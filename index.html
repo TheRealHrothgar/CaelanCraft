@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Caelancraft</title>
+  <link rel="stylesheet" href="/src/styles.css">
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <div id="hud" class="layer">
+    <div id="crosshair"></div>
+    <div id="underwater-overlay" class="hidden"></div>
+    <div id="block-toast" class="hidden"></div>
+    <div id="save-toast" class="hidden"></div>
+    <div id="hotbar">
+      <div class="hotbar-slot selected" data-slot="0"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+      <div class="hotbar-slot" data-slot="1"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+      <div class="hotbar-slot" data-slot="2"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+      <div class="hotbar-slot" data-slot="3"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+      <div class="hotbar-slot" data-slot="4"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+      <div class="hotbar-slot" data-slot="5"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+      <div class="hotbar-slot" data-slot="6"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+      <div class="hotbar-slot" data-slot="7"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+      <div class="hotbar-slot" data-slot="8"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+    </div>
+    <pre id="debug-overlay" class="hidden"></pre>
+    <div id="error-banner" class="hidden"></div>
+  </div>
+
+  <div id="block-picker" class="layer hidden">
+    <div class="picker-panel">
+      <div class="picker-title">Blocks</div>
+      <div id="picker-grid"></div>
+      <div id="picker-name">&nbsp;</div>
+      <div class="picker-hint">Click: put in selected slot · 1–9 while hovering: put in that slot · E / Esc: close</div>
+    </div>
+  </div>
+
+  <div id="pause-menu" class="layer hidden">
+    <div class="menu-panel">
+      <h2 class="menu-title">Game Paused</h2>
+      <button id="btn-resume" class="mc-button">Back to Game</button>
+      <button id="btn-save" class="mc-button">Save World</button>
+      <button id="btn-quit" class="mc-button">Save and Quit to Title</button>
+      <div id="pause-seed" class="menu-note">Seed: …</div>
+      <div id="pause-controls" class="controls-sheet"></div>
+    </div>
+  </div>
+
+  <div id="click-to-play" class="layer hidden"><div class="ctp-text">Click to play</div></div>
+
+  <div id="loading-screen" class="layer hidden">
+    <div class="loading-title">Building terrain…</div>
+    <div class="progress"><div id="loading-bar" class="progress-fill"></div></div>
+    <div id="loading-text">0 / 25 chunks</div>
+  </div>
+
+  <div id="title-screen" class="layer">
+    <canvas id="title-logo" width="200" height="32"></canvas>
+    <div id="splash-text"></div>
+    <div class="title-menu">
+      <div class="seed-row"><label for="seed-input">Seed</label><input id="seed-input" type="text" placeholder="random" autocomplete="off"></div>
+      <button id="btn-new-world" class="mc-button">New World</button>
+      <button id="btn-continue" class="mc-button" disabled>Continue</button>
+    </div>
+    <div id="title-controls" class="controls-sheet"></div>
+    <div id="title-footer">Caelancraft v0.1 · Three.js · no assets were downloaded</div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
