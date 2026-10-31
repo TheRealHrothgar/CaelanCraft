@@ -11,15 +11,16 @@ import {
   SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION,
 } from './config.js';
 import { inHeightRange } from './coords.js';
+import { faceNeighbor, hexDiscCount, hexLength, worldToHex } from './hex.js';
 import {
   BLOCK, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid,
 } from './blocks.js';
 import { normalizeSeed } from './noise.js';
 import { World } from './world.js';
-import { raycastVoxel } from './raycast.js';
+import { raycastHex } from './raycast.js';
 import { createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock } from './physics.js';
 import { advanceTime, computeSky, createSkyState } from './daynight.js';
-import { saveGame, loadGame, clearSave } from './storage.js';
+import { saveGame, loadGame, clearSave, SAVE_VERSION } from './storage.js';
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer } from './renderer.js';
 import { createControls } from './controls.js';
@@ -48,12 +49,12 @@ export const STATE = Object.freeze({
   PICKER: 'picker',
 });
 
-/** Loading progress is reported over the 5×5 chunks around the spawn (SPEC-gameplay §5.5). */
+/** Loading progress is reported over the hex disc of chunks within distance 2 of the spawn chunk (19 chunks). */
 export const LOADING_RADIUS = 2;
-export const LOADING_TOTAL = (2 * LOADING_RADIUS + 1) ** 2; // 25
+export const LOADING_TOTAL = hexDiscCount(LOADING_RADIUS); // 19
 /** KeyboardEvent.code of the hotbar keys, index = slot (precomputed: the loop runs every frame). */
 const DIGIT_CODES = Object.freeze(Array.from({ length: HOTBAR_SIZE }, (_, i) => `Digit${i + 1}`));
-/** Frames after which loading proceeds even if a chunk of the 5×5 could not be meshed (never expected). */
+/** Frames after which loading proceeds even if a chunk of the loading disc could not be meshed (never expected). */
 const LOADING_MAX_FRAMES = 1800;
 /** Sprint FOV eases 70 → 80 over this many seconds (SPEC-gameplay §4). */
 export const FOV_EASE_S = 0.15;
@@ -89,14 +90,15 @@ export function wheelSlot(selected, notches) {
 }
 
 /**
- * Chunks the loading screen waits for: the 5×5 around the spawn, shrunk to the render ring when ?rd= is
- * smaller (chunks outside the render distance are never meshed, so they could never count as done).
+ * Chunks the loading screen waits for: the hex disc of radius LOADING_RADIUS around the spawn chunk, shrunk
+ * to the render ring when ?rd= is smaller (chunks outside the render distance are never meshed, so they
+ * could never count as done).
  * @param {number} renderDistance
  * @returns {{ radius: number, total: number }}
  */
 export function loadingRing(renderDistance) {
   const radius = Math.max(0, Math.min(LOADING_RADIUS, Math.floor(renderDistance)));
-  return { radius, total: (2 * radius + 1) ** 2 };
+  return { radius, total: hexDiscCount(radius) };
 }
 
 /**
@@ -264,7 +266,7 @@ export function boot(win, doc) {
     const dx = -Math.sin(yaw) * cp;
     const dy = Math.sin(pitch);
     const dz = -Math.cos(yaw) * cp;
-    hit = raycastVoxel(world.getBlock, player.x, player.y + getEyeHeight(player), player.z, dx, dy, dz, REACH);
+    hit = raycastHex(world.getBlock, player.x, player.y + getEyeHeight(player), player.z, dx, dy, dz, REACH);
   }
 
   function selectSlot(i) {
@@ -287,7 +289,7 @@ export function boot(win, doc) {
     if (!world || !player) return false;
     const h = hit;
     if (!h || !isBreakable(h.blockId)) return false;
-    if (!world.setBlock(h.x, h.y, h.z, BLOCK.AIR)) return false;
+    if (!world.setBlock(h.q, h.y, h.r, BLOCK.AIR)) return false;
     audio.playBreak(getBlockDef(h.blockId).soundGroup);
     updateHit();
     return true;
@@ -300,13 +302,11 @@ export function boot(win, doc) {
     if (!h || h.face < 0) return false;
     const id = hotbar[selected];
     if (!isPlaceable(id)) return false;
-    const tx = h.x + h.nx;
-    const ty = h.y + h.ny;
-    const tz = h.z + h.nz;
+    const [tq, ty, tr] = faceNeighbor(h.q, h.y, h.r, h.face);
     if (!inHeightRange(ty)) return false;
-    if (!isReplaceable(world.getBlock(tx, ty, tz))) return false;
-    if (isSolid(id) && playerIntersectsBlock(player, tx, ty, tz)) return false;
-    if (!world.setBlock(tx, ty, tz, id)) return false;
+    if (!isReplaceable(world.getBlock(tq, ty, tr))) return false;
+    if (isSolid(id) && playerIntersectsBlock(player, tq, ty, tr)) return false;
+    if (!world.setBlock(tq, ty, tr, id)) return false;
     audio.playPlace(getBlockDef(id).soundGroup);
     updateHit();
     return true;
@@ -329,7 +329,7 @@ export function boot(win, doc) {
   function buildSaveData() {
     if (!world || !player) return null;
     return {
-      version: 1,
+      version: SAVE_VERSION,
       seed: world.seed,
       time,
       day,
@@ -432,7 +432,7 @@ export function boot(win, doc) {
     pendingSave = restoring;
 
     world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: restoring ? restoring.edits : undefined });
-    world.onChunkMesh = (key, cx, cz, meshData) => renderer.setChunkMesh(key, cx, cz, meshData);
+    world.onChunkMesh = (key, cq, cr, meshData) => renderer.setChunkMesh(key, cq, cr, meshData);
     world.onChunkUnload = (key) => renderer.removeChunkMesh(key);
     // After a WebGL context restore the renderer has dropped every chunk mesh (it keeps no CPU copy of the
     // vertex data). Flag the meshed chunks as never-meshed so the budgeted ring walk in world.update()
@@ -468,14 +468,16 @@ export function boot(win, doc) {
     setState(STATE.LOADING);
   }
 
-  /** @returns {number} meshed chunks within loadingRadius of the loading centre */
+  /** @returns {number} meshed chunks within hex distance loadingRadius of the loading centre's chunk */
   function loadingProgress() {
-    const cx = Math.floor(loadingCentre[0] / CHUNK_SIZE);
-    const cz = Math.floor(loadingCentre[2] / CHUNK_SIZE);
+    const [q, r] = worldToHex(loadingCentre[0], loadingCentre[2]);
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
     let done = 0;
-    for (let dx = -loadingRadius; dx <= loadingRadius; dx++) {
-      for (let dz = -loadingRadius; dz <= loadingRadius; dz++) {
-        const c = world.getChunk(cx + dx, cz + dz);
+    for (let dq = -loadingRadius; dq <= loadingRadius; dq++) {
+      for (let dr = -loadingRadius; dr <= loadingRadius; dr++) {
+        if (hexLength(dq, dr) > loadingRadius) continue;
+        const c = world.getChunk(cq + dq, cr + dr);
         if (c && c.meshed && !c.dirty) done++;
       }
     }
@@ -494,8 +496,8 @@ export function boot(win, doc) {
 
     const done = loadingProgress();
     menus.showLoading(done, loadingTotal);
-    // Contract: ready when the spawn chunk is meshed. We additionally wait for the 5×5 the progress bar
-    // promises (or a generous frame cap) so the player never spawns looking at holes.
+    // Contract: ready when the spawn chunk is meshed. We additionally wait for the loading disc the progress
+    // bar promises (or a generous frame cap) so the player never spawns looking at holes.
     const ringDone = done >= loadingTotal || (r.pendingGen === 0 && r.pendingMesh === 0) || loadingFrames >= LOADING_MAX_FRAMES;
     if (world.isReadyAt(sx, sz) && ringDone) finishLoading();
   }
@@ -513,6 +515,9 @@ export function boot(win, doc) {
       controls.yaw = Math.PI; // face +Z
       controls.pitch = 0;
     }
+    // Debug/screenshot aids: ?yaw= and ?pitch= (degrees) override the initial look direction.
+    if (params.yaw != null) controls.yaw = (params.yaw * Math.PI) / 180;
+    if (params.pitch != null) controls.pitch = (params.pitch * Math.PI) / 180;
     if (params.fly) player.flying = true;
 
     savedEditVersion = world.editVersion;

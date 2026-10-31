@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import * as C from '../../src/config.js';
+import * as coords from '../../src/coords.js';
 import {
   floorDiv, mod, worldToChunk, worldToLocal, chunkKey, parseChunkKey, localIndex, indexToLocal, columnIndex,
-  FACE_NORMALS, FACE_VERTS, FACE_TANGENTS, FACE_AXIS, FACE_OPPOSITE, yawToForward, yawToRight, lookDirection,
+  inHeightRange, yawToForward, yawToRight, lookDirection,
 } from '../../src/coords.js';
+import { FACE_TOP as HEX_FACE_TOP, FACE_BOTTOM as HEX_FACE_BOTTOM, FACE_COUNT, HEX_INRADIUS, HEX_SIZE } from '../../src/hex.js';
 import {
   BLOCK, BLOCKS, BLOCK_COUNT, TILE, TILE_IDS, DEFAULT_HOTBAR, PICKER_ORDER, getFaceTile, isSolid, isOpaque, isLiquid,
   isReplaceable, isTargetable, isPlaceable, isBreakable, shouldRenderFace, tileToUV, LAYER_CUTOUT, LAYER_TRANSLUCENT, LAYER_OPAQUE,
+  FACE_TOP, FACE_BOTTOM,
 } from '../../src/blocks.js';
 import { Chunk } from '../../src/chunk.js';
 
@@ -25,6 +28,22 @@ describe('config', () => {
     expect(C.EYE_HEIGHT).toBeLessThan(C.PLAYER_HEIGHT);
     expect(C.MAX_FRAME_DT).toBeLessThanOrEqual(0.1);
     expect(C.REACH).toBeGreaterThanOrEqual(4);
+    // The collider samples only the player's cell and its six neighbours, which is only sufficient while
+    // the footprint radius is smaller than a cell's inradius.
+    // The player must fit through the HEX_SIZE-wide throat of a 1-cell passage (which also implies the 7-column bound).
+    expect(C.PLAYER_WIDTH / 2).toBeLessThan(HEX_SIZE / 2);
+    expect(C.PLAYER_WIDTH / 2).toBeLessThan(HEX_INRADIUS);
+  });
+  it('hex render tunables are in range', () => {
+    expect(C.TOP_UV_SCALE).toBeCloseTo(Math.sqrt(3) / 2, 12);
+    // Negative: the fog must end before the nearest possibly-unmeshed cell, which is (rd − 1) rings away because the
+    // mesh disc is keyed by chunk origin cells (see renderer.fogRangeForRenderDistance). Never below -1.
+    expect(C.FOG_FAR_CHUNK_MARGIN).toBeGreaterThanOrEqual(-1);
+    expect(C.FOG_FAR_CHUNK_MARGIN).toBeLessThan(1);
+    expect(C.AO_CURVE).toHaveLength(4);
+    for (let i = 1; i < 4; i++) expect(C.AO_CURVE[i]).toBeGreaterThan(C.AO_CURVE[i - 1]);
+    expect(C.AO_CURVE[3]).toBe(1);
+    expect(C.VERSION).toBe('0.2.0');
   });
 });
 
@@ -42,6 +61,14 @@ describe('coords', () => {
   it('round-trips chunk keys', () => {
     expect(chunkKey(-3, 7)).toBe('-3,7');
     expect(parseChunkKey('-3,7')).toEqual([-3, 7]);
+    expect(parseChunkKey('0,0')).toEqual([0, 0]);
+    expect(parseChunkKey(chunkKey(-0, 12))).toEqual([0, 12]);
+    // Strict inverse: anything chunkKey could not have produced is [NaN, NaN], never a silent (0, 0).
+    for (const bad of ['', '0', ',', ' , ', '3,', ',1', ' 1,2', '1,2 ', '1,2,3', '1.5,2', '1e3,2', '0x10,2', '+1,2', 'a,b', '--1,2', '1,-']) {
+      const [cq, cr] = parseChunkKey(bad);
+      expect(Number.isNaN(cq), bad).toBe(true);
+      expect(Number.isNaN(cr), bad).toBe(true);
+    }
   });
   it('localIndex is a bijection with the documented strides', () => {
     expect(localIndex(0, 1, 0)).toBe(1);
@@ -56,20 +83,17 @@ describe('coords', () => {
     }
     expect(columnIndex(3, 5)).toBe(3 * 16 + 5);
   });
-  it('face vertex windings are CCW from outside and match normals', () => {
-    for (let f = 0; f < 6; f++) {
-      const [a, b, c] = FACE_VERTS[f];
-      const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-      const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
-      const cross = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]].map((v) => v + 0);
-      expect(cross).toEqual(FACE_NORMALS[f]);
-      // all 4 verts lie on the face plane
-      const axis = FACE_AXIS[f];
-      const planeVal = FACE_NORMALS[f][axis] > 0 ? 1 : 0;
-      for (const v of FACE_VERTS[f]) expect(v[axis]).toBe(planeVal);
-      expect(FACE_TANGENTS[f]).not.toContain(axis);
-      expect(FACE_AXIS[FACE_OPPOSITE[f]]).toBe(axis);
+  it('no longer carries the cube face tables (they live in hex.js)', () => {
+    for (const name of ['FACE_NORMALS', 'FACE_VERTS', 'FACE_TANGENTS', 'FACE_AXIS', 'FACE_OPPOSITE', 'FACE_NAMES']) {
+      expect(coords[name], name).toBeUndefined();
     }
+  });
+  it('inHeightRange covers exactly 0..WORLD_HEIGHT-1', () => {
+    expect(inHeightRange(0)).toBe(true);
+    expect(inHeightRange(C.WORLD_HEIGHT - 1)).toBe(true);
+    expect(inHeightRange(-1)).toBe(false);
+    expect(inHeightRange(C.WORLD_HEIGHT)).toBe(false);
+    expect(inHeightRange(NaN)).toBe(false);
   });
   it('orientation conventions: yaw 0 faces -Z, positive yaw turns left', () => {
     const [fx, fz] = yawToForward(0);
@@ -94,21 +118,37 @@ describe('blocks', () => {
       expect(names.has(b.name)).toBe(false);
       names.add(b.name);
       expect(BLOCK[b.name.toUpperCase()]).toBe(i);
-      expect(b.tiles).toHaveLength(6);
+      expect(b.tiles).toHaveLength(FACE_COUNT);
     });
   });
-  it('every non-air block resolves 6 valid tiles', () => {
+  it('re-exports the hex top/bottom face indices', () => {
+    expect(FACE_TOP).toBe(HEX_FACE_TOP);
+    expect(FACE_BOTTOM).toBe(HEX_FACE_BOTTOM);
+    expect(FACE_TOP).toBe(6);
+    expect(FACE_BOTTOM).toBe(7);
+  });
+  it('every non-air block resolves 8 valid tiles: six identical sides, a top and a bottom', () => {
     const tileSet = new Set(TILE_IDS);
     for (let id = 1; id < BLOCK_COUNT; id++) {
-      for (let f = 0; f < 6; f++) {
+      for (let f = 0; f < FACE_COUNT; f++) {
         const t = getFaceTile(id, f);
         expect(tileSet.has(t)).toBe(true);
         expect(t).not.toBe(TILE.MISSING);
       }
+      for (let f = 1; f < 6; f++) expect(getFaceTile(id, f)).toBe(getFaceTile(id, 0));
     }
-    expect(getFaceTile(BLOCK.GRASS_BLOCK, 2)).toBe(TILE.GRASS_TOP);
-    expect(getFaceTile(BLOCK.GRASS_BLOCK, 3)).toBe(TILE.DIRT);
+    expect(getFaceTile(BLOCK.GRASS_BLOCK, FACE_TOP)).toBe(TILE.GRASS_TOP);
+    expect(getFaceTile(BLOCK.GRASS_BLOCK, FACE_BOTTOM)).toBe(TILE.DIRT);
     expect(getFaceTile(BLOCK.GRASS_BLOCK, 0)).toBe(TILE.GRASS_SIDE);
+    expect(getFaceTile(BLOCK.GRASS_BLOCK, 5)).toBe(TILE.GRASS_SIDE);
+    expect(getFaceTile(BLOCK.OAK_LOG, FACE_TOP)).toBe(TILE.OAK_LOG_END);
+    expect(getFaceTile(BLOCK.OAK_LOG, FACE_BOTTOM)).toBe(TILE.OAK_LOG_END);
+    expect(getFaceTile(BLOCK.OAK_LOG, 3)).toBe(TILE.OAK_LOG_SIDE);
+    expect(getFaceTile(BLOCK.SNOWY_GRASS, FACE_TOP)).toBe(TILE.SNOW);
+    expect(getFaceTile(BLOCK.SNOWY_GRASS, FACE_BOTTOM)).toBe(TILE.DIRT);
+    // Out-of-range faces and unknown ids fall back to MISSING / AIR.
+    expect(getFaceTile(BLOCK.STONE, 8)).toBe(TILE.MISSING);
+    expect(getFaceTile(200, 0)).toBe(TILE.MISSING);
   });
   it('flags are consistent', () => {
     for (const b of BLOCKS) {
@@ -176,6 +216,27 @@ describe('blocks', () => {
 });
 
 describe('chunk', () => {
+  it('stores its (cq, cr) coordinates and key', () => {
+    const c = new Chunk(-3, 7);
+    expect(c.cq).toBe(-3);
+    expect(c.cr).toBe(7);
+    expect(c.key).toBe(chunkKey(-3, 7));
+    expect(c.meshed).toBe(false);
+    expect(c.heights.length).toBe(C.CHUNK_AREA);
+  });
+  it('adopts the ChunkData arrays it is given (no copy)', () => {
+    const data = {
+      blocks: new Uint8Array(C.CHUNK_VOLUME),
+      biomes: new Uint8Array(C.CHUNK_AREA),
+      heights: new Uint8Array(C.CHUNK_AREA),
+    };
+    data.blocks[localIndex(2, 3, 4)] = 9;
+    const c = new Chunk(0, 0, data);
+    expect(c.blocks).toBe(data.blocks);
+    expect(c.biomes).toBe(data.biomes);
+    expect(c.heights).toBe(data.heights);
+    expect(c.get(2, 3, 4)).toBe(9);
+  });
   it('get/set round trip with dirty flag and range checks', () => {
     const c = new Chunk(-1, 2);
     expect(c.key).toBe('-1,2');

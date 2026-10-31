@@ -17,8 +17,8 @@ import { DEFAULT_HOTBAR } from './blocks.js';
  *   removeItem(key: string): void }} StorageLike
  */
 
-export const SAVE_KEY = 'caelancraft:v1:save';
-export const SAVE_VERSION = 1;
+export const SAVE_KEY = 'caelancraft:v2:save';
+export const SAVE_VERSION = 2; // v2: edits are keyed by hex (q, r) chunks — v1 cube saves are not loadable
 
 /** The canonical default hotbar (re-exported for callers that only know storage). */
 export const DEFAULT_SAVE_HOTBAR = Object.freeze([...DEFAULT_HOTBAR]);
@@ -175,7 +175,7 @@ export function serializeSave(data) {
 /**
  * Parse and strictly validate a save document.
  *
- * Returns null on: unparsable/non-object JSON, `version !== 1`, missing or non-finite
+ * Returns null on: unparsable/non-object JSON, `version !== SAVE_VERSION`, missing or non-finite
  * `seed`/`time`/`day`, missing `player` or non-finite `player.{x,y,z,yaw,pitch}`, or `edits`
  * that is not an object. Recoverable problems are repaired instead: invalid hotbar/selected →
  * defaults; edit pairs failing `0 <= localIndex < CHUNK_VOLUME` / `0 <= id <= 255` / integer-ness

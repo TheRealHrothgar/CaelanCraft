@@ -1,5 +1,13 @@
 # Caelancraft — Build, Test and Verification Plan
 
+> **v0.2 honeycomb revision.** Caelancraft's cells are now hexagonal prisms (pointy-top, 1 wide across the flats,
+> addressed by axial `(q, r)` + `y`; see `src/hex.js`). Wherever this document describes cube blocks — AABBs, six
+> axis-aligned faces, square chunk footprints, the Amanatides–Woo voxel walk, the isometric cube icon — the
+> normative hex definitions in `src/CONTRACTS.md` supersede it. Block palette, texture recipes, terrain numbers,
+> controls, HUD and day/night still apply. Saves are v2 per `src/CONTRACTS.md` §14 (single key `caelancraft:v2:save`,
+> `version: 2`, edits keyed by hex chunk `"cq,cr"` with `localIndex = (lq*16 + lr)*128 + ly`; v1 saves are not loadable),
+> and the loading screen waits for the hex disc of 19 chunks (`hexDiscCount(2)`) rather than a 5×5 square.
+
 > Authoritative for: toolchain, gates, unit-test expectations, smoke test, review process.
 > Where this document pins a *code-level convention* that `src/CONTRACTS.md` also pins, `src/CONTRACTS.md` wins.
 
@@ -61,7 +69,7 @@ Conventions: `import { describe, it, expect } from 'vitest'`; import constants f
 2. Bedrock at y=0 in all 256 columns.
 3. Topmost solid in every column ≤ H−8 over 9 chunks.
 4. Every column has solid ground; topmost non-air is WATER only if y ≤ SEA_LEVEL.
-5. WATER ⇒ y ≤ SEA_LEVEL; some chunk in a 5×5 scan contains water.
+5. WATER ⇒ y ≤ SEA_LEVEL; some chunk in a scan of the nearby chunks contains water.
 6. Surface layering: GRASS_BLOCK has DIRT below; no GRASS_BLOCK directly under WATER.
 7. Trees: each trunk top has ≥4 LEAVES within Chebyshev 2 / y∈[−1,+2]; each LOG is rooted within 8 blocks; no LOG at y ≤ SEA_LEVEL.
 8. Cross-chunk decoration consistency: generate a 3×3 block of chunks into a merged 48×H×48 array; no canopy truncated at a chunk boundary (compare to the same tree seen from the neighbour chunk).

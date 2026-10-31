@@ -1,10 +1,10 @@
 // Caelancraft — every numeric constant and tuning knob. No logic lives here.
 // Units: blocks (metres), seconds, radians. See src/CONTRACTS.md §2.
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
-// World
-export const CHUNK_SIZE = 16;                       // X and Z extent of a chunk, in blocks
+// World (cells are hexagonal prisms addressed by axial (q, r) + y; see src/hex.js)
+export const CHUNK_SIZE = 16;                       // q and r extent of a chunk, in cells
 export const WORLD_HEIGHT = 128;                    // Y extent; valid block y is 0..127
 export const CHUNK_AREA = CHUNK_SIZE * CHUNK_SIZE;  // 256
 export const CHUNK_VOLUME = CHUNK_AREA * WORLD_HEIGHT; // 32768
@@ -13,8 +13,8 @@ export const MIN_TERRAIN_HEIGHT = 40;
 export const MAX_TERRAIN_HEIGHT = WORLD_HEIGHT - 10; // 118; leaves room for trees
 
 // Streaming
-export const RENDER_DISTANCE = 7;                   // default mesh radius in chunks (Chebyshev); ?rd= overrides
-export const DATA_RADIUS_EXTRA = 1;                 // chunks generated beyond the mesh radius
+export const RENDER_DISTANCE = 7;                   // default mesh radius in chunks (hex distance); ?rd= overrides
+export const DATA_RADIUS_EXTRA = 1;                 // chunks generated beyond the mesh radius (hex distance)
 export const UNLOAD_RADIUS_EXTRA = 3;               // chunks kept beyond the mesh radius before unloading
 export const BUILD_BUDGET_MS = 6;                   // world.update() stops starting new jobs after this
 export const MAX_BUILDS_PER_UPDATE = 6;             // hard cap per update regardless of time
@@ -35,10 +35,15 @@ export const UV_INSET = 1 / 4096;                   // 1/16 texel; kills boundar
 // Mesher
 export const WATER_SURFACE_HEIGHT = 0.875;          // top of a water block with non-water above
 export const AO_CURVE = [0.45, 0.65, 0.82, 1.0];    // index = vertexAO value 0..3
-export const FACE_SHADE = [0.8, 0.8, 1.0, 0.6, 0.9, 0.9]; // index = face (+X,-X,+Y,-Y,+Z,-Z)
+// Per-face shade lives in hex.js (FACE_SHADE) because it derives from the hex face normals.
+export const TOP_UV_SCALE = Math.sqrt(3) / 2;       // hexagon top/bottom faces are inscribed in the tile (corner-to-corner = tile height)
+export const FOG_FAR_CHUNK_MARGIN = -1;             // fog far = (renderDistance + margin) * CHUNK_RING_INRADIUS. Negative because the mesh
+                                                    // disc is keyed by chunk ORIGIN cells while a footprint extends 16·√3 toward (+1,+1): the
+                                                    // nearest unmeshed cell can be as close as (rd − 1) rings (tight analytic bound)
 
 // Player / physics
-export const PLAYER_WIDTH = 0.6;
+export const PLAYER_WIDTH = 0.56;                   // cylinder diameter; must stay < HEX_SIZE (0.577): every 1-cell passage is pinched to one
+                                                    // edge length by the two wall corners flanking it, and < 2 * HEX_INRADIUS (7-column collider)
 export const PLAYER_HEIGHT = 1.8;
 export const EYE_HEIGHT = 1.62;
 export const SNEAK_EYE_HEIGHT = 1.27;

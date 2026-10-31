@@ -2,6 +2,11 @@
 // See src/CONTRACTS.md §9 and §9.1. Pure except for the `performance.now` clock (Date.now fallback),
 // which is only used as the default `now` option; tests inject `now: () => 0`.
 //
+// Cells are hexagonal prisms addressed by axial (q, r) + y; chunks are 16×16 in (q, r). Because the chunk
+// lattice is itself a regular hex lattice in world space, streaming uses HEX distance in chunk coordinates:
+// the loaded region is a hexagon of chunks around the player, and a chunk is meshed once its six
+// hex-adjacent chunks exist (the mesher's halo only ever reads those).
+//
 // findSpawn is bounded to SPAWN_MAX_RINGS rings and update() keeps walking the ring in count-only
 // mode after the budget trips so pendingGen/pendingMesh describe the whole ring (both accepted by §9).
 import {
@@ -9,6 +14,7 @@ import {
   UNLOAD_RADIUS_EXTRA, BUILD_BUDGET_MS, MAX_BUILDS_PER_UPDATE,
 } from './config.js';
 import { chunkKey, parseChunkKey, localIndex, indexToLocal } from './coords.js';
+import { HEX_DIRS, hexLength, hexNormSq, hexToWorld, worldToHex } from './hex.js';
 import { BLOCK, BIOME } from './blocks.js';
 import { Chunk } from './chunk.js';
 import { createWorldGen } from './worldgen.js';
@@ -43,19 +49,19 @@ import { normalizeSeed } from './noise.js';
 const MIN_RENDER_DISTANCE = 1;
 const MAX_RENDER_DISTANCE = 16;
 
-/** findSpawn spiral: step in blocks and the maximum ring searched before falling back. */
+/** findSpawn spiral: step in cells and the maximum ring searched before falling back. */
 const SPAWN_STEP = 4;
-const SPAWN_MAX_RINGS = 128; // 512 blocks in every direction
+const SPAWN_MAX_RINGS = 128; // 512 cells in every direction
 
-// Numeric chunk id used for the allocation-free lookup index. cx, cz are shifted into
+// Numeric chunk id used for the allocation-free lookup index. cq, cr are shifted into
 // [0, 2^21) and packed into one double (exact up to 2^53). Chunks beyond ±2^20 (16.7 million
-// blocks) are far outside float-precision playability anyway.
+// cells) are far outside float-precision playability anyway.
 const ID_OFFSET = 1 << 20;
 const ID_SPAN = 1 << 21;
 
-/** @returns {number} unique numeric id for chunk (cx, cz) */
-function packId(cx, cz) {
-  return (cx + ID_OFFSET) * ID_SPAN + (cz + ID_OFFSET);
+/** @returns {number} unique numeric id for chunk (cq, cr) */
+function packId(cq, cr) {
+  return (cq + ID_OFFSET) * ID_SPAN + (cr + ID_OFFSET);
 }
 
 /** @returns {() => number} millisecond clock */
@@ -93,8 +99,8 @@ export class World {
     /** incremented on every successful setBlock (autosave uses it) */
     this.editVersion = 0;
 
-    /** @type {(key: ChunkKey, cx: number, cz: number, meshData: ChunkMeshData) => void} */
-    this.onChunkMesh = (_key, _cx, _cz, _meshData) => {};
+    /** @type {(key: ChunkKey, cq: number, cr: number, meshData: ChunkMeshData) => void} */
+    this.onChunkMesh = (_key, _cq, _cr, _meshData) => {};
     /** @type {(key: ChunkKey) => void} */
     this.onChunkUnload = (_key) => {};
 
@@ -106,47 +112,47 @@ export class World {
     /** getBlock single-entry cache (physics/raycast hit the same chunk repeatedly). */
     /** @type {Chunk|null} */
     this._lastChunk = null;
-    this._lastCx = NaN;
-    this._lastCz = NaN;
+    this._lastCq = NaN;
+    this._lastCr = NaN;
 
     /** RING_OFFSETS as parallel typed arrays, sorted nearest-first (see _computeRing). */
-    this._ringDx = new Int16Array(0);
-    this._ringDz = new Int16Array(0);
-    this._ringCheb = new Uint8Array(0);
+    this._ringDq = new Int16Array(0);
+    this._ringDr = new Int16Array(0);
+    this._ringDist = new Uint8Array(0);
     this._computeRing();
 
     /**
-     * Block id at world coordinates; AIR when y is out of range or the chunk is not loaded.
+     * Block id at cell (q, y, r); AIR when y is out of range or the chunk is not loaded.
      * ARROW PROPERTY: safe to pass around detached. Never allocates.
-     * @type {(wx: number, wy: number, wz: number) => BlockId}
+     * @type {(q: number, y: number, r: number) => BlockId}
      */
-    this.getBlock = (wx, wy, wz) => {
-      wy = Math.floor(wy);
-      if (!(wy >= 0 && wy < WORLD_HEIGHT)) return BLOCK.AIR; // also rejects NaN
-      wx = Math.floor(wx);
-      wz = Math.floor(wz);
-      const cx = Math.floor(wx / CHUNK_SIZE);
-      const cz = Math.floor(wz / CHUNK_SIZE);
+    this.getBlock = (q, y, r) => {
+      y = Math.floor(y);
+      if (!(y >= 0 && y < WORLD_HEIGHT)) return BLOCK.AIR; // also rejects NaN
+      q = Math.floor(q);
+      r = Math.floor(r);
+      const cq = Math.floor(q / CHUNK_SIZE);
+      const cr = Math.floor(r / CHUNK_SIZE);
       let chunk;
-      if (cx === this._lastCx && cz === this._lastCz) {
+      if (cq === this._lastCq && cr === this._lastCr) {
         chunk = this._lastChunk;
       } else {
-        chunk = this._byId.get(packId(cx, cz));
+        chunk = this._byId.get(packId(cq, cr));
         if (chunk === undefined) return BLOCK.AIR;
         this._lastChunk = chunk;
-        this._lastCx = cx;
-        this._lastCz = cz;
+        this._lastCq = cq;
+        this._lastCr = cr;
       }
-      const lx = wx - cx * CHUNK_SIZE;
-      const lz = wz - cz * CHUNK_SIZE;
-      return chunk.blocks[(lx * CHUNK_SIZE + lz) * WORLD_HEIGHT + wy];
+      const lq = q - cq * CHUNK_SIZE;
+      const lr = r - cr * CHUNK_SIZE;
+      return chunk.blocks[(lq * CHUNK_SIZE + lr) * WORLD_HEIGHT + y];
     };
 
     /**
      * Loaded chunk at chunk coordinates or null. ARROW PROPERTY (handed to the mesher).
-     * @type {(cx: number, cz: number) => Chunk|null}
+     * @type {(cq: number, cr: number) => Chunk|null}
      */
-    this.getChunkData = (cx, cz) => this._byId.get(packId(cx, cz)) ?? null;
+    this.getChunkData = (cq, cr) => this._byId.get(packId(cq, cr)) ?? null;
 
     if (opts.edits) {
       this.importEdits(opts.edits);
@@ -158,18 +164,39 @@ export class World {
   // queries
 
   /** @returns {Chunk|undefined} */
-  getChunk(cx, cz) {
-    return this._byId.get(packId(cx, cz));
+  getChunk(cq, cr) {
+    return this._byId.get(packId(cq, cr));
   }
 
-  /** @returns {boolean} a chunk is loaded under world column (wx, wz) */
+  /** @returns {BlockId} block at WORLD position (x, y, z) — convenience over getBlock(worldToHex(x, z)) */
+  getBlockAt(x, y, z) {
+    if (!Number.isFinite(x + y + z)) return BLOCK.AIR;
+    const [q, r] = worldToHex(x, z);
+    return this.getBlock(q, Math.floor(y), r);
+  }
+
+  /** @returns {boolean} a chunk is loaded under the cell containing world point (wx, wz) */
   hasChunkAt(wx, wz) {
-    return this._byId.has(packId(Math.floor(wx / CHUNK_SIZE), Math.floor(wz / CHUNK_SIZE)));
+    if (!Number.isFinite(wx + wz)) return false;
+    const [q, r] = worldToHex(wx, wz);
+    return this.hasChunkAtCell(q, r);
   }
 
-  /** @returns {boolean} chunk exists, is not dirty and has been meshed */
+  /** @returns {boolean} a chunk is loaded under cell column (q, r) */
+  hasChunkAtCell(q, r) {
+    return this._byId.has(packId(Math.floor(q / CHUNK_SIZE), Math.floor(r / CHUNK_SIZE)));
+  }
+
+  /** @returns {boolean} chunk under world point (wx, wz) exists, is not dirty and has been meshed */
   isReadyAt(wx, wz) {
-    const chunk = this._byId.get(packId(Math.floor(wx / CHUNK_SIZE), Math.floor(wz / CHUNK_SIZE)));
+    if (!Number.isFinite(wx + wz)) return false;
+    const [q, r] = worldToHex(wx, wz);
+    return this.isReadyAtCell(q, r);
+  }
+
+  /** @returns {boolean} chunk under cell column (q, r) exists, is not dirty and has been meshed */
+  isReadyAtCell(q, r) {
+    const chunk = this._byId.get(packId(Math.floor(q / CHUNK_SIZE), Math.floor(r / CHUNK_SIZE)));
     return chunk !== undefined && !chunk.dirty && chunk.meshed;
   }
 
@@ -179,49 +206,49 @@ export class World {
   }
 
   /** @returns {number} terrain height from worldGen.getColumn (ignores edits) */
-  getSurfaceHeight(wx, wz) {
-    return this.worldGen.getColumn(wx, wz).height;
+  getSurfaceHeight(q, r) {
+    return this.worldGen.getColumn(q, r).height;
   }
 
   /** @returns {number} biome id from worldGen.getColumn */
-  getBiome(wx, wz) {
-    return this.worldGen.getColumn(wx, wz).biome;
+  getBiome(q, r) {
+    return this.worldGen.getColumn(q, r).biome;
   }
 
   // -------------------------------------------------------------------------------------------
   // edits
 
   /**
-   * Set a block. Records the edit, bumps editVersion and dirties every LOADED chunk containing
-   * (wx+dx, wz+dz) for dx,dz ∈ {-1,0,1} so neighbouring meshes update their culled faces / AO.
+   * Set a block. Records the edit, bumps editVersion and dirties every LOADED chunk containing the cell or
+   * one of its six side neighbours (1–4 chunks) so neighbouring meshes update their culled faces / AO.
    * @returns {boolean} false if y out of range, id invalid, chunk not loaded, or value unchanged
    */
-  setBlock(wx, wy, wz, id) {
-    wy = Math.floor(wy);
-    if (!(wy >= 0 && wy < WORLD_HEIGHT)) return false;
+  setBlock(q, y, r, id) {
+    y = Math.floor(y);
+    if (!(y >= 0 && y < WORLD_HEIGHT)) return false;
     if (!isIntIn(id, 0, 255)) return false;
-    wx = Math.floor(wx);
-    wz = Math.floor(wz);
-    const cx = Math.floor(wx / CHUNK_SIZE);
-    const cz = Math.floor(wz / CHUNK_SIZE);
-    const chunk = this._byId.get(packId(cx, cz));
+    q = Math.floor(q);
+    r = Math.floor(r);
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
+    const chunk = this._byId.get(packId(cq, cr));
     if (chunk === undefined) return false;
-    const lx = wx - cx * CHUNK_SIZE;
-    const lz = wz - cz * CHUNK_SIZE;
-    if (!chunk.set(lx, wy, lz, id)) return false;
+    const lq = q - cq * CHUNK_SIZE;
+    const lr = r - cr * CHUNK_SIZE;
+    if (!chunk.set(lq, y, lr, id)) return false;
 
     let chunkEdits = this.edits.get(chunk.key);
     if (chunkEdits === undefined) {
       chunkEdits = new Map();
       this.edits.set(chunk.key, chunkEdits);
     }
-    chunkEdits.set(localIndex(lx, wy, lz), id);
+    chunkEdits.set(localIndex(lq, y, lr), id);
     this.editVersion++;
-    this._markDirtyAround(wx, wz);
+    this._markDirtyAround(q, r);
     return true;
   }
 
-  /** @returns {EditsJSON} `{ "cx,cz": [localIndex, id, localIndex, id, ...] }` (fresh arrays) */
+  /** @returns {EditsJSON} `{ "cq,cr": [localIndex, id, localIndex, id, ...] }` (fresh arrays) */
   exportEdits() {
     /** @type {EditsJSON} */
     const out = {};
@@ -248,10 +275,10 @@ export class World {
     for (const rawKey of Object.keys(editsJson)) {
       const arr = editsJson[rawKey];
       if (!Array.isArray(arr)) continue;
-      const [cx, cz] = parseChunkKey(rawKey);
-      if (!Number.isInteger(cx) || !Number.isInteger(cz)) continue;
-      const key = chunkKey(cx, cz);
-      const chunk = this._byId.get(packId(cx, cz));
+      const [cq, cr] = parseChunkKey(rawKey);
+      if (!Number.isInteger(cq) || !Number.isInteger(cr)) continue;
+      const key = chunkKey(cq, cr);
+      const chunk = this._byId.get(packId(cq, cr));
       let chunkEdits = this.edits.get(key);
       for (let i = 0; i + 1 < arr.length; i += 2) {
         const li = arr[i];
@@ -265,8 +292,8 @@ export class World {
         if (chunk !== undefined && chunk.blocks[li] !== id) {
           chunk.blocks[li] = id;
           chunk.dirty = true;
-          const [lx, , lz] = indexToLocal(li);
-          this._markDirtyAround(cx * CHUNK_SIZE + lx, cz * CHUNK_SIZE + lz);
+          const [lq, , lr] = indexToLocal(li);
+          this._markDirtyAround(cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr);
         }
       }
     }
@@ -277,16 +304,19 @@ export class World {
 
   /**
    * One streaming step (CONTRACTS §9.1): unload far chunks, re-mesh edited chunks, then walk the
-   * precomputed ring nearest-first generating missing chunks and meshing chunks whose 8 neighbours
+   * precomputed ring nearest-first generating missing chunks and meshing chunks whose 6 hex neighbours
    * exist, stopping after MAX_BUILDS_PER_UPDATE builds or when `budgetMs` has elapsed.
-   * @param {number} px  player x (blocks)
-   * @param {number} pz  player z (blocks)
+   * @param {number} px  player world x
+   * @param {number} pz  player world z
    * @param {number} [budgetMs]
    * @returns {UpdateResult}
    */
   update(px, pz, budgetMs = BUILD_BUDGET_MS) {
-    const pcx = Math.floor(px / CHUNK_SIZE);
-    const pcz = Math.floor(pz / CHUNK_SIZE);
+    // A non-finite position would generate and mesh a phantom 'NaN,NaN' chunk that nothing ever unloads.
+    if (!Number.isFinite(px + pz)) return { generated: 0, meshed: 0, unloaded: 0, pendingGen: 0, pendingMesh: 0 };
+    const [pq, pr] = worldToHex(px, pz);
+    const pcq = Math.floor(pq / CHUNK_SIZE);
+    const pcr = Math.floor(pr / CHUNK_SIZE);
     const now = this._now;
     const start = now();
     const renderDistance = this.renderDistance;
@@ -300,11 +330,7 @@ export class World {
     // 1. Unload everything beyond the unload radius (edits stay in `this.edits`).
     const unloadRadius = renderDistance + UNLOAD_RADIUS_EXTRA;
     for (const chunk of this.chunks.values()) {
-      const ddx = chunk.cx - pcx;
-      const ddz = chunk.cz - pcz;
-      const d = ddx < 0 ? -ddx : ddx;
-      const e = ddz < 0 ? -ddz : ddz;
-      if ((d > e ? d : e) > unloadRadius) {
+      if (hexLength(chunk.cq - pcq, chunk.cr - pcr) > unloadRadius) {
         this._removeChunk(chunk);
         unloaded++;
       }
@@ -312,7 +338,7 @@ export class World {
 
     // 2. Re-mesh edited chunks immediately (visible feedback for the player; ignores the budget).
     for (const chunk of this.chunks.values()) {
-      if (chunk.dirty && chunk.meshed && this._neighboursLoaded(chunk.cx, chunk.cz)) {
+      if (chunk.dirty && chunk.meshed && this._neighboursLoaded(chunk.cq, chunk.cr)) {
         this._mesh(chunk);
         meshed++;
       }
@@ -320,16 +346,16 @@ export class World {
 
     // 3. Ring walk, nearest first. After the budget/cap trips we keep walking in count-only mode
     //    so pendingGen / pendingMesh describe the whole ring.
-    const dxs = this._ringDx;
-    const dzs = this._ringDz;
-    const chebs = this._ringCheb;
-    const n = dxs.length;
+    const dqs = this._ringDq;
+    const drs = this._ringDr;
+    const dists = this._ringDist;
+    const n = dqs.length;
     let stopped = false;
     for (let i = 0; i < n; i++) {
-      const cx = pcx + dxs[i];
-      const cz = pcz + dzs[i];
-      const inMeshRadius = chebs[i] <= renderDistance;
-      let chunk = this._byId.get(packId(cx, cz));
+      const cq = pcq + dqs[i];
+      const cr = pcr + drs[i];
+      const inMeshRadius = dists[i] <= renderDistance;
+      let chunk = this._byId.get(packId(cq, cr));
 
       if (stopped) {
         if (chunk === undefined) {
@@ -342,14 +368,14 @@ export class World {
       }
 
       if (chunk === undefined) {
-        chunk = this._generate(cx, cz);
+        chunk = this._generate(cq, cr);
         builds++;
         generated++;
         if (builds >= MAX_BUILDS_PER_UPDATE || now() - start >= budgetMs) stopped = true;
       }
 
       if (inMeshRadius && chunk.dirty) {
-        if (!stopped && this._neighboursLoaded(cx, cz)) {
+        if (!stopped && this._neighboursLoaded(cq, cr)) {
           this._mesh(chunk);
           builds++;
           meshed++;
@@ -364,42 +390,37 @@ export class World {
   }
 
   /**
-   * Spiral out from (0,0) in SPAWN_STEP-block steps until a column is above sea level and not
-   * OCEAN/BEACH. Falls back to the origin column (raised to sea level) if nothing is found within
+   * Spiral out from cell (0,0) over hex rings in SPAWN_STEP-cell steps until a column is above sea level and
+   * not OCEAN/BEACH. Falls back to the origin column (raised to sea level) if nothing is found within
    * SPAWN_MAX_RINGS rings, so an all-ocean generator cannot hang the game.
-   * @returns {Vec3} [x+0.5, height+1, z+0.5]
+   * @returns {Vec3} world [x, height+1, z] of the cell centre
    */
   findSpawn() {
     const step = SPAWN_STEP;
-    for (let r = 0; r <= SPAWN_MAX_RINGS; r++) {
-      if (r === 0) {
-        const s = this._spawnAt(0, 0);
-        if (s) return s;
-        continue;
-      }
-      // Top and bottom rows (z = ∓r), left to right.
-      for (let i = -r; i <= r; i++) {
-        let s = this._spawnAt(i * step, -r * step);
-        if (s) return s;
-        s = this._spawnAt(i * step, r * step);
-        if (s) return s;
-      }
-      // Left and right columns (x = ∓r) without the corners already visited.
-      for (let j = -r + 1; j <= r - 1; j++) {
-        let s = this._spawnAt(-r * step, j * step);
-        if (s) return s;
-        s = this._spawnAt(r * step, j * step);
-        if (s) return s;
+    const first = this._spawnAt(0, 0);
+    if (first) return first;
+    for (let n = 1; n <= SPAWN_MAX_RINGS; n++) {
+      // Walk ring n: start at n × direction 4, then n steps along each of the six directions in order.
+      let dq = HEX_DIRS[4][0] * n;
+      let dr = HEX_DIRS[4][1] * n;
+      for (let side = 0; side < 6; side++) {
+        const d = HEX_DIRS[side];
+        for (let j = 0; j < n; j++) {
+          const s = this._spawnAt(dq * step, dr * step);
+          if (s) return s;
+          dq += d[0];
+          dr += d[1];
+        }
       }
     }
     const col = this.worldGen.getColumn(0, 0);
-    return [0.5, Math.max(col.height, SEA_LEVEL) + 1, 0.5];
+    return [0, Math.max(col.height, SEA_LEVEL) + 1, 0];
   }
 
   /** Clamp to 1..16 and rebuild the ring offsets; far chunks are dropped on the next update(). */
   setRenderDistance(n) {
     const rd = clampRenderDistance(n);
-    if (rd === this.renderDistance && this._ringDx.length > 0) return;
+    if (rd === this.renderDistance && this._ringDq.length > 0) return;
     this.renderDistance = rd;
     this._computeRing();
   }
@@ -410,116 +431,115 @@ export class World {
     this.chunks.clear();
     this._byId.clear();
     this._lastChunk = null;
-    this._lastCx = NaN;
-    this._lastCz = NaN;
+    this._lastCq = NaN;
+    this._lastCr = NaN;
   }
 
   // -------------------------------------------------------------------------------------------
   // internals
 
-  /** @returns {Vec3|null} spawn position if column (x, z) is a valid spawn */
-  _spawnAt(x, z) {
-    const col = this.worldGen.getColumn(x, z);
+  /** @returns {Vec3|null} spawn position if cell column (q, r) is a valid spawn */
+  _spawnAt(q, r) {
+    const col = this.worldGen.getColumn(q, r);
     if (col.height >= SEA_LEVEL + 2 && col.biome !== BIOME.OCEAN && col.biome !== BIOME.BEACH) {
-      return [x + 0.5, col.height + 1, z + 0.5];
+      const [x, z] = hexToWorld(q, r);
+      return [x, col.height + 1, z];
     }
     return null;
   }
 
-  /** Precompute RING_OFFSETS: Chebyshev disc of radius renderDistance + DATA_RADIUS_EXTRA, sorted by dx²+dz², ties dz then dx. */
+  /**
+   * Precompute RING_OFFSETS: the hex disc of radius renderDistance + DATA_RADIUS_EXTRA in chunk coordinates,
+   * sorted by world distance between chunk centres (∝ dq² + dq·dr + dr²), ties dr then dq.
+   */
   _computeRing() {
     const radius = this.renderDistance + DATA_RADIUS_EXTRA;
-    const side = radius * 2 + 1;
-    const count = side * side;
-    const dx = new Int16Array(count);
-    const dz = new Int16Array(count);
-    const order = new Array(count);
-    let i = 0;
-    for (let z = -radius; z <= radius; z++) {
-      for (let x = -radius; x <= radius; x++) {
-        dx[i] = x;
-        dz[i] = z;
-        order[i] = i;
-        i++;
+    const dqList = [];
+    const drList = [];
+    for (let r = -radius; r <= radius; r++) {
+      for (let q = -radius; q <= radius; q++) {
+        if (hexLength(q, r) > radius) continue;
+        dqList.push(q);
+        drList.push(r);
       }
     }
+    const count = dqList.length;
+    const order = new Array(count);
+    for (let i = 0; i < count; i++) order[i] = i;
     order.sort((a, b) => {
-      const da = dx[a] * dx[a] + dz[a] * dz[a];
-      const db = dx[b] * dx[b] + dz[b] * dz[b];
+      const da = hexNormSq(dqList[a], drList[a]);
+      const db = hexNormSq(dqList[b], drList[b]);
       if (da !== db) return da - db;
-      if (dz[a] !== dz[b]) return dz[a] - dz[b];
-      return dx[a] - dx[b];
+      if (drList[a] !== drList[b]) return drList[a] - drList[b];
+      return dqList[a] - dqList[b];
     });
-    const ringDx = new Int16Array(count);
-    const ringDz = new Int16Array(count);
-    const ringCheb = new Uint8Array(count);
+    const ringDq = new Int16Array(count);
+    const ringDr = new Int16Array(count);
+    const ringDist = new Uint8Array(count);
     for (let k = 0; k < count; k++) {
       const o = order[k];
-      ringDx[k] = dx[o];
-      ringDz[k] = dz[o];
-      ringCheb[k] = Math.max(Math.abs(dx[o]), Math.abs(dz[o]));
+      ringDq[k] = dqList[o];
+      ringDr[k] = drList[o];
+      ringDist[k] = hexLength(dqList[o], drList[o]);
     }
-    this._ringDx = ringDx;
-    this._ringDz = ringDz;
-    this._ringCheb = ringCheb;
+    this._ringDq = ringDq;
+    this._ringDr = ringDr;
+    this._ringDist = ringDist;
   }
 
-  /** @returns {boolean} all 8 horizontal neighbours of chunk (cx, cz) are loaded */
-  _neighboursLoaded(cx, cz) {
+  /** @returns {boolean} all 6 hex-adjacent neighbours of chunk (cq, cr) are loaded */
+  _neighboursLoaded(cq, cr) {
     const byId = this._byId;
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        if (dx === 0 && dz === 0) continue;
-        if (!byId.has(packId(cx + dx, cz + dz))) return false;
-      }
+    for (let j = 0; j < 6; j++) {
+      if (!byId.has(packId(cq + HEX_DIRS[j][0], cr + HEX_DIRS[j][1]))) return false;
     }
     return true;
   }
 
-  /** Mark dirty every loaded chunk containing (wx+dx, wz+dz), dx,dz ∈ {-1,0,1}: 1 to 4 chunks. */
-  _markDirtyAround(wx, wz) {
-    const cx0 = Math.floor((wx - 1) / CHUNK_SIZE);
-    const cx1 = Math.floor((wx + 1) / CHUNK_SIZE);
-    const cz0 = Math.floor((wz - 1) / CHUNK_SIZE);
-    const cz1 = Math.floor((wz + 1) / CHUNK_SIZE);
-    for (let cx = cx0; cx <= cx1; cx++) {
-      for (let cz = cz0; cz <= cz1; cz++) {
-        const chunk = this._byId.get(packId(cx, cz));
-        if (chunk !== undefined) chunk.dirty = true;
-      }
-    }
+  /**
+   * Mark dirty every loaded chunk containing cell (q, r) or one of its six neighbours: 1 to 4 chunks (4 only for
+   * the two index-space corner cells lq=15,lr=0 and lq=0,lr=15, whose neighbours span three other chunks).
+   */
+  _markDirtyAround(q, r) {
+    this._markDirtyCell(q, r);
+    for (let j = 0; j < 6; j++) this._markDirtyCell(q + HEX_DIRS[j][0], r + HEX_DIRS[j][1]);
   }
 
-  /** Generate chunk (cx, cz), apply saved edits and register it. @returns {Chunk} */
-  _generate(cx, cz) {
-    const data = this.worldGen.generateChunk(cx, cz);
-    const chunk = new Chunk(cx, cz, data);
+  _markDirtyCell(q, r) {
+    const chunk = this._byId.get(packId(Math.floor(q / CHUNK_SIZE), Math.floor(r / CHUNK_SIZE)));
+    if (chunk !== undefined) chunk.dirty = true;
+  }
+
+  /** Generate chunk (cq, cr), apply saved edits and register it. @returns {Chunk} */
+  _generate(cq, cr) {
+    const data = this.worldGen.generateChunk(cq, cr);
+    const chunk = new Chunk(cq, cr, data);
     const chunkEdits = this.edits.get(chunk.key);
     if (chunkEdits !== undefined) {
       const blocks = chunk.blocks;
       for (const [li, id] of chunkEdits) blocks[li] = id;
     }
     this.chunks.set(chunk.key, chunk);
-    this._byId.set(packId(cx, cz), chunk);
+    this._byId.set(packId(cq, cr), chunk);
     return chunk;
   }
 
-  /** Build and hand off the mesh of a chunk whose 8 neighbours are loaded. */
+  /** Build and hand off the mesh of a chunk whose 6 neighbours are loaded. */
   _mesh(chunk) {
-    const meshData = buildChunkMesh(chunk.cx, chunk.cz, this.getChunkData);
+    const meshData = buildChunkMesh(chunk.cq, chunk.cr, this.getChunkData);
     chunk.dirty = false;
     chunk.meshed = true;
-    this.onChunkMesh(chunk.key, chunk.cx, chunk.cz, meshData);
+    this.onChunkMesh(chunk.key, chunk.cq, chunk.cr, meshData);
   }
 
   /** Drop a chunk from both indices, firing onChunkUnload if it had been meshed. */
   _removeChunk(chunk) {
     this.chunks.delete(chunk.key);
-    this._byId.delete(packId(chunk.cx, chunk.cz));
+    this._byId.delete(packId(chunk.cq, chunk.cr));
     if (chunk === this._lastChunk) {
       this._lastChunk = null;
-      this._lastCx = NaN;
-      this._lastCz = NaN;
+      this._lastCq = NaN;
+      this._lastCr = NaN;
     }
     if (chunk.meshed) this.onChunkUnload(chunk.key);
   }

@@ -61,7 +61,7 @@ function randomEdits(count, seed, range = 6) {
 /** A complete, valid SaveData with a realistic spawn and the default hotbar. */
 function makeSave(edits = {}, overrides = {}) {
   return {
-    version: 1,
+    version: SAVE_VERSION,
     seed: 123456789,
     time: 0.3,
     day: 0,
@@ -109,9 +109,9 @@ function load(text) {
 // ---------------------------------------------------------------------------------------------
 
 describe('storage constants', () => {
-  it('exports the contract key and version', () => {
-    expect(SAVE_KEY).toBe('caelancraft:v1:save');
-    expect(SAVE_VERSION).toBe(1);
+  it('exports the contract key and version (v2: edits keyed by hex (q, r) chunks)', () => {
+    expect(SAVE_KEY).toBe('caelancraft:v2:save');
+    expect(SAVE_VERSION).toBe(2);
   });
 
   it('DEFAULT_SAVE_HOTBAR is a frozen copy of blocks.DEFAULT_HOTBAR', () => {
@@ -140,7 +140,7 @@ describe('serializeSave', () => {
       day: a.day,
       time: a.time,
       seed: a.seed,
-      version: 1,
+      version: SAVE_VERSION,
     };
     expect(serializeSave(a)).toBe(serializeSave(b));
   });
@@ -263,19 +263,21 @@ describe('deserializeSave', () => {
     expect(out.edits).toEqual({ '1,2': [5, BLOCK.GLASS, 6, BLOCK.DIRT] });
   });
 
-  it('returns null for wrong/missing version', () => {
+  it('returns null for wrong/missing version (a v1 cube-world save is NOT loadable)', () => {
     const base = makeSave({ '0,0': [1, 1] });
     expect(deserializeSave(JSON.stringify({ ...base, version: 0 }))).toBeNull();
-    expect(deserializeSave(JSON.stringify({ ...base, version: 2 }))).toBeNull();
-    expect(deserializeSave(JSON.stringify({ ...base, version: '1' }))).toBeNull();
+    expect(deserializeSave(JSON.stringify({ ...base, version: 1 }))).toBeNull();
+    expect(deserializeSave(JSON.stringify({ ...base, version: 3 }))).toBeNull();
+    expect(deserializeSave(JSON.stringify({ ...base, version: '2' }))).toBeNull();
     expect(deserializeSave(JSON.stringify({ ...base, version: null }))).toBeNull();
+    expect(deserializeSave(JSON.stringify({ ...base, version: SAVE_VERSION }))).not.toBeNull();
     const noVersion = /** @type {any} */ ({ ...base });
     delete noVersion.version;
     expect(deserializeSave(JSON.stringify(noVersion))).toBeNull();
   });
 
   it('returns null for garbage, empty and non-string input without throwing', () => {
-    for (const bad of ['', ' ', 'not json', '{', '{"version":1', '[]', '[1,2]', 'null', '42', '"str"', 'true', '{}']) {
+    for (const bad of ['', ' ', 'not json', '{', '{"version":2', '[]', '[1,2]', 'null', '42', '"str"', 'true', '{}']) {
       expect(deserializeSave(bad)).toBeNull();
     }
     for (const notText of [undefined, null, 123, {}, [], () => {}, Symbol('x')]) {
@@ -523,14 +525,14 @@ describe('saveGame / loadGame / hasSave / clearSave (Map-backed fake storage)', 
   });
 
   it('treats a corrupt or foreign blob under SAVE_KEY as "no save"', () => {
-    for (const blob of ['garbage', '{"version":2}', '', '{}', 'null']) {
+    for (const blob of ['garbage', '{"version":1}', '{"version":2}', '', '{}', 'null']) {
       const storage = fakeStorage([[SAVE_KEY, blob]]);
       expect(hasSave(storage), blob).toBe(false);
       expect(loadGame(storage), blob).toBeNull();
     }
     // non-string values from an odd storage implementation are ignored too
     const weird = fakeStorage();
-    weird.getItem = () => /** @type {any} */ ({ version: 1 });
+    weird.getItem = () => /** @type {any} */ ({ version: SAVE_VERSION });
     expect(loadGame(weird)).toBeNull();
   });
 

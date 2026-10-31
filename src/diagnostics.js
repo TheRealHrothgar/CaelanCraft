@@ -7,7 +7,8 @@
 // The F3 day counter comes from game.getDay() (provided by main.js), falling back to stats.day / 1.
 import { VERSION, WORLD_HEIGHT, FLY_VERTICAL_SPEED } from './config.js';
 import { BLOCK, BIOME_NAMES, getBlockDef, isBreakable, isSolid } from './blocks.js';
-import { worldToChunk, worldToLocal, lookDirection, yawToForward, FACE_NAMES } from './coords.js';
+import { worldToChunk, worldToLocal, lookDirection, yawToForward } from './coords.js';
+import { FACE_NAMES, faceNeighbor, hexLength, worldToHex } from './hex.js';
 
 /** @typedef {import('./types.js').GameContext} GameContext */
 /** @typedef {import('./types.js').SmokeResult} SmokeResult */
@@ -24,6 +25,8 @@ import { worldToChunk, worldToLocal, lookDirection, yawToForward, FACE_NAMES } f
  * @property {boolean} debug
  * @property {boolean} fly
  * @property {number|null} time      frozen time of day, clamped to 0..1
+ * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
+ * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -51,6 +54,8 @@ export function parseParams(search = defaultSearch()) {
     debug: readFlag(params, 'debug'),
     fly: readFlag(params, 'fly'),
     time: readClampedFloat(params, 'time', 0, 1),
+    yaw: readNumber(params, 'yaw'),
+    pitch: readClampedFloat(params, 'pitch', -89.9, 89.9),
   };
 }
 
@@ -277,14 +282,18 @@ export function installDebugHandle(win, game) {
   refreshHandleRefs(handle, game);
 
   const worldOf = () => (game && game.world ? game.world : null);
+  // Console helpers take WORLD positions (what the F3 overlay shows as XYZ); the cell is derived from them.
   handle.getBlock = (x, y, z) => {
     const w = worldOf();
-    return w ? w.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)) : BLOCK.AIR;
+    return w ? w.getBlockAt(x, y, z) : BLOCK.AIR;
   };
   handle.setBlock = (x, y, z, id) => {
     const w = worldOf();
-    return w ? w.setBlock(Math.floor(x), Math.floor(y), Math.floor(z), id) : false;
+    if (!w || !Number.isFinite(x + y + z)) return false;
+    const [q, r] = worldToHex(x, z);
+    return w.setBlock(q, Math.floor(y), r, id);
   };
+  handle.getCell = (x, z) => (Number.isFinite(x + z) ? worldToHex(x, z) : null);
   handle.teleport = (x, y, z) => {
     if (game && typeof game.teleport === 'function') game.teleport(x, y, z);
   };
@@ -367,7 +376,7 @@ function fmtInt(v) {
 }
 
 /** Loaded / meshed / queued chunk counts. Prefers the live World; falls back to stats fields. */
-function chunkCounts(world, pcx, pcz, stats) {
+function chunkCounts(world, pcq, pcr, stats) {
   if (world && world.chunks && typeof world.chunks.values === 'function') {
     const rd = Number.isFinite(world.renderDistance) ? world.renderDistance : Infinity;
     let loaded = 0;
@@ -376,7 +385,7 @@ function chunkCounts(world, pcx, pcz, stats) {
     for (const c of world.chunks.values()) {
       loaded++;
       if (c.meshed) meshed++;
-      if (c.dirty && Math.max(Math.abs(c.cx - pcx), Math.abs(c.cz - pcz)) <= rd) queue++;
+      if (c.dirty && hexLength(c.cq - pcq, c.cr - pcr) <= rd) queue++;
     }
     return { loaded, meshed, queue };
   }
@@ -413,26 +422,25 @@ export function buildDebugText(game, stats) {
   const px = player && Number.isFinite(player.x) ? player.x : 0;
   const py = player && Number.isFinite(player.y) ? player.y : 0;
   const pz = player && Number.isFinite(player.z) ? player.z : 0;
-  const bx = Math.floor(px);
+  const [bq, br] = worldToHex(px, pz);
   const by = Math.floor(py);
-  const bz = Math.floor(pz);
-  const cx = worldToChunk(bx);
-  const cz = worldToChunk(bz);
-  const lx = worldToLocal(bx);
-  const lz = worldToLocal(bz);
+  const cq = worldToChunk(bq);
+  const cr = worldToChunk(br);
+  const lq = worldToLocal(bq);
+  const lr = worldToLocal(br);
 
   const yaw = controls && Number.isFinite(controls.yaw) ? controls.yaw : 0;
   const pitch = controls && Number.isFinite(controls.pitch) ? controls.pitch : 0;
   const dir = lookDirection(yaw, pitch);
 
   let biome = 'unknown';
-  if (world && typeof world.getBiome === 'function') biome = BIOME_NAMES[world.getBiome(bx, bz)] ?? 'unknown';
+  if (world && typeof world.getBiome === 'function') biome = BIOME_NAMES[world.getBiome(bq, br)] ?? 'unknown';
   const seed = world && world.seed != null ? world.seed : '?';
-  const counts = chunkCounts(world, cx, cz, s);
+  const counts = chunkCounts(world, cq, cr, s);
 
   const hit = currentHit(g);
   const target = hit
-    ? `${getBlockDef(hit.blockId).name} (${hit.x}, ${hit.y}, ${hit.z}) face ${hit.face >= 0 ? FACE_NAMES[hit.face] : 'inside'}`
+    ? `${getBlockDef(hit.blockId).name} cell (${hit.q}, ${hit.y}, ${hit.r}) face ${faceName(hit.face)}`
     : 'none';
 
   const time = typeof g.getTime === 'function' ? Number(g.getTime()) : NaN;
@@ -451,7 +459,7 @@ export function buildDebugText(game, stats) {
     `Caelancraft v${VERSION}  (F3 to hide)\n` +
     `FPS: ${fmtInt(s.fps)}  frame ${fmt1(s.frameMs)} ms\n` +
     `XYZ: ${fmt3(px)} / ${fmt3(py)} / ${fmt3(pz)}\n` +
-    `Block: ${bx} ${by} ${bz}   Chunk: ${cx} ${cz}  (local ${lx} ${lz})\n` +
+    `Cell (q y r): ${bq} ${by} ${br}   Chunk: ${cq} ${cr}  (local ${lq} ${lr})\n` +
     `Facing: ${facingName(dir[0], dir[2])}  yaw ${fmt1(yawDegrees(yaw))}  pitch ${fmt1(pitch * RAD_TO_DEG)}\n` +
     `Biome: ${biome}   Seed: ${seed}\n` +
     `Chunks: loaded ${counts.loaded}  meshed ${counts.meshed}  queue ${counts.queue}\n` +
@@ -615,15 +623,14 @@ function safeStats(renderer) {
 }
 
 /**
- * Feet height for a standing spot at world column (x, z): scan down from `fromY` (+2 headroom) for the first
- * y where block(y-1) is solid and blocks y, y+1 are not. Null when none.
+ * Feet height for a standing spot in the cell column under world point (x, z): scan down from `fromY`
+ * (+2 headroom) for the first y where block(y-1) is solid and blocks y, y+1 are not. Null when none.
  */
 function findStandingHeight(getBlock, x, z, fromY) {
-  const bx = Math.floor(x);
-  const bz = Math.floor(z);
+  const [q, r] = worldToHex(x, z);
   const top = Math.min(WORLD_HEIGHT - 2, Math.floor(fromY) + 2);
   for (let y = top; y >= 1; y--) {
-    if (isSolid(getBlock(bx, y - 1, bz)) && !isSolid(getBlock(bx, y, bz)) && !isSolid(getBlock(bx, y + 1, bz))) return y;
+    if (isSolid(getBlock(q, y - 1, r)) && !isSolid(getBlock(q, y, r)) && !isSolid(getBlock(q, y + 1, r))) return y;
   }
   return null;
 }
@@ -731,46 +738,44 @@ async function runSmokeSequence(game, win, st) {
   if (!hit) {
     st.fail('no target block when looking straight down');
   } else {
-    const hx = hit.x;
+    const hq = hit.q;
     const hy = hit.y;
-    const hz = hit.z;
+    const hr = hit.r;
     const id = hit.blockId;
-    st.pass(`target below: ${blockName(id)} (${hx}, ${hy}, ${hz}) face ${faceName(hit.face)}`);
+    st.pass(`target below: ${blockName(id)} cell (${hq}, ${hy}, ${hr}) face ${faceName(hit.face)}`);
     if (!isBreakable(id)) {
       st.fail(`target ${blockName(id)} is not breakable`);
     } else {
       const returned = game.breakTargeted();
-      const after = world.getBlock(hx, hy, hz);
+      const after = world.getBlock(hq, hy, hr);
       const broke = returned === true && after === BLOCK.AIR;
       st.check(broke, 'breakTargeted() → true and the block is now AIR', `breakTargeted() returned ${returned}; block is now ${blockName(after)}`);
 
       if (broke) {
         let rm = 0;
-        while (!world.isReadyAt(hx, hz) && rm < SMOKE_REMESH_FRAMES) {
+        while (!world.isReadyAtCell(hq, hr) && rm < SMOKE_REMESH_FRAMES) {
           await tick();
           rm++;
         }
-        st.check(world.isReadyAt(hx, hz), `chunk re-meshed after ${rm} frames`, `chunk not re-meshed within ${SMOKE_REMESH_FRAMES} frames`);
+        st.check(world.isReadyAtCell(hq, hr), `chunk re-meshed after ${rm} frames`, `chunk not re-meshed within ${SMOKE_REMESH_FRAMES} frames`);
 
         game.setLook(yaw0, SMOKE_LOOK_DOWN_PITCH);
         await tick();
-        const isNewTarget = (h) => h !== null && !(h.x === hx && h.y === hy && h.z === hz);
+        const isNewTarget = (h) => h !== null && !(h.q === hq && h.y === hy && h.r === hr);
         const hit2 = await waitForHit(game, tick, isNewTarget, SMOKE_HIT_RETRY_FRAMES);
         if (!hit2) {
           st.fail('no target below the hole for placing');
         } else {
-          const tx = hit2.x + hit2.nx;
-          const ty = hit2.y + hit2.ny;
-          const tz = hit2.z + hit2.nz;
+          const [tq, ty, tr] = faceNeighbor(hit2.q, hit2.y, hit2.r, hit2.face);
           const placedReturn = game.placeSelected();
-          const placedId = world.getBlock(tx, ty, tz);
+          const placedId = world.getBlock(tq, ty, tr);
           const placed = placedReturn === true && placedId !== BLOCK.AIR;
           r.breakPlaceRoundTrip = placed; // `broke` is already true on this path
-          const where = tx === hx && ty === hy && tz === hz ? 'back in the hole' : `at (${tx}, ${ty}, ${tz}) next to the hole`;
+          const where = tq === hq && ty === hy && tr === hr ? 'back in the hole' : `at cell (${tq}, ${ty}, ${tr}) next to the hole`;
           st.check(
             placed,
             `placeSelected() → ${blockName(placedId)} ${where}`,
-            `placeSelected() returned ${placedReturn}; block at (${tx}, ${ty}, ${tz}) is ${blockName(placedId)}`,
+            `placeSelected() returned ${placedReturn}; block at cell (${tq}, ${ty}, ${tr}) is ${blockName(placedId)}`,
           );
         }
       }

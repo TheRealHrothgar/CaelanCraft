@@ -1,7 +1,7 @@
 // Caelancraft — block registry, atlas tile ids, render layers, biomes, culling and UV rules.
 // See src/CONTRACTS.md §5 and docs/SPEC-gameplay.md §1–§2. Pure.
 import { TILE_UV, UV_INSET, ATLAS_TILES_PER_ROW } from './config.js';
-import { FACE_PY, FACE_NY } from './coords.js';
+import { FACE_TOP, FACE_BOTTOM } from './hex.js';
 
 /** Block ids. */
 export const BLOCK = Object.freeze({
@@ -41,7 +41,7 @@ export const SOUND_GROUPS = Object.freeze([
  * @property {number} id
  * @property {string} name          lower_snake
  * @property {string} displayName
- * @property {number[]} tiles       6 tile ids, index = FaceIndex (+X,-X,+Y,-Y,+Z,-Z)
+ * @property {number[]} tiles       8 tile ids, index = FaceIndex (sides 0..5, 6 top, 7 bottom)
  * @property {boolean} solid        blocks the player
  * @property {boolean} opaque       fully hides adjacent faces and occludes AO
  * @property {boolean} liquid
@@ -52,9 +52,9 @@ export const SOUND_GROUPS = Object.freeze([
  * @property {string|null} soundGroup
  */
 
-/** tiles helper: [side, side, top, bottom, side, side] */
+/** tiles helper: six sides, then top, then bottom */
 function tiles(side, top = side, bottom = top) {
-  return [side, side, top, bottom, side, side];
+  return [side, side, side, side, side, side, top, bottom];
 }
 
 /**
@@ -188,4 +188,4 @@ export function tileToUV(tile) {
 }
 
 // Re-export the two face constants most callers need alongside block helpers.
-export { FACE_PY, FACE_NY };
+export { FACE_TOP, FACE_BOTTOM };
