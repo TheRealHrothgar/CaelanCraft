@@ -27,6 +27,7 @@ import {
   SAVE_VERSION, serializeSave, deserializeSave, saveGame, loadGame, hasSave, clearSave,
 } from '../../src/storage.js';
 import { computeSky, advanceTime, createSkyState, sunDirection, formatTime } from '../../src/daynight.js';
+import { RuneStore, RuneRunner, runeKey, SOURCE } from '../../src/runes.js';
 import { countFaces } from '../helpers/fixtures.js';
 
 const SEED = 1;
@@ -720,6 +721,140 @@ describe('integration harness: world + physics + raycast + storage + daynight (s
     expect(advanceTime(0.5, 0)).toBe(0.5);
     expect(formatTime(0.25)).toBe('06:00');
     expect(isFiniteVec(sunDirection(0.5))).toBe(true);
+  });
+
+  it('rune block: placed via setBlock + onBlockChange, scripted with @, triggered, saved, restored, and removed on break', () => {
+    // main-style wiring: the hook keeps the store in step, the runner executes scripts against a CommandContext.
+    const store = new RuneStore();
+    /** @type {string[]} */
+    const log = [];
+    /** @type {string[]} */
+    const said = [];
+    let time = 0.3;
+    /** @type {import('../../src/commands.js').CommandContext} */
+    const ctx = {
+      world,
+      player,
+      controls: { yaw, pitch },
+      getTime: () => time,
+      setTime: (t) => {
+        time = t;
+      },
+      addTime: (s) => {
+        time = (((time + s / 86400) % 1) + 1) % 1;
+      },
+      timeFrozen: false,
+      hotbar: DEFAULT_HOTBAR.slice(),
+      selected: 0,
+      setHotbarSlot: () => {},
+      say: (t) => said.push(t),
+      teleport: (x, y, z) => {
+        player.x = x;
+        player.y = y;
+        player.z = z;
+      },
+      setFlying: (on) => {
+        player.flying = on;
+      },
+      runes: store,
+      runner: /** @type {*} */ (null),
+      rune: null,
+      running: null,
+      seed: world.seed,
+    };
+    const runner = new RuneRunner(store, ctx);
+    ctx.runner = runner;
+    runner.onLog = (line) => log.push(line);
+    world.onBlockChange = (q, y, r, prev, next) => {
+      if (next === BLOCK.RUNE_BLOCK && prev !== BLOCK.RUNE_BLOCK) store.ensure(q, y, r);
+      else if (prev === BLOCK.RUNE_BLOCK && next !== BLOCK.RUNE_BLOCK) {
+        runner.cancel(runeKey(q, y, r));
+        store.delete(runeKey(q, y, r));
+      }
+    };
+
+    // A surface cell two cells east of the player: solid with two air cells above it.
+    const [pq, pr] = worldToHex(player.x, player.z);
+    const rq = pq + 2;
+    const rr = pr;
+    let ry = -1;
+    for (let y = WORLD_HEIGHT - 3; y >= 1; y--) {
+      if (isSolid(world.getBlock(rq, y, rr)) && !isSolid(world.getBlock(rq, y + 1, rr)) && !isSolid(world.getBlock(rq, y + 2, rr))) {
+        ry = y;
+        break;
+      }
+    }
+    expect(ry).toBeGreaterThan(0);
+    expect(world.hasChunkAtCell(rq, rr)).toBe(true);
+    const key = runeKey(rq, ry, rr);
+
+    // Place: the hook creates a default (pristine) entry; it is not exported until customised.
+    expect(world.setBlock(rq, ry, rr, BLOCK.RUNE_BLOCK)).toBe(true);
+    expect(store.has(key)).toBe(true);
+    expect(store.export()).toEqual({});
+    const rune = store.set(rq, ry, rr, { script: 'setblock @ @1 @ stone\nsay built', label: 'harness' });
+    expect(rune).not.toBeNull();
+    expect(store.export()[key]).toEqual({ script: 'setblock @ @1 @ stone\nsay built', label: 'harness' });
+
+    // Trigger and run: the script places STONE on top of its own block (rune-relative @) and says its line.
+    expect(world.getBlock(rq, ry + 1, rr)).toBe(BLOCK.AIR);
+    expect(runner.trigger(key, SOURCE.INTERACT)).toEqual({ ok: true });
+    expect(runner.isRunning(key)).toBe(true);
+    let frames = 0;
+    while (runner.isRunning(key) && frames < 10) {
+      runner.update(TICK);
+      frames++;
+    }
+    expect(frames).toBeLessThanOrEqual(2);
+    expect(world.getBlock(rq, ry + 1, rr)).toBe(BLOCK.STONE);
+    expect(said).toEqual(['built']);
+    expect(log.filter((l) => l.includes('usage'))).toEqual([]); // no command errors
+    expect(runner.getLastRun(key)).toMatchObject({ commands: 2, errors: 0, cancelled: false, source: SOURCE.INTERACT });
+    expect(store.has(key)).toBe(true); // a script never deletes its own rune by running
+    converge(world, player.x, player.z); // re-mesh the edited chunk; nothing orphaned
+    expectNoOrphans(world, stub);
+
+    // Save: the runes field roundtrips and only holds the customised entry.
+    const data = {
+      version: SAVE_VERSION,
+      seed: world.seed,
+      time,
+      day: 1,
+      player: { x: player.x, y: player.y, z: player.z, yaw, pitch, flying: false },
+      hotbar: DEFAULT_HOTBAR.slice(),
+      selected: 0,
+      edits: world.exportEdits(),
+      runes: store.export(),
+    };
+    const text = serializeSave(data);
+    const back = deserializeSave(text);
+    expect(back).not.toBeNull();
+    expect(back.runes).toEqual({ [key]: { script: 'setblock @ @1 @ stone\nsay built', label: 'harness' } });
+    expect(serializeSave(back)).toBe(text);
+
+    // Restore into a fresh world + store: the rune block and its script are both there, nothing runs.
+    const world2 = new World({ seed: back.seed, renderDistance: RD, edits: back.edits, now: () => 0 });
+    const stub2 = createStubRenderer();
+    attach(world2, stub2);
+    const store2 = new RuneStore();
+    expect(store2.replaceAll(back.runes)).toEqual([]);
+    expect(store2.version).toBe(0);
+    converge(world2, back.player.x, back.player.z);
+    expect(world2.getBlock(rq, ry, rr)).toBe(BLOCK.RUNE_BLOCK);
+    expect(world2.getBlock(rq, ry + 1, rr)).toBe(BLOCK.STONE);
+    expect(store2.get(key)).toMatchObject({ q: rq, y: ry, r: rr, script: 'setblock @ @1 @ stone\nsay built', label: 'harness', enabled: true, interact: true });
+    expect(store2.export()).toEqual(back.runes);
+    world2.dispose();
+
+    // Break the rune block: the hook removes the entry and the save no longer carries it; the stone stays.
+    expect(world.setBlock(rq, ry, rr, BLOCK.AIR)).toBe(true);
+    expect(store.has(key)).toBe(false);
+    expect(runner.isRunning(key)).toBe(false);
+    expect(serializeSave({ ...data, edits: world.exportEdits(), runes: store.export() })).not.toContain('"runes"');
+    expect(world.getBlock(rq, ry + 1, rr)).toBe(BLOCK.STONE);
+    // A trigger on the now-empty cell is refused with a clear reason.
+    expect(runner.trigger(key, SOURCE.INTERACT)).toEqual({ ok: false, reason: `no rune block at (${rq}, ${ry}, ${rr})` });
+    world.onBlockChange = () => {};
   });
 
   it('the whole harness world is still internally consistent at the end', () => {

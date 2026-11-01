@@ -14,7 +14,9 @@ import { BLOCK } from '../../src/blocks.js';
 import { flatGetBlock } from '../helpers/fixtures.js';
 import {
   createPlayer, stepPlayer, getEyeHeight, playerAABB, playerIntersectsBlock, findStandingY, PLAYER_RADIUS,
+  isFreeAt, findFreeY, supportingCells,
 } from '../../src/physics.js';
+import { makeGetBlock } from '../helpers/fixtures.js';
 
 const DT = 1 / 60;
 const GROUND = 4;          // flatGetBlock(4): solid for y <= 4, so feet rest at y = 5
@@ -684,5 +686,101 @@ describe('1-cell-wide corridors (throats)', () => {
       });
       expect(hexLength(...worldToHex(p.x, p.z))).toBe(0);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Teleport / step-on helpers (CONTRACTS §12): isFreeAt, findFreeY, supportingCells.
+describe('isFreeAt / findFreeY', () => {
+  const floor = flatGetBlock(GROUND);
+
+  it('isFreeAt: free above the floor, not when any part of the cylinder is inside a solid cell', () => {
+    expect(isFreeAt(floor, 0, FEET, 0)).toBe(true);
+    expect(isFreeAt(floor, 0, FEET + 0.3, 0)).toBe(true);
+    expect(isFreeAt(floor, 0, GROUND, 0)).toBe(false); // feet inside the top floor cell
+    expect(isFreeAt(floor, 0, FEET - 0.5, 0)).toBe(false); // overlaps the floor by half a cell
+    // A solid cell at head height blocks too (feet FEET, head reaches FEET + 1.8 → cell FEET + 1).
+    const lowCeiling = makeGetBlock({ [`0,${FEET + 1},0`]: BLOCK.STONE });
+    expect(isFreeAt(lowCeiling, 0, FEET, 0)).toBe(false);
+    expect(isFreeAt(lowCeiling, 0, FEET + 2, 0)).toBe(true);
+    // Footprint overlapping a neighbour: standing on the shared edge with (1, 0) solid at feet height.
+    const wall = makeGetBlock({ [`1,${FEET},0`]: BLOCK.STONE });
+    expect(isFreeAt(wall, 0, FEET, 0)).toBe(true); // at the centre of (0, 0): 0.5 away from the face > radius
+    expect(isFreeAt(wall, 0.5 - PLAYER_RADIUS + 0.01, FEET, 0)).toBe(false); // circle crosses into (1, 0)
+    expect(isFreeAt(wall, 0.5 - PLAYER_RADIUS - 0.01, FEET, 0)).toBe(true);
+  });
+
+  it('findFreeY snaps up by at most maxUp whole cells and returns null when nothing in range is free', () => {
+    expect(findFreeY(floor, 0, 0, FEET)).toBe(FEET);
+    expect(findFreeY(floor, 0, 0, GROUND)).toBe(FEET); // one up
+    expect(findFreeY(floor, 0, 0, GROUND - 1)).toBe(FEET); // two up
+    expect(findFreeY(floor, 0, 0, GROUND - 2)).toBeNull(); // would need three
+    expect(findFreeY(floor, 0, 0, GROUND - 2, 3)).toBe(FEET);
+    expect(findFreeY(floor, 0, 0, GROUND - 2, 0)).toBeNull();
+    // A 3-cell solid column standing on the floor: the first free feet height is above it.
+    const pillar = makeGetBlock({ [`0,${FEET},0`]: BLOCK.STONE, [`0,${FEET + 1},0`]: BLOCK.STONE, [`0,${FEET + 2},0`]: BLOCK.STONE });
+    expect(findFreeY(pillar, 0, 0, FEET, 2)).toBeNull(); // FEET, FEET+1, FEET+2 all overlap the pillar
+    expect(findFreeY(pillar, 0, 0, FEET, 3)).toBe(FEET + 3);
+    // Fractional targets are honoured as-is (world floats from tpw).
+    expect(findFreeY(floor, 0.25, -0.1, FEET + 0.5)).toBe(FEET + 0.5);
+  });
+
+  it('findFreeY never returns a height whose head would be above the world, and rejects non-finite input', () => {
+    const empty = () => BLOCK.AIR;
+    expect(findFreeY(empty, 0, 0, WORLD_HEIGHT - 2, 5)).toBe(WORLD_HEIGHT - 2); // head at 127.8 fits
+    expect(findFreeY(empty, 0, 0, WORLD_HEIGHT - 1, 5)).toBeNull(); // head would be at 128.8
+    expect(findFreeY(floor, 0, 0, WORLD_HEIGHT - 1.5, 5)).toBeNull();
+    expect(findFreeY(floor, NaN, 0, FEET)).toBeNull();
+    expect(findFreeY(floor, 0, Infinity, FEET)).toBeNull();
+    expect(findFreeY(floor, 0, 0, NaN)).toBeNull();
+  });
+});
+
+describe('supportingCells', () => {
+  const floor = flatGetBlock(GROUND);
+
+  it('is empty while airborne or for non-finite positions, and reuses / clears the out array', () => {
+    const p = createPlayer(0, FEET + 1, 0);
+    const out = [[9, 9, 9]];
+    expect(supportingCells(p, floor, out)).toBe(out);
+    expect(out).toEqual([]);
+    p.y = FEET + 0.5;
+    expect(supportingCells(p, floor)).toEqual([]);
+    p.y = NaN;
+    expect(supportingCells(p, floor)).toEqual([]);
+    const q = createPlayer(Infinity, FEET, 0);
+    expect(supportingCells(q, floor)).toEqual([]);
+  });
+
+  it('after landing at a cell centre it is exactly the cell under the feet (floor(p.y − 1e-3))', () => {
+    const p = createPlayer(0, FEET + 2, 0);
+    run(p, input(), floor, 120);
+    expect(p.onGround).toBe(true);
+    expect(p.y).toBeCloseTo(FEET + COLLISION_EPS, 9);
+    expect(supportingCells(p, floor)).toEqual([[0, GROUND, 0]]);
+    // The epsilon matters: a player sitting exactly on an integer height is still supported by the cell below.
+    p.y = FEET;
+    expect(supportingCells(p, floor)).toEqual([[0, GROUND, 0]]);
+    // Rows with the half-cell offset and negatives.
+    const [cx, cz] = hexToWorld(-4, 7);
+    const far = createPlayer(cx, FEET, cz);
+    expect(supportingCells(far, floor)).toEqual([[-4, GROUND, 7]]);
+  });
+
+  it('standing on a shared edge is supported by two cells, on a shared vertex by three', () => {
+    // Edge between (0,0) and (1,0): face 0 of (0,0) at x = 0.5.
+    const edge = createPlayer(0.5, FEET, 0);
+    const twoCells = supportingCells(edge, floor).map((c) => c.join(',')).sort();
+    expect(twoCells).toEqual(['0,4,0', '1,4,0']);
+    // Corner 0 of cell (0,0) at (0.5, -HEX_SIZE/2) is shared with (1,0) and (1,-1).
+    const corner = createPlayer(0.5, FEET, -HEX_SIZE / 2);
+    const threeCells = supportingCells(corner, floor).map((c) => c.join(',')).sort();
+    expect(threeCells).toEqual(['0,4,0', '1,4,-1', '1,4,0']);
+    // Only SOLID cells count: a hole under one of the two edge cells drops it.
+    const holed = (q, y, r) => (q === 1 && r === 0 && y === GROUND ? BLOCK.AIR : floor(q, y, r));
+    expect(supportingCells(edge, holed)).toEqual([[0, GROUND, 0]]);
+    // Water is not solid → not supporting.
+    const wet = (q, y, r) => (q === 0 && r === 0 && y === GROUND ? BLOCK.WATER : floor(q, y, r));
+    expect(supportingCells(createPlayer(0, FEET, 0), wet)).toEqual([]);
   });
 });

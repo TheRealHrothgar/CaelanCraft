@@ -150,6 +150,36 @@ describe('blocks', () => {
     expect(getFaceTile(BLOCK.STONE, 8)).toBe(TILE.MISSING);
     expect(getFaceTile(200, 0)).toBe(TILE.MISSING);
   });
+  it('RUNE_BLOCK (25) is a solid, opaque, placeable, breakable stone-sounding block with the RUNE tile on all 8 faces', () => {
+    expect(BLOCK_COUNT).toBe(26);
+    expect(BLOCK.RUNE_BLOCK).toBe(25);
+    expect(TILE.RUNE).toBe(27);
+    expect(TILE_IDS).toHaveLength(29);
+    expect(TILE_IDS).toContain(TILE.RUNE);
+    const def = BLOCKS[BLOCK.RUNE_BLOCK];
+    expect(def.name).toBe('rune_block');
+    expect(def.displayName).toBe('Rune Block');
+    expect(def.solid).toBe(true);
+    expect(def.opaque).toBe(true);
+    expect(def.liquid).toBe(false);
+    expect(isSolid(BLOCK.RUNE_BLOCK)).toBe(true);
+    expect(isOpaque(BLOCK.RUNE_BLOCK)).toBe(true);
+    expect(isPlaceable(BLOCK.RUNE_BLOCK)).toBe(true);
+    expect(isBreakable(BLOCK.RUNE_BLOCK)).toBe(true);
+    expect(isTargetable(BLOCK.RUNE_BLOCK)).toBe(true);
+    expect(isReplaceable(BLOCK.RUNE_BLOCK)).toBe(false);
+    expect(def.layer).toBe(LAYER_OPAQUE);
+    expect(def.soundGroup).toBe('stone');
+    for (let f = 0; f < FACE_COUNT; f++) expect(getFaceTile(BLOCK.RUNE_BLOCK, f)).toBe(TILE.RUNE);
+    // Picker: 24 placeable blocks, the rune block listed right before water.
+    expect(PICKER_ORDER).toHaveLength(24);
+    const iRune = PICKER_ORDER.indexOf(BLOCK.RUNE_BLOCK);
+    expect(iRune).toBeGreaterThanOrEqual(0);
+    expect(PICKER_ORDER[iRune + 1]).toBe(BLOCK.WATER);
+    expect(PICKER_ORDER[PICKER_ORDER.length - 1]).toBe(BLOCK.WATER);
+    // Not in the default hotbar.
+    expect(DEFAULT_HOTBAR).not.toContain(BLOCK.RUNE_BLOCK);
+  });
   it('flags are consistent', () => {
     for (const b of BLOCKS) {
       if (b.opaque) expect(b.solid).toBe(true);

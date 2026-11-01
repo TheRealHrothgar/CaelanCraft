@@ -8,9 +8,9 @@ export const BLOCK = Object.freeze({
   AIR: 0, STONE: 1, GRASS_BLOCK: 2, DIRT: 3, COBBLESTONE: 4, OAK_PLANKS: 5, BEDROCK: 6, WATER: 7,
   SAND: 8, GRAVEL: 9, OAK_LOG: 10, OAK_LEAVES: 11, GLASS: 12, COAL_ORE: 13, IRON_ORE: 14, GOLD_ORE: 15,
   DIAMOND_ORE: 16, SANDSTONE: 17, SNOW_BLOCK: 18, SNOWY_GRASS: 19, BRICKS: 20, BOOKSHELF: 21,
-  STONE_BRICKS: 22, WOOL_WHITE: 23, WOOL_RED: 24,
+  STONE_BRICKS: 22, WOOL_WHITE: 23, WOOL_RED: 24, RUNE_BLOCK: 25,
 });
-export const BLOCK_COUNT = 25;
+export const BLOCK_COUNT = 26;
 
 /** Atlas tile ids. Tile t is drawn at pixel ((t % 16) * 16, floor(t / 16) * 16). */
 export const TILE = Object.freeze({
@@ -18,6 +18,7 @@ export const TILE = Object.freeze({
   SAND: 8, GRAVEL: 9, OAK_LOG_SIDE: 10, OAK_LOG_END: 11, OAK_LEAVES: 12, GLASS: 13, COAL_ORE: 14,
   IRON_ORE: 15, GOLD_ORE: 16, DIAMOND_ORE: 17, SANDSTONE_TOP: 18, SANDSTONE_SIDE: 19, SNOW: 20,
   SNOWY_GRASS_SIDE: 21, BRICKS: 22, BOOKSHELF: 23, STONE_BRICKS: 24, WOOL_WHITE: 25, WOOL_RED: 26,
+  RUNE: 27,
   MISSING: 255,
 });
 /** Every tile id the atlas must paint. */
@@ -110,6 +111,9 @@ export const BLOCKS = [
   def({ id: B.STONE_BRICKS, name: 'stone_bricks', displayName: 'Stone Bricks', tiles: tiles(T.STONE_BRICKS), soundGroup: 'stone' }),
   def({ id: B.WOOL_WHITE, name: 'wool_white', displayName: 'White Wool', tiles: tiles(T.WOOL_WHITE), soundGroup: 'cloth' }),
   def({ id: B.WOOL_RED, name: 'wool_red', displayName: 'Red Wool', tiles: tiles(T.WOOL_RED), soundGroup: 'cloth' }),
+  // Rune Block: a programmable honeycomb cell. Its script and trigger settings live in runes.js (RuneStore),
+  // not in the chunk byte array; see CONTRACTS §27.
+  def({ id: B.RUNE_BLOCK, name: 'rune_block', displayName: 'Rune Block', tiles: tiles(T.RUNE), soundGroup: 'stone' }),
 ];
 
 /** Default hotbar: grass, dirt, stone, cobble, planks, log, leaves, glass, bricks. */
@@ -117,11 +121,11 @@ export const DEFAULT_HOTBAR = Object.freeze([
   B.GRASS_BLOCK, B.DIRT, B.STONE, B.COBBLESTONE, B.OAK_PLANKS, B.OAK_LOG, B.OAK_LEAVES, B.GLASS, B.BRICKS,
 ]);
 
-/** Order of the 23 placeable blocks in the block picker. */
+/** Order of the 24 placeable blocks in the block picker. */
 export const PICKER_ORDER = Object.freeze([
   B.STONE, B.COBBLESTONE, B.STONE_BRICKS, B.DIRT, B.GRASS_BLOCK, B.SNOWY_GRASS, B.SAND, B.SANDSTONE, B.GRAVEL,
   B.SNOW_BLOCK, B.OAK_LOG, B.OAK_PLANKS, B.OAK_LEAVES, B.BOOKSHELF, B.GLASS, B.BRICKS, B.WOOL_WHITE, B.WOOL_RED,
-  B.COAL_ORE, B.IRON_ORE, B.GOLD_ORE, B.DIAMOND_ORE, B.WATER,
+  B.COAL_ORE, B.IRON_ORE, B.GOLD_ORE, B.DIAMOND_ORE, B.RUNE_BLOCK, B.WATER,
 ]);
 
 /** @returns {BlockDef} the block definition; unknown ids return the AIR definition */

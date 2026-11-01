@@ -42,6 +42,7 @@ export const TILE_NAMES = Object.freeze({
   24: 'stone_bricks',
   25: 'wool_white',
   26: 'wool_red',
+  27: 'rune',
   255: 'missing',
 });
 
@@ -571,6 +572,55 @@ function paintWoolRed(px, rng) {
   paintWool(px, rng, 0xa12722);
 }
 
+/**
+ * Draw a 1-px line from (x0,y0) to (x1,y1) with `hex` (DDA over the longer axis; endpoints inclusive).
+ * Coordinates outside the tile are skipped.
+ */
+function line(px, x0, y0, x1, y1, hex) {
+  const steps = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
+  for (let i = 0; i <= steps; i++) {
+    const x = Math.round(x0 + ((x1 - x0) * i) / steps);
+    const y = Math.round(y0 + ((y1 - y0) * i) / steps);
+    if (x >= 0 && x < W && y >= 0 && y < H) set(px, x, y, hex);
+  }
+}
+
+/**
+ * 27 rune — the Rune Block: dark slate (0x2a2633, noise 6) with a glowing cyan honeycomb rune: a pointy-top
+ * hexagon outline of radius 6 centred on (7.5, 7.5), three alternate spokes to the corners, a bright centre
+ * dot, and a dim halo on the pixels next to the outline. Seed "rune".
+ */
+function paintRune(px, rng) {
+  fill(px, 0x2a2633);
+  noise(px, rng, 6);
+  const CX = 7.5;
+  const CY = 7.5;
+  const R = 6;
+  const corners = [];
+  for (let k = 0; k < 6; k++) {
+    const a = ((60 * k - 90) * Math.PI) / 180; // pointy-top: first corner straight up
+    corners.push([CX + R * Math.cos(a), CY + R * Math.sin(a)]);
+  }
+  // Halo first so the bright outline overwrites it where they coincide.
+  for (let k = 0; k < 6; k++) {
+    const [ax, ay] = corners[k];
+    const [bx, by] = corners[(k + 1) % 6];
+    const hx = (ax + bx) / 2 > CX ? 1 : -1;
+    const hy = (ay + by) / 2 > CY ? 1 : -1;
+    line(px, ax + hx, ay + hy, bx + hx, by + hy, 0x355a6b);
+  }
+  for (let k = 0; k < 6; k++) {
+    const [ax, ay] = corners[k];
+    const [bx, by] = corners[(k + 1) % 6];
+    line(px, ax, ay, bx, by, 0x7be8ff);
+  }
+  for (let k = 0; k < 6; k += 2) line(px, CX, CY, corners[k][0], corners[k][1], 0x5fc8e8);
+  set(px, 7, 7, 0xd8f8ff);
+  set(px, 8, 7, 0xd8f8ff);
+  set(px, 7, 8, 0xd8f8ff);
+  set(px, 8, 8, 0xd8f8ff);
+}
+
 /** 255 missing — 8×8 quadrant checker, magenta top-left / bottom-right, black elsewhere. */
 function paintMissing(px) {
   for (let y = 0; y < H; y++) {
@@ -609,6 +659,7 @@ const RECIPES = Object.freeze({
   stone_bricks: paintStoneBricks,
   wool_white: paintWoolWhite,
   wool_red: paintWoolRed,
+  rune: paintRune,
   missing: paintMissing,
 });
 

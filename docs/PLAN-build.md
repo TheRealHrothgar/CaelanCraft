@@ -178,10 +178,10 @@ Pass: stderr contains `SMOKE_OK`; `/mnt/c/Users/Public/caelancraft-smoke.png` sh
 **Always:** human verification at `http://localhost:5173/?smoke=1` shows a green banner. The integration harness (§2.12) is the browser-free gate.
 
 ## 4. Runtime diagnostics (`src/diagnostics.js`)
-- URL params: `seed`, `rd` (clamped 1..16), `smoke=1`, `autoplay=1`, `nosave=1`, `debug=1`, `fly=1`, `time=0..1`.
+- URL params: `seed`, `rd` (clamped 1..16), `smoke=1`, `autoplay=1`, `nosave=1`, `debug=1`, `fly=1`, `time=0..1`, `yaw`/`pitch` (degrees), `ui=console|editor` (autoplay screenshot aid; `editor` writes a sample rune block).
 - `window.__caelancraft = { version, ready, seed, world, player, renderer, camera, scene, stats:{fps, frameMs, chunksLoaded, chunksDirty, meshesVisible, faces, drawCalls, triangles, geometries, textures}, getBlock, setBlock, teleport, setTime, errors:[], smoke:null }`.
 - Error capture: `error` + `unhandledrejection` → `errors[]` and `#error-banner` (always shown for smoke/debug, and in DEV).
-- `?smoke=1` sequence (~300 frames): wait grounded ≤120 frames; assert chunks/meshes/drawCalls > 0; look down, break, assert AIR + remesh; place hotbar block at adjacent, assert; spin 360°; walk 60 frames; fly up 30 frames; assert errors empty and WebGL2. Then `__caelancraft.smoke = {done:true, ok, ...}`, `console.log('SMOKE_OK'|'SMOKE_FAIL', json)`, write `#smoke-result` text and green/red banner.
+- `?smoke=1` sequence (~300 frames): wait grounded ≤120 frames; assert chunks/meshes/drawCalls > 0; look down, break, assert AIR + remesh; place hotbar block at adjacent, assert; spin 360°; teleport 3 cells forward; fly up 30 frames; rune round trip (`setblock … rune_block` by command, script `setblock @ @1 @ stone`, `run`, assert the stone appears and the entry is removed when the block is replaced); assert errors empty and WebGL2. Then `__caelancraft.smoke = {done:true, ok, ...}`, `console.log('SMOKE_OK'|'SMOKE_FAIL', json)`, write `#smoke-result` text and green/red banner.
 
 ## 5. Parallel implementation
 Phase 0 (done by orchestrator): scaffold, `src/CONTRACTS.md`, `src/types.js`, stubs, fixtures.

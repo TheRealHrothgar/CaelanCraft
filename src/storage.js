@@ -7,9 +7,11 @@
 // single key, `(lx*16+lz)*128+ly` local indices as produced by world.exportEdits().
 import { CHUNK_VOLUME, HOTBAR_SIZE, PITCH_LIMIT } from './config.js';
 import { DEFAULT_HOTBAR } from './blocks.js';
+import { normalizeRunesJSON, validateRunesJSON } from './runes.js';
 
 /** @typedef {import('./types.js').SaveData} SaveData */
 /** @typedef {import('./types.js').EditsJSON} EditsJSON */
+/** @typedef {import('./types.js').RunesJSON} RunesJSON */
 
 /**
  * Minimal Web Storage surface used here (localStorage satisfies it; tests use a Map-backed fake).
@@ -138,6 +140,9 @@ export function serializeSave(data) {
   if (edits != null && (!isPlainObject(edits) || edits instanceof Map)) {
     throw new TypeError('serializeSave: edits must be an EditsJSON object (use world.exportEdits())');
   }
+  if (data.runes != null && (!isPlainObject(data.runes) || data.runes instanceof Map)) {
+    throw new TypeError('serializeSave: runes must be a RunesJSON object (use runes.export())');
+  }
 
   /** @type {Record<string, number[]>} */
   const outEdits = {};
@@ -166,6 +171,11 @@ export function serializeSave(data) {
     selected: isValidSelected(data.selected) ? data.selected : DEFAULT_SELECTED,
     edits: outEdits,
   };
+  // Runes are optional and omitted when empty, so worlds without customised rune blocks serialise exactly as before.
+  if (data.runes != null) {
+    const runes = normalizeRunesJSON(data.runes).runes;
+    if (Object.keys(runes).length > 0) /** @type {*} */ (out).runes = runes;
+  }
   return JSON.stringify(out);
 }
 
@@ -180,7 +190,8 @@ export function serializeSave(data) {
  * that is not an object. Recoverable problems are repaired instead: invalid hotbar/selected →
  * defaults; edit pairs failing `0 <= localIndex < CHUNK_VOLUME` / `0 <= id <= 255` / integer-ness
  * are dropped (last write wins for duplicates, dangling odd element dropped); malformed chunk keys
- * and non-array entries are dropped; `time` is wrapped into [0,1) and `pitch` clamped.
+ * and non-array entries are dropped; `time` is wrapped into [0,1) and `pitch` clamped. An optional `runes`
+ * field is validated with runes.validateRunesJSON (invalid or orphaned entries dropped) and only kept when non-empty.
  * Every repair is described in a non-enumerable `warnings: string[]` on the result.
  * @param {string} text
  * @returns {SaveData|null}
@@ -277,6 +288,15 @@ export function deserializeSave(text) {
     selected,
     edits,
   };
+  if (raw.runes !== undefined) {
+    if (!isPlainObject(raw.runes)) {
+      warnings.push('runes: not an object, ignored');
+    } else {
+      const v = validateRunesJSON(raw.runes, edits);
+      for (const w of v.warnings) warnings.push(w);
+      if (Object.keys(v.runes).length > 0) save.runes = v.runes;
+    }
+  }
   Object.defineProperty(save, 'warnings', { value: warnings, enumerable: false, writable: true, configurable: true });
   return save;
 }

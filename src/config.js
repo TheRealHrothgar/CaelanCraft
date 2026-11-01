@@ -79,6 +79,32 @@ export const MAX_PIXEL_RATIO = 2;
 export const DOUBLE_TAP_MS = 250;                   // double-tap W → sprint
 export const DOUBLE_TAP_SPACE_MS = 300;             // double-tap Space → toggle fly
 
+// Commands and Rune Blocks (CONTRACTS §26–§27)
+export const GAME_SECONDS_PER_DAY = 86400;          // `time add` counts game seconds: 86400 per in-game day
+export const MAX_FILL_CELLS = 32768;                // cells one area command (fill / hexfill / hexring) may address
+export const MAX_TOTAL_EDITS = 300000;              // area commands refuse when the world's recorded edits would exceed this (~2.3 MB of save JSON)
+export const MAX_CELLS_PER_FRAME = 4096;            // area-command cells written per frame across all scripts
+export const MAX_AREA_CHUNKS_PER_FRAME = 2;         // chunk columns one area job may write per frame (bounds the re-mesh hitch for thin fills)
+export const MAX_COMMANDS_PER_FRAME = 64;           // script commands executed per frame across all scripts
+export const MAX_RUNNING_SCRIPTS = 64;
+export const MAX_CHAIN_HOPS = 32;                   // backstop; the once-per-activation wave rule is the real loop guard
+export const CHAIN_DELAY_S = 0.1;                   // delay between a script finishing and its neighbours starting
+export const MAX_RUNES = 1024;                      // rune blocks with a stored script/settings
+export const MAX_RUNE_SCRIPT_CHARS = 4096;
+export const MAX_RUNE_SCRIPT_LINES = 128;
+export const MAX_RUNE_LABEL_CHARS = 32;
+export const WAIT_MIN_S = 0.05;
+export const WAIT_MAX_S = 600;
+export const REPEAT_MIN_S = 0.25;
+export const REPEAT_MAX_S = 3600;
+export const STEP_COOLDOWN_MAX_S = 3600;
+export const AREA_MAX_RADIUS = 64;                  // parse-level sanity bound for hexfill / hexring radius
+export const AREA_MAX_HEIGHT = 128;                 // parse-level sanity bound for hexfill / hexring height
+export const MAX_CONSOLE_LINES = 200;               // console scrollback
+export const CONSOLE_HISTORY = 50;                  // typed lines remembered for ↑/↓ (memory only)
+export const CHAT_LINES = 6;                        // HUD chat-log lines shown at once
+export const CHAT_LINE_MS = 6000;                   // a chat-log line fades after this long
+
 // Time / saving / UI
 export const DAY_LENGTH_SECONDS = 600;
 export const START_TIME = 0.30;                     // 07:12

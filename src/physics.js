@@ -136,6 +136,67 @@ export function findStandingY(getBlock, x, z, fromY) {
 }
 
 /**
+ * True when a cylinder with its feet at world (x, cy, z) overlaps no solid cell: checks the 7 candidate columns
+ * whose hexagon overlaps the footprint for solid cells in floor(cy) .. ceil(cy + PLAYER_HEIGHT) − 1.
+ * @param {GetBlockFn} getBlock
+ */
+export function isFreeAt(getBlock, x, cy, z) {
+  gatherColumns(x, z);
+  const y0 = Math.floor(cy);
+  const y1 = Math.ceil(cy + PLAYER_HEIGHT) - 1;
+  for (let c = 0; c < COLUMN_COUNT; c++) {
+    if (!hexCircleContact(colX[c], colZ[c], x, z, PLAYER_RADIUS, contact)) continue;
+    for (let y = y0; y <= y1; y++) {
+      if (isSolid(getBlock(colQ[c], y, colR[c]))) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * First feet height in fromY, fromY+1, …, fromY+maxUp (integers steps) at which the player cylinder standing at
+ * world (x, z) overlaps no solid cell; null when none of them is free. Used by teleports so a target inside a
+ * wall snaps up to the first opening above it instead of entombing the player.
+ * @param {GetBlockFn} getBlock
+ * @param {number} x
+ * @param {number} z
+ * @param {number} fromY
+ * @param {number} [maxUp=2]
+ * @returns {number|null}
+ */
+export function findFreeY(getBlock, x, z, fromY, maxUp = 2) {
+  if (!Number.isFinite(x + z + fromY)) return null;
+  for (let dy = 0; dy <= maxUp; dy++) {
+    const cy = fromY + dy;
+    if (cy + PLAYER_HEIGHT > WORLD_HEIGHT) break;
+    if (isFreeAt(getBlock, x, cy, z)) return cy;
+  }
+  return null;
+}
+
+/**
+ * The cells currently supporting the player: among the 7 candidate columns whose hexagon overlaps the footprint,
+ * those whose cell at floor(p.y − 1e-3) is solid (after landing the feet sit COLLISION_EPS above the cell top, so
+ * that is the cell being stood on). Empty when airborne. Writes [q, y, r] triples into `out` (cleared first).
+ * @param {PlayerState} p
+ * @param {GetBlockFn} getBlock
+ * @param {number[][]} [out]
+ * @returns {number[][]}
+ */
+export function supportingCells(p, getBlock, out = []) {
+  out.length = 0;
+  if (!Number.isFinite(p.x + p.y + p.z)) return out;
+  const y = Math.floor(p.y - 1e-3);
+  if (y < 0 || y >= WORLD_HEIGHT) return out;
+  gatherColumns(p.x, p.z);
+  for (let c = 0; c < COLUMN_COUNT; c++) {
+    if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, PLAYER_RADIUS, contact)) continue;
+    if (isSolid(getBlock(colQ[c], y, colR[c]))) out.push([colQ[c], y, colR[c]]);
+  }
+  return out;
+}
+
+/**
  * Advance the player by dt seconds. dt is clamped to MAX_FRAME_DT and split into ceil(dt / MAX_SUBSTEP_DT)
  * equal substeps. Mutates p.
  * @param {PlayerState} p

@@ -65,7 +65,8 @@ describe('styles.css title screen', () => {
     const rows = CONTROLS_SHEET.length;
     const sheetH = rows * ROW + (rows - 1) * rowGap;
     const total = paddingTop + logo + menuTop + menu + sheetTop + sheetH;
-    expect(rows).toBe(14);
+    // v0.3 added the console (T /), R and Shift+R rows: 17 rows.
+    expect(rows).toBe(17);
     expect(total).toBeLessThanOrEqual(VIEWPORT_H);
   });
 });

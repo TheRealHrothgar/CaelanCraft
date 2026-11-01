@@ -11,6 +11,9 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 > **v0.2 — the honeycomb revision.** Caelancraft's world is a honeycomb: every cell is a vertical **hexagonal prism**,
 > not a cube. The hex geometry is the fundamental unit of storage, generation, meshing, physics and interaction.
 > Where the SPEC documents still describe cubes (block AABBs, 6 faces, Amanatides–Woo), this file supersedes them.
+>
+> **v0.3 — commands and Rune Blocks.** A typed command console (§26, §28) and a programmable **Rune Block** (§27) whose
+> script runs on interact (R), step-on, a repeat timer and/or chains to its neighbours — all four exposed in its editor.
 
 ## 0. Conventions (apply everywhere)
 
@@ -64,6 +67,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/daynight.js` | PURE | A-daynight | `tests/unit/daynight.test.js` |
 | `src/storage.js` | PURE (storage injected) | A-storage | `tests/unit/storage.test.js` |
 | `src/tiles.js` | PURE (pixel painters) | A-tiles | `tests/unit/tiles.test.js` |
+| `src/commands.js` | PURE, command language | v0.3 | `tests/unit/commands.test.js` |
+| `src/runes.js` | PURE, rune store + runner | v0.3 | `tests/unit/runes.test.js` |
 | `src/atlas.js` | DOM + three | A-atlas | — |
 | `src/renderer.js` | three | A-renderer | `tests/unit/renderer.test.js` |
 | `src/controls.js` | DOM | A-controls | — |
@@ -71,6 +76,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/menus.js` | DOM | A-menus | — |
 | `src/audio.js` | DOM (WebAudio) | A-audio | — |
 | `src/diagnostics.js` | DOM | A-diagnostics | — |
+| `src/console.js` | DOM | v0.3 | — |
+| `src/runeEditor.js` | DOM | v0.3 | — |
 | `src/main.js` | DOM glue | A-main | `tests/integration/harness.test.js` |
 | `tests/helpers/fixtures.js` | test helpers | Wave 0 (done) | — |
 
@@ -84,17 +91,21 @@ chunk                              → config, coords
 daynight                           → config, noise
 raycast                            → config, hex, blocks
 physics                            → config, coords, hex, blocks
+commands                           → config, coords, hex, blocks, physics, daynight (formatTime)
+runes                              → config, coords, hex, blocks, commands, physics
 mesher                             → config, coords, hex, blocks
 worldgen                           → config, coords, hex, blocks, noise
 world                              → config, coords, hex, blocks, chunk, noise (normalizeSeed), worldgen, mesher
-storage                            → config, blocks (DEFAULT_HOTBAR)
+storage                            → config, blocks (DEFAULT_HOTBAR), runes (normalizeRunesJSON, validateRunesJSON)
 atlas                              → config, blocks, hex, tiles, three
 renderer                           → config, hex, three
 controls                           → config
 hud                                → config, blocks, atlas
 menus                              → config, blocks, atlas
 audio                              → blocks
-diagnostics                        → config, blocks, coords, hex
+diagnostics                        → config, blocks, coords, hex, runes (runeKey)
+console                            → config
+runeEditor                         → config, commands (parseScript)
 main                               → everything except three
 ```
 
@@ -111,6 +122,10 @@ CAMERA_FAR, MOUSE_SENSITIVITY, PITCH_LIMIT, MAX_PIXEL_RATIO, DOUBLE_TAP_MS, DOUB
 START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION`.
 `VERSION = '0.2.0'`. Render/data/unload radii are **hex distances** in chunk coordinates. `FACE_SHADE` moved to `hex.js`
 (it derives from the face normals). `TOP_UV_SCALE = √3/2` (hex caps are inscribed in their tile).
+Commands / runes: `GAME_SECONDS_PER_DAY, MAX_FILL_CELLS, MAX_TOTAL_EDITS, MAX_CELLS_PER_FRAME, MAX_COMMANDS_PER_FRAME,
+MAX_RUNNING_SCRIPTS, MAX_CHAIN_HOPS, CHAIN_DELAY_S, MAX_RUNES, MAX_RUNE_SCRIPT_CHARS, MAX_RUNE_SCRIPT_LINES, MAX_RUNE_LABEL_CHARS,
+WAIT_MIN_S, WAIT_MAX_S, REPEAT_MIN_S, REPEAT_MAX_S, STEP_COOLDOWN_MAX_S, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_CONSOLE_LINES,
+CONSOLE_HISTORY, CHAT_LINES, CHAT_LINE_MS` (values in the file; §26–§28 use them by name).
 `PLAYER_WIDTH = 0.56`: `PLAYER_WIDTH / 2` MUST stay below `HEX_SIZE / 2 ≈ 0.289` (physics.js throws at import otherwise) — every
 1-cell-wide passage is pinched to exactly one edge length (`HEX_SIZE ≈ 0.577`) by the two wall corners flanking the shared edge, and
 the player must fit through it; that bound also implies the `< HEX_INRADIUS` bound the 7-column collider needs. `FOG_FAR_CHUNK_MARGIN = -1`.
@@ -119,8 +134,8 @@ the player must fit through it; that bound also implies the `< HEX_INRADIUS` bou
 
 Typedefs: `BlockId, ChunkKey, FaceIndex (0..7), RenderLayer, Vec3, GetBlockFn ((q, y, r) → BlockId), ChunkData, GetChunkDataFn
 ((cq, cr) → ChunkData|null), MeshData (+ indexCount), ChunkMeshData, RaycastHit ({q, y, r, face, nx, ny, nz, distance, blockId}),
-ColumnInfo, WorldGen (getColumn(q, r), generateChunk(cq, cr)), PlayerState, PlayerInput, SkyState, EditsJSON, SaveData
-(version 2), SmokeResult, GameContext`. Import in JSDoc as `/** @typedef {import('./types.js').MeshData} MeshData */`.
+ColumnInfo, WorldGen (getColumn(q, r), generateChunk(cq, cr)), PlayerState, PlayerInput, SkyState, EditsJSON, Rune, RunesJSON,
+SaveData (version 2, optional `runes`), SmokeResult, GameContext (+ runCommand, runes, runner)`. Import in JSDoc as `/** @typedef {import('./types.js').MeshData} MeshData */`.
 
 ## 4. `src/coords.js` (exact — already written)
 
@@ -163,13 +178,14 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 
 Block ids (`BLOCK.*`): `AIR 0, STONE 1, GRASS_BLOCK 2, DIRT 3, COBBLESTONE 4, OAK_PLANKS 5, BEDROCK 6, WATER 7,
 SAND 8, GRAVEL 9, OAK_LOG 10, OAK_LEAVES 11, GLASS 12, COAL_ORE 13, IRON_ORE 14, GOLD_ORE 15, DIAMOND_ORE 16,
-SANDSTONE 17, SNOW_BLOCK 18, SNOWY_GRASS 19, BRICKS 20, BOOKSHELF 21, STONE_BRICKS 22, WOOL_WHITE 23, WOOL_RED 24`.
-`BLOCK_COUNT = 25`.
+SANDSTONE 17, SNOW_BLOCK 18, SNOWY_GRASS 19, BRICKS 20, BOOKSHELF 21, STONE_BRICKS 22, WOOL_WHITE 23, WOOL_RED 24,
+RUNE_BLOCK 25`. `BLOCK_COUNT = 26`. `RUNE_BLOCK` ("Rune Block") is solid, opaque, breakable, placeable, soundGroup stone, tile
+RUNE on all faces; its script lives in `runes.js` (§27), never in the chunk array. Worldgen never emits it.
 
 Tile ids (`TILE.*`): `STONE 0, DIRT 1, GRASS_TOP 2, GRASS_SIDE 3, COBBLESTONE 4, OAK_PLANKS 5, BEDROCK 6, WATER 7,
 SAND 8, GRAVEL 9, OAK_LOG_SIDE 10, OAK_LOG_END 11, OAK_LEAVES 12, GLASS 13, COAL_ORE 14, IRON_ORE 15, GOLD_ORE 16,
 DIAMOND_ORE 17, SANDSTONE_TOP 18, SANDSTONE_SIDE 19, SNOW 20, SNOWY_GRASS_SIDE 21, BRICKS 22, BOOKSHELF 23,
-STONE_BRICKS 24, WOOL_WHITE 25, WOOL_RED 26, MISSING 255`. `TILE_IDS` = array of all 28 tile ids.
+STONE_BRICKS 24, WOOL_WHITE 25, WOOL_RED 26, RUNE 27, MISSING 255`. `TILE_IDS` = array of all 29 tile ids.
 
 Layers: `LAYER_OPAQUE 0` (everything else), `LAYER_CUTOUT 1` (OAK_LEAVES, GLASS), `LAYER_TRANSLUCENT 2` (WATER).
 
@@ -180,7 +196,7 @@ Biomes: `BIOME.OCEAN 0, BEACH 1, PLAINS 2, FOREST 3, DESERT 4, SNOWY 5, MOUNTAIN
 Functions: `getBlockDef(id)` (unknown → the AIR def), `isSolid, isOpaque, isLiquid, isBreakable, isPlaceable,
 isReplaceable (AIR or liquid), isTargetable (not AIR and not liquid), getRenderLayer, getFaceTile(id, face 0..7),
 shouldRenderFace(a, b), tileToUV(tile) → [u0, v0, u1, v1]`. Re-exports `FACE_TOP, FACE_BOTTOM` from hex.js.
-Constants: `DEFAULT_HOTBAR` (9 ids), `PICKER_ORDER` (23 placeable ids), `SOUND_GROUPS`.
+Constants: `DEFAULT_HOTBAR` (9 ids), `PICKER_ORDER` (24 placeable ids, RUNE_BLOCK before WATER), `SOUND_GROUPS`.
 
 Culling rule (`shouldRenderFace(a, b)`, `a` = this block, `b` = neighbour across the face):
 ```
@@ -315,6 +331,9 @@ export class World {
   editVersion = 0;    // incremented on every successful setBlock (autosave uses it)
   onChunkMesh   = (key, cq, cr, meshData) => {};   // assignable hook, called synchronously from update()
   onChunkUnload = (key) => {};                     // assignable hook
+  onBlockChange = (q, y, r, prev, next) => {};     // assignable hook, called synchronously from setBlock ONLY, after the edit is
+                                                   // recorded and chunks are dirtied; never from importEdits / applying saved edits
+  get editCount()            // total recorded edit entries across all chunks (area commands budget against MAX_TOTAL_EDITS)
   getBlock = (q, y, r) => BlockId;      // ARROW PROPERTY. CELL coords. AIR when y out of range or chunk not loaded. Never allocates.
   getChunkData = (cq, cr) => Chunk|null; // ARROW PROPERTY.
   getBlockAt(x, y, z)        // WORLD position convenience: getBlock(...worldToHex(x, z), floor(y)); AIR for non-finite input
@@ -436,6 +455,10 @@ export function playerAABB(p, out = {})                // bounding box of the cy
 export function playerIntersectsBlock(p, q, y, r)      // strict: hexCircleContact(cell centre, p.x, p.z, PLAYER_RADIUS) && p.y < y+1 && p.y+PLAYER_HEIGHT > y
 export function findStandingY(getBlock, x, z, fromY)   // in the cell column under WORLD (x,z): scan down from fromY for the first y where
                                                        // block(y-1) solid and blocks y, y+1 not solid; null if none / non-finite input
+export function isFreeAt(getBlock, x, cy, z)           // cylinder with feet at (x, cy, z) overlaps no solid cell (7-column test)
+export function findFreeY(getBlock, x, z, fromY, maxUp = 2) // first free feet height among fromY, fromY+1, …, fromY+maxUp; null if none
+export function supportingCells(p, getBlock, out = [])  // [q,y,r] of the cells under the player's footprint whose cell at floor(p.y − 1e-3)
+                                                       // is solid (empty when airborne); the step-on trigger is edge-triggered on this set
 /** PlayerState = { x,y,z, vx,vy,vz, onGround, flying, sneaking, sprinting, inWater, headInWater, hitWall }
  *  PlayerInput = { forward: -1|0|1, strafe: -1|0|1, jump, sneak, sprint: boolean, yaw: number } */
 ```
@@ -500,8 +523,13 @@ export function loadGame(storage = globalThis.localStorage)         // SaveData|
 export function hasSave(storage = globalThis.localStorage)          // boolean
 export function clearSave(storage = globalThis.localStorage)        // void
 /** SaveData = { version: 2, seed: number, time: number, day: number, player: {x,y,z (WORLD),yaw,pitch,flying}, hotbar: number[9],
- *   selected: number, edits: EditsJSON }   EditsJSON = { "cq,cr": [localIndex, id, localIndex, id, ...] } */
+ *   selected: number, edits: EditsJSON, runes?: RunesJSON }   EditsJSON = { "cq,cr": [localIndex, id, localIndex, id, ...] } */
 ```
+`runes` (v0.3) is OPTIONAL and the version stays 2: `serializeSave` writes it only when `runes.normalizeRunesJSON(data.runes)` is
+non-empty (keys sorted by (q, y, r), non-default fields only, so untouched worlds serialise byte-identically to before);
+`deserializeSave` validates it with `runes.validateRunesJSON(raw.runes, edits)` — malformed keys, non-object entries, entries whose
+cell is not recorded as `RUNE_BLOCK` in the repaired `edits` (orphans) are dropped with warnings — and keeps the field only when
+non-empty. A non-object `runes` is ignored with a warning, never a null save.
 Validation on load: each edits entry must be an even-length array of integers with `0 <= localIndex < CHUNK_VOLUME` and
 `0 <= id <= 255`; invalid pairs are dropped (count them in a `warnings` array attached as a non-enumerable property is optional).
 `hotbar` must be 9 integers, `selected` 0..8, else defaults.
@@ -509,11 +537,13 @@ Validation on load: each edits entry must be an even-length array of integers wi
 ## 15. `src/tiles.js` (pure pixel painters)
 
 ```js
-export const TILE_NAMES = { 0:'stone', 1:'dirt', ..., 26:'wool_red', 255:'missing' };   // matches TILE in blocks.js
+export const TILE_NAMES = { 0:'stone', 1:'dirt', ..., 26:'wool_red', 27:'rune', 255:'missing' };   // matches TILE in blocks.js
 export function paintTile(tile)          // → Uint8ClampedArray(16*16*4), RGBA, idx = (y*16 + x)*4. Deterministic. Unknown tile → 'missing' checker.
 export function averageColor(tile)       // → [r,g,b] 0..255 mean over pixels with alpha >= 128
 export function createTilePainters()     // → Map<tile, () => Uint8ClampedArray> (optional convenience)
 ```
+Recipe 27 `rune` (v0.3): dark slate `0x2a2633` + noise 6, a pointy-top hexagon outline of radius 6 around (7.5, 7.5) in `0x7be8ff`
+with a `0x355a6b` halo one pixel outward, spokes to corners 0/2/4 in `0x5fc8e8`, and a 2×2 centre dot `0xd8f8ff`; alpha 255.
 Recipes: `docs/SPEC-gameplay.md` §2.3–§2.4 verbatim, including the alpha rules (water alpha 178 everywhere; glass interior
 alpha 0 with opaque frame; leaves ~22% alpha-0 holes; everything else alpha 255). Use private copies of `mulberry32` and
 `fnv1a` (do not import noise.js). `paintTile` never depends on the world seed.
@@ -596,13 +626,16 @@ export function createControls(canvas, doc = document)   // → Controls
 ```
 Mouse look only while locked: `yaw -= movementX * MOUSE_SENSITIVITY; pitch -= movementY * MOUSE_SENSITIVITY`. Listen on `doc` for
 `mousemove, keydown, keyup, pointerlockchange`, on `canvas` for `mousedown, mouseup, wheel ({passive:true}), contextmenu (preventDefault)`.
-Clear held keys on unlock and on `window blur`. `keydown` for game keys calls `preventDefault()` while locked (Space, Tab, F3, digits, WASD, Shift).
+Clear held keys on unlock and on `window blur`. `keydown` for game keys calls `preventDefault()` while locked (Space, Tab, F3, digits, WASD, Shift,
+E, F, M, T, R, Slash). A keydown whose `key === '/'` but whose code is not `Slash` (DE: Shift+7 = Digit7, numpad divide) queues a synthetic
+`Slash` edge INSTEAD of its physical code, so typing `/` never also selects a hotbar slot.
 Digit keys 1–9 are read by main via `consumePressed('Digit1')`. Do not bind Ctrl.
 
 ## 19. `src/hud.js` (DOM)
 
 ```js
-export function createHUD(doc, atlasCanvas)   // binds to the ids in index.html (#hud, #crosshair, #hotbar, #block-toast, #save-toast, #debug-overlay, #underwater-overlay, #error-banner)
+export function createHUD(doc, atlasCanvas)   // binds to the ids in index.html (#hud, #crosshair, #hotbar, #block-toast, #save-toast, #debug-overlay, #underwater-overlay, #error-banner,
+                                              //   #target-hint, #chat-log)
 /** HUD = {
  *  setHotbar(ids: number[9], selected),   // redraws slot icons (drawBlockIcon at 32px; AIR → blank) and selection
  *  setSelected(i),
@@ -612,6 +645,8 @@ export function createHUD(doc, atlasCanvas)   // binds to the ids in index.html 
  *  showSaveToast(text, isError = false),   // 1.5 s
  *  showError(text),                        // appends a line to #error-banner and unhides it
  *  setPickerOpen(on),                      // toggles #hud.picker-open
+ *  setTargetHint(text|null),               // persistent line under the crosshair (#target-hint); null hides it; DOM touched only on change
+ *  addChatLine(text, isError = false),     // #chat-log: last CHAT_LINES lines, each fades after CHAT_LINE_MS (multi-line text is split)
  *  onSlotClick: (slot) => {},              // assignable; fired when a hotbar slot is clicked (only while picker open)
  *  dispose() } */
 ```
@@ -621,7 +656,8 @@ export function createHUD(doc, atlasCanvas)   // binds to the ids in index.html 
 ```js
 export const SPLASHES = [ /* 18 strings from SPEC-gameplay §5.4 */ ];
 export function createMenus(doc, atlasCanvas, callbacks)
-/** callbacks = { onNewWorld(seedText: string), onContinue(), onResume(), onSave(), onQuit(), onClickToPlay(), onPickBlock(blockId, slot|null), onPickerClose() }
+/** callbacks = { onNewWorld(seedText: string), onContinue(), onResume(), onSave(), onStopRunes(), onQuit(), onClickToPlay(), onPickBlock(blockId, slot|null), onPickerClose() }
+ *  (#btn-stop-runes "Stop All Rune Scripts" in the pause menu fires onStopRunes; CONTROLS_SHEET lists T, /, R and Shift+R)
  *  Menus = {
  *   showTitle(hasSave), hideTitle(),        // sets a random splash, dirt background (makeTiledBackgroundDataURL DIRT), draws the logo, renders the controls sheet, enables #btn-continue iff hasSave
  *   showLoading(done, total), hideLoading(),
@@ -645,23 +681,30 @@ Synthesis per SPEC-gameplay §9.
 
 ```js
 export function parseParams(search = location.search)   // → Params { seed: string|null, rd: number|null (1..16), smoke, autoplay, nosave, debug, fly: boolean, time: number|null,
-                                                         //            yaw: number|null (degrees), pitch: number|null (degrees, ±89.9) }
+                                                         //            yaw: number|null (degrees), pitch: number|null (degrees, ±89.9), ui: 'console'|'editor'|null }
 export function installErrorCapture(win, onError)        // window 'error' + 'unhandledrejection' → onError({message, stack})
 export function installDebugHandle(win, game)            // win.__caelancraft = { version, ready:false, seed, world, player, controls, renderer, stats, errors:[], smoke:null,
-                                                         //   getBlock(x,y,z) / setBlock(x,y,z,id) over WORLD positions (cell derived with worldToHex), getCell(x,z) → [q,r], teleport, setTime }
+                                                         //   getBlock(x,y,z) / setBlock(x,y,z,id) over WORLD positions (cell derived with worldToHex), getCell(x,z) → [q,r],
+                                                         //   runCommand(line) → {ok, message}|null, runes (RuneStore), runner (RuneRunner|null), teleport, setTime }
 export function updateDebugHandle(win, stats)            // refresh stats + ready flag (called by main every ~250 ms)
-export function buildDebugText(game, stats)              // the F3 text block: XYZ (world), Cell (q y r) + chunk/local, facing, biome/seed, chunks, target cell + face name, time, mode
+export function buildDebugText(game, stats)              // the F3 text block: XYZ (world), Cell (q y r) + chunk/local, facing, biome/seed, chunks,
+                                                         //   target cell + face name + the cell's world centre (x z), time, mode
 export function runSmokeTest(game, win = window)         // Promise<SmokeResult>; drives the sequence in docs/PLAN-build.md §4 (hex cells: hit.q/y/r, faceNeighbor for the
-                                                         //   placement target, world.isReadyAtCell), sets win.__caelancraft.smoke, console.log('SMOKE_OK'|'SMOKE_FAIL', JSON),
+                                                         //   placement target, world.isReadyAtCell) plus step 9b: a rune block placed by `setblock`, scripted via game.runes,
+                                                         //   triggered by `run`, its `setblock @ @1 @ stone` observed, then cleaned up; sets win.__caelancraft.smoke, console.log('SMOKE_OK'|'SMOKE_FAIL', JSON),
                                                          //   writes #smoke-result (created if missing) and a green/red banner
 /** GameContext (types.js) = { world, player, controls, renderer, hud, getTime(), setTime(t), getHit(), breakTargeted() → boolean, placeSelected() → boolean,
- *   teleport(x,y,z), setLook(yaw,pitch), getState() → 'title'|'loading'|'clickToPlay'|'playing'|'paused'|'picker', stepFrame?(dt) } */
+ *   teleport(x,y,z), setLook(yaw,pitch), getState() → 'title'|'loading'|'clickToPlay'|'playing'|'paused'|'picker'|'console'|'editor', stepFrame?(dt),
+ *   runCommand?(line), runes?, runner? } */
 ```
 
 ## 23. `src/main.js` (glue; owns the game loop)
 
 Boot: `params = parseParams()`; `save = params.nosave ? null : loadGame()`; DOM handles; `atlasCanvas`, `atlasTexture`, `renderer`, `hud`, `menus`, `controls`, `audio`.
-State machine: `title → loading → clickToPlay → playing ⇄ paused`, `playing ⇄ picker`.
+State machine: `title → loading → clickToPlay → playing ⇄ paused`, `playing ⇄ picker`, `playing ⇄ console`, `playing ⇄ editor`.
+Console/editor are modal like the picker: `setState` BEFORE `controls.unlock()`, controls disabled, simulation frozen (the rune runner too),
+rendering continues. Closing any modal goes through `enterPlayingFromModal()`: `enterPlaying()` then, if the pointer lock is not back after
+`RELOCK_CHECK_MS` (Esc is not a user activation, so the request may be refused), the click-to-play overlay is shown instead of a dead playing state.
 - **Title**: `menus.showTitle(hasSave)`. New World → seed from input (`normalizeSeed` on trimmed text; empty → random `Math.floor(Math.random()*2**31)`),
   clear save (if not nosave), start. Continue → start with save. `params.autoplay || params.smoke` → skip title (use `params.seed ?? save?.seed ?? random`).
 - **Loading**: `world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: save?.edits })`; `world.onChunkMesh = renderer.setChunkMesh;
@@ -672,16 +715,185 @@ State machine: `title → loading → clickToPlay → playing ⇄ paused`, `play
 - **Playing** loop (`requestAnimationFrame` timestamp; `dt = min((t - last)/1000, MAX_FRAME_DT)`): `input = controls.getInput()`; handle
   `consumeFlyToggle()` → `player.flying = !player.flying; player.vy = 0`; digits/wheel → hotbar; `KeyE` → picker; `F3` → debug; `KeyM` → mute;
   mouse edges/holds → break (repeat `BREAK_REPEAT_S`) / place (repeat `PLACE_REPEAT_S`) / pick; `if (world.hasChunkAt(player.x, player.z)) stepPlayer(...)`;
-  `time = advanceTime(time, dt)` (frozen when `params.time != null`); `world.update(player.x, player.z)`; eye/dir/`raycastHex` (`REACH`);
+  `time = advanceTime(time, dt)` (frozen when `params.time != null`); **`runner.update(dt)`** (rune scripts: after physics, before
+  streaming, so their edits re-mesh this frame); `world.update(player.x, player.z)`; eye/dir/`raycastHex` (`REACH`);
+  Keys: `KeyT` → console (empty), `Slash` → console prefilled `/`; `KeyR` → `interactTarget()` (rune block targeted: `runner.trigger(key,
+  'interact')`, or a chat line explaining why not), `Shift+R` → `editTarget()` (opens the editor; `ensure` creates the default entry);
+  placing a RUNE_BLOCK opens its editor at once. `hud.setTargetHint` each frame: `[label · ]R run · Shift+R edit` (variants for disabled /
+  no Interact trigger).
   `renderer.setCamera/setFov(sprinting ? SPRINT_FOV : FOV, smoothed)/setHighlight/setSky/setUnderwater`; HUD; `renderer.render()`; stats every 250 ms.
 - **Paused**: entered when pointer lock is lost while playing (and not opening the picker); simulation and clock freeze; keep rendering. Resume re-locks.
 - Break rule: `hit && isBreakable(hit.blockId)` → `world.setBlock(hit.q, hit.y, hit.r, AIR)`; `audio.playBreak(group)`. Place rule: `hit && hit.face >= 0`;
   target `(tq, ty, tr) = faceNeighbor(hit.q, hit.y, hit.r, hit.face)`; require `inHeightRange(ty)`, `isReplaceable(world.getBlock(tq,ty,tr))`, and
   `!(isSolid(sel) && playerIntersectsBlock(player, tq,ty,tr))`; `audio.playPlace`.
   Pick (middle): if `hit` and placeable: select the slot containing it, else assign to the selected slot.
-- Autosave every `AUTOSAVE_INTERVAL_S` when `world.editVersion` changed or player moved, plus on `pagehide`, `visibilitychange(hidden)`, pause, Save, Quit. Skipped when `params.nosave`.
+- Autosave every `AUTOSAVE_INTERVAL_S` when `world.editVersion` or `runeStore.version` changed or the player moved, plus on `pagehide`,
+  `visibilitychange(hidden)`, pause, Save, Quit. Skipped when `params.nosave`. `buildSaveData` includes `runes: runeStore.export()`.
+- Runes lifecycle in main: ONE `RuneStore` for the session; `startLoading` sets `world.onBlockChange = onBlockChanged` (RUNE_BLOCK appears →
+  `store.ensure`; RUNE_BLOCK disappears → `runner.cancel(key)`, `store.delete(key)`, close the editor if it shows that rune), resets the runner
+  and calls `runeStore.replaceAll(save.runes)`; `finishLoading` builds the `CommandContext` (§26.3), creates the `RuneRunner`, wires
+  `runner.onLog → logLine` (console + chat) and `runner.onTrigger` (click sound for interact/step), and `runner.seedStep()`; `quitToTitle` /
+  `dispose` reset the runner and clear the store. `game.teleport` also calls `runner.seedStep()` (arriving is not stepping on). The pause menu's
+  "Stop All Rune Scripts" calls `runner.stopAll()`. `game.runCommand(line)`, `game.runes`, `game.runner` are exposed for diagnostics.
+- `?ui=console|editor` (screenshot aid, autoplay only, ignored under `?smoke=1`; use with `?nosave=1`): after entering playing, `showDebugUi()` opens the console
+  with `help` printed, or runs `setblock q y r rune_block` three cells ahead, stores a sample rune (label "lift", stepOn + chain) and opens
+  its editor — i.e. it WRITES to the world.
+- The relock fallback (click-to-play after a refused lock) and `saveOnLeave` both save in any state that has a player, and `saveOnLeave`
+  first flushes an open editor's fields into the store, so edits made in a modal are never lost when the page is left. A pointer lock that
+  arrives while in click-to-play (a late grant of the modal-close request) enters playing directly. Modal keys (E, T, /) are consumed before
+  the hotbar digits each frame. The editor's "Enabled" switch turned off cancels the rune's running script, like `rune q y r off`.
 - Diagnostics: `installErrorCapture` → `hud.showError`; `installDebugHandle`; if `params.smoke` → `runSmokeTest(game)` once playing.
 - `window.resize` → `renderer.resize(innerWidth, innerHeight)`.
+
+## 26. `src/commands.js` (PURE — the command language)
+
+```js
+export const COMMANDS                 // CommandSpec[] { name, usage, summary, args: kind[], min, scriptOnly? } — `help` renders it, tests iterate it
+export const HELP_FOOTER, COMPASS     // COMPASS = { north: 0, west: 90, south: 180, east: -90 } (yaw degrees as F3 shows them)
+export function parseLine(text, lineNo = 1)   // → ParsedCommand { line, name, args, raw } | ParseError { line, message } | null (blank / comment)
+export function parseScript(text)             // → { commands: ParsedCommand[], errors: ParseError[] }; never throws; lines beyond
+                                              //   MAX_RUNE_SCRIPT_LINES → one error "too many lines (N > 128); the rest is ignored"
+export function resolveBlock(token)           // → { id } | { error }
+export function parseTimeSpec(token)          // → day fraction | null ;  parseDurationSpec(token) → GAME seconds | null
+export function yawToDegrees(yaw)             // radians → [-180, 180)
+export function hexAreaCells(q, y0, r, radius, height, ring)  // [q,y,r][] of the disc / ring, y0 .. y0+height-1
+export function executeCommand(cmd, ctx)      // → CommandResult { ok, message, wait?, stop?, job? }; never throws
+```
+### 26.1 Grammar (normative)
+`line := WS* ( '#' .* | '/'? NAME (WS+ ARG)* )? WS*` over `text.split(/\r?\n/)`. `#` is a comment ONLY as the first non-blank character.
+NAME is matched case-insensitively. `say` takes the rest of the line verbatim (trimmed; no quoting; `#` not special inside).
+`NUMBER := ('~' | '@') SIGNED? | SIGNED`, `SIGNED := [+-]? ( \d+ (\.\d*)? | \.\d+ )` — no exponent, hex, Infinity or NaN.
+Argument kinds: `cell` (must resolve to an integer; `~`/`@` allowed), `num` (float; `~`/`@`), `angle` (`num` or an OWN key of COMPASS — never
+`constructor`), `int` (plain integer literal, no `~`/`@`), `block`, `word`, `choice:a|b`, `rest`. Parse-time checks: unknown command →
+`unknown command "x" (try help)`; arg count → `<name>: expected <usage args> (got N args) — usage: <usage>` where `<usage args>` is the first
+form of the usage (forms are separated by ` | ` with spaces; the `|` inside a choice list is kept); number syntax per kind; a bad choice →
+`<name>: expected one of a, b, got "x" — usage: …`; choices lower-cased. `parseScript` keeps the first MAX_RUNE_SCRIPT_LINES lines and reports
+`too many lines (N > 128); lines after 128 are dropped` (the store and the editor really drop them).
+Every execution failure is `<name>: <message> — usage: <usage>`.
+### 26.2 Resolution
+`~` = the PLAYER: for cell args `worldToHex(p.x, p.z)` / `floor(p.y)`; for `tpw` the world position; for `look` the degrees F3 shows.
+`@` = the EXECUTING RUNE's cell (`ctx.rune`); for `tpw` its centre and `y + 1`; in the console (`ctx.rune === null`) it is the error
+`@ is only valid inside a rune script`. Offsets may be negative (`~-1`). A cell arg that is not an integer after resolution →
+`expected an integer for <arg>, got "~0.5"`. Block tokens: exact `name` → `displayName` with `_` for spaces → unique prefix (name or
+display name) → unique substring → integer id `0 ≤ id < BLOCK_COUNT`; `minecraft:` prefix stripped; ambiguity lists the candidates;
+unknown → `unknown block "x" (type blocks to list them)`.
+### 26.3 CommandContext (built by main, §23)
+`{ world, player, controls {yaw, pitch}, getTime(), setTime(t) (never touches day), addTime(gameSeconds) (day += floor when passing
+midnight forwards), timeFrozen, hotbar, selected, setHotbarSlot(slot, id), say(text), teleport(x, y, z), setFlying(on), runes: RuneStore,
+runner: RuneRunner, rune: Rune|null, running: Running|null, seed }`. The runner sets `rune`/`running` around each script command; the
+console executes with both `null`.
+### 26.4 Commands (exact behaviour)
+| command | behaviour |
+|---|---|
+| `help [cmd]` | all usages + summaries + HELP_FOOTER, or one command's usage |
+| `blocks` | `id name (Display Name)` for AIR and every placeable block |
+| `pos` | `cell q y r · world x y z (2 dp) · yaw d pitch d` |
+| `seed`, `edits` | the seed; `N edited cells (≈ KB, budget MAX_TOTAL_EDITS)` |
+| `tp q y r` | feet to the centre of cell (q, r) at the first free height `findFreeY(y, 2)`; refuses `y` outside `0..WORLD_HEIGHT−2`, `target is not loaded` (chunk), `target is inside a block` |
+| `tp q r` | onto the surface: `findStandingY(…, WORLD_HEIGHT − 2)`; `no ground at (q, r)` |
+| `tpw x y z` | world floats, `y` in `0..WORLD_HEIGHT−2`, same loaded/free rules |
+| `look yaw pitch` | degrees (F3 convention), yaw may be a COMPASS word; yaw wrapped, pitch clamped to ±PITCH_LIMIT |
+| `setblock q y r <block>` | refuses `bedrock cannot be placed` (BEDROCK as the block), out-of-range y, unloaded chunk, `that cell is occupied by you` (solid block intersecting the player), `bedrock cannot be replaced`; same block → ok "already"; RUNE_BLOCK allowed (the hook creates/deletes the rune) |
+| `fill q1 y1 r1 q2 y2 r2 <block>` | inclusive axial box (corner order irrelevant), `(dq+1)(dy+1)(dr+1)` cells |
+| `hexfill q y r radius height <block>` | `hexDiscCount(radius) · height` cells, layers `y .. y+height−1`; radius `0..AREA_MAX_RADIUS`, height `1..AREA_MAX_HEIGHT` |
+| `hexring q y r radius height <block>` | the ring at exactly hex distance radius: `(radius === 0 ? 1 : 6·radius) · height` cells |
+| `time set <spec>` | noon 0.5, midnight 0, day 0.25, night 0.75, `HH:MM` (0..23:0..59), bare integer 0..24 = hours (24 → 0), a number with a decimal point in [0,1] = fraction; `time is frozen by ?time=` |
+| `time add <dur>` | GAME seconds (86400/day): `HH:MM`, `Nh`, `Nm`, `Ns`, a signed number with a decimal point ≤ 1 = fraction of a day, a signed integer = seconds; negatives allowed; `day` bumps only forwards |
+| `fly on|off|toggle` | `setFlying` |
+| `give <block> [slot]` | placeable blocks only; slot `1..9` integer literal (default: selected) |
+| `say <text>` | `ctx.say(text)`; the result message is empty |
+| `run q y r` | `runner.trigger(key, running ? 'run' : 'console', running ? { wave, hops + 1 } : undefined)`; failure reason is the message |
+| `wait <s>` | scripts only; `WAIT_MIN_S..WAIT_MAX_S` → `{ wait }` |
+| `stop` | scripts only → `{ stop }` (the script ends WITHOUT chaining) |
+| `stopall` / `resume` | `runner.stopAll()` (cancel all + pause every automatic trigger) / `runner.resume()` |
+| `runes` | one line per stored rune: `q y r · label · triggers|OFF · running|idle` (first 50) |
+| `rune q y r on|off` | sets `enabled` (creates the entry); off also cancels its script |
+**Area commands** (fill/hexfill/hexring) validate BEFORE writing anything: `total > MAX_FILL_CELLS` → `too large: N cells (max M)`;
+`rune_block` as the fill block → `use setblock for rune blocks`; `bedrock` → `bedrock cannot be placed`; any addressed `y` outside `0..WORLD_HEIGHT−1` → refused; ATOMIC across
+chunks: every covered chunk column must be loaded, else `N cells are in unloaded chunks (nothing changed)`; `world.editCount + total >
+MAX_TOTAL_EDITS` → `world edit budget exceeded …`. Then they return an `AreaJob` whose `step(maxCells)` writes cells in chunk-major order
+(`(cq, cr)`, then q, r, y) and SKIPS cells that already hold the block (`unchanged`), RUNE_BLOCK cells (`skippedRune`), BEDROCK
+(`skippedBedrock`) and — for solid blocks — cells intersecting the player (`skippedPlayer`); `summary()` →
+`<name>: N cells set to <block> (… unchanged, skipped …)`. The runner advances jobs under `MAX_CELLS_PER_FRAME` per frame.
+
+## 27. `src/runes.js` (PURE — Rune Blocks)
+
+```js
+export const RUNE_DEFAULTS   // { script:'', label:'', enabled:true, interact:true, stepOn:false, stepCooldown:1, repeat:false, repeatInterval:5, chain:false }
+export const SOURCE          // { INTERACT:'interact', STEP:'step', REPEAT:'repeat', CHAIN:'chain', RUN:'run', CONSOLE:'console' }
+export function runeKey(q, y, r) → `${q},${y},${r}`;  parseRuneKey(key) → [q, y, r] | null  (strict /^(-?\d+),(-?\d+),(-?\d+)$/, y in range, q/r safe integers, never −0)
+export function clampScript(text)                      // ≤ MAX_RUNE_SCRIPT_CHARS chars AND ≤ MAX_RUNE_SCRIPT_LINES lines
+export function normalizeRune(q, y, r, partial)        // complete Rune: unknown fields dropped, booleans coerced, stepCooldown 0..3600, repeatInterval 0.25..3600, label ≤ 32, non-finite → default
+export function runeToJSON(rune)                       // non-default fields only, in order script, label, enabled, interact, stepOn, stepCooldown, repeat, repeatInterval, chain
+export function isDefaultRune(rune)
+export function normalizeRunesJSON(raw)                // → { runes: RunesJSON, warnings } — canonical keys (last write wins), pristine entries dropped, ≤ MAX_RUNES kept in key order
+export function validateRunesJSON(raw, edits)          // normalizeRunesJSON + drop entries whose cell is not `[localIndex, RUNE_BLOCK]` in edits (orphans)
+export function hasRuneEdit(edits, q, y, r)
+export class RuneStore {
+  constructor(max = MAX_RUNES); map; version; max      // version bumps on every change; replaceAll resets it to 0 (like World.editVersion)
+  size; storedCount (non-pristine entries); get(key); has(key); ensure(q,y,r) → Rune (always; pristine entries are free); set(q,y,r,partial) → Rune|null
+  (merges only the DEFINED fields of partial; null when the result would be a NEW stored rune beyond the cap); delete(key) → boolean; clear()
+  replaceAll(json) → warnings; export() → RunesJSON (sorted, non-pristine, non-default fields); list() → Rune[] sorted by (q,y,r)
+  sweep(world) → n   // drops entries whose cell is LOADED and not RUNE_BLOCK; never touches unloaded cells
+}
+export class RuneRunner {
+  constructor(store, ctx); setContext(ctx); onLog = (line, isError) => {}; onTrigger = (key, source) => {}
+  trigger(key, source, { wave?, hops? } = {}) → { ok, reason? }
+  runConsoleLine(line) → { ok, message }   // synchronous; an area command's job is queued as a `console#N` Running
+  cancel(key); cancelAll(); stopAll() (cancelAll + paused = true); resume(); reset(); seedStep(); isRunning(key); getLastRun(key); update(dt) → { executed, fired }
+}
+```
+### 27.1 Semantics (normative)
+- A RUNE_BLOCK cell with no entry behaves as the default Rune; `ensure` creates the (pristine) entry on placement / first interact / edit.
+  Only stored (non-pristine) runes count toward `MAX_RUNES`: `set` returns null when it would create one more stored rune beyond the cap
+  (the block still exists; main toasts "Too many rune blocks"). The cap therefore means the same thing before and after a reload.
+- `trigger` refuses, in this order, with these reasons: invalid key; `rune at (q,y,r) is not loaded`; `no rune block at (q,y,r)` (and deletes
+  the entry); `rune at (q,y,r) is disabled`; `rune triggers are paused (press R on a rune or run resume)` (unless source is interact/console);
+  `rune at (q,y,r) is already running`; `chain limit reached (32 hops)`; `rune at (q,y,r) already ran in this activation` (same wave);
+  `too many running scripts (64)`. Interact/console sources clear `paused` and start a NEW wave; chain/run propagate the caller's wave.
+  Parse errors of the script are logged at start (`[q,y,r:LINE] message`, at most 3 per run) and the well-formed lines still run; runtime
+  command failures are logged with their own cap of 3 per run (the first excess of either kind becomes `… more parse|command errors suppressed`).
+- `update(dt)` phases: (1) cancel scripts whose LOADED cell is no longer RUNE_BLOCK (and delete the entry); (2) `waitLeft -= dt` for every
+  running script, then round-robin passes over a snapshot in start order — one command per live script per pass — until
+  `MAX_COMMANDS_PER_FRAME` commands or `MAX_CELLS_PER_FRAME` job cells are spent (a script whose wait just ended resumes this frame; a
+  job is advanced by `step(remainingCells)`); a failing command logs `[q,y,r:LINE] message` and the script CONTINUES; (3) pending chain
+  entries age by dt and fire FIFO when due; (4) repeat: for each stored rune with `enabled && repeat` whose chunk is loaded and which is not
+  running: `acc += dt`; at `acc ≥ repeatInterval` → `acc = 0`, trigger (unless paused); acc is held at 0 while the script runs and frozen
+  while the chunk is unloaded; (5) step-on: cooldowns age by dt; the set S of RUNE_BLOCK keys among `supportingCells(player)` (empty unless
+  `onGround`) is compared with last frame's set; for each key in S \ S_prev with `enabled && stepOn`, no cooldown left and not paused →
+  trigger and set the cooldown to `stepCooldown`; `S_prev = S` every frame. `seedStep()` (spawn, teleport — also when the teleport is
+  executed by a script mid-frame) seeds `S_prev` from the current position ignoring `onGround` and marks the seed PENDING; while pending,
+  phase 5 leaves `S_prev` untouched and adopts `S` without firing on the first frame the player is `onGround` again — so arriving by
+  teleport, including the landing after a mid-air teleport, is never a step-on.
+- A script FINISHES when its cursor passes the last command → if the rune's LIVE store entry (the editor may have replaced it mid-run) has
+  `chain && enabled`, enqueue `faceNeighbor(q, y, r, f)` for
+  `f = 0..7` in face order with `due = CHAIN_DELAY_S`, the same wave and `hops + 1`; `stop` finishes WITHOUT chaining; CANCEL (block replaced,
+  `stopall`, `rune … off`, reset) never chains. Chain targets that are not loaded rune blocks are skipped silently. Running scripts are
+  detached from streaming: a chunk unloading does not cancel them (their commands simply report "not loaded").
+- Nothing of the runner is ever saved: after a load no script runs, every accumulator is 0 and every cooldown has elapsed.
+
+## 28. `src/console.js` and `src/runeEditor.js` (DOM)
+
+```js
+export function createConsole(doc, { onLine(line) → {ok,message}|void, onClose() })
+/** Console = { open(prefill = ''), close(), isOpen(), log(text, isError = false), clear(), dispose() } */
+export function createRuneEditor(doc, { onChange(key, partial), onRun(key), onClose(key) })
+/** RuneEditor = { open(rune, lastRun = null), close(), isOpen(), getKey(), getFields(), dispose() } */
+```
+Console: binds `#console`, `#console-log`, `#console-input`. `open` shows the layer and, on the NEXT tick, focuses the input and sets the
+prefill (so the keypress that opened it never lands in the line). Enter: empty → `onClose`; else push to history (≤ CONSOLE_HISTORY, no
+consecutive duplicates), echo `> line`, call `onLine`, log `result.message` (red when `ok === false`), clear the input, stay open. Esc →
+`onClose`. ↑/↓ walk the history (the unsent draft is restored below the newest entry). The scrollback keeps ≤ MAX_CONSOLE_LINES lines;
+multi-line text is split. Keydown events on the input never bubble. A document-capture fallback handles Esc/Enter while the console is
+open but the input lost focus (a click on the scrollback or the canvas), and refocuses the input on a printable key.
+Editor: binds `#rune-editor`, `#rune-cell`, `#rune-label`, `#rune-script`, `#rune-counter`, `#rune-errors`, `#rune-enabled`, `#rune-interact`,
+`#rune-stepon`, `#rune-cooldown`, `#rune-repeat`, `#rune-interval`, `#rune-chain`, `#rune-lastrun`, `#rune-run`, `#rune-done`, `#rune-revert`.
+`open(rune, lastRun)` fills every field, remembers the original for Revert and shows `last run (source): finished|cancelled after N commands,
+M errors` / `never run`. Typing in the script/label calls `onChange(key, fields)` after EDITOR_DEBOUNCE_MS; checkbox/number changes call it
+immediately; `Run` → flush + `onRun`; `Done` → flush + `onClose`; `Revert` → original fields + flush; Esc (document capture) → flush +
+`onClose`. The counter shows `n / 128 lines · m / 4096 chars`; `#rune-errors` lists `line N: message` from `parseScript` live. Typing past
+MAX_RUNE_SCRIPT_LINES lines trims the textarea on input (chars are capped by `maxlength`), so what the editor shows is exactly what the store
+keeps; edits are therefore never lost (main writes them to the store), and main treats Esc/Done/Run as "close" only.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
@@ -717,3 +929,8 @@ State machine: `title → loading → clickToPlay → playing ⇄ paused`, `play
     leave a residual) or the vertical sweep turns the residual into a snap through walls.
 21. Streaming distances are HEX distances in chunk coordinates measured between chunk ORIGIN cells, so the meshed region is
     off-centre by up to one chunk footprint; the fog far must stay below `(rd − 1)` rings (`fogRangeForRenderDistance`).
+22. Every block write goes through `World.setBlock` so `onBlockChange` keeps the rune store honest; never write `chunk.blocks` directly
+    from gameplay code. Area commands skip RUNE_BLOCK cells and are never allowed to mint rune blocks.
+23. Rune scripts use `@` for their own cell; `~` is the player. A chain fan-out is bounded by the wave rule (once per activation), not by
+    the hop cap. Runner state is never persisted. Repeat/step/chain are suppressed after `stopall` until an interact/console trigger.
+24. Modal states (picker, console, editor) are set BEFORE `controls.unlock()`; closing goes through `enterPlayingFromModal()`.

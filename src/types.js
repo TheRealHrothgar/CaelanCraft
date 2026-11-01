@@ -115,6 +115,27 @@
 /** @typedef {Record<ChunkKey, number[]>} EditsJSON  flat pairs [localIndex0, id0, localIndex1, id1, ...] */
 
 /**
+ * Script and trigger settings of one Rune Block (runes.js). Stored outside the chunk arrays, keyed `${q},${y},${r}`.
+ * @typedef {Object} Rune
+ * @property {number} q
+ * @property {number} y
+ * @property {number} r
+ * @property {string} key             `${q},${y},${r}`
+ * @property {string} script          ≤ MAX_RUNE_SCRIPT_CHARS chars, ≤ MAX_RUNE_SCRIPT_LINES lines
+ * @property {string} label           ≤ MAX_RUNE_LABEL_CHARS chars ('' = none)
+ * @property {boolean} enabled        master switch for every trigger (default true)
+ * @property {boolean} interact       runs on R (default true)
+ * @property {boolean} stepOn         runs when the player steps onto it
+ * @property {number} stepCooldown    seconds between two step-on firings (anti-bounce), 0..3600
+ * @property {boolean} repeat         re-runs every repeatInterval seconds while its chunk is loaded
+ * @property {number} repeatInterval  seconds, 0.25..3600
+ * @property {boolean} chain          when the script finishes, triggers the rune blocks across all 8 faces
+ */
+
+/** Serialised runes: only non-default fields per entry, keys sorted by (q, y, r).
+ * @typedef {Record<string, Partial<Rune>>} RunesJSON */
+
+/**
  * @typedef {Object} SaveData
  * @property {2} version
  * @property {number} seed
@@ -124,6 +145,7 @@
  * @property {number[]} hotbar        length 9, BlockIds
  * @property {number} selected        0..8
  * @property {EditsJSON} edits
+ * @property {RunesJSON} [runes]      optional; absent/empty when the world has no customised rune blocks
  */
 
 /**
@@ -156,6 +178,9 @@
  * @property {(yaw: number, pitch: number) => void} setLook
  * @property {() => string} getState
  * @property {(dt: number) => void} [stepFrame]  one simulation + render step (used when rAF is unavailable/starved)
+ * @property {(line: string) => ({ ok: boolean, message: string }|null)} [runCommand]  execute one console line (null before a world exists)
+ * @property {import('./runes.js').RuneStore} [runes]
+ * @property {import('./runes.js').RuneRunner|null} [runner]
  */
 
 export {};

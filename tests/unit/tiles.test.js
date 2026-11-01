@@ -48,10 +48,12 @@ function everyPixel(px, pred, rows = null) {
 }
 
 describe('TILE_NAMES', () => {
-  it('lists all 27 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
+  it('lists all 28 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
     const keys = Object.keys(TILE_NAMES).map(Number).sort((a, b) => a - b);
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
-    expect(keys.length).toBe(28);
+    expect(keys.length).toBe(29);
+    expect(TILE_NAMES[TILE.RUNE]).toBe('rune');
+    expect(TILE.RUNE).toBe(27);
     for (const [key, id] of Object.entries(TILE)) {
       expect(TILE_NAMES[id]).toBe(key.toLowerCase());
     }
@@ -156,10 +158,39 @@ describe('paintTile — recipe details', () => {
   });
   it('unknown tile ids paint the missing checker', () => {
     const missing = paintTile(TILE.MISSING);
-    for (const bad of [27, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
+    for (const bad of [28, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
       // @ts-ignore — deliberately passing garbage
       expect(sameBytes(paintTile(bad), missing), `tile ${String(bad)}`).toBe(true);
     }
+  });
+  it('rune (27): fully opaque, deterministic, dark slate with the bright cyan rune colour and a 2×2 centre dot', () => {
+    const px = paintTile(TILE.RUNE);
+    expect(px).toBeInstanceOf(Uint8ClampedArray);
+    expect(px.length).toBe(BYTES);
+    everyPixel(px, (_r, _g, _b, a) => a === 255);
+    expect(sameBytes(paintTile(TILE.RUNE), px)).toBe(true);
+    expect(sameBytes(px, paintTile(TILE.MISSING))).toBe(false);
+    // The outline colour 0x7be8ff appears (several outline pixels), the centre dot is 0xd8f8ff.
+    let bright = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const [r, g, b] = rgba(px, x, y);
+        if (r === 0x7b && g === 0xe8 && b === 0xff) bright++;
+      }
+    }
+    expect(bright).toBeGreaterThanOrEqual(12);
+    for (const [x, y] of [[7, 7], [8, 7], [7, 8], [8, 8]]) expect(rgba(px, x, y)).toEqual([0xd8, 0xf8, 0xff, 255]);
+    // Corner pixels are slate (dark, slightly blue-purple), never rune cyan.
+    for (const [x, y] of [[0, 0], [15, 0], [0, 15], [15, 15]]) {
+      const [r, g, b] = rgba(px, x, y);
+      expect(r).toBeLessThan(80);
+      expect(g).toBeLessThan(80);
+      expect(b).toBeGreaterThanOrEqual(r);
+    }
+    // Rune tiles never depend on anything but their own seed: averageColor is stable and dark overall.
+    const [ar, ag, ab] = averageColor(TILE.RUNE);
+    expect(ar).toBeLessThan(ab);
+    expect(ag).toBeLessThan(160);
   });
   it('grass_side: rows 0..1 are greenish, row 15 is brownish dirt', () => {
     const px = paintTile(TILE.GRASS_SIDE);

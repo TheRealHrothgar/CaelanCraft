@@ -999,3 +999,98 @@ describe('update() with a non-finite position', () => {
     expect(world.getChunk(NaN, NaN)).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// onBlockChange hook and editCount (CONTRACTS §9) — what keeps the rune store in step with the world.
+describe('onBlockChange hook', () => {
+  function hooked(opts = {}) {
+    const made = makeWorld(opts);
+    const calls = [];
+    made.world.onBlockChange = (q, y, r, prev, next) => {
+      calls.push({ q, y, r, prev, next, editVersion: made.world.editVersion, dirty: allDirtyKeys(made.world) });
+    };
+    return { ...made, calls };
+  }
+
+  it('fires synchronously from a successful setBlock with (q, y, r, prev, next), after editVersion++ and dirty marking', () => {
+    const { world, calls } = hooked({ worldGen: flatWorldGen(10) });
+    converge(world);
+    clearDirty(world);
+    expect(world.setBlock(3, 11, -2, B.STONE)).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ q: 3, y: 11, r: -2, prev: B.AIR, next: B.STONE, editVersion: 1 });
+    expect(calls[0].dirty).toEqual(expectedDirty(3, -2));
+    // Replacing a generated solid reports the generated id as prev; breaking reports AIR as next.
+    expect(world.setBlock(3, 10, -2, B.RUNE_BLOCK)).toBe(true);
+    expect(calls[1]).toMatchObject({ q: 3, y: 10, r: -2, prev: B.STONE, next: B.RUNE_BLOCK, editVersion: 2 });
+    expect(world.setBlock(3, 10, -2, B.AIR)).toBe(true);
+    expect(calls[2]).toMatchObject({ prev: B.RUNE_BLOCK, next: B.AIR, editVersion: 3 });
+  });
+
+  it('does not fire for no-op sets, out-of-range y, invalid ids or unloaded chunks', () => {
+    const { world, calls } = hooked({ worldGen: flatWorldGen(10) });
+    converge(world);
+    expect(world.setBlock(0, 10, 0, B.STONE)).toBe(false); // already stone
+    expect(world.setBlock(0, -1, 0, B.STONE)).toBe(false);
+    expect(world.setBlock(0, WORLD_HEIGHT, 0, B.STONE)).toBe(false);
+    expect(world.setBlock(0, 11, 0, 1.5)).toBe(false);
+    expect(world.setBlock(0, 11, 0, 300)).toBe(false);
+    expect(world.setBlock(10_000, 11, 10_000, B.STONE)).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it('does not fire from importEdits, from initial edits applied at generation, or from reloads', () => {
+    const li = localIndex(2, 11, 2);
+    const { world, calls } = hooked({ worldGen: flatWorldGen(10), edits: { '0,0': [li, B.RUNE_BLOCK] } });
+    converge(world); // applies the saved edit while generating chunk (0,0)
+    expect(world.getBlock(2, 11, 2)).toBe(B.RUNE_BLOCK);
+    expect(calls).toEqual([]);
+    world.importEdits({ '0,0': [localIndex(3, 11, 3), B.GLASS] }); // loaded chunk: applied directly
+    expect(world.getBlock(3, 11, 3)).toBe(B.GLASS);
+    world.importEdits({ '5,5': [localIndex(0, 11, 0), B.GLASS] }); // not loaded: stored only
+    expect(calls).toEqual([]);
+    // Unload → reload re-applies the edits without the hook.
+    converge(world, ...chunkCentre(9, 9));
+    expect(world.getChunk(0, 0)).toBeUndefined();
+    converge(world, 0, 0);
+    expect(world.getBlock(2, 11, 2)).toBe(B.RUNE_BLOCK);
+    expect(calls).toEqual([]);
+  });
+
+  it('the default hook is a no-op and a hook that throws does not corrupt the edit (it already happened)', () => {
+    const { world } = makeWorld({ worldGen: flatWorldGen(10) });
+    converge(world);
+    expect(typeof world.onBlockChange).toBe('function');
+    expect(() => world.onBlockChange(0, 0, 0, 0, 1)).not.toThrow();
+    world.onBlockChange = () => {
+      throw new Error('boom');
+    };
+    expect(() => world.setBlock(1, 11, 1, B.STONE)).toThrow('boom');
+    expect(world.getBlock(1, 11, 1)).toBe(B.STONE);
+    expect(world.editVersion).toBe(1);
+    expect(world.edits.get('0,0').get(localIndex(1, 11, 1))).toBe(B.STONE);
+  });
+});
+
+describe('editCount', () => {
+  it('is 0 for a fresh world and counts every recorded edit, including edits back to AIR and restored saves', () => {
+    const { world } = makeWorld({ worldGen: flatWorldGen(10) });
+    expect(world.editCount).toBe(0);
+    converge(world);
+    expect(world.editCount).toBe(0);
+    world.setBlock(0, 11, 0, B.STONE);
+    world.setBlock(1, 11, 0, B.STONE);
+    expect(world.editCount).toBe(2);
+    world.setBlock(0, 11, 0, B.AIR); // same cell: still one entry (now recording AIR)
+    expect(world.editCount).toBe(2);
+    world.setBlock(5, 10, 5, B.AIR); // breaking generated stone records an AIR edit
+    expect(world.editCount).toBe(3);
+    world.setBlock(20, 11, -20, B.GLASS); // a second chunk
+    expect(world.editCount).toBe(4);
+    expect(world.editCount).toBe([...world.edits.values()].reduce((n, m) => n + m.size, 0));
+    // Restoring a save counts its edits; unloaded chunks' edits count too.
+    const { world: w2 } = makeWorld({ worldGen: flatWorldGen(10), edits: world.exportEdits() });
+    expect(w2.editCount).toBe(4);
+    expect(w2.editVersion).toBe(0);
+  });
+});

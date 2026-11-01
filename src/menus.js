@@ -13,7 +13,7 @@ export const SPLASHES = Object.freeze([
   'Hand-crafted by Caelan!',
   'Caelan was here',
   'Caelancraft: now in 3D!',
-  'Now with 100% more cubes!',
+  'Now with 100% more hexagons!',
   'Zero textures downloaded!',
   'Procedurally generated!',
   "Don't dig straight down!",
@@ -46,6 +46,9 @@ export const CONTROLS_SHEET = Object.freeze([
   Object.freeze(['MMB', 'Pick the targeted block into the hotbar']),
   Object.freeze(['1–9', 'Select hotbar slot (or scroll wheel)']),
   Object.freeze(['E', 'Open / close the block picker']),
+  Object.freeze(['T  /', 'Command console (/ starts a command)']),
+  Object.freeze(['R', 'Run the targeted Rune Block']),
+  Object.freeze(['Shift R', 'Edit the targeted Rune Block (also opens on placing one)']),
   Object.freeze(['Esc', 'Pause · close menus']),
   Object.freeze(['F3', 'Toggle the debug overlay']),
   Object.freeze(['M', 'Mute / unmute sound']),
@@ -76,6 +79,7 @@ const IDS = Object.freeze({
   pauseMenu: 'pause-menu',
   btnResume: 'btn-resume',
   btnSave: 'btn-save',
+  btnStopRunes: 'btn-stop-runes',
   btnQuit: 'btn-quit',
   pauseSeed: 'pause-seed',
   pauseControls: 'pause-controls',
@@ -90,6 +94,7 @@ const IDS = Object.freeze({
  * @property {() => void} [onContinue]
  * @property {() => void} [onResume]
  * @property {() => void} [onSave]
+ * @property {() => void} [onStopRunes]   pause-menu "Stop All Rune Scripts"
  * @property {() => void} [onQuit]
  * @property {() => void} [onClickToPlay]
  * @property {(blockId: number, slot: number|null) => void} [onPickBlock]  slot 0..8 for Digit1-9, null for a click
@@ -363,6 +368,7 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
 
   on(el.btnResume, 'click', () => fire('onResume'));
   on(el.btnSave, 'click', () => fire('onSave'));
+  on(el.btnStopRunes, 'click', () => fire('onStopRunes'));
   on(el.btnQuit, 'click', () => fire('onQuit'));
 
   // ---- block picker --------------------------------------------------------------------------------

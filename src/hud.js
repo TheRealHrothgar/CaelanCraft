@@ -4,7 +4,7 @@
 //
 // DOM module. Nothing here touches `document` at module top level: everything is bound inside
 // createHUD(doc, atlasCanvas) so the module can be imported (and unit-tested) under Node.
-import { HOTBAR_SIZE } from './config.js';
+import { HOTBAR_SIZE, CHAT_LINES, CHAT_LINE_MS } from './config.js';
 import { BLOCK } from './blocks.js';
 import { drawBlockIcon } from './atlas.js';
 
@@ -41,6 +41,8 @@ const PICKER_OPEN = 'picker-open';
  * @property {(on: boolean) => void} setPickerOpen                    toggles #hud.picker-open (CSS lets hotbar clicks through only then)
  * @property {() => boolean} isPickerOpen
  * @property {(on: boolean) => void} setCrosshairVisible
+ * @property {(text: string|null) => void} setTargetHint              persistent one-line hint under the crosshair (null hides it)
+ * @property {(text: string, isError?: boolean) => void} addChatLine  HUD chat log (last CHAT_LINES lines, each fades after CHAT_LINE_MS)
  * @property {(slot: number) => void} onSlotClick                     assignable; fired for hotbar slot clicks while the picker is open
  * @property {() => void} dispose                                     clears timers and removes listeners
  */
@@ -73,6 +75,8 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
   const debugEl = req('debug-overlay');
   const underwaterEl = req('underwater-overlay');
   const errorEl = req('error-banner');
+  const targetHintEl = req('target-hint');
+  const chatLogEl = req('chat-log');
 
   // ---------------------------------------------------------------- hotbar slots
   /** @typedef {{ el: Element, canvas: HTMLCanvasElement|null, ctx: CanvasRenderingContext2D|null, drawnId: number }} Slot */
@@ -276,6 +280,49 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     crosshairEl.classList.toggle(HIDDEN, !on);
   }
 
+  // ---------------------------------------------------------------- target hint
+  /** @type {string|null} */
+  let lastHint = null;
+
+  /** Called every frame; only touches the DOM on change. @param {string|null} text */
+  function setTargetHint(text) {
+    const s = text == null || text === '' ? null : String(text);
+    if (s === lastHint) return;
+    lastHint = s;
+    if (s === null) {
+      targetHintEl.classList.add(HIDDEN);
+    } else {
+      targetHintEl.textContent = s;
+      targetHintEl.classList.remove(HIDDEN);
+    }
+  }
+
+  // ---------------------------------------------------------------- chat log
+  /** @type {Set<number>} */
+  const chatTimers = new Set();
+
+  /** @param {string} text @param {boolean} [isError=false] */
+  function addChatLine(text, isError = false) {
+    const lines = String(text ?? '').split('\n');
+    for (const line of lines) {
+      const div = doc.createElement('div');
+      div.textContent = line;
+      if (isError) div.classList.add(ERROR);
+      chatLogEl.appendChild(div);
+      const timer = setTimeout(() => {
+        chatTimers.delete(timer);
+        div.classList.add(FADE);
+        const t2 = setTimeout(() => {
+          chatTimers.delete(t2);
+          if (div.parentNode === chatLogEl) chatLogEl.removeChild(div);
+        }, TOAST_FADE_MS);
+        chatTimers.add(t2);
+      }, CHAT_LINE_MS);
+      chatTimers.add(timer);
+    }
+    while (chatLogEl.childNodes.length > CHAT_LINES && chatLogEl.firstChild) chatLogEl.removeChild(chatLogEl.firstChild);
+  }
+
   // ---------------------------------------------------------------- slot click hook
   /** @type {HUD} */
   const hud = {
@@ -293,6 +340,8 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     setPickerOpen,
     isPickerOpen,
     setCrosshairVisible,
+    setTargetHint,
+    addChatLine,
     onSlotClick: () => {},
     dispose,
   };
@@ -316,6 +365,8 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     clearTimeout(fadeTimer);
     clearTimeout(saveTimer);
     toastTimer = fadeTimer = saveTimer = 0;
+    for (const t of chatTimers) clearTimeout(t);
+    chatTimers.clear();
     for (let i = 0; i < slots.length; i++) slots[i].el.removeEventListener('click', clickHandlers[i]);
     hud.onSlotClick = () => {};
   }

@@ -103,6 +103,12 @@ export class World {
     this.onChunkMesh = (_key, _cq, _cr, _meshData) => {};
     /** @type {(key: ChunkKey) => void} */
     this.onChunkUnload = (_key) => {};
+    /**
+     * Assignable hook, called synchronously from setBlock (only) after a successful change, once the edit is
+     * recorded and the chunks are marked dirty. Not fired by importEdits or by applying saved edits on generation.
+     * @type {(q: number, y: number, r: number, prev: BlockId, next: BlockId) => void}
+     */
+    this.onBlockChange = (_q, _y, _r, _prev, _next) => {};
 
     /** @type {() => number} */
     this._now = typeof opts.now === 'function' ? opts.now : defaultClock();
@@ -205,6 +211,13 @@ export class World {
     return this.chunks.size;
   }
 
+  /** @returns {number} total recorded edits (cells that differ from worldgen or were edited back), across all chunks */
+  get editCount() {
+    let n = 0;
+    for (const m of this.edits.values()) n += m.size;
+    return n;
+  }
+
   /** @returns {number} terrain height from worldGen.getColumn (ignores edits) */
   getSurfaceHeight(q, r) {
     return this.worldGen.getColumn(q, r).height;
@@ -235,6 +248,7 @@ export class World {
     if (chunk === undefined) return false;
     const lq = q - cq * CHUNK_SIZE;
     const lr = r - cr * CHUNK_SIZE;
+    const prev = chunk.blocks[localIndex(lq, y, lr)];
     if (!chunk.set(lq, y, lr, id)) return false;
 
     let chunkEdits = this.edits.get(chunk.key);
@@ -245,6 +259,7 @@ export class World {
     chunkEdits.set(localIndex(lq, y, lr), id);
     this.editVersion++;
     this._markDirtyAround(q, r);
+    this.onBlockChange(q, y, r, prev, id);
     return true;
   }
 
