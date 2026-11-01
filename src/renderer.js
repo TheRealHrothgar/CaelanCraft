@@ -21,13 +21,14 @@
 
 import * as THREE from 'three';
 import {
-  CHUNK_SIZE,
   FOV,
   CAMERA_NEAR,
   CAMERA_FAR,
   MAX_PIXEL_RATIO,
   RENDER_DISTANCE,
+  FOG_FAR_CHUNK_MARGIN,
 } from './config.js';
+import { CHUNK_RING_INRADIUS, HEX_SIZE, chunkOrigin, hexToWorld } from './hex.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
@@ -37,7 +38,7 @@ import {
 /**
  * @typedef {Object} Renderer
  * @property {{ renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera }} three
- * @property {(key: string, cx: number, cz: number, meshData: ChunkMeshData|null|undefined) => void} setChunkMesh
+ * @property {(key: string, cq: number, cr: number, meshData: ChunkMeshData|null|undefined) => void} setChunkMesh
  * @property {(key: string) => void} removeChunkMesh
  * @property {(x: number, y: number, z: number, yaw: number, pitch: number) => void} setCamera
  * @property {(fov: number) => void} setFov
@@ -69,6 +70,8 @@ export const SUN_SPRITE_SCALE = 60;
 export const STAR_COUNT = 600;
 export const STAR_RADIUS = 490;
 export const HIGHLIGHT_SIZE = 1.002;
+/** Sun glow strength added by the sky dome shader at full daylight. */
+export const SKY_GLOW = 1.0;
 
 /** Sun/moon sprites are hidden once this far below the horizon (unit-direction y). */
 const HORIZON_HIDE_Y = -0.12;
@@ -89,10 +92,18 @@ void main() {
 export const SKY_FRAGMENT_SHADER = /* glsl */ `
 uniform vec3 uZenith;
 uniform vec3 uHorizon;
+uniform vec3 uSunDir;
+uniform vec3 uSunColor;
+uniform float uGlow;
 varying vec3 vDir;
 void main() {
-  float h = clamp(vDir.y, 0.0, 1.0);
-  gl_FragColor = vec4(mix(uZenith, uHorizon, pow(1.0 - h, 3.0)), 1.0);
+  vec3 d = normalize(vDir);
+  float h = clamp(d.y, 0.0, 1.0);
+  vec3 col = mix(uZenith, uHorizon, pow(1.0 - h, 3.0));
+  // Soft atmospheric glow around the sun: a wide low-power halo plus a tight bright core.
+  float s = max(dot(d, uSunDir), 0.0);
+  col += uSunColor * uGlow * (0.35 * pow(s, 8.0) + 0.5 * pow(s, 64.0));
+  gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
 }
 `;
@@ -121,13 +132,15 @@ export const DEFAULT_SKY = Object.freeze({
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Fog distances for a render distance in chunks: far = (chunks - 0.5) * 16, near = far * 0.55.
+ * Fog distances for a render distance in chunks. The meshed region is a hexagon of chunks whose inradius is
+ * CHUNK_RING_INRADIUS per ring, so far = (chunks + FOG_FAR_CHUNK_MARGIN) * CHUNK_RING_INRADIUS keeps the fog
+ * inside the geometry; near = far * 0.55.
  * @param {number} chunks
  * @returns {{ near: number, far: number }}
  */
 export function fogRangeForRenderDistance(chunks) {
   const rd = Number.isFinite(chunks) ? Math.max(1, chunks) : RENDER_DISTANCE;
-  const far = Math.max(CHUNK_SIZE, (rd - 0.5) * CHUNK_SIZE);
+  const far = Math.max(CHUNK_RING_INRADIUS, (rd + FOG_FAR_CHUNK_MARGIN) * CHUNK_RING_INRADIUS);
   return { near: far * 0.55, far };
 }
 
@@ -204,7 +217,7 @@ function releaseCpuArray() {
  */
 export function buildLayerGeometry(layer) {
   const vertexCount = layer.vertexCount > 0 ? layer.vertexCount : layer.positions.length / 3;
-  const indexCount = layer.faceCount > 0 ? layer.faceCount * 6 : layer.indices.length;
+  const indexCount = layer.indexCount > 0 ? layer.indexCount : layer.indices.length;
 
   const positions = trimTyped(layer.positions, vertexCount * 3);
   const normals = trimTyped(layer.normals, vertexCount * 3);
@@ -286,7 +299,7 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   /** @type {THREE.WebGLRenderer} */
   const renderer =
     opts.webglRenderer ||
-    new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+    new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(currentPixelRatio());
   renderer.setSize(width, height, false);
   // outputColorSpace is left at its default (SRGBColorSpace) — SPEC-engine §2.
@@ -349,6 +362,9 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
     uniforms: {
       uZenith: { value: new THREE.Color(0x6da7ff) },
       uHorizon: { value: new THREE.Color(0xbfdcff) },
+      uSunDir: { value: new THREE.Vector3(0, 1, 0) },
+      uSunColor: { value: new THREE.Color(0xfff3d0) },
+      uGlow: { value: 0 },
     },
     vertexShader: SKY_VERTEX_SHADER,
     fragmentShader: SKY_FRAGMENT_SHADER,
@@ -420,10 +436,12 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   stars.name = 'stars';
   scene.add(stars);
 
-  // --- Block highlight ------------------------------------------------------------------------
-  const highlightBox = new THREE.BoxGeometry(HIGHLIGHT_SIZE, HIGHLIGHT_SIZE, HIGHLIGHT_SIZE);
-  const highlightGeometry = new THREE.EdgesGeometry(highlightBox);
-  highlightBox.dispose();
+  // --- Block highlight: the 18 edges of a hexagonal prism, slightly larger than a cell ---------
+  // CylinderGeometry with 6 radial segments puts its first corner at +Z, exactly like hex.HEX_CORNERS
+  // (pointy along ±Z), so the wireframe lines up with the cell it outlines.
+  const highlightPrism = new THREE.CylinderGeometry(HEX_SIZE * HIGHLIGHT_SIZE, HEX_SIZE * HIGHLIGHT_SIZE, HIGHLIGHT_SIZE, 6, 1);
+  const highlightGeometry = new THREE.EdgesGeometry(highlightPrism);
+  highlightPrism.dispose();
   const highlightMaterial = new THREE.LineBasicMaterial({
     color: 0x000000,
     transparent: true,
@@ -524,7 +542,7 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   const api = {
     three: { renderer, scene, camera },
 
-    setChunkMesh(key, cx, cz, meshData) {
+    setChunkMesh(key, cq, cr, meshData) {
       removeMeshesForKey(key);
       if (!meshData) return;
 
@@ -535,7 +553,8 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
         if (!isDrawableLayer(data)) continue;
         const geometry = buildLayerGeometry(data);
         const mesh = new THREE.Mesh(geometry, layerMaterials[layer]);
-        mesh.position.set(cx * CHUNK_SIZE, 0, cz * CHUNK_SIZE);
+        const origin = chunkOrigin(cq, cr);
+        mesh.position.set(origin[0], 0, origin[1]);
         mesh.matrixAutoUpdate = false;
         mesh.updateMatrix();
         mesh.renderOrder = layerRenderOrder[layer];
@@ -572,7 +591,8 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
         highlight.visible = false;
         return;
       }
-      highlight.position.set(hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
+      const centre = hexToWorld(hit.q, hit.r);
+      highlight.position.set(centre[0], hit.y + 0.5, centre[1]);
       highlight.visible = true;
     },
 
@@ -611,6 +631,10 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
       // Sun/moon/stars: the sprites need the direction of the sun ITSELF.
       const sign = sky.isDay ? 1 : -1;
       trueSunDir.set(d[0] * sign, d[1] * sign, d[2] * sign);
+      // Sky glow follows the sun and fades out with the daylight.
+      skyMaterial.uniforms.uSunDir.value.copy(trueSunDir);
+      skyMaterial.uniforms.uSunColor.value.setRGB(sunColor[0], sunColor[1], sunColor[2], THREE.SRGBColorSpace);
+      skyMaterial.uniforms.uGlow.value = SKY_GLOW * Math.min(1, Math.max(0, sky.daylight || 0));
       const starOpacity = Math.min(1, Math.max(0, sky.stars || 0));
       starMaterial.opacity = starOpacity;
       stars.visible = starOpacity > 0.001;

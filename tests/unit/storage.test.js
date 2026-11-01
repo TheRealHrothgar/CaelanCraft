@@ -1,8 +1,11 @@
 // Unit tests for src/storage.js — see src/CONTRACTS.md §14 and docs/PLAN-build.md §2.10.
 // Storage wrappers are exercised against a Map-backed fake { getItem, setItem, removeItem }.
 import { describe, it, expect } from 'vitest';
-import { CHUNK_VOLUME, HOTBAR_SIZE, PITCH_LIMIT } from '../../src/config.js';
-import { localIndex } from '../../src/coords.js';
+import {
+  CHUNK_VOLUME, HOTBAR_SIZE, PITCH_LIMIT, MAX_RUNE_SCRIPT_CHARS, MAX_RUNE_LABEL_CHARS, STEP_COOLDOWN_MAX_S,
+  REPEAT_MIN_S, REPEAT_MAX_S, MAX_RUNE_SCRIPT_LINES,
+} from '../../src/config.js';
+import { localIndex, chunkKey, worldToChunk, worldToLocal } from '../../src/coords.js';
 import { BLOCK, DEFAULT_HOTBAR } from '../../src/blocks.js';
 import {
   SAVE_KEY, SAVE_VERSION, DEFAULT_SAVE_HOTBAR,
@@ -61,7 +64,7 @@ function randomEdits(count, seed, range = 6) {
 /** A complete, valid SaveData with a realistic spawn and the default hotbar. */
 function makeSave(edits = {}, overrides = {}) {
   return {
-    version: 1,
+    version: SAVE_VERSION,
     seed: 123456789,
     time: 0.3,
     day: 0,
@@ -109,9 +112,9 @@ function load(text) {
 // ---------------------------------------------------------------------------------------------
 
 describe('storage constants', () => {
-  it('exports the contract key and version', () => {
-    expect(SAVE_KEY).toBe('caelancraft:v1:save');
-    expect(SAVE_VERSION).toBe(1);
+  it('exports the contract key and version (v2: edits keyed by hex (q, r) chunks)', () => {
+    expect(SAVE_KEY).toBe('caelancraft:v2:save');
+    expect(SAVE_VERSION).toBe(2);
   });
 
   it('DEFAULT_SAVE_HOTBAR is a frozen copy of blocks.DEFAULT_HOTBAR', () => {
@@ -140,7 +143,7 @@ describe('serializeSave', () => {
       day: a.day,
       time: a.time,
       seed: a.seed,
-      version: 1,
+      version: SAVE_VERSION,
     };
     expect(serializeSave(a)).toBe(serializeSave(b));
   });
@@ -263,19 +266,21 @@ describe('deserializeSave', () => {
     expect(out.edits).toEqual({ '1,2': [5, BLOCK.GLASS, 6, BLOCK.DIRT] });
   });
 
-  it('returns null for wrong/missing version', () => {
+  it('returns null for wrong/missing version (a v1 cube-world save is NOT loadable)', () => {
     const base = makeSave({ '0,0': [1, 1] });
     expect(deserializeSave(JSON.stringify({ ...base, version: 0 }))).toBeNull();
-    expect(deserializeSave(JSON.stringify({ ...base, version: 2 }))).toBeNull();
-    expect(deserializeSave(JSON.stringify({ ...base, version: '1' }))).toBeNull();
+    expect(deserializeSave(JSON.stringify({ ...base, version: 1 }))).toBeNull();
+    expect(deserializeSave(JSON.stringify({ ...base, version: 3 }))).toBeNull();
+    expect(deserializeSave(JSON.stringify({ ...base, version: '2' }))).toBeNull();
     expect(deserializeSave(JSON.stringify({ ...base, version: null }))).toBeNull();
+    expect(deserializeSave(JSON.stringify({ ...base, version: SAVE_VERSION }))).not.toBeNull();
     const noVersion = /** @type {any} */ ({ ...base });
     delete noVersion.version;
     expect(deserializeSave(JSON.stringify(noVersion))).toBeNull();
   });
 
   it('returns null for garbage, empty and non-string input without throwing', () => {
-    for (const bad of ['', ' ', 'not json', '{', '{"version":1', '[]', '[1,2]', 'null', '42', '"str"', 'true', '{}']) {
+    for (const bad of ['', ' ', 'not json', '{', '{"version":2', '[]', '[1,2]', 'null', '42', '"str"', 'true', '{}']) {
       expect(deserializeSave(bad)).toBeNull();
     }
     for (const notText of [undefined, null, 123, {}, [], () => {}, Symbol('x')]) {
@@ -523,14 +528,14 @@ describe('saveGame / loadGame / hasSave / clearSave (Map-backed fake storage)', 
   });
 
   it('treats a corrupt or foreign blob under SAVE_KEY as "no save"', () => {
-    for (const blob of ['garbage', '{"version":2}', '', '{}', 'null']) {
+    for (const blob of ['garbage', '{"version":1}', '{"version":2}', '', '{}', 'null']) {
       const storage = fakeStorage([[SAVE_KEY, blob]]);
       expect(hasSave(storage), blob).toBe(false);
       expect(loadGame(storage), blob).toBeNull();
     }
     // non-string values from an odd storage implementation are ignored too
     const weird = fakeStorage();
-    weird.getItem = () => /** @type {any} */ ({ version: 1 });
+    weird.getItem = () => /** @type {any} */ ({ version: SAVE_VERSION });
     expect(loadGame(weird)).toBeNull();
   });
 
@@ -553,5 +558,182 @@ describe('saveGame / loadGame / hasSave / clearSave (Map-backed fake storage)', 
     clearSave(storage);
     expect(storage.map.get('other:key')).toBe('keep me');
     expect(storage.map.size).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Optional `runes` field (CONTRACTS §14 / §27): absent unless the world has customised rune blocks.
+
+/** EditsJSON recording BLOCK.RUNE_BLOCK at cell (q, y, r) (plus any extra pairs). */
+function runeEdits(cells, extra = {}) {
+  /** @type {Record<string, number[]>} */
+  const edits = { ...extra };
+  for (const [q, y, r] of cells) {
+    const key = chunkKey(worldToChunk(q), worldToChunk(r));
+    const li = localIndex(worldToLocal(q), y, worldToLocal(r));
+    edits[key] = (edits[key] || []).concat([li, BLOCK.RUNE_BLOCK]);
+  }
+  return edits;
+}
+
+describe('runes (optional field)', () => {
+  const SAVE_KEYS = ['version', 'seed', 'time', 'day', 'player', 'hotbar', 'selected', 'edits'];
+
+  it('serializeSave omits runes when absent, null, empty, or made only of pristine (default) entries', () => {
+    expect(Object.keys(JSON.parse(serializeSave(makeSave())))).toEqual(SAVE_KEYS);
+    expect(Object.keys(JSON.parse(serializeSave(makeSave({}, { runes: null }))))).toEqual(SAVE_KEYS);
+    expect(Object.keys(JSON.parse(serializeSave(makeSave({}, { runes: {} }))))).toEqual(SAVE_KEYS);
+    const pristine = { '1,2,3': {}, '4,5,6': { script: '', enabled: true, interact: true, stepCooldown: 1 } };
+    expect(Object.keys(JSON.parse(serializeSave(makeSave({}, { runes: pristine }))))).toEqual(SAVE_KEYS);
+  });
+
+  it('writes runes last, keys sorted by (q, y, r), canonicalised, with non-default fields only', () => {
+    const runes = {
+      '5,10,-2': { script: 'say b', label: '', enabled: true, interact: true, stepOn: false, stepCooldown: 1, repeat: false, repeatInterval: 5, chain: false },
+      '-3,64,7': { script: 'say a', chain: true, stepOn: true, stepCooldown: 2.5, repeat: true, repeatInterval: 10, label: 'lift', enabled: false, interact: false },
+      '05,10,-02': { script: 'say dup wins' }, // canonical form of 5,10,-2 → last write wins
+      '0,0,0': { label: 'only a label' },
+    };
+    const parsed = JSON.parse(serializeSave(makeSave({}, { runes })));
+    expect(Object.keys(parsed)).toEqual([...SAVE_KEYS, 'runes']);
+    expect(Object.keys(parsed.runes)).toEqual(['-3,64,7', '0,0,0', '5,10,-2']);
+    expect(parsed.runes['5,10,-2']).toEqual({ script: 'say dup wins' });
+    expect(parsed.runes['0,0,0']).toEqual({ label: 'only a label' });
+    expect(parsed.runes['-3,64,7']).toEqual({
+      script: 'say a', label: 'lift', enabled: false, interact: false, stepOn: true, stepCooldown: 2.5, repeat: true, repeatInterval: 10, chain: true,
+    });
+    // Field order inside an entry is fixed.
+    expect(Object.keys(parsed.runes['-3,64,7'])).toEqual(['script', 'label', 'enabled', 'interact', 'stepOn', 'stepCooldown', 'repeat', 'repeatInterval', 'chain']);
+  });
+
+  it('serializeSave is independent of insertion order for runes too', () => {
+    const a = makeSave({}, { runes: { '1,1,1': { script: 'x' }, '0,0,0': { script: 'y' } } });
+    const b = makeSave({}, { runes: { '0,0,0': { script: 'y' }, '1,1,1': { script: 'x' } } });
+    expect(serializeSave(a)).toBe(serializeSave(b));
+  });
+
+  it('throws a TypeError for a non-object runes field (so saveGame refuses rather than writing garbage)', () => {
+    for (const bad of [[], 'x', 42, true, new Map()]) {
+      expect(() => serializeSave(makeSave({}, { runes: bad }))).toThrow(TypeError);
+    }
+    expect(saveGame(makeSave({}, { runes: [] }), fakeStorage())).toBe(false);
+  });
+
+  it('deserializeSave keeps entries whose cell is recorded as RUNE_BLOCK in edits and drops orphans with a warning', () => {
+    const edits = runeEdits([[3, 64, -5]], { '0,0': [localIndex(1, 20, 1), BLOCK.STONE] });
+    const text = serializeSave(makeSave(edits, {
+      runes: { '3,64,-5': { script: 'say kept' }, '1,20,1': { script: 'say stone, not a rune' }, '9,9,9': { script: 'say nothing there' } },
+    }));
+    const out = load(text);
+    expect(out.runes).toEqual({ '3,64,-5': { script: 'say kept' } });
+    const w = /** @type {*} */ (out).warnings;
+    expect(w.some((s) => s.includes('(1, 20, 1)'))).toBe(true);
+    expect(w.some((s) => s.includes('(9, 9, 9)'))).toBe(true);
+    expect(w.some((s) => s.includes('(3, 64, -5)'))).toBe(false);
+  });
+
+  it('a later edit pair for the same cell wins when deciding whether the cell is a rune block', () => {
+    const q = 2, y = 30, r = 2;
+    const key = chunkKey(worldToChunk(q), worldToChunk(r));
+    const li = localIndex(worldToLocal(q), y, worldToLocal(r));
+    // Recorded as rune, then overwritten by stone in the same chunk array → not a rune any more.
+    const edits = { [key]: [li, BLOCK.RUNE_BLOCK, li, BLOCK.STONE] };
+    const raw = JSON.parse(serializeSave(makeSave(edits)));
+    raw.runes = { [`${q},${y},${r}`]: { script: 'say x' } };
+    const out = load(JSON.stringify(raw));
+    expect(out.runes).toBeUndefined();
+  });
+
+  it('drops malformed keys and non-object entries, keeps the rest', () => {
+    const edits = runeEdits([[1, 5, 1]]);
+    const raw = JSON.parse(serializeSave(makeSave(edits)));
+    raw.runes = {
+      '1,5,1': { script: 'ok' },
+      '1,5': { script: 'two parts' },
+      'a,b,c': { script: 'letters' },
+      '1,200,1': { script: 'y out of range' },
+      ' 1,5,1': { script: 'space' },
+      '1,5,1,0': { script: 'four parts' },
+      '2,5,2': 'not an object',
+      '3,5,3': ['array'],
+      '4,5,4': null,
+    };
+    const out = load(JSON.stringify(raw));
+    expect(out.runes).toEqual({ '1,5,1': { script: 'ok' } });
+    expect(/** @type {*} */ (out).warnings.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it('clamps script length and line count, label length, cooldown and interval ranges; coerces booleans; defaults non-finite numbers', () => {
+    const edits = runeEdits([[0, 10, 0]]);
+    const raw = JSON.parse(serializeSave(makeSave(edits)));
+    raw.runes = {
+      '0,10,0': {
+        script: 'say x\n'.repeat(MAX_RUNE_SCRIPT_LINES + 50),
+        label: 'L'.repeat(MAX_RUNE_LABEL_CHARS + 20),
+        stepCooldown: STEP_COOLDOWN_MAX_S * 10,
+        repeatInterval: REPEAT_MIN_S / 10,
+        enabled: 0,
+        interact: 'yes',
+        stepOn: 1,
+        repeat: NaN,
+        chain: 'true',
+        unknownField: 123,
+      },
+    };
+    const out = load(JSON.stringify(raw));
+    const r = /** @type {*} */ (out.runes)['0,10,0'];
+    expect(r.script.length).toBeLessThanOrEqual(MAX_RUNE_SCRIPT_CHARS);
+    expect(r.script.split('\n').length).toBeLessThanOrEqual(MAX_RUNE_SCRIPT_LINES);
+    expect(r.label).toBe('L'.repeat(MAX_RUNE_LABEL_CHARS));
+    expect(r.stepCooldown).toBe(STEP_COOLDOWN_MAX_S);
+    expect(r.repeatInterval).toBe(REPEAT_MIN_S);
+    expect(r.enabled).toBe(false);
+    expect(r.interact).toBeUndefined(); // 'yes' → true, which is the default and therefore omitted
+    expect(r.stepOn).toBe(true);
+    expect(r.repeat).toBeUndefined(); // NaN → false (default)
+    expect(r.chain).toBe(true);
+    expect('unknownField' in r).toBe(false);
+
+    // Non-finite / huge numbers fall back to the defaults (omitted) or the cap.
+    raw.runes = { '0,10,0': { script: 'a', stepCooldown: Infinity, repeatInterval: REPEAT_MAX_S * 2 } };
+    const out2 = load(JSON.stringify(raw));
+    const r2 = /** @type {*} */ (out2.runes)['0,10,0'];
+    expect(r2.stepCooldown).toBeUndefined();
+    expect(r2.repeatInterval).toBe(REPEAT_MAX_S);
+  });
+
+  it('a non-object runes field is ignored with a warning (never a null save); absent runes → no field, no warning', () => {
+    const base = JSON.parse(serializeSave(makeSave()));
+    for (const bad of [[], 'x', 7, true]) {
+      const out = load(JSON.stringify({ ...base, runes: bad }));
+      expect(out.runes).toBeUndefined();
+      expect(/** @type {*} */ (out).warnings).toContain('runes: not an object, ignored');
+    }
+    const plain = load(JSON.stringify(base));
+    expect(plain.runes).toBeUndefined();
+    expect(/** @type {*} */ (plain).warnings).toEqual([]);
+    // `runes: null` is also treated as absent.
+    const nul = load(JSON.stringify({ ...base, runes: null }));
+    expect(nul.runes).toBeUndefined();
+  });
+
+  it('roundtrips a save with a rune block edit and its script through serialize → deserialize → serialize', () => {
+    const cells = [[-7, 40, 12], [16, 41, -16]];
+    const edits = runeEdits(cells, { '2,2': [localIndex(0, 50, 0), BLOCK.GLASS] });
+    const runes = {
+      '-7,40,12': { script: 'setblock @ @1 @ stone\nsay lift', stepOn: true, stepCooldown: 2, chain: true },
+      '16,41,-16': { script: 'time set noon', repeat: true, repeatInterval: 30, label: 'clock' },
+    };
+    const text = serializeSave(makeSave(edits, { runes }));
+    const back = load(text);
+    expect(back.runes).toEqual(runes);
+    expect(back.edits).toEqual(edits);
+    expect(serializeSave(back)).toBe(text);
+    expect(Object.keys(JSON.parse(text))).toEqual([...SAVE_KEYS, 'runes']);
+    // And through the storage wrappers.
+    const storage = fakeStorage();
+    expect(saveGame(makeSave(edits, { runes }), storage)).toBe(true);
+    expect(loadGame(storage).runes).toEqual(runes);
+    expect(hasSave(storage)).toBe(true);
   });
 });

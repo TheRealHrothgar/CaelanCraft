@@ -1,0 +1,770 @@
+// Caelancraft — the command language shared by the console and Rune Block scripts. See src/CONTRACTS.md §26. Pure.
+//
+// Grammar (one command per line):
+//   line   := WS* ( '#' .* | '/'? NAME (WS+ ARG)* )? WS*        on text.split(/\r?\n/)
+//   NUMBER := ('~' | '@') SIGNED? | SIGNED                        SIGNED := [+-]? ( \d+ (\.\d*)? | \.\d+ )
+// `#` is a comment only as the first non-blank character of a line. NAME is case-insensitive. `say` takes the rest
+// of the line verbatim. `~` is relative to the PLAYER (cell commands: the player's cell / floor(y); world commands:
+// the position; `look`: the degrees F3 shows), `@` is relative to the EXECUTING RUNE's cell and is an error in the
+// console. Cell arguments must resolve to integers. Commands never throw: every failure is a user-facing message
+// that ends with the usage line.
+//
+// Area commands (fill / hexfill / hexring) are validated up front (size cap, y range, every covered chunk loaded,
+// edit budget) and then return a resumable AreaJob that the rune runner advances under a per-frame cell budget in
+// chunk-major order, so a 32k-cell fill never stalls a frame. They skip rune blocks, bedrock and cells the player
+// occupies, and report what they skipped.
+import {
+  WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
+  GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME,
+} from './config.js';
+import { inHeightRange, worldToChunk } from './coords.js';
+import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
+import { BLOCK, BLOCKS, BLOCK_COUNT, getBlockDef, isPlaceable, isSolid } from './blocks.js';
+import { findFreeY, findStandingY, playerIntersectsBlock } from './physics.js';
+import { formatTime } from './daynight.js';
+
+/** @typedef {import('./types.js').PlayerState} PlayerState */
+/** @typedef {import('./types.js').Rune} Rune */
+
+// ---------------------------------------------------------------------------------------------------
+// Command table
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * Argument kinds: 'cell' (integer, ~/@ allowed), 'num' (float, ~/@ allowed), 'angle' (float, ~ allowed, or a compass
+ * word), 'int' (plain integer), 'block' (name or id), 'word', 'choice:a|b|c', 'rest' (the rest of the line).
+ * @typedef {Object} CommandSpec
+ * @property {string} name
+ * @property {string} usage
+ * @property {string} summary
+ * @property {string[]} args       kinds, in order
+ * @property {number} min          minimum argument count
+ * @property {boolean} [scriptOnly]
+ */
+
+/** @type {readonly CommandSpec[]} */
+export const COMMANDS = Object.freeze([
+  { name: 'help', usage: 'help [command]', summary: 'list commands, or show one command\'s usage', args: ['word'], min: 0 },
+  { name: 'blocks', usage: 'blocks', summary: 'list every block you can place (id, name, display name)', args: [], min: 0 },
+  { name: 'pos', usage: 'pos', summary: 'print your cell, world position and look angles', args: [], min: 0 },
+  { name: 'seed', usage: 'seed', summary: 'print the world seed', args: [], min: 0 },
+  { name: 'edits', usage: 'edits', summary: 'print how many cells have been edited and the save size estimate', args: [], min: 0 },
+  { name: 'tp', usage: 'tp q y r | tp q r', summary: 'teleport to the centre of a cell (2 args: onto the surface there)', args: ['cell', 'cell', 'cell'], min: 2 },
+  { name: 'tpw', usage: 'tpw x y z', summary: 'teleport to a world position (floats)', args: ['num', 'num', 'num'], min: 3 },
+  { name: 'look', usage: 'look yaw pitch', summary: 'set the look direction in degrees as F3 shows them (yaw may be north/east/south/west)', args: ['angle', 'num'], min: 2 },
+  { name: 'setblock', usage: 'setblock q y r <block>', summary: 'put a block in one cell', args: ['cell', 'cell', 'cell', 'block'], min: 4 },
+  { name: 'fill', usage: 'fill q1 y1 r1 q2 y2 r2 <block>', summary: 'fill the axial box between two cells (a parallelogram footprint)', args: ['cell', 'cell', 'cell', 'cell', 'cell', 'cell', 'block'], min: 7 },
+  { name: 'hexfill', usage: 'hexfill q y r radius height <block>', summary: 'fill a hex disc of cells `radius` wide and `height` tall, starting at y', args: ['cell', 'cell', 'cell', 'int', 'int', 'block'], min: 6 },
+  { name: 'hexring', usage: 'hexring q y r radius height <block>', summary: 'fill the ring of cells at exactly hex distance `radius`, `height` tall', args: ['cell', 'cell', 'cell', 'int', 'int', 'block'], min: 6 },
+  { name: 'time', usage: 'time set <noon|midnight|day|night|HH:MM|0-24|0.0-1.0> | time add <HH:MM|Nh|Nm|seconds>', summary: 'set or advance the clock (game time: 86400 s per day)', args: ['choice:set|add', 'word'], min: 2 },
+  { name: 'fly', usage: 'fly on|off|toggle', summary: 'flight', args: ['choice:on|off|toggle'], min: 1 },
+  { name: 'give', usage: 'give <block> [slot 1-9]', summary: 'put a block in a hotbar slot (default: the selected one)', args: ['block', 'int'], min: 1 },
+  { name: 'say', usage: 'say <text>', summary: 'show a message', args: ['rest'], min: 1 },
+  { name: 'run', usage: 'run q y r', summary: 'trigger the rune block in that cell', args: ['cell', 'cell', 'cell'], min: 3 },
+  { name: 'wait', usage: 'wait <seconds>', summary: 'pause this script (scripts only; 0.05–600 s)', args: ['num'], min: 1, scriptOnly: true },
+  { name: 'stop', usage: 'stop', summary: 'end this script here without chaining (scripts only)', args: [], min: 0, scriptOnly: true },
+  { name: 'stopall', usage: 'stopall', summary: 'cancel every running script and pause all rune triggers until you press R on a rune or run resume', args: [], min: 0 },
+  { name: 'resume', usage: 'resume', summary: 'let rune triggers fire again after stopall', args: [], min: 0 },
+  { name: 'runes', usage: 'runes', summary: 'list the rune blocks with scripts or settings', args: [], min: 0 },
+  { name: 'rune', usage: 'rune q y r on|off', summary: 'enable or disable every trigger of one rune block', args: ['cell', 'cell', 'cell', 'choice:on|off'], min: 4 },
+]);
+
+/** @type {Map<string, CommandSpec>} */
+const SPEC_BY_NAME = new Map(COMMANDS.map((c) => [c.name, c]));
+
+/** Lines shown by `help` with no argument, after the command list. */
+export const HELP_FOOTER = Object.freeze([
+  'Coordinates: block commands take cells q y r (F3 shows them), tpw takes world x y z.',
+  '~ = relative to you (~, ~3, ~-1); @ = relative to this rune block (scripts only).',
+  'Lines starting with # are comments. T opens this console, / opens it with a slash typed.',
+]);
+
+// ---------------------------------------------------------------------------------------------------
+// Parsing
+// ---------------------------------------------------------------------------------------------------
+
+const NUMBER_RE = /^([~@])?([+-]?(?:\d+(?:\.\d*)?|\.\d+))?$/;
+const INT_RE = /^[+-]?\d+$/;
+/** Compass words for `look`: yaw degrees as F3 shows them (0 = north/−Z, positive turns left). */
+export const COMPASS = Object.freeze({ north: 0, west: 90, south: 180, east: -90 });
+
+/**
+ * @typedef {Object} ParsedCommand
+ * @property {number} line      1-based line number in the script
+ * @property {string} name      lower-case command name
+ * @property {string[]} args    raw argument tokens (for `say`: one element, the rest of the line)
+ * @property {string} raw       the trimmed source line
+ */
+/** @typedef {{ line: number, message: string }} ParseError */
+
+/**
+ * Validate a numeric token against the grammar for its kind.
+ * @returns {string|null} error text or null when fine
+ */
+function checkNumberToken(token, kind, argName) {
+  const m = NUMBER_RE.exec(token);
+  if (!m || (m[1] === undefined && m[2] === undefined)) return `expected a number for ${argName}, got "${token}"`;
+  if (kind === 'int' && (m[1] !== undefined || !INT_RE.test(token))) return `${argName} must be a plain integer, got "${token}"`;
+  return null;
+}
+
+/** Name of argument i from the usage string (best effort), e.g. 'q', 'radius', '<block>'. Alternative forms are separated by ' | '. */
+function argLabel(spec, i) {
+  const parts = spec.usage.split(' | ')[0].trim().split(/\s+/).slice(1);
+  return parts[i] ? parts[i].replace(/^\[|\]$/g, '') : `argument ${i + 1}`;
+}
+
+/**
+ * Parse one line. Returns null for blank/comment lines, a ParsedCommand, or a ParseError.
+ * @param {string} text
+ * @param {number} [lineNo=1]
+ * @returns {ParsedCommand|ParseError|null}
+ */
+export function parseLine(text, lineNo = 1) {
+  let s = String(text ?? '').trim();
+  if (s === '' || s.startsWith('#')) return null;
+  if (s.startsWith('/')) s = s.slice(1).trimStart();
+  if (s === '') return null;
+  const sp = s.search(/\s/);
+  const name = (sp < 0 ? s : s.slice(0, sp)).toLowerCase();
+  const restText = sp < 0 ? '' : s.slice(sp).trim();
+  const spec = SPEC_BY_NAME.get(name);
+  if (!spec) return { line: lineNo, message: `unknown command "${name}" (try help)` };
+
+  /** @type {string[]} */
+  let args;
+  if (spec.args[0] === 'rest') args = restText === '' ? [] : [restText];
+  else args = restText === '' ? [] : restText.split(/\s+/);
+
+  if (args.length < spec.min || args.length > spec.args.length) {
+    const expected = spec.usage.split(' | ')[0].trim().replace(/^\S+\s*/, '') || 'no arguments';
+    return { line: lineNo, message: `${name}: expected ${expected} (got ${args.length} arg${args.length === 1 ? '' : 's'}) — usage: ${spec.usage}` };
+  }
+  for (let i = 0; i < args.length; i++) {
+    const kind = spec.args[i];
+    const argName = argLabel(spec, i);
+    let err = null;
+    if (kind === 'cell' || kind === 'num' || kind === 'int') err = checkNumberToken(args[i], kind, argName);
+    else if (kind === 'angle') {
+      if (!Object.hasOwn(COMPASS, args[i].toLowerCase())) err = checkNumberToken(args[i], 'num', argName);
+    } else if (kind.startsWith('choice:')) {
+      const options = kind.slice(7).split('|');
+      if (!options.includes(args[i].toLowerCase())) err = `expected one of ${options.join(', ')}, got "${args[i]}"`;
+      else args[i] = args[i].toLowerCase();
+    }
+    if (err) return { line: lineNo, message: `${name}: ${err} — usage: ${spec.usage}` };
+  }
+  return { line: lineNo, name, args, raw: s };
+}
+
+/**
+ * Parse a whole script. Never throws. Lines beyond MAX_RUNE_SCRIPT_LINES are reported as one error and ignored.
+ * @param {string} text
+ * @returns {{ commands: ParsedCommand[], errors: ParseError[] }}
+ */
+export function parseScript(text) {
+  const lines = String(text ?? '').split(/\r?\n/);
+  /** @type {ParsedCommand[]} */
+  const commands = [];
+  /** @type {ParseError[]} */
+  const errors = [];
+  const n = Math.min(lines.length, MAX_RUNE_SCRIPT_LINES);
+  for (let i = 0; i < n; i++) {
+    const r = parseLine(lines[i], i + 1);
+    if (r === null) continue;
+    if ('name' in r) commands.push(r);
+    else errors.push(r);
+  }
+  if (lines.length > MAX_RUNE_SCRIPT_LINES) {
+    errors.push({ line: MAX_RUNE_SCRIPT_LINES + 1, message: `too many lines (${lines.length} > ${MAX_RUNE_SCRIPT_LINES}); lines after ${MAX_RUNE_SCRIPT_LINES} are dropped` });
+  }
+  return { commands, errors };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Block names
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * Resolve a block token: exact name, display name with `_` for spaces (`red_wool`), a unique prefix or substring
+ * match, or an integer id below BLOCK_COUNT. A `minecraft:` prefix is ignored. Case-insensitive.
+ * @param {string} token
+ * @returns {{ id: number }|{ error: string }}
+ */
+export function resolveBlock(token) {
+  let t = String(token ?? '').trim().toLowerCase();
+  if (t.startsWith('minecraft:')) t = t.slice(10);
+  if (t === '') return { error: 'expected a block name' };
+  if (INT_RE.test(t)) {
+    const id = Number(t);
+    if (id >= 0 && id < BLOCK_COUNT) return { id };
+    return { error: `unknown block id ${id} (0..${BLOCK_COUNT - 1}; type blocks to list them)` };
+  }
+  for (const def of BLOCKS) if (def.name === t) return { id: def.id };
+  const asDisplay = t.replace(/_/g, ' ');
+  for (const def of BLOCKS) if (def.displayName.toLowerCase() === asDisplay) return { id: def.id };
+  const prefix = BLOCKS.filter((d) => d.name.startsWith(t) || d.displayName.toLowerCase().replace(/ /g, '_').startsWith(t));
+  if (prefix.length === 1) return { id: prefix[0].id };
+  const sub = prefix.length ? prefix : BLOCKS.filter((d) => d.name.includes(t));
+  if (sub.length === 1) return { id: sub[0].id };
+  if (sub.length > 1) return { error: `ambiguous block "${token}": ${sub.map((d) => d.name).join(', ')}` };
+  return { error: `unknown block "${token}" (type blocks to list them)` };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Execution
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * @typedef {Object} CommandContext  Provided by main.js (CONTRACTS §26.3): everything the executor may touch.
+ * @property {import('./world.js').World} world
+ * @property {PlayerState} player
+ * @property {{ yaw: number, pitch: number }} controls     writable yaw/pitch (radians)
+ * @property {() => number} getTime
+ * @property {(t: number) => void} setTime                  sets the day fraction (never touches the day counter)
+ * @property {(gameSeconds: number) => void} addTime        advances/rewinds the clock; main bumps `day` when it passes midnight forwards
+ * @property {boolean} timeFrozen                           true under ?time=
+ * @property {number[]} hotbar
+ * @property {number} selected
+ * @property {(slot: number, id: number) => void} setHotbarSlot
+ * @property {(text: string) => void} say
+ * @property {(x: number, y: number, z: number) => void} teleport   moves the player (feet), zeroes velocities and seeds the step-on state
+ * @property {(on: boolean) => void} setFlying
+ * @property {import('./runes.js').RuneStore} runes
+ * @property {import('./runes.js').RuneRunner} runner
+ * @property {Rune|null} rune                               the executing rune (for `@`), null in the console
+ * @property {import('./runes.js').Running|null} running    the executing script, null in the console
+ * @property {number} seed
+ */
+
+/**
+ * @typedef {Object} CommandResult
+ * @property {boolean} ok
+ * @property {string} message        user-facing text ('' when nothing to say)
+ * @property {number} [wait]         `wait`: seconds to pause the script
+ * @property {boolean} [stop]        `stop`: end the script without chaining
+ * @property {AreaJob} [job]         area commands: the resumable job to advance under the cell budget
+ */
+
+/**
+ * @typedef {Object} AreaJob  A resumable fill. `step(maxCells)` processes up to maxCells cells — but never more than
+ *   MAX_AREA_CHUNKS_PER_FRAME distinct chunk columns (cells are chunk-major) — and returns how many it processed. The
+ *   runner calls it at most once per frame, so the chunk bound is a per-frame bound on the re-mesh work.
+ * @property {string} name
+ * @property {number} total
+ * @property {number} cursor
+ * @property {number} written
+ * @property {number} unchanged
+ * @property {number} skippedRune
+ * @property {number} skippedPlayer
+ * @property {number} skippedBedrock
+ * @property {number} skippedUnloaded   cells whose chunk unloaded after the job started
+ * @property {boolean} done
+ * @property {(maxCells: number) => number} step
+ * @property {() => string} summary
+ */
+
+/** @returns {number} cells of area jobs that are queued or running but not yet written (reserved against the edit budget) */
+function reservedCells(ctx) {
+  const running = ctx.runner && ctx.runner.running;
+  if (!running || typeof running.values !== 'function') return 0;
+  let n = 0;
+  for (const run of running.values()) if (run && run.job && !run.job.done) n += run.job.total - run.job.cursor;
+  return n;
+}
+
+/** @returns {CommandResult} */
+function fail(spec, message) {
+  return { ok: false, message: `${spec.name}: ${message} — usage: ${spec.usage}` };
+}
+/** @returns {CommandResult} */
+function ok(message) {
+  return { ok: true, message };
+}
+
+/**
+ * Resolve a numeric token against a base: plain → value; `~` → playerBase + offset; `@` → runeBase + offset.
+ * @returns {{ value: number }|{ error: string }}
+ */
+function resolveNumber(token, playerBase, runeBase, argName, ctx) {
+  const m = NUMBER_RE.exec(token);
+  if (!m || (m[1] === undefined && m[2] === undefined)) return { error: `expected a number for ${argName}, got "${token}"` };
+  const offset = m[2] === undefined ? 0 : Number(m[2]);
+  if (m[1] === undefined) return { value: offset };
+  if (m[1] === '~') return { value: playerBase + offset };
+  if (!ctx.rune) return { error: '@ is only valid inside a rune script' };
+  return { value: runeBase + offset };
+}
+
+/** Resolve a CELL coordinate token (must end up an integer). */
+function resolveCell(token, axis, argName, ctx) {
+  const p = ctx.player;
+  const [pq, pr] = worldToHex(p.x, p.z);
+  const playerBase = axis === 'q' ? pq : axis === 'r' ? pr : Math.floor(p.y);
+  const runeBase = ctx.rune ? (axis === 'q' ? ctx.rune.q : axis === 'r' ? ctx.rune.r : ctx.rune.y) : 0;
+  const r = resolveNumber(token, playerBase, runeBase, argName, ctx);
+  if ('error' in r) return r;
+  if (!Number.isInteger(r.value)) return { error: `expected an integer for ${argName}, got "${token}"` };
+  return r;
+}
+
+/** Resolve q y r cell tokens starting at args[i]. @returns {{ cell: [number, number, number] }|{ error: string }} */
+function resolveCellTriple(args, i, ctx, labels = ['q', 'y', 'r']) {
+  const out = [0, 0, 0];
+  const axes = ['q', 'y', 'r'];
+  for (let k = 0; k < 3; k++) {
+    const r = resolveCell(args[i + k], axes[k], labels[k], ctx);
+    if ('error' in r) return r;
+    out[k] = r.value;
+  }
+  return { cell: /** @type {[number, number, number]} */ (out) };
+}
+
+/** Radians → degrees in [-180, 180) (the convention of the F3 overlay). */
+export function yawToDegrees(yaw) {
+  const deg = (yaw * 180) / Math.PI;
+  return deg - Math.floor((deg + 180) / 360) * 360;
+}
+
+/** Degrees → radians wrapped to [-π, π). */
+function degreesToYaw(deg) {
+  const rad = (deg * Math.PI) / 180;
+  const twoPi = Math.PI * 2;
+  return rad - Math.floor((rad + Math.PI) / twoPi) * twoPi;
+}
+
+/** `HH:MM` → day fraction, or null. */
+function parseClock(token) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(token);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return (h * 60 + min) / 1440;
+}
+
+/**
+ * Parse a `time set` specification into a day fraction in [0, 1), or null.
+ * noon 0.5, midnight 0, day 0.25 (06:00), night 0.75 (18:00); HH:MM; a bare integer 0..24 = hours;
+ * a number with a decimal point in [0, 1] = fraction of the day.
+ */
+export function parseTimeSpec(token) {
+  const t = String(token).toLowerCase();
+  if (t === 'noon') return 0.5;
+  if (t === 'midnight') return 0;
+  if (t === 'day') return 0.25;
+  if (t === 'night') return 0.75;
+  const clock = parseClock(t);
+  if (clock !== null) return clock;
+  if (/^\d{1,2}$/.test(t)) {
+    const h = Number(t);
+    return h <= 24 ? (h % 24) / 24 : null;
+  }
+  if (/^(\d+\.\d*|\.\d+)$/.test(t)) {
+    const f = Number(t);
+    return f >= 0 && f <= 1 ? f % 1 : null;
+  }
+  return null;
+}
+
+/**
+ * Parse a `time add` duration into GAME seconds, or null. `HH:MM`, `Nh`, `Nm`, `Ns`, a signed number with a decimal
+ * point and |v| <= 1 = fraction of a day, a signed integer = game seconds.
+ */
+export function parseDurationSpec(token) {
+  const t = String(token).toLowerCase();
+  let sign = 1;
+  let body = t;
+  if (body.startsWith('-')) {
+    sign = -1;
+    body = body.slice(1);
+  } else if (body.startsWith('+')) body = body.slice(1);
+  const clock = /^(\d{1,3}):(\d{2})$/.exec(body);
+  if (clock) return Number(clock[2]) <= 59 ? sign * (Number(clock[1]) * 3600 + Number(clock[2]) * 60) : null;
+  const unit = /^(\d+(?:\.\d+)?)([hms])$/.exec(body);
+  if (unit) {
+    const v = Number(unit[1]);
+    return sign * v * (unit[2] === 'h' ? 3600 : unit[2] === 'm' ? 60 : 1);
+  }
+  if (/^(\d+\.\d*|\.\d+)$/.test(body)) {
+    const f = Number(body);
+    return f <= 1 ? sign * f * GAME_SECONDS_PER_DAY : null;
+  }
+  if (/^\d+$/.test(body)) return sign * Number(body);
+  return null;
+}
+
+// ---- area jobs --------------------------------------------------------------------------------------
+
+/** Order cells chunk-major (cq, cr), then q, r, y so a frame's writes stay inside one or two chunks. */
+function sortChunkMajor(cells) {
+  const keyed = cells.map((c) => ({ c, k: [worldToChunk(c[0]), worldToChunk(c[2]), c[0], c[2], c[1]] }));
+  keyed.sort((a, b) => {
+    for (let i = 0; i < 5; i++) if (a.k[i] !== b.k[i]) return a.k[i] - b.k[i];
+    return 0;
+  });
+  for (let i = 0; i < cells.length; i++) cells[i] = keyed[i].c;
+}
+
+/**
+ * Validate an area command's target cells and build its job.
+ * @param {CommandSpec} spec
+ * @param {number[][]} cells   [q, y, r] triples (unsorted)
+ * @param {number} id
+ * @param {CommandContext} ctx
+ * @returns {CommandResult}
+ */
+function makeAreaJob(spec, cells, id, ctx) {
+  const total = cells.length;
+  if (total > MAX_FILL_CELLS) return fail(spec, `too large: ${total} cells (max ${MAX_FILL_CELLS}) — lower the size`);
+  if (id === BLOCK.RUNE_BLOCK) return fail(spec, 'use setblock for rune blocks');
+  if (id === BLOCK.BEDROCK) return fail(spec, 'bedrock cannot be placed');
+  for (const c of cells) {
+    if (!inHeightRange(c[1])) return fail(spec, `y must be 0..${WORLD_HEIGHT - 1}`);
+  }
+  // Atomic across chunks: every covered chunk column must be loaded.
+  const loadedChunks = new Set();
+  let unloadedCells = 0;
+  for (const c of cells) {
+    const ck = `${worldToChunk(c[0])},${worldToChunk(c[2])}`;
+    if (loadedChunks.has(ck)) continue;
+    if (ctx.world.hasChunkAtCell(c[0], c[2])) loadedChunks.add(ck);
+    else unloadedCells++;
+  }
+  if (unloadedCells > 0) return fail(spec, `${unloadedCells} cells are in unloaded chunks (nothing changed)`);
+  const editCount = ctx.world.editCount + reservedCells(ctx);
+  if (editCount + total > MAX_TOTAL_EDITS) {
+    return fail(spec, `world edit budget exceeded (${editCount} of ${MAX_TOTAL_EDITS} cells used or queued; this needs ${total}) — fill some of it back to its original blocks`);
+  }
+  sortChunkMajor(cells);
+  const world = ctx.world;
+  const player = ctx.player;
+  const solid = isSolid(id);
+  /** @type {AreaJob} */
+  const job = {
+    name: spec.name,
+    total,
+    cursor: 0,
+    written: 0,
+    unchanged: 0,
+    skippedRune: 0,
+    skippedPlayer: 0,
+    skippedBedrock: 0,
+    skippedUnloaded: 0,
+    done: total === 0,
+    step(maxCells) {
+      let n = 0;
+      let chunks = 0;
+      let curCq = NaN;
+      let curCr = NaN;
+      while (job.cursor < total && n < maxCells) {
+        const c = cells[job.cursor];
+        const cq = worldToChunk(c[0]);
+        const cr = worldToChunk(c[2]);
+        if (cq !== curCq || cr !== curCr) {
+          if (chunks >= MAX_AREA_CHUNKS_PER_FRAME) break; // next chunk column waits for the next frame
+          chunks++;
+          curCq = cq;
+          curCr = cr;
+        }
+        job.cursor++;
+        n++;
+        if (!world.hasChunkAtCell(c[0], c[2])) {
+          job.skippedUnloaded++;
+          continue;
+        }
+        const current = world.getBlock(c[0], c[1], c[2]);
+        if (current === id) {
+          job.unchanged++;
+          continue;
+        }
+        if (current === BLOCK.RUNE_BLOCK) {
+          job.skippedRune++;
+          continue;
+        }
+        if (current === BLOCK.BEDROCK) {
+          job.skippedBedrock++;
+          continue;
+        }
+        if (solid && playerIntersectsBlock(player, c[0], c[1], c[2])) {
+          job.skippedPlayer++;
+          continue;
+        }
+        if (world.setBlock(c[0], c[1], c[2], id)) job.written++;
+        else job.unchanged++;
+      }
+      if (job.cursor >= total) job.done = true;
+      return n;
+    },
+    summary() {
+      const parts = [];
+      if (job.unchanged) parts.push(`${job.unchanged} unchanged`);
+      if (job.skippedRune) parts.push(`skipped ${job.skippedRune} rune block${job.skippedRune === 1 ? '' : 's'}`);
+      if (job.skippedPlayer) parts.push(`skipped ${job.skippedPlayer} occupied by you`);
+      if (job.skippedBedrock) parts.push(`skipped ${job.skippedBedrock} bedrock`);
+      if (job.skippedUnloaded) parts.push(`skipped ${job.skippedUnloaded} in chunks that unloaded`);
+      return `${spec.name}: ${job.written} cells set to ${getBlockDef(id).name}${parts.length ? ` (${parts.join(', ')})` : ''}`;
+    },
+  };
+  return { ok: true, message: '', job };
+}
+
+/** Cells of the hex disc (or ring when `ring`) of hex radius `radius` around (q, r), y in [y0, y0 + height). */
+export function hexAreaCells(q, y0, r, radius, height, ring) {
+  const cells = [];
+  for (let dq = -radius; dq <= radius; dq++) {
+    for (let dr = -radius; dr <= radius; dr++) {
+      const d = hexLength(dq, dr);
+      if (d > radius || (ring && d !== radius)) continue;
+      for (let y = y0; y < y0 + height; y++) cells.push([q + dq, y, r + dr]);
+    }
+  }
+  return cells;
+}
+
+// ---- the executor --------------------------------------------------------------------------------------
+
+/**
+ * Execute one parsed command. Never throws.
+ * @param {ParsedCommand} cmd
+ * @param {CommandContext} ctx
+ * @returns {CommandResult}
+ */
+export function executeCommand(cmd, ctx) {
+  const spec = SPEC_BY_NAME.get(cmd.name);
+  if (!spec) return { ok: false, message: `unknown command "${cmd.name}" (try help)` };
+  try {
+    return run(spec, cmd.args, ctx);
+  } catch (err) {
+    return { ok: false, message: `${spec.name}: internal error: ${err && err.message ? err.message : err}` };
+  }
+}
+
+/**
+ * @param {CommandSpec} spec
+ * @param {string[]} args
+ * @param {CommandContext} ctx
+ * @returns {CommandResult}
+ */
+function run(spec, args, ctx) {
+  const world = ctx.world;
+  const p = ctx.player;
+  if (spec.scriptOnly && !ctx.running) return fail(spec, `${spec.name} is only valid inside a rune script`);
+
+  switch (spec.name) {
+    case 'help': {
+      if (args.length === 1) {
+        const s = SPEC_BY_NAME.get(args[0].toLowerCase().replace(/^\//, ''));
+        if (!s) return ok(`no command "${args[0]}" — type help for the list`);
+        return ok(`${s.usage}\n  ${s.summary}`);
+      }
+      const lines = COMMANDS.map((c) => `${c.usage}  — ${c.summary}`);
+      return ok(lines.concat(HELP_FOOTER).join('\n'));
+    }
+    case 'blocks': {
+      const lines = BLOCKS.filter((d) => d.id === BLOCK.AIR || isPlaceable(d.id)).map((d) => `${String(d.id).padStart(2)} ${d.name} (${d.displayName})`);
+      return ok(lines.join('\n'));
+    }
+    case 'pos': {
+      const [q, r] = worldToHex(p.x, p.z);
+      return ok(`cell ${q} ${Math.floor(p.y)} ${r} · world ${p.x.toFixed(2)} ${p.y.toFixed(2)} ${p.z.toFixed(2)} · yaw ${yawToDegrees(ctx.controls.yaw).toFixed(1)} pitch ${((ctx.controls.pitch * 180) / Math.PI).toFixed(1)}`);
+    }
+    case 'seed':
+      return ok(`seed ${ctx.seed}`);
+    case 'edits': {
+      const n = world.editCount;
+      return ok(`${n} edited cells (≈ ${Math.round((n * 8) / 1024)} KB of save data, budget ${MAX_TOTAL_EDITS})`);
+    }
+    case 'tp': {
+      if (args.length === 2) {
+        const rq = resolveCell(args[0], 'q', 'q', ctx);
+        if ('error' in rq) return fail(spec, rq.error);
+        const rr = resolveCell(args[1], 'r', 'r', ctx);
+        if ('error' in rr) return fail(spec, rr.error);
+        if (!world.hasChunkAtCell(rq.value, rr.value)) return fail(spec, 'target is not loaded');
+        const [x, z] = hexToWorld(rq.value, rr.value);
+        const fy = findStandingY(world.getBlock, x, z, WORLD_HEIGHT - 2);
+        if (fy === null) return fail(spec, `no ground at (${rq.value}, ${rr.value})`);
+        ctx.teleport(x, fy, z);
+        return ok(`teleported to cell ${rq.value} ${fy} ${rr.value}`);
+      }
+      const rc = resolveCellTriple(args, 0, ctx);
+      if ('error' in rc) return fail(spec, rc.error);
+      const [q, y, r] = rc.cell;
+      if (!(y >= 0 && y <= WORLD_HEIGHT - 2)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 2}`);
+      if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+      const [x, z] = hexToWorld(q, r);
+      const fy = findFreeY(world.getBlock, x, z, y, 2);
+      if (fy === null) return fail(spec, 'target is inside a block');
+      ctx.teleport(x, fy, z);
+      return ok(`teleported to cell ${q} ${fy} ${r}`);
+    }
+    case 'tpw': {
+      const runeWorld = ctx.rune ? hexToWorld(ctx.rune.q, ctx.rune.r) : null;
+      const playerBases = [p.x, p.y, p.z];
+      const runeBases = runeWorld ? [runeWorld[0], ctx.rune.y + 1, runeWorld[1]] : [0, 0, 0];
+      const vals = [0, 0, 0];
+      for (let i = 0; i < 3; i++) {
+        const r = resolveNumber(args[i], playerBases[i], runeBases[i], 'xyz'[i], ctx);
+        if ('error' in r) return fail(spec, r.error);
+        vals[i] = r.value;
+      }
+      const [x, y, z] = vals;
+      if (!(y >= 0 && y <= WORLD_HEIGHT - 2)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 2}`);
+      if (!world.hasChunkAt(x, z)) return fail(spec, 'target is not loaded');
+      const fy = findFreeY(world.getBlock, x, z, y, 2);
+      if (fy === null) return fail(spec, 'target is inside a block');
+      ctx.teleport(x, fy, z);
+      return ok(`teleported to ${x.toFixed(2)} ${fy.toFixed(2)} ${z.toFixed(2)}`);
+    }
+    case 'look': {
+      let yawDeg;
+      const word = args[0].toLowerCase();
+      if (Object.hasOwn(COMPASS, word)) yawDeg = COMPASS[word];
+      else {
+        const r = resolveNumber(args[0], yawToDegrees(ctx.controls.yaw), 0, 'yaw', ctx);
+        if ('error' in r) return fail(spec, r.error);
+        yawDeg = r.value;
+      }
+      const rp = resolveNumber(args[1], (ctx.controls.pitch * 180) / Math.PI, 0, 'pitch', ctx);
+      if ('error' in rp) return fail(spec, rp.error);
+      const limitDeg = (PITCH_LIMIT * 180) / Math.PI;
+      const pitchDeg = Math.max(-limitDeg, Math.min(limitDeg, rp.value));
+      ctx.controls.yaw = degreesToYaw(yawDeg);
+      ctx.controls.pitch = (pitchDeg * Math.PI) / 180;
+      return ok(`looking yaw ${yawToDegrees(ctx.controls.yaw).toFixed(1)} pitch ${pitchDeg.toFixed(1)}`);
+    }
+    case 'setblock': {
+      const rc = resolveCellTriple(args, 0, ctx);
+      if ('error' in rc) return fail(spec, rc.error);
+      const [q, y, r] = rc.cell;
+      const rb = resolveBlock(args[3]);
+      if ('error' in rb) return fail(spec, rb.error);
+      if (rb.id === BLOCK.BEDROCK) return fail(spec, 'bedrock cannot be placed');
+      if (!inHeightRange(y)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 1}`);
+      if (!world.hasChunkAtCell(q, r)) return fail(spec, `cell (${q}, ${y}, ${r}) is not loaded`);
+      const current = world.getBlock(q, y, r);
+      if (current === rb.id) return ok(`cell (${q}, ${y}, ${r}) is already ${getBlockDef(rb.id).name}`);
+      if (isSolid(rb.id) && playerIntersectsBlock(p, q, y, r)) return fail(spec, 'that cell is occupied by you');
+      if (current === BLOCK.BEDROCK) return fail(spec, 'bedrock cannot be replaced');
+      if (!world.setBlock(q, y, r, rb.id)) return fail(spec, `could not set cell (${q}, ${y}, ${r})`);
+      return ok(`set ${getBlockDef(rb.id).name} at (${q}, ${y}, ${r})`);
+    }
+    case 'fill': {
+      const a = resolveCellTriple(args, 0, ctx, ['q1', 'y1', 'r1']);
+      if ('error' in a) return fail(spec, a.error);
+      const b = resolveCellTriple(args, 3, ctx, ['q2', 'y2', 'r2']);
+      if ('error' in b) return fail(spec, b.error);
+      const rb = resolveBlock(args[6]);
+      if ('error' in rb) return fail(spec, rb.error);
+      const q0 = Math.min(a.cell[0], b.cell[0]);
+      const q1 = Math.max(a.cell[0], b.cell[0]);
+      const y0 = Math.min(a.cell[1], b.cell[1]);
+      const y1 = Math.max(a.cell[1], b.cell[1]);
+      const r0 = Math.min(a.cell[2], b.cell[2]);
+      const r1 = Math.max(a.cell[2], b.cell[2]);
+      const total = (q1 - q0 + 1) * (y1 - y0 + 1) * (r1 - r0 + 1);
+      if (total > MAX_FILL_CELLS) return fail(spec, `too large: ${total} cells (max ${MAX_FILL_CELLS}) — lower the size`);
+      if (!inHeightRange(y0) || !inHeightRange(y1)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 1}`);
+      const cells = [];
+      for (let q = q0; q <= q1; q++) for (let r = r0; r <= r1; r++) for (let y = y0; y <= y1; y++) cells.push([q, y, r]);
+      return makeAreaJob(spec, cells, rb.id, ctx);
+    }
+    case 'hexfill':
+    case 'hexring': {
+      const rc = resolveCellTriple(args, 0, ctx);
+      if ('error' in rc) return fail(spec, rc.error);
+      const radius = Number(args[3]);
+      const height = Number(args[4]);
+      if (radius < 0 || radius > AREA_MAX_RADIUS) return fail(spec, `radius must be 0..${AREA_MAX_RADIUS}`);
+      if (height < 1 || height > AREA_MAX_HEIGHT) return fail(spec, `height must be 1..${AREA_MAX_HEIGHT}`);
+      const rb = resolveBlock(args[5]);
+      if ('error' in rb) return fail(spec, rb.error);
+      const ring = spec.name === 'hexring';
+      const total = (ring ? (radius === 0 ? 1 : 6 * radius) : hexDiscCount(radius)) * height;
+      if (total > MAX_FILL_CELLS) return fail(spec, `too large: ${total} cells (max ${MAX_FILL_CELLS}) — lower radius or height`);
+      const [q, y, r] = rc.cell;
+      if (!inHeightRange(y) || !inHeightRange(y + height - 1)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 1} for every layer (${y}..${y + height - 1})`);
+      return makeAreaJob(spec, hexAreaCells(q, y, r, radius, height, ring), rb.id, ctx);
+    }
+    case 'time': {
+      if (ctx.timeFrozen) return fail(spec, 'time is frozen by ?time=');
+      if (args[0] === 'set') {
+        const t = parseTimeSpec(args[1]);
+        if (t === null) return fail(spec, `bad time "${args[1]}"`);
+        ctx.setTime(t);
+        return ok(`time set to ${formatTime(t)}`);
+      }
+      const d = parseDurationSpec(args[1]);
+      if (d === null) return fail(spec, `bad duration "${args[1]}"`);
+      ctx.addTime(d);
+      return ok(`time is now ${formatTime(ctx.getTime())}`);
+    }
+    case 'fly': {
+      const on = args[0] === 'toggle' ? !p.flying : args[0] === 'on';
+      ctx.setFlying(on);
+      return ok(on ? 'flying' : 'walking');
+    }
+    case 'give': {
+      const rb = resolveBlock(args[0]);
+      if ('error' in rb) return fail(spec, rb.error);
+      if (!isPlaceable(rb.id)) return fail(spec, `"${getBlockDef(rb.id).name}" is not placeable`);
+      let slot = ctx.selected;
+      if (args.length === 2) {
+        const n = Number(args[1]);
+        if (!(n >= 1 && n <= HOTBAR_SIZE)) return fail(spec, `slot must be 1-${HOTBAR_SIZE}`);
+        slot = n - 1;
+      }
+      ctx.setHotbarSlot(slot, rb.id);
+      return ok(`gave ${getBlockDef(rb.id).name} to slot ${slot + 1}`);
+    }
+    case 'say':
+      ctx.say(args[0]);
+      return ok('');
+    case 'run': {
+      const rc = resolveCellTriple(args, 0, ctx);
+      if ('error' in rc) return fail(spec, rc.error);
+      const [q, y, r] = rc.cell;
+      const res = ctx.runner.trigger(`${q},${y},${r}`, ctx.running ? 'run' : 'console',
+        ctx.running ? { wave: ctx.running.wave, hops: ctx.running.hops + 1 } : undefined);
+      return res.ok ? ok(`running rune (${q}, ${y}, ${r})`) : fail(spec, res.reason || 'could not run');
+    }
+    case 'wait': {
+      const s = Number(args[0]);
+      if (!(s >= WAIT_MIN_S && s <= WAIT_MAX_S)) return fail(spec, `seconds must be ${WAIT_MIN_S}..${WAIT_MAX_S}`);
+      return { ok: true, message: '', wait: s };
+    }
+    case 'stop':
+      return { ok: true, message: '', stop: true };
+    case 'stopall': {
+      const n = ctx.runner.stopAll();
+      return ok(`stopped ${n} script${n === 1 ? '' : 's'}; rune triggers paused (press R on a rune or run resume)`);
+    }
+    case 'resume':
+      ctx.runner.resume();
+      return ok('rune triggers resumed');
+    case 'runes': {
+      const list = ctx.runes.list();
+      if (list.length === 0) return ok('no rune blocks with scripts or settings');
+      const lines = list.slice(0, 50).map((ru) => {
+        const trig = [ru.interact && 'R', ru.stepOn && 'step', ru.repeat && `every ${ru.repeatInterval}s`, ru.chain && 'chain'].filter(Boolean).join(' ');
+        return `${ru.q} ${ru.y} ${ru.r} · ${ru.label || '(no label)'} · ${ru.enabled ? trig || 'no triggers' : 'OFF'} · ${ctx.runner.isRunning(ru.key) ? 'running' : 'idle'}`;
+      });
+      if (list.length > 50) lines.push(`… and ${list.length - 50} more`);
+      return ok(lines.join('\n'));
+    }
+    case 'rune': {
+      const rc = resolveCellTriple(args, 0, ctx);
+      if ('error' in rc) return fail(spec, rc.error);
+      const [q, y, r] = rc.cell;
+      if (!world.hasChunkAtCell(q, r)) return fail(spec, `cell (${q}, ${y}, ${r}) is not loaded`);
+      if (world.getBlock(q, y, r) !== BLOCK.RUNE_BLOCK) return fail(spec, `no rune block at (${q}, ${y}, ${r})`);
+      const rune = ctx.runes.set(q, y, r, { enabled: args[3] === 'on' });
+      if (!rune) return fail(spec, `too many rune blocks (max ${ctx.runes.max})`);
+      if (!rune.enabled) ctx.runner.cancel(rune.key);
+      return ok(`rune (${q}, ${y}, ${r}) ${rune.enabled ? 'enabled' : 'disabled'}`);
+    }
+    default:
+      return { ok: false, message: `unknown command "${spec.name}"` };
+  }
+}

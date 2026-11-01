@@ -2,14 +2,19 @@
 //
 // Everything here is deterministic for a given seed and never touches Math.random, window,
 // document or performance. `getColumn` is the single source of truth for anything that must agree
-// across chunk borders (trees, spawn): it depends only on (seed, wx, wz).
+// across chunk borders (trees, spawn): it depends only on (seed, q, r).
 //
-// Chunk layout (CONTRACTS §0): `localIndex(lx, ly, lz) = (lx * 16 + lz) * 128 + ly`, so a column is
+// Cells are hexagonal prisms addressed by axial (q, r). Continuous noise is always sampled at the cell's
+// WORLD position (hex.hexToWorld) so terrain, climate and caves are isotropic rather than sheared along
+// the axial axes; discrete hashes (bedrock, dirt depth, ores, trees) use the integer cell coordinates.
+//
+// Chunk layout (CONTRACTS §0): `localIndex(lq, ly, lr) = (lq * 16 + lr) * 128 + ly`, so a column is
 // a contiguous run of WORLD_HEIGHT bytes and can be filled with `Uint8Array.fill(id, from, to)`.
 import {
   CHUNK_SIZE, WORLD_HEIGHT, CHUNK_AREA, CHUNK_VOLUME, SEA_LEVEL, MIN_TERRAIN_HEIGHT, MAX_TERRAIN_HEIGHT,
 } from './config.js';
 import { floorDiv } from './coords.js';
+import { HEX_DIRS, hexToWorld, hexLength } from './hex.js';
 import { BLOCK, BIOME } from './blocks.js';
 import { normalizeSeed, hash2, hash3, rand3, mulberry32, clamp, createNoise } from './noise.js';
 
@@ -56,6 +61,8 @@ const CAVERN_THRESHOLD = 0.55;
 const OCEAN_CAVE_MAX_Y = SEA_LEVEL - 12;
 const TREE_SALT = 0x7ee5;
 const CANOPY_RADIUS = 2;
+/** Side faces whose neighbours carry the topmost leaf layer (T+2) besides the trunk column. */
+const CROWN_DIRS = Object.freeze([0, 2, 4]);
 
 /**
  * Create a deterministic world generator.
@@ -78,12 +85,14 @@ export function createWorldGen(seed) {
   const treeSeed = s ^ TREE_SALT;
 
   /**
-   * Terrain height / biome / climate of one world column. Pure in (seed, wx, wz).
-   * @param {number} wx
-   * @param {number} wz
+   * Terrain height / biome / climate of one cell column. Pure in (seed, q, r); noise is sampled at the
+   * cell's world position so the terrain is isotropic.
+   * @param {number} q
+   * @param {number} r
    * @returns {ColumnInfo}
    */
-  function getColumn(wx, wz) {
+  function getColumn(q, r) {
+    const [wx, wz] = hexToWorld(q, r);
     const c = nCont.fbm2D(wx / 500, wz / 500, 3);
     const d = nDetail.fbm2D(wx / 50, wz / 50, 2);
     const mRaw = nMount.fbm2D(wx / 250, wz / 250, 2);
@@ -113,12 +122,12 @@ export function createWorldGen(seed) {
    * `base` (= localIndex(lx, 0, lz)).
    * @param {Uint8Array} blocks
    * @param {number} base
-   * @param {number} wx
-   * @param {number} wz
+   * @param {number} q
+   * @param {number} r
    * @param {number} height
    * @param {number} biome
    */
-  function fillColumn(blocks, base, wx, wz, height, biome) {
+  function fillColumn(blocks, base, q, r, height, biome) {
     // Stone core for the whole column; the surface layers overwrite the top of it.
     blocks.fill(BLOCK.STONE, base, base + height + 1);
 
@@ -133,7 +142,7 @@ export function createWorldGen(seed) {
         break;
       case BIOME.PLAINS:
       case BIOME.FOREST: {
-        const depth = 3 + (hash2(wx, wz, s) & 1);
+        const depth = 3 + (hash2(q, r, s) & 1);
         fillLayer(blocks, base, height - depth, height - 1, BLOCK.DIRT);
         blocks[base + height] = BLOCK.GRASS_BLOCK;
         break;
@@ -157,8 +166,8 @@ export function createWorldGen(seed) {
 
     // Bedrock floor: solid at y=0, probabilistic at y=1 and y=2. Applied last so it always wins.
     blocks[base] = BLOCK.BEDROCK;
-    if (rand3(wx, 1, wz, s) < 0.5) blocks[base + 1] = BLOCK.BEDROCK;
-    if (rand3(wx, 2, wz, s) < 0.15) blocks[base + 2] = BLOCK.BEDROCK;
+    if (rand3(q, 1, r, s) < 0.5) blocks[base + 1] = BLOCK.BEDROCK;
+    if (rand3(q, 2, r, s) < 0.15) blocks[base + 2] = BLOCK.BEDROCK;
 
     // Water fills the column above the terrain up to sea level.
     if (height < SEA_LEVEL) blocks.fill(BLOCK.WATER, base + height + 1, base + SEA_LEVEL + 1);
@@ -169,8 +178,8 @@ export function createWorldGen(seed) {
    * whether it runs per column or as a separate pass after all columns are filled.
    * @param {Uint8Array} blocks
    * @param {number} base
-   * @param {number} wx
-   * @param {number} wz
+   * @param {number} wx  world x of the cell centre
+   * @param {number} wz  world z of the cell centre
    * @param {number} height
    * @param {number} biome
    */
@@ -203,97 +212,101 @@ export function createWorldGen(seed) {
   }
 
   /**
-   * Step 3: ore veins as seeded random walks that replace STONE only.
+   * Step 3: ore veins as seeded random walks over the 8 cell neighbours (6 sides, up, down) that replace
+   * STONE only.
    * @param {Uint8Array} blocks
-   * @param {number} cx
-   * @param {number} cz
+   * @param {number} cq
+   * @param {number} cr
    */
-  function placeOres(blocks, cx, cz) {
+  function placeOres(blocks, cq, cr) {
     for (let oi = 0; oi < ORE_TABLE.length; oi++) {
       const o = ORE_TABLE[oi];
       for (let i = 0; i < o.attempts; i++) {
-        const rng = mulberry32(hash3(cx, cz, oi * 1000 + i, s));
-        let x = Math.floor(rng() * CHUNK_SIZE);
-        let z = Math.floor(rng() * CHUNK_SIZE);
+        const rng = mulberry32(hash3(cq, cr, oi * 1000 + i, s));
+        let lq = Math.floor(rng() * CHUNK_SIZE);
+        let lr = Math.floor(rng() * CHUNK_SIZE);
         let y = o.minY + Math.floor(rng() * (o.maxY - o.minY + 1));
         const size = o.minSize + Math.floor(rng() * (o.maxSize - o.minSize + 1));
-        placeOreCell(blocks, x, y, z, o.id);
+        placeOreCell(blocks, lq, y, lr, o.id);
         for (let step = 0; step < size; step++) {
-          const axis = Math.floor(rng() * 3);
-          const dir = rng() < 0.5 ? -1 : 1;
-          if (axis === 0) x += dir;
-          else if (axis === 1) y += dir;
-          else z += dir;
-          placeOreCell(blocks, x, y, z, o.id);
+          const dir = Math.floor(rng() * 8);
+          if (dir === 6) y += 1;
+          else if (dir === 7) y -= 1;
+          else {
+            lq += HEX_DIRS[dir][0];
+            lr += HEX_DIRS[dir][1];
+          }
+          placeOreCell(blocks, lq, y, lr, o.id);
         }
       }
     }
   }
 
   /**
-   * Step 4: trees from the jittered TREE_CELL grid. Only cells inside this chunk are written; the
-   * decision whether a tree exists depends solely on getColumn, so neighbouring chunks agree.
+   * Step 4: trees from the jittered TREE_CELL grid in (q, r) index space. Only cells inside this chunk are
+   * written; the decision whether a tree exists depends solely on getColumn, so neighbouring chunks agree.
    * @param {Uint8Array} blocks
-   * @param {number} cx
-   * @param {number} cz
+   * @param {number} cq
+   * @param {number} cr
    */
-  function placeTrees(blocks, cx, cz) {
-    const ox = cx * CHUNK_SIZE;
-    const oz = cz * CHUNK_SIZE;
-    const kx0 = floorDiv(ox - 3, TREE_CELL);
-    const kx1 = floorDiv(ox + CHUNK_SIZE + 2, TREE_CELL);
-    const kz0 = floorDiv(oz - 3, TREE_CELL);
-    const kz1 = floorDiv(oz + CHUNK_SIZE + 2, TREE_CELL);
-    for (let kx = kx0; kx <= kx1; kx++) {
-      for (let kz = kz0; kz <= kz1; kz++) {
-        const hsh = hash2(kx, kz, treeSeed);
-        const tx = kx * TREE_CELL + 1 + (hsh & 3);
-        const tz = kz * TREE_CELL + 1 + ((hsh >>> 2) & 3);
-        const lx0 = tx - ox;
-        const lz0 = tz - oz;
+  function placeTrees(blocks, cq, cr) {
+    const oq = cq * CHUNK_SIZE;
+    const or = cr * CHUNK_SIZE;
+    const kq0 = floorDiv(oq - 3, TREE_CELL);
+    const kq1 = floorDiv(oq + CHUNK_SIZE + 2, TREE_CELL);
+    const kr0 = floorDiv(or - 3, TREE_CELL);
+    const kr1 = floorDiv(or + CHUNK_SIZE + 2, TREE_CELL);
+    for (let kq = kq0; kq <= kq1; kq++) {
+      for (let kr = kr0; kr <= kr1; kr++) {
+        const hsh = hash2(kq, kr, treeSeed);
+        const tq = kq * TREE_CELL + 1 + (hsh & 3);
+        const tr = kr * TREE_CELL + 1 + ((hsh >>> 2) & 3);
+        const lq0 = tq - oq;
+        const lr0 = tr - or;
         // A tree only touches this chunk when its canopy overlaps it; skip the noise work otherwise.
-        if (lx0 < -CANOPY_RADIUS || lx0 >= CHUNK_SIZE + CANOPY_RADIUS ||
-            lz0 < -CANOPY_RADIUS || lz0 >= CHUNK_SIZE + CANOPY_RADIUS) continue;
+        if (lq0 < -CANOPY_RADIUS || lq0 >= CHUNK_SIZE + CANOPY_RADIUS ||
+            lr0 < -CANOPY_RADIUS || lr0 >= CHUNK_SIZE + CANOPY_RADIUS) continue;
         const trunk = 4 + ((hsh >>> 4) % 3);
         const roll = ((hsh >>> 8) & 0xffff) / 65536;
-        const col = getColumn(tx, tz);
+        const col = getColumn(tq, tr);
         if (!(roll < TREE_DENSITY[col.biome] && col.height >= SEA_LEVEL + 2 && col.height + trunk + 2 < WORLD_HEIGHT)) {
           continue;
         }
-        stampTree(blocks, lx0, lz0, col.height + 1, col.height + trunk);
+        stampTree(blocks, lq0, lr0, col.height + 1, col.height + trunk);
       }
     }
   }
 
   /**
-   * @param {number} cx
-   * @param {number} cz
+   * @param {number} cq
+   * @param {number} cr
    * @returns {ChunkData} fresh arrays
    */
-  function generateChunk(cx, cz) {
+  function generateChunk(cq, cr) {
     const blocks = new Uint8Array(CHUNK_VOLUME);
     const biomes = new Uint8Array(CHUNK_AREA);
     const heights = new Uint8Array(CHUNK_AREA);
-    const ox = cx * CHUNK_SIZE;
-    const oz = cz * CHUNK_SIZE;
+    const oq = cq * CHUNK_SIZE;
+    const or = cr * CHUNK_SIZE;
 
     // Steps 1 and 2 are column-local, so they share one pass over the columns for cache locality.
-    for (let lx = 0; lx < CHUNK_SIZE; lx++) {
-      const wx = ox + lx;
-      for (let lz = 0; lz < CHUNK_SIZE; lz++) {
-        const wz = oz + lz;
-        const ci = lx * CHUNK_SIZE + lz;          // columnIndex(lx, lz)
-        const base = ci * WORLD_HEIGHT;           // localIndex(lx, 0, lz)
-        const col = getColumn(wx, wz);
+    for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+      const q = oq + lq;
+      for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+        const r = or + lr;
+        const ci = lq * CHUNK_SIZE + lr;          // columnIndex(lq, lr)
+        const base = ci * WORLD_HEIGHT;           // localIndex(lq, 0, lr)
+        const col = getColumn(q, r);
+        const [wx, wz] = hexToWorld(q, r);
         heights[ci] = col.height;
         biomes[ci] = col.biome;
-        fillColumn(blocks, base, wx, wz, col.height, col.biome);
+        fillColumn(blocks, base, q, r, col.height, col.biome);
         carveColumn(blocks, base, wx, wz, col.height, col.biome);
       }
     }
 
-    placeOres(blocks, cx, cz);
-    placeTrees(blocks, cx, cz);
+    placeOres(blocks, cq, cr);
+    placeTrees(blocks, cq, cr);
 
     return { blocks, biomes, heights };
   }
@@ -319,14 +332,14 @@ function fillLayer(blocks, base, yLo, yHi, id) {
 /**
  * Replace STONE with `id` at a local cell when the cell lies inside the chunk.
  * @param {Uint8Array} blocks
- * @param {number} x local
+ * @param {number} lq local
  * @param {number} y
- * @param {number} z local
+ * @param {number} lr local
  * @param {number} id
  */
-function placeOreCell(blocks, x, y, z, id) {
-  if (x < 0 || x >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE || y < 0 || y >= WORLD_HEIGHT) return;
-  const i = (x * CHUNK_SIZE + z) * WORLD_HEIGHT + y;
+function placeOreCell(blocks, lq, y, lr, id) {
+  if (lq < 0 || lq >= CHUNK_SIZE || lr < 0 || lr >= CHUNK_SIZE || y < 0 || y >= WORLD_HEIGHT) return;
+  const i = (lq * CHUNK_SIZE + lr) * WORLD_HEIGHT + y;
   if (blocks[i] === BLOCK.STONE) blocks[i] = id;
 }
 
@@ -340,38 +353,50 @@ function leaf(blocks, i) {
 }
 
 /**
- * Stamp one oak tree whose trunk is at chunk-local (lx0, lz0) — possibly outside 0..15 — writing
+ * Stamp one oak tree whose trunk is at chunk-local (lq0, lr0) — possibly outside 0..15 — writing
  * only the cells that fall inside this chunk. Logs overwrite anything; leaves fill AIR only, so the
  * result is independent of the order in which overlapping trees are stamped.
+ *
+ * Canopy (hex distance d from the trunk): y ∈ {top−1, top}: d ≤ 1 plus the six ring-2 cells that are
+ * not ring corners (13 cells); y = top+1: d ≤ 1 (7 cells); y = top+2: the trunk column plus the
+ * neighbours across side faces CROWN_DIRS (4 cells).
  * @param {Uint8Array} blocks
- * @param {number} lx0
- * @param {number} lz0
+ * @param {number} lq0
+ * @param {number} lr0
  * @param {number} base  first log y (terrain height + 1)
  * @param {number} top   last log y; leaves occupy top-1 .. top+2 (top+2 < WORLD_HEIGHT guaranteed by caller)
  */
-function stampTree(blocks, lx0, lz0, base, top) {
-  if (lx0 >= 0 && lx0 < CHUNK_SIZE && lz0 >= 0 && lz0 < CHUNK_SIZE) {
-    const col = (lx0 * CHUNK_SIZE + lz0) * WORLD_HEIGHT;
+function stampTree(blocks, lq0, lr0, base, top) {
+  if (lq0 >= 0 && lq0 < CHUNK_SIZE && lr0 >= 0 && lr0 < CHUNK_SIZE) {
+    const col = (lq0 * CHUNK_SIZE + lr0) * WORLD_HEIGHT;
     blocks.fill(BLOCK.OAK_LOG, col + base, col + top + 1);
   }
-  for (let dx = -CANOPY_RADIUS; dx <= CANOPY_RADIUS; dx++) {
-    const lx = lx0 + dx;
-    if (lx < 0 || lx >= CHUNK_SIZE) continue;
-    const adx = dx < 0 ? -dx : dx;
-    for (let dz = -CANOPY_RADIUS; dz <= CANOPY_RADIUS; dz++) {
-      const lz = lz0 + dz;
-      if (lz < 0 || lz >= CHUNK_SIZE) continue;
-      const adz = dz < 0 ? -dz : dz;
-      const col = (lx * CHUNK_SIZE + lz) * WORLD_HEIGHT;
-      // Two wide layers (5x5 minus corners) at top-1 and top.
-      if (!(adx === 2 && adz === 2)) {
+  for (let dq = -CANOPY_RADIUS; dq <= CANOPY_RADIUS; dq++) {
+    const lq = lq0 + dq;
+    if (lq < 0 || lq >= CHUNK_SIZE) continue;
+    for (let dr = -CANOPY_RADIUS; dr <= CANOPY_RADIUS; dr++) {
+      const lr = lr0 + dr;
+      if (lr < 0 || lr >= CHUNK_SIZE) continue;
+      const d = hexLength(dq, dr);
+      if (d > CANOPY_RADIUS) continue;
+      const col = (lq * CHUNK_SIZE + lr) * WORLD_HEIGHT;
+      // Ring-2 corners are the cells at twice a side direction: one axial component is 0 or they sum to 0.
+      const isCorner = d === 2 && (dq === 0 || dr === 0 || dq + dr === 0);
+      if (!isCorner) {
         leaf(blocks, col + top - 1);
         leaf(blocks, col + top);
       }
-      // 3x3 at top+1.
-      if (adx <= 1 && adz <= 1) leaf(blocks, col + top + 1);
-      // Plus shape at top+2.
-      if (adx + adz <= 1) leaf(blocks, col + top + 2);
+      if (d <= 1) leaf(blocks, col + top + 1);
+      if (d === 0 || isCrownCell(dq, dr)) leaf(blocks, col + top + 2);
     }
   }
+}
+
+/** @returns {boolean} (dq, dr) is the neighbour across one of CROWN_DIRS */
+function isCrownCell(dq, dr) {
+  for (let i = 0; i < CROWN_DIRS.length; i++) {
+    const d = HEX_DIRS[CROWN_DIRS[i]];
+    if (d[0] === dq && d[1] === dr) return true;
+  }
+  return false;
 }

@@ -1,10 +1,10 @@
 // Caelancraft — every numeric constant and tuning knob. No logic lives here.
 // Units: blocks (metres), seconds, radians. See src/CONTRACTS.md §2.
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
-// World
-export const CHUNK_SIZE = 16;                       // X and Z extent of a chunk, in blocks
+// World (cells are hexagonal prisms addressed by axial (q, r) + y; see src/hex.js)
+export const CHUNK_SIZE = 16;                       // q and r extent of a chunk, in cells
 export const WORLD_HEIGHT = 128;                    // Y extent; valid block y is 0..127
 export const CHUNK_AREA = CHUNK_SIZE * CHUNK_SIZE;  // 256
 export const CHUNK_VOLUME = CHUNK_AREA * WORLD_HEIGHT; // 32768
@@ -13,8 +13,8 @@ export const MIN_TERRAIN_HEIGHT = 40;
 export const MAX_TERRAIN_HEIGHT = WORLD_HEIGHT - 10; // 118; leaves room for trees
 
 // Streaming
-export const RENDER_DISTANCE = 7;                   // default mesh radius in chunks (Chebyshev); ?rd= overrides
-export const DATA_RADIUS_EXTRA = 1;                 // chunks generated beyond the mesh radius
+export const RENDER_DISTANCE = 7;                   // default mesh radius in chunks (hex distance); ?rd= overrides
+export const DATA_RADIUS_EXTRA = 1;                 // chunks generated beyond the mesh radius (hex distance)
 export const UNLOAD_RADIUS_EXTRA = 3;               // chunks kept beyond the mesh radius before unloading
 export const BUILD_BUDGET_MS = 6;                   // world.update() stops starting new jobs after this
 export const MAX_BUILDS_PER_UPDATE = 6;             // hard cap per update regardless of time
@@ -35,10 +35,15 @@ export const UV_INSET = 1 / 4096;                   // 1/16 texel; kills boundar
 // Mesher
 export const WATER_SURFACE_HEIGHT = 0.875;          // top of a water block with non-water above
 export const AO_CURVE = [0.45, 0.65, 0.82, 1.0];    // index = vertexAO value 0..3
-export const FACE_SHADE = [0.8, 0.8, 1.0, 0.6, 0.9, 0.9]; // index = face (+X,-X,+Y,-Y,+Z,-Z)
+// Per-face shade lives in hex.js (FACE_SHADE) because it derives from the hex face normals.
+export const TOP_UV_SCALE = Math.sqrt(3) / 2;       // hexagon top/bottom faces are inscribed in the tile (corner-to-corner = tile height)
+export const FOG_FAR_CHUNK_MARGIN = -1;             // fog far = (renderDistance + margin) * CHUNK_RING_INRADIUS. Negative because the mesh
+                                                    // disc is keyed by chunk ORIGIN cells while a footprint extends 16·√3 toward (+1,+1): the
+                                                    // nearest unmeshed cell can be as close as (rd − 1) rings (tight analytic bound)
 
 // Player / physics
-export const PLAYER_WIDTH = 0.6;
+export const PLAYER_WIDTH = 0.56;                   // cylinder diameter; must stay < HEX_SIZE (0.577): every 1-cell passage is pinched to one
+                                                    // edge length by the two wall corners flanking it, and < 2 * HEX_INRADIUS (7-column collider)
 export const PLAYER_HEIGHT = 1.8;
 export const EYE_HEIGHT = 1.62;
 export const SNEAK_EYE_HEIGHT = 1.27;
@@ -73,6 +78,32 @@ export const PITCH_LIMIT = Math.PI / 2 - 0.002;     // about ±89.9°
 export const MAX_PIXEL_RATIO = 2;
 export const DOUBLE_TAP_MS = 250;                   // double-tap W → sprint
 export const DOUBLE_TAP_SPACE_MS = 300;             // double-tap Space → toggle fly
+
+// Commands and Rune Blocks (CONTRACTS §26–§27)
+export const GAME_SECONDS_PER_DAY = 86400;          // `time add` counts game seconds: 86400 per in-game day
+export const MAX_FILL_CELLS = 32768;                // cells one area command (fill / hexfill / hexring) may address
+export const MAX_TOTAL_EDITS = 300000;              // area commands refuse when the world's recorded edits would exceed this (~2.3 MB of save JSON)
+export const MAX_CELLS_PER_FRAME = 4096;            // area-command cells written per frame across all scripts
+export const MAX_AREA_CHUNKS_PER_FRAME = 2;         // chunk columns one area job may write per frame (bounds the re-mesh hitch for thin fills)
+export const MAX_COMMANDS_PER_FRAME = 64;           // script commands executed per frame across all scripts
+export const MAX_RUNNING_SCRIPTS = 64;
+export const MAX_CHAIN_HOPS = 32;                   // backstop; the once-per-activation wave rule is the real loop guard
+export const CHAIN_DELAY_S = 0.1;                   // delay between a script finishing and its neighbours starting
+export const MAX_RUNES = 1024;                      // rune blocks with a stored script/settings
+export const MAX_RUNE_SCRIPT_CHARS = 4096;
+export const MAX_RUNE_SCRIPT_LINES = 128;
+export const MAX_RUNE_LABEL_CHARS = 32;
+export const WAIT_MIN_S = 0.05;
+export const WAIT_MAX_S = 600;
+export const REPEAT_MIN_S = 0.25;
+export const REPEAT_MAX_S = 3600;
+export const STEP_COOLDOWN_MAX_S = 3600;
+export const AREA_MAX_RADIUS = 64;                  // parse-level sanity bound for hexfill / hexring radius
+export const AREA_MAX_HEIGHT = 128;                 // parse-level sanity bound for hexfill / hexring height
+export const MAX_CONSOLE_LINES = 200;               // console scrollback
+export const CONSOLE_HISTORY = 50;                  // typed lines remembered for ↑/↓ (memory only)
+export const CHAT_LINES = 6;                        // HUD chat-log lines shown at once
+export const CHAT_LINE_MS = 6000;                   // a chat-log line fades after this long
 
 // Time / saving / UI
 export const DAY_LENGTH_SECONDS = 600;

@@ -1,7 +1,7 @@
 {
   "name": "caelancraft",
-  "version": "0.1.0",
-  "description": "Caelancraft — a Minecraft-style voxel sandbox game that runs in the browser",
+  "version": "0.2.0",
+  "description": "Caelancraft — a honeycomb voxel sandbox of hexagonal prisms that runs in the browser",
   "type": "module",
   "private": true,
   "scripts": {

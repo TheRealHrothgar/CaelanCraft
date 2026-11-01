@@ -8,24 +8,28 @@
 // raycast) runs only while `playing`; rendering, HUD and stats run in every state that has a player.
 import {
   CHUNK_SIZE, RENDER_DISTANCE, LOADING_BUDGET_MS, REACH, BREAK_REPEAT_S, PLACE_REPEAT_S, MAX_FRAME_DT, FOV,
-  SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION,
+  SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY,
 } from './config.js';
-import { inHeightRange } from './coords.js';
+import { inHeightRange, yawToForward } from './coords.js';
+import { faceNeighbor, hexDiscCount, hexLength, worldToHex } from './hex.js';
 import {
   BLOCK, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid,
 } from './blocks.js';
 import { normalizeSeed } from './noise.js';
 import { World } from './world.js';
-import { raycastVoxel } from './raycast.js';
+import { raycastHex } from './raycast.js';
 import { createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock } from './physics.js';
 import { advanceTime, computeSky, createSkyState } from './daynight.js';
-import { saveGame, loadGame, clearSave } from './storage.js';
+import { saveGame, loadGame, clearSave, SAVE_VERSION } from './storage.js';
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer } from './renderer.js';
 import { createControls } from './controls.js';
 import { createHUD } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
+import { RuneStore, RuneRunner, runeKey, SOURCE } from './runes.js';
+import { createConsole } from './console.js';
+import { createRuneEditor } from './runeEditor.js';
 import {
   parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest,
 } from './diagnostics.js';
@@ -46,14 +50,16 @@ export const STATE = Object.freeze({
   PLAYING: 'playing',
   PAUSED: 'paused',
   PICKER: 'picker',
+  CONSOLE: 'console',
+  EDITOR: 'editor',
 });
 
-/** Loading progress is reported over the 5×5 chunks around the spawn (SPEC-gameplay §5.5). */
+/** Loading progress is reported over the hex disc of chunks within distance 2 of the spawn chunk (19 chunks). */
 export const LOADING_RADIUS = 2;
-export const LOADING_TOTAL = (2 * LOADING_RADIUS + 1) ** 2; // 25
+export const LOADING_TOTAL = hexDiscCount(LOADING_RADIUS); // 19
 /** KeyboardEvent.code of the hotbar keys, index = slot (precomputed: the loop runs every frame). */
 const DIGIT_CODES = Object.freeze(Array.from({ length: HOTBAR_SIZE }, (_, i) => `Digit${i + 1}`));
-/** Frames after which loading proceeds even if a chunk of the 5×5 could not be meshed (never expected). */
+/** Frames after which loading proceeds even if a chunk of the loading disc could not be meshed (never expected). */
 const LOADING_MAX_FRAMES = 1800;
 /** Sprint FOV eases 70 → 80 over this many seconds (SPEC-gameplay §4). */
 export const FOV_EASE_S = 0.15;
@@ -62,6 +68,8 @@ const STATS_INTERVAL_S = 0.25;
 /** Player movement (blocks) that counts as "moved" for the autosave rule. */
 const AUTOSAVE_MOVE_EPS = 1e-3;
 const CANVAS_ID = 'game-canvas';
+/** After closing a modal, pointer lock must be back within this long or the click-to-play overlay is shown. */
+const RELOCK_CHECK_MS = 300;
 
 // ---------------------------------------------------------------------------------------------
 // Small pure helpers (exported for tests / reuse)
@@ -89,14 +97,15 @@ export function wheelSlot(selected, notches) {
 }
 
 /**
- * Chunks the loading screen waits for: the 5×5 around the spawn, shrunk to the render ring when ?rd= is
- * smaller (chunks outside the render distance are never meshed, so they could never count as done).
+ * Chunks the loading screen waits for: the hex disc of radius LOADING_RADIUS around the spawn chunk, shrunk
+ * to the render ring when ?rd= is smaller (chunks outside the render distance are never meshed, so they
+ * could never count as done).
  * @param {number} renderDistance
  * @returns {{ radius: number, total: number }}
  */
 export function loadingRing(renderDistance) {
   const radius = Math.max(0, Math.min(LOADING_RADIUS, Math.floor(renderDistance)));
-  return { radius, total: (2 * radius + 1) ** 2 };
+  return { radius, total: hexDiscCount(radius) };
 }
 
 /**
@@ -175,6 +184,10 @@ export function boot(win, doc) {
   let controls;
   let menus;
   let audio;
+  /** @type {ReturnType<typeof createConsole>} */
+  let consoleUI;
+  /** @type {ReturnType<typeof createRuneEditor>} */
+  let runeEditor;
   try {
     atlasCanvas = createAtlasCanvas();
     const atlasTexture = createAtlasTexture(atlasCanvas);
@@ -186,6 +199,30 @@ export function boot(win, doc) {
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();
+    consoleUI = createConsole(doc, {
+      onLine: (line) => (runner ? runner.runConsoleLine(line) : { ok: false, message: 'no world is loaded' }),
+      onClose: () => closeConsole(),
+    });
+    runeEditor = createRuneEditor(doc, {
+      onChange: (key, partial) => {
+        const rune = runeStore.get(key);
+        if (!rune) return; // the block was removed while the editor was open
+        const updated = runeStore.set(rune.q, rune.y, rune.r, partial);
+        if (!updated) {
+          hud.showSaveToast(`Too many rune blocks (max ${runeStore.max})`, true);
+          return;
+        }
+        // The master switch behaves like `rune q y r off`: a running script of a disabled rune is cancelled.
+        if (!updated.enabled && runner) runner.cancel(key);
+      },
+      onRun: (key) => {
+        closeEditor();
+        if (!runner) return;
+        const res = runner.trigger(key, SOURCE.INTERACT);
+        if (!res.ok) logLine(res.reason || 'could not run', true);
+      },
+      onClose: () => closeEditor(),
+    });
   } catch (err) {
     reportError({ message: `Caelancraft failed to start: ${err && err.message ? err.message : err}` });
     throw err;
@@ -236,6 +273,16 @@ export function boot(win, doc) {
     geometries: 0,
   };
 
+  // Rune Blocks: the store outlives worlds (replaceAll on load), the runner and command context are per world.
+  const runeStore = new RuneStore();
+  /** @type {RuneRunner|null} */
+  let runner = null;
+  /** @type {import('./commands.js').CommandContext|null} */
+  let ctx = null;
+  /** @type {string|null} rune key open in the editor */
+  let editorKey = null;
+  let savedRunesVersion = 0;
+
   let autosaveAccum = 0;
   let savedEditVersion = 0;
   let savedX = NaN;
@@ -264,7 +311,7 @@ export function boot(win, doc) {
     const dx = -Math.sin(yaw) * cp;
     const dy = Math.sin(pitch);
     const dz = -Math.cos(yaw) * cp;
-    hit = raycastVoxel(world.getBlock, player.x, player.y + getEyeHeight(player), player.z, dx, dy, dz, REACH);
+    hit = raycastHex(world.getBlock, player.x, player.y + getEyeHeight(player), player.z, dx, dy, dz, REACH);
   }
 
   function selectSlot(i) {
@@ -282,12 +329,112 @@ export function boot(win, doc) {
     hud.showBlockToast(getBlockDef(id).displayName);
   }
 
+  /** Console + HUD chat log line (command results, script errors, `say`). */
+  function logLine(text, isError = false) {
+    consoleUI.log(text, isError);
+    hud.addChatLine(text, isError);
+  }
+
+  /** World.onBlockChange: keep the rune store in step with the cells that are (no longer) rune blocks. */
+  function onBlockChanged(q, y, r, prev, next) {
+    if (next === BLOCK.RUNE_BLOCK && prev !== BLOCK.RUNE_BLOCK) {
+      runeStore.ensure(q, y, r);
+    } else if (prev === BLOCK.RUNE_BLOCK && next !== BLOCK.RUNE_BLOCK) {
+      const key = runeKey(q, y, r);
+      if (runner) runner.cancel(key);
+      runeStore.delete(key);
+      if (state === STATE.EDITOR && editorKey === key) closeEditor();
+    }
+  }
+
+  /** The CommandContext handed to the executor (CONTRACTS §26.3); built once the player exists. */
+  function buildCommandContext() {
+    /** @type {import('./commands.js').CommandContext} */
+    const c = {
+      world,
+      player,
+      controls,
+      getTime: () => time,
+      setTime: (t) => {
+        time = wrapTime(t);
+      },
+      addTime: (gameSeconds) => {
+        const nt = time + gameSeconds / GAME_SECONDS_PER_DAY;
+        if (nt >= 1) day += Math.floor(nt);
+        time = wrapTime(nt);
+      },
+      get timeFrozen() {
+        return params.time != null;
+      },
+      get hotbar() {
+        return hotbar;
+      },
+      get selected() {
+        return selected;
+      },
+      setHotbarSlot: (slot, id) => assignSlot(slot, id),
+      say: (text) => logLine(text),
+      teleport: (x, y, z) => game.teleport(x, y, z),
+      setFlying: (on) => {
+        player.flying = !!on;
+        player.vy = 0;
+      },
+      runes: runeStore,
+      runner: /** @type {*} */ (null),
+      rune: null,
+      running: null,
+      get seed() {
+        return world.seed;
+      },
+    };
+    return c;
+  }
+
+  /** Looking at a rune block: R runs it (if it has the Interact trigger). */
+  function interactTarget() {
+    const h = hit;
+    if (!h || h.blockId !== BLOCK.RUNE_BLOCK || !runner) return;
+    const rune = runeStore.ensure(h.q, h.y, h.r);
+    if (rune && !rune.enabled) {
+      logLine('this rune block is disabled — Shift+R to edit it');
+      return;
+    }
+    if (rune && !rune.interact) {
+      logLine('this rune block has no Interact trigger — Shift+R to edit it');
+      return;
+    }
+    const res = runner.trigger(runeKey(h.q, h.y, h.r), SOURCE.INTERACT);
+    if (!res.ok) logLine(res.reason || 'could not run', true);
+  }
+
+  /** Shift+R on a rune block: open its editor. */
+  function editTarget() {
+    const h = hit;
+    if (!h || h.blockId !== BLOCK.RUNE_BLOCK) return;
+    openEditorFor(h.q, h.y, h.r);
+  }
+
+  function openEditorFor(q, y, r) {
+    openEditor(runeStore.ensure(q, y, r));
+  }
+
+  /** Text under the crosshair while a rune block is targeted. */
+  function targetHintText() {
+    const h = hit;
+    if (!h || h.blockId !== BLOCK.RUNE_BLOCK) return null;
+    const rune = runeStore.get(runeKey(h.q, h.y, h.r));
+    const label = rune && rune.label ? `${rune.label} · ` : '';
+    if (rune && !rune.enabled) return `${label}rune block (disabled) · Shift+R edit`;
+    const canRun = !rune || rune.interact;
+    return `${label}${canRun ? 'R run · ' : ''}Shift+R edit${canRun ? '' : ' (no Interact trigger)'}`;
+  }
+
   /** Break rule (§23). @returns {boolean} */
   function breakTargeted() {
     if (!world || !player) return false;
     const h = hit;
     if (!h || !isBreakable(h.blockId)) return false;
-    if (!world.setBlock(h.x, h.y, h.z, BLOCK.AIR)) return false;
+    if (!world.setBlock(h.q, h.y, h.r, BLOCK.AIR)) return false;
     audio.playBreak(getBlockDef(h.blockId).soundGroup);
     updateHit();
     return true;
@@ -300,15 +447,15 @@ export function boot(win, doc) {
     if (!h || h.face < 0) return false;
     const id = hotbar[selected];
     if (!isPlaceable(id)) return false;
-    const tx = h.x + h.nx;
-    const ty = h.y + h.ny;
-    const tz = h.z + h.nz;
+    const [tq, ty, tr] = faceNeighbor(h.q, h.y, h.r, h.face);
     if (!inHeightRange(ty)) return false;
-    if (!isReplaceable(world.getBlock(tx, ty, tz))) return false;
-    if (isSolid(id) && playerIntersectsBlock(player, tx, ty, tz)) return false;
-    if (!world.setBlock(tx, ty, tz, id)) return false;
+    if (!isReplaceable(world.getBlock(tq, ty, tr))) return false;
+    if (isSolid(id) && playerIntersectsBlock(player, tq, ty, tr)) return false;
+    if (!world.setBlock(tq, ty, tr, id)) return false;
     audio.playPlace(getBlockDef(id).soundGroup);
     updateHit();
+    // A freshly placed rune block opens its editor right away (the onBlockChange hook created its entry).
+    if (id === BLOCK.RUNE_BLOCK && state === STATE.PLAYING) openEditorFor(tq, ty, tr);
     return true;
   }
 
@@ -329,7 +476,7 @@ export function boot(win, doc) {
   function buildSaveData() {
     if (!world || !player) return null;
     return {
-      version: 1,
+      version: SAVE_VERSION,
       seed: world.seed,
       time,
       day,
@@ -337,6 +484,7 @@ export function boot(win, doc) {
       hotbar: hotbar.slice(),
       selected,
       edits: world.exportEdits(),
+      runes: runeStore.export(),
     };
   }
 
@@ -355,6 +503,7 @@ export function boot(win, doc) {
     const ok = saveGame(data);
     if (ok) {
       savedEditVersion = world.editVersion;
+      savedRunesVersion = runeStore.version;
       savedX = player.x;
       savedY = player.y;
       savedZ = player.z;
@@ -380,14 +529,19 @@ export function boot(win, doc) {
     autosaveAccum += dt;
     if (autosaveAccum < AUTOSAVE_INTERVAL_S) return;
     autosaveAccum = 0;
-    if (world.editVersion !== savedEditVersion || playerMovedSinceSave()) doSave(false);
+    if (world.editVersion !== savedEditVersion || runeStore.version !== savedRunesVersion || playerMovedSinceSave()) doSave(false);
   }
 
-  /** Save when the page is leaving / hidden while a world is live. */
+  /** Save when the page is leaving / hidden while a world is live (any state with a player, click-to-play included). */
   function saveOnLeave() {
-    if (world && player && state !== STATE.TITLE && state !== STATE.LOADING && state !== STATE.CLICK_TO_PLAY) {
-      doSave(false);
+    if (!world || !player || state === STATE.TITLE || state === STATE.LOADING) return;
+    // The editor pushes typing to the store after a debounce; flush it so the last keystrokes reach this save.
+    if (runeEditor.isOpen()) {
+      const key = runeEditor.getKey();
+      const rune = key ? runeStore.get(key) : undefined;
+      if (rune) runeStore.set(rune.q, rune.y, rune.r, runeEditor.getFields());
     }
+    doSave(false);
   }
 
   // ---- state transitions ----------------------------------------------------------------------------
@@ -404,8 +558,12 @@ export function boot(win, doc) {
     menus.hideLoading();
     menus.hideClickToPlay();
     menus.hidePicker();
+    consoleUI.close();
+    runeEditor.close();
+    editorKey = null;
     hud.setPickerOpen(false);
     hud.setUnderwater(false);
+    hud.setTargetHint(null);
     menus.showTitle(hasSaveNow());
     if (params.seed != null) {
       const el = doc.getElementById('seed-input');
@@ -432,8 +590,15 @@ export function boot(win, doc) {
     pendingSave = restoring;
 
     world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: restoring ? restoring.edits : undefined });
-    world.onChunkMesh = (key, cx, cz, meshData) => renderer.setChunkMesh(key, cx, cz, meshData);
+    world.onChunkMesh = (key, cq, cr, meshData) => renderer.setChunkMesh(key, cq, cr, meshData);
     world.onChunkUnload = (key) => renderer.removeChunkMesh(key);
+    world.onBlockChange = onBlockChanged;
+    // Runes: replace the store with the save's (validated) runes; nothing runs until the player exists.
+    if (runner) runner.reset();
+    runner = null;
+    ctx = null;
+    const runeWarnings = runeStore.replaceAll(restoring ? restoring.runes : null);
+    for (const w of runeWarnings) console.warn('Caelancraft runes:', w);
     // After a WebGL context restore the renderer has dropped every chunk mesh (it keeps no CPU copy of the
     // vertex data). Flag the meshed chunks as never-meshed so the budgeted ring walk in world.update()
     // rebuilds them nearest-first over the next frames instead of all at once.
@@ -468,14 +633,16 @@ export function boot(win, doc) {
     setState(STATE.LOADING);
   }
 
-  /** @returns {number} meshed chunks within loadingRadius of the loading centre */
+  /** @returns {number} meshed chunks within hex distance loadingRadius of the loading centre's chunk */
   function loadingProgress() {
-    const cx = Math.floor(loadingCentre[0] / CHUNK_SIZE);
-    const cz = Math.floor(loadingCentre[2] / CHUNK_SIZE);
+    const [q, r] = worldToHex(loadingCentre[0], loadingCentre[2]);
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
     let done = 0;
-    for (let dx = -loadingRadius; dx <= loadingRadius; dx++) {
-      for (let dz = -loadingRadius; dz <= loadingRadius; dz++) {
-        const c = world.getChunk(cx + dx, cz + dz);
+    for (let dq = -loadingRadius; dq <= loadingRadius; dq++) {
+      for (let dr = -loadingRadius; dr <= loadingRadius; dr++) {
+        if (hexLength(dq, dr) > loadingRadius) continue;
+        const c = world.getChunk(cq + dq, cr + dr);
         if (c && c.meshed && !c.dirty) done++;
       }
     }
@@ -494,8 +661,8 @@ export function boot(win, doc) {
 
     const done = loadingProgress();
     menus.showLoading(done, loadingTotal);
-    // Contract: ready when the spawn chunk is meshed. We additionally wait for the 5×5 the progress bar
-    // promises (or a generous frame cap) so the player never spawns looking at holes.
+    // Contract: ready when the spawn chunk is meshed. We additionally wait for the loading disc the progress
+    // bar promises (or a generous frame cap) so the player never spawns looking at holes.
     const ringDone = done >= loadingTotal || (r.pendingGen === 0 && r.pendingMesh === 0) || loadingFrames >= LOADING_MAX_FRAMES;
     if (world.isReadyAt(sx, sz) && ringDone) finishLoading();
   }
@@ -513,9 +680,22 @@ export function boot(win, doc) {
       controls.yaw = Math.PI; // face +Z
       controls.pitch = 0;
     }
+    // Debug/screenshot aids: ?yaw= and ?pitch= (degrees) override the initial look direction.
+    if (params.yaw != null) controls.yaw = (params.yaw * Math.PI) / 180;
+    if (params.pitch != null) controls.pitch = (params.pitch * Math.PI) / 180;
     if (params.fly) player.flying = true;
 
+    ctx = buildCommandContext();
+    runner = new RuneRunner(runeStore, ctx);
+    ctx.runner = runner;
+    runner.onLog = (line, isError) => logLine(line, isError);
+    runner.onTrigger = (_key, source) => {
+      if (source === SOURCE.INTERACT || source === SOURCE.STEP) audio.playClick();
+    };
+    runner.seedStep();
+
     savedEditVersion = world.editVersion;
+    savedRunesVersion = runeStore.version;
     savedX = player.x;
     savedY = player.y;
     savedZ = player.z;
@@ -528,10 +708,27 @@ export function boot(win, doc) {
     menus.hideLoading();
     if (autoplay) {
       enterPlaying();
+      showDebugUi();
     } else {
       setState(STATE.CLICK_TO_PLAY);
       menus.showClickToPlay();
     }
+  }
+
+  /** `?ui=console|editor` with autoplay: open the console, or place a rune block three cells ahead and open its editor (screenshots). */
+  function showDebugUi() {
+    if (!params.ui || !runner || !player || params.smoke) return; // a modal would stall the smoke sequence
+    if (params.ui === 'console') {
+      openConsole('');
+      consoleUI.log(runner.runConsoleLine('help').message);
+      return;
+    }
+    const [fx, fz] = yawToForward(controls.yaw);
+    const [q, r] = worldToHex(player.x + fx * 3, player.z + fz * 3);
+    const y = Math.max(0, Math.floor(player.y) - 1);
+    runner.runConsoleLine(`setblock ${q} ${y} ${r} rune_block`);
+    const rune = runeStore.set(q, y, r, { label: 'lift', script: '# runs on R\nsay Going up\nhexring @ @1 @ 2 3 stone_bricks\nwait 1\ntp @ @4 @', stepOn: true, chain: true });
+    if (rune) openEditor(rune);
   }
 
   function enterPlaying() {
@@ -576,11 +773,65 @@ export function boot(win, doc) {
     if (state !== STATE.PICKER) return;
     menus.hidePicker();
     hud.setPickerOpen(false);
+    enterPlayingFromModal();
+  }
+
+  /**
+   * Leave a modal (picker / console / editor). Esc is not a user-activation event, so the pointer lock request
+   * can be refused; if it is not back shortly, fall into click-to-play instead of a dead "playing" state.
+   */
+  function enterPlayingFromModal() {
     enterPlaying();
+    win.setTimeout(() => {
+      if (disposed || state !== STATE.PLAYING || controls.locked) return;
+      setState(STATE.CLICK_TO_PLAY);
+      controls.setEnabled(false);
+      doSave(false); // like pause(): the overlay may sit there for a long time
+      menus.showClickToPlay();
+    }, RELOCK_CHECK_MS);
+  }
+
+  function openConsole(prefill) {
+    if (state !== STATE.PLAYING) return;
+    setState(STATE.CONSOLE); // before unlock(): the lock-change handler must not read 'playing'
+    controls.setEnabled(false);
+    controls.unlock();
+    consoleUI.open(prefill);
+    breakHeld = 0;
+    placeHeld = 0;
+  }
+
+  function closeConsole() {
+    if (state !== STATE.CONSOLE) return;
+    consoleUI.close();
+    enterPlayingFromModal();
+  }
+
+  /** @param {import('./types.js').Rune} rune */
+  function openEditor(rune) {
+    if (state !== STATE.PLAYING || !rune) return;
+    editorKey = rune.key;
+    setState(STATE.EDITOR);
+    controls.setEnabled(false);
+    controls.unlock();
+    runeEditor.open(rune, runner ? runner.getLastRun(rune.key) : null);
+    breakHeld = 0;
+    placeHeld = 0;
+  }
+
+  function closeEditor() {
+    if (state !== STATE.EDITOR) return;
+    runeEditor.close();
+    editorKey = null;
+    enterPlayingFromModal();
   }
 
   function quitToTitle() {
     doSave(false);
+    if (runner) runner.reset();
+    runner = null;
+    ctx = null;
+    runeStore.clear();
     if (world) {
       world.dispose();
       world = null;
@@ -624,6 +875,12 @@ export function boot(win, doc) {
       if (state !== STATE.PAUSED) return;
       doSave(true);
     },
+    onStopRunes() {
+      if (!runner) return;
+      const n = runner.stopAll();
+      hud.showSaveToast(`Stopped ${n} rune script${n === 1 ? '' : 's'}; triggers paused`);
+      logLine(`stopall: stopped ${n} script${n === 1 ? '' : 's'}; rune triggers paused (press R on a rune or run resume)`);
+    },
     onQuit() {
       if (state !== STATE.PAUSED) return;
       quitToTitle();
@@ -660,6 +917,9 @@ export function boot(win, doc) {
     } else if (state === STATE.PAUSED) {
       // Lock re-acquired (e.g. a click that slipped past the menu): treat as resume.
       resume();
+    } else if (state === STATE.CLICK_TO_PLAY && player) {
+      // A lock requested while closing a modal can arrive after the relock fallback showed the overlay.
+      enterPlaying();
     }
   };
 
@@ -700,6 +960,7 @@ export function boot(win, doc) {
       player.vz = 0;
       player.onGround = false;
       if (world) world.update(x, z);
+      if (runner) runner.seedStep(); // arriving by teleport is not stepping onto a rune
       updateHit();
     },
     setLook(yaw, pitch) {
@@ -709,6 +970,13 @@ export function boot(win, doc) {
     },
     getState: () => state,
     stepFrame: (dt) => stepFrame(dt),
+    runCommand: (line) => (runner ? runner.runConsoleLine(line) : null),
+    get runes() {
+      return runeStore;
+    },
+    get runner() {
+      return runner;
+    },
     dispose,
   };
 
@@ -730,6 +998,19 @@ export function boot(win, doc) {
       player.flying = !player.flying;
       player.vy = 0;
     }
+    // Modal keys first, so a key that opens a modal never also acts on the hotbar in the same frame.
+    if (controls.consumePressed('KeyE')) {
+      openPicker();
+      return; // the picker frame still renders below
+    }
+    if (controls.consumePressed('KeyT')) {
+      openConsole('');
+      return;
+    }
+    if (controls.consumePressed('Slash')) {
+      openConsole('/');
+      return;
+    }
     for (let i = 0; i < HOTBAR_SIZE; i++) {
       if (controls.consumePressed(DIGIT_CODES[i])) selectSlot(i);
     }
@@ -739,9 +1020,13 @@ export function boot(win, doc) {
     const mouse = controls.consumeMouse();
     if (mouse.wheel !== 0) selectSlot(wheelSlot(selected, mouse.wheel));
 
-    if (controls.consumePressed('KeyE')) {
-      openPicker();
-      return; // the picker frame still renders below
+    if (controls.consumePressed('KeyR')) {
+      if (controls.isDown('ShiftLeft') || controls.isDown('ShiftRight')) {
+        editTarget();
+        if (state !== STATE.PLAYING) return;
+      } else {
+        interactTarget();
+      }
     }
 
     // Interaction uses the hit computed at the end of the previous frame (what the highlight showed).
@@ -780,6 +1065,10 @@ export function boot(win, doc) {
       time = nt;
     }
 
+    // Rune scripts run after physics (step-on sees where the player landed) and before world.update() so their
+    // edits are re-meshed this frame. A modal opened by a script (none today) would stop the loop next frame.
+    if (runner && state === STATE.PLAYING) runner.update(dt);
+
     world.update(player.x, player.z);
     updateHit();
     autosaveTick(dt);
@@ -796,6 +1085,7 @@ export function boot(win, doc) {
     renderer.setSky(sky);
     renderer.setUnderwater(player.headInWater);
     hud.setUnderwater(player.headInWater);
+    hud.setTargetHint(state === STATE.PLAYING ? targetHintText() : null);
     if (hud.isDebugVisible()) hud.setDebugText(buildDebugText(game, stats));
     renderer.render();
   }
@@ -886,12 +1176,17 @@ export function boot(win, doc) {
     doc.removeEventListener('visibilitychange', onVisibility);
     canvas.removeEventListener('mousedown', onCanvasMouseDown);
     uninstallErrors();
+    if (runner) runner.reset();
+    runner = null;
+    runeStore.clear();
     if (world) world.dispose();
     world = null;
     player = null;
     controls.dispose();
     hud.dispose();
     menus.dispose();
+    consoleUI.dispose();
+    runeEditor.dispose();
     renderer.dispose();
   }
 

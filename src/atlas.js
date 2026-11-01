@@ -3,32 +3,64 @@
 // §2.1 / §2.5 / §5.3 and docs/SPEC-engine.md (Three.js facts 2 and 5).
 //
 // DOM + three. Every DOM access happens inside a function so the module can be imported in Node.
-// Imports: config, blocks, tiles, three (per the CONTRACTS.md import graph — coords is deliberately
-// not imported; the two side-face indices used by the icon are spelled out below).
+// Imports: config, blocks, hex, tiles, three (per the CONTRACTS.md import graph).
 import { CanvasTexture, NearestFilter, SRGBColorSpace, ClampToEdgeWrapping } from 'three';
 import { ATLAS_TILE_PX, ATLAS_TILES_PER_ROW, ATLAS_SIZE_PX } from './config.js';
-import { BLOCK, TILE, TILE_IDS, getBlockDef, getFaceTile, FACE_PY } from './blocks.js';
+import { BLOCK, TILE, TILE_IDS, getBlockDef, getFaceTile, FACE_TOP } from './blocks.js';
+import { HEX_CORNERS, HEX_SIZE } from './hex.js';
 import { paintTile } from './tiles.js';
 
-/** Icon geometry in §2.5 is specified on a 32×32 canvas; other sizes scale uniformly from it. */
+/** Icon geometry is specified on a 32×32 canvas; other sizes scale uniformly from it. */
 export const ICON_BASE_SIZE = 32;
 
-/** Face whose tile is shown on the LEFT side of the isometric icon: +Z (south). */
-const ICON_LEFT_FACE = 4;
-/** Face whose tile is shown on the RIGHT side of the isometric icon: +X (east). */
-const ICON_RIGHT_FACE = 0;
+// Hexagonal-prism icon (CONTRACTS §16): a pointy-top prism seen from the south-east-ish front, so the top
+// hexagon and the two front side faces (SE = face 1 on the right, SW = face 2 on the left) are visible. The
+// top hexagon's corners project to screen (16 + 26·dx, 9 + 8·dz/HEX_SIZE) on the 32×32 reference canvas:
+//   k0 (29,5)  k1 (29,13)  k2 (16,17)  k3 (3,13)  k4 (3,5)  k5 (16,1)
+// and the prism's visible height is ICON_SIDE_H px, so the lowest point (below k2) sits at y = 31.
+const ICON_CENTRE_X = 16;
+const ICON_TOP_CY = 9;
+const ICON_TOP_HALF_H = 8;
+const ICON_SCALE_X = 26;
+const ICON_SIDE_H = 14;
+
+/** Face shown on the LEFT front of the icon (south-west, face 2) and its shade. */
+const ICON_LEFT_FACE = 2;
+/** Face shown on the RIGHT front of the icon (south-east, face 1). */
+const ICON_RIGHT_FACE = 1;
+const ICON_LEFT_SHADE = 0.2;
+const ICON_RIGHT_SHADE = 0.4;
 
 /**
- * The three visible cube faces of a block icon, in paint order (top, left, right).
- * `m` is the exact `setTransform(a, b, c, d, e, f)` from SPEC-gameplay §2.5 for a 32×32 icon: it maps the
- * 16×16 tile onto the parallelogram of that face. `shade` is the black overlay alpha applied afterwards
- * with `source-atop` (so transparent tile pixels — leaves holes, glass interior — stay transparent).
- *   T(16,1) R(30,8) L(2,8) C(16,15) BL(2,22) BR(30,22) B(16,29)
+ * Screen position of top corner k on the 32×32 reference canvas.
+ * @param {number} k
+ * @returns {[number, number]}
  */
-const ICON_FACES = Object.freeze([
-  Object.freeze({ face: FACE_PY, m: Object.freeze([14 / 16, 7 / 16, -14 / 16, 7 / 16, 16, 1]), shade: 0 }),
-  Object.freeze({ face: ICON_LEFT_FACE, m: Object.freeze([14 / 16, 7 / 16, 0, 14 / 16, 2, 8]), shade: 0.2 }),
-  Object.freeze({ face: ICON_RIGHT_FACE, m: Object.freeze([14 / 16, -7 / 16, 0, 14 / 16, 16, 15]), shade: 0.4 }),
+export function iconTopCorner(k) {
+  const c = HEX_CORNERS[k];
+  return [ICON_CENTRE_X + ICON_SCALE_X * c[0], ICON_TOP_CY + (ICON_TOP_HALF_H * c[1]) / HEX_SIZE];
+}
+
+/**
+ * `setTransform(a, b, c, d, e, f)` mapping the 16×16 tile onto the side quad whose top edge runs from
+ * corner `kLeft` to corner `kRight` (left → right on screen) and whose bottom edge is ICON_SIDE_H lower.
+ * @returns {number[]}
+ */
+function sideTransform(kLeft, kRight) {
+  const [lx, ly] = iconTopCorner(kLeft);
+  const [rx, ry] = iconTopCorner(kRight);
+  return [(rx - lx) / ATLAS_TILE_PX, (ry - ly) / ATLAS_TILE_PX, 0, ICON_SIDE_H / ATLAS_TILE_PX, lx, ly];
+}
+
+/** The two visible side faces, in paint order (left, right). */
+const ICON_SIDES = Object.freeze([
+  Object.freeze({ face: ICON_LEFT_FACE, m: Object.freeze(sideTransform(3, 2)), shade: ICON_LEFT_SHADE }),
+  Object.freeze({ face: ICON_RIGHT_FACE, m: Object.freeze(sideTransform(2, 1)), shade: ICON_RIGHT_SHADE }),
+]);
+/** Transform mapping the tile onto the bounding box of the top hexagon (x 3..29, y 1..17); clipped to the hexagon. */
+const ICON_TOP_TRANSFORM = Object.freeze([
+  ICON_SCALE_X / ATLAS_TILE_PX, 0, 0, (2 * ICON_TOP_HALF_H) / ATLAS_TILE_PX,
+  ICON_CENTRE_X - ICON_SCALE_X / 2, ICON_TOP_CY - ICON_TOP_HALF_H,
 ]);
 
 const TILES_PER_ATLAS = ATLAS_TILES_PER_ROW * ATLAS_TILES_PER_ROW;
@@ -112,10 +144,11 @@ export function createAtlasTexture(canvas) {
 }
 
 /**
- * Draw the isometric cube icon of `blockId` into the `size`×`size` square at (0,0) of `ctx`
- * (SPEC-gameplay §2.5, scaled by `size / 32`). The square is cleared first, so AIR (or an unknown id)
- * leaves it blank — which is exactly what an empty hotbar slot needs. The context state (transform,
- * composite op, smoothing, fill style) is saved and restored around the drawing.
+ * Draw the hexagonal-prism icon of `blockId` into the `size`×`size` square at (0,0) of `ctx` (scaled by
+ * `size / 32`): the top hexagon (top tile, clipped to the hexagon) above the two front side faces (left
+ * shaded 20 %, right 40 %). The square is cleared first, so AIR (or an unknown id) leaves it blank — which
+ * is exactly what an empty hotbar slot needs. The context state (transform, clip, composite op, smoothing,
+ * fill style) is saved and restored around the drawing.
  * @param {CanvasRenderingContext2D} ctx
  * @param {HTMLCanvasElement} atlasCanvas  from createAtlasCanvas()
  * @param {number} blockId
@@ -131,8 +164,10 @@ export function drawBlockIcon(ctx, atlasCanvas, blockId, size = ICON_BASE_SIZE) 
   ctx.clearRect(0, 0, size, size);
   if (def.id !== BLOCK.AIR) {
     ctx.imageSmoothingEnabled = false;
-    for (let i = 0; i < ICON_FACES.length; i++) {
-      const { face, m, shade } = ICON_FACES[i];
+
+    // Side faces first (the top overdraws their shared edge).
+    for (let i = 0; i < ICON_SIDES.length; i++) {
+      const { face, m, shade } = ICON_SIDES[i];
       const [sx, sy] = tileOrigin(getFaceTile(def.id, face));
       // Overall transform = Scale(s) ∘ FaceTransform: every coefficient scales by s.
       ctx.setTransform(m[0] * s, m[1] * s, m[2] * s, m[3] * s, m[4] * s, m[5] * s);
@@ -144,6 +179,24 @@ export function drawBlockIcon(ctx, atlasCanvas, blockId, size = ICON_BASE_SIZE) 
         ctx.fillRect(0, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
       }
     }
+
+    // Top hexagon: clip to the projected hexagon, then draw the top tile over its bounding box.
+    ctx.save();
+    ctx.setTransform(s, 0, 0, s, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.beginPath();
+    for (let k = 0; k < HEX_CORNERS.length; k++) {
+      const [x, y] = iconTopCorner(k);
+      if (k === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.clip();
+    const m = ICON_TOP_TRANSFORM;
+    const [sx, sy] = tileOrigin(getFaceTile(def.id, FACE_TOP));
+    ctx.setTransform(m[0] * s, m[1] * s, m[2] * s, m[3] * s, m[4] * s, m[5] * s);
+    ctx.drawImage(atlasCanvas, sx, sy, ATLAS_TILE_PX, ATLAS_TILE_PX, 0, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
+    ctx.restore();
   }
   ctx.restore();
 }

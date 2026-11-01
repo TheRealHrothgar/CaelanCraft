@@ -53,7 +53,7 @@ export const GAME_KEYS = new Set([
   'KeyW', 'KeyA', 'KeyS', 'KeyD',
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'ShiftLeft', 'ShiftRight',
-  'KeyE', 'KeyF', 'KeyM',
+  'KeyE', 'KeyF', 'KeyM', 'KeyT', 'KeyR', 'Slash',
 ]);
 
 /** Upper bound on queued keydown edges per code; protects against unbounded growth for keys nobody consumes. */
@@ -165,7 +165,10 @@ export function createControls(canvas, doc = document) {
     const code = e.code;
     if (typeof code !== 'string' || code === '') return;
     if (!isLocked()) return;
-    if (GAME_KEYS.has(code) && !e.ctrlKey && !e.metaKey && !e.altKey && typeof e.preventDefault === 'function') {
+    // The console opens on the '/' CHARACTER whatever the layout (on DE/FR keyboards it is not the `Slash` key):
+    // such a press is recorded as a synthetic `Slash` edge in addition to its physical code.
+    const slashChar = e.key === '/' && code !== 'Slash';
+    if ((GAME_KEYS.has(code) || slashChar) && !e.ctrlKey && !e.metaKey && !e.altKey && typeof e.preventDefault === 'function') {
       e.preventDefault();
     }
     if (!enabled) return;
@@ -174,8 +177,11 @@ export function createControls(canvas, doc = document) {
     held.add(code);
     if (e.repeat) return;
 
-    const n = pressed.get(code) || 0;
-    if (n < MAX_QUEUED_EDGES) pressed.set(code, n + 1);
+    // A '/' typed on a non-US layout (DE: Shift+7, code Digit7; numpad: NumpadDivide) is the console key and ONLY
+    // that: queue the synthetic Slash edge instead of the physical code, so it never also selects a hotbar slot.
+    const edgeCode = slashChar ? 'Slash' : code;
+    const n = pressed.get(edgeCode) || 0;
+    if (n < MAX_QUEUED_EDGES) pressed.set(edgeCode, n + 1);
 
     if (code === 'KeyW') {
       const t = eventTime(e);

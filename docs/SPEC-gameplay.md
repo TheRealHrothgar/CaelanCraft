@@ -1,5 +1,13 @@
 # Caelancraft — Gameplay, UX and Procedural Art Specification (v1)
 
+> **v0.2 honeycomb revision.** Caelancraft's cells are now hexagonal prisms (pointy-top, 1 wide across the flats,
+> addressed by axial `(q, r)` + `y`; see `src/hex.js`). Wherever this document describes cube blocks — AABBs, six
+> axis-aligned faces, square chunk footprints, the Amanatides–Woo voxel walk, the isometric cube icon — the
+> normative hex definitions in `src/CONTRACTS.md` supersede it. Block palette, texture recipes, terrain numbers,
+> controls, HUD and day/night still apply. Saves are v2 per `src/CONTRACTS.md` §14 (single key `caelancraft:v2:save`,
+> `version: 2`, edits keyed by hex chunk `"cq,cr"` with `localIndex = (lq*16 + lr)*128 + ly`; v1 saves are not loadable),
+> and the loading screen waits for the hex disc of 19 chunks (`hexDiscCount(2)`) rather than a 5×5 square.
+
 > Authoritative for: block palette, texture recipes, terrain feel numbers, controls, HUD/UI DOM+CSS,
 > day/night keyframes, water behaviour, save format, break/place feel. Where this document and
 > `src/CONTRACTS.md` disagree on *code-level names/paths/signatures*, `src/CONTRACTS.md` wins.
@@ -254,7 +262,7 @@ Game input processed **only while `document.pointerLockElement === canvas`**; `w
 <div id="loading-screen" class="layer hidden">                                 <!-- z 40 -->
   <div class="loading-title">Building terrain…</div>
   <div class="progress"><div id="loading-bar" class="progress-fill"></div></div>
-  <div id="loading-text">0 / 25 chunks</div>
+  <div id="loading-text">0 / 19 chunks</div>
 </div>
 <div id="title-screen" class="layer">                                          <!-- z 50 -->
   <canvas id="title-logo" width="200" height="32"></canvas>
@@ -348,7 +356,7 @@ On the 200×32 `#title-logo` canvas: `font="bold 22px monospace"`, `textBaseline
 - Block highlight (engine): `LineSegments(EdgesGeometry(BoxGeometry(1.002,1.002,1.002)), LineBasicMaterial({color:0x000000, transparent:true, opacity:0.4}))` at block centre, only when a targetable block is within 5.0.
 - Picker: open → `exitPointerLock()`, `#hud.picker-open`, state `picker`. Click cell → assign to selected slot, toast, close, re-lock. Digit while hovering → assign to that slot, stay open. Click hotbar slot → select. `#picker-name` shows hovered name.
 - Pause: `pointerlockchange` with no lock and state `playing` → `paused` (simulation and clock freeze; frames keep rendering). Resume re-requests lock; Save shows `#save-toast` "World saved" 1.5 s; Quit saves and returns to title.
-- Flow: `title → loading → clickToPlay → playing ⇄ paused`, `playing ⇄ picker`. New World with an existing save → `confirm("This will delete your saved world. Continue?")`. Seed: numeric → int, text → `fnv1a`, empty → `Math.floor(Math.random()*2**31)`. Loading shows `done / total` for the initial 5×5 chunks, then `#click-to-play` (fresh gesture needed for pointer lock).
+- Flow: `title → loading → clickToPlay → playing ⇄ paused`, `playing ⇄ picker`. New World with an existing save → `confirm("This will delete your saved world. Continue?")`. Seed: numeric → int, text → `fnv1a`, empty → `Math.floor(Math.random()*2**31)`. Loading shows `done / total` for the initial hex disc of 19 chunks (`hexDiscCount(2)`), then `#click-to-play` (fresh gesture needed for pointer lock).
 
 ---
 

@@ -1,5 +1,13 @@
 # Caelancraft — Build, Test and Verification Plan
 
+> **v0.2 honeycomb revision.** Caelancraft's cells are now hexagonal prisms (pointy-top, 1 wide across the flats,
+> addressed by axial `(q, r)` + `y`; see `src/hex.js`). Wherever this document describes cube blocks — AABBs, six
+> axis-aligned faces, square chunk footprints, the Amanatides–Woo voxel walk, the isometric cube icon — the
+> normative hex definitions in `src/CONTRACTS.md` supersede it. Block palette, texture recipes, terrain numbers,
+> controls, HUD and day/night still apply. Saves are v2 per `src/CONTRACTS.md` §14 (single key `caelancraft:v2:save`,
+> `version: 2`, edits keyed by hex chunk `"cq,cr"` with `localIndex = (lq*16 + lr)*128 + ly`; v1 saves are not loadable),
+> and the loading screen waits for the hex disc of 19 chunks (`hexDiscCount(2)`) rather than a 5×5 square.
+
 > Authoritative for: toolchain, gates, unit-test expectations, smoke test, review process.
 > Where this document pins a *code-level convention* that `src/CONTRACTS.md` also pins, `src/CONTRACTS.md` wins.
 
@@ -61,7 +69,7 @@ Conventions: `import { describe, it, expect } from 'vitest'`; import constants f
 2. Bedrock at y=0 in all 256 columns.
 3. Topmost solid in every column ≤ H−8 over 9 chunks.
 4. Every column has solid ground; topmost non-air is WATER only if y ≤ SEA_LEVEL.
-5. WATER ⇒ y ≤ SEA_LEVEL; some chunk in a 5×5 scan contains water.
+5. WATER ⇒ y ≤ SEA_LEVEL; some chunk in a scan of the nearby chunks contains water.
 6. Surface layering: GRASS_BLOCK has DIRT below; no GRASS_BLOCK directly under WATER.
 7. Trees: each trunk top has ≥4 LEAVES within Chebyshev 2 / y∈[−1,+2]; each LOG is rooted within 8 blocks; no LOG at y ≤ SEA_LEVEL.
 8. Cross-chunk decoration consistency: generate a 3×3 block of chunks into a merged 48×H×48 array; no canopy truncated at a chunk boundary (compare to the same tree seen from the neighbour chunk).
@@ -170,10 +178,10 @@ Pass: stderr contains `SMOKE_OK`; `/mnt/c/Users/Public/caelancraft-smoke.png` sh
 **Always:** human verification at `http://localhost:5173/?smoke=1` shows a green banner. The integration harness (§2.12) is the browser-free gate.
 
 ## 4. Runtime diagnostics (`src/diagnostics.js`)
-- URL params: `seed`, `rd` (clamped 1..16), `smoke=1`, `autoplay=1`, `nosave=1`, `debug=1`, `fly=1`, `time=0..1`.
+- URL params: `seed`, `rd` (clamped 1..16), `smoke=1`, `autoplay=1`, `nosave=1`, `debug=1`, `fly=1`, `time=0..1`, `yaw`/`pitch` (degrees), `ui=console|editor` (autoplay screenshot aid; `editor` writes a sample rune block).
 - `window.__caelancraft = { version, ready, seed, world, player, renderer, camera, scene, stats:{fps, frameMs, chunksLoaded, chunksDirty, meshesVisible, faces, drawCalls, triangles, geometries, textures}, getBlock, setBlock, teleport, setTime, errors:[], smoke:null }`.
 - Error capture: `error` + `unhandledrejection` → `errors[]` and `#error-banner` (always shown for smoke/debug, and in DEV).
-- `?smoke=1` sequence (~300 frames): wait grounded ≤120 frames; assert chunks/meshes/drawCalls > 0; look down, break, assert AIR + remesh; place hotbar block at adjacent, assert; spin 360°; walk 60 frames; fly up 30 frames; assert errors empty and WebGL2. Then `__caelancraft.smoke = {done:true, ok, ...}`, `console.log('SMOKE_OK'|'SMOKE_FAIL', json)`, write `#smoke-result` text and green/red banner.
+- `?smoke=1` sequence (~300 frames): wait grounded ≤120 frames; assert chunks/meshes/drawCalls > 0; look down, break, assert AIR + remesh; place hotbar block at adjacent, assert; spin 360°; teleport 3 cells forward; fly up 30 frames; rune round trip (`setblock … rune_block` by command, script `setblock @ @1 @ stone`, `run`, assert the stone appears and the entry is removed when the block is replaced); assert errors empty and WebGL2. Then `__caelancraft.smoke = {done:true, ok, ...}`, `console.log('SMOKE_OK'|'SMOKE_FAIL', json)`, write `#smoke-result` text and green/red banner.
 
 ## 5. Parallel implementation
 Phase 0 (done by orchestrator): scaffold, `src/CONTRACTS.md`, `src/types.js`, stubs, fixtures.

@@ -2,20 +2,21 @@
 // injected as a stub via opts.webglRenderer).
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { buildLayerGeometry, createRenderer } from '../../src/renderer.js';
+import { buildLayerGeometry, createRenderer, fogRangeForRenderDistance, HIGHLIGHT_SIZE } from '../../src/renderer.js';
 import { buildChunkMesh } from '../../src/mesher.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 import { chunkKey } from '../../src/coords.js';
-import { MAX_PIXEL_RATIO } from '../../src/config.js';
+import { MAX_PIXEL_RATIO, FOG_FAR_CHUNK_MARGIN, RENDER_DISTANCE } from '../../src/config.js';
+import { CHUNK_RING_INRADIUS, HEX_SIZE, chunkOrigin, hexToWorld, FACE_TOP } from '../../src/hex.js';
 
-/** One real MeshData layer from the mesher (flat stone world, chunk 0,0 with all neighbours present). */
+/** One real ChunkMeshData from the mesher (flat stone world, chunk 0,0 with all neighbours present). */
 function realLayer() {
   const gen = flatWorldGen(60);
   const chunks = new Map();
-  for (let cx = -1; cx <= 1; cx++) {
-    for (let cz = -1; cz <= 1; cz++) chunks.set(chunkKey(cx, cz), gen.generateChunk(cx, cz));
+  for (let cq = -1; cq <= 1; cq++) {
+    for (let cr = -1; cr <= 1; cr++) chunks.set(chunkKey(cq, cr), gen.generateChunk(cq, cr));
   }
-  const m = buildChunkMesh(0, 0, (cx, cz) => chunks.get(chunkKey(cx, cz)) ?? null);
+  const m = buildChunkMesh(0, 0, (cq, cr) => chunks.get(chunkKey(cq, cr)) ?? null);
   expect(m.opaque).not.toBeNull();
   return m;
 }
@@ -67,11 +68,31 @@ describe('buildLayerGeometry', () => {
     expect(g.boundingSphere.radius).toBeGreaterThan(0);
   });
 
+  it('uses indexCount (hex caps are 18 indices, side quads 6), not faceCount × 6', () => {
+    const layer = realLayer().opaque;
+    expect(layer.indexCount).toBe(layer.indices.length);
+    expect(layer.indexCount).not.toBe(layer.faceCount * 6); // a flat world is mostly hexagonal tops
+    expect(layer.indexCount % 3).toBe(0);
+    const g = buildLayerGeometry(layer);
+    expect(g.index.count).toBe(layer.indexCount);
+    expect(g.getAttribute('position').count).toBe(layer.vertexCount);
+    // Every index addresses an existing vertex.
+    for (let i = 0; i < layer.indices.length; i++) expect(layer.indices[i]).toBeLessThan(layer.vertexCount);
+  });
+
+  it('falls back to indices.length / positions.length when the counts are absent', () => {
+    const layer = realLayer().opaque;
+    const bare = { ...layer, vertexCount: 0, indexCount: 0, faceCount: 0 };
+    const g = buildLayerGeometry(bare);
+    expect(g.index.count).toBe(layer.indices.length);
+    expect(g.getAttribute('position').count).toBe(layer.positions.length / 3);
+  });
+
   it('releases every CPU array after the GPU upload while keeping counts intact', () => {
     const layer = realLayer().opaque;
     const g = buildLayerGeometry(layer);
     const vertexCount = layer.vertexCount;
-    const indexCount = layer.faceCount * 6;
+    const indexCount = layer.indexCount;
 
     simulateUpload(g);
 
@@ -87,7 +108,106 @@ describe('buildLayerGeometry', () => {
   });
 });
 
+describe('fogRangeForRenderDistance', () => {
+  it('scales with the inradius of the hexagonal chunk ring (clamped to one ring), near = 55 % of far', () => {
+    for (const rd of [1, 2, 3, 7, 16]) {
+      const { near, far } = fogRangeForRenderDistance(rd);
+      expect(far).toBeCloseTo(Math.max(CHUNK_RING_INRADIUS, (rd + FOG_FAR_CHUNK_MARGIN) * CHUNK_RING_INRADIUS), 10);
+      expect(near).toBeCloseTo(far * 0.55, 10);
+      expect(near).toBeLessThan(far);
+    }
+    // The margin is negative on purpose: the mesh disc is keyed by chunk ORIGIN cells, so the nearest unmeshed
+    // cell can be as close as (rd − 1) rings; the fog must end before it.
+    expect(FOG_FAR_CHUNK_MARGIN).toBeLessThanOrEqual(-1);
+    expect(fogRangeForRenderDistance(7).far).toBeLessThan(6 * CHUNK_RING_INRADIUS + 1e-9);
+  });
+  it('never goes below one ring and treats garbage as the default render distance', () => {
+    expect(fogRangeForRenderDistance(0).far).toBeGreaterThanOrEqual(CHUNK_RING_INRADIUS);
+    expect(fogRangeForRenderDistance(-5).far).toBe(fogRangeForRenderDistance(1).far);
+    expect(fogRangeForRenderDistance(NaN)).toEqual(fogRangeForRenderDistance(RENDER_DISTANCE));
+    expect(fogRangeForRenderDistance(Infinity)).toEqual(fogRangeForRenderDistance(RENDER_DISTANCE));
+  });
+  it('is monotonic in the render distance (flat only while the one-ring clamp applies)', () => {
+    let prev = 0;
+    for (let rd = 1; rd <= 16; rd++) {
+      const { far } = fogRangeForRenderDistance(rd);
+      expect(far).toBeGreaterThanOrEqual(prev);
+      if ((rd + FOG_FAR_CHUNK_MARGIN) * CHUNK_RING_INRADIUS > CHUNK_RING_INRADIUS) expect(far).toBeGreaterThan(prev);
+      prev = far;
+    }
+  });
+});
+
 describe('createRenderer', () => {
+  it('positions chunk meshes at hex.chunkOrigin(cq, cr) with a frozen matrix', () => {
+    const r = createRenderer(fakeCanvas(), new THREE.Texture(), { webglRenderer: stubWebGLRenderer() });
+    const mesh = realLayer();
+    for (const [cq, cr] of [[0, 0], [1, 0], [0, 1], [-3, 2], [5, -7]]) {
+      const key = chunkKey(cq, cr);
+      r.setChunkMesh(key, cq, cr, mesh);
+      const obj = r.three.scene.getObjectByName(`chunk:${key}:opaque`);
+      expect(obj, key).toBeDefined();
+      const [ox, oz] = chunkOrigin(cq, cr);
+      expect(obj.position.x).toBeCloseTo(ox, 6);
+      expect(obj.position.y).toBe(0);
+      expect(obj.position.z).toBeCloseTo(oz, 6);
+      expect(obj.matrixAutoUpdate).toBe(false);
+      expect(obj.matrix.elements[12]).toBeCloseTo(ox, 6);
+      expect(obj.matrix.elements[14]).toBeCloseTo(oz, 6);
+    }
+    // Replacing a key removes the old mesh (count stays per key).
+    expect(r.getStats().chunkMeshes).toBe(5);
+    r.setChunkMesh('0,0', 0, 0, mesh);
+    expect(r.getStats().chunkMeshes).toBe(5);
+    r.setChunkMesh('0,0', 0, 0, null);
+    expect(r.getStats().chunkMeshes).toBe(4);
+    r.removeChunkMesh('1,0');
+    r.removeChunkMesh('does-not-exist');
+    expect(r.getStats().chunkMeshes).toBe(3);
+    r.dispose();
+  });
+
+  it('draws a hexagonal-prism highlight centred on the targeted cell', () => {
+    const r = createRenderer(fakeCanvas(), new THREE.Texture(), { webglRenderer: stubWebGLRenderer() });
+    const hl = r.three.scene.getObjectByName('highlight');
+    expect(hl).toBeDefined();
+    expect(hl.visible).toBe(false);
+    r.setHighlight({ q: 3, y: 64, r: -2, face: FACE_TOP, nx: 0, ny: 1, nz: 0, distance: 1, blockId: 1 });
+    expect(hl.visible).toBe(true);
+    const [cx, cz] = hexToWorld(3, -2);
+    expect(hl.position.x).toBeCloseTo(cx, 10);
+    expect(hl.position.y).toBeCloseTo(64.5, 10);
+    expect(hl.position.z).toBeCloseTo(cz, 10);
+    // Negative coordinates and the "inside a block" hit (face -1) are positioned the same way.
+    r.setHighlight({ q: -11, y: 0, r: 7, face: -1, nx: 0, ny: 0, nz: 0, distance: 0, blockId: 1 });
+    const [cx2, cz2] = hexToWorld(-11, 7);
+    expect(hl.position.x).toBeCloseTo(cx2, 10);
+    expect(hl.position.y).toBeCloseTo(0.5, 10);
+    expect(hl.position.z).toBeCloseTo(cz2, 10);
+    // The wireframe is a hexagonal prism: 18 edges (6 vertical + 2 × 6 rim) = 36 line vertices, corners at
+    // HEX_SIZE × HIGHLIGHT_SIZE from the axis and pointy along ±Z like hex.HEX_CORNERS.
+    const pos = hl.geometry.getAttribute('position');
+    expect(pos.count).toBe(36);
+    let maxR = 0;
+    let maxAbsX = 0;
+    let maxAbsZ = 0;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      maxR = Math.max(maxR, Math.hypot(x, z));
+      maxAbsX = Math.max(maxAbsX, Math.abs(x));
+      maxAbsZ = Math.max(maxAbsZ, Math.abs(z));
+      expect(Math.abs(y)).toBeCloseTo(HIGHLIGHT_SIZE / 2, 5);
+    }
+    expect(maxR).toBeCloseTo(HEX_SIZE * HIGHLIGHT_SIZE, 5);
+    expect(maxAbsZ).toBeCloseTo(HEX_SIZE * HIGHLIGHT_SIZE, 5); // corner on the z axis
+    expect(maxAbsX).toBeCloseTo(0.5 * HIGHLIGHT_SIZE, 5); // flat side facing ±x
+    r.setHighlight(null);
+    expect(hl.visible).toBe(false);
+    r.dispose();
+  });
+
   it('draws the sun/moon in the opaque pass with the §6 parameters so terrain overdraws them', () => {
     const r = createRenderer(fakeCanvas(), new THREE.Texture(), { webglRenderer: stubWebGLRenderer() });
     for (const name of ['sun', 'moon']) {

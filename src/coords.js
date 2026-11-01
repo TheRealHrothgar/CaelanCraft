@@ -1,5 +1,8 @@
-// Caelancraft — coordinate helpers, face tables and orientation conventions.
-// See src/CONTRACTS.md §0 and §4. Everything here is pure.
+// Caelancraft — chunk indexing and orientation conventions. See src/CONTRACTS.md §0 and §4. Pure.
+//
+// Cells are hexagonal prisms addressed by axial (q, r) plus integer y (geometry in src/hex.js). Chunks are
+// 16×16 parallelograms in (q, r) index space; the helpers below convert between cell, chunk and local
+// coordinates exactly like a square grid would, because the index space IS a square grid.
 import { CHUNK_SIZE, WORLD_HEIGHT } from './config.js';
 
 /** @returns {number} Math.floor(a / n) */
@@ -12,101 +15,59 @@ export function mod(a, n) {
   return ((a % n) + n) % n;
 }
 
-/** World block coordinate → chunk coordinate. */
+/** Cell coordinate (q or r) → chunk coordinate. */
 export function worldToChunk(w) {
   return Math.floor(w / CHUNK_SIZE);
 }
 
-/** World block coordinate → local coordinate 0..15. */
+/** Cell coordinate (q or r) → local coordinate 0..15. */
 export function worldToLocal(w) {
   return w - Math.floor(w / CHUNK_SIZE) * CHUNK_SIZE;
 }
 
-/** @returns {string} `${cx},${cz}` */
-export function chunkKey(cx, cz) {
-  return `${cx},${cz}`;
+/** @returns {string} `${cq},${cr}` */
+export function chunkKey(cq, cr) {
+  return `${cq},${cr}`;
 }
 
-/** @returns {[number, number]} [cx, cz] */
+/** Exactly what chunkKey produces: two optionally-negative decimal integers joined by a comma. */
+const CHUNK_KEY_RE = /^(-?\d+),(-?\d+)$/;
+
+/**
+ * Inverse of chunkKey. Anything chunkKey could not have produced — no comma, an empty half (',' or '3,'),
+ * whitespace, a '+' sign, exponent/hex forms, extra fields — yields [NaN, NaN] so callers that check
+ * Number.isInteger skip it instead of silently reading it as chunk (0, 0).
+ * @returns {[number, number]} [cq, cr]
+ */
 export function parseChunkKey(key) {
-  const i = key.indexOf(',');
-  return [Number(key.slice(0, i)), Number(key.slice(i + 1))];
+  const m = CHUNK_KEY_RE.exec(key);
+  if (m === null) return [NaN, NaN];
+  return [Number(m[1]), Number(m[2])];
 }
 
-/** (lx * 16 + lz) * 128 + ly — Y innermost so a column is contiguous. Inputs must be in range. */
-export function localIndex(lx, ly, lz) {
-  return (lx * CHUNK_SIZE + lz) * WORLD_HEIGHT + ly;
+/** (lq * 16 + lr) * 128 + ly — Y innermost so a column is contiguous. Inputs must be in range. */
+export function localIndex(lq, ly, lr) {
+  return (lq * CHUNK_SIZE + lr) * WORLD_HEIGHT + ly;
 }
 
-/** Inverse of localIndex. @returns {[number, number, number]} [lx, ly, lz] */
+/** Inverse of localIndex. @returns {[number, number, number]} [lq, ly, lr] */
 export function indexToLocal(index) {
   const ly = index % WORLD_HEIGHT;
   const col = (index - ly) / WORLD_HEIGHT;
-  const lz = col % CHUNK_SIZE;
-  const lx = (col - lz) / CHUNK_SIZE;
-  return [lx, ly, lz];
+  const lr = col % CHUNK_SIZE;
+  const lq = (col - lr) / CHUNK_SIZE;
+  return [lq, ly, lr];
 }
 
 /** Index into per-column arrays (biomes, heights). */
-export function columnIndex(lx, lz) {
-  return lx * CHUNK_SIZE + lz;
+export function columnIndex(lq, lr) {
+  return lq * CHUNK_SIZE + lr;
 }
 
 /** @returns {boolean} 0 <= y < WORLD_HEIGHT */
 export function inHeightRange(y) {
   return y >= 0 && y < WORLD_HEIGHT;
 }
-
-export const FACE_PX = 0;
-export const FACE_NX = 1;
-export const FACE_PY = 2;
-export const FACE_NY = 3;
-export const FACE_PZ = 4;
-export const FACE_NZ = 5;
-
-/** @type {number[][]} unit normal of each face */
-export const FACE_NORMALS = [
-  [1, 0, 0],
-  [-1, 0, 0],
-  [0, 1, 0],
-  [0, -1, 0],
-  [0, 0, 1],
-  [0, 0, -1],
-];
-
-export const FACE_OPPOSITE = [1, 0, 3, 2, 5, 4];
-
-/** axis index (0 = x, 1 = y, 2 = z) of each face normal */
-export const FACE_AXIS = [0, 0, 1, 1, 2, 2];
-
-/** the two non-normal axes of each face, ascending */
-export const FACE_TANGENTS = [
-  [1, 2],
-  [1, 2],
-  [0, 2],
-  [0, 2],
-  [0, 1],
-  [0, 1],
-];
-
-/** Human-readable face names, index = FaceIndex. */
-export const FACE_NAMES = ['+X', '-X', '+Y', '-Y', '+Z', '-Z'];
-
-/**
- * Unit-cube corners of each face, CCW when viewed from OUTSIDE (Three.js FrontSide).
- * Order: bottom-left, bottom-right, top-right, top-left as seen from outside, where
- * "up" = +Y for side faces and -Z (north) for the +Y / -Y faces.
- * Windings verified by cross product: (v1 - v0) × (v2 - v0) equals the face normal.
- * @type {number[][][]}  [face][vertex][xyz], each component 0 or 1
- */
-export const FACE_VERTS = [
-  [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]], // +X
-  [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]], // -X
-  [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]], // +Y
-  [[1, 0, 1], [0, 0, 1], [0, 0, 0], [1, 0, 0]], // -Y
-  [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]], // +Z
-  [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]], // -Z
-];
 
 /**
  * yaw = 0 faces -Z; positive yaw turns left (counter-clockwise seen from +Y).

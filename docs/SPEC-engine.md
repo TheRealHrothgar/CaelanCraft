@@ -1,5 +1,13 @@
 # Caelancraft — Engine Notes (reference; `src/CONTRACTS.md` is normative)
 
+> **v0.2 honeycomb revision.** Caelancraft's cells are now hexagonal prisms (pointy-top, 1 wide across the flats,
+> addressed by axial `(q, r)` + `y`; see `src/hex.js`). Wherever this document describes cube blocks — AABBs, six
+> axis-aligned faces, square chunk footprints, the Amanatides–Woo voxel walk, the isometric cube icon — the
+> normative hex definitions in `src/CONTRACTS.md` supersede it. Block palette, texture recipes, terrain numbers,
+> controls, HUD and day/night still apply. Saves are v2 per `src/CONTRACTS.md` §14 (single key `caelancraft:v2:save`,
+> `version: 2`, edits keyed by hex chunk `"cq,cr"` with `localIndex = (lq*16 + lr)*128 + ly`; v1 saves are not loadable),
+> and the loading screen waits for the hex disc of 19 chunks (`hexDiscCount(2)`) rather than a 5×5 square.
+
 ## Three.js 0.186 facts (verified against the r186 sources)
 
 1. Imports: `import * as THREE from 'three'`; addons via `three/addons/<path>` (the package `exports` map points `./addons/*` → `./examples/jsm/*`). Pure ESM.
