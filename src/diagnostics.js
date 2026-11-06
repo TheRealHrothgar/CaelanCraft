@@ -28,7 +28,7 @@ import { runeKey } from './runes.js';
  * @property {number|null} time      frozen time of day, clamped to 0..1
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
- * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor
+ * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -106,12 +106,12 @@ function readNumber(params, name) {
   return Number.isFinite(n) ? n : null;
 }
 
-/** 'console' | 'editor' | null */
+/** 'console' | 'editor' | 'picker' | null */
 function readUiParam(params) {
   const t = readString(params, 'ui');
   if (t === null) return null;
   const v = t.toLowerCase();
-  return v === 'console' || v === 'editor' ? v : null;
+  return v === 'console' || v === 'editor' || v === 'picker' ? v : null;
 }
 
 function readClampedInt(params, name, lo, hi) {

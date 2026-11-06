@@ -715,9 +715,13 @@ export function boot(win, doc) {
     }
   }
 
-  /** `?ui=console|editor` with autoplay: open the console, or place a rune block three cells ahead and open its editor (screenshots). */
+  /** `?ui=console|editor|picker` with autoplay: open the console, place a rune block three cells ahead and open its editor, or open the block picker (screenshots). */
   function showDebugUi() {
     if (!params.ui || !runner || !player || params.smoke) return; // a modal would stall the smoke sequence
+    if (params.ui === 'picker') {
+      openPicker();
+      return;
+    }
     if (params.ui === 'console') {
       openConsole('');
       consoleUI.log(runner.runConsoleLine('help').message);

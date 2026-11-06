@@ -48,10 +48,10 @@ function everyPixel(px, pred, rows = null) {
 }
 
 describe('TILE_NAMES', () => {
-  it('lists all 28 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
+  it('lists all 72 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
     const keys = Object.keys(TILE_NAMES).map(Number).sort((a, b) => a - b);
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
-    expect(keys.length).toBe(29);
+    expect(keys.length).toBe(73);
     expect(TILE_NAMES[TILE.RUNE]).toBe('rune');
     expect(TILE.RUNE).toBe(27);
     for (const [key, id] of Object.entries(TILE)) {
@@ -136,8 +136,22 @@ describe('paintTile — alpha rules', () => {
     // Holes keep their RGB (still green) so cutout edges do not fringe black.
     everyPixel(px, (r, g, b) => g > r && g > b);
   });
+  it('spruce / birch leaves have oak-style holes (12–32% alpha 0, rest 255); ice is alpha 200 everywhere', () => {
+    for (const t of [TILE.SPRUCE_LEAVES, TILE.BIRCH_LEAVES]) {
+      const px = paintTile(t);
+      let holes = 0;
+      for (let i = 3; i < BYTES; i += 4) {
+        expect(px[i] === 0 || px[i] === 255).toBe(true);
+        if (px[i] === 0) holes++;
+      }
+      expect(holes / 256).toBeGreaterThanOrEqual(0.12);
+      expect(holes / 256).toBeLessThanOrEqual(0.32);
+    }
+    const ice = paintTile(TILE.ICE);
+    for (let i = 3; i < BYTES; i += 4) expect(ice[i]).toBe(200);
+  });
   it('every other tile is alpha 255 everywhere', () => {
-    const special = new Set([TILE.WATER, TILE.GLASS, TILE.OAK_LEAVES]);
+    const special = new Set([TILE.WATER, TILE.GLASS, TILE.OAK_LEAVES, TILE.SPRUCE_LEAVES, TILE.BIRCH_LEAVES, TILE.ICE]);
     for (const t of TILE_IDS) {
       if (special.has(t)) continue;
       const px = paintTile(t);
@@ -158,7 +172,7 @@ describe('paintTile — recipe details', () => {
   });
   it('unknown tile ids paint the missing checker', () => {
     const missing = paintTile(TILE.MISSING);
-    for (const bad of [28, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
+    for (const bad of [72, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
       // @ts-ignore — deliberately passing garbage
       expect(sameBytes(paintTile(bad), missing), `tile ${String(bad)}`).toBe(true);
     }

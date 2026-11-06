@@ -9,8 +9,16 @@ export const BLOCK = Object.freeze({
   SAND: 8, GRAVEL: 9, OAK_LOG: 10, OAK_LEAVES: 11, GLASS: 12, COAL_ORE: 13, IRON_ORE: 14, GOLD_ORE: 15,
   DIAMOND_ORE: 16, SANDSTONE: 17, SNOW_BLOCK: 18, SNOWY_GRASS: 19, BRICKS: 20, BOOKSHELF: 21,
   STONE_BRICKS: 22, WOOL_WHITE: 23, WOOL_RED: 24, RUNE_BLOCK: 25,
+  // v0.4 block batch (appended so v2 saves keep their ids)
+  SPRUCE_LOG: 26, SPRUCE_PLANKS: 27, SPRUCE_LEAVES: 28, BIRCH_LOG: 29, BIRCH_PLANKS: 30, BIRCH_LEAVES: 31,
+  GRANITE: 32, DIORITE: 33, ANDESITE: 34, SLATE: 35, MOSSY_COBBLESTONE: 36, MOSSY_STONE_BRICKS: 37, OBSIDIAN: 38,
+  CLAY: 39, RED_SAND: 40, ICE: 41, PACKED_ICE: 42,
+  COAL_BLOCK: 43, IRON_BLOCK: 44, GOLD_BLOCK: 45, DIAMOND_BLOCK: 46, COPPER_BLOCK: 47,
+  GLOWSTONE: 48, HONEYCOMB_BLOCK: 49, HAY_BALE: 50, PUMPKIN: 51,
+  WOOL_ORANGE: 52, WOOL_YELLOW: 53, WOOL_LIME: 54, WOOL_GREEN: 55, WOOL_CYAN: 56, WOOL_LIGHT_BLUE: 57, WOOL_BLUE: 58,
+  WOOL_PURPLE: 59, WOOL_MAGENTA: 60, WOOL_PINK: 61, WOOL_BROWN: 62, WOOL_BLACK: 63, WOOL_GRAY: 64, WOOL_LIGHT_GRAY: 65,
 });
-export const BLOCK_COUNT = 26;
+export const BLOCK_COUNT = 66;
 
 /** Atlas tile ids. Tile t is drawn at pixel ((t % 16) * 16, floor(t / 16) * 16). */
 export const TILE = Object.freeze({
@@ -19,6 +27,13 @@ export const TILE = Object.freeze({
   IRON_ORE: 15, GOLD_ORE: 16, DIAMOND_ORE: 17, SANDSTONE_TOP: 18, SANDSTONE_SIDE: 19, SNOW: 20,
   SNOWY_GRASS_SIDE: 21, BRICKS: 22, BOOKSHELF: 23, STONE_BRICKS: 24, WOOL_WHITE: 25, WOOL_RED: 26,
   RUNE: 27,
+  SPRUCE_LOG_SIDE: 28, SPRUCE_LOG_END: 29, SPRUCE_PLANKS: 30, SPRUCE_LEAVES: 31, BIRCH_LOG_SIDE: 32, BIRCH_LOG_END: 33,
+  BIRCH_PLANKS: 34, BIRCH_LEAVES: 35, GRANITE: 36, DIORITE: 37, ANDESITE: 38, SLATE: 39, MOSSY_COBBLESTONE: 40,
+  MOSSY_STONE_BRICKS: 41, OBSIDIAN: 42, CLAY: 43, RED_SAND: 44, ICE: 45, PACKED_ICE: 46, COAL_BLOCK: 47, IRON_BLOCK: 48,
+  GOLD_BLOCK: 49, DIAMOND_BLOCK: 50, COPPER_BLOCK: 51, GLOWSTONE: 52, HONEYCOMB: 53, HAY_BALE_SIDE: 54, HAY_BALE_TOP: 55,
+  PUMPKIN_SIDE: 56, PUMPKIN_TOP: 57, WOOL_ORANGE: 58, WOOL_YELLOW: 59, WOOL_LIME: 60, WOOL_GREEN: 61, WOOL_CYAN: 62,
+  WOOL_LIGHT_BLUE: 63, WOOL_BLUE: 64, WOOL_PURPLE: 65, WOOL_MAGENTA: 66, WOOL_PINK: 67, WOOL_BROWN: 68, WOOL_BLACK: 69,
+  WOOL_GRAY: 70, WOOL_LIGHT_GRAY: 71,
   MISSING: 255,
 });
 /** Every tile id the atlas must paint. */
@@ -84,6 +99,13 @@ function def(d) {
 const T = TILE;
 const B = BLOCK;
 
+/** The v0.4 wool colours (white and red predate them): BLOCK/TILE key suffix and display label. */
+const WOOL_COLORS = [
+  ['ORANGE', 'Orange'], ['YELLOW', 'Yellow'], ['LIME', 'Lime'], ['GREEN', 'Green'], ['CYAN', 'Cyan'],
+  ['LIGHT_BLUE', 'Light Blue'], ['BLUE', 'Blue'], ['PURPLE', 'Purple'], ['MAGENTA', 'Magenta'], ['PINK', 'Pink'],
+  ['BROWN', 'Brown'], ['BLACK', 'Black'], ['GRAY', 'Gray'], ['LIGHT_GRAY', 'Light Gray'],
+];
+
 /** @type {BlockDef[]} indexed by id */
 export const BLOCKS = [
   def({ id: B.AIR, name: 'air', displayName: 'Air', tiles: tiles(T.MISSING), solid: false, opaque: false, breakable: false, placeable: false }),
@@ -114,6 +136,38 @@ export const BLOCKS = [
   // Rune Block: a programmable honeycomb cell. Its script and trigger settings live in runes.js (RuneStore),
   // not in the chunk byte array; see CONTRACTS §27.
   def({ id: B.RUNE_BLOCK, name: 'rune_block', displayName: 'Rune Block', tiles: tiles(T.RUNE), soundGroup: 'stone' }),
+  // ---- v0.4 batch. Worldgen does not emit any of these yet; they are builder's blocks.
+  def({ id: B.SPRUCE_LOG, name: 'spruce_log', displayName: 'Spruce Log', tiles: tiles(T.SPRUCE_LOG_SIDE, T.SPRUCE_LOG_END), soundGroup: 'wood' }),
+  def({ id: B.SPRUCE_PLANKS, name: 'spruce_planks', displayName: 'Spruce Planks', tiles: tiles(T.SPRUCE_PLANKS), soundGroup: 'wood' }),
+  def({ id: B.SPRUCE_LEAVES, name: 'spruce_leaves', displayName: 'Spruce Leaves', tiles: tiles(T.SPRUCE_LEAVES), opaque: false, cullSame: false, layer: LAYER_CUTOUT, soundGroup: 'leaves' }),
+  def({ id: B.BIRCH_LOG, name: 'birch_log', displayName: 'Birch Log', tiles: tiles(T.BIRCH_LOG_SIDE, T.BIRCH_LOG_END), soundGroup: 'wood' }),
+  def({ id: B.BIRCH_PLANKS, name: 'birch_planks', displayName: 'Birch Planks', tiles: tiles(T.BIRCH_PLANKS), soundGroup: 'wood' }),
+  def({ id: B.BIRCH_LEAVES, name: 'birch_leaves', displayName: 'Birch Leaves', tiles: tiles(T.BIRCH_LEAVES), opaque: false, cullSame: false, layer: LAYER_CUTOUT, soundGroup: 'leaves' }),
+  def({ id: B.GRANITE, name: 'granite', displayName: 'Granite', tiles: tiles(T.GRANITE), soundGroup: 'stone' }),
+  def({ id: B.DIORITE, name: 'diorite', displayName: 'Diorite', tiles: tiles(T.DIORITE), soundGroup: 'stone' }),
+  def({ id: B.ANDESITE, name: 'andesite', displayName: 'Andesite', tiles: tiles(T.ANDESITE), soundGroup: 'stone' }),
+  def({ id: B.SLATE, name: 'slate', displayName: 'Slate', tiles: tiles(T.SLATE), soundGroup: 'stone' }),
+  def({ id: B.MOSSY_COBBLESTONE, name: 'mossy_cobblestone', displayName: 'Mossy Cobblestone', tiles: tiles(T.MOSSY_COBBLESTONE), soundGroup: 'stone' }),
+  def({ id: B.MOSSY_STONE_BRICKS, name: 'mossy_stone_bricks', displayName: 'Mossy Stone Bricks', tiles: tiles(T.MOSSY_STONE_BRICKS), soundGroup: 'stone' }),
+  def({ id: B.OBSIDIAN, name: 'obsidian', displayName: 'Obsidian', tiles: tiles(T.OBSIDIAN), soundGroup: 'stone' }),
+  def({ id: B.CLAY, name: 'clay', displayName: 'Clay', tiles: tiles(T.CLAY), soundGroup: 'dirt' }),
+  def({ id: B.RED_SAND, name: 'red_sand', displayName: 'Red Sand', tiles: tiles(T.RED_SAND), soundGroup: 'sand' }),
+  // Ice is solid but see-through: translucent layer, faces between two ice cells culled (like water).
+  def({ id: B.ICE, name: 'ice', displayName: 'Ice', tiles: tiles(T.ICE), opaque: false, layer: LAYER_TRANSLUCENT, soundGroup: 'glass' }),
+  def({ id: B.PACKED_ICE, name: 'packed_ice', displayName: 'Packed Ice', tiles: tiles(T.PACKED_ICE), soundGroup: 'glass' }),
+  def({ id: B.COAL_BLOCK, name: 'coal_block', displayName: 'Block of Coal', tiles: tiles(T.COAL_BLOCK), soundGroup: 'stone' }),
+  def({ id: B.IRON_BLOCK, name: 'iron_block', displayName: 'Block of Iron', tiles: tiles(T.IRON_BLOCK), soundGroup: 'stone' }),
+  def({ id: B.GOLD_BLOCK, name: 'gold_block', displayName: 'Block of Gold', tiles: tiles(T.GOLD_BLOCK), soundGroup: 'stone' }),
+  def({ id: B.DIAMOND_BLOCK, name: 'diamond_block', displayName: 'Block of Diamond', tiles: tiles(T.DIAMOND_BLOCK), soundGroup: 'stone' }),
+  def({ id: B.COPPER_BLOCK, name: 'copper_block', displayName: 'Block of Copper', tiles: tiles(T.COPPER_BLOCK), soundGroup: 'stone' }),
+  // Glowstone only LOOKS lit (bright tile); there is no block-light engine yet.
+  def({ id: B.GLOWSTONE, name: 'glowstone', displayName: 'Glowstone', tiles: tiles(T.GLOWSTONE), soundGroup: 'glass' }),
+  def({ id: B.HONEYCOMB_BLOCK, name: 'honeycomb_block', displayName: 'Honeycomb Block', tiles: tiles(T.HONEYCOMB), soundGroup: 'cloth' }),
+  def({ id: B.HAY_BALE, name: 'hay_bale', displayName: 'Hay Bale', tiles: tiles(T.HAY_BALE_SIDE, T.HAY_BALE_TOP), soundGroup: 'grass' }),
+  def({ id: B.PUMPKIN, name: 'pumpkin', displayName: 'Pumpkin', tiles: tiles(T.PUMPKIN_SIDE, T.PUMPKIN_TOP), soundGroup: 'wood' }),
+  ...WOOL_COLORS.map(([key, label]) => def({
+    id: B[`WOOL_${key}`], name: `wool_${key.toLowerCase()}`, displayName: `${label} Wool`, tiles: tiles(T[`WOOL_${key}`]), soundGroup: 'cloth',
+  })),
 ];
 
 /** Default hotbar: grass, dirt, stone, cobble, planks, log, leaves, glass, bricks. */
@@ -121,11 +175,25 @@ export const DEFAULT_HOTBAR = Object.freeze([
   B.GRASS_BLOCK, B.DIRT, B.STONE, B.COBBLESTONE, B.OAK_PLANKS, B.OAK_LOG, B.OAK_LEAVES, B.GLASS, B.BRICKS,
 ]);
 
-/** Order of the 24 placeable blocks in the block picker. */
+/** Order of the 64 placeable blocks in the block picker, grouped by family. */
 export const PICKER_ORDER = Object.freeze([
-  B.STONE, B.COBBLESTONE, B.STONE_BRICKS, B.DIRT, B.GRASS_BLOCK, B.SNOWY_GRASS, B.SAND, B.SANDSTONE, B.GRAVEL,
-  B.SNOW_BLOCK, B.OAK_LOG, B.OAK_PLANKS, B.OAK_LEAVES, B.BOOKSHELF, B.GLASS, B.BRICKS, B.WOOL_WHITE, B.WOOL_RED,
-  B.COAL_ORE, B.IRON_ORE, B.GOLD_ORE, B.DIAMOND_ORE, B.RUNE_BLOCK, B.WATER,
+  // stone
+  B.STONE, B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.GRANITE, B.DIORITE, B.ANDESITE,
+  B.SLATE, B.OBSIDIAN, B.BRICKS, B.SANDSTONE,
+  // earth
+  B.DIRT, B.GRASS_BLOCK, B.SNOWY_GRASS, B.SAND, B.RED_SAND, B.GRAVEL, B.CLAY, B.SNOW_BLOCK, B.ICE, B.PACKED_ICE,
+  B.HAY_BALE, B.PUMPKIN,
+  // wood
+  B.OAK_LOG, B.OAK_PLANKS, B.OAK_LEAVES, B.SPRUCE_LOG, B.SPRUCE_PLANKS, B.SPRUCE_LEAVES, B.BIRCH_LOG, B.BIRCH_PLANKS,
+  B.BIRCH_LEAVES, B.BOOKSHELF, B.GLASS, B.GLOWSTONE,
+  // minerals
+  B.COAL_ORE, B.IRON_ORE, B.GOLD_ORE, B.DIAMOND_ORE, B.COAL_BLOCK, B.IRON_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK,
+  B.COPPER_BLOCK, B.HONEYCOMB_BLOCK,
+  // wool, light to dark around the colour wheel
+  B.WOOL_WHITE, B.WOOL_LIGHT_GRAY, B.WOOL_GRAY, B.WOOL_BLACK, B.WOOL_BROWN, B.WOOL_RED, B.WOOL_ORANGE, B.WOOL_YELLOW,
+  B.WOOL_LIME, B.WOOL_GREEN, B.WOOL_CYAN, B.WOOL_LIGHT_BLUE, B.WOOL_BLUE, B.WOOL_PURPLE, B.WOOL_MAGENTA, B.WOOL_PINK,
+  // special
+  B.RUNE_BLOCK, B.WATER,
 ]);
 
 /** @returns {BlockDef} the block definition; unknown ids return the AIR definition */

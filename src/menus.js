@@ -388,7 +388,7 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     el.pickerName.textContent = PICKER_NAME_IDLE;
   }
 
-  /** Build the 23 picker cells once; they live in #picker-grid for the lifetime of the menus. */
+  /** Build the PICKER_ORDER picker cells once; they live in #picker-grid for the lifetime of the menus. */
   function buildPickerGrid() {
     clearChildren(el.pickerGrid);
     cells.length = 0;

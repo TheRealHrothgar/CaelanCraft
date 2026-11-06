@@ -179,15 +179,28 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 Block ids (`BLOCK.*`): `AIR 0, STONE 1, GRASS_BLOCK 2, DIRT 3, COBBLESTONE 4, OAK_PLANKS 5, BEDROCK 6, WATER 7,
 SAND 8, GRAVEL 9, OAK_LOG 10, OAK_LEAVES 11, GLASS 12, COAL_ORE 13, IRON_ORE 14, GOLD_ORE 15, DIAMOND_ORE 16,
 SANDSTONE 17, SNOW_BLOCK 18, SNOWY_GRASS 19, BRICKS 20, BOOKSHELF 21, STONE_BRICKS 22, WOOL_WHITE 23, WOOL_RED 24,
-RUNE_BLOCK 25`. `BLOCK_COUNT = 26`. `RUNE_BLOCK` ("Rune Block") is solid, opaque, breakable, placeable, soundGroup stone, tile
+RUNE_BLOCK 25`, then the v0.4 batch (appended so v2 saves keep their ids): `SPRUCE_LOG 26, SPRUCE_PLANKS 27, SPRUCE_LEAVES 28,
+BIRCH_LOG 29, BIRCH_PLANKS 30, BIRCH_LEAVES 31, GRANITE 32, DIORITE 33, ANDESITE 34, SLATE 35, MOSSY_COBBLESTONE 36,
+MOSSY_STONE_BRICKS 37, OBSIDIAN 38, CLAY 39, RED_SAND 40, ICE 41, PACKED_ICE 42, COAL_BLOCK 43, IRON_BLOCK 44, GOLD_BLOCK 45,
+DIAMOND_BLOCK 46, COPPER_BLOCK 47, GLOWSTONE 48, HONEYCOMB_BLOCK 49, HAY_BALE 50, PUMPKIN 51, WOOL_ORANGE 52, WOOL_YELLOW 53,
+WOOL_LIME 54, WOOL_GREEN 55, WOOL_CYAN 56, WOOL_LIGHT_BLUE 57, WOOL_BLUE 58, WOOL_PURPLE 59, WOOL_MAGENTA 60, WOOL_PINK 61,
+WOOL_BROWN 62, WOOL_BLACK 63, WOOL_GRAY 64, WOOL_LIGHT_GRAY 65`. `BLOCK_COUNT = 66`. All v0.4 blocks are solid, breakable and
+placeable, use existing sound groups, and are never emitted by worldgen. Spruce/birch leaves are cutout with `cullSame: false`
+(like oak); ICE is solid, non-opaque, `LAYER_TRANSLUCENT`, `cullSame: true`; PACKED_ICE is opaque. Logs and hay bales use
+`tiles(side, end)`; pumpkin `tiles(side, top)`. GLOWSTONE only looks lit (no block-light engine). `RUNE_BLOCK` ("Rune Block") is solid, opaque, breakable, placeable, soundGroup stone, tile
 RUNE on all faces; its script lives in `runes.js` (§27), never in the chunk array. Worldgen never emits it.
 
 Tile ids (`TILE.*`): `STONE 0, DIRT 1, GRASS_TOP 2, GRASS_SIDE 3, COBBLESTONE 4, OAK_PLANKS 5, BEDROCK 6, WATER 7,
 SAND 8, GRAVEL 9, OAK_LOG_SIDE 10, OAK_LOG_END 11, OAK_LEAVES 12, GLASS 13, COAL_ORE 14, IRON_ORE 15, GOLD_ORE 16,
 DIAMOND_ORE 17, SANDSTONE_TOP 18, SANDSTONE_SIDE 19, SNOW 20, SNOWY_GRASS_SIDE 21, BRICKS 22, BOOKSHELF 23,
-STONE_BRICKS 24, WOOL_WHITE 25, WOOL_RED 26, RUNE 27, MISSING 255`. `TILE_IDS` = array of all 29 tile ids.
+STONE_BRICKS 24, WOOL_WHITE 25, WOOL_RED 26, RUNE 27`, v0.4 `SPRUCE_LOG_SIDE 28, SPRUCE_LOG_END 29, SPRUCE_PLANKS 30,
+SPRUCE_LEAVES 31, BIRCH_LOG_SIDE 32, BIRCH_LOG_END 33, BIRCH_PLANKS 34, BIRCH_LEAVES 35, GRANITE 36, DIORITE 37, ANDESITE 38,
+SLATE 39, MOSSY_COBBLESTONE 40, MOSSY_STONE_BRICKS 41, OBSIDIAN 42, CLAY 43, RED_SAND 44, ICE 45, PACKED_ICE 46, COAL_BLOCK 47,
+IRON_BLOCK 48, GOLD_BLOCK 49, DIAMOND_BLOCK 50, COPPER_BLOCK 51, GLOWSTONE 52, HONEYCOMB 53, HAY_BALE_SIDE 54, HAY_BALE_TOP 55,
+PUMPKIN_SIDE 56, PUMPKIN_TOP 57, WOOL_ORANGE 58 … WOOL_LIGHT_GRAY 71` (wool in BLOCK order), `MISSING 255`.
+`TILE_IDS` = array of all 73 tile ids.
 
-Layers: `LAYER_OPAQUE 0` (everything else), `LAYER_CUTOUT 1` (OAK_LEAVES, GLASS), `LAYER_TRANSLUCENT 2` (WATER).
+Layers: `LAYER_OPAQUE 0` (everything else), `LAYER_CUTOUT 1` (OAK/SPRUCE/BIRCH_LEAVES, GLASS), `LAYER_TRANSLUCENT 2` (WATER, ICE).
 
 Biomes: `BIOME.OCEAN 0, BEACH 1, PLAINS 2, FOREST 3, DESERT 4, SNOWY 5, MOUNTAINS 6, SNOWY_PEAKS 7`, `BIOME_NAMES`.
 
@@ -196,7 +209,8 @@ Biomes: `BIOME.OCEAN 0, BEACH 1, PLAINS 2, FOREST 3, DESERT 4, SNOWY 5, MOUNTAIN
 Functions: `getBlockDef(id)` (unknown → the AIR def), `isSolid, isOpaque, isLiquid, isBreakable, isPlaceable,
 isReplaceable (AIR or liquid), isTargetable (not AIR and not liquid), getRenderLayer, getFaceTile(id, face 0..7),
 shouldRenderFace(a, b), tileToUV(tile) → [u0, v0, u1, v1]`. Re-exports `FACE_TOP, FACE_BOTTOM` from hex.js.
-Constants: `DEFAULT_HOTBAR` (9 ids), `PICKER_ORDER` (24 placeable ids, RUNE_BLOCK before WATER), `SOUND_GROUPS`.
+Constants: `DEFAULT_HOTBAR` (9 ids), `PICKER_ORDER` (all 64 placeable ids, once each, grouped stone / earth / wood / minerals /
+wool / special, ending RUNE_BLOCK, WATER), `SOUND_GROUPS`.
 
 Culling rule (`shouldRenderFace(a, b)`, `a` = this block, `b` = neighbour across the face):
 ```
@@ -544,6 +558,10 @@ export function createTilePainters()     // → Map<tile, () => Uint8ClampedArra
 ```
 Recipe 27 `rune` (v0.3): dark slate `0x2a2633` + noise 6, a pointy-top hexagon outline of radius 6 around (7.5, 7.5) in `0x7be8ff`
 with a `0x355a6b` halo one pixel outward, spokes to corners 0/2/4 in `0x5fc8e8`, and a 2×2 centre dot `0xd8f8ff`; alpha 255.
+v0.4 recipes 28–71 live in tiles.js (its comments are normative): spruce/birch reuse the oak plank, bark, log-end and leaves layouts
+in new colours (birch bark is its own recipe); mossy cobblestone / stone bricks paint the base tile with ITS seed, then moss clumps;
+storage blocks share a bevelled-plate recipe; honeycomb is a small hex-cell Voronoi; wool 58–71 use the white/red weave. Alpha:
+spruce/birch leaves have oak-style ~22% holes, ICE is alpha 200 everywhere, all other v0.4 tiles alpha 255.
 Recipes: `docs/SPEC-gameplay.md` §2.3–§2.4 verbatim, including the alpha rules (water alpha 178 everywhere; glass interior
 alpha 0 with opaque frame; leaves ~22% alpha-0 holes; everything else alpha 255). Use private copies of `mulberry32` and
 `fnv1a` (do not import noise.js). `paintTile` never depends on the world seed.
@@ -663,7 +681,7 @@ export function createMenus(doc, atlasCanvas, callbacks)
  *   showLoading(done, total), hideLoading(),
  *   showClickToPlay(), hideClickToPlay(),
  *   showPause(seed), hidePause(),
- *   showPicker(hotbar, selected), hidePicker(), isPickerOpen(),   // grid of PICKER_ORDER icons (64px); click → onPickBlock(id, null); Digit1-9 while hovering → onPickBlock(id, slot)
+ *   showPicker(hotbar, selected), hidePicker(), isPickerOpen(),   // scrollable grid of PICKER_ORDER icons (64px canvases shown at 52px); click → onPickBlock(id, null); Digit1-9 while hovering → onPickBlock(id, slot)
  *   getSeedInput(),                         // text of #seed-input
  *   dispose() } */
 ```
@@ -735,8 +753,8 @@ rendering continues. Closing any modal goes through `enterPlayingFromModal()`: `
   `runner.onLog → logLine` (console + chat) and `runner.onTrigger` (click sound for interact/step), and `runner.seedStep()`; `quitToTitle` /
   `dispose` reset the runner and clear the store. `game.teleport` also calls `runner.seedStep()` (arriving is not stepping on). The pause menu's
   "Stop All Rune Scripts" calls `runner.stopAll()`. `game.runCommand(line)`, `game.runes`, `game.runner` are exposed for diagnostics.
-- `?ui=console|editor` (screenshot aid, autoplay only, ignored under `?smoke=1`; use with `?nosave=1`): after entering playing, `showDebugUi()` opens the console
-  with `help` printed, or runs `setblock q y r rune_block` three cells ahead, stores a sample rune (label "lift", stepOn + chain) and opens
+- `?ui=console|editor|picker` (screenshot aid, autoplay only, ignored under `?smoke=1`; use with `?nosave=1`): after entering playing, `showDebugUi()` opens the console
+  with `help` printed, opens the block picker (`picker`, no world writes), or runs `setblock q y r rune_block` three cells ahead, stores a sample rune (label "lift", stepOn + chain) and opens
   its editor — i.e. it WRITES to the world.
 - The relock fallback (click-to-play after a refused lock) and `saveOnLeave` both save in any state that has a player, and `saveOnLeave`
   first flushes an open editor's fields into the store, so edits made in a modal are never lost when the page is left. A pointer lock that

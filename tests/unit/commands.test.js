@@ -234,18 +234,23 @@ describe('resolveBlock', () => {
   });
 
   it('resolves unique prefixes and substrings, and lists ambiguous candidates', () => {
-    expect(resolveBlock('plank')).toEqual({ id: B.OAK_PLANKS });
+    expect(resolveBlock('oak_plank')).toEqual({ id: B.OAK_PLANKS });
     expect(resolveBlock('cobble')).toEqual({ id: B.COBBLESTONE });
-    expect(resolveBlock('diamond')).toEqual({ id: B.DIAMOND_ORE });
+    expect(resolveBlock('diamond_o')).toEqual({ id: B.DIAMOND_ORE });
+    expect(resolveBlock('honey')).toEqual({ id: B.HONEYCOMB_BLOCK });
+    expect(resolveBlock('light_blue_wool')).toEqual({ id: B.WOOL_LIGHT_BLUE });
+    expect(resolveBlock('block_of_gold')).toEqual({ id: B.GOLD_BLOCK });
+    expect(resolveBlock('diamond')).toEqual({ error: 'ambiguous block "diamond": diamond_ore, diamond_block' });
+    expect(resolveBlock('plank')).toEqual({ error: 'ambiguous block "plank": oak_planks, spruce_planks, birch_planks' });
     expect(resolveBlock('shelf')).toEqual({ id: B.BOOKSHELF }); // substring
     const amb = resolveBlock('wool');
-    expect('error' in amb && amb.error).toBe('ambiguous block "wool": wool_white, wool_red');
+    expect('error' in amb && amb.error).toMatch(/^ambiguous block "wool": wool_white, wool_red, wool_orange, .*, wool_light_gray$/);
   });
 
   it('rejects unknown names, out-of-range ids and empty tokens with helpful messages', () => {
     expect(resolveBlock('zzz')).toEqual({ error: 'unknown block "zzz" (type blocks to list them)' });
     expect(resolveBlock(String(BLOCK_COUNT))).toEqual({ error: `unknown block id ${BLOCK_COUNT} (0..${BLOCK_COUNT - 1}; type blocks to list them)` });
-    expect(resolveBlock('-1')).toEqual({ error: 'unknown block id -1 (0..25; type blocks to list them)' });
+    expect(resolveBlock('-1')).toEqual({ error: 'unknown block id -1 (0..65; type blocks to list them)' });
     expect(resolveBlock('')).toEqual({ error: 'expected a block name' });
     expect(resolveBlock(undefined)).toEqual({ error: 'expected a block name' });
   });

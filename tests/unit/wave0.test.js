@@ -9,6 +9,7 @@ import { FACE_TOP as HEX_FACE_TOP, FACE_BOTTOM as HEX_FACE_BOTTOM, FACE_COUNT, H
 import {
   BLOCK, BLOCKS, BLOCK_COUNT, TILE, TILE_IDS, DEFAULT_HOTBAR, PICKER_ORDER, getFaceTile, isSolid, isOpaque, isLiquid,
   isReplaceable, isTargetable, isPlaceable, isBreakable, shouldRenderFace, tileToUV, LAYER_CUTOUT, LAYER_TRANSLUCENT, LAYER_OPAQUE,
+  SOUND_GROUPS,
   FACE_TOP, FACE_BOTTOM,
 } from '../../src/blocks.js';
 import { Chunk } from '../../src/chunk.js';
@@ -151,10 +152,8 @@ describe('blocks', () => {
     expect(getFaceTile(200, 0)).toBe(TILE.MISSING);
   });
   it('RUNE_BLOCK (25) is a solid, opaque, placeable, breakable stone-sounding block with the RUNE tile on all 8 faces', () => {
-    expect(BLOCK_COUNT).toBe(26);
     expect(BLOCK.RUNE_BLOCK).toBe(25);
     expect(TILE.RUNE).toBe(27);
-    expect(TILE_IDS).toHaveLength(29);
     expect(TILE_IDS).toContain(TILE.RUNE);
     const def = BLOCKS[BLOCK.RUNE_BLOCK];
     expect(def.name).toBe('rune_block');
@@ -171,14 +170,52 @@ describe('blocks', () => {
     expect(def.layer).toBe(LAYER_OPAQUE);
     expect(def.soundGroup).toBe('stone');
     for (let f = 0; f < FACE_COUNT; f++) expect(getFaceTile(BLOCK.RUNE_BLOCK, f)).toBe(TILE.RUNE);
-    // Picker: 24 placeable blocks, the rune block listed right before water.
-    expect(PICKER_ORDER).toHaveLength(24);
+    // Picker: the rune block listed right before water, which is last.
     const iRune = PICKER_ORDER.indexOf(BLOCK.RUNE_BLOCK);
     expect(iRune).toBeGreaterThanOrEqual(0);
     expect(PICKER_ORDER[iRune + 1]).toBe(BLOCK.WATER);
     expect(PICKER_ORDER[PICKER_ORDER.length - 1]).toBe(BLOCK.WATER);
     // Not in the default hotbar.
     expect(DEFAULT_HOTBAR).not.toContain(BLOCK.RUNE_BLOCK);
+  });
+  it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
+    expect(BLOCK_COUNT).toBe(66);
+    expect(TILE_IDS).toHaveLength(73);
+    expect(BLOCK.STONE).toBe(1);
+    expect(BLOCK.WOOL_RED).toBe(24);
+    expect(BLOCK.SPRUCE_LOG).toBe(26);
+    expect(BLOCK.WOOL_LIGHT_GRAY).toBe(65);
+    expect(TILE.SPRUCE_LOG_SIDE).toBe(28);
+    expect(TILE.WOOL_LIGHT_GRAY).toBe(71);
+    const placeable = BLOCKS.filter((b) => b.placeable).map((b) => b.id).sort((a, b) => a - b);
+    expect(PICKER_ORDER).toHaveLength(64);
+    expect(new Set(PICKER_ORDER).size).toBe(PICKER_ORDER.length);
+    expect([...PICKER_ORDER].sort((a, b) => a - b)).toEqual(placeable);
+    // Logs and hay bales: distinct end tiles on top and bottom.
+    expect(getFaceTile(BLOCK.SPRUCE_LOG, FACE_TOP)).toBe(TILE.SPRUCE_LOG_END);
+    expect(getFaceTile(BLOCK.BIRCH_LOG, FACE_BOTTOM)).toBe(TILE.BIRCH_LOG_END);
+    expect(getFaceTile(BLOCK.HAY_BALE, 0)).toBe(TILE.HAY_BALE_SIDE);
+    expect(getFaceTile(BLOCK.PUMPKIN, FACE_TOP)).toBe(TILE.PUMPKIN_TOP);
+    // Leaves are cutout like oak; ice is a solid, see-through, translucent block that culls against itself.
+    for (const id of [BLOCK.SPRUCE_LEAVES, BLOCK.BIRCH_LEAVES]) {
+      expect(BLOCKS[id].layer).toBe(LAYER_CUTOUT);
+      expect(BLOCKS[id].cullSame).toBe(false);
+      expect(isOpaque(id)).toBe(false);
+    }
+    expect(isSolid(BLOCK.ICE)).toBe(true);
+    expect(isOpaque(BLOCK.ICE)).toBe(false);
+    expect(BLOCKS[BLOCK.ICE].layer).toBe(LAYER_TRANSLUCENT);
+    expect(shouldRenderFace(BLOCK.ICE, BLOCK.ICE)).toBe(false);
+    expect(shouldRenderFace(BLOCK.STONE, BLOCK.ICE)).toBe(true);
+    expect(isOpaque(BLOCK.PACKED_ICE)).toBe(true);
+    // Every new block is a normal solid, breakable, placeable block with a known sound group.
+    for (let id = BLOCK.SPRUCE_LOG; id < BLOCK_COUNT; id++) {
+      const d = BLOCKS[id];
+      expect(d.solid && d.breakable && d.placeable && !d.liquid, d.name).toBe(true);
+      expect(SOUND_GROUPS).toContain(d.soundGroup);
+    }
+    expect(BLOCKS[BLOCK.WOOL_LIGHT_BLUE].displayName).toBe('Light Blue Wool');
+    expect(DEFAULT_HOTBAR.every((id) => id < BLOCK.RUNE_BLOCK)).toBe(true);
   });
   it('flags are consistent', () => {
     for (const b of BLOCKS) {

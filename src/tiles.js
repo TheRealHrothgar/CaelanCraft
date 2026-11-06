@@ -43,6 +43,50 @@ export const TILE_NAMES = Object.freeze({
   25: 'wool_white',
   26: 'wool_red',
   27: 'rune',
+  28: 'spruce_log_side',
+  29: 'spruce_log_end',
+  30: 'spruce_planks',
+  31: 'spruce_leaves',
+  32: 'birch_log_side',
+  33: 'birch_log_end',
+  34: 'birch_planks',
+  35: 'birch_leaves',
+  36: 'granite',
+  37: 'diorite',
+  38: 'andesite',
+  39: 'slate',
+  40: 'mossy_cobblestone',
+  41: 'mossy_stone_bricks',
+  42: 'obsidian',
+  43: 'clay',
+  44: 'red_sand',
+  45: 'ice',
+  46: 'packed_ice',
+  47: 'coal_block',
+  48: 'iron_block',
+  49: 'gold_block',
+  50: 'diamond_block',
+  51: 'copper_block',
+  52: 'glowstone',
+  53: 'honeycomb',
+  54: 'hay_bale_side',
+  55: 'hay_bale_top',
+  56: 'pumpkin_side',
+  57: 'pumpkin_top',
+  58: 'wool_orange',
+  59: 'wool_yellow',
+  60: 'wool_lime',
+  61: 'wool_green',
+  62: 'wool_cyan',
+  63: 'wool_light_blue',
+  64: 'wool_blue',
+  65: 'wool_purple',
+  66: 'wool_magenta',
+  67: 'wool_pink',
+  68: 'wool_brown',
+  69: 'wool_black',
+  70: 'wool_gray',
+  71: 'wool_light_gray',
   255: 'missing',
 });
 
@@ -278,8 +322,11 @@ function paintCobblestone(px, rng) {
 
 /** 5 oak_planks — four 4-row planks with dark seams, staggered end seams and grain streaks. */
 function paintOakPlanks(px, rng) {
-  const BASE = 0xa2824e;
-  const SEAM = 0x6e5533;
+  paintPlanks(px, rng, 0xa2824e, 0x6e5533);
+}
+
+/** Shared plank layout for oak / spruce / birch planks. */
+function paintPlanks(px, rng, BASE, SEAM) {
   const END_SEAM_X = [11, 3, 13, 6];
   fill(px, BASE);
   // Per-plank tint on the plank body rows 4p..4p+2.
@@ -359,7 +406,12 @@ function paintGravel(px, rng) {
 
 /** 10 oak_log_side — vertical bark stripes with 3 dark cracks (clipped at the bottom edge). */
 function paintOakLogSide(px, rng) {
-  fill(px, 0x6b5032);
+  paintBarkSide(px, rng, 0x6b5032, 0x4a3620);
+}
+
+/** Shared bark: per-column ±16 stripes over `barkHex`, then 3 vertical cracks in `crackHex`, noise 5. */
+function paintBarkSide(px, rng, barkHex, crackHex) {
+  fill(px, barkHex);
   for (let x = 0; x < W; x++) {
     const d = randInt(rng, -16, 16);
     for (let y = 0; y < H; y++) adjAt(px, x, y, d);
@@ -369,22 +421,27 @@ function paintOakLogSide(px, rng) {
     const y0 = randInt(rng, 0, 8);
     const len = randInt(rng, 5, 10);
     const yEnd = Math.min(y0 + len, H);
-    for (let y = y0; y < yEnd; y++) set(px, x, y, 0x4a3620);
+    for (let y = y0; y < yEnd; y++) set(px, x, y, crackHex);
   }
   noise(px, rng, 5);
 }
 
 /** 11 oak_log_end — Chebyshev rings: bark rim (r ≥ 6.5), rings at r ∈ {4.5, 2.5, 0.5}, wood elsewhere. */
 function paintOakLogEnd(px, rng) {
+  paintLogEnd(px, rng, 0x6b5032, 0x8f7345, 0xaf8f5a);
+}
+
+/** Shared log end: bark rim, ring and wood colours. */
+function paintLogEnd(px, rng, barkHex, ringHex, woodHex) {
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const r = Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5));
       if (r >= 6.5) {
-        set(px, x, y, 0x6b5032, randInt(rng, -10, 10));
+        set(px, x, y, barkHex, randInt(rng, -10, 10));
       } else if (r === 4.5 || r === 2.5 || r === 0.5) {
-        set(px, x, y, 0x8f7345);
+        set(px, x, y, ringHex);
       } else {
-        set(px, x, y, 0xaf8f5a);
+        set(px, x, y, woodHex);
       }
     }
   }
@@ -399,10 +456,15 @@ function paintOakLogEnd(px, rng) {
 
 /** 12 oak_leaves — green noise; ~22% of pixels become alpha-0 holes (RGB kept so cutout edges stay green). */
 function paintOakLeaves(px, rng) {
-  fill(px, 0x4a8a2c);
+  paintLeaves(px, rng, 0x4a8a2c, 0x6baf3c);
+}
+
+/** Shared leaves: base + speck colour, ~22% alpha-0 holes. */
+function paintLeaves(px, rng, baseHex, speckHex) {
+  fill(px, baseHex);
   cellNoise(px, rng, 2, 16);
   noise(px, rng, 8);
-  speck(px, rng, 12, [0x6baf3c]);
+  speck(px, rng, 12, [speckHex]);
   for (let i = 3; i < BYTES; i += 4) px[i] = rng() < 0.22 ? 0 : 255;
 }
 
@@ -621,6 +683,281 @@ function paintRune(px, rng) {
   set(px, 8, 8, 0xd8f8ff);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// v0.4 block batch (tiles 28–71). Same rules: own-name seed, alpha 255 except leaves (holes) and ice (alpha 200).
+// ---------------------------------------------------------------------------------------------------------------
+
+/** 28/29/30/31 spruce — dark brown bark and planks, deep blue-green needles. */
+function paintSpruceLogSide(px, rng) {
+  paintBarkSide(px, rng, 0x3f2c1b, 0x24180d);
+}
+function paintSpruceLogEnd(px, rng) {
+  paintLogEnd(px, rng, 0x3f2c1b, 0x6b4c2c, 0x8a6740);
+}
+function paintSprucePlanks(px, rng) {
+  paintPlanks(px, rng, 0x735434, 0x45311c);
+}
+function paintSpruceLeaves(px, rng) {
+  paintLeaves(px, rng, 0x2e5a3a, 0x427a50);
+}
+
+/** 32 birch_log_side — near-white bark with short dark horizontal lenticels. */
+function paintBirchLogSide(px, rng) {
+  fill(px, 0xd8d4c6);
+  cellNoise(px, rng, 2, 6);
+  for (let k = 0; k < 9; k++) {
+    const x0 = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 15);
+    const len = randInt(rng, 2, 5);
+    for (let i = 0; i < len; i++) set(px, wrap16(x0 + i), y, 0x2e2a24, randInt(rng, -6, 6));
+  }
+  noise(px, rng, 4);
+}
+/** 33/34/35 birch end, planks, leaves. */
+function paintBirchLogEnd(px, rng) {
+  paintLogEnd(px, rng, 0xd8d4c6, 0xb59c6a, 0xd2bc85);
+}
+function paintBirchPlanks(px, rng) {
+  paintPlanks(px, rng, 0xc8b47a, 0x8f7c4c);
+}
+function paintBirchLeaves(px, rng) {
+  paintLeaves(px, rng, 0x6a9a3a, 0x8cbc52);
+}
+
+/** Speckled igneous stones: base, cell noise, then two speck colours. */
+function paintSpeckled(px, rng, baseHex, cellAmp, a, aCount, b, bCount) {
+  fill(px, baseHex);
+  cellNoise(px, rng, 2, cellAmp);
+  noise(px, rng, 5);
+  speck(px, rng, aCount, a);
+  speck(px, rng, bCount, b);
+}
+/** 36 granite */
+function paintGranite(px, rng) {
+  paintSpeckled(px, rng, 0x9a6a55, 12, [0xb88a74, 0xc49a84], 22, [0x6e4636], 14);
+}
+/** 37 diorite */
+function paintDiorite(px, rng) {
+  paintSpeckled(px, rng, 0xbdbdbd, 10, [0xe6e6e6, 0xf4f4f4], 24, [0x7f7f7f, 0x5e5e5e], 18);
+}
+/** 38 andesite */
+function paintAndesite(px, rng) {
+  paintSpeckled(px, rng, 0x868886, 12, [0x9c9e9c], 16, [0x666866], 16);
+}
+
+/** 39 slate — blue-grey layers: per-row tint bands with a few darker cleavage lines. */
+function paintSlate(px, rng) {
+  fill(px, 0x4a5058);
+  for (let y = 0; y < H; y++) {
+    const d = randInt(rng, -8, 8);
+    for (let x = 0; x < W; x++) adjAt(px, x, y, d);
+  }
+  for (let k = 0; k < 4; k++) {
+    const y = randInt(rng, 0, 15);
+    const x0 = randInt(rng, 0, 15);
+    const len = randInt(rng, 5, 11);
+    for (let i = 0; i < len; i++) set(px, wrap16(x0 + i), y, 0x30343a);
+  }
+  noise(px, rng, 4);
+}
+
+/** Moss overlay: `count` green 1–3 px clumps over whatever is already painted. */
+function moss(px, rng, count) {
+  const MOSS = [0x4f7a32, 0x5d8c3a, 0x3e6428];
+  for (let k = 0; k < count; k++) {
+    const x = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 15);
+    const c = pick(rng, MOSS);
+    set(px, x, y, c);
+    if (rng() < 0.6) set(px, wrap16(x + 1), y, c);
+    if (rng() < 0.4) set(px, x, wrap16(y + 1), c);
+  }
+}
+/** 40 mossy_cobblestone — cobblestone base (seed "cobblestone") + moss. */
+function paintMossyCobblestone(px, rng) {
+  paintCobblestone(px, makeRng('cobblestone'));
+  moss(px, rng, 26);
+}
+/** 41 mossy_stone_bricks — stone_bricks base (seed "stone_bricks") + moss. */
+function paintMossyStoneBricks(px, rng) {
+  paintStoneBricks(px, makeRng('stone_bricks'));
+  moss(px, rng, 22);
+}
+
+/** 42 obsidian — near-black violet with glassy purple glints. */
+function paintObsidian(px, rng) {
+  fill(px, 0x150f22);
+  cellNoise(px, rng, 2, 8);
+  noise(px, rng, 3);
+  speck(px, rng, 14, [0x3b2a5c, 0x4c3878]);
+  speck(px, rng, 4, [0x7a63a8]);
+}
+
+/** 43 clay */
+function paintClay(px, rng) {
+  fill(px, 0x9fa4b0);
+  cellNoise(px, rng, 2, 8);
+  noise(px, rng, 4);
+  speck(px, rng, 8, [0x8a8f9b]);
+}
+
+/** 44 red_sand */
+function paintRedSand(px, rng) {
+  fill(px, 0xbe6a2c);
+  cellNoise(px, rng, 2, 10);
+  noise(px, rng, 5);
+  speck(px, rng, 6, [0xa4581f]);
+}
+
+/** 45 ice — pale blue with white crack lines, alpha 200 everywhere (translucent layer). */
+function paintIce(px, rng) {
+  fill(px, 0x8cb4f0);
+  cellNoise(px, rng, 2, 8);
+  noise(px, rng, 3);
+  for (let k = 0; k < 3; k++) {
+    line(px, randInt(rng, 0, 15), randInt(rng, 0, 15), randInt(rng, 0, 15), randInt(rng, 0, 15), 0xdcebff);
+  }
+  for (let i = 3; i < BYTES; i += 4) px[i] = 200;
+}
+
+/** 46 packed_ice — denser, opaque, faint frost specks. */
+function paintPackedIce(px, rng) {
+  fill(px, 0x8aa8e0);
+  cellNoise(px, rng, 2, 6);
+  noise(px, rng, 3);
+  speck(px, rng, 16, [0xb4ccf4, 0xc8dcff]);
+}
+
+/**
+ * Storage blocks (coal / iron / gold / diamond / copper): a bevelled plate — light rim on the top-left edges,
+ * dark rim on the bottom-right, a soft diagonal sheen, then fine noise.
+ */
+function paintStorage(px, rng, baseHex, lightHex, darkHex, amp) {
+  fill(px, baseHex);
+  cellNoise(px, rng, 4, amp);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (x === 0 || y === 0) set(px, x, y, lightHex);
+      else if (x === 15 || y === 15) set(px, x, y, darkHex);
+      else if (x + y === 9 || x + y === 10) adjAt(px, x, y, 18);
+    }
+  }
+  noise(px, rng, 3);
+}
+/** 47–51 */
+function paintCoalBlock(px, rng) {
+  paintStorage(px, rng, 0x1c1c1e, 0x3a3a3e, 0x0a0a0a, 6);
+}
+function paintIronBlock(px, rng) {
+  paintStorage(px, rng, 0xd8d8d8, 0xf6f6f6, 0x9a9a9a, 6);
+}
+function paintGoldBlock(px, rng) {
+  paintStorage(px, rng, 0xf2cf3a, 0xfff38a, 0xb08a18, 6);
+}
+function paintDiamondBlock(px, rng) {
+  paintStorage(px, rng, 0x62e0e4, 0xc8fcff, 0x2a9ea6, 6);
+}
+function paintCopperBlock(px, rng) {
+  paintStorage(px, rng, 0xc06a45, 0xe8936a, 0x7f3e24, 8);
+  speck(px, rng, 6, [0x5fa88a]); // a hint of verdigris
+}
+
+/** 52 glowstone — warm gold crystals with bright cores (looks lit; no light engine). */
+function paintGlowstone(px, rng) {
+  fill(px, 0xc89234);
+  cellNoise(px, rng, 3, 22);
+  for (let k = 0; k < 14; k++) {
+    const x = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 15);
+    set(px, x, y, 0xfff0b0);
+    set(px, wrap16(x + 1), y, 0xf8d070);
+    set(px, x, wrap16(y + 1), 0xf8d070);
+  }
+  noise(px, rng, 5);
+}
+
+/**
+ * 53 honeycomb — the world's own motif: a 2-row honeycomb of small hex cells (amber walls, golden centres).
+ * Cell centres sit on an offset grid of pitch 6 × 5 px; a pixel is wall when its two nearest centres are nearly tied.
+ */
+function paintHoneycomb(px, rng) {
+  const centres = [];
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 3; col++) centres.push([col * 6 + (row % 2) * 3 - 0.5, row * 4 + 1.5]);
+  }
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let d1 = Infinity;
+      let d2 = Infinity;
+      for (const [cx, cy] of centres) {
+        const ax = Math.abs(x - cx);
+        const ay = Math.abs(y - cy);
+        const dx = Math.min(ax, 18 - ax);
+        const dy = Math.min(ay, 16 - ay);
+        const d = Math.sqrt(dx * dx + dy * dy * 1.3);
+        if (d < d1) {
+          d2 = d1;
+          d1 = d;
+        } else if (d < d2) {
+          d2 = d;
+        }
+      }
+      if (d2 - d1 < 0.9) set(px, x, y, 0xa8661a, randInt(rng, -6, 6));
+      else set(px, x, y, d1 < 1.2 ? 0xffd25a : 0xe8a630, randInt(rng, -6, 6));
+    }
+  }
+}
+
+/** 54 hay_bale_side — golden straw stripes with two dark binding bands. */
+function paintHayBaleSide(px, rng) {
+  fill(px, 0xc8a232);
+  for (let x = 0; x < W; x++) {
+    const d = randInt(rng, -18, 14);
+    for (let y = 0; y < H; y++) adjAt(px, x, y, d);
+  }
+  for (const y of [3, 12]) {
+    for (let x = 0; x < W; x++) set(px, x, y, 0x7a4e1c, randInt(rng, -6, 6));
+  }
+  noise(px, rng, 6);
+}
+/** 55 hay_bale_top — cut straw ends: dense specks over a golden base, dark binding ring. */
+function paintHayBaleTop(px, rng) {
+  fill(px, 0xb8922a);
+  cellNoise(px, rng, 1, 16);
+  speck(px, rng, 30, [0xe0c050, 0x8e6c1c]);
+  for (let i = 0; i < 16; i++) {
+    set(px, i, 0, 0x7a4e1c);
+    set(px, i, 15, 0x7a4e1c);
+    set(px, 0, i, 0x7a4e1c);
+    set(px, 15, i, 0x7a4e1c);
+  }
+}
+
+/** 56 pumpkin_side — orange with darker vertical ribs every 4 px. */
+function paintPumpkinSide(px, rng) {
+  fill(px, 0xd8781a);
+  for (let x = 0; x < W; x++) {
+    const rib = x % 4 === 0 ? -34 : x % 4 === 2 ? 10 : 0;
+    for (let y = 0; y < H; y++) adjAt(px, x, y, rib);
+  }
+  noise(px, rng, 5);
+}
+/** 57 pumpkin_top — orange with a green stalk in the middle and ribs radiating to the edges. */
+function paintPumpkinTop(px, rng) {
+  fill(px, 0xd27216);
+  cellNoise(px, rng, 2, 8);
+  for (const [x1, y1] of [[0, 0], [15, 0], [0, 15], [15, 15], [7, 0], [7, 15], [0, 7], [15, 7]]) line(px, 7, 7, x1, y1, 0xa85410);
+  for (let y = 6; y <= 9; y++) for (let x = 6; x <= 9; x++) set(px, x, y, 0x4e6a1e, randInt(rng, -8, 8));
+  noise(px, rng, 3);
+}
+
+/** 58–71 wool colours (same weave as white/red). */
+const WOOL_HEX = Object.freeze({
+  wool_orange: 0xe87a1a, wool_yellow: 0xf4cc30, wool_lime: 0x74c02a, wool_green: 0x4a6a22, wool_cyan: 0x168c94,
+  wool_light_blue: 0x4cb0dc, wool_blue: 0x353aa0, wool_purple: 0x7a2aaa, wool_magenta: 0xbc48b4, wool_pink: 0xec90ac,
+  wool_brown: 0x734a2a, wool_black: 0x18181c, wool_gray: 0x3e4448, wool_light_gray: 0x8e8e88,
+});
+
 /** 255 missing — 8×8 quadrant checker, magenta top-left / bottom-right, black elsewhere. */
 function paintMissing(px) {
   for (let y = 0; y < H; y++) {
@@ -660,6 +997,37 @@ const RECIPES = Object.freeze({
   wool_white: paintWoolWhite,
   wool_red: paintWoolRed,
   rune: paintRune,
+  spruce_log_side: paintSpruceLogSide,
+  spruce_log_end: paintSpruceLogEnd,
+  spruce_planks: paintSprucePlanks,
+  spruce_leaves: paintSpruceLeaves,
+  birch_log_side: paintBirchLogSide,
+  birch_log_end: paintBirchLogEnd,
+  birch_planks: paintBirchPlanks,
+  birch_leaves: paintBirchLeaves,
+  granite: paintGranite,
+  diorite: paintDiorite,
+  andesite: paintAndesite,
+  slate: paintSlate,
+  mossy_cobblestone: paintMossyCobblestone,
+  mossy_stone_bricks: paintMossyStoneBricks,
+  obsidian: paintObsidian,
+  clay: paintClay,
+  red_sand: paintRedSand,
+  ice: paintIce,
+  packed_ice: paintPackedIce,
+  coal_block: paintCoalBlock,
+  iron_block: paintIronBlock,
+  gold_block: paintGoldBlock,
+  diamond_block: paintDiamondBlock,
+  copper_block: paintCopperBlock,
+  glowstone: paintGlowstone,
+  honeycomb: paintHoneycomb,
+  hay_bale_side: paintHayBaleSide,
+  hay_bale_top: paintHayBaleTop,
+  pumpkin_side: paintPumpkinSide,
+  pumpkin_top: paintPumpkinTop,
+  ...Object.fromEntries(Object.entries(WOOL_HEX).map(([name, hex]) => [name, (px, rng) => paintWool(px, rng, hex)])),
   missing: paintMissing,
 });
 
