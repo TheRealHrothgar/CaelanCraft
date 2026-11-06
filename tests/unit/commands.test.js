@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   WORLD_HEIGHT, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S, HOTBAR_SIZE,
-  MAX_RUNE_SCRIPT_LINES, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, GAME_SECONDS_PER_DAY,
+  MAX_RUNE_SCRIPT_LINES, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, GAME_SECONDS_PER_DAY, PIG_MAX,
 } from '../../src/config.js';
 import { hexToWorld, worldToHex, hexDiscCount } from '../../src/hex.js';
 import { BLOCK, BLOCKS, BLOCK_COUNT, isPlaceable } from '../../src/blocks.js';
@@ -10,6 +10,7 @@ import { formatTime } from '../../src/daynight.js';
 import { World } from '../../src/world.js';
 import { createPlayer } from '../../src/physics.js';
 import { RuneStore } from '../../src/runes.js';
+import { Pigs } from '../../src/pigs.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 import {
   COMMANDS, HELP_FOOTER, COMPASS, parseLine, parseScript, resolveBlock, parseTimeSpec, parseDurationSpec,
@@ -250,7 +251,7 @@ describe('resolveBlock', () => {
   it('rejects unknown names, out-of-range ids and empty tokens with helpful messages', () => {
     expect(resolveBlock('zzz')).toEqual({ error: 'unknown block "zzz" (type blocks to list them)' });
     expect(resolveBlock(String(BLOCK_COUNT))).toEqual({ error: `unknown block id ${BLOCK_COUNT} (0..${BLOCK_COUNT - 1}; type blocks to list them)` });
-    expect(resolveBlock('-1')).toEqual({ error: 'unknown block id -1 (0..65; type blocks to list them)' });
+    expect(resolveBlock('-1')).toEqual({ error: 'unknown block id -1 (0..66; type blocks to list them)' });
     expect(resolveBlock('')).toEqual({ error: 'expected a block name' });
     expect(resolveBlock(undefined)).toEqual({ error: 'expected a block name' });
   });
@@ -752,6 +753,33 @@ describe('executeCommand — rune commands', () => {
     const full = new RuneStore(0);
     ctx.runes = full;
     expect(exec(ctx, 'rune 1 11 1 off')).toEqual({ ok: false, message: 'rune: too many rune blocks (max 0) — usage: rune q y r on|off' });
+  });
+});
+
+describe('executeCommand — summon / pigs', () => {
+  it('summon pig puts a pig on the ground two cells ahead, or in a given cell; pigs counts and clears', () => {
+    const { ctx, player } = makeCtx();
+    ctx.pigs = new Pigs();
+    const [aq, ar] = worldToHex(player.x, player.z - 2); // yaw 0 faces −Z
+    expect(exec(ctx, 'summon pig')).toEqual({ ok: true, message: `summoned a pig at ${aq} ${FEET} ${ar}` });
+    expect(ctx.pigs.size).toBe(1);
+    const [x, z] = hexToWorld(aq, ar);
+    expect(ctx.pigs.list[0]).toMatchObject({ x, y: FEET, z });
+    expect(exec(ctx, 'summon pig 4 9 -2')).toEqual({ ok: true, message: `summoned a pig at 4 ${FEET} -2` });
+    expect(exec(ctx, 'summon pig ~1 ~ ~')).toMatchObject({ ok: true });
+    expect(exec(ctx, 'pigs')).toEqual({ ok: true, message: `3 pigs (max ${PIG_MAX})` });
+    expect(exec(ctx, 'pigs clear')).toEqual({ ok: true, message: 'removed 3 pigs' });
+    expect(ctx.pigs.size).toBe(0);
+  });
+  it('rejects other creatures, partial coordinates, unloaded targets and more than PIG_MAX pigs', () => {
+    const { ctx } = makeCtx();
+    expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining('pigs are not available') });
+    ctx.pigs = new Pigs();
+    expect(parseLine('summon cow')).toEqual({ line: 1, message: 'summon: expected one of pig, got "cow" — usage: summon pig [q y r]' });
+    expect(exec(ctx, 'summon pig 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
+    expect(exec(ctx, 'summon pig 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
+    for (let i = 0; i < PIG_MAX; i++) ctx.pigs.spawn(0, FEET, 0);
+    expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining(`too many pigs (max ${PIG_MAX})`) });
   });
 });
 

@@ -8,10 +8,11 @@
 // raycast) runs only while `playing`; rendering, HUD and stats run in every state that has a player.
 import {
   CHUNK_SIZE, RENDER_DISTANCE, LOADING_BUDGET_MS, REACH, BREAK_REPEAT_S, PLACE_REPEAT_S, MAX_FRAME_DT, FOV,
-  SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY,
+  SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY, PLAYER_HEIGHT,
+  PIG_NATURAL_COUNT,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
-import { faceNeighbor, hexDiscCount, hexLength, worldToHex } from './hex.js';
+import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
 import {
   BLOCK, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid,
 } from './blocks.js';
@@ -28,6 +29,9 @@ import { createHUD } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
 import { RuneStore, RuneRunner, runeKey, SOURCE } from './runes.js';
+import { BlackHoles } from './blackholes.js';
+import { Pigs } from './pigs.js';
+import { createPigRenderer } from './pigRenderer.js';
 import { createConsole } from './console.js';
 import { createRuneEditor } from './runeEditor.js';
 import {
@@ -181,6 +185,8 @@ export function boot(win, doc) {
   // ---- subsystems -----------------------------------------------------------------------------------
   let atlasCanvas;
   let renderer;
+  /** @type {import('./pigRenderer.js').PigRenderer} */
+  let pigRenderer;
   let controls;
   let menus;
   let audio;
@@ -196,6 +202,7 @@ export function boot(win, doc) {
       moonCanvas: makeMoonCanvas(),
       renderDistance: params.rd ?? RENDER_DISTANCE,
     });
+    pigRenderer = createPigRenderer(renderer.three.scene);
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();
@@ -275,6 +282,27 @@ export function boot(win, doc) {
 
   // Rune Blocks: the store outlives worlds (replaceAll on load), the runner and command context are per world.
   const runeStore = new RuneStore();
+  // Black holes: re-seeded from the world's edits on every load (CONTRACTS §29).
+  const blackHoles = new BlackHoles();
+  /** @type {[number, number, number]} scratch for the pull on the player */
+  const pull = [0, 0, 0];
+  // Pigs (CONTRACTS §30): replaced from the save on every load; natural ones are placed once per world.
+  const pigs = new Pigs();
+  /** true when the loading world has never had pigs (no `pigs` field in its save) */
+  let placeNaturalPigs = false;
+  /** @type {{ pig: import('./pigs.js').Pig, distance: number }|null} pig under the crosshair, closer than `hit` */
+  let pigTarget = null;
+  const pigWorld = {
+    getBlock: (q, y, r) => world.getBlock(q, y, r),
+    isLoaded: (x, z) => world.hasChunkAt(x, z),
+    pullAt: (x, y, z, out) => blackHoles.pullAt(x, y, z, out),
+  };
+  /** World view handed to blackHoles.update (built once a world exists). */
+  const blackHoleWorld = {
+    getBlock: (q, y, r) => world.getBlock(q, y, r),
+    setBlock: (q, y, r, id) => world.setBlock(q, y, r, id),
+    isLoaded: (q, r) => world.hasChunkAtCell(q, r),
+  };
   /** @type {RuneRunner|null} */
   let runner = null;
   /** @type {import('./commands.js').CommandContext|null} */
@@ -303,6 +331,7 @@ export function boot(win, doc) {
   function updateHit() {
     if (!world || !player) {
       hit = null;
+      pigTarget = null;
       return;
     }
     const yaw = controls.yaw;
@@ -311,7 +340,11 @@ export function boot(win, doc) {
     const dx = -Math.sin(yaw) * cp;
     const dy = Math.sin(pitch);
     const dz = -Math.cos(yaw) * cp;
-    hit = raycastHex(world.getBlock, player.x, player.y + getEyeHeight(player), player.z, dx, dy, dz, REACH);
+    const eyeY = player.y + getEyeHeight(player);
+    hit = raycastHex(world.getBlock, player.x, eyeY, player.z, dx, dy, dz, REACH);
+    // A pig in front of the targeted block takes the crosshair (and hides the block highlight).
+    pigTarget = pigs.size > 0 ? pigs.raycast(player.x, eyeY, player.z, dx, dy, dz, hit ? hit.distance : REACH) : null;
+    if (pigTarget) hit = null;
   }
 
   function selectSlot(i) {
@@ -335,8 +368,9 @@ export function boot(win, doc) {
     hud.addChatLine(text, isError);
   }
 
-  /** World.onBlockChange: keep the rune store in step with the cells that are (no longer) rune blocks. */
+  /** World.onBlockChange: keep the rune store and black holes in step with the cells that are (no longer) theirs. */
   function onBlockChanged(q, y, r, prev, next) {
+    blackHoles.onBlockChange(q, y, r, prev, next);
     if (next === BLOCK.RUNE_BLOCK && prev !== BLOCK.RUNE_BLOCK) {
       runeStore.ensure(q, y, r);
     } else if (prev === BLOCK.RUNE_BLOCK && next !== BLOCK.RUNE_BLOCK) {
@@ -380,6 +414,7 @@ export function boot(win, doc) {
         player.vy = 0;
       },
       runes: runeStore,
+      pigs,
       runner: /** @type {*} */ (null),
       rune: null,
       running: null,
@@ -432,6 +467,10 @@ export function boot(win, doc) {
   /** Break rule (§23). @returns {boolean} */
   function breakTargeted() {
     if (!world || !player) return false;
+    if (pigTarget) {
+      if (pigs.hit(pigTarget.pig, player.x, player.z)) audio.playSqueal();
+      return true;
+    }
     const h = hit;
     if (!h || !isBreakable(h.blockId)) return false;
     if (!world.setBlock(h.q, h.y, h.r, BLOCK.AIR)) return false;
@@ -450,7 +489,8 @@ export function boot(win, doc) {
     const [tq, ty, tr] = faceNeighbor(h.q, h.y, h.r, h.face);
     if (!inHeightRange(ty)) return false;
     if (!isReplaceable(world.getBlock(tq, ty, tr))) return false;
-    if (isSolid(id) && playerIntersectsBlock(player, tq, ty, tr)) return false;
+    // A black hole is not solid, but placing one inside yourself would swallow you on the spot.
+    if ((isSolid(id) || id === BLOCK.BLACK_HOLE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
     if (!world.setBlock(tq, ty, tr, id)) return false;
     audio.playPlace(getBlockDef(id).soundGroup);
     updateHit();
@@ -485,6 +525,7 @@ export function boot(win, doc) {
       selected,
       edits: world.exportEdits(),
       runes: runeStore.export(),
+      pigs: pigs.export(),
     };
   }
 
@@ -593,6 +634,10 @@ export function boot(win, doc) {
     world.onChunkMesh = (key, cq, cr, meshData) => renderer.setChunkMesh(key, cq, cr, meshData);
     world.onChunkUnload = (key) => renderer.removeChunkMesh(key);
     world.onBlockChange = onBlockChanged;
+    blackHoles.loadFromEdits(world.edits);
+    pigs.load(restoring && Array.isArray(restoring.pigs) ? restoring.pigs : []);
+    placeNaturalPigs = !(restoring && Array.isArray(restoring.pigs));
+    pigTarget = null;
     // Runes: replace the store with the save's (validated) runes; nothing runs until the player exists.
     if (runner) runner.reset();
     runner = null;
@@ -684,6 +729,12 @@ export function boot(win, doc) {
     if (params.yaw != null) controls.yaw = (params.yaw * Math.PI) / 180;
     if (params.pitch != null) controls.pitch = (params.pitch * Math.PI) / 180;
     if (params.fly) player.flying = true;
+
+    if (placeNaturalPigs) {
+      placeNaturalPigs = false;
+      const [pq, pr] = worldToHex(sx, sz);
+      pigs.spawnNatural(PIG_NATURAL_COUNT, pq, pr, world.seed, world.getBlock, (q, r) => world.hasChunkAtCell(q, r));
+    }
 
     ctx = buildCommandContext();
     runner = new RuneRunner(runeStore, ctx);
@@ -994,6 +1045,47 @@ export function boot(win, doc) {
       : Date.now();
   }
 
+  /** Black holes: swallow the player (back to spawn) and let each hole eat its neighbourhood. */
+  function stepBlackHoles(dt) {
+    if (blackHoles.size === 0) return;
+    if (blackHoles.swallowing(player)) {
+      const [sx, sy, sz] = world.findSpawn();
+      game.teleport(sx, sy, sz);
+      logLine('You were swallowed by a black hole!');
+      audio.playBreak('glass');
+    }
+    const eaten = blackHoles.update(dt, blackHoleWorld);
+    // One crunch per frame at most, and only for cells the player is near enough to hear.
+    for (const e of eaten) {
+      const [ex, ez] = hexToWorld(e.q, e.r);
+      if (Math.hypot(ex - player.x, e.y - player.y, ez - player.z) < 16) {
+        audio.playBreak(getBlockDef(e.id).soundGroup);
+        break;
+      }
+    }
+  }
+
+  /** Pigs wander (and feel black holes); ambient oinks fade out by 16 units; a swallowed pig is gone. */
+  function stepPigs(dt) {
+    if (pigs.size === 0) return;
+    const oinks = pigs.update(dt, pigWorld);
+    for (const pig of oinks) {
+      const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
+      if (d < 16) {
+        audio.playOink(1 - d / 16);
+        break;
+      }
+    }
+    if (blackHoles.size === 0) return;
+    for (let i = pigs.list.length - 1; i >= 0; i--) {
+      const pig = pigs.list[i];
+      if (!blackHoles.swallowing(pig)) continue;
+      pigs.remove(pig);
+      const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
+      if (d < 16) audio.playSqueal(1 - d / 16);
+    }
+  }
+
   /** Input, interaction, physics, clock, streaming and raycast — only while playing. */
   function stepPlaying(dt) {
     const input = controls.getInput();
@@ -1060,8 +1152,15 @@ export function boot(win, doc) {
     }
     if (mouse.middlePressed) pickTargeted();
 
-    // Physics only where terrain exists (getBlock reports AIR in unloaded chunks).
+    // Physics only where terrain exists (getBlock reports AIR in unloaded chunks). Black holes pull on the
+    // player's middle; `input` is the controls' reused object, so the pull is written every frame.
+    blackHoles.pullAt(player.x, player.y + PLAYER_HEIGHT / 2, player.z, pull);
+    input.pullX = pull[0];
+    input.pullY = pull[1];
+    input.pullZ = pull[2];
     if (world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt);
+    stepBlackHoles(dt);
+    stepPigs(dt);
 
     if (params.time == null) {
       const nt = advanceTime(time, dt);
@@ -1085,6 +1184,7 @@ export function boot(win, doc) {
     fov = easeFov(fov, player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV, dt);
     renderer.setFov(fov);
     renderer.setHighlight(hit);
+    pigRenderer.sync(pigs.list);
     computeSky(time, sky);
     renderer.setSky(sky);
     renderer.setUnderwater(player.headInWater);

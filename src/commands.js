@@ -15,9 +15,9 @@
 // occupies, and report what they skipped.
 import {
   WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
-  GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME,
+  GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME, PIG_MAX,
 } from './config.js';
-import { inHeightRange, worldToChunk } from './coords.js';
+import { inHeightRange, worldToChunk, yawToForward } from './coords.js';
 import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
 import { BLOCK, BLOCKS, BLOCK_COUNT, getBlockDef, isPlaceable, isSolid } from './blocks.js';
 import { findFreeY, findStandingY, playerIntersectsBlock } from './physics.js';
@@ -67,6 +67,8 @@ export const COMMANDS = Object.freeze([
   { name: 'resume', usage: 'resume', summary: 'let rune triggers fire again after stopall', args: [], min: 0 },
   { name: 'runes', usage: 'runes', summary: 'list the rune blocks with scripts or settings', args: [], min: 0 },
   { name: 'rune', usage: 'rune q y r on|off', summary: 'enable or disable every trigger of one rune block', args: ['cell', 'cell', 'cell', 'choice:on|off'], min: 4 },
+  { name: 'summon', usage: 'summon pig [q y r]', summary: 'put a pig two cells in front of you, or in a cell', args: ['choice:pig', 'cell', 'cell', 'cell'], min: 1 },
+  { name: 'pigs', usage: 'pigs [clear]', summary: 'count the pigs, or remove them all', args: ['choice:clear'], min: 0 },
 ]);
 
 /** @type {Map<string, CommandSpec>} */
@@ -231,6 +233,7 @@ export function resolveBlock(token) {
  * @property {(x: number, y: number, z: number) => void} teleport   moves the player (feet), zeroes velocities and seeds the step-on state
  * @property {(on: boolean) => void} setFlying
  * @property {import('./runes.js').RuneStore} runes
+ * @property {import('./pigs.js').Pigs} [pigs]            absent in contexts without creatures (summon / pigs then fail)
  * @property {import('./runes.js').RuneRunner} runner
  * @property {Rune|null} rune                               the executing rune (for `@`), null in the console
  * @property {import('./runes.js').Running|null} running    the executing script, null in the console
@@ -752,6 +755,43 @@ function run(spec, args, ctx) {
       });
       if (list.length > 50) lines.push(`… and ${list.length - 50} more`);
       return ok(lines.join('\n'));
+    }
+    case 'summon': {
+      if (!ctx.pigs) return fail(spec, 'pigs are not available here');
+      if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
+      let x;
+      let z;
+      let fy;
+      if (args.length === 4) {
+        const rc = resolveCellTriple(args, 1, ctx);
+        if ('error' in rc) return fail(spec, rc.error);
+        const [q, y, r] = rc.cell;
+        if (!(y >= 0 && y <= WORLD_HEIGHT - 2)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 2}`);
+        if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+        [x, z] = hexToWorld(q, r);
+        fy = findFreeY(world.getBlock, x, z, y, 2);
+        if (fy === null) return fail(spec, 'target is inside a block');
+      } else {
+        const [fx, fz] = yawToForward(ctx.controls.yaw);
+        const [q, r] = worldToHex(p.x + fx * 2, p.z + fz * 2);
+        if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+        [x, z] = hexToWorld(q, r);
+        fy = findFreeY(world.getBlock, x, z, Math.max(0, Math.floor(p.y)), 2);
+        if (fy === null) return fail(spec, 'no room in front of you');
+      }
+      const pig = ctx.pigs.spawn(x, fy, z, Math.random() * 2 * Math.PI - Math.PI);
+      if (!pig) return fail(spec, `too many pigs (max ${PIG_MAX})`);
+      const [pq, pr] = worldToHex(x, z);
+      return ok(`summoned a pig at ${pq} ${fy} ${pr}`);
+    }
+    case 'pigs': {
+      if (!ctx.pigs) return fail(spec, 'pigs are not available here');
+      const n = ctx.pigs.size;
+      if (args.length === 1) {
+        ctx.pigs.clear();
+        return ok(`removed ${n} pig${n === 1 ? '' : 's'}`);
+      }
+      return ok(`${n} pig${n === 1 ? '' : 's'} (max ${PIG_MAX})`);
     }
     case 'rune': {
       const rc = resolveCellTriple(args, 0, ctx);

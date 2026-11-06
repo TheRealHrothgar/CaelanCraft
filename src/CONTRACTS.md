@@ -184,7 +184,7 @@ BIRCH_LOG 29, BIRCH_PLANKS 30, BIRCH_LEAVES 31, GRANITE 32, DIORITE 33, ANDESITE
 MOSSY_STONE_BRICKS 37, OBSIDIAN 38, CLAY 39, RED_SAND 40, ICE 41, PACKED_ICE 42, COAL_BLOCK 43, IRON_BLOCK 44, GOLD_BLOCK 45,
 DIAMOND_BLOCK 46, COPPER_BLOCK 47, GLOWSTONE 48, HONEYCOMB_BLOCK 49, HAY_BALE 50, PUMPKIN 51, WOOL_ORANGE 52, WOOL_YELLOW 53,
 WOOL_LIME 54, WOOL_GREEN 55, WOOL_CYAN 56, WOOL_LIGHT_BLUE 57, WOOL_BLUE 58, WOOL_PURPLE 59, WOOL_MAGENTA 60, WOOL_PINK 61,
-WOOL_BROWN 62, WOOL_BLACK 63, WOOL_GRAY 64, WOOL_LIGHT_GRAY 65`. `BLOCK_COUNT = 66`. All v0.4 blocks are solid, breakable and
+WOOL_BROWN 62, WOOL_BLACK 63, WOOL_GRAY 64, WOOL_LIGHT_GRAY 65`, v0.5 `BLACK_HOLE 66` (§29). `BLOCK_COUNT = 67`. All v0.4 blocks are solid, breakable and
 placeable, use existing sound groups, and are never emitted by worldgen. Spruce/birch leaves are cutout with `cullSame: false`
 (like oak); ICE is solid, non-opaque, `LAYER_TRANSLUCENT`, `cullSame: true`; PACKED_ICE is opaque. Logs and hay bales use
 `tiles(side, end)`; pumpkin `tiles(side, top)`. GLOWSTONE only looks lit (no block-light engine). `RUNE_BLOCK` ("Rune Block") is solid, opaque, breakable, placeable, soundGroup stone, tile
@@ -197,8 +197,8 @@ STONE_BRICKS 24, WOOL_WHITE 25, WOOL_RED 26, RUNE 27`, v0.4 `SPRUCE_LOG_SIDE 28,
 SPRUCE_LEAVES 31, BIRCH_LOG_SIDE 32, BIRCH_LOG_END 33, BIRCH_PLANKS 34, BIRCH_LEAVES 35, GRANITE 36, DIORITE 37, ANDESITE 38,
 SLATE 39, MOSSY_COBBLESTONE 40, MOSSY_STONE_BRICKS 41, OBSIDIAN 42, CLAY 43, RED_SAND 44, ICE 45, PACKED_ICE 46, COAL_BLOCK 47,
 IRON_BLOCK 48, GOLD_BLOCK 49, DIAMOND_BLOCK 50, COPPER_BLOCK 51, GLOWSTONE 52, HONEYCOMB 53, HAY_BALE_SIDE 54, HAY_BALE_TOP 55,
-PUMPKIN_SIDE 56, PUMPKIN_TOP 57, WOOL_ORANGE 58 … WOOL_LIGHT_GRAY 71` (wool in BLOCK order), `MISSING 255`.
-`TILE_IDS` = array of all 73 tile ids.
+PUMPKIN_SIDE 56, PUMPKIN_TOP 57, WOOL_ORANGE 58 … WOOL_LIGHT_GRAY 71` (wool in BLOCK order), v0.5 `BLACK_HOLE 72`, `MISSING 255`.
+`TILE_IDS` = array of all 74 tile ids.
 
 Layers: `LAYER_OPAQUE 0` (everything else), `LAYER_CUTOUT 1` (OAK/SPRUCE/BIRCH_LEAVES, GLASS), `LAYER_TRANSLUCENT 2` (WATER, ICE).
 
@@ -209,8 +209,8 @@ Biomes: `BIOME.OCEAN 0, BEACH 1, PLAINS 2, FOREST 3, DESERT 4, SNOWY 5, MOUNTAIN
 Functions: `getBlockDef(id)` (unknown → the AIR def), `isSolid, isOpaque, isLiquid, isBreakable, isPlaceable,
 isReplaceable (AIR or liquid), isTargetable (not AIR and not liquid), getRenderLayer, getFaceTile(id, face 0..7),
 shouldRenderFace(a, b), tileToUV(tile) → [u0, v0, u1, v1]`. Re-exports `FACE_TOP, FACE_BOTTOM` from hex.js.
-Constants: `DEFAULT_HOTBAR` (9 ids), `PICKER_ORDER` (all 64 placeable ids, once each, grouped stone / earth / wood / minerals /
-wool / special, ending RUNE_BLOCK, WATER), `SOUND_GROUPS`.
+Constants: `DEFAULT_HOTBAR` (9 ids), `PICKER_ORDER` (all 65 placeable ids, once each, grouped stone / earth / wood / minerals /
+wool / special, ending BLACK_HOLE, RUNE_BLOCK, WATER), `SOUND_GROUPS`.
 
 Culling rule (`shouldRenderFace(a, b)`, `a` = this block, `b` = neighbour across the face):
 ```
@@ -474,7 +474,9 @@ export function findFreeY(getBlock, x, z, fromY, maxUp = 2) // first free feet h
 export function supportingCells(p, getBlock, out = [])  // [q,y,r] of the cells under the player's footprint whose cell at floor(p.y − 1e-3)
                                                        // is solid (empty when airborne); the step-on trigger is edge-triggered on this set
 /** PlayerState = { x,y,z, vx,vy,vz, onGround, flying, sneaking, sprinting, inWater, headInWater, hitWall }
- *  PlayerInput = { forward: -1|0|1, strafe: -1|0|1, jump, sneak, sprint: boolean, yaw: number } */
+ *  PlayerInput = { forward: -1|0|1, strafe: -1|0|1, jump, sneak, sprint: boolean, yaw: number, pullX?, pullY?, pullZ?: number }
+ *  pull* (v0.5, black holes) are accelerations in m/s², default 0, added every substep in EVERY mode: vx/vz += pull·h after the
+ *  horizontal relaxation, vy = max(vy + pullY·h, TERMINAL_VELOCITY) after the vertical rule. */
 ```
 The player is a **vertical cylinder** of radius `PLAYER_RADIUS` and height `PLAYER_HEIGHT`. Because the radius is smaller than
 a cell's inradius, the footprint can only overlap the cell containing `(x, z)` and its six neighbours; the collider examines
@@ -913,6 +915,82 @@ immediately; `Run` → flush + `onRun`; `Done` → flush + `onClose`; `Revert` �
 MAX_RUNE_SCRIPT_LINES lines trims the textarea on input (chars are capped by `maxlength`), so what the editor shows is exactly what the store
 keeps; edits are therefore never lost (main writes them to the store), and main treats Esc/Done/Run as "close" only.
 
+## 29. `src/blackholes.js` (PURE — Black Holes, v0.5)
+
+`BLACK_HOLE` ("Black Hole", tile 72 `black_hole`: starfield + two-armed orange→violet accretion swirl around a black horizon, alpha 255)
+is placeable and breakable, `solid: false, opaque: false`, layer OPAQUE, soundGroup glass. Worldgen never emits it, so every hole is a
+recorded edit.
+
+```js
+export function holeKey(q, y, r)           // "q,y,r"
+export function canSwallow(id)             // false for AIR, liquids, BEDROCK, RUNE_BLOCK, BLACK_HOLE; true otherwise
+export const EAT_OFFSETS                   // frozen [dq,dy,dr] list: hex distance ≤ R and centre distance ≤ R (R = BLACK_HOLE_EAT_RADIUS),
+                                           //   centre excluded, sorted by distance, then dy, dq, dr
+export class BlackHoles {
+  holes: Map<key, {key,q,y,r,cx,cy,cz,timer,offset}>; size
+  add(q,y,r) / remove(q,y,r) / clear()     // add refuses duplicates and anything past BLACK_HOLE_MAX_TRACKED (256)
+  onBlockChange(q,y,r,prev,next)           // BLACK_HOLE appears → add; disappears → remove; a swallowable cell appears → every hole whose
+                                           //   ball (|dy| ≤ R, hex distance ≤ R) contains it restarts its search (offset = 0)
+  loadFromEdits(world.edits)               // clear, then add every edit whose id is BLACK_HOLE
+  pullAt(x,y,z,out?) → [ax,ay,az]          // Σ over holes with 0 < d < BLACK_HOLE_PULL_RADIUS: toward the centre, magnitude STRENGTH·(1−d/R)²
+  swallowing(player) → hole|null           // first hole with playerIntersectsBlock(player, q, y, r)
+  update(dt, {getBlock,setBlock,isLoaded}) → [{q,y,r,id}]   // see below
+}
+```
+`update`: holes are visited round-robin (start index advances by one per call). A hole in an unloaded column, or whose search is
+exhausted (offset past EAT_OFFSETS), is skipped without ticking. Otherwise `timer −= dt`; when `timer ≤ 0` and fewer than
+BLACK_HOLE_MAX_EATS_PER_FRAME (4) cells were eaten this call, `timer += BLACK_HOLE_EAT_INTERVAL_S` (0.2 s, floored at 0) and the
+hole scans EAT_OFFSETS from `offset` for the first `canSwallow` cell — stopping (no eat) at a cell whose column is unloaded — and
+sets it to AIR via `setBlock`, reporting the old id. Over budget: `timer = 0` so it goes first-ready next frame.
+
+main (§23): one `BlackHoles` for the session; `startLoading` calls `loadFromEdits(world.edits)` right after wiring
+`world.onBlockChange`, whose handler forwards every change to `blackHoles.onBlockChange` first. `stepPlaying` writes
+`pullAt(player.x, player.y + PLAYER_HEIGHT/2, player.z)` into `input.pullX/Y/Z` before `stepPlayer`, then (if any hole exists)
+teleports a swallowed player to `world.findSpawn()` with the chat line "You were swallowed by a black hole!" and runs `update`,
+playing at most one break sound per frame for an eaten cell within 16 units. `placeSelected` refuses a BLACK_HOLE that would
+intersect the player (like solid blocks). Constants live in config.js (`BLACK_HOLE_*`).
+
+## 30. `src/pigs.js` (PURE) and `src/pigRenderer.js` (three) — Pigs, v0.5
+
+A pig is `createPlayer(x, y, z)` plus `{ id, yaw, targetYaw, mode: 'idle'|'walk'|'flee', timer, hurt, walkPhase, oinkIn }`,
+moved by `stepPlayer` (so it collides as the player's cylinder, swims, hops one-cell ledges and feels black-hole pull).
+Pigs never die. Constants `PIG_*` live in config.js.
+```js
+export function seededRng(seed)                // mulberry32
+export function validatePigsJSON(raw)          // → { pigs: [{x,y,z,yaw}], warnings }: finite numbers, −16 ≤ y ≤ WORLD_HEIGHT, ≤ PIG_MAX kept
+export class Pigs {
+  list, size, clear()
+  spawn(x, y, z, yaw = 0) → Pig|null           // null at PIG_MAX or non-finite input; mode idle
+  remove(pig) → boolean
+  update(dt, { getBlock, isLoaded(x, z), pullAt? }) → Pig[]   // oinks due this frame; pigs with y < −16 are removed;
+                                                              //   pigs whose chunk is unloaded are frozen
+  hit(pig, fromX, fromZ) → boolean             // false during the PIG_HURT_S flash; else knockback PIG_KNOCKBACK away, vy ≥ 5,
+                                               //   mode flee for PIG_FLEE_S facing away
+  raycast(ox, oy, oz, dx, dy, dz, maxDist) → { pig, distance }|null   // vertical cylinder PIG_HIT_RADIUS × PIG_HIT_HEIGHT at the feet
+  export() → PigJSON[] (mm-rounded) ; load(validatedList)
+  spawnNatural(count, q0, r0, seed, getBlock, isLoadedCell, minDist = 4, maxDist = 18) → placed   // grass surfaces only, seeded
+}
+```
+AI per frame: timer expiry alternates idle (1–5 s) and walk (1.5–5.5 s, new heading within ±π); a walking, grounded pig whose
+cell 0.8 ahead is liquid or has no solid ground within two cells below its feet stops and turns away. Turning is capped at
+PIG_TURN_RATE; it moves forward only when within 1.2 rad of its heading, at sneak speed when walking and walk speed when fleeing,
+and jumps when it hit a wall or is in water. `walkPhase` advances by 4 × horizontal distance (mod 2π); `oinkIn` resets to 6–18 s.
+
+`createPigRenderer(scene)` → `{ sync(pigs), count(), dispose() }`: one Group per pig id, built facing −Z with `rotation.y = yaw`;
+the body is a hexagonal prism (6-sided cylinder lying along Z, flat side down); legs swing with `sin(walkPhase)`; the skin
+emissive is red while `hurt > 0`.
+
+Saves: optional `pigs: PigJSON[]` (version stays 2). serializeSave writes it whenever `data.pigs` is given — EMPTY included —
+after validatePigsJSON; deserializeSave keeps any validated array (warnings for dropped entries). An absent field means the world
+has never had pigs: main then places PIG_NATURAL_COUNT pigs with `spawnNatural` around the spawn cell in finishLoading.
+
+main: `updateHit` also ray-casts pigs up to the block hit's distance (or REACH); a pig in front sets `pigTarget` and clears
+`hit`. `breakTargeted` hits `pigTarget` (squeal) instead of breaking. `stepPigs` runs after `stepBlackHoles`: update (with
+`blackHoles.pullAt`), at most one oink per frame within 16 units (volume 1 − d/16), and pigs a black hole swallows are removed.
+`renderFrame` calls `pigRenderer.sync(pigs.list)`. Commands (§26): `summon pig [q y r]` (no cell: two units ahead along the
+yaw, `findFreeY` from the feet cell; refuses at PIG_MAX, unloaded targets, or 2–3 args) and `pigs [clear]`; both fail when the
+context has no `pigs`. audio: `playOink(volume)`, `playSqueal(volume)`.
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),
@@ -947,7 +1025,7 @@ keeps; edits are therefore never lost (main writes them to the store), and main 
     leave a residual) or the vertical sweep turns the residual into a snap through walls.
 21. Streaming distances are HEX distances in chunk coordinates measured between chunk ORIGIN cells, so the meshed region is
     off-centre by up to one chunk footprint; the fog far must stay below `(rd − 1)` rings (`fogRangeForRenderDistance`).
-22. Every block write goes through `World.setBlock` so `onBlockChange` keeps the rune store honest; never write `chunk.blocks` directly
+22. Every block write goes through `World.setBlock` so `onBlockChange` keeps the rune store and black holes honest; never write `chunk.blocks` directly
     from gameplay code. Area commands skip RUNE_BLOCK cells and are never allowed to mint rune blocks.
 23. Rune scripts use `@` for their own cell; `~` is the player. A chain fan-out is bounded by the wave rule (once per activation), not by
     the hop cap. Runner state is never persisted. Repeat/step/chain are suppressed after `stopall` until an interact/console trigger.

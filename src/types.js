@@ -95,6 +95,9 @@
  * @property {boolean} sneak    Shift (fly: descend)
  * @property {boolean} sprint
  * @property {number} yaw       radians; yaw 0 faces -Z, positive turns left
+ * @property {number} [pullX]   optional external acceleration in m/s² (black holes), added every substep
+ * @property {number} [pullY]
+ * @property {number} [pullZ]
  */
 
 /**

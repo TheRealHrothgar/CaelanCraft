@@ -105,6 +105,24 @@ export const CONSOLE_HISTORY = 50;                  // typed lines remembered fo
 export const CHAT_LINES = 6;                        // HUD chat-log lines shown at once
 export const CHAT_LINE_MS = 6000;                   // a chat-log line fades after this long
 
+// Black holes (CONTRACTS §29)
+export const BLACK_HOLE_PULL_RADIUS = 10;           // world units from the hole's centre where the pull acts
+export const BLACK_HOLE_PULL_STRENGTH = 120;        // m/s² at the centre, falling off as (1 − d/R)²; ground walking escapes beyond ~1.5 units
+export const BLACK_HOLE_EAT_RADIUS = 4;             // cells whose centre is within this distance of the hole can be swallowed
+export const BLACK_HOLE_EAT_INTERVAL_S = 0.2;       // each hole swallows at most one cell per interval
+export const BLACK_HOLE_MAX_EATS_PER_FRAME = 4;     // across all holes (each eat re-meshes a chunk)
+export const BLACK_HOLE_MAX_TRACKED = 256;          // holes beyond this are inert until others are broken
+
+// Pigs (CONTRACTS §30)
+export const PIG_MAX = 32;                          // pigs in a world; summon refuses beyond this
+export const PIG_NATURAL_COUNT = 5;                 // pigs placed on grass near spawn in a world that has never had any
+export const PIG_HIT_RADIUS = 0.45;                 // ray-target cylinder (the model is ~0.9 long, ~0.95 tall)
+export const PIG_HIT_HEIGHT = 0.95;
+export const PIG_KNOCKBACK = 5;                     // m/s horizontal kick when hit, plus a small hop
+export const PIG_HURT_S = 0.5;                      // red flash; hits during it are ignored
+export const PIG_FLEE_S = 3;                        // run away after being hit
+export const PIG_TURN_RATE = 4;                     // rad/s
+
 // Time / saving / UI
 export const DAY_LENGTH_SECONDS = 600;
 export const START_TIME = 0.30;                     // 07:12

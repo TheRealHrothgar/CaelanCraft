@@ -8,6 +8,7 @@
 import { CHUNK_VOLUME, HOTBAR_SIZE, PITCH_LIMIT } from './config.js';
 import { DEFAULT_HOTBAR } from './blocks.js';
 import { normalizeRunesJSON, validateRunesJSON } from './runes.js';
+import { validatePigsJSON } from './pigs.js';
 
 /** @typedef {import('./types.js').SaveData} SaveData */
 /** @typedef {import('./types.js').EditsJSON} EditsJSON */
@@ -176,6 +177,9 @@ export function serializeSave(data) {
     const runes = normalizeRunesJSON(data.runes).runes;
     if (Object.keys(runes).length > 0) /** @type {*} */ (out).runes = runes;
   }
+  // Pigs are optional too, but an empty list IS written: "this world's pigs are all gone" must survive a reload
+  // (an absent field means "never had pigs" and main places natural ones).
+  if (data.pigs != null) /** @type {*} */ (out).pigs = validatePigsJSON(data.pigs).pigs;
   return JSON.stringify(out);
 }
 
@@ -192,6 +196,7 @@ export function serializeSave(data) {
  * are dropped (last write wins for duplicates, dangling odd element dropped); malformed chunk keys
  * and non-array entries are dropped; `time` is wrapped into [0,1) and `pitch` clamped. An optional `runes`
  * field is validated with runes.validateRunesJSON (invalid or orphaned entries dropped) and only kept when non-empty.
+ * An optional `pigs` array is validated with pigs.validatePigsJSON and kept (even when empty).
  * Every repair is described in a non-enumerable `warnings: string[]` on the result.
  * @param {string} text
  * @returns {SaveData|null}
@@ -296,6 +301,11 @@ export function deserializeSave(text) {
       for (const w of v.warnings) warnings.push(w);
       if (Object.keys(v.runes).length > 0) save.runes = v.runes;
     }
+  }
+  if (raw.pigs !== undefined) {
+    const v = validatePigsJSON(raw.pigs);
+    for (const w of v.warnings) warnings.push(w);
+    save.pigs = v.pigs;
   }
   Object.defineProperty(save, 'warnings', { value: warnings, enumerable: false, writable: true, configurable: true });
   return save;

@@ -179,8 +179,10 @@ describe('blocks', () => {
     expect(DEFAULT_HOTBAR).not.toContain(BLOCK.RUNE_BLOCK);
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
-    expect(BLOCK_COUNT).toBe(66);
-    expect(TILE_IDS).toHaveLength(73);
+    expect(BLOCK_COUNT).toBe(67);
+    expect(TILE_IDS).toHaveLength(74);
+    expect(BLOCK.BLACK_HOLE).toBe(66);
+    expect(TILE.BLACK_HOLE).toBe(72);
     expect(BLOCK.STONE).toBe(1);
     expect(BLOCK.WOOL_RED).toBe(24);
     expect(BLOCK.SPRUCE_LOG).toBe(26);
@@ -188,7 +190,7 @@ describe('blocks', () => {
     expect(TILE.SPRUCE_LOG_SIDE).toBe(28);
     expect(TILE.WOOL_LIGHT_GRAY).toBe(71);
     const placeable = BLOCKS.filter((b) => b.placeable).map((b) => b.id).sort((a, b) => a - b);
-    expect(PICKER_ORDER).toHaveLength(64);
+    expect(PICKER_ORDER).toHaveLength(65);
     expect(new Set(PICKER_ORDER).size).toBe(PICKER_ORDER.length);
     expect([...PICKER_ORDER].sort((a, b) => a - b)).toEqual(placeable);
     // Logs and hay bales: distinct end tiles on top and bottom.
@@ -209,7 +211,7 @@ describe('blocks', () => {
     expect(shouldRenderFace(BLOCK.STONE, BLOCK.ICE)).toBe(true);
     expect(isOpaque(BLOCK.PACKED_ICE)).toBe(true);
     // Every new block is a normal solid, breakable, placeable block with a known sound group.
-    for (let id = BLOCK.SPRUCE_LOG; id < BLOCK_COUNT; id++) {
+    for (let id = BLOCK.SPRUCE_LOG; id <= BLOCK.WOOL_LIGHT_GRAY; id++) {
       const d = BLOCKS[id];
       expect(d.solid && d.breakable && d.placeable && !d.liquid, d.name).toBe(true);
       expect(SOUND_GROUPS).toContain(d.soundGroup);

@@ -269,8 +269,8 @@ function substep(p, input, getBlock, h, wx, wz) {
   if (inWater && !flying) speed *= WATER_SPEED_FACTOR;
   const accel = flying || p.onGround ? GROUND_ACCEL : inWater ? WATER_ACCEL : AIR_ACCEL;
   const k = 1 - Math.exp(-accel * h);
-  p.vx += (wx * speed - p.vx) * k;
-  p.vz += (wz * speed - p.vz) * k;
+  p.vx += (wx * speed - p.vx) * k + (input.pullX || 0) * h;
+  p.vz += (wz * speed - p.vz) * k + (input.pullZ || 0) * h;
 
   // 3. Vertical.
   if (flying) {
@@ -283,6 +283,8 @@ function substep(p, input, getBlock, h, wx, wz) {
     if (jump && p.onGround) p.vy = JUMP_VELOCITY;
     p.vy = Math.max(p.vy + GRAVITY * h, TERMINAL_VELOCITY);
   }
+  // External pull (black holes) acts in every mode; terminal velocity still caps a downward drag.
+  if (input.pullY) p.vy = Math.max(p.vy + input.pullY * h, TERMINAL_VELOCITY);
 
   // 4. Move: vertical first, then the horizontal plane.
   p.onGround = false;

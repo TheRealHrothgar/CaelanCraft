@@ -737,3 +737,20 @@ describe('runes (optional field)', () => {
     expect(hasSave(storage)).toBe(true);
   });
 });
+
+describe('pigs field (v0.5)', () => {
+  it('is absent unless given, written even when empty, and validated on load', () => {
+    expect(JSON.parse(serializeSave(makeSave())).pigs).toBeUndefined();
+    expect(deserializeSave(serializeSave(makeSave())).pigs).toBeUndefined();
+    const empty = deserializeSave(serializeSave(makeSave({}, { pigs: [] })));
+    expect(empty.pigs).toEqual([]);
+    const pigs = [{ x: 1.5, y: 20, z: -3, yaw: 0.25 }, { x: 'bad', y: 1, z: 1, yaw: 0 }];
+    const text = serializeSave(makeSave({}, { pigs }));
+    expect(JSON.parse(text).pigs).toEqual([pigs[0]]);
+    const raw = JSON.parse(text);
+    raw.pigs.push({ x: 0, y: Infinity, z: 0, yaw: 0 }, null);
+    const back = deserializeSave(JSON.stringify(raw).replace('Infinity', 'null'));
+    expect(back.pigs).toEqual([pigs[0]]);
+    expect(back.warnings).toEqual(['pigs[1]: invalid, dropped', 'pigs[2]: invalid, dropped']);
+  });
+});

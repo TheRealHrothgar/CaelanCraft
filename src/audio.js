@@ -61,6 +61,15 @@ export const PLACE_CLICK_CUTOFF_SCALE = 1.5;
 export const CLICK_HZ = 1200;
 export const CLICK_DURATION_S = 0.02;
 export const CLICK_GAIN = 0.15;
+// Pig: an oink is two short sawtooth grunts (150 → 100 Hz) through a 900 Hz lowpass; a squeal (hit) is one
+// rising-then-falling 600 → 1100 → 700 Hz cry. Both scale with the caller's volume (distance falloff).
+export const OINK_HZ = 150;
+export const OINK_GRUNT_S = 0.11;
+export const OINK_GAP_S = 0.15;
+export const OINK_CUTOFF_HZ = 900;
+export const OINK_GAIN = 0.5;
+export const SQUEAL_DURATION_S = 0.28;
+export const SQUEAL_GAIN = 0.3;
 
 /** Exponential ramps cannot reach 0; decays ramp to this floor and the voice stops there. */
 const DECAY_FLOOR = 0.001;
@@ -73,6 +82,8 @@ const MUTE_FADE_S = 0.01;
  * @property {(soundGroup: string|null|undefined) => void} playBreak   block broken; pass BLOCKS[id].soundGroup
  * @property {(soundGroup: string|null|undefined) => void} playPlace   block placed; pass BLOCKS[id].soundGroup
  * @property {() => void} playClick                              UI / hotbar click
+ * @property {(volume?: number) => void} playOink                 pig grunt; volume 0..1 (default 1)
+ * @property {(volume?: number) => void} playSqueal               pig hit
  * @property {(b: boolean) => void} setMuted
  * @property {() => boolean} toggleMuted                         returns the new muted state
  * @property {boolean} muted                                     read-only getter
@@ -286,6 +297,30 @@ export function createAudio(opts = {}) {
     track(osc, [g], t0 + dur);
   }
 
+  /**
+   * Sawtooth voice through a lowpass: frequency follows `points` ([seconds from t0, Hz] pairs, exponential ramps).
+   * @param {AudioContext} c
+   * @param {number} t0
+   * @param {number} dur
+   * @param {[number, number][]} points
+   * @param {number} cutoffHz
+   * @param {number} peak
+   */
+  function buzz(c, t0, dur, points, cutoffHz, peak) {
+    const osc = c.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(points[0][1], t0);
+    for (let i = 1; i < points.length; i++) osc.frequency.exponentialRampToValueAtTime(points[i][1], t0 + points[i][0]);
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = Math.min(cutoffHz, c.sampleRate / 2);
+    const g = envelope(c, t0, dur, peak);
+    osc.connect(lp);
+    lp.connect(g);
+    osc.start(t0);
+    track(osc, [lp, g], t0 + dur);
+  }
+
   // --- public API -----------------------------------------------------------
 
   /** Create the AudioContext on first call; afterwards just resume it if the browser suspended it. */
@@ -341,6 +376,36 @@ export function createAudio(opts = {}) {
     }
   }
 
+  /** @param {number} [volume] */
+  function playOink(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const pitch = randomPitch();
+      const f = OINK_HZ * pitch;
+      const t0 = c.currentTime;
+      const peak = OINK_GAIN * Math.min(1, volume);
+      for (const at of [0, OINK_GAP_S]) {
+        buzz(c, t0 + at, OINK_GRUNT_S, [[0, f], [OINK_GRUNT_S, f * 0.67]], OINK_CUTOFF_HZ * pitch, peak);
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playSqueal(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const pitch = randomPitch();
+      const d = SQUEAL_DURATION_S;
+      buzz(c, c.currentTime, d, [[0, 600 * pitch], [d * 0.35, 1100 * pitch], [d, 700 * pitch]], 2600, SQUEAL_GAIN * Math.min(1, volume));
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
   /** @param {boolean} b */
   function setMuted(b) {
     muted = !!b;
@@ -365,6 +430,8 @@ export function createAudio(opts = {}) {
     playBreak,
     playPlace,
     playClick,
+    playOink,
+    playSqueal,
     setMuted,
     toggleMuted,
     get muted() {

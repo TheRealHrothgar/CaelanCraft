@@ -48,10 +48,10 @@ function everyPixel(px, pred, rows = null) {
 }
 
 describe('TILE_NAMES', () => {
-  it('lists all 72 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
+  it('lists all 73 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
     const keys = Object.keys(TILE_NAMES).map(Number).sort((a, b) => a - b);
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
-    expect(keys.length).toBe(73);
+    expect(keys.length).toBe(74);
     expect(TILE_NAMES[TILE.RUNE]).toBe('rune');
     expect(TILE.RUNE).toBe(27);
     for (const [key, id] of Object.entries(TILE)) {
@@ -172,7 +172,7 @@ describe('paintTile — recipe details', () => {
   });
   it('unknown tile ids paint the missing checker', () => {
     const missing = paintTile(TILE.MISSING);
-    for (const bad of [72, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
+    for (const bad of [73, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
       // @ts-ignore — deliberately passing garbage
       expect(sameBytes(paintTile(bad), missing), `tile ${String(bad)}`).toBe(true);
     }

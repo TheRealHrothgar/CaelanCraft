@@ -87,6 +87,7 @@ export const TILE_NAMES = Object.freeze({
   69: 'wool_black',
   70: 'wool_gray',
   71: 'wool_light_gray',
+  72: 'black_hole',
   255: 'missing',
 });
 
@@ -958,6 +959,38 @@ const WOOL_HEX = Object.freeze({
   wool_brown: 0x734a2a, wool_black: 0x18181c, wool_gray: 0x3e4448, wool_light_gray: 0x8e8e88,
 });
 
+/**
+ * 72 black_hole — a starfield (0x0b0716 + a few white specks) behind a two-armed accretion swirl: for r in
+ * [3.2, 7.4) around (7.5, 7.5) the arm strength s = (1 + cos(2θ + 1.6r)) / 2 lerps the ring colour (hot orange
+ * 0xffb347 at the inner edge to violet 0x7a3fbf at the outer) from 25% to 100%; r < 3.2 is the event horizon,
+ * 0x020104 with a 0x3a1c00 photon rim at r ≥ 2.6. Alpha 255.
+ */
+function paintBlackHole(px, rng) {
+  fill(px, 0x0b0716);
+  noise(px, rng, 3);
+  speck(px, rng, 7, [0xffffff, 0xc8d0ff]);
+  const lerp = (a, b, t) => Math.round(a + (b - a) * t);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const dx = x - 7.5;
+      const dy = y - 7.5;
+      const r = Math.hypot(dx, dy);
+      if (r < 2.6) {
+        set(px, x, y, 0x020104);
+      } else if (r < 3.2) {
+        set(px, x, y, 0x3a1c00);
+      } else if (r < 7.4) {
+        const t = (r - 3.2) / 4.2;
+        const s = 0.25 + 0.75 * ((1 + Math.cos(2 * Math.atan2(dy, dx) + 1.6 * r)) / 2);
+        const cr = lerp(0xff, 0x7a, t) * s;
+        const cg = lerp(0xb3, 0x3f, t) * s;
+        const cb = lerp(0x47, 0xbf, t) * s;
+        set(px, x, y, (Math.round(cr) << 16) | (Math.round(cg) << 8) | Math.round(cb), randInt(rng, -6, 6));
+      }
+    }
+  }
+}
+
 /** 255 missing — 8×8 quadrant checker, magenta top-left / bottom-right, black elsewhere. */
 function paintMissing(px) {
   for (let y = 0; y < H; y++) {
@@ -1027,6 +1060,7 @@ const RECIPES = Object.freeze({
   hay_bale_top: paintHayBaleTop,
   pumpkin_side: paintPumpkinSide,
   pumpkin_top: paintPumpkinTop,
+  black_hole: paintBlackHole,
   ...Object.fromEntries(Object.entries(WOOL_HEX).map(([name, hex]) => [name, (px, rng) => paintWool(px, rng, hex)])),
   missing: paintMissing,
 });
