@@ -60,6 +60,34 @@ describe('Pigs.update', () => {
       expect(pig.y, `seed ${seed}`).toBeCloseTo(top, 3);
     }
   });
+  it('wades through a shallow film of flowing water but never walks into water it would swim in (v0.8)', () => {
+    const hexLen = (q, r) => Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r));
+    // A level-1 film over the whole field: pigs walk through it and never swim.
+    const filmed = (q, y) => (y < GROUND ? B.STONE : y === GROUND ? B.WATER_FLOW_1 : B.AIR);
+    // A radius-3 island in a one-deep pond of source water at the pig's feet level.
+    const island = (q, y, r) => (y < GROUND ? B.STONE : y === GROUND && hexLen(q, r) > 3 ? B.WATER : B.AIR);
+    for (let seed = 1; seed <= 3; seed++) {
+      const pigs = new Pigs(seededRng(seed));
+      const pig = pigs.spawn(0, GROUND, 0);
+      let swam = false;
+      for (let t = 0; t < 30; t += 1 / 60) {
+        pigs.update(1 / 60, { getBlock: filmed, isLoaded: loaded });
+        swam ||= pig.inWater;
+      }
+      expect(swam, `film, seed ${seed}`).toBe(false);
+      expect(Math.hypot(pig.x, pig.z), `film, seed ${seed}`).toBeGreaterThan(0.5);
+      const pigs2 = new Pigs(seededRng(seed));
+      const pig2 = pigs2.spawn(0, GROUND, 0);
+      let wet = false;
+      for (let t = 0; t < 60; t += 1 / 60) {
+        pigs2.update(1 / 60, { getBlock: island, isLoaded: loaded });
+        wet ||= pig2.inWater;
+      }
+      expect(wet, `island, seed ${seed}`).toBe(false);
+      const [q, r] = worldToHex(pig2.x, pig2.z);
+      expect(hexLen(q, r), `island, seed ${seed}`).toBeLessThanOrEqual(3);
+    }
+  });
   it('freezes pigs in unloaded chunks and removes pigs that fall out of the world', () => {
     const pigs = new Pigs(seededRng(3));
     const frozen = pigs.spawn(100, GROUND + 5, 0);

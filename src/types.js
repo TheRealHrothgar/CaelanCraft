@@ -82,12 +82,13 @@
  * @property {boolean} flying
  * @property {boolean} sneaking
  * @property {boolean} sprinting
- * @property {boolean} inWater      feet or chest cell is liquid
+ * @property {boolean} inWater      swimming: the water at the feet is deeper than WADE_DEPTH, or the chest is under a surface (v0.8)
  * @property {boolean} headInWater  eye point is below a water surface
  * @property {boolean} hitWall      horizontal collision happened in the last substep
  * @property {number} [radius]      body footprint radius (mobs; absent = PLAYER_WIDTH / 2), at most MAX_BODY_RADIUS
  * @property {number} [height]      body height (mobs; absent = PLAYER_HEIGHT)
  * @property {number} [mass]        relative mass for body-body pushes (absent = PLAYER_MASS)
+ * @property {string} [group]       resolveBodies never pairs two bodies of the same group (v0.8 lit barrels)
  */
 
 /**
@@ -152,6 +153,9 @@
  * @property {number} selected        0..8
  * @property {EditsJSON} edits
  * @property {RunesJSON} [runes]      optional; absent/empty when the world has no customised rune blocks
+ * @property {Object[]} [pigs]        optional (v0.5); absent = the world never had pigs
+ * @property {{falling:boolean, water:boolean, collapse:boolean, explosions:boolean}} [physics]
+ *   optional (v0.8) block-physics switches; absent = saved before v0.8 (main starts it with collapse off)
  */
 
 /**

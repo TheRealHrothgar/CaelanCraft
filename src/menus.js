@@ -47,7 +47,7 @@ export const CONTROLS_SHEET = Object.freeze([
   Object.freeze(['1–9', 'Select hotbar slot (or scroll wheel)']),
   Object.freeze(['E', 'Open / close the block picker']),
   Object.freeze(['T  /', 'Command console (/ starts a command)']),
-  Object.freeze(['R', 'Run the targeted Rune Block']),
+  Object.freeze(['R', 'Run a Rune Block · light a Blast Barrel']),
   Object.freeze(['Shift R', 'Edit the targeted Rune Block (also opens on placing one)']),
   Object.freeze(['Esc', 'Pause · close menus']),
   Object.freeze(['F3', 'Toggle the debug overlay']),
@@ -82,6 +82,11 @@ const IDS = Object.freeze({
   btnStopRunes: 'btn-stop-runes',
   btnQuit: 'btn-quit',
   pauseSeed: 'pause-seed',
+  btnPhysFalling: 'btn-phys-falling',
+  btnPhysWater: 'btn-phys-water',
+  btnPhysCollapse: 'btn-phys-collapse',
+  btnPhysExplosions: 'btn-phys-explosions',
+  btnUndoPhysics: 'btn-undo-physics',
   pauseControls: 'pause-controls',
   blockPicker: 'block-picker',
   pickerGrid: 'picker-grid',
@@ -95,6 +100,8 @@ const IDS = Object.freeze({
  * @property {() => void} [onResume]
  * @property {() => void} [onSave]
  * @property {() => void} [onStopRunes]   pause-menu "Stop All Rune Scripts"
+ * @property {(name: string) => void} [onPhysicsToggle]  pause-menu Physics row: 'falling' | 'water' | 'collapse' | 'explosions'
+ * @property {() => void} [onUndoPhysics]  pause-menu "Undo" (the last explosion / collapse / falling tree)
  * @property {() => void} [onQuit]
  * @property {() => void} [onClickToPlay]
  * @property {(blockId: number, slot: number|null) => void} [onPickBlock]  slot 0..8 for Digit1-9, null for a click
@@ -109,7 +116,8 @@ const IDS = Object.freeze({
  * @property {() => void} hideLoading
  * @property {() => void} showClickToPlay
  * @property {() => void} hideClickToPlay
- * @property {(seed: number|string) => void} showPause
+ * @property {(seed: number|string, physics?: PhysicsMenuState) => void} showPause
+ * @property {(physics: PhysicsMenuState) => void} setPhysicsState   refresh the Physics row and the Undo button
  * @property {() => void} hidePause
  * @property {(hotbar: number[], selected: number) => void} showPicker
  * @property {() => void} hidePicker
@@ -117,6 +125,29 @@ const IDS = Object.freeze({
  * @property {() => string} getSeedInput
  * @property {() => void} dispose
  */
+
+/**
+ * What the pause menu shows about block physics.
+ * @typedef {Object} PhysicsMenuState
+ * @property {{ falling: boolean, water: boolean, collapse: boolean, explosions: boolean }} switches
+ * @property {boolean} canUndo
+ * @property {string} [undoKind]   'explosion' | 'collapse' | 'tree' … (button label)
+ */
+
+/** Physics row buttons: switch name, label, IDS key. */
+export const PHYSICS_TOGGLES = Object.freeze([
+  Object.freeze(['falling', 'Falling', 'btnPhysFalling']),
+  Object.freeze(['water', 'Water', 'btnPhysWater']),
+  Object.freeze(['collapse', 'Collapse', 'btnPhysCollapse']),
+  Object.freeze(['explosions', 'Explosions', 'btnPhysExplosions']),
+]);
+
+/** Undo button label for an event kind ('' / undefined: nothing to undo). */
+export function undoButtonLabel(canUndo, kind) {
+  if (!canUndo) return 'Undo (nothing to undo)';
+  const what = kind === 'explosion' ? 'Explosion' : kind === 'tree' ? 'Falling Tree' : kind === 'collapse' ? 'Collapse' : 'Physics Event';
+  return `Undo Last ${what}`;
+}
 
 /**
  * Look up every element in `IDS`; fail fast with one clear message listing everything that is missing.
@@ -357,9 +388,25 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
 
   // ---- pause ---------------------------------------------------------------------------------------
 
-  function showPause(seed) {
+  function showPause(seed, physics) {
     el.pauseSeed.textContent = `Seed: ${seed}`;
+    if (physics) setPhysicsState(physics);
     show(el.pauseMenu);
+  }
+
+  /** @param {PhysicsMenuState} physics */
+  function setPhysicsState(physics) {
+    if (!physics || !physics.switches) return;
+    for (const [name, label, key] of PHYSICS_TOGGLES) {
+      const btn = el[/** @type {keyof typeof IDS} */ (key)];
+      const on = physics.switches[name] !== false;
+      btn.textContent = `${label}: ${on ? 'ON' : 'OFF'}`;
+      btn.classList.toggle('off', !on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    const undo = /** @type {HTMLButtonElement} */ (el.btnUndoPhysics);
+    undo.textContent = undoButtonLabel(physics.canUndo, physics.undoKind);
+    undo.disabled = !physics.canUndo;
   }
 
   function hidePause() {
@@ -369,6 +416,12 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
   on(el.btnResume, 'click', () => fire('onResume'));
   on(el.btnSave, 'click', () => fire('onSave'));
   on(el.btnStopRunes, 'click', () => fire('onStopRunes'));
+  for (const [name, , key] of PHYSICS_TOGGLES) {
+    on(el[/** @type {keyof typeof IDS} */ (key)], 'click', () => fire('onPhysicsToggle', name));
+  }
+  on(el.btnUndoPhysics, 'click', () => {
+    if (!/** @type {HTMLButtonElement} */ (el.btnUndoPhysics).disabled) fire('onUndoPhysics');
+  });
   on(el.btnQuit, 'click', () => fire('onQuit'));
 
   // ---- block picker --------------------------------------------------------------------------------
@@ -517,6 +570,7 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     hideClickToPlay,
     showPause,
     hidePause,
+    setPhysicsState,
     showPicker,
     hidePicker,
     isPickerOpen,

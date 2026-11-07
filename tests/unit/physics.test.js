@@ -4,7 +4,7 @@ import {
   PLAYER_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT, SNEAK_EYE_HEIGHT, GRAVITY, JUMP_VELOCITY, TERMINAL_VELOCITY,
   WALK_SPEED, SPRINT_SPEED, SNEAK_SPEED, FLY_SPEED, FLY_SPRINT_SPEED, FLY_VERTICAL_SPEED, WATER_MAX_SINK,
   SWIM_UP_SPEED, SWIM_EXIT_JUMP, WATER_SPEED_FACTOR, WATER_SURFACE_HEIGHT, MAX_FRAME_DT, MAX_SUBSTEP_DT,
-  COLLISION_EPS, WORLD_HEIGHT,
+  COLLISION_EPS, WORLD_HEIGHT, WADE_DEPTH, WADE_SPEED_FACTOR,
 } from '../../src/config.js';
 import { yawToForward } from '../../src/coords.js';
 import {
@@ -14,7 +14,7 @@ import { BLOCK } from '../../src/blocks.js';
 import { flatGetBlock } from '../helpers/fixtures.js';
 import {
   createPlayer, stepPlayer, getEyeHeight, playerAABB, playerIntersectsBlock, findStandingY, PLAYER_RADIUS,
-  isFreeAt, findFreeY, supportingCells,
+  isFreeAt, findFreeY, supportingCells, createBody, isUnderSurface, isSwimWater,
 } from '../../src/physics.js';
 import { makeGetBlock } from '../helpers/fixtures.js';
 
@@ -474,6 +474,72 @@ describe('swimming', () => {
     run(f, input(), deep, 60);
     expect(f.y).toBeCloseTo(FEET + 5, 9);
     expect(f.inWater).toBe(true);
+  });
+});
+
+describe('wading vs swimming (v0.8 flowing water, CONTRACTS §35.4)', () => {
+  const flow = (k) => BLOCK.WATER_FLOW_1 + k - 1;
+  /** Flat floor covered everywhere by one layer of `id` at the feet cell. */
+  const film = (id) => (q, y) => (y <= GROUND ? BLOCK.STONE : y === FEET ? id : BLOCK.AIR);
+
+  it('a level-1 film is wading, not swimming: walking at WADE_SPEED_FACTOR, jumping like on land', () => {
+    const get = film(flow(1));
+    const p = playerAtCell(0, 0, FEET);
+    run(p, input({ forward: 1 }), get, 120);
+    expect(p.inWater).toBe(false);
+    expect(p.headInWater).toBe(false);
+    expect(p.onGround).toBe(true);
+    expect(Math.hypot(p.vx, p.vz)).toBeCloseTo(WALK_SPEED * WADE_SPEED_FACTOR, 3);
+    run(p, input({ jump: true }), get, 1);
+    expect(p.vy).toBeGreaterThan(SWIM_UP_SPEED); // a land jump (JUMP_VELOCITY), not a swim stroke
+    expect(p.onGround).toBe(false);
+  });
+
+  it('swims only where the surface is more than WADE_DEPTH above the feet', () => {
+    for (let k = 1; k <= 6; k++) {
+      const p = playerAtCell(0, 0, FEET);
+      run(p, input(), film(flow(k)), 5);
+      expect(p.inWater, `level ${k}`).toBe((k * WATER_SURFACE_HEIGHT) / 7 > WADE_DEPTH);
+    }
+    for (const id of [BLOCK.WATER, BLOCK.WATER_FALL]) {
+      const p = playerAtCell(0, 0, FEET);
+      run(p, input(), film(id), 5);
+      expect(p.inWater).toBe(true);
+    }
+    expect(isUnderSurface(film(flow(3)), 0, FEET + 0.3, 0)).toBe(true);
+    expect(isUnderSurface(film(flow(3)), 0, FEET + 0.4, 0)).toBe(false);
+  });
+
+  it('a short body (a pig) wades by its own chest point: a shallow cell is not "chest under water"', () => {
+    const pig = createBody(0, FEET, 0, { radius: 0.42, height: 0.9, mass: 0.7 });
+    run(pig, input(), film(flow(3)), 5); // chest point at feet + 0.54: above a 0.375 surface
+    expect(pig.inWater).toBe(false);
+    const pig2 = createBody(0, FEET, 0, { radius: 0.42, height: 0.9, mass: 0.7 });
+    run(pig2, input(), film(flow(6)), 5);
+    expect(pig2.inWater).toBe(true);
+  });
+
+  it('headInWater follows the flowing surface of the eye cell', () => {
+    const get = (q, y) => (y <= GROUND ? BLOCK.STONE : y <= FEET + 1 ? BLOCK.WATER_FALL : y === FEET + 2 ? flow(4) : BLOCK.AIR);
+    const surface = FEET + 2 + (4 * WATER_SURFACE_HEIGHT) / 7;
+    const p = playerAtCell(0, 0, FEET);
+    p.flying = true;
+    p.y = surface - EYE_HEIGHT - 0.01;
+    run(p, input(), get, 1);
+    expect(p.headInWater).toBe(true);
+    p.y = surface - EYE_HEIGHT + 0.01;
+    run(p, input(), get, 1);
+    expect(p.headInWater).toBe(false);
+  });
+
+  it('isSwimWater: films and steps down into a film are wadeable; deep or stacked water is not', () => {
+    expect(isSwimWater(film(flow(1)), 0, FEET, 0)).toBe(false);
+    expect(isSwimWater(film(flow(1)), 0, FEET + 1, 0)).toBe(false); // one step down into a film
+    expect(isSwimWater(film(flow(5)), 0, FEET, 0)).toBe(true);
+    expect(isSwimWater(film(BLOCK.WATER), 0, FEET + 1, 0)).toBe(true);
+    expect(isSwimWater(flatGetBlock(GROUND), 0, FEET, 0)).toBe(false);
+    const twoDeep = (q, y) => (y < GROUND ? BLOCK.STONE : y <= FEET ? flow(1) : BLOCK.AIR);
+    expect(isSwimWater(twoDeep, 0, FEET, 0)).toBe(true);
   });
 });
 

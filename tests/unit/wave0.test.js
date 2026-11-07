@@ -8,6 +8,7 @@ import {
 import { FACE_TOP as HEX_FACE_TOP, FACE_BOTTOM as HEX_FACE_BOTTOM, FACE_COUNT, HEX_INRADIUS, HEX_SIZE } from '../../src/hex.js';
 import {
   BLOCK, BLOCKS, BLOCK_COUNT, TILE, TILE_IDS, DEFAULT_HOTBAR, PICKER_ORDER, getFaceTile, isSolid, isOpaque, isLiquid,
+  UNLOADED, isWater, isWaterSource, waterLevel, isGravityBlock, isFallThrough, isLeaves, isLog,
   isReplaceable, isTargetable, isPlaceable, isBreakable, shouldRenderFace, tileToUV, LAYER_CUTOUT, LAYER_TRANSLUCENT, LAYER_OPAQUE,
   SOUND_GROUPS,
   FACE_TOP, FACE_BOTTOM,
@@ -179,8 +180,8 @@ describe('blocks', () => {
     expect(DEFAULT_HOTBAR).not.toContain(BLOCK.RUNE_BLOCK);
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
-    expect(BLOCK_COUNT).toBe(68);
-    expect(TILE_IDS).toHaveLength(76);
+    expect(BLOCK_COUNT).toBe(76); // v0.8 appended 68..75 (see the block-physics test below)
+    expect(TILE_IDS).toHaveLength(78);
     expect(BLOCK.BLACK_HOLE).toBe(66);
     expect(TILE.BLACK_HOLE).toBe(72);
     expect(BLOCK.STONE).toBe(1);
@@ -190,7 +191,7 @@ describe('blocks', () => {
     expect(TILE.SPRUCE_LOG_SIDE).toBe(28);
     expect(TILE.WOOL_LIGHT_GRAY).toBe(71);
     const placeable = BLOCKS.filter((b) => b.placeable).map((b) => b.id).sort((a, b) => a - b);
-    expect(PICKER_ORDER).toHaveLength(66);
+    expect(PICKER_ORDER).toHaveLength(67);
     expect(new Set(PICKER_ORDER).size).toBe(PICKER_ORDER.length);
     expect([...PICKER_ORDER].sort((a, b) => a - b)).toEqual(placeable);
     // Logs and hay bales: distinct end tiles on top and bottom.
@@ -218,6 +219,50 @@ describe('blocks', () => {
     }
     expect(BLOCKS[BLOCK.WOOL_LIGHT_BLUE].displayName).toBe('Light Blue Wool');
     expect(DEFAULT_HOTBAR.every((id) => id < BLOCK.RUNE_BLOCK)).toBe(true);
+  });
+  it('v0.8 block physics: water levels 68..74, blast barrel 75, gravity flag, fall-through, UNLOADED', () => {
+    expect(BLOCK_COUNT).toBe(76);
+    expect([BLOCK.WATER_FLOW_1, BLOCK.WATER_FLOW_6, BLOCK.WATER_FALL, BLOCK.BLAST_BARREL]).toEqual([68, 73, 74, 75]);
+    expect([TILE.BARREL_SIDE, TILE.BARREL_TOP]).toEqual([75, 76]);
+    for (let id = BLOCK.WATER_FLOW_1; id <= BLOCK.WATER_FALL; id++) {
+      const d = BLOCKS[id];
+      expect(d.liquid && !d.solid && !d.opaque && !d.breakable && !d.placeable, d.name).toBe(true);
+      expect(d.layer).toBe(LAYER_TRANSLUCENT);
+      for (let f = 0; f < FACE_COUNT; f++) expect(getFaceTile(id, f)).toBe(TILE.WATER);
+      expect(isReplaceable(id)).toBe(true);
+      expect(isTargetable(id)).toBe(false);
+      expect(PICKER_ORDER).not.toContain(id);
+    }
+    expect([0, 1, 2, 3, 4, 5, 6].map((k) => (k === 0 ? waterLevel(BLOCK.WATER) : waterLevel(BLOCK.WATER_FLOW_1 + k - 1))))
+      .toEqual([7, 1, 2, 3, 4, 5, 6]);
+    expect(waterLevel(BLOCK.WATER_FALL)).toBe(7);
+    expect(waterLevel(BLOCK.STONE)).toBe(0);
+    expect(isWater(BLOCK.WATER) && isWater(BLOCK.WATER_FLOW_3) && isWater(BLOCK.WATER_FALL)).toBe(true);
+    expect(isWater(BLOCK.ICE) || isWater(BLOCK.AIR)).toBe(false);
+    expect(isWaterSource(BLOCK.WATER)).toBe(true);
+    expect(isWaterSource(BLOCK.WATER_FALL)).toBe(false);
+    // The barrel: a plain solid, placeable, breakable, wood-sounding block in the picker's special group.
+    const barrel = BLOCKS[BLOCK.BLAST_BARREL];
+    expect(barrel.name).toBe('blast_barrel');
+    expect(barrel.displayName).toBe('Blast Barrel');
+    expect(barrel.solid && barrel.opaque && barrel.placeable && barrel.breakable).toBe(true);
+    expect(barrel.soundGroup).toBe('wood');
+    expect(getFaceTile(BLOCK.BLAST_BARREL, 0)).toBe(TILE.BARREL_SIDE);
+    expect(getFaceTile(BLOCK.BLAST_BARREL, FACE_TOP)).toBe(TILE.BARREL_TOP);
+    expect(getFaceTile(BLOCK.BLAST_BARREL, FACE_BOTTOM)).toBe(TILE.BARREL_TOP);
+    expect(PICKER_ORDER.indexOf(BLOCK.BLAST_BARREL)).toBe(PICKER_ORDER.indexOf(BLOCK.CAMPFIRE) + 1);
+    // Gravity and fall-through.
+    expect(BLOCKS.filter((d) => d.gravity).map((d) => d.id).sort((a, c) => a - c)).toEqual([BLOCK.SAND, BLOCK.GRAVEL, BLOCK.RED_SAND]);
+    expect(isGravityBlock(BLOCK.SAND)).toBe(true);
+    expect(isGravityBlock(BLOCK.SANDSTONE)).toBe(false);
+    const through = BLOCKS.filter((d) => isFallThrough(d.id)).map((d) => d.id);
+    expect(through).toEqual([BLOCK.AIR, BLOCK.WATER, BLOCK.CAMPFIRE, 68, 69, 70, 71, 72, 73, 74]);
+    expect(isFallThrough(BLOCK.WATER)).toBe(true); // v0.8 water (CONTRACTS §35.6): sand sinks through sources too
+    expect(UNLOADED).toBe(255);
+    expect(BLOCKS[UNLOADED]).toBeUndefined();
+    expect(isFallThrough(UNLOADED) || isSolid(UNLOADED) || isWater(UNLOADED)).toBe(false);
+    expect(isLeaves(BLOCK.BIRCH_LEAVES) && isLog(BLOCK.SPRUCE_LOG)).toBe(true);
+    expect(isLeaves(BLOCK.OAK_LOG) || isLog(BLOCK.OAK_PLANKS)).toBe(false);
   });
   it('flags are consistent', () => {
     for (const b of BLOCKS) {

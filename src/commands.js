@@ -16,7 +16,7 @@
 import {
   WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
   GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME, PIG_MAX,
-  PIG_RADIUS, PIG_HEIGHT,
+  PIG_RADIUS, PIG_HEIGHT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS,
 } from './config.js';
 import { inHeightRange, worldToChunk, yawToForward } from './coords.js';
 import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
@@ -70,7 +70,14 @@ export const COMMANDS = Object.freeze([
   { name: 'rune', usage: 'rune q y r on|off', summary: 'enable or disable every trigger of one rune block', args: ['cell', 'cell', 'cell', 'choice:on|off'], min: 4 },
   { name: 'summon', usage: 'summon pig [q y r]', summary: 'put a pig two cells in front of you, or in a cell', args: ['choice:pig', 'cell', 'cell', 'cell'], min: 1 },
   { name: 'pigs', usage: 'pigs [clear]', summary: 'count the pigs, or remove them all', args: ['choice:clear'], min: 0 },
+  { name: 'physics', usage: 'physics status|on|off | physics falling|water|collapse|explosions on|off', summary: 'block physics: show its counters, pause / resume all of it (not saved), or switch one feature (saved with the world)', args: ['word', 'choice:on|off'], min: 1 },
+  { name: 'undo', usage: 'undo', summary: 'undo the last explosion, collapse or falling tree (within 60 s)', args: [], min: 0 },
+  { name: 'ignite', usage: 'ignite q y r', summary: 'light the blast barrel in that cell', args: ['cell', 'cell', 'cell'], min: 3 },
+  { name: 'drain', usage: 'drain [radius]', summary: `remove the water around you (a rune: around itself), radius 0–${DRAIN_MAX_RADIUS}, default ${DRAIN_DEFAULT_RADIUS}`, args: ['int'], min: 0 },
 ]);
+
+/** Block-physics feature switches (`physics <feature> on|off`); the same names as BlockPhysics FEATURES. */
+const PHYSICS_FEATURES = Object.freeze(['falling', 'water', 'collapse', 'explosions']);
 
 /** @type {Map<string, CommandSpec>} */
 const SPEC_BY_NAME = new Map(COMMANDS.map((c) => [c.name, c]));
@@ -235,6 +242,7 @@ export function resolveBlock(token) {
  * @property {(on: boolean) => void} setFlying
  * @property {import('./runes.js').RuneStore} runes
  * @property {import('./pigs.js').Pigs} [pigs]            absent in contexts without creatures (summon / pigs then fail)
+ * @property {import('./blockphysics.js').BlockPhysics} [physics]  absent without block physics (physics / undo / ignite / drain then fail)
  * @property {import('./runes.js').RuneRunner} runner
  * @property {Rune|null} rune                               the executing rune (for `@`), null in the console
  * @property {import('./runes.js').Running|null} running    the executing script, null in the console
@@ -793,6 +801,55 @@ function run(spec, args, ctx) {
         return ok(`removed ${n} pig${n === 1 ? '' : 's'}`);
       }
       return ok(`${n} pig${n === 1 ? '' : 's'} (max ${PIG_MAX})`);
+    }
+    case 'physics': {
+      const ph = ctx.physics;
+      if (!ph) return fail(spec, 'block physics is not available here');
+      const what = args[0].toLowerCase();
+      if (args.length === 1) {
+        if (what === 'status') return ok(ph.statusText());
+        if (what === 'on' || what === 'off') {
+          ph.setPaused(what === 'off');
+          return ok(what === 'off' ? 'block physics paused: nothing falls, flows or explodes until physics on (not saved)' : 'block physics running');
+        }
+        if (PHYSICS_FEATURES.includes(what)) return ok(`${what} is ${ph.isEnabled(what) ? 'on' : 'off'}`);
+        return fail(spec, `expected status, on, off or one of ${PHYSICS_FEATURES.join(', ')}, got "${args[0]}"`);
+      }
+      if (!PHYSICS_FEATURES.includes(what)) return fail(spec, `expected one of ${PHYSICS_FEATURES.join(', ')}, got "${args[0]}"`);
+      const on = args[1] === 'on';
+      const changed = ph.setSwitch(what, on);
+      return ok(`${what} ${on ? 'on' : 'off'}${changed ? ' (saved with this world)' : ' (already)'}`);
+    }
+    case 'undo': {
+      if (!ctx.physics) return fail(spec, 'block physics is not available here');
+      const res = ctx.physics.undo();
+      return res.ok ? ok(res.message) : fail(spec, res.message);
+    }
+    case 'ignite': {
+      if (!ctx.physics) return fail(spec, 'block physics is not available here');
+      const rc = resolveCellTriple(args, 0, ctx);
+      if ('error' in rc) return fail(spec, rc.error);
+      const [q, y, r] = rc.cell;
+      if (!inHeightRange(y)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 1}`);
+      if (!world.hasChunkAtCell(q, r)) return fail(spec, `cell (${q}, ${y}, ${r}) is not loaded`);
+      const res = ctx.physics.explosions.ignite(q, y, r);
+      return res.ok ? ok(res.message) : fail(spec, res.message);
+    }
+    case 'drain': {
+      if (!ctx.physics) return fail(spec, 'block physics is not available here');
+      const radius = args.length === 1 ? Number(args[0]) : DRAIN_DEFAULT_RADIUS;
+      if (!(radius >= 0 && radius <= DRAIN_MAX_RADIUS)) return fail(spec, `radius must be 0..${DRAIN_MAX_RADIUS}`);
+      let q;
+      let y;
+      let r;
+      if (ctx.rune) {
+        ({ q, y, r } = ctx.rune);
+      } else {
+        [q, r] = worldToHex(p.x, p.z);
+        y = Math.floor(p.y);
+      }
+      const res = ctx.physics.fluids.drain(q, y, r, radius);
+      return res.ok ? ok(res.message) : fail(spec, res.message);
     }
     case 'rune': {
       const rc = resolveCellTriple(args, 0, ctx);

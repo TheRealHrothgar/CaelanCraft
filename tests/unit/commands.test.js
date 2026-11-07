@@ -11,6 +11,7 @@ import { World } from '../../src/world.js';
 import { createPlayer } from '../../src/physics.js';
 import { RuneStore } from '../../src/runes.js';
 import { Pigs } from '../../src/pigs.js';
+import { BlockPhysics } from '../../src/blockphysics.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 import {
   COMMANDS, HELP_FOOTER, COMPASS, parseLine, parseScript, resolveBlock, parseTimeSpec, parseDurationSpec,
@@ -251,7 +252,7 @@ describe('resolveBlock', () => {
   it('rejects unknown names, out-of-range ids and empty tokens with helpful messages', () => {
     expect(resolveBlock('zzz')).toEqual({ error: 'unknown block "zzz" (type blocks to list them)' });
     expect(resolveBlock(String(BLOCK_COUNT))).toEqual({ error: `unknown block id ${BLOCK_COUNT} (0..${BLOCK_COUNT - 1}; type blocks to list them)` });
-    expect(resolveBlock('-1')).toEqual({ error: 'unknown block id -1 (0..67; type blocks to list them)' });
+    expect(resolveBlock('-1')).toEqual({ error: `unknown block id -1 (0..${BLOCK_COUNT - 1}; type blocks to list them)` });
     expect(resolveBlock('')).toEqual({ error: 'expected a block name' });
     expect(resolveBlock(undefined)).toEqual({ error: 'expected a block name' });
   });
@@ -841,5 +842,88 @@ describe('executeCommand — robustness', () => {
     job.step(10);
     expect(job.written).toBe(4);
     expect(exec(ctx, 'tp -4 11 -4').message).toBe('teleported to cell -4 11 -4');
+  });
+});
+
+describe('executeCommand — block physics (physics / undo / ignite / drain)', () => {
+  /** A ctx whose world has a BlockPhysics attached (as main forwards onBlockChange). */
+  function physicsCtx(over = {}) {
+    const made = makeCtx(over);
+    const physics = new BlockPhysics(made.world);
+    made.world.onBlockChange = (q, y, r, p, n) => physics.onBlockChange(q, y, r, p, n);
+    made.ctx.physics = physics;
+    return { ...made, physics };
+  }
+
+  it('fail without physics in the context', () => {
+    const { ctx } = makeCtx();
+    for (const line of ['physics status', 'undo', 'ignite 0 11 0', 'drain']) {
+      const res = exec(ctx, line);
+      expect(res.ok, line).toBe(false);
+      expect(res.message).toContain('block physics is not available here');
+    }
+  });
+
+  it('physics status | on | off | <feature> [on|off]', () => {
+    const { ctx, physics } = physicsCtx();
+    expect(exec(ctx, 'physics status').message).toBe(physics.statusText());
+    expect(exec(ctx, 'physics off')).toEqual({ ok: true, message: 'block physics paused: nothing falls, flows or explodes until physics on (not saved)' });
+    expect(physics.paused).toBe(true);
+    expect(exec(ctx, 'physics on').ok).toBe(true);
+    expect(physics.paused).toBe(false);
+    expect(exec(ctx, 'physics collapse off')).toEqual({ ok: true, message: 'collapse off (saved with this world)' });
+    expect(physics.isEnabled('collapse')).toBe(false);
+    expect(exec(ctx, 'physics collapse off').message).toBe('collapse off (already)');
+    expect(exec(ctx, 'physics collapse').message).toBe('collapse is off');
+    expect(exec(ctx, 'physics WATER OFF').ok).toBe(true);
+    expect(physics.isEnabled('water')).toBe(false);
+    expect(exec(ctx, 'physics lava on').message).toContain('expected one of falling, water, collapse, explosions');
+    expect(exec(ctx, 'physics nope').ok).toBe(false);
+    expect(parseLine('physics falling maybe').message).toContain('expected one of on, off');
+  });
+
+  it('undo reports the event or why not', () => {
+    const { ctx, physics, world } = physicsCtx();
+    expect(exec(ctx, 'undo').message).toContain('nothing to undo');
+    world.setBlock(2, 11, 2, B.BRICKS);
+    physics.beginEvent('explosion');
+    physics.ctx.writeQuiet(2, 11, 2, B.AIR);
+    physics.endEvent();
+    const res = exec(ctx, 'undo');
+    expect(res).toEqual({ ok: true, message: 'undid the explosion: restored 1 block' });
+    expect(world.getBlock(2, 11, 2)).toBe(B.BRICKS);
+  });
+
+  it('ignite resolves and checks the cell, then asks explosions; drain centres on the player (or the rune)', () => {
+    const { ctx, physics } = physicsCtx();
+    const ignite = vi.spyOn(physics.explosions, 'ignite').mockReturnValue({ ok: true, message: 'lit' });
+    expect(exec(ctx, 'ignite ~ ~ ~1')).toEqual({ ok: true, message: 'lit' });
+    expect(ignite).toHaveBeenCalledWith(0, FEET, 1);
+    expect(exec(ctx, 'ignite 9000 11 9000').message).toContain('is not loaded');
+    ignite.mockReturnValue({ ok: false, message: 'no barrel there' });
+    expect(exec(ctx, 'ignite 0 11 0').message).toBe('ignite: no barrel there — usage: ignite q y r');
+    const drain = vi.spyOn(physics.fluids, 'drain').mockReturnValue({ ok: true, message: 'drained 3 cells' });
+    expect(exec(ctx, 'drain').message).toBe('drained 3 cells');
+    expect(drain).toHaveBeenLastCalledWith(0, FEET, 0, 8);
+    exec(ctx, 'drain 2');
+    expect(drain).toHaveBeenLastCalledWith(0, FEET, 0, 2);
+    expect(exec(ctx, 'drain 17').message).toContain('radius must be 0..16');
+    ctx.rune = runeAt(5, 20, -3);
+    exec(ctx, 'drain 1');
+    expect(drain).toHaveBeenLastCalledWith(5, 20, -3, 1);
+  });
+
+  it('drain (the real water feature) removes the water around the player and nothing beyond the radius', () => {
+    const { ctx, physics, world } = physicsCtx();
+    world.setBlock(1, FEET, 0, B.WATER);
+    world.setBlock(9, FEET, 0, B.WATER);
+    for (let i = 0; i < 400 && physics.queued() > 0; i++) physics.tick();
+    expect(world.getBlock(2, FEET, 0)).toBe(B.WATER_FLOW_6);
+    const res = exec(ctx, 'drain 3');
+    expect(res.ok).toBe(true);
+    expect(res.message).toMatch(/^drained \d+ water cells within 3$/);
+    expect(world.getBlock(1, FEET, 0)).toBe(B.AIR);
+    expect(world.getBlock(9, FEET, 0)).toBe(B.WATER);
+    expect(exec(ctx, 'drain 0').message).toBe('no water to drain within 0');
   });
 });

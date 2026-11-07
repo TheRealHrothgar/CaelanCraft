@@ -19,6 +19,8 @@ export class Chunk {
     this.heights = data?.heights ?? new Uint8Array(CHUNK_AREA);
     /** needs (re)meshing */
     this.dirty = true;
+    /** dirty only through lazy (physics) writes: World.update re-meshes it under LAZY_MESH_BUDGET_MS (CONTRACTS §9.2) */
+    this.lazy = false;
     /** has been handed to the renderer at least once */
     this.meshed = false;
   }

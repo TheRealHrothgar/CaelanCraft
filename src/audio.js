@@ -1,4 +1,4 @@
-// Caelancraft — WebAudio synthesised sound effects (block break / place, UI click).
+// Caelancraft — WebAudio synthesised sound effects (block break / place, UI click, pigs, campfires, block physics).
 // See src/CONTRACTS.md §21 and docs/SPEC-gameplay.md §9.
 //
 // DOM module (WebAudio). Nothing is touched at module top level, so the module
@@ -74,6 +74,60 @@ export const SQUEAL_GAIN = 0.3;
 export const CRACKLE_POP_S = 0.012;
 export const CRACKLE_CUTOFF_HZ = 4500;
 export const CRACKLE_GAIN = 0.35;
+// v0.8 trees: playCreak — a toppling trunk's groan: a low sawtooth sliding up then down through a soft lowpass,
+// with a short woody rasp.
+export const CREAK_DURATION_S = 0.6;
+export const CREAK_START_HZ = 85;
+export const CREAK_PEAK_HZ = 135;
+export const CREAK_END_HZ = 60;
+export const CREAK_CUTOFF_HZ = 700;
+export const CREAK_GAIN = 0.3;
+export const CREAK_RASP_S = 0.25;
+export const CREAK_RASP_CUTOFF_HZ = 1200;
+export const CREAK_RASP_GAIN = 0.12;
+// Block physics (CONTRACTS §34): a landing block thuds — a sine drop 110 → 45 Hz over 160 ms under a short 500 Hz
+// noise knock; water starting to flow splashes — a 0.35 s 1.6 kHz noise wash plus two rising bubble blips.
+export const THUD_START_HZ = 110;
+export const THUD_END_HZ = 45;
+export const THUD_DURATION_S = 0.16;
+export const THUD_GAIN = 0.65;
+export const THUD_KNOCK_S = 0.06;
+export const THUD_KNOCK_CUTOFF_HZ = 500;
+export const THUD_KNOCK_GAIN = 0.45;
+export const SPLASH_DURATION_S = 0.35;
+export const SPLASH_CUTOFF_HZ = 1600;
+export const SPLASH_GAIN = 0.3;
+export const SPLASH_BLIP_HZ = 520;
+export const SPLASH_BLIP_S = 0.05;
+export const SPLASH_BLIP_GAIN = 0.12;
+// Explosives (CONTRACTS §37). A boom is a sine thump 72 → 26 Hz over 1.1 s, a 0.9 s 420 Hz noise body, a slowed
+// 150 Hz rumble starting 0.12 s later and a 60 ms 3.2 kHz crack on top. A lit fuse hisses — a bright 0.3 s noise
+// breath; putting one out fizzles — a 0.45 s 2.5 kHz noise wash over a sine sagging 700 → 180 Hz. All synthesised
+// (no samples), all scaled by the caller's volume. (The falling-tree creak, §36, is defined above with the campfire.)
+export const BOOM_THUMP_START_HZ = 72;
+export const BOOM_THUMP_END_HZ = 26;
+export const BOOM_THUMP_S = 1.1;
+export const BOOM_THUMP_GAIN = 0.9;
+export const BOOM_BODY_S = 0.9;
+export const BOOM_BODY_CUTOFF_HZ = 420;
+export const BOOM_BODY_GAIN = 0.8;
+export const BOOM_RUMBLE_DELAY_S = 0.12;
+export const BOOM_RUMBLE_S = 0.9;
+export const BOOM_RUMBLE_CUTOFF_HZ = 150;
+export const BOOM_RUMBLE_GAIN = 0.45;
+export const BOOM_CRACK_S = 0.06;
+export const BOOM_CRACK_CUTOFF_HZ = 3200;
+export const BOOM_CRACK_GAIN = 0.5;
+export const HISS_DURATION_S = 0.3;
+export const HISS_CUTOFF_HZ = 7000;
+export const HISS_GAIN = 0.12;
+export const FIZZLE_DURATION_S = 0.45;
+export const FIZZLE_CUTOFF_HZ = 2500;
+export const FIZZLE_GAIN = 0.3;
+export const FIZZLE_SAG_START_HZ = 700;
+export const FIZZLE_SAG_END_HZ = 180;
+export const FIZZLE_SAG_S = 0.25;
+export const FIZZLE_SAG_GAIN = 0.08;
 
 /** Exponential ramps cannot reach 0; decays ramp to this floor and the voice stops there. */
 const DECAY_FLOOR = 0.001;
@@ -89,6 +143,12 @@ const MUTE_FADE_S = 0.01;
  * @property {(volume?: number) => void} playOink                 pig grunt; volume 0..1 (default 1)
  * @property {(volume?: number) => void} playSqueal               pig hit
  * @property {(volume?: number) => void} playCrackle              campfire pop
+ * @property {(volume?: number) => void} playCreak                a tree starts to topple (block physics)
+ * @property {(volume?: number) => void} playThud                 a falling block lands (block physics)
+ * @property {(volume?: number) => void} playSplash               water starts to flow nearby (block physics)
+ * @property {(volume?: number) => void} playBoom                 a blast (explosives)
+ * @property {(volume?: number) => void} playHiss                 a lit barrel's fuse
+ * @property {(volume?: number) => void} playFizzle               a lit barrel put out
  * @property {(b: boolean) => void} setMuted
  * @property {() => boolean} toggleMuted                         returns the new muted state
  * @property {boolean} muted                                     read-only getter
@@ -425,6 +485,101 @@ export function createAudio(opts = {}) {
     }
   }
 
+  /** @param {number} [volume] */
+  function playCreak(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const pitch = randomPitch();
+      const d = CREAK_DURATION_S;
+      const t0 = c.currentTime;
+      buzz(c, t0, d, [[0, CREAK_START_HZ * pitch], [d * 0.55, CREAK_PEAK_HZ * pitch], [d, CREAK_END_HZ * pitch]], CREAK_CUTOFF_HZ, CREAK_GAIN * v);
+      noiseBurst(c, t0 + 0.05, CREAK_RASP_S, CREAK_RASP_CUTOFF_HZ, CREAK_RASP_GAIN * v, pitch);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playThud(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const pitch = randomPitch();
+      const t0 = c.currentTime;
+      tone(c, t0, THUD_DURATION_S, THUD_START_HZ * pitch, THUD_END_HZ * pitch, THUD_GAIN * v);
+      noiseBurst(c, t0, THUD_KNOCK_S, THUD_KNOCK_CUTOFF_HZ, THUD_KNOCK_GAIN * v, pitch);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playSplash(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const t0 = c.currentTime;
+      noiseBurst(c, t0, SPLASH_DURATION_S, SPLASH_CUTOFF_HZ, SPLASH_GAIN * v, randomPitch());
+      for (let i = 0; i < 2; i++) {
+        const f = SPLASH_BLIP_HZ * randomPitch() * (1 + 0.4 * i);
+        const at = t0 + 0.04 + Math.random() * 0.18;
+        tone(c, at, SPLASH_BLIP_S, f, f * 1.6, SPLASH_BLIP_GAIN * v);
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  // --- explosives (CONTRACTS §37) ------------------------------------------
+
+  /** @param {number} [volume] */
+  function playBoom(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const pitch = randomPitch();
+      const t0 = c.currentTime;
+      tone(c, t0, BOOM_THUMP_S, BOOM_THUMP_START_HZ * pitch, BOOM_THUMP_END_HZ * pitch, BOOM_THUMP_GAIN * v);
+      noiseBurst(c, t0, BOOM_BODY_S, BOOM_BODY_CUTOFF_HZ, BOOM_BODY_GAIN * v, pitch);
+      // Slowed noise (rate 0.6) is darker and stays inside the 1 s noise buffer.
+      noiseBurst(c, t0 + BOOM_RUMBLE_DELAY_S, BOOM_RUMBLE_S, BOOM_RUMBLE_CUTOFF_HZ / 0.6, BOOM_RUMBLE_GAIN * v, 0.6);
+      noiseBurst(c, t0, BOOM_CRACK_S, BOOM_CRACK_CUTOFF_HZ, BOOM_CRACK_GAIN * v, pitch);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playHiss(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      noiseBurst(c, c.currentTime, HISS_DURATION_S, HISS_CUTOFF_HZ, HISS_GAIN * Math.min(1, volume), randomPitch());
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playFizzle(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const pitch = randomPitch();
+      const t0 = c.currentTime;
+      noiseBurst(c, t0, FIZZLE_DURATION_S, FIZZLE_CUTOFF_HZ, FIZZLE_GAIN * v, pitch);
+      tone(c, t0, FIZZLE_SAG_S, FIZZLE_SAG_START_HZ * pitch, FIZZLE_SAG_END_HZ * pitch, FIZZLE_SAG_GAIN * v);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
   /** @param {boolean} b */
   function setMuted(b) {
     muted = !!b;
@@ -452,6 +607,12 @@ export function createAudio(opts = {}) {
     playOink,
     playSqueal,
     playCrackle,
+    playCreak,
+    playThud,
+    playSplash,
+    playBoom,
+    playHiss,
+    playFizzle,
     setMuted,
     toggleMuted,
     get muted() {

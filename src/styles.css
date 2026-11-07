@@ -69,13 +69,17 @@ canvas{image-rendering:pixelated}
 .picker-hint{color:#5a5a5a;font:12px monospace}
 
 /* Pause menu (z 30) */
-#pause-menu{z-index:30;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;overflow-y:auto}
+#pause-menu{z-index:30;background:rgba(0,0,0,.55);display:flex;align-items:safe center;justify-content:center;overflow-y:auto}
 .menu-panel{display:flex;flex-direction:column;align-items:center;gap:8px}
 .menu-title{color:#fff;font:bold 28px monospace;text-shadow:3px 3px 0 #3f3f3f;margin:0 0 12px}
 .mc-button{min-width:320px;padding:10px 16px;background:#6f6f6f;color:#e0e0e0;font:bold 18px monospace;text-shadow:2px 2px 0 #202020;border:2px solid;border-color:#aaa #555 #555 #aaa;box-shadow:0 0 0 2px #000;cursor:pointer}
 .mc-button:hover:not(:disabled){background:#7f8fbf;color:#ffffa0}
 .mc-button:disabled{background:#4a4a4a;color:#a0a0a0;cursor:default}
 .menu-note{color:#c0c0c0;font:13px monospace}
+.physics-row{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;max-width:660px}
+.physics-label{color:#e0e0e0;font:bold 14px monospace;text-shadow:2px 2px 0 #202020;margin-right:4px}
+.mc-button.toggle{min-width:0;padding:6px 10px;font-size:14px}
+.mc-button.toggle.off{background:#4a4a4a;color:#a0a0a0}
 
 /* Click to play (z 35) */
 #click-to-play{z-index:35;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);cursor:pointer}

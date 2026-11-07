@@ -263,6 +263,7 @@ function refreshHandleRefs(handle, game) {
   handle.renderer = renderer;
   handle.runes = game ? game.runes ?? null : null;
   handle.runner = game ? game.runner ?? null : null;
+  handle.physics = game ? game.physics ?? null : null;
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;
@@ -322,6 +323,10 @@ export function installDebugHandle(win, game) {
     if (game && typeof game.setLook === 'function') game.setLook(yaw, pitch);
   };
   handle.getState = () => (game && typeof game.getState === 'function' ? game.getState() : 'unknown');
+  /** One synchronous simulation + render step (screenshots under a virtual-time budget, where rAF is starved). */
+  handle.stepFrame = (dt) => {
+    if (game && typeof game.stepFrame === 'function') game.stepFrame(dt);
+  };
   handle.runSmoke = () => runSmokeTest(game, win);
 
   win.__caelancraft = handle;
@@ -472,6 +477,17 @@ export function buildDebugText(game, stats) {
   }
   if (!mode) mode = 'walk';
 
+  // Block physics (v0.8): one compact line when the game has it.
+  let physicsLine = '';
+  const ph = g.physics ?? null;
+  if (ph && typeof ph.status === 'function') {
+    const st = ph.status();
+    const q = st.queued;
+    const off = Object.keys(st.switches).filter((k) => !st.switches[k]);
+    physicsLine = `\nPhysics: ${st.paused ? 'PAUSED  ' : ''}queued ${q.fall + q.water + q.misc}  falling ${st.fallers}  tumbling ${st.tumblers}` +
+      `  tick ${fmt1(st.lastTickMs)} ms${off.length ? `  off: ${off.join(' ')}` : ''}`;
+  }
+
   return (
     `Caelancraft v${VERSION}  (F3 to hide)\n` +
     `FPS: ${fmtInt(s.fps)}  frame ${fmt1(s.frameMs)} ms\n` +
@@ -482,7 +498,8 @@ export function buildDebugText(game, stats) {
     `Chunks: loaded ${counts.loaded}  meshed ${counts.meshed}  queue ${counts.queue}\n` +
     `Target: ${target}\n` +
     `Time: ${formatClock(time)}  day ${day}  (t=${fmt3(time)})\n` +
-    `Mode: ${mode}`
+    `Mode: ${mode}` +
+    physicsLine
   );
 }
 

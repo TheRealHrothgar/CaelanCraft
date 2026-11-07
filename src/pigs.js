@@ -8,10 +8,10 @@
 import {
   PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_MASS, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
 } from './config.js';
-import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt } from './physics.js';
+import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt, isSwimWater } from './physics.js';
 import { yawToForward } from './coords.js';
 import { hexToWorld, worldToHex } from './hex.js';
-import { BLOCK, isSolid, isLiquid } from './blocks.js';
+import { BLOCK, isSolid } from './blocks.js';
 
 /** @typedef {import('./types.js').GetBlockFn} GetBlockFn */
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -183,7 +183,7 @@ export class Pigs {
     return oinks;
   }
 
-  /** AI: idle ↔ wander, flee after a hit, and never walk off a drop of more than one cell or into deep water. */
+  /** AI: idle ↔ wander, flee after a hit, and never walk off a drop of more than one cell or into water it would swim in. */
   _think(pig, dt, getBlock) {
     pig.timer -= dt;
     if (pig.timer <= 0) {
@@ -204,12 +204,12 @@ export class Pigs {
     }
   }
 
-  /** The cell 0.8 ahead has ground within one cell below the feet and is not water. */
+  /** The cell 0.8 ahead has ground within one cell below the feet and no water a pig would swim in (films are fine). */
   _safeAhead(pig, getBlock) {
     const [fx, fz] = yawToForward(pig.yaw);
     const [q, r] = worldToHex(pig.x + fx * 0.8, pig.z + fz * 0.8);
     const fy = Math.floor(pig.y + 0.01);
-    if (isLiquid(getBlock(q, fy, r)) || isLiquid(getBlock(q, fy - 1, r))) return false;
+    if (isSwimWater(getBlock, q, fy, r)) return false;
     if (getBlock(q, fy, r) === BLOCK.CAMPFIRE) return false; // pigs keep away from fire
     return isSolid(getBlock(q, fy - 1, r)) || isSolid(getBlock(q, fy - 2, r)) || isSolid(getBlock(q, fy, r));
   }

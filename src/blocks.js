@@ -1,6 +1,6 @@
 // Caelancraft — block registry, atlas tile ids, render layers, biomes, culling and UV rules.
 // See src/CONTRACTS.md §5 and docs/SPEC-gameplay.md §1–§2. Pure.
-import { TILE_UV, UV_INSET, ATLAS_TILES_PER_ROW } from './config.js';
+import { TILE_UV, UV_INSET, ATLAS_TILES_PER_ROW, WATER_SURFACE_HEIGHT } from './config.js';
 import { FACE_TOP, FACE_BOTTOM } from './hex.js';
 
 /** Block ids. */
@@ -18,8 +18,17 @@ export const BLOCK = Object.freeze({
   WOOL_ORANGE: 52, WOOL_YELLOW: 53, WOOL_LIME: 54, WOOL_GREEN: 55, WOOL_CYAN: 56, WOOL_LIGHT_BLUE: 57, WOOL_BLUE: 58,
   WOOL_PURPLE: 59, WOOL_MAGENTA: 60, WOOL_PINK: 61, WOOL_BROWN: 62, WOOL_BLACK: 63, WOOL_GRAY: 64, WOOL_LIGHT_GRAY: 65,
   BLACK_HOLE: 66, CAMPFIRE: 67,
+  // v0.8 block physics (docs/DESIGN-physics.md §0): flowing / falling water levels and the blast barrel
+  WATER_FLOW_1: 68, WATER_FLOW_2: 69, WATER_FLOW_3: 70, WATER_FLOW_4: 71, WATER_FLOW_5: 72, WATER_FLOW_6: 73,
+  WATER_FALL: 74, BLAST_BARREL: 75,
 });
-export const BLOCK_COUNT = 68;
+export const BLOCK_COUNT = 76;
+
+/**
+ * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
+ * every block predicate (isSolid, isFallThrough, …) treats it like AIR — physics rules test for it explicitly.
+ */
+export const UNLOADED = 255;
 
 /** Atlas tile ids. Tile t is drawn at pixel ((t % 16) * 16, floor(t / 16) * 16). */
 export const TILE = Object.freeze({
@@ -36,6 +45,7 @@ export const TILE = Object.freeze({
   WOOL_LIGHT_BLUE: 63, WOOL_BLUE: 64, WOOL_PURPLE: 65, WOOL_MAGENTA: 66, WOOL_PINK: 67, WOOL_BROWN: 68, WOOL_BLACK: 69,
   WOOL_GRAY: 70, WOOL_LIGHT_GRAY: 71, BLACK_HOLE: 72,
   CAMPFIRE_SIDE: 73, CAMPFIRE_TOP: 74,
+  BARREL_SIDE: 75, BARREL_TOP: 76,
   MISSING: 255,
 });
 /** Every tile id the atlas must paint. */
@@ -70,6 +80,7 @@ export const SOUND_GROUPS = Object.freeze([
  * @property {string|null} soundGroup
  * @property {boolean} meshed       drawn by the chunk mesher; false for blocks with their own model (campfire), whose
  *                                  tiles are then used only for the hotbar / picker icon
+ * @property {boolean} gravity      falls when the cell below is fall-through (sand, red sand, gravel; CONTRACTS §34)
  */
 
 /** tiles helper: six sides, then top, then bottom */
@@ -98,11 +109,17 @@ function def(d) {
     layer,
     soundGroup: d.soundGroup ?? null,
     meshed: d.meshed ?? true,
+    gravity: d.gravity ?? false,
   };
 }
 
 const T = TILE;
 const B = BLOCK;
+
+/** Shared flags of the non-source water blocks (flowing levels and falling water). */
+const WATER_FAMILY = Object.freeze({
+  solid: false, opaque: false, liquid: true, breakable: false, placeable: false, layer: LAYER_TRANSLUCENT, soundGroup: 'water',
+});
 
 /** The v0.4 wool colours (white and red predate them): BLOCK/TILE key suffix and display label. */
 const WOOL_COLORS = [
@@ -121,8 +138,8 @@ export const BLOCKS = [
   def({ id: B.OAK_PLANKS, name: 'oak_planks', displayName: 'Oak Planks', tiles: tiles(T.OAK_PLANKS), soundGroup: 'wood' }),
   def({ id: B.BEDROCK, name: 'bedrock', displayName: 'Bedrock', tiles: tiles(T.BEDROCK), breakable: false, placeable: false, soundGroup: 'stone' }),
   def({ id: B.WATER, name: 'water', displayName: 'Water', tiles: tiles(T.WATER), solid: false, opaque: false, liquid: true, breakable: false, layer: LAYER_TRANSLUCENT, soundGroup: 'water' }),
-  def({ id: B.SAND, name: 'sand', displayName: 'Sand', tiles: tiles(T.SAND), soundGroup: 'sand' }),
-  def({ id: B.GRAVEL, name: 'gravel', displayName: 'Gravel', tiles: tiles(T.GRAVEL), soundGroup: 'gravel' }),
+  def({ id: B.SAND, name: 'sand', displayName: 'Sand', tiles: tiles(T.SAND), soundGroup: 'sand', gravity: true }),
+  def({ id: B.GRAVEL, name: 'gravel', displayName: 'Gravel', tiles: tiles(T.GRAVEL), soundGroup: 'gravel', gravity: true }),
   def({ id: B.OAK_LOG, name: 'oak_log', displayName: 'Oak Log', tiles: tiles(T.OAK_LOG_SIDE, T.OAK_LOG_END, T.OAK_LOG_END), soundGroup: 'wood' }),
   def({ id: B.OAK_LEAVES, name: 'oak_leaves', displayName: 'Oak Leaves', tiles: tiles(T.OAK_LEAVES), opaque: false, cullSame: false, layer: LAYER_CUTOUT, soundGroup: 'leaves' }),
   def({ id: B.GLASS, name: 'glass', displayName: 'Glass', tiles: tiles(T.GLASS), opaque: false, layer: LAYER_CUTOUT, soundGroup: 'glass' }),
@@ -156,7 +173,7 @@ export const BLOCKS = [
   def({ id: B.MOSSY_STONE_BRICKS, name: 'mossy_stone_bricks', displayName: 'Mossy Stone Bricks', tiles: tiles(T.MOSSY_STONE_BRICKS), soundGroup: 'stone' }),
   def({ id: B.OBSIDIAN, name: 'obsidian', displayName: 'Obsidian', tiles: tiles(T.OBSIDIAN), soundGroup: 'stone' }),
   def({ id: B.CLAY, name: 'clay', displayName: 'Clay', tiles: tiles(T.CLAY), soundGroup: 'dirt' }),
-  def({ id: B.RED_SAND, name: 'red_sand', displayName: 'Red Sand', tiles: tiles(T.RED_SAND), soundGroup: 'sand' }),
+  def({ id: B.RED_SAND, name: 'red_sand', displayName: 'Red Sand', tiles: tiles(T.RED_SAND), soundGroup: 'sand', gravity: true }),
   // Ice is solid but see-through: translucent layer, faces between two ice cells culled (like water).
   def({ id: B.ICE, name: 'ice', displayName: 'Ice', tiles: tiles(T.ICE), opaque: false, layer: LAYER_TRANSLUCENT, soundGroup: 'glass' }),
   def({ id: B.PACKED_ICE, name: 'packed_ice', displayName: 'Packed Ice', tiles: tiles(T.PACKED_ICE), soundGroup: 'glass' }),
@@ -179,6 +196,15 @@ export const BLOCKS = [
   // Campfire: its own model, light, smoke and crackle (campfires.js / campfireRenderer.js, CONTRACTS §32). Not solid and
   // not meshed; its tiles only draw the icon.
   def({ id: B.CAMPFIRE, name: 'campfire', displayName: 'Campfire', tiles: tiles(T.CAMPFIRE_SIDE, T.CAMPFIRE_TOP), solid: false, opaque: false, layer: LAYER_CUTOUT, soundGroup: 'wood', meshed: false }),
+  // ---- v0.8 block physics. Flowing water levels 1..6 and falling water are WATER's family (fluids.js, CONTRACTS §35):
+  // liquid, never placed or broken by hand, drawn with the water tile. Only WATER itself is a source.
+  ...[1, 2, 3, 4, 5, 6].map((k) => def({
+    id: B[`WATER_FLOW_${k}`], name: `water_flow_${k}`, displayName: `Flowing Water ${k}`, tiles: tiles(T.WATER), ...WATER_FAMILY,
+  })),
+  def({ id: B.WATER_FALL, name: 'water_fall', displayName: 'Falling Water', tiles: tiles(T.WATER), ...WATER_FAMILY }),
+  // Blast Barrel: an explosive (explosions.js, CONTRACTS §37). A plain solid block until lit (R, a campfire next to it,
+  // `ignite`, or a blast); lit barrels are entities. Lid tile on top and bottom.
+  def({ id: B.BLAST_BARREL, name: 'blast_barrel', displayName: 'Blast Barrel', tiles: tiles(T.BARREL_SIDE, T.BARREL_TOP), soundGroup: 'wood' }),
 ];
 
 /** Default hotbar: grass, dirt, stone, cobble, planks, log, leaves, glass, bricks. */
@@ -186,7 +212,7 @@ export const DEFAULT_HOTBAR = Object.freeze([
   B.GRASS_BLOCK, B.DIRT, B.STONE, B.COBBLESTONE, B.OAK_PLANKS, B.OAK_LOG, B.OAK_LEAVES, B.GLASS, B.BRICKS,
 ]);
 
-/** Order of the 66 placeable blocks in the block picker, grouped by family. */
+/** Order of the 67 placeable blocks in the block picker, grouped by family. */
 export const PICKER_ORDER = Object.freeze([
   // stone
   B.STONE, B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.GRANITE, B.DIORITE, B.ANDESITE,
@@ -204,7 +230,7 @@ export const PICKER_ORDER = Object.freeze([
   B.WOOL_WHITE, B.WOOL_LIGHT_GRAY, B.WOOL_GRAY, B.WOOL_BLACK, B.WOOL_BROWN, B.WOOL_RED, B.WOOL_ORANGE, B.WOOL_YELLOW,
   B.WOOL_LIME, B.WOOL_GREEN, B.WOOL_CYAN, B.WOOL_LIGHT_BLUE, B.WOOL_BLUE, B.WOOL_PURPLE, B.WOOL_MAGENTA, B.WOOL_PINK,
   // special
-  B.CAMPFIRE, B.BLACK_HOLE, B.RUNE_BLOCK, B.WATER,
+  B.CAMPFIRE, B.BLAST_BARREL, B.BLACK_HOLE, B.RUNE_BLOCK, B.WATER,
 ]);
 
 /** @returns {BlockDef} the block definition; unknown ids return the AIR definition */
@@ -237,6 +263,53 @@ export function isTargetable(id) {
 /** false for blocks drawn by their own model instead of the chunk mesher (campfire). */
 export function isMeshed(id) {
   return getBlockDef(id).meshed;
+}
+/** Falls when the cell below is fall-through (BlockDef.gravity: sand, red sand, gravel). */
+export function isGravityBlock(id) {
+  return getBlockDef(id).gravity;
+}
+/** OAK / SPRUCE / BIRCH leaves: never load-bearing (CONTRACTS §36). */
+export function isLeaves(id) {
+  return id === B.OAK_LEAVES || id === B.SPRUCE_LEAVES || id === B.BIRCH_LEAVES;
+}
+/** OAK / SPRUCE / BIRCH logs (what a tree is made of, CONTRACTS §36). */
+export function isLog(id) {
+  return id === B.OAK_LOG || id === B.SPRUCE_LOG || id === B.BIRCH_LOG;
+}
+/** WATER, WATER_FLOW_1..6 or WATER_FALL. */
+export function isWater(id) {
+  return id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL);
+}
+/** Only WATER is a source (never changes by itself; FLOW/FALL are derived from sources). */
+export function isWaterSource(id) {
+  return id === B.WATER;
+}
+/** Water level: WATER and WATER_FALL → 7, WATER_FLOW_k → k, anything else → 0. */
+export function waterLevel(id) {
+  if (id === B.WATER || id === B.WATER_FALL) return 7;
+  if (id >= B.WATER_FLOW_1 && id <= B.WATER_FLOW_6) return id - B.WATER_FLOW_1 + 1;
+  return 0;
+}
+/**
+ * A falling block passes through (and a gravity block / campfire falls into) this cell: AIR, any water (sources too —
+ * sand sinks to the bottom of a lake, CONTRACTS §35.6) or a CAMPFIRE. NOT the UNLOADED sentinel.
+ */
+export function isFallThrough(id) {
+  return id === B.AIR || id === B.CAMPFIRE || id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL);
+}
+/**
+ * Height of the water surface inside a water cell, above the cell's bottom (CONTRACTS §35.4): 1 when water is above it
+ * (the surface is further up), else WATER_SURFACE_HEIGHT for a source or falling water and k/7 of it for WATER_FLOW_k;
+ * 0 for anything that is not water. The mesher draws these surfaces and physics.js wades / swims by them.
+ * @param {number} id
+ * @param {number} aboveId  the block above the cell
+ * @returns {number}
+ */
+export function waterSurfaceHeight(id, aboveId) {
+  const level = waterLevel(id);
+  if (level === 0) return 0;
+  if (isWater(aboveId)) return 1;
+  return level === 7 ? WATER_SURFACE_HEIGHT : (level * WATER_SURFACE_HEIGHT) / 7;
 }
 export function getRenderLayer(id) {
   return getBlockDef(id).layer;

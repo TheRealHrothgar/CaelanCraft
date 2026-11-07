@@ -48,10 +48,10 @@ function everyPixel(px, pred, rows = null) {
 }
 
 describe('TILE_NAMES', () => {
-  it('lists all 75 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
+  it('lists all 77 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
     const keys = Object.keys(TILE_NAMES).map(Number).sort((a, b) => a - b);
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
-    expect(keys.length).toBe(76);
+    expect(keys.length).toBe(78); // v0.8: + barrel_side 75, barrel_top 76
     expect(TILE_NAMES[TILE.RUNE]).toBe('rune');
     expect(TILE.RUNE).toBe(27);
     for (const [key, id] of Object.entries(TILE)) {
@@ -174,7 +174,7 @@ describe('paintTile — recipe details', () => {
   });
   it('unknown tile ids paint the missing checker', () => {
     const missing = paintTile(TILE.MISSING);
-    for (const bad of [75, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
+    for (const bad of [77, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
       // @ts-ignore — deliberately passing garbage
       expect(sameBytes(paintTile(bad), missing), `tile ${String(bad)}`).toBe(true);
     }
@@ -448,6 +448,31 @@ describe('averageColor', () => {
   });
   it('unknown tile averages like the missing checker', () => {
     expect(averageColor(999)).toEqual(averageColor(TILE.MISSING));
+  });
+});
+
+describe('blast barrel tiles (v0.8)', () => {
+  it('side: wooden staves, dark iron bands and a red hazard hexagon; top: a lid with a burning fuse tip; alpha 255', () => {
+    const side = paintTile(TILE.BARREL_SIDE);
+    const top = paintTile(TILE.BARREL_TOP);
+    const px = (t, x, y) => [t[(y * 16 + x) * 4], t[(y * 16 + x) * 4 + 1], t[(y * 16 + x) * 4 + 2], t[(y * 16 + x) * 4 + 3]];
+    for (let i = 3; i < BYTES; i += 4) {
+      expect(side[i]).toBe(255);
+      expect(top[i]).toBe(255);
+    }
+    const [r, g, b] = px(side, 8, 8); // inside the hexagon
+    expect(r).toBeGreaterThan(150);
+    expect(g).toBeLessThan(80);
+    expect(b).toBeLessThan(80);
+    const band = px(side, 5, 2); // iron band: grey
+    expect(Math.abs(band[0] - band[2])).toBeLessThan(20);
+    expect(band[0]).toBeLessThan(110);
+    const stave = px(side, 1, 6); // wood: brown
+    expect(stave[0]).toBeGreaterThan(stave[2] + 30);
+    const tip = px(top, 11, 4); // the fuse tip glows
+    expect(tip[0]).toBeGreaterThan(220);
+    expect(tip[1]).toBeGreaterThan(160);
+    expect(averageColor(TILE.BARREL_SIDE)[0]).toBeGreaterThan(averageColor(TILE.BARREL_SIDE)[2]);
   });
 });
 

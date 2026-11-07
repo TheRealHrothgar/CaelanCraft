@@ -6,20 +6,27 @@
 // States: title → loading → clickToPlay → playing ⇄ paused, playing ⇄ picker.
 // Every frame is one requestAnimationFrame callback: the simulation (input, physics, clock, streaming,
 // raycast) runs only while `playing`; rendering, HUD and stats run in every state that has a player.
+//
+// v0.8 block physics (CONTRACTS §33–§38): one BlockPhysics per world. stepPlaying runs input & interaction → player
+// → black holes → pigs → blockPhysics.step (tick, fallers, trees, lit barrels, blasts) → campfires → resolveBodies
+// (player, pigs, lit barrels) → unstick player → runes → streaming; renderFrame syncs the falling-block renderer,
+// the particles, the explosion light and the camera shake.
 import {
   CHUNK_SIZE, RENDER_DISTANCE, LOADING_BUDGET_MS, REACH, BREAK_REPEAT_S, PLACE_REPEAT_S, MAX_FRAME_DT, FOV,
   SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY, PLAYER_HEIGHT,
   PIG_NATURAL_COUNT, CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
+  PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
 import {
-  BLOCK, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid,
+  BLOCK, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid, isTargetable, isWaterSource,
+  isWater,
 } from './blocks.js';
 import { normalizeSeed } from './noise.js';
 import { World } from './world.js';
 import { raycastHex } from './raycast.js';
-import { createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock } from './physics.js';
+import { createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock, isFreeAt, findFreeY } from './physics.js';
 import { advanceTime, computeSky, createSkyState } from './daynight.js';
 import { saveGame, loadGame, clearSave, SAVE_VERSION } from './storage.js';
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
@@ -35,6 +42,9 @@ import { resolveBodies } from './bodies.js';
 import { Campfires } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
+import { BlockPhysics } from './blockphysics.js';
+import { createFallingRenderer } from './fallingRenderer.js';
+import { createParticles } from './particles.js';
 import { createConsole } from './console.js';
 import { createRuneEditor } from './runeEditor.js';
 import {
@@ -77,6 +87,17 @@ const AUTOSAVE_MOVE_EPS = 1e-3;
 const CANVAS_ID = 'game-canvas';
 /** After closing a modal, pointer lock must be back within this long or the click-to-play overlay is shown. */
 const RELOCK_CHECK_MS = 300;
+/** Physics sound names (PhysicsHooks.sound) → Audio method. Missing methods are silently skipped. */
+const PHYSICS_SOUND_METHODS = Object.freeze({
+  thud: 'playThud', splash: 'playSplash', boom: 'playBoom', hiss: 'playHiss', creak: 'playCreak', fizzle: 'playFizzle',
+  crackle: 'playCrackle',
+});
+/** Minimum seconds between two physics sounds of the same name. */
+const PHYSICS_SOUND_GAP_S = Object.freeze({ splash: SPLASH_MIN_INTERVAL_S, hiss: HISS_MIN_INTERVAL_S });
+/** The one-time chat line for a world saved before block physics existed (collapse starts off for it). */
+export const OLD_WORLD_PHYSICS_NOTE = 'New: block physics! Collapse is off for this older world — turn it on in Esc → Physics';
+/** WATER selected: the crosshair also stops on water sources (left-click removes one). */
+const hitTargetOrWaterSource = (id) => isTargetable(id) || isWaterSource(id);
 
 // ---------------------------------------------------------------------------------------------
 // Small pure helpers (exported for tests / reuse)
@@ -187,7 +208,12 @@ export function boot(win, doc) {
 
   // ---- subsystems -----------------------------------------------------------------------------------
   let atlasCanvas;
+  let atlasTexture;
   let renderer;
+  /** @type {import('./fallingRenderer.js').FallingRenderer} */
+  let fallingRenderer;
+  /** @type {import('./particles.js').Particles} */
+  let particles;
   /** @type {import('./pigRenderer.js').PigRenderer} */
   let pigRenderer;
   /** @type {import('./campfireRenderer.js').CampfireRenderer} */
@@ -201,7 +227,7 @@ export function boot(win, doc) {
   let runeEditor;
   try {
     atlasCanvas = createAtlasCanvas();
-    const atlasTexture = createAtlasTexture(atlasCanvas);
+    atlasTexture = createAtlasTexture(atlasCanvas);
     renderer = createRenderer(canvas, atlasTexture, {
       sunCanvas: makeSunCanvas(),
       moonCanvas: makeMoonCanvas(),
@@ -209,6 +235,8 @@ export function boot(win, doc) {
     });
     pigRenderer = createPigRenderer(renderer.three.scene);
     campfireRenderer = createCampfireRenderer(renderer.three.scene, { makeCanvas: () => doc.createElement('canvas') });
+    fallingRenderer = createFallingRenderer(renderer.three.scene, atlasTexture);
+    particles = createParticles(renderer.three.scene);
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();
@@ -306,16 +334,70 @@ export function boot(win, doc) {
   const bodies = [];
   /** @type {{ pig: import('./pigs.js').Pig, distance: number }|null} pig under the crosshair, closer than `hit` */
   let pigTarget = null;
+  /** @type {[number, number, number]} scratch for water currents (fluids.currentAt) */
+  const current = [0, 0, 0];
   const pigWorld = {
     getBlock: (q, y, r) => world.getBlock(q, y, r),
     isLoaded: (x, z) => world.hasChunkAt(x, z),
-    pullAt: (x, y, z, out) => blackHoles.pullAt(x, y, z, out),
+    // Black-hole pull plus the water current at the pig's feet (pigs sample at feet + 0.5).
+    pullAt: (x, y, z, out) => {
+      blackHoles.pullAt(x, y, z, out);
+      if (blockPhysics) {
+        blockPhysics.fluids.currentAt(x, y - 0.4, z, current);
+        out[0] += current[0];
+        out[1] += current[1];
+        out[2] += current[2];
+      }
+      return out;
+    },
   };
-  /** World view handed to blackHoles.update (built once a world exists). */
+  /** World view handed to blackHoles.update (built once a world exists). Eats are lazy writes (CONTRACTS §9.2). */
   const blackHoleWorld = {
     getBlock: (q, y, r) => world.getBlock(q, y, r),
-    setBlock: (q, y, r, id) => world.setBlock(q, y, r, id),
+    setBlock: (q, y, r, id) => world.setBlock(q, y, r, id, true),
     isLoaded: (q, r) => world.hasChunkAtCell(q, r),
+  };
+
+  // Block physics (CONTRACTS §33–§38): one BlockPhysics per world, created in startLoading.
+  /** @type {BlockPhysics|null} */
+  let blockPhysics = null;
+  /** the loading world was saved before v0.8: say OLD_WORLD_PHYSICS_NOTE once it is playable */
+  let physicsNotePending = false;
+  let savedSwitchVersion = 0;
+  /** @type {{ target: *, distance: number }|null} lit barrel under the crosshair (closer than `hit` / a pig) */
+  let litTarget = null;
+  /** @type {import('./types.js').PlayerState[]} scratch for PhysicsHooks.bodies */
+  const physicsBodies = [];
+  /** @type {Map<string, number>} physics sound name → fxTime it last played (throttle) */
+  const physicsSoundAt = new Map();
+  const flash = { x: 0, y: 0, z: 0, intensity: 0 };
+  /** @type {[number, number, number]} camera shake offset this frame */
+  const shake = [0, 0, 0];
+  /** @type {import('./blockphysics.js').PhysicsHooks} */
+  const physicsHooks = {
+    say: (text) => logLine(text),
+    areaJobsActive: () => !!runner && runner.hasActiveJobs(),
+    bodies: () => {
+      physicsBodies.length = 0;
+      if (player) physicsBodies.push(player);
+      if (world) for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) physicsBodies.push(pig);
+      return physicsBodies;
+    },
+    player: () => player,
+    sound: (name, x, y, z, volume) => playPhysicsSound(name, x, y, z, volume),
+    particles: (kind, x, y, z, count, opts) => particles.emit(kind, x, y, z, count, opts),
+    knock: (body, vx, vy, vz, fromX, fromZ) => {
+      if (body !== player && pigs.list.includes(body)) {
+        if (pigs.hit(body, fromX, fromZ)) {
+          const d = Math.hypot(body.x - player.x, body.y - player.y, body.z - player.z);
+          if (d < 16) audio.playSqueal(1 - d / 16);
+        }
+      }
+      body.vx += vx;
+      body.vy += vy;
+      body.vz += vz;
+      body.onGround = false;
+    },
   };
   /** @type {RuneRunner|null} */
   let runner = null;
@@ -355,10 +437,22 @@ export function boot(win, doc) {
     const dy = Math.sin(pitch);
     const dz = -Math.cos(yaw) * cp;
     const eyeY = player.y + getEyeHeight(player);
-    hit = raycastHex(world.getBlock, player.x, eyeY, player.z, dx, dy, dz, REACH);
+    // With WATER selected the ray also stops on water sources, so left-click can take one away (§35) — but not while
+    // the eye is in water itself (the ray would stop at once and nothing in front could be reached).
+    const [eq, er] = worldToHex(player.x, player.z);
+    const eyeWet = isWater(world.getBlock(eq, Math.floor(eyeY), er));
+    const isHit = hotbar[selected] === BLOCK.WATER && !eyeWet ? hitTargetOrWaterSource : undefined;
+    hit = raycastHex(world.getBlock, player.x, eyeY, player.z, dx, dy, dz, REACH, isHit);
     // A pig in front of the targeted block takes the crosshair (and hides the block highlight).
     pigTarget = pigs.size > 0 ? pigs.raycast(player.x, eyeY, player.z, dx, dy, dz, hit ? hit.distance : REACH) : null;
     if (pigTarget) hit = null;
+    // A lit barrel in front of both takes it from them (left-click puts it out).
+    const reach = pigTarget ? pigTarget.distance : hit ? hit.distance : REACH;
+    litTarget = blockPhysics ? blockPhysics.explosions.raycast(player.x, eyeY, player.z, dx, dy, dz, reach) : null;
+    if (litTarget) {
+      hit = null;
+      pigTarget = null;
+    }
   }
 
   function selectSlot(i) {
@@ -382,7 +476,7 @@ export function boot(win, doc) {
     hud.addChatLine(text, isError);
   }
 
-  /** World.onBlockChange: keep the rune store and black holes in step with the cells that are (no longer) theirs. */
+  /** World.onBlockChange: keep the rune store, black holes, campfires and block physics in step with the world. */
   function onBlockChanged(q, y, r, prev, next) {
     blackHoles.onBlockChange(q, y, r, prev, next);
     campfires.onBlockChange(q, y, r, prev, next);
@@ -394,6 +488,44 @@ export function boot(win, doc) {
       runeStore.delete(key);
       if (state === STATE.EDITOR && editorKey === key) closeEditor();
     }
+    // Last, so physics triggers see the trackers already updated.
+    if (blockPhysics) blockPhysics.onBlockChange(q, y, r, prev, next);
+  }
+
+  /**
+   * PhysicsHooks.sound: distance falloff from the player (BOOM_SOUND_RANGE for 'boom', PHYSICS_SOUND_RANGE otherwise),
+   * per-name throttles, 'break:<group>' → playBreak(group), other names → audio['play' + Name] when it exists.
+   */
+  function playPhysicsSound(name, x, y, z, volume = 1) {
+    if (!player || typeof name !== 'string' || !Number.isFinite(x + y + z)) return;
+    const range = name === 'boom' ? BOOM_SOUND_RANGE : PHYSICS_SOUND_RANGE;
+    const d = Math.hypot(x - player.x, y - (player.y + 1), z - player.z);
+    if (!(d < range)) return;
+    const gap = PHYSICS_SOUND_GAP_S[name];
+    if (gap !== undefined) {
+      const last = physicsSoundAt.get(name);
+      if (last !== undefined && fxTime - last < gap) return;
+      physicsSoundAt.set(name, fxTime);
+    }
+    if (name.startsWith('break:')) {
+      audio.playBreak(name.slice(6));
+      return;
+    }
+    const method = PHYSICS_SOUND_METHODS[name];
+    const fn = method ? audio[method] : undefined;
+    if (typeof fn === 'function') fn((Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1) * (1 - d / range));
+  }
+
+  /** A block change made BY THE PLAYER (break / place): physics treats its removals as player-caused (priority seeds). */
+  function playerSetBlock(q, y, r, id) {
+    if (!blockPhysics) return world.setBlock(q, y, r, id);
+    return blockPhysics.asPlayer(() => world.setBlock(q, y, r, id));
+  }
+
+  /** @returns {import('./menus.js').PhysicsMenuState|null} what the pause menu shows */
+  function physicsMenuState() {
+    if (!blockPhysics) return null;
+    return { switches: blockPhysics.exportSwitches(), canUndo: blockPhysics.canUndo, undoKind: blockPhysics.lastEvent ? blockPhysics.lastEvent.kind : undefined };
   }
 
   /** The CommandContext handed to the executor (CONTRACTS §26.3); built once the player exists. */
@@ -430,6 +562,9 @@ export function boot(win, doc) {
       },
       runes: runeStore,
       pigs,
+      get physics() {
+        return blockPhysics ?? undefined;
+      },
       runner: /** @type {*} */ (null),
       rune: null,
       running: null,
@@ -440,9 +575,14 @@ export function boot(win, doc) {
     return c;
   }
 
-  /** Looking at a rune block: R runs it (if it has the Interact trigger). */
+  /** Looking at a rune block: R runs it (if it has the Interact trigger); looking at a blast barrel: R lights it. */
   function interactTarget() {
     const h = hit;
+    if (h && h.blockId === BLOCK.BLAST_BARREL && blockPhysics) {
+      if (!blockPhysics.isEnabled('explosions')) logLine('explosions are off — turn them on in Esc → Physics');
+      else blockPhysics.asPlayer(() => blockPhysics.explosions.lightAt(h.q, h.y, h.r));
+      return;
+    }
     if (!h || h.blockId !== BLOCK.RUNE_BLOCK || !runner) return;
     const rune = runeStore.ensure(h.q, h.y, h.r);
     if (rune && !rune.enabled) {
@@ -468,9 +608,15 @@ export function boot(win, doc) {
     openEditor(runeStore.ensure(q, y, r));
   }
 
-  /** Text under the crosshair while a rune block is targeted. */
+  /** Text under the crosshair while a rune block, a blast barrel or a lit barrel is targeted. */
   function targetHintText() {
+    if (litTarget) return 'lit barrel · click: put it out';
     const h = hit;
+    if (h && h.blockId === BLOCK.BLAST_BARREL) {
+      if (!blockPhysics || !blockPhysics.isEnabled('explosions')) return 'Blast Barrel (explosions are off)';
+      // A barrel burning in place (caught in a blast, or lit beyond MAX_LIT_BARRELS): breaking it takes its fuse away.
+      return blockPhysics.explosions.isBurning(h.q, h.y, h.r) ? 'Blast Barrel · burning! click: break it' : 'Blast Barrel · R: light';
+    }
     if (!h || h.blockId !== BLOCK.RUNE_BLOCK) return null;
     const rune = runeStore.get(runeKey(h.q, h.y, h.r));
     const label = rune && rune.label ? `${rune.label} · ` : '';
@@ -482,13 +628,20 @@ export function boot(win, doc) {
   /** Break rule (§23). @returns {boolean} */
   function breakTargeted() {
     if (!world || !player) return false;
+    if (litTarget) {
+      const snuffed = blockPhysics ? blockPhysics.explosions.snuff(litTarget.target) : false;
+      updateHit();
+      return snuffed;
+    }
     if (pigTarget) {
       if (pigs.hit(pigTarget.pig, player.x, player.z)) audio.playSqueal();
       return true;
     }
     const h = hit;
-    if (!h || !isBreakable(h.blockId)) return false;
-    if (!world.setBlock(h.q, h.y, h.r, BLOCK.AIR)) return false;
+    // A water source is not breakable, but with WATER selected left-click takes it away (the flow drains by itself).
+    const takeWater = h && h.blockId === BLOCK.WATER && hotbar[selected] === BLOCK.WATER;
+    if (!h || (!isBreakable(h.blockId) && !takeWater)) return false;
+    if (!playerSetBlock(h.q, h.y, h.r, BLOCK.AIR)) return false;
     audio.playBreak(getBlockDef(h.blockId).soundGroup);
     updateHit();
     return true;
@@ -507,7 +660,7 @@ export function boot(win, doc) {
     // Black holes and campfires are not solid, but placing one inside yourself would swallow / scorch you on the spot.
     if ((isSolid(id) || id === BLOCK.BLACK_HOLE || id === BLOCK.CAMPFIRE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
     if (isSolid(id) && pigs.list.some((pig) => playerIntersectsBlock(pig, tq, ty, tr))) return false; // no entombing pigs
-    if (!world.setBlock(tq, ty, tr, id)) return false;
+    if (!playerSetBlock(tq, ty, tr, id)) return false;
     audio.playPlace(getBlockDef(id).soundGroup);
     updateHit();
     // A freshly placed rune block opens its editor right away (the onBlockChange hook created its entry).
@@ -539,9 +692,12 @@ export function boot(win, doc) {
       player: { x: player.x, y: player.y, z: player.z, yaw: controls.yaw, pitch: controls.pitch, flying: player.flying },
       hotbar: hotbar.slice(),
       selected,
-      edits: world.exportEdits(),
+      // Never mutates the live world: in-flight fallers are settled into a COPY of the edits, flowing water is left
+      // out and lit barrels are saved as barrels (BlockPhysics.exportEdits).
+      edits: blockPhysics ? blockPhysics.exportEdits() : world.exportEdits(),
       runes: runeStore.export(),
       pigs: pigs.export(),
+      physics: blockPhysics ? blockPhysics.exportSwitches() : undefined,
     };
   }
 
@@ -561,6 +717,7 @@ export function boot(win, doc) {
     if (ok) {
       savedEditVersion = world.editVersion;
       savedRunesVersion = runeStore.version;
+      if (blockPhysics) savedSwitchVersion = blockPhysics.switchVersion;
       savedX = player.x;
       savedY = player.y;
       savedZ = player.z;
@@ -586,7 +743,8 @@ export function boot(win, doc) {
     autosaveAccum += dt;
     if (autosaveAccum < AUTOSAVE_INTERVAL_S) return;
     autosaveAccum = 0;
-    if (world.editVersion !== savedEditVersion || runeStore.version !== savedRunesVersion || playerMovedSinceSave()) doSave(false);
+    const switchesChanged = blockPhysics !== null && blockPhysics.switchVersion !== savedSwitchVersion;
+    if (world.editVersion !== savedEditVersion || runeStore.version !== savedRunesVersion || switchesChanged || playerMovedSinceSave()) doSave(false);
   }
 
   /** Save when the page is leaving / hidden while a world is live (any state with a player, click-to-play included). */
@@ -649,7 +807,24 @@ export function boot(win, doc) {
     world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: restoring ? restoring.edits : undefined });
     world.onChunkMesh = (key, cq, cr, meshData) => renderer.setChunkMesh(key, cq, cr, meshData);
     world.onChunkUnload = (key) => renderer.removeChunkMesh(key);
+    // Block physics before the first chunk is generated: onChunkGenerated re-seeds edited cells as chunks stream in.
+    blockPhysics = new BlockPhysics(world, physicsHooks);
+    // A save from before v0.8 has no `physics` field: collapse starts off there (old sky bases must not fall the first
+    // time they are touched), everything else on, and the player is told once.
+    if (restoring && !restoring.physics) {
+      blockPhysics.importSwitches({ collapse: false });
+      physicsNotePending = true;
+    } else {
+      blockPhysics.importSwitches(restoring ? restoring.physics : null);
+      physicsNotePending = false;
+    }
+    savedSwitchVersion = blockPhysics.switchVersion;
+    world.onChunkGenerated = (cq, cr) => blockPhysics.onChunkGenerated(cq, cr);
     world.onBlockChange = onBlockChanged;
+    litTarget = null;
+    particles.clear();
+    fallingRenderer.sync([], 0);
+    fallingRenderer.setFlash(0, 0, 0, 0);
     blackHoles.loadFromEdits(world.edits);
     campfires.loadFromEdits(world.edits);
     pigs.load(restoring && Array.isArray(restoring.pigs) ? restoring.pigs : []);
@@ -761,6 +936,10 @@ export function boot(win, doc) {
       if (source === SOURCE.INTERACT || source === SOURCE.STEP) audio.playClick();
     };
     runner.seedStep();
+    if (physicsNotePending) {
+      physicsNotePending = false;
+      logLine(OLD_WORLD_PHYSICS_NOTE);
+    }
 
     savedEditVersion = world.editVersion;
     savedRunesVersion = runeStore.version;
@@ -821,7 +1000,7 @@ export function boot(win, doc) {
     setState(STATE.PAUSED);
     controls.setEnabled(false);
     controls.unlock();
-    menus.showPause(world.seed);
+    menus.showPause(world.seed, physicsMenuState());
     doSave(false);
   }
 
@@ -908,6 +1087,11 @@ export function boot(win, doc) {
       world.dispose();
       world = null;
     }
+    blockPhysics = null;
+    litTarget = null;
+    particles.clear();
+    fallingRenderer.sync([], 0);
+    fallingRenderer.setFlash(0, 0, 0, 0);
     player = null;
     hit = null;
     renderer.setHighlight(null);
@@ -956,6 +1140,23 @@ export function boot(win, doc) {
     onQuit() {
       if (state !== STATE.PAUSED) return;
       quitToTitle();
+    },
+    onPhysicsToggle(name) {
+      if (state !== STATE.PAUSED || !blockPhysics) return;
+      const on = !blockPhysics.isEnabled(name);
+      blockPhysics.setSwitch(name, on);
+      menus.setPhysicsState(physicsMenuState());
+      audio.playClick();
+      hud.showSaveToast(`${name[0].toUpperCase()}${name.slice(1)} ${on ? 'on' : 'off'}`);
+    },
+    onUndoPhysics() {
+      if (state !== STATE.PAUSED || !blockPhysics) return;
+      const res = blockPhysics.undo();
+      // The game is paused (no streaming step): re-mesh the restored chunks now so the menu's backdrop shows the result.
+      for (let i = 0; i < 32 && [...world.chunks.values()].some((c) => c.dirty && c.lazy && c.meshed); i++) world.update(player.x, player.z);
+      logLine(res.message, !res.ok);
+      hud.showSaveToast(res.ok ? `Undone: ${res.restored} block${res.restored === 1 ? '' : 's'} restored` : 'Nothing to undo', !res.ok);
+      menus.setPhysicsState(physicsMenuState());
     },
     onPickBlock(blockId, slot) {
       if (state !== STATE.PICKER || !isPlaceable(blockId)) return;
@@ -1049,6 +1250,9 @@ export function boot(win, doc) {
     get runner() {
       return runner;
     },
+    get physics() {
+      return blockPhysics;
+    },
     dispose,
   };
 
@@ -1135,6 +1339,23 @@ export function boot(win, doc) {
     }
   }
 
+  /** Block physics: ≤ 1 tick, then fallers, toppling trees, lit barrels and blasts (CONTRACTS §33). */
+  function stepBlockPhysics(dt) {
+    if (blockPhysics) blockPhysics.step(dt);
+  }
+
+  /**
+   * A block filled into the player (a command, a landing log, a rune) is never a trap: when the player overlaps a solid
+   * cell after everything has moved, lift them to the first free height within three cells.
+   */
+  function unstickPlayer() {
+    if (!world.hasChunkAt(player.x, player.z) || isFreeAt(world.getBlock, player.x, player.y, player.z)) return;
+    const fy = findFreeY(world.getBlock, player.x, player.z, Math.floor(player.y) + 1, 3);
+    if (fy === null) return;
+    player.y = fy;
+    if (player.vy < 0) player.vy = 0;
+  }
+
   /** Input, interaction, physics, clock, streaming and raycast — only while playing. */
   function stepPlaying(dt) {
     const input = controls.getInput();
@@ -1204,19 +1425,23 @@ export function boot(win, doc) {
     // Physics only where terrain exists (getBlock reports AIR in unloaded chunks). Black holes pull on the
     // player's middle; `input` is the controls' reused object, so the pull is written every frame.
     blackHoles.pullAt(player.x, player.y + PLAYER_HEIGHT / 2, player.z, pull);
-    input.pullX = pull[0];
-    input.pullY = pull[1];
-    input.pullZ = pull[2];
+    if (blockPhysics) blockPhysics.fluids.currentAt(player.x, player.y + 0.1, player.z, current);
+    input.pullX = pull[0] + (blockPhysics ? current[0] : 0);
+    input.pullY = pull[1] + (blockPhysics ? current[1] : 0);
+    input.pullZ = pull[2] + (blockPhysics ? current[2] : 0);
     if (world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt);
     stepBlackHoles(dt);
     stepPigs(dt);
+    stepBlockPhysics(dt);
     stepCampfires(dt);
     // Bodies collide, push and stand on each other once everything has moved (CONTRACTS §31). Pigs in unloaded
-    // chunks are frozen and stay out of it.
+    // chunks are frozen and stay out of it; lit barrels (explosions.js) take part against the player and pigs.
     bodies.length = 0;
     bodies.push(player);
     for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) bodies.push(pig);
+    if (blockPhysics) blockPhysics.bodies(bodies);
     if (bodies.length > 1) resolveBodies(bodies, world.getBlock);
+    unstickPlayer();
 
     if (params.time == null) {
       const nt = advanceTime(time, dt);
@@ -1236,7 +1461,21 @@ export function boot(win, doc) {
   /** Camera, sky, highlight, HUD and the draw — every state that has a player. */
   function renderFrame(dt) {
     const eyeY = player.y + getEyeHeight(player);
-    renderer.setCamera(player.x, eyeY, player.z, controls.yaw, controls.pitch);
+    // Moving cells, the explosion light and the camera shake (block physics), then the particles (frozen unless playing
+    // with physics running: `physics off` freezes its effects in place too).
+    if (blockPhysics) {
+      const list = blockPhysics.renderItems();
+      fallingRenderer.sync(list.items, list.count);
+      blockPhysics.explosions.flash(flash);
+      fallingRenderer.setFlash(flash.x, flash.y, flash.z, flash.intensity);
+      blockPhysics.explosions.shakeOffset(player.x, eyeY, player.z, shake);
+    } else {
+      shake[0] = 0;
+      shake[1] = 0;
+      shake[2] = 0;
+    }
+    particles.update(state === STATE.PLAYING && !(blockPhysics && blockPhysics.paused) ? dt : 0);
+    renderer.setCamera(player.x + shake[0], eyeY + shake[1], player.z + shake[2], controls.yaw, controls.pitch);
     fov = easeFov(fov, player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV, dt);
     renderer.setFov(fov);
     renderer.setHighlight(hit);
@@ -1348,7 +1587,10 @@ export function boot(win, doc) {
     runeStore.clear();
     if (world) world.dispose();
     world = null;
+    blockPhysics = null;
     player = null;
+    fallingRenderer.dispose();
+    particles.dispose();
     controls.dispose();
     hud.dispose();
     menus.dispose();

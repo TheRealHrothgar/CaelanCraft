@@ -29,6 +29,26 @@ export const DEFAULT_SELECTED = 0;
 /** Largest value a block id may take (ids live in Uint8Arrays). */
 export const MAX_BLOCK_ID = 255;
 
+/** Block-physics feature switches saved per world (CONTRACTS §14, §33.8); all on for a new world. */
+export const PHYSICS_SWITCH_NAMES = Object.freeze(['falling', 'water', 'collapse', 'explosions']);
+export const DEFAULT_PHYSICS_SWITCHES = Object.freeze({ falling: true, water: true, collapse: true, explosions: true });
+
+/**
+ * The `physics` save field in canonical form: exactly the four switches in order, each a boolean (anything that is
+ * not `false` counts as on — a missing switch is a feature this save predates).
+ * @param {unknown} raw  a plain object
+ * @returns {{ falling: boolean, water: boolean, collapse: boolean, explosions: boolean }}
+ */
+export function normalizePhysicsSwitches(raw) {
+  const src = isPlainObject(raw) ? /** @type {Record<string, unknown>} */ (raw) : {};
+  return {
+    falling: src.falling !== false,
+    water: src.water !== false,
+    collapse: src.collapse !== false,
+    explosions: src.explosions !== false,
+  };
+}
+
 /** Chunk keys are `${cx},${cz}` with optional minus signs; nothing else is accepted on load. */
 const CHUNK_KEY_RE = /^-?\d+,-?\d+$/;
 const PLAYER_NUMBER_FIELDS = ['x', 'y', 'z', 'yaw', 'pitch'];
@@ -180,6 +200,8 @@ export function serializeSave(data) {
   // Pigs are optional too, but an empty list IS written: "this world's pigs are all gone" must survive a reload
   // (an absent field means "never had pigs" and main places natural ones).
   if (data.pigs != null) /** @type {*} */ (out).pigs = validatePigsJSON(data.pigs).pigs;
+  // Block-physics switches (v0.8): written whenever given. An absent field on load means "saved before v0.8".
+  if (data.physics != null) /** @type {*} */ (out).physics = normalizePhysicsSwitches(data.physics);
   return JSON.stringify(out);
 }
 
@@ -197,6 +219,8 @@ export function serializeSave(data) {
  * and non-array entries are dropped; `time` is wrapped into [0,1) and `pitch` clamped. An optional `runes`
  * field is validated with runes.validateRunesJSON (invalid or orphaned entries dropped) and only kept when non-empty.
  * An optional `pigs` array is validated with pigs.validatePigsJSON and kept (even when empty).
+ * An optional `physics` object (block-physics switches) is normalised with normalizePhysicsSwitches; a non-object is
+ * dropped with a warning (the save then reads as one from before v0.8).
  * Every repair is described in a non-enumerable `warnings: string[]` on the result.
  * @param {string} text
  * @returns {SaveData|null}
@@ -306,6 +330,17 @@ export function deserializeSave(text) {
     const v = validatePigsJSON(raw.pigs);
     for (const w of v.warnings) warnings.push(w);
     save.pigs = v.pigs;
+  }
+  if (raw.physics !== undefined) {
+    if (!isPlainObject(raw.physics)) {
+      warnings.push('physics: not an object, ignored');
+    } else {
+      for (const name of PHYSICS_SWITCH_NAMES) {
+        const v = raw.physics[name];
+        if (v !== undefined && typeof v !== 'boolean') warnings.push(`physics.${name}: not a boolean, treated as on`);
+      }
+      /** @type {*} */ (save).physics = normalizePhysicsSwitches(raw.physics);
+    }
   }
   Object.defineProperty(save, 'warnings', { value: warnings, enumerable: false, writable: true, configurable: true });
   return save;

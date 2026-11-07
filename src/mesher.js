@@ -9,13 +9,15 @@
 // Performance notes: this runs on the main thread inside world.update()'s time budget, so the hot loop is
 // allocation-free. The padded 18×18×128 volume and the three mesh builders are module-level scratch buffers
 // reused between calls; the only allocations per call are the exact-length output arrays.
-import { CHUNK_SIZE, WORLD_HEIGHT, WATER_SURFACE_HEIGHT, AO_CURVE, TOP_UV_SCALE } from './config.js';
+import { CHUNK_SIZE, WORLD_HEIGHT, AO_CURVE, TOP_UV_SCALE } from './config.js';
 import { floorDiv, mod, localIndex } from './coords.js';
 import {
   HEX_DIRS, HEX_CORNERS, HEX_SIZE, HEX_ROW_SPACING, FACE_NORMALS, FACE_SHADE, FACE_TOP, FACE_BOTTOM, FACE_COUNT,
   SIDE_FACE_COUNT,
 } from './hex.js';
-import { BLOCK, BIOME, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed } from './blocks.js';
+import {
+  BLOCK, BIOME, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed, isWater, waterSurfaceHeight,
+} from './blocks.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
@@ -79,11 +81,17 @@ const RENDER = new Uint8Array(256 * 256);
 const FACE_UV = new Float32Array(256 * FACE_COUNT * 4);
 /** TINTED[id * 8 + f] = 1 iff isTintedFace(id, f). */
 const TINTED = new Uint8Array(256 * FACE_COUNT);
+/** WET[id] = 1 for the water family (WATER, WATER_FLOW_1..6, WATER_FALL): culled against each other by surface height. */
+const WET = new Uint8Array(256);
+/** SURFACE[id] = waterSurfaceHeight(id, AIR): the free surface of a water cell with no water above it (§10.2 step 1). */
+const SURFACE = new Float64Array(256);
 
 for (let id = 0; id < 256; id++) {
   OPAQUE[id] = isOpaque(id) ? 1 : 0;
   LAYER[id] = getRenderLayer(id);
   UNMESHED[id] = isMeshed(id) ? 0 : 1;
+  WET[id] = isWater(id) ? 1 : 0;
+  SURFACE[id] = WET[id] ? waterSurfaceHeight(id, BLOCK.AIR) : 1;
   for (let f = 0; f < FACE_COUNT; f++) {
     const uv = tileToUV(getFaceTile(id, f));
     const o = (id * FACE_COUNT + f) * 4;
@@ -336,9 +344,11 @@ function opaqueAt(pq, py, pr) {
 
 /**
  * Emit side face `f` (0..5) of the cell at padded column (pq, pr), height ly, whose centre is at local
- * (cx, cz). `topY` is the height of the cell's top (1, or WATER_SURFACE_HEIGHT for a water surface).
+ * (cx, cz). The quad spans `bottomY .. topY` above the cell's floor: 0 .. 1 for a full face; a water surface lowers
+ * `topY`, and between two water cells only the part of the higher surface above the lower one is drawn (`bottomY`).
+ * The texture window is cut to the same span (v1 at height 0, v0 at height 1).
  */
-function emitSide(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb) {
+function emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, tr, tg, tb) {
   bld.ensure(4, 6);
   const positions = bld.positions;
   const normals = bld.normals;
@@ -356,6 +366,8 @@ function emitSide(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb) {
   const v1 = FACE_UV[uo + 3];
   const uMid = (u0 + u1) * 0.5;
   const uHalf = (u1 - u0) * SIDE_HALF_U;
+  const vTop = topY === 1 ? v0 : v1 - (v1 - v0) * topY;
+  const vBottom = bottomY === 0 ? v1 : v1 - (v1 - v0) * bottomY;
   const qq = pq + DIR_DQ[f];
   const qr = pr + DIR_DR[f];
 
@@ -379,7 +391,7 @@ function emitSide(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb) {
     const vi = b + v;
     const p3 = vi * 3;
     positions[p3] = cx + CORNER_X[k];
-    positions[p3 + 1] = ly + (top ? topY : 0);
+    positions[p3 + 1] = ly + (top ? topY : bottomY);
     positions[p3 + 2] = cz + CORNER_Z[k];
     normals[p3] = nx;
     normals[p3 + 1] = 0;
@@ -387,7 +399,7 @@ function emitSide(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb) {
     const p2 = vi * 2;
     // Vertices 0 and 3 are the left edge of the face seen from outside, 1 and 2 the right edge.
     uvs[p2] = (v === 1 || v === 2) ? uMid + uHalf : uMid - uHalf;
-    uvs[p2 + 1] = top ? v0 : v1;
+    uvs[p2 + 1] = top ? vTop : vBottom;
     const col = shade * AO_CURVE[ao];
     colors[p3] = col * tr;
     colors[p3 + 1] = col * tg;
@@ -511,7 +523,6 @@ export function buildChunkMesh(cq, cr, getChunkData) {
     return { opaque: null, cutout: null, translucent: null };
   }
 
-  const WATER = BLOCK.WATER;
   const BEDROCK = BLOCK.BEDROCK;
   const biomes = centreBiomes;
 
@@ -528,12 +539,11 @@ export function buildChunkMesh(cq, cr, getChunkData) {
         const a = padded[colBase + ly];
         if (a === 0 || UNMESHED[a] === 1) continue; // air, or a block drawn by its own model (campfire)
 
-        // §10.2 step 1: water surface height applies to every top vertex of this cell.
-        let topY = 1;
-        if (a === WATER) {
-          const above = ly + 1 < WORLD_HEIGHT ? padded[colBase + ly + 1] : 0;
-          if (above !== WATER) topY = WATER_SURFACE_HEIGHT;
-        }
+        // §10.2 step 1: a water cell's surface height (waterSurfaceHeight: lower for flowing levels; 1 under more water)
+        // applies to every top vertex of this cell.
+        const wet = WET[a];
+        const above = ly + 1 < WORLD_HEIGHT ? padded[colBase + ly + 1] : 0;
+        const topY = wet && !WET[above] ? SURFACE[a] : 1;
 
         const renderRow = a << 8;
         const layer = LAYER[a];
@@ -541,21 +551,32 @@ export function buildChunkMesh(cq, cr, getChunkData) {
         const tintRow = a * FACE_COUNT;
 
         for (let f = 0; f < SIDE_FACE_COUNT; f++) {
-          const q = padded[((pq + DIR_DQ[f]) * PAD + (pr + DIR_DR[f])) * WORLD_HEIGHT + ly];
-          if (RENDER[renderRow | q] === 0) continue;
+          const nBase = ((pq + DIR_DQ[f]) * PAD + (pr + DIR_DR[f])) * WORLD_HEIGHT;
+          const q = padded[nBase + ly];
+          let bottomY = 0;
+          if (wet && WET[q]) {
+            // Two water cells: only the part of this surface above the neighbour's (§10.2 step 2a).
+            const nTop = ly + 1 < WORLD_HEIGHT && WET[padded[nBase + ly + 1]] ? 1 : SURFACE[q];
+            if (nTop >= topY) continue;
+            bottomY = nTop;
+          } else if (RENDER[renderRow | q] === 0) {
+            continue;
+          }
           const t = TINTED[tintRow + f];
-          emitSide(bld, f, pq, pr, ly, cx, cz, topY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
+          emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
         }
         {
-          const q = ly + 1 >= WORLD_HEIGHT ? 0 : padded[colBase + ly + 1];
-          if (RENDER[renderRow | q] !== 0) {
+          // A lowered water surface is always drawn (even under a solid: a low cave keeps its surface); never between
+          // two water cells.
+          const q = above;
+          if (wet ? !WET[q] : RENDER[renderRow | q] !== 0) {
             const t = TINTED[tintRow + FACE_TOP];
             emitHex(bld, FACE_TOP, pq, pr, ly, cx, cz, topY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
           }
         }
         {
           const q = ly - 1 < 0 ? BEDROCK : padded[colBase + ly - 1];
-          if (RENDER[renderRow | q] !== 0) {
+          if (wet ? !WET[q] && RENDER[renderRow | q] !== 0 : RENDER[renderRow | q] !== 0) {
             const t = TINTED[tintRow + FACE_BOTTOM];
             emitHex(bld, FACE_BOTTOM, pq, pr, ly, cx, cz, topY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
           }
@@ -569,4 +590,35 @@ export function buildChunkMesh(cq, cr, getChunkData) {
     cutout: cutoutB.build(),
     translucent: translucentB.build(),
   };
+}
+
+/** Scratch chunk for buildCellMesh: one cell in an otherwise empty chunk (plains biome so tinted faces look normal). */
+let cellChunk = null;
+
+/**
+ * The exact chunk geometry of a single, fully exposed cell of block `id` (every face, no AO, plains tint), centred on
+ * the origin: x/z around (0, 0) like a cell at axial (0, 0), y from −0.5 to +0.5. Used to draw moving blocks (falling
+ * sand, debris, toppling trees). The cell is meshed at y = 1 of a lone chunk so the bottom face is not culled against
+ * the bedrock rule below the world. Fresh arrays per call; callers cache per id.
+ * @param {number} id
+ * @returns {ChunkMeshData}
+ */
+export function buildCellMesh(id) {
+  if (cellChunk === null) {
+    cellChunk = {
+      blocks: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT),
+      biomes: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE).fill(BIOME.PLAINS),
+      heights: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE),
+    };
+  }
+  const i = localIndex(0, 1, 0);
+  cellChunk.blocks[i] = id;
+  const out = buildChunkMesh(0, 0, (cq, cr) => (cq === 0 && cr === 0 ? cellChunk : null));
+  cellChunk.blocks[i] = 0;
+  for (const layer of [out.opaque, out.cutout, out.translucent]) {
+    if (!layer) continue;
+    const pos = layer.positions;
+    for (let k = 1; k < pos.length; k += 3) pos[k] -= 1.5;
+  }
+  return out;
 }

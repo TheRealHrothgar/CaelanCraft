@@ -14,6 +14,10 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 >
 > **v0.3 — commands and Rune Blocks.** A typed command console (§26, §28) and a programmable **Rune Block** (§27) whose
 > script runs on interact (R), step-on, a repeat timer and/or chains to its neighbours — all four exposed in its editor.
+>
+> **v0.8 — block physics.** Falling sand and gravel, flowing water, collapsing structures, falling trees and blast barrels,
+> all driven by ONE scheduler (§33) with pluggable rules; falling blocks and their rendering (§34); water (§35), support
+> and trees (§36), explosives (§37). Design rationale: `docs/DESIGN-physics.md` (its §10 lists the plug-in interfaces).
 
 ## 0. Conventions (apply everywhere)
 
@@ -69,12 +73,20 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/tiles.js` | PURE (pixel painters) | A-tiles | `tests/unit/tiles.test.js` |
 | `src/commands.js` | PURE, command language | v0.3 | `tests/unit/commands.test.js` |
 | `src/runes.js` | PURE, rune store + runner | v0.3 | `tests/unit/runes.test.js` |
+| `src/blockphysics.js` | PURE, physics scheduler + rule registry (§33); the features together (§38) | v0.8 | `tests/unit/blockphysics.test.js`, `tests/integration/physics.test.js` |
+| `src/fallingblocks.js` | PURE, fallers / tumblers / gravity rule (§34) | v0.8 | `tests/unit/fallingblocks.test.js` |
+| `src/fluids.js` | PURE, flowing water: rule, floor trigger, reseeder, drain, currents (§35) | v0.8 | `tests/unit/fluids.test.js` |
+| `src/support.js` | PURE, load-bearing predicates + support search + collapse (§36) | v0.8 | `tests/unit/support.test.js` |
+| `src/trees.js` | PURE, falling trees + leaf decay (§36) | v0.8 | `tests/unit/trees.test.js` |
+| `src/explosions.js` | PURE, blast barrels (§37) | v0.8 | `tests/unit/explosions.test.js` |
+| `src/fallingRenderer.js` | three, moving cells + explosion light (§34.4) | v0.8 | `tests/unit/physicsRender.test.js` |
+| `src/particles.js` | three, one particle system (§34.5) | v0.8 | `tests/unit/physicsRender.test.js` |
 | `src/atlas.js` | DOM + three | A-atlas | — |
 | `src/renderer.js` | three | A-renderer | `tests/unit/renderer.test.js` |
 | `src/controls.js` | DOM | A-controls | — |
 | `src/hud.js` | DOM | A-hud | — |
 | `src/menus.js` | DOM | A-menus | — |
-| `src/audio.js` | DOM (WebAudio) | A-audio | — |
+| `src/audio.js` | DOM (WebAudio) | A-audio | `tests/unit/explosionsAudio.test.js` (v0.8 feature sounds) |
 | `src/diagnostics.js` | DOM | A-diagnostics | — |
 | `src/console.js` | DOM | v0.3 | — |
 | `src/runeEditor.js` | DOM | v0.3 | — |
@@ -93,6 +105,13 @@ raycast                            → config, hex, blocks
 physics                            → config, coords, hex, blocks
 commands                           → config, coords, hex, blocks, physics, daynight (formatTime)
 runes                              → config, coords, hex, blocks, commands, physics
+fluids, support, trees, explosions → config, blocks (+ hex, coords, physics as needed); never blockphysics
+trees                              → … and support (isLoadBearing)
+explosions                         → … + noise (hash3), support (isLoadBearing, isAnchorCell)
+fallingblocks                      → config, blocks, hex, physics
+blockphysics                       → config, blocks, hex, coords, noise (mulberry32), fallingblocks, fluids, support, trees, explosions
+fallingRenderer                    → mesher (buildCellMesh), three
+particles                          → config, blocks, tiles (averageColor), mesher (BIOME_TINT, isTintedFace), three
 mesher                             → config, coords, hex, blocks
 worldgen                           → config, coords, hex, blocks, noise
 world                              → config, coords, hex, blocks, chunk, noise (normalizeSeed), worldgen, mesher
@@ -106,7 +125,8 @@ audio                              → blocks
 diagnostics                        → config, blocks, coords, hex, runes (runeKey)
 console                            → config
 runeEditor                         → config, commands (parseScript)
-main                               → everything except three
+main                               → everything except three (renderer, atlas, pigRenderer, campfireRenderer,
+                                     fallingRenderer and particles are the three-importing modules)
 ```
 
 ## 2. `src/config.js` (exact — already written)
@@ -126,6 +146,20 @@ Commands / runes: `GAME_SECONDS_PER_DAY, MAX_FILL_CELLS, MAX_TOTAL_EDITS, MAX_CE
 MAX_RUNNING_SCRIPTS, MAX_CHAIN_HOPS, CHAIN_DELAY_S, MAX_RUNES, MAX_RUNE_SCRIPT_CHARS, MAX_RUNE_SCRIPT_LINES, MAX_RUNE_LABEL_CHARS,
 WAIT_MIN_S, WAIT_MAX_S, REPEAT_MIN_S, REPEAT_MAX_S, STEP_COOLDOWN_MAX_S, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_CONSOLE_LINES,
 CONSOLE_HISTORY, CHAT_LINES, CHAT_LINE_MS` (values in the file; §26–§28 use them by name).
+Block physics (v0.8, §33–§38): `PHYSICS_TICK_S, WATER_TICKS, PHYSICS_TICK_BUDGET_MS, MAX_CELL_UPDATES_PER_TICK,
+MAX_SUPPORT_VISITS_PER_TICK, SUPPORT_STARVE_TICKS, SUPPORT_STARVED_VISITS, MAX_PARKED_UPDATES, MAX_PENDING_SUPPORT_SEEDS,
+UNDO_WINDOW_S, UNDO_MAX_CELLS, LAZY_MESH_BUDGET_MS, MAX_FALLING, MAX_TUMBLING, MAX_COLUMN_FALL, FALLER_RADIUS, FALLER_HEIGHT,
+TUMBLE_SUBSTEP, TUMBLE_AIR_DRAG, TUMBLE_GROUND_FRICTION, LANDING_DUST_PER_FRAME, PARTICLE_CAPACITY, PHYSICS_SOUND_RANGE,
+BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, WATER_CURRENT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS, SUPPORT_LIMIT,
+TREE_MAX_CELLS, TREE_MAX_TOPPLING, TREE_QUEUE_GAP_S, TREE_SHAKE_S, TREE_THETA0, TREE_CAUSE_RANGE, BARREL_FUSE_S, MAX_LIT_BARRELS,
+MAX_EXPLOSIONS_PER_FRAME, MAX_DEBRIS, BLAST_RADIUS, BLAST_MAX_RADIUS, BLAST_CHAIN_WINDOW_S, BLAST_CHAIN_DISTANCE, BLAST_IMPULSE,
+BLAST_MIN_UP, BLAST_SHAKE_RANGE, BLAST_FLASH_S`; water as built (§35): `WATER_SOURCE_NEIGHBOURS, WADE_DEPTH, WADE_SPEED_FACTOR`;
+collapse and trees as built (§36): `TREE_LEAF_RADIUS, TREE_LEAF_ABOVE, TREE_MAX_QUEUED, TREE_SHAKE_ANGLE, TREE_SHAKE_WOBBLES,
+TREE_SUBSTEP_S, TREE_KNOCK_RADIUS, TREE_KNOCK_SPEED, TREE_KNOCK_UP, TREE_LEAF_PARTICLES, LEAF_DECAY_RANGE, LEAF_DECAY_S`; explosives
+as built (§37): `BARREL_TIMER_FUSE_MIN_S, BARREL_TIMER_FUSE_MAX_S, MAX_FUSE_TIMERS, BARREL_HISS_S, BARREL_PULSE_SCALE,
+BARREL_PULSE_HZ, BLAST_JITTER, DEBRIS_SPEED_MIN, DEBRIS_SPEED_MAX, DEBRIS_UP_MIN, DEBRIS_UP_MAX, DEBRIS_SPIN, BLAST_DUST_CELLS,
+BLAST_FLASH_INTENSITY, BLAST_SHAKE_S, BLAST_SHAKE_AMPLITUDE`
+(values in the file, section "Block physics"). Every physics tunable lives there.
 `PLAYER_WIDTH = 0.56`: `PLAYER_WIDTH / 2` MUST stay below `HEX_SIZE / 2 ≈ 0.289` (physics.js throws at import otherwise) — every
 1-cell-wide passage is pinched to exactly one edge length (`HEX_SIZE ≈ 0.577`) by the two wall corners flanking the shared edge, and
 the player must fit through it; that bound also implies the `< HEX_INRADIUS` bound the 7-column collider needs. `FOG_FAR_CHUNK_MARGIN = -1`.
@@ -145,6 +179,8 @@ SaveData (version 2, optional `runes`), SmokeResult, GameContext (+ runCommand, 
 `yawToForward(yaw) → [fx,fz] = [-sin, -cos]`, `yawToRight(yaw) → [cos, -sin]`,
 `lookDirection(yaw,pitch) → [-sin(yaw)cos(pitch), sin(pitch), -cos(yaw)cos(pitch)]`,
 `forEachEditedCell(edits, id, fn(q, y, r))` (v0.7: every World.edits entry with that id; malformed chunk keys skipped).
+v0.8: `packCell(q, y, r)` → `((q + 2^20)·2^21 + (r + 2^20))·128 + y`, one exact double below 2^49 (the physics queues'
+numeric cell key); `unpackCell(key, out = [0,0,0])` → `out = [q, y, r]`.
 The cube face tables (`FACE_*`, `FACE_VERTS`) are gone; face geometry is in `hex.js`.
 
 ## 4a. `src/hex.js` (exact — already written)
@@ -186,7 +222,8 @@ MOSSY_STONE_BRICKS 37, OBSIDIAN 38, CLAY 39, RED_SAND 40, ICE 41, PACKED_ICE 42,
 DIAMOND_BLOCK 46, COPPER_BLOCK 47, GLOWSTONE 48, HONEYCOMB_BLOCK 49, HAY_BALE 50, PUMPKIN 51, WOOL_ORANGE 52, WOOL_YELLOW 53,
 WOOL_LIME 54, WOOL_GREEN 55, WOOL_CYAN 56, WOOL_LIGHT_BLUE 57, WOOL_BLUE 58, WOOL_PURPLE 59, WOOL_MAGENTA 60, WOOL_PINK 61,
 WOOL_BROWN 62, WOOL_BLACK 63, WOOL_GRAY 64, WOOL_LIGHT_GRAY 65`, v0.5 `BLACK_HOLE 66` (§29), v0.7 `CAMPFIRE 67` (§32).
-`BLOCK_COUNT = 68`. All v0.4 blocks are solid, breakable and
+v0.8 (block physics, §33–§37): `WATER_FLOW_1 … WATER_FLOW_6 68…73, WATER_FALL 74, BLAST_BARREL 75`; **`BLOCK_COUNT = 76`**
+(68 before v0.8). All v0.4 blocks are solid, breakable and
 placeable, use existing sound groups, and are never emitted by worldgen. Spruce/birch leaves are cutout with `cullSame: false`
 (like oak); ICE is solid, non-opaque, `LAYER_TRANSLUCENT`, `cullSame: true`; PACKED_ICE is opaque. Logs and hay bales use
 `tiles(side, end)`; pumpkin `tiles(side, top)`. GLOWSTONE only looks lit (no block-light engine). `RUNE_BLOCK` ("Rune Block") is solid, opaque, breakable, placeable, soundGroup stone, tile
@@ -200,7 +237,16 @@ SPRUCE_LEAVES 31, BIRCH_LOG_SIDE 32, BIRCH_LOG_END 33, BIRCH_PLANKS 34, BIRCH_LE
 SLATE 39, MOSSY_COBBLESTONE 40, MOSSY_STONE_BRICKS 41, OBSIDIAN 42, CLAY 43, RED_SAND 44, ICE 45, PACKED_ICE 46, COAL_BLOCK 47,
 IRON_BLOCK 48, GOLD_BLOCK 49, DIAMOND_BLOCK 50, COPPER_BLOCK 51, GLOWSTONE 52, HONEYCOMB 53, HAY_BALE_SIDE 54, HAY_BALE_TOP 55,
 PUMPKIN_SIDE 56, PUMPKIN_TOP 57, WOOL_ORANGE 58 … WOOL_LIGHT_GRAY 71` (wool in BLOCK order), v0.5 `BLACK_HOLE 72`, v0.7 `CAMPFIRE_SIDE 73, CAMPFIRE_TOP 74`, `MISSING 255`.
-`TILE_IDS` = array of all 76 tile ids.
+v0.8 `BARREL_SIDE 75, BARREL_TOP 76`. `TILE_IDS` = array of all 78 tile ids.
+**Water family** (WATER, FLOW_1..6, FALL): `liquid: true, solid: false, opaque: false, LAYER_TRANSLUCENT, breakable: false`;
+FLOW/FALL are `placeable: false`, named `water_flow_k` / `water_fall`, tiles = WATER on every face. **BLAST_BARREL** ("Blast
+Barrel"): solid, opaque, placeable, breakable, soundGroup wood, `tiles(BARREL_SIDE, BARREL_TOP)` (lid on top and bottom).
+`BlockDef.gravity` (default false) is true for SAND, RED_SAND, GRAVEL. `UNLOADED = 255` is the sentinel `World.peekBlock`
+returns for unloaded chunks (never a block id; every predicate treats it like AIR). v0.8 helpers: `isGravityBlock(id)`,
+`isWater(id)` (the family), `isWaterSource(id)` (WATER only), `waterLevel(id)` (WATER, FALL → 7; FLOW_k → k; else 0),
+`isFallThrough(id)` (AIR, CAMPFIRE and the whole water family — a WATER source too since the water feature, §35.6 — NOT UNLOADED),
+`isLeaves(id)`, `isLog(id)` (oak, spruce, birch), `waterSurfaceHeight(id, aboveId)` (§35.4: 0 for non-water; 1 when `aboveId` is water;
+else `WATER_SURFACE_HEIGHT` for WATER / FALL and `k/7 · WATER_SURFACE_HEIGHT` for FLOW_k).
 
 Layers: `LAYER_OPAQUE 0` (everything else), `LAYER_CUTOUT 1` (OAK/SPRUCE/BIRCH_LEAVES, GLASS), `LAYER_TRANSLUCENT 2` (WATER, ICE).
 
@@ -211,8 +257,8 @@ Biomes: `BIOME.OCEAN 0, BEACH 1, PLAINS 2, FOREST 3, DESERT 4, SNOWY 5, MOUNTAIN
 Functions: `getBlockDef(id)` (unknown → the AIR def), `isSolid, isOpaque, isLiquid, isBreakable, isPlaceable,
 isReplaceable (AIR or liquid), isTargetable (not AIR and not liquid), getRenderLayer, getFaceTile(id, face 0..7),
 shouldRenderFace(a, b), tileToUV(tile) → [u0, v0, u1, v1]`. Re-exports `FACE_TOP, FACE_BOTTOM` from hex.js.
-Constants: `DEFAULT_HOTBAR` (9 ids), `PICKER_ORDER` (all 66 placeable ids, once each, grouped stone / earth / wood / minerals /
-wool / special, ending CAMPFIRE, BLACK_HOLE, RUNE_BLOCK, WATER), `SOUND_GROUPS`.
+Constants: `DEFAULT_HOTBAR` (9 ids), `PICKER_ORDER` (all 67 placeable ids, once each, grouped stone / earth / wood / minerals /
+wool / special, ending CAMPFIRE, BLAST_BARREL, BLACK_HOLE, RUNE_BLOCK, WATER), `SOUND_GROUPS`.
 v0.7: `BlockDef.meshed` (default true) and `isMeshed(id)`. A block with `meshed: false` (only CAMPFIRE) is skipped by the mesher
 and drawn by its own model; its tiles are used only for icons.
 
@@ -234,6 +280,7 @@ export class Chunk {
   cq; cr; key;                // key = chunkKey(cq, cr)
   blocks; biomes; heights;    // Uint8Array(CHUNK_VOLUME), Uint8Array(CHUNK_AREA), Uint8Array(CHUNK_AREA)
   dirty = true;               // needs (re)meshing
+  lazy = false;               // v0.8: dirty only through lazy writes (World §9.2) — re-meshed under LAZY_MESH_BUDGET_MS
   meshed = false;             // has been handed to the renderer at least once
   get(lq, ly, lr)             // BlockId; returns AIR (0) when out of range
   set(lq, ly, lr, id)         // returns true iff the value changed (then dirty = true); false when out of range
@@ -346,17 +393,26 @@ export class World {
   worldGen;           // WorldGen
   chunks;             // Map<ChunkKey, Chunk>
   edits;              // Map<ChunkKey, Map<number, BlockId>>  (inner key = localIndex)
+  origins;            // v0.8: Map<ChunkKey, Map<number, BlockId>> — each edited cell's id before its first edit (§9.2)
   editVersion = 0;    // incremented on every successful setBlock (autosave uses it)
   onChunkMesh   = (key, cq, cr, meshData) => {};   // assignable hook, called synchronously from update()
   onChunkUnload = (key) => {};                     // assignable hook
   onBlockChange = (q, y, r, prev, next) => {};     // assignable hook, called synchronously from setBlock ONLY, after the edit is
                                                    // recorded and chunks are dirtied; never from importEdits / applying saved edits
-  get editCount()            // total recorded edit entries across all chunks (area commands budget against MAX_TOTAL_EDITS)
+  onChunkGenerated = (cq, cr) => {};               // v0.8 assignable hook: end of _generate, after the chunk is registered and its
+                                                   // saved edits are applied (block physics re-queues parked updates, re-seeds)
+  get editCount()            // total recorded edit entries across all chunks (area commands budget against MAX_TOTAL_EDITS); O(1) (v0.8)
+  peekBlock(q, y, r)         // v0.8: like getBlock but UNLOADED (255) for a cell in an unloaded chunk; AIR outside 0..127 and for NaN y
+  hasEdit(q, y, r)           // v0.8: the cell has a recorded edit (loaded or not)
+  originAt(q, y, r)          // v0.8: recorded origin of an edited cell, else its current id (UNLOADED when unknown)
+  terrainHeightAt(q, r)      // v0.8: chunk.heights of the column (generated terrain height), −1 when not loaded
+  isNaturalGround(q, y, r)   // v0.8: loaded && no edit && y ≤ terrainHeightAt && isSolid(block) — untouched terrain (§36)
   getBlock = (q, y, r) => BlockId;      // ARROW PROPERTY. CELL coords. AIR when y out of range or chunk not loaded. Never allocates.
   getChunkData = (cq, cr) => Chunk|null; // ARROW PROPERTY.
   getBlockAt(x, y, z)        // WORLD position convenience: getBlock(...worldToHex(x, z), floor(y)); AIR for non-finite input
-  setBlock(q, y, r, id)      // CELL coords. boolean: false if y out of range, id not an integer 0..255, chunk not loaded, or unchanged.
-                             // On success: chunk.set, edits record, editVersion++, and marks dirty every LOADED chunk
+  setBlock(q, y, r, id, lazy = false) // CELL coords. boolean: false if y out of range, id not an integer 0..255, chunk not loaded, or unchanged.
+                             // On success: chunk.set, edits record (§9.2: origin on the first edit, deleted when written back to its
+                             // origin), editVersion++, and marks dirty (lazily when `lazy`, §9.2) every LOADED chunk
                              // containing the cell or one of its 6 HEX_DIRS neighbours (dedupes to 1–4 chunks; 4 only for the
                              // index-space corner cells lq=15,lr=0 and lq=0,lr=15).
   getChunk(cq, cr)           // Chunk|undefined
@@ -383,21 +439,35 @@ export class World {
 overBudget = () => builds >= MAX_BUILDS_PER_UPDATE || now() - start >= budgetMs
 1. Unload every chunk with hexLength(cq-pcq, cr-pcr) > renderDistance + UNLOAD_RADIUS_EXTRA:
    chunks.delete(key); if chunk.meshed → onChunkUnload(key). (Edits stay in `edits`.)
-2. Re-mesh edited chunks: every loaded chunk with dirty && meshed && all 6 hex neighbours loaded → mesh now (ignores budget).
+2. Re-mesh edited chunks: every loaded chunk with dirty && meshed && all 6 hex neighbours loaded and NOT lazy → mesh now (ignores
+   budget). v0.8: the ones that are lazy are sorted by squared world distance from (px, pz) to their centre cell
+   `hexToWorld(cq·16+8, cr·16+8)` and meshed in that order until `now() − lazyStart ≥ LAZY_MESH_BUDGET_MS`, always at least one.
 3. Walk RING_OFFSETS = all (dq,dr) with hexLength(dq,dr) <= renderDistance + DATA_RADIUS_EXTRA, sorted by hexNormSq(dq,dr)
    ascending (ties: dr then dq ascending). For each: cq = pcq+dq, cr = pcr+dr, chunk = chunks.get(key):
    if !chunk: data = worldGen.generateChunk(cq,cr); chunk = new Chunk(cq,cr,data); apply edits.get(key) (blocks[li] = id per pair);
               chunks.set(key, chunk); builds++; generated++; if overBudget() break
-   if hexLength(dq,dr) <= renderDistance && chunk.dirty && all 6 hex neighbours loaded:
+   if hexLength(dq,dr) <= renderDistance && chunk.dirty && !(chunk.meshed && chunk.lazy) && all 6 hex neighbours loaded:
               m = buildChunkMesh(cq, cr, this.getChunkData); chunk.dirty = false; chunk.meshed = true;
               onChunkMesh(key, cq, cr, m); builds++; meshed++; if overBudget() break
-   pendingGen / pendingMesh = counts of remaining ring entries that still need work (computed cheaply at the end or as the walk proceeds).
+   pendingGen / pendingMesh = counts of remaining ring entries that still need work (computed cheaply at the end or as the walk proceeds);
+   a meshed lazily-dirty chunk counts as pendingMesh (step 2 meshes it on a later call).
 ```
 Guarantee: at least one build per call when work is pending (budget is checked after each build). With `budgetMs = Infinity`
 and `MAX_BUILDS_PER_UPDATE` respected, repeated calls converge to `pendingGen === 0 && pendingMesh === 0`: `hexDiscCount(rd)`
 meshed chunks and `hexDiscCount(rd + DATA_RADIUS_EXTRA)` loaded. Because a chunk is meshed only once its 6 hex neighbours
 exist (the mesher never reads anything else), generation never invalidates an existing mesh.
 Missing `performance` (Node < 16) → use `Date.now`. Tests pass `now: () => 0` and `budgetMs = Infinity`.
+### 9.2 Origins, edit pruning and lazy re-meshing (v0.8, normative)
+1. `setBlock` success: if the cell has no edit → add the edit, record `origins[key][li] = prev`, `editCount++`. If it has one and
+   `id === origin` → delete the edit and the origin, `editCount--` (empty per-chunk maps are deleted). Otherwise update the edit.
+   An edit without a recorded origin is never pruned.
+2. `importEdits` into a LOADED chunk uses the same bookkeeping (a pair equal to the current block is skipped); into an unloaded
+   chunk it only records the edit (no origin). `_generate` gives every recorded edit of the new chunk its origin (the generated
+   id) and DROPS edits equal to the generated id, then fires `onChunkGenerated(cq, cr)`. Edits and origins survive unloading.
+3. Lazy marks: for each loaded chunk to dirty, a non-lazy write sets `dirty = true, lazy = false`; a lazy write sets `dirty = true,
+   lazy = true` only when the chunk was clean (non-lazy wins). Meshing clears both. Block physics, black-hole eats and explosions
+   write lazily; the player, commands and runes do not.
+4. `editCount` is a running count equal to Σ `edits` sizes at all times.
 
 ## 10. `src/mesher.js`
 
@@ -410,6 +480,8 @@ export function hexCornerAO(sideA, sideB)               // 3 - (sideA + sideB)  
 export function isTintedFace(id, face)                  // OAK_LEAVES: every face; GRASS_BLOCK: FACE_TOP only
 export const BIOME_TINT                                 // [r,g,b] × 8 biomes, multiplied into tinted faces
 export function createMeshBuilder(initialVertices = 1024) // growable buffer helper; ensure(vertices, indices), reset(), build()
+export function buildCellMesh(id)                       // v0.8: ChunkMeshData of ONE fully exposed cell of `id` (plains tint, no AO), centred on
+                                                        //   the origin (x/z around 0, y −0.5..0.5); fresh arrays; fallingRenderer caches per id
 /** MeshData = { positions: Float32Array (3/vertex, chunk-LOCAL relative to chunkOrigin(cq, cr): x ∈ [−0.5, 24.5], y ∈ [0,128],
  *   z ∈ [−0.58, 13.86+0.58]), normals (3/vertex = FACE_NORMALS[f]), uvs (2/vertex), colors (3/vertex, 0..1),
  *   indices: Uint32Array (6 per side quad, 18 per hex cap), vertexCount, indexCount, faceCount } */
@@ -423,16 +495,21 @@ requested (nothing in the chunk is adjacent to them) and stay AIR. Lookup `P(pq,
 are culled), `py >= WORLD_HEIGHT → AIR`, else `padded[...]`. Reuse one module-level scratch buffer between calls (fill with 0 first).
 The centre chunk's `biomes` array (if present, length ≥ 256) supplies the per-column tint; otherwise PLAINS.
 ### 10.2 Emission for block `a` at local `(lq,ly,lr)`, centre `C = (lq + lr/2, lr·√3/2)`, neighbour `Q` across face `f`
-(`Q = P + HEX_DIRS[f]` for sides, `±1` in y for caps). Emit iff `shouldRenderFace(a, P(Q))`.
-1. `topY = (a === WATER && P(lq+1, ly+1, lr+1) !== WATER) ? WATER_SURFACE_HEIGHT : 1`. Applies to EVERY top vertex of that
-   water cell: the top corners of all six side quads and the whole top hexagon sit at `ly + topY`.
+(`Q = P + HEX_DIRS[f]` for sides, `±1` in y for caps). Emit iff `shouldRenderFace(a, P(Q))` — except between the water family
+(v0.8, §35.4): when `a` is water (`isWater`), its top face is emitted iff the cell above is NOT water (always, even under an opaque
+block: a lowered surface leaves a gap), its bottom face iff `!isWater(below) && shouldRenderFace(a, below)`, and a side face toward a
+water neighbour `Q` iff `topY(Q) < topY(a)`, spanning only `bottomY = topY(Q) .. topY(a)` (2a).
+1. `topY = isWater(a) && !isWater(P(above)) ? waterSurfaceHeight(a, P(above)) : 1` (WATER / FALL `WATER_SURFACE_HEIGHT`, FLOW_k
+   `k/7` of it). Applies to EVERY top vertex of that water cell: the top corners of all six side quads and the whole top hexagon sit
+   at `ly + topY`.
 2. **Side face `j`** (quad, 4 vertices, CCW from outside): `v0 = bottom corner j+1`, `v1 = bottom corner j`, `v2 = top corner j`,
    `v3 = top corner j+1` (so v0/v3 are the LEFT edge seen from outside, v1/v2 the RIGHT). Position `C + HEX_CORNERS[k]`,
    `y = ly` or `ly + topY`; normal `FACE_NORMALS[j]`. AO per vertex with `third` = the neighbour sharing that corner's vertical
    edge (`HEX_DIRS[j+1]` for corner j+1, `HEX_DIRS[j−1]` for corner j) and `dy = top ? +1 : −1`:
    `s1 = isOpaque(third, ly)`, `s2 = isOpaque(Q, ly+dy)`, `c = isOpaque(third, ly+dy)`; `ao = vertexAO(s1, s2, c)`.
    UV: `uMid = (u0+u1)/2`, `uHalf = (u1−u0)·HEX_SIZE/2` (texel density 1 tile per unit); left vertices `u = uMid − uHalf`,
-   right `uMid + uHalf`; bottom `v = v1`, top `v = v0`. Indices with `b` = vertexCount before the quad:
+   right `uMid + uHalf`; bottom `v = v1`, top `v = v0` (a lowered / partial water face cuts the window to its span: height t in the
+   cell → `v = v1 − (v1 − v0)·t`; the bottom vertices sit at `ly + bottomY`, 0 unless 2a). Indices with `b` = vertexCount before the quad:
    if `ao0 + ao2 >= ao1 + ao3` push `b,b+1,b+2, b,b+2,b+3` else `b+1,b+2,b+3, b+1,b+3,b`.
 3. **Cap faces** (`FACE_TOP`, `FACE_BOTTOM`): 7 vertices — the centre `C` first, then the six corners in order `0,5,4,3,2,1`
    for the top (CCW seen from +Y) and `0,1,2,3,4,5` for the bottom; normal `(0, ±1, 0)`; `y = ly + topY` (top) or `ly` (bottom).
@@ -484,6 +561,8 @@ export function findStandingY(getBlock, x, z, fromY)   // in the cell column und
                                                        // block(y-1) solid and blocks y, y+1 not solid; null if none / non-finite input
 export function isFreeAt(getBlock, x, cy, z)           // cylinder with feet at (x, cy, z) overlaps no solid cell (7-column test)
 export function findFreeY(getBlock, x, z, fromY, maxUp = 2) // first free feet height among fromY, fromY+1, …, fromY+maxUp; null if none
+export function isUnderSurface(getBlock, q, py, r)     // v0.8 (§35.4): the point at height py in column (q, r) is below its cell's waterSurfaceHeight
+export function isSwimWater(getBlock, q, y, r)         // v0.8 (§35.4): standing at y (or one step down) means swimming (≥ 2 deep / surface > WADE_DEPTH)
 export function supportingCells(p, getBlock, out = [])  // [q,y,r] of the cells under the player's footprint whose cell at floor(p.y − 1e-3)
                                                        // is solid (empty when airborne); the step-on trigger is edge-triggered on this set
 /** PlayerState = { x,y,z, vx,vy,vz, onGround, flying, sneaking, sprinting, inWater, headInWater, hitWall }
@@ -496,15 +575,15 @@ a cell's inradius, the footprint can only overlap the cell containing `(x, z)` a
 exactly those 7 columns (`gatherColumns`).
 ### 12.1 Substep of `h` seconds (normative)
 ```
-1. Environment: (bq, br) = worldToHex(x, z); feet = getBlock(bq, floor(y+0.1), br); chest = getBlock(bq, floor(y+1.0), br)
-   inWater = isLiquid(feet) || isLiquid(chest)
-   eyeY = y + getEyeHeight(p); eyeCell = getBlock(bq, floor(eyeY), br); above = getBlock(bq, floor(eyeY)+1, br)
-   headInWater = isLiquid(eyeCell) && (isLiquid(above) || (eyeY - floor(eyeY)) < WATER_SURFACE_HEIGHT)   // only the topmost water block has a lowered surface
+1. Environment (v0.8 water surfaces, §35.4): (bq, br) = worldToHex(x, z); fy = floor(y+0.1); feet = getBlock(bq, fy, br)
+   under(py) = isLiquid(cell at floor(py)) && py − floor(py) < waterSurfaceHeight(that cell, the cell above it)   // isUnderSurface
+   inWater = (isLiquid(feet) && fy + waterSurfaceHeight(feet, getBlock(bq, fy+1, br)) > y + WADE_DEPTH) || under(y + min(1.0, 0.6·height))
+   wading = isLiquid(feet) && !inWater;  headInWater = under(y + getEyeHeight(p))
    sneaking = input.sneak && !flying;  sprinting = input.sprint && input.forward > 0 && !sneaking
 2. Horizontal: [fx,fz] = yawToForward(input.yaw); [rx,rz] = yawToRight(input.yaw)
    wx = fx*forward + rx*strafe; wz = fz*forward + rz*strafe; normalise (wx,wz) if its length > 1
    speed = flying ? (sprinting ? FLY_SPRINT_SPEED : FLY_SPEED) : sneaking ? SNEAK_SPEED : sprinting ? SPRINT_SPEED : WALK_SPEED
-   if (inWater && !flying) speed *= WATER_SPEED_FACTOR
+   if (inWater && !flying) speed *= WATER_SPEED_FACTOR; else if (wading && !flying) speed *= WADE_SPEED_FACTOR   // wading: no swim mode
    accel = (flying || onGround) ? GROUND_ACCEL : inWater ? WATER_ACCEL : AIR_ACCEL;  k = 1 - exp(-accel*h)
    vx += (wx*speed - vx)*k;  vz += (wz*speed - vz)*k
 3. Vertical:
@@ -552,8 +631,14 @@ export function loadGame(storage = globalThis.localStorage)         // SaveData|
 export function hasSave(storage = globalThis.localStorage)          // boolean
 export function clearSave(storage = globalThis.localStorage)        // void
 /** SaveData = { version: 2, seed: number, time: number, day: number, player: {x,y,z (WORLD),yaw,pitch,flying}, hotbar: number[9],
- *   selected: number, edits: EditsJSON, runes?: RunesJSON }   EditsJSON = { "cq,cr": [localIndex, id, localIndex, id, ...] } */
+ *   selected: number, edits: EditsJSON, runes?: RunesJSON, pigs?: PigJSON[], physics?: PhysicsSwitches }
+ *   EditsJSON = { "cq,cr": [localIndex, id, localIndex, id, ...] } */
 ```
+`physics` (v0.8) is OPTIONAL: `{ falling, water, collapse, explosions }` booleans. `serializeSave` writes it whenever
+`data.physics != null`, canonicalised by `normalizePhysicsSwitches(raw)` (exactly these four keys in this order; anything not
+`=== false` is on). `deserializeSave` keeps it when it is a plain object (non-boolean switches warn `physics.<name>: not a boolean,
+treated as on`); a non-object is dropped with the warning `physics: not an object, ignored`. **Absent means the world was saved
+before v0.8**: main then starts it with collapse OFF (§33.8). Exports `PHYSICS_SWITCH_NAMES`, `DEFAULT_PHYSICS_SWITCHES`.
 `runes` (v0.3) is OPTIONAL and the version stays 2: `serializeSave` writes it only when `runes.normalizeRunesJSON(data.runes)` is
 non-empty (keys sorted by (q, y, r), non-default fields only, so untouched worlds serialise byte-identically to before);
 `deserializeSave` validates it with `runes.validateRunesJSON(raw.runes, edits)` — malformed keys, non-object entries, entries whose
@@ -573,6 +658,10 @@ export function createTilePainters()     // → Map<tile, () => Uint8ClampedArra
 ```
 Recipe 27 `rune` (v0.3): dark slate `0x2a2633` + noise 6, a pointy-top hexagon outline of radius 6 around (7.5, 7.5) in `0x7be8ff`
 with a `0x355a6b` halo one pixel outward, spokes to corners 0/2/4 in `0x5fc8e8`, and a 2×2 centre dot `0xd8f8ff`; alpha 255.
+v0.8 recipes 75 `barrel_side` / 76 `barrel_top` (tiles.js comments are normative; original art, alpha 255): four wooden staves
+with dark seams, two dark iron bands with rivets on rows 1–3 and 12–14, and a red pointy-top hazard hexagon with a pale
+exclamation mark between them; the lid is horizontal planks inside a dark iron rim, a fuse socket in the middle and a short fuse
+whose tip burns yellow-orange.
 v0.4 recipes 28–71 live in tiles.js (its comments are normative): spruce/birch reuse the oak plank, bark, log-end and leaves layouts
 in new colours (birch bark is its own recipe); mossy cobblestone / stone bricks paint the base tile with ITS seed, then moss clumps;
 storage blocks share a bevelled-plate recipe; honeycomb is a small hex-cell Voronoi; wool 58–71 use the white/red weave. Alpha:
@@ -689,26 +778,39 @@ export function createHUD(doc, atlasCanvas)   // binds to the ids in index.html 
 ```js
 export const SPLASHES = [ /* 18 strings from SPEC-gameplay §5.4 */ ];
 export function createMenus(doc, atlasCanvas, callbacks)
-/** callbacks = { onNewWorld(seedText: string), onContinue(), onResume(), onSave(), onStopRunes(), onQuit(), onClickToPlay(), onPickBlock(blockId, slot|null), onPickerClose() }
+/** callbacks = { onNewWorld(seedText: string), onContinue(), onResume(), onSave(), onStopRunes(), onQuit(), onClickToPlay(), onPickBlock(blockId, slot|null), onPickerClose(),
+ *              onPhysicsToggle(name) (v0.8: 'falling'|'water'|'collapse'|'explosions'), onUndoPhysics() (v0.8) }
  *  (#btn-stop-runes "Stop All Rune Scripts" in the pause menu fires onStopRunes; CONTROLS_SHEET lists T, /, R and Shift+R)
  *  Menus = {
  *   showTitle(hasSave), hideTitle(),        // sets a random splash, dirt background (makeTiledBackgroundDataURL DIRT), draws the logo, renders the controls sheet, enables #btn-continue iff hasSave
  *   showLoading(done, total), hideLoading(),
  *   showClickToPlay(), hideClickToPlay(),
- *   showPause(seed), hidePause(),
+ *   showPause(seed, physics?), hidePause(),        // v0.8 physics = PhysicsMenuState { switches, canUndo, undoKind? } refreshes the row first
+ *   setPhysicsState(physics),               // v0.8: the Physics row (#btn-phys-falling|water|collapse|explosions: "<Label>: ON|OFF", class
+ *                                           //   `off`, aria-pressed) and #btn-undo-physics (undoButtonLabel(canUndo, kind); disabled when !canUndo)
  *   showPicker(hotbar, selected), hidePicker(), isPickerOpen(),   // scrollable grid of PICKER_ORDER icons (64px canvases shown at 52px); click → onPickBlock(id, null); Digit1-9 while hovering → onPickBlock(id, slot)
  *   getSeedInput(),                         // text of #seed-input
  *   dispose() } */
 ```
 New World with an existing save must `confirm("This will delete your saved world. Continue?")` before calling `onNewWorld`.
+v0.8 pause menu (index.html, below "Stop All Rune Scripts"): `#pause-physics.physics-row` = label "Physics" + four `.mc-button.toggle`
+buttons, then `#btn-undo-physics`. CONTROLS_SHEET row R: "Run a Rune Block · light a Blast Barrel".
 
 ## 21. `src/audio.js` (WebAudio, optional feel)
 
 ```js
 export function createAudio()   // → Audio; everything is a no-op when AudioContext is unavailable
-/** Audio = { resume() (call on first user gesture), playBreak(soundGroup), playPlace(soundGroup), playClick(), setMuted(b), toggleMuted() → boolean, get muted } */
+/** Audio = { resume() (call on first user gesture), playBreak(soundGroup), playPlace(soundGroup), playClick(), setMuted(b), toggleMuted() → boolean, get muted,
+ *   playOink(v), playSqueal(v), playCrackle(v), playThud(v) (v0.8: sine 110 → 45 Hz 160 ms + 500 Hz noise knock),
+ *   playSplash(v) (v0.8: 0.35 s 1.6 kHz noise wash + two rising blips),
+ *   playBoom(v) (v0.8 §37: sine thump 72 → 26 Hz 1.1 s + 0.9 s 420 Hz noise body + slowed 150 Hz rumble from +0.12 s + 60 ms 3.2 kHz crack),
+ *   playHiss(v) (0.3 s 7 kHz noise breath), playFizzle(v) (0.45 s 2.5 kHz noise wash over a sine sagging 700 → 180 Hz),
+ *   playCreak(v) (§36, below) } — volume v in 0..1, every sound scales linearly with it. main calls the physics sounds (§33.7)
+ *   through PhysicsHooks.sound. */
 ```
 Synthesis per SPEC-gameplay §9.
+v0.8 trees: `playCreak(v)` (a tree starts to topple, §36.5.3): a 0.6 s sawtooth 85 → 135 → 60 Hz through a 700 Hz lowpass plus a 0.25 s
+1.2 kHz noise rasp. (The explosives branch also wrote a `playCreak`; the merge kept this one, §38.1.2.)
 
 ## 22. `src/diagnostics.js` (DOM)
 
@@ -718,10 +820,13 @@ export function parseParams(search = location.search)   // → Params { seed: st
 export function installErrorCapture(win, onError)        // window 'error' + 'unhandledrejection' → onError({message, stack})
 export function installDebugHandle(win, game)            // win.__caelancraft = { version, ready:false, seed, world, player, controls, renderer, stats, errors:[], smoke:null,
                                                          //   getBlock(x,y,z) / setBlock(x,y,z,id) over WORLD positions (cell derived with worldToHex), getCell(x,z) → [q,r],
-                                                         //   runCommand(line) → {ok, message}|null, runes (RuneStore), runner (RuneRunner|null), teleport, setTime }
+                                                         //   runCommand(line) → {ok, message}|null, runes (RuneStore), runner (RuneRunner|null), teleport, setTime,
+                                                         //   v0.8: physics (BlockPhysics|null, refreshed like world), stepFrame(dt) (one synchronous simulation +
+                                                         //   render step, for screenshot drivers under a virtual-time budget) }
 export function updateDebugHandle(win, stats)            // refresh stats + ready flag (called by main every ~250 ms)
 export function buildDebugText(game, stats)              // the F3 text block: XYZ (world), Cell (q y r) + chunk/local, facing, biome/seed, chunks,
-                                                         //   target cell + face name + the cell's world centre (x z), time, mode
+                                                         //   target cell + face name + the cell's world centre (x z), time, mode; v0.8: a last line
+                                                         //   `Physics: [PAUSED] queued N falling N tumbling N tick X ms [off: …]` when game.physics exists
 export function runSmokeTest(game, win = window)         // Promise<SmokeResult>; drives the sequence in docs/PLAN-build.md §4 (hex cells: hit.q/y/r, faceNeighbor for the
                                                          //   placement target, world.isReadyAtCell) plus step 9b: a rune block placed by `setblock`, scripted via game.runes,
                                                          //   triggered by `run`, its `setblock @ @1 @ stone` observed, then cleaned up; sets win.__caelancraft.smoke, console.log('SMOKE_OK'|'SMOKE_FAIL', JSON),
@@ -775,6 +880,31 @@ rendering continues. Closing any modal goes through `enterPlayingFromModal()`: `
   first flushes an open editor's fields into the store, so edits made in a modal are never lost when the page is left. A pointer lock that
   arrives while in click-to-play (a late grant of the modal-close request) enters playing directly. Modal keys (E, T, /) are consumed before
   the hotbar digits each frame. The editor's "Enabled" switch turned off cancels the rune's running script, like `rune q y r off`.
+- **Block physics (v0.8, §33–§37).** `startLoading` creates ONE `BlockPhysics(world, physicsHooks)` right after the World (before any
+  chunk generates), sets `world.onChunkGenerated → blockPhysics.onChunkGenerated`, and imports the save's switches — a restored save
+  WITHOUT a `physics` field gets `importSwitches({ collapse: false })` and, once playable, the chat line OLD_WORLD_PHYSICS_NOTE
+  ("New: block physics! Collapse is off for this older world — turn it on in Esc → Physics"); new worlds start all on.
+  `onBlockChanged` forwards every change to `blockPhysics.onBlockChange` LAST (after black holes, campfires, runes). Black-hole eats
+  write lazily. physicsHooks: `say` → logLine; `areaJobsActive` → `runner.hasActiveJobs()`; `bodies` → [player, pigs in loaded
+  chunks]; `player`; `sound(name, x, y, z, v)` → `audio['play' + Name]` when it exists (`break:<group>` → playBreak), volume ·
+  (1 − d/range) with range BOOM_SOUND_RANGE for 'boom' else PHYSICS_SOUND_RANGE (d from the player's chest), splash / hiss throttled
+  by SPLASH_MIN_INTERVAL_S / HISS_MIN_INTERVAL_S; `particles` → `particles.emit`; `knock(body, vx, vy, vz, fromX, fromZ)` adds the
+  velocity (a pig also gets `pigs.hit` + squeal).
+  `stepPlaying` order: input & interaction → player (pull = black holes + `fluids.currentAt(player feet + 0.1)`; pigs' pullAt adds
+  `currentAt(feet + 0.1)` too) → black holes → pigs → **`blockPhysics.step(dt)`** → campfires → `resolveBodies([player, pigs…,
+  …blockPhysics.bodies()])` → **unstick player** (when `!isFreeAt(player)`: `findFreeY(…, floor(y)+1, 3)`, vy ≥ 0) → time → runes →
+  streaming. `renderFrame`: `fallingRenderer.sync(blockPhysics.renderItems())`, `explosions.flash(out)` → `fallingRenderer.setFlash`,
+  `explosions.shakeOffset(eye, out)` added to the camera position, `particles.update(dt)` (0 unless playing with physics not paused).
+  Interaction: player break / place go through `blockPhysics.asPlayer(() => world.setBlock(…))`; with WATER selected (and the eye
+  cell not water — §35.5) the crosshair ray uses `isHit = isTargetable(id) || isWaterSource(id)` and left-click on a source sets it to AIR; `explosions.raycast` runs after
+  the pig ray (up to the nearer hit) and a lit barrel under the crosshair takes it (left-click → `explosions.snuff(target)`); R on a
+  BLAST_BARREL → `blockPhysics.asPlayer(() => explosions.lightAt(q, y, r))` (chat line when explosions are off); target hints
+  `Blast Barrel · R: light` / `Blast Barrel · burning! click: break it` (`explosions.isBurning`, §38.2) / `Blast Barrel (explosions
+  are off)` / `lit barrel · click: put it out`.
+  Saving: `edits: blockPhysics.exportEdits()` (never the live world, §33.9), `physics: blockPhysics.exportSwitches()`; autosave also
+  fires when `blockPhysics.switchVersion` changed. Pause menu: `menus.showPause(seed, physicsMenuState())`; `onPhysicsToggle(name)`
+  flips the switch (click + toast), `onUndoPhysics` → `blockPhysics.undo()` (chat line + toast). The CommandContext gets
+  `physics` (getter). `game.physics` exposes it. `quitToTitle` / `dispose` drop it and clear the renderers.
 - Diagnostics: `installErrorCapture` → `hud.showError`; `installDebugHandle`; if `params.smoke` → `runSmokeTest(game)` once playing.
 - `window.resize` → `renderer.resize(innerWidth, innerHeight)`.
 
@@ -813,7 +943,7 @@ unknown → `unknown block "x" (type blocks to list them)`.
 ### 26.3 CommandContext (built by main, §23)
 `{ world, player, controls {yaw, pitch}, getTime(), setTime(t) (never touches day), addTime(gameSeconds) (day += floor when passing
 midnight forwards), timeFrozen, hotbar, selected, setHotbarSlot(slot, id), say(text), teleport(x, y, z), setFlying(on), runes: RuneStore,
-runner: RuneRunner, rune: Rune|null, running: Running|null, seed }`. The runner sets `rune`/`running` around each script command; the
+runner: RuneRunner, rune: Rune|null, running: Running|null, seed, physics?: BlockPhysics (v0.8) }`. The runner sets `rune`/`running` around each script command; the
 console executes with both `null`.
 ### 26.4 Commands (exact behaviour)
 | command | behaviour |
@@ -841,6 +971,12 @@ console executes with both `null`.
 | `stopall` / `resume` | `runner.stopAll()` (cancel all + pause every automatic trigger) / `runner.resume()` |
 | `runes` | one line per stored rune: `q y r · label · triggers|OFF · running|idle` (first 50) |
 | `rune q y r on|off` | sets `enabled` (creates the entry); off also cancels its script |
+| `physics status\|on\|off` | v0.8, needs `ctx.physics`: `status` → `physics.statusText()`; `off` / `on` → `setPaused` ("block physics paused: nothing falls, flows or explodes until physics on (not saved)" / "block physics running"); a lone feature name reports `<f> is on\|off` |
+| `physics <falling\|water\|collapse\|explosions> on\|off` | `setSwitch` → `<f> on\|off (saved with this world)` or `(already)`; an unknown feature fails |
+| `undo` | `physics.undo()`: its message (ok) or failure (`nothing to undo …`, `… too late to undo`) |
+| `ignite q y r` | y in range and the cell loaded, then `physics.explosions.ignite(q, y, r)` → its `{ ok, message }` |
+| `drain [radius]` | radius `0..DRAIN_MAX_RADIUS` (default DRAIN_DEFAULT_RADIUS) around the rune's cell in scripts, the player's cell (`worldToHex`, `floor(y)`) in the console → `physics.fluids.drain(q, y, r, radius)` |
+All four fail with `block physics is not available here` when the context has no `physics`.
 **Area commands** (fill/hexfill/hexring) validate BEFORE writing anything: `total > MAX_FILL_CELLS` → `too large: N cells (max M)`;
 `rune_block` as the fill block → `use setblock for rune blocks`; `bedrock` → `bedrock cannot be placed`; any addressed `y` outside `0..WORLD_HEIGHT−1` → refused; ATOMIC across
 chunks: every covered chunk column must be loaded, else `N cells are in unloaded chunks (nothing changed)`; `world.editCount + total >
@@ -874,6 +1010,7 @@ export class RuneRunner {
   trigger(key, source, { wave?, hops? } = {}) → { ok, reason? }
   runConsoleLine(line) → { ok, message }   // synchronous; an area command's job is queued as a `console#N` Running
   cancel(key); cancelAll(); stopAll() (cancelAll + paused = true); resume(); reset(); seedStep(); isRunning(key); getLastRun(key); update(dt) → { executed, fired }
+  hasActiveJobs() → boolean   // v0.8: some running script / console job still has an area job (block physics batches its support seeds)
 }
 ```
 ### 27.1 Semantics (normative)
@@ -956,6 +1093,8 @@ BLACK_HOLE_MAX_EATS_PER_FRAME (4) cells were eaten this call, `timer += BLACK_HO
 hole scans EAT_OFFSETS from `offset` for the first `canSwallow` cell — stopping (no eat) at a cell whose column is unloaded — and
 sets it to AIR via `setBlock`, reporting the old id. Over budget: `timer = 0` so it goes first-ready next frame.
 
+v0.8: main's `blackHoleWorld.setBlock` writes LAZILY (`world.setBlock(q, y, r, id, true)`), and every eat reaches block physics
+through onBlockChange like any removal (support seeds, gravity / water triggers).
 main (§23): one `BlackHoles` for the session; `startLoading` calls `loadFromEdits(world.edits)` right after wiring
 `world.onBlockChange`, whose handler forwards every change to `blackHoles.onBlockChange` first. `stepPlaying` writes
 `pullAt(player.x, player.y + PLAYER_HEIGHT/2, player.z)` into `input.pullX/Y/Z` before `stepPlayer`, then (if any hole exists)
@@ -988,7 +1127,8 @@ export class Pigs {
 }
 ```
 AI per frame: timer expiry alternates idle (1–5 s) and walk (1.5–5.5 s, new heading within ±π); a walking, grounded pig whose
-cell 0.8 ahead is liquid or has no solid ground within two cells below its feet stops and turns away. Turning is capped at
+cell 0.8 ahead is water it would swim in (`physics.isSwimWater`: two cells deep, or a surface more than WADE_DEPTH above the floor
+— v0.8; shallow films are walked through) or has no solid ground within two cells below its feet stops and turns away. Turning is capped at
 PIG_TURN_RATE; it moves forward only when within 1.2 rad of its heading, at sneak speed when walking and walk speed when fleeing,
 and jumps when it hit a wall or is in water. `walkPhase` advances by 4 × horizontal distance (mod 2π); `oinkIn` resets to 6–18 s.
 
@@ -1019,6 +1159,8 @@ export function resolveBodies(bodies, getBlock) → contacts   // pairs overlapp
 1. **Carry**: for each body with `carrier` set last frame that is still in `bodies`, `displaceBody` by the carrier's movement since
    `carrierAt`; then `carrier = null`.
 2. **Separate**, BODY_PASSES (3) sweeps over pairs i < j (stop early when a sweep finds nothing). `upper` = the body with the higher feet.
+   (v0.8) A pair whose bodies have the same non-null `group` (PlayerState.group) is skipped: lit barrels (§37) push the player and
+   pigs but never each other.
    - No horizontal overlap → nothing. No vertical overlap → nothing, except a REST: gap < 0.01, horizontal overlap > 0.05 and
      `upper.vy ≤ lower.vy` → stand (below).
    - STAND when vertical < horizontal, horizontal > 0.05 and `upper.y ≥ lower.y + 0.5·height(lower)`: `displaceBody(upper, 0,
@@ -1063,12 +1205,548 @@ volume 1 − d/10 (`audio.playCrackle`). `placeSelected` refuses a campfire that
 Pigs: a walking pig treats a campfire in the cell ahead as unsafe; a pig whose feet cell is a campfire (and is not already hurt) is
 `hit` from the cell centre and listed in `pigs.scorched` for that update (main plays a squeal within 16 units).
 
+## 33. `src/blockphysics.js` (PURE) — the block-physics scheduler, v0.8
+
+One `BlockPhysics` per World. It owns the feature modules and every queue; features plug in through the registry and never
+edit this file. Rationale and measurements: `docs/DESIGN-physics.md` §2; the plug-in reference is its §10.
+```js
+export const RINGS = ['fall', 'water', 'misc'], RING_DELAY = [1, WATER_TICKS, 1]       // ticks from schedule() to update
+export const FEATURES = ['falling', 'water', 'collapse', 'explosions']
+export const WRITE_EXTERNAL = 0, WRITE_PHYSICS = 1, WRITE_QUIET = 2                      // the `mode` triggers receive
+export const CAUSE_WORLD = { kind: 'world' }, CAUSE_PHYSICS = { kind: 'physics' }, CAUSE_AREA = { kind: 'area' }
+export class SeedQueue        // support seeds: priority lane + normal lane, cell-level dedupe; size, push(seed), shift(), peek(), clear()
+export class SaveOverlay      // copy-on-write save view: peek(q,y,r), set(q,y,r,id), toJSON() → EditsJSON (§33.9)
+export class BlockPhysics {
+  constructor(world, hooks = {}, { now }?)   // hooks: PhysicsHooks (§33.7), missing ones are no-ops; now: ms clock (default world._now)
+  world; hooks; ctx (RuleContext, §33.3); fallers; fluids; support; trees; explosions   // the feature modules (§34–§37)
+  switches { falling, water, collapse, explosions }; switchVersion; paused; tickCount; time; stats; seeds (SeedQueue); lastEvent
+  registerRule(name, { ring | rings, feature?, ids?, update(ctx, q, y, r, id) }); unregisterRule(name); ruleNames(ring)
+  addTrigger(name, feature, fn(q, y, r, prev, next, mode)); removeTrigger(name)
+  addReseeder(name, feature, ids, fn(ctx, q, y, r, id)); removeReseeder(name)
+  schedule(ring, q, y, r, delay?) → boolean; queued(ring?) → n; isQueued(ring, q, y, r); get parkedCount
+  isEnabled(feature); setSwitch(name, on) → changed; setPaused(on); exportSwitches(); importSwitches(raw)
+  onBlockChange(q, y, r, prev, next); onChunkGenerated(cq, cr)          // main forwards World's hooks
+  seedSupport(cells, { priority?, cause?, removed? }) → queued; seedRemoval(q, y, r, prev, opts?); collectAreaSeed(q, y, r, prev);
+  flushAreaSeeds(); get areaSeedCount
+  asPlayer(fn); withCause(cause, fn); get cause
+  beginEvent(kind, cause?) → PhysicsEvent; endEvent(); get openEventId; enterEvent(id) → token; exitEvent(token); withEvent(id|ev, fn);
+  get canUndo; undo() → { ok, message, restored }
+  step(dt); tick(); renderItems() → { items: RenderItem[], count }; bodies(out = []) → out; exportEdits() → EditsJSON;
+  status(); statusText(); clear()
+}
+```
+### 33.1 Tick and rings
+1. `step(dt)`: `time += dt` (always); nothing else while `paused`; `acc += dt`; if `acc ≥ PHYSICS_TICK_S`: `acc = min(acc −
+   PHYSICS_TICK_S, PHYSICS_TICK_S)` and run ONE `tick()`; then `fallers.step(dt)`, `trees.step(dt)`, `explosions.step(dt)`.
+2. A ring is a FIFO of `packCell` keys with their due tick, deduplicated per ring (`schedule` of a queued cell returns false and keeps
+   the earlier slot). Every entry of a ring has the same delay, so a ring is sorted by due tick: `tick()` pops from the head while
+   `due ≤ tickCount`. `schedule` refuses y outside 0..WORLD_HEIGHT−1; `delay` (integer ≥ 1) overrides the ring's delay.
+3. `tick()`: `tickCount++`; flush the area seeds when `!hooks.areaJobsActive()` (§33.6); drain `fall`, then `misc`; if the budget is
+   not spent and collapse is on and (`seeds.size > 0 || support.busy`) → `support.step(ctx, seeds, MAX_SUPPORT_VISITS_PER_TICK)`;
+   then drain `water`. Starvation guard (integration, §38.4): when the budget IS spent with a collapse pending, a counter counts the
+   ticks in a row; on the SUPPORT_STARVE_TICKS-th one (reset after it, and whenever support runs or nothing is pending) support runs
+   anyway with `maxVisits = SUPPORT_STARVED_VISITS` (its own deadline check then stops it within 256 visits or one component).
+4. Budget: one per tick across all rings: stop when `MAX_CELL_UPDATES_PER_TICK` updates ran, or — checked before every 32nd update
+   — when `now() − start ≥ PHYSICS_TICK_BUDGET_MS`. Leftovers stay at the head (FIFO: nothing starves; there is NO per-chunk cap).
+   `ctx.deadline = start + PHYSICS_TICK_BUDGET_MS` for the support search (which checks it every 256 visits).
+5. Running a popped cell: `id = world.peekBlock`; UNLOADED → park it on its own chunk (§33.4). Otherwise every rule of that ring, in
+   registration order, whose feature switch is on and whose `ids` include `id` runs `update(ctx, q, y, r, id)`; after a rule that
+   wrote, later rules see the re-read id. A rule that throws is skipped (one `console.warn` per rule); the tick goes on.
+### 33.2 Rules
+`registerRule(name, spec)` replaces a rule of the same name. `ring` (or `rings`) names one or more rings; `feature` gates it (null =
+always); `ids` limits it (omitted = every id, including AIR). The gravity rule (§34) is `fall`/'falling'/[SAND, RED_SAND, GRAVEL,
+CAMPFIRE]. Water (§35) registers ONE rule on `['water', 'fall']`; ignition (§37) on `misc` with [BLAST_BARREL].
+### 33.3 RuleContext (`physics.ctx`, one object)
+`physics, world, hooks, tick, time, deadline, now()`, `peek(q, y, r)` (World.peekBlock; remembers the last UNLOADED cell),
+`write(q, y, r, id)` / `writeQuiet(q, y, r, id)` → `'ok' | 'failed' | 'capped'`, `schedule(ring, q, y, r, delay?)`, `park(q?, r?)`,
+`random()` (mulberry32 seeded from the world seed), `say(text)`, `sound(name, x, y, z, volume = 1)`, `particles(kind, x, y, z,
+count = 8, opts)`, and the getters `fallers, fluids, support, trees, explosions`.
+**Writes** (`_write`): y outside 0..127 or an UNLOADED cell → `'failed'`; current id === id → `'ok'` (nothing written);
+`world.editCount ≥ MAX_TOTAL_EDITS && !world.hasEdit(cell)` (it would add a NEW entry) → `'capped'`, with ONE chat line through
+`hooks.say` (re-armed once editCount < 95 % of the cap); else `world.setBlock(q, y, r, id, true)` (lazy) with the write mode set for
+the triggers (`write` → WRITE_PHYSICS, `writeQuiet` → WRITE_QUIET) and, when an event is open (§33.8), recorded into it.
+### 33.4 Parking and re-seeding
+1. `ctx.park()` parks the CURRENT update on the chunk of the last UNLOADED cell `ctx.peek` returned (or of column (q, r) when given):
+   it leaves the ring and waits in `parked[chunkKey]` (a Set of `ringIndex·2^50 + key`), at most MAX_PARKED_UPDATES in total
+   (beyond: dropped and counted in `parkedDropped` — re-seeding covers them).
+2. `onChunkGenerated(cq, cr)` re-queues every update parked on that chunk (due next tick), then hands every EDITED cell of the chunk
+   whose id a reseeder lists to `fn(ctx, q, y, r, id)` (reseeders of switched-off features are skipped).
+3. Built-in reseeders: 'gravity' (falling): SAND/RED_SAND/GRAVEL/CAMPFIRE over a fall-through cell → `fall`; 'water' (water):
+   WATER → its open neighbours (AIR, CAMPFIRE, FLOW, FALL) per §33.5.2, FLOW/FALL → `scheduleWaterAround` (fluids.js replaces it
+   by name with a superset, §35.3); 'ignite' (explosions):
+   BLAST_BARREL with a CAMPFIRE among its 8 neighbours → `misc`.
+### 33.5 Triggers (`onBlockChange`, every change from any source)
+1. Registered triggers run in order, each only while its feature is on, with `(q, y, r, prev, next, mode)`.
+2. Built-ins: **'gravity'** (falling): `!isFallThrough(prev) && isFallThrough(next)` and the cell above is a gravity block or a
+   campfire → `fall` (above); `next` is a gravity block or a campfire and the cell below is fall-through → `fall` (this cell).
+   **'water'** (water): `isWater(prev) || isWater(next)`, or fall-through-ness or solidity changed and a neighbour is water →
+   `scheduleWaterAround(q, y, r)`: the cell and its 8 neighbours, each only if it is water, AIR or CAMPFIRE, into `fall` when it is
+   FALL or a non-source cell with water above, else into `water`. **'ignite'** (explosions): `next === CAMPFIRE` → every BLAST_BARREL
+   neighbour into `misc`; `next === BLAST_BARREL` with a CAMPFIRE neighbour → itself into `misc`.
+3. Then the support seed (§33.6). Neighbours are the 6 HEX_DIRS sides, then above, then below.
+### 33.6 Support seeds (the search itself is support.js, §36)
+1. A change with `isLoadBearing(prev) && !isLoadBearing(next)` while collapse is on: mode QUIET → nothing (physics' own crumble /
+   topple / blast removals queue ONE boundary search themselves); mode EXTERNAL with no cause set and `hooks.areaJobsActive()` →
+   `collectAreaSeed`; otherwise `seedRemoval(q, y, r, prev, { cause, priority: cause.kind === 'player' })` with cause =
+   the asPlayer / withCause cause, else CAUSE_WORLD (external) / CAUSE_PHYSICS.
+2. `seedRemoval` seeds the load-bearing neighbours (none → nothing) with `removed: [[q, y, r, prev, wasAnchor]]`, where wasAnchor =
+   `y === 0 || prev === BEDROCK || (isSolid(prev) && y ≤ terrainHeightAt(q, r) && originAt(q, y, r) === prev)` — the removed cell
+   was untouched terrain.
+3. `seedSupport(cells, opts)` queues a SupportSeed `{ cells (copy), removed (default []), cause (default: current cause or
+   CAUSE_PHYSICS), priority, event: openEventId, tick }`; dropped while collapse is off. The SeedQueue omits cells already pending in
+   an earlier seed, drops a seed left with no cells and no removals, holds ≤ MAX_PENDING_SUPPORT_SEEDS (`dropped` counts the rest);
+   `shift()` returns the oldest priority seed, else the oldest normal one, and its cells stop being pending.
+4. Area batching: `collectAreaSeed` appends the removal and its load-bearing neighbours (deduped); `flushAreaSeeds()` (automatic at
+   the start of the first tick with no active area job) queues them as ONE seed with cause CAUSE_AREA.
+5. Switching collapse off clears every pending seed and the area batch.
+### 33.7 Hooks (PhysicsHooks)
+`say(text)`, `areaJobsActive()`, `bodies()` (player + pigs in loaded chunks; never buried by a landing), `player()`, `sound(name, x, y,
+z, volume)` with names 'thud' | 'splash' | 'boom' | 'hiss' | 'creak' | 'fizzle' | 'crackle' | 'break:<soundGroup>', `particles(kind,
+x, y, z, count, opts)` (§34.5), `knock(body, vx, vy, vz, fromX, fromZ)` (default: add the velocity, onGround = false).
+### 33.8 Switches, pause, causes, events and undo
+1. `setSwitch` changes a FEATURES switch (`switchVersion++`) and calls the owning module's `onSwitch(on)` (falling → fallers, water
+   → fluids, collapse → support and trees, explosions → explosions). A switched-off feature drops its triggers, reseeders and rules
+   (queued updates are skipped when popped) — switching it on again never acts on what happened meanwhile. `importSwitches(raw)`:
+   each switch = `raw[name]` when boolean, else true; it does not bump switchVersion. New worlds: all on; saves without `physics`:
+   collapse off (main, §23).
+2. `paused` (console `physics off`): no ticks, entities frozen; triggers still queue; not saved.
+3. `beginEvent(kind, cause)` makes a new PhysicsEvent `{ id, kind, cause, time, cells: Map<packCell, prev·256 + wrote>, truncated }`
+   the ONLY undoable one (`lastEvent`) and records every write into it until `endEvent()` (nestable). A cell keeps the id from before
+   the event's first write and the id of its last write; beyond UNDO_MAX_CELLS cells `truncated = true`. `openEventId` is stamped on
+   fallers / tumblers / seeds created meanwhile; `enterEvent(id)` / `withEvent(id, fn)` record later writes (landings) into event `id`
+   only while it is still `lastEvent`.
+4. `undo()`: no event → `{ ok: false, 'nothing to undo (only the last explosion, collapse or falling tree can be undone)' }`; older
+   than UNDO_WINDOW_S of `time` → refused (`… too late to undo`) and forgotten. Else `lastEvent = null`; `cancelEvent(id)` on fallers,
+   trees and explosions (entities in flight removed, lit barrels refunded); then every recorded cell whose current id is still the id
+   the event wrote — or is water-family where the event wrote AIR (§38.3) — is written back (quiet, lazy, ignoring the edit cap).
+   Message: `undid the <kind>: restored N block(s)[, removed M still in flight][ (K changed since, left alone)][ (U in unloaded
+   chunks)]`.
+### 33.9 Saving (`exportEdits`, never touches the live world)
+`overlay = new SaveOverlay(world)`; `fallers.settleInto(overlay)`, `trees.settleInto(overlay)`, `explosions.settleInto(overlay)`;
+return `overlay.toJSON()`: world.edits overridden by the overlay's cells, where an edit of FLOW_1..6 / FALL is DROPPED when its origin
+is AIR or WATER (the cell reloads as generated: a refilled hole in a lake is lake again) and saved as AIR otherwise (sources and
+the AIR next to natural water re-flow through the 'water' reseeder on load, §35.3). `overlay.peek` = overlay cell, else
+`world.peekBlock`; `overlay.set` refuses y outside 0..127.
+### 33.10 Rendering and status
+`renderItems()` fills a pooled list `{ items, count }` (`RenderItem = { id, x, y, z, rx, ry, rz, scale }`, centre + Euler 'YXZ' +
+uniform scale) from `fallers.renderItems(push)`, `trees.renderItems(push)`, `explosions.renderItems(push)` with
+`push(id, x, y, z, rx = 0, ry = 0, rz = 0, scale = 1)`. `bodies(out)` appends `explosions.bodies(out)`. `status()` → `{ paused,
+switches, queued: { fall, water, misc }, parked, seeds, fallers, tumblers, trees, litBarrels, edits, tick, lastTickMs,
+lastTickUpdates, canUndo }`; `statusText()` is its one-line form (console `physics status`).
+
+## 34. `src/fallingblocks.js` (PURE), `src/fallingRenderer.js` and `src/particles.js` (three) — falling blocks, v0.8
+
+```js
+export const GRAVITY_RULE_IDS        // [SAND, RED_SAND, GRAVEL, CAMPFIRE]
+export class FallingBlocks {         // physics.fallers
+  constructor(physics)               // registers the 'gravity' rule (fall ring, feature falling)
+  count; get tumblerCount; tumblers: Tumbler[]
+  spawn(id, q, y, r, { vy = 0, event = openEventId }?) → animates?   // a column faller with its bottom at y; the cell is NOT touched
+  crumble(cells: [q,y,r][], { event }?) → n                           // writeQuiet AIR (lowest first), then drop them (§34.2)
+  settleNow(id, q, y, r, { event }?) → placed                         // instant column drop with the landing rules
+  spawnTumbler(id, x, y, z, vx = 0, vy = 0, vz = 0, { spin?: [wx,wy,wz], persistent?, event?, data? }?) → Tumbler|null
+  removeTumbler(t) → boolean; cancelEvent(id) → n; reset(); faller(i) → { id, q, y, r, vy, event }|null
+  step(dt); renderItems(push); settleInto(overlay)
+}
+/** Tumbler = { id, body (createBody FALLER_RADIUS × FALLER_HEIGHT), rx, ry, rz, wx, wy, wz, scale, persistent, event, data } */
+```
+### 34.1 Gravity rule (`fall` ring)
+For a cell holding a gravity block or a campfire: below = `ctx.peek(q, y−1, r)`; UNLOADED → park; not fall-through → nothing. A
+CAMPFIRE breaks: `ctx.write(AIR)`, 10 'smoke' particles at y + 0.3, sound 'break:wood'. A gravity block drops its whole column:
+from y upward while the cells are gravity blocks (at most MAX_COLUMN_FALL), each is written AIR (stop at the first refused write)
+and becomes a faller at its own cell — so the column falls together, at one speed. When fewer than n slots are free, the LOWEST
+(n − free) settle instantly (`settleNow`) and the rest animate. Falling into a campfire or any water passes through it (v0.8 water,
+§35.6: sand sinks through sources to the bottom; the landing cell's water is crushed).
+### 34.2 Column fallers
+1. Kept in typed arrays (id, q, r, y, vy, event) sorted by y (insertion sort per frame) and processed LOWEST FIRST, so a stack landing
+   in one frame piles up exactly. Frozen while `!world.hasChunkAtCell(q, r)`.
+2. Per frame: `vy = max(vy + GRAVITY·dt, TERMINAL_VELOCITY)`, `y1 = y0 + vy·dt`. If the cell containing the bottom
+   (`c0 = floor(y0)`, when y0 is not an integer) is not fall-through, land at `c0 + 1`. Otherwise sweep `b = c0 − 1 … floor(y1)`
+   (b ≥ 0) and land at `b + 1` on the first cell that is not fall-through. No landing and `y1 < 0` → removed. Else `y = y1`.
+3. **Landing** in cell C (`_placeLanded`): if C is not fall-through, move up (≤ 4 cells) to the first fall-through cell, else break.
+   For a solid id, every body in `hooks.bodies()` that `playerIntersectsBlock` C is lifted to `findFreeY(world + C, x, z, floor(y)+1,
+   3, its radius, its height)`; if any has no room the block BREAKS (dust, nothing placed). Then `ctx.write(C, id)` inside
+   `enterEvent(faller.event)`; `'capped'` / `'failed'` → break. Lifted bodies: `y = freeY`, `vy = max(vy, 0)`. Placed: dust (the first
+   LANDING_DUST_PER_FRAME landings of a frame) and one 'thud' per frame at the landing nearest `hooks.player()`.
+4. `crumble(cells)`: AIR / UNLOADED cells skipped; sorted by (y, q, r); removed with `ctx.writeQuiet(AIR)` inside
+   `enterEvent(event)`; the lowest `max(0, n − (MAX_FALLING − count))` settle instantly, the rest animate. `spawn` beyond MAX_FALLING
+   settles instantly. `settleNow` drops from `floor(y)` (clamped) while the cell below is fall-through; below 0 → gone.
+5. Saving (`settleInto(overlay)`): fallers lowest first; from `floor(y)` move up past non-fall-through overlay cells, then down while
+   the cell below is fall-through, and `overlay.set` the id there (columns in unloaded chunks are skipped). Debris is not saved;
+   persistent tumblers are their owner's (explosions saves lit barrels).
+### 34.3 Tumblers
+`MAX_TUMBLING` at once (`spawnTumbler` → null beyond; callers turn extra debris into dust). Per frame (frozen in unloaded chunks):
+`vy = max(vy + GRAVITY·dt, TERMINAL_VELOCITY)`; velocity × `TUMBLE_AIR_DRAG^(60·dt)`; on the ground horizontal velocity and spin ×
+`TUMBLE_GROUND_FRICTION^(60·dt)`; move with `displaceBody` in `n = ceil(max|Δ| / TUMBLE_SUBSTEP)` equal substeps; rotation += spin·dt.
+A non-persistent tumbler that hits a floor while moving down vanishes in 10 dust particles; any tumbler below y = −16 is removed.
+### 34.4 `createFallingRenderer(scene, atlasTexture)` → `{ sync(items, count = items.length), setFlash(x, y, z, intensity), count(), meshCount(), dispose() }`
+One InstancedMesh per (block id, render layer) from `mesher.buildCellMesh(id)` (ids with no geometry — CAMPFIRE — draw nothing),
+three Lambert materials like the chunks' (opaque; cutout alphaTest 0.5 DoubleSide; translucent transparent, depthWrite false,
+DoubleSide, renderOrder 1) on the shared atlas texture (never disposed here), `frustumCulled = false`, DynamicDrawUsage. Capacity
+starts at 16 and doubles (a new InstancedMesh on the same geometry). `sync` composes position (x, y, z), `Euler(rx, ry, rz, 'YXZ')`
+and scale for items[0 .. count); meshes with no instance are hidden. One PointLight (0xffd49a, distance 28, decay 1.4, intensity 0)
+is created at construction for the explosion flash (a constant light count).
+### 34.5 `createParticles(scene, { capacity = PARTICLE_CAPACITY, random })` → `{ emit, update(dt), count(), clear(), dispose(), points }`
+ONE `THREE.Points` (ShaderMaterial: world-unit point sizes, soft round sprites, terrain fog, transparent, depthWrite false,
+frustumCulled false); `emit(kind, x, y, z, count = 8, { id?, color?, spread = 0.35, speed = 1, vx, vy, vz })` with kinds
+`PARTICLE_KINDS = ['dust', 'leaves', 'smoke', 'sparks', 'steam']` overwrites the oldest particle when full. Dust / leaves with `id`
+take `blockParticleColor(id)`: the sRGB mean of the block's top tile, × the plains BIOME_TINT when the mesher tints that face. `update(0)`
+freezes; a particle fades over its life and is dead (size 0, alpha 0) after it; the Points is hidden while none live.
+
+## 35. `src/fluids.js` (PURE) — flowing water, v0.8
+
+Rationale and measurements: `docs/DESIGN-physics.md` §4. Water is a FAMILY (§5): WATER is a **source** (it never changes by itself);
+WATER_FLOW_1..6 (level k) and WATER_FALL (water with water above it) are derived from their neighbourhood, never placed by hand and
+never saved (§33.9). Wired elsewhere: the scheduler's 'water' trigger (§33.5), main's WATER-selected ray, source removal and current
+pulls (§23), `drain` (§26), the surfaces in the mesher (§10.2) and physics (§12.1). A lit barrel touching water is put out by
+explosions.js (§37), which reads `isWater` itself — fluids exports no hook for it.
+```js
+export const WATER_RULE_IDS          // [AIR, CAMPFIRE, WATER, WATER_FLOW_1..6, WATER_FALL]
+export function isFlowingWater(id)   // WATER_FLOW_1..6
+export function isWaterFloor(id)     // water standing on it spreads sideways: id === WATER || isSolid(id)   (UNLOADED → false)
+export function flowId(level)        // WATER_FLOW_level for 1..6 (floored, ≥ 7 → FLOW_6); < 1 → AIR
+export class Fluids {                // physics.fluids
+  constructor(physics)               // registers rule 'water' { rings: ['water', 'fall'], feature: 'water', ids: WATER_RULE_IDS },
+                                     //   trigger 'water-floor' (feature water) and replaces the reseeder 'water' (§35.3)
+  maxDrainRadius;                    // DRAIN_MAX_RADIUS
+  stats;                             // { updates, writes } of the rule
+  drain(q, y, r, radius) → { ok, message }
+  currentAt(x, y, z, out) → out [ax, ay, az]
+  reset(); onSwitch(on)              // no state is held between updates: the world is the state
+}
+```
+### 35.1 Definitions
+`E(id) = waterLevel(id)`: 7 for WATER and FALL, k for FLOW_k. A water cell n **spreads** (feeds its six side neighbours) iff the cell
+below n is a floor (`isWaterFloor`): solid or a WATER source — never over FALL, FLOW, AIR, a campfire or UNLOADED. *This one predicate
+bounds waterfalls: falling water only spreads where it lands.*
+### 35.2 The rule (`update(ctx, q, y, r, id)` on the `water` and `fall` rings)
+Every input is read before anything is written. A side neighbour that is UNLOADED: when `id` is water, `ctx.schedule('water', that
+cell)` (it parks on its own chunk), then `ctx.park(its q, r)` and return — both re-run when that chunk is generated. The target:
+1. `id === WATER` → WATER.
+2. Otherwise, with `sources` = the WATER side neighbours and `fed = max(E(n) − 1)` over the side neighbours n that spread:
+   a. `id` is FLOW_k or FALL, `sources ≥ WATER_SOURCE_NEIGHBOURS` (3) and the cell below is a floor → **WATER** (infinite source);
+   b. else the cell above is water → FALL;
+   c. else `fed ≥ 1` → FLOW_fed;
+   d. else AIR (a CAMPFIRE stays a CAMPFIRE).
+3. `target !== id` → `ctx.write(target)`; when 'ok': a replaced CAMPFIRE → `ctx.sound('hiss', centre)` + 12 'steam' particles; an empty
+   cell that became FALL over a floor, or FLOW_6 → `ctx.sound('splash', centre, 0.8 | 0.4)` (main throttles). Then return (also on
+   'capped': physics holds water back). The trigger queues the cell below new water on the `fall` ring, so **a waterfall advances
+   exactly one cell per tick**.
+4. Unchanged, the target is WATER or FLOW_k, `y > 0` and the cell below is AIR, CAMPFIRE or FLOW → `ctx.write(below, FALL)` (a campfire
+   there: hiss + steam).
+Consequences (`tests/unit/fluids.test.js`): one source on flat ground → exactly 126 FLOW cells, level `7 − hex distance`; one source on a
+10-high, radius-3 plateau → 571 water cells (240 falling), and none — with every edit pruned — once the source is removed; two adjacent
+sources stay two sources (their two shared neighbours see only 2); three around a hole make 7 and stop; a hole next to a straight sea
+edge fills (FLOW_6, over FALL when deeper); a drained patch of open sea refills to sources and leaves no edits.
+### 35.3 Trigger and reseeder
+1. **'water-floor'** (feature water): `isWaterFloor(prev) !== isWaterFloor(next)` and the cell above is water → wake each side neighbour of
+   that water cell which is AIR, CAMPFIRE, FLOW, FALL or UNLOADED. (*The scheduler's 'water' trigger covers the changed cell and its 8
+   neighbours; the rule also reads the cells below its side neighbours.*) **Wake** = `schedule('fall', …)` for FALL or a non-source cell
+   with water above, else `schedule('water', …)`.
+2. **Reseeder 'water'** (replaces the built-in of §33.4 by name; feature water) — EDITED cells of a generated chunk: AIR → wake it when the
+   cell above or a side neighbour is water, or a side neighbour is UNLOADED (*a hole dug beside the sea: flow is never saved*); WATER → wake
+   its 8 neighbours that are AIR / CAMPFIRE / FLOW / FALL / UNLOADED; FLOW / FALL → wake itself and those neighbours. A woken UNLOADED cell
+   parks on its own chunk and runs when it loads.
+### 35.4 Surfaces: rendering, wading and swimming
+`waterSurfaceHeight(id, above)` (blocks.js, §5) is the one surface rule. The mesher draws it (§10.2: lowered tops always drawn, nothing
+between two water cells but the strip of the higher surface above the lower one). physics.js (§12.1): a body is `inWater` (swims) only
+when the surface in its feet cell is more than `WADE_DEPTH` (0.4) above its feet or its chest point is under a surface; shallower water is
+**wading** — walking and jumping as on land at `WADE_SPEED_FACTOR` (0.85); `headInWater` = the eye point under a surface
+(`isUnderSurface(getBlock, q, py, r)`). So a level-1..3 film is wading, level ≥ 4, sources and falling water are swimming. Pigs avoid only
+water they would swim in (`isSwimWater(getBlock, q, y, r)`: the water at y, or one step down at y − 1, is two cells deep or its surface is
+more than WADE_DEPTH above its floor; §30).
+### 35.5 Taking water away, drain, currents
+- WATER selected: the crosshair ray also stops on WATER sources — unless the eye cell is water (the ray would stop at once) — and
+  left-click sets the source to AIR (`blockPhysics.asPlayer`, main §23); the flow it fed drains by itself; in open sea the hole refills
+  (rule 2a).
+- `drain(q, y, r, radius)`: `radius` an integer 0..DRAIN_MAX_RADIUS (else `{ ok: false }`). Every water cell with hex distance ≤ radius from
+  (q, r) and |dy| ≤ radius (y clamped to 0..127), in loaded columns, → `ctx.write(AIR)`, stopping at 'capped'. Message (`ok: true`):
+  `no water to drain within R`, else `drained N water cell(s) within R` + ` — the water around it flows back in` (unedited sources were
+  removed and water remains in the ring at R + 1 or the layer above) + ` (stopped: the world already has too many edited cells)` +
+  ` (K column(s) not loaded)`.
+- `currentAt(x, y, z, out)`: (x, y, z) = a body's feet + 0.1 (main adds it to the player's pull; pigs through `pigWorld.pullAt`). Zero
+  unless the water switch is on; in FALL `[0, −WATER_CURRENT, 0]`; in FLOW_k `WATER_CURRENT` along the normalised sum of the directions
+  (FACE_NORMALS) of the side neighbours with the lowest level below k (solid and UNLOADED cells skipped, non-water counts 0); else zero.
+### 35.6 Saving and sinking
+FLOW / FALL are never saved (§33.9: dropped when the origin is AIR or WATER, else AIR); the reseeder resumes the flow on load. A WATER
+source is fall-through (§5): sand, gravel, debris and logs sink to the bottom and crush the water cell they land in; a hole left in a lake
+refills (rule 2a), so no air pocket persists.
+
+## 36. `src/support.js` and `src/trees.js` (PURE) — collapsing structures and falling trees, v0.8
+
+Rationale and measurements: `docs/DESIGN-physics.md` §5–§6. The scheduler side (seeds, `support.step` in the tick) is §33.6.
+```js
+// support.js
+export const COLLAPSE_TIP            // 'Builds must touch the ground! (Esc → Physics to turn collapse off)'
+export function isLoadBearing(id)    // isSolid && !isLeaves && id !== RUNE_BLOCK   (UNLOADED, AIR, liquids, CAMPFIRE, BLACK_HOLE → false)
+export function isSelfAnchored(id)   // RUNE_BLOCK or BLACK_HOLE: never fall, hold nothing up
+export function isAnchorCell(world, q, y, r)   // y === 0 || BEDROCK || world.isNaturalGround(q, y, r)
+export class SupportSolver {         // physics.support
+  constructor(physics)               // registers the trigger 'support' (feature collapse, §36.1.5)
+  get busy; tipSaid; stats { batches, searches, visits, floating, crumbled, toppled, restarts }
+  step(ctx, seeds: SeedQueue, maxVisits) → visits; reset(); onSwitch(on)       // off → reset()
+}
+/** FloatingComponent = { cells: [q, y, r, id][], cause: Cause, event: number } */
+// trees.js (imports isLoadBearing from support.js)
+export function tiltEuler(kx, kz, theta, out = [0, 0, 0]) → [rx, ry, rz]   // Euler 'YXZ' of a rotation by θ about axis (kx, 0, kz)
+export function shakeAngle(t) → θ                                          // tilt t s into the shake (§36.5.3)
+export class Trees {                 // physics.trees
+  constructor(physics); maxToppling (= TREE_MAX_TOPPLING); get count (falling + waiting); get decayCount
+  get jobs → { dir, phase: 'queued'|'shake'|'fall', theta, logs, cells, event }[]   // read-only view (tests, diagnostics)
+  stats { toppled, impacts, decayed }
+  test(component) → TreeInfo|null    // TreeInfo = { logs: [q,y,r,id][], leaves: [q,y,r,id][], cut: [q,y,r], pivot: [x,y,z] }
+  topple(tree, component, { cause?, event? }) → boolean   // false → the caller crumbles the component
+  decayHangingLeaves(cells, { event? }?) → n               // after a crumble (§36.6.1)
+  step(dt); renderItems(push); settleInto(overlay); cancelEvent(id) → n; reset(); onSwitch(on)
+}
+```
+### 36.1 Batches and the search
+1. `step(ctx, seeds, maxVisits)`: when no batch is open and `seeds.size > 0`, a BATCH takes every pending seed (`seeds.shift()` until
+   null: the priority lane first) with a fresh memo (a supported set and a floating map). Its start cells, deduplicated in this order:
+   each seed's `cells`, then the 8 neighbours of each of its `removed` cells (the queue leaves out cells already pending elsewhere).
+2. A start cell already in the memo is skipped; UNLOADED, or load-bearing and `isAnchorCell` → supported; not load-bearing →
+   skipped. Otherwise a DFS starts from it: neighbours are pushed in the order above, the 6 sides (HEX_DIRS), below — so the cell
+   below is popped first, then the sides, then the one above. A popped cell that is no longer load-bearing is skipped; else it counts
+   one visit and each neighbour with y in 0..127 not pushed yet is checked: in the supported memo, UNLOADED, or load-bearing and an
+   anchor → the search ends SUPPORTED; load-bearing → pushed. `SUPPORT_LIMIT` visits in one search → SUPPORTED. Empty stack →
+   FLOATING.
+3. SUPPORTED: every pushed cell joins the supported memo. FLOATING: the pushed cells are one component (with the seed of its start
+   cell). A cell that already belonged to an earlier component marks that one stale.
+4. Budget: a step stops when `maxVisits` visits ran or — checked every 256 visits — `ctx.now() ≥ ctx.deadline`. The batch, memo and
+   the current DFS are kept (`busy` is true until the batch has collapsed what it found); when a batch ends and budget is left, the
+   next one starts.
+5. Trigger 'support' (collapse): while a batch is open, an EXTERNAL write (mode `WRITE_EXTERNAL`) that makes a cell load-bearing
+   restarts the current DFS when the cell touches one of its pushed cells (`stats.restarts`), and marks a found component next to it
+   stale (never collapsed). Physics' own writes are ignored; removals need nothing (they seed the next batch).
+### 36.2 Which components collapse (the disconnected-by-this-removal rule)
+1. A removal `[q, y, r, prevId, wasAnchor]` of the batch is SUPPORTED when `wasAnchor === 1` or one of its 8 neighbours is in the
+   supported memo or UNLOADED.
+2. A (not stale) floating component next to a supported removal COLLAPSES; every removal next to a collapsing component or to a
+   supported removal is supported too — propagated until nothing changes (several cells cut at once: area commands, craters).
+3. A component found from a seed with no `removed` (an explicit `seedSupport`, e.g. a crater rim) collapses outright.
+4. Every other floating component stays: a build that already floated (old saves, `fill`, physics-off builds) is never brought
+   down by breaking one of its blocks. Placing blocks is never checked.
+### 36.3 Collapse
+1. Collapsing components are handled in the order they were found; after each one, `ctx.now() ≥ ctx.deadline` leaves the rest for
+   the next tick. Cells are re-read: only those still load-bearing make the FloatingComponent `[q, y, r, id]` (none → skipped).
+2. Undo: the writes record into the seed's `event` while it is still `physics.lastEvent` (a blast's rim search records into the blast);
+   otherwise into the batch's own event, opened once per batch with `beginEvent('collapse', seed.cause)` (later components re-enter
+   it). Its kind is `'falling tree'` while it holds only toppled trees and `'collapse'` once something crumbled.
+3. `tree = trees.test(component)`; `tree && trees.topple(tree, component, { cause, event })` → `stats.toppled++`; else
+   `fallers.crumble(cells, { event })` (lowest first, the lowest settle instantly beyond MAX_FALLING, §34.2.4) and, when it removed
+   any cell, `trees.decayHangingLeaves(cells, { event })`, `stats.crumbled++`, and the first such crumble of this SupportSolver (one per
+   loaded world) says COLLAPSE_TIP (`tipSaid`). A BLAST_BARREL cell for which `ctx.explosions.hangBurning(q, y, r)` is true (it burns
+   in place) is left out of `cells` (integration, §38.2).
+4. Rune blocks and black holes are never part of a component (not load-bearing): they stay where they are, and what rests on them
+   lands on them. Campfires, water and anything else above follow through the normal triggers (§33.5). No boundary search follows a
+   collapse: a component is maximal, so removing it cannot leave another load-bearing cell floating.
+### 36.4 Tree test (`trees.test(component)`)
+1. A tree has 3 … TREE_MAX_CELLS cells, every one a log (`isLog`), in at most 2 (q, r) columns that are hex-adjacent; anything else
+   (a log cabin, a trunk with a plank platform) → null, and the component crumbles.
+2. `logs` = the cells sorted by (y, q, r). `leaves` = every `isLeaves` cell in a column within hex distance TREE_LEAF_RADIUS of a log
+   column, with y from the lowest log to the top log + TREE_LEAF_ABOVE, unless ANOTHER log column is strictly nearer: a log outside
+   the tree's columns at hex distance < d_own (the leaf's distance to the nearest own column) and |dy| ≤ TREE_LEAF_ABOVE. Ties stay
+   with this tree. logs + leaves > TREE_MAX_CELLS → null.
+3. `cut` = the cell below the lowest log; `pivot` = `[q + r/2, lowest log y, r·HEX_ROW_SPACING]` of the cut column (its top centre).
+### 36.5 Topple (`trees.topple`, `trees.step`)
+1. `topple` returns false for a malformed TreeInfo, logs + leaves > TREE_MAX_CELLS, TREE_MAX_QUEUED trees already waiting, or when no
+   log could be removed. Otherwise, inside `enterEvent(event)`, every log, then leaf, still holding its id is removed with
+   `ctx.writeQuiet(AIR)` (a refused cell stays in the world and out of the tree); the tree becomes a JOB (every cell as its centre minus
+   the pivot) and its surroundings are queued for leaf decay (§36.6.1). The job starts at once when fewer than `maxToppling` jobs
+   shake / fall and none waits; else it WAITS, drawn standing. Waiting jobs start in order, one per TREE_QUEUE_GAP_S, as slots free.
+2. Direction: the side direction j (FACE_NORMALS index 0..5) with the largest dot product with "away from" (first maximum): the
+   cause's (x, z) for an explosion cause; else the player when within TREE_CAUSE_RANGE (3D, of the pivot) — the cause's position for a
+   player cause, otherwise `hooks.player()`; else `floor(ctx.random()·6)`. The rotation axis is k = up × dir = (dz, 0, −dx).
+3. A starting job SHAKES for TREE_SHAKE_S with `ctx.sound('creak', pivot raised by half the trunk)`; its tilt is
+   `shakeAngle(t) = TREE_THETA0·u² + TREE_SHAKE_ANGLE·sin(2π·TREE_SHAKE_WOBBLES·u)`, u = t / TREE_SHAKE_S (ends at TREE_THETA0).
+4. Then it FALLS from θ = TREE_THETA0, ω = 0: per frame `n = ceil(dt / TREE_SUBSTEP_S)` substeps of h = dt / n: `ω += (3·|GRAVITY| /
+   2H)·sin θ·h`, `θ' = min(θ + ω·h, π/2)`, H = top log y + 1 − pivot y. Before θ' is accepted every LOG centre `pivot + R(θ')·offset`
+   (Rodrigues about k) is tested: y < 0, or its cell (worldToHex, floor y) UNLOADED or solid and not leaves → IMPACT at θ (the last
+   free pose). θ' = π/2 → impact there. Leaves never collide, so other trees' canopies never stop a fall.
+5. Impact: each log, lowest first, snaps to the cell its centre is in when that cell is fall-through and not taken by another log;
+   else to the first such cell on points 0.35 apart toward the pivot; else up the pivot column — and becomes `ctx.fallers.spawn(logId,
+   q, y, r, { event })` (the trunk ends up lying on the ground along the fall direction). Each leaf emits `max(1,
+   ⌊TREE_LEAF_PARTICLES / leaves⌋)` 'leaves' particles at its centre (`{ id, spread: 0.6 }`). Each body of `hooks.bodies()` whose
+   centre (feet + height/2) is within TREE_KNOCK_RADIUS of a snapped log centre is knocked once: `hooks.knock(body, TREE_KNOCK_SPEED ·
+   away (horizontal, from that log; the fall direction when on top of it), TREE_KNOCK_UP, …, logX, logZ)`. One `ctx.sound('thud')` at
+   the middle log. Landing logs never bury a body (the faller landing rules, §34.2.3).
+6. A job is frozen while the chunk of its cut column is unloaded; nothing moves while physics is paused (§33.1.1).
+### 36.6 Leaf decay, drawing, saving, undo
+1. Decay is queued (each cell once) after a topple for every leaf in a column within LEAF_DECAY_RANGE (hex) of a removed log column,
+   with y within LEAF_DECAY_RANGE of the removed logs' span, that has no log at hex distance ≤ LEAF_DECAY_RANGE and |dy| ≤
+   LEAF_DECAY_RANGE; and after a crumble (`decayHangingLeaves(cells)`) for every cluster of leaves next to the crumbled cells —
+   connected through leaves (8-neighbourhood), ≤ TREE_MAX_CELLS — that touches no load-bearing and no UNLOADED cell (a hedge on the
+   ground or a canopy held by its trunk stays).
+2. A queued leaf decays after `LEAF_DECAY_S·(0.15 + 0.85·ctx.random())` s: when it still holds its id, `ctx.writeQuiet(AIR)` inside
+   `enterEvent(event)` and 4 'leaves' particles. Leaves never become falling blocks.
+3. `renderItems(push)`: every job (falling, then waiting) pushes each cell at `pivot + R(θ)·offset` with `tiltEuler(kx, kz, θ)`, scale 1
+   (θ: 0 while waiting, `shakeAngle` while shaking).
+4. `settleInto(overlay)` (saving; never the live world): per job, its logs snapped like an impact at the current θ against
+   `overlay.peek`, then lowest first moved up past non-fall-through cells and down while the cell below is fall-through, and
+   `overlay.set` there (a column in an unloaded chunk is skipped); leaves are not saved; leaves waiting to decay are saved as AIR.
+5. `cancelEvent(id)` (undo): removes the jobs (falling or waiting) and the leaf decays of event id; returns the jobs removed. `reset()`
+   drops everything. `onSwitch(on)` does nothing: trees already out of the world finish their fall (the scheduler stops new seeds).
+### 36.7 Deviations from DESIGN-physics §5–§6 (and why)
+1. A batch is "every seed pending when it starts" (searched over as many ticks as it needs) rather than "the seeds of one tick": the
+   memo has to outlive a tick for the resumable search; new seeds wait for the next batch's fresh memo.
+2. The disconnected-by-this-removal rule propagates through the removals and components of a batch (§36.2.2): with several cells cut
+   at once, a part held only through other cut cells would otherwise never be judged "was supported".
+3. Seeds without `removed` collapse what they find (§36.2.3): §37's blast rim seed (`seedSupport(rim, { cause })`) carries no removals.
+4. One undo event per batch, and a collapse found from a blast's rim records into the blast's event (§36.3.2): one undo restores
+   everything one action brought down.
+5. The tree test requires every cell to be a log (a trunk with planks attached crumbles); collisions use "solid and not leaves" so
+   rune blocks and barrels stop a fall too.
+6. Away from a blast takes precedence over the player (§7 "away from the blast" for trees a blast fells).
+7. Waiting trees leave the world at once and are drawn standing (no stale floating tree the player can still edit), and the queue is
+   capped (TREE_MAX_QUEUED, beyond → crumble) so a `fill air` through a forest cannot queue minutes of toppling.
+8. The shake eases into TREE_THETA0 (no 7° jump when the fall starts).
+9. Hanging leaves also decay after a crumble (§36.6.1): the design only decays leaves after a topple, which left leaf roofs floating.
+10. The first-collapse tip is per loaded world (not saved — that would need a save field) and only for crumbles, not trees.
+11. No boundary `seedSupport` after a collapse (DESIGN §10.3 suggested one): a floating component is maximal, so nothing load-bearing
+    next to it is left without support by its removal.
+
+## 37. `src/explosions.js` (PURE) — blast barrels, v0.8
+
+Rationale: `docs/DESIGN-physics.md` §7. Wired elsewhere: the 'ignite' trigger / reseeder (§33.4–§33.5), R / left-click / raycast /
+flash / shake / bodies in main (§23), `ignite` (§26), the BLAST_BARREL block and tiles (§5, §15), `group` in resolveBodies (§31).
+```js
+export const BLAST_PROOF_IDS         // AIR, WATER, WATER_FLOW_1..6, WATER_FALL, BEDROCK, OBSIDIAN, RUNE_BLOCK, BLACK_HOLE
+export function isBlastProof(id)     // BLAST_PROOF_IDS, UNLOADED or any liquid
+export function blastRadius(n)       // min(BLAST_MAX_RADIUS, BLAST_RADIUS·∛max(1, n))
+export const LIT_BARREL_GROUP = 'lit-barrel'
+export class Explosions {            // physics.explosions
+  constructor(physics)               // registers rule 'ignite' (misc, feature explosions, ids [BLAST_BARREL]) and trigger 'barrel-timers'
+  lit: LitBarrel[]; timers: Map<packCell, LitBarrel>; blastCount; lastBlast: BlastInfo|null; get litCount (lit + timers)
+  lightAt(q, y, r) → boolean; ignite(q, y, r) → { ok, message }
+  isBurning(q, y, r) → boolean                  // a fuse timer burns in that cell (main's hint, §23)
+  hangBurning(q, y, r) → boolean                // isBurning, and marks the timer `hung` (support.js asks before a crumble, §38.2)
+  raycast(ox, oy, oz, dx, dy, dz, maxDist) → { target: LitBarrel, distance }|null; snuff(target) → boolean
+  step(dt); renderItems(push) (nothing: lit barrels are tumblers, timers are blocks); bodies(out); settleInto(overlay); cancelEvent(id) → n
+  flash(out { x, y, z, intensity }) → out; shakeOffset(x, y, z, out [dx, dy, dz]) → out; reset(); onSwitch(on)
+}
+/** LitBarrel = { tumbler: Tumbler|null (null = fuse timer), q, y, r, fuse (s left), event (blast that lit it, 0 = none), phase, sparkIn,
+ *               hung (timers: a collapse left it hanging, §38.2) }
+ *  BlastInfo = { x, y, z, radius, barrels, destroyed, debris, lit (barrels it set burning), knocked, rim, capped, event } */
+```
+### 37.1 Lighting
+1. `lightAt` (R; main wraps it in `asPlayer`): false while explosions are off. `_light(q, y, r)`: the cell must hold BLAST_BARREL and
+   not already burn (no timer); while `lit.length < MAX_LIT_BARRELS` and `fallers.tumblerCount < MAX_TUMBLING`, `ctx.writeQuiet(AIR)`
+   and `fallers.spawnTumbler(BLAST_BARREL, cell floor centre, 0, 0, 0, { persistent: true, event: 0, data: rec })` with
+   `body.group = LIT_BARREL_GROUP`, fuse BARREL_FUSE_S, a 'hiss' and 6 sparks (a null tumbler puts the block back); otherwise a
+   **fuse timer** in place (fuse BARREL_FUSE_S; the block stays). Quiet: lighting never seeds a support search.
+2. Rule 'ignite' (`misc`): a barrel with a CAMPFIRE among its 8 neighbours → `_light`; no campfire but an UNLOADED neighbour → park.
+3. `ignite(q, y, r)` (console / rune): `{ ok: false }` with `explosions are off — …`, `cell … is not loaded`, `there is no blast barrel at
+   (q, y, r)`, `the barrel at (q, y, r) is already burning`; else `lit the blast barrel at (q, y, r) — 3 s fuse`.
+4. `_addTimer(q, y, r, fuse, event)`: an existing timer keeps the SHORTER fuse; at most MAX_FUSE_TIMERS (beyond: stays unlit). Trigger
+   'barrel-timers': a cell that stops being BLAST_BARREL drops its timer (broken, crumbled, swallowed barrels stop burning).
+### 37.2 Lit barrels per frame (`step(dt)`, after fallers and trees; nothing while paused)
+1. Entities: a tumbler no longer in `fallers.tumblers` (fell below y = −16, reset) is forgotten; frozen while its column is unloaded;
+   WATER-family at `floor(y + 0.1)` or `floor(y + 0.6)` of its column → put out (steam). Else `fuse −= dt`; pulse `scale = 1 +
+   BARREL_PULSE_SCALE·sin(phase)`, phase at BARREL_PULSE_HZ × (1 + 2·min(1, 1 − fuse)) over the last second; 2 sparks at the lid every
+   0.12 s. Timers (loaded only): `fuse −= dt`, 1 spark every 0.2 s (≤ 24 per frame).
+2. Every BARREL_HISS_S one 'hiss' (volume 0.7) at the burning barrel nearest `hooks.player()`.
+3. **Merged chains**, ≤ MAX_EXPLOSIONS_PER_FRAME per frame: the loaded barrel with the smallest fuse; if that fuse ≤ 0, the group = every
+   loaded barrel (entities and timers) with `fuse ≤ earliest + BLAST_CHAIN_WINDOW_S` whose centre (entity: body centre; timer: cell
+   centre) is within BLAST_CHAIN_DISTANCE of the earliest's. Timers whose cell is no longer a barrel are dropped; timers with water above
+   or beside them fizzle (steam, 'fizzle'); the rest go off as ONE blast at the mean centre, radius `blastRadius(n)`.
+4. **Putting out** (`snuff`, water, switch off): the tumbler is removed, 'fizzle' + 8 smoke (steam when wet), and a BLAST_BARREL is left
+   in the first fall-through or liquid cell at `floor(y + 0.05)` … +3 of its column: over a fall-through cell → `fallers.spawn` (it
+   drops); in a fall-through cell → `fallers.settleNow` (never buries a body). Water is fall-through (§35.6), so a barrel put out
+   in a lake sinks to the bottom; `ctx.write` into the cell remains only as the fallback for any other liquid.
+### 37.3 The blast (`_explode` → `_blast`)
+1. Event: when a barrel of the group was lit by the blast that is still `physics.lastEvent`, the writes go into THAT event (`enterEvent`:
+   a chain is one undo); else `beginEvent('explosion', { kind: 'explosion', x, y, z })`. The group's entities are removed (their cells
+   kept for the undo refund) and its timer cells written AIR (quiet).
+2. Cells: every column within `R + BLAST_JITTER` horizontally that is loaded, y within reach; a cell whose centre distance d satisfies
+   `d ≤ R + jitter`, `jitter = (hash3(q, y, r, salt) / 2^32 · 2 − 1) · BLAST_JITTER` with `salt` from `ctx.random()` once per blast, and
+   that is not blast-proof, is a candidate; candidates are handled NEAREST FIRST: BLAST_BARREL → `_addTimer(fuse ∈
+   [BARREL_TIMER_FUSE_MIN_S, MAX_S) seeded, event)`; anything else (campfires and leaves included) → `ctx.writeQuiet(AIR)`; the first
+   `'capped'` stops all further breaking (barrels still catch).
+3. Bodies within 2R: `j = BLAST_IMPULSE·(1 − d/2R)` with d from the blast centre to the body centre (feet + height/2), along the unit
+   direction (straight up when d ≈ 0), `vy = max(j·ny, BLAST_MIN_UP)`. The player and pigs (`hooks.bodies()`) through
+   `hooks.knock(body, vx, vy, vz, cx, cz)` (main: pigs squeal and flee); every tumbler (lit barrels, debris) gets it added directly
+   (`onGround = false`, ± DEBRIS_SPIN/2 spin about x and z). A lit barrel whose centre is within R gets `fuse = min(fuse, a timer fuse)`.
+   Column fallers are not pushed.
+4. Debris: up to MAX_DEBRIS destroyed SOLID cells, picked at random (`ctx.random`), become tumblers of their block (feet at y + 0.01,
+   outward from the centre at DEBRIS_SPEED_MIN…MAX, up DEBRIS_UP_MIN…MAX, spin ±DEBRIS_SPIN, event = the blast's): they vanish in dust
+   where they land (§34.3); a null tumbler → 6 dust. Of the other destroyed cells an even spread of at most BLAST_DUST_CELLS puffs 3 dust
+   (campfires: smoke).
+5. Support: ONE `physics.seedSupport(rim, { cause, removed })` inside the event — `rim` = every load-bearing, not destroyed 8-neighbour of
+   a destroyed cell; `removed` = `[q, y, r, prevId, wasAnchor]` for each destroyed load-bearing cell (and each timer barrel, wasAnchor 0),
+   wasAnchor = `isAnchorCell` read before the write. Trees the collapse fells topple away from `cause` (§36).
+6. Effects: 'boom' at volume `min(1, 0.6 + 0.4·(R − BLAST_RADIUS)/(BLAST_MAX_RADIUS − BLAST_RADIUS))`; `16 + 8R` smoke (spread 0.5R, speed ×2.2)
+   and `24 + 6R` sparks (speed ×1.6) at the centre. `flash(out)`: position = centre + (0, 1, 0), intensity `BLAST_FLASH_INTENSITY·R/BLAST_RADIUS·(1 −
+   age/BLAST_FLASH_S)²` (0 outside); `shakeOffset`: `a = BLAST_SHAKE_AMPLITUDE·√(R/BLAST_RADIUS)·(1 − d/BLAST_SHAKE_RANGE)·(1 −
+   age/BLAST_SHAKE_S)²`, `out = a·[sin(53t + 0.7), 0.6·sin(61t + 2.1), sin(47t + 4.2)]` (t = age). Ages run on step(dt) time, so a pause
+   freezes them. `blastCount++`, `lastBlast = BlastInfo`.
+### 37.4 Bodies, saving, undo, switches
+1. `bodies(out)` pushes every lit entity's body (`group = LIT_BARREL_GROUP`, so resolveBodies never pairs two of them).
+2. `settleInto(overlay)`: each lit entity is saved as BLAST_BARREL at `floor(y + 0.05)` moved up past cells that are neither fall-through
+   nor liquid, then down while the cell below is fall-through (unloaded columns skipped); fuse timers are not saved (they are barrels),
+   except that a `hung` timer's barrel, lowest first, is saved moved down its column while the cell below is fall-through (§38.2).
+3. `cancelEvent(id)` (undo, before the cells are restored): timers of event `id` are dropped (still barrels; a `hung` one queues
+   `physics.seedSupport([[q, y, r]])`, §38.2), lit entities of it become
+   blocks again (both counted in the result); the barrel entities used up by that event's blasts are written back (quiet) where their
+   cells are fall-through.
+4. `onSwitch(false)`: every lit entity is put out (37.2.4), every timer dropped (a `hung` one queues its support seed, §38.2). A timer
+   that fizzles in water (37.2.3) does the same. `reset()`: lit entities removed from the fallers, timers,
+   refunds, flash and shake cleared.
+
+## 38. Block physics integration (v0.8) — the features together
+
+The five feature modules were built in parallel against stubs of each other (DESIGN-physics §10). These rules are what their
+combination needs on top of §33–§37; `tests/integration/physics.test.js` checks each of them headless (Map-backed fake worlds, plus a
+real World for saving and reloading).
+### 38.1 Wiring (as merged)
+1. Construction order in `BlockPhysics`: fallers, fluids, support, trees, explosions. Rings: `fall` = ['gravity', 'water'], `water` =
+   ['water'], `misc` = ['ignite']. Triggers, in order: 'gravity', 'water', 'ignite' (built in), 'water-floor' (fluids), 'support'
+   (collapse), 'barrel-timers' (explosions). Reseeders: 'gravity', 'water' (fluids' replacement), 'ignite'.
+2. Shared files: `audio.js` has ONE `playCreak` (the trees feature's sawtooth groan; the explosives branch's copy was dropped) beside
+   `playThud`, `playSplash`, `playBoom`, `playHiss`, `playFizzle`; `config.js` keeps one "Block physics" section with a block per
+   feature; main's frame order is §23 / DESIGN §9 unchanged.
+3. Water is fall-through (§35.6): sand, crumble pieces, logs and put-out barrels sink to the bottom of a lake and crush the source they
+   land in; a lit barrel entity in any water cell goes out (§37.2.1) and its barrel block sinks the same way.
+### 38.2 Barrels burning in place and collapses
+1. A blast that sets barrels burning (fuse timers, §37.3.2) usually also cuts what holds them up, and the rim search (§37.3.5) runs a
+   tick later — before the 0.3–0.8 s fuses end. `support._collapse` asks `explosions.hangBurning(q, y, r)` for every BLAST_BARREL cell
+   of a collapsing component: a burning one is left out of the crumble and stays where it is (marked `hung`) until it goes off; the
+   rest of the component crumbles around it (what rested on it lands on it). Without this the crumble removed the barrel cell, the
+   'barrel-timers' trigger dropped its fuse, and a pile caught by a blast landed in the crater as dead barrels.
+2. A `hung` timer that stops burning WITHOUT going off — fizzled by water (§37.2.3), explosions switched off (§37.4.4), undo
+   (§37.4.3) — queues `physics.seedSupport([[q, y, r]], { cause: { kind: 'physics' } })`: a seed without removals collapses the
+   floating component it finds outright (§36.2.3), so the barrel falls after all instead of floating forever.
+3. Saving (§37.4.2): a `hung` timer's barrel is saved dropped down its column (a reloaded barrel has no fuse and would float).
+4. main's crosshair hint on a burning barrel: `Blast Barrel · burning! click: break it` (`explosions.isBurning`); breaking it drops its
+   fuse ('barrel-timers').
+### 38.3 Water, craters and undo
+1. Blast writes are quiet (no support seed of their own) but every trigger still runs, so the 'water' / 'water-floor' triggers queue
+   the water next to a crater and it flows in (a crater beside the sea or a pond floods; sources form by the ≥ 3 rule).
+2. `undo()` (§33.8.4) also restores a recorded cell the event made AIR when it now holds water (any water-family id): the crater fills
+   back in instead of leaving pockets of water inside the restored ground, and the drained flow edits prune away.
+3. What the GRAVITY rule moved after a blast or a collapse (sand from a crater rim) is not part of the event: it stays where it fell, and
+   a crater cell it fell into is reported as `changed since, left alone`. One undo restores the blast, the collapse it caused (§36.3.2)
+   and the trees it felled; a chain is one event (§37.3.1).
+### 38.4 Scheduling
+1. The fall ring carries falling water as well as gravity blocks (§33.5.2), so a long waterfall can spend the whole tick budget before
+   `support.step`. Starvation guard (§33.1.3): after SUPPORT_STARVE_TICKS ticks in a row without a support step while a collapse is
+   pending, support runs with `maxVisits = SUPPORT_STARVED_VISITS` (and its own deadline check), so a cut tree next to a waterfall
+   still falls about 0.2 s later.
+2. Measured (headless Chrome in real time on a loaded machine, seed 42, 200 barrels from one `fill`, one lit): 5 merged blasts (1, 15,
+   110, 69, 1 barrels; 4 barrels at the far corner of the box are never in reach and stay), physics step worst 22–25 ms (the
+   radius-8 blast's ~700 writes) and mean ≈ 0.7 ms, world.update worst 13–15 ms (lazy re-meshing), whole frame worst 40–94 ms with
+   headless software rendering.
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),
 `makeChunkData()` (zeroed ChunkData), `setWorldBlock(chunks, q, y, r, id)`, `flatIsSolid(groundY)`, `flatGetBlock(groundY, id = STONE)`,
 `countFaces(meshData)` (sum of `faceCount` over layers), `trivialWorldGen()` (all-AIR chunks with heights 0, biome PLAINS),
 `flatWorldGen(groundY, id = STONE)`.
+v0.8: `makeFakeWorld({ groundY = −1, groundId = STONE, seed, now })` — a Map-backed world with World's physics surface (peekBlock,
+getBlock, setBlock(…, lazy) with edits / origins / pruning / editCount, hasChunkAtCell / hasChunkAt, hasEdit, originAt,
+terrainHeightAt, isNaturalGround, onBlockChange, onChunkGenerated), a `writes` log, `unload(cq, cr)` / `load(cq, cr)` (fires
+onChunkGenerated) and `put(q, y, r, id)` (terrain without an edit or hook); `attachPhysics(world, BlockPhysics, hooks?, opts?)`
+forwards onBlockChange / onChunkGenerated like main.
 
 ## 25. Pitfall checklist (read before coding)
 
@@ -1077,7 +1755,8 @@ Pigs: a walking pig treats a campfire in the cell ahead as unsafe; a pig whose f
 3. Chunk-edge culling reads neighbours via `getChunkData`; mesh only when all 6 HEX neighbours exist (world.js); the index-space
    corner chunks `(±1, ±1)` are not neighbours — do not wait for them and do not read them.
 4. AO quad flip: diagonal joins the brighter pair; do not "fix" one order by reversing it. Cap faces are fans with a centre vertex.
-5. Water top: lower ALL top vertices of a water cell with non-water above (six side quads and the top hexagon).
+5. Water top: lower ALL top vertices of a water cell with non-water above (six side quads and the top hexagon) to
+   `waterSurfaceHeight`; never draw faces between two water cells except the strip of the higher surface above the lower one.
 6. Leaves and glass are cutout (`alphaTest 0.5`, depth write on). Water is the only translucent layer.
 7. Texture bleeding: NearestFilter both filters, no mipmaps, `UV_INSET`; cap UVs stay inside the tile because the hexagon is inscribed (`TOP_UV_SCALE`).
 8. `flipY = false` ⇔ the UV assignment in §10.2 (v1 at the bottom of side quads; +z → +v on caps).
@@ -1102,3 +1781,10 @@ Pigs: a walking pig treats a campfire in the cell ahead as unsafe; a pig whose f
 23. Rune scripts use `@` for their own cell; `~` is the player. A chain fan-out is bounded by the wave rule (once per activation), not by
     the hop cap. Runner state is never persisted. Repeat/step/chain are suppressed after `stopall` until an interact/console trigger.
 24. Modal states (picker, console, editor) are set BEFORE `controls.unlock()`; closing goes through `enterPlayingFromModal()`.
+25. (v0.8) Physics never writes `chunk.blocks` or calls `world.setBlock` directly: rules use `ctx.write` / `ctx.writeQuiet` (lazy,
+    capped, event-recorded). Read through `ctx.peek` and treat `UNLOADED` as "not there yet" (park), never as AIR.
+26. (v0.8) Physics modules are PURE: no `Math.random` (use `ctx.random()`), no clocks (use `ctx.now()` / `ctx.deadline`), no audio
+    or three — effects go through `ctx.sound` / `ctx.particles` / hooks. Feature modules never import blockphysics.js.
+27. (v0.8) Saving never mutates the live world: build saves with `blockPhysics.exportEdits()` (a copy with fallers settled), never by
+    landing entities "for real".
+28. (v0.8) A switched-off feature DROPS its triggers; switching it back on must never act on what happened meanwhile.
