@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import * as C from '../../src/config.js';
 import * as coords from '../../src/coords.js';
 import {
@@ -44,7 +46,20 @@ describe('config', () => {
     expect(C.AO_CURVE).toHaveLength(4);
     for (let i = 1; i < 4; i++) expect(C.AO_CURVE[i]).toBeGreaterThan(C.AO_CURVE[i - 1]);
     expect(C.AO_CURVE[3]).toBe(1);
-    expect(C.VERSION).toBe('0.2.0');
+    expect(C.VERSION).toBe('0.7.0');
+  });
+  it('every version string matches VERSION (F3, console, debug handle, title footer, package files)', () => {
+    // Regression: v0.4–v0.7 shipped as "v0.2.0" in F3 and "v0.3" on the title screen because only some were bumped.
+    const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+    const pkg = JSON.parse(read('../../package.json'));
+    const lock = JSON.parse(read('../../package-lock.json'));
+    expect(pkg.version).toBe(C.VERSION);
+    expect(lock.version).toBe(C.VERSION);
+    expect(lock.packages[''].version).toBe(C.VERSION);
+    const [major, minor] = C.VERSION.split('.');
+    const footer = /<div id="title-footer">Caelancraft v([0-9.]+) ·/.exec(read('../../index.html'));
+    expect(footer && footer[1]).toBe(`${major}.${minor}`);
+    expect(read('../../src/CONTRACTS.md')).toContain(`\`VERSION = '${C.VERSION}'\``);
   });
 });
 

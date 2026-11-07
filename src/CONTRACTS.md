@@ -120,8 +120,10 @@ FLY_SPRINT_SPEED, FLY_VERTICAL_SPEED, GROUND_ACCEL, AIR_ACCEL, WATER_ACCEL, WATE
 SWIM_EXIT_JUMP, WATER_SPEED_FACTOR, MAX_SUBSTEP_DT, MAX_FRAME_DT, COLLISION_EPS, FOV, SPRINT_FOV, CAMERA_NEAR,
 CAMERA_FAR, MOUSE_SENSITIVITY, PITCH_LIMIT, MAX_PIXEL_RATIO, DOUBLE_TAP_MS, DOUBLE_TAP_SPACE_MS, DAY_LENGTH_SECONDS,
 START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION`.
-`VERSION = '0.2.0'`. Render/data/unload radii are **hex distances** in chunk coordinates. `FACE_SHADE` moved to `hex.js`
-(it derives from the face normals). `TOP_UV_SCALE = √3/2` (hex caps are inscribed in their tile).
+`VERSION = '0.7.0'`; `package.json` and `package-lock.json` carry the same version and the title footer in `index.html` reads
+`Caelancraft v<major>.<minor>` (`v0.7`) — bump all four together (wave0.test.js checks they agree). Render/data/unload radii are
+**hex distances** in chunk coordinates. `FACE_SHADE` moved to `hex.js` (it derives from the face normals).
+`TOP_UV_SCALE = √3/2` (hex caps are inscribed in their tile).
 Commands / runes: `GAME_SECONDS_PER_DAY, MAX_FILL_CELLS, MAX_TOTAL_EDITS, MAX_CELLS_PER_FRAME, MAX_COMMANDS_PER_FRAME,
 MAX_RUNNING_SCRIPTS, MAX_CHAIN_HOPS, CHAIN_DELAY_S, MAX_RUNES, MAX_RUNE_SCRIPT_CHARS, MAX_RUNE_SCRIPT_LINES, MAX_RUNE_LABEL_CHARS,
 WAIT_MIN_S, WAIT_MAX_S, REPEAT_MIN_S, REPEAT_MAX_S, STEP_COOLDOWN_MAX_S, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_CONSOLE_LINES,
