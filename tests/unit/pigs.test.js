@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { BLOCK } from '../../src/blocks.js';
 import { PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_HURT_S, WORLD_HEIGHT } from '../../src/config.js';
-import { Pigs, seededRng, validatePigsJSON } from '../../src/pigs.js';
+import { Pigs, seededRng, validatePigsJSON, SHORE_SEARCHES_PER_UPDATE } from '../../src/pigs.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { BlackHoles } from '../../src/blackholes.js';
 
@@ -136,6 +136,125 @@ describe('Pigs.update — water (play-test A1)', () => {
     expect(bottomFrames).toBe(0);
     expect(pig.y).toBeGreaterThan(GROUND - 1.5); // bobbing at the surface (top water cell GROUND − 1)
     expect(pig.mode).toBe('walk'); // paddling, never idle in water
+  });
+  it('a walled pond: heads for the gap in the wall, not the ground behind the wall (follow-up A1)', () => {
+    // From the re-verifier's rv-a1-walled: pond radius 4, two deep, ringed at distance 5 by a two-high wall except a
+    // five-cell gap around (5, 0). The old search aimed at the ground outside the wall (it does not border the water)
+    // and exit-jumped against the wall forever: 0 of the starts 6–9 cells from the gap got out (19/61 overall).
+    const gap = new Set(['5,0', '5,-1', '4,1', '5,-2', '3,2']);
+    const getBlock = (q, y, r) => {
+      const d = Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r));
+      if (d <= 4 && (y === GROUND - 1 || y === GROUND - 2)) return B.WATER;
+      if (d === 5 && !gap.has(`${q},${r}`) && (y === GROUND || y === GROUND + 1)) return B.STONE;
+      return flat(q, y, r);
+    };
+    const far = [[-4, 0], [-4, 4], [0, 4], [-1, -3], [-3, 0], [-2, 4]]; // 7–9 cells from (5, 0)
+    for (const [q, r] of far) {
+      const pigs = new Pigs(seededRng(q * 13 + r));
+      const [x, z] = hexToWorld(q, r);
+      const pig = pigs.spawn(x, GROUND - 0.5, z, 0);
+      let out = null;
+      for (let f = 0; f < 60 * 60 && out === null; f++) {
+        pigs.update(1 / 60, { getBlock, isLoaded: loaded });
+        const [eq, er] = worldToHex(pig.x, pig.z);
+        if (!pig.inWater && pig.onGround && pig.y >= GROUND - 1e-3 && Math.max(Math.abs(eq), Math.abs(er), Math.abs(eq + er)) >= 5) out = f / 60;
+      }
+      expect(out, `start ${q},${r}`).not.toBeNull();
+      expect(out).toBeLessThan(30);
+    }
+  });
+  it('open sea: reaches a bank 16 cells away within a minute (follow-up A1)', () => {
+    // A straight shore: water for q < 0, land at the surface for q >= 0. The old search only looked 8 cells away and
+    // random-walked beyond that (the re-verifier saw 13–324 s, and pigs that never got out, from 9–16 cells).
+    const getBlock = (q, y, r) => (q < 0 && y >= GROUND - 4 && y < GROUND ? B.WATER : flat(q, y, r));
+    for (const [r, seed] of [[0, 1], [8, 2], [-8, 3]]) {
+      const pigs = new Pigs(seededRng(seed));
+      const [x, z] = hexToWorld(-16, r); // 16 cells (hex distance) from the nearest q = 0 bank
+      const pig = pigs.spawn(x, GROUND - 0.5, z, Math.PI / 2); // yawToForward(π/2) = (−1, 0): facing out to sea
+      let out = null;
+      for (let f = 0; f < 60 * 60 && out === null; f++) {
+        pigs.update(1 / 60, { getBlock, isLoaded: loaded });
+        if (pig.onGround && !pig.inWater && pig.y >= GROUND - 1e-3) out = f / 60;
+      }
+      expect(out, `start r ${r}`).not.toBeNull();
+      expect(out).toBeLessThan(60);
+    }
+  });
+  it('with no bank in reach it swims a straight line instead of circling (follow-up A1)', () => {
+    const getBlock = pond(60, 4); // the nearest bank is 61 cells away: far beyond SHORE_SEARCH
+    const pigs = new Pigs(seededRng(5));
+    const pig = pigs.spawn(0, GROUND - 0.5, 0, 1.0);
+    let path = 0;
+    let px = pig.x;
+    let pz = pig.z;
+    for (let f = 0; f < 20 * 60; f++) {
+      pigs.update(1 / 60, { getBlock, isLoaded: loaded });
+      path += Math.hypot(pig.x - px, pig.z - pz);
+      px = pig.x;
+      pz = pig.z;
+    }
+    expect(path).toBeGreaterThan(8); // it keeps paddling (0.655 m/s at the surface)
+    expect(Math.hypot(pig.x, pig.z)).toBeGreaterThan(0.95 * path); // and in one direction (a random walk: ~0.3)
+    expect(pig.targetYaw).toBeCloseTo(1.0, 6);
+  });
+  describe('what counts as a bank', () => {
+    // A pond of radius 2 around (−4, 0) walled in two high; `open` cells have no wall (grass at the surface level),
+    // `wet` cells are water like the pond.
+    const hexd = (q, r, q0, r0) => Math.max(Math.abs(q - q0), Math.abs(r - r0), Math.abs(q - q0 + r - r0));
+    const basin = (wet, open, roof = new Set()) => (q, y, r) => {
+      const k = `${q},${r}`;
+      if (hexd(q, r, -4, 0) <= 2 || wet.has(k)) return y >= GROUND - 3 && y < GROUND ? B.WATER : flat(q, y, r);
+      if (roof.has(k) && y === GROUND + 1) return B.STONE;
+      if (!open.has(k) && (y === GROUND || y === GROUND + 1)) return B.STONE;
+      return flat(q, y, r);
+    };
+    const swimmer = () => {
+      const pigs = new Pigs(seededRng(1));
+      const [x, z] = hexToWorld(-4, 0);
+      return [pigs, pigs.spawn(x, GROUND - 0.5, z, 0)];
+    };
+    it('not behind a one-cell channel (a pig is too wide for it)', () => {
+      // Channel (−1..2, 0) to the bank at (3, 0): walls on both sides, so every step along it is a one-cell gap.
+      const narrow = new Set(['-1,0', '0,0', '1,0', '2,0']);
+      const [pigs, pig] = swimmer();
+      expect(pigs._shoreYaw(pig, basin(narrow, new Set(['3,0'])))).toBeNull(); // the old search aimed at (3, 0)
+      // Two cells wide, it is a way out.
+      const wide = new Set([...narrow, '-2,1', '-1,1', '0,1', '1,1', '2,1']);
+      expect(pigs._shoreYaw(pig, basin(wide, new Set(['3,0'])))).not.toBeNull();
+    });
+    it('not under a roof one cell above its floor (it needs two free cells)', () => {
+      const exit = new Set(['-1,0', '-1,-1']); // two cells at the pond's east side
+      const [pigs, pig] = swimmer();
+      expect(pigs._shoreYaw(pig, basin(new Set(), exit, exit))).toBeNull(); // the old search took them
+      const yaw = pigs._shoreYaw(pig, basin(new Set(), exit)); // no roof: they are the way out, east of the pig
+      expect(yaw).not.toBeNull();
+      expect(-Math.sin(yaw)).toBeGreaterThan(0.8); // yawToForward(yaw) = (−sin, −cos)
+    });
+    it('not ground that does not touch the water, even straight ahead', () => {
+      // The open cell (−1, 0) touches the pond; (0, 0) behind the wall does not. Walled: the old search took (0, 0)
+      // whenever it was nearer, here it is the only one.
+      const [pigs, pig] = swimmer();
+      expect(pigs._shoreYaw(pig, basin(new Set(), new Set(['0,0', '1,0'])))).toBeNull();
+    });
+  });
+  it('spreads the bank searches of pigs that fell in together over frames (SHORE_SEARCHES_PER_UPDATE)', () => {
+    const getBlock = pond(30, 4);
+    const pigs = new Pigs(seededRng(2));
+    for (let i = 0; i < 32; i++) pigs.spawn((i % 8) - 3.5, GROUND - 0.5, Math.floor(i / 8) * 1.2, i);
+    let searches = 0;
+    const search = pigs._shoreYaw;
+    pigs._shoreYaw = function (...args) {
+      searches++;
+      return search.apply(this, args);
+    };
+    let most = 0;
+    for (let f = 0; f < 120; f++) {
+      searches = 0;
+      pigs.update(1 / 60, { getBlock, isLoaded: loaded });
+      most = Math.max(most, searches);
+    }
+    expect(most).toBeLessThanOrEqual(SHORE_SEARCHES_PER_UPDATE);
+    expect(pigs.list.filter((p) => p.inWater).every((p) => p.mode === 'walk')).toBe(true); // all paddling meanwhile
   });
   it('a pig still refuses to walk into water from the shore', () => {
     const getBlock = pond(3, 3);

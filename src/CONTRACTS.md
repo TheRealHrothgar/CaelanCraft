@@ -1015,8 +1015,9 @@ export class Pigs {
   list, size, clear()
   spawn(x, y, z, yaw = 0) → Pig|null           // null at PIG_MAX or non-finite input; mode idle
   remove(pig) → boolean
-  update(dt, { getBlock, isLoaded(x, z), pullAt? }) → Pig[]   // oinks due this frame; pigs with y < −16 are removed;
-                                                              //   pigs whose chunk is unloaded are frozen
+  update(dt, { getBlock, isLoaded(x, z), pullAt?, hasCampfires? }) → Pig[]   // oinks due this frame; pigs with y < −16 are
+                                               //   removed; pigs whose chunk is unloaded are frozen; hasCampfires() false =
+                                               //   the world has no CAMPFIRE cell at all (absent: assume it may)
   hit(pig, fromX, fromZ) → boolean             // false during the PIG_HURT_S flash; else knockback PIG_KNOCKBACK away, vy ≥ 5,
                                                //   mode flee for PIG_FLEE_S facing away
   raycast(ox, oy, oz, dx, dy, dz, maxDist) → { pig, distance }|null   // the body cylinder PIG_RADIUS × PIG_HEIGHT at the feet
@@ -1026,16 +1027,31 @@ export class Pigs {
 ```
 AI per frame (`canHop` = the pig has no `carrier` and no pig in the list has it as `carrier`, both links from the end of last
 frame — §31; a pig standing on or carrying another body never hops, so pigs cannot climb a wall on each other's backs):
-1. **In water** (`inWater`, mode not flee): the pig swims — mode walk, and whenever the mode was not walk, the timer ran out or
-   the timer exceeds SWIM_REAIM_S 0.75 (it just fell in), the timer becomes SWIM_REAIM_S and `targetYaw` points at the nearest
-   column within SHORE_SEARCH 8 cells (world distance) that has a solid cell under an open one (not solid, liquid or CAMPFIRE)
-   with its floor at the water surface S or S + 1 (S = one above the topmost liquid cell of the pig's column); when there is none,
-   or the pig is against a wall (`hitWall`), a random turn within ±0.75π instead. No edge rule; steps 2–3 are skipped.
+1. **In water** (`inWater`, mode not flee): the pig swims — mode walk. A re-aim is due when the mode was not walk, the timer ran
+   out or the timer exceeds SWIM_REAIM_S 0.75 (it just fell in); at most SHORE_SEARCHES_PER_UPDATE (2) pigs re-aim per update
+   (a due pig past that budget keeps its heading and re-aims on a later frame), so pigs that fell in together do not all search
+   in one frame. A re-aim sets the timer to SWIM_REAIM_S and `targetYaw` toward the pig's **bank target** (below); when there is
+   none the heading is KEPT (it crosses open water in a straight line instead of circling), except that a pig against a wall
+   (`hitWall`) turns randomly within ±0.75π. No edge rule; steps 2–3 are skipped.
+   **Bank target**: wy = the topmost liquid cell of the pig's column, starting from floor(y) or floor(y) + 1 (neither liquid: no
+   target). Columns are read at wy: *water* = liquid at wy and not solid at wy + 1; *bank* = not liquid at wy and either solid at
+   wy with wy + 1 and wy + 2 open (stand at wy + 1, level with the surface) or solid at wy + 1 with wy + 2 and wy + 3 open (stand
+   at wy + 2, which SWIM_EXIT_JUMP clears), open = not solid, liquid or CAMPFIRE. A breadth-first search runs from the pig's column
+   over water columns up to SHORE_SEARCH (20) hex steps away (≤ 1261 columns, one window of reads per search); a step from a
+   searched column to a neighbour that is water or a bank is refused when BOTH cells flanking their shared edge block it — not
+   water, and solid at wy or wy + 1 for a step into water, at the bank's stand level for a step onto a bank (a one-cell gap is too
+   narrow for a pig). So a bank always borders water the pig can reach. The first BFS layer that reaches a bank ends the search,
+   and its bank nearest the pig (world distance) is the goal. The pig heads for the farthest node of the path back from the goal
+   (the bank, then the water columns toward the pig, not its own column) whose straight line from the pig, sampled every 0.25,
+   lies only in water columns (the pig's own and that node's column excepted); at worst the path's first step.
 2. Timer expiry alternates idle (1–5 s) and walk (1.5–5.5 s, new heading within ±π).
 3. A walking, grounded pig stops (idle 0.5–1.5 s) and turns away by 0.5–1.5π when the cell (q, r) 0.8 ahead at feet level
    fy = floor(y + 0.01) is liquid or has liquid below it, or is solid unless `canHop` and fy + 1 there is open (a one-cell ledge),
    or is open with no solid at fy − 1 or fy − 2 (a drop), or when any point 0.25, 0.5 or 0.8 ahead (FIRE_LOOK) lies within
-   FIRE_MARGIN 0.15 (`hexCircleContact`) of a CAMPFIRE cell at fy or fy − 1.
+   FIRE_MARGIN 0.15 (`hexCircleContact`) of a CAMPFIRE cell at fy or fy − 1. Order (cheap where there is no fire): the cell under
+   the point is read (not again when it is the previous point's); a neighbour is read only when the point is nearer than
+   FIRE_MARGIN to their shared edge (the neighbour lies beyond it, so it is farther than that otherwise), and the contact is
+   computed only for a neighbour that IS a campfire. The whole fire check is skipped while `hasCampfires()` returns false.
 Turning is capped at PIG_TURN_RATE; it moves forward only when within 1.2 rad of its heading, at sneak speed when walking and walk
 speed when fleeing. `jump = inWater || (moving && hitWall && canHop && the cell 0.8 ahead is solid at fy and open at fy + 1)`:
 a pig in water always paddles up (it floats; pressing into a bank gives SWIM_EXIT_JUMP), and on land it hops only a one-cell
@@ -1057,7 +1073,7 @@ has never had pigs: main then places PIG_NATURAL_COUNT pigs with `spawnNatural` 
 
 main: `updateHit` also ray-casts pigs up to the block hit's distance (or REACH); a pig in front sets `pigTarget` and clears
 `hit`. `breakTargeted` hits `pigTarget` (squeal) instead of breaking. `stepPigs` runs after `stepBlackHoles`: update (with
-`blackHoles.pullAt`), at most one oink per frame within 16 units (volume 1 − d/16), and pigs a black hole swallows are removed.
+`blackHoles.pullAt` and `hasCampfires: () => campfires.total > 0`, §32), at most one oink per frame within 16 units (volume 1 − d/16), and pigs a black hole swallows are removed.
 `renderFrame` calls `pigRenderer.sync(pigs.list)`. `placeSelected` refuses a solid block that would intersect a pig. Commands (§26):
 `summon pig [q y r]` (no cell: two units ahead along the yaw, `findFreeY` with the pig's size from the feet cell; refuses at PIG_MAX, unloaded targets, or 2–3 args) and `pigs [clear]`; both fail when the
 context has no `pigs`. audio: `playOink(volume)`, `playSqueal(volume)`.
@@ -1168,7 +1184,8 @@ liquid directly above it, and a liquid whose target cell is directly above a cam
 line "Water would put the campfire out." at most every 2 s. Console / rune commands write blocks as told (as they may also bury the
 player); a campfire put under water that way still burns.
 Pigs: a walking pig treats a heading as unsafe when a point 0.25, 0.5 or 0.8 ahead comes within FIRE_MARGIN 0.15 of a campfire
-cell at its feet level or one below (§30 AI step 3); a pig whose feet cell is a campfire (and is not already hurt) is
+cell at its feet level or one below (§30 AI step 3; main skips that look-ahead while `campfires.total` is 0 — every CAMPFIRE cell,
+tracked or refused, is in `campfires`, so it costs nothing in a world without fire); a pig whose feet cell is a campfire (and is not already hurt) is
 `hit` from the cell centre and listed in `pigs.scorched` for that update (main plays a squeal within 16 units).
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)

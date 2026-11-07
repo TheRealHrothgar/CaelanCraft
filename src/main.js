@@ -320,6 +320,8 @@ export function boot(win, doc) {
     getBlock: (q, y, r) => world.getBlock(q, y, r),
     isLoaded: (x, z) => world.hasChunkAt(x, z),
     pullAt: (x, y, z, out) => blackHoles.pullAt(x, y, z, out),
+    // Every CAMPFIRE cell is known to `campfires` (tracked or refused): with none, pigs skip the fire look-ahead.
+    hasCampfires: () => campfires.total > 0,
   };
   /** World view handed to blackHoles.update and blackHoles.respawnPoint (used once a world exists). */
   const blackHoleWorld = {
