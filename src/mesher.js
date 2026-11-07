@@ -79,11 +79,18 @@ const RENDER = new Uint8Array(256 * 256);
 const FACE_UV = new Float32Array(256 * FACE_COUNT * 4);
 /** TINTED[id * 8 + f] = 1 iff isTintedFace(id, f). */
 const TINTED = new Uint8Array(256 * FACE_COUNT);
+/**
+ * FREE_SURFACE[id] = 1 iff water under a cell of `id` has a free, lowered surface (§10.2 step 1): AIR, or a block drawn
+ * by its own model (campfire). Under water or any block meshed as a full prism (stone, glass, ice, leaves, a black hole)
+ * the water stays full height, so a submerged see-through block shows no fake surface ledge below it.
+ */
+const FREE_SURFACE = new Uint8Array(256);
 
 for (let id = 0; id < 256; id++) {
   OPAQUE[id] = isOpaque(id) ? 1 : 0;
   LAYER[id] = getRenderLayer(id);
   UNMESHED[id] = isMeshed(id) ? 0 : 1;
+  FREE_SURFACE[id] = id === BLOCK.AIR || !isMeshed(id) ? 1 : 0;
   for (let f = 0; f < FACE_COUNT; f++) {
     const uv = tileToUV(getFaceTile(id, f));
     const o = (id * FACE_COUNT + f) * 4;
@@ -532,7 +539,7 @@ export function buildChunkMesh(cq, cr, getChunkData) {
         let topY = 1;
         if (a === WATER) {
           const above = ly + 1 < WORLD_HEIGHT ? padded[colBase + ly + 1] : 0;
-          if (above !== WATER) topY = WATER_SURFACE_HEIGHT;
+          if (FREE_SURFACE[above] === 1) topY = WATER_SURFACE_HEIGHT;
         }
 
         const renderRow = a << 8;

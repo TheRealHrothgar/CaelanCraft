@@ -4,7 +4,7 @@ import {
   PLAYER_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT, SNEAK_EYE_HEIGHT, GRAVITY, JUMP_VELOCITY, TERMINAL_VELOCITY,
   WALK_SPEED, SPRINT_SPEED, SNEAK_SPEED, FLY_SPEED, FLY_SPRINT_SPEED, FLY_VERTICAL_SPEED, WATER_MAX_SINK,
   SWIM_UP_SPEED, SWIM_EXIT_JUMP, WATER_SPEED_FACTOR, WATER_SURFACE_HEIGHT, MAX_FRAME_DT, MAX_SUBSTEP_DT,
-  COLLISION_EPS, WORLD_HEIGHT,
+  COLLISION_EPS, WORLD_HEIGHT, GROUND_ACCEL,
 } from '../../src/config.js';
 import { yawToForward } from '../../src/coords.js';
 import {
@@ -519,6 +519,37 @@ describe('horizontal movement', () => {
     run(air, input({ forward: 1 }), () => BLOCK.AIR, 3);
     expect(Math.hypot(air.vx, air.vz)).toBeLessThan(Math.hypot(ground.vx, ground.vz));
   });
+});
+
+describe('external pull (black holes, input.pullX/Y/Z)', () => {
+  const floor = flatGetBlock(GROUND);
+  /** Step `p` for `seconds` of frames of `dt` with `inp`. */
+  function hold(p, inp, getBlock, seconds, dt) {
+    for (let i = 0; i < Math.round(seconds / dt); i++) stepPlayer(p, inp, getBlock, dt);
+    return p;
+  }
+  for (const dt of [1 / 30, 1 / 60, 1 / 144]) {
+    it(`drifts pull / GROUND_ACCEL whatever the mode, at ${Math.round(1 / dt)} Hz`, () => {
+      const pull = 30;
+      const want = pull / GROUND_ACCEL;
+      const standing = hold(createPlayer(0, FEET, 0), input({ pullX: pull }), floor, 2, dt);
+      expect(standing.onGround).toBe(true);
+      expect(standing.vx).toBeCloseTo(want, 6);
+      // Airborne (AIR_ACCEL relaxation): the same drift, not AIR_ACCEL / GROUND_ACCEL times more.
+      const falling = hold(createPlayer(0, 100, 0), input({ pullX: pull }), () => BLOCK.AIR, 3, dt);
+      expect(falling.onGround).toBe(false);
+      expect(falling.vx).toBeCloseTo(want, 3);
+      // Walking straight against it: walking speed minus the drift.
+      const walking = hold(createPlayer(0, FEET, 0), input({ forward: 1, yaw: Math.PI / 2, pullX: pull }), floor, 2, dt);
+      expect(walking.vx).toBeCloseTo(-WALK_SPEED + want, 6);
+      // Flying: the vertical pull drifts the same way; a fall (no relaxation) feels it as a plain acceleration.
+      const flying = createPlayer(0, 50, 0);
+      flying.flying = true;
+      expect(hold(flying, input({ pullY: pull }), () => BLOCK.AIR, 2, dt).vy).toBeCloseTo(want, 6);
+      const dropped = hold(createPlayer(0, 100, 0), input({ pullY: 4 }), () => BLOCK.AIR, 0.5, dt);
+      expect(dropped.vy).toBeCloseTo((GRAVITY + 4) * 0.5, 6);
+    });
+  }
 });
 
 describe('robustness', () => {

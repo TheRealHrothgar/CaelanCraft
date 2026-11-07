@@ -5,7 +5,7 @@ import { chunkKey, columnIndex, localIndex } from '../../src/coords.js';
 import {
   HEX_DIRS, HEX_CORNERS, HEX_SIZE, HEX_ROW_SPACING, FACE_NORMALS, FACE_SHADE, FACE_OPPOSITE, FACE_TOP, FACE_BOTTOM,
 } from '../../src/hex.js';
-import { BLOCK, BIOME, getFaceTile, tileToUV } from '../../src/blocks.js';
+import { BLOCK, BIOME, getFaceTile, tileToUV, isOpaque } from '../../src/blocks.js';
 import { buildChunkMesh, vertexAO, hexCornerAO, createMeshBuilder, BIOME_TINT, isTintedFace } from '../../src/mesher.js';
 import { createWorldGen } from '../../src/worldgen.js';
 import { makeChunkData, makeChunkDataGetter, setWorldBlock, countFaces } from '../helpers/fixtures.js';
@@ -546,6 +546,22 @@ describe('buildChunkMesh — water', () => {
     expect(faceSet(upper)).toEqual([0, 1, 2, 3, 4, 5, 6]);
     const top = upper.find((f) => f.face === FACE_TOP);
     for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + 1 + WATER_SURFACE_HEIGHT, 6);
+  });
+  it('water under any block meshed as a full prism stays full height: no fake surface under submerged glass, ice or leaves', () => {
+    for (const above of [B.GLASS, B.ICE, B.OAK_LEAVES, B.BLACK_HOLE, B.STONE]) {
+      const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, above]]));
+      const water = facesAt(m, AQ, AY, AR);
+      expect(water.length).toBeGreaterThan(0);
+      for (const f of water) for (const v of f.verts) expect([AY, AY + 1]).toContain(v[1]);
+      // The cap stays toward a see-through block, flush with that block's bottom face (like the water's side faces
+      // against it), and is culled under an opaque one.
+      expect(water.some((f) => f.face === FACE_TOP)).toBe(!isOpaque(above));
+    }
+  });
+  it('water under a campfire (drawn by its own model, the cell is mostly air) keeps the lowered free surface', () => {
+    const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.CAMPFIRE]]));
+    const top = facesAt(m, AQ, AY, AR).find((f) => f.face === FACE_TOP);
+    for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
   });
   it('two side-by-side water cells cull their shared face (cullSame)', () => {
     const m = mesh(world([[...A, B.WATER], [...near(2), B.WATER]]));

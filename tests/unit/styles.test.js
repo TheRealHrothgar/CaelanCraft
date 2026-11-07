@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CONTROLS_SHEET } from '../../src/menus.js';
+import { PICKER_ORDER } from '../../src/blocks.js';
 
 const css = readFileSync(fileURLToPath(new URL('../../src/styles.css', import.meta.url)), 'utf8');
 
@@ -68,5 +69,52 @@ describe('styles.css title screen', () => {
     // v0.3 added the console (T /), R and Shift+R rows: 17 rows.
     expect(rows).toBe(17);
     expect(total).toBeLessThanOrEqual(VIEWPORT_H);
+  });
+});
+
+/** A px / vh length, or calc() of px / vh terms joined by + and −, in px for a viewport height. */
+function lengthPx(v, viewportH) {
+  const m = /^calc\((.*)\)$/.exec(v);
+  if (!m) return toPx(v, viewportH);
+  let total = 0;
+  for (const [, sign, term] of m[1].matchAll(/([+-]?)\s*([\d.]+(?:px|vh))/g)) total += (sign === '-' ? -1 : 1) * toPx(term, viewportH);
+  return total;
+}
+
+describe('styles.css block picker', () => {
+  // Pixels from the viewport bottom to the hotbar's visible top: 8px offset, 40px slot + 3px padding + 2px border on
+  // each side, 2px box-shadow (the hotbar stays visible and clickable while the picker is open).
+  const hotbar = decls('#hotbar');
+  const HOTBAR_CLEARANCE = toPx(hotbar.get('bottom'), 0) + toPx(decls('.hotbar-slot').get('height'), 0)
+    + 2 * toPx(hotbar.get('padding'), 0) + 2 * 2 + 2;
+  const layer = decls('#block-picker');
+  const panel = decls('.picker-panel');
+  const grid = decls('#picker-grid');
+
+  it('the panel never reaches the hotbar, whatever the viewport height (an 800x480 window included)', () => {
+    expect(HOTBAR_CLEARANCE).toBe(60);
+    expect(panel.get('box-sizing')).toBe('border-box'); // max-height covers the border and padding
+    for (const H of [300, 382, 480, 502, 600, 622, 720, 1080, 1440]) {
+      const bottom = lengthPx(layer.get('padding-top'), H) + lengthPx(panel.get('max-height'), H) + 2; // + 2px shadow
+      expect(bottom).toBeLessThanOrEqual(H - HOTBAR_CLEARANCE - 8);
+    }
+  });
+
+  it('only the grid shrinks and scrolls, so the title, name and a wrapped hint can never push the panel down', () => {
+    expect(panel.get('display')).toBe('flex');
+    expect(panel.get('flex-direction')).toBe('column');
+    expect(grid.get('overflow-y')).toBe('auto');
+    expect(grid.get('min-height')).toBe('0');
+    expect(grid.get('flex')).toMatch(/^0 1 /);
+    expect(grid.get('max-height')).not.toMatch(/vh/); // the viewport bound lives on the panel, which sees all the chrome
+  });
+
+  it('the 1280x720 reference window (622px viewport) still shows the whole grid without scrolling', () => {
+    const H = 622;
+    // 4px border + 12px padding on each side, 16px bold title and name (~19px lines), 12px hint (~15px), 8px grid margins.
+    const chrome = 2 * 4 + 2 * 12 + 19 + 19 + 15 + 2 * 8;
+    const cols = Math.floor((820 + 4) / (60 + 4)); // grid width min(820px, 100vw − 48px) = 820px at 1258px wide
+    const rows = Math.ceil(PICKER_ORDER.length / cols);
+    expect(lengthPx(panel.get('max-height'), H)).toBeGreaterThanOrEqual(chrome + rows * 60 + (rows - 1) * 4);
   });
 });

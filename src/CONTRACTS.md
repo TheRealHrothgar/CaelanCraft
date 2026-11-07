@@ -424,8 +424,12 @@ are culled), `py >= WORLD_HEIGHT → AIR`, else `padded[...]`. Reuse one module-
 The centre chunk's `biomes` array (if present, length ≥ 256) supplies the per-column tint; otherwise PLAINS.
 ### 10.2 Emission for block `a` at local `(lq,ly,lr)`, centre `C = (lq + lr/2, lr·√3/2)`, neighbour `Q` across face `f`
 (`Q = P + HEX_DIRS[f]` for sides, `±1` in y for caps). Emit iff `shouldRenderFace(a, P(Q))`.
-1. `topY = (a === WATER && P(lq+1, ly+1, lr+1) !== WATER) ? WATER_SURFACE_HEIGHT : 1`. Applies to EVERY top vertex of that
-   water cell: the top corners of all six side quads and the whole top hexagon sit at `ly + topY`.
+1. `above = P(lq+1, ly+1, lr+1)`; `topY = (a === WATER && (above === AIR || !isMeshed(above))) ? WATER_SURFACE_HEIGHT : 1`:
+   only a free surface (air, or a block drawn by its own model: campfire) is lowered. Water under water or under any block
+   meshed as a full prism (stone, and also see-through glass, ice, leaves, a black hole) stays full height, so a submerged
+   see-through block shows no fake surface ledge; its top cap still follows the culling rule (drawn flush with the bottom
+   face of a non-opaque block, like the water's side faces against it). Applies to EVERY top vertex of that water cell: the
+   top corners of all six side quads and the whole top hexagon sit at `ly + topY`.
 2. **Side face `j`** (quad, 4 vertices, CCW from outside): `v0 = bottom corner j+1`, `v1 = bottom corner j`, `v2 = top corner j`,
    `v3 = top corner j+1` (so v0/v3 are the LEFT edge seen from outside, v1/v2 the RIGHT). Position `C + HEX_CORNERS[k]`,
    `y = ly` or `ly + topY`; normal `FACE_NORMALS[j]`. AO per vertex with `third` = the neighbour sharing that corner's vertical
@@ -488,8 +492,11 @@ export function supportingCells(p, getBlock, out = [])  // [q,y,r] of the cells 
                                                        // is solid (empty when airborne); the step-on trigger is edge-triggered on this set
 /** PlayerState = { x,y,z, vx,vy,vz, onGround, flying, sneaking, sprinting, inWater, headInWater, hitWall }
  *  PlayerInput = { forward: -1|0|1, strafe: -1|0|1, jump, sneak, sprint: boolean, yaw: number, pullX?, pullY?, pullZ?: number }
- *  pull* (v0.5, black holes) are accelerations in m/s², default 0, added every substep in EVERY mode: vx/vz += pull·h after the
- *  horizontal relaxation, vy = max(vy + pullY·h, TERMINAL_VELOCITY) after the vertical rule. */
+ *  pull* (v0.5, black holes) are accelerations in m/s², default 0, felt every substep in EVERY mode (§12.1 steps 2–3). Where
+ *  velocity relaxes toward a target (horizontal always, vertical while flying) the pull moves the target by pull / GROUND_ACCEL,
+ *  so it adds a drift of exactly pull / GROUND_ACCEL whatever h and accel are (the v0.5 rule, a raw pull·h, drifted pull·h/k:
+ *  18 % more on the ground at 60 Hz and 5× more airborne, so hopping away from a hole was far worse than walking). Where vy is
+ *  ballistic (falling, swimming) it is a plain acceleration: vy = max(vy + pullY·h, TERMINAL_VELOCITY) after the vertical rule. */
 ```
 The player is a **vertical cylinder** of radius `PLAYER_RADIUS` and height `PLAYER_HEIGHT`. Because the radius is smaller than
 a cell's inradius, the footprint can only overlap the cell containing `(x, z)` and its six neighbours; the collider examines
@@ -506,11 +513,12 @@ exactly those 7 columns (`gatherColumns`).
    speed = flying ? (sprinting ? FLY_SPRINT_SPEED : FLY_SPEED) : sneaking ? SNEAK_SPEED : sprinting ? SPRINT_SPEED : WALK_SPEED
    if (inWater && !flying) speed *= WATER_SPEED_FACTOR
    accel = (flying || onGround) ? GROUND_ACCEL : inWater ? WATER_ACCEL : AIR_ACCEL;  k = 1 - exp(-accel*h)
-   vx += (wx*speed - vx)*k;  vz += (wz*speed - vz)*k
+   vx += (wx*speed + pullX/GROUND_ACCEL - vx)*k;  vz += (wz*speed + pullZ/GROUND_ACCEL - vz)*k
 3. Vertical:
-   flying:  target = ((jump?1:0) - (sneak?1:0)) * FLY_VERTICAL_SPEED;  vy += (target - vy) * (1 - exp(-GROUND_ACCEL*h))
+   flying:  target = ((jump?1:0) - (sneak?1:0)) * FLY_VERTICAL_SPEED + pullY/GROUND_ACCEL;  vy += (target - vy) * (1 - exp(-GROUND_ACCEL*h))
    inWater: if jump: vy = hitWall ? SWIM_EXIT_JUMP : SWIM_UP_SPEED;  else vy = max(vy + WATER_GRAVITY*h, WATER_MAX_SINK)
    else:    if (jump && onGround) vy = JUMP_VELOCITY;  vy = max(vy + GRAVITY*h, TERMINAL_VELOCITY)
+   not flying, pullY ≠ 0: vy = max(vy + pullY*h, TERMINAL_VELOCITY)
 4. Move, vertical then horizontal; before moving: onGround = false, hitWall = false
    moveVertical(vy*h): collision moving down → onGround = true; any collision → vy = 0
    moveHorizontal(vx*h, vz*h): any collision → hitWall = true (velocity into each wall removed, tangential kept)
@@ -697,6 +705,9 @@ export function createMenus(doc, atlasCanvas, callbacks)
  *   showClickToPlay(), hideClickToPlay(),
  *   showPause(seed), hidePause(),
  *   showPicker(hotbar, selected), hidePicker(), isPickerOpen(),   // scrollable grid of PICKER_ORDER icons (64px canvases shown at 52px); click → onPickBlock(id, null); Digit1-9 while hovering → onPickBlock(id, slot)
+ *                                           // styles.css: .picker-panel is a border-box flex column with max-height calc(100vh − 8vh − 72px), so at
+ *                                           //   any viewport height it ends above the hotbar (bottom 60px), which stays visible and clickable; only
+ *                                           //   #picker-grid (min-height 0, flex 0 1 auto, max-height 420px) shrinks and scrolls
  *   getSeedInput(),                         // text of #seed-input
  *   dispose() } */
 ```
@@ -939,29 +950,53 @@ export function holeKey(q, y, r)           // "q,y,r"
 export function canSwallow(id)             // false for AIR, liquids, BEDROCK, RUNE_BLOCK, BLACK_HOLE; true otherwise
 export const EAT_OFFSETS                   // frozen [dq,dy,dr] list: hex distance ≤ R and centre distance ≤ R (R = BLACK_HOLE_EAT_RADIUS),
                                            //   centre excluded, sorted by distance, then dy, dq, dr
+export function columnHasEdits(edits, q, r) // true when World.edits records any cell of column (q, r) (128 lookups, y innermost)
 export class BlackHoles {
-  holes: Map<key, {key,q,y,r,cx,cy,cz,timer,offset}>; size
-  add(q,y,r) / remove(q,y,r) / clear()     // add refuses duplicates and anything past BLACK_HOLE_MAX_TRACKED (256)
+  holes: Map<key, {key,q,y,r,cx,cy,cz,due,offset}>; size; inert   // inert = BLACK_HOLE cells refused at the cap (do nothing)
+  add(q,y,r) / remove(q,y,r) / clear()     // add refuses duplicates; past BLACK_HOLE_MAX_TRACKED (256) it records the cell as inert
+                                           //   instead. remove forgets the cell (tracked or inert); when it frees a tracked slot,
+                                           //   the oldest inert holes are added until the cap is full again (no reload needed)
   onBlockChange(q,y,r,prev,next)           // BLACK_HOLE appears → add; disappears → remove; a swallowable cell appears → every hole whose
                                            //   ball (|dy| ≤ R, hex distance ≤ R) contains it restarts its search (offset = 0)
   loadFromEdits(world.edits)               // clear, then add every edit whose id is BLACK_HOLE
   pullAt(x,y,z,out?) → [ax,ay,az]          // Σ over holes with 0 < d < BLACK_HOLE_PULL_RADIUS: toward the centre, magnitude STRENGTH·(1−d/R)²
   swallowing(player) → hole|null           // first hole with playerIntersectsBlock(player, q, y, r)
+  nearestDistance(x,y,z,stopBelow=0)       // distance to the nearest hole centre (Infinity: none); may return early once below stopBelow
+  respawnPoint(spawn, {getBlock,isLoaded,surfaceHeight,hasEdits}) → [x,y,z]   // see below
   update(dt, {getBlock,setBlock,isLoaded}) → [{q,y,r,id}]   // see below
 }
 ```
-`update`: holes are visited round-robin (start index advances by one per call). A hole in an unloaded column, or whose search is
-exhausted (offset past EAT_OFFSETS), is skipped without ticking. Otherwise `timer −= dt`; when `timer ≤ 0` and fewer than
-BLACK_HOLE_MAX_EATS_PER_FRAME (4) cells were eaten this call, `timer += BLACK_HOLE_EAT_INTERVAL_S` (0.2 s, floored at 0) and the
-hole scans EAT_OFFSETS from `offset` for the first `canSwallow` cell — stopping (no eat) at a cell whose column is unloaded — and
-sets it to AIR via `setBlock`, reporting the old id. Over budget: `timer = 0` so it goes first-ready next frame.
+`update` eats in rounds on one shared clock (`_clock`, set to BLACK_HOLE_EAT_INTERVAL_S when the first hole is added and by `clear`):
+`clock −= dt`; when `clock ≤ 0`, `clock += INTERVAL` (reset to INTERVAL if still ≤ 0: one round per call at most) and every hole
+gets `due = true` (one owed eat; owed eats never pile up). Holes are then visited round-robin from the cursor; a hole that is not
+due, whose search is exhausted (offset past EAT_OFFSETS) or whose column is unloaded is skipped (staying due). Otherwise, while
+fewer than BLACK_HOLE_MAX_EATS_PER_FRAME (64) cells were eaten this call, the hole scans EAT_OFFSETS from `offset` for the first
+`canSwallow` cell — stopping (no cell) at one whose column is unloaded. An eat dirties the chunks of its column and its six side
+neighbours (what `World.setBlock` marks); after the call's first eat, an eat that would bring the call's dirtied chunks above
+max(BLACK_HOLE_MAX_EAT_CHUNKS_PER_FRAME (1), chunks dirtied so far) is held back (world.update re-meshes every dirtied chunk at
+once, §9.1 step 2, so eats inside the frame's chunks are free and one frame re-meshes one chunk, or the 2–4 a border eat touches).
+A held-back hole stays due, and the first one held back by either limit is where the next call starts (else the cursor advances
+by one), so crowds in different chunks take turns. Otherwise `due = false` and the cell (if any) is set to AIR via `setBlock`,
+reporting the old id. Because holes stay in step, a chunk full of holes is re-meshed once a round, not every frame.
+
+`respawnPoint(spawn, world)`: columns over the hex rings 0..BLACK_HOLE_RESPAWN_RINGS (32) around spawn's column (ring n from
+n × HEX_DIRS[4], n steps along each direction, like findSpawn) give candidates: a loaded column stands on its topmost solid cell
+`t` (feet y = t + 1) if cells t + 1 and t + 2 are AIR (water, a campfire or a hole there → none) and `t + 1 + PLAYER_HEIGHT ≤
+WORLD_HEIGHT`, so edits count (ground a hole ate, a house built over spawn); an unloaded column without recorded edits (`hasEdits`) stands at its
+worldgen surface + 1 when the surface is ≥ SEA_LEVEL. The first candidate whose body middle (feet + PLAYER_HEIGHT/2) is at least
+BLACK_HOLE_PULL_RADIUS from every tracked hole is returned (no pull there, and no eat ball reaches its floor, so a player standing
+still is never swallowed); else the candidate farthest from every hole; else `spawn`.
 
 main (§23): one `BlackHoles` for the session; `startLoading` calls `loadFromEdits(world.edits)` right after wiring
 `world.onBlockChange`, whose handler forwards every change to `blackHoles.onBlockChange` first. `stepPlaying` writes
 `pullAt(player.x, player.y + PLAYER_HEIGHT/2, player.z)` into `input.pullX/Y/Z` before `stepPlayer`, then (if any hole exists)
-teleports a swallowed player to `world.findSpawn()` with the chat line "You were swallowed by a black hole!" and runs `update`,
-playing at most one break sound per frame for an eaten cell within 16 units. `placeSelected` refuses a BLACK_HOLE that would
-intersect the player (like solid blocks). Constants live in config.js (`BLACK_HOLE_*`).
+teleports a swallowed player to `respawnPoint(world.findSpawn(), view)` (view: live `getBlock`, `hasChunkAtCell`,
+`getSurfaceHeight`, `columnHasEdits(world.edits, …)`); the chat line "You were swallowed by a black hole!" and the glass break
+sound play at most once per BLACK_HOLE_SWALLOW_LINE_S (2 s, `fxTime`). When `inert` becomes non-zero it logs once (again only
+after it has dropped to 0) "Only 256 black holes can be active at once: the rest do nothing until some are broken." Then it runs
+`update`, playing at most one break sound per frame for an eaten cell within 16 units. `placeSelected` refuses a BLACK_HOLE that
+would intersect the player (like solid blocks). Constants live in config.js (`BLACK_HOLE_*`); with the §12 pull rule, walking,
+hopping, sprinting or flying away from a hole on the floor escapes from 1.5 units out, and standing still never does.
 
 ## 30. `src/pigs.js` (PURE) and `src/pigRenderer.js` (three) — Pigs, v0.5
 

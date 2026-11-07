@@ -121,11 +121,19 @@ export const CAMPFIRE_CRACKLES_PER_S = 5;           // average crackle rate at t
 
 // Black holes (CONTRACTS §29)
 export const BLACK_HOLE_PULL_RADIUS = 10;           // world units from the hole's centre where the pull acts
-export const BLACK_HOLE_PULL_STRENGTH = 120;        // m/s² at the centre, falling off as (1 − d/R)²; ground walking escapes beyond ~1.5 units
+export const BLACK_HOLE_PULL_STRENGTH = 120;        // m/s² at the centre, falling off as (1 − d/R)². Physics turns a pull into a drift of
+                                                    // pull / GROUND_ACCEL in every mode and at any frame rate (§12), which falls below WALK_SPEED
+                                                    // ≈ 1.25 units from a hole on the floor: walking, hopping, sprinting or flying away escapes
+                                                    // from 1.5 units out; standing still never does
 export const BLACK_HOLE_EAT_RADIUS = 4;             // cells whose centre is within this distance of the hole can be swallowed
-export const BLACK_HOLE_EAT_INTERVAL_S = 0.2;       // each hole swallows at most one cell per interval
-export const BLACK_HOLE_MAX_EATS_PER_FRAME = 4;     // across all holes (each eat re-meshes a chunk)
-export const BLACK_HOLE_MAX_TRACKED = 256;          // holes beyond this are inert until others are broken
+export const BLACK_HOLE_EAT_INTERVAL_S = 0.2;       // one eating round per interval (shared clock): each hole swallows at most one cell a round
+export const BLACK_HOLE_MAX_EATS_PER_FRAME = 64;    // across all holes; a safety bound on setBlock calls (re-meshing is bounded by the next line)
+export const BLACK_HOLE_MAX_EAT_CHUNKS_PER_FRAME = 1; // distinct chunks one frame's eats may dirty (World.update re-meshes each at once, §9.1
+                                                    // step 2); the frame's first eat always goes, even when it dirties several at a chunk border
+export const BLACK_HOLE_MAX_TRACKED = 256;          // holes beyond this are inert (no pull, eating or swallowing) until others are broken
+export const BLACK_HOLE_RESPAWN_RINGS = 32;         // cell rings around the world spawn searched for a respawn point out of every hole's reach
+                                                    // (a 256-hole cluster at spawn needs ~20; one search costs ~1 ms, ~10–30 ms when holes carpet it all)
+export const BLACK_HOLE_SWALLOW_LINE_S = 2;         // the "swallowed" chat line and sound repeat at most this often
 
 // Pigs (CONTRACTS §30)
 export const PIG_MAX = 32;                          // pigs in a world; summon refuses beyond this

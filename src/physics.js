@@ -307,12 +307,15 @@ function substep(p, input, getBlock, h, wx, wz) {
   if (inWater && !flying) speed *= WATER_SPEED_FACTOR;
   const accel = flying || p.onGround ? GROUND_ACCEL : inWater ? WATER_ACCEL : AIR_ACCEL;
   const k = 1 - Math.exp(-accel * h);
-  p.vx += (wx * speed - p.vx) * k + (input.pullX || 0) * h;
-  p.vz += (wz * speed - p.vz) * k + (input.pullZ || 0) * h;
+  // External pull (black holes) moves the velocity the relaxation heads for by pull / GROUND_ACCEL, in every mode.
+  // The drift it adds is then pull / GROUND_ACCEL whatever the substep size or the accel state. A raw pull·h here
+  // would drift pull·h/k: about 18 % more on the ground at 60 Hz and 5× more in the air (AIR_ACCEL).
+  p.vx += (wx * speed + (input.pullX || 0) / GROUND_ACCEL - p.vx) * k;
+  p.vz += (wz * speed + (input.pullZ || 0) / GROUND_ACCEL - p.vz) * k;
 
   // 3. Vertical.
   if (flying) {
-    const target = ((jump ? 1 : 0) - (sneak ? 1 : 0)) * FLY_VERTICAL_SPEED;
+    const target = ((jump ? 1 : 0) - (sneak ? 1 : 0)) * FLY_VERTICAL_SPEED + (input.pullY || 0) / GROUND_ACCEL;
     p.vy += (target - p.vy) * (1 - Math.exp(-GROUND_ACCEL * h));
   } else if (inWater) {
     if (jump) p.vy = p.hitWall ? SWIM_EXIT_JUMP : SWIM_UP_SPEED;
@@ -321,8 +324,9 @@ function substep(p, input, getBlock, h, wx, wz) {
     if (jump && p.onGround) p.vy = JUMP_VELOCITY;
     p.vy = Math.max(p.vy + GRAVITY * h, TERMINAL_VELOCITY);
   }
-  // External pull (black holes) acts in every mode; terminal velocity still caps a downward drag.
-  if (input.pullY) p.vy = Math.max(p.vy + input.pullY * h, TERMINAL_VELOCITY);
+  // Falling and swimming have no relaxation, so there the pull is a plain acceleration (terminal velocity still caps a
+  // downward drag); flying took it into its target above.
+  if (input.pullY && !flying) p.vy = Math.max(p.vy + input.pullY * h, TERMINAL_VELOCITY);
 
   // 4. Move: vertical first, then the horizontal plane.
   p.onGround = false;

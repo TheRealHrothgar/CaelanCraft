@@ -10,6 +10,7 @@ import {
   CHUNK_SIZE, RENDER_DISTANCE, LOADING_BUDGET_MS, REACH, BREAK_REPEAT_S, PLACE_REPEAT_S, MAX_FRAME_DT, FOV,
   SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY, PLAYER_HEIGHT,
   PIG_NATURAL_COUNT, CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
+  BLACK_HOLE_MAX_TRACKED, BLACK_HOLE_SWALLOW_LINE_S,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
@@ -29,7 +30,7 @@ import { createHUD } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
 import { RuneStore, RuneRunner, runeKey, SOURCE } from './runes.js';
-import { BlackHoles } from './blackholes.js';
+import { BlackHoles, columnHasEdits } from './blackholes.js';
 import { Pigs } from './pigs.js';
 import { resolveBodies } from './bodies.js';
 import { Campfires } from './campfires.js';
@@ -292,6 +293,10 @@ export function boot(win, doc) {
   const blackHoles = new BlackHoles();
   /** @type {[number, number, number]} scratch for the pull on the player */
   const pull = [0, 0, 0];
+  /** throttle for the "swallowed" chat line and sound (fxTime seconds) */
+  let lastSwallowLineAt = -Infinity;
+  /** the "inert black holes" chat line was shown and the inert count has not dropped to 0 since */
+  let inertHolesWarned = false;
   // Campfires (CONTRACTS §32): re-seeded from the world's edits on every load, like black holes.
   const campfires = new Campfires();
   /** seconds of animation time for flames and smoke (advances in every state that renders) */
@@ -311,11 +316,13 @@ export function boot(win, doc) {
     isLoaded: (x, z) => world.hasChunkAt(x, z),
     pullAt: (x, y, z, out) => blackHoles.pullAt(x, y, z, out),
   };
-  /** World view handed to blackHoles.update (built once a world exists). */
+  /** World view handed to blackHoles.update and blackHoles.respawnPoint (used once a world exists). */
   const blackHoleWorld = {
     getBlock: (q, y, r) => world.getBlock(q, y, r),
     setBlock: (q, y, r, id) => world.setBlock(q, y, r, id),
     isLoaded: (q, r) => world.hasChunkAtCell(q, r),
+    surfaceHeight: (q, r) => world.getSurfaceHeight(q, r),
+    hasEdits: (q, r) => columnHasEdits(world.edits, q, r),
   };
   /** @type {RuneRunner|null} */
   let runner = null;
@@ -1062,14 +1069,26 @@ export function boot(win, doc) {
       : Date.now();
   }
 
-  /** Black holes: swallow the player (back to spawn) and let each hole eat its neighbourhood. */
+  /**
+   * Black holes: swallow the player (back to the nearest point near spawn that no hole can reach, §29) and let each
+   * hole eat its neighbourhood.
+   */
   function stepBlackHoles(dt) {
     if (blackHoles.size === 0) return;
     if (blackHoles.swallowing(player)) {
-      const [sx, sy, sz] = world.findSpawn();
+      const [sx, sy, sz] = blackHoles.respawnPoint(world.findSpawn(), blackHoleWorld);
       game.teleport(sx, sy, sz);
-      logLine('You were swallowed by a black hole!');
-      audio.playBreak('glass');
+      if (fxTime - lastSwallowLineAt >= BLACK_HOLE_SWALLOW_LINE_S) {
+        lastSwallowLineAt = fxTime;
+        logLine('You were swallowed by a black hole!');
+        audio.playBreak('glass');
+      }
+    }
+    if (blackHoles.inert === 0) {
+      inertHolesWarned = false;
+    } else if (!inertHolesWarned) {
+      inertHolesWarned = true;
+      logLine(`Only ${BLACK_HOLE_MAX_TRACKED} black holes can be active at once: the rest do nothing until some are broken.`);
     }
     const eaten = blackHoles.update(dt, blackHoleWorld);
     // One crunch per frame at most, and only for cells the player is near enough to hear.
