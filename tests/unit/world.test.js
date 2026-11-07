@@ -5,11 +5,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE,
-  DATA_RADIUS_EXTRA, UNLOAD_RADIUS_EXTRA, MAX_BUILDS_PER_UPDATE,
+  DATA_RADIUS_EXTRA, UNLOAD_RADIUS_EXTRA, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS,
 } from '../../src/config.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
 import { HEX_DIRS, hexLength, hexNormSq, hexToWorld, worldToHex, hexDiscCount } from '../../src/hex.js';
-import { BLOCK, BIOME } from '../../src/blocks.js';
+import { BLOCK, BIOME, UNLOADED } from '../../src/blocks.js';
 import { normalizeSeed, hashString } from '../../src/noise.js';
 import { World } from '../../src/world.js';
 import { trivialWorldGen, flatWorldGen, countFaces, makeChunkData } from '../helpers/fixtures.js';
@@ -1073,7 +1073,8 @@ describe('onBlockChange hook', () => {
 });
 
 describe('editCount', () => {
-  it('is 0 for a fresh world and counts every recorded edit, including edits back to AIR and restored saves', () => {
+  // v0.8 (CONTRACTS §9.2): an edit that puts a cell back to its origin is deleted, so editing back no longer costs an entry.
+  it('is 0 for a fresh world and counts every recorded edit; edits back to the origin are pruned; restored saves count', () => {
     const { world } = makeWorld({ worldGen: flatWorldGen(10) });
     expect(world.editCount).toBe(0);
     converge(world);
@@ -1081,16 +1082,215 @@ describe('editCount', () => {
     world.setBlock(0, 11, 0, B.STONE);
     world.setBlock(1, 11, 0, B.STONE);
     expect(world.editCount).toBe(2);
-    world.setBlock(0, 11, 0, B.AIR); // same cell: still one entry (now recording AIR)
+    world.setBlock(0, 11, 0, B.GLASS); // same cell: still one entry (now recording GLASS)
     expect(world.editCount).toBe(2);
+    world.setBlock(0, 11, 0, B.AIR); // back to its origin (AIR): the edit is gone
+    expect(world.editCount).toBe(1);
+    expect(world.edits.get('0,0').has(localIndex(0, 11, 0))).toBe(false);
     world.setBlock(5, 10, 5, B.AIR); // breaking generated stone records an AIR edit
-    expect(world.editCount).toBe(3);
+    expect(world.editCount).toBe(2);
     world.setBlock(20, 11, -20, B.GLASS); // a second chunk
+    expect(world.editCount).toBe(3);
+    world.setBlock(0, 11, 0, B.STONE);
     expect(world.editCount).toBe(4);
     expect(world.editCount).toBe([...world.edits.values()].reduce((n, m) => n + m.size, 0));
     // Restoring a save counts its edits; unloaded chunks' edits count too.
     const { world: w2 } = makeWorld({ worldGen: flatWorldGen(10), edits: world.exportEdits() });
     expect(w2.editCount).toBe(4);
     expect(w2.editVersion).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// v0.8 block-physics support (CONTRACTS §9.2): origins and edit pruning, lazy re-meshing, onChunkGenerated,
+// peekBlock, hasEdit / originAt / terrainHeightAt, isNaturalGround.
+
+describe('edit origins and pruning', () => {
+  it('the first edit records the origin; writing the origin back deletes the edit (and the origin)', () => {
+    const { world } = makeWorld({ worldGen: flatWorldGen(10) });
+    converge(world);
+    const li = localIndex(4, 10, 4);
+    expect(world.setBlock(4, 10, 4, B.DIRT)).toBe(true);
+    expect(world.origins.get('0,0').get(li)).toBe(B.STONE);
+    expect(world.setBlock(4, 10, 4, B.GLASS)).toBe(true);
+    expect(world.origins.get('0,0').get(li)).toBe(B.STONE); // still the generated id
+    expect(world.edits.get('0,0').get(li)).toBe(B.GLASS);
+    expect(world.setBlock(4, 10, 4, B.STONE)).toBe(true); // back to the origin
+    expect(world.edits.has('0,0')).toBe(false); // empty per-chunk maps are dropped too
+    expect(world.origins.has('0,0')).toBe(false);
+    expect(world.editCount).toBe(0);
+    expect(world.exportEdits()).toEqual({});
+    expect(world.editVersion).toBe(3); // still a change for autosave
+  });
+
+  it('drained water / refilled holes cost nothing: many edits back and forth keep editCount exact', () => {
+    const { world } = makeWorld({ worldGen: flatWorldGen(10) });
+    converge(world);
+    for (let i = 0; i < 50; i++) {
+      world.setBlock(i % 7, 11, Math.floor(i / 7), B.WATER);
+      world.setBlock(i % 7, 10, Math.floor(i / 7), B.AIR);
+    }
+    expect(world.editCount).toBe(100);
+    for (let i = 0; i < 50; i++) {
+      world.setBlock(i % 7, 11, Math.floor(i / 7), B.AIR);
+      world.setBlock(i % 7, 10, Math.floor(i / 7), B.STONE);
+    }
+    expect(world.editCount).toBe(0);
+    expect(world.editCount).toBe([...world.edits.values()].reduce((n, m) => n + m.size, 0));
+  });
+
+  it('saved edits get their origin when the chunk is generated; an edit equal to the generated id is dropped', () => {
+    const keep = localIndex(1, 11, 1);
+    const redundant = localIndex(2, 5, 2); // stone over stone
+    const { world } = makeWorld({ worldGen: flatWorldGen(10), edits: { '0,0': [keep, B.GLASS, redundant, B.STONE] } });
+    expect(world.editCount).toBe(2);
+    expect(world.origins.has('0,0')).toBe(false);
+    converge(world);
+    expect(world.editCount).toBe(1);
+    expect(world.edits.get('0,0').has(redundant)).toBe(false);
+    expect(world.origins.get('0,0').get(keep)).toBe(B.AIR);
+    // …so breaking that glass afterwards removes the edit instead of recording AIR.
+    world.setBlock(1, 11, 1, B.AIR);
+    expect(world.editCount).toBe(0);
+  });
+
+  it('importEdits into a loaded chunk records origins and prunes like setBlock (no hook)', () => {
+    const { world } = makeWorld({ worldGen: flatWorldGen(10) });
+    converge(world);
+    let fired = 0;
+    world.onBlockChange = () => fired++;
+    world.importEdits({ '0,0': [localIndex(3, 11, 3), B.SAND, localIndex(3, 10, 3), B.STONE] });
+    expect(world.editCount).toBe(1); // the second pair equals the generated block: nothing to record
+    expect(world.originAt(3, 11, 3)).toBe(B.AIR);
+    world.importEdits({ '0,0': [localIndex(3, 11, 3), B.AIR] });
+    expect(world.editCount).toBe(0);
+    expect(fired).toBe(0);
+  });
+
+  it('origins and edits survive unload / reload', () => {
+    const { world } = makeWorld({ worldGen: flatWorldGen(10) });
+    converge(world);
+    world.setBlock(3, 10, 3, B.AIR);
+    converge(world, ...chunkCentre(50, 50));
+    expect(world.getChunk(0, 0)).toBeUndefined();
+    expect(world.originAt(3, 10, 3)).toBe(B.STONE);
+    converge(world);
+    world.setBlock(3, 10, 3, B.STONE);
+    expect(world.editCount).toBe(0);
+  });
+});
+
+describe('peekBlock / hasEdit / originAt / terrainHeightAt / isNaturalGround', () => {
+  it('peekBlock: UNLOADED for unloaded chunks, AIR above and below the world', () => {
+    const { world } = makeWorld({ worldGen: flatWorldGen(10) });
+    converge(world);
+    expect(world.peekBlock(3, 10, 3)).toBe(B.STONE);
+    expect(world.peekBlock(3, 11, 3)).toBe(B.AIR);
+    expect(world.peekBlock(3, -1, 3)).toBe(B.AIR);
+    expect(world.peekBlock(3, WORLD_HEIGHT, 3)).toBe(B.AIR);
+    expect(world.peekBlock(5000, 10, 5000)).toBe(UNLOADED);
+    expect(world.getBlock(5000, 10, 5000)).toBe(B.AIR);
+    expect(world.peekBlock(-1, 10, -17)).toBe(B.STONE); // negative chunk coordinates
+  });
+
+  it('hasEdit / originAt / terrainHeightAt', () => {
+    const { world } = makeWorld({ worldGen: flatWorldGen(10) });
+    converge(world);
+    expect(world.hasEdit(1, 10, 1)).toBe(false);
+    expect(world.originAt(1, 10, 1)).toBe(B.STONE);
+    world.setBlock(1, 10, 1, B.GLASS);
+    expect(world.hasEdit(1, 10, 1)).toBe(true);
+    expect(world.originAt(1, 10, 1)).toBe(B.STONE);
+    expect(world.terrainHeightAt(1, 1)).toBe(10);
+    expect(world.terrainHeightAt(5000, 5000)).toBe(-1);
+    expect(world.originAt(5000, 10, 5000)).toBe(UNLOADED);
+  });
+
+  it('isNaturalGround: loaded, unedited, at or below the column height, solid', () => {
+    const { world } = makeWorld({ worldGen: flatWorldGen(10) });
+    converge(world);
+    expect(world.isNaturalGround(2, 10, 2)).toBe(true);
+    expect(world.isNaturalGround(2, 0, 2)).toBe(true);
+    expect(world.isNaturalGround(2, 11, 2)).toBe(false); // above the terrain
+    world.setBlock(2, 12, 2, B.STONE);
+    expect(world.isNaturalGround(2, 12, 2)).toBe(false); // a build
+    world.setBlock(2, 9, 2, B.DIRT);
+    expect(world.isNaturalGround(2, 9, 2)).toBe(false); // edited terrain
+    world.setBlock(2, 9, 2, B.STONE); // edited back: untouched again
+    expect(world.isNaturalGround(2, 9, 2)).toBe(true);
+    world.setBlock(3, 10, 3, B.AIR);
+    expect(world.isNaturalGround(3, 10, 3)).toBe(false); // not solid
+    expect(world.isNaturalGround(5000, 5, 5000)).toBe(false); // not loaded
+    expect(world.isNaturalGround(2, -1, 2)).toBe(false);
+  });
+});
+
+describe('onChunkGenerated', () => {
+  it('fires once per generated chunk, after the chunk is registered and its saved edits are applied', () => {
+    const li = localIndex(2, 11, 2);
+    const seen = [];
+    let world;
+    world = new World({ seed: 1, renderDistance: 1, worldGen: flatWorldGen(10), now: () => 0, edits: { '0,0': [li, B.SAND] } });
+    world.onChunkGenerated = (cq, cr) => seen.push([cq, cr, world.getBlock(cq * CHUNK_SIZE + 2, 11, cr * CHUNK_SIZE + 2)]);
+    converge(world);
+    expect(seen.length).toBe(world.chunkCount);
+    expect(seen.find(([cq, cr]) => cq === 0 && cr === 0)[2]).toBe(B.SAND);
+    expect(new Set(seen.map(([cq, cr]) => `${cq},${cr}`)).size).toBe(seen.length);
+  });
+});
+
+describe('lazy re-meshing', () => {
+  /** Edit one cell in each of `n` meshed chunks with lazy writes; returns the keys. */
+  function lazyEdits(world, chunks) {
+    for (const [cq, cr] of chunks) world.setBlock(cq * CHUNK_SIZE + 8, 11, cr * CHUNK_SIZE + 8, B.STONE, true);
+  }
+
+  it('a lazy write marks chunks dirty + lazy; a non-lazy write wins; meshing clears the flag', () => {
+    const { world } = makeWorld({ worldGen: flatWorldGen(10) });
+    converge(world);
+    world.setBlock(8, 11, 8, B.STONE, true);
+    const c = world.getChunk(0, 0);
+    expect(c.dirty && c.lazy).toBe(true);
+    world.setBlock(9, 11, 8, B.STONE); // non-lazy
+    expect(c.dirty).toBe(true);
+    expect(c.lazy).toBe(false);
+    world.setBlock(10, 11, 8, B.STONE, true); // lazy after non-lazy: stays non-lazy
+    expect(c.lazy).toBe(false);
+    world.update(0, 0, Infinity);
+    expect(c.dirty || c.lazy).toBe(false);
+    expect(world.edits.get('0,0').size).toBe(3); // lazy writes are recorded like any other
+  });
+
+  it('non-lazy dirty chunks re-mesh at once; lazy ones nearest-first under LAZY_MESH_BUDGET_MS, at least one per update', () => {
+    let t = 0;
+    const { world, meshCalls } = makeWorld({ worldGen: flatWorldGen(10), now: () => t });
+    converge(world);
+    const far = [[2, 0], [0, 2], [-2, 2], [1, 1]];
+    lazyEdits(world, far);
+    world.setBlock(-8, 11, 3, B.STONE); // a player edit in chunk (-1, 0)
+    // Each clock read advances 3 ms: the lazy pass meshes one chunk (always), checks (3 ms < 4), a second, then stops.
+    world._now = () => (t += 3);
+    meshCalls.length = 0;
+    const r = world.update(0, 0, Infinity);
+    const keys = meshCalls.map((m) => m.key);
+    expect(keys[0]).toBe('-1,0'); // non-lazy first, regardless of budget
+    // Nearest to the player first (world distance to the chunk's centre cell): (-2,2) and (1,1) beat (2,0) and (0,2).
+    expect(keys.length).toBe(1 + Math.max(1, Math.floor(LAZY_MESH_BUDGET_MS / 3) + 1));
+    expect(keys.slice(1)).toEqual(['-2,2', '1,1']);
+    expect(r.pendingMesh).toBeGreaterThan(0); // the rest are still pending…
+    for (let i = 0; i < 10 && world.update(0, 0, Infinity).pendingMesh > 0; i++);
+    expect(dirtyKeys(world)).toEqual([]); // …and done a few updates later
+  });
+
+  it('the ring walk never re-meshes a lazily dirty chunk (that is the lazy pass\'s job) but reports it pending', () => {
+    let t = 0;
+    const { world, meshCalls } = makeWorld({ worldGen: flatWorldGen(10), now: () => t });
+    converge(world);
+    lazyEdits(world, [[1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1], [1, -1]]);
+    world._now = () => (t += 100); // every budget is exhausted after the first job
+    meshCalls.length = 0;
+    const r = world.update(0, 0, Infinity);
+    expect(meshCalls.length).toBe(1);
+    expect(r.pendingMesh).toBe(5);
   });
 });

@@ -414,6 +414,12 @@ export class RuneRunner {
     return this.running.has(key);
   }
 
+  /** @returns {boolean} some script (or console job) is still writing an area command (block physics batches its seeds) */
+  hasActiveJobs() {
+    for (const run of this.running.values()) if (run.job && !run.dead) return true;
+    return false;
+  }
+
   /** @returns {RunRecord|undefined} */
   getLastRun(key) {
     return this.lastRun.get(key);

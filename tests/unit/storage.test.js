@@ -8,8 +8,8 @@ import {
 import { localIndex, chunkKey, worldToChunk, worldToLocal } from '../../src/coords.js';
 import { BLOCK, DEFAULT_HOTBAR } from '../../src/blocks.js';
 import {
-  SAVE_KEY, SAVE_VERSION, DEFAULT_SAVE_HOTBAR,
-  serializeSave, deserializeSave, saveGame, loadGame, hasSave, clearSave,
+  SAVE_KEY, SAVE_VERSION, DEFAULT_SAVE_HOTBAR, DEFAULT_PHYSICS_SWITCHES, PHYSICS_SWITCH_NAMES,
+  serializeSave, deserializeSave, saveGame, loadGame, hasSave, clearSave, normalizePhysicsSwitches,
 } from '../../src/storage.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -752,5 +752,44 @@ describe('pigs field (v0.5)', () => {
     const back = deserializeSave(JSON.stringify(raw).replace('Infinity', 'null'));
     expect(back.pigs).toEqual([pigs[0]]);
     expect(back.warnings).toEqual(['pigs[1]: invalid, dropped', 'pigs[2]: invalid, dropped']);
+  });
+});
+
+describe('physics field (v0.8 block-physics switches)', () => {
+  it('is absent unless given (an absent field means the world predates block physics)', () => {
+    expect(JSON.parse(serializeSave(makeSave())).physics).toBeUndefined();
+    expect(deserializeSave(serializeSave(makeSave())).physics).toBeUndefined();
+  });
+
+  it('round-trips the four switches in canonical order', () => {
+    const physics = { explosions: false, collapse: false, water: true, falling: true };
+    const text = serializeSave(makeSave({}, { physics }));
+    expect(text).toContain('"physics":{"falling":true,"water":true,"collapse":false,"explosions":false}');
+    expect(deserializeSave(text).physics).toEqual({ falling: true, water: true, collapse: false, explosions: false });
+    expect(PHYSICS_SWITCH_NAMES).toEqual(['falling', 'water', 'collapse', 'explosions']);
+    expect(DEFAULT_PHYSICS_SWITCHES).toEqual({ falling: true, water: true, collapse: true, explosions: true });
+  });
+
+  it('normalises: anything that is not false is on; unknown keys dropped', () => {
+    expect(normalizePhysicsSwitches({ falling: false, water: 0, extra: true })).toEqual({ falling: false, water: true, collapse: true, explosions: true });
+    expect(normalizePhysicsSwitches(null)).toEqual(DEFAULT_PHYSICS_SWITCHES);
+  });
+
+  it('a malformed field is dropped with a warning (never a null save); non-boolean switches warn and read as on', () => {
+    const raw = JSON.parse(serializeSave(makeSave()));
+    raw.physics = 'yes';
+    const a = deserializeSave(JSON.stringify(raw));
+    expect(a).not.toBeNull();
+    expect(a.physics).toBeUndefined();
+    expect(a.warnings).toContain('physics: not an object, ignored');
+    raw.physics = { falling: 'no', collapse: false };
+    const b = deserializeSave(JSON.stringify(raw));
+    expect(b.physics).toEqual({ falling: true, water: true, collapse: false, explosions: true });
+    expect(b.warnings).toContain('physics.falling: not a boolean, treated as on');
+  });
+
+  it('worlds without the field serialise byte-identically to before', () => {
+    const data = makeSave({ '0,0': [5, BLOCK.STONE] });
+    expect(serializeSave(data)).toBe(serializeSave({ ...data, physics: undefined }));
   });
 });

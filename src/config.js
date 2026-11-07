@@ -149,6 +149,95 @@ export const PIG_HURT_S = 0.5;                      // red flash; hits during it
 export const PIG_FLEE_S = 3;                        // run away after being hit
 export const PIG_TURN_RATE = 4;                     // rad/s
 
+// Block physics (CONTRACTS §33–§38, docs/DESIGN-physics.md). Scheduler core (§33):
+export const PHYSICS_TICK_S = 0.05;                 // fixed tick; step(dt) runs at most ONE tick per frame (slow motion below 20 fps)
+export const WATER_TICKS = 5;                       // delay (ticks) of the `water` ring; `fall` and `misc` use 1
+export const PHYSICS_TICK_BUDGET_MS = 3;            // time budget per tick (checked every 32 cell updates / 256 support visits)
+export const MAX_CELL_UPDATES_PER_TICK = 256;       // count backstop per tick across all rings
+export const MAX_SUPPORT_VISITS_PER_TICK = 8192;    // support-search visits per tick (the search resumes next tick)
+export const SUPPORT_STARVE_TICKS = 4;              // a pending collapse starved by full fall / misc rings this many ticks in a row …
+export const SUPPORT_STARVED_VISITS = 256;          // … gets a step of this many visits anyway (CONTRACTS §33.1.3)
+export const MAX_PARKED_UPDATES = 65536;            // updates waiting for an unloaded chunk; beyond this they are dropped (re-seeding covers them)
+export const MAX_PENDING_SUPPORT_SEEDS = 4096;      // queued support-seed records; beyond this new records are dropped
+export const UNDO_WINDOW_S = 60;                    // the last physics event can be undone this long after it began
+export const UNDO_MAX_CELLS = 65536;                // cells one event records for undo (beyond: recorded partially)
+export const LAZY_MESH_BUDGET_MS = 4;               // world.update(): lazy (physics) re-meshes per call, nearest first, at least one
+// Falling blocks (§34)
+export const MAX_FALLING = 1024;                    // column fallers in flight; beyond this (the lowest) cells settle instantly
+export const MAX_TUMBLING = 64;                     // tumbling entities (debris, lit barrels); extra debris becomes dust
+export const MAX_COLUMN_FALL = 128;                 // gravity blocks one gravity update releases from a column (bottom first)
+export const FALLER_RADIUS = 0.45;                  // tumbling body radius (< HEX_INRADIUS); column fallers are exact cells
+export const FALLER_HEIGHT = 0.98;
+export const TUMBLE_SUBSTEP = 0.9;                  // displaceBody substeps keep |Δ| ≤ this (no tunnelling through 1-cell walls)
+export const TUMBLE_AIR_DRAG = 0.98;                // velocity × this^(60·dt)
+export const TUMBLE_GROUND_FRICTION = 0.8;          // horizontal velocity × this^(60·dt) while a tumbler rests on the ground
+export const LANDING_DUST_PER_FRAME = 16;           // landings per frame that emit dust (the rest land silently)
+// Effects
+export const PARTICLE_CAPACITY = 2048;              // one THREE.Points system; the oldest particle is overwritten
+export const PHYSICS_SOUND_RANGE = 24;              // thud / splash / hiss / creak audible within this distance (linear fade)
+export const BOOM_SOUND_RANGE = 96;
+export const SPLASH_MIN_INTERVAL_S = 0.4;           // throttles for repeated physics sounds
+export const HISS_MIN_INTERVAL_S = 0.4;
+// Flowing water (§35, fluids.js)
+export const WATER_CURRENT = 6;                     // m/s² push toward the lowest-level side neighbour in FLOW cells
+export const DRAIN_MAX_RADIUS = 16;                 // `drain [radius]`
+export const DRAIN_DEFAULT_RADIUS = 8;
+export const WATER_SOURCE_NEIGHBOURS = 3;           // a flowing / falling cell with this many WATER side-neighbours (and a floor) becomes a source;
+                                                    // 2 would let two adjacent sources fill a lake (they share two neighbours on a hex grid)
+export const WADE_DEPTH = 0.4;                      // a body swims only where the water surface is more than this above its feet (or its chest is under)
+export const WADE_SPEED_FACTOR = 0.85;              // horizontal speed in shallower water (wading: walking, jumping, no swim mode)
+// Collapsing structures and trees (§36, support.js / trees.js)
+export const SUPPORT_LIMIT = 8192;                  // a search that visits this many cells counts as supported
+export const TREE_MAX_CELLS = 400;                  // larger floating components crumble instead of toppling
+export const TREE_MAX_TOPPLING = 4;                 // trees toppling at once; more wait in a queue
+export const TREE_QUEUE_GAP_S = 0.3;
+export const TREE_SHAKE_S = 0.15;
+export const TREE_THETA0 = 0.12;                    // initial tilt (rad) of the rod model θ'' = (3g / 2h)·sin θ
+export const TREE_CAUSE_RANGE = 16;                 // the player within this distance sets the topple direction
+// (collapse / trees feature, CONTRACTS §36.3–§36.6)
+export const TREE_LEAF_RADIUS = 2;                  // tree test: its leaves lie within this hex distance of its log columns …
+export const TREE_LEAF_ABOVE = 3;                   // … from the lowest floating log up to the top log + this
+export const TREE_MAX_QUEUED = 64;                  // trees waiting for a topple slot; beyond this a floating tree crumbles
+export const TREE_SHAKE_ANGLE = 0.035;              // ±2° wobble during the TREE_SHAKE_S shake (which also eases in TREE_THETA0)
+export const TREE_SHAKE_WOBBLES = 3;                // whole wobbles in one shake (ends exactly at TREE_THETA0)
+export const TREE_SUBSTEP_S = 1 / 120;              // rod integration / collision substep (the top log moves ≤ ~0.15 per substep)
+export const TREE_KNOCK_RADIUS = 1.2;               // bodies this close to a landing log are knocked away …
+export const TREE_KNOCK_SPEED = 4;                  // … at this horizontal speed (m/s) …
+export const TREE_KNOCK_UP = 5;                     // … plus this upward speed
+export const TREE_LEAF_PARTICLES = 96;              // leaf-burst particles per toppled tree (spread over its leaves)
+export const LEAF_DECAY_RANGE = 3;                  // a leaf with no log within this (hex distance and |dy|) decays after a topple
+export const LEAF_DECAY_S = 1;                      // decaying leaves disappear at random times within this
+// Explosives (§37, explosions.js)
+export const BARREL_FUSE_S = 3;
+export const MAX_LIT_BARRELS = 32;                  // lit barrel entities; beyond this they burn as fuse timers in place
+export const MAX_EXPLOSIONS_PER_FRAME = 1;
+export const MAX_DEBRIS = 16;                       // destroyed cells that fly as tumbling debris per blast
+export const BLAST_RADIUS = 3.5;                    // one barrel; a merged chain of n barrels: BLAST_RADIUS·cbrt(n) capped at BLAST_MAX_RADIUS
+export const BLAST_MAX_RADIUS = 8;
+export const BLAST_CHAIN_WINDOW_S = 0.5;            // fuses expiring within this of the earliest, and within BLAST_CHAIN_DISTANCE of it, merge
+export const BLAST_CHAIN_DISTANCE = 8;
+export const BLAST_IMPULSE = 16;                    // m/s at the centre, falling off linearly to 0 at 2R
+export const BLAST_MIN_UP = 6;                      // at least this much of the impulse is upward
+export const BLAST_SHAKE_RANGE = 24;                // camera shake within this distance
+export const BLAST_FLASH_S = 0.25;
+// Explosives, as built (§37): fuse timers, crater edge, debris, effects
+export const BARREL_TIMER_FUSE_MIN_S = 0.3;         // a barrel caught in a blast burns in place for MIN … MAX seconds (seeded)
+export const BARREL_TIMER_FUSE_MAX_S = 0.8;
+export const MAX_FUSE_TIMERS = 4096;                // barrels burning in place; beyond this a barrel caught in a blast stays unlit
+export const BARREL_HISS_S = 0.4;                   // the lit barrel nearest the player hisses this often
+export const BARREL_PULSE_SCALE = 0.04;             // lit barrels are drawn at scale 1 ± this …
+export const BARREL_PULSE_HZ = 4;                   // … at this rate, rising to 3× over the last second of the fuse
+export const BLAST_JITTER = 0.5;                    // a cell breaks when its centre is within R + jitter, jitter ∈ ±this (seeded per cell and blast)
+export const DEBRIS_SPEED_MIN = 6;                  // debris flies outward at MIN … MAX m/s …
+export const DEBRIS_SPEED_MAX = 10;
+export const DEBRIS_UP_MIN = 4;                     // … and upward at MIN … MAX m/s …
+export const DEBRIS_UP_MAX = 8;
+export const DEBRIS_SPIN = 9;                       // … spinning up to this many rad/s about each axis
+export const BLAST_DUST_CELLS = 48;                 // destroyed cells (beyond the debris) that puff dust; the rest vanish silently
+export const BLAST_FLASH_INTENSITY = 90;            // explosion PointLight peak for a one-barrel blast (× R / BLAST_RADIUS), fading over BLAST_FLASH_S
+export const BLAST_SHAKE_S = 0.6;                   // camera shake duration …
+export const BLAST_SHAKE_AMPLITUDE = 0.16;          // … and amplitude (m) at the blast for one barrel (× √(R / BLAST_RADIUS)), fading to 0 at BLAST_SHAKE_RANGE
+
 // Time / saving / UI
 export const DAY_LENGTH_SECONDS = 600;
 export const START_TIME = 0.30;                     // 07:12

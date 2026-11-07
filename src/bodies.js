@@ -18,6 +18,8 @@
 //        one spot eases apart in every direction over a few frames instead of shooting out along one line.
 //   Pairs are visited in index order for BODY_PASSES passes so chains (player → pig → pig) settle in one frame.
 //   3. A rider that stopped standing on its carrier (jumped or walked off) keeps the carrier's horizontal velocity.
+//   Two bodies with the same non-null `group` are never paired (v0.8: lit barrels push the player and pigs, not each
+//   other — CONTRACTS §37).
 import { PLAYER_MASS, BODY_PASSES, COLLISION_EPS } from './config.js';
 import { bodyRadius, bodyHeight, displaceBody } from './physics.js';
 
@@ -120,7 +122,10 @@ export function resolveBodies(bodies, getBlock) {
   for (let pass = 0; pass < BODY_PASSES; pass++) {
     let any = false;
     for (let i = 0; i < bodies.length; i++) {
+      const group = bodies[i].group;
       for (let j = i + 1; j < bodies.length; j++) {
+        // Bodies of one group never meet (lit barrels: hundreds of barrel pairs would cost more than they add).
+        if (group != null && bodies[j].group === group) continue;
         if (separatePair(bodies, i, j, getBlock)) {
           any = true;
           if (pass === 0) contacts++;

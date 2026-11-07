@@ -12,11 +12,11 @@ import {
   PLAYER_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT, SNEAK_EYE_HEIGHT, GRAVITY, JUMP_VELOCITY, TERMINAL_VELOCITY,
   WALK_SPEED, SPRINT_SPEED, SNEAK_SPEED, FLY_SPEED, FLY_SPRINT_SPEED, FLY_VERTICAL_SPEED, GROUND_ACCEL,
   AIR_ACCEL, WATER_ACCEL, WATER_GRAVITY, WATER_MAX_SINK, SWIM_UP_SPEED, SWIM_EXIT_JUMP, WATER_SPEED_FACTOR,
-  MAX_SUBSTEP_DT, MAX_FRAME_DT, COLLISION_EPS, WATER_SURFACE_HEIGHT, WORLD_HEIGHT,
+  MAX_SUBSTEP_DT, MAX_FRAME_DT, COLLISION_EPS, WORLD_HEIGHT, WADE_DEPTH, WADE_SPEED_FACTOR,
 } from './config.js';
 import { yawToForward, yawToRight } from './coords.js';
 import { HEX_DIRS, HEX_SIZE, hexToWorld, worldToHex, hexCircleContact } from './hex.js';
-import { isSolid, isLiquid } from './blocks.js';
+import { isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
 /** @typedef {import('./types.js').PlayerInput} PlayerInput */
@@ -213,6 +213,38 @@ export function findFreeY(getBlock, x, z, fromY, maxUp = 2, radius = PLAYER_RADI
 }
 
 /**
+ * Is the point at height `py` in cell column (q, r) under a water surface? The point's cell must be water and the point
+ * below that cell's surface (`waterSurfaceHeight`: 1 under more water, 0.875 at a source's or falling water's top,
+ * k/7 · 0.875 in flowing water of level k). Used for the chest and eye samples of stepPlayer.
+ * @param {GetBlockFn} getBlock
+ * @returns {boolean}
+ */
+export function isUnderSurface(getBlock, q, py, r) {
+  const cy = Math.floor(py);
+  const id = getBlock(q, cy, r);
+  return isLiquid(id) && py - cy < waterSurfaceHeight(id, getBlock(q, cy + 1, r));
+}
+
+/**
+ * Would a body standing on the floor below cell (q, y, r) — or one step down, in (q, y − 1, r) — have to SWIM there?
+ * True when that water is two or more cells deep or its surface is more than WADE_DEPTH above the floor; a shallow film
+ * is wading. Pigs use it to keep out of deep water only (CONTRACTS §30).
+ * @param {GetBlockFn} getBlock
+ * @returns {boolean}
+ */
+export function isSwimWater(getBlock, q, y, r) {
+  let top = y;
+  let id = getBlock(q, top, r);
+  if (!isLiquid(id)) {
+    top = y - 1;
+    id = getBlock(q, top, r);
+    if (!isLiquid(id)) return false;
+  }
+  if (isLiquid(getBlock(q, top - 1, r))) return true;
+  return waterSurfaceHeight(id, getBlock(q, top + 1, r)) > WADE_DEPTH;
+}
+
+/**
  * The cells currently supporting the player: among the 7 candidate columns whose hexagon overlaps the footprint,
  * those whose cell at floor(p.y − 1e-3) is solid (after landing the feet sit COLLISION_EPS above the cell top, so
  * that is the cell being stood on). Empty when airborne. Writes [q, y, r] triples into `out` (cleared first).
@@ -282,16 +314,21 @@ function substep(p, input, getBlock, h, wx, wz) {
   const jump = !!input.jump;
   const sneak = !!input.sneak;
 
-  // 1. Environment (sampled in the column under the player's centre).
+  // 1. Environment (sampled in the column under the player's centre). v0.8: water surfaces follow waterSurfaceHeight
+  // (a flowing level k is k/7 of a full surface); a body swims only where the water over the floor of its feet column is
+  // two cells deep or its surface is more than WADE_DEPTH above that floor (isSwimWater), or its chest point is under
+  // water — shallower water (a level-1 film) is wading: walking, just slower.
   const [bq, br] = worldToHex(p.x, p.z);
-  const feet = getBlock(bq, Math.floor(p.y + 0.1), br);
-  const chest = getBlock(bq, Math.floor(p.y + Math.min(1.0, bodyHeight(p) * 0.6)), br); // a short body's chest is lower
-  p.inWater = isLiquid(feet) || isLiquid(chest);
-  const eyeY = p.y + getEyeHeight(p);
-  const eyeCell = Math.floor(eyeY);
-  // Only the topmost water block (non-water above) has its surface lowered to WATER_SURFACE_HEIGHT.
-  p.headInWater = isLiquid(getBlock(bq, eyeCell, br))
-    && (isLiquid(getBlock(bq, eyeCell + 1, br)) || eyeY - eyeCell < WATER_SURFACE_HEIGHT);
+  const feetY = Math.floor(p.y + 0.1);
+  const feet = getBlock(bq, feetY, br);
+  const chestPoint = p.y + Math.min(1.0, bodyHeight(p) * 0.6); // a short body's chest is lower
+  const feetWet = isLiquid(feet);
+  // Depth is measured over the FLOOR of the feet column (isSwimWater), not below the body's own feet: a body floating
+  // near the top of deep water is still swimming (it keeps its buoyancy and SWIM_EXIT_JUMP), while a body standing in
+  // a film is wading.
+  p.inWater = (feetWet && isSwimWater(getBlock, bq, feetY, br)) || isUnderSurface(getBlock, bq, chestPoint, br);
+  const wading = feetWet && !p.inWater;
+  p.headInWater = isUnderSurface(getBlock, bq, p.y + getEyeHeight(p), br);
   p.sneaking = sneak && !p.flying;
   p.sprinting = !!input.sprint && (input.forward || 0) > 0 && !p.sneaking;
 
@@ -305,6 +342,7 @@ function substep(p, input, getBlock, h, wx, wz) {
   else if (p.sprinting) speed = SPRINT_SPEED;
   else speed = WALK_SPEED;
   if (inWater && !flying) speed *= WATER_SPEED_FACTOR;
+  else if (wading && !flying) speed *= WADE_SPEED_FACTOR;
   const accel = flying || p.onGround ? GROUND_ACCEL : inWater ? WATER_ACCEL : AIR_ACCEL;
   const k = 1 - Math.exp(-accel * h);
   // External pull (black holes) moves the velocity the relaxation heads for by pull / GROUND_ACCEL, in every mode.

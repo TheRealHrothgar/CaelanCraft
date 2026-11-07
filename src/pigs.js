@@ -10,7 +10,7 @@
 import {
   PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_MASS, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
 } from './config.js';
-import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt } from './physics.js';
+import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt, isSwimWater } from './physics.js';
 import { yawToForward } from './coords.js';
 import { HEX_DIRS, hexToWorld, worldToHex, hexLength, hexCircleContact } from './hex.js';
 import { BLOCK, isSolid, isLiquid } from './blocks.js';
@@ -265,7 +265,8 @@ export class Pigs {
   }
 
   /**
-   * The cell 0.8 ahead is not water, has ground within two cells below the feet, and is not a wall: a solid cell
+   * The cell 0.8 ahead is not water a pig would swim in (physics.isSwimWater — films are fine), has ground within
+   * two cells below the feet, and is not a wall: a solid cell
    * there only passes as a one-cell ledge the pig can hop (open cell above it) while `canHop`. And the centre's path
    * over the next 0.8 keeps FIRE_MARGIN away from every campfire.
    */
@@ -273,7 +274,7 @@ export class Pigs {
     const [q, r, fy] = this._aheadCell(pig);
     const at = getBlock(q, fy, r);
     const below = getBlock(q, fy - 1, r);
-    if (isLiquid(at) || isLiquid(below)) return false;
+    if (isSwimWater(getBlock, q, fy, r)) return false; // films a pig can wade through are fine
     if (this._fireAhead(pig, fy, getBlock)) return false; // pigs keep away from fire
     if (isSolid(at)) return canHop && isOpen(getBlock(q, fy + 1, r));
     return isSolid(below) || isSolid(getBlock(q, fy - 2, r));
