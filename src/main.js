@@ -33,7 +33,7 @@ import { RuneStore, RuneRunner, runeKey, SOURCE } from './runes.js';
 import { BlackHoles, columnHasEdits } from './blackholes.js';
 import { Pigs } from './pigs.js';
 import { resolveBodies, detachBody } from './bodies.js';
-import { Campfires } from './campfires.js';
+import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
 import { createConsole } from './console.js';
@@ -210,6 +210,9 @@ export function boot(win, doc) {
     });
     pigRenderer = createPigRenderer(renderer.three.scene);
     campfireRenderer = createCampfireRenderer(renderer.three.scene, { makeCanvas: () => doc.createElement('canvas') });
+    // Pay the campfire shader costs while the game loads (compile now, one hidden draw in the first frame), not on the
+    // frame the first fire appears (§32).
+    campfireRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();
@@ -303,6 +306,8 @@ export function boot(win, doc) {
   let fxTime = 0;
   /** throttle for the "too hot" chat line */
   let lastHotLineAt = -Infinity;
+  /** throttle for the "water would put the campfire out" chat line */
+  let lastDouseLineAt = -Infinity;
   // Pigs (CONTRACTS §30): replaced from the save on every load; natural ones are placed once per world.
   const pigs = new Pigs();
   /** true when the loading world has never had pigs (no `pigs` field in its save) */
@@ -514,6 +519,14 @@ export function boot(win, doc) {
     // Black holes and campfires are not solid, but placing one inside yourself would swallow / scorch you on the spot.
     if ((isSolid(id) || id === BLOCK.BLACK_HOLE || id === BLOCK.CAMPFIRE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
     if (isSolid(id) && pigs.list.some((pig) => playerIntersectsBlock(pig, tq, ty, tr))) return false; // no entombing pigs
+    // A campfire never goes into or under water, and water never goes on a campfire (§32).
+    if (wouldDouseCampfire(world.getBlock, id, tq, ty, tr)) {
+      if (fxTime - lastDouseLineAt > 2) {
+        lastDouseLineAt = fxTime;
+        logLine('Water would put the campfire out.');
+      }
+      return false;
+    }
     if (!world.setBlock(tq, ty, tr, id)) return false;
     audio.playPlace(getBlockDef(id).soundGroup);
     updateHit();
@@ -1107,25 +1120,16 @@ export function boot(win, doc) {
    * fires crackle at random, fading out by CAMPFIRE_CRACKLE_RANGE.
    */
   function stepCampfires(dt) {
-    if (campfires.size === 0) return;
-    const [cq, cr] = worldToHex(player.x, player.z);
-    if (!player.flying && world.getBlock(cq, Math.floor(player.y + 0.05), cr) === BLOCK.CAMPFIRE) {
-      const [fx, fz] = hexToWorld(cq, cr);
-      let dx = player.x - fx;
-      let dz = player.z - fz;
-      const d = Math.hypot(dx, dz);
-      if (d < 1e-6) [dx, dz] = yawToForward(controls.yaw + Math.PI); // dead centre: back out the way you came
-      else [dx, dz] = [dx / d, dz / d];
-      player.vx = dx * 5;
-      player.vz = dz * 5;
-      player.vy = Math.max(player.vy, 5);
-      player.onGround = false;
+    // The burn reads the block, so it holds for every campfire, tracked or not (past CAMPFIRE_MAX_TRACKED).
+    // Dead centre: back out the way you came.
+    if (scorchPlayer(player, world.getBlock, () => yawToForward(controls.yaw + Math.PI))) {
       if (fxTime - lastHotLineAt > 2) {
         lastHotLineAt = fxTime;
         logLine('Ouch! That campfire is hot.');
       }
       audio.playCrackle(1);
     }
+    if (campfires.size === 0) return;
     const near = campfires.nearest(player.x, player.y, player.z, CAMPFIRE_CRACKLE_RANGE, 1);
     if (near.length && Math.random() < CAMPFIRE_CRACKLES_PER_S * dt) audio.playCrackle(1 - near[0].dist / CAMPFIRE_CRACKLE_RANGE);
   }
@@ -1262,7 +1266,9 @@ export function boot(win, doc) {
     renderer.setHighlight(hit);
     pigRenderer.sync(pigs.list);
     fxTime += dt;
-    if (campfires.size > 0 || campfireRenderer.count() > 0) {
+    // Past CAMPFIRE_MAX_TRACKED, keep the tracked fires the ones nearest the player (a no-op otherwise).
+    campfires.retrack(player.x, eyeY, player.z);
+    if (campfires.size > 0 || !campfireRenderer.idle()) {
       const near = campfires.nearest(player.x, eyeY, player.z, CAMPFIRE_MODEL_RANGE)
         .filter((n) => world.hasChunkAtCell(n.fire.q, n.fire.r))
         .slice(0, CAMPFIRE_MAX_MODELS);
