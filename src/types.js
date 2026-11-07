@@ -85,6 +85,9 @@
  * @property {boolean} inWater      feet or chest cell is liquid
  * @property {boolean} headInWater  eye point is below a water surface
  * @property {boolean} hitWall      horizontal collision happened in the last substep
+ * @property {number} [radius]      body footprint radius (mobs; absent = PLAYER_WIDTH / 2), at most MAX_BODY_RADIUS
+ * @property {number} [height]      body height (mobs; absent = PLAYER_HEIGHT)
+ * @property {number} [mass]        relative mass for body-body pushes (absent = PLAYER_MASS)
  */
 
 /**

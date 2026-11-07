@@ -88,6 +88,8 @@ export const TILE_NAMES = Object.freeze({
   70: 'wool_gray',
   71: 'wool_light_gray',
   72: 'black_hole',
+  73: 'campfire_side',
+  74: 'campfire_top',
   255: 'missing',
 });
 
@@ -991,6 +993,59 @@ function paintBlackHole(px, rng) {
   }
 }
 
+/**
+ * 73 campfire_side (icon only; the block has its own model) — alpha 0 background; two stacked logs on rows 12–15
+ * (bark 0x5a3b22 ± 10 with a lighter top edge, 0xa07848 end rings at x 0–1 and 14–15) and a flame above them:
+ * column x burns from row 11 up to height h(x) = round(10·(1 − |x − 7.5|/8.5)) + randInt(−1, 1) rows; within a column
+ * the colour goes from 0xfff2a8 (bottom third, middle columns 5–10) through 0xffb02e to a 0xe8501a tip row.
+ */
+function paintCampfireSide(px, rng) {
+  for (let i = 0; i < BYTES; i += 4) px[i + 3] = 0;
+  for (let y = 12; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const end = x <= 1 || x >= 14;
+      set(px, x, y, end ? 0xa07848 : 0x5a3b22, end ? 0 : randInt(rng, -10, 10));
+    }
+  }
+  for (let x = 2; x < 14; x++) {
+    adjAt(px, x, 12, 18);
+    adjAt(px, x, 14, -12);
+  }
+  for (let x = 1; x < 15; x++) {
+    const h = Math.max(1, Math.round(10 * (1 - Math.abs(x - 7.5) / 8.5)) + randInt(rng, -1, 1));
+    for (let k = 0; k < h; k++) {
+      const y = 11 - k;
+      const core = k < h / 3 && x >= 5 && x <= 10;
+      const hex = k === h - 1 ? 0xe8501a : core ? 0xfff2a8 : 0xffb02e;
+      set(px, x, y, hex, randInt(rng, -8, 8));
+    }
+  }
+}
+
+/**
+ * 74 campfire_top (icon only) — alpha 0 background; three 2-px logs (0x5a3b22 ± 8) through the centre at 0°, 60° and
+ * 120°, and a glowing 4×4 ember bed in the middle (0xffb02e, centre 2×2 0xfff2a8).
+ */
+function paintCampfireTop(px, rng) {
+  for (let i = 0; i < BYTES; i += 4) px[i + 3] = 0;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const dx = x - 7.5;
+      const dy = y - 7.5;
+      if (Math.hypot(dx, dy) > 7.6) continue;
+      for (const a of [0, Math.PI / 3, (2 * Math.PI) / 3]) {
+        // distance from the line through the centre at angle a
+        if (Math.abs(-Math.sin(a) * dx + Math.cos(a) * dy) < 1.05) {
+          set(px, x, y, 0x5a3b22, randInt(rng, -8, 8));
+          break;
+        }
+      }
+    }
+  }
+  for (let y = 6; y <= 9; y++) for (let x = 6; x <= 9; x++) set(px, x, y, 0xffb02e, randInt(rng, -10, 10));
+  for (let y = 7; y <= 8; y++) for (let x = 7; x <= 8; x++) set(px, x, y, 0xfff2a8);
+}
+
 /** 255 missing — 8×8 quadrant checker, magenta top-left / bottom-right, black elsewhere. */
 function paintMissing(px) {
   for (let y = 0; y < H; y++) {
@@ -1061,6 +1116,8 @@ const RECIPES = Object.freeze({
   pumpkin_side: paintPumpkinSide,
   pumpkin_top: paintPumpkinTop,
   black_hole: paintBlackHole,
+  campfire_side: paintCampfireSide,
+  campfire_top: paintCampfireTop,
   ...Object.fromEntries(Object.entries(WOOL_HEX).map(([name, hex]) => [name, (px, rng) => paintWool(px, rng, hex)])),
   missing: paintMissing,
 });

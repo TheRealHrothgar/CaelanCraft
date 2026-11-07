@@ -59,6 +59,25 @@ export function indexToLocal(index) {
   return [lq, ly, lr];
 }
 
+/**
+ * Call fn(q, y, r) for every recorded edit (World.edits: chunk key → Map(localIndex → id)) whose id is `id`.
+ * Malformed chunk keys are skipped. Blocks worldgen never emits (black holes, campfires) are found this way on load.
+ * @param {Map<string, Map<number, number>>} edits
+ * @param {number} id
+ * @param {(q: number, y: number, r: number) => void} fn
+ */
+export function forEachEditedCell(edits, id, fn) {
+  for (const [key, chunkEdits] of edits) {
+    const [cq, cr] = parseChunkKey(key);
+    if (!Number.isInteger(cq) || !Number.isInteger(cr)) continue;
+    for (const [li, v] of chunkEdits) {
+      if (v !== id) continue;
+      const [lq, ly, lr] = indexToLocal(li);
+      fn(cq * CHUNK_SIZE + lq, ly, cr * CHUNK_SIZE + lr);
+    }
+  }
+}
+
 /** Index into per-column arrays (biomes, heights). */
 export function columnIndex(lq, lr) {
   return lq * CHUNK_SIZE + lr;

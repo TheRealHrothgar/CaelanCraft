@@ -143,7 +143,8 @@ SaveData (version 2, optional `runes`), SmokeResult, GameContext (+ runCommand, 
 `parseChunkKey(key)` (strict inverse: anything not matching `/^(-?\d+),(-?\d+)$/` → `[NaN, NaN]`), `localIndex(lq,ly,lr)`,
 `indexToLocal(index)`, `columnIndex(lq,lr)`, `inHeightRange(y)`,
 `yawToForward(yaw) → [fx,fz] = [-sin, -cos]`, `yawToRight(yaw) → [cos, -sin]`,
-`lookDirection(yaw,pitch) → [-sin(yaw)cos(pitch), sin(pitch), -cos(yaw)cos(pitch)]`.
+`lookDirection(yaw,pitch) → [-sin(yaw)cos(pitch), sin(pitch), -cos(yaw)cos(pitch)]`,
+`forEachEditedCell(edits, id, fn(q, y, r))` (v0.7: every World.edits entry with that id; malformed chunk keys skipped).
 The cube face tables (`FACE_*`, `FACE_VERTS`) are gone; face geometry is in `hex.js`.
 
 ## 4a. `src/hex.js` (exact — already written)
@@ -184,7 +185,8 @@ BIRCH_LOG 29, BIRCH_PLANKS 30, BIRCH_LEAVES 31, GRANITE 32, DIORITE 33, ANDESITE
 MOSSY_STONE_BRICKS 37, OBSIDIAN 38, CLAY 39, RED_SAND 40, ICE 41, PACKED_ICE 42, COAL_BLOCK 43, IRON_BLOCK 44, GOLD_BLOCK 45,
 DIAMOND_BLOCK 46, COPPER_BLOCK 47, GLOWSTONE 48, HONEYCOMB_BLOCK 49, HAY_BALE 50, PUMPKIN 51, WOOL_ORANGE 52, WOOL_YELLOW 53,
 WOOL_LIME 54, WOOL_GREEN 55, WOOL_CYAN 56, WOOL_LIGHT_BLUE 57, WOOL_BLUE 58, WOOL_PURPLE 59, WOOL_MAGENTA 60, WOOL_PINK 61,
-WOOL_BROWN 62, WOOL_BLACK 63, WOOL_GRAY 64, WOOL_LIGHT_GRAY 65`, v0.5 `BLACK_HOLE 66` (§29). `BLOCK_COUNT = 67`. All v0.4 blocks are solid, breakable and
+WOOL_BROWN 62, WOOL_BLACK 63, WOOL_GRAY 64, WOOL_LIGHT_GRAY 65`, v0.5 `BLACK_HOLE 66` (§29), v0.7 `CAMPFIRE 67` (§32).
+`BLOCK_COUNT = 68`. All v0.4 blocks are solid, breakable and
 placeable, use existing sound groups, and are never emitted by worldgen. Spruce/birch leaves are cutout with `cullSame: false`
 (like oak); ICE is solid, non-opaque, `LAYER_TRANSLUCENT`, `cullSame: true`; PACKED_ICE is opaque. Logs and hay bales use
 `tiles(side, end)`; pumpkin `tiles(side, top)`. GLOWSTONE only looks lit (no block-light engine). `RUNE_BLOCK` ("Rune Block") is solid, opaque, breakable, placeable, soundGroup stone, tile
@@ -197,8 +199,8 @@ STONE_BRICKS 24, WOOL_WHITE 25, WOOL_RED 26, RUNE 27`, v0.4 `SPRUCE_LOG_SIDE 28,
 SPRUCE_LEAVES 31, BIRCH_LOG_SIDE 32, BIRCH_LOG_END 33, BIRCH_PLANKS 34, BIRCH_LEAVES 35, GRANITE 36, DIORITE 37, ANDESITE 38,
 SLATE 39, MOSSY_COBBLESTONE 40, MOSSY_STONE_BRICKS 41, OBSIDIAN 42, CLAY 43, RED_SAND 44, ICE 45, PACKED_ICE 46, COAL_BLOCK 47,
 IRON_BLOCK 48, GOLD_BLOCK 49, DIAMOND_BLOCK 50, COPPER_BLOCK 51, GLOWSTONE 52, HONEYCOMB 53, HAY_BALE_SIDE 54, HAY_BALE_TOP 55,
-PUMPKIN_SIDE 56, PUMPKIN_TOP 57, WOOL_ORANGE 58 … WOOL_LIGHT_GRAY 71` (wool in BLOCK order), v0.5 `BLACK_HOLE 72`, `MISSING 255`.
-`TILE_IDS` = array of all 74 tile ids.
+PUMPKIN_SIDE 56, PUMPKIN_TOP 57, WOOL_ORANGE 58 … WOOL_LIGHT_GRAY 71` (wool in BLOCK order), v0.5 `BLACK_HOLE 72`, v0.7 `CAMPFIRE_SIDE 73, CAMPFIRE_TOP 74`, `MISSING 255`.
+`TILE_IDS` = array of all 76 tile ids.
 
 Layers: `LAYER_OPAQUE 0` (everything else), `LAYER_CUTOUT 1` (OAK/SPRUCE/BIRCH_LEAVES, GLASS), `LAYER_TRANSLUCENT 2` (WATER, ICE).
 
@@ -209,8 +211,10 @@ Biomes: `BIOME.OCEAN 0, BEACH 1, PLAINS 2, FOREST 3, DESERT 4, SNOWY 5, MOUNTAIN
 Functions: `getBlockDef(id)` (unknown → the AIR def), `isSolid, isOpaque, isLiquid, isBreakable, isPlaceable,
 isReplaceable (AIR or liquid), isTargetable (not AIR and not liquid), getRenderLayer, getFaceTile(id, face 0..7),
 shouldRenderFace(a, b), tileToUV(tile) → [u0, v0, u1, v1]`. Re-exports `FACE_TOP, FACE_BOTTOM` from hex.js.
-Constants: `DEFAULT_HOTBAR` (9 ids), `PICKER_ORDER` (all 65 placeable ids, once each, grouped stone / earth / wood / minerals /
-wool / special, ending BLACK_HOLE, RUNE_BLOCK, WATER), `SOUND_GROUPS`.
+Constants: `DEFAULT_HOTBAR` (9 ids), `PICKER_ORDER` (all 66 placeable ids, once each, grouped stone / earth / wood / minerals /
+wool / special, ending CAMPFIRE, BLACK_HOLE, RUNE_BLOCK, WATER), `SOUND_GROUPS`.
+v0.7: `BlockDef.meshed` (default true) and `isMeshed(id)`. A block with `meshed: false` (only CAMPFIRE) is skipped by the mesher
+and drawn by its own model; its tiles are used only for icons.
 
 Culling rule (`shouldRenderFace(a, b)`, `a` = this block, `b` = neighbour across the face):
 ```
@@ -399,6 +403,8 @@ Missing `performance` (Node < 16) → use `Date.now`. Tests pass `now: () => 0` 
 
 ```js
 export function buildChunkMesh(cq, cr, getChunkData)   // → ChunkMeshData { opaque, cutout, translucent } (null layer when 0 faces)
+                                                        //   cells whose block is not isMeshed emit nothing (v0.7); neighbours still
+                                                        //   apply shouldRenderFace against them (non-opaque → their faces render)
 export function vertexAO(side1, side2, corner)          // (side1 && side2) ? 0 : 3 - (side1 + side2 + corner); args 0|1  (side faces)
 export function hexCornerAO(sideA, sideB)               // 3 - (sideA + sideB)                                            (hex caps)
 export function isTintedFace(id, face)                  // OAK_LEAVES: every face; GRASS_BLOCK: FACE_TOP only
@@ -466,7 +472,14 @@ export function createPlayer(x, y, z)                 // PlayerState at feet pos
 export function stepPlayer(p, input, getBlock, dt)     // mutates p. dt clamped to MAX_FRAME_DT and split into ceil(dt/MAX_SUBSTEP_DT) equal substeps
 export function getEyeHeight(p)                        // (p.sneaking && !p.flying) ? SNEAK_EYE_HEIGHT : EYE_HEIGHT
 export function playerAABB(p, out = {})                // bounding box of the cylinder: ±PLAYER_RADIUS around (x,z), y..y+PLAYER_HEIGHT
-export function playerIntersectsBlock(p, q, y, r)      // strict: hexCircleContact(cell centre, p.x, p.z, PLAYER_RADIUS) && p.y < y+1 && p.y+PLAYER_HEIGHT > y
+export function playerIntersectsBlock(p, q, y, r)      // strict: hexCircleContact(cell centre, p.x, p.z, bodyRadius(p)) && p.y < y+1 && p.y+bodyHeight(p) > y
+// v0.6 per-body sizes: every routine below reads bodyRadius(p) = p.radius ?? PLAYER_RADIUS and bodyHeight(p) = p.height ?? PLAYER_HEIGHT
+// (including the substep collider; the chest sample is p.y + min(1.0, 0.6·height)), so a plain PlayerState behaves exactly as before.
+export const MAX_BODY_RADIUS = 0.5                     // the 7-column collider is exact below HEX_SIZE (≈0.577)
+export function createBody(x, y, z, { radius, height, mass = 1 })   // createPlayer + size; RangeError unless 0 < radius ≤ MAX_BODY_RADIUS, height, mass > 0
+export function displaceBody(p, dx, dy, dz, getBlock)  // terrain-aware shove: moveHorizontal(dx, dz) then moveVertical(dy); a floor/ceiling hit
+                                                       //   zeroes vy toward it (floor → onGround). → { hitWall, hitFloorOrCeiling }
+// isFreeAt(getBlock, x, cy, z, radius = PLAYER_RADIUS, height = PLAYER_HEIGHT) and findFreeY(..., maxUp = 2, radius, height) take a size.
 export function findStandingY(getBlock, x, z, fromY)   // in the cell column under WORLD (x,z): scan down from fromY for the first y where
                                                        // block(y-1) solid and blocks y, y+1 not solid; null if none / non-finite input
 export function isFreeAt(getBlock, x, cy, z)           // cylinder with feet at (x, cy, z) overlaps no solid cell (7-column test)
@@ -952,8 +965,11 @@ intersect the player (like solid blocks). Constants live in config.js (`BLACK_HO
 
 ## 30. `src/pigs.js` (PURE) and `src/pigRenderer.js` (three) — Pigs, v0.5
 
-A pig is `createPlayer(x, y, z)` plus `{ id, yaw, targetYaw, mode: 'idle'|'walk'|'flee', timer, hurt, walkPhase, oinkIn }`,
-moved by `stepPlayer` (so it collides as the player's cylinder, swims, hops one-cell ledges and feels black-hole pull).
+A pig is `createBody(x, y, z, { radius: PIG_RADIUS 0.42, height: PIG_HEIGHT 0.9, mass: PIG_MASS 0.7 })` plus
+`{ id, yaw, targetYaw, mode: 'idle'|'walk'|'flee', timer, hurt, walkPhase, oinkIn }`, moved by `stepPlayer` (so it collides with
+terrain as its own cylinder, swims, hops one-cell ledges and feels black-hole pull). It fits under one-cell overhangs but not
+through one-cell tunnels. At the start of each update a pig that overlaps a solid cell is lifted to `findFreeY(…, floor(y)+1, 3)`
+with its own size (blocks filled into it by commands).
 Pigs never die. Constants `PIG_*` live in config.js.
 ```js
 export function seededRng(seed)                // mulberry32
@@ -966,7 +982,7 @@ export class Pigs {
                                                               //   pigs whose chunk is unloaded are frozen
   hit(pig, fromX, fromZ) → boolean             // false during the PIG_HURT_S flash; else knockback PIG_KNOCKBACK away, vy ≥ 5,
                                                //   mode flee for PIG_FLEE_S facing away
-  raycast(ox, oy, oz, dx, dy, dz, maxDist) → { pig, distance }|null   // vertical cylinder PIG_HIT_RADIUS × PIG_HIT_HEIGHT at the feet
+  raycast(ox, oy, oz, dx, dy, dz, maxDist) → { pig, distance }|null   // the body cylinder PIG_RADIUS × PIG_HEIGHT at the feet
   export() → PigJSON[] (mm-rounded) ; load(validatedList)
   spawnNatural(count, q0, r0, seed, getBlock, isLoadedCell, minDist = 4, maxDist = 18) → placed   // grass surfaces only, seeded
 }
@@ -987,9 +1003,65 @@ has never had pigs: main then places PIG_NATURAL_COUNT pigs with `spawnNatural` 
 main: `updateHit` also ray-casts pigs up to the block hit's distance (or REACH); a pig in front sets `pigTarget` and clears
 `hit`. `breakTargeted` hits `pigTarget` (squeal) instead of breaking. `stepPigs` runs after `stepBlackHoles`: update (with
 `blackHoles.pullAt`), at most one oink per frame within 16 units (volume 1 − d/16), and pigs a black hole swallows are removed.
-`renderFrame` calls `pigRenderer.sync(pigs.list)`. Commands (§26): `summon pig [q y r]` (no cell: two units ahead along the
-yaw, `findFreeY` from the feet cell; refuses at PIG_MAX, unloaded targets, or 2–3 args) and `pigs [clear]`; both fail when the
+`renderFrame` calls `pigRenderer.sync(pigs.list)`. `placeSelected` refuses a solid block that would intersect a pig. Commands (§26):
+`summon pig [q y r]` (no cell: two units ahead along the yaw, `findFreeY` with the pig's size from the feet cell; refuses at PIG_MAX, unloaded targets, or 2–3 args) and `pigs [clear]`; both fail when the
 context has no `pigs`. audio: `playOink(volume)`, `playSqueal(volume)`.
+
+## 31. `src/bodies.js` (PURE — body-to-body physics, v0.6)
+
+Bodies are PlayerStates (physics §12) with optional `radius`, `height`, `mass` (PLAYER_MASS = 1 when absent).
+```js
+export function bodyMass(b)
+export function bodyOverlap(a, b) → { horizontal: rA + rB − dist, vertical: min(tops) − max(feet), nx, nz (unit a→b; +x when coincident), dist }
+export function resolveBodies(bodies, getBlock) → contacts   // pairs overlapping on the first pass
+```
+`resolveBodies`, once per frame after every body has been stepped:
+1. **Carry**: for each body with `carrier` set last frame that is still in `bodies`, `displaceBody` by the carrier's movement since
+   `carrierAt`; then `carrier = null`.
+2. **Separate**, BODY_PASSES (3) sweeps over pairs i < j (stop early when a sweep finds nothing). `upper` = the body with the higher feet.
+   - No horizontal overlap → nothing. No vertical overlap → nothing, except a REST: gap < 0.01, horizontal overlap > 0.05 and
+     `upper.vy ≤ lower.vy` → stand (below).
+   - STAND when vertical < horizontal, horizontal > 0.05 and `upper.y ≥ lower.y + 0.5·height(lower)`: `displaceBody(upper, 0,
+     vertical + COLLISION_EPS, 0)`; if the full lift happened → stand: `onGround = true`, `vy = max(vy, lower.vy)`,
+     `carrier = lower`, `carrierAt = [lower.x, lower.y, lower.z]`. A lift cut short by a ceiling is undone and falls through to a push.
+   - PUSH: total = horizontal + COLLISION_EPS; B moves `total · mA/(mA+mB)` along n, A moves the rest along −n, and if A could not
+     (walls) B tries to take what is left — all through `displaceBody`, so nobody is pushed into terrain. Then if the normal relative
+     velocity `(vB − vA)·n < 0`, a perfectly inelastic impulse `j = −vrel / (1/mA + 1/mB)` (vA −= j/mA·n, vB += j/mB·n).
+main: after `stepPigs`, `resolveBodies([player, …pigs in loaded chunks], world.getBlock)`. So the player shoves pigs (and pigs nudge
+the player), pigs crowd without overlapping, and either can stand on and ride the other. Constants: PLAYER_MASS, BODY_PASSES, PIG_*.
+
+## 32. `src/campfires.js` (PURE) and `src/campfireRenderer.js` (three) — Campfires, v0.7
+
+`CAMPFIRE` ("Campfire", soundGroup wood) is placeable, breakable and targetable, `solid: false, opaque: false`, layer CUTOUT,
+`meshed: false`. Tiles 73 `campfire_side` / 74 `campfire_top` (icon only; alpha-0 backgrounds — logs with a flame, and three crossed
+logs on an ember bed; recipes in tiles.js are normative). Worldgen never emits it.
+```js
+export function campfireKey(q, y, r)
+export function flicker(t, seed)            // 1 + 0.12·sin(7.3t+s) + 0.08·sin(13.1t+1.7s) + 0.05·sin(23.7t+2.9s) ∈ [0.75, 1.25]
+export class Campfires {
+  fires: Map<key, { key, q, y, r, x, z (cell floor centre), seed ∈ [0, 2π) hashed from the cell }>; size; clear(); has(q, y, r)
+  add(q, y, r) / remove(q, y, r)            // add refuses duplicates and anything past CAMPFIRE_MAX_TRACKED (1024)
+  onBlockChange(q, y, r, prev, next)        // CAMPFIRE appears → add; disappears → remove
+  loadFromEdits(world.edits)                // clear, then forEachEditedCell(edits, CAMPFIRE, add)
+  nearest(x, y, z, maxDist, limit = ∞)      // [{ fire, dist }] by distance to (x, y + 0.3, z) of the fire, nearest first (ties by key)
+}
+export function createCampfireRenderer(scene, { makeCanvas }) → { sync(near, t, dt), count(), dispose() }
+```
+Renderer: one Group per fire in `near` at its cell floor — six 6-sided stones on the cell corners (0.72·HEX_SIZE), three 6-sided logs
+crossing at 60°, seven embers, five 6-sided flame cones (MeshBasicMaterial; scale/rotation driven by `flicker` and per-flame sines),
+and SMOKE_PER_FIRE (6) sprites cycling over 3.2 s (rise 0.85 m/s, size 0.25 → 1.0, opacity peaking at 0.32). Models not in `near`
+are removed. A fixed pool of CAMPFIRE_LIGHTS (4) PointLights (0xff9a40, distance CAMPFIRE_LIGHT_RANGE 14, decay 1.6) is created once;
+the first four entries of `near` get one each at +0.6 with intensity `CAMPFIRE_LIGHT_INTENSITY · flicker`; the rest sit at 0.
+
+main: ONE `Campfires` for the session; `startLoading` calls `loadFromEdits` next to black holes and `onBlockChanged` forwards to
+it. `renderFrame` advances `fxTime` by dt and, while any fire is tracked or modelled, syncs the renderer with
+`nearest(player eye, CAMPFIRE_MODEL_RANGE 64)` filtered to loaded columns and cut to CAMPFIRE_MAX_MODELS (48). `stepCampfires`
+(after `stepPigs`): a non-flying player whose feet cell (`floor(y + 0.05)`) is a campfire is bounced out — horizontal 5 m/s away
+from the cell centre (backwards along the yaw at dead centre), `vy ≥ 5` — with the chat line "Ouch! That campfire is hot." at most
+every 2 s and a crackle; the nearest fire within CAMPFIRE_CRACKLE_RANGE (10) crackles with probability CAMPFIRE_CRACKLES_PER_S·dt at
+volume 1 − d/10 (`audio.playCrackle`). `placeSelected` refuses a campfire that would intersect the player.
+Pigs: a walking pig treats a campfire in the cell ahead as unsafe; a pig whose feet cell is a campfire (and is not already hurt) is
+`hit` from the cell centre and listed in `pigs.scorched` for that update (main plays a squeal within 16 units).
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

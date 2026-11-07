@@ -15,7 +15,7 @@ import {
   HEX_DIRS, HEX_CORNERS, HEX_SIZE, HEX_ROW_SPACING, FACE_NORMALS, FACE_SHADE, FACE_TOP, FACE_BOTTOM, FACE_COUNT,
   SIDE_FACE_COUNT,
 } from './hex.js';
-import { BLOCK, BIOME, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV } from './blocks.js';
+import { BLOCK, BIOME, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed } from './blocks.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
@@ -71,6 +71,8 @@ export function isTintedFace(id, face) {
 const OPAQUE = new Uint8Array(256);
 /** LAYER[id] = getRenderLayer(id). */
 const LAYER = new Uint8Array(256);
+/** UNMESHED[id] = 1 for blocks the mesher skips (BlockDef.meshed false: they have their own model). */
+const UNMESHED = new Uint8Array(256);
 /** RENDER[(a << 8) | b] = 1 iff shouldRenderFace(a, b). */
 const RENDER = new Uint8Array(256 * 256);
 /** FACE_UV[(id * 8 + f) * 4 + k] = tileToUV(getFaceTile(id, f))[k]. */
@@ -81,6 +83,7 @@ const TINTED = new Uint8Array(256 * FACE_COUNT);
 for (let id = 0; id < 256; id++) {
   OPAQUE[id] = isOpaque(id) ? 1 : 0;
   LAYER[id] = getRenderLayer(id);
+  UNMESHED[id] = isMeshed(id) ? 0 : 1;
   for (let f = 0; f < FACE_COUNT; f++) {
     const uv = tileToUV(getFaceTile(id, f));
     const o = (id * FACE_COUNT + f) * 4;
@@ -523,7 +526,7 @@ export function buildChunkMesh(cq, cr, getChunkData) {
 
       for (let ly = 0; ly < WORLD_HEIGHT; ly++) {
         const a = padded[colBase + ly];
-        if (a === 0) continue;
+        if (a === 0 || UNMESHED[a] === 1) continue; // air, or a block drawn by its own model (campfire)
 
         // §10.2 step 1: water surface height applies to every top vertex of this cell.
         let topY = 1;

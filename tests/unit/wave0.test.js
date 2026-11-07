@@ -179,8 +179,8 @@ describe('blocks', () => {
     expect(DEFAULT_HOTBAR).not.toContain(BLOCK.RUNE_BLOCK);
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
-    expect(BLOCK_COUNT).toBe(67);
-    expect(TILE_IDS).toHaveLength(74);
+    expect(BLOCK_COUNT).toBe(68);
+    expect(TILE_IDS).toHaveLength(76);
     expect(BLOCK.BLACK_HOLE).toBe(66);
     expect(TILE.BLACK_HOLE).toBe(72);
     expect(BLOCK.STONE).toBe(1);
@@ -190,7 +190,7 @@ describe('blocks', () => {
     expect(TILE.SPRUCE_LOG_SIDE).toBe(28);
     expect(TILE.WOOL_LIGHT_GRAY).toBe(71);
     const placeable = BLOCKS.filter((b) => b.placeable).map((b) => b.id).sort((a, b) => a - b);
-    expect(PICKER_ORDER).toHaveLength(65);
+    expect(PICKER_ORDER).toHaveLength(66);
     expect(new Set(PICKER_ORDER).size).toBe(PICKER_ORDER.length);
     expect([...PICKER_ORDER].sort((a, b) => a - b)).toEqual(placeable);
     // Logs and hay bales: distinct end tiles on top and bottom.

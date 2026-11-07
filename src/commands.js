@@ -16,6 +16,7 @@
 import {
   WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
   GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME, PIG_MAX,
+  PIG_RADIUS, PIG_HEIGHT,
 } from './config.js';
 import { inHeightRange, worldToChunk, yawToForward } from './coords.js';
 import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
@@ -769,14 +770,14 @@ function run(spec, args, ctx) {
         if (!(y >= 0 && y <= WORLD_HEIGHT - 2)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 2}`);
         if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
         [x, z] = hexToWorld(q, r);
-        fy = findFreeY(world.getBlock, x, z, y, 2);
+        fy = findFreeY(world.getBlock, x, z, y, 2, PIG_RADIUS, PIG_HEIGHT);
         if (fy === null) return fail(spec, 'target is inside a block');
       } else {
         const [fx, fz] = yawToForward(ctx.controls.yaw);
         const [q, r] = worldToHex(p.x + fx * 2, p.z + fz * 2);
         if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
         [x, z] = hexToWorld(q, r);
-        fy = findFreeY(world.getBlock, x, z, Math.max(0, Math.floor(p.y)), 2);
+        fy = findFreeY(world.getBlock, x, z, Math.max(0, Math.floor(p.y)), 2, PIG_RADIUS, PIG_HEIGHT);
         if (fy === null) return fail(spec, 'no room in front of you');
       }
       const pig = ctx.pigs.spawn(x, fy, z, Math.random() * 2 * Math.PI - Math.PI);

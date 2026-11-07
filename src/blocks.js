@@ -17,9 +17,9 @@ export const BLOCK = Object.freeze({
   GLOWSTONE: 48, HONEYCOMB_BLOCK: 49, HAY_BALE: 50, PUMPKIN: 51,
   WOOL_ORANGE: 52, WOOL_YELLOW: 53, WOOL_LIME: 54, WOOL_GREEN: 55, WOOL_CYAN: 56, WOOL_LIGHT_BLUE: 57, WOOL_BLUE: 58,
   WOOL_PURPLE: 59, WOOL_MAGENTA: 60, WOOL_PINK: 61, WOOL_BROWN: 62, WOOL_BLACK: 63, WOOL_GRAY: 64, WOOL_LIGHT_GRAY: 65,
-  BLACK_HOLE: 66,
+  BLACK_HOLE: 66, CAMPFIRE: 67,
 });
-export const BLOCK_COUNT = 67;
+export const BLOCK_COUNT = 68;
 
 /** Atlas tile ids. Tile t is drawn at pixel ((t % 16) * 16, floor(t / 16) * 16). */
 export const TILE = Object.freeze({
@@ -35,6 +35,7 @@ export const TILE = Object.freeze({
   PUMPKIN_SIDE: 56, PUMPKIN_TOP: 57, WOOL_ORANGE: 58, WOOL_YELLOW: 59, WOOL_LIME: 60, WOOL_GREEN: 61, WOOL_CYAN: 62,
   WOOL_LIGHT_BLUE: 63, WOOL_BLUE: 64, WOOL_PURPLE: 65, WOOL_MAGENTA: 66, WOOL_PINK: 67, WOOL_BROWN: 68, WOOL_BLACK: 69,
   WOOL_GRAY: 70, WOOL_LIGHT_GRAY: 71, BLACK_HOLE: 72,
+  CAMPFIRE_SIDE: 73, CAMPFIRE_TOP: 74,
   MISSING: 255,
 });
 /** Every tile id the atlas must paint. */
@@ -67,6 +68,8 @@ export const SOUND_GROUPS = Object.freeze([
  * @property {boolean} cullSame     faces between two blocks of this id are culled
  * @property {number} layer         RenderLayer
  * @property {string|null} soundGroup
+ * @property {boolean} meshed       drawn by the chunk mesher; false for blocks with their own model (campfire), whose
+ *                                  tiles are then used only for the hotbar / picker icon
  */
 
 /** tiles helper: six sides, then top, then bottom */
@@ -94,6 +97,7 @@ function def(d) {
     cullSame: d.cullSame ?? true,
     layer,
     soundGroup: d.soundGroup ?? null,
+    meshed: d.meshed ?? true,
   };
 }
 
@@ -172,6 +176,9 @@ export const BLOCKS = [
   // Black Hole: pulls the player and swallows nearby cells (blackholes.js, CONTRACTS §29). Not solid, so the player
   // can fall in — touching it sends them back to spawn. Breakable like any block; breaking it stops it.
   def({ id: B.BLACK_HOLE, name: 'black_hole', displayName: 'Black Hole', tiles: tiles(T.BLACK_HOLE), solid: false, opaque: false, soundGroup: 'glass' }),
+  // Campfire: its own model, light, smoke and crackle (campfires.js / campfireRenderer.js, CONTRACTS §32). Not solid and
+  // not meshed; its tiles only draw the icon.
+  def({ id: B.CAMPFIRE, name: 'campfire', displayName: 'Campfire', tiles: tiles(T.CAMPFIRE_SIDE, T.CAMPFIRE_TOP), solid: false, opaque: false, layer: LAYER_CUTOUT, soundGroup: 'wood', meshed: false }),
 ];
 
 /** Default hotbar: grass, dirt, stone, cobble, planks, log, leaves, glass, bricks. */
@@ -179,7 +186,7 @@ export const DEFAULT_HOTBAR = Object.freeze([
   B.GRASS_BLOCK, B.DIRT, B.STONE, B.COBBLESTONE, B.OAK_PLANKS, B.OAK_LOG, B.OAK_LEAVES, B.GLASS, B.BRICKS,
 ]);
 
-/** Order of the 65 placeable blocks in the block picker, grouped by family. */
+/** Order of the 66 placeable blocks in the block picker, grouped by family. */
 export const PICKER_ORDER = Object.freeze([
   // stone
   B.STONE, B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.GRANITE, B.DIORITE, B.ANDESITE,
@@ -197,7 +204,7 @@ export const PICKER_ORDER = Object.freeze([
   B.WOOL_WHITE, B.WOOL_LIGHT_GRAY, B.WOOL_GRAY, B.WOOL_BLACK, B.WOOL_BROWN, B.WOOL_RED, B.WOOL_ORANGE, B.WOOL_YELLOW,
   B.WOOL_LIME, B.WOOL_GREEN, B.WOOL_CYAN, B.WOOL_LIGHT_BLUE, B.WOOL_BLUE, B.WOOL_PURPLE, B.WOOL_MAGENTA, B.WOOL_PINK,
   // special
-  B.BLACK_HOLE, B.RUNE_BLOCK, B.WATER,
+  B.CAMPFIRE, B.BLACK_HOLE, B.RUNE_BLOCK, B.WATER,
 ]);
 
 /** @returns {BlockDef} the block definition; unknown ids return the AIR definition */
@@ -226,6 +233,10 @@ export function isReplaceable(id) {
 /** The raycast stops on targetable blocks: anything that is not AIR and not a liquid. */
 export function isTargetable(id) {
   return id !== B.AIR && !getBlockDef(id).liquid;
+}
+/** false for blocks drawn by their own model instead of the chunk mesher (campfire). */
+export function isMeshed(id) {
+  return getBlockDef(id).meshed;
 }
 export function getRenderLayer(id) {
   return getBlockDef(id).layer;

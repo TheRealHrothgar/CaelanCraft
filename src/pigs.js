@@ -1,14 +1,14 @@
 // Caelancraft — Pigs: the first creatures. See src/CONTRACTS.md §30. Pure (no DOM, no three).
 //
-// A pig is a PlayerState driven by a tiny AI through the same stepPlayer physics as the player, so it slides along
-// honeycomb walls, hops up one-cell ledges, swims and feels black holes exactly like the player does. It collides
-// as the player's cylinder (PLAYER_WIDTH × PLAYER_HEIGHT) — a pig cannot squeeze under a one-cell overhang — but it
-// is drawn ~0.95 tall and is targeted with a smaller cylinder (PIG_HIT_RADIUS × PIG_HIT_HEIGHT).
+// A pig is a body (physics.createBody, PIG_RADIUS × PIG_HEIGHT, PIG_MASS) driven by a tiny AI through the same
+// stepPlayer physics as the player, so it slides along honeycomb walls, hops up one-cell ledges, swims and feels black
+// holes exactly like the player does. Its cylinder is used for terrain collisions, for body-to-body pushing
+// (bodies.js) and as the ray target. A pig fits under a one-cell overhang but is too wide for a one-cell tunnel.
 // Pigs never die: a hit makes them squeal, hop back and run away for PIG_FLEE_S.
 import {
-  PIG_MAX, PIG_HIT_RADIUS, PIG_HIT_HEIGHT, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
+  PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_MASS, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
 } from './config.js';
-import { createPlayer, stepPlayer, findStandingY } from './physics.js';
+import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt } from './physics.js';
 import { yawToForward } from './coords.js';
 import { hexToWorld, worldToHex } from './hex.js';
 import { BLOCK, isSolid, isLiquid } from './blocks.js';
@@ -44,6 +44,19 @@ function wrapAngle(a) {
   return a;
 }
 
+/**
+ * A block placed into a pig (commands can fill cells pigs stand in): lift it to the first free height within three
+ * cells, or leave it (the terrain sweep will snap it) when there is none.
+ */
+function unstick(pig, getBlock) {
+  if (isFreeAt(getBlock, pig.x, pig.y, pig.z, PIG_RADIUS, PIG_HEIGHT)) return;
+  const fy = findFreeY(getBlock, pig.x, pig.z, Math.floor(pig.y) + 1, 3, PIG_RADIUS, PIG_HEIGHT);
+  if (fy !== null) {
+    pig.y = fy;
+    pig.vy = 0;
+  }
+}
+
 /** mulberry32: a small seeded generator for deterministic natural spawns. @returns {() => number} */
 export function seededRng(seed) {
   let a = seed >>> 0;
@@ -65,6 +78,8 @@ export class Pigs {
     this._nextId = 1;
     /** @type {[number, number, number]} */
     this._pull = [0, 0, 0];
+    /** @type {Pig[]} pigs that stepped into a campfire during the last update (they yelp and jump out) */
+    this.scorched = [];
     this._input = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, yaw: 0, pullX: 0, pullY: 0, pullZ: 0 };
   }
 
@@ -82,7 +97,7 @@ export class Pigs {
    */
   spawn(x, y, z, yaw = 0) {
     if (this.list.length >= PIG_MAX || !Number.isFinite(x + y + z + yaw)) return null;
-    const pig = /** @type {Pig} */ (Object.assign(createPlayer(x, y, z), {
+    const pig = /** @type {Pig} */ (Object.assign(createBody(x, y, z, { radius: PIG_RADIUS, height: PIG_HEIGHT, mass: PIG_MASS }), {
       id: this._nextId++,
       yaw: wrapAngle(yaw),
       targetYaw: wrapAngle(yaw),
@@ -113,6 +128,7 @@ export class Pigs {
   update(dt, world) {
     /** @type {Pig[]} */
     const oinks = [];
+    this.scorched.length = 0;
     if (!(dt > 0)) return oinks;
     const input = this._input;
     for (let i = this.list.length - 1; i >= 0; i--) {
@@ -122,6 +138,7 @@ export class Pigs {
         continue;
       }
       if (!world.isLoaded(pig.x, pig.z)) continue;
+      unstick(pig, world.getBlock);
       this._think(pig, dt, world.getBlock);
 
       // Turn toward the target heading at PIG_TURN_RATE.
@@ -149,6 +166,12 @@ export class Pigs {
       stepPlayer(pig, input, world.getBlock, dt);
       pig.sneaking = false; // a pig has no eye height to lower; keep the flag meaningful for the player only
       pig.walkPhase = (pig.walkPhase + Math.hypot(pig.x - x0, pig.z - z0) * 4) % TWO_PI;
+      // Standing in a campfire: hop out away from its centre (hit() also starts the flee and the hurt flash).
+      const [cq, cr] = worldToHex(pig.x, pig.z);
+      if (world.getBlock(cq, Math.floor(pig.y + 0.05), cr) === BLOCK.CAMPFIRE && pig.hurt === 0) {
+        const [fx, fz] = hexToWorld(cq, cr);
+        if (this.hit(pig, fx, fz)) this.scorched.push(pig);
+      }
       if (pig.hurt > 0) pig.hurt = Math.max(0, pig.hurt - dt);
 
       pig.oinkIn -= dt;
@@ -187,6 +210,7 @@ export class Pigs {
     const [q, r] = worldToHex(pig.x + fx * 0.8, pig.z + fz * 0.8);
     const fy = Math.floor(pig.y + 0.01);
     if (isLiquid(getBlock(q, fy, r)) || isLiquid(getBlock(q, fy - 1, r))) return false;
+    if (getBlock(q, fy, r) === BLOCK.CAMPFIRE) return false; // pigs keep away from fire
     return isSolid(getBlock(q, fy - 1, r)) || isSolid(getBlock(q, fy - 2, r)) || isSolid(getBlock(q, fy, r));
   }
 
@@ -219,19 +243,19 @@ export class Pigs {
   }
 
   /**
-   * Nearest pig whose hit cylinder the ray (origin o, unit direction d) enters within maxDist.
+   * Nearest pig whose body cylinder the ray (origin o, unit direction d) enters within maxDist.
    * @returns {{ pig: Pig, distance: number }|null}
    */
   raycast(ox, oy, oz, dx, dy, dz, maxDist) {
     let best = null;
     let bestT = maxDist;
-    const R2 = PIG_HIT_RADIUS * PIG_HIT_RADIUS;
+    const R2 = PIG_RADIUS * PIG_RADIUS;
     for (const pig of this.list) {
       // Ray vs vertical cylinder: solve the horizontal circle, then clip to the cylinder's height; also the caps.
       const px = ox - pig.x;
       const pz = oz - pig.z;
       const y0 = pig.y;
-      const y1 = pig.y + PIG_HIT_HEIGHT;
+      const y1 = pig.y + PIG_HEIGHT;
       const a = dx * dx + dz * dz;
       const b = px * dx + pz * dz;
       const c = px * px + pz * pz - R2;

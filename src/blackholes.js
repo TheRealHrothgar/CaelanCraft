@@ -4,11 +4,11 @@
 // Holes are tracked by cell key. Worldgen never emits BLACK_HOLE, so every hole in a world is a recorded edit:
 // main seeds the tracker from World.edits on load (loadFromEdits) and keeps it in step through World.onBlockChange.
 import {
-  CHUNK_SIZE, BLACK_HOLE_PULL_RADIUS, BLACK_HOLE_PULL_STRENGTH, BLACK_HOLE_EAT_RADIUS, BLACK_HOLE_EAT_INTERVAL_S,
+  BLACK_HOLE_PULL_RADIUS, BLACK_HOLE_PULL_STRENGTH, BLACK_HOLE_EAT_RADIUS, BLACK_HOLE_EAT_INTERVAL_S,
   BLACK_HOLE_MAX_EATS_PER_FRAME, BLACK_HOLE_MAX_TRACKED,
 } from './config.js';
 import { BLOCK, isLiquid } from './blocks.js';
-import { parseChunkKey, indexToLocal } from './coords.js';
+import { forEachEditedCell } from './coords.js';
 import { hexToWorld, hexDistance } from './hex.js';
 import { playerIntersectsBlock } from './physics.js';
 
@@ -118,15 +118,7 @@ export class BlackHoles {
    */
   loadFromEdits(edits) {
     this.clear();
-    for (const [key, chunkEdits] of edits) {
-      const [cq, cr] = parseChunkKey(key);
-      if (!Number.isInteger(cq) || !Number.isInteger(cr)) continue;
-      for (const [li, id] of chunkEdits) {
-        if (id !== BLOCK.BLACK_HOLE) continue;
-        const [lq, ly, lr] = indexToLocal(li);
-        this.add(cq * CHUNK_SIZE + lq, ly, cr * CHUNK_SIZE + lr);
-      }
-    }
+    forEachEditedCell(edits, BLOCK.BLACK_HOLE, (q, y, r) => this.add(q, y, r));
   }
 
   /**

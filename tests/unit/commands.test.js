@@ -251,7 +251,7 @@ describe('resolveBlock', () => {
   it('rejects unknown names, out-of-range ids and empty tokens with helpful messages', () => {
     expect(resolveBlock('zzz')).toEqual({ error: 'unknown block "zzz" (type blocks to list them)' });
     expect(resolveBlock(String(BLOCK_COUNT))).toEqual({ error: `unknown block id ${BLOCK_COUNT} (0..${BLOCK_COUNT - 1}; type blocks to list them)` });
-    expect(resolveBlock('-1')).toEqual({ error: 'unknown block id -1 (0..66; type blocks to list them)' });
+    expect(resolveBlock('-1')).toEqual({ error: 'unknown block id -1 (0..67; type blocks to list them)' });
     expect(resolveBlock('')).toEqual({ error: 'expected a block name' });
     expect(resolveBlock(undefined)).toEqual({ error: 'expected a block name' });
   });

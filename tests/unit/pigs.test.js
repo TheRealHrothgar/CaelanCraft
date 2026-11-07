@@ -1,7 +1,7 @@
 // Unit tests for src/pigs.js — pig AI, physics, hits, ray targeting and save validation (CONTRACTS §30).
 import { describe, it, expect } from 'vitest';
 import { BLOCK } from '../../src/blocks.js';
-import { PIG_MAX, PIG_HIT_RADIUS, PIG_HIT_HEIGHT, PIG_HURT_S, WORLD_HEIGHT } from '../../src/config.js';
+import { PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_HURT_S, WORLD_HEIGHT } from '../../src/config.js';
 import { Pigs, seededRng, validatePigsJSON } from '../../src/pigs.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { BlackHoles } from '../../src/blackholes.js';
@@ -120,17 +120,17 @@ describe('Pigs.raycast', () => {
     pigs.spawn(0, 0, -6);
     const h = pigs.raycast(0, 0.5, 0, 0, 0, -1, 10);
     expect(h.pig).toBe(near);
-    expect(h.distance).toBeCloseTo(3 - PIG_HIT_RADIUS, 9);
+    expect(h.distance).toBeCloseTo(3 - PIG_RADIUS, 9);
     expect(pigs.raycast(0, 0.5, 0, 0, 0, -1, 2)).toBeNull();
     expect(pigs.raycast(0, 0.5, 0, 0, 0, 1, 10)).toBeNull(); // behind
-    expect(pigs.raycast(0, PIG_HIT_HEIGHT + 0.2, 0, 0, 0, -1, 10)).toBeNull(); // over its back
+    expect(pigs.raycast(0, PIG_HEIGHT + 0.2, 0, 0, 0, -1, 10)).toBeNull(); // over its back
   });
   it('hits through the top cap when looking down on a pig', () => {
     const pigs = new Pigs(seededRng(1));
     const pig = pigs.spawn(0, 0, 0);
     const h = pigs.raycast(0.1, 3, 0.1, 0, -1, 0, 5);
     expect(h.pig).toBe(pig);
-    expect(h.distance).toBeCloseTo(3 - PIG_HIT_HEIGHT, 9);
+    expect(h.distance).toBeCloseTo(3 - PIG_HEIGHT, 9);
   });
 });
 

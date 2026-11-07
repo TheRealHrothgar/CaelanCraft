@@ -105,6 +105,20 @@ export const CONSOLE_HISTORY = 50;                  // typed lines remembered fo
 export const CHAT_LINES = 6;                        // HUD chat-log lines shown at once
 export const CHAT_LINE_MS = 6000;                   // a chat-log line fades after this long
 
+// Body-to-body physics (CONTRACTS §31)
+export const PLAYER_MASS = 1;
+export const BODY_PASSES = 3;                       // pair-separation sweeps per frame (chains of touching bodies settle)
+
+// Campfires (CONTRACTS §32)
+export const CAMPFIRE_MAX_TRACKED = 1024;           // campfires beyond this are inert (no model, light or sound) until others go
+export const CAMPFIRE_MODEL_RANGE = 64;             // world units from the camera within which campfires get a model
+export const CAMPFIRE_MAX_MODELS = 48;              // nearest-first
+export const CAMPFIRE_LIGHTS = 4;                   // pooled point lights, given to the nearest lit models (constant count: no shader rebuilds)
+export const CAMPFIRE_LIGHT_INTENSITY = 6;          // PointLight intensity before flicker
+export const CAMPFIRE_LIGHT_RANGE = 14;             // PointLight distance (light reaches zero there)
+export const CAMPFIRE_CRACKLE_RANGE = 10;           // crackles are audible within this distance, fading linearly
+export const CAMPFIRE_CRACKLES_PER_S = 5;           // average crackle rate at the fire
+
 // Black holes (CONTRACTS §29)
 export const BLACK_HOLE_PULL_RADIUS = 10;           // world units from the hole's centre where the pull acts
 export const BLACK_HOLE_PULL_STRENGTH = 120;        // m/s² at the centre, falling off as (1 − d/R)²; ground walking escapes beyond ~1.5 units
@@ -116,8 +130,9 @@ export const BLACK_HOLE_MAX_TRACKED = 256;          // holes beyond this are ine
 // Pigs (CONTRACTS §30)
 export const PIG_MAX = 32;                          // pigs in a world; summon refuses beyond this
 export const PIG_NATURAL_COUNT = 5;                 // pigs placed on grass near spawn in a world that has never had any
-export const PIG_HIT_RADIUS = 0.45;                 // ray-target cylinder (the model is ~0.9 long, ~0.95 tall)
-export const PIG_HIT_HEIGHT = 0.95;
+export const PIG_RADIUS = 0.42;                     // body cylinder (collisions, pushing and ray targeting); ≤ MAX_BODY_RADIUS
+export const PIG_HEIGHT = 0.9;                      // fits under a one-cell overhang; too wide for one-cell tunnels
+export const PIG_MASS = 0.7;                        // relative to PLAYER_MASS: the player shoves pigs more than they shove back
 export const PIG_KNOCKBACK = 5;                     // m/s horizontal kick when hit, plus a small hop
 export const PIG_HURT_S = 0.5;                      // red flash; hits during it are ignored
 export const PIG_FLEE_S = 3;                        // run away after being hit

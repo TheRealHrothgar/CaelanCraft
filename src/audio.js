@@ -70,6 +70,10 @@ export const OINK_CUTOFF_HZ = 900;
 export const OINK_GAIN = 0.5;
 export const SQUEAL_DURATION_S = 0.28;
 export const SQUEAL_GAIN = 0.3;
+// Campfire crackle: 2–3 tiny bright noise pops (12 ms, 4.5 kHz lowpass) within 80 ms.
+export const CRACKLE_POP_S = 0.012;
+export const CRACKLE_CUTOFF_HZ = 4500;
+export const CRACKLE_GAIN = 0.35;
 
 /** Exponential ramps cannot reach 0; decays ramp to this floor and the voice stops there. */
 const DECAY_FLOOR = 0.001;
@@ -84,6 +88,7 @@ const MUTE_FADE_S = 0.01;
  * @property {() => void} playClick                              UI / hotbar click
  * @property {(volume?: number) => void} playOink                 pig grunt; volume 0..1 (default 1)
  * @property {(volume?: number) => void} playSqueal               pig hit
+ * @property {(volume?: number) => void} playCrackle              campfire pop
  * @property {(b: boolean) => void} setMuted
  * @property {() => boolean} toggleMuted                         returns the new muted state
  * @property {boolean} muted                                     read-only getter
@@ -406,6 +411,20 @@ export function createAudio(opts = {}) {
     }
   }
 
+  /** @param {number} [volume] */
+  function playCrackle(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const pops = 2 + (Math.random() < 0.5 ? 1 : 0);
+      for (let i = 0; i < pops; i++) {
+        noiseBurst(c, c.currentTime + Math.random() * 0.08, CRACKLE_POP_S, CRACKLE_CUTOFF_HZ, CRACKLE_GAIN * Math.min(1, volume), randomPitch());
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
   /** @param {boolean} b */
   function setMuted(b) {
     muted = !!b;
@@ -432,6 +451,7 @@ export function createAudio(opts = {}) {
     playClick,
     playOink,
     playSqueal,
+    playCrackle,
     setMuted,
     toggleMuted,
     get muted() {

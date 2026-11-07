@@ -48,10 +48,10 @@ function everyPixel(px, pred, rows = null) {
 }
 
 describe('TILE_NAMES', () => {
-  it('lists all 73 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
+  it('lists all 75 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
     const keys = Object.keys(TILE_NAMES).map(Number).sort((a, b) => a - b);
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
-    expect(keys.length).toBe(74);
+    expect(keys.length).toBe(76);
     expect(TILE_NAMES[TILE.RUNE]).toBe('rune');
     expect(TILE.RUNE).toBe(27);
     for (const [key, id] of Object.entries(TILE)) {
@@ -151,7 +151,9 @@ describe('paintTile — alpha rules', () => {
     for (let i = 3; i < BYTES; i += 4) expect(ice[i]).toBe(200);
   });
   it('every other tile is alpha 255 everywhere', () => {
-    const special = new Set([TILE.WATER, TILE.GLASS, TILE.OAK_LEAVES, TILE.SPRUCE_LEAVES, TILE.BIRCH_LEAVES, TILE.ICE]);
+    const special = new Set([
+      TILE.WATER, TILE.GLASS, TILE.OAK_LEAVES, TILE.SPRUCE_LEAVES, TILE.BIRCH_LEAVES, TILE.ICE, TILE.CAMPFIRE_SIDE, TILE.CAMPFIRE_TOP,
+    ]);
     for (const t of TILE_IDS) {
       if (special.has(t)) continue;
       const px = paintTile(t);
@@ -172,7 +174,7 @@ describe('paintTile — recipe details', () => {
   });
   it('unknown tile ids paint the missing checker', () => {
     const missing = paintTile(TILE.MISSING);
-    for (const bad of [73, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
+    for (const bad of [75, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
       // @ts-ignore — deliberately passing garbage
       expect(sameBytes(paintTile(bad), missing), `tile ${String(bad)}`).toBe(true);
     }

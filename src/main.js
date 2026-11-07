@@ -9,7 +9,7 @@
 import {
   CHUNK_SIZE, RENDER_DISTANCE, LOADING_BUDGET_MS, REACH, BREAK_REPEAT_S, PLACE_REPEAT_S, MAX_FRAME_DT, FOV,
   SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY, PLAYER_HEIGHT,
-  PIG_NATURAL_COUNT,
+  PIG_NATURAL_COUNT, CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
@@ -31,6 +31,9 @@ import { createAudio } from './audio.js';
 import { RuneStore, RuneRunner, runeKey, SOURCE } from './runes.js';
 import { BlackHoles } from './blackholes.js';
 import { Pigs } from './pigs.js';
+import { resolveBodies } from './bodies.js';
+import { Campfires } from './campfires.js';
+import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
 import { createConsole } from './console.js';
 import { createRuneEditor } from './runeEditor.js';
@@ -187,6 +190,8 @@ export function boot(win, doc) {
   let renderer;
   /** @type {import('./pigRenderer.js').PigRenderer} */
   let pigRenderer;
+  /** @type {import('./campfireRenderer.js').CampfireRenderer} */
+  let campfireRenderer;
   let controls;
   let menus;
   let audio;
@@ -203,6 +208,7 @@ export function boot(win, doc) {
       renderDistance: params.rd ?? RENDER_DISTANCE,
     });
     pigRenderer = createPigRenderer(renderer.three.scene);
+    campfireRenderer = createCampfireRenderer(renderer.three.scene, { makeCanvas: () => doc.createElement('canvas') });
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();
@@ -286,10 +292,18 @@ export function boot(win, doc) {
   const blackHoles = new BlackHoles();
   /** @type {[number, number, number]} scratch for the pull on the player */
   const pull = [0, 0, 0];
+  // Campfires (CONTRACTS §32): re-seeded from the world's edits on every load, like black holes.
+  const campfires = new Campfires();
+  /** seconds of animation time for flames and smoke (advances in every state that renders) */
+  let fxTime = 0;
+  /** throttle for the "too hot" chat line */
+  let lastHotLineAt = -Infinity;
   // Pigs (CONTRACTS §30): replaced from the save on every load; natural ones are placed once per world.
   const pigs = new Pigs();
   /** true when the loading world has never had pigs (no `pigs` field in its save) */
   let placeNaturalPigs = false;
+  /** @type {import('./types.js').PlayerState[]} scratch list for resolveBodies */
+  const bodies = [];
   /** @type {{ pig: import('./pigs.js').Pig, distance: number }|null} pig under the crosshair, closer than `hit` */
   let pigTarget = null;
   const pigWorld = {
@@ -371,6 +385,7 @@ export function boot(win, doc) {
   /** World.onBlockChange: keep the rune store and black holes in step with the cells that are (no longer) theirs. */
   function onBlockChanged(q, y, r, prev, next) {
     blackHoles.onBlockChange(q, y, r, prev, next);
+    campfires.onBlockChange(q, y, r, prev, next);
     if (next === BLOCK.RUNE_BLOCK && prev !== BLOCK.RUNE_BLOCK) {
       runeStore.ensure(q, y, r);
     } else if (prev === BLOCK.RUNE_BLOCK && next !== BLOCK.RUNE_BLOCK) {
@@ -489,8 +504,9 @@ export function boot(win, doc) {
     const [tq, ty, tr] = faceNeighbor(h.q, h.y, h.r, h.face);
     if (!inHeightRange(ty)) return false;
     if (!isReplaceable(world.getBlock(tq, ty, tr))) return false;
-    // A black hole is not solid, but placing one inside yourself would swallow you on the spot.
-    if ((isSolid(id) || id === BLOCK.BLACK_HOLE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
+    // Black holes and campfires are not solid, but placing one inside yourself would swallow / scorch you on the spot.
+    if ((isSolid(id) || id === BLOCK.BLACK_HOLE || id === BLOCK.CAMPFIRE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
+    if (isSolid(id) && pigs.list.some((pig) => playerIntersectsBlock(pig, tq, ty, tr))) return false; // no entombing pigs
     if (!world.setBlock(tq, ty, tr, id)) return false;
     audio.playPlace(getBlockDef(id).soundGroup);
     updateHit();
@@ -635,6 +651,7 @@ export function boot(win, doc) {
     world.onChunkUnload = (key) => renderer.removeChunkMesh(key);
     world.onBlockChange = onBlockChanged;
     blackHoles.loadFromEdits(world.edits);
+    campfires.loadFromEdits(world.edits);
     pigs.load(restoring && Array.isArray(restoring.pigs) ? restoring.pigs : []);
     placeNaturalPigs = !(restoring && Array.isArray(restoring.pigs));
     pigTarget = null;
@@ -1065,10 +1082,42 @@ export function boot(win, doc) {
     }
   }
 
+  /**
+   * Campfires: a player standing in one is bounced out (away from its centre, with a hop) and told it is hot; nearby
+   * fires crackle at random, fading out by CAMPFIRE_CRACKLE_RANGE.
+   */
+  function stepCampfires(dt) {
+    if (campfires.size === 0) return;
+    const [cq, cr] = worldToHex(player.x, player.z);
+    if (!player.flying && world.getBlock(cq, Math.floor(player.y + 0.05), cr) === BLOCK.CAMPFIRE) {
+      const [fx, fz] = hexToWorld(cq, cr);
+      let dx = player.x - fx;
+      let dz = player.z - fz;
+      const d = Math.hypot(dx, dz);
+      if (d < 1e-6) [dx, dz] = yawToForward(controls.yaw + Math.PI); // dead centre: back out the way you came
+      else [dx, dz] = [dx / d, dz / d];
+      player.vx = dx * 5;
+      player.vz = dz * 5;
+      player.vy = Math.max(player.vy, 5);
+      player.onGround = false;
+      if (fxTime - lastHotLineAt > 2) {
+        lastHotLineAt = fxTime;
+        logLine('Ouch! That campfire is hot.');
+      }
+      audio.playCrackle(1);
+    }
+    const near = campfires.nearest(player.x, player.y, player.z, CAMPFIRE_CRACKLE_RANGE, 1);
+    if (near.length && Math.random() < CAMPFIRE_CRACKLES_PER_S * dt) audio.playCrackle(1 - near[0].dist / CAMPFIRE_CRACKLE_RANGE);
+  }
+
   /** Pigs wander (and feel black holes); ambient oinks fade out by 16 units; a swallowed pig is gone. */
   function stepPigs(dt) {
     if (pigs.size === 0) return;
     const oinks = pigs.update(dt, pigWorld);
+    for (const pig of pigs.scorched) {
+      const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
+      if (d < 16) audio.playSqueal(1 - d / 16);
+    }
     for (const pig of oinks) {
       const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
       if (d < 16) {
@@ -1161,6 +1210,13 @@ export function boot(win, doc) {
     if (world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt);
     stepBlackHoles(dt);
     stepPigs(dt);
+    stepCampfires(dt);
+    // Bodies collide, push and stand on each other once everything has moved (CONTRACTS §31). Pigs in unloaded
+    // chunks are frozen and stay out of it.
+    bodies.length = 0;
+    bodies.push(player);
+    for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) bodies.push(pig);
+    if (bodies.length > 1) resolveBodies(bodies, world.getBlock);
 
     if (params.time == null) {
       const nt = advanceTime(time, dt);
@@ -1185,6 +1241,13 @@ export function boot(win, doc) {
     renderer.setFov(fov);
     renderer.setHighlight(hit);
     pigRenderer.sync(pigs.list);
+    fxTime += dt;
+    if (campfires.size > 0 || campfireRenderer.count() > 0) {
+      const near = campfires.nearest(player.x, eyeY, player.z, CAMPFIRE_MODEL_RANGE)
+        .filter((n) => world.hasChunkAtCell(n.fire.q, n.fire.r))
+        .slice(0, CAMPFIRE_MAX_MODELS);
+      campfireRenderer.sync(near, fxTime, dt);
+    }
     computeSky(time, sky);
     renderer.setSky(sky);
     renderer.setUnderwater(player.headInWater);

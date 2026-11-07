@@ -2,6 +2,8 @@
 // See src/CONTRACTS.md §12. Pure.
 //
 // The player is a cylinder of diameter PLAYER_WIDTH and height PLAYER_HEIGHT standing at (x, y, z) (feet).
+// Other bodies (mobs) carry their own `radius` and `height` (createBody); every routine here reads them through
+// bodyRadius / bodyHeight, so a state without them is a player-sized body.
 // Vertical movement is resolved against the cells whose hexagon overlaps the cylinder's footprint; horizontal
 // movement is resolved by pushing the footprint circle out of overlapping solid hexagons along the minimum
 // translation vector, which gives natural sliding along honeycomb walls. Because the footprint radius is
@@ -26,6 +28,21 @@ if (!(PLAYER_RADIUS < HEX_SIZE / 2)) {
   // HEX_SIZE / 2 (0.289) < HEX_INRADIUS (0.5): this single check guarantees both that the player fits through
   // the HEX_SIZE-wide throat of a 1-cell passage and that the 7-column collider is exact.
   throw new Error('physics: PLAYER_WIDTH / 2 must be smaller than HEX_SIZE / 2 (1-cell passages must be passable)');
+}
+
+/**
+ * Largest body radius the 7-column collider handles exactly: a footprint circle centred anywhere in a cell can only
+ * reach that cell's six neighbours while its radius is below the hexagon edge length HEX_SIZE (≈ 0.577); keep a margin.
+ */
+export const MAX_BODY_RADIUS = 0.5;
+
+/** @param {PlayerState} p @returns {number} footprint radius */
+export function bodyRadius(p) {
+  return p.radius ?? PLAYER_RADIUS;
+}
+/** @param {PlayerState} p @returns {number} cylinder height */
+export function bodyHeight(p) {
+  return p.height ?? PLAYER_HEIGHT;
 }
 
 /**
@@ -83,6 +100,22 @@ export function createPlayer(x, y, z) {
 }
 
 /** @param {PlayerState} p @returns {number} eye height above the feet */
+/**
+ * A body of a given size and mass (a mob): a PlayerState plus `radius`, `height` and `mass`. Throws when the radius is
+ * not in (0, MAX_BODY_RADIUS] or the height / mass are not positive.
+ * @param {number} x
+ * @param {number} y
+ * @param {number} z
+ * @param {{ radius: number, height: number, mass?: number }} size
+ * @returns {PlayerState}
+ */
+export function createBody(x, y, z, size) {
+  const { radius, height, mass = 1 } = size;
+  if (!(radius > 0 && radius <= MAX_BODY_RADIUS)) throw new RangeError(`createBody: radius must be in (0, ${MAX_BODY_RADIUS}]`);
+  if (!(height > 0) || !(mass > 0)) throw new RangeError('createBody: height and mass must be positive');
+  return Object.assign(createPlayer(x, y, z), { radius, height, mass });
+}
+
 export function getEyeHeight(p) {
   return p.sneaking && !p.flying ? SNEAK_EYE_HEIGHT : EYE_HEIGHT;
 }
@@ -94,12 +127,13 @@ export function getEyeHeight(p) {
  * @returns {AABB}
  */
 export function playerAABB(p, out = {}) {
-  out.minX = p.x - PLAYER_RADIUS;
-  out.maxX = p.x + PLAYER_RADIUS;
+  const rad = bodyRadius(p);
+  out.minX = p.x - rad;
+  out.maxX = p.x + rad;
   out.minY = p.y;
-  out.maxY = p.y + PLAYER_HEIGHT;
-  out.minZ = p.z - PLAYER_RADIUS;
-  out.maxZ = p.z + PLAYER_RADIUS;
+  out.maxY = p.y + bodyHeight(p);
+  out.minZ = p.z - rad;
+  out.maxZ = p.z + rad;
   return out;
 }
 
@@ -109,9 +143,9 @@ export function playerAABB(p, out = {}) {
  * @param {PlayerState} p
  */
 export function playerIntersectsBlock(p, q, y, r) {
-  if (!(p.y < y + 1 && p.y + PLAYER_HEIGHT > y)) return false;
+  if (!(p.y < y + 1 && p.y + bodyHeight(p) > y)) return false;
   const c = hexToWorld(q, r);
-  return hexCircleContact(c[0], c[1], p.x, p.z, PLAYER_RADIUS, contact);
+  return hexCircleContact(c[0], c[1], p.x, p.z, bodyRadius(p), contact);
 }
 
 /**
@@ -137,15 +171,17 @@ export function findStandingY(getBlock, x, z, fromY) {
 
 /**
  * True when a cylinder with its feet at world (x, cy, z) overlaps no solid cell: checks the 7 candidate columns
- * whose hexagon overlaps the footprint for solid cells in floor(cy) .. ceil(cy + PLAYER_HEIGHT) − 1.
+ * whose hexagon overlaps the footprint for solid cells in floor(cy) .. ceil(cy + height) − 1.
  * @param {GetBlockFn} getBlock
+ * @param {number} [radius=PLAYER_RADIUS]
+ * @param {number} [height=PLAYER_HEIGHT]
  */
-export function isFreeAt(getBlock, x, cy, z) {
+export function isFreeAt(getBlock, x, cy, z, radius = PLAYER_RADIUS, height = PLAYER_HEIGHT) {
   gatherColumns(x, z);
   const y0 = Math.floor(cy);
-  const y1 = Math.ceil(cy + PLAYER_HEIGHT) - 1;
+  const y1 = Math.ceil(cy + height) - 1;
   for (let c = 0; c < COLUMN_COUNT; c++) {
-    if (!hexCircleContact(colX[c], colZ[c], x, z, PLAYER_RADIUS, contact)) continue;
+    if (!hexCircleContact(colX[c], colZ[c], x, z, radius, contact)) continue;
     for (let y = y0; y <= y1; y++) {
       if (isSolid(getBlock(colQ[c], y, colR[c]))) return false;
     }
@@ -162,14 +198,16 @@ export function isFreeAt(getBlock, x, cy, z) {
  * @param {number} z
  * @param {number} fromY
  * @param {number} [maxUp=2]
+ * @param {number} [radius=PLAYER_RADIUS]
+ * @param {number} [height=PLAYER_HEIGHT]
  * @returns {number|null}
  */
-export function findFreeY(getBlock, x, z, fromY, maxUp = 2) {
+export function findFreeY(getBlock, x, z, fromY, maxUp = 2, radius = PLAYER_RADIUS, height = PLAYER_HEIGHT) {
   if (!Number.isFinite(x + z + fromY)) return null;
   for (let dy = 0; dy <= maxUp; dy++) {
     const cy = fromY + dy;
-    if (cy + PLAYER_HEIGHT > WORLD_HEIGHT) break;
-    if (isFreeAt(getBlock, x, cy, z)) return cy;
+    if (cy + height > WORLD_HEIGHT) break;
+    if (isFreeAt(getBlock, x, cy, z, radius, height)) return cy;
   }
   return null;
 }
@@ -190,7 +228,7 @@ export function supportingCells(p, getBlock, out = []) {
   if (y < 0 || y >= WORLD_HEIGHT) return out;
   gatherColumns(p.x, p.z);
   for (let c = 0; c < COLUMN_COUNT; c++) {
-    if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, PLAYER_RADIUS, contact)) continue;
+    if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, bodyRadius(p), contact)) continue;
     if (isSolid(getBlock(colQ[c], y, colR[c]))) out.push([colQ[c], y, colR[c]]);
   }
   return out;
@@ -247,7 +285,7 @@ function substep(p, input, getBlock, h, wx, wz) {
   // 1. Environment (sampled in the column under the player's centre).
   const [bq, br] = worldToHex(p.x, p.z);
   const feet = getBlock(bq, Math.floor(p.y + 0.1), br);
-  const chest = getBlock(bq, Math.floor(p.y + 1.0), br);
+  const chest = getBlock(bq, Math.floor(p.y + Math.min(1.0, bodyHeight(p) * 0.6)), br); // a short body's chest is lower
   p.inWater = isLiquid(feet) || isLiquid(chest);
   const eyeY = p.y + getEyeHeight(p);
   const eyeCell = Math.floor(eyeY);
@@ -316,15 +354,17 @@ function moveVertical(p, delta, getBlock) {
   if (delta === 0) return false;
   p.y += delta;
 
+  const rad = bodyRadius(p);
+  const height = bodyHeight(p);
   const y0 = Math.floor(p.y);
-  const y1 = Math.ceil(p.y + PLAYER_HEIGHT) - 1;
+  const y1 = Math.ceil(p.y + height) - 1;
   gatherColumns(p.x, p.z);
 
   let hit = false;
   let nearestMin = Infinity;  // min(cell bottom) — used when moving up
   let nearestMax = -Infinity; // max(cell top) — used when moving down
   for (let c = 0; c < COLUMN_COUNT; c++) {
-    if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, PLAYER_RADIUS, contact)) continue;
+    if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, rad, contact)) continue;
     const q = colQ[c];
     const r = colR[c];
     for (let y = y0; y <= y1; y++) {
@@ -335,7 +375,7 @@ function moveVertical(p, delta, getBlock) {
     }
   }
   if (!hit) return false;
-  if (delta > 0) p.y = nearestMin - PLAYER_HEIGHT - COLLISION_EPS;
+  if (delta > 0) p.y = nearestMin - height - COLLISION_EPS;
   else p.y = nearestMax + COLLISION_EPS;
   return true;
 }
@@ -360,8 +400,9 @@ function moveHorizontal(p, dx, dz, getBlock) {
   p.x += dx;
   p.z += dz;
 
+  const rad = bodyRadius(p);
   const y0 = Math.floor(p.y);
-  const y1 = Math.ceil(p.y + PLAYER_HEIGHT) - 1;
+  const y1 = Math.ceil(p.y + bodyHeight(p)) - 1;
   let collided = false;
 
   // MAX_PUSH_PASSES pushes plus one final re-check (the last iteration only tests).
@@ -371,7 +412,7 @@ function moveHorizontal(p, dx, dz, getBlock) {
     let bnx = 0;
     let bnz = 0;
     for (let c = 0; c < COLUMN_COUNT; c++) {
-      if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, PLAYER_RADIUS, contact)) continue;
+      if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, rad, contact)) continue;
       if (contact.depth <= bestDepth) continue;
       const q = colQ[c];
       const r = colR[c];
@@ -408,6 +449,27 @@ function moveHorizontal(p, dx, dz, getBlock) {
     collided = true;
   }
   return collided;
+}
+
+/**
+ * Displace a body through the terrain (no gravity, no input): horizontal first, sliding along walls exactly like
+ * walking, then vertical. Used to push bodies apart and to carry riders. Velocities into walls are removed.
+ * @param {PlayerState} p
+ * @param {number} dx
+ * @param {number} dy
+ * @param {number} dz
+ * @param {GetBlockFn} getBlock
+ * @returns {{ hitWall: boolean, hitFloorOrCeiling: boolean }}
+ */
+export function displaceBody(p, dx, dy, dz, getBlock) {
+  sanitize(p);
+  const hitWall = Number.isFinite(dx + dz) ? moveHorizontal(p, dx, dz, getBlock) : false;
+  const hitFloorOrCeiling = Number.isFinite(dy) ? moveVertical(p, dy, getBlock) : false;
+  if (hitFloorOrCeiling) {
+    if (dy < 0) p.onGround = true;
+    if ((dy < 0 && p.vy < 0) || (dy > 0 && p.vy > 0)) p.vy = 0;
+  }
+  return { hitWall, hitFloorOrCeiling };
 }
 
 /**
