@@ -88,6 +88,8 @@
  * @property {number} [radius]      body footprint radius (mobs; absent = PLAYER_WIDTH / 2), at most MAX_BODY_RADIUS
  * @property {number} [height]      body height (mobs; absent = PLAYER_HEIGHT)
  * @property {number} [mass]        relative mass for body-body pushes (absent = PLAYER_MASS)
+ * @property {PlayerState|null} [carrier]   the body this one stood on at the end of last frame (bodies.js, §31)
+ * @property {number[]} [carrierAt]  that carrier's feet [x, y, z] then
  */
 
 /**

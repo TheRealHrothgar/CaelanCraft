@@ -31,7 +31,7 @@ import { createAudio } from './audio.js';
 import { RuneStore, RuneRunner, runeKey, SOURCE } from './runes.js';
 import { BlackHoles } from './blackholes.js';
 import { Pigs } from './pigs.js';
-import { resolveBodies } from './bodies.js';
+import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
@@ -1031,6 +1031,7 @@ export function boot(win, doc) {
       player.vy = 0;
       player.vz = 0;
       player.onGround = false;
+      detachBody(player, pigs.list); // a pig on the player's head (or under its feet) stays behind (§31)
       if (world) world.update(x, z);
       if (runner) runner.seedStep(); // arriving by teleport is not stepping onto a rune
       updateHit();
