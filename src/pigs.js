@@ -4,13 +4,15 @@
 // stepPlayer physics as the player, so it slides along honeycomb walls, hops up one-cell ledges, swims and feels black
 // holes exactly like the player does. Its cylinder is used for terrain collisions, for body-to-body pushing
 // (bodies.js) and as the ray target. A pig fits under a one-cell overhang but is too wide for a one-cell tunnel.
-// Pigs never die: a hit makes them squeal, hop back and run away for PIG_FLEE_S.
+// Pigs never die: a hit makes them squeal, hop back and run away for PIG_FLEE_S. A pig in water swims for the
+// nearest bank it can climb. It hops only one-cell ledges, and never while standing on or carrying another body,
+// so pigs cannot climb out of a two-high pen on each other's backs.
 import {
   PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_MASS, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
 } from './config.js';
 import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt } from './physics.js';
 import { yawToForward } from './coords.js';
-import { hexToWorld, worldToHex } from './hex.js';
+import { HEX_DIRS, hexToWorld, worldToHex, hexLength, hexCircleContact } from './hex.js';
 import { BLOCK, isSolid, isLiquid } from './blocks.js';
 
 /** @typedef {import('./types.js').GetBlockFn} GetBlockFn */
@@ -21,8 +23,8 @@ import { BLOCK, isSolid, isLiquid } from './blocks.js';
  *   id: number, yaw: number, targetYaw: number, mode: 'idle'|'walk'|'flee', timer: number,
  *   hurt: number, walkPhase: number, oinkIn: number,
  * }} Pig
- * `walkPhase` advances with distance walked (the renderer swings the legs with it); `oinkIn` counts down to the
- * next ambient oink.
+ * `walkPhase` advances with distance walked (the renderer swings the legs with it) and settles to a multiple of π
+ * while the pig stands (legs straight); `oinkIn` counts down to the next ambient oink.
  */
 
 /** @typedef {{ x: number, y: number, z: number, yaw: number }} PigJSON */
@@ -35,6 +37,25 @@ import { BLOCK, isSolid, isLiquid } from './blocks.js';
  */
 
 const TWO_PI = Math.PI * 2;
+/** Cells around a swimming pig searched for a bank it can climb out onto. */
+export const SHORE_SEARCH = 8;
+/** A swimming pig re-aims for the nearest bank this often (s). */
+export const SWIM_REAIM_S = 0.75;
+/** Distances (m) along the heading at which a walking pig looks for campfires. */
+export const FIRE_LOOK = Object.freeze([0.25, 0.5, 0.8]);
+/** A walking pig keeps its centre (the point the scorch test uses) at least this far from a campfire cell. */
+export const FIRE_MARGIN = 0.15;
+/** Below this horizontal speed (m/s) a pig counts as standing and its legs settle back to straight. */
+export const LEG_SETTLE_SPEED = 0.2;
+/** Rate (1/s) at which a standing pig's walkPhase eases to the nearest multiple of π (sin = 0: legs straight). */
+export const LEG_SETTLE_RATE = 10;
+/** scratch for hexCircleContact */
+const contact = { depth: 0, nx: 0, nz: 0 };
+
+/** A cell a pig may hop up into or swim out onto: no solid, no water, no fire. */
+function isOpen(id) {
+  return !isSolid(id) && !isLiquid(id) && id !== BLOCK.CAMPFIRE;
+}
 
 /** Wrap an angle into (−π, π]. */
 function wrapAngle(a) {
@@ -80,6 +101,8 @@ export class Pigs {
     this._pull = [0, 0, 0];
     /** @type {Pig[]} pigs that stepped into a campfire during the last update (they yelp and jump out) */
     this.scorched = [];
+    /** @type {Set<object>} scratch: bodies some pig stood on at the end of last frame */
+    this._carriers = new Set();
     this._input = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, yaw: 0, pullX: 0, pullY: 0, pullZ: 0 };
   }
 
@@ -131,6 +154,10 @@ export class Pigs {
     this.scorched.length = 0;
     if (!(dt > 0)) return oinks;
     const input = this._input;
+    // Ride links are the ones made at the end of last frame (bodies.js keeps them until the next resolveBodies).
+    const carriers = this._carriers;
+    carriers.clear();
+    for (const pig of this.list) if (pig.carrier) carriers.add(pig.carrier);
     for (let i = this.list.length - 1; i >= 0; i--) {
       const pig = this.list[i];
       if (pig.y < -16) {
@@ -139,7 +166,9 @@ export class Pigs {
       }
       if (!world.isLoaded(pig.x, pig.z)) continue;
       unstick(pig, world.getBlock);
-      this._think(pig, dt, world.getBlock);
+      // A pig standing on another body, or carrying a pig, never hops: stacked pigs would climb any wall.
+      const canHop = !pig.carrier && !carriers.has(pig);
+      this._think(pig, dt, world.getBlock, canHop);
 
       // Turn toward the target heading at PIG_TURN_RATE.
       const dYaw = wrapAngle(pig.targetYaw - pig.yaw);
@@ -149,7 +178,9 @@ export class Pigs {
       const moving = pig.mode !== 'idle' && Math.abs(dYaw) < 1.2;
       input.forward = moving ? 1 : 0;
       input.sneak = pig.mode === 'walk'; // sneak speed (1.31 m/s) is a pig's amble; fleeing uses walk speed
-      input.jump = moving && (pig.hitWall || pig.inWater);
+      // In water a pig always paddles up (it floats, and pressing into a bank gives SWIM_EXIT_JUMP); on land it
+      // hops only at a one-cell ledge straight ahead.
+      input.jump = pig.inWater || (moving && pig.hitWall && canHop && this._ledgeAhead(pig, world.getBlock));
       input.yaw = pig.yaw;
       if (world.pullAt) {
         world.pullAt(pig.x, pig.y + 0.5, pig.z, this._pull);
@@ -165,7 +196,13 @@ export class Pigs {
       const z0 = pig.z;
       stepPlayer(pig, input, world.getBlock, dt);
       pig.sneaking = false; // a pig has no eye height to lower; keep the flag meaningful for the player only
-      pig.walkPhase = (pig.walkPhase + Math.hypot(pig.x - x0, pig.z - z0) * 4) % TWO_PI;
+      const stride = Math.hypot(pig.x - x0, pig.z - z0);
+      pig.walkPhase = (pig.walkPhase + stride * 4) % TWO_PI;
+      if (stride < LEG_SETTLE_SPEED * dt) {
+        // Standing still: ease to the nearest multiple of π, where the swing sin(walkPhase) is 0 (legs straight).
+        const straight = Math.round(pig.walkPhase / Math.PI) * Math.PI;
+        pig.walkPhase += (straight - pig.walkPhase) * (1 - Math.exp(-LEG_SETTLE_RATE * dt));
+      }
       // Standing in a campfire: hop out away from its centre (hit() also starts the flee and the hurt flash).
       const [cq, cr] = worldToHex(pig.x, pig.z);
       if (world.getBlock(cq, Math.floor(pig.y + 0.05), cr) === BLOCK.CAMPFIRE && pig.hurt === 0) {
@@ -183,9 +220,25 @@ export class Pigs {
     return oinks;
   }
 
-  /** AI: idle ↔ wander, flee after a hit, and never walk off a drop of more than one cell or into deep water. */
-  _think(pig, dt, getBlock) {
+  /**
+   * AI: idle ↔ wander, flee after a hit; never walk off a drop of more than one cell, into water, into a wall it
+   * cannot hop or toward a campfire; and swim for the shore when in water.
+   * @param {boolean} canHop  false while the pig stands on, or carries, another body
+   */
+  _think(pig, dt, getBlock, canHop) {
     pig.timer -= dt;
+    if (pig.inWater && pig.mode !== 'flee') {
+      // Swimming: never idle; head for the nearest bank it can climb, re-aimed every SWIM_REAIM_S (at once when it
+      // has just fallen in with a long walk timer). The edge rule does not apply, since all around is water. Stuck
+      // against a wall it cannot climb, it tries another way.
+      if (pig.mode !== 'walk' || pig.timer <= 0 || pig.timer > SWIM_REAIM_S) {
+        pig.mode = 'walk';
+        pig.timer = SWIM_REAIM_S;
+        const shore = pig.hitWall ? null : this._shoreYaw(pig, getBlock);
+        pig.targetYaw = shore ?? wrapAngle(pig.yaw + (this._rng() * 2 - 1) * Math.PI * 0.75);
+      }
+      return;
+    }
     if (pig.timer <= 0) {
       if (pig.mode === 'idle') {
         pig.mode = 'walk';
@@ -196,22 +249,97 @@ export class Pigs {
         pig.timer = 1 + this._rng() * 4;
       }
     }
-    if (pig.mode === 'walk' && pig.onGround && !this._safeAhead(pig, getBlock)) {
-      // Edge or water ahead: stop and look somewhere else.
+    if (pig.mode === 'walk' && pig.onGround && !this._safeAhead(pig, getBlock, canHop)) {
+      // Edge, water, wall or fire ahead: stop and look somewhere else.
       pig.mode = 'idle';
       pig.timer = 0.5 + this._rng();
       pig.targetYaw = wrapAngle(pig.yaw + Math.PI * (0.5 + this._rng()));
     }
   }
 
-  /** The cell 0.8 ahead has ground within one cell below the feet and is not water. */
-  _safeAhead(pig, getBlock) {
+  /** @returns {[number, number, number]} the cell (q, r) 0.8 ahead along the yaw, and the feet level fy */
+  _aheadCell(pig) {
     const [fx, fz] = yawToForward(pig.yaw);
     const [q, r] = worldToHex(pig.x + fx * 0.8, pig.z + fz * 0.8);
-    const fy = Math.floor(pig.y + 0.01);
-    if (isLiquid(getBlock(q, fy, r)) || isLiquid(getBlock(q, fy - 1, r))) return false;
-    if (getBlock(q, fy, r) === BLOCK.CAMPFIRE) return false; // pigs keep away from fire
-    return isSolid(getBlock(q, fy - 1, r)) || isSolid(getBlock(q, fy - 2, r)) || isSolid(getBlock(q, fy, r));
+    return [q, r, Math.floor(pig.y + 0.01)];
+  }
+
+  /**
+   * The cell 0.8 ahead is not water, has ground within two cells below the feet, and is not a wall: a solid cell
+   * there only passes as a one-cell ledge the pig can hop (open cell above it) while `canHop`. And the centre's path
+   * over the next 0.8 keeps FIRE_MARGIN away from every campfire.
+   */
+  _safeAhead(pig, getBlock, canHop) {
+    const [q, r, fy] = this._aheadCell(pig);
+    const at = getBlock(q, fy, r);
+    const below = getBlock(q, fy - 1, r);
+    if (isLiquid(at) || isLiquid(below)) return false;
+    if (this._fireAhead(pig, fy, getBlock)) return false; // pigs keep away from fire
+    if (isSolid(at)) return canHop && isOpen(getBlock(q, fy + 1, r));
+    return isSolid(below) || isSolid(getBlock(q, fy - 2, r));
+  }
+
+  /** A one-cell ledge straight ahead (solid at the feet, open above): the only wall worth hopping at. */
+  _ledgeAhead(pig, getBlock) {
+    const [q, r, fy] = this._aheadCell(pig);
+    return isSolid(getBlock(q, fy, r)) && isOpen(getBlock(q, fy + 1, r));
+  }
+
+  /**
+   * True when a point FIRE_LOOK ahead along the yaw lies within FIRE_MARGIN of a campfire cell at the feet level or
+   * one below (a fire the pig would step down into). Several points, each with a margin, cover the cell corners and
+   * the arc of a turn that a single look-ahead point skips.
+   */
+  _fireAhead(pig, fy, getBlock) {
+    const [fx, fz] = yawToForward(pig.yaw);
+    for (const s of FIRE_LOOK) {
+      const px = pig.x + fx * s;
+      const pz = pig.z + fz * s;
+      const [cq, cr] = worldToHex(px, pz);
+      for (let k = -1; k < 6; k++) {
+        const q = k < 0 ? cq : cq + HEX_DIRS[k][0];
+        const r = k < 0 ? cr : cr + HEX_DIRS[k][1];
+        if (k >= 0) {
+          const [hx, hz] = hexToWorld(q, r);
+          if (!hexCircleContact(hx, hz, px, pz, FIRE_MARGIN, contact)) continue;
+        }
+        if (getBlock(q, fy, r) === BLOCK.CAMPFIRE || getBlock(q, fy - 1, r) === BLOCK.CAMPFIRE) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Heading (yaw) toward the nearest column within SHORE_SEARCH cells whose floor a swimmer can climb onto: a solid
+   * cell under an open one, level with the water surface or one above it (SWIM_EXIT_JUMP clears that). null when
+   * there is none in range.
+   */
+  _shoreYaw(pig, getBlock) {
+    const [pq, pr] = worldToHex(pig.x, pig.z);
+    let y = Math.floor(pig.y);
+    if (!isLiquid(getBlock(pq, y, pr))) y++;
+    if (!isLiquid(getBlock(pq, y, pr))) return null;
+    while (y < WORLD_HEIGHT - 1 && isLiquid(getBlock(pq, y + 1, pr))) y++;
+    const surface = y + 1; // feet height on a bank level with the top water cell
+    let best = null;
+    let bestD2 = Infinity;
+    for (let dq = -SHORE_SEARCH; dq <= SHORE_SEARCH; dq++) {
+      for (let dr = -SHORE_SEARCH; dr <= SHORE_SEARCH; dr++) {
+        if ((dq === 0 && dr === 0) || hexLength(dq, dr) > SHORE_SEARCH) continue;
+        const [x, z] = hexToWorld(pq + dq, pr + dr);
+        const d2 = (x - pig.x) ** 2 + (z - pig.z) ** 2;
+        if (d2 >= bestD2) continue;
+        for (let h = surface + 1; h >= surface; h--) {
+          if (isSolid(getBlock(pq + dq, h - 1, pr + dr)) && isOpen(getBlock(pq + dq, h, pr + dr))) {
+            best = [x, z];
+            bestD2 = d2;
+            break;
+          }
+        }
+      }
+    }
+    if (!best) return null;
+    return Math.atan2(-(best[0] - pig.x), -(best[1] - pig.z)); // yawToForward(yaw) = (−sin, −cos)
   }
 
   /**

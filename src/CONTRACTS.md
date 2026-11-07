@@ -1022,14 +1022,32 @@ export class Pigs {
   spawnNatural(count, q0, r0, seed, getBlock, isLoadedCell, minDist = 4, maxDist = 18) → placed   // grass surfaces only, seeded
 }
 ```
-AI per frame: timer expiry alternates idle (1–5 s) and walk (1.5–5.5 s, new heading within ±π); a walking, grounded pig whose
-cell 0.8 ahead is liquid or has no solid ground within two cells below its feet stops and turns away. Turning is capped at
-PIG_TURN_RATE; it moves forward only when within 1.2 rad of its heading, at sneak speed when walking and walk speed when fleeing,
-and jumps when it hit a wall or is in water. `walkPhase` advances by 4 × horizontal distance (mod 2π); `oinkIn` resets to 6–18 s.
+AI per frame (`canHop` = the pig has no `carrier` and no pig in the list has it as `carrier`, both links from the end of last
+frame — §31; a pig standing on or carrying another body never hops, so pigs cannot climb a wall on each other's backs):
+1. **In water** (`inWater`, mode not flee): the pig swims — mode walk, and whenever the mode was not walk, the timer ran out or
+   the timer exceeds SWIM_REAIM_S 0.75 (it just fell in), the timer becomes SWIM_REAIM_S and `targetYaw` points at the nearest
+   column within SHORE_SEARCH 8 cells (world distance) that has a solid cell under an open one (not solid, liquid or CAMPFIRE)
+   with its floor at the water surface S or S + 1 (S = one above the topmost liquid cell of the pig's column); when there is none,
+   or the pig is against a wall (`hitWall`), a random turn within ±0.75π instead. No edge rule; steps 2–3 are skipped.
+2. Timer expiry alternates idle (1–5 s) and walk (1.5–5.5 s, new heading within ±π).
+3. A walking, grounded pig stops (idle 0.5–1.5 s) and turns away by 0.5–1.5π when the cell (q, r) 0.8 ahead at feet level
+   fy = floor(y + 0.01) is liquid or has liquid below it, or is solid unless `canHop` and fy + 1 there is open (a one-cell ledge),
+   or is open with no solid at fy − 1 or fy − 2 (a drop), or when any point 0.25, 0.5 or 0.8 ahead (FIRE_LOOK) lies within
+   FIRE_MARGIN 0.15 (`hexCircleContact`) of a CAMPFIRE cell at fy or fy − 1.
+Turning is capped at PIG_TURN_RATE; it moves forward only when within 1.2 rad of its heading, at sneak speed when walking and walk
+speed when fleeing. `jump = inWater || (moving && hitWall && canHop && the cell 0.8 ahead is solid at fy and open at fy + 1)`:
+a pig in water always paddles up (it floats; pressing into a bank gives SWIM_EXIT_JUMP), and on land it hops only a one-cell
+ledge straight ahead. `walkPhase` advances by 4 × horizontal distance (mod 2π); when the pig moved less than LEG_SETTLE_SPEED
+0.2 m/s · dt it eases toward the nearest multiple of π by `1 − exp(−LEG_SETTLE_RATE 10 · dt)` (the legs stand straight again).
+`oinkIn` resets to 6–18 s.
 
-`createPigRenderer(scene)` → `{ sync(pigs), count(), dispose() }`: one Group per pig id, built facing −Z with `rotation.y = yaw`;
-the body is a hexagonal prism (6-sided cylinder lying along Z, flat side down); legs swing with `sin(walkPhase)`; the skin
-emissive is red while `hurt > 0`.
+`createPigRenderer(scene, capacity = PIG_MAX)` → `{ sync(pigs), count(), dispose(), group }`: the first `capacity` pigs are drawn
+with five shared InstancedMeshes in `group` — `pig-skin` (body, head, ears, tail merged; PINK), `pig-features` (snout, nostrils,
+eyes, pupils merged with vertex colours), `pig-legs` (4 instances per pig, pivoting at the hip) and their twins `pig-skin-hurt` /
+`pig-legs-hurt` (emissive 0xff2a2a × 0.6), which draw the pigs with `hurt > 0` — so any number of pigs costs 3 draw calls (5 while
+one flashes). Each pig's matrix is translate(x, y, z) · rotateY(yaw) of a model built facing −Z; the body is a hexagonal prism
+(6-sided cylinder lying along Z, flat side down); diagonal leg pairs swing by ±`sin(walkPhase)` · 0.6 rad. `count()` = pigs drawn
+by the last sync; meshes with no instances are hidden; frustum culling is off (instances move every frame).
 
 Saves: optional `pigs: PigJSON[]` (version stays 2). serializeSave writes it whenever `data.pigs` is given — EMPTY included —
 after validatePigsJSON; deserializeSave keeps any validated array (warnings for dropped entries). An absent field means the world
@@ -1044,26 +1062,43 @@ context has no `pigs`. audio: `playOink(volume)`, `playSqueal(volume)`.
 
 ## 31. `src/bodies.js` (PURE — body-to-body physics, v0.6)
 
-Bodies are PlayerStates (physics §12) with optional `radius`, `height`, `mass` (PLAYER_MASS = 1 when absent).
+Bodies are PlayerStates (physics §12) with optional `radius`, `height`, `mass` (PLAYER_MASS = 1 when absent), and the ride link
+`carrier` / `carrierAt` that resolveBodies keeps (typed in types.js; read by pigs.js `canHop`, §30).
 ```js
 export function bodyMass(b)
-export function bodyOverlap(a, b) → { horizontal: rA + rB − dist, vertical: min(tops) − max(feet), nx, nz (unit a→b; +x when coincident), dist }
+export function pairAngle(i, j)                // fixed, well-spread direction (radians) of the pair at list indices i < j (integer hash)
+export function bodyOverlap(a, b, angle = 0) → { horizontal: rA + rB − dist, vertical: min(tops) − max(feet), nx, nz, dist }
+       // n = unit(d + max(0, BODY_NEAR_DIST − dist)·(cos angle, sin angle)), d = b − a in xz: the line a→b, blended toward the
+       // pair's own direction below BODY_NEAR_DIST 0.25 (exactly it when coincident; +x by default; +x if the sum is 0)
 export function resolveBodies(bodies, getBlock) → contacts   // pairs overlapping on the first pass
+export function detachBody(body, others)       // body.carrier = null and every o.carrier === body → null (teleports)
+// BODY_NEAR_DIST 0.25, BODY_MAX_PUSH 0.25, BODY_MAX_SHOVE 0.5, CARRY_STEP 0.25, CARRY_MAX_MOVE 8 are exported from bodies.js
 ```
 `resolveBodies`, once per frame after every body has been stepped:
-1. **Carry**: for each body with `carrier` set last frame that is still in `bodies`, `displaceBody` by the carrier's movement since
-   `carrierAt`; then `carrier = null`.
-2. **Separate**, BODY_PASSES (3) sweeps over pairs i < j (stop early when a sweep finds nothing). `upper` = the body with the higher feet.
+1. **Carry**: for each body with `carrier` set last frame that is still in `bodies`: d = the carrier's movement since `carrierAt`;
+   if |d| ≤ CARRY_MAX_MOVE (more than any body moves in a MAX_FRAME_DT frame: the carrier teleported, its rider stays), `displaceBody`
+   by d in ceil(|d| / CARRY_STEP) equal steps (so a rider slides along walls, never tunnels) and remember the carrier; then
+   `carrier = null`.
+2. **Separate**, BODY_PASSES (3) sweeps over pairs i < j (stop early when a sweep finds nothing), with
+   `bodyOverlap(a, b, pairAngle(i, j))`. `upper` = the body with the higher feet.
    - No horizontal overlap → nothing. No vertical overlap → nothing, except a REST: gap < 0.01, horizontal overlap > 0.05 and
      `upper.vy ≤ lower.vy` → stand (below).
    - STAND when vertical < horizontal, horizontal > 0.05 and `upper.y ≥ lower.y + 0.5·height(lower)`: `displaceBody(upper, 0,
-     vertical + COLLISION_EPS, 0)`; if the full lift happened → stand: `onGround = true`, `vy = max(vy, lower.vy)`,
-     `carrier = lower`, `carrierAt = [lower.x, lower.y, lower.z]`. A lift cut short by a ceiling is undone and falls through to a push.
-   - PUSH: total = horizontal + COLLISION_EPS; B moves `total · mA/(mA+mB)` along n, A moves the rest along −n, and if A could not
-     (walls) B tries to take what is left — all through `displaceBody`, so nobody is pushed into terrain. Then if the normal relative
-     velocity `(vB − vA)·n < 0`, a perfectly inelastic impulse `j = −vrel / (1/mA + 1/mB)` (vA −= j/mA·n, vB += j/mB·n).
+     vertical + COLLISION_EPS, 0)`; if the full lift happened → stand: `onGround = true`, `vy = max(vy, min(lower.vy, 0))` (never
+     falling faster than the carrier, but a RISING carrier does not hand over its speed: the carry already lifts the rider, and both
+     launched it off a jumping carrier), `carrier = lower`, `carrierAt = [lower.x, lower.y, lower.z]`. A lift cut short by a
+     ceiling is undone and falls through to a push.
+   - PUSH: total = min(horizontal + COLLISION_EPS, BODY_MAX_PUSH); B moves `total · mA/(mA+mB)` along n, A moves the rest along −n,
+     and if A could not (walls) B tries to take what is left — all through `displaceBody`, so nobody is pushed into terrain, and no
+     body is pushed more than BODY_MAX_SHOVE in total per call (each push is cut to the body's remaining budget). So a pile of
+     bodies on one point eases apart in every direction over a few frames instead of popping out along one line. Then if the normal
+     relative velocity `(vB − vA)·n < 0`, a perfectly inelastic impulse `j = −vrel / (1/mA + 1/mB)` (vA −= j/mA·n, vB += j/mB·n).
+3. **Release**: a body carried in step 1 whose `carrier` is no longer that carrier (it jumped or walked off) adds the carrier's
+   `vx, vz` to its own, so it keeps moving with it.
 main: after `stepPigs`, `resolveBodies([player, …pigs in loaded chunks], world.getBlock)`. So the player shoves pigs (and pigs nudge
-the player), pigs crowd without overlapping, and either can stand on and ride the other. Constants: PLAYER_MASS, BODY_PASSES, PIG_*.
+the player), pigs crowd without overlapping, and either can stand on and ride the other. `game.teleport` calls
+`detachBody(player, pigs.list)` (tp, tpw and the black-hole respawn: a pig on the player's head stays behind and falls).
+Constants: PLAYER_MASS, BODY_PASSES, PIG_*.
 
 ## 32. `src/campfires.js` (PURE) and `src/campfireRenderer.js` (three) — Campfires, v0.7
 
@@ -1095,7 +1130,8 @@ it. `renderFrame` advances `fxTime` by dt and, while any fire is tracked or mode
 from the cell centre (backwards along the yaw at dead centre), `vy ≥ 5` — with the chat line "Ouch! That campfire is hot." at most
 every 2 s and a crackle; the nearest fire within CAMPFIRE_CRACKLE_RANGE (10) crackles with probability CAMPFIRE_CRACKLES_PER_S·dt at
 volume 1 − d/10 (`audio.playCrackle`). `placeSelected` refuses a campfire that would intersect the player.
-Pigs: a walking pig treats a campfire in the cell ahead as unsafe; a pig whose feet cell is a campfire (and is not already hurt) is
+Pigs: a walking pig treats a heading as unsafe when a point 0.25, 0.5 or 0.8 ahead comes within FIRE_MARGIN 0.15 of a campfire
+cell at its feet level or one below (§30 AI step 3); a pig whose feet cell is a campfire (and is not already hurt) is
 `hit` from the cell centre and listed in `pigs.scorched` for that update (main plays a squeal within 16 units).
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
