@@ -547,21 +547,55 @@ describe('buildChunkMesh — water', () => {
     const top = upper.find((f) => f.face === FACE_TOP);
     for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + 1 + WATER_SURFACE_HEIGHT, 6);
   });
-  it('water under any block meshed as a full prism stays full height: no fake surface under submerged glass, ice or leaves', () => {
-    for (const above of [B.GLASS, B.ICE, B.OAK_LEAVES, B.BLACK_HOLE, B.STONE]) {
-      const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, above]]));
-      const water = facesAt(m, AQ, AY, AR);
-      expect(water.length).toBeGreaterThan(0);
-      for (const f of water) for (const v of f.verts) expect([AY, AY + 1]).toContain(v[1]);
-      // The cap stays toward a see-through block, flush with that block's bottom face (like the water's side faces
-      // against it), and is culled under an opaque one.
-      expect(water.some((f) => f.face === FACE_TOP)).toBe(!isOpaque(above));
+  // §10.2 step 1. The free surface is decided by the cell above (A) and A's own side neighbours: a block resting ON the
+  // water (nothing but non-water beside it) keeps the surface lowered under it; a block with water beside it is submerged.
+  const ON_SURFACE = [B.GLASS, B.ICE, B.OAK_LEAVES, B.BLACK_HOLE, B.STONE, B.CAMPFIRE];
+  /** Highest vertex y over every face of the cell at (q, y, r). */
+  const waterTop = (m, q, y, r) => Math.max(...facesAt(m, q, y, r).flatMap((f) => f.verts.map((v) => v[1])));
+  it('a block resting ON the water surface keeps the water under it lowered, level with the open water (no step, no dark band)', () => {
+    for (const above of ON_SURFACE) {
+      const cells = [[...A, B.WATER], [AQ, AY + 1, AR, above]];
+      for (let j = 0; j < 6; j++) cells.push([...near(j), B.WATER]); // the open pool around it, air above
+      const m = mesh(world(cells));
+      const surface = AY + WATER_SURFACE_HEIGHT;
+      expect(waterTop(m, AQ, AY, AR), `under ${above}`).toBeCloseTo(surface, 6);
+      for (let j = 0; j < 6; j++) expect(waterTop(m, ...near(j))).toBeCloseTo(surface, 6);
+      // The lowered cap sits below the block, so nothing covers it: drawn even under an opaque block.
+      const cap = facesAt(m, AQ, AY, AR).find((f) => f.face === FACE_TOP);
+      expect(cap, `cap under ${above}`).toBeDefined();
+      for (const v of cap.verts) expect(v[1]).toBeCloseTo(surface, 6);
     }
   });
-  it('water under a campfire (drawn by its own model, the cell is mostly air) keeps the lowered free surface', () => {
-    const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.CAMPFIRE]]));
-    const top = facesAt(m, AQ, AY, AR).find((f) => f.face === FACE_TOP);
-    for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+  it('a submerged block (water beside it) leaves the water under it full height, flush with the water around: no ledge', () => {
+    for (const above of ON_SURFACE) {
+      const cells = [[...A, B.WATER], [AQ, AY + 1, AR, above]];
+      for (let j = 0; j < 6; j++) cells.push([...near(j), B.WATER], [...near(j, 1), B.WATER]);
+      const m = mesh(world(cells));
+      const water = facesAt(m, AQ, AY, AR);
+      for (const f of water) for (const v of f.verts) expect([AY, AY + 1], `under ${above}`).toContain(v[1]);
+      // The cap stays toward a see-through block or a campfire, flush with that block's bottom (like the water's side faces
+      // against it), and is culled under an opaque one.
+      expect(water.some((f) => f.face === FACE_TOP), `cap under ${above}`).toBe(!isOpaque(above));
+      // Water beside the block on one side is enough.
+      const one = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, above], [...near(3, 1), B.WATER], [...near(3), B.WATER]]));
+      expect(waterTop(one, AQ, AY, AR)).toBe(AY + 1);
+    }
+  });
+  it('water under a lone block with no water beside it (a campfire included) keeps the lowered free surface', () => {
+    for (const above of ON_SURFACE) {
+      const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, above]]));
+      expect(waterTop(m, AQ, AY, AR)).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    }
+  });
+  it('the water beside the block above is read across a chunk border (halo)', () => {
+    // Local q = 0: the cell beside the block at q = −1 lies in chunk (−1, 0).
+    const lid = [[0, AY, AR, B.WATER], [0, AY + 1, AR, B.GLASS]];
+    expect(waterTop(mesh(world(lid)), 0, AY, AR)).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    expect(waterTop(mesh(world([...lid, [-1, AY + 1, AR, B.WATER]])), 0, AY, AR)).toBe(AY + 1);
+    // And at the other border: local q = 15, the cell beside it at q = 16 in chunk (1, 0).
+    const far = [[CHUNK_SIZE - 1, AY, AR, B.WATER], [CHUNK_SIZE - 1, AY + 1, AR, B.GLASS]];
+    expect(waterTop(mesh(world(far)), CHUNK_SIZE - 1, AY, AR)).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    expect(waterTop(mesh(world([...far, [CHUNK_SIZE, AY + 1, AR, B.WATER]])), CHUNK_SIZE - 1, AY, AR)).toBe(AY + 1);
   });
   it('two side-by-side water cells cull their shared face (cullSame)', () => {
     const m = mesh(world([[...A, B.WATER], [...near(2), B.WATER]]));

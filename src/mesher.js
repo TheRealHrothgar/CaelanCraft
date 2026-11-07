@@ -79,18 +79,10 @@ const RENDER = new Uint8Array(256 * 256);
 const FACE_UV = new Float32Array(256 * FACE_COUNT * 4);
 /** TINTED[id * 8 + f] = 1 iff isTintedFace(id, f). */
 const TINTED = new Uint8Array(256 * FACE_COUNT);
-/**
- * FREE_SURFACE[id] = 1 iff water under a cell of `id` has a free, lowered surface (§10.2 step 1): AIR, or a block drawn
- * by its own model (campfire). Under water or any block meshed as a full prism (stone, glass, ice, leaves, a black hole)
- * the water stays full height, so a submerged see-through block shows no fake surface ledge below it.
- */
-const FREE_SURFACE = new Uint8Array(256);
-
 for (let id = 0; id < 256; id++) {
   OPAQUE[id] = isOpaque(id) ? 1 : 0;
   LAYER[id] = getRenderLayer(id);
   UNMESHED[id] = isMeshed(id) ? 0 : 1;
-  FREE_SURFACE[id] = id === BLOCK.AIR || !isMeshed(id) ? 1 : 0;
   for (let f = 0; f < FACE_COUNT; f++) {
     const uv = tileToUV(getFaceTile(id, f));
     const o = (id * FACE_COUNT + f) * 4;
@@ -337,6 +329,23 @@ function opaqueAt(pq, py, pr) {
   return OPAQUE[padded[(pq * PAD + pr) * WORLD_HEIGHT + py]];
 }
 
+/**
+ * §10.2 step 1: is the water cell at padded (pq, ly, pr) (column base `colBase`) at the free surface? Yes when the cell
+ * above, A, is not water and none of A's six side neighbours is water: A sits on top of the water body (air, or a block
+ * resting on the surface), so the surface is lowered and continues under A. When water goes on around A, A is
+ * submerged and the cell stays full height, like the water beside it. The neighbours of A are inside the halo.
+ * @returns {boolean}
+ */
+function isFreeSurface(colBase, pq, pr, ly) {
+  const ay = ly + 1;
+  if (ay >= WORLD_HEIGHT) return true; // above the world is AIR, and so is everything beside it
+  if (padded[colBase + ay] === BLOCK.WATER) return false;
+  for (let j = 0; j < SIDE_FACE_COUNT; j++) {
+    if (padded[((pq + DIR_DQ[j]) * PAD + (pr + DIR_DR[j])) * WORLD_HEIGHT + ay] === BLOCK.WATER) return false;
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Face emission
 // ---------------------------------------------------------------------------------------------------
@@ -537,10 +546,7 @@ export function buildChunkMesh(cq, cr, getChunkData) {
 
         // §10.2 step 1: water surface height applies to every top vertex of this cell.
         let topY = 1;
-        if (a === WATER) {
-          const above = ly + 1 < WORLD_HEIGHT ? padded[colBase + ly + 1] : 0;
-          if (FREE_SURFACE[above] === 1) topY = WATER_SURFACE_HEIGHT;
-        }
+        if (a === WATER && isFreeSurface(colBase, pq, pr, ly)) topY = WATER_SURFACE_HEIGHT;
 
         const renderRow = a << 8;
         const layer = LAYER[a];
@@ -554,8 +560,9 @@ export function buildChunkMesh(cq, cr, getChunkData) {
           emitSide(bld, f, pq, pr, ly, cx, cz, topY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
         }
         {
+          // A lowered water surface sits below the cell above, so nothing covers it: always drawn (§10.2 step 1).
           const q = ly + 1 >= WORLD_HEIGHT ? 0 : padded[colBase + ly + 1];
-          if (RENDER[renderRow | q] !== 0) {
+          if (topY < 1 || RENDER[renderRow | q] !== 0) {
             const t = TINTED[tintRow + FACE_TOP];
             emitHex(bld, FACE_TOP, pq, pr, ly, cx, cz, topY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
           }
