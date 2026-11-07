@@ -110,10 +110,13 @@ export const PLAYER_MASS = 1;
 export const BODY_PASSES = 3;                       // pair-separation sweeps per frame (chains of touching bodies settle)
 
 // Campfires (CONTRACTS §32)
-export const CAMPFIRE_MAX_TRACKED = 1024;           // campfires beyond this are inert (no model, light or sound) until others go
+export const CAMPFIRE_MAX_TRACKED = 1024;           // fires scanned per frame; past this, the ones nearest the player are tracked (the rest still burn)
+export const CAMPFIRE_RETRACK_DISTANCE = 8;         // past the cap, the tracked set is re-picked after the player moves this far
 export const CAMPFIRE_MODEL_RANGE = 64;             // world units from the camera within which campfires get a model
 export const CAMPFIRE_MAX_MODELS = 48;              // nearest-first
 export const CAMPFIRE_LIGHTS = 4;                   // pooled point lights, given to the nearest lit models (constant count: no shader rebuilds)
+export const CAMPFIRE_LIGHT_FADE_S = 0.25;          // a pooled light fades out before it moves to another fire, then fades in
+export const CAMPFIRE_LIGHT_HYSTERESIS = 0.5;       // a lit fire keeps its light until an unlit one is this much nearer
 export const CAMPFIRE_LIGHT_INTENSITY = 6;          // PointLight intensity before flicker
 export const CAMPFIRE_LIGHT_RANGE = 14;             // PointLight distance (light reaches zero there)
 export const CAMPFIRE_CRACKLE_RANGE = 10;           // crackles are audible within this distance, fading linearly

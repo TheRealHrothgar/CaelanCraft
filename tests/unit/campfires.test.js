@@ -1,8 +1,9 @@
 // Unit tests for src/campfires.js and the campfire's block / mesher / pig rules (CONTRACTS §32).
 import { describe, it, expect } from 'vitest';
 import { BLOCK, BLOCKS, TILE, getFaceTile, isSolid, isOpaque, isPlaceable, isBreakable, isTargetable, isMeshed, FACE_TOP } from '../../src/blocks.js';
-import { CAMPFIRE_MAX_TRACKED } from '../../src/config.js';
-import { Campfires, campfireKey, flicker } from '../../src/campfires.js';
+import { CAMPFIRE_MAX_TRACKED, CAMPFIRE_RETRACK_DISTANCE } from '../../src/config.js';
+import { Campfires, campfireKey, flicker, scorchPlayer, wouldDouseCampfire } from '../../src/campfires.js';
+import { createPlayer } from '../../src/physics.js';
 import { forEachEditedCell, localIndex, chunkKey } from '../../src/coords.js';
 import { hexToWorld } from '../../src/hex.js';
 import { buildChunkMesh } from '../../src/mesher.js';
@@ -78,6 +79,71 @@ describe('Campfires tracking', () => {
     const c = new Campfires();
     for (let i = 0; i < CAMPFIRE_MAX_TRACKED + 3; i++) c.add(i, 5, 0);
     expect(c.size).toBe(CAMPFIRE_MAX_TRACKED);
+    expect(c.total).toBe(CAMPFIRE_MAX_TRACKED + 3);
+    expect(c.refused.size).toBe(3);
+  });
+  it('a fire refused at the cap is tracked once a tracked one goes (regression: they stayed inert until reload)', () => {
+    const c = new Campfires();
+    for (let i = 0; i < CAMPFIRE_MAX_TRACKED + 2; i++) c.onBlockChange(i, 5, 0, B.AIR, B.CAMPFIRE);
+    const late = CAMPFIRE_MAX_TRACKED + 1;
+    expect(c.has(late, 5, 0)).toBe(false);
+    // Every tracked fire goes, as in the play-test (break them all).
+    for (let i = 0; i < CAMPFIRE_MAX_TRACKED; i++) c.onBlockChange(i, 5, 0, B.CAMPFIRE, B.AIR);
+    expect(c.size).toBe(0);
+    expect(c.retrack(0, 5, 0)).toBe(true);
+    expect(c.size).toBe(2);
+    expect(c.has(late, 5, 0)).toBe(true);
+    expect(c.refused.size).toBe(0);
+    // Nothing is refused any more: retrack is a no-op.
+    expect(c.retrack(500, 5, 0)).toBe(false);
+    // A refused cell that is broken is forgotten (never tracked later).
+    for (let i = 0; i < CAMPFIRE_MAX_TRACKED + 1; i++) c.add(1000 + i, 5, 0);
+    expect(c.refused.size).toBe(1);
+    expect(c.remove(1000 + CAMPFIRE_MAX_TRACKED, 5, 0)).toBe(true);
+    expect(c.total).toBe(c.size);
+  });
+  it('past the cap, retrack keeps the fires nearest the player tracked, so the near ones always have a model', () => {
+    const c = new Campfires();
+    const N = CAMPFIRE_MAX_TRACKED + 200;
+    for (let i = 0; i < N; i++) c.add(i, 5, 0); // a line of fires along +x; the last 200 are refused
+    const [farX] = hexToWorld(N - 1, 0);
+    // Standing at the far (refused) end: before a retrack none of the near fires is tracked.
+    expect(c.nearest(farX, 5.3, 0, 10)).toEqual([]);
+    expect(c.retrack(farX, 5.3, 0)).toBe(true);
+    expect(c.size).toBe(CAMPFIRE_MAX_TRACKED);
+    expect(c.has(N - 1, 5, 0)).toBe(true);
+    expect(c.has(0, 5, 0)).toBe(false); // the farthest went to `refused`
+    expect(c.nearest(farX, 5.3, 0, 10).map((n) => n.fire.q)).toContain(N - 1);
+    // Moving less than CAMPFIRE_RETRACK_DISTANCE does nothing; moving that far rebuilds around the new spot.
+    expect(c.retrack(farX - (CAMPFIRE_RETRACK_DISTANCE - 0.5), 5.3, 0)).toBe(false);
+    expect(c.retrack(0, 5.3, 0)).toBe(true);
+    expect(c.has(0, 5, 0)).toBe(true);
+    expect(c.has(N - 1, 5, 0)).toBe(false);
+    // A refusal makes the next retrack rebuild even without moving: a fire placed by the player gets tracked.
+    const [nx] = hexToWorld(-1, 0);
+    c.add(-1, 5, 0);
+    expect(c.has(-1, 5, 0)).toBe(false);
+    expect(c.retrack(0, 5.3, 0)).toBe(true);
+    expect(c.has(-1, 5, 0)).toBe(true);
+    expect(nx).toBeLessThan(0);
+    expect(c.total).toBe(N + 1);
+  });
+  it('loadFromEdits past the cap remembers the rest and the first retrack picks the nearest', () => {
+    const w = new World({ worldGen: flatWorldGen(10), renderDistance: 1 });
+    w.update(0, 0, 1e9);
+    let n = 0;
+    for (let q = -8; q <= 8 && n < CAMPFIRE_MAX_TRACKED + 10; q++) {
+      for (let r = -8; r <= 8 && n < CAMPFIRE_MAX_TRACKED + 10; r++) {
+        for (let y = 11; y < 17 && n < CAMPFIRE_MAX_TRACKED + 10; y++) if (w.setBlock(q, y, r, B.CAMPFIRE)) n++;
+      }
+    }
+    expect(n).toBe(CAMPFIRE_MAX_TRACKED + 10);
+    const c = new Campfires();
+    c.loadFromEdits(w.edits);
+    expect(c.size).toBe(CAMPFIRE_MAX_TRACKED);
+    expect(c.total).toBe(n);
+    expect(c.retrack(0, 11.3, 0)).toBe(true);
+    expect(c.has(0, 11, 0)).toBe(true);
   });
   it('gives neighbouring fires different flicker phases', () => {
     const c = new Campfires();
@@ -118,6 +184,49 @@ describe('Campfires tracking', () => {
     const seen = [];
     forEachEditedCell(edits, B.CAMPFIRE, (q, y, r) => seen.push([q, y, r]));
     expect(seen).toEqual([[16 + 2, 7, -16 + 3]]);
+  });
+});
+
+describe('player and water rules', () => {
+  const GROUND = 10;
+  const fireAt = (fq, fr) => (q, y, r) => (y < GROUND ? B.STONE : y === GROUND && q === fq && r === fr ? B.CAMPFIRE : B.AIR);
+  it('scorchPlayer bounces a walking player out of ANY campfire cell — no tracker involved (regression: none tracked → no burn)', () => {
+    const [fx, fz] = hexToWorld(3, -2);
+    const p = createPlayer(fx + 0.15, GROUND, fz + 0.1);
+    p.onGround = true;
+    expect(scorchPlayer(p, fireAt(3, -2), () => [1, 0])).toBe(true);
+    const d = Math.hypot(0.15, 0.1);
+    expect(p.vx).toBeCloseTo((0.15 / d) * 5, 9);
+    expect(p.vz).toBeCloseTo((0.1 / d) * 5, 9);
+    expect(p.vy).toBeGreaterThanOrEqual(5);
+    expect(p.onGround).toBe(false);
+    // Dead centre: along the given direction.
+    const c = createPlayer(fx, GROUND, fz);
+    expect(scorchPlayer(c, fireAt(3, -2), () => [0, -1])).toBe(true);
+    expect([c.vx, c.vz]).toEqual([0, -5]);
+    // Flying, or feet in another cell: nothing.
+    const f = createPlayer(fx, GROUND, fz);
+    f.flying = true;
+    expect(scorchPlayer(f, fireAt(3, -2), () => [1, 0])).toBe(false);
+    expect(scorchPlayer(createPlayer(fx, GROUND + 1, fz), fireAt(3, -2), () => [1, 0])).toBe(false);
+    expect(scorchPlayer(createPlayer(fx + 1, GROUND, fz), fireAt(3, -2), () => [1, 0])).toBe(false);
+  });
+  it('wouldDouseCampfire: no campfire into or under water, no water on a campfire; beside water is fine', () => {
+    const cells = new Map([
+      [campfireKey(0, 11, 0), B.WATER], // a pool cell
+      [campfireKey(1, 12, 0), B.WATER], // water over an air cell
+      [campfireKey(5, 11, 5), B.CAMPFIRE],
+    ]);
+    const get = (q, y, r) => cells.get(campfireKey(q, y, r)) ?? (y <= 10 ? B.STONE : B.AIR);
+    expect(wouldDouseCampfire(get, B.CAMPFIRE, 0, 11, 0)).toBe(true); // into water
+    expect(wouldDouseCampfire(get, B.CAMPFIRE, 1, 11, 0)).toBe(true); // under water
+    expect(wouldDouseCampfire(get, B.CAMPFIRE, 2, 11, 0)).toBe(false); // beside the pool
+    expect(wouldDouseCampfire(get, B.CAMPFIRE, 0, 12, 0)).toBe(false); // on top of the pool's water cell
+    expect(wouldDouseCampfire(get, B.WATER, 5, 12, 5)).toBe(true); // water poured on a campfire
+    expect(wouldDouseCampfire(get, B.WATER, 6, 11, 5)).toBe(false); // water beside it
+    expect(wouldDouseCampfire(get, B.WATER, 5, 10, 5)).toBe(false); // water under it
+    expect(wouldDouseCampfire(get, B.STONE, 0, 11, 0)).toBe(false); // other blocks still replace water
+    expect(wouldDouseCampfire(get, B.STONE, 5, 12, 5)).toBe(false);
   });
 });
 

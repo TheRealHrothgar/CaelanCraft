@@ -1038,28 +1038,63 @@ logs on an ember bed; recipes in tiles.js are normative). Worldgen never emits i
 ```js
 export function campfireKey(q, y, r)
 export function flicker(t, seed)            // 1 + 0.12·sin(7.3t+s) + 0.08·sin(13.1t+1.7s) + 0.05·sin(23.7t+2.9s) ∈ [0.75, 1.25]
+export function scorchPlayer(player, getBlock, awayDir) → boolean   // the burn rule below; reads the BLOCK (tracked or not)
+export function wouldDouseCampfire(getBlock, id, q, y, r) → boolean // the water rule below
 export class Campfires {
-  fires: Map<key, { key, q, y, r, x, z (cell floor centre), seed ∈ [0, 2π) hashed from the cell }>; size; clear(); has(q, y, r)
-  add(q, y, r) / remove(q, y, r)            // add refuses duplicates and anything past CAMPFIRE_MAX_TRACKED (1024)
+  fires: Map<key, { key, q, y, r, x, z (cell floor centre), seed ∈ [0, 2π) hashed from the cell }>   // TRACKED, ≤ CAMPFIRE_MAX_TRACKED
+  refused: Map<key, same>                   // CAMPFIRE cells past the cap (empty below it)
+  size (tracked); total (tracked + refused); clear(); has(q, y, r) (tracked)
+  add(q, y, r) → tracked?                   // duplicates ignored; past CAMPFIRE_MAX_TRACKED (1024) the fire goes to `refused`
+  remove(q, y, r) → known?                  // from either map
   onBlockChange(q, y, r, prev, next)        // CAMPFIRE appears → add; disappears → remove
   loadFromEdits(world.edits)                // clear, then forEachEditedCell(edits, CAMPFIRE, add)
-  nearest(x, y, z, maxDist, limit = ∞)      // [{ fire, dist }] by distance to (x, y + 0.3, z) of the fire, nearest first (ties by key)
+  retrack(x, y, z) → rebuilt?               // see "Tracking cap"
+  nearest(x, y, z, maxDist, limit = ∞)      // [{ fire, dist }] over TRACKED fires, by distance to (x, y + 0.3, z) of the fire, nearest first (ties by key)
 }
-export function createCampfireRenderer(scene, { makeCanvas }) → { sync(near, t, dt), count(), dispose() }
+export function createCampfireRenderer(scene, { makeCanvas, capacity = CAMPFIRE_MAX_MODELS })
+  → { sync(near, t, dt), count(), idle(), prewarm(webglRenderer, camera) → Promise, dispose() }
 ```
-Renderer: one Group per fire in `near` at its cell floor — six 6-sided stones on the cell corners (0.72·HEX_SIZE), three 6-sided logs
-crossing at 60°, seven embers, five 6-sided flame cones (MeshBasicMaterial; scale/rotation driven by `flicker` and per-flame sines),
-and SMOKE_PER_FIRE (6) sprites cycling over 3.2 s (rise 0.85 m/s, size 0.25 → 1.0, opacity peaking at 0.32). Models not in `near`
-are removed. A fixed pool of CAMPFIRE_LIGHTS (4) PointLights (0xff9a40, distance CAMPFIRE_LIGHT_RANGE 14, decay 1.6) is created once;
-the first four entries of `near` get one each at +0.6 with intensity `CAMPFIRE_LIGHT_INTENSITY · flicker`; the rest sit at 0.
+Tracking cap: `nearest` scans every tracked fire each frame, so at most CAMPFIRE_MAX_TRACKED are tracked. While `refused` is not empty,
+`retrack(x, y, z)` (a no-op otherwise) rebuilds the tracked set as the CAMPFIRE_MAX_TRACKED fires nearest (x, y, z) (same distance as
+`nearest`, ties by key; the rest go to `refused`) whenever a fire was refused or a tracked one removed since the last rebuild, or
+(x, y, z) is CAMPFIRE_RETRACK_DISTANCE (8) or more from where it last rebuilt. So the fires around the player always have their model,
+light and crackle, and fires refused at the cap come back as others go. Nothing that burns depends on tracking (`scorchPlayer`, pigs).
+
+Renderer: each fire in `near` (at most `capacity`; extra entries are ignored) sits at its cell floor — six 6-sided stones on the cell
+corners (0.72·HEX_SIZE), three 6-sided logs crossing at 60° (the middle one charred), seven embers, five 6-sided flame cones
+(MeshBasicMaterial; scale/rotation driven by `flicker` and per-flame sines; inner tongues drawn over outer, renderOrder 2–6), and
+SMOKE_PER_FIRE (6) camera-facing puffs cycling over 3.2 s (rise 0.85 m/s, size 0.25 → 1.0, opacity peaking at 0.32; renderOrder 10).
+Fires not in `near` lose their model at once.
+1. Draw calls: every part is ONE InstancedMesh shared by all fires under a Group named `campfires` — stones, logs (log/char by instance
+   colour), embers, one per flame tongue, smoke (a quad billboarded in the vertex shader like a Sprite, with a per-instance `aOpacity`
+   attribute) — so any number of fires costs the same 9 draw calls (0 while none is modelled: parts are hidden). Flame materials are
+   transparent DoubleSide with `forceSinglePass` (one colour at one opacity blends the same in either order). Fires keep a dense slot
+   each (instances [0, count)); a fire that leaves is swap-removed.
+2. Shader programs: geometries and materials are created once and only disposed by `dispose()` (never when fires come and go).
+   `prewarm(webglRenderer, camera)` (main calls it right after creating the renderer, while the game loads) compiles every campfire
+   material against the real scene's lights and fog (`compileAsync(root, camera, scene)` when present, else `compile`), and makes each
+   part draw one hidden instance (micro-scaled, 10 000 below the world) in the next rendered frame, then nothing until `sync` gives it
+   fires — ANGLE/D3D11 only finishes a program's executables on its first draw. Never throws.
+3. Lights: a fixed pool of CAMPFIRE_LIGHTS (4) PointLights (0xff9a40, distance CAMPFIRE_LIGHT_RANGE 14, decay 1.6), created once, at
+   +0.6 above their fire with intensity `CAMPFIRE_LIGHT_INTENSITY · flicker · smoothstep(level)`. The wanted fires are the four
+   nearest in `near` by `dist`, a fire that already holds a light counting CAMPFIRE_LIGHT_HYSTERESIS (0.5) nearer. A light on a wanted
+   fire keeps it and rises; a light whose fire is no longer wanted (or gone) fades out where it is; a wanted fire without a light takes
+   one that was free at the start of the frame, rising from 0; `level` moves by dt / CAMPFIRE_LIGHT_FADE_S (0.25 s) per frame. A light
+   only changes fire at level 0, so a hand-over is a fade-out then a fade-in, never a pop.
+`count()` = fires with a model; `idle()` = no model and no light holding a fire.
 
 main: ONE `Campfires` for the session; `startLoading` calls `loadFromEdits` next to black holes and `onBlockChanged` forwards to
-it. `renderFrame` advances `fxTime` by dt and, while any fire is tracked or modelled, syncs the renderer with
-`nearest(player eye, CAMPFIRE_MODEL_RANGE 64)` filtered to loaded columns and cut to CAMPFIRE_MAX_MODELS (48). `stepCampfires`
-(after `stepPigs`): a non-flying player whose feet cell (`floor(y + 0.05)`) is a campfire is bounced out — horizontal 5 m/s away
-from the cell centre (backwards along the yaw at dead centre), `vy ≥ 5` — with the chat line "Ouch! That campfire is hot." at most
-every 2 s and a crackle; the nearest fire within CAMPFIRE_CRACKLE_RANGE (10) crackles with probability CAMPFIRE_CRACKLES_PER_S·dt at
+it. `renderFrame` advances `fxTime` by dt, calls `campfires.retrack(player eye)` and, while any fire is tracked or the renderer is not
+`idle()`, syncs the renderer with `nearest(player eye, CAMPFIRE_MODEL_RANGE 64)` filtered to loaded columns and cut to
+CAMPFIRE_MAX_MODELS (48). `stepCampfires` (after `stepPigs`), burn rule (`scorchPlayer`, for EVERY campfire cell, tracked or not): a
+non-flying player whose feet cell (`floor(y + 0.05)`) is a campfire is bounced out — horizontal 5 m/s away from the cell centre
+(backwards along the yaw at dead centre), `vy ≥ 5` — with the chat line "Ouch! That campfire is hot." at most every 2 s and a crackle;
+then, if any fire is tracked, the nearest within CAMPFIRE_CRACKLE_RANGE (10) crackles with probability CAMPFIRE_CRACKLES_PER_S·dt at
 volume 1 − d/10 (`audio.playCrackle`). `placeSelected` refuses a campfire that would intersect the player.
+Water rule (`wouldDouseCampfire`, hand placement only): `placeSelected` refuses a campfire whose target cell is a liquid or has a
+liquid directly above it, and a liquid whose target cell is directly above a campfire — water would put the fire out — with the chat
+line "Water would put the campfire out." at most every 2 s. Console / rune commands write blocks as told (as they may also bury the
+player); a campfire put under water that way still burns.
 Pigs: a walking pig treats a campfire in the cell ahead as unsafe; a pig whose feet cell is a campfire (and is not already hurt) is
 `hit` from the cell centre and listed in `pigs.scorched` for that update (main plays a squeal within 16 units).
 
