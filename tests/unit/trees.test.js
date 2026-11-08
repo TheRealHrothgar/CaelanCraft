@@ -11,6 +11,7 @@ import { createPlayer, playerIntersectsBlock } from '../../src/physics.js';
 import { World } from '../../src/world.js';
 import { BlockPhysics } from '../../src/blockphysics.js';
 import { tiltEuler, shakeAngle } from '../../src/trees.js';
+import { isLoadBearing } from '../../src/support.js';
 import { makeFakeWorld, attachPhysics } from '../helpers/fixtures.js';
 
 const B = BLOCK;
@@ -337,6 +338,76 @@ describe('saving and undo', () => {
       const after = scan(world, (id) => isLog(id) || isLeaves(id), -3, 6, 11, 20, -3, 3);
       expect(after).toEqual(before.filter(([q, y, r]) => !(q === 0 && y === GROUND + 1 && r === 0))); // all but the cut log
     }
+  });
+});
+
+describe('no canopy left hanging next to a trunk felled earlier (CT-2)', () => {
+  const N8 = [...HEX_DIRS.map(([dq, dr]) => [dq, 0, dr]), [0, 1, 0], [0, -1, 0]];
+  /** Leaf cells in the box whose cluster (through leaves) touches nothing load-bearing. */
+  function hanging(world, q0, q1, y0, y1, r0, r1) {
+    const out = [];
+    for (const [q, y, r] of scan(world, isLeaves, q0, q1, y0, y1, r0, r1)) {
+      const seen = new Set([`${q},${y},${r}`]);
+      const stack = [[q, y, r]];
+      let held = false;
+      while (stack.length > 0 && !held) {
+        const [a, b, c] = stack.pop();
+        for (const [dq, dy, dr] of N8) {
+          const k = `${a + dq},${b + dy},${c + dr}`;
+          const id = world.getBlock(a + dq, b + dy, c + dr);
+          if (isLoadBearing(id)) held = true;
+          else if (isLeaves(id) && !seen.has(k)) {
+            seen.add(k);
+            stack.push([a + dq, b + dy, c + dr]);
+          }
+        }
+      }
+      if (!held) out.push([q, y, r]);
+    }
+    return out;
+  }
+
+  /**
+   * Oak A at (0, 0) and, next to its canopy, a trunk lying on the ground at (3, 11, −2 … 0) — three logs the player laid
+   * there (the same as a tree felled earlier). A's canopy leaf L = (2, 14, −1) is 3 above them: "nearer another log", so
+   * it is not taken with A, and that log vetoes the distance decay. `extra` builds more before A is felled westward.
+   */
+  function fellNextToLyingTrunk(extra) {
+    const { world, physics } = setup();
+    plantTree(world, 0, 0);
+    for (const r of [-2, -1, 0]) physics.asPlayer(() => world.setBlock(3, GROUND + 1, r, B.OAK_LOG));
+    if (extra) extra(world, physics);
+    settle(physics);
+    expect(world.getBlock(2, 14, -1)).toBe(B.OAK_LEAVES);
+    const [x, z] = hexToWorld(4, 0); // the player stands east: A falls west, away from the lying trunk
+    cut(physics, world, 0, 0, { kind: 'player', x, y: GROUND + 1, z });
+    settle(physics);
+    expect(physics.trees.stats.impacts).toBe(1);
+    return { world, physics };
+  }
+
+  it("the felled tree's leaves left hanging from nothing decay too (none float)", () => {
+    const { world, physics } = fellNextToLyingTrunk();
+    expect(world.getBlock(2, 14, -1)).toBe(B.AIR);
+    expect(physics.trees.stats.decayed).toBe(1);
+    expect(hanging(world, -6, 6, 11, 20, -6, 6)).toEqual([]);
+    for (const r of [-2, -1, 0]) expect(world.getBlock(3, GROUND + 1, r)).toBe(B.OAK_LOG); // the lying trunk stays
+    // One undo brings the tree back with that leaf.
+    expect(physics.undo().ok).toBe(true);
+    expect(world.getBlock(2, 14, -1)).toBe(B.OAK_LEAVES);
+  });
+
+  it("never takes a player's leaves, nor a leaf resting on something", () => {
+    // A player's leaf hanging next to L: L decays, the player's leaf stays (the distance rule spares it as before).
+    const a = fellNextToLyingTrunk((world, physics) => physics.asPlayer(() => world.setBlock(3, 14, -1, B.OAK_LEAVES)));
+    expect(a.world.getBlock(2, 14, -1)).toBe(B.AIR);
+    expect(a.world.getBlock(3, 14, -1)).toBe(B.OAK_LEAVES);
+    // A post under L holds it: it stays.
+    const b = fellNextToLyingTrunk((world, physics) => {
+      for (let y = GROUND + 1; y <= 13; y++) physics.asPlayer(() => world.setBlock(2, y, -1, B.STONE_BRICKS));
+    });
+    expect(b.world.getBlock(2, 14, -1)).toBe(B.OAK_LEAVES);
+    expect(b.physics.trees.stats.decayed).toBe(0);
   });
 });
 

@@ -4,7 +4,8 @@
 // ONE THREE.Points of PARTICLE_CAPACITY points — one draw call whatever the load; when it is full the oldest particle
 // is overwritten. Simulation is plain typed arrays on the CPU (velocity, gravity, drag, growth, life); the shader
 // draws soft round points sized in world units and fogged like the terrain. Colours are sRGB in the API and converted
-// to the linear working space on emit.
+// to the linear working space on emit. prewarm() compiles the shader while the game loads (like campfireRenderer), so
+// the first particle of a session does not compile it mid-frame.
 import * as THREE from 'three';
 import { PARTICLE_CAPACITY } from './config.js';
 import { BIOME, FACE_TOP, getBlockDef, getFaceTile } from './blocks.js';
@@ -75,6 +76,7 @@ void main() {
  * @property {(dt: number) => void} update   advance and upload; call once per frame (dt 0 = frozen)
  * @property {() => number} count            live particles
  * @property {() => void} clear
+ * @property {(webgl: *, camera: THREE.Camera) => Promise<void>} prewarm  compile the particle program now
  * @property {() => void} dispose
  * @property {THREE.Points} points
  */
@@ -124,6 +126,8 @@ export function createParticles(scene, opts = {}) {
   let next = 0;
   let live = 0;
   let highWater = 0;
+  /** prewarm's warm-up draw is still owed: the Points draws one dead point (nothing on screen) until it is rendered. */
+  let warming = false;
 
   const geometry = new THREE.BufferGeometry();
   const aPos = new THREE.BufferAttribute(position, 3).setUsage(THREE.DynamicDrawUsage);
@@ -156,6 +160,15 @@ export function createParticles(scene, opts = {}) {
     renderer.getDrawingBufferSize(bufferSize);
     const fov = /** @type {THREE.PerspectiveCamera} */ (camera).fov ?? 70;
     material.uniforms.uScale.value = bufferSize.y / (2 * Math.tan((fov * Math.PI) / 360));
+  };
+  // After its warm-up draw the Points goes back to drawing nothing (unless particles were emitted meanwhile).
+  points.onAfterRender = () => {
+    if (!warming) return;
+    warming = false;
+    if (live === 0) {
+      geometry.setDrawRange(0, highWater);
+      points.visible = false;
+    }
   };
   scene.add(points);
 
@@ -206,7 +219,8 @@ export function createParticles(scene, opts = {}) {
 
   function update(dt) {
     if (live === 0) {
-      points.visible = false;
+      if (warming) geometry.setDrawRange(0, 1); // still owes its warm-up draw: one dead point (size 0)
+      points.visible = warming;
       return;
     }
     if (dt > 0) {
@@ -240,6 +254,33 @@ export function createParticles(scene, opts = {}) {
     points.visible = live > 0;
   }
 
+  /**
+   * Pay the particle shader cost while the game loads, not on the frame of the first particle (as
+   * campfireRenderer.prewarm, CONTRACTS §32.2): compile the program now with the scene's fog (compileAsync when the
+   * renderer has it), and draw ONE dead point (palpha 0 → gl_PointSize 0) in the next rendered frame, because some
+   * drivers (ANGLE on D3D11) only finish a program on its first draw. `update` / `clear` keep that draw until the Points
+   * has been rendered once. Never throws.
+   * @param {*} webgl a THREE.WebGLRenderer (anything without compile/compileAsync only gets the warm-up draw)
+   * @param {THREE.Camera} camera
+   * @returns {Promise<void>}
+   */
+  function prewarm(webgl, camera) {
+    if (live === 0) {
+      warming = true;
+      geometry.setDrawRange(0, 1);
+      points.visible = true;
+    }
+    try {
+      if (webgl && typeof webgl.compileAsync === 'function') {
+        return Promise.resolve(webgl.compileAsync(points, camera, scene)).then(() => {}, () => {});
+      }
+      if (webgl && typeof webgl.compile === 'function') webgl.compile(points, camera, scene);
+    } catch {
+      // A failed compile only brings back the one-off compile on first use.
+    }
+    return Promise.resolve();
+  }
+
   return {
     emit,
     update,
@@ -247,12 +288,14 @@ export function createParticles(scene, opts = {}) {
     clear() {
       life.fill(0);
       alpha.fill(0);
+      aAlpha.needsUpdate = true; // every point dead on the GPU too (a warm-up draw shows nothing)
       live = 0;
       highWater = 0;
       next = 0;
-      geometry.setDrawRange(0, 0);
-      points.visible = false;
+      geometry.setDrawRange(0, warming ? 1 : 0);
+      points.visible = warming;
     },
+    prewarm,
     dispose() {
       scene.remove(points);
       geometry.dispose();

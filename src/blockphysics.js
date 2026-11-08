@@ -1411,8 +1411,16 @@ export class BlockPhysics {
       }
       if ((isGravityBlock(next) || next === BLOCK.CAMPFIRE) && isFallThrough(this._peekColumn(q, y - 1, r))) this.schedule('fall', q, y, r);
     });
-    this.addReseeder('gravity', 'falling', [BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, BLOCK.CAMPFIRE], (ctx, q, y, r) => {
-      if (isFallThrough(peek(q, y - 1, r))) this.schedule('fall', q, y, r);
+    // Reseeder: an edited gravity block / campfire over a fall-through cell, and the cell above an EDITED fall-through
+    // cell — natural sand whose fall was still queued when the game saved (rings are not saved) falls on reload.
+    const fallThroughIds = [];
+    for (let id = 0; id < 256; id++) if (isFallThrough(id)) fallThroughIds.push(id);
+    this.addReseeder('gravity', 'falling', [BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, BLOCK.CAMPFIRE, ...fallThroughIds], (ctx, q, y, r, id) => {
+      if ((isGravityBlock(id) || id === BLOCK.CAMPFIRE) && isFallThrough(peek(q, y - 1, r))) this.schedule('fall', q, y, r);
+      if (isFallThrough(id)) {
+        const above = peek(q, y + 1, r);
+        if (isGravityBlock(above) || above === BLOCK.CAMPFIRE) this.schedule('fall', q, y + 1, r);
+      }
     });
 
     // ---- water: any change involving water, or a change of fall-through-ness / solidity next to water, queues the

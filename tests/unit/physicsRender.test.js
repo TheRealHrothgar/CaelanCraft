@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PARTICLE_CAPACITY } from '../../src/config.js';
 import { BLOCK } from '../../src/blocks.js';
-import { createFallingRenderer } from '../../src/fallingRenderer.js';
+import { createFallingRenderer, PREWARM_IDS } from '../../src/fallingRenderer.js';
 import { createParticles, PARTICLE_KINDS, blockParticleColor } from '../../src/particles.js';
 
 const item = (id, x, y, z, extra = {}) => ({ id, x, y, z, rx: 0, ry: 0, rz: 0, scale: 1, ...extra });
@@ -115,5 +115,176 @@ describe('particles', () => {
     const grass = blockParticleColor(BLOCK.GRASS_BLOCK);
     expect(grass[1]).toBeGreaterThan(grass[0]);
     expect(blockParticleColor(999)).toEqual(blockParticleColor(BLOCK.AIR));
+  });
+});
+
+describe('fallingRenderer: capacity growth keeps this frame’s instances (FR-3)', () => {
+  /** @returns {number} drawn instances of `mesh` not at their item's position */
+  function wrongInstances(mesh, items) {
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    let wrong = 0;
+    for (let i = 0; i < mesh.count; i++) {
+      mesh.getMatrixAt(i, m);
+      p.setFromMatrixPosition(m);
+      if (Math.abs(p.x - items[i].x) + Math.abs(p.y - items[i].y) + Math.abs(p.z - items[i].z) > 1e-6) wrong++;
+    }
+    return wrong;
+  }
+
+  it('the sync that grows a mesh (16 → 32 → 64 → 128) draws every block where it is, not at the world origin', () => {
+    const scene = new THREE.Scene();
+    const fr = createFallingRenderer(scene, new THREE.Texture());
+    const items = (n) => Array.from({ length: n }, (_, i) => item(BLOCK.SAND, 100 + i, 80.5, -50 - i, { ry: 0.25 * i }));
+    for (const n of [16, 17, 33, 40, 65]) {
+      const list = items(n);
+      fr.sync(list, n); // the growing sync itself, not the one after it
+      const mesh = scene.getObjectByName('falling:8:opaque');
+      expect(mesh.count, `sync(${n})`).toBe(n);
+      expect(mesh.instanceMatrix.count).toBeGreaterThanOrEqual(n);
+      expect(wrongInstances(mesh, list), `sync(${n})`).toBe(0);
+    }
+    expect(scene.children.filter((o) => o.name === 'falling:8:opaque')).toHaveLength(1); // the outgrown meshes are gone
+    const glass = Array.from({ length: 20 }, (_, i) => item(BLOCK.GLASS, i, 30, i));
+    fr.sync(glass, 20);
+    expect(wrongInstances(scene.getObjectByName('falling:12:cutout'), glass)).toBe(0);
+    fr.dispose();
+  });
+});
+
+describe('prewarm: no shader compile on the first falling block / particle (FR-4)', () => {
+  const posScale = (mesh, i) => {
+    const m = new THREE.Matrix4();
+    mesh.getMatrixAt(i, m);
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3();
+    m.decompose(p, new THREE.Quaternion(), s);
+    return { p, s };
+  };
+
+  it('fallingRenderer.prewarm compiles one mesh per render layer against the real scene before anything falls', async () => {
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0, 1, 100);
+    const fr = createFallingRenderer(scene, new THREE.Texture());
+    const camera = new THREE.PerspectiveCamera();
+    const calls = [];
+    await fr.prewarm({ compileAsync: (obj, cam, target) => { calls.push({ obj, cam, target }); return Promise.resolve(obj); } }, camera);
+    expect(PREWARM_IDS).toEqual([BLOCK.SAND, BLOCK.GLASS, BLOCK.ICE]);
+    // three's compile walks each object: every layer's material, on an InstancedMesh (the variant sync draws).
+    const layers = new Set();
+    for (const c of calls) {
+      expect(c.cam).toBe(camera);
+      expect(c.target).toBe(scene);
+      c.obj.traverse((o) => { if (o.isInstancedMesh) layers.add(o.name.split(':')[2]); });
+    }
+    expect([...layers].sort()).toEqual(['cutout', 'opaque', 'translucent']);
+    const materials = new Set(calls.map((c) => c.obj.material));
+    expect(materials.size).toBe(3); // the renderer's three materials, shared by every block id of that layer
+    fr.sync([item(BLOCK.OAK_LEAVES, 0, 10, 0), item(BLOCK.STONE, 0, 11, 0)]);
+    expect(materials.has(scene.getObjectByName('falling:11:cutout').material)).toBe(true);
+    expect(materials.has(scene.getObjectByName('falling:1:opaque').material)).toBe(true);
+    fr.dispose();
+  });
+
+  it('each warm mesh draws one hidden instance until it has been rendered once; sync([], 0) on load keeps it', () => {
+    const scene = new THREE.Scene();
+    const fr = createFallingRenderer(scene, new THREE.Texture());
+    fr.prewarm(null, new THREE.PerspectiveCamera());
+    const warm = scene.children.filter((o) => o.isInstancedMesh);
+    expect(warm.map((m) => m.name).sort()).toEqual(['falling:12:cutout', 'falling:41:translucent', 'falling:8:opaque']);
+    const check = () => {
+      for (const m of warm) {
+        expect(m.visible).toBe(true);
+        expect(m.count).toBe(1);
+        const { p, s } = posScale(m, 0);
+        expect(p.y).toBeLessThan(-1000); // far below the world: clipped, nothing on screen
+        expect(s.x).toBeLessThan(1e-3);
+      }
+    };
+    check();
+    fr.sync([], 0); // main, on world load
+    fr.sync([], 0);
+    check();
+    expect(fr.count()).toBe(0); // not a falling block
+    // three calls onAfterRender after drawing an object: back to drawing nothing.
+    for (const m of warm) m.onAfterRender();
+    for (const m of warm) {
+      expect(m.count).toBe(0);
+      expect(m.visible).toBe(false);
+    }
+    fr.sync([], 0);
+    expect(warm.every((m) => !m.visible)).toBe(true);
+    fr.dispose();
+  });
+
+  it('a block that falls before the first render replaces the warm instance (and keeps drawing after it)', () => {
+    const scene = new THREE.Scene();
+    const fr = createFallingRenderer(scene, new THREE.Texture());
+    fr.prewarm(null, new THREE.PerspectiveCamera());
+    fr.sync([item(BLOCK.SAND, 3, 40, 5)]);
+    const sand = scene.getObjectByName('falling:8:opaque');
+    sand.onAfterRender();
+    expect(sand.count).toBe(1);
+    expect(sand.visible).toBe(true);
+    expect(posScale(sand, 0).p.toArray()).toEqual([3, 40, 5]);
+    fr.sync([], 0);
+    expect(sand.visible).toBe(false);
+    fr.dispose();
+  });
+
+  it('fallingRenderer.prewarm falls back to compile and never throws', async () => {
+    const camera = new THREE.PerspectiveCamera();
+    const fr = createFallingRenderer(new THREE.Scene(), new THREE.Texture());
+    let compiled = 0;
+    await fr.prewarm({ compile: () => { compiled++; } }, camera);
+    expect(compiled).toBe(3);
+    await expect(fr.prewarm({ compile: () => { throw new Error('lost context'); } }, camera)).resolves.toBeUndefined();
+    await expect(fr.prewarm({ compileAsync: () => Promise.reject(new Error('x')) }, camera)).resolves.toBeUndefined();
+    await expect(fr.prewarm(null, camera)).resolves.toBeUndefined();
+    fr.dispose();
+  });
+
+  it('particles.prewarm compiles the Points and draws one dead point (size 0) until the first render', async () => {
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0, 1, 100);
+    const ps = createParticles(scene, { random: () => 0.5 });
+    const camera = new THREE.PerspectiveCamera();
+    const calls = [];
+    await ps.prewarm({ compileAsync: (obj, cam, target) => { calls.push([obj, cam, target]); return Promise.resolve(obj); } }, camera);
+    expect(calls).toEqual([[ps.points, camera, scene]]);
+    const g = ps.points.geometry;
+    const warm = () => {
+      expect(ps.points.visible).toBe(true);
+      expect(g.drawRange.count).toBe(1);
+      expect(g.getAttribute('palpha').getX(0)).toBe(0); // the vertex shader gives it gl_PointSize 0
+    };
+    warm();
+    ps.clear(); // main, on world load
+    ps.update(1 / 60);
+    ps.update(0);
+    warm();
+    expect(ps.count()).toBe(0);
+    ps.points.onAfterRender();
+    expect(ps.points.visible).toBe(false);
+    expect(g.drawRange.count).toBe(0);
+    ps.update(1 / 60);
+    expect(ps.points.visible).toBe(false);
+    ps.emit('dust', 0, 10, 0, 3); // emitting works as before
+    ps.update(1 / 60);
+    expect(ps.points.visible).toBe(true);
+    expect(g.drawRange.count).toBe(3);
+    ps.dispose();
+  });
+
+  it('particles.prewarm falls back to compile and never throws', async () => {
+    const camera = new THREE.PerspectiveCamera();
+    const ps = createParticles(new THREE.Scene());
+    let compiled = 0;
+    await ps.prewarm({ compile: () => { compiled++; } }, camera);
+    expect(compiled).toBe(1);
+    await expect(ps.prewarm({ compile: () => { throw new Error('lost context'); } }, camera)).resolves.toBeUndefined();
+    await expect(ps.prewarm({ compileAsync: () => Promise.reject(new Error('x')) }, camera)).resolves.toBeUndefined();
+    await expect(ps.prewarm(null, camera)).resolves.toBeUndefined();
+    ps.dispose();
   });
 });

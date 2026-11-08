@@ -241,6 +241,9 @@ export function boot(win, doc) {
     campfireRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     fallingRenderer = createFallingRenderer(renderer.three.scene, atlasTexture);
     particles = createParticles(renderer.three.scene);
+    // The same for falling blocks (one mesh per render layer) and particles: no hitch on the first fall / dust (§34).
+    fallingRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    particles.prewarm(renderer.three.renderer, renderer.three.camera);
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();

@@ -7,7 +7,7 @@ import {
   MAX_SUPPORT_VISITS_PER_TICK, SUPPORT_STARVED_VISITS,
 } from '../../src/config.js';
 import { BLOCK, UNLOADED } from '../../src/blocks.js';
-import { packCell } from '../../src/coords.js';
+import { localIndex, packCell } from '../../src/coords.js';
 import { World } from '../../src/world.js';
 import {
   BlockPhysics, SaveOverlay, SeedQueue, RINGS, FEATURES, WRITE_EXTERNAL, WRITE_PHYSICS, WRITE_QUIET, CAUSE_AREA,
@@ -660,5 +660,82 @@ describe('real World', () => {
     expect(t).toContain('collapse off');
     expect(t).toContain('queued 0');
     expect(t).toContain(`/ ${MAX_TOTAL_EDITS}`);
+  });
+});
+
+describe('a queued fall survives a save and reload (FR-5: rings are not saved)', () => {
+  /** Flat stone to y 10 with a NATURAL 3-high sand column at (2, 11..13, 2) (terrain height 13 there). */
+  function sandWorldGen() {
+    const flat = flatWorldGen(10);
+    return {
+      ...flat,
+      generateChunk: (cq, cr) => {
+        const d = flat.generateChunk(cq, cr);
+        if (cq === 0 && cr === 0) {
+          for (let y = 11; y <= 13; y++) d.blocks[localIndex(2, y, 2)] = B.SAND;
+          d.heights[2 * CHUNK_SIZE + 2] = 13;
+        }
+        return d;
+      },
+    };
+  }
+  /** A converged World (+ physics, wired like main: physics before the first chunk) from `edits`. */
+  function load(edits) {
+    const world = new World({ seed: 1, renderDistance: 1, worldGen: sandWorldGen(), now: () => 0, edits });
+    const physics = attachPhysics(world, BlockPhysics);
+    converge(world);
+    return { world, physics };
+  }
+  const column = (world) => [10, 11, 12, 13].map((y) => world.getBlock(2, y, 2));
+  const run = (physics) => {
+    for (let i = 0; i < 240; i++) physics.step(1 / 60);
+  };
+
+  it('natural sand over a cell the player just emptied falls after the reload (saved paused, or before the next tick)', () => {
+    for (const paused of [true, false]) {
+      const { world, physics } = load();
+      expect(column(world)).toEqual([B.STONE, B.SAND, B.SAND, B.SAND]);
+      expect(world.hasEdit(2, 11, 2)).toBe(false); // natural: no reseeder looks at it
+      physics.setPaused(paused); // `physics off` still queues the trigger
+      physics.asPlayer(() => world.setBlock(2, 10, 2, B.AIR));
+      expect(physics.isQueued('fall', 2, 11, 2)).toBe(true);
+      const saved = JSON.parse(JSON.stringify(physics.exportEdits())); // autosave / save & quit: the fall ring is lost
+      const re = load(saved);
+      expect(column(re.world), `paused ${paused}`).toEqual([B.AIR, B.SAND, B.SAND, B.SAND]);
+      expect(re.physics.isQueued('fall', 2, 11, 2)).toBe(true); // re-seeded from the edited AIR below it
+      run(re.physics);
+      expect(column(re.world), `paused ${paused}`).toEqual([B.SAND, B.SAND, B.SAND, B.AIR]);
+      // …exactly where the live session puts it.
+      physics.setPaused(false);
+      run(physics);
+      expect(column(world)).toEqual(column(re.world));
+    }
+  });
+
+  it('an edited fall-through cell re-seeds only a gravity block or campfire above it, and only while falling is on', () => {
+    const { world, physics } = setup(); // natural stone for y ≤ 10
+    for (const f of ['water', 'collapse']) physics.setSwitch(f, false); // only the gravity reseeder at work
+    physics.setSwitch('falling', false);
+    world.put(5, 11, 5, B.GRAVEL); // natural gravel, natural campfire (no edits) and a stone on top of the ground
+    world.put(8, 11, 8, B.CAMPFIRE);
+    world.put(7, 11, 7, B.STONE);
+    world.setBlock(5, 10, 5, B.AIR); // dug out from under them while falling is off (the triggers are dropped)
+    world.setBlock(8, 10, 8, B.WATER);
+    world.setBlock(7, 10, 7, B.AIR);
+    expect(physics.queued()).toBe(0);
+    world.unload(0, 0);
+    world.load(0, 0);
+    expect(physics.queued()).toBe(0); // reseeders follow the switches
+    physics.setSwitch('falling', true);
+    world.unload(0, 0);
+    world.load(0, 0); // streaming back in / a reload
+    expect(physics.isQueued('fall', 5, 11, 5)).toBe(true);
+    expect(physics.isQueued('fall', 8, 11, 8)).toBe(true);
+    expect(physics.isQueued('fall', 7, 11, 7)).toBe(false); // stone does not fall
+    expect(physics.queued()).toBe(2);
+    physics.tick();
+    expect(world.getBlock(5, 11, 5)).toBe(B.AIR); // the gravel is falling
+    expect(physics.fallers.count).toBe(1);
+    expect(world.getBlock(8, 11, 8)).toBe(B.AIR); // the campfire over water broke
   });
 });
