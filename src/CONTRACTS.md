@@ -501,7 +501,9 @@ The centre chunk's `biomes` array (if present, length ≥ 256) supplies the per-
 (v0.8, §35.4): when `a` is water (`isWater`), its top face is emitted iff the cell above is NOT water and either its `topY < 1` (a lowered
 surface leaves a gap, so it is drawn even under an opaque block) or `shouldRenderFace(a, above)` (a full-height cell under an
 opaque block has no top face), its bottom face iff `!isWater(below) && shouldRenderFace(a, below)`, and a side face toward a
-water neighbour `Q` iff `topY(Q) < topY(a)`, spanning only `bottomY = topY(Q) .. topY(a)` (2a).
+water neighbour `Q` iff `topY(Q) < topY(a)`, spanning only `bottomY = topY(Q) .. topY(a)` (2a) — `topY(Q)` by the same step 1 with Q's
+own upper neighbour (one `waterTopY(id, above)` for both), so two full cells that are both covered draw nothing between them (before:
+each took the other at 0.875 and both drew a strip, a honeycomb of coincident pairs under a glass floor over a pool).
 1. `topY = isWater(a) && !isWater(P(above)) ? waterSurfaceHeight(a, P(above)) : 1` (WATER / FALL `WATER_SURFACE_HEIGHT`, FLOW_k
    `k/7` of it) — except that a FULL cell (WATER or WATER_FALL) under a block meshed as a full prism (`isMeshed(above)` and not AIR:
    stone, and also see-through glass, ice, leaves, a black hole) stays at 1, so a submerged see-through block shows no fake surface
@@ -1351,7 +1353,10 @@ volume 1 − d/10 (`audio.playCrackle`). `placeSelected` refuses a campfire that
 Water rule (`wouldDouseCampfire`, hand placement only): `placeSelected` refuses a campfire whose target cell is a liquid or has a
 liquid directly above it, and a liquid whose target cell is directly above a campfire — water would put the fire out — with the chat
 line "Water would put the campfire out." at most every 2 s. Console / rune commands write blocks as told (as they may also bury the
-player); a campfire put under water that way still burns.
+player), and block physics then treats what they wrote like any other block: water puts out a campfire it reaches, whoever placed
+it (§35.2 — one written into or under water, beside water that spreads into its cell, or with water written on top of it, is replaced
+by water with a hiss + steam), and a campfire over water or another fall-through cell breaks (§34.1). Such a campfire stays lit only
+while the water switch is off (on a floor) or physics is paused (`physics off`).
 Pigs: a walking pig treats a heading as unsafe when a point 0.25, 0.5 or 0.8 ahead comes within FIRE_MARGIN 0.15 of a campfire
 cell at its feet level or one below (§30 AI step 3; main skips that look-ahead while `campfires.total` is 0 — every CAMPFIRE cell,
 tracked or refused, is in `campfires`, so it costs nothing in a world without fire); a pig whose feet cell is a campfire (and is not already hurt) is
@@ -1557,6 +1562,7 @@ export const WATER_RULE_IDS          // [AIR, CAMPFIRE, WATER, WATER_FLOW_1..6, 
 export function isFlowingWater(id)   // WATER_FLOW_1..6
 export function isWaterFloor(id)     // water standing on it spreads sideways: id === WATER || isSolid(id)   (UNLOADED → false)
 export function flowId(level)        // WATER_FLOW_level for 1..6 (floored, ≥ 7 → FLOW_6); < 1 → AIR
+export function fallLevel(ctx, q, y, r) // E of the FALL at (q, y, r): walk up its FALL column; WATER on top → 7, FLOW_k → k, else 0
 export class Fluids {                // physics.fluids
   constructor(physics)               // registers rule 'water' { rings: ['water', 'fall'], feature: 'water', ids: WATER_RULE_IDS },
                                      //   trigger 'water-floor' (feature water) and replaces the reseeder 'water' (§35.3)
@@ -1568,15 +1574,20 @@ export class Fluids {                // physics.fluids
 }
 ```
 ### 35.1 Definitions
-`E(id) = waterLevel(id)`: 7 for WATER and FALL, k for FLOW_k. A water cell n **spreads** (feeds its six side neighbours) iff the cell
+`E(n)`: 7 for WATER, k for FLOW_k, and for FALL `fallLevel` — the level of the water pouring in at the top of its column (the first
+non-FALL cell above: WATER → 7, FLOW_k → k, anything else → 0). A water cell n **spreads** (feeds its six side neighbours) iff the cell
 below n is a floor (`isWaterFloor`): solid or a WATER source — never over FALL, FLOW, AIR, a campfire or UNLOADED. *This one predicate
-bounds waterfalls: falling water only spreads where it lands.*
+bounds waterfalls: falling water only spreads where it lands. And falling keeps a stream's level, it never refreshes it: with E(FALL) = 7
+every 1-high step of a hillside restarted a full reach-6 disc, and one source on seed 7's highest hilltop wet 9,999 cells down to the
+sea (24,409 on a synthetic 40-step staircase); now every FLOW_k is within 7 − k cells of a source and the same source wets 148.*
 ### 35.2 The rule (`update(ctx, q, y, r, id)` on the `water` and `fall` rings)
 Every input is read before anything is written. A side neighbour that is UNLOADED: when `id` is water, `ctx.schedule('water', that
 cell)` (it parks on its own chunk), then `ctx.park(its q, r)` and return — both re-run when that chunk is generated. The target:
 1. `id === WATER` → WATER.
 2. Otherwise, with `sources` = the WATER side neighbours and `fed = max(E(n) − 1)` over the side neighbours n that spread:
-   a. `id` is FLOW_k or FALL, `sources ≥ WATER_SOURCE_NEIGHBOURS` (3) and the cell below is a floor → **WATER** (infinite source);
+   a. `id` is FLOW_k or FALL, and either `sources ≥ WATER_SOURCE_NEIGHBOURS` (3) with the cell below a floor (infinite source), or
+      the cell was generated as WATER (`world.originAt(q, y, r) === WATER`: natural sea / lake water coming back — the save drops such
+      an edit anyway, §33.9, so the live world and a reload agree) → **WATER**;
    b. else the cell above is water → FALL;
    c. else `fed ≥ 1` → FLOW_fed;
    d. else AIR (a CAMPFIRE stays a CAMPFIRE).
@@ -1586,14 +1597,20 @@ cell)` (it parks on its own chunk), then `ctx.park(its q, r)` and return — bot
    exactly one cell per tick**.
 4. Unchanged, the target is WATER or FLOW_k, `y > 0` and the cell below is AIR, CAMPFIRE or FLOW → `ctx.write(below, FALL)` (a campfire
    there: hiss + steam).
-Consequences (`tests/unit/fluids.test.js`): one source on flat ground → exactly 126 FLOW cells, level `7 − hex distance`; one source on a
-10-high, radius-3 plateau → 571 water cells (240 falling), and none — with every edit pruned — once the source is removed; two adjacent
-sources stay two sources (their two shared neighbours see only 2); three around a hole make 7 and stop; a hole next to a straight sea
-edge fills (FLOW_6, over FALL when deeper); a drained patch of open sea refills to sources and leaves no edits.
+Consequences (`tests/unit/fluids.test.js`): one source on flat ground → exactly 126 FLOW cells, level `7 − hex distance`; one source in
+mid-air → a FALL column landing at full strength (E 7) and those 126 FLOW cells around where it lands; one source on a 10-high, radius-3
+plateau → 367 water cells (240 falling: the FLOW_3 over the edge lands as 3 and spreads FLOW_2, FLOW_1), and none — with every edit pruned
+— once the source is removed; down a staircase (or seed 7's hillside) every FLOW cell is `7 − its hex distance` from the source, within
+reach 6; two adjacent sources stay two sources (their two shared neighbours see only 2); three around a hole make 7 and stop; a hole
+next to a straight sea edge fills (FLOW_6, over FALL when deeper); a drained patch of open sea refills to the generated sea and leaves
+no edits — over a flat or an uneven seabed (before natural water healed by 2a, `drain 6` over seed 42's sloping seabed left 163 cells
+AIR and 369 edits: the surface ring stood on FALL, the bottom ring touched sand instead of three sources).
 ### 35.3 Trigger and reseeder
 1. **'water-floor'** (feature water): `isWaterFloor(prev) !== isWaterFloor(next)` and the cell above is water → wake each side neighbour of
-   that water cell which is AIR, CAMPFIRE, FLOW, FALL or UNLOADED. (*The scheduler's 'water' trigger covers the changed cell and its 8
-   neighbours; the rule also reads the cells below its side neighbours.*) **Wake** = `schedule('fall', …)` for FALL or a non-source cell
+   that water cell which is AIR, CAMPFIRE, FLOW, FALL or UNLOADED. Also: `prev !== next`, either is water and the cell below is FALL → walk
+   down that FALL column to where it lands; when the cell under its lowest FALL is a floor, wake that landing's side neighbours the same
+   way (its `fallLevel` changed). (*The scheduler's 'water' trigger covers the changed cell and its 8 neighbours; the rule also reads the
+   cells below its side neighbours and the column above a falling one.*) **Wake** = `schedule('fall', …)` for FALL or a non-source cell
    with water above, else `schedule('water', …)`.
 2. **Reseeder 'water'** (replaces the built-in of §33.4 by name; feature water) — EDITED cells of a generated chunk: AIR → wake it when the
    cell above or a side neighbour is water, or a side neighbour is UNLOADED (*a hole dug beside the sea: flow is never saved*); WATER → wake
@@ -1610,8 +1627,8 @@ water they would swim in (`isSwimWater(getBlock, q, y, r)`: the water at y, or o
 more than WADE_DEPTH above its floor; §30).
 ### 35.5 Taking water away, drain, currents
 - WATER selected: the crosshair ray also stops on WATER sources — unless the eye cell is water (the ray would stop at once) — and
-  left-click sets the source to AIR (`blockPhysics.asPlayer`, main §23); the flow it fed drains by itself; in open sea the hole refills
-  (rule 2a).
+  left-click sets the source to AIR (`blockPhysics.asPlayer`, main §23); the flow it fed drains by itself; a natural sea / lake cell
+  refills as a source as soon as water flows back into it (rule 2a), a placed source does not.
 - `drain(q, y, r, radius)`: `radius` an integer 0..DRAIN_MAX_RADIUS (else `{ ok: false }`). Every water cell with hex distance ≤ radius from
   (q, r) and |dy| ≤ radius (y clamped to 0..127), in loaded columns, → `ctx.write(AIR)`, stopping at 'capped'. Message (`ok: true`):
   `no water to drain within R`, else `drained N water cell(s) within R` + ` — the water around it flows back in` (unedited sources were
@@ -1623,7 +1640,7 @@ more than WADE_DEPTH above its floor; §30).
 ### 35.6 Saving and sinking
 FLOW / FALL are never saved (§33.9: dropped when the origin is AIR or WATER, else AIR); the reseeder resumes the flow on load. A WATER
 source is fall-through (§5): sand, gravel, debris and logs sink to the bottom and crush the water cell they land in; a hole left in a lake
-refills (rule 2a), so no air pocket persists.
+refills as lake (rule 2a: natural water, whatever the floor), so no air pocket persists and the live world matches what a reload makes.
 
 ## 36. `src/support.js` and `src/trees.js` (PURE) — collapsing structures and falling trees, v0.8
 

@@ -3,6 +3,8 @@
 // campfires, drain, currents and the save rule. Map-backed fake worlds from the fixtures unless a real World matters
 // (chunk corners while streaming, the seed-42 sea).
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   CHUNK_SIZE, WATER_CURRENT, DRAIN_MAX_RADIUS, WATER_SOURCE_NEIGHBOURS, WORLD_HEIGHT,
 } from '../../src/config.js';
@@ -11,10 +13,13 @@ import { HEX_DIRS, FACE_NORMALS, hexToWorld, hexLength } from '../../src/hex.js'
 import { World } from '../../src/world.js';
 import { createWorldGen } from '../../src/worldgen.js';
 import { BlockPhysics, SaveOverlay } from '../../src/blockphysics.js';
-import { WATER_RULE_IDS, isFlowingWater, isWaterFloor, flowId } from '../../src/fluids.js';
+import * as fluidsModule from '../../src/fluids.js';
+import { executeCommand, parseLine } from '../../src/commands.js';
+import { createPlayer } from '../../src/physics.js';
 import { makeFakeWorld, attachPhysics, flatWorldGen } from '../helpers/fixtures.js';
 
 const B = BLOCK;
+const { WATER_RULE_IDS, isFlowingWater, isWaterFloor, flowId } = fluidsModule;
 const flow = (k) => B.WATER_FLOW_1 + k - 1;
 
 /** A fake world (stone for y ≤ groundY) with physics attached; `fx` records sounds and particles. */
@@ -101,6 +106,17 @@ describe('predicates and registration', () => {
     expect(waterSurfaceHeight(B.STONE, B.AIR)).toBe(0);
   });
 
+  it('fallLevel: falling water carries the level of the water pouring in at the top of its column', () => {
+    const { fallLevel } = fluidsModule;
+    expect(typeof fallLevel).toBe('function');
+    const column = (...ids) => ({ peek: (_q, y, _r) => ids[y] ?? B.AIR }); // ids[0] is the bottom of the column
+    expect(fallLevel(column(B.WATER_FALL, B.WATER_FALL, B.WATER), 0, 0, 0)).toBe(7);
+    expect(fallLevel(column(B.WATER_FALL, B.WATER_FALL, flow(4)), 0, 0, 0)).toBe(4);
+    expect(fallLevel(column(B.WATER_FALL, flow(1)), 0, 0, 0)).toBe(1);
+    expect(fallLevel(column(B.WATER_FALL, B.WATER_FALL), 0, 0, 0)).toBe(0); // nothing feeds it: a stale fall feeds nothing
+    expect(fallLevel(column(B.WATER_FALL, B.STONE), 0, 0, 0)).toBe(0);
+  });
+
   it('registers one rule on the water and fall rings, the floor trigger, and replaces the water reseeder', () => {
     const { physics } = setup();
     expect(physics.ruleNames('water')).toEqual(['water']);
@@ -139,10 +155,14 @@ describe('the water rule', () => {
     world.setBlock(0, 11, 0, B.WATER);
     settle(physics);
     const c = census(world, 24, 0, 14);
-    // 61 on top (37 on the plateau + 24 over the edge), 24 waterfalls of 10 cells, 270 spreading at the bottom.
-    expect(c.water).toBe(571);
+    // 61 on top (37 on the plateau + 24 FLOW_3 over the edge), 24 waterfalls of 10 cells, and at the bottom the falls
+    // spread at the level that poured in (3): FLOW_2 one ring out, FLOW_1 the next — 66 cells (270 when a landing fall
+    // counted as a fresh source, before the slope fix: review water-3).
+    expect(c.water).toBe(367);
     expect(c.fall).toBe(240);
-    expect(c.maxR).toBe(10);
+    expect(c.maxR).toBe(6);
+    expect(c.cells.filter(([, y]) => y === 1).map(([, , , id]) => id).filter((id) => id !== B.WATER_FALL).sort())
+      .toEqual([...Array(30).fill(flow(2)), ...Array(36).fill(flow(1))].sort());
     // Mid-cliff falling water never spreads: only the 24 fall cells at y = 5.
     expect(c.cells.filter(([, y]) => y === 5).length).toBe(24);
     expect(c.cells.filter(([, y]) => y === 5).every(([q, , r, id]) => id === B.WATER_FALL && hexLength(q, r) === 4)).toBe(true);
@@ -205,6 +225,35 @@ describe('the water rule', () => {
     expect(world.editCount).toBe(0);
   });
 
+  it('…on an uneven seabed too: natural water refills as natural water, whatever the floor (review water-1)', () => {
+    // One seabed cell in four raised by one: the bottom ring of the drained patch touches sand, not three sources, and the
+    // ring above it stood on falling water — 436 cells stayed AIR and 754 edits were left before natural water healed.
+    const { world, physics } = setup({ groundY: 3 });
+    seaWorld(world, 12);
+    for (let q = -24; q <= 24; q++) for (let r = -24; r < 0; r++) if (((q * 7 + r * 13) & 3) === 0) world.put(q, 4, r, B.STONE);
+    const sea = new Map();
+    for (let q = -8; q <= 8; q++) for (let r = -22; r <= -8; r++) for (let y = 4; y <= 12; y++) sea.set(`${q},${y},${r}`, world.getBlock(q, y, r));
+    expect(physics.fluids.drain(0, 8, -15, 5).message).toMatch(/^drained \d+ water cells within 5 — the water around it flows back in$/);
+    settle(physics);
+    const wrong = [...sea].filter(([k, id]) => world.getBlock(...k.split(',').map(Number)) !== id);
+    expect(wrong).toEqual([]);
+    expect(world.editCount).toBe(0);
+  });
+
+  it('a sea cell taken out at the shore comes back as a source, as a reload would make it', () => {
+    // r = −1 is the sea's edge row; this cell has only two sea sides at its own height, so rule 2a's ≥ 3 never applied.
+    const { world, physics } = setup({ groundY: 3 });
+    seaWorld(world, 6);
+    world.put(4, 5, -1, B.STONE); // a rock beside it: two WATER sides left (and the shore)
+    world.put(3, 5, -2, B.STONE);
+    expect(HEX_DIRS.filter(([dq, dr]) => world.getBlock(3 + dq, 5, -1 + dr) === B.WATER).length).toBe(2);
+    world.setBlock(3, 5, -1, B.AIR);
+    settle(physics);
+    expect(world.getBlock(3, 5, -1)).toBe(B.WATER);
+    expect(world.editCount).toBe(0);
+    expect(physics.exportEdits()).toEqual({});
+  });
+
   it('a waterfall advances one cell per tick and spreads only where it lands', () => {
     const { world, physics } = setup({ groundY: 0 });
     world.put(0, 20, 0, B.STONE);
@@ -219,6 +268,60 @@ describe('the water rule', () => {
     const c = census(world, 14, 0, 22);
     expect(c.cells.filter(([, y]) => y > 1 && y < 20).every(([, , , id]) => id === B.WATER_FALL)).toBe(true);
     expect(c.cells.filter(([, y]) => y === 1).length).toBeGreaterThan(6);
+  });
+
+  it('a source poured over a drop lands at full strength: a waterfall and a reach-6 pool where it lands', () => {
+    const { world, physics } = setup();
+    world.setBlock(0, 11, 0, B.WATER); // in mid-air, ten cells above the ground
+    settle(physics);
+    const c = census(world, 12, 0, 12);
+    expect(c.fall).toBe(10); // y 1..10 under the source
+    expect(c.flow).toBe(126);
+    for (const [q, y, r, id] of c.cells) if (isFlowingWater(id)) expect(y === 1 && waterLevel(id) === 7 - hexLength(q, r), `${q},${y},${r}`).toBe(true);
+    world.setBlock(0, 11, 0, B.AIR);
+    settle(physics);
+    expect(census(world, 12, 0, 12).water).toBe(0);
+    expect(world.editCount).toBe(0);
+  });
+
+  it('down a staircase a stream keeps losing level: it stops within reach 6 of its source (review water-3)', () => {
+    // 1-high steps every 3 cells, 15 steps down toward +q, 91 cells wide. When a landing fall counted 7 again, every step
+    // restarted a reach-6 disc and the sheet widened by ~9 cells a step (24,409 cells on the reviewer's 40-step stairs).
+    const { world, physics } = setup();
+    const h = (q) => (q < 0 ? 20 : Math.max(5, 20 - Math.floor(q / 3)));
+    for (let q = -8; q <= 50; q++) for (let r = -45; r <= 45; r++) for (let y = 1; y <= h(q); y++) world.put(q, y, r, B.STONE);
+    world.setBlock(2, 21, 0, B.WATER); // on the top step, two cells from its edge
+    settle(physics);
+    const c = census(world, 60, 0, 22, 2, 0);
+    expect(c.maxR).toBeLessThanOrEqual(6);
+    expect(c.water).toBeLessThan(200);
+    // Every flowing level is exactly 7 minus its distance from the source: falling never refreshed it.
+    for (const [q, , r, id] of c.cells) if (isFlowingWater(id)) expect(waterLevel(id), `${q},${r}`).toBe(7 - hexLength(q - 2, r));
+    world.setBlock(2, 21, 0, B.AIR);
+    settle(physics);
+    expect(census(world, 60, 0, 22, 2, 0).water).toBe(0);
+    expect(world.editCount).toBe(0);
+  });
+
+  it('a stream over a ledge feeds the level it had, and follows that level when it changes (the fall trigger)', () => {
+    // A one-wide channel at y = 6 (floor y ≤ 5) ends at q = 3 over a 4-deep pit (q = 3, 4; floor y = 1).
+    const { world, physics } = setup({ groundY: 5 });
+    for (let q = -2; q <= 8; q++) for (let r = -2; r <= 2; r++) if (r !== 0 || q < 0) world.put(q, 6, r, B.STONE);
+    for (const q of [3, 4]) for (let y = 2; y <= 5; y++) world.setBlock(q, y, 0, B.AIR);
+    world.setBlock(0, 6, 0, B.WATER);
+    settle(physics);
+    // FLOW_4 at q = 3 hangs over the pit: the fall below it lands at y = 2 and feeds q = 4 at 4 − 1.
+    expect(world.getBlock(3, 6, 0)).toBe(flow(4));
+    expect([5, 4, 3, 2].map((y) => world.getBlock(3, y, 0))).toEqual([B.WATER_FALL, B.WATER_FALL, B.WATER_FALL, B.WATER_FALL]);
+    expect(world.getBlock(4, 2, 0)).toBe(flow(3));
+    // A source dropped right onto the channel's end raises the fall's level: the landing feeds 6 now.
+    world.setBlock(2, 6, 0, B.WATER);
+    settle(physics);
+    expect(world.getBlock(3, 6, 0)).toBe(flow(6));
+    expect(world.getBlock(4, 2, 0)).toBe(flow(5));
+    world.setBlock(2, 6, 0, B.AIR); // and back down: the far side of the pit follows
+    settle(physics);
+    expect(world.getBlock(4, 2, 0)).toBe(flow(3));
   });
 
   it('removing the floor under flowing water re-evaluates what it fed (the water-floor trigger)', () => {
@@ -276,6 +379,48 @@ describe('the water rule', () => {
     world.setBlock(1, 1, 0, B.AIR);
     settle(physics);
     expect(census(world, 8, 0, 3).water).toBe(127);
+  });
+
+  it('a campfire a COMMAND writes into, under or beside water is put out too; it burns only with water off or physics paused', () => {
+    // Review F4: §32 said a command-placed campfire under water "still burns" while §35.2 puts out any campfire water
+    // reaches. Water puts fires out, whoever placed them: §32 now says so, and the command path is pinned here.
+    const run = (mode) => {
+      const { world, physics, fx } = setup({ groundY: 3 });
+      seaWorld(world, 6); // natural sea at r < 0, y 4..6; stone shore at r ≥ 0
+      world.put(0, 4, 6, B.AIR); // a dry pit in the shore for the "water poured on it" case
+      world.put(0, 5, 6, B.AIR);
+      if (mode === 'water off') physics.setSwitch('water', false);
+      if (mode === 'paused') physics.setPaused(true);
+      const [x, z] = hexToWorld(0, 20);
+      const ctx = { world, player: { ...createPlayer(x, 30, z), flying: true }, controls: { yaw: 0, pitch: 0 }, physics, seed: 1 };
+      const cmd = (line) => executeCommand(parseLine(line), ctx);
+      const steps = (n) => {
+        for (let i = 0; i < n; i++) physics.step(0.05); // as the game steps it (a paused physics skips its ticks)
+      };
+      world.setBlock(3, 4, 0, B.AIR); // a hole dug in the shore beside the sea: flowing water fills it (water on)
+      steps(40);
+      expect(cmd('setblock 0 4 -10 campfire').message).toBe('set campfire at (0, 4, -10)'); // on the seabed, sea above it
+      expect(cmd('setblock 3 4 0 campfire').ok).toBe(true); // beside the sea, in the hole
+      expect(cmd('setblock 0 4 6 campfire').ok).toBe(true); // in the dry pit…
+      expect(cmd('setblock 0 5 6 water').ok).toBe(true); // …with a source written on top of it
+      steps(200);
+      const cells = [[0, 4, -10], [3, 4, 0], [0, 4, 6]].map(([q, y, r]) => world.getBlock(q, y, r));
+      return { cells, hisses: fx.sounds.filter((s) => s.name === 'hiss').length };
+    };
+    const on = run('water on');
+    // Put out, each with a hiss: the sea closes over the first (natural water refills as natural water), the shore hole
+    // floods again, the poured source falls into the pit.
+    expect(on.cells).toEqual([B.WATER, flow(6), B.WATER_FALL]);
+    expect(on.hisses).toBe(3);
+    for (const mode of ['water off', 'paused']) {
+      const off = run(mode);
+      expect(off, mode).toEqual({ cells: [B.CAMPFIRE, B.CAMPFIRE, B.CAMPFIRE], hisses: 0 });
+    }
+    // And the two normative sections agree now.
+    const contracts = readFileSync(fileURLToPath(new URL('../../src/CONTRACTS.md', import.meta.url)), 'utf8');
+    const s32 = contracts.slice(contracts.indexOf('Water rule (`wouldDouseCampfire`'), contracts.indexOf('\nPigs: a walking pig'));
+    expect(s32).not.toMatch(/still burns/);
+    expect(s32).toMatch(/§35\.2/);
   });
 
   it('stops spreading at the edit cap ("capped") without throwing', () => {
@@ -504,5 +649,63 @@ describe('real worldgen (seed 42)', () => {
     settle(physics);
     expect(isWater(world.getBlock(shore[0], SEA, shore[1]))).toBe(true);
     expect(world.editCount).toBe(1);
+  });
+});
+
+describe('real worldgen: drained sea and hillside streams (review water-1, water-3)', () => {
+  /** A real World of `seed` loaded at render distance 3 around cell (q, r), physics forwarded like main. */
+  function realWorld(seed, q, r) {
+    const world = new World({ seed, renderDistance: 3, worldGen: createWorldGen(seed), now: () => 0 });
+    const physics = attachPhysics(world, BlockPhysics);
+    const [x, z] = hexToWorld(q, r);
+    for (let i = 0; i < 2000; i++) {
+      const s = world.update(x, z, Infinity);
+      if (s.pendingGen === 0 && s.pendingMesh === 0) break;
+    }
+    return { world, physics };
+  }
+
+  it('seed 42: `drain 6` on open sea over a sloping seabed refills to the generated sea, no edits left', () => {
+    // Before natural water healed: 163 cells stayed AIR (a hexagonal crater in the surface), 205 FLOW / FALL, 369 edits.
+    const { world, physics } = realWorld(42, 29, 24);
+    const before = new Map();
+    for (let dq = -8; dq <= 8; dq++) for (let dr = -8; dr <= 8; dr++) for (let y = 54; y <= 64; y++) before.set(`${29 + dq},${y},${24 + dr}`, world.getBlock(29 + dq, y, 24 + dr));
+    const floors = new Set();
+    for (let dq = -6; dq <= 6; dq++) for (let dr = -6; dr <= 6; dr++) if (hexLength(dq, dr) <= 6) floors.add(world.terrainHeightAt(29 + dq, 24 + dr));
+    expect(floors.size, 'the seabed under the patch is not flat').toBeGreaterThan(1);
+    const res = physics.fluids.drain(29, 62, 24, 6);
+    expect(res.message).toBe('drained 408 water cells within 6 — the water around it flows back in');
+    settle(physics);
+    const wrong = [...before].filter(([k, id]) => world.getBlock(...k.split(',').map(Number)) !== id);
+    expect(wrong).toEqual([]);
+    expect(world.editCount).toBe(0);
+  });
+
+  it('seed 7: one source on the highest hilltop near spawn wets one reach-6 stream (~150 cells), not 10,000', () => {
+    const { world, physics } = realWorld(7, 39, -29);
+    expect(world.terrainHeightAt(39, -29)).toBe(88);
+    expect(world.getBlock(39, 89, -29)).toBe(B.AIR);
+    world.setBlock(39, 89, -29, B.WATER);
+    settle(physics);
+    let n = 0;
+    let maxR = 0;
+    for (const [key, edits] of world.edits) {
+      const [cq, cr] = key.split(',').map(Number);
+      for (const [li, id] of edits) {
+        if (!isWater(id)) continue;
+        const y = li % WORLD_HEIGHT;
+        const col = (li - y) / WORLD_HEIGHT;
+        const lr = col % CHUNK_SIZE;
+        n++;
+        maxR = Math.max(maxR, hexLength(cq * CHUNK_SIZE + (col - lr) / CHUNK_SIZE - 39, cr * CHUNK_SIZE + lr + 29));
+      }
+    }
+    expect(physics.parkedCount).toBe(0); // it never reached the edge of the loaded area (8,566 cells and 65 parked before)
+    expect(maxR).toBeLessThanOrEqual(6);
+    expect(n).toBeGreaterThan(100);
+    expect(n).toBeLessThan(250);
+    world.setBlock(39, 89, -29, B.AIR);
+    settle(physics);
+    expect(world.editCount).toBe(0);
   });
 });

@@ -653,6 +653,35 @@ describe('buildChunkMesh — flowing water surfaces (v0.8, CONTRACTS §35.4)', (
     expect(strip.verts[0][1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
     expect(strip.verts[2][1]).toBe(AY + 1);
   });
+
+  it('two full water cells that are both covered draw nothing between them; the step to open water stays', () => {
+    // Review water-2: the neighbour's top ignored the full-prism rule, so each of two covered cells drew a 0.875..1 strip
+    // toward the other (coincident pairs: a blue honeycomb under a glass floor on a pool).
+    const sides = (m, j) => faceSet(facesAt(m, AQ, AY, AR)).includes(j);
+    const n = near(0);
+    for (const cover of [B.STONE, B.GLASS]) {
+      for (const [a, b] of [[B.WATER, B.WATER], [B.WATER_FALL, B.WATER], [B.WATER, B.WATER_FALL]]) {
+        const m = mesh(world([[...A, a], [AQ, AY + 1, AR, cover], [...n, b], [n[0], AY + 1, n[2], cover]]));
+        expect(sides(m, 0), `${a}|${b} under ${cover}`).toBe(false);
+        expect(faceSet(facesAt(m, n[0], n[1], n[2])), `${b}|${a} under ${cover}`).not.toContain(FACE_OPPOSITE[0]);
+      }
+    }
+    // A full cell under more water next to a covered full cell: both at 1, nothing between them either.
+    const deep = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.WATER], [...n, B.WATER], [n[0], AY + 1, n[2], B.STONE]]));
+    expect(sides(deep, 0)).toBe(false);
+    // A covered cell next to open water still draws the 0.875..1 step, and a covered flowing level keeps its surface.
+    const step = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.GLASS], [...n, B.WATER]]));
+    const s = facesAt(step, AQ, AY, AR).find((f) => f.face === 0);
+    expect(s.verts[0][1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    expect(s.verts[2][1]).toBe(AY + 1);
+    const low = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.STONE], [...n, B.WATER_FLOW_3], [n[0], AY + 1, n[2], B.STONE]]));
+    expect(facesAt(low, AQ, AY, AR).find((f) => f.face === 0).verts[0][1]).toBeCloseTo(AY + surf(3), 6);
+    // A 7 × 7 pool under a full glass roof: only its outer walls and bottom, no strip on any inner edge.
+    const pool = [];
+    for (let q = 2; q <= 8; q++) for (let r = 4; r <= 10; r++) pool.push([q, AY, r, B.WATER], [q, AY + 1, r, B.GLASS]);
+    const strips = faces(mesh(world(pool)).translucent).filter((f) => !f.isCap && f.verts[0][1] > AY + 0.5);
+    expect(strips.length).toBe(0);
+  });
 });
 
 describe('buildChunkMesh — cutout layer', () => {
