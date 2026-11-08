@@ -1,7 +1,7 @@
 // Unit tests for src/campfires.js and the campfire's block / mesher / pig rules (CONTRACTS §32).
 import { describe, it, expect } from 'vitest';
 import { BLOCK, BLOCKS, TILE, getFaceTile, isSolid, isOpaque, isPlaceable, isBreakable, isTargetable, isMeshed, FACE_TOP } from '../../src/blocks.js';
-import { CAMPFIRE_MAX_TRACKED, CAMPFIRE_RETRACK_DISTANCE } from '../../src/config.js';
+import { CAMPFIRE_MAX_TRACKED, CAMPFIRE_RETRACK_DISTANCE, CAMPFIRE_RETRACK_BATCH } from '../../src/config.js';
 import { Campfires, campfireKey, flicker, scorchPlayer, wouldDouseCampfire } from '../../src/campfires.js';
 import { createPlayer } from '../../src/physics.js';
 import { forEachEditedCell, localIndex, chunkKey } from '../../src/coords.js';
@@ -145,6 +145,116 @@ describe('Campfires tracking', () => {
     expect(c.retrack(0, 11.3, 0)).toBe(true);
     expect(c.has(0, 11, 0)).toBe(true);
   });
+  describe('retrack cost (regression: every re-pick sorted every known fire — 35 ms at 25k fires, seconds at 300k)', () => {
+    /** A field of `n` fires on 4 layers around the origin, added in a scrambled order (after `first`, if given). */
+    function field(n, first = null) {
+      const side = Math.ceil(Math.sqrt(n / 4));
+      const cells = [];
+      for (let y = 0; y < 4; y++) for (let q = -side; q < side; q++) for (let r = -side; r < side; r++) cells.push([q, 60 + y, r]);
+      let s = 7;
+      for (let i = cells.length - 1; i > 0; i--) {
+        s = (Math.imul(s, 1103515245) + 12345) >>> 0;
+        const j = s % (i + 1);
+        [cells[i], cells[j]] = [cells[j], cells[i]];
+      }
+      const c = new Campfires();
+      if (first) c.add(...first);
+      for (let i = 0; c.total < n; i++) c.add(...cells[i]);
+      return { c, side };
+    }
+    /** The CAMPFIRE_MAX_TRACKED nearest by a full sort, ties by key: what the tracked set must equal. */
+    function nearestKeys(c, x, y, z) {
+      const all = [...c.fires.values(), ...c.refused.values()];
+      const d = all.map((f) => (f.x - x) ** 2 + (f.y + 0.3 - y) ** 2 + (f.z - z) ** 2);
+      const order = all.map((_, i) => i).sort((a, b) => d[a] - d[b] || (all[a].key < all[b].key ? -1 : 1));
+      return order.slice(0, CAMPFIRE_MAX_TRACKED).map((i) => all[i].key).sort();
+    }
+    const trackedKeys = (c) => [...c.fires.keys()].sort();
+    /** Call retrack at (x, y, z) until it finishes a re-pick; returns the number of calls. */
+    function settle(c, x, y, z) {
+      for (let calls = 1; calls < 1000; calls++) if (c.retrack(x, y, z)) return calls;
+      throw new Error('retrack never finished');
+    }
+
+    it('a re-pick visits at most CAMPFIRE_RETRACK_BATCH fires a call and still ends on exactly the nearest set', () => {
+      const N = 3 * CAMPFIRE_RETRACK_BATCH + 500;
+      const { c } = field(N);
+      expect(c.total).toBe(N);
+      // The first call starts the re-pick but cannot finish it: the tracked set is untouched until the last batch.
+      const before = trackedKeys(c);
+      expect(c.retrack(0, 61.3, 0)).toBe(false);
+      expect(trackedKeys(c)).toEqual(before);
+      expect(1 + settle(c, 0, 61.3, 0)).toBe(Math.ceil(N / CAMPFIRE_RETRACK_BATCH));
+      expect(trackedKeys(c)).toEqual(nearestKeys(c, 0, 61.3, 0));
+      // Moving on: the next re-pick (bounded by the last one's farthest kept fire) is exact too, and deterministic.
+      for (const [x, z] of [[9, 0], [9, 9.5], [-12, 3], [40, -40]]) {
+        settle(c, x, 62.1, z);
+        expect(trackedKeys(c)).toEqual(nearestKeys(c, x, 62.1, z));
+      }
+      // Standing still afterwards costs nothing.
+      expect(c.retrack(40, 62.1, -40)).toBe(false);
+    });
+
+    it('ties at the cut are broken by key, whatever order the fires were placed in, as the full sort did', () => {
+      // A row of CAMPFIRE_MAX_TRACKED + 1 fires centred on the player: q = ±H are exactly as far, and only one fits.
+      const H = CAMPFIRE_MAX_TRACKED / 2;
+      for (const order of [1, -1]) {
+        const c = new Campfires();
+        for (let i = -H; i <= H; i++) c.add(order * i, 10, 0);
+        settle(c, 0, 10.3, 0);
+        expect(c.has(-H, 10, 0)).toBe(true); // "-512,10,0" < "512,10,0"
+        expect(c.has(H, 10, 0)).toBe(false);
+        expect(trackedKeys(c)).toEqual(nearestKeys(c, 0, 10.3, 0));
+      }
+    });
+
+    it('fires added or removed while a re-pick is under way: added ones are seen, removed ones are not kept, and it ends exact', () => {
+      const N = 3 * CAMPFIRE_RETRACK_BATCH + 10;
+      // The fire at the player's spot is the first one placed, so the first batch puts it in the re-pick's heap.
+      const { c, side } = field(N, [0, 61, 0]);
+      expect(c.retrack(0, 61.3, 0)).toBe(false); // under way: one batch walked
+      // A fire placed right next to the player (unless the field has it already) and one far away, both after the
+      // walked part: seen by this re-pick.
+      c.add(1, 61, 0);
+      expect(c.add(side * 3, 61, 0)).toBe(false); // refused: the cap is full
+      // Broken mid-way: the nearest fire (kept by the walk so far; the far one just added is swapped into its slot and
+      // offered at once) and a refused one.
+      expect(c.remove(0, 61, 0)).toBe(true);
+      const someRefused = c.refused.values().next().value;
+      expect(c.remove(someRefused.q, someRefused.y, someRefused.r)).toBe(true);
+      // The walk finishes on schedule, keeps the nearest fires that still exist (one short: the broken one is not kept)
+      // and asks for another re-pick, which ends exactly on the nearest set.
+      expect(settle(c, 0, 61.3, 0)).toBe(Math.ceil(c.total / CAMPFIRE_RETRACK_BATCH) - 1);
+      expect(c.size).toBe(CAMPFIRE_MAX_TRACKED - 1);
+      expect(c.has(1, 61, 0)).toBe(true);
+      expect(c.has(0, 61, 0)).toBe(false);
+      const want = new Set(nearestKeys(c, 0, 61.3, 0));
+      expect(trackedKeys(c).filter((k) => !want.has(k))).toEqual([]);
+      settle(c, 0, 61.3, 0);
+      expect(c.size).toBe(CAMPFIRE_MAX_TRACKED);
+      expect(trackedKeys(c)).toEqual(nearestKeys(c, 0, 61.3, 0));
+      expect(c.refused.has(campfireKey(side * 3, 61, 0))).toBe(true);
+    });
+
+    it('with 100 000 fires no retrack call stalls a frame (each one does a bounded batch)', () => {
+      const { c, side } = field(100000);
+      settle(c, -side, 61.3, 0);
+      const times = [];
+      let rebuilt = 0;
+      // Fly across the field at 10 m/s, one call per 60 Hz frame.
+      for (let px = -side; px < side; px += 10 / 60) {
+        const t0 = performance.now();
+        if (c.retrack(px, 61.3, 0)) rebuilt++;
+        times.push(performance.now() - t0);
+      }
+      times.sort((a, b) => a - b);
+      expect(rebuilt).toBeGreaterThan(10);
+      // The old full sort took ~180 ms per re-pick here. Generous bounds for a loaded machine.
+      expect(times[Math.floor(times.length * 0.99)]).toBeLessThan(12);
+      expect(times[times.length - 1]).toBeLessThan(40);
+    });
+  });
+
   it('gives neighbouring fires different flicker phases', () => {
     const c = new Campfires();
     c.add(0, 10, 0);

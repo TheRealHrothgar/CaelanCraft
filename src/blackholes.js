@@ -119,17 +119,28 @@ export function columnHasEdits(edits, q, r) {
 }
 
 /**
- * Feet height of the highest place to stand in loaded column (q, r): one above its topmost solid cell, with AIR in the
- * two cells the body takes (water, a campfire or a black hole there → null) under the world's ceiling.
+ * Feet height of the lowest place to stand in loaded column (q, r) at or above `fromFeet` (the column's natural ground,
+ * worldgen surface + 1): a solid floor cell with AIR in the two cells the body takes (water, a campfire or a black hole
+ * there do not count), under the world's ceiling. The search climbs through solid cells (blocks stacked on the ground
+ * lift you onto them) and one-cell gaps, but two non-solid cells in a row that are no place to stand end it (null): the
+ * ground spot is taken by water, a hole or a fire, or was dug away, and anything higher would be a roof, a sky platform
+ * or a canopy over that gap. So a house built over the ground keeps you inside it.
  * @param {GetBlockFn} getBlock
+ * @param {number} fromFeet
  * @returns {number|null}
  */
-function standingTop(getBlock, q, r) {
-  for (let y = WORLD_HEIGHT - 1; y >= 0; y--) {
-    if (!isSolid(getBlock(q, y, r))) continue; // air, or water / a hole / a campfire hanging above the ground
-    const feet = y + 1;
-    if (feet + PLAYER_HEIGHT > WORLD_HEIGHT) return null;
-    return getBlock(q, feet, r) === BLOCK.AIR && getBlock(q, feet + 1, r) === BLOCK.AIR ? feet : null;
+function standingFrom(getBlock, q, r, fromFeet) {
+  let feet = Math.max(1, fromFeet);
+  let below = getBlock(q, feet - 1, r);
+  let at = getBlock(q, feet, r);
+  let run = isSolid(below) ? 0 : 1; // non-solid cells in a row, up to and including `at` once updated
+  for (; feet + PLAYER_HEIGHT <= WORLD_HEIGHT; feet++) {
+    const head = getBlock(q, feet + 1, r);
+    if (at === BLOCK.AIR && head === BLOCK.AIR && isSolid(below)) return feet;
+    run = isSolid(at) ? 0 : run + 1;
+    if (run >= 2) return null;
+    below = at;
+    at = head;
   }
   return null;
 }
@@ -303,8 +314,10 @@ export class BlackHoles {
    * world spawn's column, nearest ring first, and the first place to stand whose body middle (feet + PLAYER_HEIGHT / 2)
    * is at least BLACK_HOLE_PULL_RADIUS from every tracked hole wins. There the pull is zero and no eat ball reaches the
    * floor, so no hole can reach a player standing there. A loaded column is read live, so edits count (ground a hole
-   * ate, a house built over spawn): the feet go on its topmost solid cell, with AIR for the body. An unloaded column is judged
-   * from worldgen (dry land: surface height ≥ SEA_LEVEL, feet at height + 1) and skipped when it has recorded edits.
+   * ate, a house built over spawn): searching upward from its natural ground (worldgen surface + 1, which for spawn's own
+   * column is findSpawn's height), the feet go on the first solid cell with AIR for the body — inside a house over spawn,
+   * never on its roof or on a platform or canopy high above. An unloaded column is judged from worldgen (dry land:
+   * surface height ≥ SEA_LEVEL, feet at height + 1) and skipped when it has recorded edits.
    * If nothing is out of reach, the candidate farthest from every hole wins; with no candidate at all, `spawn`.
    * @param {[number, number, number]} spawn World.findSpawn() (world feet position)
    * @param {RespawnWorld} world
@@ -319,10 +332,10 @@ export class BlackHoles {
       const q = q0 + RESPAWN_OFFSETS[i];
       const r = r0 + RESPAWN_OFFSETS[i + 1];
       let y = null;
+      const h = world.surfaceHeight(q, r);
       if (world.isLoaded(q, r)) {
-        y = standingTop(world.getBlock, q, r);
+        y = standingFrom(world.getBlock, q, r, h + 1);
       } else if (!world.hasEdits(q, r)) {
-        const h = world.surfaceHeight(q, r);
         if (h >= SEA_LEVEL && h + 1 + PLAYER_HEIGHT <= WORLD_HEIGHT) y = h + 1;
       }
       if (y === null) continue;

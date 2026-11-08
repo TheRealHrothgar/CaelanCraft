@@ -507,7 +507,10 @@ water neighbour `Q` iff `topY(Q) < topY(a)`, spanning only `bottomY = topY(Q) ..
    stone, and also see-through glass, ice, leaves, a black hole) stays at 1, so a submerged see-through block shows no fake surface
    ledge (its top cap is drawn flush with that block's bottom face); only a free surface (AIR, or a block drawn by its own model:
    campfire) lowers a full cell. Flowing levels keep their own height everywhere. Applies to EVERY top vertex of that water cell:
-   the top corners of all six side quads and the whole top hexagon sit at `ly + topY`.
+   the top corners of all six side quads and the whole top hexagon sit at `ly + topY`. A block resting ON the surface leaves
+   the full cell under it 0.125 above the open water around; that step is drawn by the water-to-water side strips (2a), so no
+   dark band shows. (A rule that lowers the cell when the block above has no water beside it was tried and rejected: it brings
+   the fake ledge back under every submerged structure three or more cells wide.)
 2. **Side face `j`** (quad, 4 vertices, CCW from outside): `v0 = bottom corner j+1`, `v1 = bottom corner j`, `v2 = top corner j`,
    `v3 = top corner j+1` (so v0/v3 are the LEFT edge seen from outside, v1/v2 the RIGHT). Position `C + HEX_CORNERS[k]`,
    `y = ly` or `ly + topY`; normal `FACE_NORMALS[j]`. AO per vertex with `third` = the neighbour sharing that corner's vertical
@@ -801,9 +804,12 @@ export function createMenus(doc, atlasCanvas, callbacks)
  *   setPhysicsState(physics),               // v0.8: the Physics row (#btn-phys-falling|water|collapse|explosions: "<Label>: ON|OFF", class
  *                                           //   `off`, aria-pressed) and #btn-undo-physics (undoButtonLabel(canUndo, kind); disabled when !canUndo)
  *   showPicker(hotbar, selected), hidePicker(), isPickerOpen(),   // scrollable grid of PICKER_ORDER icons (64px canvases shown at 52px); click → onPickBlock(id, null); Digit1-9 while hovering → onPickBlock(id, slot)
- *                                           // styles.css: .picker-panel is a border-box flex column with max-height calc(100vh − 8vh − 72px), so at
- *                                           //   any viewport height it ends above the hotbar (bottom 60px), which stays visible and clickable; only
- *                                           //   #picker-grid (min-height 0, flex 0 1 auto, max-height 420px) shrinks and scrolls
+ *                                           // styles.css: .picker-panel is a border-box flex column with max-height max(180px, calc(100vh − 8vh − 72px))
+ *                                           //   and overflow-y auto; only #picker-grid (min-height 64px = one row, flex 0 1 auto, max-height 420px)
+ *                                           //   shrinks and scrolls. At viewport heights ≥ 274px the panel ends above the hotbar (bottom 60px), which
+ *                                           //   stays visible and clickable. Below that the panel stays 180px (chrome with a two-line hint, 116px, plus
+ *                                           //   one row) so a block can always be picked, and only then overlaps the hotbar; if the hint wraps further
+ *                                           //   (very narrow too), the panel scrolls
  *   getSeedInput(),                         // text of #seed-input
  *   dispose() } */
 ```
@@ -1121,10 +1127,14 @@ by one), so crowds in different chunks take turns. Otherwise `due = false` and t
 reporting the old id. Because holes stay in step, a chunk full of holes is re-meshed once a round, not every frame.
 
 `respawnPoint(spawn, world)`: columns over the hex rings 0..BLACK_HOLE_RESPAWN_RINGS (32) around spawn's column (ring n from
-n × HEX_DIRS[4], n steps along each direction, like findSpawn) give candidates: a loaded column stands on its topmost solid cell
-`t` (feet y = t + 1) if cells t + 1 and t + 2 are AIR (water, a campfire or a hole there → none) and `t + 1 + PLAYER_HEIGHT ≤
-WORLD_HEIGHT`, so edits count (ground a hole ate, a house built over spawn); an unloaded column without recorded edits (`hasEdits`) stands at its
-worldgen surface + 1 when the surface is ≥ SEA_LEVEL. The first candidate whose body middle (feet + PLAYER_HEIGHT/2) is at least
+n × HEX_DIRS[4], n steps along each direction, like findSpawn) give candidates. A loaded column is searched UPWARD from its
+natural ground, feet = `surfaceHeight(q, r) + 1` (worldgen; for spawn's own column that is findSpawn's height): the first feet
+y with a solid cell at y − 1, AIR at y and y + 1 (water, a campfire or a hole there do not count) and `y + PLAYER_HEIGHT ≤
+WORLD_HEIGHT`. The search climbs through solid cells and one-cell gaps, but two non-solid cells in a row that are no place to
+stand end it (no candidate): the ground spot is taken by water, a hole or a fire, or was dug away, and anything higher would be
+a roof, a sky platform or a canopy over that gap. So edits count — blocks stacked on the ground lift you onto them, ground a hole
+ate is out — and a house built over spawn keeps you inside it, while a roof, a platform or leaves above a free spot never lift
+you. An unloaded column without recorded edits (`hasEdits`) stands at its worldgen surface + 1 when the surface is ≥ SEA_LEVEL. The first candidate whose body middle (feet + PLAYER_HEIGHT/2) is at least
 BLACK_HOLE_PULL_RADIUS from every tracked hole is returned (no pull there, and no eat ball reaches its floor, so a player standing
 still is never swallowed); else the candidate farthest from every hole; else `spawn`.
 
@@ -1257,24 +1267,36 @@ export function flicker(t, seed)            // 1 + 0.12·sin(7.3t+s) + 0.08·sin
 export function scorchPlayer(player, getBlock, awayDir) → boolean   // the burn rule below; reads the BLOCK (tracked or not)
 export function wouldDouseCampfire(getBlock, id, q, y, r) → boolean // the water rule below
 export class Campfires {
-  fires: Map<key, { key, q, y, r, x, z (cell floor centre), seed ∈ [0, 2π) hashed from the cell }>   // TRACKED, ≤ CAMPFIRE_MAX_TRACKED
-  refused: Map<key, same>                   // CAMPFIRE cells past the cap (empty below it)
-  size (tracked); total (tracked + refused); clear(); has(q, y, r) (tracked)
-  add(q, y, r) → tracked?                   // duplicates ignored; past CAMPFIRE_MAX_TRACKED (1024) the fire goes to `refused`
-  remove(q, y, r) → known?                  // from either map
+  fires: Map<key, { key, q, y, r, x, z (cell floor centre), seed ∈ [0, 2π) hashed from the cell, slot, mark (internal) }>
+                                            // TRACKED, ≤ CAMPFIRE_MAX_TRACKED
+  known: Map<key, same>                     // every CAMPFIRE cell, tracked or not (only add/remove change it)
+  refused                                   // read-only view { size, has(key), get(key), values() } of known − fires (empty below the cap)
+  size (tracked); total (known.size); clear(); has(q, y, r) (tracked)
+  add(q, y, r) → tracked?                   // duplicates ignored; past CAMPFIRE_MAX_TRACKED (1024) the fire is refused (known, untracked)
+  remove(q, y, r) → known?                  // forgets the cell, tracked or not
   onBlockChange(q, y, r, prev, next)        // CAMPFIRE appears → add; disappears → remove
   loadFromEdits(world.edits)                // clear, then forEachEditedCell(edits, CAMPFIRE, add)
-  retrack(x, y, z) → rebuilt?               // see "Tracking cap"
+  retrack(x, y, z) → finished?              // advances or finishes a re-pick; see "Tracking cap"
   nearest(x, y, z, maxDist, limit = ∞)      // [{ fire, dist }] over TRACKED fires, by distance to (x, y + 0.3, z) of the fire, nearest first (ties by key)
 }
 export function createCampfireRenderer(scene, { makeCanvas, capacity = CAMPFIRE_MAX_MODELS })
   → { sync(near, t, dt), count(), idle(), prewarm(webglRenderer, camera) → Promise, dispose() }
 ```
 Tracking cap: `nearest` scans every tracked fire each frame, so at most CAMPFIRE_MAX_TRACKED are tracked. While `refused` is not empty,
-`retrack(x, y, z)` (a no-op otherwise) rebuilds the tracked set as the CAMPFIRE_MAX_TRACKED fires nearest (x, y, z) (same distance as
-`nearest`, ties by key; the rest go to `refused`) whenever a fire was refused or a tracked one removed since the last rebuild, or
-(x, y, z) is CAMPFIRE_RETRACK_DISTANCE (8) or more from where it last rebuilt. So the fires around the player always have their model,
-light and crackle, and fires refused at the cap come back as others go. Nothing that burns depends on tracking (`scorchPlayer`, pigs).
+`retrack(x, y, z)` (a no-op otherwise) re-picks the tracked set as the CAMPFIRE_MAX_TRACKED fires nearest (x, y, z) (same distance as
+`nearest`, compared squared, ties by key; the rest are refused). A re-pick starts when a fire was refused or a tracked one removed
+since the last one started (or the last one ended short, below), or (x, y, z) is CAMPFIRE_RETRACK_DISTANCE (8) or more from where the
+last one measured. It never sorts all fires: it keeps the nearest in a bounded max-heap on (squared distance, key). It first offers
+the tracked fires (stamped `mark = −pass`; with a full tracked set the heap starts full, its root no farther than the farthest tracked
+fire), then walks every known fire's position from dense typed arrays (slot order; a removal swaps the last fire into its slot),
+skipping at one compare any fire farther than the heap's root and the fires offered up front, at most CAMPFIRE_RETRACK_BATCH (16384)
+per call, measuring from where it started. Fires added meanwhile are visited too; a fire moved by a removal from the part not yet
+walked into the walked part is offered at once; a removed fire is never kept. When the walk has seen every fire, the tracked set
+becomes exactly the kept fires (only fires that change side go in or out of `fires`; `known` is untouched; kept fires get
+`mark = ++marks`) and `retrack` returns true; calls that only advance a walk return false. The kept fires are always the nearest that
+exist; if removals during the walk left fewer than min(cap, total), another re-pick follows. So per-frame cost stays bounded (about
+a millisecond at 100 000 fires) while the result equals a full sort's. The fires around the player always have their model, light
+and crackle, and fires refused at the cap come back as others go. Nothing that burns depends on tracking (`scorchPlayer`, pigs).
 
 Renderer: each fire in `near` (at most `capacity`; extra entries are ignored) sits at its cell floor — six 6-sided stones on the cell
 corners (0.72·HEX_SIZE), three 6-sided logs crossing at 60° (the middle one charred), seven embers, five 6-sided flame cones

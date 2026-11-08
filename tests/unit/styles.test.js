@@ -72,8 +72,26 @@ describe('styles.css title screen', () => {
   });
 });
 
-/** A px / vh length, or calc() of px / vh terms joined by + and −, in px for a viewport height. */
+/** A px / vh length, calc() of px / vh terms joined by + and −, or max() of those, in px for a viewport height. */
 function lengthPx(v, viewportH) {
+  const mx = /^max\((.*)\)$/.exec(v);
+  if (mx) {
+    // split on the top-level commas only (calc() arguments have none here, but keep it honest)
+    const parts = [];
+    let depth = 0;
+    let start = 0;
+    for (let i = 0; i < mx[1].length; i++) {
+      const ch = mx[1][i];
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      else if (ch === ',' && depth === 0) {
+        parts.push(mx[1].slice(start, i).trim());
+        start = i + 1;
+      }
+    }
+    parts.push(mx[1].slice(start).trim());
+    return Math.max(...parts.map((p) => lengthPx(p, viewportH)));
+  }
   const m = /^calc\((.*)\)$/.exec(v);
   if (!m) return toPx(v, viewportH);
   let total = 0;
@@ -91,20 +109,37 @@ describe('styles.css block picker', () => {
   const panel = decls('.picker-panel');
   const grid = decls('#picker-grid');
 
-  it('the panel never reaches the hotbar, whatever the viewport height (an 800x480 window included)', () => {
+  // 4px border + 12px padding on each side, 16px bold title and name (~19px lines), 8px grid margins, and the 12px hint
+  // (~15px a line) on two lines: it wraps below ~640px wide (measured in Chrome: 114px of chrome at 512 wide, 100 at 1280).
+  const CHROME_TWO_LINE_HINT = 2 * 4 + 2 * 12 + 19 + 19 + 2 * 15 + 2 * 8;
+  const ONE_ROW = 60;
+  const panelBottom = (H) => lengthPx(layer.get('padding-top'), H) + lengthPx(panel.get('max-height'), H) + 2; // + 2px shadow
+
+  it('the panel never reaches the hotbar at any usual viewport height (an 800x480 window included)', () => {
     expect(HOTBAR_CLEARANCE).toBe(60);
     expect(panel.get('box-sizing')).toBe('border-box'); // max-height covers the border and padding
-    for (const H of [300, 382, 480, 502, 600, 622, 720, 1080, 1440]) {
-      const bottom = lengthPx(layer.get('padding-top'), H) + lengthPx(panel.get('max-height'), H) + 2; // + 2px shadow
-      expect(bottom).toBeLessThanOrEqual(H - HOTBAR_CLEARANCE - 8);
+    for (const H of [274, 300, 382, 480, 502, 600, 622, 720, 1080, 1440]) {
+      expect(panelBottom(H), `viewport ${H}px`).toBeLessThanOrEqual(H - HOTBAR_CLEARANCE - 8);
     }
+  });
+
+  it('a tiny window (512x202 and smaller) still shows a row of blocks to pick: only then may the panel overlap the hotbar', () => {
+    // Regression: at a 202px viewport #picker-grid shrank to 0px, so nothing could be picked.
+    expect(lengthPx(grid.get('min-height'), 0)).toBeGreaterThanOrEqual(ONE_ROW);
+    expect(lengthPx(grid.get('min-height'), 0)).toBeLessThan(2 * ONE_ROW); // about one row, not a fixed big panel
+    for (const H of [120, 202, 240, 273]) {
+      const room = lengthPx(panel.get('max-height'), H);
+      expect(room, `viewport ${H}px`).toBeGreaterThanOrEqual(CHROME_TWO_LINE_HINT + lengthPx(grid.get('min-height'), 0));
+      expect(room).toBeLessThanOrEqual(CHROME_TWO_LINE_HINT + lengthPx(grid.get('min-height'), 0) + 8); // no more than needed
+    }
+    // Narrower still (a three-line hint): the panel scrolls rather than spilling past its border.
+    expect(panel.get('overflow-y')).toBe('auto');
   });
 
   it('only the grid shrinks and scrolls, so the title, name and a wrapped hint can never push the panel down', () => {
     expect(panel.get('display')).toBe('flex');
     expect(panel.get('flex-direction')).toBe('column');
     expect(grid.get('overflow-y')).toBe('auto');
-    expect(grid.get('min-height')).toBe('0');
     expect(grid.get('flex')).toMatch(/^0 1 /);
     expect(grid.get('max-height')).not.toMatch(/vh/); // the viewport bound lives on the panel, which sees all the chrome
   });

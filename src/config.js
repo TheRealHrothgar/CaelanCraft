@@ -112,6 +112,7 @@ export const BODY_PASSES = 3;                       // pair-separation sweeps pe
 // Campfires (CONTRACTS §32)
 export const CAMPFIRE_MAX_TRACKED = 1024;           // fires scanned per frame; past this, the ones nearest the player are tracked (the rest still burn)
 export const CAMPFIRE_RETRACK_DISTANCE = 8;         // past the cap, the tracked set is re-picked after the player moves this far
+export const CAMPFIRE_RETRACK_BATCH = 16384;        // fires a re-pick examines per frame at most (it finishes over several frames)
 export const CAMPFIRE_MODEL_RANGE = 64;             // world units from the camera within which campfires get a model
 export const CAMPFIRE_MAX_MODELS = 48;              // nearest-first
 export const CAMPFIRE_LIGHTS = 4;                   // pooled point lights, given to the nearest lit models (constant count: no shader rebuilds)

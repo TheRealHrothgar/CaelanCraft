@@ -393,7 +393,7 @@ describe('BlackHoles.respawnPoint', () => {
     expect(holes.swallowing(p)).toBeNull();
     expect(Math.hypot(p.x - at[0], p.y - at[1], p.z - at[2])).toBeLessThan(1e-3);
   });
-  it('respects edits: a house over spawn puts you on its roof, and water or an eaten crater is never stood in', () => {
+  it('respects edits: blocks stacked on the ground lift you onto them, and water or an eaten crater is never stood in', () => {
     const { w, holes, view, spawn } = flatWorld();
     for (let y = 71; y <= 75; y++) w.setBlock(0, y, 0, B.STONE);
     expect(holes.respawnPoint(spawn, view)).toEqual([0, 76, 0]);
@@ -407,6 +407,48 @@ describe('BlackHoles.respawnPoint', () => {
     const dry = holes.respawnPoint(spawn, view);
     expect(clearance(holes, dry)).toBeGreaterThanOrEqual(BLACK_HOLE_PULL_RADIUS);
     expect(dry[1]).toBe(71);
+  });
+  it('searches upward from the natural ground: a house over spawn keeps you inside it; a roof, sky platform or canopy never lifts you', () => {
+    // Regression: the respawn went to the TOPMOST solid block of the column, even for a hole far away.
+    const build = (w, cells) => { for (const [q, y, r, id] of cells) w.setBlock(q, y, r, id); };
+    const disc = (q0, y, r0, R, id) => {
+      const out = [];
+      for (let dq = -R; dq <= R; dq++) for (let dr = -R; dr <= R; dr++) if (hexDistance(0, 0, dq, dr) <= R) out.push([q0 + dq, y, r0 + dr, id]);
+      return out;
+    };
+    const scenes = {
+      // `hexfill 0 90 0 3 1 glass`: a glass platform high over spawn
+      platform: disc(0, 90, 0, 3, B.GLASS),
+      // a stone house: walls ring 3, floor at ground level, roof at 76, hollow inside
+      house: [
+        ...disc(0, 76, 0, 3, B.STONE),
+        ...[71, 72, 73, 74, 75].flatMap((y) => disc(0, y, 0, 3, B.STONE).filter(([q, , r]) => hexDistance(0, 0, q, r) === 3)),
+      ],
+      // a leaf canopy two cells above the ground
+      canopy: [...disc(0, 73, 0, 2, B.OAK_LEAVES), ...disc(0, 74, 0, 2, B.OAK_LEAVES)],
+    };
+    for (const [name, cells] of Object.entries(scenes)) {
+      const { w, holes, view, spawn } = flatWorld();
+      build(w, cells);
+      w.setBlock(-40, 71, 0, B.BLACK_HOLE); // a hole far from spawn: it cannot reach spawn at all
+      expect(holes.respawnPoint(spawn, view), name).toEqual(spawn);
+      // A hole at spawn: the nearest place out of reach is still at ground level, never up on the build.
+      w.setBlock(0, 71, 0, B.BLACK_HOLE);
+      const at = holes.respawnPoint(spawn, view);
+      expect(at[1], name).toBe(71);
+      expect(clearance(holes, at)).toBeGreaterThanOrEqual(BLACK_HOLE_PULL_RADIUS);
+    }
+  });
+  it('climbs one-cell gaps but never over a taken or dug-out ground spot to a floor high above it', () => {
+    const { w, holes, view, spawn } = flatWorld();
+    w.setBlock(0, 72, 0, B.STONE); // a one-cell overhang just above the ground: no room under it, so on top
+    expect(holes.respawnPoint(spawn, view)).toEqual([0, 73, 0]);
+    w.setBlock(0, 72, 0, B.AIR);
+    w.setBlock(0, 80, 0, B.OAK_PLANKS); // a plank floor high over spawn
+    for (let y = 60; y <= 70; y++) w.setBlock(0, y, 0, B.AIR); // and the ground under spawn dug away
+    const dug = holes.respawnPoint(spawn, view);
+    expect(hexDistance(0, 0, ...worldToHex(dug[0], dug[2]))).toBe(1);
+    expect(dug[1]).toBe(71);
   });
   it('a hole floating high above spawn does not hide the ground under it', () => {
     const { w, holes, view, spawn } = flatWorld();
