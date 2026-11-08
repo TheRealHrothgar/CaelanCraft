@@ -526,10 +526,12 @@ export class Pigs {
   }
 
   /**
-   * Hit a pig from a point (the player's position): knockback away from it, a hop, a hurt flash and a flee.
+   * Hit a pig from a point (the player's position): knockback away from it, a hop, a hurt flash and a flee. With
+   * `kick` false (a blast or a log, which push every body the same through PhysicsHooks.knock) only the flash and the
+   * flee: the pig's velocity is left alone.
    * @returns {boolean} false while the pig is still flashing from the last hit
    */
-  hit(pig, fromX, fromZ) {
+  hit(pig, fromX, fromZ, kick = true) {
     if (pig.hurt > 0) return false;
     let dx = pig.x - fromX;
     let dz = pig.z - fromZ;
@@ -541,10 +543,12 @@ export class Pigs {
       dx /= d;
       dz /= d;
     }
-    pig.vx = dx * PIG_KNOCKBACK;
-    pig.vz = dz * PIG_KNOCKBACK;
-    pig.vy = Math.max(pig.vy, 5);
-    pig.onGround = false;
+    if (kick) {
+      pig.vx = dx * PIG_KNOCKBACK;
+      pig.vz = dz * PIG_KNOCKBACK;
+      pig.vy = Math.max(pig.vy, 5);
+      pig.onGround = false;
+    }
     pig.hurt = PIG_HURT_S;
     pig.mode = 'flee';
     pig.timer = PIG_FLEE_S;

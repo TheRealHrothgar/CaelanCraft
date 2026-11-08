@@ -152,7 +152,7 @@ Block physics (v0.8, §33–§38): `PHYSICS_TICK_S, WATER_TICKS, PHYSICS_TICK_BU
 MAX_SUPPORT_VISITS_PER_TICK, SUPPORT_STARVED_VISITS, MAX_PARKED_UPDATES, MAX_PENDING_SUPPORT_SEEDS,
 UNDO_WINDOW_S, UNDO_MAX_CELLS, LAZY_MESH_BUDGET_MS, MAX_FALLING, MAX_TUMBLING, MAX_COLUMN_FALL, FALLER_RADIUS, FALLER_HEIGHT,
 TUMBLE_SUBSTEP, TUMBLE_AIR_DRAG, TUMBLE_GROUND_FRICTION, LANDING_DUST_PER_FRAME, PARTICLE_CAPACITY, PHYSICS_SOUND_RANGE,
-BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, WATER_CURRENT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS, SUPPORT_LIMIT,
+BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S, WATER_CURRENT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS, SUPPORT_LIMIT,
 TREE_MAX_CELLS, TREE_MAX_TOPPLING, TREE_QUEUE_GAP_S, TREE_SHAKE_S, TREE_THETA0, TREE_CAUSE_RANGE, BARREL_FUSE_S, MAX_LIT_BARRELS,
 MAX_EXPLOSIONS_PER_FRAME, MAX_DEBRIS, BLAST_RADIUS, BLAST_MAX_RADIUS, BLAST_CHAIN_WINDOW_S, BLAST_CHAIN_DISTANCE, BLAST_IMPULSE,
 BLAST_MIN_UP, BLAST_SHAKE_RANGE, BLAST_FLASH_S`; water as built (§35): `WATER_SOURCE_NEIGHBOURS, WADE_DEPTH, WADE_SPEED_FACTOR`;
@@ -910,9 +910,11 @@ rendering continues. Closing any modal goes through `enterPlayingFromModal()`: `
   `onBlockChanged` forwards every change to `blockPhysics.onBlockChange` LAST (after black holes, campfires, runes). Black-hole eats
   write lazily. physicsHooks: `say` → logLine; `areaJobsActive` → `runner.hasActiveJobs()`; `bodies` → [player, pigs in loaded
   chunks]; `player`; `sound(name, x, y, z, v)` → `audio['play' + Name]` when it exists (`break:<group>` → playBreak), volume ·
-  (1 − d/range) with range BOOM_SOUND_RANGE for 'boom' else PHYSICS_SOUND_RANGE (d from the player's chest), splash / hiss throttled
-  by SPLASH_MIN_INTERVAL_S / HISS_MIN_INTERVAL_S; `particles` → `particles.emit`; `knock(body, vx, vy, vz, fromX, fromZ)` adds the
-  velocity (a pig also gets `pigs.hit` + squeal).
+  (1 − d/range) with range BOOM_SOUND_RANGE for 'boom' else PHYSICS_SOUND_RANGE (d from the player's chest), splash / hiss / fizzle
+  throttled by SPLASH_MIN_INTERVAL_S / HISS_MIN_INTERVAL_S / FIZZLE_MIN_INTERVAL_S; `particles` → `particles.emit`; `knock(body, vx,
+  vy, vz, fromX, fromZ)` adds the velocity — a pig also gets `pigs.hit(pig, fromX, fromZ, false)` (flash and flee, NO kick: a blast
+  or a log pushes every body the same) and a squeal within 16 units, at most ONE per frame (the loudest, played after
+  `blockPhysics.step`: a blast through a herd took every audio voice from the boom).
   `stepPlaying` order: input & interaction → player (pull = black holes + `fluids.currentAt(player feet + 0.1)`; pigs' pullAt adds
   `currentAt(feet + 0.1)` too) → black holes → pigs → **`blockPhysics.step(dt)`** → campfires → `resolveBodies([player, pigs…,
   …blockPhysics.bodies()])` → **unstick player** (when `!isFreeAt(player)`: `findFreeY(…, floor(y)+1, 3)`, vy ≥ 0) → time → runes →
@@ -1171,7 +1173,8 @@ export class Pigs {
   update(dt, { getBlock, isLoaded(x, z), pullAt?, hasCampfires? }) → Pig[]   // oinks due this frame; pigs with y < −16 are
                                                //   removed; pigs whose chunk is unloaded are frozen; hasCampfires() false =
                                                //   the world has no CAMPFIRE cell at all (absent: assume it may)
-  hit(pig, fromX, fromZ) → boolean             // false during the PIG_HURT_S flash; else knockback PIG_KNOCKBACK away, vy ≥ 5,
+  hit(pig, fromX, fromZ, kick = true) → boolean  // false during the PIG_HURT_S flash; else knockback PIG_KNOCKBACK away, vy ≥ 5
+                                               //   (only with `kick`; main's physics knock hook passes false, §23), hurt flash,
                                                //   mode flee for PIG_FLEE_S facing away
   raycast(ox, oy, oz, dx, dy, dz, maxDist) → { pig, distance }|null   // the body cylinder PIG_RADIUS × PIG_HEIGHT at the feet
   export() → PigJSON[] (mm-rounded) ; load(validatedList)
@@ -1265,6 +1268,11 @@ export function detachBody(body, others)       // body.carrier = null and every 
      falling faster than the carrier, but a RISING carrier does not hand over its speed: the carry already lifts the rider, and both
      launched it off a jumping carrier), `carrier = lower`, `carrierAt = [lower.x, lower.y, lower.z]`. A lift cut short by a
      ceiling is undone and falls through to a push.
+   - (v0.8) A rider's `vx, vz` are relative to its carrier (step 1 carries it, step 3 hands the carrier's back). So a NEW ride —
+     `lower` is not the carrier the body had at the start of this call — does the mirror of step 3: `vx −= lower.vx, vz −=
+     lower.vz` (and a ride begun earlier in the same call and now replaced gives its carrier's back first). Landing on a moving
+     body, or being caught by one in mid-air, keeps the rider's motion over the ground instead of adding the carrier's on top; a
+     link that breaks and re-forms frame after frame no longer speeds the rider up. Both stand paths (rest and lift) do this.
    - PUSH: total = min(horizontal + COLLISION_EPS, BODY_MAX_PUSH); B moves `total · mA/(mA+mB)` along n, A moves the rest along −n,
      and if A could not (walls) B tries to take what is left — all through `displaceBody`, so nobody is pushed into terrain, and no
      body is pushed more than BODY_MAX_SHOVE in total per call (each push is cut to the body's remaining budget). So a pile of
@@ -1484,12 +1492,19 @@ x, y, z, count, opts)` (§34.5), `knock(body, vx, vy, vz, fromX, fromZ)` (defaul
    fallers / tumblers / seeds created meanwhile; `enterEvent(id)` / `withEvent(id, fn)` record later writes (landings) into event `id`
    only while it is still `lastEvent`.
 4. `undo()`: no event → `{ ok: false, 'nothing to undo (only the last explosion, collapse or falling tree can be undone)' }`; older
-   than UNDO_WINDOW_S of `time` → refused (`… too late to undo`) and forgotten. Else `lastEvent = null`; `cancelEvent(id)` on fallers,
-   trees and explosions (entities in flight removed, lit barrels refunded) and support (a crumble still coming down into the event
-   stops, §36.3.2); then every recorded cell whose current id is still the id
-   the event wrote — or is water-family where the event wrote AIR (§38.3) — is written back (quiet, lazy, ignoring the edit cap).
+   than UNDO_WINDOW_S of `time` → refused (`… too late to undo`) and forgotten. Else `lastEvent = null`; `cancelEvent(id)` on fallers
+   and trees (entities in flight removed) and support (a crumble still coming down into the event stops, §36.3.2); then every recorded cell whose current id is still the id the event wrote — or is
+   water-family where the event wrote AIR (§38.3) — is written back (quiet, lazy, ignoring the edit cap), the cells whose old id is
+   BLAST_BARREL LAST; then `explosions.cancelEvent(id, writeBarrel)` (§37.4.3: the event's burning barrels stop, its lit barrels are
+   given back in the cells they were lit in, through the same quiet uncapped write). So no barrel takes a cell the restore needs (a
+   campfire it fell into, sand that dropped into its lit cell).
+   **Undo never leaves an unlit BLAST_BARREL next to a CAMPFIRE** (8-neighbourhood, as the world stands after the other restores): it
+   would only catch again — through the 'ignite' trigger at once, or through the reseeder on the next load — and blow the restored
+   scene up a second time. Such a barrel cell is not restored, such a used-up barrel is not given back (both counted as "not given
+   back"), and a barrel of the event still burning there keeps burning as the campfire's (§37.4.3).
    Message: `undid the <kind>: restored N block(s)[, removed M still in flight][ (K changed since, left alone)][ (U in unloaded
-   chunks)]`.
+   chunks)][ (F barrel(s) next to a campfire not given back)][ (L barrel(s) found no room)]` — N counts the event's cells (not the
+   barrels given back), M includes the event's lit barrels put out.
 ### 33.9 Saving (`exportEdits`, never touches the live world)
 `overlay = new SaveOverlay(world)`; `fallers.settleInto(overlay)`, `support.settleInto(overlay)` (what a collapse has not brought
 down yet is saved fallen, §36.6.4), `trees.settleInto(overlay)`, `explosions.settleInto(overlay)`;
@@ -1836,11 +1851,15 @@ export class Explosions {            // physics.explosions
   isBurning(q, y, r) → boolean                  // a fuse timer burns in that cell (main's hint, §23)
   hangBurning(q, y, r) → boolean                // isBurning, and marks the timer `hung` (support.js asks before a crumble, §38.2)
   raycast(ox, oy, oz, dx, dy, dz, maxDist) → { target: LitBarrel, distance }|null; snuff(target) → boolean
-  step(dt); renderItems(push) (nothing: lit barrels are tumblers, timers are blocks); bodies(out); settleInto(overlay); cancelEvent(id) → n
+  step(dt); renderItems(push) (nothing: lit barrels are tumblers, timers are blocks); bodies(out); settleInto(overlay)
+  cancelEvent(id, write = ctx.writeQuiet-based) → BarrelUndo     // undo, AFTER the event's cells are restored (§33.8.4, §37.4.3)
   flash(out { x, y, z, intensity }) → out; shakeOffset(x, y, z, out [dx, dy, dz]) → out; reset(); onSwitch(on)
 }
-/** LitBarrel = { tumbler: Tumbler|null (null = fuse timer), q, y, r, fuse (s left), event (blast that lit it, 0 = none), phase, sparkIn,
- *               hung (timers: a collapse left it hanging, §38.2) }
+/** LitBarrel = { tumbler: Tumbler|null (null = fuse timer), q, y, r (entities: the cell it was LIT in), fuse (s left), event (blast
+ *               that lit it — or caught it burning, §37.3.3 — 0 = none), phase, sparkIn, hung (timers: a collapse left it hanging,
+ *               §38.2), hungEvent (timers: lastEvent's id when it was hung, 0 = none) }
+ *  BarrelUndo = { putOut (lit barrels of the event stopped), burnt (not given back: a CAMPFIRE next to the cell), lost (no loaded
+ *               cell with room in the column) }
  *  BlastInfo = { x, y, z, radius, barrels, destroyed, debris, lit (barrels it set burning), knocked, rim, capped, event } */
 ```
 ### 37.1 Lighting
@@ -1852,7 +1871,9 @@ export class Explosions {            // physics.explosions
 2. Rule 'ignite' (`misc`): a barrel with a CAMPFIRE among its 8 neighbours → `_light`; no campfire but an UNLOADED neighbour → park.
 3. `ignite(q, y, r)` (console / rune): `{ ok: false }` with `explosions are off — …`, `cell … is not loaded`, `there is no blast barrel at
    (q, y, r)`, `the barrel at (q, y, r) is already burning`; else `lit the blast barrel at (q, y, r) — 3 s fuse`.
-4. `_addTimer(q, y, r, fuse, event)`: an existing timer keeps the SHORTER fuse; at most MAX_FUSE_TIMERS (beyond: stays unlit). Trigger
+4. `_addTimer(q, y, r, fuse, event)`: an existing timer keeps the SHORTER fuse and, when `event > 0`, takes that event (a barrel lit by R,
+   a campfire or `ignite` that a blast catches joins the blast's chain: one undo, §37.3.1); at most MAX_FUSE_TIMERS (beyond: stays
+   unlit). Trigger
    'barrel-timers': a cell that stops being BLAST_BARREL drops its timer (broken, crumbled, swallowed barrels stop burning).
 ### 37.2 Lit barrels per frame (`step(dt)`, after fallers and trees; nothing while paused)
 1. Entities: a tumbler no longer in `fallers.tumblers` (fell below y = −16, reset) is forgotten; frozen while its column is unloaded;
@@ -1863,15 +1884,19 @@ export class Explosions {            // physics.explosions
 3. **Merged chains**, ≤ MAX_EXPLOSIONS_PER_FRAME per frame: the loaded barrel with the smallest fuse; if that fuse ≤ 0, the group = every
    loaded barrel (entities and timers) with `fuse ≤ earliest + BLAST_CHAIN_WINDOW_S` whose centre (entity: body centre; timer: cell
    centre) is within BLAST_CHAIN_DISTANCE of the earliest's. Timers whose cell is no longer a barrel are dropped; timers with water above
-   or beside them fizzle (steam, 'fizzle'); the rest go off as ONE blast at the mean centre, radius `blastRadius(n)`.
+   or beside them fizzle (8 steam each for the first 16 of the group; ONE 'fizzle' per group, at the fizzled timer nearest
+   `hooks.player()`, emitted AFTER the group's blast — a wet pile sent ~100 fizzles in one frame and they took every audio voice from
+   the boom; main also throttles 'fizzle', §23); the rest go off as ONE blast at the mean centre, radius `blastRadius(n)`.
 4. **Putting out** (`snuff`, water, switch off): the tumbler is removed, 'fizzle' + 8 smoke (steam when wet), and a BLAST_BARREL is left
+   (outside any event — not in the event of a blast that caught it, whose undo would take it away without giving it back)
    in the first fall-through or liquid cell at `floor(y + 0.05)` … +3 of its column: over a fall-through cell → `fallers.spawn` (it
    drops); in a fall-through cell → `fallers.settleNow` (never buries a body). Water is fall-through (§35.6), so a barrel put out
    in a lake sinks to the bottom; `ctx.write` into the cell remains only as the fallback for any other liquid.
 ### 37.3 The blast (`_explode` → `_blast`)
 1. Event: when a barrel of the group was lit by the blast that is still `physics.lastEvent`, the writes go into THAT event (`enterEvent`:
-   a chain is one undo); else `beginEvent('explosion', { kind: 'explosion', x, y, z })`. The group's entities are removed (their cells
-   kept for the undo refund) and its timer cells written AIR (quiet).
+   a chain is one undo); else `beginEvent('explosion', { kind: 'explosion', x, y, z })`. The group's entities are removed (the cells
+   they were LIT in kept for the undo refund — not where they went off: two lit in one stack fall into one cell, a knocked one goes
+   off in mid-air) and its timer cells written AIR (quiet).
 2. Cells: every column within `R + BLAST_JITTER` horizontally that is loaded, y within reach; a cell whose centre distance d satisfies
    `d ≤ R + jitter`, `jitter = (hash3(q, y, r, salt) / 2^32 · 2 − 1) · BLAST_JITTER` with `salt` from `ctx.random()` once per blast, and
    that is not blast-proof, is a candidate; candidates are handled NEAREST FIRST: BLAST_BARREL → `_addTimer(fuse ∈
@@ -1880,8 +1905,11 @@ export class Explosions {            // physics.explosions
 3. Bodies within 2R: `j = BLAST_IMPULSE·(1 − d/2R)` with d from the blast centre to the body centre (feet + height/2), along the unit
    direction (straight up when d ≈ 0), `vy = max(j·ny, BLAST_MIN_UP)`. The player and pigs (`hooks.bodies()`) through
    `hooks.knock(body, vx, vy, vz, cx, cz)` (main: pigs squeal and flee); every tumbler (lit barrels, debris) gets it added directly
-   (`onGround = false`, ± DEBRIS_SPIN/2 spin about x and z). A lit barrel whose centre is within R gets `fuse = min(fuse, a timer fuse)`.
-   Column fallers are not pushed.
+   (`onGround = false`, ± DEBRIS_SPIN/2 spin about x and z). A knocked body riding a knocked carrier (`body.carrier`, §31) then has the
+   carrier's `vx, vz` change taken off again — a rider's velocity is relative to its carrier, so it ends up with exactly its own
+   impulse over the ground, not its own plus the carrier's (a player on a pig was thrown ~2.5× as far; all changes are taken
+   before any is corrected). A lit barrel whose centre is within R gets `fuse = min(fuse, a timer fuse)` and `event` = the blast's
+   (it joins the chain like a barrel block caught as a timer). Column fallers are not pushed.
 4. Debris: up to MAX_DEBRIS destroyed SOLID cells, picked at random (`ctx.random`), become tumblers of their block (feet at y + 0.01,
    outward from the centre at DEBRIS_SPEED_MIN…MAX, up DEBRIS_UP_MIN…MAX, spin ±DEBRIS_SPIN, event = the blast's): they vanish in dust
    where they land (§34.3); a null tumbler → 6 dust. Of the other destroyed cells an even spread of at most BLAST_DUST_CELLS puffs 3 dust
@@ -1899,12 +1927,20 @@ export class Explosions {            // physics.explosions
 2. `settleInto(overlay)`: each lit entity is saved as BLAST_BARREL at `floor(y + 0.05)` moved up past cells that are neither fall-through
    nor liquid, then down while the cell below is fall-through (unloaded columns skipped); fuse timers are not saved (they are barrels),
    except that a `hung` timer's barrel, lowest first, is saved moved down its column while the cell below is fall-through (§38.2).
-3. `cancelEvent(id)` (undo, before the cells are restored): timers of event `id` are dropped (still barrels; a `hung` one queues
-   `physics.seedSupport([[q, y, r]])`, §38.2), lit entities of it become
-   blocks again (both counted in the result); the barrel entities used up by that event's blasts are written back (quiet) where their
-   cells are fall-through.
+3. `cancelEvent(id, write)` (undo, AFTER the scheduler restored the event's cells, §33.8.4; `write(q, y, r)` writes a BLAST_BARREL
+   block — undo passes its quiet uncapped write): timers of event `id` are dropped (still barrels; a `hung` one queues
+   `physics.seedSupport([[q, y, r]])`, §38.2) and lit entities of it are removed — except one whose cell (an entity: its lit cell) has a
+   CAMPFIRE neighbour, which keeps burning with `event = 0` (put out it would only catch again); `putOut` counts the rest. Then every
+   barrel to give back — the entities used up by the event's blasts and the entities just removed — goes back into the cell it was
+   LIT in, lowest first: moved up past cells that are neither AIR nor water (sand that dropped into the cell, a barrel given back
+   there already: two from one stack come back stacked), then down while the cell below is AIR or water (never floating); an
+   unloaded column or one full to the top → `lost`; a CAMPFIRE next to the final cell → not given back (`burnt`, §33.8.4);
+   else `write`.
 4. `onSwitch(false)`: every lit entity is put out (37.2.4), every timer dropped (a `hung` one queues its support seed, §38.2). A timer
-   that fizzles in water (37.2.3) does the same. `reset()`: lit entities removed from the fallers, timers,
+   that fizzles in water (37.2.3) does the same. The hung seed joins the undoable event (`withEvent`) while `canUndo` and that event is
+   the timer's `event`, its `hungEvent`, or recorded a cell next to the barrel (a collapse begun just after `hangBurning`): the barrel's
+   fall belongs to what left it hanging. Otherwise its crumble began a 'collapse' event of its own, which replaced the blast as the one
+   undoable event — the crater could no longer be undone. `reset()`: lit entities removed from the fallers, timers,
    refunds, flash and shake cleared.
 
 ## 38. Block physics integration (v0.8) — the features together
@@ -1929,7 +1965,9 @@ real World for saving and reloading).
    'barrel-timers' trigger dropped its fuse, and a pile caught by a blast landed in the crater as dead barrels.
 2. A `hung` timer that stops burning WITHOUT going off — fizzled by water (§37.2.3), explosions switched off (§37.4.4), undo
    (§37.4.3) — queues `physics.seedSupport([[q, y, r]], { cause: { kind: 'physics' } })`: a seed without removals collapses the
-   floating component it finds outright (§36.2.3), so the barrel falls after all instead of floating forever.
+   floating component it finds outright (§36.2.3), so the barrel falls after all instead of floating forever. The seed is queued
+   inside the blast's event while that is still undoable (§37.4.4), so the crumble records into it (§36.3) instead of opening a
+   'collapse' event that would take the undo away from the crater.
 3. Saving (§37.4.2): a `hung` timer's barrel is saved dropped down its column (a reloaded barrel has no fuse and would float).
 4. main's crosshair hint on a burning barrel: `Blast Barrel · burning! click: break it` (`explosions.isBurning`); breaking it drops its
    fuse ('barrel-timers').
@@ -1940,7 +1978,9 @@ real World for saving and reloading).
    back in instead of leaving pockets of water inside the restored ground, and the drained flow edits prune away.
 3. What the GRAVITY rule moved after a blast or a collapse (sand from a crater rim) is not part of the event: it stays where it fell, and
    a crater cell it fell into is reported as `changed since, left alone`. One undo restores the blast, the collapse it caused (§36.3.2)
-   and the trees it felled; a chain is one event (§37.3.1).
+   and the trees it felled; a chain is one event (§37.3.1) — including the barrels it caught that were already burning (§37.3.3,
+   §37.1.4) and the fall of hung barrels that fizzled (§38.2.2) — and gives the lit barrels back in their lit cells (§37.4.3), never
+   next to a campfire (§33.8.4).
 ### 38.4 Scheduling
 1. The fall ring carries falling water as well as gravity blocks (§33.5.2), so a long waterfall can spend the whole tick budget.
    Fair shares (§33.1.3) replaced the support-only starvation guard (SUPPORT_STARVE_TICKS): the fall ring stops at half the budget

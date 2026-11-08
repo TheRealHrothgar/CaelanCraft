@@ -246,7 +246,8 @@ stutter*). `MAX_EXPLOSIONS_PER_FRAME = 1`.
 - **Undo** the last physics *event* (explosion, collapse, tree) within 60 s: each event records the cells it changed
   (cell, previous id, id it wrote) and the cells its fallers/logs later landed in; `undo` (console) or the pause-menu
   button restores every recorded cell whose current id is still what the event wrote, removes that event's entities still
-  in flight, and refunds lit barrels. Only the most recent event (one level). Chat confirms what was restored.
+  in flight, and refunds lit barrels (in the cells they were lit in; never next to a campfire, which would only light them
+  again — CONTRACTS §33.8.4). Only the most recent event (one level). Chat confirms what was restored.
 - Saving: §3 (fallers settled into a copy), §4 (no flow/fall edits), lit barrels saved as barrels, fuse timers dropped,
   `physics` field written. The live world is never modified by a save.
 
@@ -407,6 +408,27 @@ Found only with everything running together, and how the merge resolved it:
 4. **Two `playCreak`s** (trees and explosives both wrote one): the trees owner's is kept.
 5. Tests written against stubbed neighbours that live water now changes (a water source beside a lit barrel puts it out; the
    trigger list) were adjusted, not the behaviour.
+6. **A chain is one undo, however it unfolds** (review fixes, CONTRACTS §37.1.4, §37.3.3, §38.2.2). Three things split a chain into
+   several events, and each new event took the only undo away from the crater: a hung barrel that fizzled in a pond (or was put out
+   by switching explosions off) crumbled in a 'collapse' event of its own; a barrel already lit with R (an entity, or a fuse timer
+   when every entity slot was taken) that the blast set off early opened a second 'explosion'. Now the hung barrel's support seed
+   joins the blast's event, and a caught burning barrel takes the blast's event. *Undo restores the whole crater.*
+7. **Barrels come back where they were lit** (CONTRACTS §37.4.3). The undo refund used the entity's position when it went off and
+   was written before the restore: two barrels of one stack (lit barrels never collide, so the top one falls into the bottom one's
+   cell) came back as one, a knocked one came back floating, and one that had fallen into a campfire's cell took it. Now the lit cell
+   is kept, and the barrels are given back after the restore, stacked and settled down their column.
+8. **Undo never leaves an unlit barrel next to a campfire.** Undoing a campfire-lit blast restored the barrel and the campfire, and
+   the 'ignite' trigger lit the pair again: the same crater 3 s after every undo (masking the trigger during undo only moves it to
+   the next load — the reseeder lights a saved pair). A used-up barrel next to a campfire is not given back (the chat line says
+   so), and one still burning there keeps burning. *The restored scene stays standing.*
+9. **Every body gets the same push** (CONTRACTS §23, §31, §37.3.3). Pigs got `pigs.hit`'s 5 m/s kick on top of the blast (2.07 m of
+   rise at any distance, against the player's 0.59 m); a player riding a pig got its own impulse plus the pig's (the rider's velocity
+   is relative to its carrier) and, when the faster-rising pig caught it in mid-air, the pig's once more: ~2.5× the throw. Now the
+   knock hook only flashes and scares the pig, the blast takes the carrier's change off a knocked rider, and a new ride converts the
+   rider's velocity to the carrier's frame (the mirror of the release).
+10. **One fizzle per group, after the boom.** A wet pile fizzled ~100 barrels in one frame; each `playFizzle` takes two of the 32
+   audio voices, so the boom of that frame was dropped. Now one 'fizzle' per merged group, emitted after its blast; main throttles
+   'fizzle' (FIZZLE_MIN_INTERVAL_S) and plays at most one knock squeal per frame.
 
 ### 10.10 Performance pass (v0.8 review: CORE-1, CORE-2, F1, F2, FR-1, FR-2; normative: CONTRACTS §33.1, §33.6.4, §34.1–§34.2, §36.1.4, §36.3)
 The review measured frames far beyond the 3 ms tick: one 150–470 ms physics step after a 32 768-cell `fill … air`, area-job

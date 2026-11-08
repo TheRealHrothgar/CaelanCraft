@@ -789,11 +789,12 @@ export class BlockPhysics {
   }
 
   /**
-   * Undo the last physics event within UNDO_WINDOW_S: remove its entities still in flight (fallers, logs, debris,
-   * lit barrels — the latter refunded as barrels by explosions.cancelEvent), then restore every recorded cell whose
-   * current id is still what the event wrote — or, where the event wrote AIR, water that has flowed in since (a
-   * flooded crater fills back in instead of leaving water pockets inside the restored ground, CONTRACTS §38.3).
-   * Writes are quiet (no support seeds) and lazy.
+   * Undo the last physics event within UNDO_WINDOW_S: remove its fallers, logs and debris still in flight, then restore
+   * every recorded cell whose current id is still what the event wrote — or, where the event wrote AIR, water that has
+   * flowed in since (a flooded crater fills back in instead of leaving water pockets inside the restored ground,
+   * CONTRACTS §38.3). The event's barrel cells are restored last, and never next to a CAMPFIRE (it would only light
+   * them again); then explosions.cancelEvent stops the event's burning barrels and gives back the lit ones in the cells
+   * they were lit in (§37.4.3). Writes are quiet (no support seeds), lazy and past the edit cap.
    * @returns {{ ok: boolean, message: string, restored: number }}
    */
   undo() {
@@ -809,12 +810,13 @@ export class BlockPhysics {
     let inFlight = 0;
     inFlight += this.fallers.cancelEvent(ev.id) | 0;
     inFlight += this.trees.cancelEvent(ev.id) | 0;
-    inFlight += this.explosions.cancelEvent(ev.id) | 0;
     this.support.cancelEvent(ev.id); // a big crumble still coming down into this event stops (§36.3.2)
     let restored = 0;
     let changed = 0;
     let unloaded = 0;
     const c = this._cell;
+    /** @type {number[]} the event's own BLAST_BARREL cells: restored after every other cell (a campfire first) */
+    const barrels = [];
     for (const [key, code] of ev.cells) {
       unpackCell(key, c);
       const prev = Math.floor(code / 256);
@@ -829,13 +831,28 @@ export class BlockPhysics {
         continue;
       }
       if (prev === wrote) continue;
-      if (this._write(c[0], c[1], c[2], prev, WRITE_QUIET, true) === 'ok') restored++;
+      if (prev === BLOCK.BLAST_BARREL) barrels.push(key);
+      else if (this._write(c[0], c[1], c[2], prev, WRITE_QUIET, true) === 'ok') restored++;
     }
+    // Barrels: never next to a campfire — an unlit barrel there would catch again (the 'ignite' trigger at once, or
+    // the reseeder on the next load) and blow the restored scene up a second time (§33.8.4).
+    let burnt = 0;
+    const writeBarrel = (q, y, r) => this._write(q, y, r, BLOCK.BLAST_BARREL, WRITE_QUIET, true) === 'ok';
+    for (const key of barrels) {
+      unpackCell(key, c);
+      if (this._hasNeighbour(c[0], c[1], c[2], BLOCK.CAMPFIRE)) burnt++;
+      else if (writeBarrel(c[0], c[1], c[2])) restored++;
+    }
+    const lit = this.explosions.cancelEvent(ev.id, writeBarrel) || {};
+    inFlight += lit.putOut | 0;
+    burnt += lit.burnt | 0;
     this._event = savedEvent;
     let message = `undid the ${ev.kind}: restored ${restored} block${restored === 1 ? '' : 's'}`;
     if (inFlight > 0) message += `, removed ${inFlight} still in flight`;
     if (changed > 0) message += ` (${changed} changed since, left alone)`;
     if (unloaded > 0) message += ` (${unloaded} in unloaded chunks)`;
+    if (burnt > 0) message += ` (${burnt} barrel${burnt === 1 ? '' : 's'} next to a campfire not given back)`;
+    if (lit.lost > 0) message += ` (${lit.lost} barrel${lit.lost === 1 ? '' : 's'} found no room)`;
     if (ev.truncated) message += ' (the event was too large to record completely)';
     return { ok: true, message, restored };
   }

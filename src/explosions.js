@@ -15,7 +15,7 @@
 // BLAST_RADIUS·∛n capped at BLAST_MAX_RADIUS, at most MAX_EXPLOSIONS_PER_FRAME per frame. A pile is one bigger boom.
 //
 // THE BLAST (centre c, radius R), inside ONE undoable physics event ('explosion'; a chain continues the event of the
-// blast that lit it while that is still the undoable one):
+// blast that lit it — or caught it already burning — while that is still the undoable one):
 //   1. every cell whose centre is within R + jitter (seeded, ±BLAST_JITTER) is destroyed, nearest first, with
 //      ctx.writeQuiet — except blast-proof cells (AIR, liquids, BEDROCK, OBSIDIAN, RUNE_BLOCK, BLACK_HOLE, unloaded);
 //      barrels become fuse timers; the first 'capped' write stops the breaking;
@@ -63,10 +63,20 @@ import { isAnchorCell, isLoadBearing } from './support.js';
  * @property {number} y
  * @property {number} r
  * @property {number} fuse     seconds left (≤ 0: due; it waits while its chunk is unloaded)
- * @property {number} event    physics event whose blast lit it (0 = lit by the player, a campfire or a command)
+ * @property {number} event    physics event whose blast lit it — or caught it while it burned (§37.3.3) — (0 = lit by
+ *                             the player, a campfire or a command)
  * @property {number} phase    pulse phase (entities), radians
  * @property {number} sparkIn  seconds to its next fuse sparks
  * @property {boolean} hung    timers: a collapse found it hanging and left it in place while it burns (hangBurning)
+ * @property {number} [hungEvent]  timers: physics.lastEvent's id when a collapse hung it (0 = none)
+ */
+
+/**
+ * What undo did with the barrels of an event (cancelEvent).
+ * @typedef {Object} BarrelUndo
+ * @property {number} putOut  lit barrels of the event that stopped burning (still in flight: counted by undo's message)
+ * @property {number} burnt   barrels not given back because a CAMPFIRE is next to their cell (it would light them again)
+ * @property {number} lost    barrels not given back for want of a loaded cell with room in their column
  */
 
 /**
@@ -121,6 +131,8 @@ const ENTITY_SPARK_S = 0.12;
 const TIMER_SPARK_S = 0.2;
 /** Fuse timers that spark in one frame (a field of hundreds burning stays cheap). */
 const MAX_TIMER_SPARKS_PER_FRAME = 24;
+/** Fizzling timers of one merged group that puff steam (they all fizzle; only one 'fizzle' sound plays). */
+const MAX_FIZZLE_STEAM = 16;
 /** Dust particles per destroyed cell that puffs (BLAST_DUST_CELLS of them). */
 const DUST_PER_CELL = 3;
 const TWO_PI = Math.PI * 2;
@@ -195,13 +207,27 @@ export class Explosions {
     if (this.timers.size === 0) return false;
     const rec = this.timers.get(packCell(q, y, r));
     if (rec === undefined) return false;
+    if (!rec.hung) rec.hungEvent = this.physics.lastEvent ? this.physics.lastEvent.id : 0;
     rec.hung = true;
     return true;
   }
 
-  /** A hung timer stopped burning without going off: let the collapse search judge its barrel now. */
+  /**
+   * A hung timer stopped burning without going off: let the collapse search judge its barrel now. Its fall belongs to
+   * what left it hanging, so the seed joins the undoable event when that is the blast that lit (or caught) it, the
+   * event that hung it, or an event that changed a cell next to it (a collapse begun just after hangBurning asked) —
+   * else the crumble would begin a 'collapse' event of its own and take the only undo away from the blast (§38.2.2).
+   */
   _unhang(rec) {
-    if (rec.hung) this.physics.seedSupport([[rec.q, rec.y, rec.r]], { cause: CAUSE_HUNG });
+    if (!rec.hung) return;
+    const physics = this.physics;
+    const seed = () => physics.seedSupport([[rec.q, rec.y, rec.r]], { cause: CAUSE_HUNG });
+    const ev = physics.canUndo ? physics.lastEvent : null;
+    if (ev !== null && (ev.id === rec.event || ev.id === rec.hungEvent || touchedAround(ev, rec.q, rec.y, rec.r))) {
+      physics.withEvent(ev.id, seed);
+    } else {
+      seed();
+    }
   }
 
   // -------------------------------------------------------------------------------------------------------------------
@@ -256,7 +282,7 @@ export class Explosions {
     if (this.lit.length < MAX_LIT_BARRELS && fallers.tumblerCount < MAX_TUMBLING && ctx.writeQuiet(q, y, r, BLOCK.AIR) === 'ok') {
       const [x, z] = hexToWorld(q, r);
       /** @type {LitBarrel} */
-      const rec = { tumbler: null, q, y, r, fuse: BARREL_FUSE_S, event: 0, phase: 0, sparkIn: 0, hung: false };
+      const rec = { tumbler: null, q, y, r, fuse: BARREL_FUSE_S, event: 0, phase: 0, sparkIn: 0, hung: false, hungEvent: 0 };
       const t = fallers.spawnTumbler(BLOCK.BLAST_BARREL, x, y, z, 0, 0, 0, { persistent: true, event: 0, data: rec });
       if (t !== null) {
         t.body.group = LIT_BARREL_GROUP;
@@ -272,7 +298,8 @@ export class Explosions {
   }
 
   /**
-   * Start (or shorten) a fuse timer on the barrel block at (q, y, r).
+   * Start (or shorten) a fuse timer on the barrel block at (q, y, r). A barrel already burning that a blast catches
+   * (`event` > 0) joins that blast's event: its own blast continues the chain, and one undo restores both (§37.3.3).
    * @returns {boolean} a new timer started (false when it was already burning or MAX_FUSE_TIMERS are)
    */
   _addTimer(q, y, r, fuse, event) {
@@ -280,10 +307,11 @@ export class Explosions {
     const old = this.timers.get(key);
     if (old !== undefined) {
       if (fuse < old.fuse) old.fuse = fuse;
+      if (event > 0) old.event = event;
       return false;
     }
     if (this.timers.size >= MAX_FUSE_TIMERS) return false;
-    this.timers.set(key, { tumbler: null, q, y, r, fuse, event, phase: 0, sparkIn: 0, hung: false });
+    this.timers.set(key, { tumbler: null, q, y, r, fuse, event, phase: 0, sparkIn: 0, hung: false, hungEvent: 0 });
     return true;
   }
 
@@ -337,7 +365,9 @@ export class Explosions {
     const top = b.y + bodyHeight(b);
     ctx.sound('fizzle', b.x, top, b.z, 1);
     ctx.particles(wet ? 'steam' : 'smoke', b.x, top, b.z, 8, { spread: 0.2 });
-    this._placeBarrel(b, rec.event);
+    // Not recorded into the blast that caught it (rec.event): that event's undo would take the barrel away again
+    // without giving it back — it is no longer a lit barrel of the event. It stays where it was put out.
+    this._placeBarrel(b, 0);
   }
 
   /**
@@ -498,6 +528,14 @@ export class Explosions {
     for (const rec of this.lit) consider(rec);
     for (const rec of this.timers.values()) consider(rec);
     const ctx = this.physics.ctx;
+    const player = this.physics.hooks.player();
+    // The timers in water fizzle: steam from each (the first MAX_FIZZLE_STEAM), ONE 'fizzle' at the one nearest the
+    // player (a wet pile sent ~100 at once, and they took every audio voice from the boom, §37.2.3).
+    let fizzled = 0;
+    let near = Infinity;
+    let fx = 0;
+    let fy = 0;
+    let fz = 0;
     for (let i = group.length - 1; i >= 0; i--) {
       const rec = group[i];
       if (rec.tumbler !== null) continue;
@@ -511,11 +549,18 @@ export class Explosions {
         this._unhang(rec);
         const x = rec.q + rec.r / 2;
         const z = rec.r * HEX_ROW_SPACING;
-        ctx.sound('fizzle', x, rec.y + 1, z, 1);
-        ctx.particles('steam', x, rec.y + 1, z, 8, { spread: 0.3 });
+        if (fizzled++ < MAX_FIZZLE_STEAM) ctx.particles('steam', x, rec.y + 1, z, 8, { spread: 0.3 });
+        const d = player ? Math.hypot(x - player.x, rec.y + 1 - player.y, z - player.z) : 0;
+        if (d < near) {
+          near = d;
+          fx = x;
+          fy = rec.y + 1;
+          fz = z;
+        }
       }
     }
-    if (group.length > 0) this._explode(group);
+    if (group.length > 0) this._explode(group); // the boom first, so the fizzle never takes its voice
+    if (fizzled > 0) ctx.sound('fizzle', fx, fy, fz, 1);
     return true;
   }
 
@@ -563,7 +608,7 @@ export class Explosions {
     let sy = 0;
     let sz = 0;
     let chain = 0;
-    /** @type {number[][]} cells of the barrel entities used up (undo puts them back) */
+    /** @type {number[][]} the cells the barrel entities used up were lit in (undo gives them back there, §37.4.3) */
     const refund = [];
     for (const rec of group) {
       this._position(rec, p);
@@ -572,9 +617,7 @@ export class Explosions {
       sz += p[2];
       if (rec.event > 0 && rec.event === lastId) chain = lastId;
       if (rec.tumbler !== null) {
-        const b = rec.tumbler.body;
-        const [q, r] = worldToHex(b.x, b.z);
-        refund.push([q, clampY(Math.floor(b.y + 0.05)), r]);
+        refund.push([rec.q, rec.y, rec.r]);
         physics.fallers.removeTumbler(rec.tumbler);
         this.lit.splice(this.lit.indexOf(rec), 1);
       } else {
@@ -697,7 +740,7 @@ export class Explosions {
     }
 
     // 3. Knock bodies within 2R away (before the debris, so it is not pushed by its own blast).
-    const knocked = this._knockAll(cx, cy, cz, radius);
+    const knocked = this._knockAll(cx, cy, cz, radius, event);
 
     // 2. Debris and dust.
     const debris = this._throwDebris(destroyed, cx, cy, cz, event);
@@ -764,40 +807,65 @@ export class Explosions {
     return k;
   }
 
-  /** @returns {number} bodies pushed: the player and pigs (hooks.knock), every tumbler (lit barrels, debris) */
-  _knockAll(cx, cy, cz, radius) {
+  /**
+   * Knock every body within 2R. A rider's horizontal velocity is relative to its carrier while it rides (bodies.js
+   * carries it, and hands it the carrier's velocity when it leaves), so a rider whose carrier is knocked too has the
+   * carrier's change taken off again: it ends up with exactly its own impulse over the ground, not its own plus the
+   * carrier's (a player standing on a pig was thrown ~2.5× as far, §37.3.3).
+   * @returns {number} bodies pushed: the player and pigs (hooks.knock), every tumbler (lit barrels, debris)
+   */
+  _knockAll(cx, cy, cz, radius, event) {
     const physics = this.physics;
     const ctx = physics.ctx;
-    let n = 0;
+    /** @type {Map<PlayerState, number[]>} knocked body → its [vx, vz] before the knock */
+    const before = new Map();
     const bodies = physics.hooks.bodies();
     if (bodies) {
       for (let i = 0; i < bodies.length; i++) {
         const b = bodies[i];
-        const k = b ? this._impulse(b, cx, cy, cz, radius) : null;
+        const k = b && !before.has(b) ? this._impulse(b, cx, cy, cz, radius) : null;
         if (k === null) continue;
+        before.set(b, [b.vx, b.vz]);
         physics.hooks.knock(b, k[0], k[1], k[2], cx, cz);
-        n++;
       }
     }
     for (const t of physics.fallers.tumblers) {
       const b = t.body;
-      const k = this._impulse(b, cx, cy, cz, radius);
+      const k = before.has(b) ? null : this._impulse(b, cx, cy, cz, radius);
       if (k === null) continue;
+      before.set(b, [b.vx, b.vz]);
       b.vx += k[0];
       b.vy += k[1];
       b.vz += k[2];
       b.onGround = false;
       t.wx += (ctx.random() * 2 - 1) * DEBRIS_SPIN * 0.5;
       t.wz += (ctx.random() * 2 - 1) * DEBRIS_SPIN * 0.5;
-      n++;
     }
-    // A lit barrel inside the crater catches the blast: its fuse shortens like a barrel block's.
+    if (before.size > 1) {
+      // Each carrier's change, all taken before any rider is corrected (a stack of three comes out right too).
+      /** @type {[PlayerState, number, number][]} */
+      const fix = [];
+      for (const b of before.keys()) {
+        const c = b.carrier;
+        const v0 = c ? before.get(c) : undefined;
+        if (v0 !== undefined) fix.push([b, /** @type {PlayerState} */ (c).vx - v0[0], /** @type {PlayerState} */ (c).vz - v0[1]]);
+      }
+      for (const [b, dvx, dvz] of fix) {
+        b.vx -= dvx;
+        b.vz -= dvz;
+      }
+    }
+    // A lit barrel inside the crater catches the blast: its fuse shortens like a barrel block's, and it joins the
+    // blast's event (its own blast continues the chain; undo puts it out, §37.3.3).
     for (const rec of this.lit) {
       this._position(rec, this._p);
       const p = this._p;
-      if (Math.hypot(p[0] - cx, p[1] - cy, p[2] - cz) <= radius) rec.fuse = Math.min(rec.fuse, this._timerFuse());
+      if (Math.hypot(p[0] - cx, p[1] - cy, p[2] - cz) <= radius) {
+        rec.fuse = Math.min(rec.fuse, this._timerFuse());
+        if (event > 0) rec.event = event;
+      }
     }
-    return n;
+    return before.size;
   }
 
   /**
@@ -911,37 +979,65 @@ export class Explosions {
   }
 
   /**
-   * Undo of event `id`: the barrels it lit stop burning (fuse timers dropped — they are still barrel blocks; lit
-   * entities of it become blocks again) and the barrel entities its blasts used up are put back where they were.
-   * Debris is the fallers' (fallers.cancelEvent). Runs before the scheduler restores the event's cells.
-   * @returns {number} lit barrels of that event put out
+   * Undo of event `id`, run by BlockPhysics.undo AFTER it restored the event's cells (§33.8.4), so a barrel never takes
+   * a cell the restore needs (a campfire it fell into, sand that dropped into its lit cell). The barrels of the event
+   * still burning stop: fuse timers are dropped (they are still barrel blocks), lit entities are removed. The lit
+   * entities of the event — those its blasts used up and those still burning — are given back as BLAST_BARREL blocks
+   * in the cell they were LIT in, lowest first, each moved up past cells that are neither AIR nor water (two barrels
+   * of one cell stack) and down while the cell below is AIR or water. Undo never leaves an unlit barrel next to a
+   * CAMPFIRE, which would only light it again (at once through the 'ignite' trigger, or on the next load through the
+   * reseeder): a burning one there keeps burning (as the campfire's, event 0), a used-up one is not given back.
+   * Debris is the fallers' (fallers.cancelEvent).
+   * @param {number} id
+   * @param {((q: number, y: number, r: number) => boolean)|null} [write]  writes a BLAST_BARREL block (undo passes its
+   *   quiet, uncapped write; default ctx.writeQuiet)
+   * @returns {BarrelUndo}
    */
-  cancelEvent(id) {
-    if (!(id > 0)) return 0;
-    let n = 0;
+  cancelEvent(id, write = null) {
+    /** @type {BarrelUndo} */
+    const res = { putOut: 0, burnt: 0, lost: 0 };
+    if (!(id > 0)) return res;
+    const ctx = this.physics.ctx;
+    const put = write ?? ((q, y, r) => ctx.writeQuiet(q, y, r, BLOCK.BLAST_BARREL) === 'ok');
     for (const [key, rec] of this.timers) {
-      if (rec.event === id) {
-        this.timers.delete(key);
-        this._unhang(rec);
-        n++;
+      if (rec.event !== id) continue;
+      if (nextToCampfire(ctx, rec.q, rec.y, rec.r)) {
+        rec.event = 0;
+        continue;
       }
+      this.timers.delete(key);
+      this._unhang(rec);
+      res.putOut++;
     }
+    /** @type {number[][]} lit cells of the barrels to give back */
+    const back = this._refunds.get(id) ?? [];
+    this._refunds.delete(id);
     for (let i = this.lit.length - 1; i >= 0; i--) {
       const rec = this.lit[i];
       if (rec.event !== id) continue;
+      if (nextToCampfire(ctx, rec.q, rec.y, rec.r)) {
+        rec.event = 0;
+        continue;
+      }
       this.lit.splice(i, 1);
-      const t = /** @type {Tumbler} */ (rec.tumbler);
-      this.physics.fallers.removeTumbler(t);
-      this._placeBarrel(t.body, 0);
-      n++;
+      this.physics.fallers.removeTumbler(/** @type {Tumbler} */ (rec.tumbler));
+      back.push([rec.q, rec.y, rec.r]);
+      res.putOut++;
     }
-    const refund = this._refunds.get(id);
-    if (refund) {
-      this._refunds.delete(id);
-      const ctx = this.physics.ctx;
-      for (const [q, y, r] of refund) if (isFallThrough(ctx.peek(q, y, r))) ctx.writeQuiet(q, y, r, BLOCK.BLAST_BARREL);
+    back.sort((a, b) => a[1] - b[1]);
+    for (const [q, y0, r] of back) {
+      let cy = y0;
+      let id2 = ctx.peek(q, cy, r);
+      while (id2 !== UNLOADED && !isOpen(id2) && cy < WORLD_HEIGHT - 1) id2 = ctx.peek(q, ++cy, r);
+      if (!isOpen(id2)) {
+        res.lost++; // unloaded, or the column is full to the top
+        continue;
+      }
+      while (cy > 0 && isOpen(ctx.peek(q, cy - 1, r))) cy--;
+      if (nextToCampfire(ctx, q, cy, r)) res.burnt++;
+      else if (!put(q, cy, r)) res.lost++;
     }
-    return n;
+    return res;
   }
 
   /**
@@ -1014,6 +1110,27 @@ function clampY(y) {
 /** A lit barrel saved into the overlay may rest in AIR, a campfire, flowing / falling water or a water source. */
 function isFree(id) {
   return isFallThrough(id) || isLiquid(id);
+}
+
+/** A barrel undo gives back may go into AIR or water (not a campfire's cell: it would take the campfire's place). */
+function isOpen(id) {
+  return isFallThrough(id) && id !== BLOCK.CAMPFIRE;
+}
+
+/** @returns {boolean} a CAMPFIRE is among the cell's 8 neighbours (an unlit barrel there catches fire) */
+function nextToCampfire(ctx, q, y, r) {
+  for (const [dq, dy, dr] of NEIGHBOURS) if (ctx.peek(q + dq, y + dy, r + dr) === BLOCK.CAMPFIRE) return true;
+  return false;
+}
+
+/** @returns {boolean} physics event `ev` changed one of the 8 neighbours of cell (q, y, r) */
+function touchedAround(ev, q, y, r) {
+  if (ev.cells.size === 0) return false;
+  for (const [dq, dy, dr] of NEIGHBOURS) {
+    const ny = y + dy;
+    if (ny >= 0 && ny < WORLD_HEIGHT && ev.cells.has(packCell(q + dq, ny, r + dr))) return true;
+  }
+  return false;
 }
 
 /**
