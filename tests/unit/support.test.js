@@ -5,11 +5,11 @@
 import { describe, it, expect } from 'vitest';
 import { SUPPORT_LIMIT, MAX_SUPPORT_VISITS_PER_TICK } from '../../src/config.js';
 import { BLOCK } from '../../src/blocks.js';
-import { hexToWorld } from '../../src/hex.js';
+import { HEX_DIRS, hexToWorld } from '../../src/hex.js';
 import { createPlayer, playerIntersectsBlock } from '../../src/physics.js';
 import { World } from '../../src/world.js';
 import { BlockPhysics } from '../../src/blockphysics.js';
-import { COLLAPSE_TIP } from '../../src/support.js';
+import { COLLAPSE_TIP, peekNeighbours } from '../../src/support.js';
 import { makeFakeWorld, attachPhysics, flatWorldGen } from '../helpers/fixtures.js';
 
 const B = BLOCK;
@@ -466,6 +466,21 @@ describe('real World', { timeout: 20000 }, () => {
     settle(physics);
     expect(count(world, B.OAK_PLANKS, 12, 19, 11, 20, 12, 19)).toBe(64);
     expect(count(world, B.OAK_PLANKS, 12, 19, 20, 20, 12, 19)).toBe(0);
+  });
+
+  it('peekNeighbours gives exactly what world.peekBlock gives, also for a cell of an unloaded chunk beside loaded ones', () => {
+    const { world } = realWorld({ rd: 1 });
+    world.setBlock(47, 11, 5, B.BRICKS); // chunk (2, 0), loaded; (3, 0) is not (beyond rd + DATA_RADIUS_EXTRA)
+    expect(world.getChunk(2, 0)).toBeDefined();
+    expect(world.getChunk(3, 0)).toBeUndefined();
+    const out = new Uint8Array(8);
+    const want = (q, y, r) => [
+      ...HEX_DIRS.map(([dq, dr]) => world.peekBlock(q + dq, y, r + dr)), world.peekBlock(q, y + 1, r), world.peekBlock(q, y - 1, r),
+    ];
+    for (const [q, y, r] of [[48, 11, 5], [48, 10, 0], [48, 0, 5], [48, 127, 5], [47, 11, 5], [5, 11, 5], [33, 11, 15]]) {
+      expect([...peekNeighbours(world, q, y, r, out)], `${q},${y},${r}`).toEqual(want(q, y, r));
+    }
+    expect(peekNeighbours(world, 48, 11, 5, out)[3]).toBe(B.BRICKS); // the side in loaded chunk (2, 0); it read UNLOADED
   });
 
   it('a crumbling deck never buries the player standing under it (lifted onto the pile, or the block breaks)', () => {

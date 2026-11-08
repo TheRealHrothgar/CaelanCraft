@@ -13,10 +13,11 @@
 // v0.8 (block physics, CONTRACTS §9.2): every edit remembers the cell's ORIGINAL (generated) id in `origins`, and a
 // write that puts a cell back to its origin deletes the edit, so drained water and refilled holes cost nothing in the
 // save; `editCount` is a running count. `setBlock(…, lazy = true)` (physics, black holes, explosions) marks chunks
-// dirty *lazily*: update() re-meshes those nearest-first under LAZY_MESH_BUDGET_MS instead of all at once.
+// dirty *lazily*: update() re-meshes those nearest-first under LAZY_MESH_BUDGET_MS instead of all at once;
+// `lazy = 'coalesce'` (a big crumble) also waits LAZY_COALESCE_UPDATES calls between two re-meshes of a chunk.
 import {
   CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE, DATA_RADIUS_EXTRA,
-  UNLOAD_RADIUS_EXTRA, BUILD_BUDGET_MS, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS,
+  UNLOAD_RADIUS_EXTRA, BUILD_BUDGET_MS, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS, LAZY_COALESCE_UPDATES,
 } from './config.js';
 import { chunkKey, parseChunkKey, localIndex, indexToLocal } from './coords.js';
 import { HEX_DIRS, hexLength, hexNormSq, hexToWorld, worldToHex } from './hex.js';
@@ -149,6 +150,8 @@ export class World {
 
     /** @type {Chunk[]} scratch list of lazily dirty chunks for update() step 2 */
     this._lazyScratch = [];
+    /** update() calls so far (a 'coalesce' chunk's wait, §9.2) */
+    this._updateCalls = 0;
 
     /** RING_OFFSETS as parallel typed arrays, sorted nearest-first (see _computeRing). */
     this._ringDq = new Int16Array(0);
@@ -335,12 +338,13 @@ export class World {
    * every LOADED chunk containing the cell or one of its six side neighbours (1–4 chunks) so neighbouring meshes
    * update their culled faces / AO. A `lazy` write (block physics, black holes, explosions) marks those chunks
    * dirty lazily — re-meshed nearest-first under LAZY_MESH_BUDGET_MS by update() — unless they are already dirty
-   * non-lazily; a non-lazy write always makes them non-lazy (immediate re-mesh).
+   * non-lazily; a non-lazy write always makes them non-lazy (immediate re-mesh). `lazy = 'coalesce'` is lazy too, and
+   * a chunk dirtied by nothing else waits LAZY_COALESCE_UPDATES update() calls since its last mesh (§9.2).
    * @param {number} q
    * @param {number} y
    * @param {number} r
    * @param {number} id
-   * @param {boolean} [lazy=false]
+   * @param {boolean|'coalesce'} [lazy=false]
    * @returns {boolean} false if y out of range, id invalid, chunk not loaded, or value unchanged
    */
   setBlock(q, y, r, id, lazy = false) {
@@ -497,12 +501,16 @@ export class World {
 
     // 2. Re-mesh edited chunks immediately (visible feedback for the player; ignores the budget). Chunks dirtied only
     //    by lazy writes (physics) are collected and re-meshed nearest-first under LAZY_MESH_BUDGET_MS — always at
-    //    least one per call — so a collapse or a flood never re-meshes dozens of chunks in one frame.
+    //    least one per call — so a collapse or a flood never re-meshes dozens of chunks in one frame. One dirtied
+    //    only by 'coalesce' writes (a big crumble's instant part) waits until LAZY_COALESCE_UPDATES calls have passed
+    //    since it was last meshed: its updates of a few frames become one re-mesh.
+    const call = ++this._updateCalls;
     const lazy = this._lazyScratch;
     lazy.length = 0;
     for (const chunk of this.chunks.values()) {
       if (chunk.dirty && chunk.meshed && this._neighboursLoaded(chunk.cq, chunk.cr)) {
         if (chunk.lazy) {
+          if (chunk.coalesce && call - chunk.meshedAt < LAZY_COALESCE_UPDATES) continue;
           lazy.push(chunk);
         } else {
           this._mesh(chunk);
@@ -677,22 +685,35 @@ export class World {
   /**
    * Mark dirty every loaded chunk containing cell (q, r) or one of its six neighbours: 1 to 4 chunks (4 only for
    * the two index-space corner cells lq=15,lr=0 and lq=0,lr=15, whose neighbours span three other chunks).
+   * @param {number} q
+   * @param {number} r
+   * @param {boolean|'coalesce'} [lazy=false]
    */
   _markDirtyAround(q, r, lazy = false) {
     this._markDirtyCell(q, r, lazy);
     for (let j = 0; j < 6; j++) this._markDirtyCell(q + HEX_DIRS[j][0], r + HEX_DIRS[j][1], lazy);
   }
 
-  /** Non-lazy always wins: a lazy mark never downgrades a chunk that is already dirty non-lazily. */
+  /**
+   * Non-lazy always wins: a lazy mark never downgrades a chunk that is already dirty non-lazily; likewise a plain lazy
+   * write ends a chunk's 'coalesce' wait (§9.2).
+   * @param {number} q
+   * @param {number} r
+   * @param {boolean|'coalesce'} [lazy=false]
+   */
   _markDirtyCell(q, r, lazy = false) {
     const chunk = this._byId.get(packId(Math.floor(q / CHUNK_SIZE), Math.floor(r / CHUNK_SIZE)));
     if (chunk === undefined) return;
     if (!lazy) {
       chunk.dirty = true;
       chunk.lazy = false;
+      chunk.coalesce = false;
     } else if (!chunk.dirty) {
       chunk.dirty = true;
       chunk.lazy = true;
+      chunk.coalesce = lazy === 'coalesce';
+    } else if (lazy !== 'coalesce') {
+      chunk.coalesce = false;
     }
   }
 
@@ -736,7 +757,9 @@ export class World {
     const meshData = buildChunkMesh(chunk.cq, chunk.cr, this.getChunkData);
     chunk.dirty = false;
     chunk.lazy = false;
+    chunk.coalesce = false;
     chunk.meshed = true;
+    chunk.meshedAt = this._updateCalls;
     this.onChunkMesh(chunk.key, chunk.cq, chunk.cr, meshData);
   }
 

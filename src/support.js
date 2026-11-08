@@ -18,13 +18,17 @@
 //   3. each collapsing component is a tree (trees.test → trees.topple) or crumbles (fallers.crumble), inside one
 //      undoable event per batch (or the seed's own event while that is still undoable, e.g. the blast that cut it).
 // Every part of a batch keeps its state across ticks (`busy`) and stops on the tick's deadline (CONTRACTS §36.1.4):
-// taking the seeds in, the sweep over its start cells, the DFS (MAX_SUPPORT_VISITS_PER_TICK visits), the rule's scans
-// over the removals and the crumble of a big component (a slice of CRUMBLE_SLICE cells at a time, lowest first) — a
-// 30 000-cell `fill … air` is searched over a few ticks instead of freezing one frame.
-import { CHUNK_SIZE, MAX_FALLING, SUPPORT_LIMIT, TREE_MAX_CELLS, WORLD_HEIGHT } from './config.js';
+// taking the seeds in, the sweep over its start cells, the DFS (MAX_SUPPORT_VISITS_PER_TICK visits) and the rule's
+// scans over the removals — a 30 000-cell `fill … air` is searched over a few ticks instead of freezing one frame.
+// A CRUMBLE leaves its batch once begun (CONTRACTS §36.3.1): it comes down a slice of CRUMBLE_SLICE cells at a time,
+// lowest first, beside the later batches (which get half of each step while crumbles run, so a cut tree never waits
+// for a big build to finish), round-robin with the other crumbles. Cells it finds in an unloaded chunk are PARKED on
+// that chunk and re-seeded when it is back (§36.3.5); blocks that land on or are placed against what still hangs are
+// re-searched once it is down (§36.3.6).
+import { CHUNK_SIZE, MAX_FALLING, MAX_PARKED_UPDATES, SUPPORT_LIMIT, TREE_MAX_CELLS, WORLD_HEIGHT } from './config.js';
 import { BLOCK, UNLOADED, isFallThrough, isLeaves, isSolid } from './blocks.js';
 import { HEX_DIRS } from './hex.js';
-import { packCell, unpackCell } from './coords.js';
+import { chunkKey, localIndex, packCell, unpackCell } from './coords.js';
 
 /** @typedef {import('./blockphysics.js').BlockPhysics} BlockPhysics */
 /** @typedef {import('./blockphysics.js').RuleContext} RuleContext */
@@ -54,6 +58,12 @@ const DEADLINE_CHECK_CHEAP = 256;
 const CHEAP_PER_VISIT = 8;
 /** A big component crumbles this many cells (lowest first) between two deadline checks (CONTRACTS §36.3.1). */
 export const CRUMBLE_SLICE = 64;
+/** While crumbles come down, a batch with work gets this share of what is left of the step (§36.3.1). */
+const BATCH_SHARE = 0.5;
+/** Cells parked on unloaded chunks at most (beyond: dropped and counted, §36.3.5). */
+const MAX_PARKED_CELLS = MAX_PARKED_UPDATES;
+/** The `mode` of physics' own quiet removals and undo's restores (blockphysics.js WRITE_QUIET). */
+const MODE_QUIET = 2;
 /** A search verdict over more cells than this is written into the memo a slice at a time (cheap units, §36.1.4). */
 const FINISH_SLICE = 512;
 /** Crumble order key: y · 2^42 + the packed column, so a plain numeric sort gives (y, q, r) (CONTRACTS §34.2.4). */
@@ -92,10 +102,30 @@ function orderKey(v) {
   return (v - y * Y_STRIDE) * WORLD_HEIGHT + y;
 }
 
+/** @returns {number} the crumble order value of cell (q, y, r) (inverse of orderKey) */
+function orderValue(q, y, r) {
+  return y * Y_STRIDE + packCell(q, 0, r) / WORLD_HEIGHT;
+}
+
+/** @returns {number} index of `v` in the sorted `order` at or after `from`, or −1 */
+function findOrder(order, from, v) {
+  let lo = from;
+  let hi = order.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const m = order[mid];
+    if (m === v) return mid;
+    if (m < v) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return -1;
+}
+
 /**
  * The ids of the 8 neighbours of cell (q, y, r) — the 6 sides (HEX_DIRS order), above, below — exactly as
  * `world.peekBlock` returns them (UNLOADED in unloaded chunks, AIR outside 0..127). A cell away from its chunk's edges
- * is read straight from the chunk's blocks (one chunk lookup instead of eight) when the world has `getChunk`.
+ * is read straight from the chunk's blocks (one chunk lookup instead of eight) when the world has `getChunk`; a cell
+ * of an unloaded chunk reads its sides one by one (they may sit in loaded chunks).
  * @param {*} world
  * @param {number} q   integer
  * @param {number} y   integer
@@ -109,32 +139,31 @@ export function peekNeighbours(world, q, y, r, out, chunk) {
     const cq = Math.floor(q / CHUNK_SIZE);
     const cr = Math.floor(r / CHUNK_SIZE);
     const ch = chunk || world.getChunk(cq, cr);
-    if (ch === undefined || ch === null) {
-      for (let k = 0; k < 8; k++) out[k] = UNLOADED;
+    if (ch !== undefined && ch !== null) {
+      const lq = q - cq * CHUNK_SIZE;
+      const lr = r - cr * CHUNK_SIZE;
+      const blocks = ch.blocks;
+      const i = (lq * CHUNK_SIZE + lr) * WORLD_HEIGHT + y;
+      if (lq > 0 && lq < CHUNK_SIZE - 1 && lr > 0 && lr < CHUNK_SIZE - 1) {
+        out[0] = blocks[i + SIDE0];
+        out[1] = blocks[i + SIDE1];
+        out[2] = blocks[i + SIDE2];
+        out[3] = blocks[i + SIDE3];
+        out[4] = blocks[i + SIDE4];
+        out[5] = blocks[i + SIDE5];
+      } else {
+        // On the chunk's edge: the sides that leave it are read from their own chunk.
+        for (let k = 0; k < 6; k++) {
+          const nq = lq + HEX_DIRS[k][0];
+          const nr = lr + HEX_DIRS[k][1];
+          out[k] = nq >= 0 && nq < CHUNK_SIZE && nr >= 0 && nr < CHUNK_SIZE ? blocks[i + SIDE_INDEX[k]] : world.peekBlock(q + HEX_DIRS[k][0], y, r + HEX_DIRS[k][1]);
+        }
+      }
+      out[6] = blocks[i + 1];
+      out[7] = blocks[i - 1];
       return out;
     }
-    const lq = q - cq * CHUNK_SIZE;
-    const lr = r - cr * CHUNK_SIZE;
-    const blocks = ch.blocks;
-    const i = (lq * CHUNK_SIZE + lr) * WORLD_HEIGHT + y;
-    if (lq > 0 && lq < CHUNK_SIZE - 1 && lr > 0 && lr < CHUNK_SIZE - 1) {
-      out[0] = blocks[i + SIDE0];
-      out[1] = blocks[i + SIDE1];
-      out[2] = blocks[i + SIDE2];
-      out[3] = blocks[i + SIDE3];
-      out[4] = blocks[i + SIDE4];
-      out[5] = blocks[i + SIDE5];
-    } else {
-      // On the chunk's edge: the sides that leave it are read from their own chunk.
-      for (let k = 0; k < 6; k++) {
-        const nq = lq + HEX_DIRS[k][0];
-        const nr = lr + HEX_DIRS[k][1];
-        out[k] = nq >= 0 && nq < CHUNK_SIZE && nr >= 0 && nr < CHUNK_SIZE ? blocks[i + SIDE_INDEX[k]] : world.peekBlock(q + HEX_DIRS[k][0], y, r + HEX_DIRS[k][1]);
-      }
-    }
-    out[6] = blocks[i + 1];
-    out[7] = blocks[i - 1];
-    return out;
+    // Its own chunk is unloaded (above and below are UNLOADED with it); a side may sit in a loaded one.
   }
   for (let k = 0; k < 6; k++) out[k] = world.peekBlock(q + HEX_DIRS[k][0], y, r + HEX_DIRS[k][1]);
   out[6] = world.peekBlock(q, y + 1, r);
@@ -191,16 +220,36 @@ export function isAnchorCell(world, q, y, r) {
  */
 
 /**
- * A component being crumbled a slice at a time (lowest cells first).
+ * The 'collapse' event of one batch, shared by its collapses — the crumbles that outlive it included.
+ * @typedef {Object} EventBox
+ * @property {PhysicsEvent|null} ev
+ */
+
+/**
+ * A component being crumbled a slice at a time (lowest cells first), on its own once begun (§36.3.1).
  * @typedef {Object} Crumbling
  * @property {Float64Array} order   its cells as y · Y_STRIDE + packed column, sorted: (y, q, r) — re-read slice by slice
  * @property {number} at            next cell to crumble
  * @property {number} settle        the lowest this many cells settle instantly (the faller slots free when it began)
  * @property {number} leafAt        next cell whose leaves are checked once every cell is down (-1: still crumbling)
  * @property {number} removed       cells crumbled so far
+ * @property {boolean} done         every cell is down and its leaves were checked
  * @property {SupportSeed} seed     the seed whose start cell found it (cause, event)
+ * @property {EventBox} box         its batch's 'collapse' event
  * @property {PhysicsEvent|null} event  the event its writes record into (chosen at its first live slice)
  * @property {boolean} own          the event is the batch's own 'collapse' event
+ * @property {Set<number>} watch    packed cells that became load-bearing next to what still hangs (re-searched when done)
+ * @property {Set<string>} parkedIn chunk keys it parked cells on
+ */
+
+/**
+ * Cells of a collapse that were in an unloaded chunk when their turn came (CONTRACTS §36.3.5).
+ * @typedef {Object} ParkedCells
+ * @property {number[]} keys          packed cells
+ * @property {Cause} cause
+ * @property {number} event           event id the re-seeded collapse records into while it is still undoable (0: none)
+ * @property {Crumbling|null} crumble the crumble still coming down that parked them (they wait for it: null when done)
+ * @property {object} group           the crumble or component they came from (one record per group and chunk)
  */
 
 /**
@@ -233,8 +282,8 @@ export function isAnchorCell(world, q, y, r) {
  * @property {number} phase         PHASE_TAKE → PHASE_SEARCH → PHASE_INDEX → PHASE_SCAN → PHASE_SPREAD → PHASE_COLLAPSE
  * @property {number[]} collapses   component indices to collapse, in order
  * @property {number} collapseAt    next of them
- * @property {Crumbling|null} crumbling  the component being crumbled now
- * @property {PhysicsEvent|null} event  the batch's own 'collapse' event once one was needed
+ * @property {EventBox} box         the batch's own 'collapse' event once one was needed
+ * @property {Set<number>|null} cancelled  undone events: components found from their seeds never collapse
  */
 
 /**
@@ -270,21 +319,47 @@ export class SupportSolver {
     this._nb = new Uint8Array(8);
     /** @type {Finishing|null} a big verdict still being written into the memo */
     this._finishing = null;
+    /** @type {Crumbling[]} crumbles coming down, round-robin (§36.3.1) */
+    this._crumbles = [];
+    /** round-robin cursor into _crumbles */
+    this._crumbleAt = 0;
+    /** @type {Crumbling|null} the crumble whose slice is being written now (its own landings are not watched) */
+    this._slicing = null;
+    /** @type {Map<string, { cq: number, cr: number, list: ParkedCells[] }>} chunk key → cells parked on it (§36.3.5) */
+    this._parked = new Map();
+    this._parkedCount = 0;
     /** counters for tests / diagnostics */
-    this.stats = { batches: 0, searches: 0, visits: 0, floating: 0, crumbled: 0, toppled: 0, restarts: 0 };
+    this.stats = {
+      batches: 0, searches: 0, visits: 0, floating: 0, crumbled: 0, toppled: 0, restarts: 0, parked: 0, parkedDropped: 0,
+      resumed: 0, watched: 0,
+    };
 
     // A block placed (by the player, a command or a rune) next to a search in progress, or next to a floating
     // component not collapsed yet, may connect it to the ground: restart that search / never collapse that component
-    // on a stale verdict. Physics' own landings are ignored (a pile under a falling build changes nothing worth a
-    // restart). Removals need no such care — they queue their own seed, searched by the next batch.
+    // on a stale verdict. Physics' own landings are ignored there (a pile under a falling build changes nothing worth
+    // a restart). Removals need no such care — they queue their own seed, searched by the next batch. Any block that
+    // becomes load-bearing next to what a crumble still has to bring down — placed, or landed by physics — would hang
+    // there once it is gone: it is re-searched when that crumble is done (§36.3.6).
     physics.addTrigger('support', 'collapse', (q, y, r, prev, next, mode) => {
-      if (this._batch !== null && mode === MODE_EXTERNAL && isLoadBearing(next) && !isLoadBearing(prev)) this._onPlaced(q, y, r);
+      if (!isLoadBearing(next) || isLoadBearing(prev)) return;
+      if (this._batch !== null && mode === MODE_EXTERNAL) this._onPlaced(q, y, r);
+      if (this._crumbles.length > 0 && mode !== MODE_QUIET) this._watchPlaced(q, y, r);
     });
   }
 
-  /** @returns {boolean} a search is in progress (the scheduler calls step() even with no new seeds) */
+  /** @returns {boolean} a search or a crumble is in progress (the scheduler calls step() even with no new seeds) */
   get busy() {
-    return this._batch !== null;
+    return this._batch !== null || this._crumbles.length > 0;
+  }
+
+  /** @returns {number} crumbles coming down now */
+  get crumbleCount() {
+    return this._crumbles.length;
+  }
+
+  /** @returns {number} cells parked on unloaded chunks, waiting to be re-searched (§36.3.5) */
+  get parkedCount() {
+    return this._parkedCount;
   }
 
   /**
@@ -293,7 +368,9 @@ export class SupportSolver {
    * ctx.deadline, checked every 256 visits, every 256 cheap units, after each collapsed component and after each
    * crumbled slice. Every part keeps its cursor and resumes next tick. A new batch takes the seeds pending when it
    * begins (`seeds.shift()`, priority lane first); a finished batch collapses what it found floating and the next batch
-   * starts while budget is left.
+   * starts while budget is left. While crumbles come down, a batch with work gets BATCH_SHARE of what is left of the
+   * step first, then the crumbles take the rest (at least one slice); once they are all down, budget still left goes
+   * back to the batches.
    * @param {RuleContext} ctx
    * @param {SeedQueue} seeds
    * @param {number} maxVisits
@@ -307,6 +384,30 @@ export class SupportSolver {
     const max = maxVisits > 0 ? maxVisits : Infinity;
     this._maxCheap = max * CHEAP_PER_VISIT;
     if (this._batch !== null) this._batch.nbFor = -1; // the world may have changed since the last step
+    const deadline = ctx.deadline;
+    if (this._batch !== null || seeds.size > 0) {
+      if (this._crumbles.length > 0) {
+        const t = ctx.now();
+        ctx.deadline = t + (deadline - t) * BATCH_SHARE;
+      }
+      try {
+        this._batches(ctx, seeds, max);
+      } finally {
+        ctx.deadline = deadline;
+      }
+    }
+    if (this._crumbles.length > 0) {
+      this._crumbleAll(ctx);
+      if (this._crumbles.length === 0 && (this._batch !== null || seeds.size > 0) && this._visits < max && this._cheap < this._maxCheap && ctx.now() < deadline) {
+        this._batches(ctx, seeds, max);
+      }
+    }
+    this.stats.visits += this._visits;
+    return this._visits;
+  }
+
+  /** The batches' part of a step: open, search, decide and collapse until the budget is spent. */
+  _batches(ctx, seeds, max) {
     for (;;) {
       if (this._batch === null) {
         if (seeds.size === 0) break;
@@ -323,13 +424,16 @@ export class SupportSolver {
       this._endBatch();
       if (this._visits >= max || this._cheap >= this._maxCheap || ctx.now() >= ctx.deadline) break;
     }
-    this.stats.visits += this._visits;
-    return this._visits;
   }
 
-  /** Forget any search in progress (collapse switched off, world reset). */
+  /** Forget any search, crumble and parked cells (collapse switched off, world reset). */
   reset() {
     this._endBatch();
+    this._crumbles.length = 0;
+    this._crumbleAt = 0;
+    this._slicing = null;
+    this._parked.clear();
+    this._parkedCount = 0;
   }
 
   /** The 'collapse' switch changed (the scheduler already cleared its seeds when switched off). */
@@ -338,51 +442,192 @@ export class SupportSolver {
   }
 
   /**
-   * Undo of event `id` (physics.undo, CONTRACTS §36.3.2): a batch whose collapse records into it — the component still
-   * crumbling, or one still to come — stops there; what still hangs stays where it is, like everything undo puts back.
+   * Undo of event `id` (physics.undo, CONTRACTS §36.3.2): only what records into it stops — a crumble coming down into
+   * it (or that would choose it at its first slice), the open batch's components still to come that would record into
+   * it (their seed's event, or the batch's own event being undone), the components found from that event's seeds, and
+   * the cells it parked; what still hangs stays where it is, like everything undo puts back. The rest of the batch and
+   * every other crumble go on.
    * @returns {number} 0 (nothing of it is in flight)
    */
   cancelEvent(id) {
-    const batch = this._batch;
-    if (!(id > 0) || batch === null || batch.phase !== PHASE_COLLAPSE) return 0;
-    let hit = (batch.event !== null && batch.event.id === id) || (batch.crumbling !== null && batch.crumbling.event !== null && batch.crumbling.event.id === id);
-    for (let k = batch.collapseAt; k < batch.collapses.length && !hit; k++) {
-      hit = batch.seeds[this._components[batch.collapses[k]].seed].event === id;
+    if (!(id > 0)) return 0;
+    const into = (seed, box) => seed.event === id || (box.ev !== null && box.ev.id === id);
+    for (let i = this._crumbles.length - 1; i >= 0; i--) {
+      const cr = this._crumbles[i];
+      if (cr.event !== null ? cr.event.id === id : into(cr.seed, cr.box)) {
+        this._crumbles.splice(i, 1);
+        this._unpark((rec) => rec.crumble === cr);
+      }
     }
-    if (hit) this._endBatch();
+    this._unpark((rec) => rec.crumble === null && rec.event === id);
+    const batch = this._batch;
+    if (batch !== null) {
+      if (batch.cancelled === null) batch.cancelled = new Set();
+      batch.cancelled.add(id);
+      if (batch.box.ev !== null && batch.box.ev.id === id) {
+        for (let k = batch.collapseAt; k < batch.collapses.length; k++) this._components[batch.collapses[k]].stale = true;
+      }
+    }
     return 0;
   }
 
   /**
-   * Saving (never touches the live world): what the open batch decided to collapse but has not brought down yet — the
-   * rest of the component crumbling now and the components after it — is saved fallen. Each of its cells still
-   * load-bearing in the overlay, lowest first, is moved down its column like a column faller (CONTRACTS §36.6.4). A
-   * burning barrel is left to explosions.settleInto. Runs after fallers.settleInto.
+   * Saving (never touches the live world): what a collapse has not brought down yet — the rest of every crumble, the
+   * open batch's components still to come and the parked cells — is saved fallen. Each of its cells still load-bearing
+   * in the overlay, lowest first, is moved down its column like a column faller (CONTRACTS §36.6.4); a cell of an
+   * unloaded chunk falls through that chunk as it will generate (worldGen + its edits + the overlay). A burning barrel
+   * is left to explosions.settleInto. Runs after fallers.settleInto.
    * @param {import('./blockphysics.js').SaveOverlay} overlay
    */
   settleInto(overlay) {
-    const batch = this._batch;
-    if (batch === null || batch.phase !== PHASE_COLLAPSE) return;
     /** @type {number[][]} */
     const cells = [];
-    const cr = batch.crumbling;
-    if (cr !== null && cr.leafAt < 0) for (let i = cr.at; i < cr.order.length; i++) cells.push(unpackCell(orderKey(cr.order[i])));
-    for (let k = batch.collapseAt; k < batch.collapses.length; k++) {
-      const comp = this._components[batch.collapses[k]];
-      if (!comp.stale) for (const key of comp.keys) cells.push(unpackCell(key));
+    for (const cr of this._crumbles) if (cr.leafAt < 0) for (let i = cr.at; i < cr.order.length; i++) cells.push(unpackCell(orderKey(cr.order[i])));
+    const batch = this._batch;
+    if (batch !== null && batch.phase === PHASE_COLLAPSE) {
+      for (let k = batch.collapseAt; k < batch.collapses.length; k++) {
+        const comp = this._components[batch.collapses[k]];
+        if (!comp.stale && !this._cancelled(batch, comp)) for (const key of comp.keys) cells.push(unpackCell(key));
+      }
     }
+    for (const { list } of this._parked.values()) for (const rec of list) for (const key of rec.keys) cells.push(unpackCell(key));
     if (cells.length === 0) return;
     cells.sort((a, b) => a[1] - b[1] || a[0] - b[0] || a[2] - b[2]);
     const explosions = this.physics.explosions;
+    /** @type {Map<string, Uint8Array|null>} chunk key → its blocks as they will generate (unloaded chunks) */
+    const generated = new Map();
     for (const [q, y, r] of cells) {
-      const id = overlay.peek(q, y, r);
+      let peek = (pq, py, pr) => overlay.peek(pq, py, pr);
+      let id = peek(q, y, r);
+      if (id === UNLOADED) {
+        const blocks = this._generatedBlocks(generated, q, r);
+        if (blocks === null) continue;
+        const cq = Math.floor(q / CHUNK_SIZE);
+        const cr = Math.floor(r / CHUNK_SIZE);
+        peek = (pq, py, pr) => {
+          if (!(py >= 0 && py < WORLD_HEIGHT)) return BLOCK.AIR;
+          const v = overlay.cells.get(packCell(pq, py, pr));
+          return v !== undefined ? v : blocks[localIndex(pq - cq * CHUNK_SIZE, py, pr - cr * CHUNK_SIZE)];
+        };
+        id = peek(q, y, r);
+      }
       if (!isLoadBearing(id)) continue;
       if (id === BLOCK.BLAST_BARREL && explosions && typeof explosions.isBurning === 'function' && explosions.isBurning(q, y, r)) continue;
       overlay.set(q, y, r, BLOCK.AIR);
       let cy = y;
-      while (cy > 0 && isFallThrough(overlay.peek(q, cy - 1, r))) cy--;
+      while (cy > 0 && isFallThrough(peek(q, cy - 1, r))) cy--;
       overlay.set(q, cy, r, id);
     }
+  }
+
+  /**
+   * The blocks of the unloaded chunk of column (q, r) as it will generate: worldGen.generateChunk plus world.edits.
+   * @returns {Uint8Array|null} null when the world has no generator (that cell is saved where it hangs)
+   */
+  _generatedBlocks(cache, q, r) {
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
+    const key = chunkKey(cq, cr);
+    let blocks = cache.get(key);
+    if (blocks !== undefined) return blocks;
+    const world = this.physics.world;
+    const gen = world.worldGen;
+    blocks = null;
+    if (gen && typeof gen.generateChunk === 'function') {
+      blocks = gen.generateChunk(cq, cr).blocks;
+      const edits = world.edits instanceof Map ? world.edits.get(key) : undefined;
+      if (edits !== undefined) for (const [li, v] of edits) blocks[li] = v;
+    }
+    cache.set(key, blocks);
+    return blocks;
+  }
+
+  // -------------------------------------------------------------------------------------------------------------------
+  // streaming: cells parked on unloaded chunks (§36.3.5)
+
+  /**
+   * A chunk was generated (physics.onChunkGenerated): the cells parked on it, or on one of its 6 neighbours, are
+   * re-seeded once that chunk and its 6 neighbours are all loaded (the search must not stop on an UNLOADED cell next
+   * to them) and the crumble that parked them is down.
+   */
+  onChunkGenerated(cq, cr) {
+    if (this._parked.size === 0) return;
+    this._resume(cq, cr);
+    for (const [dq, dr] of HEX_DIRS) this._resume(cq + dq, cr + dr);
+  }
+
+  /**
+   * Park cell (q, y, r) of a collapse on its chunk. Cells of one `group` (a crumble, or one component) parked on the
+   * same chunk one after another share a record.
+   */
+  _park(q, y, r, cause, event, crumble, group) {
+    if (this._parkedCount >= MAX_PARKED_CELLS) {
+      this.stats.parkedDropped++;
+      return;
+    }
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
+    const key = chunkKey(cq, cr);
+    let entry = this._parked.get(key);
+    if (entry === undefined) {
+      entry = { cq, cr, list: [] };
+      this._parked.set(key, entry);
+    }
+    let rec = entry.list.length > 0 ? entry.list[entry.list.length - 1] : null;
+    if (rec === null || rec.group !== group) {
+      rec = { keys: [], cause, event, crumble, group };
+      entry.list.push(rec);
+    }
+    rec.keys.push(packCell(q, y, r));
+    if (crumble !== null) crumble.parkedIn.add(key);
+    this._parkedCount++;
+    this.stats.parked++;
+  }
+
+  /** Re-seed the cells parked on chunk (cq, cr) when it and its 6 neighbours are loaded. */
+  _resume(cq, cr) {
+    const key = chunkKey(cq, cr);
+    const entry = this._parked.get(key);
+    if (entry === undefined) return;
+    const world = this.physics.world;
+    if (!world.hasChunkAtCell(cq * CHUNK_SIZE, cr * CHUNK_SIZE)) return;
+    for (const [dq, dr] of HEX_DIRS) if (!world.hasChunkAtCell((cq + dq) * CHUNK_SIZE, (cr + dr) * CHUNK_SIZE)) return;
+    const keep = [];
+    for (const rec of entry.list) {
+      if (rec.crumble !== null) {
+        keep.push(rec);
+        continue;
+      }
+      this._parkedCount -= rec.keys.length;
+      this.stats.resumed += rec.keys.length;
+      this._reseed(rec.keys, rec.cause, rec.event);
+    }
+    if (keep.length > 0) entry.list = keep;
+    else this._parked.delete(key);
+  }
+
+  /** Drop the parked cells `pick` selects. */
+  _unpark(pick) {
+    for (const [key, entry] of this._parked) {
+      const keep = entry.list.filter((rec) => {
+        if (!pick(rec)) return true;
+        this._parkedCount -= rec.keys.length;
+        return false;
+      });
+      if (keep.length > 0) entry.list = keep;
+      else this._parked.delete(key);
+    }
+  }
+
+  /**
+   * Queue packed cells as ONE seed without removals (what it finds floating collapses outright, §36.2.3), recorded
+   * into event `event` while that is still the undoable one.
+   */
+  _reseed(keys, cause, event) {
+    if (keys.length === 0) return;
+    const physics = this.physics;
+    const cells = keys.map((k) => unpackCell(k));
+    physics.withEvent(event, () => physics.seedSupport(cells, { cause, priority: cause !== null && cause.kind === 'player' }));
   }
 
   // -------------------------------------------------------------------------------------------------------------------
@@ -394,7 +639,7 @@ export class SupportSolver {
     const batch = {
       seeds: [], take: seeds.size, removals: [], si: 0, ci: 0, ri: 0, di: 0, nbFor: -1, nb: this._nb, at: 0,
       remIndex: null, remKeys: [], supported: null, compRems: null, queue: [], phase: PHASE_TAKE, collapses: [],
-      collapseAt: 0, crumbling: null, event: null,
+      collapseAt: 0, box: { ev: null }, cancelled: null,
     };
     this._batch = batch;
     this._search = null;
@@ -618,6 +863,32 @@ export class SupportSolver {
     return true;
   }
 
+  /**
+   * A cell became load-bearing (any write but a quiet one) while crumbles come down: each crumble — other than the one
+   * whose slice is landing right now — that still has to bring down one of its 8 neighbours re-searches it once it is
+   * done (a block that landed on, or was placed against, the part that still hangs would float after it, §36.3.6).
+   */
+  _watchPlaced(q, y, r) {
+    let key = -1;
+    for (const cr of this._crumbles) {
+      if (cr === this._slicing || cr.leafAt >= 0) continue;
+      const order = cr.order;
+      for (let d = 0; d < PUSH_ORDER.length; d++) {
+        const o = PUSH_ORDER[d];
+        const ny = y + o[1];
+        if (ny < 0 || ny >= WORLD_HEIGHT) continue;
+        if (findOrder(order, cr.at, orderValue(q + o[0], ny, r + o[2])) >= 0) {
+          if (key < 0) key = packCell(q, y, r);
+          if (!cr.watch.has(key)) {
+            cr.watch.add(key);
+            this.stats.watched++;
+          }
+          break;
+        }
+      }
+    }
+  }
+
   _onPlaced(q, y, r) {
     const f = this._finishing;
     for (const [dq, dy, dr] of PUSH_ORDER) {
@@ -781,31 +1052,33 @@ export class SupportSolver {
   // collapse
 
   /**
-   * Collapse the batch's components in order, checking the deadline after each one and after each slice of a crumble.
+   * Collapse the batch's components in order, checking the deadline after each one. A crumble leaves the batch once
+   * its first slice is down (_startCrumble), so the batch ends as soon as its last component has begun.
    * @returns {boolean} all done
    */
   _collapseSome(ctx) {
     const batch = /** @type {Batch} */ (this._batch);
-    for (;;) {
-      if (batch.crumbling !== null) {
-        this._crumbleSlice(ctx);
-      } else if (batch.collapseAt < batch.collapses.length) {
-        const comp = this._components[batch.collapses[batch.collapseAt++]];
-        if (!comp.stale) this._collapse(ctx, comp);
-      } else {
-        return true;
-      }
-      if (batch.crumbling === null && batch.collapseAt >= batch.collapses.length) return true;
-      if (ctx.now() >= ctx.deadline) return false;
+    while (batch.collapseAt < batch.collapses.length) {
+      const comp = this._components[batch.collapses[batch.collapseAt++]];
+      if (!comp.stale && !this._cancelled(batch, comp)) this._collapse(ctx, comp);
+      if (batch.collapseAt < batch.collapses.length && ctx.now() >= ctx.deadline) return false;
     }
+    return true;
+  }
+
+  /** @returns {boolean} the component was found from a seed of an undone event (§36.3.2) */
+  _cancelled(batch, comp) {
+    return batch.cancelled !== null && batch.cancelled.has(batch.seeds[comp.seed].event);
   }
 
   /**
    * Topple (a tree) or start crumbling one floating component. The writes record into the seed's own event while it
    * is still the undoable one (the blast whose rim search found it), else into the batch's 'collapse' event (one per
    * batch, so one undo restores everything an action brought down). Its kind reads 'falling tree' while it holds only
-   * trees. A component small enough to be a tree is re-read whole for the tree test; a crumble goes a slice of
-   * CRUMBLE_SLICE cells at a time, lowest first, each slice re-read (_crumbleSlice).
+   * trees. A component small enough to be a tree is re-read whole for the tree test — when a cell of it is in an
+   * unloaded chunk by now, nothing of it collapses: those cells are parked and the whole component is searched again
+   * once they are back (§36.3.5); a crumble goes a slice of CRUMBLE_SLICE cells at a time, lowest first, each slice
+   * re-read (_crumbleSlice).
    * @param {RuleContext} ctx
    * @param {Component} comp
    */
@@ -814,19 +1087,33 @@ export class SupportSolver {
     const batch = /** @type {Batch} */ (this._batch);
     const seed = batch.seeds[comp.seed];
     if (comp.keys.length > TREE_MAX_CELLS) {
-      this._startCrumble(ctx, seed, comp.keys, null, false); // no tree (§36.4.1): its event is chosen at the first live slice
+      this._startCrumble(ctx, seed, comp.keys, null, false, batch.box); // no tree (§36.4.1): its event is chosen at the first live slice
       return;
     }
     /** @type {number[][]} [q, y, r, id] — re-read: a search may have spanned ticks */
     const cells = [];
+    /** @type {number[]|null} cells of it in a chunk that is unloaded by now */
+    let unloaded = null;
     const c = this._cell;
     for (const k of comp.keys) {
       unpackCell(k, c);
+      if (ctx.peek(c[0], c[1], c[2]) === UNLOADED) {
+        if (unloaded === null) unloaded = [];
+        unloaded.push(k);
+        continue;
+      }
       const id = this._liveId(ctx, c[0], c[1], c[2]);
       if (id >= 0) cells.push([c[0], c[1], c[2], id]);
     }
+    if (unloaded !== null) {
+      for (const k of unloaded) {
+        unpackCell(k, c);
+        this._park(c[0], c[1], c[2], seed.cause, seed.event, null, comp);
+      }
+      return;
+    }
     if (cells.length === 0) return;
-    const { ev, own, opened } = this._eventFor(seed);
+    const { ev, own, opened } = this._eventFor(seed, batch.box);
     const token = physics.enterEvent(ev.id);
     try {
       /** @type {FloatingComponent} */
@@ -840,39 +1127,40 @@ export class SupportSolver {
     } finally {
       physics.exitEvent(token);
     }
-    this._startCrumble(ctx, seed, cells.map((cell) => packCell(cell[0], cell[1], cell[2])), ev, own);
+    this._startCrumble(ctx, seed, cells.map((cell) => packCell(cell[0], cell[1], cell[2])), ev, own, batch.box);
   }
 
   /**
    * The event a collapse of this batch records into: the seed's own while it is still the undoable one, else the
-   * batch's 'collapse' event — opened now when needed (begun and ended at once: it stays physics.lastEvent, and every
-   * write of the collapse re-enters it, until another event begins).
+   * batch's 'collapse' event (`box`) — opened now when needed (begun and ended at once: it stays physics.lastEvent, and
+   * every write of the collapse re-enters it, until another event begins).
    * @param {SupportSeed} seed
+   * @param {EventBox} box
    * @returns {{ ev: PhysicsEvent, own: boolean, opened: boolean }}
    */
-  _eventFor(seed) {
+  _eventFor(seed, box) {
     const physics = this.physics;
-    const batch = /** @type {Batch} */ (this._batch);
     const last = physics.lastEvent;
     if (seed.event > 0 && last !== null && last.id === seed.event) return { ev: last, own: false, opened: false };
-    if (batch.event !== null && last === batch.event) return { ev: batch.event, own: true, opened: false };
+    if (box.ev !== null && last === box.ev) return { ev: box.ev, own: true, opened: false };
     const ev = physics.beginEvent('collapse', seed.cause);
     physics.endEvent();
-    batch.event = ev;
+    box.ev = ev;
     return { ev, own: true, opened: true };
   }
 
   /**
    * Begin crumbling the cells `keys` (packed) lowest first: their (y, q, r) order is one native numeric sort of
-   * y · Y_STRIDE + column; the faller slots free now decide how many of the lowest settle instantly.
+   * y · Y_STRIDE + column; the faller slots free now decide how many of the lowest settle instantly. The first slice
+   * comes down at once; the rest is a crumble of its own (_crumbleAll), outside the batch.
    * @param {RuleContext} ctx
    * @param {SupportSeed} seed
    * @param {number[]} keys
    * @param {PhysicsEvent|null} ev
    * @param {boolean} own
+   * @param {EventBox} box
    */
-  _startCrumble(ctx, seed, keys, ev, own) {
-    const batch = /** @type {Batch} */ (this._batch);
+  _startCrumble(ctx, seed, keys, ev, own, box) {
     const n = keys.length;
     const order = new Float64Array(n);
     for (let i = 0; i < n; i++) {
@@ -882,8 +1170,57 @@ export class SupportSolver {
     }
     order.sort();
     const free = Math.max(0, MAX_FALLING - ctx.fallers.count);
-    batch.crumbling = { order, at: 0, settle: Math.max(0, n - free), leafAt: -1, removed: 0, seed, event: ev, own };
-    this._crumbleSlice(ctx);
+    /** @type {Crumbling} */
+    const cr = {
+      order, at: 0, settle: Math.max(0, n - free), leafAt: -1, removed: 0, done: false, seed, box, event: ev, own,
+      watch: new Set(), parkedIn: new Set(),
+    };
+    this._crumbles.push(cr);
+    this._crumbleSlice(ctx, cr);
+    if (cr.done) this._finishCrumble(cr);
+  }
+
+  /**
+   * One slice of each crumble in turn (round-robin, from where the last step stopped) until `ctx.deadline` — at least
+   * one slice per step.
+   */
+  _crumbleAll(ctx) {
+    const list = this._crumbles;
+    let first = true;
+    while (list.length > 0) {
+      if (!first && ctx.now() >= ctx.deadline) return;
+      first = false;
+      if (this._crumbleAt >= list.length) this._crumbleAt = 0;
+      const cr = list[this._crumbleAt];
+      this._crumbleSlice(ctx, cr);
+      if (cr.done) this._finishCrumble(cr);
+      else this._crumbleAt++;
+    }
+  }
+
+  /**
+   * A crumble is down: it leaves the list; the cells watched next to it (§36.3.6) are searched again; the cells it
+   * parked wait for their chunks only now (§36.3.5).
+   * @param {Crumbling} cr
+   */
+  _finishCrumble(cr) {
+    const i = this._crumbles.indexOf(cr);
+    if (i >= 0) {
+      this._crumbles.splice(i, 1);
+      if (i < this._crumbleAt) this._crumbleAt--;
+    }
+    const event = cr.event !== null ? cr.event.id : cr.seed.event;
+    if (cr.watch.size > 0) this._reseed([...cr.watch], cr.seed.cause, event);
+    for (const key of cr.parkedIn) {
+      const entry = this._parked.get(key);
+      if (entry === undefined) continue;
+      for (const rec of entry.list) {
+        if (rec.crumble !== cr) continue;
+        rec.crumble = null;
+        rec.event = event;
+      }
+      this._resume(entry.cq, entry.cr);
+    }
   }
 
   /**
@@ -900,14 +1237,16 @@ export class SupportSolver {
   }
 
   /**
-   * The next slice of the component being crumbled: CRUMBLE_SLICE cells (lowest first, re-read) go to
-   * `fallers.crumble` — the lowest `settle` cells of the whole component settle instantly, the rest animate, so the pile
-   * keeps its order while a big build comes down from the bottom over a few ticks. Once every cell is down, the hanging
-   * leaves next to them are checked (`trees.decayHangingLeaves`), 4 slices' worth at a time.
+   * The next slice of crumble `cr`: CRUMBLE_SLICE cells (lowest first, re-read) go to `fallers.crumble` — the lowest
+   * `settle` cells of the whole component settle instantly, the rest animate, so the pile keeps its order while a big
+   * build comes down from the bottom over a few ticks. The instant part is written with `physics.coalesceMesh` set (its
+   * chunks re-mesh at most every LAZY_COALESCE_UPDATES frames, World §9.2: nothing animated stands in for those
+   * cells). A cell in an unloaded chunk is parked on it (§36.3.5). Once every cell is down, the hanging leaves next to
+   * them are checked (`trees.decayHangingLeaves`), 4 slices' worth at a time; then `done`.
+   * @param {RuleContext} ctx
+   * @param {Crumbling} cr
    */
-  _crumbleSlice(ctx) {
-    const batch = /** @type {Batch} */ (this._batch);
-    const cr = /** @type {Crumbling} */ (batch.crumbling);
+  _crumbleSlice(ctx, cr) {
     const order = cr.order;
     const n = order.length;
     if (cr.leafAt >= 0) {
@@ -917,35 +1256,49 @@ export class SupportSolver {
       for (let i = cr.leafAt; i < end; i++) cells.push(unpackCell(orderKey(order[i])));
       ctx.trees.decayHangingLeaves(cells, { event: /** @type {PhysicsEvent} */ (cr.event).id });
       cr.leafAt = end;
-      if (end >= n) batch.crumbling = null;
+      if (end >= n) cr.done = true;
       return;
     }
     const end = Math.min(cr.at + CRUMBLE_SLICE, n);
     /** @type {number[][]} */
-    const slice = [];
-    let settle = 0;
+    const instant = [];
+    /** @type {number[][]} */
+    const rest = [];
     const c = this._cell;
     for (let i = cr.at; i < end; i++) {
       unpackCell(orderKey(order[i]), c);
+      if (ctx.peek(c[0], c[1], c[2]) === UNLOADED) {
+        this._park(c[0], c[1], c[2], cr.seed.cause, 0, cr, cr);
+        continue;
+      }
       const id = this._liveId(ctx, c[0], c[1], c[2]);
       if (id < 0) continue;
-      slice.push([c[0], c[1], c[2], id]);
-      if (i < cr.settle) settle++;
+      (i < cr.settle ? instant : rest).push([c[0], c[1], c[2], id]);
     }
     cr.at = end;
-    if (slice.length > 0) {
+    if (instant.length + rest.length > 0) {
       if (cr.event === null) {
-        const e = this._eventFor(cr.seed);
+        const e = this._eventFor(cr.seed, cr.box);
         cr.event = e.ev;
         cr.own = e.own;
       }
       const ev = cr.event;
       const physics = this.physics;
       const token = physics.enterEvent(ev.id);
-      let removed;
+      this._slicing = cr;
+      let removed = 0;
       try {
-        removed = ctx.fallers.crumble(slice, { event: ev.id, settle });
+        if (instant.length > 0) {
+          physics.coalesceMesh = true;
+          try {
+            removed += ctx.fallers.crumble(instant, { event: ev.id, settle: instant.length });
+          } finally {
+            physics.coalesceMesh = false;
+          }
+        }
+        if (rest.length > 0) removed += ctx.fallers.crumble(rest, { event: ev.id, settle: 0 });
       } finally {
+        this._slicing = null;
         physics.exitEvent(token);
       }
       if (removed > 0 && cr.removed === 0) {
@@ -960,7 +1313,7 @@ export class SupportSolver {
     }
     if (cr.at >= n) {
       if (cr.removed > 0) cr.leafAt = 0;
-      else batch.crumbling = null;
+      else cr.done = true;
     }
   }
 }

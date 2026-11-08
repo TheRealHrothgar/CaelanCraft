@@ -193,6 +193,7 @@ export const MAX_PENDING_SUPPORT_SEEDS = 4096;      // queued support-seed recor
 export const UNDO_WINDOW_S = 60;                    // the last physics event can be undone this long after it began
 export const UNDO_MAX_CELLS = 65536;                // cells one event records for undo (beyond: recorded partially)
 export const LAZY_MESH_BUDGET_MS = 4;               // world.update(): lazy (physics) re-meshes per call, nearest first, at least one
+export const LAZY_COALESCE_UPDATES = 20;            // … a chunk dirtied only by a big crumble's instant part: one re-mesh per this many calls
 // Falling blocks (§34)
 export const MAX_FALLING = 1024;                    // column fallers in flight; beyond this (the lowest) cells settle instantly
 export const MAX_TUMBLING = 64;                     // tumbling entities (debris, lit barrels); extra debris becomes dust

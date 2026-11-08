@@ -494,6 +494,8 @@ export class BlockPhysics {
 
     this._writeMode = WRITE_EXTERNAL;
     this._writeSeq = 0;
+    /** physics writes reach world.setBlock as lazy 'coalesce' while set (a crumble's instant part, §36.3.1, World §9.2) */
+    this.coalesceMesh = false;
     /** @type {Cause|null} */
     this._cause = null;
     /** @type {PhysicsEvent|null} event that ctx.write currently records into */
@@ -914,7 +916,10 @@ export class BlockPhysics {
     return this._wChunk !== null && q === this._wq && r === this._wr ? this._wChunk : undefined;
   }
 
-  /** A chunk was generated: re-queue the updates parked on it, then re-seed its edited physics-active cells. */
+  /**
+   * A chunk was generated: re-queue the updates parked on it, re-seed the collapse cells parked on it (support, §36.3.5),
+   * then re-seed its edited physics-active cells.
+   */
   onChunkGenerated(cq, cr) {
     const key = chunkKey(cq, cr);
     const parked = this._parked.get(key);
@@ -926,6 +931,7 @@ export class BlockPhysics {
         this._rings[ri].push(pk - ri * PARK_STRIDE, this.tickCount + 1);
       }
     }
+    if (this.switches.collapse) this.support.onChunkGenerated(cq, cr);
     if (this._reseeders.length === 0 || !this.world.edits) return;
     const chunkEdits = this.world.edits.get(key);
     if (chunkEdits === undefined) return;
@@ -1317,7 +1323,7 @@ export class BlockPhysics {
     this._writeMode = mode;
     let ok;
     try {
-      ok = world.setBlock(q, y, r, id, true);
+      ok = world.setBlock(q, y, r, id, this.coalesceMesh ? 'coalesce' : true);
     } finally {
       this._writeMode = prevMode;
     }

@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE,
-  DATA_RADIUS_EXTRA, UNLOAD_RADIUS_EXTRA, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS,
+  DATA_RADIUS_EXTRA, UNLOAD_RADIUS_EXTRA, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS, LAZY_COALESCE_UPDATES,
 } from '../../src/config.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
 import { HEX_DIRS, hexLength, hexNormSq, hexToWorld, worldToHex, hexDiscCount } from '../../src/hex.js';
@@ -1292,5 +1292,36 @@ describe('lazy re-meshing', () => {
     const r = world.update(0, 0, Infinity);
     expect(meshCalls.length).toBe(1);
     expect(r.pendingMesh).toBe(5);
+  });
+
+  it("a chunk dirtied only by 'coalesce' writes re-meshes at most once per LAZY_COALESCE_UPDATES calls; a plain lazy write ends the wait", () => {
+    const { world, meshCalls } = makeWorld({ worldGen: flatWorldGen(10) });
+    converge(world);
+    const c = world.getChunk(0, 0);
+    for (let i = 0; i < 50; i++) world.update(0, 0, Infinity); // its last mesh is long ago
+    // One coalesce write every call (a big crumble's instant part): the first re-meshes at once, then one per window.
+    meshCalls.length = 0;
+    let last = null;
+    const calls = 48;
+    for (let i = 0; i < calls; i++) {
+      world.setBlock(8, 11 + (i % 2), 8, i % 4 < 2 ? B.STONE : B.AIR, 'coalesce');
+      last = world.update(0, 0, Infinity);
+    }
+    expect(meshCalls.filter((m) => m.key === '0,0').length).toBe(Math.ceil(calls / LAZY_COALESCE_UPDATES)); // it was 48
+    expect(c.dirty && c.lazy && c.coalesce).toBe(true); // the last writes wait …
+    expect(last.pendingMesh).toBeGreaterThan(0); // … counted as pending
+    world.setBlock(9, 11, 8, B.GLASS, true); // a plain lazy write (a landing) ends the wait
+    expect(c.coalesce).toBe(false);
+    meshCalls.length = 0;
+    world.update(0, 0, Infinity);
+    expect(meshCalls.map((m) => m.key)).toEqual(['0,0']);
+    expect(c.dirty || c.lazy || c.coalesce).toBe(false);
+    // A non-lazy write never waits either; repeated calls always converge.
+    world.setBlock(8, 13, 8, B.STONE, 'coalesce');
+    world.setBlock(9, 13, 8, B.STONE);
+    expect(c.coalesce).toBe(false);
+    world.setBlock(8, 14, 8, B.STONE, 'coalesce');
+    for (let i = 0; i < LAZY_COALESCE_UPDATES && world.update(0, 0, Infinity).pendingMesh > 0; i++);
+    expect(dirtyKeys(world)).toEqual([]);
   });
 });

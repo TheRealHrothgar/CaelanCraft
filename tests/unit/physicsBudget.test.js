@@ -1,10 +1,13 @@
 // Regression tests for the block-physics tick budget (CONTRACTS §33.1.4, §33.6.4, §34.1, §36.1.4, §36.3.1): big area
 // batches, many seeds and big crumbles spread over ticks under the deadline; an area removal reads no neighbours; a
 // saturated fall ring no longer starves the misc / water rings; a cut sand tower releases about one column past the
-// budget; a settle never lands under a block that was beneath it. Clocks are fake and charge per clock read or per
-// write, so every bound here is deterministic.
+// budget; a settle never lands under a block that was beneath it; a crumble coming down over many ticks lives beside
+// later collapses, undo, streaming and the blocks that land on it, and re-meshes its chunks in coalesced steps (§36.3,
+// World §9.2). Clocks are fake and charge per clock read or per write, so every bound here is deterministic.
 import { describe, it, expect } from 'vitest';
-import { MAX_CELL_UPDATES_PER_TICK, MAX_COLUMN_FALL, PHYSICS_TICK_BUDGET_MS, WATER_TICKS } from '../../src/config.js';
+import {
+  CHUNK_SIZE, LAZY_COALESCE_UPDATES, MAX_CELL_UPDATES_PER_TICK, MAX_COLUMN_FALL, PHYSICS_TICK_BUDGET_MS, WATER_TICKS,
+} from '../../src/config.js';
 import { BLOCK } from '../../src/blocks.js';
 import { World } from '../../src/world.js';
 import { BlockPhysics, SaveOverlay } from '../../src/blockphysics.js';
@@ -306,5 +309,188 @@ describe('big crumbles come down a slice at a time (FR-2)', { timeout: 60000 }, 
       expect(stack).toEqual(Array.from({ length: N }, (_, k) => original(20 + k)));
       expect(overlay.peek(q, 20 + N - 1, r)).toBe(B.AIR);
     }
+  });
+});
+
+describe('a crumble coming down beside everything else (FR-2 follow-up)', { timeout: 60000 }, () => {
+  const STRIPES = [B.BRICKS, B.STONE_BRICKS, B.OAK_PLANKS];
+  const N = 12;
+  const original = (y) => STRIPES[y % 3];
+  /** An N × N × N striped box at q, r in [q0, q0 + N) on one cobblestone pillar at (q0, q0): its cells y 20 … 31. */
+  function box(world, q0 = 0) {
+    for (let y = 11; y <= 19; y++) world.put(q0, y, q0, B.COBBLESTONE);
+    for (let q = q0; q < q0 + N; q++) for (let r = q0; r < q0 + N; r++) for (let y = 20; y < 20 + N; y++) world.put(q, y, r, original(y));
+  }
+  /** Every column of the box holds its N cells in order (lowest first) and its top cell is gone. */
+  function expectDown(world, q0 = 0) {
+    for (let q = q0; q < q0 + N; q++) for (let r = q0; r < q0 + N; r++) {
+      const stack = [];
+      for (let y = 11; y < 40; y++) {
+        const id = world.getBlock(q, y, r);
+        if (STRIPES.includes(id)) stack.push(id);
+      }
+      expect(stack, `${q},${r}`).toEqual(Array.from({ length: N }, (_, k) => original(20 + k)));
+      expect(world.getBlock(q, 20 + N - 1, r)).toBe(B.AIR);
+    }
+  }
+  const crumbling = (p) => p.support.stats.crumbled > 0 && p.support.busy;
+
+  it('undo of a blast while its crumble comes down stops only that crumble: a collapse queued beside it still falls', () => {
+    const { world, physics } = costlyFakeWorld(0.05); // one 64-cell slice (128 writes) overruns a tick's budget
+    box(world);
+    // A 5-cell glass beam on its own pillar, far away.
+    for (let y = 11; y <= 14; y++) world.put(40, y, 40, B.COBBLESTONE);
+    for (let q = 40; q < 45; q++) world.put(q, 15, 40, B.GLASS);
+    // One tick: a "blast" cuts the box's pillar (quiet write + rim seed in its event), then a command cuts the beam's.
+    physics.beginEvent('explosion', { kind: 'explosion', x: 0, y: 19, z: 0 });
+    physics.ctx.writeQuiet(0, 19, 0, B.AIR);
+    physics.seedSupport([[0, 20, 0]], { removed: [[0, 19, 0, B.COBBLESTONE, 0]] });
+    physics.endEvent();
+    world.setBlock(40, 13, 40, B.AIR);
+    for (let i = 0; i < 400 && !crumbling(physics); i++) physics.tick();
+    expect(crumbling(physics)).toBe(true);
+    expect(world.getBlock(42, 15, 40)).toBe(B.GLASS); // the beam has not come down yet
+    expect(physics.lastEvent.kind).toBe('explosion');
+    expect(physics.undo().ok).toBe(true);
+    for (let i = 0; i < 2000 && !idle(physics); i++) physics.step(1 / 20);
+    for (let q = 0; q < N; q++) for (let r = 0; r < N; r++) for (let y = 20; y < 20 + N; y++) expect(world.getBlock(q, y, r)).toBe(original(y));
+    for (let q = 40; q < 45; q++) expect(world.getBlock(q, 15, 40), `beam ${q}`).toBe(B.AIR); // it hung there for good
+    let glass = 0;
+    for (let q = 40; q < 45; q++) for (let y = 11; y <= 15; y++) if (world.getBlock(q, y, 40) === B.GLASS) glass++;
+    expect(glass).toBe(5);
+  });
+
+  it('a crumble whose chunk unloads part-way comes down the rest of the way when the chunk is back', () => {
+    const { world, physics } = costlyFakeWorld(0.02);
+    box(world, 2); // inside chunk (0, 0)
+    physics.asPlayer(() => world.setBlock(2, 15, 2, B.AIR));
+    for (let i = 0; i < 400 && !crumbling(physics); i++) physics.tick();
+    for (let i = 0; i < 2; i++) physics.tick();
+    expect(physics.support.busy).toBe(true); // part of it still hangs
+    world.unload(0, 0);
+    for (let i = 0; i < 400 && physics.support.busy; i++) physics.step(1 / 20);
+    const parked = physics.support.parkedCount;
+    world.load(0, 0);
+    for (let i = 0; i < 3000 && !idle(physics); i++) physics.step(1 / 20);
+    expectDown(world, 2); // the rest hung there for good
+    expect(parked).toBeGreaterThan(0);
+    expect(physics.support.parkedCount).toBe(0);
+  });
+
+  it('a save while part of a crumble waits on an unloaded chunk saves that part fallen too (nothing floats after a reload)', () => {
+    let t = 0;
+    const { world, physics } = realWorld(10, () => t);
+    for (let y = 11; y <= 19; y++) world.setBlock(3, y, 3, B.COBBLESTONE);
+    for (let q = 2; q < 2 + N; q++) for (let r = 2; r < 2 + N; r++) for (let y = 20; y < 20 + N; y++) world.setBlock(q, y, r, original(y));
+    const setBlock = world.setBlock.bind(world);
+    world.setBlock = (...a) => {
+      const ok = setBlock(...a);
+      if (ok) t += 0.02;
+      return ok;
+    };
+    physics.asPlayer(() => world.setBlock(3, 19, 3, B.AIR));
+    for (let i = 0; i < 400 && !crumbling(physics); i++) physics.tick();
+    expect(physics.fallers.count).toBe(0); // still in its instant part: nothing in flight to lose in the unloaded chunk
+    const far = 40 * CHUNK_SIZE;
+    for (let i = 0; i < 500 && world.getChunk(0, 0) !== undefined; i++) world.update(far, 0, Infinity);
+    for (let i = 0; i < 400 && physics.support.busy; i++) physics.step(1 / 20);
+    expect(world.getChunk(0, 0)).toBeUndefined();
+    const parked = physics.support.parkedCount;
+    const reloaded = new World({ seed: 1, renderDistance: 2, worldGen: flatWorldGen(10), now: () => 0 });
+    reloaded.importEdits(physics.exportEdits());
+    for (let i = 0; i < 500; i++) {
+      const r = reloaded.update(0, 0, Infinity);
+      if (r.pendingGen === 0 && r.pendingMesh === 0) break;
+    }
+    for (let q = 2; q < 2 + N; q++) for (let r = 2; r < 2 + N; r++) {
+      const stack = [];
+      for (let y = 11; y < 40; y++) if (STRIPES.includes(reloaded.getBlock(q, y, r))) stack.push(reloaded.getBlock(q, y, r));
+      expect(stack, `${q},${r}`).toEqual(Array.from({ length: N }, (_, k) => original(20 + k)));
+      expect(reloaded.getBlock(q, 20 + N - 1, r)).toBe(B.AIR); // it reloaded hanging
+    }
+    expect(parked).toBeGreaterThan(0);
+  });
+
+  it('a tree cut while a big crumble comes down starts to fall at once, and a small collapse comes down at once', () => {
+    const { world, physics } = costlyFakeWorld(0.02);
+    box(world);
+    for (let y = 11; y <= 16; y++) world.put(-20, y, 0, B.OAK_LOG); // a 6-log trunk on the ground
+    for (let y = 11; y <= 14; y++) world.put(-30, y, 0, B.COBBLESTONE); // a 3-cell glass beam on a pillar
+    for (let q = -30; q < -27; q++) world.put(q, 15, 0, B.GLASS);
+    physics.asPlayer(() => world.setBlock(0, 15, 0, B.AIR));
+    for (let i = 0; i < 400 && !crumbling(physics); i++) physics.tick();
+    for (let i = 0; i < 3; i++) physics.tick();
+    expect(physics.support.busy).toBe(true);
+    expect(world.getBlock(5, 20 + N - 1, 5)).toBe(original(20 + N - 1)); // the box's top still hangs
+    physics.asPlayer(() => world.setBlock(-20, 11, 0, B.AIR));
+    world.setBlock(-30, 13, 0, B.AIR);
+    physics.tick();
+    expect(physics.support.stats.toppled).toBe(1); // it waited for the whole crumble (~40 ticks)
+    expect(world.getBlock(-29, 15, 0)).toBe(B.AIR); // the beam is on its way down
+    expect(world.getBlock(5, 20 + N - 1, 5)).toBe(original(20 + N - 1)); // the box still comes down meanwhile
+    for (let i = 0; i < 3000 && !idle(physics); i++) physics.step(1 / 20);
+    expectDown(world);
+  });
+
+  it('blocks that land on, or are placed against, the part that still hangs come down once the crumble is done', () => {
+    const { world, physics } = costlyFakeWorld(0.02);
+    box(world);
+    physics.asPlayer(() => world.setBlock(0, 15, 0, B.AIR));
+    for (let i = 0; i < 400 && !crumbling(physics); i++) physics.tick();
+    expect(world.getBlock(5, 20 + N - 1, 5)).toBe(original(20 + N - 1)); // the top still hangs
+    physics.fallers.spawn(B.GLASS, 5, 20 + N + 1, 5); // drops onto the hanging top
+    world.setBlock(N, 20 + N - 1, 5, B.ICE); // the player builds against its side
+    for (let i = 0; i < 3000 && !idle(physics); i++) physics.step(1 / 20);
+    expectDown(world);
+    let glass = 0;
+    let ice = 0;
+    for (let y = 11; y < 40; y++) {
+      if (world.getBlock(5, y, 5) === B.GLASS) glass = y;
+      if (world.getBlock(N, y, 5) === B.ICE) ice = y;
+    }
+    expect(glass).toBe(11 + N); // on top of its column's pile (it hung at 20 + N)
+    expect(ice).toBe(11); // on the ground (it hung at 19 + N)
+    expect(physics.support.stats.watched).toBe(2);
+  });
+
+  it("re-meshes a crumble's chunk once per LAZY_COALESCE_UPDATES frames while its lowest cells settle (not once a tick)", () => {
+    let t = 0;
+    const { world, physics } = realWorld(10, () => t);
+    // A 12 × 12 × 40 box inside chunk (0, 0) on one pillar: 5 760 cells, 4 736 of them settle instantly.
+    for (let y = 11; y <= 19; y++) world.setBlock(3, y, 3, B.COBBLESTONE);
+    for (let q = 2; q < 14; q++) for (let r = 2; r < 14; r++) for (let y = 20; y < 60; y++) world.setBlock(q, y, r, original(y));
+    for (let i = 0; i < 50; i++) world.update(0, 0, Infinity);
+    const setBlock = world.setBlock.bind(world);
+    world.setBlock = (...a) => {
+      const ok = setBlock(...a);
+      if (ok) t += 0.02; // a physics write costs 0.02 ms: about one 64-cell slice per tick
+      return ok;
+    };
+    let meshes = 0;
+    const mesh = world._mesh.bind(world);
+    world._mesh = (c) => {
+      if (c.key === '0,0') meshes++;
+      return mesh(c);
+    };
+    physics.asPlayer(() => world.setBlock(3, 19, 3, B.AIR));
+    let frames = 0;
+    let instantFrames = 0;
+    let instantMeshes = 0;
+    for (; frames < 20000 && !(idle(physics) && frames > 10); frames++) {
+      const before = meshes;
+      physics.step(1 / 60);
+      world.update(0, 0);
+      // Crumbling, and nothing animates yet: its lowest cells are settling instantly.
+      if (physics.support.busy && physics.support.stats.crumbled > 0 && physics.fallers.count === 0) {
+        instantFrames++;
+        instantMeshes += meshes - before;
+      }
+    }
+    for (let i = 0; i < 50; i++) world.update(0, 0);
+    expect(physics.support.stats.crumbled).toBe(1);
+    expect(instantFrames).toBeGreaterThan(48); // it came down over many frames …
+    expect(instantMeshes).toBeLessThanOrEqual(instantFrames / LAZY_COALESCE_UPDATES + 1); // … it was one re-mesh a tick
+    for (let q = 2; q < 14; q++) for (let r = 2; r < 14; r++) expect(world.getBlock(q, 59, r)).toBe(B.AIR);
+    expect([...world.chunks.values()].filter((c) => c.dirty && c.meshed).length).toBe(0); // all re-meshed in the end
   });
 });

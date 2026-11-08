@@ -21,6 +21,10 @@ export class Chunk {
     this.dirty = true;
     /** dirty only through lazy (physics) writes: World.update re-meshes it under LAZY_MESH_BUDGET_MS (CONTRACTS §9.2) */
     this.lazy = false;
+    /** dirty only through 'coalesce' writes: re-meshed at most every LAZY_COALESCE_UPDATES update() calls (§9.2) */
+    this.coalesce = false;
+    /** World.update call count when it was last meshed (−Infinity: never) */
+    this.meshedAt = -Infinity;
     /** has been handed to the renderer at least once */
     this.meshed = false;
   }

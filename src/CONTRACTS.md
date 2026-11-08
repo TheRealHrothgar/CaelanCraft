@@ -153,7 +153,7 @@ MAX_RUNNING_SCRIPTS, MAX_CHAIN_HOPS, CHAIN_DELAY_S, MAX_RUNES, MAX_RUNE_SCRIPT_C
 WAIT_MIN_S, WAIT_MAX_S, REPEAT_MIN_S, REPEAT_MAX_S, STEP_COOLDOWN_MAX_S, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_CONSOLE_LINES,
 CONSOLE_HISTORY, CHAT_LINES, CHAT_LINE_MS` (values in the file; §26–§28 use them by name).
 Block physics (v0.8, §33–§38): `PHYSICS_TICK_S, WATER_TICKS, PHYSICS_TICK_BUDGET_MS, MAX_CELL_UPDATES_PER_TICK,
-MAX_SUPPORT_VISITS_PER_TICK, SUPPORT_STARVED_VISITS, MAX_PARKED_UPDATES, MAX_PENDING_SUPPORT_SEEDS,
+MAX_SUPPORT_VISITS_PER_TICK, SUPPORT_STARVED_VISITS, MAX_PARKED_UPDATES, MAX_PENDING_SUPPORT_SEEDS, LAZY_COALESCE_UPDATES,
 UNDO_WINDOW_S, UNDO_MAX_CELLS, LAZY_MESH_BUDGET_MS, MAX_FALLING, MAX_TUMBLING, MAX_COLUMN_FALL, FALLER_RADIUS, FALLER_HEIGHT,
 TUMBLE_SUBSTEP, TUMBLE_AIR_DRAG, TUMBLE_GROUND_FRICTION, LANDING_DUST_PER_FRAME, PARTICLE_CAPACITY, PHYSICS_SOUND_RANGE,
 BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S, WATER_CURRENT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS, SUPPORT_LIMIT,
@@ -287,6 +287,8 @@ export class Chunk {
   blocks; biomes; heights;    // Uint8Array(CHUNK_VOLUME), Uint8Array(CHUNK_AREA), Uint8Array(CHUNK_AREA)
   dirty = true;               // needs (re)meshing
   lazy = false;               // v0.8: dirty only through lazy writes (World §9.2) — re-meshed under LAZY_MESH_BUDGET_MS
+  coalesce = false;           // … and only through 'coalesce' writes (World §9.2): waits LAZY_COALESCE_UPDATES calls between meshes
+  meshedAt = -Infinity;       // World.update call count of its last mesh
   meshed = false;             // has been handed to the renderer at least once
   get(lq, ly, lr)             // BlockId; returns AIR (0) when out of range
   set(lq, ly, lr, id)         // returns true iff the value changed (then dirty = true); false when out of range
@@ -418,9 +420,9 @@ export class World {
   getBlockAt(x, y, z)        // WORLD position convenience: getBlock(...worldToHex(x, z), floor(y)); AIR for non-finite input
   setBlock(q, y, r, id, lazy = false) // CELL coords. boolean: false if y out of range, id not an integer 0..255, chunk not loaded, or unchanged.
                              // On success: chunk.set, edits record (§9.2: origin on the first edit, deleted when written back to its
-                             // origin), editVersion++, and marks dirty (lazily when `lazy`, §9.2) every LOADED chunk
-                             // containing the cell or one of its 6 HEX_DIRS neighbours (dedupes to 1–4 chunks; 4 only for the
-                             // index-space corner cells lq=15,lr=0 and lq=0,lr=15).
+                             // origin), editVersion++, and marks dirty (lazily when `lazy` — true or 'coalesce', §9.2) every
+                             // LOADED chunk containing the cell or one of its 6 HEX_DIRS neighbours (dedupes to 1–4 chunks; 4 only
+                             // for the index-space corner cells lq=15,lr=0 and lq=0,lr=15).
   getChunk(cq, cr)           // Chunk|undefined
   hasChunkAt(wx, wz)         // WORLD position → chunk of worldToHex loaded?   hasChunkAtCell(q, r) takes a cell
   isReadyAt(wx, wz)          // WORLD position: chunk exists, !dirty, meshed    isReadyAtCell(q, r) takes a cell
@@ -448,6 +450,8 @@ overBudget = () => builds >= MAX_BUILDS_PER_UPDATE || now() - start >= budgetMs
 2. Re-mesh edited chunks: every loaded chunk with dirty && meshed && all 6 hex neighbours loaded and NOT lazy → mesh now (ignores
    budget). v0.8: the ones that are lazy are sorted by squared world distance from (px, pz) to their centre cell
    `hexToWorld(cq·16+8, cr·16+8)` and meshed in that order until `now() − lazyStart ≥ LAZY_MESH_BUDGET_MS`, always at least one.
+   A lazy chunk with `coalesce` is left out (still pending) while `calls − meshedAt < LAZY_COALESCE_UPDATES`, where `calls` counts
+   update() calls (this one included) and `_mesh` sets `meshedAt = calls` (every mesh, any step).
 3. Walk RING_OFFSETS = all (dq,dr) with hexLength(dq,dr) <= renderDistance + DATA_RADIUS_EXTRA, sorted by hexNormSq(dq,dr)
    ascending (ties: dr then dq ascending). For each: cq = pcq+dq, cr = pcr+dr, chunk = chunks.get(key):
    if !chunk: data = worldGen.generateChunk(cq,cr); chunk = new Chunk(cq,cr,data); apply edits.get(key) (blocks[li] = id per pair);
@@ -470,9 +474,14 @@ Missing `performance` (Node < 16) → use `Date.now`. Tests pass `now: () => 0` 
 2. `importEdits` into a LOADED chunk uses the same bookkeeping (a pair equal to the current block is skipped); into an unloaded
    chunk it only records the edit (no origin). `_generate` gives every recorded edit of the new chunk its origin (the generated
    id) and DROPS edits equal to the generated id, then fires `onChunkGenerated(cq, cr)`. Edits and origins survive unloading.
-3. Lazy marks: for each loaded chunk to dirty, a non-lazy write sets `dirty = true, lazy = false`; a lazy write sets `dirty = true,
-   lazy = true` only when the chunk was clean (non-lazy wins). Meshing clears both. Block physics, black-hole eats and explosions
-   write lazily; the player, commands and runes do not.
+3. Lazy marks: for each loaded chunk to dirty, a non-lazy write sets `dirty = true, lazy = false, coalesce = false`; a lazy write
+   (`lazy` true or 'coalesce') sets `dirty = true, lazy = true, coalesce = (lazy === 'coalesce')` only when the chunk was clean
+   (non-lazy wins), and a `lazy = true` write to a dirty chunk sets `coalesce = false` (a plain lazy write never waits). Meshing
+   clears all three. Block physics, black-hole eats and explosions write lazily; the player, commands and runes do not.
+   'coalesce' (physics' `coalesceMesh`, §33.3): a big crumble's instant part (§36.3.1), whose chunks were re-meshed once per
+   physics tick for seconds (an 8 000-cell box: world.update 125–139 → 720–853 ms in game, frame p50 4.5 → 12–14 ms; now
+   271–433 ms and 5.6–7.7 ms, §38.4.4); with nothing animated standing in for those cells, a chunk may show them up to
+   LAZY_COALESCE_UPDATES frames (⅓ s at 60 fps) late instead.
 4. `editCount` is a running count equal to Σ `edits` sizes at all times.
 
 ## 10. `src/mesher.js`
@@ -1406,6 +1415,7 @@ export class BlockPhysics {
   constructor(world, hooks = {}, { now }?)   // hooks: PhysicsHooks (§33.7), missing ones are no-ops; now: ms clock (default world._now)
   world; hooks; ctx (RuleContext, §33.3); fallers; fluids; support; trees; explosions   // the feature modules (§34–§37)
   switches { falling, water, collapse, explosions }; switchVersion; paused; tickCount; time; stats; seeds (SeedQueue); lastEvent
+  coalesceMesh = false      // set by support around a crumble's instant part: writes reach setBlock as lazy 'coalesce' (§33.3)
   registerRule(name, { ring | rings, feature?, ids?, update(ctx, q, y, r, id) }); unregisterRule(name); ruleNames(ring)
   addTrigger(name, feature, fn(q, y, r, prev, next, mode)); removeTrigger(name)
   addReseeder(name, feature, ids, fn(ctx, q, y, r, id)); removeReseeder(name)
@@ -1455,13 +1465,16 @@ count = 8, opts)`, and the getters `fallers, fluids, support, trees, explosions`
 **Writes** (`_write`): y outside 0..127 or an UNLOADED cell → `'failed'`; current id === id → `'ok'` (nothing written);
 `world.editCount ≥ MAX_TOTAL_EDITS && !world.hasEdit(cell)` (it would add a NEW entry) → `'capped'`, with ONE chat line through
 `hooks.say` (re-armed once editCount < 95 % of the cap); else `world.setBlock(q, y, r, id, true)` (lazy) with the write mode set for
-the triggers (`write` → WRITE_PHYSICS, `writeQuiet` → WRITE_QUIET) and, when an event is open (§33.8), recorded into it.
+the triggers (`write` → WRITE_PHYSICS, `writeQuiet` → WRITE_QUIET) and, when an event is open (§33.8), recorded into it. While
+`coalesceMesh` is set the write is `world.setBlock(q, y, r, id, 'coalesce')` instead (World §9.2: its chunks re-mesh in coalesced
+steps; §36.3.1).
 ### 33.4 Parking and re-seeding
 1. `ctx.park()` parks the CURRENT update on the chunk of the last UNLOADED cell `ctx.peek` returned (or of column (q, r) when given):
    it leaves the ring and waits in `parked[chunkKey]` (a Set of `ringIndex·2^50 + key`), at most MAX_PARKED_UPDATES in total
    (beyond: dropped and counted in `parkedDropped` — re-seeding covers them).
-2. `onChunkGenerated(cq, cr)` re-queues every update parked on that chunk (due next tick), then hands every EDITED cell of the chunk
-   whose id a reseeder lists to `fn(ctx, q, y, r, id)` (reseeders of switched-off features are skipped).
+2. `onChunkGenerated(cq, cr)` re-queues every update parked on that chunk (due next tick), calls `support.onChunkGenerated(cq, cr)`
+   while collapse is on (the collapse cells parked on it, §36.3.5), then hands every EDITED cell of the chunk whose id a reseeder
+   lists to `fn(ctx, q, y, r, id)` (reseeders of switched-off features are skipped).
 3. Built-in reseeders: 'gravity' (falling): SAND/RED_SAND/GRAVEL/CAMPFIRE over a fall-through cell → `fall`, and every edited
    fall-through cell (AIR, CAMPFIRE, any water) with a gravity block or a campfire above it → that cell into `fall` (the rings are not
    saved: natural sand dug out from under just before a save — always so under `physics off` — falls after the reload); 'water' (water):
@@ -1720,13 +1733,16 @@ export function isSelfAnchored(id)   // RUNE_BLOCK or BLACK_HOLE: never fall, ho
 export function isAnchorCell(world, q, y, r)   // y === 0 || BEDROCK || world.isNaturalGround(q, y, r)
 export class SupportSolver {         // physics.support
   constructor(physics)               // registers the trigger 'support' (feature collapse, §36.1.5)
-  get busy; tipSaid; stats { batches, searches, visits, floating, crumbled, toppled, restarts }
+  get busy                           // a batch is open or a crumble comes down (§36.3.1)
+  get crumbleCount; get parkedCount; tipSaid                                     // crumbles in progress; cells parked (§36.3.5)
+  stats { batches, searches, visits, floating, crumbled, toppled, restarts, parked, parkedDropped, resumed, watched }
   step(ctx, seeds: SeedQueue, maxVisits) → visits; reset(); onSwitch(on)       // off → reset()
-  cancelEvent(id) → 0; settleInto(overlay)                                       // undo / saving (§36.3.2, §36.6.4)
+  cancelEvent(id) → 0; settleInto(overlay); onChunkGenerated(cq, cr)   // undo / saving / streaming (§36.3.2, §36.6.4, §36.3.5)
 }
 export const CRUMBLE_SLICE           // 64: a big crumble's cells between two deadline checks (§36.3.1)
 export function peekNeighbours(world, q, y, r, out, chunk?) → out   // the 8 neighbour ids (6 sides, above, below) as peekBlock gives
-                                     // them, read straight from the chunk when the cell is off its edges (one lookup, not eight)
+                                     // them, read straight from the chunk when the cell is off its edges (one lookup, not eight);
+                                     // a cell of an unloaded chunk reads its 6 sides one by one (they may be loaded)
 /** FloatingComponent = { cells: [q, y, r, id][], cause: Cause, event: number } */
 // trees.js (imports isLoadBearing from support.js)
 export function tiltEuler(kx, kz, theta, out = [0, 0, 0]) → [rx, ry, rz]   // Euler 'YXZ' of a rotation by θ about axis (kx, 0, kz)
@@ -1762,11 +1778,13 @@ export class Trees {                 // physics.trees
    stops when `maxVisits` visits ran, when `maxVisits · 8` units of cheap work ran (a seed taken in, a start cell looked at, 8 per
    removal scanned by the rule, 1 per cell written into the memo), or when `ctx.now() ≥ ctx.deadline` — checked every 256 visits and
    every 256 cheap units, so a step always does at least that much. The batch, memo and the current DFS are kept (`busy` is true
-   until the batch has collapsed what it found); when a batch ends and budget is left, the next one starts. A 30 000-removal
+   while a batch is open or a crumble comes down); a batch ends once its last component has begun to collapse (a crumble goes on
+   by itself, §36.3.1), and when budget is left the next one starts. A 30 000-removal
    `fill … air` batch takes ~10 ticks of ≤ 3 ms instead of one 150–400 ms tick.
 5. Trigger 'support' (collapse): while a batch is open, an EXTERNAL write (mode `WRITE_EXTERNAL`) that makes a cell load-bearing
    restarts the current DFS when the cell touches one of its pushed cells (`stats.restarts`), and marks a found component next to it
-   stale (never collapsed). Physics' own writes are ignored; removals need nothing (they seed the next batch).
+   stale (never collapsed). Physics' own writes are ignored there; removals need nothing (they seed the next batch). While crumbles
+   come down, every non-quiet write that makes a cell load-bearing is also checked against them (§36.3.6).
 ### 36.2 Which components collapse (the disconnected-by-this-removal rule)
 1. A removal `[q, y, r, prevId, wasAnchor]` of the batch is SUPPORTED when `wasAnchor === 1` or one of its 8 neighbours is in the
    supported memo or UNLOADED.
@@ -1778,26 +1796,56 @@ export class Trees {                 // physics.trees
 5. It runs as three resumable passes over the batch's removals (index them by cell; find the supported ones and the components each
    touches; spread through removals and components) — skipped when no component floated.
 ### 36.3 Collapse
-1. Collapsing components are handled in the order they were found; after each one — and after each slice of a crumble —
-   `ctx.now() ≥ ctx.deadline` leaves the rest for the next tick. A component of ≤ TREE_MAX_CELLS cells is re-read whole: only cells
-   still load-bearing make the FloatingComponent `[q, y, r, id]` (none → skipped) for the tree test. A crumble goes CRUMBLE_SLICE
-   cells at a time in (y, q, r) order (one numeric sort of `y·2^42 + packed column`), each slice re-read (cells no longer
-   load-bearing are skipped): a big build comes down from the bottom over a few ticks — what is not down yet hangs meanwhile — instead
-   of freezing one frame (an 8 000-cell box took 110–250 ms). It is committed once begun; later batches wait (`busy`).
+1. Collapsing components are handled in the order they were found; after each one `ctx.now() ≥ ctx.deadline` leaves the rest
+   for the next tick. A component of ≤ TREE_MAX_CELLS cells is re-read whole: only cells still load-bearing make the
+   FloatingComponent `[q, y, r, id]` (none → skipped) for the tree test (a cell of it in an unloaded chunk by now: §36.3.5). A
+   crumble goes CRUMBLE_SLICE cells at a time in (y, q, r) order (one numeric sort of `y·2^42 + packed column`), each slice re-read
+   (cells no longer load-bearing are skipped): a big build comes down from the bottom over a few ticks — what is not down yet hangs
+   meanwhile — instead of freezing one frame (an 8 000-cell box took 110–250 ms). It is committed once begun and LEAVES THE BATCH
+   (FR-2 follow-up): its first slice comes down at once, the rest is a crumble of its own (`crumbleCount`), so the batch ends and
+   later batches go on beside it — a tree cut during an 8 000-cell crumble used to wait 2–6 s (up to SUPPORT_LIMIT / CRUMBLE_SLICE
+   ticks). Per step, while crumbles come down: a batch with work first gets BATCH_SHARE = ½ of what is left of the step
+   (`ctx.deadline` lowered for it), then the crumbles take the rest, one slice each in turn (round-robin, resumed where the last
+   step stopped), the deadline checked after each slice, at least one slice per step; once they are all down, budget still left
+   goes back to the batches. A slice's instant part (its cells below `settle`) is written with `physics.coalesceMesh` set (World
+   §9.2: those chunks re-mesh once per LAZY_COALESCE_UPDATES frames instead of once a tick); its animated part is not (the faller
+   drawn there would show next to a stale copy).
 2. Undo: the writes record into the seed's `event` while it is still `physics.lastEvent` (a blast's rim search records into the blast);
    otherwise into the batch's own event, opened once per batch with `beginEvent('collapse', seed.cause)` (later components and slices
    re-enter it; a big crumble chooses it at its first slice with a live cell). Its kind is `'falling tree'` while it holds only
-   toppled trees and `'collapse'` once something crumbled. `cancelEvent(id)` (undo of that event, or of the event a pending collapse
-   would record into) ends the batch: what still hangs stays where it is, like everything undo puts back.
+   toppled trees and `'collapse'` once something crumbled. The batch's event is shared with the crumbles that outlive it.
+   `cancelEvent(id)` (undo of that event) stops only what records into it: a crumble whose event is `id` — or, before its first
+   live slice, whose seed's event or batch's event is `id` — is dropped with the cells it parked; the open batch's components still
+   to come are dropped when its own event is `id`, and no component found from a seed whose `event` is `id` collapses
+   (`batch.cancelled`, in any phase: the undo put back what cut it loose); cells parked into `id` are dropped. What still hangs
+   stays where it is, like everything undo puts back; the rest of the batch and every other crumble go on (an undo used to end the
+   whole batch, and the other collapses queued in it hung for good).
 3. `tree = trees.test(component)`; `tree && trees.topple(tree, component, { cause, event })` → `stats.toppled++`; else the crumble:
-   each slice is `fallers.crumble(slice, { event, settle })`, where the lowest `max(0, n − free slots when it began)` cells of the
-   whole component settle instantly and the rest animate (§34.2.4: the pile keeps its order across slices); once every cell is down,
-   `trees.decayHangingLeaves` runs over the component's cells (256 at a time). The first slice that removed a cell counts
-   `stats.crumbled++`, and the first such crumble of this SupportSolver (one per loaded world) says COLLAPSE_TIP (`tipSaid`). A
-   BLAST_BARREL cell for which `ctx.explosions.hangBurning(q, y, r)` is true (it burns in place) is left out (integration, §38.2).
+   each slice is `fallers.crumble(instant, { event, settle: instant.length })` (with `coalesceMesh` set) then `fallers.crumble(rest,
+   { event, settle: 0 })`, where `instant` holds the slice's cells among the lowest `settle = max(0, n − free slots when it began)`
+   cells of the whole component — they settle instantly — and the rest animate (§34.2.4: the pile keeps its order across slices);
+   once every cell is down, `trees.decayHangingLeaves` runs over the component's cells (256 at a time). The first slice that removed
+   a cell counts `stats.crumbled++`, and the first such crumble of this SupportSolver (one per loaded world) says COLLAPSE_TIP
+   (`tipSaid`). A BLAST_BARREL cell for which `ctx.explosions.hangBurning(q, y, r)` is true (it burns in place) is left out
+   (integration, §38.2).
 4. Rune blocks and black holes are never part of a component (not load-bearing): they stay where they are, and what rests on them
    lands on them. Campfires, water and anything else above follow through the normal triggers (§33.5). No boundary search follows a
-   collapse: a component is maximal, so removing it cannot leave another load-bearing cell floating.
+   collapse: a component is maximal, so removing it cannot leave another load-bearing cell floating — except a cell that became
+   load-bearing next to a crumble while it came down (§36.3.6).
+5. Streaming (FR-2 follow-up): a collapse cell that reads UNLOADED when its turn comes — a cell of a crumble's slice, or any cell
+   of a small component at its collapse (then nothing of that component collapses now) — is PARKED on its chunk (`ParkedCells {
+   keys, cause, event, crumble }`; at most MAX_PARKED_UPDATES cells, beyond: `stats.parkedDropped`). A crumble's parked cells wait
+   until it is down (a search of them meanwhile would meet its own hanging rest), then take its event. `onChunkGenerated(cq, cr)` —
+   and the end of the crumble that parked them — re-seeds the cells parked on a chunk once it and its 6 hex neighbours are all
+   loaded (a search must not stop on an UNLOADED cell next to them): ONE `seedSupport(cells, { cause, priority: cause is the
+   player })` without removals inside `withEvent(event)`, so what it finds floating collapses outright (§36.2.3), into the original
+   event while that is still undoable (`stats.resumed`). A crumble whose chunks unloaded part-way (the player teleporting away) used
+   to leave the rest hanging for good: 7 616 of an 8 000-cell box.
+6. What lands on a crumble: while crumbles come down, trigger 'support' takes every write but a quiet one (EXTERNAL or PHYSICS) that
+   makes a cell load-bearing; each crumble — other than the one whose slice is being written (its own settling cells) — that still
+   has to bring down one of the cell's 8 neighbours (its `order` from `at`, binary search) adds the cell to its `watch` set
+   (`stats.watched`). When that crumble is done its watched cells are ONE seed without removals (its cause and event): a faller, log
+   or other crumble that landed on the hanging part, or a block placed against it, would float once it was gone.
 ### 36.4 Tree test (`trees.test(component)`)
 1. A tree has 3 … TREE_MAX_CELLS cells, every one a log (`isLog`), in at most 2 (q, r) columns that are hex-adjacent; anything else
    (a log cabin, a trunk with a plank platform) → null, and the component crumbles.
@@ -1842,9 +1890,11 @@ export class Trees {                 // physics.trees
    `enterEvent(event)` and 4 'leaves' particles. Leaves never become falling blocks.
 3. `renderItems(push)`: every job (falling, then waiting) pushes each cell at `pivot + R(θ)·offset` with `tiltEuler(kx, kz, θ)`, scale 1
    (θ: 0 while waiting, `shakeAngle` while shaking).
-4. support's `settleInto(overlay)` (after fallers'): the cells the open batch decided to collapse but has not brought down yet — the
-   rest of a crumble and the components after it — still load-bearing in the overlay are saved fallen, lowest first, down their
-   columns (a burning barrel is explosions'). Trees' `settleInto(overlay)` (saving; never the live world): per job, its logs snapped
+4. support's `settleInto(overlay)` (after fallers'): the cells a collapse has not brought down yet — the rest of every crumble, the
+   open batch's components still to come (not stale, not cancelled) and the parked cells — still load-bearing in the overlay are
+   saved fallen, lowest first, down their columns (a burning barrel is explosions'); a cell of an unloaded chunk falls through that
+   chunk as it will generate (`world.worldGen.generateChunk` with `world.edits` and the overlay's cells on top; a world without a
+   worldGen saves it where it hangs). Trees' `settleInto(overlay)` (saving; never the live world): per job, its logs snapped
    like an impact at the current θ against
    `overlay.peek`, then lowest first moved up past non-fall-through cells and down while the cell below is fall-through, and
    `overlay.set` there (a column in an unloaded chunk is skipped); leaves are not saved; leaves waiting to decay are saved as AIR.
@@ -1873,6 +1923,8 @@ export class Trees {                 // physics.trees
 13. Hanging canopy leaves also decay after a topple (§36.6.1): ownership (§36.4.2) and the topple decay count any log, so a trunk
     felled earlier and lying on the ground under a canopy kept single leaves floating (about one per 5 trees felled in a dense forest).
     Natural leaves only: the rules above already decide a player's leaves.
+14. A crumble outlives its batch, parks what streams out and re-searches what lands on it (§36.3.1, §36.3.5–6): DESIGN §5 crumbles a
+    component in one call, so nothing could happen to a half-crumbled build there.
 
 ## 37. `src/explosions.js` (PURE) — blast barrels, v0.8
 
@@ -2036,6 +2088,13 @@ real World for saving and reloading).
    pre-v0.8 per-cell cost (were ~8×); a cut 37 × 64 / 217 × 40 sand tower — worst tick 4–14 ms (was 34–113 ms), no frame over 16 ms;
    an 8 000-cell floating box crumbling — worst physics step ~6 ms warm (was 110–243 ms), down over ~3 s; a 15 000-cell sand
    `fill` in the air — no tick over 16 ms (were 10 per run). Final column stacks equal the old code's in every one of these.
+4. Measured after the crumble follow-up (§36.3.1–§36.3.6; headless Chrome in real time on a shared machine, seed 42, a 20 × 20 × 20
+   stone box on one pillar, 4 reps each, interleaved with the FR-2 build and the pre-FR-2 one): world.update during the crumble
+   271–433 ms (FR-2: 674–889, pre-FR-2: 82–169), frame p50 5.6–7.7 ms (10.9–11.9; 4.2–5.1), 40–55 re-meshes (73–101; 12–24) —
+   19–26 over the 75–114 frames its lowest cells settle, where FR-2 re-meshed every frame — worst physics step 9–35 ms (8.5–41;
+   up to 272), nothing lost. A trunk cut 6 ticks into it falls after 1 tick (FR-2: 36); teleporting away 5 ticks in and back leaves
+   0 of its 400 top cells hanging (FR-2: 400). Final stacks and edits equal FR-2's and the pre-FR-2 code's in the verifier's five
+   equivalence scenarios on both clocks.
 
 ## 39. `src/zombies.js` (PURE) and `src/zombieRenderer.js` (three) — Zombies
 

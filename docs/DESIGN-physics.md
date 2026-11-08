@@ -458,6 +458,14 @@ waterfall holding the water and misc rings for ~450 ticks. Only the DFS was budg
 5. **Fair shares.** While misc, support or water have work due, the fall ring stops at half the budget (misc at ⅝, support at
    ⅞); fall and misc get the leftovers afterwards, and every ring with due work runs at least 8 updates (or one heavy one). This
    replaces the support-only starvation guard of §10.9.3.
+6. **A crumble on its own** (follow-up review of 3; CONTRACTS §36.3.1–§36.3.6, World §9.2). Spreading a crumble over ~40 ticks
+   kept its batch busy: a tree cut meanwhile waited 2–6 s, an undo dropped every other collapse of the batch, a teleport away left
+   the rest hanging for good, and the box's chunks re-meshed once a tick (world.update ×3–6). Now a crumble leaves its batch after
+   its first slice and comes down beside later batches (they get half of each step); undo drops only what records into the
+   undone event; cells found in an unloaded chunk are parked there and re-searched once it and its neighbours are back (a save
+   drops them through the chunk as it will generate); a block that lands on, or is placed against, the part still hanging is
+   re-searched once the crumble is down; and the instantly settled cells are written as 'coalesce' writes, so their chunks
+   re-mesh once per LAZY_COALESCE_UPDATES frames instead of once a tick.
 Remaining cost on a shared, loaded machine: single frames of ~5–15 ms when a 4–11 ms GC pause lands in a physics step (packed
 cell keys are doubles, so the memo's Sets allocate); fluids' re-queueing of already-settled falling water (two thirds of a
 waterfall's fall-ring updates are no-ops) is a fluids.js matter left for that module.
