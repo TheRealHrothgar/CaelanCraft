@@ -160,6 +160,11 @@ export class Campfires {
     /** @type {(Campfire|null)[]} */
     this._heapF = new Array(CAMPFIRE_MAX_TRACKED).fill(null);
     this._heapN = 0;
+    /** scratch for _applyPass: heap indices in nearest-first order */
+    this._order = new Int32Array(CAMPFIRE_MAX_TRACKED);
+    /** _applyPass comparator, made once: heap distance, ties by key */
+    this._byHeapDist = (i, j) => this._heapD[i] - this._heapD[j]
+      || (/** @type {Campfire} */ (this._heapF[i]).key < /** @type {Campfire} */ (this._heapF[j]).key ? -1 : 1);
     /** re-picks finished so far: a finished re-pick stamps the fires it keeps with this (Campfire.mark) */
     this._marks = 0;
   }
@@ -393,23 +398,23 @@ export class Campfires {
    * @returns {number} how many it kept
    */
   _applyPass() {
-    const D = this._heapD;
     const F = this._heapF;
     const n = this._heapN;
-    const order = [];
+    const order = this._order; // reused: no allocation per re-pick
+    let live = 0;
     for (let i = 0; i < n; i++) {
-      if (/** @type {Campfire} */ (F[i]).slot >= 0) order.push(i); // skip fires removed meanwhile
+      if (/** @type {Campfire} */ (F[i]).slot >= 0) order[live++] = i; // skip fires removed meanwhile
     }
-    order.sort((i, j) => D[i] - D[j] || (/** @type {Campfire} */ (F[i]).key < /** @type {Campfire} */ (F[j]).key ? -1 : 1));
+    order.subarray(0, live).sort(this._byHeapDist);
     const mark = ++this._marks;
     this.fires.clear();
-    for (const i of order) {
-      const fire = /** @type {Campfire} */ (F[i]);
+    for (let k = 0; k < live; k++) {
+      const fire = /** @type {Campfire} */ (F[order[k]]);
       fire.mark = mark;
       this.fires.set(fire.key, fire);
     }
     this._endPass();
-    return order.length;
+    return live;
   }
 
   _endPass() {

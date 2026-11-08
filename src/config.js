@@ -150,6 +150,37 @@ export const PIG_HURT_S = 0.5;                      // red flash; hits during it
 export const PIG_FLEE_S = 3;                        // run away after being hit
 export const PIG_TURN_RATE = 4;                     // rad/s
 
+// Zombies (CONTRACTS §39): night mobs, never saved; the per-world on/off switch is.
+export const ZOMBIE_MAX = 16;                       // alive at once; natural spawning and summon stop there
+export const ZOMBIE_RADIUS = 0.27;                  // body cylinder: just under PLAYER_RADIUS, so it fits the player's 1-cell, 2-high doorways
+export const ZOMBIE_HEIGHT = 1.9;                   // feet 0.56 + torso 0.76 + head 0.58
+export const ZOMBIE_MASS = 1.2;                     // a little heavier than the player (PLAYER_MASS 1)
+export const ZOMBIE_TARGET_RADIUS = 0.3;            // ray-target cylinder: the drawn torso's corner radius
+export const ZOMBIE_CHASE_SPEED = 0.82;             // forward input while chasing: 0.82 × WALK_SPEED ≈ 3.5 m/s (the player walks 4.3)
+export const ZOMBIE_TURN_RATE = 3.5;                // rad/s
+export const ZOMBIE_SIGHT = 24;                     // chases a player within this distance …
+export const ZOMBIE_CHASE_MAX_RISE = 5;             // … unless flying or more than this many units above its feet
+export const ZOMBIE_MAX_DROP = 3;                   // never walks off a drop deeper than this many cells
+export const ZOMBIE_REACH = 1.3;                    // horizontal centre distance of an attack (heights overlapping, no wall between)
+export const ZOMBIE_ATTACK_COOLDOWN_S = 1;
+export const ZOMBIE_HIT_PUSH = 6;                   // m/s horizontal knockback on the player …
+export const ZOMBIE_HIT_LIFT = 4;                   // … plus this upward (no damage: there is no health)
+export const ZOMBIE_HITS = 4;                       // player hits that knock a zombie out
+export const ZOMBIE_KNOCKBACK = 6.5;                // m/s horizontal kick when the player hits it …
+export const ZOMBIE_KNOCK_LIFT = 4.5;               // … plus a hop
+export const ZOMBIE_HURT_S = 0.45;                  // red flash and stun; hits during it are ignored
+export const ZOMBIE_KO_KNOCK = 9;                   // a knock (blast) at least this fast knocks it out: about the blast radius R
+export const ZOMBIE_BURN_S = 4;                     // seconds under open daylight before it burns away
+export const ZOMBIE_FIRE_FEAR = 4;                  // never comes within this of a campfire (they are safe zones) …
+export const ZOMBIE_SPAWN_FIRE_CLEAR = 8;           // … and never spawns within this of one
+export const ZOMBIE_SPAWN_MIN = 16;                 // natural spawns: horizontal distance from the player, min …
+export const ZOMBIE_SPAWN_MAX = 40;                 // … and max
+export const ZOMBIE_SPAWN_INTERVAL_MIN_S = 8;       // one spawn attempt (1–2 zombies) every 8–20 s at night: a few a minute
+export const ZOMBIE_SPAWN_INTERVAL_MAX_S = 20;
+export const ZOMBIE_SPAWN_TRIES = 12;               // columns tried per attempt
+export const ZOMBIE_DESPAWN_DIST = 80;              // farther than this from the player: gone
+export const ZOMBIE_SOUND_RANGE = 24;               // groans and knock-outs fade out linearly by this distance
+
 // Block physics (CONTRACTS §33–§38, docs/DESIGN-physics.md). Scheduler core (§33):
 export const PHYSICS_TICK_S = 0.05;                 // fixed tick; step(dt) runs at most ONE tick per frame (slow motion below 20 fps)
 export const WATER_TICKS = 5;                       // delay (ticks) of the `water` ring; `fall` and `misc` use 1

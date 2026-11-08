@@ -199,6 +199,16 @@ export function computeSky(time, out) {
 }
 
 /**
+ * True by day (dawn 0.25 ≤ t < dusk 0.75), exactly SkyState.isDay without computing the sky (zombies, §39).
+ * @param {number} time
+ * @returns {boolean}
+ */
+export function isDayTime(time) {
+  const t = wrapTime(time);
+  return t >= DAWN && t < DUSK;
+}
+
+/**
  * "HH:MM" 24-hour clock for a day fraction (0.25 → "06:00"). Floors to the minute; wraps out-of-range times.
  * @param {number} time
  * @returns {string}

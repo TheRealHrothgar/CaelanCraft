@@ -17,6 +17,7 @@ import {
   PIG_NATURAL_COUNT, CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
   BLACK_HOLE_MAX_TRACKED, BLACK_HOLE_SWALLOW_LINE_S,
   PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S,
+  ZOMBIE_SOUND_RANGE, ZOMBIE_HEIGHT,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
@@ -28,7 +29,7 @@ import { normalizeSeed } from './noise.js';
 import { World } from './world.js';
 import { raycastHex } from './raycast.js';
 import { createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock, isFreeAt, findFreeY } from './physics.js';
-import { advanceTime, computeSky, createSkyState } from './daynight.js';
+import { advanceTime, computeSky, createSkyState, isDayTime } from './daynight.js';
 import { saveGame, loadGame, clearSave, SAVE_VERSION } from './storage.js';
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer } from './renderer.js';
@@ -43,6 +44,8 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
+import { Zombies } from './zombies.js';
+import { createZombieRenderer } from './zombieRenderer.js';
 import { BlockPhysics } from './blockphysics.js';
 import { createFallingRenderer } from './fallingRenderer.js';
 import { createParticles } from './particles.js';
@@ -97,6 +100,8 @@ const PHYSICS_SOUND_METHODS = Object.freeze({
 const PHYSICS_SOUND_GAP_S = Object.freeze({ splash: SPLASH_MIN_INTERVAL_S, hiss: HISS_MIN_INTERVAL_S, fizzle: FIZZLE_MIN_INTERVAL_S });
 /** The one-time chat line for a world saved before block physics existed (collapse starts off for it). */
 export const OLD_WORLD_PHYSICS_NOTE = 'New: block physics! Collapse is off for this older world — turn it on in Esc → Physics';
+/** The red screen-edge flash after a zombie's strike fades out over this long (s, §39). */
+const HURT_FLASH_S = 0.45;
 /** WATER selected: the crosshair also stops on water sources (left-click removes one). */
 const hitTargetOrWaterSource = (id) => isTargetable(id) || isWaterSource(id);
 
@@ -217,6 +222,8 @@ export function boot(win, doc) {
   let particles;
   /** @type {import('./pigRenderer.js').PigRenderer} */
   let pigRenderer;
+  /** @type {import('./zombieRenderer.js').ZombieRenderer} */
+  let zombieRenderer;
   /** @type {import('./campfireRenderer.js').CampfireRenderer} */
   let campfireRenderer;
   let controls;
@@ -235,6 +242,7 @@ export function boot(win, doc) {
       renderDistance: params.rd ?? RENDER_DISTANCE,
     });
     pigRenderer = createPigRenderer(renderer.three.scene);
+    zombieRenderer = createZombieRenderer(renderer.three.scene, atlasTexture);
     campfireRenderer = createCampfireRenderer(renderer.three.scene, { makeCanvas: () => doc.createElement('canvas') });
     // Pay the campfire shader costs while the game loads (compile now, one hidden draw in the first frame), not on the
     // frame the first fire appears (§32).
@@ -366,6 +374,28 @@ export function boot(win, doc) {
     // Every CAMPFIRE cell is known to `campfires` (tracked or refused): with none, pigs skip the fire look-ahead.
     hasCampfires: () => campfires.total > 0,
   };
+  // Zombies (CONTRACTS §39): night mobs, never saved; the per-world switch is (startLoading sets it from the save).
+  const zombies = new Zombies();
+  /** @type {{ zombie: import('./zombies.js').Zombie, distance: number }|null} zombie under the crosshair */
+  let zombieTarget = null;
+  /** the red screen-edge flash after a zombie's strike, 1 → 0 */
+  let hurtFlash = 0;
+  let savedZombieSwitch = 0;
+  /** World view for zombies.update (player and isDay are refreshed every frame by stepZombies). */
+  const zombieWorld = {
+    getBlock: pigWorld.getBlock,
+    isLoaded: pigWorld.isLoaded,
+    pullAt: pigWorld.pullAt,
+    hasCampfires: pigWorld.hasCampfires,
+    /** @type {PlayerState|null} */
+    player: null,
+    isDay: false,
+    nearestFire: (x, y, z, maxDist, out) => nearestCampfire(x, y, z, maxDist, out),
+    isLoadedCell: (q, r) => world.hasChunkAtCell(q, r),
+    groundHeight: (q, r) => world.terrainHeightAt(q, r),
+    isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
+    columnEdited: (q, r) => columnHasEdits(world.edits, q, r),
+  };
   /**
    * World view handed to blackHoles.update and blackHoles.respawnPoint (used once a world exists). Eats are lazy writes
    * (CONTRACTS §9.2).
@@ -403,12 +433,19 @@ export function boot(win, doc) {
       physicsBodies.length = 0;
       if (player) physicsBodies.push(player);
       if (world) for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) physicsBodies.push(pig);
+      if (world) for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) physicsBodies.push(zb);
       return physicsBodies;
     },
     player: () => player,
     sound: (name, x, y, z, volume) => playPhysicsSound(name, x, y, z, volume),
     particles: (kind, x, y, z, count, opts) => particles.emit(kind, x, y, z, count, opts),
     knock: (body, vx, vy, vz, fromX, fromZ) => {
+      // A zombie near a blast is knocked out (§39); weaker knocks fling it (zombies.knock adds the velocity itself).
+      const zb = /** @type {import('./zombies.js').Zombie} */ (body);
+      if (body !== player && zombies.list.includes(zb)) {
+        if (zombies.knock(zb, vx, vy, vz) === 'ko') zombieGone(zb, 'ko');
+        return;
+      }
       // A pig flashes, flees and squeals, but gets the same push as every other body (no pigs.hit kick on top); one
       // squeal per frame, the loudest, played after the step (a blast through a herd took every voice from the boom).
       if (body !== player && pigs.list.includes(body)) {
@@ -452,6 +489,7 @@ export function boot(win, doc) {
     if (!world || !player) {
       hit = null;
       pigTarget = null;
+      zombieTarget = null;
       return;
     }
     const yaw = controls.yaw;
@@ -470,12 +508,20 @@ export function boot(win, doc) {
     // A pig in front of the targeted block takes the crosshair (and hides the block highlight).
     pigTarget = pigs.size > 0 ? pigs.raycast(player.x, eyeY, player.z, dx, dy, dz, hit ? hit.distance : REACH) : null;
     if (pigTarget) hit = null;
-    // A lit barrel in front of both takes it from them (left-click puts it out).
-    const reach = pigTarget ? pigTarget.distance : hit ? hit.distance : REACH;
+    // A zombie in front of both takes the crosshair from them (§39).
+    zombieTarget = zombies.size > 0
+      ? zombies.raycast(player.x, eyeY, player.z, dx, dy, dz, pigTarget ? pigTarget.distance : hit ? hit.distance : REACH) : null;
+    if (zombieTarget) {
+      hit = null;
+      pigTarget = null;
+    }
+    // A lit barrel in front of all of them takes it from them (left-click puts it out).
+    const reach = zombieTarget ? zombieTarget.distance : pigTarget ? pigTarget.distance : hit ? hit.distance : REACH;
     litTarget = blockPhysics ? blockPhysics.explosions.raycast(player.x, eyeY, player.z, dx, dy, dz, reach) : null;
     if (litTarget) {
       hit = null;
       pigTarget = null;
+      zombieTarget = null;
     }
   }
 
@@ -586,6 +632,7 @@ export function boot(win, doc) {
       },
       runes: runeStore,
       pigs,
+      zombies,
       get physics() {
         return blockPhysics ?? undefined;
       },
@@ -635,6 +682,7 @@ export function boot(win, doc) {
   /** Text under the crosshair while a rune block, a blast barrel or a lit barrel is targeted. */
   function targetHintText() {
     if (litTarget) return 'lit barrel · click: put it out';
+    if (zombieTarget) return 'Zombie · click: hit it';
     const h = hit;
     if (h && h.blockId === BLOCK.BLAST_BARREL) {
       if (!blockPhysics || !blockPhysics.isEnabled('explosions')) return 'Blast Barrel (explosions are off)';
@@ -656,6 +704,11 @@ export function boot(win, doc) {
       const snuffed = blockPhysics ? blockPhysics.explosions.snuff(litTarget.target) : false;
       updateHit();
       return snuffed;
+    }
+    if (zombieTarget) {
+      hitZombie(zombieTarget.zombie);
+      updateHit();
+      return true;
     }
     if (pigTarget) {
       if (pigs.hit(pigTarget.pig, player.x, player.z)) audio.playSqueal();
@@ -684,6 +737,7 @@ export function boot(win, doc) {
     // Black holes and campfires are not solid, but placing one inside yourself would swallow / scorch you on the spot.
     if ((isSolid(id) || id === BLOCK.BLACK_HOLE || id === BLOCK.CAMPFIRE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
     if (isSolid(id) && pigs.list.some((pig) => playerIntersectsBlock(pig, tq, ty, tr))) return false; // no entombing pigs
+    if (isSolid(id) && zombies.list.some((zb) => playerIntersectsBlock(zb, tq, ty, tr))) return false; // … nor zombies
     // A campfire never goes into or under water, and water never goes on a campfire (§32).
     if (wouldDouseCampfire(world.getBlock, id, tq, ty, tr)) {
       if (fxTime - lastDouseLineAt > 2) {
@@ -730,6 +784,7 @@ export function boot(win, doc) {
       runes: runeStore.export(),
       pigs: pigs.export(),
       physics: blockPhysics ? blockPhysics.exportSwitches() : undefined,
+      zombies: zombies.enabled, // the switch only: zombies themselves are never saved (§39)
     };
   }
 
@@ -750,6 +805,7 @@ export function boot(win, doc) {
       savedEditVersion = world.editVersion;
       savedRunesVersion = runeStore.version;
       if (blockPhysics) savedSwitchVersion = blockPhysics.switchVersion;
+      savedZombieSwitch = zombies.switchVersion;
       savedX = player.x;
       savedY = player.y;
       savedZ = player.z;
@@ -775,7 +831,8 @@ export function boot(win, doc) {
     autosaveAccum += dt;
     if (autosaveAccum < AUTOSAVE_INTERVAL_S) return;
     autosaveAccum = 0;
-    const switchesChanged = blockPhysics !== null && blockPhysics.switchVersion !== savedSwitchVersion;
+    const switchesChanged = (blockPhysics !== null && blockPhysics.switchVersion !== savedSwitchVersion)
+      || zombies.switchVersion !== savedZombieSwitch;
     if (world.editVersion !== savedEditVersion || runeStore.version !== savedRunesVersion || switchesChanged || playerMovedSinceSave()) doSave(false);
   }
 
@@ -862,6 +919,12 @@ export function boot(win, doc) {
     pigs.load(restoring && Array.isArray(restoring.pigs) ? restoring.pigs : []);
     placeNaturalPigs = !(restoring && Array.isArray(restoring.pigs));
     pigTarget = null;
+    // Zombies are never saved; their switch is (absent — a new world or an older save — means on).
+    zombies.clear();
+    zombies.setEnabled(!(restoring && restoring.zombies === false));
+    savedZombieSwitch = zombies.switchVersion;
+    zombieTarget = null;
+    hurtFlash = 0;
     // Runes: replace the store with the save's (validated) runes; nothing runs until the player exists.
     if (runner) runner.reset();
     runner = null;
@@ -1033,6 +1096,7 @@ export function boot(win, doc) {
     controls.setEnabled(false);
     controls.unlock();
     menus.showPause(world.seed, physicsMenuState());
+    menus.setZombiesState(zombies.enabled);
     doSave(false);
   }
 
@@ -1124,6 +1188,10 @@ export function boot(win, doc) {
     particles.clear();
     fallingRenderer.sync([], 0);
     fallingRenderer.setFlash(0, 0, 0, 0);
+    zombies.clear();
+    zombieTarget = null;
+    hurtFlash = 0;
+    hud.setHurtFlash(0);
     player = null;
     hit = null;
     renderer.setHighlight(null);
@@ -1180,6 +1248,14 @@ export function boot(win, doc) {
       menus.setPhysicsState(physicsMenuState());
       audio.playClick();
       hud.showSaveToast(`${name[0].toUpperCase()}${name.slice(1)} ${on ? 'on' : 'off'}`);
+    },
+    onZombiesToggle() {
+      if (state !== STATE.PAUSED) return;
+      const on = !zombies.enabled;
+      zombies.setEnabled(on); // off also removes every zombie
+      menus.setZombiesState(on);
+      audio.playClick();
+      hud.showSaveToast(`Zombies ${on ? 'on' : 'off'}`);
     },
     onUndoPhysics() {
       if (state !== STATE.PAUSED || !blockPhysics) return;
@@ -1265,6 +1341,7 @@ export function boot(win, doc) {
       player.vz = 0;
       player.onGround = false;
       detachBody(player, pigs.list); // a pig on the player's head (or under its feet) stays behind (§31)
+      detachBody(player, zombies.list); // … and so does a zombie
       if (world) world.update(x, z);
       if (runner) runner.seedStep(); // arriving by teleport is not stepping onto a rune
       updateHit();
@@ -1286,6 +1363,7 @@ export function boot(win, doc) {
     get physics() {
       return blockPhysics;
     },
+    zombies,
     dispose,
   };
 
@@ -1372,6 +1450,97 @@ export function boot(win, doc) {
       pigs.remove(pig);
       const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
       if (d < 16) audio.playSqueal(1 - d / 16);
+    }
+  }
+
+  // ---- zombies (CONTRACTS §39) ----------------------------------------------------------------------
+
+  /** Distance to the nearest tracked campfire's floor centre within maxDist (written to out), else Infinity. */
+  function nearestCampfire(x, y, z, maxDist, out) {
+    let best = Infinity;
+    if (campfires.size === 0) return best;
+    for (const fire of campfires.fires.values()) {
+      const d = Math.hypot(fire.x - x, fire.y - y, fire.z - z);
+      if (d <= maxDist && d < best) {
+        best = d;
+        out[0] = fire.x;
+        out[1] = fire.y;
+        out[2] = fire.z;
+      }
+    }
+    return best;
+  }
+
+  /** @returns {number} 1 at the player fading to 0 at ZOMBIE_SOUND_RANGE (0 beyond) */
+  function zombieVolume(zb) {
+    const d = Math.hypot(zb.x - player.x, zb.y - player.y, zb.z - player.z);
+    return d < ZOMBIE_SOUND_RANGE ? 1 - d / ZOMBIE_SOUND_RANGE : 0;
+  }
+
+  /** A zombie is gone — knocked out ('ko', a dull grey-green puff) or burned away ('burn', ash, smoke and embers). */
+  function zombieGone(zb, how) {
+    const cy = zb.y + ZOMBIE_HEIGHT / 2;
+    if (how === 'burn') {
+      particles.emit('smoke', zb.x, cy + 0.3, zb.z, 14, { spread: 0.45 });
+      particles.emit('sparks', zb.x, cy, zb.z, 10, { speed: 0.35 });
+      particles.emit('dust', zb.x, cy, zb.z, 18, { color: [0.24, 0.23, 0.22], spread: 0.4 });
+    } else {
+      particles.emit('dust', zb.x, cy, zb.z, 28, { color: [0.45, 0.55, 0.38], spread: 0.45 });
+      particles.emit('smoke', zb.x, cy, zb.z, 6, { spread: 0.4, color: [0.5, 0.55, 0.47] });
+    }
+    const v = zombieVolume(zb);
+    if (v > 0) audio.playZombieDown(v);
+    if (zombieTarget && zombieTarget.zombie === zb) zombieTarget = null;
+  }
+
+  /** The player's left-click on a zombie: knockback and a red flash, or a knock-out on the ZOMBIE_HITS-th hit. */
+  function hitZombie(zb) {
+    const res = zombies.hit(zb, player.x, player.z);
+    if (res === 'ko') zombieGone(zb, 'ko');
+    else if (res === 'hit') audio.playZombieHurt(1);
+  }
+
+  /**
+   * Zombies: natural spawning at night, AI, daylight, attacks (knockback + red flash + thump), groans; smouldering
+   * ones smoke; black holes swallow them.
+   */
+  function stepZombies(dt) {
+    zombieWorld.player = player;
+    zombieWorld.isDay = isDayTime(time);
+    const ev = zombies.update(dt, zombieWorld);
+    if (ev.attacks.length > 0) {
+      hurtFlash = 1;
+      audio.playThud(1);
+    }
+    for (const zb of ev.groans) {
+      const v = zombieVolume(zb);
+      if (v > 0) {
+        audio.playGroan(v);
+        break; // one groan a frame at most
+      }
+    }
+    for (const zb of ev.ignited) {
+      const v = zombieVolume(zb);
+      if (v > 0) audio.playHiss(v);
+    }
+    for (const zb of ev.scorched) {
+      const v = zombieVolume(zb);
+      if (v > 0) audio.playZombieHurt(v);
+    }
+    for (const zb of ev.burned) zombieGone(zb, 'burn');
+    for (const zb of ev.knockedOut) zombieGone(zb, 'ko');
+    for (const zb of zombies.list) {
+      if (!zb.smoking) continue;
+      // Smoke thickens as it burns; now and then an ember.
+      if (Math.random() < dt * (6 + 10 * (zb.burn / 4))) particles.emit('smoke', zb.x, zb.y + 1.2 + Math.random() * 0.7, zb.z, 1, { spread: 0.3 });
+      if (Math.random() < dt * 3) particles.emit('sparks', zb.x, zb.y + 1.0, zb.z, 1, { speed: 0.25 });
+    }
+    if (blackHoles.size === 0) return;
+    for (let i = zombies.list.length - 1; i >= 0; i--) {
+      const zb = zombies.list[i];
+      if (!blackHoles.swallowing(zb)) continue;
+      zombies.remove(zb);
+      zombieGone(zb, 'ko');
     }
   }
 
@@ -1472,6 +1641,7 @@ export function boot(win, doc) {
     if (world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt);
     stepBlackHoles(dt);
     stepPigs(dt);
+    stepZombies(dt);
     stepBlockPhysics(dt);
     stepCampfires(dt);
     // Bodies collide, push and stand on each other once everything has moved (CONTRACTS §31). Pigs in unloaded
@@ -1479,6 +1649,7 @@ export function boot(win, doc) {
     bodies.length = 0;
     bodies.push(player);
     for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) bodies.push(pig);
+    for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) bodies.push(zb);
     if (blockPhysics) blockPhysics.bodies(bodies);
     if (bodies.length > 1) resolveBodies(bodies, world.getBlock);
     unstickPlayer();
@@ -1520,6 +1691,9 @@ export function boot(win, doc) {
     renderer.setFov(fov);
     renderer.setHighlight(hit);
     pigRenderer.sync(pigs.list);
+    zombieRenderer.sync(zombies.list);
+    hurtFlash = Math.max(0, hurtFlash - dt / HURT_FLASH_S);
+    hud.setHurtFlash(hurtFlash);
     fxTime += dt;
     // Past CAMPFIRE_MAX_TRACKED, keep the tracked fires the ones nearest the player (a no-op otherwise).
     campfires.retrack(player.x, eyeY, player.z);
@@ -1633,6 +1807,8 @@ export function boot(win, doc) {
     player = null;
     fallingRenderer.dispose();
     particles.dispose();
+    zombieRenderer.dispose();
+    zombies.clear();
     controls.dispose();
     hud.dispose();
     menus.dispose();

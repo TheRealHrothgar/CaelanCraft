@@ -17,6 +17,7 @@ import {
   WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
   GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME, PIG_MAX,
   PIG_RADIUS, PIG_HEIGHT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS,
+  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT,
 } from './config.js';
 import { inHeightRange, worldToChunk, yawToForward } from './coords.js';
 import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
@@ -68,8 +69,9 @@ export const COMMANDS = Object.freeze([
   { name: 'resume', usage: 'resume', summary: 'let rune triggers fire again after stopall', args: [], min: 0 },
   { name: 'runes', usage: 'runes', summary: 'list the rune blocks with scripts or settings', args: [], min: 0 },
   { name: 'rune', usage: 'rune q y r on|off', summary: 'enable or disable every trigger of one rune block', args: ['cell', 'cell', 'cell', 'choice:on|off'], min: 4 },
-  { name: 'summon', usage: 'summon pig [q y r]', summary: 'put a pig two cells in front of you, or in a cell', args: ['choice:pig', 'cell', 'cell', 'cell'], min: 1 },
+  { name: 'summon', usage: 'summon pig|zombie [q y r]', summary: 'put a pig or a zombie two cells in front of you, or in a cell', args: ['choice:pig|zombie', 'cell', 'cell', 'cell'], min: 1 },
   { name: 'pigs', usage: 'pigs [clear]', summary: 'count the pigs, or remove them all', args: ['choice:clear'], min: 0 },
+  { name: 'zombies', usage: 'zombies [clear|on|off]', summary: 'count the zombies, remove them all, or switch zombies on / off for this world (saved)', args: ['choice:clear|on|off'], min: 0 },
   { name: 'physics', usage: 'physics status|on|off | physics falling|water|collapse|explosions on|off', summary: 'block physics: show its counters, pause / resume all of it (not saved), or switch one feature (saved with the world)', args: ['word', 'choice:on|off'], min: 1 },
   { name: 'undo', usage: 'undo', summary: 'undo the last explosion, collapse or falling tree (within 60 s)', args: [], min: 0 },
   { name: 'ignite', usage: 'ignite q y r', summary: 'light the blast barrel in that cell', args: ['cell', 'cell', 'cell'], min: 3 },
@@ -242,6 +244,7 @@ export function resolveBlock(token) {
  * @property {(on: boolean) => void} setFlying
  * @property {import('./runes.js').RuneStore} runes
  * @property {import('./pigs.js').Pigs} [pigs]            absent in contexts without creatures (summon / pigs then fail)
+ * @property {import('./zombies.js').Zombies} [zombies]   absent without zombies (summon zombie / zombies then fail)
  * @property {import('./blockphysics.js').BlockPhysics} [physics]  absent without block physics (physics / undo / ignite / drain then fail)
  * @property {import('./runes.js').RuneRunner} runner
  * @property {Rune|null} rune                               the executing rune (for `@`), null in the console
@@ -552,6 +555,61 @@ export function executeCommand(cmd, ctx) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Zombies (§39): `summon zombie [q y r]` (by day too: handy for testing) and `zombies [clear|on|off]`.
+// ---------------------------------------------------------------------------------------------------
+
+/** @returns {CommandResult} */
+function summonZombie(spec, args, ctx) {
+  const zs = ctx.zombies;
+  if (!zs) return fail(spec, 'zombies are not available here');
+  if (!zs.enabled) return fail(spec, 'zombies are off in this world (zombies on to allow them)');
+  if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
+  const world = ctx.world;
+  const p = ctx.player;
+  let x;
+  let z;
+  let fy;
+  if (args.length === 4) {
+    const rc = resolveCellTriple(args, 1, ctx);
+    if ('error' in rc) return fail(spec, rc.error);
+    const [q, y, r] = rc.cell;
+    if (!(y >= 0 && y <= WORLD_HEIGHT - 2)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 2}`);
+    if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+    [x, z] = hexToWorld(q, r);
+    fy = findFreeY(world.getBlock, x, z, y, 2, ZOMBIE_RADIUS, ZOMBIE_HEIGHT);
+    if (fy === null) return fail(spec, 'target is inside a block');
+  } else {
+    const [fx, fz] = yawToForward(ctx.controls.yaw);
+    const [q, r] = worldToHex(p.x + fx * 2, p.z + fz * 2);
+    if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+    [x, z] = hexToWorld(q, r);
+    fy = findFreeY(world.getBlock, x, z, Math.max(0, Math.floor(p.y)), 2, ZOMBIE_RADIUS, ZOMBIE_HEIGHT);
+    if (fy === null) return fail(spec, 'no room in front of you');
+  }
+  // It turns to face you.
+  const zb = zs.spawn(x, fy, z, Math.atan2(-(p.x - x), -(p.z - z)));
+  if (!zb) return fail(spec, `too many zombies (max ${ZOMBIE_MAX})`);
+  const [pq, pr] = worldToHex(x, z);
+  return ok(`summoned a zombie at ${pq} ${fy} ${pr}`);
+}
+
+/** @returns {CommandResult} */
+function zombiesCommand(spec, args, ctx) {
+  const zs = ctx.zombies;
+  if (!zs) return fail(spec, 'zombies are not available here');
+  const n = zs.size;
+  const count = (k) => `${k} zombie${k === 1 ? '' : 's'}`;
+  if (args.length === 0) return ok(`${count(n)} (max ${ZOMBIE_MAX}) · zombies are ${zs.enabled ? 'on' : 'off'} in this world`);
+  if (args[0] === 'clear') {
+    zs.clear();
+    return ok(`removed ${count(n)}`);
+  }
+  const on = args[0] === 'on';
+  if (!zs.setEnabled(on)) return ok(`zombies are already ${on ? 'on' : 'off'}`);
+  return ok(on ? 'zombies on (saved with this world)' : `zombies off (saved with this world)${n ? `: removed ${count(n)}` : ''}`);
+}
+
 /**
  * @param {CommandSpec} spec
  * @param {string[]} args
@@ -766,6 +824,7 @@ function run(spec, args, ctx) {
       return ok(lines.join('\n'));
     }
     case 'summon': {
+      if (args[0] === 'zombie') return summonZombie(spec, args, ctx);
       if (!ctx.pigs) return fail(spec, 'pigs are not available here');
       if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
       let x;
@@ -802,6 +861,8 @@ function run(spec, args, ctx) {
       }
       return ok(`${n} pig${n === 1 ? '' : 's'} (max ${PIG_MAX})`);
     }
+    case 'zombies':
+      return zombiesCommand(spec, args, ctx);
     case 'physics': {
       const ph = ctx.physics;
       if (!ph) return fail(spec, 'block physics is not available here');

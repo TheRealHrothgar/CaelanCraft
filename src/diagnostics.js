@@ -264,6 +264,7 @@ function refreshHandleRefs(handle, game) {
   handle.runes = game ? game.runes ?? null : null;
   handle.runner = game ? game.runner ?? null : null;
   handle.physics = game ? game.physics ?? null : null;
+  handle.zombies = game ? game.zombies ?? null : null;
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;

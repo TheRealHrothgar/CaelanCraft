@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   WORLD_HEIGHT, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S, HOTBAR_SIZE,
   MAX_RUNE_SCRIPT_LINES, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, GAME_SECONDS_PER_DAY, PIG_MAX,
+  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT,
 } from '../../src/config.js';
 import { hexToWorld, worldToHex, hexDiscCount } from '../../src/hex.js';
 import { BLOCK, BLOCKS, BLOCK_COUNT, isPlaceable } from '../../src/blocks.js';
@@ -11,6 +12,7 @@ import { World } from '../../src/world.js';
 import { createPlayer } from '../../src/physics.js';
 import { RuneStore } from '../../src/runes.js';
 import { Pigs } from '../../src/pigs.js';
+import { Zombies } from '../../src/zombies.js';
 import { BlockPhysics } from '../../src/blockphysics.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 import {
@@ -776,11 +778,56 @@ describe('executeCommand — summon / pigs', () => {
     const { ctx } = makeCtx();
     expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining('pigs are not available') });
     ctx.pigs = new Pigs();
-    expect(parseLine('summon cow')).toEqual({ line: 1, message: 'summon: expected one of pig, got "cow" — usage: summon pig [q y r]' });
+    expect(parseLine('summon cow')).toEqual({ line: 1, message: 'summon: expected one of pig, zombie, got "cow" — usage: summon pig|zombie [q y r]' });
     expect(exec(ctx, 'summon pig 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
     expect(exec(ctx, 'summon pig 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
     for (let i = 0; i < PIG_MAX; i++) ctx.pigs.spawn(0, FEET, 0);
     expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining(`too many pigs (max ${PIG_MAX})`) });
+  });
+});
+
+describe('executeCommand — summon zombie / zombies (§39)', () => {
+  it('summon zombie puts a zombie (facing you) two cells ahead or in a cell, by day too; zombies counts and clears', () => {
+    const { ctx, player } = makeCtx(); // time 0.5: noon
+    ctx.zombies = new Zombies();
+    const [aq, ar] = worldToHex(player.x, player.z - 2);
+    expect(exec(ctx, 'summon zombie')).toEqual({ ok: true, message: `summoned a zombie at ${aq} ${FEET} ${ar}` });
+    const zb = ctx.zombies.list[0];
+    const [x, z] = hexToWorld(aq, ar);
+    expect(zb).toMatchObject({ x, y: FEET, z, radius: ZOMBIE_RADIUS, height: ZOMBIE_HEIGHT });
+    expect(Math.cos(zb.yaw)).toBeCloseTo(-1, 6); // it faces +Z, back at the player
+    expect(exec(ctx, 'summon zombie 4 9 -2')).toEqual({ ok: true, message: `summoned a zombie at 4 ${FEET} -2` });
+    expect(exec(ctx, 'zombies')).toEqual({ ok: true, message: `2 zombies (max ${ZOMBIE_MAX}) · zombies are on in this world` });
+    expect(exec(ctx, 'zombies clear')).toEqual({ ok: true, message: 'removed 2 zombies' });
+    expect(ctx.zombies.size).toBe(0);
+  });
+  it('zombies on|off is the saved switch: off removes them and summon refuses', () => {
+    const { ctx } = makeCtx();
+    ctx.zombies = new Zombies();
+    exec(ctx, 'summon zombie');
+    const v = ctx.zombies.switchVersion;
+    expect(exec(ctx, 'zombies off')).toEqual({ ok: true, message: 'zombies off (saved with this world): removed 1 zombie' });
+    expect(ctx.zombies.enabled).toBe(false);
+    expect(ctx.zombies.switchVersion).toBe(v + 1);
+    expect(exec(ctx, 'zombies off')).toEqual({ ok: true, message: 'zombies are already off' });
+    expect(exec(ctx, 'summon zombie')).toMatchObject({ ok: false, message: expect.stringContaining('zombies are off in this world') });
+    expect(exec(ctx, 'zombies')).toMatchObject({ message: expect.stringContaining('zombies are off in this world') });
+    expect(exec(ctx, 'zombies on')).toEqual({ ok: true, message: 'zombies on (saved with this world)' });
+    expect(exec(ctx, 'summon zombie')).toMatchObject({ ok: true });
+  });
+  it('rejects contexts without zombies, partial coordinates, unloaded targets, solid cells and more than ZOMBIE_MAX', () => {
+    const { ctx, world } = makeCtx();
+    expect(exec(ctx, 'summon zombie')).toMatchObject({ ok: false, message: expect.stringContaining('zombies are not available') });
+    expect(exec(ctx, 'zombies')).toMatchObject({ ok: false, message: expect.stringContaining('zombies are not available') });
+    ctx.zombies = new Zombies();
+    expect(parseLine('zombies maybe')).toMatchObject({ message: expect.stringContaining('expected one of clear, on, off') });
+    expect(exec(ctx, 'summon zombie 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
+    expect(exec(ctx, 'summon zombie 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
+    // A pillar three high over cell (5, 0): no free two-high space within findFreeY's two cells.
+    for (let y = FEET; y < FEET + 3; y++) world.setBlock(5, y, 0, B.STONE);
+    expect(exec(ctx, `summon zombie 5 ${FEET} 0`)).toMatchObject({ ok: false, message: expect.stringContaining('inside a block') });
+    for (let i = 0; i < ZOMBIE_MAX; i++) ctx.zombies.spawn(0, FEET, 0);
+    expect(exec(ctx, 'summon zombie')).toMatchObject({ ok: false, message: expect.stringContaining(`too many zombies (max ${ZOMBIE_MAX})`) });
   });
 });
 

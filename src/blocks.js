@@ -46,6 +46,8 @@ export const TILE = Object.freeze({
   WOOL_GRAY: 70, WOOL_LIGHT_GRAY: 71, BLACK_HOLE: 72,
   CAMPFIRE_SIDE: 73, CAMPFIRE_TOP: 74,
   BARREL_SIDE: 75, BARREL_TOP: 76,
+  // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
+  ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
   MISSING: 255,
 });
 /** Every tile id the atlas must paint. */
