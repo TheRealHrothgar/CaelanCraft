@@ -117,9 +117,13 @@ average colour), leaves, smoke, sparks; one draw call whatever the load.
 =====================================================================================================================
 ## 4. Flowing water (`src/fluids.js`, PURE rule called by the scheduler)
 
-Definitions: `E(id)` effective level = 7 for WATER and FALL, k for FLOW_k. *Spreads-sideways(n)* ⇔ n is water and the
-cell below n is **solid, or a WATER source** (never over FALL/FLOW/AIR). *This one predicate is the v1 blocker fix: v1 let
-every mid-column fall cell spread, and one source on a 10-high plateau filled 9,673 cells instead of 637.*
+Definitions: `E(id)` effective level = 7 for WATER, k for FLOW_k, and for FALL the level of the water pouring in at the top
+of its column (7 under a source, k under FLOW_k). *Spreads-sideways(n)* ⇔ n is water and the cell below n is **solid, or a
+WATER source** (never over FALL/FLOW/AIR). *This one predicate is the v1 blocker fix: v1 let every mid-column fall cell
+spread, and one source on a 10-high plateau filled 9,673 cells instead of 637.* *A fall keeping its level is the slope fix
+(v0.8 review): with E(FALL) = 7 every 1-high step restarted a full disc, and one source on a hillside wet 4–10k cells down
+to the sea; now a stream loses a level per cell of sideways travel and stops within 6 cells of its source (148 cells on
+seed 7's hilltop), while a source poured over a drop still lands at full strength.*
 
 Update of a water-family cell W, or of an AIR/CAMPFIRE cell next to water (`water` ring; FALL cells via `fall`):
 1. **Source** (WATER): never changes by itself.
@@ -128,6 +132,9 @@ Update of a water-family cell W, or of an AIR/CAMPFIRE cell next to water (`wate
    (So every level is exactly what its feeders would write; removing a source drains its flow in ≤ 6 steps.)
 4. **Infinite source:** a FLOW cell with **≥ 3** WATER side-neighbours and solid-or-WATER below becomes WATER.
    *With ≥ 2, two adjacent sources on a hex grid filled a radius-40 disc (two sources share two neighbours).*
+   A FLOW / FALL cell that was generated as WATER becomes WATER too (natural water heals; the save does the same).
+   *With only the ≥ 3 rule a drained patch of sea over an uneven seabed stalled: the surface ring stood on FALL, the bottom
+   ring touched sand — a permanent crater that a reload filled in.*
 5. Write the new state if it differs (`ctx.write`, lazy). Neighbours re-trigger through onBlockChange.
 6. **Downward:** a water cell whose below is AIR/CAMPFIRE/FLOW writes FALL below (a FALL below a FALL is a no-op).
 Water entering a campfire cell puts it out (hiss + steam particles). Lit barrels touching water go out (§7).
@@ -378,10 +385,12 @@ are already in `config.js` ("Block physics").
 - A WATER source is not fall-through, so sand dropped on a lake rests ON the surface (by the letter of §3). Sinking would be
   more Minecraft-like but leaves FALL / air pockets inside oceans that the save turns into AIR edits; decide in §4.
   **Decided (water):** sources ARE fall-through — sand sinks. The pockets heal: the ≥ 3 infinite-source rule also turns FALL with a
-  floor back into WATER, so a hole inside a lake refills as lake (and its edits prune away); CONTRACTS §35.6.
+  floor back into WATER, and (v0.8 review) any FLOW / FALL in a cell generated as WATER becomes WATER again, so a hole inside a lake
+  refills as lake on any floor (and its edits prune away); CONTRACTS §35.2 / §35.6.
 - A FLOW / FALL edit whose origin is WATER is saved as AIR (by the letter of §4): it would reload as an air pocket under water.
   Dropping it (reverting to the source) may be better. **Decided (water):** dropped (CONTRACTS §33.9); the 'water' reseeder also
-  wakes edited AIR beside water, so a channel dug from the natural sea refills after a reload (CONTRACTS §35.3).
+  wakes edited AIR beside water, so a channel dug from the natural sea refills after a reload (CONTRACTS §35.3). The live rule now
+  makes the same choice (natural water heals, §35.2 2a), so the world no longer changes on a save + reload.
 
 ### 10.9 Integration (the four features merged; normative: CONTRACTS §38)
 Found only with everything running together, and how the merge resolved it:

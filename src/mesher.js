@@ -113,6 +113,17 @@ for (let a = 0; a < 256; a++) {
   for (let b = 0; b < 256; b++) RENDER[(a << 8) | b] = shouldRenderFace(a, b) ? 1 : 0;
 }
 
+/**
+ * §10.2 step 1: the top of water cell `a` (WET) whose upper neighbour is `above` — 1 under more water and for a FULL
+ * cell (source or falling water) under a block meshed as a full prism, else its free surface SURFACE[a]. The SAME rule
+ * gives a water neighbour's top for the side strips (2a), so two full cells that are both covered stand at 1 and draw
+ * nothing between them (a glass floor over a pool shows no honeycomb of coincident strips).
+ */
+function waterTopY(a, above) {
+  if (WET[above] === 1 || (FREE_SURFACE[above] === 0 && (a === BLOCK.WATER || a === BLOCK.WATER_FALL))) return 1;
+  return SURFACE[a];
+}
+
 /** Axial offsets of the six side neighbours as flat arrays. */
 const DIR_DQ = new Int8Array(6);
 const DIR_DR = new Int8Array(6);
@@ -531,8 +542,6 @@ export function buildChunkMesh(cq, cr, getChunkData) {
   }
 
   const BEDROCK = BLOCK.BEDROCK;
-  const WATER = BLOCK.WATER;
-  const WATER_FALL = BLOCK.WATER_FALL;
   const biomes = centreBiomes;
 
   for (let lq = 0; lq < CHUNK_SIZE; lq++) {
@@ -553,8 +562,7 @@ export function buildChunkMesh(cq, cr, getChunkData) {
         // full prism stays full height; a flowing level keeps its own height wherever it is.
         const wet = WET[a];
         const above = ly + 1 < WORLD_HEIGHT ? padded[colBase + ly + 1] : 0;
-        let topY = 1;
-        if (wet && !WET[above] && (FREE_SURFACE[above] === 1 || (a !== WATER && a !== WATER_FALL))) topY = SURFACE[a];
+        const topY = wet ? waterTopY(a, above) : 1;
 
         const renderRow = a << 8;
         const layer = LAYER[a];
@@ -566,8 +574,9 @@ export function buildChunkMesh(cq, cr, getChunkData) {
           const q = padded[nBase + ly];
           let bottomY = 0;
           if (wet && WET[q]) {
-            // Two water cells: only the part of this surface above the neighbour's (§10.2 step 2a).
-            const nTop = ly + 1 < WORLD_HEIGHT && WET[padded[nBase + ly + 1]] ? 1 : SURFACE[q];
+            // Two water cells: only the part of this surface above the neighbour's (§10.2 step 2a), the neighbour's
+            // top by the same step-1 rule as this cell's (a covered full neighbour stands at 1 too).
+            const nTop = waterTopY(q, ly + 1 < WORLD_HEIGHT ? padded[nBase + ly + 1] : 0);
             if (nTop >= topY) continue;
             bottomY = nTop;
           } else if (RENDER[renderRow | q] === 0) {
