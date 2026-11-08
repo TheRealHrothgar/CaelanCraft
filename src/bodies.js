@@ -10,6 +10,7 @@
 //      - vertical (the upper body's feet are in the top part of the lower one and the vertical overlap is the
 //        smaller): the upper body is lifted out, lands (onGround, never falling faster than the carrier, but not
 //        thrown upward by a rising one — the carry already lifts it) and records the carrier for step 1 next frame;
+//        a NEW ride turns its horizontal velocity into one relative to the carrier (the mirror of step 3);
 //      - horizontal: the pair is pushed apart along the line between their centres, each side moving in proportion
 //        to the OTHER's mass. Displacement goes through the terrain (physics.displaceBody), so a body pinned against
 //        a wall cannot be pushed into it — the other body takes the rest of the separation. The approaching part
@@ -200,10 +201,11 @@ function separatePair(bodies, i, j, getBlock) {
   if (o.horizontal <= 0) return false;
   const upper = a.y >= b.y ? a : b;
   const lower = upper === a ? b : a;
+  const was = prevCarrier[upper === a ? i : j];
   if (o.vertical <= 0) {
     // Not touching — unless the upper body rests right on the lower one's top: then it still stands there.
     if (o.vertical > -STAND_TOLERANCE && o.horizontal > STAND_MIN_OVERLAP && upper.vy <= lower.vy + 1e-9) {
-      standOn(upper, lower);
+      standOn(upper, lower, was);
     }
     return false;
   }
@@ -218,7 +220,7 @@ function separatePair(bodies, i, j, getBlock) {
     const before = upper.y;
     displaceBody(upper, 0, lift, 0, getBlock);
     if (upper.y - before >= lift - 1e-9) {
-      standOn(upper, lower);
+      standOn(upper, lower, was);
       return true;
     }
     // A ceiling stopped the lift: fall through and push them apart sideways instead.
@@ -251,8 +253,26 @@ function separatePair(bodies, i, j, getBlock) {
  * `upper` stands on `lower`: grounded, never falling faster than it, and carried by it next frame. A RISING carrier
  * does not hand its upward speed to the rider: the carry already lifts the rider by the carrier's displacement, and
  * adding the speed too would launch it (riders floated 0.13 above a jumping carrier and were dropped).
+ * A rider's horizontal velocity is relative to its carrier (step 1 carries it, step 3 hands the carrier's back when it
+ * leaves), so a NEW ride — `lower` is not the carrier it had at the start of the frame (`was`) — turns it from over
+ * the ground into relative to `lower`, the mirror of step 3. Landing on a moving body (or being caught by one in
+ * mid-air, as a blast-thrown pig catches its rider) keeps the rider's motion instead of adding the carrier's on top.
+ * @param {PlayerState} upper
+ * @param {PlayerState} lower
+ * @param {PlayerState|null} was  upper's carrier at the start of this frame
  */
-function standOn(upper, lower) {
+function standOn(upper, lower, was) {
+  const now = upper.carrier;
+  if (now !== lower) {
+    if (now && now !== was) { // it stood on another body earlier this frame: undo that ride's conversion
+      upper.vx += now.vx;
+      upper.vz += now.vz;
+    }
+    if (lower !== was) {
+      upper.vx -= lower.vx;
+      upper.vz -= lower.vz;
+    }
+  }
   upper.onGround = true;
   const floor = Math.min(lower.vy, 0);
   if (upper.vy < floor) upper.vy = floor;

@@ -179,6 +179,7 @@ export const PHYSICS_SOUND_RANGE = 24;              // thud / splash / hiss / cr
 export const BOOM_SOUND_RANGE = 96;
 export const SPLASH_MIN_INTERVAL_S = 0.4;           // throttles for repeated physics sounds
 export const HISS_MIN_INTERVAL_S = 0.4;
+export const FIZZLE_MIN_INTERVAL_S = 0.25;          // put-out / fizzling barrels: one 'fizzle' per interval at most
 // Flowing water (§35, fluids.js)
 export const WATER_CURRENT = 6;                     // m/s² push toward the lowest-level side neighbour in FLOW cells
 export const DRAIN_MAX_RADIUS = 16;                 // `drain [radius]`

@@ -16,7 +16,7 @@ import {
   SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY, PLAYER_HEIGHT,
   PIG_NATURAL_COUNT, CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
   BLACK_HOLE_MAX_TRACKED, BLACK_HOLE_SWALLOW_LINE_S,
-  PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S,
+  PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
@@ -94,7 +94,7 @@ const PHYSICS_SOUND_METHODS = Object.freeze({
   crackle: 'playCrackle',
 });
 /** Minimum seconds between two physics sounds of the same name. */
-const PHYSICS_SOUND_GAP_S = Object.freeze({ splash: SPLASH_MIN_INTERVAL_S, hiss: HISS_MIN_INTERVAL_S });
+const PHYSICS_SOUND_GAP_S = Object.freeze({ splash: SPLASH_MIN_INTERVAL_S, hiss: HISS_MIN_INTERVAL_S, fizzle: FIZZLE_MIN_INTERVAL_S });
 /** The one-time chat line for a world saved before block physics existed (collapse starts off for it). */
 export const OLD_WORLD_PHYSICS_NOTE = 'New: block physics! Collapse is off for this older world — turn it on in Esc → Physics';
 /** WATER selected: the crosshair also stops on water sources (left-click removes one). */
@@ -387,6 +387,8 @@ export function boot(win, doc) {
   const physicsBodies = [];
   /** @type {Map<string, number>} physics sound name → fxTime it last played (throttle) */
   const physicsSoundAt = new Map();
+  /** loudest squeal of the pigs knocked during this frame's physics step (0 = none); played once after it */
+  let knockSqueal = 0;
   const flash = { x: 0, y: 0, z: 0, intensity: 0 };
   /** @type {[number, number, number]} camera shake offset this frame */
   const shake = [0, 0, 0];
@@ -404,10 +406,12 @@ export function boot(win, doc) {
     sound: (name, x, y, z, volume) => playPhysicsSound(name, x, y, z, volume),
     particles: (kind, x, y, z, count, opts) => particles.emit(kind, x, y, z, count, opts),
     knock: (body, vx, vy, vz, fromX, fromZ) => {
+      // A pig flashes, flees and squeals, but gets the same push as every other body (no pigs.hit kick on top); one
+      // squeal per frame, the loudest, played after the step (a blast through a herd took every voice from the boom).
       if (body !== player && pigs.list.includes(body)) {
-        if (pigs.hit(body, fromX, fromZ)) {
+        if (pigs.hit(body, fromX, fromZ, false)) {
           const d = Math.hypot(body.x - player.x, body.y - player.y, body.z - player.z);
-          if (d < 16) audio.playSqueal(1 - d / 16);
+          if (d < 16) knockSqueal = Math.max(knockSqueal, 1 - d / 16);
         }
       }
       body.vx += vx;
@@ -1371,6 +1375,10 @@ export function boot(win, doc) {
   /** Block physics: ≤ 1 tick, then fallers, toppling trees, lit barrels and blasts (CONTRACTS §33). */
   function stepBlockPhysics(dt) {
     if (blockPhysics) blockPhysics.step(dt);
+    if (knockSqueal > 0) {
+      audio.playSqueal(knockSqueal);
+      knockSqueal = 0;
+    }
   }
 
   /**
