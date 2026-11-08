@@ -15,7 +15,9 @@
 // not leaves (or an unloaded cell) stops it at the last free pose; else it stops lying flat (θ = π/2). IMPACT: the
 // leaves burst into leaf particles, every log becomes a column faller at the cell its centre is in (the next free cell
 // toward the pivot when taken), so the trunk ends up lying on the ground; bodies near a landing log are knocked; thud.
-// Leaves left with no log within LEAF_DECAY_RANGE decay (removed over LEAF_DECAY_S with leaf particles). At most
+// Leaves left with no log within LEAF_DECAY_RANGE decay (removed over LEAF_DECAY_S with leaf particles), and so do
+// natural leaves next to the felled tree left hanging from nothing (a trunk felled earlier, lying on the ground below,
+// kept them from both the tree and that rule). At most
 // TREE_MAX_TOPPLING fall at once; more wait (already out of the world, drawn standing) TREE_QUEUE_GAP_S apart.
 import {
   GRAVITY, WORLD_HEIGHT, TREE_MAX_CELLS, TREE_MAX_TOPPLING, TREE_QUEUE_GAP_S, TREE_SHAKE_S, TREE_THETA0, TREE_CAUSE_RANGE,
@@ -292,6 +294,10 @@ export class Trees {
       rodK: (3 * Math.abs(GRAVITY)) / (2 * Math.max(1, top - py)), phase: PHASE_QUEUED, t: 0, theta: 0, omega: 0, event,
     };
     this._decayOrphans(logs, event);
+    // A canopy leaf a trunk lying on the ground nearby kept from both rules above (it is "nearer another log", which
+    // holds nothing up) would float: natural leaf clusters next to the removed cells that touch nothing load-bearing
+    // decay too. Natural only — a player's leaves are never taken by this.
+    this.decayHangingLeaves([...logs, ...leaves], { event, naturalOnly: true });
     return job;
   }
 
@@ -587,16 +593,19 @@ export class Trees {
   }
 
   /**
-   * After a crumble (support.js): leaves that hung only from the crumbled cells decay — every cluster of leaves next
-   * to `cells` (connected through leaves, ≤ TREE_MAX_CELLS) that touches no load-bearing cell (and no unloaded one).
-   * A hedge on the ground or a canopy held by its trunk stays.
-   * @param {number[][]} cells  the crumbled cells [q, y, r, …] (already AIR)
-   * @param {{ event?: number }} [opts]
+   * After a crumble (support.js) or a topple (`naturalOnly`): leaves that hung only from the removed cells decay —
+   * every cluster of leaves next to `cells` (connected through leaves, ≤ TREE_MAX_CELLS) that touches no load-bearing
+   * cell (and no unloaded one). A hedge on the ground or a canopy held by its trunk stays.
+   * @param {number[][]} cells  the removed cells [q, y, r, …] (already AIR)
+   * @param {{ event?: number, naturalOnly?: boolean }} [opts]  naturalOnly: queue only cells with no edit (never a
+   *        player's leaves; they still count as part of their cluster)
    * @returns {number} leaves queued to decay
    */
   decayHangingLeaves(cells, opts = {}) {
     const peek = this.physics.ctx.peek;
     const event = opts.event ?? this.physics.openEventId;
+    const world = this.physics.world;
+    const naturalOnly = opts.naturalOnly === true;
     /** @type {Map<number, boolean>} packed leaf cell → its cluster is held */
     const verdict = new Map();
     let queued = 0;
@@ -641,7 +650,10 @@ export class Trees {
         }
         for (const k of visited) verdict.set(k, held);
         if (held) continue;
-        for (const [q, y, r, id] of cluster) if (this._queueDecay(q, y, r, id, event)) queued++;
+        for (const [q, y, r, id] of cluster) {
+          if (naturalOnly && world.hasEdit(q, y, r)) continue;
+          if (this._queueDecay(q, y, r, id, event)) queued++;
+        }
       }
     }
     return queued;

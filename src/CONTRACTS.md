@@ -110,7 +110,7 @@ trees                              → … and support (isLoadBearing)
 explosions                         → … + noise (hash3), support (isLoadBearing, isAnchorCell)
 fallingblocks                      → config, blocks, hex, physics
 blockphysics                       → config, blocks, hex, coords, noise (mulberry32), fallingblocks, fluids, support, trees, explosions
-fallingRenderer                    → mesher (buildCellMesh), three
+fallingRenderer                    → blocks (BLOCK), mesher (buildCellMesh), three
 particles                          → config, blocks, tiles (averageColor), mesher (BIOME_TINT, isTintedFace), three
 mesher                             → config, coords, hex, blocks
 worldgen                           → config, coords, hex, blocks, noise
@@ -1423,7 +1423,9 @@ the triggers (`write` → WRITE_PHYSICS, `writeQuiet` → WRITE_QUIET) and, when
    (beyond: dropped and counted in `parkedDropped` — re-seeding covers them).
 2. `onChunkGenerated(cq, cr)` re-queues every update parked on that chunk (due next tick), then hands every EDITED cell of the chunk
    whose id a reseeder lists to `fn(ctx, q, y, r, id)` (reseeders of switched-off features are skipped).
-3. Built-in reseeders: 'gravity' (falling): SAND/RED_SAND/GRAVEL/CAMPFIRE over a fall-through cell → `fall`; 'water' (water):
+3. Built-in reseeders: 'gravity' (falling): SAND/RED_SAND/GRAVEL/CAMPFIRE over a fall-through cell → `fall`, and every edited
+   fall-through cell (AIR, CAMPFIRE, any water) with a gravity block or a campfire above it → that cell into `fall` (the rings are not
+   saved: natural sand dug out from under just before a save — always so under `physics off` — falls after the reload); 'water' (water):
    WATER → its open neighbours (AIR, CAMPFIRE, FLOW, FALL) per §33.5.2, FLOW/FALL → `scheduleWaterAround` (fluids.js replaces it
    by name with a superset, §35.3); 'ignite' (explosions):
    BLAST_BARREL with a CAMPFIRE among its 8 neighbours → `misc`.
@@ -1531,19 +1533,29 @@ and becomes a faller at its own cell — so the column falls together, at one sp
 `vy = max(vy + GRAVITY·dt, TERMINAL_VELOCITY)`; velocity × `TUMBLE_AIR_DRAG^(60·dt)`; on the ground horizontal velocity and spin ×
 `TUMBLE_GROUND_FRICTION^(60·dt)`; move with `displaceBody` in `n = ceil(max|Δ| / TUMBLE_SUBSTEP)` equal substeps; rotation += spin·dt.
 A non-persistent tumbler that hits a floor while moving down vanishes in 10 dust particles; any tumbler below y = −16 is removed.
-### 34.4 `createFallingRenderer(scene, atlasTexture)` → `{ sync(items, count = items.length), setFlash(x, y, z, intensity), count(), meshCount(), dispose() }`
+### 34.4 `createFallingRenderer(scene, atlasTexture)` → `{ sync(items, count = items.length), setFlash(x, y, z, intensity), count(), meshCount(), prewarm(webglRenderer, camera) → Promise, dispose() }`
 One InstancedMesh per (block id, render layer) from `mesher.buildCellMesh(id)` (ids with no geometry — CAMPFIRE — draw nothing),
 three Lambert materials like the chunks' (opaque; cutout alphaTest 0.5 DoubleSide; translucent transparent, depthWrite false,
 DoubleSide, renderOrder 1) on the shared atlas texture (never disposed here), `frustumCulled = false`, DynamicDrawUsage. Capacity
-starts at 16 and doubles (a new InstancedMesh on the same geometry). `sync` composes position (x, y, z), `Euler(rx, ry, rz, 'YXZ')`
-and scale for items[0 .. count); meshes with no instance are hidden. One PointLight (0xffd49a, distance 28, decay 1.4, intensity 0)
-is created at construction for the explosion flash (a constant light count).
-### 34.5 `createParticles(scene, { capacity = PARTICLE_CAPACITY, random })` → `{ emit, update(dt), count(), clear(), dispose(), points }`
+starts at 16 and doubles (a new InstancedMesh on the same geometry, inside the sync that needs it: the matrices that sync already
+wrote are copied into the new mesh, so no block of that id is drawn at the world origin for a frame). `sync` composes position
+(x, y, z), `Euler(rx, ry, rz, 'YXZ')` and scale for items[0 .. count); meshes with no instance are hidden. One PointLight (0xffd49a,
+distance 28, decay 1.4, intensity 0) is created at construction for the explosion flash (a constant light count).
+`prewarm(webglRenderer, camera)` (main calls it right after creating the renderer, like the campfires' §32.2) builds the meshes of
+`PREWARM_IDS` = [SAND, GLASS, ICE] — one per layer, so the three materials' InstancedMesh programs — compiles them against the real
+scene (`compileAsync(mesh, camera, scene)` when present, else `compile`), and makes each draw one hidden instance (micro-scaled,
+10 000 below the world) until it has been rendered once (`onAfterRender`) or its id has instances of its own; `sync` keeps that
+instance (main's `sync([], 0)` on load included). So the first falling block of a session (and the first of each layer) compiles
+nothing mid-frame. Never throws.
+### 34.5 `createParticles(scene, { capacity = PARTICLE_CAPACITY, random })` → `{ emit, update(dt), count(), clear(), prewarm(webglRenderer, camera) → Promise, dispose(), points }`
 ONE `THREE.Points` (ShaderMaterial: world-unit point sizes, soft round sprites, terrain fog, transparent, depthWrite false,
 frustumCulled false); `emit(kind, x, y, z, count = 8, { id?, color?, spread = 0.35, speed = 1, vx, vy, vz })` with kinds
 `PARTICLE_KINDS = ['dust', 'leaves', 'smoke', 'sparks', 'steam']` overwrites the oldest particle when full. Dust / leaves with `id`
 take `blockParticleColor(id)`: the sRGB mean of the block's top tile, × the plains BIOME_TINT when the mesher tints that face. `update(0)`
-freezes; a particle fades over its life and is dead (size 0, alpha 0) after it; the Points is hidden while none live.
+freezes; a particle fades over its life and is dead (size 0, alpha 0) after it; the Points is hidden while none live — except after
+`prewarm(webglRenderer, camera)` (main, with the falling renderer's): it compiles the Points (`compileAsync(points, camera, scene)`,
+else `compile`) and draws one dead point (palpha 0 → `gl_PointSize` 0) until it has been rendered once (`update` and `clear` keep
+that draw), so the first particle of a session compiles nothing mid-frame. Never throws.
 
 ## 35. `src/fluids.js` (PURE) — flowing water, v0.8
 
@@ -1729,7 +1741,10 @@ export class Trees {                 // physics.trees
    with y within LEAF_DECAY_RANGE of the removed logs' span, that has no log at hex distance ≤ LEAF_DECAY_RANGE and |dy| ≤
    LEAF_DECAY_RANGE; and after a crumble (`decayHangingLeaves(cells)`) for every cluster of leaves next to the crumbled cells —
    connected through leaves (8-neighbourhood), ≤ TREE_MAX_CELLS — that touches no load-bearing and no UNLOADED cell (a hedge on the
-   ground or a canopy held by its trunk stays).
+   ground or a canopy held by its trunk stays). After a topple the same cluster test also runs on the removed logs and leaves
+   (`decayHangingLeaves(cells, { naturalOnly: true })`), queuing only leaves with no edit: a canopy leaf that a trunk lying on the
+   ground below kept from both rules above (it is "nearer another log", §36.4.2) does not float, and a player's leaves are never
+   taken by it.
 2. A queued leaf decays after `LEAF_DECAY_S·(0.15 + 0.85·ctx.random())` s: when it still holds its id, `ctx.writeQuiet(AIR)` inside
    `enterEvent(event)` and 4 'leaves' particles. Leaves never become falling blocks.
 3. `renderItems(push)`: every job (falling, then waiting) pushes each cell at `pivot + R(θ)·offset` with `tiltEuler(kx, kz, θ)`, scale 1
@@ -1757,6 +1772,9 @@ export class Trees {                 // physics.trees
 10. The first-collapse tip is per loaded world (not saved — that would need a save field) and only for crumbles, not trees.
 11. No boundary `seedSupport` after a collapse (DESIGN §10.3 suggested one): a floating component is maximal, so nothing load-bearing
     next to it is left without support by its removal.
+12. Hanging canopy leaves also decay after a topple (§36.6.1): ownership (§36.4.2) and the topple decay count any log, so a trunk
+    felled earlier and lying on the ground under a canopy kept single leaves floating (about one per 5 trees felled in a dense forest).
+    Natural leaves only: the rules above already decide a player's leaves.
 
 ## 37. `src/explosions.js` (PURE) — blast barrels, v0.8
 

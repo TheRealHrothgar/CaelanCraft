@@ -62,7 +62,8 @@ All tunables live in `config.js` under "Block physics (CONTRACTS §33–§37)"; 
 - **Unloaded neighbours.** Rules read through `world.peekBlock`. An update that sees UNLOADED in a cell it needs is
   **parked** under that chunk key (not dropped); `onChunkGenerated` re-queues parked updates for that chunk and
   re-seeds the chunk's edited physics-active cells (non-source water and their neighbours, gravity blocks with a
-  fall-through cell below, barrels next to a campfire). *Physics must survive streaming and reloads.*
+  fall-through cell below, gravity blocks above an edited fall-through cell, barrels next to a campfire). *Physics must
+  survive streaming and reloads.*
 - **Triggers** (`onBlockChange(q, y, r, prev, next)`, forwarded by main for every change from any source):
   - the cell **above** a cell that became fall-through → `fall` ring (gravity blocks drop, campfires break);
   - a gravity block placed over a fall-through cell → `fall` ring;
@@ -110,7 +111,9 @@ toppling trees save their logs dropped from their current pose. The live simulat
 bounding sphere is computed once and goes stale*). One API for every moving cell: `sync(items)` where an item is
 `{ id, x, y, z, rx, ry, rz }` (centre + rotation). Lit barrels pulse (scale 1 ± 0.04 at 4 Hz, faster near the end).
 **Particles** (`src/particles.js`, three): ONE `THREE.Points` system, capacity 2048, oldest overwritten — dust (block's
-average colour), leaves, smoke, sparks; one draw call whatever the load.
+average colour), leaves, smoke, sparks; one draw call whatever the load. Both compile their shaders while the game loads
+(`prewarm`, like the campfires): *on ANGLE/D3D11 the first falling block cost a 100–220 ms frame, the first particle
+30–95 ms, the first glass / ice block another 95–170 ms each.*
 
 =====================================================================================================================
 ## 4. Flowing water (`src/fluids.js`, PURE rule called by the scheduler)
@@ -195,7 +198,8 @@ the tree's own cells (leaves of other trees do not stop it); stop at first conta
 **Impact:** leaves burst into leaf particles; every log becomes a column faller at its rotated position (snapped to
 that cell; if it is not free, the next free cell toward the pivot), so the trunk ends up lying on the ground; bodies
 within 1.2 of a landing log are knocked (4 m/s away, vy 5); `audio.playThud`. Leaves left within 3 of no log anymore
-**decay**: removed over ~1 s with leaf particles (they never become falling leaf blocks). Max 4 toppling at once; extra
+**decay**: removed over ~1 s with leaf particles (they never become falling leaf blocks); so do the tree's natural leaves
+left hanging from nothing (CONTRACTS §36.6.1). Max 4 toppling at once; extra
 trees wait in a queue (0.3 s apart) instead of crumbling. Cells ≤ 400 per tree (more → crumble).
 
 =====================================================================================================================
@@ -371,6 +375,9 @@ are already in `config.js` ("Block physics").
 10. **main / commands are pre-wired for every feature** (WATER ray + source removal, currents, R to light, crosshair on lit
     barrels, snuff, flash light, camera shake, `ignite`, `drain`, `knock` hook) against the stubs, so features do not edit main.
 11. Blast barrel bottom face uses the lid tile (two tiles were allotted).
+12. **Re-seeding above edited fall-through cells**: the rings are not saved, so natural sand dug out from under just before a
+    save (always so under `physics off`, item 4) floated forever after the reload; the 'gravity' reseeder also queues a
+    gravity block or campfire above an edited fall-through cell.
 
 ### 10.8 Open questions for the feature owners
 - A WATER source is not fall-through, so sand dropped on a lake rests ON the surface (by the letter of §3). Sinking would be
