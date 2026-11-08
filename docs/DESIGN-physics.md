@@ -64,8 +64,8 @@ All tunables live in `config.js` under "Block physics (CONTRACTS §33–§37)"; 
 - **Unloaded neighbours.** Rules read through `world.peekBlock`. An update that sees UNLOADED in a cell it needs is
   **parked** under that chunk key (not dropped); `onChunkGenerated` re-queues parked updates for that chunk and
   re-seeds the chunk's edited physics-active cells (non-source water and their neighbours, gravity blocks with a
-  fall-through cell below, gravity blocks above an edited fall-through cell, barrels next to a campfire). *Physics must
-  survive streaming and reloads.*
+  fall-through cell below, gravity blocks above an edited fall-through cell that was generated solid, barrels next to a
+  campfire). *Physics must survive streaming and reloads — and do no more there than live play did.*
 - **Triggers** (`onBlockChange(q, y, r, prev, next)`, forwarded by main for every change from any source):
   - the cell **above** a cell that became fall-through → `fall` ring (gravity blocks drop, campfires break);
   - a gravity block placed over a fall-through cell → `fall` ring;
@@ -125,13 +125,18 @@ of its column (7 under a source, k under FLOW_k). *Spreads-sideways(n)* ⇔ n is
 WATER source** (never over FALL/FLOW/AIR). *This one predicate is the v1 blocker fix: v1 let every mid-column fall cell
 spread, and one source on a 10-high plateau filled 9,673 cells instead of 637.* *A fall keeping its level is the slope fix
 (v0.8 review): with E(FALL) = 7 every 1-high step restarted a full disc, and one source on a hillside wet 4–10k cells down
-to the sea; now a stream loses a level per cell of sideways travel and stops within 6 cells of its source (148 cells on
-seed 7's hilltop), while a source poured over a drop still lands at full strength.*
+to the sea; now a stream loses a level per cell of sideways travel and stops within 6 cells of its source (150 cells on
+seed 7's hilltop), while a source poured over a drop still lands at full strength.* A cell with water above that its sides
+feed better than the fall is FLOW, not FALL, so a cell's level is the best of the two and more water never lowers one.
+*With E(FALL) = the fall's level alone, a FLOW_1 trickle dripping into a FLOW_5 stream cut the stream off there, and a
+reload's reflow (all sources at once) ran the stream past the cut before the trickle arrived — a campfire there went out
+on reload only. Now water only rises toward where it settles: a reload climbs straight to the live state.*
 
 Update of a water-family cell W, or of an AIR/CAMPFIRE cell next to water (`water` ring; FALL cells via `fall`):
 1. **Source** (WATER): never changes by itself.
-2. **Falling:** if the cell above is water → W should be FALL.
-3. **Fed level:** otherwise `L' = max(E(n) − 1)` over side neighbours n that *spread sideways*; `L' ≤ 0` → AIR.
+2. **Falling:** if the cell above is water and the fall's level ≥ the fed level L' (step 3) → W should be FALL.
+3. **Fed level:** otherwise `L' = max(E(n) − 1)` over side neighbours n that *spread sideways*; `L' ≤ 0` → AIR, else
+   FLOW_L' (also under water: a trickle landing in a stream keeps the stream's level).
    (So every level is exactly what its feeders would write; removing a source drains its flow in ≤ 6 steps.)
 4. **Infinite source:** a FLOW cell with **≥ 3** WATER side-neighbours and solid-or-WATER below becomes WATER.
    *With ≥ 2, two adjacent sources on a hex grid filled a radius-40 disc (two sources share two neighbours).*
@@ -139,7 +144,8 @@ Update of a water-family cell W, or of an AIR/CAMPFIRE cell next to water (`wate
    *With only the ≥ 3 rule a drained patch of sea over an uneven seabed stalled: the surface ring stood on FALL, the bottom
    ring touched sand — a permanent crater that a reload filled in.*
 5. Write the new state if it differs (`ctx.write`, lazy). Neighbours re-trigger through onBlockChange.
-6. **Downward:** a water cell whose below is AIR/CAMPFIRE/FLOW writes FALL below (a FALL below a FALL is a no-op).
+6. **Downward:** a water cell whose below is AIR/CAMPFIRE/a FLOW no higher than itself writes FALL below (a FALL below a
+   FALL is a no-op; a higher FLOW below is fed better from its sides).
 Water entering a campfire cell puts it out (hiss + steam particles). Lit barrels touching water go out (§7).
 
 **Wading vs swimming** (physics.js): the water surface of a cell is `y + h(id, above)` with h = 1 if water is above,
@@ -387,7 +393,9 @@ are already in `config.js` ("Block physics").
 11. Blast barrel bottom face uses the lid tile (two tiles were allotted).
 12. **Re-seeding above edited fall-through cells**: the rings are not saved, so natural sand dug out from under just before a
     save (always so under `physics off`, item 4) floated forever after the reload; the 'gravity' reseeder also queues a
-    gravity block or campfire above an edited fall-through cell.
+    gravity block or campfire above an edited fall-through cell whose ORIGIN is not fall-through (it was dug out: exactly
+    when the live trigger fired). *Queuing above ANY edited fall-through cell made worldgen's natural sand on cave air fall
+    onto a water source or campfire the player put under it, on reload and stream-in only.*
 
 ### 10.8 Open questions for the feature owners
 - A WATER source is not fall-through, so sand dropped on a lake rests ON the surface (by the letter of §3). Sinking would be

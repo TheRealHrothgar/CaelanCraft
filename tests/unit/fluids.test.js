@@ -324,6 +324,77 @@ describe('the water rule', () => {
     expect(world.getBlock(4, 2, 0)).toBe(flow(3));
   });
 
+  it('a trickle falling into a stream feeds it and never lowers it; the stream follows the fall when it rises or goes', () => {
+    // Review water-3 regression: a FALL took the level at the top of its column and ignored its sides, so a FLOW_1
+    // trickle dripping onto a FLOW_5 channel cell made it FALL (1) and dried everything downstream ('W 6 F . . . . . .').
+    // Main channel at y = 6 along +q (floor y ≤ 5, stone roof at y = 7) from a source at q = 0; an upper channel at
+    // y = 10 along r (q = 2, floor y = 9) from a source at (2, 10, 6) whose FLOW_1 tip at (2, 10, 0) drips through a
+    // 3-high shaft (2, 7..9, 0) onto (2, 6, 0).
+    const scene = (order) => {
+      const { world, physics } = setup({ groundY: 5 });
+      for (let q = -3; q <= 12; q++) {
+        for (let r = -3; r <= 9; r++) {
+          if (!(r === 0 && q >= 0)) world.put(q, 6, r, B.STONE);
+          for (let y = 7; y <= 9; y++) if (!(q === 2 && r === 0)) world.put(q, y, r, B.STONE);
+          if (!(q === 2 && r >= 0 && r <= 6)) world.put(q, 10, r, B.STONE);
+        }
+      }
+      const main = () => world.setBlock(0, 6, 0, B.WATER);
+      const trickle = () => world.setBlock(2, 10, 6, B.WATER);
+      if (order === 'stream first') main();
+      else trickle();
+      settle(physics);
+      if (order === 'stream first') trickle();
+      else main();
+      settle(physics);
+      return { world, physics };
+    };
+    const row = (world) => [0, 1, 2, 3, 4, 5, 6, 7, 8].map((q) => world.getBlock(q, 6, 0));
+    const full = [B.WATER, flow(6), flow(5), flow(4), flow(3), flow(2), flow(1), B.AIR, B.AIR];
+    for (const order of ['stream first', 'trickle first']) {
+      const { world, physics } = scene(order);
+      expect([5, 4, 3, 2, 1, 0].map((r) => world.getBlock(2, 10, r)), order).toEqual([6, 5, 4, 3, 2, 1].map(flow));
+      expect([9, 8, 7].map((y) => world.getBlock(2, y, 0)), order).toEqual([B.WATER_FALL, B.WATER_FALL, B.WATER_FALL]);
+      expect(row(world), order).toEqual(full); // the landing is FLOW_5: its side feeds it better than the fall (1)
+      // The fall rises above the stream (a source at the tip): the landing falls at 7 and feeds the channel at 6.
+      world.setBlock(2, 10, 0, B.WATER);
+      settle(physics);
+      expect(row(world), order).toEqual([B.WATER, flow(6), B.WATER_FALL, flow(6), flow(5), flow(4), flow(3), flow(2), flow(1)]);
+      world.setBlock(2, 10, 0, B.AIR); // and back to the trickle: the landing is FLOW_5 again
+      settle(physics);
+      expect(row(world), order).toEqual(full);
+      world.setBlock(0, 6, 0, B.AIR); // the stream's source goes: only the trickle's fall is left, feeding nothing
+      settle(physics);
+      expect(row(world), order).toEqual([B.AIR, B.AIR, B.WATER_FALL, B.AIR, B.AIR, B.AIR, B.AIR, B.AIR, B.AIR]);
+      world.setBlock(0, 6, 0, B.WATER);
+      settle(physics);
+      expect(row(world), order).toEqual(full);
+      world.setBlock(2, 10, 6, B.AIR); // the trickle's source goes: the stream is untouched
+      settle(physics);
+      expect(row(world), order).toEqual(full);
+      expect(world.getBlock(2, 7, 0)).toBe(B.AIR);
+      world.setBlock(0, 6, 0, B.AIR);
+      settle(physics);
+      expect(world.editCount).toBe(0);
+    }
+    // A second source at q = 4: the landing's sides are fed 6 by the sources whatever the fall does. A source beside
+    // the trickle's tip raises it to FLOW_6 (the landing falls at 6); walling that source in again drops the tip
+    // straight back to FLOW_1 with no gap in the column, and nothing beside the landing changes — only the trigger's
+    // walk down the column makes the landing compare again.
+    const { world, physics } = scene('stream first');
+    world.setBlock(4, 6, 0, B.WATER);
+    settle(physics);
+    expect(row(world).slice(0, 5)).toEqual([B.WATER, flow(6), flow(5), flow(6), B.WATER]);
+    world.setBlock(3, 10, 0, B.WATER);
+    settle(physics);
+    expect(world.getBlock(2, 10, 0)).toBe(flow(6));
+    expect(row(world).slice(0, 5)).toEqual([B.WATER, flow(6), B.WATER_FALL, flow(6), B.WATER]);
+    world.setBlock(3, 10, 0, B.STONE);
+    settle(physics);
+    expect(world.getBlock(2, 10, 0)).toBe(flow(1));
+    expect(row(world).slice(0, 5)).toEqual([B.WATER, flow(6), flow(5), flow(6), B.WATER]);
+  });
+
   it('removing the floor under flowing water re-evaluates what it fed (the water-floor trigger)', () => {
     // A one-wide channel along +q at y = 6 on a y ≤ 5 floor: levels 6, 5, 4, 3, 2, 1.
     const { world, physics } = setup({ groundY: 5 });
@@ -537,6 +608,138 @@ describe('saving and reloading', () => {
     expect(w2.getBlock(0, 4, 0)).toBe(flow(6));
     expect(w2.getBlock(0, 3, 0)).toBe(B.WATER_FALL);
     expect(census(w2, 8, 5, 5, 8, 6).water).toBe(census(world, 8, 5, 5, 8, 6).water);
+  });
+
+  /**
+   * A converged real World on `worldGen` around cell (8, 8) from saved `edits`, physics wired like main; `wet` collects
+   * every cell that turned to water while it ran (the reflow's path, not just where it ends).
+   */
+  function loadWorld(worldGen, edits) {
+    const world = new World({ seed: 1, renderDistance: 2, worldGen, now: () => 0, edits });
+    const physics = attachPhysics(world, BlockPhysics);
+    const wet = new Set();
+    const forward = world.onBlockChange;
+    world.onBlockChange = (q, y, r, prev, next) => {
+      if (isWater(next)) wet.add(`${q},${y},${r}`);
+      forward(q, y, r, prev, next);
+    };
+    const [x, z] = hexToWorld(8, 8);
+    for (let i = 0; i < 500; i++) {
+      const s = world.update(x, z, Infinity);
+      if (s.pendingGen === 0 && s.pendingMesh === 0) break;
+    }
+    return { world, physics, wet };
+  }
+  /** Save (exportEdits, JSON round trip like storage) → a fresh World → settle; compare cells q, r ∈ [lo, hi], y0..y1. */
+  function reloadAndCompare(live, worldGen, lo, hi, y0, y1) {
+    const saved = JSON.parse(JSON.stringify(live.physics.exportEdits()));
+    const re = loadWorld(worldGen, saved);
+    re.wet.clear(); // count from the first tick (generation itself writes nothing through onBlockChange)
+    settle(re.physics);
+    const differ = [];
+    const flooded = []; // cells the reflow wet that end dry: water the live world never had there
+    let campfires = 0;
+    for (let q = lo; q <= hi; q++) {
+      for (let r = lo; r <= hi; r++) {
+        for (let y = y0; y <= y1; y++) {
+          const a = live.world.getBlock(q, y, r);
+          const b = re.world.getBlock(q, y, r);
+          if (a === B.CAMPFIRE) campfires++;
+          if (a !== b) differ.push(`${q},${y},${r}: live ${a} reload ${b}`);
+        }
+      }
+    }
+    for (const k of re.wet) if (!isWater(re.world.getBlock(...k.split(',').map(Number)))) flooded.push(k);
+    return { differ, flooded, campfires };
+  }
+
+  it('a reload reaches the live state: a trickle into a stream, and a campfire put out only where live play puts it out', () => {
+    // Review water-3 regression: a fall lowered the stream it landed in, so a reload's reflow (both sources at once)
+    // briefly ran the stream past the cut before the trickle arrived — a campfire on the dry channel floor there burned
+    // on live but was put out on reload ('W 6 F . . C . . .' vs 'W 6 F . . . . . .').
+    const gen = flatWorldGen(5);
+    const live = loadWorld(gen);
+    const w = live.world;
+    // The trickle scene of the rule test above, at (4, 4): main channel (q ≥ 4, 6, 4), shaft (6, 7..9, 4), upper
+    // channel (6, 10, 4..10).
+    for (let q = -1; q <= 13; q++) {
+      for (let r = -1; r <= 13; r++) {
+        if (!(r === 4 && q >= 4)) w.setBlock(q, 6, r, B.STONE);
+        for (let y = 7; y <= 9; y++) if (!(q === 6 && r === 4)) w.setBlock(q, y, r, B.STONE);
+        if (!(q === 6 && r >= 4 && r <= 10)) w.setBlock(q, 10, r, B.STONE);
+      }
+    }
+    w.setBlock(4, 6, 4, B.WATER);
+    w.setBlock(6, 10, 10, B.WATER);
+    settle(live.physics);
+    const row = (world) => [4, 5, 6, 7, 8, 9, 10, 11, 12].map((q) => world.getBlock(q, 6, 4));
+    expect(row(w)).toEqual([B.WATER, flow(6), flow(5), flow(4), flow(3), flow(2), flow(1), B.AIR, B.AIR]);
+    w.setBlock(9, 6, 4, B.CAMPFIRE); // into the stream: put out at once
+    w.setBlock(11, 6, 4, B.CAMPFIRE); // on the dry floor past the stream's end: burns
+    settle(live.physics);
+    expect(row(w)).toEqual([B.WATER, flow(6), flow(5), flow(4), flow(3), flow(2), flow(1), B.CAMPFIRE, B.AIR]);
+    const res = reloadAndCompare(live, gen, -2, 14, 5, 11);
+    expect(res.differ).toEqual([]);
+    expect(res.flooded).toEqual([]);
+    expect(res.campfires).toBe(1);
+  });
+
+  it('live play and a reload agree on stepped terrain with falls into streams: the reflow only ever rises', () => {
+    // Blocky terraces (3 × 3 patches, 0..4 high steps) with sources on the ground and in mid-air: streams pour over
+    // steps into other streams. Campfires on every dry floor cell beside water after it settles, then a source taken
+    // away. The reload starts from the sources only; with more water never lowering a level it climbs straight to the
+    // live state — nothing it wets on the way ends dry, no campfire goes out that live play keeps lit.
+    const height = (seed, q, r) => 5 + ((((Math.floor(q / 3) * 92837111) ^ (Math.floor(r / 3) * 689287499) ^ (seed * 283923481)) >>> 0) % 5);
+    for (const seed of [1, 2, 3, 4]) {
+      const gen = {
+        seed,
+        getColumn: (q, r) => ({ height: height(seed, q, r), biome: 0, temperature: 0, humidity: 0 }),
+        generateChunk: (cq, cr) => {
+          const d = { blocks: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT), biomes: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE), heights: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE) };
+          for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+            for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+              const h = height(seed, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr);
+              d.heights[lq * CHUNK_SIZE + lr] = h;
+              d.blocks.fill(B.STONE, (lq * CHUNK_SIZE + lr) * WORLD_HEIGHT, (lq * CHUNK_SIZE + lr) * WORLD_HEIGHT + h + 1);
+            }
+          }
+          return d;
+        },
+      };
+      const live = loadWorld(gen);
+      const w = live.world;
+      let s = seed * 7919;
+      const rnd = (n) => {
+        s = (Math.imul(s, 1103515245) + 12345) >>> 0;
+        return (s >>> 8) % n;
+      };
+      const sources = [];
+      for (let i = 0; i < 7; i++) {
+        const q = 3 + rnd(10);
+        const r = 3 + rnd(10);
+        const y = height(seed, q, r) + 1 + (rnd(3) === 0 ? 3 + rnd(4) : 0); // a third of them poured from mid-air
+        w.setBlock(q, y, r, B.WATER);
+        sources.push([q, y, r]);
+        settle(live.physics);
+      }
+      w.setBlock(...sources[0], B.AIR);
+      settle(live.physics);
+      let lit = 0;
+      for (let q = -4; q <= 19; q++) {
+        for (let r = -4; r <= 19; r++) {
+          const y = height(seed, q, r) + 1;
+          if (w.getBlock(q, y, r) !== B.AIR || !HEX_DIRS.some(([dq, dr]) => isWater(w.getBlock(q + dq, y, r + dr)))) continue;
+          w.setBlock(q, y, r, B.CAMPFIRE);
+          lit++;
+        }
+      }
+      settle(live.physics);
+      expect(lit, `seed ${seed}`).toBeGreaterThan(10);
+      const res = reloadAndCompare(live, gen, -8, 23, 5, 20);
+      expect(res.differ, `seed ${seed}`).toEqual([]);
+      expect(res.flooded, `seed ${seed}`).toEqual([]);
+      expect(res.campfires, `seed ${seed}`).toBe(lit);
+    }
   });
 
   it('a source whose open neighbour lies in a chunk loaded later still wakes it', () => {

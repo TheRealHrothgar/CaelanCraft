@@ -3,8 +3,9 @@
 // through ctx.write (lazy, capped, event-recorded).
 //
 // Water is a FAMILY of blocks: WATER (a source — it never changes by itself), WATER_FLOW_1..6 (level k, derived from
-// its feeders) and WATER_FALL (water with water above it). With E(id) = 7 for WATER, k for FLOW_k and, for FALL, the
-// level of the water pouring in at the top of its column (fallLevel: 7 under a source, k under FLOW_k), and
+// its feeders) and WATER_FALL (water with water above it that its sides do not feed better). With E(id) = 7 for WATER,
+// k for FLOW_k and, for FALL, the level of the water pouring in at the top of its column (fallLevel: 7 under a source,
+// k under FLOW_k), and
 //
 //   spreads(n) ⇔ n is water and the cell below n is solid or a WATER source (never over FALL / FLOW / AIR),
 //
@@ -13,25 +14,30 @@
 //   2. a FLOW / FALL cell with ≥ WATER_SOURCE_NEIGHBOURS WATER side-neighbours over a solid or WATER floor → WATER, and
 //      so does one in a cell generated as WATER (natural sea / lake refills as itself, on any floor — what saving makes
 //      of it anyway);
-//   3. water above → FALL;
-//   4. else L = max(E(n) − 1) over the side neighbours n that spread; L ≤ 0 → AIR (a campfire stays), else FLOW_L;
+//   3. with L = max(E(n) − 1) over the side neighbours n that spread: water above and fallLevel ≥ L → FALL;
+//   4. else L ≥ 1 → FLOW_L (also under water, when the sides feed it better than the fall: a trickle landing in a
+//      stream keeps the stream's level); else AIR (a campfire stays);
 //   5. write the result if it differs — the scheduler's 'water' trigger re-queues the neighbourhood (the cell below
 //      a new water cell on the 1-tick fall ring), so a change propagates one cell per update and a waterfall
 //      advances exactly one cell per tick;
-//   6. a source or flowing cell this update left unchanged, over AIR / CAMPFIRE / FLOW, writes FALL below it.
+//   6. a source or flowing cell this update left unchanged, over AIR / CAMPFIRE / a FLOW no higher than itself,
+//      writes FALL below it.
 // Every level is exactly what its feeders imply, so taking the source away drains its flow by itself (the highest level
 // left always loses its feeder). Falling keeps a stream's level and never refreshes it, so every FLOW_k is within 7 − k
 // cells of a source: one source wets at most the 127 columns of a reach-6 hex disc, however the ground falls away (126
 // FLOW cells on flat ground, 367 cells off a 10-high plateau, ~150 down a hillside), while a source poured over a drop
-// lands at full strength and spreads a reach-6 pool where it lands.
+// lands at full strength and spreads a reach-6 pool where it lands. A cell's level is the best of what falls into it
+// and what its sides feed it, so more water never lowers a level: water only rises toward where it settles, and a
+// reload's reflow (which starts from the sources) never wets — or douses — a cell the live world keeps dry.
 // Water entering a campfire puts it out ('hiss' + steam) — also one a command put there (§32).
 //
 // The scheduler's triggers queue a changed cell and its 8 neighbours. The rule also reads the cell BELOW each side
 // neighbour and the column ABOVE a falling one, so this module adds the 'water-floor' trigger: when a cell starts / stops
 // being a floor (solid or WATER) under water, the side neighbours of that water are re-queued, and when the water above
-// a fall column changes, the side neighbours of where that column lands. It replaces the built-in 'water' reseeder with
-// one that also wakes edited AIR next to water (a dug-out hole beside the sea: flow is never saved) and neighbours in
-// chunks that are not loaded yet (they wait for their chunk), so streamed / reloaded water flows on.
+// a fall column changes, the column cells beside spreading water, the FLOW it ends on and the side neighbours of where
+// it lands. It replaces the built-in 'water' reseeder with one that also wakes edited AIR next to water (a dug-out hole
+// beside the sea: flow is never saved) and neighbours in chunks that are not loaded yet (they wait for their chunk), so
+// streamed / reloaded water flows on.
 import { WORLD_HEIGHT, WATER_CURRENT, DRAIN_MAX_RADIUS, WATER_SOURCE_NEIGHBOURS } from './config.js';
 import { BLOCK, UNLOADED, isSolid, isWater, waterLevel } from './blocks.js';
 import { HEX_DIRS, FACE_NORMALS, hexToWorld, worldToHex } from './hex.js';
@@ -145,9 +151,11 @@ export class Fluids {
       if (id !== B.AIR && id !== B.CAMPFIRE
         && ((sources >= WATER_SOURCE_NEIGHBOURS && isWaterFloor(ctx.peek(q, y - 1, r))) || this._isNaturalWater(q, y, r))) {
         target = B.WATER; // infinite source (a hole in a lake refills as lake); natural water refills as natural water
-      } else if (isWater(above)) {
-        target = B.WATER_FALL;
+      } else if (isWater(above) && (fed === 0 || fallLevel(ctx, q, y, r) >= fed)) {
+        target = B.WATER_FALL; // the water pouring in from above feeds it at least as well as its sides do
       } else if (fed > 0) {
+        // (also under water: fed better from its sides than by the fall above — a trickle landing in a stream — it keeps
+        // the stream's level, so more water above never lowers a cell below; review water-3 regression)
         target = FLOW_ID0 + fed;
       } else {
         target = id === B.CAMPFIRE ? B.CAMPFIRE : B.AIR;
@@ -165,11 +173,12 @@ export class Fluids {
       return;
     }
 
-    // 6. Downward: a settled source or flowing cell over an open cell (or over flowing water) falls into it. Falling
-    // water's front is left to the trigger (it queued the cell below), or a waterfall would advance two cells a tick.
+    // 6. Downward: a settled source or flowing cell over an open cell (or over flowing water no higher than itself)
+    // falls into it. Falling water's front is left to the trigger (it queued the cell below), or a waterfall would
+    // advance two cells a tick. A FLOW below that is higher than this cell is fed better from its sides: left alone.
     if ((target === B.WATER || isFlowingWater(target)) && y > 0) {
       const below = ctx.peek(q, y - 1, r);
-      if (below === B.AIR || below === B.CAMPFIRE || isFlowingWater(below)) {
+      if (below === B.AIR || below === B.CAMPFIRE || (isFlowingWater(below) && waterLevel(below) <= waterLevel(target))) {
         if (ctx.write(q, y - 1, r, B.WATER_FALL) === 'ok') {
           this.stats.writes++;
           if (below === B.CAMPFIRE) this._douse(ctx, q, y - 1, r);
@@ -209,22 +218,38 @@ export class Fluids {
   /**
    * 'water-floor' trigger: a cell started or stopped being a floor (solid or WATER) under water — that water starts /
    * stops spreading sideways, so its side neighbours (which the scheduler's own trigger does not reach) are re-queued.
-   * Also: the water directly above a fall column changed — its fallLevel did too, so the side neighbours of the cell
-   * where that column lands (and spreads) are re-queued.
+   * Also: the water directly above a fall column changed — its fallLevel did too, all the way down. Re-queued: every
+   * FALL of the column beside spreading water (rule 2b compares the fall with that side feed), the FLOW the column
+   * ends on (fed better from its sides: it compares again) and, where the column lands on a floor, the landing's side
+   * neighbours (what it feeds).
    */
   _onFloorChange(q, y, r, prev, next) {
     const world = this.physics.world;
     if (isWaterFloor(prev) !== isWaterFloor(next) && isWater(world.peekBlock(q, y + 1, r))) {
       for (let j = 0; j < 6; j++) this._wakeIfOpen(q + DQ[j], y + 1, r + DR[j]);
     }
-    // The water pouring into a fall column changed: what the column feeds where it lands (fallLevel) changed with it.
     if (prev !== next && (isWater(prev) || isWater(next)) && world.peekBlock(q, y - 1, r) === B.WATER_FALL) {
-      let yy = y - 1;
-      while (yy > 0 && world.peekBlock(q, yy - 1, r) === B.WATER_FALL) yy--;
-      if (yy > 0 && isWaterFloor(world.peekBlock(q, yy - 1, r))) {
-        for (let j = 0; j < 6; j++) this._wakeIfOpen(q + DQ[j], yy, r + DR[j]);
+      for (let yy = y - 1; ; yy--) {
+        if (this._besideSpreadingWater(q, yy, r)) this._wake(q, yy, r);
+        if (yy === 0) break;
+        const below = world.peekBlock(q, yy - 1, r);
+        if (below === B.WATER_FALL) continue;
+        if (isFlowingWater(below)) this._wake(q, yy - 1, r);
+        else if (isWaterFloor(below)) for (let j = 0; j < 6; j++) this._wakeIfOpen(q + DQ[j], yy, r + DR[j]);
+        break;
       }
     }
+  }
+
+  /** @returns {boolean} a side neighbour of (q, y, r) is water that spreads (it stands on a floor) */
+  _besideSpreadingWater(q, y, r) {
+    const world = this.physics.world;
+    for (let j = 0; j < 6; j++) {
+      const nq = q + DQ[j];
+      const nr = r + DR[j];
+      if (isWater(world.peekBlock(nq, y, nr)) && isWaterFloor(world.peekBlock(nq, y - 1, nr))) return true;
+    }
+    return false;
   }
 
   /**

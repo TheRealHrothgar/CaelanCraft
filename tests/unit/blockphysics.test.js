@@ -712,16 +712,19 @@ describe('a queued fall survives a save and reload (FR-5: rings are not saved)',
     }
   });
 
-  it('an edited fall-through cell re-seeds only a gravity block or campfire above it, and only while falling is on', () => {
+  it('an edited fall-through cell generated solid (dug out) re-seeds only a gravity block or campfire above it, and only while falling is on', () => {
     const { world, physics } = setup(); // natural stone for y ≤ 10
     for (const f of ['water', 'collapse']) physics.setSwitch(f, false); // only the gravity reseeder at work
     physics.setSwitch('falling', false);
     world.put(5, 11, 5, B.GRAVEL); // natural gravel, natural campfire (no edits) and a stone on top of the ground
     world.put(8, 11, 8, B.CAMPFIRE);
     world.put(7, 11, 7, B.STONE);
+    world.put(9, 10, 9, B.AIR); // a natural cave cell under natural gravel…
+    world.put(9, 11, 9, B.GRAVEL);
     world.setBlock(5, 10, 5, B.AIR); // dug out from under them while falling is off (the triggers are dropped)
     world.setBlock(8, 10, 8, B.WATER);
     world.setBlock(7, 10, 7, B.AIR);
+    world.setBlock(9, 10, 9, B.WATER); // …that only changed to another fall-through id: no live trigger would fire
     expect(physics.queued()).toBe(0);
     world.unload(0, 0);
     world.load(0, 0);
@@ -732,10 +735,55 @@ describe('a queued fall survives a save and reload (FR-5: rings are not saved)',
     expect(physics.isQueued('fall', 5, 11, 5)).toBe(true);
     expect(physics.isQueued('fall', 8, 11, 8)).toBe(true);
     expect(physics.isQueued('fall', 7, 11, 7)).toBe(false); // stone does not fall
+    expect(physics.isQueued('fall', 9, 11, 9)).toBe(false); // generated fall-through below: nothing was dug out
     expect(physics.queued()).toBe(2);
     physics.tick();
     expect(world.getBlock(5, 11, 5)).toBe(B.AIR); // the gravel is falling
     expect(physics.fallers.count).toBe(1);
     expect(world.getBlock(8, 11, 8)).toBe(B.AIR); // the campfire over water broke
+  });
+
+  it('a source or campfire put in a natural cave under natural sand leaves the sand put: live, after a reload, after streaming back', () => {
+    // FR-5 follow-up (review render-save-trees): the reseeder re-queued natural sand above ANY edited fall-through cell,
+    // but the live trigger only fires when a cell BECOMES fall-through. Worldgen leaves natural sand resting on cave air;
+    // a water source or campfire the player put under it never moved it live, yet a reload or a stream-in dropped it and
+    // crushed what the player had put there (column 1,1,7,9,9 → 1,1,9,9,0 on seed 42).
+    const flat = flatWorldGen(12);
+    const caveGen = {
+      ...flat,
+      generateChunk: (cq, cr) => {
+        const d = flat.generateChunk(cq, cr);
+        if (cq === 0 && cr === 0) {
+          d.blocks[localIndex(5, 9, 5)] = B.AIR; // a one-cell cave…
+          d.blocks[localIndex(5, 10, 5)] = B.SAND; // …with natural sand resting on its air
+          d.blocks[localIndex(5, 11, 5)] = B.SAND;
+        }
+        return d;
+      },
+    };
+    const make = (edits) => {
+      const world = new World({ seed: 1, renderDistance: 1, worldGen: caveGen, now: () => 0, edits });
+      const physics = attachPhysics(world, BlockPhysics);
+      converge(world);
+      return { world, physics };
+    };
+    const cave = (world) => [8, 9, 10, 11, 12].map((y) => world.getBlock(5, y, 5));
+    for (const put of [B.WATER, B.CAMPFIRE]) {
+      const live = make();
+      expect(cave(live.world)).toEqual([B.STONE, B.AIR, B.SAND, B.SAND, B.STONE]);
+      live.physics.asPlayer(() => live.world.setBlock(5, 9, 5, put));
+      run(live.physics);
+      const want = [B.STONE, put, B.SAND, B.SAND, B.STONE];
+      expect(cave(live.world), `live ${put}`).toEqual(want);
+      const re = make(JSON.parse(JSON.stringify(live.physics.exportEdits())));
+      expect(re.physics.isQueued('fall', 5, 10, 5), `reload ${put}`).toBe(false);
+      run(re.physics);
+      expect(cave(re.world), `reload ${put}`).toEqual(want);
+      converge(live.world, 100 * CHUNK_SIZE, 0); // streamed out…
+      expect(live.world.getChunk(0, 0)).toBeUndefined();
+      converge(live.world, 0, 0); // …and back in
+      run(live.physics);
+      expect(cave(live.world), `stream-in ${put}`).toEqual(want);
+    }
   });
 });
