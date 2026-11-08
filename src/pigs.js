@@ -71,8 +71,9 @@ const contact = { depth: 0, nx: 0, nz: 0 };
 /**
  * A cell a pig may hop up into or swim out onto: no solid, no fire, and no water it would swim in — a film shallow
  * enough to wade (surface ≤ WADE_DEPTH: flowing levels 1–3) counts as open, so a beach under a thin flow is still a bank.
+ * (Zombies use the same rule, §39.)
  */
-function isOpen(id) {
+export function isOpen(id) {
   if (isSolid(id) || id === BLOCK.CAMPFIRE) return false;
   return !isLiquid(id) || waterSurfaceHeight(id, BLOCK.AIR) <= WADE_DEPTH;
 }
@@ -235,7 +236,7 @@ function shoreTarget(getBlock, x, z, pq, pr, wy) {
 }
 
 /** Wrap an angle into (−π, π]. */
-function wrapAngle(a) {
+export function wrapAngle(a) {
   a %= TWO_PI;
   if (a > Math.PI) a -= TWO_PI;
   else if (a <= -Math.PI) a += TWO_PI;
@@ -253,6 +254,60 @@ function unstick(pig, getBlock) {
     pig.y = fy;
     pig.vy = 0;
   }
+}
+
+/**
+ * True when a point FIRE_LOOK ahead of (x, z) along `yaw` lies within FIRE_MARGIN of a campfire cell at the feet level
+ * fy or one below (a fire the walker would step down into). Several points, each with a margin, cover the cell corners
+ * and the arc of a turn that a single look-ahead point skips. Cheap where there is no fire: a neighbour cell can only
+ * be within the margin when the point is that close to their shared edge (the neighbour lies beyond it), so only
+ * those neighbours are read, and the exact contact is computed only for a neighbour that IS a campfire. Shared by
+ * walking pigs (§30) and zombies (§39).
+ * @param {GetBlockFn} getBlock
+ * @returns {boolean}
+ */
+export function fireAhead(getBlock, x, z, yaw, fy) {
+  const [fx, fz] = yawToForward(yaw);
+  let lastQ = NaN;
+  let lastR = NaN;
+  for (const s of FIRE_LOOK) {
+    const px = x + fx * s;
+    const pz = z + fz * s;
+    const [cq, cr] = worldToHex(px, pz);
+    if ((cq !== lastQ || cr !== lastR) && isFireAt(getBlock, cq, fy, cr)) return true;
+    lastQ = cq;
+    lastR = cr;
+    const dx = px - (cq + cr * 0.5); // offset from the centre of cell (cq, cr) (hexToWorld)
+    const dz = pz - cr * HEX_ROW_SPACING;
+    for (let k = 0; k < 6; k++) {
+      const n = FACE_NORMALS[k]; // also the world offset of neighbour k (HEX_DIRS[k])
+      if (HEX_INRADIUS - (dx * n[0] + dz * n[2]) >= FIRE_MARGIN) continue; // farther than the margin from edge k
+      const q = cq + HEX_DIRS[k][0];
+      const r = cr + HEX_DIRS[k][1];
+      if (!isFireAt(getBlock, q, fy, r)) continue;
+      const [hx, hz] = hexToWorld(q, r);
+      if (hexCircleContact(hx, hz, px, pz, FIRE_MARGIN, contact)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Heading (yaw) toward the nearest bank a swimmer at feet (x, y0, z) can reach over the water and climb (shoreTarget),
+ * null when its column has no water at the feet or one above, or no bank is within SHORE_SEARCH steps. Shared by
+ * swimming pigs (§30) and zombies (§39).
+ * @param {GetBlockFn} getBlock
+ * @returns {number|null}
+ */
+export function shoreYaw(getBlock, x, y0, z) {
+  const [pq, pr] = worldToHex(x, z);
+  let y = Math.floor(y0);
+  if (!isLiquid(getBlock(pq, y, pr))) y++;
+  if (!isLiquid(getBlock(pq, y, pr))) return null;
+  while (y < WORLD_HEIGHT - 1 && isLiquid(getBlock(pq, y + 1, pr))) y++;
+  const target = shoreTarget(getBlock, x, z, pq, pr, y);
+  if (!target) return null;
+  return Math.atan2(-(target[0] - x), -(target[1] - z)); // yawToForward(yaw) = (−sin, −cos)
 }
 
 /** mulberry32: a small seeded generator for deterministic natural spawns. @returns {() => number} */
@@ -477,52 +532,14 @@ export class Pigs {
     return isSolid(getBlock(q, fy, r)) && isOpen(getBlock(q, fy + 1, r));
   }
 
-  /**
-   * True when a point FIRE_LOOK ahead along the yaw lies within FIRE_MARGIN of a campfire cell at the feet level or
-   * one below (a fire the pig would step down into). Several points, each with a margin, cover the cell corners and
-   * the arc of a turn that a single look-ahead point skips. Cheap where there is no fire: a neighbour cell can only
-   * be within the margin when the point is that close to their shared edge (the neighbour lies beyond it), so only
-   * those neighbours are read, and the exact contact is computed only for a neighbour that IS a campfire.
-   */
+  /** A campfire within FIRE_MARGIN of the pig's next steps (fireAhead along its yaw at feet level fy). */
   _fireAhead(pig, fy, getBlock) {
-    const [fx, fz] = yawToForward(pig.yaw);
-    let lastQ = NaN;
-    let lastR = NaN;
-    for (const s of FIRE_LOOK) {
-      const px = pig.x + fx * s;
-      const pz = pig.z + fz * s;
-      const [cq, cr] = worldToHex(px, pz);
-      if ((cq !== lastQ || cr !== lastR) && isFireAt(getBlock, cq, fy, cr)) return true;
-      lastQ = cq;
-      lastR = cr;
-      const dx = px - (cq + cr * 0.5); // offset from the centre of cell (cq, cr) (hexToWorld)
-      const dz = pz - cr * HEX_ROW_SPACING;
-      for (let k = 0; k < 6; k++) {
-        const n = FACE_NORMALS[k]; // also the world offset of neighbour k (HEX_DIRS[k])
-        if (HEX_INRADIUS - (dx * n[0] + dz * n[2]) >= FIRE_MARGIN) continue; // farther than the margin from edge k
-        const q = cq + HEX_DIRS[k][0];
-        const r = cr + HEX_DIRS[k][1];
-        if (!isFireAt(getBlock, q, fy, r)) continue;
-        const [hx, hz] = hexToWorld(q, r);
-        if (hexCircleContact(hx, hz, px, pz, FIRE_MARGIN, contact)) return true;
-      }
-    }
-    return false;
+    return fireAhead(getBlock, pig.x, pig.z, pig.yaw, fy);
   }
 
-  /**
-   * Heading (yaw) toward the nearest bank the swimmer can reach over the water and climb (shoreTarget), null when its
-   * column has no water at the feet or one above, or no bank is within SHORE_SEARCH steps.
-   */
+  /** Heading toward the nearest bank the swimming pig can reach and climb (shoreYaw), or null. */
   _shoreYaw(pig, getBlock) {
-    const [pq, pr] = worldToHex(pig.x, pig.z);
-    let y = Math.floor(pig.y);
-    if (!isLiquid(getBlock(pq, y, pr))) y++;
-    if (!isLiquid(getBlock(pq, y, pr))) return null;
-    while (y < WORLD_HEIGHT - 1 && isLiquid(getBlock(pq, y + 1, pr))) y++;
-    const target = shoreTarget(getBlock, pig.x, pig.z, pq, pr, y);
-    if (!target) return null;
-    return Math.atan2(-(target[0] - pig.x), -(target[1] - pig.z)); // yawToForward(yaw) = (−sin, −cos)
+    return shoreYaw(getBlock, pig.x, pig.y, pig.z);
   }
 
   /**

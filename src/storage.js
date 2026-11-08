@@ -202,6 +202,8 @@ export function serializeSave(data) {
   if (data.pigs != null) /** @type {*} */ (out).pigs = validatePigsJSON(data.pigs).pigs;
   // Block-physics switches (v0.8): written whenever given. An absent field on load means "saved before v0.8".
   if (data.physics != null) /** @type {*} */ (out).physics = normalizePhysicsSwitches(data.physics);
+  // Zombies switch (§39): written whenever given (anything but `false` is on). Absent on load = on.
+  if (data.zombies != null) /** @type {*} */ (out).zombies = data.zombies !== false;
   return JSON.stringify(out);
 }
 
@@ -221,6 +223,8 @@ export function serializeSave(data) {
  * An optional `pigs` array is validated with pigs.validatePigsJSON and kept (even when empty).
  * An optional `physics` object (block-physics switches) is normalised with normalizePhysicsSwitches; a non-object is
  * dropped with a warning (the save then reads as one from before v0.8).
+ * An optional boolean `zombies` (the world's zombies switch, §39) is kept; anything else is dropped with a warning
+ * (absent means on).
  * Every repair is described in a non-enumerable `warnings: string[]` on the result.
  * @param {string} text
  * @returns {SaveData|null}
@@ -341,6 +345,10 @@ export function deserializeSave(text) {
       }
       /** @type {*} */ (save).physics = normalizePhysicsSwitches(raw.physics);
     }
+  }
+  if (raw.zombies !== undefined) {
+    if (typeof raw.zombies === 'boolean') /** @type {*} */ (save).zombies = raw.zombies;
+    else warnings.push('zombies: not a boolean, treated as on');
   }
   Object.defineProperty(save, 'warnings', { value: warnings, enumerable: false, writable: true, configurable: true });
   return save;

@@ -87,6 +87,7 @@ const IDS = Object.freeze({
   btnPhysCollapse: 'btn-phys-collapse',
   btnPhysExplosions: 'btn-phys-explosions',
   btnUndoPhysics: 'btn-undo-physics',
+  btnZombies: 'btn-zombies',
   pauseControls: 'pause-controls',
   blockPicker: 'block-picker',
   pickerGrid: 'picker-grid',
@@ -102,6 +103,7 @@ const IDS = Object.freeze({
  * @property {() => void} [onStopRunes]   pause-menu "Stop All Rune Scripts"
  * @property {(name: string) => void} [onPhysicsToggle]  pause-menu Physics row: 'falling' | 'water' | 'collapse' | 'explosions'
  * @property {() => void} [onUndoPhysics]  pause-menu "Undo" (the last explosion / collapse / falling tree)
+ * @property {() => void} [onZombiesToggle]  pause-menu Creatures row: the world's Zombies switch (§39)
  * @property {() => void} [onQuit]
  * @property {() => void} [onClickToPlay]
  * @property {(blockId: number, slot: number|null) => void} [onPickBlock]  slot 0..8 for Digit1-9, null for a click
@@ -118,6 +120,7 @@ const IDS = Object.freeze({
  * @property {() => void} hideClickToPlay
  * @property {(seed: number|string, physics?: PhysicsMenuState) => void} showPause
  * @property {(physics: PhysicsMenuState) => void} setPhysicsState   refresh the Physics row and the Undo button
+ * @property {(on: boolean) => void} setZombiesState   refresh the Zombies toggle (§39)
  * @property {() => void} hidePause
  * @property {(hotbar: number[], selected: number) => void} showPicker
  * @property {() => void} hidePicker
@@ -413,6 +416,16 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     hide(el.pauseMenu);
   }
 
+  /** The Creatures row's Zombies toggle (§39): "Zombies: ON|OFF", class `off`, aria-pressed. @param {boolean} on */
+  function setZombiesState(on) {
+    const btn = el.btnZombies;
+    btn.textContent = `Zombies: ${on ? 'ON' : 'OFF'}`;
+    btn.classList.toggle('off', !on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  on(el.btnZombies, 'click', () => fire('onZombiesToggle'));
+
   on(el.btnResume, 'click', () => fire('onResume'));
   on(el.btnSave, 'click', () => fire('onSave'));
   on(el.btnStopRunes, 'click', () => fire('onStopRunes'));
@@ -571,6 +584,7 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     showPause,
     hidePause,
     setPhysicsState,
+    setZombiesState,
     showPicker,
     hidePicker,
     isPickerOpen,

@@ -81,6 +81,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/explosions.js` | PURE, blast barrels (§37) | v0.8 | `tests/unit/explosions.test.js` |
 | `src/fallingRenderer.js` | three, moving cells + explosion light (§34.4) | v0.8 | `tests/unit/physicsRender.test.js` |
 | `src/particles.js` | three, one particle system (§34.5) | v0.8 | `tests/unit/physicsRender.test.js` |
+| `src/zombies.js` | PURE, zombies: spawning, AI, daylight, hits (§39) | zombies | `tests/unit/zombies.test.js` |
+| `src/zombieRenderer.js` | three, instanced four-prism zombie models (§39.2) | zombies | `tests/unit/zombieRenderer.test.js` |
 | `src/atlas.js` | DOM + three | A-atlas | — |
 | `src/renderer.js` | three | A-renderer | `tests/unit/renderer.test.js` |
 | `src/controls.js` | DOM | A-controls | — |
@@ -125,8 +127,10 @@ audio                              → blocks
 diagnostics                        → config, blocks, coords, hex, runes (runeKey)
 console                            → config
 runeEditor                         → config, commands (parseScript)
+zombies                            → config, physics, hex, blocks, pigs (fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S)
+zombieRenderer                     → config, blocks (TILE), zombies (SWING_S), three
 main                               → everything except three (renderer, atlas, pigRenderer, campfireRenderer,
-                                     fallingRenderer and particles are the three-importing modules)
+                                     fallingRenderer, particles and zombieRenderer are the three-importing modules)
 ```
 
 ## 2. `src/config.js` (exact — already written)
@@ -628,6 +632,7 @@ export function advanceTime(time, dt, dayLengthSeconds = DAY_LENGTH_SECONDS)   /
 export function computeSky(time)          // → SkyState (pure; linear interpolation between keyframes, wrapping 1 → 0)
 export function formatTime(time)          // "HH:MM" (0.25 → "06:00")
 export function sunDirection(time)        // Vec3 unit: θ = (time-0.25)*2π; normalize(cos θ, sin θ, 0.25)  (rises at +X)
+export function isDayTime(time)           // SkyState.isDay without the sky: 0.25 <= wrapped t < 0.75 (zombies, §39)
 /** SkyState = { time, isDay (0.25 <= t < 0.75), sunDir (toward sun by day, toward moon = -sun by night), sunColor, sunIntensity,
  *   hemiIntensity (= amb), zenithColor, horizonColor, fogColor, daylight (0..1), stars (0..1) } */
 ```
@@ -654,6 +659,9 @@ export function clearSave(storage = globalThis.localStorage)        // void
 `=== false` is on). `deserializeSave` keeps it when it is a plain object (non-boolean switches warn `physics.<name>: not a boolean,
 treated as on`); a non-object is dropped with the warning `physics: not an object, ignored`. **Absent means the world was saved
 before v0.8**: main then starts it with collapse OFF (§33.8). Exports `PHYSICS_SWITCH_NAMES`, `DEFAULT_PHYSICS_SWITCHES`.
+`zombies` (§39) is OPTIONAL: the world's zombies switch. `serializeSave` writes it whenever `data.zombies != null` (anything not
+`=== false` is `true`); `deserializeSave` keeps a boolean and drops anything else with the warning `zombies: not a boolean, treated
+as on`. Absent means on (new worlds and saves from before zombies). Zombies themselves are never saved.
 `runes` (v0.3) is OPTIONAL and the version stays 2: `serializeSave` writes it only when `runes.normalizeRunesJSON(data.runes)` is
 non-empty (keys sorted by (q, y, r), non-default fields only, so untouched worlds serialise byte-identically to before);
 `deserializeSave` validates it with `runes.validateRunesJSON(raw.runes, edits)` — malformed keys, non-object entries, entries whose
@@ -784,6 +792,8 @@ export function createHUD(doc, atlasCanvas)   // binds to the ids in index.html 
  *  setPickerOpen(on),                      // toggles #hud.picker-open
  *  setTargetHint(text|null),               // persistent line under the crosshair (#target-hint); null hides it; DOM touched only on change
  *  addChatLine(text, isError = false),     // #chat-log: last CHAT_LINES lines, each fades after CHAT_LINE_MS (multi-line text is split)
+ *  setHurtFlash(level),                    // §39: red screen-edge vignette #hurt-overlay (created in #hud when index.html has none),
+ *                                          //   opacity = level 0..1 in 1/32 steps, hidden at 0; DOM touched only on change
  *  onSlotClick: (slot) => {},              // assignable; fired when a hotbar slot is clicked (only while picker open)
  *  dispose() } */
 ```
@@ -794,7 +804,7 @@ export function createHUD(doc, atlasCanvas)   // binds to the ids in index.html 
 export const SPLASHES = [ /* 18 strings from SPEC-gameplay §5.4 */ ];
 export function createMenus(doc, atlasCanvas, callbacks)
 /** callbacks = { onNewWorld(seedText: string), onContinue(), onResume(), onSave(), onStopRunes(), onQuit(), onClickToPlay(), onPickBlock(blockId, slot|null), onPickerClose(),
- *              onPhysicsToggle(name) (v0.8: 'falling'|'water'|'collapse'|'explosions'), onUndoPhysics() (v0.8) }
+ *              onPhysicsToggle(name) (v0.8: 'falling'|'water'|'collapse'|'explosions'), onUndoPhysics() (v0.8), onZombiesToggle() (§39) }
  *  (#btn-stop-runes "Stop All Rune Scripts" in the pause menu fires onStopRunes; CONTROLS_SHEET lists T, /, R and Shift+R)
  *  Menus = {
  *   showTitle(hasSave), hideTitle(),        // sets a random splash, dirt background (makeTiledBackgroundDataURL DIRT), draws the logo, renders the controls sheet, enables #btn-continue iff hasSave
@@ -803,6 +813,7 @@ export function createMenus(doc, atlasCanvas, callbacks)
  *   showPause(seed, physics?), hidePause(),        // v0.8 physics = PhysicsMenuState { switches, canUndo, undoKind? } refreshes the row first
  *   setPhysicsState(physics),               // v0.8: the Physics row (#btn-phys-falling|water|collapse|explosions: "<Label>: ON|OFF", class
  *                                           //   `off`, aria-pressed) and #btn-undo-physics (undoButtonLabel(canUndo, kind); disabled when !canUndo)
+ *   setZombiesState(on),                    // §39: #btn-zombies "Zombies: ON|OFF" (class `off`, aria-pressed) in #pause-creatures
  *   showPicker(hotbar, selected), hidePicker(), isPickerOpen(),   // scrollable grid of PICKER_ORDER icons (64px canvases shown at 52px); click → onPickBlock(id, null); Digit1-9 while hovering → onPickBlock(id, slot)
  *                                           // styles.css: .picker-panel is a border-box flex column with max-height max(180px, calc(100vh − 8vh − 72px))
  *                                           //   and overflow-y auto; only #picker-grid (min-height 64px = one row, flex 0 1 auto, max-height 420px)
@@ -826,8 +837,11 @@ export function createAudio()   // → Audio; everything is a no-op when AudioCo
  *   playSplash(v) (v0.8: 0.35 s 1.6 kHz noise wash + two rising blips),
  *   playBoom(v) (v0.8 §37: sine thump 72 → 26 Hz 1.1 s + 0.9 s 420 Hz noise body + slowed 150 Hz rumble from +0.12 s + 60 ms 3.2 kHz crack),
  *   playHiss(v) (0.3 s 7 kHz noise breath), playFizzle(v) (0.45 s 2.5 kHz noise wash over a sine sagging 700 → 180 Hz),
- *   playCreak(v) (§36, below) } — volume v in 0..1, every sound scales linearly with it. main calls the physics sounds (§33.7)
- *   through PhysicsHooks.sound. */
+ *   playCreak(v) (§36, below),
+ *   playGroan(v) (§39: a 1 s sawtooth moan 92 → 118 → 70 Hz through a 520 Hz lowpass, a detuned fifth above it, a breathy noise),
+ *   playZombieHurt(v) (0.22 s 170 → 230 → 110 Hz bark over a 50 ms noise slap),
+ *   playZombieDown(v) (0.8 s moan sinking 130 → 40 Hz, a 300 Hz noise poof, a 90 → 40 Hz thump) }
+ *   — volume v in 0..1, every sound scales linearly with it. main calls the physics sounds (§33.7) through PhysicsHooks.sound. */
 ```
 Synthesis per SPEC-gameplay §9.
 v0.8 trees: `playCreak(v)` (a tree starts to topple, §36.5.3): a 0.6 s sawtooth 85 → 135 → 60 Hz through a 700 Hz lowpass plus a 0.25 s
@@ -926,6 +940,9 @@ rendering continues. Closing any modal goes through `enterPlayingFromModal()`: `
   fires when `blockPhysics.switchVersion` changed. Pause menu: `menus.showPause(seed, physicsMenuState())`; `onPhysicsToggle(name)`
   flips the switch (click + toast), `onUndoPhysics` → `blockPhysics.undo()` (chat line + toast). The CommandContext gets
   `physics` (getter). `game.physics` exposes it. `quitToTitle` / `dispose` drop it and clear the renderers.
+- **Zombies (§39.3)**: `stepZombies` runs right after `stepPigs` (so the order is player → black holes → pigs → zombies →
+  blockPhysics → campfires → resolveBodies); zombies join `resolveBodies` and PhysicsHooks.bodies; `renderFrame` calls
+  `zombieRenderer.sync(zombies.list)` and fades the HUD hurt flash.
 - Diagnostics: `installErrorCapture` → `hud.showError`; `installDebugHandle`; if `params.smoke` → `runSmokeTest(game)` once playing.
 - `window.resize` → `renderer.resize(innerWidth, innerHeight)`.
 
@@ -964,7 +981,7 @@ unknown → `unknown block "x" (type blocks to list them)`.
 ### 26.3 CommandContext (built by main, §23)
 `{ world, player, controls {yaw, pitch}, getTime(), setTime(t) (never touches day), addTime(gameSeconds) (day += floor when passing
 midnight forwards), timeFrozen, hotbar, selected, setHotbarSlot(slot, id), say(text), teleport(x, y, z), setFlying(on), runes: RuneStore,
-runner: RuneRunner, rune: Rune|null, running: Running|null, seed, physics?: BlockPhysics (v0.8) }`. The runner sets `rune`/`running` around each script command; the
+runner: RuneRunner, rune: Rune|null, running: Running|null, seed, physics?: BlockPhysics (v0.8), pigs?: Pigs, zombies?: Zombies (§39) }`. The runner sets `rune`/`running` around each script command; the
 console executes with both `null`.
 ### 26.4 Commands (exact behaviour)
 | command | behaviour |
@@ -992,6 +1009,8 @@ console executes with both `null`.
 | `stopall` / `resume` | `runner.stopAll()` (cancel all + pause every automatic trigger) / `runner.resume()` |
 | `runes` | one line per stored rune: `q y r · label · triggers|OFF · running|idle` (first 50) |
 | `rune q y r on|off` | sets `enabled` (creates the entry); off also cancels its script |
+| `summon zombie [q y r]` | §39, needs `ctx.zombies` (`zombies are not available here`); refuses while switched off (`zombies are off in this world (zombies on to allow them)`), at ZOMBIE_MAX, unloaded targets, 2–3 args; like `summon pig` with the zombie's size, facing the player; works by day too (it then burns under open sky) |
+| `zombies [clear\|on\|off]` | §39: `N zombies (max 16) · zombies are on\|off in this world`; `clear` → `removed N zombies`; `on`/`off` → `setEnabled` → `zombies on (saved with this world)` / `zombies off (saved with this world)[: removed N zombies]` / `zombies are already on\|off` |
 | `physics status\|on\|off` | v0.8, needs `ctx.physics`: `status` → `physics.statusText()`; `off` / `on` → `setPaused` ("block physics paused: nothing falls, flows or explodes until physics on (not saved)" / "block physics running"); a lone feature name reports `<f> is on\|off` |
 | `physics <falling\|water\|collapse\|explosions> on\|off` | `setSwitch` → `<f> on\|off (saved with this world)` or `(already)`; an unknown feature fails |
 | `undo` | `physics.undo()`: its message (ok) or failure (`nothing to undo …`, `… too late to undo`) |
@@ -1175,6 +1194,8 @@ export class Pigs {
   export() → PigJSON[] (mm-rounded) ; load(validatedList)
   spawnNatural(count, q0, r0, seed, getBlock, isLoadedCell, minDist = 4, maxDist = 18) → placed   // grass surfaces only, seeded
 }
+// Shared with zombies (§39): fireAhead(getBlock, x, z, yaw, fy) (AI step 3's fire look-ahead; Pigs._fireAhead delegates),
+// shoreYaw(getBlock, x, y, z) → yaw|null (the bank search of step 1; Pigs._shoreYaw delegates), isOpen(id), wrapAngle(a).
 ```
 AI per frame (`canHop` = the pig has no `carrier` and no pig in the list has it as `carrier`, both links from the end of last
 frame — §31; a pig standing on or carrying another body never hops, so pigs cannot climb a wall on each other's backs):
@@ -1888,6 +1909,124 @@ real World for saving and reloading).
    110, 69, 1 barrels; 4 barrels at the far corner of the box are never in reach and stay), physics step worst 22–25 ms (the
    radius-8 blast's ~700 writes) and mean ≈ 0.7 ms, world.update worst 13–15 ms (lazy re-meshing), whole frame worst 40–94 ms with
    headless software rendering.
+
+## 39. `src/zombies.js` (PURE) and `src/zombieRenderer.js` (three) — Zombies
+
+A zombie is `createBody(x, y, z, { radius: ZOMBIE_RADIUS 0.27, height: ZOMBIE_HEIGHT 1.9, mass: ZOMBIE_MASS 1.2 })` plus
+`{ id, yaw, targetYaw, mode: 'idle'|'walk'|'chase'|'avoid', timer, hurt, hits, walkPhase, groanIn, attackIn, swing, burn,
+smoking, exposed, sunIn, fireIn, detour, detourYaw, side (±1), stuck, tilt, wallSinceAim }`, moved by `stepPlayer` like a pig
+(§30): it collides as its own cylinder, swims, hops one-cell ledges and feels `world.pullAt` (black holes + water currents, sampled
+at feet + 0.5 exactly like pigs). The radius is just under PLAYER_RADIUS (< HEX_SIZE / 2), so a zombie fits through the player's
+one-cell, two-high doorways. Each update first lifts a zombie that overlaps a solid cell (`findFreeY(…, floor(y)+1, 3)` with its
+size). Zombies are night mobs: they are NEVER saved; the per-world switch is (`enabled`, below). There is no health anywhere:
+nobody dies, a zombie is knocked out, burns away or is swallowed. Constants `ZOMBIE_*` live in config.js.
+```js
+export function openSky(getBlock, q, y0, r)       // no solid cell in column (q, r) from y0 to the top of the world
+export class Zombies {
+  list, size, clear(), events                      // events: the ZombieEvents object update() returns (arrays reused)
+  enabled; setEnabled(on) → changed?; switchVersion // the saved switch: off clears the list, summon and spawning refuse
+  spawn(x, y, z, yaw = 0) → Zombie|null            // null when off, at ZOMBIE_MAX (16) or for non-finite input; mode idle
+  remove(zb) → boolean
+  update(dt, ZombieWorld) → ZombieEvents           // below
+  hit(zb, fromX, fromZ) → 'hit'|'ko'|null          // the player's punch; null during the ZOMBIE_HURT_S flash
+  knock(zb, vx, vy, vz) → 'hit'|'ko'               // a block-physics impulse (blasts, landing logs)
+  raycast(ox, oy, oz, dx, dy, dz, maxDist) → { zombie, distance }|null   // cylinder ZOMBIE_TARGET_RADIUS 0.3 × ZOMBIE_HEIGHT
+  spawnHeightAt(world, q, r) → feet y|null         // the natural-spawn test for one column
+}
+/** ZombieWorld = { getBlock, isLoaded(x, z), player?, isDay?, pullAt?, hasCampfires?, nearestFire?(x, y, z, maxDist, out) → dist|∞,
+ *    isLoadedCell?(q, r), groundHeight?(q, r) (World.terrainHeightAt), isNaturalGround?(q, y, r), columnEdited?(q, r) }
+ *  ZombieEvents = { attacks, groans, ignited, burned, knockedOut, scorched, spawned: Zombie[], despawned: number } */
+```
+### 39.1 Update (normative order)
+1. **Natural spawning** (only while `enabled`, a player exists, `!isDay` and `groundHeight` is given): `_spawnIn` counts down; at 0 it
+   is reset to ZOMBIE_SPAWN_INTERVAL_MIN_S + rng·(MAX − MIN) (8–20 s: a few zombies a minute) and one attempt runs: 1 zombie, or 2
+   with probability 0.35 (the second 1.5–3.5 from the first), over at most ZOMBIE_SPAWN_TRIES (12) random columns at a horizontal
+   distance ZOMBIE_SPAWN_MIN 16 … ZOMBIE_SPAWN_MAX 40 from the player (cell centre at least 16 away), while fewer than ZOMBIE_MAX
+   exist. `spawnHeightAt` accepts column (q, r) when it is loaded, h = `groundHeight(q, r)` ≥ 0 with h + 3 < WORLD_HEIGHT,
+   `isNaturalGround(q, h, r)` (untouched, solid), cells h + 1 and h + 2 are AIR (no water, fire, logs or leaves there),
+   `columnEdited(q, r)` is false (never in a column the player has built in: houses are safe), no campfire within
+   ZOMBIE_SPAWN_FIRE_CLEAR (8) of the floor centre at h + 1, and the body is free there; it stands at h + 1 facing the player ±90°.
+2. Per zombie (list walked from the end): y < −16 → removed; horizontal distance to the player > ZOMBIE_DESPAWN_DIST (80) →
+   removed (`despawned`); chunk not loaded → frozen (skipped); unstick.
+3. **Daylight**: while `isDay`, every SUN_CHECK_S (0.25 s; the first check after night is immediate) `exposed` = not wet (inWater,
+   or liquid at floor(y + 0.1) or floor(y − 0.5): a swimmer bobbing out of the surface) and `openSky(column, ceil(y + height))`.
+   Exposed: `smoking` (the first frame reports `ignited`), `burn += dt`, and at ZOMBIE_BURN_S (4) it is removed (`burned`). Not
+   exposed (shade, water, night): `smoking = false`, `burn` cools by dt. So a zombie in shade survives until it walks into light.
+4. **AI** (`_think`), `canHop` as for pigs (§30: no carrier, carrying nobody — from the end of last frame):
+   - Campfires are safe zones: every FIRE_CHECK_S (0.2 s), while `hasCampfires()`, a zombie within ZOMBIE_FIRE_FEAR (4) of a fire
+     (`nearestFire` from y + 1) turns straight away from it, mode `avoid` for AVOID_S (0.8 s) at chase speed; it stops early (idle)
+     when, facing its heading, the way ahead is unsafe (below). A player standing by a campfire is never reached.
+   - **Chase** (`_canChase`): the player exists, is not flying, is at most ZOMBIE_CHASE_MAX_RISE (5) above the zombie's feet and
+     within ZOMBIE_SIGHT (24, 3D). Entering chase moves the next groan to 0.2–0.8 s. Heading: straight at the player (kept when
+     closer than 0.35 horizontally), or the detour heading while a detour runs. Whenever it would step (on the ground, heading within
+     MOVE_CONE 1.2 rad of its yaw) and the way ahead is unsafe, a **detour** starts: `detourYaw = yaw + side·(π/3)(1 + rng)` for
+     DETOUR_S + rng·DETOUR_RAND_S (0.5–1.1 s), always toward the zombie's own `side` (chosen at spawn), so repeated blocks walk it
+     around an obstacle; pressing into a wall it cannot hop for STUCK_S (0.25 s) also starts one. A chaser in water swims straight
+     at the player.
+   - Otherwise in water: swim for the nearest bank exactly like a pig (`pigs.shoreYaw`, re-aimed every SWIM_REAIM_S, at most
+     ZOMBIE_SHORE_SEARCHES (1) searches per update); else idle ↔ walk like a pig (idle 1–5 s, walk 1.5–5.5 s within ±π), a walking
+     grounded zombie whose way ahead is unsafe stops (0.5–1.5 s) and turns away by 0.5–1.5π.
+   - **Unsafe ahead** (`_safeAhead`, the cell 0.8 along the yaw, feet level fy = floor(y + 0.01)): water it would swim in
+     (`isSwimWater`; wanderers only — a chaser wades in after you); a campfire on its next steps (`pigs.fireAhead`, the pig rule
+     §30 step 3, skipped while `hasCampfires()` is false); a solid cell unless `canHop` and fy + 1, fy + 2 are open (`pigs.isOpen`:
+     a one-cell ledge with room for its height); a solid cell at fy + 1 over an open fy (too low); no solid cell within
+     ZOMBIE_MAX_DROP (3) below fy (liquid there counts as ground for a chaser only).
+5. **Move**: turn toward `targetYaw` at ZOMBIE_TURN_RATE (3.5 rad/s); step forward only when not idle, not hurt (stunned), not right
+   under/over the player and within MOVE_CONE of the heading — `forward` ZOMBIE_CHASE_SPEED (0.82 × WALK_SPEED ≈ 3.5 m/s, the
+   player walks 4.3) in chase / avoid, else 1 with `sneak` (1.31 m/s shamble); `jump = inWater || (moving && hitWall && canHop &&
+   a one-cell ledge with two open cells on it straight ahead)`. `walkPhase` advances by 3.2 × distance (mod 2π) and settles to a
+   multiple of π below 0.2 m/s.
+6. **Campfire scorch**: a zombie (not flashing) whose feet cell floor(y + 0.05) is a CAMPFIRE is `hit` from the cell centre —
+   `scorched`, or `knockedOut` (removed) when that was its last hit.
+7. **Attack**: not hurt, `attackIn` ≤ 0, the player within ZOMBIE_REACH (1.3) horizontally, heights overlapping, and no solid cell at
+   chest height (the mean feet + 1.2) at 1/3 and 2/3 of the way: the player's horizontal velocity is SET to ZOMBIE_HIT_PUSH (6 m/s)
+   straight away from the zombie, `vy = max(vy, ZOMBIE_HIT_LIFT 4)`, `onGround = false`; `attackIn = ZOMBIE_ATTACK_COOLDOWN_S` (1),
+   `swing = SWING_S` (0.35 s, the renderer's lurch); reported in `attacks`. No damage. Zombies never attack pigs.
+8. Groans: `groanIn` counts down; due → reported (`groans`), reset to 3–8 s while chasing, else 6–16 s.
+`hit(zb, fromX, fromZ)`: ignored (null) while `hurt > 0`; `hits++`; the ZOMBIE_HITS-th (4) hit removes it ('ko'); otherwise velocity
+ZOMBIE_KNOCKBACK (6.5) away from the hitter, `vy ≥ ZOMBIE_KNOCK_LIFT` (4.5), `hurt = ZOMBIE_HURT_S` (0.45 s: red flash and stun,
+`attackIn ≥ hurt`), detour cleared. `knock(zb, v)`: |v| ≥ ZOMBIE_KO_KNOCK (9 m/s) removes it ('ko') — a blast's §37 impulse
+BLAST_IMPULSE·(1 − d/2R) reaches that within about the blast radius R (its BLAST_MIN_UP floor adds a little); weaker knocks add the
+velocity and count as a hit (unless flashing), which can also be the knock-out.
+### 39.2 Rendering
+`createZombieRenderer(scene, atlasTexture, capacity = ZOMBIE_MAX)` → `{ sync(zombies), count(), dispose(), group }`. The model
+faces −Z with its origin at the feet (matrix translate(x, y, z) · rotateY(yaw), like pigs) and is four hexagonal prisms from
+`hexPrismGeometry(R, h, y0, { front, sides, top, bottom })` (corners at 60°·k from +X toward +Z, so side face 4 — normal −Z — is the
+front; each side shows a whole atlas tile upright and unmirrored seen from outside, caps an inscribed hexagon; UV_INSET):
+two feet (R FOOT_R 0.145, h 0.56, centres ±FOOT_X 0.152 — together as wide as the torso — hanging from the hip so they swing ±0.55
+rad with sin(walkPhase) in opposite phase; `zombie_trousers` sides and top, `zombie_sole` below), a torso on the hips (R 0.3,
+h 0.76, `zombie_shirt` all round; leaning −0.05 rad, −0.14 in a chase, plus a −0.32·sin(π·swing/SWING_S) lurch after an attack, and
+swaying with the stride) and a head on the torso (R 0.28, h 0.58: the face tile `zombie_face` on the FRONT side only,
+`zombie_head_side` on the other five and below, `zombie_scalp` on top; rolled by its own `tilt` and nodding with the stride);
+0.56 + 0.76 + 0.58 = ZOMBIE_HEIGHT. Draw calls: three InstancedMeshes in group `zombies` — `zombie-feet` (2 per zombie),
+`zombie-torso`, `zombie-head` (MeshLambertMaterial, map = the atlas, a faint self-light `emissive NIGHT_GLOW 0x8c8c8c ×
+emissiveMap = the atlas` that keeps them readable at night) — and their twins `-hurt` (emissive 0xff2a2a × 1.6 through the
+texture: zombies with `hurt > 0`) and `-burn` (colour 0x8a7c72 soot, emissive 0xff6a1a × 0.9 through the texture: `smoking`
+zombies), so any number of zombies costs 3 draw calls (up to 9 while some flash or burn); meshes with no instances are hidden;
+frustum culling off. Tiles (tiles.js recipes are normative; original art, alpha 255; atlas row 15, not block faces): 240
+`zombie_face` (grey-green rotting skin, matted fringe, a stitched forehead scar, two dark eye sockets with a sickly yellow glint —
+the right one droops — nostril holes, a crooked dark mouth with two pale teeth), 241 `zombie_head_side`, 242 `zombie_scalp`, 243
+`zombie_shirt` (faded teal, two tears showing skin, a stain, a torn hem), 244 `zombie_trousers` (ragged brown, frayed hem, bare
+ankle, battered dark shoe), 245 `zombie_sole`. Side faces are about twice as tall as wide, so features are drawn short and wide.
+### 39.3 Integration
+main: ONE `Zombies` for the session. `startLoading` clears it and sets `setEnabled(save?.zombies !== false)` (new worlds and saves
+from before zombies: on); `buildSaveData` writes `zombies: zombies.enabled`; autosave also fires when `switchVersion` changed;
+`quitToTitle` / `dispose` clear it. `stepZombies` runs right after `stepPigs`: `zombieWorld.player = player`, `isDay =
+daynight.isDayTime(time)`, `update(dt, zombieWorld)` (getBlock / isLoaded / pullAt / hasCampfires shared with pigs; `nearestFire`
+over the tracked `campfires.fires`; `isLoadedCell` = hasChunkAtCell, `groundHeight` = World.terrainHeightAt, `isNaturalGround`,
+`columnEdited` = blackholes.columnHasEdits(world.edits, …)); an attack sets the HUD hurt flash to 1 (fading over HURT_FLASH_S 0.45 s
+in renderFrame, `hud.setHurtFlash`) and plays `audio.playThud(1)`; at most one groan a frame within ZOMBIE_SOUND_RANGE (24, volume
+1 − d/24); `ignited` → playHiss; `burned` / `knockedOut` → `zombieGone` (a puff: dust grey-green for a knock-out, ash + smoke +
+sparks for a burn; `playZombieDown`); smouldering zombies emit smoke (and now and then a spark) every frame; zombies a black hole
+swallows (`blackHoles.swallowing(zb)`) are removed with a puff. `resolveBodies([player, pigs…, zombies…, lit barrels…])` (loaded
+chunks only) and PhysicsHooks.bodies include them, so they push and are pushed, can be stood on and are lifted out of landing blocks.
+PhysicsHooks.knock on a zombie → `zombies.knock` (a 'ko' puffs it away). `updateHit` ray-casts zombies after pigs, up to the pig's
+or block's distance; a zombie in front takes the crosshair (target hint `Zombie · click: hit it`), lit barrels in front of it take
+it from the zombie; `breakTargeted` hits it (`playZombieHurt`, or `zombieGone` on 'ko'). `placeSelected` refuses a solid block
+that would intersect a zombie. `game.teleport` also `detachBody(player, zombies.list)`; `game.zombies` and the debug handle's
+`zombies` expose the instance. Pause menu: `#pause-creatures.physics-row` (label "Creatures", below the Undo button) with
+`#btn-zombies` ("Zombies: ON|OFF", class `off`, aria-pressed; `menus.setZombiesState(on)` after `showPause`); `onZombiesToggle`
+flips the switch (off removes every zombie), click + toast. The CommandContext gets `zombies`.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

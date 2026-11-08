@@ -128,6 +128,16 @@ export const FIZZLE_SAG_START_HZ = 700;
 export const FIZZLE_SAG_END_HZ = 180;
 export const FIZZLE_SAG_S = 0.25;
 export const FIZZLE_SAG_GAIN = 0.08;
+// Zombies (CONTRACTS §39). A groan is a low sawtooth moan rising then sagging (92 → 118 → 70 Hz over 1 s) through a
+// dark lowpass, with a detuned fifth above it and a breathy noise; a hit grunt is a short 170 → 230 → 110 Hz bark
+// over a noise slap; a knock-out is a moan sinking 130 → 40 Hz under a soft noise poof and a low thump.
+export const GROAN_DURATION_S = 1.0;
+export const GROAN_CUTOFF_HZ = 520;
+export const GROAN_GAIN = 0.32;
+export const GRUNT_DURATION_S = 0.22;
+export const GRUNT_GAIN = 0.3;
+export const ZOMBIE_DOWN_S = 0.8;
+export const ZOMBIE_DOWN_GAIN = 0.32;
 
 /** Exponential ramps cannot reach 0; decays ramp to this floor and the voice stops there. */
 const DECAY_FLOOR = 0.001;
@@ -149,6 +159,9 @@ const MUTE_FADE_S = 0.01;
  * @property {(volume?: number) => void} playBoom                 a blast (explosives)
  * @property {(volume?: number) => void} playHiss                 a lit barrel's fuse
  * @property {(volume?: number) => void} playFizzle               a lit barrel put out
+ * @property {(volume?: number) => void} playGroan                a zombie moans (ambient / it noticed you)
+ * @property {(volume?: number) => void} playZombieHurt           a zombie is hit
+ * @property {(volume?: number) => void} playZombieDown           a zombie is knocked out or burns away
  * @property {(b: boolean) => void} setMuted
  * @property {() => boolean} toggleMuted                         returns the new muted state
  * @property {boolean} muted                                     read-only getter
@@ -580,6 +593,58 @@ export function createAudio(opts = {}) {
     }
   }
 
+  // --- zombies (CONTRACTS §39) ----------------------------------------------
+
+  /** @param {number} [volume] */
+  function playGroan(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const p = randomPitch();
+      const d = GROAN_DURATION_S * (0.85 + Math.random() * 0.3);
+      const t0 = c.currentTime;
+      buzz(c, t0, d, [[0, 92 * p], [d * 0.4, 118 * p], [d, 70 * p]], GROAN_CUTOFF_HZ, GROAN_GAIN * v);
+      buzz(c, t0 + 0.03, d * 0.9, [[0, 139 * p], [d * 0.4, 176 * p], [d * 0.9, 104 * p]], GROAN_CUTOFF_HZ * 1.3, GROAN_GAIN * 0.35 * v);
+      noiseBurst(c, t0, d * 0.7, 400, 0.1 * v, p);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playZombieHurt(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const p = randomPitch();
+      const d = GRUNT_DURATION_S;
+      const t0 = c.currentTime;
+      buzz(c, t0, d, [[0, 170 * p], [d * 0.3, 230 * p], [d, 110 * p]], 900, GRUNT_GAIN * v);
+      noiseBurst(c, t0, 0.05, 1200, 0.25 * v, p);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playZombieDown(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const p = randomPitch();
+      const d = ZOMBIE_DOWN_S;
+      const t0 = c.currentTime;
+      buzz(c, t0, d, [[0, 130 * p], [d, 40 * p]], 500, ZOMBIE_DOWN_GAIN * v);
+      noiseBurst(c, t0 + 0.1, 0.3, 300, 0.4 * v, p);
+      tone(c, t0 + 0.12, 0.2, 90 * p, 40 * p, 0.4 * v);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
   /** @param {boolean} b */
   function setMuted(b) {
     muted = !!b;
@@ -613,6 +678,9 @@ export function createAudio(opts = {}) {
     playBoom,
     playHiss,
     playFizzle,
+    playGroan,
+    playZombieHurt,
+    playZombieDown,
     setMuted,
     toggleMuted,
     get muted() {

@@ -159,6 +159,7 @@
  * @property {Object[]} [pigs]        optional (v0.5); absent = the world never had pigs
  * @property {{falling:boolean, water:boolean, collapse:boolean, explosions:boolean}} [physics]
  *   optional (v0.8) block-physics switches; absent = saved before v0.8 (main starts it with collapse off)
+ * @property {boolean} [zombies]       optional (§39) the world's zombies switch; absent = on
  */
 
 /**

@@ -92,6 +92,12 @@ export const TILE_NAMES = Object.freeze({
   74: 'campfire_top',
   75: 'barrel_side',
   76: 'barrel_top',
+  240: 'zombie_face',
+  241: 'zombie_head_side',
+  242: 'zombie_scalp',
+  243: 'zombie_shirt',
+  244: 'zombie_trousers',
+  245: 'zombie_sole',
   255: 'missing',
 });
 
@@ -1128,6 +1134,195 @@ function paintBarrelTop(px, rng) {
   set(px, 11, 3, 0xffb02e);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Zombie parts (CONTRACTS §39). Not block faces: the zombie renderer maps them onto its four hex prisms. The side
+// faces they land on are about twice as tall as they are wide, so features are drawn short and wide (an eye socket
+// 5 px wide and 3 rows tall reads as a round, hollow socket). Original art; alpha 255 everywhere.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Grey-green rotting skin: the base every zombie skin tile starts from. */
+const ZOMBIE_SKIN = 0x7b9168;
+const ZOMBIE_ROT = 0x5b6e4c;
+const ZOMBIE_BRUISE = 0x6c5f70;
+const ZOMBIE_PALE = 0x9aab88;
+const ZOMBIE_HAIR = 0x2a2520;
+
+/** Skin: ZOMBIE_SKIN with noise 6, 2×2 cell noise 7, a few rot blotches (3–5 px) and bruise / pale specks. */
+function zombieSkin(px, rng, blotches) {
+  fill(px, ZOMBIE_SKIN);
+  noise(px, rng, 6);
+  cellNoise(px, rng, 2, 7);
+  for (let k = 0; k < blotches; k++) {
+    const cx = randInt(rng, 1, 14);
+    const cy = randInt(rng, 3, 14);
+    const n = randInt(rng, 3, 5);
+    for (let i = 0; i < n; i++) set(px, wrap16(cx + randInt(rng, -1, 1)), Math.min(15, cy + randInt(rng, -1, 1)), ZOMBIE_ROT, delta(rng, 5));
+  }
+  speck(px, rng, 5, [ZOMBIE_BRUISE, ZOMBIE_PALE, ZOMBIE_ROT]);
+}
+
+/** Matted hair over rows 0 .. depth−1 with a ragged lower edge (each column 0–2 px longer). */
+function zombieHairline(px, rng, depth) {
+  for (let x = 0; x < W; x++) {
+    const end = depth + randInt(rng, -1, 1) + (rng() < 0.2 ? 1 : 0);
+    for (let y = 0; y < end; y++) set(px, x, y, rng() < 0.15 ? 0x3d362d : ZOMBIE_HAIR, delta(rng, 5));
+  }
+}
+
+/**
+ * 240 zombie_face — the head's FRONT side face only: skin with a matted fringe (rows 0–2), a stitched scar on the
+ * forehead, two dark eye sockets (0x1b1719, rows 6–8 at x 2–6 and rows 7–9 at x 9–13 — the right one droops) with a
+ * sickly 0xd4dc5c glint each, a pair of dark nostril holes, a crooked mouth (0x2a1418: rows 12, 13, 12 left to right)
+ * with two pale 0xcfc8a4 teeth, and a rot patch on the chin. Alpha 255.
+ */
+function paintZombieFace(px, rng) {
+  zombieSkin(px, rng, 2);
+  zombieHairline(px, rng, 2);
+  // Forehead scar with stitches.
+  line(px, 9, 4, 13, 4, 0x3c3330);
+  for (const x of [10, 12]) {
+    set(px, x, 3, 0x2e2a26);
+    set(px, x, 5, 0x2e2a26);
+  }
+  // Brow ridges, then the sockets (dark hollows with a darker rim) and their glints.
+  for (let x = 2; x <= 6; x++) set(px, x, 5, ZOMBIE_ROT, delta(rng, 4));
+  for (let x = 9; x <= 13; x++) set(px, x, 6, ZOMBIE_ROT, delta(rng, 4));
+  const socket = (x0, y0) => {
+    for (let y = y0; y < y0 + 3; y++) {
+      for (let x = x0; x < x0 + 5; x++) {
+        const corner = (x === x0 || x === x0 + 4) && (y === y0 || y === y0 + 2);
+        set(px, x, y, corner ? 0x3f4a37 : 0x1b1719, corner ? 0 : delta(rng, 3));
+      }
+    }
+  };
+  socket(2, 6);
+  socket(9, 7);
+  set(px, 4, 7, 0xd4dc5c);
+  set(px, 11, 8, 0xd4dc5c);
+  set(px, 3, 7, 0x2c2a20);
+  // Nose: a dark sunken bridge and two nostril holes.
+  set(px, 7, 9, ZOMBIE_ROT);
+  set(px, 8, 9, ZOMBIE_ROT);
+  set(px, 7, 10, 0x231d1e);
+  set(px, 8, 10, 0x231d1e);
+  // Crooked mouth: higher on the left, sagging in the middle, hitched up on the right, with a lip shadow above.
+  for (let x = 3; x <= 6; x++) set(px, x, 12, 0x2a1418);
+  for (let x = 6; x <= 10; x++) set(px, x, 13, 0x2a1418);
+  for (let x = 10; x <= 12; x++) set(px, x, 12, 0x2a1418);
+  for (let x = 3; x <= 12; x++) set(px, x, x >= 7 && x <= 9 ? 12 : 11, 0x5d4a44, delta(rng, 4));
+  set(px, 5, 12, 0xcfc8a4);
+  set(px, 9, 13, 0xcfc8a4);
+  // Rot on the chin and a darker jaw line.
+  for (let x = 2; x <= 13; x++) set(px, x, 15, ZOMBIE_ROT, delta(rng, 5));
+  set(px, 11, 14, ZOMBIE_BRUISE);
+  set(px, 12, 14, ZOMBIE_BRUISE);
+}
+
+/**
+ * 241 zombie_head_side — the head's other five sides: rotting skin under a matted hairline (rows 0–3, ragged), with a
+ * darker vein running down and a stitched cut. Alpha 255.
+ */
+function paintZombieHeadSide(px, rng) {
+  zombieSkin(px, rng, 4);
+  zombieHairline(px, rng, 4);
+  let x = randInt(rng, 3, 12);
+  for (let y = 6; y < 15; y++) {
+    set(px, x, y, 0x55644a, delta(rng, 4));
+    if (rng() < 0.35) x = Math.max(1, Math.min(14, x + (rng() < 0.5 ? -1 : 1)));
+  }
+  line(px, 2, 10, 5, 12, 0x3c3330);
+  set(px, 3, 10, 0x2e2a26);
+  set(px, 4, 12, 0x2e2a26);
+}
+
+/** 242 zombie_scalp — the head's top: matted dark hair (strands of 0x3d362d) with a bald, rotting patch. Alpha 255. */
+function paintZombieScalp(px, rng) {
+  fill(px, ZOMBIE_HAIR);
+  noise(px, rng, 7);
+  for (let k = 0; k < 14; k++) {
+    const x = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 13);
+    set(px, x, y, 0x3d362d);
+    set(px, x, y + 1, 0x3d362d, -6);
+  }
+  // A bald, rotting patch: an uneven blob (squashed, ragged rim) off to one side, and a smaller one behind it.
+  for (const [cx, cy, rad] of [[10, 6, 2.4], [5, 11, 1.3]]) {
+    for (let y = 0; y < H; y++) {
+      for (let xx = 0; xx < W; xx++) {
+        const d = Math.hypot((xx + 0.5 - cx) * 0.8, y + 0.5 - cy);
+        if (d < rad + rng() * 1.1) set(px, xx, y, d < rad * 0.5 ? ZOMBIE_ROT : ZOMBIE_SKIN, delta(rng, 6));
+      }
+    }
+  }
+}
+
+/**
+ * 243 zombie_shirt — the torso's sides: a faded teal work shirt (0x4d6a73, weave noise, darker folds at the face edges)
+ * with two ragged tears showing grey-green skin through dark frayed rims, a muddy stain and a torn hem (rows 13–15:
+ * cloth strips hanging over skin). Alpha 255.
+ */
+function paintZombieShirt(px, rng) {
+  fill(px, 0x4d6a73);
+  for (let y = 0; y < H; y++) {
+    const d = y % 2 === 0 ? 3 : -2;
+    for (let x = 0; x < W; x++) adjAt(px, x, y, d + delta(rng, 5));
+  }
+  for (let y = 0; y < H; y++) {
+    adjAt(px, 0, y, -14);
+    adjAt(px, 15, y, -14);
+    adjAt(px, 1, y, -6);
+  }
+  // Tears: an irregular blob of skin each, ringed by dark frayed cloth.
+  const tear = (cx, cy, rx, ry) => {
+    for (let y = cy - ry - 1; y <= cy + ry + 1; y++) {
+      for (let x = cx - rx - 1; x <= cx + rx + 1; x++) {
+        if (x < 0 || x >= W || y < 0 || y >= H) continue;
+        const e = ((x - cx) / (rx + 0.5)) ** 2 + ((y - cy) / (ry + 0.5)) ** 2 + (rng() - 0.5) * 0.5;
+        if (e < 1) set(px, x, y, ZOMBIE_SKIN, delta(rng, 8));
+        else if (e < 1.7) set(px, x, y, 0x26343a, delta(rng, 4));
+      }
+    }
+  };
+  tear(randInt(rng, 3, 5), randInt(rng, 3, 5), 1, 2);
+  tear(randInt(rng, 9, 12), randInt(rng, 7, 9), 2, 1);
+  for (let k = 0; k < 6; k++) set(px, randInt(rng, 5, 9), randInt(rng, 9, 12), 0x5d5a3c, delta(rng, 6));
+  // Torn hem: strips of cloth of random length over the skin of the belly.
+  for (let x = 0; x < W; x++) {
+    const hang = randInt(rng, 13, 16);
+    for (let y = 13; y < H; y++) set(px, x, y, y < hang ? 0x405a62 : ZOMBIE_SKIN, delta(rng, 5));
+  }
+}
+
+/**
+ * 244 zombie_trousers — the feet's sides: ragged brown trousers (0x5b4b3b, noise 6, a dark seam down the middle, a
+ * lighter patch), a frayed hem (row 10) over a strip of bare ankle (row 11), and a battered dark shoe (rows 12–15:
+ * 0x2c2623 with a 0x463c35 top edge, a 0x1a1614 sole and a hole showing one toe). Alpha 255.
+ */
+function paintZombieTrousers(px, rng) {
+  fill(px, 0x5b4b3b);
+  noise(px, rng, 6);
+  for (let y = 0; y < 10; y++) set(px, 7, y, 0x463a2e, delta(rng, 3));
+  const pxs = randInt(rng, 9, 11);
+  for (let y = 3; y <= 6; y++) for (let x = pxs; x < pxs + 3; x++) set(px, x, y, 0x6d5c47, delta(rng, 4));
+  for (let x = 0; x < W; x++) {
+    set(px, x, 10, rng() < 0.5 ? 0x4a3d31 : 0x5b4b3b, delta(rng, 5));
+    set(px, x, 11, rng() < 0.3 ? 0x4a3d31 : ZOMBIE_SKIN, delta(rng, 6));
+  }
+  for (let y = 12; y < H; y++) {
+    for (let x = 0; x < W; x++) set(px, x, y, y === 12 ? 0x463c35 : y === 15 ? 0x1a1614 : 0x2c2623, delta(rng, 3));
+  }
+  set(px, 4, 13, ZOMBIE_PALE);
+  set(px, 3, 13, 0x1a1614);
+}
+
+/** 245 zombie_sole — the feet's undersides: a worn dark sole with lighter tread bars and a scuffed patch. Alpha 255. */
+function paintZombieSole(px, rng) {
+  fill(px, 0x2a2421);
+  noise(px, rng, 4);
+  for (let y = 2; y < 14; y += 3) for (let x = 3; x < 13; x++) set(px, x, y, 0x3a322d, delta(rng, 3));
+  for (let k = 0; k < 6; k++) set(px, randInt(rng, 6, 10), randInt(rng, 6, 10), 0x4a413a, delta(rng, 4));
+}
+
 /** 255 missing — 8×8 quadrant checker, magenta top-left / bottom-right, black elsewhere. */
 function paintMissing(px) {
   for (let y = 0; y < H; y++) {
@@ -1202,6 +1397,12 @@ const RECIPES = Object.freeze({
   campfire_top: paintCampfireTop,
   barrel_side: paintBarrelSide,
   barrel_top: paintBarrelTop,
+  zombie_face: paintZombieFace,
+  zombie_head_side: paintZombieHeadSide,
+  zombie_scalp: paintZombieScalp,
+  zombie_shirt: paintZombieShirt,
+  zombie_trousers: paintZombieTrousers,
+  zombie_sole: paintZombieSole,
   ...Object.fromEntries(Object.entries(WOOL_HEX).map(([name, hex]) => [name, (px, rng) => paintWool(px, rng, hex)])),
   missing: paintMissing,
 });

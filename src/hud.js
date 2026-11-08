@@ -42,6 +42,7 @@ const PICKER_OPEN = 'picker-open';
  * @property {() => boolean} isPickerOpen
  * @property {(on: boolean) => void} setCrosshairVisible
  * @property {(text: string|null) => void} setTargetHint              persistent one-line hint under the crosshair (null hides it)
+ * @property {(level: number) => void} setHurtFlash                   red screen-edge vignette 0..1 (a zombie's strike, §39)
  * @property {(text: string, isError?: boolean) => void} addChatLine  HUD chat log (last CHAT_LINES lines, each fades after CHAT_LINE_MS)
  * @property {(slot: number) => void} onSlotClick                     assignable; fired for hotbar slot clicks while the picker is open
  * @property {() => void} dispose                                     clears timers and removes listeners
@@ -297,6 +298,31 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     }
   }
 
+  // ---------------------------------------------------------------- hurt flash (zombies, §39)
+  /** #hurt-overlay: a red vignette, created here when index.html has none. */
+  let hurtEl = doc.getElementById('hurt-overlay');
+  if (!hurtEl && typeof doc.createElement === 'function') {
+    hurtEl = doc.createElement('div');
+    hurtEl.id = 'hurt-overlay';
+    hurtEl.className = HIDDEN;
+    hudEl.insertBefore(hurtEl, hudEl.firstChild);
+  }
+  let hurtLevel = -1;
+
+  /**
+   * Red screen-edge flash when a zombie strikes: level 0..1 (main fades it out). Called every frame; touches the DOM
+   * only when the level (in 1/32 steps) changes.
+   * @param {number} level
+   */
+  function setHurtFlash(level) {
+    if (!hurtEl) return;
+    const q = Math.round(Math.max(0, Math.min(1, Number(level) || 0)) * 32) / 32;
+    if (q === hurtLevel) return;
+    hurtLevel = q;
+    hurtEl.classList.toggle(HIDDEN, q === 0);
+    hurtEl.style.opacity = String(q);
+  }
+
   // ---------------------------------------------------------------- chat log
   /** @type {Set<number>} */
   const chatTimers = new Set();
@@ -341,6 +367,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     isPickerOpen,
     setCrosshairVisible,
     setTargetHint,
+    setHurtFlash,
     addChatLine,
     onSlotClick: () => {},
     dispose,

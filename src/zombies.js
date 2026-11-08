@@ -1,0 +1,714 @@
+// Caelancraft — Zombies: night mobs built from four hexagonal-prism blocks. See src/CONTRACTS.md §39. Pure (no DOM, no
+// three).
+//
+// A zombie is a body (physics.createBody, ZOMBIE_RADIUS × ZOMBIE_HEIGHT, ZOMBIE_MASS) driven by a small AI through the
+// same stepPlayer physics as the player and the pigs, so it slides along honeycomb walls, hops one-cell ledges, swims,
+// feels black holes and water currents (world.pullAt) and takes part in resolveBodies (bodies.js). It is a little
+// narrower than the player, so it fits through the same one-cell, two-high doorways. The renderer draws it as two
+// feet side by side, a torso on them and a head on top (zombieRenderer.js).
+//
+// Zombies only come out at night (natural spawning around the player, never near a campfire, never in a column the
+// player has built in), shamble about, and chase a player they can see who is on foot and not far above them: straight
+// at the player, hopping ledges, turning aside for a moment when something blocks the way, never off a drop of more
+// than ZOMBIE_MAX_DROP cells and never near a campfire (campfires are safe zones). Within ZOMBIE_REACH they lash out
+// once a second: the player is knocked back (main flashes the screen red). There is no health: nothing dies.
+// From dawn a zombie under open sky smoulders and burns away after ZOMBIE_BURN_S; in shade (or water) it survives
+// until it walks into the light. The player knocks one out with ZOMBIE_HITS hits; a blast near it, a black hole or
+// being farther than ZOMBIE_DESPAWN_DIST away also ends it. Zombies are never saved: the per-world switch is.
+import {
+  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, ZOMBIE_MASS, ZOMBIE_TARGET_RADIUS, ZOMBIE_CHASE_SPEED, ZOMBIE_TURN_RATE,
+  ZOMBIE_SIGHT, ZOMBIE_CHASE_MAX_RISE, ZOMBIE_MAX_DROP, ZOMBIE_REACH, ZOMBIE_ATTACK_COOLDOWN_S, ZOMBIE_HIT_PUSH,
+  ZOMBIE_HIT_LIFT, ZOMBIE_HITS, ZOMBIE_KNOCKBACK, ZOMBIE_KNOCK_LIFT, ZOMBIE_HURT_S, ZOMBIE_KO_KNOCK, ZOMBIE_BURN_S,
+  ZOMBIE_FIRE_FEAR, ZOMBIE_SPAWN_FIRE_CLEAR, ZOMBIE_SPAWN_MIN, ZOMBIE_SPAWN_MAX, ZOMBIE_SPAWN_INTERVAL_MIN_S,
+  ZOMBIE_SPAWN_INTERVAL_MAX_S, ZOMBIE_SPAWN_TRIES, ZOMBIE_DESPAWN_DIST, WORLD_HEIGHT, PLAYER_HEIGHT,
+} from './config.js';
+import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater } from './physics.js';
+import { hexToWorld, worldToHex } from './hex.js';
+import { BLOCK, isSolid, isLiquid } from './blocks.js';
+import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js';
+
+/** @typedef {import('./types.js').GetBlockFn} GetBlockFn */
+/** @typedef {import('./types.js').PlayerState} PlayerState */
+
+/**
+ * @typedef {PlayerState & {
+ *   id: number, yaw: number, targetYaw: number, mode: 'idle'|'walk'|'chase'|'avoid', timer: number,
+ *   hurt: number, hits: number, walkPhase: number, groanIn: number, attackIn: number, swing: number,
+ *   burn: number, smoking: boolean, exposed: boolean, sunIn: number, fireIn: number,
+ *   detour: number, detourYaw: number, side: 1|-1, stuck: number, tilt: number, wallSinceAim: boolean,
+ * }} Zombie
+ * `walkPhase` advances with distance walked (the renderer swings the feet with it); `swing` counts down after an
+ * attack (the renderer lurches the torso); `burn` is seconds spent in open daylight (burns away at ZOMBIE_BURN_S) and
+ * `smoking` is true while it is exposed; `tilt` is the head's fixed lean (radians), chosen at spawn.
+ */
+
+/**
+ * @typedef {Object} ZombieWorld
+ * @property {GetBlockFn} getBlock
+ * @property {(x: number, z: number) => boolean} isLoaded   true when the chunk under world (x, z) is loaded
+ * @property {PlayerState|null} [player]   the player to chase, attack and measure despawning from
+ * @property {boolean} [isDay]             daylight (daynight.isDayTime): no spawning, and zombies under open sky burn
+ * @property {(x: number, y: number, z: number, out: [number, number, number]) => [number, number, number]} [pullAt]
+ *   black holes + water currents, sampled at feet + 0.5 like pigs
+ * @property {() => boolean} [hasCampfires]  false while the world has no CAMPFIRE cell: the fire checks are skipped
+ * @property {(x: number, y: number, z: number, maxDist: number, out: [number, number, number]) => number} [nearestFire]
+ *   distance (≤ maxDist) to the nearest campfire's floor centre, written to `out`; Infinity when none is that close
+ * @property {(q: number, r: number) => boolean} [isLoadedCell]   natural spawning needs this and the next two
+ * @property {(q: number, r: number) => number} [groundHeight]    generated terrain height (top solid cell), −1 unloaded
+ * @property {(q: number, y: number, r: number) => boolean} [isNaturalGround]   untouched terrain (World.isNaturalGround)
+ * @property {(q: number, r: number) => boolean} [columnEdited]  when given: the player built in the column (no spawning there)
+ */
+
+/**
+ * What one update did, for main's sounds and effects. The arrays are reused by the next update.
+ * @typedef {Object} ZombieEvents
+ * @property {Zombie[]} attacks     hit the player this frame (the player's velocity is already set)
+ * @property {Zombie[]} groans      ambient groans due
+ * @property {Zombie[]} ignited     started smouldering this frame (daylight)
+ * @property {Zombie[]} burned      burned away this frame (removed)
+ * @property {Zombie[]} knockedOut  knocked out by a campfire's last hit this frame (removed)
+ * @property {Zombie[]} scorched    stepped into a campfire and hopped out (one hit)
+ * @property {Zombie[]} spawned     placed by natural spawning this frame
+ * @property {number} despawned     removed for being farther than ZOMBIE_DESPAWN_DIST from the player
+ */
+
+const TWO_PI = Math.PI * 2;
+/** A zombie in daylight looks up its column this often (s); the first look after dusk → dawn is immediate. */
+export const SUN_CHECK_S = 0.25;
+/** A zombie looks for a campfire within ZOMBIE_FIRE_FEAR this often (s). */
+export const FIRE_CHECK_S = 0.2;
+/** Turning away from a campfire lasts this long (s), walking at chase speed. */
+export const AVOID_S = 0.8;
+/** A chaser blocked ahead takes another heading for this long (s; plus up to DETOUR_RAND_S). */
+export const DETOUR_S = 0.5;
+export const DETOUR_RAND_S = 0.6;
+/** A chaser pressing into a wall it cannot hop for this long (s) also takes a detour. */
+export const STUCK_S = 0.25;
+/** Bank searches per update, all zombies together (pigs.js shoreYaw; ~0.4 ms each in open sea). */
+export const ZOMBIE_SHORE_SEARCHES = 1;
+/** The torso's lurch after an attack lasts this long (s). */
+export const SWING_S = 0.35;
+/** A zombie steps forward only while its heading is within this of its yaw (rad), like a pig. */
+export const MOVE_CONE = 1.2;
+/** Below this horizontal speed (m/s) a zombie counts as standing and its feet settle back to straight. */
+const LEG_SETTLE_SPEED = 0.2;
+const LEG_SETTLE_RATE = 10;
+
+/** Yaw that faces from (x, z) toward (tx, tz): yawToForward(yaw) = (−sin, −cos). */
+function yawToward(x, z, tx, tz) {
+  return Math.atan2(-(tx - x), -(tz - z));
+}
+
+/** No solid cell in column (q, r) from y0 up to the top of the world (getBlock is AIR above it). */
+export function openSky(getBlock, q, y0, r) {
+  for (let y = Math.max(0, y0); y < WORLD_HEIGHT; y++) if (isSolid(getBlock(q, y, r))) return false;
+  return true;
+}
+
+/**
+ * Ray (origin o, unit direction d) against a vertical cylinder (feet centre (cx, y0, cz), radius, height): the
+ * distance where it enters (0 when the origin is inside), or −1 when it misses. Allocation-free.
+ */
+function rayCylinder(ox, oy, oz, dx, dy, dz, cx, y0, cz, radius, height) {
+  const y1 = y0 + height;
+  const px = ox - cx;
+  const pz = oz - cz;
+  const r2 = radius * radius;
+  const c = px * px + pz * pz - r2;
+  if (c <= 0 && oy >= y0 && oy <= y1) return 0;
+  let best = Infinity;
+  const a = dx * dx + dz * dz;
+  if (a > 1e-12) {
+    const b = px * dx + pz * dz;
+    const disc = b * b - a * c;
+    if (disc >= 0) {
+      const t = (-b - Math.sqrt(disc)) / a; // the entry through the side
+      const y = oy + dy * t;
+      if (t >= 0 && y >= y0 && y <= y1) best = t;
+    }
+  }
+  if (Math.abs(dy) > 1e-12) {
+    for (let k = 0; k < 2; k++) {
+      const t = ((k === 0 ? y0 : y1) - oy) / dy;
+      if (!(t >= 0 && t < best)) continue;
+      const hx = px + dx * t;
+      const hz = pz + dz * t;
+      if (hx * hx + hz * hz <= r2) best = t;
+    }
+  }
+  return best === Infinity ? -1 : best;
+}
+
+export class Zombies {
+  /** @param {() => number} [rng] uniform [0, 1); Math.random by default */
+  constructor(rng = Math.random) {
+    /** @type {Zombie[]} */
+    this.list = [];
+    this._rng = rng;
+    this._nextId = 1;
+    this._enabled = true;
+    /** bumped whenever the saved on/off switch changes (main autosaves on it) */
+    this.switchVersion = 0;
+    /** seconds to the next natural spawn attempt (counts only at night) */
+    this._spawnIn = 6;
+    /** @type {ZombieEvents} */
+    this.events = { attacks: [], groans: [], ignited: [], burned: [], knockedOut: [], scorched: [], spawned: [], despawned: 0 };
+    /** @type {Set<object>} scratch: bodies some zombie stood on at the end of last frame */
+    this._carriers = new Set();
+    this._fires = true;
+    this._shoreBudget = ZOMBIE_SHORE_SEARCHES;
+    /** @type {[number, number, number]} */
+    this._pull = [0, 0, 0];
+    /** @type {[number, number, number]} */
+    this._fire = [0, 0, 0];
+    this._input = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, yaw: 0, pullX: 0, pullY: 0, pullZ: 0 };
+  }
+
+  get size() {
+    return this.list.length;
+  }
+
+  /** The saved per-world switch: off means no zombies at all (none spawn, summon refuses). */
+  get enabled() {
+    return this._enabled;
+  }
+
+  /**
+   * Turn zombies on or off for this world; off removes every zombie. @returns {boolean} true when it changed
+   */
+  setEnabled(on) {
+    const next = !!on;
+    if (next === this._enabled) return false;
+    this._enabled = next;
+    this.switchVersion++;
+    if (!next) this.clear();
+    return true;
+  }
+
+  clear() {
+    this.list.length = 0;
+  }
+
+  /**
+   * Add a zombie standing at feet (x, y, z) facing `yaw`. @returns {Zombie|null} null when switched off, at
+   * ZOMBIE_MAX, or for a non-finite position
+   */
+  spawn(x, y, z, yaw = 0) {
+    if (!this._enabled || this.list.length >= ZOMBIE_MAX || !Number.isFinite(x + y + z + yaw)) return null;
+    const zb = /** @type {Zombie} */ (Object.assign(createBody(x, y, z, { radius: ZOMBIE_RADIUS, height: ZOMBIE_HEIGHT, mass: ZOMBIE_MASS }), {
+      id: this._nextId++,
+      yaw: wrapAngle(yaw),
+      targetYaw: wrapAngle(yaw),
+      mode: 'idle',
+      timer: 0.5 + this._rng() * 2,
+      hurt: 0,
+      hits: 0,
+      walkPhase: 0,
+      groanIn: 3 + this._rng() * 8,
+      attackIn: 0,
+      swing: 0,
+      burn: 0,
+      smoking: false,
+      exposed: false,
+      sunIn: 0,
+      fireIn: this._rng() * FIRE_CHECK_S,
+      detour: 0,
+      detourYaw: 0,
+      side: this._rng() < 0.5 ? 1 : -1,
+      stuck: 0,
+      tilt: (this._rng() * 2 - 1) * 0.28,
+      wallSinceAim: false,
+    }));
+    this.list.push(zb);
+    return zb;
+  }
+
+  /** @returns {boolean} true when the zombie was in the list */
+  remove(zb) {
+    const i = this.list.indexOf(zb);
+    if (i < 0) return false;
+    this.list.splice(i, 1);
+    return true;
+  }
+
+  /**
+   * Natural spawning, then every zombie: despawn far away, freeze in unloaded chunks, daylight, AI, physics, campfire
+   * scorch and attacks.
+   * @param {number} dt
+   * @param {ZombieWorld} world
+   * @returns {ZombieEvents} this.events (reused)
+   */
+  update(dt, world) {
+    const ev = this.events;
+    ev.attacks.length = 0;
+    ev.groans.length = 0;
+    ev.ignited.length = 0;
+    ev.burned.length = 0;
+    ev.knockedOut.length = 0;
+    ev.scorched.length = 0;
+    ev.spawned.length = 0;
+    ev.despawned = 0;
+    if (!(dt > 0)) return ev;
+    const player = world.player ?? null;
+    const getBlock = world.getBlock;
+    const isDay = !!world.isDay;
+    this._fires = world.hasCampfires ? !!world.hasCampfires() : true;
+    this._shoreBudget = ZOMBIE_SHORE_SEARCHES;
+
+    if (this._enabled && player && !isDay && world.groundHeight) {
+      this._spawnIn -= dt;
+      if (this._spawnIn <= 0) {
+        this._spawnIn = ZOMBIE_SPAWN_INTERVAL_MIN_S + this._rng() * (ZOMBIE_SPAWN_INTERVAL_MAX_S - ZOMBIE_SPAWN_INTERVAL_MIN_S);
+        this._spawnNear(player, world);
+      }
+    }
+
+    const carriers = this._carriers;
+    carriers.clear();
+    for (const zb of this.list) if (zb.carrier) carriers.add(zb.carrier);
+    const input = this._input;
+    for (let i = this.list.length - 1; i >= 0; i--) {
+      const zb = this.list[i];
+      if (zb.y < -16) {
+        this.list.splice(i, 1);
+        continue;
+      }
+      if (player && Math.hypot(zb.x - player.x, zb.z - player.z) > ZOMBIE_DESPAWN_DIST) {
+        this.list.splice(i, 1);
+        ev.despawned++;
+        continue;
+      }
+      if (!world.isLoaded(zb.x, zb.z)) continue; // frozen until its chunk is back
+      this._unstick(zb, getBlock);
+
+      // Daylight: under open sky (and out of water) it smoulders, and burns away after ZOMBIE_BURN_S; in shade it cools.
+      if (isDay) {
+        zb.sunIn -= dt;
+        if (zb.sunIn <= 0) {
+          zb.sunIn = SUN_CHECK_S;
+          const [q, r] = worldToHex(zb.x, zb.z);
+          // Wet = swimming, or water at its feet or just under them (a swimmer bobbing up out of the surface).
+          const wet = zb.inWater || isLiquid(getBlock(q, Math.floor(zb.y + 0.1), r)) || isLiquid(getBlock(q, Math.floor(zb.y - 0.5), r));
+          zb.exposed = !wet && openSky(getBlock, q, Math.ceil(zb.y + ZOMBIE_HEIGHT), r);
+        }
+      } else {
+        zb.exposed = false;
+        zb.sunIn = 0;
+      }
+      if (zb.exposed) {
+        if (!zb.smoking) ev.ignited.push(zb);
+        zb.smoking = true;
+        zb.burn += dt;
+        if (zb.burn >= ZOMBIE_BURN_S) {
+          this.list.splice(i, 1);
+          ev.burned.push(zb);
+          continue;
+        }
+      } else {
+        zb.smoking = false;
+        zb.burn = Math.max(0, zb.burn - dt);
+      }
+
+      const canHop = !zb.carrier && !carriers.has(zb);
+      const chasing = this._think(zb, dt, world, player, canHop);
+
+      const dYaw = wrapAngle(zb.targetYaw - zb.yaw);
+      const maxTurn = ZOMBIE_TURN_RATE * dt;
+      zb.yaw = wrapAngle(zb.yaw + Math.max(-maxTurn, Math.min(maxTurn, dYaw)));
+      const near = chasing && player !== null && Math.hypot(player.x - zb.x, player.z - zb.z) < 0.35; // right under / on top
+      const moving = zb.mode !== 'idle' && zb.hurt <= 0 && !near && Math.abs(wrapAngle(zb.targetYaw - zb.yaw)) < MOVE_CONE;
+      const brisk = zb.mode === 'chase' || zb.mode === 'avoid';
+      input.forward = moving ? (brisk ? ZOMBIE_CHASE_SPEED : 1) : 0;
+      input.sneak = moving && !brisk; // a wandering zombie shambles at sneak speed (1.31 m/s)
+      // In water it always paddles up (it floats; pressing into a bank gives SWIM_EXIT_JUMP); on land it hops only a
+      // one-cell ledge straight ahead with room for its height.
+      const ledge = moving && zb.hitWall && canHop && this._ledgeAhead(zb, getBlock);
+      input.jump = zb.inWater || ledge;
+      input.yaw = zb.yaw;
+      if (world.pullAt) {
+        world.pullAt(zb.x, zb.y + 0.5, zb.z, this._pull);
+        input.pullX = this._pull[0];
+        input.pullY = this._pull[1];
+        input.pullZ = this._pull[2];
+      } else {
+        input.pullX = 0;
+        input.pullY = 0;
+        input.pullZ = 0;
+      }
+      const x0 = zb.x;
+      const z0 = zb.z;
+      stepPlayer(zb, input, getBlock, dt);
+      zb.sneaking = false;
+      if (zb.hitWall) zb.wallSinceAim = true;
+      // A chaser pressing into a wall it cannot hop turns aside after STUCK_S.
+      if (chasing && moving && zb.onGround && zb.hitWall && !ledge) {
+        zb.stuck += dt;
+        if (zb.stuck >= STUCK_S) this._startDetour(zb);
+      } else {
+        zb.stuck = 0;
+      }
+      const stride = Math.hypot(zb.x - x0, zb.z - z0);
+      zb.walkPhase = (zb.walkPhase + stride * 3.2) % TWO_PI;
+      if (stride < LEG_SETTLE_SPEED * dt) {
+        const straight = Math.round(zb.walkPhase / Math.PI) * Math.PI;
+        zb.walkPhase += (straight - zb.walkPhase) * (1 - Math.exp(-LEG_SETTLE_RATE * dt));
+      }
+
+      // Standing in a campfire: hop out away from its centre; it counts as a hit (the last one knocks it out).
+      const [cq, cr] = worldToHex(zb.x, zb.z);
+      if (zb.hurt <= 0 && getBlock(cq, Math.floor(zb.y + 0.05), cr) === BLOCK.CAMPFIRE) {
+        const [fx, fz] = hexToWorld(cq, cr);
+        const res = this.hit(zb, fx, fz);
+        if (res === 'ko') {
+          ev.knockedOut.push(zb);
+          continue;
+        }
+        if (res === 'hit') ev.scorched.push(zb);
+      }
+      if (zb.hurt > 0) zb.hurt = Math.max(0, zb.hurt - dt);
+      if (zb.swing > 0) zb.swing = Math.max(0, zb.swing - dt);
+      if (zb.attackIn > 0) zb.attackIn -= dt;
+
+      if (player && zb.hurt <= 0 && zb.attackIn <= 0 && this._canReach(zb, player, getBlock)) {
+        this._strike(zb, player);
+        ev.attacks.push(zb);
+      }
+
+      zb.groanIn -= dt;
+      if (zb.groanIn <= 0) {
+        zb.groanIn = zb.mode === 'chase' ? 3 + this._rng() * 5 : 6 + this._rng() * 10;
+        ev.groans.push(zb);
+      }
+    }
+    return ev;
+  }
+
+  /** A player the zombie goes after: on foot, within ZOMBIE_SIGHT, and not more than ZOMBIE_CHASE_MAX_RISE above it. */
+  _canChase(zb, player) {
+    if (!player || player.flying) return false;
+    const dy = player.y - zb.y;
+    if (dy > ZOMBIE_CHASE_MAX_RISE) return false;
+    return Math.hypot(player.x - zb.x, dy, player.z - zb.z) <= ZOMBIE_SIGHT;
+  }
+
+  /**
+   * AI: keep away from campfires, chase a visible player (straight at them, detouring when blocked), swim for the
+   * shore when there is no one to chase, else idle ↔ wander like a pig.
+   * @returns {boolean} true while chasing
+   */
+  _think(zb, dt, world, player, canHop) {
+    const getBlock = world.getBlock;
+    zb.timer -= dt;
+    if (zb.detour > 0) zb.detour -= dt;
+    // Campfires are safe zones: within ZOMBIE_FIRE_FEAR of one, walk straight away from it for AVOID_S.
+    if (this._fires && world.nearestFire) {
+      zb.fireIn -= dt;
+      if (zb.fireIn <= 0) {
+        zb.fireIn = FIRE_CHECK_S;
+        const d = world.nearestFire(zb.x, zb.y + 1, zb.z, ZOMBIE_FIRE_FEAR, this._fire);
+        if (d < ZOMBIE_FIRE_FEAR) {
+          zb.mode = 'avoid';
+          zb.timer = AVOID_S;
+          zb.detour = 0;
+          const away = Math.hypot(zb.x - this._fire[0], zb.z - this._fire[2]) > 1e-6
+            ? yawToward(this._fire[0], this._fire[2], zb.x, zb.z) : zb.yaw + Math.PI;
+          zb.targetYaw = wrapAngle(away);
+        }
+      }
+    }
+    if (zb.mode === 'avoid') {
+      // Walking away from a fire never takes it off a drop or into a wall: it stops there instead.
+      // (Checked once it would step: while it turns, the cell ahead is still the fire side.)
+      const facing = Math.abs(wrapAngle(zb.targetYaw - zb.yaw)) < MOVE_CONE;
+      if (zb.timer > 0 && !(facing && zb.onGround && !this._safeAhead(zb, getBlock, canHop, false))) return false;
+      zb.mode = 'idle';
+      zb.timer = 0.3;
+    }
+    const chase = this._canChase(zb, player);
+    if (zb.inWater) {
+      if (chase) {
+        zb.mode = 'chase';
+        zb.targetYaw = yawToward(zb.x, zb.z, player.x, player.z);
+        return true;
+      }
+      // Swimming with no one to chase: head for the nearest bank it can reach and climb, like a pig (pigs.js).
+      const due = zb.mode !== 'walk' || zb.timer <= 0 || zb.timer > SWIM_REAIM_S;
+      zb.mode = 'walk';
+      if (due && this._shoreBudget > 0) {
+        this._shoreBudget--;
+        zb.timer = SWIM_REAIM_S;
+        const shore = shoreYaw(getBlock, zb.x, zb.y, zb.z);
+        if (shore !== null) zb.targetYaw = shore;
+        else if (zb.wallSinceAim) zb.targetYaw = wrapAngle(zb.yaw + (this._rng() * 2 - 1) * Math.PI * 0.75);
+        zb.wallSinceAim = false;
+      }
+      return false;
+    }
+    if (chase) {
+      if (zb.mode !== 'chase') {
+        zb.mode = 'chase';
+        zb.groanIn = Math.min(zb.groanIn, 0.2 + this._rng() * 0.6); // it groans when it notices you
+      }
+      if (zb.detour > 0) {
+        zb.targetYaw = zb.detourYaw;
+      } else if (Math.hypot(player.x - zb.x, player.z - zb.z) >= 0.35) {
+        zb.targetYaw = yawToward(zb.x, zb.z, player.x, player.z);
+      }
+      // Blocked ahead (a drop, a wall it cannot hop, a fire): take another heading for a moment. Checked whenever it
+      // would step forward (within MOVE_CONE of its heading), so it never steps along an unsafe yaw while turning: a
+      // new detour turns it further toward its side, until the way ahead is clear.
+      if (zb.onGround && Math.abs(wrapAngle(zb.targetYaw - zb.yaw)) < MOVE_CONE && !this._safeAhead(zb, getBlock, canHop, true)) {
+        this._startDetour(zb);
+      }
+      return true;
+    }
+    if (zb.mode === 'chase') {
+      zb.mode = 'idle';
+      zb.timer = 1 + this._rng() * 2;
+      zb.detour = 0;
+    }
+    if (zb.timer <= 0) {
+      if (zb.mode === 'idle') {
+        zb.mode = 'walk';
+        zb.targetYaw = wrapAngle(zb.yaw + (this._rng() * 2 - 1) * Math.PI);
+        zb.timer = 1.5 + this._rng() * 4;
+      } else {
+        zb.mode = 'idle';
+        zb.timer = 1 + this._rng() * 4;
+      }
+    }
+    if (zb.mode === 'walk' && zb.onGround && !this._safeAhead(zb, getBlock, canHop, false)) {
+      zb.mode = 'idle';
+      zb.timer = 0.5 + this._rng();
+      zb.targetYaw = wrapAngle(zb.yaw + Math.PI * (0.5 + this._rng()));
+    }
+    return false;
+  }
+
+  /**
+   * Turn 60°–120° toward the zombie's own side for DETOUR_S … DETOUR_S + DETOUR_RAND_S. Always the same side, so a
+   * zombie blocked again and again works its way around the obstacle instead of dithering in front of it.
+   */
+  _startDetour(zb) {
+    zb.detourYaw = wrapAngle(zb.yaw + zb.side * (Math.PI / 3) * (1 + this._rng()));
+    zb.detour = DETOUR_S + this._rng() * DETOUR_RAND_S;
+    zb.targetYaw = zb.detourYaw;
+    zb.stuck = 0;
+  }
+
+  /** @returns {[number, number, number]} the cell (q, r) 0.8 ahead along the yaw, and the feet level fy */
+  _aheadCell(zb) {
+    const [q, r] = worldToHex(zb.x - Math.sin(zb.yaw) * 0.8, zb.z - Math.cos(zb.yaw) * 0.8);
+    return [q, r, Math.floor(zb.y + 0.01)];
+  }
+
+  /**
+   * The cell 0.8 ahead is fine to walk into: not water a wanderer would swim in (a chaser wades in after you), no
+   * campfire within FIRE_MARGIN of the next steps (pigs.fireAhead), room for the body (open at the feet and the cell
+   * above, or a one-cell ledge with two open cells on it while `canHop`), and ground within ZOMBIE_MAX_DROP cells below
+   * (water to land in counts for a chaser).
+   */
+  _safeAhead(zb, getBlock, canHop, chasing) {
+    const [q, r, fy] = this._aheadCell(zb);
+    if (!chasing && isSwimWater(getBlock, q, fy, r)) return false;
+    if (this._fires && fireAhead(getBlock, zb.x, zb.z, zb.yaw, fy)) return false;
+    if (isSolid(getBlock(q, fy, r))) return canHop && isOpen(getBlock(q, fy + 1, r)) && isOpen(getBlock(q, fy + 2, r));
+    if (isSolid(getBlock(q, fy + 1, r))) return false; // a one-high gap: too low for a zombie
+    for (let d = 1; d <= ZOMBIE_MAX_DROP; d++) {
+      const id = getBlock(q, fy - d, r);
+      if (isSolid(id)) return true;
+      if (isLiquid(id)) return chasing;
+    }
+    return false;
+  }
+
+  /** A one-cell ledge straight ahead with room for a zombie on it: the only wall worth hopping at. */
+  _ledgeAhead(zb, getBlock) {
+    const [q, r, fy] = this._aheadCell(zb);
+    return isSolid(getBlock(q, fy, r)) && isOpen(getBlock(q, fy + 1, r)) && isOpen(getBlock(q, fy + 2, r));
+  }
+
+  /** The player within ZOMBIE_REACH (horizontal), heights overlapping, and no solid cell between their chests. */
+  _canReach(zb, player, getBlock) {
+    const dx = player.x - zb.x;
+    const dz = player.z - zb.z;
+    if (dx * dx + dz * dz > ZOMBIE_REACH * ZOMBIE_REACH) return false;
+    if (!(zb.y < player.y + (player.height ?? PLAYER_HEIGHT) && player.y < zb.y + ZOMBIE_HEIGHT)) return false;
+    const cy = (zb.y + player.y) / 2 + 1.2;
+    for (let k = 1; k <= 2; k++) {
+      const [q, r] = worldToHex(zb.x + (dx * k) / 3, zb.z + (dz * k) / 3);
+      if (isSolid(getBlock(q, Math.floor(cy), r))) return false;
+    }
+    return true;
+  }
+
+  /** Knock the player back from the zombie (no damage): ZOMBIE_HIT_PUSH away plus ZOMBIE_HIT_LIFT up. */
+  _strike(zb, player) {
+    let dx = player.x - zb.x;
+    let dz = player.z - zb.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 1e-6) {
+      dx = -Math.sin(zb.yaw);
+      dz = -Math.cos(zb.yaw);
+    } else {
+      dx /= d;
+      dz /= d;
+    }
+    player.vx = dx * ZOMBIE_HIT_PUSH;
+    player.vz = dz * ZOMBIE_HIT_PUSH;
+    player.vy = Math.max(player.vy, ZOMBIE_HIT_LIFT);
+    player.onGround = false;
+    zb.attackIn = ZOMBIE_ATTACK_COOLDOWN_S;
+    zb.swing = SWING_S;
+  }
+
+  /** A block placed into a zombie: lift it to the first free height within three cells (else leave it). */
+  _unstick(zb, getBlock) {
+    if (isFreeAt(getBlock, zb.x, zb.y, zb.z, ZOMBIE_RADIUS, ZOMBIE_HEIGHT)) return;
+    const fy = findFreeY(getBlock, zb.x, zb.z, Math.floor(zb.y) + 1, 3, ZOMBIE_RADIUS, ZOMBIE_HEIGHT);
+    if (fy !== null) {
+      zb.y = fy;
+      zb.vy = 0;
+    }
+  }
+
+  /**
+   * The player hits a zombie from a point: knockback away from it, a hop, a red flash and a short stun. The
+   * ZOMBIE_HITS-th hit knocks it out (it is removed; main puffs it away).
+   * @returns {'hit'|'ko'|null} null while it is still flashing from the last hit (the hit is ignored)
+   */
+  hit(zb, fromX, fromZ) {
+    if (zb.hurt > 0) return null;
+    zb.hits++;
+    if (zb.hits >= ZOMBIE_HITS) {
+      this.remove(zb);
+      return 'ko';
+    }
+    let dx = zb.x - fromX;
+    let dz = zb.z - fromZ;
+    const d = Math.hypot(dx, dz);
+    if (d < 1e-6) {
+      dx = Math.sin(zb.yaw); // backwards
+      dz = Math.cos(zb.yaw);
+    } else {
+      dx /= d;
+      dz /= d;
+    }
+    zb.vx = dx * ZOMBIE_KNOCKBACK;
+    zb.vz = dz * ZOMBIE_KNOCKBACK;
+    zb.vy = Math.max(zb.vy, ZOMBIE_KNOCK_LIFT);
+    zb.onGround = false;
+    zb.hurt = ZOMBIE_HURT_S;
+    zb.attackIn = Math.max(zb.attackIn, ZOMBIE_HURT_S);
+    zb.detour = 0;
+    return 'hit';
+  }
+
+  /**
+   * An impulse from block physics (a blast, a landing log): at least ZOMBIE_KO_KNOCK m/s knocks the zombie out (a
+   * blast within about its radius); weaker ones fling it and count as a hit (unless it is still flashing).
+   * @returns {'hit'|'ko'}
+   */
+  knock(zb, vx, vy, vz) {
+    if (Math.hypot(vx, vy, vz) >= ZOMBIE_KO_KNOCK) {
+      this.remove(zb);
+      return 'ko';
+    }
+    zb.vx += vx;
+    zb.vy += vy;
+    zb.vz += vz;
+    zb.onGround = false;
+    if (zb.hurt <= 0) {
+      zb.hits++;
+      zb.hurt = ZOMBIE_HURT_S;
+      if (zb.hits >= ZOMBIE_HITS) {
+        this.remove(zb);
+        return 'ko';
+      }
+    }
+    return 'hit';
+  }
+
+  /**
+   * Nearest zombie whose target cylinder (ZOMBIE_TARGET_RADIUS × ZOMBIE_HEIGHT at its feet) the ray (origin o, unit
+   * direction d) enters within maxDist.
+   * @returns {{ zombie: Zombie, distance: number }|null}
+   */
+  raycast(ox, oy, oz, dx, dy, dz, maxDist) {
+    let best = null;
+    let bestT = maxDist;
+    for (const zb of this.list) {
+      const t = rayCylinder(ox, oy, oz, dx, dy, dz, zb.x, zb.y, zb.z, ZOMBIE_TARGET_RADIUS, ZOMBIE_HEIGHT);
+      if (t >= 0 && t < bestT) {
+        bestT = t;
+        best = zb;
+      }
+    }
+    return best ? { zombie: best, distance: bestT } : null;
+  }
+
+  /**
+   * Whether a zombie may spawn standing on natural ground at column (q, r): loaded, its generated top cell untouched
+   * and solid, two AIR cells above it (no water, fire, leaves or logs), no player edits in the column, no campfire
+   * within ZOMBIE_SPAWN_FIRE_CLEAR and room for the body. @returns {number|null} the feet y, or null
+   * @param {ZombieWorld} world
+   */
+  spawnHeightAt(world, q, r) {
+    if (!world.isLoadedCell || !world.groundHeight || !world.isNaturalGround) return null;
+    if (!world.isLoadedCell(q, r)) return null;
+    const h = world.groundHeight(q, r);
+    if (!(h >= 0 && h + 3 < WORLD_HEIGHT)) return null;
+    if (!world.isNaturalGround(q, h, r)) return null;
+    const getBlock = world.getBlock;
+    if (getBlock(q, h + 1, r) !== BLOCK.AIR || getBlock(q, h + 2, r) !== BLOCK.AIR) return null;
+    if (world.columnEdited && world.columnEdited(q, r)) return null;
+    const [x, z] = hexToWorld(q, r);
+    if (world.nearestFire && this._fires && world.nearestFire(x, h + 1, z, ZOMBIE_SPAWN_FIRE_CLEAR, this._fire) <= ZOMBIE_SPAWN_FIRE_CLEAR) return null;
+    if (!isFreeAt(getBlock, x, h + 1, z, ZOMBIE_RADIUS, ZOMBIE_HEIGHT)) return null;
+    return h + 1;
+  }
+
+  /**
+   * One natural spawn attempt: 1 zombie (sometimes 2, the second near the first) on natural ground between
+   * ZOMBIE_SPAWN_MIN and ZOMBIE_SPAWN_MAX (horizontally) from the player, within ZOMBIE_SPAWN_TRIES columns.
+   * @param {PlayerState} player
+   * @param {ZombieWorld} world
+   * @returns {number} zombies placed
+   */
+  _spawnNear(player, world) {
+    const want = this._rng() < 0.35 ? 2 : 1;
+    let placed = 0;
+    let ax = 0;
+    let az = 0;
+    for (let k = 0; k < ZOMBIE_SPAWN_TRIES && placed < want && this.list.length < ZOMBIE_MAX; k++) {
+      const ang = this._rng() * TWO_PI;
+      let x;
+      let z;
+      if (placed === 0) {
+        const d = ZOMBIE_SPAWN_MIN + this._rng() * (ZOMBIE_SPAWN_MAX - ZOMBIE_SPAWN_MIN);
+        x = player.x + Math.cos(ang) * d;
+        z = player.z + Math.sin(ang) * d;
+      } else {
+        const d = 1.5 + this._rng() * 2;
+        x = ax + Math.cos(ang) * d;
+        z = az + Math.sin(ang) * d;
+      }
+      const [q, r] = worldToHex(x, z);
+      const [cx, cz] = hexToWorld(q, r);
+      const dh = Math.hypot(cx - player.x, cz - player.z);
+      if (dh < ZOMBIE_SPAWN_MIN || dh > ZOMBIE_SPAWN_MAX + 1) continue;
+      const fy = this.spawnHeightAt(world, q, r);
+      if (fy === null) continue;
+      const yaw = wrapAngle(yawToward(cx, cz, player.x, player.z) + (this._rng() * 2 - 1) * Math.PI * 0.5);
+      const zb = this.spawn(cx, fy, cz, yaw);
+      if (!zb) break;
+      this.events.spawned.push(zb);
+      if (placed === 0) {
+        ax = cx;
+        az = cz;
+      }
+      placed++;
+    }
+    return placed;
+  }
+}

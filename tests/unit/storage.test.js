@@ -793,3 +793,26 @@ describe('physics field (v0.8 block-physics switches)', () => {
     expect(serializeSave(data)).toBe(serializeSave({ ...data, physics: undefined }));
   });
 });
+
+describe('zombies field (§39: the per-world zombies switch; zombies themselves are never saved)', () => {
+  it('is absent unless given, and absent reads as on (new worlds and older saves have zombies)', () => {
+    expect(JSON.parse(serializeSave(makeSave())).zombies).toBeUndefined();
+    expect(deserializeSave(serializeSave(makeSave())).zombies).toBeUndefined();
+  });
+
+  it('round-trips on and off', () => {
+    const off = serializeSave(makeSave({}, { zombies: false }));
+    expect(off).toContain('"zombies":false');
+    expect(deserializeSave(off).zombies).toBe(false);
+    expect(deserializeSave(serializeSave(makeSave({}, { zombies: true }))).zombies).toBe(true);
+  });
+
+  it('a non-boolean field is dropped with a warning (never a null save)', () => {
+    const raw = JSON.parse(serializeSave(makeSave()));
+    raw.zombies = 'nope';
+    const s = deserializeSave(JSON.stringify(raw));
+    expect(s).not.toBeNull();
+    expect(s.zombies).toBeUndefined();
+    expect(s.warnings).toContain('zombies: not a boolean, treated as on');
+  });
+});
