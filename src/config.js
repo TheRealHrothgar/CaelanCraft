@@ -153,11 +153,10 @@ export const PIG_TURN_RATE = 4;                     // rad/s
 // Block physics (CONTRACTS §33–§38, docs/DESIGN-physics.md). Scheduler core (§33):
 export const PHYSICS_TICK_S = 0.05;                 // fixed tick; step(dt) runs at most ONE tick per frame (slow motion below 20 fps)
 export const WATER_TICKS = 5;                       // delay (ticks) of the `water` ring; `fall` and `misc` use 1
-export const PHYSICS_TICK_BUDGET_MS = 3;            // time budget per tick (checked every 32 cell updates / 256 support visits)
+export const PHYSICS_TICK_BUDGET_MS = 3;            // time budget per tick, shared fairly by the rings and the support search (§33.1)
 export const MAX_CELL_UPDATES_PER_TICK = 256;       // count backstop per tick across all rings
 export const MAX_SUPPORT_VISITS_PER_TICK = 8192;    // support-search visits per tick (the search resumes next tick)
-export const SUPPORT_STARVE_TICKS = 4;              // a pending collapse starved by full fall / misc rings this many ticks in a row …
-export const SUPPORT_STARVED_VISITS = 256;          // … gets a step of this many visits anyway (CONTRACTS §33.1.3)
+export const SUPPORT_STARVED_VISITS = 256;          // support step when the rings overran the whole tick budget (CONTRACTS §33.1.3)
 export const MAX_PARKED_UPDATES = 65536;            // updates waiting for an unloaded chunk; beyond this they are dropped (re-seeding covers them)
 export const MAX_PENDING_SUPPORT_SEEDS = 4096;      // queued support-seed records; beyond this new records are dropped
 export const UNDO_WINDOW_S = 60;                    // the last physics event can be undone this long after it began

@@ -149,7 +149,7 @@ MAX_RUNNING_SCRIPTS, MAX_CHAIN_HOPS, CHAIN_DELAY_S, MAX_RUNES, MAX_RUNE_SCRIPT_C
 WAIT_MIN_S, WAIT_MAX_S, REPEAT_MIN_S, REPEAT_MAX_S, STEP_COOLDOWN_MAX_S, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_CONSOLE_LINES,
 CONSOLE_HISTORY, CHAT_LINES, CHAT_LINE_MS` (values in the file; §26–§28 use them by name).
 Block physics (v0.8, §33–§38): `PHYSICS_TICK_S, WATER_TICKS, PHYSICS_TICK_BUDGET_MS, MAX_CELL_UPDATES_PER_TICK,
-MAX_SUPPORT_VISITS_PER_TICK, SUPPORT_STARVE_TICKS, SUPPORT_STARVED_VISITS, MAX_PARKED_UPDATES, MAX_PENDING_SUPPORT_SEEDS,
+MAX_SUPPORT_VISITS_PER_TICK, SUPPORT_STARVED_VISITS, MAX_PARKED_UPDATES, MAX_PENDING_SUPPORT_SEEDS,
 UNDO_WINDOW_S, UNDO_MAX_CELLS, LAZY_MESH_BUDGET_MS, MAX_FALLING, MAX_TUMBLING, MAX_COLUMN_FALL, FALLER_RADIUS, FALLER_HEIGHT,
 TUMBLE_SUBSTEP, TUMBLE_AIR_DRAG, TUMBLE_GROUND_FRICTION, LANDING_DUST_PER_FRAME, PARTICLE_CAPACITY, PHYSICS_SOUND_RANGE,
 BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, WATER_CURRENT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS, SUPPORT_LIMIT,
@@ -1379,7 +1379,7 @@ export class BlockPhysics {
   isEnabled(feature); setSwitch(name, on) → changed; setPaused(on); exportSwitches(); importSwitches(raw)
   onBlockChange(q, y, r, prev, next); onChunkGenerated(cq, cr)          // main forwards World's hooks
   seedSupport(cells, { priority?, cause?, removed? }) → queued; seedRemoval(q, y, r, prev, opts?); collectAreaSeed(q, y, r, prev);
-  flushAreaSeeds(); get areaSeedCount
+  flushAreaSeeds(); get areaSeedCount; seedRemovals(cells: [q, y, r, prev][], opts?) → queued   // ONE seed for a gravity column
   asPlayer(fn); withCause(cause, fn); get cause
   beginEvent(kind, cause?) → PhysicsEvent; endEvent(); get openEventId; enterEvent(id) → token; exitEvent(token); withEvent(id|ev, fn);
   get canUndo; undo() → { ok, message, restored }
@@ -1393,14 +1393,19 @@ export class BlockPhysics {
 2. A ring is a FIFO of `packCell` keys with their due tick, deduplicated per ring (`schedule` of a queued cell returns false and keeps
    the earlier slot). Every entry of a ring has the same delay, so a ring is sorted by due tick: `tick()` pops from the head while
    `due ≤ tickCount`. `schedule` refuses y outside 0..WORLD_HEIGHT−1; `delay` (integer ≥ 1) overrides the ring's delay.
-3. `tick()`: `tickCount++`; flush the area seeds when `!hooks.areaJobsActive()` (§33.6); drain `fall`, then `misc`; if the budget is
-   not spent and collapse is on and (`seeds.size > 0 || support.busy`) → `support.step(ctx, seeds, MAX_SUPPORT_VISITS_PER_TICK)`;
-   then drain `water`. Starvation guard (integration, §38.4): when the budget IS spent with a collapse pending, a counter counts the
-   ticks in a row; on the SUPPORT_STARVE_TICKS-th one (reset after it, and whenever support runs or nothing is pending) support runs
-   anyway with `maxVisits = SUPPORT_STARVED_VISITS` (its own deadline check then stops it within 256 visits or one component).
+3. `tick()`: `tickCount++`; flush the area seeds when `!hooks.areaJobsActive()` (§33.6); drain `fall`, then `misc`; when collapse is
+   on and (`seeds.size > 0 || support.busy`) → `support.step(ctx, seeds, MAX_SUPPORT_VISITS_PER_TICK)` — or with `maxVisits =
+   SUPPORT_STARVED_VISITS` when the rings already spent the whole budget (one huge update) — then drain `water`; then, while budget
+   is left, drain `fall` and `misc` again. FAIR SHARES (v0.8 review, CORE-2 / §38.4): while a later consumer has work due (a due misc
+   entry, a pending collapse, a due water entry), `fall` stops at FALL_SHARE = ½ of the budget, `misc` at MISC_SHARE = ⅝ (cumulative,
+   counts and time), and the support step's `ctx.deadline` is `start + SUPPORT_SHARE·budget` (⅞) while water is due; the water ring
+   gets the rest, and the second pass hands what is left back to fall and misc. A ring with due updates runs at least
+   MIN_RING_UPDATES = 8 of them (or one update that wrote ≥ 32 cells) per tick even when an earlier one overran: a saturated ring
+   slows the others down, it never stops them (a 631-source rain used to hold water and misc for ~450 ticks).
 4. Budget: one per tick across all rings: stop when `MAX_CELL_UPDATES_PER_TICK` updates ran, or — checked before every 32nd update
-   — when `now() − start ≥ PHYSICS_TICK_BUDGET_MS`. Leftovers stay at the head (FIFO: nothing starves; there is NO per-chunk cap).
-   `ctx.deadline = start + PHYSICS_TICK_BUDGET_MS` for the support search (which checks it every 256 visits).
+   AND after any update that wrote ≥ 32 cells since the last check (a gravity column, §34.1) — when `now() − start ≥
+   PHYSICS_TICK_BUDGET_MS`. Leftovers stay at the head (FIFO: nothing starves; there is NO per-chunk cap). `ctx.deadline = start +
+   PHYSICS_TICK_BUDGET_MS` for the support search, whose every part stops on it (§36.1.4).
 5. Running a popped cell: `id = world.peekBlock`; UNLOADED → park it on its own chunk (§33.4). Otherwise every rule of that ring, in
    registration order, whose feature switch is on and whose `ids` include `id` runs `update(ctx, q, y, r, id)`; after a rule that
    wrote, later rules see the re-read id. A rule that throws is skipped (one `console.warn` per rule); the tick goes on.
@@ -1431,7 +1436,9 @@ the triggers (`write` → WRITE_PHYSICS, `writeQuiet` → WRITE_QUIET) and, when
 1. Registered triggers run in order, each only while its feature is on, with `(q, y, r, prev, next, mode)`.
 2. Built-ins: **'gravity'** (falling): `!isFallThrough(prev) && isFallThrough(next)` and the cell above is a gravity block or a
    campfire → `fall` (above); `next` is a gravity block or a campfire and the cell below is fall-through → `fall` (this cell).
-   **'water'** (water): `isWater(prev) || isWater(next)`, or fall-through-ness or solidity changed and a neighbour is water →
+   **'water'** (water): `isWater(prev) || isWater(next)`, or fall-through-ness or solidity changed and a neighbour is water (read with
+   `peekNeighbours`, §36: straight from the written cell's chunk, which onBlockChange looks up ONCE per write for the built-in
+   triggers and the area collector) →
    `scheduleWaterAround(q, y, r)`: the cell and its 8 neighbours, each only if it is water, AIR or CAMPFIRE, into `fall` when it is
    FALL or a non-source cell with water above, else into `water`. **'ignite'** (explosions): `next === CAMPFIRE` → every BLAST_BARREL
    neighbour into `misc`; `next === BLAST_BARREL` with a CAMPFIRE neighbour → itself into `misc`.
@@ -1448,9 +1455,13 @@ the triggers (`write` → WRITE_PHYSICS, `writeQuiet` → WRITE_QUIET) and, when
    CAUSE_PHYSICS), priority, event: openEventId, tick }`; dropped while collapse is off. The SeedQueue omits cells already pending in
    an earlier seed, drops a seed left with no cells and no removals, holds ≤ MAX_PENDING_SUPPORT_SEEDS (`dropped` counts the rest);
    `shift()` returns the oldest priority seed, else the oldest normal one, and its cells stop being pending.
-4. Area batching: `collectAreaSeed` appends the removal and its load-bearing neighbours (deduped); `flushAreaSeeds()` (automatic at
-   the start of the first tick with no active area job) queues them as ONE seed with cause CAUSE_AREA.
+4. Area batching: `collectAreaSeed` appends only the removal `[q, y, r, prev, wasAnchor]` — no neighbour reads (the search looks at
+   the 8 neighbours of every removal itself, §36.1.1, and by then most are cells the same job removed); `flushAreaSeeds()` (automatic
+   at the start of the first tick with no active area job, O(1)) queues them as ONE seed with cause CAUSE_AREA, `cells: []` and every
+   removal in `removed`. A `fill … air` of MAX_FILL_CELLS used to cost ~8× its pre-v0.8 per-cell time and a 0.2–0.4 s freeze after it.
 5. Switching collapse off clears every pending seed and the area batch.
+6. `seedRemovals(cells, opts)` (collapse on, cells non-empty): ONE seed `{ cells: [], removed: cells with their wasAnchor }` — the
+   gravity rule's column (§34.1).
 ### 33.7 Hooks (PhysicsHooks)
 `say(text)`, `areaJobsActive()`, `bodies()` (player + pigs in loaded chunks; never buried by a landing), `player()`, `sound(name, x, y,
 z, volume)` with names 'thud' | 'splash' | 'boom' | 'hiss' | 'creak' | 'fizzle' | 'crackle' | 'break:<soundGroup>', `particles(kind,
@@ -1469,12 +1480,14 @@ x, y, z, count, opts)` (§34.5), `knock(body, vx, vy, vz, fromX, fromZ)` (defaul
    only while it is still `lastEvent`.
 4. `undo()`: no event → `{ ok: false, 'nothing to undo (only the last explosion, collapse or falling tree can be undone)' }`; older
    than UNDO_WINDOW_S of `time` → refused (`… too late to undo`) and forgotten. Else `lastEvent = null`; `cancelEvent(id)` on fallers,
-   trees and explosions (entities in flight removed, lit barrels refunded); then every recorded cell whose current id is still the id
+   trees and explosions (entities in flight removed, lit barrels refunded) and support (a crumble still coming down into the event
+   stops, §36.3.2); then every recorded cell whose current id is still the id
    the event wrote — or is water-family where the event wrote AIR (§38.3) — is written back (quiet, lazy, ignoring the edit cap).
    Message: `undid the <kind>: restored N block(s)[, removed M still in flight][ (K changed since, left alone)][ (U in unloaded
    chunks)]`.
 ### 33.9 Saving (`exportEdits`, never touches the live world)
-`overlay = new SaveOverlay(world)`; `fallers.settleInto(overlay)`, `trees.settleInto(overlay)`, `explosions.settleInto(overlay)`;
+`overlay = new SaveOverlay(world)`; `fallers.settleInto(overlay)`, `support.settleInto(overlay)` (what a collapse has not brought
+down yet is saved fallen, §36.6.4), `trees.settleInto(overlay)`, `explosions.settleInto(overlay)`;
 return `overlay.toJSON()`: world.edits overridden by the overlay's cells, where an edit of FLOW_1..6 / FALL is DROPPED when its origin
 is AIR or WATER (the cell reloads as generated: a refilled hole in a lake is lake again) and saved as AIR otherwise (sources and
 the AIR next to natural water re-flow through the 'water' reseeder on load, §35.3). `overlay.peek` = overlay cell, else
@@ -1494,7 +1507,7 @@ export class FallingBlocks {         // physics.fallers
   constructor(physics)               // registers the 'gravity' rule (fall ring, feature falling)
   count; get tumblerCount; tumblers: Tumbler[]
   spawn(id, q, y, r, { vy = 0, event = openEventId }?) → animates?   // a column faller with its bottom at y; the cell is NOT touched
-  crumble(cells: [q,y,r][], { event }?) → n                           // writeQuiet AIR (lowest first), then drop them (§34.2)
+  crumble(cells: [q,y,r][], { event, settle }?) → n                   // writeQuiet AIR (lowest first), then drop them (§34.2)
   settleNow(id, q, y, r, { event }?) → placed                         // instant column drop with the landing rules
   spawnTumbler(id, x, y, z, vx = 0, vy = 0, vz = 0, { spin?: [wx,wy,wz], persistent?, event?, data? }?) → Tumbler|null
   removeTumbler(t) → boolean; cancelEvent(id) → n; reset(); faller(i) → { id, q, y, r, vy, event }|null
@@ -1505,13 +1518,17 @@ export class FallingBlocks {         // physics.fallers
 ### 34.1 Gravity rule (`fall` ring)
 For a cell holding a gravity block or a campfire: below = `ctx.peek(q, y−1, r)`; UNLOADED → park; not fall-through → nothing. A
 CAMPFIRE breaks: `ctx.write(AIR)`, 10 'smoke' particles at y + 0.3, sound 'break:wood'. A gravity block drops its whole column:
-from y upward while the cells are gravity blocks (at most MAX_COLUMN_FALL), each is written AIR (stop at the first refused write)
-and becomes a faller at its own cell — so the column falls together, at one speed. When fewer than n slots are free, the LOWEST
-(n − free) settle instantly (`settleNow`) and the rest animate. Falling into a campfire or any water passes through it (v0.8 water,
+from y upward while the cells are gravity blocks (at most MAX_COLUMN_FALL), each is written AIR with `ctx.writeQuiet` (stop at the
+first refused write) and becomes a faller at its own cell — so the column falls together, at one speed — and the column queues ONE
+support seed with all its removals (`physics.seedRemovals`; cause = the current cause, priority for a player cause) instead of one
+per cell (a cut 217-column sand tower used to queue thousands). When fewer than n slots are free, the LOWEST (n − free) settle
+instantly (`settleNow`) and the rest animate. The scheduler reads its clock after such an update (≥ 32 writes, §33.1.4), so a tick
+overruns its budget by at most about one column. Falling into a campfire or any water passes through it (v0.8 water,
 §35.6: sand sinks through sources to the bottom; the landing cell's water is crushed).
 ### 34.2 Column fallers
-1. Kept in typed arrays (id, q, r, y, vy, event) sorted by y (insertion sort per frame) and processed LOWEST FIRST, so a stack landing
-   in one frame piles up exactly. Frozen while `!world.hasChunkAtCell(q, r)`.
+1. Kept in typed arrays (id, q, r, y, vy, event) sorted by y (insertion sort per frame — or one index sort when more than 32 were
+   spawned since the last sort: columns spawned bottom-up one after another made the insertion sort quadratic) and processed LOWEST
+   FIRST, so a stack landing in one frame piles up exactly. Frozen while `!world.hasChunkAtCell(q, r)`.
 2. Per frame: `vy = max(vy + GRAVITY·dt, TERMINAL_VELOCITY)`, `y1 = y0 + vy·dt`. If the cell containing the bottom
    (`c0 = floor(y0)`, when y0 is not an integer) is not fall-through, land at `c0 + 1`. Otherwise sweep `b = c0 − 1 … floor(y1)`
    (b ≥ 0) and land at `b + 1` on the first cell that is not fall-through. No landing and `y1 < 0` → removed. Else `y = y1`.
@@ -1520,9 +1537,11 @@ and becomes a faller at its own cell — so the column falls together, at one sp
    3, its radius, its height)`; if any has no room the block BREAKS (dust, nothing placed). Then `ctx.write(C, id)` inside
    `enterEvent(faller.event)`; `'capped'` / `'failed'` → break. Lifted bodies: `y = freeY`, `vy = max(vy, 0)`. Placed: dust (the first
    LANDING_DUST_PER_FRAME landings of a frame) and one 'thud' per frame at the landing nearest `hooks.player()`.
-4. `crumble(cells)`: AIR / UNLOADED cells skipped; sorted by (y, q, r); removed with `ctx.writeQuiet(AIR)` inside
-   `enterEvent(event)`; the lowest `max(0, n − (MAX_FALLING − count))` settle instantly, the rest animate. `spawn` beyond MAX_FALLING
-   settles instantly. `settleNow` drops from `floor(y)` (clamped) while the cell below is fall-through; below 0 → gone.
+4. `crumble(cells, { settle })`: AIR / UNLOADED cells skipped; sorted by (y, q, r); removed with `ctx.writeQuiet(AIR)` inside
+   `enterEvent(event)`; the lowest `max(0, n − (MAX_FALLING − count), settle)` settle instantly, the rest animate (one that finds no
+   free slot settles too). `spawn` beyond MAX_FALLING settles instantly. `settleNow` first settles every column faller still in
+   flight BELOW it in its column (lowest first: a block never lands under one that was beneath it — a column cut again while it
+   falls, a crumble slice at the cap), then drops from `floor(y)` (clamped) while the cell below is fall-through; below 0 → gone.
 5. Saving (`settleInto(overlay)`): fallers lowest first; from `floor(y)` move up past non-fall-through overlay cells, then down while
    the cell below is fall-through, and `overlay.set` the id there (columns in unloaded chunks are skipped). Debris is not saved;
    persistent tumblers are their owner's (explosions saves lit barrels).
@@ -1638,7 +1657,11 @@ export class SupportSolver {         // physics.support
   constructor(physics)               // registers the trigger 'support' (feature collapse, §36.1.5)
   get busy; tipSaid; stats { batches, searches, visits, floating, crumbled, toppled, restarts }
   step(ctx, seeds: SeedQueue, maxVisits) → visits; reset(); onSwitch(on)       // off → reset()
+  cancelEvent(id) → 0; settleInto(overlay)                                       // undo / saving (§36.3.2, §36.6.4)
 }
+export const CRUMBLE_SLICE           // 64: a big crumble's cells between two deadline checks (§36.3.1)
+export function peekNeighbours(world, q, y, r, out, chunk?) → out   // the 8 neighbour ids (6 sides, above, below) as peekBlock gives
+                                     // them, read straight from the chunk when the cell is off its edges (one lookup, not eight)
 /** FloatingComponent = { cells: [q, y, r, id][], cause: Cause, event: number } */
 // trees.js (imports isLoadBearing from support.js)
 export function tiltEuler(kx, kz, theta, out = [0, 0, 0]) → [rx, ry, rz]   // Euler 'YXZ' of a rotation by θ about axis (kx, 0, kz)
@@ -1654,9 +1677,11 @@ export class Trees {                 // physics.trees
 }
 ```
 ### 36.1 Batches and the search
-1. `step(ctx, seeds, maxVisits)`: when no batch is open and `seeds.size > 0`, a BATCH takes every pending seed (`seeds.shift()` until
-   null: the priority lane first) with a fresh memo (a supported set and a floating map). Its start cells, deduplicated in this order:
-   each seed's `cells`, then the 8 neighbours of each of its `removed` cells (the queue leaves out cells already pending elsewhere).
+1. `step(ctx, seeds, maxVisits)`: when no batch is open and `seeds.size > 0`, a BATCH opens with a fresh memo (a supported set and a
+   floating map) and takes the seeds pending at that moment (`seeds.shift()`, the priority lane first; over several ticks when there
+   are thousands). Its start cells, in this order: each seed's `cells`, then the 8 neighbours of each of its `removed` cells (the
+   queue leaves out cells already pending elsewhere) — generated from a cursor as the sweep goes and deduplicated by the memo; a
+   removal whose 8 neighbours hold nothing load-bearing (inside a dug-out volume: one `peekNeighbours`) is passed over at once.
 2. A start cell already in the memo is skipped; UNLOADED, or load-bearing and `isAnchorCell` → supported; not load-bearing →
    skipped. Otherwise a DFS starts from it: neighbours are pushed in the order above, the 6 sides (HEX_DIRS), below — so the cell
    below is popped first, then the sides, then the one above. A popped cell that is no longer load-bearing is skipped; else it counts
@@ -1664,10 +1689,16 @@ export class Trees {                 // physics.trees
    anchor → the search ends SUPPORTED; load-bearing → pushed. `SUPPORT_LIMIT` visits in one search → SUPPORTED. Empty stack →
    FLOATING.
 3. SUPPORTED: every pushed cell joins the supported memo. FLOATING: the pushed cells are one component (with the seed of its start
-   cell). A cell that already belonged to an earlier component marks that one stale.
-4. Budget: a step stops when `maxVisits` visits ran or — checked every 256 visits — `ctx.now() ≥ ctx.deadline`. The batch, memo and
-   the current DFS are kept (`busy` is true until the batch has collapsed what it found); when a batch ends and budget is left, the
-   next one starts.
+   cell). A cell that already belonged to an earlier component marks that one stale. A verdict over more than 512 cells is written
+   into the memo 512 at a time under the budget below, before the next start cell (a block placed next to such a component meanwhile
+   still marks it stale).
+4. Budget: EVERY part of a batch keeps a cursor and stops on the tick's budget (v0.8 review, CORE-1 / F1 / FR-2): taking seeds in,
+   the start-cell sweep, the DFS, writing a verdict into the memo, the rule's passes (§36.2.5) and the collapse (§36.3.1). A step
+   stops when `maxVisits` visits ran, when `maxVisits · 8` units of cheap work ran (a seed taken in, a start cell looked at, 8 per
+   removal scanned by the rule, 1 per cell written into the memo), or when `ctx.now() ≥ ctx.deadline` — checked every 256 visits and
+   every 256 cheap units, so a step always does at least that much. The batch, memo and the current DFS are kept (`busy` is true
+   until the batch has collapsed what it found); when a batch ends and budget is left, the next one starts. A 30 000-removal
+   `fill … air` batch takes ~10 ticks of ≤ 3 ms instead of one 150–400 ms tick.
 5. Trigger 'support' (collapse): while a batch is open, an EXTERNAL write (mode `WRITE_EXTERNAL`) that makes a cell load-bearing
    restarts the current DFS when the cell touches one of its pushed cells (`stats.restarts`), and marks a found component next to it
    stale (never collapsed). Physics' own writes are ignored; removals need nothing (they seed the next batch).
@@ -1679,17 +1710,26 @@ export class Trees {                 // physics.trees
 3. A component found from a seed with no `removed` (an explicit `seedSupport`, e.g. a crater rim) collapses outright.
 4. Every other floating component stays: a build that already floated (old saves, `fill`, physics-off builds) is never brought
    down by breaking one of its blocks. Placing blocks is never checked.
+5. It runs as three resumable passes over the batch's removals (index them by cell; find the supported ones and the components each
+   touches; spread through removals and components) — skipped when no component floated.
 ### 36.3 Collapse
-1. Collapsing components are handled in the order they were found; after each one, `ctx.now() ≥ ctx.deadline` leaves the rest for
-   the next tick. Cells are re-read: only those still load-bearing make the FloatingComponent `[q, y, r, id]` (none → skipped).
+1. Collapsing components are handled in the order they were found; after each one — and after each slice of a crumble —
+   `ctx.now() ≥ ctx.deadline` leaves the rest for the next tick. A component of ≤ TREE_MAX_CELLS cells is re-read whole: only cells
+   still load-bearing make the FloatingComponent `[q, y, r, id]` (none → skipped) for the tree test. A crumble goes CRUMBLE_SLICE
+   cells at a time in (y, q, r) order (one numeric sort of `y·2^42 + packed column`), each slice re-read (cells no longer
+   load-bearing are skipped): a big build comes down from the bottom over a few ticks — what is not down yet hangs meanwhile — instead
+   of freezing one frame (an 8 000-cell box took 110–250 ms). It is committed once begun; later batches wait (`busy`).
 2. Undo: the writes record into the seed's `event` while it is still `physics.lastEvent` (a blast's rim search records into the blast);
-   otherwise into the batch's own event, opened once per batch with `beginEvent('collapse', seed.cause)` (later components re-enter
-   it). Its kind is `'falling tree'` while it holds only toppled trees and `'collapse'` once something crumbled.
-3. `tree = trees.test(component)`; `tree && trees.topple(tree, component, { cause, event })` → `stats.toppled++`; else
-   `fallers.crumble(cells, { event })` (lowest first, the lowest settle instantly beyond MAX_FALLING, §34.2.4) and, when it removed
-   any cell, `trees.decayHangingLeaves(cells, { event })`, `stats.crumbled++`, and the first such crumble of this SupportSolver (one per
-   loaded world) says COLLAPSE_TIP (`tipSaid`). A BLAST_BARREL cell for which `ctx.explosions.hangBurning(q, y, r)` is true (it burns
-   in place) is left out of `cells` (integration, §38.2).
+   otherwise into the batch's own event, opened once per batch with `beginEvent('collapse', seed.cause)` (later components and slices
+   re-enter it; a big crumble chooses it at its first slice with a live cell). Its kind is `'falling tree'` while it holds only
+   toppled trees and `'collapse'` once something crumbled. `cancelEvent(id)` (undo of that event, or of the event a pending collapse
+   would record into) ends the batch: what still hangs stays where it is, like everything undo puts back.
+3. `tree = trees.test(component)`; `tree && trees.topple(tree, component, { cause, event })` → `stats.toppled++`; else the crumble:
+   each slice is `fallers.crumble(slice, { event, settle })`, where the lowest `max(0, n − free slots when it began)` cells of the
+   whole component settle instantly and the rest animate (§34.2.4: the pile keeps its order across slices); once every cell is down,
+   `trees.decayHangingLeaves` runs over the component's cells (256 at a time). The first slice that removed a cell counts
+   `stats.crumbled++`, and the first such crumble of this SupportSolver (one per loaded world) says COLLAPSE_TIP (`tipSaid`). A
+   BLAST_BARREL cell for which `ctx.explosions.hangBurning(q, y, r)` is true (it burns in place) is left out (integration, §38.2).
 4. Rune blocks and black holes are never part of a component (not load-bearing): they stay where they are, and what rests on them
    lands on them. Campfires, water and anything else above follow through the normal triggers (§33.5). No boundary search follows a
    collapse: a component is maximal, so removing it cannot leave another load-bearing cell floating.
@@ -1734,7 +1774,10 @@ export class Trees {                 // physics.trees
    `enterEvent(event)` and 4 'leaves' particles. Leaves never become falling blocks.
 3. `renderItems(push)`: every job (falling, then waiting) pushes each cell at `pivot + R(θ)·offset` with `tiltEuler(kx, kz, θ)`, scale 1
    (θ: 0 while waiting, `shakeAngle` while shaking).
-4. `settleInto(overlay)` (saving; never the live world): per job, its logs snapped like an impact at the current θ against
+4. support's `settleInto(overlay)` (after fallers'): the cells the open batch decided to collapse but has not brought down yet — the
+   rest of a crumble and the components after it — still load-bearing in the overlay are saved fallen, lowest first, down their
+   columns (a burning barrel is explosions'). Trees' `settleInto(overlay)` (saving; never the live world): per job, its logs snapped
+   like an impact at the current θ against
    `overlay.peek`, then lowest first moved up past non-fall-through cells and down while the cell below is fall-through, and
    `overlay.set` there (a column in an unloaded chunk is skipped); leaves are not saved; leaves waiting to decay are saved as AIR.
 5. `cancelEvent(id)` (undo): removes the jobs (falling or waiting) and the leaf decays of event id; returns the jobs removed. `reset()`
@@ -1757,6 +1800,8 @@ export class Trees {                 // physics.trees
 10. The first-collapse tip is per loaded world (not saved — that would need a save field) and only for crumbles, not trees.
 11. No boundary `seedSupport` after a collapse (DESIGN §10.3 suggested one): a floating component is maximal, so nothing load-bearing
     next to it is left without support by its removal.
+12. Batches, searches and crumbles are spread over ticks part by part (§36.1.4, §36.3.1; review CORE-1, F1, FR-2): DESIGN §2 budgets
+    only the DFS visits, which left the batch build, the rule and the collapse of one component unbounded.
 
 ## 37. `src/explosions.js` (PURE) — blast barrels, v0.8
 
@@ -1880,14 +1925,21 @@ real World for saving and reloading).
    a crater cell it fell into is reported as `changed since, left alone`. One undo restores the blast, the collapse it caused (§36.3.2)
    and the trees it felled; a chain is one event (§37.3.1).
 ### 38.4 Scheduling
-1. The fall ring carries falling water as well as gravity blocks (§33.5.2), so a long waterfall can spend the whole tick budget before
-   `support.step`. Starvation guard (§33.1.3): after SUPPORT_STARVE_TICKS ticks in a row without a support step while a collapse is
-   pending, support runs with `maxVisits = SUPPORT_STARVED_VISITS` (and its own deadline check), so a cut tree next to a waterfall
-   still falls about 0.2 s later.
+1. The fall ring carries falling water as well as gravity blocks (§33.5.2), so a long waterfall can spend the whole tick budget.
+   Fair shares (§33.1.3) replaced the support-only starvation guard (SUPPORT_STARVE_TICKS): the fall ring stops at half the budget
+   while misc, support or water have work due, every ring with due updates gets at least a small slice, and support gets a step every
+   tick (SUPPORT_STARVED_VISITS visits when the rings overran) — measured with a 631-source rain at y = 125 (seed 42): a new source
+   beside it flows after 12–13 ticks (was 443–461) and a barrel by a campfire lights after 1 tick (was 438–456); a cut tree next to
+   a waterfall falls at once.
 2. Measured (headless Chrome in real time on a loaded machine, seed 42, 200 barrels from one `fill`, one lit): 5 merged blasts (1, 15,
    110, 69, 1 barrels; 4 barrels at the far corner of the box are never in reach and stay), physics step worst 22–25 ms (the
    radius-8 blast's ~700 writes) and mean ≈ 0.7 ms, world.update worst 13–15 ms (lazy re-meshing), whole frame worst 40–94 ms with
    headless software rendering.
+3. Measured after the review's performance pass (Node, real worldgen, seed 42, on a shared machine with 4–11 ms GC pauses): a
+   32 768-cell `fill … air` in stone — worst physics step after the job 5–10 ms (was 150–470 ms), area-job writes ~1–2.5× their
+   pre-v0.8 per-cell cost (were ~8×); a cut 37 × 64 / 217 × 40 sand tower — worst tick 4–14 ms (was 34–113 ms), no frame over 16 ms;
+   an 8 000-cell floating box crumbling — worst physics step ~6 ms warm (was 110–243 ms), down over ~3 s; a 15 000-cell sand
+   `fill` in the air — no tick over 16 ms (were 10 per run). Final column stacks equal the old code's in every one of these.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

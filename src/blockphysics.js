@@ -7,8 +7,8 @@
 // fluids (§35), support / collapse and trees (§36), explosions (§37) — and drives them in a fixed order:
 //
 //   step(dt): ≤ 1 tick (PHYSICS_TICK_S) → fallers.step → trees.step → explosions.step
-//   tick:     fall ring → misc ring → support search → water ring, all under ONE budget
-//             (PHYSICS_TICK_BUDGET_MS, MAX_CELL_UPDATES_PER_TICK, MAX_SUPPORT_VISITS_PER_TICK)
+//   tick:     fall ring → misc ring → support search → water ring (→ fall, misc again), all under ONE budget split in fair
+//             shares (PHYSICS_TICK_BUDGET_MS, MAX_CELL_UPDATES_PER_TICK, MAX_SUPPORT_VISITS_PER_TICK; CONTRACTS §33.1.3)
 //
 // A queued update is a CELL in a delay ring. When it is due, every registered rule of that ring whose feature is
 // switched on and whose `ids` include the cell's block runs `update(ctx, q, y, r, id)`. Rules read through
@@ -19,7 +19,7 @@
 import {
   CHUNK_SIZE, WORLD_HEIGHT, MAX_TOTAL_EDITS, PHYSICS_TICK_S, WATER_TICKS, PHYSICS_TICK_BUDGET_MS,
   MAX_CELL_UPDATES_PER_TICK, MAX_SUPPORT_VISITS_PER_TICK, MAX_PARKED_UPDATES, MAX_PENDING_SUPPORT_SEEDS,
-  UNDO_WINDOW_S, UNDO_MAX_CELLS, SUPPORT_STARVE_TICKS, SUPPORT_STARVED_VISITS,
+  UNDO_WINDOW_S, UNDO_MAX_CELLS, SUPPORT_STARVED_VISITS,
 } from './config.js';
 import {
   BLOCK, UNLOADED, isFallThrough, isGravityBlock, isSolid, isWater, isWaterSource,
@@ -29,7 +29,7 @@ import { chunkKey, localIndex, packCell, unpackCell } from './coords.js';
 import { mulberry32 } from './noise.js';
 import { FallingBlocks } from './fallingblocks.js';
 import { Fluids } from './fluids.js';
-import { SupportSolver, isLoadBearing } from './support.js';
+import { SupportSolver, isLoadBearing, peekNeighbours } from './support.js';
 import { Trees } from './trees.js';
 import { Explosions } from './explosions.js';
 
@@ -161,8 +161,22 @@ const WATER = 1;
 const MISC = 2;
 /** Parked entries are `ringIndex · PARK_STRIDE + packCell(...)`; packed keys stay below 2^49 < PARK_STRIDE. */
 const PARK_STRIDE = 2 ** 50;
-/** The time budget is checked every this many cell updates. */
+/** The time budget is checked every this many cell updates … */
 const TIME_CHECK_MASK = 31;
+/** … and after any update that wrote this many cells since the last check (a gravity column: up to MAX_COLUMN_FALL). */
+const TIME_CHECK_WRITES = 32;
+/**
+ * Fair shares of a tick (CONTRACTS §33.1.4), cumulative fractions of PHYSICS_TICK_BUDGET_MS and of
+ * MAX_CELL_UPDATES_PER_TICK: while a later consumer (misc ring, support search, water ring) has work due, the fall ring
+ * stops at FALL_SHARE of the budget, misc at MISC_SHARE, and the support search at SUPPORT_SHARE of the time; the water
+ * ring gets the rest, and fall then misc take whatever is left over. A saturated ring slows the others down, never
+ * stops them.
+ */
+const FALL_SHARE = 0.5;
+const MISC_SHARE = 0.625;
+const SUPPORT_SHARE = 0.875;
+/** A ring with due updates runs at least this many per tick even when an earlier one overran the budget. */
+const MIN_RING_UPDATES = 8;
 /** The 8 neighbours of a cell: six sides, then above and below, as [dq, dy, dr]. */
 const NEIGHBOURS = Object.freeze([
   ...HEX_DIRS.map(([dq, dr]) => Object.freeze([dq, 0, dr])), Object.freeze([0, 1, 0]), Object.freeze([0, -1, 0]),
@@ -447,8 +461,6 @@ export class BlockPhysics {
     this.time = 0;
     this._acc = 0;
     this.stats = { ticks: 0, updates: 0, lastTickUpdates: 0, lastTickMs: 0, lastSupportVisits: 0 };
-    /** ticks in a row the fall / misc rings spent the whole budget while a collapse was pending */
-    this._supportStarved = 0;
 
     this._rings = [new CellRing(), new CellRing(), new CellRing()];
     /** @type {{ name: string, feature: string|null, mask: Uint8Array|null, update: Function }[][]} per ring index */
@@ -468,10 +480,17 @@ export class BlockPhysics {
     this._parkR = 0;
 
     this.seeds = new SeedQueue();
-    /** @type {Map<number, number[]>} neighbour cells collected while area jobs run */
-    this._areaCells = new Map();
-    /** @type {number[][]} removals collected while area jobs run */
+    /** @type {number[][]} removals collected while area jobs run, [q, y, r, prevId, wasAnchor][] */
     this._areaRemoved = [];
+    /** scratch: neighbour ids (peekNeighbours) */
+    this._nb = new Uint8Array(8);
+    // The written cell's chunk while onBlockChange runs (one lookup per write, shared by the built-in triggers and the
+    // area collector: the hot path of a 32 768-cell `fill`). Null outside onBlockChange or for worlds without getChunk.
+    this._hasChunks = !!world && typeof world.getChunk === 'function';
+    this._wChunk = null;
+    this._wq = 0;
+    this._wr = 0;
+    this._wBase = 0;
 
     this._writeMode = WRITE_EXTERNAL;
     this._writeSeq = 0;
@@ -488,7 +507,7 @@ export class BlockPhysics {
 
     this._rng = mulberry32(((world && world.seed) >>> 0) ^ 0x5eed9e37);
     this._cell = [0, 0, 0];
-    this._budget = { updates: 0, start: 0, out: false };
+    this._budget = { updates: 0, start: 0, out: false, checkSeq: 0 };
 
     /** @type {RenderItem[]} pooled render items; renderItems() fills the first `count` */
     this._itemPool = [];
@@ -659,7 +678,6 @@ export class BlockPhysics {
     this.switchVersion++;
     if (name === 'collapse' && !v) {
       this.seeds.clear();
-      this._areaCells.clear();
       this._areaRemoved.length = 0;
     }
     const owners = { falling: [this.fallers], water: [this.fluids], collapse: [this.support, this.trees], explosions: [this.explosions] }[name];
@@ -792,6 +810,7 @@ export class BlockPhysics {
     inFlight += this.fallers.cancelEvent(ev.id) | 0;
     inFlight += this.trees.cancelEvent(ev.id) | 0;
     inFlight += this.explosions.cancelEvent(ev.id) | 0;
+    this.support.cancelEvent(ev.id); // a big crumble still coming down into this event stops (§36.3.2)
     let restored = 0;
     let changed = 0;
     let unloaded = 0;
@@ -832,19 +851,50 @@ export class BlockPhysics {
   onBlockChange(q, y, r, prev, next) {
     const mode = this._writeMode;
     const triggers = this._triggers;
-    for (let i = 0; i < triggers.length; i++) {
-      const t = triggers[i];
-      if (t.feature !== null && this.switches[t.feature] !== true) continue;
-      t.fn(q, y, r, prev, next, mode);
+    const outer = this._wChunk;
+    const oq = this._wq;
+    const or = this._wr;
+    const ob = this._wBase;
+    if (this._hasChunks) {
+      const cq = Math.floor(q / CHUNK_SIZE);
+      const cr = Math.floor(r / CHUNK_SIZE);
+      this._wChunk = this.world.getChunk(cq, cr) ?? null;
+      this._wq = q;
+      this._wr = r;
+      this._wBase = ((q - cq * CHUNK_SIZE) * CHUNK_SIZE + (r - cr * CHUNK_SIZE)) * WORLD_HEIGHT;
     }
-    if (this.switches.collapse && mode !== WRITE_QUIET && isLoadBearing(prev) && !isLoadBearing(next)) {
-      if (mode === WRITE_EXTERNAL && this._cause === null && this.hooks.areaJobsActive()) {
-        this.collectAreaSeed(q, y, r, prev);
-      } else {
-        const cause = this._cause ?? (mode === WRITE_EXTERNAL ? CAUSE_WORLD : CAUSE_PHYSICS);
-        this.seedRemoval(q, y, r, prev, { cause, priority: cause.kind === 'player' });
+    try {
+      for (let i = 0; i < triggers.length; i++) {
+        const t = triggers[i];
+        if (t.feature !== null && this.switches[t.feature] !== true) continue;
+        t.fn(q, y, r, prev, next, mode);
       }
+      if (this.switches.collapse && mode !== WRITE_QUIET && isLoadBearing(prev) && !isLoadBearing(next)) {
+        if (mode === WRITE_EXTERNAL && this._cause === null && this.hooks.areaJobsActive()) {
+          this.collectAreaSeed(q, y, r, prev);
+        } else {
+          const cause = this._cause ?? (mode === WRITE_EXTERNAL ? CAUSE_WORLD : CAUSE_PHYSICS);
+          this.seedRemoval(q, y, r, prev, { cause, priority: cause.kind === 'player' });
+        }
+      }
+    } finally {
+      this._wChunk = outer;
+      this._wq = oq;
+      this._wr = or;
+      this._wBase = ob;
     }
+  }
+
+  /** world.peekBlock — straight from the written cell's chunk for its own column while onBlockChange runs. */
+  _peekColumn(q, y, r) {
+    const ch = this._wChunk;
+    if (ch !== null && q === this._wq && r === this._wr && y >= 0 && y < WORLD_HEIGHT) return ch.blocks[this._wBase + y];
+    return this.world.peekBlock(q, y, r);
+  }
+
+  /** @returns {*} the loaded chunk of column (q, r) when it is the written cell's (onBlockChange), else undefined */
+  _chunkHint(q, r) {
+    return this._wChunk !== null && q === this._wq && r === this._wr ? this._wChunk : undefined;
   }
 
   /** A chunk was generated: re-queue the updates parked on it, then re-seed its edited physics-active cells. */
@@ -917,12 +967,13 @@ export class BlockPhysics {
 
   /**
    * While area commands run, removals are collected here instead of being searched one by one; the batch becomes ONE
-   * seed (cause 'area') at the first tick with no active area job.
+   * seed (cause 'area') at the first tick with no active area job. Only the removal is kept (CONTRACTS §33.6.4): the
+   * search looks at the 8 neighbours of every removal anyway, and by then most of them are cells the same job removed
+   * — a 32 768-cell `fill … air` costs a push per cell here instead of 8 lookups and a neighbour list.
    */
   collectAreaSeed(q, y, r, prev) {
     if (!this.switches.collapse) return;
     this._areaRemoved.push([q, y, r, prev, this._wasAnchor(q, y, r, prev) ? 1 : 0]);
-    for (const c of this._loadBearingNeighbours(q, y, r)) this._areaCells.set(packCell(c[0], c[1], c[2]), c);
   }
 
   /** @returns {number} removals collected for the next area seed */
@@ -930,14 +981,26 @@ export class BlockPhysics {
     return this._areaRemoved.length;
   }
 
-  /** Turn the collected area removals into one seed now (normally automatic once no area job runs). */
+  /** Turn the collected area removals into one seed now (normally automatic once no area job runs). O(1). */
   flushAreaSeeds() {
     if (this._areaRemoved.length === 0) return false;
-    const cells = [...this._areaCells.values()];
     const removed = this._areaRemoved;
-    this._areaCells = new Map();
     this._areaRemoved = [];
-    return this.seedSupport(cells, { cause: CAUSE_AREA, removed });
+    return this.seedSupport([], { cause: CAUSE_AREA, removed });
+  }
+
+  /**
+   * ONE seed for several removals physics made at once (a gravity column, §34.1) — their cells were written quietly;
+   * `cells` are [q, y, r, prevId][] AFTER the writes (wasAnchor is read from the world's origins, §33.6.2).
+   * @param {number[][]} cells
+   * @param {{ priority?: boolean, cause?: Cause|null }} [opts]
+   * @returns {boolean} queued
+   */
+  seedRemovals(cells, opts = {}) {
+    if (!this.switches.collapse || cells.length === 0) return false;
+    const removed = [];
+    for (const c of cells) removed.push([c[0], c[1], c[2], c[3], this._wasAnchor(c[0], c[1], c[2], c[3]) ? 1 : 0]);
+    return this.seedSupport([], { ...opts, removed });
   }
 
   _loadBearingNeighbours(q, y, r) {
@@ -954,8 +1017,22 @@ export class BlockPhysics {
   _wasAnchor(q, y, r, prev) {
     if (y === 0 || prev === BLOCK.BEDROCK) return true;
     const w = this.world;
-    if (!isSolid(prev) || typeof w.terrainHeightAt !== 'function' || typeof w.originAt !== 'function') return false;
+    if (!isSolid(prev)) return false;
     // The write already happened: the cell had no edit before it iff its recorded origin is the id it had.
+    if (this._hasChunks && w.origins instanceof Map) {
+      // World: the same test straight from the chunk (terrainHeightAt / originAt without the string chunk key).
+      const cq = Math.floor(q / CHUNK_SIZE);
+      const cr = Math.floor(r / CHUNK_SIZE);
+      const chunk = this._chunkHint(q, r) ?? w.getChunk(cq, cr);
+      if (chunk === undefined || chunk === null) return false;
+      const lq = q - cq * CHUNK_SIZE;
+      const lr = r - cr * CHUNK_SIZE;
+      if (!(y <= chunk.heights[lq * CHUNK_SIZE + lr])) return false;
+      const chunkOrigins = w.origins.get(chunk.key);
+      const origin = chunkOrigins === undefined ? undefined : chunkOrigins.get(localIndex(lq, y, lr));
+      return (origin === undefined ? chunk.blocks[localIndex(lq, y, lr)] : origin) === prev;
+    }
+    if (typeof w.terrainHeightAt !== 'function' || typeof w.originAt !== 'function') return false;
     return y <= w.terrainHeightAt(q, r) && w.originAt(q, y, r) === prev;
   }
 
@@ -982,7 +1059,10 @@ export class BlockPhysics {
     this.explosions.step(dt);
   }
 
-  /** Run one tick now (tests and step()). */
+  /**
+   * Run one tick now (tests and step()): fall → misc → support → water under ONE budget split in fair shares (FALL_SHARE
+   * …), then fall and misc again with what is left.
+   */
   tick() {
     this.tickCount++;
     this.stats.ticks++;
@@ -990,46 +1070,74 @@ export class BlockPhysics {
     b.updates = 0;
     b.out = false;
     b.start = this._now();
-    this.ctx.deadline = b.start + PHYSICS_TICK_BUDGET_MS;
+    b.checkSeq = this._writeSeq;
+    const deadline = b.start + PHYSICS_TICK_BUDGET_MS;
+    this.ctx.deadline = deadline;
     if (this._areaRemoved.length > 0 && !this.hooks.areaJobsActive()) this.flushAreaSeeds();
 
-    this._drain(FALL);
-    if (!b.out) this._drain(MISC);
+    const support = this.switches.collapse && (this.seeds.size > 0 || this.support.busy);
+    const water = this._isDue(WATER);
+    const afterMisc = support || water;
+    this._drain(FALL, afterMisc || this._isDue(MISC) ? FALL_SHARE : 1);
+    this._drain(MISC, afterMisc ? MISC_SHARE : 1);
     this.stats.lastSupportVisits = 0;
-    if (this.switches.collapse && (this.seeds.size > 0 || this.support.busy)) {
-      // A long waterfall or gravity cascade can fill the fall ring every tick; a collapse (a cut tree, a crater rim)
-      // must not wait for it to calm down: after SUPPORT_STARVE_TICKS starved ticks it gets a small slice anyway.
-      if (!b.out) {
-        this._supportStarved = 0;
-        this.stats.lastSupportVisits = this.support.step(this.ctx, this.seeds, MAX_SUPPORT_VISITS_PER_TICK) | 0;
-      } else if (++this._supportStarved >= SUPPORT_STARVE_TICKS) {
-        this._supportStarved = 0;
-        this.stats.lastSupportVisits = this.support.step(this.ctx, this.seeds, SUPPORT_STARVED_VISITS) | 0;
-      }
-    } else {
-      this._supportStarved = 0;
+    if (support) {
+      // A long waterfall or gravity cascade can fill the fall ring every tick; a collapse (a cut tree, a crater rim) must
+      // not wait for it to calm down: it always gets its share, and a small step even when the rings overran the budget.
+      this.ctx.deadline = water ? b.start + PHYSICS_TICK_BUDGET_MS * SUPPORT_SHARE : deadline;
+      const visits = b.out ? SUPPORT_STARVED_VISITS : MAX_SUPPORT_VISITS_PER_TICK;
+      this.stats.lastSupportVisits = this.support.step(this.ctx, this.seeds, visits) | 0;
+      this.ctx.deadline = deadline;
     }
-    if (!b.out) this._drain(WATER);
+    this._drain(WATER, 1);
+    if (!b.out) {
+      this._drain(FALL, 1, 0);
+      this._drain(MISC, 1, 0);
+    }
     this.stats.lastTickUpdates = b.updates;
     this.stats.updates += b.updates;
     this.stats.lastTickMs = this._now() - b.start;
   }
 
-  _drain(ri) {
+  /** @returns {boolean} ring `ri` has an update due this tick */
+  _isDue(ri) {
+    const ring = this._rings[ri];
+    return ring.size > 0 && ring.headDue() <= this.tickCount;
+  }
+
+  /**
+   * Run ring `ri`'s due updates, FIFO, until `share` of the tick's budget is spent: `share · MAX_CELL_UPDATES_PER_TICK`
+   * updates of the tick, or — checked before every 32nd update and after an update that wrote TIME_CHECK_WRITES cells
+   * since the last check — `share · PHYSICS_TICK_BUDGET_MS` past the tick's start. Reaching the WHOLE budget sets
+   * `b.out`. A ring with due updates runs at least `min` of them — or one heavy update (TIME_CHECK_WRITES writes) —
+   * however late it is (the second pass, with leftovers only, has no minimum).
+   */
+  _drain(ri, share, min = MIN_RING_UPDATES) {
     const ring = this._rings[ri];
     const b = this._budget;
     const tick = this.tickCount;
+    const maxUpdates = Math.ceil(MAX_CELL_UPDATES_PER_TICK * share);
+    const maxMs = PHYSICS_TICK_BUDGET_MS * share;
+    const seq0 = this._writeSeq;
+    let own = 0;
     while (ring.size > 0 && ring.headDue() <= tick) {
-      if (b.updates >= MAX_CELL_UPDATES_PER_TICK) {
-        b.out = true;
-        return;
+      const minimum = own < min && this._writeSeq - seq0 < TIME_CHECK_WRITES;
+      if (!minimum) {
+        if (b.updates >= MAX_CELL_UPDATES_PER_TICK) {
+          b.out = true;
+          return;
+        }
+        if (b.updates >= maxUpdates || b.out) return;
       }
-      if (b.updates > 0 && (b.updates & TIME_CHECK_MASK) === 0 && this._now() - b.start >= PHYSICS_TICK_BUDGET_MS) {
-        b.out = true;
-        return;
+      if (b.updates > 0 && ((b.updates & TIME_CHECK_MASK) === 0 || this._writeSeq - b.checkSeq >= TIME_CHECK_WRITES)) {
+        b.checkSeq = this._writeSeq;
+        const spent = this._now() - b.start;
+        if (spent >= PHYSICS_TICK_BUDGET_MS) b.out = true;
+        if (!minimum && spent >= maxMs) return;
       }
       this._runCell(ri, ring.shift());
       b.updates++;
+      own++;
     }
   }
 
@@ -1118,6 +1226,7 @@ export class BlockPhysics {
   exportEdits() {
     const overlay = new SaveOverlay(this.world);
     this.fallers.settleInto(overlay);
+    this.support.settleInto(overlay);
     this.trees.settleInto(overlay);
     this.explosions.settleInto(overlay);
     return overlay.toJSON();
@@ -1159,7 +1268,6 @@ export class BlockPhysics {
     this._parked.clear();
     this._parkedCount = 0;
     this.seeds.clear();
-    this._areaCells.clear();
     this._areaRemoved.length = 0;
     this.lastEvent = null;
     this._event = null;
@@ -1281,10 +1389,10 @@ export class BlockPhysics {
     // ---- falling: the cell above a cell that became fall-through; a gravity block / campfire placed over one.
     this.addTrigger('gravity', 'falling', (q, y, r, prev, next) => {
       if (!isFallThrough(prev) && isFallThrough(next)) {
-        const above = peek(q, y + 1, r);
+        const above = this._peekColumn(q, y + 1, r);
         if (isGravityBlock(above) || above === BLOCK.CAMPFIRE) this.schedule('fall', q, y + 1, r);
       }
-      if ((isGravityBlock(next) || next === BLOCK.CAMPFIRE) && isFallThrough(peek(q, y - 1, r))) this.schedule('fall', q, y, r);
+      if ((isGravityBlock(next) || next === BLOCK.CAMPFIRE) && isFallThrough(this._peekColumn(q, y - 1, r))) this.schedule('fall', q, y, r);
     });
     this.addReseeder('gravity', 'falling', [BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, BLOCK.CAMPFIRE], (ctx, q, y, r) => {
       if (isFallThrough(peek(q, y - 1, r))) this.schedule('fall', q, y, r);
@@ -1347,7 +1455,8 @@ export class BlockPhysics {
   }
 
   _hasWaterNeighbour(q, y, r) {
-    for (const [dq, dy, dr] of NEIGHBOURS) if (isWater(this.world.peekBlock(q + dq, y + dy, r + dr))) return true;
+    const nb = peekNeighbours(this.world, q, y, r, this._nb, this._chunkHint(q, r));
+    for (let k = 0; k < 8; k++) if (isWater(nb[k])) return true;
     return false;
   }
 

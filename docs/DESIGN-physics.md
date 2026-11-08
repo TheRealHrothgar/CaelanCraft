@@ -55,6 +55,8 @@ All tunables live in `config.js` under "Block physics (CONTRACTS §33–§37)"; 
   while `due ≤ now` and the tick's budget lasts; leftovers simply stay at the head (no re-bucketing).
 - **Budgets per tick.** Time: `PHYSICS_TICK_BUDGET_MS = 3` (checked every 32 updates / 256 search visits);
   count backstop `MAX_CELL_UPDATES_PER_TICK = 256`; support search `MAX_SUPPORT_VISITS_PER_TICK = 8192`.
+  *(Review pass, §10.10: the clock is also read after any update that wrote ≥ 32 cells, the rings share the budget fairly,
+  and every part of the support work — not just its DFS — stops on the deadline.)*
 - **Writes.** Rules write through `ctx.write(q, y, r, id)` → `'ok' | 'failed' | 'capped'`: a lazy `world.setBlock`;
   `'capped'` when the write would add a NEW edit entry while `world.editCount ≥ MAX_TOTAL_EDITS` (physics pauses
   water spreading and explosions stop breaking blocks; one chat line via `hooks.say`). *No chunk cap: lazy meshing
@@ -316,7 +318,7 @@ are already in `config.js` ("Block physics").
   cause, event }`. First collapse → `ctx.say('Builds must touch the ground! (Esc → Physics to turn collapse off)')`.
 - Seeds come from: player / command / rune / black-hole removals (one SupportSeed each; player ones `priority`), area commands
   (ONE seed per batch, cause `area`, `removed` lists every removal), `physics.seedSupport` from blasts. Physics' own gravity
-  falls seed too (mode PHYSICS); quiet writes never do.
+  falls seed too (one seed per released column since the review pass, §10.10); quiet writes never do.
 
 ### 10.4 Falling blocks API used by the features — `physics.fallers` (built)
 - `spawn(id, q, y, r, { vy, event })` — a column faller (the cell is not touched; remove the block first if it is in the world).
@@ -391,7 +393,33 @@ Found only with everything running together, and how the merge resolved it:
 2. **Undo vs. water.** Water that flowed into a crater made those cells "changed since", so undo left pockets of water inside
    the restored ground. Undo now also restores a cell the event made AIR when it holds water. *The crater fills back in.*
 3. **Starved collapses.** Waterfalls share the `fall` ring with sand; a long one could fill every tick's budget before the
-   support step. A pending collapse now gets a small step (256 visits) after 4 starved ticks.
+   support step. A pending collapse now gets a small step (256 visits) after 4 starved ticks. *(Superseded by the fair shares
+   of §10.10: the same waterfall also starved the water and misc rings.)*
 4. **Two `playCreak`s** (trees and explosives both wrote one): the trees owner's is kept.
 5. Tests written against stubbed neighbours that live water now changes (a water source beside a lit barrel puts it out; the
    trigger list) were adjusted, not the behaviour.
+
+### 10.10 Performance pass (v0.8 review: CORE-1, CORE-2, F1, F2, FR-1, FR-2; normative: CONTRACTS §33.1, §33.6.4, §34.1–§34.2, §36.1.4, §36.3)
+The review measured frames far beyond the 3 ms tick: one 150–470 ms physics step after a 32 768-cell `fill … air`, area-job
+writes ~8× their pre-v0.8 cost, 34–113 ms ticks while a cut sand tower fell, 110–250 ms for an 8 000-cell crumble, and a big
+waterfall holding the water and misc rings for ~450 ticks. Only the DFS was budgeted; everything around it was one call.
+1. **Area batches carry only their removals.** The collector pushed each removal's load-bearing neighbours (8 reads, a list, a
+   Map insert) though the search looks at every removal's neighbours anyway. Now it pushes the removal alone; one chunk lookup
+   per write serves the built-in triggers, the water-neighbour check (`peekNeighbours`) and the anchor test.
+2. **Every part of a batch is resumable.** Taking seeds in, the start-cell sweep (a cursor over seeds and removals, deduplicated
+   by the memo instead of a prebuilt set), writing a big verdict into the memo, the rule's three passes and the collapse all keep
+   cursors and stop on the deadline (cheap work is counted and checked every 256 units). *A 30 000-removal batch takes ~10 ticks
+   of ≤ 3 ms; what it decides is unchanged.*
+3. **Big crumbles come down from the bottom.** A component crumbles 64 cells at a time in (y, q, r) order; the lowest cells
+   beyond the faller slots free when it began settle instantly, so the pile keeps its order across slices, and `settleNow` first
+   settles the fallers still in flight below it in its column. Its leaves are checked once it is all down; undo stops it, a save
+   writes what still hangs as fallen. *The build visibly gives way from below over a second or so instead of freezing a frame.*
+4. **Gravity columns.** A column's AIR writes are quiet and queue ONE support seed; the scheduler reads its clock after any
+   update that wrote ≥ 32 cells (a tick overruns by at most about one column); many fallers spawned at once are index-sorted
+   instead of insertion-sorted (quadratic for columns spawned bottom-up one after another).
+5. **Fair shares.** While misc, support or water have work due, the fall ring stops at half the budget (misc at ⅝, support at
+   ⅞); fall and misc get the leftovers afterwards, and every ring with due work runs at least 8 updates (or one heavy one). This
+   replaces the support-only starvation guard of §10.9.3.
+Remaining cost on a shared, loaded machine: single frames of ~5–15 ms when a 4–11 ms GC pause lands in a physics step (packed
+cell keys are doubles, so the memo's Sets allocate); fluids' re-queueing of already-settled falling water (two thirds of a
+waterfall's fall-ring updates are no-ops) is a fluids.js matter left for that module.

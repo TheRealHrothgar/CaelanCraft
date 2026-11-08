@@ -46,6 +46,13 @@ export const GRAVITY_RULE_IDS = Object.freeze([BLOCK.SAND, BLOCK.RED_SAND, BLOCK
 
 /** A body a landing block would trap is lifted to the first free height among floor(y)+1 … floor(y)+1+this. */
 const LIFT_MAX_UP = 3;
+/** More spawns than this since the last frame's sort → one O(n log n) sort instead of the insertion sort. */
+const SORT_FULL_AFTER = 32;
+
+/** @returns {number} a key for column (q, r) */
+function colKey(q, r) {
+  return (q + 2097152) * 4194304 + (r + 2097152);
+}
 
 export class FallingBlocks {
   /** @param {BlockPhysics} physics */
@@ -81,8 +88,14 @@ export class FallingBlocks {
     /** @type {(PlayerState|number)[]} scratch: body, newY pairs */
     this._lifts = [];
     this._colIds = new Uint8Array(MAX_COLUMN_FALL);
-    /** @type {number[]} scratch index list for settleInto */
+    /** @type {number[]} scratch index list for settleInto / the full sort */
     this._order = [];
+    /** spawns since the last sort (they are appended unsorted) */
+    this._spawned = 0;
+    /** @type {Map<number, number>} column key → column fallers in flight in it (settleNow keeps a column's order) */
+    this._colCount = new Map();
+    /** _stepFallers is running (its indices must not move) */
+    this._stepping = false;
 
     physics.registerRule('gravity', {
       ring: 'fall',
@@ -123,9 +136,10 @@ export class FallingBlocks {
   /**
    * Remove these cells from the world (quietly: no support seeds — the caller queues one boundary search) and drop
    * them as fallers, lowest first; beyond MAX_FALLING the LOWEST cells settle instantly and the top ones animate, so
-   * the pile keeps its order. AIR / unloaded cells are skipped; a cell whose removal is refused stays put.
+   * the pile keeps its order. `settle` asks for at least that many of the lowest to settle instantly (a big component
+   * crumbled a slice at a time, support.js). AIR / unloaded cells are skipped; a cell whose removal is refused stays put.
    * @param {number[][]} cells  [q, y, r][]
-   * @param {{ event?: number }} [opts]
+   * @param {{ event?: number, settle?: number }} [opts]
    * @returns {number} cells dropped
    */
   crumble(cells, opts = {}) {
@@ -143,10 +157,10 @@ export class FallingBlocks {
     const token = this.physics.enterEvent(ev);
     for (const c of list) if (ctx.writeQuiet(c[0], c[1], c[2], BLOCK.AIR) === 'ok') removed.push(c);
     this.physics.exitEvent(token);
-    const settle = Math.max(0, removed.length - (MAX_FALLING - this.count));
+    const settle = Math.max(0, removed.length - (MAX_FALLING - this.count), opts.settle ?? 0);
     for (let i = 0; i < removed.length; i++) {
       const [q, y, r, id] = removed[i];
-      if (i < settle) this.settleNow(id, q, y, r, { event: ev });
+      if (i < settle || this.count >= MAX_FALLING) this.settleNow(id, q, y, r, { event: ev });
       else this._spawn(id, q, y, r, 0, ev);
     }
     return removed.length;
@@ -154,13 +168,15 @@ export class FallingBlocks {
 
   /**
    * Drop block `id` from cell (q, y, r) to its landing cell right now (no animation), with the same landing rules as
-   * an animated faller.
+   * an animated faller. Column fallers still in flight BELOW it in its column settle first (lowest first), so a block
+   * never ends up under one that was beneath it (a column cut again while it falls, a crumble slice at the cap).
    * @param {{ event?: number }} [opts]
    * @returns {boolean} placed
    */
   settleNow(id, q, y, r, opts = {}) {
     const ev = opts.event ?? this.physics.openEventId;
     const world = this.physics.world;
+    if (this._colCount.size > 0 && !this._stepping && this._colCount.has(colKey(q, r))) this._settleColumnBelow(q, r, y);
     let cy = Math.max(0, Math.min(WORLD_HEIGHT - 1, Math.floor(y)));
     while (cy >= 0 && isFallThrough(world.peekBlock(q, cy - 1, r))) cy--;
     if (cy < 0) return false; // fell out of the world
@@ -197,6 +213,24 @@ export class FallingBlocks {
     return true;
   }
 
+  /** Settle every column faller in flight in column (q, r) below height y now, lowest first. */
+  _settleColumnBelow(q, r, y) {
+    const world = this.physics.world;
+    const order = this._order;
+    order.length = 0;
+    for (let i = 0; i < this.count; i++) if (this._q[i] === q && this._r[i] === r && this._y[i] < y && !this._dead[i]) order.push(i);
+    if (order.length === 0) return;
+    order.sort((a, b) => this._y[a] - this._y[b]);
+    for (const i of order) {
+      this._dead[i] = 1;
+      let cy = Math.max(0, Math.min(WORLD_HEIGHT - 1, Math.floor(this._y[i])));
+      while (cy >= 0 && isFallThrough(world.peekBlock(q, cy - 1, r))) cy--;
+      if (cy >= 0) this._placeLanded(this._id[i], q, cy, r, this._ev[i]);
+    }
+    order.length = 0;
+    this._compact();
+  }
+
   /** Remove the fallers and non-persistent tumblers of event `id` (undo). @returns {number} removed */
   cancelEvent(id) {
     if (!(id > 0)) return 0;
@@ -222,6 +256,8 @@ export class FallingBlocks {
   reset() {
     this.count = 0;
     this.tumblers.length = 0;
+    this._colCount.clear();
+    this._spawned = 0;
   }
 
   /**
@@ -254,6 +290,15 @@ export class FallingBlocks {
     const world = this.physics.world;
     const dv = GRAVITY * dt;
     this._sortByY();
+    this._stepping = true;
+    try {
+      this._moveFallers(world, dv, dt);
+    } finally {
+      this._stepping = false;
+    }
+  }
+
+  _moveFallers(world, dv, dt) {
     const n = this.count;
     let removed = 0;
     for (let i = 0; i < n; i++) {
@@ -290,8 +335,18 @@ export class FallingBlocks {
     if (removed > 0) this._compact();
   }
 
-  /** Insertion sort of the parallel arrays by y (ascending). */
+  /**
+   * Sort the parallel arrays by y (ascending): an insertion sort, linear on the nearly sorted order falling keeps —
+   * unless many fallers were appended since the last sort (a gravity column or crumble slice spawns bottom-up, column
+   * after column: quadratic for the insertion sort), then one index sort.
+   */
   _sortByY() {
+    const many = this._spawned > SORT_FULL_AFTER;
+    this._spawned = 0;
+    if (many && this.count > 1) {
+      this._fullSort();
+      return;
+    }
     const ys = this._y;
     for (let i = 1; i < this.count; i++) {
       if (ys[i - 1] <= ys[i]) continue;
@@ -320,12 +375,37 @@ export class FallingBlocks {
     }
   }
 
+  /** Stable index sort of the parallel arrays by y. */
+  _fullSort() {
+    const n = this.count;
+    const ys = this._y;
+    const order = this._order;
+    order.length = n;
+    for (let i = 0; i < n; i++) order[i] = i;
+    order.sort((a, b) => ys[a] - ys[b] || a - b);
+    const permute = (arr) => {
+      const copy = arr.slice(0, n);
+      for (let k = 0; k < n; k++) arr[k] = copy[order[k]];
+    };
+    permute(this._id);
+    permute(this._q);
+    permute(this._r);
+    permute(this._y);
+    permute(this._vy);
+    permute(this._ev);
+    order.length = 0;
+  }
+
   /** Drop every entry marked in `_dead`, keeping the order. */
   _compact() {
     let w = 0;
     for (let i = 0; i < this.count; i++) {
       if (this._dead[i]) {
         this._dead[i] = 0;
+        const ck = colKey(this._q[i], this._r[i]);
+        const left = (this._colCount.get(ck) ?? 1) - 1;
+        if (left > 0) this._colCount.set(ck, left);
+        else this._colCount.delete(ck);
         continue;
       }
       if (w !== i) {
@@ -448,11 +528,18 @@ export class FallingBlocks {
     if (!isGravityBlock(id)) return;
     const ids = this._colIds;
     let n = 0;
+    // Quiet writes and ONE support seed for the column (with all its removals) instead of one per cell (§34.1).
     for (let cy = y; cy < WORLD_HEIGHT && n < MAX_COLUMN_FALL; cy++) {
       const cid = cy === y ? id : ctx.peek(q, cy, r);
       if (!isGravityBlock(cid)) break;
-      if (ctx.write(q, cy, r, BLOCK.AIR) !== 'ok') break; // capped: the rest of the column stays
+      if (ctx.writeQuiet(q, cy, r, BLOCK.AIR) !== 'ok') break; // capped: the rest of the column stays
       ids[n++] = cid;
+    }
+    if (n > 0 && this.physics.switches.collapse) {
+      const removed = [];
+      for (let k = 0; k < n; k++) removed.push([q, y + k, r, ids[k]]);
+      const cause = this.physics.cause;
+      this.physics.seedRemovals(removed, cause ? { cause, priority: cause.kind === 'player' } : {});
     }
     const settle = Math.max(0, n - (MAX_FALLING - this.count));
     const ev = this.physics.openEventId;
@@ -468,6 +555,9 @@ export class FallingBlocks {
   _spawn(id, q, y, r, vy, ev) {
     if (this.count >= this._cap) this._grow(Math.min(MAX_FALLING, this._cap * 2));
     const i = this.count++;
+    this._spawned++;
+    const ck = colKey(q, r);
+    this._colCount.set(ck, (this._colCount.get(ck) ?? 0) + 1);
     this._id[i] = id;
     this._q[i] = q;
     this._r[i] = r;

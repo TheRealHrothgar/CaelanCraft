@@ -4,7 +4,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   CHUNK_SIZE, MAX_CELL_UPDATES_PER_TICK, MAX_TOTAL_EDITS, PHYSICS_TICK_S, WATER_TICKS, UNDO_WINDOW_S,
-  MAX_SUPPORT_VISITS_PER_TICK, SUPPORT_STARVE_TICKS, SUPPORT_STARVED_VISITS,
+  MAX_SUPPORT_VISITS_PER_TICK, SUPPORT_STARVED_VISITS,
 } from '../../src/config.js';
 import { BLOCK, UNLOADED } from '../../src/blocks.js';
 import { packCell } from '../../src/coords.js';
@@ -425,25 +425,35 @@ describe('support seeds', () => {
     expect(physics.stats.lastSupportVisits).toBe(5);
   });
 
-  it('a collapse starved by a full fall ring still gets a small step every SUPPORT_STARVE_TICKS ticks (integration §38.4)', () => {
-    const { physics, world } = setup();
+  it('a collapse is never starved by a full fall ring: it gets its share every tick (fair shares, §33.1.3 / §38.4)', () => {
+    let t = 0;
+    const { physics, world } = setup({ physicsOpts: { now: () => t } });
     // A fall-ring rule that re-queues MORE than a tick's worth of cells forever (a huge waterfall / cascade).
     physics.registerRule('flood', { ring: 'fall', update: (ctx, q, y, r) => ctx.schedule('fall', q, y, r) });
     for (let i = 0; i < MAX_CELL_UPDATES_PER_TICK + 40; i++) physics.schedule('fall', i, 40, 7);
     const steps = [];
     physics.support.step = (ctx, seeds, maxVisits) => {
-      steps.push({ tick: ctx.tick, maxVisits });
+      steps.push({ tick: ctx.tick, maxVisits, deadline: ctx.deadline });
       seeds.shift();
       return 1;
     };
     world.setBlock(0, 11, 0, B.STONE);
     world.setBlock(0, 12, 0, B.STONE);
     world.setBlock(0, 11, 0, B.AIR); // a pending collapse check
-    for (let i = 0; i < SUPPORT_STARVE_TICKS - 1; i++) physics.tick();
-    expect(steps.length).toBe(0); // starved so far
     physics.tick();
-    expect(steps.length).toBe(1);
-    expect(steps[0].maxVisits).toBe(SUPPORT_STARVED_VISITS);
+    expect(steps.length).toBe(1); // the fall ring stopped at its share (FALL_SHARE) for it
+    expect(steps[0].maxVisits).toBe(MAX_SUPPORT_VISITS_PER_TICK);
+    // A ring that overran the whole budget (one huge update) still leaves the collapse a small step.
+    physics.registerRule('slow', { ring: 'fall', update: () => (t += 10) });
+    physics.schedule('fall', 0, 60, 0, 1);
+    physics.schedule('fall', 1, 60, 0, 1);
+    world.setBlock(1, 11, 1, B.STONE);
+    world.setBlock(1, 12, 1, B.STONE);
+    world.setBlock(1, 11, 1, B.AIR);
+    physics.tick();
+    expect(steps.length).toBe(2);
+    expect(steps[1].maxVisits).toBe(SUPPORT_STARVED_VISITS);
+    physics.unregisterRule('slow');
     // With the ring calm again, support gets its full budget at once.
     physics.unregisterRule('flood');
     for (let i = 0; i < 3; i++) physics.tick();
