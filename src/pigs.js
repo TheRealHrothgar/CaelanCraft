@@ -5,15 +5,19 @@
 // holes exactly like the player does. Its cylinder is used for terrain collisions, for body-to-body pushing
 // (bodies.js) and as the ray target. A pig fits under a one-cell overhang but is too wide for a one-cell tunnel.
 // Pigs never die: a hit makes them squeal, hop back and run away for PIG_FLEE_S. A pig in water swims for the
-// nearest bank it can climb. It hops only one-cell ledges, and never while standing on or carrying another body,
-// so pigs cannot climb out of a two-high pen on each other's backs.
+// nearest bank it can reach and climb (a search over the water surface), or straight on when there is none in reach.
+// It hops only one-cell ledges, and never while standing on or carrying another body, so pigs cannot climb out of a
+// two-high pen on each other's backs.
 import {
   PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_MASS, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
+  WADE_DEPTH,
 } from './config.js';
 import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt, isSwimWater } from './physics.js';
 import { yawToForward } from './coords.js';
-import { HEX_DIRS, hexToWorld, worldToHex, hexLength, hexCircleContact } from './hex.js';
-import { BLOCK, isSolid, isLiquid } from './blocks.js';
+import {
+  HEX_DIRS, HEX_INRADIUS, HEX_ROW_SPACING, FACE_NORMALS, hexToWorld, worldToHex, hexLength, hexCircleContact,
+} from './hex.js';
+import { BLOCK, isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
 
 /** @typedef {import('./types.js').GetBlockFn} GetBlockFn */
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -34,13 +38,25 @@ import { BLOCK, isSolid, isLiquid } from './blocks.js';
  * @property {GetBlockFn} getBlock
  * @property {(x: number, z: number) => boolean} isLoaded   true when the chunk under world (x, z) is loaded
  * @property {(x: number, y: number, z: number, out: [number, number, number]) => [number, number, number]} [pullAt]
+ * @property {() => boolean} [hasCampfires]  false while the world has no CAMPFIRE cell at all (tracked or refused):
+ *   walking pigs then skip the look-ahead for fire. Absent: always look.
  */
 
 const TWO_PI = Math.PI * 2;
-/** Cells around a swimming pig searched for a bank it can climb out onto. */
-export const SHORE_SEARCH = 8;
+/**
+ * Hex steps a swimming pig's bank search spreads over the water surface from its own column (so it visits at most
+ * 3·20·21 + 1 = 1261 water columns).
+ */
+export const SHORE_SEARCH = 20;
 /** A swimming pig re-aims for the nearest bank this often (s). */
 export const SWIM_REAIM_S = 0.75;
+/**
+ * Bank searches per update, all pigs together (each costs up to ~0.4 ms in open sea): pigs that fell in together
+ * spread their re-aims over frames instead of all searching in one. Pigs past the budget keep their heading a frame.
+ */
+export const SHORE_SEARCHES_PER_UPDATE = 2;
+/** Spacing (m) of the points a swimmer's straight line to its target is checked at (all must be in water columns). */
+const SWIM_SIGHT_STEP = 0.25;
 /** Distances (m) along the heading at which a walking pig looks for campfires. */
 export const FIRE_LOOK = Object.freeze([0.25, 0.5, 0.8]);
 /** A walking pig keeps its centre (the point the scorch test uses) at least this far from a campfire cell. */
@@ -52,9 +68,170 @@ export const LEG_SETTLE_RATE = 10;
 /** scratch for hexCircleContact */
 const contact = { depth: 0, nx: 0, nz: 0 };
 
-/** A cell a pig may hop up into or swim out onto: no solid, no water, no fire. */
+/**
+ * A cell a pig may hop up into or swim out onto: no solid, no fire, and no water it would swim in — a film shallow
+ * enough to wade (surface ≤ WADE_DEPTH: flowing levels 1–3) counts as open, so a beach under a thin flow is still a bank.
+ */
 function isOpen(id) {
-  return !isSolid(id) && !isLiquid(id) && id !== BLOCK.CAMPFIRE;
+  if (isSolid(id) || id === BLOCK.CAMPFIRE) return false;
+  return !isLiquid(id) || waterSurfaceHeight(id, BLOCK.AIR) <= WADE_DEPTH;
+}
+
+/** CAMPFIRE at the feet level fy or one below (a fire the pig would walk or step down into). */
+function isFireAt(getBlock, q, fy, r) {
+  return getBlock(q, fy, r) === BLOCK.CAMPFIRE || getBlock(q, fy - 1, r) === BLOCK.CAMPFIRE;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Shore search (swimming pigs). Columns are read at the swimmer's water level wy (its column's top liquid cell):
+// what is liquid, solid or open (isOpen) at wy … wy + 3, as bits.
+const C_LIQ = 1; // liquid at wy
+const C_S0 = 2; // solid at wy
+const C_S1 = 4; // solid at wy + 1
+const C_S2 = 8; // solid at wy + 2
+const C_O1 = 16; // open at wy + 1
+const C_O2 = 32; // open at wy + 2
+const C_O3 = 64; // open at wy + 3
+/** Window of columns around the swimmer: one ring past SHORE_SEARCH, so the banks at the search's edge fit. */
+const SW_R = SHORE_SEARCH + 1;
+const SW_W = 2 * SW_R + 1;
+const SW_N = SW_W * SW_W;
+const SW_START = SW_R * SW_W + SW_R; // the swimmer's own column
+const swDq = new Int8Array(SW_N); // window index → offset (dq, dr) and its hex distance
+const swDr = new Int8Array(SW_N);
+const swHex = new Uint8Array(SW_N);
+for (let i = 0; i < SW_N; i++) {
+  swDq[i] = Math.floor(i / SW_W) - SW_R;
+  swDr[i] = (i % SW_W) - SW_R;
+  swHex[i] = hexLength(swDq[i], swDr[i]);
+}
+/** window index step to each HEX_DIRS neighbour */
+const swStep = Int32Array.from(HEX_DIRS, ([a, b]) => a * SW_W + b);
+const swStamp = new Int32Array(SW_N); // == swNow: the column is read this search
+const swBits = new Uint8Array(SW_N);
+const swFrom = new Int32Array(SW_N); // BFS parent (−1 the start, −2 not reached)
+const swQueue = new Int32Array(SW_N);
+let swNow = 0;
+
+function columnBits(getBlock, q, wy, r) {
+  const a = getBlock(q, wy, r);
+  const b = getBlock(q, wy + 1, r);
+  if (isLiquid(a)) return C_LIQ | (isSolid(b) ? C_S1 : 0); // water: only whether it is open above matters
+  const c = getBlock(q, wy + 2, r);
+  return (isSolid(a) ? C_S0 : 0) | (isSolid(b) ? C_S1 : 0) | (isOpen(b) ? C_O1 : 0) | (isSolid(c) ? C_S2 : 0)
+    | (isOpen(c) ? C_O2 : 0) | (isOpen(getBlock(q, wy + 3, r)) ? C_O3 : 0);
+}
+
+/** A column a pig swims through at the surface: liquid at wy, not solid at wy + 1. */
+function isWaterCol(bits) {
+  return (bits & (C_LIQ | C_S1)) === C_LIQ;
+}
+
+/**
+ * Stand level of a bank (0 when the column is none): not liquid at wy, and either solid at wy with wy + 1 and wy + 2
+ * open (level with the surface: stand at wy + 1), or solid at wy + 1 with wy + 2 and wy + 3 open (one above it, which
+ * SWIM_EXIT_JUMP clears: stand at wy + 2).
+ */
+function bankStand(bits, wy) {
+  if (bits & C_LIQ) return 0;
+  if (bits & C_S1) return (bits & (C_O2 | C_O3)) === (C_O2 | C_O3) ? wy + 2 : 0;
+  return (bits & (C_S0 | C_O1 | C_O2)) === (C_S0 | C_O1 | C_O2) ? wy + 1 : 0;
+}
+
+/** Bits of window column i (read once per search; a first read also marks it not reached). */
+function swRead(getBlock, pq, pr, wy, i) {
+  if (swStamp[i] !== swNow) {
+    swStamp[i] = swNow;
+    swBits[i] = columnBits(getBlock, pq + swDq[i], wy, pr + swDr[i]);
+    swFrom[i] = -2;
+  }
+  return swBits[i];
+}
+
+/** A flank of a step that is not water and is solid where `mask` says. */
+function swBlocks(getBlock, pq, pr, wy, i, mask) {
+  const bits = swRead(getBlock, pq, pr, wy, i);
+  return !isWaterCol(bits) && (bits & mask) !== 0;
+}
+
+/** True when every SWIM_SIGHT_STEP point from (x, z) to (tx, tz) lies in a water column, the start or target column. */
+function swimClear(getBlock, pq, pr, wy, x, z, tx, tz, target) {
+  const n = Math.ceil(Math.hypot(tx - x, tz - z) / SWIM_SIGHT_STEP);
+  for (let k = 1; k <= n; k++) {
+    const [q, r] = worldToHex(x + ((tx - x) * k) / n, z + ((tz - z) * k) / n);
+    const dq = q - pq;
+    const dr = r - pr;
+    if (hexLength(dq, dr) > SW_R) return false;
+    const i = (dq + SW_R) * SW_W + (dr + SW_R);
+    if (i !== target && i !== SW_START && !isWaterCol(swRead(getBlock, pq, pr, wy, i))) return false;
+  }
+  return true;
+}
+
+/**
+ * Where a pig swimming at (x, z) in column (pq, pr), top water cell wy, should head for the nearest bank it can reach
+ * and climb, or null when there is none within SHORE_SEARCH steps over the water. A breadth-first search over water
+ * columns (§30): a step from one column to a neighbour is passable unless BOTH cells flanking their shared edge block
+ * it (a pig is too wide for a one-cell gap) — for a step into water, a flank blocks when it is not water and is solid
+ * at wy or wy + 1; for a step onto a bank, when it is not water and is solid at the bank's stand level. The first
+ * layer with a reachable bank wins, the bank nearest (x, z) of that layer. The heading is the farthest point of the
+ * path (the bank, then the water columns back toward the pig) whose straight line from the pig stays in water.
+ * @returns {[number, number]|null} world (x, z) to swim toward
+ */
+function shoreTarget(getBlock, x, z, pq, pr, wy) {
+  swNow++;
+  swRead(getBlock, pq, pr, wy, SW_START);
+  swFrom[SW_START] = -1;
+  swQueue[0] = SW_START;
+  let head = 0;
+  let tail = 1;
+  let layerEnd = 1;
+  let best = -1;
+  let bestFrom = -1;
+  let bestD2 = Infinity;
+  while (head < tail) {
+    if (head === layerEnd) {
+      if (best >= 0) break; // the nearest layer with a bank is done
+      layerEnd = tail;
+    }
+    const i = swQueue[head++];
+    for (let k = 0; k < 6; k++) {
+      const n = i + swStep[k];
+      if (swStamp[n] === swNow && swFrom[n] !== -2) continue; // already queued
+      const bits = swRead(getBlock, pq, pr, wy, n);
+      const water = isWaterCol(bits) && swHex[n] <= SHORE_SEARCH;
+      const stand = water ? 0 : bankStand(bits, wy);
+      if (!water && !stand) continue;
+      // The cells either side of the edge crossed: both blocking is a one-cell gap the pig is too wide for.
+      const mask = water ? C_S0 | C_S1 : stand === wy + 1 ? C_S1 : C_S2;
+      if (
+        swBlocks(getBlock, pq, pr, wy, i + swStep[(k + 5) % 6], mask)
+        && swBlocks(getBlock, pq, pr, wy, i + swStep[(k + 1) % 6], mask)
+      ) continue;
+      if (water) {
+        swFrom[n] = i;
+        swQueue[tail++] = n;
+        continue;
+      }
+      const [bx, bz] = hexToWorld(pq + swDq[n], pr + swDr[n]);
+      const d2 = (bx - x) * (bx - x) + (bz - z) * (bz - z);
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = n;
+        bestFrom = i;
+      }
+    }
+  }
+  if (best < 0) return null;
+  // Aim at the farthest point along the path that the pig can swim to in a straight line (at worst the next column).
+  let node = best;
+  let next = bestFrom;
+  for (;;) {
+    const [tx, tz] = hexToWorld(pq + swDq[node], pr + swDr[node]);
+    if (next === SW_START || swimClear(getBlock, pq, pr, wy, x, z, tx, tz, node)) return [tx, tz];
+    node = next;
+    next = swFrom[node];
+  }
 }
 
 /** Wrap an angle into (−π, π]. */
@@ -103,6 +280,10 @@ export class Pigs {
     this.scorched = [];
     /** @type {Set<object>} scratch: bodies some pig stood on at the end of last frame */
     this._carriers = new Set();
+    /** this update: the world may have a campfire (PigWorld.hasCampfires), so walking pigs look ahead for fire */
+    this._fires = true;
+    /** bank searches left this update (SHORE_SEARCHES_PER_UPDATE) */
+    this._shoreBudget = SHORE_SEARCHES_PER_UPDATE;
     this._input = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, yaw: 0, pullX: 0, pullY: 0, pullZ: 0 };
   }
 
@@ -154,6 +335,8 @@ export class Pigs {
     this.scorched.length = 0;
     if (!(dt > 0)) return oinks;
     const input = this._input;
+    this._fires = world.hasCampfires ? !!world.hasCampfires() : true;
+    this._shoreBudget = SHORE_SEARCHES_PER_UPDATE;
     // Ride links are the ones made at the end of last frame (bodies.js keeps them until the next resolveBodies).
     const carriers = this._carriers;
     carriers.clear();
@@ -196,6 +379,9 @@ export class Pigs {
       const z0 = pig.z;
       stepPlayer(pig, input, world.getBlock, dt);
       pig.sneaking = false; // a pig has no eye height to lower; keep the flag meaningful for the player only
+      // Remembered until the next swim re-aim: a swimmer pressed into a high wall exit-jumps and only touches it on
+      // some frames, so the instant hitWall at re-aim time is usually false and it would never turn away.
+      if (pig.hitWall) pig.wallSinceAim = true;
       const stride = Math.hypot(pig.x - x0, pig.z - z0);
       pig.walkPhase = (pig.walkPhase + stride * 4) % TWO_PI;
       if (stride < LEG_SETTLE_SPEED * dt) {
@@ -228,14 +414,19 @@ export class Pigs {
   _think(pig, dt, getBlock, canHop) {
     pig.timer -= dt;
     if (pig.inWater && pig.mode !== 'flee') {
-      // Swimming: never idle; head for the nearest bank it can climb, re-aimed every SWIM_REAIM_S (at once when it
-      // has just fallen in with a long walk timer). The edge rule does not apply, since all around is water. Stuck
-      // against a wall it cannot climb, it tries another way.
-      if (pig.mode !== 'walk' || pig.timer <= 0 || pig.timer > SWIM_REAIM_S) {
-        pig.mode = 'walk';
+      // Swimming: never idle; head for the nearest bank it can reach and climb, re-aimed every SWIM_REAIM_S (at once
+      // when it has just fallen in with a long walk timer). The edge rule does not apply, since all around is water.
+      // With no bank in reach it keeps its heading, so it crosses open water in a straight line instead of circling;
+      // only a wall in the way turns it. Past this update's search budget, a due re-aim waits for the next frame.
+      const due = pig.mode !== 'walk' || pig.timer <= 0 || pig.timer > SWIM_REAIM_S;
+      pig.mode = 'walk';
+      if (due && this._shoreBudget > 0) {
+        this._shoreBudget--;
         pig.timer = SWIM_REAIM_S;
-        const shore = pig.hitWall ? null : this._shoreYaw(pig, getBlock);
-        pig.targetYaw = shore ?? wrapAngle(pig.yaw + (this._rng() * 2 - 1) * Math.PI * 0.75);
+        const shore = this._shoreYaw(pig, getBlock);
+        if (shore !== null) pig.targetYaw = shore;
+        else if (pig.wallSinceAim) pig.targetYaw = wrapAngle(pig.yaw + (this._rng() * 2 - 1) * Math.PI * 0.75);
+        pig.wallSinceAim = false;
       }
       return;
     }
@@ -275,7 +466,7 @@ export class Pigs {
     const at = getBlock(q, fy, r);
     const below = getBlock(q, fy - 1, r);
     if (isSwimWater(getBlock, q, fy, r)) return false; // films a pig can wade through are fine
-    if (this._fireAhead(pig, fy, getBlock)) return false; // pigs keep away from fire
+    if (this._fires && this._fireAhead(pig, fy, getBlock)) return false; // pigs keep away from fire
     if (isSolid(at)) return canHop && isOpen(getBlock(q, fy + 1, r));
     return isSolid(below) || isSolid(getBlock(q, fy - 2, r));
   }
@@ -289,31 +480,39 @@ export class Pigs {
   /**
    * True when a point FIRE_LOOK ahead along the yaw lies within FIRE_MARGIN of a campfire cell at the feet level or
    * one below (a fire the pig would step down into). Several points, each with a margin, cover the cell corners and
-   * the arc of a turn that a single look-ahead point skips.
+   * the arc of a turn that a single look-ahead point skips. Cheap where there is no fire: a neighbour cell can only
+   * be within the margin when the point is that close to their shared edge (the neighbour lies beyond it), so only
+   * those neighbours are read, and the exact contact is computed only for a neighbour that IS a campfire.
    */
   _fireAhead(pig, fy, getBlock) {
     const [fx, fz] = yawToForward(pig.yaw);
+    let lastQ = NaN;
+    let lastR = NaN;
     for (const s of FIRE_LOOK) {
       const px = pig.x + fx * s;
       const pz = pig.z + fz * s;
       const [cq, cr] = worldToHex(px, pz);
-      for (let k = -1; k < 6; k++) {
-        const q = k < 0 ? cq : cq + HEX_DIRS[k][0];
-        const r = k < 0 ? cr : cr + HEX_DIRS[k][1];
-        if (k >= 0) {
-          const [hx, hz] = hexToWorld(q, r);
-          if (!hexCircleContact(hx, hz, px, pz, FIRE_MARGIN, contact)) continue;
-        }
-        if (getBlock(q, fy, r) === BLOCK.CAMPFIRE || getBlock(q, fy - 1, r) === BLOCK.CAMPFIRE) return true;
+      if ((cq !== lastQ || cr !== lastR) && isFireAt(getBlock, cq, fy, cr)) return true;
+      lastQ = cq;
+      lastR = cr;
+      const dx = px - (cq + cr * 0.5); // offset from the centre of cell (cq, cr) (hexToWorld)
+      const dz = pz - cr * HEX_ROW_SPACING;
+      for (let k = 0; k < 6; k++) {
+        const n = FACE_NORMALS[k]; // also the world offset of neighbour k (HEX_DIRS[k])
+        if (HEX_INRADIUS - (dx * n[0] + dz * n[2]) >= FIRE_MARGIN) continue; // farther than the margin from edge k
+        const q = cq + HEX_DIRS[k][0];
+        const r = cr + HEX_DIRS[k][1];
+        if (!isFireAt(getBlock, q, fy, r)) continue;
+        const [hx, hz] = hexToWorld(q, r);
+        if (hexCircleContact(hx, hz, px, pz, FIRE_MARGIN, contact)) return true;
       }
     }
     return false;
   }
 
   /**
-   * Heading (yaw) toward the nearest column within SHORE_SEARCH cells whose floor a swimmer can climb onto: a solid
-   * cell under an open one, level with the water surface or one above it (SWIM_EXIT_JUMP clears that). null when
-   * there is none in range.
+   * Heading (yaw) toward the nearest bank the swimmer can reach over the water and climb (shoreTarget), null when its
+   * column has no water at the feet or one above, or no bank is within SHORE_SEARCH steps.
    */
   _shoreYaw(pig, getBlock) {
     const [pq, pr] = worldToHex(pig.x, pig.z);
@@ -321,26 +520,9 @@ export class Pigs {
     if (!isLiquid(getBlock(pq, y, pr))) y++;
     if (!isLiquid(getBlock(pq, y, pr))) return null;
     while (y < WORLD_HEIGHT - 1 && isLiquid(getBlock(pq, y + 1, pr))) y++;
-    const surface = y + 1; // feet height on a bank level with the top water cell
-    let best = null;
-    let bestD2 = Infinity;
-    for (let dq = -SHORE_SEARCH; dq <= SHORE_SEARCH; dq++) {
-      for (let dr = -SHORE_SEARCH; dr <= SHORE_SEARCH; dr++) {
-        if ((dq === 0 && dr === 0) || hexLength(dq, dr) > SHORE_SEARCH) continue;
-        const [x, z] = hexToWorld(pq + dq, pr + dr);
-        const d2 = (x - pig.x) ** 2 + (z - pig.z) ** 2;
-        if (d2 >= bestD2) continue;
-        for (let h = surface + 1; h >= surface; h--) {
-          if (isSolid(getBlock(pq + dq, h - 1, pr + dr)) && isOpen(getBlock(pq + dq, h, pr + dr))) {
-            best = [x, z];
-            bestD2 = d2;
-            break;
-          }
-        }
-      }
-    }
-    if (!best) return null;
-    return Math.atan2(-(best[0] - pig.x), -(best[1] - pig.z)); // yawToForward(yaw) = (−sin, −cos)
+    const target = shoreTarget(getBlock, pig.x, pig.z, pq, pr, y);
+    if (!target) return null;
+    return Math.atan2(-(target[0] - pig.x), -(target[1] - pig.z)); // yawToForward(yaw) = (−sin, −cos)
   }
 
   /**

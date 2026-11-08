@@ -360,6 +360,8 @@ export function boot(win, doc) {
       }
       return out;
     },
+    // Every CAMPFIRE cell is known to `campfires` (tracked or refused): with none, pigs skip the fire look-ahead.
+    hasCampfires: () => campfires.total > 0,
   };
   /**
    * World view handed to blackHoles.update and blackHoles.respawnPoint (used once a world exists). Eats are lazy writes
