@@ -43,6 +43,64 @@ export const TILE_NAMES = Object.freeze({
   25: 'wool_white',
   26: 'wool_red',
   27: 'rune',
+  28: 'spruce_log_side',
+  29: 'spruce_log_end',
+  30: 'spruce_planks',
+  31: 'spruce_leaves',
+  32: 'birch_log_side',
+  33: 'birch_log_end',
+  34: 'birch_planks',
+  35: 'birch_leaves',
+  36: 'granite',
+  37: 'diorite',
+  38: 'andesite',
+  39: 'slate',
+  40: 'mossy_cobblestone',
+  41: 'mossy_stone_bricks',
+  42: 'obsidian',
+  43: 'clay',
+  44: 'red_sand',
+  45: 'ice',
+  46: 'packed_ice',
+  47: 'coal_block',
+  48: 'iron_block',
+  49: 'gold_block',
+  50: 'diamond_block',
+  51: 'copper_block',
+  52: 'glowstone',
+  53: 'honeycomb',
+  54: 'hay_bale_side',
+  55: 'hay_bale_top',
+  56: 'pumpkin_side',
+  57: 'pumpkin_top',
+  58: 'wool_orange',
+  59: 'wool_yellow',
+  60: 'wool_lime',
+  61: 'wool_green',
+  62: 'wool_cyan',
+  63: 'wool_light_blue',
+  64: 'wool_blue',
+  65: 'wool_purple',
+  66: 'wool_magenta',
+  67: 'wool_pink',
+  68: 'wool_brown',
+  69: 'wool_black',
+  70: 'wool_gray',
+  71: 'wool_light_gray',
+  72: 'black_hole',
+  73: 'campfire_side',
+  74: 'campfire_top',
+  75: 'barrel_side',
+  76: 'barrel_top',
+  240: 'zombie_face',
+  241: 'zombie_head_side',
+  242: 'zombie_scalp',
+  243: 'zombie_shirt',
+  244: 'zombie_trousers',
+  245: 'zombie_sole',
+  250: 'watcher_stone',
+  251: 'watcher_cracks',
+  252: 'watcher_smoke',
   255: 'missing',
 });
 
@@ -278,8 +336,11 @@ function paintCobblestone(px, rng) {
 
 /** 5 oak_planks — four 4-row planks with dark seams, staggered end seams and grain streaks. */
 function paintOakPlanks(px, rng) {
-  const BASE = 0xa2824e;
-  const SEAM = 0x6e5533;
+  paintPlanks(px, rng, 0xa2824e, 0x6e5533);
+}
+
+/** Shared plank layout for oak / spruce / birch planks. */
+function paintPlanks(px, rng, BASE, SEAM) {
   const END_SEAM_X = [11, 3, 13, 6];
   fill(px, BASE);
   // Per-plank tint on the plank body rows 4p..4p+2.
@@ -359,7 +420,12 @@ function paintGravel(px, rng) {
 
 /** 10 oak_log_side — vertical bark stripes with 3 dark cracks (clipped at the bottom edge). */
 function paintOakLogSide(px, rng) {
-  fill(px, 0x6b5032);
+  paintBarkSide(px, rng, 0x6b5032, 0x4a3620);
+}
+
+/** Shared bark: per-column ±16 stripes over `barkHex`, then 3 vertical cracks in `crackHex`, noise 5. */
+function paintBarkSide(px, rng, barkHex, crackHex) {
+  fill(px, barkHex);
   for (let x = 0; x < W; x++) {
     const d = randInt(rng, -16, 16);
     for (let y = 0; y < H; y++) adjAt(px, x, y, d);
@@ -369,22 +435,27 @@ function paintOakLogSide(px, rng) {
     const y0 = randInt(rng, 0, 8);
     const len = randInt(rng, 5, 10);
     const yEnd = Math.min(y0 + len, H);
-    for (let y = y0; y < yEnd; y++) set(px, x, y, 0x4a3620);
+    for (let y = y0; y < yEnd; y++) set(px, x, y, crackHex);
   }
   noise(px, rng, 5);
 }
 
 /** 11 oak_log_end — Chebyshev rings: bark rim (r ≥ 6.5), rings at r ∈ {4.5, 2.5, 0.5}, wood elsewhere. */
 function paintOakLogEnd(px, rng) {
+  paintLogEnd(px, rng, 0x6b5032, 0x8f7345, 0xaf8f5a);
+}
+
+/** Shared log end: bark rim, ring and wood colours. */
+function paintLogEnd(px, rng, barkHex, ringHex, woodHex) {
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const r = Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5));
       if (r >= 6.5) {
-        set(px, x, y, 0x6b5032, randInt(rng, -10, 10));
+        set(px, x, y, barkHex, randInt(rng, -10, 10));
       } else if (r === 4.5 || r === 2.5 || r === 0.5) {
-        set(px, x, y, 0x8f7345);
+        set(px, x, y, ringHex);
       } else {
-        set(px, x, y, 0xaf8f5a);
+        set(px, x, y, woodHex);
       }
     }
   }
@@ -399,10 +470,15 @@ function paintOakLogEnd(px, rng) {
 
 /** 12 oak_leaves — green noise; ~22% of pixels become alpha-0 holes (RGB kept so cutout edges stay green). */
 function paintOakLeaves(px, rng) {
-  fill(px, 0x4a8a2c);
+  paintLeaves(px, rng, 0x4a8a2c, 0x6baf3c);
+}
+
+/** Shared leaves: base + speck colour, ~22% alpha-0 holes. */
+function paintLeaves(px, rng, baseHex, speckHex) {
+  fill(px, baseHex);
   cellNoise(px, rng, 2, 16);
   noise(px, rng, 8);
-  speck(px, rng, 12, [0x6baf3c]);
+  speck(px, rng, 12, [speckHex]);
   for (let i = 3; i < BYTES; i += 4) px[i] = rng() < 0.22 ? 0 : 255;
 }
 
@@ -621,6 +697,759 @@ function paintRune(px, rng) {
   set(px, 8, 8, 0xd8f8ff);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// v0.4 block batch (tiles 28–71). Same rules: own-name seed, alpha 255 except leaves (holes) and ice (alpha 200).
+// ---------------------------------------------------------------------------------------------------------------
+
+/** 28/29/30/31 spruce — dark brown bark and planks, deep blue-green needles. */
+function paintSpruceLogSide(px, rng) {
+  paintBarkSide(px, rng, 0x3f2c1b, 0x24180d);
+}
+function paintSpruceLogEnd(px, rng) {
+  paintLogEnd(px, rng, 0x3f2c1b, 0x6b4c2c, 0x8a6740);
+}
+function paintSprucePlanks(px, rng) {
+  paintPlanks(px, rng, 0x735434, 0x45311c);
+}
+function paintSpruceLeaves(px, rng) {
+  paintLeaves(px, rng, 0x2e5a3a, 0x427a50);
+}
+
+/** 32 birch_log_side — near-white bark with short dark horizontal lenticels. */
+function paintBirchLogSide(px, rng) {
+  fill(px, 0xd8d4c6);
+  cellNoise(px, rng, 2, 6);
+  for (let k = 0; k < 9; k++) {
+    const x0 = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 15);
+    const len = randInt(rng, 2, 5);
+    for (let i = 0; i < len; i++) set(px, wrap16(x0 + i), y, 0x2e2a24, randInt(rng, -6, 6));
+  }
+  noise(px, rng, 4);
+}
+/** 33/34/35 birch end, planks, leaves. */
+function paintBirchLogEnd(px, rng) {
+  paintLogEnd(px, rng, 0xd8d4c6, 0xb59c6a, 0xd2bc85);
+}
+function paintBirchPlanks(px, rng) {
+  paintPlanks(px, rng, 0xc8b47a, 0x8f7c4c);
+}
+function paintBirchLeaves(px, rng) {
+  paintLeaves(px, rng, 0x6a9a3a, 0x8cbc52);
+}
+
+/** Speckled igneous stones: base, cell noise, then two speck colours. */
+function paintSpeckled(px, rng, baseHex, cellAmp, a, aCount, b, bCount) {
+  fill(px, baseHex);
+  cellNoise(px, rng, 2, cellAmp);
+  noise(px, rng, 5);
+  speck(px, rng, aCount, a);
+  speck(px, rng, bCount, b);
+}
+/** 36 granite */
+function paintGranite(px, rng) {
+  paintSpeckled(px, rng, 0x9a6a55, 12, [0xb88a74, 0xc49a84], 22, [0x6e4636], 14);
+}
+/** 37 diorite */
+function paintDiorite(px, rng) {
+  paintSpeckled(px, rng, 0xbdbdbd, 10, [0xe6e6e6, 0xf4f4f4], 24, [0x7f7f7f, 0x5e5e5e], 18);
+}
+/** 38 andesite */
+function paintAndesite(px, rng) {
+  paintSpeckled(px, rng, 0x868886, 12, [0x9c9e9c], 16, [0x666866], 16);
+}
+
+/** 39 slate — blue-grey layers: per-row tint bands with a few darker cleavage lines. */
+function paintSlate(px, rng) {
+  fill(px, 0x4a5058);
+  for (let y = 0; y < H; y++) {
+    const d = randInt(rng, -8, 8);
+    for (let x = 0; x < W; x++) adjAt(px, x, y, d);
+  }
+  for (let k = 0; k < 4; k++) {
+    const y = randInt(rng, 0, 15);
+    const x0 = randInt(rng, 0, 15);
+    const len = randInt(rng, 5, 11);
+    for (let i = 0; i < len; i++) set(px, wrap16(x0 + i), y, 0x30343a);
+  }
+  noise(px, rng, 4);
+}
+
+/** Moss overlay: `count` green 1–3 px clumps over whatever is already painted. */
+function moss(px, rng, count) {
+  const MOSS = [0x4f7a32, 0x5d8c3a, 0x3e6428];
+  for (let k = 0; k < count; k++) {
+    const x = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 15);
+    const c = pick(rng, MOSS);
+    set(px, x, y, c);
+    if (rng() < 0.6) set(px, wrap16(x + 1), y, c);
+    if (rng() < 0.4) set(px, x, wrap16(y + 1), c);
+  }
+}
+/** 40 mossy_cobblestone — cobblestone base (seed "cobblestone") + moss. */
+function paintMossyCobblestone(px, rng) {
+  paintCobblestone(px, makeRng('cobblestone'));
+  moss(px, rng, 26);
+}
+/** 41 mossy_stone_bricks — stone_bricks base (seed "stone_bricks") + moss. */
+function paintMossyStoneBricks(px, rng) {
+  paintStoneBricks(px, makeRng('stone_bricks'));
+  moss(px, rng, 22);
+}
+
+/** 42 obsidian — near-black violet with glassy purple glints. */
+function paintObsidian(px, rng) {
+  fill(px, 0x150f22);
+  cellNoise(px, rng, 2, 8);
+  noise(px, rng, 3);
+  speck(px, rng, 14, [0x3b2a5c, 0x4c3878]);
+  speck(px, rng, 4, [0x7a63a8]);
+}
+
+/** 43 clay */
+function paintClay(px, rng) {
+  fill(px, 0x9fa4b0);
+  cellNoise(px, rng, 2, 8);
+  noise(px, rng, 4);
+  speck(px, rng, 8, [0x8a8f9b]);
+}
+
+/** 44 red_sand */
+function paintRedSand(px, rng) {
+  fill(px, 0xbe6a2c);
+  cellNoise(px, rng, 2, 10);
+  noise(px, rng, 5);
+  speck(px, rng, 6, [0xa4581f]);
+}
+
+/** 45 ice — pale blue with white crack lines, alpha 200 everywhere (translucent layer). */
+function paintIce(px, rng) {
+  fill(px, 0x8cb4f0);
+  cellNoise(px, rng, 2, 8);
+  noise(px, rng, 3);
+  for (let k = 0; k < 3; k++) {
+    line(px, randInt(rng, 0, 15), randInt(rng, 0, 15), randInt(rng, 0, 15), randInt(rng, 0, 15), 0xdcebff);
+  }
+  for (let i = 3; i < BYTES; i += 4) px[i] = 200;
+}
+
+/** 46 packed_ice — denser, opaque, faint frost specks. */
+function paintPackedIce(px, rng) {
+  fill(px, 0x8aa8e0);
+  cellNoise(px, rng, 2, 6);
+  noise(px, rng, 3);
+  speck(px, rng, 16, [0xb4ccf4, 0xc8dcff]);
+}
+
+/**
+ * Storage blocks (coal / iron / gold / diamond / copper): a bevelled plate — light rim on the top-left edges,
+ * dark rim on the bottom-right, a soft diagonal sheen, then fine noise.
+ */
+function paintStorage(px, rng, baseHex, lightHex, darkHex, amp) {
+  fill(px, baseHex);
+  cellNoise(px, rng, 4, amp);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (x === 0 || y === 0) set(px, x, y, lightHex);
+      else if (x === 15 || y === 15) set(px, x, y, darkHex);
+      else if (x + y === 9 || x + y === 10) adjAt(px, x, y, 18);
+    }
+  }
+  noise(px, rng, 3);
+}
+/** 47–51 */
+function paintCoalBlock(px, rng) {
+  paintStorage(px, rng, 0x1c1c1e, 0x3a3a3e, 0x0a0a0a, 6);
+}
+function paintIronBlock(px, rng) {
+  paintStorage(px, rng, 0xd8d8d8, 0xf6f6f6, 0x9a9a9a, 6);
+}
+function paintGoldBlock(px, rng) {
+  paintStorage(px, rng, 0xf2cf3a, 0xfff38a, 0xb08a18, 6);
+}
+function paintDiamondBlock(px, rng) {
+  paintStorage(px, rng, 0x62e0e4, 0xc8fcff, 0x2a9ea6, 6);
+}
+function paintCopperBlock(px, rng) {
+  paintStorage(px, rng, 0xc06a45, 0xe8936a, 0x7f3e24, 8);
+  speck(px, rng, 6, [0x5fa88a]); // a hint of verdigris
+}
+
+/** 52 glowstone — warm gold crystals with bright cores (looks lit; no light engine). */
+function paintGlowstone(px, rng) {
+  fill(px, 0xc89234);
+  cellNoise(px, rng, 3, 22);
+  for (let k = 0; k < 14; k++) {
+    const x = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 15);
+    set(px, x, y, 0xfff0b0);
+    set(px, wrap16(x + 1), y, 0xf8d070);
+    set(px, x, wrap16(y + 1), 0xf8d070);
+  }
+  noise(px, rng, 5);
+}
+
+/**
+ * 53 honeycomb — the world's own motif: a 2-row honeycomb of small hex cells (amber walls, golden centres).
+ * Cell centres sit on an offset grid of pitch 6 × 5 px; a pixel is wall when its two nearest centres are nearly tied.
+ */
+function paintHoneycomb(px, rng) {
+  const centres = [];
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 3; col++) centres.push([col * 6 + (row % 2) * 3 - 0.5, row * 4 + 1.5]);
+  }
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let d1 = Infinity;
+      let d2 = Infinity;
+      for (const [cx, cy] of centres) {
+        const ax = Math.abs(x - cx);
+        const ay = Math.abs(y - cy);
+        const dx = Math.min(ax, 18 - ax);
+        const dy = Math.min(ay, 16 - ay);
+        const d = Math.sqrt(dx * dx + dy * dy * 1.3);
+        if (d < d1) {
+          d2 = d1;
+          d1 = d;
+        } else if (d < d2) {
+          d2 = d;
+        }
+      }
+      if (d2 - d1 < 0.9) set(px, x, y, 0xa8661a, randInt(rng, -6, 6));
+      else set(px, x, y, d1 < 1.2 ? 0xffd25a : 0xe8a630, randInt(rng, -6, 6));
+    }
+  }
+}
+
+/** 54 hay_bale_side — golden straw stripes with two dark binding bands. */
+function paintHayBaleSide(px, rng) {
+  fill(px, 0xc8a232);
+  for (let x = 0; x < W; x++) {
+    const d = randInt(rng, -18, 14);
+    for (let y = 0; y < H; y++) adjAt(px, x, y, d);
+  }
+  for (const y of [3, 12]) {
+    for (let x = 0; x < W; x++) set(px, x, y, 0x7a4e1c, randInt(rng, -6, 6));
+  }
+  noise(px, rng, 6);
+}
+/** 55 hay_bale_top — cut straw ends: dense specks over a golden base, dark binding ring. */
+function paintHayBaleTop(px, rng) {
+  fill(px, 0xb8922a);
+  cellNoise(px, rng, 1, 16);
+  speck(px, rng, 30, [0xe0c050, 0x8e6c1c]);
+  for (let i = 0; i < 16; i++) {
+    set(px, i, 0, 0x7a4e1c);
+    set(px, i, 15, 0x7a4e1c);
+    set(px, 0, i, 0x7a4e1c);
+    set(px, 15, i, 0x7a4e1c);
+  }
+}
+
+/** 56 pumpkin_side — orange with darker vertical ribs every 4 px. */
+function paintPumpkinSide(px, rng) {
+  fill(px, 0xd8781a);
+  for (let x = 0; x < W; x++) {
+    const rib = x % 4 === 0 ? -34 : x % 4 === 2 ? 10 : 0;
+    for (let y = 0; y < H; y++) adjAt(px, x, y, rib);
+  }
+  noise(px, rng, 5);
+}
+/** 57 pumpkin_top — orange with a green stalk in the middle and ribs radiating to the edges. */
+function paintPumpkinTop(px, rng) {
+  fill(px, 0xd27216);
+  cellNoise(px, rng, 2, 8);
+  for (const [x1, y1] of [[0, 0], [15, 0], [0, 15], [15, 15], [7, 0], [7, 15], [0, 7], [15, 7]]) line(px, 7, 7, x1, y1, 0xa85410);
+  for (let y = 6; y <= 9; y++) for (let x = 6; x <= 9; x++) set(px, x, y, 0x4e6a1e, randInt(rng, -8, 8));
+  noise(px, rng, 3);
+}
+
+/** 58–71 wool colours (same weave as white/red). */
+const WOOL_HEX = Object.freeze({
+  wool_orange: 0xe87a1a, wool_yellow: 0xf4cc30, wool_lime: 0x74c02a, wool_green: 0x4a6a22, wool_cyan: 0x168c94,
+  wool_light_blue: 0x4cb0dc, wool_blue: 0x353aa0, wool_purple: 0x7a2aaa, wool_magenta: 0xbc48b4, wool_pink: 0xec90ac,
+  wool_brown: 0x734a2a, wool_black: 0x18181c, wool_gray: 0x3e4448, wool_light_gray: 0x8e8e88,
+});
+
+/**
+ * 72 black_hole — a starfield (0x0b0716 + a few white specks) behind a two-armed accretion swirl: for r in
+ * [3.2, 7.4) around (7.5, 7.5) the arm strength s = (1 + cos(2θ + 1.6r)) / 2 lerps the ring colour (hot orange
+ * 0xffb347 at the inner edge to violet 0x7a3fbf at the outer) from 25% to 100%; r < 3.2 is the event horizon,
+ * 0x020104 with a 0x3a1c00 photon rim at r ≥ 2.6. Alpha 255.
+ */
+function paintBlackHole(px, rng) {
+  fill(px, 0x0b0716);
+  noise(px, rng, 3);
+  speck(px, rng, 7, [0xffffff, 0xc8d0ff]);
+  const lerp = (a, b, t) => Math.round(a + (b - a) * t);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const dx = x - 7.5;
+      const dy = y - 7.5;
+      const r = Math.hypot(dx, dy);
+      if (r < 2.6) {
+        set(px, x, y, 0x020104);
+      } else if (r < 3.2) {
+        set(px, x, y, 0x3a1c00);
+      } else if (r < 7.4) {
+        const t = (r - 3.2) / 4.2;
+        const s = 0.25 + 0.75 * ((1 + Math.cos(2 * Math.atan2(dy, dx) + 1.6 * r)) / 2);
+        const cr = lerp(0xff, 0x7a, t) * s;
+        const cg = lerp(0xb3, 0x3f, t) * s;
+        const cb = lerp(0x47, 0xbf, t) * s;
+        set(px, x, y, (Math.round(cr) << 16) | (Math.round(cg) << 8) | Math.round(cb), randInt(rng, -6, 6));
+      }
+    }
+  }
+}
+
+/**
+ * 73 campfire_side (icon only; the block has its own model) — alpha 0 background; two stacked logs on rows 12–15
+ * (bark 0x5a3b22 ± 10 with a lighter top edge, 0xa07848 end rings at x 0–1 and 14–15) and a flame above them:
+ * column x burns from row 11 up to height h(x) = round(10·(1 − |x − 7.5|/8.5)) + randInt(−1, 1) rows; within a column
+ * the colour goes from 0xfff2a8 (bottom third, middle columns 5–10) through 0xffb02e to a 0xe8501a tip row.
+ */
+function paintCampfireSide(px, rng) {
+  for (let i = 0; i < BYTES; i += 4) px[i + 3] = 0;
+  for (let y = 12; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const end = x <= 1 || x >= 14;
+      set(px, x, y, end ? 0xa07848 : 0x5a3b22, end ? 0 : randInt(rng, -10, 10));
+    }
+  }
+  for (let x = 2; x < 14; x++) {
+    adjAt(px, x, 12, 18);
+    adjAt(px, x, 14, -12);
+  }
+  for (let x = 1; x < 15; x++) {
+    const h = Math.max(1, Math.round(10 * (1 - Math.abs(x - 7.5) / 8.5)) + randInt(rng, -1, 1));
+    for (let k = 0; k < h; k++) {
+      const y = 11 - k;
+      const core = k < h / 3 && x >= 5 && x <= 10;
+      const hex = k === h - 1 ? 0xe8501a : core ? 0xfff2a8 : 0xffb02e;
+      set(px, x, y, hex, randInt(rng, -8, 8));
+    }
+  }
+}
+
+/**
+ * 74 campfire_top (icon only) — alpha 0 background; three 2-px logs (0x5a3b22 ± 8) through the centre at 0°, 60° and
+ * 120°, and a glowing 4×4 ember bed in the middle (0xffb02e, centre 2×2 0xfff2a8).
+ */
+function paintCampfireTop(px, rng) {
+  for (let i = 0; i < BYTES; i += 4) px[i + 3] = 0;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const dx = x - 7.5;
+      const dy = y - 7.5;
+      if (Math.hypot(dx, dy) > 7.6) continue;
+      for (const a of [0, Math.PI / 3, (2 * Math.PI) / 3]) {
+        // distance from the line through the centre at angle a
+        if (Math.abs(-Math.sin(a) * dx + Math.cos(a) * dy) < 1.05) {
+          set(px, x, y, 0x5a3b22, randInt(rng, -8, 8));
+          break;
+        }
+      }
+    }
+  }
+  for (let y = 6; y <= 9; y++) for (let x = 6; x <= 9; x++) set(px, x, y, 0xffb02e, randInt(rng, -10, 10));
+  for (let y = 7; y <= 8; y++) for (let x = 7; x <= 8; x++) set(px, x, y, 0xfff2a8);
+}
+
+/**
+ * Pixels (x, y) inside the pointy-top hexagon of circumradius `R` centred on (cx, cy) (corner straight up), tested at
+ * the pixel centre against the hexagon's three slab pairs.
+ */
+function inHexagon(x, y, cx, cy, R) {
+  const dx = x + 0.5 - cx;
+  const dy = y + 0.5 - cy;
+  const inr = (R * Math.sqrt(3)) / 2;
+  // Pointy-top: edge normals at 0°, 60° and 120°, so |dx| ≤ inradius (the vertical sides) and the slanted pairs.
+  const ax = Math.abs(dx);
+  return ax <= inr && ax * 0.5 + Math.abs(dy) * (Math.sqrt(3) / 2) <= inr;
+}
+
+/**
+ * 75 barrel_side — the Blast Barrel's staves: four vertical staves (3–4 px wide, three warm browns, noise 6) split by
+ * dark 0x3e2612 seams, two dark iron bands on rows 1–3 and 12–14 (0x3a3d42, a 0x5f646c highlight row, 0x9aa0a8
+ * rivets at x 2 and 13), and between them a red hazard hexagon (pointy-top, circumradius 4.2 around (8, 7.5):
+ * 0xc8281e fill with a one-pixel 0x5e0c08 outline) carrying a pale 0xffe9a0 exclamation mark. Alpha 255.
+ */
+function paintBarrelSide(px, rng) {
+  const STAVES = [[0, 3, 0x8a5a2e], [4, 7, 0x7a4c26], [8, 11, 0x93623a], [12, 15, 0x80522a]];
+  for (const [x0, x1, hex] of STAVES) {
+    for (let y = 0; y < H; y++) {
+      for (let x = x0; x <= x1; x++) set(px, x, y, hex, delta(rng, 6) + (y % 5 === 0 ? -4 : 0));
+    }
+  }
+  for (let y = 0; y < H; y++) for (const x of [3, 7, 11]) set(px, x, y, 0x3e2612, delta(rng, 4));
+  for (const [y0, y1] of [[1, 3], [12, 14]]) {
+    for (let y = y0; y <= y1; y++) {
+      for (let x = 0; x < W; x++) set(px, x, y, y === y0 ? 0x5f646c : 0x3a3d42, delta(rng, 4));
+    }
+    set(px, 2, y0 + 1, 0x9aa0a8);
+    set(px, 13, y0 + 1, 0x9aa0a8);
+  }
+  const CX = 8;
+  const CY = 7.5;
+  for (let y = 4; y <= 11; y++) {
+    for (let x = 3; x <= 12; x++) {
+      if (!inHexagon(x, y, CX, CY, 4.2)) continue;
+      const edge = !inHexagon(x - 1, y, CX, CY, 4.2) || !inHexagon(x + 1, y, CX, CY, 4.2) ||
+        !inHexagon(x, y - 1, CX, CY, 4.2) || !inHexagon(x, y + 1, CX, CY, 4.2);
+      set(px, x, y, edge ? 0x5e0c08 : 0xc8281e, edge ? 0 : delta(rng, 8));
+    }
+  }
+  for (const y of [5, 6, 7]) {
+    set(px, 7, y, 0xffe9a0);
+    set(px, 8, y, 0xffe9a0);
+  }
+  set(px, 7, 9, 0xffe9a0);
+  set(px, 8, 9, 0xffe9a0);
+}
+
+/**
+ * 76 barrel_top — the lid: horizontal planks (rows of 3, 0x9a6a3a / 0x8a5c30, noise 5, 0x4a3018 seams), a dark iron rim
+ * (0x3a3d42) on every pixel whose centre lies 6.2–7.9 from (8, 8), a 2×2 0x6a7078 fuse socket at (7..8, 7..8), and a
+ * short fuse cord (0x2a2420) from the socket up-right to (11, 4) whose tip burns 0xffd040 with a 0xff7a1a ember beside it.
+ * Alpha 255.
+ */
+function paintBarrelTop(px, rng) {
+  for (let y = 0; y < H; y++) {
+    const band = Math.floor(y / 3);
+    const seam = y % 3 === 2;
+    for (let x = 0; x < W; x++) set(px, x, y, seam ? 0x4a3018 : band % 2 === 0 ? 0x9a6a3a : 0x8a5c30, delta(rng, 5));
+  }
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x + 0.5 - 8, y + 0.5 - 8);
+      if (d >= 6.2 && d < 7.9) set(px, x, y, 0x3a3d42, delta(rng, 4));
+      else if (d >= 7.9) set(px, x, y, 0x2e3034, delta(rng, 3));
+    }
+  }
+  for (let y = 7; y <= 8; y++) for (let x = 7; x <= 8; x++) set(px, x, y, 0x6a7078);
+  line(px, 8, 6, 9, 5, 0x2a2420);
+  line(px, 9, 5, 10, 5, 0x2a2420);
+  line(px, 10, 5, 11, 4, 0x2a2420);
+  set(px, 11, 4, 0xffd040);
+  set(px, 12, 3, 0xff7a1a);
+  set(px, 11, 3, 0xffb02e);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Zombie parts (CONTRACTS §39). Not block faces: the zombie renderer maps them onto its four hex prisms. The side
+// faces they land on are about twice as tall as they are wide, so features are drawn short and wide (an eye socket
+// 5 px wide and 3 rows tall reads as a round, hollow socket). Original art; alpha 255 everywhere.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Grey-green rotting skin: the base every zombie skin tile starts from. */
+const ZOMBIE_SKIN = 0x7b9168;
+const ZOMBIE_ROT = 0x5b6e4c;
+const ZOMBIE_BRUISE = 0x6c5f70;
+const ZOMBIE_PALE = 0x9aab88;
+const ZOMBIE_HAIR = 0x2a2520;
+
+/** Skin: ZOMBIE_SKIN with noise 6, 2×2 cell noise 7, a few rot blotches (3–5 px) and bruise / pale specks. */
+function zombieSkin(px, rng, blotches) {
+  fill(px, ZOMBIE_SKIN);
+  noise(px, rng, 6);
+  cellNoise(px, rng, 2, 7);
+  for (let k = 0; k < blotches; k++) {
+    const cx = randInt(rng, 1, 14);
+    const cy = randInt(rng, 3, 14);
+    const n = randInt(rng, 3, 5);
+    for (let i = 0; i < n; i++) set(px, wrap16(cx + randInt(rng, -1, 1)), Math.min(15, cy + randInt(rng, -1, 1)), ZOMBIE_ROT, delta(rng, 5));
+  }
+  speck(px, rng, 5, [ZOMBIE_BRUISE, ZOMBIE_PALE, ZOMBIE_ROT]);
+}
+
+/** Matted hair over rows 0 .. depth−1 with a ragged lower edge (each column 0–2 px longer). */
+function zombieHairline(px, rng, depth) {
+  for (let x = 0; x < W; x++) {
+    const end = depth + randInt(rng, -1, 1) + (rng() < 0.2 ? 1 : 0);
+    for (let y = 0; y < end; y++) set(px, x, y, rng() < 0.15 ? 0x3d362d : ZOMBIE_HAIR, delta(rng, 5));
+  }
+}
+
+/**
+ * 240 zombie_face — the head's FRONT side face only: skin with a matted fringe (rows 0–2), a stitched scar on the
+ * forehead, two dark eye sockets (0x1b1719, rows 6–8 at x 2–6 and rows 7–9 at x 9–13 — the right one droops) with a
+ * sickly 0xd4dc5c glint each, a pair of dark nostril holes, a crooked mouth (0x2a1418: rows 12, 13, 12 left to right)
+ * with two pale 0xcfc8a4 teeth, and a rot patch on the chin. Alpha 255.
+ */
+function paintZombieFace(px, rng) {
+  zombieSkin(px, rng, 2);
+  zombieHairline(px, rng, 2);
+  // Forehead scar with stitches.
+  line(px, 9, 4, 13, 4, 0x3c3330);
+  for (const x of [10, 12]) {
+    set(px, x, 3, 0x2e2a26);
+    set(px, x, 5, 0x2e2a26);
+  }
+  // Brow ridges, then the sockets (dark hollows with a darker rim) and their glints.
+  for (let x = 2; x <= 6; x++) set(px, x, 5, ZOMBIE_ROT, delta(rng, 4));
+  for (let x = 9; x <= 13; x++) set(px, x, 6, ZOMBIE_ROT, delta(rng, 4));
+  const socket = (x0, y0) => {
+    for (let y = y0; y < y0 + 3; y++) {
+      for (let x = x0; x < x0 + 5; x++) {
+        const corner = (x === x0 || x === x0 + 4) && (y === y0 || y === y0 + 2);
+        set(px, x, y, corner ? 0x3f4a37 : 0x1b1719, corner ? 0 : delta(rng, 3));
+      }
+    }
+  };
+  socket(2, 6);
+  socket(9, 7);
+  set(px, 4, 7, 0xd4dc5c);
+  set(px, 11, 8, 0xd4dc5c);
+  set(px, 3, 7, 0x2c2a20);
+  // Nose: a dark sunken bridge and two nostril holes.
+  set(px, 7, 9, ZOMBIE_ROT);
+  set(px, 8, 9, ZOMBIE_ROT);
+  set(px, 7, 10, 0x231d1e);
+  set(px, 8, 10, 0x231d1e);
+  // Crooked mouth: higher on the left, sagging in the middle, hitched up on the right, with a lip shadow above.
+  for (let x = 3; x <= 6; x++) set(px, x, 12, 0x2a1418);
+  for (let x = 6; x <= 10; x++) set(px, x, 13, 0x2a1418);
+  for (let x = 10; x <= 12; x++) set(px, x, 12, 0x2a1418);
+  for (let x = 3; x <= 12; x++) set(px, x, x >= 7 && x <= 9 ? 12 : 11, 0x5d4a44, delta(rng, 4));
+  set(px, 5, 12, 0xcfc8a4);
+  set(px, 9, 13, 0xcfc8a4);
+  // Rot on the chin and a darker jaw line.
+  for (let x = 2; x <= 13; x++) set(px, x, 15, ZOMBIE_ROT, delta(rng, 5));
+  set(px, 11, 14, ZOMBIE_BRUISE);
+  set(px, 12, 14, ZOMBIE_BRUISE);
+}
+
+/**
+ * 241 zombie_head_side — the head's other five sides: rotting skin under a matted hairline (rows 0–3, ragged), with a
+ * darker vein running down and a stitched cut. Alpha 255.
+ */
+function paintZombieHeadSide(px, rng) {
+  zombieSkin(px, rng, 4);
+  zombieHairline(px, rng, 4);
+  let x = randInt(rng, 3, 12);
+  for (let y = 6; y < 15; y++) {
+    set(px, x, y, 0x55644a, delta(rng, 4));
+    if (rng() < 0.35) x = Math.max(1, Math.min(14, x + (rng() < 0.5 ? -1 : 1)));
+  }
+  line(px, 2, 10, 5, 12, 0x3c3330);
+  set(px, 3, 10, 0x2e2a26);
+  set(px, 4, 12, 0x2e2a26);
+}
+
+/** 242 zombie_scalp — the head's top: matted dark hair (strands of 0x3d362d) with a bald, rotting patch. Alpha 255. */
+function paintZombieScalp(px, rng) {
+  fill(px, ZOMBIE_HAIR);
+  noise(px, rng, 7);
+  for (let k = 0; k < 14; k++) {
+    const x = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 13);
+    set(px, x, y, 0x3d362d);
+    set(px, x, y + 1, 0x3d362d, -6);
+  }
+  // A bald, rotting patch: an uneven blob (squashed, ragged rim) off to one side, and a smaller one behind it.
+  for (const [cx, cy, rad] of [[10, 6, 2.4], [5, 11, 1.3]]) {
+    for (let y = 0; y < H; y++) {
+      for (let xx = 0; xx < W; xx++) {
+        const d = Math.hypot((xx + 0.5 - cx) * 0.8, y + 0.5 - cy);
+        if (d < rad + rng() * 1.1) set(px, xx, y, d < rad * 0.5 ? ZOMBIE_ROT : ZOMBIE_SKIN, delta(rng, 6));
+      }
+    }
+  }
+}
+
+/**
+ * 243 zombie_shirt — the torso's sides: a faded teal work shirt (0x4d6a73, weave noise, darker folds at the face edges)
+ * with two ragged tears showing grey-green skin through dark frayed rims, a muddy stain and a torn hem (rows 13–15:
+ * cloth strips hanging over skin). Alpha 255.
+ */
+function paintZombieShirt(px, rng) {
+  fill(px, 0x4d6a73);
+  for (let y = 0; y < H; y++) {
+    const d = y % 2 === 0 ? 3 : -2;
+    for (let x = 0; x < W; x++) adjAt(px, x, y, d + delta(rng, 5));
+  }
+  for (let y = 0; y < H; y++) {
+    adjAt(px, 0, y, -14);
+    adjAt(px, 15, y, -14);
+    adjAt(px, 1, y, -6);
+  }
+  // Tears: an irregular blob of skin each, ringed by dark frayed cloth.
+  const tear = (cx, cy, rx, ry) => {
+    for (let y = cy - ry - 1; y <= cy + ry + 1; y++) {
+      for (let x = cx - rx - 1; x <= cx + rx + 1; x++) {
+        if (x < 0 || x >= W || y < 0 || y >= H) continue;
+        const e = ((x - cx) / (rx + 0.5)) ** 2 + ((y - cy) / (ry + 0.5)) ** 2 + (rng() - 0.5) * 0.5;
+        if (e < 1) set(px, x, y, ZOMBIE_SKIN, delta(rng, 8));
+        else if (e < 1.7) set(px, x, y, 0x26343a, delta(rng, 4));
+      }
+    }
+  };
+  tear(randInt(rng, 3, 5), randInt(rng, 3, 5), 1, 2);
+  tear(randInt(rng, 9, 12), randInt(rng, 7, 9), 2, 1);
+  for (let k = 0; k < 6; k++) set(px, randInt(rng, 5, 9), randInt(rng, 9, 12), 0x5d5a3c, delta(rng, 6));
+  // Torn hem: strips of cloth of random length over the skin of the belly.
+  for (let x = 0; x < W; x++) {
+    const hang = randInt(rng, 13, 16);
+    for (let y = 13; y < H; y++) set(px, x, y, y < hang ? 0x405a62 : ZOMBIE_SKIN, delta(rng, 5));
+  }
+}
+
+/**
+ * 244 zombie_trousers — the feet's sides: ragged brown trousers (0x5b4b3b, noise 6, a dark seam down the middle, a
+ * lighter patch), a frayed hem (row 10) over a strip of bare ankle (row 11), and a battered dark shoe (rows 12–15:
+ * 0x2c2623 with a 0x463c35 top edge, a 0x1a1614 sole and a hole showing one toe). Alpha 255.
+ */
+function paintZombieTrousers(px, rng) {
+  fill(px, 0x5b4b3b);
+  noise(px, rng, 6);
+  for (let y = 0; y < 10; y++) set(px, 7, y, 0x463a2e, delta(rng, 3));
+  const pxs = randInt(rng, 9, 11);
+  for (let y = 3; y <= 6; y++) for (let x = pxs; x < pxs + 3; x++) set(px, x, y, 0x6d5c47, delta(rng, 4));
+  for (let x = 0; x < W; x++) {
+    set(px, x, 10, rng() < 0.5 ? 0x4a3d31 : 0x5b4b3b, delta(rng, 5));
+    set(px, x, 11, rng() < 0.3 ? 0x4a3d31 : ZOMBIE_SKIN, delta(rng, 6));
+  }
+  for (let y = 12; y < H; y++) {
+    for (let x = 0; x < W; x++) set(px, x, y, y === 12 ? 0x463c35 : y === 15 ? 0x1a1614 : 0x2c2623, delta(rng, 3));
+  }
+  set(px, 4, 13, ZOMBIE_PALE);
+  set(px, 3, 13, 0x1a1614);
+}
+
+/** 245 zombie_sole — the feet's undersides: a worn dark sole with lighter tread bars and a scuffed patch. Alpha 255. */
+function paintZombieSole(px, rng) {
+  fill(px, 0x2a2421);
+  noise(px, rng, 4);
+  for (let y = 2; y < 14; y += 3) for (let x = 3; x < 13; x++) set(px, x, y, 0x3a322d, delta(rng, 3));
+  for (let k = 0; k < 6; k++) set(px, randInt(rng, 6, 10), randInt(rng, 6, 10), 0x4a413a, delta(rng, 4));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The Hollow Watcher (CONTRACTS §40). Not block faces: watcherRenderer maps them onto its hollow rings, its lantern and
+// its smoke wisp. Weathered ash-grey stone split by thin cracks; the cracks' glow is its own tile (the emissive mask,
+// which the renderer reads one tile to the right of every stone texel), so only the cracks shine. Original art;
+// alpha 255 everywhere.
+// ---------------------------------------------------------------------------------------------------------------
+
+const WATCHER_ASH = 0x8a8884;
+const WATCHER_GROOVE = 0x2a3d41;
+const WATCHER_CRACK_GLOW = 0x5ae6f0;
+const WATCHER_SELF_LIGHT = 0.4;
+
+/**
+ * One crack: a 1-px walk of `steps` from (x, y), each step one pixel along (ax, ay) — one of them 0 — plus a sideways
+ * drift on the other axis that keeps its last value (30 %), returns to 0 (25 %) or turns to −1 / +1 (45 %), so the
+ * crack runs jagged but 8-connected. A drift that would leave the tile turns back; the walk stops when its main
+ * direction runs off the tile.
+ */
+function watcherCrackWalk(rng, out, x, y, ax, ay, steps) {
+  let lat = 0;
+  for (let s = 0; s < steps; s++) {
+    if (x < 0 || x >= W || y < 0 || y >= H) return;
+    out.add(y * W + x);
+    const r = rng();
+    if (r >= 0.3) lat = r < 0.55 ? 0 : rng() < 0.5 ? -1 : 1;
+    const side = ax === 0 ? x : y; // the drifting coordinate
+    if (side + lat < 0 || side + lat >= (ax === 0 ? W : H)) lat = -lat;
+    x += ax + (ax === 0 ? lat : 0);
+    y += ay + (ay === 0 ? lat : 0);
+  }
+}
+
+/**
+ * The crack pixels shared by watcher_stone (dark grooves) and watcher_cracks (their glow), from their own fixed seed
+ * ('hollow_watcher_cracks') so the two tiles always agree — two short, thin cracks, so a face's window of the tile
+ * shows one, both or none: one running across from column 0–3 at row 8–13 (6–9 steps), one running down from column
+ * 6–11 at row 0–3 (6–9 steps) with a 2–3 step branch off toward +x from its fourth pixel.
+ * @returns {Set<number>} pixel indices y·16 + x
+ */
+function watcherCracks() {
+  const rng = makeRng('hollow_watcher_cracks');
+  /** @type {Set<number>} */
+  const out = new Set();
+  watcherCrackWalk(rng, out, randInt(rng, 0, 3), randInt(rng, 8, 13), 1, 0, randInt(rng, 6, 9));
+  const before = out.size;
+  watcherCrackWalk(rng, out, randInt(rng, 6, 11), randInt(rng, 0, 3), 0, 1, randInt(rng, 6, 9));
+  const fourth = [...out][Math.min(out.size - 1, before + 3)];
+  watcherCrackWalk(rng, out, (fourth % W) + 1, Math.floor(fourth / W), 1, 0, randInt(rng, 2, 3));
+  return out;
+}
+
+/** The 4-neighbours of `cracks` that are not cracks themselves (a crack's lip). @returns {Set<number>} */
+function watcherCrackLips(cracks) {
+  /** @type {Set<number>} */
+  const lips = new Set();
+  for (const i of cracks) {
+    const x = i % W;
+    const y = Math.floor(i / W);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H || cracks.has(ny * W + nx)) continue;
+      lips.add(ny * W + nx);
+    }
+  }
+  return lips;
+}
+
+/**
+ * 250 watcher_stone — the rings and the lantern: weathered ash-grey stone (WATCHER_ASH 0x8a8884) mottled in 4×4
+ * patches (±7) and 2×2 grains (±4), noise 5, ten pale weathered flecks (+12) and eighteen pores (−36, each with a
+ * lighter +8 rim pixel under it), then the shared cracks (watcherCracks) as dark teal-grey grooves (WATCHER_GROOVE
+ * 0x2a3d41, ±3) with shadowed lips (their 4-neighbours −14). Neutral grey, never black or purple. Alpha 255.
+ */
+function paintWatcherStone(px, rng) {
+  fill(px, WATCHER_ASH);
+  cellNoise(px, rng, 4, 7);
+  cellNoise(px, rng, 2, 4);
+  noise(px, rng, 5);
+  for (let k = 0; k < 10; k++) adjAt(px, randInt(rng, 0, 15), randInt(rng, 0, 15), 12);
+  for (let k = 0; k < 18; k++) {
+    const x = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 15);
+    adjAt(px, x, y, -36);
+    if (y < H - 1) adjAt(px, x, y + 1, 8);
+  }
+  const cracks = watcherCracks();
+  for (const i of watcherCrackLips(cracks)) adjAt(px, i % W, Math.floor(i / W), -14);
+  for (const i of cracks) set(px, i % W, Math.floor(i / W), WATCHER_GROOVE, delta(rng, 3));
+}
+
+/**
+ * 251 watcher_cracks — the stone's self-light (the renderer's emissiveMap, read one tile right of watcher_stone): the
+ * stone itself (watcher_stone painted with its own seed) dimmed to WATCHER_SELF_LIGHT (0.4), so by night it still
+ * reads as pale stone rather than a black shape, and the shared cracks a bright cyan WATCHER_CRACK_GLOW 0x5ae6f0
+ * (±16). Never on screen as a colour of its own. Alpha 255.
+ */
+function paintWatcherCracks(px, rng) {
+  paintWatcherStone(px, makeRng('watcher_stone'));
+  for (let i = 0; i < BYTES; i += 4) {
+    px[i] = Math.round(px[i] * WATCHER_SELF_LIGHT);
+    px[i + 1] = Math.round(px[i + 1] * WATCHER_SELF_LIGHT);
+    px[i + 2] = Math.round(px[i + 2] * WATCHER_SELF_LIGHT);
+  }
+  for (const i of watcherCracks()) set(px, i % W, Math.floor(i / W), WATCHER_CRACK_GLOW, delta(rng, 16));
+}
+
+/**
+ * 252 watcher_smoke — the wisp under the rings: dark neutral soot 0x2a2b2e (noise 3) with four lighter wisps 0x45474b
+ * rising from the bottom row, swaying a pixel left or right on 40 % of the rows and fading as they rise (−0.8 per row,
+ * ±4). Alpha 255 (the renderer fades the wisp with vertex alpha).
+ */
+function paintWatcherSmoke(px, rng) {
+  fill(px, 0x2a2b2e);
+  noise(px, rng, 3);
+  for (let k = 0; k < 4; k++) {
+    let x = randInt(rng, 0, 15);
+    for (let y = H - 1; y >= 0; y--) {
+      set(px, wrap16(x), y, 0x45474b, delta(rng, 4) - Math.round((H - 1 - y) * 0.8));
+      if (rng() < 0.4) x += rng() < 0.5 ? -1 : 1;
+    }
+  }
+}
+
 /** 255 missing — 8×8 quadrant checker, magenta top-left / bottom-right, black elsewhere. */
 function paintMissing(px) {
   for (let y = 0; y < H; y++) {
@@ -660,6 +1489,51 @@ const RECIPES = Object.freeze({
   wool_white: paintWoolWhite,
   wool_red: paintWoolRed,
   rune: paintRune,
+  spruce_log_side: paintSpruceLogSide,
+  spruce_log_end: paintSpruceLogEnd,
+  spruce_planks: paintSprucePlanks,
+  spruce_leaves: paintSpruceLeaves,
+  birch_log_side: paintBirchLogSide,
+  birch_log_end: paintBirchLogEnd,
+  birch_planks: paintBirchPlanks,
+  birch_leaves: paintBirchLeaves,
+  granite: paintGranite,
+  diorite: paintDiorite,
+  andesite: paintAndesite,
+  slate: paintSlate,
+  mossy_cobblestone: paintMossyCobblestone,
+  mossy_stone_bricks: paintMossyStoneBricks,
+  obsidian: paintObsidian,
+  clay: paintClay,
+  red_sand: paintRedSand,
+  ice: paintIce,
+  packed_ice: paintPackedIce,
+  coal_block: paintCoalBlock,
+  iron_block: paintIronBlock,
+  gold_block: paintGoldBlock,
+  diamond_block: paintDiamondBlock,
+  copper_block: paintCopperBlock,
+  glowstone: paintGlowstone,
+  honeycomb: paintHoneycomb,
+  hay_bale_side: paintHayBaleSide,
+  hay_bale_top: paintHayBaleTop,
+  pumpkin_side: paintPumpkinSide,
+  pumpkin_top: paintPumpkinTop,
+  black_hole: paintBlackHole,
+  campfire_side: paintCampfireSide,
+  campfire_top: paintCampfireTop,
+  barrel_side: paintBarrelSide,
+  barrel_top: paintBarrelTop,
+  zombie_face: paintZombieFace,
+  zombie_head_side: paintZombieHeadSide,
+  zombie_scalp: paintZombieScalp,
+  zombie_shirt: paintZombieShirt,
+  zombie_trousers: paintZombieTrousers,
+  zombie_sole: paintZombieSole,
+  watcher_stone: paintWatcherStone,
+  watcher_cracks: paintWatcherCracks,
+  watcher_smoke: paintWatcherSmoke,
+  ...Object.fromEntries(Object.entries(WOOL_HEX).map(([name, hex]) => [name, (px, rng) => paintWool(px, rng, hex)])),
   missing: paintMissing,
 });
 

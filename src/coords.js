@@ -59,6 +59,51 @@ export function indexToLocal(index) {
   return [lq, ly, lr];
 }
 
+/**
+ * Call fn(q, y, r) for every recorded edit (World.edits: chunk key → Map(localIndex → id)) whose id is `id`.
+ * Malformed chunk keys are skipped. Blocks worldgen never emits (black holes, campfires) are found this way on load.
+ * @param {Map<string, Map<number, number>>} edits
+ * @param {number} id
+ * @param {(q: number, y: number, r: number) => void} fn
+ */
+export function forEachEditedCell(edits, id, fn) {
+  for (const [key, chunkEdits] of edits) {
+    const [cq, cr] = parseChunkKey(key);
+    if (!Number.isInteger(cq) || !Number.isInteger(cr)) continue;
+    for (const [li, v] of chunkEdits) {
+      if (v !== id) continue;
+      const [lq, ly, lr] = indexToLocal(li);
+      fn(cq * CHUNK_SIZE + lq, ly, cr * CHUNK_SIZE + lr);
+    }
+  }
+}
+
+// Packed cell keys (block physics, CONTRACTS §33): q and r offset by 2^20 into 21 bits each, y in 7 bits, as ONE double
+// (exact: the largest key is below 2^49), like world.js packs chunk ids. Cells beyond ±2^20 are far outside playability.
+const CELL_OFFSET = 1 << 20;
+const CELL_SPAN = 1 << 21;
+
+/** @returns {number} unique non-negative integer key of cell (q, y, r); y must be 0..WORLD_HEIGHT−1 */
+export function packCell(q, y, r) {
+  return ((q + CELL_OFFSET) * CELL_SPAN + (r + CELL_OFFSET)) * WORLD_HEIGHT + y;
+}
+
+/**
+ * Inverse of packCell. Writes [q, y, r] into `out` (default: a fresh array).
+ * @param {number} key
+ * @param {number[]} [out]
+ * @returns {number[]} out
+ */
+export function unpackCell(key, out = [0, 0, 0]) {
+  const y = key % WORLD_HEIGHT;
+  const col = (key - y) / WORLD_HEIGHT;
+  const r = col % CELL_SPAN;
+  out[0] = (col - r) / CELL_SPAN - CELL_OFFSET;
+  out[1] = y;
+  out[2] = r - CELL_OFFSET;
+  return out;
+}
+
 /** Index into per-column arrays (biomes, heights). */
 export function columnIndex(lq, lr) {
   return lq * CHUNK_SIZE + lr;

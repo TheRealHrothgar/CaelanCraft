@@ -82,9 +82,15 @@
  * @property {boolean} flying
  * @property {boolean} sneaking
  * @property {boolean} sprinting
- * @property {boolean} inWater      feet or chest cell is liquid
+ * @property {boolean} inWater      swimming: the water at the feet is deeper than WADE_DEPTH, or the chest is under a surface (v0.8)
  * @property {boolean} headInWater  eye point is below a water surface
  * @property {boolean} hitWall      horizontal collision happened in the last substep
+ * @property {number} [radius]      body footprint radius (mobs; absent = PLAYER_WIDTH / 2), at most MAX_BODY_RADIUS
+ * @property {number} [height]      body height (mobs; absent = PLAYER_HEIGHT)
+ * @property {number} [mass]        relative mass for body-body pushes (absent = PLAYER_MASS)
+ * @property {PlayerState|null} [carrier]   the body this one stood on at the end of last frame (bodies.js, §31)
+ * @property {number[]} [carrierAt]  that carrier's feet [x, y, z] then
+ * @property {string} [group]       resolveBodies never pairs two bodies of the same group (v0.8 lit barrels)
  */
 
 /**
@@ -95,6 +101,11 @@
  * @property {boolean} sneak    Shift (fly: descend)
  * @property {boolean} sprint
  * @property {number} yaw       radians; yaw 0 faces -Z, positive turns left
+ * @property {number} [pullX]   optional external acceleration in m/s² (black holes), felt every substep as a drift of
+ *                              pull / GROUND_ACCEL in every mode (CONTRACTS §12)
+ * @property {number} [pullY]
+ * @property {number} [pullZ]
+ * @property {boolean} [noExitJump]  in water, jump paddles up (SWIM_UP_SPEED) but never gives SWIM_EXIT_JUMP at a wall
  */
 
 /**
@@ -146,6 +157,15 @@
  * @property {number} selected        0..8
  * @property {EditsJSON} edits
  * @property {RunesJSON} [runes]      optional; absent/empty when the world has no customised rune blocks
+ * @property {Object[]} [pigs]        optional (v0.5); absent = the world never had pigs
+ * @property {{falling:boolean, water:boolean, collapse:boolean, explosions:boolean}} [physics]
+ *   optional (v0.8) block-physics switches; absent = saved before v0.8 (main starts it with collapse off)
+ * @property {boolean} [zombies]       optional (§39) the world's zombies switch; absent = on
+ * @property {boolean} [watcher]       optional (§40) the world's Hollow Watcher switch; absent = on
+ * @property {number} [watcherNight]  optional (§40.1) the night (watcher.nightKey) of the world's last natural Watcher
+ *   sighting, a whole number ≥ 0; absent = none yet (or a save from before the field)
+ * @property {{name?: string, createdAt?: number, lastPlayed?: number}} [meta]
+ *   optional (§41) the save slot's world name and times (ms since the epoch); storage.loadSlot always fills all three
  */
 
 /**

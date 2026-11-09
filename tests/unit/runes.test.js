@@ -795,6 +795,14 @@ describe('RuneRunner.runConsoleLine', () => {
     expect(runner.runConsoleLine('   ')).toEqual({ ok: true, message: '' });
     expect(runner.runConsoleLine('# just a comment')).toEqual({ ok: true, message: '' });
   });
+  it('hasActiveJobs is true exactly while an area job is still writing (block physics batches its support seeds)', () => {
+    const { runner, tick } = makeRig();
+    expect(runner.hasActiveJobs()).toBe(false);
+    runner.runConsoleLine('hexfill 0 30 0 15 11 glass');
+    expect(runner.hasActiveJobs()).toBe(true);
+    for (let i = 0; i < 20 && runner.hasActiveJobs(); i++) tick(1);
+    expect(runner.hasActiveJobs()).toBe(false);
+  });
   it('queues an area job as console#N, which update() completes and summarises; `run` from the console is a root activation', () => {
     const { world, runner, placeRune, logs, tick, said } = makeRig();
     const res = runner.runConsoleLine('hexfill 0 30 0 15 11 glass');

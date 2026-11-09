@@ -1,11 +1,13 @@
-// Caelancraft — title / loading / click-to-play / pause / block-picker screens.
-// See src/CONTRACTS.md §20 and docs/SPEC-gameplay.md §5.1–§5.5.
+// Caelancraft — title (with the Worlds panel) / loading / click-to-play / pause / block-picker screens.
+// See src/CONTRACTS.md §20, §41 and docs/SPEC-gameplay.md §5.1–§5.5.
 //
 // DOM module. Every DOM access goes through the `doc` handed to createMenus and happens inside a
-// function, so this file can be imported in Node. Imports: config, blocks, atlas (per the import graph).
-import { HOTBAR_SIZE } from './config.js';
+// function, so this file can be imported in Node. Imports: config, blocks, atlas, storage (world names only; per the
+// import graph). The Worlds panel never touches storage itself: main lists the slots and acts on the callbacks.
+import { HOTBAR_SIZE, MAX_WORLD_NAME_CHARS } from './config.js';
 import { TILE, PICKER_ORDER, getBlockDef } from './blocks.js';
 import { makeBlockIconCanvas, makeTiledBackgroundDataURL, drawTitleLogo } from './atlas.js';
+import { defaultWorldName } from './storage.js';
 
 /** The 18 title-screen splash strings from docs/SPEC-gameplay.md §5.4, verbatim. */
 export const SPLASHES = Object.freeze([
@@ -47,15 +49,113 @@ export const CONTROLS_SHEET = Object.freeze([
   Object.freeze(['1–9', 'Select hotbar slot (or scroll wheel)']),
   Object.freeze(['E', 'Open / close the block picker']),
   Object.freeze(['T  /', 'Command console (/ starts a command)']),
-  Object.freeze(['R', 'Run the targeted Rune Block']),
+  Object.freeze(['R', 'Run a Rune Block · light a Blast Barrel']),
   Object.freeze(['Shift R', 'Edit the targeted Rune Block (also opens on placing one)']),
   Object.freeze(['Esc', 'Pause · close menus']),
   Object.freeze(['F3', 'Toggle the debug overlay']),
   Object.freeze(['M', 'Mute / unmute sound']),
 ]);
 
-/** Text of the confirm() shown when New World would overwrite an existing save (CONTRACTS §20). */
-export const CONFIRM_NEW_WORLD_TEXT = 'This will delete your saved world. Continue?';
+// ---- Worlds panel text (pure, §41) ------------------------------------------------------------------
+
+const KB = 1024;
+const MB = 1024 * 1024;
+
+/**
+ * A stored size for people: "512 B", "37 KB", "1.2 MB", "5 MB" (one decimal from 1 MB on, a trailing ".0" dropped).
+ * @param {number} n  characters (≈ bytes: saves are ASCII JSON)
+ */
+export function formatBytes(n) {
+  const v = Number.isFinite(n) && n > 0 ? n : 0;
+  if (v < KB) return `${Math.round(v)} B`;
+  if (v < MB) return `${Math.min(1023, Math.max(1, Math.round(v / KB)))} KB`;
+  return `${(v / MB).toFixed(1).replace(/\.0$/, '')} MB`;
+}
+
+function plural(n, unit) {
+  return `${n} ${unit}${n === 1 ? '' : 's'} ago`;
+}
+
+/**
+ * When a world was last played, relative to `now`: "just now", "5 minutes ago", "2 hours ago", "yesterday",
+ * "3 days ago", "2 months ago", "1 year ago"; '' when unknown (0 or not a number). A time in the future reads "just now".
+ * @param {number} ts  ms since the epoch
+ * @param {number} now  ms since the epoch
+ */
+export function formatLastPlayed(ts, now) {
+  if (!Number.isFinite(ts) || ts <= 0 || !Number.isFinite(now)) return '';
+  const s = Math.max(0, (now - ts) / 1000);
+  if (s < 60) return 'just now';
+  const min = Math.floor(s / 60);
+  if (min < 60) return plural(min, 'minute');
+  const h = Math.floor(min / 60);
+  if (h < 24) return plural(h, 'hour');
+  const d = Math.floor(h / 24);
+  if (d === 1) return 'yesterday';
+  if (d < 30) return plural(d, 'day');
+  if (d < 365) return plural(Math.max(1, Math.floor(d / 30)), 'month');
+  return plural(Math.floor(d / 365), 'year');
+}
+
+/**
+ * The second line of a Worlds row: "Seed 1234 · played 2 hours ago · 37 KB" (the played part only when known),
+ * "Can't be read · 12 KB" for a damaged slot, "No world yet" for an empty one.
+ * @param {import('./storage.js').SlotInfo} info
+ * @param {number} now
+ */
+export function slotDetailText(info, now) {
+  if (!info || info.status === 'empty') return 'No world yet';
+  if (info.status === 'damaged') return `Can't be read · ${formatBytes(info.bytes)}`;
+  const parts = [`Seed ${info.seed}`];
+  const played = formatLastPlayed(info.lastPlayed, now);
+  if (played) parts.push(`played ${played}`);
+  parts.push(formatBytes(info.bytes));
+  return parts.join(' · ');
+}
+
+/**
+ * The usage line under the Worlds list: "1.2 MB of ~5 MB (24%)".
+ * @param {{ used: number, quota: number, fraction: number }} usage
+ */
+export function usageLabel(usage) {
+  const u = usage || { used: 0, quota: 0, fraction: 0 };
+  const pct = Math.round(Math.min(1, Math.max(0, Number(u.fraction) || 0)) * 100);
+  return `${formatBytes(u.used)} of ~${formatBytes(u.quota)} (${pct}%)`;
+}
+
+/** Usage bar colour class: '' below 75 %, 'warn' below 90 %, 'full' from 90 %. @param {number} fraction */
+export function usageLevel(fraction) {
+  return fraction >= 0.9 ? 'full' : fraction >= 0.75 ? 'warn' : '';
+}
+
+/**
+ * The delete dialog's two lines for a slot, naming the world.
+ * @param {import('./storage.js').SlotInfo} info
+ * @returns {{ title: string, detail: string }}
+ */
+export function deleteConfirmText(info) {
+  if (info.status === 'damaged') {
+    return { title: `Delete the damaged world in slot ${info.slot}?`, detail: 'Its save cannot be read. This cannot be undone.' };
+  }
+  return { title: `Delete “${info.name}”?`, detail: `Slot ${info.slot} · seed ${info.seed}. This cannot be undone.` };
+}
+
+/** The slot of the most recently played world (0 when there is none): its row is marked and its Play button focused. */
+export function latestSlot(slots) {
+  let best = 0;
+  let bestTs = -1;
+  for (const s of slots || []) {
+    if (s && s.status === 'world' && s.lastPlayed > bestTs) {
+      best = s.slot;
+      bestTs = s.lastPlayed;
+    }
+  }
+  return best;
+}
+
+/** #btn-quit labels (§41): normally, and after a Save & Quit whose save failed. */
+export const QUIT_LABEL = 'Save & Quit';
+export const QUIT_UNSAVED_LABEL = 'Quit Without Saving';
 
 /** Edge length of the block-picker icon canvases, in CSS pixels (CONTRACTS §20). */
 export const PICKER_ICON_PX = 64;
@@ -68,9 +168,17 @@ const IDS = Object.freeze({
   titleScreen: 'title-screen',
   titleLogo: 'title-logo',
   splashText: 'splash-text',
-  seedInput: 'seed-input',
-  btnNewWorld: 'btn-new-world',
-  btnContinue: 'btn-continue',
+  worldsList: 'worlds-list',
+  worldsCount: 'worlds-count',
+  usageBar: 'usage-bar',
+  usageFill: 'usage-fill',
+  usageText: 'usage-text',
+  worldsMessage: 'worlds-message',
+  confirmDialog: 'confirm-dialog',
+  confirmText: 'confirm-text',
+  confirmDetail: 'confirm-detail',
+  confirmYes: 'confirm-yes',
+  confirmNo: 'confirm-no',
   titleControls: 'title-controls',
   loadingScreen: 'loading-screen',
   loadingBar: 'loading-bar',
@@ -81,7 +189,14 @@ const IDS = Object.freeze({
   btnSave: 'btn-save',
   btnStopRunes: 'btn-stop-runes',
   btnQuit: 'btn-quit',
+  pauseWorld: 'pause-world',
   pauseSeed: 'pause-seed',
+  btnPhysFalling: 'btn-phys-falling',
+  btnPhysWater: 'btn-phys-water',
+  btnPhysCollapse: 'btn-phys-collapse',
+  btnPhysExplosions: 'btn-phys-explosions',
+  btnUndoPhysics: 'btn-undo-physics',
+  btnZombies: 'btn-zombies',
   pauseControls: 'pause-controls',
   blockPicker: 'block-picker',
   pickerGrid: 'picker-grid',
@@ -90,11 +205,18 @@ const IDS = Object.freeze({
 
 /**
  * @typedef {Object} MenusCallbacks  All optional; missing callbacks are simply not fired.
- * @property {(seedText: string) => void} [onNewWorld]   text of #seed-input (untrimmed; main normalises)
- * @property {() => void} [onContinue]
+ * @property {(slot: number) => void} [onPlayWorld]   Worlds panel: Play on a filled slot
+ * @property {(slot: number, name: string, seedText: string) => void} [onNewWorld]   the New World form of an empty slot
+ *   (name and seed text untrimmed; main normalises both)
+ * @property {(slot: number, name: string) => void} [onRenameWorld]
+ * @property {(slot: number) => void} [onDuplicateWorld]
+ * @property {(slot: number) => void} [onDeleteWorld]   fired only after the delete dialog was confirmed
  * @property {() => void} [onResume]
  * @property {() => void} [onSave]
  * @property {() => void} [onStopRunes]   pause-menu "Stop All Rune Scripts"
+ * @property {(name: string) => void} [onPhysicsToggle]  pause-menu Physics row: 'falling' | 'water' | 'collapse' | 'explosions'
+ * @property {() => void} [onUndoPhysics]  pause-menu "Undo" (the last explosion / collapse / falling tree)
+ * @property {() => void} [onZombiesToggle]  pause-menu Creatures row: the world's Zombies switch (§39)
  * @property {() => void} [onQuit]
  * @property {() => void} [onClickToPlay]
  * @property {(blockId: number, slot: number|null) => void} [onPickBlock]  slot 0..8 for Digit1-9, null for a click
@@ -102,21 +224,63 @@ const IDS = Object.freeze({
  */
 
 /**
+ * What the Worlds panel shows besides the slots.
+ * @typedef {Object} WorldsOptions
+ * @property {number} [now]            ms since the epoch, for "played 2 hours ago" (default Date.now())
+ * @property {{ used: number, quota: number, fraction: number }} [usage]   storage.storageUsage(slots)
+ * @property {boolean} [readOnly]      ?nosave: Rename / Duplicate / Delete are disabled (New World and Play still work)
+ * @property {string|null} [defaultSeed]  prefills the New World form's seed field (?seed=)
+ * @property {string} [message]        status line under the list ('' clears it)
+ * @property {boolean} [isError]       … shown in red
+ * @property {number} [focusSlot]      focus this row's first button after rendering (default: the last played world's
+ *                                     Play, else the first New World)
+ */
+
+/**
  * @typedef {Object} Menus
- * @property {(hasSave: boolean) => void} showTitle
+ * @property {(slots: import('./storage.js').SlotInfo[], opts?: WorldsOptions) => void} showTitle
+ * @property {(slots: import('./storage.js').SlotInfo[], opts?: WorldsOptions) => void} setWorlds   re-render the panel only
+ * @property {(text: string, isError?: boolean) => void} showWorldsMessage
+ * @property {() => boolean} isConfirmOpen
  * @property {() => void} hideTitle
  * @property {(done: number, total: number) => void} showLoading
  * @property {() => void} hideLoading
  * @property {() => void} showClickToPlay
  * @property {() => void} hideClickToPlay
- * @property {(seed: number|string) => void} showPause
+ * @property {(seed: number|string, physics?: PhysicsMenuState, worldName?: string) => void} showPause
+ * @property {(physics: PhysicsMenuState) => void} setPhysicsState   refresh the Physics row and the Undo button
+ * @property {(on: boolean) => void} setZombiesState   refresh the Zombies toggle (§39)
  * @property {() => void} hidePause
+ * @property {(on: boolean) => void} setQuitUnsaved   #btn-quit: "Save & Quit" / "Quit Without Saving" (after a failed save)
  * @property {(hotbar: number[], selected: number) => void} showPicker
  * @property {() => void} hidePicker
  * @property {() => boolean} isPickerOpen
- * @property {() => string} getSeedInput
+ * @property {() => string} getSeedInput   the open New World form's seed text ('' when no form is open)
  * @property {() => void} dispose
  */
+
+/**
+ * What the pause menu shows about block physics.
+ * @typedef {Object} PhysicsMenuState
+ * @property {{ falling: boolean, water: boolean, collapse: boolean, explosions: boolean }} switches
+ * @property {boolean} canUndo
+ * @property {string} [undoKind]   'explosion' | 'collapse' | 'falling tree' … (button label)
+ */
+
+/** Physics row buttons: switch name, label, IDS key. */
+export const PHYSICS_TOGGLES = Object.freeze([
+  Object.freeze(['falling', 'Falling', 'btnPhysFalling']),
+  Object.freeze(['water', 'Water', 'btnPhysWater']),
+  Object.freeze(['collapse', 'Collapse', 'btnPhysCollapse']),
+  Object.freeze(['explosions', 'Explosions', 'btnPhysExplosions']),
+]);
+
+/** Undo button label for an event kind ('' / undefined: nothing to undo). */
+export function undoButtonLabel(canUndo, kind) {
+  if (!canUndo) return 'Undo (nothing to undo)';
+  const what = kind === 'explosion' ? 'Explosion' : kind === 'falling tree' ? 'Falling Tree' : kind === 'collapse' ? 'Collapse' : 'Physics Event';
+  return `Undo Last ${what}`;
+}
 
 /**
  * Look up every element in `IDS`; fail fast with one clear message listing everything that is missing.
@@ -179,10 +343,19 @@ function slotFromDigitCode(code) {
  */
 export function createMenus(doc, atlasCanvas, callbacks = {}) {
   const el = bindElements(doc);
-  const win = doc.defaultView || globalThis;
 
   const state = {
-    hasSave: false,
+    /** @type {import('./storage.js').SlotInfo[]} the slots the Worlds panel shows */
+    worlds: [],
+    /** @type {WorldsOptions} */
+    worldsOpts: {},
+    /** @type {{ slot: number, mode: 'new'|'rename' }|null} the one open inline form */
+    editing: null,
+    worldsRenders: 0,
+    /** slot the delete dialog is asking about (0 = closed) */
+    confirmSlot: 0,
+    /** @type {HTMLElement|null} focused before the dialog opened (gets focus back on Cancel) */
+    confirmReturn: null,
     lastSplash: -1,
     backgroundApplied: false,
     pickerOpen: false,
@@ -234,9 +407,14 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
   const show = (node) => node.classList.remove('hidden');
   const hide = (node) => node.classList.add('hidden');
 
-  /** Ask the user; when no confirm() exists (non-browser host) there is nobody to ask, so proceed. */
-  function confirmDialog(message) {
-    return typeof win.confirm === 'function' ? Boolean(win.confirm(message)) : true;
+  /** Focus without scrolling the page (where supported). @param {HTMLElement|null|undefined} node */
+  function focusEl(node) {
+    if (!node || typeof node.focus !== 'function') return;
+    try {
+      node.focus({ preventScroll: true });
+    } catch {
+      node.focus();
+    }
   }
 
   // ---- shared visuals ------------------------------------------------------------------------------
@@ -288,43 +466,352 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
 
   // ---- title ---------------------------------------------------------------------------------------
 
-  function showTitle(hasSave) {
-    state.hasSave = Boolean(hasSave);
+  /**
+   * @param {import('./storage.js').SlotInfo[]} slots
+   * @param {WorldsOptions} [opts]
+   */
+  function showTitle(slots, opts = {}) {
     el.splashText.textContent = pickSplash();
     ensureBackground();
     safe(() => drawTitleLogo(el.titleLogo, atlasCanvas), 'title logo');
     renderControlsSheets();
-    /** @type {HTMLButtonElement} */ (el.btnContinue).disabled = !state.hasSave;
+    state.editing = null;
+    closeConfirm(false);
     show(el.titleScreen);
+    setWorlds(slots, opts);
   }
 
   function hideTitle() {
+    state.editing = null;
+    closeConfirm(false);
     hide(el.titleScreen);
-    // A focused (now invisible) text input would keep swallowing keystrokes in some browsers.
-    if (doc.activeElement === el.seedInput && typeof el.seedInput.blur === 'function') el.seedInput.blur();
+    // A focused (now invisible) text input or button would keep swallowing keystrokes in some browsers.
+    const active = /** @type {HTMLElement|null} */ (doc.activeElement);
+    if (active && el.titleScreen.contains(active) && typeof active.blur === 'function') active.blur();
   }
 
+  /** The open New World form's seed text ('' when no form is open). */
   function getSeedInput() {
-    const v = /** @type {HTMLInputElement} */ (el.seedInput).value;
-    return typeof v === 'string' ? v : '';
+    const input = /** @type {HTMLInputElement|null} */ (el.worldsList.querySelector('.slot-seed-input'));
+    return input && typeof input.value === 'string' ? input.value : '';
   }
 
-  function startNewWorld() {
-    if (state.hasSave && !confirmDialog(CONFIRM_NEW_WORLD_TEXT)) return;
-    fire('onNewWorld', getSeedInput());
+  // ---- Worlds panel (§41) ------------------------------------------------------------------------------
+
+  /** `<tag class=…>text</tag>` @param {string} tag @param {string} className @param {string} [text] */
+  function make(tag, className, text) {
+    const node = doc.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
   }
 
-  on(el.btnNewWorld, 'click', () => startNewWorld());
-  on(el.seedInput, 'keydown', (/** @type {KeyboardEvent} */ e) => {
-    if (e.repeat) return;
-    if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') {
-      e.preventDefault();
-      startNewWorld();
+  /**
+   * A row button; `data-action` / `data-slot` route its click through the list's one delegated listener.
+   * @param {string} label @param {string} action @param {number} slot @param {string} [aria] @param {boolean} [disabled]
+   */
+  function slotButton(label, action, slot, aria, disabled = false) {
+    const b = /** @type {HTMLButtonElement} */ (make('button', 'mc-button slot-btn', label));
+    b.type = 'button';
+    b.dataset.action = action;
+    b.dataset.slot = String(slot);
+    if (aria) b.setAttribute('aria-label', aria);
+    if (action === 'delete') b.classList.add('danger');
+    if (disabled) {
+      b.disabled = true;
+      b.title = 'Saving is off (?nosave=1)';
+    }
+    return b;
+  }
+
+  /** `<label for=id>text</label><input id=id …>` inside one wrapper label-pair span. */
+  function field(labelText, id, className, value, placeholder) {
+    const wrap = make('span', 'slot-field');
+    const label = /** @type {HTMLLabelElement} */ (make('label', '', labelText));
+    label.htmlFor = id;
+    const input = /** @type {HTMLInputElement} */ (make('input', className));
+    input.id = id;
+    input.type = 'text';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.value = value;
+    if (placeholder) input.placeholder = placeholder;
+    wrap.appendChild(label);
+    wrap.appendChild(input);
+    return { wrap, input };
+  }
+
+  /** The inline New World / Rename form that replaces a row's text and buttons. */
+  function buildForm(info, mode) {
+    const form = /** @type {HTMLFormElement} */ (make('form', 'slot-form'));
+    form.noValidate = true;
+    form.dataset.slot = String(info.slot);
+    form.dataset.mode = mode;
+    const name = field('Name', 'world-name-input', 'slot-name-input', mode === 'rename' ? info.name : defaultWorldName(info.slot));
+    name.input.maxLength = MAX_WORLD_NAME_CHARS;
+    form.appendChild(name.wrap);
+    if (mode === 'new') {
+      const seed = state.worldsOpts.defaultSeed;
+      form.appendChild(field('Seed', 'seed-input', 'slot-seed-input', seed == null ? '' : String(seed), 'random').wrap);
+    }
+    const buttons = make('span', 'slot-form-buttons');
+    const submit = /** @type {HTMLButtonElement} */ (make('button', 'mc-button slot-btn', mode === 'new' ? 'Create' : 'Save'));
+    submit.type = 'submit';
+    buttons.appendChild(submit);
+    buttons.appendChild(slotButton('Cancel', 'cancel', info.slot));
+    form.appendChild(buttons);
+    return form;
+  }
+
+  /** One `li.world-slot` of the list. */
+  function buildRow(info, latest, canDuplicate, readOnly) {
+    const li = make('li', `world-slot ${info.status}${info.slot === latest ? ' latest' : ''}`);
+    li.dataset.slot = String(info.slot);
+    li.appendChild(make('div', 'slot-num', String(info.slot)));
+    const editing = state.editing && state.editing.slot === info.slot ? state.editing.mode : null;
+    if (editing) {
+      li.classList.add('editing');
+      li.appendChild(buildForm(info, editing));
+      return li;
+    }
+    const body = make('div', 'slot-body');
+    const title = info.status === 'world' ? info.name : info.status === 'damaged' ? 'Damaged world' : 'Empty';
+    const name = make('div', 'slot-name', title);
+    if (info.status === 'world') name.title = info.name;
+    body.appendChild(name);
+    body.appendChild(make('div', 'slot-detail', slotDetailText(info, state.worldsOpts.now ?? Date.now())));
+    li.appendChild(body);
+    const actions = make('div', 'slot-actions');
+    if (info.status === 'world') {
+      actions.appendChild(slotButton('Play', 'play', info.slot, `Play ${info.name}`));
+      actions.appendChild(slotButton('Rename', 'rename', info.slot, `Rename ${info.name}`, readOnly));
+      if (canDuplicate) actions.appendChild(slotButton('Duplicate', 'duplicate', info.slot, `Duplicate ${info.name}`, readOnly));
+      actions.appendChild(slotButton('Delete', 'delete', info.slot, `Delete ${info.name}`, readOnly));
+    } else if (info.status === 'damaged') {
+      actions.appendChild(slotButton('Delete', 'delete', info.slot, `Delete the damaged world in slot ${info.slot}`, readOnly));
+    } else {
+      actions.appendChild(slotButton('New World', 'new', info.slot, `New world in slot ${info.slot}`));
+    }
+    li.appendChild(actions);
+    return li;
+  }
+
+  /** The row element of `slot`, or null. */
+  function rowOf(slot) {
+    return /** @type {HTMLElement|null} */ (el.worldsList.querySelector(`li[data-slot="${slot}"]`));
+  }
+
+  /** Focus a row's first enabled control (a form's name field, else its first button). */
+  function focusRow(slot) {
+    const row = rowOf(slot);
+    if (!row) return false;
+    const input = /** @type {HTMLInputElement|null} */ (row.querySelector('.slot-name-input'));
+    if (input) {
+      focusEl(input);
+      if (typeof input.select === 'function') input.select();
+      return true;
+    }
+    const btn = /** @type {HTMLElement|null} */ (row.querySelector('button:not([disabled])'));
+    focusEl(btn);
+    return Boolean(btn);
+  }
+
+  /** Re-render the list, the count and the usage bar from state. */
+  function renderWorlds() {
+    state.worldsRenders++;
+    const slots = state.worlds;
+    const o = state.worldsOpts;
+    const latest = latestSlot(slots);
+    const canDuplicate = slots.some((s) => s.status === 'empty');
+    clearChildren(el.worldsList);
+    for (const info of slots) el.worldsList.appendChild(buildRow(info, latest, canDuplicate, Boolean(o.readOnly)));
+    const used = slots.filter((s) => s.status !== 'empty').length;
+    el.worldsCount.textContent = `${used} of ${slots.length} slots used${o.readOnly ? ' · saving off' : ''}`;
+    const usage = o.usage || { used: 0, quota: 0, fraction: 0 };
+    const fraction = Math.min(1, Math.max(0, Number(usage.fraction) || 0));
+    el.usageFill.style.width = `${(fraction * 100).toFixed(1)}%`;
+    el.usageFill.classList.remove('warn', 'full');
+    const level = usageLevel(fraction);
+    if (level) el.usageFill.classList.add(level);
+    el.usageText.textContent = usageLabel(usage);
+    el.usageBar.setAttribute('aria-valuenow', String(Math.round(fraction * 100)));
+    el.usageBar.setAttribute('aria-valuetext', el.usageText.textContent);
+  }
+
+  /**
+   * Show these slots in the Worlds panel (keeps the title as it is).
+   * @param {import('./storage.js').SlotInfo[]} slots
+   * @param {WorldsOptions} [opts]
+   */
+  function setWorlds(slots, opts = {}) {
+    state.worlds = Array.isArray(slots) ? slots.slice() : [];
+    state.worldsOpts = { ...opts };
+    if (state.editing) {
+      // a form stays open only while its slot still fits it (another tab may have changed the slot)
+      const info = state.worlds.find((s) => s.slot === state.editing.slot);
+      const want = state.editing.mode === 'new' ? 'empty' : 'world';
+      if (!info || info.status !== want) state.editing = null;
+    }
+    renderWorlds();
+    showWorldsMessage(opts.message || '', Boolean(opts.isError));
+    if (el.titleScreen.classList.contains('hidden') || state.confirmSlot) return;
+    if (opts.focusSlot && focusRow(opts.focusSlot)) return;
+    const latest = latestSlot(state.worlds);
+    const empty = state.worlds.find((s) => s.status === 'empty');
+    focusRow(latest || (empty ? empty.slot : 1));
+  }
+
+  /** The status line under the list ('' clears it). @param {string} text @param {boolean} [isError] */
+  function showWorldsMessage(text, isError = false) {
+    el.worldsMessage.textContent = text || '';
+    el.worldsMessage.classList.toggle('error', Boolean(text) && Boolean(isError));
+  }
+
+  /** Open (or switch to) the inline form of `slot`. @param {number} slot @param {'new'|'rename'} mode */
+  function openForm(slot, mode) {
+    state.editing = { slot, mode };
+    renderWorlds();
+    focusRow(slot);
+  }
+
+  function cancelForm() {
+    const slot = state.editing ? state.editing.slot : 0;
+    state.editing = null;
+    renderWorlds();
+    if (slot) focusRow(slot);
+  }
+
+  /** @param {HTMLFormElement} form */
+  function submitForm(form) {
+    const slot = Number(form.dataset.slot);
+    const mode = form.dataset.mode;
+    const nameInput = /** @type {HTMLInputElement|null} */ (form.querySelector('.slot-name-input'));
+    const seedInput = /** @type {HTMLInputElement|null} */ (form.querySelector('.slot-seed-input'));
+    const name = nameInput ? nameInput.value : '';
+    const seed = seedInput ? seedInput.value : '';
+    state.editing = null;
+    const renders = state.worldsRenders;
+    if (mode === 'new') fire('onNewWorld', slot, name, seed);
+    else fire('onRenameWorld', slot, name);
+    // Nobody re-rendered (no callback, or the title stays up without a refresh): close the form here.
+    if (state.worldsRenders === renders && !el.titleScreen.classList.contains('hidden')) {
+      renderWorlds();
+      focusRow(slot);
+    }
+  }
+
+  /** The delete dialog for `slot`, naming its world; Cancel has the focus. */
+  function openConfirm(slot) {
+    const info = state.worlds.find((s) => s.slot === slot);
+    if (!info || info.status === 'empty') return;
+    const text = deleteConfirmText(info);
+    el.confirmText.textContent = text.title;
+    el.confirmDetail.textContent = text.detail;
+    state.confirmSlot = slot;
+    state.confirmReturn = /** @type {HTMLElement|null} */ (doc.activeElement);
+    show(el.confirmDialog);
+    focusEl(el.confirmNo);
+  }
+
+  /** @param {boolean} restoreFocus  give the focus back to what had it (Cancel / Esc) */
+  function closeConfirm(restoreFocus) {
+    const back = state.confirmReturn;
+    state.confirmSlot = 0;
+    state.confirmReturn = null;
+    if (el.confirmDialog.classList.contains('hidden')) return;
+    hide(el.confirmDialog);
+    if (restoreFocus && back && el.titleScreen.contains(back)) focusEl(back);
+  }
+
+  function isConfirmOpen() {
+    return state.confirmSlot !== 0;
+  }
+
+  on(el.worldsList, 'click', (e) => {
+    const target = /** @type {HTMLElement|null} */ (e.target);
+    const btn = target && typeof target.closest === 'function' ? /** @type {HTMLButtonElement|null} */ (target.closest('button[data-action]')) : null;
+    if (!btn || btn.disabled) return;
+    const slot = Number(btn.dataset.slot);
+    switch (btn.dataset.action) {
+      case 'play':
+        fire('onPlayWorld', slot);
+        break;
+      case 'new':
+        openForm(slot, 'new');
+        break;
+      case 'rename':
+        openForm(slot, 'rename');
+        break;
+      case 'duplicate':
+        fire('onDuplicateWorld', slot);
+        break;
+      case 'delete':
+        openConfirm(slot);
+        break;
+      case 'cancel':
+        cancelForm();
+        break;
+      default:
+        break;
     }
   });
-  on(el.btnContinue, 'click', () => {
-    if (!state.hasSave || /** @type {HTMLButtonElement} */ (el.btnContinue).disabled) return;
-    fire('onContinue');
+  on(el.worldsList, 'submit', (e) => {
+    e.preventDefault();
+    submitForm(/** @type {HTMLFormElement} */ (e.target));
+  });
+  on(el.worldsList, 'keydown', (/** @type {KeyboardEvent} */ e) => {
+    const target = /** @type {HTMLElement} */ (e.target);
+    const key = e.key;
+    if ((key === 'Escape' || key === 'Esc') && state.editing) {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelForm();
+      return;
+    }
+    // Arrow keys walk the rows' buttons: up / down to the same button (or the nearest) of the row above / below,
+    // left / right along a row. Text fields keep their arrows.
+    if (target.tagName !== 'BUTTON' || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) return;
+    const row = /** @type {HTMLElement|null} */ (target.closest('li.world-slot'));
+    if (!row) return;
+    const buttons = (r) => Array.from(r.querySelectorAll('button:not([disabled])'));
+    const own = buttons(row);
+    const i = own.indexOf(target);
+    let next = null;
+    if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      next = own[i + (key === 'ArrowRight' ? 1 : -1)] || null;
+    } else {
+      const rows = Array.from(el.worldsList.querySelectorAll('li.world-slot'));
+      const j = rows.indexOf(row) + (key === 'ArrowDown' ? 1 : -1);
+      if (j >= 0 && j < rows.length) {
+        const other = buttons(rows[j]);
+        next = other[Math.min(Math.max(0, i), other.length - 1)] || null;
+      }
+    }
+    if (next) {
+      e.preventDefault();
+      focusEl(/** @type {HTMLElement} */ (next));
+    }
+  });
+
+  on(el.confirmYes, 'click', () => {
+    const slot = state.confirmSlot;
+    closeConfirm(false);
+    if (slot) fire('onDeleteWorld', slot);
+  });
+  on(el.confirmNo, 'click', () => closeConfirm(true));
+  on(el.confirmDialog, 'click', (e) => {
+    if (e.target === el.confirmDialog) closeConfirm(true); // a click on the dimmed backdrop cancels
+  });
+  on(el.confirmDialog, 'keydown', (/** @type {KeyboardEvent} */ e) => {
+    if (e.key === 'Escape' || e.key === 'Esc') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeConfirm(true);
+    } else if (e.key === 'Tab') {
+      // keep the focus on the dialog's two buttons
+      e.preventDefault();
+      focusEl(doc.activeElement === el.confirmNo ? el.confirmYes : el.confirmNo);
+    }
   });
 
   // ---- loading -------------------------------------------------------------------------------------
@@ -357,18 +844,63 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
 
   // ---- pause ---------------------------------------------------------------------------------------
 
-  function showPause(seed) {
+  /** @param {number|string} seed @param {PhysicsMenuState} [physics] @param {string} [worldName]  shown under the title */
+  function showPause(seed, physics, worldName) {
+    el.pauseWorld.textContent = typeof worldName === 'string' ? worldName : '';
+    el.pauseWorld.classList.toggle('hidden', !worldName);
+    setQuitUnsaved(false);
     el.pauseSeed.textContent = `Seed: ${seed}`;
+    if (physics) setPhysicsState(physics);
     show(el.pauseMenu);
+  }
+
+  /** @param {PhysicsMenuState} physics */
+  function setPhysicsState(physics) {
+    if (!physics || !physics.switches) return;
+    for (const [name, label, key] of PHYSICS_TOGGLES) {
+      const btn = el[/** @type {keyof typeof IDS} */ (key)];
+      const on = physics.switches[name] !== false;
+      btn.textContent = `${label}: ${on ? 'ON' : 'OFF'}`;
+      btn.classList.toggle('off', !on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    const undo = /** @type {HTMLButtonElement} */ (el.btnUndoPhysics);
+    undo.textContent = undoButtonLabel(physics.canUndo, physics.undoKind);
+    undo.disabled = !physics.canUndo;
   }
 
   function hidePause() {
     hide(el.pauseMenu);
   }
 
+  /**
+   * §41: #btn-quit reads "Save & Quit", or "Quit Without Saving" (class `danger`) after a Save & Quit whose save failed.
+   * @param {boolean} on
+   */
+  function setQuitUnsaved(on) {
+    el.btnQuit.textContent = on ? QUIT_UNSAVED_LABEL : QUIT_LABEL;
+    el.btnQuit.classList.toggle('danger', Boolean(on));
+  }
+
+  /** The Creatures row's Zombies toggle (§39): "Zombies: ON|OFF", class `off`, aria-pressed. @param {boolean} on */
+  function setZombiesState(on) {
+    const btn = el.btnZombies;
+    btn.textContent = `Zombies: ${on ? 'ON' : 'OFF'}`;
+    btn.classList.toggle('off', !on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+
+  on(el.btnZombies, 'click', () => fire('onZombiesToggle'));
+
   on(el.btnResume, 'click', () => fire('onResume'));
   on(el.btnSave, 'click', () => fire('onSave'));
   on(el.btnStopRunes, 'click', () => fire('onStopRunes'));
+  for (const [name, , key] of PHYSICS_TOGGLES) {
+    on(el[/** @type {keyof typeof IDS} */ (key)], 'click', () => fire('onPhysicsToggle', name));
+  }
+  on(el.btnUndoPhysics, 'click', () => {
+    if (!/** @type {HTMLButtonElement} */ (el.btnUndoPhysics).disabled) fire('onUndoPhysics');
+  });
   on(el.btnQuit, 'click', () => fire('onQuit'));
 
   // ---- block picker --------------------------------------------------------------------------------
@@ -388,7 +920,7 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     el.pickerName.textContent = PICKER_NAME_IDLE;
   }
 
-  /** Build the 23 picker cells once; they live in #picker-grid for the lifetime of the menus. */
+  /** Build the PICKER_ORDER picker cells once; they live in #picker-grid for the lifetime of the menus. */
   function buildPickerGrid() {
     clearChildren(el.pickerGrid);
     cells.length = 0;
@@ -501,6 +1033,10 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     cells.length = 0;
     state.hoveredId = null;
     state.hoveredCell = null;
+    clearChildren(el.worldsList);
+    state.editing = null;
+    state.confirmSlot = 0;
+    state.confirmReturn = null;
   }
 
   // Static content that does not depend on showTitle: the picker grid, and the pause-menu cheat sheet
@@ -510,6 +1046,9 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
 
   return {
     showTitle,
+    setWorlds,
+    showWorldsMessage,
+    isConfirmOpen,
     hideTitle,
     showLoading,
     hideLoading,
@@ -517,6 +1056,9 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     hideClickToPlay,
     showPause,
     hidePause,
+    setQuitUnsaved,
+    setPhysicsState,
+    setZombiesState,
     showPicker,
     hidePicker,
     isPickerOpen,

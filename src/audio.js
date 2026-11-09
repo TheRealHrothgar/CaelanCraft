@@ -1,4 +1,4 @@
-// Caelancraft — WebAudio synthesised sound effects (block break / place, UI click).
+// Caelancraft — WebAudio synthesised sound effects (block break / place, UI click, pigs, campfires, block physics).
 // See src/CONTRACTS.md §21 and docs/SPEC-gameplay.md §9.
 //
 // DOM module (WebAudio). Nothing is touched at module top level, so the module
@@ -61,6 +61,88 @@ export const PLACE_CLICK_CUTOFF_SCALE = 1.5;
 export const CLICK_HZ = 1200;
 export const CLICK_DURATION_S = 0.02;
 export const CLICK_GAIN = 0.15;
+// Pig: an oink is two short sawtooth grunts (150 → 100 Hz) through a 900 Hz lowpass; a squeal (hit) is one
+// rising-then-falling 600 → 1100 → 700 Hz cry. Both scale with the caller's volume (distance falloff).
+export const OINK_HZ = 150;
+export const OINK_GRUNT_S = 0.11;
+export const OINK_GAP_S = 0.15;
+export const OINK_CUTOFF_HZ = 900;
+export const OINK_GAIN = 0.5;
+export const SQUEAL_DURATION_S = 0.28;
+export const SQUEAL_GAIN = 0.3;
+// Campfire crackle: 2–3 tiny bright noise pops (12 ms, 4.5 kHz lowpass) within 80 ms.
+export const CRACKLE_POP_S = 0.012;
+export const CRACKLE_CUTOFF_HZ = 4500;
+export const CRACKLE_GAIN = 0.35;
+// v0.8 trees: playCreak — a toppling trunk's groan: a low sawtooth sliding up then down through a soft lowpass,
+// with a short woody rasp.
+export const CREAK_DURATION_S = 0.6;
+export const CREAK_START_HZ = 85;
+export const CREAK_PEAK_HZ = 135;
+export const CREAK_END_HZ = 60;
+export const CREAK_CUTOFF_HZ = 700;
+export const CREAK_GAIN = 0.3;
+export const CREAK_RASP_S = 0.25;
+export const CREAK_RASP_CUTOFF_HZ = 1200;
+export const CREAK_RASP_GAIN = 0.12;
+// Block physics (CONTRACTS §34): a landing block thuds — a sine drop 110 → 45 Hz over 160 ms under a short 500 Hz
+// noise knock; water starting to flow splashes — a 0.35 s 1.6 kHz noise wash plus two rising bubble blips.
+export const THUD_START_HZ = 110;
+export const THUD_END_HZ = 45;
+export const THUD_DURATION_S = 0.16;
+export const THUD_GAIN = 0.65;
+export const THUD_KNOCK_S = 0.06;
+export const THUD_KNOCK_CUTOFF_HZ = 500;
+export const THUD_KNOCK_GAIN = 0.45;
+export const SPLASH_DURATION_S = 0.35;
+export const SPLASH_CUTOFF_HZ = 1600;
+export const SPLASH_GAIN = 0.3;
+export const SPLASH_BLIP_HZ = 520;
+export const SPLASH_BLIP_S = 0.05;
+export const SPLASH_BLIP_GAIN = 0.12;
+// Explosives (CONTRACTS §37). A boom is a sine thump 72 → 26 Hz over 1.1 s, a 0.9 s 420 Hz noise body, a slowed
+// 150 Hz rumble starting 0.12 s later and a 60 ms 3.2 kHz crack on top. A lit fuse hisses — a bright 0.3 s noise
+// breath; putting one out fizzles — a 0.45 s 2.5 kHz noise wash over a sine sagging 700 → 180 Hz. All synthesised
+// (no samples), all scaled by the caller's volume. (The falling-tree creak, §36, is defined above with the campfire.)
+export const BOOM_THUMP_START_HZ = 72;
+export const BOOM_THUMP_END_HZ = 26;
+export const BOOM_THUMP_S = 1.1;
+export const BOOM_THUMP_GAIN = 0.9;
+export const BOOM_BODY_S = 0.9;
+export const BOOM_BODY_CUTOFF_HZ = 420;
+export const BOOM_BODY_GAIN = 0.8;
+export const BOOM_RUMBLE_DELAY_S = 0.12;
+export const BOOM_RUMBLE_S = 0.9;
+export const BOOM_RUMBLE_CUTOFF_HZ = 150;
+export const BOOM_RUMBLE_GAIN = 0.45;
+export const BOOM_CRACK_S = 0.06;
+export const BOOM_CRACK_CUTOFF_HZ = 3200;
+export const BOOM_CRACK_GAIN = 0.5;
+export const HISS_DURATION_S = 0.3;
+export const HISS_CUTOFF_HZ = 7000;
+export const HISS_GAIN = 0.12;
+export const FIZZLE_DURATION_S = 0.45;
+export const FIZZLE_CUTOFF_HZ = 2500;
+export const FIZZLE_GAIN = 0.3;
+export const FIZZLE_SAG_START_HZ = 700;
+export const FIZZLE_SAG_END_HZ = 180;
+export const FIZZLE_SAG_S = 0.25;
+export const FIZZLE_SAG_GAIN = 0.08;
+// Zombies (CONTRACTS §39). A groan is a low sawtooth moan rising then sagging (92 → 118 → 70 Hz over 1 s) through a
+// dark lowpass, with a detuned fifth above it and a breathy noise; a hit grunt is a short 170 → 230 → 110 Hz bark
+// over a noise slap; a knock-out is a moan sinking 130 → 40 Hz under a soft noise poof and a low thump.
+export const GROAN_DURATION_S = 1.0;
+export const GROAN_CUTOFF_HZ = 520;
+export const GROAN_GAIN = 0.32;
+export const GRUNT_DURATION_S = 0.22;
+export const GRUNT_GAIN = 0.3;
+export const ZOMBIE_DOWN_S = 0.8;
+export const ZOMBIE_DOWN_GAIN = 0.32;
+// The Hollow Watcher (CONTRACTS §40) vanishing: a faint, low exhale — two sine tones a few hertz apart sinking 68 → 30
+// Hz over 1.6 s (they beat slowly against each other), a hollow 240 Hz noise breath and a soft 900 Hz air rush at the
+// start. Quiet on purpose: you are not sure you heard it.
+export const WATCHER_VANISH_S = 1.6;
+export const WATCHER_VANISH_GAIN = 0.2;
 
 /** Exponential ramps cannot reach 0; decays ramp to this floor and the voice stops there. */
 const DECAY_FLOOR = 0.001;
@@ -70,9 +152,23 @@ const MUTE_FADE_S = 0.01;
 /**
  * @typedef {Object} Audio
  * @property {() => void} resume                                 create / resume the AudioContext; call on the first user gesture
- * @property {(soundGroup: string|null|undefined) => void} playBreak   block broken; pass BLOCKS[id].soundGroup
+ * @property {(soundGroup: string|null|undefined, volume?: number) => void} playBreak   block broken; pass BLOCKS[id].soundGroup
+ *   and optionally a volume 0..1 (distance falloff; default 1)
  * @property {(soundGroup: string|null|undefined) => void} playPlace   block placed; pass BLOCKS[id].soundGroup
  * @property {() => void} playClick                              UI / hotbar click
+ * @property {(volume?: number) => void} playOink                 pig grunt; volume 0..1 (default 1)
+ * @property {(volume?: number) => void} playSqueal               pig hit
+ * @property {(volume?: number) => void} playCrackle              campfire pop
+ * @property {(volume?: number) => void} playCreak                a tree starts to topple (block physics)
+ * @property {(volume?: number) => void} playThud                 a falling block lands (block physics)
+ * @property {(volume?: number) => void} playSplash               water starts to flow nearby (block physics)
+ * @property {(volume?: number) => void} playBoom                 a blast (explosives)
+ * @property {(volume?: number) => void} playHiss                 a lit barrel's fuse
+ * @property {(volume?: number) => void} playFizzle               a lit barrel put out
+ * @property {(volume?: number) => void} playGroan                a zombie moans (ambient / it noticed you)
+ * @property {(volume?: number) => void} playZombieHurt           a zombie is hit
+ * @property {(volume?: number) => void} playZombieDown           a zombie is knocked out or burns away
+ * @property {(volume?: number) => void} playWatcherVanish        the Hollow Watcher vanishes in a puff of smoke (§40)
  * @property {(b: boolean) => void} setMuted
  * @property {() => boolean} toggleMuted                         returns the new muted state
  * @property {boolean} muted                                     read-only getter
@@ -286,6 +382,30 @@ export function createAudio(opts = {}) {
     track(osc, [g], t0 + dur);
   }
 
+  /**
+   * Sawtooth voice through a lowpass: frequency follows `points` ([seconds from t0, Hz] pairs, exponential ramps).
+   * @param {AudioContext} c
+   * @param {number} t0
+   * @param {number} dur
+   * @param {[number, number][]} points
+   * @param {number} cutoffHz
+   * @param {number} peak
+   */
+  function buzz(c, t0, dur, points, cutoffHz, peak) {
+    const osc = c.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(points[0][1], t0);
+    for (let i = 1; i < points.length; i++) osc.frequency.exponentialRampToValueAtTime(points[i][1], t0 + points[i][0]);
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = Math.min(cutoffHz, c.sampleRate / 2);
+    const g = envelope(c, t0, dur, peak);
+    osc.connect(lp);
+    lp.connect(g);
+    osc.start(t0);
+    track(osc, [lp, g], t0 + dur);
+  }
+
   // --- public API -----------------------------------------------------------
 
   /** Create the AudioContext on first call; afterwards just resume it if the browser suspended it. */
@@ -299,16 +419,19 @@ export function createAudio(opts = {}) {
   }
 
   /** @param {string|null|undefined} soundGroup */
-  function playBreak(soundGroup) {
+  /** @param {string|null|undefined} soundGroup @param {number} [volume] 0..1 (default 1) */
+  function playBreak(soundGroup, volume = 1) {
     const c = ready();
     if (!c) return;
+    const v = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1;
+    if (v <= 0) return;
     try {
       const group = normalizeSoundGroup(soundGroup);
       const pitch = randomPitch();
       const t0 = c.currentTime;
-      noiseBurst(c, t0, BREAK_DURATION_S, BREAK_CUTOFF_HZ[group], BREAK_GAIN, pitch);
+      noiseBurst(c, t0, BREAK_DURATION_S, BREAK_CUTOFF_HZ[group], BREAK_GAIN * v, pitch);
       if (group === 'glass') {
-        tone(c, t0, GLASS_PING_DURATION_S, GLASS_PING_HZ * pitch, GLASS_PING_HZ * pitch, GLASS_PING_GAIN);
+        tone(c, t0, GLASS_PING_DURATION_S, GLASS_PING_HZ * pitch, GLASS_PING_HZ * pitch, GLASS_PING_GAIN * v);
       }
     } catch (err) {
       warnOnce(err);
@@ -341,6 +464,217 @@ export function createAudio(opts = {}) {
     }
   }
 
+  /** @param {number} [volume] */
+  function playOink(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const pitch = randomPitch();
+      const f = OINK_HZ * pitch;
+      const t0 = c.currentTime;
+      const peak = OINK_GAIN * Math.min(1, volume);
+      for (const at of [0, OINK_GAP_S]) {
+        buzz(c, t0 + at, OINK_GRUNT_S, [[0, f], [OINK_GRUNT_S, f * 0.67]], OINK_CUTOFF_HZ * pitch, peak);
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playSqueal(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const pitch = randomPitch();
+      const d = SQUEAL_DURATION_S;
+      buzz(c, c.currentTime, d, [[0, 600 * pitch], [d * 0.35, 1100 * pitch], [d, 700 * pitch]], 2600, SQUEAL_GAIN * Math.min(1, volume));
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playCrackle(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const pops = 2 + (Math.random() < 0.5 ? 1 : 0);
+      for (let i = 0; i < pops; i++) {
+        noiseBurst(c, c.currentTime + Math.random() * 0.08, CRACKLE_POP_S, CRACKLE_CUTOFF_HZ, CRACKLE_GAIN * Math.min(1, volume), randomPitch());
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playCreak(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const pitch = randomPitch();
+      const d = CREAK_DURATION_S;
+      const t0 = c.currentTime;
+      buzz(c, t0, d, [[0, CREAK_START_HZ * pitch], [d * 0.55, CREAK_PEAK_HZ * pitch], [d, CREAK_END_HZ * pitch]], CREAK_CUTOFF_HZ, CREAK_GAIN * v);
+      noiseBurst(c, t0 + 0.05, CREAK_RASP_S, CREAK_RASP_CUTOFF_HZ, CREAK_RASP_GAIN * v, pitch);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playThud(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const pitch = randomPitch();
+      const t0 = c.currentTime;
+      tone(c, t0, THUD_DURATION_S, THUD_START_HZ * pitch, THUD_END_HZ * pitch, THUD_GAIN * v);
+      noiseBurst(c, t0, THUD_KNOCK_S, THUD_KNOCK_CUTOFF_HZ, THUD_KNOCK_GAIN * v, pitch);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playSplash(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const t0 = c.currentTime;
+      noiseBurst(c, t0, SPLASH_DURATION_S, SPLASH_CUTOFF_HZ, SPLASH_GAIN * v, randomPitch());
+      for (let i = 0; i < 2; i++) {
+        const f = SPLASH_BLIP_HZ * randomPitch() * (1 + 0.4 * i);
+        const at = t0 + 0.04 + Math.random() * 0.18;
+        tone(c, at, SPLASH_BLIP_S, f, f * 1.6, SPLASH_BLIP_GAIN * v);
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  // --- explosives (CONTRACTS §37) ------------------------------------------
+
+  /** @param {number} [volume] */
+  function playBoom(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const pitch = randomPitch();
+      const t0 = c.currentTime;
+      tone(c, t0, BOOM_THUMP_S, BOOM_THUMP_START_HZ * pitch, BOOM_THUMP_END_HZ * pitch, BOOM_THUMP_GAIN * v);
+      noiseBurst(c, t0, BOOM_BODY_S, BOOM_BODY_CUTOFF_HZ, BOOM_BODY_GAIN * v, pitch);
+      // Slowed noise (rate 0.6) is darker and stays inside the 1 s noise buffer.
+      noiseBurst(c, t0 + BOOM_RUMBLE_DELAY_S, BOOM_RUMBLE_S, BOOM_RUMBLE_CUTOFF_HZ / 0.6, BOOM_RUMBLE_GAIN * v, 0.6);
+      noiseBurst(c, t0, BOOM_CRACK_S, BOOM_CRACK_CUTOFF_HZ, BOOM_CRACK_GAIN * v, pitch);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playHiss(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      noiseBurst(c, c.currentTime, HISS_DURATION_S, HISS_CUTOFF_HZ, HISS_GAIN * Math.min(1, volume), randomPitch());
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playFizzle(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const pitch = randomPitch();
+      const t0 = c.currentTime;
+      noiseBurst(c, t0, FIZZLE_DURATION_S, FIZZLE_CUTOFF_HZ, FIZZLE_GAIN * v, pitch);
+      tone(c, t0, FIZZLE_SAG_S, FIZZLE_SAG_START_HZ * pitch, FIZZLE_SAG_END_HZ * pitch, FIZZLE_SAG_GAIN * v);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  // --- zombies (CONTRACTS §39) ----------------------------------------------
+
+  /** @param {number} [volume] */
+  function playGroan(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const p = randomPitch();
+      const d = GROAN_DURATION_S * (0.85 + Math.random() * 0.3);
+      const t0 = c.currentTime;
+      buzz(c, t0, d, [[0, 92 * p], [d * 0.4, 118 * p], [d, 70 * p]], GROAN_CUTOFF_HZ, GROAN_GAIN * v);
+      buzz(c, t0 + 0.03, d * 0.9, [[0, 139 * p], [d * 0.4, 176 * p], [d * 0.9, 104 * p]], GROAN_CUTOFF_HZ * 1.3, GROAN_GAIN * 0.35 * v);
+      noiseBurst(c, t0, d * 0.7, 400, 0.1 * v, p);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playZombieHurt(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const p = randomPitch();
+      const d = GRUNT_DURATION_S;
+      const t0 = c.currentTime;
+      buzz(c, t0, d, [[0, 170 * p], [d * 0.3, 230 * p], [d, 110 * p]], 900, GRUNT_GAIN * v);
+      noiseBurst(c, t0, 0.05, 1200, 0.25 * v, p);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** @param {number} [volume] */
+  function playZombieDown(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const p = randomPitch();
+      const d = ZOMBIE_DOWN_S;
+      const t0 = c.currentTime;
+      buzz(c, t0, d, [[0, 130 * p], [d, 40 * p]], 500, ZOMBIE_DOWN_GAIN * v);
+      noiseBurst(c, t0 + 0.1, 0.3, 300, 0.4 * v, p);
+      tone(c, t0 + 0.12, 0.2, 90 * p, 40 * p, 0.4 * v);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  // --- the Hollow Watcher (CONTRACTS §40) ------------------------------------
+
+  /** @param {number} [volume] */
+  function playWatcherVanish(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const p = 0.95 + Math.random() * 0.1;
+      const d = WATCHER_VANISH_S;
+      const t0 = c.currentTime;
+      tone(c, t0, d, 68 * p, 30 * p, WATCHER_VANISH_GAIN * v);
+      tone(c, t0 + 0.04, d * 0.95, 71.5 * p, 31.5 * p, WATCHER_VANISH_GAIN * 0.7 * v);
+      noiseBurst(c, t0, d * 0.8, 240, WATCHER_VANISH_GAIN * 0.9 * v, p);
+      noiseBurst(c, t0, 0.25, 900, WATCHER_VANISH_GAIN * 0.35 * v, p);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
   /** @param {boolean} b */
   function setMuted(b) {
     muted = !!b;
@@ -365,6 +699,19 @@ export function createAudio(opts = {}) {
     playBreak,
     playPlace,
     playClick,
+    playOink,
+    playSqueal,
+    playCrackle,
+    playCreak,
+    playThud,
+    playSplash,
+    playBoom,
+    playHiss,
+    playFizzle,
+    playGroan,
+    playZombieHurt,
+    playZombieDown,
+    playWatcherVanish,
     setMuted,
     toggleMuted,
     get muted() {

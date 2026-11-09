@@ -48,10 +48,10 @@ function everyPixel(px, pred, rows = null) {
 }
 
 describe('TILE_NAMES', () => {
-  it('lists all 28 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
+  it('lists all 77 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
     const keys = Object.keys(TILE_NAMES).map(Number).sort((a, b) => a - b);
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
-    expect(keys.length).toBe(29);
+    expect(keys.length).toBe(87); // v0.8: + barrel_side 75, barrel_top 76; zombies (§39): + 240–245; the Watcher (§40): + 250–252 (stone, crack glow, smoke)
     expect(TILE_NAMES[TILE.RUNE]).toBe('rune');
     expect(TILE.RUNE).toBe(27);
     for (const [key, id] of Object.entries(TILE)) {
@@ -136,8 +136,24 @@ describe('paintTile — alpha rules', () => {
     // Holes keep their RGB (still green) so cutout edges do not fringe black.
     everyPixel(px, (r, g, b) => g > r && g > b);
   });
+  it('spruce / birch leaves have oak-style holes (12–32% alpha 0, rest 255); ice is alpha 200 everywhere', () => {
+    for (const t of [TILE.SPRUCE_LEAVES, TILE.BIRCH_LEAVES]) {
+      const px = paintTile(t);
+      let holes = 0;
+      for (let i = 3; i < BYTES; i += 4) {
+        expect(px[i] === 0 || px[i] === 255).toBe(true);
+        if (px[i] === 0) holes++;
+      }
+      expect(holes / 256).toBeGreaterThanOrEqual(0.12);
+      expect(holes / 256).toBeLessThanOrEqual(0.32);
+    }
+    const ice = paintTile(TILE.ICE);
+    for (let i = 3; i < BYTES; i += 4) expect(ice[i]).toBe(200);
+  });
   it('every other tile is alpha 255 everywhere', () => {
-    const special = new Set([TILE.WATER, TILE.GLASS, TILE.OAK_LEAVES]);
+    const special = new Set([
+      TILE.WATER, TILE.GLASS, TILE.OAK_LEAVES, TILE.SPRUCE_LEAVES, TILE.BIRCH_LEAVES, TILE.ICE, TILE.CAMPFIRE_SIDE, TILE.CAMPFIRE_TOP,
+    ]);
     for (const t of TILE_IDS) {
       if (special.has(t)) continue;
       const px = paintTile(t);
@@ -158,7 +174,7 @@ describe('paintTile — recipe details', () => {
   });
   it('unknown tile ids paint the missing checker', () => {
     const missing = paintTile(TILE.MISSING);
-    for (const bad of [28, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
+    for (const bad of [77, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
       // @ts-ignore — deliberately passing garbage
       expect(sameBytes(paintTile(bad), missing), `tile ${String(bad)}`).toBe(true);
     }
@@ -432,6 +448,74 @@ describe('averageColor', () => {
   });
   it('unknown tile averages like the missing checker', () => {
     expect(averageColor(999)).toEqual(averageColor(TILE.MISSING));
+  });
+});
+
+describe('blast barrel tiles (v0.8)', () => {
+  it('side: wooden staves, dark iron bands and a red hazard hexagon; top: a lid with a burning fuse tip; alpha 255', () => {
+    const side = paintTile(TILE.BARREL_SIDE);
+    const top = paintTile(TILE.BARREL_TOP);
+    const px = (t, x, y) => [t[(y * 16 + x) * 4], t[(y * 16 + x) * 4 + 1], t[(y * 16 + x) * 4 + 2], t[(y * 16 + x) * 4 + 3]];
+    for (let i = 3; i < BYTES; i += 4) {
+      expect(side[i]).toBe(255);
+      expect(top[i]).toBe(255);
+    }
+    const [r, g, b] = px(side, 8, 8); // inside the hexagon
+    expect(r).toBeGreaterThan(150);
+    expect(g).toBeLessThan(80);
+    expect(b).toBeLessThan(80);
+    const band = px(side, 5, 2); // iron band: grey
+    expect(Math.abs(band[0] - band[2])).toBeLessThan(20);
+    expect(band[0]).toBeLessThan(110);
+    const stave = px(side, 1, 6); // wood: brown
+    expect(stave[0]).toBeGreaterThan(stave[2] + 30);
+    const tip = px(top, 11, 4); // the fuse tip glows
+    expect(tip[0]).toBeGreaterThan(220);
+    expect(tip[1]).toBeGreaterThan(160);
+    expect(averageColor(TILE.BARREL_SIDE)[0]).toBeGreaterThan(averageColor(TILE.BARREL_SIDE)[2]);
+  });
+});
+
+describe('zombie tiles (§39)', () => {
+  const px = (t, x, y) => [t[(y * 16 + x) * 4], t[(y * 16 + x) * 4 + 1], t[(y * 16 + x) * 4 + 2]];
+  const greenish = ([r, g, b]) => g > r && g > b;
+  it('live in atlas row 15 (240–245), alpha 255', () => {
+    for (const t of [TILE.ZOMBIE_FACE, TILE.ZOMBIE_HEAD_SIDE, TILE.ZOMBIE_SCALP, TILE.ZOMBIE_SHIRT, TILE.ZOMBIE_TROUSERS, TILE.ZOMBIE_SOLE]) {
+      expect(Math.floor(t / 16)).toBe(15);
+      const p = paintTile(t);
+      for (let i = 3; i < BYTES; i += 4) expect(p[i]).toBe(255);
+    }
+  });
+  it('face: grey-green skin, dark hair on top, two dark eye sockets with a glint, a crooked dark mouth with teeth', () => {
+    const face = paintTile(TILE.ZOMBIE_FACE);
+    expect(greenish(px(face, 1, 4))).toBe(true); // skin
+    expect(px(face, 6, 0)[0]).toBeLessThan(70); // hair
+    for (const [x, y] of [[3, 8], [10, 9]]) expect(Math.max(...px(face, x, y))).toBeLessThan(45); // sockets
+    const glint = px(face, 4, 7);
+    expect(glint[0]).toBeGreaterThan(180);
+    expect(glint[2]).toBeLessThan(120);
+    // The mouth is crooked: dark on row 12 at the left and right, but on row 13 in the middle.
+    for (const [x, y] of [[4, 12], [8, 13], [11, 12]]) expect(Math.max(...px(face, x, y))).toBeLessThan(60);
+    expect(Math.max(...px(face, 8, 12))).toBeGreaterThan(60);
+    expect(Math.min(...px(face, 5, 12))).toBeGreaterThan(150); // a tooth
+    // The other head sides have no face: no dark sockets in the eye rows.
+    const side = paintTile(TILE.ZOMBIE_HEAD_SIDE);
+    let dark = 0;
+    for (let y = 6; y <= 9; y++) for (let x = 0; x < 16; x++) if (Math.max(...px(side, x, y)) < 45) dark++;
+    expect(dark).toBeLessThan(3);
+  });
+  it('torn shirt (bluish cloth with skin showing), brown trousers over dark shoes, a dark sole', () => {
+    const shirt = averageColor(TILE.ZOMBIE_SHIRT);
+    expect(shirt[2]).toBeGreaterThan(shirt[0]);
+    const tears = paintTile(TILE.ZOMBIE_SHIRT);
+    let skin = 0;
+    for (let y = 0; y < 13; y++) for (let x = 0; x < 16; x++) if (greenish(px(tears, x, y)) && px(tears, x, y)[1] > 120) skin++;
+    expect(skin).toBeGreaterThan(4);
+    const trousers = paintTile(TILE.ZOMBIE_TROUSERS);
+    const leg = px(trousers, 3, 4);
+    expect(leg[0]).toBeGreaterThan(leg[2] + 10);
+    expect(Math.max(...px(trousers, 10, 14))).toBeLessThan(70); // shoe
+    expect(Math.max(...averageColor(TILE.ZOMBIE_SOLE))).toBeLessThan(70);
   });
 });
 

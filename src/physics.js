@@ -2,6 +2,8 @@
 // See src/CONTRACTS.md §12. Pure.
 //
 // The player is a cylinder of diameter PLAYER_WIDTH and height PLAYER_HEIGHT standing at (x, y, z) (feet).
+// Other bodies (mobs) carry their own `radius` and `height` (createBody); every routine here reads them through
+// bodyRadius / bodyHeight, so a state without them is a player-sized body.
 // Vertical movement is resolved against the cells whose hexagon overlaps the cylinder's footprint; horizontal
 // movement is resolved by pushing the footprint circle out of overlapping solid hexagons along the minimum
 // translation vector, which gives natural sliding along honeycomb walls. Because the footprint radius is
@@ -10,11 +12,11 @@ import {
   PLAYER_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT, SNEAK_EYE_HEIGHT, GRAVITY, JUMP_VELOCITY, TERMINAL_VELOCITY,
   WALK_SPEED, SPRINT_SPEED, SNEAK_SPEED, FLY_SPEED, FLY_SPRINT_SPEED, FLY_VERTICAL_SPEED, GROUND_ACCEL,
   AIR_ACCEL, WATER_ACCEL, WATER_GRAVITY, WATER_MAX_SINK, SWIM_UP_SPEED, SWIM_EXIT_JUMP, WATER_SPEED_FACTOR,
-  MAX_SUBSTEP_DT, MAX_FRAME_DT, COLLISION_EPS, WATER_SURFACE_HEIGHT, WORLD_HEIGHT,
+  MAX_SUBSTEP_DT, MAX_FRAME_DT, COLLISION_EPS, WORLD_HEIGHT, WADE_DEPTH, WADE_SPEED_FACTOR,
 } from './config.js';
 import { yawToForward, yawToRight } from './coords.js';
 import { HEX_DIRS, HEX_SIZE, hexToWorld, worldToHex, hexCircleContact } from './hex.js';
-import { isSolid, isLiquid } from './blocks.js';
+import { isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
 /** @typedef {import('./types.js').PlayerInput} PlayerInput */
@@ -26,6 +28,21 @@ if (!(PLAYER_RADIUS < HEX_SIZE / 2)) {
   // HEX_SIZE / 2 (0.289) < HEX_INRADIUS (0.5): this single check guarantees both that the player fits through
   // the HEX_SIZE-wide throat of a 1-cell passage and that the 7-column collider is exact.
   throw new Error('physics: PLAYER_WIDTH / 2 must be smaller than HEX_SIZE / 2 (1-cell passages must be passable)');
+}
+
+/**
+ * Largest body radius the 7-column collider handles exactly: a footprint circle centred anywhere in a cell can only
+ * reach that cell's six neighbours while its radius is below the hexagon edge length HEX_SIZE (≈ 0.577); keep a margin.
+ */
+export const MAX_BODY_RADIUS = 0.5;
+
+/** @param {PlayerState} p @returns {number} footprint radius */
+export function bodyRadius(p) {
+  return p.radius ?? PLAYER_RADIUS;
+}
+/** @param {PlayerState} p @returns {number} cylinder height */
+export function bodyHeight(p) {
+  return p.height ?? PLAYER_HEIGHT;
 }
 
 /**
@@ -83,6 +100,22 @@ export function createPlayer(x, y, z) {
 }
 
 /** @param {PlayerState} p @returns {number} eye height above the feet */
+/**
+ * A body of a given size and mass (a mob): a PlayerState plus `radius`, `height` and `mass`. Throws when the radius is
+ * not in (0, MAX_BODY_RADIUS] or the height / mass are not positive.
+ * @param {number} x
+ * @param {number} y
+ * @param {number} z
+ * @param {{ radius: number, height: number, mass?: number }} size
+ * @returns {PlayerState}
+ */
+export function createBody(x, y, z, size) {
+  const { radius, height, mass = 1 } = size;
+  if (!(radius > 0 && radius <= MAX_BODY_RADIUS)) throw new RangeError(`createBody: radius must be in (0, ${MAX_BODY_RADIUS}]`);
+  if (!(height > 0) || !(mass > 0)) throw new RangeError('createBody: height and mass must be positive');
+  return Object.assign(createPlayer(x, y, z), { radius, height, mass });
+}
+
 export function getEyeHeight(p) {
   return p.sneaking && !p.flying ? SNEAK_EYE_HEIGHT : EYE_HEIGHT;
 }
@@ -94,12 +127,13 @@ export function getEyeHeight(p) {
  * @returns {AABB}
  */
 export function playerAABB(p, out = {}) {
-  out.minX = p.x - PLAYER_RADIUS;
-  out.maxX = p.x + PLAYER_RADIUS;
+  const rad = bodyRadius(p);
+  out.minX = p.x - rad;
+  out.maxX = p.x + rad;
   out.minY = p.y;
-  out.maxY = p.y + PLAYER_HEIGHT;
-  out.minZ = p.z - PLAYER_RADIUS;
-  out.maxZ = p.z + PLAYER_RADIUS;
+  out.maxY = p.y + bodyHeight(p);
+  out.minZ = p.z - rad;
+  out.maxZ = p.z + rad;
   return out;
 }
 
@@ -109,9 +143,9 @@ export function playerAABB(p, out = {}) {
  * @param {PlayerState} p
  */
 export function playerIntersectsBlock(p, q, y, r) {
-  if (!(p.y < y + 1 && p.y + PLAYER_HEIGHT > y)) return false;
+  if (!(p.y < y + 1 && p.y + bodyHeight(p) > y)) return false;
   const c = hexToWorld(q, r);
-  return hexCircleContact(c[0], c[1], p.x, p.z, PLAYER_RADIUS, contact);
+  return hexCircleContact(c[0], c[1], p.x, p.z, bodyRadius(p), contact);
 }
 
 /**
@@ -137,15 +171,17 @@ export function findStandingY(getBlock, x, z, fromY) {
 
 /**
  * True when a cylinder with its feet at world (x, cy, z) overlaps no solid cell: checks the 7 candidate columns
- * whose hexagon overlaps the footprint for solid cells in floor(cy) .. ceil(cy + PLAYER_HEIGHT) − 1.
+ * whose hexagon overlaps the footprint for solid cells in floor(cy) .. ceil(cy + height) − 1.
  * @param {GetBlockFn} getBlock
+ * @param {number} [radius=PLAYER_RADIUS]
+ * @param {number} [height=PLAYER_HEIGHT]
  */
-export function isFreeAt(getBlock, x, cy, z) {
+export function isFreeAt(getBlock, x, cy, z, radius = PLAYER_RADIUS, height = PLAYER_HEIGHT) {
   gatherColumns(x, z);
   const y0 = Math.floor(cy);
-  const y1 = Math.ceil(cy + PLAYER_HEIGHT) - 1;
+  const y1 = Math.ceil(cy + height) - 1;
   for (let c = 0; c < COLUMN_COUNT; c++) {
-    if (!hexCircleContact(colX[c], colZ[c], x, z, PLAYER_RADIUS, contact)) continue;
+    if (!hexCircleContact(colX[c], colZ[c], x, z, radius, contact)) continue;
     for (let y = y0; y <= y1; y++) {
       if (isSolid(getBlock(colQ[c], y, colR[c]))) return false;
     }
@@ -162,16 +198,50 @@ export function isFreeAt(getBlock, x, cy, z) {
  * @param {number} z
  * @param {number} fromY
  * @param {number} [maxUp=2]
+ * @param {number} [radius=PLAYER_RADIUS]
+ * @param {number} [height=PLAYER_HEIGHT]
  * @returns {number|null}
  */
-export function findFreeY(getBlock, x, z, fromY, maxUp = 2) {
+export function findFreeY(getBlock, x, z, fromY, maxUp = 2, radius = PLAYER_RADIUS, height = PLAYER_HEIGHT) {
   if (!Number.isFinite(x + z + fromY)) return null;
   for (let dy = 0; dy <= maxUp; dy++) {
     const cy = fromY + dy;
-    if (cy + PLAYER_HEIGHT > WORLD_HEIGHT) break;
-    if (isFreeAt(getBlock, x, cy, z)) return cy;
+    if (cy + height > WORLD_HEIGHT) break;
+    if (isFreeAt(getBlock, x, cy, z, radius, height)) return cy;
   }
   return null;
+}
+
+/**
+ * Is the point at height `py` in cell column (q, r) under a water surface? The point's cell must be water and the point
+ * below that cell's surface (`waterSurfaceHeight`: 1 under more water, 0.875 at a source's or falling water's top,
+ * k/7 · 0.875 in flowing water of level k). Used for the chest and eye samples of stepPlayer.
+ * @param {GetBlockFn} getBlock
+ * @returns {boolean}
+ */
+export function isUnderSurface(getBlock, q, py, r) {
+  const cy = Math.floor(py);
+  const id = getBlock(q, cy, r);
+  return isLiquid(id) && py - cy < waterSurfaceHeight(id, getBlock(q, cy + 1, r));
+}
+
+/**
+ * Would a body standing on the floor below cell (q, y, r) — or one step down, in (q, y − 1, r) — have to SWIM there?
+ * True when that water is two or more cells deep or its surface is more than WADE_DEPTH above the floor; a shallow film
+ * is wading. Pigs use it to keep out of deep water only (CONTRACTS §30).
+ * @param {GetBlockFn} getBlock
+ * @returns {boolean}
+ */
+export function isSwimWater(getBlock, q, y, r) {
+  let top = y;
+  let id = getBlock(q, top, r);
+  if (!isLiquid(id)) {
+    top = y - 1;
+    id = getBlock(q, top, r);
+    if (!isLiquid(id)) return false;
+  }
+  if (isLiquid(getBlock(q, top - 1, r))) return true;
+  return waterSurfaceHeight(id, getBlock(q, top + 1, r)) > WADE_DEPTH;
 }
 
 /**
@@ -190,7 +260,7 @@ export function supportingCells(p, getBlock, out = []) {
   if (y < 0 || y >= WORLD_HEIGHT) return out;
   gatherColumns(p.x, p.z);
   for (let c = 0; c < COLUMN_COUNT; c++) {
-    if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, PLAYER_RADIUS, contact)) continue;
+    if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, bodyRadius(p), contact)) continue;
     if (isSolid(getBlock(colQ[c], y, colR[c]))) out.push([colQ[c], y, colR[c]]);
   }
   return out;
@@ -244,16 +314,21 @@ function substep(p, input, getBlock, h, wx, wz) {
   const jump = !!input.jump;
   const sneak = !!input.sneak;
 
-  // 1. Environment (sampled in the column under the player's centre).
+  // 1. Environment (sampled in the column under the player's centre). v0.8: water surfaces follow waterSurfaceHeight
+  // (a flowing level k is k/7 of a full surface); a body swims only where the water over the floor of its feet column is
+  // two cells deep or its surface is more than WADE_DEPTH above that floor (isSwimWater), or its chest point is under
+  // water — shallower water (a level-1 film) is wading: walking, just slower.
   const [bq, br] = worldToHex(p.x, p.z);
-  const feet = getBlock(bq, Math.floor(p.y + 0.1), br);
-  const chest = getBlock(bq, Math.floor(p.y + 1.0), br);
-  p.inWater = isLiquid(feet) || isLiquid(chest);
-  const eyeY = p.y + getEyeHeight(p);
-  const eyeCell = Math.floor(eyeY);
-  // Only the topmost water block (non-water above) has its surface lowered to WATER_SURFACE_HEIGHT.
-  p.headInWater = isLiquid(getBlock(bq, eyeCell, br))
-    && (isLiquid(getBlock(bq, eyeCell + 1, br)) || eyeY - eyeCell < WATER_SURFACE_HEIGHT);
+  const feetY = Math.floor(p.y + 0.1);
+  const feet = getBlock(bq, feetY, br);
+  const chestPoint = p.y + Math.min(1.0, bodyHeight(p) * 0.6); // a short body's chest is lower
+  const feetWet = isLiquid(feet);
+  // Depth is measured over the FLOOR of the feet column (isSwimWater), not below the body's own feet: a body floating
+  // near the top of deep water is still swimming (it keeps its buoyancy and SWIM_EXIT_JUMP), while a body standing in
+  // a film is wading.
+  p.inWater = (feetWet && isSwimWater(getBlock, bq, feetY, br)) || isUnderSurface(getBlock, bq, chestPoint, br);
+  const wading = feetWet && !p.inWater;
+  p.headInWater = isUnderSurface(getBlock, bq, p.y + getEyeHeight(p), br);
   p.sneaking = sneak && !p.flying;
   p.sprinting = !!input.sprint && (input.forward || 0) > 0 && !p.sneaking;
 
@@ -267,22 +342,30 @@ function substep(p, input, getBlock, h, wx, wz) {
   else if (p.sprinting) speed = SPRINT_SPEED;
   else speed = WALK_SPEED;
   if (inWater && !flying) speed *= WATER_SPEED_FACTOR;
+  else if (wading && !flying) speed *= WADE_SPEED_FACTOR;
   const accel = flying || p.onGround ? GROUND_ACCEL : inWater ? WATER_ACCEL : AIR_ACCEL;
   const k = 1 - Math.exp(-accel * h);
-  p.vx += (wx * speed - p.vx) * k;
-  p.vz += (wz * speed - p.vz) * k;
+  // External pull (black holes) moves the velocity the relaxation heads for by pull / GROUND_ACCEL, in every mode.
+  // The drift it adds is then pull / GROUND_ACCEL whatever the substep size or the accel state. A raw pull·h here
+  // would drift pull·h/k: about 18 % more on the ground at 60 Hz and 5× more in the air (AIR_ACCEL).
+  p.vx += (wx * speed + (input.pullX || 0) / GROUND_ACCEL - p.vx) * k;
+  p.vz += (wz * speed + (input.pullZ || 0) / GROUND_ACCEL - p.vz) * k;
 
   // 3. Vertical.
   if (flying) {
-    const target = ((jump ? 1 : 0) - (sneak ? 1 : 0)) * FLY_VERTICAL_SPEED;
+    const target = ((jump ? 1 : 0) - (sneak ? 1 : 0)) * FLY_VERTICAL_SPEED + (input.pullY || 0) / GROUND_ACCEL;
     p.vy += (target - p.vy) * (1 - Math.exp(-GROUND_ACCEL * h));
   } else if (inWater) {
-    if (jump) p.vy = p.hitWall ? SWIM_EXIT_JUMP : SWIM_UP_SPEED;
+    // input.noExitJump: paddle up but never launch out of the water at a bank (a pig carrying another pig, §30).
+    if (jump) p.vy = p.hitWall && !input.noExitJump ? SWIM_EXIT_JUMP : SWIM_UP_SPEED;
     else p.vy = Math.max(p.vy + WATER_GRAVITY * h, WATER_MAX_SINK);
   } else {
     if (jump && p.onGround) p.vy = JUMP_VELOCITY;
     p.vy = Math.max(p.vy + GRAVITY * h, TERMINAL_VELOCITY);
   }
+  // Falling and swimming have no relaxation, so there the pull is a plain acceleration (terminal velocity still caps a
+  // downward drag); flying took it into its target above.
+  if (input.pullY && !flying) p.vy = Math.max(p.vy + input.pullY * h, TERMINAL_VELOCITY);
 
   // 4. Move: vertical first, then the horizontal plane.
   p.onGround = false;
@@ -314,15 +397,17 @@ function moveVertical(p, delta, getBlock) {
   if (delta === 0) return false;
   p.y += delta;
 
+  const rad = bodyRadius(p);
+  const height = bodyHeight(p);
   const y0 = Math.floor(p.y);
-  const y1 = Math.ceil(p.y + PLAYER_HEIGHT) - 1;
+  const y1 = Math.ceil(p.y + height) - 1;
   gatherColumns(p.x, p.z);
 
   let hit = false;
   let nearestMin = Infinity;  // min(cell bottom) — used when moving up
   let nearestMax = -Infinity; // max(cell top) — used when moving down
   for (let c = 0; c < COLUMN_COUNT; c++) {
-    if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, PLAYER_RADIUS, contact)) continue;
+    if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, rad, contact)) continue;
     const q = colQ[c];
     const r = colR[c];
     for (let y = y0; y <= y1; y++) {
@@ -333,7 +418,7 @@ function moveVertical(p, delta, getBlock) {
     }
   }
   if (!hit) return false;
-  if (delta > 0) p.y = nearestMin - PLAYER_HEIGHT - COLLISION_EPS;
+  if (delta > 0) p.y = nearestMin - height - COLLISION_EPS;
   else p.y = nearestMax + COLLISION_EPS;
   return true;
 }
@@ -358,8 +443,9 @@ function moveHorizontal(p, dx, dz, getBlock) {
   p.x += dx;
   p.z += dz;
 
+  const rad = bodyRadius(p);
   const y0 = Math.floor(p.y);
-  const y1 = Math.ceil(p.y + PLAYER_HEIGHT) - 1;
+  const y1 = Math.ceil(p.y + bodyHeight(p)) - 1;
   let collided = false;
 
   // MAX_PUSH_PASSES pushes plus one final re-check (the last iteration only tests).
@@ -369,7 +455,7 @@ function moveHorizontal(p, dx, dz, getBlock) {
     let bnx = 0;
     let bnz = 0;
     for (let c = 0; c < COLUMN_COUNT; c++) {
-      if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, PLAYER_RADIUS, contact)) continue;
+      if (!hexCircleContact(colX[c], colZ[c], p.x, p.z, rad, contact)) continue;
       if (contact.depth <= bestDepth) continue;
       const q = colQ[c];
       const r = colR[c];
@@ -406,6 +492,27 @@ function moveHorizontal(p, dx, dz, getBlock) {
     collided = true;
   }
   return collided;
+}
+
+/**
+ * Displace a body through the terrain (no gravity, no input): horizontal first, sliding along walls exactly like
+ * walking, then vertical. Used to push bodies apart and to carry riders. Velocities into walls are removed.
+ * @param {PlayerState} p
+ * @param {number} dx
+ * @param {number} dy
+ * @param {number} dz
+ * @param {GetBlockFn} getBlock
+ * @returns {{ hitWall: boolean, hitFloorOrCeiling: boolean }}
+ */
+export function displaceBody(p, dx, dy, dz, getBlock) {
+  sanitize(p);
+  const hitWall = Number.isFinite(dx + dz) ? moveHorizontal(p, dx, dz, getBlock) : false;
+  const hitFloorOrCeiling = Number.isFinite(dy) ? moveVertical(p, dy, getBlock) : false;
+  if (hitFloorOrCeiling) {
+    if (dy < 0) p.onGround = true;
+    if ((dy < 0 && p.vy < 0) || (dy > 0 && p.vy > 0)) p.vy = 0;
+  }
+  return { hitWall, hitFloorOrCeiling };
 }
 
 /**

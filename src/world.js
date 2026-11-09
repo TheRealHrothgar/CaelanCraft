@@ -9,13 +9,19 @@
 //
 // findSpawn is bounded to SPAWN_MAX_RINGS rings and update() keeps walking the ring in count-only
 // mode after the budget trips so pendingGen/pendingMesh describe the whole ring (both accepted by §9).
+//
+// v0.8 (block physics, CONTRACTS §9.2): every edit remembers the cell's ORIGINAL (generated) id in `origins`, and a
+// write that puts a cell back to its origin deletes the edit, so drained water and refilled holes cost nothing in the
+// save; `editCount` is a running count. `setBlock(…, lazy = true)` (physics, black holes, explosions) marks chunks
+// dirty *lazily*: update() re-meshes those nearest-first under LAZY_MESH_BUDGET_MS instead of all at once;
+// `lazy = 'coalesce'` (a big crumble) also waits LAZY_COALESCE_UPDATES calls between two re-meshes of a chunk.
 import {
   CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE, DATA_RADIUS_EXTRA,
-  UNLOAD_RADIUS_EXTRA, BUILD_BUDGET_MS, MAX_BUILDS_PER_UPDATE,
+  UNLOAD_RADIUS_EXTRA, BUILD_BUDGET_MS, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS, LAZY_COALESCE_UPDATES,
 } from './config.js';
 import { chunkKey, parseChunkKey, localIndex, indexToLocal } from './coords.js';
 import { HEX_DIRS, hexLength, hexNormSq, hexToWorld, worldToHex } from './hex.js';
-import { BLOCK, BIOME } from './blocks.js';
+import { BLOCK, BIOME, UNLOADED, isSolid } from './blocks.js';
 import { Chunk } from './chunk.js';
 import { createWorldGen } from './worldgen.js';
 import { buildChunkMesh } from './mesher.js';
@@ -64,6 +70,12 @@ function packId(cq, cr) {
   return (cq + ID_OFFSET) * ID_SPAN + (cr + ID_OFFSET);
 }
 
+/** @returns {number} squared world distance from (px, pz) to the centre cell of `chunk` (lazy re-mesh order) */
+function chunkDistSq(chunk, px, pz) {
+  const [cx, cz] = hexToWorld(chunk.cq * CHUNK_SIZE + CHUNK_SIZE / 2, chunk.cr * CHUNK_SIZE + CHUNK_SIZE / 2);
+  return (cx - px) * (cx - px) + (cz - pz) * (cz - pz);
+}
+
 /** @returns {() => number} millisecond clock */
 function defaultClock() {
   if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
@@ -96,6 +108,15 @@ export class World {
     this.chunks = new Map();
     /** @type {Map<ChunkKey, Map<number, BlockId>>} inner key = localIndex */
     this.edits = new Map();
+    /**
+     * The id each edited cell had before its first edit (worldgen's id), same keys as `edits` — absent for edits
+     * imported into a chunk that has not been generated yet (filled in by _generate). A write back to the origin
+     * deletes both entries.
+     * @type {Map<ChunkKey, Map<number, BlockId>>}
+     */
+    this.origins = new Map();
+    /** running number of entries across `edits` (O(1) editCount) */
+    this._editCount = 0;
     /** incremented on every successful setBlock (autosave uses it) */
     this.editVersion = 0;
 
@@ -109,6 +130,12 @@ export class World {
      * @type {(q: number, y: number, r: number, prev: BlockId, next: BlockId) => void}
      */
     this.onBlockChange = (_q, _y, _r, _prev, _next) => {};
+    /**
+     * Assignable hook, called at the end of _generate (inside update()) once the new chunk is registered and its
+     * saved edits are applied. Block physics re-queues the updates parked on this chunk and re-seeds its edited cells.
+     * @type {(cq: number, cr: number) => void}
+     */
+    this.onChunkGenerated = (_cq, _cr) => {};
 
     /** @type {() => number} */
     this._now = typeof opts.now === 'function' ? opts.now : defaultClock();
@@ -120,6 +147,11 @@ export class World {
     this._lastChunk = null;
     this._lastCq = NaN;
     this._lastCr = NaN;
+
+    /** @type {Chunk[]} scratch list of lazily dirty chunks for update() step 2 */
+    this._lazyScratch = [];
+    /** update() calls so far (a 'coalesce' chunk's wait, §9.2) */
+    this._updateCalls = 0;
 
     /** RING_OFFSETS as parallel typed arrays, sorted nearest-first (see _computeRing). */
     this._ringDq = new Int16Array(0);
@@ -211,11 +243,81 @@ export class World {
     return this.chunks.size;
   }
 
-  /** @returns {number} total recorded edits (cells that differ from worldgen or were edited back), across all chunks */
+  /** @returns {number} total recorded edit entries across all chunks (O(1): a running count, CONTRACTS §9.2) */
   get editCount() {
-    let n = 0;
-    for (const m of this.edits.values()) n += m.size;
-    return n;
+    return this._editCount;
+  }
+
+  /**
+   * Like getBlock, but a cell in an UNLOADED chunk reads as the `UNLOADED` sentinel (255) instead of AIR; AIR above
+   * and below the world. Block physics reads through this so it can tell "empty" from "not there yet".
+   * @returns {BlockId|255}
+   */
+  peekBlock(q, y, r) {
+    y = Math.floor(y);
+    if (!(y >= 0 && y < WORLD_HEIGHT)) return BLOCK.AIR; // also NaN, like getBlock
+    q = Math.floor(q);
+    r = Math.floor(r);
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
+    const chunk = cq === this._lastCq && cr === this._lastCr ? this._lastChunk : this._byId.get(packId(cq, cr));
+    if (chunk === undefined || chunk === null) return UNLOADED;
+    return chunk.blocks[((q - cq * CHUNK_SIZE) * CHUNK_SIZE + (r - cr * CHUNK_SIZE)) * WORLD_HEIGHT + y];
+  }
+
+  /** @returns {boolean} the cell (any chunk, loaded or not) has a recorded edit */
+  hasEdit(q, y, r) {
+    if (!(y >= 0 && y < WORLD_HEIGHT)) return false;
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
+    const chunkEdits = this.edits.get(chunkKey(cq, cr));
+    return chunkEdits !== undefined && chunkEdits.has(localIndex(q - cq * CHUNK_SIZE, y, r - cr * CHUNK_SIZE));
+  }
+
+  /**
+   * The cell's original (generated) id: its recorded origin when edited, otherwise its current id (UNLOADED when the
+   * chunk is not loaded and nothing is recorded). An edited cell whose chunk was never generated reports its edit.
+   * @returns {BlockId|255}
+   */
+  originAt(q, y, r) {
+    if (y >= 0 && y < WORLD_HEIGHT) {
+      const cq = Math.floor(q / CHUNK_SIZE);
+      const cr = Math.floor(r / CHUNK_SIZE);
+      const key = chunkKey(cq, cr);
+      const li = localIndex(q - cq * CHUNK_SIZE, y, r - cr * CHUNK_SIZE);
+      const o = this.origins.get(key)?.get(li);
+      if (o !== undefined) return o;
+    }
+    return this.peekBlock(q, y, r);
+  }
+
+  /** @returns {number} chunk.heights of column (q, r) — the generated terrain height — or −1 when not loaded */
+  terrainHeightAt(q, r) {
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
+    const chunk = this._byId.get(packId(cq, cr));
+    if (chunk === undefined) return -1;
+    return chunk.heights[(q - cq * CHUNK_SIZE) * CHUNK_SIZE + (r - cr * CHUNK_SIZE)];
+  }
+
+  /**
+   * Untouched terrain (CONTRACTS §9.2): the chunk is loaded, the cell has no edit, y ≤ the column's generated height
+   * and the block is solid. Support searches stop as soon as they touch it.
+   * @returns {boolean}
+   */
+  isNaturalGround(q, y, r) {
+    if (!(y >= 0 && y < WORLD_HEIGHT)) return false;
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
+    const chunk = this._byId.get(packId(cq, cr));
+    if (chunk === undefined) return false;
+    const lq = q - cq * CHUNK_SIZE;
+    const lr = r - cr * CHUNK_SIZE;
+    if (y > chunk.heights[lq * CHUNK_SIZE + lr]) return false;
+    const li = (lq * CHUNK_SIZE + lr) * WORLD_HEIGHT + y;
+    if (!isSolid(chunk.blocks[li])) return false;
+    const chunkEdits = this.edits.get(chunk.key);
+    return chunkEdits === undefined || !chunkEdits.has(li);
   }
 
   /** @returns {number} terrain height from worldGen.getColumn (ignores edits) */
@@ -232,11 +334,20 @@ export class World {
   // edits
 
   /**
-   * Set a block. Records the edit, bumps editVersion and dirties every LOADED chunk containing the cell or
-   * one of its six side neighbours (1–4 chunks) so neighbouring meshes update their culled faces / AO.
+   * Set a block. Records the edit (or deletes it when the cell is back to its origin), bumps editVersion and dirties
+   * every LOADED chunk containing the cell or one of its six side neighbours (1–4 chunks) so neighbouring meshes
+   * update their culled faces / AO. A `lazy` write (block physics, black holes, explosions) marks those chunks
+   * dirty lazily — re-meshed nearest-first under LAZY_MESH_BUDGET_MS by update() — unless they are already dirty
+   * non-lazily; a non-lazy write always makes them non-lazy (immediate re-mesh). `lazy = 'coalesce'` is lazy too, and
+   * a chunk dirtied by nothing else waits LAZY_COALESCE_UPDATES update() calls since its last mesh (§9.2).
+   * @param {number} q
+   * @param {number} y
+   * @param {number} r
+   * @param {number} id
+   * @param {boolean|'coalesce'} [lazy=false]
    * @returns {boolean} false if y out of range, id invalid, chunk not loaded, or value unchanged
    */
-  setBlock(q, y, r, id) {
+  setBlock(q, y, r, id, lazy = false) {
     y = Math.floor(y);
     if (!(y >= 0 && y < WORLD_HEIGHT)) return false;
     if (!isIntIn(id, 0, 255)) return false;
@@ -248,19 +359,50 @@ export class World {
     if (chunk === undefined) return false;
     const lq = q - cq * CHUNK_SIZE;
     const lr = r - cr * CHUNK_SIZE;
-    const prev = chunk.blocks[localIndex(lq, y, lr)];
+    const li = localIndex(lq, y, lr);
+    const prev = chunk.blocks[li];
+    const wasDirty = chunk.dirty;
     if (!chunk.set(lq, y, lr, id)) return false;
+    chunk.dirty = wasDirty; // _markDirtyAround decides (lazy or not) for this chunk like for its neighbours
 
-    let chunkEdits = this.edits.get(chunk.key);
-    if (chunkEdits === undefined) {
-      chunkEdits = new Map();
-      this.edits.set(chunk.key, chunkEdits);
-    }
-    chunkEdits.set(localIndex(lq, y, lr), id);
+    this._recordEdit(chunk.key, li, prev, id);
     this.editVersion++;
-    this._markDirtyAround(q, r);
+    this._markDirtyAround(q, r, lazy);
     this.onBlockChange(q, y, r, prev, id);
     return true;
+  }
+
+  /**
+   * Edit bookkeeping for one changed cell: the first edit of a cell records its origin (`prev`); an edit that returns
+   * the cell to its origin is deleted. Keeps `_editCount` exact. An edit without a known origin is never pruned.
+   */
+  _recordEdit(key, li, prev, id) {
+    let chunkEdits = this.edits.get(key);
+    if (chunkEdits !== undefined && chunkEdits.has(li)) {
+      const chunkOrigins = this.origins.get(key);
+      if (chunkOrigins !== undefined && chunkOrigins.get(li) === id) {
+        chunkEdits.delete(li);
+        chunkOrigins.delete(li);
+        this._editCount--;
+        if (chunkEdits.size === 0) this.edits.delete(key);
+        if (chunkOrigins.size === 0) this.origins.delete(key);
+      } else {
+        chunkEdits.set(li, id);
+      }
+      return;
+    }
+    if (chunkEdits === undefined) {
+      chunkEdits = new Map();
+      this.edits.set(key, chunkEdits);
+    }
+    chunkEdits.set(li, id);
+    this._editCount++;
+    let chunkOrigins = this.origins.get(key);
+    if (chunkOrigins === undefined) {
+      chunkOrigins = new Map();
+      this.origins.set(key, chunkOrigins);
+    }
+    chunkOrigins.set(li, prev);
   }
 
   /** @returns {EditsJSON} `{ "cq,cr": [localIndex, id, localIndex, id, ...] }` (fresh arrays) */
@@ -294,21 +436,27 @@ export class World {
       if (!Number.isInteger(cq) || !Number.isInteger(cr)) continue;
       const key = chunkKey(cq, cr);
       const chunk = this._byId.get(packId(cq, cr));
-      let chunkEdits = this.edits.get(key);
       for (let i = 0; i + 1 < arr.length; i += 2) {
         const li = arr[i];
         const id = arr[i + 1];
         if (!isIntIn(li, 0, CHUNK_VOLUME - 1) || !isIntIn(id, 0, 255)) continue;
-        if (chunkEdits === undefined) {
-          chunkEdits = new Map();
-          this.edits.set(key, chunkEdits);
-        }
-        chunkEdits.set(li, id);
-        if (chunk !== undefined && chunk.blocks[li] !== id) {
+        if (chunk !== undefined) {
+          // Loaded: the same bookkeeping as setBlock (origin on first edit, pruning back to it), applied now, no hook.
+          const current = chunk.blocks[li];
+          if (current === id) continue;
+          this._recordEdit(key, li, current, id);
           chunk.blocks[li] = id;
-          chunk.dirty = true;
           const [lq, , lr] = indexToLocal(li);
           this._markDirtyAround(cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr);
+        } else {
+          // Not generated yet: recorded without an origin; _generate fills it in (or drops a redundant edit).
+          let chunkEdits = this.edits.get(key);
+          if (chunkEdits === undefined) {
+            chunkEdits = new Map();
+            this.edits.set(key, chunkEdits);
+          }
+          if (!chunkEdits.has(li)) this._editCount++;
+          chunkEdits.set(li, id);
         }
       }
     }
@@ -351,12 +499,34 @@ export class World {
       }
     }
 
-    // 2. Re-mesh edited chunks immediately (visible feedback for the player; ignores the budget).
+    // 2. Re-mesh edited chunks immediately (visible feedback for the player; ignores the budget). Chunks dirtied only
+    //    by lazy writes (physics) are collected and re-meshed nearest-first under LAZY_MESH_BUDGET_MS — always at
+    //    least one per call — so a collapse or a flood never re-meshes dozens of chunks in one frame. One dirtied
+    //    only by 'coalesce' writes (a big crumble's instant part) waits until LAZY_COALESCE_UPDATES calls have passed
+    //    since it was last meshed: its updates of a few frames become one re-mesh.
+    const call = ++this._updateCalls;
+    const lazy = this._lazyScratch;
+    lazy.length = 0;
     for (const chunk of this.chunks.values()) {
       if (chunk.dirty && chunk.meshed && this._neighboursLoaded(chunk.cq, chunk.cr)) {
-        this._mesh(chunk);
+        if (chunk.lazy) {
+          if (chunk.coalesce && call - chunk.meshedAt < LAZY_COALESCE_UPDATES) continue;
+          lazy.push(chunk);
+        } else {
+          this._mesh(chunk);
+          meshed++;
+        }
+      }
+    }
+    if (lazy.length > 0) {
+      if (lazy.length > 1) lazy.sort((a, b) => chunkDistSq(a, px, pz) - chunkDistSq(b, px, pz));
+      const lazyStart = now();
+      for (let i = 0; i < lazy.length; i++) {
+        if (i > 0 && now() - lazyStart >= LAZY_MESH_BUDGET_MS) break;
+        this._mesh(lazy[i]);
         meshed++;
       }
+      lazy.length = 0;
     }
 
     // 3. Ring walk, nearest first. After the budget/cap trips we keep walking in count-only mode
@@ -390,7 +560,8 @@ export class World {
       }
 
       if (inMeshRadius && chunk.dirty) {
-        if (!stopped && this._neighboursLoaded(cq, cr)) {
+        // A meshed chunk with only lazy changes is the lazy pass's job (step 2); it still counts as pending.
+        if (!stopped && !(chunk.meshed && chunk.lazy) && this._neighboursLoaded(cq, cr)) {
           this._mesh(chunk);
           builds++;
           meshed++;
@@ -514,28 +685,70 @@ export class World {
   /**
    * Mark dirty every loaded chunk containing cell (q, r) or one of its six neighbours: 1 to 4 chunks (4 only for
    * the two index-space corner cells lq=15,lr=0 and lq=0,lr=15, whose neighbours span three other chunks).
+   * @param {number} q
+   * @param {number} r
+   * @param {boolean|'coalesce'} [lazy=false]
    */
-  _markDirtyAround(q, r) {
-    this._markDirtyCell(q, r);
-    for (let j = 0; j < 6; j++) this._markDirtyCell(q + HEX_DIRS[j][0], r + HEX_DIRS[j][1]);
+  _markDirtyAround(q, r, lazy = false) {
+    this._markDirtyCell(q, r, lazy);
+    for (let j = 0; j < 6; j++) this._markDirtyCell(q + HEX_DIRS[j][0], r + HEX_DIRS[j][1], lazy);
   }
 
-  _markDirtyCell(q, r) {
+  /**
+   * Non-lazy always wins: a lazy mark never downgrades a chunk that is already dirty non-lazily; likewise a plain lazy
+   * write ends a chunk's 'coalesce' wait (§9.2).
+   * @param {number} q
+   * @param {number} r
+   * @param {boolean|'coalesce'} [lazy=false]
+   */
+  _markDirtyCell(q, r, lazy = false) {
     const chunk = this._byId.get(packId(Math.floor(q / CHUNK_SIZE), Math.floor(r / CHUNK_SIZE)));
-    if (chunk !== undefined) chunk.dirty = true;
+    if (chunk === undefined) return;
+    if (!lazy) {
+      chunk.dirty = true;
+      chunk.lazy = false;
+      chunk.coalesce = false;
+    } else if (!chunk.dirty) {
+      chunk.dirty = true;
+      chunk.lazy = true;
+      chunk.coalesce = lazy === 'coalesce';
+    } else if (lazy !== 'coalesce') {
+      chunk.coalesce = false;
+    }
   }
 
-  /** Generate chunk (cq, cr), apply saved edits and register it. @returns {Chunk} */
+  /**
+   * Generate chunk (cq, cr), apply saved edits (recording each cell's generated id as its origin; an edit equal to the
+   * generated id is redundant and dropped), register it and fire onChunkGenerated. @returns {Chunk}
+   */
   _generate(cq, cr) {
     const data = this.worldGen.generateChunk(cq, cr);
     const chunk = new Chunk(cq, cr, data);
     const chunkEdits = this.edits.get(chunk.key);
     if (chunkEdits !== undefined) {
       const blocks = chunk.blocks;
-      for (const [li, id] of chunkEdits) blocks[li] = id;
+      let chunkOrigins = this.origins.get(chunk.key);
+      if (chunkOrigins === undefined) {
+        chunkOrigins = new Map();
+        this.origins.set(chunk.key, chunkOrigins);
+      }
+      for (const [li, id] of chunkEdits) {
+        const generated = blocks[li];
+        if (generated === id) {
+          chunkEdits.delete(li); // deleting the current entry while iterating a Map is safe
+          chunkOrigins.delete(li);
+          this._editCount--;
+          continue;
+        }
+        chunkOrigins.set(li, generated);
+        blocks[li] = id;
+      }
+      if (chunkEdits.size === 0) this.edits.delete(chunk.key);
+      if (chunkOrigins.size === 0) this.origins.delete(chunk.key);
     }
     this.chunks.set(chunk.key, chunk);
     this._byId.set(packId(cq, cr), chunk);
+    this.onChunkGenerated(cq, cr);
     return chunk;
   }
 
@@ -543,7 +756,10 @@ export class World {
   _mesh(chunk) {
     const meshData = buildChunkMesh(chunk.cq, chunk.cr, this.getChunkData);
     chunk.dirty = false;
+    chunk.lazy = false;
+    chunk.coalesce = false;
     chunk.meshed = true;
+    chunk.meshedAt = this._updateCalls;
     this.onChunkMesh(chunk.key, chunk.cq, chunk.cr, meshData);
   }
 

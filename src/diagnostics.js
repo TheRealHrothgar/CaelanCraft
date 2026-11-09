@@ -5,7 +5,7 @@
 // The DOM (window / document / location) is only touched inside functions and only through the `win`
 // argument or guarded `typeof` checks, so this module also loads and runs under Node (tests, harness).
 // The F3 day counter comes from game.getDay() (provided by main.js), falling back to stats.day / 1.
-import { VERSION, WORLD_HEIGHT, FLY_VERTICAL_SPEED } from './config.js';
+import { VERSION, WORLD_HEIGHT, FLY_VERTICAL_SPEED, SAVE_SLOTS } from './config.js';
 import { BLOCK, BIOME_NAMES, getBlockDef, isBreakable, isSolid } from './blocks.js';
 import { worldToChunk, worldToLocal, lookDirection, yawToForward } from './coords.js';
 import { FACE_NAMES, faceNeighbor, hexLength, hexToWorld, worldToHex } from './hex.js';
@@ -28,7 +28,8 @@ import { runeKey } from './runes.js';
  * @property {number|null} time      frozen time of day, clamped to 0..1
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
- * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor
+ * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker
+ * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -59,7 +60,14 @@ export function parseParams(search = defaultSearch()) {
     yaw: readNumber(params, 'yaw'),
     pitch: readClampedFloat(params, 'pitch', -89.9, 89.9),
     ui: readUiParam(params),
+    slot: readSlotParam(params),
   };
+}
+
+/** An integer 1..SAVE_SLOTS, else null (out of range is ignored rather than clamped: slot=9 must not play slot 6). */
+function readSlotParam(params) {
+  const n = readNumber(params, 'slot');
+  return n !== null && Number.isInteger(n) && n >= 1 && n <= SAVE_SLOTS ? n : null;
 }
 
 /** `location.search` in a browser, '' anywhere else (never throws under Node). */
@@ -106,12 +114,12 @@ function readNumber(params, name) {
   return Number.isFinite(n) ? n : null;
 }
 
-/** 'console' | 'editor' | null */
+/** 'console' | 'editor' | 'picker' | null */
 function readUiParam(params) {
   const t = readString(params, 'ui');
   if (t === null) return null;
   const v = t.toLowerCase();
-  return v === 'console' || v === 'editor' ? v : null;
+  return v === 'console' || v === 'editor' || v === 'picker' ? v : null;
 }
 
 function readClampedInt(params, name, lo, hi) {
@@ -263,6 +271,9 @@ function refreshHandleRefs(handle, game) {
   handle.renderer = renderer;
   handle.runes = game ? game.runes ?? null : null;
   handle.runner = game ? game.runner ?? null : null;
+  handle.physics = game ? game.physics ?? null : null;
+  handle.zombies = game ? game.zombies ?? null : null;
+  handle.watcher = game ? game.watcher ?? null : null;
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;
@@ -322,6 +333,10 @@ export function installDebugHandle(win, game) {
     if (game && typeof game.setLook === 'function') game.setLook(yaw, pitch);
   };
   handle.getState = () => (game && typeof game.getState === 'function' ? game.getState() : 'unknown');
+  /** One synchronous simulation + render step (screenshots under a virtual-time budget, where rAF is starved). */
+  handle.stepFrame = (dt) => {
+    if (game && typeof game.stepFrame === 'function') game.stepFrame(dt);
+  };
   handle.runSmoke = () => runSmokeTest(game, win);
 
   win.__caelancraft = handle;
@@ -472,6 +487,17 @@ export function buildDebugText(game, stats) {
   }
   if (!mode) mode = 'walk';
 
+  // Block physics (v0.8): one compact line when the game has it.
+  let physicsLine = '';
+  const ph = g.physics ?? null;
+  if (ph && typeof ph.status === 'function') {
+    const st = ph.status();
+    const q = st.queued;
+    const off = Object.keys(st.switches).filter((k) => !st.switches[k]);
+    physicsLine = `\nPhysics: ${st.paused ? 'PAUSED  ' : ''}queued ${q.fall + q.water + q.misc}  falling ${st.fallers}  tumbling ${st.tumblers}` +
+      `  tick ${fmt1(st.lastTickMs)} ms${off.length ? `  off: ${off.join(' ')}` : ''}`;
+  }
+
   return (
     `Caelancraft v${VERSION}  (F3 to hide)\n` +
     `FPS: ${fmtInt(s.fps)}  frame ${fmt1(s.frameMs)} ms\n` +
@@ -482,7 +508,8 @@ export function buildDebugText(game, stats) {
     `Chunks: loaded ${counts.loaded}  meshed ${counts.meshed}  queue ${counts.queue}\n` +
     `Target: ${target}\n` +
     `Time: ${formatClock(time)}  day ${day}  (t=${fmt3(time)})\n` +
-    `Mode: ${mode}`
+    `Mode: ${mode}` +
+    physicsLine
   );
 }
 

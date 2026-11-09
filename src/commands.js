@@ -15,13 +15,16 @@
 // occupies, and report what they skipped.
 import {
   WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
-  GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME,
+  GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME, PIG_MAX,
+  PIG_RADIUS, PIG_HEIGHT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS,
+  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT,
 } from './config.js';
-import { inHeightRange, worldToChunk } from './coords.js';
+import { inHeightRange, worldToChunk, yawToForward } from './coords.js';
 import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
 import { BLOCK, BLOCKS, BLOCK_COUNT, getBlockDef, isPlaceable, isSolid } from './blocks.js';
 import { findFreeY, findStandingY, playerIntersectsBlock } from './physics.js';
 import { formatTime } from './daynight.js';
+import { WATCHER_HEIGHT } from './watcher.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
 /** @typedef {import('./types.js').Rune} Rune */
@@ -67,7 +70,18 @@ export const COMMANDS = Object.freeze([
   { name: 'resume', usage: 'resume', summary: 'let rune triggers fire again after stopall', args: [], min: 0 },
   { name: 'runes', usage: 'runes', summary: 'list the rune blocks with scripts or settings', args: [], min: 0 },
   { name: 'rune', usage: 'rune q y r on|off', summary: 'enable or disable every trigger of one rune block', args: ['cell', 'cell', 'cell', 'choice:on|off'], min: 4 },
+  { name: 'summon', usage: 'summon pig|zombie|watcher [q y r]', summary: 'put a pig or a zombie two cells in front of you, or in a cell (watcher: far away in view)', args: ['choice:pig|zombie|watcher', 'cell', 'cell', 'cell'], min: 1 },
+  { name: 'pigs', usage: 'pigs [clear]', summary: 'count the pigs, or remove them all', args: ['choice:clear'], min: 0 },
+  { name: 'zombies', usage: 'zombies [clear|on|off]', summary: 'count the zombies, remove them all, or switch zombies on / off for this world (saved)', args: ['choice:clear|on|off'], min: 0 },
+  { name: 'watcher', usage: 'watcher [on|off]', summary: 'is the Hollow Watcher about? or switch it on / off for this world (saved)', args: ['choice:on|off'], min: 0 },
+  { name: 'physics', usage: 'physics status|on|off | physics falling|water|collapse|explosions on|off', summary: 'block physics: show its counters, pause / resume all of it (not saved), or switch one feature (saved with the world)', args: ['word', 'choice:on|off'], min: 1 },
+  { name: 'undo', usage: 'undo', summary: 'undo the last explosion, collapse or falling tree (within 60 s)', args: [], min: 0 },
+  { name: 'ignite', usage: 'ignite q y r', summary: 'light the blast barrel in that cell', args: ['cell', 'cell', 'cell'], min: 3 },
+  { name: 'drain', usage: 'drain [radius]', summary: `remove the water around you (a rune: around itself), radius 0–${DRAIN_MAX_RADIUS}, default ${DRAIN_DEFAULT_RADIUS}`, args: ['int'], min: 0 },
 ]);
+
+/** Block-physics feature switches (`physics <feature> on|off`); the same names as BlockPhysics FEATURES. */
+const PHYSICS_FEATURES = Object.freeze(['falling', 'water', 'collapse', 'explosions']);
 
 /** @type {Map<string, CommandSpec>} */
 const SPEC_BY_NAME = new Map(COMMANDS.map((c) => [c.name, c]));
@@ -231,6 +245,11 @@ export function resolveBlock(token) {
  * @property {(x: number, y: number, z: number) => void} teleport   moves the player (feet), zeroes velocities and seeds the step-on state
  * @property {(on: boolean) => void} setFlying
  * @property {import('./runes.js').RuneStore} runes
+ * @property {import('./pigs.js').Pigs} [pigs]            absent in contexts without creatures (summon / pigs then fail)
+ * @property {import('./zombies.js').Zombies} [zombies]   absent without zombies (summon zombie / zombies then fail)
+ * @property {import('./watcher.js').Watcher} [watcher]   absent without the Hollow Watcher (summon watcher / watcher then fail)
+ * @property {import('./watcher.js').WatcherWorld} [watcherWorld]  the view summon watcher places it in (main refreshes it)
+ * @property {import('./blockphysics.js').BlockPhysics} [physics]  absent without block physics (physics / undo / ignite / drain then fail)
  * @property {import('./runes.js').RuneRunner} runner
  * @property {Rune|null} rune                               the executing rune (for `@`), null in the console
  * @property {import('./runes.js').Running|null} running    the executing script, null in the console
@@ -540,6 +559,111 @@ export function executeCommand(cmd, ctx) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Zombies (§39): `summon zombie [q y r]` (by day too: handy for testing) and `zombies [clear|on|off]`.
+// ---------------------------------------------------------------------------------------------------
+
+/** @returns {CommandResult} */
+function summonZombie(spec, args, ctx) {
+  const zs = ctx.zombies;
+  if (!zs) return fail(spec, 'zombies are not available here');
+  if (!zs.enabled) return fail(spec, 'zombies are off in this world (zombies on to allow them)');
+  if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
+  const world = ctx.world;
+  const p = ctx.player;
+  let x;
+  let z;
+  let fy;
+  if (args.length === 4) {
+    const rc = resolveCellTriple(args, 1, ctx);
+    if ('error' in rc) return fail(spec, rc.error);
+    const [q, y, r] = rc.cell;
+    if (!(y >= 0 && y <= WORLD_HEIGHT - 2)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 2}`);
+    if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+    [x, z] = hexToWorld(q, r);
+    fy = findFreeY(world.getBlock, x, z, y, 2, ZOMBIE_RADIUS, ZOMBIE_HEIGHT);
+    if (fy === null) return fail(spec, 'target is inside a block');
+  } else {
+    const [fx, fz] = yawToForward(ctx.controls.yaw);
+    const [q, r] = worldToHex(p.x + fx * 2, p.z + fz * 2);
+    if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+    [x, z] = hexToWorld(q, r);
+    fy = findFreeY(world.getBlock, x, z, Math.max(0, Math.floor(p.y)), 2, ZOMBIE_RADIUS, ZOMBIE_HEIGHT);
+    if (fy === null) return fail(spec, 'no room in front of you');
+  }
+  // It turns to face you.
+  const zb = zs.spawn(x, fy, z, Math.atan2(-(p.x - x), -(p.z - z)));
+  if (!zb) return fail(spec, `too many zombies (max ${ZOMBIE_MAX})`);
+  const [pq, pr] = worldToHex(x, z);
+  return ok(`summoned a zombie at ${pq} ${fy} ${pr}`);
+}
+
+/** @returns {CommandResult} */
+function zombiesCommand(spec, args, ctx) {
+  const zs = ctx.zombies;
+  if (!zs) return fail(spec, 'zombies are not available here');
+  const n = zs.size;
+  const count = (k) => `${k} zombie${k === 1 ? '' : 's'}`;
+  if (args.length === 0) return ok(`${count(n)} (max ${ZOMBIE_MAX}) · zombies are ${zs.enabled ? 'on' : 'off'} in this world`);
+  if (args[0] === 'clear') {
+    zs.clear();
+    return ok(`removed ${count(n)}`);
+  }
+  const on = args[0] === 'on';
+  if (!zs.setEnabled(on)) return ok(`zombies are already ${on ? 'on' : 'off'}`);
+  return ok(on ? 'zombies on (saved with this world)' : `zombies off (saved with this world)${n ? `: removed ${count(n)}` : ''}`);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The Hollow Watcher (§40): `summon watcher [q y r]` (any time of day: for testing) and `watcher [on|off]`.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** @returns {CommandResult} */
+function summonWatcher(spec, args, ctx) {
+  const w = ctx.watcher;
+  if (!w || !ctx.watcherWorld) return fail(spec, 'the Watcher is not available here');
+  if (!w.enabled) return fail(spec, 'the Watcher is off in this world (watcher on to allow it)');
+  if (w.present) return fail(spec, 'the Watcher is already here');
+  if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
+  const world = ctx.world;
+  let f;
+  if (args.length === 4) {
+    const rc = resolveCellTriple(args, 1, ctx);
+    if ('error' in rc) return fail(spec, rc.error);
+    const [q, y, r] = rc.cell;
+    if (!(y >= 0 && y <= WORLD_HEIGHT - 3)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 3}`);
+    if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+    const [x, z] = hexToWorld(q, r);
+    const fy = findFreeY(world.getBlock, x, z, y, 2, 0.2, WATCHER_HEIGHT);
+    if (fy === null) return fail(spec, 'target is inside a block');
+    f = w.summonAt(ctx.watcherWorld, q, fy, r);
+  } else {
+    f = w.summon(ctx.watcherWorld);
+    if (!f) return fail(spec, 'no open ground for it out there in view (try another direction, or a render distance of 4 or more)');
+  }
+  if (!f) return fail(spec, 'the Watcher is already here');
+  const p = ctx.player;
+  const d = Math.round(Math.hypot(f.x - p.x, f.y - p.y, f.z - p.z));
+  // summon prefers a spot in sight; walled in (a cave) it stands hidden in the view and goes 30 s later, unseen.
+  return ok(`summoned the Watcher at ${f.q} ${f.y} ${f.r}, ${d} away${f.los ? '' : ' (out of sight)'}`);
+}
+
+/** @returns {CommandResult} */
+function watcherCommand(spec, args, ctx) {
+  const w = ctx.watcher;
+  if (!w) return fail(spec, 'the Watcher is not available here');
+  if (args.length === 0) {
+    const f = w.figure;
+    const p = ctx.player;
+    const where = f && p ? `it is here, ${Math.round(Math.hypot(f.x - p.x, f.y - p.y, f.z - p.z))} away` : 'it is not here';
+    return ok(`the Watcher is ${w.enabled ? 'on' : 'off'} in this world · ${where}`);
+  }
+  const on = args[0] === 'on';
+  const was = w.present;
+  if (!w.setEnabled(on)) return ok(`the Watcher is already ${on ? 'on' : 'off'}`);
+  return ok(on ? 'the Watcher on (saved with this world)' : `the Watcher off (saved with this world)${was ? ': it is gone' : ''}`);
+}
+
 /**
  * @param {CommandSpec} spec
  * @param {string[]} args
@@ -752,6 +876,98 @@ function run(spec, args, ctx) {
       });
       if (list.length > 50) lines.push(`… and ${list.length - 50} more`);
       return ok(lines.join('\n'));
+    }
+    case 'summon': {
+      if (args[0] === 'zombie') return summonZombie(spec, args, ctx);
+      if (args[0] === 'watcher') return summonWatcher(spec, args, ctx);
+      if (!ctx.pigs) return fail(spec, 'pigs are not available here');
+      if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
+      let x;
+      let z;
+      let fy;
+      if (args.length === 4) {
+        const rc = resolveCellTriple(args, 1, ctx);
+        if ('error' in rc) return fail(spec, rc.error);
+        const [q, y, r] = rc.cell;
+        if (!(y >= 0 && y <= WORLD_HEIGHT - 2)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 2}`);
+        if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+        [x, z] = hexToWorld(q, r);
+        fy = findFreeY(world.getBlock, x, z, y, 2, PIG_RADIUS, PIG_HEIGHT);
+        if (fy === null) return fail(spec, 'target is inside a block');
+      } else {
+        const [fx, fz] = yawToForward(ctx.controls.yaw);
+        const [q, r] = worldToHex(p.x + fx * 2, p.z + fz * 2);
+        if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+        [x, z] = hexToWorld(q, r);
+        fy = findFreeY(world.getBlock, x, z, Math.max(0, Math.floor(p.y)), 2, PIG_RADIUS, PIG_HEIGHT);
+        if (fy === null) return fail(spec, 'no room in front of you');
+      }
+      const pig = ctx.pigs.spawn(x, fy, z, Math.random() * 2 * Math.PI - Math.PI);
+      if (!pig) return fail(spec, `too many pigs (max ${PIG_MAX})`);
+      const [pq, pr] = worldToHex(x, z);
+      return ok(`summoned a pig at ${pq} ${fy} ${pr}`);
+    }
+    case 'pigs': {
+      if (!ctx.pigs) return fail(spec, 'pigs are not available here');
+      const n = ctx.pigs.size;
+      if (args.length === 1) {
+        ctx.pigs.clear();
+        return ok(`removed ${n} pig${n === 1 ? '' : 's'}`);
+      }
+      return ok(`${n} pig${n === 1 ? '' : 's'} (max ${PIG_MAX})`);
+    }
+    case 'zombies':
+      return zombiesCommand(spec, args, ctx);
+    case 'watcher':
+      return watcherCommand(spec, args, ctx);
+    case 'physics': {
+      const ph = ctx.physics;
+      if (!ph) return fail(spec, 'block physics is not available here');
+      const what = args[0].toLowerCase();
+      if (args.length === 1) {
+        if (what === 'status') return ok(ph.statusText());
+        if (what === 'on' || what === 'off') {
+          ph.setPaused(what === 'off');
+          return ok(what === 'off' ? 'block physics paused: nothing falls, flows or explodes until physics on (not saved)' : 'block physics running');
+        }
+        if (PHYSICS_FEATURES.includes(what)) return ok(`${what} is ${ph.isEnabled(what) ? 'on' : 'off'}`);
+        return fail(spec, `expected status, on, off or one of ${PHYSICS_FEATURES.join(', ')}, got "${args[0]}"`);
+      }
+      if (!PHYSICS_FEATURES.includes(what)) return fail(spec, `expected one of ${PHYSICS_FEATURES.join(', ')}, got "${args[0]}"`);
+      const on = args[1] === 'on';
+      const changed = ph.setSwitch(what, on);
+      return ok(`${what} ${on ? 'on' : 'off'}${changed ? ' (saved with this world)' : ' (already)'}`);
+    }
+    case 'undo': {
+      if (!ctx.physics) return fail(spec, 'block physics is not available here');
+      const res = ctx.physics.undo();
+      return res.ok ? ok(res.message) : fail(spec, res.message);
+    }
+    case 'ignite': {
+      if (!ctx.physics) return fail(spec, 'block physics is not available here');
+      const rc = resolveCellTriple(args, 0, ctx);
+      if ('error' in rc) return fail(spec, rc.error);
+      const [q, y, r] = rc.cell;
+      if (!inHeightRange(y)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 1}`);
+      if (!world.hasChunkAtCell(q, r)) return fail(spec, `cell (${q}, ${y}, ${r}) is not loaded`);
+      const res = ctx.physics.explosions.ignite(q, y, r);
+      return res.ok ? ok(res.message) : fail(spec, res.message);
+    }
+    case 'drain': {
+      if (!ctx.physics) return fail(spec, 'block physics is not available here');
+      const radius = args.length === 1 ? Number(args[0]) : DRAIN_DEFAULT_RADIUS;
+      if (!(radius >= 0 && radius <= DRAIN_MAX_RADIUS)) return fail(spec, `radius must be 0..${DRAIN_MAX_RADIUS}`);
+      let q;
+      let y;
+      let r;
+      if (ctx.rune) {
+        ({ q, y, r } = ctx.rune);
+      } else {
+        [q, r] = worldToHex(p.x, p.z);
+        y = Math.floor(p.y);
+      }
+      const res = ctx.physics.fluids.drain(q, y, r, radius);
+      return res.ok ? ok(res.message) : fail(spec, res.message);
     }
     case 'rune': {
       const rc = resolveCellTriple(args, 0, ctx);

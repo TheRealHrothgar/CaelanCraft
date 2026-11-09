@@ -85,12 +85,13 @@ away, `stopall` in the console (or **Stop All Rune Scripts** in the pause menu) 
 | `?seed=123` | World seed (number or any text) |
 | `?rd=6` | Render distance in chunks (1–16, hex distance) |
 | `?debug=1` | Start with the debug overlay visible |
-| `?nosave=1` | Do not read or write saved worlds |
+| `?nosave=1` | Never write saved worlds (the Worlds panel is read-only; `?autoplay=1` starts a fresh world instead of loading one) |
 | `?time=0.5` | Freeze the time of day (0 = midnight, 0.5 = noon) |
 | `?fly=1` | Start in fly mode |
 | `?yaw=90&pitch=-30` | Initial look direction in degrees (yaw 0 = north, 90 = west, 180 = south, 270 = east; negative pitch looks down) |
 | `?ui=console` / `?ui=editor` | With `?autoplay=1`: open the console, or place a sample Rune Block ahead and open its editor (screenshots; use with `?nosave=1` — the editor variant writes to the world) |
 | `?autoplay=1` | Skip the title screen |
+| `?slot=3` | With `?autoplay=1`: play save slot 1–6 (default 1; with `?nosave=1` nothing is written) |
 | `?smoke=1` | Run the built-in self-test and show the result banner |
 
 ## Scripts
@@ -121,6 +122,10 @@ Where the `docs/` specifications still describe cubes, `src/CONTRACTS.md` wins.
 
 ## Saved worlds
 
-Worlds are stored in `localStorage` under keys starting with `caelancraft:v2:`. Saves from the cube-based v0.1
-(`caelancraft:v1:`) are not loadable — their edits were addressed on a square grid. Use **New World** on the
-title screen to start over (it asks before deleting), or clear site data in the browser.
+Up to six worlds live side by side in `localStorage`, one key per save slot (`caelancraft:v2:slot:1` … `:6`, plus a small
+index `caelancraft:v2:slots`). The title screen's **Worlds** panel lists them — name, seed, when you last played, size — with
+Play, Rename, Duplicate and Delete (it asks first), **New World** on every empty slot, and a bar showing how much of the
+browser's ~5 MB the worlds use (all slots share it; when a save does not fit, the game says so and the previous save stays).
+A save from before save slots (`caelancraft:v2:save`) moves into slot 1 as "My World" on first start. Saves from the cube-based
+v0.1 (`caelancraft:v1:`) are not loadable — their edits were addressed on a square grid — and a slot whose save cannot be read
+shows as "Damaged world", which can only be deleted.

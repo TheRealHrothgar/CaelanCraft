@@ -11,6 +11,8 @@ canvas{image-rendering:pixelated}
 #crosshair{position:absolute;left:50%;top:50%;width:20px;height:20px;transform:translate(-50%,-50%);mix-blend-mode:difference;
   background:linear-gradient(#fff,#fff) center/100% 2px no-repeat,linear-gradient(#fff,#fff) center/2px 100% no-repeat}
 #underwater-overlay{position:absolute;inset:0;background:rgba(20,60,160,.45)}
+/* A zombie's strike (§39): red screen edges; main fades the opacity out */
+#hurt-overlay{position:absolute;inset:0;background:radial-gradient(ellipse at center,rgba(150,0,0,0) 35%,rgba(150,0,0,.35) 70%,rgba(200,10,10,.8) 100%)}
 #hotbar{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:2px;padding:3px;background:rgba(20,20,20,.7);border:2px solid #a0a0a0;box-shadow:0 0 0 2px #000}
 .hotbar-slot{width:40px;height:40px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;background:rgba(139,139,139,.35);border:1px solid #2b2b2b}
 .hotbar-slot.selected{border:2px solid #fff;box-shadow:inset 0 0 0 1px #000}
@@ -58,24 +60,32 @@ canvas{image-rendering:pixelated}
 .rune-hint{color:#8fa3b8;font:11px monospace}
 .rune-panel code{color:#ffe08a}
 
-/* Block picker (z 20) */
+/* Block picker (z 20). The hotbar stays visible and clickable under the dimmed layer: it takes the bottom 60px (8px offset,
+   40px slots + 3px padding + 2px border each side, 2px shadow), so the panel (8vh down) never reaches the bottom 72px. It is
+   a flex column whose grid is the only part that shrinks (and scrolls), whatever the title, name and wrapped hint take.
+   The grid keeps one row (64px) so a block can always be picked: in a window under ~274px tall the panel stays 180px
+   (chrome with a two-line hint, 116px, plus that row) and overlaps the hotbar; if even that is too short it scrolls. */
 #block-picker{z-index:20;pointer-events:none;display:flex;align-items:flex-start;justify-content:center;padding-top:8vh;background:rgba(0,0,0,.45)}
-.picker-panel{pointer-events:auto;background:#c6c6c6;border:4px solid;border-color:#fff #555 #555 #fff;box-shadow:0 0 0 2px #000;padding:12px}
+.picker-panel{pointer-events:auto;background:#c6c6c6;border:4px solid;border-color:#fff #555 #555 #fff;box-shadow:0 0 0 2px #000;padding:12px;box-sizing:border-box;max-height:max(180px,calc(100vh - 8vh - 72px));overflow-y:auto;display:flex;flex-direction:column}
 .picker-title,#picker-name{color:#404040;font:bold 16px monospace}
-#picker-grid{display:grid;grid-template-columns:repeat(8,72px);gap:4px;margin:8px 0}
-.picker-cell{width:72px;height:72px;padding:0;background:#8b8b8b;border:2px solid;border-color:#373737 #fff #fff #373737;cursor:pointer;display:flex;align-items:center;justify-content:center}
+#picker-grid{display:grid;grid-template-columns:repeat(auto-fill,60px);gap:4px;margin:8px 0;width:min(820px,calc(100vw - 48px));max-height:420px;min-height:64px;flex:0 1 auto;overflow-y:auto;justify-content:center}
+.picker-cell{width:60px;height:60px;padding:0;background:#8b8b8b;border:2px solid;border-color:#373737 #fff #fff #373737;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .picker-cell:hover{outline:2px solid #fff;outline-offset:-2px}
-.picker-cell canvas{width:64px;height:64px}
+.picker-cell canvas{width:52px;height:52px}
 .picker-hint{color:#5a5a5a;font:12px monospace}
 
 /* Pause menu (z 30) */
-#pause-menu{z-index:30;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;overflow-y:auto}
+#pause-menu{z-index:30;background:rgba(0,0,0,.55);display:flex;align-items:safe center;justify-content:center;overflow-y:auto}
 .menu-panel{display:flex;flex-direction:column;align-items:center;gap:8px}
 .menu-title{color:#fff;font:bold 28px monospace;text-shadow:3px 3px 0 #3f3f3f;margin:0 0 12px}
 .mc-button{min-width:320px;padding:10px 16px;background:#6f6f6f;color:#e0e0e0;font:bold 18px monospace;text-shadow:2px 2px 0 #202020;border:2px solid;border-color:#aaa #555 #555 #aaa;box-shadow:0 0 0 2px #000;cursor:pointer}
 .mc-button:hover:not(:disabled){background:#7f8fbf;color:#ffffa0}
 .mc-button:disabled{background:#4a4a4a;color:#a0a0a0;cursor:default}
 .menu-note{color:#c0c0c0;font:13px monospace}
+.physics-row{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;max-width:660px}
+.physics-label{color:#e0e0e0;font:bold 14px monospace;text-shadow:2px 2px 0 #202020;margin-right:4px}
+.mc-button.toggle{min-width:0;padding:6px 10px;font-size:14px}
+.mc-button.toggle.off{background:#4a4a4a;color:#a0a0a0}
 
 /* Click to play (z 35) */
 #click-to-play{z-index:35;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);cursor:pointer}
@@ -89,16 +99,60 @@ canvas{image-rendering:pixelated}
 .progress{width:400px;height:16px;background:#000;border:2px solid #7f7f7f}
 .progress-fill{height:100%;width:0%;background:#7fbf3f;transition:width .1s linear}
 #loading-text{color:#c0c0c0;font:14px monospace}
-/* Vertical budget at the 1280x720 reference viewport (scripts/smoke-windows-chrome.sh): 4vh top (28.8px) + 128px logo + 24px
-   + seed row & two buttons (~140px) + 12px + 17 cheat-sheet rows (17×20 + 16×2 = 372px) ~= 705px, so the whole sheet fits
-   without clipping; overflow-y:auto is the fallback for shorter viewports (the layer is fixed and body{overflow:hidden}). */
+/* Vertical budget at the 1280x720 reference viewport (scripts/smoke-windows-chrome.sh): 4vh top (28.8px) + 128px logo + 16px,
+   then the Worlds panel (six 50px rows: ~438px) BESIDE the 17-row cheat sheet (12px + 17×20 + 16×2 = 384px) ~= 611px, so both
+   fit without clipping. Below ~1240px wide the sheet wraps under the panel and overflow-y:auto scrolls (the layer is fixed and
+   body{overflow:hidden}); the panel shrinks to the window and its rows wrap their buttons under the name. */
 #title-screen{--title-top:4vh;z-index:50;display:flex;flex-direction:column;align-items:center;padding-top:var(--title-top);overflow-y:auto}
 #title-logo{width:min(800px,90vw);height:auto}
-#splash-text{position:absolute;top:calc(var(--title-top) + 92px);left:calc(50% + 150px);color:#ff0;font:bold 20px monospace;text-shadow:2px 2px 0 #3f3f00;transform:rotate(-20deg);transform-origin:center;animation:splash-pulse .5s ease-in-out infinite alternate}
+#splash-text{position:absolute;top:calc(var(--title-top) + 92px);left:calc(50% + 150px);color:#ff0;font:bold 20px monospace;text-shadow:2px 2px 0 #3f3f00;transform:rotate(-20deg);transform-origin:center;animation:splash-pulse .5s ease-in-out infinite alternate;pointer-events:none}
 @keyframes splash-pulse{from{transform:rotate(-20deg) scale(1)}to{transform:rotate(-20deg) scale(1.08)}}
-.title-menu{margin-top:24px;display:flex;flex-direction:column;align-items:center;gap:8px}
-.seed-row label{color:#fff;font:bold 16px monospace;margin-right:8px;text-shadow:1px 1px 0 #000}
-#seed-input{width:220px;padding:6px 8px;background:#000;color:#fff;border:2px solid #a0a0a0;font:16px monospace}
+/* The Worlds panel (§41): six slot rows, a storage usage bar and a status line, beside (or above) the cheat sheet */
+.title-main{margin-top:16px;display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:4px 28px;width:100%;box-sizing:border-box;padding:0 16px 24px}
+.worlds-panel{width:min(640px,100%);box-sizing:border-box;margin-top:12px;padding:8px 10px;background:rgba(0,0,0,.45);border:2px solid #a0a0a0;box-shadow:0 0 0 2px #000}
+.worlds-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px}
+.worlds-title{margin:0;color:#fff;font:bold 20px monospace;text-shadow:2px 2px 0 #3f3f3f}
+.worlds-note{color:#c0c0c0;font:12px monospace;text-shadow:1px 1px 0 #000}
+#worlds-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.world-slot{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-height:50px;padding:4px 8px;box-sizing:border-box;background:rgba(111,111,111,.4);border:2px solid;border-color:#555 #aaa #aaa #555}
+.world-slot.latest{border-color:#d8d890}
+.world-slot.empty{background:rgba(30,30,30,.45)}
+.world-slot.damaged{background:rgba(110,30,30,.45)}
+.slot-num{flex:0 0 18px;color:#a8a8a8;font:bold 16px monospace;text-align:center;text-shadow:1px 1px 0 #000}
+.slot-body{flex:1 1 180px;min-width:0}
+.slot-name{color:#fff;font:bold 15px monospace;text-shadow:1px 1px 0 #000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.world-slot.empty .slot-name{color:#9a9a9a;font-weight:normal;font-style:italic}
+.world-slot.damaged .slot-name{color:#ff9a9a}
+.slot-detail{margin-top:2px;color:#c8c8c8;font:12px monospace;text-shadow:1px 1px 0 #000}
+.slot-actions{flex:0 1 auto;margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
+.mc-button.slot-btn{min-width:0;padding:4px 10px;font-size:13px;text-shadow:1px 1px 0 #202020}
+.mc-button.danger:hover:not(:disabled){background:#b85a5a;color:#fff}
+#btn-quit.danger{background:#8a4646}
+.mc-button:focus-visible{outline:2px solid #ffffa0;outline-offset:1px}
+.slot-form{flex:1 1 300px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.slot-field{display:flex;align-items:center;gap:6px}
+.slot-field label{color:#fff;font:bold 13px monospace;text-shadow:1px 1px 0 #000}
+.slot-field input{width:min(190px,52vw);padding:4px 6px;background:#000;color:#fff;border:2px solid #a0a0a0;font:14px monospace}
+.slot-field input:focus{border-color:#ffffa0;outline:none}
+.slot-form-buttons{display:flex;gap:4px;margin-left:auto}
+.usage-row{display:flex;align-items:center;gap:8px;margin-top:8px;color:#c8c8c8;font:12px monospace;text-shadow:1px 1px 0 #000}
+.usage-label{color:#e0e0e0;font-weight:bold}
+.usage-bar{flex:1 1 120px;height:10px;background:#000;border:2px solid #7f7f7f}
+.usage-fill{height:100%;width:0;background:#7fbf3f}
+.usage-fill.warn{background:#d0b030}
+.usage-fill.full{background:#d04040}
+.worlds-message{min-height:15px;margin-top:4px;color:#9fef9f;font:12px monospace;text-shadow:1px 1px 0 #000}
+.worlds-message.error{color:#ff8080}
+.menu-subtitle{margin:-8px 0 6px;color:#ffffa0;font:bold 16px monospace;text-shadow:2px 2px 0 #3f3f3f;max-width:90vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Delete confirmation (z 60, over the title) */
+#confirm-dialog{z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;background:rgba(0,0,0,.6)}
+.dialog-panel{width:min(460px,100%);box-sizing:border-box;padding:16px 18px;background:#2a2a2a;border:3px solid;border-color:#aaa #555 #555 #aaa;box-shadow:0 0 0 2px #000;display:flex;flex-direction:column;gap:10px}
+.dialog-title{color:#fff;font:bold 18px monospace;text-shadow:2px 2px 0 #000;overflow-wrap:anywhere}
+.dialog-note{color:#c8c8c8;font:13px monospace}
+.dialog-buttons{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.dialog-buttons .mc-button.small{min-width:110px}
+.dialog-buttons .mc-button.danger{background:#8a4646}
 .controls-sheet{margin-top:12px;display:grid;grid-template-columns:auto auto;gap:2px 16px;color:#e0e0e0;font:13px monospace;text-shadow:1px 1px 0 #000}
 kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;border:1px solid #777;border-bottom-width:3px;color:#fff;font:bold 12px monospace;text-align:center}
 #title-footer{position:absolute;bottom:8px;left:8px;color:#c0c0c0;font:12px monospace;text-shadow:1px 1px 0 #000}

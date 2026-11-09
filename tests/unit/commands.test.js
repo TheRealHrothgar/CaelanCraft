@@ -2,7 +2,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   WORLD_HEIGHT, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S, HOTBAR_SIZE,
-  MAX_RUNE_SCRIPT_LINES, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, GAME_SECONDS_PER_DAY,
+  MAX_RUNE_SCRIPT_LINES, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, GAME_SECONDS_PER_DAY, PIG_MAX,
+  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT,
 } from '../../src/config.js';
 import { hexToWorld, worldToHex, hexDiscCount } from '../../src/hex.js';
 import { BLOCK, BLOCKS, BLOCK_COUNT, isPlaceable } from '../../src/blocks.js';
@@ -10,6 +11,10 @@ import { formatTime } from '../../src/daynight.js';
 import { World } from '../../src/world.js';
 import { createPlayer } from '../../src/physics.js';
 import { RuneStore } from '../../src/runes.js';
+import { Pigs } from '../../src/pigs.js';
+import { Zombies } from '../../src/zombies.js';
+import { Watcher } from '../../src/watcher.js';
+import { BlockPhysics } from '../../src/blockphysics.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 import {
   COMMANDS, HELP_FOOTER, COMPASS, parseLine, parseScript, resolveBlock, parseTimeSpec, parseDurationSpec,
@@ -234,18 +239,23 @@ describe('resolveBlock', () => {
   });
 
   it('resolves unique prefixes and substrings, and lists ambiguous candidates', () => {
-    expect(resolveBlock('plank')).toEqual({ id: B.OAK_PLANKS });
+    expect(resolveBlock('oak_plank')).toEqual({ id: B.OAK_PLANKS });
     expect(resolveBlock('cobble')).toEqual({ id: B.COBBLESTONE });
-    expect(resolveBlock('diamond')).toEqual({ id: B.DIAMOND_ORE });
+    expect(resolveBlock('diamond_o')).toEqual({ id: B.DIAMOND_ORE });
+    expect(resolveBlock('honey')).toEqual({ id: B.HONEYCOMB_BLOCK });
+    expect(resolveBlock('light_blue_wool')).toEqual({ id: B.WOOL_LIGHT_BLUE });
+    expect(resolveBlock('block_of_gold')).toEqual({ id: B.GOLD_BLOCK });
+    expect(resolveBlock('diamond')).toEqual({ error: 'ambiguous block "diamond": diamond_ore, diamond_block' });
+    expect(resolveBlock('plank')).toEqual({ error: 'ambiguous block "plank": oak_planks, spruce_planks, birch_planks' });
     expect(resolveBlock('shelf')).toEqual({ id: B.BOOKSHELF }); // substring
     const amb = resolveBlock('wool');
-    expect('error' in amb && amb.error).toBe('ambiguous block "wool": wool_white, wool_red');
+    expect('error' in amb && amb.error).toMatch(/^ambiguous block "wool": wool_white, wool_red, wool_orange, .*, wool_light_gray$/);
   });
 
   it('rejects unknown names, out-of-range ids and empty tokens with helpful messages', () => {
     expect(resolveBlock('zzz')).toEqual({ error: 'unknown block "zzz" (type blocks to list them)' });
     expect(resolveBlock(String(BLOCK_COUNT))).toEqual({ error: `unknown block id ${BLOCK_COUNT} (0..${BLOCK_COUNT - 1}; type blocks to list them)` });
-    expect(resolveBlock('-1')).toEqual({ error: 'unknown block id -1 (0..25; type blocks to list them)' });
+    expect(resolveBlock('-1')).toEqual({ error: `unknown block id -1 (0..${BLOCK_COUNT - 1}; type blocks to list them)` });
     expect(resolveBlock('')).toEqual({ error: 'expected a block name' });
     expect(resolveBlock(undefined)).toEqual({ error: 'expected a block name' });
   });
@@ -750,6 +760,152 @@ describe('executeCommand — rune commands', () => {
   });
 });
 
+describe('executeCommand — summon / pigs', () => {
+  it('summon pig puts a pig on the ground two cells ahead, or in a given cell; pigs counts and clears', () => {
+    const { ctx, player } = makeCtx();
+    ctx.pigs = new Pigs();
+    const [aq, ar] = worldToHex(player.x, player.z - 2); // yaw 0 faces −Z
+    expect(exec(ctx, 'summon pig')).toEqual({ ok: true, message: `summoned a pig at ${aq} ${FEET} ${ar}` });
+    expect(ctx.pigs.size).toBe(1);
+    const [x, z] = hexToWorld(aq, ar);
+    expect(ctx.pigs.list[0]).toMatchObject({ x, y: FEET, z });
+    expect(exec(ctx, 'summon pig 4 9 -2')).toEqual({ ok: true, message: `summoned a pig at 4 ${FEET} -2` });
+    expect(exec(ctx, 'summon pig ~1 ~ ~')).toMatchObject({ ok: true });
+    expect(exec(ctx, 'pigs')).toEqual({ ok: true, message: `3 pigs (max ${PIG_MAX})` });
+    expect(exec(ctx, 'pigs clear')).toEqual({ ok: true, message: 'removed 3 pigs' });
+    expect(ctx.pigs.size).toBe(0);
+  });
+  it('rejects other creatures, partial coordinates, unloaded targets and more than PIG_MAX pigs', () => {
+    const { ctx } = makeCtx();
+    expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining('pigs are not available') });
+    ctx.pigs = new Pigs();
+    expect(parseLine('summon cow')).toEqual({ line: 1, message: 'summon: expected one of pig, zombie, watcher, got "cow" — usage: summon pig|zombie|watcher [q y r]' });
+    expect(exec(ctx, 'summon pig 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
+    expect(exec(ctx, 'summon pig 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
+    for (let i = 0; i < PIG_MAX; i++) ctx.pigs.spawn(0, FEET, 0);
+    expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining(`too many pigs (max ${PIG_MAX})`) });
+  });
+});
+
+describe('executeCommand — summon zombie / zombies (§39)', () => {
+  it('summon zombie puts a zombie (facing you) two cells ahead or in a cell, by day too; zombies counts and clears', () => {
+    const { ctx, player } = makeCtx(); // time 0.5: noon
+    ctx.zombies = new Zombies();
+    const [aq, ar] = worldToHex(player.x, player.z - 2);
+    expect(exec(ctx, 'summon zombie')).toEqual({ ok: true, message: `summoned a zombie at ${aq} ${FEET} ${ar}` });
+    const zb = ctx.zombies.list[0];
+    const [x, z] = hexToWorld(aq, ar);
+    expect(zb).toMatchObject({ x, y: FEET, z, radius: ZOMBIE_RADIUS, height: ZOMBIE_HEIGHT });
+    expect(Math.cos(zb.yaw)).toBeCloseTo(-1, 6); // it faces +Z, back at the player
+    expect(exec(ctx, 'summon zombie 4 9 -2')).toEqual({ ok: true, message: `summoned a zombie at 4 ${FEET} -2` });
+    expect(exec(ctx, 'zombies')).toEqual({ ok: true, message: `2 zombies (max ${ZOMBIE_MAX}) · zombies are on in this world` });
+    expect(exec(ctx, 'zombies clear')).toEqual({ ok: true, message: 'removed 2 zombies' });
+    expect(ctx.zombies.size).toBe(0);
+  });
+  it('zombies on|off is the saved switch: off removes them and summon refuses', () => {
+    const { ctx } = makeCtx();
+    ctx.zombies = new Zombies();
+    exec(ctx, 'summon zombie');
+    const v = ctx.zombies.switchVersion;
+    expect(exec(ctx, 'zombies off')).toEqual({ ok: true, message: 'zombies off (saved with this world): removed 1 zombie' });
+    expect(ctx.zombies.enabled).toBe(false);
+    expect(ctx.zombies.switchVersion).toBe(v + 1);
+    expect(exec(ctx, 'zombies off')).toEqual({ ok: true, message: 'zombies are already off' });
+    expect(exec(ctx, 'summon zombie')).toMatchObject({ ok: false, message: expect.stringContaining('zombies are off in this world') });
+    expect(exec(ctx, 'zombies')).toMatchObject({ message: expect.stringContaining('zombies are off in this world') });
+    expect(exec(ctx, 'zombies on')).toEqual({ ok: true, message: 'zombies on (saved with this world)' });
+    expect(exec(ctx, 'summon zombie')).toMatchObject({ ok: true });
+  });
+  it('rejects contexts without zombies, partial coordinates, unloaded targets, solid cells and more than ZOMBIE_MAX', () => {
+    const { ctx, world } = makeCtx();
+    expect(exec(ctx, 'summon zombie')).toMatchObject({ ok: false, message: expect.stringContaining('zombies are not available') });
+    expect(exec(ctx, 'zombies')).toMatchObject({ ok: false, message: expect.stringContaining('zombies are not available') });
+    ctx.zombies = new Zombies();
+    expect(parseLine('zombies maybe')).toMatchObject({ message: expect.stringContaining('expected one of clear, on, off') });
+    expect(exec(ctx, 'summon zombie 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
+    expect(exec(ctx, 'summon zombie 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
+    // A pillar three high over cell (5, 0): no free two-high space within findFreeY's two cells.
+    for (let y = FEET; y < FEET + 3; y++) world.setBlock(5, y, 0, B.STONE);
+    expect(exec(ctx, `summon zombie 5 ${FEET} 0`)).toMatchObject({ ok: false, message: expect.stringContaining('inside a block') });
+    for (let i = 0; i < ZOMBIE_MAX; i++) ctx.zombies.spawn(0, FEET, 0);
+    expect(exec(ctx, 'summon zombie')).toMatchObject({ ok: false, message: expect.stringContaining(`too many zombies (max ${ZOMBIE_MAX})`) });
+  });
+});
+
+describe('executeCommand — summon watcher / watcher (§40)', () => {
+  /** The Watcher with a view over the ctx world (fog far 40: it stands 30–38 away). */
+  function withWatcher(ctx, world, player, time = 0.5) {
+    ctx.watcher = new Watcher();
+    ctx.watcherWorld = {
+      getBlock: world.getBlock,
+      isLoadedCell: (q, r) => world.hasChunkAtCell(q, r),
+      groundHeight: (q, r) => world.terrainHeightAt(q, r),
+      isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
+      hasEdit: (q, y, r) => world.hasEdit(q, y, r),
+      player,
+      eye: [player.x, player.y + 1.62, player.z],
+      look: [0, 0, -1],
+      yaw: 0,
+      time,
+      day: 1,
+      fogFar: 40,
+      spawn: null,
+    };
+    return ctx.watcher;
+  }
+
+  it('summon watcher puts it far away in view at noon, facing you; one at a time; summon watcher q y r puts it in a cell', () => {
+    const { ctx, world, player } = makeCtx(); // noon
+    const w = withWatcher(ctx, world, player);
+    const res = exec(ctx, 'summon watcher');
+    expect(res.ok).toBe(true);
+    const f = w.figure;
+    expect(res.message).toBe(`summoned the Watcher at ${f.q} ${f.y} ${f.r}, ${Math.round(Math.hypot(f.x - player.x, f.y - player.y, f.z - player.z))} away`);
+    expect(Math.hypot(f.x - player.x, f.z - player.z)).toBeGreaterThanOrEqual(30);
+    expect(Math.hypot(f.x - player.x, f.z - player.z)).toBeLessThanOrEqual(38);
+    expect(f.z).toBeLessThan(player.z); // ahead (the view looks along −Z)
+    expect(f.y).toBe(FEET);
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: false, message: expect.stringContaining('already here') });
+    expect(exec(ctx, 'watcher')).toEqual({ ok: true, message: `the Watcher is on in this world · it is here, ${Math.round(Math.hypot(f.x - player.x, f.y - player.y, f.z - player.z))} away` });
+    w.clear();
+    expect(exec(ctx, 'summon watcher 4 9 -30')).toEqual({ ok: true, message: `summoned the Watcher at 4 ${FEET} -30, ${Math.round(Math.hypot(hexToWorld(4, -30)[0] - player.x, 0, hexToWorld(4, -30)[1] - player.z))} away` });
+    expect(exec(ctx, 'watcher')).toMatchObject({ message: expect.stringContaining('it is here') });
+  });
+
+  it('watcher on|off is the saved switch: off removes it and summon refuses; errors for bad input', () => {
+    const { ctx, world, player } = makeCtx();
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: false, message: expect.stringContaining('not available') });
+    expect(exec(ctx, 'watcher')).toMatchObject({ ok: false, message: expect.stringContaining('not available') });
+    const w = withWatcher(ctx, world, player);
+    expect(exec(ctx, 'watcher')).toEqual({ ok: true, message: 'the Watcher is on in this world · it is not here' });
+    exec(ctx, 'summon watcher');
+    expect(exec(ctx, 'watcher off')).toEqual({ ok: true, message: 'the Watcher off (saved with this world): it is gone' });
+    expect(w.present).toBe(false);
+    expect(w.switchVersion).toBe(1);
+    expect(exec(ctx, 'watcher off')).toEqual({ ok: true, message: 'the Watcher is already off' });
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: false, message: expect.stringContaining('off in this world') });
+    expect(exec(ctx, 'watcher on')).toEqual({ ok: true, message: 'the Watcher on (saved with this world)' });
+    expect(parseLine('watcher maybe')).toMatchObject({ message: expect.stringContaining('expected one of on, off') });
+    expect(exec(ctx, 'summon watcher 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
+    expect(exec(ctx, 'summon watcher 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
+    for (let y = FEET; y < FEET + 5; y++) world.setBlock(5, y, -30, B.STONE);
+    expect(exec(ctx, `summon watcher 5 ${FEET} -30`)).toMatchObject({ ok: false, message: expect.stringContaining('inside a block') });
+    // Walled in: it still comes for a test, hidden in the view, and says so.
+    w.clear();
+    for (let q = -3; q <= 3; q++) for (let y = FEET; y < FEET + 12; y++) world.setBlock(q, y, -3, B.STONE);
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: true, message: expect.stringMatching(/^summoned the Watcher at .* away \(out of sight\)$/) });
+    expect(w.figure.los).toBe(false);
+    w.clear();
+    // Looking down at your feet the horizon is off screen: nowhere in view.
+    ctx.watcherWorld.look = [0, -1, 0];
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: false, message: expect.stringContaining('no open ground') });
+    ctx.watcherWorld.look = [0, 0, -1];
+    // Nowhere to stand out there (a fog far too short for 30 m): a clear refusal.
+    ctx.watcherWorld.fogFar = 27;
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: false, message: expect.stringContaining('no open ground') });
+  });
+});
+
 describe('executeCommand — information commands', () => {
   it('help lists every command with its usage and the footer, or one command', () => {
     const { ctx } = makeCtx();
@@ -808,5 +964,88 @@ describe('executeCommand — robustness', () => {
     job.step(10);
     expect(job.written).toBe(4);
     expect(exec(ctx, 'tp -4 11 -4').message).toBe('teleported to cell -4 11 -4');
+  });
+});
+
+describe('executeCommand — block physics (physics / undo / ignite / drain)', () => {
+  /** A ctx whose world has a BlockPhysics attached (as main forwards onBlockChange). */
+  function physicsCtx(over = {}) {
+    const made = makeCtx(over);
+    const physics = new BlockPhysics(made.world);
+    made.world.onBlockChange = (q, y, r, p, n) => physics.onBlockChange(q, y, r, p, n);
+    made.ctx.physics = physics;
+    return { ...made, physics };
+  }
+
+  it('fail without physics in the context', () => {
+    const { ctx } = makeCtx();
+    for (const line of ['physics status', 'undo', 'ignite 0 11 0', 'drain']) {
+      const res = exec(ctx, line);
+      expect(res.ok, line).toBe(false);
+      expect(res.message).toContain('block physics is not available here');
+    }
+  });
+
+  it('physics status | on | off | <feature> [on|off]', () => {
+    const { ctx, physics } = physicsCtx();
+    expect(exec(ctx, 'physics status').message).toBe(physics.statusText());
+    expect(exec(ctx, 'physics off')).toEqual({ ok: true, message: 'block physics paused: nothing falls, flows or explodes until physics on (not saved)' });
+    expect(physics.paused).toBe(true);
+    expect(exec(ctx, 'physics on').ok).toBe(true);
+    expect(physics.paused).toBe(false);
+    expect(exec(ctx, 'physics collapse off')).toEqual({ ok: true, message: 'collapse off (saved with this world)' });
+    expect(physics.isEnabled('collapse')).toBe(false);
+    expect(exec(ctx, 'physics collapse off').message).toBe('collapse off (already)');
+    expect(exec(ctx, 'physics collapse').message).toBe('collapse is off');
+    expect(exec(ctx, 'physics WATER OFF').ok).toBe(true);
+    expect(physics.isEnabled('water')).toBe(false);
+    expect(exec(ctx, 'physics lava on').message).toContain('expected one of falling, water, collapse, explosions');
+    expect(exec(ctx, 'physics nope').ok).toBe(false);
+    expect(parseLine('physics falling maybe').message).toContain('expected one of on, off');
+  });
+
+  it('undo reports the event or why not', () => {
+    const { ctx, physics, world } = physicsCtx();
+    expect(exec(ctx, 'undo').message).toContain('nothing to undo');
+    world.setBlock(2, 11, 2, B.BRICKS);
+    physics.beginEvent('explosion');
+    physics.ctx.writeQuiet(2, 11, 2, B.AIR);
+    physics.endEvent();
+    const res = exec(ctx, 'undo');
+    expect(res).toEqual({ ok: true, message: 'undid the explosion: restored 1 block' });
+    expect(world.getBlock(2, 11, 2)).toBe(B.BRICKS);
+  });
+
+  it('ignite resolves and checks the cell, then asks explosions; drain centres on the player (or the rune)', () => {
+    const { ctx, physics } = physicsCtx();
+    const ignite = vi.spyOn(physics.explosions, 'ignite').mockReturnValue({ ok: true, message: 'lit' });
+    expect(exec(ctx, 'ignite ~ ~ ~1')).toEqual({ ok: true, message: 'lit' });
+    expect(ignite).toHaveBeenCalledWith(0, FEET, 1);
+    expect(exec(ctx, 'ignite 9000 11 9000').message).toContain('is not loaded');
+    ignite.mockReturnValue({ ok: false, message: 'no barrel there' });
+    expect(exec(ctx, 'ignite 0 11 0').message).toBe('ignite: no barrel there — usage: ignite q y r');
+    const drain = vi.spyOn(physics.fluids, 'drain').mockReturnValue({ ok: true, message: 'drained 3 cells' });
+    expect(exec(ctx, 'drain').message).toBe('drained 3 cells');
+    expect(drain).toHaveBeenLastCalledWith(0, FEET, 0, 8);
+    exec(ctx, 'drain 2');
+    expect(drain).toHaveBeenLastCalledWith(0, FEET, 0, 2);
+    expect(exec(ctx, 'drain 17').message).toContain('radius must be 0..16');
+    ctx.rune = runeAt(5, 20, -3);
+    exec(ctx, 'drain 1');
+    expect(drain).toHaveBeenLastCalledWith(5, 20, -3, 1);
+  });
+
+  it('drain (the real water feature) removes the water around the player and nothing beyond the radius', () => {
+    const { ctx, physics, world } = physicsCtx();
+    world.setBlock(1, FEET, 0, B.WATER);
+    world.setBlock(9, FEET, 0, B.WATER);
+    for (let i = 0; i < 400 && physics.queued() > 0; i++) physics.tick();
+    expect(world.getBlock(2, FEET, 0)).toBe(B.WATER_FLOW_6);
+    const res = exec(ctx, 'drain 3');
+    expect(res.ok).toBe(true);
+    expect(res.message).toMatch(/^drained \d+ water cells within 3$/);
+    expect(world.getBlock(1, FEET, 0)).toBe(B.AIR);
+    expect(world.getBlock(9, FEET, 0)).toBe(B.WATER);
+    expect(exec(ctx, 'drain 0').message).toBe('no water to drain within 0');
   });
 });

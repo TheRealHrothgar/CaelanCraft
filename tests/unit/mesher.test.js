@@ -5,7 +5,7 @@ import { chunkKey, columnIndex, localIndex } from '../../src/coords.js';
 import {
   HEX_DIRS, HEX_CORNERS, HEX_SIZE, HEX_ROW_SPACING, FACE_NORMALS, FACE_SHADE, FACE_OPPOSITE, FACE_TOP, FACE_BOTTOM,
 } from '../../src/hex.js';
-import { BLOCK, BIOME, getFaceTile, tileToUV } from '../../src/blocks.js';
+import { BLOCK, BIOME, getFaceTile, tileToUV, isOpaque } from '../../src/blocks.js';
 import { buildChunkMesh, vertexAO, hexCornerAO, createMeshBuilder, BIOME_TINT, isTintedFace } from '../../src/mesher.js';
 import { createWorldGen } from '../../src/worldgen.js';
 import { makeChunkData, makeChunkDataGetter, setWorldBlock, countFaces } from '../helpers/fixtures.js';
@@ -79,7 +79,7 @@ function faces(layer) {
       // vertex 1 is the bottom corner `face` of the cell
       cx = verts[1][0] - HEX_CORNERS[face][0];
       cz = verts[1][2] - HEX_CORNERS[face][1];
-      cellY = verts[0][1];
+      cellY = Math.floor(verts[0][1] + 1e-6); // a water side face may start above the cell floor (§35.4)
     }
     out.push({ face, base: v, verts, uvs, colors, idx, normal, cx, cz, cellY, isCap });
     v += nv;
@@ -547,6 +547,22 @@ describe('buildChunkMesh — water', () => {
     const top = upper.find((f) => f.face === FACE_TOP);
     for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + 1 + WATER_SURFACE_HEIGHT, 6);
   });
+  it('water under any block meshed as a full prism stays full height: no fake surface under submerged glass, ice or leaves', () => {
+    for (const above of [B.GLASS, B.ICE, B.OAK_LEAVES, B.BLACK_HOLE, B.STONE]) {
+      const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, above]]));
+      const water = facesAt(m, AQ, AY, AR);
+      expect(water.length).toBeGreaterThan(0);
+      for (const f of water) for (const v of f.verts) expect([AY, AY + 1]).toContain(v[1]);
+      // The cap stays toward a see-through block, flush with that block's bottom face (like the water's side faces
+      // against it), and is culled under an opaque one.
+      expect(water.some((f) => f.face === FACE_TOP)).toBe(!isOpaque(above));
+    }
+  });
+  it('water under a campfire (drawn by its own model, the cell is mostly air) keeps the lowered free surface', () => {
+    const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.CAMPFIRE]]));
+    const top = facesAt(m, AQ, AY, AR).find((f) => f.face === FACE_TOP);
+    for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+  });
   it('two side-by-side water cells cull their shared face (cullSame)', () => {
     const m = mesh(world([[...A, B.WATER], [...near(2), B.WATER]]));
     expect(countFaces(m)).toBe(14);
@@ -572,6 +588,99 @@ describe('buildChunkMesh — water', () => {
     const m = mesh(world(cells));
     const top = facesAt(m, AQ, AY, AR).find((f) => f.face === FACE_TOP);
     for (const c of top.colors) expectGrey(c, FACE_SHADE[FACE_TOP]);
+  });
+});
+
+describe('buildChunkMesh — flowing water surfaces (v0.8, CONTRACTS §35.4)', () => {
+  const level = (k) => B.WATER_FLOW_1 + k - 1;
+  const surf = (k) => (k * WATER_SURFACE_HEIGHT) / 7;
+  const topOf = (fs) => fs.find((f) => f.face === FACE_TOP);
+
+  it('a flowing level k has its surface at k/7 of a source; falling water at a source surface, full under water', () => {
+    for (let k = 1; k <= 6; k++) {
+      const top = topOf(facesAt(mesh(world([[...A, level(k)]])), AQ, AY, AR));
+      for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + surf(k), 6);
+    }
+    const fall = facesAt(mesh(world([[...A, B.WATER_FALL]])), AQ, AY, AR);
+    for (const v of topOf(fall).verts) expect(v[1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    const stacked = facesAt(mesh(world([[...A, B.WATER_FALL], [AQ, AY + 1, AR, B.WATER_FLOW_2]])), AQ, AY, AR);
+    expect(faceSet(stacked)).toEqual([0, 1, 2, 3, 4, 5, 7]); // no top face under more water
+    for (const f of stacked) if (f.face !== FACE_BOTTOM) expect(f.verts[2][1]).toBe(AY + 1);
+  });
+
+  it('the surface of a lowered (flowing) water cell is drawn even under a solid block (low caves keep their surface)', () => {
+    for (const id of [level(1), level(2), level(6)]) {
+      const fs = facesAt(mesh(world([[...A, id], [AQ, AY + 1, AR, B.STONE]])), AQ, AY, AR);
+      expect(faceSet(fs), String(id)).toContain(FACE_TOP);
+    }
+  });
+  it('a full water cell (source or falling) under a solid block fills it: full height, no hidden top face', () => {
+    for (const id of [B.WATER, B.WATER_FALL]) {
+      const fs = facesAt(mesh(world([[...A, id], [AQ, AY + 1, AR, B.STONE]])), AQ, AY, AR);
+      expect(faceSet(fs), String(id)).not.toContain(FACE_TOP);
+      for (const f of fs) for (const v of f.verts) expect([AY, AY + 1]).toContain(v[1]);
+    }
+  });
+
+  it('between two water cells: no top / bottom faces, and a side face only above the lower surface', () => {
+    // FLOW_5 next to FLOW_2: the 5 shows the strip between the two surfaces toward the 2; the 2 shows nothing toward it.
+    const m = mesh(world([[...A, level(5)], [...near(0), level(2)]]));
+    const hi = facesAt(m, AQ, AY, AR).find((f) => f.face === 0);
+    expect(hi.verts[0][1]).toBeCloseTo(AY + surf(2), 6);
+    expect(hi.verts[1][1]).toBeCloseTo(AY + surf(2), 6);
+    expect(hi.verts[2][1]).toBeCloseTo(AY + surf(5), 6);
+    expect(hi.verts[3][1]).toBeCloseTo(AY + surf(5), 6);
+    // The texture window is cut to the same span (v grows down the image: v1 at height 0, v0 at height 1).
+    const [, v0, , v1] = tileToUV(getFaceTile(B.WATER, 0));
+    expect(hi.uvs[0][1]).toBeCloseTo(v1 - (v1 - v0) * surf(2), 6);
+    expect(hi.uvs[2][1]).toBeCloseTo(v1 - (v1 - v0) * surf(5), 6);
+    const n = near(0);
+    expect(faceSet(facesAt(m, n[0], n[1], n[2]))).not.toContain(FACE_OPPOSITE[0]);
+    // Equal surfaces (a source next to falling water) cull each other; water over different water has no cap faces.
+    expect(countFaces(mesh(world([[...A, B.WATER], [...near(1), B.WATER_FALL]])))).toBe(14);
+    const tower = mesh(world([[...A, level(3)], [AQ, AY + 1, AR, B.WATER]]));
+    expect(faceSet(facesAt(tower, AQ, AY, AR))).not.toContain(FACE_TOP);
+    expect(faceSet(facesAt(tower, AQ, AY + 1, AR))).not.toContain(FACE_BOTTOM);
+    expectWindingsConsistent(m.translucent);
+  });
+
+  it('a water cell under more water hides its whole side toward a neighbour that also has water above', () => {
+    const m = mesh(world([[...A, B.WATER_FALL], [AQ, AY + 1, AR, B.WATER_FALL], [...near(2), B.WATER], [...near(2, 1), B.WATER_FALL]]));
+    expect(faceSet(facesAt(m, AQ, AY, AR))).not.toContain(2);
+    // …but toward a neighbour with a free surface it shows the strip above that surface.
+    const m2 = mesh(world([[...A, B.WATER_FALL], [AQ, AY + 1, AR, B.WATER_FALL], [...near(2), B.WATER]]));
+    const strip = facesAt(m2, AQ, AY, AR).find((f) => f.face === 2);
+    expect(strip.verts[0][1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    expect(strip.verts[2][1]).toBe(AY + 1);
+  });
+
+  it('two full water cells that are both covered draw nothing between them; the step to open water stays', () => {
+    // Review water-2: the neighbour's top ignored the full-prism rule, so each of two covered cells drew a 0.875..1 strip
+    // toward the other (coincident pairs: a blue honeycomb under a glass floor on a pool).
+    const sides = (m, j) => faceSet(facesAt(m, AQ, AY, AR)).includes(j);
+    const n = near(0);
+    for (const cover of [B.STONE, B.GLASS]) {
+      for (const [a, b] of [[B.WATER, B.WATER], [B.WATER_FALL, B.WATER], [B.WATER, B.WATER_FALL]]) {
+        const m = mesh(world([[...A, a], [AQ, AY + 1, AR, cover], [...n, b], [n[0], AY + 1, n[2], cover]]));
+        expect(sides(m, 0), `${a}|${b} under ${cover}`).toBe(false);
+        expect(faceSet(facesAt(m, n[0], n[1], n[2])), `${b}|${a} under ${cover}`).not.toContain(FACE_OPPOSITE[0]);
+      }
+    }
+    // A full cell under more water next to a covered full cell: both at 1, nothing between them either.
+    const deep = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.WATER], [...n, B.WATER], [n[0], AY + 1, n[2], B.STONE]]));
+    expect(sides(deep, 0)).toBe(false);
+    // A covered cell next to open water still draws the 0.875..1 step, and a covered flowing level keeps its surface.
+    const step = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.GLASS], [...n, B.WATER]]));
+    const s = facesAt(step, AQ, AY, AR).find((f) => f.face === 0);
+    expect(s.verts[0][1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    expect(s.verts[2][1]).toBe(AY + 1);
+    const low = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.STONE], [...n, B.WATER_FLOW_3], [n[0], AY + 1, n[2], B.STONE]]));
+    expect(facesAt(low, AQ, AY, AR).find((f) => f.face === 0).verts[0][1]).toBeCloseTo(AY + surf(3), 6);
+    // A 7 × 7 pool under a full glass roof: only its outer walls and bottom, no strip on any inner edge.
+    const pool = [];
+    for (let q = 2; q <= 8; q++) for (let r = 4; r <= 10; r++) pool.push([q, AY, r, B.WATER], [q, AY + 1, r, B.GLASS]);
+    const strips = faces(mesh(world(pool)).translucent).filter((f) => !f.isCap && f.verts[0][1] > AY + 0.5);
+    expect(strips.length).toBe(0);
   });
 });
 

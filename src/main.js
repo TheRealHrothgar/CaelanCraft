@@ -6,28 +6,54 @@
 // States: title → loading → clickToPlay → playing ⇄ paused, playing ⇄ picker.
 // Every frame is one requestAnimationFrame callback: the simulation (input, physics, clock, streaming,
 // raycast) runs only while `playing`; rendering, HUD and stats run in every state that has a player.
+//
+// v0.8 block physics (CONTRACTS §33–§38): one BlockPhysics per world. stepPlaying runs input & interaction → player
+// → black holes → pigs → blockPhysics.step (tick, fallers, trees, lit barrels, blasts) → campfires → resolveBodies
+// (player, pigs, lit barrels) → unstick player → runes → streaming; renderFrame syncs the falling-block renderer,
+// the particles, the explosion light and the camera shake.
 import {
   CHUNK_SIZE, RENDER_DISTANCE, LOADING_BUDGET_MS, REACH, BREAK_REPEAT_S, PLACE_REPEAT_S, MAX_FRAME_DT, FOV,
-  SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY,
+  SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY, PLAYER_HEIGHT,
+  PIG_NATURAL_COUNT, CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
+  BLACK_HOLE_MAX_TRACKED, BLACK_HOLE_SWALLOW_LINE_S,
+  PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S,
+  ZOMBIE_HEIGHT,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
-import { faceNeighbor, hexDiscCount, hexLength, worldToHex } from './hex.js';
+import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
 import {
-  BLOCK, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid,
+  BLOCK, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid, isTargetable, isWaterSource,
+  isWater,
 } from './blocks.js';
 import { normalizeSeed } from './noise.js';
 import { World } from './world.js';
 import { raycastHex } from './raycast.js';
-import { createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock } from './physics.js';
-import { advanceTime, computeSky, createSkyState } from './daynight.js';
-import { saveGame, loadGame, clearSave, SAVE_VERSION } from './storage.js';
+import { createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock, isFreeAt, findFreeY } from './physics.js';
+import { advanceTime, computeSky, createSkyState, isDayTime } from './daynight.js';
+import {
+  SAVE_VERSION, listSlots, loadSlot, saveSlot, deleteSlot, renameSlot, duplicateSlot, migrateLegacySave, storageUsage,
+  normalizeWorldName, defaultWorldName,
+} from './storage.js';
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
-import { createRenderer } from './renderer.js';
+import { createRenderer, fogRangeForRenderDistance } from './renderer.js';
 import { createControls } from './controls.js';
 import { createHUD } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
 import { RuneStore, RuneRunner, runeKey, SOURCE } from './runes.js';
+import { BlackHoles, columnHasEdits } from './blackholes.js';
+import { Pigs } from './pigs.js';
+import { resolveBodies, detachBody } from './bodies.js';
+import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
+import { createCampfireRenderer } from './campfireRenderer.js';
+import { createPigRenderer } from './pigRenderer.js';
+import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume } from './zombies.js';
+import { createZombieRenderer } from './zombieRenderer.js';
+import { Watcher, WATCHER_HEIGHT } from './watcher.js';
+import { createWatcherRenderer } from './watcherRenderer.js';
+import { BlockPhysics } from './blockphysics.js';
+import { createFallingRenderer } from './fallingRenderer.js';
+import { createParticles } from './particles.js';
 import { createConsole } from './console.js';
 import { createRuneEditor } from './runeEditor.js';
 import {
@@ -70,6 +96,19 @@ const AUTOSAVE_MOVE_EPS = 1e-3;
 const CANVAS_ID = 'game-canvas';
 /** After closing a modal, pointer lock must be back within this long or the click-to-play overlay is shown. */
 const RELOCK_CHECK_MS = 300;
+/** Physics sound names (PhysicsHooks.sound) → Audio method. Missing methods are silently skipped. */
+const PHYSICS_SOUND_METHODS = Object.freeze({
+  thud: 'playThud', splash: 'playSplash', boom: 'playBoom', hiss: 'playHiss', creak: 'playCreak', fizzle: 'playFizzle',
+  crackle: 'playCrackle',
+});
+/** Minimum seconds between two physics sounds of the same name. */
+const PHYSICS_SOUND_GAP_S = Object.freeze({ splash: SPLASH_MIN_INTERVAL_S, hiss: HISS_MIN_INTERVAL_S, fizzle: FIZZLE_MIN_INTERVAL_S });
+/** The one-time chat line for a world saved before block physics existed (collapse starts off for it). */
+export const OLD_WORLD_PHYSICS_NOTE = 'New: block physics! Collapse is off for this older world — turn it on in Esc → Physics';
+/** The red screen-edge flash after a zombie's strike fades out over this long (s, §39). */
+const HURT_FLASH_S = 0.45;
+/** WATER selected: the crosshair also stops on water sources (left-click removes one). */
+const hitTargetOrWaterSource = (id) => isTargetable(id) || isWaterSource(id);
 
 // ---------------------------------------------------------------------------------------------
 // Small pure helpers (exported for tests / reuse)
@@ -85,6 +124,33 @@ export function seedFromInput(text, random = Math.random) {
   const trimmed = typeof text === 'string' ? text.trim() : '';
   if (trimmed === '') return Math.floor(random() * 2 ** 31);
   return normalizeSeed(trimmed);
+}
+
+/**
+ * The red toast for a save that failed (§41): storage.saveSlot's `reason` → text. A full storage asks for a world to be
+ * deleted (all six slots share the browser's ~5 MB); the slot's previous save is untouched either way.
+ * @param {string|undefined} reason
+ */
+export function saveFailMessage(reason) {
+  if (reason === 'quota') return 'Save failed: storage full — delete a world on the Worlds screen to make room';
+  if (reason === 'unavailable') return 'Save failed: this browser is not letting the game store anything';
+  return 'Save failed';
+}
+
+/**
+ * The Worlds-screen status line after a failed Rename / Duplicate (storage.SlotResult `reason`).
+ * @param {'rename'|'duplicate'} action @param {string|undefined} reason
+ */
+export function worldsFailMessage(action, reason) {
+  if (reason === 'quota') {
+    return action === 'duplicate'
+      ? 'Not enough storage to copy this world — delete a world first'
+      : 'Not enough storage to rename this world — delete a world first';
+  }
+  if (reason === 'full') return 'No empty slot to copy into — delete a world first';
+  if (reason === 'damaged') return 'That world is damaged and cannot be changed';
+  if (reason === 'empty') return 'That slot is empty now';
+  return action === 'duplicate' ? 'Could not copy the world' : 'Could not rename the world';
 }
 
 /**
@@ -180,7 +246,20 @@ export function boot(win, doc) {
 
   // ---- subsystems -----------------------------------------------------------------------------------
   let atlasCanvas;
+  let atlasTexture;
   let renderer;
+  /** @type {import('./fallingRenderer.js').FallingRenderer} */
+  let fallingRenderer;
+  /** @type {import('./particles.js').Particles} */
+  let particles;
+  /** @type {import('./pigRenderer.js').PigRenderer} */
+  let pigRenderer;
+  /** @type {import('./zombieRenderer.js').ZombieRenderer} */
+  let zombieRenderer;
+  /** @type {import('./watcherRenderer.js').WatcherRenderer} */
+  let watcherRenderer;
+  /** @type {import('./campfireRenderer.js').CampfireRenderer} */
+  let campfireRenderer;
   let controls;
   let menus;
   let audio;
@@ -190,12 +269,27 @@ export function boot(win, doc) {
   let runeEditor;
   try {
     atlasCanvas = createAtlasCanvas();
-    const atlasTexture = createAtlasTexture(atlasCanvas);
+    atlasTexture = createAtlasTexture(atlasCanvas);
     renderer = createRenderer(canvas, atlasTexture, {
       sunCanvas: makeSunCanvas(),
       moonCanvas: makeMoonCanvas(),
       renderDistance: params.rd ?? RENDER_DISTANCE,
     });
+    pigRenderer = createPigRenderer(renderer.three.scene);
+    zombieRenderer = createZombieRenderer(renderer.three.scene, atlasTexture);
+    watcherRenderer = createWatcherRenderer(renderer.three.scene, atlasTexture);
+    campfireRenderer = createCampfireRenderer(renderer.three.scene, { makeCanvas: () => doc.createElement('canvas') });
+    fallingRenderer = createFallingRenderer(renderer.three.scene, atlasTexture);
+    particles = createParticles(renderer.three.scene);
+    // Pay the shader costs while the game loads (compile now, one hidden draw in the first frame), not on the frame the
+    // first fire, fall or dust appears (§32, §34) — and only once every renderer that adds a light exists: the number of
+    // PointLights (the campfires' and the explosion flash) is part of every program's key.
+    campfireRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    fallingRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    particles.prewarm(renderer.three.renderer, renderer.three.camera);
+    // The Watcher's figure too (§40.4) — only now: the scene's lights are part of every program's key, so compiling it
+    // before the campfire and explosion PointLights existed built programs the first sighting could not use.
+    watcherRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();
@@ -236,8 +330,18 @@ export function boot(win, doc) {
   let player = null;
   /** @type {RaycastHit|null} */
   let hit = null;
-  /** @type {SaveData|null} */
-  let save = params.nosave ? null : loadGame();
+  // Save slots (§41): the old single save moves into slot 1 first (never under ?nosave, which writes nothing).
+  if (!params.nosave) {
+    const moved = migrateLegacySave();
+    if (moved.status !== 'none' && moved.status !== 'migrated') console.warn('Caelancraft: the old save was not moved into a slot yet:', moved);
+  }
+  /** the save slot (1..SAVE_SLOTS) the live world is saved to */
+  let currentSlot = params.slot ?? 1;
+  /** the live world's name and creation time, written into every save's `meta` */
+  let worldName = defaultWorldName(currentSlot);
+  let worldCreatedAt = 0;
+  /** a Save & Quit whose save failed: the next one quits without saving (reset on every pause) */
+  let quitUnsavedArmed = false;
   /** @type {SaveData|null} save being restored by the current loading step */
   let pendingSave = null;
   /** @type {number[]|null} [x, y, z] the loading screen streams around */
@@ -275,6 +379,171 @@ export function boot(win, doc) {
 
   // Rune Blocks: the store outlives worlds (replaceAll on load), the runner and command context are per world.
   const runeStore = new RuneStore();
+  // Black holes: re-seeded from the world's edits on every load (CONTRACTS §29).
+  const blackHoles = new BlackHoles();
+  /** @type {[number, number, number]} scratch for the pull on the player */
+  const pull = [0, 0, 0];
+  /** throttle for the "swallowed" chat line and sound (fxTime seconds) */
+  let lastSwallowLineAt = -Infinity;
+  /** the "inert black holes" chat line was shown and the inert count has not dropped to 0 since */
+  let inertHolesWarned = false;
+  // Campfires (CONTRACTS §32): re-seeded from the world's edits on every load, like black holes.
+  const campfires = new Campfires();
+  /** seconds of animation time for flames and smoke (advances in every state that renders) */
+  let fxTime = 0;
+  /** throttle for the "too hot" chat line */
+  let lastHotLineAt = -Infinity;
+  /** throttle for the "water would put the campfire out" chat line */
+  let lastDouseLineAt = -Infinity;
+  // Pigs (CONTRACTS §30): replaced from the save on every load; natural ones are placed once per world.
+  const pigs = new Pigs();
+  /** true when the loading world has never had pigs (no `pigs` field in its save) */
+  let placeNaturalPigs = false;
+  /** @type {import('./types.js').PlayerState[]} scratch list for resolveBodies */
+  const bodies = [];
+  /** @type {{ pig: import('./pigs.js').Pig, distance: number }|null} pig under the crosshair, closer than `hit` */
+  let pigTarget = null;
+  /** @type {[number, number, number]} scratch for water currents (fluids.currentAt) */
+  const current = [0, 0, 0];
+  const pigWorld = {
+    getBlock: (q, y, r) => world.getBlock(q, y, r),
+    isLoaded: (x, z) => world.hasChunkAt(x, z),
+    // Black-hole pull plus the water current at the pig's feet (pigs sample at feet + 0.5).
+    pullAt: (x, y, z, out) => {
+      blackHoles.pullAt(x, y, z, out);
+      if (blockPhysics) {
+        blockPhysics.fluids.currentAt(x, y - 0.4, z, current);
+        out[0] += current[0];
+        out[1] += current[1];
+        out[2] += current[2];
+      }
+      return out;
+    },
+    // Every CAMPFIRE cell is known to `campfires` (tracked or refused): with none, pigs skip the fire look-ahead.
+    hasCampfires: () => campfires.total > 0,
+  };
+  // Zombies (CONTRACTS §39): night mobs, never saved; the per-world switch is (startLoading sets it from the save).
+  const zombies = new Zombies();
+  /** @type {{ zombie: import('./zombies.js').Zombie, distance: number }|null} zombie under the crosshair */
+  let zombieTarget = null;
+  /** the red screen-edge flash after a zombie's strike, 1 → 0 */
+  let hurtFlash = 0;
+  let savedZombieSwitch = 0;
+  /** World view for zombies.update (player and isDay are refreshed every frame by stepZombies). */
+  const zombieWorld = {
+    getBlock: pigWorld.getBlock,
+    isLoaded: pigWorld.isLoaded,
+    pullAt: pigWorld.pullAt,
+    hasCampfires: pigWorld.hasCampfires,
+    /** @type {PlayerState|null} */
+    player: null,
+    isDay: false,
+    nearestFire: (x, y, z, maxDist, out) => nearestCampfire(x, y, z, maxDist, out),
+    isLoadedCell: (q, r) => world.hasChunkAtCell(q, r),
+    groundHeight: (q, r) => world.terrainHeightAt(q, r),
+    isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
+    columnEdited: (q, r) => columnHasEdits(world.edits, q, r),
+  };
+  // The Hollow Watcher (CONTRACTS §40): a rare sighting, never saved; the per-world switch and the night of its last
+  // natural sighting are (startLoading restores both).
+  const watcher = new Watcher();
+  let savedWatcherSwitch = 0;
+  /** watcher.lastNight as last saved: a new sighting autosaves, so a reload cannot bring a second one that night */
+  let savedWatcherNight = /** @type {number|null} */ (null);
+  /** World view for watcher.update / summon (refreshWatcherWorld fills the player, view, clock and fog every frame). */
+  const watcherWorld = {
+    getBlock: pigWorld.getBlock,
+    isLoadedCell: (q, r) => world.hasChunkAtCell(q, r),
+    groundHeight: (q, r) => world.terrainHeightAt(q, r),
+    isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
+    hasEdit: (q, y, r) => world.hasEdit(q, y, r),
+    occupied: (q, y, r) => pigs.list.some((b) => playerIntersectsBlock(b, q, y, r)) || zombies.list.some((b) => playerIntersectsBlock(b, q, y, r)),
+    /** @type {PlayerState|null} */
+    player: null,
+    /** @type {[number, number, number]} */
+    eye: [0, 0, 0],
+    /** @type {[number, number, number]} */
+    look: [0, 0, -1],
+    yaw: 0,
+    time: 0,
+    day: 1,
+    fogFar: 0,
+    /** the camera's vertical FOV (degrees) and width / height: a sighting must start on screen (§40.1.2) */
+    fov: FOV,
+    viewFov: FOV,
+    aspect: 16 / 9,
+    /** @type {[number, number]|null} */
+    spawn: null,
+  };
+  /**
+   * World view handed to blackHoles.update and blackHoles.respawnPoint (used once a world exists). Eats are lazy writes
+   * (CONTRACTS §9.2).
+   */
+  const blackHoleWorld = {
+    getBlock: (q, y, r) => world.getBlock(q, y, r),
+    setBlock: (q, y, r, id) => world.setBlock(q, y, r, id, true),
+    isLoaded: (q, r) => world.hasChunkAtCell(q, r),
+    surfaceHeight: (q, r) => world.getSurfaceHeight(q, r),
+    hasEdits: (q, r) => columnHasEdits(world.edits, q, r),
+  };
+
+  // Block physics (CONTRACTS §33–§38): one BlockPhysics per world, created in startLoading.
+  /** @type {BlockPhysics|null} */
+  let blockPhysics = null;
+  /** the loading world was saved before v0.8: say OLD_WORLD_PHYSICS_NOTE once it is playable */
+  let physicsNotePending = false;
+  let savedSwitchVersion = 0;
+  /** @type {{ target: *, distance: number }|null} lit barrel under the crosshair (closer than `hit` / a pig) */
+  let litTarget = null;
+  /** @type {import('./types.js').PlayerState[]} scratch for PhysicsHooks.bodies */
+  const physicsBodies = [];
+  /** @type {Map<string, number>} physics sound name → fxTime it last played (throttle) */
+  const physicsSoundAt = new Map();
+  /** loudest squeal of the pigs knocked during this frame's physics step (0 = none); played once after it */
+  let knockSqueal = 0;
+  /** loudest physics 'break:<group>' of this frame's physics step (volume 0 = none); played once after it */
+  let breakVolume = 0;
+  let breakGroup = '';
+  /** loudest knock-out / burn-out of the zombies gone this frame (0 = none); one playZombieDown after the physics step */
+  let zombieDownVolume = 0;
+  const flash = { x: 0, y: 0, z: 0, intensity: 0 };
+  /** @type {[number, number, number]} camera shake offset this frame */
+  const shake = [0, 0, 0];
+  /** @type {import('./blockphysics.js').PhysicsHooks} */
+  const physicsHooks = {
+    say: (text) => logLine(text),
+    areaJobsActive: () => !!runner && runner.hasActiveJobs(),
+    bodies: () => {
+      physicsBodies.length = 0;
+      if (player) physicsBodies.push(player);
+      if (world) for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) physicsBodies.push(pig);
+      if (world) for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) physicsBodies.push(zb);
+      return physicsBodies;
+    },
+    player: () => player,
+    sound: (name, x, y, z, volume) => playPhysicsSound(name, x, y, z, volume),
+    particles: (kind, x, y, z, count, opts) => particles.emit(kind, x, y, z, count, opts),
+    knock: (body, vx, vy, vz, fromX, fromZ) => {
+      // A zombie near a blast is knocked out (§39); weaker knocks fling it (zombies.knock adds the velocity itself).
+      const zb = /** @type {import('./zombies.js').Zombie} */ (body);
+      if (body !== player && zombies.list.includes(zb)) {
+        if (zombies.knock(zb, vx, vy, vz) === 'ko') zombieGone(zb, 'ko');
+        return;
+      }
+      // A pig flashes, flees and squeals, but gets the same push as every other body (no pigs.hit kick on top); one
+      // squeal per frame, the loudest, played after the step (a blast through a herd took every voice from the boom).
+      if (body !== player && pigs.list.includes(body)) {
+        if (pigs.hit(body, fromX, fromZ, false)) {
+          const d = Math.hypot(body.x - player.x, body.y - player.y, body.z - player.z);
+          if (d < 16) knockSqueal = Math.max(knockSqueal, 1 - d / 16);
+        }
+      }
+      body.vx += vx;
+      body.vy += vy;
+      body.vz += vz;
+      body.onGround = false;
+    },
+  };
   /** @type {RuneRunner|null} */
   let runner = null;
   /** @type {import('./commands.js').CommandContext|null} */
@@ -297,12 +566,12 @@ export function boot(win, doc) {
 
   // ---- helpers --------------------------------------------------------------------------------------
 
-  const hasSaveNow = () => !params.nosave && save !== null;
-
   /** Live raycast from the eye along the look direction (allocation-free apart from the hit object). */
   function updateHit() {
     if (!world || !player) {
       hit = null;
+      pigTarget = null;
+      zombieTarget = null;
       return;
     }
     const yaw = controls.yaw;
@@ -311,7 +580,31 @@ export function boot(win, doc) {
     const dx = -Math.sin(yaw) * cp;
     const dy = Math.sin(pitch);
     const dz = -Math.cos(yaw) * cp;
-    hit = raycastHex(world.getBlock, player.x, player.y + getEyeHeight(player), player.z, dx, dy, dz, REACH);
+    const eyeY = player.y + getEyeHeight(player);
+    // With WATER selected the ray also stops on water sources, so left-click can take one away (§35) — but not while
+    // the eye is in water itself (the ray would stop at once and nothing in front could be reached).
+    const [eq, er] = worldToHex(player.x, player.z);
+    const eyeWet = isWater(world.getBlock(eq, Math.floor(eyeY), er));
+    const isHit = hotbar[selected] === BLOCK.WATER && !eyeWet ? hitTargetOrWaterSource : undefined;
+    hit = raycastHex(world.getBlock, player.x, eyeY, player.z, dx, dy, dz, REACH, isHit);
+    // A pig in front of the targeted block takes the crosshair (and hides the block highlight).
+    pigTarget = pigs.size > 0 ? pigs.raycast(player.x, eyeY, player.z, dx, dy, dz, hit ? hit.distance : REACH) : null;
+    if (pigTarget) hit = null;
+    // A zombie in front of both takes the crosshair from them (§39).
+    zombieTarget = zombies.size > 0
+      ? zombies.raycast(player.x, eyeY, player.z, dx, dy, dz, pigTarget ? pigTarget.distance : hit ? hit.distance : REACH) : null;
+    if (zombieTarget) {
+      hit = null;
+      pigTarget = null;
+    }
+    // A lit barrel in front of all of them takes it from them (left-click puts it out).
+    const reach = zombieTarget ? zombieTarget.distance : pigTarget ? pigTarget.distance : hit ? hit.distance : REACH;
+    litTarget = blockPhysics ? blockPhysics.explosions.raycast(player.x, eyeY, player.z, dx, dy, dz, reach) : null;
+    if (litTarget) {
+      hit = null;
+      pigTarget = null;
+      zombieTarget = null;
+    }
   }
 
   function selectSlot(i) {
@@ -335,8 +628,10 @@ export function boot(win, doc) {
     hud.addChatLine(text, isError);
   }
 
-  /** World.onBlockChange: keep the rune store in step with the cells that are (no longer) rune blocks. */
+  /** World.onBlockChange: keep the rune store, black holes, campfires and block physics in step with the world. */
   function onBlockChanged(q, y, r, prev, next) {
+    blackHoles.onBlockChange(q, y, r, prev, next);
+    campfires.onBlockChange(q, y, r, prev, next);
     if (next === BLOCK.RUNE_BLOCK && prev !== BLOCK.RUNE_BLOCK) {
       runeStore.ensure(q, y, r);
     } else if (prev === BLOCK.RUNE_BLOCK && next !== BLOCK.RUNE_BLOCK) {
@@ -345,6 +640,50 @@ export function boot(win, doc) {
       runeStore.delete(key);
       if (state === STATE.EDITOR && editorKey === key) closeEditor();
     }
+    // Last, so physics triggers see the trackers already updated.
+    if (blockPhysics) blockPhysics.onBlockChange(q, y, r, prev, next);
+  }
+
+  /**
+   * PhysicsHooks.sound: distance falloff from the player (BOOM_SOUND_RANGE for 'boom', PHYSICS_SOUND_RANGE otherwise),
+   * per-name throttles, 'break:<group>' → the frame's loudest break (one playBreak after the physics step, with the falloff
+   * volume — a collapsing camp or a campfire fill broke up to 256 fires in one tick, each a full-volume sound), other
+   * names → audio['play' + Name] when it exists.
+   */
+  function playPhysicsSound(name, x, y, z, volume = 1) {
+    if (!player || typeof name !== 'string' || !Number.isFinite(x + y + z)) return;
+    const range = name === 'boom' ? BOOM_SOUND_RANGE : PHYSICS_SOUND_RANGE;
+    const d = Math.hypot(x - player.x, y - (player.y + 1), z - player.z);
+    if (!(d < range)) return;
+    const gap = PHYSICS_SOUND_GAP_S[name];
+    if (gap !== undefined) {
+      const last = physicsSoundAt.get(name);
+      if (last !== undefined && fxTime - last < gap) return;
+      physicsSoundAt.set(name, fxTime);
+    }
+    const v = (Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1) * (1 - d / range);
+    if (name.startsWith('break:')) {
+      if (v > breakVolume) {
+        breakVolume = v;
+        breakGroup = name.slice(6);
+      }
+      return;
+    }
+    const method = PHYSICS_SOUND_METHODS[name];
+    const fn = method ? audio[method] : undefined;
+    if (typeof fn === 'function') fn(v);
+  }
+
+  /** A block change made BY THE PLAYER (break / place): physics treats its removals as player-caused (priority seeds). */
+  function playerSetBlock(q, y, r, id) {
+    if (!blockPhysics) return world.setBlock(q, y, r, id);
+    return blockPhysics.asPlayer(() => world.setBlock(q, y, r, id));
+  }
+
+  /** @returns {import('./menus.js').PhysicsMenuState|null} what the pause menu shows */
+  function physicsMenuState() {
+    if (!blockPhysics) return null;
+    return { switches: blockPhysics.exportSwitches(), canUndo: blockPhysics.canUndo, undoKind: blockPhysics.lastEvent ? blockPhysics.lastEvent.kind : undefined };
   }
 
   /** The CommandContext handed to the executor (CONTRACTS §26.3); built once the player exists. */
@@ -380,6 +719,15 @@ export function boot(win, doc) {
         player.vy = 0;
       },
       runes: runeStore,
+      pigs,
+      zombies,
+      watcher,
+      get watcherWorld() {
+        return refreshWatcherWorld();
+      },
+      get physics() {
+        return blockPhysics ?? undefined;
+      },
       runner: /** @type {*} */ (null),
       rune: null,
       running: null,
@@ -390,9 +738,14 @@ export function boot(win, doc) {
     return c;
   }
 
-  /** Looking at a rune block: R runs it (if it has the Interact trigger). */
+  /** Looking at a rune block: R runs it (if it has the Interact trigger); looking at a blast barrel: R lights it. */
   function interactTarget() {
     const h = hit;
+    if (h && h.blockId === BLOCK.BLAST_BARREL && blockPhysics) {
+      if (!blockPhysics.isEnabled('explosions')) logLine('explosions are off — turn them on in Esc → Physics');
+      else blockPhysics.asPlayer(() => blockPhysics.explosions.lightAt(h.q, h.y, h.r));
+      return;
+    }
     if (!h || h.blockId !== BLOCK.RUNE_BLOCK || !runner) return;
     const rune = runeStore.ensure(h.q, h.y, h.r);
     if (rune && !rune.enabled) {
@@ -418,9 +771,16 @@ export function boot(win, doc) {
     openEditor(runeStore.ensure(q, y, r));
   }
 
-  /** Text under the crosshair while a rune block is targeted. */
+  /** Text under the crosshair while a rune block, a blast barrel or a lit barrel is targeted. */
   function targetHintText() {
+    if (litTarget) return 'lit barrel · click: put it out';
+    if (zombieTarget) return 'Zombie · click: hit it';
     const h = hit;
+    if (h && h.blockId === BLOCK.BLAST_BARREL) {
+      if (!blockPhysics || !blockPhysics.isEnabled('explosions')) return 'Blast Barrel (explosions are off)';
+      // A barrel burning in place (caught in a blast, or lit beyond MAX_LIT_BARRELS): breaking it takes its fuse away.
+      return blockPhysics.explosions.isBurning(h.q, h.y, h.r) ? 'Blast Barrel · burning! click: break it' : 'Blast Barrel · R: light';
+    }
     if (!h || h.blockId !== BLOCK.RUNE_BLOCK) return null;
     const rune = runeStore.get(runeKey(h.q, h.y, h.r));
     const label = rune && rune.label ? `${rune.label} · ` : '';
@@ -432,9 +792,25 @@ export function boot(win, doc) {
   /** Break rule (§23). @returns {boolean} */
   function breakTargeted() {
     if (!world || !player) return false;
+    if (litTarget) {
+      const snuffed = blockPhysics ? blockPhysics.explosions.snuff(litTarget.target) : false;
+      updateHit();
+      return snuffed;
+    }
+    if (zombieTarget) {
+      hitZombie(zombieTarget.zombie);
+      updateHit();
+      return true;
+    }
+    if (pigTarget) {
+      if (pigs.hit(pigTarget.pig, player.x, player.z)) audio.playSqueal();
+      return true;
+    }
     const h = hit;
-    if (!h || !isBreakable(h.blockId)) return false;
-    if (!world.setBlock(h.q, h.y, h.r, BLOCK.AIR)) return false;
+    // A water source is not breakable, but with WATER selected left-click takes it away (the flow drains by itself).
+    const takeWater = h && h.blockId === BLOCK.WATER && hotbar[selected] === BLOCK.WATER;
+    if (!h || (!isBreakable(h.blockId) && !takeWater)) return false;
+    if (!playerSetBlock(h.q, h.y, h.r, BLOCK.AIR)) return false;
     audio.playBreak(getBlockDef(h.blockId).soundGroup);
     updateHit();
     return true;
@@ -450,8 +826,19 @@ export function boot(win, doc) {
     const [tq, ty, tr] = faceNeighbor(h.q, h.y, h.r, h.face);
     if (!inHeightRange(ty)) return false;
     if (!isReplaceable(world.getBlock(tq, ty, tr))) return false;
-    if (isSolid(id) && playerIntersectsBlock(player, tq, ty, tr)) return false;
-    if (!world.setBlock(tq, ty, tr, id)) return false;
+    // Black holes and campfires are not solid, but placing one inside yourself would swallow / scorch you on the spot.
+    if ((isSolid(id) || id === BLOCK.BLACK_HOLE || id === BLOCK.CAMPFIRE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
+    if (isSolid(id) && pigs.list.some((pig) => playerIntersectsBlock(pig, tq, ty, tr))) return false; // no entombing pigs
+    if (isSolid(id) && zombies.list.some((zb) => playerIntersectsBlock(zb, tq, ty, tr))) return false; // … nor zombies
+    // A campfire never goes into or under water, and water never goes on a campfire (§32).
+    if (wouldDouseCampfire(world.getBlock, id, tq, ty, tr)) {
+      if (fxTime - lastDouseLineAt > 2) {
+        lastDouseLineAt = fxTime;
+        logLine('Water would put the campfire out.');
+      }
+      return false;
+    }
+    if (!playerSetBlock(tq, ty, tr, id)) return false;
     audio.playPlace(getBlockDef(id).soundGroup);
     updateHit();
     // A freshly placed rune block opens its editor right away (the onBlockChange hook created its entry).
@@ -483,13 +870,22 @@ export function boot(win, doc) {
       player: { x: player.x, y: player.y, z: player.z, yaw: controls.yaw, pitch: controls.pitch, flying: player.flying },
       hotbar: hotbar.slice(),
       selected,
-      edits: world.exportEdits(),
+      // Never mutates the live world: in-flight fallers are settled into a COPY of the edits, flowing water is left
+      // out and lit barrels are saved as barrels (BlockPhysics.exportEdits).
+      edits: blockPhysics ? blockPhysics.exportEdits() : world.exportEdits(),
       runes: runeStore.export(),
+      pigs: pigs.export(),
+      physics: blockPhysics ? blockPhysics.exportSwitches() : undefined,
+      zombies: zombies.enabled, // the switch only: zombies themselves are never saved (§39)
+      watcher: watcher.enabled, // the switch: the Watcher itself is a sighting, never saved (§40) …
+      watcherNight: watcher.lastNight ?? undefined, // … and the night of its last natural sighting (none: not written)
+      meta: { name: worldName, createdAt: worldCreatedAt, lastPlayed: Date.now() }, // §41: the slot's name and times
     };
   }
 
   /**
-   * Save now. Skipped under ?nosave. Errors always show the red toast; `announce` also shows "World saved".
+   * Save now, to the current slot only. Skipped under ?nosave. Errors always show the red toast (saveFailMessage: a full
+   * storage asks for a world to be deleted); `announce` also shows "World saved".
    * @param {boolean} announce
    * @returns {boolean}
    */
@@ -500,18 +896,22 @@ export function boot(win, doc) {
     }
     const data = buildSaveData();
     if (!data) return false;
-    const ok = saveGame(data);
+    const res = saveSlot(currentSlot, data);
+    const ok = res.ok;
     if (ok) {
       savedEditVersion = world.editVersion;
       savedRunesVersion = runeStore.version;
+      if (blockPhysics) savedSwitchVersion = blockPhysics.switchVersion;
+      savedZombieSwitch = zombies.switchVersion;
+      savedWatcherSwitch = watcher.switchVersion;
+      savedWatcherNight = watcher.lastNight;
       savedX = player.x;
       savedY = player.y;
       savedZ = player.z;
       autosaveAccum = 0;
-      save = data;
       if (announce) hud.showSaveToast('World saved');
     } else {
-      hud.showSaveToast('Save failed: storage full', true);
+      hud.showSaveToast(saveFailMessage(res.reason), true);
     }
     return ok;
   }
@@ -529,7 +929,10 @@ export function boot(win, doc) {
     autosaveAccum += dt;
     if (autosaveAccum < AUTOSAVE_INTERVAL_S) return;
     autosaveAccum = 0;
-    if (world.editVersion !== savedEditVersion || runeStore.version !== savedRunesVersion || playerMovedSinceSave()) doSave(false);
+    const switchesChanged = (blockPhysics !== null && blockPhysics.switchVersion !== savedSwitchVersion)
+      || zombies.switchVersion !== savedZombieSwitch || watcher.switchVersion !== savedWatcherSwitch
+      || watcher.lastNight !== savedWatcherNight;
+    if (world.editVersion !== savedEditVersion || runeStore.version !== savedRunesVersion || switchesChanged || playerMovedSinceSave()) doSave(false);
   }
 
   /** Save when the page is leaving / hidden while a world is live (any state with a player, click-to-play included). */
@@ -551,7 +954,12 @@ export function boot(win, doc) {
     stats.state = s;
   }
 
-  function showTitle() {
+  /**
+   * The title screen with the Worlds panel.
+   * @param {number} [focusSlot]  focus this row (default: the last played world)
+   * @param {string} [message]  red status line (a world that could not be saved on quit)
+   */
+  function showTitle(focusSlot, message = '') {
     setState(STATE.TITLE);
     controls.setEnabled(false);
     menus.hidePause();
@@ -564,14 +972,28 @@ export function boot(win, doc) {
     hud.setPickerOpen(false);
     hud.setUnderwater(false);
     hud.setTargetHint(null);
-    menus.showTitle(hasSaveNow());
-    if (params.seed != null) {
-      const el = doc.getElementById('seed-input');
-      if (el) {
-        el.value = String(params.seed);
-        el.setAttribute('value', String(params.seed));
-      }
-    }
+    menus.showTitle(...worldsView({ focusSlot, message, isError: Boolean(message) }));
+  }
+
+  /**
+   * menus.showTitle / setWorlds arguments: the slots as storage lists them (under ?nosave read-only: no index repair) and
+   * the panel options (usage bar, ?seed for the New World form, `extra` for message / focus).
+   * @param {import('./menus.js').WorldsOptions} [extra]
+   * @returns {[import('./storage.js').SlotInfo[], import('./menus.js').WorldsOptions]}
+   */
+  function worldsView(extra = {}) {
+    const slots = listSlots(undefined, { repair: !params.nosave });
+    return [slots, { now: Date.now(), usage: storageUsage(slots), readOnly: params.nosave, defaultSeed: params.seed, ...extra }];
+  }
+
+  /** Re-render the Worlds panel after an action (the title stays up). */
+  function refreshWorlds(message = '', isError = false, focusSlot = undefined) {
+    menus.setWorlds(...worldsView({ message, isError, focusSlot }));
+  }
+
+  /** The pause menu's world line: the name, plus a note when nothing is being saved (?nosave, or switched off by autoplay). */
+  function pauseWorldLabel() {
+    return params.nosave ? `${worldName} · not saving` : worldName;
   }
 
   /**
@@ -592,7 +1014,44 @@ export function boot(win, doc) {
     world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: restoring ? restoring.edits : undefined });
     world.onChunkMesh = (key, cq, cr, meshData) => renderer.setChunkMesh(key, cq, cr, meshData);
     world.onChunkUnload = (key) => renderer.removeChunkMesh(key);
+    // Block physics before the first chunk is generated: onChunkGenerated re-seeds edited cells as chunks stream in.
+    blockPhysics = new BlockPhysics(world, physicsHooks);
+    // A save from before v0.8 has no `physics` field: collapse starts off there (old sky bases must not fall the first
+    // time they are touched), everything else on, and the player is told once.
+    if (restoring && !restoring.physics) {
+      blockPhysics.importSwitches({ collapse: false });
+      physicsNotePending = true;
+    } else {
+      blockPhysics.importSwitches(restoring ? restoring.physics : null);
+      physicsNotePending = false;
+    }
+    savedSwitchVersion = blockPhysics.switchVersion;
+    world.onChunkGenerated = (cq, cr) => blockPhysics.onChunkGenerated(cq, cr);
     world.onBlockChange = onBlockChanged;
+    litTarget = null;
+    particles.clear();
+    fallingRenderer.sync([], 0);
+    fallingRenderer.setFlash(0, 0, 0, 0);
+    blackHoles.loadFromEdits(world.edits);
+    campfires.loadFromEdits(world.edits);
+    pigs.load(restoring && Array.isArray(restoring.pigs) ? restoring.pigs : []);
+    placeNaturalPigs = !(restoring && Array.isArray(restoring.pigs));
+    pigTarget = null;
+    // Zombies are never saved; their switch is (absent — a new world or an older save — means on).
+    zombies.clear();
+    zombies.setEnabled(!(restoring && restoring.zombies === false));
+    savedZombieSwitch = zombies.switchVersion;
+    zombieTarget = null;
+    hurtFlash = 0;
+    // The Watcher: no figure; its switch from the save (absent means on) and the night of its last natural sighting
+    // (absent: none), so reloading in the night it came does not bring it again.
+    watcher.clear();
+    watcher.setEnabled(!(restoring && restoring.watcher === false));
+    watcher.setLastNight(restoring && restoring.watcherNight != null ? restoring.watcherNight : null);
+    savedWatcherSwitch = watcher.switchVersion;
+    savedWatcherNight = watcher.lastNight;
+    const spawnPoint = world.findSpawn(); // its traces keep clear of the world's spawn
+    watcherWorld.spawn = [spawnPoint[0], spawnPoint[2]];
     // Runes: replace the store with the save's (validated) runes; nothing runs until the player exists.
     if (runner) runner.reset();
     runner = null;
@@ -685,6 +1144,12 @@ export function boot(win, doc) {
     if (params.pitch != null) controls.pitch = (params.pitch * Math.PI) / 180;
     if (params.fly) player.flying = true;
 
+    if (placeNaturalPigs) {
+      placeNaturalPigs = false;
+      const [pq, pr] = worldToHex(sx, sz);
+      pigs.spawnNatural(PIG_NATURAL_COUNT, pq, pr, world.seed, world.getBlock, (q, r) => world.hasChunkAtCell(q, r));
+    }
+
     ctx = buildCommandContext();
     runner = new RuneRunner(runeStore, ctx);
     ctx.runner = runner;
@@ -693,6 +1158,10 @@ export function boot(win, doc) {
       if (source === SOURCE.INTERACT || source === SOURCE.STEP) audio.playClick();
     };
     runner.seedStep();
+    if (physicsNotePending) {
+      physicsNotePending = false;
+      logLine(OLD_WORLD_PHYSICS_NOTE);
+    }
 
     savedEditVersion = world.editVersion;
     savedRunesVersion = runeStore.version;
@@ -700,6 +1169,7 @@ export function boot(win, doc) {
     savedY = player.y;
     savedZ = player.z;
     autosaveAccum = 0;
+    if (!restoring) doSave(false); // a new world claims its slot at once (§41); a no-op under ?nosave
     fov = FOV;
     breakHeld = 0;
     placeHeld = 0;
@@ -715,9 +1185,13 @@ export function boot(win, doc) {
     }
   }
 
-  /** `?ui=console|editor` with autoplay: open the console, or place a rune block three cells ahead and open its editor (screenshots). */
+  /** `?ui=console|editor|picker` with autoplay: open the console, place a rune block three cells ahead and open its editor, or open the block picker (screenshots). */
   function showDebugUi() {
     if (!params.ui || !runner || !player || params.smoke) return; // a modal would stall the smoke sequence
+    if (params.ui === 'picker') {
+      openPicker();
+      return;
+    }
     if (params.ui === 'console') {
       openConsole('');
       consoleUI.log(runner.runConsoleLine('help').message);
@@ -749,7 +1223,9 @@ export function boot(win, doc) {
     setState(STATE.PAUSED);
     controls.setEnabled(false);
     controls.unlock();
-    menus.showPause(world.seed);
+    menus.showPause(world.seed, physicsMenuState(), pauseWorldLabel()); // also resets the quit button to "Save & Quit"
+    quitUnsavedArmed = false;
+    menus.setZombiesState(zombies.enabled);
     doSave(false);
   }
 
@@ -826,8 +1302,11 @@ export function boot(win, doc) {
     enterPlayingFromModal();
   }
 
-  function quitToTitle() {
-    doSave(false);
+  /**
+   * Close the world and show the Worlds screen. The caller has saved (or failed to: `message` then says so on the panel).
+   * @param {string} [message]  red status line on the Worlds panel
+   */
+  function quitToTitle(message = '') {
     if (runner) runner.reset();
     runner = null;
     ctx = null;
@@ -836,33 +1315,80 @@ export function boot(win, doc) {
       world.dispose();
       world = null;
     }
+    blockPhysics = null;
+    litTarget = null;
+    particles.clear();
+    fallingRenderer.sync([], 0);
+    fallingRenderer.setFlash(0, 0, 0, 0);
+    zombies.clear();
+    zombieTarget = null;
+    hurtFlash = 0;
+    hud.setHurtFlash(0);
+    watcher.clear();
     player = null;
     hit = null;
     renderer.setHighlight(null);
-    if (!params.nosave) save = loadGame();
-    showTitle();
+    showTitle(currentSlot, message); // the Worlds screen, the world just left focused
   }
 
   // ---- menus / hud callbacks ------------------------------------------------------------------------
 
   menus = createMenus(doc, atlasCanvas, {
-    onNewWorld(seedText) {
+    // ---- the Worlds panel (§41): every action works on one slot; nothing is written under ?nosave ----
+    onPlayWorld(slot) {
       if (state !== STATE.TITLE) return;
-      const seed = seedFromInput(seedText);
-      if (!params.nosave) clearSave();
-      save = null;
-      audio.resume();
-      startLoading(seed, null);
-    },
-    onContinue() {
-      if (state !== STATE.TITLE) return;
-      save = params.nosave ? null : loadGame();
-      if (!save) {
-        menus.showTitle(false);
+      const data = loadSlot(slot);
+      if (!data) {
+        refreshWorlds(`World ${slot} could not be loaded`, true, slot); // emptied or damaged meanwhile (another tab)
         return;
       }
+      currentSlot = slot;
+      worldName = data.meta.name;
+      worldCreatedAt = data.meta.createdAt;
       audio.resume();
-      startLoading(save.seed, save);
+      startLoading(data.seed, data);
+    },
+    onNewWorld(slot, name, seedText) {
+      if (state !== STATE.TITLE) return;
+      if (!params.nosave && listSlots()[slot - 1]?.status !== 'empty') {
+        refreshWorlds(`Slot ${slot} is not empty any more`, true, slot);
+        return;
+      }
+      currentSlot = slot;
+      worldName = normalizeWorldName(name, slot);
+      worldCreatedAt = Date.now();
+      audio.resume();
+      startLoading(seedFromInput(seedText), null);
+    },
+    onRenameWorld(slot, name) {
+      if (state !== STATE.TITLE) return;
+      if (params.nosave) {
+        refreshWorlds('Saving is off (?nosave=1): worlds cannot be changed', true, slot);
+        return;
+      }
+      const res = renameSlot(slot, name);
+      refreshWorlds(res.ok ? `Renamed to “${res.name}”` : worldsFailMessage('rename', res.reason), !res.ok, slot);
+    },
+    onDuplicateWorld(slot) {
+      if (state !== STATE.TITLE) return;
+      if (params.nosave) {
+        refreshWorlds('Saving is off (?nosave=1): worlds cannot be changed', true, slot);
+        return;
+      }
+      const res = duplicateSlot(slot);
+      if (res.ok) refreshWorlds(`Copied to slot ${res.slot} as “${res.name}”`, false, res.slot);
+      else refreshWorlds(worldsFailMessage('duplicate', res.reason), true, slot);
+    },
+    onDeleteWorld(slot) {
+      if (state !== STATE.TITLE) return;
+      if (params.nosave) {
+        refreshWorlds('Saving is off (?nosave=1): worlds cannot be changed', true, slot);
+        return;
+      }
+      const before = listSlots()[slot - 1];
+      const what = before && before.status === 'world' ? `“${before.name}”` : `the world in slot ${slot}`;
+      if (deleteSlot(slot)) refreshWorlds(`Deleted ${what}`, false, slot);
+      else refreshWorlds(`Could not delete ${what}`, true, slot);
     },
     onClickToPlay() {
       if (state !== STATE.CLICK_TO_PLAY) return;
@@ -883,7 +1409,39 @@ export function boot(win, doc) {
     },
     onQuit() {
       if (state !== STATE.PAUSED) return;
-      quitToTitle();
+      const saved = params.nosave || doSave(false);
+      if (!saved && !quitUnsavedArmed) {
+        // The red toast says why; the world stays open and the button now reads "Quit Without Saving" (§41).
+        quitUnsavedArmed = true;
+        menus.setQuitUnsaved(true);
+        return;
+      }
+      quitToTitle(saved ? '' : `“${worldName}” was not saved (storage full) — its last save is kept. Delete a world to make room.`);
+    },
+    onPhysicsToggle(name) {
+      if (state !== STATE.PAUSED || !blockPhysics) return;
+      const on = !blockPhysics.isEnabled(name);
+      blockPhysics.setSwitch(name, on);
+      menus.setPhysicsState(physicsMenuState());
+      audio.playClick();
+      hud.showSaveToast(`${name[0].toUpperCase()}${name.slice(1)} ${on ? 'on' : 'off'}`);
+    },
+    onZombiesToggle() {
+      if (state !== STATE.PAUSED) return;
+      const on = !zombies.enabled;
+      zombies.setEnabled(on); // off also removes every zombie
+      menus.setZombiesState(on);
+      audio.playClick();
+      hud.showSaveToast(`Zombies ${on ? 'on' : 'off'}`);
+    },
+    onUndoPhysics() {
+      if (state !== STATE.PAUSED || !blockPhysics) return;
+      const res = blockPhysics.undo();
+      // The game is paused (no streaming step): re-mesh the restored chunks now so the menu's backdrop shows the result.
+      for (let i = 0; i < 32 && [...world.chunks.values()].some((c) => c.dirty && c.lazy && c.meshed); i++) world.update(player.x, player.z);
+      logLine(res.message, !res.ok);
+      hud.showSaveToast(res.ok ? `Undone: ${res.restored} block${res.restored === 1 ? '' : 's'} restored` : 'Nothing to undo', !res.ok);
+      menus.setPhysicsState(physicsMenuState());
     },
     onPickBlock(blockId, slot) {
       if (state !== STATE.PICKER || !isPlaceable(blockId)) return;
@@ -959,6 +1517,8 @@ export function boot(win, doc) {
       player.vy = 0;
       player.vz = 0;
       player.onGround = false;
+      detachBody(player, pigs.list); // a pig on the player's head (or under its feet) stays behind (§31)
+      detachBody(player, zombies.list); // … and so does a zombie
       if (world) world.update(x, z);
       if (runner) runner.seedStep(); // arriving by teleport is not stepping onto a rune
       updateHit();
@@ -977,6 +1537,11 @@ export function boot(win, doc) {
     get runner() {
       return runner;
     },
+    get physics() {
+      return blockPhysics;
+    },
+    zombies,
+    watcher,
     dispose,
   };
 
@@ -988,6 +1553,250 @@ export function boot(win, doc) {
     return typeof win.performance !== 'undefined' && typeof win.performance.now === 'function'
       ? win.performance.now()
       : Date.now();
+  }
+
+  /**
+   * Black holes: swallow the player (back to the nearest point near spawn that no hole can reach, §29) and let each
+   * hole eat its neighbourhood.
+   */
+  function stepBlackHoles(dt) {
+    if (blackHoles.size === 0) return;
+    if (blackHoles.swallowing(player)) {
+      const [sx, sy, sz] = blackHoles.respawnPoint(world.findSpawn(), blackHoleWorld);
+      game.teleport(sx, sy, sz);
+      if (fxTime - lastSwallowLineAt >= BLACK_HOLE_SWALLOW_LINE_S) {
+        lastSwallowLineAt = fxTime;
+        logLine('You were swallowed by a black hole!');
+        audio.playBreak('glass');
+      }
+    }
+    if (blackHoles.inert === 0) {
+      inertHolesWarned = false;
+    } else if (!inertHolesWarned) {
+      inertHolesWarned = true;
+      logLine(`Only ${BLACK_HOLE_MAX_TRACKED} black holes can be active at once: the rest do nothing until some are broken.`);
+    }
+    const eaten = blackHoles.update(dt, blackHoleWorld);
+    // One crunch per frame at most, and only for cells the player is near enough to hear.
+    for (const e of eaten) {
+      const [ex, ez] = hexToWorld(e.q, e.r);
+      if (Math.hypot(ex - player.x, e.y - player.y, ez - player.z) < 16) {
+        audio.playBreak(getBlockDef(e.id).soundGroup);
+        break;
+      }
+    }
+  }
+
+  /**
+   * Campfires: a player standing in one is bounced out (away from its centre, with a hop) and told it is hot; nearby
+   * fires crackle at random, fading out by CAMPFIRE_CRACKLE_RANGE.
+   */
+  function stepCampfires(dt) {
+    // The burn reads the block, so it holds for every campfire, tracked or not (past CAMPFIRE_MAX_TRACKED).
+    // Dead centre: back out the way you came.
+    if (scorchPlayer(player, world.getBlock, () => yawToForward(controls.yaw + Math.PI))) {
+      if (fxTime - lastHotLineAt > 2) {
+        lastHotLineAt = fxTime;
+        logLine('Ouch! That campfire is hot.');
+      }
+      audio.playCrackle(1);
+    }
+    if (campfires.size === 0) return;
+    const near = campfires.nearest(player.x, player.y, player.z, CAMPFIRE_CRACKLE_RANGE, 1);
+    if (near.length && Math.random() < CAMPFIRE_CRACKLES_PER_S * dt) audio.playCrackle(1 - near[0].dist / CAMPFIRE_CRACKLE_RANGE);
+  }
+
+  /** Pigs wander (and feel black holes); ambient oinks fade out by 16 units; a swallowed pig is gone. */
+  function stepPigs(dt) {
+    if (pigs.size === 0) return;
+    const oinks = pigs.update(dt, pigWorld);
+    for (const pig of pigs.scorched) {
+      const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
+      if (d < 16) audio.playSqueal(1 - d / 16);
+    }
+    for (const pig of oinks) {
+      const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
+      if (d < 16) {
+        audio.playOink(1 - d / 16);
+        break;
+      }
+    }
+    if (blackHoles.size === 0) return;
+    for (let i = pigs.list.length - 1; i >= 0; i--) {
+      const pig = pigs.list[i];
+      if (!blackHoles.swallowing(pig)) continue;
+      pigs.remove(pig);
+      const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
+      if (d < 16) audio.playSqueal(1 - d / 16);
+    }
+  }
+
+  // ---- zombies (CONTRACTS §39) ----------------------------------------------------------------------
+
+  /** Distance to the nearest tracked campfire's floor centre within maxDist (written to out), else Infinity. */
+  function nearestCampfire(x, y, z, maxDist, out) {
+    let best = Infinity;
+    if (campfires.size === 0) return best;
+    for (const fire of campfires.fires.values()) {
+      const d = Math.hypot(fire.x - x, fire.y - y, fire.z - z);
+      if (d <= maxDist && d < best) {
+        best = d;
+        out[0] = fire.x;
+        out[1] = fire.y;
+        out[2] = fire.z;
+      }
+    }
+    return best;
+  }
+
+  /** @returns {number} 1 at the player fading to 0 at ZOMBIE_SOUND_RANGE (0 beyond) */
+  function zombieVolume(zb) {
+    return zombieVolumeFor(zb, player);
+  }
+
+  /** A zombie is gone — knocked out ('ko', a dull grey-green puff) or burned away ('burn', ash, smoke and embers). */
+  function zombieGone(zb, how) {
+    const cy = zb.y + ZOMBIE_HEIGHT / 2;
+    if (how === 'burn') {
+      particles.emit('smoke', zb.x, cy + 0.3, zb.z, 14, { spread: 0.45 });
+      particles.emit('sparks', zb.x, cy, zb.z, 10, { speed: 0.35 });
+      particles.emit('dust', zb.x, cy, zb.z, 18, { color: [0.24, 0.23, 0.22], spread: 0.4 });
+    } else {
+      particles.emit('dust', zb.x, cy, zb.z, 28, { color: [0.45, 0.55, 0.38], spread: 0.45 });
+      particles.emit('smoke', zb.x, cy, zb.z, 6, { spread: 0.4, color: [0.5, 0.55, 0.47] });
+    }
+    // One down sound a frame, the loudest (a crowd burning out together at dawn is one voice): played after the step.
+    zombieDownVolume = Math.max(zombieDownVolume, zombieVolume(zb));
+    if (zombieTarget && zombieTarget.zombie === zb) zombieTarget = null;
+  }
+
+  /** The player's left-click on a zombie: knockback and a red flash, or a knock-out on the ZOMBIE_HITS-th hit. */
+  function hitZombie(zb) {
+    const res = zombies.hit(zb, player.x, player.z);
+    if (res === 'ko') zombieGone(zb, 'ko');
+    else if (res === 'hit') audio.playZombieHurt(1);
+  }
+
+  /**
+   * Zombies: natural spawning at night, AI, daylight, attacks (knockback + red flash + thump), groans; smouldering
+   * ones smoke; black holes swallow them.
+   */
+  function stepZombies(dt) {
+    zombieWorld.player = player;
+    zombieWorld.isDay = isDayTime(time);
+    const ev = zombies.update(dt, zombieWorld);
+    if (ev.attacks.length > 0) {
+      hurtFlash = 1;
+      audio.playThud(1);
+    }
+    for (const zb of ev.groans) {
+      const v = zombieVolume(zb);
+      if (v > 0) {
+        audio.playGroan(v);
+        break; // one groan a frame at most
+      }
+    }
+    // One hiss and one scorch yelp a frame at most, the loudest (a crowd ignites together at dawn).
+    const hiss = loudestVolume(ev.ignited, player);
+    if (hiss > 0) audio.playHiss(hiss);
+    const yelp = loudestVolume(ev.scorched, player);
+    if (yelp > 0) audio.playZombieHurt(yelp);
+    for (const zb of ev.burned) zombieGone(zb, 'burn');
+    for (const zb of ev.knockedOut) zombieGone(zb, 'ko');
+    for (const zb of zombies.list) {
+      if (!zb.smoking) continue;
+      // Smoke thickens as it burns; now and then an ember.
+      if (Math.random() < dt * (6 + 10 * (zb.burn / 4))) particles.emit('smoke', zb.x, zb.y + 1.2 + Math.random() * 0.7, zb.z, 1, { spread: 0.3 });
+      if (Math.random() < dt * 3) particles.emit('sparks', zb.x, zb.y + 1.0, zb.z, 1, { speed: 0.25 });
+    }
+    if (blackHoles.size === 0) return;
+    for (let i = zombies.list.length - 1; i >= 0; i--) {
+      const zb = zombies.list[i];
+      if (!blackHoles.swallowing(zb)) continue;
+      zombies.remove(zb);
+      zombieGone(zb, 'ko');
+    }
+  }
+
+  // ---- the Hollow Watcher (CONTRACTS §40) ------------------------------------------------------------
+
+  /** Fill watcherWorld with this frame's player, view (camera FOV and window too), clock and fog distance. @returns {typeof watcherWorld} */
+  function refreshWatcherWorld() {
+    watcherWorld.player = player;
+    if (player) {
+      watcherWorld.eye[0] = player.x;
+      watcherWorld.eye[1] = player.y + getEyeHeight(player);
+      watcherWorld.eye[2] = player.z;
+    }
+    // coords.lookDirection, without the allocation (every frame)
+    const cp = Math.cos(controls.pitch);
+    watcherWorld.look[0] = -Math.sin(controls.yaw) * cp;
+    watcherWorld.look[1] = Math.sin(controls.pitch);
+    watcherWorld.look[2] = -Math.cos(controls.yaw) * cp;
+    watcherWorld.yaw = controls.yaw;
+    // The narrower of the camera's FOV and the walking one: a spot found while the sprint FOV is wider stays on screen
+    // when the sprint ends.
+    watcherWorld.fov = Math.min(fov, FOV);
+    // … but while it is there, what is on screen is the camera's real view (wider while sprinting).
+    watcherWorld.viewFov = fov;
+    watcherWorld.aspect = renderer.three.camera.aspect;
+    watcherWorld.time = time;
+    watcherWorld.day = day;
+    watcherWorld.fogFar = world ? fogRangeForRenderDistance(world.renderDistance).far : 0;
+    return watcherWorld;
+  }
+
+  /**
+   * The Watcher: natural sightings, its gaze / proximity / unseen vanishing, wisps; when it vanishes a puff of dark
+   * smoke, a faint low sound and maybe a trace (plain world edits, applied in order).
+   */
+  function stepWatcher(dt) {
+    const ev = watcher.update(dt, refreshWatcherWorld());
+    const f = watcher.figure;
+    if (ev.wisp && f) {
+      // From the smoke wisp under its rings.
+      const y = f.y + 0.1 + Math.random() * 0.6;
+      particles.emit('smoke', f.x, y, f.z, 2, { spread: 0.15, speed: 0.4, color: [0.11, 0.11, 0.12] });
+    }
+    const gone = ev.vanished;
+    if (!gone || gone.reason === 'unloaded') return;
+    // A column of dark smoke the figure's height (it billows out and up), and a few ash-grey motes that fall.
+    for (let h = 0.3; h < WATCHER_HEIGHT; h += 0.45) {
+      particles.emit('smoke', gone.x, gone.y + h, gone.z, 8, { spread: 0.4, speed: 1.2, color: [0.07, 0.07, 0.08] });
+    }
+    particles.emit('dust', gone.x, gone.y + 1.3, gone.z, 18, { spread: 0.5, color: [0.42, 0.42, 0.41] });
+    const d = Math.hypot(gone.x - player.x, gone.y - player.y, gone.z - player.z);
+    audio.playWatcherVanish(Math.max(0.4, 1 - d / 100));
+    if (gone.trace) for (const [q, y, r, id] of gone.trace.writes) world.setBlock(q, y, r, id);
+  }
+
+  /** Block physics: ≤ 1 tick, then fallers, toppling trees, lit barrels and blasts (CONTRACTS §33). */
+  function stepBlockPhysics(dt) {
+    if (blockPhysics) blockPhysics.step(dt);
+    if (breakVolume > 0) {
+      audio.playBreak(breakGroup, breakVolume);
+      breakVolume = 0;
+    }
+    if (knockSqueal > 0) {
+      audio.playSqueal(knockSqueal);
+      knockSqueal = 0;
+    }
+    if (zombieDownVolume > 0) {
+      audio.playZombieDown(zombieDownVolume);
+      zombieDownVolume = 0;
+    }
+  }
+
+  /**
+   * A block filled into the player (a command, a landing log, a rune) is never a trap: when the player overlaps a solid
+   * cell after everything has moved, lift them to the first free height within three cells.
+   */
+  function unstickPlayer() {
+    if (!world.hasChunkAt(player.x, player.z) || isFreeAt(world.getBlock, player.x, player.y, player.z)) return;
+    const fy = findFreeY(world.getBlock, player.x, player.z, Math.floor(player.y) + 1, 3);
+    if (fy === null) return;
+    player.y = fy;
+    if (player.vy < 0) player.vy = 0;
   }
 
   /** Input, interaction, physics, clock, streaming and raycast — only while playing. */
@@ -1056,8 +1865,29 @@ export function boot(win, doc) {
     }
     if (mouse.middlePressed) pickTargeted();
 
-    // Physics only where terrain exists (getBlock reports AIR in unloaded chunks).
+    // Physics only where terrain exists (getBlock reports AIR in unloaded chunks). Black holes pull on the
+    // player's middle; `input` is the controls' reused object, so the pull is written every frame.
+    blackHoles.pullAt(player.x, player.y + PLAYER_HEIGHT / 2, player.z, pull);
+    if (blockPhysics) blockPhysics.fluids.currentAt(player.x, player.y + 0.1, player.z, current);
+    input.pullX = pull[0] + (blockPhysics ? current[0] : 0);
+    input.pullY = pull[1] + (blockPhysics ? current[1] : 0);
+    input.pullZ = pull[2] + (blockPhysics ? current[2] : 0);
     if (world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt);
+    stepBlackHoles(dt);
+    stepPigs(dt);
+    stepZombies(dt);
+    stepWatcher(dt);
+    stepBlockPhysics(dt);
+    stepCampfires(dt);
+    // Bodies collide, push and stand on each other once everything has moved (CONTRACTS §31). Pigs in unloaded
+    // chunks are frozen and stay out of it; lit barrels (explosions.js) take part against the player and pigs.
+    bodies.length = 0;
+    bodies.push(player);
+    for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) bodies.push(pig);
+    for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) bodies.push(zb);
+    if (blockPhysics) blockPhysics.bodies(bodies);
+    if (bodies.length > 1) resolveBodies(bodies, world.getBlock);
+    unstickPlayer();
 
     if (params.time == null) {
       const nt = advanceTime(time, dt);
@@ -1077,10 +1907,38 @@ export function boot(win, doc) {
   /** Camera, sky, highlight, HUD and the draw — every state that has a player. */
   function renderFrame(dt) {
     const eyeY = player.y + getEyeHeight(player);
-    renderer.setCamera(player.x, eyeY, player.z, controls.yaw, controls.pitch);
+    // Moving cells, the explosion light and the camera shake (block physics), then the particles (frozen unless playing
+    // with physics running: `physics off` freezes its effects in place too).
+    if (blockPhysics) {
+      const list = blockPhysics.renderItems();
+      fallingRenderer.sync(list.items, list.count);
+      blockPhysics.explosions.flash(flash);
+      fallingRenderer.setFlash(flash.x, flash.y, flash.z, flash.intensity);
+      blockPhysics.explosions.shakeOffset(player.x, eyeY, player.z, shake);
+    } else {
+      shake[0] = 0;
+      shake[1] = 0;
+      shake[2] = 0;
+    }
+    particles.update(state === STATE.PLAYING && !(blockPhysics && blockPhysics.paused) ? dt : 0);
+    renderer.setCamera(player.x + shake[0], eyeY + shake[1], player.z + shake[2], controls.yaw, controls.pitch);
     fov = easeFov(fov, player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV, dt);
     renderer.setFov(fov);
     renderer.setHighlight(hit);
+    pigRenderer.sync(pigs.list);
+    zombieRenderer.sync(zombies.list);
+    watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime);
+    hurtFlash = Math.max(0, hurtFlash - dt / HURT_FLASH_S);
+    hud.setHurtFlash(hurtFlash);
+    fxTime += dt;
+    // Past CAMPFIRE_MAX_TRACKED, keep the tracked fires the ones nearest the player (a no-op otherwise).
+    campfires.retrack(player.x, eyeY, player.z);
+    if (campfires.size > 0 || !campfireRenderer.idle()) {
+      const near = campfires.nearest(player.x, eyeY, player.z, CAMPFIRE_MODEL_RANGE)
+        .filter((n) => world.hasChunkAtCell(n.fire.q, n.fire.r))
+        .slice(0, CAMPFIRE_MAX_MODELS);
+      campfireRenderer.sync(near, fxTime, dt);
+    }
     computeSky(time, sky);
     renderer.setSky(sky);
     renderer.setUnderwater(player.headInWater);
@@ -1181,7 +2039,14 @@ export function boot(win, doc) {
     runeStore.clear();
     if (world) world.dispose();
     world = null;
+    blockPhysics = null;
     player = null;
+    fallingRenderer.dispose();
+    particles.dispose();
+    zombieRenderer.dispose();
+    zombies.clear();
+    watcherRenderer.dispose();
+    watcher.clear();
     controls.dispose();
     hud.dispose();
     menus.dispose();
@@ -1197,7 +2062,14 @@ export function boot(win, doc) {
   if (params.debug) hud.setDebugVisible(true);
 
   if (autoplay) {
-    // Skip the title: ?seed wins, then the save's seed (whose edits we restore), then a random seed.
+    // Skip the title and play slot ?slot (default 1): ?seed wins, then the slot's seed (whose edits we restore), then a
+    // random seed. Under ?nosave nothing is loaded or written.
+    const save = params.nosave ? null : loadSlot(currentSlot);
+    if (!params.nosave && !save && listSlots()[currentSlot - 1].status === 'damaged') {
+      // Never overwrite a damaged save from a URL: the player decides on the Worlds screen.
+      params.nosave = true;
+      console.warn(`Caelancraft: ?autoplay on the damaged slot ${currentSlot} — saving disabled for this session.`);
+    }
     let restoring = null;
     let seed;
     if (params.seed != null) {
@@ -1214,6 +2086,12 @@ export function boot(win, doc) {
       restoring = save;
     } else {
       seed = seedFromInput('');
+    }
+    if (restoring) {
+      worldName = restoring.meta.name;
+      worldCreatedAt = restoring.meta.createdAt;
+    } else {
+      worldCreatedAt = Date.now();
     }
     startLoading(seed, restoring);
   } else {

@@ -77,10 +77,23 @@ say Tower built"></textarea>
   <div id="pause-menu" class="layer hidden">
     <div class="menu-panel">
       <h2 class="menu-title">Game Paused</h2>
+      <div id="pause-world" class="menu-subtitle hidden"></div>
       <button id="btn-resume" class="mc-button">Back to Game</button>
       <button id="btn-save" class="mc-button">Save World</button>
       <button id="btn-stop-runes" class="mc-button">Stop All Rune Scripts</button>
-      <button id="btn-quit" class="mc-button">Save and Quit to Title</button>
+      <div id="pause-physics" class="physics-row">
+        <span class="physics-label">Physics</span>
+        <button id="btn-phys-falling" class="mc-button toggle" aria-pressed="true">Falling: ON</button>
+        <button id="btn-phys-water" class="mc-button toggle" aria-pressed="true">Water: ON</button>
+        <button id="btn-phys-collapse" class="mc-button toggle" aria-pressed="true">Collapse: ON</button>
+        <button id="btn-phys-explosions" class="mc-button toggle" aria-pressed="true">Explosions: ON</button>
+      </div>
+      <button id="btn-undo-physics" class="mc-button" disabled>Undo (nothing to undo)</button>
+      <div id="pause-creatures" class="physics-row">
+        <span class="physics-label">Creatures</span>
+        <button id="btn-zombies" class="mc-button toggle" aria-pressed="true">Zombies: ON</button>
+      </div>
+      <button id="btn-quit" class="mc-button">Save &amp; Quit</button>
       <div id="pause-seed" class="menu-note">Seed: …</div>
       <div id="pause-controls" class="controls-sheet"></div>
     </div>
@@ -97,13 +110,31 @@ say Tower built"></textarea>
   <div id="title-screen" class="layer">
     <canvas id="title-logo" width="200" height="32"></canvas>
     <div id="splash-text"></div>
-    <div class="title-menu">
-      <div class="seed-row"><label for="seed-input">Seed</label><input id="seed-input" type="text" placeholder="random" autocomplete="off"></div>
-      <button id="btn-new-world" class="mc-button">New World</button>
-      <button id="btn-continue" class="mc-button" disabled>Continue</button>
+    <div class="title-main">
+      <section id="worlds-panel" class="worlds-panel" aria-labelledby="worlds-title">
+        <div class="worlds-head"><h2 id="worlds-title" class="worlds-title">Worlds</h2><span id="worlds-count" class="worlds-note"></span></div>
+        <ol id="worlds-list"></ol>
+        <div class="usage-row">
+          <span class="usage-label">Storage</span>
+          <div id="usage-bar" class="usage-bar" role="meter" aria-label="Browser storage used by your worlds" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="usage-fill" class="usage-fill"></div></div>
+          <span id="usage-text"></span>
+        </div>
+        <div id="worlds-message" class="worlds-message" role="status" aria-live="polite"></div>
+      </section>
+      <div id="title-controls" class="controls-sheet"></div>
     </div>
-    <div id="title-controls" class="controls-sheet"></div>
-    <div id="title-footer">Caelancraft v0.3 · a honeycomb world · Three.js · no assets were downloaded</div>
+    <div id="title-footer">Caelancraft v0.8 · a honeycomb world · Three.js · no assets were downloaded</div>
+  </div>
+
+  <div id="confirm-dialog" class="layer hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-text" aria-describedby="confirm-detail">
+    <div class="dialog-panel">
+      <div id="confirm-text" class="dialog-title"></div>
+      <div id="confirm-detail" class="dialog-note"></div>
+      <div class="dialog-buttons">
+        <button id="confirm-yes" class="mc-button small danger">Delete</button>
+        <button id="confirm-no" class="mc-button small">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="/src/main.js"></script>
