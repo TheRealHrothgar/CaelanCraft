@@ -2408,3 +2408,56 @@ Every must-fix from the three reviews is applied. The should-fix and nice items 
 **Not applied:**
 - **Restyling the existing Minecraft-like menus** (originality, nice): it changes Creative's look, which the user promised to
   keep, so it is left for the user to decide (§11), with a KNOWN-ISSUES entry.
+
+## 14. The Survival Handbook (added by the user after the design review)
+
+The user asked: *"Make sure there's a survival handbook the player can access through the tutorial menu and a rustic looking
+version that can be placed in the player's inventory on spawn."* It is built as package **H** after A–F merge (it touches W0's
+`items.js`, E's screens and B's `survivalControl.js`), before or alongside I.
+
+### 14.1 One text, two books
+- **Content** lives in a new PURE module `src/handbook.js`: `CHAPTERS` = ordered `{ id, title, icon, pages: Page[] }`, a page being
+  a list of blocks `{ kind: 'p'|'h'|'tip'|'warn'|'list'|'table'|'figure', … }`. Prose is written by hand; every table that restates
+  game data is **generated from the data tables** (`RECIPES` by workplace, tool tiers and what each mines from `BLOCK_RULES`, food
+  values from `ITEMS`, the §3.4 climate rows, damage sources), so the book can never disagree with the game. A test walks every
+  generated table against its source.
+- **Chapters** (in order): *Your first day* (the §7.5 walkthrough as steps), *Water* (fresh vs salt, drinking with R, pots,
+  boiling, sickness), *Food and fire* (foraging, hunting pigs, the seven fire spots, fuel, burn-out, spoilage and salting),
+  *Warm and cool* (what sets air temperature, felt temperature, clothing, the danger bands), *Tools and the ages* (stone → flint →
+  copper → bronze → iron → steel: what each tier needs and unlocks, with the gating ore/tool chain), *Workplaces and making*
+  (Work Stump, Kiln, Bloomery, Forge; lanes, ranges, the recipe tables), *Dangers* (every damage source and how to avoid it),
+  *Death and waking* (belongings, the Sleeping Hide), *Controls* (R interact, hold LMB dig, RMB place/use, E pack, the hotbar),
+  and *Creative and Survival* (the switch, what is kept). Plain, friendly, accurate; teaches real survival ideas where true
+  (salt water dehydrates, wet clothes chill, charcoal for high heat, tin bronze).
+- **The Guide (tutorial menu)**: a new `Guide` button on the title screen (next to the controls sheet) and in the pause menu opens
+  `#guide` — a clean, readable two-pane reader (chapter list + scrollable page), in the survival palette and `.hex-button`
+  chrome, usable in Creative too (reading only; nothing to do with the mode). Esc / the close button return to where it was
+  opened. Keyboard: ↑/↓ chapters, PgUp/PgDn pages.
+- **The rustic Handbook (item)**: item key `handbook` (W0's registry gains it in H: a non-block item, stack 1, never spoils, no
+  recipe needed, `never lost`: see 14.2). Its own procedural icon in `itemArt.js` — a small leather-bound book tied with cord, a hex
+  burned into the cover. Reading it opens `#handbook`: the SAME chapters drawn as a worn field book — a two-page spread on
+  parchment (CSS gradients and a procedural paper-grain canvas, no downloaded images or fonts: a serif system font stack), hand-ruled
+  margins, chapter tabs cut into the page edge, ink-style tables, page-turn with ←/→ or clicking the page corners, a pencilled
+  "notes" margin where tips sit. The world keeps running while it is open (like the pack screen); taking damage closes it.
+
+### 14.2 Getting and opening it
+- **On spawn:** whenever a survival state is begun (§1.2 "begin one": a new Survival world, or the first switch of a world to
+  Survival) the pack starts with the Handbook in the LAST hotbar slot (slot 8), not an empty pack. The §1.2 chat line gains
+  *"Your handbook is in the last hotbar slot — hold it and press R to read."*
+- **Never lost:** death does not put it in Your Belongings; on waking, if the pack has no handbook, one is given back (last free
+  slot). It cannot be discarded (the discard action refuses it with a short message) and does not count toward pack fullness checks
+  in recipes. A second copy cannot be made.
+- **Opening:** with the Handbook selected, **R** opens it when no higher R priority applies (append to `interactKind` as priority 10,
+  before "today's barrel and rune behaviour"), and **RMB** (use) opens it at once (no hold). In the pack screen, clicking it opens
+  it. The Guide is always available from the menus, in both modes.
+- **Interact stays R** in both modes. Hints: `Handbook · R: read`.
+
+### 14.3 Package H
+- **Owns:** `src/handbook.js`, `src/handbookUI.js` (new, DOM: both skins), its section of `src/styles.css`, the Guide button and the
+  two reader roots in `index.html`, the `handbook` item in `src/items.js` and its art in `src/itemArt.js`, the `read` case in
+  `src/survivalControl.js`, the begin/wake/discard rules in `src/inventory.js` / `src/survival.js` where they live after A–F.
+- **Tests:** chapters and generated tables match the data; every chapter non-empty; the Guide opens/closes from title and pause
+  and restores focus; the rustic reader turns pages, closes on Esc and on damage; the item: begin puts it in slot 8, death keeps it,
+  wake restores it, discard refuses it, R and RMB open it; `itemArt` has its icon; styles: z-order above the HUD, below the death
+  screen.
+- **Wiring (I):** opening/closing from main (R/RMB/pack/menus), closing on damage, the chat line.
