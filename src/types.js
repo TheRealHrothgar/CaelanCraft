@@ -299,6 +299,19 @@
  * @property {(line: string) => ({ ok: boolean, message: string }|null)} [runCommand]  execute one console line (null before a world exists)
  * @property {import('./runes.js').RuneStore} [runes]
  * @property {import('./runes.js').RuneRunner|null} [runner]
+ * @property {import('./blockphysics.js').BlockPhysics|null} [physics]  v0.8 block physics (null before a world exists)
+ * @property {import('./zombies.js').Zombies} [zombies]
+ * @property {import('./watcher.js').Watcher} [watcher]
+ * v0.9 Survival (CONTRACTS §49; DESIGN-survival §9.5 / §9.10): the live objects, and one-frame drivers for the smoke test.
+ * @property {import('./survival.js').Survival} [survival]  the mode and the vitals (one per session)
+ * @property {import('./inventory.js').Pack} [pack]           the Survival pack (one per session; reloaded from every save)
+ * @property {(mode: 'creative'|'survival') => void} [setMode]  queue a mode switch (applied at the top of the next frame)
+ * @property {() => ('creative'|'survival')} [getMode]
+ * @property {'creative'|'survival'|null} [urlMode]  `?mode=` as the page was opened with (null when absent or consumed)
+ * @property {(i: number) => void} [selectSlot]      select hotbar slot 0–8
+ * @property {() => void} [interact]                 one press of R on the current target (both modes)
+ * @property {(dt: number) => (object|null)} [digTargeted]  one frame of holding LMB on the target in Survival (the real dig path)
+ * @property {(dt: number) => ({ progress: number|null }|null)} [useSelected]  one frame of holding RMB with the selected item in Survival
  */
 
 export {};

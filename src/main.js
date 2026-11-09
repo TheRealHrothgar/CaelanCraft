@@ -83,6 +83,8 @@ import { createFallingRenderer } from './fallingRenderer.js';
 import { createParticles } from './particles.js';
 import { createConsole } from './console.js';
 import { createRuneEditor } from './runeEditor.js';
+import { HANDBOOK_KEY, HANDBOOK_CHAT_LINE, buildChapters, ensureHandbook } from './handbook.js';
+import { createHandbookUI } from './handbookUI.js';
 import {
   parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest,
 } from './diagnostics.js';
@@ -93,15 +95,8 @@ import {
 /** @typedef {import('./types.js').GameContext} GameContext */
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 
-// The Survival Handbook (DESIGN-survival §14) is built by package H in parallel against the exact API of §14.4. Until its
-// modules are merged they may be missing, so they are picked up through an eager glob (an empty object when the files do not
-// exist) and every call below is guarded: without them the game runs and the book simply cannot be opened.
-// TODO(integration): once H is merged, replace this with static imports of handbook.js and handbookUI.js.
-const HANDBOOK_MODULES = /** @type {Record<string, any>} */ (import.meta.glob(['./handbook.js', './handbookUI.js'], { eager: true }));
-const handbookMod = HANDBOOK_MODULES['./handbook.js'] ?? null;
-const handbookUIMod = HANDBOOK_MODULES['./handbookUI.js'] ?? null;
-/** The Handbook's item key (§14.4 HANDBOOK_KEY). */
-export const HANDBOOK_KEY = typeof handbookMod?.HANDBOOK_KEY === 'string' ? handbookMod.HANDBOOK_KEY : 'handbook';
+/** The Survival Handbook's item key (§14.4; handbook.js owns it, re-exported for the tests and drivers). */
+export { HANDBOOK_KEY };
 
 // ---------------------------------------------------------------------------------------------
 // Constants (main-only tuning; everything shared lives in config.js)
@@ -174,7 +169,7 @@ export const SURVIVAL_PIG_GROUND = Object.freeze([BLOCK.GRASS_BLOCK, BLOCK.SNOWY
 /** The §1.2 chat line for a new survival state, and the Handbook's addition (§14.2). */
 export const SURVIVAL_INTRO = 'Survival: you carry nothing. Loose stones give rock and flint, fallen branches give sticks, '
   + 'tussock gives fibre. Drink fresh water with R.';
-export const HANDBOOK_INTRO = 'Your handbook is in the last hotbar slot — hold it and press R to read.';
+export const HANDBOOK_INTRO = HANDBOOK_CHAT_LINE;
 export const UPGRADED_NOTE = 'Survival resources have come to this world.';
 export const MODE_PARAM_IGNORED = '?mode=survival ignored: this older world needs the in-game upgrade (Esc → Mode)';
 export const SURVIVAL_NEEDS_GEN2 = 'mode: survival needs generation 2; loaded in Creative';
@@ -347,6 +342,41 @@ export function packListText(pack) {
   const wearNames = ['head', 'body', 'feet'];
   pack.wear.forEach((s, i) => { if (s) line(`worn on ${wearNames[i]}`, s); });
   return lines.join('\n');
+}
+
+/**
+ * The console's `pack add <item> [count]` (§9.7): stacks in one piece, tools one at a time (they never stack), and the
+ * Handbook (§14.2: a second copy cannot be made) only when the pack has none — through `ensureHandbook`, so it lands in the
+ * last hotbar slot. Pure: used by main's CommandContext.survival and tested directly.
+ * @param {Pack} pack
+ * @param {string} key  an item key (resolved by commands.js)
+ * @param {number} n    1..PACK_ADD_MAX
+ * @returns {ItemStack[]|{ n: number, refused: string }|null} what did not fit (null when everything fit); `refused` when nothing
+ *   was added on purpose
+ */
+export function consolePackAdd(pack, key, n) {
+  let left = Math.floor(n);
+  if (key === HANDBOOK_KEY) {
+    if (left > 1) return { n: left, refused: 'one handbook is enough' };
+    if (ensureHandbook(pack)) return null;
+    const has = (/** @type {ItemStack|null} */ s) => !!s && s.k === HANDBOOK_KEY;
+    return { n: left, refused: pack.slots.some(has) || pack.wear.some(has) ? 'the pack already has a handbook' : 'the pack is full' };
+  }
+  /** @type {ItemStack[]} */
+  const over = [];
+  while (left > 0) {
+    const part = getItem(key)?.tool ? 1 : left;
+    const o = pack.add({ k: key, n: part });
+    left -= part;
+    if (o) over.push(o);
+  }
+  return over.length ? over : null;
+}
+
+/** The console's `pack clear` (§9.7): everything out, then the Handbook back in its slot (§14.2). @param {Pack} pack */
+export function consolePackClear(pack) {
+  pack.clear();
+  ensureHandbook(pack);
 }
 
 /**
@@ -568,8 +598,8 @@ export function boot(win, doc) {
   let runeEditor;
   /** @type {import('./packUI.js').PackUI} */
   let packUI;
-  /** @type {any} the Handbook reader (§14.4 createHandbookUI), null until package H is merged */
-  let handbookUI = null;
+  /** @type {import('./handbookUI.js').HandbookUI} the Handbook readers (§14.4: the Guide and the field book) */
+  let handbookUI;
   try {
     atlasCanvas = createAtlasCanvas();
     atlasTexture = createAtlasTexture(atlasCanvas);
@@ -628,21 +658,13 @@ export function boot(win, doc) {
       onCancelJob: (lane, i) => packCancelJob(lane, i),
       onTab: (tab) => packSetTab(tab),
       onClose: () => closePack(),
-      onRead: () => packRead(), // §14.4 (package H): read the Handbook from its slot
+      onRead: () => packRead(), // §14.4: read the Handbook from its slot
     });
+    // The Survival Handbook's two readers (§14.4): the Guide (menus) and the field book (the item), one text.
+    handbookUI = createHandbookUI(doc, { chapters: buildChapters(), onClose: () => onBookClosed() });
   } catch (err) {
     reportError({ message: `Caelancraft failed to start: ${err && err.message ? err.message : err}` });
     throw err;
-  }
-  // The Handbook reader (§14.4) is optional until package H is merged; a failure to build it never stops the game.
-  if (handbookUIMod && typeof handbookUIMod.createHandbookUI === 'function') {
-    try {
-      const chapters = typeof handbookMod?.buildChapters === 'function' ? handbookMod.buildChapters() : undefined;
-      handbookUI = handbookUIMod.createHandbookUI(doc, { chapters, onClose: () => onBookClosed() });
-    } catch (err) {
-      handbookUI = null;
-      console.warn('Caelancraft: the Handbook reader could not be created:', err);
-    }
   }
 
   // ---- game state -----------------------------------------------------------------------------------
@@ -1224,19 +1246,8 @@ export function boot(win, doc) {
     restoreVitals: () => {
       survival.restoreVitals();
     },
-    packAdd: (key, n) => {
-      const over = [];
-      let left = Math.floor(n);
-      // Tools never stack, so they are given one at a time; everything else in stack-sized pieces.
-      while (left > 0) {
-        const part = getItem(key)?.tool ? 1 : left;
-        const o = pack.add({ k: key, n: part });
-        left -= part;
-        if (o) over.push(o);
-      }
-      return over.length ? over : null;
-    },
-    packClear: () => pack.clear(),
+    packAdd: (key, n) => consolePackAdd(pack, key, n),
+    packClear: () => consolePackClear(pack),
     packList: () => packListText(pack),
   };
 
@@ -1528,7 +1539,7 @@ export function boot(win, doc) {
     if (state === STATE.PACK) closePack(false);
     if (state === STATE.BOOK) {
       setState(STATE.PLAYING); // first, so the book's onClose does not try to resume play
-      if (handbookUI) handbookUI.close();
+      handbookUI.close();
     }
     // 2. The belongings: every pack and worn stack (the Handbook stays, §14.2) into a REMAINS cell — beyond MAX_CONTAINERS.
     const stacks = pack.dumpAll();
@@ -1588,7 +1599,7 @@ export function boot(win, doc) {
   function wake() {
     if (state !== STATE.DEAD || !world || !player) return;
     survival.respawn();
-    ensureHandbookInPack();
+    ensureHandbook(pack); // §14.2: back if it went missing
     /** @type {number[]|null} */
     let pos = null;
     const sp = survival.spawn;
@@ -1612,17 +1623,6 @@ export function boot(win, doc) {
     menus.hideDeath();
     enterPlayingFromModal();
     doSave(false);
-  }
-
-  /** Give the Handbook back when the pack has none (§14.2; a no-op until package H is merged). @returns {boolean} given */
-  function ensureHandbookInPack() {
-    if (!handbookMod || typeof handbookMod.ensureHandbook !== 'function') return false;
-    try {
-      return Boolean(handbookMod.ensureHandbook(pack));
-    } catch (err) {
-      console.warn('Caelancraft: ensureHandbook failed:', err);
-      return false;
-    }
   }
 
   /** Forget every in-progress dig, use and hold, and the action ring. */
@@ -1688,7 +1688,7 @@ export function boot(win, doc) {
     if (mode === 'survival') {
       if (!hadState) {
         pack.clear();
-        sayBeginLines(ensureHandbookInPack());
+        sayBeginLines(ensureHandbook(pack));
       }
       player.flying = false;
       player.landSpeed = 0;
@@ -1724,11 +1724,7 @@ export function boot(win, doc) {
     interactCtx.waterHit = waterHit;
     interactCtx.headInWater = Boolean(player && player.headInWater);
     interactCtx.selectedKey = selectedKey();
-    const act = interactKind(interactCtx);
-    // §14.2 priority 10: with the Handbook in hand and nothing else to do, R reads it (package H adds this to interactKind;
-    // done here as well so the book opens before H is merged).
-    if (!act && interactCtx.selectedKey === HANDBOOK_KEY) return /** @type {*} */ ({ kind: 'read' });
-    return act;
+    return interactKind(interactCtx); // §14.2 priority 10: with the Handbook in hand and nothing else to do → `read`
   }
 
   /** @returns {string|null} the Survival target hint */
@@ -2492,15 +2488,11 @@ export function boot(win, doc) {
     openBook();
   }
 
-  // ---- The Survival Handbook (§14; guarded until package H is merged) --------------------------------
+  // ---- The Survival Handbook (§14) --------------------------------------------------------------------
 
   /** Read the rustic Handbook (R or RMB with it in hand, or from the pack screen). The world keeps running. */
   function openBook() {
     if (state !== STATE.PLAYING) return;
-    if (!handbookUI) {
-      showHint('The handbook cannot be opened in this build');
-      return;
-    }
     setState(STATE.BOOK); // before unlock()
     controls.setEnabled(false);
     controls.unlock();
@@ -2517,14 +2509,14 @@ export function boot(win, doc) {
 
   /** Damage closes the field book (§14.1). */
   function closeRusticBook() {
-    if (state !== STATE.BOOK || !handbookUI) return;
+    if (state !== STATE.BOOK) return;
     if (handbookUI.isOpen() === 'rustic') handbookUI.close();
     onBookClosed();
   }
 
   /** The Guide (menus.onGuide): from the title screen or the pause menu, in both modes; reading only. */
   function openGuide() {
-    if (!handbookUI || (state !== STATE.TITLE && state !== STATE.PAUSED)) return;
+    if (state !== STATE.TITLE && state !== STATE.PAUSED) return;
     handbookUI.openGuide();
   }
 
@@ -2658,7 +2650,7 @@ export function boot(win, doc) {
     editorKey = null;
     packUI.close();
     menus.hideDeath();
-    if (handbookUI && handbookUI.isOpen()) handbookUI.close();
+    if (handbookUI.isOpen()) handbookUI.close();
     hud.setPickerOpen(false);
     hud.setUnderwater(false);
     hud.setTargetHint(null);
@@ -2923,7 +2915,7 @@ export function boot(win, doc) {
     if (survivalBegun) {
       // §1.2 / §14.2: a survival state that has just begun starts with the Handbook in the last hotbar slot.
       survivalBegun = false;
-      sayBeginLines(ensureHandbookInPack());
+      sayBeginLines(ensureHandbook(pack));
     }
 
     savedEditVersion = world.editVersion;
@@ -3137,7 +3129,7 @@ export function boot(win, doc) {
     climateSample = null;
     packUI.close();
     menus.hideDeath();
-    if (handbookUI && handbookUI.isOpen()) handbookUI.close();
+    if (handbookUI.isOpen()) handbookUI.close();
     renderer.setDigProgress(null, 0);
     hud.setSurvivalVisible(false);
     hud.setHotbarStacks(null, selected);
@@ -3302,7 +3294,7 @@ export function boot(win, doc) {
       const saved = params.nosave || doSave(false);
       quitToTitle(saved ? '' : `“${worldName}” was not saved (storage full) — its last save is kept. Delete a world to make room.`);
     },
-    /** §14.4 (package H): the Guide button on the title screen and in the pause menu. */
+    /** §14.4: the Guide button on the title screen and in the pause menu. */
     onGuide() {
       openGuide();
     },
@@ -4013,7 +4005,7 @@ export function boot(win, doc) {
   };
   // §14.4: while a Handbook reader is open, keydowns go to it first (Esc, arrows, PgUp / PgDn), before the menus and controls.
   const onBookKeyDown = (/** @type {KeyboardEvent} */ e) => {
-    if (!handbookUI || !handbookUI.isOpen()) return;
+    if (!handbookUI.isOpen()) return;
     if (handbookUI.handleKey(e)) {
       e.preventDefault();
       e.stopPropagation();
