@@ -459,9 +459,19 @@ describe('export / load / validatePigsJSON', () => {
     expect(back.list).toHaveLength(1);
     expect(back.list[0]).toMatchObject({ x: 1.235, y: GROUND, z: -7, yaw: 1 });
   });
-  it('drops invalid entries and caps at PIG_MAX', () => {
-    const v = validatePigsJSON([{ x: 0, y: 1, z: 2, yaw: 0 }, { x: 'a', y: 1, z: 2, yaw: 0 }, null, { x: 0, y: WORLD_HEIGHT + 1, z: 0, yaw: 0 }]);
-    expect(v.pigs).toEqual([{ x: 0, y: 1, z: 2, yaw: 0 }]);
+  it('a pig above the world (on a flying player\'s head) is saved at the top, not dropped (play-test PB-2)', () => {
+    const pigs = new Pigs(seededRng(1));
+    pigs.spawn(2, WORLD_HEIGHT + 30.8, 5, 0);
+    const json = pigs.export();
+    expect(json).toEqual([{ x: 2, y: WORLD_HEIGHT, z: 5, yaw: 0 }]);
+    expect(validatePigsJSON(JSON.parse(JSON.stringify(json))).pigs).toHaveLength(1);
+  });
+  it('drops invalid entries, clamps pigs above the world, and caps at PIG_MAX', () => {
+    const v = validatePigsJSON([
+      { x: 0, y: 1, z: 2, yaw: 0 }, { x: 'a', y: 1, z: 2, yaw: 0 }, null, { x: 0, y: -17, z: 0, yaw: 0 },
+      { x: 3, y: WORLD_HEIGHT + 30, z: 4, yaw: 1 },
+    ]);
+    expect(v.pigs).toEqual([{ x: 0, y: 1, z: 2, yaw: 0 }, { x: 3, y: WORLD_HEIGHT, z: 4, yaw: 1 }]);
     expect(v.warnings).toHaveLength(3);
     expect(validatePigsJSON({}).pigs).toEqual([]);
     const many = Array.from({ length: PIG_MAX + 3 }, () => ({ x: 0, y: 0, z: 0, yaw: 0 }));

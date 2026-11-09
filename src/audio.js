@@ -147,7 +147,8 @@ const MUTE_FADE_S = 0.01;
 /**
  * @typedef {Object} Audio
  * @property {() => void} resume                                 create / resume the AudioContext; call on the first user gesture
- * @property {(soundGroup: string|null|undefined) => void} playBreak   block broken; pass BLOCKS[id].soundGroup
+ * @property {(soundGroup: string|null|undefined, volume?: number) => void} playBreak   block broken; pass BLOCKS[id].soundGroup
+ *   and optionally a volume 0..1 (distance falloff; default 1)
  * @property {(soundGroup: string|null|undefined) => void} playPlace   block placed; pass BLOCKS[id].soundGroup
  * @property {() => void} playClick                              UI / hotbar click
  * @property {(volume?: number) => void} playOink                 pig grunt; volume 0..1 (default 1)
@@ -412,16 +413,19 @@ export function createAudio(opts = {}) {
   }
 
   /** @param {string|null|undefined} soundGroup */
-  function playBreak(soundGroup) {
+  /** @param {string|null|undefined} soundGroup @param {number} [volume] 0..1 (default 1) */
+  function playBreak(soundGroup, volume = 1) {
     const c = ready();
     if (!c) return;
+    const v = Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1;
+    if (v <= 0) return;
     try {
       const group = normalizeSoundGroup(soundGroup);
       const pitch = randomPitch();
       const t0 = c.currentTime;
-      noiseBurst(c, t0, BREAK_DURATION_S, BREAK_CUTOFF_HZ[group], BREAK_GAIN, pitch);
+      noiseBurst(c, t0, BREAK_DURATION_S, BREAK_CUTOFF_HZ[group], BREAK_GAIN * v, pitch);
       if (group === 'glass') {
-        tone(c, t0, GLASS_PING_DURATION_S, GLASS_PING_HZ * pitch, GLASS_PING_HZ * pitch, GLASS_PING_GAIN);
+        tone(c, t0, GLASS_PING_DURATION_S, GLASS_PING_HZ * pitch, GLASS_PING_HZ * pitch, GLASS_PING_GAIN * v);
       }
     } catch (err) {
       warnOnce(err);

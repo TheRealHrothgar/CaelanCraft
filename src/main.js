@@ -462,6 +462,9 @@ export function boot(win, doc) {
   const physicsSoundAt = new Map();
   /** loudest squeal of the pigs knocked during this frame's physics step (0 = none); played once after it */
   let knockSqueal = 0;
+  /** loudest physics 'break:<group>' of this frame's physics step (volume 0 = none); played once after it */
+  let breakVolume = 0;
+  let breakGroup = '';
   /** loudest knock-out / burn-out of the zombies gone this frame (0 = none); one playZombieDown after the physics step */
   let zombieDownVolume = 0;
   const flash = { x: 0, y: 0, z: 0, intensity: 0 };
@@ -604,7 +607,9 @@ export function boot(win, doc) {
 
   /**
    * PhysicsHooks.sound: distance falloff from the player (BOOM_SOUND_RANGE for 'boom', PHYSICS_SOUND_RANGE otherwise),
-   * per-name throttles, 'break:<group>' → playBreak(group), other names → audio['play' + Name] when it exists.
+   * per-name throttles, 'break:<group>' → the frame's loudest break (one playBreak after the physics step, with the falloff
+   * volume — a collapsing camp or a campfire fill broke up to 256 fires in one tick, each a full-volume sound), other
+   * names → audio['play' + Name] when it exists.
    */
   function playPhysicsSound(name, x, y, z, volume = 1) {
     if (!player || typeof name !== 'string' || !Number.isFinite(x + y + z)) return;
@@ -617,13 +622,17 @@ export function boot(win, doc) {
       if (last !== undefined && fxTime - last < gap) return;
       physicsSoundAt.set(name, fxTime);
     }
+    const v = (Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1) * (1 - d / range);
     if (name.startsWith('break:')) {
-      audio.playBreak(name.slice(6));
+      if (v > breakVolume) {
+        breakVolume = v;
+        breakGroup = name.slice(6);
+      }
       return;
     }
     const method = PHYSICS_SOUND_METHODS[name];
     const fn = method ? audio[method] : undefined;
-    if (typeof fn === 'function') fn((Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1) * (1 - d / range));
+    if (typeof fn === 'function') fn(v);
   }
 
   /** A block change made BY THE PLAYER (break / place): physics treats its removals as player-caused (priority seeds). */
@@ -1653,6 +1662,10 @@ export function boot(win, doc) {
   /** Block physics: ≤ 1 tick, then fallers, toppling trees, lit barrels and blasts (CONTRACTS §33). */
   function stepBlockPhysics(dt) {
     if (blockPhysics) blockPhysics.step(dt);
+    if (breakVolume > 0) {
+      audio.playBreak(breakGroup, breakVolume);
+      breakVolume = 0;
+    }
     if (knockSqueal > 0) {
       audio.playSqueal(knockSqueal);
       knockSqueal = 0;

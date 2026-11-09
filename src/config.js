@@ -162,6 +162,7 @@ export const ZOMBIE_SIGHT = 24;                     // chases a player within th
 export const ZOMBIE_CHASE_MAX_RISE = 5;             // … unless flying or more than this many units above its feet
 export const ZOMBIE_MAX_DROP = 3;                   // walks down a drop of this many cells, never off a deeper one
 export const ZOMBIE_REACH = 1.3;                    // horizontal centre distance of an attack (heights overlapping, no wall between)
+export const ZOMBIE_REACH_OVERLAP = 0.1;            // the player's feet must be this far below the zombie's top (not standing on it)
 export const ZOMBIE_ATTACK_COOLDOWN_S = 1;
 export const ZOMBIE_HIT_PUSH = 6;                   // m/s horizontal knockback on the player …
 export const ZOMBIE_HIT_LIFT = 4;                   // … plus this upward (no damage: there is no health)

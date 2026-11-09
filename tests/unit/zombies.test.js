@@ -10,7 +10,7 @@ import {
 } from '../../src/config.js';
 import { Zombies, openSky, zombieVolume, loudestVolume } from '../../src/zombies.js';
 import { seededRng, wrapAngle } from '../../src/pigs.js';
-import { createPlayer, createBody, isFreeAt } from '../../src/physics.js';
+import { createPlayer, createBody, isFreeAt, stepPlayer } from '../../src/physics.js';
 import { hexToWorld, worldToHex, hexLength } from '../../src/hex.js';
 import { BlackHoles } from '../../src/blackholes.js';
 import { resolveBodies } from '../../src/bodies.js';
@@ -181,6 +181,28 @@ describe('Zombies.update — chase and attack', () => {
     expect(zs._canReach(zb, p, walled)).toBe(false);
     expect(zs._canReach(zb, standing(1.2, 0, GROUND + ZOMBIE_HEIGHT + 0.01), flat)).toBe(false); // standing on its head
     expect(zs._canReach(zb, standing(ZOMBIE_REACH + 0.05, 0), flat)).toBe(false);
+  });
+  it('never strikes a player riding it: sunk a few mm into its head, with or without the ride link (play-test PB-6)', () => {
+    const zs = new Zombies(seededRng(6));
+    const zb = zs.spawn(0, GROUND, 0);
+    const rider = standing(0.05, 0, GROUND + ZOMBIE_HEIGHT - 0.008); // gravity sank it before body resolution lifts it
+    expect(zs._canReach(zb, rider, flat)).toBe(false); // the landing frame: no link yet, inside the overlap tolerance
+    rider.carrier = zb;
+    rider.y = GROUND + ZOMBIE_HEIGHT - 0.05;
+    expect(zs._canReach(zb, rider, flat)).toBe(false); // riding
+    // Riding for 10 s in main's order — stepPlayer (the rider sinks), zombies.update (the attack test), then
+    // resolveBodies (the rider is lifted back): never struck.
+    const IDLE = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, yaw: 0 };
+    const p = standing(0.05, 0, GROUND + ZOMBIE_HEIGHT + 0.5);
+    let strikes = 0;
+    stepPlayer(p, IDLE, flat, DT);
+    run(zs, view(flat, p), 10, (ev) => {
+      strikes += ev.attacks.length;
+      resolveBodies([p, zb], flat);
+      stepPlayer(p, IDLE, flat, DT);
+    });
+    expect(p.carrier).toBe(zb);
+    expect(strikes).toBe(0);
   });
   it('does not chase a flying player or one far above it, and loses interest beyond ZOMBIE_SIGHT', () => {
     const zs = new Zombies(seededRng(8));

@@ -18,8 +18,8 @@
 // being farther than ZOMBIE_DESPAWN_DIST away also ends it. Zombies are never saved: the per-world switch is.
 import {
   ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, ZOMBIE_MASS, ZOMBIE_TARGET_RADIUS, ZOMBIE_CHASE_SPEED, ZOMBIE_TURN_RATE,
-  ZOMBIE_SIGHT, ZOMBIE_CHASE_MAX_RISE, ZOMBIE_MAX_DROP, ZOMBIE_REACH, ZOMBIE_ATTACK_COOLDOWN_S, ZOMBIE_HIT_PUSH,
-  ZOMBIE_HIT_LIFT, ZOMBIE_HITS, ZOMBIE_KNOCKBACK, ZOMBIE_KNOCK_LIFT, ZOMBIE_HURT_S, ZOMBIE_KO_KNOCK, ZOMBIE_BURN_S,
+  ZOMBIE_SIGHT, ZOMBIE_CHASE_MAX_RISE, ZOMBIE_MAX_DROP, ZOMBIE_REACH, ZOMBIE_REACH_OVERLAP, ZOMBIE_ATTACK_COOLDOWN_S,
+  ZOMBIE_HIT_PUSH, ZOMBIE_HIT_LIFT, ZOMBIE_HITS, ZOMBIE_KNOCKBACK, ZOMBIE_KNOCK_LIFT, ZOMBIE_HURT_S, ZOMBIE_KO_KNOCK, ZOMBIE_BURN_S,
   ZOMBIE_FIRE_FEAR, ZOMBIE_SPAWN_FIRE_CLEAR, ZOMBIE_SPAWN_MIN, ZOMBIE_SPAWN_MAX, ZOMBIE_SPAWN_INTERVAL_MIN_S,
   ZOMBIE_SPAWN_INTERVAL_MAX_S, ZOMBIE_SPAWN_TRIES, ZOMBIE_DESPAWN_DIST, ZOMBIE_SOUND_RANGE, WORLD_HEIGHT, PLAYER_HEIGHT,
 } from './config.js';
@@ -616,12 +616,19 @@ export class Zombies {
     return isSolid(getBlock(q, fy, r)) && isOpen(getBlock(q, fy + 1, r)) && isOpen(getBlock(q, fy + 2, r));
   }
 
-  /** The player within ZOMBIE_REACH (horizontal), heights overlapping, and no solid cell between their chests. */
+  /**
+   * The player within ZOMBIE_REACH (horizontal), heights overlapping by more than ZOMBIE_REACH_OVERLAP, not riding this
+   * zombie, and no solid cell between their chests.
+   */
   _canReach(zb, player, getBlock) {
+    // A player riding this zombie is out of its reach: the attack test runs before body resolution lifts a rider that
+    // gravity sank a few millimetres into the zombie's top, so without this every rider counted as overlapping.
+    if (player.carrier === zb) return false;
     const dx = player.x - zb.x;
     const dz = player.z - zb.z;
     if (dx * dx + dz * dz > ZOMBIE_REACH * ZOMBIE_REACH) return false;
-    if (!(zb.y < player.y + (player.height ?? PLAYER_HEIGHT) && player.y < zb.y + ZOMBIE_HEIGHT)) return false;
+    // Heights must overlap by more than ZOMBIE_REACH_OVERLAP (also covers the landing frame, before the ride link exists).
+    if (!(zb.y < player.y + (player.height ?? PLAYER_HEIGHT) && player.y < zb.y + ZOMBIE_HEIGHT - ZOMBIE_REACH_OVERLAP)) return false;
     const cy = (zb.y + player.y) / 2 + 1.2;
     for (let k = 1; k <= 2; k++) {
       const [q, r] = worldToHex(zb.x + (dx * k) / 3, zb.z + (dz * k) / 3);

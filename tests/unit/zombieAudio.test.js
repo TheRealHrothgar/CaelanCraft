@@ -80,3 +80,23 @@ describe('zombie sounds (§39)', () => {
     });
   }
 });
+
+describe('playBreak volume (play-test fire-holes F1: physics breaks played at full volume, up to 256 a frame)', () => {
+  it('scales the burst (and the glass ping) with the optional volume; 1 by default; silent at 0', () => {
+    const log = [];
+    const audio = createAudio({ AudioContextClass: fakeContextClass(log) });
+    audio.resume();
+    const peak = (from) => Math.max(...log.slice(from).filter((n) => n.kind === 'gain').map((g) => g.gain.value));
+    for (const group of ['wood', 'glass']) {
+      const n0 = log.length;
+      audio.playBreak(group);
+      const full = peak(n0);
+      const n1 = log.length;
+      audio.playBreak(group, 0.25);
+      expect(peak(n1)).toBeCloseTo(full * 0.25, 6);
+      const n2 = log.length;
+      audio.playBreak(group, 0);
+      expect(log.length).toBe(n2);
+    }
+  });
+});

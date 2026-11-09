@@ -626,7 +626,8 @@ export class Pigs {
   /** @returns {PigJSON[]} positions rounded to millimetres */
   export() {
     const r3 = (v) => Math.round(v * 1000) / 1000;
-    return this.list.map((p) => ({ x: r3(p.x), y: r3(p.y), z: r3(p.z), yaw: r3(p.yaw) }));
+    // A pig above the world (on a flying player's head, thrown by a blast) is saved at the top and falls on reload.
+    return this.list.map((p) => ({ x: r3(p.x), y: Math.min(r3(p.y), WORLD_HEIGHT), z: r3(p.z), yaw: r3(p.yaw) }));
   }
 
   /** Replace every pig with the (already validated) saved ones. */
@@ -660,8 +661,9 @@ export class Pigs {
 }
 
 /**
- * Validate a saved `pigs` field: an array of {x, y, z, yaw} with finite numbers (y within −16..WORLD_HEIGHT);
- * anything else is dropped with a warning, and at most PIG_MAX are kept.
+ * Validate a saved `pigs` field: an array of {x, y, z, yaw} with finite numbers and y ≥ −16 (a y above WORLD_HEIGHT is
+ * clamped to it, so the pig falls back in rather than vanishing); anything else is dropped with a warning, and at most
+ * PIG_MAX are kept.
  * @param {unknown} raw
  * @returns {{ pigs: PigJSON[], warnings: string[] }}
  */
@@ -675,7 +677,7 @@ export function validatePigsJSON(raw) {
     const p = raw[i];
     const ok = p && typeof p === 'object'
       && [p.x, p.y, p.z, p.yaw].every((v) => typeof v === 'number' && Number.isFinite(v))
-      && p.y >= -16 && p.y <= WORLD_HEIGHT;
+      && p.y >= -16;
     if (!ok) {
       warnings.push(`pigs[${i}]: invalid, dropped`);
       continue;
@@ -684,7 +686,7 @@ export function validatePigsJSON(raw) {
       warnings.push(`pigs: more than ${PIG_MAX}, extra dropped`);
       break;
     }
-    pigs.push({ x: p.x, y: p.y, z: p.z, yaw: p.yaw });
+    pigs.push({ x: p.x, y: Math.min(p.y, WORLD_HEIGHT), z: p.z, yaw: p.yaw });
   }
   return { pigs, warnings };
 }
