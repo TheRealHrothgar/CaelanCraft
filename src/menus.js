@@ -3,6 +3,7 @@
 // v0.9 Survival (docs/DESIGN-survival.md §9.8; CONTRACTS §48 once merged): the pause menu's `[ Creative | Survival ]` mode
 // switch, Undo disabled in Survival, the death screen (a honeycomb closing ring by ring, "Wake up"), a general
 // `confirm()` on the old delete dialog, the New World form's "Survival resources" checkbox and "· Survival" on Worlds rows.
+// §14: a Guide button on the title screen (under the controls sheet) and in the pause menu → callbacks.onGuide(from).
 //
 // DOM module. Every DOM access goes through the `doc` handed to createMenus and happens inside a
 // function, so this file can be imported in Node. Imports: config, blocks, atlas, storage (world names only; per the
@@ -244,6 +245,7 @@ const IDS = Object.freeze({
   confirmYes: 'confirm-yes',
   confirmNo: 'confirm-no',
   titleControls: 'title-controls',
+  btnGuideTitle: 'btn-guide-title',
   loadingScreen: 'loading-screen',
   loadingBar: 'loading-bar',
   loadingText: 'loading-text',
@@ -265,6 +267,7 @@ const IDS = Object.freeze({
   btnModeCreative: 'btn-mode-creative',
   btnModeSurvival: 'btn-mode-survival',
   pauseControls: 'pause-controls',
+  btnGuidePause: 'btn-guide-pause',
   deathScreen: 'death-screen',
   deathComb: 'death-comb',
   deathTitle: 'death-title',
@@ -296,6 +299,8 @@ const IDS = Object.freeze({
  * @property {() => void} [onWake]        death screen "Wake up"
  * @property {() => void} [onDeathQuit]   death screen "Save & quit" (main saves, then quits)
  * @property {() => void} [onQuit]
+ * @property {(from: 'title'|'pause') => void} [onGuide]  the Guide button on the title screen or in the pause menu (§14):
+ *   main opens handbookUI.openGuide(); the screen underneath stays and comes back when the Guide closes
  * @property {() => void} [onClickToPlay]
  * @property {(blockId: number, slot: number|null) => void} [onPickBlock]  slot 0..8 for Digit1-9, null for a click
  * @property {() => void} [onPickerClose]
@@ -1156,6 +1161,9 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
   on(el.btnWake, 'click', () => fire('onWake'));
   on(el.btnDeathQuit, 'click', () => fire('onDeathQuit'));
   on(el.btnQuit, 'click', () => fire('onQuit'));
+  // §14: the Survival Guide (the handbook's clean copy), in both modes
+  on(el.btnGuideTitle, 'click', () => fire('onGuide', 'title'));
+  on(el.btnGuidePause, 'click', () => fire('onGuide', 'pause'));
 
   // ---- block picker --------------------------------------------------------------------------------
 

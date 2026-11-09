@@ -62,6 +62,7 @@ const MATERIALS = {
   greenware_pot: ['Greenware Pot', 8], green_brick: ['Green Brick', 32], fired_brick: ['Fired Brick', 32],
   greenware_crucible: ['Greenware Crucible', 4], greenware_mold: ['Greenware Mold', 4], bellows: ['Bellows', 1],
   clay_pot: ['Clay Pot', 8], salt_pot: ['Salt-crusted Pot', 1], pot_snow: ['Pot of Snow', 1],
+  handbook: ['Survival Handbook', 1], // §14: added by package H, the last material
 };
 
 /** §5.1 / §4.5 food: key → [display name, stack, satiation, hydration, sick, useS, extra]. */
@@ -177,10 +178,10 @@ describe('items — the registry', () => {
       expect(getItem(key)).toBe(ITEMS[key]);
       expect(isItemKey(key)).toBe(true);
     }
-    // 34 tools, 37 materials, 20 foods, 2 bandages, 5 clothes and the 79 placeable blocks other than water.
+    // 34 tools, 37 materials + the handbook (§14), 20 foods, 2 bandages, 5 clothes and the 79 placeable blocks other than water.
     const count = (kind) => ITEM_KEYS.filter((k) => ITEMS[k].kind === kind).length;
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 37, 20, 2, 5, 79]);
-    expect(ITEM_KEYS).toHaveLength(177);
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 38, 20, 2, 5, 79]);
+    expect(ITEM_KEYS).toHaveLength(178);
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -279,6 +280,17 @@ describe('items — the registry', () => {
     // pot_snow and unpeeled_cactus_fruit are materials: boiled, singed or peeled first, never eaten as they are.
     expect(getItem('pot_snow').kind).toBe('material');
     expect(getItem('unpeeled_cactus_fruit').kind).toBe('material');
+  });
+  it('§14 the Survival Handbook: a plain item, stack 1, no durability, never spoils, places nothing, resolvable by name', () => {
+    expect(getItem('handbook')).toEqual({ key: 'handbook', name: 'Survival Handbook', kind: 'material', stack: 1 });
+    expect(stackSize('handbook')).toBe(1);
+    expect(maxDurability('handbook')).toBe(0);
+    expect(blockForItem('handbook')).toBe(-1);
+    expect(resolveItem('handbook')).toEqual({ key: 'handbook' });
+    expect(resolveItem('Survival Handbook')).toEqual({ key: 'handbook' });
+    // the last material, right before the food (ITEM_KEYS order)
+    const materials = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'material');
+    expect(materials[materials.length - 1]).toBe('handbook');
   });
   it('every key the rest of the design names exists (drops, picks, fire spots, recipes, workplaces)', () => {
     for (const key of REFERENCED) expect(isItemKey(key), key).toBe(true);

@@ -359,3 +359,71 @@ describe('styles.css survival screens', () => {
     expect(decls('.death-title').get('color')).toBe('#e8b04a');
   });
 });
+
+describe('styles.css the Survival Handbook (§14)', () => {
+  const z = (sel) => Number(decls(sel).get('z-index'));
+
+  it('z-order: both readers above the HUD and below the death screen; the Guide over the pause menu, and over the title', () => {
+    // the field book: over the HUD and the pack screen (it replaces it), under the console, the pause menu and the death screen
+    expect(z('#handbook')).toBe(21);
+    expect(z('#handbook')).toBeGreaterThan(z('#hud'));
+    expect(z('#handbook')).toBeGreaterThan(z('#pack-screen'));
+    expect(z('#handbook')).toBeLessThan(z('#console'));
+    expect(z('#handbook')).toBeLessThan(z('#pause-menu'));
+    expect(z('#handbook')).toBeLessThan(z('#death-screen'));
+    // the Guide: over the pause menu it opens from, under the death screen
+    expect(z('#guide')).toBe(32);
+    expect(z('#guide')).toBeGreaterThan(z('#pause-menu'));
+    expect(z('#guide')).toBeLessThan(z('#death-screen'));
+    expect(z('#guide')).toBeGreaterThan(z('#hud'));
+    // opened from the title screen it lifts over it, still under the confirm dialog
+    expect(z('#guide.over-title')).toBeGreaterThan(z('#title-screen'));
+    expect(z('#guide.over-title')).toBeLessThan(z('#confirm-dialog'));
+  });
+
+  it('the field book ends above the HUD\'s hotbar and vitals at every usual window height', () => {
+    const m = /^min\((\d+)px,(max\(.*\))\)$/.exec(/** @type {string} */ (decls('.hb-book').get('height')));
+    expect(m).toBeTruthy();
+    for (const H of [480, 622, 720, 1080]) {
+      const top = lengthPx(/** @type {string} */ (decls('#handbook').get('padding-top')), H);
+      const height = Math.min(Number(m[1]), lengthPx(m[2], H));
+      if (H >= 480) expect(top + height, `viewport ${H}`).toBeLessThanOrEqual(H - 72);
+      expect(height, `viewport ${H}`).toBeGreaterThanOrEqual(300);
+    }
+  });
+
+  it('the title screen still fits 1280x720 with the Guide button under the controls sheet', () => {
+    const first = (v) => toPx(/** @type {string} */ (v).split(/\s+/)[0], 720);
+    const sheetRows = CONTROLS_SHEET.length;
+    const sheet = first(decls('.controls-sheet').get('margin-top')) + sheetRows * 20 + (sheetRows - 1) * first(decls('.controls-sheet').get('gap'));
+    const btn = decls('.guide-button');
+    const [padY] = /** @type {string} */ (btn.get('padding')).split(/\s+/).map((v) => toPx(v, 0));
+    const buttonH = first(btn.get('margin-top')) + 2 * padY + 18; // a 14px bold line ≈ 18px
+    const column = sheet + buttonH;
+    for (const H of [720, 622]) {
+      const total = toPx(/** @type {string} */ (decls('#title-screen').get('--title-top')), H) + 128 + first(decls('.title-main').get('margin-top')) + column;
+      expect(total, `viewport ${H}`).toBeLessThanOrEqual(H);
+    }
+    expect(decls('.title-side').get('flex-direction')).toBe('column');
+  });
+
+  it('the readers\' roots are in index.html; nothing in them uses .mc-button or .picker-panel; the Guide buttons are .hex-button', () => {
+    const doc = documentFromHTML(readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8'));
+    for (const id of ['guide', 'handbook']) {
+      const el = /** @type {any} */ (doc.getElementById(id));
+      expect(el, id).toBeTruthy();
+      expect(el.classList.contains('layer') && el.classList.contains('hidden'), id).toBe(true);
+      expect(el.querySelectorAll('.mc-button, .picker-panel'), id).toHaveLength(0);
+    }
+    for (const id of ['btn-guide-title', 'btn-guide-pause']) {
+      const el = /** @type {any} */ (doc.getElementById(id));
+      expect(el.classList.contains('hex-button'), id).toBe(true);
+      expect(el.classList.contains('mc-button'), id).toBe(false);
+    }
+    // the field book draws its parchment and type itself: no url() images and no @font-face
+    const section = css.slice(css.indexOf('The Survival Handbook (docs/DESIGN-survival.md §14'));
+    expect(section.length).toBeGreaterThan(1000);
+    expect(section).not.toMatch(/url\(|@font-face|@import/);
+    expect(decls('.hb-page').get('font')).toMatch(/serif$/);
+  });
+});

@@ -43,7 +43,7 @@ function principalAngle(points) {
 
 describe('itemArt: coverage', () => {
   it('every non-block item in ITEMS has art, and only those (block items are drawn from the atlas)', () => {
-    expect(NON_BLOCK.length).toBe(98);
+    expect(NON_BLOCK.length).toBe(99); // 98 + the Survival Handbook (§14)
     expect([...ITEM_ART_KEYS].sort()).toEqual([...NON_BLOCK].sort());
     expect(ITEM_ART_KEYS).toEqual(NON_BLOCK); // same order as ITEM_KEYS (tools, materials, food, bandages, clothes)
     for (const k of NON_BLOCK) expect(hasItemArt(k), k).toBe(true);
@@ -171,6 +171,31 @@ describe('itemArt: the art rules (§9.8, §11)', () => {
     let blue = 0;
     for (let i = 0; i < px.length; i += 4) if (px[i + 3] && px[i + 2] > px[i] + 40) blue++;
     expect(blue).toBeGreaterThan(20);
+  });
+
+  it('§14 the handbook: a leather-bound book tied with cord, a hex burned into the cover, pages at the edge', () => {
+    expect(hasItemArt('handbook')).toBe(true);
+    const px = paintItem('handbook');
+    expect(isChecker(px)).toBe(false);
+    const at = (x, y) => {
+      const i = (y * N + x) * 4;
+      return px[i + 3] ? [px[i], px[i + 1], px[i + 2]] : null;
+    };
+    const near = (c, rgb, tol = 4) => !!c && c.every((v, i) => Math.abs(v - rgb[i]) <= tol);
+    // the cord crosses the whole cover on row 10, in the cord colours, and is knotted past the fore-edge
+    for (let x = 2; x <= 12; x++) expect(near(at(x, 10), x & 1 ? [0xd8, 0xc3, 0x8c] : [0x8f, 0x7a, 0x4a]), `cord ${x}`).toBe(true);
+    expect(near(at(14, 10), [0xd8, 0xc3, 0x8c])).toBe(true);
+    // the burned hex: a charred pointy-top ring (top and bottom vertices, both sides) round a scorched face
+    for (const [x, y] of [[7, 2], [8, 2], [5, 4], [10, 4], [5, 5], [10, 5], [7, 7], [8, 7]]) expect(near(at(x, y), [0x26, 0x13, 0x0a]), `hex ${x},${y}`).toBe(true);
+    // leather cover: brown (red > green > blue) over most of the icon; pale pages at the fore-edge
+    let leather = 0;
+    for (let y = 1; y <= 13; y++) for (let x = 4; x <= 11; x++) {
+      const c = at(x, y);
+      if (c && c[0] > c[1] && c[1] > c[2]) leather++;
+    }
+    expect(leather).toBeGreaterThan(80);
+    const page = at(13, 5);
+    expect(page && page[0] > 190 && page[1] > 170).toBe(true);
   });
 });
 

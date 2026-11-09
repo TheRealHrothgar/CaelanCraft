@@ -191,6 +191,8 @@ function paintMissing(ic) {
 const WOOD = { base: 0x8a5a2b, dark: 0x5e3b1a, light: 0xb07a42 };
 /** Cord and fibre. */
 const CORD = { light: 0xd8c38c, dark: 0x8f7a4a };
+/** The handbook's binding (§14). */
+const LEATHER = { base: 0x7a4a2a, light: 0x9a6238, dark: 0x5a341c, spine: 0x4a2a14 };
 
 /**
  * Head colours by tier (§9.8): stone grey, flint #3b3f4a with a pale cortex, copper #c8743a, bronze #b08d3a, iron #8a8f96,
@@ -801,6 +803,35 @@ const MATERIAL_PAINTERS = {
   pot_snow(ic, rng) {
     paintPot(ic, rng, 0xb8613a, 0xf4f8fc, 0xc8d8e8);
     ic.ellipse(8, 2.6, 3.4, 1.8, 0xf4f8fc); // heaped above the rim
+  },
+  handbook(ic, rng) {
+    // §14 the Survival Handbook: a small leather-bound field book tied with cord, a hex burned into its cover
+    const page = (i) => (i & 1 ? 0xeadcb8 : 0xcfbc90);
+    for (let y = 2; y <= 14; y++) ic.set(13, y, page(y)); // the page block, at the fore-edge …
+    for (let x = 3; x <= 13; x++) ic.set(x, 14, page(x)); // … and the foot
+    ic.rect(2, 1, 12, 13, LEATHER.base);
+    ic.line(4, 1, 12, 1, LEATHER.light);
+    ic.line(12, 2, 12, 13, LEATHER.dark);
+    ic.line(4, 13, 11, 13, LEATHER.dark);
+    ic.rect(2, 1, 3, 13, LEATHER.spine); // the spine, with two raised bands
+    for (const y of [3, 11]) {
+      ic.set(2, y, LEATHER.light);
+      ic.set(3, y, LEATHER.base);
+    }
+    ic.jitter(rng, 0.05);
+    // the hex, burned in: a scorched face inside a charred pointy-top outline
+    ic.rect(6, 3, 9, 6, 0x5e331a);
+    for (const [x, y] of [[7, 2], [8, 2], [5, 3], [6, 3], [9, 3], [10, 3], [5, 4], [10, 4], [5, 5], [10, 5], [5, 6], [6, 6],
+      [9, 6], [10, 6], [7, 7], [8, 7]]) ic.set(x, y, 0x26130a);
+    ic.set(7, 4, 0x8a4a22); // an ember-brown glint where the brand bit deepest
+    // the cord: once round the cover, knotted at the fore-edge, its ends hanging
+    for (let x = 2; x <= 12; x++) ic.set(x, 10, x & 1 ? CORD.light : CORD.dark);
+    ic.set(13, 9, CORD.light);
+    ic.set(13, 10, CORD.dark);
+    ic.set(13, 11, CORD.light);
+    ic.set(14, 10, CORD.light);
+    ic.set(14, 12, CORD.dark);
+    ic.set(14, 13, CORD.light);
   },
 };
 

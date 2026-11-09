@@ -15,6 +15,20 @@ import { TAGS, WEAR_SLOT_NAMES, getItem, isItemKey, itemName, stackSize, maxDura
 /** @typedef {import('./types.js').ToolDef} ToolDef */
 /** @typedef {import('./types.js').ItemDef} ItemDef */
 
+/**
+ * Items that stay with you (§14.2, the Survival Handbook): `dumpAll()` (death) leaves them in the pack, and the pack screen
+ * never lets one go: the discard hex and a basket refuse it (the cursor keeps it), and closing the screen with one on the
+ * cursor never leaves it behind.
+ */
+export const KEEP_ON_DEATH = Object.freeze(['handbook']);
+/** What `slotClick` reports (`result.refused`) when it refuses to let a KEEP_ON_DEATH item go. */
+export const KEEP_REFUSED = 'The handbook stays with you.';
+
+/** @param {ItemStack|null|undefined} s @returns {boolean} a stack of an item that stays with you */
+export function isKept(s) {
+  return !!s && KEEP_ON_DEATH.includes(s.k);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Stack helpers
 
@@ -458,14 +472,20 @@ export class Pack {
   }
 
   /**
-   * Empty the pack and the wear slots (death, §2.5).
-   * @returns {ItemStack[]} every stack: slots 0 → 26, then head, body, feet (at most PACK_SLOTS + WEAR_SLOTS)
+   * Empty the pack and the wear slots (death, §2.5), except the KEEP_ON_DEATH items (§14.2), which stay in their slots.
+   * @returns {ItemStack[]} every other stack: slots 0 → 26, then head, body, feet (at most PACK_SLOTS + WEAR_SLOTS)
    */
   dumpAll() {
     const out = [];
-    for (const s of this.slots) if (s) out.push(s);
-    for (const s of this.wear) if (s) out.push(s);
-    if (out.length) this.clear();
+    for (const list of [this.slots, this.wear]) {
+      for (let i = 0; i < list.length; i++) {
+        const s = list[i];
+        if (!s || isKept(s)) continue;
+        out.push(s);
+        list[i] = null;
+      }
+    }
+    if (out.length) this.version++;
     return out;
   }
 
@@ -544,6 +564,8 @@ export class Pack {
  * @property {boolean} changed       anything changed (pack, container or cursor)
  * @property {boolean} container     the container's slots changed (main then calls `containers.touch()`)
  * @property {ItemStack|null} discarded  the stack the discard hex destroyed
+ * @property {string} [refused]      set (to KEEP_REFUSED) when the click would have let a KEEP_ON_DEATH item go: dropped on
+ *   the discard hex or put into a basket. Nothing changed; main shows it as a hint or chat line.
  */
 
 /** @param {ItemStack} s @param {number} w @returns {boolean} a stack of a wear item for wear slot w */
@@ -560,7 +582,9 @@ function fitsWearSlot(s, w) {
  * - right with a cursor: put 1 into an empty or same-key slot;
  * - wear slots accept only wear items for that slot;
  * - shift + left quick-moves: pack → the open container, else hotbar ↔ the rosette; container → pack; wear → pack;
- * - `area 'discard'`: the cursor stack is destroyed.
+ * - `area 'discard'`: the cursor stack is destroyed;
+ * - a KEEP_ON_DEATH item (the handbook, §14.2) is never destroyed nor put into a container: those clicks change nothing
+ *   and report `refused`.
  * @param {SlotSession} session  changed in place
  * @param {'pack'|'wear'|'container'|'discard'} area
  * @param {number} index
@@ -572,7 +596,13 @@ export function slotClick(session, area, index, button, shift) {
   /** @type {SlotClickResult} */
   const res = { changed: false, container: false, discarded: null };
   const { pack } = session;
+  /** @returns {SlotClickResult} the refusal of a KEEP_ON_DEATH item (nothing changes) */
+  const refuse = () => {
+    res.refused = KEEP_REFUSED;
+    return res;
+  };
   if (area === 'discard') {
+    if (isKept(session.cursor)) return refuse();
     if (session.cursor) {
       res.discarded = session.cursor;
       session.cursor = null;
@@ -598,6 +628,8 @@ export function slotClick(session, area, index, button, shift) {
   };
   const cur = session.cursor;
   const here = slots[index] ?? null;
+  // The handbook stays with you (§14.2): it never goes into a basket, by click or by shift-click.
+  if (area === 'container' && isKept(cur) && !(button === 0 && shift)) return refuse();
 
   if (button === 0 && shift) {
     if (!here) return res;
@@ -606,6 +638,7 @@ export function slotClick(session, area, index, button, shift) {
     /** @type {ArrayLike<number>} */
     let order;
     if (area === 'pack' && session.container) {
+      if (isKept(here)) return refuse();
       into = session.container;
       order = range(0, into.length);
     } else if (area === 'pack') {
@@ -672,12 +705,26 @@ export function slotClick(session, area, index, button, shift) {
 }
 
 /**
- * Closing the pack screen with a stack on the cursor (§5.4): it goes back with `pack.add`.
+ * Closing the pack screen with a stack on the cursor (§5.4): it goes back with `pack.add`. A KEEP_ON_DEATH item that no
+ * longer fits displaces the last other stack instead (§14.2), so the handbook is never what is lost.
  * @param {SlotSession} session  its cursor is cleared
  * @returns {ItemStack|null} what did not fit (lost, with the "left behind" message)
  */
 export function returnCursor(session) {
   const cur = session.cursor;
   session.cursor = null;
-  return cur ? session.pack.add(cur) : null;
+  if (!cur) return null;
+  const left = session.pack.add(cur);
+  if (!left || !isKept(left)) return left;
+  // A KEEP_ON_DEATH item is never the one left behind (§14.2): when the pack filled up meanwhile (a job finished while it
+  // was on the cursor), it takes the last slot holding anything else, and that stack is what is left behind instead.
+  const slots = session.pack.slots;
+  for (let i = slots.length - 1; i >= 0; i--) {
+    const s = slots[i];
+    if (s && !isKept(s)) {
+      session.pack.setSlot(i, left);
+      return s;
+    }
+  }
+  return left;
 }

@@ -247,6 +247,40 @@ describe('the pack screen on a page', () => {
     expect(/** @type {any} */ (e).defaultPrevented).toBe(true);
   });
 
+  it('§14: right-click on the handbook reads it (onRead, not onSlot); so does the Read button, shown while the pack holds it', () => {
+    const onSlot = vi.fn();
+    const onRead = vi.fn();
+    const { ui, root } = setup({ onSlot, onRead });
+    const v = demoPackView();
+    const at = v.slots.findIndex((s) => s && s.k === 'handbook');
+    expect(at).toBeGreaterThanOrEqual(0); // the ?ui=pack story carries the handbook too
+    ui.open(v);
+    fire(cell(root, 'pack', at), 'mousedown', { button: 2 });
+    expect(onRead).toHaveBeenCalledTimes(1);
+    expect(onSlot).not.toHaveBeenCalled();
+    // a left click picks it up as usual (to move it about)
+    fire(cell(root, 'pack', at), 'mousedown', { button: 0 });
+    expect(onSlot).toHaveBeenLastCalledWith('pack', at, 0, false);
+    // with a stack on the cursor, a right-click is the usual "put one"
+    ui.refresh({ ...v, cursor: { k: 'rock', n: 2 } });
+    fire(cell(root, 'pack', at), 'mousedown', { button: 2 });
+    expect(onSlot).toHaveBeenLastCalledWith('pack', at, 2, false);
+    expect(onRead).toHaveBeenCalledTimes(1);
+    // right-click on anything else is the usual "take half"
+    fire(cell(root, 'pack', 6), 'mousedown', { button: 2 });
+    expect(onSlot).toHaveBeenLastCalledWith('pack', 6, 2, false);
+    // the Read button
+    const read = root.querySelector('.pack-read');
+    expect(read.classList.contains('hex-button')).toBe(true);
+    expect(read.classList.contains('hidden')).toBe(false);
+    fire(read, 'click');
+    expect(onRead).toHaveBeenCalledTimes(2);
+    const without = demoPackView();
+    without.slots[at] = null;
+    ui.refresh(without);
+    expect(read.classList.contains('hidden')).toBe(true);
+  });
+
   it('a basket replaces the Making panel, never stacked above the pack', () => {
     const { ui, root } = setup();
     ui.open(demoPackView({ basket: true }));
