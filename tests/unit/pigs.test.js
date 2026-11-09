@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { BLOCK } from '../../src/blocks.js';
 import { PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_HURT_S, WORLD_HEIGHT } from '../../src/config.js';
-import { Pigs, seededRng, validatePigsJSON, SHORE_SEARCHES_PER_UPDATE } from '../../src/pigs.js';
+import { Pigs, seededRng, validatePigsJSON, SHORE_SEARCHES_PER_UPDATE, PIG_HEAD_BOX } from '../../src/pigs.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { BlackHoles } from '../../src/blackholes.js';
 
@@ -428,6 +428,23 @@ describe('Pigs.hit', () => {
 });
 
 describe('Pigs.raycast', () => {
+  it('hits the drawn head and snout from the side, outside the collision cylinder (play-test PB-3)', () => {
+    const pigs = new Pigs(seededRng(1));
+    const pig = pigs.spawn(0, GROUND, 0, 0); // yaw 0: faces −Z, the head around z −0.33 … −0.77
+    // Along +x at head height through z = −0.55: misses the 0.42 cylinder, enters the head box at x = −0.22.
+    const h = pigs.raycast(-3, GROUND + 0.7, -0.55, 1, 0, 0, 10);
+    expect(h && h.pig).toBe(pig);
+    expect(h.distance).toBeCloseTo(3 - PIG_HEAD_BOX.x, 6);
+    expect(pigs.raycast(-3, GROUND + 0.3, -0.55, 1, 0, 0, 10)).toBeNull(); // under the chin
+    // Head-on, the snout tip is hit before the cylinder; from behind, the cylinder still comes first.
+    expect(pigs.raycast(0, GROUND + 0.6, -3, 0, 0, 1, 10).distance).toBeCloseTo(3 - 0.78, 6);
+    expect(pigs.raycast(0, GROUND + 0.6, 3, 0, 0, -1, 10).distance).toBeCloseTo(3 - PIG_RADIUS, 6);
+    expect(pigs.raycast(-3, GROUND + 0.7, -0.9, 1, 0, 0, 10)).toBeNull(); // past the snout tip
+    // Turned a quarter (yaw π/2: faces −X, the head around x −0.55): a ray along +z through x = −0.55 hits it.
+    pig.yaw = Math.PI / 2;
+    expect(pigs.raycast(-0.55, GROUND + 0.7, -3, 0, 0, 1, 10)?.pig).toBe(pig);
+    expect(pigs.raycast(-3, GROUND + 0.7, -0.55, 1, 0, 0, 10)?.distance ?? Infinity).toBeGreaterThan(2.5); // now its flank
+  });
   it('hits the nearest pig cylinder along the ray within maxDist', () => {
     const pigs = new Pigs(seededRng(1));
     const near = pigs.spawn(0, 0, -3);

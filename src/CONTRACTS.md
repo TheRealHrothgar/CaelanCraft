@@ -1236,7 +1236,12 @@ with its own size (blocks filled into it by commands).
 Pigs never die. Constants `PIG_*` live in config.js.
 ```js
 export function seededRng(seed)                // mulberry32
-export function validatePigsJSON(raw)          // → { pigs: [{x,y,z,yaw}], warnings }: finite numbers, −16 ≤ y ≤ WORLD_HEIGHT, ≤ PIG_MAX kept
+export function validatePigsJSON(raw)          // → { pigs: [{x,y,z,yaw}], warnings }: finite numbers, y ≥ −16 (above
+                                               //   WORLD_HEIGHT is clamped to it, not dropped), ≤ PIG_MAX kept
+export const PIG_HEAD_BOX                      // { x: 0.22, y0: 0.49, y1: 1.0, z0: −0.78, z1: −0.33 }: the drawn head, snout
+                                               //   and ears in pig space (facing −Z, feet at y 0), outside the cylinder
+export function rayHeadBox(pig, ox, oy, oz, dx, dy, dz) → number   // entry distance into PIG_HEAD_BOX turned by pig.yaw
+                                               //   (0 inside, Infinity on a miss)
 export class Pigs {
   list, size, clear()
   spawn(x, y, z, yaw = 0) → Pig|null           // null at PIG_MAX or non-finite input; mode idle
@@ -1247,8 +1252,9 @@ export class Pigs {
   hit(pig, fromX, fromZ, kick = true) → boolean  // false during the PIG_HURT_S flash; else knockback PIG_KNOCKBACK away, vy ≥ 5
                                                //   (only with `kick`; main's physics knock hook passes false, §23), hurt flash,
                                                //   mode flee for PIG_FLEE_S facing away
-  raycast(ox, oy, oz, dx, dy, dz, maxDist) → { pig, distance }|null   // the body cylinder PIG_RADIUS × PIG_HEIGHT at the feet
-  export() → PigJSON[] (mm-rounded) ; load(validatedList)
+  raycast(ox, oy, oz, dx, dy, dz, maxDist) → { pig, distance }|null   // the nearer of the body cylinder PIG_RADIUS ×
+                                               //   PIG_HEIGHT at the feet and PIG_HEAD_BOX (rayHeadBox)
+  export() → PigJSON[] (mm-rounded; y clamped to ≤ WORLD_HEIGHT) ; load(validatedList)
   spawnNatural(count, q0, r0, seed, getBlock, isLoadedCell, minDist = 4, maxDist = 18) → placed   // grass surfaces only, seeded
 }
 // Shared with zombies (§39): fireAhead(getBlock, x, z, yaw, fy) (AI step 3's fire look-ahead; Pigs._fireAhead delegates),
@@ -2242,7 +2248,9 @@ export class Zombies {
    multiple of π below 0.2 m/s.
 6. **Campfire scorch**: a zombie (not flashing) whose feet cell floor(y + 0.05) is a CAMPFIRE is `hit` from the cell centre —
    `scorched`, or `knockedOut` (removed) when that was its last hit.
-7. **Attack**: not hurt, `attackIn` ≤ 0, not in `avoid`, the player within ZOMBIE_REACH (1.3) horizontally, heights overlapping, and
+7. **Attack**: not hurt, `attackIn` ≤ 0, not in `avoid`, the player not riding this zombie (`player.carrier !== zombie`), within
+   ZOMBIE_REACH (1.3) horizontally, heights overlapping (the player's feet more than ZOMBIE_REACH_OVERLAP 0.1 below the zombie's
+   top, so a rider sunk a few mm into its head is never struck), and
    no solid cell at chest height (the mean feet + 1.2) at 1/3 and 2/3 of the way; then, while `hasCampfires()`, two live
    `nearestFire` look-ups (never the remembered fire): the player inside a zone refuses it (looked up once per update, at the first
    strike due), and the zombie inside a zone refuses it and starts `avoid` away from that fire (as in step 4) — so a strike needs

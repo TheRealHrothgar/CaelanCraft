@@ -310,6 +310,45 @@ export function shoreYaw(getBlock, x, y0, z) {
   return Math.atan2(-(target[0] - x), -(target[1] - z)); // yawToForward(yaw) = (−sin, −cos)
 }
 
+/**
+ * The pig's head, snout and ears in pig space (src/pigRenderer.js builds the model facing −Z with its feet at y 0,
+ * rotation.y = yaw): the head box spans z −0.69 … −0.33, the snout reaches −0.77, the ears rise to ~1.0. All of it
+ * sticks out of the PIG_RADIUS collision cylinder, which covers the body.
+ */
+export const PIG_HEAD_BOX = Object.freeze({ x: 0.22, y0: 0.49, y1: 1.0, z0: -0.78, z1: -0.33 });
+
+/**
+ * Distance along the ray (origin o, unit direction d) to where it enters PIG_HEAD_BOX around `pig`, 0 when the origin is
+ * inside, Infinity when it misses. Slab test in pig space (the inverse of the model's rotation about y by pig.yaw).
+ * @returns {number}
+ */
+export function rayHeadBox(pig, ox, oy, oz, dx, dy, dz) {
+  const c = Math.cos(pig.yaw);
+  const s = Math.sin(pig.yaw);
+  const wx = ox - pig.x;
+  const wz = oz - pig.z;
+  const o = [wx * c - wz * s, oy - pig.y, wx * s + wz * c];
+  const d = [dx * c - dz * s, dy, dx * s + dz * c];
+  const lo = [-PIG_HEAD_BOX.x, PIG_HEAD_BOX.y0, PIG_HEAD_BOX.z0];
+  const hi = [PIG_HEAD_BOX.x, PIG_HEAD_BOX.y1, PIG_HEAD_BOX.z1];
+  let tmin = -Infinity;
+  let tmax = Infinity;
+  for (let k = 0; k < 3; k++) {
+    if (Math.abs(d[k]) < 1e-12) {
+      if (o[k] < lo[k] || o[k] > hi[k]) return Infinity;
+      continue;
+    }
+    let t0 = (lo[k] - o[k]) / d[k];
+    let t1 = (hi[k] - o[k]) / d[k];
+    if (t0 > t1) [t0, t1] = [t1, t0];
+    if (t0 > tmin) tmin = t0;
+    if (t1 < tmax) tmax = t1;
+    if (tmin > tmax) return Infinity;
+  }
+  if (tmax < 0) return Infinity;
+  return Math.max(tmin, 0);
+}
+
 /** mulberry32: a small seeded generator for deterministic natural spawns. @returns {() => number} */
 export function seededRng(seed) {
   let a = seed >>> 0;
@@ -588,6 +627,13 @@ export class Pigs {
     let bestT = maxDist;
     const R2 = PIG_RADIUS * PIG_RADIUS;
     for (const pig of this.list) {
+      // The drawn head, snout and ears reach past the collision cylinder: the ray also hits a box around them, turned
+      // with the pig, so clicking its head never breaks the block behind it (play-test PB-3).
+      const tb = rayHeadBox(pig, ox, oy, oz, dx, dy, dz);
+      if (tb < bestT) {
+        bestT = tb;
+        best = pig;
+      }
       // Ray vs vertical cylinder: solve the horizontal circle, then clip to the cylinder's height; also the caps.
       const px = ox - pig.x;
       const pz = oz - pig.z;
