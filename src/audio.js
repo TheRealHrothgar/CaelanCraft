@@ -14,7 +14,20 @@
 // Voices disconnect themselves when they end. White noise comes from a single
 // buffer generated once with the context and played from a random offset, so
 // the hot path allocates only the handful of nodes a voice needs.
+//
+// Powder and circuits (docs/DESIGN-circuits.md §6.2.11): two generic primitives play the data recipes of
+// circuitSounds.js — `playRecipe(recipeOrName, volume)` (one voice per layer, within MAX_VOICES) and `startLoop(recipe)`
+// (one persistent voice, e.g. the black-hole drone, steered every frame with `set(volume, rate)`). No new play* methods.
 import { SOUND_GROUPS } from './blocks.js';
+import { SOUND_RECIPES } from './circuitSounds.js';
+
+/** @typedef {import('./circuitSounds.js').SoundRecipe} SoundRecipe */
+/** @typedef {import('./circuitSounds.js').SoundLayer} SoundLayer */
+/**
+ * A running loop (audio.startLoop): `set(volume, rate)` sets its volume 0..1 (0 suspends it: its nodes stop and it frees
+ * its voice) and pitch factor (1 = as written); `stop()` ends it. A no-op without WebAudio or while muted.
+ * @typedef {{ set: (volume: number, rate?: number) => void, stop: () => void }} LoopHandle
+ */
 
 /** Master volume applied to every sound. */
 export const MASTER_GAIN = 0.5;
@@ -203,6 +216,12 @@ export const PICK_SWISH_S = 0.12;
 export const PICK_RUSTLE_HZ = 2600;
 export const PICK_GAIN = 0.25;
 
+/** A recipe layer without an `attack` rises over this long (a click-free onset). */
+export const RECIPE_DEFAULT_ATTACK_S = 0.002;
+/** A loop's volume and pitch follow `set` with this time constant (no zipper noise); it fades out over LOOP_FADE_S. */
+export const LOOP_SMOOTH_S = 0.05;
+export const LOOP_FADE_S = 0.06;
+
 /** Exponential ramps cannot reach 0; decays ramp to this floor and the voice stops there. */
 const DECAY_FLOOR = 0.001;
 /** Time constant (s) of the master-gain fade used by setMuted, so muting never clicks. */
@@ -238,6 +257,9 @@ const MUTE_FADE_S = 0.01;
  * @property {(volume?: number) => void} playToolBreak            Survival: a tool wears out
  * @property {(volume?: number) => void} playSizzle               Survival: something cooks on a campfire nearby
  * @property {(volume?: number) => void} playPick                 Survival: a plant picked or litter gathered
+ * @property {(recipe: SoundRecipe|string, volume?: number) => void} playRecipe  a circuitSounds recipe (or its name),
+ *   one voice per layer within MAX_VOICES; volume 0..1 (default 1)
+ * @property {(recipe: SoundRecipe|string) => LoopHandle} startLoop  a persistent voice playing the recipe's layers
  * @property {(b: boolean) => void} setMuted
  * @property {() => boolean} toggleMuted                         returns the new muted state
  * @property {boolean} muted                                     read-only getter
@@ -939,6 +961,240 @@ export function createAudio(opts = {}) {
     }
   }
 
+  // --- recipes and loops (DESIGN-circuits §6.2.11) -----------------------------------------------------------
+
+  /** @returns {SoundRecipe|null} a recipe object, or the named one from circuitSounds.SOUND_RECIPES */
+  function resolveRecipe(recipe) {
+    if (typeof recipe === 'string') return Object.hasOwn(SOUND_RECIPES, recipe) ? SOUND_RECIPES[recipe] : null;
+    return recipe && typeof recipe === 'object' && Array.isArray(recipe.layers) ? recipe : null;
+  }
+
+  /** @returns {number} a positive finite number, else `dflt` */
+  function pos(v, dflt) {
+    return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : dflt;
+  }
+
+  /** @returns {number} a filter / oscillator frequency kept inside (1 Hz, Nyquist) */
+  function hz(c, f) {
+    return Math.min(Math.max(1, f), c.sampleRate / 2 - 1);
+  }
+
+  const FILTER_TYPES = /** @type {const} */ ([['hp', 'highpass'], ['bp', 'bandpass'], ['lp', 'lowpass']]);
+
+  /**
+   * Run `head` through the layer's filters (hp → bp → lp). Each filter starts at its value (or the first of a [from, to]
+   * pair) at `start` and, for a pair, sweeps exponentially to `to` by `end` (when `end` is given).
+   * @returns {AudioNode} the last node of the chain
+   */
+  function filters(c, layer, head, start, end, nodes) {
+    for (const [key, type] of FILTER_TYPES) {
+      const v = /** @type {any} */ (layer)[key];
+      if (v === undefined || v === null) continue;
+      const from = Array.isArray(v) ? v[0] : v;
+      const to = Array.isArray(v) ? v[1] : v;
+      if (!(from > 0)) continue;
+      const f = c.createBiquadFilter();
+      f.type = type;
+      f.frequency.setValueAtTime(hz(c, from), start);
+      if (end !== undefined && to > 0 && to !== from) f.frequency.exponentialRampToValueAtTime(hz(c, to), end);
+      if (f.Q) f.Q.value = pos(layer.q, 1);
+      head.connect(f);
+      nodes.push(f);
+      head = f;
+    }
+    return head;
+  }
+
+  /** The layer's source: an oscillator at f0 (sweeping to f1 by `end`), or looping white noise from a random offset. */
+  function layerSource(c, layer, start, end, rate = 1) {
+    if (layer.type === 'noise') {
+      const src = c.createBufferSource();
+      src.buffer = noise;
+      src.loop = true;
+      src.playbackRate.value = rate;
+      return src;
+    }
+    const osc = c.createOscillator();
+    osc.type = layer.type === 'saw' ? 'sawtooth' : layer.type === 'square' ? 'square' : 'sine';
+    const f0 = pos(layer.f0, 440);
+    osc.frequency.setValueAtTime(hz(c, f0 * rate), start);
+    const f1 = pos(layer.f1, f0);
+    if (end !== undefined && f1 !== f0) osc.frequency.exponentialRampToValueAtTime(hz(c, f1 * rate), end);
+    return osc;
+  }
+
+  /** An amplitude LFO on `gainParam`: ±depth/2 of `peak` at lfoHz, from `start` (to `end` when given). */
+  function lfo(c, layer, gainParam, peak, start, end, nodes) {
+    const rateHz = pos(layer.lfoHz, 0);
+    const depth = pos(layer.lfoDepth, 0);
+    if (!rateHz || !depth) return null;
+    const osc = c.createOscillator();
+    osc.frequency.value = rateHz;
+    const g = c.createGain();
+    g.gain.value = (peak * Math.min(1, depth)) / 2;
+    osc.connect(g);
+    g.connect(gainParam);
+    osc.start(start);
+    if (end !== undefined) osc.stop(end);
+    nodes.push(osc, g);
+    return osc;
+  }
+
+  /** Schedule one layer as one voice: delay, attack, exponential decay; sweeps run over attack + decay. */
+  function layerVoice(c, layer, t0, peak) {
+    const start = t0 + Math.max(0, pos(layer.delay, 0));
+    const attack = layer.attack === undefined ? RECIPE_DEFAULT_ATTACK_S : Math.max(0, pos(layer.attack, 0));
+    const len = attack + pos(layer.decay, 0.01);
+    const end = start + len;
+    const nodes = [];
+    const src = layerSource(c, layer, start, end);
+    const head = filters(c, layer, src, start, end, nodes);
+    const g = envelope(c, start, len, peak, attack);
+    head.connect(g);
+    nodes.push(g);
+    lfo(c, layer, g.gain, peak, start, end, nodes);
+    if (layer.type === 'noise') {
+      const buffer = /** @type {AudioBuffer} */ (noise);
+      src.start(start, Math.random() * Math.max(0, buffer.duration - 0.01));
+    } else {
+      src.start(start);
+    }
+    track(src, nodes, end);
+  }
+
+  /**
+   * Play a recipe (circuitSounds.js) or a recipe name: one voice per layer (per strike, for a `repeat`), scaled by the
+   * recipe's gain and `volume`. Layers that would pass MAX_VOICES are dropped; an unknown name does nothing.
+   * @param {SoundRecipe|string} recipeOrName
+   * @param {number} [volume] 0..1 (default 1)
+   */
+  function playRecipe(recipeOrName, volume = 1) {
+    const v = vol(volume);
+    if (!v) return;
+    const c = ready();
+    if (!c) return;
+    try {
+      const recipe = resolveRecipe(recipeOrName);
+      if (!recipe) return;
+      const strikes = recipe.repeat ? Math.max(1, Math.floor(pos(recipe.repeat.count, 1))) : 1;
+      const every = recipe.repeat ? pos(recipe.repeat.every, 0) : 0;
+      const t0 = c.currentTime;
+      const gain = pos(recipe.gain, 1) * v;
+      for (let k = 0; k < strikes; k++) {
+        for (const layer of recipe.layers) {
+          if (voices >= MAX_VOICES) return;
+          layerVoice(c, layer, t0 + k * every, gain * pos(layer.gain, 0));
+        }
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /**
+   * A persistent voice playing the recipe's layers continuously (oscillators at f0, filters at their starting
+   * frequencies, each layer at its gain, with its LFO). It is built on the first `set` with a volume above 0 on a
+   * running, unmuted context, and counts as one voice while it sounds; `set(0)` (or muting) fades it out, stops its nodes
+   * and frees the voice. A handle on an unknown recipe, or without WebAudio, does nothing.
+   * @param {SoundRecipe|string} recipeOrName
+   * @returns {LoopHandle}
+   */
+  function startLoop(recipeOrName) {
+    const recipe = resolveRecipe(recipeOrName);
+    /**
+     * @type {{ out: GainNode, sources: any[], oscs: { node: OscillatorNode, f0: number }[],
+     *   noises: AudioBufferSourceNode[], nodes: AudioNode[] }|null}
+     */
+    let running = null;
+    let rate = 1;
+
+    function build(c) {
+      const out = c.createGain();
+      out.gain.setValueAtTime(DECAY_FLOOR, c.currentTime);
+      out.connect(/** @type {GainNode} */ (master));
+      const live = { out, sources: [], oscs: [], noises: [], nodes: [out] };
+      const t0 = c.currentTime;
+      const gain = pos(/** @type {SoundRecipe} */ (recipe).gain, 1);
+      for (const layer of /** @type {SoundRecipe} */ (recipe).layers) {
+        const src = layerSource(c, layer, t0, undefined, rate);
+        const head = filters(c, layer, src, t0, undefined, live.nodes);
+        const g = c.createGain();
+        const peak = gain * pos(layer.gain, 0);
+        g.gain.value = peak;
+        head.connect(g);
+        g.connect(out);
+        live.nodes.push(g);
+        const l = lfo(c, layer, g.gain, peak, t0, undefined, live.nodes);
+        if (l) live.sources.push(l);
+        if (layer.type === 'noise') {
+          src.start(t0, Math.random() * Math.max(0, /** @type {AudioBuffer} */ (noise).duration - 0.01));
+          live.noises.push(src);
+        } else {
+          src.start(t0);
+          live.oscs.push({ node: src, f0: pos(layer.f0, 440) });
+        }
+        live.sources.push(src);
+      }
+      voices++;
+      return live;
+    }
+
+    function teardown() {
+      const live = running;
+      running = null;
+      if (!live || !ctx) return;
+      voices = Math.max(0, voices - 1);
+      const now = ctx.currentTime;
+      live.out.gain.cancelScheduledValues(now);
+      live.out.gain.setTargetAtTime(0, now, LOOP_FADE_S / 4);
+      const last = live.sources[live.sources.length - 1];
+      if (last) {
+        last.onended = () => {
+          last.onended = null;
+          try {
+            for (const n of live.sources) n.disconnect();
+            for (const n of live.nodes) n.disconnect();
+          } catch {
+            /* already disconnected */
+          }
+        };
+      }
+      for (const s of live.sources) s.stop(now + LOOP_FADE_S);
+    }
+
+    return {
+      set(volume, r = 1) {
+        try {
+          if (!recipe) return;
+          const v = vol(volume);
+          rate = pos(r, 1);
+          if (!v || muted || !ctx || !master || !noise || ctx.state !== 'running') {
+            if (running) teardown();
+            if (v && ctx && !muted) kick();
+            return;
+          }
+          if (!running) {
+            if (voices >= MAX_VOICES) return;
+            running = build(ctx);
+          }
+          const now = ctx.currentTime;
+          running.out.gain.setTargetAtTime(v, now, LOOP_SMOOTH_S);
+          for (const o of running.oscs) o.node.frequency.setTargetAtTime(hz(ctx, o.f0 * rate), now, LOOP_SMOOTH_S);
+          for (const n of running.noises) n.playbackRate.setTargetAtTime(rate, now, LOOP_SMOOTH_S);
+        } catch (err) {
+          warnOnce(err);
+        }
+      },
+      stop() {
+        try {
+          teardown();
+        } catch (err) {
+          warnOnce(err);
+        }
+      },
+    };
+  }
+
   /** @param {boolean} b */
   function setMuted(b) {
     muted = !!b;
@@ -985,6 +1241,8 @@ export function createAudio(opts = {}) {
     playToolBreak,
     playSizzle,
     playPick,
+    playRecipe,
+    startLoop,
     setMuted,
     toggleMuted,
     get muted() {

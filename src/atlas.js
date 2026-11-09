@@ -145,11 +145,14 @@ export function createAtlasTexture(canvas) {
 }
 
 /**
- * Draw the hexagonal-prism icon of `blockId` into the `size`×`size` square at (0,0) of `ctx` (scaled by
- * `size / 32`): the top hexagon (top tile, clipped to the hexagon) above the two front side faces (left
- * shaded 20 %, right 40 %). The square is cleared first, so AIR (or an unknown id) leaves it blank — which
- * is exactly what an empty hotbar slot needs. The context state (transform, clip, composite op, smoothing,
- * fill style) is saved and restored around the drawing.
+ * Draw the icon of `blockId` into the `size`×`size` square at (0,0) of `ctx` (scaled by `size / 32`). A block whose
+ * `icon` is 'prism' (the default) is drawn as a hexagonal prism: the top hexagon (top tile, clipped to the hexagon)
+ * above the two front side faces (left shaded 20 %, right 40 %). A block whose `icon` is 'flat' (the thin circuit parts:
+ * fuse, torch, wires — DESIGN-circuits §1.5) is drawn as its TOP tile, an unskewed 2D picture fitted to the square with
+ * nearest-neighbour scaling: one drawImage and no side faces, since a wire drawn as a prism with transparent sides reads
+ * as nothing. The square is cleared first, so AIR (or an unknown id) leaves it blank — which is exactly what an empty
+ * hotbar slot needs. The context state (transform, clip, composite op, smoothing, fill style) is saved and restored
+ * around the drawing.
  * @param {CanvasRenderingContext2D} ctx
  * @param {HTMLCanvasElement} atlasCanvas  from createAtlasCanvas()
  * @param {number} blockId
@@ -163,7 +166,11 @@ export function drawBlockIcon(ctx, atlasCanvas, blockId, size = ICON_BASE_SIZE) 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.clearRect(0, 0, size, size);
-  if (def.id !== BLOCK.AIR) {
+  if (def.id !== BLOCK.AIR && def.icon === 'flat') {
+    ctx.imageSmoothingEnabled = false;
+    const [sx, sy] = tileOrigin(getFaceTile(def.id, FACE_TOP));
+    ctx.drawImage(atlasCanvas, sx, sy, ATLAS_TILE_PX, ATLAS_TILE_PX, 0, 0, size, size);
+  } else if (def.id !== BLOCK.AIR) {
     ctx.imageSmoothingEnabled = false;
 
     // Side faces first (the top overdraws their shared edge).
