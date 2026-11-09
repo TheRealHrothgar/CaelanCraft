@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createHandbookUI, paintPaperGrain, bookPages, folioOf, GLYPHS, SINGLE_PAGE_BELOW_PX } from '../../src/handbookUI.js';
+import { createHandbookUI, paintPaperGrain, bookPages, folioOf, keepUnits, GLYPHS, SINGLE_PAGE_BELOW_PX } from '../../src/handbookUI.js';
 import { buildChapters } from '../../src/handbook.js';
 import { createMenus } from '../../src/menus.js';
 import { documentFromHTML, fire } from '../helpers/fakeDom.js';
@@ -81,6 +81,14 @@ describe('pure helpers', () => {
     expect(chapterPages).toHaveLength(CHAPTERS.reduce((s, c) => s + c.pages.length, 0));
     expect(pages.every((p) => ['title', 'contents', 'chapter', 'blank'].includes(p.type))).toBe(true);
     expect([folioOf(0), folioOf(1), folioOf(2), folioOf(9)]).toEqual(['', '', '1', '8']);
+  });
+
+  it('keepUnits glues numbers to their units (no-break space), and nothing else', () => {
+    const NB = ' ';
+    expect(keepUnits('−11.2 °C')).toBe(`−11.2${NB}°C`);
+    expect(keepUnits('50 % and 8 HP/s, 6 HP, 40 s, 5 min, 6 cells, 60 uses, 13.1 m/s')).toBe(
+      `50${NB}% and 8${NB}HP/s, 6${NB}HP, 40${NB}s, 5${NB}min, 6${NB}cells, 60${NB}uses, 13.1${NB}m/s`);
+    expect(keepUnits('6 Sticks and 3 sticks, 2 Rock, 3 seconds')).toBe(`6 Sticks and 3 sticks, 2 Rock, 3${NB}seconds`);
   });
 
   it('every chapter icon has a glyph', () => {
@@ -303,6 +311,26 @@ describe('the field book (§14.1: the handbook item)', () => {
     expect(onClose).toHaveBeenLastCalledWith('rustic');
     ui.close(); // closing twice fires nothing more
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  it('follows the window: resizing below the breakpoint switches to one page at a time', () => {
+    const doc = documentFromHTML(html);
+    /** @type {Record<string, Function>} */
+    const handlers = {};
+    doc.defaultView.addEventListener = (type, fn) => { handlers[type] = fn; };
+    doc.defaultView.removeEventListener = (type) => { delete handlers[type]; };
+    const ui = createHandbookUI(/** @type {any} */ (doc));
+    ui.openRustic();
+    const bookEl = /** @type {any} */ (doc.querySelector('.hb-book'));
+    expect(bookEl.classList.contains('single')).toBe(false);
+    doc.defaultView.innerWidth = 700;
+    handlers.resize();
+    expect(bookEl.classList.contains('single')).toBe(true);
+    doc.defaultView.innerWidth = 1280;
+    handlers.resize();
+    expect(bookEl.classList.contains('single')).toBe(false);
+    ui.dispose();
+    expect(handlers.resize).toBeUndefined();
   });
 
   it('a narrow window shows one page at a time and turns one page', () => {

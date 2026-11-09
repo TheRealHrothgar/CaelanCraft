@@ -106,6 +106,12 @@ export function fmtDurationLong(seconds) {
   return `${Number.isInteger(half) ? half : `${Math.floor(half)}½`} minutes`;
 }
 
+/** A small count in words for prose ("seven"), digits beyond twelve. */
+export function numWord(n) {
+  const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+  return Number.isInteger(n) && n >= 0 && n < WORDS.length ? WORDS[n] : String(n);
+}
+
 /** A day fraction as a clock time: 0.3 → "07:12". */
 export function fmtClock(t) {
   const mins = Math.round((((t % 1) + 1) % 1) * 24 * 60);
@@ -791,14 +797,20 @@ function agesFigure() {
       for (const [tool, tier] of toolNeeds()) {
         if (tier !== t) continue;
         const names = blocksNeeding(tool, tier);
-        const ores = names.filter((n) => / Ore$/.test(n)).map((n) => n.replace(/ Ore$/, ''));
+        // the metals of the ladder first (copper, tin, iron, gold), then the rest (coal, gems)
+        const rank = (n) => {
+          const i = ['copper', 'tin', 'iron', 'gold'].indexOf(n);
+          return i < 0 ? 9 : i;
+        };
+        const ores = names.filter((n) => / Ore$/.test(n)).map((n) => n.replace(/ Ore$/, '').toLowerCase())
+          .sort((a, b) => rank(a) - rank(b));
         if (tool === 'pick' && names.includes('Stone')) opens.push('stone');
-        opens.push(...ores.map((n) => n.toLowerCase()));
+        opens.push(...ores);
         if (tool === 'axe') opens.push('logs');
       }
     }
     if (t === 0) opens = ['dirt', 'plants', 'litter'];
-    return { tier: t, name: cap(TIER_NAMES[t]), opens: opens.slice(0, 3) };
+    return { tier: t, name: cap(TIER_NAMES[t]), opens: opens.slice(0, 4) };
   });
   return { kind: 'figure', figure: 'ages', caption: 'Each age opens the next: what a tool of that age can first break', data };
 }
@@ -955,8 +967,8 @@ function makeChapters() {
       p(`A pig gives ${pigDrops}. Pigs come back to the land over time.`),
     ],
     [
-      h('The seven fire spots'),
-      p(`A campfire has ${SKEWER_SPOTS + 1} spots: a green-wood skewer at each of its ${SKEWER_SPOTS} corner stones, and the embers in the middle. Each skewer holds one piece of food, the embers one pot, and every spot cooks on its own timer.`),
+      h(`The ${numWord(SKEWER_SPOTS + 1)} fire spots`),
+      p(`A campfire has ${numWord(SKEWER_SPOTS + 1)} spots: a green-wood skewer at each of its ${numWord(SKEWER_SPOTS)} corner stones, and the embers in the middle. Each skewer holds one piece of food, the embers one pot, and every spot cooks on its own timer.`),
       fireFigure(),
       bullets([
         '[R] with food in hand: onto the free skewer nearest you.',

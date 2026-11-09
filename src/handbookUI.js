@@ -121,6 +121,14 @@ export function bookPages(chapters) {
   return { pages, start };
 }
 
+/**
+ * Glue a number to its unit with a no-break space ("−11.2 °C", "50 %", "8 HP/s", "40 s"), so a narrow table cell never
+ * leaves the unit alone on the next line. @param {string} text
+ */
+export function keepUnits(text) {
+  return text.replace(/(\d) (?=°C|%|HP\/s|HP\b|m\/s|s\b|min\b|cells?\b|uses\b|seconds\b|minutes\b)/g, '$1 ');
+}
+
 /** The printed page number of book page `i` (the title and contents pages have none). @param {number} i */
 export function folioOf(i) {
   return i >= 2 ? String(i - 1) : '';
@@ -257,7 +265,7 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
   /** Append marked-up text: *emphasis* and [Key] caps. @param {Element} el @param {string} text */
   function inline(el, text) {
     for (const part of inlineParts(text)) {
-      if (part.t === 'text') el.appendChild(doc.createTextNode(part.s));
+      if (part.t === 'text') el.appendChild(doc.createTextNode(keepUnits(part.s)));
       else el.appendChild(make(part.t === 'em' ? 'em' : 'kbd', part.t === 'em' ? '' : 'hb-key', part.s));
     }
     return el;
@@ -286,7 +294,7 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
     b.rows.forEach((row, i) => {
       const tr = make('tr');
       tr.dataset.key = String(b.keys[i] ?? i);
-      for (const cell of row) tr.appendChild(make('td', '', cell));
+      for (const cell of row) tr.appendChild(make('td', '', keepUnits(cell)));
       tbody.appendChild(tr);
     });
     t.appendChild(tbody);
@@ -348,7 +356,7 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
   function drawAges(data) {
     const list = Array.isArray(data) ? data : [];
     const step = 80;
-    const s = svg('svg', { viewBox: `0 0 ${Math.max(1, list.length) * step + 10} 132`, class: 'fig-svg', role: 'img',
+    const s = svg('svg', { viewBox: `0 0 ${Math.max(1, list.length) * step + 10} 146`, class: 'fig-svg', role: 'img',
       'aria-label': list.map((d) => d.name).join(', ') });
     list.forEach((d, i) => {
       const x = 45 + i * step;
@@ -602,6 +610,13 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
     on(root, 'mousedown', (e) => {
       if (e.target === root) close();
     });
+    // one page or two follows the window
+    const view = doc.defaultView;
+    if (view && typeof view.addEventListener === 'function') {
+      on(view, 'resize', () => {
+        if (state.mode === 'rustic' && perView() !== state.perView) renderRustic(0);
+      });
+    }
   }
 
   /** How many pages the field book shows at once (one in a narrow window). */

@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
   HANDBOOK_KEY, HANDBOOK_CHAT_LINE, TABLE_ROWS_PER_PAGE, TABLE_SOURCES, CLIMATE_EXAMPLES, FALL_EXAMPLES, DANGER_NAMES,
   buildChapters, chapterIds, ensureHandbook, inlineParts, plainText, fmtNum, fmtSigned, fmtPct, fmtTemp, fmtDuration,
-  fmtDurationLong, fmtClock, listJoin, describeDrops, recipeInputs, recipeInputsProse, recipeOutputs, recipeTools,
+  fmtDurationLong, fmtClock, listJoin, numWord, describeDrops, recipeInputs, recipeInputsProse, recipeOutputs, recipeTools,
   toolNeedLabel, firstDayKit, fallSpeedForCells, climateExample, exampleBreakSeconds, temperatureBands,
 } from '../../src/handbook.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, itemName, isItemKey } from '../../src/items.js';
@@ -204,6 +204,20 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     expect(rowOf(t, 'pick:3')[2]).toBe('Tin Ore');
     expect(rowOf(t, 'pick:4')[2]).toBe('Iron Ore, Gold Ore');
     expect(rowOf(t, 'pick:2')[1]).toBe('Flint Pick');
+  });
+
+  it('the figures carry the game\'s data: the ages chain (§7.4), the body-temperature bands, the seven fire spots', () => {
+    const figs = [...blocks()].map((x) => x.block).filter((b) => b.kind === 'figure');
+    const ages = figs.find((f) => f.figure === 'ages').data;
+    expect(ages.map((a) => a.name)).toEqual(['Hand', 'Stone', 'Flint', 'Copper', 'Bronze', 'Iron', 'Steel']);
+    expect(ages[1].opens).toEqual(['logs']);
+    expect(ages[2].opens.slice(0, 2)).toEqual(['stone', 'copper']); // the flint pick opens stone and copper first
+    expect(ages[3].opens).toEqual(['tin']);
+    expect(ages[4].opens).toEqual(['iron', 'gold']);
+    for (const a of ages) expect(a.opens.length).toBeLessThanOrEqual(4);
+    const bands = figs.find((f) => f.figure === 'bands').data;
+    expect(bands.map((b) => b.label)).toEqual(temperatureBands().map((b) => b.label));
+    expect(figs.find((f) => f.figure === 'fire-spots').data).toEqual({ skewers: 6, embers: 1 });
   });
 
   it('break times are harvest.breakSeconds with the right kind of tool of each age', () => {
@@ -434,6 +448,7 @@ describe('handbook: formatting', () => {
     expect([fmtDurationLong(270), fmtDurationLong(1200), fmtDurationLong(60), fmtDurationLong(25)]).toEqual(['4½ minutes', '20 minutes', 'a minute', '25 seconds']);
     expect([fmtClock(0.3), fmtClock(0.75), fmtClock(0)]).toEqual(['07:12', '18:00', '00:00']);
     expect([listJoin([]), listJoin(['a']), listJoin(['a', 'b']), listJoin(['a', 'b', 'c'])]).toEqual(['', 'a', 'a and b', 'a, b and c']);
+    expect([numWord(7), numWord(6), numWord(0), numWord(12), numWord(13), numWord(1.5)]).toEqual(['seven', 'six', 'no', 'twelve', '13', '1.5']);
   });
 
   it('inline marks: *emphasis* and [Key] caps', () => {
