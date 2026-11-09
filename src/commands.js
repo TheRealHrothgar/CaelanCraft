@@ -9,6 +9,9 @@
 // console. Cell arguments must resolve to integers. Commands never throw: every failure is a user-facing message
 // that ends with the usage line.
 //
+// Survival (v0.9, docs/DESIGN-survival.md §9.7): `mode` (console only: the new `consoleOnly` flag), `vitals`, `pack` and
+// `items` work through the optional `ctx.survival`; `fly` and `give` refuse while the world is in Survival.
+//
 // Area commands (fill / hexfill / hexring) are validated up front (size cap, y range, every covered chunk loaded,
 // edit budget) and then return a resumable AreaJob that the rune runner advances under a per-frame cell budget in
 // chunk-major order, so a 32k-cell fill never stalls a frame. They skip rune blocks, bedrock and cells the player
@@ -17,7 +20,7 @@ import {
   WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
   GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME, PIG_MAX,
   PIG_RADIUS, PIG_HEIGHT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS,
-  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT,
+  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, STAT_MAX, BREATH_MAX_S, BODY_TEMP_MIN, BODY_TEMP_MAX,
 } from './config.js';
 import { inHeightRange, worldToChunk, yawToForward } from './coords.js';
 import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
@@ -25,6 +28,7 @@ import { BLOCK, BLOCKS, BLOCK_COUNT, getBlockDef, isPlaceable, isSolid } from '.
 import { findFreeY, findStandingY, playerIntersectsBlock } from './physics.js';
 import { formatTime } from './daynight.js';
 import { WATCHER_HEIGHT } from './watcher.js';
+import { ITEM_KEYS, itemName, resolveItem } from './items.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
 /** @typedef {import('./types.js').Rune} Rune */
@@ -43,6 +47,7 @@ import { WATCHER_HEIGHT } from './watcher.js';
  * @property {string[]} args       kinds, in order
  * @property {number} min          minimum argument count
  * @property {boolean} [scriptOnly]
+ * @property {boolean} [consoleOnly]   refused inside a rune script (`ctx.running`): `mode` would reload the world under the runner
  */
 
 /** @type {readonly CommandSpec[]} */
@@ -78,7 +83,26 @@ export const COMMANDS = Object.freeze([
   { name: 'undo', usage: 'undo', summary: 'undo the last explosion, collapse or falling tree (within 60 s)', args: [], min: 0 },
   { name: 'ignite', usage: 'ignite q y r', summary: 'light the blast barrel in that cell', args: ['cell', 'cell', 'cell'], min: 3 },
   { name: 'drain', usage: 'drain [radius]', summary: `remove the water around you (a rune: around itself), radius 0–${DRAIN_MAX_RADIUS}, default ${DRAIN_DEFAULT_RADIUS}`, args: ['int'], min: 0 },
+  { name: 'mode', usage: 'mode [creative|survival]', summary: 'show this world\'s mode, or switch it (saved with the world; console only)', args: ['choice:creative|survival'], min: 0, consoleOnly: true },
+  { name: 'vitals', usage: 'vitals [full|health|nourishment|hydration|temp|breath] [value]', summary: 'show your Survival stats, set one (~ = relative to now), or restore them all', args: ['word', 'num'], min: 0 },
+  { name: 'pack', usage: 'pack [list|add|clear] [item] [count]', summary: 'list the Survival pack, add items to it, or empty it (and what you wear)', args: ['choice:list|add|clear', 'word', 'int'], min: 0 },
+  { name: 'items', usage: 'items [filter]', summary: 'list the item names pack add takes (filtered by a part of the name)', args: ['word'], min: 0 },
 ]);
+
+/** `vitals` stat words → the internal key (`satiation` is shown as Nourishment everywhere), label, range and unit. */
+const VITAL_STATS = Object.freeze({
+  health: Object.freeze({ key: 'health', label: 'Health', lo: 0, hi: STAT_MAX, unit: '' }),
+  nourishment: Object.freeze({ key: 'satiation', label: 'Nourishment', lo: 0, hi: STAT_MAX, unit: '' }),
+  hydration: Object.freeze({ key: 'hydration', label: 'Hydration', lo: 0, hi: STAT_MAX, unit: '' }),
+  temp: Object.freeze({ key: 'temp', label: 'Body temperature', lo: BODY_TEMP_MIN, hi: BODY_TEMP_MAX, unit: ' °C' }),
+  breath: Object.freeze({ key: 'breath', label: 'Breath', lo: 0, hi: BREATH_MAX_S, unit: ' s' }),
+});
+
+/** `pack add` takes at most this many at once. */
+const PACK_ADD_MAX = 9999;
+/** `items` prints this many keys per line. */
+const ITEMS_PER_LINE = 8;
+const NO_SURVIVAL_STATE = 'no survival state in this world (try mode survival)';
 
 /** Block-physics feature switches (`physics <feature> on|off`); the same names as BlockPhysics FEATURES. */
 const PHYSICS_FEATURES = Object.freeze(['falling', 'water', 'collapse', 'explosions']);
@@ -254,6 +278,24 @@ export function resolveBlock(token) {
  * @property {Rune|null} rune                               the executing rune (for `@`), null in the console
  * @property {import('./runes.js').Running|null} running    the executing script, null in the console
  * @property {number} seed
+ * @property {SurvivalCommands} [survival]   v0.9: absent where there is no survival (mode / vitals / pack then fail)
+ */
+
+/**
+ * What the survival commands may touch (main's implementation, DESIGN-survival §9.5 / §9.7).
+ * @typedef {Object} SurvivalCommands
+ * @property {'creative'|'survival'} mode
+ * @property {boolean} hasState                 the world has entered Survival at least once
+ * @property {(m: 'creative'|'survival') => { ok: boolean, message: string }} setMode   queues the switch (requestMode)
+ * @property {() => ({ health: number, satiation: number, hydration: number, temp: number, breath: number,
+ *   labels?: string[] }|null)} vitals          the current (or frozen) stats; null without a survival state
+ * @property {(name: string, v: number) => boolean} setVital   internal key ('health', 'satiation', 'hydration', 'temp',
+ *   'breath'); the value is already clamped; `health` 0 makes main die with cause 'command'
+ * @property {() => void} restoreVitals
+ * @property {(key: string, n: number) => (number|{n: number}|{n: number}[]|null|undefined)} packAdd   what did not fit:
+ *   a count, a stack, a list of stacks, or null/undefined when everything fit
+ * @property {() => void} packClear              empties the pack and the worn items
+ * @property {() => string} packList             the non-empty slots ('' when there are none)
  */
 
 /**
@@ -674,6 +716,7 @@ function run(spec, args, ctx) {
   const world = ctx.world;
   const p = ctx.player;
   if (spec.scriptOnly && !ctx.running) return fail(spec, `${spec.name} is only valid inside a rune script`);
+  if (spec.consoleOnly && ctx.running) return fail(spec, `${spec.name} is only valid in the console`);
 
   switch (spec.name) {
     case 'help': {
@@ -825,11 +868,13 @@ function run(spec, args, ctx) {
       return ok(`time is now ${formatTime(ctx.getTime())}`);
     }
     case 'fly': {
+      if (inSurvival(ctx)) return fail(spec, 'not in Survival');
       const on = args[0] === 'toggle' ? !p.flying : args[0] === 'on';
       ctx.setFlying(on);
       return ok(on ? 'flying' : 'walking');
     }
     case 'give': {
+      if (inSurvival(ctx)) return fail(spec, 'in Survival use: pack add <item> [count]');
       const rb = resolveBlock(args[0]);
       if ('error' in rb) return fail(spec, rb.error);
       if (!isPlaceable(rb.id)) return fail(spec, `"${getBlockDef(rb.id).name}" is not placeable`);
@@ -980,7 +1025,119 @@ function run(spec, args, ctx) {
       if (!rune.enabled) ctx.runner.cancel(rune.key);
       return ok(`rune (${q}, ${y}, ${r}) ${rune.enabled ? 'enabled' : 'disabled'}`);
     }
+    case 'mode':
+      return modeCommand(spec, args, ctx);
+    case 'vitals':
+      return vitalsCommand(spec, args, ctx);
+    case 'pack':
+      return packCommand(spec, args, ctx);
+    case 'items': {
+      const filter = args.length === 1 ? args[0].toLowerCase() : '';
+      const keys = ITEM_KEYS.filter((k) => k.includes(filter));
+      if (keys.length === 0) return ok(`no items match "${args[0]}"`);
+      const lines = [`${keys.length} item${keys.length === 1 ? '' : 's'}${filter ? ` matching "${filter}"` : ''}:`];
+      for (let i = 0; i < keys.length; i += ITEMS_PER_LINE) lines.push(keys.slice(i, i + ITEMS_PER_LINE).join(', '));
+      return ok(lines.join('\n'));
+    }
     default:
       return { ok: false, message: `unknown command "${spec.name}"` };
   }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Survival (v0.9, DESIGN-survival §9.7): mode, vitals, pack (and `items` above). They reach the game through ctx.survival.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** @returns {boolean} the world is in Survival (dead or alive) */
+function inSurvival(ctx) {
+  return Boolean(ctx.survival && ctx.survival.mode === 'survival');
+}
+
+/** "Health 87 · Nourishment 64 · Hydration 51 · 36.9 °C" (`long` adds the breath and the status labels). */
+function vitalsText(v, long) {
+  const n = (x) => (Number.isFinite(x) ? Math.round(x) : '?');
+  const temp = Number.isFinite(v.temp) ? v.temp.toFixed(1) : '?';
+  let text = `Health ${n(v.health)} · Nourishment ${n(v.satiation)} · Hydration ${n(v.hydration)} · ${temp} °C`;
+  if (long) {
+    text += ` · Breath ${n(v.breath)} s`;
+    if (Array.isArray(v.labels) && v.labels.length > 0) text += ` · ${v.labels.join(', ')}`;
+  }
+  return text;
+}
+
+/** A stat value for messages: at most one decimal. */
+function statValue(v) {
+  return Number.isFinite(v) ? String(Math.round(v * 10) / 10) : '?';
+}
+
+/** @returns {CommandResult} */
+function modeCommand(spec, args, ctx) {
+  const sv = ctx.survival;
+  if (args.length === 0) {
+    if (!sv || sv.mode !== 'survival') return ok('mode: creative');
+    const v = sv.vitals();
+    return ok(v ? `mode: survival (${vitalsText(v, false)})` : 'mode: survival');
+  }
+  if (!sv) return fail(spec, 'survival is not available here');
+  const res = sv.setMode(/** @type {'creative'|'survival'} */ (args[0]));
+  if (!res || !res.ok) return fail(spec, (res && res.message) || `could not switch to ${args[0]}`);
+  return ok(res.message || `${args[0]} (saved with this world)`);
+}
+
+/** @returns {CommandResult} */
+function vitalsCommand(spec, args, ctx) {
+  const sv = ctx.survival;
+  const v = sv && sv.hasState ? sv.vitals() : null;
+  if (!v) return fail(spec, NO_SURVIVAL_STATE);
+  if (args.length === 0) return ok(vitalsText(v, true));
+  const what = args[0].toLowerCase();
+  if (what === 'full') {
+    if (args.length > 1) return fail(spec, 'full takes no value');
+    sv.restoreVitals();
+    const now = sv.vitals();
+    return ok(`vitals restored: ${vitalsText(now || v, false)}`);
+  }
+  if (!Object.hasOwn(VITAL_STATS, what)) {
+    return fail(spec, `expected full, ${Object.keys(VITAL_STATS).join(', ')}, got "${args[0]}"`);
+  }
+  const stat = VITAL_STATS[what];
+  const current = Number(v[stat.key]);
+  if (args.length === 1) return ok(`${stat.label} ${statValue(current)}${stat.unit}`);
+  if (args[1].startsWith('@')) return fail(spec, 'value must be a number (~ is relative to the current value)');
+  const r = resolveNumber(args[1], Number.isFinite(current) ? current : 0, 0, 'value', ctx);
+  if ('error' in r) return fail(spec, r.error);
+  const value = Math.max(stat.lo, Math.min(stat.hi, r.value));
+  if (!sv.setVital(stat.key, value)) return fail(spec, NO_SURVIVAL_STATE);
+  return ok(`${stat.label} set to ${statValue(value)}${stat.unit}${value !== r.value ? ' (clamped)' : ''}`);
+}
+
+/** @returns {number} how many items `left` (packAdd's result) says did not fit */
+function leftoverCount(left) {
+  if (typeof left === 'number') return Number.isFinite(left) && left > 0 ? Math.floor(left) : 0;
+  if (Array.isArray(left)) return left.reduce((s, x) => s + leftoverCount(x), 0);
+  if (left && typeof left === 'object') return leftoverCount(/** @type {{n: unknown}} */ (left).n);
+  return 0;
+}
+
+/** @returns {CommandResult} */
+function packCommand(spec, args, ctx) {
+  const sv = ctx.survival;
+  if (!sv || !sv.hasState) return fail(spec, NO_SURVIVAL_STATE);
+  const what = args.length > 0 ? args[0] : 'list';
+  if (what === 'list' || what === 'clear') {
+    if (args.length > 1) return fail(spec, `${what} takes no item`);
+    if (what === 'list') return ok(sv.packList() || 'the pack is empty');
+    sv.packClear();
+    return ok('emptied the pack and what you wear');
+  }
+  if (args.length < 2) return fail(spec, 'expected an item name (type items to list them)');
+  const ri = resolveItem(args[1]);
+  if ('error' in ri) return fail(spec, ri.error);
+  const n = args.length === 3 ? Number(args[2]) : 1;
+  if (!(Number.isInteger(n) && n >= 1 && n <= PACK_ADD_MAX)) return fail(spec, `count must be 1–${PACK_ADD_MAX}`);
+  const left = Math.min(n, leftoverCount(sv.packAdd(ri.key, n)));
+  const name = itemName(ri.key);
+  if (left >= n) return fail(spec, `the pack is full (${n} ${name} did not fit)`);
+  return ok(`added ${n - left} ${name}${left > 0 ? ` (${left} did not fit)` : ''}`);
+}
+

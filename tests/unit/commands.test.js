@@ -15,6 +15,7 @@ import { Pigs } from '../../src/pigs.js';
 import { Zombies } from '../../src/zombies.js';
 import { Watcher } from '../../src/watcher.js';
 import { BlockPhysics } from '../../src/blockphysics.js';
+import { ITEM_KEYS } from '../../src/items.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 import {
   COMMANDS, HELP_FOOTER, COMPASS, parseLine, parseScript, resolveBlock, parseTimeSpec, parseDurationSpec,
@@ -117,6 +118,10 @@ describe('command table', () => {
     }
     expect(names).toEqual(expect.arrayContaining(['help', 'tp', 'tpw', 'setblock', 'fill', 'hexfill', 'hexring', 'time', 'say', 'run', 'wait', 'stop', 'stopall', 'runes', 'rune']));
     expect(COMMANDS.filter((c) => c.scriptOnly).map((c) => c.name).sort()).toEqual(['stop', 'wait']);
+    // v0.9: `mode` is the only console-only command, and no command is both
+    expect(COMMANDS.filter((c) => c.consoleOnly).map((c) => c.name)).toEqual(['mode']);
+    expect(COMMANDS.filter((c) => c.scriptOnly && c.consoleOnly)).toEqual([]);
+    expect(names).toEqual(expect.arrayContaining(['mode', 'vitals', 'pack', 'items']));
     expect(HELP_FOOTER).toHaveLength(3);
     expect(COMPASS).toEqual({ north: 0, west: 90, south: 180, east: -90 });
   });
@@ -243,7 +248,8 @@ describe('resolveBlock', () => {
     expect(resolveBlock('cobble')).toEqual({ id: B.COBBLESTONE });
     expect(resolveBlock('diamond_o')).toEqual({ id: B.DIAMOND_ORE });
     // CONTRACT-ISSUE: DESIGN-survival §8.1 names blocks 78/79 honeyberry_bush(_bare), so the prefix "honey" stopped being
-    // unique (it named honeycomb_block before v0.9). W0 changed this line (owned by package C) to keep the suite green.
+    // unique (it named honeycomb_block before v0.9). W0 changed this line to keep the suite green; package C (owner) keeps
+    // the change: resolveBlock's rules are unchanged, and an ambiguous prefix listing every candidate is the intended result.
     expect(resolveBlock('honeyc')).toEqual({ id: B.HONEYCOMB_BLOCK });
     expect(resolveBlock('honey')).toEqual({ error: 'ambiguous block "honey": honeycomb_block, honeyberry_bush, honeyberry_bush_bare' });
     expect(resolveBlock('light_blue_wool')).toEqual({ id: B.WOOL_LIGHT_BLUE });
@@ -1050,5 +1056,220 @@ describe('executeCommand — block physics (physics / undo / ignite / drain)', (
     expect(world.getBlock(1, FEET, 0)).toBe(B.AIR);
     expect(world.getBlock(9, FEET, 0)).toBe(B.WATER);
     expect(exec(ctx, 'drain 0').message).toBe('no water to drain within 0');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Survival commands (v0.9, docs/DESIGN-survival.md §9.7) against a fake ctx.survival
+
+/** A fake CommandContext.survival: a live survival state with spied methods. */
+function fakeSurvival(over = {}) {
+  const v = { health: 87.4, satiation: 64.2, hydration: 51, temp: 36.94, breath: 20, labels: [] };
+  const sv = {
+    mode: 'survival',
+    hasState: true,
+    v,
+    setMode: vi.fn((m) => ({ ok: true, message: `${m} (saved with this world)` })),
+    vitals: vi.fn(() => (sv.hasState ? { ...v } : null)),
+    setVital: vi.fn((name, value) => {
+      v[name] = value;
+      return true;
+    }),
+    restoreVitals: vi.fn(() => Object.assign(v, { health: 100, satiation: 100, hydration: 100, temp: 37, breath: 20 })),
+    packAdd: vi.fn(() => null),
+    packClear: vi.fn(),
+    packList: vi.fn(() => '1: 12 Rock\n2: Flint Pick (40/90)'),
+    ...over,
+  };
+  return sv;
+}
+
+/** A running script (for the console-only check): what the runner sets while a rune's command runs. */
+const RUNNING = { wave: 1, hops: 0 };
+
+describe('executeCommand — mode (console only)', () => {
+  it('without an argument prints the mode, with the vitals in Survival', () => {
+    const { ctx } = makeCtx({ survival: fakeSurvival() });
+    expect(exec(ctx, 'mode')).toEqual({ ok: true, message: 'mode: survival (Health 87 · Nourishment 64 · Hydration 51 · 36.9 °C)' });
+    ctx.survival.mode = 'creative';
+    expect(exec(ctx, 'mode')).toEqual({ ok: true, message: 'mode: creative' });
+    const noState = fakeSurvival({ vitals: () => null });
+    expect(exec(makeCtx({ survival: noState }).ctx, 'mode').message).toBe('mode: survival');
+    // a context without survival at all is a Creative world
+    expect(exec(makeCtx().ctx, 'mode')).toEqual({ ok: true, message: 'mode: creative' });
+  });
+
+  it('with an argument queues the switch through ctx.survival.setMode and relays its message', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'mode Creative')).toEqual({ ok: true, message: 'creative (saved with this world)' });
+    expect(sv.setMode).toHaveBeenCalledWith('creative');
+    sv.setMode = vi.fn(() => ({ ok: true, message: 'adding survival resources to this world: reloading…' }));
+    expect(exec(ctx, 'mode survival').message).toBe('adding survival resources to this world: reloading…');
+    sv.setMode = vi.fn(() => ({ ok: true, message: 'already creative' }));
+    expect(exec(ctx, 'mode creative')).toEqual({ ok: true, message: 'already creative' });
+    sv.setMode = vi.fn(() => ({ ok: true, message: '' }));
+    expect(exec(ctx, 'mode survival').message).toBe('survival (saved with this world)');
+    sv.setMode = vi.fn(() => ({ ok: false, message: 'not while dead' }));
+    expect(exec(ctx, 'mode creative')).toEqual({ ok: false, message: 'mode: not while dead — usage: mode [creative|survival]' });
+    expect(exec(makeCtx().ctx, 'mode survival')).toEqual({ ok: false, message: 'mode: survival is not available here — usage: mode [creative|survival]' });
+  });
+
+  it('is refused inside a rune script, before anything is touched', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv, running: RUNNING, rune: runeAt(0, 5, 0) });
+    expect(exec(ctx, 'mode survival')).toEqual({ ok: false, message: 'mode: mode is only valid in the console — usage: mode [creative|survival]' });
+    expect(exec(ctx, 'mode')).toEqual({ ok: false, message: 'mode: mode is only valid in the console — usage: mode [creative|survival]' });
+    expect(sv.setMode).not.toHaveBeenCalled();
+    // parse-time checks as for any command
+    expect(parseLine('mode hardcore')).toEqual({ line: 1, message: 'mode: expected one of creative, survival, got "hardcore" — usage: mode [creative|survival]' });
+    expect(parseLine('mode survival now')).toMatchObject({ message: expect.stringContaining('mode: expected [creative|survival] (got 2 args)') });
+  });
+});
+
+describe('executeCommand — vitals', () => {
+  it('fails without a survival state', () => {
+    const fail = { ok: false, message: 'vitals: no survival state in this world (try mode survival) — usage: vitals [full|health|nourishment|hydration|temp|breath] [value]' };
+    expect(exec(makeCtx().ctx, 'vitals')).toEqual(fail);
+    expect(exec(makeCtx({ survival: fakeSurvival({ hasState: false }) }).ctx, 'vitals health 5')).toEqual(fail);
+  });
+
+  it('prints every stat with the breath and the status labels, or one stat', () => {
+    const sv = fakeSurvival();
+    sv.v.labels = ['Hungry', 'Wet'];
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'vitals')).toEqual({ ok: true, message: 'Health 87 · Nourishment 64 · Hydration 51 · 36.9 °C · Breath 20 s · Hungry, Wet' });
+    expect(exec(ctx, 'vitals health').message).toBe('Health 87.4');
+    expect(exec(ctx, 'vitals NOURISHMENT').message).toBe('Nourishment 64.2');
+    expect(exec(ctx, 'vitals temp').message).toBe('Body temperature 36.9 °C');
+    expect(exec(ctx, 'vitals breath').message).toBe('Breath 20 s');
+  });
+
+  it('sets one stat (clamped to its range, ~ relative to the current value) through setVital with the internal key', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'vitals nourishment 30')).toEqual({ ok: true, message: 'Nourishment set to 30' });
+    expect(sv.setVital).toHaveBeenLastCalledWith('satiation', 30);
+    expect(exec(ctx, 'vitals health 150')).toEqual({ ok: true, message: 'Health set to 100 (clamped)' });
+    expect(exec(ctx, 'vitals health -5')).toEqual({ ok: true, message: 'Health set to 0 (clamped)' });
+    expect(sv.setVital).toHaveBeenLastCalledWith('health', 0); // main turns this into pendingDeath 'command'
+    expect(exec(ctx, 'vitals temp 50').message).toBe('Body temperature set to 45 °C (clamped)');
+    expect(exec(ctx, 'vitals temp 10').message).toBe('Body temperature set to 25 °C (clamped)');
+    expect(exec(ctx, 'vitals breath 25').message).toBe('Breath set to 20 s (clamped)');
+    expect(exec(ctx, 'vitals hydration 40').message).toBe('Hydration set to 40');
+    expect(exec(ctx, 'vitals hydration ~-15').message).toBe('Hydration set to 25');
+    expect(exec(ctx, 'vitals hydration ~').message).toBe('Hydration set to 25');
+    expect(exec(ctx, 'vitals temp 38.25').message).toBe('Body temperature set to 38.3 °C');
+    expect(sv.setVital).toHaveBeenLastCalledWith('temp', 38.25);
+    expect(exec(ctx, 'vitals health @5')).toEqual({ ok: false, message: 'vitals: value must be a number (~ is relative to the current value) — usage: vitals [full|health|nourishment|hydration|temp|breath] [value]' });
+    sv.setVital = vi.fn(() => false);
+    expect(exec(ctx, 'vitals health 50').message).toContain('no survival state in this world');
+  });
+
+  it('full restores everything; unknown stats and stray values are refused', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'vitals full')).toEqual({ ok: true, message: 'vitals restored: Health 100 · Nourishment 100 · Hydration 100 · 37.0 °C' });
+    expect(sv.restoreVitals).toHaveBeenCalledTimes(1);
+    expect(exec(ctx, 'vitals full 5').message).toBe('vitals: full takes no value — usage: vitals [full|health|nourishment|hydration|temp|breath] [value]');
+    expect(exec(ctx, 'vitals satiation 5').message).toBe('vitals: expected full, health, nourishment, hydration, temp, breath, got "satiation" — usage: vitals [full|health|nourishment|hydration|temp|breath] [value]');
+    expect(exec(ctx, 'vitals __proto__').ok).toBe(false);
+    expect(exec(ctx, 'vitals constructor 1').ok).toBe(false);
+    expect(parseLine('vitals health lots')).toMatchObject({ message: expect.stringContaining('expected a number for value') });
+    expect(sv.setVital).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeCommand — pack and items', () => {
+  const USAGE = 'usage: pack [list|add|clear] [item] [count]';
+
+  it('pack (list) prints the non-empty slots; an empty pack says so; no survival state fails', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'pack')).toEqual({ ok: true, message: '1: 12 Rock\n2: Flint Pick (40/90)' });
+    expect(exec(ctx, 'pack list').message).toBe('1: 12 Rock\n2: Flint Pick (40/90)');
+    sv.packList = vi.fn(() => '');
+    expect(exec(ctx, 'pack').message).toBe('the pack is empty');
+    expect(exec(ctx, 'pack list rock')).toEqual({ ok: false, message: `pack: list takes no item — ${USAGE}` });
+    expect(exec(makeCtx().ctx, 'pack')).toEqual({ ok: false, message: `pack: no survival state in this world (try mode survival) — ${USAGE}` });
+    expect(exec(makeCtx({ survival: fakeSurvival({ hasState: false }) }).ctx, 'pack add rock').ok).toBe(false);
+  });
+
+  it('pack add resolves item keys and display names, adds 1 by default, and reports what did not fit', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'pack add rock 12')).toEqual({ ok: true, message: 'added 12 Rock' });
+    expect(sv.packAdd).toHaveBeenLastCalledWith('rock', 12);
+    expect(exec(ctx, 'pack add Pot_of_Water')).toEqual({ ok: true, message: 'added 1 Pot of Water' });
+    expect(sv.packAdd).toHaveBeenLastCalledWith('pot_water', 1);
+    expect(exec(ctx, 'pack ADD wrought_iron_bar 3').message).toBe('added 3 Wrought Iron Bar');
+    // what did not fit: a count, an overflow stack, or a list of stacks
+    sv.packAdd = vi.fn(() => 3);
+    expect(exec(ctx, 'pack add rock 12')).toEqual({ ok: true, message: 'added 9 Rock (3 did not fit)' });
+    sv.packAdd = vi.fn(() => ({ k: 'rock', n: 5 }));
+    expect(exec(ctx, 'pack add rock 12').message).toBe('added 7 Rock (5 did not fit)');
+    sv.packAdd = vi.fn(() => [{ k: 'rock', n: 2 }, { k: 'rock', n: 2 }]);
+    expect(exec(ctx, 'pack add rock 12').message).toBe('added 8 Rock (4 did not fit)');
+    sv.packAdd = vi.fn(() => 12);
+    expect(exec(ctx, 'pack add rock 12')).toEqual({ ok: false, message: `pack: the pack is full (12 Rock did not fit) — ${USAGE}` });
+    sv.packAdd = vi.fn(() => 0);
+    expect(exec(ctx, 'pack add flint_pick').message).toBe('added 1 Flint Pick');
+  });
+
+  it('pack add refuses unknown items, a missing item and counts outside 1–9999', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'pack add nope')).toEqual({ ok: false, message: `pack: unknown item "nope" (type items to list them) — ${USAGE}` });
+    expect(exec(ctx, 'pack add')).toEqual({ ok: false, message: `pack: expected an item name (type items to list them) — ${USAGE}` });
+    expect(exec(ctx, 'pack add rock 0').message).toBe(`pack: count must be 1–9999 — ${USAGE}`);
+    expect(exec(ctx, 'pack add rock 10000').ok).toBe(false);
+    expect(exec(ctx, 'pack add rock -3').ok).toBe(false);
+    expect(parseLine('pack add rock 2.5')).toMatchObject({ message: expect.stringContaining('must be a plain integer') });
+    expect(parseLine('pack give rock')).toMatchObject({ message: expect.stringContaining('expected one of list, add, clear') });
+    expect(sv.packAdd).not.toHaveBeenCalled();
+  });
+
+  it('pack clear empties the pack and what you wear', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'pack clear')).toEqual({ ok: true, message: 'emptied the pack and what you wear' });
+    expect(sv.packClear).toHaveBeenCalledTimes(1);
+    expect(exec(ctx, 'pack clear rock').ok).toBe(false);
+    expect(sv.packClear).toHaveBeenCalledTimes(1);
+  });
+
+  it('items lists every item key, 8 per line, or those containing a filter', () => {
+    const { ctx } = makeCtx();
+    const all = exec(ctx, 'items');
+    expect(all.ok).toBe(true);
+    const lines = all.message.split('\n');
+    expect(lines[0]).toBe(`${ITEM_KEYS.length} items:`);
+    const keys = lines.slice(1).flatMap((l) => l.split(', '));
+    expect(keys).toEqual([...ITEM_KEYS]);
+    for (const l of lines.slice(1, -1)) expect(l.split(', ')).toHaveLength(8);
+    const pots = exec(ctx, 'items POT').message.split('\n');
+    expect(pots[0]).toMatch(/^\d+ items matching "pot":$/);
+    for (const k of pots.slice(1).flatMap((l) => l.split(', '))) expect(k).toContain('pot');
+    expect(exec(ctx, 'items wrought').message).toBe('1 item matching "wrought":\nwrought_iron');
+    expect(exec(ctx, 'items zzz')).toEqual({ ok: true, message: 'no items match "zzz"' });
+  });
+});
+
+describe('executeCommand — Creative-only commands in Survival', () => {
+  it('fly fails in Survival with "not in Survival"; it still works in Creative', () => {
+    const { ctx, player } = makeCtx({ survival: fakeSurvival() });
+    expect(exec(ctx, 'fly on')).toEqual({ ok: false, message: 'fly: not in Survival — usage: fly on|off|toggle' });
+    expect(player.flying).toBe(false);
+    expect(ctx.setFlying).not.toHaveBeenCalled();
+    ctx.survival.mode = 'creative';
+    expect(exec(ctx, 'fly on')).toEqual({ ok: true, message: 'flying' });
+  });
+
+  it('give fails in Survival and points at pack add; it still works in Creative', () => {
+    const { ctx } = makeCtx({ survival: fakeSurvival() });
+    expect(exec(ctx, 'give stone')).toEqual({ ok: false, message: 'give: in Survival use: pack add <item> [count] — usage: give <block> [slot 1-9]' });
+    expect(ctx.setHotbarSlot).not.toHaveBeenCalled();
+    ctx.survival.mode = 'creative';
+    expect(exec(ctx, 'give stone').ok).toBe(true);
   });
 });
