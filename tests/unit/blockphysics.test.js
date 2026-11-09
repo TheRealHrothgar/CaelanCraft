@@ -6,9 +6,12 @@ import {
   CHUNK_SIZE, MAX_CELL_UPDATES_PER_TICK, MAX_TOTAL_EDITS, PHYSICS_TICK_S, WATER_TICKS, UNDO_WINDOW_S,
   MAX_SUPPORT_VISITS_PER_TICK, SUPPORT_STARVED_VISITS,
 } from '../../src/config.js';
-import { BLOCK, UNLOADED } from '../../src/blocks.js';
+import { BLOCK, BIOME, UNLOADED, POP_OFF_IDS, isPlant } from '../../src/blocks.js';
 import { localIndex, packCell } from '../../src/coords.js';
+import { HEX_DIRS, hexToWorld } from '../../src/hex.js';
 import { World } from '../../src/world.js';
+import { createWorldGen, POND_CELL, POND_SALT } from '../../src/worldgen.js';
+import { hash2 } from '../../src/noise.js';
 import {
   BlockPhysics, SaveOverlay, SeedQueue, RINGS, FEATURES, WRITE_EXTERNAL, WRITE_PHYSICS, WRITE_QUIET, CAUSE_AREA,
 } from '../../src/blockphysics.js';
@@ -285,6 +288,44 @@ describe('parking and re-seeding', () => {
     expect(physics.fallers.count).toBe(1);
   });
 
+  it('the gravity reseeder lists every pop-off id, and re-seeds an edited pop-off block over a fall-through cell', () => {
+    const { physics, world } = setup();
+    const gravity = physics._reseeders.find((rs) => rs.name === 'gravity');
+    expect(gravity).toBeDefined();
+    for (const id of [B.SAND, B.RED_SAND, B.GRAVEL, ...POP_OFF_IDS, B.AIR, B.WATER, B.WATER_FALL]) {
+      expect(gravity.mask[id], `id ${id}`).toBe(1);
+    }
+    for (const id of [B.STONE, B.DIRT, B.WORK_STUMP, B.WICKER_BASKET, B.REMAINS, B.BLAST_BARREL]) expect(gravity.mask[id], `id ${id}`).toBe(0);
+    // Behaviour: pop-off blocks left hanging at save time (falling off) are queued when their chunk comes back.
+    physics.setSwitch('falling', false);
+    POP_OFF_IDS.forEach((id, i) => world.setBlock(i, 20, 4, id));
+    expect(physics.queued()).toBe(0);
+    physics.setSwitch('falling', true);
+    world.unload(0, 0);
+    world.load(0, 0);
+    POP_OFF_IDS.forEach((id, i) => expect(physics.isQueued('fall', i, 20, 4), `id ${id}`).toBe(true));
+    physics.tick();
+    POP_OFF_IDS.forEach((id, i) => expect(world.getBlock(i, 20, 4), `id ${id}`).toBe(B.AIR));
+  });
+
+  it('a natural plant whose floor was dug out before a save is re-seeded through the edited AIR below it', () => {
+    const { physics, world } = setup(); // natural stone for y ≤ 10
+    for (const f of ['water', 'collapse']) physics.setSwitch(f, false);
+    physics.setSwitch('falling', false);
+    world.put(6, 11, 6, B.TUSSOCK); // natural (no edit)
+    world.put(8, 11, 8, B.LOOSE_STONES);
+    world.setBlock(6, 10, 6, B.AIR); // dug out while falling is off
+    world.setBlock(8, 10, 8, B.STONE); // unchanged id: no edit, nothing to re-seed
+    physics.setSwitch('falling', true);
+    world.unload(0, 0);
+    world.load(0, 0);
+    expect(physics.isQueued('fall', 6, 11, 6)).toBe(true);
+    expect(physics.isQueued('fall', 8, 11, 8)).toBe(false);
+    physics.tick();
+    expect(world.getBlock(6, 11, 6)).toBe(B.AIR);
+    expect(world.getBlock(8, 11, 8)).toBe(B.LOOSE_STONES);
+  });
+
   it('re-seeds edited water: sources wake their open neighbours, flowing water itself (reseeders follow the switches)', () => {
     const { physics, world } = setup();
     physics.setSwitch('water', false);
@@ -315,6 +356,38 @@ describe('built-in triggers', () => {
     expect(physics.isQueued('fall', 6, 11, 6)).toBe(false);
     world.setBlock(7, 20, 7, B.CAMPFIRE); // a floating campfire breaks
     expect(physics.isQueued('fall', 7, 20, 7)).toBe(true);
+  });
+
+  it('falling: pop-off blocks (DESIGN-survival §8.5) queue like the campfire — over a hole, or when their floor goes', () => {
+    for (const id of POP_OFF_IDS) {
+      const { physics, world } = setup();
+      world.setBlock(0, 20, 0, id); // floating
+      expect(physics.isQueued('fall', 0, 20, 0), `placed ${id}`).toBe(true);
+      world.setBlock(3, 11, 3, id); // on the ground: nothing to do
+      expect(physics.isQueued('fall', 3, 11, 3), `grounded ${id}`).toBe(false);
+      world.setBlock(3, 10, 3, B.AIR); // the floor goes
+      expect(physics.isQueued('fall', 3, 11, 3), `floor of ${id}`).toBe(true);
+      // A floor that only changes to another solid block queues nothing.
+      world.setBlock(5, 11, 5, id);
+      world.setBlock(5, 10, 5, B.DIRT);
+      expect(physics.isQueued('fall', 5, 11, 5)).toBe(false);
+    }
+    // Stations and containers are not pop-off blocks.
+    const { physics, world } = setup();
+    for (const id of [B.WORK_STUMP, B.WICKER_BASKET, B.REMAINS, B.SLEEPING_HIDE, B.KILN]) {
+      world.setBlock(7, 20, 7, id);
+      expect(physics.isQueued('fall', 7, 20, 7), `id ${id}`).toBe(false);
+    }
+  });
+
+  it('explosions: ignition stays CAMPFIRE only — a fire pit, a plant or litter next to a barrel queues nothing', () => {
+    for (const id of POP_OFF_IDS) {
+      if (id === B.CAMPFIRE) continue;
+      const { physics, world } = setup();
+      world.setBlock(0, 11, 0, B.BLAST_BARREL);
+      world.setBlock(1, 11, 0, id);
+      expect(physics.queued('misc'), `id ${id}`).toBe(0);
+    }
   });
 
   it('water: placing water queues it and its open neighbours; an open cell under water uses the fall ring', () => {
@@ -785,5 +858,73 @@ describe('a queued fall survives a save and reload (FR-5: rings are not saved)',
       run(live.physics);
       expect(cave(live.world), `stream-in ${put}`).toEqual(want);
     }
+  });
+});
+
+describe('generation-2 terrain under physics (DESIGN-survival §8.4–§8.5)', () => {
+  const SEED = 'caelancraft-test';
+  const gen2 = createWorldGen(SEED, { gen: 2 });
+
+  /** A converged gen-2 World of SEED around cell (q, r), with physics attached like main. */
+  function gen2World(q, r) {
+    const world = new World({ seed: SEED, gen: 2, renderDistance: 1, now: () => 0 });
+    const physics = attachPhysics(world, BlockPhysics);
+    const [x, z] = hexToWorld(q, r);
+    converge(world, x, z);
+    return { world, physics };
+  }
+
+  it('a natural plant or litter pops when the player digs out the ground under it', () => {
+    // A natural tussock, honeyberry bush and loose stones in the chunks around the origin.
+    const want = new Map([[B.TUSSOCK, null], [B.HONEYBERRY_BUSH, null], [B.LOOSE_STONES, null]]);
+    for (let cq = -2; cq <= 2; cq++) {
+      for (let cr = -2; cr <= 2; cr++) {
+        const d = gen2.generateChunk(cq, cr);
+        for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+          for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+            const h = d.heights[lq * CHUNK_SIZE + lr];
+            const id = d.blocks[localIndex(lq, h + 1, lr)];
+            if (want.has(id) && want.get(id) === null) want.set(id, [cq * CHUNK_SIZE + lq, h, cr * CHUNK_SIZE + lr]);
+          }
+        }
+      }
+    }
+    for (const [id, cell] of want) {
+      expect(cell, `a natural ${id} near the origin`).not.toBeNull();
+      const [q, h, r] = cell;
+      const { world, physics } = gen2World(q, r);
+      expect(world.getBlock(q, h + 1, r)).toBe(id);
+      expect(world.hasEdit(q, h + 1, r)).toBe(false);
+      physics.asPlayer(() => world.setBlock(q, h, r, B.AIR));
+      for (let i = 0; i < 10; i++) physics.step(1 / 60);
+      expect(world.getBlock(q, h + 1, r), `id ${id}`).toBe(B.AIR);
+      expect(world.getBlock(q, h, r)).toBe(B.AIR); // nothing fell into the hole
+      expect(isPlant(id) || id === B.LOOSE_STONES).toBe(true);
+    }
+  });
+
+  it('pond water never flows: waking every cell of a pond changes nothing', () => {
+    let pond = null;
+    for (let kq = -8; kq <= 8 && !pond; kq++) {
+      for (let kr = -8; kr <= 8 && !pond; kr++) {
+        const h = hash2(kq, kr, gen2.seed ^ POND_SALT);
+        const q = kq * POND_CELL + 2 + (h & 7);
+        const r = kr * POND_CELL + 2 + ((h >>> 3) & 7);
+        if (gen2.pondAt(q, r) && gen2.getColumn(q, r).biome !== BIOME.SNOWY) pond = { q, r, H: gen2.getColumn(q, r).height };
+      }
+    }
+    expect(pond).not.toBeNull();
+    const { world, physics } = gen2World(pond.q, pond.r);
+    const cells = [[0, 0], ...HEX_DIRS].map(([dq, dr]) => [pond.q + dq, pond.r + dr]).filter(([q, r]) => gen2.pondAt(q, r));
+    expect(cells.length).toBeGreaterThan(0);
+    for (const [q, r] of cells) {
+      expect(world.getBlock(q, pond.H, r)).toBe(B.WATER);
+      physics.scheduleWaterAround(q, pond.H, r);
+    }
+    expect(physics.queued()).toBeGreaterThan(0);
+    for (let i = 0; i < 240; i++) physics.step(1 / 60);
+    expect(physics.queued()).toBe(0);
+    expect(world.editCount).toBe(0); // not one cell changed
+    for (const [q, r] of cells) expect(world.getBlock(q, pond.H, r)).toBe(B.WATER);
   });
 });

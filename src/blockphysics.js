@@ -22,7 +22,7 @@ import {
   UNDO_WINDOW_S, UNDO_MAX_CELLS, SUPPORT_STARVED_VISITS,
 } from './config.js';
 import {
-  BLOCK, UNLOADED, isFallThrough, isGravityBlock, isSolid, isWater, isWaterSource,
+  BLOCK, UNLOADED, POP_OFF_IDS, isFallThrough, isGravityBlock, isPopOff, isSolid, isWater, isWaterSource,
 } from './blocks.js';
 import { HEX_DIRS } from './hex.js';
 import { chunkKey, localIndex, packCell, unpackCell } from './coords.js';
@@ -1447,27 +1447,28 @@ export class BlockPhysics {
     const world = this.world;
     const peek = (q, y, r) => world.peekBlock(q, y, r);
 
-    // ---- falling: the cell above a cell that became fall-through; a gravity block / campfire placed over one.
+    // ---- falling: the cell above a cell that became fall-through; a gravity block / pop-off block placed over one.
+    // Pop-off blocks (v0.9, DESIGN-survival §8.5: campfire, fire pit, plants, litter) break where a campfire always did.
     this.addTrigger('gravity', 'falling', (q, y, r, prev, next) => {
       if (!isFallThrough(prev) && isFallThrough(next)) {
         const above = this._peekColumn(q, y + 1, r);
-        if (isGravityBlock(above) || above === BLOCK.CAMPFIRE) this.schedule('fall', q, y + 1, r);
+        if (isGravityBlock(above) || isPopOff(above)) this.schedule('fall', q, y + 1, r);
       }
-      if ((isGravityBlock(next) || next === BLOCK.CAMPFIRE) && isFallThrough(this._peekColumn(q, y - 1, r))) this.schedule('fall', q, y, r);
+      if ((isGravityBlock(next) || isPopOff(next)) && isFallThrough(this._peekColumn(q, y - 1, r))) this.schedule('fall', q, y, r);
     });
-    // Reseeder: an edited gravity block / campfire over a fall-through cell, and the cell above an EDITED fall-through
-    // cell that was generated NOT fall-through (dug out) — natural sand whose fall was still queued when the game saved
-    // (rings are not saved) falls on reload. That is exactly when the live trigger fired: a cave or sea cell that only
-    // changed to another fall-through id (a source or campfire put under natural sand) never moved the sand live, so it
-    // does not on load or stream-in either.
+    // Reseeder: an edited gravity block / pop-off block over a fall-through cell, and the cell above an EDITED
+    // fall-through cell that was generated NOT fall-through (dug out) — natural sand (or a natural plant) whose fall was
+    // still queued when the game saved (rings are not saved) falls on reload. That is exactly when the live trigger
+    // fired: a cave or sea cell that only changed to another fall-through id (a source or campfire put under natural
+    // sand) never moved the sand live, so it does not on load or stream-in either.
     const fallThroughIds = [];
     for (let id = 0; id < 256; id++) if (isFallThrough(id)) fallThroughIds.push(id);
     const dugOut = (q, y, r) => typeof world.originAt !== 'function' || !isFallThrough(world.originAt(q, y, r));
-    this.addReseeder('gravity', 'falling', [BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, BLOCK.CAMPFIRE, ...fallThroughIds], (ctx, q, y, r, id) => {
-      if ((isGravityBlock(id) || id === BLOCK.CAMPFIRE) && isFallThrough(peek(q, y - 1, r))) this.schedule('fall', q, y, r);
+    this.addReseeder('gravity', 'falling', [BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, ...POP_OFF_IDS, ...fallThroughIds], (ctx, q, y, r, id) => {
+      if ((isGravityBlock(id) || isPopOff(id)) && isFallThrough(peek(q, y - 1, r))) this.schedule('fall', q, y, r);
       if (isFallThrough(id) && dugOut(q, y, r)) {
         const above = peek(q, y + 1, r);
-        if (isGravityBlock(above) || above === BLOCK.CAMPFIRE) this.schedule('fall', q, y + 1, r);
+        if (isGravityBlock(above) || isPopOff(above)) this.schedule('fall', q, y + 1, r);
       }
     });
 
