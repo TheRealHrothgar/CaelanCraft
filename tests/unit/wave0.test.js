@@ -47,7 +47,7 @@ describe('config', () => {
     expect(C.AO_CURVE).toHaveLength(4);
     for (let i = 1; i < 4; i++) expect(C.AO_CURVE[i]).toBeGreaterThan(C.AO_CURVE[i - 1]);
     expect(C.AO_CURVE[3]).toBe(1);
-    expect(C.VERSION).toBe('0.7.0');
+    expect(C.VERSION).toBe('0.8.0');
   });
   it('every version string matches VERSION (F3, console, debug handle, title footer, package files)', () => {
     // Regression: v0.4–v0.7 shipped as "v0.2.0" in F3 and "v0.3" on the title screen because only some were bumped.

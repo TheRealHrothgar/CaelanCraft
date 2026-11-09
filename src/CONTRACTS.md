@@ -148,8 +148,8 @@ SWIM_EXIT_JUMP, WATER_SPEED_FACTOR, MAX_SUBSTEP_DT, MAX_FRAME_DT, COLLISION_EPS,
 CAMERA_FAR, MOUSE_SENSITIVITY, PITCH_LIMIT, MAX_PIXEL_RATIO, DOUBLE_TAP_MS, DOUBLE_TAP_SPACE_MS, DAY_LENGTH_SECONDS,
 START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION`; save slots (§41): `SAVE_SLOTS = 6, MAX_WORLD_NAME_CHARS = 24,
 STORAGE_QUOTA_ESTIMATE = 5 * 1024 * 1024`.
-`VERSION = '0.7.0'`; `package.json` and `package-lock.json` carry the same version and the title footer in `index.html` reads
-`Caelancraft v<major>.<minor>` (`v0.7`) — bump all four together (wave0.test.js checks they agree). Render/data/unload radii are
+`VERSION = '0.8.0'`; `package.json` and `package-lock.json` carry the same version and the title footer in `index.html` reads
+`Caelancraft v<major>.<minor>` (`v0.8`) — bump all four together (wave0.test.js checks they agree). Render/data/unload radii are
 **hex distances** in chunk coordinates. `FACE_SHADE` moved to `hex.js` (it derives from the face normals).
 `TOP_UV_SCALE = √3/2` (hex caps are inscribed in their tile).
 Commands / runes: `GAME_SECONDS_PER_DAY, MAX_FILL_CELLS, MAX_TOTAL_EDITS, MAX_CELLS_PER_FRAME, MAX_COMMANDS_PER_FRAME,

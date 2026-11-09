@@ -1,6 +1,6 @@
 {
   "name": "caelancraft",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Caelancraft — a honeycomb voxel sandbox of hexagonal prisms that runs in the browser",
   "type": "module",
   "private": true,
