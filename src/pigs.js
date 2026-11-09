@@ -339,7 +339,9 @@ export class Pigs {
     this._fires = true;
     /** bank searches left this update (SHORE_SEARCHES_PER_UPDATE) */
     this._shoreBudget = SHORE_SEARCHES_PER_UPDATE;
-    this._input = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, yaw: 0, pullX: 0, pullY: 0, pullZ: 0 };
+    this._input = {
+      forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, yaw: 0, pullX: 0, pullY: 0, pullZ: 0, noExitJump: false,
+    };
   }
 
   get size() {
@@ -419,6 +421,9 @@ export class Pigs {
       // In water a pig always paddles up (it floats, and pressing into a bank gives SWIM_EXIT_JUMP); on land it
       // hops only at a one-cell ledge straight ahead.
       input.jump = pig.inWater || (moving && pig.hitWall && canHop && this._ledgeAhead(pig, world.getBlock));
+      // The swim exit jump (SWIM_EXIT_JUMP at a bank) is a hop too: a pig carrying or riding another would launch its
+      // rider over a wall no single pig can climb (play-test PB-1).
+      input.noExitJump = !canHop;
       input.yaw = pig.yaw;
       if (world.pullAt) {
         world.pullAt(pig.x, pig.y + 0.5, pig.z, this._pull);

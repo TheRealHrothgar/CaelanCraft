@@ -357,6 +357,27 @@ describe('pigs use their body', () => {
     }
     expect(maxY).toBeLessThan(GROUND + 0.5); // nobody even got onto another pig's back
   }, 20000);
+  it('pigs in a walled pool do not escape on each other\'s backs: no swim exit jump while carrying or riding (play-test PB-1)', () => {
+    // A radius-3 pool, water three deep with its surface cell at GROUND − 1, inside a rim that stands to GROUND + 1:
+    // the bank floor is ~2.1 above the water surface, out of one pig's swim exit jump.
+    const ring = (q, r) => Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r));
+    const pool = (q, y, r) => {
+      const d = ring(q, r);
+      if (d <= 3) return y < GROUND - 3 ? B.STONE : y < GROUND ? B.WATER : B.AIR;
+      return y <= GROUND + 1 ? B.STONE : B.AIR;
+    };
+    const escapes = [];
+    for (const seed of [1, 2, 3]) {
+      const pigs = new Pigs(seededRng(seed));
+      for (const [q, r] of [[0, 0], [1, 0], [0, 1], [-1, 0]]) pigs.spawn(...hexToWorld(q, r).flatMap((v, i) => (i === 0 ? [v, GROUND - 1] : [v])), q);
+      for (let f = 0; f < 90 * 60; f++) {
+        pigs.update(1 / 60, { getBlock: pool, isLoaded: () => true });
+        resolveBodies(pigs.list, pool);
+      }
+      escapes.push(pigs.list.filter((g) => ring(...worldToHex(g.x, g.z)) >= 4).length);
+    }
+    expect(escapes).toEqual([0, 0, 0]);
+  }, 60000);
   it('a pig with a block placed in it climbs out', () => {
     const cells = new Set();
     const getBlock = (q, y, r) => (y < GROUND || cells.has(`${q},${y},${r}`) ? B.STONE : B.AIR);

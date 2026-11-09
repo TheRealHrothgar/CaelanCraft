@@ -356,7 +356,8 @@ function substep(p, input, getBlock, h, wx, wz) {
     const target = ((jump ? 1 : 0) - (sneak ? 1 : 0)) * FLY_VERTICAL_SPEED + (input.pullY || 0) / GROUND_ACCEL;
     p.vy += (target - p.vy) * (1 - Math.exp(-GROUND_ACCEL * h));
   } else if (inWater) {
-    if (jump) p.vy = p.hitWall ? SWIM_EXIT_JUMP : SWIM_UP_SPEED;
+    // input.noExitJump: paddle up but never launch out of the water at a bank (a pig carrying another pig, §30).
+    if (jump) p.vy = p.hitWall && !input.noExitJump ? SWIM_EXIT_JUMP : SWIM_UP_SPEED;
     else p.vy = Math.max(p.vy + WATER_GRAVITY * h, WATER_MAX_SINK);
   } else {
     if (jump && p.onGround) p.vy = JUMP_VELOCITY;

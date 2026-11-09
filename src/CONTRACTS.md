@@ -621,7 +621,7 @@ exactly those 7 columns (`gatherColumns`).
    vx += (wx*speed + pullX/GROUND_ACCEL - vx)*k;  vz += (wz*speed + pullZ/GROUND_ACCEL - vz)*k
 3. Vertical:
    flying:  target = ((jump?1:0) - (sneak?1:0)) * FLY_VERTICAL_SPEED + pullY/GROUND_ACCEL;  vy += (target - vy) * (1 - exp(-GROUND_ACCEL*h))
-   inWater: if jump: vy = hitWall ? SWIM_EXIT_JUMP : SWIM_UP_SPEED;  else vy = max(vy + WATER_GRAVITY*h, WATER_MAX_SINK)
+   inWater: if jump: vy = (hitWall && !input.noExitJump) ? SWIM_EXIT_JUMP : SWIM_UP_SPEED;  else vy = max(vy + WATER_GRAVITY*h, WATER_MAX_SINK)
    else:    if (jump && onGround) vy = JUMP_VELOCITY;  vy = max(vy + GRAVITY*h, TERMINAL_VELOCITY)
    not flying, pullY ≠ 0: vy = max(vy + pullY*h, TERMINAL_VELOCITY)
 4. Move, vertical then horizontal; before moving: onGround = false, hitWall = false
@@ -1287,7 +1287,8 @@ frame — §31; a pig standing on or carrying another body never hops, so pigs c
    computed only for a neighbour that IS a campfire. The whole fire check is skipped while `hasCampfires()` returns false.
 Turning is capped at PIG_TURN_RATE; it moves forward only when within 1.2 rad of its heading, at sneak speed when walking and walk
 speed when fleeing. `jump = inWater || (moving && hitWall && canHop && the cell 0.8 ahead is solid at fy and open at fy + 1)`:
-a pig in water always paddles up (it floats; pressing into a bank gives SWIM_EXIT_JUMP), and on land it hops only a one-cell
+a pig in water always paddles up (it floats; pressing into a bank gives SWIM_EXIT_JUMP — unless `!canHop`: `input.noExitJump`, so
+a pig carrying or riding another cannot launch it over a pool's rim, play-test PB-1), and on land it hops only a one-cell
 ledge straight ahead. `walkPhase` advances by 4 × horizontal distance (mod 2π); when the pig moved less than LEG_SETTLE_SPEED
 0.2 m/s · dt it eases toward the nearest multiple of π by `1 − exp(−LEG_SETTLE_RATE 10 · dt)` (the legs stand straight again).
 `oinkIn` resets to 6–18 s.

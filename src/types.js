@@ -105,6 +105,7 @@
  *                              pull / GROUND_ACCEL in every mode (CONTRACTS §12)
  * @property {number} [pullY]
  * @property {number} [pullZ]
+ * @property {boolean} [noExitJump]  in water, jump paddles up (SWIM_UP_SPEED) but never gives SWIM_EXIT_JUMP at a wall
  */
 
 /**
