@@ -264,7 +264,7 @@ const IDS = Object.freeze({
  * @typedef {Object} PhysicsMenuState
  * @property {{ falling: boolean, water: boolean, collapse: boolean, explosions: boolean }} switches
  * @property {boolean} canUndo
- * @property {string} [undoKind]   'explosion' | 'collapse' | 'tree' … (button label)
+ * @property {string} [undoKind]   'explosion' | 'collapse' | 'falling tree' … (button label)
  */
 
 /** Physics row buttons: switch name, label, IDS key. */
@@ -278,7 +278,7 @@ export const PHYSICS_TOGGLES = Object.freeze([
 /** Undo button label for an event kind ('' / undefined: nothing to undo). */
 export function undoButtonLabel(canUndo, kind) {
   if (!canUndo) return 'Undo (nothing to undo)';
-  const what = kind === 'explosion' ? 'Explosion' : kind === 'tree' ? 'Falling Tree' : kind === 'collapse' ? 'Collapse' : 'Physics Event';
+  const what = kind === 'explosion' ? 'Explosion' : kind === 'falling tree' ? 'Falling Tree' : kind === 'collapse' ? 'Collapse' : 'Physics Event';
   return `Undo Last ${what}`;
 }
 

@@ -13,6 +13,7 @@ import { BlockPhysics } from '../../src/blockphysics.js';
 import { tiltEuler, shakeAngle } from '../../src/trees.js';
 import { isLoadBearing } from '../../src/support.js';
 import { makeFakeWorld, attachPhysics } from '../helpers/fixtures.js';
+import { undoButtonLabel } from '../../src/menus.js';
 
 const B = BLOCK;
 const GROUND = 10; // natural ground for y ≤ 10; trees stand on it from y = 11
@@ -256,6 +257,18 @@ describe('topple', () => {
     expect(player.vx).toBeGreaterThan(0);
     settle(physics);
     for (const [q, y, r] of scan(world, isLog, -3, 6, 11, 20, -3, 3)) expect(playerIntersectsBlock(player, q, y, r)).toBe(false);
+  });
+
+  it('the pause-menu Undo button names a felled tree (play-test V3: it read "Undo Last Physics Event")', () => {
+    const { world, physics } = setup();
+    plantTree(world, 0, 0);
+    cut(physics, world, 0, 0);
+    physics.tick();
+    expect(physics.canUndo).toBe(true);
+    expect(undoButtonLabel(physics.canUndo, physics.lastEvent.kind)).toBe('Undo Last Falling Tree');
+    expect(undoButtonLabel(true, 'explosion')).toBe('Undo Last Explosion');
+    expect(undoButtonLabel(true, 'collapse')).toBe('Undo Last Collapse');
+    expect(undoButtonLabel(false, 'falling tree')).toBe('Undo (nothing to undo)');
   });
 
   it('a tree cut at eye level knocks a body its logs drop onto, not just the ones at pivot height (play-test G7)', () => {

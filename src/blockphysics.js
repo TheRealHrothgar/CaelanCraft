@@ -129,7 +129,7 @@ export const CAUSE_AREA = Object.freeze({ kind: 'area' });
  * fallers / logs later landed in — with the id before the event first touched it and the id the event wrote last.
  * @typedef {Object} PhysicsEvent
  * @property {number} id
- * @property {string} kind              'explosion' | 'collapse' | 'tree' | …
+ * @property {string} kind              'explosion' | 'collapse' | 'falling tree' | …
  * @property {Cause} cause
  * @property {number} time              physics.time when it began
  * @property {Map<number, number>} cells  packCell key → prevId·256 + wroteId
