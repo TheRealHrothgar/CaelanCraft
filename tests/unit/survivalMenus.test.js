@@ -256,3 +256,46 @@ describe('the controls sheet (§9.8)', () => {
     expect(row('Space Space')).toBe('Double-tap: fly (or F) · Creative');
   });
 });
+
+describe('§14 the Guide buttons (title screen and pause menu)', () => {
+  it('a Guide .hex-button under the title screen\'s controls sheet, and one in the pause menu after the Mode row', () => {
+    const { $ } = setup();
+    const title = $('btn-guide-title');
+    const pause = $('btn-guide-pause');
+    for (const b of [title, pause]) {
+      expect(b.tagName).toBe('BUTTON');
+      expect(b.classList.contains('hex-button')).toBe(true);
+      expect(b.classList.contains('mc-button')).toBe(false);
+      expect(b.textContent).toBe('Survival Guide');
+    }
+    // beside the controls sheet: the sheet and the button share the title's second column
+    const side = title.parentNode;
+    expect(side.classList.contains('title-side')).toBe(true);
+    expect(side.children.indexOf($('title-controls'))).toBe(side.children.indexOf(title) - 1);
+    expect(side.parentNode.classList.contains('title-main')).toBe(true);
+    // in the pause menu, right after the Mode row
+    const panel = pause.parentNode;
+    expect(panel.children.indexOf(pause)).toBe(panel.children.indexOf($('pause-mode')) + 1);
+  });
+
+  it('each fires onGuide with where it was pressed, in either mode', () => {
+    const onGuide = vi.fn();
+    const { menus, $ } = setup({ onGuide });
+    fire($('btn-guide-title'), 'click');
+    expect(onGuide).toHaveBeenLastCalledWith('title');
+    menus.hideTitle();
+    menus.showPause(7);
+    for (const mode of ['creative', 'survival']) {
+      menus.setModeState(/** @type {any} */ (mode));
+      fire($('btn-guide-pause'), 'click');
+      expect(onGuide).toHaveBeenLastCalledWith('pause');
+    }
+    expect(onGuide).toHaveBeenCalledTimes(3);
+  });
+
+  it('without an onGuide callback the buttons do nothing (and throw nothing)', () => {
+    const { $ } = setup();
+    expect(() => fire($('btn-guide-title'), 'click')).not.toThrow();
+    expect(() => fire($('btn-guide-pause'), 'click')).not.toThrow();
+  });
+});

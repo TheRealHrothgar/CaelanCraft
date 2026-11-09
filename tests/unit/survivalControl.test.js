@@ -9,6 +9,7 @@ import { breakSeconds } from '../../src/harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, strikeKind, useActionOf, placeRefusal, handKeyOf,
   stationIdOf, waterHint, HINT, KNIFE_TIER, DIG_BLOCKED_TICK_S, STATION_TABS, STATION_OF_BLOCK, BELONGINGS_SCAN_DOWN,
+  HANDBOOK_ITEM,
 } from '../../src/survivalControl.js';
 import { makeGetBlock } from '../helpers/fixtures.js';
 
@@ -462,11 +463,40 @@ describe('interactKind: the R priority (§9.4)', () => {
     expect(interactKind(ctx({ headInWater: true, hit: hit(B.WICKER_BASKET) })).kind).toBe('basket');
   });
 
-  it("10. otherwise null: today's barrel and rune behaviour", () => {
+  it('10. the handbook in hand: read it (§14.2), after every target and water case, before barrels and runes', () => {
+    const book = { selectedKey: 'handbook' };
+    expect(HANDBOOK_ITEM).toBe('handbook');
+    expect(HINT.read).toBe('Handbook · R: read');
+    expect(interactKind(ctx({ ...book }))).toEqual({ kind: 'read', hint: 'Handbook · R: read' });
+    expect(interactKind(ctx({ ...book, hit: hit(B.STONE) })).kind).toBe('read');
+    expect(interactKind(ctx({ ...book, hit: hit(B.BLAST_BARREL) })).kind).toBe('read');
+    expect(interactKind(ctx({ ...book, hit: hit(B.RUNE_BLOCK) })).kind).toBe('read');
+    // anything with a higher priority still wins
+    expect(interactKind(ctx({ ...book, hit: hit(B.LOOSE_STONES) })).kind).toBe('pick');
+    expect(interactKind(ctx({ ...book, hit: hit(B.CAMPFIRE), fireView: fireView({ 2: 'roast_pork' }) })).kind).toBe('fire_take');
+    expect(interactKind(ctx({ ...book, hit: hit(B.WICKER_BASKET) })).kind).toBe('basket');
+    expect(interactKind(ctx({ ...book, waterHit: water(2) })).kind).toBe('drink');
+    expect(interactKind(ctx({ ...book, headInWater: true })).kind).toBe('drink_here');
+  });
+
+  it("11. otherwise null: today's barrel and rune behaviour", () => {
     expect(interactKind(ctx({ hit: hit(B.BLAST_BARREL) }))).toBe(null);
     expect(interactKind(ctx({ hit: hit(B.RUNE_BLOCK) }))).toBe(null);
     expect(interactKind(ctx({ hit: hit(B.STONE) }))).toBe(null);
     expect(interactKind(ctx({}))).toBe(null);
+    expect(interactKind(ctx({ selectedKey: 'rock' }))).toBe(null);
+  });
+});
+
+describe('§14.2 RMB with the handbook', () => {
+  it('reads it at once: needS 0, once per press (no repeat)', () => {
+    expect(useActionOf({ k: 'handbook', n: 1 })).toEqual({ kind: 'read', key: 'handbook', needS: 0, repeat: false });
+  });
+  it('a UseState completes the read on the first frame and does not repeat while held', () => {
+    const u = new UseState();
+    const act = useActionOf({ k: 'handbook', n: 1 });
+    expect(u.step(DT, act, true).done).toBe(true);
+    for (let i = 0; i < 64; i++) expect(u.step(DT, act, true).done).toBe(false);
   });
 });
 

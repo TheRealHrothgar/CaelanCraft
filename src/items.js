@@ -101,6 +101,9 @@ const MATERIAL_ROWS = [
   ['clay_pot', 'Clay Pot', 8], ['salt_pot', 'Salt-crusted Pot', 1],
   // boiled in the embers, never drunk as it is
   ['pot_snow', 'Pot of Snow', 1],
+  // §14 the Survival Handbook: every survival state starts with it; never lost on death, never discarded, never made
+  // (inventory.js KEEP_ON_DEATH, handbook.js ensureHandbook). R or RMB with it in hand opens the field book.
+  ['handbook', 'Survival Handbook', 1],
 ];
 
 /**

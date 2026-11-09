@@ -11,6 +11,9 @@
 import { PACK_SLOTS, HOTBAR_SIZE, WEAR_SLOTS } from './config.js';
 import { ITEMS, ITEM_KEYS, TAGS, itemName, maxDurability, WEAR_SLOT_NAMES } from './items.js';
 
+/** The Survival Handbook's item key (§14; handbook.js HANDBOOK_KEY): right-click on it, or "Read", fires onRead. */
+const HANDBOOK_ITEM = 'handbook';
+
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 /** @typedef {import('./itemIcons.js').ItemIcons} ItemIcons */
 
@@ -50,6 +53,8 @@ import { ITEMS, ITEM_KEYS, TAGS, itemName, maxDurability, WEAR_SLOT_NAMES } from
  * @property {(lane: string, i: number) => void} [onCancelJob]
  * @property {(tab: string) => void} [onTab]   a station id or 'all'
  * @property {() => void} [onClose]           Esc, E or the close hex
+ * @property {() => void} [onRead]            §14: right-click on the handbook's slot (empty cursor) or the "Read" button
+ *   beside the Pack heading: main closes the pack and opens the field book
  */
 
 // ---- geometry (pure) -----------------------------------------------------------------------------------------------
@@ -291,6 +296,7 @@ export function demoPackView(opts = {}) {
   put(9, 'plant_fibre', 31); put(10, 'cord', 4); put(11, 'flint', 3); put(12, 'clay_lump', 12); put(13, 'honeyberries', 9);
   put(14, 'oak_log', 6); put(15, 'raw_pork', 2); put(16, 'rawhide', 1); put(17, 'pig_fat', 1); put(19, 'malachite', 5);
   put(20, 'coal', 7); put(22, 'greenware_pot', 2); put(23, 'fibre_bandage', 2); put(25, 'birch_bark', 6); put(26, 'dirt', 40);
+  put(24, HANDBOOK_ITEM); // §14: every survival pack carries the handbook
   const recipe = (id, station, out, inputs, tools, seconds, stationOk = true) => {
     const ins = inputs.map(([k, need, have, tag]) => (tag ? { tag, label: `#${tag}`, need, have } : { k, label: itemName(k), need, have }));
     const tl = tools.map(([type, tier, ok]) => ({ type, tier, label: `${type}≥${tier}`, ok }));
@@ -540,7 +546,16 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     // left: the pack board (wear chain, discard hex, rosette, centre info), the info line, the hotbar strip
     const left = make('div', 'pack-left');
     panel.appendChild(left);
-    left.appendChild(make('div', 'pack-heading', 'Pack'));
+    const heading = make('div', 'pack-heading pack-heading-row');
+    heading.appendChild(make('span', '', 'Pack'));
+    // §14: the handbook's "Read" action (right-clicking its slot does the same); shown while the pack holds it
+    const read = /** @type {HTMLButtonElement} */ (make('button', `hex-button pack-read ${HIDDEN}`, 'Read the handbook'));
+    read.type = 'button';
+    read.title = 'Open the Survival Handbook (or right-click it)';
+    on(read, 'click', () => fire('onRead'));
+    heading.appendChild(read);
+    parts.read = read;
+    left.appendChild(heading);
     const board = /** @type {HTMLElement} */ (make('div', 'pack-board'));
     left.appendChild(board);
     const rosette = /** @type {HTMLElement} */ (make('div', 'pack-rosette'));
@@ -676,7 +691,13 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
       return;
     }
     if (area !== 'pack' && area !== 'wear' && area !== 'container') return;
-    fire('onSlot', area, Number(cell.getAttribute('data-index')), e.button === 2 ? 2 : 0, Boolean(e.shiftKey));
+    const index = Number(cell.getAttribute('data-index'));
+    // §14: right-click on the handbook (with nothing on the cursor) reads it instead of picking it up
+    if (e.button === 2 && stackAt({ area, index })?.k === HANDBOOK_ITEM && !state.view?.cursor) {
+      fire('onRead');
+      return;
+    }
+    fire('onSlot', area, index, e.button === 2 ? 2 : 0, Boolean(e.shiftKey));
   }
 
   /** @param {MouseEvent} e */
@@ -762,6 +783,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     });
     const wear = Array.isArray(v.wear) ? v.wear : [];
     cellsByArea.wear.forEach((cell, i) => paintCell(cell, wear[i] || null));
+    if (parts.read) parts.read.classList.toggle(HIDDEN, !slots.some((s) => s && s.k === HANDBOOK_ITEM));
   }
 
   function renderContainer() {

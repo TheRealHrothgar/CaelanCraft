@@ -85,6 +85,12 @@ say Tower built"></textarea>
   <!-- Survival: the Pack & Making screen (z 20, the picker's layer; never open together). packUI.js builds its content. -->
   <div id="pack-screen" class="layer hidden" role="dialog" aria-label="Pack and Making"></div>
 
+  <!-- The Survival Handbook (docs/DESIGN-survival.md §14); handbookUI.js builds both. The field book (the `handbook` item,
+       z 21: over the HUD and the pack screen, under the pause menu and the death screen) and the Guide (title screen and
+       pause menu, z 32; over the title screen it lifts to z 55, under the confirm dialog). -->
+  <div id="handbook" class="layer hidden" role="dialog" aria-label="Survival Handbook"></div>
+  <div id="guide" class="layer hidden" role="dialog" aria-label="Survival Guide"></div>
+
   <div id="pause-menu" class="layer hidden">
     <div class="menu-panel">
       <h2 class="menu-title">Game Paused</h2>
@@ -111,6 +117,7 @@ say Tower built"></textarea>
           <button id="btn-mode-survival" type="button" class="hex-button mode-half" aria-pressed="false">Survival</button>
         </div>
       </div>
+      <button id="btn-guide-pause" type="button" class="hex-button guide-button" title="The Survival Guide: how to stay alive">Survival Guide</button>
       <button id="btn-quit" class="mc-button">Save &amp; Quit</button>
       <div id="pause-seed" class="menu-note">Seed: …</div>
       <div id="pause-controls" class="controls-sheet"></div>
@@ -151,7 +158,10 @@ say Tower built"></textarea>
         </div>
         <div id="worlds-message" class="worlds-message" role="status" aria-live="polite"></div>
       </section>
-      <div id="title-controls" class="controls-sheet"></div>
+      <div class="title-side">
+        <div id="title-controls" class="controls-sheet"></div>
+        <button id="btn-guide-title" type="button" class="hex-button guide-button" title="The Survival Guide: how to stay alive">Survival Guide</button>
+      </div>
     </div>
     <div id="title-footer">Caelancraft v0.8 · a honeycomb world · Three.js · no assets were downloaded</div>
   </div>

@@ -5,7 +5,7 @@ import { PACK_SLOTS, WEAR_SLOTS, HOTBAR_SIZE } from '../../src/config.js';
 import { ITEMS, ITEM_KEYS, TAGS, stackSize, maxDurability } from '../../src/items.js';
 import {
   Pack, slotClick, returnCursor, makeStack, copyStack, canMerge, durabilityLeft, stackProblem, fitStack, spoilSlots,
-  countsToStacks, aggregateStacks, stackLabel,
+  countsToStacks, aggregateStacks, stackLabel, KEEP_ON_DEATH, KEEP_REFUSED, isKept,
 } from '../../src/inventory.js';
 import { mulberry32 } from '../../src/noise.js';
 
@@ -833,5 +833,94 @@ describe('slotClick (§5.4)', () => {
     s.cursor = { k: 'rock', n: 2 };
     expect(returnCursor(s)).toEqual({ k: 'rock', n: 2 });
     expect(s.cursor).toBe(null);
+  });
+});
+
+describe('§14.2 the handbook stays with you (KEEP_ON_DEATH)', () => {
+  const BOOK = { k: 'handbook', n: 1 };
+  function session(slots = {}, cursor = null, container = null) {
+    return { pack: packWith(slots), cursor, container };
+  }
+
+  it('KEEP_ON_DEATH is the handbook; isKept tells a kept stack', () => {
+    expect([...KEEP_ON_DEATH]).toEqual(['handbook']);
+    expect(Object.isFrozen(KEEP_ON_DEATH)).toBe(true);
+    expect(isKept(BOOK)).toBe(true);
+    expect([isKept({ k: 'rock', n: 1 }), isKept(null), isKept(undefined)]).toEqual([false, false, false]);
+    expect(KEEP_REFUSED).toBe('The handbook stays with you.');
+  });
+
+  it('dumpAll (death) leaves it in its slot and gives up everything else', () => {
+    const p = packWith({ 0: { k: 'flint_pick', n: 1, d: 40 }, 8: BOOK, 20: { k: 'rock', n: 5 } }, { 1: { k: 'grass_cape', n: 1 } });
+    const v = p.version;
+    expect(p.dumpAll()).toEqual([{ k: 'flint_pick', n: 1, d: 40 }, { k: 'rock', n: 5 }, { k: 'grass_cape', n: 1 }]);
+    expect(filled(p)).toEqual({ 8: BOOK });
+    expect(p.wear).toEqual([null, null, null]);
+    expect(p.version).toBeGreaterThan(v);
+    // a pack holding only the handbook: nothing to dump, nothing changes
+    const v2 = p.version;
+    expect(p.dumpAll()).toEqual([]);
+    expect(p.version).toBe(v2);
+    expect(filled(p)).toEqual({ 8: BOOK });
+  });
+
+  it('the discard hex refuses it: the cursor keeps it and the result says why; other stacks still go', () => {
+    const s = session({}, BOOK);
+    const res = slotClick(s, 'discard', 0, 0, false);
+    expect(res).toEqual({ changed: false, container: false, discarded: null, refused: KEEP_REFUSED });
+    expect(s.cursor).toEqual(BOOK);
+    s.cursor = { k: 'rock', n: 3 };
+    expect(slotClick(s, 'discard', 0, 0, false)).toEqual({ changed: true, container: false, discarded: { k: 'rock', n: 3 } });
+  });
+
+  it('a basket refuses it, by click, right-click, swap or shift-click; taking one out of a basket is allowed', () => {
+    const basket = new Array(18).fill(null);
+    basket[3] = { k: 'acorns', n: 6 };
+    // left click on an empty basket slot, and on a full one (a swap)
+    for (const i of [0, 3]) {
+      const s = session({}, BOOK, basket);
+      const res = slotClick(s, 'container', i, 0, false);
+      expect(res.refused, `slot ${i}`).toBe(KEEP_REFUSED);
+      expect(res.changed).toBe(false);
+      expect(s.cursor).toEqual(BOOK);
+    }
+    // right click: put one
+    const s = session({}, BOOK, basket);
+    expect(slotClick(s, 'container', 0, 2, false).refused).toBe(KEEP_REFUSED);
+    expect(basket[0]).toBe(null);
+    // shift-click from the pack while the basket is open
+    const s2 = session({ 8: BOOK }, null, basket);
+    expect(slotClick(s2, 'pack', 8, 0, true).refused).toBe(KEEP_REFUSED);
+    expect(s2.pack.slots[8]).toEqual(BOOK);
+    expect(basket.filter(Boolean)).toEqual([{ k: 'acorns', n: 6 }]);
+    // with no basket open, shift-click still moves it between the hotbar and the rosette
+    const s3 = session({ 8: BOOK });
+    expect(slotClick(s3, 'pack', 8, 0, true).changed).toBe(true);
+    expect(s3.pack.slots[9]).toEqual(BOOK);
+    // and moving it about the pack is ordinary
+    const s4 = session({ 8: BOOK });
+    slotClick(s4, 'pack', 8, 0, false);
+    slotClick(s4, 'pack', 2, 0, false);
+    expect(filled(s4.pack)).toEqual({ 2: BOOK });
+    // one that got into a basket some other way can be taken out
+    const old = new Array(18).fill(null);
+    old[5] = BOOK;
+    const s5 = session({}, null, old);
+    expect(slotClick(s5, 'container', 5, 0, false).changed).toBe(true);
+    expect(s5.cursor).toEqual(BOOK);
+  });
+
+  it('returnCursor never leaves it behind: in a full pack it takes the last other stack\'s place', () => {
+    const s = session({}, BOOK);
+    expect(returnCursor(s)).toBe(null);
+    expect(s.pack.slots[0]).toEqual(BOOK);
+    const full = session({}, BOOK);
+    for (let i = 0; i < 27; i++) full.pack.slots[i] = { k: 'stick', n: 64 };
+    full.pack.slots[26] = { k: 'rock', n: 7 };
+    const v = full.pack.version;
+    expect(returnCursor(full)).toEqual({ k: 'rock', n: 7 });
+    expect(full.pack.slots[26]).toEqual(BOOK);
+    expect(full.cursor).toBe(null);
+    expect(full.pack.version).toBeGreaterThan(v);
   });
 });

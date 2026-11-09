@@ -341,3 +341,157 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 /* The New World form's "Survival resources" checkbox (§1.3) */
 .slot-check{display:flex;flex-basis:100%;align-items:center;gap:6px;color:#e0e0e0;font:12px monospace;text-shadow:1px 1px 0 #000;cursor:pointer}
 .slot-check input{margin:0;accent-color:#e8b04a}
+
+/* ==== The Survival Handbook (docs/DESIGN-survival.md §14; handbookUI.js) =====================================================
+   One text, two skins. The Guide (#guide, title screen and pause menu): the survival palette and .hex-button chrome, z 32 over
+   the pause menu (30) and under the death screen (33); over the title screen (z 50) it lifts to z 55, still under the confirm
+   dialog (60). The field book (#handbook, the `handbook` item): parchment from CSS gradients and a procedural grain canvas, a
+   serif system font stack (nothing downloaded), z 21: over the HUD and the pack screen, under the console, the pause menu and
+   the death screen. Like the pack screen it ends above the HUD's hotbar and vitals (bottom 84px), so they stay in sight. */
+.title-side{display:flex;flex-direction:column;align-items:flex-start}
+.guide-button{margin-top:10px;padding:7px 22px;font-size:14px}
+#pause-menu .guide-button{margin-top:0}
+/* the pack screen's "Read the handbook" action, inside the Pack heading's line */
+.pack-heading-row{display:flex;align-items:center;gap:12px}
+.pack-read{padding:1px 14px;font:bold 11px/14px monospace;letter-spacing:0;text-transform:none}
+
+/* -- the Guide -- */
+#guide{z-index:32;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;background:rgba(10,8,14,.72)}
+#guide.over-title{z-index:55}
+.guide-panel{display:flex;flex-direction:column;width:min(1060px,100%);height:min(660px,100%);box-sizing:border-box;background:#1c1a24;border:2px solid #e8b04a;box-shadow:0 0 0 2px #000,0 10px 32px rgba(0,0,0,.6);color:#f1e6cf;font:15px/1.55 system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+.guide-head{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid #3a3446}
+.guide-hex{display:block;width:22px;height:22px;fill:#e8b04a;stroke:#1c1a24;stroke-width:1.5}
+.guide-title{margin:0;color:#e8b04a;font:bold 17px monospace;letter-spacing:.08em;text-transform:uppercase}
+.guide-sub{color:#8a8298;font:12px monospace}
+.guide-close{margin-left:auto}
+.guide-body{flex:1;min-height:0;display:flex}
+.guide-nav{flex:0 0 236px;overflow-y:auto;padding:8px 6px;border-right:1px solid #3a3446;display:flex;flex-direction:column;gap:2px}
+.guide-chapter{display:flex;align-items:center;gap:10px;padding:7px 10px 7px 14px;border:0;background:transparent;color:#d8ccb4;font:14px/18px system-ui,"Segoe UI",Roboto,Arial,sans-serif;text-align:left;cursor:pointer;clip-path:polygon(9px 0,100% 0,100% 100%,9px 100%,0 50%)}
+.guide-chapter:hover{background:#2a2633}
+.guide-chapter:focus-visible{outline:none;background:#3a3446}
+.guide-chapter.active{background:#e8b04a;color:#1c1a24}
+.hb-glyph{flex:0 0 20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.guide-chapter-title{flex:1}
+.guide-count{min-width:18px;padding:0 4px;border-radius:8px;background:rgba(0,0,0,.25);font:11px/16px monospace;text-align:center}
+.guide-page{flex:1;min-width:0;overflow-y:auto;padding:16px 28px 22px;outline:none}
+.guide-crumb{margin-bottom:8px;color:#8a8298;font:12px monospace;letter-spacing:.04em}
+.guide-content{max-width:76ch}
+.guide-content .hb-h{margin:0 0 10px;color:#e8b04a;font:bold 21px/1.3 system-ui,"Segoe UI",Roboto,Arial,sans-serif}
+.guide-content .hb-p{margin:0 0 11px}
+.guide-content em{color:#ffd884;font-style:normal;font-weight:600}
+.guide-content .hb-list{margin:0 0 12px;padding-left:24px}
+.guide-content .hb-list li{margin:0 0 6px}
+.guide-content ol.hb-list li::marker{color:#e8b04a;font-weight:bold}
+.hb-key{display:inline-block;min-width:14px;margin:0 1px;padding:0 5px;border:1px solid #8a8298;border-bottom-width:2px;border-radius:3px;font:bold 12px/17px monospace;text-align:center;vertical-align:1px}
+.guide-content .hb-key{background:#2a2633;color:#fff}
+.hb-callout{margin:12px 0;padding:8px 12px;border-left:3px solid #e8b04a;background:rgba(232,176,74,.1)}
+.hb-callout.hb-warn{border-left-color:#d0582a;background:rgba(208,88,42,.13)}
+.hb-note-label{margin-right:8px;font:bold 11px monospace;letter-spacing:.08em;text-transform:uppercase}
+.hb-callout .hb-note-label{color:#e8b04a}
+.hb-callout.hb-warn .hb-note-label{color:#ff8a5a}
+.hb-table-wrap{margin:4px 0 12px;overflow-x:auto}
+.hb-table{width:100%;border-collapse:collapse}
+.hb-table caption{text-align:left}
+.guide-content .hb-table{font:13px/1.4 system-ui,"Segoe UI",Roboto,Arial,sans-serif}
+.guide-content .hb-table caption{padding:0 0 6px;color:#e8b04a;font:bold 13px monospace;letter-spacing:.04em}
+.guide-content .hb-table th{padding:5px 10px 5px 0;border-bottom:2px solid #e8b04a;color:#e8b04a;font-weight:600;text-align:left;white-space:nowrap}
+.guide-content .hb-table td{padding:5px 10px 5px 0;border-bottom:1px solid #3a3446;vertical-align:top}
+.guide-content .hb-table tbody tr:nth-child(even){background:rgba(255,255,255,.03)}
+.hb-figure{margin:6px 0 14px}
+.hb-figure svg{display:block;width:100%;max-width:560px;height:auto}
+.fig-fire-spots svg{max-width:240px}
+.hb-text .fig-fire-spots svg{max-width:188px}
+.hb-figure figcaption{margin-top:4px;font-size:12px;opacity:.8}
+.fig-label{font:bold 12px system-ui,"Segoe UI",Arial,sans-serif;fill:currentColor}
+.fig-small{font-size:10px;font-weight:normal}
+.fig-cell{fill:none;stroke:currentColor;stroke-opacity:.45;stroke-width:1.5;stroke-dasharray:4 3}
+.fig-embers{fill:#d0582a;fill-opacity:.55}
+.fig-stone{fill:#9a948a;stroke:#2a2633;stroke-width:1.2}
+.fig-skewer{stroke:#7c8a4c;stroke-width:3;stroke-linecap:round}
+.fig-food{fill:#c97a52;stroke:#2a2633;stroke-width:.8}
+.fig-pot{fill:#b5603a;stroke:#2a2633;stroke-width:1.2}
+.fig-pot + .fig-label{fill:#fff4dc}
+.fig-arrow{fill:none;stroke:currentColor;stroke-width:2;stroke-opacity:.6}
+.fig-age{stroke:#1c1a24;stroke-width:1.5}
+.fig-age-0{fill:#d8b48c}.fig-age-1{fill:#9a948a}.fig-age-2{fill:#5a6070}.fig-age-3{fill:#c8743a}.fig-age-4{fill:#b08d3a}.fig-age-5{fill:#8a8f96}.fig-age-6{fill:#c9d3dc}
+.fig-age-name{fill:#1c1a24}
+.fig-age-2 + .fig-age-name{fill:#f1e6cf}
+.fig-band{stroke:#1c1a24;stroke-width:1}
+.fig-band-0{fill:#2a4f9e}.fig-band-1{fill:#3a7bd5}.fig-band-2{fill:#6fa6e8}.fig-band-3{fill:#a9cdf2}.fig-band-4{fill:#6fbf6a}.fig-band-5{fill:#e8b04a}.fig-band-6{fill:#e07a3a}.fig-band-7{fill:#c8402a}
+.fig-mark{fill:currentColor}
+.guide-content .hb-figure{color:#f1e6cf}
+.guide-foot{display:flex;align-items:center;gap:12px;padding:8px 14px;border-top:1px solid #3a3446}
+.guide-pos{min-width:96px;color:#e8b04a;font:bold 13px monospace;text-align:center}
+.guide-keys{margin-left:auto;color:#8a8298;font:11px monospace}
+@media (max-width:720px){.guide-body{flex-direction:column}.guide-nav{flex:0 0 auto;flex-direction:row;overflow-x:auto;border-right:0;border-bottom:1px solid #3a3446}.guide-chapter-title,.guide-count,.guide-keys{display:none}}
+
+/* -- the field book -- */
+#handbook{z-index:21;display:flex;align-items:flex-start;justify-content:center;padding-top:3vh;box-sizing:border-box;background:radial-gradient(ellipse at 50% 40%,rgba(30,18,8,.35),rgba(12,7,3,.72))}
+.hb-book{position:relative;width:min(1120px,calc(100vw - 100px));height:min(600px,max(300px,calc(100vh - 3vh - 84px)));box-sizing:border-box;padding:12px 14px 26px;border-radius:12px;outline:none;background:radial-gradient(ellipse at 30% 20%,rgba(255,220,170,.10),transparent 60%),repeating-radial-gradient(circle at 70% 80%,rgba(0,0,0,.05) 0 2px,transparent 2px 5px),linear-gradient(160deg,#5a3520,#3a2214 55%,#2a180d);box-shadow:0 0 0 2px #1a0e06,inset 0 0 0 3px rgba(255,210,150,.12),inset 0 0 22px rgba(0,0,0,.6),0 18px 40px rgba(0,0,0,.6)}
+.hb-spread{position:relative;display:flex;height:100%}
+.hb-gutter{flex:0 0 2px;background:linear-gradient(#5c3b1e,#3a2410)}
+.hb-page{position:relative;flex:1;min-width:0;overflow:hidden;color:#3b2412;font:15px/1.48 "Palatino Linotype",Palatino,"Book Antiqua","Iowan Old Style",Georgia,"Times New Roman",serif;background:radial-gradient(ellipse at 50% 45%,#f6eacb 0%,#efdfb6 55%,#e2cb94 100%)}
+.hb-left{border-radius:7px 2px 2px 7px;box-shadow:inset -26px 0 30px -18px rgba(80,45,12,.6),inset 6px 0 10px -6px rgba(80,45,12,.4)}
+.hb-right{border-radius:2px 7px 7px 2px;box-shadow:inset 26px 0 30px -18px rgba(80,45,12,.6),inset -6px 0 10px -6px rgba(80,45,12,.4)}
+.hb-grain{position:absolute;inset:0;width:100%;height:100%;mix-blend-mode:multiply;pointer-events:none;image-rendering:auto}
+.hb-page-inner{position:relative;height:100%;box-sizing:border-box;padding:18px 30px 30px;display:flex;flex-direction:column}
+.hb-running{flex:0 0 auto;margin-bottom:10px;padding-bottom:3px;border-bottom:1px solid rgba(90,55,25,.4);color:#7a5a3a;font-size:12px;font-variant:small-caps;letter-spacing:.1em;text-align:center}
+.title-page .hb-running{border-bottom-color:transparent}
+.hb-columns{flex:1;min-height:0;display:flex;gap:14px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(90,55,25,.4) transparent}
+.hb-text{flex:1;min-width:0}
+.hb-notes{display:none;flex:0 0 29%;padding:2px 0 0 12px;border-left:1px solid rgba(165,62,40,.5)}
+.hb-columns.has-notes .hb-notes{display:block}
+.hb-left .hb-notes{order:-1;padding:2px 12px 0 0;border-left:0;border-right:1px solid rgba(165,62,40,.5)}
+.hb-folio{position:absolute;bottom:9px;color:#7a5a3a;font-size:12px;font-style:italic}
+.hb-left .hb-folio{left:32px}
+.hb-right .hb-folio{right:32px}
+.hb-corner{position:absolute;bottom:0;width:40px;height:40px;padding:0;border:0;cursor:pointer;background:linear-gradient(135deg,transparent 50%,rgba(120,80,35,.28) 50%,rgba(60,35,12,.42))}
+.hb-corner.prev{left:0;background:linear-gradient(225deg,transparent 50%,rgba(120,80,35,.28) 50%,rgba(60,35,12,.42))}
+.hb-corner.next{right:0}
+.hb-corner:hover:not(:disabled),.hb-corner:focus-visible{width:52px;height:52px;outline:none}
+.hb-corner:disabled{opacity:0;cursor:default}
+.hb-book:not(.single) .hb-left .hb-corner.next,.hb-book:not(.single) .hb-right .hb-corner.prev{display:none}
+.hb-book.single .hb-right,.hb-book.single .hb-gutter{display:none}
+.hb-book.single .hb-left{border-radius:7px}
+.hb-text .hb-h{display:inline-block;margin:0 0 9px;padding-bottom:1px;border-bottom:2px solid rgba(59,36,18,.55);font-size:21px;font-weight:normal;font-variant:small-caps;letter-spacing:.04em;line-height:1.25}
+.hb-text .hb-p{margin:0 0 9px;text-align:justify;hyphens:auto}
+.hb-text em{color:#5a2a0c;font-style:italic}
+.hb-text .hb-list{margin:0 0 10px;padding-left:22px}
+.hb-text .hb-list li{margin:0 0 4px}
+.hb-text .hb-key{border-color:#7a5a3a;background:rgba(255,248,230,.55);color:#3b2412;font:bold 11px/16px Georgia,serif}
+.hb-note{margin:2px 0 16px;color:#57534d;font:15px/1.28 "Segoe Print","Bradley Hand","Noteworthy","Comic Sans MS",cursive;transform:rotate(-1.2deg);transform-origin:left top}
+.hb-note .hb-key{border-color:#7d7770;background:none;color:#57534d;font:bold 11px/15px Georgia,serif}
+.hb-note.hb-warn{color:#8e2b17;transform:rotate(.8deg)}
+.hb-note .hb-note-label{display:block;margin:0 0 1px;font:italic bold 12px Georgia,serif;letter-spacing:0;text-transform:none;opacity:.8}
+.hb-note.hb-warn .hb-note-label::after{content:"!"}
+.hb-text .hb-table{font-size:13px;line-height:1.28}
+.hb-text .hb-table caption{padding:0 0 4px;font-size:14px;font-variant:small-caps;letter-spacing:.05em;color:#5a3a1c}
+.hb-text .hb-table th{padding:2px 8px 3px 0;border-bottom:1.5px solid #3b2412;font-weight:bold;font-variant:small-caps;text-align:left;white-space:nowrap}
+.hb-text .hb-table td{padding:3px 8px 3px 0;border-bottom:1px solid rgba(59,36,18,.28);vertical-align:top}
+.hb-text .hb-figure{color:#3b2412}
+.hb-text .hb-figure svg{filter:sepia(.55) saturate(.7)}
+.hb-text .hb-figure figcaption{font-style:italic}
+.hb-tabs{position:absolute;top:26px;right:-42px;bottom:34px;display:flex;flex-direction:column;gap:3px;width:56px}
+.hb-tab{flex:1 1 0;max-height:44px;min-height:0;padding:0 3px 0 14px;border:0;border-radius:0 7px 7px 0;background:linear-gradient(90deg,#d8c08a,#e9d6a6);color:#4a2e14;font:bold 10px/1.05 "Palatino Linotype",Palatino,Georgia,serif;font-variant:small-caps;text-align:left;overflow:hidden;cursor:pointer;box-shadow:2px 1px 3px rgba(0,0,0,.45)}
+.hb-tab:nth-child(even){background:linear-gradient(90deg,#cdb27a,#e2cc98)}
+.hb-tab:hover,.hb-tab:focus-visible{outline:none;transform:translateX(3px)}
+.hb-tab.active{background:linear-gradient(90deg,#efdfb6,#f6eacb);transform:translateX(4px)}
+.hb-close{position:absolute;top:-8px;right:58px;padding:12px 10px 5px;border:0;border-radius:0 0 4px 4px;background:linear-gradient(#8a5a33,#6a4122);color:#f6e2b8;font:bold 11px Georgia,serif;font-variant:small-caps;letter-spacing:.08em;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,.5)}
+.hb-close:hover,.hb-close:focus-visible{outline:none;background:linear-gradient(#a06a3e,#7a4b28)}
+.hb-hint{position:absolute;left:0;right:0;bottom:5px;color:#e3cf9f;font:italic 12px Georgia,serif;text-align:center;opacity:.85}
+.hb-titleblock{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:100%;padding:30px 0;box-sizing:border-box;text-align:center}
+.hb-emblem{width:84px;height:84px;fill:none;stroke:#3b2412;stroke-width:1.1;stroke-linejoin:round;opacity:.85}
+.hb-booktitle{font-size:32px;font-variant:small-caps;letter-spacing:.08em}
+.hb-booksub{font-size:16px;font-style:italic;color:#5a3a1c}
+.hb-bookfoot{margin-top:26px;color:#57534d;font:15px "Segoe Print","Bradley Hand","Noteworthy","Comic Sans MS",cursive;transform:rotate(-2deg)}
+.hb-toc{margin:6px 0 0;padding:0;list-style:none}
+.hb-toc-entry{display:flex;align-items:baseline;gap:6px;width:100%;padding:3px 0;border:0;background:none;color:#3b2412;font:16px/1.5 "Palatino Linotype",Palatino,Georgia,serif;text-align:left;cursor:pointer}
+.hb-toc-entry:hover,.hb-toc-entry:focus-visible{outline:none;color:#8e2b17}
+.hb-toc-dots{flex:1;border-bottom:1.5px dotted rgba(59,36,18,.5);transform:translateY(-4px)}
+.hb-toc-page{font-style:italic}
+.blank-page .hb-columns{background:repeating-linear-gradient(transparent 0 25px,rgba(60,90,140,.18) 25px 26px)}
+.hb-spread.turn-next .hb-page-inner{animation:hb-turn-next .22s ease-out}
+.hb-spread.turn-prev .hb-page-inner{animation:hb-turn-prev .22s ease-out}
+@keyframes hb-turn-next{from{opacity:.25;transform:translateX(14px)}to{opacity:1;transform:none}}
+@keyframes hb-turn-prev{from{opacity:.25;transform:translateX(-14px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.hb-spread.turn-next .hb-page-inner,.hb-spread.turn-prev .hb-page-inner{animation:none}}

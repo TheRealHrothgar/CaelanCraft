@@ -33,7 +33,11 @@ export const HINT = Object.freeze({
   packFull: 'Pack full',
   needsGround: 'needs solid ground',
   protectedCell: 'Holds survival items · switch to Survival to empty it',
+  read: 'Handbook · R: read',
 });
+
+/** The Survival Handbook's item key (handbook.js HANDBOOK_KEY; §14). R (priority 10) and RMB with it in hand read it. */
+export const HANDBOOK_ITEM = 'handbook';
 
 /** Workplace block → its station id (crafting.findStations / the Making tabs). */
 export const STATION_OF_BLOCK = Object.freeze({
@@ -219,14 +223,16 @@ export class UseState {
 
 /**
  * What RMB does with the selected stack in Survival (§0, §4.5): eat or drink food (food that gives back a pot is drunk),
- * apply a bandage, wear clothes, or place a block. null for tools and materials.
+ * apply a bandage, wear clothes, place a block, or read the handbook (§14.2: at once, no hold: needS 0, once per press).
+ * null for tools and other materials.
  * @param {ItemStack|null} stack
- * @returns {({kind: 'eat'|'drink'|'bandage'|'wear', key: string, needS: number, repeat?: boolean}|
+ * @returns {({kind: 'eat'|'drink'|'bandage'|'wear'|'read', key: string, needS: number, repeat?: boolean}|
  *   {kind: 'place', key: string, block: number})|null}
  */
 export function useActionOf(stack) {
   const def = stack ? getItem(stack.k) : null;
   if (!def) return null;
+  if (def.key === HANDBOOK_ITEM) return { kind: 'read', key: def.key, needS: 0, repeat: false };
   if (def.food) return { kind: def.food.returns ? 'drink' : 'eat', key: def.key, needS: def.food.useS };
   if (def.heal) return { kind: 'bandage', key: def.key, needS: def.heal.useS };
   if (def.wear) return { kind: 'wear', key: def.key, needS: 0, repeat: false };
@@ -282,7 +288,7 @@ export function strikeKind(mob, tool) {
 /**
  * @typedef {Object} InteractAction
  * @property {string} kind  fire_put | fire_feed | fire_take | fire_hint | pit_take | pit_relight | pit_hint | pick | tap |
- *   tap_hint | basket | belongings | hide | station | fill | drink | drink_here
+ *   tap_hint | basket | belongings | hide | station | fill | drink | drink_here | read
  * @property {number} [q] @property {number} [y] @property {number} [r]   the cell acted on (the water cell for fill/drink)
  * @property {string} [key]      fire_put / fire_feed: the selected item
  * @property {'skewer'|'centre'} [spot]  fire_put
@@ -313,7 +319,8 @@ function anyFree(spots, from, to) {
  * 7. a workplace → `station`;
  * 8. `waterHit` is water nearer than `hit` (or there is no hit) → `fill` with an empty clay pot selected, else `drink`;
  * 9. the head is under water → `drink_here`;
- * 10. null: today's barrel and rune behaviour.
+ * 10. the handbook is selected → `read` (§14.2: before today's barrel and rune behaviour);
+ * 11. null: today's barrel and rune behaviour.
  * @param {InteractContext} c
  * @returns {InteractAction|null}
  */
@@ -372,6 +379,7 @@ export function interactKind(c) {
     return act;
   }
   if (c.headInWater) return { kind: 'drink_here' };
+  if (sel === HANDBOOK_ITEM) return { kind: 'read', hint: HINT.read };
   return null;
 }
 

@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { ITEMS, ITEM_KEYS, getItem } from '../../src/items.js';
 import { BLOCK } from '../../src/blocks.js';
-import { ITEM_ART_KEYS, ITEM_ART_SIZE, paintItem, paintMissingItem, hasItemArt, toolArtOf } from '../../src/itemArt.js';
+import { ITEM_ART_KEYS, ITEM_ART_SIZE, paintItem, paintMissingItem, hasItemArt, toolArtOf, HEX_BRAND } from '../../src/itemArt.js';
 import { createItemIcons, iconBlockFor, sheetCell, SHEET_COLS } from '../../src/itemIcons.js';
 import { FakeDocument } from '../helpers/fakeDom.js';
 
@@ -43,7 +43,7 @@ function principalAngle(points) {
 
 describe('itemArt: coverage', () => {
   it('every non-block item in ITEMS has art, and only those (block items are drawn from the atlas)', () => {
-    expect(NON_BLOCK.length).toBe(98);
+    expect(NON_BLOCK.length).toBe(99); // 98 + the Survival Handbook (§14)
     expect([...ITEM_ART_KEYS].sort()).toEqual([...NON_BLOCK].sort());
     expect(ITEM_ART_KEYS).toEqual(NON_BLOCK); // same order as ITEM_KEYS (tools, materials, food, bandages, clothes)
     for (const k of NON_BLOCK) expect(hasItemArt(k), k).toBe(true);
@@ -171,6 +171,36 @@ describe('itemArt: the art rules (§9.8, §11)', () => {
     let blue = 0;
     for (let i = 0; i < px.length; i += 4) if (px[i + 3] && px[i + 2] > px[i] + 40) blue++;
     expect(blue).toBeGreaterThan(20);
+  });
+
+  it('§14 the handbook: a leather-bound book tied with cord, a hex burned into the cover, pages at the edge', () => {
+    expect(hasItemArt('handbook')).toBe(true);
+    const px = paintItem('handbook');
+    expect(isChecker(px)).toBe(false);
+    const at = (x, y) => {
+      const i = (y * N + x) * 4;
+      return px[i + 3] ? [px[i], px[i + 1], px[i + 2]] : null;
+    };
+    const near = (c, rgb, tol = 4) => !!c && c.every((v, i) => Math.abs(v - rgb[i]) <= tol);
+    // the hemp twine crosses the whole cover on row 10 and is knotted past the fore-edge
+    for (let x = 2; x <= 12; x++) expect(near(at(x, 10), x & 1 ? [0xc9, 0xb0, 0x7a] : [0xa4, 0x8a, 0x52]), `cord ${x}`).toBe(true);
+    expect(near(at(14, 10), [0xa4, 0x8a, 0x52])).toBe(true);
+    // the burned hex: a charred pointy-top ring (a vertex top and bottom, straight sides) round a scorched face
+    expect(HEX_BRAND).toHaveLength(14);
+    for (const [x, y] of HEX_BRAND) expect(near(at(x, y), [0x26, 0x13, 0x0a]), `hex ${x},${y}`).toBe(true);
+    const xs = HEX_BRAND.map(([x]) => x);
+    const ys = HEX_BRAND.map(([, y]) => y);
+    expect([Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]).toEqual([5, 10, 2, 8]);
+    expect(near(at(7, 6), [0x5e, 0x33, 0x1a])).toBe(true); // scorched inside
+    // leather cover: brown (red > green > blue) over most of the icon; pale pages at the fore-edge
+    let leather = 0;
+    for (let y = 1; y <= 13; y++) for (let x = 4; x <= 11; x++) {
+      const c = at(x, y);
+      if (c && c[0] > c[1] && c[1] > c[2]) leather++;
+    }
+    expect(leather).toBeGreaterThan(80);
+    const page = at(13, 5);
+    expect(page && page[0] > 190 && page[1] > 170).toBe(true);
   });
 });
 
