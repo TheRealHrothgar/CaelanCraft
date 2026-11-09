@@ -4,14 +4,21 @@
 // switch, Undo disabled in Survival, the death screen (a honeycomb closing ring by ring, "Wake up"), a general
 // `confirm()` on the old delete dialog, the New World form's "Survival resources" checkbox and "· Survival" on Worlds rows.
 // §14: a Guide button on the title screen (under the controls sheet) and in the pause menu → callbacks.onGuide(from).
+// Circuits (docs/DESIGN-circuits.md §5, §6.2.14, §6.2.17; CONTRACTS §56 once merged): the block picker is pickerUI.js's
+// honeycomb (this module binds its elements and delegates showPicker / hidePicker / isPickerOpen, so main's API is unchanged);
+// the pause menu's Devices row `[ Circuits: On | Off ]` `[ Black holes: On | Off ]`; the reworded controls sheet (§4.9).
 //
 // DOM module. Every DOM access goes through the `doc` handed to createMenus and happens inside a
 // function, so this file can be imported in Node. Imports: config, blocks, atlas, storage (world names only; per the
-// import graph). The Worlds panel never touches storage itself: main lists the slots and acts on the callbacks.
-import { HOTBAR_SIZE, MAX_WORLD_NAME_CHARS } from './config.js';
-import { TILE, PICKER_ORDER, getBlockDef } from './blocks.js';
-import { makeBlockIconCanvas, makeTiledBackgroundDataURL, drawTitleLogo } from './atlas.js';
+// import graph), pickerUI. The Worlds panel never touches storage itself: main lists the slots and acts on the callbacks.
+import { MAX_WORLD_NAME_CHARS } from './config.js';
+import { TILE } from './blocks.js';
+import { makeTiledBackgroundDataURL, drawTitleLogo } from './atlas.js';
 import { defaultWorldName } from './storage.js';
+import { createPickerUI, PICKER_ICON_PX } from './pickerUI.js';
+
+/** Edge length of the block-picker icon canvases, in CSS pixels (CONTRACTS §20); pickerUI.js owns it now. */
+export { PICKER_ICON_PX };
 
 /** The 18 title-screen splash strings from docs/SPEC-gameplay.md §5.4, verbatim. */
 export const SPLASHES = Object.freeze([
@@ -37,7 +44,10 @@ export const SPLASHES = Object.freeze([
 
 /**
  * Controls cheat-sheet rows (docs/SPEC-gameplay.md §4), rendered as one `<kbd>` + one `<span>` per row
- * into the two-column `.controls-sheet` grids (#title-controls, #pause-controls).
+ * into the two-column `.controls-sheet` grids (#title-controls, #pause-controls). Still 17 rows; RMB, R and Shift R carry
+ * the circuits wording merged with survival's (DESIGN-circuits §4.9, §7.1): keys are written in full ("R key", "Shift+R
+ * key", "right-click"), never a bare "R:". The two long rows wrap onto a second line (styles.css: the description column
+ * is 58ch wide).
  * @type {ReadonlyArray<readonly [string, string]>}
  */
 export const CONTROLS_SHEET = Object.freeze([
@@ -48,13 +58,13 @@ export const CONTROLS_SHEET = Object.freeze([
   Object.freeze(['W W', 'Double-tap: sprint (while W is held)']),
   Object.freeze(['Space Space', 'Double-tap: fly (or F) · Creative']),
   Object.freeze(['LMB', 'Break block (hold) · Survival: hold to dig']),
-  Object.freeze(['RMB', 'Place block · Survival: use the item in hand']),
+  Object.freeze(['RMB', 'Place · right-click works switches, timers, plungers (Shift: place) · Survival: use the item in hand']),
   Object.freeze(['MMB', 'Pick the targeted block into the hotbar']),
   Object.freeze(['1–9', 'Select hotbar slot (or scroll wheel)']),
   Object.freeze(['E', 'Blocks · Survival: pack & making']),
   Object.freeze(['T  /', 'Command console (/ starts a command)']),
-  Object.freeze(['R', 'Use: rune, barrel, fire, water, plants, basket']),
-  Object.freeze(['Shift R', 'Edit the targeted Rune Block (also opens on placing one)']),
+  Object.freeze(['R', 'R key: use a switch, timer, fuse, radio key or rune · Survival: fire, water, plants, basket']),
+  Object.freeze(['Shift R', 'Shift+R key: settings of the targeted device or Rune Block']),
   Object.freeze(['Esc', 'Pause · close menus']),
   Object.freeze(['F3', 'Toggle the debug overlay']),
   Object.freeze(['M', 'Mute / unmute sound']),
@@ -222,11 +232,15 @@ export function deathCombCells(rings = DEATH_COMB_RINGS, size = DEATH_COMB_CELL)
   return out;
 }
 
-/** Edge length of the block-picker icon canvases, in CSS pixels (CONTRACTS §20). */
-export const PICKER_ICON_PX = 64;
-
-/** `#picker-name` content while nothing is hovered: a non-breaking space keeps the line's height. */
-const PICKER_NAME_IDLE = ' ';
+/**
+ * The pause menu's Devices switches (DESIGN-circuits §6.2.17): the world's Circuits and Black holes switches, each two halves
+ * of one hexagon like survival's Mode switch: [name, the On half's label, IDS keys of the group, the On and the Off half,
+ * the callback].
+ */
+export const DEVICE_SWITCHES = Object.freeze([
+  Object.freeze(['circuits', 'Circuits: On', 'btnCircuits', 'btnCircuitsOn', 'btnCircuitsOff', 'onSetCircuits']),
+  Object.freeze(['blackholes', 'Black holes: On', 'btnBlackholes', 'btnBlackholesOn', 'btnBlackholesOff', 'onSetBlackHoles']),
+]);
 
 /** Element ids in index.html this module binds to (property name → id). */
 const IDS = Object.freeze({
@@ -275,9 +289,20 @@ const IDS = Object.freeze({
   deathWhere: 'death-where',
   btnWake: 'btn-wake',
   btnDeathQuit: 'btn-death-quit',
+  btnCircuits: 'btn-circuits',
+  btnCircuitsOn: 'btn-circuits-on',
+  btnCircuitsOff: 'btn-circuits-off',
+  btnBlackholes: 'btn-blackholes',
+  btnBlackholesOn: 'btn-blackholes-on',
+  btnBlackholesOff: 'btn-blackholes-off',
   blockPicker: 'block-picker',
   pickerGrid: 'picker-grid',
   pickerName: 'picker-name',
+  pickerSearch: 'picker-search',
+  pickerShowAll: 'picker-showall',
+  pickerRail: 'picker-rail',
+  pickerScroll: 'picker-scroll',
+  pickerBlurb: 'picker-blurb',
 });
 
 /**
@@ -302,8 +327,12 @@ const IDS = Object.freeze({
  * @property {(from: 'title'|'pause') => void} [onGuide]  the Guide button on the title screen or in the pause menu (§14):
  *   main opens handbookUI.openGuide(); the screen underneath stays and comes back when the Guide closes
  * @property {() => void} [onClickToPlay]
- * @property {(blockId: number, slot: number|null) => void} [onPickBlock]  slot 0..8 for Digit1-9, null for a click
+ * @property {(blockId: number, slot: number|null) => void} [onPickBlock]  slot 0..8 for Digit1-9 or a drop on the hotbar
+ *   (the picker stays open), null for a click / Enter (main closes it)
  * @property {() => void} [onPickerClose]
+ * @property {(on: boolean) => void} [onSetCircuits]    pause-menu Devices row: the world's Circuits switch; fired only by the
+ *   inactive half (DESIGN-circuits §6.2.17)
+ * @property {(on: boolean) => void} [onSetBlackHoles]  the Devices row's Black holes switch, likewise
  */
 
 /**
@@ -347,6 +376,9 @@ const IDS = Object.freeze({
  *   belongings line, hidden when empty
  * @property {() => void} hideDeath
  * @property {() => boolean} isDeathOpen
+ * @property {(sw: { circuits?: boolean, blackholes?: boolean }) => void} setDeviceSwitches   the Devices row: each switch's
+ *   active half filled in honey with aria-pressed="true" (a missing key keeps its state)
+ * @property {() => { circuits: boolean, blackholes: boolean }} getDeviceSwitches
  * @property {() => void} dispose
  */
 
@@ -415,28 +447,6 @@ function clearChildren(el) {
 }
 
 /**
- * Map a KeyboardEvent.key to the KeyboardEvent.code this module cares about, for events that carry no
- * `code` (some synthetic / virtual-keyboard events). Returns '' when the key is not one we handle.
- * @param {string|undefined} key
- */
-function codeFromKey(key) {
-  if (key === 'Escape' || key === 'Esc') return 'Escape';
-  if (key === 'e' || key === 'E') return 'KeyE';
-  if (typeof key === 'string' && key.length === 1 && key >= '1' && key <= '9') return 'Digit' + key;
-  return '';
-}
-
-/**
- * Hotbar slot (0-based) selected by a `Digit1`..`Digit9` code, or -1 for anything else / out of range.
- * @param {string} code
- */
-function slotFromDigitCode(code) {
-  if (!code.startsWith('Digit')) return -1;
-  const n = Number(code.slice(5));
-  return Number.isInteger(n) && n >= 1 && n <= HOTBAR_SIZE ? n - 1 : -1;
-}
-
-/**
  * Create the menu controller bound to the ids in index.html.
  *
  * Decorative atlas work (dirt background, logo, picker icons) is wrapped so that a failure there is
@@ -469,17 +479,11 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     deathCombBuilt: false,
     lastSplash: -1,
     backgroundApplied: false,
-    pickerOpen: false,
-    pickerKeysAttached: false,
-    /** @type {number|null} block id of the hovered / focused picker cell */
-    hoveredId: null,
-    /** @type {HTMLElement|null} */
-    hoveredCell: null,
+    /** the Devices row (DESIGN-circuits §6.2.17) */
+    devices: { circuits: true, blackholes: true },
     disposed: false,
   };
 
-  /** @type {{ id: number, cell: HTMLElement }[]} */
-  const cells = [];
   /** @type {Array<[EventTarget, string, EventListener]>} static listeners removed by dispose() */
   const listeners = [];
   /** @type {Set<string>} */
@@ -1165,118 +1169,70 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
   on(el.btnGuideTitle, 'click', () => fire('onGuide', 'title'));
   on(el.btnGuidePause, 'click', () => fire('onGuide', 'pause'));
 
-  // ---- block picker --------------------------------------------------------------------------------
-
-  /** @param {number} id @param {HTMLElement} cell */
-  function setHovered(id, cell) {
-    state.hoveredId = id;
-    state.hoveredCell = cell;
-    el.pickerName.textContent = getBlockDef(id).displayName;
-  }
-
-  /** Clear the hover only if `cell` is still the hovered one (focus/blur and mouse events interleave). */
-  function clearHovered(cell) {
-    if (cell !== undefined && cell !== state.hoveredCell) return;
-    state.hoveredId = null;
-    state.hoveredCell = null;
-    el.pickerName.textContent = PICKER_NAME_IDLE;
-  }
-
-  /** Build the PICKER_ORDER picker cells once; they live in #picker-grid for the lifetime of the menus. */
-  function buildPickerGrid() {
-    clearChildren(el.pickerGrid);
-    cells.length = 0;
-    for (let i = 0; i < PICKER_ORDER.length; i++) {
-      const id = PICKER_ORDER[i];
-      const def = getBlockDef(id);
-      const cell = /** @type {HTMLButtonElement} */ (doc.createElement('button'));
-      cell.type = 'button';
-      cell.className = 'picker-cell';
-      cell.dataset.blockId = String(id);
-      cell.title = def.displayName;
-      cell.setAttribute('aria-label', def.displayName);
-      const icon = safe(() => makeBlockIconCanvas(atlasCanvas, id, PICKER_ICON_PX), 'block icons');
-      if (icon) cell.appendChild(icon);
-      on(cell, 'mouseenter', () => setHovered(id, cell));
-      on(cell, 'mouseleave', () => clearHovered(cell));
-      on(cell, 'focus', () => setHovered(id, cell));
-      on(cell, 'blur', () => clearHovered(cell));
-      on(cell, 'click', () => fire('onPickBlock', id, null));
-      el.pickerGrid.appendChild(cell);
-      cells.push({ id, cell });
-    }
-  }
+  // ---- the Devices row (DESIGN-circuits §6.2.17) ---------------------------------------------------------
 
   /**
-   * Mark which blocks are already in the hotbar (data-slot, .in-hotbar, tooltip) and which one is the
-   * selected slot (.selected). Purely informational; the CSS may or may not style these hooks.
-   * @param {number[]|undefined} hotbar @param {number|undefined} selected
+   * The Circuits and Black holes switches: each one's active half filled in honey with aria-pressed="true"; only the inactive
+   * half fires its callback. A key missing from `sw` keeps that switch as it is.
+   * @param {{ circuits?: boolean, blackholes?: boolean }} sw
    */
-  function markHotbar(hotbar, selected) {
-    const bar = Array.isArray(hotbar) ? hotbar : [];
-    for (let i = 0; i < cells.length; i++) {
-      const { id, cell } = cells[i];
-      const slot = bar.indexOf(id);
-      const name = getBlockDef(id).displayName;
-      if (slot >= 0) {
-        cell.dataset.slot = String(slot);
-        cell.title = `${name} — slot ${slot + 1}`;
-        cell.classList.add('in-hotbar');
-      } else {
-        delete cell.dataset.slot;
-        cell.title = name;
-        cell.classList.remove('in-hotbar');
+  function setDeviceSwitches(sw) {
+    const o = /** @type {Record<string, unknown>} */ (sw || {});
+    for (const [name, , groupKey, onKey, offKey] of DEVICE_SWITCHES) {
+      const which = /** @type {'circuits'|'blackholes'} */ (name);
+      if (typeof o[which] === 'boolean') state.devices[which] = /** @type {boolean} */ (o[which]);
+      const isOn = state.devices[which];
+      for (const [key, half] of [[onKey, true], [offKey, false]]) {
+        const btn = el[/** @type {keyof typeof IDS} */ (key)];
+        const active = half === isOn;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
       }
-      cell.classList.toggle('selected', slot >= 0 && slot === selected);
+      el[/** @type {keyof typeof IDS} */ (groupKey)].dataset.on = isOn ? 'true' : 'false';
     }
   }
 
-  /** Document-level key handling, attached only while the picker is open. @param {KeyboardEvent} e */
-  function onPickerKeyDown(e) {
-    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
-    const code = e.code || codeFromKey(e.key);
-    if (code === 'Escape' || code === 'KeyE') {
-      e.preventDefault();
-      fire('onPickerClose');
-      return;
-    }
-    const slot = slotFromDigitCode(code);
-    if (slot >= 0 && state.hoveredId !== null) {
-      e.preventDefault();
-      fire('onPickBlock', state.hoveredId, slot);
+  function getDeviceSwitches() {
+    return { circuits: state.devices.circuits, blackholes: state.devices.blackholes };
+  }
+
+  for (const [name, , , onKey, offKey, callback] of DEVICE_SWITCHES) {
+    for (const [key, half] of [[onKey, true], [offKey, false]]) {
+      // only the inactive half asks to switch; main applies it and calls setDeviceSwitches
+      on(el[/** @type {keyof typeof IDS} */ (key)], 'click', () => {
+        if (state.devices[/** @type {'circuits'|'blackholes'} */ (name)] !== half) fire(callback, half);
+      });
     }
   }
 
-  function attachPickerKeys() {
-    if (state.pickerKeysAttached) return;
-    state.pickerKeysAttached = true;
-    doc.addEventListener('keydown', onPickerKeyDown);
-  }
+  // ---- block picker (pickerUI.js, DESIGN-circuits §5) ------------------------------------------------------
 
-  function detachPickerKeys() {
-    if (!state.pickerKeysAttached) return;
-    state.pickerKeysAttached = false;
-    doc.removeEventListener('keydown', onPickerKeyDown);
-  }
+  const picker = createPickerUI(doc, {
+    blockPicker: el.blockPicker,
+    pickerGrid: el.pickerGrid,
+    pickerName: el.pickerName,
+    pickerBlurb: el.pickerBlurb,
+    pickerSearch: el.pickerSearch,
+    pickerShowAll: el.pickerShowAll,
+    pickerRail: el.pickerRail,
+    pickerScroll: el.pickerScroll,
+  }, atlasCanvas, {
+    onPick: (id, slot) => fire('onPickBlock', id, slot),
+    onClose: () => fire('onPickerClose'),
+  });
 
+  /** @param {number[]} hotbar @param {number} selected */
   function showPicker(hotbar, selected) {
     if (state.disposed) return;
-    markHotbar(hotbar, selected);
-    clearHovered();
-    state.pickerOpen = true;
-    attachPickerKeys();
-    show(el.blockPicker);
+    picker.show(hotbar, selected);
   }
 
   function hidePicker() {
-    detachPickerKeys();
-    state.pickerOpen = false;
-    clearHovered();
-    hide(el.blockPicker);
+    picker.hide();
   }
 
   function isPickerOpen() {
-    return state.pickerOpen;
+    return picker.isOpen();
   }
 
   // ---- lifecycle -----------------------------------------------------------------------------------
@@ -1284,17 +1240,12 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
   function dispose() {
     if (state.disposed) return;
     state.disposed = true;
-    detachPickerKeys();
-    state.pickerOpen = false;
+    picker.dispose();
     for (let i = 0; i < listeners.length; i++) {
       const [target, type, fn] = listeners[i];
       target.removeEventListener(type, fn);
     }
     listeners.length = 0;
-    clearChildren(el.pickerGrid);
-    cells.length = 0;
-    state.hoveredId = null;
-    state.hoveredCell = null;
     clearChildren(el.worldsList);
     state.editing = null;
     if (state.pending) {
@@ -1306,11 +1257,11 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     state.deathOpen = false;
   }
 
-  // Static content that does not depend on showTitle: the picker grid, and the pause-menu cheat sheet
-  // (autoplay/smoke runs never call showTitle but can still pause).
-  buildPickerGrid();
+  // Static content that does not depend on showTitle: the pause-menu cheat sheet (autoplay/smoke runs never call showTitle
+  // but can still pause). The picker built its rail above; its honeycomb is laid out when it opens (it measures its width).
   renderControlsSheets();
   setModeState('creative'); // new worlds start in Creative; main calls setModeState(survival.mode) on every pause
+  setDeviceSwitches({ circuits: true, blackholes: true }); // main calls setDeviceSwitches with the world's switches on pause
 
   return {
     showTitle,
@@ -1337,6 +1288,8 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     showDeath,
     hideDeath,
     isDeathOpen,
+    setDeviceSwitches,
+    getDeviceSwitches,
     dispose,
   };
 }
