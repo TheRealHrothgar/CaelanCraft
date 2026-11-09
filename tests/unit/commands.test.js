@@ -1025,6 +1025,20 @@ describe('executeCommand — block physics (physics / undo / ignite / drain)', (
     expect(world.getBlock(2, 11, 2)).toBe(B.BRICKS);
   });
 
+  it('undo refuses in Survival like the pause menu\'s Undo (§1.5; KNOWN-ISSUES S4), and still works in Creative', () => {
+    const { ctx, physics, world } = physicsCtx();
+    world.setBlock(2, 11, 2, B.BRICKS);
+    physics.beginEvent('explosion');
+    physics.ctx.writeQuiet(2, 11, 2, B.AIR);
+    physics.endEvent();
+    ctx.survival = { mode: 'survival', hasState: true };
+    expect(exec(ctx, 'undo')).toEqual({ ok: false, message: 'undo: not in Survival — usage: undo' });
+    expect(world.getBlock(2, 11, 2)).toBe(B.AIR);
+    ctx.survival.mode = 'creative'; // a world switched back to Creative (its state kept) may undo again
+    expect(exec(ctx, 'undo').ok).toBe(true);
+    expect(world.getBlock(2, 11, 2)).toBe(B.BRICKS);
+  });
+
   it('ignite resolves and checks the cell, then asks explosions; drain centres on the player (or the rune)', () => {
     const { ctx, physics } = physicsCtx();
     const ignite = vi.spyOn(physics.explosions, 'ignite').mockReturnValue({ ok: true, message: 'lit' });
@@ -1214,6 +1228,18 @@ describe('executeCommand — pack and items', () => {
     expect(exec(ctx, 'pack add rock 12')).toEqual({ ok: false, message: `pack: the pack is full (12 Rock did not fit) — ${USAGE}` });
     sv.packAdd = vi.fn(() => 0);
     expect(exec(ctx, 'pack add flint_pick').message).toBe('added 1 Flint Pick');
+  });
+
+  it('pack add relays a refusal from the game (§14.2: the handbook is never minted twice)', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    sv.packAdd = vi.fn(() => ({ n: 1, refused: 'the pack already has a handbook' }));
+    expect(exec(ctx, 'pack add handbook')).toEqual({ ok: false, message: `pack: the pack already has a handbook — ${USAGE}` });
+    sv.packAdd = vi.fn(() => ({ n: 2, refused: 'one handbook is enough' }));
+    expect(exec(ctx, 'pack add handbook 2').message).toBe(`pack: one handbook is enough — ${USAGE}`);
+    // a refusal that let some through is still a refusal (nothing is reported as added)
+    sv.packAdd = vi.fn(() => ({ n: 0, refused: 'no' }));
+    expect(exec(ctx, 'pack add handbook').ok).toBe(false);
   });
 
   it('pack add refuses unknown items, a missing item and counts outside 1–9999', () => {

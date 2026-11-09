@@ -33,7 +33,7 @@ import { countFaces } from '../helpers/fixtures.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { vi } from 'vitest';
-import { GEN_LATEST, STAT_MAX, BREATH_MAX_S, BODY_TEMP_MIN, BODY_TEMP_MAX } from '../../src/config.js';
+import { GEN_LATEST, STAT_MAX, BREATH_MAX_S, BODY_TEMP_MIN, BODY_TEMP_MAX, HOTBAR_SIZE, PACK_SLOTS } from '../../src/config.js';
 import { BIOME } from '../../src/blocks.js';
 import { Survival } from '../../src/survival.js';
 import { Pack } from '../../src/inventory.js';
@@ -47,6 +47,7 @@ import {
   STATE, stateSimulates, stateAfterLoading, loadingGen, loadingMode, modeParamPlan, consumeModeParam, survivalSaveFields,
   physicsMenuStateFor, sampleClimate, deathScreenText, knockCause, cellsLifted, MODE_PARAM_IGNORED, SURVIVAL_NEEDS_GEN2,
   survivalIntroLines, SURVIVAL_INTRO, HANDBOOK_INTRO, leftBehindText, spoiledText, packListText, CLIMATE_SAMPLE_S,
+  consolePackAdd, consolePackClear, HANDBOOK_KEY,
 } from '../../src/main.js';
 import { documentFromHTML } from '../helpers/fakeDom.js';
 
@@ -1146,5 +1147,45 @@ describe('integration harness: Survival (v0.9)', () => {
     expect(survivalDebugLine(s)).toBe(''); // dead: not active
     const text = buildDebugText({ survival: null }, { fps: 60, frameMs: 16 });
     expect(text).not.toContain('Survival:');
+  });
+
+  it('the console pack rules (§14.2): add never mints a second handbook, clear gives it back in slot 8', () => {
+    const pack = new Pack();
+    // an empty pack (a save from before the handbook): `pack add handbook` gives the one copy, in the last hotbar slot
+    expect(consolePackAdd(pack, HANDBOOK_KEY, 1)).toBeNull();
+    expect(pack.slots[HOTBAR_SIZE - 1]).toEqual({ k: HANDBOOK_KEY, n: 1 });
+    // a second copy is refused (nothing changes), and so is any count above one
+    const v = pack.version;
+    expect(consolePackAdd(pack, HANDBOOK_KEY, 1)).toEqual({ n: 1, refused: 'the pack already has a handbook' });
+    expect(consolePackAdd(pack, HANDBOOK_KEY, 3)).toEqual({ n: 3, refused: 'one handbook is enough' });
+    expect(pack.version).toBe(v);
+    expect(pack.slots.filter((s) => s && s.k === HANDBOOK_KEY)).toHaveLength(1);
+    // everything else adds as before: stacks in one piece, tools one at a time, the overflow reported
+    expect(consolePackAdd(pack, 'rock', 70)).toBeNull();
+    expect(pack.count('rock')).toBe(70);
+    expect(consolePackAdd(pack, 'flint_pick', 2)).toBeNull();
+    expect(pack.slots.filter((s) => s && s.k === 'flint_pick')).toHaveLength(2);
+    for (let i = 0; i < PACK_SLOTS; i++) if (!pack.slots[i]) pack.slots[i] = { k: 'stick', n: 64 };
+    expect(consolePackAdd(pack, 'clay_lump', 5)).toEqual([{ k: 'clay_lump', n: 5 }]);
+    // `pack clear` empties everything, then the handbook comes back (slot 8)
+    pack.wear[0] = { k: 'straw_hat', n: 1 };
+    consolePackClear(pack);
+    expect(pack.slots.filter(Boolean)).toEqual([{ k: HANDBOOK_KEY, n: 1 }]);
+    expect(pack.slots[HOTBAR_SIZE - 1]).toEqual({ k: HANDBOOK_KEY, n: 1 });
+    expect(pack.wear.filter(Boolean)).toEqual([]);
+  });
+
+  it('main imports the Handbook modules statically (KNOWN-ISSUES S2: no import.meta.glob guard is left)', () => {
+    const src = readFileSync(fileURLToPath(new URL('../../src/main.js', import.meta.url)), 'utf8');
+    expect(src).not.toContain('import.meta.glob');
+    expect(src).toMatch(/^import \{[^}]*\bensureHandbook\b[^}]*\} from '\.\/handbook\.js';$/m);
+    expect(src).toMatch(/^import \{ createHandbookUI \} from '\.\/handbookUI\.js';$/m);
+    expect(src).not.toContain('cannot be opened in this build');
+    // types.js's GameContext lists the v0.9 members main hands to diagnostics (KNOWN-ISSUES S3)
+    const types = readFileSync(fileURLToPath(new URL('../../src/types.js', import.meta.url)), 'utf8');
+    const ctx = types.slice(types.indexOf('@typedef {Object} GameContext'));
+    for (const m of ['survival', 'pack', 'setMode', 'getMode', 'urlMode', 'selectSlot', 'interact', 'digTargeted', 'useSelected']) {
+      expect(ctx, m).toMatch(new RegExp(`@property \\{[^\\n]*\\} \\[?${m}\\]?\\b`));
+    }
   });
 });

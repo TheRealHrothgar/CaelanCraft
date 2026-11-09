@@ -118,7 +118,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/itemArt.js` | PURE pixel painters, one 16 × 16 icon per non-block item (§48) | v0.9 E | `tests/unit/itemArt.test.js` |
 | `src/itemIcons.js` | DOM, the item icon sheet (§48) | v0.9 E | — |
 | `src/packUI.js` | DOM (+ pure geometry / label helpers), the Pack & Making screen (§48) | v0.9 E | `tests/unit/packUI.test.js` |
-| `src/handbook.js`, `src/handbookUI.js` | PURE chapters; DOM readers — the Survival Handbook (§43, §48) | v0.9 H | (H's) |
+| `src/handbook.js` | PURE, the Survival Handbook's chapters (hand-written prose + tables generated from the data), `ensureHandbook` (§43) | v0.9 H | `tests/unit/handbook.test.js` |
+| `src/handbookUI.js` | DOM (+ pure page layout helpers), the two Handbook readers: the Guide and the field book (§48) | v0.9 H | `tests/unit/handbookUI.test.js` |
 | — | survival data closure, first day, harness (§42–§49) | v0.9 I | `tests/integration/survivalData.test.js`, `tests/integration/survival.test.js` |
 | `tests/helpers/fixtures.js` | test helpers | Wave 0 (done) | — |
 | `tests/helpers/fakeDom.js` | a small fake DOM for the DOM modules under Node (v0.9 E) | v0.9 E | — |
@@ -181,8 +182,9 @@ packUI                             → config, items            (the ItemIcons a
 storage                            → … + items, cooking (fire-spot validation)
 commands                           → … + items
 hud                                → … + items, itemIcons
-handbook (H)                       → items, crafting, harvest, climate, vitals (read-only data)
-main                               → … + all of the above; handbook / handbookUI through an eager import.meta.glob (§49)
+handbook                           → config, blocks, items, crafting, harvest, climate, vitals, cooking (read-only data and pure functions)
+handbookUI                         → handbook (buildChapters, inlineParts)
+main                               → … + all of the above, handbook and handbookUI (static imports, §49)
 ```
 
 ## 2. `src/config.js` (exact — already written)
@@ -237,8 +239,9 @@ Typedefs: `BlockId, ChunkKey, FaceIndex (0..7), RenderLayer, Vec3, GetBlockFn ((
 ColumnInfo, WorldGen (getColumn(q, r), generateChunk(cq, cr)), PlayerState, PlayerInput, SkyState, EditsJSON, Rune, RunesJSON,
 SaveData (version 2, optional `runes`), SmokeResult, GameContext (+ runCommand, runes, runner)`. Import in JSDoc as `/** @typedef {import('./types.js').MeshData} MeshData */`.
 v0.9: `ItemStack, ItemDef, ToolDef, FoodDef, WearDef, SurvivalJSON, ContainersJSON, FireSlotsJSON`; `SaveData` gains `gen?, mode?,
-survival?, containers?` and `version: 2|3`; `PlayerState.landSpeed?`; `PlayerInput.speedFactor?`. (GameContext's v0.9 members, §49,
-are not in the typedef yet; worldgen.js types its generator locally as `SurvivalWorldGen`.)
+survival?, containers?` and `version: 2|3`; `PlayerState.landSpeed?`; `PlayerInput.speedFactor?`; `GameContext` lists the v0.8 / v0.9 members main hands to
+diagnostics (`physics?, zombies?, watcher?, survival?, pack?, setMode?, getMode?, urlMode?, selectSlot?, interact?, digTargeted?,
+useSelected?`, §49). (worldgen.js types its generator locally as `SurvivalWorldGen`.)
 
 ## 4. `src/coords.js` (exact — already written)
 
@@ -1198,7 +1201,7 @@ console executes with both `null`.
 | `watcher [on\|off]` | §40: `the Watcher is on\|off in this world · it is here, N away` / `· it is not here`; `on`/`off` → `setEnabled` → `the Watcher on (saved with this world)` / `the Watcher off (saved with this world)[: it is gone]` / `the Watcher is already on\|off` |
 | `physics status\|on\|off` | v0.8, needs `ctx.physics`: `status` → `physics.statusText()`; `off` / `on` → `setPaused` ("block physics paused: nothing falls, flows or explodes until physics on (not saved)" / "block physics running"); a lone feature name reports `<f> is on\|off` |
 | `physics <falling\|water\|collapse\|explosions> on\|off` | `setSwitch` → `<f> on\|off (saved with this world)` or `(already)`; an unknown feature fails |
-| `undo` | `physics.undo()`: its message (ok) or failure (`nothing to undo …`, `… too late to undo`) |
+| `undo` | `physics.undo()`: its message (ok) or failure (`nothing to undo …`, `… too late to undo`); in Survival `not in Survival` (§33.8) |
 | `ignite q y r` | y in range and the cell loaded, then `physics.explosions.ignite(q, y, r)` → its `{ ok, message }` |
 | `drain [radius]` | radius `0..DRAIN_MAX_RADIUS` (default DRAIN_DEFAULT_RADIUS) around the rune's cell in scripts, the player's cell (`worldToHex`, `floor(y)`) in the console → `physics.fluids.drain(q, y, r, radius)` |
 All four fail with `block physics is not available here` when the context has no `physics`.
@@ -1208,8 +1211,10 @@ All four fail with `block physics is not available here` when the context has no
 (Health 87 · Nourishment 64 · Hydration 51 · 36.9 °C)`; with one → `ctx.survival.setMode(m)` (queued) and its message. `vitals
 [full|health|nourishment|hydration|temp|breath] [value]` (prints stats and labels, or sets one, clamped; `~` relative; `full`
 restores all; without a state `no survival state in this world (try mode survival)`). `pack [list|add|clear] [item] [count]` (`add`
-through `resolveItem`, counts 1–9999, `added 12 Rock` / `… (3 did not fit)`). `items [filter]` (8 keys a line). In Survival `fly`
-fails `not in Survival` and `give` fails `in Survival use: pack add <item> [count]`.
+through `resolveItem`, counts 1–9999, `added 12 Rock` / `… (3 did not fit)`; a `packAdd` result with `refused` fails with that text —
+main's `consolePackAdd` (§49) refuses a second Handbook: `the pack already has a handbook`, `one handbook is enough` for a count above
+1; `clear` empties the pack and the worn items and then the Handbook comes back, `consolePackClear`). `items [filter]` (8 keys a
+line). In Survival `fly` and `undo` fail `not in Survival` and `give` fails `in Survival use: pack add <item> [count]`.
 **Area commands** (fill/hexfill/hexring) validate BEFORE writing anything: `total > MAX_FILL_CELLS` → `too large: N cells (max M)`;
 `rune_block` as the fill block → `use setblock for rune blocks`; `bedrock` → `bedrock cannot be placed`; any addressed `y` outside `0..WORLD_HEIGHT−1` → refused; ATOMIC across
 chunks: every covered chunk column must be loaded, else `N cells are in unloaded chunks (nothing changed)`; `world.editCount + total >
@@ -1747,7 +1752,8 @@ x, y, z, count, opts)` (§34.5), `knock(body, vx, vy, vz, fromX, fromZ)` (defaul
    barrels given back), M includes the event's lit barrels put out.
    **v0.9: Undo is disabled in Survival** (SV): it restores every cell the event wrote, which would duplicate whatever the player mined
    from a toppled tree or a collapse. The pause menu shows `#btn-undo-physics` disabled as "Undo (not in Survival)" and main's
-   `onUndoPhysics` refuses (§42, §49). The console `undo` command is left as it is (it is a debugging tool, like `pack add`).
+   `onUndoPhysics` refuses (§42, §49). The console `undo` fails `not in Survival` too (§26.4; it would duplicate mined debris just
+   the same). A world switched back to Creative may undo again.
 ### 33.9 Saving (`exportEdits`, never touches the live world)
 `overlay = new SaveOverlay(world, { keepFlow: !switches.water })`; `fallers.settleInto(overlay)`, `support.settleInto(overlay)` (what a collapse has not brought
 down yet is saved fallen, §36.6.4), `trees.settleInto(overlay)`, `explosions.settleInto(overlay)`;
@@ -2854,10 +2860,21 @@ with an entry changing to anything else releases its stacks — into the pack wh
 main writes AIR when empty), `addRemains(q, y, r, stacks)` (a death always gets its entry, beyond the cap), `spoil(dt, random,
 isLoadedCell)`, `size, version, touch, export()` (keys sorted; empty baskets too) / `load(json) → warnings`. Saved as `containers`,
 validated against the repaired `edits` like runes (§14).
-**The Survival Handbook** (DESIGN-survival §14, package H): item `handbook` (non-block, stack 1, never spoils, no recipe). When a
-survival state begins, `handbook.ensureHandbook(pack)` puts it in the last hotbar slot (8, else the last empty slot); it is never put
-into Your Belongings (`inventory.KEEP_ON_DEATH = ['handbook']`) and is given back on waking if missing; the discard hex refuses it; a
-second copy cannot be made. R (priority 10, §44) or RMB with it selected, or `onRead` in the pack screen, opens the field book (§48).
+**The Survival Handbook** (DESIGN-survival §14; `src/handbook.js`, PURE): item `handbook` (non-block, stack 1, never spoils, no
+recipe makes or takes it). API: `HANDBOOK_KEY 'handbook'`, `HANDBOOK_CHAT_LINE` (main's `HANDBOOK_INTRO`, the §1.2 sentence "Your
+handbook is in the last hotbar slot — hold it and press R to read."), `buildChapters() → Chapter[]` (cached; ten chapters `{ id, title,
+short, icon, pages: Block[][] }` of hand-written prose and tables GENERATED from RECIPES, ITEMS, BLOCK_RULES, the climate and vitals
+tables — each table names its `source` and its rows' `keys`, so a test can walk it against the data; `TABLE_ROWS_PER_PAGE 10` splits
+long ones), `chapterIds()`, `ensureHandbook(pack, preferSlot = 8) → boolean` (gives one when the pack — slots and wear — has none:
+`preferSlot` if empty, else the last empty slot; false when it already has one or is full), plus the pure formatters (`fmtNum,
+fmtTemp, fmtDuration, inlineParts, plainText, describeDrops, …`). **Rules:** when a survival state begins, and again on waking,
+`ensureHandbook(pack)`; death never puts it into Your Belongings (`inventory.KEEP_ON_DEATH = ['handbook']`: `dumpAll` leaves it in its
+slot); the discard hex and every move into a container refuse it (`slotClick` changes nothing and reports `refused` =
+`inventory.KEEP_REFUSED` "The handbook stays with you."; `returnCursor` never leaves it behind); the console cannot mint a second copy
+(§26.4, main's `consolePackAdd`) and `pack clear` gives it back. **Reading** (§44 `interactKind` priority 10, after every other R
+target, before today's barrel and rune behaviour: `{ kind: 'read', hint: HINT.read }` = `Handbook · R: read`; `useActionOf` →
+`{ kind: 'read', needS: 0 }` so RMB opens it at once): R or RMB with it selected, or `onRead` in the pack screen, open the field book
+(§48, §49); the Guide is the same text from the menus.
 
 ## 44. Harvesting — `src/harvest.js` and `src/survivalControl.js` (PURE)
 
@@ -3080,10 +3097,21 @@ CONTRACT-ISSUE):** a saved spot is kept when its item can be on that kind of spo
   picked block), every other item from a lazily painted 16-column sheet of `itemArt.paintItem(key)` (16 × 16 RGBA, deterministic; tools
   upright with the haft in columns 7–8, the tier in the head colour AND the binding; hexagonal ingots; unknown keys the magenta
   checker).
-- **The Handbook readers** (§14.4, package H, `handbookUI.js`): `createHandbookUI(doc, { chapters, onClose }) → { openGuide(chapterId?),
-  openRustic(chapterId?), close(), isOpen() → 'guide'|'rustic'|null, handleKey(e) → boolean }`; chapters from the pure
-  `handbook.buildChapters()` (generated tables come from the data tables, so the book never disagrees with the game). z-order: above
-  the HUD, below the death screen. main routes keydowns to `handleKey` first (a capture listener) while a reader is open.
+- **The Handbook readers** (§14.4, `handbookUI.js`; imports handbook only): `createHandbookUI(doc, { chapters?, onClose? }) →
+  { openGuide(chapterId?), openRustic(chapterId?), close(), isOpen() → 'guide'|'rustic'|null, handleKey(e) → boolean, position() →
+  { mode, chapter, page, spread }, dispose() }`; chapters default to the pure `handbook.buildChapters()` (generated tables come from
+  the data tables, so the book never disagrees with the game); either reader replaces the other without an `onClose`; `onClose(kind)`
+  fires once when a reader closes (Esc, the close hex, a click on the backdrop, R in the field book, or `close()`). **The Guide**
+  (`#guide`, the survival palette and `.hex-button` chrome): a chapter list and a scrollable page; ↑/↓ chapters, PgUp/PgDn and ←/→
+  pages; opened by `menus.onGuide(from)` from `#btn-guide-title` and `#btn-guide-pause` ("Survival Guide" `.hex-button.guide-button`,
+  both modes; the screen underneath stays). **The field book** (`#handbook`, the item): parchment from CSS gradients and a
+  procedural grain canvas (`paintPaperGrain`), a two-page spread (`bookPages`: a title page and contents, every chapter on a left-hand
+  page; one page at a time below `SINGLE_PAGE_BELOW_PX` 900), chapter tabs, ←/→ and the page corners turn, tips and warnings in the
+  pencilled margin; opened by R / RMB with the item or the pack screen's "Read" hex (`packUI.onRead`). **z-order** (styles.test):
+  `#handbook` 21 (over the HUD 10 and the pack screen 20; under the console 22, the pause menu 30 and the death screen 33); `#guide`
+  32 (over the pause menu, under the death screen), lifted to 55 with `.over-title` while the title screen (50) shows, still under
+  the confirm dialog (60). main routes keydowns to `handleKey` first (a capture listener) while a reader is open; the reader's own
+  document listener and that route act on an event once.
 - **renderer.js**: `setDigProgress(hit | null, p)` — a honey `LineSegments` of the highlight prism's 6 vertical and 6 top edges, drawn
   to `2·ceil(12·p)` vertices (`digTraceVertexCount`), renderOrder 3, hidden for null or p ≤ 0, disposed in `dispose()` and rebuilt after
   a context restore. **Adjudicated (F's CONTRACT-ISSUE):** "clockwise from the north corner" = `DIG_TRACE_CORNER_ORDER [5, 0, 1, 2, 3,
@@ -3179,14 +3207,17 @@ every survival object, close the pack screen, the death screen and any reader, a
 this world: reloading…", "m (saved with this world)"; refused while dead), `vitals() → {…vitals, labels} | null, setVital(name, v)`
 (health 0 → `pendingDeath ??= 'command'`, never a death inside the command), `restoreVitals(), packAdd(key, n) → leftovers | null,
 packClear(), packList() }`.
-**GameContext** (diagnostics; types.js's typedef does not list these yet): `survival, pack, setMode(mode)` (queued), `getMode()`,
+**GameContext** (diagnostics; types.js's typedef lists them, §3): `survival, pack, setMode(mode)` (queued), `getMode()`,
 `urlMode`, `selectSlot(i)`, `interact()` (one R press), `digTargeted(dt)` / `useSelected(dt)` (one frame of the real hold-to-dig /
 hold-to-use paths). The debug handle adds `survival`, `pack` (refreshed like `world`), `getMode / setMode / selectSlot / digTargeted /
 useSelected / interact`.
-**The Handbook wiring** (§14.4; package H's modules are picked up with an eager `import.meta.glob` and every call is guarded, so main
-runs without them): `menus.onGuide` → `openGuide()` from the title or the pause menu (both modes; the menu stays underneath); R `read`
-and RMB with the Handbook → `openBook()` (state BOOK; the world keeps running; damage closes it); `packUI.onRead` → close the pack, open
-the book; while a reader is open keydowns go to `handleKey` first; `ensureHandbook(pack)` after a state begins and after waking.
+**The Handbook wiring** (§14.4; `handbook.js` and `handbookUI.js` are static imports — `HANDBOOK_KEY, HANDBOOK_CHAT_LINE,
+buildChapters, ensureHandbook` and `createHandbookUI`; the readers are built with the other screens, so a failure there is a failure
+to start): `menus.onGuide` → `openGuide()` from the title or the pause menu (both modes; the menu stays underneath); R `read` and RMB
+with the Handbook → `openBook()` (state BOOK; the world keeps running; damage closes it, `closeRusticBook`); `packUI.onRead` → close
+the pack, open the book; while a reader is open keydowns go to `handleKey` first; `ensureHandbook(pack)` after a state begins (the
+chat line's Handbook sentence only when it was given) and after waking; `quitToTitle` / `dispose` close any reader. The console's
+`pack add` / `pack clear` go through the pure `consolePackAdd(pack, key, n)` / `consolePackClear(pack)` (§26.4).
 **Diagnostics** (§22): `parseParams` adds `mode` (`readModeParam`: 'creative' | 'survival' | null) and `ui: 'pack'` (the pack screen in
 Survival; under ?nosave an empty pack is stocked with `demoPackView()`'s kit). `?mode=` applies only to the first world, only with
 `?autoplay` / `?smoke` (`main.modeParamPlan`: always for Creative; Survival for a new slot, any world under ?nosave — its generation may

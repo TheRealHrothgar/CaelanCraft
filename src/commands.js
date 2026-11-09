@@ -10,7 +10,7 @@
 // that ends with the usage line.
 //
 // Survival (v0.9, docs/DESIGN-survival.md §9.7): `mode` (console only: the new `consoleOnly` flag), `vitals`, `pack` and
-// `items` work through the optional `ctx.survival`; `fly` and `give` refuse while the world is in Survival.
+// `items` work through the optional `ctx.survival`; `fly`, `give` and `undo` refuse while the world is in Survival.
 //
 // Area commands (fill / hexfill / hexring) are validated up front (size cap, y range, every covered chunk loaded,
 // edit budget) and then return a resumable AreaJob that the rune runner advances under a per-frame cell budget in
@@ -292,8 +292,9 @@ export function resolveBlock(token) {
  * @property {(name: string, v: number) => boolean} setVital   internal key ('health', 'satiation', 'hydration', 'temp',
  *   'breath'); the value is already clamped; `health` 0 makes main die with cause 'command'
  * @property {() => void} restoreVitals
- * @property {(key: string, n: number) => (number|{n: number}|{n: number}[]|null|undefined)} packAdd   what did not fit:
- *   a count, a stack, a list of stacks, or null/undefined when everything fit
+ * @property {(key: string, n: number) => (number|{n: number, refused?: string}|{n: number}[]|null|undefined)} packAdd
+ *   what did not fit: a count, a stack, a list of stacks, or null/undefined when everything fit; `refused` (a reason) when
+ *   the game would not add the item at all (§14.2: a second handbook)
  * @property {() => void} packClear              empties the pack and the worn items
  * @property {() => string} packList             the non-empty slots ('' when there are none)
  */
@@ -984,6 +985,7 @@ function run(spec, args, ctx) {
       return ok(`${what} ${on ? 'on' : 'off'}${changed ? ' (saved with this world)' : ' (already)'}`);
     }
     case 'undo': {
+      if (inSurvival(ctx)) return fail(spec, 'not in Survival'); // like the pause menu's Undo (§1.5)
       if (!ctx.physics) return fail(spec, 'block physics is not available here');
       const res = ctx.physics.undo();
       return res.ok ? ok(res.message) : fail(spec, res.message);
@@ -1135,7 +1137,9 @@ function packCommand(spec, args, ctx) {
   if ('error' in ri) return fail(spec, ri.error);
   const n = args.length === 3 ? Number(args[2]) : 1;
   if (!(Number.isInteger(n) && n >= 1 && n <= PACK_ADD_MAX)) return fail(spec, `count must be 1–${PACK_ADD_MAX}`);
-  const left = Math.min(n, leftoverCount(sv.packAdd(ri.key, n)));
+  const res = sv.packAdd(ri.key, n);
+  if (res && typeof res === 'object' && !Array.isArray(res) && typeof res.refused === 'string') return fail(spec, res.refused);
+  const left = Math.min(n, leftoverCount(res));
   const name = itemName(ri.key);
   if (left >= n) return fail(spec, `the pack is full (${n} ${name} did not fit)`);
   return ok(`added ${n - left} ${name}${left > 0 ? ` (${left} did not fit)` : ''}`);
