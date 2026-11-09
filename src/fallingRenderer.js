@@ -6,7 +6,9 @@
 // falling block looks exactly like the block it was. Capacity starts small and doubles (the instances already written
 // this frame are copied into the bigger mesh). `frustumCulled = false`: an InstancedMesh's bounding sphere is computed
 // once from its first instances and would go stale as they move.
-// The explosion PointLight is created once (a constant light count: changing it would recompile every material).
+// The explosion PointLight is created once (a constant light count: changing it would recompile every material). It is
+// shared by every flash: a keg's blast in its warm 0xffd49a and a collapsar's FLASH in warm white (setFlash's colour,
+// DESIGN-circuits §6.2.12; main passes the brighter of the two).
 // prewarm() compiles the three layers' programs while the game loads (like campfireRenderer), so the first falling
 // block of a session does not compile a shader mid-frame.
 import * as THREE from 'three';
@@ -17,7 +19,8 @@ import { buildCellMesh } from './mesher.js';
 /** @typedef {import('./types.js').MeshData} MeshData */
 
 const INITIAL_CAPACITY = 16;
-const FLASH_COLOR = 0xffd49a;
+/** The blast flash's colour: setFlash's default. */
+export const FLASH_COLOR = 0xffd49a;
 const FLASH_DISTANCE = 28;
 const FLASH_DECAY = 1.4;
 const LAYER_NAMES = /** @type {const} */ (['opaque', 'cutout', 'translucent']);
@@ -30,7 +33,8 @@ const WARM_MATRIX = new THREE.Matrix4().makeTranslation(0, -1e4, 0).multiply(new
 /**
  * @typedef {Object} FallingRenderer
  * @property {(items: RenderItem[], count?: number) => void} sync   draw exactly items[0 .. count)
- * @property {(x: number, y: number, z: number, intensity: number) => void} setFlash   explosion light (0 = off)
+ * @property {(x: number, y: number, z: number, intensity: number, color?: number) => void} setFlash   the shared flash
+ *   light (0 = off); `color` 0xrrggbb (sRGB), default the blast's 0xffd49a, set on the light only when it changes
  * @property {() => number} count       instances drawn by the last sync
  * @property {() => number} meshCount   InstancedMeshes created so far
  * @property {(webgl: *, camera: THREE.Camera) => Promise<void>} prewarm  compile every falling-block program now
@@ -82,6 +86,8 @@ export function createFallingRenderer(scene, atlasTexture) {
   const light = new THREE.PointLight(FLASH_COLOR, 0, FLASH_DISTANCE, FLASH_DECAY);
   light.name = 'explosion-flash';
   scene.add(light);
+  /** the light's colour as last set (0xrrggbb): it is changed only when setFlash asks for another */
+  let lightColor = FLASH_COLOR;
 
   function makeMesh(geometry, layer, capacity, id) {
     const mesh = new THREE.InstancedMesh(geometry, materials[layer], capacity);
@@ -212,10 +218,15 @@ export function createFallingRenderer(scene, atlasTexture) {
       }
     },
 
-    setFlash(x, y, z, intensity) {
+    setFlash(x, y, z, intensity, color = FLASH_COLOR) {
       const v = Number.isFinite(intensity) && intensity > 0 ? intensity : 0;
       light.intensity = v;
       if (v > 0 && Number.isFinite(x + y + z)) light.position.set(x, y, z);
+      const c = Number.isInteger(color) && color >= 0 && color <= 0xffffff ? color : FLASH_COLOR;
+      if (v > 0 && c !== lightColor) {
+        lightColor = c;
+        light.color.setHex(c);
+      }
     },
 
     count: () => drawn,

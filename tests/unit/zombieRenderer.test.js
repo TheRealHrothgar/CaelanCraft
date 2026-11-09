@@ -5,7 +5,7 @@ import {
   createZombieRenderer, hexPrismGeometry, FOOT_R, FOOT_H, FOOT_X, TORSO_R, TORSO_H, HEAD_R, HEAD_H, MODEL_HEIGHT,
   NIGHT_GLOW,
 } from '../../src/zombieRenderer.js';
-import { ZOMBIE_MAX, ZOMBIE_HEIGHT, ATLAS_TILES_PER_ROW } from '../../src/config.js';
+import { ZOMBIE_MAX, ZOMBIE_HEIGHT, ATLAS_TILES_PER_ROW, MAX_INFALL_MOBS } from '../../src/config.js';
 import { TILE } from '../../src/blocks.js';
 
 /** A minimal zombie as the renderer reads it. */
@@ -167,6 +167,56 @@ describe('createZombieRenderer — instanced zombie models', () => {
     const r = createZombieRenderer(scene, atlas);
     for (const name of ['zombie-feet', 'zombie-torso', 'zombie-head', 'zombie-head-hurt']) expect(byName(r, name).material.map).toBe(atlas);
     expect(byName(r, 'zombie-head').material.emissiveMap).toBe(atlas);
+    r.dispose();
+  });
+});
+
+describe('createZombieRenderer — black-hole ghosts (renderScale, renderSpin; DESIGN-circuits §2.7, §6.2.13)', () => {
+  function snapshot(r) {
+    const out = {};
+    for (const m of r.group.children) out[m.name] = Array.from(m.instanceMatrix.array.slice(0, m.count * 16));
+    return out;
+  }
+  it('without renderScale / renderSpin the output is exactly as before (and 1 / 0 or nonsense change nothing)', () => {
+    const scene = new THREE.Scene();
+    const r = createZombieRenderer(scene, null);
+    const base = [
+      zombie(1, 10, 2, { yaw: 0.7, walkPhase: 1.1, tilt: 0.1, mode: 'chase' }),
+      zombie(-3, 11, 4, { yaw: -2, walkPhase: 0.3, hurt: 0.2, swing: 0.1 }),
+      zombie(5, 11, 4, { smoking: true }),
+    ];
+    r.sync(base);
+    const plain = snapshot(r);
+    r.sync(base.map((z) => ({ ...z, renderScale: 1, renderSpin: 0 })));
+    expect(snapshot(r)).toEqual(plain);
+    r.sync(base.map((z) => ({ ...z, renderScale: 0, renderSpin: Infinity })));
+    expect(snapshot(r)).toEqual(plain);
+    r.dispose();
+  });
+  it('renderScale scales the whole zombie about its feet; renderSpin adds to its yaw', () => {
+    const scene = new THREE.Scene();
+    const r = createZombieRenderer(scene, null);
+    r.sync([zombie(3, 64, -2, { yaw: 0.5, renderScale: 0.5, renderSpin: -1 })]);
+    const m = new THREE.Matrix4();
+    byName(r, 'zombie-torso').getMatrixAt(0, m);
+    expect(translation(m).y).toBeCloseTo(64 + FOOT_H * 0.5, 5); // the hips, half as high
+    const s = new THREE.Vector3().setFromMatrixScale(m);
+    expect(s.y).toBeCloseTo(0.5, 5);
+    byName(r, 'zombie-feet').getMatrixAt(0, m);
+    const hip = translation(m);
+    // The feet sit either side of the middle, turned by yaw + spin = −0.5: their offset is ⊥ to the facing direction.
+    const side = new THREE.Vector3(hip.x - 3, 0, hip.z + 2);
+    const facing = new THREE.Vector3(-Math.sin(-0.5), 0, -Math.cos(-0.5));
+    expect(side.dot(facing)).toBeCloseTo(0, 5);
+    expect(side.length()).toBeCloseTo(FOOT_X * 0.5, 5);
+    r.dispose();
+  });
+  it('the capacity argument holds ZOMBIE_MAX + MAX_INFALL_MOBS bodies', () => {
+    const scene = new THREE.Scene();
+    const r = createZombieRenderer(scene, null, ZOMBIE_MAX + MAX_INFALL_MOBS);
+    r.sync(Array.from({ length: ZOMBIE_MAX + MAX_INFALL_MOBS + 3 }, (_, i) => zombie(i, 10, 0)));
+    expect(r.count()).toBe(ZOMBIE_MAX + MAX_INFALL_MOBS);
+    expect(byName(r, 'zombie-feet').count).toBe((ZOMBIE_MAX + MAX_INFALL_MOBS) * 2);
     r.dispose();
   });
 });

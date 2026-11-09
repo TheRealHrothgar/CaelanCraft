@@ -10,7 +10,9 @@
 // All zombies share three InstancedMeshes (feet ×2 per zombie, torso, head), so any number of zombies costs 3 draw
 // calls; their twins with a red emissive (a zombie with `hurt > 0`) or an ember glow (smouldering in daylight) only
 // draw while one flashes or burns. The feet swing from the hip with `walkPhase`, the torso sways and leans into a
-// chase and lurches after an attack (`swing`), and the head lolls by its own `tilt`.
+// chase and lurches after an attack (`swing`), and the head lolls by its own `tilt`. A zombie's optional
+// `renderScale` (default 1) and `renderSpin` (default 0, extra yaw) draw a black hole's shrinking, spinning ghost
+// (infall.js, DESIGN-circuits §6.2.13); without them the output is exactly as before.
 import * as THREE from 'three';
 import { ZOMBIE_MAX, ATLAS_TILES_PER_ROW, UV_INSET } from './config.js';
 import { TILE } from './blocks.js';
@@ -51,6 +53,18 @@ const LURCH = -0.32;
  * @property {() => void} dispose
  * @property {THREE.Group} group                  the instanced meshes (for tests and diagnostics)
  */
+
+/** A body's model scale: its `renderScale` when a positive number, else 1 (pigRenderer's rule). */
+function renderScaleOf(body) {
+  const s = body.renderScale;
+  return typeof s === 'number' && s > 0 && Number.isFinite(s) ? s : 1;
+}
+
+/** A body's extra yaw: its `renderSpin` when a finite number, else 0. */
+function renderSpinOf(body) {
+  const s = body.renderSpin;
+  return typeof s === 'number' && Number.isFinite(s) ? s : 0;
+}
 
 /**
  * @typedef {{ front: number, sides: number, top: number, bottom: number }} PrismTiles  atlas tiles of a prism's faces
@@ -136,7 +150,7 @@ export function hexPrismGeometry(R, h, y0, tiles) {
 /**
  * @param {THREE.Scene} scene
  * @param {THREE.Texture|null} atlasTexture  the block atlas (zombie_* tiles); null draws untextured (tests)
- * @param {number} [capacity=ZOMBIE_MAX]     most zombies drawn
+ * @param {number} [capacity=ZOMBIE_MAX]     most zombies drawn (main: ZOMBIE_MAX + MAX_INFALL_MOBS, for ghosts)
  * @returns {ZombieRenderer}
  */
 export function createZombieRenderer(scene, atlasTexture, capacity = ZOMBIE_MAX) {
@@ -186,7 +200,7 @@ export function createZombieRenderer(scene, atlasTexture, capacity = ZOMBIE_MAX)
   const tmp = new THREE.Matrix4();
   const rot = new THREE.Matrix4();
   const at = new THREE.Vector3();
-  const one = new THREE.Vector3(1, 1, 1);
+  const scl = new THREE.Vector3(1, 1, 1);
   const q = new THREE.Quaternion();
   const UP = new THREE.Vector3(0, 1, 0);
   const counts = { base: 0, hurt: 0, burn: 0 };
@@ -203,7 +217,8 @@ export function createZombieRenderer(scene, atlasTexture, capacity = ZOMBIE_MAX)
       const kind = zb.hurt > 0 ? 'hurt' : zb.smoking ? 'burn' : 'base';
       const set = sets[kind];
       const slot = counts[kind]++;
-      bodyM.compose(at.set(zb.x, zb.y, zb.z), q.setFromAxisAngle(UP, zb.yaw), one);
+      const s = renderScaleOf(zb);
+      bodyM.compose(at.set(zb.x, zb.y, zb.z), q.setFromAxisAngle(UP, zb.yaw + renderSpinOf(zb)), scl.set(s, s, s));
       const phase = zb.walkPhase || 0;
       const swingK = zb.swing > 0 ? zb.swing / SWING_S : 0;
       // Feet: swing from the hip in opposite phase.

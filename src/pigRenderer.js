@@ -4,6 +4,10 @@
 // (the camera uses the same convention). The body is a hexagonal prism lying along the pig — the honeycomb motif of
 // the world — with a box head, snout, ears, eyes, a tail and four legs that swing with `pig.walkPhase`.
 //
+// A pig's optional `renderScale` (default 1) scales the whole model about its feet and its optional `renderSpin`
+// (default 0) adds to its yaw: a pig swallowed by a black hole is drawn as a shrinking, spinning ghost (infall.js,
+// DESIGN-circuits §2.7, §6.2.13). Without them the output is exactly as before.
+//
 // Every pig shares a handful of InstancedMeshes, so all pigs together cost 3 draw calls (5 while one flashes):
 //   skin      body + head + ears + tail merged into one geometry (pink)
 //   features  snout + nostrils + eyes + pupils merged, coloured per vertex
@@ -33,7 +37,8 @@ const LEG_SIGN = [1, -1, -1, 1];
 
 /**
  * @typedef {Object} PigRenderer
- * @property {(pigs: Pig[]) => void} sync   draw the given pigs (position, yaw, leg swing, hurt flash)
+ * @property {(pigs: Pig[]) => void} sync   draw the given pigs (position, yaw, leg swing, hurt flash; renderScale and
+ *                                          renderSpin when set)
  * @property {() => number} count           pigs drawn by the last sync
  * @property {() => void} dispose
  * @property {THREE.Group} group            the instanced meshes (for tests and diagnostics)
@@ -89,9 +94,22 @@ function mergeParts(parts) {
   return out;
 }
 
+/** A body's model scale: its `renderScale` when a positive number, else 1. */
+export function renderScaleOf(body) {
+  const s = body.renderScale;
+  return typeof s === 'number' && s > 0 && Number.isFinite(s) ? s : 1;
+}
+
+/** A body's extra yaw: its `renderSpin` when a finite number, else 0. */
+export function renderSpinOf(body) {
+  const s = body.renderSpin;
+  return typeof s === 'number' && Number.isFinite(s) ? s : 0;
+}
+
 /**
  * @param {THREE.Scene} scene
- * @param {number} [capacity=PIG_MAX] most pigs drawn (pigs past it are not drawn)
+ * @param {number} [capacity=PIG_MAX] most pigs drawn (pigs past it are not drawn); main passes PIG_MAX + MAX_INFALL_MOBS
+ *   so a ghost is never dropped from a full list
  * @returns {PigRenderer}
  */
 export function createPigRenderer(scene, capacity = PIG_MAX) {
@@ -169,7 +187,7 @@ export function createPigRenderer(scene, capacity = PIG_MAX) {
   const hipM = new THREE.Matrix4();
   const rot = new THREE.Matrix4();
   const at = new THREE.Vector3();
-  const one = new THREE.Vector3(1, 1, 1);
+  const scl = new THREE.Vector3(1, 1, 1);
   const yawQ = new THREE.Quaternion();
   const UP = new THREE.Vector3(0, 1, 0);
   let drawn = 0;
@@ -181,7 +199,8 @@ export function createPigRenderer(scene, capacity = PIG_MAX) {
     let hurts = 0;
     for (let i = 0; i < n; i++) {
       const pig = pigs[i];
-      pigM.compose(at.set(pig.x, pig.y, pig.z), yawQ.setFromAxisAngle(UP, pig.yaw), one);
+      const s = renderScaleOf(pig);
+      pigM.compose(at.set(pig.x, pig.y, pig.z), yawQ.setFromAxisAngle(UP, pig.yaw + renderSpinOf(pig)), scl.set(s, s, s));
       meshes.features.setMatrixAt(i, pigM);
       const hurt = pig.hurt > 0;
       const body = hurt ? meshes.skinHurt : meshes.skin;
