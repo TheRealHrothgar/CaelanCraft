@@ -184,20 +184,13 @@ describe('styles.css block picker', () => {
     expect(grid.get('max-height')).not.toMatch(/vh/); // the viewport bound lives on the panel, which sees all the chrome
   });
 
-  it('the 1280x720 reference window (622px viewport) still shows the whole grid without scrolling', () => {
-    const H = 622;
-    // 4px border + 12px padding on each side, 16px bold title and name (~19px lines), 12px hint (~15px), 8px grid margins.
-    const chrome = 2 * 4 + 2 * 12 + 19 + 19 + 15 + 2 * 8;
-    // v0.9 (DESIGN-survival §9.2): 80 blocks would take 7 rows of 12 and make the grid scroll, so it is 980px wide.
+  // DESIGN-circuits §5.10: the v0.9 test "the 1280x720 reference window (622px viewport) still shows the whole grid without
+  // scrolling" is gone. With the 20 circuit blocks PICKER_ORDER holds 99 blocks (7 rows of 15), so the picker scrolls by
+  // design; the test above pins the scrolling grid, and package D's honeycomb picker replaces this block of tests.
+  it('the grid keeps its 980px width at the 1280x720 reference window (it now scrolls: 99 blocks)', () => {
     expect(grid.get('width')).toBe('min(980px,calc(100vw - 48px))');
     expect(980).toBeLessThanOrEqual(1258 - 48); // the 1258px-wide reference viewport gives the grid its full width
-    const cols = Math.floor((980 + 4) / (60 + 4)); // grid width min(980px, 100vw − 48px) = 980px at 1258px wide
-    expect(cols).toBe(15);
-    const rows = Math.ceil(PICKER_ORDER.length / cols);
-    expect(rows).toBe(6);
-    const gridH = rows * 60 + (rows - 1) * 4;
-    expect(gridH).toBeLessThanOrEqual(lengthPx(grid.get('max-height'), H)); // the grid itself never scrolls (380 ≤ 420)
-    expect(lengthPx(panel.get('max-height'), H)).toBeGreaterThanOrEqual(chrome + gridH);
+    expect(Math.ceil(PICKER_ORDER.length / Math.floor((980 + 4) / (60 + 4)))).toBe(7);
   });
 });
 

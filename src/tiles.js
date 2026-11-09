@@ -1,9 +1,11 @@
 // Caelancraft — procedural 16×16 tile painters. See src/CONTRACTS.md §15 and docs/SPEC-gameplay.md §2.2–§2.5.
 //
-// PURE: no DOM, no three, no imports, no Math.random. Every tile is painted from a private mulberry32 stream
+// PURE: no DOM, no three, no Math.random; the only import is circuitTiles.js (the powder-and-circuits tiles and the Powder
+// Keg's painters, DESIGN-circuits §6.2.9). Every tile is painted from a private mulberry32 stream
 // seeded with fnv1a(tileName), so textures never depend on the world seed and are bit-identical across runs.
 // Output is a Uint8ClampedArray(16*16*4) in RGBA order with idx = (y*16 + x)*4; y grows DOWN the tile image
 // (row 0 is the world-up edge of side faces, see CONTRACTS.md §0 — flipY = false).
+import { CIRCUIT_TILE_NAMES, CIRCUIT_RECIPES } from './circuitTiles.js';
 
 const W = 16;
 const H = 16;
@@ -121,6 +123,8 @@ export const TILE_NAMES = Object.freeze({
   102: 'loose_stones',
   103: 'fallen_branches',
   104: 'fire_pit_side',
+  // powder and circuits: 160–194 (DESIGN-circuits §1.4), painted by circuitTiles.js
+  ...CIRCUIT_TILE_NAMES,
   240: 'zombie_face',
   241: 'zombie_head_side',
   242: 'zombie_scalp',
@@ -1097,73 +1101,6 @@ function inHexagon(x, y, cx, cy, R) {
   // Pointy-top: edge normals at 0°, 60° and 120°, so |dx| ≤ inradius (the vertical sides) and the slanted pairs.
   const ax = Math.abs(dx);
   return ax <= inr && ax * 0.5 + Math.abs(dy) * (Math.sqrt(3) / 2) <= inr;
-}
-
-/**
- * 75 barrel_side — the Blast Barrel's staves: four vertical staves (3–4 px wide, three warm browns, noise 6) split by
- * dark 0x3e2612 seams, two dark iron bands on rows 1–3 and 12–14 (0x3a3d42, a 0x5f646c highlight row, 0x9aa0a8
- * rivets at x 2 and 13), and between them a red hazard hexagon (pointy-top, circumradius 4.2 around (8, 7.5):
- * 0xc8281e fill with a one-pixel 0x5e0c08 outline) carrying a pale 0xffe9a0 exclamation mark. Alpha 255.
- */
-function paintBarrelSide(px, rng) {
-  const STAVES = [[0, 3, 0x8a5a2e], [4, 7, 0x7a4c26], [8, 11, 0x93623a], [12, 15, 0x80522a]];
-  for (const [x0, x1, hex] of STAVES) {
-    for (let y = 0; y < H; y++) {
-      for (let x = x0; x <= x1; x++) set(px, x, y, hex, delta(rng, 6) + (y % 5 === 0 ? -4 : 0));
-    }
-  }
-  for (let y = 0; y < H; y++) for (const x of [3, 7, 11]) set(px, x, y, 0x3e2612, delta(rng, 4));
-  for (const [y0, y1] of [[1, 3], [12, 14]]) {
-    for (let y = y0; y <= y1; y++) {
-      for (let x = 0; x < W; x++) set(px, x, y, y === y0 ? 0x5f646c : 0x3a3d42, delta(rng, 4));
-    }
-    set(px, 2, y0 + 1, 0x9aa0a8);
-    set(px, 13, y0 + 1, 0x9aa0a8);
-  }
-  const CX = 8;
-  const CY = 7.5;
-  for (let y = 4; y <= 11; y++) {
-    for (let x = 3; x <= 12; x++) {
-      if (!inHexagon(x, y, CX, CY, 4.2)) continue;
-      const edge = !inHexagon(x - 1, y, CX, CY, 4.2) || !inHexagon(x + 1, y, CX, CY, 4.2) ||
-        !inHexagon(x, y - 1, CX, CY, 4.2) || !inHexagon(x, y + 1, CX, CY, 4.2);
-      set(px, x, y, edge ? 0x5e0c08 : 0xc8281e, edge ? 0 : delta(rng, 8));
-    }
-  }
-  for (const y of [5, 6, 7]) {
-    set(px, 7, y, 0xffe9a0);
-    set(px, 8, y, 0xffe9a0);
-  }
-  set(px, 7, 9, 0xffe9a0);
-  set(px, 8, 9, 0xffe9a0);
-}
-
-/**
- * 76 barrel_top — the lid: horizontal planks (rows of 3, 0x9a6a3a / 0x8a5c30, noise 5, 0x4a3018 seams), a dark iron rim
- * (0x3a3d42) on every pixel whose centre lies 6.2–7.9 from (8, 8), a 2×2 0x6a7078 fuse socket at (7..8, 7..8), and a
- * short fuse cord (0x2a2420) from the socket up-right to (11, 4) whose tip burns 0xffd040 with a 0xff7a1a ember beside it.
- * Alpha 255.
- */
-function paintBarrelTop(px, rng) {
-  for (let y = 0; y < H; y++) {
-    const band = Math.floor(y / 3);
-    const seam = y % 3 === 2;
-    for (let x = 0; x < W; x++) set(px, x, y, seam ? 0x4a3018 : band % 2 === 0 ? 0x9a6a3a : 0x8a5c30, delta(rng, 5));
-  }
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const d = Math.hypot(x + 0.5 - 8, y + 0.5 - 8);
-      if (d >= 6.2 && d < 7.9) set(px, x, y, 0x3a3d42, delta(rng, 4));
-      else if (d >= 7.9) set(px, x, y, 0x2e3034, delta(rng, 3));
-    }
-  }
-  for (let y = 7; y <= 8; y++) for (let x = 7; x <= 8; x++) set(px, x, y, 0x6a7078);
-  line(px, 8, 6, 9, 5, 0x2a2420);
-  line(px, 9, 5, 10, 5, 0x2a2420);
-  line(px, 10, 5, 11, 4, 0x2a2420);
-  set(px, 11, 4, 0xffd040);
-  set(px, 12, 3, 0xff7a1a);
-  set(px, 11, 3, 0xffb02e);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -2405,8 +2342,6 @@ const RECIPES = Object.freeze({
   black_hole: paintBlackHole,
   campfire_side: paintCampfireSide,
   campfire_top: paintCampfireTop,
-  barrel_side: paintBarrelSide,
-  barrel_top: paintBarrelTop,
   copper_ore: paintCopperOre,
   tin_ore: paintTinOre,
   honeyberry_bush: paintHoneyberryBush,
@@ -2446,6 +2381,8 @@ const RECIPES = Object.freeze({
   watcher_smoke: paintWatcherSmoke,
   ...Object.fromEntries(Object.entries(WOOL_HEX).map(([name, hex]) => [name, (px, rng) => paintWool(px, rng, hex)])),
   missing: paintMissing,
+  // Last: the 35 powder-and-circuits tiles and the Powder Keg's barrel_side / barrel_top (circuitTiles.js, §6.2.9).
+  ...CIRCUIT_RECIPES,
 });
 
 // ---------------------------------------------------------------------------------------------------------------
