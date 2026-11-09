@@ -5,8 +5,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CONTROLS_SHEET } from '../../src/menus.js';
-import { PICKER_ORDER } from '../../src/blocks.js';
-import { SAVE_SLOTS } from '../../src/config.js';
+import { PICKER_ORDER, BLOCKS } from '../../src/blocks.js';
+import { SAVE_SLOTS, HOTBAR_SIZE } from '../../src/config.js';
+import { ITEMS } from '../../src/items.js';
+import { documentFromHTML } from '../helpers/fakeDom.js';
 
 const css = readFileSync(fileURLToPath(new URL('../../src/styles.css', import.meta.url)), 'utf8');
 
@@ -196,5 +198,164 @@ describe('styles.css block picker', () => {
     const gridH = rows * 60 + (rows - 1) * 4;
     expect(gridH).toBeLessThanOrEqual(lengthPx(grid.get('max-height'), H)); // the grid itself never scrolls (380 ≤ 420)
     expect(lengthPx(panel.get('max-height'), H)).toBeGreaterThanOrEqual(chrome + gridH);
+  });
+});
+
+// ---- Survival (DESIGN-survival §9.8): z-order, the HUD bookends and chips at the reference sizes, the survival hotbar, and
+// no Minecraft chrome (.mc-button / .picker-panel) on any new element.
+describe('styles.css survival screens', () => {
+  /** "calc(50% + 201px)" → 201 */
+  const fromCentre = (v) => {
+    const m = /^calc\(50% \+ (\d+(?:\.\d+)?)px\)$/.exec(/** @type {string} */ (v));
+    if (!m) throw new Error(`not calc(50% + Npx): ${v}`);
+    return Number(m[1]);
+  };
+  /** "calc(50% - 209px)" at a viewport width */
+  const halfMinus = (v, W) => {
+    const m = /^calc\(50% - (\d+(?:\.\d+)?)px\)$/.exec(/** @type {string} */ (v));
+    if (!m) throw new Error(`not calc(50% - Npx): ${v}`);
+    return W / 2 - Number(m[1]);
+  };
+  const px = (v) => toPx(/** @type {string} */ (v).split(/\s+/)[0], 0);
+  /** A box's height: its font's line height + vertical padding + borders ("bold 10px/12px monospace", "1px 5px", "1px solid"). */
+  const boxH = (d) => Number(/\/(\d+)px/.exec(/** @type {string} */ (d.get('font')))?.[1])
+    + 2 * toPx(/** @type {string} */ (d.get('padding')).split(/\s+/)[0], 0) + 2 * px(d.get('border'));
+  /** @typedef {{x0: number, x1: number, y0: number, y1: number}} Rect  screen px, y down */
+  const overlap = (a, b) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+
+  it('z-order: the pack screen shares the picker\'s layer (20); the death screen (33) sits over the pause menu, under click-to-play', () => {
+    const z = (sel) => Number(decls(sel).get('z-index'));
+    expect(z('#pack-screen')).toBe(20);
+    expect(z('#pack-screen')).toBe(z('#block-picker'));
+    expect(z('#death-screen')).toBe(33);
+    expect(z('#pause-menu')).toBeLessThan(z('#death-screen'));
+    expect(z('#death-screen')).toBeLessThan(z('#click-to-play'));
+    expect(z('#hud')).toBeLessThan(z('#pack-screen'));
+  });
+
+  it('the survival hotbar: pointy-top hex slots 40x46, under #block-toast; Creative\'s hotbar parts stay as they were', () => {
+    const slot = decls('#hotbar.survival .hotbar-slot');
+    expect(slot.get('clip-path')).toBe('polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)');
+    expect(slot.get('width')).toBe('40px');
+    expect(slot.get('height')).toBe('46px');
+    expect(decls('#hotbar.survival .hotbar-slot::before').get('clip-path')).toBe(slot.get('clip-path'));
+    const [padY] = /** @type {string} */ (decls('#hotbar.survival').get('padding')).split(/\s+/).map((v) => toPx(v, 0));
+    const border = px(decls('#hotbar').get('border'));
+    const top = toPx(decls('#hotbar').get('bottom'), 0) + px(slot.get('height')) + 2 * padY + 2 * border + 2; // + 2px shadow
+    expect(top).toBeLessThanOrEqual(toPx(decls('#block-toast').get('bottom'), 0));
+    // the survival parts never show in Creative
+    expect(decls('#hotbar .slot-count,#hotbar .slot-wear,#pack-glyph').get('display')).toBe('none');
+    expect(decls('.hotbar-slot').get('width')).toBe('40px');
+    expect(decls('.hotbar-slot').get('height')).toBe('40px');
+  });
+
+  it('the bookends, status chips and job chip avoid #block-toast, #chat-log and the hotbar at 1280x720 (and its 1258x622 viewport)', () => {
+    const bar = decls('#hotbar');
+    const slot = decls('#hotbar.survival .hotbar-slot');
+    const [padY, padX] = /** @type {string} */ (decls('#hotbar.survival').get('padding')).split(/\s+/).map((v) => toPx(v, 0));
+    const border = px(bar.get('border'));
+    const barW = HOTBAR_SIZE * px(slot.get('width')) + (HOTBAR_SIZE - 1) * px(bar.get('gap')) + 2 * padX + 2 * border;
+    const barH = px(slot.get('height')) + 2 * padY + 2 * border;
+    expect(barW).toBe(386);
+    const vit = decls('.vitals');
+    const cellW = px(decls('.vital').get('width'));
+    const cellH = px(decls('.vital').get('height'));
+    expect([cellW, cellH]).toEqual([38, 44]);
+    const pairW = 2 * cellW + px(vit.get('gap'));
+    const leftOff = fromCentre(decls('#vitals-left').get('right'));
+    const rightOff = fromCentre(decls('#vitals-right').get('left'));
+    expect(leftOff).toBeGreaterThanOrEqual(barW / 2 + 2); // clear of the hotbar and its shadow
+    const chips = decls('.status-chips');
+    const chipH = boxH(decls('.chip'));
+    const job = decls('.job-chip');
+    const jobH = boxH(job);
+    expect([chipH, jobH]).toEqual([16, 16]);
+    // the longest name a toast shows (bold 18px monospace ≈ 10.8px a character, ~21px tall, 2px shadow)
+    const longest = Math.max(...Object.values(ITEMS).map((d) => d.name.length), ...BLOCKS.map((b) => b.displayName.length));
+    const toastHalfW = (longest * 10.8 + 2) / 2;
+    const toastBottom = toPx(decls('#block-toast').get('bottom'), 0);
+    const vb = toPx(vit.get('bottom'), 0);
+
+    for (const [W, H] of [[1280, 720], [1258, 622]]) {
+      /** @type {Record<string, Rect>} */
+      const r = {
+        hotbar: { x0: W / 2 - barW / 2 - 2, x1: W / 2 + barW / 2 + 2, y0: H - 8 - barH - 2, y1: H - 8 + 2 },
+        toast: { x0: W / 2 - toastHalfW, x1: W / 2 + toastHalfW, y0: H - toastBottom - 21, y1: H - toastBottom },
+        chat: { x0: 8, x1: 8 + 0.6 * W, y0: 0, y1: H - toPx(decls('#chat-log').get('bottom'), 0) },
+        left: { x0: W / 2 - leftOff - pairW, x1: W / 2 - leftOff, y0: H - vb - cellH, y1: H - vb },
+        right: { x0: W / 2 + rightOff, x1: W / 2 + rightOff + pairW, y0: H - vb - cellH, y1: H - vb },
+        chips: {
+          x0: W / 2 - fromCentre(chips.get('right')) - halfMinus(chips.get('max-width'), W), x1: W / 2 - fromCentre(chips.get('right')),
+          y0: H - toPx(chips.get('bottom'), 0) - chipH, y1: H - toPx(chips.get('bottom'), 0),
+        },
+        job: {
+          x0: W / 2 + fromCentre(job.get('left')), x1: W / 2 + fromCentre(job.get('left')) + halfMinus(job.get('max-width'), W),
+          y0: H - toPx(job.get('bottom'), 0) - jobH, y1: H - toPx(job.get('bottom'), 0),
+        },
+      };
+      for (const name of ['left', 'right', 'chips', 'job']) {
+        expect(overlap(r[name], r.toast), `${name} vs #block-toast at ${W}x${H}`).toBe(false);
+        expect(overlap(r[name], r.chat), `${name} vs #chat-log at ${W}x${H}`).toBe(false);
+        expect(overlap(r[name], r.hotbar), `${name} vs #hotbar at ${W}x${H}`).toBe(false);
+        expect(r[name].x0, `${name} on screen`).toBeGreaterThanOrEqual(0);
+        expect(r[name].x1, `${name} on screen`).toBeLessThanOrEqual(W);
+      }
+      // the chips sit above the left bookend, the job chip above the right one
+      expect(r.chips.y1).toBeLessThanOrEqual(r.left.y0);
+      expect(r.chips.x1).toBe(r.left.x1);
+      expect(r.job.y1).toBeLessThanOrEqual(r.right.y0);
+      expect(r.job.x0).toBe(r.right.x0);
+    }
+    // the pack glyph overlaps the hotbar's bottom-right corner but stays clear of the right bookend
+    const glyph = decls('#hotbar.survival #pack-glyph');
+    const glyphRight = barW / 2 - border - toPx(/** @type {string} */ (glyph.get('right')), 0);
+    expect(glyphRight).toBeLessThan(rightOff);
+  });
+
+  it('the pack screen ends above the HUD hotbar like the picker, and fits 1258x622 without scrolling', () => {
+    const layer = decls('#pack-screen');
+    const panel = decls('.pack-panel');
+    expect(panel.get('box-sizing')).toBe('border-box');
+    expect(panel.get('overflow-y')).toBe('auto');
+    for (const H of [480, 622, 720, 1080]) {
+      const bottom = lengthPx(layer.get('padding-top'), H) + lengthPx(panel.get('max-height'), H) + 2;
+      expect(bottom, `viewport ${H}`).toBeLessThanOrEqual(H - 60 - 8);
+    }
+    // left column: heading, the board (the wear chain and discard hex are its tallest part), the info line, the zig-zag
+    // strip and the hint (packUI.js: flat-top cells of circumradius 30)
+    const S = 30;
+    const cy = Math.ceil(2.5 * Math.sqrt(3) * S);
+    const board = Math.round(cy + 3.1 * Math.sqrt(3) * S);
+    const left = 18 + 4 + board + 4 + 17 + 4 + Math.round(Math.sqrt(3) * S * 1.5) + 6 + 15;
+    const [padY] = /** @type {string} */ (panel.get('padding')).split(/\s+/).map((v) => toPx(v, 0));
+    expect(left + 2 * padY + 4).toBeLessThanOrEqual(lengthPx(panel.get('max-height'), 622));
+    // width: the strip beside the Making panel
+    const stripW = 1.5 * S * 8 + 2 * S;
+    const right = Number(/min\((\d+)px/.exec(/** @type {string} */ (decls('.pack-right').get('width')))?.[1]);
+    expect(stripW + 22 + right + 2 * 18 + 4).toBeLessThanOrEqual(1258 - 32);
+  });
+
+  it('#death-screen and every new survival element use no .mc-button or .picker-panel; their buttons are .hex-button', () => {
+    const doc = documentFromHTML(readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8'));
+    const ids = ['death-screen', 'pack-screen', 'pause-mode', 'vitals-left', 'vitals-right', 'status-chips', 'job-chip',
+      'action-ring', 'pickup-layer', 'pack-glyph'];
+    for (const id of ids) {
+      const el = /** @type {any} */ (doc.getElementById(id));
+      expect(el, id).toBeTruthy();
+      expect(el.classList.contains('mc-button') || el.classList.contains('picker-panel'), id).toBe(false);
+      expect(el.querySelectorAll('.mc-button, .picker-panel'), id).toHaveLength(0);
+    }
+    for (const id of ['btn-wake', 'btn-mode-creative', 'btn-mode-survival']) {
+      expect(/** @type {any} */ (doc.getElementById(id)).classList.contains('hex-button'), id).toBe(true);
+    }
+    // and the new modules never create one
+    for (const file of ['packUI.js', 'itemIcons.js', 'itemArt.js']) {
+      const src = readFileSync(fileURLToPath(new URL(`../../src/${file}`, import.meta.url)), 'utf8');
+      expect(src, file).not.toMatch(/mc-button|picker-panel/);
+    }
+    expect(decls('#death-screen').get('background')).toBeUndefined(); // no red tint: the honeycomb is the background
+    expect(decls('.death-comb polygon').get('fill')).toBe('#1c1a24');
+    expect(decls('.comb-ring').get('opacity')).toBe('.85');
+    expect(decls('.death-title').get('color')).toBe('#e8b04a');
   });
 });

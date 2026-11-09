@@ -1,9 +1,13 @@
 // Unit tests for the Worlds panel's pure text helpers (src/menus.js), main's save-failure messages and the ?slot URL
 // parameter — see src/CONTRACTS.md §41, §20, §22 and §23. The DOM side is checked in a real browser (screenshots).
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   formatBytes, formatLastPlayed, slotDetailText, usageLabel, usageLevel, deleteConfirmText, latestSlot,
+  createMenus, SURVIVAL_RESOURCES_LABEL,
 } from '../../src/menus.js';
+import { documentFromHTML, fire } from '../helpers/fakeDom.js';
 import { saveFailMessage, worldsFailMessage } from '../../src/main.js';
 import { parseParams } from '../../src/diagnostics.js';
 import { STORAGE_QUOTA_ESTIMATE } from '../../src/storage.js';
@@ -97,5 +101,61 @@ describe('?slot=N', () => {
     expect(parseParams('?slot=1').slot).toBe(1);
     expect(parseParams('?autoplay=1&slot=6').slot).toBe(6);
     for (const bad of ['0', '7', '2.5', 'two', '', '-1']) expect(parseParams(`?slot=${bad}`).slot, bad).toBeNull();
+  });
+});
+
+describe('Worlds panel: Survival (DESIGN-survival §9.8)', () => {
+  it('a world in Survival says so at the end of its detail line; Creative worlds read as before', () => {
+    expect(slotDetailText(world(2, { lastPlayed: NOW - 2 * HOUR, bytes: 37 * 1024, mode: 'survival' }), NOW))
+      .toBe('Seed 1002 · played 2 hours ago · 37 KB · Survival');
+    expect(slotDetailText(world(2, { lastPlayed: 0, bytes: 600, mode: 'survival' }), NOW)).toBe('Seed 1002 · 600 B · Survival');
+    expect(slotDetailText(world(2, { lastPlayed: 0, bytes: 600, mode: 'creative' }), NOW)).toBe('Seed 1002 · 600 B');
+    expect(slotDetailText(world(2, { lastPlayed: 0, bytes: 600 }), NOW)).toBe('Seed 1002 · 600 B');
+    expect(slotDetailText({ ...damaged(3), mode: 'survival' }, NOW)).toBe("Can't be read · 900 B");
+  });
+
+  /** The menus on a fake DOM built from index.html, with the title showing these slots. */
+  function titleWith(slots, callbacks) {
+    vi.spyOn(console, 'warn').mockImplementation(() => {}); // no real canvas for the atlas helpers
+    const html = readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8');
+    const doc = documentFromHTML(html);
+    const menus = createMenus(/** @type {any} */ (doc), /** @type {any} */ ({}), callbacks);
+    menus.showTitle(slots, { now: NOW });
+    return { doc, menus, list: /** @type {any} */ (doc.getElementById('worlds-list')) };
+  }
+
+  it('the row shows the Survival detail', () => {
+    const { list } = titleWith([world(1, { mode: 'survival', lastPlayed: 0, bytes: 600 }), empty(2)], {});
+    expect(list.querySelector('li[data-slot="1"] .slot-detail').textContent).toBe('Seed 1001 · 600 B · Survival');
+    vi.restoreAllMocks();
+  });
+
+  it('the New World form has the "Survival resources" checkbox, checked by default, and its value reaches onNewWorld', () => {
+    const onNewWorld = vi.fn();
+    const { list } = titleWith([world(1), empty(2), empty(3)], { onNewWorld });
+    list.querySelector('li[data-slot="2"] button[data-action="new"]').click();
+    const form = list.querySelector('form.slot-form');
+    const box = form.querySelector('input.slot-survival-input');
+    expect(box.type).toBe('checkbox');
+    expect(box.checked).toBe(true);
+    expect(form.querySelector('label.slot-check').textContent).toBe(SURVIVAL_RESOURCES_LABEL);
+    expect(SURVIVAL_RESOURCES_LABEL).toBe('Survival resources (wild plants, ponds, copper and tin)');
+    fire(form, 'submit');
+    expect(onNewWorld).toHaveBeenLastCalledWith(2, 'World 2', '', { survivalResources: true });
+    // cleared: generation 1, today's land
+    list.querySelector('li[data-slot="3"] button[data-action="new"]').click();
+    const form3 = list.querySelector('form.slot-form');
+    form3.querySelector('input.slot-survival-input').checked = false;
+    form3.querySelector('.slot-name-input').value = 'Flatlands';
+    fire(form3, 'submit');
+    expect(onNewWorld).toHaveBeenLastCalledWith(3, 'Flatlands', '', { survivalResources: false });
+    vi.restoreAllMocks();
+  });
+
+  it('Rename has no checkbox', () => {
+    const { list } = titleWith([world(1), empty(2)], {});
+    list.querySelector('li[data-slot="1"] button[data-action="rename"]').click();
+    expect(list.querySelector('form.slot-form .slot-survival-input')).toBeNull();
+    vi.restoreAllMocks();
   });
 });
