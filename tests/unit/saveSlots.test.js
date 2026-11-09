@@ -696,3 +696,47 @@ describe('save slots: survival worlds (v0.9)', () => {
     expect(junk.writes).toBe(writes);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Circuits (docs/DESIGN-circuits.md §6.4): the black-holes and circuits switches and the configured parts.
+
+describe('save slots: circuit fields', () => {
+  /** A world with both switches off and two configured parts (their blocks recorded in the edits). */
+  const circuitWorld = (seed = 80, overrides = {}) => makeSave(seed, {
+    // (5, 64, 0) is chunk (0, 0), local index (5·16 + 0)·128 + 64; (−3, 70, 2) is chunk (−1, 0), local (13·16 + 2)·128 + 70
+    edits: { '0,0': [(5 * 16) * 128 + 64, BLOCK.KNIFE_SWITCH], '-1,0': [(13 * 16 + 2) * 128 + 70, BLOCK.SPARK_TRANSMITTER] },
+    blackholes: false,
+    circuits: false,
+    circuitParts: { '5,64,0': { k: 'switch', on: true }, '-3,70,2': { k: 'tx', l: 'Gate', ch: 7 } },
+    ...overrides,
+  });
+  /** The three circuit fields of a loaded save. */
+  const circuitFields = (save) => {
+    expect(save).not.toBeNull();
+    return { blackholes: save.blackholes, circuits: save.circuits, circuitParts: save.circuitParts };
+  };
+
+  it('save and load keep them; a world without them stays version 2 and byte-identical', () => {
+    const storage = withWorlds([[1, circuitWorld()], [2, makeSave(2)]]);
+    expect(circuitFields(loadSlot(1, storage))).toEqual({
+      blackholes: false, circuits: false, circuitParts: { '-3,70,2': { k: 'tx', l: 'Gate', ch: 7 }, '5,64,0': { k: 'switch', on: true } },
+    });
+    expect(loadSlot(1, storage).version).toBe(SAVE_VERSION);
+    expect(storage.map.get(slotKey(2))).toBe(serializeSave(makeSave(2)));
+    expect(storage.map.get(slotKey(2))).not.toContain('circuit');
+  });
+
+  it('rename, duplicate and the legacy move keep blackholes, circuits and circuitParts', () => {
+    const world = circuitWorld(81, { meta: { name: 'Wired', createdAt: 100, lastPlayed: 200 } });
+    const expected = circuitFields(deserializeSave(serializeSave(world)));
+    expect(expected.circuitParts).toBeDefined();
+    const storage = withWorlds([[3, world]]);
+    expect(renameSlot(3, 'Rewired', storage).ok).toBe(true);
+    expect(circuitFields(loadSlot(3, storage))).toEqual(expected);
+    expect(duplicateSlot(3, storage, NOW)).toMatchObject({ ok: true, slot: 1, name: 'Rewired (copy)' });
+    expect(circuitFields(loadSlot(1, storage))).toEqual(expected);
+    const legacy = fakeStorage([[LEGACY_SAVE_KEY, serializeSave({ ...world, meta: undefined })]]);
+    expect(migrateLegacySave(legacy, NOW)).toMatchObject({ status: 'migrated', slot: 1 });
+    expect(circuitFields(loadSlot(1, legacy))).toEqual(expected);
+  });
+});

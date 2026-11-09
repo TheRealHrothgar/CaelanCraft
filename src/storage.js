@@ -6,6 +6,8 @@
 //
 // v0.9 (docs/DESIGN-survival.md §1.4, §9.6): the optional `gen`, `mode`, `survival` and `containers` fields; a document
 // carrying `gen` ≥ 2 or `survival` is version 3, everything else stays version 2 byte for byte.
+// Circuits (docs/DESIGN-circuits.md §6.4): the optional `blackholes` and `circuits` switches and the configured parts
+// (`circuitParts`), after `containers` and before `meta`. They change no version: an older client ignores them.
 //
 // Note: docs/SPEC-gameplay.md §8 describes a multi-key layout (`caelancraft:v1:meta` +
 // `caelancraft:v1:chunk:<cx>,<cz>`) and an (x-innermost) localIndex formula. CONTRACTS.md wins:
@@ -20,6 +22,7 @@ import { normalizeRunesJSON, validateRunesJSON } from './runes.js';
 import { validatePigsJSON } from './pigs.js';
 import { WEAR_SLOT_NAMES, getItem, maxDurability, stackSize } from './items.js';
 import { normalizeFiresJSON, parseCellKey } from './cooking.js';
+import { normalizePartsJSON, validatePartsJSON } from './circuitStore.js';
 
 /** @typedef {import('./types.js').SaveData} SaveData */
 /** @typedef {import('./types.js').EditsJSON} EditsJSON */
@@ -519,6 +522,9 @@ export function serializeSave(data) {
   if (data.containers != null && (!isPlainObject(data.containers) || data.containers instanceof Map)) {
     throw new TypeError('serializeSave: containers must be a ContainersJSON object (use containers.export())');
   }
+  if (data.circuitParts != null && (!isPlainObject(data.circuitParts) || data.circuitParts instanceof Map)) {
+    throw new TypeError('serializeSave: circuitParts must be a CircuitPartsJSON object (use circuitStore.export())');
+  }
   if (Number.isInteger(data.gen) && data.gen > GEN_LATEST) {
     throw new TypeError(`serializeSave: gen ${data.gen} is newer than this game (${GEN_LATEST})`);
   }
@@ -577,6 +583,14 @@ export function serializeSave(data) {
     const containers = normalizeContainersJSON(data.containers);
     if (Object.keys(containers).length > 0) /** @type {*} */ (out).containers = containers;
   }
+  // Circuits (DESIGN-circuits §6.4), in this order: the black-holes and circuits switches (written whenever given; anything
+  // but `false` is on, the `zombies` rule; absent on load = on) and the configured parts (only when non-empty).
+  if (data.blackholes != null) /** @type {*} */ (out).blackholes = data.blackholes !== false;
+  if (data.circuits != null) /** @type {*} */ (out).circuits = data.circuits !== false;
+  if (data.circuitParts != null) {
+    const parts = normalizePartsJSON(data.circuitParts).parts;
+    if (Object.keys(parts).length > 0) /** @type {*} */ (out).circuitParts = parts;
+  }
   // Version 3 exactly when gen ≥ 2 or a survival state is present (older clients then show the slot as damaged).
   if (/** @type {*} */ (out).gen !== undefined || /** @type {*} */ (out).survival !== undefined) {
     /** @type {*} */ (out).version = SURVIVAL_SAVE_VERSION;
@@ -616,6 +630,10 @@ export function serializeSave(data) {
  * loads as 'creative' with `mode: survival needs generation 2; loaded in Creative`); `survival` through normalizeSurvivalJSON
  * (its fires checked against the repaired edits); `containers` through normalizeContainersJSON (checked against the edits,
  * kept when non-empty). The result's `version` is 3 exactly when it has `gen` ≥ 2 or `survival`, else 2.
+ * Circuits (DESIGN-circuits §6.4): booleans `blackholes` and `circuits` are kept (anything else is dropped with
+ * `blackholes: not a boolean, treated as on`); `circuitParts` through circuitStore.validatePartsJSON against the repaired
+ * edits (orphans, unknown kinds, bad keys and fields repaired with a warning each; kept when non-empty; a non-object warns
+ * `circuitParts: not an object, ignored`).
  * Every repair is described in a non-enumerable `warnings: string[]` on the result.
  * @param {string} text
  * @returns {SaveData|null}
@@ -775,6 +793,20 @@ export function deserializeSave(text) {
     else {
       const containers = normalizeContainersJSON(raw.containers, warnings, { edits });
       if (Object.keys(containers).length > 0) /** @type {*} */ (save).containers = containers;
+    }
+  }
+  for (const name of ['blackholes', 'circuits']) {
+    if (raw[name] === undefined) continue;
+    if (typeof raw[name] === 'boolean') /** @type {*} */ (save)[name] = raw[name];
+    else warnings.push(`${name}: not a boolean, treated as on`);
+  }
+  if (raw.circuitParts !== undefined) {
+    if (!isPlainObject(raw.circuitParts)) warnings.push('circuitParts: not an object, ignored');
+    else {
+      // The orphan check reuses this function's own per-chunk map of the repaired edits: O(1) per entry.
+      const v = validatePartsJSON(raw.circuitParts, edits, perChunk);
+      for (const w of v.warnings) warnings.push(w);
+      if (Object.keys(v.parts).length > 0) /** @type {*} */ (save).circuitParts = v.parts;
     }
   }
   if (gen >= 2 || /** @type {*} */ (save).survival !== undefined) save.version = SURVIVAL_SAVE_VERSION;
