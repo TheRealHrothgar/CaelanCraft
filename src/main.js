@@ -17,7 +17,7 @@ import {
   PIG_NATURAL_COUNT, CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
   BLACK_HOLE_MAX_TRACKED, BLACK_HOLE_SWALLOW_LINE_S,
   PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S,
-  ZOMBIE_SOUND_RANGE, ZOMBIE_HEIGHT,
+  ZOMBIE_HEIGHT,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
@@ -44,7 +44,7 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Zombies } from './zombies.js';
+import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume } from './zombies.js';
 import { createZombieRenderer } from './zombieRenderer.js';
 import { BlockPhysics } from './blockphysics.js';
 import { createFallingRenderer } from './fallingRenderer.js';
@@ -422,6 +422,8 @@ export function boot(win, doc) {
   const physicsSoundAt = new Map();
   /** loudest squeal of the pigs knocked during this frame's physics step (0 = none); played once after it */
   let knockSqueal = 0;
+  /** loudest knock-out / burn-out of the zombies gone this frame (0 = none); one playZombieDown after the physics step */
+  let zombieDownVolume = 0;
   const flash = { x: 0, y: 0, z: 0, intensity: 0 };
   /** @type {[number, number, number]} camera shake offset this frame */
   const shake = [0, 0, 0];
@@ -1473,8 +1475,7 @@ export function boot(win, doc) {
 
   /** @returns {number} 1 at the player fading to 0 at ZOMBIE_SOUND_RANGE (0 beyond) */
   function zombieVolume(zb) {
-    const d = Math.hypot(zb.x - player.x, zb.y - player.y, zb.z - player.z);
-    return d < ZOMBIE_SOUND_RANGE ? 1 - d / ZOMBIE_SOUND_RANGE : 0;
+    return zombieVolumeFor(zb, player);
   }
 
   /** A zombie is gone — knocked out ('ko', a dull grey-green puff) or burned away ('burn', ash, smoke and embers). */
@@ -1488,8 +1489,8 @@ export function boot(win, doc) {
       particles.emit('dust', zb.x, cy, zb.z, 28, { color: [0.45, 0.55, 0.38], spread: 0.45 });
       particles.emit('smoke', zb.x, cy, zb.z, 6, { spread: 0.4, color: [0.5, 0.55, 0.47] });
     }
-    const v = zombieVolume(zb);
-    if (v > 0) audio.playZombieDown(v);
+    // One down sound a frame, the loudest (a crowd burning out together at dawn is one voice): played after the step.
+    zombieDownVolume = Math.max(zombieDownVolume, zombieVolume(zb));
     if (zombieTarget && zombieTarget.zombie === zb) zombieTarget = null;
   }
 
@@ -1519,14 +1520,11 @@ export function boot(win, doc) {
         break; // one groan a frame at most
       }
     }
-    for (const zb of ev.ignited) {
-      const v = zombieVolume(zb);
-      if (v > 0) audio.playHiss(v);
-    }
-    for (const zb of ev.scorched) {
-      const v = zombieVolume(zb);
-      if (v > 0) audio.playZombieHurt(v);
-    }
+    // One hiss and one scorch yelp a frame at most, the loudest (a crowd ignites together at dawn).
+    const hiss = loudestVolume(ev.ignited, player);
+    if (hiss > 0) audio.playHiss(hiss);
+    const yelp = loudestVolume(ev.scorched, player);
+    if (yelp > 0) audio.playZombieHurt(yelp);
     for (const zb of ev.burned) zombieGone(zb, 'burn');
     for (const zb of ev.knockedOut) zombieGone(zb, 'ko');
     for (const zb of zombies.list) {
@@ -1550,6 +1548,10 @@ export function boot(win, doc) {
     if (knockSqueal > 0) {
       audio.playSqueal(knockSqueal);
       knockSqueal = 0;
+    }
+    if (zombieDownVolume > 0) {
+      audio.playZombieDown(zombieDownVolume);
+      zombieDownVolume = 0;
     }
   }
 

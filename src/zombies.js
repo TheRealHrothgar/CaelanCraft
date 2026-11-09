@@ -10,8 +10,9 @@
 // Zombies only come out at night (natural spawning around the player, never near a campfire, never in a column the
 // player has built in), shamble about, and chase a player they can see who is on foot and not far above them: straight
 // at the player, hopping ledges, turning aside for a moment when something blocks the way, never off a drop of more
-// than ZOMBIE_MAX_DROP cells and never near a campfire (campfires are safe zones). Within ZOMBIE_REACH they lash out
-// once a second: the player is knocked back (main flashes the screen red). There is no health: nothing dies.
+// than ZOMBIE_MAX_DROP cells and never into a campfire's safe zone (ZOMBIE_FIRE_FEAR: one inside turns straight away,
+// and nobody inside is struck). Within ZOMBIE_REACH they lash out once a second: the player is knocked back (main
+// flashes the screen red). There is no health: nothing dies.
 // From dawn a zombie under open sky smoulders and burns away after ZOMBIE_BURN_S; in shade (or water) it survives
 // until it walks into the light. The player knocks one out with ZOMBIE_HITS hits; a blast near it, a black hole or
 // being farther than ZOMBIE_DESPAWN_DIST away also ends it. Zombies are never saved: the per-world switch is.
@@ -20,7 +21,7 @@ import {
   ZOMBIE_SIGHT, ZOMBIE_CHASE_MAX_RISE, ZOMBIE_MAX_DROP, ZOMBIE_REACH, ZOMBIE_ATTACK_COOLDOWN_S, ZOMBIE_HIT_PUSH,
   ZOMBIE_HIT_LIFT, ZOMBIE_HITS, ZOMBIE_KNOCKBACK, ZOMBIE_KNOCK_LIFT, ZOMBIE_HURT_S, ZOMBIE_KO_KNOCK, ZOMBIE_BURN_S,
   ZOMBIE_FIRE_FEAR, ZOMBIE_SPAWN_FIRE_CLEAR, ZOMBIE_SPAWN_MIN, ZOMBIE_SPAWN_MAX, ZOMBIE_SPAWN_INTERVAL_MIN_S,
-  ZOMBIE_SPAWN_INTERVAL_MAX_S, ZOMBIE_SPAWN_TRIES, ZOMBIE_DESPAWN_DIST, WORLD_HEIGHT, PLAYER_HEIGHT,
+  ZOMBIE_SPAWN_INTERVAL_MAX_S, ZOMBIE_SPAWN_TRIES, ZOMBIE_DESPAWN_DIST, ZOMBIE_SOUND_RANGE, WORLD_HEIGHT, PLAYER_HEIGHT,
 } from './config.js';
 import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater } from './physics.js';
 import { hexToWorld, worldToHex } from './hex.js';
@@ -35,11 +36,14 @@ import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js'
  *   id: number, yaw: number, targetYaw: number, mode: 'idle'|'walk'|'chase'|'avoid', timer: number,
  *   hurt: number, hits: number, walkPhase: number, groanIn: number, attackIn: number, swing: number,
  *   burn: number, smoking: boolean, exposed: boolean, sunIn: number, fireIn: number,
+ *   fireX: number, fireY: number, fireZ: number,
  *   detour: number, detourYaw: number, side: 1|-1, stuck: number, tilt: number, wallSinceAim: boolean,
  * }} Zombie
  * `walkPhase` advances with distance walked (the renderer swings the feet with it); `swing` counts down after an
  * attack (the renderer lurches the torso); `burn` is seconds spent in open daylight (burns away at ZOMBIE_BURN_S) and
- * `smoking` is true while it is exposed; `tilt` is the head's fixed lean (radians), chosen at spawn.
+ * `smoking` is true while it is exposed; `tilt` is the head's fixed lean (radians), chosen at spawn. `fireX/Y/Z` is the
+ * floor centre of the nearest campfire within ZOMBIE_FIRE_FEAR + FIRE_WATCH at the last fire check (fireX NaN: none),
+ * which it steers around between checks.
  */
 
 /**
@@ -77,6 +81,8 @@ const TWO_PI = Math.PI * 2;
 export const SUN_CHECK_S = 0.25;
 /** A zombie looks for a campfire within ZOMBIE_FIRE_FEAR this often (s). */
 export const FIRE_CHECK_S = 0.2;
+/** The fire check also remembers the nearest campfire up to this far outside ZOMBIE_FIRE_FEAR, to steer around it. */
+export const FIRE_WATCH = 2;
 /** Turning away from a campfire lasts this long (s), walking at chase speed. */
 export const AVOID_S = 0.8;
 /** A chaser blocked ahead takes another heading for this long (s; plus up to DETOUR_RAND_S). */
@@ -97,6 +103,28 @@ const LEG_SETTLE_RATE = 10;
 /** Yaw that faces from (x, z) toward (tx, tz): yawToForward(yaw) = (−sin, −cos). */
 function yawToward(x, z, tx, tz) {
   return Math.atan2(-(tx - x), -(tz - z));
+}
+
+/**
+ * A zombie sound's volume for a listener: 1 at the listener, fading linearly to 0 at ZOMBIE_SOUND_RANGE (0 beyond).
+ * @param {{ x: number, y: number, z: number }} zb
+ * @param {{ x: number, y: number, z: number }} listener
+ */
+export function zombieVolume(zb, listener) {
+  const d = Math.hypot(zb.x - listener.x, zb.y - listener.y, zb.z - listener.z);
+  return d < ZOMBIE_SOUND_RANGE ? 1 - d / ZOMBIE_SOUND_RANGE : 0;
+}
+
+/**
+ * The loudest zombieVolume among `list` (0 when none is in range). main plays each kind of zombie sound at most once a
+ * frame at this volume, so a crowd igniting or burning out together at dawn is one voice, not one per zombie.
+ * @param {Iterable<{ x: number, y: number, z: number }>} list
+ * @param {{ x: number, y: number, z: number }} listener
+ */
+export function loudestVolume(list, listener) {
+  let best = 0;
+  for (const zb of list) best = Math.max(best, zombieVolume(zb, listener));
+  return best;
 }
 
 /** No solid cell in column (q, r) from y0 up to the top of the world (getBlock is AIR above it). */
@@ -212,6 +240,9 @@ export class Zombies {
       exposed: false,
       sunIn: 0,
       fireIn: this._rng() * FIRE_CHECK_S,
+      fireX: NaN,
+      fireY: 0,
+      fireZ: 0,
       detour: 0,
       detourYaw: 0,
       side: this._rng() < 0.5 ? 1 : -1,
@@ -267,6 +298,8 @@ export class Zombies {
     carriers.clear();
     for (const zb of this.list) if (zb.carrier) carriers.add(zb.carrier);
     const input = this._input;
+    /** @type {boolean|null} the player inside a campfire's safe zone: looked up once, at the first strike due */
+    let playerSafe = null;
     for (let i = this.list.length - 1; i >= 0; i--) {
       const zb = this.list[i];
       if (zb.y < -16) {
@@ -369,9 +402,14 @@ export class Zombies {
       if (zb.swing > 0) zb.swing = Math.max(0, zb.swing - dt);
       if (zb.attackIn > 0) zb.attackIn -= dt;
 
-      if (player && zb.hurt <= 0 && zb.attackIn <= 0 && this._canReach(zb, player, getBlock)) {
-        this._strike(zb, player);
-        ev.attacks.push(zb);
+      // Nobody inside a campfire's safe zone is struck: not by a zombie turning away from a fire, not by one inside a
+      // zone (it turns away now), and not a player inside one.
+      if (player && zb.hurt <= 0 && zb.attackIn <= 0 && zb.mode !== 'avoid' && this._canReach(zb, player, getBlock)) {
+        if (playerSafe === null) playerSafe = this._inSafeZone(player, world);
+        if (!playerSafe && !this._fireFear(zb, world)) {
+          this._strike(zb, player);
+          ev.attacks.push(zb);
+        }
       }
 
       zb.groanIn -= dt;
@@ -400,20 +438,17 @@ export class Zombies {
     const getBlock = world.getBlock;
     zb.timer -= dt;
     if (zb.detour > 0) zb.detour -= dt;
-    // Campfires are safe zones: within ZOMBIE_FIRE_FEAR of one, walk straight away from it for AVOID_S.
-    if (this._fires && world.nearestFire) {
+    // Campfires are safe zones: within ZOMBIE_FIRE_FEAR of one, walk straight away from it for AVOID_S. The check also
+    // remembers the nearest fire a little farther out, which _safeAhead steers around until the next check.
+    if (!this._fires) {
+      zb.fireX = NaN;
+    } else if (world.nearestFire) {
       zb.fireIn -= dt;
       if (zb.fireIn <= 0) {
         zb.fireIn = FIRE_CHECK_S;
-        const d = world.nearestFire(zb.x, zb.y + 1, zb.z, ZOMBIE_FIRE_FEAR, this._fire);
-        if (d < ZOMBIE_FIRE_FEAR) {
-          zb.mode = 'avoid';
-          zb.timer = AVOID_S;
-          zb.detour = 0;
-          const away = Math.hypot(zb.x - this._fire[0], zb.z - this._fire[2]) > 1e-6
-            ? yawToward(this._fire[0], this._fire[2], zb.x, zb.z) : zb.yaw + Math.PI;
-          zb.targetYaw = wrapAngle(away);
-        }
+        const d = world.nearestFire(zb.x, zb.y + 1, zb.z, ZOMBIE_FIRE_FEAR + FIRE_WATCH, this._fire);
+        this._rememberFire(zb, d);
+        if (d < ZOMBIE_FIRE_FEAR) this._startAvoid(zb);
       }
     }
     if (zb.mode === 'avoid') {
@@ -485,6 +520,58 @@ export class Zombies {
     return false;
   }
 
+  /** Remember the fire `nearestFire` just wrote to this._fire (distance d), or forget it when d is Infinity. */
+  _rememberFire(zb, d) {
+    if (d === Infinity) {
+      zb.fireX = NaN;
+      return;
+    }
+    zb.fireX = this._fire[0];
+    zb.fireY = this._fire[1];
+    zb.fireZ = this._fire[2];
+  }
+
+  /** Turn straight away from the fire in this._fire: mode avoid for AVOID_S. */
+  _startAvoid(zb) {
+    zb.mode = 'avoid';
+    zb.timer = AVOID_S;
+    zb.detour = 0;
+    const away = Math.hypot(zb.x - this._fire[0], zb.z - this._fire[2]) > 1e-6
+      ? yawToward(this._fire[0], this._fire[2], zb.x, zb.z) : zb.yaw + Math.PI;
+    zb.targetYaw = wrapAngle(away);
+  }
+
+  /** A body (a player) inside a campfire's safe zone: within ZOMBIE_FIRE_FEAR of one, measured from y + 1. */
+  _inSafeZone(body, world) {
+    if (!this._fires || !world.nearestFire) return false;
+    return world.nearestFire(body.x, body.y + 1, body.z, ZOMBIE_FIRE_FEAR, this._fire) < ZOMBIE_FIRE_FEAR;
+  }
+
+  /** The zombie is inside a campfire's safe zone right now (a live look-up): it turns away from that fire. */
+  _fireFear(zb, world) {
+    if (!this._inSafeZone(zb, world)) return false;
+    this._rememberFire(zb, 0);
+    this._startAvoid(zb);
+    return true;
+  }
+
+  /**
+   * The next steps (0.8 along the yaw) lead deeper into the remembered campfire's safe zone: the point there is within
+   * ZOMBIE_FIRE_FEAR of it (measured from y + 1, like nearestFire) and nearer to it than the zombie is now. Walking
+   * out of a zone, or along its edge, is fine.
+   */
+  _intoFire(zb) {
+    if (Number.isNaN(zb.fireX)) return false;
+    const dy = zb.y + 1 - zb.fireY;
+    const ax = zb.x - Math.sin(zb.yaw) * 0.8 - zb.fireX;
+    const az = zb.z - Math.cos(zb.yaw) * 0.8 - zb.fireZ;
+    const ahead = ax * ax + dy * dy + az * az;
+    if (ahead >= ZOMBIE_FIRE_FEAR * ZOMBIE_FIRE_FEAR) return false;
+    const hx = zb.x - zb.fireX;
+    const hz = zb.z - zb.fireZ;
+    return ahead < hx * hx + dy * dy + hz * hz;
+  }
+
   /**
    * Turn 60°–120° toward the zombie's own side for DETOUR_S … DETOUR_S + DETOUR_RAND_S. Always the same side, so a
    * zombie blocked again and again works its way around the obstacle instead of dithering in front of it.
@@ -504,17 +591,18 @@ export class Zombies {
 
   /**
    * The cell 0.8 ahead is fine to walk into: not water a wanderer would swim in (a chaser wades in after you), no
-   * campfire within FIRE_MARGIN of the next steps (pigs.fireAhead), room for the body (open at the feet and the cell
-   * above, or a one-cell ledge with two open cells on it while `canHop`), and ground within ZOMBIE_MAX_DROP cells below
-   * (water to land in counts for a chaser).
+   * campfire within FIRE_MARGIN of the next steps (pigs.fireAhead), not deeper into a campfire's safe zone (_intoFire),
+   * room for the body (open at the feet and the cell above, or a one-cell ledge with two open cells on it while
+   * `canHop`), and a drop of at most ZOMBIE_MAX_DROP cells: ground within ZOMBIE_MAX_DROP + 1 cells below the feet
+   * level (ground at fy − d is a drop of d − 1; water to land in counts for a chaser).
    */
   _safeAhead(zb, getBlock, canHop, chasing) {
     const [q, r, fy] = this._aheadCell(zb);
     if (!chasing && isSwimWater(getBlock, q, fy, r)) return false;
-    if (this._fires && fireAhead(getBlock, zb.x, zb.z, zb.yaw, fy)) return false;
+    if (this._fires && (fireAhead(getBlock, zb.x, zb.z, zb.yaw, fy) || this._intoFire(zb))) return false;
     if (isSolid(getBlock(q, fy, r))) return canHop && isOpen(getBlock(q, fy + 1, r)) && isOpen(getBlock(q, fy + 2, r));
     if (isSolid(getBlock(q, fy + 1, r))) return false; // a one-high gap: too low for a zombie
-    for (let d = 1; d <= ZOMBIE_MAX_DROP; d++) {
+    for (let d = 1; d <= ZOMBIE_MAX_DROP + 1; d++) {
       const id = getBlock(q, fy - d, r);
       if (isSolid(id)) return true;
       if (isLiquid(id)) return chasing;

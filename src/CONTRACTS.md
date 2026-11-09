@@ -2116,7 +2116,7 @@ real World for saving and reloading).
 
 A zombie is `createBody(x, y, z, { radius: ZOMBIE_RADIUS 0.27, height: ZOMBIE_HEIGHT 1.9, mass: ZOMBIE_MASS 1.2 })` plus
 `{ id, yaw, targetYaw, mode: 'idle'|'walk'|'chase'|'avoid', timer, hurt, hits, walkPhase, groanIn, attackIn, swing, burn,
-smoking, exposed, sunIn, fireIn, detour, detourYaw, side (±1), stuck, tilt, wallSinceAim }`, moved by `stepPlayer` like a pig
+smoking, exposed, sunIn, fireIn, fireX, fireY, fireZ, detour, detourYaw, side (±1), stuck, tilt, wallSinceAim }`, moved by `stepPlayer` like a pig
 (§30): it collides as its own cylinder, swims, hops one-cell ledges and feels `world.pullAt` (black holes + water currents, sampled
 at feet + 0.5 exactly like pigs). The radius is just under PLAYER_RADIUS (< HEX_SIZE / 2), so a zombie fits through the player's
 one-cell, two-high doorways. Each update first lifts a zombie that overlaps a solid cell (`findFreeY(…, floor(y)+1, 3)` with its
@@ -2124,6 +2124,8 @@ size). Zombies are night mobs: they are NEVER saved; the per-world switch is (`e
 nobody dies, a zombie is knocked out, burns away or is swallowed. Constants `ZOMBIE_*` live in config.js.
 ```js
 export function openSky(getBlock, q, y0, r)       // no solid cell in column (q, r) from y0 to the top of the world
+export function zombieVolume(zb, listener)        // 1 − d/ZOMBIE_SOUND_RANGE (3D distance), 0 at and beyond the range
+export function loudestVolume(list, listener)     // max zombieVolume over list, 0 for none in range (one voice a frame)
 export class Zombies {
   list, size, clear(), events                      // events: the ZombieEvents object update() returns (arrays reused)
   enabled; setEnabled(on) → changed?; switchVersion // the saved switch: off clears the list, summon and spawning refuse
@@ -2155,9 +2157,13 @@ export class Zombies {
    Exposed: `smoking` (the first frame reports `ignited`), `burn += dt`, and at ZOMBIE_BURN_S (4) it is removed (`burned`). Not
    exposed (shade, water, night): `smoking = false`, `burn` cools by dt. So a zombie in shade survives until it walks into light.
 4. **AI** (`_think`), `canHop` as for pigs (§30: no carrier, carrying nobody — from the end of last frame):
-   - Campfires are safe zones: every FIRE_CHECK_S (0.2 s), while `hasCampfires()`, a zombie within ZOMBIE_FIRE_FEAR (4) of a fire
-     (`nearestFire` from y + 1) turns straight away from it, mode `avoid` for AVOID_S (0.8 s) at chase speed; it stops early (idle)
-     when, facing its heading, the way ahead is unsafe (below). A player standing by a campfire is never reached.
+   - Campfires are safe zones: the **zone** of a campfire is everything within ZOMBIE_FIRE_FEAR (4) of its floor centre, measured
+     from a body's y + 1 (`nearestFire(x, y + 1, z, …)`; on the fire's own level a horizontal radius of √15 ≈ 3.87). Every
+     FIRE_CHECK_S (0.2 s), while `hasCampfires()`, a zombie looks up the nearest fire within ZOMBIE_FIRE_FEAR + FIRE_WATCH (2) and
+     remembers its floor centre in `fireX, fireY, fireZ` (fireX NaN: none; also NaN while `hasCampfires()` is false); when it is
+     inside that fire's zone it turns straight away from it, mode `avoid` for AVOID_S (0.8 s) at chase speed; it stops early (idle)
+     when, facing its heading, the way ahead is unsafe (below). Between checks it steers by the remembered fire (`_intoFire`,
+     below), so a chaser walks along the edge of a zone instead of into it. Nobody inside a zone is struck (step 7).
    - **Chase** (`_canChase`): the player exists, is not flying, is at most ZOMBIE_CHASE_MAX_RISE (5) above the zombie's feet and
      within ZOMBIE_SIGHT (24, 3D). Entering chase moves the next groan to 0.2–0.8 s. Heading: straight at the player (kept when
      closer than 0.35 horizontally), or the detour heading while a detour runs. Whenever it would step (on the ground, heading within
@@ -2170,9 +2176,13 @@ export class Zombies {
      grounded zombie whose way ahead is unsafe stops (0.5–1.5 s) and turns away by 0.5–1.5π.
    - **Unsafe ahead** (`_safeAhead`, the cell 0.8 along the yaw, feet level fy = floor(y + 0.01)): water it would swim in
      (`isSwimWater`; wanderers only — a chaser wades in after you); a campfire on its next steps (`pigs.fireAhead`, the pig rule
-     §30 step 3, skipped while `hasCampfires()` is false); a solid cell unless `canHop` and fy + 1, fy + 2 are open (`pigs.isOpen`:
-     a one-cell ledge with room for its height); a solid cell at fy + 1 over an open fy (too low); no solid cell within
-     ZOMBIE_MAX_DROP (3) below fy (liquid there counts as ground for a chaser only).
+     §30 step 3, skipped while `hasCampfires()` is false); a step deeper into the remembered fire's zone (`_intoFire`, skipped
+     while `hasCampfires()` is false: the point 0.8 along the yaw is within ZOMBIE_FIRE_FEAR of (fireX, fireY, fireZ), measured
+     from y + 1, and nearer to it than the zombie is; walking out of a zone or along its edge is fine); a solid cell unless
+     `canHop` and fy + 1, fy + 2 are open (`pigs.isOpen`: a one-cell ledge with room for its height); a solid cell at fy + 1 over
+     an open fy (too low); a drop of more than ZOMBIE_MAX_DROP (3) cells: no solid cell at fy − 1 … fy − (ZOMBIE_MAX_DROP + 1)
+     (ground at fy − d is a drop of d − 1 cells; liquid met first counts as ground for a chaser only, and ends the search as
+     unsafe for anyone else). So a zombie walks down a 3-cell drop and never off a 4-cell one.
 5. **Move**: turn toward `targetYaw` at ZOMBIE_TURN_RATE (3.5 rad/s); step forward only when not idle, not hurt (stunned), not right
    under/over the player and within MOVE_CONE of the heading — `forward` ZOMBIE_CHASE_SPEED (0.82 × WALK_SPEED ≈ 3.5 m/s, the
    player walks 4.3) in chase / avoid, else 1 with `sneak` (1.31 m/s shamble); `jump = inWater || (moving && hitWall && canHop &&
@@ -2180,10 +2190,15 @@ export class Zombies {
    multiple of π below 0.2 m/s.
 6. **Campfire scorch**: a zombie (not flashing) whose feet cell floor(y + 0.05) is a CAMPFIRE is `hit` from the cell centre —
    `scorched`, or `knockedOut` (removed) when that was its last hit.
-7. **Attack**: not hurt, `attackIn` ≤ 0, the player within ZOMBIE_REACH (1.3) horizontally, heights overlapping, and no solid cell at
-   chest height (the mean feet + 1.2) at 1/3 and 2/3 of the way: the player's horizontal velocity is SET to ZOMBIE_HIT_PUSH (6 m/s)
-   straight away from the zombie, `vy = max(vy, ZOMBIE_HIT_LIFT 4)`, `onGround = false`; `attackIn = ZOMBIE_ATTACK_COOLDOWN_S` (1),
-   `swing = SWING_S` (0.35 s, the renderer's lurch); reported in `attacks`. No damage. Zombies never attack pigs.
+7. **Attack**: not hurt, `attackIn` ≤ 0, not in `avoid`, the player within ZOMBIE_REACH (1.3) horizontally, heights overlapping, and
+   no solid cell at chest height (the mean feet + 1.2) at 1/3 and 2/3 of the way; then, while `hasCampfires()`, two live
+   `nearestFire` look-ups (never the remembered fire): the player inside a zone refuses it (looked up once per update, at the first
+   strike due), and the zombie inside a zone refuses it and starts `avoid` away from that fire (as in step 4) — so a strike needs
+   both outside every tracked campfire's zone, and a player standing in a zone (on the fire's level: within 3.87 of it, the fire's
+   cell and its three rings) is never struck. A refused strike keeps `attackIn` ≤ 0. A strike SETS the player's horizontal
+   velocity to ZOMBIE_HIT_PUSH (6 m/s) straight away from the zombie, `vy = max(vy, ZOMBIE_HIT_LIFT 4)`, `onGround = false`;
+   `attackIn = ZOMBIE_ATTACK_COOLDOWN_S` (1), `swing = SWING_S` (0.35 s, the renderer's lurch); reported in `attacks`. No damage.
+   Zombies never attack pigs.
 8. Groans: `groanIn` counts down; due → reported (`groans`), reset to 3–8 s while chasing, else 6–16 s.
 `hit(zb, fromX, fromZ)`: ignored (null) while `hurt > 0`; `hits++`; the ZOMBIE_HITS-th (4) hit removes it ('ko'); otherwise velocity
 ZOMBIE_KNOCKBACK (6.5) away from the hitter, `vy ≥ ZOMBIE_KNOCK_LIFT` (4.5), `hurt = ZOMBIE_HURT_S` (0.45 s: red flash and stun,
@@ -2218,9 +2233,12 @@ daynight.isDayTime(time)`, `update(dt, zombieWorld)` (getBlock / isLoaded / pull
 over the tracked `campfires.fires`; `isLoadedCell` = hasChunkAtCell, `groundHeight` = World.terrainHeightAt, `isNaturalGround`,
 `columnEdited` = blackholes.columnHasEdits(world.edits, …)); an attack sets the HUD hurt flash to 1 (fading over HURT_FLASH_S 0.45 s
 in renderFrame, `hud.setHurtFlash`) and plays `audio.playThud(1)`; at most one groan a frame within ZOMBIE_SOUND_RANGE (24, volume
-1 − d/24); `ignited` → playHiss; `burned` / `knockedOut` → `zombieGone` (a puff: dust grey-green for a knock-out, ash + smoke +
-sparks for a burn; `playZombieDown`); smouldering zombies emit smoke (and now and then a spark) every frame; zombies a black hole
-swallows (`blackHoles.swallowing(zb)`) are removed with a puff. `resolveBodies([player, pigs…, zombies…, lit barrels…])` (loaded
+`zombieVolume` = 1 − d/24); `ignited` → ONE playHiss a frame and `scorched` → ONE playZombieHurt a frame, each at
+`loudestVolume(list, player)` (a crowd ignites on the same frame at dawn); `burned` / `knockedOut` → `zombieGone` (a puff: dust
+grey-green for a knock-out, ash + smoke + sparks for a burn), which only raises `zombieDownVolume` to its `zombieVolume`: ONE
+`playZombieDown(zombieDownVolume)` a frame, the loudest, played in `stepBlockPhysics` after the physics step like `knockSqueal`
+(so punches, burns, black holes and blasts on one frame are one voice); smouldering zombies emit smoke (and now and then a spark)
+every frame; zombies a black hole swallows (`blackHoles.swallowing(zb)`) are removed with a puff. `resolveBodies([player, pigs…, zombies…, lit barrels…])` (loaded
 chunks only) and PhysicsHooks.bodies include them, so they push and are pushed, can be stood on and are lifted out of landing blocks.
 PhysicsHooks.knock on a zombie → `zombies.knock` (a 'ko' puffs it away). `updateHit` ray-casts zombies after pigs, up to the pig's
 or block's distance; a zombie in front takes the crosshair (target hint `Zombie · click: hit it`), lit barrels in front of it take

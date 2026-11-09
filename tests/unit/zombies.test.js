@@ -6,10 +6,10 @@ import {
   ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, ZOMBIE_HITS, ZOMBIE_HURT_S, ZOMBIE_BURN_S, ZOMBIE_REACH,
   ZOMBIE_ATTACK_COOLDOWN_S, ZOMBIE_HIT_PUSH, ZOMBIE_HIT_LIFT, ZOMBIE_FIRE_FEAR, ZOMBIE_SPAWN_MIN, ZOMBIE_SPAWN_MAX,
   ZOMBIE_SPAWN_FIRE_CLEAR, ZOMBIE_DESPAWN_DIST, ZOMBIE_KO_KNOCK, ZOMBIE_MAX_DROP, WALK_SPEED, BLAST_RADIUS,
-  BLAST_IMPULSE,
+  BLAST_IMPULSE, ZOMBIE_SOUND_RANGE,
 } from '../../src/config.js';
-import { Zombies, openSky } from '../../src/zombies.js';
-import { seededRng } from '../../src/pigs.js';
+import { Zombies, openSky, zombieVolume, loudestVolume } from '../../src/zombies.js';
+import { seededRng, wrapAngle } from '../../src/pigs.js';
 import { createPlayer, createBody, isFreeAt } from '../../src/physics.js';
 import { hexToWorld, worldToHex, hexLength } from '../../src/hex.js';
 import { BlackHoles } from '../../src/blackholes.js';
@@ -97,15 +97,22 @@ describe('Zombies.update — wandering', () => {
     expect(Math.hypot(zb.x, zb.z)).toBeGreaterThan(0.5);
     expect(Math.hypot(zb.x, zb.z)).toBeLessThan(60);
   });
-  it('never wanders off a drop deeper than ZOMBIE_MAX_DROP cells', () => {
-    const top = GROUND + ZOMBIE_MAX_DROP + 2;
-    const getBlock = (q, y, r) => (y < (hexLength(q, r) <= 5 ? top : GROUND) ? B.STONE : B.AIR);
+  it('never wanders off a drop deeper than ZOMBIE_MAX_DROP cells, but does wander down one that deep', () => {
+    // A plateau (radius 5) whose top is `drop` cells above the plain around it.
+    const plateau = (drop) => (q, y, r) => (y < (hexLength(q, r) <= 5 ? GROUND + drop : GROUND) ? B.STONE : B.AIR);
+    let down = 0;
     for (let seed = 1; seed <= 4; seed++) {
+      const top = GROUND + ZOMBIE_MAX_DROP + 1; // one cell too deep
       const zs = new Zombies(seededRng(seed));
       const zb = zs.spawn(0, top, 0);
-      run(zs, view(getBlock, null), 60);
+      run(zs, view(plateau(ZOMBIE_MAX_DROP + 1), null), 60);
       expect(zb.y, `seed ${seed}`).toBeCloseTo(top, 3);
+      const ok = new Zombies(seededRng(seed));
+      const oz = ok.spawn(0, GROUND + ZOMBIE_MAX_DROP, 0);
+      run(ok, view(plateau(ZOMBIE_MAX_DROP), null), 60);
+      if (oz.y < GROUND + 0.5) down++;
     }
+    expect(down).toBeGreaterThanOrEqual(1); // a drop of exactly ZOMBIE_MAX_DROP is walked off
   });
   it('reports ambient groans now and then', () => {
     const zs = new Zombies(seededRng(11));
@@ -224,8 +231,9 @@ describe('Zombies.update — chase and attack', () => {
     }
     expect(hits).toBeGreaterThanOrEqual(3);
   });
-  it('does not follow the player off a cliff deeper than ZOMBIE_MAX_DROP, but steps down a shallow one', () => {
-    for (const [drop, follows] of [[ZOMBIE_MAX_DROP + 2, false], [2, true]]) {
+  it('follows the player down a cliff of ZOMBIE_MAX_DROP cells or less, never off a deeper one', () => {
+    // The boundary both ways: a drop of exactly ZOMBIE_MAX_DROP is followed, ZOMBIE_MAX_DROP + 1 is not.
+    for (const [drop, follows] of [[ZOMBIE_MAX_DROP + 2, false], [ZOMBIE_MAX_DROP + 1, false], [ZOMBIE_MAX_DROP, true], [2, true]]) {
       const top = GROUND + drop;
       const getBlock = (q, y) => (y < (q <= 0 ? top : GROUND) ? B.STONE : B.AIR);
       const zs = new Zombies(seededRng(drop));
@@ -376,6 +384,87 @@ describe('Zombies — campfires are safe zones', () => {
       });
       expect(attacks, `seed ${seed}`).toBe(0);
       expect(closest, `seed ${seed}`).toBeGreaterThan(ZOMBIE_FIRE_FEAR - 1.2);
+    }
+  });
+  // On the fire's level the zone (ZOMBIE_FIRE_FEAR, measured from y + 1 to the floor centre) reaches this far out.
+  const ZONE = Math.sqrt(ZOMBIE_FIRE_FEAR ** 2 - 1);
+  const fireView = (player) => view(withFire, player, { nearestFire, hasCampfires: () => true });
+  it('a crowd from every side never strikes a player two cells from a campfire; they keep to the edge of its zone', () => {
+    for (let seed = 1; seed <= 3; seed++) {
+      const zs = new Zombies(seededRng(seed));
+      const [px, pz] = hexToWorld(fq + 2, fr);
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2 + 0.2;
+        zs.spawn(px + Math.cos(a) * 10, GROUND, pz + Math.sin(a) * 10);
+      }
+      const player = standing(px, pz);
+      let closest = Infinity;
+      let attacks = 0;
+      run(zs, fireView(player), 30, (ev) => {
+        attacks += ev.attacks.length;
+        resolveBodies([player, ...zs.list], withFire); // they jostle each other as in the game
+        player.x = px;
+        player.z = pz;
+        player.vx = player.vz = 0;
+        for (const zb of zs.list) closest = Math.min(closest, Math.hypot(zb.x - fx, zb.z - fz));
+      });
+      expect(attacks, `seed ${seed}`).toBe(0);
+      expect(closest, `seed ${seed}`).toBeGreaterThan(ZONE - 0.3);
+    }
+  });
+  it('a zombie inside a zone never strikes, even pressed against a player outside it, and turns away from the fire', () => {
+    // The zombie 3 from the fire (inside), the player 1.1 farther out (outside): in reach.
+    for (let seed = 1; seed <= 3; seed++) {
+      const zs = new Zombies(seededRng(seed));
+      const zb = zs.spawn(fx + 3, GROUND, fz, Math.PI / 2); // facing the fire
+      const player = standing(fx + 4.1, fz);
+      expect(Math.hypot(player.x - fx, 1, player.z - fz)).toBeGreaterThan(ZOMBIE_FIRE_FEAR);
+      let attacks = 0;
+      run(zs, fireView(player), 3, (ev) => {
+        attacks += ev.attacks.length;
+        zb.x = fx + 3;
+        zb.z = fz;
+        player.x = fx + 4.1;
+        player.z = fz;
+        player.vx = player.vy = player.vz = 0;
+      });
+      expect(attacks, `seed ${seed}`).toBe(0);
+      expect(zb.mode).toBe('avoid');
+      expect(Math.abs(wrapAngle(zb.targetYaw + Math.PI / 2))).toBeLessThan(1e-6); // straight away: toward +x
+    }
+    // The same pair with no fire: struck within the first cooldown.
+    const zs = new Zombies(seededRng(1));
+    zs.spawn(3, GROUND, 0);
+    let attacks = 0;
+    run(zs, view(flat, standing(4.1, 0)), 1.5, (ev) => {
+      attacks += ev.attacks.length;
+    });
+    expect(attacks).toBeGreaterThan(0);
+  });
+  it('a player inside a zone is never struck, even by a zombie just outside it; out of the zone the strikes resume', () => {
+    for (const [px, struck] of [[fx + 3.3, false], [fx + 5.2, true]]) {
+      const zs = new Zombies(seededRng(4));
+      const zb = zs.spawn(px + 1.1, GROUND, fz, Math.PI / 2);
+      const player = standing(px, fz);
+      expect(Math.hypot(zb.x - fx, 1, zb.z - fz)).toBeGreaterThan(ZOMBIE_FIRE_FEAR); // the zombie is outside
+      let attacks = 0;
+      run(zs, fireView(player), 3, (ev) => {
+        attacks += ev.attacks.length;
+        zb.x = px + 1.1;
+        zb.z = fz;
+        player.x = px;
+        player.z = fz;
+        player.vx = player.vy = player.vz = 0;
+      });
+      expect(attacks > 0, `player at ${px}`).toBe(struck);
+    }
+  });
+  it('a zombie summoned inside a zone walks out of it', () => {
+    for (let seed = 1; seed <= 3; seed++) {
+      const zs = new Zombies(seededRng(seed));
+      const zb = zs.spawn(fx - 1.5, GROUND, fz + 0.4, seed);
+      run(zs, fireView(null), 4);
+      expect(Math.hypot(zb.x - fx, zb.z - fz), `seed ${seed}`).toBeGreaterThan(ZONE);
     }
   });
   it('a wandering zombie never steps into a campfire cell', () => {
@@ -545,5 +634,42 @@ describe('Zombies — water, black holes and bodies', () => {
       });
       expect(zb.y > GROUND + 0.5, `ridden: ${ridden}`).toBe(!ridden);
     }
+  });
+});
+
+describe('Zombies — sounds (main plays each kind at most once a frame, at loudestVolume)', () => {
+  it('zombieVolume fades linearly to 0 at ZOMBIE_SOUND_RANGE; loudestVolume is the nearest zombie\'s', () => {
+    const at = { x: 0, y: GROUND, z: 0 };
+    expect(zombieVolume({ x: 0, y: GROUND, z: 0 }, at)).toBe(1);
+    expect(zombieVolume({ x: ZOMBIE_SOUND_RANGE / 4, y: GROUND, z: 0 }, at)).toBeCloseTo(0.75, 12);
+    expect(zombieVolume({ x: 0, y: GROUND + ZOMBIE_SOUND_RANGE, z: 0 }, at)).toBe(0);
+    expect(loudestVolume([], at)).toBe(0);
+    expect(loudestVolume([{ x: 30, y: GROUND, z: 0 }], at)).toBe(0);
+    const crowd = [3, 12, 1.5, 20].map((d) => ({ x: d, y: GROUND, z: 0 }));
+    expect(loudestVolume(crowd, at)).toBeCloseTo(1 - 1.5 / ZOMBIE_SOUND_RANGE, 12);
+  });
+  it('a crowd under open sky ignites on one frame at dawn and burns out on one frame: one voice each, the loudest', () => {
+    const zs = new Zombies(seededRng(40));
+    const player = standing(0, 0);
+    player.flying = true; // nobody chases: they stand about where they were put
+    for (let k = 0; k < 12; k++) zs.spawn(Math.cos(k) * (2 + k), GROUND, Math.sin(k) * (2 + k));
+    run(zs, view(flat, player), 1);
+    let ignitedFrames = 0;
+    let burnedFrames = 0;
+    let most = 0;
+    run(zs, { ...view(flat, player), isDay: true }, ZOMBIE_BURN_S + 1, (ev) => {
+      for (const list of [ev.ignited, ev.burned]) {
+        if (list.length === 0) continue;
+        most = Math.max(most, list.length);
+        const loudest = Math.max(...list.map((zb) => zombieVolume(zb, player)));
+        expect(loudestVolume(list, player)).toBe(loudest);
+      }
+      if (ev.ignited.length) ignitedFrames++;
+      if (ev.burned.length) burnedFrames++;
+    });
+    expect(zs.size).toBe(0);
+    expect(most).toBe(12); // why main must not play one hiss and one down sound per zombie
+    expect(ignitedFrames).toBe(1);
+    expect(burnedFrames).toBe(1);
   });
 });
