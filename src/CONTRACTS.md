@@ -1831,7 +1831,7 @@ export class Trees {                 // physics.trees
   stats { toppled, impacts, decayed }
   test(component) → TreeInfo|null    // TreeInfo = { logs: [q,y,r,id][], leaves: [q,y,r,id][], cut: [q,y,r], pivot: [x,y,z] }
   topple(tree, component, { cause?, event? }) → boolean   // false → the caller crumbles the component
-  decayHangingLeaves(cells, { event? }?) → n               // after a crumble (§36.6.1)
+  decayHangingLeaves(cells, { event?, naturalOnly? }?) → n   // after a crumble, a topple, a batch's log removals (§36.6.1)
   step(dt); renderItems(push); settleInto(overlay); cancelEvent(id) → n; reset(); onSwitch(on)
 }
 ```
@@ -1965,9 +1965,15 @@ export class Trees {                 // physics.trees
    ground or a canopy held by its trunk stays). After a topple the same cluster test also runs on the removed logs and leaves
    (`decayHangingLeaves(cells, { naturalOnly: true })`), queuing only leaves with no edit: a canopy leaf that a trunk lying on the
    ground below kept from both rules above (it is "nearer another log", §36.4.2) does not float, and a player's leaves are never
-   taken by it.
+   taken by it. And when a support batch ends (after its collapses), the same `naturalOnly` test runs on the LOG cells each of its
+   seeds took in as removals (`prevId` a log; seeds of an undone event skipped, `event` = the seed's): a canopy whose logs were
+   chopped top-down, blasted or cut by an area command never toppled, and used to float forever (play-test G5). In the cluster
+   test a load-bearing cell that itself rests on leaves (the cell under it is leaves — a felled log lying on a canopy) holds
+   nothing (play-test G6).
 2. A queued leaf decays after `LEAF_DECAY_S·(0.15 + 0.85·ctx.random())` s: when it still holds its id, `ctx.writeQuiet(AIR)` inside
-   `enterEvent(event)` and 4 'leaves' particles. Leaves never become falling blocks.
+   `enterEvent(event)` and 4 'leaves' particles; when the cell above it is load-bearing, `physics.seedSupport([[q, y + 1, r]])`
+   (still inside the event), so a block that rested on the leaf comes down if nothing else holds it (G6). Leaves never become
+   falling blocks.
 3. `renderItems(push)`: every job (falling, then waiting) pushes each cell at `pivot + R(θ)·offset` with `tiltEuler(kx, kz, θ)`, scale 1
    (θ: 0 while waiting, `shakeAngle` while shaking).
 4. support's `settleInto(overlay)` (after fallers'): the cells a collapse has not brought down yet — the rest of every crumble, the

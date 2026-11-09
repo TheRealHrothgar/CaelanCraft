@@ -26,7 +26,7 @@
 // that chunk and re-seeded when it is back (§36.3.5); blocks that land on or are placed against what still hangs are
 // re-searched once it is down (§36.3.6).
 import { CHUNK_SIZE, MAX_FALLING, MAX_PARKED_UPDATES, SUPPORT_LIMIT, TREE_MAX_CELLS, WORLD_HEIGHT } from './config.js';
-import { BLOCK, UNLOADED, isFallThrough, isLeaves, isSolid } from './blocks.js';
+import { BLOCK, UNLOADED, isFallThrough, isLeaves, isLog, isSolid } from './blocks.js';
 import { HEX_DIRS } from './hex.js';
 import { chunkKey, localIndex, packCell, unpackCell } from './coords.js';
 
@@ -421,6 +421,7 @@ export class SupportSolver {
       }
       if (batch.phase < PHASE_COLLAPSE && !this._decide(ctx)) break;
       if (!this._collapseSome(ctx)) break;
+      this._decayAfterLogRemovals(ctx, batch);
       this._endBatch();
       if (this._visits >= max || this._cheap >= this._maxCheap || ctx.now() >= ctx.deadline) break;
     }
@@ -1064,6 +1065,23 @@ export class SupportSolver {
       if (batch.collapseAt < batch.collapses.length && ctx.now() >= ctx.deadline) return false;
     }
     return true;
+  }
+
+  /**
+   * After a batch: natural leaves that hung only from logs it took in as removals decay (trees.decayHangingLeaves). A
+   * canopy whose logs were chopped top-down, blasted or cut by an area command never toppled, so nothing else would
+   * ever bring it down (play-test G5). Seeds of an undone event are skipped.
+   * @param {RuleContext} ctx
+   * @param {Batch} batch
+   */
+  _decayAfterLogRemovals(ctx, batch) {
+    for (const seed of batch.seeds) {
+      if (batch.cancelled !== null && batch.cancelled.has(seed.event)) continue;
+      /** @type {number[][]|null} */
+      let logs = null;
+      for (const rm of seed.removed) if (isLog(rm[3])) (logs ??= []).push(rm);
+      if (logs !== null) ctx.trees.decayHangingLeaves(logs, { event: seed.event, naturalOnly: true });
+    }
   }
 
   /** @returns {boolean} the component was found from a seed of an undone event (§36.3.2) */

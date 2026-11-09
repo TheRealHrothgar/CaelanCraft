@@ -435,6 +435,43 @@ describe('no canopy left hanging next to a trunk felled earlier (CT-2)', () => {
     expect(b.world.getBlock(2, 14, -1)).toBe(B.OAK_LEAVES);
     expect(b.physics.trees.stats.decayed).toBe(0);
   });
+
+  it('a canopy whose trunk is chopped top-down (no topple) decays once no log holds it (play-test G5)', () => {
+    const { world, physics } = setup();
+    const { leaves } = plantTree(world, 0, 0); // logs 11 … 15, leaves 14 … 17
+    // A second oak whose leaves the player placed: never taken.
+    for (let y = GROUND + 1; y <= 15; y++) world.put(10, y, 0, B.OAK_LOG);
+    for (const [dq, dr] of HEX_DIRS) physics.asPlayer(() => world.setBlock(10 + dq, 16, dr, B.OAK_LEAVES));
+    const chop = (q, y) => physics.asPlayer(() => world.setBlock(q, y, 0, B.AIR));
+    chop(0, 15);
+    settle(physics);
+    expect(scan(world, isLeaves, -3, 3, 11, 20, -3, 3)).toHaveLength(leaves); // the log at 14 still holds them
+    chop(0, 14);
+    settle(physics);
+    expect(physics.trees.stats.impacts).toBe(0); // it never toppled
+    expect(scan(world, isLeaves, -3, 3, 11, 20, -3, 3)).toEqual([]); // they used to float forever
+    for (let y = 11; y <= 13; y++) expect(world.getBlock(0, y, 0)).toBe(B.OAK_LOG); // the stump stays
+    for (let y = 15; y >= 11; y--) chop(10, y);
+    settle(physics);
+    expect(scan(world, isLeaves, 7, 13, 11, 20, -3, 3)).toHaveLength(6);
+  });
+
+  it('a log lying on a canopy falls once that tree is felled: the leaf under it decays (play-test G6)', () => {
+    const { world, physics } = setup();
+    plantTree(world, 0, 0);
+    // A log felled earlier lies on the leaf (2, 15, −1), touching the top leaf layer beside it too.
+    physics.asPlayer(() => world.setBlock(2, 16, -1, B.OAK_LOG));
+    settle(physics);
+    expect(world.getBlock(2, 16, -1)).toBe(B.OAK_LOG);
+    const [x, z] = hexToWorld(4, 0); // the player stands east: the oak falls west, away from the log
+    cut(physics, world, 0, 0, { kind: 'player', x, y: GROUND + 1, z });
+    settle(physics);
+    expect(physics.trees.stats.impacts).toBe(1);
+    expect(world.getBlock(2, 15, -1)).toBe(B.AIR);
+    expect(world.getBlock(2, 16, -1)).toBe(B.AIR); // it used to hang there, on the leaf it "held"
+    expect(world.getBlock(2, GROUND + 1, -1)).toBe(B.OAK_LOG); // it fell to the ground
+    expect(hanging(world, -6, 6, 11, 20, -6, 6)).toEqual([]);
+  });
 });
 
 describe('rotation helpers', () => {

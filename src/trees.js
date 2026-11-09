@@ -606,9 +606,11 @@ export class Trees {
   }
 
   /**
-   * After a crumble (support.js) or a topple (`naturalOnly`): leaves that hung only from the removed cells decay —
-   * every cluster of leaves next to `cells` (connected through leaves, ≤ TREE_MAX_CELLS) that touches no load-bearing
-   * cell (and no unloaded one). A hedge on the ground or a canopy held by its trunk stays.
+   * After a crumble (support.js), a topple or a support batch that removed logs (`naturalOnly`): leaves that hung only
+   * from the removed cells decay — every cluster of leaves next to `cells` (connected through leaves, ≤ TREE_MAX_CELLS)
+   * that touches no load-bearing cell (and no unloaded one). A hedge on the ground or a canopy held by its trunk stays.
+   * A load-bearing cell that itself rests on leaves (a felled log lying on a canopy) holds nothing: it is carried by the
+   * leaves, not the other way round (play-test G6).
    * @param {number[][]} cells  the removed cells [q, y, r, …] (already AIR)
    * @param {{ event?: number, naturalOnly?: boolean }} [opts]  naturalOnly: queue only cells with no edit (never a
    *        player's leaves; they still count as part of their cluster)
@@ -646,7 +648,7 @@ export class Trees {
             const nk = packCell(nq, ny, nr);
             if (visited.has(nk)) continue;
             const id = peek(nq, ny, nr);
-            if (id === UNLOADED || isLoadBearing(id) || verdict.get(nk) === true) {
+            if (id === UNLOADED || verdict.get(nk) === true || (isLoadBearing(id) && !(ny > 0 && isLeaves(peek(nq, ny - 1, nr))))) {
               held = true;
               break;
             }
@@ -696,6 +698,8 @@ export class Trees {
       if (ctx.peek(d.q, d.y, d.r) !== d.id) continue; // changed (or unloaded) meanwhile
       const token = physics.enterEvent(d.event);
       const res = ctx.writeQuiet(d.q, d.y, d.r, BLOCK.AIR);
+      // A block resting on the leaf (a felled log on a canopy) may hang now: search its support (G6).
+      if (res === 'ok' && d.y + 1 < WORLD_HEIGHT && isLoadBearing(ctx.peek(d.q, d.y + 1, d.r))) physics.seedSupport([[d.q, d.y + 1, d.r]]);
       physics.exitEvent(token);
       if (res !== 'ok') continue;
       this.stats.decayed++;
