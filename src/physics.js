@@ -269,13 +269,19 @@ export function supportingCells(p, getBlock, out = []) {
 /**
  * Advance the player by dt seconds. dt is clamped to MAX_FRAME_DT and split into ceil(dt / MAX_SUBSTEP_DT)
  * equal substeps. Mutates p.
+ * v0.9 (DESIGN-survival §9.3): `p.landSpeed` is set to 0 on entry (a dt ≤ 0 or NaN step changes nothing at all), then
+ * to the fastest downward speed (m/s) at which a substep's vertical move hit a floor (0 without a landing; standing
+ * records one substep of gravity). `input.speedFactor` (0..1, absent = 1) scales the horizontal target speed on foot,
+ * never in flight.
  * @param {PlayerState} p
  * @param {PlayerInput} input
  * @param {GetBlockFn} getBlock
  * @param {number} dt seconds
  */
 export function stepPlayer(p, input, getBlock, dt) {
-  if (!(dt > 0)) return; // also rejects NaN
+  if (!(dt > 0)) return; // also rejects NaN (the state is left exactly as it was)
+  // v0.9 (DESIGN-survival §9.3): the fastest landing of THIS step; survival.step consumes it (reads, then zeroes it).
+  p.landSpeed = 0;
   if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
   const n = Math.ceil(dt / MAX_SUBSTEP_DT);
   const h = dt / n;
@@ -343,6 +349,8 @@ function substep(p, input, getBlock, h, wx, wz) {
   else speed = WALK_SPEED;
   if (inWater && !flying) speed *= WATER_SPEED_FACTOR;
   else if (wading && !flying) speed *= WADE_SPEED_FACTOR;
+  // v0.9 (DESIGN-survival §9.3): survival slowness (hunger, cold, wounds…) scales the target speed on foot, never in flight.
+  if (!flying) speed *= speedFactorOf(input);
   const accel = flying || p.onGround ? GROUND_ACCEL : inWater ? WATER_ACCEL : AIR_ACCEL;
   const k = 1 - Math.exp(-accel * h);
   // External pull (black holes) moves the velocity the relaxation heads for by pull / GROUND_ACCEL, in every mode.
@@ -376,6 +384,10 @@ function substep(p, input, getBlock, h, wx, wz) {
     if (dy < 0) {
       p.onGround = true;
       if (flying) p.flying = false; // landing ends flight
+      // v0.9 (DESIGN-survival §9.3): the impact speed, before vy is zeroed (fall damage). In every mode, for every body.
+      // Resting on the ground records the one substep of gravity (GRAVITY·h ≈ 0.47 m/s at 60 Hz): far below any harm.
+      const impact = -p.vy;
+      if (impact > (p.landSpeed || 0)) p.landSpeed = impact;
     }
     p.vy = 0;
   }
@@ -384,6 +396,18 @@ function substep(p, input, getBlock, h, wx, wz) {
   }
 
   sanitize(p);
+}
+
+/**
+ * The survival slow-down factor of an input (DESIGN-survival §9.3): `input.speedFactor`, clamped to 0..1; 1 when absent
+ * or not a finite number.
+ * @param {PlayerInput} input
+ * @returns {number}
+ */
+export function speedFactorOf(input) {
+  const f = input.speedFactor;
+  if (typeof f !== 'number' || !Number.isFinite(f)) return 1;
+  return f < 0 ? 0 : f > 1 ? 1 : f;
 }
 
 /**
