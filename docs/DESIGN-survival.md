@@ -2461,3 +2461,30 @@ version that can be placed in the player's inventory on spawn."* It is built as 
   wake restores it, discard refuses it, R and RMB open it; `itemArt` has its icon; styles: z-order above the HUD, below the death
   screen.
 - **Wiring (I):** opening/closing from main (R/RMB/pack/menus), closing on damage, the chat line.
+
+### 14.4 Exact API (so H and I can be built in parallel)
+```js
+// src/handbook.js (PURE; imports items, crafting, harvest, climate/vitals data — read-only)
+export const HANDBOOK_KEY = 'handbook';
+export function buildChapters() → Chapter[]        // cached; Chapter = { id, title, icon, pages: Block[][] }
+export function chapterIds() → string[]
+export function ensureHandbook(pack, preferSlot = 8) → boolean   // gives one when the pack has none: preferSlot if empty, else the
+                                                                  // last empty slot; false when the pack already has one or is full
+// src/inventory.js (H's additions)
+export const KEEP_ON_DEATH = ['handbook'];          // Pack.dumpAll() leaves these in the pack; slotClick 'discard' refuses them
+                                                    // (cursor kept, result.refused = 'The handbook stays with you.')
+// src/survivalControl.js (H's addition)
+// interactKind: priority 10 (before null) → { kind: 'read' } when c.selectedKey === 'handbook'
+// src/handbookUI.js (DOM)
+export function createHandbookUI(doc, { chapters, onClose } = {}) → {
+  openGuide(chapterId?), openRustic(chapterId?),   // the Guide (menus) / the field book (item); either replaces the other
+  close(), isOpen() → 'guide' | 'rustic' | null,
+  handleKey(e) → boolean                            // main routes keydowns here while open (Esc, arrows, PgUp/PgDn)
+}
+// src/menus.js (H's addition): a Guide button on the title screen and in the pause menu → callbacks.onGuide()
+// src/packUI.js (H's addition): right-click (or a "Read" action) on the handbook's slot → callbacks.onRead()
+```
+**I wires:** `menus.onGuide` → `handbookUI.openGuide()` (both modes; the pause menu stays underneath and comes back on close);
+R `{kind:'read'}` and RMB with the handbook selected → `handbookUI.openRustic()`; `packUI.onRead` → close the pack, open the rustic
+book; while `handbookUI.isOpen()` keydowns go to `handleKey` first and the pointer is released; survival damage events close a rustic
+book; after `survival.begin()` and after every waking `ensureHandbook(pack)`; the §1.2 chat line's handbook sentence.
