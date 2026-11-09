@@ -28,8 +28,9 @@ import { runeKey } from './runes.js';
  * @property {number|null} time      frozen time of day, clamped to 0..1
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
- * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker
+ * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker, 'pack' the Pack & Making screen (Survival)
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
+ * @property {'creative'|'survival'|null} mode  v0.9 (§9.10): the first world's mode with ?autoplay / ?smoke; anything else → null
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -61,7 +62,20 @@ export function parseParams(search = defaultSearch()) {
     pitch: readClampedFloat(params, 'pitch', -89.9, 89.9),
     ui: readUiParam(params),
     slot: readSlotParam(params),
+    mode: readModeParam(params),
   };
+}
+
+/**
+ * `?mode=creative|survival` (case-insensitive), anything else null (DESIGN-survival §9.10).
+ * @param {URLSearchParams} params
+ * @returns {'creative'|'survival'|null}
+ */
+export function readModeParam(params) {
+  const t = readString(params, 'mode');
+  if (t === null) return null;
+  const v = t.toLowerCase();
+  return v === 'creative' || v === 'survival' ? v : null;
 }
 
 /** An integer 1..SAVE_SLOTS, else null (out of range is ignored rather than clamped: slot=9 must not play slot 6). */
@@ -114,12 +128,12 @@ function readNumber(params, name) {
   return Number.isFinite(n) ? n : null;
 }
 
-/** 'console' | 'editor' | 'picker' | null */
+/** 'console' | 'editor' | 'picker' | 'pack' | null */
 function readUiParam(params) {
   const t = readString(params, 'ui');
   if (t === null) return null;
   const v = t.toLowerCase();
-  return v === 'console' || v === 'editor' || v === 'picker' ? v : null;
+  return v === 'console' || v === 'editor' || v === 'picker' || v === 'pack' ? v : null;
 }
 
 function readClampedInt(params, name, lo, hi) {
@@ -274,6 +288,8 @@ function refreshHandleRefs(handle, game) {
   handle.physics = game ? game.physics ?? null : null;
   handle.zombies = game ? game.zombies ?? null : null;
   handle.watcher = game ? game.watcher ?? null : null;
+  handle.survival = game ? game.survival ?? null : null; // v0.9 (§9.10)
+  handle.pack = game ? game.pack ?? null : null;
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;
@@ -333,6 +349,19 @@ export function installDebugHandle(win, game) {
     if (game && typeof game.setLook === 'function') game.setLook(yaw, pitch);
   };
   handle.getState = () => (game && typeof game.getState === 'function' ? game.getState() : 'unknown');
+  // v0.9 Survival (§9.10): the mode (switches are queued), and one frame of the real dig / use / R paths for drivers.
+  handle.getMode = () => (game && typeof game.getMode === 'function' ? game.getMode() : 'creative');
+  handle.setMode = (mode) => {
+    if (game && typeof game.setMode === 'function') game.setMode(mode);
+  };
+  handle.selectSlot = (i) => {
+    if (game && typeof game.selectSlot === 'function') game.selectSlot(i);
+  };
+  handle.digTargeted = (dt) => (game && typeof game.digTargeted === 'function' ? game.digTargeted(dt) : null);
+  handle.useSelected = (dt) => (game && typeof game.useSelected === 'function' ? game.useSelected(dt) : null);
+  handle.interact = () => {
+    if (game && typeof game.interact === 'function') game.interact();
+  };
   /** One synchronous simulation + render step (screenshots under a virtual-time budget, where rAF is starved). */
   handle.stepFrame = (dt) => {
     if (game && typeof game.stepFrame === 'function') game.stepFrame(dt);
@@ -509,8 +538,24 @@ export function buildDebugText(game, stats) {
     `Target: ${target}\n` +
     `Time: ${formatClock(time)}  day ${day}  (t=${fmt3(time)})\n` +
     `Mode: ${mode}` +
+    survivalDebugLine(g.survival ?? null) +
     physicsLine
   );
+}
+
+/**
+ * The F3 survival line (DESIGN-survival §9.10), after `Mode:`, only while Survival is active:
+ * `Survival: HP 87 · Nourishment 64 · Hydration 51 · Breath 20 · body 36.9 °C · felt 12.3 °C (air 9.8) · Chilled`.
+ * @param {*} sv  a Survival (survival.js) or null
+ * @returns {string} '' when there is none or it is not active; otherwise the line with its leading newline
+ */
+export function survivalDebugLine(sv) {
+  if (!sv || !sv.active || !sv.vitals) return '';
+  const v = sv.vitals;
+  const labels = sv.status && Array.isArray(sv.status.labels) ? sv.status.labels : [];
+  return `\nSurvival: HP ${fmtInt(v.health)} · Nourishment ${fmtInt(v.satiation)} · Hydration ${fmtInt(v.hydration)}` +
+    ` · Breath ${fmtInt(v.breath)} · body ${fmt1(v.temp)} °C · felt ${fmt1(sv.felt)} °C (air ${fmt1(sv.air)})` +
+    (labels.length ? ` · ${labels.join(' · ')}` : '');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -527,6 +572,10 @@ export const SMOKE_SPIN_FRAMES = 60;
 export const SMOKE_FLY_FRAMES = 30;
 const SMOKE_REMESH_FRAMES = 30;
 const SMOKE_HIT_RETRY_FRAMES = 10;
+/** v0.9: frames to wait for a queued mode switch; at most this many 1/60 s dig and eat frames in the survival step. */
+const SMOKE_MODE_FRAMES = 10;
+const SMOKE_DIG_FRAMES = 240;
+const SMOKE_EAT_FRAMES = 180;
 const SMOKE_LOOK_DOWN_PITCH = -1.5;
 const SMOKE_TELEPORT_DISTANCE = 3;
 // Must be shorter than the 25 s virtual-time budget in scripts/smoke-windows-chrome.sh so a stalled
@@ -736,6 +785,14 @@ async function runSmokeSequence(game, win, st) {
   }
   st.pass(`state 'playing' after ${waited} frames`);
 
+  // v0.9 (§9.10): the sequence below is Creative's; a world opened in Survival (?mode=survival) switches first. The switch is
+  // queued and applied at the top of the next frame.
+  if (typeof game.getMode === 'function' && typeof game.setMode === 'function' && game.getMode() !== 'creative') {
+    game.setMode('creative');
+    for (let i = 0; i < SMOKE_MODE_FRAMES && game.getMode() !== 'creative'; i++) await tick();
+    st.check(game.getMode() === 'creative', 'switched to Creative for the sequence', `still in ${game.getMode()} mode`);
+  }
+
   const world = game.world;
   const player = game.player;
   const renderer = game.renderer;
@@ -895,6 +952,9 @@ async function runSmokeSequence(game, win, st) {
     st.info('rune round trip skipped (no runCommand / runes on the game context)');
   }
 
+  // 9c. v0.9 (§9.10): the optional survival step, only for a page opened with ?mode=survival.
+  if (game.urlMode === 'survival') await runSurvivalSmoke(game, world, player, tick, st, yaw0);
+
   // 10. WebGL2 context.
   r.webgl = detectWebGL(renderer, win);
   const hasWebGL2Type = typeof ((win && win.WebGL2RenderingContext) || globalThis.WebGL2RenderingContext) === 'function';
@@ -905,6 +965,59 @@ async function runSmokeSequence(game, win, st) {
   // 11. No captured errors.
   r.errors = collectErrors(win);
   st.check(r.errors.length === 0, 'no captured errors', `${r.errors.length} captured error(s): ${r.errors[0]}`);
+}
+
+/**
+ * The survival smoke step (DESIGN-survival §9.10): back to Survival, `setblock ~ ~-1 ~ stone` and `pack add flint_pick`,
+ * hold-dig the cell below for its break time (the real dig path, game.digTargeted) and see it become AIR with rock in the
+ * pack, then `pack add honeyberries` and hold to eat one (game.useSelected).
+ * @param {GameContext|*} game @param {*} world @param {*} player @param {() => Promise<void>} tick
+ * @param {ReturnType<typeof createSmokeState>} st @param {number} yaw0
+ */
+async function runSurvivalSmoke(game, world, player, tick, st, yaw0) {
+  if (typeof game.setMode !== 'function' || typeof game.digTargeted !== 'function' || !game.pack) {
+    st.info('survival step skipped (no survival on the game context)');
+    return;
+  }
+  game.setMode('survival');
+  for (let i = 0; i < SMOKE_MODE_FRAMES && game.getMode() !== 'survival'; i++) await tick();
+  if (!st.check(game.getMode() === 'survival', 'switched to Survival', `could not switch to Survival (mode ${game.getMode()})`)) return;
+  let g = 0;
+  while (!player.onGround && g < SMOKE_GROUND_FRAMES) {
+    await tick();
+    g++;
+  }
+  const placed = game.runCommand('setblock ~ ~-1 ~ stone');
+  const added = game.runCommand('pack add flint_pick');
+  st.check(!!placed && placed.ok && !!added && added.ok, 'stone below and a flint pick in the pack',
+    `setup failed: ${placed && placed.message} / ${added && added.message}`);
+  const pickSlot = game.pack.hotbarSlotOf('flint_pick');
+  if (pickSlot >= 0) game.selectSlot(pickSlot);
+  game.setLook(yaw0, SMOKE_LOOK_DOWN_PITCH);
+  await tick();
+  await tick();
+  const hit = await waitForHit(game, tick, (h) => h !== null && h.blockId === BLOCK.STONE, SMOKE_HIT_RETRY_FRAMES);
+  if (!st.check(!!hit, 'looking at the stone below', 'no stone below to dig')) return;
+  const rockBefore = game.pack.count('rock');
+  let dug = 0;
+  for (; dug < SMOKE_DIG_FRAMES; dug++) {
+    game.digTargeted(SMOKE_HEADLESS_DT);
+    if (world.getBlock(hit.q, hit.y, hit.r) === BLOCK.AIR) break;
+  }
+  const broke = world.getBlock(hit.q, hit.y, hit.r) === BLOCK.AIR;
+  st.check(broke && game.pack.count('rock') > rockBefore,
+    `dug the stone with the flint pick in ${((dug + 1) * SMOKE_HEADLESS_DT).toFixed(2)} s; the pack holds ${game.pack.count('rock')} rock`,
+    `hold-dig failed: block is ${blockName(world.getBlock(hit.q, hit.y, hit.r))}, rock ${game.pack.count('rock')}`);
+  await tick();
+  const food = game.runCommand('pack add honeyberries 2');
+  const berrySlot = game.pack.hotbarSlotOf('honeyberries');
+  if (!st.check(!!food && food.ok && berrySlot >= 0, 'honeyberries in the hotbar', `pack add honeyberries failed: ${food && food.message}`)) return;
+  game.selectSlot(berrySlot);
+  const before = game.pack.count('honeyberries');
+  let held = 0;
+  for (; held < SMOKE_EAT_FRAMES && game.pack.count('honeyberries') >= before; held++) game.useSelected(SMOKE_HEADLESS_DT);
+  st.check(game.pack.count('honeyberries') === before - 1, `ate a honeyberry after holding ${((held + 1) * SMOKE_HEADLESS_DT).toFixed(2)} s`,
+    `eating failed: ${game.pack.count('honeyberries')} of ${before} honeyberries left`);
 }
 
 /** First FAIL step text (without the prefix), or null. */

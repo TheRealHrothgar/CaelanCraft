@@ -103,7 +103,8 @@ function get2D(canvas) {
 /**
  * Build the 256×256 texture atlas. Every id in TILE_IDS is painted with `paintTile` (pure RGBA pixels)
  * and blitted with `putImageData` at its tile origin, so alpha is written verbatim (water 178, glass
- * interior 0, leaf holes 0) rather than composited. Reserved tiles (27–254) stay transparent black.
+ * interior 0, leaf holes 0) rather than composited. Ids that are not tiles (105–239, 246–249, 253–254 as of v0.9: see
+ * TILE_IDS) stay transparent black.
  * @returns {HTMLCanvasElement}
  */
 export function createAtlasCanvas() {

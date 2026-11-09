@@ -4,8 +4,9 @@ A honeycomb voxel sandbox that runs in your browser. The world is built from **h
 cubes: every cell of terrain, every block you place, every wall you walk along and every surface you look at is a
 hex, and the physics, ray casting, meshing and streaming are all native to the honeycomb rather than a cube grid
 with a hex skin. Infinite procedurally generated terrain with biomes, caves, ores, trees and oceans; first-person
-movement with sliding collision, swimming and flight; break and place two dozen block types; a day/night cycle
-with a glowing sky; and worlds that save themselves in the browser.
+movement with sliding collision, swimming and flight; break and place dozens of block types; a day/night cycle
+with a glowing sky; a **Survival** mode with a body to look after, tools from flint to steel and cooking on the
+campfire; and worlds that save themselves in the browser.
 
 Everything is generated at runtime — no textures, models, sounds or fonts are downloaded.
 Built with [Three.js](https://threejs.org/) and [Vite](https://vite.dev/) in plain JavaScript.
@@ -51,6 +52,7 @@ Press **T** (or **/**) for the command console. Commands are one per line; `help
 | `time set noon|midnight|day|night|HH:MM` · `time add 1h` | the clock |
 | `fly on|off|toggle`, `give <block> [slot]`, `say <text>`, `pos`, `seed`, `edits` | utilities |
 | `run q y r`, `wait <s>`, `stop`, `stopall`, `resume`, `runes`, `rune q y r on|off` | rune scripting |
+| `mode [creative\|survival]` (console only), `vitals [full\|health …] [value]`, `pack [list\|add\|clear] [item] [count]`, `items [filter]` | Survival |
 
 A **Rune Block** (in the block picker) stores a script. Place one and its editor opens (**Shift+R** reopens it; **R** runs it).
 Its editor exposes four triggers you can combine: **Interact** (press R while looking at it), **Step on** (walk onto it, with a
@@ -58,6 +60,33 @@ cooldown — being teleported onto it does not count), **Repeat** every N second
 script finishes, the rune blocks touching any of its eight faces run next; `stop` ends a script without chaining). Every rune runs
 at most once per activation, so loops of chained runes terminate. Scripts and settings are saved with the world. If a script runs
 away, `stopall` in the console (or **Stop All Rune Scripts** in the pause menu) cancels everything and pauses the triggers.
+
+## Survival
+
+Every world has a mode, **Creative** (the sandbox above, unchanged) or **Survival**, switched in the pause menu (`Esc` →
+**Mode** `[ Creative | Survival ]`) or with the console command `mode survival` / `mode creative`. The mode is saved with the
+world and can be flipped at any time; neither inventory ever turns into the other, and a Survival state switched back to
+Creative is kept frozen for the next time.
+
+In Survival you have a body — **Health**, **Nourishment**, **Hydration** and **body temperature** sit either side of the hex
+hotbar, and **Breath** darkens the Health cell's border edge by edge under water. Blocks are dug by **holding** the left mouse
+button (a honey outline traces the cell as you dig); some need a tool of a high enough tier, and what you dig goes into your
+**Pack** (`E`: 27 hex slots, a rosette around the hotbar, plus head / body / feet). Making is a list of recipes filtered by what
+you carry and which workplaces are near — your hands, a Work Stump, a Kiln, a Bloomery, a Forge — each with its own lane, so
+they all work at once. The tools go from stone and knapped flint through copper and bronze to iron and steel. Right mouse uses
+the item in hand (place, eat, drink, bandage, wear); `R` drinks water (fresh from ponds, salty from the sea), picks berries and
+loose stones, tends a campfire's six skewers and its pot in the embers, taps birch sap, opens baskets, sets a Sleeping Hide to
+wake at, and takes back **Your Belongings** after a death. Survival-placed campfires need feeding and burn out to a cold pit.
+Every new Survival game starts with a **Survival Handbook** in the last hotbar slot (hold it and press `R`); the same text is
+the **Guide** on the title screen and in the pause menu.
+
+**Survival resources and old worlds.** Survival adds a few things to world generation: copper and tin ores, clay beds, wild
+plants, loose stones and fallen branches, small fresh-water ponds, and spruce and birch trees ("generation 2"). **New worlds get
+them unless you clear the "Survival resources" box in the New World form** — so new worlds look a little different even in
+Creative; clear the box to keep today's land. **Existing worlds do not change** until they are first switched to Survival: the
+pause menu then asks before bringing the survival resources in (they appear wherever the land is untouched, near your builds
+too, and this cannot be undone). A world that stays in Creative is never touched. Saves of Survival or generation-2 worlds are
+version 3, which older versions of the game show as damaged rather than misread.
 
 ## Controls
 
@@ -67,14 +96,15 @@ away, `stopall` in the console (or **Stop All Rune Scripts** in the pause menu) 
 | Jump / swim up / fly up | `Space` |
 | Sneak / fly down | `Shift` |
 | Sprint | double-tap `W` |
-| Toggle flying | double-tap `Space` or `F` |
-| Break block | Left mouse button |
-| Place block | Right mouse button |
-| Pick targeted block into hotbar | Middle mouse button |
+| Toggle flying (Creative) | double-tap `Space` or `F` |
+| Break block (Survival: hold to dig) | Left mouse button |
+| Place block (Survival: use the item in hand) | Right mouse button |
+| Pick targeted block into hotbar (Survival: select it if the hotbar holds it) | Middle mouse button |
 | Choose hotbar slot | `1`–`9` or mouse wheel |
-| Block picker | `E` |
+| Block picker (Survival: Pack & Making) | `E` |
 | Command console | `T` (or `/` to start a command) |
-| Run / edit the targeted Rune Block | `R` / `Shift+R` |
+| Use: rune, barrel; in Survival also water, fire, plants, basket, belongings, Handbook | `R` |
+| Edit the targeted Rune Block | `Shift+R` |
 | Debug overlay | `F3` |
 | Pause / release mouse | `Esc` |
 
@@ -90,9 +120,11 @@ away, `stopall` in the console (or **Stop All Rune Scripts** in the pause menu) 
 | `?fly=1` | Start in fly mode |
 | `?yaw=90&pitch=-30` | Initial look direction in degrees (yaw 0 = north, 90 = west, 180 = south, 270 = east; negative pitch looks down) |
 | `?ui=console` / `?ui=editor` | With `?autoplay=1`: open the console, or place a sample Rune Block ahead and open its editor (screenshots; use with `?nosave=1` — the editor variant writes to the world) |
+| `?ui=picker` / `?ui=pack` | With `?autoplay=1`: open the block picker, or (in Survival) the Pack & Making screen — with `?nosave=1` an empty pack is stocked with a demo kit |
+| `?mode=survival` / `?mode=creative` | With `?autoplay=1` or `?smoke=1`: the first world's mode. A saved world older than Survival is not upgraded from a URL (use `Esc` → Mode) unless `?nosave=1` |
 | `?autoplay=1` | Skip the title screen |
 | `?slot=3` | With `?autoplay=1`: play save slot 1–6 (default 1; with `?nosave=1` nothing is written) |
-| `?smoke=1` | Run the built-in self-test and show the result banner |
+| `?smoke=1` | Run the built-in self-test and show the result banner (with `?mode=survival` it ends by digging and eating in Survival) |
 
 ## Scripts
 
@@ -113,7 +145,9 @@ away, `stopall` in the console (or **Stop All Rune Scripts** in the pause menu) 
   description of the hex geometry (`src/hex.js`), meshing, physics, ray casting, the command language
   (`src/commands.js`) and Rune Blocks (`src/runes.js`).
 - `tests/unit/` — one test file per pure module; `tests/integration/harness.test.js` drives the whole
-  game loop headlessly with a stub renderer.
+  game loop headlessly with a stub renderer; `tests/integration/survival.test.js` plays a Survival first day on paper and
+  `survivalData.test.js` checks that every item can be found or made and every recipe reached.
+- `docs/DESIGN-survival.md` — the Survival design (the body, items, harvesting, making, fire, world generation 2, the screens).
 - `docs/SPEC-gameplay.md` — block palette, texture recipes, terrain numbers, controls, UI, day/night, saves.
 - `docs/SPEC-engine.md` — engine architecture and algorithms.
 - `docs/PLAN-build.md` — toolchain, test plan, verification gates.
