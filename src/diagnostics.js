@@ -5,7 +5,7 @@
 // The DOM (window / document / location) is only touched inside functions and only through the `win`
 // argument or guarded `typeof` checks, so this module also loads and runs under Node (tests, harness).
 // The F3 day counter comes from game.getDay() (provided by main.js), falling back to stats.day / 1.
-import { VERSION, WORLD_HEIGHT, FLY_VERTICAL_SPEED } from './config.js';
+import { VERSION, WORLD_HEIGHT, FLY_VERTICAL_SPEED, SAVE_SLOTS } from './config.js';
 import { BLOCK, BIOME_NAMES, getBlockDef, isBreakable, isSolid } from './blocks.js';
 import { worldToChunk, worldToLocal, lookDirection, yawToForward } from './coords.js';
 import { FACE_NAMES, faceNeighbor, hexLength, hexToWorld, worldToHex } from './hex.js';
@@ -29,6 +29,7 @@ import { runeKey } from './runes.js';
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
  * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker
+ * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -59,7 +60,14 @@ export function parseParams(search = defaultSearch()) {
     yaw: readNumber(params, 'yaw'),
     pitch: readClampedFloat(params, 'pitch', -89.9, 89.9),
     ui: readUiParam(params),
+    slot: readSlotParam(params),
   };
+}
+
+/** An integer 1..SAVE_SLOTS, else null (out of range is ignored rather than clamped: slot=9 must not play slot 6). */
+function readSlotParam(params) {
+  const n = readNumber(params, 'slot');
+  return n !== null && Number.isInteger(n) && n >= 1 && n <= SAVE_SLOTS ? n : null;
 }
 
 /** `location.search` in a browser, '' anywhere else (never throws under Node). */

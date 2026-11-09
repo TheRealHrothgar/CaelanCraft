@@ -1,11 +1,12 @@
-// Regression tests for src/styles.css — the title-screen controls sheet must fit the 1280x720 reference
-// viewport used by scripts/smoke-windows-chrome.sh and docs/PLAN-build.md §3, and the fixed menu layers
+// Regression tests for src/styles.css — the title screen's Worlds panel (§41) and controls sheet must fit the 1280x720
+// reference viewport used by scripts/smoke-windows-chrome.sh and docs/PLAN-build.md §3, and the fixed menu layers
 // must be able to scroll on shorter viewports (body{overflow:hidden} means nothing else can).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CONTROLS_SHEET } from '../../src/menus.js';
 import { PICKER_ORDER } from '../../src/blocks.js';
+import { SAVE_SLOTS } from '../../src/config.js';
 
 const css = readFileSync(fileURLToPath(new URL('../../src/styles.css', import.meta.url)), 'utf8');
 
@@ -50,25 +51,62 @@ describe('styles.css title screen', () => {
     expect(decls('#splash-text').get('top')).toContain('var(--title-top)');
   });
 
-  it('logo + menu + full controls sheet fit inside a 1280x720 viewport', () => {
-    const paddingTop = toPx(/** @type {string} */ (title.get('--title-top')), VIEWPORT_H);
-    // #title-logo is the 200x32 canvas at width:min(800px,90vw) -> 800px wide at 1280 -> 128px tall.
-    const logo = (800 * 32) / 200;
-    const menuTop = toPx(/** @type {string} */ (decls('.title-menu').get('margin-top')), VIEWPORT_H);
-    // Seed row (16px font input, 6px padding, 2px border ≈ 34px) + two .mc-button (18px font, 10px padding,
-    // 2px border ≈ 45px each) + two 8px flex gaps. Measured from the 1280x720 reference screenshot.
-    const menu = 34 + 45 * 2 + 8 * 2;
-    const sheet = decls('.controls-sheet');
-    const sheetTop = toPx(/** @type {string} */ (sheet.get('margin-top')), VIEWPORT_H);
-    const rowGap = toPx(/** @type {string} */ (sheet.get('gap')).split(/\s+/)[0], VIEWPORT_H);
+  // §41: the title shows the Worlds panel (SAVE_SLOTS rows, the storage usage bar, a status line) BESIDE the cheat sheet.
+  // Measured in headless Chrome at the 1280x720 reference window (a 1258x622 viewport under --dump-dom): logo 25..153,
+  // panel 181..591 (410px tall, 640px wide), sheet 181..553 (503px wide), rows 50px.
+  const first = (v) => toPx(/** @type {string} */ (v).split(/\s+/)[0], VIEWPORT_H);
+  const panel = decls('.worlds-panel');
+  const sheet = decls('.controls-sheet');
+  /** Height of the Worlds panel with every row closed. */
+  function worldsPanelHeight() {
+    const [padY] = /** @type {string} */ (panel.get('padding')).split(/\s+/).map((v) => toPx(v, VIEWPORT_H));
+    const border = first(panel.get('border'));
+    const HEAD = 23 + first(decls('.worlds-head').get('margin-bottom')); // the 20px bold "Worlds" line ≈ 23px
+    const row = first(decls('.world-slot').get('min-height'));
+    const gap = first(decls('#worlds-list').get('gap'));
+    const USAGE = first(decls('.usage-row').get('margin-top')) + 14; // the 14px bar (10px + 2px borders) sets the line
+    const message = decls('.worlds-message');
+    const MESSAGE = first(message.get('margin-top')) + first(message.get('min-height'));
+    return 2 * border + 2 * padY + HEAD + SAVE_SLOTS * row + (SAVE_SLOTS - 1) * gap + USAGE + MESSAGE;
+  }
+  function sheetHeight() {
+    const rowGap = first(sheet.get('gap'));
     // One <kbd> row: 12px bold text + 1px padding x2 + 1px top border + 3px bottom border ≈ 20px.
     const ROW = 20;
     const rows = CONTROLS_SHEET.length;
-    const sheetH = rows * ROW + (rows - 1) * rowGap;
-    const total = paddingTop + logo + menuTop + menu + sheetTop + sheetH;
-    // v0.3 added the console (T /), R and Shift+R rows: 17 rows.
-    expect(rows).toBe(17);
-    expect(total).toBeLessThanOrEqual(VIEWPORT_H);
+    return rows * ROW + (rows - 1) * rowGap;
+  }
+
+  it('the Worlds panel model matches the measured layout', () => {
+    expect(SAVE_SLOTS).toBe(6);
+    expect(worldsPanelHeight()).toBe(410);
+    expect(CONTROLS_SHEET.length).toBe(17); // v0.3 added the console (T /), R and Shift+R rows
+    expect(sheetHeight()).toBe(372);
+  });
+
+  it('logo + the Worlds panel beside the full controls sheet fit the 1280x720 reference window (622px viewport too)', () => {
+    for (const H of [720, 622]) {
+      const paddingTop = toPx(/** @type {string} */ (title.get('--title-top')), H);
+      // #title-logo is the 200x32 canvas at width:min(800px,90vw) -> 800px wide at 1280 -> 128px tall.
+      const logo = (800 * 32) / 200;
+      const mainTop = first(decls('.title-main').get('margin-top'));
+      const column = Math.max(first(panel.get('margin-top')) + worldsPanelHeight(), first(sheet.get('margin-top')) + sheetHeight());
+      expect(paddingTop + logo + mainTop + column, `viewport ${H}px`).toBeLessThanOrEqual(H);
+    }
+  });
+
+  it('the panel and the sheet sit side by side in the 1258px-wide reference viewport, and stack in narrower windows', () => {
+    const main = decls('.title-main');
+    expect(main.get('flex-wrap')).toBe('wrap');
+    const panelW = Number(/^min\((\d+)px,100%\)$/.exec(/** @type {string} */ (panel.get('width')))?.[1]);
+    expect(panelW).toBe(640);
+    const columnGap = toPx(/** @type {string} */ (main.get('gap')).split(/\s+/)[1], VIEWPORT_H);
+    const padX = toPx(/** @type {string} */ (main.get('padding')).split(/\s+/)[1], VIEWPORT_H);
+    const SHEET_W = 503; // measured: the widest row is "Shift R" + "Edit the targeted Rune Block (also opens on placing one)"
+    expect(2 * padX + panelW + columnGap + SHEET_W).toBeLessThanOrEqual(1258);
+    // rows wrap their buttons under the name rather than overflowing a phone-width panel
+    expect(decls('.world-slot').get('flex-wrap')).toBe('wrap');
+    expect(decls('.slot-actions').get('flex-wrap')).toBe('wrap');
   });
 });
 

@@ -275,4 +275,7 @@ export const BLAST_SHAKE_AMPLITUDE = 0.16;          // … and amplitude (m) at 
 export const DAY_LENGTH_SECONDS = 600;
 export const START_TIME = 0.30;                     // 07:12
 export const AUTOSAVE_INTERVAL_S = 30;
+export const SAVE_SLOTS = 6;                        // worlds kept side by side, one localStorage key each (§41)
+export const MAX_WORLD_NAME_CHARS = 24;             // world names are trimmed and cut to this many characters
+export const STORAGE_QUOTA_ESTIMATE = 5 * 1024 * 1024; // characters a site may keep in localStorage in common browsers (~5 MB; the Worlds usage bar)
 export const HOTBAR_SIZE = 9;

@@ -18,6 +18,9 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 > **v0.8 — block physics.** Falling sand and gravel, flowing water, collapsing structures, falling trees and blast barrels,
 > all driven by ONE scheduler (§33) with pluggable rules; falling blocks and their rendering (§34); water (§35), support
 > and trees (§36), explosives (§37). Design rationale: `docs/DESIGN-physics.md` (its §10 lists the plug-in interfaces).
+>
+> **Save slots.** Up to six worlds, one localStorage key each, listed on the title screen's Worlds panel (§41); the old single
+> save moves into slot 1.
 
 ## 0. Conventions (apply everywhere)
 
@@ -69,7 +72,7 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/raycast.js` | PURE | A-raycast | `tests/unit/raycast.test.js` |
 | `src/physics.js` | PURE | A-physics | `tests/unit/physics.test.js` |
 | `src/daynight.js` | PURE | A-daynight | `tests/unit/daynight.test.js` |
-| `src/storage.js` | PURE (storage injected) | A-storage | `tests/unit/storage.test.js` |
+| `src/storage.js` | PURE (storage injected); save slots (§41) | A-storage | `tests/unit/storage.test.js`, `tests/unit/saveSlots.test.js` |
 | `src/tiles.js` | PURE (pixel painters) | A-tiles | `tests/unit/tiles.test.js` |
 | `src/commands.js` | PURE, command language | v0.3 | `tests/unit/commands.test.js` |
 | `src/runes.js` | PURE, rune store + runner | v0.3 | `tests/unit/runes.test.js` |
@@ -87,7 +90,7 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/renderer.js` | three | A-renderer | `tests/unit/renderer.test.js` |
 | `src/controls.js` | DOM | A-controls | — |
 | `src/hud.js` | DOM | A-hud | — |
-| `src/menus.js` | DOM | A-menus | — |
+| `src/menus.js` | DOM (+ pure Worlds-panel text helpers, §41) | A-menus | `tests/unit/worldsMenu.test.js` (helpers), `tests/unit/styles.test.js` (layout) |
 | `src/audio.js` | DOM (WebAudio) | A-audio | `tests/unit/explosionsAudio.test.js` (v0.8 feature sounds) |
 | `src/diagnostics.js` | DOM | A-diagnostics | — |
 | `src/console.js` | DOM | v0.3 | — |
@@ -122,7 +125,7 @@ atlas                              → config, blocks, hex, tiles, three
 renderer                           → config, hex, three
 controls                           → config
 hud                                → config, blocks, atlas
-menus                              → config, blocks, atlas
+menus                              → config, blocks, atlas, storage (defaultWorldName)
 audio                              → blocks
 diagnostics                        → config, blocks, coords, hex, runes (runeKey)
 console                            → config
@@ -143,7 +146,8 @@ SNEAK_EYE_HEIGHT, GRAVITY, JUMP_VELOCITY, TERMINAL_VELOCITY, WALK_SPEED, SPRINT_
 FLY_SPRINT_SPEED, FLY_VERTICAL_SPEED, GROUND_ACCEL, AIR_ACCEL, WATER_ACCEL, WATER_GRAVITY, WATER_MAX_SINK, SWIM_UP_SPEED,
 SWIM_EXIT_JUMP, WATER_SPEED_FACTOR, MAX_SUBSTEP_DT, MAX_FRAME_DT, COLLISION_EPS, FOV, SPRINT_FOV, CAMERA_NEAR,
 CAMERA_FAR, MOUSE_SENSITIVITY, PITCH_LIMIT, MAX_PIXEL_RATIO, DOUBLE_TAP_MS, DOUBLE_TAP_SPACE_MS, DAY_LENGTH_SECONDS,
-START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION`.
+START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION`; save slots (§41): `SAVE_SLOTS = 6, MAX_WORLD_NAME_CHARS = 24,
+STORAGE_QUOTA_ESTIMATE = 5 * 1024 * 1024`.
 `VERSION = '0.7.0'`; `package.json` and `package-lock.json` carry the same version and the title footer in `index.html` reads
 `Caelancraft v<major>.<minor>` (`v0.7`) — bump all four together (wave0.test.js checks they agree). Render/data/unload radii are
 **hex distances** in chunk coordinates. `FACE_SHADE` moved to `hex.js` (it derives from the face normals).
@@ -653,7 +657,7 @@ Invariants: intensities ≥ 0; every colour channel in [0,1]; `computeSky(0)` eq
 ## 14. `src/storage.js`
 
 ```js
-export const SAVE_KEY = 'caelancraft:v2:save';
+export const SAVE_KEY = 'caelancraft:v2:save';      // the ONE save of the versions before save slots (= LEGACY_SAVE_KEY, §41.3)
 export const SAVE_VERSION = 2;                      // v2: edits are keyed by hex (q, r) chunks; v1 cube saves are not loadable
 export function serializeSave(data)                 // SaveData → JSON string (keys in stable order)
 export function deserializeSave(text)               // string → SaveData|null (null on parse error, wrong version, missing/invalid fields)
@@ -661,10 +665,21 @@ export function saveGame(data, storage = globalThis.localStorage)   // boolean; 
 export function loadGame(storage = globalThis.localStorage)         // SaveData|null
 export function hasSave(storage = globalThis.localStorage)          // boolean
 export function clearSave(storage = globalThis.localStorage)        // void
+//   saveGame / loadGame / hasSave / clearSave work on SAVE_KEY only and are kept for tests and old data: main saves through the
+//   slot API (§41: listSlots, loadSlot, saveSlot, deleteSlot, renameSlot, duplicateSlot, migrateLegacySave, storageUsage).
 /** SaveData = { version: 2, seed: number, time: number, day: number, player: {x,y,z (WORLD),yaw,pitch,flying}, hotbar: number[9],
- *   selected: number, edits: EditsJSON, runes?: RunesJSON, pigs?: PigJSON[], physics?: PhysicsSwitches }
+ *   selected: number, edits: EditsJSON, runes?: RunesJSON, pigs?: PigJSON[], physics?: PhysicsSwitches, zombies?: boolean,
+ *   meta?: { name?: string, createdAt?: number, lastPlayed?: number } }
  *   EditsJSON = { "cq,cr": [localIndex, id, localIndex, id, ...] } */
 ```
+`meta` (§41) is OPTIONAL: the world's name and times, so a slot's document alone says what the Worlds screen lists.
+`serializeSave` writes it LAST whenever `data.meta != null` (a non-object throws a TypeError), canonicalised by
+`normalizeWorldMeta(raw)`: `{ name?, createdAt?, lastPlayed? }` in this order, `name` through `cleanWorldName` (control characters
+→ spaces, trimmed, cut to MAX_WORLD_NAME_CHARS code points, trimmed again; '' = unusable), times as integer ms ≥ 0; unusable fields
+are left out and an empty result omits `meta`, so documents without it serialise byte-identically to before. `deserializeSave`
+keeps what normalizeWorldMeta keeps, warning `meta.name: not a usable name, ignored` / `meta.<createdAt|lastPlayed>: not a timestamp,
+ignored`; a non-object is dropped with `meta: not an object, ignored`. Exports `cleanWorldName, defaultWorldName, normalizeWorldName,
+normalizeWorldMeta`.
 `physics` (v0.8) is OPTIONAL: `{ falling, water, collapse, explosions }` booleans. `serializeSave` writes it whenever
 `data.physics != null`, canonicalised by `normalizePhysicsSwitches(raw)` (exactly these four keys in this order; anything not
 `=== false` is on). `deserializeSave` keeps it when it is a plain object (non-boolean switches warn `physics.<name>: not a boolean,
@@ -814,14 +829,22 @@ export function createHUD(doc, atlasCanvas)   // binds to the ids in index.html 
 ```js
 export const SPLASHES = [ /* 18 strings from SPEC-gameplay §5.4 */ ];
 export function createMenus(doc, atlasCanvas, callbacks)
-/** callbacks = { onNewWorld(seedText: string), onContinue(), onResume(), onSave(), onStopRunes(), onQuit(), onClickToPlay(), onPickBlock(blockId, slot|null), onPickerClose(),
+/** callbacks = { onPlayWorld(slot), onNewWorld(slot, name, seedText), onRenameWorld(slot, name), onDuplicateWorld(slot), onDeleteWorld(slot) (§41: the
+ *              Worlds panel; name / seed text untrimmed, main normalises), onResume(), onSave(), onStopRunes(), onQuit(), onClickToPlay(),
+ *              onPickBlock(blockId, slot|null), onPickerClose(),
  *              onPhysicsToggle(name) (v0.8: 'falling'|'water'|'collapse'|'explosions'), onUndoPhysics() (v0.8), onZombiesToggle() (§39) }
  *  (#btn-stop-runes "Stop All Rune Scripts" in the pause menu fires onStopRunes; CONTROLS_SHEET lists T, /, R and Shift+R)
  *  Menus = {
- *   showTitle(hasSave), hideTitle(),        // sets a random splash, dirt background (makeTiledBackgroundDataURL DIRT), draws the logo, renders the controls sheet, enables #btn-continue iff hasSave
+ *   showTitle(slots, opts?), hideTitle(),   // sets a random splash, dirt background (makeTiledBackgroundDataURL DIRT), draws the logo, renders the controls sheet,
+ *                                           //   closes any open form / dialog and shows the Worlds panel (setWorlds); hideTitle also blurs a focused control in it
+ *   setWorlds(slots, opts?),                // §41: re-render the Worlds panel only; slots = storage.listSlots(), opts = WorldsOptions { now, usage
+ *                                           //   (storage.storageUsage), readOnly (?nosave), defaultSeed (?seed), message, isError, focusSlot }
+ *   showWorldsMessage(text, isError?), isConfirmOpen(),
  *   showLoading(done, total), hideLoading(),
  *   showClickToPlay(), hideClickToPlay(),
- *   showPause(seed, physics?), hidePause(),        // v0.8 physics = PhysicsMenuState { switches, canUndo, undoKind? } refreshes the row first
+ *   showPause(seed, physics?, worldName?), hidePause(),   // v0.8 physics = PhysicsMenuState { switches, canUndo, undoKind? } refreshes the row first;
+ *                                           //   §41 worldName → #pause-world under the title (hidden when empty); resets setQuitUnsaved(false)
+ *   setQuitUnsaved(on),                     // §41: #btn-quit QUIT_LABEL "Save & Quit", or QUIT_UNSAVED_LABEL "Quit Without Saving" + class `danger`
  *   setPhysicsState(physics),               // v0.8: the Physics row (#btn-phys-falling|water|collapse|explosions: "<Label>: ON|OFF", class
  *                                           //   `off`, aria-pressed) and #btn-undo-physics (undoButtonLabel(canUndo, kind); disabled when !canUndo)
  *   setZombiesState(on),                    // §39: #btn-zombies "Zombies: ON|OFF" (class `off`, aria-pressed) in #pause-creatures
@@ -832,10 +855,12 @@ export function createMenus(doc, atlasCanvas, callbacks)
  *                                           //   stays visible and clickable. Below that the panel stays 180px (chrome with a two-line hint, 116px, plus
  *                                           //   one row) so a block can always be picked, and only then overlaps the hotbar; if the hint wraps further
  *                                           //   (very narrow too), the panel scrolls
- *   getSeedInput(),                         // text of #seed-input
+ *   getSeedInput(),                         // the open New World form's seed text ('' when no form is open)
  *   dispose() } */
 ```
-New World with an existing save must `confirm("This will delete your saved world. Continue?")` before calling `onNewWorld`.
+New World is offered on empty slots only, so it never overwrites a world and asks nothing; Delete always goes through the in-game
+`#confirm-dialog` (§41.4) — the game uses no `window.confirm`. Pure exports for the panel's text (tested): `formatBytes, formatLastPlayed,
+slotDetailText, usageLabel, usageLevel, deleteConfirmText, latestSlot` (§41.4).
 v0.8 pause menu (index.html, below "Stop All Rune Scripts"): `#pause-physics.physics-row` = label "Physics" + four `.mc-button.toggle`
 buttons, then `#btn-undo-physics`. CONTROLS_SHEET row R: "Run a Rune Block · light a Blast Barrel".
 
@@ -862,7 +887,8 @@ v0.8 trees: `playCreak(v)` (a tree starts to topple, §36.5.3): a 0.6 s sawtooth
 
 ```js
 export function parseParams(search = location.search)   // → Params { seed: string|null, rd: number|null (1..16), smoke, autoplay, nosave, debug, fly: boolean, time: number|null,
-                                                         //            yaw: number|null (degrees), pitch: number|null (degrees, ±89.9), ui: 'console'|'editor'|null }
+                                                         //            yaw: number|null (degrees), pitch: number|null (degrees, ±89.9), ui: 'console'|'editor'|null,
+                                                         //            slot: number|null (§41: an integer 1..SAVE_SLOTS, anything else null — never clamped) }
 export function installErrorCapture(win, onError)        // window 'error' + 'unhandledrejection' → onError({message, stack})
 export function installDebugHandle(win, game)            // win.__caelancraft = { version, ready:false, seed, world, player, controls, renderer, stats, errors:[], smoke:null,
                                                          //   getBlock(x,y,z) / setBlock(x,y,z,id) over WORLD positions (cell derived with worldToHex), getCell(x,z) → [q,r],
@@ -884,13 +910,22 @@ export function runSmokeTest(game, win = window)         // Promise<SmokeResult>
 
 ## 23. `src/main.js` (glue; owns the game loop)
 
-Boot: `params = parseParams()`; `save = params.nosave ? null : loadGame()`; DOM handles; `atlasCanvas`, `atlasTexture`, `renderer`, `hud`, `menus`, `controls`, `audio`.
+Boot: `params = parseParams()`; unless `params.nosave`, `migrateLegacySave()` (§41.3; a status other than 'none' / 'migrated' is a
+console warning); `currentSlot = params.slot ?? 1`; DOM handles; `atlasCanvas`, `atlasTexture`, `renderer`, `hud`, `menus`, `controls`, `audio`.
 State machine: `title → loading → clickToPlay → playing ⇄ paused`, `playing ⇄ picker`, `playing ⇄ console`, `playing ⇄ editor`.
 Console/editor are modal like the picker: `setState` BEFORE `controls.unlock()`, controls disabled, simulation frozen (the rune runner too),
 rendering continues. Closing any modal goes through `enterPlayingFromModal()`: `enterPlaying()` then, if the pointer lock is not back after
 `RELOCK_CHECK_MS` (Esc is not a user activation, so the request may be refused), the click-to-play overlay is shown instead of a dead playing state.
-- **Title**: `menus.showTitle(hasSave)`. New World → seed from input (`normalizeSeed` on trimmed text; empty → random `Math.floor(Math.random()*2**31)`),
-  clear save (if not nosave), start. Continue → start with save. `params.autoplay || params.smoke` → skip title (use `params.seed ?? save?.seed ?? random`).
+- **Title = the Worlds screen (§41)**: `menus.showTitle(listSlots(…, { repair: !nosave }), { now, usage: storageUsage(slots), readOnly: nosave,
+  defaultSeed: params.seed, focusSlot })`. Play → `loadSlot(slot)` (null → status line "World N could not be loaded" and a re-list), then
+  `currentSlot = slot`, the name / createdAt from `save.meta`, start with the save. New World (slot, name, seedText) → refused with a status line
+  when the slot is no longer empty (not under nosave), else `currentSlot = slot`, `worldName = normalizeWorldName(name, slot)`, `worldCreatedAt =
+  Date.now()`, seed from the text (`seedFromInput`: `normalizeSeed` on trimmed text; empty → random `Math.floor(Math.random()*2**31)`), start.
+  Rename / Duplicate / Delete → `renameSlot` / `duplicateSlot` / `deleteSlot`, then `menus.setWorlds` with a status line (`worldsFailMessage` on
+  failure) and that row focused; under nosave they only say "Saving is off (?nosave=1): worlds cannot be changed".
+  `params.autoplay || params.smoke` → skip the title and play slot `currentSlot`: `save = nosave ? null : loadSlot(currentSlot)`; a DAMAGED slot sets
+  `params.nosave` (warning: never overwritten from a URL); then `params.seed ?? save?.seed ?? random` exactly as before (a different ?seed than the
+  slot's save sets nosave), the name from the save's meta (else "World N").
 - **Loading**: `world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: save?.edits })`; `world.onChunkMesh = renderer.setChunkMesh;
   world.onChunkUnload = renderer.removeChunkMesh`; spawn = save?.player ?? world.findSpawn() (WORLD position); each frame `world.update(spawn.x, spawn.z, LOADING_BUDGET_MS)`,
   show progress = meshed chunks within HEX distance `min(2, rd)` of the spawn chunk out of `hexDiscCount(that radius)` (19 by default);
@@ -912,7 +947,15 @@ rendering continues. Closing any modal goes through `enterPlayingFromModal()`: `
   `!(isSolid(sel) && playerIntersectsBlock(player, tq,ty,tr))`; `audio.playPlace`.
   Pick (middle): if `hit` and placeable: select the slot containing it, else assign to the selected slot.
 - Autosave every `AUTOSAVE_INTERVAL_S` when `world.editVersion` or `runeStore.version` changed or the player moved, plus on `pagehide`,
-  `visibilitychange(hidden)`, pause, Save, Quit. Skipped when `params.nosave`. `buildSaveData` includes `runes: runeStore.export()`.
+  `visibilitychange(hidden)`, pause, Save, Quit. Skipped when `params.nosave`. `buildSaveData` includes `runes: runeStore.export()` and (§41)
+  `meta: { name: worldName, createdAt: worldCreatedAt, lastPlayed: Date.now() }`. Every save goes to `saveSlot(currentSlot, data)` — the current
+  slot only; a failure shows the red toast `saveFailMessage(reason)` ('quota' → "Save failed: storage full — delete a world on the Worlds screen
+  to make room") and the slot keeps its previous save. `finishLoading` saves a NEW world at once (it claims its slot; a no-op under nosave).
+  The pause menu shows `menus.showPause(seed, physics, worldName)` (+ " · not saving" under nosave); "Save & Quit" (`#btn-quit`) saves and returns
+  to the Worlds screen with that world's row focused. A Save & Quit whose save FAILS does not quit: the red toast explains, the world stays
+  open and the button turns into "Quit Without Saving" (`menus.setQuitUnsaved(true)`, reset by the next pause); pressing it saves once more
+  and, failing again, quits with the Worlds status line `“<name>” was not saved (storage full) — its last save is kept. Delete a world to
+  make room.` (the world is never closed without the player choosing to lose the unsaved part).
 - Runes lifecycle in main: ONE `RuneStore` for the session; `startLoading` sets `world.onBlockChange = onBlockChanged` (RUNE_BLOCK appears →
   `store.ensure`; RUNE_BLOCK disappears → `runner.cancel(key)`, `store.delete(key)`, close the editor if it shows that rune), resets the runner
   and calls `runeStore.replaceAll(save.runes)`; `finishLoading` builds the `CommandContext` (§26.3), creates the `RuneRunner`, wires
@@ -2248,6 +2291,91 @@ that would intersect a zombie. `game.teleport` also `detachBody(player, zombies.
 `#btn-zombies` ("Zombies: ON|OFF", class `off`, aria-pressed; `menus.setZombiesState(on)` after `showPause`); `onZombiesToggle`
 flips the switch (off removes every zombie), click + toast. The CommandContext gets `zombies`.
 
+## 41. Save slots — `src/storage.js` (PURE), the Worlds panel in `src/menus.js` and `index.html`, wiring in `src/main.js`
+
+Up to SAVE_SLOTS (6) worlds side by side in the browser's localStorage. Each slot is ONE serializeSave document (§14) under its own
+key; its `meta` carries the name and times, so the document alone is the truth. A small index key only caches what the Worlds screen
+lists and is never trusted blindly. Every function takes the storage last (default `globalThis.localStorage`), never throws, and the
+only clock is a `now` argument (default `Date.now()`).
+```js
+export const SAVE_SLOTS, MAX_WORLD_NAME_CHARS, STORAGE_QUOTA_ESTIMATE   // re-exported from config (6, 24, 5 × 1024 × 1024 characters)
+export const LEGACY_SAVE_KEY = SAVE_KEY;          // 'caelancraft:v2:save', the single save of the versions before slots
+export const SLOT_KEY_PREFIX = 'caelancraft:v2:slot:';   export function slotKey(n)  // 'caelancraft:v2:slot:1' … ':6'
+export const SLOT_INDEX_KEY = 'caelancraft:v2:slots';    export const SLOT_INDEX_VERSION = 1;
+export const MIGRATED_WORLD_NAME = 'My World';  export const COPY_SUFFIX = ' (copy)';
+export function isSlot(n)                         // integer 1..SAVE_SLOTS
+export function copyWorldName(name)               // "<name> (copy)", the name shortened first so the result keeps ≤ MAX_WORLD_NAME_CHARS
+export function textHash(text)                    // 32-bit FNV-1a over the UTF-16 code units (uint32)
+export function isQuotaError(err)                 // name QuotaExceededError | NS_ERROR_DOM_QUOTA_REACHED, or code 22 | 1014
+export function listSlots(storage, { repair = true } = {})   // → SlotInfo[SAVE_SLOTS] in slot order
+export function loadSlot(slot, storage)           // → SaveData|null; the result always has meta { name, createdAt, lastPlayed } (fallbacks below)
+export function saveSlot(slot, data, storage)     // → SlotResult { ok, bytes } | { ok: false, reason: 'invalid'|'unavailable'|'quota'|'error' }
+export function deleteSlot(slot, storage)         // → boolean: the slot is empty afterwards
+export function renameSlot(slot, name, storage)   // → { ok, name, bytes } | { ok: false, reason: 'invalid'|'empty'|'damaged'|'quota'|'error'|… }
+export function duplicateSlot(slot, storage, now) // → { ok, slot, name, bytes } | { ok: false, reason: …|'full' }
+export function firstEmptySlot(storage)           // → 1..SAVE_SLOTS, 0 when none (a damaged slot is not empty)
+export function migrateLegacySave(storage, now)   // → { status, slot?, reason?, legacyKept? } (§41.3)
+export function storageUsage(slots)               // → { used: Σ slot bytes, quota: STORAGE_QUOTA_ESTIMATE, fraction: min(1, used / quota) }
+/** SlotInfo = { slot, status: 'empty'|'world'|'damaged', name ('' unless world), seed (null unless world), createdAt, lastPlayed (ms, 0 =
+ *   unknown), bytes (stored characters, 0 when empty), legacy (slot 1 still read from LEGACY_SAVE_KEY) } */
+```
+
+### 41.1 Slots, names and the index
+1. A slot is EMPTY when its key is absent or ''; DAMAGED when it holds text that `deserializeSave` rejects (unparsable, wrong version,
+   missing fields — e.g. a v1 cube save or a half-written blob); otherwise a WORLD. A damaged slot is never read, written over, renamed or
+   copied: the Worlds panel offers only Delete. Names: `normalizeWorldName(raw, slot)` = `cleanWorldName(raw)` (§14) or, when that is
+   empty, `defaultWorldName(slot)` "World N"; duplicates are allowed. A document without a name lists as "World N" — or MIGRATED_WORLD_NAME
+   while it is still the legacy save (§41.3).
+2. Index `SLOT_INDEX_KEY` = `{ "version": 1, "slots": [entry|null × SAVE_SLOTS] }`, entry `{ name, seed, createdAt, lastPlayed, bytes,
+   hash }` or `{ damaged: true, bytes, hash }` (bytes = the slot text's length, hash = textHash of it). `listSlots` uses an entry ONLY when
+   it is well-formed and both `bytes` and `hash` match the slot's current text; otherwise (missing / corrupt / foreign-version index, ghost
+   entries for empty slots, a slot changed behind its back) the slot's document is parsed and the entry rebuilt. With `repair` the rebuilt
+   index is written back when it differs (best effort; never when the index is absent and every slot empty); `repair: false` (?nosave)
+   writes nothing. Writers refresh their slot's entry after a successful write (best effort: a failed index write only means a rebuild).
+
+### 41.2 Writing (never lose the previous save)
+`saveSlot` serialises first (a TypeError → 'invalid', nothing touched), writes the whole document with ONE `setItem` (Web Storage leaves
+a key untouched when setItem throws, so a full storage keeps the old save byte for byte), then reads it back: a write that threw but
+changed the key anyway, or stuck as something else, is put back to the previous text (or removed when there was none) and reported
+('quota' for a quota error, else 'error'). No temporary second copy is written — it would need room for the save twice. `renameSlot`
+rewrites the document with `meta.name` replaced (content and times unchanged); `duplicateSlot` writes into `firstEmptySlot` with `meta
+{ name: copyWorldName(src name), createdAt: now, lastPlayed: src lastPlayed ?? now }` and writes nothing when there is no empty slot
+('full') or no room ('quota').
+
+### 41.3 Moving the old single save (`migrateLegacySave`; main calls it at boot unless ?nosave)
+1. Nothing under LEGACY_SAVE_KEY → 'none'. A slot already holding the same world (`meta` aside; or the identical text) → an earlier run
+   copied it but could not remove the legacy key: remove it now → 'migrated' (no second copy).
+2. Target = slot 1 when its key is empty, else the first empty slot; none → 'no-room' (legacy key untouched). A loadable save is written
+   with `meta` (its own fields, else name MIGRATED_WORLD_NAME "My World" and both times `now`); a damaged one VERBATIM (it then lists as
+   damaged; the player decides).
+3. The legacy key is removed ONLY after the copy was written and read back identical → 'migrated' (`legacyKept: true` when the removal
+   failed; finished on the next boot by 1). A copy that throws → 'deferred' (`reason`; any partial copy removed, legacy untouched); one
+   that reads back different → 'failed' ('verify'; the copy removed, legacy untouched).
+4. While slot 1's own key is empty and the legacy key holds text, SLOT 1 IS THE LEGACY SAVE: listSlots / loadSlot / saveSlot / renameSlot /
+   deleteSlot / duplicateSlot read and write LEGACY_SAVE_KEY in place (`SlotInfo.legacy = true`). That keeps a save too big to exist twice
+   (e.g. > half the quota: 'deferred' with 'quota') playable and saveable; the move is retried on every boot. A legacy save that appears
+   after the move (an old tab saving on close) becomes another world in the first empty slot, never merged into slot 1.
+
+### 41.4 The Worlds panel (title screen: `index.html`, `menus.js`, `styles.css`)
+`#title-screen` = logo, splash, `.title-main` (flex row, wraps) = `#worlds-panel.worlds-panel` (min(640px, 100%) wide: `.worlds-head`
+"Worlds" + `#worlds-count` "N of 6 slots used", `ol#worlds-list`, `.usage-row` "Storage" + `#usage-bar` (role meter) / `#usage-fill`
+(class `warn` from 75 %, `full` from 90 %) + `#usage-text` usageLabel "1.1 MB of ~5 MB (23%)", `#worlds-message` status line, red with
+class `error`) beside `#title-controls`; at 1280×720 both fit side by side without scrolling, narrower windows stack them and scroll.
+Rows `li.world-slot.<status>[.latest][.editing][data-slot]` (min-height 50px; `.latest` = latestSlot, the most recently played):
+`.slot-num`, `.slot-body` (`.slot-name`: the name / "Empty" / "Damaged world"; `.slot-detail`: slotDetailText "Seed 77 · played
+yesterday · 1.1 MB", "Can't be read · 2 KB", "No world yet"; formatLastPlayed: just now / N minutes|hours ago / yesterday / N days|
+months|years ago, '' when unknown) and `.slot-actions`: world → Play, Rename, Duplicate (only while an empty slot exists), Delete;
+damaged → Delete; empty → New World. Under `readOnly` Rename / Duplicate / Delete are disabled. Buttons carry `data-action` /
+`data-slot` (one delegated listener) and an aria-label naming the world.
+New World and Rename replace the row's text and buttons with an inline `form.slot-form`: `#world-name-input` (maxlength 24; New World
+prefilled "World N", Rename the current name; focused and selected), for New World also `#seed-input` (placeholder "random", prefilled
+from ?seed), then Create / Save (submit, Enter) and Cancel (Esc). One form at a time. Delete opens `#confirm-dialog` (z 60, role
+alertdialog): deleteConfirmText — `Delete “<name>”?` / `Slot N · seed S. This cannot be undone.` (damaged: `Delete the damaged world
+in slot N?`) — with Delete (`#confirm-yes`, fires onDeleteWorld) and Cancel (`#confirm-no`, focused; Esc and a click on the backdrop
+cancel and give the focus back; Tab stays on the two buttons). Keyboard: every control is a real button / input; ArrowUp / ArrowDown
+move between rows (same button position), ArrowLeft / ArrowRight along a row; showTitle focuses `focusSlot`'s row, else the last played
+world's Play, else the first New World. `#splash-text` has `pointer-events: none` (it can sit over the panel in narrow windows).
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),
@@ -2300,3 +2428,6 @@ forwards onBlockChange / onChunkGenerated like main.
 27. (v0.8) Saving never mutates the live world: build saves with `blockPhysics.exportEdits()` (a copy with fallers settled), never by
     landing entities "for real".
 28. (v0.8) A switched-off feature DROPS its triggers; switching it back on must never act on what happened meanwhile.
+29. (§41) Never trust the slot index without checking it against the slot's text (bytes + hash), never write a save as two copies (no
+    room for that), never remove the legacy save before its copy reads back identical, and never let a URL (?autoplay) overwrite a
+    damaged slot. Under ?nosave nothing at all is written: not the migration, not the index repair.

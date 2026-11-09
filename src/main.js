@@ -30,7 +30,10 @@ import { World } from './world.js';
 import { raycastHex } from './raycast.js';
 import { createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock, isFreeAt, findFreeY } from './physics.js';
 import { advanceTime, computeSky, createSkyState, isDayTime } from './daynight.js';
-import { saveGame, loadGame, clearSave, SAVE_VERSION } from './storage.js';
+import {
+  SAVE_VERSION, listSlots, loadSlot, saveSlot, deleteSlot, renameSlot, duplicateSlot, migrateLegacySave, storageUsage,
+  normalizeWorldName, defaultWorldName,
+} from './storage.js';
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer } from './renderer.js';
 import { createControls } from './controls.js';
@@ -119,6 +122,33 @@ export function seedFromInput(text, random = Math.random) {
   const trimmed = typeof text === 'string' ? text.trim() : '';
   if (trimmed === '') return Math.floor(random() * 2 ** 31);
   return normalizeSeed(trimmed);
+}
+
+/**
+ * The red toast for a save that failed (§41): storage.saveSlot's `reason` → text. A full storage asks for a world to be
+ * deleted (all six slots share the browser's ~5 MB); the slot's previous save is untouched either way.
+ * @param {string|undefined} reason
+ */
+export function saveFailMessage(reason) {
+  if (reason === 'quota') return 'Save failed: storage full — delete a world on the Worlds screen to make room';
+  if (reason === 'unavailable') return 'Save failed: this browser is not letting the game store anything';
+  return 'Save failed';
+}
+
+/**
+ * The Worlds-screen status line after a failed Rename / Duplicate (storage.SlotResult `reason`).
+ * @param {'rename'|'duplicate'} action @param {string|undefined} reason
+ */
+export function worldsFailMessage(action, reason) {
+  if (reason === 'quota') {
+    return action === 'duplicate'
+      ? 'Not enough storage to copy this world — delete a world first'
+      : 'Not enough storage to rename this world — delete a world first';
+  }
+  if (reason === 'full') return 'No empty slot to copy into — delete a world first';
+  if (reason === 'damaged') return 'That world is damaged and cannot be changed';
+  if (reason === 'empty') return 'That slot is empty now';
+  return action === 'duplicate' ? 'Could not copy the world' : 'Could not rename the world';
 }
 
 /**
@@ -292,8 +322,18 @@ export function boot(win, doc) {
   let player = null;
   /** @type {RaycastHit|null} */
   let hit = null;
-  /** @type {SaveData|null} */
-  let save = params.nosave ? null : loadGame();
+  // Save slots (§41): the old single save moves into slot 1 first (never under ?nosave, which writes nothing).
+  if (!params.nosave) {
+    const moved = migrateLegacySave();
+    if (moved.status !== 'none' && moved.status !== 'migrated') console.warn('Caelancraft: the old save was not moved into a slot yet:', moved);
+  }
+  /** the save slot (1..SAVE_SLOTS) the live world is saved to */
+  let currentSlot = params.slot ?? 1;
+  /** the live world's name and creation time, written into every save's `meta` */
+  let worldName = defaultWorldName(currentSlot);
+  let worldCreatedAt = 0;
+  /** a Save & Quit whose save failed: the next one quits without saving (reset on every pause) */
+  let quitUnsavedArmed = false;
   /** @type {SaveData|null} save being restored by the current loading step */
   let pendingSave = null;
   /** @type {number[]|null} [x, y, z] the loading screen streams around */
@@ -483,8 +523,6 @@ export function boot(win, doc) {
   const sky = createSkyState();
 
   // ---- helpers --------------------------------------------------------------------------------------
-
-  const hasSaveNow = () => !params.nosave && save !== null;
 
   /** Live raycast from the eye along the look direction (allocation-free apart from the hit object). */
   function updateHit() {
@@ -787,11 +825,13 @@ export function boot(win, doc) {
       pigs: pigs.export(),
       physics: blockPhysics ? blockPhysics.exportSwitches() : undefined,
       zombies: zombies.enabled, // the switch only: zombies themselves are never saved (§39)
+      meta: { name: worldName, createdAt: worldCreatedAt, lastPlayed: Date.now() }, // §41: the slot's name and times
     };
   }
 
   /**
-   * Save now. Skipped under ?nosave. Errors always show the red toast; `announce` also shows "World saved".
+   * Save now, to the current slot only. Skipped under ?nosave. Errors always show the red toast (saveFailMessage: a full
+   * storage asks for a world to be deleted); `announce` also shows "World saved".
    * @param {boolean} announce
    * @returns {boolean}
    */
@@ -802,7 +842,8 @@ export function boot(win, doc) {
     }
     const data = buildSaveData();
     if (!data) return false;
-    const ok = saveGame(data);
+    const res = saveSlot(currentSlot, data);
+    const ok = res.ok;
     if (ok) {
       savedEditVersion = world.editVersion;
       savedRunesVersion = runeStore.version;
@@ -812,10 +853,9 @@ export function boot(win, doc) {
       savedY = player.y;
       savedZ = player.z;
       autosaveAccum = 0;
-      save = data;
       if (announce) hud.showSaveToast('World saved');
     } else {
-      hud.showSaveToast('Save failed: storage full', true);
+      hud.showSaveToast(saveFailMessage(res.reason), true);
     }
     return ok;
   }
@@ -857,7 +897,12 @@ export function boot(win, doc) {
     stats.state = s;
   }
 
-  function showTitle() {
+  /**
+   * The title screen with the Worlds panel.
+   * @param {number} [focusSlot]  focus this row (default: the last played world)
+   * @param {string} [message]  red status line (a world that could not be saved on quit)
+   */
+  function showTitle(focusSlot, message = '') {
     setState(STATE.TITLE);
     controls.setEnabled(false);
     menus.hidePause();
@@ -870,14 +915,28 @@ export function boot(win, doc) {
     hud.setPickerOpen(false);
     hud.setUnderwater(false);
     hud.setTargetHint(null);
-    menus.showTitle(hasSaveNow());
-    if (params.seed != null) {
-      const el = doc.getElementById('seed-input');
-      if (el) {
-        el.value = String(params.seed);
-        el.setAttribute('value', String(params.seed));
-      }
-    }
+    menus.showTitle(...worldsView({ focusSlot, message, isError: Boolean(message) }));
+  }
+
+  /**
+   * menus.showTitle / setWorlds arguments: the slots as storage lists them (under ?nosave read-only: no index repair) and
+   * the panel options (usage bar, ?seed for the New World form, `extra` for message / focus).
+   * @param {import('./menus.js').WorldsOptions} [extra]
+   * @returns {[import('./storage.js').SlotInfo[], import('./menus.js').WorldsOptions]}
+   */
+  function worldsView(extra = {}) {
+    const slots = listSlots(undefined, { repair: !params.nosave });
+    return [slots, { now: Date.now(), usage: storageUsage(slots), readOnly: params.nosave, defaultSeed: params.seed, ...extra }];
+  }
+
+  /** Re-render the Worlds panel after an action (the title stays up). */
+  function refreshWorlds(message = '', isError = false, focusSlot = undefined) {
+    menus.setWorlds(...worldsView({ message, isError, focusSlot }));
+  }
+
+  /** The pause menu's world line: the name, plus a note when nothing is being saved (?nosave, or switched off by autoplay). */
+  function pauseWorldLabel() {
+    return params.nosave ? `${worldName} · not saving` : worldName;
   }
 
   /**
@@ -1044,6 +1103,7 @@ export function boot(win, doc) {
     savedY = player.y;
     savedZ = player.z;
     autosaveAccum = 0;
+    if (!restoring) doSave(false); // a new world claims its slot at once (§41); a no-op under ?nosave
     fov = FOV;
     breakHeld = 0;
     placeHeld = 0;
@@ -1097,7 +1157,8 @@ export function boot(win, doc) {
     setState(STATE.PAUSED);
     controls.setEnabled(false);
     controls.unlock();
-    menus.showPause(world.seed, physicsMenuState());
+    menus.showPause(world.seed, physicsMenuState(), pauseWorldLabel()); // also resets the quit button to "Save & Quit"
+    quitUnsavedArmed = false;
     menus.setZombiesState(zombies.enabled);
     doSave(false);
   }
@@ -1175,8 +1236,11 @@ export function boot(win, doc) {
     enterPlayingFromModal();
   }
 
-  function quitToTitle() {
-    doSave(false);
+  /**
+   * Close the world and show the Worlds screen. The caller has saved (or failed to: `message` then says so on the panel).
+   * @param {string} [message]  red status line on the Worlds panel
+   */
+  function quitToTitle(message = '') {
     if (runner) runner.reset();
     runner = null;
     ctx = null;
@@ -1197,30 +1261,67 @@ export function boot(win, doc) {
     player = null;
     hit = null;
     renderer.setHighlight(null);
-    if (!params.nosave) save = loadGame();
-    showTitle();
+    showTitle(currentSlot, message); // the Worlds screen, the world just left focused
   }
 
   // ---- menus / hud callbacks ------------------------------------------------------------------------
 
   menus = createMenus(doc, atlasCanvas, {
-    onNewWorld(seedText) {
+    // ---- the Worlds panel (§41): every action works on one slot; nothing is written under ?nosave ----
+    onPlayWorld(slot) {
       if (state !== STATE.TITLE) return;
-      const seed = seedFromInput(seedText);
-      if (!params.nosave) clearSave();
-      save = null;
-      audio.resume();
-      startLoading(seed, null);
-    },
-    onContinue() {
-      if (state !== STATE.TITLE) return;
-      save = params.nosave ? null : loadGame();
-      if (!save) {
-        menus.showTitle(false);
+      const data = loadSlot(slot);
+      if (!data) {
+        refreshWorlds(`World ${slot} could not be loaded`, true, slot); // emptied or damaged meanwhile (another tab)
         return;
       }
+      currentSlot = slot;
+      worldName = data.meta.name;
+      worldCreatedAt = data.meta.createdAt;
       audio.resume();
-      startLoading(save.seed, save);
+      startLoading(data.seed, data);
+    },
+    onNewWorld(slot, name, seedText) {
+      if (state !== STATE.TITLE) return;
+      if (!params.nosave && listSlots()[slot - 1]?.status !== 'empty') {
+        refreshWorlds(`Slot ${slot} is not empty any more`, true, slot);
+        return;
+      }
+      currentSlot = slot;
+      worldName = normalizeWorldName(name, slot);
+      worldCreatedAt = Date.now();
+      audio.resume();
+      startLoading(seedFromInput(seedText), null);
+    },
+    onRenameWorld(slot, name) {
+      if (state !== STATE.TITLE) return;
+      if (params.nosave) {
+        refreshWorlds('Saving is off (?nosave=1): worlds cannot be changed', true, slot);
+        return;
+      }
+      const res = renameSlot(slot, name);
+      refreshWorlds(res.ok ? `Renamed to “${res.name}”` : worldsFailMessage('rename', res.reason), !res.ok, slot);
+    },
+    onDuplicateWorld(slot) {
+      if (state !== STATE.TITLE) return;
+      if (params.nosave) {
+        refreshWorlds('Saving is off (?nosave=1): worlds cannot be changed', true, slot);
+        return;
+      }
+      const res = duplicateSlot(slot);
+      if (res.ok) refreshWorlds(`Copied to slot ${res.slot} as “${res.name}”`, false, res.slot);
+      else refreshWorlds(worldsFailMessage('duplicate', res.reason), true, slot);
+    },
+    onDeleteWorld(slot) {
+      if (state !== STATE.TITLE) return;
+      if (params.nosave) {
+        refreshWorlds('Saving is off (?nosave=1): worlds cannot be changed', true, slot);
+        return;
+      }
+      const before = listSlots()[slot - 1];
+      const what = before && before.status === 'world' ? `“${before.name}”` : `the world in slot ${slot}`;
+      if (deleteSlot(slot)) refreshWorlds(`Deleted ${what}`, false, slot);
+      else refreshWorlds(`Could not delete ${what}`, true, slot);
     },
     onClickToPlay() {
       if (state !== STATE.CLICK_TO_PLAY) return;
@@ -1241,7 +1342,14 @@ export function boot(win, doc) {
     },
     onQuit() {
       if (state !== STATE.PAUSED) return;
-      quitToTitle();
+      const saved = params.nosave || doSave(false);
+      if (!saved && !quitUnsavedArmed) {
+        // The red toast says why; the world stays open and the button now reads "Quit Without Saving" (§41).
+        quitUnsavedArmed = true;
+        menus.setQuitUnsaved(true);
+        return;
+      }
+      quitToTitle(saved ? '' : `“${worldName}” was not saved (storage full) — its last save is kept. Delete a world to make room.`);
     },
     onPhysicsToggle(name) {
       if (state !== STATE.PAUSED || !blockPhysics) return;
@@ -1826,7 +1934,14 @@ export function boot(win, doc) {
   if (params.debug) hud.setDebugVisible(true);
 
   if (autoplay) {
-    // Skip the title: ?seed wins, then the save's seed (whose edits we restore), then a random seed.
+    // Skip the title and play slot ?slot (default 1): ?seed wins, then the slot's seed (whose edits we restore), then a
+    // random seed. Under ?nosave nothing is loaded or written.
+    const save = params.nosave ? null : loadSlot(currentSlot);
+    if (!params.nosave && !save && listSlots()[currentSlot - 1].status === 'damaged') {
+      // Never overwrite a damaged save from a URL: the player decides on the Worlds screen.
+      params.nosave = true;
+      console.warn(`Caelancraft: ?autoplay on the damaged slot ${currentSlot} — saving disabled for this session.`);
+    }
     let restoring = null;
     let seed;
     if (params.seed != null) {
@@ -1843,6 +1958,12 @@ export function boot(win, doc) {
       restoring = save;
     } else {
       seed = seedFromInput('');
+    }
+    if (restoring) {
+      worldName = restoring.meta.name;
+      worldCreatedAt = restoring.meta.createdAt;
+    } else {
+      worldCreatedAt = Date.now();
     }
     startLoading(seed, restoring);
   } else {

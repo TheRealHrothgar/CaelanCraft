@@ -99,16 +99,60 @@ canvas{image-rendering:pixelated}
 .progress{width:400px;height:16px;background:#000;border:2px solid #7f7f7f}
 .progress-fill{height:100%;width:0%;background:#7fbf3f;transition:width .1s linear}
 #loading-text{color:#c0c0c0;font:14px monospace}
-/* Vertical budget at the 1280x720 reference viewport (scripts/smoke-windows-chrome.sh): 4vh top (28.8px) + 128px logo + 24px
-   + seed row & two buttons (~140px) + 12px + 17 cheat-sheet rows (17×20 + 16×2 = 372px) ~= 705px, so the whole sheet fits
-   without clipping; overflow-y:auto is the fallback for shorter viewports (the layer is fixed and body{overflow:hidden}). */
+/* Vertical budget at the 1280x720 reference viewport (scripts/smoke-windows-chrome.sh): 4vh top (28.8px) + 128px logo + 16px,
+   then the Worlds panel (six 50px rows: ~438px) BESIDE the 17-row cheat sheet (12px + 17×20 + 16×2 = 384px) ~= 611px, so both
+   fit without clipping. Below ~1240px wide the sheet wraps under the panel and overflow-y:auto scrolls (the layer is fixed and
+   body{overflow:hidden}); the panel shrinks to the window and its rows wrap their buttons under the name. */
 #title-screen{--title-top:4vh;z-index:50;display:flex;flex-direction:column;align-items:center;padding-top:var(--title-top);overflow-y:auto}
 #title-logo{width:min(800px,90vw);height:auto}
-#splash-text{position:absolute;top:calc(var(--title-top) + 92px);left:calc(50% + 150px);color:#ff0;font:bold 20px monospace;text-shadow:2px 2px 0 #3f3f00;transform:rotate(-20deg);transform-origin:center;animation:splash-pulse .5s ease-in-out infinite alternate}
+#splash-text{position:absolute;top:calc(var(--title-top) + 92px);left:calc(50% + 150px);color:#ff0;font:bold 20px monospace;text-shadow:2px 2px 0 #3f3f00;transform:rotate(-20deg);transform-origin:center;animation:splash-pulse .5s ease-in-out infinite alternate;pointer-events:none}
 @keyframes splash-pulse{from{transform:rotate(-20deg) scale(1)}to{transform:rotate(-20deg) scale(1.08)}}
-.title-menu{margin-top:24px;display:flex;flex-direction:column;align-items:center;gap:8px}
-.seed-row label{color:#fff;font:bold 16px monospace;margin-right:8px;text-shadow:1px 1px 0 #000}
-#seed-input{width:220px;padding:6px 8px;background:#000;color:#fff;border:2px solid #a0a0a0;font:16px monospace}
+/* The Worlds panel (§41): six slot rows, a storage usage bar and a status line, beside (or above) the cheat sheet */
+.title-main{margin-top:16px;display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:4px 28px;width:100%;box-sizing:border-box;padding:0 16px 24px}
+.worlds-panel{width:min(640px,100%);box-sizing:border-box;margin-top:12px;padding:8px 10px;background:rgba(0,0,0,.45);border:2px solid #a0a0a0;box-shadow:0 0 0 2px #000}
+.worlds-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px}
+.worlds-title{margin:0;color:#fff;font:bold 20px monospace;text-shadow:2px 2px 0 #3f3f3f}
+.worlds-note{color:#c0c0c0;font:12px monospace;text-shadow:1px 1px 0 #000}
+#worlds-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.world-slot{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-height:50px;padding:4px 8px;box-sizing:border-box;background:rgba(111,111,111,.4);border:2px solid;border-color:#555 #aaa #aaa #555}
+.world-slot.latest{border-color:#d8d890}
+.world-slot.empty{background:rgba(30,30,30,.45)}
+.world-slot.damaged{background:rgba(110,30,30,.45)}
+.slot-num{flex:0 0 18px;color:#a8a8a8;font:bold 16px monospace;text-align:center;text-shadow:1px 1px 0 #000}
+.slot-body{flex:1 1 180px;min-width:0}
+.slot-name{color:#fff;font:bold 15px monospace;text-shadow:1px 1px 0 #000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.world-slot.empty .slot-name{color:#9a9a9a;font-weight:normal;font-style:italic}
+.world-slot.damaged .slot-name{color:#ff9a9a}
+.slot-detail{margin-top:2px;color:#c8c8c8;font:12px monospace;text-shadow:1px 1px 0 #000}
+.slot-actions{flex:0 1 auto;margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
+.mc-button.slot-btn{min-width:0;padding:4px 10px;font-size:13px;text-shadow:1px 1px 0 #202020}
+.mc-button.danger:hover:not(:disabled){background:#b85a5a;color:#fff}
+#btn-quit.danger{background:#8a4646}
+.mc-button:focus-visible{outline:2px solid #ffffa0;outline-offset:1px}
+.slot-form{flex:1 1 300px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.slot-field{display:flex;align-items:center;gap:6px}
+.slot-field label{color:#fff;font:bold 13px monospace;text-shadow:1px 1px 0 #000}
+.slot-field input{width:min(190px,52vw);padding:4px 6px;background:#000;color:#fff;border:2px solid #a0a0a0;font:14px monospace}
+.slot-field input:focus{border-color:#ffffa0;outline:none}
+.slot-form-buttons{display:flex;gap:4px;margin-left:auto}
+.usage-row{display:flex;align-items:center;gap:8px;margin-top:8px;color:#c8c8c8;font:12px monospace;text-shadow:1px 1px 0 #000}
+.usage-label{color:#e0e0e0;font-weight:bold}
+.usage-bar{flex:1 1 120px;height:10px;background:#000;border:2px solid #7f7f7f}
+.usage-fill{height:100%;width:0;background:#7fbf3f}
+.usage-fill.warn{background:#d0b030}
+.usage-fill.full{background:#d04040}
+.worlds-message{min-height:15px;margin-top:4px;color:#9fef9f;font:12px monospace;text-shadow:1px 1px 0 #000}
+.worlds-message.error{color:#ff8080}
+.menu-subtitle{margin:-8px 0 6px;color:#ffffa0;font:bold 16px monospace;text-shadow:2px 2px 0 #3f3f3f;max-width:90vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Delete confirmation (z 60, over the title) */
+#confirm-dialog{z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;background:rgba(0,0,0,.6)}
+.dialog-panel{width:min(460px,100%);box-sizing:border-box;padding:16px 18px;background:#2a2a2a;border:3px solid;border-color:#aaa #555 #555 #aaa;box-shadow:0 0 0 2px #000;display:flex;flex-direction:column;gap:10px}
+.dialog-title{color:#fff;font:bold 18px monospace;text-shadow:2px 2px 0 #000;overflow-wrap:anywhere}
+.dialog-note{color:#c8c8c8;font:13px monospace}
+.dialog-buttons{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+.dialog-buttons .mc-button.small{min-width:110px}
+.dialog-buttons .mc-button.danger{background:#8a4646}
 .controls-sheet{margin-top:12px;display:grid;grid-template-columns:auto auto;gap:2px 16px;color:#e0e0e0;font:13px monospace;text-shadow:1px 1px 0 #000}
 kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;border:1px solid #777;border-bottom-width:3px;color:#fff;font:bold 12px monospace;text-align:center}
 #title-footer{position:absolute;bottom:8px;left:8px;color:#c0c0c0;font:12px monospace;text-shadow:1px 1px 0 #000}
