@@ -279,4 +279,56 @@ export const AUTOSAVE_INTERVAL_S = 30;
 export const SAVE_SLOTS = 6;                        // worlds kept side by side, one localStorage key each (§41)
 export const MAX_WORLD_NAME_CHARS = 24;             // world names are trimmed and cut to this many characters
 export const STORAGE_QUOTA_ESTIMATE = 5 * 1024 * 1024; // characters a site may keep in localStorage in common browsers (~5 MB; the Worlds usage bar)
-export const HOTBAR_SIZE = 9;
+export const HOTBAR_SIZE = 9;                       // also the survival pack's hotbar: pack slots 0..HOTBAR_SIZE-1
+
+// Survival (§42–§49; docs/DESIGN-survival.md §9.2). Rates are per real second; one game day is DAY_LENGTH_SECONDS.
+export const GEN_LATEST = 2;                        // newest world generator: 2 adds the survival resources (absent `gen` = 1, today's land)
+// Pack and containers (§5)
+export const PACK_SLOTS = 27;                       // 0..8 the hotbar strip, 9..26 the rosette
+export const WEAR_SLOTS = 3;                        // head, body, feet
+export const BASKET_SLOTS = 18;                     // a wicker basket's rosette (6 + 12)
+export const REMAINS_SLOTS = 30;                    // "Your Belongings": every pack and worn stack
+export const MAX_CONTAINERS = 1024;                 // basket entries per world (a death always gets its entry beyond this)
+// Campfires: fire spots and fuel (§4.4)
+export const FIRE_SPOTS = 7;                        // six skewers (0..5) and the embers (6)
+export const MAX_FIRE_SLOTS = 256;                  // fires with spot or fuel entries kept in a save
+export const CAMPFIRE_FUEL_START_S = 300;           // a campfire placed in Survival (and a relit pit) starts with this much fuel
+export const CAMPFIRE_FUEL_MAX_S = 1200;
+export const FUEL_STICK_S = 40;                     // fuel per stick fed …
+export const FUEL_LOG_S = 300;                      // … and per log (six riven sticks give less than the log)
+export const RELIGHT_HOLD_S = 3;                    // hold R this long to relight a cold fire pit
+// Making (§7)
+export const STATION_RANGE = 3;                     // a workplace is near within this hex distance (|dy| ≤ 2): needed to queue a job
+export const STATION_WORK_RANGE = 16;               // a lane's head job runs while its workplace is within this hex distance
+export const MAX_CRAFT_JOBS = 8;                    // jobs across all lanes
+// The body (§2–§3)
+export const STAT_MAX = 100;                        // health, satiation (shown as Nourishment) and hydration
+export const BREATH_MAX_S = 20;
+export const BREATH_REFILL_PER_S = 5;
+export const BODY_TEMP_NORMAL = 37;                 // °C
+export const BODY_TEMP_MIN = 25;
+export const BODY_TEMP_MAX = 45;
+export const SICK_MAX_S = 600;                      // repeat cases of sickness add up to this
+export const HEAL_MAX = 50;                         // pending bandage healing
+// Damage (§2.4)
+export const FALL_SAFE_SPEED = 13.5;                // m/s: a 3-cell drop lands at 13.07 and is safe
+export const FALL_DAMAGE_K = 0.1;                   // HP = K·(v² − FALL_SAFE_SPEED²) × the soft-landing factor
+export const CRUSH_DAMAGE_PER_CELL = 6;             // per cell unstickPlayer lifts the player
+// Input timing (§4.2, §4.5, §6)
+export const ATTACK_REPEAT_S = 0.55;                // held LMB strikes a mob this often (longer than PIG_HURT_S and ZOMBIE_HURT_S)
+export const DIG_TICK_S = 0.25;                     // dig sound and dust cadence
+export const USE_REPEAT_GAP_S = 0.25;               // held RMB starts the next eat / drink after this
+export const GULP_GAP_S = 0.5;                      // one hand gulp of water per this
+export const TAP_HOLD_S = 4;                        // hold R this long to tap a birch
+// Mobs in Survival (§4.3, §2.4)
+export const PIG_HEALTH = 5;
+export const PIG_REPOP_CHECK_S = 150;               // daylight repopulation check interval
+export const PIG_REPOP_TARGET = 3;                  // pigs wanted within PIG_REPOP_RADIUS of the player
+export const PIG_REPOP_RADIUS = 64;
+export const PIG_REPOP_MIN = 24;                    // repopulation spawns this far from the player, min …
+export const PIG_REPOP_MAX = 48;                    // … and max
+export const ZOMBIE_DAMAGE = 8;                     // HP per zombie strike in Survival (the push is unchanged)
+export const FIRE_BURN_DAMAGE = 4;                  // HP per campfire scorch (at most one per 0.5 s)
+// Regrowth (§6.5)
+export const REGROW_MEAN_S = 600;                   // a picked bush regrows after one game day on average
+export const MAX_REGROW_TRACKED = 4096;

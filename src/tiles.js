@@ -92,6 +92,35 @@ export const TILE_NAMES = Object.freeze({
   74: 'campfire_top',
   75: 'barrel_side',
   76: 'barrel_top',
+  // v0.9 survival tiles (docs/DESIGN-survival.md §8.1)
+  77: 'copper_ore',
+  78: 'tin_ore',
+  79: 'honeyberry_bush',
+  80: 'honeyberry_bush_bare',
+  81: 'tussock',
+  82: 'cattails_side',
+  83: 'cattails_top',
+  84: 'tuber_plant',
+  85: 'prickly_pear',
+  86: 'prickly_pear_bare',
+  87: 'stump_side',
+  88: 'stump_top',
+  89: 'kiln_side',
+  90: 'kiln_top',
+  91: 'bloomery_side',
+  92: 'bloomery_top',
+  93: 'forge_side',
+  94: 'forge_top',
+  95: 'basket_side',
+  96: 'basket_top',
+  97: 'hide_side',
+  98: 'hide_top',
+  99: 'remains_side',
+  100: 'remains_top',
+  101: 'plant_top_clear',
+  102: 'loose_stones',
+  103: 'fallen_branches',
+  104: 'fire_pit_side',
   240: 'zombie_face',
   241: 'zombie_head_side',
   242: 'zombie_scalp',
@@ -1459,6 +1488,32 @@ function paintMissing(px) {
   }
 }
 
+/**
+ * Survival tiles 77–104 (docs/DESIGN-survival.md §8.2) before their art lands (package A replaces these): one flat, fully
+ * opaque colour, the top 24 bits of fnv1a(name), so each placeholder differs from every other tile. Alpha 255.
+ * @param {Uint8ClampedArray} px
+ * @param {string} name  the tile name
+ */
+function paintPlaceholder(px, name) {
+  fill(px, fnv1a(name) >>> 8);
+}
+
+/** The survival tiles that are still placeholders (every survival tile except plant_top_clear). */
+const PLACEHOLDER_TILES = Object.freeze([
+  'copper_ore', 'tin_ore', 'honeyberry_bush', 'honeyberry_bush_bare', 'tussock', 'cattails_side', 'cattails_top',
+  'tuber_plant', 'prickly_pear', 'prickly_pear_bare', 'stump_side', 'stump_top', 'kiln_side', 'kiln_top', 'bloomery_side',
+  'bloomery_top', 'forge_side', 'forge_top', 'basket_side', 'basket_top', 'hide_side', 'hide_top', 'remains_side',
+  'remains_top', 'loose_stones', 'fallen_branches', 'fire_pit_side',
+]);
+
+/**
+ * 101 plant_top_clear — every pixel alpha 0 (RGB 0): the top and bottom faces of the short plants, the litter and the fire
+ * pit, which the mesher draws a whole cell up (§8.1), so nothing shows there.
+ */
+function paintPlantTopClear(px) {
+  px.fill(0);
+}
+
 /** @type {Readonly<Record<string, (px: Uint8ClampedArray, rng: Rng) => void>>} */
 const RECIPES = Object.freeze({
   stone: paintStone,
@@ -1524,6 +1579,8 @@ const RECIPES = Object.freeze({
   campfire_top: paintCampfireTop,
   barrel_side: paintBarrelSide,
   barrel_top: paintBarrelTop,
+  ...Object.fromEntries(PLACEHOLDER_TILES.map((name) => [name, (px) => paintPlaceholder(px, name)])),
+  plant_top_clear: paintPlantTopClear,
   zombie_face: paintZombieFace,
   zombie_head_side: paintZombieHeadSide,
   zombie_scalp: paintZombieScalp,

@@ -21,8 +21,13 @@ export const BLOCK = Object.freeze({
   // v0.8 block physics (docs/DESIGN-physics.md §0): flowing / falling water levels and the blast barrel
   WATER_FLOW_1: 68, WATER_FLOW_2: 69, WATER_FLOW_3: 70, WATER_FLOW_4: 71, WATER_FLOW_5: 72, WATER_FLOW_6: 73,
   WATER_FALL: 74, BLAST_BARREL: 75,
+  // v0.9 survival (docs/DESIGN-survival.md §8.1): ores, wild plants and their picked variants, workplaces, containers,
+  // ground litter and the cold fire pit. Only generation-2 worlds generate the ores, plants and litter.
+  COPPER_ORE: 76, TIN_ORE: 77, HONEYBERRY_BUSH: 78, HONEYBERRY_BUSH_BARE: 79, TUSSOCK: 80, CATTAILS: 81, TUBER_PLANT: 82,
+  PRICKLY_PEAR: 83, PRICKLY_PEAR_BARE: 84, WORK_STUMP: 85, KILN: 86, BLOOMERY: 87, FORGE: 88, WICKER_BASKET: 89,
+  SLEEPING_HIDE: 90, REMAINS: 91, LOOSE_STONES: 92, FALLEN_BRANCHES: 93, FIRE_PIT: 94,
 });
-export const BLOCK_COUNT = 76;
+export const BLOCK_COUNT = 95;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -46,6 +51,12 @@ export const TILE = Object.freeze({
   WOOL_GRAY: 70, WOOL_LIGHT_GRAY: 71, BLACK_HOLE: 72,
   CAMPFIRE_SIDE: 73, CAMPFIRE_TOP: 74,
   BARREL_SIDE: 75, BARREL_TOP: 76,
+  // v0.9 survival blocks (§8.1). PLANT_TOP_CLEAR is all alpha 0: the top and bottom of the short plants, litter and fire pit.
+  COPPER_ORE: 77, TIN_ORE: 78, HONEYBERRY_BUSH: 79, HONEYBERRY_BUSH_BARE: 80, TUSSOCK: 81, CATTAILS_SIDE: 82, CATTAILS_TOP: 83,
+  TUBER_PLANT: 84, PRICKLY_PEAR: 85, PRICKLY_PEAR_BARE: 86, STUMP_SIDE: 87, STUMP_TOP: 88, KILN_SIDE: 89, KILN_TOP: 90,
+  BLOOMERY_SIDE: 91, BLOOMERY_TOP: 92, FORGE_SIDE: 93, FORGE_TOP: 94, BASKET_SIDE: 95, BASKET_TOP: 96, HIDE_SIDE: 97,
+  HIDE_TOP: 98, REMAINS_SIDE: 99, REMAINS_TOP: 100, PLANT_TOP_CLEAR: 101, LOOSE_STONES: 102, FALLEN_BRANCHES: 103,
+  FIRE_PIT_SIDE: 104,
   // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
   ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
   // The Hollow Watcher (§40; atlas row 15, not block faces): its ash-grey stone, the glow mask of that stone's cracks
@@ -124,6 +135,15 @@ const B = BLOCK;
 /** Shared flags of the non-source water blocks (flowing levels and falling water). */
 const WATER_FAMILY = Object.freeze({
   solid: false, opaque: false, liquid: true, breakable: false, placeable: false, layer: LAYER_TRANSLUCENT, soundGroup: 'water',
+});
+
+/**
+ * Flags of the survival plants (§8.1 "PLANT"), also used by the blocks with "PLANT flags" (belongings, litter, the fire
+ * pit): walk-through, see-through cutout prisms that never cull against themselves. They stay not replaceable (a block is
+ * never placed into one) and not fall-through (sand rests on them); a block's own sound overrides 'leaves'.
+ */
+const PLANT = Object.freeze({
+  solid: false, opaque: false, layer: LAYER_CUTOUT, cullSame: false, soundGroup: 'leaves',
 });
 
 /** The v0.4 wool colours (white and red predate them): BLOCK/TILE key suffix and display label. */
@@ -210,6 +230,32 @@ export const BLOCKS = [
   // Blast Barrel: an explosive (explosions.js, CONTRACTS §37). A plain solid block until lit (R, a campfire next to it,
   // `ignite`, or a blast); lit barrels are entities. Lid tile on top and bottom.
   def({ id: B.BLAST_BARREL, name: 'blast_barrel', displayName: 'Blast Barrel', tiles: tiles(T.BARREL_SIDE, T.BARREL_TOP), soundGroup: 'wood' }),
+  // ---- v0.9 survival (docs/DESIGN-survival.md §8.1). Only generation-2 worldgen emits the ores, plants and litter.
+  def({ id: B.COPPER_ORE, name: 'copper_ore', displayName: 'Copper Ore', tiles: tiles(T.COPPER_ORE), soundGroup: 'stone' }),
+  def({ id: B.TIN_ORE, name: 'tin_ore', displayName: 'Tin Ore', tiles: tiles(T.TIN_ORE), soundGroup: 'stone' }),
+  // Wild plants (PLANT). A picked bush or pear becomes its *_BARE variant, which regrows and is never placed by hand.
+  def({ id: B.HONEYBERRY_BUSH, name: 'honeyberry_bush', displayName: 'Honeyberry Bush', tiles: tiles(T.HONEYBERRY_BUSH), ...PLANT }),
+  def({ id: B.HONEYBERRY_BUSH_BARE, name: 'honeyberry_bush_bare', displayName: 'Picked Honeyberry Bush', tiles: tiles(T.HONEYBERRY_BUSH_BARE), ...PLANT, placeable: false }),
+  // Short plants: top and bottom are PLANT_TOP_CLEAR, because the mesher draws the top hexagon a whole cell up.
+  def({ id: B.TUSSOCK, name: 'tussock', displayName: 'Tussock Grass', tiles: tiles(T.TUSSOCK, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'grass' }),
+  def({ id: B.CATTAILS, name: 'cattails', displayName: 'Cattails', tiles: tiles(T.CATTAILS_SIDE, T.CATTAILS_TOP), ...PLANT, soundGroup: 'grass' }),
+  def({ id: B.TUBER_PLANT, name: 'tuber_plant', displayName: 'Wild Tuber Plant', tiles: tiles(T.TUBER_PLANT, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'grass' }),
+  def({ id: B.PRICKLY_PEAR, name: 'prickly_pear', displayName: 'Prickly Pear', tiles: tiles(T.PRICKLY_PEAR), ...PLANT }),
+  def({ id: B.PRICKLY_PEAR_BARE, name: 'prickly_pear_bare', displayName: 'Picked Prickly Pear', tiles: tiles(T.PRICKLY_PEAR_BARE), ...PLANT, placeable: false }),
+  // Workplaces (§7.1): plain solid blocks that crafting.findStations looks for near the player.
+  def({ id: B.WORK_STUMP, name: 'work_stump', displayName: 'Work Stump', tiles: tiles(T.STUMP_SIDE, T.STUMP_TOP, T.OAK_LOG_END), soundGroup: 'wood' }),
+  def({ id: B.KILN, name: 'kiln', displayName: 'Kiln', tiles: tiles(T.KILN_SIDE, T.KILN_TOP), soundGroup: 'stone' }),
+  def({ id: B.BLOOMERY, name: 'bloomery', displayName: 'Bloomery', tiles: tiles(T.BLOOMERY_SIDE, T.BLOOMERY_TOP), soundGroup: 'stone' }),
+  def({ id: B.FORGE, name: 'forge', displayName: 'Forge', tiles: tiles(T.FORGE_SIDE, T.FORGE_TOP), soundGroup: 'stone' }),
+  // Containers (§5.6; their contents live in containers.js, keyed "q,y,r") and the Sleeping Hide (the waking place, §2.5).
+  def({ id: B.WICKER_BASKET, name: 'wicker_basket', displayName: 'Wicker Basket', tiles: tiles(T.BASKET_SIDE, T.BASKET_TOP), soundGroup: 'wood' }),
+  def({ id: B.SLEEPING_HIDE, name: 'sleeping_hide', displayName: 'Sleeping Hide', tiles: tiles(T.HIDE_SIDE, T.HIDE_TOP), soundGroup: 'cloth' }),
+  def({ id: B.REMAINS, name: 'remains', displayName: 'Your Belongings', tiles: tiles(T.REMAINS_SIDE, T.REMAINS_TOP), ...PLANT, soundGroup: 'cloth', placeable: false }),
+  // Ground litter (picked with R or broken by hand) and the cold fire pit a burnt-out campfire leaves: a meshed cutout block,
+  // so campfires.js, the campfire renderer and the zombie safe zone never see it. None of these is placed by hand.
+  def({ id: B.LOOSE_STONES, name: 'loose_stones', displayName: 'Loose Stones', tiles: tiles(T.LOOSE_STONES, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'stone', placeable: false }),
+  def({ id: B.FALLEN_BRANCHES, name: 'fallen_branches', displayName: 'Fallen Branches', tiles: tiles(T.FALLEN_BRANCHES, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'wood', placeable: false }),
+  def({ id: B.FIRE_PIT, name: 'fire_pit', displayName: 'Cold Fire Pit', tiles: tiles(T.FIRE_PIT_SIDE, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'stone', placeable: false }),
 ];
 
 /** Default hotbar: grass, dirt, stone, cobble, planks, log, leaves, glass, bricks. */
@@ -217,26 +263,38 @@ export const DEFAULT_HOTBAR = Object.freeze([
   B.GRASS_BLOCK, B.DIRT, B.STONE, B.COBBLESTONE, B.OAK_PLANKS, B.OAK_LOG, B.OAK_LEAVES, B.GLASS, B.BRICKS,
 ]);
 
-/** Order of the 67 placeable blocks in the block picker, grouped by family. */
+/** Order of the 80 placeable blocks in the block picker, grouped by family; RUNE_BLOCK and WATER stay last. */
 export const PICKER_ORDER = Object.freeze([
   // stone
   B.STONE, B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.GRANITE, B.DIORITE, B.ANDESITE,
   B.SLATE, B.OBSIDIAN, B.BRICKS, B.SANDSTONE,
-  // earth
+  // earth (v0.9: the wild plants right after the pumpkin)
   B.DIRT, B.GRASS_BLOCK, B.SNOWY_GRASS, B.SAND, B.RED_SAND, B.GRAVEL, B.CLAY, B.SNOW_BLOCK, B.ICE, B.PACKED_ICE,
-  B.HAY_BALE, B.PUMPKIN,
+  B.HAY_BALE, B.PUMPKIN, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.HONEYBERRY_BUSH, B.PRICKLY_PEAR,
   // wood
   B.OAK_LOG, B.OAK_PLANKS, B.OAK_LEAVES, B.SPRUCE_LOG, B.SPRUCE_PLANKS, B.SPRUCE_LEAVES, B.BIRCH_LOG, B.BIRCH_PLANKS,
   B.BIRCH_LEAVES, B.BOOKSHELF, B.GLASS, B.GLOWSTONE,
-  // minerals
-  B.COAL_ORE, B.IRON_ORE, B.GOLD_ORE, B.DIAMOND_ORE, B.COAL_BLOCK, B.IRON_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK,
-  B.COPPER_BLOCK, B.HONEYCOMB_BLOCK,
+  // minerals (v0.9: copper and tin ore right after diamond ore)
+  B.COAL_ORE, B.IRON_ORE, B.GOLD_ORE, B.DIAMOND_ORE, B.COPPER_ORE, B.TIN_ORE, B.COAL_BLOCK, B.IRON_BLOCK, B.GOLD_BLOCK,
+  B.DIAMOND_BLOCK, B.COPPER_BLOCK, B.HONEYCOMB_BLOCK,
   // wool, light to dark around the colour wheel
   B.WOOL_WHITE, B.WOOL_LIGHT_GRAY, B.WOOL_GRAY, B.WOOL_BLACK, B.WOOL_BROWN, B.WOOL_RED, B.WOOL_ORANGE, B.WOOL_YELLOW,
   B.WOOL_LIME, B.WOOL_GREEN, B.WOOL_CYAN, B.WOOL_LIGHT_BLUE, B.WOOL_BLUE, B.WOOL_PURPLE, B.WOOL_MAGENTA, B.WOOL_PINK,
-  // special
+  // special (v0.9: the workplaces, the basket and the Sleeping Hide right before the campfire)
+  B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WICKER_BASKET, B.SLEEPING_HIDE,
   B.CAMPFIRE, B.BLAST_BARREL, B.BLACK_HOLE, B.RUNE_BLOCK, B.WATER,
 ]);
+
+/** The seven wild-plant ids (§8.1 "PLANT"), ripe and picked: HONEYBERRY_BUSH … PRICKLY_PEAR_BARE (78–84), in id order. */
+export const PLANT_IDS = Object.freeze([
+  B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE,
+]);
+
+/**
+ * The 11 pop-off ids (§8.5), in id order: CAMPFIRE, the seven plants, the two kinds of litter and FIRE_PIT. A pop-off block
+ * breaks (is written AIR and drops nothing) when the cell below it becomes fall-through.
+ */
+export const POP_OFF_IDS = Object.freeze([B.CAMPFIRE, ...PLANT_IDS, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT]);
 
 /** @returns {BlockDef} the block definition; unknown ids return the AIR definition */
 export function getBlockDef(id) {
@@ -280,6 +338,26 @@ export function isLeaves(id) {
 /** OAK / SPRUCE / BIRCH logs (what a tree is made of, CONTRACTS §36). */
 export function isLog(id) {
   return id === B.OAK_LOG || id === B.SPRUCE_LOG || id === B.BIRCH_LOG;
+}
+/** One of the seven wild plants, ripe or picked (`PLANT_IDS`, 78–84). */
+export function isPlant(id) {
+  return id >= B.HONEYBERRY_BUSH && id <= B.PRICKLY_PEAR_BARE;
+}
+/** Ground litter: LOOSE_STONES or FALLEN_BRANCHES. */
+export function isLitter(id) {
+  return id === B.LOOSE_STONES || id === B.FALLEN_BRANCHES;
+}
+/** CAMPFIRE, FIRE_PIT, a plant or litter (`POP_OFF_IDS`): breaks when the cell below becomes fall-through (§8.5). */
+export function isPopOff(id) {
+  return id === B.CAMPFIRE || id === B.FIRE_PIT || isPlant(id) || isLitter(id);
+}
+/** A workplace (§7.1): WORK_STUMP, KILN, BLOOMERY or FORGE. */
+export function isStation(id) {
+  return id === B.WORK_STUMP || id === B.KILN || id === B.BLOOMERY || id === B.FORGE;
+}
+/** A block whose contents live in containers.js (§5.6): WICKER_BASKET or REMAINS. */
+export function isContainerBlock(id) {
+  return id === B.WICKER_BASKET || id === B.REMAINS;
 }
 /** WATER, WATER_FLOW_1..6 or WATER_FALL. */
 export function isWater(id) {
