@@ -4,13 +4,15 @@
 // stepPlayer physics as the player, so it slides along honeycomb walls, hops up one-cell ledges, swims and feels black
 // holes exactly like the player does. Its cylinder is used for terrain collisions, for body-to-body pushing
 // (bodies.js) and as the ray target. A pig fits under a one-cell overhang but is too wide for a one-cell tunnel.
-// Pigs never die: a hit makes them squeal, hop back and run away for PIG_FLEE_S. A pig in water swims for the
+// A hit makes a pig squeal, hop back and run away for PIG_FLEE_S. Pigs never die in Creative (main only calls `hit`);
+// in Survival (v0.9, DESIGN-survival §4.3, §9.3) a tool `wound`s them: PIG_HEALTH, not saved, so pigs heal on reload.
+// `pruneFar` and `spawnNatural`'s ground list serve Survival's repopulation. A pig in water swims for the
 // nearest bank it can reach and climb (a search over the water surface), or straight on when there is none in reach.
 // It hops only one-cell ledges, and never while standing on or carrying another body, so pigs cannot climb out of a
 // two-high pen on each other's backs.
 import {
   PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_MASS, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
-  WADE_DEPTH,
+  WADE_DEPTH, PIG_HEALTH,
 } from './config.js';
 import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt, isSwimWater } from './physics.js';
 import { yawToForward } from './coords.js';
@@ -25,10 +27,11 @@ import { BLOCK, isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
 /**
  * @typedef {PlayerState & {
  *   id: number, yaw: number, targetYaw: number, mode: 'idle'|'walk'|'flee', timer: number,
- *   hurt: number, walkPhase: number, oinkIn: number,
+ *   hurt: number, walkPhase: number, oinkIn: number, health: number, wallSinceAim?: boolean,
  * }} Pig
  * `walkPhase` advances with distance walked (the renderer swings the legs with it) and settles to a multiple of π
- * while the pig stands (legs straight); `oinkIn` counts down to the next ambient oink.
+ * while the pig stands (legs straight); `oinkIn` counts down to the next ambient oink. `health` (v0.9) starts at
+ * PIG_HEALTH and only `wound` lowers it (Survival); it is not saved.
  */
 
 /** @typedef {{ x: number, y: number, z: number, yaw: number }} PigJSON */
@@ -43,6 +46,8 @@ import { BLOCK, isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
  */
 
 const TWO_PI = Math.PI * 2;
+/** The ground `spawnNatural` places pigs on unless told otherwise (Creative: grass only). */
+const DEFAULT_PIG_GROUND = Object.freeze([BLOCK.GRASS_BLOCK]);
 /**
  * Hex steps a swimming pig's bank search spreads over the water surface from its own column (so it visits at most
  * 3·20·21 + 1 = 1261 water columns).
@@ -406,6 +411,7 @@ export class Pigs {
       hurt: 0,
       walkPhase: 0,
       oinkIn: 4 + this._rng() * 10,
+      health: PIG_HEALTH,
     }));
     this.list.push(pig);
     return pig;
@@ -619,6 +625,50 @@ export class Pigs {
   }
 
   /**
+   * A Survival strike with a tool of `power` (DESIGN-survival §4.3, §9.3): ignored (null) while the pig still flashes from
+   * the last hit, or when it is no longer in the list; otherwise `health −= power`. At 0 or below the pig is removed
+   * ('dead'); else it is `hit` from (fromX, fromZ): knockback, flash and flee ('hit'). A power that is not a positive
+   * number wounds nothing (the hit still shoves). Creative never calls this, so pigs never die there.
+   * @param {Pig} pig
+   * @param {number} power  the tool's power (items ToolDef.power)
+   * @returns {'hit'|'dead'|null}
+   */
+  wound(pig, power, fromX, fromZ) {
+    if (pig.hurt > 0 || !this.list.includes(pig)) return null;
+    const p = typeof power === 'number' && power > 0 && Number.isFinite(power) ? power : 0;
+    pig.health = (Number.isFinite(pig.health) ? pig.health : PIG_HEALTH) - p;
+    if (pig.health <= 0) {
+      this.remove(pig);
+      return 'dead';
+    }
+    this.hit(pig, fromX, fromZ);
+    return 'hit';
+  }
+
+  /**
+   * Remove the one pig farthest from world (x, z) whose cell is not loaded and whose horizontal distance is more than
+   * `minDist` (Survival repopulation, DESIGN-survival §4.3: pigs left behind would otherwise fill PIG_MAX for good).
+   * @param {(q: number, r: number) => boolean} isLoadedCell
+   * @returns {boolean} false when no pig qualifies
+   */
+  pruneFar(x, z, isLoadedCell, minDist) {
+    let best = -1;
+    let bestD = minDist;
+    for (let i = 0; i < this.list.length; i++) {
+      const pig = this.list[i];
+      const d = Math.hypot(pig.x - x, pig.z - z);
+      if (!(d > bestD)) continue;
+      const [q, r] = worldToHex(pig.x, pig.z);
+      if (isLoadedCell(q, r)) continue;
+      best = i;
+      bestD = d;
+    }
+    if (best < 0) return false;
+    this.list.splice(best, 1);
+    return true;
+  }
+
+  /**
    * Nearest pig whose body cylinder the ray (origin o, unit direction d) enters within maxDist.
    * @returns {{ pig: Pig, distance: number }|null}
    */
@@ -689,11 +739,13 @@ export class Pigs {
 
   /**
    * Place up to `count` pigs on grass cells around (q0, r0) at hex distance minDist..maxDist, deterministically from
-   * `seed`. Columns whose chunk is not loaded or whose surface is not GRASS_BLOCK are skipped.
+   * `seed`. Columns whose chunk is not loaded or whose surface is not one of `surfaces` (GRASS_BLOCK by default; Survival
+   * repopulation passes [GRASS_BLOCK, SNOWY_GRASS], v0.9) are skipped.
    * @param {(q: number, r: number) => boolean} isLoadedCell
+   * @param {ReadonlyArray<number>} [surfaces]  block ids a pig may stand on
    * @returns {number} pigs placed
    */
-  spawnNatural(count, q0, r0, seed, getBlock, isLoadedCell, minDist = 4, maxDist = 18) {
+  spawnNatural(count, q0, r0, seed, getBlock, isLoadedCell, minDist = 4, maxDist = 18, surfaces = DEFAULT_PIG_GROUND) {
     const rng = seededRng(seed ^ 0x9e3779b9);
     let placed = 0;
     for (let attempt = 0; attempt < count * 40 && placed < count; attempt++) {
@@ -704,7 +756,7 @@ export class Pigs {
       if (!isLoadedCell(q, r)) continue;
       const [x, z] = hexToWorld(q, r);
       const fy = findStandingY(getBlock, x, z, WORLD_HEIGHT - 2);
-      if (fy === null || getBlock(q, fy - 1, r) !== BLOCK.GRASS_BLOCK) continue;
+      if (fy === null || !surfaces.includes(getBlock(q, fy - 1, r))) continue;
       if (this.spawn(x, fy, z, rng() * TWO_PI - Math.PI)) placed++;
     }
     return placed;
