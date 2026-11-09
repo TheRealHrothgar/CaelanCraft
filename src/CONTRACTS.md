@@ -1951,7 +1951,9 @@ export class Trees {                 // physics.trees
    else to the first such cell on points 0.35 apart toward the pivot; else up the pivot column — and becomes `ctx.fallers.spawn(logId,
    q, y, r, { event })` (the trunk ends up lying on the ground along the fall direction). Each leaf emits `max(1,
    ⌊TREE_LEAF_PARTICLES / leaves⌋)` 'leaves' particles at its centre (`{ id, spread: 0.6 }`). Each body of `hooks.bodies()` whose
-   centre (feet + height/2) is within TREE_KNOCK_RADIUS of a snapped log centre is knocked once: `hooks.knock(body, TREE_KNOCK_SPEED ·
+   centre (feet + height/2) is within TREE_KNOCK_RADIUS of a snapped log's DROP PATH — the vertical segment of cell centres from the
+   snapped cell down to the cell it lands in (down while the cell below is fall-through), so a tree cut at eye level knocks the
+   bodies it drops onto instead of lifting them onto the trunk (play-test G7) — is knocked once: `hooks.knock(body, TREE_KNOCK_SPEED ·
    away (horizontal, from that log; the fall direction when on top of it), TREE_KNOCK_UP, …, logX, logZ)`. One `ctx.sound('thud')` at
    the middle log. Landing logs never bury a body (the faller landing rules, §34.2.3).
 6. A job is frozen while the chunk of its cut column is unloaded; nothing moves while physics is paused (§33.1.1).

@@ -258,6 +258,32 @@ describe('topple', () => {
     for (const [q, y, r] of scan(world, isLog, -3, 6, 11, 20, -3, 3)) expect(playerIntersectsBlock(player, q, y, r)).toBe(false);
   });
 
+  it('a tree cut at eye level knocks a body its logs drop onto, not just the ones at pivot height (play-test G7)', () => {
+    const [x0, z0] = hexToWorld(0, 0);
+    const player = createPlayer(x0 + 2.5, GROUND + 1, z0);
+    const { world, physics } = setup({ hooks: { bodies: () => [player], player: () => player } });
+    plantTree(world, 0, 0, { height: 7 }); // logs 11 … 17
+    physics.withCause({ kind: 'explosion', x: x0 - 4, y: 14, z: z0 }, () => world.setBlock(0, 13, 0, B.AIR)); // falls east
+    for (let i = 0; i < 200 && physics.trees.stats.impacts === 0; i++) physics.step(1 / 60);
+    expect(physics.trees.stats.impacts).toBe(1);
+    // The trunk lies at the pivot (y 14), 2 m above the player's middle, and drops from there onto the player.
+    expect(player.vy).toBeGreaterThanOrEqual(5);
+    expect(player.vx).toBeGreaterThan(0);
+    settle(physics);
+    for (const [q, y, r] of scan(world, isLog, -3, 8, 11, 22, -3, 3)) expect(playerIntersectsBlock(player, q, y, r)).toBe(false);
+  });
+
+  it('a body beside a landing log path but far from it is not knocked', () => {
+    const [x0, z0] = hexToWorld(0, 0);
+    const player = createPlayer(x0 + 2.5, GROUND + 1, z0 + 4);
+    const { world, physics } = setup({ hooks: { bodies: () => [player], player: () => player } });
+    plantTree(world, 0, 0, { height: 7 });
+    physics.withCause({ kind: 'explosion', x: x0 - 4, y: 14, z: z0 }, () => world.setBlock(0, 13, 0, B.AIR));
+    for (let i = 0; i < 200 && physics.trees.stats.impacts === 0; i++) physics.step(1 / 60);
+    expect(physics.trees.stats.impacts).toBe(1);
+    expect(player.vy).toBeLessThan(1);
+  });
+
   it('at most TREE_MAX_TOPPLING fall at once; the rest wait (drawn standing) and start TREE_QUEUE_GAP_S apart', () => {
     const { world, physics } = setup();
     const n = TREE_MAX_TOPPLING + 2;

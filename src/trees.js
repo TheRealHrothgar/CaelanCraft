@@ -119,6 +119,8 @@ export class Trees {
     this.maxToppling = TREE_MAX_TOPPLING;
     /** @type {ToppleJob[]} shaking or falling */
     this._active = [];
+    /** @type {number[]} scratch: the landing height of each impact cell (_impact) */
+    this._lands = [];
     /** @type {ToppleJob[]} out of the world, waiting for a slot */
     this._queue = [];
     this._gap = 0;
@@ -506,13 +508,24 @@ export class Trees {
 
     const bodies = physics.hooks.bodies();
     if (bodies && bodies.length > 0) {
+      // Each log's drop path: from its cell down to the cell it lands in. A tree cut at eye level lies well above the
+      // bodies it then drops onto, so testing the lying pose alone missed them (they were lifted onto the trunk, G7).
+      const lands = this._lands;
+      lands.length = 0;
+      for (const [q, y, r] of cells) {
+        let ly = y;
+        while (ly > 0 && isFallThrough(ctx.peek(q, ly - 1, r))) ly--;
+        lands.push(ly);
+      }
       for (const b of bodies) {
         if (!b) continue;
         const by = b.y + bodyHeight(b) / 2;
-        for (const [q, y, r] of cells) {
+        for (let k = 0; k < cells.length; k++) {
+          const [q, y, r] = cells[k];
           const lx = q + r / 2;
           const lz = r * HEX_ROW_SPACING;
-          if (Math.hypot(b.x - lx, by - (y + 0.5), b.z - lz) >= TREE_KNOCK_RADIUS) continue;
+          const py = Math.min(Math.max(by, lands[k] + 0.5), y + 0.5); // nearest point of the path to the body's middle
+          if (Math.hypot(b.x - lx, by - py, b.z - lz) >= TREE_KNOCK_RADIUS) continue;
           let hx = b.x - lx;
           let hz = b.z - lz;
           const hl = Math.hypot(hx, hz);
