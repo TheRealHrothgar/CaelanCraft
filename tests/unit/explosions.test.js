@@ -141,6 +141,10 @@ describe('lighting', () => {
     expect(res.ok).toBe(true);
     expect(res.message).toContain('lit the blast barrel at (0, 11, 0)');
     expect(ex.litCount).toBe(1);
+    // The lit entity left AIR behind: igniting it again says it burns (play-test L1: "there is no blast barrel there").
+    expect(ex.ignite(0, 11, 0)).toEqual({ ok: false, message: 'the barrel at (0, 11, 0) is already burning' });
+    physics.step(DT);
+    expect(ex.ignite(0, 11, 0).message).toContain('already burning');
     // A barrel burning in place (a fuse timer) cannot be lit twice.
     for (let i = 0; i < MAX_LIT_BARRELS; i++) world.setBlock(10 + i * 2, 11, 10, B.BLAST_BARREL);
     for (let i = 0; i < MAX_LIT_BARRELS; i++) ex.ignite(10 + i * 2, 11, 10);

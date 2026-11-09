@@ -258,6 +258,8 @@ export class Explosions {
     if (!this.physics.isEnabled('explosions')) return { ok: false, message: 'explosions are off — turn them on with `physics explosions on`' };
     const id = this.physics.ctx.peek(q, y, r);
     if (id === UNLOADED) return { ok: false, message: `cell (${q}, ${y}, ${r}) is not loaded` };
+    // A lit barrel entity leaves AIR in the world: say it burns rather than "no barrel" (play-test L1).
+    if (this.occupiesCell(q, y, r)) return { ok: false, message: `the barrel at (${q}, ${y}, ${r}) is already burning` };
     if (id !== BLOCK.BLAST_BARREL) return { ok: false, message: `there is no blast barrel at (${q}, ${y}, ${r})` };
     if (this.timers.has(packCell(q, y, r))) return { ok: false, message: `the barrel at (${q}, ${y}, ${r}) is already burning` };
     if (!this._light(q, y, r)) return { ok: false, message: `the barrel at (${q}, ${y}, ${r}) could not be lit` };

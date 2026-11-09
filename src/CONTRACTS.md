@@ -2057,7 +2057,8 @@ export class Explosions {            // physics.explosions
    **fuse timer** in place (fuse BARREL_FUSE_S; the block stays). Quiet: lighting never seeds a support search.
 2. Rule 'ignite' (`misc`): a barrel with a CAMPFIRE among its 8 neighbours → `_light`; no campfire but an UNLOADED neighbour → park.
 3. `ignite(q, y, r)` (console / rune): `{ ok: false }` with `explosions are off — …`, `cell … is not loaded`, `there is no blast barrel at
-   (q, y, r)`, `the barrel at (q, y, r) is already burning`; else `lit the blast barrel at (q, y, r) — 3 s fuse`.
+   (q, y, r)`, `the barrel at (q, y, r) is already burning` (a fuse timer there, or a lit entity resting there — `occupiesCell`,
+   37.4.5; it used to read "no blast barrel", play-test L1); else `lit the blast barrel at (q, y, r) — 3 s fuse`.
 4. `_addTimer(q, y, r, fuse, event)`: an existing timer keeps the SHORTER fuse and, when `event > 0`, takes that event (a barrel lit by R,
    a campfire or `ignite` that a blast catches joins the blast's chain: one undo, §37.3.1); at most MAX_FUSE_TIMERS (beyond: stays
    unlit). Trigger
