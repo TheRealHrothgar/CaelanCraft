@@ -1633,7 +1633,8 @@ export class FallingBlocks {         // physics.fallers
 /** Tumbler = { id, body (createBody FALLER_RADIUS × FALLER_HEIGHT), rx, ry, rz, wx, wy, wz, scale, persistent, event, data } */
 ```
 ### 34.1 Gravity rule (`fall` ring)
-For a cell holding a gravity block or a campfire: below = `ctx.peek(q, y−1, r)`; UNLOADED → park; not fall-through → nothing. A
+For a cell holding a gravity block or a campfire: below = `ctx.peek(q, y−1, r)`; UNLOADED → park; not fall-through, or a cell a lit
+barrel entity rests in (`explosions.occupiesCell`, §37.4.5) → nothing. A
 CAMPFIRE breaks: `ctx.write(AIR)`, 10 'smoke' particles at y + 0.3, sound 'break:wood'. A gravity block drops its whole column:
 from y upward while the cells are gravity blocks (at most MAX_COLUMN_FALL), each is written AIR with `ctx.writeQuiet` (stop at the
 first refused write) and becomes a faller at its own cell — so the column falls together, at one speed — and the column queues ONE
@@ -1649,6 +1650,9 @@ overruns its budget by at most about one column. Falling into a campfire or any 
 2. Per frame: `vy = max(vy + GRAVITY·dt, TERMINAL_VELOCITY)`, `y1 = y0 + vy·dt`. If the cell containing the bottom
    (`c0 = floor(y0)`, when y0 is not an integer) is not fall-through, land at `c0 + 1`. Otherwise sweep `b = c0 − 1 … floor(y1)`
    (b ≥ 0) and land at `b + 1` on the first cell that is not fall-through. No landing and `y1 < 0` → removed. Else `y = y1`.
+   Throughout §34 (this sweep, landing, `settleNow`, `settleInto`), a cell a lit barrel entity rests in
+   (`explosions.occupiesCell`) counts as NOT fall-through: blocks pile on top of a burning barrel instead of landing in its cell,
+   which used to pop the barrel up through the pile one cell per landing (play-test B3).
 3. **Landing** in cell C (`_placeLanded`): if C is not fall-through, move up (≤ 4 cells) to the first fall-through cell, else break.
    For a solid id, every body in `hooks.bodies()` that `playerIntersectsBlock` C is lifted to `liftFreeY(world + C, body, 3)`: the
    first feet height floor(y)+1, +2, +3 (its own radius and height) that is free, reached STRAIGHT UP — at each height that is not
@@ -2017,6 +2021,7 @@ export class Explosions {            // physics.explosions
   hangBurning(q, y, r) → boolean                // isBurning, and marks the timer `hung` (support.js asks before a crumble, §38.2)
   raycast(ox, oy, oz, dx, dy, dz, maxDist) → { target: LitBarrel, distance }|null; snuff(target) → boolean
   step(dt); renderItems(push) (nothing: lit barrels are tumblers, timers are blocks); bodies(out); settleInto(overlay)
+  occupiesCell(q, y, r) → boolean               // a lit barrel entity rests in that cell (§37.4.5; fallers treat it as solid)
   cancelEvent(id, write = ctx.writeQuiet-based) → BarrelUndo     // undo, AFTER the event's cells are restored (§33.8.4, §37.4.3)
   flash(out { x, y, z, intensity }) → out; shakeOffset(x, y, z, out [dx, dy, dz]) → out; reset(); onSwitch(on)
 }
@@ -2106,7 +2111,12 @@ export class Explosions {            // physics.explosions
    the timer's `event`, its `hungEvent`, or recorded a cell next to the barrel (a collapse begun just after `hangBurning`): the barrel's
    fall belongs to what left it hanging. Otherwise its crumble began a 'collapse' event of its own, which replaced the blast as the one
    undoable event — the crater could no longer be undone. `reset()`: lit entities removed from the fallers, timers,
-   refunds, flash and shake cleared.
+   refunds, flash and shake cleared (and the occupied cells of 37.4.5).
+5. Occupied cells (play-test B3): each lit entity rests in the cell `floor(y + 0.05)` at its body's (q, r) (as 37.4.2 saves it),
+   recorded when it is lit and rebuilt at the end of every `step` (also with dt 0). `occupiesCell(q, y, r)` is true while a lit
+   entity still in `lit` rests there (one put out or gone off this frame no longer counts). Fallers treat such cells as solid
+   (§34.2.2). A cell a barrel left since the last step (rolled, thrown, went off, put out and dropping) queues `(q, y + 1, r)` on the
+   `fall` ring, so a pile that rested on the barrel falls into its cell.
 
 ## 38. Block physics integration (v0.8) — the features together
 

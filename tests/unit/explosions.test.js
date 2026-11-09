@@ -614,6 +614,41 @@ describe('bodies, saving and undo', () => {
     expect(ex.litCount).toBe(MAX_LIT_BARRELS + 1);
   });
 
+  it('sand on a burning barrel rests on it, and the blast goes off inside the pile (play-test B3)', () => {
+    const { world, physics, ex } = setup();
+    world.setBlock(0, 11, 0, B.BLAST_BARREL);
+    for (let y = 12; y <= 15; y++) world.setBlock(0, y, 0, B.SAND);
+    world.setBlock(0, 20, 0, B.SAND); // and one that drops onto the pile from higher up
+    ex.lightAt(0, 11, 0);
+    const b = ex.lit[0].tumbler.body;
+    stepUntil(physics, () => physics.fallers.count === 0 && physics.queued('fall') === 0, 120);
+    for (let i = 0; i < 60; i++) physics.step(DT);
+    expect(b.y).toBeCloseTo(11, 1); // it used to pop up through the sand, one cell per landing, to y 16
+    expect([11, 12, 13, 14, 15, 16, 17].map((y) => world.getBlock(0, y, 0))).toEqual([B.AIR, B.SAND, B.SAND, B.SAND, B.SAND, B.SAND, B.AIR]);
+    expect(ex.occupiesCell(0, 11, 0)).toBe(true);
+    // Saved now: the barrel block where it burns, the pile on top of it.
+    const saved = new World({ seed: 7, renderDistance: 0, worldGen: () => { throw new Error('unused'); }, now: () => 0, edits: physics.exportEdits() });
+    expect([11, 12, 16].map((y) => saved.edits.get('0,0').get(y))).toEqual([B.BLAST_BARREL, B.SAND, B.SAND]);
+    stepUntil(physics, () => ex.blastCount > 0, 400);
+    expect(ex.blastCount).toBe(1);
+    expect(world.getBlock(0, 10, 0)).toBe(B.AIR); // the crater is dug from inside the pile, into the ground below it
+  });
+
+  it('a pile resting on a burning barrel falls into its cell when the barrel is pushed out from under it', () => {
+    const { world, physics, ex } = setup();
+    world.setBlock(0, 11, 0, B.BLAST_BARREL);
+    for (let y = 12; y <= 14; y++) world.setBlock(0, y, 0, B.SAND);
+    ex.lightAt(0, 11, 0);
+    for (let i = 0; i < 30; i++) physics.step(DT);
+    expect(world.getBlock(0, 12, 0)).toBe(B.SAND);
+    const b = ex.lit[0].tumbler.body;
+    [b.x, b.z] = hexToWorld(2, 0); // rolled two cells away
+    stepUntil(physics, () => physics.fallers.count === 0 && physics.queued('fall') === 0 && world.getBlock(0, 11, 0) !== B.AIR, 120);
+    expect([11, 12, 13, 14].map((y) => world.getBlock(0, y, 0))).toEqual([B.SAND, B.SAND, B.SAND, B.AIR]);
+    expect(ex.occupiesCell(0, 11, 0)).toBe(false);
+    expect(ex.occupiesCell(2, 11, 0)).toBe(true);
+  });
+
   it('undo restores the crater, removes the debris in flight and puts the barrel back', () => {
     const { world, physics, ex } = setup();
     world.setBlock(0, 11, 0, B.BLAST_BARREL);

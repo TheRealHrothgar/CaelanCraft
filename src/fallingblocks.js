@@ -205,7 +205,7 @@ export class FallingBlocks {
     const world = this.physics.world;
     if (this._colCount.size > 0 && !this._stepping && this._colCount.has(colKey(q, r))) this._settleColumnBelow(q, r, y);
     let cy = Math.max(0, Math.min(WORLD_HEIGHT - 1, Math.floor(y)));
-    while (cy >= 0 && isFallThrough(world.peekBlock(q, cy - 1, r))) cy--;
+    while (cy >= 0 && isFallThrough(world.peekBlock(q, cy - 1, r)) && !this._litAt(q, cy - 1, r)) cy--;
     if (cy < 0) return false; // fell out of the world
     return this._placeLanded(id, q, cy, r, ev);
   }
@@ -251,7 +251,7 @@ export class FallingBlocks {
     for (const i of order) {
       this._dead[i] = 1;
       let cy = Math.max(0, Math.min(WORLD_HEIGHT - 1, Math.floor(this._y[i])));
-      while (cy >= 0 && isFallThrough(world.peekBlock(q, cy - 1, r))) cy--;
+      while (cy >= 0 && isFallThrough(world.peekBlock(q, cy - 1, r)) && !this._litAt(q, cy - 1, r)) cy--;
       if (cy >= 0) this._placeLanded(this._id[i], q, cy, r, this._ev[i]);
     }
     order.length = 0;
@@ -327,6 +327,7 @@ export class FallingBlocks {
 
   _moveFallers(world, dv, dt) {
     const n = this.count;
+    const lit = this._anyLit();
     let removed = 0;
     for (let i = 0; i < n; i++) {
       const q = this._q[i];
@@ -344,7 +345,7 @@ export class FallingBlocks {
         // Swept: every cell whose top lies in (y1, y0] — exact because the faller is one cell wide.
         const end = Math.floor(y1);
         for (let b = Math.min(c0 - 1, WORLD_HEIGHT - 1); b >= end && b >= 0; b--) {
-          if (!isFallThrough(world.peekBlock(q, b, r))) {
+          if (!isFallThrough(world.peekBlock(q, b, r)) || (lit && this._litAt(q, b, r))) {
             land = b + 1;
             break;
           }
@@ -522,8 +523,8 @@ export class FallingBlocks {
       const r = this._r[i];
       let cy = Math.max(0, Math.min(WORLD_HEIGHT - 1, Math.floor(this._y[i])));
       if (overlay.peek(q, cy, r) === UNLOADED) continue; // its column streamed out: nothing to stand on
-      while (cy < WORLD_HEIGHT && !isFallThrough(overlay.peek(q, cy, r))) cy++;
-      while (cy >= 0 && isFallThrough(overlay.peek(q, cy - 1, r))) cy--;
+      while (cy < WORLD_HEIGHT && (!isFallThrough(overlay.peek(q, cy, r)) || this._litAt(q, cy, r))) cy++;
+      while (cy >= 0 && isFallThrough(overlay.peek(q, cy - 1, r)) && !this._litAt(q, cy - 1, r)) cy--;
       if (cy >= 0 && cy < WORLD_HEIGHT) overlay.set(q, cy, r, this._id[i]);
     }
   }
@@ -542,7 +543,7 @@ export class FallingBlocks {
       ctx.park();
       return;
     }
-    if (!isFallThrough(below)) return;
+    if (!isFallThrough(below) || this._litAt(q, y - 1, r)) return; // resting on the ground, or on a burning barrel
     const x = q + r / 2;
     const z = r * HEX_ROW_SPACING;
     if (id === BLOCK.CAMPFIRE) {
@@ -623,13 +624,13 @@ export class FallingBlocks {
     const world = physics.world;
     const x = q + r / 2;
     const z = r * HEX_ROW_SPACING;
-    // The landing cell must be free (a block may have appeared in it): rest on top of whatever is there.
+    // The landing cell must be free (a block may have appeared in it, or a burning barrel rests in it): rest on top.
     let tries = 0;
-    while (cy < WORLD_HEIGHT && !isFallThrough(world.peekBlock(q, cy, r)) && tries < 4) {
+    while (cy < WORLD_HEIGHT && (!isFallThrough(world.peekBlock(q, cy, r)) || this._litAt(q, cy, r)) && tries < 4) {
       cy++;
       tries++;
     }
-    if (cy >= WORLD_HEIGHT || !isFallThrough(world.peekBlock(q, cy, r))) {
+    if (cy >= WORLD_HEIGHT || !isFallThrough(world.peekBlock(q, cy, r)) || this._litAt(q, cy, r)) {
       this._dust(id, x, Math.min(cy, WORLD_HEIGHT - 1), z, 8);
       return false;
     }
@@ -671,6 +672,22 @@ export class FallingBlocks {
     lifts.length = 0;
     this._noteLanding(id, x, cy, z);
     return true;
+  }
+
+  /** @returns {boolean} some lit barrel entity rests in a cell (explosions.occupiesCell can be true) */
+  _anyLit() {
+    const ex = this.physics.explosions;
+    return !!ex && ex.lit.length > 0;
+  }
+
+  /**
+   * A lit barrel entity rests in cell (q, y, r): blocks fall onto it, never into its cell (play-test B3: sand landing
+   * in it popped the barrel up through the pile).
+   * @returns {boolean}
+   */
+  _litAt(q, y, r) {
+    const ex = this.physics.explosions;
+    return !!ex && ex.occupiesCell(q, y, r);
   }
 
   _noteLanding(id, x, y, z) {

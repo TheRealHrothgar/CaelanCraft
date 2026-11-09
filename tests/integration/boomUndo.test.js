@@ -233,12 +233,31 @@ describe('barrels given back by undo (EXP-2)', () => {
     for (let y = 6; y <= 14; y++) expect(world.getBlock(8, y, 0), `pit y=${y}`).not.toBe(B.BLAST_BARREL);
   });
 
-  it('sand that dropped into the lit cell gets its cell back first; the barrel comes back on top of it', () => {
+  it('sand resting on a lit barrel stays on it (play-test B3); undo puts the barrel back in its cell under the sand', () => {
     const { world, physics, ex } = scene();
     world.setBlock(0, 11, 0, B.BLAST_BARREL);
     world.setBlock(0, 12, 0, B.SAND);
     settle(physics);
     physics.asPlayer(() => ex.lightAt(0, 11, 0));
+    steps(physics, 0.5);
+    expect(world.getBlock(0, 11, 0)).toBe(B.AIR); // the sand never dropped into the lit cell
+    expect(world.getBlock(0, 12, 0)).toBe(B.SAND);
+    stepUntil(physics, () => ex.blastCount === 1);
+    expect(physics.undo().ok).toBe(true);
+    expect(world.getBlock(0, 11, 0)).toBe(B.BLAST_BARREL);
+    expect(world.getBlock(0, 12, 0)).toBe(B.SAND);
+  });
+
+  it('sand that drops into an empty lit cell (the barrel rolled away) gets its cell back first; the barrel comes back on top', () => {
+    const { world, physics, ex } = scene();
+    world.setBlock(0, 11, 0, B.BLAST_BARREL);
+    world.setBlock(0, 12, 0, B.SAND);
+    settle(physics);
+    physics.asPlayer(() => ex.lightAt(0, 11, 0));
+    const b = ex.lit[0].tumbler.body;
+    [b.x, b.z] = hexToWorld(3, 0); // rolled out from under the sand
+    stepUntil(physics, () => world.getBlock(0, 11, 0) === B.SAND, 120);
+    expect(world.getBlock(0, 12, 0)).toBe(B.AIR);
     stepUntil(physics, () => ex.blastCount === 1);
     expect(physics.undo().ok).toBe(true);
     expect(world.getBlock(0, 11, 0)).toBe(B.SAND);

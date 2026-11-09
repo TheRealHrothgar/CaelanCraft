@@ -69,6 +69,7 @@ import { isAnchorCell, isLoadBearing } from './support.js';
  * @property {number} sparkIn  seconds to its next fuse sparks
  * @property {boolean} hung    timers: a collapse found it hanging and left it in place while it burns (hangBurning)
  * @property {number} [hungEvent]  timers: physics.lastEvent's id when a collapse hung it (0 = none)
+ * @property {number} [cell]   entities: packCell of the cell it rests in (occupiesCell), updated every step
  */
 
 /**
@@ -146,6 +147,12 @@ export class Explosions {
     this.lit = [];
     /** @type {Map<number, LitBarrel>} fuse timers burning in place, by packCell */
     this.timers = new Map();
+    /** @type {Set<number>} packCell of the cell each lit barrel entity rests in (occupiesCell), rebuilt every step */
+    this._litCells = new Set();
+    /** @type {number[]} the same cells as flat q, y, r triples */
+    this._litCellList = [];
+    /** @type {number[]} scratch for the next list */
+    this._litCellNext = [];
     /** blasts so far (merged chains count once) */
     this.blastCount = 0;
     /** @type {BlastInfo|null} */
@@ -288,6 +295,9 @@ export class Explosions {
         t.body.group = LIT_BARREL_GROUP;
         rec.tumbler = t;
         this.lit.push(rec);
+        rec.cell = packCell(q, y, r);
+        this._litCells.add(rec.cell); // sand above it, dropping now, must land on top of it
+        this._litCellList.push(q, y, r);
         ctx.sound('hiss', x, y + 1, z, 0.8);
         ctx.particles('sparks', x, y + 1.05, z, 6, { spread: 0.1, speed: 0.35 });
         return true;
@@ -402,12 +412,59 @@ export class Explosions {
 
   /** Fuses (entities: pulse, sparks, water; timers: sparks), the hiss, merged chain blasts (≤ MAX_EXPLOSIONS_PER_FRAME). */
   step(dt) {
-    if (!(dt > 0)) return;
-    this._clock += dt;
-    this._stepEntities(dt);
-    this._stepTimers(dt);
-    this._stepHiss(dt);
-    for (let k = 0; k < MAX_EXPLOSIONS_PER_FRAME; k++) if (!this._detonateNext()) break;
+    if (dt > 0) {
+      this._clock += dt;
+      this._stepEntities(dt);
+      this._stepTimers(dt);
+      this._stepHiss(dt);
+      for (let k = 0; k < MAX_EXPLOSIONS_PER_FRAME; k++) if (!this._detonateNext()) break;
+    }
+    this._updateLitCells();
+  }
+
+  /**
+   * A lit barrel entity rests in cell (q, y, r) (as of the end of the last step, or since it was lit): falling blocks
+   * treat the cell as occupied, so sand dropped on a burning barrel piles on top of it instead of landing in its cell
+   * and popping it up through the pile (play-test B3).
+   * @returns {boolean}
+   */
+  occupiesCell(q, y, r) {
+    if (this._litCells.size === 0) return false;
+    const key = packCell(q, y, r);
+    if (!this._litCells.has(key)) return false;
+    for (const rec of this.lit) if (rec.cell === key) return true; // not a barrel put out (or gone off) this frame
+    return false;
+  }
+
+  /**
+   * Rebuild the cells lit barrels rest in (the cell of the body's feet, as settleInto saves it). A cell a barrel left
+   * (rolled, thrown, went off, put out as a falling block) queues the cell above it on the fall ring: a pile that rested
+   * on the barrel falls.
+   */
+  _updateLitCells() {
+    const old = this._litCellList;
+    if (old.length === 0 && this.lit.length === 0) return;
+    const cells = this._litCells;
+    const next = this._litCellNext;
+    cells.clear();
+    next.length = 0;
+    for (const rec of this.lit) {
+      const b = /** @type {Tumbler} */ (rec.tumbler).body;
+      const y = Math.floor(b.y + 0.05);
+      if (!(y >= 0 && y < WORLD_HEIGHT)) {
+        rec.cell = -1;
+        continue;
+      }
+      const [q, r] = worldToHex(b.x, b.z);
+      rec.cell = packCell(q, y, r);
+      cells.add(rec.cell);
+      next.push(q, y, r);
+    }
+    for (let i = 0; i < old.length; i += 3) {
+      if (!cells.has(packCell(old[i], old[i + 1], old[i + 2]))) this.physics.schedule('fall', old[i], old[i + 1] + 1, old[i + 2]);
+    }
+    this._litCellList = next;
+    this._litCellNext = old;
   }
 
   _stepEntities(dt) {
@@ -1087,6 +1144,8 @@ export class Explosions {
     for (const rec of this.lit) if (rec.tumbler) this.physics.fallers.removeTumbler(rec.tumbler);
     this.lit.length = 0;
     this.timers.clear();
+    this._litCells.clear();
+    this._litCellList.length = 0;
     this._refunds.clear();
     this._flashAt = -Infinity;
     this._shakeAt = -Infinity;
