@@ -156,3 +156,188 @@ canvas{image-rendering:pixelated}
 .controls-sheet{margin-top:12px;display:grid;grid-template-columns:auto auto;gap:2px 16px;color:#e0e0e0;font:13px monospace;text-shadow:1px 1px 0 #000}
 kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;border:1px solid #777;border-bottom-width:3px;color:#fff;font:bold 12px monospace;text-align:center}
 #title-footer{position:absolute;bottom:8px;left:8px;color:#c0c0c0;font:12px monospace;text-shadow:1px 1px 0 #000}
+
+/* ==== Survival (docs/DESIGN-survival.md §9.8; CONTRACTS §48 once merged) ======================================================
+   The pack screen's palette: dark #1c1a24, honey #e8b04a, ember #d0582a. No new element uses .mc-button or .picker-panel:
+   they use .hex-button (an elongated hexagon) and hex cells. Everything here is hidden in Creative, whose HUD is unchanged. */
+.hex-button{padding:6px 20px;border:0;background:linear-gradient(#f0c066,#d99a32);color:#1c1a24;font:bold 15px monospace;cursor:pointer;clip-path:polygon(12px 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,12px 100%,0 50%)}
+.hex-button:hover:not(:disabled){background:linear-gradient(#ffd884,#e8b04a)}
+.hex-button:focus-visible{outline:none;background:linear-gradient(#fff2c8,#f0c066)}
+.hex-button:disabled{background:#4a4458;color:#8a8298;cursor:default}
+.text-link{padding:2px 6px;border:0;background:none;color:#c8bca4;font:12px monospace;text-decoration:underline;cursor:pointer}
+.text-link:hover,.text-link:focus-visible{color:#e8b04a;outline:none}
+
+/* The survival hotbar (#hotbar.survival): pointy-top hex slots 40x46 with a stack count and a wear outline. The slot's own
+   background shows as its rim (honey when selected) around a dark inner hex. 1px vertical padding keeps its top (bottom 62px
+   with the shadow) under #block-toast (bottom 64px). Creative never shows these parts. */
+#hotbar .slot-count,#hotbar .slot-wear,#pack-glyph{display:none}
+#hotbar.survival{padding:1px 3px;background:rgba(28,26,36,.72);border-color:#e8b04a}
+#hotbar.survival .hotbar-slot{position:relative;width:40px;height:46px;border:0;background:#4a4458;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+#hotbar.survival .hotbar-slot::before{content:"";position:absolute;inset:2px;background:rgba(36,33,46,.94);clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+#hotbar.survival .hotbar-slot.selected{border:0;box-shadow:none;background:#e8b04a}
+#hotbar.survival .hotbar-slot.selected::before{inset:3px}
+#hotbar.survival .slot-icon{position:relative;z-index:1}
+#hotbar.survival .slot-count{display:block;position:absolute;right:7px;bottom:7px;z-index:3;color:#fff;font:bold 11px/11px monospace;text-shadow:1px 1px 0 #000}
+#hotbar.survival .slot-wear{display:block;position:absolute;left:0;top:0;z-index:2;fill:none;stroke-width:2.5;stroke-linecap:round}
+.slot-wear.good polygon,.cell-wear.good polygon{stroke:#e8b04a}
+.slot-wear.worn polygon,.cell-wear.worn polygon{stroke:#e08a3a}
+.slot-wear.low polygon,.cell-wear.low polygon{stroke:#d0582a}
+#hotbar.survival #pack-glyph{display:block;position:absolute;right:-7px;bottom:-7px;z-index:4;width:14px;height:16px;background:radial-gradient(circle,#1c1a24 0 2px,transparent 2.5px),#e8b04a;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.hotbar-slot.pulse,#pack-glyph.pulse{animation:slot-pulse .42s ease-out}
+@keyframes slot-pulse{0%{filter:brightness(2)}100%{filter:brightness(1)}}
+
+/* CONTRACT-ISSUE: "44 px hex cells" read as 44 px tall (see hud.js VITAL_H): 44 px wide cells would push the chips above
+   them into #chat-log's band. */
+/* Vitals as bookends of the hotbar: a honeycomb pair of 38x44 hex cells each side, bottom 8px like the hotbar (386px wide in
+   Survival: 9 x 40 + 8 x 2 gaps + 2 x 3 padding + 2 x 2 border), 8px clear of it. Health and Nourishment on the left,
+   Hydration and the body-temperature gauge on the right. Breath is the Health cell's own border. */
+.vitals{position:absolute;bottom:8px;display:flex;gap:2px}
+#vitals-left{right:calc(50% + 201px)}
+#vitals-right{left:calc(50% + 201px)}
+.vital{display:block;width:38px;height:44px;overflow:visible}
+.vital-bg{fill:rgba(28,26,36,.86)}
+.vital-rim{fill:none;stroke:rgba(232,176,74,.6);stroke-width:1.4}
+.vital-health .vital-fill{fill:#b5452e}
+.vital-satiation .vital-fill{fill:#d9922e}
+.vital-hydration .vital-fill{fill:#3a7bd5}
+.vital-glyph{fill:none;stroke:#fff4dc;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;opacity:.92}
+.vital-glyph ellipse,.vital-glyph path:not([fill]){fill:#fff4dc;stroke-width:.6}
+.vital-gauge{opacity:.9}
+.temp-needle line{stroke:#fff;stroke-width:2}
+.temp-needle path{fill:#fff;stroke:#1c1a24;stroke-width:.8}
+.temp-trend{font:bold 9px monospace;fill:#fff4dc}
+.temp-trend.up{fill:#ffb070}
+.temp-trend.down{fill:#9ecbff}
+.breath-edge{stroke-width:2.6;stroke-linecap:round}
+.breath-edge.lit{stroke:#bfe6ff}
+.breath-edge.dark{stroke:#2c2a36}
+.breath.out .breath-edge{stroke:#d0582a;animation:breath-pulse .5s ease-in-out infinite alternate}
+@keyframes breath-pulse{from{opacity:1}to{opacity:.3}}
+
+/* Status chips above the left bookend and the job chip above the right one: one 16px row at bottom 54..70px, so both stay
+   under #chat-log (bottom 72px) and beside #block-toast. */
+.status-chips{position:absolute;bottom:54px;right:calc(50% + 201px);max-width:calc(50% - 209px);display:flex;justify-content:flex-end;gap:3px;overflow:hidden;white-space:nowrap}
+.chip{padding:1px 5px;border:1px solid #1c1a24;background:#e8b04a;color:#1c1a24;font:bold 10px/12px monospace}
+.chip-hunger{background:#d9922e}
+.chip-thirst{background:#3a7bd5;color:#fff}
+.chip-hurt{background:#b5452e;color:#fff}
+.chip-heat{background:#d0582a;color:#fff}
+.chip-cold{background:#9ecbff}
+.chip-breath{background:#d0582a;color:#fff;animation:breath-pulse .5s ease-in-out infinite alternate}
+.chip-sick{background:#7a9a3a;color:#fff}
+.chip-wet{background:#5a7a9a;color:#fff}
+.job-chip{position:absolute;bottom:54px;left:calc(50% + 201px);max-width:calc(50% - 209px);padding:1px 6px;border:1px solid #e8b04a;background:rgba(28,26,36,.86);color:#e8b04a;font:bold 10px/12px monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* The hexagonal action ring round the crosshair (digging, eating, tapping): its stroke fills with progress. */
+.action-ring{position:absolute;left:50%;top:50%;width:40px;height:46px;transform:translate(-50%,-50%)}
+.action-ring svg{display:block}
+.ring-track{fill:none;stroke:rgba(28,26,36,.55);stroke-width:3}
+.ring-fill{fill:none;stroke:#e8b04a;stroke-width:3;stroke-linecap:round}
+
+/* Pickups: a small hex token of the item flies to its slot (no text feed). */
+.pickup-layer{position:absolute;inset:0;overflow:hidden}
+.pickup-token{position:absolute;left:0;top:0;width:16px;height:18px;display:flex;align-items:center;justify-content:center;background:#e8b04a;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);transition:transform .55s cubic-bezier(.45,0,.8,.45);will-change:transform}
+.pickup-token canvas{display:block;width:16px;height:16px}
+
+/* The Pack & Making screen (z 20, the picker's layer): flat-top hex cells, a rosette around an info hex, the wear chain and the
+   discard hex on its left, the zig-zag hotbar strip under it; Making (or a basket's rosette) on the right. Like the picker,
+   the panel ends above the HUD hotbar (bottom 72px) and scrolls when the window is short. */
+#pack-screen{z-index:20;display:flex;align-items:flex-start;justify-content:center;padding-top:6vh;box-sizing:border-box;background:rgba(10,8,14,.55)}
+.pack-panel{position:relative;display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:12px 22px;max-width:calc(100vw - 32px);max-height:max(220px,calc(100vh - 6vh - 72px));overflow-y:auto;box-sizing:border-box;padding:12px 18px;background:rgba(28,26,36,.96);border:2px solid #e8b04a;box-shadow:0 0 0 2px #000,0 8px 24px rgba(0,0,0,.5);color:#f1e6cf;font:13px/17px monospace}
+.pack-heading{margin-bottom:4px;color:#e8b04a;font:bold 14px monospace;letter-spacing:.08em;text-transform:uppercase}
+.pack-close{position:absolute;right:10px;top:8px;padding:2px 12px;font-size:13px}
+.pack-left{display:flex;flex-direction:column;align-items:center}
+.pack-board{display:flex;align-items:flex-start;gap:14px}
+.pack-wear,.pack-rosette,.pack-strip{position:relative;flex:0 0 auto}
+.pack-cell{position:absolute;width:60px;height:52px;display:flex;align-items:center;justify-content:center;background:#3a3446;cursor:pointer;clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)}
+.pack-cell::before{content:"";position:absolute;inset:2px;background:#24212e;clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)}
+.pack-cell:hover{background:#f0c066}
+.pack-cell canvas{position:relative;z-index:1;width:32px;height:32px}
+.cell-count{position:absolute;right:13px;bottom:4px;z-index:3;color:#fff;font:bold 11px/11px monospace;text-shadow:1px 1px 0 #000}
+.cell-wear{position:absolute;left:0;top:0;z-index:2;width:60px;height:52px;fill:none;stroke-width:2.5;stroke-linecap:round;pointer-events:none}
+.cell-label{position:absolute;z-index:1;color:#8a8298;font:10px monospace;pointer-events:none}
+.cell-key{position:absolute;left:14px;top:3px;z-index:3;color:#8a8298;font:9px/9px monospace;pointer-events:none}
+.pack-centre{background:#e8b04a;cursor:default}
+.pack-centre:hover{background:#e8b04a}
+.pack-centre canvas{width:40px;height:40px}
+.wear-slot{background:#5a5068}
+.discard{background:#7a2a1e}
+.discard::before{background:#3a1612}
+.discard:hover{background:#d0582a}
+.discard .cell-label{color:#e8a090}
+.pack-info{min-height:17px;margin:4px 0 0;color:#f1e6cf;font:bold 13px/17px monospace}
+.pack-strip{margin-top:4px}
+.hotbar-cell{background:#c8963e}
+.hotbar-cell:hover{background:#ffd884}
+.hotbar-cell.selected{background:#ffe2a0}
+.hotbar-cell.selected::before{inset:4px}
+.pack-cursor{position:fixed;left:0;top:0;z-index:5;pointer-events:none;background:#e8b04a}
+.pack-hint{margin-top:6px;color:#8a8298;font:11px monospace}
+.pack-right{width:min(520px,calc(100vw - 80px))}
+.making-tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.making-tab{padding:3px 14px;border:0;background:#3a3446;color:#f1e6cf;font:bold 12px monospace;cursor:pointer;clip-path:polygon(8px 0,calc(100% - 8px) 0,100% 50%,calc(100% - 8px) 100%,8px 100%,0 50%)}
+.making-tab:hover{background:#4a4458}
+.making-tab.active{background:#e8b04a;color:#1c1a24}
+.making-tab.far{opacity:.5}
+.recipe-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:6px;max-height:290px;overflow-y:auto;padding-right:4px}
+.recipe-empty{color:#8a8298;font:12px monospace}
+.recipe-card{display:flex;align-items:center;gap:8px;padding:3px 6px;background:#24212e;border:1px solid #3a3446}
+.recipe-card.craftable{border-color:#e8b04a}
+.recipe-card.far{opacity:.55}
+.card-rosette{position:relative;flex:0 0 85px;width:85px;height:89px}
+.card-hex{position:absolute;width:34px;height:29px;display:flex;align-items:center;justify-content:center;background:#3a3446;clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)}
+.card-hex canvas{display:block;width:16px;height:16px}
+.card-out{background:#e8b04a}
+.card-out canvas{width:20px;height:20px}
+.card-tool.ok{background:#3f5a34}
+.card-tool.short{background:#6a2a20}
+.card-badge{position:absolute;bottom:0;left:0;right:0;text-align:center;font:bold 8px/9px monospace;text-shadow:1px 1px 0 #000}
+.card-badge.ok{color:#9fe39a}
+.card-badge.short{color:#ff8a7a}
+.card-tier,.card-n{position:absolute;right:5px;bottom:0;color:#fff;font:bold 8px/9px monospace;text-shadow:1px 1px 0 #000}
+.card-n{color:#1c1a24;text-shadow:none}
+.card-side{display:flex;flex-direction:column;gap:3px;min-width:0}
+.card-name{color:#f1e6cf;font:bold 12px monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-meta{color:#a89eb8;font:11px monospace}
+.card-buttons{display:flex;gap:4px}
+.card-make{padding:2px 12px;font-size:11px}
+.lanes{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.lane-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.lane-name{min-width:84px;color:#e8b04a;font:bold 12px monospace}
+.lane-job{display:inline-flex;align-items:center;gap:4px;padding:1px 4px;background:#24212e;border:1px solid #3a3446;font:11px monospace}
+.lane-job.head{border-color:#e8b04a}
+.job-bar{display:inline-block;width:48px;height:6px;background:#3a3446}
+.job-fill{display:block;height:100%;background:#e8b04a}
+.lane-job.waiting .job-fill{background:#8a8298}
+.job-status{color:#a89eb8}
+.job-cancel{padding:0 2px;border:0;background:none;color:#d0582a;font:bold 12px monospace;cursor:pointer}
+.container-panel{display:flex;flex-direction:column;align-items:center}
+
+/* The pause menu's Mode switch: [ Creative | Survival ], the two halves of one hexagon; the active half filled in honey. */
+.mode-switch{display:inline-flex;gap:2px}
+.mode-half{min-width:120px;padding:6px 14px;font-size:14px;background:#2a2633;color:#e8b04a}
+.mode-half:first-child{clip-path:polygon(12px 0,100% 0,100% 100%,12px 100%,0 50%)}
+.mode-half:last-child{clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%)}
+.mode-half.active{background:#e8b04a;color:#1c1a24;cursor:default}
+.mode-half:hover:not(.active){background:#3a3446}
+
+/* The death screen (z 33, above the pause menu, under click-to-play): no red tint, no headline, no score. A honeycomb of
+   #1c1a24 cells darkens to 85 % ring by ring from the outside in over 1.2 s, then the cause line in honey and Wake up. */
+#death-screen{z-index:33;display:flex;align-items:center;justify-content:center}
+.death-comb{position:absolute;inset:0;width:100%;height:100%}
+.death-comb polygon{fill:#1c1a24}
+.comb-ring{opacity:.85}
+#death-screen.closing .comb-ring{animation:comb-close .3s ease-in both}
+@keyframes comb-close{from{opacity:0}to{opacity:.85}}
+.death-panel{position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;max-width:min(640px,90vw);padding:24px;text-align:center}
+#death-screen.closing .death-panel{animation:death-panel-in .5s ease-out .8s both}
+@keyframes death-panel-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.death-title{color:#e8b04a;font:bold 26px monospace;text-shadow:2px 2px 0 #000}
+.death-detail{color:#f1e6cf;font:15px monospace;text-shadow:1px 1px 0 #000}
+.death-where{color:#c8bca4;font:13px monospace;text-shadow:1px 1px 0 #000}
+.wake-button{min-width:200px;margin-top:10px;padding:10px 28px;font-size:18px}
+@media (prefers-reduced-motion:reduce){#death-screen.closing .comb-ring,#death-screen.closing .death-panel{animation:none}}
+
+/* The New World form's "Survival resources" checkbox (§1.3) */
+.slot-check{display:flex;flex-basis:100%;align-items:center;gap:6px;color:#e0e0e0;font:12px monospace;text-shadow:1px 1px 0 #000;cursor:pointer}
+.slot-check input{margin:0;accent-color:#e8b04a}

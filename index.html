@@ -15,16 +15,24 @@
     <div id="block-toast" class="hidden"></div>
     <div id="save-toast" class="hidden"></div>
     <div id="hotbar">
-      <div class="hotbar-slot selected" data-slot="0"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="1"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="2"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="3"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="4"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="5"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="6"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="7"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="8"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+      <div class="hotbar-slot selected" data-slot="0"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="1"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="2"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="3"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="4"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="5"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="6"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="7"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="8"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div id="pack-glyph" aria-hidden="true"></div>
     </div>
+    <!-- Survival (docs/DESIGN-survival.md §9.8): all hidden in Creative. The vitals cells are built by hud.js. -->
+    <div id="vitals-left" class="vitals hidden" aria-label="Health and Nourishment"></div>
+    <div id="vitals-right" class="vitals hidden" aria-label="Hydration and body temperature"></div>
+    <div id="status-chips" class="status-chips hidden" aria-live="polite"></div>
+    <div id="job-chip" class="job-chip hidden"></div>
+    <div id="action-ring" class="action-ring hidden" aria-hidden="true"></div>
+    <div id="pickup-layer" class="pickup-layer" aria-hidden="true"></div>
     <div id="target-hint" class="hidden"></div>
     <div id="chat-log"></div>
     <pre id="debug-overlay" class="hidden"></pre>
@@ -74,6 +82,9 @@ say Tower built"></textarea>
     </div>
   </div>
 
+  <!-- Survival: the Pack & Making screen (z 20, the picker's layer; never open together). packUI.js builds its content. -->
+  <div id="pack-screen" class="layer hidden" role="dialog" aria-label="Pack and Making"></div>
+
   <div id="pause-menu" class="layer hidden">
     <div class="menu-panel">
       <h2 class="menu-title">Game Paused</h2>
@@ -93,9 +104,28 @@ say Tower built"></textarea>
         <span class="physics-label">Creatures</span>
         <button id="btn-zombies" class="mc-button toggle" aria-pressed="true">Zombies: ON</button>
       </div>
+      <div id="pause-mode" class="physics-row">
+        <span class="physics-label">Mode</span>
+        <div id="btn-mode" class="mode-switch" role="group" aria-label="Game mode" data-mode="creative">
+          <button id="btn-mode-creative" type="button" class="hex-button mode-half active" aria-pressed="true">Creative</button>
+          <button id="btn-mode-survival" type="button" class="hex-button mode-half" aria-pressed="false">Survival</button>
+        </div>
+      </div>
       <button id="btn-quit" class="mc-button">Save &amp; Quit</button>
       <div id="pause-seed" class="menu-note">Seed: …</div>
       <div id="pause-controls" class="controls-sheet"></div>
+    </div>
+  </div>
+
+  <!-- Survival: the death screen (z 33). No headline, no score: a honeycomb closing ring by ring (built by menus.js). -->
+  <div id="death-screen" class="layer hidden" role="alertdialog" aria-modal="true" aria-labelledby="death-title" aria-describedby="death-detail">
+    <svg id="death-comb" class="death-comb" aria-hidden="true"></svg>
+    <div class="death-panel">
+      <div id="death-title" class="death-title"></div>
+      <div id="death-detail" class="death-detail"></div>
+      <div id="death-where" class="death-where hidden"></div>
+      <button id="btn-wake" type="button" class="hex-button wake-button">Wake up</button>
+      <button id="btn-death-quit" type="button" class="text-link">Save &amp; quit</button>
     </div>
   </div>
 

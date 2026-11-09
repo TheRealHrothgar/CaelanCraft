@@ -1,5 +1,8 @@
 // Caelancraft — title (with the Worlds panel) / loading / click-to-play / pause / block-picker screens.
 // See src/CONTRACTS.md §20, §41 and docs/SPEC-gameplay.md §5.1–§5.5.
+// v0.9 Survival (docs/DESIGN-survival.md §9.8; CONTRACTS §48 once merged): the pause menu's `[ Creative | Survival ]` mode
+// switch, Undo disabled in Survival, the death screen (a honeycomb closing ring by ring, "Wake up"), a general
+// `confirm()` on the old delete dialog, the New World form's "Survival resources" checkbox and "· Survival" on Worlds rows.
 //
 // DOM module. Every DOM access goes through the `doc` handed to createMenus and happens inside a
 // function, so this file can be imported in Node. Imports: config, blocks, atlas, storage (world names only; per the
@@ -42,14 +45,14 @@ export const CONTROLS_SHEET = Object.freeze([
   Object.freeze(['Space', 'Jump · fly up']),
   Object.freeze(['Shift', 'Sneak · fly down']),
   Object.freeze(['W W', 'Double-tap: sprint (while W is held)']),
-  Object.freeze(['Space Space', 'Double-tap: toggle fly (or F)']),
-  Object.freeze(['LMB', 'Break block (hold to repeat)']),
-  Object.freeze(['RMB', 'Place block (hold to repeat)']),
+  Object.freeze(['Space Space', 'Double-tap: fly (or F) · Creative']),
+  Object.freeze(['LMB', 'Break block (hold) · Survival: hold to dig']),
+  Object.freeze(['RMB', 'Place block · Survival: use the item in hand']),
   Object.freeze(['MMB', 'Pick the targeted block into the hotbar']),
   Object.freeze(['1–9', 'Select hotbar slot (or scroll wheel)']),
-  Object.freeze(['E', 'Open / close the block picker']),
+  Object.freeze(['E', 'Blocks · Survival: pack & making']),
   Object.freeze(['T  /', 'Command console (/ starts a command)']),
-  Object.freeze(['R', 'Run a Rune Block · light a Blast Barrel']),
+  Object.freeze(['R', 'Use: rune, barrel, fire, water, plants, basket']),
   Object.freeze(['Shift R', 'Edit the targeted Rune Block (also opens on placing one)']),
   Object.freeze(['Esc', 'Pause · close menus']),
   Object.freeze(['F3', 'Toggle the debug overlay']),
@@ -98,9 +101,10 @@ export function formatLastPlayed(ts, now) {
 }
 
 /**
- * The second line of a Worlds row: "Seed 1234 · played 2 hours ago · 37 KB" (the played part only when known),
- * "Can't be read · 12 KB" for a damaged slot, "No world yet" for an empty one.
- * @param {import('./storage.js').SlotInfo} info
+ * The second line of a Worlds row: "Seed 1234 · played 2 hours ago · 37 KB" (the played part only when known), with
+ * " · Survival" appended for a world in Survival (`info.mode`, §9.6), "Can't be read · 12 KB" for a damaged slot,
+ * "No world yet" for an empty one.
+ * @param {import('./storage.js').SlotInfo & { mode?: string }} info
  * @param {number} now
  */
 export function slotDetailText(info, now) {
@@ -110,6 +114,7 @@ export function slotDetailText(info, now) {
   const played = formatLastPlayed(info.lastPlayed, now);
   if (played) parts.push(`played ${played}`);
   parts.push(formatBytes(info.bytes));
+  if (info.mode === 'survival') parts.push('Survival'); // §9.8: the Worlds row says which worlds are in Survival
   return parts.join(' · ');
 }
 
@@ -157,6 +162,65 @@ export function latestSlot(slots) {
 export const QUIT_LABEL = 'Save & Quit';
 export const QUIT_UNSAVED_LABEL = 'Quit Without Saving';
 
+/** The New World form's checkbox (§1.3): checked creates the world with GEN_LATEST, unchecked with generation 1. */
+export const SURVIVAL_RESOURCES_LABEL = 'Survival resources (wild plants, ponds, copper and tin)';
+/** The two game modes, in the switch's order. */
+export const GAME_MODES = Object.freeze(['creative', 'survival']);
+/** The death screen's button and link (§2.5). */
+export const WAKE_LABEL = 'Wake up';
+export const DEATH_QUIT_LABEL = 'Save & quit';
+/**
+ * The honeycomb mask behind the death screen (§9.8): pointy-top cells of circumradius DEATH_COMB_CELL over a viewBox
+ * DEATH_COMB_RINGS cells wide each side of the centre (sliced to cover the window), and the time it takes to close.
+ */
+export const DEATH_COMB_RINGS = 11;
+export const DEATH_COMB_CELL = 44;
+export const DEATH_COMB_CLOSE_S = 1.2;
+/** One ring's fade; the outermost ring starts first, the centre last, all done by DEATH_COMB_CLOSE_S. */
+export const DEATH_COMB_FADE_S = 0.3;
+/** The viewBox's height over its width (wider than 16:9 is cropped at the sides, taller at the top and bottom). */
+const DEATH_COMB_ASPECT = 0.6;
+
+/**
+ * Half the width and height of the death comb's viewBox. Pure.
+ * @param {number} [rings=DEATH_COMB_RINGS] @param {number} [size=DEATH_COMB_CELL]
+ * @returns {[number, number]}
+ */
+export function deathCombExtent(rings = DEATH_COMB_RINGS, size = DEATH_COMB_CELL) {
+  const halfW = Math.ceil(Math.sqrt(3) * size * (rings + 0.5));
+  return [halfW, Math.ceil(halfW * DEATH_COMB_ASPECT)];
+}
+
+/**
+ * Cells of the death screen's honeycomb: every pointy-top cell (circumradius `size`, centred on 0,0) that touches the
+ * viewBox (deathCombExtent), each with its ring (hex distance from the centre cell) and its animation delay: the outermost
+ * ring darkens first and the centre last, so the mask closes in over DEATH_COMB_CLOSE_S. Pure.
+ * @param {number} [rings=DEATH_COMB_RINGS] @param {number} [size=DEATH_COMB_CELL]
+ * @returns {{ x: number, y: number, ring: number, delay: number }[]}
+ */
+export function deathCombCells(rings = DEATH_COMB_RINGS, size = DEATH_COMB_CELL) {
+  const [halfW, halfH] = deathCombExtent(rings, size);
+  const colW = Math.sqrt(3) * size;
+  const rowH = 1.5 * size;
+  const rMax = Math.ceil(halfH / rowH) + 1;
+  /** @type {{ x: number, y: number, ring: number, delay: number }[]} */
+  const out = [];
+  for (let r = -rMax; r <= rMax; r++) {
+    const qMin = Math.floor(-halfW / colW - r / 2) - 1;
+    const qMax = Math.ceil(halfW / colW - r / 2) + 1;
+    for (let q = qMin; q <= qMax; q++) {
+      const x = colW * (q + r / 2);
+      const y = rowH * r;
+      if (Math.abs(x) > halfW + size || Math.abs(y) > halfH + size) continue;
+      out.push({ x, y, ring: Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)), delay: 0 });
+    }
+  }
+  const maxRing = out.reduce((m, c) => Math.max(m, c.ring), 0);
+  const span = DEATH_COMB_CLOSE_S - DEATH_COMB_FADE_S;
+  for (const c of out) c.delay = maxRing > 0 ? Math.round(((maxRing - c.ring) / maxRing) * span * 1000) / 1000 : 0;
+  return out;
+}
+
 /** Edge length of the block-picker icon canvases, in CSS pixels (CONTRACTS §20). */
 export const PICKER_ICON_PX = 64;
 
@@ -197,7 +261,17 @@ const IDS = Object.freeze({
   btnPhysExplosions: 'btn-phys-explosions',
   btnUndoPhysics: 'btn-undo-physics',
   btnZombies: 'btn-zombies',
+  btnMode: 'btn-mode',
+  btnModeCreative: 'btn-mode-creative',
+  btnModeSurvival: 'btn-mode-survival',
   pauseControls: 'pause-controls',
+  deathScreen: 'death-screen',
+  deathComb: 'death-comb',
+  deathTitle: 'death-title',
+  deathDetail: 'death-detail',
+  deathWhere: 'death-where',
+  btnWake: 'btn-wake',
+  btnDeathQuit: 'btn-death-quit',
   blockPicker: 'block-picker',
   pickerGrid: 'picker-grid',
   pickerName: 'picker-name',
@@ -206,8 +280,9 @@ const IDS = Object.freeze({
 /**
  * @typedef {Object} MenusCallbacks  All optional; missing callbacks are simply not fired.
  * @property {(slot: number) => void} [onPlayWorld]   Worlds panel: Play on a filled slot
- * @property {(slot: number, name: string, seedText: string) => void} [onNewWorld]   the New World form of an empty slot
- *   (name and seed text untrimmed; main normalises both)
+ * @property {(slot: number, name: string, seedText: string, opts: { survivalResources: boolean }) => void} [onNewWorld]
+ *   the New World form of an empty slot (name and seed text untrimmed; main normalises both); `survivalResources` is the
+ *   form's checkbox (§1.3: checked → GEN_LATEST, unchecked → generation 1)
  * @property {(slot: number, name: string) => void} [onRenameWorld]
  * @property {(slot: number) => void} [onDuplicateWorld]
  * @property {(slot: number) => void} [onDeleteWorld]   fired only after the delete dialog was confirmed
@@ -217,6 +292,9 @@ const IDS = Object.freeze({
  * @property {(name: string) => void} [onPhysicsToggle]  pause-menu Physics row: 'falling' | 'water' | 'collapse' | 'explosions'
  * @property {() => void} [onUndoPhysics]  pause-menu "Undo" (the last explosion / collapse / falling tree)
  * @property {() => void} [onZombiesToggle]  pause-menu Creatures row: the world's Zombies switch (§39)
+ * @property {(mode: 'creative'|'survival') => void} [onModeSelect]  pause-menu Mode switch: fired only by the inactive half
+ * @property {() => void} [onWake]        death screen "Wake up"
+ * @property {() => void} [onDeathQuit]   death screen "Save & quit" (main saves, then quits)
  * @property {() => void} [onQuit]
  * @property {() => void} [onClickToPlay]
  * @property {(blockId: number, slot: number|null) => void} [onPickBlock]  slot 0..8 for Digit1-9, null for a click
@@ -256,7 +334,25 @@ const IDS = Object.freeze({
  * @property {() => void} hidePicker
  * @property {() => boolean} isPickerOpen
  * @property {() => string} getSeedInput   the open New World form's seed text ('' when no form is open)
+ * @property {(mode: 'creative'|'survival') => void} setModeState   the Mode switch: the active half filled, aria-pressed
+ * @property {() => 'creative'|'survival'} getModeState
+ * @property {(opts?: ConfirmOptions) => Promise<boolean>} confirm   ask on #confirm-dialog; false on No / Esc / the backdrop /
+ *   hidePause / showTitle / another question
+ * @property {(title: string, detail: string, where?: string) => void} showDeath   the death screen (§2.5); `where` is the
+ *   belongings line, hidden when empty
+ * @property {() => void} hideDeath
+ * @property {() => boolean} isDeathOpen
  * @property {() => void} dispose
+ */
+
+/**
+ * A question for confirm().
+ * @typedef {Object} ConfirmOptions
+ * @property {string} [title]
+ * @property {string} [detail]
+ * @property {string} [yes='OK']       #confirm-yes's text
+ * @property {string} [no='Cancel']    #confirm-no's text
+ * @property {boolean} [danger=false]  #confirm-yes in the danger colour
  */
 
 /**
@@ -265,6 +361,7 @@ const IDS = Object.freeze({
  * @property {{ falling: boolean, water: boolean, collapse: boolean, explosions: boolean }} switches
  * @property {boolean} canUndo
  * @property {string} [undoKind]   'explosion' | 'collapse' | 'falling tree' … (button label)
+ * @property {boolean} [survival]  v0.9 §1.5: in Survival, Undo is disabled ("Undo (not in Survival)")
  */
 
 /** Physics row buttons: switch name, label, IDS key. */
@@ -275,8 +372,13 @@ export const PHYSICS_TOGGLES = Object.freeze([
   Object.freeze(['explosions', 'Explosions', 'btnPhysExplosions']),
 ]);
 
-/** Undo button label for an event kind ('' / undefined: nothing to undo). */
-export function undoButtonLabel(canUndo, kind) {
+/**
+ * Undo button label for an event kind ('' / undefined: nothing to undo). In Survival (§1.5) Undo would duplicate what the
+ * player mined from a toppled tree or a collapse, so it reads "Undo (not in Survival)" whatever there is to undo.
+ * @param {boolean} canUndo @param {string} [kind] @param {boolean} [survival=false]
+ */
+export function undoButtonLabel(canUndo, kind, survival = false) {
+  if (survival) return 'Undo (not in Survival)';
   if (!canUndo) return 'Undo (nothing to undo)';
   const what = kind === 'explosion' ? 'Explosion' : kind === 'falling tree' ? 'Falling Tree' : kind === 'collapse' ? 'Collapse' : 'Physics Event';
   return `Undo Last ${what}`;
@@ -352,10 +454,14 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     /** @type {{ slot: number, mode: 'new'|'rename' }|null} the one open inline form */
     editing: null,
     worldsRenders: 0,
-    /** slot the delete dialog is asking about (0 = closed) */
-    confirmSlot: 0,
+    /** @type {{ resolve: ((answer: boolean) => void)|null, onYes: (() => void)|null }|null} the open question (§9.8) */
+    pending: null,
     /** @type {HTMLElement|null} focused before the dialog opened (gets focus back on Cancel) */
     confirmReturn: null,
+    /** @type {'creative'|'survival'} the Mode switch's active half */
+    mode: 'creative',
+    deathOpen: false,
+    deathCombBuilt: false,
     lastSplash: -1,
     backgroundApplied: false,
     pickerOpen: false,
@@ -476,7 +582,7 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     safe(() => drawTitleLogo(el.titleLogo, atlasCanvas), 'title logo');
     renderControlsSheets();
     state.editing = null;
-    closeConfirm(false);
+    closeConfirm(false); // a pending confirm() resolves false
     show(el.titleScreen);
     setWorlds(slots, opts);
   }
@@ -553,6 +659,16 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     if (mode === 'new') {
       const seed = state.worldsOpts.defaultSeed;
       form.appendChild(field('Seed', 'seed-input', 'slot-seed-input', seed == null ? '' : String(seed), 'random').wrap);
+      // §1.3: new worlds get the survival resources unless this is cleared
+      const check = /** @type {HTMLLabelElement} */ (make('label', 'slot-check'));
+      const box = /** @type {HTMLInputElement} */ (make('input', 'slot-survival-input'));
+      box.type = 'checkbox';
+      box.id = 'survival-resources-input';
+      box.checked = true;
+      box.setAttribute('checked', '');
+      check.appendChild(box);
+      check.appendChild(make('span', '', SURVIVAL_RESOURCES_LABEL));
+      form.appendChild(check);
     }
     const buttons = make('span', 'slot-form-buttons');
     const submit = /** @type {HTMLButtonElement} */ (make('button', 'mc-button slot-btn', mode === 'new' ? 'Create' : 'Save'));
@@ -654,7 +770,7 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     }
     renderWorlds();
     showWorldsMessage(opts.message || '', Boolean(opts.isError));
-    if (el.titleScreen.classList.contains('hidden') || state.confirmSlot) return;
+    if (el.titleScreen.classList.contains('hidden') || state.pending) return;
     if (opts.focusSlot && focusRow(opts.focusSlot)) return;
     const latest = latestSlot(state.worlds);
     const empty = state.worlds.find((s) => s.status === 'empty');
@@ -687,11 +803,13 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     const mode = form.dataset.mode;
     const nameInput = /** @type {HTMLInputElement|null} */ (form.querySelector('.slot-name-input'));
     const seedInput = /** @type {HTMLInputElement|null} */ (form.querySelector('.slot-seed-input'));
+    const box = /** @type {HTMLInputElement|null} */ (form.querySelector('.slot-survival-input'));
     const name = nameInput ? nameInput.value : '';
     const seed = seedInput ? seedInput.value : '';
+    const survivalResources = box ? Boolean(box.checked) : true;
     state.editing = null;
     const renders = state.worldsRenders;
-    if (mode === 'new') fire('onNewWorld', slot, name, seed);
+    if (mode === 'new') fire('onNewWorld', slot, name, seed, { survivalResources });
     else fire('onRenameWorld', slot, name);
     // Nobody re-rendered (no callback, or the title stays up without a refresh): close the form here.
     if (state.worldsRenders === renders && !el.titleScreen.classList.contains('hidden')) {
@@ -700,31 +818,68 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     }
   }
 
-  /** The delete dialog for `slot`, naming its world; Cancel has the focus. */
-  function openConfirm(slot) {
-    const info = state.worlds.find((s) => s.slot === slot);
-    if (!info || info.status === 'empty') return;
-    const text = deleteConfirmText(info);
-    el.confirmText.textContent = text.title;
-    el.confirmDetail.textContent = text.detail;
-    state.confirmSlot = slot;
+  /**
+   * Put a question on #confirm-dialog. Every call resets #confirm-yes's text and danger class and #confirm-no's text; a
+   * question still open is answered "no" first. `onYes` runs synchronously on Yes (the delete flow), before `resolve`.
+   * @param {ConfirmOptions} opts @param {((answer: boolean) => void)|null} resolve @param {(() => void)|null} onYes
+   */
+  function openDialog(opts, resolve, onYes) {
+    if (state.pending) settle(false, false);
+    const o = opts || {};
+    el.confirmText.textContent = o.title == null ? '' : String(o.title);
+    el.confirmDetail.textContent = o.detail == null ? '' : String(o.detail);
+    el.confirmYes.textContent = o.yes == null ? 'OK' : String(o.yes);
+    el.confirmNo.textContent = o.no == null ? 'Cancel' : String(o.no);
+    el.confirmYes.classList.toggle('danger', Boolean(o.danger));
+    state.pending = { resolve, onYes };
     state.confirmReturn = /** @type {HTMLElement|null} */ (doc.activeElement);
     show(el.confirmDialog);
     focusEl(el.confirmNo);
   }
 
+  /**
+   * Answer the open question (if any) and close the dialog.
+   * @param {boolean} answer @param {boolean} restoreFocus  give the focus back to what had it (Cancel / Esc)
+   */
+  function settle(answer, restoreFocus) {
+    const pending = state.pending;
+    const back = state.confirmReturn;
+    state.pending = null;
+    state.confirmReturn = null;
+    if (!el.confirmDialog.classList.contains('hidden')) hide(el.confirmDialog);
+    if (restoreFocus && back && (el.titleScreen.contains(back) || el.pauseMenu.contains(back))) focusEl(back);
+    if (!pending) return;
+    if (answer && pending.onYes) pending.onYes();
+    if (pending.resolve) pending.resolve(answer);
+  }
+
+  /**
+   * Ask a yes / no question on the in-game dialog (§9.8). Resolves true on Yes; false on No, Esc, a click on the backdrop,
+   * hidePause(), showTitle() or a newer question, so no Promise is ever left hanging.
+   * @param {ConfirmOptions} [opts]
+   * @returns {Promise<boolean>}
+   */
+  function confirm(opts = {}) {
+    if (state.disposed) return Promise.resolve(false);
+    return new Promise((resolve) => openDialog(opts, resolve, null));
+  }
+
+  /** The delete dialog for `slot`, naming its world; Cancel has the focus. */
+  function openConfirm(slot) {
+    const info = state.worlds.find((s) => s.slot === slot);
+    if (!info || info.status === 'empty') return;
+    const text = deleteConfirmText(info);
+    openDialog({ title: text.title, detail: text.detail, yes: 'Delete', no: 'Cancel', danger: true }, null,
+      () => fire('onDeleteWorld', slot));
+  }
+
   /** @param {boolean} restoreFocus  give the focus back to what had it (Cancel / Esc) */
   function closeConfirm(restoreFocus) {
-    const back = state.confirmReturn;
-    state.confirmSlot = 0;
-    state.confirmReturn = null;
-    if (el.confirmDialog.classList.contains('hidden')) return;
-    hide(el.confirmDialog);
-    if (restoreFocus && back && el.titleScreen.contains(back)) focusEl(back);
+    settle(false, restoreFocus);
   }
 
   function isConfirmOpen() {
-    return state.confirmSlot !== 0;
+    return state.pending !== null;
   }
 
   on(el.worldsList, 'click', (e) => {
@@ -793,11 +948,7 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     }
   });
 
-  on(el.confirmYes, 'click', () => {
-    const slot = state.confirmSlot;
-    closeConfirm(false);
-    if (slot) fire('onDeleteWorld', slot);
-  });
+  on(el.confirmYes, 'click', () => settle(true, false));
   on(el.confirmNo, 'click', () => closeConfirm(true));
   on(el.confirmDialog, 'click', (e) => {
     if (e.target === el.confirmDialog) closeConfirm(true); // a click on the dimmed backdrop cancels
@@ -865,11 +1016,13 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
       btn.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
     const undo = /** @type {HTMLButtonElement} */ (el.btnUndoPhysics);
-    undo.textContent = undoButtonLabel(physics.canUndo, physics.undoKind);
-    undo.disabled = !physics.canUndo;
+    const survival = Boolean(physics.survival);
+    undo.textContent = undoButtonLabel(physics.canUndo, physics.undoKind, survival);
+    undo.disabled = survival || !physics.canUndo;
   }
 
   function hidePause() {
+    if (state.pending) closeConfirm(false); // a question asked from the pause menu resolves false
     hide(el.pauseMenu);
   }
 
@@ -901,6 +1054,107 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
   on(el.btnUndoPhysics, 'click', () => {
     if (!/** @type {HTMLButtonElement} */ (el.btnUndoPhysics).disabled) fire('onUndoPhysics');
   });
+
+  // ---- the Mode switch (§1.1, §9.8) -----------------------------------------------------------------------
+
+  /**
+   * `[ Creative | Survival ]`: the active half is filled in honey and carries aria-pressed="true".
+   * @param {'creative'|'survival'} mode
+   */
+  function setModeState(mode) {
+    state.mode = mode === 'survival' ? 'survival' : 'creative';
+    for (const [m, key] of [['creative', 'btnModeCreative'], ['survival', 'btnModeSurvival']]) {
+      const btn = el[/** @type {keyof typeof IDS} */ (key)];
+      const active = state.mode === m;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    }
+    el.btnMode.dataset.mode = state.mode;
+  }
+
+  function getModeState() {
+    return state.mode;
+  }
+
+  for (const [m, key] of [['creative', 'btnModeCreative'], ['survival', 'btnModeSurvival']]) {
+    // only the inactive half asks to switch; main queues the switch (requestMode) and applies it next frame
+    on(el[/** @type {keyof typeof IDS} */ (key)], 'click', () => {
+      if (state.mode !== m) fire('onModeSelect', m);
+    });
+  }
+
+  // ---- death screen (§2.5, §9.8) ---------------------------------------------------------------------------
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  /** The honeycomb mask: one SVG of hex cells grouped by ring, each ring darkening after its delay. */
+  function buildDeathComb() {
+    if (state.deathCombBuilt || typeof doc.createElementNS !== 'function') return;
+    state.deathCombBuilt = true;
+    const svg = el.deathComb;
+    clearChildren(svg);
+    const size = DEATH_COMB_CELL;
+    const [halfW, halfH] = deathCombExtent(DEATH_COMB_RINGS, size);
+    svg.setAttribute('viewBox', `${-halfW} ${-halfH} ${2 * halfW} ${2 * halfH}`);
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+    const corners = [];
+    for (let k = 0; k < 6; k++) {
+      const a = (Math.PI / 3) * k - Math.PI / 2;
+      corners.push([(size - 1.2) * Math.cos(a), (size - 1.2) * Math.sin(a)]); // thin gaps: the comb's cells read
+    }
+    /** @type {Map<number, Element>} */
+    const groups = new Map();
+    for (const cell of deathCombCells(DEATH_COMB_RINGS, size)) {
+      let g = groups.get(cell.ring);
+      if (!g) {
+        g = doc.createElementNS(SVG_NS, 'g');
+        g.setAttribute('class', 'comb-ring');
+        g.setAttribute('style', `animation-delay:${cell.delay}s`);
+        g.setAttribute('data-ring', String(cell.ring));
+        groups.set(cell.ring, g);
+      }
+      const poly = doc.createElementNS(SVG_NS, 'polygon');
+      poly.setAttribute('points', corners.map(([x, y]) => `${+(cell.x + x).toFixed(1)},${+(cell.y + y).toFixed(1)}`).join(' '));
+      g.appendChild(poly);
+    }
+    for (const ring of [...groups.keys()].sort((a, b) => b - a)) svg.appendChild(/** @type {Element} */ (groups.get(ring)));
+  }
+
+  /**
+   * Show the death screen: no headline, no score; the cause line in honey, the detail, and where the belongings lie
+   * (hidden when they were lost). The honeycomb closes in again on every call.
+   * @param {string} title @param {string} detail @param {string} [where]
+   */
+  function showDeath(title, detail, where) {
+    if (state.disposed) return;
+    buildDeathComb();
+    el.deathTitle.textContent = title == null ? '' : String(title);
+    el.deathDetail.textContent = detail == null ? '' : String(detail);
+    el.deathWhere.textContent = where ? String(where) : '';
+    el.deathWhere.classList.toggle('hidden', !where);
+    // restart the closing animation
+    el.deathScreen.classList.remove('closing');
+    void el.deathScreen.offsetWidth;
+    el.deathScreen.classList.add('closing');
+    state.deathOpen = true;
+    show(el.deathScreen);
+    focusEl(el.btnWake);
+  }
+
+  function hideDeath() {
+    state.deathOpen = false;
+    el.deathScreen.classList.remove('closing');
+    hide(el.deathScreen);
+    const active = /** @type {HTMLElement|null} */ (doc.activeElement);
+    if (active && el.deathScreen.contains(active) && typeof active.blur === 'function') active.blur();
+  }
+
+  function isDeathOpen() {
+    return state.deathOpen;
+  }
+
+  on(el.btnWake, 'click', () => fire('onWake'));
+  on(el.btnDeathQuit, 'click', () => fire('onDeathQuit'));
   on(el.btnQuit, 'click', () => fire('onQuit'));
 
   // ---- block picker --------------------------------------------------------------------------------
@@ -1035,14 +1289,20 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     state.hoveredCell = null;
     clearChildren(el.worldsList);
     state.editing = null;
-    state.confirmSlot = 0;
+    if (state.pending) {
+      const pending = state.pending;
+      state.pending = null;
+      if (pending.resolve) pending.resolve(false);
+    }
     state.confirmReturn = null;
+    state.deathOpen = false;
   }
 
   // Static content that does not depend on showTitle: the picker grid, and the pause-menu cheat sheet
   // (autoplay/smoke runs never call showTitle but can still pause).
   buildPickerGrid();
   renderControlsSheets();
+  setModeState('creative'); // new worlds start in Creative; main calls setModeState(survival.mode) on every pause
 
   return {
     showTitle,
@@ -1063,6 +1323,12 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     hidePicker,
     isPickerOpen,
     getSeedInput,
+    setModeState,
+    getModeState,
+    confirm,
+    showDeath,
+    hideDeath,
+    isDeathOpen,
     dispose,
   };
 }
