@@ -1,7 +1,9 @@
 // Caelancraft — Three.js renderer. Implements src/CONTRACTS.md §17.
 //
 // Owns: the WebGLRenderer, scene, camera, the three shared chunk materials, one Mesh per non-empty
-// layer per chunk, lights, fog, the sky dome (+ sun/moon sprites and stars) and the block highlight.
+// layer per chunk, lights, fog, the sky dome (+ sun/moon sprites and stars), the block highlight and
+// the Survival dig trace (docs/DESIGN-survival.md §9.9: the targeted cell's hex outline drawn in honey
+// as you dig — there are no crack textures).
 // Nothing here touches WebGL or the DOM at import time — only createRenderer() does.
 //
 // Colour spaces (SPEC-engine §2/§3): every SkyState colour is sRGB, so it enters Three via
@@ -28,7 +30,7 @@ import {
   RENDER_DISTANCE,
   FOG_FAR_CHUNK_MARGIN,
 } from './config.js';
-import { CHUNK_RING_INRADIUS, HEX_SIZE, chunkOrigin, hexToWorld } from './hex.js';
+import { CHUNK_RING_INRADIUS, HEX_CORNERS, HEX_SIZE, chunkOrigin, hexToWorld } from './hex.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
@@ -43,6 +45,9 @@ import { CHUNK_RING_INRADIUS, HEX_SIZE, chunkOrigin, hexToWorld } from './hex.js
  * @property {(x: number, y: number, z: number, yaw: number, pitch: number) => void} setCamera
  * @property {(fov: number) => void} setFov
  * @property {(hit: RaycastHit|null|undefined) => void} setHighlight
+ * @property {(hit: {q: number, y: number, r: number}|null|undefined, p: number) => void} setDigProgress
+ *   Survival hold-to-dig feedback (DESIGN-survival §9.9): traces the first 2·ceil(12·p) line vertices of the cell's
+ *   hex outline (6 vertical + 6 top edges, clockwise from the north corner) in honey; hidden for a null hit or p ≤ 0
  * @property {(sky: SkyState) => void} setSky
  * @property {(on: boolean) => void} setUnderwater
  * @property {(chunks: number) => void} setRenderDistance
@@ -70,6 +75,21 @@ export const SUN_SPRITE_SCALE = 60;
 export const STAR_COUNT = 600;
 export const STAR_RADIUS = 490;
 export const HIGHLIGHT_SIZE = 1.002;
+/** Dig trace (DESIGN-survival §9.9): honey #e8b04a, drawn after the black highlight (renderOrder 2). */
+export const DIG_TRACE_COLOR = 0xe8b04a;
+export const DIG_TRACE_RENDER_ORDER = 3;
+/** The trace's line segments: the highlight prism's 6 vertical and 6 top edges. */
+export const DIG_TRACE_SEGMENTS = 12;
+/**
+ * The hex corners (hex.HEX_CORNERS indices) in trace order: clockwise as seen from above with north (−Z) up and east
+ * (+X) right, starting at the north corner (corner 5, at −Z). That is the order of increasing corner angle 60°k − 30°.
+ */
+// CONTRACT-ISSUE: DESIGN-survival §9.9 says the trace runs "clockwise from the north corner" without a frame, and
+// CONTRACTS §0 calls this same direction (increasing face/corner index, E → SE → …) "counter-clockwise seen from +Y with
+// +X right and +Z down", although on that very picture (and on screen when the player looks down facing north) it turns
+// clockwise. The trace follows what the player sees: clockwise on a north-up top view. Reverse this list (5, 4, 3, …)
+// if the integrator reads "clockwise" in CONTRACTS' wording instead.
+export const DIG_TRACE_CORNER_ORDER = Object.freeze([5, 0, 1, 2, 3, 4]);
 /** Sun glow strength added by the sky dome shader at full daylight. */
 export const SKY_GLOW = 1.0;
 
@@ -178,6 +198,46 @@ export function generateStarPositions(count, radius, seed = 0xc0ffee) {
     out[i * 3] = Math.cos(theta) * r * radius;
     out[i * 3 + 1] = y * radius;
     out[i * 3 + 2] = Math.sin(theta) * r * radius;
+  }
+  return out;
+}
+
+/**
+ * Line vertices of the dig trace to draw at progress `p` (DESIGN-survival §9.9): 2·ceil(12·p), p clamped to 0..1;
+ * anything that is not a finite number draws nothing.
+ * @param {number} p
+ * @returns {number} 0..2·DIG_TRACE_SEGMENTS, always even
+ */
+export function digTraceVertexCount(p) {
+  const t = typeof p === 'number' && Number.isFinite(p) ? Math.min(1, Math.max(0, p)) : 0;
+  return 2 * Math.ceil(DIG_TRACE_SEGMENTS * t);
+}
+
+/**
+ * Vertex positions of the dig trace, relative to (hexToWorld(q, r), cell y): the 18-edge highlight prism's 6 vertical
+ * and 6 top edges (same corners at HEX_SIZE·HIGHLIGHT_SIZE, same height HIGHLIGHT_SIZE centred on y + 0.5), ordered
+ * as the trace is drawn — for each corner of DIG_TRACE_CORNER_ORDER: its vertical edge bottom → top, then the top
+ * edge to the next corner. So a partial draw range climbs the north corner first and walks the rim clockwise.
+ * @returns {Float32Array} DIG_TRACE_SEGMENTS · 2 vertices · 3 floats
+ */
+export function digTracePositions() {
+  const out = new Float32Array(DIG_TRACE_SEGMENTS * 2 * 3);
+  const bottom = 0.5 - HIGHLIGHT_SIZE / 2;
+  const top = 0.5 + HIGHLIGHT_SIZE / 2;
+  let o = 0;
+  const vertex = (/** @type {number} */ corner, /** @type {number} */ y) => {
+    out[o++] = HEX_CORNERS[corner][0] * HIGHLIGHT_SIZE;
+    out[o++] = y;
+    out[o++] = HEX_CORNERS[corner][1] * HIGHLIGHT_SIZE;
+  };
+  const n = DIG_TRACE_CORNER_ORDER.length;
+  for (let i = 0; i < n; i++) {
+    const c = DIG_TRACE_CORNER_ORDER[i];
+    const next = DIG_TRACE_CORNER_ORDER[(i + 1) % n];
+    vertex(c, bottom); // vertical edge at this corner
+    vertex(c, top);
+    vertex(c, top); // top edge to the next corner clockwise
+    vertex(next, top);
   }
   return out;
 }
@@ -453,6 +513,28 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   highlight.name = 'highlight';
   scene.add(highlight);
 
+  // --- Dig trace (Survival): the highlight prism's outline traced in honey as a cell is dug -----------
+  // Transparent like the highlight so both sit in the transparent pass, where renderOrder 3 draws the trace after
+  // the black outline (renderOrder 2); the edges coincide, so the honey covers the black where it has been traced.
+  /** @returns {THREE.BufferGeometry} */
+  function buildDigTraceGeometry() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(digTracePositions(), 3));
+    g.computeBoundingSphere();
+    return g;
+  }
+  const digTraceMaterial = new THREE.LineBasicMaterial({
+    color: DIG_TRACE_COLOR,
+    transparent: true,
+    opacity: 1,
+  });
+  const digTrace = new THREE.LineSegments(buildDigTraceGeometry(), digTraceMaterial);
+  digTrace.renderOrder = DIG_TRACE_RENDER_ORDER;
+  digTrace.geometry.setDrawRange(0, 0);
+  digTrace.visible = false;
+  digTrace.name = 'digTrace';
+  scene.add(digTrace);
+
   // --- Per-frame scratch state (allocation-free hot paths) -----------------------------------
   /** Unit direction toward the SUN itself (not the active light), from the last setSky. */
   const trueSunDir = new THREE.Vector3(
@@ -473,6 +555,12 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   function onContextRestored() {
     if (disposed) return;
     for (const key of Array.from(chunkMeshes.keys())) removeMeshesForKey(key);
+    // The dig trace gets a fresh geometry (same draw range) so nothing of it refers to the lost context's buffers.
+    const oldTrace = digTrace.geometry;
+    const freshTrace = buildDigTraceGeometry();
+    freshTrace.setDrawRange(oldTrace.drawRange.start, oldTrace.drawRange.count);
+    digTrace.geometry = freshTrace;
+    oldTrace.dispose();
     api.onContextRestored();
   }
   if (contextCanvas) contextCanvas.addEventListener('webglcontextrestored', onContextRestored, false);
@@ -596,6 +684,18 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
       highlight.visible = true;
     },
 
+    setDigProgress(hit, p) {
+      const count = hit ? digTraceVertexCount(p) : 0;
+      digTrace.geometry.setDrawRange(0, count);
+      if (count === 0) {
+        digTrace.visible = false;
+        return;
+      }
+      const centre = hexToWorld(hit.q, hit.r);
+      digTrace.position.set(centre[0], hit.y, centre[1]);
+      digTrace.visible = true;
+    },
+
     setSky(sky) {
       if (!sky) return;
       const sunColor = sky.sunColor;
@@ -692,7 +792,7 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
       disposed = true;
       if (contextCanvas) contextCanvas.removeEventListener('webglcontextrestored', onContextRestored, false);
       for (const key of Array.from(chunkMeshes.keys())) removeMeshesForKey(key);
-      scene.remove(skyDome, stars, sunSprite, moonSprite, highlight, dirLight, dirLight.target, hemiLight);
+      scene.remove(skyDome, stars, sunSprite, moonSprite, highlight, digTrace, dirLight, dirLight.target, hemiLight);
       skyGeometry.dispose();
       skyMaterial.dispose();
       starGeometry.dispose();
@@ -703,6 +803,8 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
       ownedTextures.length = 0;
       highlightGeometry.dispose();
       highlightMaterial.dispose();
+      digTrace.geometry.dispose();
+      digTraceMaterial.dispose();
       // The three chunk materials are owned by this renderer (the atlas texture is NOT — atlas.js owns it).
       opaqueMaterial.dispose();
       cutoutMaterial.dispose();

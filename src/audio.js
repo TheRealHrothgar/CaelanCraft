@@ -1,5 +1,6 @@
-// Caelancraft — WebAudio synthesised sound effects (block break / place, UI click, pigs, campfires, block physics).
-// See src/CONTRACTS.md §21 and docs/SPEC-gameplay.md §9.
+// Caelancraft — WebAudio synthesised sound effects (block break / place, UI click, pigs, campfires, block physics,
+// Survival: hurt, death, eating, drinking, digging, making, tool breaks, sizzling, picking).
+// See src/CONTRACTS.md §21, docs/SPEC-gameplay.md §9 and docs/DESIGN-survival.md §9.9.
 //
 // DOM module (WebAudio). Nothing is touched at module top level, so the module
 // loads in Node. The AudioContext is created lazily inside resume(), which
@@ -143,6 +144,64 @@ export const ZOMBIE_DOWN_GAIN = 0.32;
 // start. Quiet on purpose: you are not sure you heard it.
 export const WATCHER_VANISH_S = 1.6;
 export const WATCHER_VANISH_GAIN = 0.2;
+// Survival (docs/DESIGN-survival.md §9.9). All synthesised here, none modelled on another game's samples.
+// Hurt: a short low thump (sine 150 → 55 Hz) under a filtered breath (a soft-attack 900 Hz bandpassed noise exhale).
+export const HURT_THUMP_START_HZ = 150;
+export const HURT_THUMP_END_HZ = 55;
+export const HURT_THUMP_S = 0.14;
+export const HURT_THUMP_GAIN = 0.6;
+export const HURT_BREATH_S = 0.24;
+export const HURT_BREATH_HZ = 900;
+export const HURT_BREATH_GAIN = 0.22;
+// Death: a falling low tone (triangle 196 → 49 Hz over 1.3 s) and, near its end, a muffled thud (sine 80 → 32 Hz under
+// a 260 Hz lowpassed knock).
+export const DEATH_TONE_START_HZ = 196;
+export const DEATH_TONE_END_HZ = 49;
+export const DEATH_TONE_S = 1.3;
+export const DEATH_TONE_GAIN = 0.3;
+export const DEATH_THUD_AT_S = 0.95;
+export const DEATH_THUD_S = 0.3;
+export const DEATH_THUD_GAIN = 0.55;
+export const DEATH_KNOCK_CUTOFF_HZ = 260;
+// Eat: three crunchy ticks — short noise bursts through a 2.2 kHz bandpass, about 0.11 s apart.
+export const EAT_TICKS = 3;
+export const EAT_TICK_S = 0.035;
+export const EAT_TICK_GAP_S = 0.11;
+export const EAT_TICK_HZ = 2200;
+export const EAT_TICK_GAIN = 0.4;
+// Drink: two low gulps, each a sine whose pitch drops 440 → 190 Hz in 90 ms, 0.24 s apart.
+export const DRINK_GULPS = 2;
+export const DRINK_GULP_S = 0.09;
+export const DRINK_GULP_GAP_S = 0.24;
+export const DRINK_GULP_START_HZ = 440;
+export const DRINK_GULP_END_HZ = 190;
+export const DRINK_GULP_GAIN = 0.35;
+// Dig tick (hold to dig, every DIG_TICK_S): a 40 ms noise tick through the block's break lowpass (BREAK_CUTOFF_HZ).
+export const DIG_TICK_DURATION_S = 0.04;
+export const DIG_GAIN = 0.6;
+// Craft: a wooden knock (a 900 Hz bandpassed noise click over a sine 330 → 250 Hz) and a soft two-partial chime.
+export const CRAFT_KNOCK_S = 0.05;
+export const CRAFT_KNOCK_HZ = 900;
+export const CRAFT_KNOCK_GAIN = 0.4;
+export const CRAFT_CHIME_AT_S = 0.07;
+export const CRAFT_CHIME_HZ = 1318.5; // E6, with a partial a fifth above
+export const CRAFT_CHIME_S = 0.6;
+export const CRAFT_CHIME_GAIN = 0.09;
+// Tool break: a snap — a 60 ms noise burst through a 3.6 kHz bandpass, and a smaller splinter 35 ms later.
+export const TOOL_BREAK_S = 0.06;
+export const TOOL_BREAK_HZ = 3600;
+export const TOOL_BREAK_GAIN = 0.55;
+export const TOOL_BREAK_SPLINTER_AT_S = 0.035;
+// Sizzle: hissing noise above 3 kHz with a soft attack, and a few crackle pops (the campfire crackle's settings).
+export const SIZZLE_S = 0.6;
+export const SIZZLE_HIGHPASS_HZ = 3000;
+export const SIZZLE_GAIN = 0.12;
+export const SIZZLE_ATTACK_S = 0.06;
+// Pick: a leafy rustle — three overlapping soft-attack noise swishes through a 2.6 kHz bandpass.
+export const PICK_SWISHES = 3;
+export const PICK_SWISH_S = 0.12;
+export const PICK_RUSTLE_HZ = 2600;
+export const PICK_GAIN = 0.25;
 
 /** Exponential ramps cannot reach 0; decays ramp to this floor and the voice stops there. */
 const DECAY_FLOOR = 0.001;
@@ -169,6 +228,16 @@ const MUTE_FADE_S = 0.01;
  * @property {(volume?: number) => void} playZombieHurt           a zombie is hit
  * @property {(volume?: number) => void} playZombieDown           a zombie is knocked out or burns away
  * @property {(volume?: number) => void} playWatcherVanish        the Hollow Watcher vanishes in a puff of smoke (§40)
+ * @property {(volume?: number) => void} playHurt                 Survival: the player takes damage (a soft one for damage over time)
+ * @property {(volume?: number) => void} playDeath                Survival: the player dies
+ * @property {(volume?: number) => void} playEat                  Survival: one food item eaten
+ * @property {(volume?: number) => void} playDrink                Survival: a gulp or a pot drunk
+ * @property {(soundGroup: string|null|undefined, volume?: number) => void} playDig  Survival: a dig tick (pass
+ *   BLOCKS[id].soundGroup; main uses 0.35 while digging and 0.15 for a block it cannot dig)
+ * @property {(volume?: number) => void} playCraft                Survival: a job completes
+ * @property {(volume?: number) => void} playToolBreak            Survival: a tool wears out
+ * @property {(volume?: number) => void} playSizzle               Survival: something cooks on a campfire nearby
+ * @property {(volume?: number) => void} playPick                 Survival: a plant picked or litter gathered
  * @property {(b: boolean) => void} setMuted
  * @property {() => boolean} toggleMuted                         returns the new muted state
  * @property {boolean} muted                                     read-only getter
@@ -300,16 +369,23 @@ export function createAudio(opts = {}) {
   }
 
   /**
-   * Gain stage with an exponential decay: `peak` at t0 → DECAY_FLOOR at t0 + dur. Connected to master.
+   * Gain stage with an exponential decay: `peak` at t0 → DECAY_FLOOR at t0 + dur. Connected to master. With an
+   * `attack` (seconds, < dur) the gain first rises linearly from DECAY_FLOOR to `peak` (a breath, a swish), then decays.
    * @param {AudioContext} c
    * @param {number} t0
    * @param {number} dur
    * @param {number} peak
+   * @param {number} [attack]
    * @returns {GainNode}
    */
-  function envelope(c, t0, dur, peak) {
+  function envelope(c, t0, dur, peak, attack = 0) {
     const g = c.createGain();
-    g.gain.setValueAtTime(peak, t0);
+    if (attack > 0 && attack < dur) {
+      g.gain.setValueAtTime(DECAY_FLOOR, t0);
+      g.gain.linearRampToValueAtTime(peak, t0 + attack);
+    } else {
+      g.gain.setValueAtTime(peak, t0);
+    }
     g.gain.exponentialRampToValueAtTime(DECAY_FLOOR, t0 + dur);
     g.connect(/** @type {GainNode} */ (master));
     return g;
@@ -363,20 +439,52 @@ export function createAudio(opts = {}) {
   }
 
   /**
-   * Sine tone: oscillator (exponential sweep f0 → f1 when they differ) → decaying gain → master.
+   * White noise through any biquad filter (bandpass / highpass / lowpass at `freqHz` × pitch, quality `q`) →
+   * envelope (optionally with an attack) → master. noiseBurst is the lowpass case without Q or attack.
+   * @param {AudioContext} c
+   * @param {number} t0
+   * @param {number} dur
+   * @param {BiquadFilterType} type
+   * @param {number} freqHz
+   * @param {number} q
+   * @param {number} peak
+   * @param {number} pitch
+   * @param {number} [attack]
+   */
+  function filteredNoise(c, t0, dur, type, freqHz, q, peak, pitch, attack = 0) {
+    const buffer = /** @type {AudioBuffer} */ (noise);
+    const src = c.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.value = pitch;
+    const f = c.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = Math.min(freqHz * pitch, c.sampleRate / 2);
+    if (f.Q) f.Q.value = q;
+    const g = envelope(c, t0, dur, peak, attack);
+    src.connect(f);
+    f.connect(g);
+    const maxOffset = Math.max(0, buffer.duration - dur * pitch - 0.01);
+    src.start(t0, Math.random() * maxOffset);
+    track(src, [f, g], t0 + dur);
+  }
+
+  /**
+   * Tone: oscillator (exponential sweep f0 → f1 when they differ) → decaying gain → master.
    * @param {AudioContext} c
    * @param {number} t0
    * @param {number} dur
    * @param {number} f0
    * @param {number} f1
    * @param {number} peak
+   * @param {OscillatorType} [type]  'sine' unless given
+   * @param {number} [attack]        seconds of linear rise before the decay (0: starts at the peak)
    */
-  function tone(c, t0, dur, f0, f1, peak) {
+  function tone(c, t0, dur, f0, f1, peak, type = 'sine', attack = 0) {
     const osc = c.createOscillator();
-    osc.type = 'sine';
+    osc.type = type;
     osc.frequency.setValueAtTime(f0, t0);
     if (f1 !== f0) osc.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
-    const g = envelope(c, t0, dur, peak);
+    const g = envelope(c, t0, dur, peak, attack);
     osc.connect(g);
     osc.start(t0);
     track(osc, [g], t0 + dur);
@@ -675,6 +783,162 @@ export function createAudio(opts = {}) {
     }
   }
 
+  // --- Survival (DESIGN-survival §9.9) ----------------------------------------
+
+  /**
+   * Volume 0..1 for a sound, or 0 when it must be skipped (anything that is not a positive number).
+   * @param {number} volume
+   */
+  function vol(volume) {
+    return typeof volume === 'number' && volume > 0 ? Math.min(1, volume) : 0;
+  }
+
+  /** A short low thump plus a filtered breath. @param {number} [volume] */
+  function playHurt(volume = 1) {
+    const c = ready();
+    const v = vol(volume);
+    if (!c || !v) return;
+    try {
+      const p = randomPitch();
+      const t0 = c.currentTime;
+      tone(c, t0, HURT_THUMP_S, HURT_THUMP_START_HZ * p, HURT_THUMP_END_HZ * p, HURT_THUMP_GAIN * v);
+      filteredNoise(c, t0 + 0.02, HURT_BREATH_S, 'bandpass', HURT_BREATH_HZ, 0.9, HURT_BREATH_GAIN * v, p, 0.03);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** A falling low tone and a muffled thud. @param {number} [volume] */
+  function playDeath(volume = 1) {
+    const c = ready();
+    const v = vol(volume);
+    if (!c || !v) return;
+    try {
+      const p = 0.97 + Math.random() * 0.06; // nearly fixed: this one should sound the same every time
+      const t0 = c.currentTime;
+      tone(c, t0, DEATH_TONE_S, DEATH_TONE_START_HZ * p, DEATH_TONE_END_HZ * p, DEATH_TONE_GAIN * v, 'triangle', 0.05);
+      tone(c, t0 + DEATH_THUD_AT_S, DEATH_THUD_S, 80 * p, 32 * p, DEATH_THUD_GAIN * v);
+      noiseBurst(c, t0 + DEATH_THUD_AT_S, 0.12, DEATH_KNOCK_CUTOFF_HZ, DEATH_THUD_GAIN * 0.6 * v, p);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** Three crunchy noise ticks. @param {number} [volume] */
+  function playEat(volume = 1) {
+    const c = ready();
+    const v = vol(volume);
+    if (!c || !v) return;
+    try {
+      const t0 = c.currentTime;
+      for (let i = 0; i < EAT_TICKS; i++) {
+        const at = t0 + i * EAT_TICK_GAP_S + Math.random() * 0.02;
+        filteredNoise(c, at, EAT_TICK_S, 'bandpass', EAT_TICK_HZ * (0.85 + Math.random() * 0.3), 1.2, EAT_TICK_GAIN * v, randomPitch());
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** Two low gulps: sines whose pitch drops. @param {number} [volume] */
+  function playDrink(volume = 1) {
+    const c = ready();
+    const v = vol(volume);
+    if (!c || !v) return;
+    try {
+      const p = randomPitch();
+      const t0 = c.currentTime;
+      for (let i = 0; i < DRINK_GULPS; i++) {
+        const lower = 1 - 0.08 * i; // the second gulp sits a little lower
+        tone(c, t0 + i * DRINK_GULP_GAP_S, DRINK_GULP_S, DRINK_GULP_START_HZ * p * lower, DRINK_GULP_END_HZ * p * lower, DRINK_GULP_GAIN * v, 'sine', 0.01);
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /**
+   * A short, quiet tick through the block's break lowpass (hold to dig, every DIG_TICK_S).
+   * @param {string|null|undefined} soundGroup  BLOCKS[id].soundGroup
+   * @param {number} [volume]
+   */
+  function playDig(soundGroup, volume = 1) {
+    const c = ready();
+    const v = vol(volume);
+    if (!c || !v) return;
+    try {
+      noiseBurst(c, c.currentTime, DIG_TICK_DURATION_S, breakCutoffFor(soundGroup), DIG_GAIN * v, randomPitch());
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** A wooden knock plus a soft chime. @param {number} [volume] */
+  function playCraft(volume = 1) {
+    const c = ready();
+    const v = vol(volume);
+    if (!c || !v) return;
+    try {
+      const p = randomPitch();
+      const t0 = c.currentTime;
+      filteredNoise(c, t0, CRAFT_KNOCK_S, 'bandpass', CRAFT_KNOCK_HZ, 1.5, CRAFT_KNOCK_GAIN * v, p);
+      tone(c, t0, 0.07, 330 * p, 250 * p, CRAFT_KNOCK_GAIN * 0.8 * v);
+      const at = t0 + CRAFT_CHIME_AT_S;
+      tone(c, at, CRAFT_CHIME_S, CRAFT_CHIME_HZ, CRAFT_CHIME_HZ, CRAFT_CHIME_GAIN * v, 'sine', 0.008);
+      tone(c, at, CRAFT_CHIME_S * 0.7, CRAFT_CHIME_HZ * 1.5, CRAFT_CHIME_HZ * 1.5, CRAFT_CHIME_GAIN * 0.5 * v, 'sine', 0.008);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** A snap: a noise burst through a high bandpass, and a smaller splinter. @param {number} [volume] */
+  function playToolBreak(volume = 1) {
+    const c = ready();
+    const v = vol(volume);
+    if (!c || !v) return;
+    try {
+      const p = randomPitch();
+      const t0 = c.currentTime;
+      filteredNoise(c, t0, TOOL_BREAK_S, 'bandpass', TOOL_BREAK_HZ, 2.5, TOOL_BREAK_GAIN * v, p);
+      filteredNoise(c, t0 + TOOL_BREAK_SPLINTER_AT_S, TOOL_BREAK_S * 0.6, 'bandpass', TOOL_BREAK_HZ * 1.3, 3, TOOL_BREAK_GAIN * 0.45 * v, p);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** Hissing noise with a crackle (something cooking on a campfire). @param {number} [volume] */
+  function playSizzle(volume = 1) {
+    const c = ready();
+    const v = vol(volume);
+    if (!c || !v) return;
+    try {
+      const t0 = c.currentTime;
+      filteredNoise(c, t0, SIZZLE_S, 'highpass', SIZZLE_HIGHPASS_HZ, 0.7, SIZZLE_GAIN * v, randomPitch(), SIZZLE_ATTACK_S);
+      const pops = 2 + (Math.random() < 0.5 ? 1 : 0);
+      for (let i = 0; i < pops; i++) {
+        noiseBurst(c, t0 + Math.random() * SIZZLE_S * 0.7, CRACKLE_POP_S, CRACKLE_CUTOFF_HZ, CRACKLE_GAIN * 0.6 * v, randomPitch());
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
+  /** A leafy rustle. @param {number} [volume] */
+  function playPick(volume = 1) {
+    const c = ready();
+    const v = vol(volume);
+    if (!c || !v) return;
+    try {
+      const t0 = c.currentTime;
+      for (let i = 0; i < PICK_SWISHES; i++) {
+        const at = t0 + i * 0.045 + Math.random() * 0.02;
+        filteredNoise(c, at, PICK_SWISH_S, 'bandpass', PICK_RUSTLE_HZ * (0.8 + Math.random() * 0.4), 0.8, PICK_GAIN * v, randomPitch(), 0.025);
+      }
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
   /** @param {boolean} b */
   function setMuted(b) {
     muted = !!b;
@@ -712,6 +976,15 @@ export function createAudio(opts = {}) {
     playZombieHurt,
     playZombieDown,
     playWatcherVanish,
+    playHurt,
+    playDeath,
+    playEat,
+    playDrink,
+    playDig,
+    playCraft,
+    playToolBreak,
+    playSizzle,
+    playPick,
     setMuted,
     toggleMuted,
     get muted() {

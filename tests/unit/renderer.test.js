@@ -2,7 +2,10 @@
 // injected as a stub via opts.webglRenderer).
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { buildLayerGeometry, createRenderer, fogRangeForRenderDistance, HIGHLIGHT_SIZE } from '../../src/renderer.js';
+import {
+  buildLayerGeometry, createRenderer, fogRangeForRenderDistance, HIGHLIGHT_SIZE,
+  DIG_TRACE_COLOR, DIG_TRACE_RENDER_ORDER, DIG_TRACE_SEGMENTS, DIG_TRACE_CORNER_ORDER, digTraceVertexCount, digTracePositions,
+} from '../../src/renderer.js';
 import { buildChunkMesh } from '../../src/mesher.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 import { chunkKey } from '../../src/coords.js';
@@ -297,6 +300,240 @@ describe('createRenderer', () => {
     });
     r.setChunkMesh('0,0', 0, 0, realLayer());
     expect(r.getStats().chunkMeshes).toBe(1);
+    r.dispose();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The Survival dig trace (docs/DESIGN-survival.md §9.9): the cell's hex outline traced in honey as you dig.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The vertices of a LineSegments geometry as [x, y, z] triples (y shifted by `dy`). */
+function lineVertices(geometry, dy = 0) {
+  const pos = geometry.getAttribute('position');
+  const out = [];
+  for (let i = 0; i < pos.count; i++) out.push([pos.getX(i), pos.getY(i) + dy, pos.getZ(i)]);
+  return out;
+}
+
+/** An order-free key for the segment a–b (rounded so Float32 noise does not matter). */
+function segmentKey(a, b) {
+  const k = (v) => v.map((c) => (Math.abs(c) < 5e-5 ? 0 : c).toFixed(4)).join(',');
+  return [k(a), k(b)].sort().join('|');
+}
+
+describe('dig trace: pure helpers', () => {
+  it('digTraceVertexCount is 2·ceil(12·p) for p in 0..1 — even, monotonic, 0 at 0 and 24 at 1', () => {
+    expect(DIG_TRACE_SEGMENTS).toBe(12);
+    let prev = 0;
+    for (let i = 0; i <= 2400; i++) {
+      const p = i / 2400;
+      const n = digTraceVertexCount(p);
+      if (n !== 2 * Math.ceil(12 * p)) expect(n, `p = ${p}`).toBe(2 * Math.ceil(12 * p));
+      if (n % 2 !== 0 || n < prev) expect.fail(`p = ${p}: ${n} after ${prev}`);
+      prev = n;
+    }
+    expect(digTraceVertexCount(0)).toBe(0);
+    expect(digTraceVertexCount(1e-9)).toBe(2); // the first stroke appears at once
+    expect(digTraceVertexCount(1 / 12)).toBe(2);
+    expect(digTraceVertexCount(1 / 12 + 1e-6)).toBe(4);
+    expect(digTraceVertexCount(0.5)).toBe(12);
+    expect(digTraceVertexCount(1 - 1e-9)).toBe(24);
+    expect(digTraceVertexCount(1)).toBe(24);
+  });
+
+  it('digTraceVertexCount clamps p and draws nothing for garbage', () => {
+    expect(digTraceVertexCount(1.5)).toBe(24);
+    expect(digTraceVertexCount(1e9)).toBe(24);
+    expect(digTraceVertexCount(-0.2)).toBe(0);
+    expect(digTraceVertexCount(-0)).toBe(0);
+    for (const bad of [NaN, Infinity, -Infinity, undefined, null, '0.5', {}, [0.5], true]) {
+      expect(digTraceVertexCount(/** @type {*} */ (bad)), String(bad)).toBe(0);
+    }
+  });
+
+  it('digTracePositions are the highlight prism\'s 6 vertical and 6 top edges, each exactly once', () => {
+    const verts = [];
+    const pos = digTracePositions();
+    expect(pos).toBeInstanceOf(Float32Array);
+    expect(pos.length).toBe(DIG_TRACE_SEGMENTS * 2 * 3);
+    for (let i = 0; i < pos.length; i += 3) verts.push([pos[i], pos[i + 1], pos[i + 2]]);
+    // The highlight's 18 edges, in the trace's frame (the trace sits at the cell's y, the highlight at y + 0.5).
+    const r = createRenderer(fakeCanvas(), new THREE.Texture(), { webglRenderer: stubWebGLRenderer() });
+    const hl = lineVertices(r.three.scene.getObjectByName('highlight').geometry, 0.5);
+    r.dispose();
+    const highlightEdges = new Set();
+    for (let i = 0; i < hl.length; i += 2) highlightEdges.add(segmentKey(hl[i], hl[i + 1]));
+    expect(highlightEdges.size).toBe(18);
+    const bottom = 0.5 - HIGHLIGHT_SIZE / 2;
+    const top = 0.5 + HIGHLIGHT_SIZE / 2;
+    const seen = new Set();
+    let vertical = 0;
+    let topEdges = 0;
+    for (let s = 0; s < DIG_TRACE_SEGMENTS; s++) {
+      const a = verts[2 * s];
+      const b = verts[2 * s + 1];
+      const key = segmentKey(a, b);
+      expect(highlightEdges.has(key), `segment ${s} is a highlight edge`).toBe(true);
+      expect(seen.has(key), `segment ${s} repeats`).toBe(false);
+      seen.add(key);
+      if (Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[2] - b[2]) < 1e-6) {
+        vertical++;
+        expect(s % 2).toBe(0); // vertical edges at even positions …
+        expect(a[1]).toBeCloseTo(bottom, 6); // … climbing from the bottom
+        expect(b[1]).toBeCloseTo(top, 6);
+      } else {
+        topEdges++;
+        expect(s % 2).toBe(1); // … each followed by the top edge to the next corner
+        expect(a[1]).toBeCloseTo(top, 6);
+        expect(b[1]).toBeCloseTo(top, 6);
+      }
+      // Every vertex is a corner of the highlight prism (HEX_SIZE·HIGHLIGHT_SIZE from the axis).
+      for (const v of [a, b]) expect(Math.hypot(v[0], v[2])).toBeCloseTo(HEX_SIZE * HIGHLIGHT_SIZE, 5);
+    }
+    expect([vertical, topEdges]).toEqual([6, 6]);
+  });
+
+  it('starts at the north corner and runs clockwise seen from above (north up, east right)', () => {
+    expect(DIG_TRACE_CORNER_ORDER).toEqual([5, 0, 1, 2, 3, 4]);
+    const pos = digTracePositions();
+    const corner = (s) => [pos[s * 6], pos[s * 6 + 2]]; // first vertex of segment s
+    // The north corner is the one at −Z.
+    const [nx, nz] = corner(0);
+    expect(nx).toBeCloseTo(0, 6);
+    expect(nz).toBeCloseTo(-HEX_SIZE * HIGHLIGHT_SIZE, 6);
+    // The vertical edges visit the corners in order of increasing angle from +X toward +Z, 60° apart: from north
+    // (−90°) to north-east (−30°), south-east, south, south-west, north-west — clockwise on a north-up map.
+    const wrap = (deg) => ((((deg + 180) % 360) + 360) % 360) - 180;
+    let prevAngle = null;
+    for (let i = 0; i < 6; i++) {
+      const [x, z] = corner(2 * i);
+      const angle = (Math.atan2(z, x) * 180) / Math.PI;
+      expect(wrap(angle - (60 * DIG_TRACE_CORNER_ORDER[i] - 30))).toBeCloseTo(0, 3);
+      if (prevAngle !== null) expect(wrap(angle - prevAngle)).toBeCloseTo(60, 3);
+      prevAngle = angle;
+    }
+    const [ex, ez] = corner(2);
+    expect(ex).toBeGreaterThan(0); // the second corner lies east …
+    expect(ez).toBeLessThan(0); // … and still north of the centre
+    // Each top edge runs from its own corner to the next corner of the walk (the last one closes the hexagon).
+    for (let i = 0; i < 6; i++) {
+      const s = 2 * i + 1;
+      const next = (2 * ((i + 1) % 6)) * 6;
+      expect(pos[s * 6 + 3]).toBeCloseTo(pos[next], 6);
+      expect(pos[s * 6 + 5]).toBeCloseTo(pos[next + 2], 6);
+    }
+  });
+});
+
+describe('dig trace: renderer.setDigProgress', () => {
+  function withTrace() {
+    const canvas = fakeCanvas();
+    const r = createRenderer(canvas, new THREE.Texture(), { webglRenderer: stubWebGLRenderer() });
+    const trace = r.three.scene.getObjectByName('digTrace');
+    return { r, trace, canvas };
+  }
+
+  it('is a honey LineSegments, hidden until digging, drawn after the black highlight', () => {
+    const { r, trace } = withTrace();
+    expect(trace).toBeDefined();
+    expect(trace.isLineSegments).toBe(true);
+    expect(trace.visible).toBe(false);
+    expect(trace.geometry.drawRange.count).toBe(0);
+    expect(trace.material.color.getHex()).toBe(DIG_TRACE_COLOR);
+    expect(DIG_TRACE_COLOR).toBe(0xe8b04a);
+    expect(trace.renderOrder).toBe(DIG_TRACE_RENDER_ORDER);
+    expect(DIG_TRACE_RENDER_ORDER).toBe(3);
+    const hl = r.three.scene.getObjectByName('highlight');
+    expect(trace.renderOrder).toBeGreaterThan(hl.renderOrder);
+    // Same render pass as the (transparent) highlight, or renderOrder would not order them.
+    expect(trace.material.transparent).toBe(hl.material.transparent);
+    expect(trace.geometry.getAttribute('position').count).toBe(2 * DIG_TRACE_SEGMENTS);
+    r.dispose();
+  });
+
+  it('sits at hexToWorld(q, r) and the cell\'s y, with the draw range following p', () => {
+    const { r, trace } = withTrace();
+    for (const [q, y, rr] of [[0, 0, 0], [3, 64, -2], [-11, 5, 7], [-200, 127, -300]]) {
+      const hit = { q, y, r: rr, face: FACE_TOP, nx: 0, ny: 1, nz: 0, distance: 2, blockId: 1 };
+      const [cx, cz] = hexToWorld(q, rr);
+      for (let i = 1; i <= 24; i++) {
+        const p = i / 24;
+        r.setDigProgress(hit, p);
+        expect(trace.visible).toBe(true);
+        expect(trace.geometry.drawRange.start).toBe(0);
+        expect(trace.geometry.drawRange.count).toBe(2 * Math.ceil(12 * p));
+        expect(trace.position.x).toBeCloseTo(cx, 10);
+        expect(trace.position.y).toBe(y);
+        expect(trace.position.z).toBeCloseTo(cz, 10);
+      }
+    }
+    r.setDigProgress({ q: 1, y: 2, r: 3 }, 7);
+    expect(trace.geometry.drawRange.count).toBe(24);
+    r.dispose();
+  });
+
+  it('a null hit, p ≤ 0 or a bad p hides it (and draws nothing)', () => {
+    const { r, trace } = withTrace();
+    const hit = { q: 2, y: 30, r: -1 };
+    for (const off of [() => r.setDigProgress(null, 0.5), () => r.setDigProgress(undefined, 1), () => r.setDigProgress(hit, 0),
+      () => r.setDigProgress(hit, -1), () => r.setDigProgress(hit, NaN), () => r.setDigProgress(hit, undefined)]) {
+      r.setDigProgress(hit, 0.6);
+      expect(trace.visible).toBe(true);
+      off();
+      expect(trace.visible).toBe(false);
+      expect(trace.geometry.drawRange.count).toBe(0);
+    }
+    r.dispose();
+  });
+
+  it('traced fully, it covers the same edges as the highlight on the same cell', () => {
+    const { r, trace } = withTrace();
+    const hit = { q: -4, y: 12, r: 9, face: FACE_TOP, nx: 0, ny: 1, nz: 0, distance: 1, blockId: 1 };
+    r.setHighlight(hit);
+    r.setDigProgress(hit, 1);
+    const hl = r.three.scene.getObjectByName('highlight');
+    const world = (obj) => lineVertices(obj.geometry).map(([x, y, z]) => [x + obj.position.x, y + obj.position.y, z + obj.position.z]);
+    const hw = world(hl);
+    const edges = new Set();
+    for (let i = 0; i < hw.length; i += 2) edges.add(segmentKey(hw[i], hw[i + 1]));
+    const tw = world(trace);
+    for (let i = 0; i < tw.length; i += 2) expect(edges.has(segmentKey(tw[i], tw[i + 1])), `trace segment ${i / 2}`).toBe(true);
+    r.dispose();
+  });
+
+  it('dispose() removes it and frees its geometry and material', () => {
+    const { r, trace } = withTrace();
+    const events = [];
+    trace.geometry.addEventListener('dispose', () => events.push('geometry'));
+    trace.material.addEventListener('dispose', () => events.push('material'));
+    r.setDigProgress({ q: 0, y: 0, r: 0 }, 0.5);
+    r.dispose();
+    expect(events.sort()).toEqual(['geometry', 'material']);
+    expect(r.three.scene.getObjectByName('digTrace')).toBeUndefined();
+  });
+
+  it('is rebuilt after a WebGL context restore, keeping what it showed', () => {
+    const { r, trace, canvas } = withTrace();
+    const hit = { q: 5, y: 40, r: -6 };
+    r.setDigProgress(hit, 0.4);
+    const before = trace.geometry;
+    const positions = Array.from(before.getAttribute('position').array);
+    let oldDisposed = 0;
+    before.addEventListener('dispose', () => oldDisposed++);
+    r.setChunkMesh('0,0', 0, 0, realLayer());
+    canvas.dispatch('webglcontextrestored');
+    expect(trace.geometry).not.toBe(before);
+    expect(oldDisposed).toBe(1);
+    expect(Array.from(trace.geometry.getAttribute('position').array)).toEqual(positions);
+    expect(trace.geometry.drawRange.count).toBe(digTraceVertexCount(0.4));
+    expect(trace.visible).toBe(true);
+    expect(r.getStats().chunkMeshes).toBe(0); // the chunk meshes are still dropped as before
+    // It keeps working afterwards.
+    r.setDigProgress(hit, 1);
+    expect(trace.geometry.drawRange.count).toBe(24);
+    r.setDigProgress(null, 0);
+    expect(trace.visible).toBe(false);
     r.dispose();
   });
 });
