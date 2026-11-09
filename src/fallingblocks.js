@@ -17,9 +17,36 @@ import {
 } from './config.js';
 import { BLOCK, UNLOADED, isFallThrough, isGravityBlock, isSolid } from './blocks.js';
 import { HEX_ROW_SPACING, worldToHex } from './hex.js';
-import { bodyHeight, bodyRadius, createBody, displaceBody, findFreeY, playerIntersectsBlock } from './physics.js';
+import { bodyHeight, bodyRadius, createBody, displaceBody, isFreeAt, playerIntersectsBlock } from './physics.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
+
+/**
+ * The lowest feet height floor(y)+1 … floor(y)+maxUp at which `b` is free of solid cells, reached by moving it STRAIGHT UP
+ * one cell at a time: every height on the way must be free too, so a body under a 1- or 2-thick roof is never lifted
+ * through it onto the top (findFreeY tests each height on its own). null when the first blocked height comes before a
+ * free one.
+ * @param {(q: number, y: number, r: number) => number} getBlock
+ * @param {PlayerState} b
+ * @param {number} maxUp
+ * @returns {number|null}
+ */
+export function liftFreeY(getBlock, b, maxUp) {
+  const radius = bodyRadius(b);
+  const height = bodyHeight(b);
+  const from = Math.floor(b.y) + 1;
+  for (let dy = 0; dy < maxUp; dy++) {
+    const cy = from + dy;
+    if (cy + height > WORLD_HEIGHT) return null;
+    if (isFreeAt(getBlock, b.x, cy, b.z, radius, height)) return cy;
+    // Not free at cy: a lift beyond it would pass through whatever blocks cy — unless only the block landing below
+    // the body's top keeps cy occupied, which a higher height leaves behind. Moving up, the body only ENTERS cells above
+    // its current top, so stop as soon as such a cell is solid.
+    const top = Math.ceil(cy + height) - 1;
+    if (!isFreeAt(getBlock, b.x, top, b.z, radius, 1)) return null;
+  }
+  return null;
+}
 /** @typedef {import('./blockphysics.js').BlockPhysics} BlockPhysics */
 /** @typedef {import('./blockphysics.js').RuleContext} RuleContext */
 /** @typedef {import('./blockphysics.js').SaveOverlay} SaveOverlay */
@@ -79,7 +106,7 @@ export class FallingBlocks {
     this._thudY = 0;
     this._thudZ = 0;
 
-    // Landing overlay for findFreeY: the world plus the block about to land.
+    // Landing overlay for liftFreeY: the world plus the block about to land.
     this._ovQ = 0;
     this._ovY = -1;
     this._ovR = 0;
@@ -585,8 +612,9 @@ export class FallingBlocks {
 
 
   /**
-   * Land block `id` into cell (q, cy, r). A body the block would trap is lifted with findFreeY (from floor(y)+1, up
-   * to LIFT_MAX_UP); when one has no room the block breaks into dust instead (never bury the player). A refused write
+   * Land block `id` into cell (q, cy, r). A body the block would trap is lifted with liftFreeY (from floor(y)+1, up to
+   * LIFT_MAX_UP, sweeping up one cell at a time so it never passes through a solid roof); when one has no room the block
+   * breaks into dust instead (never bury the player). A refused write
    * ('capped' / 'failed') also breaks it. The write is recorded into event `ev` while that is still undoable.
    * @returns {boolean} placed
    */
@@ -617,7 +645,7 @@ export class FallingBlocks {
         for (let i = 0; i < bodies.length; i++) {
           const b = bodies[i];
           if (!b || !playerIntersectsBlock(b, q, cy, r)) continue;
-          const fy = findFreeY(this._overlayGet, b.x, b.z, Math.floor(b.y) + 1, LIFT_MAX_UP, bodyRadius(b), bodyHeight(b));
+          const fy = liftFreeY(this._overlayGet, b, LIFT_MAX_UP);
           if (fy === null) {
             this._ovY = -1;
             this._dust(id, x, cy, z, 12);

@@ -1643,8 +1643,11 @@ overruns its budget by at most about one column. Falling into a campfire or any 
    (`c0 = floor(y0)`, when y0 is not an integer) is not fall-through, land at `c0 + 1`. Otherwise sweep `b = c0 − 1 … floor(y1)`
    (b ≥ 0) and land at `b + 1` on the first cell that is not fall-through. No landing and `y1 < 0` → removed. Else `y = y1`.
 3. **Landing** in cell C (`_placeLanded`): if C is not fall-through, move up (≤ 4 cells) to the first fall-through cell, else break.
-   For a solid id, every body in `hooks.bodies()` that `playerIntersectsBlock` C is lifted to `findFreeY(world + C, x, z, floor(y)+1,
-   3, its radius, its height)`; if any has no room the block BREAKS (dust, nothing placed). Then `ctx.write(C, id)` inside
+   For a solid id, every body in `hooks.bodies()` that `playerIntersectsBlock` C is lifted to `liftFreeY(world + C, body, 3)`: the
+   first feet height floor(y)+1, +2, +3 (its own radius and height) that is free, reached STRAIGHT UP — at each height that is not
+   free, the body's newly entered top layer (`ceil(h + height) − 1`) must be non-solid in every footprint column, else there is no
+   lift (so a body under a 1- or 2-thick roof is never carried through it; a block that landed in the body's own cells is not in
+   the way and the body pops on top of it, play-test SAND-1); if any body has no lift the block BREAKS (dust, nothing placed). Then `ctx.write(C, id)` inside
    `enterEvent(faller.event)`; `'capped'` / `'failed'` → break. Lifted bodies: `y = freeY`, `vy = max(vy, 0)`. Placed: dust (the first
    LANDING_DUST_PER_FRAME landings of a frame) and one 'thud' per frame at the landing nearest `hooks.player()`.
 4. `crumble(cells, { settle })`: AIR / UNLOADED cells skipped; sorted by (y, q, r); removed with `ctx.writeQuiet(AIR)` inside

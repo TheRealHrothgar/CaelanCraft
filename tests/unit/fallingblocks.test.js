@@ -7,7 +7,7 @@ import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { createPlayer, createBody } from '../../src/physics.js';
 import { World } from '../../src/world.js';
 import { BlockPhysics } from '../../src/blockphysics.js';
-import { GRAVITY_RULE_IDS } from '../../src/fallingblocks.js';
+import { GRAVITY_RULE_IDS, liftFreeY } from '../../src/fallingblocks.js';
 import { createWorldGen } from '../../src/worldgen.js';
 import { findStandingY } from '../../src/physics.js';
 import { makeFakeWorld, attachPhysics, flatWorldGen, trivialWorldGen } from '../helpers/fixtures.js';
@@ -213,6 +213,29 @@ describe('landing never buries a body', () => {
     expect(fx.sounds.some((s) => s.name === 'thud')).toBe(false);
   });
 
+  it('never lifts a body up through a solid roof: under a 1- or 2-thick roof the block breaks instead (play-test SAND-1)', () => {
+    for (const thick of [1, 2]) {
+      let p;
+      const { world, physics, fx } = setup({ hooks: { bodies: () => [p], player: () => p } });
+      p = standing(); // feet at y 11 in column (0, 0), overlapping (1, 0)
+      // A 2-high room: a stone roof over both columns from y 13, `thick` cells thick.
+      for (const [q, r] of [[0, 0], [1, 0]]) for (let y = 13; y < 13 + thick; y++) world.setBlock(q, y, r, B.STONE);
+      physics.fallers.spawn(B.SAND, 1, 12, 0); // into the neighbour column at the feet level
+      settle(physics);
+      expect(p.y, `thick ${thick}`).toBeCloseTo(GROUND + 1, 3); // was lifted to y 14 / 15, on top of the roof
+      expect(world.getBlock(1, 11, 0)).toBe(B.AIR);
+      expect(fx.particles.some((e) => e.kind === 'dust' && e.o.id === B.SAND)).toBe(true);
+    }
+  });
+  it('liftFreeY: the first free height going straight up, or null when a solid is in the way', () => {
+    const p = createPlayer(0, GROUND + 1, 0); // feet 11, height 1.8
+    const roofAt = (h) => (_q, y) => (y <= GROUND || y === h ? B.STONE : B.AIR);
+    expect(liftFreeY((_q, y) => (y <= GROUND ? B.STONE : B.AIR), p, 3)).toBe(12); // open sky
+    expect(liftFreeY(roofAt(14), p, 3)).toBe(12); // 12 … 13.8 clears a roof at 14
+    expect(liftFreeY(roofAt(13), p, 3)).toBeNull(); // the head would enter the roof: never lifted through to 14
+    // A block already inside the body (one that landed in its head cell) is not in the way: the body pops on top of it.
+    expect(liftFreeY(roofAt(12), p, 3)).toBe(13);
+  });
   it('pigs are lifted with their own size', () => {
     let pig;
     const { physics } = setup({ hooks: { bodies: () => [pig] } });
