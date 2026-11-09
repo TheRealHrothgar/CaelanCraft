@@ -924,3 +924,31 @@ describe('§14.2 the handbook stays with you (KEEP_ON_DEATH)', () => {
     expect(full.pack.version).toBeGreaterThan(v);
   });
 });
+
+describe('Pack.canExchange: room once the inputs are gone (§7.2 "Pack full")', () => {
+  it('a recipe that gives back the slot it takes fits a full pack (play-test: scrape_salt waited "Pack full" for ever)', () => {
+    const pack = new Pack();
+    for (let i = 0; i < PACK_SLOTS; i++) pack.setSlot(i, { k: i === 0 ? 'salt_pot' : 'hammerstone', n: 1 });
+    expect(pack.canGive([{ k: 'salt', n: 1 }, { k: 'clay_pot', n: 1 }])).toBe(false);
+    // once the salt pot is taken its slot is free; salt and the pot both need a slot, so only one of the two outputs fits …
+    expect(pack.canExchange([['salt_pot', 1]], [{ k: 'salt', n: 1 }, { k: 'clay_pot', n: 1 }])).toBe(false);
+    // … unless a stack can merge (salt onto salt)
+    pack.setSlot(1, { k: 'salt', n: 3 });
+    expect(pack.canExchange([['salt_pot', 1]], [{ k: 'salt', n: 1 }, { k: 'clay_pot', n: 1 }])).toBe(true);
+    expect(pack.count('salt_pot')).toBe(1); // nothing changed
+    expect(pack.count('salt')).toBe(3);
+  });
+
+  it('takes come off slot 26 back to 0 like take(), and a partial take leaves the rest of the stack', () => {
+    const pack = new Pack();
+    pack.setSlot(0, { k: 'rock', n: 5 });
+    pack.setSlot(26, { k: 'rock', n: 2 });
+    for (let i = 1; i < 26; i++) pack.setSlot(i, { k: 'hammerstone', n: 1 });
+    // taking 2 rock empties slot 26 only; a stick then fits there
+    expect(pack.canExchange([['rock', 2]], [{ k: 'stick', n: 1 }])).toBe(true);
+    // taking 1 rock leaves slot 26 with one rock: no free slot for the stick
+    expect(pack.canExchange([['rock', 1]], [{ k: 'stick', n: 1 }])).toBe(false);
+    expect(pack.canExchange(new Map([['rock', 7]]), [{ k: 'stick', n: 64 }, { k: 'flint', n: 1 }])).toBe(true);
+    expect(pack.canExchange([], [{ k: 'stick', n: 1 }])).toBe(false); // no takes: canGive
+  });
+});

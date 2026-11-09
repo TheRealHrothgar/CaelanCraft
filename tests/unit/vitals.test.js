@@ -434,15 +434,16 @@ describe('damage over time (§2.3, §2.4)', () => {
 });
 
 describe('damage formulas (§2.4)', () => {
-  it('fall: 0.1·(v² − 13.5²) above the safe speed, × the soft-landing factor', () => {
-    expect([FALL_SAFE_SPEED, FALL_DAMAGE_K]).toEqual([13.5, 0.1]);
-    expect(fallDamage(13.07)).toBe(0);
-    expect(fallDamage(13.5)).toBe(0);
+  it('fall: 0.1·(v² − 14²) above the safe speed, × the soft-landing factor', () => {
+    expect([FALL_SAFE_SPEED, FALL_DAMAGE_K]).toEqual([14, 0.1]);
+    expect(fallDamage(13.07)).toBe(0); // a 3-cell drop
+    expect(fallDamage(13.7)).toBe(0); // a jump off a 2-cell ledge (play-test: 13.5 made the most ordinary hop flash red)
+    expect(fallDamage(14)).toBe(0);
     // The §2.4 table (speeds are 28·n/60).
-    const table = [[32, 4.1], [36, 10.0], [39, 14.9], [45, 25.9], [51, 38.4], [56, 50.1], [62, 65.5], [72, 94.7], [73, 97.8],
-      [75, 104.3]];
+    const table = [[32, 2.7], [36, 8.6], [39, 13.5], [45, 24.5], [51, 37.0], [56, 48.7], [62, 64.1], [72, 93.3], [73, 96.5],
+      [75, 102.9]];
     for (const [n, hp] of table) expect(fallDamage((28 * n) / 60), `n ${n}`).toBeCloseTo(hp, 1);
-    expect(fallDamage(20, 0.4)).toBeCloseTo(0.4 * 0.1 * (400 - 182.25), 12);
+    expect(fallDamage(20, 0.4)).toBeCloseTo(0.4 * 0.1 * (400 - 196), 12);
     expect(fallDamage(20, 2)).toBeCloseTo(fallDamage(20), 12); // the factor is clamped to 0..1
     expect(fallDamage(20, NaN)).toBeCloseTo(fallDamage(20), 12);
     expect(fallDamage(NaN)).toBe(0);

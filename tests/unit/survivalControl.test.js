@@ -1,7 +1,9 @@
 // Unit tests for src/survivalControl.js — hold-to-dig and hold-to-use, the R priority, RMB use, striking mobs, where the
 // belongings go and the pack screen's view (docs/DESIGN-survival.md §9.4, §6.1, §4.2–§4.4, §5.3–§5.4, §2.5, §9.8).
 import { describe, it, expect } from 'vitest';
-import { DIG_TICK_S, USE_REPEAT_GAP_S, TAP_HOLD_S, RELIGHT_HOLD_S, FUEL_STICK_S, FUEL_LOG_S, WORLD_HEIGHT } from '../../src/config.js';
+import {
+  DIG_TICK_S, USE_REPEAT_GAP_S, TAP_HOLD_S, RELIGHT_HOLD_S, FUEL_STICK_S, FUEL_LOG_S, WORLD_HEIGHT, STATION_RANGE,
+} from '../../src/config.js';
 import { BLOCK } from '../../src/blocks.js';
 import { getItem } from '../../src/items.js';
 import { Pack } from '../../src/inventory.js';
@@ -9,7 +11,7 @@ import { breakSeconds } from '../../src/harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, strikeKind, useActionOf, placeRefusal, handKeyOf,
   stationIdOf, waterHint, HINT, KNIFE_TIER, DIG_BLOCKED_TICK_S, STATION_TABS, STATION_OF_BLOCK, BELONGINGS_SCAN_DOWN,
-  HANDBOOK_ITEM,
+  HANDBOOK_ITEM, relightMissing, wearsFromDigging, wearsFromStriking, KIT_TOOL_TYPES,
 } from '../../src/survivalControl.js';
 import { makeGetBlock } from '../helpers/fixtures.js';
 
@@ -372,11 +374,20 @@ describe('interactKind: the R priority (§9.4)', () => {
       expect(interactKind(ctx({ hit: hit(B.FIRE_PIT), pack: fakePack({ fire_drill: 1, plant_fibre: 1, stick: 9 }) })).kind).toBe('pit_relight');
     });
 
-    it('anything missing gives the hint', () => {
-      for (const kit of [{ birch_bark: 1, stick: 3 }, { fire_drill: 1, stick: 3 }, { fire_drill: 1, birch_bark: 1, stick: 2 }, {}]) {
-        expect(interactKind(ctx({ hit: hit(B.FIRE_PIT), pack: fakePack(kit) })))
-          .toEqual({ kind: 'pit_hint', q: 1, y: 60, r: 2, hint: 'Cold Fire Pit · hold R to relight (drill, tinder, 3 sticks)' });
+    it('anything missing gives the hint, naming what is missing (play-test: a fire died at night for want of one stick)', () => {
+      const cases = [
+        [{ birch_bark: 1, stick: 3 }, 'a fire drill'],
+        [{ fire_drill: 1, stick: 3 }, 'tinder'],
+        [{ fire_drill: 1, birch_bark: 1, stick: 2 }, '1 more stick'],
+        [{ fire_drill: 1, birch_bark: 1 }, '3 more sticks'],
+        [{}, 'a fire drill, tinder and 3 more sticks'],
+      ];
+      for (const [kit, missing] of cases) {
+        expect(interactKind(ctx({ hit: hit(B.FIRE_PIT), pack: fakePack(kit) })), JSON.stringify(kit))
+          .toEqual({ kind: 'pit_hint', q: 1, y: 60, r: 2, hint: `Cold Fire Pit · relight needs ${missing}` });
       }
+      expect(relightMissing(fakePack({ fire_drill: 1, birch_bark: 1, stick: 3 }))).toEqual([]);
+      expect(HINT.pit).toBe('Cold Fire Pit · hold R to relight (drill, tinder, 3 sticks)'); // the relight hint itself
     });
   });
 
@@ -423,6 +434,17 @@ describe('interactKind: the R priority (§9.4)', () => {
     expect(interactKind(ctx({ hit: hit(B.WORK_STUMP) })).station).toBe('stump');
     expect(interactKind(ctx({ hit: hit(B.BLOOMERY) })).station).toBe('bloomery');
     expect(interactKind(ctx({ hit: hit(B.FORGE) })).hint).toBe('Forge · R: open Making');
+  });
+
+  it('7. a workplace in the crosshair but beyond STATION_RANGE of the feet is `station_far`: R does nothing, the hint says to step closer', () => {
+    // play-test: R reaches 5 cells, Making counts a workplace as near within 3, so R on a far kiln opened a Making where
+    // every kiln card said "build a Kiln nearby"
+    const near = (s) => s === 'stump';
+    expect(interactKind(ctx({ hit: hit(B.KILN), stationNear: near })))
+      .toEqual({ kind: 'station_far', q: 1, y: 60, r: 2, station: 'kiln', hint: `Kiln · step within ${STATION_RANGE} cells to work here` });
+    expect(interactKind(ctx({ hit: hit(B.WORK_STUMP), stationNear: near })).kind).toBe('station');
+    expect(interactKind(ctx({ hit: hit(B.FORGE), stationNear: () => false })).hint).toBe('Forge · step within 3 cells to work here');
+    expect(interactKind(ctx({ hit: hit(B.KILN) })).kind).toBe('station'); // no stationNear given: every workplace counts as near
   });
 
   describe('8. water', () => {
@@ -542,9 +564,15 @@ describe('chooseBelongingsCell (§2.5)', () => {
     expect(chooseBelongingsCell(g, 0, 60, 0)).toEqual([0, 60, 1]); // SE
   });
 
-  it('boxed in completely: null (the items are lost)', () => {
+  it('boxed in completely (a burial): the feet cell itself, so the heap replaces the block that killed the player', () => {
+    // play-test: a `buried` death lost every belonging, because only AIR or a liquid could take the REMAINS
     const g = makeGetBlock({}, B.STONE);
-    expect(chooseBelongingsCell(g, 0, 60, 0)).toBe(null);
+    expect(chooseBelongingsCell(g, 0, 60, 0)).toEqual([0, 60, 0]);
+    // never bedrock: the first candidate that is not (the cell above the feet here)
+    const cells = new Map([['0,60,0', B.BEDROCK]]);
+    expect(chooseBelongingsCell(makeGetBlock(cells, B.STONE), 0, 60, 0)).toEqual([0, 61, 0]);
+    // all bedrock: lost
+    expect(chooseBelongingsCell(makeGetBlock({}, B.BEDROCK), 0, 60, 0)).toBe(null);
   });
 
   it('negative coordinates, the world top, the void and garbage', () => {
@@ -570,7 +598,8 @@ describe('buildPackView (§9.8)', () => {
   it('has the view shape, with copied stacks', () => {
     const pack = packWith({ 0: { k: 'rock', n: 3 } }, { 1: { k: 'grass_cape', n: 1 } });
     const view = buildPackView({ pack, selected: 4, cursor: null });
-    expect(Object.keys(view).sort()).toEqual(['container', 'cursor', 'hover', 'lanes', 'recipes', 'selected', 'slots', 'stations', 'tab', 'wear'].sort());
+    expect(Object.keys(view).sort()).toEqual(['container', 'cursor', 'hover', 'lanes', 'message', 'recipes', 'selected', 'slots', 'stations', 'tab', 'wear'].sort());
+    expect(view.message).toBe(null);
     expect(view.slots.length).toBe(27);
     expect(view.slots[0]).toEqual({ k: 'rock', n: 3 });
     expect(view.slots[0]).not.toBe(pack.slots[0]);
@@ -646,5 +675,36 @@ describe('buildPackView (§9.8)', () => {
       { station: 'kiln', label: 'Kiln', jobs: [{ name: 'Copper Ingot', progress: 0.25, waiting: 'Kiln too far' }, { name: 'charcoal', progress: 0.25, waiting: false }] },
       { station: 'forge', label: 'Forge', jobs: [{ name: 'Steel Bar', progress: 1, waiting: false }] },
     ]);
+  });
+});
+
+describe('wear on a dig or a blow (§6.1 step 6)', () => {
+  const tool = (k) => getItem(k).tool;
+  it('a dig wears only digging tools: axe, spade, pick, knife, hammer', () => {
+    for (const k of ['stone_chopper', 'flint_spade', 'flint_pick', 'flint_knife', 'hammerstone', 'steel_axe', 'iron_hammer']) {
+      expect(wearsFromDigging(tool(k)), k).toBe(true);
+    }
+    // play-test: a Crucible (20), Casting Mold (12) or Fire Drill (8) in the hand was used up by digging dirt
+    for (const k of ['crucible', 'casting_mold', 'fire_drill', 'flint_spear', 'bronze_sword']) expect(wearsFromDigging(tool(k)), k).toBe(false);
+    expect(wearsFromDigging(null)).toBe(false);
+    expect(wearsFromDigging(undefined)).toBe(false);
+  });
+
+  it('a blow that lands wears everything but the kiln kit', () => {
+    for (const k of ['stone_chopper', 'flint_spear', 'bronze_sword', 'flint_pick']) expect(wearsFromStriking(tool(k)), k).toBe(true);
+    for (const k of ['crucible', 'casting_mold', 'fire_drill']) expect(wearsFromStriking(tool(k)), k).toBe(false);
+    expect([...KIT_TOOL_TYPES].sort()).toEqual(['crucible', 'firestarter', 'mold']);
+    expect(wearsFromStriking(null)).toBe(false);
+  });
+});
+
+describe('buildPackView: the screen\'s own message line (§9.8)', () => {
+  it('carries the message given, with its error flag, else null', () => {
+    const pack = new Pack();
+    expect(buildPackView({ pack, selected: 0, message: { text: 'The handbook stays with you.', error: true } }).message)
+      .toEqual({ text: 'The handbook stays with you.', error: true });
+    expect(buildPackView({ pack, selected: 0, message: { text: 'Making 5 × Cord' } }).message).toEqual({ text: 'Making 5 × Cord', error: false });
+    expect(buildPackView({ pack, selected: 0, message: { text: '' } }).message).toBe(null);
+    expect(buildPackView({ pack, selected: 0, message: null }).message).toBe(null);
   });
 });

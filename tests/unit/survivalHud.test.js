@@ -8,7 +8,7 @@ import {
   createHUD, vitalsKey, breathEdges, BREATH_EDGES, airBodyTarget, tempTrend, tempGaugeLevel, chipKind, wearFraction, wearLevel,
   countText, jobChipText, hexCorners, TEMP_GAUGE_MIN, TEMP_GAUGE_MAX, PICKUP_FLY_MS, MAX_PICKUP_TOKENS,
 } from '../../src/hud.js';
-import { BREATH_MAX_S, HOTBAR_SIZE } from '../../src/config.js';
+import { BREATH_MAX_S, HOTBAR_SIZE, CHAT_LINE_MS, INTRO_LINE_MS } from '../../src/config.js';
 import { DEFAULT_HOTBAR } from '../../src/blocks.js';
 import { documentFromHTML } from '../helpers/fakeDom.js';
 
@@ -298,5 +298,31 @@ describe('survival HUD on the page', () => {
     const { hud, $ } = setup();
     hud.addPickup('rock', 1, null);
     expect($('pickup-layer').children.length).toBe(0);
+  });
+});
+
+describe('addChatLine with a lifetime (§1.2: the Survival intro lines)', () => {
+  it('an ordinary line fades after CHAT_LINE_MS; a line given a lifetime stays that long', () => {
+    vi.useFakeTimers();
+    const { hud, $ } = setup();
+    hud.addChatLine('plain');
+    hud.addChatLine('Your handbook is in the last hotbar slot.', false, INTRO_LINE_MS);
+    const lines = () => Array.from($('chat-log').children);
+    expect(lines().length).toBe(2);
+    vi.advanceTimersByTime(CHAT_LINE_MS + 1);
+    expect(lines()[0].classList.contains('fade')).toBe(true);
+    expect(lines()[1].classList.contains('fade')).toBe(false);
+    vi.advanceTimersByTime(INTRO_LINE_MS - CHAT_LINE_MS);
+    expect(lines().some((d) => d.textContent.startsWith('Your handbook') && d.classList.contains('fade'))).toBe(true);
+    expect(INTRO_LINE_MS).toBeGreaterThanOrEqual(3 * CHAT_LINE_MS);
+  });
+
+  it('a bad lifetime falls back to CHAT_LINE_MS', () => {
+    vi.useFakeTimers();
+    const { hud, $ } = setup();
+    hud.addChatLine('x', false, NaN);
+    hud.addChatLine('y', false, -5);
+    vi.advanceTimersByTime(CHAT_LINE_MS + 1);
+    expect(Array.from($('chat-log').children).every((d) => d.classList.contains('fade'))).toBe(true);
   });
 });

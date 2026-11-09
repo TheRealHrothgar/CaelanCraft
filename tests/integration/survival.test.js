@@ -17,7 +17,7 @@ import { DigState, interactKind, chooseBelongingsCell, handKeyOf } from '../../s
 import { CraftQueue, getRecipe } from '../../src/crafting.js';
 import { FireSlots } from '../../src/cooking.js';
 import { Survival } from '../../src/survival.js';
-import { deathScreenText } from '../../src/main.js';
+import { deathScreenText, spoiledText, stacksText } from '../../src/main.js';
 import { blockParticleColor } from '../../src/particles.js';
 
 const B = BLOCK;
@@ -320,5 +320,14 @@ describe('dig dust and pick motes take the block\'s colour (particles.blockParti
     // A block with an opaque top keeps its top colour (grass stays green-tinted, stone grey).
     const grass = blockParticleColor(B.GRASS_BLOCK);
     expect(grass[1]).toBeGreaterThan(grass[0]);
+  });
+});
+
+describe('chat lines about stacks (§4.5, §5.3)', () => {
+  it('one of a plural-named item reads as one: "1 Honeyberry went bad.", "2 Honeyberries and 1 Acorn went bad."', () => {
+    expect(spoiledText([{ k: 'honeyberries', n: 1 }])).toBe('1 Honeyberry went bad.');
+    expect(spoiledText([{ k: 'honeyberries', n: 2 }, { k: 'acorns', n: 1 }])).toBe('2 Honeyberries and 1 Acorn went bad.');
+    expect(spoiledText([{ k: 'raw_pork', n: 1 }])).toBe('1 Raw Pork went bad.');
+    expect(stacksText([{ k: 'rock', n: 2 }, { k: 'flint', n: 1 }])).toBe('2 Rock and 1 Flint');
   });
 });

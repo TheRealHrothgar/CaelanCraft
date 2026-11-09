@@ -1114,20 +1114,49 @@ function writeIndexEntry(storage, slot, entry) {
   writeText(storage, SLOT_INDEX_KEY, indexText(entries));
 }
 
-/** @returns {SlotIndexEntry} what the index says about a slot holding `text` (parses it) */
+/**
+ * A document is written as version 3 (SURVIVAL_SAVE_VERSION) exactly when it has `gen` ≥ 2 or a survival state.
+ * @param {*} data  SaveData, or what deserializeSave returned
+ */
+export function isVersionThree(data) {
+  return isPlainObject(data) && ((Number.isInteger(data.gen) && data.gen >= 2) || data.survival !== undefined);
+}
+
+/**
+ * The index entry WRITTEN for a slot: a version-3 document gets `{ damaged: true, bytes, hash }`, never the rich entry.
+ * §42 / DESIGN-survival §1.4 promise that an older client (v0.8 in another tab, or a rollback) shows such a slot as
+ * damaged and never overwrites it; v0.8 trusts any rich entry whose bytes and hash match, so a rich entry would list the
+ * Survival world as a normal world there and its `?autoplay` boot would save a fresh gen-1 world over it (play-test).
+ * v0.9's listSlots never trusts a damaged entry (it parses the slot again, §41.1), so this client still lists the world.
+ * @param {SlotIndexEntry} entry  the rich entry of the slot's document
+ * @param {boolean} versionThree
+ * @returns {SlotIndexEntry}
+ */
+function indexEntryOf(entry, versionThree) {
+  return versionThree ? { damaged: true, bytes: entry.bytes, hash: entry.hash } : entry;
+}
+
+/**
+ * @returns {{ info: SlotIndexEntry, index: SlotIndexEntry }} what a slot holding `text` is (parses it) — `info` for the
+ *   Worlds screen, `index` the entry to write (indexEntryOf)
+ */
 function entryFromText(text, fallback) {
   const bytes = text.length;
   const hash = textHash(text);
   const save = deserializeSave(text);
-  if (!save) return { damaged: true, bytes, hash };
+  if (!save) {
+    /** @type {SlotIndexEntry} */
+    const damaged = { damaged: true, bytes, hash };
+    return { info: damaged, index: damaged };
+  }
   const meta = /** @type {*} */ (save).meta || {};
   /** @type {SlotIndexEntry} */
   const entry = { name: meta.name || fallback, seed: save.seed, createdAt: meta.createdAt ?? 0, lastPlayed: meta.lastPlayed ?? 0, bytes, hash };
   if (isSurvivalSave(save)) entry.mode = 'survival';
-  return entry;
+  return { info: entry, index: indexEntryOf(entry, isVersionThree(save)) };
 }
 
-/** @returns {SlotIndexEntry} the entry for `text` = serializeSave(data), just written (no parse) */
+/** @returns {SlotIndexEntry} the entry to WRITE for `text` = serializeSave(data), just written (no parse; indexEntryOf) */
 function entryFromData(data, text, fallback) {
   const meta = normalizeWorldMeta(data.meta) || {};
   /** @type {SlotIndexEntry} */
@@ -1136,7 +1165,7 @@ function entryFromData(data, text, fallback) {
     bytes: text.length, hash: textHash(text),
   };
   if (isSurvivalSave(data)) entry.mode = 'survival';
-  return entry;
+  return indexEntryOf(entry, isVersionThree(data));
 }
 
 /** @returns {SlotInfo} */
@@ -1154,10 +1183,10 @@ function slotInfo(slot, entry, legacy) {
 
 /**
  * Every slot, in order, for the Worlds screen. Never throws. A cached index entry is used only when it matches its slot's
- * text (length and hash) and is not 'damaged' (a damaged slot is always parsed again: an older client sharing the index
- * calls a newer world damaged); otherwise the slot's document is parsed (unparsable → 'damaged') and, with `repair`, the
- * rebuilt index is written back (best effort; pass `repair: false` when nothing may be written, e.g. under ?nosave).
- * A Survival world's SlotInfo carries `mode: 'survival'`.
+ * text (length and hash) and is not 'damaged' (a damaged slot is always parsed again: a version-3 world is indexed as
+ * damaged for older clients' sake, indexEntryOf); otherwise the slot's document is parsed (unparsable → 'damaged') and,
+ * with `repair`, the rebuilt index is written back (best effort; pass `repair: false` when nothing may be written, e.g.
+ * under ?nosave). A Survival world's SlotInfo carries `mode: 'survival'`.
  * @param {StorageLike} [storage]
  * @param {{ repair?: boolean }} [opts]
  * @returns {SlotInfo[]}
@@ -1172,16 +1201,23 @@ export function listSlots(storage = defaultStorage(), opts = {}) {
   for (let n = 1; n <= SAVE_SLOTS; n++) {
     const { key, text } = readSlot(storage, n);
     let entry = null;
+    let index = null;
     if (text !== null) {
       const c = cached[n - 1];
-      // A cached 'damaged' entry is re-checked: an older client lists a newer (version 3) world as damaged in the shared
-      // index, and trusting that would leave a good world offered for deletion only. Damaged slots are rare, so it is cheap.
-      // CONTRACT-ISSUE: CONTRACTS §41.1 lets listSlots trust any entry whose bytes and hash match; v0.9's version 3 makes
-      // that unsafe for 'damaged' entries written by a v0.8 tab, so they are parsed again (§41.1 should say so).
+      // A cached 'damaged' entry is never trusted (§41.1 v0.9): a version-3 world is INDEXED as damaged on purpose (so an
+      // older client sharing the index never overwrites it), and a v0.8 tab writes the same for it; the slot is parsed
+      // again and listed as the world it is. Truly damaged slots are rare, so the parse is cheap.
       const usable = c && c.bytes === text.length && c.hash === textHash(text) && !('damaged' in c);
-      entry = usable ? c : entryFromText(text, fallbackName(n, key));
+      if (usable) {
+        entry = c;
+        index = c;
+      } else {
+        const e = entryFromText(text, fallbackName(n, key));
+        entry = e.info;
+        index = e.index;
+      }
     }
-    entries.push(entry);
+    entries.push(index);
     out.push(slotInfo(n, entry, key === LEGACY_SAVE_KEY));
   }
   if (repair) {

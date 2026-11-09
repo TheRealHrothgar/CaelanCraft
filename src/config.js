@@ -104,6 +104,7 @@ export const MAX_CONSOLE_LINES = 200;               // console scrollback
 export const CONSOLE_HISTORY = 50;                  // typed lines remembered for ↑/↓ (memory only)
 export const CHAT_LINES = 6;                        // HUD chat-log lines shown at once
 export const CHAT_LINE_MS = 6000;                   // a chat-log line fades after this long
+export const INTRO_LINE_MS = 20000;                 // the Survival intro lines (the only pointer to the Handbook) stay this long
 
 // Body-to-body physics (CONTRACTS §31)
 export const PLAYER_MASS = 1;
@@ -299,6 +300,7 @@ export const FUEL_LOG_S = 300;                      // … and per log (six rive
 export const RELIGHT_HOLD_S = 3;                    // hold R this long to relight a cold fire pit
 // Making (§7)
 export const STATION_RANGE = 3;                     // a workplace is near within this hex distance (|dy| ≤ 2): needed to queue a job
+export const PACK_MESSAGE_S = 3;                    // the pack screen's own feedback line (a refusal, a Make result) stays this long
 export const STATION_WORK_RANGE = 16;               // a lane's head job runs while its workplace is within this hex distance
 export const MAX_CRAFT_JOBS = 8;                    // jobs across all lanes
 // The body (§2–§3)
@@ -311,7 +313,7 @@ export const BODY_TEMP_MAX = 45;
 export const SICK_MAX_S = 600;                      // repeat cases of sickness add up to this
 export const HEAL_MAX = 50;                         // pending bandage healing
 // Damage (§2.4)
-export const FALL_SAFE_SPEED = 13.5;                // m/s: a 3-cell drop lands at 13.07 and is safe
+export const FALL_SAFE_SPEED = 14.0;                // m/s: a 3-cell drop (13.07) and a jump off a 2-cell ledge (13.70) are safe; 4 cells (14.93) hurts
 export const FALL_DAMAGE_K = 0.1;                   // HP = K·(v² − FALL_SAFE_SPEED²) × the soft-landing factor
 export const CRUSH_DAMAGE_PER_CELL = 6;             // per cell unstickPlayer lifts the player
 // Input timing (§4.2, §4.5, §6)

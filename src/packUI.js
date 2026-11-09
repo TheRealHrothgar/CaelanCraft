@@ -43,6 +43,8 @@ const HANDBOOK_ITEM = 'handbook';
  * @property {string} tab                    'all' or a station id
  * @property {RecipeView[]} recipes
  * @property {Array<{station: string, jobs: Array<{name: string, progress: number, waiting: boolean|string}>}>} lanes
+ * @property {{text: string, error?: boolean}|null} [message]  the screen's own feedback line (.pack-message under the
+ *   hotbar strip): the Handbook's refusal, a Make result — the HUD's target hint is not drawn while the pack is open
  */
 
 /**
@@ -422,6 +424,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     /** @type {{area: string, index: number}|null} the cell under the mouse */
     hover: null,
     infoSig: '\u0000',
+    messageSig: '\u0000',
     cursorSig: '\u0000',
     containerSize: -1,
     tabsSig: '',
@@ -646,6 +649,9 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     root.appendChild(cursor.el);
     parts.cursor = cursor.el;
     parts.cursorCell = /** @type {any} */ (cursor);
+    parts.message = /** @type {HTMLElement} */ (make('div', 'pack-message', ''));
+    parts.message.setAttribute('role', 'status');
+    left.appendChild(parts.message);
     parts.hint = /** @type {HTMLElement} */ (make('div', 'pack-hint',
       'Click: take / put · right-click: half / one · shift-click: move · E / Esc: close'));
     left.appendChild(parts.hint);
@@ -761,6 +767,18 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
       parts.info.textContent = stack ? stackTitle(stack) : '';
       parts.info.classList.toggle('empty', !stack);
     }
+  }
+
+  /** The screen's feedback line (a refusal, a Make result); empty when the view carries none. */
+  function renderMessage() {
+    const m = state.view && state.view.message;
+    const text = m && m.text ? String(m.text) : '';
+    const sig = `${text}|${m && m.error ? 1 : 0}`;
+    if (sig === state.messageSig) return;
+    state.messageSig = sig;
+    if (!parts.message) return;
+    parts.message.textContent = text;
+    parts.message.classList.toggle('error', !!(m && m.error && text));
   }
 
   function renderCursor() {
@@ -1005,6 +1023,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     renderRecipes();
     renderLanes();
     renderInfo();
+    renderMessage();
     renderCursor();
   }
 
@@ -1024,6 +1043,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     build();
     state.view = view || null;
     state.infoSig = '\u0000';
+    state.messageSig = '\u0000';
     render();
     state.open = true;
     root.classList.remove(HIDDEN);

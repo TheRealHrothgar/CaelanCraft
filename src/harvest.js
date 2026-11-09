@@ -211,7 +211,35 @@ export function breakSeconds(id, tool, underwater = false) {
 export function harvestHint(id) {
   const rule = ruleFor(id);
   if (!rule || rule.tier === 0) return null;
-  return `${getBlockDef(id).displayName} · needs a ${TIER_NAMES[rule.tier]} ${rule.tool} or better`;
+  return `${getBlockDef(id).displayName} · needs ${withArticle(`${TIER_NAMES[rule.tier]} ${rule.tool}`)} or better`;
+}
+
+/** "a bronze pick", "an iron hammer". @param {string} noun */
+export function withArticle(noun) {
+  return `${/^[aeiou]/i.test(noun) ? 'an' : 'a'} ${noun}`;
+}
+
+/** Tool types that wear on a block they break (§6.1 step 6); a spear or sword wears only on blows, the kiln kit never digs. */
+export const DIG_TOOL_TYPES = Object.freeze(new Set(['axe', 'spade', 'pick', 'knife', 'hammer']));
+
+/**
+ * The bare-hand gathering targets the Handbook names that R does NOT pick (§6.2: tussock, cattails, the tuber plant,
+ * gravel, clay): their crosshair hint tells a new player to hold the left mouse button, the way the neighbouring loose
+ * stones say `R: pick`. The verb is the Handbook's: plants are pulled, ground is dug.
+ * @type {Readonly<Record<number, string>>}
+ */
+export const HAND_GATHER = Object.freeze({
+  [B.TUSSOCK]: 'pull', [B.CATTAILS]: 'pull', [B.TUBER_PLANT]: 'pull', [B.GRAVEL]: 'dig', [B.CLAY]: 'dig',
+});
+
+/**
+ * The target hint for a bare-hand gathering target that is broken, not picked (§6.1): `Tussock Grass · hold LMB: pull`,
+ * `Gravel · hold LMB: dig`. Null for every other block (ordinary digging has no hint, as in Creative).
+ * @param {number} id @returns {string|null}
+ */
+export function handGatherHint(id) {
+  if (!Number.isInteger(id) || !Object.hasOwn(HAND_GATHER, id)) return null;
+  return `${getBlockDef(id).displayName} · hold LMB: ${HAND_GATHER[id]}`;
 }
 
 /** @param {string|null} cond @param {ToolDef|null} tool @param {DropContext} ctx */

@@ -138,19 +138,19 @@ describe('mode and setMode (§1.2)', () => {
 });
 
 describe('falls through the real physics (§2.4)', () => {
-  it('3 cells: no damage; 4 ≈ 4.1 HP; 10 ≈ 38.4 HP (±1)', () => {
+  it('3 cells: no damage; 4 ≈ 2.7 HP; 10 ≈ 37.0 HP (±1)', () => {
     expect(drop(3).fall).toBe(0);
-    expect(drop(4).fall).toBeCloseTo(4.1, 0);
-    expect(Math.abs(drop(4).fall - 4.1)).toBeLessThan(1);
-    expect(Math.abs(drop(10).fall - 38.4)).toBeLessThan(1);
-    expect(Math.abs(drop(15).fall - 65.5)).toBeLessThan(1);
+    expect(drop(4).fall).toBeCloseTo(2.7, 0);
+    expect(Math.abs(drop(4).fall - 2.7)).toBeLessThan(1);
+    expect(Math.abs(drop(10).fall - 37.0)).toBeLessThan(1);
+    expect(Math.abs(drop(15).fall - 64.1)).toBeLessThan(1);
   });
 
-  it('21 cells leaves about 2 HP from full health; 22 cells kills (cause fall)', () => {
+  it('21 cells leaves about 3.5 HP from full health; 22 cells kills (cause fall)', () => {
     const a = drop(21);
     expect(a.died).toBeNull();
     expect(a.s.vitals.health).toBeGreaterThan(0);
-    expect(Math.abs(a.s.vitals.health - 2.2)).toBeLessThan(1);
+    expect(Math.abs(a.s.vitals.health - 3.5)).toBeLessThan(1);
     const b = drop(22);
     expect(b.died).toBe('fall');
     expect(b.s.dead).toBe('fall');
@@ -189,14 +189,14 @@ describe('falls through the real physics (§2.4)', () => {
       fall += s.step(DT, env).fall;
     }
     expect(factor).toBe(0.4);
-    expect(fall).toBeCloseTo(0.4 * 38.4, 0);
+    expect(fall).toBeCloseTo(0.4 * 37.0, 0);
     // Hay alone (no snow under the feet): × 0.6.
     const hay = (q, y, r) => (y === GROUND && q === 0 && r === 0 ? BLOCK.HAY_BALE : flatGetBlock(GROUND)(q, y, r));
-    expect(drop(10, { getBlock: hay }).fall).toBeCloseTo(0.6 * 38.4, 0);
+    expect(drop(10, { getBlock: hay }).fall).toBeCloseTo(0.6 * 37.0, 0);
     const wool = (q, y, r) => (y === GROUND ? BLOCK.WOOL_BLUE : flatGetBlock(GROUND)(q, y, r));
-    expect(drop(10, { getBlock: wool }).fall).toBeCloseTo(0.7 * 38.4, 0);
+    expect(drop(10, { getBlock: wool }).fall).toBeCloseTo(0.7 * 37.0, 0);
     const hide = (q, y, r) => (y === GROUND ? BLOCK.SLEEPING_HIDE : flatGetBlock(GROUND)(q, y, r));
-    expect(drop(10, { getBlock: hide }).fall).toBeCloseTo(0.9 * 38.4, 0);
+    expect(drop(10, { getBlock: hide }).fall).toBeCloseTo(0.9 * 37.0, 0);
   });
 
   it('consume semantics: step reads landSpeed and zeroes it, so a value is applied once', () => {

@@ -3,11 +3,11 @@
 // belongings, and the pack screen's view. Pure: no DOM, clocks or randomness. See docs/DESIGN-survival.md §9.4, §6.1,
 // §4.2–§4.4, §5.3–§5.4 and §2.5 (CONTRACTS §44 once merged).
 import {
-  DIG_TICK_S, USE_REPEAT_GAP_S, TAP_HOLD_S, RELIGHT_HOLD_S, FUEL_STICK_S, FUEL_LOG_S, WORLD_HEIGHT,
+  DIG_TICK_S, USE_REPEAT_GAP_S, TAP_HOLD_S, RELIGHT_HOLD_S, FUEL_STICK_S, FUEL_LOG_S, WORLD_HEIGHT, STATION_RANGE,
 } from './config.js';
 import { BLOCK, getBlockDef, isPopOff, isReplaceable, isSolid, isWater } from './blocks.js';
 import { getItem, hasTag, itemName, maxDurability } from './items.js';
-import { isPickable, tap, toolPower } from './harvest.js';
+import { isPickable, tap, toolPower, DIG_TOOL_TYPES } from './harvest.js';
 import { HEX_DIRS } from './hex.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
@@ -24,6 +24,7 @@ export const HINT = Object.freeze({
   fullyFed: 'The fire is fully fed',
   noFuel: 'This fire needs no fuel',
   pit: 'Cold Fire Pit · hold R to relight (drill, tinder, 3 sticks)',
+  stationFar: `step within ${STATION_RANGE} cells to work here`,
   tap: 'Birch Log · R: tap sap (needs a knife and an empty pot)',
   tapped: 'Birch Log · tapped today',
   basket: 'Wicker Basket · R: open',
@@ -283,12 +284,14 @@ export function strikeKind(mob, tool) {
  *   'embers'), or null (main passes cooking.js's FIRE_TRANSFORMS lookup)
  * @property {(q: number, y: number, r: number) => boolean} [tappedToday]  harvest.Tapped for today's game day
  * @property {(q: number, r: number) => boolean} [salty]  water at that column is salt (climate.isSaltyBiome of its biome)
+ * @property {(station: string) => boolean} [stationNear]  the workplace of that station id is within STATION_RANGE of the
+ *   feet (main: `!!stations[id]` from crafting.findStations); absent → every targeted workplace counts as near
  */
 
 /**
  * @typedef {Object} InteractAction
  * @property {string} kind  fire_put | fire_feed | fire_take | fire_hint | pit_take | pit_relight | pit_hint | pick | tap |
- *   tap_hint | basket | belongings | hide | station | fill | drink | drink_here | read
+ *   tap_hint | basket | belongings | hide | station | station_far | fill | drink | drink_here | read
  * @property {number} [q] @property {number} [y] @property {number} [r]   the cell acted on (the water cell for fill/drink)
  * @property {string} [key]      fire_put / fire_feed: the selected item
  * @property {'skewer'|'centre'} [spot]  fire_put
@@ -311,12 +314,13 @@ function anyFree(spots, from, to) {
  * 1. CAMPFIRE → `fire_put` (a skewer food or a centre pot selected, and a free spot of that kind), `fire_feed` (a stick or a
  *    `#log` selected), `fire_take` (its spots hold anything), else `fire_hint`;
  * 2. FIRE_PIT → `pit_take` (its spots hold anything), else `pit_relight` (a fire drill, 1 `#tinder` and 3 sticks in the
- *    pack), else `pit_hint`;
+ *    pack), else `pit_hint` (its hint names what is missing: `Cold Fire Pit · relight needs a fire drill and 2 more sticks`);
  * 3. a ripe honeyberry bush or prickly pear, loose stones, fallen branches → `pick`;
  * 4. BIRCH_LOG → `tap` (an empty clay pot selected, a knife ≥ 2 in the pack, not tapped today), else `tap_hint`;
  * 5. WICKER_BASKET → `basket`; REMAINS → `belongings`;
  * 6. SLEEPING_HIDE → `hide`;
- * 7. a workplace → `station`;
+ * 7. a workplace → `station`, or `station_far` (hint `Kiln · step within 3 cells to work here`) when `stationNear` says
+ *    Making does not count it as near;
  * 8. `waterHit` is water nearer than `hit` (or there is no hit) → `fill` with an empty clay pot selected, else `drink`;
  * 9. the head is under water → `drink_here`;
  * 10. the handbook is selected → `read` (§14.2: before today's barrel and rune behaviour);
@@ -343,8 +347,9 @@ export function interactKind(c) {
       const holds = !!spots && spots.some((s) => !!s);
       if (id === BLOCK.FIRE_PIT) {
         if (holds) return { kind: 'pit_take', q, y, r };
-        const canRelight = c.pack.hasTool('firestarter', 0) && c.pack.countTag('tinder') >= 1 && c.pack.count('stick') >= 3;
-        return { kind: canRelight ? 'pit_relight' : 'pit_hint', q, y, r, ...(canRelight ? { needS: RELIGHT_HOLD_S } : {}), hint: HINT.pit };
+        const missing = relightMissing(c.pack);
+        if (missing.length === 0) return { kind: 'pit_relight', q, y, r, needS: RELIGHT_HOLD_S, hint: HINT.pit };
+        return { kind: 'pit_hint', q, y, r, hint: `Cold Fire Pit · relight needs ${listJoin(missing)}` };
       }
       if (sel) {
         const kind = c.fireSpotKind ? c.fireSpotKind(sel) : null;
@@ -366,7 +371,13 @@ export function interactKind(c) {
     if (id === BLOCK.REMAINS) return { kind: 'belongings', q, y, r, hint: HINT.belongings };
     if (id === BLOCK.SLEEPING_HIDE) return { kind: 'hide', q, y, r, hint: HINT.hide };
     const station = stationIdOf(id);
-    if (station) return { kind: 'station', q, y, r, station, hint: `${getBlockDef(id).displayName} · R: open Making` };
+    if (station) {
+      const name = getBlockDef(id).displayName;
+      // R reaches REACH cells but Making counts a workplace as near only within STATION_RANGE of the feet (§7.2): a
+      // workplace in the crosshair but too far to work at says so instead of opening a Making full of greyed cards.
+      if (c.stationNear && !c.stationNear(station)) return { kind: 'station_far', q, y, r, station, hint: `${name} · ${HINT.stationFar}` };
+      return { kind: 'station', q, y, r, station, hint: `${name} · R: open Making` };
+    }
   }
   if (waterFirst) {
     const fill = sel === 'clay_pot';
@@ -382,6 +393,50 @@ export function interactKind(c) {
   if (sel === HANDBOOK_ITEM) return { kind: 'read', hint: HINT.read };
   return null;
 }
+
+/**
+ * What a cold pit's relight still lacks (§4.4: a fire drill, 1 `#tinder`, 3 sticks), for the pit hint: `a fire drill`,
+ * `tinder`, `2 more sticks` — empty when it can be relit.
+ * @param {{count(k: string): number, countTag(t: string): number, hasTool(type: string, minTier: number): boolean}} pack
+ * @returns {string[]}
+ */
+export function relightMissing(pack) {
+  const out = [];
+  if (!pack.hasTool('firestarter', 0)) out.push('a fire drill');
+  if (pack.countTag('tinder') < 1) out.push('tinder');
+  const sticks = RELIGHT_STICKS - pack.count('stick');
+  if (sticks > 0) out.push(`${sticks} more stick${sticks === 1 ? '' : 's'}`);
+  return out;
+}
+/** Sticks a relight takes (§4.4). */
+export const RELIGHT_STICKS = 3;
+
+/** "a, b and c". @param {string[]} parts */
+function listJoin(parts) {
+  if (parts.length <= 1) return parts.join('');
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Wear from digging (§6.1 step 6): a block broken wears the selected tool only when it is a digging tool — an axe,
+ * spade, pick, knife or hammer. A spear or sword wears on the blows it lands (`wearsFromStriking`), never on a dig; the
+ * kiln kit (fire drill, crucible, casting mold) wears only in the jobs that need it (play-test: a fresh mold in the hand
+ * was destroyed by digging eight blocks of clay).
+ * @param {ToolDef|null|undefined} tool  the selected stack's ToolDef
+ */
+export function wearsFromDigging(tool) {
+  return !!tool && DIG_TOOL_TYPES.has(tool.type);
+}
+
+/**
+ * Wear from a blow that lands on a mob (§4.3, §6.1): every tool but the kiln kit, which cuts nothing.
+ * @param {ToolDef|null|undefined} tool
+ */
+export function wearsFromStriking(tool) {
+  return !!tool && !KIT_TOOL_TYPES.has(tool.type);
+}
+/** Tool types of the tier-0 kit that wears out but cuts nothing (items.js). */
+export const KIT_TOOL_TYPES = Object.freeze(new Set(['firestarter', 'crucible', 'mold']));
 
 /**
  * The water target hint (§4.1): `Fresh water · R: drink`, `Sea water (salty) · R: drink`, or `… · R: fill the pot` with an
@@ -403,10 +458,13 @@ export const BELONGINGS_TRY_UP = 3;
 /**
  * Where a death leaves "Your Belongings" (§2.5). From the feet cell, first scan down to the first cell standing on a solid
  * one (at most 8 cells; none → the feet cell), so a death in mid-air leaves them on the ground. Try that cell, then up to 3
- * cells above it, then its 6 side neighbours; the first that `isReplaceable` (AIR or a liquid) is the place.
+ * cells above it, then its 6 side neighbours; the first that `isReplaceable` (AIR or a liquid) is the place. When none is
+ * (a death buried in solid ground: a cave-in, a block written onto the player), the same candidates are tried again for
+ * the first solid cell that is not BEDROCK — the heap replaces the block that killed the player and is dug out like any
+ * other, so a burial never costs the pack (§2.5).
  * @param {(q: number, y: number, r: number) => number} getBlock
  * @param {number} q @param {number} y @param {number} r the feet cell
- * @returns {[number, number, number]|null} null when every candidate is taken (the items are lost)
+ * @returns {[number, number, number]|null} null when every candidate is bedrock or unloaded (the items are lost)
  */
 export function chooseBelongingsCell(getBlock, q, y, r) {
   if (!Number.isFinite(q + y + r) || y < 0) return null;
@@ -428,6 +486,12 @@ export function chooseBelongingsCell(getBlock, q, y, r) {
     const cy = cell[1];
     if (cy < 0 || cy >= WORLD_HEIGHT) continue;
     if (isReplaceable(getBlock(cell[0], cy, cell[2]))) return cell;
+  }
+  for (const cell of tries) {
+    const cy = cell[1];
+    if (cy < 0 || cy >= WORLD_HEIGHT) continue;
+    const id = getBlock(cell[0], cy, cell[2]);
+    if (isSolid(id) && id !== BLOCK.BEDROCK) return cell;
   }
   return null;
 }
@@ -457,6 +521,8 @@ export function chooseBelongingsCell(getBlock, q, y, r) {
  * @property {string} [tab]     'all' or a station id
  * @property {ReadonlyArray<{station: string}>} [recipes]  crafting.listRecipes (RecipeView[]), already sorted
  * @property {ReadonlyArray<{station: string, jobs: ReadonlyArray<any>}>} [lanes]  craftQueue.lanes()
+ * @property {{text: string, error?: boolean}|null} [message]  a line for the screen itself (§14.4 "The handbook stays with
+ *   you.", a Make result): the HUD's target hint is not drawn under the pack screen
  */
 
 /**
@@ -471,6 +537,7 @@ export function chooseBelongingsCell(getBlock, q, y, r) {
  * @property {string} tab
  * @property {any[]} recipes   the RecipeViews of the tab
  * @property {{station: string, label: string, jobs: {name: string, progress: number, waiting: any}[]}[]} lanes  busy lanes only
+ * @property {{text: string, error: boolean}|null} message  the screen's own feedback line (refusals, Make results)
  */
 
 /** @param {ItemStack|null|undefined} s @returns {ItemStack|null} */
@@ -501,7 +568,8 @@ const TAB_LABEL = Object.fromEntries(STATION_TABS.map((t) => [t.id, t.label]));
  * - `stations`: the five Making tabs after `All` (`Hands` is always near);
  * - `tab`: an unknown tab becomes 'all'; `recipes`: the given RecipeViews of that tab, in the given order;
  * - `hover`: the hovered slot's item, else the cursor's, else null;
- * - `lanes`: one row per busy station.
+ * - `lanes`: one row per busy station;
+ * - `message`: the screen's feedback line, or null.
  * @param {PackViewInput} input
  * @returns {PackView}
  */
@@ -545,6 +613,7 @@ export function buildPackView(input) {
     container,
     stations,
     tab,
+    message: input.message && input.message.text ? { text: String(input.message.text), error: !!input.message.error } : null,
     recipes: [...recipes],
     lanes,
   };

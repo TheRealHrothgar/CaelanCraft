@@ -308,6 +308,31 @@ export class Pack {
     return true;
   }
 
+  /**
+   * PackOps: would every one of `gives` fit once `takes` are removed? The copy loses the takes in the order `take` would
+   * (slot 26 → 0, worn items untouched), then the gives are fitted as `add` would. Nothing changes.
+   * @param {Iterable<[string, number]>} takes  [key, n] pairs (a crafting allocation's `takes`)
+   * @param {Iterable<{k: string, n: number, d?: number}>} gives
+   */
+  canExchange(takes, gives) {
+    const slots = this.slots.slice();
+    for (const [key, n] of takes) {
+      let left = Math.floor(n);
+      for (let i = slots.length - 1; i >= 0 && left > 0; i--) {
+        const s = slots[i];
+        if (!s || s.k !== key) continue;
+        const put = Math.min(s.n, left);
+        left -= put;
+        slots[i] = put === s.n ? null : { ...s, n: s.n - put };
+      }
+    }
+    for (const s of gives) {
+      if (!s || !(s.n > 0)) continue;
+      if (fitStack(slots, s, ADD_ORDER) > 0) return false;
+    }
+    return true;
+  }
+
   /** PackOps: how many of `key` the pack slots hold (worn items do not count). @param {string} key */
   count(key) {
     let n = 0;

@@ -434,6 +434,24 @@ describe('the pack screen on a page', () => {
     expect(ui.isOpen()).toBe(false);
   });
 
+  it('shows the view\'s message line on the screen itself (play-test: the Handbook\'s refusal was never seen)', () => {
+    const { ui, root } = setup();
+    const view = demoPackView();
+    ui.open({ ...view, message: null });
+    const line = root.querySelector('.pack-message');
+    expect(line).toBeTruthy();
+    expect(line.textContent).toBe('');
+    ui.refresh({ ...view, message: { text: 'The handbook stays with you.', error: true } });
+    expect(line.textContent).toBe('The handbook stays with you.');
+    expect(line.classList.contains('error')).toBe(true);
+    ui.refresh({ ...view, message: { text: 'Making 5 × Cord', error: false } });
+    expect(line.textContent).toBe('Making 5 × Cord');
+    expect(line.classList.contains('error')).toBe(false);
+    ui.refresh({ ...view, message: null });
+    expect(line.textContent).toBe('');
+    expect(line.getAttribute('role')).toBe('status');
+  });
+
   it('works without #pack-screen in the page (creates it)', () => {
     const doc = documentFromHTML('<div id="hud"></div>');
     const icons = { draw: vi.fn(), canvas: vi.fn(() => doc.createElement('canvas')) };

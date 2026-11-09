@@ -27,7 +27,7 @@ import {
 import { BLOCK, BIOME, getBlockDef } from './blocks.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, getItem, itemName } from './items.js';
 import { RECIPES, STATION_IDS, STATION_NAMES, STATION_BLOCKS, getRecipe, inputLabel } from './crafting.js';
-import { BLOCK_RULES, PICKABLE, MOB_DROPS, breakSeconds, ruleFor, UNDERWATER_DIG_FACTOR } from './harvest.js';
+import { BLOCK_RULES, PICKABLE, HAND_GATHER, MOB_DROPS, breakSeconds, ruleFor, UNDERWATER_DIG_FACTOR } from './harvest.js';
 import {
   HEAT_SOURCES, DIURNAL_AMPLITUDE, ALTITUDE_LAPSE, ALTITUDE_REF_Y, SUN_HEAT, SHELTER_HEAT, SHELTER_BELOW, ACTIVITY_HEAT,
   GROUND_CHILL, WET_CHILL, WET_INSULATION_LOSS, WET_DRY_S, INSULATION_HOT_FROM, COMFORT_LOW, COMFORT_HIGH,
@@ -47,7 +47,7 @@ export const TABLE_ROWS_PER_PAGE = 10;
 
 /**
  * @typedef {{ kind: 'h'|'p'|'tip'|'warn', text: string }} TextBlock
- * @typedef {{ kind: 'list', items: string[], ordered: boolean }} ListBlock
+ * @typedef {{ kind: 'list', items: string[], ordered: boolean, start?: number }} ListBlock  `start`: a numbered list cut over two pages carries on
  * @typedef {{ kind: 'table', id: string, caption: string, head: string[], rows: string[][], keys: (string|number)[],
  *   source: string|null, part: number, parts: number }} TableBlock
  * @typedef {{ kind: 'figure', figure: 'fire-spots'|'ages'|'bands', caption: string, data: any }} FigureBlock
@@ -415,7 +415,8 @@ function gatherTable() {
   const rows = GATHER.map((id) => {
     const rule = /** @type {import('./harvest.js').BlockRule} */ (ruleFor(id));
     const picked = Object.hasOwn(PICKABLE, id);
-    const how = picked ? 'R, or break it' : `break it${rule.tool ? ` (${/^[aeiou]/.test(rule.tool) ? 'an' : 'a'} ${rule.tool} is faster)` : ''}`;
+    const verb = Object.hasOwn(HAND_GATHER, id) ? HAND_GATHER[id] : 'break';
+    const how = picked ? 'R, or hold LMB' : `hold LMB to ${verb} it${rule.tool ? ` (${/^[aeiou]/.test(rule.tool) ? 'an' : 'a'} ${rule.tool} is faster)` : ''}`;
     return [getBlockDef(id).displayName, how, describeDrops(picked ? PICKABLE[id].drops : rule.drops)];
   });
   return table({ id: 'gather', caption: 'Gathering with bare hands', head: ['Find', 'Take it', 'You get'], rows, keys: GATHER,
@@ -701,7 +702,7 @@ const DANGER_AVOID = Object.freeze({
   fall: 'Climb down; land on snow, leaves, hay or wool; drop into deep water',
   drown: 'Surface before the Health cell\'s border goes dark',
   buried: 'Never dig straight up under sand or gravel',
-  crush: 'Shore up overhangs; step back when you undermine sand',
+  crush: 'Step back when you undermine sand or gravel: what falls into your cell lifts you and hurts',
   fire: 'Walk around the flames, not through them',
   zombie: 'Stay by a burning fire at night; fight back with a tool',
   blast: 'Keep well away from a lit barrel',
@@ -880,8 +881,8 @@ function makeChapters() {
     [
       h('Before dusk, step by step'),
       steps([
-        'Pull *tussock grass* with your bare hands for Plant Fibre: eight tussocks give about a dozen.',
-        'Look at the ground as you walk. *Loose Stones* give Rock, and about half the time a Flint; *Fallen Branches* give Sticks. Press [R] on them. Gravel dug by hand gives Rock too.',
+        'Pull *tussock grass* with your bare hands for Plant Fibre: hold the left mouse button on it until it breaks. Eight tussocks give about a dozen.',
+        'Look at the ground as you walk. *Loose Stones* give Rock, and about half the time a Flint; *Fallen Branches* give Sticks. Press [R] on them. Gravel dug by hand (hold the left mouse button) gives Rock too.',
         'Press [E] and make a *Hammerstone*, then a *Stone Chopper* and some *Cord*. Hand jobs carry on while you walk.',
         'With the chopper in hand, lop leaves for Sticks and fell a tree: logs need an axe.',
         'Knap your flint with the hammerstone: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
@@ -1091,8 +1092,8 @@ function makeChapters() {
     ],
     [
       h('Wear'),
-      p('A tool loses one use for every block it breaks (whatever the block), every blow it lands and every job that needs it. The hex outline round its slot drains as it wears; at nothing, it breaks.'),
-      p('So choose the right tool: a pick wears just as fast on dirt.'),
+      p('A digging tool (an axe, spade, pick, knife or hammer) loses one use for every block it breaks, whatever the block, and every blow it lands; a spear or sword wears only on its blows. The hex outline round its slot drains as it wears; at nothing, it breaks.'),
+      p('So choose the right tool: a pick wears just as fast on dirt. The kiln kit (fire drill, crucible, casting mold) wears only in the jobs that need it, never by digging with it in hand.'),
       p('When a job needs a tool, the most worn one of the lowest good-enough age is used, so your best tools last.'),
       p(`Breaking a block with your head under water takes ${fmtNum(UNDERWATER_DIG_FACTOR)} times as long.`),
     ],

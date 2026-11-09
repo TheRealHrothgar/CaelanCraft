@@ -27,7 +27,7 @@ import {
   PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S,
   ZOMBIE_HEIGHT, GEN_LATEST, PIG_MAX, CAMPFIRE_FUEL_START_S, CAMPFIRE_FUEL_MAX_S, ATTACK_REPEAT_S, GULP_GAP_S,
   PIG_REPOP_CHECK_S, PIG_REPOP_TARGET, PIG_REPOP_RADIUS, PIG_REPOP_MIN, PIG_REPOP_MAX, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE,
-  FALL_SAFE_SPEED,
+  FALL_SAFE_SPEED, INTRO_LINE_MS, PACK_MESSAGE_S,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
@@ -63,10 +63,12 @@ import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky } from
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST } from './survival.js';
 import { Pack, slotClick, returnCursor } from './inventory.js';
 import { Containers } from './containers.js';
-import { breakSeconds, rollDrops, harvestHint, canHarvest, pick, Tapped, Regrowth, rollMobDrops, ripeOf } from './harvest.js';
+import {
+  breakSeconds, rollDrops, harvestHint, handGatherHint, canHarvest, pick, Tapped, Regrowth, rollMobDrops, ripeOf,
+} from './harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
-  HINT, KNIFE_TIER,
+  wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER,
 } from './survivalControl.js';
 import { CraftQueue, findStations, listRecipes } from './crafting.js';
 import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
@@ -315,7 +317,7 @@ export function cellsLifted(fromY, toY) {
 
 /** "2 Rock and 1 Flint" for stacks. @param {ReadonlyArray<{k: string, n: number}>} stacks */
 export function stacksText(stacks) {
-  const parts = stacks.map((s) => `${s.n} ${itemName(s.k)}`);
+  const parts = stacks.map((s) => `${s.n} ${itemName(s.k, s.n)}`);
   if (parts.length <= 1) return parts.join('');
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
@@ -325,7 +327,7 @@ export function leftBehindText(stacks) {
   return `Pack full: ${stacksText(stacks)} left behind`;
 }
 
-/** "1 Raw Pork went bad." (§4.5). */
+/** "1 Raw Pork went bad.", "1 Honeyberry went bad." (§4.5; items.SINGULAR_NAMES). */
 export function spoiledText(stacks) {
   return `${stacksText(stacks)} went bad.`;
 }
@@ -891,6 +893,11 @@ export function boot(win, doc) {
       body.vz += vz;
       body.onGround = false;
     },
+    lifted: (body, cells) => {
+      // Survival (§2.4 crush): a landing block lifted the body inside blockPhysics.step, so unstickPlayer would never
+      // see it; record the player's lift and hurt after the step (never a death from inside a hook).
+      if (body === player) pendingCrush += cells;
+    },
   };
   /** @type {RuneRunner|null} */
   let runner = null;
@@ -938,6 +945,8 @@ export function boot(win, doc) {
   let pendingDeath = null;
   /** the hardest knock on the player during this frame's physics step, |Δv| (§2.4) */
   let pendingKnock = 0;
+  /** whole cells landing blocks lifted the player during this frame's physics step (§2.4 crush) */
+  let pendingCrush = 0;
   /** @type {{ mode: 'creative'|'survival' }|null} a queued switch (§1.1) */
   let pendingModeSwitch = null;
   /** @type {RaycastHit|null} the second ray that stops at water (§4.2), Survival with a dry eye only */
@@ -970,6 +979,10 @@ export function boot(win, doc) {
   /** @type {string|null} a short-lived target hint ("needs solid ground", "Pack full", …) and when it ends (fxTime) */
   let flashHint = null;
   let flashHintUntil = 0;
+  /** @type {{text: string, error: boolean}|null} the pack screen's own feedback line (packSay) and when it ends (fxTime) */
+  let packMessage = null;
+  let packMessageUntil = 0;
+  let packMessageSeq = 0;
   /** the loading world began a survival state (its intro lines are said once it is playable) */
   let survivalBegun = false;
   /** the loading world was just upgraded to generation 2 (UPGRADED_NOTE once playable) */
@@ -1008,6 +1021,7 @@ export function boot(win, doc) {
     fireSpotKind: fireSpotKindFn,
     tappedToday: (q, y, r) => !tapped.canTap(`${q},${y},${r}`, day),
     salty: (q, r) => isSaltyBiome(world.getBiome(q, r)),
+    stationNear: (station) => !!stations[station], // findStations within STATION_RANGE of the feet (§7.2)
   };
   /** the reused SurvivalEnv (§9.4) */
   const survivalEnv = {
@@ -1102,9 +1116,9 @@ export function boot(win, doc) {
   }
 
   /** Console + HUD chat log line (command results, script errors, `say`). */
-  function logLine(text, isError = false) {
+  function logLine(text, isError = false, ms = undefined) {
     consoleUI.log(text, isError);
-    hud.addChatLine(text, isError);
+    hud.addChatLine(text, isError, ms);
   }
 
   /** World.onBlockChange: keep the rune store, black holes, campfires and block physics in step with the world. */
@@ -1494,9 +1508,16 @@ export function boot(win, doc) {
   }
 
   /** The selected tool takes 1 wear (a block broken, a mob hit, §5.3); nothing for a bare hand or a non-tool item. */
-  function wearSelectedTool() {
+  /**
+   * 1 wear on the selected tool (§6.1 step 6): on a dig only a digging tool wears (axe, spade, pick, knife, hammer), on a
+   * blow everything but the kiln kit — a spear digs nothing and a crucible in the hand must not be used up by digging clay.
+   * @param {'dig'|'strike'} how
+   */
+  function wearSelectedTool(how) {
     const s = pack.slots[selected];
     if (!s || maxDurability(s.k) === 0) return;
+    const tool = pack.toolAt(selected);
+    if (how === 'dig' ? !wearsFromDigging(tool) : !wearsFromStriking(tool)) return;
     const res = pack.damage(selected, 1);
     if (res && res.broke) toolBroke(res.key);
   }
@@ -1506,8 +1527,11 @@ export function boot(win, doc) {
   /** Instant damage (§9.5 hurt): only while Survival is active; a lethal one only sets pendingDeath (never die() here). */
   function hurt(amount, cause) {
     if (!survival.active || !(amount > 0)) return;
-    if (survival.damage(amount, cause)) pendingDeath ??= cause;
-    else hurtFeedback(amount);
+    if (survival.damage(amount, cause)) {
+      pendingDeath ??= cause; // die() closes the book itself without resuming play (no pointer lock under the death screen)
+      return;
+    }
+    hurtFeedback(amount);
     closeRusticBook(); // §14.1: taking damage closes the field book
   }
 
@@ -1713,7 +1737,8 @@ export function boot(win, doc) {
   function sayBeginLines(handbookGiven) {
     const [q, r] = worldToHex(player.x, player.z);
     const [gx, , gz] = world.findSurvivalSpawn();
-    for (const line of survivalIntroLines(world.getBiome(q, r), worldToHex(gx, gz), handbookGiven)) logLine(line);
+    // The intro is the only pointer to the Handbook, so it outlives an ordinary chat line (INTRO_LINE_MS, §1.2).
+    for (const line of survivalIntroLines(world.getBiome(q, r), worldToHex(gx, gz), handbookGiven)) logLine(line, false, INTRO_LINE_MS);
   }
 
   // ---- Survival: the target hint (§9.5 targetHintText) -----------------------------------------------
@@ -1762,6 +1787,9 @@ export function boot(win, doc) {
         const need = harvestHint(h.blockId);
         if (need) return need;
       }
+      // §6.2: the Handbook's bare-hand targets that R does not pick say how they are taken (`Tussock Grass · hold LMB: pull`)
+      const gather = handGatherHint(h.blockId);
+      if (gather) return gather;
     }
     return barrelOrRuneHint();
   }
@@ -1912,6 +1940,8 @@ export function boot(win, doc) {
       case 'station':
         openPack({ tab: act.station });
         return;
+      case 'station_far':
+        return; // the target hint says to step closer (§7.2): Making would only grey every card of that workplace
       case 'fill': {
         if (selectedKey() !== 'clay_pot') return;
         const salty = act.salty ?? isSaltyBiome(world.getBiome(q, r));
@@ -2073,7 +2103,7 @@ export function boot(win, doc) {
     if (!ok) return;
     audio.playBreak(getBlockDef(id).soundGroup);
     giveStacks(drops, screenPointOfCell(h.q, h.y, h.r));
-    wearSelectedTool();
+    wearSelectedTool('dig');
     updateHit();
   }
 
@@ -2089,7 +2119,7 @@ export function boot(win, doc) {
       } else if (res === 'hit') {
         audio.playZombieHurt(1);
       }
-      if (res) wearSelectedTool();
+      if (res) wearSelectedTool('strike');
       updateHit();
       return;
     }
@@ -2105,7 +2135,7 @@ export function boot(win, doc) {
       } else if (res === 'hit') {
         audio.playSqueal(1);
       }
-      if (res) wearSelectedTool();
+      if (res) wearSelectedTool('strike');
     } else if (pigs.hit(pig, player.x, player.z)) {
       audio.playSqueal();
     }
@@ -2393,6 +2423,7 @@ export function boot(win, doc) {
     packSession.cursor = null;
     packSession.container = null;
     packContainer = null;
+    packMessage = null;
     if (opts.container) {
       const [q, y, r] = opts.container;
       const entry = containers.get(q, y, r);
@@ -2431,16 +2462,21 @@ export function boot(win, doc) {
       tab: packTab,
       recipes: listRecipes(pack, stations, { queue: craftQueue }),
       lanes: craftQueue.lanes(),
+      message: packMessage,
     });
   }
 
   function packKey() {
-    return `${pack.version}|${craftQueue.version}|${containers.version}|${stationsVersion}|${packTab}`;
+    return `${pack.version}|${craftQueue.version}|${containers.version}|${stationsVersion}|${packTab}|${packMessageSeq}`;
   }
 
   /** Redraw the pack screen when anything it shows changed (or `force`); drops a basket that is no longer there. */
   function refreshPackScreen(force = false) {
     if (state !== STATE.PACK) return;
+    if (packMessage && fxTime >= packMessageUntil) {
+      packMessage = null;
+      packMessageSeq++;
+    }
     if (packContainer && containers.get(packContainer.q, packContainer.y, packContainer.r) !== packContainer.entry) {
       packSession.container = null;
       packContainer = null;
@@ -2456,15 +2492,26 @@ export function boot(win, doc) {
     if (state !== STATE.PACK) return;
     const res = /** @type {*} */ (slotClick(packSession, area, index, button, shift));
     if (res.container) containers.touch();
-    if (res.refused) showHint(String(res.refused)); // §14.4: the Handbook refuses the discard hex
+    if (res.refused) packSay(String(res.refused), true); // §14.4: the Handbook refuses the discard hex
     if (res.changed) audio.playClick();
     refreshPackScreen(true);
+  }
+
+  /**
+   * A line on the pack screen itself for PACK_MESSAGE_S (§9.8): refusals and Make results. The HUD's target hint and
+   * save toast are not drawn under the pack screen, so they were never seen there (play-test).
+   * @param {string} text @param {boolean} [error]
+   */
+  function packSay(text, error = false) {
+    packMessage = { text, error };
+    packMessageUntil = fxTime + PACK_MESSAGE_S;
+    packMessageSeq++;
   }
 
   function packMake(recipeId, times) {
     if (state !== STATE.PACK) return;
     const res = craftQueue.enqueue(recipeId, times, pack, stations);
-    hud.showSaveToast(res.message, !res.ok);
+    packSay(res.message, !res.ok);
     if (res.ok) audio.playClick();
     refreshPackScreen(true);
   }
@@ -2811,6 +2858,7 @@ export function boot(win, doc) {
     resetSurvivalInput();
     pendingDeath = null;
     pendingKnock = 0;
+    pendingCrush = 0;
     pendingModeSwitch = null;
     releaseToPack = false;
     climateSample = null;
@@ -3122,6 +3170,7 @@ export function boot(win, doc) {
     resetSurvivalInput();
     pendingDeath = null;
     pendingKnock = 0;
+    pendingCrush = 0;
     pendingModeSwitch = null;
     packSession.cursor = null;
     packSession.container = null;
@@ -3669,6 +3718,12 @@ export function boot(win, doc) {
         }
       }
       pendingKnock = 0;
+      // §2.4 crush: falling ground (sand, gravel, a collapse) filled the player's cell and lifted them — the same guards
+      // as the unstickPlayer lift (not on a teleport frame, under fall grace, or on top of a knock this frame).
+      if (pendingCrush > 0 && survival.active && !survival.fallGrace && !teleportFrame && !knockHurtThisFrame) {
+        hurt(crushDamage(pendingCrush), 'crush');
+      }
+      pendingCrush = 0;
     }
     if (breakVolume > 0) {
       audio.playBreak(breakGroup, breakVolume);

@@ -372,8 +372,8 @@ describe('handbook: generated tables match the game (§14.1)', () => {
 
   it('falls use the real integrator: §2.4\'s speeds and damage', () => {
     // DESIGN-survival §2.4: cells → [v, HP]
-    const DOC = { 3: [13.07, 0], 4: [14.93, 4.1], 5: [16.8, 10.0], 6: [18.2, 14.9], 8: [21.0, 25.9], 10: [23.8, 38.4],
-      15: [28.93, 65.5], 20: [33.6, 94.7], 21: [34.07, 97.8], 22: [35.0, 104.3] };
+    const DOC = { 3: [13.07, 0], 4: [14.93, 2.7], 5: [16.8, 8.6], 6: [18.2, 13.5], 8: [21.0, 24.5], 10: [23.8, 37.0],
+      15: [28.93, 64.1], 20: [33.6, 93.3], 21: [34.07, 96.5], 22: [35.0, 102.9] };
     expect([...FALL_EXAMPLES]).toEqual(Object.keys(DOC).map(Number));
     for (const [d, [v, hp]] of Object.entries(DOC)) {
       expect(fallSpeedForCells(Number(d))).toBeCloseTo(v, 1);
@@ -381,8 +381,8 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     }
     const t = tableById('fall');
     expect(rowOf(t, 3)[2]).toBe('none');
-    expect(rowOf(t, 10)).toEqual(['10', '23.8 m/s', '38.4 HP']);
-    expect(rowOf(t, 22)[2]).toBe('104.3 HP');
+    expect(rowOf(t, 10)).toEqual(['10', '23.8 m/s', '37 HP']);
+    expect(rowOf(t, 22)[2]).toBe('102.9 HP');
   });
 
   it('soft landings group vitals.SOFT_LANDING by factor', () => {
@@ -413,14 +413,19 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     expect(allProse()).toContain('In all: 9 Rock, 4 Flint, 11 Plant Fibre and 8 Sticks, and 28 seconds of hand jobs.');
   });
 
-  it('gathering rows describe PICKABLE (for what R picks) and BLOCK_RULES drops', () => {
+  it('gathering rows describe PICKABLE (for what R picks) and BLOCK_RULES drops, and say how: R, or hold LMB', () => {
     const t = tableById('gather');
     for (const id of t.keys) {
       const row = rowOf(t, id);
       const picked = Object.hasOwn(PICKABLE, id);
       expect(row[2]).toBe(describeDrops(picked ? PICKABLE[id].drops : ruleFor(id).drops));
-      expect(row[1].startsWith(picked ? 'R' : 'break')).toBe(true);
+      // play-test: "break it" never told a new player which button; the crosshair hint (harvest.handGatherHint) says the same
+      expect(row[1].startsWith(picked ? 'R, or hold LMB' : 'hold LMB to ')).toBe(true);
     }
+    expect(rowOf(t, BLOCK.TUSSOCK)[1]).toBe('hold LMB to pull it (a knife is faster)');
+    expect(rowOf(t, BLOCK.GRAVEL)[1]).toBe('hold LMB to dig it (a spade is faster)');
+    expect(rowOf(t, BLOCK.OAK_LEAVES)[1]).toBe('hold LMB to break it (an axe is faster)');
+    expect(allProse()).toContain('hold the left mouse button on it until it breaks');
     expect(rowOf(t, BLOCK.LOOSE_STONES)[2]).toBe('1–2 Rock · Flint (50 %, wild only)');
     expect(rowOf(t, BLOCK.TUSSOCK)[2]).toBe('with a spade: Tussock Grass; with a knife: 2–3 Plant Fibre; otherwise: 1–2 Plant Fibre');
   });

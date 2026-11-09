@@ -9,6 +9,8 @@ import {
   listRecipes, inputLabel, toolLabel, CraftQueue,
 } from '../../src/crafting.js';
 import { makeGetBlock } from '../helpers/fixtures.js';
+import { Pack } from '../../src/inventory.js';
+import { PACK_SLOTS } from '../../src/config.js';
 
 // ---------------------------------------------------------------------------------------------
 // helpers
@@ -697,5 +699,65 @@ describe('CraftQueue: cancel, clear, chip, lanes, version', () => {
     expect(bumps).toBeGreaterThan(15); // the progress bar moves …
     expect(bumps).toBeLessThan(60); // … but far fewer than 1500 times
     expect(pack.count('clay_pot')).toBe(1);
+  });
+});
+
+describe('play-test fixes (progression lens)', () => {
+  it('tool labels take the right article: "needs an iron hammer or better", not "a iron hammer"', () => {
+    const pack = new Pack();
+    pack.add({ k: 'wrought_iron', n: 8 });
+    pack.add({ k: 'charcoal', n: 8 });
+    const q = new CraftQueue();
+    expect(q.enqueue('stone_chopper', 1, pack, { hand: true }).message).toBe("Can't make Stone Chopper: needs a stone hammer or better");
+    pack.add({ k: 'bronze_hammer', n: 1 });
+    const res = q.enqueue('steel_bar', 1, pack, { hand: true, forge: [0, 64, 2] });
+    expect(res.ok).toBe(false);
+    expect(res.message).toBe("Can't make Steel Bar: needs an iron hammer or better");
+    // the same article when a job fails at completion because its tool is gone
+    pack.add({ k: 'rock', n: 3 });
+    pack.add({ k: 'plant_fibre', n: 4 });
+    pack.add({ k: 'cord', n: 1 });
+    pack.add({ k: 'stick', n: 1 });
+    pack.setSlot(20, { k: 'iron_hammer', n: 1 });
+    expect(q.enqueue('stone_chopper', 1, pack, { hand: true }).ok).toBe(true);
+    pack.setSlot(20, null);
+    pack.take('bronze_hammer', 1); // no hammer of any kind is left
+    const ev = q.step(100, pack, null, [0, 64, 0]);
+    expect(ev.messages).toEqual(["Couldn't make Stone Chopper: missing a stone hammer or better."]);
+  });
+
+  it('"Pack full" is judged after the inputs are taken: a recipe that frees its own slot completes in a full pack', () => {
+    // play-test: scrape_salt (Salt-crusted Pot → Salt + Clay Pot) sat at 100 % with "Pack full" for ever
+    const pack = new Pack();
+    for (let i = 0; i < PACK_SLOTS; i++) pack.setSlot(i, { k: i === 0 ? 'salt_pot' : i === 1 ? 'salt' : 'hammerstone', n: 1 });
+    const q = new CraftQueue();
+    expect(q.enqueue('scrape_salt', 1, pack, { hand: true }).ok).toBe(true);
+    const e = q.step(60, pack, null, [0, 64, 0]);
+    expect(e.done.map((d) => d.id)).toEqual(['scrape_salt']);
+    expect(e.lost).toEqual([]);
+    expect(pack.count('salt_pot')).toBe(0);
+    expect(pack.count('salt')).toBe(2);
+    expect(pack.count('clay_pot')).toBe(1);
+    // a pack with truly no room still waits: the rock stack keeps its slot after one rock is taken, the hammerstone needs its own
+    const full = new Pack();
+    for (let i = 0; i < PACK_SLOTS; i++) full.setSlot(i, { k: i === 0 ? 'rock' : 'hammerstone', n: i === 0 ? 3 : 1 });
+    const q2 = new CraftQueue();
+    expect(q2.enqueue('hammerstone', 1, full, { hand: true }).ok).toBe(true);
+    q2.step(60, full, null, [0, 64, 0]);
+    expect(q2.lanes()[0].jobs[0]).toMatchObject({ waiting: true, reason: 'Pack full' });
+    expect(full.count('rock')).toBe(3);
+    // a single rock in that slot: taking it frees the slot and the job completes
+    full.setSlot(0, { k: 'rock', n: 1 });
+    q2.step(1, full, null, [0, 64, 0]);
+    expect(q2.size).toBe(0);
+    expect(full.count('hammerstone')).toBe(PACK_SLOTS);
+    // a PackOps without canExchange (a Map-backed fake) still works through canGive
+    const plain = {
+      count: () => 9, countTag: () => 9, take: () => 0, takeTag: () => 0, canGive: () => false, give: () => 0, hasTool: () => true, useTool: () => null,
+    };
+    const q3 = new CraftQueue();
+    expect(q3.enqueue('cord', 1, /** @type {any} */ (plain), { hand: true }).ok).toBe(true);
+    q3.step(60, /** @type {any} */ (plain), null, [0, 64, 0]);
+    expect(q3.lanes()[0].jobs[0]).toMatchObject({ waiting: true, reason: 'Pack full' });
   });
 });
