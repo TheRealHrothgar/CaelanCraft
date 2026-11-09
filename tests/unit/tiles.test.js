@@ -491,8 +491,8 @@ describe('averageColor', () => {
   });
 });
 
-describe('blast barrel tiles (v0.8)', () => {
-  it('side: wooden staves, dark iron bands and a red hazard hexagon; top: a lid with a burning fuse tip; alpha 255', () => {
+describe('powder keg tiles (v0.8; repainted by DESIGN-circuits §3.5, whose art circuitTiles.test.js covers in full)', () => {
+  it('side: wooden staves, copper hoops and a burnt-in brand; top: a lid with an unlit bung; alpha 255', () => {
     const side = paintTile(TILE.BARREL_SIDE);
     const top = paintTile(TILE.BARREL_TOP);
     const px = (t, x, y) => [t[(y * 16 + x) * 4], t[(y * 16 + x) * 4 + 1], t[(y * 16 + x) * 4 + 2], t[(y * 16 + x) * 4 + 3]];
@@ -500,18 +500,14 @@ describe('blast barrel tiles (v0.8)', () => {
       expect(side[i]).toBe(255);
       expect(top[i]).toBe(255);
     }
-    const [r, g, b] = px(side, 8, 8); // inside the hexagon
-    expect(r).toBeGreaterThan(150);
-    expect(g).toBeLessThan(80);
-    expect(b).toBeLessThan(80);
-    const band = px(side, 5, 2); // iron band: grey
-    expect(Math.abs(band[0] - band[2])).toBeLessThan(20);
-    expect(band[0]).toBeLessThan(110);
+    const [r, g, b] = px(side, 8, 4); // the brand's outline: burnt dark, not a red hazard sign
+    expect(r + g + b).toBeLessThan(200);
+    const band = px(side, 5, 2); // copper hoop, not iron grey
+    expect(band[0]).toBeGreaterThan(band[2] + 60);
     const stave = px(side, 1, 6); // wood: brown
     expect(stave[0]).toBeGreaterThan(stave[2] + 30);
-    const tip = px(top, 11, 4); // the fuse tip glows
-    expect(tip[0]).toBeGreaterThan(220);
-    expect(tip[1]).toBeGreaterThan(160);
+    const tip = px(top, 11, 4); // no burning fuse tip on the lid any more
+    expect(tip[0] > 220 && tip[1] > 160).toBe(false);
     expect(averageColor(TILE.BARREL_SIDE)[0]).toBeGreaterThan(averageColor(TILE.BARREL_SIDE)[2]);
   });
 });
