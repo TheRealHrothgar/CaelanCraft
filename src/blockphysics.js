@@ -353,9 +353,10 @@ export class SeedQueue {
  * in-flight entities (fallers, logs, lit barrels) into it.
  */
 export class SaveOverlay {
-  /** @param {*} world */
-  constructor(world) {
+  /** @param {*} world @param {{ keepFlow?: boolean }} [opts] keepFlow: save FLOW/FALL edits as they are (water switched off) */
+  constructor(world, opts = {}) {
     this.world = world;
+    this.keepFlow = !!opts.keepFlow;
     /** @type {Map<number, number>} packed cell → id */
     this.cells = new Map();
     /** @type {Map<string, Map<number, number>>} chunk key → localIndex → id, overriding world.edits */
@@ -402,7 +403,7 @@ export class SaveOverlay {
       const arr = [];
       for (const [li, rawId] of entries) {
         let id = rawId;
-        if (isWater(id) && !isWaterSource(id)) {
+        if (!this.keepFlow && isWater(id) && !isWaterSource(id)) {
           const origin = chunkOrigins ? chunkOrigins.get(li) : undefined;
           if (origin === BLOCK.AIR || origin === BLOCK.WATER) continue;
           id = BLOCK.AIR;
@@ -684,6 +685,11 @@ export class BlockPhysics {
     }
     const owners = { falling: [this.fallers], water: [this.fluids], collapse: [this.support, this.trees], explosions: [this.explosions] }[name];
     for (const m of owners) if (m && typeof m.onSwitch === 'function') m.onSwitch(v);
+    // Turning Falling back on wakes the loaded world's gravity blocks the way loading a chunk does (§33.8.1): sand left
+    // hanging while it was off falls now, not at some later stream-in or reload.
+    if (name === 'falling' && v && this.world.chunks instanceof Map) {
+      for (const chunk of this.world.chunks.values()) this._reseedChunk(chunk.cq, chunk.cr, 'falling');
+    }
     return true;
   }
 
@@ -932,8 +938,19 @@ export class BlockPhysics {
       }
     }
     if (this.switches.collapse) this.support.onChunkGenerated(cq, cr);
+    this._reseedChunk(cq, cr, null);
+  }
+
+  /**
+   * Run the reseeders over chunk (cq, cr)'s edited cells: every enabled one (`only` null — a chunk generating), or just
+   * those of feature `only` (that feature being switched back on).
+   * @param {number} cq
+   * @param {number} cr
+   * @param {string|null} only
+   */
+  _reseedChunk(cq, cr, only) {
     if (this._reseeders.length === 0 || !this.world.edits) return;
-    const chunkEdits = this.world.edits.get(key);
+    const chunkEdits = this.world.edits.get(chunkKey(cq, cr));
     if (chunkEdits === undefined) return;
     const mask = this._reseedMask;
     const q0 = cq * CHUNK_SIZE;
@@ -947,6 +964,7 @@ export class BlockPhysics {
       const r = r0 + lr;
       for (const rs of this._reseeders) {
         if (rs.mask[id] === 0) continue;
+        if (only !== null && rs.feature !== only) continue;
         if (rs.feature !== null && this.switches[rs.feature] !== true) continue;
         rs.fn(this.ctx, q, y, r, id);
       }
@@ -1247,7 +1265,9 @@ export class BlockPhysics {
    * @returns {EditsJSON}
    */
   exportEdits() {
-    const overlay = new SaveOverlay(this.world);
+    // While Water is off the flow is frozen and nothing re-flows it on load (the water reseeder is off too), so the save
+    // keeps it as it stands: a reload then matches the live world (§33.9, §35.6).
+    const overlay = new SaveOverlay(this.world, { keepFlow: this.switches.water !== true });
     this.fallers.settleInto(overlay);
     this.support.settleInto(overlay);
     this.trees.settleInto(overlay);

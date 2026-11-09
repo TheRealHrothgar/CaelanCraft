@@ -385,6 +385,7 @@ function realScene(opts = {}) {
   const player = createPlayer(0.5, GROUND + 1, -20);
   const { hooks, fx } = makeHooks({ bodies: [player], player });
   const physics = attachPhysics(world, BlockPhysics, hooks);
+  if (opts.switches) physics.importSwitches(opts.switches); // as main does from the save, before any chunk generates
   for (let i = 0; i < 500; i++) {
     const r = world.update(player.x, player.z, Infinity);
     if (r.pendingGen === 0 && r.pendingMesh === 0) break;
@@ -460,6 +461,42 @@ describe('saving in the middle of everything', () => {
     settle(re.physics);
     expect(countWhere(re.world, (id) => isWater(id) && id !== B.WATER, [-16, 8, 0, 14, -8, 8])).toBeGreaterThan(0);
     expect(re.physics.explosions.blastCount).toBe(0); // nothing went off by itself after the reload
+  });
+});
+
+describe('switched-off features across a save (play-test G3 / G4)', () => {
+  const box = [-16, 8, 0, 14, -8, 8];
+  const flowCells = (world) => countWhere(world, (id) => isWater(id) && id !== B.WATER, box);
+  it('Water off: the frozen flow is saved as it stands, so a reload matches live play (and turning it on keeps it)', () => {
+    const { world, physics } = realScene();
+    world.setBlock(-6, 11, 0, B.STONE);
+    world.setBlock(-6, 12, 0, B.WATER);
+    settle(physics);
+    const live = flowCells(world);
+    expect(live).toBeGreaterThan(20);
+    physics.setSwitch('water', false);
+    const saved = physics.exportEdits();
+    const re = realScene({ edits: saved, switches: physics.exportSwitches() });
+    settle(re.physics);
+    expect(flowCells(re.world)).toBe(live); // was 0: the save dropped all flow and nothing re-flowed it
+    re.physics.setSwitch('water', true);
+    settle(re.physics);
+    expect(flowCells(re.world)).toBe(live); // switching on acts on nothing after the fact, live or reloaded
+  });
+  it('Falling off → on: sand left hanging while it was off falls when it is switched on, as it does on a reload', () => {
+    const { world, physics } = realScene();
+    physics.setSwitch('falling', false);
+    for (let y = 20; y <= 22; y++) world.setBlock(3, y, 3, B.SAND);
+    settle(physics);
+    expect(world.getBlock(3, 20, 3)).toBe(B.SAND); // floating while off
+    const saved = physics.exportEdits();
+    physics.setSwitch('falling', true);
+    settle(physics);
+    const liveCol = [11, 12, 13, 20, 21, 22].map((y) => world.getBlock(3, y, 3));
+    expect(liveCol).toEqual([B.SAND, B.SAND, B.SAND, B.AIR, B.AIR, B.AIR]); // was still hanging until a stream-in / reload
+    const re = realScene({ edits: saved, switches: { ...physics.exportSwitches(), falling: true } });
+    settle(re.physics);
+    expect([11, 12, 13, 20, 21, 22].map((y) => re.world.getBlock(3, y, 3))).toEqual(liveCol);
   });
 });
 

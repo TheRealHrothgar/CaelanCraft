@@ -1453,7 +1453,7 @@ export const FEATURES = ['falling', 'water', 'collapse', 'explosions']
 export const WRITE_EXTERNAL = 0, WRITE_PHYSICS = 1, WRITE_QUIET = 2                      // the `mode` triggers receive
 export const CAUSE_WORLD = { kind: 'world' }, CAUSE_PHYSICS = { kind: 'physics' }, CAUSE_AREA = { kind: 'area' }
 export class SeedQueue        // support seeds: priority lane + normal lane, cell-level dedupe; size, push(seed), shift(), peek(), clear()
-export class SaveOverlay      // copy-on-write save view: peek(q,y,r), set(q,y,r,id), toJSON() → EditsJSON (§33.9)
+export class SaveOverlay      // copy-on-write save view (world, { keepFlow }): peek(q,y,r), set(q,y,r,id), toJSON() → EditsJSON (§33.9)
 export class BlockPhysics {
   constructor(world, hooks = {}, { now }?)   // hooks: PhysicsHooks (§33.7), missing ones are no-ops; now: ms clock (default world._now)
   world; hooks; ctx (RuleContext, §33.3); fallers; fluids; support; trees; explosions   // the feature modules (§34–§37)
@@ -1567,7 +1567,10 @@ x, y, z, count, opts)` (§34.5), `knock(body, vx, vy, vz, fromX, fromZ)` (defaul
 ### 33.8 Switches, pause, causes, events and undo
 1. `setSwitch` changes a FEATURES switch (`switchVersion++`) and calls the owning module's `onSwitch(on)` (falling → fallers, water
    → fluids, collapse → support and trees, explosions → explosions). A switched-off feature drops its triggers, reseeders and rules
-   (queued updates are skipped when popped) — switching it on again never acts on what happened meanwhile. `importSwitches(raw)`:
+   (queued updates are skipped when popped) — switching it on again never acts on what happened meanwhile, with ONE exception:
+   switching **falling** back on runs the 'falling' reseeders over every loaded chunk's edits (`_reseedChunk(cq, cr, 'falling')`,
+   the pass a chunk gets when it generates), so sand left hanging while it was off falls at once — live play then matches what a
+   stream-in or reload would do (play-test G4). `importSwitches(raw)`:
    each switch = `raw[name]` when boolean, else true; it does not bump switchVersion. New worlds: all on; saves without `physics`:
    collapse off (main, §23).
 2. `paused` (console `physics off`): no ticks, entities frozen; triggers still queue; not saved.
@@ -1591,11 +1594,13 @@ x, y, z, count, opts)` (§34.5), `knock(body, vx, vy, vz, fromX, fromZ)` (defaul
    chunks)][ (F barrel(s) next to a campfire not given back)][ (L barrel(s) found no room)]` — N counts the event's cells (not the
    barrels given back), M includes the event's lit barrels put out.
 ### 33.9 Saving (`exportEdits`, never touches the live world)
-`overlay = new SaveOverlay(world)`; `fallers.settleInto(overlay)`, `support.settleInto(overlay)` (what a collapse has not brought
+`overlay = new SaveOverlay(world, { keepFlow: !switches.water })`; `fallers.settleInto(overlay)`, `support.settleInto(overlay)` (what a collapse has not brought
 down yet is saved fallen, §36.6.4), `trees.settleInto(overlay)`, `explosions.settleInto(overlay)`;
 return `overlay.toJSON()`: world.edits overridden by the overlay's cells, where an edit of FLOW_1..6 / FALL is DROPPED when its origin
 is AIR or WATER (the cell reloads as generated: a refilled hole in a lake is lake again) and saved as AIR otherwise (sources and
-the AIR next to natural water re-flow through the 'water' reseeder on load, §35.3). `overlay.peek` = overlay cell, else
+the AIR next to natural water re-flow through the 'water' reseeder on load, §35.3) — UNLESS `keepFlow` (water switched off):
+then FLOW/FALL edits are saved as they stand, since nothing re-flows them on load while water is off; the reload shows the same
+frozen flow as the live world (play-test G3). `overlay.peek` = overlay cell, else
 `world.peekBlock`; `overlay.set` refuses y outside 0..127.
 ### 33.10 Rendering and status
 `renderItems()` fills a pooled list `{ items, count }` (`RenderItem = { id, x, y, z, rx, ry, rz, scale }`, centre + Euler 'YXZ' +
