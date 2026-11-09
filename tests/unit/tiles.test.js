@@ -1,7 +1,13 @@
 // Unit tests for src/tiles.js — CONTRACTS.md §15 and docs/SPEC-gameplay.md §2.2–§2.5.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { TILE, TILE_IDS } from '../../src/blocks.js';
 import { TILE_NAMES, paintTile, averageColor, createTilePainters } from '../../src/tiles.js';
+import { CIRCUIT_TILE_NAMES, CIRCUIT_RECIPES } from '../../src/circuitTiles.js';
+
+/** The circuit tiles (DESIGN-circuits §1.4): their alpha rules are circuitTiles.test.js's, so the generic ones skip them. */
+const CIRCUIT_IDS = Object.keys(CIRCUIT_TILE_NAMES).map(Number);
 
 const W = 16;
 const H = 16;
@@ -60,12 +66,12 @@ function everyPixel(px, pred, rows = null) {
 }
 
 describe('TILE_NAMES', () => {
-  it('lists all 105 block tiles plus the mob tiles and 255 missing, matching blocks.js TILE keys in lower_snake', () => {
+  it('lists all 140 block tiles plus the mob tiles and 255 missing, matching blocks.js TILE keys in lower_snake', () => {
     const keys = Object.keys(TILE_NAMES).map(Number).sort((a, b) => a - b);
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
     // v0.8: + barrel_side 75, barrel_top 76; zombies (§39): + 240–245; the Watcher (§40): + 250–252 (stone, crack glow, smoke);
-    // v0.9 survival: + 77–104 (DESIGN-survival §8.1)
-    expect(keys.length).toBe(115);
+    // v0.9 survival: + 77–104 (DESIGN-survival §8.1); powder and circuits: + 160–194 (DESIGN-circuits §1.4)
+    expect(keys.length).toBe(150);
     expect(TILE_NAMES[TILE.COPPER_ORE]).toBe('copper_ore');
     expect(TILE_NAMES[TILE.PLANT_TOP_CLEAR]).toBe('plant_top_clear');
     expect(TILE_NAMES[TILE.FIRE_PIT_SIDE]).toBe('fire_pit_side');
@@ -107,13 +113,17 @@ describe('paintTile — shape and determinism', () => {
     const again = paintTile(TILE.STONE);
     expect(sameBytes(first, again)).toBe(true);
   });
-  it('every tile differs from every other tile', () => {
+  it('every tile differs from every other tile (two wholly transparent tiles may be the same nothing)', () => {
     const all = TILE_IDS.map((t) => [t, paintTile(t)]);
+    const clear = (px) => px.every((v) => v === 0);
     for (let i = 0; i < all.length; i++) {
       for (let j = i + 1; j < all.length; j++) {
+        // plant_top_clear and circuit_clear (DESIGN-circuits §1.4) are both RGBA 0 everywhere, by design.
+        if (clear(all[i][1]) && clear(all[j][1])) continue;
         expect(sameBytes(all[i][1], all[j][1]), `tiles ${all[i][0]} and ${all[j][0]} are identical`).toBe(false);
       }
     }
+    expect(all.filter(([, px]) => clear(px)).map(([t]) => t)).toEqual([TILE.PLANT_TOP_CLEAR, TILE.CIRCUIT_CLEAR]);
   });
 });
 
@@ -177,6 +187,7 @@ describe('paintTile — alpha rules', () => {
       TILE.WATER, TILE.GLASS, TILE.OAK_LEAVES, TILE.SPRUCE_LEAVES, TILE.BIRCH_LEAVES, TILE.ICE, TILE.CAMPFIRE_SIDE, TILE.CAMPFIRE_TOP,
       TILE.PLANT_TOP_CLEAR, // v0.9: all alpha 0 (the test above)
       ...SURVIVAL_CUTOUT, // v0.9: plants, litter, the fire pit and Your Belongings (DESIGN-survival §8.2; tested below)
+      ...CIRCUIT_IDS, // DESIGN-circuits §6.2.9: circuit_clear and the flat pictures are alpha 0 by design (tested below)
     ]);
     for (const t of TILE_IDS) {
       if (special.has(t)) continue;
@@ -502,6 +513,85 @@ describe('blast barrel tiles (v0.8)', () => {
     expect(tip[0]).toBeGreaterThan(220);
     expect(tip[1]).toBeGreaterThan(160);
     expect(averageColor(TILE.BARREL_SIDE)[0]).toBeGreaterThan(averageColor(TILE.BARREL_SIDE)[2]);
+  });
+});
+
+describe('circuit tiles (DESIGN-circuits §1.4, §3.5, §6.2.9; painted by circuitTiles.js)', () => {
+  const FLAT = [TILE.POWDER_FUSE, TILE.TORCH, TILE.COPPER_WIRE, TILE.BROWN_WIRE, TILE.WHITE_WIRE, TILE.EARTH_WIRE];
+
+  it('CIRCUIT_TILE_NAMES is exactly 160–194, spread into TILE_NAMES under the blocks.js TILE names', () => {
+    expect(Object.isFrozen(CIRCUIT_TILE_NAMES)).toBe(true);
+    expect(CIRCUIT_IDS).toEqual(Array.from({ length: 35 }, (_, i) => 160 + i));
+    const tileKeyOf = new Map(Object.entries(TILE).map(([key, id]) => [id, key]));
+    for (const id of CIRCUIT_IDS) {
+      expect(TILE_NAMES[id], `tile ${id}`).toBe(CIRCUIT_TILE_NAMES[id]);
+      expect(CIRCUIT_TILE_NAMES[id]).toBe(tileKeyOf.get(id).toLowerCase());
+    }
+    // The keg keeps its tile ids and names in tiles.js; only its painters moved.
+    expect([TILE_NAMES[75], TILE_NAMES[76]]).toEqual(['barrel_side', 'barrel_top']);
+    expect(Object.hasOwn(CIRCUIT_TILE_NAMES, 75) || Object.hasOwn(CIRCUIT_TILE_NAMES, 76)).toBe(false);
+  });
+
+  it('CIRCUIT_RECIPES holds exactly the circuit tile names plus barrel_side and barrel_top; circuitTiles.js imports nothing', () => {
+    expect(Object.isFrozen(CIRCUIT_RECIPES)).toBe(true);
+    expect(Object.keys(CIRCUIT_RECIPES).sort()).toEqual([...Object.values(CIRCUIT_TILE_NAMES), 'barrel_side', 'barrel_top'].sort());
+    for (const fn of Object.values(CIRCUIT_RECIPES)) expect(typeof fn).toBe('function');
+    const src = readFileSync(fileURLToPath(new URL('../../src/circuitTiles.js', import.meta.url)), 'utf8');
+    expect(src).not.toMatch(/^\s*import\b/m);
+    expect(src).not.toMatch(/Math\.random\(|Date\.now\(|performance\.now\(|document\.|window\./);
+  });
+
+  it('every circuit tile paints deterministically, is not the missing checker, and the keg tiles still paint', () => {
+    const missing = paintTile(TILE.MISSING);
+    for (const t of [...CIRCUIT_IDS, TILE.BARREL_SIDE, TILE.BARREL_TOP]) {
+      const px = paintTile(t);
+      expect(px.length, TILE_NAMES[t]).toBe(BYTES);
+      expect(sameBytes(px, paintTile(t)), TILE_NAMES[t]).toBe(true);
+      expect(sameBytes(px, missing), TILE_NAMES[t]).toBe(false);
+    }
+  });
+
+  it('circuit_clear is RGBA 0 everywhere; the flat pictures have an alpha-0 background (corners) and ≥ 40 opaque pixels', () => {
+    everyPixel(paintTile(TILE.CIRCUIT_CLEAR), (r, g, b, a) => a === 0);
+    for (const t of FLAT) {
+      const px = paintTile(t);
+      for (const [x, y] of [[0, 0], [15, 0], [0, 15], [15, 15]]) expect(px[idx(x, y) + 3], `${TILE_NAMES[t]} (${x},${y})`).toBe(0);
+      let opaqueCount = 0;
+      for (let i = 3; i < BYTES; i += 4) {
+        expect(px[i] === 0 || px[i] === 255, `${TILE_NAMES[t]} alpha ${px[i]}`).toBe(true);
+        if (px[i] === 255) opaqueCount++;
+      }
+      expect(opaqueCount, TILE_NAMES[t]).toBeGreaterThanOrEqual(40);
+    }
+  });
+
+  it('the cabinet tiles and both keg tiles are alpha 255 everywhere', () => {
+    const cabinets = CIRCUIT_IDS.filter((t) => t !== TILE.CIRCUIT_CLEAR && !FLAT.includes(t));
+    expect(cabinets).toHaveLength(28);
+    for (const t of [...cabinets, TILE.BARREL_SIDE, TILE.BARREL_TOP]) {
+      const px = paintTile(t);
+      for (let i = 3; i < BYTES; i += 4) expect(px[i], `${TILE_NAMES[t]} byte ${i}`).toBe(255);
+    }
+  });
+
+  it('no circuit or collapsar tile has an opaque violet pixel (hue 250°–300° at saturation above 0.15)', () => {
+    for (const t of CIRCUIT_IDS) {
+      const px = paintTile(t);
+      for (let i = 0; i < BYTES; i += 4) {
+        if (px[i + 3] === 0) continue;
+        const r = px[i] / 255;
+        const g = px[i + 1] / 255;
+        const b = px[i + 2] / 255;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const sat = max === 0 ? 0 : (max - min) / max;
+        if (sat <= 0.15) continue;
+        const d = max - min;
+        let hue = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+        hue = (hue * 60 + 360) % 360;
+        expect(hue >= 250 && hue <= 300, `${TILE_NAMES[t]} pixel ${i / 4} hue ${hue.toFixed(0)}`).toBe(false);
+      }
+    }
   });
 });
 

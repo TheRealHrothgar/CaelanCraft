@@ -18,16 +18,25 @@ export const BLOCK = Object.freeze({
   WOOL_ORANGE: 52, WOOL_YELLOW: 53, WOOL_LIME: 54, WOOL_GREEN: 55, WOOL_CYAN: 56, WOOL_LIGHT_BLUE: 57, WOOL_BLUE: 58,
   WOOL_PURPLE: 59, WOOL_MAGENTA: 60, WOOL_PINK: 61, WOOL_BROWN: 62, WOOL_BLACK: 63, WOOL_GRAY: 64, WOOL_LIGHT_GRAY: 65,
   BLACK_HOLE: 66, CAMPFIRE: 67,
-  // v0.8 block physics (docs/DESIGN-physics.md §0): flowing / falling water levels and the blast barrel
+  // v0.8 block physics (docs/DESIGN-physics.md §0): flowing / falling water levels and the powder keg. POWDER_KEG is the
+  // canonical key (DESIGN-circuits §1.1); BLAST_BARREL is its deprecated alias with the same id, kept so the explosions and
+  // physics code and their tests need no rename. New code writes POWDER_KEG.
   WATER_FLOW_1: 68, WATER_FLOW_2: 69, WATER_FLOW_3: 70, WATER_FLOW_4: 71, WATER_FLOW_5: 72, WATER_FLOW_6: 73,
-  WATER_FALL: 74, BLAST_BARREL: 75,
+  WATER_FALL: 74, POWDER_KEG: 75, BLAST_BARREL: 75,
   // v0.9 survival (docs/DESIGN-survival.md §8.1): ores, wild plants and their picked variants, workplaces, containers,
   // ground litter and the cold fire pit. Only generation-2 worlds generate the ores, plants and litter.
   COPPER_ORE: 76, TIN_ORE: 77, HONEYBERRY_BUSH: 78, HONEYBERRY_BUSH_BARE: 79, TUSSOCK: 80, CATTAILS: 81, TUBER_PLANT: 82,
   PRICKLY_PEAR: 83, PRICKLY_PEAR_BARE: 84, WORK_STUMP: 85, KILN: 86, BLOOMERY: 87, FORGE: 88, WICKER_BASKET: 89,
   SLEEPING_HIDE: 90, REMAINS: 91, LOOSE_STONES: 92, FALLEN_BRANCHES: 93, FIRE_PIT: 94,
+  // Powder and circuits (docs/DESIGN-circuits.md §1.2–§1.3, renumbered after survival's 76–94): the dormant Collapsar Charge,
+  // the Powder Fuse, the Torch, four wires and the devices. Worldgen never emits them; their state lives in circuitStore.js
+  // and circuits.js, never in the block id.
+  COLLAPSAR_CHARGE: 95, POWDER_FUSE: 96, TORCH: 97, COPPER_WIRE: 98, BROWN_WIRE: 99, WHITE_WIRE: 100, EARTH_WIRE: 101,
+  TERMINAL_BOARD: 102, VOLTAIC_BATTERY: 103, BLASTING_MACHINE: 104, SELENIUM_PANEL: 105, KNIFE_SWITCH: 106, PUSH_BUTTON: 107,
+  CLOCKWORK_TIMER: 108, RELAY: 109, IGNITER: 110, FILAMENT_LAMP: 111, ELECTRIC_BELL: 112, SPARK_TRANSMITTER: 113,
+  COHERER_RECEIVER: 114,
 });
-export const BLOCK_COUNT = 95;
+export const BLOCK_COUNT = 115;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -57,6 +66,14 @@ export const TILE = Object.freeze({
   BLOOMERY_SIDE: 91, BLOOMERY_TOP: 92, FORGE_SIDE: 93, FORGE_TOP: 94, BASKET_SIDE: 95, BASKET_TOP: 96, HIDE_SIDE: 97,
   HIDE_TOP: 98, REMAINS_SIDE: 99, REMAINS_TOP: 100, PLANT_TOP_CLEAR: 101, LOOSE_STONES: 102, FALLEN_BRANCHES: 103,
   FIRE_PIT_SIDE: 104,
+  // Powder and circuits (DESIGN-circuits §1.4; painted by circuitTiles.js). CIRCUIT_CLEAR is all alpha 0: the sides and bottom
+  // of the thin parts. POWDER_FUSE, TORCH and the four wires are flat pictures on an alpha-0 background, drawn only as icons.
+  CIRCUIT_CLEAR: 160, COLLAPSAR_SIDE: 161, COLLAPSAR_TOP: 162, POWDER_FUSE: 163, TORCH: 164, COPPER_WIRE: 165, BROWN_WIRE: 166,
+  WHITE_WIRE: 167, EARTH_WIRE: 168, TERMINAL_SIDE: 169, TERMINAL_TOP: 170, BATTERY_SIDE: 171, BATTERY_TOP: 172,
+  BLASTER_SIDE: 173, BLASTER_TOP: 174, SELENIUM_SIDE: 175, SELENIUM_TOP: 176, SWITCH_SIDE: 177, SWITCH_TOP: 178,
+  BUTTON_SIDE: 179, BUTTON_TOP: 180, TIMER_SIDE: 181, TIMER_TOP: 182, RELAY_SIDE: 183, RELAY_TOP: 184, IGNITER_SIDE: 185,
+  IGNITER_TOP: 186, LAMP_SIDE: 187, LAMP_TOP: 188, BELL_SIDE: 189, BELL_TOP: 190, TX_SIDE: 191, TX_TOP: 192, RX_SIDE: 193,
+  RX_TOP: 194,
   // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
   ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
   // The Hollow Watcher (§40; atlas row 15, not block faces): its ash-grey stone, the glow mask of that stone's cracks
@@ -94,9 +111,12 @@ export const SOUND_GROUPS = Object.freeze([
  * @property {boolean} cullSame     faces between two blocks of this id are culled
  * @property {number} layer         RenderLayer
  * @property {string|null} soundGroup
- * @property {boolean} meshed       drawn by the chunk mesher; false for blocks with their own model (campfire), whose
- *                                  tiles are then used only for the hotbar / picker icon
+ * @property {boolean} meshed       drawn by the chunk mesher; false for blocks with their own model (campfire, black hole,
+ *                                  the thin circuit parts), whose tiles are then used only for the hotbar / picker icon
  * @property {boolean} gravity      falls when the cell below is fall-through (sand, red sand, gravel; CONTRACTS §34)
+ * @property {'prism'|'flat'} icon  how atlas.drawBlockIcon draws its hotbar / picker icon: 'prism' (default) the hexagonal
+ *                                  prism; 'flat' the TOP tile alone as an unskewed 2D picture (the thin circuit parts, whose
+ *                                  transparent sides would draw nothing; DESIGN-circuits §1.5)
  */
 
 /** tiles helper: six sides, then top, then bottom */
@@ -126,6 +146,7 @@ function def(d) {
     soundGroup: d.soundGroup ?? null,
     meshed: d.meshed ?? true,
     gravity: d.gravity ?? false,
+    icon: d.icon ?? 'prism',
   };
 }
 
@@ -144,6 +165,15 @@ const WATER_FAMILY = Object.freeze({
  */
 const PLANT = Object.freeze({
   solid: false, opaque: false, layer: LAYER_CUTOUT, cullSame: false, soundGroup: 'leaves',
+});
+
+/**
+ * Flags of the thin circuit parts (DESIGN-circuits §1.2 "THIN": the Powder Fuse, the Torch and the four wires): walk-through,
+ * not load-bearing, never meshed (circuitRenderer draws them) and shown as a flat icon of their top tile. A cell holds one
+ * id, so a thin part still blocks water and is not fall-through (sand rests on it), like any block.
+ */
+const THIN = Object.freeze({
+  solid: false, opaque: false, layer: LAYER_CUTOUT, cullSame: false, meshed: false, icon: /** @type {'flat'} */ ('flat'),
 });
 
 /** The v0.4 wool colours (white and red predate them): BLOCK/TILE key suffix and display label. */
@@ -215,9 +245,11 @@ export const BLOCKS = [
   ...WOOL_COLORS.map(([key, label]) => def({
     id: B[`WOOL_${key}`], name: `wool_${key.toLowerCase()}`, displayName: `${label} Wool`, tiles: tiles(T[`WOOL_${key}`]), soundGroup: 'cloth',
   })),
-  // Black Hole: pulls the player and swallows nearby cells (blackholes.js, CONTRACTS §29). Not solid, so the player
-  // can fall in — touching it sends them back to spawn. Breakable like any block; breaking it stops it.
-  def({ id: B.BLACK_HOLE, name: 'black_hole', displayName: 'Black Hole', tiles: tiles(T.BLACK_HOLE), solid: false, opaque: false, soundGroup: 'glass' }),
+  // Black Hole: the active vortex (blackholes.js, CONTRACTS §29; DESIGN-circuits §2). It pulls the player and swallows
+  // nearby cells. Not solid, so the player can fall in — touching it sends them back to spawn. Breakable like any block;
+  // breaking it stops it. Not placeable: the picker gives the dormant Collapsar Charge, and a cell becomes a hole only by
+  // activation, `setblock`/`fill … black_hole` or an old save. Not meshed: vortexRenderer draws it.
+  def({ id: B.BLACK_HOLE, name: 'black_hole', displayName: 'Black Hole', tiles: tiles(T.BLACK_HOLE), solid: false, opaque: false, placeable: false, soundGroup: 'glass', meshed: false }),
   // Campfire: its own model, light, smoke and crackle (campfires.js / campfireRenderer.js, CONTRACTS §32). Not solid and
   // not meshed; its tiles only draw the icon.
   def({ id: B.CAMPFIRE, name: 'campfire', displayName: 'Campfire', tiles: tiles(T.CAMPFIRE_SIDE, T.CAMPFIRE_TOP), solid: false, opaque: false, layer: LAYER_CUTOUT, soundGroup: 'wood', meshed: false }),
@@ -227,9 +259,10 @@ export const BLOCKS = [
     id: B[`WATER_FLOW_${k}`], name: `water_flow_${k}`, displayName: `Flowing Water ${k}`, tiles: tiles(T.WATER), ...WATER_FAMILY,
   })),
   def({ id: B.WATER_FALL, name: 'water_fall', displayName: 'Falling Water', tiles: tiles(T.WATER), ...WATER_FAMILY }),
-  // Blast Barrel: an explosive (explosions.js, CONTRACTS §37). A plain solid block until lit (R, a campfire next to it,
-  // `ignite`, or a blast); lit barrels are entities. Lid tile on top and bottom.
-  def({ id: B.BLAST_BARREL, name: 'blast_barrel', displayName: 'Blast Barrel', tiles: tiles(T.BARREL_SIDE, T.BARREL_TOP), soundGroup: 'wood' }),
+  // Powder Keg (the v0.8 "Blast Barrel"; DESIGN-circuits §1.1, §3): an explosive (explosions.js, CONTRACTS §37). A plain
+  // solid block until lit by a fuse, a torch, an igniter, a campfire beside it, `ignite` or a blast; it then burns where it
+  // stands. Lid tile on top and bottom (its painters live in circuitTiles.js). Saves store the id, so the rename changes none.
+  def({ id: B.POWDER_KEG, name: 'powder_keg', displayName: 'Powder Keg', tiles: tiles(T.BARREL_SIDE, T.BARREL_TOP), soundGroup: 'wood' }),
   // ---- v0.9 survival (docs/DESIGN-survival.md §8.1). Only generation-2 worldgen emits the ores, plants and litter.
   def({ id: B.COPPER_ORE, name: 'copper_ore', displayName: 'Copper Ore', tiles: tiles(T.COPPER_ORE), soundGroup: 'stone' }),
   def({ id: B.TIN_ORE, name: 'tin_ore', displayName: 'Tin Ore', tiles: tiles(T.TIN_ORE), soundGroup: 'stone' }),
@@ -256,14 +289,50 @@ export const BLOCKS = [
   def({ id: B.LOOSE_STONES, name: 'loose_stones', displayName: 'Loose Stones', tiles: tiles(T.LOOSE_STONES, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'stone', placeable: false }),
   def({ id: B.FALLEN_BRANCHES, name: 'fallen_branches', displayName: 'Fallen Branches', tiles: tiles(T.FALLEN_BRANCHES, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'wood', placeable: false }),
   def({ id: B.FIRE_PIT, name: 'fire_pit', displayName: 'Cold Fire Pit', tiles: tiles(T.FIRE_PIT_SIDE, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'stone', placeable: false }),
+  // ---- Powder and circuits (DESIGN-circuits §1.2). The part table, predicates and connection rules live in circuitParts.js.
+  // CAB ("cabinet") devices are plain solid, opaque, meshed prisms (def defaults) with their working part on top; their moving
+  // and lit bits are circuitRenderer overlays, so a state change never re-meshes a chunk. THIN parts are drawn by
+  // circuitRenderer: their top tile is the icon picture, their sides and bottom CIRCUIT_CLEAR.
+  def({ id: B.COLLAPSAR_CHARGE, name: 'collapsar_charge', displayName: 'Collapsar Charge', tiles: tiles(T.COLLAPSAR_SIDE, T.COLLAPSAR_TOP), soundGroup: 'glass' }),
+  def({ id: B.POWDER_FUSE, name: 'powder_fuse', displayName: 'Powder Fuse', tiles: tiles(T.CIRCUIT_CLEAR, T.POWDER_FUSE, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'cloth' }),
+  def({ id: B.TORCH, name: 'torch', displayName: 'Torch', tiles: tiles(T.CIRCUIT_CLEAR, T.TORCH, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'wood' }),
+  def({ id: B.COPPER_WIRE, name: 'copper_wire', displayName: 'Copper Wire', tiles: tiles(T.CIRCUIT_CLEAR, T.COPPER_WIRE, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'cloth' }),
+  def({ id: B.BROWN_WIRE, name: 'brown_wire', displayName: 'Brown Wire', tiles: tiles(T.CIRCUIT_CLEAR, T.BROWN_WIRE, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'cloth' }),
+  def({ id: B.WHITE_WIRE, name: 'white_wire', displayName: 'White Wire', tiles: tiles(T.CIRCUIT_CLEAR, T.WHITE_WIRE, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'cloth' }),
+  def({ id: B.EARTH_WIRE, name: 'earth_wire', displayName: 'Earth Wire', tiles: tiles(T.CIRCUIT_CLEAR, T.EARTH_WIRE, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'cloth' }),
+  def({ id: B.TERMINAL_BOARD, name: 'terminal_board', displayName: 'Terminal Board', tiles: tiles(T.TERMINAL_SIDE, T.TERMINAL_TOP), soundGroup: 'wood' }),
+  def({ id: B.VOLTAIC_BATTERY, name: 'voltaic_battery', displayName: 'Voltaic Battery', tiles: tiles(T.BATTERY_SIDE, T.BATTERY_TOP), soundGroup: 'wood' }),
+  def({ id: B.BLASTING_MACHINE, name: 'blasting_machine', displayName: 'Blasting Machine', tiles: tiles(T.BLASTER_SIDE, T.BLASTER_TOP), soundGroup: 'wood' }),
+  def({ id: B.SELENIUM_PANEL, name: 'selenium_panel', displayName: 'Selenium Panel', tiles: tiles(T.SELENIUM_SIDE, T.SELENIUM_TOP), soundGroup: 'glass' }),
+  def({ id: B.KNIFE_SWITCH, name: 'knife_switch', displayName: 'Knife Switch', tiles: tiles(T.SWITCH_SIDE, T.SWITCH_TOP), soundGroup: 'stone' }),
+  def({ id: B.PUSH_BUTTON, name: 'push_button', displayName: 'Push Button', tiles: tiles(T.BUTTON_SIDE, T.BUTTON_TOP), soundGroup: 'stone' }),
+  def({ id: B.CLOCKWORK_TIMER, name: 'clockwork_timer', displayName: 'Clockwork Timer', tiles: tiles(T.TIMER_SIDE, T.TIMER_TOP), soundGroup: 'wood' }),
+  def({ id: B.RELAY, name: 'relay', displayName: 'Relay', tiles: tiles(T.RELAY_SIDE, T.RELAY_TOP), soundGroup: 'wood' }),
+  def({ id: B.IGNITER, name: 'igniter', displayName: 'Igniter', tiles: tiles(T.IGNITER_SIDE, T.IGNITER_TOP), soundGroup: 'stone' }),
+  // An opaque oak cabinet: the glass bulb is a circuitRenderer overlay.
+  def({ id: B.FILAMENT_LAMP, name: 'filament_lamp', displayName: 'Filament Lamp', tiles: tiles(T.LAMP_SIDE, T.LAMP_TOP), soundGroup: 'wood' }),
+  def({ id: B.ELECTRIC_BELL, name: 'electric_bell', displayName: 'Electric Bell', tiles: tiles(T.BELL_SIDE, T.BELL_TOP), soundGroup: 'stone' }),
+  def({ id: B.SPARK_TRANSMITTER, name: 'spark_transmitter', displayName: 'Spark Transmitter', tiles: tiles(T.TX_SIDE, T.TX_TOP), soundGroup: 'wood' }),
+  def({ id: B.COHERER_RECEIVER, name: 'coherer_receiver', displayName: 'Coherer Receiver', tiles: tiles(T.RX_SIDE, T.RX_TOP), soundGroup: 'glass' }),
 ];
+
+/**
+ * Old block names that still resolve (DESIGN-circuits §1.5): `commands.resolveBlock` consults this right after its exact-name
+ * pass (and accepts the display-name form, `blast barrel`), so rune scripts written as `setblock … blast_barrel` keep working.
+ * @type {Readonly<Record<string, number>>}
+ */
+export const BLOCK_ALIASES = Object.freeze({ blast_barrel: B.POWDER_KEG });
 
 /** Default hotbar: grass, dirt, stone, cobble, planks, log, leaves, glass, bricks. */
 export const DEFAULT_HOTBAR = Object.freeze([
   B.GRASS_BLOCK, B.DIRT, B.STONE, B.COBBLESTONE, B.OAK_PLANKS, B.OAK_LOG, B.OAK_LEAVES, B.GLASS, B.BRICKS,
 ]);
 
-/** Order of the 80 placeable blocks in the block picker, grouped by family; RUNE_BLOCK and WATER stay last. */
+/**
+ * Order of the 99 placeable blocks, grouped by family; RUNE_BLOCK and WATER stay last. It is the flat list of every placeable
+ * block (survival's ITEM_KEYS and the `blocks` command use it); the picker's sections come from pickerModel.js. The Black
+ * Hole is not placeable (DESIGN-circuits §1.5); the Powder Keg follows the campfire, then the 20 circuit blocks in §1.2 order.
+ */
 export const PICKER_ORDER = Object.freeze([
   // stone
   B.STONE, B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.GRANITE, B.DIORITE, B.ANDESITE,
@@ -282,7 +351,12 @@ export const PICKER_ORDER = Object.freeze([
   B.WOOL_LIME, B.WOOL_GREEN, B.WOOL_CYAN, B.WOOL_LIGHT_BLUE, B.WOOL_BLUE, B.WOOL_PURPLE, B.WOOL_MAGENTA, B.WOOL_PINK,
   // special (v0.9: the workplaces, the basket and the Sleeping Hide right before the campfire)
   B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WICKER_BASKET, B.SLEEPING_HIDE,
-  B.CAMPFIRE, B.BLAST_BARREL, B.BLACK_HOLE, B.RUNE_BLOCK, B.WATER,
+  B.CAMPFIRE, B.POWDER_KEG,
+  // powder and circuits (DESIGN-circuits §1.2 table order)
+  B.COLLAPSAR_CHARGE, B.POWDER_FUSE, B.TORCH, B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE, B.TERMINAL_BOARD,
+  B.VOLTAIC_BATTERY, B.BLASTING_MACHINE, B.SELENIUM_PANEL, B.KNIFE_SWITCH, B.PUSH_BUTTON, B.CLOCKWORK_TIMER, B.RELAY,
+  B.IGNITER, B.FILAMENT_LAMP, B.ELECTRIC_BELL, B.SPARK_TRANSMITTER, B.COHERER_RECEIVER,
+  B.RUNE_BLOCK, B.WATER,
 ]);
 
 /** The seven wild-plant ids (§8.1 "PLANT"), ripe and picked: HONEYBERRY_BUSH … PRICKLY_PEAR_BARE (78–84), in id order. */
@@ -323,7 +397,7 @@ export function isReplaceable(id) {
 export function isTargetable(id) {
   return id !== B.AIR && !getBlockDef(id).liquid;
 }
-/** false for blocks drawn by their own model instead of the chunk mesher (campfire). */
+/** false for blocks drawn by their own model instead of the chunk mesher (campfire, black hole, the thin circuit parts). */
 export function isMeshed(id) {
   return getBlockDef(id).meshed;
 }

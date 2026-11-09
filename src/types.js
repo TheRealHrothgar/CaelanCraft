@@ -262,8 +262,115 @@
  * @property {'creative'|'survival'} [mode]   optional (v0.9) written once the world has a survival state; absent = creative
  * @property {SurvivalJSON} [survival]        optional (v0.9) the frozen or live survival state; absent = never in Survival
  * @property {ContainersJSON} [containers]    optional (v0.9) baskets and belongings; absent = none
+ * @property {boolean} [blackholes]   optional (DESIGN-circuits §6.4) the world's black-holes switch; anything but false = on
+ * @property {boolean} [circuits]     optional (DESIGN-circuits §6.4) the world's circuits switch; anything but false = on
+ * @property {CircuitPartsJSON} [circuitParts]  optional (DESIGN-circuits §6.4) configured circuit parts; absent = none
  * @property {{name?: string, createdAt?: number, lastPlayed?: number}} [meta]
  *   optional (§41) the save slot's world name and times (ms since the epoch); storage.loadSlot always fills all three
+ */
+
+// ---- Powder, circuits and black holes v2 (docs/DESIGN-circuits.md §6; CONTRACTS §50–§58 once merged) ----
+
+/**
+ * One row of the circuit part table (circuitParts.PARTS, DESIGN-circuits §4.2). `wire`, `volts`, `vMin` and `amps` are
+ * present only on the parts they describe.
+ * @typedef {Object} PartDef
+ * @property {number} id        the block id
+ * @property {string} key       stable save string: the store kind `k` (§4.8)
+ * @property {'wire'|'junction'|'source'|'contact'|'load'|'fuse'|'flame'|'ignitable'} role
+ * @property {string} [wire]    'copper', 'brown', 'white' or 'earth' (wires only)
+ * @property {number} [volts]   a source's output (a selenium panel's in full sun)
+ * @property {number} [vMin]    a load's (or input's) minimum voltage
+ * @property {number} [amps]    a load's (or input's) current: both its share of the wire drop and its battery drain (§4.4)
+ * @property {boolean} input    has one input face (relay coil, timer start, coherer tapper), which is never a contact terminal
+ * @property {boolean} earth    needs earth to work: sources, loads and inputs
+ * @property {boolean} control  right-click operates it (§4.9)
+ * @property {readonly string[]} fields  the store fields saved for it, in JSON order (§4.8); [] = no store entry
+ * @property {string} origin    the real thing, one line
+ * @property {string} tip       the teaching line (§4.13), at most 240 characters
+ */
+
+/**
+ * The settings and saved state of one configured circuit part (circuitStore.js, DESIGN-circuits §4.8). Only the fields of its
+ * kind are present; `k` is always its PartDef.key.
+ * @typedef {Object} PartState
+ * @property {string} key       `"q,y,r"`
+ * @property {number} q
+ * @property {number} y
+ * @property {number} r
+ * @property {string} k         the part's kind (PartDef.key)
+ * @property {string} l         label, '' = none (≤ MAX_PART_LABEL_CHARS)
+ * @property {boolean} [on]     switch closed / timer hold latched / receiver latched closed
+ * @property {boolean} [nc]     normally closed (push button, relay)
+ * @property {number} [f]       input face 0..6 (timer, relay, receiver)
+ * @property {number} [s]       timer delay, TIMER_MIN_S..TIMER_MAX_S in 0.5 s steps
+ * @property {string} [m]       timer 'pulse'|'hold'|'repeat'; receiver 'pulse'|'latch'
+ * @property {boolean} [run]    a repeat timer is running
+ * @property {number} [ch]      radio channel 1..RADIO_CHANNELS
+ * @property {number} [c]       battery charge, amp-seconds 0..BATTERY_CAPACITY
+ */
+
+/**
+ * Saved circuit parts (DESIGN-circuits §6.4): canonical `"q,y,r"` keys; each entry holds `k` and then its non-default fields
+ * only, in the order k, l, on, nc, f, s, m, run, ch, c. `s` is rounded to 0.5 steps, `c` to an integer.
+ * @typedef {Record<string, { k: string, l?: string, on?: boolean, nc?: boolean, f?: number, s?: number, m?: string,
+ *   run?: boolean, ch?: number, c?: number }>} CircuitPartsJSON
+ */
+
+/**
+ * One moving or lit bit of a circuit part, drawn by circuitRenderer (circuits.overlays, DESIGN-circuits §4.11).
+ * @typedef {Object} OverlayItem
+ * @property {'blade'|'cap'|'hand'|'arm'|'plunger'|'hammer'|'bulb'|'glow'|'staff'} type
+ * @property {number} q
+ * @property {number} y
+ * @property {number} r
+ * @property {number} a         the type's first parameter (an angle, a travel, a brightness, …)
+ * @property {number} b         its second parameter
+ * @property {'lamp'|'igniter'|'ember'|'spark'|'coherer'|'charge'|'fuse'} [glow]   which glow (type 'glow')
+ * @property {'torch'|'filament'|'char'} [staff]   which thin boxes (type 'staff'; the design's 'linstock', renamed with the
+ *                                  part: DESIGN-circuits' user-decision note)
+ */
+
+/**
+ * A black-hole event (blackholes.drainEvents, DESIGN-circuits §6.2.4): a phase change of one hole, with its centre.
+ * @typedef {Object} BlackHoleEvent
+ * @property {'arm'|'flash'|'implode'|'formed'|'collapsed'|'cancelled'} type
+ * @property {number} q
+ * @property {number} y
+ * @property {number} r
+ * @property {number} cx        centre, world units
+ * @property {number} cy
+ * @property {number} cz
+ */
+
+/**
+ * One hole as vortexRenderer draws it (blackholes.vortexViews, DESIGN-circuits §6.2.4), nearest first.
+ * @typedef {Object} VortexView
+ * @property {number} cx
+ * @property {number} cy
+ * @property {number} cz
+ * @property {number} phase     blackholes.PHASE: 0 ARM, 1 FLASH, 2 IMPLODE, 3 VORTEX
+ * @property {number} s         progress through the phase, 0..1
+ * @property {number} strength  1, or 0.2 for an inert hole or while black holes are switched off
+ * @property {number} seed      0..1, a hash of the cell key
+ * @property {number} age       seconds since arming began (Infinity for a hole loaded as a vortex)
+ * @property {boolean} full     among the nearest maxFull: drawn with its disk, shell and lensed band
+ */
+
+/**
+ * What the device panel shows for one part (circuits.panelView, DESIGN-circuits §4.10, §6.2.15).
+ * @typedef {Object} DevicePanelView
+ * @property {string} key       `"q,y,r"`
+ * @property {string} k         the part's kind (PartDef.key)
+ * @property {number} id        the block id
+ * @property {string} title     the part's display name
+ * @property {string} coords    the cell, as printed
+ * @property {string} label
+ * @property {string[]} readout  live lines: volts, current, earth, diagnostic, state
+ * @property {{ s?: number, m?: string, f?: number, nc?: boolean, ch?: number, on?: boolean, c?: number }} fields
+ * @property {('start'|'stop'|'send'|'tap'|'refill')[]} actions
+ * @property {string} origin    the real thing (PartDef.origin)
+ * @property {string} about     the tip (PartDef.tip)
  */
 
 /**

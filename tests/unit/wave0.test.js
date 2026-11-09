@@ -15,6 +15,7 @@ import {
   SOUND_GROUPS,
   FACE_TOP, FACE_BOTTOM,
   PLANT_IDS, POP_OFF_IDS, isPlant, isLitter, isPopOff, isStation, isContainerBlock,
+  BLOCK_ALIASES, getBlockDef, isMeshed,
 } from '../../src/blocks.js';
 import { Chunk } from '../../src/chunk.js';
 
@@ -98,6 +99,62 @@ describe('config', () => {
     expect(C.PIG_REPOP_MIN).toBeLessThan(C.PIG_REPOP_MAX);
     expect(C.PIG_REPOP_MAX).toBeLessThanOrEqual(C.PIG_REPOP_RADIUS);
     expect(C.STATION_RANGE).toBeLessThan(C.STATION_WORK_RANGE);
+  });
+  it('has the circuit and black-hole constants of DESIGN-circuits §6.3', () => {
+    const CIRCUITS = {
+      CIRCUIT_TICK_S: 0.05, VOLT_UNIT: 0.0625, WIRE_OHMS: 0.0625,
+      BATTERY_V: 6, BATTERY_EMPTY_V: 4.5, BATTERY_KNEE: 0.25, MAX_PILE: 4, BLASTER_V: 24, SELENIUM_MAX_V: 3,
+      LAMP_MIN_V: 1.5, LAMP_FULL_V: 6, COIL_MIN_V: 2.5, IGNITER_MIN_V: 3,
+      LAMP_AMPS: 1, BELL_AMPS: 1, IGNITER_AMPS: 2, COIL_AMPS: 0.5, BATTERY_CAPACITY: 3600,
+      EARTH_WALK_CELLS: 8,
+      IGNITER_REFIRE_S: 0.5, RELAY_DELAY_TICKS: 1, RELAY_HAND_S: 0.5, BUTTON_PULSE_S: 0.3, BUTTON_RELEASE_S: 0.1,
+      BLASTER_PULSE_S: 1, BLASTER_RESET_S: 1.5,
+      TIMER_MIN_S: 0.5, TIMER_MAX_S: 3600, TIMER_DEFAULT_S: 5, TIMER_PULSE_S: 1,
+      RADIO_CHANNELS: 16, RADIO_BASE_M: 300, RADIO_STEP_M: 50, RADIO_DISTRESS_CH: 7, RADIO_RANGE: 160, RADIO_PULSE_S: 1,
+      FUSE_CELL_S: 0.4, MAX_BURNING_FUSES: 2048, MAX_FLAME_QUEUE: 4096, KEG_DIRECT_FUSE_S: 0.25,
+      MAX_FUSE_SPARK_CELLS: 16, MAX_FUSE_PUFFS_PER_TICK: 24,
+      MAX_CIRCUIT_PARTS: 4096, MAX_PART_LABEL_CHARS: 24,
+      MAX_CIRCUIT_VISITS_PER_TICK: 6000, CIRCUIT_TICK_BUDGET_MS: 2, MAX_NETWORK_CELLS: 8192,
+      MAX_CONTACT_CHANGES_PER_TICK: 1024, MAX_SETTLE_PASSES: 4,
+      MAX_CIRCUIT_WRITES_PER_TICK: 32, MAX_IGNITIONS_PER_TICK: 32,
+      CIRCUIT_DRAW_RANGE: 64, CIRCUIT_OVERLAY_RANGE: 48, MAX_CIRCUIT_OVERLAYS: 512,
+    };
+    const HOLES = {
+      BLACK_HOLE_ARM_S: 0.4, BLACK_HOLE_FLASH_S: 0.3, BLACK_HOLE_IMPLODE_S: 1.2,
+      BLACK_HOLE_SWIRL: 1.6, BLACK_HOLE_SWIRL_CORE: 1.5,
+      BLACK_HOLE_FLASH_INTENSITY: 220, BLACK_HOLE_FLASH_COLOR: 0xfff4e6,
+      BLACK_HOLE_SCREEN_FLASH_RANGE: 48, BLACK_HOLE_SCREEN_FLASH_S: 0.6,
+      BLACK_HOLE_SCREEN_FLASH_MAX: 0.75, BLACK_HOLE_SCREEN_FLASH_GAP_S: 0.5,
+      BLACK_HOLE_PINCH_DEG: 8, BLACK_HOLE_PINCH_RANGE: 24, BLACK_HOLE_STRETCH_DEG: 4,
+      VORTEX_MODEL_RANGE: 128, VORTEX_MAX_MODELS: 16, VORTEX_MAX_CORES: 256,
+      VORTEX_PARTICLES_PER_S: 40, VORTEX_PARTICLE_HOLES: 4,
+      VORTEX_SPIRAL_K: 3.33, VORTEX_INFLOW: 1.2, VORTEX_FLOW_RATE: 9,
+      VORTEX_BILLBOARD: 3.6, VORTEX_CORE_R: 0.3, VORTEX_EVENT_R: 0.45,
+      MAX_INFALL_BLOCKS: 96, MAX_INFALL_MOBS: 8, INFALL_VIEW_RANGE: 48,
+      INFALL_MIN_S: 0.6, INFALL_MAX_S: 2.4, INFALL_MOB_S: 1.2,
+    };
+    for (const table of [CIRCUITS, HOLES]) {
+      expect(Object.fromEntries(Object.keys(table).map((k) => [k, C[k]]))).toEqual(table);
+    }
+    // Volts are whole VOLT_UNITs: a wire cell drops one unit per amp, and every source, threshold and battery voltage is a
+    // whole number of units (the solver's bucket queue, §4.7).
+    expect(C.WIRE_OHMS).toBe(C.VOLT_UNIT);
+    for (const v of [C.BATTERY_V, C.BATTERY_EMPTY_V, C.BLASTER_V, C.SELENIUM_MAX_V, C.LAMP_MIN_V, C.LAMP_FULL_V, C.COIL_MIN_V, C.IGNITER_MIN_V]) {
+      expect(Number.isInteger(v / C.VOLT_UNIT), String(v)).toBe(true);
+    }
+    // A pile of MAX_PILE batteries is the blasting machine's 24 V; the knee leaves 4.5 V just before empty.
+    expect(C.MAX_PILE * C.BATTERY_V).toBe(C.BLASTER_V);
+    expect(C.BATTERY_V * (1 - C.BATTERY_KNEE)).toBe(C.BATTERY_EMPTY_V);
+    // 16 wavelengths from 300 m to 1050 m; the distress channel is 600 m.
+    expect(C.RADIO_BASE_M + C.RADIO_STEP_M * (C.RADIO_CHANNELS - 1)).toBe(1050);
+    expect(C.RADIO_BASE_M + C.RADIO_STEP_M * (C.RADIO_DISTRESS_CH - 1)).toBe(600);
+    // A fuse burns at 2.5 cells/s; the ARM + FLASH + IMPLODE sequence takes 1.9 s; timer delays come in 0.5 s steps.
+    expect(1 / C.FUSE_CELL_S).toBeCloseTo(2.5, 12);
+    expect(C.BLACK_HOLE_ARM_S + C.BLACK_HOLE_FLASH_S + C.BLACK_HOLE_IMPLODE_S).toBeCloseTo(1.9, 12);
+    expect(C.TIMER_DEFAULT_S >= C.TIMER_MIN_S && C.TIMER_DEFAULT_S <= C.TIMER_MAX_S).toBe(true);
+    // One spiral everywhere: the disk, the particles and the infall share dθ/d ln ρ = 4 / 1.2 (§2.4).
+    expect(C.VORTEX_SPIRAL_K).toBeCloseTo(4 / C.VORTEX_INFLOW, 2);
+    expect(C.INFALL_MIN_S).toBeLessThan(C.INFALL_MAX_S);
   });
   it('every version string matches VERSION (F3, console, debug handle, title footer, package files)', () => {
     // Regression: v0.4–v0.7 shipped as "v0.2.0" in F3 and "v0.3" on the title screen because only some were bumped.
@@ -245,10 +302,11 @@ describe('blocks', () => {
     expect(DEFAULT_HOTBAR).not.toContain(BLOCK.RUNE_BLOCK);
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
-    expect(BLOCK_COUNT).toBe(95); // v0.8 appended 68..75 (see the block-physics test below), v0.9 survival 76..94
+    // v0.8 appended 68..75 (see the block-physics test below), v0.9 survival 76..94, powder and circuits 95..114
+    expect(BLOCK_COUNT).toBe(115);
     // + 6 zombie part tiles 240–245 (§39), + 3 Watcher tiles 250–252 (§40: stone, crack glow, smoke), not block faces;
-    // v0.9 survival + 28 (77–104)
-    expect(TILE_IDS).toHaveLength(115);
+    // v0.9 survival + 28 (77–104); powder and circuits + 35 (160–194)
+    expect(TILE_IDS).toHaveLength(150);
     expect(BLOCK.BLACK_HOLE).toBe(66);
     expect(TILE.BLACK_HOLE).toBe(72);
     expect(BLOCK.STONE).toBe(1);
@@ -258,7 +316,7 @@ describe('blocks', () => {
     expect(TILE.SPRUCE_LOG_SIDE).toBe(28);
     expect(TILE.WOOL_LIGHT_GRAY).toBe(71);
     const placeable = BLOCKS.filter((b) => b.placeable).map((b) => b.id).sort((a, b) => a - b);
-    expect(PICKER_ORDER).toHaveLength(80); // 67 before the v0.9 survival blocks
+    expect(PICKER_ORDER).toHaveLength(99); // 67 before the v0.9 survival blocks, 80 before powder and circuits
     expect(new Set(PICKER_ORDER).size).toBe(PICKER_ORDER.length);
     expect([...PICKER_ORDER].sort((a, b) => a - b)).toEqual(placeable);
     // Logs and hay bales: distinct end tiles on top and bottom.
@@ -287,8 +345,9 @@ describe('blocks', () => {
     expect(BLOCKS[BLOCK.WOOL_LIGHT_BLUE].displayName).toBe('Light Blue Wool');
     expect(DEFAULT_HOTBAR.every((id) => id < BLOCK.RUNE_BLOCK)).toBe(true);
   });
-  it('v0.8 block physics: water levels 68..74, blast barrel 75, gravity flag, fall-through, UNLOADED', () => {
+  it('v0.8 block physics: water levels 68..74, the keg (once "blast barrel") 75, gravity flag, fall-through, UNLOADED', () => {
     expect(BLOCK.BLAST_BARREL).toBe(75);
+    expect(BLOCK.POWDER_KEG).toBe(75); // DESIGN-circuits §1.1: the canonical key; BLAST_BARREL is its deprecated alias
     expect([BLOCK.WATER_FLOW_1, BLOCK.WATER_FLOW_6, BLOCK.WATER_FALL, BLOCK.BLAST_BARREL]).toEqual([68, 73, 74, 75]);
     expect([TILE.BARREL_SIDE, TILE.BARREL_TOP]).toEqual([75, 76]);
     for (let id = BLOCK.WATER_FLOW_1; id <= BLOCK.WATER_FALL; id++) {
@@ -308,10 +367,12 @@ describe('blocks', () => {
     expect(isWater(BLOCK.ICE) || isWater(BLOCK.AIR)).toBe(false);
     expect(isWaterSource(BLOCK.WATER)).toBe(true);
     expect(isWaterSource(BLOCK.WATER_FALL)).toBe(false);
-    // The barrel: a plain solid, placeable, breakable, wood-sounding block in the picker's special group.
+    // The keg: a plain solid, placeable, breakable, wood-sounding block in the picker's special group. Renamed from
+    // "Blast Barrel" (DESIGN-circuits §1.1); saves store the id, and BLOCK_ALIASES keeps the old name resolving.
     const barrel = BLOCKS[BLOCK.BLAST_BARREL];
-    expect(barrel.name).toBe('blast_barrel');
-    expect(barrel.displayName).toBe('Blast Barrel');
+    expect(barrel.name).toBe('powder_keg');
+    expect(barrel.displayName).toBe('Powder Keg');
+    expect(BLOCK_ALIASES.blast_barrel).toBe(BLOCK.POWDER_KEG);
     expect(barrel.solid && barrel.opaque && barrel.placeable && barrel.breakable).toBe(true);
     expect(barrel.soundGroup).toBe('wood');
     expect(getFaceTile(BLOCK.BLAST_BARREL, 0)).toBe(TILE.BARREL_SIDE);
@@ -331,9 +392,9 @@ describe('blocks', () => {
     expect(isLeaves(BLOCK.BIRCH_LEAVES) && isLog(BLOCK.SPRUCE_LOG)).toBe(true);
     expect(isLeaves(BLOCK.OAK_LOG) || isLog(BLOCK.OAK_PLANKS)).toBe(false);
   });
-  it('v0.9 survival: blocks 76..94 exactly as DESIGN-survival §8.1, tiles 77..104, BLOCK_COUNT 95', () => {
-    expect(BLOCK_COUNT).toBe(95);
-    expect(BLOCKS).toHaveLength(95);
+  it('v0.9 survival: blocks 76..94 exactly as DESIGN-survival §8.1, tiles 77..104 (powder and circuits follow at 95)', () => {
+    expect(BLOCK_COUNT).toBe(115); // 95 after survival; DESIGN-circuits §1.3 appends 95..114
+    expect(BLOCKS).toHaveLength(115);
     const P = 'plant'; // the PLANT flags: walk-through, see-through cutout, never culled against itself
     const S = 'solid'; // a plain full block (def defaults)
     // [key, id, name, displayName, flags, soundGroup, [side, top, bottom] TILE keys, placeable]
@@ -390,7 +451,7 @@ describe('blocks', () => {
       'PLANT_TOP_CLEAR', 'LOOSE_STONES', 'FALLEN_BRANCHES', 'FIRE_PIT_SIDE',
     ];
     TILES.forEach((key, i) => expect(TILE[key], key).toBe(77 + i));
-    expect(TILE_IDS).toHaveLength(115);
+    expect(TILE_IDS).toHaveLength(150); // 115 after survival; + the 35 circuit tiles 160..194
     expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
     // Every survival tile is used by a block face.
     const used = new Set(BLOCKS.flatMap((d) => d.tiles));
@@ -398,7 +459,7 @@ describe('blocks', () => {
   });
 
   it('v0.9 survival: PICKER_ORDER inserts the 13 placeable blocks into their groups; WATER last, RUNE_BLOCK before it', () => {
-    expect(PICKER_ORDER).toHaveLength(80);
+    expect(PICKER_ORDER).toHaveLength(99); // 80 after survival; DESIGN-circuits §1.5: − BLACK_HOLE + the 20 circuit blocks
     expect(PICKER_ORDER[PICKER_ORDER.length - 1]).toBe(BLOCK.WATER);
     expect(PICKER_ORDER[PICKER_ORDER.length - 2]).toBe(BLOCK.RUNE_BLOCK);
     const after = (id, ids) => {
@@ -408,13 +469,14 @@ describe('blocks', () => {
     };
     after(BLOCK.DIAMOND_ORE, [BLOCK.COPPER_ORE, BLOCK.TIN_ORE, BLOCK.COAL_BLOCK]);
     after(BLOCK.PUMPKIN, [BLOCK.TUSSOCK, BLOCK.CATTAILS, BLOCK.TUBER_PLANT, BLOCK.HONEYBERRY_BUSH, BLOCK.PRICKLY_PEAR, BLOCK.OAK_LOG]);
+    // The keg follows the campfire; the circuit blocks (tested below) follow it; the Black Hole is gone (DESIGN-circuits §1.5).
     after(BLOCK.WOOL_PINK, [
       BLOCK.WORK_STUMP, BLOCK.KILN, BLOCK.BLOOMERY, BLOCK.FORGE, BLOCK.WICKER_BASKET, BLOCK.SLEEPING_HIDE, BLOCK.CAMPFIRE,
-      BLOCK.BLAST_BARREL, BLOCK.BLACK_HOLE, BLOCK.RUNE_BLOCK, BLOCK.WATER,
+      BLOCK.POWDER_KEG, BLOCK.COLLAPSAR_CHARGE,
     ]);
     const placeable = BLOCKS.filter((b) => b.placeable).map((b) => b.id).sort((a, b) => a - b);
     expect([...PICKER_ORDER].sort((a, b) => a - b)).toEqual(placeable);
-    expect(BLOCKS.filter((b) => b.id >= 76 && b.placeable)).toHaveLength(13);
+    expect(BLOCKS.filter((b) => b.id >= 76 && b.id <= 94 && b.placeable)).toHaveLength(13);
     expect(DEFAULT_HOTBAR.every((id) => id < BLOCK.RUNE_BLOCK)).toBe(true); // Creative's default hotbar is unchanged
   });
 
@@ -434,12 +496,142 @@ describe('blocks', () => {
     for (const f of [isPlant, isLitter, isPopOff, isStation, isContainerBlock]) {
       expect(f(UNLOADED) || f(-1) || f(NaN) || f(undefined), f.name).toBe(false);
     }
-    // The plants carry the PLANT flags; the PLANT-flagged non-plants are belongings, litter and the fire pit.
-    const plantFlagged = BLOCKS.filter((d) => d.layer === LAYER_CUTOUT && !d.solid && !d.cullSame).map((d) => d.id);
+    // The plants carry the PLANT flags; the PLANT-flagged non-plants are belongings, litter and the fire pit. (The thin
+    // circuit parts share those flags but are unmeshed: DESIGN-circuits §1.2 "THIN", tested below.)
+    const plantFlagged = BLOCKS.filter((d) => d.layer === LAYER_CUTOUT && !d.solid && !d.cullSame && d.meshed).map((d) => d.id);
     expect(plantFlagged).toEqual([...PLANT_IDS, B.REMAINS, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT]);
-    // FIRE_PIT is a meshed cutout block; only CAMPFIRE has its own model, and only CAMPFIRE is fall-through.
-    expect(BLOCKS.filter((d) => !d.meshed).map((d) => d.id)).toEqual([B.CAMPFIRE]);
+    // FIRE_PIT is a meshed cutout block. Only CAMPFIRE, the Black Hole and the thin circuit parts have their own models,
+    // and only CAMPFIRE is fall-through.
+    expect(BLOCKS.filter((d) => !d.meshed).map((d) => d.id)).toEqual([
+      B.BLACK_HOLE, B.CAMPFIRE, B.POWDER_FUSE, B.TORCH, B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE,
+    ]);
     expect(isFallThrough(B.FIRE_PIT) || isFallThrough(B.TUSSOCK) || isFallThrough(B.REMAINS)).toBe(false);
+  });
+
+  // DESIGN-circuits §1.2–§1.4 (final ids, §1.3: BLOCK_COUNT 95 after survival + working id − 140). The user named the
+  // design's Linstock a Torch: key TORCH, name torch, display name "Torch", tile 164 TORCH.
+  const CIRCUIT_BLOCKS = [
+    // [BLOCK key, id, name, displayName, shape, soundGroup, [side, top] TILE keys] (bottom = top; THIN: CIRCUIT_CLEAR)
+    ['COLLAPSAR_CHARGE', 95, 'collapsar_charge', 'Collapsar Charge', 'CAB', 'glass', ['COLLAPSAR_SIDE', 'COLLAPSAR_TOP']],
+    ['POWDER_FUSE', 96, 'powder_fuse', 'Powder Fuse', 'THIN', 'cloth', ['CIRCUIT_CLEAR', 'POWDER_FUSE']],
+    ['TORCH', 97, 'torch', 'Torch', 'THIN', 'wood', ['CIRCUIT_CLEAR', 'TORCH']],
+    ['COPPER_WIRE', 98, 'copper_wire', 'Copper Wire', 'THIN', 'cloth', ['CIRCUIT_CLEAR', 'COPPER_WIRE']],
+    ['BROWN_WIRE', 99, 'brown_wire', 'Brown Wire', 'THIN', 'cloth', ['CIRCUIT_CLEAR', 'BROWN_WIRE']],
+    ['WHITE_WIRE', 100, 'white_wire', 'White Wire', 'THIN', 'cloth', ['CIRCUIT_CLEAR', 'WHITE_WIRE']],
+    ['EARTH_WIRE', 101, 'earth_wire', 'Earth Wire', 'THIN', 'cloth', ['CIRCUIT_CLEAR', 'EARTH_WIRE']],
+    ['TERMINAL_BOARD', 102, 'terminal_board', 'Terminal Board', 'CAB', 'wood', ['TERMINAL_SIDE', 'TERMINAL_TOP']],
+    ['VOLTAIC_BATTERY', 103, 'voltaic_battery', 'Voltaic Battery', 'CAB', 'wood', ['BATTERY_SIDE', 'BATTERY_TOP']],
+    ['BLASTING_MACHINE', 104, 'blasting_machine', 'Blasting Machine', 'CAB', 'wood', ['BLASTER_SIDE', 'BLASTER_TOP']],
+    ['SELENIUM_PANEL', 105, 'selenium_panel', 'Selenium Panel', 'CAB', 'glass', ['SELENIUM_SIDE', 'SELENIUM_TOP']],
+    ['KNIFE_SWITCH', 106, 'knife_switch', 'Knife Switch', 'CAB', 'stone', ['SWITCH_SIDE', 'SWITCH_TOP']],
+    ['PUSH_BUTTON', 107, 'push_button', 'Push Button', 'CAB', 'stone', ['BUTTON_SIDE', 'BUTTON_TOP']],
+    ['CLOCKWORK_TIMER', 108, 'clockwork_timer', 'Clockwork Timer', 'CAB', 'wood', ['TIMER_SIDE', 'TIMER_TOP']],
+    ['RELAY', 109, 'relay', 'Relay', 'CAB', 'wood', ['RELAY_SIDE', 'RELAY_TOP']],
+    ['IGNITER', 110, 'igniter', 'Igniter', 'CAB', 'stone', ['IGNITER_SIDE', 'IGNITER_TOP']],
+    ['FILAMENT_LAMP', 111, 'filament_lamp', 'Filament Lamp', 'CAB', 'wood', ['LAMP_SIDE', 'LAMP_TOP']],
+    ['ELECTRIC_BELL', 112, 'electric_bell', 'Electric Bell', 'CAB', 'stone', ['BELL_SIDE', 'BELL_TOP']],
+    ['SPARK_TRANSMITTER', 113, 'spark_transmitter', 'Spark Transmitter', 'CAB', 'wood', ['TX_SIDE', 'TX_TOP']],
+    ['COHERER_RECEIVER', 114, 'coherer_receiver', 'Coherer Receiver', 'CAB', 'glass', ['RX_SIDE', 'RX_TOP']],
+  ];
+  const CIRCUIT_TILES = [
+    'CIRCUIT_CLEAR', 'COLLAPSAR_SIDE', 'COLLAPSAR_TOP', 'POWDER_FUSE', 'TORCH', 'COPPER_WIRE', 'BROWN_WIRE', 'WHITE_WIRE',
+    'EARTH_WIRE', 'TERMINAL_SIDE', 'TERMINAL_TOP', 'BATTERY_SIDE', 'BATTERY_TOP', 'BLASTER_SIDE', 'BLASTER_TOP',
+    'SELENIUM_SIDE', 'SELENIUM_TOP', 'SWITCH_SIDE', 'SWITCH_TOP', 'BUTTON_SIDE', 'BUTTON_TOP', 'TIMER_SIDE', 'TIMER_TOP',
+    'RELAY_SIDE', 'RELAY_TOP', 'IGNITER_SIDE', 'IGNITER_TOP', 'LAMP_SIDE', 'LAMP_TOP', 'BELL_SIDE', 'BELL_TOP', 'TX_SIDE',
+    'TX_TOP', 'RX_SIDE', 'RX_TOP',
+  ];
+
+  it('powder and circuits: blocks 95..114 exactly as DESIGN-circuits §1.2 (THIN and CAB), BLOCK_COUNT 115', () => {
+    expect(CIRCUIT_BLOCKS.map((row) => row[1])).toEqual(Array.from({ length: 20 }, (_, i) => 95 + i));
+    expect(BLOCK_COUNT).toBe(115);
+    for (const [key, id, name, displayName, shape, sound, [side, top]] of CIRCUIT_BLOCKS) {
+      expect(BLOCK[key], key).toBe(id);
+      const d = BLOCKS[id];
+      expect([d.id, d.name, d.displayName, d.soundGroup], key).toEqual([id, name, displayName, sound]);
+      expect(SOUND_GROUPS).toContain(d.soundGroup);
+      // All 20 are breakable and placeable, have no gravity and do not fall through (§1.2); none is liquid or replaceable.
+      expect(d.breakable && d.placeable && !d.gravity && !d.liquid, key).toBe(true);
+      expect(isFallThrough(id) || isReplaceable(id) || isPopOff(id) || !isTargetable(id), key).toBe(false);
+      for (let f = 0; f < 6; f++) expect(getFaceTile(id, f), `${key} side ${f}`).toBe(TILE[side]);
+      expect(getFaceTile(id, FACE_TOP), key).toBe(TILE[top]);
+      if (shape === 'THIN') {
+        // solid: false, opaque: false, layer cutout, cullSame: false, meshed: false, icon 'flat'; bottom CIRCUIT_CLEAR.
+        expect([d.solid, d.opaque, d.layer, d.cullSame, d.meshed, d.icon], key).toEqual([false, false, LAYER_CUTOUT, false, false, 'flat']);
+        expect(getFaceTile(id, FACE_BOTTOM), key).toBe(TILE.CIRCUIT_CLEAR);
+        expect(shouldRenderFace(BLOCK.STONE, id), key).toBe(true); // never hides the stone it lies on
+      } else {
+        // A cabinet: a solid, opaque, meshed full prism with def defaults; bottom = top.
+        expect([d.solid, d.opaque, d.layer, d.cullSame, d.meshed, d.icon], key).toEqual([true, true, LAYER_OPAQUE, true, true, 'prism']);
+        expect(getFaceTile(id, FACE_BOTTOM), key).toBe(TILE[top]);
+      }
+    }
+    // 6 thin parts (the fuse, the torch, four wires) and 14 cabinets; the lamp is an opaque cabinet (its bulb is an overlay).
+    expect(CIRCUIT_BLOCKS.filter((row) => row[4] === 'THIN')).toHaveLength(6);
+    expect(isOpaque(BLOCK.FILAMENT_LAMP) && isMeshed(BLOCK.FILAMENT_LAMP)).toBe(true);
+    // Worldgen-era survival blocks keep their ids.
+    expect([BLOCK.COPPER_ORE, BLOCK.FIRE_PIT]).toEqual([76, 94]);
+  });
+
+  it('powder and circuits: tiles 160..194 (§1.4), each used by a block face; TILE_IDS 150', () => {
+    CIRCUIT_TILES.forEach((key, i) => expect(TILE[key], key).toBe(160 + i));
+    expect(TILE_IDS).toHaveLength(150);
+    expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
+    const used = new Set(BLOCKS.flatMap((d) => d.tiles));
+    for (const key of CIRCUIT_TILES) expect(used.has(TILE[key]), key).toBe(true);
+    // Clear of survival's 77–104 and the creatures' 240–252; the keg keeps its own two tiles.
+    expect(TILE.FIRE_PIT_SIDE).toBeLessThan(160);
+    expect(TILE.ZOMBIE_FACE).toBeGreaterThan(194);
+    expect([TILE.BARREL_SIDE, TILE.BARREL_TOP]).toEqual([75, 76]);
+  });
+
+  it('BlockDef.icon is "prism" by default and "flat" only on the six thin parts', () => {
+    const flat = BLOCKS.filter((d) => d.icon === 'flat').map((d) => d.id);
+    expect(flat).toEqual([BLOCK.POWDER_FUSE, BLOCK.TORCH, BLOCK.COPPER_WIRE, BLOCK.BROWN_WIRE, BLOCK.WHITE_WIRE, BLOCK.EARTH_WIRE]);
+    for (const d of BLOCKS) expect(['prism', 'flat'], d.name).toContain(d.icon);
+    expect(getBlockDef(200).icon).toBe('prism'); // unknown ids read as AIR
+  });
+
+  it('the Black Hole is the active vortex only: not placeable, not meshed, still breakable and targetable (§1.1)', () => {
+    const d = BLOCKS[BLOCK.BLACK_HOLE];
+    expect([d.id, d.name, d.displayName]).toEqual([66, 'black_hole', 'Black Hole']);
+    expect(isPlaceable(BLOCK.BLACK_HOLE) || isMeshed(BLOCK.BLACK_HOLE) || isSolid(BLOCK.BLACK_HOLE)).toBe(false);
+    expect(isBreakable(BLOCK.BLACK_HOLE) && isTargetable(BLOCK.BLACK_HOLE)).toBe(true);
+    expect(PICKER_ORDER).not.toContain(BLOCK.BLACK_HOLE);
+    expect(DEFAULT_HOTBAR).not.toContain(BLOCK.BLACK_HOLE);
+    expect(getFaceTile(BLOCK.BLACK_HOLE, 0)).toBe(TILE.BLACK_HOLE); // its old tile stays (old icons)
+  });
+
+  it('POWDER_KEG is the canonical key of 75; BLAST_BARREL is its alias; BLOCK_ALIASES resolves the old name (§1.1, §1.5)', () => {
+    expect(BLOCK.POWDER_KEG).toBe(75);
+    expect(BLOCK.BLAST_BARREL).toBe(BLOCK.POWDER_KEG);
+    expect(BLOCKS[BLOCK.POWDER_KEG].name.toUpperCase()).toBe('POWDER_KEG');
+    expect(BLOCK_ALIASES).toEqual({ blast_barrel: BLOCK.POWDER_KEG });
+    expect(Object.isFrozen(BLOCK_ALIASES)).toBe(true);
+    // An alias never shadows a real block name, and every alias points at a real block.
+    const names = new Set(BLOCKS.map((b) => b.name));
+    for (const [alias, id] of Object.entries(BLOCK_ALIASES)) {
+      expect(names.has(alias), alias).toBe(false);
+      expect(BLOCKS[id], alias).toBeDefined();
+    }
+    // Every other BLOCK key is unique to its id: BLAST_BARREL is the only alias.
+    const keysById = new Map();
+    for (const [k, id] of Object.entries(BLOCK)) keysById.set(id, [...(keysById.get(id) ?? []), k]);
+    expect([...keysById.values()].filter((ks) => ks.length > 1)).toEqual([['POWDER_KEG', 'BLAST_BARREL']]);
+  });
+
+  it('PICKER_ORDER (§1.5): 99 placeable ids; the keg after the campfire, then the 20 new ids in table order, RUNE_BLOCK, WATER', () => {
+    expect(PICKER_ORDER).toHaveLength(99);
+    const iKeg = PICKER_ORDER.indexOf(BLOCK.POWDER_KEG);
+    expect(iKeg).toBe(PICKER_ORDER.indexOf(BLOCK.CAMPFIRE) + 1);
+    expect(PICKER_ORDER.slice(iKeg + 1)).toEqual([...CIRCUIT_BLOCKS.map(([key]) => BLOCK[key]), BLOCK.RUNE_BLOCK, BLOCK.WATER]);
+    const placeable = BLOCKS.filter((b) => b.placeable).map((b) => b.id).sort((a, b) => a - b);
+    expect([...PICKER_ORDER].sort((a, b) => a - b)).toEqual(placeable);
+    expect(Object.isFrozen(PICKER_ORDER)).toBe(true);
+    // DEFAULT_HOTBAR is unchanged.
+    expect(DEFAULT_HOTBAR).toEqual([
+      BLOCK.GRASS_BLOCK, BLOCK.DIRT, BLOCK.STONE, BLOCK.COBBLESTONE, BLOCK.OAK_PLANKS, BLOCK.OAK_LOG, BLOCK.OAK_LEAVES, BLOCK.GLASS,
+      BLOCK.BRICKS,
+    ]);
   });
 
   it('flags are consistent', () => {
