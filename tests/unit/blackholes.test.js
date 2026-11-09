@@ -41,13 +41,13 @@ function packBall(cells, id) {
 }
 
 describe('black_hole block', () => {
-  it('is placeable, breakable and targetable but not solid, so the player can fall in', () => {
+  it('is breakable and targetable but not solid, so the player can fall in; not placeable (DESIGN-circuits §1.1)', () => {
     const d = BLOCKS[B.BLACK_HOLE];
     expect(d.name).toBe('black_hole');
     expect(d.displayName).toBe('Black Hole');
     expect(isSolid(B.BLACK_HOLE)).toBe(false);
     expect(isOpaque(B.BLACK_HOLE)).toBe(false);
-    expect(isPlaceable(B.BLACK_HOLE)).toBe(true);
+    expect(isPlaceable(B.BLACK_HOLE)).toBe(false); // the picker gives the dormant Collapsar Charge instead
     expect(isBreakable(B.BLACK_HOLE)).toBe(true);
     expect(isTargetable(B.BLACK_HOLE)).toBe(true);
   });

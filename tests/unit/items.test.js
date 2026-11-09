@@ -131,7 +131,7 @@ const REFERENCED_BLOCKS = [
   'dirt', 'grass_block', 'snowy_grass', 'sand', 'red_sand', 'gravel', 'clay', 'snow_block', 'ice', 'packed_ice', 'oak_leaves',
   'spruce_leaves', 'birch_leaves', 'honeyberry_bush', 'prickly_pear', 'tussock', 'cattails', 'tuber_plant', 'oak_log',
   'spruce_log', 'birch_log', 'oak_planks', 'spruce_planks', 'birch_planks', 'bookshelf', 'work_stump', 'wicker_basket',
-  'blast_barrel', 'pumpkin', 'hay_bale', 'honeycomb_block', 'sleeping_hide', 'campfire', 'glass', 'glowstone', 'kiln',
+  'powder_keg', 'pumpkin', 'hay_bale', 'honeycomb_block', 'sleeping_hide', 'campfire', 'glass', 'glowstone', 'kiln',
   'bloomery', 'forge', 'cobblestone', 'mossy_cobblestone', 'stone_bricks', 'mossy_stone_bricks', 'bricks', 'granite',
   'diorite', 'andesite', 'slate', 'sandstone', 'obsidian', 'rune_block', 'coal_ore', 'copper_ore', 'tin_ore', 'iron_ore',
   'gold_ore', 'diamond_ore', 'coal_block', 'copper_block', 'gold_block', 'iron_block', 'diamond_block', 'stone',
@@ -177,10 +177,11 @@ describe('items — the registry', () => {
       expect(getItem(key)).toBe(ITEMS[key]);
       expect(isItemKey(key)).toBe(true);
     }
-    // 34 tools, 37 materials, 20 foods, 2 bandages, 5 clothes and the 79 placeable blocks other than water.
+    // 34 tools, 37 materials, 20 foods, 2 bandages, 5 clothes and the 98 placeable blocks other than water (DESIGN-circuits
+    // §1.5: PICKER_ORDER drops the black hole and gains the 20 circuit blocks; the blast barrel's key is now powder_keg).
     const count = (kind) => ITEM_KEYS.filter((k) => ITEMS[k].kind === kind).length;
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 37, 20, 2, 5, 79]);
-    expect(ITEM_KEYS).toHaveLength(177);
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 37, 20, 2, 5, 98]);
+    expect(ITEM_KEYS).toHaveLength(196);
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();

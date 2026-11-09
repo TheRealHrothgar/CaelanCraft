@@ -26,8 +26,11 @@ describe('campfire block', () => {
     expect(isMeshed(B.CAMPFIRE)).toBe(false);
     expect(getFaceTile(B.CAMPFIRE, 0)).toBe(TILE.CAMPFIRE_SIDE);
     expect(getFaceTile(B.CAMPFIRE, FACE_TOP)).toBe(TILE.CAMPFIRE_TOP);
-    // Every other block is meshed as before.
-    expect(BLOCKS.filter((b) => !b.meshed).map((b) => b.name)).toEqual(['campfire']);
+    // Every other block is meshed as before, except the black hole and the thin circuit parts (DESIGN-circuits §1.1–§1.2),
+    // which vortexRenderer and circuitRenderer draw.
+    expect(BLOCKS.filter((b) => !b.meshed).map((b) => b.name)).toEqual([
+      'black_hole', 'campfire', 'powder_fuse', 'torch', 'copper_wire', 'brown_wire', 'white_wire', 'earth_wire',
+    ]);
   });
   it('the mesher skips the campfire cell but still draws the ground under it', () => {
     const chunks = new Map();

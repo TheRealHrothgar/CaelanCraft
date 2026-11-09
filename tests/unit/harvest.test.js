@@ -87,10 +87,12 @@ const TABLE = [
 ];
 
 describe('BLOCK_RULES (§6.3)', () => {
-  it('has one entry per block id; only AIR, BEDROCK and the water family are null', () => {
+  it('has one entry per block id; only AIR, BEDROCK, the water family and the circuit blocks are null', () => {
     expect(BLOCK_RULES.length).toBe(BLOCK_COUNT);
     const nulls = BLOCK_RULES.map((r, id) => (r ? null : id)).filter((x) => x !== null);
-    expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id)).map((b) => b.id));
+    // The 20 powder-and-circuits blocks (DESIGN-circuits §1.2) get their rows with survival's build of them (its §8.3).
+    const circuit = (id) => id >= B.COLLAPSAR_CHARGE && id <= B.COHERER_RECEIVER;
+    expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id) || circuit(b.id)).map((b) => b.id));
   });
 
   it('matches the table row for row (h, tool, tier)', () => {

@@ -548,7 +548,7 @@ describe('buildChunkMesh — water', () => {
     for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + 1 + WATER_SURFACE_HEIGHT, 6);
   });
   it('water under any block meshed as a full prism stays full height: no fake surface under submerged glass, ice or leaves', () => {
-    for (const above of [B.GLASS, B.ICE, B.OAK_LEAVES, B.BLACK_HOLE, B.STONE]) {
+    for (const above of [B.GLASS, B.ICE, B.OAK_LEAVES, B.STONE]) {
       const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, above]]));
       const water = facesAt(m, AQ, AY, AR);
       expect(water.length).toBeGreaterThan(0);
@@ -559,9 +559,13 @@ describe('buildChunkMesh — water', () => {
     }
   });
   it('water under a campfire (drawn by its own model, the cell is mostly air) keeps the lowered free surface', () => {
-    const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.CAMPFIRE]]));
-    const top = facesAt(m, AQ, AY, AR).find((f) => f.face === FACE_TOP);
-    for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    // Also under the other blocks with their own model: the black hole (vortexRenderer) and a thin circuit part
+    // (circuitRenderer), unmeshed since DESIGN-circuits §1.1–§1.2.
+    for (const above of [B.CAMPFIRE, B.BLACK_HOLE, B.COPPER_WIRE]) {
+      const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, above]]));
+      const top = facesAt(m, AQ, AY, AR).find((f) => f.face === FACE_TOP);
+      for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    }
   });
   it('two side-by-side water cells cull their shared face (cullSame)', () => {
     const m = mesh(world([[...A, B.WATER], [...near(2), B.WATER]]));
