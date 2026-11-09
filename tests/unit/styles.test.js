@@ -5,9 +5,13 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CONTROLS_SHEET } from '../../src/menus.js';
-import { PICKER_ORDER, BLOCKS } from '../../src/blocks.js';
+import { BLOCK, BLOCKS } from '../../src/blocks.js';
 import { SAVE_SLOTS, HOTBAR_SIZE } from '../../src/config.js';
 import { ITEMS } from '../../src/items.js';
+import { PARTS, isPart, partTip } from '../../src/circuitParts.js';
+import { buildPickerModel, familyLine } from '../../src/pickerModel.js';
+import { createDevicePanel, panelFields, PANEL_KEYS_HINT, ACTION_LABELS } from '../../src/devicePanel.js';
+import { makeCircuitWorld, FLOOR } from '../helpers/circuitWorld.js';
 import { documentFromHTML } from '../helpers/fakeDom.js';
 
 const css = readFileSync(fileURLToPath(new URL('../../src/styles.css', import.meta.url)), 'utf8');
@@ -71,19 +75,40 @@ describe('styles.css title screen', () => {
     const MESSAGE = first(message.get('margin-top')) + first(message.get('min-height'));
     return 2 * border + 2 * padY + HEAD + SAVE_SLOTS * row + (SAVE_SLOTS - 1) * gap + USAGE + MESSAGE;
   }
+  /** Lines a description takes in the sheet's 58-character column (greedy word wrap, as the browser does). @param {string} text */
+  function sheetLines(text) {
+    const cols = Number(/minmax\(0,(\d+)ch\)/.exec(/** @type {string} */ (sheet.get('grid-template-columns')))?.[1]);
+    let lines = 1;
+    let len = 0;
+    for (const word of text.split(' ')) {
+      const add = len === 0 ? word.length : len + 1 + word.length;
+      if (add > cols && len > 0) {
+        lines++;
+        len = word.length;
+      } else len = add;
+    }
+    return lines;
+  }
   function sheetHeight() {
     const rowGap = first(sheet.get('gap'));
-    // One <kbd> row: 12px bold text + 1px padding x2 + 1px top border + 3px bottom border ≈ 20px.
+    // One <kbd> row: 12px bold text + 1px padding x2 + 1px top border + 3px bottom border ≈ 20px; a description that wraps
+    // takes 15px a line (13px monospace, normal line height; measured: 30px for two).
     const ROW = 20;
+    const LINE = 15;
     const rows = CONTROLS_SHEET.length;
-    return rows * ROW + (rows - 1) * rowGap;
+    let total = (rows - 1) * rowGap;
+    for (const [, text] of CONTROLS_SHEET) total += Math.max(ROW, sheetLines(text) * LINE);
+    return total;
   }
 
   it('the Worlds panel model matches the measured layout', () => {
     expect(SAVE_SLOTS).toBe(6);
     expect(worldsPanelHeight()).toBe(410);
     expect(CONTROLS_SHEET.length).toBe(17); // v0.3 added the console (T /), R and Shift+R rows
-    expect(sheetHeight()).toBe(372);
+    // DESIGN-circuits §7.1: the RMB and R rows carry the circuits and survival wording and wrap onto a second line
+    expect(sheet.get('grid-template-columns')).toBe('auto minmax(0,58ch)');
+    expect(CONTROLS_SHEET.filter(([, text]) => sheetLines(text) > 1).map(([k]) => k)).toEqual(['RMB', 'R']);
+    expect(sheetHeight()).toBe(392); // measured in headless Chrome at 1280x720: 392px
   });
 
   it('logo + the Worlds panel beside the full controls sheet fit the 1280x720 reference window (622px viewport too)', () => {
@@ -104,7 +129,7 @@ describe('styles.css title screen', () => {
     expect(panelW).toBe(640);
     const columnGap = toPx(/** @type {string} */ (main.get('gap')).split(/\s+/)[1], VIEWPORT_H);
     const padX = toPx(/** @type {string} */ (main.get('padding')).split(/\s+/)[1], VIEWPORT_H);
-    const SHEET_W = 503; // measured: the widest row is "Shift R" + "Edit the targeted Rune Block (also opens on placing one)"
+    const SHEET_W = 518; // measured 517.1: an 86.6px key column, 16px gap and the 58ch (414.5px) description column
     expect(2 * padX + panelW + columnGap + SHEET_W).toBeLessThanOrEqual(1258);
     // rows wrap their buttons under the name rather than overflowing a phone-width panel
     expect(decls('.world-slot').get('flex-wrap')).toBe('wrap');
@@ -114,7 +139,7 @@ describe('styles.css title screen', () => {
 
 /** A px / vh length, calc() of px / vh terms joined by + and −, or max() of those, in px for a viewport height. */
 function lengthPx(v, viewportH) {
-  const mx = /^max\((.*)\)$/.exec(v);
+  const mx = /^(?:max|min)\((.*)\)$/.exec(v);
   if (mx) {
     // split on the top-level commas only (calc() arguments have none here, but keep it honest)
     const parts = [];
@@ -130,7 +155,8 @@ function lengthPx(v, viewportH) {
       }
     }
     parts.push(mx[1].slice(start).trim());
-    return Math.max(...parts.map((p) => lengthPx(p, viewportH)));
+    const values = parts.map((p) => lengthPx(p, viewportH));
+    return v.startsWith('min(') ? Math.min(...values) : Math.max(...values);
   }
   const m = /^calc\((.*)\)$/.exec(v);
   if (!m) return toPx(v, viewportH);
@@ -139,7 +165,7 @@ function lengthPx(v, viewportH) {
   return total;
 }
 
-describe('styles.css block picker', () => {
+describe('styles.css block picker (DESIGN-circuits §5.4, §5.10)', () => {
   // Pixels from the viewport bottom to the hotbar's visible top: 8px offset, 40px slot + 3px padding + 2px border on
   // each side, 2px box-shadow (the hotbar stays visible and clickable while the picker is open).
   const hotbar = decls('#hotbar');
@@ -147,50 +173,217 @@ describe('styles.css block picker', () => {
     + 2 * toPx(hotbar.get('padding'), 0) + 2 * 2 + 2;
   const layer = decls('#block-picker');
   const panel = decls('.picker-panel');
-  const grid = decls('#picker-grid');
-
-  // 4px border + 12px padding on each side, 16px bold title and name (~19px lines), 8px grid margins, and the 12px hint
-  // (~15px a line) on two lines: it wraps below ~640px wide (measured in Chrome: 114px of chrome at 512 wide, 100 at 1280).
-  const CHROME_TWO_LINE_HINT = 2 * 4 + 2 * 12 + 19 + 19 + 2 * 15 + 2 * 8;
-  const ONE_ROW = 60;
+  const scroll = decls('#picker-scroll');
+  const ONE_ROW = 64; // a 56x64 honeycomb cell
   const panelBottom = (H) => lengthPx(layer.get('padding-top'), H) + lengthPx(panel.get('max-height'), H) + 2; // + 2px shadow
 
-  it('the panel never reaches the hotbar at any usual viewport height (an 800x480 window included)', () => {
+  it('the panel ends above the hotbar for heights 274–1440 (an 800x480 window included); its height never exceeds that bound', () => {
     expect(HOTBAR_CLEARANCE).toBe(60);
     expect(panel.get('box-sizing')).toBe('border-box'); // max-height covers the border and padding
+    expect(panel.get('max-height')).toBe('max(180px,calc(100vh - 8vh - 72px))');
     for (const H of [274, 300, 382, 480, 502, 600, 622, 720, 1080, 1440]) {
       expect(panelBottom(H), `viewport ${H}px`).toBeLessThanOrEqual(H - HOTBAR_CLEARANCE - 8);
+      // the fixed height (so a search never makes the panel jump) stays within the max-height
+      expect(lengthPx(panel.get('height'), H), `viewport ${H}px`).toBeLessThanOrEqual(lengthPx(panel.get('max-height'), H));
     }
+    expect(panel.get('width')).toBe('min(980px,calc(100vw - 48px))'); // W0's 980px, kept
   });
 
-  it('a tiny window (512x202 and smaller) still shows a row of blocks to pick: only then may the panel overlap the hotbar', () => {
-    // Regression: at a 202px viewport #picker-grid shrank to 0px, so nothing could be picked.
-    expect(lengthPx(grid.get('min-height'), 0)).toBeGreaterThanOrEqual(ONE_ROW);
-    expect(lengthPx(grid.get('min-height'), 0)).toBeLessThan(2 * ONE_ROW); // about one row, not a fixed big panel
-    for (const H of [120, 202, 240, 273]) {
-      const room = lengthPx(panel.get('max-height'), H);
-      expect(room, `viewport ${H}px`).toBeGreaterThanOrEqual(CHROME_TWO_LINE_HINT + lengthPx(grid.get('min-height'), 0));
-      expect(room).toBeLessThanOrEqual(CHROME_TWO_LINE_HINT + lengthPx(grid.get('min-height'), 0) + 8); // no more than needed
-    }
-    // Narrower still (a three-line hint): the panel scrolls rather than spilling past its border.
-    expect(panel.get('overflow-y')).toBe('auto');
-  });
-
-  it('only the grid shrinks and scrolls, so the title, name and a wrapped hint can never push the panel down', () => {
+  it('the panel is a flex column; only the body grows and shrinks; #picker-scroll scrolls and keeps one row', () => {
     expect(panel.get('display')).toBe('flex');
     expect(panel.get('flex-direction')).toBe('column');
-    expect(grid.get('overflow-y')).toBe('auto');
-    expect(grid.get('flex')).toMatch(/^0 1 /);
-    expect(grid.get('max-height')).not.toMatch(/vh/); // the viewport bound lives on the panel, which sees all the chrome
+    const body = decls('.picker-body');
+    expect(body.get('flex')).toBe('1 1 auto');
+    expect(body.get('min-height')).toBe('0');
+    expect(decls('.picker-head').get('flex')).toBe('0 0 auto');
+    expect(decls('.picker-foot').get('flex')).toBe('0 0 auto');
+    expect(scroll.get('overflow-y')).toBe('auto');
+    expect(lengthPx(scroll.get('min-height'), 0)).toBeGreaterThanOrEqual(ONE_ROW);
+    expect(scroll.get('overscroll-behavior')).toBe('contain');
+    expect(scroll.get('scrollbar-color')).toBe('#e8b04a #2a2633');
+    expect(scroll.get('position')).toBe('relative'); // the sections' offsetTop is measured from it (the rail's jumps)
+    expect(decls('#picker-rail').get('flex')).toBe('0 0 40px');
   });
 
-  // DESIGN-circuits §5.10: the v0.9 test "the 1280x720 reference window (622px viewport) still shows the whole grid without
-  // scrolling" is gone. With the 20 circuit blocks PICKER_ORDER holds 99 blocks (7 rows of 15), so the picker scrolls by
-  // design; the test above pins the scrolling grid, and package D's honeycomb picker replaces this block of tests.
-  it('the grid keeps its 980px width at the 1280x720 reference window (it now scrolls: 99 blocks)', () => {
-    expect(grid.get('width')).toBe('min(980px,calc(100vw - 48px))');
-    expect(980).toBeLessThanOrEqual(1258 - 48); // the 1258px-wide reference viewport gives the grid its full width
-    expect(Math.ceil(PICKER_ORDER.length / Math.floor((980 + 4) / (60 + 4)))).toBe(7);
+  it('the head and the foot fit in the 180px minimum panel with one row (the tip and the hint fold away in short windows)', () => {
+    const border = toPx(/** @type {string} */ (panel.get('border')).split(/\s+/)[0], 0);
+    const pad = toPx(/** @type {string} */ (panel.get('padding')), 0);
+    const gap = toPx(/** @type {string} */ (panel.get('gap')), 0);
+    const chrome = 2 * border + 2 * pad + 2 * gap;
+    const head = toPx(/** @type {string} */ (decls('.picker-head').get('height')), 0);
+    const foot = decls('.picker-foot');
+    const footTop = toPx(/** @type {string} */ (foot.get('padding-top')), 0) + 1; // + the 1px rule
+    const lineH = (sel) => Number(/\/(\d+)px/.exec(/** @type {string} */ (decls(sel).get('font')))?.[1]);
+    const name = lineH('#picker-name');
+    const blurb = toPx(/** @type {string} */ (decls('#picker-blurb').get('height')), 0); // two lines, reserved
+    const hint = lineH('.picker-hint');
+    const footGap = toPx(/** @type {string} */ (foot.get('gap')), 0);
+    expect([name, blurb, hint]).toEqual([18, 30, 15]);
+    expect(decls('.picker-hint').get('white-space')).toBe('nowrap'); // one line, however narrow
+    // the compact foot (name only) under the media query's height, the full one above it
+    const m = /@media \(max-height:(\d+)px\)\{#picker-blurb,\.picker-hint\{display:none\}\}/.exec(css);
+    expect(m).toBeTruthy();
+    const fold = Number(/** @type {RegExpExecArray} */ (m)[1]);
+    const compact = chrome + head + footTop + name + ONE_ROW;
+    const full = chrome + head + footTop + name + footGap + blurb + footGap + hint + ONE_ROW;
+    expect(compact).toBeLessThanOrEqual(180);
+    for (const H of [120, 202, 240, 273, fold]) expect(compact, `viewport ${H}`).toBeLessThanOrEqual(lengthPx(panel.get('max-height'), H));
+    for (const H of [fold + 1, 360, 480, 622]) expect(full, `viewport ${H}`).toBeLessThanOrEqual(lengthPx(panel.get('max-height'), H));
+  });
+
+  it('the honeycomb: 56x64 pointy-top cells, rows 50px apart, odd rows indented 29px; sticky honey section headers', () => {
+    const hex = 'polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)';
+    const cell = decls('.picker-cell');
+    expect([cell.get('width'), cell.get('height'), cell.get('clip-path')]).toEqual(['56px', '64px', hex]);
+    expect(decls('.picker-cell::before').get('clip-path')).toBe(hex); // the hover ring: an outline cannot follow a clip-path
+    expect(decls('.picker-cell::before').get('inset')).toBe('2px');
+    expect(decls('.picker-row').get('height')).toBe('50px');
+    expect(decls('.picker-row').get('gap')).toBe('2px');
+    expect(decls('.picker-row.indent').get('padding-left')).toBe('29px');
+    expect(decls('.picker-icon').get('width')).toBe('48px');
+    const head = decls('.picker-section-head');
+    expect(head.get('position')).toBe('sticky');
+    expect(head.get('top')).toBe('0');
+    expect(head.get('background')).toBe('#1c1a24');
+    expect(head.get('font-variant')).toBe('small-caps');
+    expect(head.get('font')).toMatch(/^bold 18px/);
+    expect(head.get('color')).toBe('#e8b04a');
+    // the badge of a block already in the hotbar is a 14px honey hex; a family tile has its count and chevron
+    expect(decls('.picker-badge').get('width')).toBe('14px');
+    expect(decls('.picker-badge').get('background')).toBe('#e8b04a');
+    expect(decls('.picker-cell.in-hotbar .picker-badge').get('display')).toBe('flex');
+    // the drawer: #241f2e with honey left and right edges
+    const drawer = decls('.picker-drawer');
+    expect(drawer.get('background')).toBe('#241f2e');
+    expect(drawer.get('border-left')).toBe('3px solid #e8b04a');
+    expect(drawer.get('border-right')).toBe('3px solid #e8b04a');
+    // the look: survival's palette, never the grey bevel
+    expect(panel.get('background')).toBe('#1c1a24');
+    expect(panel.get('border')).toBe('3px solid #e8b04a');
+    expect(panel.get('color')).toBe('#f3ead8');
+    expect(decls('.picker-hint').get('color')).toBe('#b9ad95');
+    expect(decls('.picker-ghost').get('pointer-events')).toBe('none'); // elementFromPoint finds the hotbar slot under it
+  });
+
+  it('the picker DOM (§5.9): the ids menus.js binds, the search placeholder and the hint', () => {
+    const doc = documentFromHTML(readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8'));
+    for (const id of ['block-picker', 'picker-grid', 'picker-name', 'picker-search', 'picker-showall', 'picker-rail',
+      'picker-scroll', 'picker-blurb']) expect(doc.getElementById(id), id).toBeTruthy();
+    const $ = (id) => /** @type {any} */ (doc.getElementById(id));
+    expect($('picker-search').getAttribute('type')).toBe('search');
+    expect($('picker-search').getAttribute('placeholder')).toBe('Search blocks  ( / )');
+    expect($('picker-showall').getAttribute('type')).toBe('checkbox');
+    expect($('picker-scroll').contains($('picker-grid'))).toBe(true);
+    expect($('block-picker').querySelector('.picker-hint').textContent)
+      .toBe('Click: selected slot · 1–9: that slot · drag onto the hotbar · ▸ opens a family · / search · E / Esc: close');
+    expect($('block-picker').querySelector('.picker-panel').getAttribute('role')).toBe('dialog');
+  });
+});
+
+describe('styles.css circuits screens (DESIGN-circuits §4.10, §5.10, §6.2.16–§6.2.17)', () => {
+  const z = (sel) => Number(decls(sel).get('z-index'));
+
+  it('z-order: the picker 20; the device panel 24, the rune editor\'s layer, over the HUD and the console, under the pause menu', () => {
+    expect(z('#block-picker')).toBe(20);
+    expect(z('#device-panel')).toBe(24);
+    expect(z('#device-panel')).toBe(z('#rune-editor'));
+    expect(z('#device-panel')).toBeGreaterThan(z('#hud'));
+    expect(z('#device-panel')).toBeGreaterThan(z('#console'));
+    expect(z('#device-panel')).toBeLessThan(z('#pause-menu'));
+  });
+
+  it('#device-panel, the picker, #btn-circuits and #btn-blackholes hold no .mc-button; every button in #device-panel is a .hex-button', () => {
+    const doc = documentFromHTML(readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8'));
+    for (const id of ['device-panel', 'block-picker', 'btn-circuits', 'btn-blackholes', 'pause-devices']) {
+      const el = /** @type {any} */ (doc.getElementById(id));
+      expect(el, id).toBeTruthy();
+      expect(el.classList.contains('mc-button'), id).toBe(false);
+      expect(el.querySelectorAll('.mc-button'), id).toHaveLength(0);
+    }
+    expect(/** @type {any} */ (doc.getElementById('device-panel')).querySelectorAll('.picker-panel')).toHaveLength(0);
+    // the panel as devicePanel.js builds it, for every kind of part
+    const panel = createDevicePanel(/** @type {any} */ (doc), {});
+    const root = /** @type {any} */ (doc.getElementById('device-panel'));
+    let buttons = 0;
+    for (const id of Object.keys(PARTS).map(Number).filter((id) => isPart(id))) {
+      const env = makeCircuitWorld();
+      env.put(0, 0, id);
+      env.ticks(1);
+      panel.open(/** @type {*} */ (env.circuits.panelView(0, FLOOR, 0, true)));
+      for (const b of root.querySelectorAll('button')) {
+        expect(b.classList.contains('hex-button'), `${id}: ${b.textContent}`).toBe(true);
+        buttons++;
+      }
+      expect(root.querySelectorAll('.mc-button, .picker-panel')).toHaveLength(0);
+    }
+    expect(buttons).toBeGreaterThan(40);
+    panel.dispose();
+    for (const id of ['btn-circuits-on', 'btn-circuits-off', 'btn-blackholes-on', 'btn-blackholes-off']) {
+      expect(/** @type {any} */ (doc.getElementById(id)).classList.contains('hex-button'), id).toBe(true);
+    }
+    // and the new modules never create one
+    for (const file of ['pickerUI.js', 'pickerModel.js', 'devicePanel.js']) {
+      const src = readFileSync(fileURLToPath(new URL(`../../src/${file}`, import.meta.url)), 'utf8');
+      expect(src.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, ''), file).not.toMatch(/mc-button/);
+    }
+    expect(decls('.cc-panel').get('background')).toBe('#1c1a24');
+    expect(decls('.cc-panel').get('border')).toBe('3px solid #e8b04a');
+  });
+
+  it('no player-facing string has a bare [R] or "R:" (hints of every part, the controls sheet, the §3.3 / §4.6 lines, the panel, tips)', () => {
+    /** @type {string[]} */
+    const strings = [];
+    // hintFor over every part, in a few states
+    const env = makeCircuitWorld();
+    const ids = Object.keys(PARTS).map(Number).filter((id) => isPart(id));
+    ids.forEach((id, i) => env.put(i * 3, 0, id));
+    env.ticks(2);
+    const c = env.circuits;
+    const at = (id) => ids.indexOf(id) * 3;
+    c.switchAt(at(BLOCK.KNIFE_SWITCH), FLOOR, 0, 'on');
+    c.timerAt(at(BLOCK.CLOCKWORK_TIMER), FLOOR, 0, 'start');
+    c.applySettings(at(BLOCK.PUSH_BUTTON), FLOOR, 0, { nc: true, l: 'Front door' });
+    c.ignite(at(BLOCK.POWDER_FUSE), FLOOR, 0);
+    env.ticks(3);
+    for (const id of ids) {
+      const h = c.hintFor(at(id), FLOOR, 0);
+      if (h) strings.push(h);
+      const v = c.panelView(at(id), FLOOR, 0, true);
+      if (v) strings.push(...v.readout, v.about, v.origin, ...panelFields(v).map((f) => /** @type {*} */ (f).label ?? ''));
+      strings.push(partTip(id));
+    }
+    expect(strings.length).toBeGreaterThan(60);
+    // the controls sheet, the picker's and the panel's own lines
+    for (const [keys, text] of CONTROLS_SHEET) strings.push(`${keys} ${text}`, text);
+    strings.push(PANEL_KEYS_HINT, ...Object.values(ACTION_LABELS));
+    const doc = documentFromHTML(readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8'));
+    strings.push(/** @type {any} */ (doc.querySelector('.picker-hint')).textContent);
+    const model = buildPickerModel();
+    for (const f of model.families.values()) strings.push(familyLine(f), familyLine(f, true));
+    // DESIGN-circuits §3.3 and §4.6: main's keg hints, the R key's explanation and the pocket key's toast (I wires them)
+    strings.push(
+      'Powder Keg · light it with a fuse, a torch or an igniter',
+      'Powder Keg (explosions are off)',
+      'Powder Keg · burning! left-click: pinch out the fuse',
+      'lit keg · left-click: put it out',
+      'Powder kegs need a flame: lay a Powder Fuse to it and light that with the R key, or wire an Igniter. Shift+R key on a part tells you more.',
+      'Pocket key · 400 m · R key: send',
+      'Black Hole · walk straight away · left-click: break its core',
+    );
+    for (const s of strings) {
+      expect(s, s).not.toContain('[R]');
+      expect(s, s).not.toMatch(/(^|[^+\w])R:/);
+    }
+    // the check itself catches the old wording
+    expect('Blast Barrel · R: light').toMatch(/(^|[^+\w])R:/);
+    expect('Use: rune, barrel, fire [R]').toContain('[R]');
+  });
+
+  it('the Devices row: survival\'s Mode-switch halves; the screen flash overlay fills #hud', () => {
+    expect(decls('.mode-half:first-child').get('clip-path')).toBeTruthy();
+    expect(decls('.device-switch .mode-half').get('min-width')).toBe('0');
+    expect(decls('#flash-overlay').get('position')).toBe('absolute');
+    expect(decls('#flash-overlay').get('inset')).toBe('0');
   });
 });
 
@@ -388,7 +581,11 @@ describe('styles.css the Survival Handbook (§14)', () => {
   it('the title screen still fits 1280x720 with the Guide button under the controls sheet', () => {
     const first = (v) => toPx(/** @type {string} */ (v).split(/\s+/)[0], 720);
     const sheetRows = CONTROLS_SHEET.length;
-    const sheet = first(decls('.controls-sheet').get('margin-top')) + sheetRows * 20 + (sheetRows - 1) * first(decls('.controls-sheet').get('gap'));
+    // rows whose description is longer than the 58ch column wrap to two 15px lines (30px instead of 20: DESIGN-circuits §7.1)
+    const wrapped = CONTROLS_SHEET.filter(([, text]) => text.length > 58).length;
+    expect(wrapped).toBe(2);
+    const sheet = first(decls('.controls-sheet').get('margin-top')) + sheetRows * 20 + wrapped * 10
+      + (sheetRows - 1) * first(decls('.controls-sheet').get('gap'));
     const btn = decls('.guide-button');
     const [padY] = /** @type {string} */ (btn.get('padding')).split(/\s+/).map((v) => toPx(v, 0));
     const buttonH = first(btn.get('margin-top')) + 2 * padY + 18; // a 14px bold line ≈ 18px
@@ -398,6 +595,11 @@ describe('styles.css the Survival Handbook (§14)', () => {
       expect(total, `viewport ${H}`).toBeLessThanOrEqual(H);
     }
     expect(decls('.title-side').get('flex-direction')).toBe('column');
+    // … including the layer's own bottom padding: a title that scrolls by a few pixels shows a scrollbar and narrows
+    const padBottom = toPx(/** @type {string} */ (decls('.title-main').get('padding')).split(/\s+/)[2], 0);
+    const at622 = toPx(/** @type {string} */ (decls('#title-screen').get('--title-top')), 622) + 128
+      + first(decls('.title-main').get('margin-top')) + column + padBottom;
+    expect(at622).toBeLessThanOrEqual(622);
   });
 
   it('the readers\' roots are in index.html; nothing in them uses .mc-button or .picker-panel; the Guide buttons are .hex-button', () => {

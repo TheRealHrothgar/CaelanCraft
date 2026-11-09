@@ -246,13 +246,13 @@ describe('the death screen (§2.5)', () => {
 });
 
 describe('the controls sheet (§9.8)', () => {
-  it('still 17 rows, with the survival wording', () => {
+  it('still 17 rows, with the survival wording (RMB and R merged with the circuits wording, DESIGN-circuits §7.1)', () => {
     expect(CONTROLS_SHEET).toHaveLength(17);
     const row = (k) => CONTROLS_SHEET.find(([key]) => key === k)?.[1];
     expect(row('LMB')).toBe('Break block (hold) · Survival: hold to dig');
-    expect(row('RMB')).toBe('Place block · Survival: use the item in hand');
+    expect(row('RMB')).toBe('Place · right-click works switches, timers, plungers (Shift: place) · Survival: use the item in hand');
     expect(row('E')).toBe('Blocks · Survival: pack & making');
-    expect(row('R')).toBe('Use: rune, barrel, fire, water, plants, basket');
+    expect(row('R')).toBe('R key: use a switch, timer, fuse, radio key or rune · Survival: fire, water, plants, basket');
     expect(row('Space Space')).toBe('Double-tap: fly (or F) · Creative');
   });
 });
@@ -273,9 +273,12 @@ describe('§14 the Guide buttons (title screen and pause menu)', () => {
     expect(side.classList.contains('title-side')).toBe(true);
     expect(side.children.indexOf($('title-controls'))).toBe(side.children.indexOf(title) - 1);
     expect(side.parentNode.classList.contains('title-main')).toBe(true);
-    // in the pause menu, right after the Mode row
+    // in the pause menu after the Mode row and the circuits' Devices row (DESIGN-circuits §7.1: the Guide right above Save &
+    // Quit, then Mode, then Devices after Creatures)
     const panel = pause.parentNode;
-    expect(panel.children.indexOf(pause)).toBe(panel.children.indexOf($('pause-mode')) + 1);
+    expect(panel.children.indexOf(pause)).toBeGreaterThan(panel.children.indexOf($('pause-mode')));
+    expect(panel.children.indexOf(pause)).toBe(panel.children.indexOf($('pause-devices')) + 1);
+    expect(panel.children.indexOf(pause)).toBe(panel.children.indexOf($('btn-quit')) - 1);
   });
 
   it('each fires onGuide with where it was pressed, in either mode', () => {

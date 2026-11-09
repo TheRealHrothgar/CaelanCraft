@@ -5,10 +5,16 @@
 // (Health with Breath on its border, Nourishment, Hydration, the body-temperature gauge), the status chips, the job chip,
 // the hex action ring round the crosshair, the hex survival hotbar with stack counts and wear outlines, and the pickup
 // tokens that fly to their slot. All of it is hidden in Creative, where the HUD is exactly as before.
+// Circuits (docs/DESIGN-circuits.md §6.2.16; CONTRACTS §54 once merged): the black hole's screen flash, #flash-overlay (white
+// for a charge's FLASH, void for being swallowed), driven by the pure flashStep: at most one start per 0.5 s, never brighter
+// than 0.75, fading on a (1 − t/0.6)² curve (WCAG 2.3.1: fewer than three flashes a second).
 //
 // DOM module. Nothing here touches `document` at module top level: everything is bound inside
 // createHUD(doc, atlasCanvas) so the module can be imported (and unit-tested) under Node.
-import { HOTBAR_SIZE, CHAT_LINES, CHAT_LINE_MS, BREATH_MAX_S, STAT_MAX, BODY_TEMP_NORMAL } from './config.js';
+import {
+  HOTBAR_SIZE, CHAT_LINES, CHAT_LINE_MS, BREATH_MAX_S, STAT_MAX, BODY_TEMP_NORMAL, BLACK_HOLE_SCREEN_FLASH_S,
+  BLACK_HOLE_SCREEN_FLASH_MAX, BLACK_HOLE_SCREEN_FLASH_GAP_S,
+} from './config.js';
 import { BLOCK } from './blocks.js';
 import { drawBlockIcon } from './atlas.js';
 import { maxDurability } from './items.js';
@@ -169,6 +175,53 @@ export function jobChipText(station, name, seconds, more = 0) {
   return `${station} · ${name} ${s} s${more > 0 ? ` +${more}` : ''}`;
 }
 
+// ---------------------------------------------------------------- the screen flash (circuits, pure)
+
+/**
+ * @typedef {{ level: number, sinceStart: number }} FlashState  the screen flash's level 0..BLACK_HOLE_SCREEN_FLASH_MAX and
+ *   the seconds since the last flash started
+ */
+
+/** A screen flash at rest: dark, and ready to start at once. @returns {FlashState} */
+export function createFlashState() {
+  return { level: 0, sinceStart: Infinity };
+}
+
+/**
+ * One step of the screen flash (DESIGN-circuits §6.2.16). The flash in progress fades on the (1 − t/0.6)² curve, t being the
+ * seconds since it started (BLACK_HOLE_SCREEN_FLASH_S). Then a trigger `{ level }` starts a new flash only when at least
+ * BLACK_HOLE_SCREEN_FLASH_GAP_S has passed since the last start, at min(level, BLACK_HOLE_SCREEN_FLASH_MAX) (or the current
+ * level, if brighter); otherwise it is ignored. So there are never more than two starts in any second, and the first frame
+ * of a flash shows it at full strength (§6.2.16 names the trigger before the decay; fading first is what keeps that frame
+ * at the trigger's level). Pure: it mutates and returns `state.level`.
+ * @param {FlashState} state
+ * @param {number} dt  seconds since the last step
+ * @param {{ level: number }|null} [trigger]
+ * @returns {number} the level to show, 0..BLACK_HOLE_SCREEN_FLASH_MAX
+ */
+export function flashStep(state, dt, trigger = null) {
+  const d = Number.isFinite(dt) && dt > 0 ? dt : 0;
+  const t0 = Number.isFinite(state.sinceStart) ? state.sinceStart : Infinity;
+  const t1 = t0 + d;
+  state.sinceStart = t1;
+  const T = BLACK_HOLE_SCREEN_FLASH_S;
+  if (state.level > 0) {
+    if (!(t1 < T)) state.level = 0;
+    else if (d > 0) {
+      const a = 1 - t0 / T;
+      const b = 1 - t1 / T;
+      state.level = a > 0 ? state.level * (b / a) * (b / a) : 0;
+    }
+  }
+  const want = trigger ? Number(trigger.level) : 0;
+  if (want > 0 && Number.isFinite(want) && state.sinceStart >= BLACK_HOLE_SCREEN_FLASH_GAP_S) {
+    state.level = Math.max(state.level, Math.min(BLACK_HOLE_SCREEN_FLASH_MAX, want));
+    state.sinceStart = 0;
+  }
+  if (!(state.level > 1e-4)) state.level = 0;
+  return state.level;
+}
+
 /** Corners of a pointy-top hex in a w×h box, clockwise from the top: [[x, y] × 6]. */
 export function hexCorners(w, h, inset = 0) {
   const x0 = inset;
@@ -234,6 +287,9 @@ const PICKER_OPEN = 'picker-open';
  * @property {(on: boolean) => void} setCrosshairVisible
  * @property {(text: string|null) => void} setTargetHint              persistent one-line hint under the crosshair (null hides it)
  * @property {(level: number) => void} setHurtFlash                   red screen-edge vignette 0..1 (a zombie's strike, §39)
+ * @property {(level: number, kind?: 'white'|'void') => void} setFlashOverlay   the black hole's screen flash (#flash-overlay,
+ *   created before the crosshair when index.html has none): opacity = level 0..1 in 1/32 steps, hidden at 0, white or void;
+ *   the DOM is touched only when the step or the kind changes
  * @property {(text: string, isError?: boolean) => void} addChatLine  HUD chat log (last CHAT_LINES lines, each fades after CHAT_LINE_MS)
  * @property {(slot: number) => void} onSlotClick                     assignable; fired for hotbar slot clicks while the picker is open
  * @property {() => void} dispose                                     clears timers and removes listeners
@@ -541,6 +597,40 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     hurtLevel = q;
     hurtEl.classList.toggle(HIDDEN, q === 0);
     hurtEl.style.opacity = String(q);
+  }
+
+  // ---------------------------------------------------------------- the screen flash (black holes, DESIGN-circuits §6.2.16)
+  /** #flash-overlay: created here, before the crosshair, when index.html has none (as #hurt-overlay is). */
+  let flashEl = doc.getElementById('flash-overlay');
+  if (!flashEl && typeof doc.createElement === 'function') {
+    flashEl = doc.createElement('div');
+    flashEl.id = 'flash-overlay';
+    flashEl.className = `${HIDDEN} white`;
+    flashEl.setAttribute('aria-hidden', 'true');
+    hudEl.insertBefore(flashEl, crosshairEl.parentNode === hudEl ? crosshairEl : hudEl.firstChild);
+  }
+  let flashLevel = -1;
+  /** @type {'white'|'void'} */
+  let flashKindShown = 'white';
+
+  /**
+   * The screen flash: level 0..1 (main feeds it flashStep's level every frame), white (a charge's FLASH) or void (#0b0908,
+   * being swallowed). Touches the DOM only when the level's 1/32 step or the kind changes.
+   * @param {number} level @param {'white'|'void'} [kind='white']
+   */
+  function setFlashOverlay(level, kind = 'white') {
+    if (!flashEl) return;
+    const k = kind === 'void' ? 'void' : 'white';
+    const q = Math.round(Math.max(0, Math.min(1, Number(level) || 0)) * 32) / 32;
+    if (k !== flashKindShown) {
+      flashKindShown = k;
+      flashEl.classList.toggle('white', k === 'white');
+      flashEl.classList.toggle('void', k === 'void');
+    }
+    if (q === flashLevel) return;
+    flashLevel = q;
+    flashEl.classList.toggle(HIDDEN, q === 0);
+    flashEl.style.opacity = String(q);
   }
 
   // ---------------------------------------------------------------- chat log
@@ -988,6 +1078,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     setCrosshairVisible,
     setTargetHint,
     setHurtFlash,
+    setFlashOverlay,
     addChatLine,
     setSurvivalVisible,
     setVitals,

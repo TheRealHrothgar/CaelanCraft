@@ -73,14 +73,28 @@ say Tower built"></textarea>
     </div>
   </div>
 
+  <!-- The creative inventory (DESIGN-circuits §5.9): a honeycomb in sections with a rail; pickerUI.js builds the cells. -->
   <div id="block-picker" class="layer hidden">
-    <div class="picker-panel">
-      <div class="picker-title">Blocks</div>
-      <div id="picker-grid"></div>
-      <div id="picker-name">&nbsp;</div>
-      <div class="picker-hint">Click: put in selected slot · 1–9 while hovering: put in that slot · E / Esc: close</div>
+    <div class="picker-panel" role="dialog" aria-label="Blocks">
+      <div class="picker-head">
+        <div class="picker-title">Blocks</div>
+        <input id="picker-search" type="search" placeholder="Search blocks  ( / )" autocomplete="off" spellcheck="false" aria-label="Search blocks">
+        <label class="picker-showall"><input id="picker-showall" type="checkbox"> Show all</label>
+      </div>
+      <div class="picker-body">
+        <nav id="picker-rail" aria-label="Sections"></nav>
+        <div id="picker-scroll"><div id="picker-grid" role="grid" aria-label="Blocks"></div></div>
+      </div>
+      <div class="picker-foot">
+        <div id="picker-name">&nbsp;</div>
+        <div id="picker-blurb"></div>
+        <div class="picker-hint">Click: selected slot · 1–9: that slot · drag onto the hotbar · ▸ opens a family · / search · E / Esc: close</div>
+      </div>
     </div>
   </div>
+
+  <!-- The device panel (DESIGN-circuits §4.10; z 24, the rune editor's layer, never open with it). devicePanel.js builds it. -->
+  <div id="device-panel" class="layer hidden" role="dialog" aria-label="Device settings"></div>
 
   <!-- Survival: the Pack & Making screen (z 20, the picker's layer; never open together). packUI.js builds its content. -->
   <div id="pack-screen" class="layer hidden" role="dialog" aria-label="Pack and Making"></div>
@@ -115,6 +129,17 @@ say Tower built"></textarea>
         <div id="btn-mode" class="mode-switch" role="group" aria-label="Game mode" data-mode="creative">
           <button id="btn-mode-creative" type="button" class="hex-button mode-half active" aria-pressed="true">Creative</button>
           <button id="btn-mode-survival" type="button" class="hex-button mode-half" aria-pressed="false">Survival</button>
+        </div>
+      </div>
+      <div id="pause-devices" class="physics-row">
+        <span class="physics-label">Devices</span>
+        <div id="btn-circuits" class="mode-switch device-switch" role="group" aria-label="Circuits" data-on="true">
+          <button id="btn-circuits-on" type="button" class="hex-button mode-half active" aria-pressed="true">Circuits: On</button>
+          <button id="btn-circuits-off" type="button" class="hex-button mode-half" aria-pressed="false" aria-label="Circuits: Off">Off</button>
+        </div>
+        <div id="btn-blackholes" class="mode-switch device-switch" role="group" aria-label="Black holes" data-on="true">
+          <button id="btn-blackholes-on" type="button" class="hex-button mode-half active" aria-pressed="true">Black holes: On</button>
+          <button id="btn-blackholes-off" type="button" class="hex-button mode-half" aria-pressed="false" aria-label="Black holes: Off">Off</button>
         </div>
       </div>
       <button id="btn-guide-pause" type="button" class="hex-button guide-button" title="The Survival Guide: how to stay alive">Survival Guide</button>
