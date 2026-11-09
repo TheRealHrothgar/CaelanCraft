@@ -3,7 +3,8 @@
 Problems found by play-testing and review. Each one was reproduced independently by a second agent before it was
 listed. File and line references in the open tables are from commit c47ce0b, the build the play-test ran on. That build
 is the pushed branch plus the unshipped Hollow Watcher, minus save slots, so line numbers can be off by a few. All the
-bugs and glitches are fixed now (first table). The visual, performance and save-slot items below are still open.
+bugs and glitches are fixed now (first table), and so is everything that held the Hollow Watcher back (its section). The visual,
+performance and save-slot items below are still open.
 
 Severity: **bug** = wrong behaviour or lost state; **glitch** = wrong but recoverable; **visual**; **perf** = frame
 hitch; **polish**.
@@ -43,7 +44,7 @@ Every bug and glitch below now has a regression test that fails on the old code,
 
 | # | Problem | Cause | Suggested fix |
 |---|---------|-------|---------------|
-| P1 | **0.7–1.9 s freeze the first time the crosshair lands on a block** in a new world. | The block-highlight material is compiled on first draw (renderer.js:445); loading doesn't pre-warm it. | Add `renderer.prewarm` (compile plus one hidden draw) and call it while loading. |
+| P1 | **0.7–1.9 s freeze the first time the crosshair lands on a block** in a new world. | The block-highlight material is compiled on first draw (renderer.js:445); loading doesn't pre-warm it. The chunk cutout (leaves) program is not pre-warmed either: it compiles the first time trees come into view (seen in the Watcher review). | Add `renderer.prewarm` (compile plus one hidden draw for the highlight and the chunk materials) and call it while loading. |
 | P2 | **The first zombie of a session freezes the game** (up to several seconds on this machine). | zombieRenderer has no pre-warm (zombieRenderer.js:142). | Add `zombieRenderer.prewarm` like `fallingRenderer.prewarm` and call it while loading. |
 | P3 | **After a big sand fill, other sand waits 2–10 s before falling.** | The fill's column releases fill the fall queue ahead of the player's dig; ~70% of queued updates are no-ops (blockphysics.js:1103/1131). | A priority lane for player-caused falls, and don't queue a released column's own cells. |
 | P4 | **Leaf decay after a fall re-draws a chunk almost every frame for ~1.4 s** (15–35 ms frames when several trees fall). | Each decaying leaf is a separate lazy write at a random time (trees.js:667/685). | Use coalesced writes (`physics.coalesceMesh`) or decay in 3–4 waves. |
@@ -69,22 +70,23 @@ Nothing open (L1 and L2 are fixed, see above).
 - **Timing tests:** worldgen "warm chunk ≤ 8 ms", mesher "real chunk < 25 ms" and campfires "100 000 fires … stalls a frame" fail when the full suite runs in parallel on a busy machine, and pass when run alone.
 - **Faller over a crumble at save time** (found by reading the code while fixing B1; not reproduced): `fallers.settleInto` runs before `support.settleInto`, so a non-gravity block in flight above a crumble still coming down is saved on top of the hanging cells. Those cells are then saved fallen, which leaves that block floating after a reload. Sand is fine, because the gravity reseeder drops it on load.
 
-## Not shipped: the Hollow Watcher
+## The Hollow Watcher: shipped after a redesign
 
-An original spooky figure, built as our own legend instead of "Herobrine" (a Minecraft character). It is **not in
-PR #3**. Its code is on the local branch `worktree-wf_6c9efe31-dfa-4` (merged locally as `old-watcher-merge`). Its behaviour
-checked out (about one sighting every three nights, vanishes when looked at or approached, traces trigger no
-collapses), but it is held back because:
+An original night "sighting" (CONTRACTS §40), built as our own legend instead of "Herobrine" (a Minecraft character). Its
+first version was held back for the reasons below. All are fixed in the version on PR #3, and an independent review
+(originality, behaviour, rendering, each finding checked by a skeptic) found nothing left. The first version stays only on
+the local branches `worktree-wf_6c9efe31-dfa-4` and `old-watcher-merge`; it was never pushed.
 
-- **Originality:** the look reads as Minecraft's Enderman (a tall, thin, black humanoid with purple speckles and glowing
-  eyes). The planned redesign is a floating stack of hollow hex rings with a hex lantern head (two cyan lights), a smoke
-  wisp instead of legs, and ash-grey stone with cyan cracks. It was stopped before it finished.
-- **Traces overwrite player builds:** an uprooting turned a player block under a root into dirt and deleted a Rune
-  Block; pillars fill player-dug shafts.
-- **Pre-warm:** shader pre-warm doesn't work, so the first sighting compiles 3 programs mid-game.
-- **Second sighting:** a reload allows a second sighting in the same in-game night.
-- **Off-screen sightings:** about half of natural sightings appear off screen (25–75° to the side).
-- **Cave sightings:** these never had line of sight, so the figure is invisible but still uses up the night.
+| Was | Now |
+|-----|-----|
+| **Originality:** the look read as Minecraft's Enderman (a tall thin black humanoid, purple specks, glowing eyes). | A floating stack of five hollow hex rings of ash-grey stone with glowing cyan cracks, a caged hex lantern head with two cyan lights, and a smoke wisp instead of legs. Nothing humanoid, black or purple. The review compared it with Minecraft's mobs and other well-known game characters and found no match. No game has a character called "Hollow Watcher". |
+| **Traces overwrote player builds** (dirt under a root, a deleted Rune Block, pillars in dug shafts). | A trace only changes untouched natural terrain and natural trees. Every cell it writes or relies on must have no edit, and it mirrors the leaf decay that follows an uprooting (0 side effects in 113 real-terrain uprootings with random player edits). |
+| **Pre-warm didn't work:** the first sighting compiled 3 programs mid-game. | It is pre-warmed after the campfire and explosion lights exist, plus one hidden first-frame draw. The first sighting now compiles none (measured in Chrome). |
+| **A reload allowed a second sighting** the same night. | The night of the last sighting is saved (`watcherNight`). A remembered night ahead of the clock counts as tonight. |
+| **About half the sightings started off screen.** | A sighting starts inside the real camera view (toward its edge, checked horizontally and vertically). "Seen" uses the camera's real FOV, so it is wider while sprinting. |
+| **Cave sightings had no line of sight** but used up the night. | A natural sighting needs line of sight; otherwise the night's roll waits for a later check. |
+
+Design note: at sighting distances (30–80 m) the two lights merge into one cyan point; they separate only up close.
 
 ## Refuted (not issues)
 

@@ -124,6 +124,11 @@ function isValidLocalIndex(v) {
   return Number.isInteger(v) && v >= 0 && v < CHUNK_VOLUME;
 }
 
+/** A night number (watcher.nightKey: main's day counter starts at 1, so the first night is 0): a whole number ≥ 0. */
+function isNightNumber(v) {
+  return Number.isSafeInteger(v) && v >= 0;
+}
+
 function isValidSelected(v) {
   return Number.isInteger(v) && v >= 0 && v < HOTBAR_SIZE;
 }
@@ -256,6 +261,11 @@ export function serializeSave(data) {
   if (data.physics != null) /** @type {*} */ (out).physics = normalizePhysicsSwitches(data.physics);
   // Zombies switch (§39): written whenever given (anything but `false` is on). Absent on load = on.
   if (data.zombies != null) /** @type {*} */ (out).zombies = data.zombies !== false;
+  // The Hollow Watcher's switch (§40): the same rule. The Watcher itself is a sighting and never saved.
+  if (data.watcher != null) /** @type {*} */ (out).watcher = data.watcher !== false;
+  // The night of its last natural sighting (§40.1), so a reload in the same night cannot bring a second one. Written only
+  // as a night number (anything else is left out); absent — no sighting yet, or an older save — means none.
+  if (isNightNumber(data.watcherNight)) /** @type {*} */ (out).watcherNight = data.watcherNight;
   // The world's name and times (§41): last, canonical (normalizeWorldMeta), omitted when nothing usable is given.
   const meta = data.meta != null ? normalizeWorldMeta(data.meta) : null;
   if (meta) /** @type {*} */ (out).meta = meta;
@@ -280,6 +290,9 @@ export function serializeSave(data) {
  * dropped with a warning (the save then reads as one from before v0.8).
  * An optional boolean `zombies` (the world's zombies switch, §39) is kept; anything else is dropped with a warning
  * (absent means on).
+ * An optional boolean `watcher` (the world's Hollow Watcher switch, §40) is kept the same way (absent means on).
+ * An optional `watcherNight` (the night of the world's last natural Watcher sighting, §40.1) is kept when it is a whole
+ * number ≥ 0; anything else is dropped with a warning (absent means none).
  * An optional `meta` object (the world's name and times, §41) is kept as normalizeWorldMeta gives it (unusable fields are
  * dropped with a warning, a non-object with `meta: not an object, ignored`).
  * Every repair is described in a non-enumerable `warnings: string[]` on the result.
@@ -406,6 +419,14 @@ export function deserializeSave(text) {
   if (raw.zombies !== undefined) {
     if (typeof raw.zombies === 'boolean') /** @type {*} */ (save).zombies = raw.zombies;
     else warnings.push('zombies: not a boolean, treated as on');
+  }
+  if (raw.watcher !== undefined) {
+    if (typeof raw.watcher === 'boolean') /** @type {*} */ (save).watcher = raw.watcher;
+    else warnings.push('watcher: not a boolean, treated as on');
+  }
+  if (raw.watcherNight !== undefined) {
+    if (isNightNumber(raw.watcherNight)) /** @type {*} */ (save).watcherNight = raw.watcherNight;
+    else warnings.push('watcherNight: not a night number, ignored');
   }
   if (raw.meta !== undefined) {
     if (!isPlainObject(raw.meta)) {

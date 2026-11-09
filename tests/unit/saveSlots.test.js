@@ -377,6 +377,18 @@ describe('save slots: a failed save keeps the previous one', () => {
 });
 
 describe('save slots: rename, duplicate, delete', () => {
+  it('rename, duplicate and the legacy move keep the night of the last Watcher sighting (§14 watcherNight)', () => {
+    const orig = makeSave(8, { watcherNight: 5, meta: { name: 'Night', createdAt: 100, lastPlayed: 200 } });
+    const storage = withWorlds([[3, orig]]);
+    expect(renameSlot(3, 'Renamed', storage).ok).toBe(true);
+    expect(loadSlot(3, storage).watcherNight).toBe(5);
+    expect(duplicateSlot(3, storage, NOW)).toMatchObject({ ok: true, slot: 1 });
+    expect(loadSlot(1, storage).watcherNight).toBe(5);
+    const legacy = fakeStorage([[LEGACY_SAVE_KEY, serializeSave(makeSave(9, { watcherNight: 2 }))]]);
+    expect(migrateLegacySave(legacy, NOW)).toMatchObject({ status: 'migrated', slot: 1 });
+    expect(loadSlot(1, legacy).watcherNight).toBe(2);
+  });
+
   it('rename changes only the name (normalised), keeps the times and the world', () => {
     const orig = makeSave(8, { meta: { name: 'Before', createdAt: 100, lastPlayed: 200 } });
     const storage = withWorlds([[3, orig]]);

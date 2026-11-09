@@ -196,7 +196,7 @@ describe('blocks', () => {
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
     expect(BLOCK_COUNT).toBe(76); // v0.8 appended 68..75 (see the block-physics test below)
-    expect(TILE_IDS).toHaveLength(84); // + 6 zombie part tiles 240–245 (§39), not block faces
+    expect(TILE_IDS).toHaveLength(87); // + 6 zombie part tiles 240–245 (§39), + 3 Watcher tiles 250–252 (§40: stone, crack glow, smoke), not block faces
     expect(BLOCK.BLACK_HOLE).toBe(66);
     expect(TILE.BLACK_HOLE).toBe(72);
     expect(BLOCK.STONE).toBe(1);

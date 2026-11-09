@@ -35,7 +35,7 @@ import {
   normalizeWorldName, defaultWorldName,
 } from './storage.js';
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
-import { createRenderer } from './renderer.js';
+import { createRenderer, fogRangeForRenderDistance } from './renderer.js';
 import { createControls } from './controls.js';
 import { createHUD } from './hud.js';
 import { createMenus } from './menus.js';
@@ -49,6 +49,8 @@ import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
 import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume } from './zombies.js';
 import { createZombieRenderer } from './zombieRenderer.js';
+import { Watcher, WATCHER_HEIGHT } from './watcher.js';
+import { createWatcherRenderer } from './watcherRenderer.js';
 import { BlockPhysics } from './blockphysics.js';
 import { createFallingRenderer } from './fallingRenderer.js';
 import { createParticles } from './particles.js';
@@ -254,6 +256,8 @@ export function boot(win, doc) {
   let pigRenderer;
   /** @type {import('./zombieRenderer.js').ZombieRenderer} */
   let zombieRenderer;
+  /** @type {import('./watcherRenderer.js').WatcherRenderer} */
+  let watcherRenderer;
   /** @type {import('./campfireRenderer.js').CampfireRenderer} */
   let campfireRenderer;
   let controls;
@@ -273,15 +277,19 @@ export function boot(win, doc) {
     });
     pigRenderer = createPigRenderer(renderer.three.scene);
     zombieRenderer = createZombieRenderer(renderer.three.scene, atlasTexture);
+    watcherRenderer = createWatcherRenderer(renderer.three.scene, atlasTexture);
     campfireRenderer = createCampfireRenderer(renderer.three.scene, { makeCanvas: () => doc.createElement('canvas') });
-    // Pay the campfire shader costs while the game loads (compile now, one hidden draw in the first frame), not on the
-    // frame the first fire appears (§32).
-    campfireRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     fallingRenderer = createFallingRenderer(renderer.three.scene, atlasTexture);
     particles = createParticles(renderer.three.scene);
-    // The same for falling blocks (one mesh per render layer) and particles: no hitch on the first fall / dust (§34).
+    // Pay the shader costs while the game loads (compile now, one hidden draw in the first frame), not on the frame the
+    // first fire, fall or dust appears (§32, §34) — and only once every renderer that adds a light exists: the number of
+    // PointLights (the campfires' and the explosion flash) is part of every program's key.
+    campfireRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     fallingRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     particles.prewarm(renderer.three.renderer, renderer.three.camera);
+    // The Watcher's figure too (§40.4) — only now: the scene's lights are part of every program's key, so compiling it
+    // before the campfire and explosion PointLights existed built programs the first sighting could not use.
+    watcherRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();
@@ -435,6 +443,37 @@ export function boot(win, doc) {
     groundHeight: (q, r) => world.terrainHeightAt(q, r),
     isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
     columnEdited: (q, r) => columnHasEdits(world.edits, q, r),
+  };
+  // The Hollow Watcher (CONTRACTS §40): a rare sighting, never saved; the per-world switch and the night of its last
+  // natural sighting are (startLoading restores both).
+  const watcher = new Watcher();
+  let savedWatcherSwitch = 0;
+  /** watcher.lastNight as last saved: a new sighting autosaves, so a reload cannot bring a second one that night */
+  let savedWatcherNight = /** @type {number|null} */ (null);
+  /** World view for watcher.update / summon (refreshWatcherWorld fills the player, view, clock and fog every frame). */
+  const watcherWorld = {
+    getBlock: pigWorld.getBlock,
+    isLoadedCell: (q, r) => world.hasChunkAtCell(q, r),
+    groundHeight: (q, r) => world.terrainHeightAt(q, r),
+    isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
+    hasEdit: (q, y, r) => world.hasEdit(q, y, r),
+    occupied: (q, y, r) => pigs.list.some((b) => playerIntersectsBlock(b, q, y, r)) || zombies.list.some((b) => playerIntersectsBlock(b, q, y, r)),
+    /** @type {PlayerState|null} */
+    player: null,
+    /** @type {[number, number, number]} */
+    eye: [0, 0, 0],
+    /** @type {[number, number, number]} */
+    look: [0, 0, -1],
+    yaw: 0,
+    time: 0,
+    day: 1,
+    fogFar: 0,
+    /** the camera's vertical FOV (degrees) and width / height: a sighting must start on screen (§40.1.2) */
+    fov: FOV,
+    viewFov: FOV,
+    aspect: 16 / 9,
+    /** @type {[number, number]|null} */
+    spawn: null,
   };
   /**
    * World view handed to blackHoles.update and blackHoles.respawnPoint (used once a world exists). Eats are lazy writes
@@ -682,6 +721,10 @@ export function boot(win, doc) {
       runes: runeStore,
       pigs,
       zombies,
+      watcher,
+      get watcherWorld() {
+        return refreshWatcherWorld();
+      },
       get physics() {
         return blockPhysics ?? undefined;
       },
@@ -834,6 +877,8 @@ export function boot(win, doc) {
       pigs: pigs.export(),
       physics: blockPhysics ? blockPhysics.exportSwitches() : undefined,
       zombies: zombies.enabled, // the switch only: zombies themselves are never saved (§39)
+      watcher: watcher.enabled, // the switch: the Watcher itself is a sighting, never saved (§40) …
+      watcherNight: watcher.lastNight ?? undefined, // … and the night of its last natural sighting (none: not written)
       meta: { name: worldName, createdAt: worldCreatedAt, lastPlayed: Date.now() }, // §41: the slot's name and times
     };
   }
@@ -858,6 +903,8 @@ export function boot(win, doc) {
       savedRunesVersion = runeStore.version;
       if (blockPhysics) savedSwitchVersion = blockPhysics.switchVersion;
       savedZombieSwitch = zombies.switchVersion;
+      savedWatcherSwitch = watcher.switchVersion;
+      savedWatcherNight = watcher.lastNight;
       savedX = player.x;
       savedY = player.y;
       savedZ = player.z;
@@ -883,7 +930,8 @@ export function boot(win, doc) {
     if (autosaveAccum < AUTOSAVE_INTERVAL_S) return;
     autosaveAccum = 0;
     const switchesChanged = (blockPhysics !== null && blockPhysics.switchVersion !== savedSwitchVersion)
-      || zombies.switchVersion !== savedZombieSwitch;
+      || zombies.switchVersion !== savedZombieSwitch || watcher.switchVersion !== savedWatcherSwitch
+      || watcher.lastNight !== savedWatcherNight;
     if (world.editVersion !== savedEditVersion || runeStore.version !== savedRunesVersion || switchesChanged || playerMovedSinceSave()) doSave(false);
   }
 
@@ -995,6 +1043,15 @@ export function boot(win, doc) {
     savedZombieSwitch = zombies.switchVersion;
     zombieTarget = null;
     hurtFlash = 0;
+    // The Watcher: no figure; its switch from the save (absent means on) and the night of its last natural sighting
+    // (absent: none), so reloading in the night it came does not bring it again.
+    watcher.clear();
+    watcher.setEnabled(!(restoring && restoring.watcher === false));
+    watcher.setLastNight(restoring && restoring.watcherNight != null ? restoring.watcherNight : null);
+    savedWatcherSwitch = watcher.switchVersion;
+    savedWatcherNight = watcher.lastNight;
+    const spawnPoint = world.findSpawn(); // its traces keep clear of the world's spawn
+    watcherWorld.spawn = [spawnPoint[0], spawnPoint[2]];
     // Runes: replace the store with the save's (validated) runes; nothing runs until the player exists.
     if (runner) runner.reset();
     runner = null;
@@ -1267,6 +1324,7 @@ export function boot(win, doc) {
     zombieTarget = null;
     hurtFlash = 0;
     hud.setHurtFlash(0);
+    watcher.clear();
     player = null;
     hit = null;
     renderer.setHighlight(null);
@@ -1483,6 +1541,7 @@ export function boot(win, doc) {
       return blockPhysics;
     },
     zombies,
+    watcher,
     dispose,
   };
 
@@ -1659,6 +1718,58 @@ export function boot(win, doc) {
     }
   }
 
+  // ---- the Hollow Watcher (CONTRACTS §40) ------------------------------------------------------------
+
+  /** Fill watcherWorld with this frame's player, view (camera FOV and window too), clock and fog distance. @returns {typeof watcherWorld} */
+  function refreshWatcherWorld() {
+    watcherWorld.player = player;
+    if (player) {
+      watcherWorld.eye[0] = player.x;
+      watcherWorld.eye[1] = player.y + getEyeHeight(player);
+      watcherWorld.eye[2] = player.z;
+    }
+    // coords.lookDirection, without the allocation (every frame)
+    const cp = Math.cos(controls.pitch);
+    watcherWorld.look[0] = -Math.sin(controls.yaw) * cp;
+    watcherWorld.look[1] = Math.sin(controls.pitch);
+    watcherWorld.look[2] = -Math.cos(controls.yaw) * cp;
+    watcherWorld.yaw = controls.yaw;
+    // The narrower of the camera's FOV and the walking one: a spot found while the sprint FOV is wider stays on screen
+    // when the sprint ends.
+    watcherWorld.fov = Math.min(fov, FOV);
+    // … but while it is there, what is on screen is the camera's real view (wider while sprinting).
+    watcherWorld.viewFov = fov;
+    watcherWorld.aspect = renderer.three.camera.aspect;
+    watcherWorld.time = time;
+    watcherWorld.day = day;
+    watcherWorld.fogFar = world ? fogRangeForRenderDistance(world.renderDistance).far : 0;
+    return watcherWorld;
+  }
+
+  /**
+   * The Watcher: natural sightings, its gaze / proximity / unseen vanishing, wisps; when it vanishes a puff of dark
+   * smoke, a faint low sound and maybe a trace (plain world edits, applied in order).
+   */
+  function stepWatcher(dt) {
+    const ev = watcher.update(dt, refreshWatcherWorld());
+    const f = watcher.figure;
+    if (ev.wisp && f) {
+      // From the smoke wisp under its rings.
+      const y = f.y + 0.1 + Math.random() * 0.6;
+      particles.emit('smoke', f.x, y, f.z, 2, { spread: 0.15, speed: 0.4, color: [0.11, 0.11, 0.12] });
+    }
+    const gone = ev.vanished;
+    if (!gone || gone.reason === 'unloaded') return;
+    // A column of dark smoke the figure's height (it billows out and up), and a few ash-grey motes that fall.
+    for (let h = 0.3; h < WATCHER_HEIGHT; h += 0.45) {
+      particles.emit('smoke', gone.x, gone.y + h, gone.z, 8, { spread: 0.4, speed: 1.2, color: [0.07, 0.07, 0.08] });
+    }
+    particles.emit('dust', gone.x, gone.y + 1.3, gone.z, 18, { spread: 0.5, color: [0.42, 0.42, 0.41] });
+    const d = Math.hypot(gone.x - player.x, gone.y - player.y, gone.z - player.z);
+    audio.playWatcherVanish(Math.max(0.4, 1 - d / 100));
+    if (gone.trace) for (const [q, y, r, id] of gone.trace.writes) world.setBlock(q, y, r, id);
+  }
+
   /** Block physics: ≤ 1 tick, then fallers, toppling trees, lit barrels and blasts (CONTRACTS §33). */
   function stepBlockPhysics(dt) {
     if (blockPhysics) blockPhysics.step(dt);
@@ -1765,6 +1876,7 @@ export function boot(win, doc) {
     stepBlackHoles(dt);
     stepPigs(dt);
     stepZombies(dt);
+    stepWatcher(dt);
     stepBlockPhysics(dt);
     stepCampfires(dt);
     // Bodies collide, push and stand on each other once everything has moved (CONTRACTS §31). Pigs in unloaded
@@ -1815,6 +1927,7 @@ export function boot(win, doc) {
     renderer.setHighlight(hit);
     pigRenderer.sync(pigs.list);
     zombieRenderer.sync(zombies.list);
+    watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime);
     hurtFlash = Math.max(0, hurtFlash - dt / HURT_FLASH_S);
     hud.setHurtFlash(hurtFlash);
     fxTime += dt;
@@ -1932,6 +2045,8 @@ export function boot(win, doc) {
     particles.dispose();
     zombieRenderer.dispose();
     zombies.clear();
+    watcherRenderer.dispose();
+    watcher.clear();
     controls.dispose();
     hud.dispose();
     menus.dispose();

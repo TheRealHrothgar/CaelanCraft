@@ -161,6 +161,9 @@
  * @property {{falling:boolean, water:boolean, collapse:boolean, explosions:boolean}} [physics]
  *   optional (v0.8) block-physics switches; absent = saved before v0.8 (main starts it with collapse off)
  * @property {boolean} [zombies]       optional (§39) the world's zombies switch; absent = on
+ * @property {boolean} [watcher]       optional (§40) the world's Hollow Watcher switch; absent = on
+ * @property {number} [watcherNight]  optional (§40.1) the night (watcher.nightKey) of the world's last natural Watcher
+ *   sighting, a whole number ≥ 0; absent = none yet (or a save from before the field)
  * @property {{name?: string, createdAt?: number, lastPlayed?: number}} [meta]
  *   optional (§41) the save slot's world name and times (ms since the epoch); storage.loadSlot always fills all three
  */

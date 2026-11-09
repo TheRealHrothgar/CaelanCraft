@@ -86,6 +86,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/particles.js` | three, one particle system (§34.5) | v0.8 | `tests/unit/physicsRender.test.js` |
 | `src/zombies.js` | PURE, zombies: spawning, AI, daylight, hits (§39) | zombies | `tests/unit/zombies.test.js` |
 | `src/zombieRenderer.js` | three, instanced four-prism zombie models (§39.2) | zombies | `tests/unit/zombieRenderer.test.js` |
+| `src/watcher.js` | PURE, the Hollow Watcher: sightings, placement, vanishing, traces (§40) | watcher | `tests/unit/watcher.test.js` |
+| `src/watcherRenderer.js` | three, the Watcher's figure — hollow hex rings, hex lantern with fog-free lights, smoke wisp — and its shader pre-warm (§40.4) | watcher | `tests/unit/watcherRenderer.test.js` |
 | `src/atlas.js` | DOM + three | A-atlas | — |
 | `src/renderer.js` | three | A-renderer | `tests/unit/renderer.test.js` |
 | `src/controls.js` | DOM | A-controls | — |
@@ -108,7 +110,7 @@ chunk                              → config, coords
 daynight                           → config, noise
 raycast                            → config, hex, blocks
 physics                            → config, coords, hex, blocks
-commands                           → config, coords, hex, blocks, physics, daynight (formatTime)
+commands                           → config, coords, hex, blocks, physics, daynight (formatTime), watcher (WATCHER_HEIGHT)
 runes                              → config, coords, hex, blocks, commands, physics
 fluids, support, trees, explosions → config, blocks (+ hex, coords, physics as needed); never blockphysics
 trees                              → … and support (isLoadBearing)
@@ -132,8 +134,11 @@ console                            → config
 runeEditor                         → config, commands (parseScript)
 zombies                            → config, physics, hex, blocks, pigs (fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S)
 zombieRenderer                     → config, blocks (TILE), zombies (SWING_S), three
+watcher                            → config, hex, blocks, raycast, physics (playerIntersectsBlock), daynight (isDayTime), support (isLoadBearing)
+watcherRenderer                    → config (ATLAS_TILE_PX, TILE_UV), blocks (TILE, tileToUV), watcher (WATCHER_EYE_Y), three
 main                               → everything except three (renderer, atlas, pigRenderer, campfireRenderer,
-                                     fallingRenderer, particles and zombieRenderer are the three-importing modules)
+                                     fallingRenderer, particles, zombieRenderer and watcherRenderer are the three-importing
+                                     modules)
 ```
 
 ## 2. `src/config.js` (exact — already written)
@@ -669,7 +674,7 @@ export function clearSave(storage = globalThis.localStorage)        // void
 //   slot API (§41: listSlots, loadSlot, saveSlot, deleteSlot, renameSlot, duplicateSlot, migrateLegacySave, storageUsage).
 /** SaveData = { version: 2, seed: number, time: number, day: number, player: {x,y,z (WORLD),yaw,pitch,flying}, hotbar: number[9],
  *   selected: number, edits: EditsJSON, runes?: RunesJSON, pigs?: PigJSON[], physics?: PhysicsSwitches, zombies?: boolean,
- *   meta?: { name?: string, createdAt?: number, lastPlayed?: number } }
+ *   watcher?: boolean, watcherNight?: number, meta?: { name?: string, createdAt?: number, lastPlayed?: number } }
  *   EditsJSON = { "cq,cr": [localIndex, id, localIndex, id, ...] } */
 ```
 `meta` (§41) is OPTIONAL: the world's name and times, so a slot's document alone says what the Worlds screen lists.
@@ -688,6 +693,16 @@ before v0.8**: main then starts it with collapse OFF (§33.8). Exports `PHYSICS_
 `zombies` (§39) is OPTIONAL: the world's zombies switch. `serializeSave` writes it whenever `data.zombies != null` (anything not
 `=== false` is `true`); `deserializeSave` keeps a boolean and drops anything else with the warning `zombies: not a boolean, treated
 as on`. Absent means on (new worlds and saves from before zombies). Zombies themselves are never saved.
+`watcher` (§40) is OPTIONAL: the world's Hollow Watcher switch, by exactly the same rules as `zombies` (written whenever
+`data.watcher != null`, anything not `=== false` is `true`; a non-boolean is dropped with the warning `watcher: not a boolean,
+treated as on`; absent — new worlds and older saves — means on). The Watcher itself is a sighting and is never saved.
+`watcherNight` (§40.1) is OPTIONAL: the night (`watcher.nightKey(time, day)`) of the world's last natural Watcher sighting, so a reload
+in the same night cannot bring a second one. `serializeSave` writes it (after `watcher`, before `meta`) only when it is a whole number
+≥ 0 (`Number.isSafeInteger`); anything else, null included, is left out, so documents without it serialise byte-identically to
+before. `deserializeSave` keeps such a number and drops anything else with the warning `watcherNight: not a night number, ignored`
+(never a null save); absent — no sighting yet, or a save from before the field — means none. It goes through renameSlot /
+duplicateSlot / migrateLegacySave unchanged (§41: they re-serialise the parsed document). With `!==` against the current night key
+(§40.1), even a corrupt in-range value can only ever block that one night.
 `runes` (v0.3) is OPTIONAL and the version stays 2: `serializeSave` writes it only when `runes.normalizeRunesJSON(data.runes)` is
 non-empty (keys sorted by (q, y, r), non-default fields only, so untouched worlds serialise byte-identically to before);
 `deserializeSave` validates it with `runes.validateRunesJSON(raw.runes, edits)` — malformed keys, non-object entries, entries whose
@@ -711,7 +726,8 @@ v0.8 recipes 75 `barrel_side` / 76 `barrel_top` (tiles.js comments are normative
 with dark seams, two dark iron bands with rivets on rows 1–3 and 12–14, and a red pointy-top hazard hexagon with a pale
 exclamation mark between them; the lid is horizontal planks inside a dark iron rim, a fuse socket in the middle and a short fuse
 whose tip burns yellow-orange.
-v0.4 recipes 28–71 live in tiles.js (its comments are normative): spruce/birch reuse the oak plank, bark, log-end and leaves layouts
+§40 recipes 250–252 (`watcher_stone`, `watcher_cracks` — the stone's glow mask, read one tile right of it — and `watcher_smoke`)
+are the Hollow Watcher's (tiles.js comments are normative). v0.4 recipes 28–71 live in tiles.js (its comments are normative): spruce/birch reuse the oak plank, bark, log-end and leaves layouts
 in new colours (birch bark is its own recipe); mossy cobblestone / stone bricks paint the base tile with ITS seed, then moss clumps;
 storage blocks share a bevelled-plate recipe; honeycomb is a small hex-cell Voronoi; wool 58–71 use the white/red weave. Alpha:
 spruce/birch leaves have oak-style ~22% holes, ICE is alpha 200 everywhere, all other v0.4 tiles alpha 255.
@@ -876,7 +892,9 @@ export function createAudio()   // → Audio; everything is a no-op when AudioCo
  *   playCreak(v) (§36, below),
  *   playGroan(v) (§39: a 1 s sawtooth moan 92 → 118 → 70 Hz through a 520 Hz lowpass, a detuned fifth above it, a breathy noise),
  *   playZombieHurt(v) (0.22 s 170 → 230 → 110 Hz bark over a 50 ms noise slap),
- *   playZombieDown(v) (0.8 s moan sinking 130 → 40 Hz, a 300 Hz noise poof, a 90 → 40 Hz thump) }
+ *   playZombieDown(v) (0.8 s moan sinking 130 → 40 Hz, a 300 Hz noise poof, a 90 → 40 Hz thump),
+ *   playWatcherVanish(v) (§40: faint and low — two sines 68 → 30 and 71.5 → 31.5 Hz over 1.6 s beating against each other,
+ *     a 1.3 s 240 Hz noise breath and a 0.25 s 900 Hz air rush; peak gain WATCHER_VANISH_GAIN 0.2) }
  *   — volume v in 0..1, every sound scales linearly with it. main calls the physics sounds (§33.7) through PhysicsHooks.sound. */
 ```
 Synthesis per SPEC-gameplay §9.
@@ -999,6 +1017,8 @@ rendering continues. Closing any modal goes through `enterPlayingFromModal()`: `
 - **Zombies (§39.3)**: `stepZombies` runs right after `stepPigs` (so the order is player → black holes → pigs → zombies →
   blockPhysics → campfires → resolveBodies); zombies join `resolveBodies` and PhysicsHooks.bodies; `renderFrame` calls
   `zombieRenderer.sync(zombies.list)` and fades the HUD hurt flash.
+- **The Hollow Watcher (§40.4)**: `stepWatcher` runs right after `stepZombies` (… → zombies → watcher → blockPhysics → …); it is not
+  a body. `renderFrame` calls `watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime)`.
 - Diagnostics: `installErrorCapture` → `hud.showError`; `installDebugHandle`; if `params.smoke` → `runSmokeTest(game)` once playing.
 - `window.resize` → `renderer.resize(innerWidth, innerHeight)`.
 
@@ -1037,7 +1057,8 @@ unknown → `unknown block "x" (type blocks to list them)`.
 ### 26.3 CommandContext (built by main, §23)
 `{ world, player, controls {yaw, pitch}, getTime(), setTime(t) (never touches day), addTime(gameSeconds) (day += floor when passing
 midnight forwards), timeFrozen, hotbar, selected, setHotbarSlot(slot, id), say(text), teleport(x, y, z), setFlying(on), runes: RuneStore,
-runner: RuneRunner, rune: Rune|null, running: Running|null, seed, physics?: BlockPhysics (v0.8), pigs?: Pigs, zombies?: Zombies (§39) }`. The runner sets `rune`/`running` around each script command; the
+runner: RuneRunner, rune: Rune|null, running: Running|null, seed, physics?: BlockPhysics (v0.8), pigs?: Pigs, zombies?: Zombies (§39),
+watcher?: Watcher, watcherWorld?: WatcherWorld (§40; main's getter refreshes the view first) }`. The runner sets `rune`/`running` around each script command; the
 console executes with both `null`.
 ### 26.4 Commands (exact behaviour)
 | command | behaviour |
@@ -1067,6 +1088,8 @@ console executes with both `null`.
 | `rune q y r on|off` | sets `enabled` (creates the entry); off also cancels its script |
 | `summon zombie [q y r]` | §39, needs `ctx.zombies` (`zombies are not available here`); refuses while switched off (`zombies are off in this world (zombies on to allow them)`), at ZOMBIE_MAX, unloaded targets, 2–3 args; like `summon pig` with the zombie's size, facing the player; works by day too (it then burns under open sky) |
 | `zombies [clear\|on\|off]` | §39: `N zombies (max 16) · zombies are on\|off in this world`; `clear` → `removed N zombies`; `on`/`off` → `setEnabled` → `zombies on (saved with this world)` / `zombies off (saved with this world)[: removed N zombies]` / `zombies are already on\|off` |
+| `summon watcher [q y r]` | §40, needs `ctx.watcher` and `ctx.watcherWorld` (`the Watcher is not available here`); refuses while switched off (`the Watcher is off in this world (watcher on to allow it)`), while one is present (`the Watcher is already here`), 2–3 args. Alone: `watcher.summon(watcherWorld)` — far away in view at any time of day; none found → `no open ground for it out there in view (try another direction, or a render distance of 4 or more)`. With a cell: y in `0..WORLD_HEIGHT−3`, loaded (`target is not loaded`), feet at `findFreeY(y, 2, radius 0.2, WATCHER_HEIGHT)` (`target is inside a block`) → `summonAt`. Ok: `summoned the Watcher at q y r, N away` |
+| `watcher [on\|off]` | §40: `the Watcher is on\|off in this world · it is here, N away` / `· it is not here`; `on`/`off` → `setEnabled` → `the Watcher on (saved with this world)` / `the Watcher off (saved with this world)[: it is gone]` / `the Watcher is already on\|off` |
 | `physics status\|on\|off` | v0.8, needs `ctx.physics`: `status` → `physics.statusText()`; `off` / `on` → `setPaused` ("block physics paused: nothing falls, flows or explodes until physics on (not saved)" / "block physics running"); a lone feature name reports `<f> is on\|off` |
 | `physics <falling\|water\|collapse\|explosions> on\|off` | `setSwitch` → `<f> on\|off (saved with this world)` or `(already)`; an unknown feature fails |
 | `undo` | `physics.undo()`: its message (ok) or failure (`nothing to undo …`, `… too late to undo`) |
@@ -1418,7 +1441,8 @@ Fires not in `near` lose their model at once.
    transparent DoubleSide with `forceSinglePass` (one colour at one opacity blends the same in either order). Fires keep a dense slot
    each (instances [0, count)); a fire that leaves is swap-removed.
 2. Shader programs: geometries and materials are created once and only disposed by `dispose()` (never when fires come and go).
-   `prewarm(webglRenderer, camera)` (main calls it right after creating the renderer, while the game loads) compiles every campfire
+   `prewarm(webglRenderer, camera)` (main calls it while the game loads, once every renderer that adds a light — this one and the falling
+   renderer's explosion flash — exists, since the PointLight count is part of every program's key) compiles every campfire
    material against the real scene's lights and fog (`compileAsync(root, camera, scene)` when present, else `compile`), and makes each
    part draw one hidden instance (micro-scaled, 10 000 below the world) in the next rendered frame, then nothing until `sync` gives it
    fires — ANGLE/D3D11 only finishes a program's executables on its first draw. Never throws.
@@ -1684,7 +1708,7 @@ starts at 16 and doubles (a new InstancedMesh on the same geometry, inside the s
 wrote are copied into the new mesh, so no block of that id is drawn at the world origin for a frame). `sync` composes position
 (x, y, z), `Euler(rx, ry, rz, 'YXZ')` and scale for items[0 .. count); meshes with no instance are hidden. One PointLight (0xffd49a,
 distance 28, decay 1.4, intensity 0) is created at construction for the explosion flash (a constant light count).
-`prewarm(webglRenderer, camera)` (main calls it right after creating the renderer, like the campfires' §32.2) builds the meshes of
+`prewarm(webglRenderer, camera)` (main calls it while loading, after every renderer that adds a light exists, like the campfires' §32.2) builds the meshes of
 `PREWARM_IDS` = [SAND, GLASS, ICE] — one per layer, so the three materials' InstancedMesh programs — compiles them against the real
 scene (`compileAsync(mesh, camera, scene)` when present, else `compile`), and makes each draw one hidden instance (micro-scaled,
 10 000 below the world) until it has been rendered once (`onAfterRender`) or its id has instances of its own; `sync` keeps that
@@ -2335,6 +2359,207 @@ that would intersect a zombie. `game.teleport` also `detachBody(player, zombies.
 `zombies` expose the instance. Pause menu: `#pause-creatures.physics-row` (label "Creatures", below the Undo button) with
 `#btn-zombies` ("Zombies: ON|OFF", class `off`, aria-pressed; `menus.setZombiesState(on)` after `showPause`); `onZombiesToggle`
 flips the switch (off removes every zombie), click + toast. The CommandContext gets `zombies`.
+
+## 40. `src/watcher.js` (PURE) and `src/watcherRenderer.js` (three) — the Hollow Watcher
+
+Caelancraft's own legend (original: nothing about it borrows another game's character): a figure (WATCHER_HEIGHT 2.6) built
+from the world's own cell shape — a floating stack of hollow hexagonal rings of weathered ash-grey stone with thin glowing cyan
+cracks, a hex lantern for a head with two small cyan lights inside that shine through fog and darkness, and a wisp of dark smoke
+trailing to the ground where legs would be (§40.4). It is a SIGHTING, not a creature: at most one exists, it is never a body (no
+collisions, not in `resolveBodies`, not targetable), it never moves, never attacks and never writes a block while it is there — only
+its head turns. The figure is never saved; the world keeps the per-world switch (`enabled`, §14 `watcher`) and the night of the last
+natural sighting (`lastNight`, §14 `watcherNight`). Its tunables `WATCHER_*` live in watcher.js (exported; nothing else reads them).
+```js
+export function nightKey(time, day)          // t ≥ 0.75 → day, else day − 1: one key from dusk to the next dusk (main bumps day at midnight)
+export function blocksSight(id)              // isOpaque(id) || isLeaves(id): air, water and glass let sight through
+export function lineOfSight(getBlock, ex, ey, ez, tx, ty, tz)   // raycastHex(…, d − 0.35, blocksSight) === null (d ≤ 0.35 → true)
+export function isDeepUnderground(world)     // eye y ≤ groundHeight(player column) + 1 − WATCHER_CAVE_DEPTH (8) and a solid cell above the eye
+export function viewTangents(world, fovDeg = world.fov) → [tanH, tanV]   // tan of half the view: tanV = tan(fov / 2) (fov: fovDeg, else config FOV 70°),
+                                             // tanH = tanV · aspect (world.aspect, else WATCHER_DEFAULT_ASPECT 16 / 9)
+export function screenPos(world, x, y, z, out, fovDeg = world.fov) → boolean   // out = [sx, sy]: the point's camera-space x and y over its depth, divided by
+                                             // tanH / tanV (|s| ≤ 1 on screen); false behind the eye (§40.1.2)
+export function inView(world, x, y, z, margin = 0, fovDeg = world.fov) → boolean   // screenPos and |sx|, |sy| ≤ 1 − margin
+export function surfaceFeetY(world, q, r) / caveFeetY(world, q, r, fy)   // standing spots (§40.1.2)
+export function traceWritable(world, q, y, r) // y in range, loaded, no edit (hasEdit false), ≥ WATCHER_SPAWN_CLEAR (16) from `spawn`,
+                                             // not in the player's body, not occupied()
+export function planPillar / planDeadFire(world, x, y, z, rng), planUproot(world, x, y, z), planUprootAt(world, q, h, r) → WatcherTrace|null
+export function planTrace(world, x, y, z, rng, kinds = TRACE_KINDS) → WatcherTrace|null   // TRACE_KINDS = ['pillar', 'deadfire', 'uprooted']
+export class Watcher {
+  constructor(rng = Math.random)
+  figure: WatcherFigure|null; present; events   // events: the WatcherEvents object update() returns (reused)
+  enabled; setEnabled(on) → changed?; switchVersion   // off removes the figure at once (no puff, no trace), nothing appears, summon refuses
+  clear()                                      // a new world: no figure, no pending roll, no night used (the switch is kept)
+  lastNight → number|null; setLastNight(n) → accepted?   // the night of the last natural sighting (saved: §40.4); n a whole number ≥ 0 or null
+  sightingMode(world) → 'cave'|'night'|null    // null with no player or the head under water; 'cave' when isDeepUnderground; 'night' when !isDayTime
+  findSpot(world, cave, { edgeMin?, edgeMax?, hiddenOk? }?) → { x, y, z, los }|null
+  summon(world) → WatcherFigure|null; summonAt(world, q, y, r) → WatcherFigure|null   // kind 'summon', any time of day
+  update(dt, world) → WatcherEvents
+}
+/** WatcherWorld = { getBlock, isLoadedCell(q, r), groundHeight(q, r) (World.terrainHeightAt), isNaturalGround(q, y, r), hasEdit(q, y, r)
+ *    (without it no trace is made), occupied?(q, y, r) (a creature's body), player, eye: [x, y, z], look: [dx, dy, dz] (unit), yaw,
+ *    fov? (the vertical FOV, degrees, a sighting must START inside), viewFov? (the camera's real vertical FOV now; fov when absent:
+ *    the seen test, §40.2), aspect? (width / height), time, day, fogFar, spawn?: [x, z]|null }
+ *  WatcherFigure = { x, y, z (feet: its cell centre), q, r, yaw (faces the player as it appears; never changes), headYaw, headPitch,
+ *    kind: 'night'|'cave'|'summon', los, age, gaze, unseen, seen, wispIn }
+ *  WatcherEvents = { appeared: WatcherFigure|null, vanished: { x, y, z, reason: 'gaze'|'near'|'unseen'|'dawn'|'unloaded', trace }|null, wisp }
+ *  WatcherTrace = { kind, at: [q, y, r], writes: [q, y, r, id][] (main applies them in order) } */
+```
+### 40.1 Appearing
+1. `update(dt, world)` (nothing for `dt ≤ 0` or no player): with a figure present it only runs §40.2. Otherwise, while `enabled`:
+   `key = nightKey(time, day)`; a new key drops a pending roll. A remembered night AHEAD of `key` (the console's `time set` rewinds
+   the hour but keeps the day; a bad save) becomes `key`: it counts as tonight — no second sighting in the night the player is in,
+   and no block on the nights to come. Nothing more when `sightingMode` is null or `key` is the key of the
+   last natural sighting (**at most one per in-game night**). Every WATCHER_CHECK_S (5 s) of such time one check: unless a roll is
+   already pending, `rng() < WATCHER_CHECK_CHANCE` = 1 − (1 − WATCHER_NIGHT_CHANCE ⅓)^(5 / 300) ≈ 0.00673 makes one pending — so a
+   night (DAY_LENGTH_SECONDS / 2 = 300 s, ~5 real minutes, 60 checks) brings a sighting with probability ⅓; a pending roll is placed
+   by `findSpot(world, mode === 'cave')` at this and every later check of the night until a spot is found — a natural sighting
+   **only ever starts on screen and in sight** (§40.1.2), so while there is none (walled in, a cave, looking at the ground) the roll
+   stays pending instead of being spent on a figure nobody could see. Placing it records the key (`lastNight`), reports `appeared`
+   and returns — **it never vanishes on the update it appears in**. The key is saved with the world (§40.4), so a reload in the
+   same night brings no second sighting while the next night still can (main saves `time` and `day`, so the key is the same after
+   a reload).
+2. `findSpot(world, cave, { edgeMin = WATCHER_EDGE_MIN 0.4, edgeMax = WATCHER_EDGE_MAX 0.85, hiddenOk = false })`:
+   `dMin = max(WATCHER_MIN_DIST 30, WATCHER_FOG_MIN 0.75 · fogFar)`, `dMax = WATCHER_FOG_MAX 0.95 · fogFar` (main's fogFar is
+   `fogRangeForRenderDistance(rd).far`: 27.7 at rd 3 → no spot at all, 41.6 at rd 4, 83.1 at rd 7); none when dMin > dMax (or without
+   player, eye or look). Up to WATCHER_PLACE_TRIES (24) columns: aim at yaw ± atan(u · tanH · cos(pitch)) with u = edgeMin … edgeMax
+   — the point at the horizon u of the screen's half-width out from its middle (`viewTangents`; cos(pitch) = |look| in the
+   horizontal plane): natural sightings toward the edge of the view, the corner of the eye (≈ 26°–47° aside in a 16:9 window at
+   FOV 70°) — at a distance dMin … dMax, take that point's cell, which must be loaded with its
+   centre within dMin … dMax horizontally; feet = `caveFeetY(…, floor(player y))` in a cave (the nearest level fy, fy + 1, fy − 1, …
+   within WATCHER_CAVE_SPAN 8 with a standable floor — solid, not leaves, not liquid — and three AIR cells) else `surfaceFeetY` (the
+   highest standable cell from groundHeight + 8 down to groundHeight − 6, and only if three AIR cells stand on it); 3D distance ≥ 30;
+   and **on screen**: its feet (x, y, z) and the top of its head (y + WATCHER_HEIGHT) both `inView(…, WATCHER_VIEW_MARGIN 0.1)` —
+   inside the camera's view (screenPos: the eye, `look`, no roll, as main's camera is rotated (pitch, yaw, 0) 'YXZ'; `fov` and
+   `aspect` from WatcherWorld, config FOV 70° and 16 : 9 when absent) shrunk by 10 % of its half-width and half-height, so the
+   vertical counts too (looking at the ground the horizon is off screen: no spot). The first such spot with line of sight (eye → its
+   eyes at WATCHER_EYE_Y 2.38, or its centre at 1.3) wins; none in sight → null — natural sightings never fall back to a hidden spot
+   (play-test: underground nearly every sighting appeared where it could not be seen and went 30 s later, using up the night). Only
+   `hiddenOk` (summon) takes the first in-view spot without line of sight (`los: false`). It faces the player (`yaw = headYaw`
+   toward the player).
+3. `summon(world)` (a testing command): enabled, none present, a player → `findSpot(world, isDeepUnderground(world), { edgeMin:
+   tan(WATCHER_SUMMON_SIDE_MIN 8°) / tanH, edgeMax: tan(WATCHER_SUMMON_SIDE_MAX 25°) / tanH (both at most 1 − WATCHER_VIEW_MARGIN),
+   hiddenOk: true })`: 8°–25° aside on screen (plainly in view, never dead centre), and on screen like a natural one. A spot in
+   sight is preferred; only when there is none (walled in, a cave) it stands hidden in the view (`los: false`; the console says
+   "(out of sight)"; it goes after WATCHER_UNSEEN_S like any sighting nobody sees), so it can still be tried anywhere. Nothing in
+   view (the horizon off screen, a fog far too short) → null. It does NOT use up the night's natural sighting. `summonAt(world, q,
+   y, r)`: feet at (hexToWorld(q, r), y), wherever that is (`los` says whether it is in sight).
+### 40.2 While it is there, and vanishing (the order of checks per update)
+`age += dt`; its chunk unloaded → gone (`unloaded`: no puff, no trace); the player within WATCHER_NEAR_VANISH (20, 3D feet to feet) →
+`near`; a `night` sighting once `isDayTime` (and the player is not deep underground) → `dawn`. Seen: it is ON SCREEN (`seen`) when
+its centre (y + 1.3) or its eyes (y + WATCHER_EYE_Y) is `inView` (margin 0, fovDeg = `viewFov` — the camera's real view now, wider
+while sprinting, and its window — not a cone,
+so 48° aside is on screen in a 16:9 window and 40° above the view's middle is not) with line of sight to that point (rays only for a
+point on screen); `cos` of the angle between `look` and eye → its centre inside WATCHER_GAZE_CONE (6°) with line of sight to its
+CENTRE: the player is looking straight at it: `gaze += dt` (else `gaze = 0`), and at
+WATCHER_GAZE_S (0.4 s) → `gaze`. `unseen` = seconds since it was last on screen; at WATCHER_UNSEEN_S (30 s) → `unseen`. Then its head
+turns toward the player at WATCHER_HEAD_TURN_RATE (0.6 rad/s), at most WATCHER_HEAD_MAX_TURN (1.3 rad) from the body's yaw, and tilts
+toward the player's eye (±WATCHER_HEAD_MAX_PITCH 0.35) at the same rate; every WATCHER_WISP_MIN_S … MAX_S (1.2–3.6 s) `wisp` is
+reported. It never changes x, y, z or yaw, never touches the player and has no way to write a block. Vanishing reports
+`{ x, y, z, reason, trace }` where trace = `rng() < WATCHER_TRACE_CHANCE (0.35) ? planTrace(world, x, y, z, rng) : null` (never for
+`unloaded`).
+### 40.3 Traces (`planTrace`: a random kind first, then the others in random order — Fisher–Yates over `kinds` — the first that fits)
+Plain world edits, applied by main in order with `World.setBlock` (so they are saved and trigger block physics like any external
+write; they are not physics events and `undo` does not take them back). **A trace only ever changes untouched natural terrain and
+natural trees** (play-test: an uprooting turned a player's block under a root into dirt — deleting a Rune Block — and pillars filled
+player-dug shafts): every cell it writes and every cell it relies on has no edit (`hasEdit` false; `isNaturalGround` cells are
+unedited by definition), so a placed block, a dug hole or shaft (edited AIR), a Rune Block or anything else the player made is never
+written, filled or stood on. Every written cell passes `traceWritable` (so also never the player's cell, never a creature's, never
+within 16 of spawn) and none has a liquid among its 8 neighbours. Each kind is laid out so it cannot bring anything else down:
+- `pillar`: WATCHER_PILLAR_MIN … MAX (4–6, from rng) OBSIDIAN cells stacked on natural ground, bottom first, every one AIR before.
+  The column: the figure's own cell, then the rings 1 … WATCHER_TRACE_NEAR (3) around it (each ring walked from a random cell), each
+  with its ground = the highest `isNaturalGround` cell from floor(y) + 1 down to floor(y) − 4, kept when UNTOUCHED AIR (no edit)
+  stands on it — the floor of a hole or shaft the player dug is not open ground, and every obsidian cell is untouched AIR. `at` = the
+  bottom obsidian cell. Nothing is removed, so nothing can fall.
+- `deadfire` (a dead campfire, never a lit CAMPFIRE): in the first such column with ground g ≥ 1 whose g + 1, g + 2 are untouched
+  AIR and g − 1 standable and unedited (the ash never rests on a player's block), and whose six neighbours all have natural ground at
+  exactly g with untouched AIR at g + 1 and g + 2 (never in a pit the player dug): COBBLESTONE on the six neighbours at g + 1 (faces
+  0..5), then the centre floor (q, g, r) → GRAVEL (cold ash; it rests on a solid cell, so it never falls). `at` = [q, g, r]; the
+  centre cell above stays empty.
+- `uprooted`: the nearest (horizontal distance to the trunk centre ≤ WATCHER_TREE_RANGE 8; ties by q, r) column whose cell over
+  `groundHeight` h is a log for which `planUprootAt(world, q, h, r)` holds: h ≥ 1, natural ground at h, a single trunk of
+  WATCHER_TRUNK_MIN … MAX (3–8) unedited logs from h + 1 crowned by leaves; against every trunk cell AND the root only natural
+  ground, leaves or non-solid cells (no build hangs on it or is set into the ground beside its root, no other trunk touches it —
+  else this tree is skipped), no liquid; the cell under the root standable, unedited natural ground. **An edited root or cell under
+  it skips the whole tree** (not just the dirt write): with a player's block under the root — a Rune Block, a tunnel's ceiling — the
+  hole alone would still open onto it and the tree no longer stands on untouched ground; another tree or kind is taken instead.
+  Its leaves: unedited leaves in columns within WATCHER_LEAF_RADIUS (2) of the trunk from the top log − 1 to + 3, except
+  those with another UNEDITED log (any y within ±3) in a column at a hex distance ≤ their own distance from the trunk (shared or
+  nearer leaves stay with that natural tree; a log the player placed, or one felled onto the canopy, keeps none — it holds nothing
+  up; the player's own leaves stay too); the whole canopy must be loaded and writable; no edited cell that it leaves rests on one it
+  removes (the player's gravel on a leaf would fall — the tree is skipped); and the leaf decay block physics runs on the removed logs
+  afterwards (§36.6.1 — mirrored on the world as the trace leaves it: clusters of leaves next to the logs, through leaves, that touch
+  no unloaded cell and no load-bearing cell other than one resting on leaves) must find nothing but AIR or leaves on any natural leaf
+  that would decay — else the tree is skipped (a review found player blocks on such leaves falling 6 cells). Writes: the leaves top
+  down → AIR, the logs top down → AIR, the root (q, h, r) → AIR and (q, h − 1, r) → DIRT unless it already is: a hole over dirt
+  where the tree stood. `at` = [q, h, r].
+  Logs and the root are removed together in one frame, so the support search finds nothing floating (§36.2) and no tree topples.
+### 40.4 Rendering and integration
+`createWatcherRenderer(scene, atlasTexture)` → `{ sync(figure|null, camX, camY, camZ, time), visible(), prewarm(webgl, camera),
+warmPending(), dispose(), group, head, rings, lantern, core, smoke, eyes, glows }`: ONE group `watcher` of 12 parts (10 meshes, 2
+sprites — it is one figure, so a handful of draw calls), hidden when `figure` is null; origin at the feet (the cell floor),
+translate(x, y, z) · rotateY(yaw), facing −Z like the zombies. Built from the world's cell shape and hollow; nothing humanoid (no
+legs, arms or face). `time` (s; main passes fxTime) drives the rings, the smoke and the pulse.
+- Body: RING_COUNT 5 open hex rings `watcher-ring-0..4` — thin-walled hex bands (outer circumradius RING_R = [0.19, 0.26, 0.3, 0.26,
+  0.2], widest in the middle; wall RING_WALL 0.035 across the flats; height RING_H 0.12; nothing across the middle), pointy-top like
+  the cells at rest (corner 0 at −30°) — floating with RING_GAP 0.14 open between them: ring i's underside at `ringBaseY(i)` =
+  RING_BASE_Y 0.72 + i·(RING_H + RING_GAP) + RING_BOB 0.02 · sin(2πt / RING_BOB_S 5.5 − RING_BOB_STEP 1.1 · i), turned
+  RING_PHASE[i] + RING_SPIN[i]·t about its axis (RING_PHASE [0, 0.33, 0.12, 0.47, 0.21], RING_SPIN [0.045, −0.03, 0.02, −0.035,
+  0.05] rad/s: each its own slow way). WATCHER_CENTRE_Y 1.3 falls on the middle ring.
+- Head: the pivot `watcher-head-pivot` at HEAD_Y = RING_BASE_Y + 5·RING_H + 4·RING_GAP + NECK_GAP 0.16 = 2.04 (rotation 'YXZ' =
+  (headPitch, headYaw − yaw, 0)) holds a hex LANTERN, LANTERN_H 0.56 tall (HEAD_Y + LANTERN_H = WATCHER_HEIGHT), flat front (corner 0
+  on +X, so side 4 faces −Z): `watcher-lantern`, a heavier rim top and bottom (R LANTERN_R 0.22, wall LANTERN_WALL 0.05, height
+  LANTERN_RIM_H 0.07) and six slim corner posts (hex prisms R POST_R 0.017) on the rims' middle line, its sides open; inside,
+  `watcher-core`, the dim inner glow (hex prism R CORE_R 0.075, pivot y CORE_Y 0.24 … + CORE_H 0.2; MeshBasicMaterial CORE_COLOR
+  0x0f4c55, opacity CORE_OPACITY 0.55 · (1 + 0.5 · CRACK_PULSE · the pulse), normal blending, depthWrite false, fogged — a faint teal
+  light at night, a muted crystal by day); in front of the core, inside the front window, the two lights `watcher-eye-l/r`: small
+  pointy-top hexagons (CircleGeometry(EYE_R 0.021, 6, π/2)) at (±EYE_X 0.045, WATCHER_EYE_Y, EYE_Z −0.14),
+  `MeshBasicMaterial({ color: EYE_COLOR 0x7ff8ff, fog: false })` — unlit and fog-free, so they stay bright through fog and darkness:
+  the only bright features — and a Sprite each (`watcher-glow-l/r`: a 32×32 DataTexture radial glow, `color GLOW_COLOR 0x39d8f0,
+  fog: false, depthWrite: false, Additive`) scaled `max(GLOW_MIN 0.16, distance · GLOW_PER_M 0.012)` m (about six pixels at 720p,
+  however far), its opacity breathing 0.9 ± 0.1. Intended: at sighting distances (30–80 m; it is gone within WATCHER_NEAR_VANISH 20 m)
+  the two glows overlap (glow width / light spacing = d / 7.5 ≥ 4), so a player sees ONE cyan point at the top of a faint column;
+  the two lights only separate up close (summonAt at a few metres, screenshots).
+- Smoke: `watcher-smoke`, three stacked hex tubes under the lowest ring (SMOKE: y 0.46…0.7, 0.24…0.44, 0.02…0.22 above the feet;
+  radius 0.11 → 0.025 and vertex alpha 0.4 → 0.04 shrinking toward the ground), watcher_smoke texels, MeshBasicMaterial(map,
+  vertexColors with alpha, transparent, depthWrite false, DoubleSide, forceSinglePass), turning SMOKE_SPIN 0.3 rad/s.
+- Stone: the rings and the lantern share ONE MeshLambertMaterial(map = the atlas, vertexColors = a shade per face: 1 outer walls,
+  0.9 tops, 0.72 undersides, 0.5 inner walls, so the hollow reads; emissive white × emissiveMap = a clone of the atlas — same Source,
+  so one GPU texture — with offset (TILE_UV, 0): every stone texel's glow is read from the tile to its right, watcher_cracks),
+  emissiveIntensity CRACK_GLOW 0.75 · (1 + CRACK_PULSE 0.35 · sin(2πt / CRACK_PULSE_S 6.5)) — the cracks pulse slowly. Untextured
+  (tests): colour 0x8b8984, no emission. Every face shows a window of its tile, FACE_PX 12 pixels along its longer side and as many
+  along the other as keep the texels square, placed (and mirrored) by a per-face seed, so the cracks fall differently on each face.
+Tiles (tiles.js recipes are normative; original art, alpha 255; atlas row 15, not block faces): 250 `watcher_stone` (weathered
+ash-grey stone 0x8a8884, mottled and porous, with two short thin cracks as dark teal-grey grooves), 251 `watcher_cracks` (its glow
+mask, so it must sit right of 250 in the same row: the same stone at 0.4 of its brightness — a faint self-light, so by night the
+figure reads as pale stone, never a black shape — with the same crack pixels bright cyan 0x5ae6f0), 252 `watcher_smoke` (dark
+neutral soot with lighter wisps rising).
+`prewarm(webgl, camera)` pays every Watcher shader cost while the game loads, not on the frame of the first sighting: it compiles
+the group against the real scene (`compileAsync(group, camera, scene)` when present, else `compile`) — the scene's lights are part
+of every program's key, so it must run once every light exists — and makes every part (rings, smoke, lantern, core, lights, glow
+sprites) draw ONCE in the next rendered frame, because ANGLE/D3D11 only finishes a program on its first draw: the group is shown as
+a speck (scale WARM_SCALE 1e-6 at y WARM_Y −10 000) with frustum culling off until each part's `onAfterRender` has fired. `sync(null)`
+keeps the speck meanwhile; a figure shown before then takes its place (its own first draw is the warm-up); afterwards the group is
+hidden at full size with normal culling and stays so. `warmPending()` counts the parts still owing that draw. Never throws.
+`dispose()` frees its geometries, materials, the glow texture and the crack-map clone (never the shared atlas).
+main: ONE `Watcher()` for the session and a persistent `watcherWorld` (getBlock, isLoadedCell = hasChunkAtCell, groundHeight =
+terrainHeightAt, isNaturalGround, hasEdit, `occupied` = a pig's or zombie's body intersects the cell); `refreshWatcherWorld()` sets
+player, eye (player.y + getEyeHeight), look = `lookDirection(controls.yaw, controls.pitch)` (written in place), yaw, fov = `min(fov,
+FOV)` (the eased camera FOV, never wider than the walking one: a spot found while sprinting at SPRINT_FOV stays on screen when the
+sprint ends), viewFov = the eased camera FOV itself (what is on screen now, for the seen test), aspect = the camera's (`renderer.three.camera.aspect`, kept by `resize`), time, day and fogFar =
+`fogRangeForRenderDistance(world.renderDistance).far` (the NORMAL fog: no sighting starts while the head is under water). `startLoading`
+calls `watcher.clear()`, `setEnabled(save?.watcher !== false)`, `setLastNight(save?.watcherNight ?? null)` (absent — an older save —
+means none; storage has already validated it) and stores `spawn` = world.findSpawn()'s (x, z); `buildSaveData` writes `watcher:
+watcher.enabled` and `watcherNight: watcher.lastNight` (left out when null); autosave also fires when its `switchVersion` or its
+`lastNight` changed since the last save (so a sighting is on disk soon even without a page-leave save); `quitToTitle` / `dispose`
+clear it.
+main creates the renderer with the others and calls `watcherRenderer.prewarm` after the campfire, falling-block and particle
+renderers exist (after their prewarms): the campfire and explosion PointLights must be in the scene when it compiles.
+`stepWatcher(dt)` runs after `stepZombies`: `update(dt, refreshWatcherWorld())`; `wisp` → 2 'smoke' particles (ash grey [0.11,
+0.11, 0.12], spread 0.15, speed × 0.4) from its smoke wisp, 0.1–0.7 above its feet; `vanished` (not `unloaded`) → the puff: a column
+of dark 'smoke' — 8 particles ([0.07, 0.07, 0.08], spread 0.4, speed × 1.2) every 0.45 from 0.3 above its feet up to WATCHER_HEIGHT —
+plus 18 falling ash-grey 'dust' motes ([0.42, 0.42, 0.41]) at its middle, `audio.playWatcherVanish(max(0.4, 1 − d / 100))` (d = its distance from the player), then
+`trace.writes` through `world.setBlock` in order. The CommandContext gets `watcher` and a `watcherWorld` getter (refreshes first);
+`game.watcher` and the debug handle's `watcher` expose the instance. There is no pause-menu toggle (console `watcher on|off`).
 
 ## 41. Save slots — `src/storage.js` (PURE), the Worlds panel in `src/menus.js` and `index.html`, wiring in `src/main.js`
 

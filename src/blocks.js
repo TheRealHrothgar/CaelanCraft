@@ -48,6 +48,9 @@ export const TILE = Object.freeze({
   BARREL_SIDE: 75, BARREL_TOP: 76,
   // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
   ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
+  // The Hollow Watcher (§40; atlas row 15, not block faces): its ash-grey stone, the glow mask of that stone's cracks
+  // (it must sit one tile right of the stone: the renderer reads it through a shifted clone of the atlas), its smoke.
+  WATCHER_STONE: 250, WATCHER_CRACKS: 251, WATCHER_SMOKE: 252,
   MISSING: 255,
 });
 /** Every tile id the atlas must paint. */

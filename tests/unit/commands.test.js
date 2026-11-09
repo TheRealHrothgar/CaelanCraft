@@ -13,6 +13,7 @@ import { createPlayer } from '../../src/physics.js';
 import { RuneStore } from '../../src/runes.js';
 import { Pigs } from '../../src/pigs.js';
 import { Zombies } from '../../src/zombies.js';
+import { Watcher } from '../../src/watcher.js';
 import { BlockPhysics } from '../../src/blockphysics.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 import {
@@ -778,7 +779,7 @@ describe('executeCommand — summon / pigs', () => {
     const { ctx } = makeCtx();
     expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining('pigs are not available') });
     ctx.pigs = new Pigs();
-    expect(parseLine('summon cow')).toEqual({ line: 1, message: 'summon: expected one of pig, zombie, got "cow" — usage: summon pig|zombie [q y r]' });
+    expect(parseLine('summon cow')).toEqual({ line: 1, message: 'summon: expected one of pig, zombie, watcher, got "cow" — usage: summon pig|zombie|watcher [q y r]' });
     expect(exec(ctx, 'summon pig 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
     expect(exec(ctx, 'summon pig 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
     for (let i = 0; i < PIG_MAX; i++) ctx.pigs.spawn(0, FEET, 0);
@@ -828,6 +829,80 @@ describe('executeCommand — summon zombie / zombies (§39)', () => {
     expect(exec(ctx, `summon zombie 5 ${FEET} 0`)).toMatchObject({ ok: false, message: expect.stringContaining('inside a block') });
     for (let i = 0; i < ZOMBIE_MAX; i++) ctx.zombies.spawn(0, FEET, 0);
     expect(exec(ctx, 'summon zombie')).toMatchObject({ ok: false, message: expect.stringContaining(`too many zombies (max ${ZOMBIE_MAX})`) });
+  });
+});
+
+describe('executeCommand — summon watcher / watcher (§40)', () => {
+  /** The Watcher with a view over the ctx world (fog far 40: it stands 30–38 away). */
+  function withWatcher(ctx, world, player, time = 0.5) {
+    ctx.watcher = new Watcher();
+    ctx.watcherWorld = {
+      getBlock: world.getBlock,
+      isLoadedCell: (q, r) => world.hasChunkAtCell(q, r),
+      groundHeight: (q, r) => world.terrainHeightAt(q, r),
+      isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
+      hasEdit: (q, y, r) => world.hasEdit(q, y, r),
+      player,
+      eye: [player.x, player.y + 1.62, player.z],
+      look: [0, 0, -1],
+      yaw: 0,
+      time,
+      day: 1,
+      fogFar: 40,
+      spawn: null,
+    };
+    return ctx.watcher;
+  }
+
+  it('summon watcher puts it far away in view at noon, facing you; one at a time; summon watcher q y r puts it in a cell', () => {
+    const { ctx, world, player } = makeCtx(); // noon
+    const w = withWatcher(ctx, world, player);
+    const res = exec(ctx, 'summon watcher');
+    expect(res.ok).toBe(true);
+    const f = w.figure;
+    expect(res.message).toBe(`summoned the Watcher at ${f.q} ${f.y} ${f.r}, ${Math.round(Math.hypot(f.x - player.x, f.y - player.y, f.z - player.z))} away`);
+    expect(Math.hypot(f.x - player.x, f.z - player.z)).toBeGreaterThanOrEqual(30);
+    expect(Math.hypot(f.x - player.x, f.z - player.z)).toBeLessThanOrEqual(38);
+    expect(f.z).toBeLessThan(player.z); // ahead (the view looks along −Z)
+    expect(f.y).toBe(FEET);
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: false, message: expect.stringContaining('already here') });
+    expect(exec(ctx, 'watcher')).toEqual({ ok: true, message: `the Watcher is on in this world · it is here, ${Math.round(Math.hypot(f.x - player.x, f.y - player.y, f.z - player.z))} away` });
+    w.clear();
+    expect(exec(ctx, 'summon watcher 4 9 -30')).toEqual({ ok: true, message: `summoned the Watcher at 4 ${FEET} -30, ${Math.round(Math.hypot(hexToWorld(4, -30)[0] - player.x, 0, hexToWorld(4, -30)[1] - player.z))} away` });
+    expect(exec(ctx, 'watcher')).toMatchObject({ message: expect.stringContaining('it is here') });
+  });
+
+  it('watcher on|off is the saved switch: off removes it and summon refuses; errors for bad input', () => {
+    const { ctx, world, player } = makeCtx();
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: false, message: expect.stringContaining('not available') });
+    expect(exec(ctx, 'watcher')).toMatchObject({ ok: false, message: expect.stringContaining('not available') });
+    const w = withWatcher(ctx, world, player);
+    expect(exec(ctx, 'watcher')).toEqual({ ok: true, message: 'the Watcher is on in this world · it is not here' });
+    exec(ctx, 'summon watcher');
+    expect(exec(ctx, 'watcher off')).toEqual({ ok: true, message: 'the Watcher off (saved with this world): it is gone' });
+    expect(w.present).toBe(false);
+    expect(w.switchVersion).toBe(1);
+    expect(exec(ctx, 'watcher off')).toEqual({ ok: true, message: 'the Watcher is already off' });
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: false, message: expect.stringContaining('off in this world') });
+    expect(exec(ctx, 'watcher on')).toEqual({ ok: true, message: 'the Watcher on (saved with this world)' });
+    expect(parseLine('watcher maybe')).toMatchObject({ message: expect.stringContaining('expected one of on, off') });
+    expect(exec(ctx, 'summon watcher 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
+    expect(exec(ctx, 'summon watcher 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
+    for (let y = FEET; y < FEET + 5; y++) world.setBlock(5, y, -30, B.STONE);
+    expect(exec(ctx, `summon watcher 5 ${FEET} -30`)).toMatchObject({ ok: false, message: expect.stringContaining('inside a block') });
+    // Walled in: it still comes for a test, hidden in the view, and says so.
+    w.clear();
+    for (let q = -3; q <= 3; q++) for (let y = FEET; y < FEET + 12; y++) world.setBlock(q, y, -3, B.STONE);
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: true, message: expect.stringMatching(/^summoned the Watcher at .* away \(out of sight\)$/) });
+    expect(w.figure.los).toBe(false);
+    w.clear();
+    // Looking down at your feet the horizon is off screen: nowhere in view.
+    ctx.watcherWorld.look = [0, -1, 0];
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: false, message: expect.stringContaining('no open ground') });
+    ctx.watcherWorld.look = [0, 0, -1];
+    // Nowhere to stand out there (a fog far too short for 30 m): a clear refusal.
+    ctx.watcherWorld.fogFar = 27;
+    expect(exec(ctx, 'summon watcher')).toMatchObject({ ok: false, message: expect.stringContaining('no open ground') });
   });
 });
 

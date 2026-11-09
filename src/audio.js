@@ -138,6 +138,11 @@ export const GRUNT_DURATION_S = 0.22;
 export const GRUNT_GAIN = 0.3;
 export const ZOMBIE_DOWN_S = 0.8;
 export const ZOMBIE_DOWN_GAIN = 0.32;
+// The Hollow Watcher (CONTRACTS §40) vanishing: a faint, low exhale — two sine tones a few hertz apart sinking 68 → 30
+// Hz over 1.6 s (they beat slowly against each other), a hollow 240 Hz noise breath and a soft 900 Hz air rush at the
+// start. Quiet on purpose: you are not sure you heard it.
+export const WATCHER_VANISH_S = 1.6;
+export const WATCHER_VANISH_GAIN = 0.2;
 
 /** Exponential ramps cannot reach 0; decays ramp to this floor and the voice stops there. */
 const DECAY_FLOOR = 0.001;
@@ -163,6 +168,7 @@ const MUTE_FADE_S = 0.01;
  * @property {(volume?: number) => void} playGroan                a zombie moans (ambient / it noticed you)
  * @property {(volume?: number) => void} playZombieHurt           a zombie is hit
  * @property {(volume?: number) => void} playZombieDown           a zombie is knocked out or burns away
+ * @property {(volume?: number) => void} playWatcherVanish        the Hollow Watcher vanishes in a puff of smoke (§40)
  * @property {(b: boolean) => void} setMuted
  * @property {() => boolean} toggleMuted                         returns the new muted state
  * @property {boolean} muted                                     read-only getter
@@ -649,6 +655,26 @@ export function createAudio(opts = {}) {
     }
   }
 
+  // --- the Hollow Watcher (CONTRACTS §40) ------------------------------------
+
+  /** @param {number} [volume] */
+  function playWatcherVanish(volume = 1) {
+    const c = ready();
+    if (!c || !(volume > 0)) return;
+    try {
+      const v = Math.min(1, volume);
+      const p = 0.95 + Math.random() * 0.1;
+      const d = WATCHER_VANISH_S;
+      const t0 = c.currentTime;
+      tone(c, t0, d, 68 * p, 30 * p, WATCHER_VANISH_GAIN * v);
+      tone(c, t0 + 0.04, d * 0.95, 71.5 * p, 31.5 * p, WATCHER_VANISH_GAIN * 0.7 * v);
+      noiseBurst(c, t0, d * 0.8, 240, WATCHER_VANISH_GAIN * 0.9 * v, p);
+      noiseBurst(c, t0, 0.25, 900, WATCHER_VANISH_GAIN * 0.35 * v, p);
+    } catch (err) {
+      warnOnce(err);
+    }
+  }
+
   /** @param {boolean} b */
   function setMuted(b) {
     muted = !!b;
@@ -685,6 +711,7 @@ export function createAudio(opts = {}) {
     playGroan,
     playZombieHurt,
     playZombieDown,
+    playWatcherVanish,
     setMuted,
     toggleMuted,
     get muted() {

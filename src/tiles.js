@@ -98,6 +98,9 @@ export const TILE_NAMES = Object.freeze({
   243: 'zombie_shirt',
   244: 'zombie_trousers',
   245: 'zombie_sole',
+  250: 'watcher_stone',
+  251: 'watcher_cracks',
+  252: 'watcher_smoke',
   255: 'missing',
 });
 
@@ -1323,6 +1326,130 @@ function paintZombieSole(px, rng) {
   for (let k = 0; k < 6; k++) set(px, randInt(rng, 6, 10), randInt(rng, 6, 10), 0x4a413a, delta(rng, 4));
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// The Hollow Watcher (CONTRACTS §40). Not block faces: watcherRenderer maps them onto its hollow rings, its lantern and
+// its smoke wisp. Weathered ash-grey stone split by thin cracks; the cracks' glow is its own tile (the emissive mask,
+// which the renderer reads one tile to the right of every stone texel), so only the cracks shine. Original art;
+// alpha 255 everywhere.
+// ---------------------------------------------------------------------------------------------------------------
+
+const WATCHER_ASH = 0x8a8884;
+const WATCHER_GROOVE = 0x2a3d41;
+const WATCHER_CRACK_GLOW = 0x5ae6f0;
+const WATCHER_SELF_LIGHT = 0.4;
+
+/**
+ * One crack: a 1-px walk of `steps` from (x, y), each step one pixel along (ax, ay) — one of them 0 — plus a sideways
+ * drift on the other axis that keeps its last value (30 %), returns to 0 (25 %) or turns to −1 / +1 (45 %), so the
+ * crack runs jagged but 8-connected. A drift that would leave the tile turns back; the walk stops when its main
+ * direction runs off the tile.
+ */
+function watcherCrackWalk(rng, out, x, y, ax, ay, steps) {
+  let lat = 0;
+  for (let s = 0; s < steps; s++) {
+    if (x < 0 || x >= W || y < 0 || y >= H) return;
+    out.add(y * W + x);
+    const r = rng();
+    if (r >= 0.3) lat = r < 0.55 ? 0 : rng() < 0.5 ? -1 : 1;
+    const side = ax === 0 ? x : y; // the drifting coordinate
+    if (side + lat < 0 || side + lat >= (ax === 0 ? W : H)) lat = -lat;
+    x += ax + (ax === 0 ? lat : 0);
+    y += ay + (ay === 0 ? lat : 0);
+  }
+}
+
+/**
+ * The crack pixels shared by watcher_stone (dark grooves) and watcher_cracks (their glow), from their own fixed seed
+ * ('hollow_watcher_cracks') so the two tiles always agree — two short, thin cracks, so a face's window of the tile
+ * shows one, both or none: one running across from column 0–3 at row 8–13 (6–9 steps), one running down from column
+ * 6–11 at row 0–3 (6–9 steps) with a 2–3 step branch off toward +x from its fourth pixel.
+ * @returns {Set<number>} pixel indices y·16 + x
+ */
+function watcherCracks() {
+  const rng = makeRng('hollow_watcher_cracks');
+  /** @type {Set<number>} */
+  const out = new Set();
+  watcherCrackWalk(rng, out, randInt(rng, 0, 3), randInt(rng, 8, 13), 1, 0, randInt(rng, 6, 9));
+  const before = out.size;
+  watcherCrackWalk(rng, out, randInt(rng, 6, 11), randInt(rng, 0, 3), 0, 1, randInt(rng, 6, 9));
+  const fourth = [...out][Math.min(out.size - 1, before + 3)];
+  watcherCrackWalk(rng, out, (fourth % W) + 1, Math.floor(fourth / W), 1, 0, randInt(rng, 2, 3));
+  return out;
+}
+
+/** The 4-neighbours of `cracks` that are not cracks themselves (a crack's lip). @returns {Set<number>} */
+function watcherCrackLips(cracks) {
+  /** @type {Set<number>} */
+  const lips = new Set();
+  for (const i of cracks) {
+    const x = i % W;
+    const y = Math.floor(i / W);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H || cracks.has(ny * W + nx)) continue;
+      lips.add(ny * W + nx);
+    }
+  }
+  return lips;
+}
+
+/**
+ * 250 watcher_stone — the rings and the lantern: weathered ash-grey stone (WATCHER_ASH 0x8a8884) mottled in 4×4
+ * patches (±7) and 2×2 grains (±4), noise 5, ten pale weathered flecks (+12) and eighteen pores (−36, each with a
+ * lighter +8 rim pixel under it), then the shared cracks (watcherCracks) as dark teal-grey grooves (WATCHER_GROOVE
+ * 0x2a3d41, ±3) with shadowed lips (their 4-neighbours −14). Neutral grey, never black or purple. Alpha 255.
+ */
+function paintWatcherStone(px, rng) {
+  fill(px, WATCHER_ASH);
+  cellNoise(px, rng, 4, 7);
+  cellNoise(px, rng, 2, 4);
+  noise(px, rng, 5);
+  for (let k = 0; k < 10; k++) adjAt(px, randInt(rng, 0, 15), randInt(rng, 0, 15), 12);
+  for (let k = 0; k < 18; k++) {
+    const x = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 15);
+    adjAt(px, x, y, -36);
+    if (y < H - 1) adjAt(px, x, y + 1, 8);
+  }
+  const cracks = watcherCracks();
+  for (const i of watcherCrackLips(cracks)) adjAt(px, i % W, Math.floor(i / W), -14);
+  for (const i of cracks) set(px, i % W, Math.floor(i / W), WATCHER_GROOVE, delta(rng, 3));
+}
+
+/**
+ * 251 watcher_cracks — the stone's self-light (the renderer's emissiveMap, read one tile right of watcher_stone): the
+ * stone itself (watcher_stone painted with its own seed) dimmed to WATCHER_SELF_LIGHT (0.4), so by night it still
+ * reads as pale stone rather than a black shape, and the shared cracks a bright cyan WATCHER_CRACK_GLOW 0x5ae6f0
+ * (±16). Never on screen as a colour of its own. Alpha 255.
+ */
+function paintWatcherCracks(px, rng) {
+  paintWatcherStone(px, makeRng('watcher_stone'));
+  for (let i = 0; i < BYTES; i += 4) {
+    px[i] = Math.round(px[i] * WATCHER_SELF_LIGHT);
+    px[i + 1] = Math.round(px[i + 1] * WATCHER_SELF_LIGHT);
+    px[i + 2] = Math.round(px[i + 2] * WATCHER_SELF_LIGHT);
+  }
+  for (const i of watcherCracks()) set(px, i % W, Math.floor(i / W), WATCHER_CRACK_GLOW, delta(rng, 16));
+}
+
+/**
+ * 252 watcher_smoke — the wisp under the rings: dark neutral soot 0x2a2b2e (noise 3) with four lighter wisps 0x45474b
+ * rising from the bottom row, swaying a pixel left or right on 40 % of the rows and fading as they rise (−0.8 per row,
+ * ±4). Alpha 255 (the renderer fades the wisp with vertex alpha).
+ */
+function paintWatcherSmoke(px, rng) {
+  fill(px, 0x2a2b2e);
+  noise(px, rng, 3);
+  for (let k = 0; k < 4; k++) {
+    let x = randInt(rng, 0, 15);
+    for (let y = H - 1; y >= 0; y--) {
+      set(px, wrap16(x), y, 0x45474b, delta(rng, 4) - Math.round((H - 1 - y) * 0.8));
+      if (rng() < 0.4) x += rng() < 0.5 ? -1 : 1;
+    }
+  }
+}
+
 /** 255 missing — 8×8 quadrant checker, magenta top-left / bottom-right, black elsewhere. */
 function paintMissing(px) {
   for (let y = 0; y < H; y++) {
@@ -1403,6 +1530,9 @@ const RECIPES = Object.freeze({
   zombie_shirt: paintZombieShirt,
   zombie_trousers: paintZombieTrousers,
   zombie_sole: paintZombieSole,
+  watcher_stone: paintWatcherStone,
+  watcher_cracks: paintWatcherCracks,
+  watcher_smoke: paintWatcherSmoke,
   ...Object.fromEntries(Object.entries(WOOL_HEX).map(([name, hex]) => [name, (px, rng) => paintWool(px, rng, hex)])),
   missing: paintMissing,
 });

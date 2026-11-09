@@ -24,6 +24,7 @@ import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
 import { BLOCK, BLOCKS, BLOCK_COUNT, getBlockDef, isPlaceable, isSolid } from './blocks.js';
 import { findFreeY, findStandingY, playerIntersectsBlock } from './physics.js';
 import { formatTime } from './daynight.js';
+import { WATCHER_HEIGHT } from './watcher.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
 /** @typedef {import('./types.js').Rune} Rune */
@@ -69,9 +70,10 @@ export const COMMANDS = Object.freeze([
   { name: 'resume', usage: 'resume', summary: 'let rune triggers fire again after stopall', args: [], min: 0 },
   { name: 'runes', usage: 'runes', summary: 'list the rune blocks with scripts or settings', args: [], min: 0 },
   { name: 'rune', usage: 'rune q y r on|off', summary: 'enable or disable every trigger of one rune block', args: ['cell', 'cell', 'cell', 'choice:on|off'], min: 4 },
-  { name: 'summon', usage: 'summon pig|zombie [q y r]', summary: 'put a pig or a zombie two cells in front of you, or in a cell', args: ['choice:pig|zombie', 'cell', 'cell', 'cell'], min: 1 },
+  { name: 'summon', usage: 'summon pig|zombie|watcher [q y r]', summary: 'put a pig or a zombie two cells in front of you, or in a cell (watcher: far away in view)', args: ['choice:pig|zombie|watcher', 'cell', 'cell', 'cell'], min: 1 },
   { name: 'pigs', usage: 'pigs [clear]', summary: 'count the pigs, or remove them all', args: ['choice:clear'], min: 0 },
   { name: 'zombies', usage: 'zombies [clear|on|off]', summary: 'count the zombies, remove them all, or switch zombies on / off for this world (saved)', args: ['choice:clear|on|off'], min: 0 },
+  { name: 'watcher', usage: 'watcher [on|off]', summary: 'is the Hollow Watcher about? or switch it on / off for this world (saved)', args: ['choice:on|off'], min: 0 },
   { name: 'physics', usage: 'physics status|on|off | physics falling|water|collapse|explosions on|off', summary: 'block physics: show its counters, pause / resume all of it (not saved), or switch one feature (saved with the world)', args: ['word', 'choice:on|off'], min: 1 },
   { name: 'undo', usage: 'undo', summary: 'undo the last explosion, collapse or falling tree (within 60 s)', args: [], min: 0 },
   { name: 'ignite', usage: 'ignite q y r', summary: 'light the blast barrel in that cell', args: ['cell', 'cell', 'cell'], min: 3 },
@@ -245,6 +247,8 @@ export function resolveBlock(token) {
  * @property {import('./runes.js').RuneStore} runes
  * @property {import('./pigs.js').Pigs} [pigs]            absent in contexts without creatures (summon / pigs then fail)
  * @property {import('./zombies.js').Zombies} [zombies]   absent without zombies (summon zombie / zombies then fail)
+ * @property {import('./watcher.js').Watcher} [watcher]   absent without the Hollow Watcher (summon watcher / watcher then fail)
+ * @property {import('./watcher.js').WatcherWorld} [watcherWorld]  the view summon watcher places it in (main refreshes it)
  * @property {import('./blockphysics.js').BlockPhysics} [physics]  absent without block physics (physics / undo / ignite / drain then fail)
  * @property {import('./runes.js').RuneRunner} runner
  * @property {Rune|null} rune                               the executing rune (for `@`), null in the console
@@ -610,6 +614,56 @@ function zombiesCommand(spec, args, ctx) {
   return ok(on ? 'zombies on (saved with this world)' : `zombies off (saved with this world)${n ? `: removed ${count(n)}` : ''}`);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// The Hollow Watcher (§40): `summon watcher [q y r]` (any time of day: for testing) and `watcher [on|off]`.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** @returns {CommandResult} */
+function summonWatcher(spec, args, ctx) {
+  const w = ctx.watcher;
+  if (!w || !ctx.watcherWorld) return fail(spec, 'the Watcher is not available here');
+  if (!w.enabled) return fail(spec, 'the Watcher is off in this world (watcher on to allow it)');
+  if (w.present) return fail(spec, 'the Watcher is already here');
+  if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
+  const world = ctx.world;
+  let f;
+  if (args.length === 4) {
+    const rc = resolveCellTriple(args, 1, ctx);
+    if ('error' in rc) return fail(spec, rc.error);
+    const [q, y, r] = rc.cell;
+    if (!(y >= 0 && y <= WORLD_HEIGHT - 3)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 3}`);
+    if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
+    const [x, z] = hexToWorld(q, r);
+    const fy = findFreeY(world.getBlock, x, z, y, 2, 0.2, WATCHER_HEIGHT);
+    if (fy === null) return fail(spec, 'target is inside a block');
+    f = w.summonAt(ctx.watcherWorld, q, fy, r);
+  } else {
+    f = w.summon(ctx.watcherWorld);
+    if (!f) return fail(spec, 'no open ground for it out there in view (try another direction, or a render distance of 4 or more)');
+  }
+  if (!f) return fail(spec, 'the Watcher is already here');
+  const p = ctx.player;
+  const d = Math.round(Math.hypot(f.x - p.x, f.y - p.y, f.z - p.z));
+  // summon prefers a spot in sight; walled in (a cave) it stands hidden in the view and goes 30 s later, unseen.
+  return ok(`summoned the Watcher at ${f.q} ${f.y} ${f.r}, ${d} away${f.los ? '' : ' (out of sight)'}`);
+}
+
+/** @returns {CommandResult} */
+function watcherCommand(spec, args, ctx) {
+  const w = ctx.watcher;
+  if (!w) return fail(spec, 'the Watcher is not available here');
+  if (args.length === 0) {
+    const f = w.figure;
+    const p = ctx.player;
+    const where = f && p ? `it is here, ${Math.round(Math.hypot(f.x - p.x, f.y - p.y, f.z - p.z))} away` : 'it is not here';
+    return ok(`the Watcher is ${w.enabled ? 'on' : 'off'} in this world · ${where}`);
+  }
+  const on = args[0] === 'on';
+  const was = w.present;
+  if (!w.setEnabled(on)) return ok(`the Watcher is already ${on ? 'on' : 'off'}`);
+  return ok(on ? 'the Watcher on (saved with this world)' : `the Watcher off (saved with this world)${was ? ': it is gone' : ''}`);
+}
+
 /**
  * @param {CommandSpec} spec
  * @param {string[]} args
@@ -825,6 +879,7 @@ function run(spec, args, ctx) {
     }
     case 'summon': {
       if (args[0] === 'zombie') return summonZombie(spec, args, ctx);
+      if (args[0] === 'watcher') return summonWatcher(spec, args, ctx);
       if (!ctx.pigs) return fail(spec, 'pigs are not available here');
       if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
       let x;
@@ -863,6 +918,8 @@ function run(spec, args, ctx) {
     }
     case 'zombies':
       return zombiesCommand(spec, args, ctx);
+    case 'watcher':
+      return watcherCommand(spec, args, ctx);
     case 'physics': {
       const ph = ctx.physics;
       if (!ph) return fail(spec, 'block physics is not available here');

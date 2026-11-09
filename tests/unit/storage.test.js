@@ -816,3 +816,50 @@ describe('zombies field (§39: the per-world zombies switch; zombies themselves 
     expect(s.warnings).toContain('zombies: not a boolean, treated as on');
   });
 });
+
+describe('watcher field (§40: the per-world Hollow Watcher switch; the Watcher itself is never saved)', () => {
+  it('is absent unless given (absent reads as on), round-trips on and off, and a non-boolean is dropped with a warning', () => {
+    expect(JSON.parse(serializeSave(makeSave())).watcher).toBeUndefined();
+    expect(deserializeSave(serializeSave(makeSave())).watcher).toBeUndefined();
+    const off = serializeSave(makeSave({}, { watcher: false }));
+    expect(off).toContain('"watcher":false');
+    expect(deserializeSave(off).watcher).toBe(false);
+    expect(deserializeSave(serializeSave(makeSave({}, { watcher: true }))).watcher).toBe(true);
+    const raw = JSON.parse(serializeSave(makeSave()));
+    raw.watcher = 3;
+    const s = deserializeSave(JSON.stringify(raw));
+    expect(s).not.toBeNull();
+    expect(s.watcher).toBeUndefined();
+    expect(s.warnings).toContain('watcher: not a boolean, treated as on');
+  });
+});
+
+describe('watcherNight field (§40.1: the night of the last natural Watcher sighting, so a reload cannot bring a second)', () => {
+  it('is absent unless given — old saves load without it — and round-trips a night number, written after `watcher`', () => {
+    expect(JSON.parse(serializeSave(makeSave())).watcherNight).toBeUndefined();
+    expect(deserializeSave(serializeSave(makeSave())).watcherNight).toBeUndefined();
+    expect(serializeSave(makeSave({}, { watcherNight: null }))).toBe(serializeSave(makeSave())); // byte-identical without it
+    for (const n of [0, 1, 7, 123456]) {
+      const text = serializeSave(makeSave({}, { watcherNight: n }));
+      expect(deserializeSave(text).watcherNight).toBe(n);
+      expect(deserializeSave(text).warnings).toEqual([]);
+    }
+    const keys = Object.keys(JSON.parse(serializeSave(makeSave({}, { watcher: false, watcherNight: 4, meta: { name: 'W' } }))));
+    expect(keys.slice(-3)).toEqual(['watcher', 'watcherNight', 'meta']);
+  });
+
+  it('is never trusted blindly: anything but a whole night number ≥ 0 is dropped with a warning (never a null save)', () => {
+    for (const bad of [-1, 2.5, '3', true, null, {}, [3], 1e300, Number.MAX_SAFE_INTEGER + 2]) {
+      const raw = JSON.parse(serializeSave(makeSave()));
+      raw.watcherNight = bad;
+      const s = deserializeSave(JSON.stringify(raw));
+      expect(s, JSON.stringify(bad)).not.toBeNull();
+      expect(s.watcherNight).toBeUndefined();
+      expect(s.warnings).toContain('watcherNight: not a night number, ignored');
+    }
+    // serializeSave leaves an unusable value out rather than writing something the loader would drop.
+    for (const bad of [-1, 2.5, NaN, Infinity, '3']) {
+      expect(JSON.parse(serializeSave(makeSave({}, { watcherNight: bad }))).watcherNight).toBeUndefined();
+    }
+  });
+});
