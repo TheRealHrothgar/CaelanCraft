@@ -1273,3 +1273,205 @@ describe('executeCommand — Creative-only commands in Survival', () => {
     expect(exec(ctx, 'give stone').ok).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Circuits and black holes (docs/DESIGN-circuits.md §6.5), against fake ctx.circuits / ctx.blackHoles.
+
+/** A fake ctx.circuits: every method a spy with a scripted answer. */
+function fakeCircuits(over = {}) {
+  const c = {
+    enabled: true,
+    setEnabled: vi.fn((on) => {
+      const changed = c.enabled !== on;
+      c.enabled = on;
+      return changed;
+    }),
+    ignite: vi.fn(() => ({ ok: true, message: 'lit' })),
+    switchAt: vi.fn(() => ({ ok: true, message: 'knife switch at (0, 11, 1): closed' })),
+    timerAt: vi.fn(() => ({ ok: true, message: 'timer at (0, 11, 1): 5 s pulse, idle' })),
+    radio: vi.fn(() => ({ ok: true, message: 'sent on 400 m: 2 receivers in range' })),
+    probe: vi.fn(() => null),
+    stats: vi.fn(() => ({ parts: 214, networks: 12, burning: 3, timers: 2 })),
+    ...over,
+  };
+  return c;
+}
+
+/** A fake ctx.blackHoles. */
+function fakeBlackHoles() {
+  const bh = {
+    enabled: true,
+    setEnabled: vi.fn((on) => {
+      bh.enabled = on;
+    }),
+    status: vi.fn(() => 'black holes on · 3 active (1 forming), 0 inert'),
+    list: vi.fn(() => ['hole at 4 70 -2 · vortex · 12 away']),
+  };
+  return bh;
+}
+
+describe('executeCommand — circuits and black holes (DESIGN-circuits §6.5)', () => {
+  it('the table gains switch, timer, radio, volts, circuits and blackholes; none is console- or script-only', () => {
+    const names = COMMANDS.map((c) => c.name);
+    for (const n of ['switch', 'timer', 'radio', 'volts', 'circuits', 'blackholes', 'ignite']) {
+      expect(names).toContain(n);
+      const spec = COMMANDS.find((c) => c.name === n);
+      expect(spec.consoleOnly).toBeUndefined();
+      expect(spec.scriptOnly).toBeUndefined();
+      expect(spec.usage.startsWith(n)).toBe(true);
+    }
+    expect(COMMANDS.find((c) => c.name === 'ignite').summary).toBe('light the powder keg, powder fuse or collapsar charge in that cell');
+    expect(exec(makeCtx().ctx, 'help').message).toContain('radio <channel>');
+  });
+
+  it('ignite lights a keg, fuse or charge through ctx.circuits, else falls back to explosions, else fails', () => {
+    const circuits = fakeCircuits();
+    const { ctx } = makeCtx({ circuits });
+    expect(exec(ctx, 'ignite ~ ~ ~1')).toEqual({ ok: true, message: 'lit' });
+    expect(circuits.ignite).toHaveBeenCalledWith(0, FEET, 1);
+    circuits.ignite.mockReturnValue({ ok: false, message: 'there is nothing to light at (0, 11, 0) — a powder keg, powder fuse or collapsar charge' });
+    expect(exec(ctx, 'ignite 0 11 0')).toEqual({
+      ok: false, message: 'ignite: there is nothing to light at (0, 11, 0) — a powder keg, powder fuse or collapsar charge — usage: ignite q y r',
+    });
+    expect(exec(ctx, 'ignite 9000 11 9000').message).toContain('is not loaded');
+    expect(exec(ctx, 'ignite 0 500 0').message).toContain(`y must be 0..${WORLD_HEIGHT - 1}`);
+    // The fallback: a real keg lit through the physics' explosions (3 s, in place).
+    const made = makeCtx();
+    const physics = new BlockPhysics(made.world);
+    made.world.onBlockChange = (q, y, r, p, n) => physics.onBlockChange(q, y, r, p, n);
+    made.ctx.physics = physics;
+    made.world.setBlock(2, FEET, 2, B.POWDER_KEG);
+    expect(exec(made.ctx, `ignite 2 ${FEET} 2`)).toEqual({ ok: true, message: `lit the powder keg at (2, ${FEET}, 2) — 3 s fuse` });
+    expect(physics.explosions.isBurning(2, FEET, 2)).toBe(true);
+    expect(exec(made.ctx, `ignite 2 ${FEET} 2`).message).toContain(`the keg at (2, ${FEET}, 2) is already burning`);
+    expect(exec(made.ctx, `ignite 3 ${FEET} 3`).message).toContain(`there is no powder keg at (3, ${FEET}, 3)`);
+    expect(exec(makeCtx().ctx, 'ignite 0 11 0').message).toContain('block physics is not available here');
+  });
+
+  it('switch: toggle by default, on / off / press passed through; refusals; unloaded; no circuits', () => {
+    const circuits = fakeCircuits();
+    const { ctx } = makeCtx({ circuits });
+    expect(exec(ctx, 'switch 0 11 1')).toEqual({ ok: true, message: 'knife switch at (0, 11, 1): closed' });
+    expect(circuits.switchAt).toHaveBeenLastCalledWith(0, 11, 1, 'toggle');
+    for (const m of ['on', 'off', 'press', 'toggle', 'ON']) {
+      exec(ctx, `switch ~ ~ ~ ${m}`);
+      expect(circuits.switchAt).toHaveBeenLastCalledWith(0, FEET, 0, m.toLowerCase());
+    }
+    expect(parseLine('switch 0 11 1 flip').message).toContain('expected one of on, off, toggle, press');
+    circuits.switchAt.mockReturnValue({ ok: false, message: 'there is no switch or button at (0, 11, 1)' });
+    expect(exec(ctx, 'switch 0 11 1')).toEqual({ ok: false, message: 'switch: there is no switch or button at (0, 11, 1) — usage: switch q y r [on|off|toggle|press]' });
+    expect(exec(ctx, 'switch 9000 11 9000').message).toContain('is not loaded');
+    expect(exec(makeCtx().ctx, 'switch 0 11 1')).toEqual({ ok: false, message: 'switch: circuits are not available here — usage: switch q y r [on|off|toggle|press]' });
+  });
+
+  it('timer: status with 3 args, start / stop, a delay in seconds, a mode (alone or after the delay); bad words fail', () => {
+    const circuits = fakeCircuits();
+    const { ctx } = makeCtx({ circuits });
+    expect(exec(ctx, 'timer 0 11 1')).toEqual({ ok: true, message: 'timer at (0, 11, 1): 5 s pulse, idle' });
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, undefined, undefined);
+    exec(ctx, 'timer 0 11 1 start');
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, 'start', undefined);
+    exec(ctx, 'timer 0 11 1 STOP');
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, 'stop', undefined);
+    exec(ctx, 'timer 0 11 1 30');
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, 30, undefined);
+    exec(ctx, 'timer 0 11 1 0.5 repeat');
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, 0.5, 'repeat');
+    exec(ctx, 'timer 0 11 1 hold');
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, undefined, 'hold');
+    expect(exec(ctx, 'timer 0 11 1 soon')).toEqual({ ok: false, message: 'timer: expected start, stop or a delay in seconds, got "soon" — usage: timer q y r [start|stop|<seconds>] [pulse|hold|repeat]' });
+    expect(exec(ctx, 'timer 0 11 1 -5').ok).toBe(false);
+    expect(parseLine('timer 0 11 1 5 latch').message).toContain('expected one of pulse, hold, repeat');
+    expect(parseLine('timer 0 11').message).toContain('timer: expected q y r');
+  });
+
+  it('radio 3 and radio 400m send from the player (from the rune\'s cell in a script); bad channels fail', () => {
+    const circuits = fakeCircuits();
+    const { ctx, player } = makeCtx({ circuits });
+    expect(exec(ctx, 'radio 3')).toEqual({ ok: true, message: 'sent on 400 m: 2 receivers in range' });
+    expect(circuits.radio).toHaveBeenLastCalledWith(3, player.x, player.y + 1, player.z);
+    exec(ctx, 'radio 400m');
+    expect(circuits.radio).toHaveBeenLastCalledWith(3, player.x, player.y + 1, player.z);
+    exec(ctx, 'radio 1050M');
+    expect(circuits.radio).toHaveBeenLastCalledWith(16, player.x, player.y + 1, player.z);
+    ctx.rune = runeAt(5, 20, -3);
+    exec(ctx, 'radio 7');
+    const [x, z] = hexToWorld(5, -3);
+    expect(circuits.radio).toHaveBeenLastCalledWith(7, x, 20.5, z);
+    for (const bad of ['0', '17', '325m', 'loud', '1100m']) {
+      expect(exec(ctx, `radio ${bad}`)).toEqual({ ok: false, message: `radio: expected a channel 1–16 or a wavelength 300m–1050m, got "${bad}" — usage: radio <channel>` });
+    }
+    circuits.radio.mockReturnValue({ ok: false, message: 'circuits are off — turn them on with `circuits on`' });
+    expect(exec(ctx, 'radio 1').message).toContain('circuits are off');
+    expect(exec(makeCtx().ctx, 'radio 1').message).toContain('circuits are not available here');
+  });
+
+  it('volts: the multimeter line, with earth, the network and a diagnostic; a non-part says so', () => {
+    const circuits = fakeCircuits();
+    const { ctx } = makeCtx({ circuits });
+    expect(exec(ctx, 'volts 0 11 1')).toEqual({ ok: false, message: 'volts: (0, 11, 1) is not part of a circuit — usage: volts q y r' });
+    circuits.probe.mockReturnValue({
+      volts: 5.4375, amps: 2, earthed: true, earthReason: '', state: 'lit', diag: null,
+      net: { cells: 31, sources: 1, loads: 2, partial: false, truncated: false },
+    });
+    expect(exec(ctx, 'volts 0 11 1')).toEqual({ ok: true, message: '5.4375 V · earthed · network: 31 cells, 1 source, 2 loads, 2 A' });
+    circuits.probe.mockReturnValue({
+      volts: 0, amps: 1, earthed: false, earthReason: 'not earthed: wood does not conduct — run an Earth Wire down to the ground',
+      state: 'dark', diag: 'no-wire', net: null,
+    });
+    expect(exec(ctx, 'volts 0 11 1').message).toBe('0 V · not earthed: wood does not conduct — run an Earth Wire down to the ground · no wire: join it to the battery with a wire');
+    circuits.probe.mockReturnValue({
+      volts: 6, amps: 0, earthed: null, earthReason: '', state: 'open', diag: 'bypassed',
+      net: { cells: 1, sources: 1, loads: 1, partial: true, truncated: true },
+    });
+    expect(exec(ctx, 'volts 0 11 1').message).toBe('6 V · network: 1 cell, 1 source, 1 load, 0 A (reaches an unloaded chunk: frozen) (truncated) · bypassed: the wires on either side touch');
+    expect(exec(ctx, 'volts 9000 11 9000').message).toContain('is not loaded');
+  });
+
+  it('circuits: status, on and off (saved), already', () => {
+    const circuits = fakeCircuits();
+    const { ctx } = makeCtx({ circuits });
+    expect(exec(ctx, 'circuits')).toEqual({ ok: true, message: 'circuits on · 214 parts, 12 networks, 3 fuses burning, 2 timers running' });
+    expect(exec(ctx, 'circuits status').message).toBe('circuits on · 214 parts, 12 networks, 3 fuses burning, 2 timers running');
+    expect(exec(ctx, 'circuits on')).toEqual({ ok: true, message: 'circuits are already on' });
+    expect(exec(ctx, 'circuits off')).toEqual({ ok: true, message: 'circuits off (saved with this world)' });
+    expect(circuits.enabled).toBe(false);
+    circuits.stats.mockReturnValue({ parts: 1, networks: 1, burning: 1, timers: 1 });
+    expect(exec(ctx, 'circuits').message).toBe('circuits off · 1 part, 1 network, 1 fuse burning, 1 timer running');
+    expect(exec(ctx, 'circuits on').message).toBe('circuits on (saved with this world)');
+    expect(exec(makeCtx().ctx, 'circuits').message).toContain('circuits are not available here');
+  });
+
+  it('blackholes: status, list (the nearest to the player), on and off (saved), already', () => {
+    const blackHoles = fakeBlackHoles();
+    const { ctx, player } = makeCtx({ blackHoles });
+    expect(exec(ctx, 'blackholes')).toEqual({ ok: true, message: 'black holes on · 3 active (1 forming), 0 inert' });
+    expect(exec(ctx, 'blackholes list')).toEqual({ ok: true, message: 'hole at 4 70 -2 · vortex · 12 away' });
+    expect(blackHoles.list).toHaveBeenCalledWith(player.x, player.y, player.z);
+    blackHoles.list.mockReturnValue([]);
+    expect(exec(ctx, 'blackholes list').message).toBe('no black holes');
+    expect(exec(ctx, 'blackholes on').message).toBe('black holes are already on');
+    expect(exec(ctx, 'blackholes off')).toEqual({ ok: true, message: 'black holes off (saved with this world)' });
+    expect(blackHoles.setEnabled).toHaveBeenCalledWith(false);
+    expect(exec(ctx, 'blackholes off').message).toBe('black holes are already off');
+    expect(exec(ctx, 'blackholes on').message).toBe('black holes on (saved with this world)');
+    expect(exec(makeCtx().ctx, 'blackholes').message).toContain('black holes are not available here');
+  });
+
+  it('give black_hole explains; the blast_barrel alias (and its display form) still names the powder keg', () => {
+    const { ctx, world } = makeCtx();
+    expect(exec(ctx, 'give black_hole')).toEqual({ ok: false, message: 'give: a black hole cannot be held — give collapsar_charge and set it off — usage: give <block> [slot 1-9]' });
+    expect(exec(ctx, 'give collapsar_charge').message).toBe('gave collapsar_charge to slot 1');
+    expect(resolveBlock('blast_barrel')).toEqual({ id: B.POWDER_KEG });
+    expect(resolveBlock('BLAST_BARREL')).toEqual({ id: B.POWDER_KEG });
+    expect(resolveBlock('blast barrel')).toEqual({ id: B.POWDER_KEG });
+    expect(resolveBlock('powder_keg')).toEqual({ id: B.POWDER_KEG });
+    expect(resolveBlock('Powder_Keg')).toEqual({ id: B.POWDER_KEG });
+    expect(resolveBlock('torch')).toEqual({ id: B.TORCH });
+    expect(resolveBlock('black_hole')).toEqual({ id: B.BLACK_HOLE }); // setblock still makes an instant vortex
+    expect(exec(ctx, `setblock 3 ${FEET} 3 blast_barrel`)).toEqual({ ok: true, message: `set powder_keg at (3, ${FEET}, 3)` });
+    expect(world.getBlock(3, FEET, 3)).toBe(B.POWDER_KEG);
+    expect(exec(ctx, 'blocks').message).not.toContain('black_hole');
+    expect(exec(ctx, 'blocks').message).toContain('collapsar_charge');
+  });
+});

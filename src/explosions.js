@@ -1,14 +1,21 @@
-// Caelancraft — explosives: lighting blast barrels, lit barrel entities, fuse timers, merged chain blasts, debris,
-// knockback, flash and shake. See src/CONTRACTS.md §37 and docs/DESIGN-physics.md §7 / §10. PURE: talks to the world
-// only through its BlockPhysics (ctx.peek / ctx.write / ctx.writeQuiet / hooks); no DOM, no three, no Math.random.
+// Caelancraft — explosives: lighting powder kegs (the v0.8 "blast barrels"; the code keeps its BLAST_BARREL / barrel names,
+// DESIGN-circuits §1.1), fuse timers burning in place, lit keg entities, merged chain blasts, debris, knockback, flash and
+// shake. See src/CONTRACTS.md §37, docs/DESIGN-physics.md §7 / §10 and docs/DESIGN-circuits.md §3 (CONTRACTS §55 once
+// merged). PURE: talks to the world only through its BlockPhysics (ctx.peek / ctx.write / ctx.writeQuiet / hooks); no DOM,
+// no three, no Math.random.
 //
-// A barrel is LIT in one of two ways:
-// - an ENTITY (R on it, a campfire next to it, `ignite q y r`): the block is replaced by a persistent tumbler
-//   (physics.fallers.spawnTumbler, drawn and moved by fallingblocks) that pulses, hisses, sparks, can be pushed around
-//   by the player and pigs (resolveBodies; never barrel against barrel), put out with a left-click or by water, and
-//   goes off when its fuse (BARREL_FUSE_S) ends. At most MAX_LIT_BARRELS entities;
-// - a FUSE TIMER in place (`timers`, keyed by packCell): the block stays in the world and burns for a short while —
-//   every barrel caught in a blast (BARREL_TIMER_FUSE_MIN_S … MAX_S), and barrels lit beyond MAX_LIT_BARRELS.
+// A keg is LIT in one of two ways:
+// - BURNING IN PLACE (`timers`, keyed by packCell; igniteInPlace): the block stays in the world, sparks rise from its bung,
+//   and it goes off when its fuse ends. Every game path lights a keg this way (DESIGN-circuits §3.2): a powder fuse, a torch
+//   or an igniter beside it (KEG_DIRECT_FUSE_S, through the circuits' hooks), a campfire beside it or `ignite`
+//   (BARREL_FUSE_S), a blast (BARREL_TIMER_FUSE_MIN_S … MAX_S). A left-click pinches its fuse out (snuff(q, y, r));
+// - an ENTITY (programmatic lighting only: lightAt, which no game path calls any more): the block is replaced by a persistent
+//   tumbler (physics.fallers.spawnTumbler, drawn and moved by fallingblocks) that pulses, hisses, sparks, can be pushed
+//   around by the player and pigs (resolveBodies; never keg against keg), put out with a left-click or by water, and goes off
+//   when its fuse (BARREL_FUSE_S) ends. At most MAX_LIT_BARRELS entities; beyond that lightAt burns in place too.
+//
+// A blast never destroys a Collapsar Charge (blast-proof): it calls `onCharge(q, y, r)` for each charge it reaches (main sets
+// it to blackHoles.activate), which sets the charge off.
 //
 // MERGED CHAINS. Each frame the earliest expired fuse goes off TOGETHER with every fuse that expires within
 // BLAST_CHAIN_WINDOW_S of it and lies within BLAST_CHAIN_DISTANCE of it: ONE blast at their mean position, radius
@@ -30,7 +37,7 @@ import {
   BLAST_MAX_RADIUS, BLAST_CHAIN_WINDOW_S, BLAST_CHAIN_DISTANCE, BLAST_IMPULSE, BLAST_MIN_UP, BLAST_SHAKE_RANGE,
   BLAST_FLASH_S, BARREL_TIMER_FUSE_MIN_S, BARREL_TIMER_FUSE_MAX_S, MAX_FUSE_TIMERS, BARREL_HISS_S, BARREL_PULSE_SCALE,
   BARREL_PULSE_HZ, BLAST_JITTER, DEBRIS_SPEED_MIN, DEBRIS_SPEED_MAX, DEBRIS_UP_MIN, DEBRIS_UP_MAX, DEBRIS_SPIN,
-  BLAST_DUST_CELLS, BLAST_FLASH_INTENSITY, BLAST_SHAKE_S, BLAST_SHAKE_AMPLITUDE,
+  BLAST_DUST_CELLS, BLAST_FLASH_INTENSITY, BLAST_SHAKE_S, BLAST_SHAKE_AMPLITUDE, KEG_DIRECT_FUSE_S,
 } from './config.js';
 import { BLOCK, UNLOADED, isFallThrough, isLiquid, isSolid, isWater } from './blocks.js';
 import { HEX_DIRS, HEX_ROW_SPACING, HEX_SIZE, hexToWorld, worldToHex } from './hex.js';
@@ -76,7 +83,8 @@ import { isAnchorCell, isLoadBearing } from './support.js';
  * What undo did with the barrels of an event (cancelEvent).
  * @typedef {Object} BarrelUndo
  * @property {number} putOut  lit barrels of the event that stopped burning (still in flight: counted by undo's message)
- * @property {number} burnt   barrels not given back because a CAMPFIRE is next to their cell (it would light them again)
+ * @property {number} burnt   kegs not given back because a CAMPFIRE is next to their cell, or the physics hook ignitesAt
+ *                            says it would catch (a torch or a powered igniter beside it): they would light again
  * @property {number} lost    barrels not given back for want of a loaded cell with room in their column
  */
 
@@ -95,16 +103,20 @@ import { isAnchorCell, isLoadBearing } from './support.js';
  * @property {number} rim        load-bearing rim cells seeded for the support search
  * @property {boolean} capped    a write was refused by the edit cap: breaking stopped there
  * @property {number} event      physics event id it recorded into
+ * @property {number} charges    Collapsar Charges it reached (each handed to onCharge, never destroyed)
  */
 
 /** Cause of the support check a hung barrel gets when it stops burning without going off. */
 const CAUSE_HUNG = Object.freeze({ kind: 'physics' });
 
-/** Cells a blast never breaks (besides UNLOADED): AIR, liquids, BEDROCK, OBSIDIAN, RUNE_BLOCK, BLACK_HOLE. */
+/**
+ * Cells a blast never breaks (besides UNLOADED): AIR, liquids, BEDROCK, OBSIDIAN, RUNE_BLOCK, BLACK_HOLE and the
+ * COLLAPSAR_CHARGE (a blast sets a charge off through onCharge instead, DESIGN-circuits §3.4.6).
+ */
 export const BLAST_PROOF_IDS = Object.freeze([
   BLOCK.AIR, BLOCK.WATER, BLOCK.WATER_FLOW_1, BLOCK.WATER_FLOW_2, BLOCK.WATER_FLOW_3, BLOCK.WATER_FLOW_4,
   BLOCK.WATER_FLOW_5, BLOCK.WATER_FLOW_6, BLOCK.WATER_FALL, BLOCK.BEDROCK, BLOCK.OBSIDIAN, BLOCK.RUNE_BLOCK,
-  BLOCK.BLACK_HOLE,
+  BLOCK.BLACK_HOLE, BLOCK.COLLAPSAR_CHARGE,
 ]);
 const BLAST_PROOF = new Uint8Array(256);
 for (const id of BLAST_PROOF_IDS) BLAST_PROOF[id] = 1;
@@ -157,6 +169,12 @@ export class Explosions {
     this.blastCount = 0;
     /** @type {BlastInfo|null} */
     this.lastBlast = null;
+    /**
+     * A blast reached a Collapsar Charge (DESIGN-circuits §3.4.6): main sets this to
+     * `(q, y, r) => blackHoles.activate(q, y, r, blackHoleWorld)`. Null: charges in a blast are simply left alone.
+     * @type {((q: number, y: number, r: number) => *)|null}
+     */
+    this.onCharge = null;
 
     /** seconds of (unpaused) explosions.step time: drives the flash, the shake and the pulse */
     this._clock = 0;
@@ -177,7 +195,7 @@ export class Explosions {
     this._p0 = [0, 0, 0];
     this._kick = [0, 0, 0];
 
-    // (b) a campfire next to a barrel: the scheduler's 'ignite' trigger / reseeder queue the barrel in `misc`.
+    // (b) a campfire next to a keg: the scheduler's 'ignite' trigger / reseeder queue the keg in `misc`; it burns in place.
     physics.registerRule('ignite', {
       ring: 'misc',
       feature: 'explosions',
@@ -241,9 +259,10 @@ export class Explosions {
   // lighting
 
   /**
-   * Light the BLAST_BARREL block at cell (q, y, r) (R key): it becomes a lit barrel entity (fuse BARREL_FUSE_S), or a
-   * fuse timer in place when MAX_LIT_BARRELS entities (or MAX_TUMBLING tumblers) already exist.
-   * @returns {boolean} lit (false: explosions off, no barrel there, or it is already burning)
+   * PROGRAMMATIC LIGHTING (no game path calls it any more, DESIGN-circuits §3.2; kept for its tests): the keg block at cell
+   * (q, y, r) becomes a lit keg entity (fuse BARREL_FUSE_S), or burns in place when MAX_LIT_BARRELS entities (or
+   * MAX_TUMBLING tumblers) already exist.
+   * @returns {boolean} lit (false: explosions off, no keg there, or it is already burning)
    */
   lightAt(q, y, r) {
     if (!this.physics.isEnabled('explosions')) return false;
@@ -251,23 +270,45 @@ export class Explosions {
   }
 
   /**
-   * Console / rune `ignite q y r` (the command already checked the height range and that the chunk is loaded).
-   * @returns {{ ok: boolean, message: string }}
+   * Light the keg at (q, y, r) so that it BURNS IN PLACE (DESIGN-circuits §3.2, §3.4.2): the block stays, sparks rise from
+   * its bung, and it goes off when `fuse` seconds have passed (KEG_DIRECT_FUSE_S by default: a powder fuse, a torch or an
+   * igniter; the campfire rule and `ignite` pass BARREL_FUSE_S). A keg already burning — in place, or a lit entity resting
+   * there — is left alone and answers `quiet` (an igniter refires every 0.5 s: it must neither shorten the fuse nor chat).
+   * @param {number} [fuse]  seconds
+   * @returns {{ ok: boolean, message: string, quiet?: boolean }}
    */
-  ignite(q, y, r) {
+  igniteInPlace(q, y, r, fuse = KEG_DIRECT_FUSE_S) {
     if (!this.physics.isEnabled('explosions')) return { ok: false, message: 'explosions are off — turn them on with `physics explosions on`' };
+    if (!(y >= 0 && y < WORLD_HEIGHT)) return { ok: false, message: `there is no powder keg at (${q}, ${y}, ${r})` };
     const id = this.physics.ctx.peek(q, y, r);
     if (id === UNLOADED) return { ok: false, message: `cell (${q}, ${y}, ${r}) is not loaded` };
-    // A lit barrel entity leaves AIR in the world: say it burns rather than "no barrel" (play-test L1).
-    if (this.occupiesCell(q, y, r)) return { ok: false, message: `the barrel at (${q}, ${y}, ${r}) is already burning` };
-    if (id !== BLOCK.BLAST_BARREL) return { ok: false, message: `there is no blast barrel at (${q}, ${y}, ${r})` };
-    if (this.timers.has(packCell(q, y, r))) return { ok: false, message: `the barrel at (${q}, ${y}, ${r}) is already burning` };
-    if (!this._light(q, y, r)) return { ok: false, message: `the barrel at (${q}, ${y}, ${r}) could not be lit` };
-    return { ok: true, message: `lit the blast barrel at (${q}, ${y}, ${r}) — ${BARREL_FUSE_S} s fuse` };
+    // A lit keg entity leaves AIR in the world: say it burns rather than "no keg" (play-test L1).
+    if (this.occupiesCell(q, y, r)) return { ok: false, quiet: true, message: `the keg at (${q}, ${y}, ${r}) is already burning` };
+    if (id !== BLOCK.POWDER_KEG) return { ok: false, message: `there is no powder keg at (${q}, ${y}, ${r})` };
+    if (this.timers.has(packCell(q, y, r))) return { ok: false, quiet: true, message: `the keg at (${q}, ${y}, ${r}) is already burning` };
+    const s = Number.isFinite(fuse) && fuse > 0 ? fuse : KEG_DIRECT_FUSE_S;
+    if (!this._addTimer(q, y, r, s, 0)) return { ok: false, message: `the keg at (${q}, ${y}, ${r}) could not be lit` };
+    const ctx = this.physics.ctx;
+    const [x, z] = hexToWorld(q, r);
+    ctx.sound('hiss', x, y + 1, z, 0.8);
+    ctx.particles('sparks', x, y + 1.05, z, 6, { spread: 0.1, speed: 0.35 });
+    return { ok: true, message: `lit the powder keg at (${q}, ${y}, ${r}) — ${s} s fuse` };
   }
 
   /**
-   * `misc` rule: a barrel with a campfire among its 8 neighbours catches fire (waits for an unloaded neighbour).
+   * Console / rune `ignite q y r` (the command already checked the height range and that the chunk is loaded): the keg burns
+   * in place with a BARREL_FUSE_S fuse.
+   * @returns {{ ok: boolean, message: string, quiet?: boolean }}
+   */
+  ignite(q, y, r) {
+    const res = this.igniteInPlace(q, y, r, BARREL_FUSE_S);
+    if (res.quiet) return { ok: false, message: res.message };
+    return res;
+  }
+
+  /**
+   * `misc` rule: a keg with a campfire among its 8 neighbours catches fire and burns in place for BARREL_FUSE_S (waits for
+   * an unloaded neighbour).
    * @param {RuleContext} ctx
    */
   _igniteRule(ctx, q, y, r) {
@@ -275,7 +316,7 @@ export class Explosions {
     for (const [dq, dy, dr] of NEIGHBOURS) {
       const id = ctx.peek(q + dq, y + dy, r + dr);
       if (id === BLOCK.CAMPFIRE) {
-        this._light(q, y, r);
+        this.igniteInPlace(q, y, r, BARREL_FUSE_S);
         return;
       }
       if (id === UNLOADED) unloaded = true;
@@ -354,15 +395,35 @@ export class Explosions {
   }
 
   /**
-   * Put out a lit barrel (left-click): back to a BLAST_BARREL block where it rests (dropping to the ground when it is
-   * in the air), with a fizzle.
-   * @param {*} target  LitBarrelHit.target
+   * Put a keg out (left-click). `snuff(q, y, r)` (DESIGN-circuits §3.4.5) pinches out the fuse of the keg burning in place
+   * at that cell and keeps the keg (a hung one gets its support check, §38.2), with a short hiss at volume 0.3; false when
+   * no keg burns in place there. `snuff(target)` (a LitBarrelHit.target, §37.2.4) puts out a lit keg entity: back to a keg
+   * block where it rests (dropping to the ground when it is in the air), with a fizzle.
+   * CONTRACT-ISSUE: §3.4.5 gives snuff the signature (q, y, r), but main (not this package's file) still calls
+   * snuff(litTarget.target) for the entity; both forms are kept, told apart by the first argument being a number. The cell
+   * form's y and r arrive as rest arguments, so snuff.length stays 1 (physicsInterfaces' documented arity, §37).
+   * @param {*} target  a cell's q, or LitBarrelHit.target
+   * @param {...number} cell  y, r (the cell form)
    * @returns {boolean}
    */
-  snuff(target) {
+  snuff(target, ...cell) {
+    if (typeof target === 'number') return this._snuffInPlace(target, cell[0], cell[1]);
     const i = this.lit.indexOf(target);
     if (i < 0) return false;
     this._putOut(i, false);
+    return true;
+  }
+
+  /** Pinch out the fuse of the keg burning in place at (q, y, r). @returns {boolean} */
+  _snuffInPlace(q, y, r) {
+    if (!Number.isInteger(q) || !Number.isInteger(y) || !Number.isInteger(r) || !(y >= 0 && y < WORLD_HEIGHT)) return false;
+    const key = packCell(q, y, r);
+    const rec = this.timers.get(key);
+    if (rec === undefined) return false;
+    this.timers.delete(key);
+    this._unhang(rec);
+    const [x, z] = hexToWorld(q, r);
+    this.physics.ctx.sound('hiss', x, y + 1, z, 0.3);
     return true;
   }
 
@@ -743,6 +804,8 @@ export class Explosions {
     const yhi = Math.min(WORLD_HEIGHT - 1, Math.ceil(cy + reach - 0.5));
     /** @type {number[]} flat [distance, q, y, r, id] per cell */
     const cand = [];
+    /** @type {number[]} flat [q, y, r] of the Collapsar Charges in reach (set off through onCharge, never written) */
+    const charges = [];
     for (let dq = -hr; dq <= hr; dq++) {
       const drLo = Math.max(-hr, -dq - hr);
       const drHi = Math.min(hr, -dq + hr);
@@ -758,10 +821,16 @@ export class Explosions {
           const d2 = h2 + vy * vy;
           if (d2 > reach2) continue;
           const id = world.peekBlock(q, y, r);
-          if (isBlastProof(id)) continue;
+          // A charge is blast-proof, so the check must come before the blast-proof skip or blasts would never set one off
+          // (DESIGN-circuits §3.4.6).
+          const charge = id === BLOCK.COLLAPSAR_CHARGE;
+          if (!charge && isBlastProof(id)) continue;
           const d = Math.sqrt(d2);
           const jitter = (hash3(q, y, r, salt) / 4294967296 * 2 - 1) * BLAST_JITTER;
-          if (d <= radius + jitter) cand.push(d, q, y, r, id);
+          if (d <= radius + jitter) {
+            if (charge) charges.push(q, y, r);
+            else cand.push(d, q, y, r, id);
+          }
         }
       }
     }
@@ -796,6 +865,10 @@ export class Explosions {
       destroyed.push([q, y, r, id]);
       gone.add(packCell(q, y, r));
       if (bearing) removed.push([q, y, r, id, anchor ? 1 : 0]);
+    }
+    // The charges the blast reached are set off (main: blackHoles.activate), never destroyed.
+    if (typeof this.onCharge === 'function') {
+      for (let i = 0; i < charges.length; i += 3) this.onCharge(charges[i], charges[i + 1], charges[i + 2]);
     }
 
     // 3. Knock bodies within 2R away (before the debris, so it is not pushed by its own blast).
@@ -836,7 +909,10 @@ export class Explosions {
     this._shakeZ = cz;
     this._shakeAmp = BLAST_SHAKE_AMPLITUDE * Math.sqrt(radius / BLAST_RADIUS);
 
-    return { x: cx, y: cy, z: cz, radius, barrels: 0, destroyed: destroyed.length, debris, lit, knocked, rim: rim.length, capped, event };
+    return {
+      x: cx, y: cy, z: cz, radius, barrels: 0, destroyed: destroyed.length, debris, lit, knocked, rim: rim.length, capped, event,
+      charges: charges.length / 3,
+    };
   }
 
   /**
@@ -1045,7 +1121,9 @@ export class Explosions {
    * in the cell they were LIT in, lowest first, each moved up past cells that are neither AIR nor water (two barrels
    * of one cell stack) and down while the cell below is AIR or water. Undo never leaves an unlit barrel next to a
    * CAMPFIRE, which would only light it again (at once through the 'ignite' trigger, or on the next load through the
-   * reseeder): a burning one there keeps burning (as the campfire's, event 0), a used-up one is not given back.
+   * reseeder): a burning one there keeps burning (as the campfire's, event 0), a used-up one is not given back. The same
+   * holds where the physics hook `ignitesAt(q, y, r)` says the cell would catch at once (a torch, or an igniter still
+   * powered, beside it: main's circuits.wouldIgnite, DESIGN-circuits §3.4.7, §3.6); such kegs count in `burnt`.
    * Debris is the fallers' (fallers.cancelEvent).
    * @param {number} id
    * @param {((q: number, y: number, r: number) => boolean)|null} [write]  writes a BLAST_BARREL block (undo passes its
@@ -1058,9 +1136,12 @@ export class Explosions {
     if (!(id > 0)) return res;
     const ctx = this.physics.ctx;
     const put = write ?? ((q, y, r) => ctx.writeQuiet(q, y, r, BLOCK.BLAST_BARREL) === 'ok');
+    const hook = /** @type {*} */ (this.physics.hooks).ignitesAt;
+    /** @returns {boolean} a keg at the cell would light again at once */
+    const catches = (q, y, r) => nextToCampfire(ctx, q, y, r) || (typeof hook === 'function' && Boolean(hook(q, y, r)));
     for (const [key, rec] of this.timers) {
       if (rec.event !== id) continue;
-      if (nextToCampfire(ctx, rec.q, rec.y, rec.r)) {
+      if (catches(rec.q, rec.y, rec.r)) {
         rec.event = 0;
         continue;
       }
@@ -1074,7 +1155,7 @@ export class Explosions {
     for (let i = this.lit.length - 1; i >= 0; i--) {
       const rec = this.lit[i];
       if (rec.event !== id) continue;
-      if (nextToCampfire(ctx, rec.q, rec.y, rec.r)) {
+      if (catches(rec.q, rec.y, rec.r)) {
         rec.event = 0;
         continue;
       }
@@ -1093,7 +1174,7 @@ export class Explosions {
         continue;
       }
       while (cy > 0 && isOpen(ctx.peek(q, cy - 1, r))) cy--;
-      if (nextToCampfire(ctx, q, cy, r)) res.burnt++;
+      if (catches(q, cy, r)) res.burnt++;
       else if (!put(q, cy, r)) res.lost++;
     }
     return res;

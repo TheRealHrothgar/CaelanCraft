@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import {
   CHUNK_VOLUME, HOTBAR_SIZE, PITCH_LIMIT, MAX_RUNE_SCRIPT_CHARS, MAX_RUNE_LABEL_CHARS, STEP_COOLDOWN_MAX_S,
   REPEAT_MIN_S, REPEAT_MAX_S, MAX_RUNE_SCRIPT_LINES, GEN_LATEST, PACK_SLOTS, WEAR_SLOTS, BASKET_SLOTS, REMAINS_SLOTS,
-  MAX_FIRE_SLOTS,
+  MAX_FIRE_SLOTS, MAX_CIRCUIT_PARTS,
 } from '../../src/config.js';
 import { localIndex, chunkKey, worldToChunk, worldToLocal } from '../../src/coords.js';
 import { BLOCK, DEFAULT_HOTBAR } from '../../src/blocks.js';
@@ -1247,5 +1247,130 @@ describe('survival save fields: containers', () => {
     expect(Object.keys(out.containers)).toEqual(['1,1,0', '2,1,0']);
     expect(normalizeContainersJSON('x')).toEqual({});
     for (const bad of ['x', 3, [], new Map()]) expect(() => serializeSave({ ...makeSave(), containers: /** @type {any} */ (bad) })).toThrow(TypeError);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Circuits (docs/DESIGN-circuits.md §6.4): the black-holes and circuits switches and the configured parts.
+
+describe('circuit save fields: blackholes, circuits, circuitParts', () => {
+  /** A switch, a timer and a relay recorded in the edits. */
+  const partEdits = () => editsAt([[1, 64, 0, BLOCK.KNIFE_SWITCH], [-20, 64, 5, BLOCK.CLOCKWORK_TIMER], [3, 70, -40, BLOCK.RELAY]]);
+  const parts = () => ({
+    '1,64,0': { k: 'switch', on: true },
+    '-20,64,5': { k: 'timer', l: 'Gate', on: true, f: 1, s: 30, m: 'hold' },
+    '3,70,-40': { k: 'relay', nc: true },
+  });
+
+  it('each field is absent unless given; absent reads as on / no parts (no warning); a world without them is unchanged', () => {
+    const base = makeSave({ '1,2': [5, 1] });
+    const text = serializeSave(base);
+    for (const f of ['blackholes', 'circuits', 'circuitParts']) expect(text).not.toContain(`"${f}"`);
+    const back = load(text);
+    expect(back.warnings).toEqual([]);
+    expect(back.blackholes).toBeUndefined();
+    expect(back.circuits).toBeUndefined();
+    expect(back.circuitParts).toBeUndefined();
+    expect(serializeSave({ ...base, circuitParts: {} })).toBe(text); // empty parts are not written
+    expect(serializeSave({ ...base, circuitParts: { '1,2,3': { k: 'switch' } } })).toBe(text); // pristine: nothing to save
+    expect(serializeSave({ ...base, blackholes: null, circuits: undefined, circuitParts: null })).toBe(text);
+    expect(text.startsWith('{"version":2,')).toBe(true);
+  });
+
+  it('the switches: written whenever given, anything but false is on, a non-boolean on load is dropped with a warning', () => {
+    const out = JSON.parse(serializeSave({ ...makeSave(), blackholes: false, circuits: true }));
+    expect(out.blackholes).toBe(false);
+    expect(out.circuits).toBe(true);
+    expect(JSON.parse(serializeSave({ ...makeSave(), blackholes: /** @type {any} */ (0), circuits: /** @type {any} */ ('off') }))).toMatchObject({ blackholes: true, circuits: true });
+    const off = load(serializeSave({ ...makeSave(), blackholes: false, circuits: false }));
+    expect(off.blackholes).toBe(false);
+    expect(off.circuits).toBe(false);
+    expect(off.warnings).toEqual([]);
+    const bad = loadWith({ blackholes: 'yes', circuits: 1 });
+    expect(bad.blackholes).toBeUndefined();
+    expect(bad.circuits).toBeUndefined();
+    expect(bad.warnings).toEqual(['blackholes: not a boolean, treated as on', 'circuits: not a boolean, treated as on']);
+  });
+
+  it('writes the fields after containers and before meta, with survival\'s fields present (a literal object)', () => {
+    const edits = editsAt([[0, 64, 0, BLOCK.WICKER_BASKET], [1, 64, 0, BLOCK.KNIFE_SWITCH]]);
+    const text = serializeSave({
+      version: 2, seed: 7, time: 0.5, day: 3, player: { x: 0.5, y: 70, z: 0.5, yaw: 0, pitch: 0, flying: false },
+      hotbar: [...DEFAULT_HOTBAR], selected: 0, edits, runes: {}, pigs: [], physics: DEFAULT_PHYSICS_SWITCHES, zombies: true,
+      watcher: true, watcherNight: 3, gen: 2, mode: 'survival', survival: survivalState(),
+      containers: { '0,64,0': { kind: 'basket', slots: [] } }, blackholes: true, circuits: false,
+      circuitParts: { '1,64,0': { k: 'switch', on: true } }, meta: { name: 'Home' },
+    });
+    expect(Object.keys(JSON.parse(text))).toEqual([
+      'version', 'seed', 'time', 'day', 'player', 'hotbar', 'selected', 'edits', 'pigs', 'physics', 'zombies', 'watcher',
+      'watcherNight', 'gen', 'mode', 'survival', 'containers', 'blackholes', 'circuits', 'circuitParts', 'meta',
+    ]);
+    expect(text.startsWith('{"version":3,')).toBe(true); // survival decides the version; circuits change none
+  });
+
+  it('circuitParts round-trips canonically: keys sorted, k first, non-default fields only, s in 0.5 steps, c whole', () => {
+    const edits = editsAt([...[[1, 64, 0, BLOCK.KNIFE_SWITCH], [-20, 64, 5, BLOCK.CLOCKWORK_TIMER], [3, 70, -40, BLOCK.RELAY]],
+      [9, 64, 9, BLOCK.VOLTAIC_BATTERY]]);
+    const text = serializeSave({ ...makeSave(edits), circuitParts: { ...parts(), '9,64,9': { k: 'battery', c: 1234.7 },
+      '-20,64,5': { m: 'hold', s: 29.8, on: true, f: 1, l: 'Gate', k: 'timer' } } });
+    const out = JSON.parse(text).circuitParts;
+    expect(Object.keys(out)).toEqual(['-20,64,5', '1,64,0', '3,70,-40', '9,64,9']);
+    expect(Object.keys(out['-20,64,5'])).toEqual(['k', 'l', 'on', 'f', 's', 'm']);
+    expect(out['-20,64,5']).toEqual({ k: 'timer', l: 'Gate', on: true, f: 1, s: 30, m: 'hold' });
+    expect(out['9,64,9']).toEqual({ k: 'battery', c: 1235 });
+    const back = load(text);
+    expect(back.warnings).toEqual([]);
+    expect(back.circuitParts).toEqual(out);
+    expect(serializeSave(back)).toBe(text);
+    for (const bad of ['x', 3, [], new Map()]) expect(() => serializeSave({ ...makeSave(), circuitParts: /** @type {any} */ (bad) })).toThrow(TypeError);
+  });
+
+  it('every repair row of §6.4 warns and drops or resets, and never makes the save unloadable', () => {
+    const edits = partEdits();
+    const n = loadWith({ circuitParts: 'x' }, edits);
+    expect(n.circuitParts).toBeUndefined();
+    expect(n.warnings).toEqual(['circuitParts: not an object, ignored']);
+    expect(loadWith({ circuitParts: [] }, edits).warnings).toEqual(['circuitParts: not an object, ignored']);
+    const v = loadWith({
+      circuitParts: {
+        ...parts(),
+        'a,b,c': { k: 'switch', on: true },
+        '2,64,0': { k: 'flux' },
+        '4,64,0': { k: 'switch', on: true }, // nothing recorded there: an orphan
+        '-20,64,5': { k: 'timer', s: 'soon', m: 'hold' },
+        '3,70,-40': { k: 'timer', s: 9 }, // a relay there, not a timer
+      },
+    }, edits);
+    expect(v.circuitParts).toEqual({ '-20,64,5': { k: 'timer', m: 'hold' }, '1,64,0': { k: 'switch', on: true } });
+    expect(v.warnings).toEqual(expect.arrayContaining([
+      'circuitParts["a,b,c"]: not a cell key, dropped',
+      'circuitParts[2,64,0]: unknown kind "flux", dropped',
+      'circuitParts[-20,64,5].s: invalid, reset',
+      'circuitParts[4,64,0]: no switch there, dropped',
+      'circuitParts[3,70,-40]: no timer there, dropped',
+    ]));
+    expect(v.warnings.length).toBe(5);
+    // More than MAX_CIRCUIT_PARTS entries: cut in key order.
+    /** @type {Record<string, *>} */
+    const many = {};
+    const cells = [];
+    for (let i = 0; i < MAX_CIRCUIT_PARTS + 3; i++) {
+      const q = i % 16;
+      const y = 1 + Math.floor(i / 256);
+      const r = Math.floor(i / 16) % 16;
+      many[`${q},${y},${r}`] = { k: 'switch', on: true };
+      cells.push([q, y, r, BLOCK.KNIFE_SWITCH]);
+    }
+    const big = loadWith({ circuitParts: many }, editsAt(cells));
+    expect(Object.keys(big.circuitParts).length).toBe(MAX_CIRCUIT_PARTS);
+    expect(big.warnings).toEqual([`circuitParts: more than ${MAX_CIRCUIT_PARTS} entries, the rest dropped`]);
+  });
+
+  it('an orphan check sees the REPAIRED edits: a later pair for the cell decides, an invalid pair is not there', () => {
+    const li = localIndex(1, 64, 0);
+    const v = loadWith({ circuitParts: { '1,64,0': { k: 'switch', on: true }, '2,64,0': { k: 'relay', nc: true } } },
+      { '0,0': [li, BLOCK.STONE, li, BLOCK.KNIFE_SWITCH, localIndex(2, 64, 0), 999] });
+    expect(v.circuitParts).toEqual({ '1,64,0': { k: 'switch', on: true } });
+    expect(v.warnings).toContain('circuitParts[2,64,0]: no relay there, dropped');
   });
 });

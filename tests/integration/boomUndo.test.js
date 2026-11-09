@@ -183,7 +183,7 @@ describe('a chain is one undo (EXP-1, EXP-3)', () => {
     settle(physics);
     const snap = snapshot(world, -9, 11, 0, 14, -9, 9);
     physics.asPlayer(() => ex.lightAt(0, 11, 0)); // an entity
-    for (let i = 1; i < MAX_LIT_BARRELS; i++) ex.ignite(40 + 2 * i, 11, 40);
+    for (let i = 1; i < MAX_LIT_BARRELS; i++) ex.lightAt(40 + 2 * i, 11, 40); // entities (ignite now burns in place)
     for (const rec of ex.lit) if (rec.q >= 40) rec.fuse = 1e9; // the far ones never go off
     steps(physics, 1);
     physics.asPlayer(() => ex.lightAt(2, 11, 0)); // a fuse timer, event 0
