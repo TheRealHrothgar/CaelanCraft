@@ -2,7 +2,8 @@
 // Everything runs against Map-backed fakes of the Web Storage subset the module uses; the quota fake throws a
 // QuotaExceededError like a full localStorage does and never changes anything when it throws.
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_HOTBAR } from '../../src/blocks.js';
+import { PACK_SLOTS } from '../../src/config.js';
+import { BLOCK, DEFAULT_HOTBAR } from '../../src/blocks.js';
 import {
   SAVE_VERSION, SAVE_KEY, SAVE_SLOTS, MAX_WORLD_NAME_CHARS, STORAGE_QUOTA_ESTIMATE, LEGACY_SAVE_KEY, SLOT_INDEX_KEY,
   MIGRATED_WORLD_NAME, serializeSave, deserializeSave, slotKey, isSlot, cleanWorldName, defaultWorldName, normalizeWorldName,
@@ -573,5 +574,125 @@ describe('save slots: moving the old single save into slot 1', () => {
     expect(migrateLegacySave(storage, NOW + 1)).toEqual({ status: 'migrated', slot: 2 });
     expect(loadSlot(1, storage).day).toBe(2);
     expect(loadSlot(2, storage).day).toBe(30);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// v0.9 survival fields through the slot API (docs/DESIGN-survival.md §9.6)
+
+/** A Survival world: generation 2, mode survival, a pack, a fire on a campfire cell and a basket. */
+function survivalWorld(seed = 50, overrides = {}) {
+  // cells (0, 64, 0) and (1, 64, 0) live in chunk 0,0: local index (lq·16 + lr)·128 + y
+  const fireLi = (0 * 16 + 0) * 128 + 64;
+  const basketLi = (1 * 16 + 0) * 128 + 64;
+  return makeSave(seed, {
+    edits: { '0,0': [fireLi, BLOCK.CAMPFIRE, basketLi, BLOCK.WICKER_BASKET] },
+    gen: 2,
+    mode: 'survival',
+    survival: {
+      health: 90, satiation: 70, hydration: 60, temp: 37, breath: 20, wet: 0, sick: 0, heal: 0, healRate: 0,
+      spawn: null, deaths: 0,
+      pack: [{ k: 'rock', n: 5 }, ...new Array(PACK_SLOTS - 1).fill(null)],
+      wear: [null, null, null],
+      fires: { '0,64,0': { s: [{ k: 'raw_pork', t: 3 }, null, null, null, null, null, null], f: 200 } },
+    },
+    containers: { '1,64,0': { kind: 'basket', slots: [{ k: 'stick', n: 4 }] } },
+    ...overrides,
+  });
+}
+
+/** The four survival fields of a loaded save. */
+function survivalFields(save) {
+  expect(save).not.toBeNull();
+  return { gen: save.gen, mode: save.mode, survival: save.survival, containers: save.containers, version: save.version };
+}
+
+describe('save slots: survival worlds (v0.9)', () => {
+  it('save, load and list a Survival world: version 3, the fields intact, "mode: survival" on its SlotInfo', () => {
+    const world = survivalWorld(50, { meta: { name: 'Wild' } });
+    const storage = withWorlds([[2, world], [3, makeSave(3, { meta: { name: 'Builder' } })]]);
+    expect(JSON.parse(storage.map.get(slotKey(2))).version).toBe(3);
+    const loaded = loadSlot(2, storage);
+    expect(loaded.warnings).toEqual([]);
+    expect(survivalFields(loaded)).toEqual({
+      gen: 2, mode: 'survival', survival: deserializeSave(serializeSave(world)).survival, containers: world.containers, version: 3,
+    });
+    const slots = listSlots(storage);
+    expect(slots[1]).toMatchObject({ status: 'world', name: 'Wild', mode: 'survival' });
+    expect(slots[2]).toMatchObject({ status: 'world', name: 'Builder' });
+    expect('mode' in slots[2]).toBe(false); // Creative worlds carry no mode
+    expect(JSON.parse(storage.map.get(slotKey(3))).version).toBe(2);
+  });
+
+  it('the index records the mode from both entry paths (a fresh save, and a rebuild from the text)', () => {
+    const storage = withWorlds([[1, survivalWorld()], [2, makeSave(2)], [3, survivalWorld(51, { mode: 'creative' })]]);
+    let index = JSON.parse(storage.map.get(SLOT_INDEX_KEY));
+    expect(index.slots[0].mode).toBe('survival'); // entryFromData (saveSlot)
+    expect(index.slots[1].mode).toBeUndefined();
+    expect(index.slots[2].mode).toBeUndefined(); // a frozen survival state in Creative is a Creative world
+    storage.map.delete(SLOT_INDEX_KEY);
+    expect(listSlots(storage).map((s) => s.mode)).toEqual(['survival', undefined, undefined, undefined, undefined, undefined]);
+    index = JSON.parse(storage.map.get(SLOT_INDEX_KEY));
+    expect(index.slots[0].mode).toBe('survival'); // entryFromText (the rebuild)
+    // a consistent index with the mode is used as is
+    const writes = storage.writes;
+    expect(listSlots(storage)[0].mode).toBe('survival');
+    expect(storage.writes).toBe(writes);
+    // an index entry with a mode that is not 'survival' is not trusted: rebuilt from the document
+    index.slots[1] = { ...index.slots[1], mode: 'hardcore' };
+    index.slots[0] = { ...index.slots[0], mode: undefined };
+    storage.map.set(SLOT_INDEX_KEY, JSON.stringify(index));
+    expect(listSlots(storage)[1].mode).toBeUndefined();
+    expect(JSON.parse(storage.map.get(SLOT_INDEX_KEY)).slots[1].mode).toBeUndefined();
+  });
+
+  it('a hand-edited Survival mode on generation 1 is listed (and loads) as a Creative world', () => {
+    const storage = fakeStorage([[slotKey(1), serializeSave(makeSave(1, { mode: 'survival' }))]]);
+    expect(listSlots(storage)[0].mode).toBeUndefined();
+    const s = loadSlot(1, storage);
+    expect(s.mode).toBe('creative');
+    expect(s.warnings).toContain('mode: survival needs generation 2; loaded in Creative');
+  });
+
+  it('rename, duplicate and the legacy move keep gen, mode, survival and containers', () => {
+    const world = survivalWorld(60, { meta: { name: 'Wild', createdAt: 100, lastPlayed: 200 } });
+    const expected = survivalFields(deserializeSave(serializeSave(world)));
+    const storage = withWorlds([[3, world]]);
+    expect(renameSlot(3, 'Wilder', storage).ok).toBe(true);
+    expect(survivalFields(loadSlot(3, storage))).toEqual(expected);
+    expect(listSlots(storage)[2]).toMatchObject({ name: 'Wilder', mode: 'survival' });
+    expect(duplicateSlot(3, storage, NOW)).toMatchObject({ ok: true, slot: 1, name: 'Wilder (copy)' });
+    expect(survivalFields(loadSlot(1, storage))).toEqual(expected);
+    expect(listSlots(storage)[0]).toMatchObject({ name: 'Wilder (copy)', mode: 'survival' });
+    const legacy = fakeStorage([[LEGACY_SAVE_KEY, serializeSave({ ...world, meta: undefined })]]);
+    expect(listSlots(legacy, { repair: false })[0]).toMatchObject({ legacy: true, mode: 'survival' });
+    expect(migrateLegacySave(legacy, NOW)).toMatchObject({ status: 'migrated', slot: 1 });
+    expect(survivalFields(loadSlot(1, legacy))).toEqual(expected);
+  });
+
+  it('a world from a newer generator is damaged: never loaded, renamed or copied, only deleted', () => {
+    const raw = JSON.parse(serializeSave(survivalWorld()));
+    const newer = JSON.stringify({ ...raw, gen: 3 });
+    const storage = fakeStorage([[slotKey(4), newer]]);
+    expect(listSlots(storage)[3]).toMatchObject({ status: 'damaged', bytes: newer.length });
+    expect(loadSlot(4, storage)).toBeNull();
+    expect(renameSlot(4, 'x', storage)).toEqual({ ok: false, reason: 'damaged' });
+    expect(duplicateSlot(4, storage, NOW)).toEqual({ ok: false, reason: 'damaged' });
+    expect(storage.map.get(slotKey(4))).toBe(newer);
+  });
+
+  it('a world an older client called "damaged" in the shared index is checked again and listed as the world it is', () => {
+    const text = serializeSave(survivalWorld(70, { meta: { name: 'Newer' } }));
+    // what a v0.8 tab writes after listing a version-3 slot it cannot read
+    const index = { version: 1, slots: [{ damaged: true, bytes: text.length, hash: textHash(text) }, null, null, null, null, null] };
+    const storage = fakeStorage([[slotKey(1), text], [SLOT_INDEX_KEY, JSON.stringify(index)]]);
+    expect(listSlots(storage)[0]).toMatchObject({ status: 'world', name: 'Newer', seed: 70, mode: 'survival' });
+    expect(JSON.parse(storage.map.get(SLOT_INDEX_KEY)).slots[0]).toMatchObject({ name: 'Newer', mode: 'survival' });
+    // a truly damaged slot stays damaged, and its (unchanged) index entry is not rewritten
+    const junk = fakeStorage([[slotKey(2), '{broken']]);
+    listSlots(junk);
+    const writes = junk.writes;
+    expect(listSlots(junk)[1].status).toBe('damaged');
+    expect(junk.writes).toBe(writes);
   });
 });
