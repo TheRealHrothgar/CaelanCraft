@@ -21,6 +21,10 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 >
 > **Save slots.** Up to six worlds, one localStorage key each, listed on the title screen's Worlds panel (§41); the old single
 > save moves into slot 1.
+>
+> **v0.9 — Survival.** A per-world Creative / Survival mode (§42): the body (§45), items, the pack and containers (§43),
+> harvesting (§44), making and fire (§46), world generation 2 (§47), the survival screens, rendering and sound (§48) and main's
+> wiring (§49). Design: `docs/DESIGN-survival.md`. Creative and every existing world behave exactly as before.
 
 ## 0. Conventions (apply everywhere)
 
@@ -35,6 +39,9 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
   `HEX_DIRS[j]` ∈ `[1,0],[0,1],[−1,1],[−1,0],[0,−1],[1,−1]`. Face `6` = top (+Y), face `7` = bottom (−Y).
   `FACE_OPPOSITE = [3,4,5,0,1,2,7,6]`. Corner `k` (0..5) is at angle `60°k − 30°` (`HEX_CORNERS`); side `j` spans corners
   `j` and `j+1`. Exactly three cells meet at every vertical edge, and they are mutually adjacent.
+  (v0.9 note: on a picture seen from above with +X right and +Z down — north up — increasing angle from +X toward +Z, and so
+  increasing face and corner index, turns CLOCKWISE. The indices and angles are what is normative; "clockwise from the north corner"
+  in §48 means corners 5, 0, 1, 2, 3, 4.)
 - **World positions** are floats `(x, y, z)`; **cell coordinates** are integers `(q, y, r)`. Every signature below says
   which it takes. `World.getBlock/setBlock` take cells; `World.update/hasChunkAt/isReadyAt/getBlockAt` take world positions.
 - Chunk of a cell coordinate `w` (q or r) is `Math.floor(w / 16)`; local coordinate is `w − c*16`. **Never** use `%`, `|0`,
@@ -97,8 +104,24 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/diagnostics.js` | DOM | A-diagnostics | — |
 | `src/console.js` | DOM | v0.3 | — |
 | `src/runeEditor.js` | DOM | v0.3 | — |
-| `src/main.js` | DOM glue | A-main | `tests/integration/harness.test.js` |
+| `src/main.js` | DOM glue | A-main | `tests/integration/harness.test.js`, `tests/integration/survival.test.js` |
+| `src/items.js` | PURE, the item registry, tiers, tags (§43) | v0.9 W0 | `tests/unit/items.test.js` |
+| `src/inventory.js` | PURE, `Pack`, `slotClick`, stacks, spoilage (§43) | v0.9 B | `tests/unit/inventory.test.js` |
+| `src/containers.js` | PURE, baskets and belongings (§43) | v0.9 B | `tests/unit/containers.test.js` |
+| `src/harvest.js` | PURE, BLOCK_RULES, break times, drops, picking, tapping, regrowth, mob drops (§44) | v0.9 B | `tests/unit/harvest.test.js` |
+| `src/survivalControl.js` | PURE, dig / use state machines, the R priority, belongings cell, pack view (§44) | v0.9 B | `tests/unit/survivalControl.test.js` |
+| `src/crafting.js` | PURE, RECIPES, findStations, listRecipes, CraftQueue lanes (§46) | v0.9 C | `tests/unit/crafting.test.js` |
+| `src/cooking.js` | PURE, FIRE_TRANSFORMS, FireSlots (spots and fuel) (§46) | v0.9 C | `tests/unit/cooking.test.js` |
+| `src/climate.js` | PURE, air / felt / body-target temperature, heat sources, salinity (§45) | v0.9 D | `tests/unit/climate.test.js` |
+| `src/vitals.js` | PURE, stat dynamics, status, damage formulas (§45) | v0.9 D | `tests/unit/vitals.test.js` |
+| `src/survival.js` | PURE, `Survival`: mode, vitals, step, death and waking, export (§45) | v0.9 D | `tests/unit/survival.test.js` |
+| `src/itemArt.js` | PURE pixel painters, one 16 × 16 icon per non-block item (§48) | v0.9 E | `tests/unit/itemArt.test.js` |
+| `src/itemIcons.js` | DOM, the item icon sheet (§48) | v0.9 E | — |
+| `src/packUI.js` | DOM (+ pure geometry / label helpers), the Pack & Making screen (§48) | v0.9 E | `tests/unit/packUI.test.js` |
+| `src/handbook.js`, `src/handbookUI.js` | PURE chapters; DOM readers — the Survival Handbook (§43, §48) | v0.9 H | (H's) |
+| — | survival data closure, first day, harness (§42–§49) | v0.9 I | `tests/integration/survivalData.test.js`, `tests/integration/survival.test.js` |
 | `tests/helpers/fixtures.js` | test helpers | Wave 0 (done) | — |
+| `tests/helpers/fakeDom.js` | a small fake DOM for the DOM modules under Node (v0.9 E) | v0.9 E | — |
 
 Import graph (must stay acyclic):
 ```
@@ -118,7 +141,7 @@ explosions                         → … + noise (hash3), support (isLoadBeari
 fallingblocks                      → config, blocks, hex, physics
 blockphysics                       → config, blocks, hex, coords, noise (mulberry32), fallingblocks, fluids, support, trees, explosions
 fallingRenderer                    → blocks (BLOCK), mesher (buildCellMesh), three
-particles                          → config, blocks, tiles (averageColor), mesher (BIOME_TINT, isTintedFace), three
+particles                          → config, blocks, tiles (averageColor, paintTile), mesher (BIOME_TINT, isTintedFace), three
 mesher                             → config, coords, hex, blocks
 worldgen                           → config, coords, hex, blocks, noise
 world                              → config, coords, hex, blocks, chunk, noise (normalizeSeed), worldgen, mesher
@@ -139,6 +162,27 @@ watcherRenderer                    → config (ATLAS_TILE_PX, TILE_UV), blocks (
 main                               → everything except three (renderer, atlas, pigRenderer, campfireRenderer,
                                      fallingRenderer, particles, zombieRenderer and watcherRenderer are the three-importing
                                      modules)
+# v0.9 Survival (§42–§49). Beyond DESIGN-survival §9.1, these edges were adjudicated in (all leaf-ward; still acyclic):
+#   harvest → coords (forEachEditedCell), survivalControl → hex (HEX_DIRS), containers → inventory (stack helpers),
+#   vitals → blocks, climate (soft landings, bodyTarget), climate → hex (hexToWorld), particles → tiles (paintTile).
+items                              → blocks
+inventory                          → config, items
+containers                         → config, blocks, inventory
+harvest                            → config, blocks, items, coords
+survivalControl                    → config, blocks, items, harvest, hex
+crafting                           → config, blocks, hex, items         (pack access through PackOps only)
+cooking                            → config, blocks
+climate                            → config, blocks, hex
+vitals                             → config, blocks, climate
+survival                           → config, items, vitals, climate
+itemArt                            → (nothing)
+itemIcons                          → config, items, atlas, itemArt
+packUI                             → config, items            (the ItemIcons are handed in by main)
+storage                            → … + items, cooking (fire-spot validation)
+commands                           → … + items
+hud                                → … + items, itemIcons
+handbook (H)                       → items, crafting, harvest, climate, vitals (read-only data)
+main                               → … + all of the above; handbook / handbookUI through an eager import.meta.glob (§49)
 ```
 
 ## 2. `src/config.js` (exact — already written)
@@ -153,8 +197,8 @@ SWIM_EXIT_JUMP, WATER_SPEED_FACTOR, MAX_SUBSTEP_DT, MAX_FRAME_DT, COLLISION_EPS,
 CAMERA_FAR, MOUSE_SENSITIVITY, PITCH_LIMIT, MAX_PIXEL_RATIO, DOUBLE_TAP_MS, DOUBLE_TAP_SPACE_MS, DAY_LENGTH_SECONDS,
 START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION`; save slots (§41): `SAVE_SLOTS = 6, MAX_WORLD_NAME_CHARS = 24,
 STORAGE_QUOTA_ESTIMATE = 5 * 1024 * 1024`.
-`VERSION = '0.8.0'`; `package.json` and `package-lock.json` carry the same version and the title footer in `index.html` reads
-`Caelancraft v<major>.<minor>` (`v0.8`) — bump all four together (wave0.test.js checks they agree). Render/data/unload radii are
+`VERSION = '0.9.0'`; `package.json` and `package-lock.json` carry the same version and the title footer in `index.html` reads
+`Caelancraft v<major>.<minor>` (`v0.9`) — bump all four together (wave0.test.js checks they agree). Render/data/unload radii are
 **hex distances** in chunk coordinates. `FACE_SHADE` moved to `hex.js` (it derives from the face normals).
 `TOP_UV_SCALE = √3/2` (hex caps are inscribed in their tile).
 Commands / runes: `GAME_SECONDS_PER_DAY, MAX_FILL_CELLS, MAX_TOTAL_EDITS, MAX_CELLS_PER_FRAME, MAX_COMMANDS_PER_FRAME,
@@ -178,6 +222,13 @@ BLAST_FLASH_INTENSITY, BLAST_SHAKE_S, BLAST_SHAKE_AMPLITUDE`
 `PLAYER_WIDTH = 0.56`: `PLAYER_WIDTH / 2` MUST stay below `HEX_SIZE / 2 ≈ 0.289` (physics.js throws at import otherwise) — every
 1-cell-wide passage is pinched to exactly one edge length (`HEX_SIZE ≈ 0.577`) by the two wall corners flanking the shared edge, and
 the player must fit through it; that bound also implies the `< HEX_INRADIUS` bound the 7-column collider needs. `FOG_FAR_CHUNK_MARGIN = -1`.
+v0.9 Survival (section "Survival (§42–§49)", values per DESIGN-survival §9.2): `GEN_LATEST 2; PACK_SLOTS 27, WEAR_SLOTS 3, BASKET_SLOTS
+18, REMAINS_SLOTS 30, MAX_CONTAINERS 1024; FIRE_SPOTS 7, MAX_FIRE_SLOTS 256; CAMPFIRE_FUEL_START_S 300, CAMPFIRE_FUEL_MAX_S 1200,
+FUEL_STICK_S 40, FUEL_LOG_S 300, RELIGHT_HOLD_S 3; STATION_RANGE 3, STATION_WORK_RANGE 16, MAX_CRAFT_JOBS 8; STAT_MAX 100, BREATH_MAX_S
+20, BREATH_REFILL_PER_S 5; BODY_TEMP_NORMAL 37, BODY_TEMP_MIN 25, BODY_TEMP_MAX 45, SICK_MAX_S 600, HEAL_MAX 50; FALL_SAFE_SPEED 13.5,
+FALL_DAMAGE_K 0.1, CRUSH_DAMAGE_PER_CELL 6; ATTACK_REPEAT_S 0.55, DIG_TICK_S 0.25, USE_REPEAT_GAP_S 0.25, GULP_GAP_S 0.5, TAP_HOLD_S 4;
+PIG_HEALTH 5, PIG_REPOP_CHECK_S 150, PIG_REPOP_TARGET 3, PIG_REPOP_RADIUS 64, PIG_REPOP_MIN 24, PIG_REPOP_MAX 48; ZOMBIE_DAMAGE 8,
+FIRE_BURN_DAMAGE 4; REGROW_MEAN_S 600, MAX_REGROW_TRACKED 4096`. HOTBAR_SIZE (9) is also the pack's hotbar.
 
 ## 3. `src/types.js` (exact — already written)
 
@@ -185,6 +236,9 @@ Typedefs: `BlockId, ChunkKey, FaceIndex (0..7), RenderLayer, Vec3, GetBlockFn ((
 ((cq, cr) → ChunkData|null), MeshData (+ indexCount), ChunkMeshData, RaycastHit ({q, y, r, face, nx, ny, nz, distance, blockId}),
 ColumnInfo, WorldGen (getColumn(q, r), generateChunk(cq, cr)), PlayerState, PlayerInput, SkyState, EditsJSON, Rune, RunesJSON,
 SaveData (version 2, optional `runes`), SmokeResult, GameContext (+ runCommand, runes, runner)`. Import in JSDoc as `/** @typedef {import('./types.js').MeshData} MeshData */`.
+v0.9: `ItemStack, ItemDef, ToolDef, FoodDef, WearDef, SurvivalJSON, ContainersJSON, FireSlotsJSON`; `SaveData` gains `gen?, mode?,
+survival?, containers?` and `version: 2|3`; `PlayerState.landSpeed?`; `PlayerInput.speedFactor?`. (GameContext's v0.9 members, §49,
+are not in the typedef yet; worldgen.js types its generator locally as `SurvivalWorldGen`.)
 
 ## 4. `src/coords.js` (exact — already written)
 
@@ -266,6 +320,10 @@ else `WATER_SURFACE_HEIGHT` for WATER / FALL and `k/7 · WATER_SURFACE_HEIGHT` f
 Layers: `LAYER_OPAQUE 0` (everything else), `LAYER_CUTOUT 1` (OAK/SPRUCE/BIRCH_LEAVES, GLASS), `LAYER_TRANSLUCENT 2` (WATER, ICE).
 
 Biomes: `BIOME.OCEAN 0, BEACH 1, PLAINS 2, FOREST 3, DESERT 4, SNOWY 5, MOUNTAINS 6, SNOWY_PEAKS 7`, `BIOME_NAMES`.
+
+v0.9 Survival (§47): blocks 76–94 (COPPER_ORE … FIRE_PIT, **`BLOCK_COUNT = 95`**), tiles 77–104 (`TILE_IDS` 115 entries; 250–252 are the
+Watcher's, 240–245 the zombie's), `PICKER_ORDER` 80 entries, `PLANT_IDS`, `POP_OFF_IDS` and `isPlant, isLitter, isPopOff, isStation,
+isContainerBlock`. Plants, litter, REMAINS and FIRE_PIT are cutout, walk-through, not replaceable and not fall-through.
 
 `BLOCKS[id]` → `{ id, name, displayName, tiles:[8], solid, opaque, liquid, breakable, placeable, cullSame, layer, soundGroup }`.
 `tiles` has **8 entries indexed by face**: six sides, then top (6), then bottom (7).
@@ -399,6 +457,10 @@ return { height, biome, temperature: T, humidity: H }
 
 Cost target: ≤ 8 ms per chunk in Node on this machine.
 
+v0.9 (§47): `createWorldGen(seed, { gen = 1 })`. Generation 1 (the default) is byte-identical to the above; generation 2 appends
+`ORE_TABLE_GEN2` (copper, tin, clay), hex ponds, tree species (`treeTrunkAt`) and the `FLORA_TABLE` surface pass, and the generator
+exposes `gen, pondAt, treeTrunkAt, FLORA_TABLE`. A warm generation-2 chunk is also held to ≤ 8 ms.
+
 ## 9. `src/world.js`
 
 ```js
@@ -448,6 +510,9 @@ export class World {
   importEdits(editsJson)     // merge (last write wins); for loaded chunks also apply and mark dirty (+ neighbours)
   setRenderDistance(n)       // clamp 1..16, recompute ring offsets
   dispose()                  // remove all chunks, firing onChunkUnload for meshed ones
+  // v0.9 (§47): constructor opts.gen (normalised: an integer ≥ 1, clamped to GEN_LATEST; with an injected worldGen,
+  //   opts.gen ?? worldGen.gen ?? 1) → `gen`; columnAt(q, r) → { height, biome, temperature } (a fresh object from the generator);
+  //   findSurvivalSpawn() → Vec3 (findSpawn's spiral, PLAINS / FOREST at height ≥ SEA_LEVEL + 2 only, else findSpawn(); cached; copies)
 }
 ```
 ### 9.1 `update(px, pz, budgetMs)` (normative)
@@ -609,6 +674,11 @@ export function supportingCells(p, getBlock, out = [])  // [q,y,r] of the cells 
 The player is a **vertical cylinder** of radius `PLAYER_RADIUS` and height `PLAYER_HEIGHT`. Because the radius is smaller than
 a cell's inradius, the footprint can only overlap the cell containing `(x, z)` and its six neighbours; the collider examines
 exactly those 7 columns (`gatherColumns`).
+v0.9 (§45): `stepPlayer` zeroes `p.landSpeed` on entry (after its dt guard: a dt ≤ 0 / NaN step changes nothing) and, in every mode,
+records `landSpeed = max(landSpeed, −vy)` whenever a substep's downward move hits a floor, before vy is zeroed (standing records one
+substep of gravity). **Consume semantics:** `survival.step` reads it and sets it to 0; main zeroes it whenever it sets fallGrace.
+`input.speedFactor` (clamped 0..1, absent 1) multiplies the horizontal target speed after the sneak / sprint / water choice, never in
+flight. `bodies.standOn` records `landSpeed` on the rider it stops.
 ### 12.1 Substep of `h` seconds (normative)
 ```
 1. Environment (v0.8 water surfaces, §35.4): (bq, br) = worldToHex(x, z); fy = floor(y+0.1); feet = getBlock(bq, fy, br)
@@ -677,6 +747,24 @@ export function clearSave(storage = globalThis.localStorage)        // void
  *   watcher?: boolean, watcherNight?: number, meta?: { name?: string, createdAt?: number, lastPlayed?: number } }
  *   EditsJSON = { "cq,cr": [localIndex, id, localIndex, id, ...] } */
 ```
+**v0.9 Survival (§42).** `serializeSave` writes, after `watcherNight` and before `meta`, in this order: `gen` (an integer ≥ 2 only),
+`mode` (`'creative' | 'survival'`), `survival` (an object, canonicalised by `normalizeSurvivalJSON`: `{ health, satiation, hydration,
+temp, breath, wet, sick, heal, healRate, spawn: [q,y,r]|null, deaths, dead?, pack: (ItemStack|null)[27], wear: (ItemStack|null)[3],
+fires: { "q,y,r": { s: ({k, t}|null)[7], f? } } }`, numbers to 3 dp) and `containers` (only when non-empty after
+`normalizeContainersJSON`: `{ "q,y,r": { kind: 'basket'|'remains', slots } }`). **`version: 3` exactly when `gen ≥ 2` or `survival`
+is present, else 2**; `deserializeSave` reads 2 and 3; `gen > GEN_LATEST` is unloadable (`unloadableReason`: "gen 3: made by a newer
+version of Caelancraft"). `serializeSave` throws a TypeError for `gen > GEN_LATEST` or a non-object `survival` / `containers` (never
+writes what loading would reject). Every other repair is a warning, never a null save: a bad `gen` (treated as 1), a bad `mode`
+(Creative), a non-object `survival`, a bad stat (its fresh value), a bad pack / wear stack (null, with its reason), a wrong pack
+length, fire entries (malformed key, more than MAX_FIRE_SLOTS, not 7 spots, bad fuel, **a cell that is not CAMPFIRE or FIRE_PIT in the
+repaired edits**; a spot is emptied when its item cannot be on that kind of spot — the transform chain, §46 — or its `t` is bad),
+containers (malformed key, unknown kind, too many slots, a cell not recorded in the repaired edits as its block; bad stacks become
+null; not capped by MAX_CONTAINERS — deaths bypass it). A `mode: 'survival'` save below generation 2 loads in Creative with the §42
+warning. Exports `SURVIVAL_SAVE_VERSION, SAVE_MODES, DEATH_CAUSES, SURVIVAL_STATS, normalizeSurvivalJSON, normalizeContainersJSON,
+isSurvivalSave, unloadableReason`. A Creative world that never entered Survival writes none of the four and serialises
+byte-identically to before (tested). Rename / duplicate / migrate keep all four; the slot index records `mode: 'survival'` for a
+Survival world (`isSurvivalSave`: mode survival and gen ≥ 2) from both entry paths, and `SlotInfo.mode` lets the Worlds panel say
+"· Survival".
 `meta` (§41) is OPTIONAL: the world's name and times, so a slot's document alone says what the Worlds screen lists.
 `serializeSave` writes it LAST whenever `data.meta != null` (a non-object throws a TypeError), canonicalised by
 `normalizeWorldMeta(raw)`: `{ name?, createdAt?, lastPlayed? }` in this order, `name` through `cleanWorldName` (control characters
@@ -791,6 +879,8 @@ with `s = max(dot(dir, sunDir), 0)`, then `#include <colorspace_fragment>`; `fog
 Sun/moon sprites: `depthTest:false / depthWrite:false / fog:false / renderOrder −1`, `transparent: false, alphaTest: 0.5` so they render in the
 OPAQUE pass before terrain, which then overdraws them. Stars per §6. Fog: `new Fog(color, near, far)`.
 Camera: `PerspectiveCamera(FOV, w/h, CAMERA_NEAR, CAMERA_FAR)`. Stats from `renderer.info`.
+v0.9 (§48): `setDigProgress(hit | null, p)` — the honey dig trace (`digTraceVertexCount`, `digTracePositions`,
+`DIG_TRACE_CORNER_ORDER`).
 
 ## 18. `src/controls.js` (DOM)
 
@@ -839,6 +929,9 @@ export function createHUD(doc, atlasCanvas)   // binds to the ids in index.html 
  *  onSlotClick: (slot) => {},              // assignable; fired when a hotbar slot is clicked (only while picker open)
  *  dispose() } */
 ```
+v0.9 (§48): `setSurvivalVisible, setVitals, setHotbarStacks, setActionProgress, setJobChip, addPickup` and the pure `vitalsKey`, …;
+elements `#vitals-left`, `#vitals-right`, `#status-chips`, `#job-chip`, `#action-ring`, `#pickup-layer`, `#pack-glyph`. `setHotbar`
+while the survival hotbar is shown only remembers the ids (Creative's hotbar comes back from them).
 
 ## 20. `src/menus.js` (DOM)
 
@@ -879,6 +972,11 @@ New World is offered on empty slots only, so it never overwrites a world and ask
 slotDetailText, usageLabel, usageLevel, deleteConfirmText, latestSlot` (§41.4).
 v0.8 pause menu (index.html, below "Stop All Rune Scripts"): `#pause-physics.physics-row` = label "Physics" + four `.mc-button.toggle`
 buttons, then `#btn-undo-physics`. CONTROLS_SHEET row R: "Run a Rune Block · light a Blast Barrel".
+v0.9 (§48): callbacks `onNewWorld(slot, name, seedText, { survivalResources })`, `onModeSelect(mode)`, `onWake()`, `onDeathQuit()`
+(and §14's `onGuide()`); Menus adds `setModeState, getModeState, confirm(opts) → Promise<boolean>, showDeath, hideDeath, isDeathOpen`;
+`PhysicsMenuState.survival` disables Undo ("Undo (not in Survival)"); the Worlds rows show "· Survival"; CONTROLS_SHEET keeps 17 rows
+(LMB `Break block (hold) · Survival: hold to dig`, RMB `Place block · Survival: use the item in hand`, E `Blocks · Survival: pack &
+making`, R `Use: rune, barrel, fire, water, plants, basket`, Space Space `Double-tap: fly (or F) · Creative`).
 
 ## 21. `src/audio.js` (WebAudio, optional feel)
 
@@ -900,6 +998,8 @@ export function createAudio()   // → Audio; everything is a no-op when AudioCo
 Synthesis per SPEC-gameplay §9.
 v0.8 trees: `playCreak(v)` (a tree starts to topple, §36.5.3): a 0.6 s sawtooth 85 → 135 → 60 Hz through a 700 Hz lowpass plus a 0.25 s
 1.2 kHz noise rasp. (The explosives branch also wrote a `playCreak`; the merge kept this one, §38.1.2.)
+v0.9 (§48): `playHurt(v), playDeath(v?), playEat(v?), playDrink(v?), playDig(group, v), playCraft(v?), playToolBreak(v?),
+playSizzle(v), playPick(v?)`.
 
 ## 22. `src/diagnostics.js` (DOM)
 
@@ -925,6 +1025,9 @@ export function runSmokeTest(game, win = window)         // Promise<SmokeResult>
  *   teleport(x,y,z), setLook(yaw,pitch), getState() → 'title'|'loading'|'clickToPlay'|'playing'|'paused'|'picker'|'console'|'editor', stepFrame?(dt),
  *   runCommand?(line), runes?, runner? } */
 ```
+v0.9 (§49): `Params.mode` (`readModeParam`), `ui: 'pack'`; the F3 `Survival:` line (`survivalDebugLine`); the debug handle's
+`survival`, `pack` and survival helpers; GameContext's survival members and the states `'pack' | 'book' | 'dead'`; the smoke test's
+switch to Creative and its optional survival step.
 
 ## 23. `src/main.js` (glue; owns the game loop)
 
@@ -1021,6 +1124,9 @@ rendering continues. Closing any modal goes through `enterPlayingFromModal()`: `
   a body. `renderFrame` calls `watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime)`.
 - Diagnostics: `installErrorCapture` → `hud.showError`; `installDebugHandle`; if `params.smoke` → `runSmokeTest(game)` once playing.
 - `window.resize` → `renderer.resize(innerWidth, innerHeight)`.
+- **Survival (v0.9)**: states `pack`, `book`, `dead`; the frame order with its death checkpoints, the queued mode switch, the second
+  `waterHit` ray, hold-to-dig, the R priorities, RMB use, the pack screen, lanes, fire spots and fuel, damage, death and waking,
+  saving and loading: **§49**. Creative's code paths are unchanged.
 
 ## 26. `src/commands.js` (PURE — the command language)
 
@@ -1096,6 +1202,14 @@ console executes with both `null`.
 | `ignite q y r` | y in range and the cell loaded, then `physics.explosions.ignite(q, y, r)` → its `{ ok, message }` |
 | `drain [radius]` | radius `0..DRAIN_MAX_RADIUS` (default DRAIN_DEFAULT_RADIUS) around the rune's cell in scripts, the player's cell (`worldToHex`, `floor(y)`) in the console → `physics.fluids.drain(q, y, r, radius)` |
 All four fail with `block physics is not available here` when the context has no `physics`.
+**v0.9 Survival** (through the optional `ctx.survival`, §49): `mode [creative|survival]` — the new flag **`consoleOnly: true`**
+(only `mode` has it; no command is both scriptOnly and consoleOnly): `executeCommand` fails `mode is only valid in the console` while
+`ctx.running` (a rune's step-on script could otherwise reload the world under the runner); no args → `mode: creative` / `mode: survival
+(Health 87 · Nourishment 64 · Hydration 51 · 36.9 °C)`; with one → `ctx.survival.setMode(m)` (queued) and its message. `vitals
+[full|health|nourishment|hydration|temp|breath] [value]` (prints stats and labels, or sets one, clamped; `~` relative; `full`
+restores all; without a state `no survival state in this world (try mode survival)`). `pack [list|add|clear] [item] [count]` (`add`
+through `resolveItem`, counts 1–9999, `added 12 Rock` / `… (3 did not fit)`). `items [filter]` (8 keys a line). In Survival `fly`
+fails `not in Survival` and `give` fails `in Survival use: pack add <item> [count]`.
 **Area commands** (fill/hexfill/hexring) validate BEFORE writing anything: `total > MAX_FILL_CELLS` → `too large: N cells (max M)`;
 `rune_block` as the fill block → `use setblock for rune blocks`; `bedrock` → `bedrock cannot be placed`; any addressed `y` outside `0..WORLD_HEIGHT−1` → refused; ATOMIC across
 chunks: every covered chunk column must be loaded, else `N cells are in unloaded chunks (nothing changed)`; `world.editCount + total >
@@ -1256,7 +1370,8 @@ A pig is `createBody(x, y, z, { radius: PIG_RADIUS 0.42, height: PIG_HEIGHT 0.9,
 terrain as its own cylinder, swims, hops one-cell ledges and feels black-hole pull). It fits under one-cell overhangs but not
 through one-cell tunnels. At the start of each update a pig that overlaps a solid cell is lifted to `findFreeY(…, floor(y)+1, 3)`
 with its own size (blocks filled into it by commands).
-Pigs never die. Constants `PIG_*` live in config.js.
+Pigs never die **in Creative**; in Survival see §45 (`health`, `wound`, `pruneFar`, `spawnNatural(…, surfaces)`) and §49 (hunting
+and repopulation). Constants `PIG_*` live in config.js.
 ```js
 export function seededRng(seed)                // mulberry32
 export function validatePigsJSON(raw)          // → { pigs: [{x,y,z,yaw}], warnings }: finite numbers, y ≥ −16 (above
@@ -1473,6 +1588,10 @@ Pigs: a walking pig treats a heading as unsafe when a point 0.25, 0.5 or 0.8 ahe
 cell at its feet level or one below (§30 AI step 3; main skips that look-ahead while `campfires.total` is 0 — every CAMPFIRE cell,
 tracked or refused, is in `campfires`, so it costs nothing in a world without fire); a pig whose feet cell is a campfire (and is not already hurt) is
 `hit` from the cell centre and listed in `pigs.scorched` for that update (main plays a squeal within 16 units).
+**v0.9 Survival (§46):** every campfire has seven fire spots (six skewers, the embers), drawn by `campfireRenderer.sync(…, spotsView)`
+(§48); fires **placed in Survival** need fuel and burn out into the meshed FIRE_PIT block (which campfires.js never tracks: no heat,
+light, smoke or safe zone), relit with a fire drill. Fires placed in Creative or saved before v0.9 have no fuel entry and burn forever
+as above. A scorch in Survival also deals FIRE_BURN_DAMAGE (§45).
 
 ## 33. `src/blockphysics.js` (PURE) — the block-physics scheduler, v0.8
 
@@ -1626,6 +1745,9 @@ x, y, z, count, opts)` (§34.5), `knock(body, vx, vy, vz, fromX, fromZ)` (defaul
    Message: `undid the <kind>: restored N block(s)[, removed M still in flight][ (K changed since, left alone)][ (U in unloaded
    chunks)][ (F barrel(s) next to a campfire not given back)][ (L barrel(s) found no room)]` — N counts the event's cells (not the
    barrels given back), M includes the event's lit barrels put out.
+   **v0.9: Undo is disabled in Survival** (SV): it restores every cell the event wrote, which would duplicate whatever the player mined
+   from a toppled tree or a collapse. The pause menu shows `#btn-undo-physics` disabled as "Undo (not in Survival)" and main's
+   `onUndoPhysics` refuses (§42, §49). The console `undo` command is left as it is (it is a debugging tool, like `pack add`).
 ### 33.9 Saving (`exportEdits`, never touches the live world)
 `overlay = new SaveOverlay(world, { keepFlow: !switches.water })`; `fallers.settleInto(overlay)`, `support.settleInto(overlay)` (what a collapse has not brought
 down yet is saved fallen, §36.6.4), `trees.settleInto(overlay)`, `explosions.settleInto(overlay)`;
@@ -1645,7 +1767,7 @@ lastTickUpdates, canUndo }`; `statusText()` is its one-line form (console `physi
 ## 34. `src/fallingblocks.js` (PURE), `src/fallingRenderer.js` and `src/particles.js` (three) — falling blocks, v0.8
 
 ```js
-export const GRAVITY_RULE_IDS        // [SAND, RED_SAND, GRAVEL, CAMPFIRE]
+export const GRAVITY_RULE_IDS        // [SAND, RED_SAND, GRAVEL, ...POP_OFF_IDS] (v0.9; POP_OFF_IDS begins with CAMPFIRE)
 export class FallingBlocks {         // physics.fallers
   constructor(physics)               // registers the 'gravity' rule (fall ring, feature falling)
   count; get tumblerCount; tumblers: Tumbler[]
@@ -1669,6 +1791,10 @@ per cell (a cut 217-column sand tower used to queue thousands). When fewer than 
 instantly (`settleNow`) and the rest animate. The scheduler reads its clock after such an update (≥ 32 writes, §33.1.4), so a tick
 overruns its budget by at most about one column. Falling into a campfire or any water passes through it (v0.8 water,
 §35.6: sand sinks through sources to the bottom; the landing cell's water is crushed).
+**v0.9 pop-off blocks (§47):** every `isPopOff` id (CAMPFIRE, FIRE_PIT, the plants and the litter) behaves as the campfire does here:
+the gravity rule, the blockphysics falling trigger and the gravity reseeder test `isPopOff(id)`, the cell is written AIR, and
+`popOffEffect(id)` gives its puff and sound (a campfire keeps its smoke and 'break:wood'). Popped blocks drop nothing. The `ignite`
+trigger stays CAMPFIRE only. A Survival placement of a pop-off block over a non-solid cell is refused (`needs solid ground`, §44).
 ### 34.2 Column fallers
 1. Kept in typed arrays (id, q, r, y, vy, event) sorted by y (insertion sort per frame — or one index sort when more than 32 were
    spawned since the last sort: columns spawned bottom-up one after another made the insertion sort quadratic) and processed LOWEST
@@ -2309,10 +2435,12 @@ export class Zombies {
    both outside every tracked campfire's zone, and a player standing in a zone (on the fire's level: within 3.87 of it, the fire's
    cell and its three rings) is never struck. A refused strike keeps `attackIn` ≤ 0. A strike SETS the player's horizontal
    velocity to ZOMBIE_HIT_PUSH (6 m/s) straight away from the zombie, `vy = max(vy, ZOMBIE_HIT_LIFT 4)`, `onGround = false`;
-   `attackIn = ZOMBIE_ATTACK_COOLDOWN_S` (1), `swing = SWING_S` (0.35 s, the renderer's lurch); reported in `attacks`. No damage.
+   `attackIn = ZOMBIE_ATTACK_COOLDOWN_S` (1), `swing = SWING_S` (0.35 s, the renderer's lurch); reported in `attacks`. No damage in Creative; in Survival main deals
+   ZOMBIE_DAMAGE (8) per strike (§45, §49) — zombies.js stays mode-agnostic and the push is unchanged.
    Zombies never attack pigs.
 8. Groans: `groanIn` counts down; due → reported (`groans`), reset to 3–8 s while chasing, else 6–16 s.
-`hit(zb, fromX, fromZ)`: ignored (null) while `hurt > 0`; `hits++`; the ZOMBIE_HITS-th (4) hit removes it ('ko'); otherwise velocity
+`hit(zb, fromX, fromZ, power = 1)` (v0.9: the tool's power, §45; anything not a positive number counts 1): ignored (null) while
+`hurt > 0`; `hits += power`; the ZOMBIE_HITS-th (4) hit removes it ('ko'); otherwise velocity
 ZOMBIE_KNOCKBACK (6.5) away from the hitter, `vy ≥ ZOMBIE_KNOCK_LIFT` (4.5), `hurt = ZOMBIE_HURT_S` (0.45 s: red flash and stun,
 `attackIn ≥ hurt`), detour cleared. `knock(zb, v)`: |v| ≥ ZOMBIE_KO_KNOCK (9 m/s) removes it ('ko') — a blast's §37 impulse
 BLAST_IMPULSE·(1 − d/2R) reaches that within about the blast radius R (its BLAST_MIN_UP floor adds a little); weaker knocks add the
@@ -2602,6 +2730,9 @@ export function storageUsage(slots)               // → { used: Σ slot bytes, 
    entries for empty slots, a slot changed behind its back) the slot's document is parsed and the entry rebuilt. With `repair` the rebuilt
    index is written back when it differs (best effort; never when the index is absent and every slot empty); `repair: false` (?nosave)
    writes nothing. Writers refresh their slot's entry after a successful write (best effort: a failed index write only means a rebuild).
+   **v0.9 (adjudicated, C's CONTRACT-ISSUE):** a cached `{ damaged: true }` entry is NOT trusted even when bytes and hash match — the
+   slot is parsed again. A v0.8 tab lists a version-3 (Survival) world as damaged in the shared index, and trusting that would offer a
+   good world for deletion only. (Cosmetic leftover: such a world's "· Survival" label is lost from the index until it is saved again.)
 
 ### 41.2 Writing (never lose the previous save)
 `saveSlot` serialises first (a TypeError → 'invalid', nothing touched), writes the whole document with ONE `setItem` (Web Storage leaves
@@ -2645,6 +2776,425 @@ in slot N?`) — with Delete (`#confirm-yes`, fires onDeleteWorld) and Cancel (`
 cancel and give the focus back; Tab stays on the two buttons). Keyboard: every control is a real button / input; ArrowUp / ArrowDown
 move between rows (same button position), ArrowLeft / ArrowRight along a row; showTitle focuses `focusSlot`'s row, else the last played
 world's Play, else the first New World. `#splash-text` has `pointer-events: none` (it can sit over the panel in narrow windows).
+
+## 42. Survival mode (v0.9) — the switch, generation 2, the save fields, and Creative's guarantees
+
+Design and rationale: `docs/DESIGN-survival.md` (its §13 Decisions and §14 Handbook win over its earlier text); this section and
+§43–§49 are the normative summary as merged. **Creative and every existing world keep working exactly as before.**
+- **SV / S.** "In Survival" (SV) = `survival.inSurvival` (mode `'survival'`, dead or alive): it drives every UI and input branch.
+  "Survival active" (S) = `survival.active` (in Survival and not dead): it gates the vitals, the craft lanes, fire spots and fuel,
+  regrowth, spoilage and pig repopulation. Nothing survival steps otherwise, and nothing catches up on a backlog (pitfall 28).
+  The stat stored as `satiation` is shown as **Nourishment** everywhere; the key stays `satiation`.
+- **The switch.** Pause menu `[ Creative | Survival ]` (`#btn-mode`, §48), console `mode creative|survival` (console only, §49),
+  URL `?mode=` (first world only, with `?autoplay`/`?smoke`, §49). Every one calls main's `requestMode(mode)`, which only sets
+  `pendingModeSwitch`; main applies it at the top of the next frame while PLAYING, PAUSED, CONSOLE or EDITOR (an open console or
+  editor is closed first). Never switched inside a command, a hook or a step (pitfall 31). The death screen is modal: no switch
+  while dead.
+- **Creative → Survival** (`survival.setMode`): a generation-1 world is upgraded first (below). Without a survival state one begins
+  (§45 new values; an empty pack plus the Handbook in slot 8, §43) with the chat line `SURVIVAL_INTRO` (+ `HANDBOOK_INTRO` when the
+  Handbook was given; in DESERT, SNOWY, MOUNTAINS, SNOWY_PEAKS also "This land is harsh: green land lies near q Q, r R." from
+  `world.findSurvivalSpawn()`); with one, it comes back exactly as left. Flight off, `fallGrace` set (`landSpeed` zeroed), the HUD swaps
+  to the hex hotbar and the vitals, Undo is disabled (§33.8).
+  **Survival → Creative**: the survival state (vitals, pack, wear, fire spots and fuel, Sleeping Hide) is frozen and kept in the save;
+  the creative `hotbar` comes back unchanged. No item ever moves between the two inventories (pitfall 30). The world is shared.
+- **Generation 2** (§47). `gen` save field: absent = 1 (today's terrain, byte for byte); `gen: 2` adds the survival resources. New
+  worlds: the New World form's checkbox "Survival resources (wild plants, ponds, copper and tin)", checked by default → GEN_LATEST
+  (2), unchecked → 1 (`main.loadingGen`). Old worlds stay generation 1 until first switched to Survival: the pause menu asks
+  (`menus.confirm(UPGRADE_CONFIRM)`: "Bring survival resources into this world?" / "Copper, tin, clay, wild plants, ponds and new
+  trees will appear wherever the land is untouched — near your builds too. This cannot be undone." / `Bring them` / `Cancel`; after the
+  await it continues only if still PAUSED in the same world); the console does not ask. The upgrade, exactly:
+  `data = buildSaveData(); data.gen = GEN_LATEST; data.mode = 'survival'; data.player.flying = false; if (!nosave) saveSlot(currentSlot,
+  data); startLoading(world.seed, data)` — gen and mode reach the store together — then the chat line "Survival resources have come
+  to this world." A save with `mode: 'survival'` and no `gen ≥ 2` (hand-edited) loads in Creative with the warning
+  `mode: survival needs generation 2; loaded in Creative` (storage.js and `main.loadingMode` both apply it).
+- **Save fields** (§14), after `watcherNight`, before `meta`, in this order: `gen` (integer ≥ 2 only), `mode` (only once the world has a
+  survival state), `survival` (§45 vitals + `pack`, `wear` + `fires`, §46), `containers` (§43, only when non-empty). **Version 3**
+  exactly when `gen ≥ 2` or `survival` is present, else 2 — so an older client shows such a slot as damaged (never overwritten)
+  instead of silently regenerating gen-1 terrain under gen-2 edits, and **a Creative world that never entered Survival serialises
+  byte-identically to before, still version 2** (tested). `main.survivalSaveFields({ gen, survival, pack, fireSlots, containers })`
+  builds the four fields.
+
+## 43. Items, the pack and containers — `src/items.js`, `src/inventory.js`, `src/containers.js` (PURE)
+
+```js
+// items.js (imports blocks only; deep-frozen; Map lookups, so '__proto__' is just unknown; throws at import on a duplicate key or name)
+export const TIER /* {HAND 0, STONE 1, FLINT 2, COPPER 3, BRONZE 4, IRON 5, STEEL 6} */, TIER_NAMES, TIER_SPEED /* [1,1.5,2,2.6,3.4,4.5,6] */,
+  TOOL_TYPES, WEAR_SLOT_NAMES /* ['head','body','feet'] */, TAGS /* log, planks, fuel (coal then charcoal), tinder, knapstone, sand */;
+export const ITEMS, ITEM_KEYS   // display order: tools, materials, food, heal, wear, then blocks in PICKER_ORDER order
+export function getItem(key), isItemKey(key), stackSize(key) /* 0 unknown */, maxDurability(key) /* 0 none */, itemForBlock(id),
+  blockForItem(key) /* −1 */, hasTag(key, tag), itemName(key) /* '?' */, resolveItem(token) /* {key}|{error} */
+/** ItemDef = { key, name, kind: 'block'|'material'|'food'|'heal'|'wear'|'tool', stack, block?, tool?: {type, tier, durability, power},
+ *   food?: {satiation, hydration, sick (fraction), useS, temp?, returns?, spoilS?}, heal?: {hp, rate, useS},
+ *   wear?: {slot, insulation, sunShade}, tags? }   ItemStack = { k, n ≥ 1, d? (durability left; absent = new) } */
+```
+Every placeable block except WATER has a block item (key = block name, stack 64); `honeyberry_bush` / `prickly_pear` place their
+picked (`_BARE`) block, and both variants map back to the ripe item (a transplant must regrow). LOOSE_STONES, FALLEN_BRANCHES,
+FIRE_PIT and REMAINS have no item. Tools have stack 1 and never stack; two stacks merge with the same `k`, no `d`, within the stack
+size. The full registry is DESIGN-survival §5.1 (tested item by item).
+**The Pack** (`new Pack()`): `slots` (PACK_SLOTS 27; 0–8 the hotbar = HOTBAR_SIZE) and `wear` (3: head, body, feet); `version` bumps on
+every change (`touch()` after an in-place change). `add(stack)` merges into same-key stacks 0 → 26, then fills empties 0 → 26, returns
+the overflow (main: "Pack full: 2 Rock left behind", once per 2 s); `addAll`. PackOps (what crafting.js and the actions use): `count,
+countTag, take / takeTag` (from slot 26 back to 0; tag members in TAGS order; return the count taken), `canGive(list)` (all together,
+nothing changes), `give(key, n) → leftover count`, `hasTool(type, minTier)`, `useTool(type, minTier) → {key, broke}|null` (the lowest
+qualifying tier, ties to the least durability left, then the higher slot). Also `toolAt(i), consume(i, n), damage(i, n) → {key,
+broke}|null` (breaks at 0), `equip(i)` (swap with the worn item of its slot), `unequip(w)`, `insulation()` (Σ I), `sunShade()` (max),
+`dumpAll()` (death; v0.9 §14: `KEEP_ON_DEATH` items stay), `spoil(dt, random)`, `hotbarSlotOf(key)` (middle mouse), `export() → {pack,
+wear}`, `load(json) → warnings`. Pure `slotClick(session, area, index, button, shift) → {changed, container, discarded[, refused]}`
+implements every pack-screen rule (left: pick up / put / merge / swap; right: half / one; wear slots take only their wear items; shift
+quick-moves pack → open container, else hotbar ↔ rosette, container → pack, wear → pack; `'discard'` destroys the cursor stack — never
+the Handbook, which comes back with `refused` "The handbook stays with you."), and `returnCursor(session)` (closing with a cursor
+stack). main calls `containers.touch()` when `container` is true. **Spoilage** is stateless: while S, once a second, each perishable
+stack loses 1 with probability `min(1, n·dt / food.spoilS)`, in the pack (chat "1 Raw Pork went bad.", once per 2 s) and in every
+basket / belongings entry whose chunk is loaded.
+**Containers** (`new Containers()`, keys `"q,y,r"`): kinds `basket` (WICKER_BASKET, BASKET_SLOTS 18) and `remains` ("Your Belongings",
+REMAINS, ≤ REMAINS_SLOTS 30). `onBlockChange` (main forwards every write, in every mode): a cell becoming WICKER_BASKET gets an empty
+entry (at most MAX_CONTAINERS 1024; beyond it the basket has no storage: hint `Basket · too many containers in this world`); a cell
+with an entry changing to anything else releases its stacks — into the pack when the player broke it in Survival (main's
+`releaseToPack`), otherwise lost. `ensureBasket, hasItems, contents, takeAll(q, y, r, pack) → {moved, empty}` (overflow stays inside;
+main writes AIR when empty), `addRemains(q, y, r, stacks)` (a death always gets its entry, beyond the cap), `spoil(dt, random,
+isLoadedCell)`, `size, version, touch, export()` (keys sorted; empty baskets too) / `load(json) → warnings`. Saved as `containers`,
+validated against the repaired `edits` like runes (§14).
+**The Survival Handbook** (DESIGN-survival §14, package H): item `handbook` (non-block, stack 1, never spoils, no recipe). When a
+survival state begins, `handbook.ensureHandbook(pack)` puts it in the last hotbar slot (8, else the last empty slot); it is never put
+into Your Belongings (`inventory.KEEP_ON_DEATH = ['handbook']`) and is given back on waking if missing; the discard hex refuses it; a
+second copy cannot be made. R (priority 10, §44) or RMB with it selected, or `onRead` in the pack screen, opens the field book (§48).
+
+## 44. Harvesting — `src/harvest.js` and `src/survivalControl.js` (PURE)
+
+```js
+// harvest.js
+export const BLOCK_RULES                      // index = block id: { h (s by hand), tool, tier (0 = hands allowed), drops: DropGroup[] } | null
+export function ruleFor(id), canHarvest(id, tool), breakSeconds(id, tool, underwater) /* Infinity = cannot */, harvestHint(id)
+export function rollDrops(id, tool, { natural, knifeInPack }, random) → ItemStack[]   // aggregated by key; [] when it cannot
+export const PICKABLE; export function isPickable(id), pick(id, ctx, random) → { to, drops } | null
+export function tap(id, selectedKey, knifeInPack) → { gives: 'pot_sap', takes: 'clay_pot', wears: 'knife' } | null
+export class Tapped { canTap(key, day), mark(key, day), clear() }          // once per birch cell per game day; not saved
+export class Regrowth { track, untrack, onBlockChange, loadFromEdits(edits), step(dt, random, isLoadedCell) → [{q,y,r,id}], clear, size }
+export const MOB_DROPS; export function rollMobDrops(kind, random), toolPower(tool) /* hand 1 */, ripeOf(id)
+```
+`breakSeconds = max(0.05, h / speed) × (underwater ? 2.5 : 1)`, `speed = TIER_SPEED[tier]` with the rule's tool type, else 1;
+a rule with `tier > 0` needs that tool type of at least that tier (else Infinity: hint `Iron Ore · needs a bronze pick or better`).
+Drops are groups; each group gives the first branch whose condition holds (tool type, or `knifeInPack` = a knife ≥ 2 anywhere in the
+pack); `natural` items only from a cell that had **no edit before the break** — main computes `!world.hasEdit(q, y, r)` BEFORE
+writing AIR (the write records an edit; checking after would make every natural drop, and all flint, impossible). The table is
+DESIGN-survival §6.3 (every block id has an entry; AIR, BEDROCK and the water family are null = unbreakable). Highlights: there is no
+stone pick (rock needs a flint pick, tier 2); leaves give a stick and themselves only to an axe; loose stones rock 1–2 + flint p 0.5
+natural; STONE rock 2 + flint p 0.05 natural; obsidian and gems need only a flint pick; tin a copper pick; iron and gold a bronze pick.
+Regrowth tracks picked bushes and pears (≤ MAX_REGROW_TRACKED 4096); while S main calls `step(1, …)` once a second and writes each
+returned cell's ripe id LAZILY (`world.setBlock(q, y, r, id, true)`, which prunes a wild bush's edit) when the cell still holds the
+picked id. Broken plants and litter never come back.
+**survivalControl.js** (main's input state machines and choices, unit-tested instead of hand-written into main):
+`DigState.step(dt, target, held, need, handKey) → { progress, done, tick }` (accumulates on the same cell + id + hand; any change,
+a release or `reset()` resets; ticks on the first frame and every DIG_TICK_S, every 0.5 s for a block it cannot break; `done` stays
+until `reset()`, which main calls after a break and when a modal opens); `UseState.step(dt, action, held) → { progress, done }` (one
+use per `needS`, the next after USE_REPEAT_GAP_S; `repeat: false` once per hold); `handKeyOf(selected, stack)` (durability left
+out: wear does not reset a dig, a tool breaking does); `useActionOf(stack)` (RMB: eat / drink (food that returns a pot) / bandage /
+wear (needS 0, once) / place); `placeRefusal(getBlock, id, q, y, r)` (`needs solid ground` for a pop-off block over a non-solid
+cell); `strikeKind(mob, tool)` (bare hands only shove a pig); `chooseBelongingsCell` (§45); `buildPackView` (§48); `HINT`,
+`STATION_OF_BLOCK`, `STATION_TABS`, `KNIFE_TIER` 2, `waterHint`.
+**`interactKind(ctx)`** — R in Survival, the first that applies: 1 CAMPFIRE → `fire_put` (a skewer food or centre pot selected and a
+free spot of that kind) / `fire_feed` (a stick or `#log`) / `fire_take` / `fire_hint`; 2 FIRE_PIT → `pit_take` / `pit_relight`
+(drill, 1 `#tinder`, 3 sticks; held RELIGHT_HOLD_S) / `pit_hint`; 3 ripe bush, prickly pear, loose stones, fallen branches → `pick`
+(whatever is in the hand); 4 BIRCH_LOG → `tap` (empty clay pot selected, knife ≥ 2 in the pack, not tapped today; held TAP_HOLD_S) /
+`tap_hint`; 5 WICKER_BASKET → `basket`, REMAINS → `belongings`; 6 SLEEPING_HIDE → `hide`; 7 a workplace → `station`; 8 water →
+`fill` (empty clay pot selected) / `drink` (anything else in hand); 9 head under water → `drink_here`; 10 (§14) the Handbook
+selected → `read`; null → today's barrel and rune behaviour. **Adjudicated (B's CONTRACT-ISSUE):** where DESIGN-survival §9.4
+lists cases 1–7 before water and §4.2 says R uses `waterHit` whenever its water is nearer than `hit`, §4.2 wins: water in front of a
+block takes the R (they differ only for a block seen through water). ctx = `{ hit, waterHit, headInWater, selectedKey, pack,
+fireView (cooking FireSlots.view), fireSpotKind (main: cooking.isSkewerFood → 'skewer', isCentrePot → 'centre'), tappedToday,
+salty (climate.isSaltyBiome of the column) }`.
+
+## 45. The body — `src/vitals.js`, `src/climate.js`, `src/survival.js` (PURE); physics, bodies, pigs and zombies additions
+
+Every number is DESIGN-survival §2–§3, by name: `vitals.RATES`, `climate.*` constants, `config` (STAT_MAX, BREATH_MAX_S 20,
+BREATH_REFILL_PER_S 5, BODY_TEMP_NORMAL 37, BODY_TEMP_MIN 25 / MAX 45, SICK_MAX_S 600, HEAL_MAX 50, FALL_SAFE_SPEED 13.5, FALL_DAMAGE_K
+0.1, CRUSH_DAMAGE_PER_CELL 6, ZOMBIE_DAMAGE 8, FIRE_BURN_DAMAGE 4). Rates are per real second.
+- **Stats** health 0–100, satiation ("Nourishment") 0–100, hydration 0–100, temp 25–45 °C, breath 0–20 s, wet 0–1, sick 0–600 s,
+  heal (pending bandage HP) 0–50. New: 100 / 80 / 80 / 37 / 20. **Waking**: health 60, satiation and hydration max(current, 50),
+  37 °C, full breath, dry, well, nothing pending.
+- **Drain** satiation 0.0556 × activity × coldFactor × sickFactor, hydration 0.0833 × activity × heatFactor × sickFactor; activity is
+  the largest of still 1, walking 1.4, breaking 1.8, swimming 2.2, sprinting 2.5. heatFactor and coldFactor are the only temperature
+  terms. **Regeneration** 0.12 HP/s (× 2 still ≥ 3 s within 4 of a burning campfire) needs satiation ≥ 50, hydration ≥ 50, body
+  35.5–38.5, not sick, breath > 0; each HP costs 0.25 satiation. Bandages pay out queued HP at 1.5 / 2.5 HP/s whatever else holds.
+- **`statusOf(v, {headInWater, buried}) → { canSprint, moveFactor (≥ 0.6), regen, labels }`** (§2.3 table). Of each pair only the
+  worse label shows (Starving replaces Hungry, Parched replaces Thirsty) — D's choice, kept. **Adjudicated:** Hypothermic (< 31 °C)
+  also forbids sprinting (the milder Cold and Freezing rows do; the table omitted it). Main applies `input.sprint &&= canSprint` and
+  `input.speedFactor = moveFactor` while S (1 otherwise).
+- **Damage over time** starve 0.35, thirst 0.7, cold 0.4 (Freezing) / 1.5 (Hypothermic), heat 0.4 (Overheating) / 1.5
+  (Heatstroke), drown / buried 8 at breath 0, sick 0.15 (never below 10 HP: sickness never kills alone).
+- **Climate** (`climate.js`): `baseTemperature(biome, T) = 12 + 22·T` (DESERT +4, SNOWY −4, OCEAN/BEACH halfway to 16);
+  `airTemperature` adds the diurnal swing A[biome]·cos(2π(t − 14:00)) and −0.25 °C per cell above y 64, except underground (the daily
+  mean); `feltTemperature(ClimateInput) → {air, felt}` adds sun (open sky, by day, × (1 − sunShade)), shelter +3 (no open sky and air
+  < 10), heat sources (Σ heat·(1 − d/radius)², ≤ 30, from the chest = feet + CHEST_HEIGHT; campfire 20/6 measured to fire.y + 0.3,
+  kiln 12/4, bloomery 16/4, forge 22/5 while their lane runs a job), insulation I·(1 − 0.6w)·(1 − 0.5·wet), exertion (+1/+2/+2/+4),
+  ground −2 on snow or ice, −6·wet; in water `waterTemp + 0.25·I + 2`. `bodyTarget(felt, inWater)`; body temp moves with τ 120 s away
+  from 37, 40 s back, × 0.3 in water. `isSaltyBiome(biome)`: OCEAN or BEACH water is salt, all other water fresh.
+- **`Survival`** (`survival.js`): `mode, hasState, switchVersion, vitals, spawn ([q,y,r] Sleeping Hide | null), deaths, dead (cause |
+  null), fallGrace, felt, air`; getters `inSurvival, active, status`; `setMode(mode) → changed` (only main's switch calls it; begins a
+  state on first entry; refused while dead), `begin()`, `step(dt, SurvivalEnv) → { damage, causes, died, felt, air, fall, pulse }`
+  (order: the fall — `landSpeed` consumed, no damage under fallGrace, any landing clears it; breath; wet; felt and body temperature;
+  drains, regeneration, bandages; damage over time; death by the cause that dealt the most), `damage(amount, cause) → killed`,
+  `eat(key, random) → { ok, message?, returns? }`, `drink(salty, random) → line` (fresh +8 with 1 % Sick; salt −4, "Salt water only
+  makes you thirstier." at most once per 5 s), `bandage(key)`, `respawn()`, `setVital(name, v)`, `restoreVitals()`, `export()` (§14
+  canonical order, 3 dp, `dead` only while dead) / `import(json)` (null → no state). `DEATH_TITLES` / `deathTitle(cause)`,
+  `BELONGINGS_KEPT`, `BELONGINGS_LOST`. SurvivalEnv = `{ player, softFactor, breaking, moving?, still?, buried, climate: {biome, climateT,
+  openSky, underground, groundChill}, heat, nearFire, insulation, sunShade, time, random }`.
+- **Damage sources** (cause keys, `vitals.DAMAGE_CAUSES`): `fall` `0.1·(v² − 13.5²)` × the softest landing factor under the feet
+  (SNOW_BLOCK 0.4, leaves and HAY_BALE 0.6, wool 0.7, SLEEPING_HIDE 0.9) — 3 cells safe, 21 survivable from full health, 22 kills;
+  water cushions; `drown`, `buried` (findFreeY null and the eye cell solid); `crush` 6 × cells lifted by unstickPlayer (not on a
+  teleport frame, under fallGrace or on top of a blast / log hit); `fire` 4 per scorch (≤ 1 / 0.5 s); `zombie` 8 per strike; `blast` /
+  `log` `knockDamage(|Δv|) = 6·max(0, |Δv| − 5)`; `blackhole` and `void` (feet below y −32): death, belongings lost; `starve`,
+  `thirst`, `cold`, `heat`, `sick`; `command` (`vitals health 0`). Death titles: DESIGN-survival §2.5 table.
+- **Physics** (§12): `stepPlayer` sets `p.landSpeed = 0` on entry (after its dt guard) and records the fastest downward impact before
+  zeroing vy (in every mode; standing records one substep of gravity, ≈ 0.47 m/s — harmless, and it lets "any landing clears
+  fallGrace" work). **Consume semantics:** `survival.step` reads `landSpeed` and sets it to 0, so a stale value is never applied twice;
+  main zeroes it whenever it sets fallGrace (switching to Survival, loading it, every `game.teleport`). `input.speedFactor` (0..1,
+  absent 1) scales the horizontal target speed on foot, never in flight. `bodies.standOn` records `landSpeed` too (landing on a mob
+  counts).
+- **Pigs** (§30): `spawn` sets `health = PIG_HEALTH` 5 (not saved: pigs heal on reload); `wound(pig, power, fromX, fromZ) → 'hit' |
+  'dead' | null` (null during `hurt`); `pruneFar(x, z, isLoadedCell, minDist)`; `spawnNatural(…, surfaces = [GRASS_BLOCK])`. Creative
+  only ever calls `hit`, so pigs never die there. **Zombies** (§39): `hit(zb, fromX, fromZ, power = 1)`; mode-agnostic — main applies
+  the damage.
+
+## 46. Making and fire — `src/crafting.js`, `src/cooking.js` (PURE)
+
+```js
+// crafting.js (PackOps only: no inventory import)
+export const STATION_IDS /* hand, stump, kiln, bloomery, forge */, STATION_BLOCKS, STATION_NAMES, RECIPES /* 89 */, TAG_LABELS;
+export function stationOfBlock(id), findStations(getBlock, q, y, r) → { hand: true, stump?: [q,y,r], kiln?, bloomery?, forge? },
+  getRecipe(id), recipeName(rec), inputLabel(inp), toolLabel(type, tier), listRecipes(pack, stations, { station?, queue? }) → RecipeView[]
+export class CraftQueue { enqueue(recipeId, times, pack, stations) → { ok, message, queued }, step(dt, pack, stationCheck, playerCell)
+  → { done, failed, broke, lost, messages }, cancel(lane, i), lanes(), jobs(), chipText(), clear(), size, version }
+```
+Recipes: DESIGN-survival §7.3 (37 hand, 12 stump, 21 kiln, 4 bloomery, 15 forge; ids unique; a packing recipe uses 3, 6, 7 or 12 of an
+input, never 4 or 9 — tested). A workplace is **near** within hex distance STATION_RANGE 3 of the feet cell and |dy| ≤ 2
+(`findStations`, refreshed every CLIMATE_SAMPLE_S and when the pack screen opens). **Lanes:** one per station; each lane's head job
+runs alongside the others. Queueing needs the station near (the job remembers its cell), room under MAX_CRAFT_JOBS 8 across all
+lanes, the tools, and the inputs of every queued job in every lane plus this one (exact keys first, then tags in TAGS order); ×5
+queues as many as fit. A head job runs while its station cell still holds the station and lies within STATION_WORK_RANGE 16 of the
+feet column at any height (else it waits, "Kiln too far"); hand jobs never wait for range; a vanished station fails the job ("Couldn't
+make Charcoal: the Kiln is gone."). Completion is atomic: wait while the outputs do not fit ("Pack full"), fail on missing inputs or
+tools, else take the inputs (the queue-wide allocation), wear each tool once, give the outputs. Inputs are only consumed on
+completion, so lanes are never saved or refunded (a reload, a death or a switch to Creative drops them). **Adjudicated (C's
+CONTRACT-ISSUE):** `step`'s third argument is a block reader `stationCheck(q, y, r) → id` (main passes `world.peekBlock`: UNLOADED or
+a non-integer reads as not loaded → the job waits) — a findStations result only covers 3 cells, not the 16-cell work range.
+**Adjudicated (B's and C's CONTRACT-ISSUE): `lanes()` → `[{ station, label, jobs: [{ id, name, progress 0..1, secondsLeft, waiting:
+boolean, reason }] }]`** (busy lanes only, station order) is the one shape; `survivalControl.buildPackView` maps it to the screen's
+`{ name, progress, waiting }`. `chipText()` = the HUD job chip (`Kiln · Copper Ingot 12 s`, `+2` with two more lanes busy).
+```js
+// cooking.js
+export const FIRE_TRANSFORMS /* key → { to, seconds, spot: 'skewer'|'centre' } */, SKEWER_FOODS, CENTRE_POTS, SKEWER_ANGLES, SKEWER_SPOTS 6, EMBERS_SPOT 6;
+export function isSkewerFood(k), isCentrePot(k), spotKind(i), spotAccepts(i, k), hasCooked(k), fuelSeconds(k), formatFuel(s),
+  fireKey(q, y, r), parseCellKey(key), normalizeFiresJSON(raw, { prefix?, cellOk? }), fireHint(view)
+export class FireSlots { put(q, y, r, key, facing) → spot | −1, canPut, takeReady(q, y, r, give?) → ItemStack[], hasItems, light(q, y, r, fuel),
+  addFuel(q, y, r, s) → 'ok'|'full'|'untracked', fuel(q, y, r), step(dt, isBurning, isLoaded) → { burntOut, cooking },
+  onBlockChange(q, y, r, prev, next) → ItemStack[], view(q, y, r) → { spots: ({k, progress, secondsLeft, next}|null)[7], fuel } | null,
+  export(), load(json), clear(), size, version }
+```
+Every CAMPFIRE has FIRE_SPOTS 7 spots: 0–5 green-wood skewers at the corner stones (angle 60k − 90°), one skewer food each; 6 the
+embers, one pot. `put` takes ONE item to the free spot of its kind nearest `facing` (main: the angle from the fire toward the player).
+Each spot has its own timer and transforms chain (raw pork → roast 20 s → charred 40 s more). `takeReady` takes every spot that has
+finished at least one transform, or everything when none has; with `give` (main: `pack.add(...) === null`) what does not fit stays.
+**Fuel (Survival-placed fires only):** a campfire placed while in Survival gets `light(…, CAMPFIRE_FUEL_START_S 300)`; feeding adds
+FUEL_STICK_S 40 / FUEL_LOG_S 300 up to CAMPFIRE_FUEL_MAX_S 1200 (`full` → hint `The fire is fully fed`); fuel counts down only while S
+and the chunk is loaded; at 0 `step` reports it in `burntOut` ONCE and main writes FIRE_PIT (a plain `world.setBlock`). A fire pit is a
+meshed cutout block: no heat, light, smoke or safe zone; its spots stay, frozen (R takes them). Relighting (hold R RELIGHT_HOLD_S 3 on
+an empty pit with a fire drill, 1 `#tinder`, 3 sticks; costs the drill 1 wear) writes CAMPFIRE with `playerSetBlock` and
+`light(…, 300)`. **Fires with no fuel entry** (placed in Creative, or from before v0.9) burn forever (`untracked` → `This fire needs
+no fuel`); a Survival visit never turns them into pits. `onBlockChange` keeps the spots across CAMPFIRE ↔ FIRE_PIT (a burn-out drops
+the fuel entry; an entry left with nothing is forgotten) and releases them on any other change — into the pack when the player broke it
+in Survival, else lost. Runtime cap MAX_FIRE_SLOTS 256 (a 257th new fire burns forever, as a reload would). **Adjudicated (C's
+CONTRACT-ISSUE):** a saved spot is kept when its item can be on that kind of spot — anything put there or anything the fire makes of it
+(`spotAccepts`, the transform chain), not only keys with a FIRE_TRANSFORMS entry, which would throw every finished item away on reload.
+
+## 47. World generation 2 — blocks 76–94, tiles 77–104, ores, ponds, flora, species, pop-off
+
+- **Blocks** (§5): COPPER_ORE 76, TIN_ORE 77, HONEYBERRY_BUSH 78, HONEYBERRY_BUSH_BARE 79 (not placeable), TUSSOCK 80, CATTAILS 81,
+  TUBER_PLANT 82, PRICKLY_PEAR 83, PRICKLY_PEAR_BARE 84 (not placeable), WORK_STUMP 85, KILN 86, BLOOMERY 87, FORGE 88, WICKER_BASKET 89,
+  SLEEPING_HIDE 90, REMAINS 91 ("Your Belongings"), LOOSE_STONES 92, FALLEN_BRANCHES 93, FIRE_PIT 94 ("Cold Fire Pit") — the last four not
+  placeable; **BLOCK_COUNT 95**. PLANT = solid false, opaque false, LAYER_CUTOUT, cullSame false, sound leaves unless stated; REMAINS,
+  litter and FIRE_PIT use the same flags. They are walk-through, not load-bearing, NOT replaceable (break first) and NOT fall-through.
+  Predicates: `isPlant` (78–84, `PLANT_IDS`), `isLitter`, `isPopOff` (CAMPFIRE, FIRE_PIT, plants, litter — `POP_OFF_IDS`, 11 ids),
+  `isStation` (the four workplaces), `isContainerBlock` (WICKER_BASKET, REMAINS). PICKER_ORDER has 80 entries (copper and tin ore after
+  DIAMOND_ORE; the five plants after PUMPKIN; the six workplaces and containers before CAMPFIRE; RUNE_BLOCK, WATER last).
+- **Tiles** 77–104 (`TILE_IDS` 115); original procedural art (tiles.js comments are normative). Short blocks (TUSSOCK, TUBER_PLANT,
+  LOOSE_STONES, FALLEN_BRANCHES, FIRE_PIT) have the all-clear `PLANT_TOP_CLEAR` (101) on top and bottom, so `averageColor` of their top is
+  [0, 0, 0]: **particles.blockParticleColor falls back to the side tile when the top has no opaque texel** (v0.9 fix; dust is never black).
+- **`createWorldGen(seed, { gen = 1 })`** (§8): anything not an integer ≥ 1 is 1, above GEN_LATEST clamped. Generation 1 is byte-identical
+  to before (pinned checksums). Generation 2, in order inside `generateChunk`: `ORE_TABLE_GEN2` rows appended after ORE_TABLE (oi 6–8;
+  copper y 30–80, tin y 20–64, clay y 52–62 replacing sand, gravel and dirt; every gen-1 vein unchanged); hex **ponds** (POND_CELL 20
+  jittered grid; a centre in PLAINS / FOREST / SNOWY with every column within 2 at height ≥ H, those biomes, no trunk within 2: WATER
+  (SNOWY: ICE) at y = H within distance 1, CLAY under it, cattails / loose stones on part of the rim); **trees** through `treeTrunkAt(kq,
+  kr) → { tq, tr, height, trunk, biome, species } | null` (exactly the gen-1 acceptance test; never consults ponds) with species SNOWY →
+  spruce, FOREST → birch when `((hsh >>> 24) & 3) === 0`, else oak; the surface pass `placeFlora` from `FLORA_TABLE` — an array indexed
+  by BIOME id (null for OCEAN and SNOWY_PEAKS) of `{ surface, rows: [{ id, chance, top?, minHeight?, maxHeight?, besideBelow? }] }`,
+  one roll per column compared with cumulative chances (`top: true` replaces the surface with GRAVEL; plants and litter go at height + 1).
+  The generator exposes `gen`, `pondAt(q, r)` (true only for pond water columns), `treeTrunkAt`, `FLORA_TABLE`; the module also
+  `ORE_TABLE_GEN2, FLORA_TABLE, POND_CELL, POND_SALT, FLORA_SALT`. A warm gen-2 chunk stays within the 8 ms budget.
+- **World** (§9): `new World({ …, gen })`, `world.gen`; `columnAt(q, r) → { height, biome, temperature }` (a fresh object from the
+  generator); `findSurvivalSpawn()` — findSpawn's spiral accepting only PLAINS / FOREST at height ≥ SEA_LEVEL + 2, falling back to
+  `findSpawn()`, cached per world, returns copies; `findSpawn` and Creative are unchanged.
+- **Pop-off** (§34): `fallingblocks.GRAVITY_RULE_IDS = [SAND, RED_SAND, GRAVEL, ...POP_OFF_IDS]`; the gravity rule, the falling trigger
+  and the gravity reseeder treat `isPopOff(id)` like CAMPFIRE: the cell is written AIR when its floor becomes fall-through, with
+  `popOffEffect(id)`'s puff (plants 6 leaves, prickly pear green dust, stones and the pit grey dust, branches bark dust; sounds
+  break:leaves / break:stone / break:wood); popped blocks drop nothing. The `ignite` trigger stays CAMPFIRE only.
+
+## 48. Survival screens, rendering and sound — hud, menus, packUI, itemIcons, itemArt, handbookUI, renderer, campfireRenderer, audio
+
+- **Look** (DESIGN-survival §11): every survival element uses the pack palette (dark #1c1a24, honey #e8b04a, ember #d0582a) and
+  `.hex-button`; none uses `.mc-button` or `.picker-panel` (tested). No hearts, drumsticks, bubble rows, square slot grids, crack
+  textures or diagonal tool icons.
+- **hud.js** adds (each touches the DOM only when its rounded value changes: health / nourishment / hydration to integers,
+  temperature and felt to 0.1, breath to its edge count `ceil(breath / (BREATH_MAX_S / 6))`; pure `vitalsKey`):
+  `setSurvivalVisible(on)`, `setVitals({ health, satiation, hydration, temp, felt, breath, labels, target? })` (the bookends
+  `#vitals-left` Health + Nourishment and `#vitals-right` Hydration + the body-temperature gauge with a ▲/▼ trend; Breath is the Health
+  cell's six-edge border, ember-pulsing at 0; `#status-chips` coloured by kind), `setHotbarStacks(pack.slots | null, selected,
+  version)` (the hex survival hotbar, slots 0–8, redrawn when `version` or `selected` changes; null → Creative's hotbar back from the
+  ids last given to `setHotbar`; main passes the live array every frame, no copy), `setActionProgress(p | null)` (`#action-ring`),
+  `setJobChip(text | null)` (`#job-chip`), `addPickup(key, n, {x, y} | null)` (a 16 px hex token flies to its slot, or the pack
+  glyph, which pulses). **Adjudicated (E):** the bookend cells are 38 × 44 px pointy-top hexes (a 44-wide cell is 51 tall, which left
+  13 px for the chips under `#chat-log`), bottoms 8–52 px, chips 54–70 px.
+- **menus.js** adds: the Mode switch (`#pause-mode` row after Creatures, `#btn-mode` with halves `#btn-mode-creative` /
+  `#btn-mode-survival`, the active one honey with `aria-pressed="true"`; `setModeState(mode)`, `getModeState()`; callback
+  `onModeSelect(mode)` from the inactive half only); `PhysicsMenuState.survival` (Undo disabled, `undoButtonLabel(canUndo, kind,
+  survival)` → "Undo (not in Survival)"); the death screen `#death-screen` (z 33: a honeycomb SVG mask closing ring by ring over 1.2 s
+  on #1c1a24 at 85 %, `#death-title` in honey, `#death-detail`, `#death-where` hidden when empty, `#btn-wake` "Wake up" as a
+  `.hex-button`, `#btn-death-quit` "Save & quit" as a text link; `showDeath(title, detail, where?)`, `hideDeath()`, `isDeathOpen()`,
+  callbacks `onWake`, `onDeathQuit`); `confirm({ title, detail, yes, no, danger }) → Promise<boolean>` on `#confirm-dialog` (every call
+  resets its labels; `hidePause`, `showTitle`, `dispose` and a newer question resolve a pending one false; the world-delete flow runs
+  on it); the New World form's checkbox → `onNewWorld(slot, name, seedText, { survivalResources })`; Worlds rows append `· Survival`
+  (`SlotInfo.mode`); the controls sheet keeps 17 rows with the survival wording. §14 (package H): a Guide button on the title screen and
+  in the pause menu → `onGuide()`.
+- **packUI.js**: `createPackUI(doc, itemIcons, callbacks) → { open(view), refresh(view), close(), isOpen(), dispose() }`; callbacks
+  `onSlot(area, index, button, shift)`, `onDiscard()`, `onMake(recipeId, times)`, `onCancelJob(lane, i)`, `onTab(id | 'all')`,
+  `onClose()` (Esc, E or the close hex; a document listener only while open, repeats ignored), `onRead()` (§14). `#pack-screen` z 20
+  (the picker's layer; never open together): flat-top hexes — an 18-slot rosette (slots 9–26, ring 1 then ring 2, clockwise from the
+  top; pure `rosetteCells`) around a centre info hex, a 9-cell zig-zag hotbar strip, the head / body / feet wear chain and a red discard
+  hex; a basket opens as a second rosette replacing the Making panel; Making = station tabs (far ones dimmed), mini-rosette recipe
+  cards (output in the middle, inputs with have/need, the tool chip, time, Make / ×5) and the busy lanes with ✕. **Adjudicated (E):**
+  the centre hex shows the icon with its wear outline; the name and "45/90" sit on the line under the rosette. All item logic stays in
+  main, survivalControl and inventory.js; the view is `survivalControl.buildPackView({ pack, selected, cursor, hover, container,
+  stations, tab, recipes: crafting.listRecipes(…, { queue }), lanes: craftQueue.lanes() })`; `demoPackView()` is the `?ui=pack` demo.
+- **itemIcons.js / itemArt.js**: `createItemIcons(doc, atlasCanvas) → { draw(ctx, key, size), canvas(key, size) }` — block items with
+  `drawBlockIcon` (**adjudicated (E):** the two bush items show the RIPE bush, `iconBlockFor`, although `blockForItem` returns the
+  picked block), every other item from a lazily painted 16-column sheet of `itemArt.paintItem(key)` (16 × 16 RGBA, deterministic; tools
+  upright with the haft in columns 7–8, the tier in the head colour AND the binding; hexagonal ingots; unknown keys the magenta
+  checker).
+- **The Handbook readers** (§14.4, package H, `handbookUI.js`): `createHandbookUI(doc, { chapters, onClose }) → { openGuide(chapterId?),
+  openRustic(chapterId?), close(), isOpen() → 'guide'|'rustic'|null, handleKey(e) → boolean }`; chapters from the pure
+  `handbook.buildChapters()` (generated tables come from the data tables, so the book never disagrees with the game). z-order: above
+  the HUD, below the death screen. main routes keydowns to `handleKey` first (a capture listener) while a reader is open.
+- **renderer.js**: `setDigProgress(hit | null, p)` — a honey `LineSegments` of the highlight prism's 6 vertical and 6 top edges, drawn
+  to `2·ceil(12·p)` vertices (`digTraceVertexCount`), renderOrder 3, hidden for null or p ≤ 0, disposed in `dispose()` and rebuilt after
+  a context restore. **Adjudicated (F's CONTRACT-ISSUE):** "clockwise from the north corner" = `DIG_TRACE_CORNER_ORDER [5, 0, 1, 2, 3,
+  4]`, increasing corner angle measured from +X toward +Z, which turns CLOCKWISE on a north-up picture seen from above (see the note in
+  §0).
+- **campfireRenderer.js** (§32): `sync(near, t, dt, spotsView?)` with `spotsView(fire) → fireSlots.view(…)`; 12 InstancedMeshes (9 + skewers,
+  food chunks coloured raw → cooked #8a5a2b → burnt #2a2018, terracotta hex pots), all in `prewarm()`; a fire with nothing on its spots
+  still costs 9 draw calls; while spot 6 holds a pot the flames are squashed (POT_FLAME_SQUASH 0.35, widened × 1.25) so the pot shows.
+  `SPOT_ITEMS` copies FIRE_TRANSFORMS' keys (the renderer may not import cooking.js; a test checks them against each other).
+- **audio.js** adds `playHurt(v), playDeath(), playEat(), playDrink(), playDig(group, v)` (reuses BREAK_CUTOFF_HZ), `playCraft(),
+  playToolBreak(), playSizzle(v), playPick()` — synthesised, every one with an optional volume, silent when muted.
+
+## 49. Survival integration — `src/main.js` and `src/diagnostics.js`
+
+**Objects** (one per session, reloaded from every save in `startLoading`): `survival, pack, containers, fireSlots, regrowth, tapped,
+craftQueue, digState, useState` (RMB), `holdState` (R holds), `stations`, `climateSample`, and the slots `releaseToPack, pendingDeath,
+pendingKnock, pendingModeSwitch, waterHit`. States add `PACK 'pack'`, `BOOK 'book'` (the rustic Handbook) and `DEAD 'dead'`.
+**`stepFrame(dt)`**: a queued mode switch first (`applyModeSwitch`: in PLAYING / PAUSED / CONSOLE / EDITOR; an upgrade calls
+`startLoading` and ends the frame); then PLAYING, PACK and BOOK run `stepPlaying` (PACK and BOOK with the controls disabled, so the
+player stands still while the world runs: lanes progress, fires cook, vitals drain, zombies come); DEAD and every other state step
+nothing (`main.stateSimulates`). The pack screen refreshes when `pack.version`, `craftQueue.version`, `containers.version`, the
+stations or the tab change.
+**`stepPlaying(dt)`**, SV = `survival.inSurvival`, S = `survival.active`:
+1. fly toggle only if !SV; KeyE → SV ? pack screen : picker; T, /, digits, F3, M as before.
+2. R: Shift+R → editor (both modes); SV → `survivalR` (§44 `interactKind`; tap and relight held through `holdState`; put, feed and
+   gulps repeat every R_REPEAT_S 0.25 while held, a gulp at most every GULP_GAP_S; with nothing to do → `interactTarget()`: barrels and
+   runes as today); Creative → `interactTarget()`.
+3. Mouse: Creative exactly as before. SV: LMB → a lit barrel is snuffed (as today); a zombie or pig is struck on the press and every
+   ATTACK_REPEAT_S 0.55 while held (`strikeKind`: zombies `hit(zb, x, z, power)`, a 'ko' drops a Grave Rag 50 %; pigs `wound` with a
+   tool (a 'dead' pig: grey-pink dust, a squeal, raw pork 2–3, rawhide, pig fat 60 %, straight into the pack), `hit` by hand; each hit
+   that lands wears the tool 1); else hold-to-dig (`digState` with `breakSeconds(id, tool, headInWater)`; every DIG_TICK_S
+   `playDig(group, 0.35)` and 3 dust motes `{ id }` at the hit face; a block the hand cannot break: a dull `playDig(group, 0.15)` every
+   0.5 s). **Finishing**, in order: `natural = !world.hasEdit` (BEFORE), `rollDrops`, `pack.canGive(drops + container contents + fire
+   spots)` else the hint `Pack full` and the dig stays complete, the break `playerSetBlock(AIR)` inside `releaseToPack = true`,
+   `playBreak`, the drops with pickup tokens, 1 wear on the selected tool ("Your Flint Axe broke." + `playToolBreak`). RMB → the
+   Handbook opens at once; a block item places (Creative's rules, `placeRefusal`'s `needs solid ground`, `pack.consume(selected, 1)`,
+   a campfire gets `fireSlots.light(…, 300)`; PLACE_REPEAT_S when held); food / pots / bandages / wear through `useState` (a drunk pot
+   comes back into the hand). MMB → `pack.hotbarSlotOf(itemForBlock(id))` only (never conjures).
+4. While S: `input.sprint &&= status.canSprint`, `input.speedFactor = status.moveFactor` (else 1).
+5. Physics, then `stepBlackHoles` (S: swallowed → `pendingDeath ??= 'blackhole'`, no teleport) → **checkpoint** → pigs → zombies (S:
+   `hurt(ZOMBIE_DAMAGE × attacks, 'zombie')`) → watcher → `stepBlockPhysics` (`b0 = explosions.blastCount`; `blockPhysics.step`; the
+   knock hook's player branch only records `pendingKnock = max(…, |Δv|)`; then S → `hurt(knockDamage(pendingKnock), blastCount ≠ b0 ?
+   'blast' : 'log')`; `pendingKnock = 0`) → `stepCampfires` (S: a scorch → `hurt(FIRE_BURN_DAMAGE, 'fire')`, ≤ 1 / 0.5 s) →
+   **checkpoint** → bodies → `unstickPlayer() → { lifted, buried }` (crush per §45) → the clock → while S `stepSurvival(dt, buried)`
+   → **checkpoint** → `runner.update` (PLAYING only) → **checkpoint** → streaming, `updateHit`, `autosaveTick`.
+6. **`stepSurvival`**: every CLIMATE_SAMPLE_S 0.5 `main.sampleClimate(world, player)` (feet column `world.columnAt`, `zombies.openSky`
+   over the eye, underground, ground chill) + heat sources (burning campfires within 8, working kiln / bloomery / forge lanes) at the
+   chest, `nearFire` (a campfire within NEAR_FIRE_CELLS 4) and `findStations`; the soft-landing factor from `physics.supportingCells` on a
+   hard landing; `survival.step` (`fall` → hurt flash and sound, `pulse` → flash 0.4 and `playHurt(0.4)`, any damage closes the field
+   book, `died` → `pendingDeath ??= died`); `craftQueue.step(dt, pack, world.peekBlock, feetCell)` (failure lines to chat, broken tools,
+   `playCraft`); `fireSlots.step(dt, isBurning, isLoadedCell)` (burnt-out → `world.setBlock(FIRE_PIT)` + smoke; smoke over meat, steam
+   over pots and a sizzle within 6 cells); once a second regrowth (lazy writes) and spoilage; pig repopulation every PIG_REPOP_CHECK_S
+   150 in daylight (at PIG_MAX prune one far unloaded pig beyond 2·PIG_REPOP_RADIUS; with fewer than PIG_REPOP_TARGET 3 within
+   PIG_REPOP_RADIUS 64, `spawnNatural(2, …, seed ^ (day·7919 + n), …, PIG_REPOP_MIN 24, PIG_REPOP_MAX 48, [GRASS_BLOCK, SNOWY_GRASS])`);
+   feet below VOID_Y −32 → `pendingDeath ??= 'void'`.
+**`hurt(amount, cause)`**: nothing unless S; `survival.damage`; a lethal hit only sets `pendingDeath ??= cause`; else the flash `min(1,
+0.4 + dmg/20)` and `playHurt` (≤ 1 / 0.3 s). **Never `die()` from a hook, a command, a rune or an explosion.**
+**`die(cause)`** (checkpoints only): close the pack screen (cursor back; overflow lost) and the field book; `pack.dumpAll()` into a
+REMAINS cell from `chooseBelongingsCell(getBlock, feet)` (scan down ≤ 8 to ground, then that cell, up to 3 above, then the 6 side
+neighbours; the first replaceable) written with `world.setBlock` and `containers.addRemains` — none for `blackhole` / `void` or when no
+cell fits (lost); `survival.dead = cause`, `deaths++`, lanes cleared, inputs reset; `setState(DEAD)` BEFORE `controls.unlock()`;
+`menus.showDeath(deathTitle(cause), "Your belongings lie where you fell." | "Your belongings are lost." | "You carried nothing.",
+"Your belongings lie at q Q, r R, height Y.")` (`main.deathScreenText`); `playDeath()`; `doSave(false)`. **Wake up**: `survival.respawn()`,
+the Handbook back if missing, then the Sleeping Hide (its chunk loaded for ≤ 200 ms behind the screen; on the hide with `findFreeY(…,
+hideY + 1, 3)`; still unloaded → trust it; gone → "Your Sleeping Hide is gone.") or `blackHoles.respawnPoint(world.findSurvivalSpawn(),
+…)`; `game.teleport` (fallGrace), hide the screen, `enterPlayingFromModal()`. **Save & quit** saves, then quits to the Worlds screen. A
+save with `survival.dead` reloads straight onto the death screen (`main.stateAfterLoading`): never click-to-play or play;
+`enterPlaying()` returns early while dead. The reloaded screen names the nearest REMAINS entry, if any.
+**`updateHit`**: `hit` as before (Creative's WATER-selected source ray stays Creative-only); in SV with a dry eye a second ray
+`waterHit` stops at any water (`isTargetable || isWater`; kept only when it is water; dropped when a mob or a lit barrel takes the
+crosshair). **Target hints** (SV): `Pig · click: hunt it` / `… shove it (hunting needs a tool)`, the campfire line (`Campfire · 3
+roasting (next 14 s) · 2 done · fuel 4:10 · R: take`; the fuel part only for fires with fuel), the pit, `<Plant> · R: pick`, birch,
+water (`Fresh water · R: drink`, `Sea water (salty) · R: drink`, `… · R: fill the pot`), basket, `Your Belongings · R: take back`,
+`Sleeping Hide · R: wake here`, `Kiln · R: open Making`, `Handbook · R: read`, the tier hint (`Iron Ore · needs a bronze pick or
+better`), `Pack full`, then barrels and runes as before; short-lived refusals (`needs solid ground`, `The fire is fully fed`, …)
+for 1.6 s. Creative: `breakTargeted` refuses — with `Holds survival items · switch to Survival to empty it` — a WICKER_BASKET or REMAINS
+that holds items and a CAMPFIRE or FIRE_PIT whose spots hold anything.
+**`onBlockChanged`** (after campfires, before blockPhysics): `containers.onBlockChange`, `fireSlots.onBlockChange` (released stacks to
+the pack while `releaseToPack`), `regrowth.onBlockChange`. **`renderFrame`**: `renderer.setDigProgress(digHit, progress)`,
+`campfireRenderer.sync(…, spotsView)`, `hud.setSurvivalVisible(SV)`, `hud.setHotbarStacks(SV ? pack.slots : null, selected,
+pack.version)`, and in SV `setVitals` (with `target = bodyTarget(felt, inWater)`), `setActionProgress` (dig, else RMB use, else R hold),
+`setJobChip(craftQueue.chipText())`.
+**Loading** (`startLoading(seed, restoring, { survivalResources })`): `gen = main.loadingGen(…)`; `new World({ …, gen })`;
+`survival.import(save.survival)`; `survival.mode = main.loadingMode(save, gen).mode`; a Survival world without a state begins one;
+`pack.load`, `fireSlots.load(save.survival.fires)`, `containers.load(save.containers)`, `regrowth.loadFromEdits(world.edits)`, everything
+else cleared. `finishLoading`: `?mode` (first world only, `main.consumeModeParam`); in SV `flying = false` (whatever ?fly says),
+`landSpeed = 0`, fallGrace; the upgrade note and the begin lines (with `ensureHandbook`); then DEAD, autoplay or click-to-play.
+**Saving**: `buildSaveData` spreads `main.survivalSaveFields(…)`; `autosaveTick` also saves every interval while S and when
+`survival.switchVersion`, `pack.version`, `containers.version` or `fireSlots.version` changed. **Pause**: `menus.setModeState(mode)`;
+the physics state carries `survival: SV` (`main.physicsMenuStateFor`); `onUndoPhysics` refuses in SV. `quitToTitle` / `dispose` clear
+every survival object, close the pack screen, the death screen and any reader, and hide the survival HUD.
+**CommandContext.survival** (§26): `{ mode, hasState, setMode(m) → { ok, message }` (queued; "already m", "adding survival resources to
+this world: reloading…", "m (saved with this world)"; refused while dead), `vitals() → {…vitals, labels} | null, setVital(name, v)`
+(health 0 → `pendingDeath ??= 'command'`, never a death inside the command), `restoreVitals(), packAdd(key, n) → leftovers | null,
+packClear(), packList() }`.
+**GameContext** (diagnostics; types.js's typedef does not list these yet): `survival, pack, setMode(mode)` (queued), `getMode()`,
+`urlMode`, `selectSlot(i)`, `interact()` (one R press), `digTargeted(dt)` / `useSelected(dt)` (one frame of the real hold-to-dig /
+hold-to-use paths). The debug handle adds `survival`, `pack` (refreshed like `world`), `getMode / setMode / selectSlot / digTargeted /
+useSelected / interact`.
+**The Handbook wiring** (§14.4; package H's modules are picked up with an eager `import.meta.glob` and every call is guarded, so main
+runs without them): `menus.onGuide` → `openGuide()` from the title or the pause menu (both modes; the menu stays underneath); R `read`
+and RMB with the Handbook → `openBook()` (state BOOK; the world keeps running; damage closes it); `packUI.onRead` → close the pack, open
+the book; while a reader is open keydowns go to `handleKey` first; `ensureHandbook(pack)` after a state begins and after waking.
+**Diagnostics** (§22): `parseParams` adds `mode` (`readModeParam`: 'creative' | 'survival' | null) and `ui: 'pack'` (the pack screen in
+Survival; under ?nosave an empty pack is stocked with `demoPackView()`'s kit). `?mode=` applies only to the first world, only with
+`?autoplay` / `?smoke` (`main.modeParamPlan`: always for Creative; Survival for a new slot, any world under ?nosave — its generation may
+be raised — or a generation-2 world; an older saved world loads as it is with `?mode=survival ignored: this older world needs the
+in-game upgrade (Esc → Mode)`); then `params.mode` is null. F3 adds, while S, `Survival: HP 87 · Nourishment 64 · Hydration 51 · Breath
+20 · body 36.9 °C · felt 12.3 °C (air 9.8) · Chilled` after `Mode:` (`survivalDebugLine`). The smoke test switches to Creative first
+when needed (queued; waits for it); with `?mode=survival` it ends with the survival step: back to Survival, `setblock ~ ~-1 ~ stone`,
+`pack add flint_pick`, hold-dig the cell below (AIR, rock in the pack), `pack add honeyberries 2`, hold to eat one.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
@@ -2698,6 +3248,13 @@ forwards onBlockChange / onChunkGenerated like main.
 27. (v0.8) Saving never mutates the live world: build saves with `blockPhysics.exportEdits()` (a copy with fallers settled), never by
     landing entities "for real".
 28. (v0.8) A switched-off feature DROPS its triggers; switching it back on must never act on what happened meanwhile.
+    (v0.9: Survival is such a feature — in Creative or while dead nothing survival steps, and nothing catches up afterwards.)
 29. (§41) Never trust the slot index without checking it against the slot's text (bytes + hash), never write a save as two copies (no
     room for that), never remove the legacy save before its copy reads back identical, and never let a URL (?autoplay) overwrite a
     damaged slot. Under ?nosave nothing at all is written: not the migration, not the index repair.
+30. (v0.9) Survival state is frozen in Creative; never convert between the two inventories (the creative `hotbar` of block ids and
+    the survival pack of item stacks never exchange anything).
+31. (v0.9) Never die, switch mode or reload a world from inside a hook, a command or a rune: queue it (`pendingDeath`,
+    `pendingModeSwitch`) and act at the frame's checkpoints (§49).
+32. (v0.9) Compute `natural = !world.hasEdit(q, y, r)` BEFORE a Survival break or pick writes the cell: the write itself records an
+    edit, and checking afterwards makes every natural drop (all flint) impossible.

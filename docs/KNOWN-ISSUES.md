@@ -1,4 +1,4 @@
-# Known issues (v0.8, PR #3)
+# Known issues (v0.8, PR #3; v0.9 Survival items at the end)
 
 Problems found by play-testing and review. Each one was reproduced independently by a second agent before it was
 listed. File and line references in the open tables are from commit c47ce0b, the build the play-test ran on. That build
@@ -52,6 +52,18 @@ Every bug and glitch below now has a regression test that fails on the old code,
 ## Polish
 
 Nothing open (L1 and L2 are fixed, see above).
+
+## Survival (v0.9) — open items from the integration
+
+| # | Problem | Cause | Suggested fix |
+|---|---------|-------|---------------|
+| S1 | **The inherited menus still look like Minecraft's.** The title, pause and block-picker screens keep `.mc-button`'s grey #6f6f6f bevel, the #c6c6c6 picker with its #404040 title and the rotating yellow splash text. Every new Survival screen uses the honey palette and `.hex-button` (DESIGN-survival §11), so the two looks now sit side by side. | Restyling the existing screens would change how Creative looks, which v0.9 promised not to do. | **The user's call.** Proposed follow-up: move the title, pause and picker screens onto the survival palette (#1c1a24 / honey #e8b04a / ember #d0582a) and `.hex-button`, drop the splash text's rotating yellow, and re-shoot the Creative screenshots. |
+| S2 | **The Handbook is wired against its API, not its code.** Package H (`handbook.js`, `handbookUI.js`, the Guide button, the `handbook` item) was built in parallel. main picks the two modules up with an eager `import.meta.glob` and guards every call, so until H is merged the Guide button does nothing, no Handbook is given, and R / RMB with nothing to read show "The handbook cannot be opened in this build". | Parallel packages (DESIGN-survival §14.3–§14.4). | After H merges: replace the glob in main.js with static imports, then check the Guide from the title and pause menus, R and RMB on the item, `onRead` from the pack screen, closing the field book on damage, and `ensureHandbook` after a new state and after waking. |
+| S3 | **`types.js`'s GameContext typedef lacks the v0.9 members** (`survival`, `pack`, `setMode`, `getMode`, `urlMode`, `selectSlot`, `interact`, `digTargeted`, `useSelected`). | types.js belongs to W0; main types its `game` object with an index signature meanwhile. | Add them to the typedef (CONTRACTS §49 lists them). |
+| S4 | **The console `undo` still undoes in Survival.** The pause menu's Undo is disabled in Survival (§1.5), but `undo` in the console calls `physics.undo()` in any mode, which can duplicate mined debris. | commands.js was not asked to refuse it (DESIGN-survival §9.7). | Make `undo` fail with `not in Survival` when `ctx.survival.mode === 'survival'`, like `fly` and `give`. |
+| S5 | **A Survival world listed by a v0.8 tab loses its "· Survival" label** in the Worlds list until it is saved again. | An older tab rewrites the shared slot index without the `mode` field (the world itself loads correctly). | None needed beyond a resave; noted for completeness. |
+| S6 | **Four timing tests fail when the machine is busy** (they pass run alone): worldgen "generates a warm chunk in ≤ 8 ms" and its generation-2 twin, mesher "meshes a real chunk in under 25 ms", campfires "100 000 fires". | They measure wall-clock time; other sessions' processes on this machine skew them. | Run them alone before believing a failure; consider a CI-only budget multiplier. |
+| S7 | **Closing the pack screen or the field book with `Esc` (or `E`) may fall back to click-to-play.** | Esc is not a user activation, so the pointer-lock request can be refused (the same as the picker, console and editor; CONTRACTS §23). | None (by design); a click resumes. |
 
 ## Save slots (minor, from the save-slot check)
 
