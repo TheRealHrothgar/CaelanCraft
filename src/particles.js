@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { PARTICLE_CAPACITY } from './config.js';
 import { BIOME, FACE_TOP, getBlockDef, getFaceTile } from './blocks.js';
-import { averageColor } from './tiles.js';
+import { averageColor, paintTile } from './tiles.js';
 import { BIOME_TINT, isTintedFace } from './mesher.js';
 
 /**
@@ -84,6 +84,13 @@ void main() {
 /** @type {Map<number, number[]>} block id → sRGB average colour of its top tile (tinted when the mesher tints it) */
 const blockColorCache = new Map();
 
+/** @returns {boolean} the tile has a texel that averageColor counts (alpha ≥ 128) */
+function hasOpaqueTexel(tile) {
+  const px = paintTile(tile);
+  for (let i = 3; i < px.length; i += 4) if (px[i] >= 128) return true;
+  return false;
+}
+
 /** @returns {number[]} sRGB 0..1 colour of block `id` for dust / leaves */
 export function blockParticleColor(id) {
   let c = blockColorCache.get(id);
@@ -91,9 +98,13 @@ export function blockParticleColor(id) {
   if (getBlockDef(id).id === 0) {
     c = KINDS.dust.color.slice(); // AIR / unknown ids
   } else {
-    const [r, g, b] = averageColor(getFaceTile(id, FACE_TOP));
+    // v0.9: short survival blocks (tussock, tuber plant, loose stones, fallen branches, the fire pit) have the all-clear
+    // PLANT_TOP_CLEAR on top, whose average is [0, 0, 0] (no opaque texel): their dust takes the side tile's colour instead.
+    let face = FACE_TOP;
+    if (!hasOpaqueTexel(getFaceTile(id, FACE_TOP))) face = 0;
+    const [r, g, b] = averageColor(getFaceTile(id, face));
     c = [r / 255, g / 255, b / 255];
-    if (isTintedFace(id, FACE_TOP)) {
+    if (isTintedFace(id, face)) {
       const t = BIOME_TINT[BIOME.PLAINS];
       c = [c[0] * t[0], c[1] * t[1], c[2] * t[2]];
     }

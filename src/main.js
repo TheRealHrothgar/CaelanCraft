@@ -11,24 +11,36 @@
 // → black holes → pigs → blockPhysics.step (tick, fallers, trees, lit barrels, blasts) → campfires → resolveBodies
 // (player, pigs, lit barrels) → unstick player → runes → streaming; renderFrame syncs the falling-block renderer,
 // the particles, the explosion light and the camera shake.
+//
+// v0.9 Survival (CONTRACTS §42–§49, docs/DESIGN-survival.md §9.5): one Survival, Pack, Containers, FireSlots, Regrowth,
+// Tapped and CraftQueue per session, re-loaded from every save. "In Survival" (SV) is `survival.inSurvival`; "Survival
+// active" (S) is `survival.active` (in Survival and alive) and gates every survival step. Three more states: PACK (the
+// Pack & Making screen), BOOK (the rustic Handbook, §14) — the world keeps running under both — and DEAD (the death
+// screen; nothing steps). Death is deferred: damage only sets `pendingDeath`, and `die()` runs at the frame's checkpoints
+// (after black holes, after campfires, after the survival step, after the runes). A mode switch is queued
+// (`pendingModeSwitch`) and applied at the top of the next frame, never inside a command, a hook or a step.
 import {
   CHUNK_SIZE, RENDER_DISTANCE, LOADING_BUDGET_MS, REACH, BREAK_REPEAT_S, PLACE_REPEAT_S, MAX_FRAME_DT, FOV,
   SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY, PLAYER_HEIGHT,
   PIG_NATURAL_COUNT, CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
   BLACK_HOLE_MAX_TRACKED, BLACK_HOLE_SWALLOW_LINE_S,
   PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S,
-  ZOMBIE_HEIGHT,
+  ZOMBIE_HEIGHT, GEN_LATEST, PIG_MAX, CAMPFIRE_FUEL_START_S, CAMPFIRE_FUEL_MAX_S, ATTACK_REPEAT_S, GULP_GAP_S,
+  PIG_REPOP_CHECK_S, PIG_REPOP_TARGET, PIG_REPOP_RADIUS, PIG_REPOP_MIN, PIG_REPOP_MAX, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE,
+  FALL_SAFE_SPEED,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
 import {
-  BLOCK, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid, isTargetable, isWaterSource,
-  isWater,
+  BLOCK, BIOME, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid, isTargetable,
+  isWaterSource, isWater,
 } from './blocks.js';
 import { normalizeSeed } from './noise.js';
 import { World } from './world.js';
 import { raycastHex } from './raycast.js';
-import { createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock, isFreeAt, findFreeY } from './physics.js';
+import {
+  createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock, isFreeAt, findFreeY, supportingCells,
+} from './physics.js';
 import { advanceTime, computeSky, createSkyState, isDayTime } from './daynight.js';
 import {
   SAVE_VERSION, listSlots, loadSlot, saveSlot, deleteSlot, renameSlot, duplicateSlot, migrateLegacySave, storageUsage,
@@ -47,7 +59,22 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume } from './zombies.js';
+import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky } from './zombies.js';
+import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST } from './survival.js';
+import { Pack, slotClick, returnCursor } from './inventory.js';
+import { Containers } from './containers.js';
+import { breakSeconds, rollDrops, harvestHint, canHarvest, pick, Tapped, Regrowth, rollMobDrops, ripeOf } from './harvest.js';
+import {
+  DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
+  HINT, KNIFE_TIER,
+} from './survivalControl.js';
+import { CraftQueue, findStations, listRecipes } from './crafting.js';
+import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
+import { heatSource, heatAt, groundChillOf, isSaltyBiome, bodyTarget, CHEST_HEIGHT, HEAT_SOURCES } from './climate.js';
+import { softLandingFactor, knockDamage, crushDamage } from './vitals.js';
+import { getItem, itemName, itemForBlock, maxDurability } from './items.js';
+import { createPackUI, demoPackView } from './packUI.js';
+import { createItemIcons } from './itemIcons.js';
 import { createZombieRenderer } from './zombieRenderer.js';
 import { Watcher, WATCHER_HEIGHT } from './watcher.js';
 import { createWatcherRenderer } from './watcherRenderer.js';
@@ -64,6 +91,17 @@ import {
 /** @typedef {import('./types.js').RaycastHit} RaycastHit */
 /** @typedef {import('./types.js').SaveData} SaveData */
 /** @typedef {import('./types.js').GameContext} GameContext */
+/** @typedef {import('./types.js').ItemStack} ItemStack */
+
+// The Survival Handbook (DESIGN-survival §14) is built by package H in parallel against the exact API of §14.4. Until its
+// modules are merged they may be missing, so they are picked up through an eager glob (an empty object when the files do not
+// exist) and every call below is guarded: without them the game runs and the book simply cannot be opened.
+// TODO(integration): once H is merged, replace this with static imports of handbook.js and handbookUI.js.
+const HANDBOOK_MODULES = /** @type {Record<string, any>} */ (import.meta.glob(['./handbook.js', './handbookUI.js'], { eager: true }));
+const handbookMod = HANDBOOK_MODULES['./handbook.js'] ?? null;
+const handbookUIMod = HANDBOOK_MODULES['./handbookUI.js'] ?? null;
+/** The Handbook's item key (§14.4 HANDBOOK_KEY). */
+export const HANDBOOK_KEY = typeof handbookMod?.HANDBOOK_KEY === 'string' ? handbookMod.HANDBOOK_KEY : 'handbook';
 
 // ---------------------------------------------------------------------------------------------
 // Constants (main-only tuning; everything shared lives in config.js)
@@ -78,6 +116,10 @@ export const STATE = Object.freeze({
   PICKER: 'picker',
   CONSOLE: 'console',
   EDITOR: 'editor',
+  // v0.9 Survival (§49): the Pack & Making screen and the rustic Handbook keep the world running; the death screen does not.
+  PACK: 'pack',
+  BOOK: 'book',
+  DEAD: 'dead',
 });
 
 /** Loading progress is reported over the hex disc of chunks within distance 2 of the spawn chunk (19 chunks). */
@@ -109,6 +151,263 @@ export const OLD_WORLD_PHYSICS_NOTE = 'New: block physics! Collapse is off for t
 const HURT_FLASH_S = 0.45;
 /** WATER selected: the crosshair also stops on water sources (left-click removes one). */
 const hitTargetOrWaterSource = (id) => isTargetable(id) || isWaterSource(id);
+
+// ---- Survival (v0.9, CONTRACTS §49) ----
+/** The survival `waterHit` ray stops at any water cell (§4.2: R drinks or fills from it). */
+const hitTargetOrWater = (id) => isTargetable(id) || isWater(id);
+/** The climate and the nearby workplaces are sampled this often (s, §3.1, §7.1). */
+export const CLIMATE_SAMPLE_S = 0.5;
+/** Feet below this height: death by `void` (§2.4); the belongings are lost. */
+export const VOID_Y = -32;
+/** At most one fire scorch per this many seconds (§2.4). */
+export const FIRE_SCORCH_GAP_S = 0.5;
+/** At most one hurt sound per this many seconds (§2.4). */
+export const HURT_SOUND_GAP_S = 0.3;
+/** Holding R repeats a put, a feed or a gulp this often (§4.4). */
+export const R_REPEAT_S = 0.25;
+/** A burning campfire within this many cells of the feet doubles regeneration while standing still (§2.3). */
+export const NEAR_FIRE_CELLS = 4;
+/** Biomes where a new survival state also points the way to green land (§1.2). */
+export const HARSH_BIOMES = Object.freeze([BIOME.DESERT, BIOME.SNOWY, BIOME.MOUNTAINS, BIOME.SNOWY_PEAKS]);
+/** Ground a repopulating pig may spawn on in Survival (§4.3). */
+export const SURVIVAL_PIG_GROUND = Object.freeze([BLOCK.GRASS_BLOCK, BLOCK.SNOWY_GRASS]);
+/** The §1.2 chat line for a new survival state, and the Handbook's addition (§14.2). */
+export const SURVIVAL_INTRO = 'Survival: you carry nothing. Loose stones give rock and flint, fallen branches give sticks, '
+  + 'tussock gives fibre. Drink fresh water with R.';
+export const HANDBOOK_INTRO = 'Your handbook is in the last hotbar slot — hold it and press R to read.';
+export const UPGRADED_NOTE = 'Survival resources have come to this world.';
+export const MODE_PARAM_IGNORED = '?mode=survival ignored: this older world needs the in-game upgrade (Esc → Mode)';
+export const SURVIVAL_NEEDS_GEN2 = 'mode: survival needs generation 2; loaded in Creative';
+/** The pause menu's upgrade question (§1.3). */
+export const UPGRADE_CONFIRM = Object.freeze({
+  title: 'Bring survival resources into this world?',
+  detail: 'Copper, tin, clay, wild plants, ponds and new trees will appear wherever the land is untouched — near your builds too. '
+    + 'This cannot be undone.',
+  yes: 'Bring them',
+  no: 'Cancel',
+});
+/** States in which the world steps (§9.5: PLAYING, and PACK / BOOK with the controls disabled). */
+const SIMULATING_STATES = new Set([STATE.PLAYING, STATE.PACK, STATE.BOOK]);
+/** States in which a queued mode switch is applied (§1.1: playing or paused; an open console or editor is closed first). */
+const MODE_SWITCH_STATES = new Set([STATE.PLAYING, STATE.PAUSED, STATE.CONSOLE, STATE.EDITOR]);
+
+/** @param {string} state @returns {boolean} the world steps in this state (§9.5) */
+export function stateSimulates(state) {
+  return SIMULATING_STATES.has(state);
+}
+
+/**
+ * The generator version a loading world gets (§1.3, §9.5): a save's `gen` (absent → 1); a new world GEN_LATEST unless the
+ * New World form's "Survival resources" box was cleared.
+ * @param {SaveData|null} restoring
+ * @param {{ survivalResources?: boolean }} [opts]
+ * @returns {number}
+ */
+export function loadingGen(restoring, opts) {
+  if (restoring) return Number.isInteger(restoring.gen) && restoring.gen >= 1 ? restoring.gen : 1;
+  return opts && opts.survivalResources === false ? 1 : GEN_LATEST;
+}
+
+/**
+ * The mode a loading world starts in (§1.3): the save's `mode` (absent → Creative), but Creative with a warning when it says
+ * Survival on a world below generation 2 (only possible by hand-editing; the pause menu then offers the upgrade).
+ * @param {SaveData|null} restoring
+ * @param {number} gen
+ * @returns {{ mode: 'creative'|'survival', warning: string|null }}
+ */
+export function loadingMode(restoring, gen) {
+  const mode = restoring && restoring.mode === 'survival' ? 'survival' : 'creative';
+  if (mode === 'survival' && !(gen >= 2)) return { mode: 'creative', warning: SURVIVAL_NEEDS_GEN2 };
+  return { mode, warning: null };
+}
+
+/**
+ * What `?mode=` does to the first world the page loads (§1.1). Creative always applies. Survival applies to a new slot (it is
+ * generated with GEN_LATEST), to any world under ?nosave (its generation may be raised: nothing is saved) and to a world
+ * already at generation 2; an older saved world is loaded as it is, with the MODE_PARAM_IGNORED warning.
+ * @param {'creative'|'survival'|null} mode
+ * @param {{ save: SaveData|null, nosave: boolean }} ctx  `save`: the slot's save being restored (null: a new world)
+ * @returns {{ apply: boolean, raiseGen: boolean, warning: string|null }}
+ */
+export function modeParamPlan(mode, ctx) {
+  if (mode !== 'creative' && mode !== 'survival') return { apply: false, raiseGen: false, warning: null };
+  if (mode === 'creative' || !ctx.save) return { apply: true, raiseGen: false, warning: null };
+  const gen = loadingGen(ctx.save);
+  if (gen >= 2) return { apply: true, raiseGen: false, warning: null };
+  if (ctx.nosave) return { apply: true, raiseGen: true, warning: null };
+  return { apply: false, raiseGen: false, warning: MODE_PARAM_IGNORED };
+}
+
+/**
+ * Use up `?mode=` (§1.1: the first world only): its value, and `params.mode` is null from then on.
+ * @param {{ mode?: 'creative'|'survival'|null }} params
+ * @returns {'creative'|'survival'|null}
+ */
+export function consumeModeParam(params) {
+  const mode = params.mode === 'creative' || params.mode === 'survival' ? params.mode : null;
+  params.mode = null;
+  return mode;
+}
+
+/**
+ * Where a world goes once loaded (§2.5 step 6): a save left on the death screen goes back to it — never to click-to-play
+ * (z 35, above the death screen) or straight to play; else playing with ?autoplay / ?smoke, otherwise click-to-play.
+ * @param {{ dead: boolean, autoplay: boolean }} s
+ * @returns {string} a STATE value
+ */
+export function stateAfterLoading(s) {
+  if (s.dead) return STATE.DEAD;
+  return s.autoplay ? STATE.PLAYING : STATE.CLICK_TO_PLAY;
+}
+
+/**
+ * The pause menu's Physics row and Undo button (menus.PhysicsMenuState): in Survival Undo is disabled (§1.5).
+ * @param {{ exportSwitches(): any, canUndo: boolean, lastEvent: {kind: string}|null }|null} blockPhysics
+ * @param {boolean} inSurvival
+ */
+export function physicsMenuStateFor(blockPhysics, inSurvival) {
+  if (!blockPhysics) return null;
+  return {
+    switches: blockPhysics.exportSwitches(),
+    canUndo: blockPhysics.canUndo,
+    undoKind: blockPhysics.lastEvent ? blockPhysics.lastEvent.kind : undefined,
+    survival: Boolean(inSurvival),
+  };
+}
+
+/**
+ * The four survival save fields (§1.4, §9.5 buildSaveData). A world that never entered Survival writes none of them, so its
+ * save stays version 2 and byte-identical to before.
+ * @param {{ gen: number, survival: Survival, pack: Pack, fireSlots: FireSlots, containers: Containers }} s
+ * @returns {{ gen?: number, mode?: 'creative'|'survival', survival?: object, containers?: object }}
+ */
+export function survivalSaveFields(s) {
+  /** @type {*} */
+  const out = {};
+  if (s.gen >= 2) out.gen = s.gen;
+  if (s.survival.hasState) {
+    out.mode = s.survival.mode;
+    out.survival = { ...s.survival.export(), ...s.pack.export(), fires: s.fireSlots.export() };
+  }
+  if (s.containers.size > 0) out.containers = s.containers.export();
+  return out;
+}
+
+/**
+ * The death screen's three lines (§2.5). `cell` is where the belongings were left (null: lost); `carried` is false when there
+ * was nothing to leave.
+ * @param {string} cause
+ * @param {[number, number, number]|null} cell
+ * @param {boolean} [carried=true]
+ * @returns {{ title: string, detail: string, where: string }}
+ */
+export function deathScreenText(cause, cell, carried = true) {
+  const title = deathTitle(cause);
+  if (!carried) return { title, detail: 'You carried nothing.', where: '' };
+  if (!cell) return { title, detail: BELONGINGS_LOST, where: '' };
+  return { title, detail: BELONGINGS_KEPT, where: `Your belongings lie at q ${cell[0]}, r ${cell[2]}, height ${cell[1]}.` };
+}
+
+/** A knock on the player is a blast when an explosion went off during the physics step, else a toppled log (§2.4). */
+export function knockCause(blastsBefore, blastsAfter) {
+  return blastsAfter !== blastsBefore ? 'blast' : 'log';
+}
+
+/** Whole cells unstickPlayer lifted the player (crush damage, §2.4): at least 1 for any lift. */
+export function cellsLifted(fromY, toY) {
+  return Math.max(1, Math.ceil(toY - fromY - 1e-6));
+}
+
+/** "2 Rock and 1 Flint" for stacks. @param {ReadonlyArray<{k: string, n: number}>} stacks */
+export function stacksText(stacks) {
+  const parts = stacks.map((s) => `${s.n} ${itemName(s.k)}`);
+  if (parts.length <= 1) return parts.join('');
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/** "Pack full: 2 Rock left behind" (§5.3). */
+export function leftBehindText(stacks) {
+  return `Pack full: ${stacksText(stacks)} left behind`;
+}
+
+/** "1 Raw Pork went bad." (§4.5). */
+export function spoiledText(stacks) {
+  return `${stacksText(stacks)} went bad.`;
+}
+
+/** The `pack list` text (§9.7): one line per non-empty slot, "3: Flint Pick (51/90)", then the worn items. */
+export function packListText(pack) {
+  const lines = [];
+  const line = (label, s) => {
+    const max = maxDurability(s.k);
+    const wear = max ? ` (${s.d ?? max}/${max})` : '';
+    lines.push(`${label}: ${s.n > 1 ? `${s.n} ` : ''}${itemName(s.k)}${wear}`);
+  };
+  pack.slots.forEach((s, i) => { if (s) line(String(i + 1), s); });
+  const wearNames = ['head', 'body', 'feet'];
+  pack.wear.forEach((s, i) => { if (s) line(`worn on ${wearNames[i]}`, s); });
+  return lines.join('\n');
+}
+
+/**
+ * The §1.2 chat lines for a survival state that has just begun: the intro (plus the Handbook's sentence when one was given)
+ * and, in a harsh biome, where green land lies.
+ * @param {number} biome  the feet column's biome
+ * @param {[number, number]|null} green  the [q, r] of world.findSurvivalSpawn()
+ * @param {boolean} handbookGiven
+ * @returns {string[]}
+ */
+export function survivalIntroLines(biome, green, handbookGiven) {
+  const lines = [handbookGiven ? `${SURVIVAL_INTRO} ${HANDBOOK_INTRO}` : SURVIVAL_INTRO];
+  if (HARSH_BIOMES.includes(biome) && green) lines.push(`This land is harsh: green land lies near q ${green[0]}, r ${green[1]}.`);
+  return lines;
+}
+
+/**
+ * What the climate sees where the player stands (§3.1): the feet column's biome and climate noise, open sky over the eye
+ * (zombies.openSky: leaves and glass count as cover), underground (no open sky and the column's surface ≥ 4 cells above the
+ * eye cell) and the ground chill of the cell under the feet. Heat and nearFire are filled in by main.
+ * @param {{ columnAt(q: number, r: number): {height: number, biome: number, temperature: number}, getBlock: Function }} world
+ * @param {PlayerState} player
+ * @param {(getBlock: Function, q: number, y: number, r: number) => boolean} [openSkyFn]
+ * @returns {{ biome: number, climateT: number, openSky: boolean, underground: boolean, groundChill: number, heat: number,
+ *   nearFire: boolean }}
+ */
+export function sampleClimate(world, player, openSkyFn = openSky) {
+  const [q, r] = worldToHex(player.x, player.z);
+  const col = world.columnAt(q, r);
+  const eyeY = player.y + getEyeHeight(player);
+  const sky = openSkyFn(world.getBlock, q, Math.ceil(eyeY), r);
+  const underground = !sky && col.height >= Math.floor(eyeY) + 4;
+  const ground = world.getBlock(q, Math.floor(player.y - 1e-3), r);
+  return {
+    biome: col.biome,
+    climateT: col.temperature,
+    openSky: sky,
+    underground,
+    groundChill: groundChillOf(ground),
+    heat: 0,
+    nearFire: false,
+  };
+}
+
+/**
+ * Project a world point to window pixels with a three.js camera's matrices (last render), for the pickup tokens (§9.8).
+ * @returns {{x: number, y: number}|null} null behind the camera or without matrices
+ */
+export function projectToScreen(camera, x, y, z, width, height) {
+  const vi = camera && camera.matrixWorldInverse ? camera.matrixWorldInverse.elements : null;
+  const p = camera && camera.projectionMatrix ? camera.projectionMatrix.elements : null;
+  if (!vi || !p || !Number.isFinite(x + y + z)) return null;
+  const vx = vi[0] * x + vi[4] * y + vi[8] * z + vi[12];
+  const vy = vi[1] * x + vi[5] * y + vi[9] * z + vi[13];
+  const vz = vi[2] * x + vi[6] * y + vi[10] * z + vi[14];
+  const cx = p[0] * vx + p[4] * vy + p[8] * vz + p[12];
+  const cy = p[1] * vx + p[5] * vy + p[9] * vz + p[13];
+  const cw = p[3] * vx + p[7] * vy + p[11] * vz + p[15];
+  if (!(cw > 1e-6)) return null;
+  return { x: ((cx / cw + 1) / 2) * width, y: ((1 - cy / cw) / 2) * height };
+}
 
 // ---------------------------------------------------------------------------------------------
 // Small pure helpers (exported for tests / reuse)
@@ -267,6 +566,10 @@ export function boot(win, doc) {
   let consoleUI;
   /** @type {ReturnType<typeof createRuneEditor>} */
   let runeEditor;
+  /** @type {import('./packUI.js').PackUI} */
+  let packUI;
+  /** @type {any} the Handbook reader (§14.4 createHandbookUI), null until package H is merged */
+  let handbookUI = null;
   try {
     atlasCanvas = createAtlasCanvas();
     atlasTexture = createAtlasTexture(atlasCanvas);
@@ -317,9 +620,29 @@ export function boot(win, doc) {
       },
       onClose: () => closeEditor(),
     });
+    // The Pack & Making screen (§5.4, §9.8): clicks are forwarded raw; all item logic is here and in inventory.js.
+    packUI = createPackUI(doc, createItemIcons(doc, atlasCanvas), {
+      onSlot: (area, index, button, shift) => packSlotClick(area, index, button, shift),
+      onDiscard: () => packSlotClick('discard', 0, 0, false),
+      onMake: (recipeId, times) => packMake(recipeId, times),
+      onCancelJob: (lane, i) => packCancelJob(lane, i),
+      onTab: (tab) => packSetTab(tab),
+      onClose: () => closePack(),
+      onRead: () => packRead(), // §14.4 (package H): read the Handbook from its slot
+    });
   } catch (err) {
     reportError({ message: `Caelancraft failed to start: ${err && err.message ? err.message : err}` });
     throw err;
+  }
+  // The Handbook reader (§14.4) is optional until package H is merged; a failure to build it never stops the game.
+  if (handbookUIMod && typeof handbookUIMod.createHandbookUI === 'function') {
+    try {
+      const chapters = typeof handbookMod?.buildChapters === 'function' ? handbookMod.buildChapters() : undefined;
+      handbookUI = handbookUIMod.createHandbookUI(doc, { chapters, onClose: () => onBookClosed() });
+    } catch (err) {
+      handbookUI = null;
+      console.warn('Caelancraft: the Handbook reader could not be created:', err);
+    }
   }
 
   // ---- game state -----------------------------------------------------------------------------------
@@ -524,6 +847,9 @@ export function boot(win, doc) {
     sound: (name, x, y, z, volume) => playPhysicsSound(name, x, y, z, volume),
     particles: (kind, x, y, z, count, opts) => particles.emit(kind, x, y, z, count, opts),
     knock: (body, vx, vy, vz, fromX, fromZ) => {
+      // Survival (§2.4): the hook runs inside the blast, so it only records the hardest knock on the player; main turns it
+      // into 'blast' or 'log' damage after blockPhysics.step (never a death from inside a hook).
+      if (body === player) pendingKnock = Math.max(pendingKnock, Math.hypot(vx, vy, vz) || 0);
       // A zombie near a blast is knocked out (§39); weaker knocks fling it (zombies.knock adds the velocity itself).
       const zb = /** @type {import('./zombies.js').Zombie} */ (body);
       if (body !== player && zombies.list.includes(zb)) {
@@ -564,12 +890,127 @@ export function boot(win, doc) {
 
   const sky = createSkyState();
 
+  // ---- Survival state (v0.9, §9.5; one of each per session, re-loaded from every save) ------------------
+  const survival = new Survival();
+  const pack = new Pack();
+  const containers = new Containers();
+  const fireSlots = new FireSlots();
+  const regrowth = new Regrowth();
+  const tapped = new Tapped();
+  const craftQueue = new CraftQueue();
+  /** hold LMB to dig (§6.1) */
+  const digState = new DigState();
+  /** hold RMB to eat, drink, bandage or wear (§4.5) */
+  const useState = new UseState();
+  /** hold R to tap a birch or relight a fire pit (§4.2, §4.4) */
+  const holdState = new UseState();
+  /** @type {Record<string, any>} the last crafting.findStations result (refreshed every CLIMATE_SAMPLE_S) */
+  let stations = { hand: true };
+  let stationsVersion = 0;
+  /** @type {ReturnType<typeof sampleClimate>|null} what the climate saw at the last sample */
+  let climateSample = null;
+  let climateAccum = 0;
+  /** true around a Survival break: released container and fire-spot stacks go into the pack (§5.6) */
+  let releaseToPack = false;
+  /** @type {string|null} the cause of a death to run at the next checkpoint (§2.5) */
+  let pendingDeath = null;
+  /** the hardest knock on the player during this frame's physics step, |Δv| (§2.4) */
+  let pendingKnock = 0;
+  /** @type {{ mode: 'creative'|'survival' }|null} a queued switch (§1.1) */
+  let pendingModeSwitch = null;
+  /** @type {RaycastHit|null} the second ray that stops at water (§4.2), Survival with a dry eye only */
+  let waterHit = null;
+  /** dig feedback: the cell being dug, its progress 0..1, and whether the pack was too full to take its drops */
+  let digHit = /** @type {RaycastHit|null} */ (null);
+  let digProgress = 0;
+  let digAdvanced = false;
+  let digPackFull = false;
+  /** @type {number|null} the action ring's RMB / R-hold progress */
+  let useProgress = null;
+  let holdProgress = null;
+  let attackHeld = 0;
+  let rRepeat = 0;
+  /** fxTime throttles */
+  let gulpAt = -Infinity;
+  let scorchAt = -Infinity;
+  let hurtSoundAt = -Infinity;
+  let leftBehindAt = -Infinity;
+  let spoilLineAt = -Infinity;
+  let sizzleAt = -Infinity;
+  /** seconds toward the next once-a-second survival work (regrowth, spoilage) */
+  let survivalSecond = 0;
+  let pigRepopAccum = 0;
+  let pigRepopTries = 0;
+  /** blast or log damage was dealt this frame (no crush damage on top, §2.4) */
+  let knockHurtThisFrame = false;
+  /** a game.teleport happened since the last unstick check (no crush damage, §2.4) */
+  let teleportFrame = false;
+  /** @type {string|null} a short-lived target hint ("needs solid ground", "Pack full", …) and when it ends (fxTime) */
+  let flashHint = null;
+  let flashHintUntil = 0;
+  /** the loading world began a survival state (its intro lines are said once it is playable) */
+  let survivalBegun = false;
+  /** the loading world was just upgraded to generation 2 (UPGRADED_NOTE once playable) */
+  let upgradeNotePending = false;
+  /** versions as last saved (autosave) */
+  let savedSurvivalSwitch = 0;
+  let savedPackVersion = 0;
+  let savedContainersVersion = 0;
+  let savedFiresVersion = 0;
+  /** the Pack & Making screen's session (inventory.slotClick), its open container and tab */
+  /** @type {{ pack: Pack, cursor: ItemStack|null, container: (ItemStack|null)[]|null }} */
+  const packSession = { pack, cursor: null, container: null };
+  /** @type {{ q: number, y: number, r: number, entry: any }|null} */
+  let packContainer = null;
+  let packTab = 'all';
+  let packViewKey = '';
+  /** `?mode=` as given (the smoke test's optional survival step reads it after params.mode is used up) */
+  const urlMode = params.mode ?? null;
+  /** scratch */
+  const supportScratch = /** @type {number[][]} */ ([]);
+  const supportIds = /** @type {number[]} */ ([]);
+  const feetCell = /** @type {[number, number, number]} */ ([0, 0, 0]);
+  const peekBlockFn = (q, y, r) => world.peekBlock(q, y, r);
+  const isLoadedCellFn = (q, r) => !!world && world.hasChunkAtCell(q, r);
+  const isBurningFn = (q, y, r) => world.getBlock(q, y, r) === BLOCK.CAMPFIRE;
+  const fireSpotKindFn = (key) => (isSkewerFood(key) ? 'skewer' : isCentrePot(key) ? 'centre' : null);
+  const spotsViewFn = (fire) => (fireSlots.size > 0 ? fireSlots.view(fire.q, fire.y, fire.r) : null);
+  /** the reused interactKind context (§9.4) */
+  const interactCtx = {
+    hit: /** @type {RaycastHit|null} */ (null),
+    waterHit: /** @type {RaycastHit|null} */ (null),
+    headInWater: false,
+    selectedKey: /** @type {string|null} */ (null),
+    pack,
+    fireView: (q, y, r) => fireSlots.view(q, y, r),
+    fireSpotKind: fireSpotKindFn,
+    tappedToday: (q, y, r) => !tapped.canTap(`${q},${y},${r}`, day),
+    salty: (q, r) => isSaltyBiome(world.getBiome(q, r)),
+  };
+  /** the reused SurvivalEnv (§9.4) */
+  const survivalEnv = {
+    player: /** @type {PlayerState|null} */ (null),
+    softFactor: 1,
+    breaking: false,
+    buried: false,
+    climate: /** @type {*} */ (null),
+    heat: 0,
+    nearFire: false,
+    insulation: 0,
+    sunShade: 0,
+    time: 0,
+    random: Math.random,
+  };
+  /** the reused HUD vitals view (§9.8) */
+  const vitalsView = { health: 0, satiation: 0, hydration: 0, temp: 0, felt: 0, breath: 0, labels: /** @type {string[]} */ ([]), target: 37 };
+
   // ---- helpers --------------------------------------------------------------------------------------
 
   /** Live raycast from the eye along the look direction (allocation-free apart from the hit object). */
   function updateHit() {
     if (!world || !player) {
       hit = null;
+      waterHit = null;
       pigTarget = null;
       zombieTarget = null;
       return;
@@ -585,8 +1026,17 @@ export function boot(win, doc) {
     // the eye is in water itself (the ray would stop at once and nothing in front could be reached).
     const [eq, er] = worldToHex(player.x, player.z);
     const eyeWet = isWater(world.getBlock(eq, Math.floor(eyeY), er));
-    const isHit = hotbar[selected] === BLOCK.WATER && !eyeWet ? hitTargetOrWaterSource : undefined;
+    const SV = survival.inSurvival;
+    // (Creative only: in Survival the hotbar holds pack stacks and water is never a block to take.)
+    const isHit = !SV && hotbar[selected] === BLOCK.WATER && !eyeWet ? hitTargetOrWaterSource : undefined;
     hit = raycastHex(world.getBlock, player.x, eyeY, player.z, dx, dy, dz, REACH, isHit);
+    // Survival (§4.2): a second ray that stops at water, for R (drink, fill) and the water hint; LMB / RMB keep using `hit`,
+    // so water is never dug or placed against and the highlight never outlines it. Only a water cell is kept.
+    waterHit = null;
+    if (SV && !eyeWet) {
+      const w = raycastHex(world.getBlock, player.x, eyeY, player.z, dx, dy, dz, REACH, hitTargetOrWater);
+      if (w && isWater(w.blockId)) waterHit = w;
+    }
     // A pig in front of the targeted block takes the crosshair (and hides the block highlight).
     pigTarget = pigs.size > 0 ? pigs.raycast(player.x, eyeY, player.z, dx, dy, dz, hit ? hit.distance : REACH) : null;
     if (pigTarget) hit = null;
@@ -605,12 +1055,19 @@ export function boot(win, doc) {
       pigTarget = null;
       zombieTarget = null;
     }
+    // A mob or a lit barrel nearer than the water takes R from it too.
+    if (waterHit && (litTarget || zombieTarget || pigTarget)) waterHit = null;
   }
 
   function selectSlot(i) {
     if (!Number.isInteger(i) || i < 0 || i >= HOTBAR_SIZE) return;
     selected = i;
     hud.setSelected(i);
+    if (survival.inSurvival) {
+      const s = pack.slots[i];
+      if (s) hud.showBlockToast(itemName(s.k));
+      return;
+    }
     const id = hotbar[i];
     if (id !== BLOCK.AIR) hud.showBlockToast(getBlockDef(id).displayName);
   }
@@ -639,6 +1096,15 @@ export function boot(win, doc) {
       if (runner) runner.cancel(key);
       runeStore.delete(key);
       if (state === STATE.EDITOR && editorKey === key) closeEditor();
+    }
+    // Survival (§5.6, §4.4, §6.5): containers and fire spots release their stacks when their cell changes (into the pack
+    // only when the player broke it in Survival, else they are lost; a burn-out or a relight keeps the spots), and picked
+    // bushes are tracked for regrowth. In every mode, so a Creative edit never leaves a stale entry behind.
+    const releasedItems = containers.onBlockChange(q, y, r, prev, next);
+    const releasedSpots = fireSlots.onBlockChange(q, y, r, prev, next);
+    regrowth.onBlockChange(q, y, r, prev, next);
+    if (releaseToPack && (releasedItems.length > 0 || releasedSpots.length > 0)) {
+      giveStacks([...releasedItems, ...releasedSpots], screenPointOfCell(q, y, r));
     }
     // Last, so physics triggers see the trackers already updated.
     if (blockPhysics) blockPhysics.onBlockChange(q, y, r, prev, next);
@@ -682,8 +1148,7 @@ export function boot(win, doc) {
 
   /** @returns {import('./menus.js').PhysicsMenuState|null} what the pause menu shows */
   function physicsMenuState() {
-    if (!blockPhysics) return null;
-    return { switches: blockPhysics.exportSwitches(), canUndo: blockPhysics.canUndo, undoKind: blockPhysics.lastEvent ? blockPhysics.lastEvent.kind : undefined };
+    return physicsMenuStateFor(blockPhysics, survival.inSurvival); // §1.5: Undo is off in Survival
   }
 
   /** The CommandContext handed to the executor (CONTRACTS §26.3); built once the player exists. */
@@ -734,8 +1199,54 @@ export function boot(win, doc) {
       get seed() {
         return world.seed;
       },
+      survival: survivalCommands,
     };
     return c;
+  }
+
+  /** CommandContext.survival (§9.7): the commands see the live state; a mode switch is queued, `vitals health 0` deferred. */
+  /** @type {import('./commands.js').SurvivalCommands} */
+  const survivalCommands = {
+    get mode() {
+      return survival.mode;
+    },
+    get hasState() {
+      return survival.hasState;
+    },
+    setMode: (m) => commandSetMode(m),
+    vitals: () => (survival.hasState ? { ...survival.vitals, labels: survival.status.labels } : null),
+    setVital: (name, v) => {
+      const ok = survival.setVital(name, v);
+      // Health 0 never kills inside the command: the death waits for the next checkpoint (§2.5, pitfall 31).
+      if (ok && name === 'health' && !(survival.vitals.health > 0) && survival.active) pendingDeath ??= 'command';
+      return ok;
+    },
+    restoreVitals: () => {
+      survival.restoreVitals();
+    },
+    packAdd: (key, n) => {
+      const over = [];
+      let left = Math.floor(n);
+      // Tools never stack, so they are given one at a time; everything else in stack-sized pieces.
+      while (left > 0) {
+        const part = getItem(key)?.tool ? 1 : left;
+        const o = pack.add({ k: key, n: part });
+        left -= part;
+        if (o) over.push(o);
+      }
+      return over.length ? over : null;
+    },
+    packClear: () => pack.clear(),
+    packList: () => packListText(pack),
+  };
+
+  /** `mode <m>` from the console (§9.7): queued like the pause menu's switch; the console closes when it is applied. */
+  function commandSetMode(m) {
+    if (survival.dead) return { ok: false, message: 'not while the death screen is up' };
+    if (m === survival.mode && !pendingModeSwitch) return { ok: true, message: `already ${m}` };
+    requestMode(m);
+    if (m === 'survival' && world && world.gen < 2) return { ok: true, message: 'adding survival resources to this world: reloading…' };
+    return { ok: true, message: `${m} (saved with this world)` };
   }
 
   /** Looking at a rune block: R runs it (if it has the Interact trigger); looking at a blast barrel: R lights it. */
@@ -771,10 +1282,22 @@ export function boot(win, doc) {
     openEditor(runeStore.ensure(q, y, r));
   }
 
-  /** Text under the crosshair while a rune block, a blast barrel or a lit barrel is targeted. */
+  /** Text under the crosshair while a rune block, a blast barrel or a lit barrel is targeted (Survival: §9.5's hints too). */
   function targetHintText() {
+    if (flashHint !== null) {
+      if (fxTime < flashHintUntil) return flashHint;
+      flashHint = null;
+    }
+    if (survival.inSurvival) return survivalHintText();
     if (litTarget) return 'lit barrel · click: put it out';
     if (zombieTarget) return 'Zombie · click: hit it';
+    // §5.5: Creative breaking is instant, so a cell holding survival items is protected (and says why).
+    if (hit && isProtectedCell(hit)) return HINT.protectedCell;
+    return barrelOrRuneHint();
+  }
+
+  /** The Blast Barrel and Rune Block hints (both modes). */
+  function barrelOrRuneHint() {
     const h = hit;
     if (h && h.blockId === BLOCK.BLAST_BARREL) {
       if (!blockPhysics || !blockPhysics.isEnabled('explosions')) return 'Blast Barrel (explosions are off)';
@@ -810,22 +1333,53 @@ export function boot(win, doc) {
     // A water source is not breakable, but with WATER selected left-click takes it away (the flow drains by itself).
     const takeWater = h && h.blockId === BLOCK.WATER && hotbar[selected] === BLOCK.WATER;
     if (!h || (!isBreakable(h.blockId) && !takeWater)) return false;
+    // §5.5: a basket or belongings holding items, or a fire whose spots hold anything, are kept safe from Creative.
+    if (isProtectedCell(h)) {
+      showHint(HINT.protectedCell);
+      return false;
+    }
     if (!playerSetBlock(h.q, h.y, h.r, BLOCK.AIR)) return false;
     audio.playBreak(getBlockDef(h.blockId).soundGroup);
     updateHit();
     return true;
   }
 
+  /** §5.5: a WICKER_BASKET / REMAINS cell holding items, or a CAMPFIRE / FIRE_PIT whose spots hold anything. */
+  function isProtectedCell(h) {
+    const id = h.blockId;
+    if (id === BLOCK.WICKER_BASKET || id === BLOCK.REMAINS) return containers.hasItems(h.q, h.y, h.r);
+    if (id === BLOCK.CAMPFIRE || id === BLOCK.FIRE_PIT) return fireSlots.hasItems(h.q, h.y, h.r);
+    return false;
+  }
+
   /** Place rule (§23). @returns {boolean} */
   function placeSelected() {
     if (!world || !player) return false;
-    const h = hit;
-    if (!h || h.face < 0) return false;
     const id = hotbar[selected];
     if (!isPlaceable(id)) return false;
+    const cell = placeTarget();
+    if (!cell || !placeBlockAt(id, cell)) return false;
+    // A freshly placed rune block opens its editor right away (the onBlockChange hook created its entry).
+    if (id === BLOCK.RUNE_BLOCK && state === STATE.PLAYING) openEditorFor(cell[0], cell[1], cell[2]);
+    return true;
+  }
+
+  /** The cell a placement would fill: across the targeted face, in height range and replaceable; else null. */
+  function placeTarget() {
+    const h = hit;
+    if (!h || h.face < 0) return null;
     const [tq, ty, tr] = faceNeighbor(h.q, h.y, h.r, h.face);
-    if (!inHeightRange(ty)) return false;
-    if (!isReplaceable(world.getBlock(tq, ty, tr))) return false;
+    if (!inHeightRange(ty)) return null;
+    if (!isReplaceable(world.getBlock(tq, ty, tr))) return null;
+    return [tq, ty, tr];
+  }
+
+  /**
+   * Place block `id` at `cell` (from placeTarget) under §23's rules: never inside the player (solid, black hole, campfire),
+   * never entombing a pig or a zombie, never dousing a campfire. Plays the place sound. @returns {boolean}
+   */
+  function placeBlockAt(id, cell) {
+    const [tq, ty, tr] = cell;
     // Black holes and campfires are not solid, but placing one inside yourself would swallow / scorch you on the spot.
     if ((isSolid(id) || id === BLOCK.BLACK_HOLE || id === BLOCK.CAMPFIRE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
     if (isSolid(id) && pigs.list.some((pig) => playerIntersectsBlock(pig, tq, ty, tr))) return false; // no entombing pigs
@@ -841,8 +1395,6 @@ export function boot(win, doc) {
     if (!playerSetBlock(tq, ty, tr, id)) return false;
     audio.playPlace(getBlockDef(id).soundGroup);
     updateHit();
-    // A freshly placed rune block opens its editor right away (the onBlockChange hook created its entry).
-    if (id === BLOCK.RUNE_BLOCK && state === STATE.PLAYING) openEditorFor(tq, ty, tr);
     return true;
   }
 
@@ -855,6 +1407,1125 @@ export function boot(win, doc) {
     else assignSlot(selected, h.blockId);
     audio.playClick();
     return true;
+  }
+
+  // ---- Survival: small helpers (§49) ----------------------------------------------------------------
+
+  /** A short-lived target hint (refusals: "needs solid ground", "Pack full", …). */
+  function showHint(text, seconds = 1.6) {
+    flashHint = text;
+    flashHintUntil = fxTime + seconds;
+  }
+
+  /** @returns {ItemStack|null} the selected pack stack */
+  function selectedStack() {
+    return pack.slots[selected] ?? null;
+  }
+
+  /** @returns {string|null} */
+  function selectedKey() {
+    const s = pack.slots[selected];
+    return s ? s.k : null;
+  }
+
+  /** @returns {import('./types.js').ToolDef|null} the tool in hand (null: a bare hand or a non-tool item) */
+  function selectedTool() {
+    return pack.toolAt(selected);
+  }
+
+  /** Window pixels of a cell's centre (the pickup tokens fly from there), or null. */
+  function screenPointOfCell(q, y, r) {
+    if (!player) return null;
+    const [x, z] = hexToWorld(q, r);
+    return projectToScreen(renderer.three.camera, x, y + 0.5, z, win.innerWidth, win.innerHeight);
+  }
+
+  /** @returns {{x: number, y: number}|null} */
+  function screenPointOfBody(b) {
+    return projectToScreen(renderer.three.camera, b.x, b.y + 0.5, b.z, win.innerWidth, win.innerHeight);
+  }
+
+  /**
+   * Give stacks to the pack (§5.3): each flies to its slot as a hex token from `from`; what does not fit is left behind with
+   * one throttled chat line. @returns {ItemStack[]} what did not fit
+   */
+  function giveStacks(stacks, from = null) {
+    /** @type {ItemStack[]} */
+    const over = [];
+    for (const s of stacks) {
+      if (!s || !(s.n > 0)) continue;
+      const left = pack.add(s);
+      const got = s.n - (left ? left.n : 0);
+      if (got > 0) hud.addPickup(s.k, got, from);
+      if (left) over.push(left);
+    }
+    if (over.length > 0) leftBehind(over);
+    return over;
+  }
+
+  /** "Pack full: 2 Rock left behind" (at most once per 2 s). */
+  function leftBehind(stacks) {
+    if (fxTime - leftBehindAt < 2) return;
+    leftBehindAt = fxTime;
+    logLine(leftBehindText(stacks));
+  }
+
+  /** Put one `key` into the selected slot when it is empty (a drunk pot comes back into the hand), else anywhere. */
+  function giveToHand(key) {
+    if (!pack.slots[selected]) pack.setSlot(selected, { k: key, n: 1 });
+    else giveStacks([{ k: key, n: 1 }]);
+  }
+
+  /** "Your Flint Axe broke." and the snap (§5.3). */
+  function toolBroke(key) {
+    logLine(`Your ${itemName(key)} broke.`);
+    audio.playToolBreak();
+  }
+
+  /** The selected tool takes 1 wear (a block broken, a mob hit, §5.3); nothing for a bare hand or a non-tool item. */
+  function wearSelectedTool() {
+    const s = pack.slots[selected];
+    if (!s || maxDurability(s.k) === 0) return;
+    const res = pack.damage(selected, 1);
+    if (res && res.broke) toolBroke(res.key);
+  }
+
+  // ---- Survival: damage, death and waking (§2.4, §2.5) ----------------------------------------------
+
+  /** Instant damage (§9.5 hurt): only while Survival is active; a lethal one only sets pendingDeath (never die() here). */
+  function hurt(amount, cause) {
+    if (!survival.active || !(amount > 0)) return;
+    if (survival.damage(amount, cause)) pendingDeath ??= cause;
+    else hurtFeedback(amount);
+    closeRusticBook(); // §14.1: taking damage closes the field book
+  }
+
+  /** The hurt flash `min(1, 0.4 + dmg / 20)` and a hurt sound at most once per HURT_SOUND_GAP_S (§2.4). */
+  function hurtFeedback(dmg) {
+    hurtFlash = Math.max(hurtFlash, Math.min(1, 0.4 + dmg / 20));
+    if (fxTime - hurtSoundAt >= HURT_SOUND_GAP_S) {
+      hurtSoundAt = fxTime;
+      audio.playHurt(1);
+    }
+  }
+
+  /** A checkpoint (§2.5): run a pending death. @returns {boolean} the player died (the frame must end) */
+  function checkDeath() {
+    if (pendingDeath === null) return false;
+    const cause = pendingDeath;
+    pendingDeath = null;
+    if (!survival.inSurvival || state === STATE.DEAD || !player) return false;
+    die(cause);
+    return true;
+  }
+
+  /**
+   * §2.5 die(cause): close the pack screen, leave Your Belongings, then the death state, screen, sound and a save. Runs only
+   * from the frame's checkpoints.
+   */
+  function die(cause) {
+    // 1. The pack screen (its cursor stack goes back first; overflow is lost) and the field book.
+    if (state === STATE.PACK) closePack(false);
+    if (state === STATE.BOOK) {
+      setState(STATE.PLAYING); // first, so the book's onClose does not try to resume play
+      if (handbookUI) handbookUI.close();
+    }
+    // 2. The belongings: every pack and worn stack (the Handbook stays, §14.2) into a REMAINS cell — beyond MAX_CONTAINERS.
+    const stacks = pack.dumpAll();
+    /** @type {[number, number, number]|null} */
+    let cell = null;
+    if (stacks.length > 0 && cause !== 'blackhole' && cause !== 'void') {
+      const [fq, fr] = worldToHex(player.x, player.z);
+      const c = chooseBelongingsCell(world.getBlock, fq, Math.floor(player.y + 1e-3), fr);
+      if (c && world.hasChunkAtCell(c[0], c[2]) && world.setBlock(c[0], c[1], c[2], BLOCK.REMAINS)) {
+        containers.addRemains(c[0], c[1], c[2], stacks);
+        cell = c;
+      }
+    }
+    // 3. The state.
+    survival.dead = cause;
+    if (survival.vitals.health > 0) survival.vitals.health = 0;
+    survival.deaths++;
+    craftQueue.clear();
+    resetSurvivalInput();
+    breakHeld = 0;
+    placeHeld = 0;
+    setState(STATE.DEAD); // before unlock(): the lock-change handler must not read 'playing' (pitfall 24)
+    controls.setEnabled(false);
+    controls.unlock();
+    hud.setTargetHint(null);
+    hud.setActionProgress(null);
+    renderer.setDigProgress(null, 0);
+    const text = deathScreenText(cause, cell, stacks.length > 0);
+    menus.showDeath(text.title, text.detail, text.where || undefined);
+    audio.playDeath();
+    doSave(false);
+  }
+
+  /** The death screen again for a save that was left dead (§2.5 step 6): the nearest belongings are named, if any. */
+  function showDeathAfterLoad() {
+    const cause = survival.dead ?? 'command';
+    /** @type {[number, number, number]|null} */
+    let cell = null;
+    let best = Infinity;
+    for (const e of containers.entries.values()) {
+      if (e.kind !== 'remains') continue;
+      const [x, z] = hexToWorld(e.q, e.r);
+      const d = Math.hypot(x - player.x, e.y - player.y, z - player.z);
+      if (d < best) {
+        best = d;
+        cell = [e.q, e.y, e.r];
+      }
+    }
+    const text = deathScreenText(cause, cell);
+    menus.showDeath(text.title, text.detail, text.where || undefined);
+  }
+
+  /**
+   * "Wake up" (§2.5 step 5): the waking values, then the Sleeping Hide (its chunk loaded for up to 200 ms behind the death
+   * screen) or green land near the world spawn, out of black holes' reach; fallGrace; back to playing.
+   */
+  function wake() {
+    if (state !== STATE.DEAD || !world || !player) return;
+    survival.respawn();
+    ensureHandbookInPack();
+    /** @type {number[]|null} */
+    let pos = null;
+    const sp = survival.spawn;
+    if (sp) {
+      const [hx, hz] = hexToWorld(sp[0], sp[2]);
+      const start = now();
+      while (!world.hasChunkAtCell(sp[0], sp[2]) && now() - start < 200) world.update(hx, hz);
+      if (!world.hasChunkAtCell(sp[0], sp[2])) {
+        pos = [hx, sp[1] + 1, hz]; // still loading: trust the hide
+      } else if (world.getBlock(sp[0], sp[1], sp[2]) === BLOCK.SLEEPING_HIDE) {
+        const fy = findFreeY(world.getBlock, hx, hz, sp[1] + 1, 3);
+        if (fy !== null) pos = [hx, fy, hz];
+      } else {
+        survival.spawn = null;
+        logLine('Your Sleeping Hide is gone.');
+      }
+    }
+    if (!pos) pos = blackHoles.respawnPoint(world.findSurvivalSpawn(), blackHoleWorld);
+    game.teleport(pos[0], pos[1], pos[2]); // sets fallGrace and clears landSpeed
+    hurtFlash = 0;
+    menus.hideDeath();
+    enterPlayingFromModal();
+    doSave(false);
+  }
+
+  /** Give the Handbook back when the pack has none (§14.2; a no-op until package H is merged). @returns {boolean} given */
+  function ensureHandbookInPack() {
+    if (!handbookMod || typeof handbookMod.ensureHandbook !== 'function') return false;
+    try {
+      return Boolean(handbookMod.ensureHandbook(pack));
+    } catch (err) {
+      console.warn('Caelancraft: ensureHandbook failed:', err);
+      return false;
+    }
+  }
+
+  /** Forget every in-progress dig, use and hold, and the action ring. */
+  function resetSurvivalInput() {
+    digState.reset();
+    useState.reset();
+    holdState.reset();
+    digHit = null;
+    digProgress = 0;
+    digAdvanced = false;
+    digPackFull = false;
+    useProgress = null;
+    holdProgress = null;
+    attackHeld = 0;
+    rRepeat = 0;
+  }
+
+  // ---- Survival: switching modes (§1.1–§1.3) --------------------------------------------------------
+
+  /** Queue a switch (the pause menu, the console and ?mode all come here); applied at the top of the next frame. */
+  function requestMode(mode) {
+    if (mode !== 'creative' && mode !== 'survival') return;
+    pendingModeSwitch = { mode };
+  }
+
+  /**
+   * Apply the queued switch (§9.5 top of the frame): close an open console or editor, then either switch in place or — a
+   * generation-1 world going to Survival — upgrade it, which reloads the world. @returns {boolean} the world was replaced
+   */
+  function applyModeSwitch() {
+    const { mode } = /** @type {{ mode: 'creative'|'survival' }} */ (pendingModeSwitch);
+    pendingModeSwitch = null;
+    if (!world || !player || survival.dead) return false;
+    if (state === STATE.CONSOLE) closeConsole();
+    if (state === STATE.EDITOR) closeEditor();
+    if (mode === survival.mode) return false;
+    if (mode === 'survival' && world.gen < 2) {
+      upgradeToGen2();
+      return true;
+    }
+    enterMode(mode);
+    return false;
+  }
+
+  /** §1.3 the upgrade, exactly: gen and mode reach the store together, then the world reloads from that save. */
+  function upgradeToGen2() {
+    const data = /** @type {SaveData} */ (buildSaveData());
+    data.gen = GEN_LATEST;
+    data.mode = 'survival';
+    data.player.flying = false;
+    if (!params.nosave) {
+      const res = saveSlot(currentSlot, data);
+      if (!res.ok) hud.showSaveToast(saveFailMessage(res.reason), true);
+    }
+    upgradeNotePending = true;
+    startLoading(world.seed, data);
+  }
+
+  /** §1.2 a switch in place: Survival begins (or comes back as it was left) or freezes; the HUD follows next frame. */
+  function enterMode(mode) {
+    const hadState = survival.hasState;
+    if (!survival.setMode(mode)) return;
+    if (mode === 'survival') {
+      if (!hadState) {
+        pack.clear();
+        sayBeginLines(ensureHandbookInPack());
+      }
+      player.flying = false;
+      player.landSpeed = 0;
+      survival.fallGrace = true;
+      climateSample = null;
+    } else {
+      craftQueue.clear();
+      pendingDeath = null;
+      if (state === STATE.PACK) closePack();
+    }
+    resetSurvivalInput();
+    updateHit();
+    hud.showSaveToast(mode === 'survival' ? 'Survival' : 'Creative');
+    if (state === STATE.PAUSED) {
+      menus.setModeState(mode);
+      menus.setPhysicsState(physicsMenuState());
+    }
+    doSave(false);
+  }
+
+  /** The §1.2 chat lines for a survival state that has just begun (§14.2's Handbook sentence when one was given). */
+  function sayBeginLines(handbookGiven) {
+    const [q, r] = worldToHex(player.x, player.z);
+    const [gx, , gz] = world.findSurvivalSpawn();
+    for (const line of survivalIntroLines(world.getBiome(q, r), worldToHex(gx, gz), handbookGiven)) logLine(line);
+  }
+
+  // ---- Survival: the target hint (§9.5 targetHintText) -----------------------------------------------
+
+  /** @returns {import('./survivalControl.js').InteractAction|null} what R would do now (§9.4) */
+  function interactAction() {
+    interactCtx.hit = hit;
+    interactCtx.waterHit = waterHit;
+    interactCtx.headInWater = Boolean(player && player.headInWater);
+    interactCtx.selectedKey = selectedKey();
+    const act = interactKind(interactCtx);
+    // §14.2 priority 10: with the Handbook in hand and nothing else to do, R reads it (package H adds this to interactKind;
+    // done here as well so the book opens before H is merged).
+    if (!act && interactCtx.selectedKey === HANDBOOK_KEY) return /** @type {*} */ ({ kind: 'read' });
+    return act;
+  }
+
+  /** @returns {string|null} the Survival target hint */
+  function survivalHintText() {
+    if (litTarget) return 'lit barrel · click: put it out';
+    if (zombieTarget) return 'Zombie · click: hit it';
+    if (pigTarget) return selectedTool() ? 'Pig · click: hunt it' : 'Pig · click: shove it (hunting needs a tool)';
+    if (digPackFull && digState.active) return HINT.packFull;
+    const act = interactAction();
+    if (act) {
+      switch (act.kind) {
+        case 'fire_put':
+        case 'fire_feed':
+        case 'fire_take':
+        case 'fire_hint':
+          return campfireHintText(act);
+        case 'pit_take':
+        case 'pit_relight':
+        case 'pit_hint':
+          return pitHintText(act);
+        case 'pick':
+          return `${getBlockDef(/** @type {number} */ (act.id)).displayName} · R: pick`;
+        case 'read':
+          return 'Handbook · R: read';
+        case 'drink_here':
+          return `${saltyHere() ? 'Sea water (salty)' : 'Fresh water'} · R: drink`;
+        default:
+          if (act.hint) return act.hint;
+      }
+    }
+    const h = hit;
+    if (h) {
+      const tool = selectedTool();
+      if (!canHarvest(h.blockId, tool)) {
+        const need = harvestHint(h.blockId);
+        if (need) return need;
+      }
+    }
+    return barrelOrRuneHint();
+  }
+
+  /** `Campfire · 3 roasting (next 14 s) · 2 done · fuel 4:10 · R: take` (§4.4). */
+  function campfireHintText(act) {
+    const view = fireSlots.view(/** @type {number} */ (act.q), /** @type {number} */ (act.y), /** @type {number} */ (act.r));
+    const status = fireHint(view);
+    const head = status ? `Campfire · ${status}` : 'Campfire';
+    switch (act.kind) {
+      case 'fire_put':
+        return `${head} · R: ${act.spot === 'skewer' ? 'put it on a skewer' : 'set it in the embers'}`;
+      case 'fire_feed': {
+        const fuel = view ? view.fuel : null;
+        if (fuel === null) return `${head} · ${HINT.noFuel}`;
+        if (fuel >= CAMPFIRE_FUEL_MAX_S) return `${head} · ${HINT.fullyFed}`;
+        return `${head} · R: feed the fire`;
+      }
+      case 'fire_take':
+        return `${head} · R: take`;
+      default:
+        return status ? `${head} · hold food or a pot and press R` : HINT.fire;
+    }
+  }
+
+  /** The cold fire pit's hint (§4.4). */
+  function pitHintText(act) {
+    if (act.kind === 'pit_take') {
+      const view = fireSlots.view(/** @type {number} */ (act.q), /** @type {number} */ (act.y), /** @type {number} */ (act.r));
+      const status = fireHint(view);
+      return `Cold Fire Pit${status ? ` · ${status}` : ''} · R: take`;
+    }
+    return HINT.pit;
+  }
+
+  /** @returns {boolean} the water at the player's own column is salt (drinking with the head under water) */
+  function saltyHere() {
+    const [q, r] = worldToHex(player.x, player.z);
+    return isSaltyBiome(world.getBiome(q, r));
+  }
+
+  // ---- Survival: R (§9.4 priorities) -----------------------------------------------------------------
+
+  /** R kinds that repeat while R is held (§4.4: put and feed every 0.25 s; gulps are throttled by GULP_GAP_S). */
+  const R_REPEATS = new Set(['fire_put', 'fire_feed', 'drink', 'drink_here']);
+
+  /**
+   * R in Survival: tap and relight are held (holdState); put, feed and drinking repeat while held; anything else acts on the
+   * press. With nothing to do, today's barrel and rune behaviour (interactTarget).
+   */
+  function survivalR(pressed, dt) {
+    const held = controls.isDown('KeyR');
+    const act = interactAction();
+    if (act && (act.kind === 'tap' || act.kind === 'pit_relight')) {
+      const use = { kind: act.kind, key: selectedKey(), needS: act.needS ?? 0, target: [act.q, act.y, act.r], repeat: false };
+      const res = holdState.step(dt, /** @type {*} */ (use), held || pressed);
+      holdProgress = held || pressed ? res.progress : null;
+      if (res.done) {
+        holdProgress = null;
+        doHoldAction(act);
+      }
+      return;
+    }
+    holdState.step(dt, null, false);
+    holdProgress = null;
+    if (pressed) {
+      rRepeat = 0;
+      if (act) doInteract(act);
+      else interactTarget();
+    } else if (held && act && R_REPEATS.has(act.kind)) {
+      rRepeat += dt;
+      if (rRepeat >= R_REPEAT_S) {
+        rRepeat -= R_REPEAT_S;
+        doInteract(act);
+      }
+    } else {
+      rRepeat = 0;
+    }
+  }
+
+  /** One R action (§4, §5.6, §6.4, §7.1). */
+  function doInteract(act) {
+    const { q, y, r } = /** @type {{q: number, y: number, r: number}} */ (act);
+    switch (act.kind) {
+      case 'fire_put': {
+        const [fx, fz] = hexToWorld(q, r);
+        const spot = fireSlots.put(q, y, r, act.key, Math.atan2(player.z - fz, player.x - fx));
+        if (spot < 0) {
+          showHint(HINT.fire);
+          return;
+        }
+        pack.consume(selected, 1);
+        audio.playClick();
+        return;
+      }
+      case 'fire_feed': {
+        const res = fireSlots.addFuel(q, y, r, act.seconds);
+        if (res === 'ok') {
+          pack.consume(selected, 1);
+          audio.playCrackle(1);
+          const [fx, fz] = hexToWorld(q, r);
+          particles.emit('sparks', fx, y + 0.4, fz, 6, { speed: 0.4 });
+        } else {
+          showHint(res === 'full' ? HINT.fullyFed : HINT.noFuel);
+        }
+        return;
+      }
+      case 'fire_take':
+      case 'pit_take': {
+        const from = screenPointOfCell(q, y, r);
+        const taken = fireSlots.takeReady(q, y, r, (k) => pack.add({ k, n: 1 }) === null);
+        if (taken.length === 0) {
+          showHint(HINT.packFull);
+          return;
+        }
+        for (const s of taken) hud.addPickup(s.k, s.n, from);
+        audio.playPick();
+        return;
+      }
+      case 'pick':
+        pickAt(q, y, r, /** @type {number} */ (act.id));
+        return;
+      case 'basket':
+        if (!containers.ensureBasket(q, y, r)) {
+          showHint(HINT.basketFull);
+          return;
+        }
+        openPack({ container: [q, y, r] });
+        return;
+      case 'belongings': {
+        const res = containers.takeAll(q, y, r, pack);
+        const from = screenPointOfCell(q, y, r);
+        for (const s of res.moved) hud.addPickup(s.k, s.n, from);
+        if (res.empty) {
+          playerSetBlock(q, y, r, BLOCK.AIR); // emptied: the heap is gone (§2.5)
+          audio.playPick();
+        } else {
+          showHint(res.moved.length ? 'Your pack is full: the rest is still there' : HINT.packFull);
+          if (res.moved.length) audio.playPick();
+        }
+        return;
+      }
+      case 'hide':
+        survival.spawn = [q, y, r];
+        logLine('You will wake at this Sleeping Hide.');
+        audio.playClick();
+        return;
+      case 'station':
+        openPack({ tab: act.station });
+        return;
+      case 'fill': {
+        if (selectedKey() !== 'clay_pot') return;
+        const salty = act.salty ?? isSaltyBiome(world.getBiome(q, r));
+        pack.consume(selected, 1);
+        giveToHand(salty ? 'pot_seawater' : 'pot_water');
+        audio.playPick();
+        return;
+      }
+      case 'drink':
+      case 'drink_here': {
+        if (fxTime - gulpAt < GULP_GAP_S) return;
+        gulpAt = fxTime;
+        const salty = act.kind === 'drink' ? (act.salty ?? isSaltyBiome(world.getBiome(q, r))) : saltyHere();
+        const line = survival.drink(salty, Math.random);
+        audio.playDrink();
+        if (line) logLine(line);
+        return;
+      }
+      case 'read':
+        openBook();
+        return;
+      default:
+        if (act.hint) showHint(act.hint); // fire_hint, pit_hint, tap_hint
+    }
+  }
+
+  /** The end of a held R (§4.2 tapping birch sap, §4.4 relighting a fire pit); every condition is checked again. */
+  function doHoldAction(act) {
+    const { q, y, r } = act;
+    if (act.kind === 'tap') {
+      const key = `${q},${y},${r}`;
+      if (world.getBlock(q, y, r) !== BLOCK.BIRCH_LOG || selectedKey() !== 'clay_pot' || !pack.hasTool('knife', KNIFE_TIER)) return;
+      if (!tapped.canTap(key, day)) {
+        showHint(HINT.tapped);
+        return;
+      }
+      pack.consume(selected, 1);
+      giveToHand('pot_sap');
+      const used = pack.useTool('knife', KNIFE_TIER);
+      if (used && used.broke) toolBroke(used.key);
+      tapped.mark(key, day);
+      audio.playDrink();
+      return;
+    }
+    // pit_relight: the drill, 1 tinder and 3 sticks are taken only once the fire is lit.
+    if (world.getBlock(q, y, r) !== BLOCK.FIRE_PIT) return;
+    if (!pack.hasTool('firestarter', 0) || pack.countTag('tinder') < 1 || pack.count('stick') < 3) {
+      showHint(HINT.pit);
+      return;
+    }
+    if (wouldDouseCampfire(world.getBlock, BLOCK.CAMPFIRE, q, y, r) || !playerSetBlock(q, y, r, BLOCK.CAMPFIRE)) return;
+    pack.takeTag('tinder', 1);
+    pack.take('stick', 3);
+    const used = pack.useTool('firestarter', 0);
+    if (used && used.broke) toolBroke(used.key);
+    fireSlots.light(q, y, r, CAMPFIRE_FUEL_START_S);
+    audio.playCrackle(1);
+  }
+
+  /** §6.4 picking with R: natural before the write, room checked, the picked block written by the player. */
+  function pickAt(q, y, r, id) {
+    const natural = !world.hasEdit(q, y, r);
+    const res = pick(id, { natural, knifeInPack: pack.hasTool('knife', KNIFE_TIER) }, Math.random);
+    if (!res) return;
+    if (!pack.canGive(res.drops)) {
+      showHint(HINT.packFull);
+      return;
+    }
+    if (!playerSetBlock(q, y, r, res.to)) return;
+    giveStacks(res.drops, screenPointOfCell(q, y, r));
+    audio.playPick();
+    const [x, z] = hexToWorld(q, r);
+    if (id === BLOCK.LOOSE_STONES) particles.emit('dust', x, y + 0.2, z, 4, { color: [0.55, 0.53, 0.5], spread: 0.3 });
+    else particles.emit('leaves', x, y + 0.4, z, 4, { id, spread: 0.3 });
+    updateHit();
+  }
+
+  // ---- Survival: left mouse — strike or hold to dig (§6.1) --------------------------------------------
+
+  function survivalLeft(mouse, dt) {
+    digAdvanced = false;
+    if (litTarget) {
+      digStep(0, false);
+      if (mouse.leftPressed) breakTargeted(); // a click snuffs a lit barrel, as today
+      return;
+    }
+    if (zombieTarget || pigTarget) {
+      digStep(0, false);
+      if (mouse.leftPressed) {
+        attackHeld = 0;
+        strike();
+      } else if (mouse.left) {
+        attackHeld += dt;
+        if (attackHeld >= ATTACK_REPEAT_S) {
+          attackHeld -= ATTACK_REPEAT_S;
+          strike();
+        }
+      } else {
+        attackHeld = 0;
+      }
+      return;
+    }
+    attackHeld = 0;
+    digStep(dt, mouse.left);
+  }
+
+  /**
+   * One frame of hold-to-dig on `hit` (§6.1): the dig trace and the ring follow `t / need`; every DIG_TICK_S a dig sound
+   * and 3 dust motes at the hit face (a dull sound every 0.5 s for a block the hand cannot break); done → finishDig.
+   * @returns {{progress: number, done: boolean, tick: boolean}}
+   */
+  function digStep(dt, held) {
+    const h = hit;
+    const stack = selectedStack();
+    const tool = selectedTool();
+    const need = h ? breakSeconds(h.blockId, tool, Boolean(player.headInWater)) : Infinity;
+    const res = digState.step(dt, h, held, need, handKeyOf(selected, stack));
+    if (!digState.active) digPackFull = false;
+    digHit = digState.active ? h : null;
+    digProgress = digState.active ? res.progress : 0;
+    if (!h || !held) return res;
+    const finite = Number.isFinite(need);
+    if (finite && !res.done && dt > 0) digAdvanced = true;
+    if (res.tick) {
+      audio.playDig(getBlockDef(h.blockId).soundGroup, finite ? 0.35 : 0.15);
+      if (finite) {
+        const [x, z] = hexToWorld(h.q, h.r);
+        particles.emit('dust', x + h.nx * 0.52, h.y + 0.5 + h.ny * 0.52, z + h.nz * 0.52, 3, { id: h.blockId, spread: 0.2 });
+      }
+    }
+    if (res.done) finishDig(h, tool);
+    return res;
+  }
+
+  /** §6.1 finishing a dig, in order: natural (before the break), drops, room, the break as the player, sound, drops, wear. */
+  function finishDig(h, tool) {
+    const id = h.blockId;
+    const natural = !world.hasEdit(h.q, h.y, h.r);
+    const drops = rollDrops(id, tool, { natural, knifeInPack: pack.hasTool('knife', KNIFE_TIER) }, Math.random);
+    // A basket, belongings or a fire also give what they hold (§5.6, §4.4): all of it must fit.
+    const held = [...containers.contents(h.q, h.y, h.r)];
+    const view = id === BLOCK.CAMPFIRE || id === BLOCK.FIRE_PIT ? fireSlots.view(h.q, h.y, h.r) : null;
+    if (view) for (const s of view.spots) if (s) held.push({ k: s.k, n: 1 });
+    if (!pack.canGive([...drops, ...held])) {
+      digPackFull = true; // the dig stays complete and finishes as soon as there is room (§6.1 step 3)
+      return;
+    }
+    let ok;
+    releaseToPack = true;
+    try {
+      ok = playerSetBlock(h.q, h.y, h.r, BLOCK.AIR);
+    } finally {
+      releaseToPack = false;
+    }
+    digState.reset();
+    digHit = null;
+    digProgress = 0;
+    digPackFull = false;
+    if (!ok) return;
+    audio.playBreak(getBlockDef(id).soundGroup);
+    giveStacks(drops, screenPointOfCell(h.q, h.y, h.r));
+    wearSelectedTool();
+    updateHit();
+  }
+
+  /** LMB on a mob (§4.3, §6.1): zombies take the tool's power; pigs are wounded only by a tool, shoved by a hand. */
+  function strike() {
+    const tool = selectedTool();
+    if (zombieTarget) {
+      const zb = zombieTarget.zombie;
+      const res = zombies.hit(zb, player.x, player.z, strikeKind('zombie', tool).power);
+      if (res === 'ko') {
+        zombieGone(zb, 'ko');
+        giveStacks(rollMobDrops('zombie', Math.random), screenPointOfBody(zb));
+      } else if (res === 'hit') {
+        audio.playZombieHurt(1);
+      }
+      if (res) wearSelectedTool();
+      updateHit();
+      return;
+    }
+    if (!pigTarget) return;
+    const pig = pigTarget.pig;
+    const k = strikeKind('pig', tool);
+    if (k.call === 'wound') {
+      const res = pigs.wound(pig, k.power, player.x, player.z);
+      if (res === 'dead') {
+        particles.emit('dust', pig.x, pig.y + 0.45, pig.z, 22, { color: [0.66, 0.57, 0.57], spread: 0.45 });
+        audio.playSqueal(1);
+        giveStacks(rollMobDrops('pig', Math.random), screenPointOfBody(pig));
+      } else if (res === 'hit') {
+        audio.playSqueal(1);
+      }
+      if (res) wearSelectedTool();
+    } else if (pigs.hit(pig, player.x, player.z)) {
+      audio.playSqueal();
+    }
+    updateHit();
+  }
+
+  // ---- Survival: right mouse — place or use the item in hand (§5.3, §4.5) ----------------------------
+
+  function survivalRight(mouse, dt) {
+    const stack = selectedStack();
+    if (stack && stack.k === HANDBOOK_KEY) {
+      useState.step(dt, null, false);
+      useProgress = null;
+      if (mouse.rightPressed) openBook(); // §14.2: RMB opens it at once, no hold
+      return;
+    }
+    const act = useActionOf(stack);
+    if (act && act.kind === 'place') {
+      useState.step(dt, null, false);
+      useProgress = null;
+      if (mouse.rightPressed) {
+        survivalPlace();
+        placeHeld = 0;
+      } else if (mouse.right) {
+        placeHeld += dt;
+        if (placeHeld >= PLACE_REPEAT_S) {
+          placeHeld -= PLACE_REPEAT_S;
+          survivalPlace();
+        }
+      } else {
+        placeHeld = 0;
+      }
+      return;
+    }
+    placeHeld = 0;
+    const use = act ? { kind: act.kind, key: act.key, needS: act.needS, repeat: act.repeat, target: String(selected) } : null;
+    const res = useState.step(dt, /** @type {*} */ (use), Boolean(mouse.right));
+    useProgress = use && mouse.right ? res.progress : null;
+    if (res.done && act) useItem(act);
+  }
+
+  /** The end of a held RMB use: eat or drink (a pot comes back into the hand), bandage, or wear. */
+  function useItem(act) {
+    const s = pack.slots[selected];
+    if (!s || s.k !== act.key) return;
+    if (act.kind === 'eat' || act.kind === 'drink') {
+      const res = survival.eat(act.key, Math.random);
+      if (!res.ok) {
+        if (res.message) showHint(res.message);
+        return;
+      }
+      pack.consume(selected, 1);
+      if (res.returns) giveToHand(res.returns);
+      if (act.kind === 'drink') audio.playDrink();
+      else audio.playEat();
+      if (res.message) logLine(res.message);
+    } else if (act.kind === 'bandage') {
+      if (!survival.bandage(act.key)) {
+        showHint('No more healing can be queued yet');
+        return;
+      }
+      pack.consume(selected, 1);
+      audio.playPick();
+    } else if (act.kind === 'wear') {
+      if (pack.equip(selected)) audio.playClick();
+    }
+  }
+
+  /** §5.3 placing in Survival: Creative's rules with the stack's block; a pop-off block needs solid ground; uses 1. */
+  function survivalPlace() {
+    const def = getItem(selectedKey() ?? '');
+    if (!def || def.block === undefined) return false;
+    const id = def.block;
+    const cell = placeTarget();
+    if (!cell) return false;
+    const refusal = placeRefusal(world.getBlock, id, cell[0], cell[1], cell[2]);
+    if (refusal) {
+      showHint(refusal);
+      return false;
+    }
+    if (!placeBlockAt(id, cell)) return false;
+    pack.consume(selected, 1);
+    if (id === BLOCK.CAMPFIRE) fireSlots.light(cell[0], cell[1], cell[2], CAMPFIRE_FUEL_START_S); // §4.4: it needs fuel
+    if (id === BLOCK.RUNE_BLOCK && state === STATE.PLAYING) openEditorFor(cell[0], cell[1], cell[2]);
+    return true;
+  }
+
+  /** Middle mouse in Survival (§5.3): select a hotbar slot holding the targeted block's item; never conjure one. */
+  function selectSlotHolding(h) {
+    if (!h) return;
+    const i = pack.hotbarSlotOf(itemForBlock(h.blockId));
+    if (i < 0) return;
+    selectSlot(i);
+    audio.playClick();
+  }
+
+  /** The action ring (§9.8): the dig, else a held use, else a held R. */
+  function actionProgress() {
+    if (digProgress > 0) return digProgress;
+    if (useProgress !== null) return useProgress;
+    if (holdProgress !== null) return holdProgress;
+    return null;
+  }
+
+  // ---- Survival: the step (§9.5 step 12) -------------------------------------------------------------
+
+  /** Everything that runs only while Survival is active; `buried` comes from unstickPlayer. */
+  function stepSurvival(dt, buried) {
+    climateAccum += dt;
+    if (climateSample === null || climateAccum >= CLIMATE_SAMPLE_S) {
+      climateAccum = 0;
+      refreshClimate();
+    }
+    const sample = /** @type {NonNullable<typeof climateSample>} */ (climateSample);
+    // The body: soft landings from the cells under the feet (only worth the scan for a hard landing).
+    let softFactor = 1;
+    if (player.landSpeed > FALL_SAFE_SPEED) {
+      supportingCells(player, world.getBlock, supportScratch);
+      supportIds.length = 0;
+      for (const c of supportScratch) supportIds.push(world.getBlock(c[0], c[1], c[2]));
+      softFactor = softLandingFactor(supportIds);
+    }
+    const env = survivalEnv;
+    env.player = player;
+    env.softFactor = softFactor;
+    env.breaking = digAdvanced;
+    env.buried = buried;
+    env.climate = sample;
+    env.heat = sample.heat;
+    env.nearFire = sample.nearFire;
+    env.insulation = pack.insulation();
+    env.sunShade = pack.sunShade();
+    env.time = time;
+    const ev = survival.step(dt, /** @type {*} */ (env));
+    if (ev.died) pendingDeath ??= ev.died;
+    else if (ev.fall > 0) hurtFeedback(ev.fall);
+    if (ev.pulse && !ev.died) {
+      hurtFlash = Math.max(hurtFlash, 0.4);
+      audio.playHurt(0.4);
+    }
+    if (ev.damage > 0) closeRusticBook();
+
+    // The craft lanes (§7.2): a lane's head job runs while its station is still there within STATION_WORK_RANGE.
+    const [fq, fr] = worldToHex(player.x, player.z);
+    feetCell[0] = fq;
+    feetCell[1] = Math.floor(player.y + 1e-3);
+    feetCell[2] = fr;
+    if (craftQueue.size > 0) {
+      const cev = craftQueue.step(dt, pack, peekBlockFn, feetCell);
+      for (const line of cev.messages) logLine(line, true);
+      for (const key of cev.broke) toolBroke(key);
+      if (cev.done.length > 0) audio.playCraft();
+      if (cev.lost.length > 0) leftBehind(cev.lost);
+    }
+
+    // Fire spots and fuel (§4.4): a burnt-out fire becomes a cold FIRE_PIT (a plain write; the spots stay on it).
+    if (fireSlots.size > 0) {
+      const fev = fireSlots.step(dt, isBurningFn, isLoadedCellFn);
+      for (const [q, y, r] of fev.burntOut) {
+        if (world.getBlock(q, y, r) !== BLOCK.CAMPFIRE) continue;
+        world.setBlock(q, y, r, BLOCK.FIRE_PIT);
+        const [x, z] = hexToWorld(q, r);
+        particles.emit('smoke', x, y + 0.4, z, 10, { spread: 0.3 });
+      }
+      fireEffects(dt, fev.cooking);
+    }
+
+    // Once a second: regrowth (lazy writes of the ripe id), spoilage in the pack and in loaded containers (§4.5, §6.5).
+    survivalSecond += dt;
+    if (survivalSecond >= 1) {
+      survivalSecond = Math.min(survivalSecond - 1, 1);
+      for (const c of regrowth.step(1, Math.random, isLoadedCellFn)) {
+        if (ripeOf(world.getBlock(c.q, c.y, c.r)) === c.id) world.setBlock(c.q, c.y, c.r, c.id, true);
+      }
+      const bad = pack.spoil(1, Math.random);
+      if (bad.length > 0 && fxTime - spoilLineAt >= 2) {
+        spoilLineAt = fxTime;
+        logLine(spoiledText(bad));
+      }
+      containers.spoil(1, Math.random, isLoadedCellFn);
+    }
+
+    // Pigs repopulate in daylight (§4.3).
+    pigRepopAccum += dt;
+    if (pigRepopAccum >= PIG_REPOP_CHECK_S) {
+      pigRepopAccum = 0;
+      if (isDayTime(time)) repopulatePigs();
+    }
+
+    if (player.y < VOID_Y) pendingDeath ??= 'void';
+  }
+
+  /** Sample the climate, the heat sources and the workplaces near the player (every CLIMATE_SAMPLE_S, §3.1, §7.1). */
+  function refreshClimate() {
+    const s = sampleClimate(world, player);
+    /** @type {{x: number, y: number, z: number, heat: number, radius: number}[]} */
+    const sources = [];
+    let nearFire = false;
+    if (campfires.size > 0) {
+      for (const n of campfires.nearest(player.x, player.y, player.z, HEAT_SOURCES.campfire.radius + 2)) {
+        const src = heatSource('campfire', n.fire.q, n.fire.y, n.fire.r);
+        if (src) sources.push(src);
+        if (n.dist <= NEAR_FIRE_CELLS) nearFire = true;
+      }
+    }
+    // A workplace is hot while its lane runs a job (the lane's head, not waiting).
+    const seen = new Set();
+    for (const job of craftQueue.jobs()) {
+      if (seen.has(job.station)) continue;
+      seen.add(job.station);
+      if (job.at && job.reason === '' && job.station !== 'stump' && job.station !== 'hand') {
+        const src = heatSource(/** @type {*} */ (job.station), job.at[0], job.at[1], job.at[2]);
+        if (src) sources.push(src);
+      }
+    }
+    s.heat = heatAt(sources, player.x, player.y + CHEST_HEIGHT, player.z);
+    s.nearFire = nearFire;
+    climateSample = s;
+    const [q, r] = worldToHex(player.x, player.z);
+    const next = findStations(world.getBlock, q, Math.floor(player.y + 1e-3), r);
+    if (stationsKey(next) !== stationsKey(stations)) {
+      stations = next;
+      stationsVersion++;
+    }
+  }
+
+  /** @returns {string} a comparable key of a findStations result */
+  function stationsKey(st) {
+    return ['stump', 'kiln', 'bloomery', 'forge'].map((k) => (st[k] ? st[k].join(',') : '-')).join('|');
+  }
+
+  /** §4.3: prune one far pig at the cap, then bring two more when fewer than PIG_REPOP_TARGET are within reach. */
+  function repopulatePigs() {
+    if (pigs.size >= PIG_MAX) pigs.pruneFar(player.x, player.z, isLoadedCellFn, 2 * PIG_REPOP_RADIUS);
+    let near = 0;
+    for (const p of pigs.list) if (Math.hypot(p.x - player.x, p.z - player.z) <= PIG_REPOP_RADIUS) near++;
+    if (near >= PIG_REPOP_TARGET || pigs.size >= PIG_MAX) return;
+    const [pq, pr] = worldToHex(player.x, player.z);
+    pigRepopTries++;
+    const seed = (world.seed ^ (day * 7919 + pigRepopTries)) >>> 0;
+    pigs.spawnNatural(Math.min(2, PIG_MAX - pigs.size), pq, pr, seed, world.getBlock, isLoadedCellFn, PIG_REPOP_MIN,
+      PIG_REPOP_MAX, SURVIVAL_PIG_GROUND);
+  }
+
+  /** Smoke over meat, steam over pots and a soft sizzle within 6 cells (§4.4), for the fires near the player. */
+  function fireEffects(dt, cooking) {
+    if (!(cooking > 0) || campfires.size === 0) return;
+    let sizzle = 0;
+    for (const n of campfires.nearest(player.x, player.y, player.z, 16, CAMPFIRE_MAX_MODELS)) {
+      const view = fireSlots.view(n.fire.q, n.fire.y, n.fire.r);
+      if (!view) continue;
+      const [x, z] = hexToWorld(n.fire.q, n.fire.r);
+      let meat = false;
+      let pot = false;
+      view.spots.forEach((s, i) => {
+        if (!s || s.next === null) return;
+        if (i === 6) pot = true;
+        else meat = true;
+      });
+      if (meat && Math.random() < dt * 3) particles.emit('smoke', x, n.fire.y + 0.75, z, 1, { spread: 0.25, color: [0.5, 0.48, 0.46] });
+      if (pot && Math.random() < dt * 4) particles.emit('steam', x, n.fire.y + 0.7, z, 1, { spread: 0.1 });
+      if ((meat || pot) && n.dist < 6) sizzle = Math.max(sizzle, 1 - n.dist / 6);
+    }
+    if (sizzle > 0 && fxTime - sizzleAt > 1.2) {
+      sizzleAt = fxTime;
+      audio.playSizzle(sizzle);
+    }
+  }
+
+  // ---- Survival: the Pack & Making screen (§5.4, §9.8) ------------------------------------------------
+
+  /**
+   * Open the pack screen (E, R on a basket or a workplace). The world keeps running (§9.5): stepFrame steps PACK like PLAYING
+   * with the controls disabled.
+   * @param {{ container?: [number, number, number], tab?: string }} [opts]
+   */
+  function openPack(opts = {}) {
+    if (state !== STATE.PLAYING || !survival.inSurvival) return;
+    setState(STATE.PACK); // before unlock(): the lock-change handler must not read 'playing'
+    controls.setEnabled(false);
+    controls.unlock();
+    breakHeld = 0;
+    placeHeld = 0;
+    resetSurvivalInput();
+    packSession.cursor = null;
+    packSession.container = null;
+    packContainer = null;
+    if (opts.container) {
+      const [q, y, r] = opts.container;
+      const entry = containers.get(q, y, r);
+      if (entry) {
+        packSession.container = entry.slots;
+        packContainer = { q, y, r, entry };
+      }
+    }
+    if (opts.tab) packTab = opts.tab;
+    refreshClimate(); // the workplaces near the player, now
+    packViewKey = packKey();
+    packUI.open(packScreenView());
+  }
+
+  /** Close the pack screen: the cursor stack goes back (overflow is lost with the message), then back to playing. */
+  function closePack(relock = true) {
+    if (state !== STATE.PACK) return;
+    const left = returnCursor(packSession);
+    if (left) leftBehind([left]);
+    packSession.container = null;
+    packContainer = null;
+    packUI.close();
+    if (relock) enterPlayingFromModal();
+    else setState(STATE.PLAYING);
+  }
+
+  /** @returns {import('./survivalControl.js').PackView} */
+  function packScreenView() {
+    return buildPackView({
+      pack,
+      selected,
+      cursor: packSession.cursor,
+      hover: null,
+      container: packContainer ? { kind: packContainer.entry.kind, slots: packContainer.entry.slots } : null,
+      stations,
+      tab: packTab,
+      recipes: listRecipes(pack, stations, { queue: craftQueue }),
+      lanes: craftQueue.lanes(),
+    });
+  }
+
+  function packKey() {
+    return `${pack.version}|${craftQueue.version}|${containers.version}|${stationsVersion}|${packTab}`;
+  }
+
+  /** Redraw the pack screen when anything it shows changed (or `force`); drops a basket that is no longer there. */
+  function refreshPackScreen(force = false) {
+    if (state !== STATE.PACK) return;
+    if (packContainer && containers.get(packContainer.q, packContainer.y, packContainer.r) !== packContainer.entry) {
+      packSession.container = null;
+      packContainer = null;
+      force = true;
+    }
+    const key = packKey();
+    if (!force && key === packViewKey) return;
+    packViewKey = key;
+    packUI.refresh(packScreenView());
+  }
+
+  function packSlotClick(area, index, button, shift) {
+    if (state !== STATE.PACK) return;
+    const res = /** @type {*} */ (slotClick(packSession, area, index, button, shift));
+    if (res.container) containers.touch();
+    if (res.refused) showHint(String(res.refused)); // §14.4: the Handbook refuses the discard hex
+    if (res.changed) audio.playClick();
+    refreshPackScreen(true);
+  }
+
+  function packMake(recipeId, times) {
+    if (state !== STATE.PACK) return;
+    const res = craftQueue.enqueue(recipeId, times, pack, stations);
+    hud.showSaveToast(res.message, !res.ok);
+    if (res.ok) audio.playClick();
+    refreshPackScreen(true);
+  }
+
+  function packCancelJob(lane, i) {
+    if (state !== STATE.PACK) return;
+    if (craftQueue.cancel(lane, i)) audio.playClick();
+    refreshPackScreen(true);
+  }
+
+  function packSetTab(tab) {
+    if (state !== STATE.PACK) return;
+    packTab = typeof tab === 'string' ? tab : 'all';
+    refreshPackScreen(true);
+  }
+
+  /** §14.4 packUI.onRead: close the pack, open the field book. */
+  function packRead() {
+    if (state !== STATE.PACK) return;
+    closePack(false);
+    openBook();
+  }
+
+  // ---- The Survival Handbook (§14; guarded until package H is merged) --------------------------------
+
+  /** Read the rustic Handbook (R or RMB with it in hand, or from the pack screen). The world keeps running. */
+  function openBook() {
+    if (state !== STATE.PLAYING) return;
+    if (!handbookUI) {
+      showHint('The handbook cannot be opened in this build');
+      return;
+    }
+    setState(STATE.BOOK); // before unlock()
+    controls.setEnabled(false);
+    controls.unlock();
+    breakHeld = 0;
+    placeHeld = 0;
+    resetSurvivalInput();
+    handbookUI.openRustic();
+  }
+
+  /** handbookUI's onClose: a rustic book read in play goes back to playing; the Guide leaves the menu underneath as it was. */
+  function onBookClosed() {
+    if (state === STATE.BOOK) enterPlayingFromModal();
+  }
+
+  /** Damage closes the field book (§14.1). */
+  function closeRusticBook() {
+    if (state !== STATE.BOOK || !handbookUI) return;
+    if (handbookUI.isOpen() === 'rustic') handbookUI.close();
+    onBookClosed();
+  }
+
+  /** The Guide (menus.onGuide): from the title screen or the pause menu, in both modes; reading only. */
+  function openGuide() {
+    if (!handbookUI || (state !== STATE.TITLE && state !== STATE.PAUSED)) return;
+    handbookUI.openGuide();
   }
 
   // ---- saving ---------------------------------------------------------------------------------------
@@ -879,6 +2550,8 @@ export function boot(win, doc) {
       zombies: zombies.enabled, // the switch only: zombies themselves are never saved (§39)
       watcher: watcher.enabled, // the switch: the Watcher itself is a sighting, never saved (§40) …
       watcherNight: watcher.lastNight ?? undefined, // … and the night of its last natural sighting (none: not written)
+      // v0.9 (§1.4): gen, mode, survival and containers, each only when there is something to say (storage orders them).
+      ...survivalSaveFields({ gen: world.gen, survival, pack, fireSlots, containers }),
       meta: { name: worldName, createdAt: worldCreatedAt, lastPlayed: Date.now() }, // §41: the slot's name and times
     };
   }
@@ -905,6 +2578,7 @@ export function boot(win, doc) {
       savedZombieSwitch = zombies.switchVersion;
       savedWatcherSwitch = watcher.switchVersion;
       savedWatcherNight = watcher.lastNight;
+      markSurvivalSaved();
       savedX = player.x;
       savedY = player.y;
       savedZ = player.z;
@@ -932,7 +2606,20 @@ export function boot(win, doc) {
     const switchesChanged = (blockPhysics !== null && blockPhysics.switchVersion !== savedSwitchVersion)
       || zombies.switchVersion !== savedZombieSwitch || watcher.switchVersion !== savedWatcherSwitch
       || watcher.lastNight !== savedWatcherNight;
-    if (world.editVersion !== savedEditVersion || runeStore.version !== savedRunesVersion || switchesChanged || playerMovedSinceSave()) doSave(false);
+    // Survival (§9.5 step 13): an active survival saves every interval (the vitals change all the time), and any change of
+    // the mode, the pack, the containers or the fire spots saves too.
+    const survivalChanged = survival.active || survival.switchVersion !== savedSurvivalSwitch || pack.version !== savedPackVersion
+      || containers.version !== savedContainersVersion || fireSlots.version !== savedFiresVersion;
+    if (world.editVersion !== savedEditVersion || runeStore.version !== savedRunesVersion || switchesChanged || survivalChanged
+      || playerMovedSinceSave()) doSave(false);
+  }
+
+  /** Remember the survival versions a save carried. */
+  function markSurvivalSaved() {
+    savedSurvivalSwitch = survival.switchVersion;
+    savedPackVersion = pack.version;
+    savedContainersVersion = containers.version;
+    savedFiresVersion = fireSlots.version;
   }
 
   /** Save when the page is leaving / hidden while a world is live (any state with a player, click-to-play included). */
@@ -969,9 +2656,15 @@ export function boot(win, doc) {
     consoleUI.close();
     runeEditor.close();
     editorKey = null;
+    packUI.close();
+    menus.hideDeath();
+    if (handbookUI && handbookUI.isOpen()) handbookUI.close();
     hud.setPickerOpen(false);
     hud.setUnderwater(false);
     hud.setTargetHint(null);
+    hud.setSurvivalVisible(false);
+    hud.setActionProgress(null);
+    hud.setJobChip(null);
     menus.showTitle(...worldsView({ focusSlot, message, isError: Boolean(message) }));
   }
 
@@ -1000,18 +2693,24 @@ export function boot(win, doc) {
    * Build the world and enter the loading screen.
    * @param {number} seed
    * @param {SaveData|null} restoring
+   * @param {{ survivalResources?: boolean }} [opts]  a new world: the New World form's checkbox (§1.3)
    */
-  function startLoading(seed, restoring) {
+  function startLoading(seed, restoring, opts = {}) {
     if (world) {
       world.dispose();
       world = null;
     }
     player = null;
     hit = null;
+    waterHit = null;
     renderer.setHighlight(null);
+    renderer.setDigProgress(null, 0);
     pendingSave = restoring;
 
-    world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: restoring ? restoring.edits : undefined });
+    // §1.3: a save keeps its generator version (absent: 1, today's land); a new world gets GEN_LATEST unless the box was
+    // cleared. Only an explicit upgrade (or ?mode under §1.1's rules) ever raises it.
+    const gen = loadingGen(restoring, opts);
+    world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: restoring ? restoring.edits : undefined, gen });
     world.onChunkMesh = (key, cq, cr, meshData) => renderer.setChunkMesh(key, cq, cr, meshData);
     world.onChunkUnload = (key) => renderer.removeChunkMesh(key);
     // Block physics before the first chunk is generated: onChunkGenerated re-seeds edited cells as chunks stream in.
@@ -1058,6 +2757,7 @@ export function boot(win, doc) {
     ctx = null;
     const runeWarnings = runeStore.replaceAll(restoring ? restoring.runes : null);
     for (const w of runeWarnings) console.warn('Caelancraft runes:', w);
+    loadSurvival(restoring);
     // After a WebGL context restore the renderer has dropped every chunk mesh (it keeps no CPU copy of the
     // vertex data). Flag the meshed chunks as never-meshed so the budgeted ring walk in world.update()
     // rebuilds them nearest-first over the next frames instead of all at once.
@@ -1090,6 +2790,47 @@ export function boot(win, doc) {
     menus.hidePause();
     menus.showLoading(0, loadingTotal);
     setState(STATE.LOADING);
+  }
+
+  /**
+   * §9.5 startLoading, the survival part: the vitals, the mode (Creative for a hand-edited Survival save below generation 2),
+   * a fresh state for a Survival world without one, the pack, fire spots, containers, regrowth; nothing else carries over.
+   * @param {SaveData|null} restoring
+   */
+  function loadSurvival(restoring) {
+    survival.import(restoring && restoring.survival ? restoring.survival : null);
+    const { mode, warning } = loadingMode(restoring, world.gen);
+    if (warning) console.warn(`Caelancraft: ${warning}`);
+    survival.mode = mode;
+    survivalBegun = false;
+    if (mode === 'survival' && !survival.hasState) {
+      survival.begin();
+      survivalBegun = true;
+    }
+    const packWarnings = pack.load(survival.hasState && restoring ? restoring.survival : null);
+    for (const w of packWarnings) console.warn('Caelancraft pack:', w);
+    const fireWarnings = fireSlots.load(restoring && restoring.survival ? restoring.survival.fires : null);
+    for (const w of fireWarnings) console.warn('Caelancraft fires:', w);
+    const containerWarnings = containers.load(restoring ? restoring.containers : null);
+    for (const w of containerWarnings) console.warn('Caelancraft containers:', w);
+    regrowth.loadFromEdits(world.edits);
+    tapped.clear();
+    craftQueue.clear();
+    resetSurvivalInput();
+    pendingDeath = null;
+    pendingKnock = 0;
+    pendingModeSwitch = null;
+    releaseToPack = false;
+    climateSample = null;
+    climateAccum = 0;
+    stations = { hand: true };
+    stationsVersion++;
+    survivalSecond = 0;
+    pigRepopAccum = 0;
+    pigRepopTries = 0;
+    flashHint = null;
+    packTab = 'all';
+    markSurvivalSaved();
   }
 
   /** @returns {number} meshed chunks within hex distance loadingRadius of the loading centre's chunk */
@@ -1143,6 +2884,19 @@ export function boot(win, doc) {
     if (params.yaw != null) controls.yaw = (params.yaw * Math.PI) / 180;
     if (params.pitch != null) controls.pitch = (params.pitch * Math.PI) / 180;
     if (params.fly) player.flying = true;
+    // §1.1 ?mode: the first world only (the autoplay boot already decided whether it may apply), then it is used up.
+    const urlModeNow = consumeModeParam(params);
+    if (urlModeNow && urlModeNow !== survival.mode && !survival.dead && (urlModeNow === 'creative' || world.gen >= 2)) {
+      const hadState = survival.hasState;
+      survival.setMode(urlModeNow);
+      if (urlModeNow === 'survival' && !hadState) survivalBegun = true;
+    }
+    // §9.5 finishLoading: no flight in Survival (whatever ?fly says), and the first landing does no damage.
+    if (survival.inSurvival) {
+      player.flying = false;
+      player.landSpeed = 0;
+      survival.fallGrace = true;
+    }
 
     if (placeNaturalPigs) {
       placeNaturalPigs = false;
@@ -1162,6 +2916,15 @@ export function boot(win, doc) {
       physicsNotePending = false;
       logLine(OLD_WORLD_PHYSICS_NOTE);
     }
+    if (upgradeNotePending) {
+      upgradeNotePending = false;
+      logLine(UPGRADED_NOTE);
+    }
+    if (survivalBegun) {
+      // §1.2 / §14.2: a survival state that has just begun starts with the Handbook in the last hotbar slot.
+      survivalBegun = false;
+      sayBeginLines(ensureHandbookInPack());
+    }
 
     savedEditVersion = world.editVersion;
     savedRunesVersion = runeStore.version;
@@ -1176,6 +2939,13 @@ export function boot(win, doc) {
     updateHit();
 
     menus.hideLoading();
+    // §2.5 step 6: a world saved on the death screen reloads onto it — never into click-to-play (z 35, above it) or play.
+    if (stateAfterLoading({ dead: Boolean(survival.dead), autoplay }) === STATE.DEAD) {
+      setState(STATE.DEAD);
+      controls.setEnabled(false);
+      showDeathAfterLoad();
+      return;
+    }
     if (autoplay) {
       enterPlaying();
       showDebugUi();
@@ -1192,6 +2962,18 @@ export function boot(win, doc) {
       openPicker();
       return;
     }
+    if (params.ui === 'pack') {
+      // The Pack & Making screen (§9.10): Survival only. Under ?nosave an empty pack is stocked with the screen's demo kit
+      // (nothing is saved), so the screenshot shows a lived-in pack.
+      if (!survival.inSurvival) return;
+      if (params.nosave && pack.slots.every((s) => s === null || s.k === HANDBOOK_KEY)) {
+        const demo = demoPackView();
+        demo.slots.forEach((s, i) => { if (s && !pack.slots[i]) pack.setSlot(i, s); });
+        demo.wear.forEach((s, i) => { if (s) pack.setWear(i, s); });
+      }
+      openPack();
+      return;
+    }
     if (params.ui === 'console') {
       openConsole('');
       consoleUI.log(runner.runConsoleLine('help').message);
@@ -1206,6 +2988,7 @@ export function boot(win, doc) {
   }
 
   function enterPlaying() {
+    if (survival.dead) return; // §2.5: the death screen is modal; only Wake up leaves it
     menus.hideClickToPlay();
     menus.hidePause();
     setState(STATE.PLAYING);
@@ -1226,6 +3009,7 @@ export function boot(win, doc) {
     menus.showPause(world.seed, physicsMenuState(), pauseWorldLabel()); // also resets the quit button to "Save & Quit"
     quitUnsavedArmed = false;
     menus.setZombiesState(zombies.enabled);
+    menus.setModeState(survival.mode); // §1.1 the Mode switch
     doSave(false);
   }
 
@@ -1325,10 +3109,40 @@ export function boot(win, doc) {
     hurtFlash = 0;
     hud.setHurtFlash(0);
     watcher.clear();
+    clearSurvival();
     player = null;
     hit = null;
+    waterHit = null;
     renderer.setHighlight(null);
     showTitle(currentSlot, message); // the Worlds screen, the world just left focused
+  }
+
+  /** §9.5 quitToTitle / dispose: forget every survival object and hide its screens and HUD. */
+  function clearSurvival() {
+    survival.import(null);
+    survival.mode = 'creative';
+    pack.clear();
+    containers.clear();
+    fireSlots.clear();
+    regrowth.clear();
+    tapped.clear();
+    craftQueue.clear();
+    resetSurvivalInput();
+    pendingDeath = null;
+    pendingKnock = 0;
+    pendingModeSwitch = null;
+    packSession.cursor = null;
+    packSession.container = null;
+    packContainer = null;
+    climateSample = null;
+    packUI.close();
+    menus.hideDeath();
+    if (handbookUI && handbookUI.isOpen()) handbookUI.close();
+    renderer.setDigProgress(null, 0);
+    hud.setSurvivalVisible(false);
+    hud.setHotbarStacks(null, selected);
+    hud.setActionProgress(null);
+    hud.setJobChip(null);
   }
 
   // ---- menus / hud callbacks ------------------------------------------------------------------------
@@ -1348,7 +3162,7 @@ export function boot(win, doc) {
       audio.resume();
       startLoading(data.seed, data);
     },
-    onNewWorld(slot, name, seedText) {
+    onNewWorld(slot, name, seedText, opts) {
       if (state !== STATE.TITLE) return;
       if (!params.nosave && listSlots()[slot - 1]?.status !== 'empty') {
         refreshWorlds(`Slot ${slot} is not empty any more`, true, slot);
@@ -1358,7 +3172,8 @@ export function boot(win, doc) {
       worldName = normalizeWorldName(name, slot);
       worldCreatedAt = Date.now();
       audio.resume();
-      startLoading(seedFromInput(seedText), null);
+      // §1.3: "Survival resources" checked (the default) → GEN_LATEST, cleared → today's land (generation 1).
+      startLoading(seedFromInput(seedText), null, { survivalResources: !(opts && opts.survivalResources === false) });
     },
     onRenameWorld(slot, name) {
       if (state !== STATE.TITLE) return;
@@ -1436,6 +3251,12 @@ export function boot(win, doc) {
     },
     onUndoPhysics() {
       if (state !== STATE.PAUSED || !blockPhysics) return;
+      // §1.5: Undo restores every cell an event wrote, which in Survival would duplicate what was mined from the debris.
+      if (survival.inSurvival) {
+        hud.showSaveToast('Undo is off in Survival', true);
+        menus.setPhysicsState(physicsMenuState());
+        return;
+      }
       const res = blockPhysics.undo();
       // The game is paused (no streaming step): re-mesh the restored chunks now so the menu's backdrop shows the result.
       for (let i = 0; i < 32 && [...world.chunks.values()].some((c) => c.dirty && c.lazy && c.meshed); i++) world.update(player.x, player.z);
@@ -1458,6 +3279,32 @@ export function boot(win, doc) {
     },
     onPickerClose() {
       closePicker();
+    },
+    // ---- v0.9 Survival ----
+    /** §1.1: the inactive half of the Mode switch. A generation-1 world going to Survival asks first (§1.3). */
+    async onModeSelect(mode) {
+      if (state !== STATE.PAUSED || !world || (mode !== 'creative' && mode !== 'survival')) return;
+      if (mode === survival.mode) return;
+      if (mode === 'survival' && world.gen < 2) {
+        const worldAtAsk = world;
+        const yes = await menus.confirm({ ...UPGRADE_CONFIRM });
+        // Anything may have happened while the dialog was up (Resume, Quit, another world): ask again next time.
+        if (!yes || state !== STATE.PAUSED || world !== worldAtAsk) return;
+      }
+      requestMode(mode);
+      audio.playClick();
+    },
+    onWake() {
+      wake();
+    },
+    onDeathQuit() {
+      if (state !== STATE.DEAD) return;
+      const saved = params.nosave || doSave(false);
+      quitToTitle(saved ? '' : `“${worldName}” was not saved (storage full) — its last save is kept. Delete a world to make room.`);
+    },
+    /** §14.4 (package H): the Guide button on the title screen and in the pause menu. */
+    onGuide() {
+      openGuide();
     },
   });
 
@@ -1489,7 +3336,11 @@ export function boot(win, doc) {
 
   // ---- game context for diagnostics -----------------------------------------------------------------
 
-  /** @type {GameContext & { getDay: () => number, dispose: () => void }} */
+  /**
+   * v0.9 adds (CONTRACTS §49; types.js's GameContext typedef is W0's and does not list them yet): survival, pack,
+   * setMode(mode) (queued), getMode(), urlMode, selectSlot(i), interact(), digTargeted(dt), useSelected(dt).
+   * @type {GameContext & { getDay: () => number, dispose: () => void, [key: string]: any }}
+   */
   const game = {
     get world() {
       return world;
@@ -1517,6 +3368,11 @@ export function boot(win, doc) {
       player.vy = 0;
       player.vz = 0;
       player.onGround = false;
+      // §2.4: every teleport (waking, a black hole's return, tp / tpw, runes) lands without fall damage, and lifting the
+      // player out of the arrival cell is no crush.
+      player.landSpeed = 0;
+      teleportFrame = true;
+      if (survival.inSurvival) survival.fallGrace = true;
       detachBody(player, pigs.list); // a pig on the player's head (or under its feet) stays behind (§31)
       detachBody(player, zombies.list); // … and so does a zombie
       if (world) world.update(x, z);
@@ -1542,6 +3398,33 @@ export function boot(win, doc) {
     },
     zombies,
     watcher,
+    // ---- v0.9 Survival (§9.5 GameContext) ----
+    survival,
+    pack,
+    /** Queue a mode switch (applied at the top of the next frame). */
+    setMode(mode) {
+      requestMode(mode);
+    },
+    getMode: () => survival.mode,
+    /** `?mode=` as the page was opened with (the smoke test's optional survival step). */
+    get urlMode() {
+      return urlMode;
+    },
+    selectSlot: (i) => selectSlot(i),
+    /** One press of R on the current target (both modes; screenshot drivers). */
+    interact: () => {
+      if (!player || state !== STATE.PLAYING) return;
+      if (survival.inSurvival) survivalR(true, 0);
+      else interactTarget();
+    },
+    /** One frame of holding LMB on the target in Survival (smoke test): the real dig path. */
+    digTargeted: (dt) => (survival.active && player ? digStep(dt, true) : null),
+    /** One frame of holding RMB with the selected item in Survival (smoke test): the real use path. */
+    useSelected: (dt) => {
+      if (!survival.active || !player) return null;
+      survivalRight({ right: true, rightPressed: false }, dt);
+      return { progress: useProgress };
+    },
     dispose,
   };
 
@@ -1561,7 +3444,10 @@ export function boot(win, doc) {
    */
   function stepBlackHoles(dt) {
     if (blackHoles.size === 0) return;
-    if (blackHoles.swallowing(player)) {
+    if (blackHoles.swallowing(player) && survival.active) {
+      // Survival (§2.4): swallowed is a death, and the belongings go with you (no teleport; the checkpoint runs die()).
+      pendingDeath ??= 'blackhole';
+    } else if (blackHoles.swallowing(player)) {
       const [sx, sy, sz] = blackHoles.respawnPoint(world.findSpawn(), blackHoleWorld);
       game.teleport(sx, sy, sz);
       if (fxTime - lastSwallowLineAt >= BLACK_HOLE_SWALLOW_LINE_S) {
@@ -1600,6 +3486,11 @@ export function boot(win, doc) {
         logLine('Ouch! That campfire is hot.');
       }
       audio.playCrackle(1);
+      // Survival (§2.4): a scorch burns, at most once per FIRE_SCORCH_GAP_S.
+      if (survival.active && fxTime - scorchAt >= FIRE_SCORCH_GAP_S) {
+        scorchAt = fxTime;
+        hurt(FIRE_BURN_DAMAGE, 'fire');
+      }
     }
     if (campfires.size === 0) return;
     const near = campfires.nearest(player.x, player.y, player.z, CAMPFIRE_CRACKLE_RANGE, 1);
@@ -1688,6 +3579,8 @@ export function boot(win, doc) {
     if (ev.attacks.length > 0) {
       hurtFlash = 1;
       audio.playThud(1);
+      // Survival (§2.4): each strike deals ZOMBIE_DAMAGE (zombies.js stays mode-agnostic; the push is unchanged).
+      if (survival.active) hurt(ZOMBIE_DAMAGE * ev.attacks.length, 'zombie');
     }
     for (const zb of ev.groans) {
       const v = zombieVolume(zb);
@@ -1772,7 +3665,19 @@ export function boot(win, doc) {
 
   /** Block physics: ≤ 1 tick, then fallers, toppling trees, lit barrels and blasts (CONTRACTS §33). */
   function stepBlockPhysics(dt) {
-    if (blockPhysics) blockPhysics.step(dt);
+    if (blockPhysics) {
+      const blasts = blockPhysics.explosions.blastCount;
+      blockPhysics.step(dt); // the knock hook's player branch only records pendingKnock
+      // Survival (§2.4): the hardest knock of the step hurts once — a blast if one went off, else a toppled log.
+      if (pendingKnock > 0 && survival.active) {
+        const dmg = knockDamage(pendingKnock);
+        if (dmg > 0) {
+          knockHurtThisFrame = true;
+          hurt(dmg, knockCause(blasts, blockPhysics.explosions.blastCount));
+        }
+      }
+      pendingKnock = 0;
+    }
     if (breakVolume > 0) {
       audio.playBreak(breakGroup, breakVolume);
       breakVolume = 0;
@@ -1790,27 +3695,44 @@ export function boot(win, doc) {
   /**
    * A block filled into the player (a command, a landing log, a rune) is never a trap: when the player overlaps a solid
    * cell after everything has moved, lift them to the first free height within three cells.
+   * v0.9 (§2.4): reports how many whole cells it lifted (crush damage) and, when there is no room within three cells and
+   * the eye cell is solid, `buried` (breath drains as under water).
+   * @returns {{ lifted: number, buried: boolean }}
    */
   function unstickPlayer() {
-    if (!world.hasChunkAt(player.x, player.z) || isFreeAt(world.getBlock, player.x, player.y, player.z)) return;
+    if (!world.hasChunkAt(player.x, player.z) || isFreeAt(world.getBlock, player.x, player.y, player.z)) return NOT_STUCK;
     const fy = findFreeY(world.getBlock, player.x, player.z, Math.floor(player.y) + 1, 3);
-    if (fy === null) return;
+    if (fy === null) {
+      const [q, r] = worldToHex(player.x, player.z);
+      return { lifted: 0, buried: isSolid(world.getBlock(q, Math.floor(player.y + getEyeHeight(player)), r)) };
+    }
+    const lifted = cellsLifted(player.y, fy);
     player.y = fy;
     if (player.vy < 0) player.vy = 0;
+    return { lifted, buried: false };
   }
+  const NOT_STUCK = Object.freeze({ lifted: 0, buried: false });
 
-  /** Input, interaction, physics, clock, streaming and raycast — only while playing. */
+  /**
+   * Input, interaction, physics, clock, streaming and raycast — while playing, and (v0.9, §9.5) under the pack screen and
+   * the field book too, with the controls disabled so the player stands still while the world runs.
+   */
   function stepPlaying(dt) {
+    const SV = survival.inSurvival;
+    const st0 = state;
     const input = controls.getInput();
+    knockHurtThisFrame = false;
 
-    if (controls.consumeFlyToggle()) {
+    // Flight is Creative's (§0): in Survival the toggle is consumed and ignored.
+    if (controls.consumeFlyToggle() && !SV) {
       player.flying = !player.flying;
       player.vy = 0;
     }
     // Modal keys first, so a key that opens a modal never also acts on the hotbar in the same frame.
     if (controls.consumePressed('KeyE')) {
-      openPicker();
-      return; // the picker frame still renders below
+      if (SV) openPack();
+      else openPicker();
+      if (state !== st0) return; // the modal's frame still renders below
     }
     if (controls.consumePressed('KeyT')) {
       openConsole('');
@@ -1829,41 +3751,63 @@ export function boot(win, doc) {
     const mouse = controls.consumeMouse();
     if (mouse.wheel !== 0) selectSlot(wheelSlot(selected, mouse.wheel));
 
-    if (controls.consumePressed('KeyR')) {
-      if (controls.isDown('ShiftLeft') || controls.isDown('ShiftRight')) {
-        editTarget();
-        if (state !== STATE.PLAYING) return;
-      } else {
-        interactTarget();
-      }
+    const rPressed = controls.consumePressed('KeyR');
+    const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
+    if (rPressed && shift) {
+      editTarget();
+      if (state !== st0) return;
+    } else if (SV) {
+      // §9.4 the R priorities (barrel and rune behave as today when nothing else applies).
+      survivalR(rPressed, dt);
+      if (state !== st0) return;
+    } else if (rPressed) {
+      interactTarget();
     }
 
     // Interaction uses the hit computed at the end of the previous frame (what the highlight showed).
-    if (mouse.leftPressed) {
-      breakTargeted();
-      breakHeld = 0;
-    } else if (mouse.left) {
-      breakHeld += dt;
-      if (breakHeld >= BREAK_REPEAT_S) {
-        breakHeld -= BREAK_REPEAT_S;
+    if (SV) {
+      // §6.1 strike or hold to dig; §5.3 / §4.5 place or hold to use; middle mouse only selects (never conjures).
+      survivalLeft(mouse, dt);
+      if (state !== st0) return;
+      survivalRight(mouse, dt);
+      if (state !== st0) return;
+      if (mouse.middlePressed) selectSlotHolding(hit);
+    } else {
+      if (mouse.leftPressed) {
         breakTargeted();
+        breakHeld = 0;
+      } else if (mouse.left) {
+        breakHeld += dt;
+        if (breakHeld >= BREAK_REPEAT_S) {
+          breakHeld -= BREAK_REPEAT_S;
+          breakTargeted();
+        }
+      } else {
+        breakHeld = 0;
       }
-    } else {
-      breakHeld = 0;
-    }
-    if (mouse.rightPressed) {
-      placeSelected();
-      placeHeld = 0;
-    } else if (mouse.right) {
-      placeHeld += dt;
-      if (placeHeld >= PLACE_REPEAT_S) {
-        placeHeld -= PLACE_REPEAT_S;
+      if (mouse.rightPressed) {
         placeSelected();
+        placeHeld = 0;
+      } else if (mouse.right) {
+        placeHeld += dt;
+        if (placeHeld >= PLACE_REPEAT_S) {
+          placeHeld -= PLACE_REPEAT_S;
+          placeSelected();
+        }
+      } else {
+        placeHeld = 0;
       }
-    } else {
-      placeHeld = 0;
+      if (mouse.middlePressed) pickTargeted();
     }
-    if (mouse.middlePressed) pickTargeted();
+
+    // §2.3: the body limits sprinting and slows walking (physics §9.3 speedFactor).
+    if (survival.active) {
+      const status = survival.status;
+      input.sprint = input.sprint && status.canSprint;
+      input.speedFactor = status.moveFactor;
+    } else {
+      input.speedFactor = 1;
+    }
 
     // Physics only where terrain exists (getBlock reports AIR in unloaded chunks). Black holes pull on the
     // player's middle; `input` is the controls' reused object, so the pull is written every frame.
@@ -1874,11 +3818,13 @@ export function boot(win, doc) {
     input.pullZ = pull[2] + (blockPhysics ? current[2] : 0);
     if (world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt);
     stepBlackHoles(dt);
+    if (checkDeath()) return; // §2.5 checkpoint
     stepPigs(dt);
     stepZombies(dt);
     stepWatcher(dt);
     stepBlockPhysics(dt);
     stepCampfires(dt);
+    if (checkDeath()) return; // §2.5 checkpoint
     // Bodies collide, push and stand on each other once everything has moved (CONTRACTS §31). Pigs in unloaded
     // chunks are frozen and stay out of it; lit barrels (explosions.js) take part against the player and pigs.
     bodies.length = 0;
@@ -1887,7 +3833,12 @@ export function boot(win, doc) {
     for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) bodies.push(zb);
     if (blockPhysics) blockPhysics.bodies(bodies);
     if (bodies.length > 1) resolveBodies(bodies, world.getBlock);
-    unstickPlayer();
+    const stuck = unstickPlayer();
+    // §2.4 crush: falling ground lifted the player — not on a teleport frame, under fall grace, or on top of a knock.
+    if (stuck.lifted > 0 && survival.active && !survival.fallGrace && !teleportFrame && !knockHurtThisFrame) {
+      hurt(crushDamage(stuck.lifted), 'crush');
+    }
+    teleportFrame = false;
 
     if (params.time == null) {
       const nt = advanceTime(time, dt);
@@ -1895,9 +3846,16 @@ export function boot(win, doc) {
       time = nt;
     }
 
+    // §9.5 step 12: the body, the lanes, the fires, regrowth, spoilage, pigs — only while Survival is active.
+    if (survival.active) {
+      stepSurvival(dt, stuck.buried);
+      if (checkDeath()) return; // §2.5 checkpoint
+    }
+
     // Rune scripts run after physics (step-on sees where the player landed) and before world.update() so their
     // edits are re-meshed this frame. A modal opened by a script (none today) would stop the loop next frame.
     if (runner && state === STATE.PLAYING) runner.update(dt);
+    if (checkDeath()) return; // §2.5 checkpoint (a script's damage)
 
     world.update(player.x, player.z);
     updateHit();
@@ -1925,6 +3883,9 @@ export function boot(win, doc) {
     fov = easeFov(fov, player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV, dt);
     renderer.setFov(fov);
     renderer.setHighlight(hit);
+    const SV = survival.inSurvival;
+    // §9.9: the dig trace follows the cell's hex outline in honey as it is dug (hidden when not digging).
+    renderer.setDigProgress(SV && digHit && digProgress > 0 ? digHit : null, digProgress);
     pigRenderer.sync(pigs.list);
     zombieRenderer.sync(zombies.list);
     watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime);
@@ -1937,12 +3898,33 @@ export function boot(win, doc) {
       const near = campfires.nearest(player.x, eyeY, player.z, CAMPFIRE_MODEL_RANGE)
         .filter((n) => world.hasChunkAtCell(n.fire.q, n.fire.r))
         .slice(0, CAMPFIRE_MAX_MODELS);
-      campfireRenderer.sync(near, fxTime, dt);
+      // §9.9: the skewers, the food on them and the pot in the embers (fire spots, Survival only hold anything).
+      campfireRenderer.sync(near, fxTime, dt, spotsViewFn);
     }
     computeSky(time, sky);
     renderer.setSky(sky);
     renderer.setUnderwater(player.headInWater);
     hud.setUnderwater(player.headInWater);
+    // §9.8: the survival HUD — hex hotbar from the pack (no per-frame copy), vitals bookends, the action ring, the job chip.
+    hud.setSurvivalVisible(SV);
+    hud.setHotbarStacks(SV ? pack.slots : null, selected, pack.version);
+    if (SV) {
+      const v = survival.vitals;
+      vitalsView.health = v.health;
+      vitalsView.satiation = v.satiation;
+      vitalsView.hydration = v.hydration;
+      vitalsView.temp = v.temp;
+      vitalsView.felt = survival.felt;
+      vitalsView.breath = v.breath;
+      vitalsView.labels = survival.status.labels;
+      vitalsView.target = bodyTarget(survival.felt, Boolean(player.inWater));
+      hud.setVitals(vitalsView);
+      hud.setActionProgress(state === STATE.PLAYING ? actionProgress() : null);
+      hud.setJobChip(craftQueue.chipText());
+    } else {
+      hud.setActionProgress(null);
+      hud.setJobChip(null);
+    }
     hud.setTargetHint(state === STATE.PLAYING ? targetHintText() : null);
     if (hud.isDebugVisible()) hud.setDebugText(buildDebugText(game, stats));
     renderer.render();
@@ -1998,16 +3980,26 @@ export function boot(win, doc) {
     if (disposed) return;
     const dt = Math.min(Math.max(0, Number.isFinite(rawDt) ? rawDt : 0), MAX_FRAME_DT);
 
+    // §9.5 top of the frame: a queued mode switch (never applied inside a command, a hook or a step). The upgrade of a
+    // generation-1 world replaces the world, so that frame ends here.
+    if (pendingModeSwitch && MODE_SWITCH_STATES.has(state) && applyModeSwitch()) {
+      refreshStats(rawDt);
+      return;
+    }
+
     switch (state) {
       case STATE.LOADING:
         stepLoading();
         break;
       case STATE.PLAYING:
+      case STATE.PACK: // §9.5: the world keeps running under the pack screen …
+      case STATE.BOOK: // … and the field book (§14.1)
         stepPlaying(dt);
         break;
       default:
-        break; // title / clickToPlay / paused / picker: frozen simulation
+        break; // title / clickToPlay / paused / picker / console / editor / dead: frozen simulation
     }
+    if (state === STATE.PACK) refreshPackScreen();
     if (player) renderFrame(dt);
     refreshStats(rawDt);
   }
@@ -2019,10 +4011,19 @@ export function boot(win, doc) {
   const onVisibility = () => {
     if (doc.visibilityState === 'hidden') saveOnLeave();
   };
+  // §14.4: while a Handbook reader is open, keydowns go to it first (Esc, arrows, PgUp / PgDn), before the menus and controls.
+  const onBookKeyDown = (/** @type {KeyboardEvent} */ e) => {
+    if (!handbookUI || !handbookUI.isOpen()) return;
+    if (handbookUI.handleKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
   win.addEventListener('resize', onResize);
   win.addEventListener('pagehide', onPageHide);
   win.addEventListener('beforeunload', onPageHide);
   doc.addEventListener('visibilitychange', onVisibility);
+  doc.addEventListener('keydown', onBookKeyDown, true);
 
   function dispose() {
     if (disposed) return;
@@ -2032,11 +4033,14 @@ export function boot(win, doc) {
     win.removeEventListener('pagehide', onPageHide);
     win.removeEventListener('beforeunload', onPageHide);
     doc.removeEventListener('visibilitychange', onVisibility);
+    doc.removeEventListener('keydown', onBookKeyDown, true);
     canvas.removeEventListener('mousedown', onCanvasMouseDown);
     uninstallErrors();
     if (runner) runner.reset();
     runner = null;
     runeStore.clear();
+    clearSurvival();
+    packUI.dispose();
     if (world) world.dispose();
     world = null;
     blockPhysics = null;
@@ -2093,8 +4097,15 @@ export function boot(win, doc) {
     } else {
       worldCreatedAt = Date.now();
     }
+    // §1.1 ?mode: applies to this first world only (finishLoading uses it up). It never raises a saved world's generation
+    // unless nothing is being saved; an older saved world loads as it is.
+    const plan = modeParamPlan(params.mode, { save: restoring, nosave: params.nosave });
+    if (plan.warning) console.warn(`Caelancraft: ${plan.warning}`);
+    if (!plan.apply) params.mode = null;
+    else if (plan.raiseGen && restoring) restoring = { ...restoring, gen: GEN_LATEST };
     startLoading(seed, restoring);
   } else {
+    params.mode = null; // ?mode works only with ?autoplay or ?smoke
     showTitle();
   }
 

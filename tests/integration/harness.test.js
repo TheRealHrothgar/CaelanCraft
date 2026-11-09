@@ -29,6 +29,26 @@ import {
 import { computeSky, advanceTime, createSkyState, sunDirection, formatTime } from '../../src/daynight.js';
 import { RuneStore, RuneRunner, runeKey, SOURCE } from '../../src/runes.js';
 import { countFaces } from '../helpers/fixtures.js';
+// v0.9 Survival (§10 I-3)
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { vi } from 'vitest';
+import { GEN_LATEST, STAT_MAX, BREATH_MAX_S, BODY_TEMP_MIN, BODY_TEMP_MAX } from '../../src/config.js';
+import { BIOME } from '../../src/blocks.js';
+import { Survival } from '../../src/survival.js';
+import { Pack } from '../../src/inventory.js';
+import { Containers } from '../../src/containers.js';
+import { FireSlots } from '../../src/cooking.js';
+import { CraftQueue } from '../../src/crafting.js';
+import { parseLine, executeCommand } from '../../src/commands.js';
+import { parseParams, survivalDebugLine, buildDebugText } from '../../src/diagnostics.js';
+import { createMenus } from '../../src/menus.js';
+import {
+  STATE, stateSimulates, stateAfterLoading, loadingGen, loadingMode, modeParamPlan, consumeModeParam, survivalSaveFields,
+  physicsMenuStateFor, sampleClimate, deathScreenText, knockCause, cellsLifted, MODE_PARAM_IGNORED, SURVIVAL_NEEDS_GEN2,
+  survivalIntroLines, SURVIVAL_INTRO, HANDBOOK_INTRO, leftBehindText, spoiledText, packListText, CLIMATE_SAMPLE_S,
+} from '../../src/main.js';
+import { documentFromHTML } from '../helpers/fakeDom.js';
 
 const SEED = 1;
 const RD = 2;
@@ -866,5 +886,265 @@ describe('integration harness: world + physics + raycast + storage + daynight (s
     expect(stub.meshes.size).toBe(0);
     // Edits survive dispose (they are what the save stores).
     expect(Object.keys(world.exportEdits()).length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// v0.9 Survival (docs/DESIGN-survival.md §10 "I" test 3, CONTRACTS §42 / §49): the same real modules, in main.js's order,
+// with main.js's own exported helpers for the decisions it makes.
+
+/** The survival objects main keeps, fresh. */
+function survivalObjects() {
+  return { survival: new Survival(), pack: new Pack(), fireSlots: new FireSlots(), containers: new Containers() };
+}
+
+/** A minimal Creative save of `world` (what buildSaveData writes without the survival fields). */
+function creativeSave(w, p) {
+  return {
+    version: SAVE_VERSION,
+    seed: w.seed,
+    time: START_TIME,
+    day: 1,
+    player: { x: p.x, y: p.y, z: p.z, yaw, pitch, flying: false },
+    hotbar: DEFAULT_HOTBAR.slice(),
+    selected: 0,
+    edits: w.exportEdits(),
+    meta: { name: 'Harness', createdAt: 1, lastPlayed: 2 },
+  };
+}
+
+describe('integration harness: Survival (v0.9)', () => {
+  it('a Creative world that never entered Survival saves byte-identically, still version 2; generation 2 makes it 3', () => {
+    const w = new World({ seed: SEED, renderDistance: RD, now: () => 0 });
+    expect(w.gen).toBe(1);
+    const p = createPlayer(...w.findSpawn());
+    const base = creativeSave(w, p);
+    const fields = survivalSaveFields({ gen: w.gen, ...survivalObjects() });
+    expect(fields).toEqual({});
+    const text = serializeSave({ ...base, ...fields });
+    expect(text).toBe(serializeSave(base));
+    expect(JSON.parse(text).version).toBe(2);
+    // A new world with the survival resources box checked (the default) is generation 2, in Creative: version 3.
+    expect(loadingGen(null, {})).toBe(GEN_LATEST);
+    expect(loadingGen(null, { survivalResources: false })).toBe(1);
+    expect(loadingGen(base, {})).toBe(1);
+    const g2 = JSON.parse(serializeSave({ ...base, ...survivalSaveFields({ gen: 2, ...survivalObjects() }) }));
+    expect([g2.version, g2.gen, g2.mode, g2.survival]).toEqual([3, 2, undefined, undefined]);
+    w.dispose();
+  });
+
+  it('a survival state saves gen, mode, survival and containers in order, and loads back', () => {
+    const o = survivalObjects();
+    o.survival.setMode('survival');
+    o.pack.give('flint_pick', 1);
+    o.pack.give('rock', 7);
+    o.containers.ensureBasket(0, 64, 0);
+    const fields = survivalSaveFields({ gen: 2, ...o });
+    expect(Object.keys(fields)).toEqual(['gen', 'mode', 'survival', 'containers']);
+    expect(fields.survival.pack.filter(Boolean)).toEqual([{ k: 'flint_pick', n: 1 }, { k: 'rock', n: 7 }]);
+    const w = new World({ seed: SEED, renderDistance: RD, now: () => 0, gen: 2 });
+    w.importEdits({});
+    const save = { ...creativeSave(w, createPlayer(0, 70, 0)), ...fields, edits: { '0,0': [64, BLOCK.WICKER_BASKET] } };
+    const back = deserializeSave(serializeSave(save));
+    expect(back.version).toBe(3);
+    expect(Object.keys(back).slice(-5)).toEqual(['gen', 'mode', 'survival', 'containers', 'meta']);
+    const loaded = survivalObjects();
+    loaded.survival.import(back.survival);
+    expect(loadingMode(back, back.gen)).toEqual({ mode: 'survival', warning: null });
+    loaded.pack.load(back.survival);
+    expect(loaded.pack.count('rock')).toBe(7);
+    // A hand-edited Survival save on generation 1 loads in Creative, with the warning.
+    expect(loadingMode({ ...back, gen: undefined }, 1)).toEqual({ mode: 'creative', warning: SURVIVAL_NEEDS_GEN2 });
+    w.dispose();
+  });
+
+  it('60 simulated seconds of Survival on a generation-2 world keep every vital in range', () => {
+    const w = new World({ seed: SEED, renderDistance: RD, now: () => 0, gen: 2 });
+    attach(w, createStubRenderer());
+    const start = w.findSurvivalSpawn();
+    converge(w, start[0], start[2]);
+    const p = createPlayer(...start);
+    const s = new Survival();
+    expect(s.setMode('survival')).toBe(true);
+    let sample = sampleClimate(w, p);
+    expect([BIOME.PLAINS, BIOME.FOREST]).toContain(sample.biome);
+    let t = START_TIME;
+    let sinceSample = 0;
+    // Standing at the survival spawn (on seed 1 any walk soon goes downhill into the sea, which is another test's business).
+    for (let frame = 0; frame < 60 * 60; frame++) {
+      // The climate is sampled every CLIMATE_SAMPLE_S, as main does.
+      stepPlayer(p, IDLE, w.getBlock, TICK);
+      sinceSample += TICK;
+      if (sinceSample >= CLIMATE_SAMPLE_S) {
+        sinceSample = 0;
+        sample = sampleClimate(w, p);
+      }
+      t = advanceTime(t, TICK);
+      const ev = s.step(TICK, { player: p, climate: sample, heat: 0, time: t, random: () => 0.99 });
+      expect(ev.died).toBeNull();
+      if (frame % 60 === 0) {
+        const v = s.vitals;
+        expect(v.health).toBeGreaterThan(0);
+        expect(v.health).toBeLessThanOrEqual(STAT_MAX);
+        expect(v.satiation).toBeGreaterThanOrEqual(0);
+        expect(v.hydration).toBeGreaterThanOrEqual(0);
+        expect(v.temp).toBeGreaterThanOrEqual(BODY_TEMP_MIN);
+        expect(v.temp).toBeLessThanOrEqual(BODY_TEMP_MAX);
+        expect(v.breath).toBeGreaterThanOrEqual(0);
+        expect(v.breath).toBeLessThanOrEqual(BREATH_MAX_S);
+        expect(Number.isFinite(s.felt)).toBe(true);
+      }
+    }
+    // A minute on green land on a cool morning: a little hungrier (the cold factor too, §2.2) and thirstier, no harm done.
+    expect(s.active).toBe(true);
+    expect(s.vitals.health).toBe(100);
+    // (At most 2.5× the resting drain, §2.2: 100 → 0 in 30 / 20 min at rest.)
+    expect(s.vitals.satiation).toBeLessThan(80);
+    expect(s.vitals.satiation).toBeGreaterThan(80 - 2.5 * 0.0556 * 60);
+    expect(s.vitals.hydration).toBeLessThan(80);
+    expect(s.vitals.hydration).toBeGreaterThan(80 - 2.5 * 0.0833 * 60);
+    expect(Math.abs(s.vitals.temp - 37)).toBeLessThan(1.5);
+    w.dispose();
+  });
+
+  it('lanes keep running under the pack screen (and the field book); nothing steps while dead or paused', () => {
+    for (const st of [STATE.PLAYING, STATE.PACK, STATE.BOOK]) expect(stateSimulates(st), st).toBe(true);
+    for (const st of [STATE.DEAD, STATE.PAUSED, STATE.PICKER, STATE.CONSOLE, STATE.EDITOR, STATE.TITLE, STATE.LOADING, STATE.CLICK_TO_PLAY]) {
+      expect(stateSimulates(st), st).toBe(false);
+    }
+    // Frames as main runs them: the lane steps only in simulating states.
+    const pack = new Pack();
+    pack.give('plant_fibre', 4);
+    const queue = new CraftQueue();
+    expect(queue.enqueue('cord', 2, pack, { hand: true }).ok).toBe(true);
+    let state = STATE.PACK;
+    for (let i = 0; i < 90; i++) if (stateSimulates(state)) queue.step(TICK, pack, null, [0, 64, 0]);
+    expect(pack.count('cord')).toBe(1);
+    state = STATE.DEAD;
+    for (let i = 0; i < 600; i++) if (stateSimulates(state)) queue.step(TICK, pack, null, [0, 64, 0]);
+    expect(pack.count('cord')).toBe(1); // frozen: pitfall 28
+  });
+
+  it('a save left on the death screen reloads into DEAD, never into click-to-play or play', () => {
+    const s = new Survival();
+    s.setMode('survival');
+    s.damage(500, 'zombie');
+    expect(s.dead).toBe('zombie');
+    const w = new World({ seed: SEED, renderDistance: RD, now: () => 0, gen: 2 });
+    const save = { ...creativeSave(w, createPlayer(0, 70, 0)), ...survivalSaveFields({ gen: 2, ...survivalObjects(), survival: s }) };
+    const back = deserializeSave(serializeSave(save));
+    expect(back.survival.dead).toBe('zombie');
+    const again = new Survival();
+    again.import(back.survival);
+    again.mode = loadingMode(back, back.gen).mode;
+    expect(again.dead).toBe('zombie');
+    expect(again.inSurvival).toBe(true);
+    expect(again.active).toBe(false);
+    for (const autoplay of [false, true]) expect(stateAfterLoading({ dead: Boolean(again.dead), autoplay })).toBe(STATE.DEAD);
+    expect(stateAfterLoading({ dead: false, autoplay: false })).toBe(STATE.CLICK_TO_PLAY);
+    expect(stateAfterLoading({ dead: false, autoplay: true })).toBe(STATE.PLAYING);
+    // Waking clears it; the next save is alive.
+    again.respawn();
+    expect(again.export().dead).toBeUndefined();
+    w.dispose();
+  });
+
+  it('`mode survival` from a rune script fails; from the console it is queued through ctx.survival', () => {
+    const calls = [];
+    const fakeSurvival = {
+      mode: 'creative',
+      hasState: false,
+      setMode: (m) => {
+        calls.push(m);
+        return { ok: true, message: `${m} (saved with this world)` };
+      },
+      vitals: () => null,
+      setVital: () => false,
+      restoreVitals() {},
+      packAdd: () => null,
+      packClear() {},
+      packList: () => '',
+    };
+    const cmd = parseLine('mode survival');
+    const fromRune = executeCommand(cmd, { survival: fakeSurvival, running: { key: '0,64,0' }, rune: { q: 0, y: 64, r: 0 } });
+    expect(fromRune.ok).toBe(false);
+    expect(fromRune.message).toContain('only valid in the console');
+    expect(calls).toEqual([]);
+    const fromConsole = executeCommand(cmd, { survival: fakeSurvival, running: null, rune: null });
+    expect(fromConsole).toMatchObject({ ok: true, message: 'survival (saved with this world)' });
+    expect(calls).toEqual(['survival']);
+  });
+
+  it('?mode touches only the first world the page loads, and never raises an old saved world\'s generation', () => {
+    const params = parseParams('?autoplay=1&mode=Survival');
+    expect(params.mode).toBe('survival');
+    expect(parseParams('?mode=hardcore').mode).toBeNull();
+    expect(parseParams('').mode).toBeNull();
+    expect(consumeModeParam(params)).toBe('survival');
+    expect(params.mode).toBeNull();
+    expect(consumeModeParam(params)).toBeNull(); // the next world (from the Worlds panel) is never touched
+    const gen1 = { gen: undefined };
+    expect(modeParamPlan('survival', { save: null, nosave: false })).toEqual({ apply: true, raiseGen: false, warning: null });
+    expect(modeParamPlan('survival', { save: gen1, nosave: false })).toEqual({ apply: false, raiseGen: false, warning: MODE_PARAM_IGNORED });
+    expect(modeParamPlan('survival', { save: gen1, nosave: true })).toEqual({ apply: true, raiseGen: true, warning: null });
+    expect(modeParamPlan('survival', { save: { gen: 2 }, nosave: false })).toEqual({ apply: true, raiseGen: false, warning: null });
+    expect(modeParamPlan('creative', { save: gen1, nosave: false }).apply).toBe(true);
+    expect(modeParamPlan(null, { save: null, nosave: false }).apply).toBe(false);
+  });
+
+  it('Undo is refused in Survival: the pause menu disables it and says why', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const html = readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8');
+      const doc = documentFromHTML(html);
+      let undone = 0;
+      const menus = createMenus(/** @type {any} */ (doc), /** @type {any} */ ({ width: 256, height: 256 }), { onUndoPhysics: () => undone++ });
+      const bp = { exportSwitches: () => ({ falling: true, water: true, collapse: true, explosions: true }), canUndo: true, lastEvent: { kind: 'explosion' } };
+      const undo = /** @type {any} */ (doc.getElementById('btn-undo-physics'));
+      menus.setPhysicsState(physicsMenuStateFor(bp, false));
+      expect([undo.disabled, undo.textContent]).toEqual([false, 'Undo Last Explosion']);
+      menus.setPhysicsState(physicsMenuStateFor(bp, true));
+      expect([undo.disabled, undo.textContent]).toEqual([true, 'Undo (not in Survival)']);
+      expect(physicsMenuStateFor(null, true)).toBeNull();
+      menus.dispose();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('main\'s small survival decisions: knock cause, crush cells, death lines, chat lines', () => {
+    expect(knockCause(3, 4)).toBe('blast');
+    expect(knockCause(3, 3)).toBe('log');
+    expect(cellsLifted(64.2, 65)).toBe(1);
+    expect(cellsLifted(64, 65)).toBe(1);
+    expect(cellsLifted(64, 66)).toBe(2);
+    expect(deathScreenText('blackhole', null)).toEqual({ title: 'Swallowed by a black hole.', detail: 'Your belongings are lost.', where: '' });
+    expect(deathScreenText('void', null, false).detail).toBe('You carried nothing.');
+    expect(survivalIntroLines(BIOME.PLAINS, [10, -4], false)).toEqual([SURVIVAL_INTRO]);
+    expect(survivalIntroLines(BIOME.DESERT, [10, -4], true)).toEqual([
+      `${SURVIVAL_INTRO} ${HANDBOOK_INTRO}`, 'This land is harsh: green land lies near q 10, r -4.',
+    ]);
+    expect(leftBehindText([{ k: 'rock', n: 2 }])).toBe('Pack full: 2 Rock left behind');
+    expect(spoiledText([{ k: 'raw_pork', n: 1 }, { k: 'honeyberries', n: 2 }])).toBe('1 Raw Pork and 2 Honeyberries went bad.');
+    const pack = new Pack();
+    pack.give('flint_pick', 1);
+    pack.give('rock', 3);
+    expect(packListText(pack)).toBe('1: Flint Pick (90/90)\n2: 3 Rock');
+  });
+
+  it('diagnostics: ?ui=pack, and the F3 survival line only while Survival is active (§9.10)', () => {
+    expect(parseParams('?autoplay=1&ui=pack').ui).toBe('pack');
+    const s = new Survival();
+    expect(survivalDebugLine(s)).toBe('');
+    s.setMode('survival');
+    s.vitals.temp = 34.9;
+    s.felt = 12.34;
+    s.air = 9.8;
+    expect(survivalDebugLine(s)).toBe(
+      '\nSurvival: HP 100 · Nourishment 80 · Hydration 80 · Breath 20 · body 34.9 °C · felt 12.3 °C (air 9.8) · Chilled');
+    s.damage(1000, 'fall');
+    expect(survivalDebugLine(s)).toBe(''); // dead: not active
+    const text = buildDebugText({ survival: null }, { fps: 60, frameMs: 16 });
+    expect(text).not.toContain('Survival:');
   });
 });
