@@ -242,7 +242,10 @@ describe('resolveBlock', () => {
     expect(resolveBlock('oak_plank')).toEqual({ id: B.OAK_PLANKS });
     expect(resolveBlock('cobble')).toEqual({ id: B.COBBLESTONE });
     expect(resolveBlock('diamond_o')).toEqual({ id: B.DIAMOND_ORE });
-    expect(resolveBlock('honey')).toEqual({ id: B.HONEYCOMB_BLOCK });
+    // CONTRACT-ISSUE: DESIGN-survival §8.1 names blocks 78/79 honeyberry_bush(_bare), so the prefix "honey" stopped being
+    // unique (it named honeycomb_block before v0.9). W0 changed this line (owned by package C) to keep the suite green.
+    expect(resolveBlock('honeyc')).toEqual({ id: B.HONEYCOMB_BLOCK });
+    expect(resolveBlock('honey')).toEqual({ error: 'ambiguous block "honey": honeycomb_block, honeyberry_bush, honeyberry_bush_bare' });
     expect(resolveBlock('light_blue_wool')).toEqual({ id: B.WOOL_LIGHT_BLUE });
     expect(resolveBlock('block_of_gold')).toEqual({ id: B.GOLD_BLOCK });
     expect(resolveBlock('diamond')).toEqual({ error: 'ambiguous block "diamond": diamond_ore, diamond_block' });

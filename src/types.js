@@ -91,6 +91,8 @@
  * @property {PlayerState|null} [carrier]   the body this one stood on at the end of last frame (bodies.js, §31)
  * @property {number[]} [carrierAt]  that carrier's feet [x, y, z] then
  * @property {string} [group]       resolveBodies never pairs two bodies of the same group (v0.8 lit barrels)
+ * @property {number} [landSpeed]   (v0.9 survival, DESIGN-survival §9.3) the fastest downward speed (m/s, ≥ 0) at which the body
+ *                                  landed during the last stepPlayer (0 without a landing); survival.step reads it, then sets it to 0
  */
 
 /**
@@ -106,6 +108,8 @@
  * @property {number} [pullY]
  * @property {number} [pullZ]
  * @property {boolean} [noExitJump]  in water, jump paddles up (SWIM_UP_SPEED) but never gives SWIM_EXIT_JUMP at a wall
+ * @property {number} [speedFactor]  (v0.9 survival) multiplies the horizontal target speed when not flying, clamped to 0..1;
+ *                              absent = 1 (main sets survival.status.moveFactor while Survival is active)
  */
 
 /**
@@ -146,9 +150,98 @@
 /** Serialised runes: only non-default fields per entry, keys sorted by (q, y, r).
  * @typedef {Record<string, Partial<Rune>>} RunesJSON */
 
+// ---- Survival (docs/DESIGN-survival.md §5, §9.6; CONTRACTS §42–§49 once merged) ----
+
+/**
+ * One pack, basket or belongings slot's contents (§5.2). Items with a durability never stack (n = 1); two stacks merge only
+ * when they have the same key, no `d`, and the stack size allows.
+ * @typedef {Object} ItemStack
+ * @property {string} k   item key (items.js)
+ * @property {number} n   count, an integer 1..stackSize(k)
+ * @property {number} [d] durability left, an integer 1..maxDurability(k); absent = new (full). Only on items with a durability.
+ */
+
+/**
+ * @typedef {Object} ToolDef
+ * @property {string} type        one of items.TOOL_TYPES ('hammer', 'axe', 'spade', 'knife', 'pick', 'spear', 'sword',
+ *                                'firestarter', 'crucible', 'mold')
+ * @property {number} tier        0..6, index into items.TIER_NAMES / TIER_SPEED
+ * @property {number} durability  uses when new
+ * @property {number} power       damage one hit deals a mob
+ */
+
+/**
+ * What eating or drinking one item does (§4.5).
+ * @typedef {Object} FoodDef
+ * @property {number} satiation   added to satiation (shown as Nourishment); may be negative
+ * @property {number} hydration   added to hydration; may be negative (salty or dry food)
+ * @property {number} sick        chance 0..1 of falling Sick
+ * @property {number} useS        seconds RMB is held to eat or drink one
+ * @property {number} [temp]      instant change of body temperature, °C (snow −0.2)
+ * @property {string} [returns]   item key given back after use (the clay pot)
+ * @property {number} [spoilS]    mean seconds per item before it goes bad; absent = never spoils
+ */
+
+/**
+ * A worn item (§3.2, §5.3).
+ * @typedef {Object} WearDef
+ * @property {'head'|'body'|'feet'} slot   one of items.WEAR_SLOT_NAMES
+ * @property {number} insulation  I, in °C of felt temperature
+ * @property {number} sunShade    0..1: the share of the sun term the item shades (the largest worn value counts)
+ */
+
+/**
+ * One item of the registry (items.js). Exactly the field of its kind is present: `block` (kind 'block'), `tool`, `food`,
+ * `heal` or `wear`.
+ * @typedef {Object} ItemDef
+ * @property {string} key       unique lower_snake key; saves store keys, never numbers
+ * @property {string} name      display name
+ * @property {'block'|'material'|'food'|'heal'|'wear'|'tool'} kind
+ * @property {number} stack     stack size: 64 for block items, 1 for tools and clothes
+ * @property {number} [block]   block id the item places (the bush items place their picked variant)
+ * @property {ToolDef} [tool]
+ * @property {FoodDef} [food]
+ * @property {{hp: number, rate: number, useS: number}} [heal]   bandage: HP queued, paid out at rate HP/s; useS to apply
+ * @property {WearDef} [wear]
+ * @property {string[]} [tags]  the items.TAGS this item belongs to
+ */
+
+/**
+ * Fire spots and fuel of every tracked campfire / fire pit (cooking.js FireSlots; §4.4, §9.6), keyed `"q,y,r"`. `s` has
+ * FIRE_SPOTS (7) entries: 0..5 the skewers, 6 the embers; `t` is the seconds the item has cooked. `f` is the fuel left in
+ * seconds (0..CAMPFIRE_FUEL_MAX_S); absent = the fire burns forever. An entry with no items and no `f` is not written.
+ * @typedef {Record<string, { s: ({ k: string, t: number }|null)[], f?: number }>} FireSlotsJSON
+ */
+
+/**
+ * The frozen or live survival state (§1.4, §9.6), canonical key order as listed; numbers rounded to 3 decimal places.
+ * @typedef {Object} SurvivalJSON
+ * @property {number} health      0..100
+ * @property {number} satiation   0..100 (shown as Nourishment)
+ * @property {number} hydration   0..100
+ * @property {number} temp        body temperature, 25..45 °C
+ * @property {number} breath      0..20 s
+ * @property {number} wet         0..1
+ * @property {number} sick        seconds of sickness left, 0..600
+ * @property {number} heal        pending bandage healing, 0..50 HP
+ * @property {number} healRate    its payout rate, 0..5 HP/s
+ * @property {[number, number, number]|null} spawn   the Sleeping Hide cell [q, y, r] to wake at, or null
+ * @property {number} deaths      an integer ≥ 0
+ * @property {string} [dead]      the cause of death while the death screen is up (§2.4 cause keys); absent = alive
+ * @property {(ItemStack|null)[]} pack   PACK_SLOTS (27) entries
+ * @property {(ItemStack|null)[]} wear   WEAR_SLOTS (3) entries: head, body, feet
+ * @property {FireSlotsJSON} fires
+ */
+
+/**
+ * Wicker baskets and belongings (containers.js; §5.6, §9.6), keyed `"q,y,r"`. `slots` holds at most BASKET_SLOTS (basket)
+ * or REMAINS_SLOTS (remains) entries.
+ * @typedef {Record<string, { kind: 'basket'|'remains', slots: (ItemStack|null)[] }>} ContainersJSON
+ */
+
 /**
  * @typedef {Object} SaveData
- * @property {2} version
+ * @property {2|3} version            3 when `gen` ≥ 2 or `survival` is present (v0.9, DESIGN-survival §1.4), else 2
  * @property {number} seed
  * @property {number} time            0..1 day fraction
  * @property {number} day
@@ -164,6 +257,11 @@
  * @property {boolean} [watcher]       optional (§40) the world's Hollow Watcher switch; absent = on
  * @property {number} [watcherNight]  optional (§40.1) the night (watcher.nightKey) of the world's last natural Watcher
  *   sighting, a whole number ≥ 0; absent = none yet (or a save from before the field)
+ * @property {number} [gen]           optional (v0.9) the world generator version, an integer ≥ 2 (≤ GEN_LATEST); absent = 1,
+ *   today's terrain
+ * @property {'creative'|'survival'} [mode]   optional (v0.9) written once the world has a survival state; absent = creative
+ * @property {SurvivalJSON} [survival]        optional (v0.9) the frozen or live survival state; absent = never in Survival
+ * @property {ContainersJSON} [containers]    optional (v0.9) baskets and belongings; absent = none
  * @property {{name?: string, createdAt?: number, lastPlayed?: number}} [meta]
  *   optional (§41) the save slot's world name and times (ms since the epoch); storage.loadSlot always fills all three
  */

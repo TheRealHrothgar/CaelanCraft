@@ -48,10 +48,15 @@ function everyPixel(px, pred, rows = null) {
 }
 
 describe('TILE_NAMES', () => {
-  it('lists all 77 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
+  it('lists all 105 block tiles plus the mob tiles and 255 missing, matching blocks.js TILE keys in lower_snake', () => {
     const keys = Object.keys(TILE_NAMES).map(Number).sort((a, b) => a - b);
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
-    expect(keys.length).toBe(87); // v0.8: + barrel_side 75, barrel_top 76; zombies (§39): + 240–245; the Watcher (§40): + 250–252 (stone, crack glow, smoke)
+    // v0.8: + barrel_side 75, barrel_top 76; zombies (§39): + 240–245; the Watcher (§40): + 250–252 (stone, crack glow, smoke);
+    // v0.9 survival: + 77–104 (DESIGN-survival §8.1)
+    expect(keys.length).toBe(115);
+    expect(TILE_NAMES[TILE.COPPER_ORE]).toBe('copper_ore');
+    expect(TILE_NAMES[TILE.PLANT_TOP_CLEAR]).toBe('plant_top_clear');
+    expect(TILE_NAMES[TILE.FIRE_PIT_SIDE]).toBe('fire_pit_side');
     expect(TILE_NAMES[TILE.RUNE]).toBe('rune');
     expect(TILE.RUNE).toBe(27);
     for (const [key, id] of Object.entries(TILE)) {
@@ -150,9 +155,15 @@ describe('paintTile — alpha rules', () => {
     const ice = paintTile(TILE.ICE);
     for (let i = 3; i < BYTES; i += 4) expect(ice[i]).toBe(200);
   });
+  it('plant_top_clear (v0.9) is alpha 0 on every pixel, RGB 0, and averages to black', () => {
+    const px = paintTile(TILE.PLANT_TOP_CLEAR);
+    everyPixel(px, (r, g, b, a) => r === 0 && g === 0 && b === 0 && a === 0);
+    expect(averageColor(TILE.PLANT_TOP_CLEAR)).toEqual([0, 0, 0]);
+  });
   it('every other tile is alpha 255 everywhere', () => {
     const special = new Set([
       TILE.WATER, TILE.GLASS, TILE.OAK_LEAVES, TILE.SPRUCE_LEAVES, TILE.BIRCH_LEAVES, TILE.ICE, TILE.CAMPFIRE_SIDE, TILE.CAMPFIRE_TOP,
+      TILE.PLANT_TOP_CLEAR, // v0.9: all alpha 0 (the test above)
     ]);
     for (const t of TILE_IDS) {
       if (special.has(t)) continue;
@@ -174,7 +185,7 @@ describe('paintTile — recipe details', () => {
   });
   it('unknown tile ids paint the missing checker', () => {
     const missing = paintTile(TILE.MISSING);
-    for (const bad of [77, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
+    for (const bad of [105, 159, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) { // 77–104 are tiles since v0.9
       // @ts-ignore — deliberately passing garbage
       expect(sameBytes(paintTile(bad), missing), `tile ${String(bad)}`).toBe(true);
     }
@@ -440,6 +451,11 @@ describe('averageColor', () => {
         }
       }
       const got = averageColor(t);
+      if (n === 0) {
+        // No pixel qualifies (plant_top_clear): the documented [0, 0, 0].
+        expect(got, TILE_NAMES[t]).toEqual([0, 0, 0]);
+        continue;
+      }
       expect(Math.abs(got[0] - r / n), TILE_NAMES[t]).toBeLessThanOrEqual(0.5);
       expect(Math.abs(got[1] - g / n), TILE_NAMES[t]).toBeLessThanOrEqual(0.5);
       expect(Math.abs(got[2] - b / n), TILE_NAMES[t]).toBeLessThanOrEqual(0.5);
@@ -473,6 +489,22 @@ describe('blast barrel tiles (v0.8)', () => {
     expect(tip[0]).toBeGreaterThan(220);
     expect(tip[1]).toBeGreaterThan(160);
     expect(averageColor(TILE.BARREL_SIDE)[0]).toBeGreaterThan(averageColor(TILE.BARREL_SIDE)[2]);
+  });
+});
+
+describe('survival tiles (v0.9, DESIGN-survival §8.1–§8.2)', () => {
+  const SURVIVAL = Array.from({ length: 28 }, (_, i) => 77 + i);
+  it('77–104 each have a recipe of their own: not the missing checker, distinct, deterministic', () => {
+    const missing = paintTile(TILE.MISSING);
+    const seen = [];
+    for (const t of SURVIVAL) {
+      expect(Object.hasOwn(TILE_NAMES, t), `tile ${t}`).toBe(true);
+      const px = paintTile(t);
+      expect(sameBytes(px, missing), TILE_NAMES[t]).toBe(false);
+      expect(sameBytes(px, paintTile(t)), TILE_NAMES[t]).toBe(true);
+      for (const [u, other] of seen) expect(sameBytes(px, other), `${TILE_NAMES[t]} vs ${TILE_NAMES[u]}`).toBe(false);
+      seen.push([t, px]);
+    }
   });
 });
 
