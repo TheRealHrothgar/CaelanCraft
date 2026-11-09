@@ -453,6 +453,23 @@ describe('a crumble coming down beside everything else (FR-2 follow-up)', { time
     expect(physics.support.stats.watched).toBe(2);
   });
 
+  it('a block placed against a crumble part-way down is saved fallen too, as it comes down live (play-test G2)', () => {
+    const { world, physics } = costlyFakeWorld(0.02);
+    box(world);
+    physics.asPlayer(() => world.setBlock(0, 15, 0, B.AIR));
+    for (let i = 0; i < 400 && !crumbling(physics); i++) physics.tick();
+    expect(world.getBlock(5, 20 + N - 1, 5)).toBe(original(20 + N - 1)); // the top still hangs
+    world.setBlock(N, 20 + N - 1, 5, B.ICE); // the player builds against its side
+    expect(physics.support.stats.watched).toBe(1);
+    const overlay = new SaveOverlay(world);
+    physics.fallers.settleInto(overlay);
+    physics.support.settleInto(overlay);
+    expect(overlay.peek(N, 20 + N - 1, 5)).toBe(B.AIR); // it used to be saved hanging there
+    expect(overlay.peek(N, 11, 5)).toBe(B.ICE);
+    for (let i = 0; i < 3000 && !idle(physics); i++) physics.step(1 / 20);
+    expect(world.getBlock(N, 11, 5)).toBe(B.ICE); // live: the same
+  });
+
   it("re-meshes a crumble's chunk once per LAZY_COALESCE_UPDATES frames while its lowest cells settle (not once a tick)", () => {
     let t = 0;
     const { world, physics } = realWorld(10, () => t);

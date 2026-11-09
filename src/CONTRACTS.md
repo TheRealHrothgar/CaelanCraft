@@ -1459,7 +1459,8 @@ export const RINGS = ['fall', 'water', 'misc'], RING_DELAY = [1, WATER_TICKS, 1]
 export const FEATURES = ['falling', 'water', 'collapse', 'explosions']
 export const WRITE_EXTERNAL = 0, WRITE_PHYSICS = 1, WRITE_QUIET = 2                      // the `mode` triggers receive
 export const CAUSE_WORLD = { kind: 'world' }, CAUSE_PHYSICS = { kind: 'physics' }, CAUSE_AREA = { kind: 'area' }
-export class SeedQueue        // support seeds: priority lane + normal lane, cell-level dedupe; size, push(seed), shift(), peek(), clear()
+export class SeedQueue        // support seeds: priority lane + normal lane, cell-level dedupe; size, push(seed), shift(), peek(), clear(),
+                              //   list() → the pending seeds in shift() order, none removed
 export class SaveOverlay      // copy-on-write save view (world, { keepFlow }): peek(q,y,r), set(q,y,r,id), toJSON() → EditsJSON (§33.9)
 export class BlockPhysics {
   constructor(world, hooks = {}, { now }?)   // hooks: PhysicsHooks (§33.7), missing ones are no-ops; now: ms clock (default world._now)
@@ -1474,6 +1475,7 @@ export class BlockPhysics {
   onBlockChange(q, y, r, prev, next); onChunkGenerated(cq, cr)          // main forwards World's hooks
   seedSupport(cells, { priority?, cause?, removed? }) → queued; seedRemoval(q, y, r, prev, opts?); collectAreaSeed(q, y, r, prev);
   flushAreaSeeds(); get areaSeedCount; seedRemovals(cells: [q, y, r, prev][], opts?) → queued   // ONE seed for a gravity column
+  pendingSupportSeeds() → SupportSeed[]   // seeds.list() plus the unflushed area removals as their seed; nothing is taken
   asPlayer(fn); withCause(cause, fn); get cause
   beginEvent(kind, cause?) → PhysicsEvent; endEvent(); get openEventId; enterEvent(id) → token; exitEvent(token); withEvent(id|ev, fn);
   get canUndo; undo() → { ok, message, restored }
@@ -1980,7 +1982,14 @@ export class Trees {                 // physics.trees
    open batch's components still to come (not stale, not cancelled) and the parked cells — still load-bearing in the overlay are
    saved fallen, lowest first, down their columns (a burning barrel is explosions'); a cell of an unloaded chunk falls through that
    chunk as it will generate (`world.worldGen.generateChunk` with `world.edits` and the overlay's cells on top; a world without a
-   worldGen saves it where it hangs). Trees' `settleInto(overlay)` (saving; never the live world): per job, its logs snapped
+   worldGen saves it where it hangs). THEN the support work still waiting (while collapse is on) runs as ONE batch of a scratch
+   SupportSolver that reads the overlay (`peekBlock` = `overlay.peek`; natural ground only where the overlay has no cell): the open
+   batch's seeds when it has not decided yet (cancelled ones left out), `physics.pendingSupportSeeds()`, and per crumble a seed of
+   its watched cells without removals (36.3.6). The same search and rule pick its components, whose cells are saved fallen the same
+   way. A cut saved before its search ran used to hang forever after a reload, and later breaks found it "already floating"
+   (play-test B1); so did a block placed against a crumble part-way down (G2). Nothing live changes (the seeds stay queued, the
+   batch keeps its state), so a save costs one synchronous search of whatever is pending. Trees' `settleInto(overlay)` (saving;
+   never the live world): per job, its logs snapped
    like an impact at the current θ against
    `overlay.peek`, then lowest first moved up past non-fall-through cells and down while the cell below is fall-through, and
    `overlay.set` there (a column in an unloaded chunk is skipped); leaves are not saved; leaves waiting to decay are saved as AIR.

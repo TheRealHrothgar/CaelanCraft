@@ -477,7 +477,10 @@ export class SupportSolver {
    * open batch's components still to come and the parked cells — is saved fallen. Each of its cells still load-bearing
    * in the overlay, lowest first, is moved down its column like a column faller (CONTRACTS §36.6.4); a cell of an
    * unloaded chunk falls through that chunk as it will generate (worldGen + its edits + the overlay). A burning barrel
-   * is left to explosions.settleInto. Runs after fallers.settleInto.
+   * is left to explosions.settleInto. Runs after fallers.settleInto. Then the support work still waiting is done now
+   * against the overlay (_pendingCollapses) and what it brings down is saved fallen the same way: a cut saved before its
+   * search ran used to hang forever after a reload (play-test B1), and so did a block placed on a half-fallen crumble
+   * (G2).
    * @param {import('./blockphysics.js').SaveOverlay} overlay
    */
   settleInto(overlay) {
@@ -492,7 +495,64 @@ export class SupportSolver {
       }
     }
     for (const { list } of this._parked.values()) for (const rec of list) for (const key of rec.keys) cells.push(unpackCell(key));
-    if (cells.length === 0) return;
+    if (cells.length > 0) this._dropInto(overlay, cells);
+    const pending = this._pendingCollapses(overlay);
+    if (pending.length > 0) this._dropInto(overlay, pending);
+  }
+
+  /**
+   * The support work still waiting at a save — an open batch that has not decided yet, the queued seeds, the area
+   * removals not flushed yet, and the cells watched next to each crumble (re-searched live once it is down, §36.3.6) —
+   * run now as ONE batch of a scratch solver that reads the save overlay (after the crumbles above were saved fallen).
+   * Nothing live changes: the seeds stay queued and the batch keeps its state.
+   * @param {import('./blockphysics.js').SaveOverlay} overlay
+   * @returns {number[][]} [q, y, r] of every cell of the components it would collapse
+   */
+  _pendingCollapses(overlay) {
+    const physics = this.physics;
+    if (!physics.isEnabled('collapse')) return [];
+    /** @type {SupportSeed[]} */
+    const seeds = [];
+    const batch = this._batch;
+    if (batch !== null && batch.phase < PHASE_COLLAPSE) {
+      for (const seed of batch.seeds) if (batch.cancelled === null || !batch.cancelled.has(seed.event)) seeds.push(seed);
+    }
+    for (const seed of physics.pendingSupportSeeds()) seeds.push(seed);
+    for (const cr of this._crumbles) {
+      if (cr.watch.size === 0) continue;
+      const cells = [];
+      for (const k of cr.watch) cells.push(unpackCell(k));
+      seeds.push({ cells, removed: [], cause: cr.seed.cause, priority: false, event: 0, tick: 0 });
+    }
+    if (seeds.length === 0) return [];
+    const world = physics.world;
+    const view = {
+      peekBlock: (q, y, r) => overlay.peek(q, y, r),
+      isNaturalGround: (q, y, r) => !(y >= 0 && y < WORLD_HEIGHT && overlay.cells.has(packCell(q, y, r))) && world.isNaturalGround(q, y, r),
+    };
+    const ctx = /** @type {RuleContext} */ (/** @type {*} */ ({ world: view, peek: view.peekBlock, now: () => 0, deadline: Infinity }));
+    let at = 0;
+    const queue = /** @type {SeedQueue} */ (/** @type {*} */ ({ get size() { return seeds.length - at; }, shift: () => seeds[at++] }));
+    const shadow = new SupportSolver(physics);
+    shadow._beginBatch(queue);
+    shadow._take(ctx, queue);
+    shadow._searchAll(ctx, Infinity);
+    shadow._beginDecide();
+    const sb = /** @type {Batch} */ (shadow._batch);
+    if (sb.phase < PHASE_COLLAPSE) shadow._decide(ctx);
+    /** @type {number[][]} */
+    const out = [];
+    for (const ci of sb.collapses) for (const k of shadow._components[ci].keys) out.push(unpackCell(k));
+    return out;
+  }
+
+  /**
+   * Save `cells` fallen into the overlay: each one still load-bearing there, lowest first, moved down its column
+   * (settleInto).
+   * @param {import('./blockphysics.js').SaveOverlay} overlay
+   * @param {number[][]} cells  [q, y, r, …][]
+   */
+  _dropInto(overlay, cells) {
     cells.sort((a, b) => a[1] - b[1] || a[0] - b[0] || a[2] - b[2]);
     const explosions = this.physics.explosions;
     /** @type {Map<string, Uint8Array|null>} chunk key → its blocks as they will generate (unloaded chunks) */

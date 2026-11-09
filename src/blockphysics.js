@@ -327,6 +327,11 @@ export class SeedQueue {
     return seed;
   }
 
+  /** @returns {SupportSeed[]} every pending seed in shift() order, without removing any (saving, §36.6.4) */
+  list() {
+    return [...this._priority.slice(this._ph), ...this._normal.slice(this._nh)];
+  }
+
   /** @returns {SupportSeed|null} the seed shift() would return, without removing it */
   peek() {
     if (this._ph < this._priority.length) return this._priority[this._ph];
@@ -1020,6 +1025,19 @@ export class BlockPhysics {
   /** @returns {number} removals collected for the next area seed */
   get areaSeedCount() {
     return this._areaRemoved.length;
+  }
+
+  /**
+   * The support seeds still waiting, without taking them: the queued ones (shift order), then the area removals not
+   * flushed yet as the seed they will become. Saving searches them against the save overlay (support.settleInto, B1).
+   * @returns {SupportSeed[]}
+   */
+  pendingSupportSeeds() {
+    const out = this.seeds.list();
+    if (this._areaRemoved.length > 0) {
+      out.push({ cells: [], removed: this._areaRemoved.slice(), cause: CAUSE_AREA, priority: false, event: this.openEventId, tick: this.tickCount });
+    }
+    return out;
   }
 
   /** Turn the collected area removals into one seed now (normally automatic once no area job runs). O(1). */

@@ -464,6 +464,67 @@ describe('saving in the middle of everything', () => {
   });
 });
 
+describe('support work still pending at a save (play-test B1)', () => {
+  /** A cobblestone pillar at (0, 0) holding a 7-plank beam at y 20 east of it. */
+  function beam(world) {
+    for (let y = 11; y <= 19; y++) world.setBlock(0, y, 0, B.COBBLESTONE);
+    for (let q = 0; q <= 6; q++) world.setBlock(q, 20, 0, B.OAK_PLANKS);
+  }
+  const cells = (world) => {
+    const out = [];
+    for (let q = 0; q <= 6; q++) for (let y = 11; y <= 20; y++) out.push(world.getBlock(q, y, 0));
+    return out;
+  };
+
+  it('a cut saved before its support search ran comes down on reload, as it does live', () => {
+    const { world, physics } = realScene();
+    beam(world);
+    settle(physics);
+    physics.asPlayer(() => world.setBlock(0, 15, 0, B.AIR)); // its seed waits for the next tick
+    expect(physics.seeds.size).toBe(1);
+    const saved = physics.exportEdits();
+    expect(physics.seeds.size).toBe(1); // saving took nothing from the live queue
+    expect(world.getBlock(3, 20, 0)).toBe(B.OAK_PLANKS);
+    settle(physics);
+    expect(world.getBlock(3, 20, 0)).toBe(B.AIR);
+    const re = realScene({ edits: saved });
+    settle(re.physics);
+    expect(re.world.getBlock(3, 20, 0)).toBe(B.AIR); // it used to hang there for good
+    expect(cells(re.world)).toEqual(cells(world));
+  });
+
+  it('removals an area command collected (not flushed yet) are searched at the save too', () => {
+    const { world, physics } = realScene();
+    beam(world);
+    settle(physics);
+    let area = true;
+    physics.hooks.areaJobsActive = () => area;
+    world.setBlock(0, 15, 0, B.AIR); // a `fill … air` still running
+    expect(physics.areaSeedCount).toBe(1);
+    const saved = physics.exportEdits();
+    area = false;
+    stepUntil(physics, () => physics.areaSeedCount === 0, 60); // flushed into a seed at the next tick
+    settle(physics);
+    expect(world.getBlock(3, 20, 0)).toBe(B.AIR);
+    const re = realScene({ edits: saved });
+    settle(re.physics);
+    expect(cells(re.world)).toEqual(cells(world));
+  });
+
+  it('a build that already floated before the cut stays up in the save, as it does live', () => {
+    const { world, physics } = realScene();
+    for (let q = 0; q <= 6; q++) world.setBlock(q, 30, 0, B.OAK_PLANKS); // a sky beam on nothing
+    settle(physics);
+    physics.asPlayer(() => world.setBlock(3, 30, 0, B.AIR));
+    const saved = physics.exportEdits();
+    settle(physics);
+    expect(world.getBlock(1, 30, 0)).toBe(B.OAK_PLANKS);
+    const re = realScene({ edits: saved });
+    settle(re.physics);
+    expect([0, 1, 2, 4, 5, 6].map((q) => re.world.getBlock(q, 30, 0))).toEqual(Array(6).fill(B.OAK_PLANKS));
+  });
+});
+
 describe('switched-off features across a save (play-test G3 / G4)', () => {
   const box = [-16, 8, 0, 14, -8, 8];
   const flowCells = (world) => countWhere(world, (id) => isWater(id) && id !== B.WATER, box);
