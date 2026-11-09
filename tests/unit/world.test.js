@@ -4,7 +4,7 @@
 // frozen clock (now: () => 0) with an infinite budget unless a test is about the budget itself.
 import { describe, it, expect } from 'vitest';
 import {
-  CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE,
+  CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE, GEN_LATEST,
   DATA_RADIUS_EXTRA, UNLOAD_RADIUS_EXTRA, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS, LAZY_COALESCE_UPDATES,
 } from '../../src/config.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
@@ -12,6 +12,7 @@ import { HEX_DIRS, hexLength, hexNormSq, hexToWorld, worldToHex, hexDiscCount } 
 import { BLOCK, BIOME, UNLOADED } from '../../src/blocks.js';
 import { normalizeSeed, hashString } from '../../src/noise.js';
 import { World } from '../../src/world.js';
+import { createWorldGen } from '../../src/worldgen.js';
 import { trivialWorldGen, flatWorldGen, countFaces, makeChunkData } from '../helpers/fixtures.js';
 
 const B = BLOCK;
@@ -902,6 +903,12 @@ describe('spawn, surface, biome', () => {
     expect(world.chunkCount).toBe(0);
   });
 
+  it('findSpawn ignores the generator version: gen 1 and gen 2 of a seed spawn at the same place', () => {
+    const a = new World({ seed: 'spawn-seed', now: () => 0 });
+    const b = new World({ seed: 'spawn-seed', gen: 2, now: () => 0 });
+    expect(b.findSpawn()).toEqual(a.findSpawn());
+  });
+
   it('getSurfaceHeight and getBiome come from worldGen.getColumn and ignore edits', () => {
     const gen = {
       seed: 1,
@@ -916,6 +923,147 @@ describe('spawn, surface, biome', () => {
     expect(world.getBiome(-3, 2)).toBe(BIOME.DESERT);
     world.setBlock(3, 100, 2, B.STONE);
     expect(world.getSurfaceHeight(3, 2)).toBe(65);
+  });
+});
+
+describe('generation, columnAt and findSurvivalSpawn (DESIGN-survival §8.3, §3.1, §2.5)', () => {
+  /** A generator whose columns come from `fn(q, r)` (temperature / humidity default 0) and that counts its calls. */
+  function columnGen(fn) {
+    const gen = {
+      seed: 1,
+      calls: 0,
+      getColumn(q, r) {
+        gen.calls++;
+        return { temperature: 0, humidity: 0, ...fn(q, r) };
+      },
+      generateChunk: () => makeChunkData(),
+    };
+    return gen;
+  }
+
+  it('gen defaults to 1, takes 2, and anything that is not an integer ≥ 1 is 1 (above GEN_LATEST is clamped)', () => {
+    expect(new World({ seed: 5, now: () => 0 }).gen).toBe(1);
+    expect(new World({ seed: 5, now: () => 0 }).worldGen.gen).toBe(1);
+    const w2 = new World({ seed: 5, gen: 2, now: () => 0 });
+    expect(w2.gen).toBe(2);
+    expect(w2.worldGen.gen).toBe(2);
+    expect(w2.worldGen.seed).toBe(5);
+    for (const bad of [0, -1, 1.5, '2', null, NaN, {}]) {
+      const w = new World({ seed: 5, gen: /** @type {*} */ (bad), now: () => 0 });
+      expect(w.gen, String(bad)).toBe(1);
+      expect(w.worldGen.gen).toBe(1);
+    }
+    expect(new World({ seed: 5, gen: 7, now: () => 0 }).gen).toBe(GEN_LATEST);
+  });
+
+  it('an injected generator keeps its own gen (or 1) unless gen is given', () => {
+    expect(new World({ seed: 1, worldGen: trivialWorldGen(), now: () => 0 }).gen).toBe(1);
+    const injected = { ...flatWorldGen(10), gen: 2 };
+    expect(new World({ seed: 1, worldGen: injected, now: () => 0 }).gen).toBe(2);
+    expect(new World({ seed: 1, worldGen: injected, gen: 1, now: () => 0 }).gen).toBe(1);
+    expect(new World({ seed: 1, worldGen: flatWorldGen(10), gen: 2, now: () => 0 }).worldGen.gen).toBeUndefined(); // used as given
+  });
+
+  it('a gen-2 world streams generation-2 chunks; a gen-1 world streams today\'s', () => {
+    const seed = 'caelancraft-test';
+    const w1 = new World({ seed, renderDistance: 1, now: () => 0 });
+    const w2 = new World({ seed, renderDistance: 1, gen: 2, now: () => 0 });
+    converge(w1);
+    converge(w2);
+    const g1 = createWorldGen(seed);
+    const g2 = createWorldGen(seed, { gen: 2 });
+    for (const [cq, cr] of [[0, 0], [1, 0], [0, -1]]) {
+      expect(w1.getChunk(cq, cr).blocks).toEqual(g1.generateChunk(cq, cr).blocks);
+      expect(w2.getChunk(cq, cr).blocks).toEqual(g2.generateChunk(cq, cr).blocks);
+    }
+  });
+
+  it('columnAt(q, r) matches getColumn: { height, biome, temperature }, a fresh object, edits ignored', () => {
+    const world = new World({ seed: 'columns', gen: 2, now: () => 0 });
+    for (let i = 0; i < 200; i++) {
+      const q = ((i * 7919) % 2001) - 1000;
+      const r = ((i * 104729) % 2001) - 1000;
+      const col = world.worldGen.getColumn(q, r);
+      const got = world.columnAt(q, r);
+      expect(got).toEqual({ height: col.height, biome: col.biome, temperature: col.temperature });
+      expect(Object.keys(got).sort()).toEqual(['biome', 'height', 'temperature']);
+    }
+    const a = world.columnAt(3, 4);
+    a.height = -1;
+    expect(world.columnAt(3, 4).height).not.toBe(-1);
+    // An injected generator is used as is.
+    const { world: w2 } = makeWorld({ worldGen: columnGen(() => ({ height: 77, biome: BIOME.DESERT, temperature: 0.62 })) });
+    converge(w2);
+    w2.setBlock(0, 100, 0, B.STONE);
+    expect(w2.columnAt(0, 0)).toEqual({ height: 77, biome: BIOME.DESERT, temperature: 0.62 });
+  });
+
+  it('findSurvivalSpawn walks findSpawn\'s spiral but accepts only PLAINS / FOREST at SEA_LEVEL + 2 or higher', () => {
+    // Desert at the origin and ring 1, snowy and mountains on ring 2 except one low plains column and one forest column.
+    const forest = [-4, 8]; // ring 2
+    const lowPlains = [8, -4]; // ring 2, visited before `forest`, but too low
+    const gen = columnGen((q, r) => {
+      if (q === forest[0] && r === forest[1]) return { height: SEA_LEVEL + 2, biome: BIOME.FOREST };
+      if (q === lowPlains[0] && r === lowPlains[1]) return { height: SEA_LEVEL + 1, biome: BIOME.PLAINS };
+      const n = hexLength(q / 4, r / 4);
+      if (n <= 1) return { height: 80, biome: BIOME.DESERT };
+      return { height: 90, biome: (q + r) % 8 === 0 ? BIOME.SNOWY : BIOME.MOUNTAINS };
+    });
+    const { world } = makeWorld({ worldGen: gen });
+    // findSpawn is unchanged: the origin (desert) is fine for it.
+    expect(world.findSpawn()).toEqual([0, 81, 0]);
+    const [x, z] = hexToWorld(forest[0], forest[1]);
+    expect(world.findSurvivalSpawn()).toEqual([x, SEA_LEVEL + 3, z]);
+    expect(world.chunkCount).toBe(0); // pure: no chunk loaded
+  });
+
+  it('findSurvivalSpawn takes PLAINS too, skips OCEAN / BEACH / DESERT / SNOWY / MOUNTAINS / SNOWY_PEAKS, and is cached', () => {
+    const order = [];
+    const gen = columnGen((q, r) => {
+      order.push(`${q},${r}`);
+      if (q === 0 && r === 0) return { height: 70, biome: BIOME.SNOWY };
+      if (q === 0 && r === -4) return { height: 70, biome: BIOME.OCEAN };
+      if (q === 4 && r === -4) return { height: 70, biome: BIOME.BEACH };
+      if (q === 4 && r === 0) return { height: 70, biome: BIOME.DESERT };
+      if (q === 0 && r === 4) return { height: 95, biome: BIOME.SNOWY_PEAKS };
+      if (q === -4 && r === 4) return { height: 86, biome: BIOME.MOUNTAINS };
+      if (q === -4 && r === 0) return { height: 72, biome: BIOME.PLAINS };
+      return { height: 70, biome: BIOME.FOREST };
+    });
+    const { world } = makeWorld({ worldGen: gen });
+    const [x, z] = hexToWorld(-4, 0);
+    expect(world.findSurvivalSpawn()).toEqual([x, 73, z]);
+    // Ring 1 is walked from (0, −4) through the six directions, exactly like findSpawn.
+    expect(order).toEqual(['0,0', '0,-4', '4,-4', '4,0', '0,4', '-4,4', '-4,0']);
+    const calls = gen.calls;
+    const again = world.findSurvivalSpawn();
+    expect(again).toEqual([x, 73, z]);
+    expect(gen.calls).toBe(calls); // cached per world
+    again[1] = 999; // callers get copies
+    expect(world.findSurvivalSpawn()[1]).toBe(73);
+  });
+
+  it('findSurvivalSpawn falls back to findSpawn when the bounded spiral finds no green land (and caches that too)', () => {
+    const gen = columnGen((q, r) => (q === 8 && r === 0 ? { height: 80, biome: BIOME.DESERT } : { height: 40, biome: BIOME.OCEAN }));
+    const { world } = makeWorld({ worldGen: gen });
+    const spawn = world.findSpawn();
+    expect(spawn).toEqual([...hexToWorld(8, 0).slice(0, 1), 81, hexToWorld(8, 0)[1]]);
+    expect(world.findSurvivalSpawn()).toEqual(spawn);
+    const calls = gen.calls;
+    expect(world.findSurvivalSpawn()).toEqual(spawn);
+    expect(gen.calls).toBe(calls);
+  });
+
+  it('on a real gen-2 world the survival spawn stands on PLAINS or FOREST land at SEA_LEVEL + 2 or higher', () => {
+    for (const seed of ['caelancraft-test', 1, 42, 'survival']) {
+      const world = new World({ seed, gen: 2, now: () => 0 });
+      const [x, y, z] = world.findSurvivalSpawn();
+      const [q, r] = worldToHex(x, z);
+      const col = world.worldGen.getColumn(q, r);
+      expect([BIOME.PLAINS, BIOME.FOREST], String(seed)).toContain(col.biome);
+      expect(col.height).toBeGreaterThanOrEqual(SEA_LEVEL + 2);
+      expect(y).toBe(col.height + 1);
+    }
   });
 });
 
