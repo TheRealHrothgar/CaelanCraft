@@ -1,44 +1,43 @@
 # Known issues (v0.8, PR #3)
 
-Open problems found by play-testing and review that are **not fixed yet**. Each one was reproduced
-independently by a second agent before it was listed. File and line references are from commit c47ce0b, the build
-the play-test ran on. That build is the pushed branch plus the unshipped Hollow Watcher, minus save slots, so line
-numbers can be off by a few.
+Problems found by play-testing and review. Each one was reproduced independently by a second agent before it was
+listed. File and line references in the open tables are from commit c47ce0b, the build the play-test ran on. That build
+is the pushed branch plus the unshipped Hollow Watcher, minus save slots, so line numbers can be off by a few. All the
+bugs and glitches are fixed now (first table). The visual, performance and save-slot items below are still open.
 
 Severity: **bug** = wrong behaviour or lost state; **glitch** = wrong but recoverable; **visual**; **perf** = frame
 hitch; **polish**.
 
-## Bugs
+## Fixed since the play-test
 
-| # | Problem | Cause | Suggested fix |
-|---|---------|-------|---------------|
-| B1 | **A cut saved before its collapse check runs never comes down.** After a reload the build hangs forever, and later breaks count it as "already floating". | `support.settleInto` (support.js:482) saves only crumbles and open collapse batches; queued seeds and area batches (`physics.seeds`, `_areaRemoved`) are ignored by `exportEdits` (blockphysics.js:1249). | At save time, finish pending support work against the save overlay (same DFS, overlay reads) and write the result as fallen. |
-| B2 | **A pig carried above y = 128 disappears on save** (e.g. on a flying player's head). | `validatePigsJSON` drops `y > WORLD_HEIGHT` (pigs.js:678); `Pigs.export` doesn't clamp. | Clamp y to `WORLD_HEIGHT` on export/validate instead of dropping. |
-| B3 | **A lit Blast Barrel under sand rises through the pile** and explodes on top, breaking only the sand. | Lighting turns the cell to AIR; sand falls into the lit barrel's cell; the landing lift pushes the barrel body up one cell per frame (explosions.js:282, fallingblocks.js landing). | Treat lit-barrel bodies as occupied when fallers land: stack the sand on top instead of in the barrel's cell. |
-| B4 | **Pigs climb out of a walled pool by riding each other:** 3 of 4 pigs escape. | Swimming pigs still do the SWIM_EXIT_JUMP wall jump while carrying a rider (pigs.js:421 → physics.js:359); the carry lifts the rider over the wall. | Let a pig that can't hop use plain swim-up instead of the exit jump (e.g. an `input.noExitJump` flag). |
-| B5 | **Clicking a pig's head from the side breaks the block behind it.** | The ray only tests the 0.42-radius collision cylinder (pigs.js:581); the model's head and snout stick out to 0.77. | Ray-test a yaw-aligned box around the head/snout (or the whole model). |
-| B6 | **A zombie hits a player standing on its head** about once a second, so you can't ride one. | `_canReach` (zombies.js:624) runs before body resolution, so a rider sunk a few mm counts as overlapping. | Skip the attack when `player.carrier === zombie`; require overlap beyond a 0.1 tolerance. |
+Every bug and glitch below now has a regression test that fails on the old code, and CONTRACTS.md describes the new rule.
 
-## Glitches
-
-| # | Problem | Cause | Suggested fix |
-|---|---------|-------|---------------|
-| G1 | **Landing sand lifts the player, a pig or a zombie up through a 1–2-thick solid roof.** | The landing lift uses `findFreeY` (fallingblocks.js:620), which tests each height alone and never checks the cells in between. | Lift layer by layer and stop at the first solid layer; break the block if there's no room. |
-| G2 | **Blocks placed on a half-fallen crumble float forever after save + reload** (live play brings them down). | `settleInto` ignores the crumble's `watch` set (support.js:241/485). | At save time, re-check the watched cells against the overlay and drop what floats. |
-| G3 | **Saving with Water switched off deletes all flowing water;** switching it back on leaves the sources dry. | Saves always drop flow/fall cells (blockphysics.js:403); the water reseeder is skipped while water is off (blockphysics.js:950); `fluids.onSwitch` does nothing (fluids.js:422). | While water is off, save flow/fall cells as they are (frozen), so a reload matches the live world. |
-| G4 | **Floating sand built with Falling off stays up when it's switched back on,** then falls on its own after you walk away and back, or reload. | The gravity reseeder runs on chunk load (blockphysics.js:1428) but not when the switch turns back on. | When Falling is switched on, run the gravity reseeder over loaded chunks, so live play and reload agree. |
-| G5 | **A canopy is left floating forever** when its logs are removed without a topple (chopping top-down, a blast, an area cut). | Leaf decay only starts from a topple or a crumble (trees.js:296, support.js:1257). | After a support batch handles log removals, run `trees.decayHangingLeaves` on them. |
-| G6 | **A felled log that lands on another tree's canopy hangs in mid-air** after that tree is felled. | The stray log claims the leaf under it, and the decay rules count it as support (trees.js:209/587/636). | Don't count a block resting *on* a leaf as holding it; re-seed support when a leaf under a block decays. |
-| G7 | **A tree chopped at eye level doesn't knock zombies;** they're just lifted onto the trunk. | Knock-back tests the logs' rotated pose at pivot height, not where they land (trees.js:515). | Test knocks along each log's drop path down to its landing cell. |
-| G8 | **Many campfires breaking at once play up to 256 full-volume sounds in one frame.** | Each broken campfire calls `break:wood` (fallingblocks.js:521); `playPhysicsSound` drops the distance volume for `break:*` (main.js:612). | Give `playBreak` a volume, apply the distance falloff, and keep only the loudest break per frame. |
+| # | Problem | Fix | Commit |
+|---|---------|-----|--------|
+| B1 | A cut saved before its collapse check ran never came down after a reload. | At save time, pending support work (queued seeds, unflushed area removals, a batch still searching) runs as one batch of a scratch solver that reads the save overlay, and what it collapses is saved fallen (CONTRACTS §36.6.4). | 0d01e17 |
+| B2 | A pig carried above y = 128 disappeared on save. | `Pigs.export` and `validatePigsJSON` clamp y to `WORLD_HEIGHT` instead of dropping the pig. | fdc4ea7 |
+| B3 | A lit Blast Barrel under sand rose up through the pile. | Explosions tracks the cell each lit barrel rests in (`occupiesCell`); fallers treat it as solid, so sand piles on top. When the barrel leaves, the pile falls in (§34.2.2, §37.4.5). | e3a6cea |
+| B4 | Pigs climbed out of a walled pool by riding each other. | A pig that can't hop swims up without the exit wall jump (`input.noExitJump`). | 9759242 |
+| B5 | Clicking a pig's head from the side broke the block behind it. | `Pigs.raycast` also tests `PIG_HEAD_BOX` (head, snout, ears), turned with the pig. | 77811ab |
+| B6 | A zombie hit a player standing on its head. | No strike on its own rider; the player's feet must be more than 0.1 below the zombie's top. | fdc4ea7 |
+| G1 | Landing sand lifted bodies up through a 1–2-thick roof. | `liftFreeY` lifts layer by layer and stops at the first solid layer (the block breaks if there's no room). | fc05409 |
+| G2 | Blocks placed on a half-fallen crumble floated forever after save + reload. | The save-time search (B1) also re-searches each crumble's watched cells. | 0d01e17 |
+| G3 | Saving with Water off deleted all flowing water. | While Water is off, flow/fall cells are saved as they stand. | c15a9c6 |
+| G4 | Floating sand built with Falling off stayed up when Falling was switched back on. | Switching Falling on runs the gravity reseeder over loaded chunks. | c15a9c6 |
+| G5 | A canopy whose logs were removed without a topple floated forever. | When a support batch ends, the hanging-leaves test runs on the log cells it removed (natural leaves only). | ed292d3 |
+| G6 | A felled log lying on another tree's canopy hung in mid-air once that tree fell. | A load-bearing cell resting on leaves no longer holds them, and a decaying leaf seeds support for the block on it. | ed292d3 |
+| G7 | A tree chopped at eye level didn't knock zombies; they were lifted onto the trunk. | The knock tests each log's drop path down to its landing cell. | 4313b2a |
+| G8 | Many campfires breaking at once played up to 256 full-volume sounds in one frame. | `playBreak` takes a volume with the distance falloff, and only the loudest break of a frame plays. | fdc4ea7 |
+| V3 | The Undo button said "Undo Last Physics Event" after a falling tree. | It compares with the real kind, `'falling tree'`. | 61de012 |
+| L1 | `ignite` on a lit barrel said "there is no blast barrel there". | It says "already burning". | 8643e1b |
+| L2 | Version labels still said v0.7. | Bumped to 0.8.0 / v0.8 everywhere. | 15fb69b |
 
 ## Visual
 
 | # | Problem | Cause | Suggested fix |
 |---|---------|-------|---------------|
 | V1 | **Pigs and zombies float above water** with their feet at or above the surface; they look like they stand on it. | Mobs paddle up on every in-water frame (pigs.js:421, zombies.js:359 → physics.js:359), which launches them clear of the surface. | Paddle only while a float point (≈ 0.45 up the body) is under water, so they sit partly submerged. |
-| V2 | **Pig heads go through walls and other pigs** when pressed against something. | The model reaches 0.77 ahead of centre; the collider is a 0.42 cylinder (pigRenderer.js:113). | Shorten the model, or stop fleeing/pushed pigs facing a solid cell. Fix together with B5. |
-| V3 | **The Undo button says "Undo Last Physics Event" after a falling tree.** | menus.js:151 checks `kind === 'tree'`; the event kind is `'falling tree'` (support.js:1124). | Compare with `'falling tree'`; fix the two JSDoc comments that say `'tree'`. |
+| V2 | **Pig heads go through walls and other pigs** when pressed against something. | The model reaches 0.77 ahead of centre; the collider is a 0.42 cylinder (pigRenderer.js:113). | Shorten the model, or stop fleeing/pushed pigs facing a solid cell. (B5 made the head clickable; it still clips.) |
 
 ## Performance
 
@@ -51,10 +50,7 @@ hitch; **polish**.
 
 ## Polish
 
-| # | Problem | Suggested fix |
-|---|---------|---------------|
-| L1 | `ignite` on a barrel that's already lit says "there is no blast barrel there" (explosions.js:254). | Check lit barrel entities at that cell first and say "already burning". |
-| L2 | Version labels still say v0.7 (config.js:4, package.json, package-lock.json, index.html footer, CONTRACTS, wave0 test). | Bump all of them to 0.8.0 / v0.8 together. |
+Nothing open (L1 and L2 are fixed, see above).
 
 ## Save slots (minor, from the save-slot check)
 
@@ -71,6 +67,7 @@ hitch; **polish**.
 - **Zombie safe-zone edge:** a hopping player at the edge of a campfire's safe zone can still be struck, because zone membership uses the player's current height. §39.1 step 7 also understates the zone (most of ring 4 is inside).
 - **Pig crowd overlap:** under a sustained pull (e.g. a floating black hole with swallowing off), the body push caps leave pig crowds overlapping.
 - **Timing tests:** worldgen "warm chunk ≤ 8 ms", mesher "real chunk < 25 ms" and campfires "100 000 fires … stalls a frame" fail when the full suite runs in parallel on a busy machine, and pass when run alone.
+- **Faller over a crumble at save time** (found by reading the code while fixing B1; not reproduced): `fallers.settleInto` runs before `support.settleInto`, so a non-gravity block in flight above a crumble still coming down is saved on top of the hanging cells. Those cells are then saved fallen, which leaves that block floating after a reload. Sand is fine, because the gravity reseeder drops it on load.
 
 ## Not shipped: the Hollow Watcher
 
