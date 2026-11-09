@@ -122,6 +122,10 @@ export const CAUSE_AREA = Object.freeze({ kind: 'area' });
  *   kinds 'dust' | 'leaves' | 'smoke' | 'sparks' | 'steam'; opts { id?, color?, spread?, speed?, vx?, vy?, vz? } (particles.js)
  * @property {(body: PlayerState, vx: number, vy: number, vz: number, fromX: number, fromZ: number) => void} [knock]
  *   add an impulse to a body (explosions, tree impacts); main also makes a pig flee and squeal
+ * @property {(id: number) => boolean} [isIgnitable]   (DESIGN-circuits §3.6; main → circuitParts.isIgnitable) a block a flame
+ *   lights: undo restores these (besides the keg) last, and never where they would catch at once
+ * @property {(q: number, y: number, r: number) => boolean} [ignitesAt]   (DESIGN-circuits §3.6; main → circuits.wouldIgnite) a
+ *   keg or fuse at the cell would catch at once: a torch or a campfire beside it, or an igniter still powered
  */
 
 /**
@@ -139,7 +143,7 @@ export const CAUSE_AREA = Object.freeze({ kind: 'area' });
 /** One item for fallingRenderer.sync: a moving cell's centre, rotation (Euler order 'YXZ') and uniform scale. */
 /** @typedef {{ id: number, x: number, y: number, z: number, rx: number, ry: number, rz: number, scale: number }} RenderItem */
 
-const HOOK_NAMES = Object.freeze(['say', 'areaJobsActive', 'bodies', 'player', 'sound', 'particles', 'knock']);
+const HOOK_NAMES = Object.freeze(['say', 'areaJobsActive', 'bodies', 'player', 'sound', 'particles', 'knock', 'isIgnitable', 'ignitesAt']);
 const NO_BODIES = Object.freeze([]);
 const DEFAULT_HOOKS = Object.freeze({
   say: () => {},
@@ -154,6 +158,8 @@ const DEFAULT_HOOKS = Object.freeze({
     body.vz += vz;
     body.onGround = false;
   },
+  isIgnitable: () => false,
+  ignitesAt: () => false,
 });
 
 const FALL = 0;
@@ -805,9 +811,11 @@ export class BlockPhysics {
    * Undo the last physics event within UNDO_WINDOW_S: remove its fallers, logs and debris still in flight, then restore
    * every recorded cell whose current id is still what the event wrote — or, where the event wrote AIR, water that has
    * flowed in since (a flooded crater fills back in instead of leaving water pockets inside the restored ground,
-   * CONTRACTS §38.3). The event's barrel cells are restored last, and never next to a CAMPFIRE (it would only light
-   * them again); then explosions.cancelEvent stops the event's burning barrels and gives back the lit ones in the cells
-   * they were lit in (§37.4.3). Writes are quiet (no support seeds), lazy and past the edit cap.
+   * CONTRACTS §38.3). The event's keg cells — and its other ignitable cells (hooks.isIgnitable: powder fuses, charges) — are
+   * restored last, each as its own block, and never next to a CAMPFIRE nor where hooks.ignitesAt says it would catch (a
+   * torch or a still-powered igniter beside it; it would only light again and blow the restored scene up a second time,
+   * DESIGN-circuits §3.6); then explosions.cancelEvent stops the event's burning kegs and gives back the lit ones in the
+   * cells they were lit in (§37.4.3). Writes are quiet (no support seeds), lazy and past the edit cap.
    * @returns {{ ok: boolean, message: string, restored: number }}
    */
   undo() {
@@ -828,7 +836,7 @@ export class BlockPhysics {
     let changed = 0;
     let unloaded = 0;
     const c = this._cell;
-    /** @type {number[]} the event's own BLAST_BARREL cells: restored after every other cell (a campfire first) */
+    /** @type {number[]} the event's own keg and ignitable cells and their ids: restored after every other cell (a campfire first) */
     const barrels = [];
     for (const [key, code] of ev.cells) {
       unpackCell(key, c);
@@ -844,17 +852,18 @@ export class BlockPhysics {
         continue;
       }
       if (prev === wrote) continue;
-      if (prev === BLOCK.BLAST_BARREL) barrels.push(key);
+      if (prev === BLOCK.BLAST_BARREL || this.hooks.isIgnitable(prev)) barrels.push(key, prev);
       else if (this._write(c[0], c[1], c[2], prev, WRITE_QUIET, true) === 'ok') restored++;
     }
-    // Barrels: never next to a campfire — an unlit barrel there would catch again (the 'ignite' trigger at once, or
-    // the reseeder on the next load) and blow the restored scene up a second time (§33.8.4).
+    // Kegs (and fuses, charges): never next to a campfire or where a torch or a powered igniter would light them — an
+    // unlit keg there would catch again (the 'ignite' trigger at once, or the reseeder on the next load) and blow the
+    // restored scene up a second time (§33.8.4, DESIGN-circuits §3.6).
     let burnt = 0;
     const writeBarrel = (q, y, r) => this._write(q, y, r, BLOCK.BLAST_BARREL, WRITE_QUIET, true) === 'ok';
-    for (const key of barrels) {
-      unpackCell(key, c);
-      if (this._hasNeighbour(c[0], c[1], c[2], BLOCK.CAMPFIRE)) burnt++;
-      else if (writeBarrel(c[0], c[1], c[2])) restored++;
+    for (let i = 0; i < barrels.length; i += 2) {
+      unpackCell(barrels[i], c);
+      if (this._hasNeighbour(c[0], c[1], c[2], BLOCK.CAMPFIRE) || this.hooks.ignitesAt(c[0], c[1], c[2])) burnt++;
+      else if (this._write(c[0], c[1], c[2], barrels[i + 1], WRITE_QUIET, true) === 'ok') restored++;
     }
     const lit = this.explosions.cancelEvent(ev.id, writeBarrel) || {};
     inFlight += lit.putOut | 0;
@@ -864,8 +873,8 @@ export class BlockPhysics {
     if (inFlight > 0) message += `, removed ${inFlight} still in flight`;
     if (changed > 0) message += ` (${changed} changed since, left alone)`;
     if (unloaded > 0) message += ` (${unloaded} in unloaded chunks)`;
-    if (burnt > 0) message += ` (${burnt} barrel${burnt === 1 ? '' : 's'} next to a campfire not given back)`;
-    if (lit.lost > 0) message += ` (${lit.lost} barrel${lit.lost === 1 ? '' : 's'} found no room)`;
+    if (burnt > 0) message += ` (${burnt} ${burnt === 1 ? 'keg or fuse' : 'kegs or fuses'} next to a fire not given back)`;
+    if (lit.lost > 0) message += ` (${lit.lost} keg${lit.lost === 1 ? '' : 's'} found no room)`;
     if (ev.truncated) message += ' (the event was too large to record completely)';
     return { ok: true, message, restored };
   }
@@ -1320,7 +1329,7 @@ export class BlockPhysics {
     const q = s.queued;
     return `physics ${s.paused ? 'PAUSED' : 'running'} · ${sw} · queued ${q.fall + q.water + q.misc} (fall ${q.fall}, water ${q.water}, misc ${q.misc})` +
       ` · parked ${s.parked} · support seeds ${s.seeds} · falling ${s.fallers} · tumbling ${s.tumblers} · trees ${s.trees}` +
-      ` · lit barrels ${s.litBarrels} · edits ${s.edits} / ${MAX_TOTAL_EDITS}${s.canUndo ? ` · undo: ${this.lastEvent.kind}` : ''}`;
+      ` · lit kegs ${s.litBarrels} · edits ${s.edits} / ${MAX_TOTAL_EDITS}${s.canUndo ? ` · undo: ${this.lastEvent.kind}` : ''}`;
   }
 
   /** Drop everything queued and in flight (the world is unchanged). */

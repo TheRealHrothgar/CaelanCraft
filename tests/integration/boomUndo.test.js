@@ -275,7 +275,7 @@ describe('undo next to a campfire (F3, EXP-2)', () => {
     expect(world.getBlock(0, 11, 0)).toBe(B.AIR); // the blast broke the campfire
     const res = physics.undo();
     expect(res.ok).toBe(true);
-    expect(res.message).toContain('1 barrel next to a campfire not given back');
+    expect(res.message).toContain('1 keg or fuse next to a fire not given back');
     expect(world.getBlock(0, 11, 0)).toBe(B.CAMPFIRE);
     expect(world.getBlock(1, 11, 0)).toBe(B.AIR);
     steps(physics, 10);
@@ -289,7 +289,7 @@ describe('undo next to a campfire (F3, EXP-2)', () => {
     world.setBlock(0, 11, 0, B.CAMPFIRE);
     world.setBlock(0, 12, 0, B.BLAST_BARREL);
     stepUntil(physics, () => ex.blastCount === 1, 400);
-    expect(physics.undo().message).toContain('next to a campfire not given back');
+    expect(physics.undo().message).toContain('next to a fire not given back');
     expect(world.getBlock(0, 11, 0)).toBe(B.CAMPFIRE);
     expect(world.getBlock(0, 12, 0)).toBe(B.AIR);
     steps(physics, 6);
