@@ -22,7 +22,7 @@
 // solved with no edge actions: relays take their coil's settled state at once (up to MAX_SETTLE_PASSES passes), selenium is
 // evaluated at once, and loads simply take their current state. A network that reaches an unloaded chunk (or that touches a
 // relay whose coil cannot be known yet) is FROZEN: it keeps its last voltages, takes no edges and drains nothing until it is
-// whole again. Loading never fires anything (CONTRACTS pitfall 36).
+// whole again. Loading never fires anything (CONTRACTS pitfall 37).
 //
 // The user named the design's "Linstock" a Torch (block TORCH, key `torch`): a flame that is always lit (circuitParts.js).
 import {
@@ -136,6 +136,8 @@ const units = (v) => Math.round(v / VOLT_UNIT);
 const UNITS_PER_AMP = Math.max(1, Math.round(WIRE_OHMS / VOLT_UNIT));
 const BLASTER_UNITS = units(BLASTER_V);
 const LAMP_MIN_UNITS = units(LAMP_MIN_V);
+/** OverlayItem.b of a keg's bung glow (circuitGeometry.FUSE_AT_BUNG: the spark sits on a keg burning in place). */
+const FUSE_AT_BUNG = 8;
 
 // Packed cell arithmetic (coords.packCell: ((q + 2^20)·2^21 + (r + 2^20))·128 + y): a neighbour is pc + a constant.
 const H = WORLD_HEIGHT;
@@ -382,7 +384,7 @@ export class Circuits {
 
   /**
    * Every block change from any source (main forwards World.onBlockChange). BOOKKEEPING ONLY — it runs inside World.setBlock,
-   * so it never writes, never calls a hook (CONTRACTS pitfall 33): the index; the store entry (a part leaving deletes its
+   * so it never writes, never calls a hook (CONTRACTS pitfall 34): the index; the store entry (a part leaving deletes its
    * entry, §4.8); `spent`; the cell and its 8 neighbours dirty; every earth-needing part or earth wire in the 9 cells above
    * dirty (their earth walk may have changed); flame candidates queued.
    */
@@ -2094,11 +2096,28 @@ export class Circuits {
       if (id === undefined) continue;
       if (isFlame(id)) return true;
       if (id === B.IGNITER) {
+        // CONTRACT-ISSUE (integrator): undo restores the igniter and its wires just before the kegs, so their networks are
+        // still dirty and the restored igniter has no runtime state yet: solve the waiting cells now, SETTLING (no edge
+        // fires), so "powered" is what the next tick would find (§3.6: the quarry on a battery and a closed switch).
+        if (this._dq.length > this._dqHead) this._settleNow();
         const rt = this.rt.get(n);
         if (rt && rt.id === id && rt.powered) return true;
       }
     }
     return false;
+  }
+
+  /**
+   * Solve every waiting dirty cell now, as settling (loads take their state with no edge actions): wouldIgnite's look-ahead
+   * after a burst of restored cells. A no-op inside a tick's network step or while switched off.
+   */
+  _settleNow() {
+    if (this._inNetworks || !this.enabled) return;
+    for (const pc of this._dflag.keys()) this._dflag.set(pc, true);
+    this._loadedCache.clear();
+    this._t0 = this._now();
+    this._visits = 0;
+    this._stepNetworks();
   }
 
   /**
@@ -2589,11 +2608,13 @@ export class Circuits {
 
   /**
    * The moving and lit bits to draw this frame (§4.11), nearest first, at most MAX_CIRCUIT_OVERLAYS within `range` of the eye.
-   * The eye is also remembered for the nearest-first sounds and sparks. Per type (a, b): blade (open 0/1, seconds since it
-   * last moved), cap (pressed 0/1, 0), hand (time left / delay, holding 0/1), arm (energised or pushed 0/1, NC 0/1), plunger
-   * (handle height 1 up … 0 down, 0), hammer (ringing 0/1, seed), bulb (brightness, 0), glow (intensity, see `glow`: lamp
-   * b = brightness, fuse b = the from face or −2 at a keg's bung, charge / ember b = seed), staff (torch: seed, 0; filament:
-   * brightness, 0; char: burnt fraction, from face).
+   * The eye is also remembered for the nearest-first sounds and sparks. Per type (a, b), as circuitGeometry.overlayPose reads
+   * them (CONTRACTS §53): blade (closed 0/1, seconds since it last moved), cap (pressed 0/1, NC 0/1), hand (time left / delay,
+   * holding 0/1), arm (energised or pushed 0/1, NC 0/1), plunger (travel 0 cocked … 1 pushed home, 0), hammer (ringing 0/1,
+   * seed), bulb (brightness, 0), glow (intensity, see `glow`: lamp b = brightness, fuse b = the from face, −1 lit in place,
+   * or FUSE_AT_BUNG 8 on a keg burning in place; charge / ember b = seed), staff (torch: seed, 0; filament: brightness, 0;
+   * char: burnt fraction, from face).
+   * The integrator aligned these with circuitGeometry's header (blade, cap, plunger and the keg's bung were the other way).
    * @param {OverlayItem[]} [out]
    * @returns {OverlayItem[]}
    */
@@ -2624,10 +2645,10 @@ export class Circuits {
     const st = this._st(pc);
     switch (id) {
       case B.KNIFE_SWITCH:
-        item('blade', this._contactClosed(pc, id, rt) ? 0 : 1, Math.min(1, (this.tickCount - rt.swTick) * TICK));
+        item('blade', this._contactClosed(pc, id, rt) ? 1 : 0, Math.min(1, (this.tickCount - rt.swTick) * TICK));
         break;
       case B.PUSH_BUTTON:
-        item('cap', rt.press > 0 ? 1 : 0, 0);
+        item('cap', rt.press > 0 ? 1 : 0, st && st.nc ? 1 : 0);
         break;
       case B.CLOCKWORK_TIMER: {
         const total = this._timerTicks(pc);
@@ -2638,7 +2659,7 @@ export class Circuits {
         item('arm', rt.arm || rt.hand > 0 ? 1 : 0, st && st.nc ? 1 : 0);
         break;
       case B.BLASTING_MACHINE:
-        item('plunger', rt.pulse > 0 ? 0 : rt.reset > 0 ? 1 - rt.reset / BLASTER_RESET_TICKS : 1, 0);
+        item('plunger', rt.pulse > 0 ? 1 : rt.reset > 0 ? rt.reset / BLASTER_RESET_TICKS : 0, 0);
         break;
       case B.ELECTRIC_BELL:
         item('hammer', rt.powered ? 1 : 0, seedOf(pc));
@@ -2674,7 +2695,7 @@ export class Circuits {
         break;
       }
       case B.POWDER_KEG:
-        if (typeof this.hooks.kegBurning === 'function' && this.hooks.kegBurning(q, y, r)) item('glow', 1, -2, { glow: 'fuse' });
+        if (typeof this.hooks.kegBurning === 'function' && this.hooks.kegBurning(q, y, r)) item('glow', 1, FUSE_AT_BUNG, { glow: 'fuse' });
         break;
       default:
         break;

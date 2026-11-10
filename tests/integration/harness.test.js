@@ -50,6 +50,19 @@ import {
   consolePackAdd, consolePackClear, HANDBOOK_KEY,
 } from '../../src/main.js';
 import { documentFromHTML } from '../helpers/fakeDom.js';
+// v0.10 circuits (§7 I-2)
+import { PLACE_REPEAT_S } from '../../src/config.js';
+import { BlockPhysics } from '../../src/blockphysics.js';
+import { BlackHoles } from '../../src/blackholes.js';
+import { Circuits } from '../../src/circuits.js';
+import { CircuitStore } from '../../src/circuitStore.js';
+import { isControl as isControlPart } from '../../src/circuitParts.js';
+import { interactKind } from '../../src/survivalControl.js';
+import { makeFakeWorld } from '../helpers/fixtures.js';
+import {
+  rKeyStep, rightMouseStep, ControlLatch, explainLine, snuffsKeg, panelCellChanged, kegHintText, hotbarFrom, hasRAction,
+  makeCircuitHooks, makeBlackHoleWorld, physicsCircuitHooks, KEG_EXPLAIN,
+} from '../../src/main.js';
 
 const SEED = 1;
 const RD = 2;
@@ -1187,5 +1200,203 @@ describe('integration harness: Survival (v0.9)', () => {
     for (const m of ['survival', 'pack', 'setMode', 'getMode', 'urlMode', 'selectSlot', 'interact', 'digTargeted', 'useSelected']) {
       expect(ctx, m).toMatch(new RegExp(`@property \\{[^\\n]*\\} \\[?${m}\\]?\\b`));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// v0.10 circuits (DESIGN-circuits §7 I-2): the R key, the right mouse button's control latch, snuffing and the device panel,
+// through main.js's own rules (rKeyStep, rightMouseStep / ControlLatch, snuffsKeg, explainLine, panelCellChanged) on a real
+// Circuits and BlockPhysics over a fake world wired with main's hooks.
+
+describe('v0.10 circuits through main\'s rules (§7 I-2)', () => {
+  const CY = 11;
+  /** A fake world (natural stone ≤ 10) with block physics, black holes and circuits wired as main wires them. */
+  function circuitRig() {
+    const world = makeFakeWorld({ groundY: CY - 1 });
+    const blackHoles = new BlackHoles();
+    const bhWorld = makeBlackHoleWorld(() => world);
+    /** @type {*} */
+    let circuits = null;
+    const physics = new BlockPhysics(world, {
+      say() {}, sound() {}, particles() {}, bodies: () => [], player: () => null, knock() {}, ...physicsCircuitHooks(() => circuits),
+    });
+    const hooks = makeCircuitHooks({ world: () => world, physics: () => physics, blackHoles, blackHoleWorld: bhWorld, daylight: () => 1, now: () => 0 });
+    circuits = new Circuits(new CircuitStore(), hooks);
+    world.onBlockChange = (q, y, r, prev, next) => {
+      blackHoles.onBlockChange(q, y, r, prev, next);
+      circuits.onBlockChange(q, y, r, prev, next);
+      physics.onBlockChange(q, y, r, prev, next);
+    };
+    const placed = [];
+    const latch = new ControlLatch();
+    const env = {
+      isControl: (id) => isControlPart(id),
+      operate: (h) => circuits.interact(h.q, h.y, h.r, 'use'),
+      hold: (h) => circuits.hold(h.q, h.y, h.r),
+      place: () => placed.push(1),
+    };
+    const frame = () => {
+      physics.step(TICK);
+      circuits.step(TICK);
+    };
+    const hitAt = (q, r, id) => ({ q, y: CY, r, blockId: id, face: 0, nx: 0, ny: 1, nz: 0, distance: 3 });
+    return { world, physics, circuits, latch, env, placed, frame, hitAt };
+  }
+  const down = { rightPressed: true, right: true };
+  const held = { rightPressed: false, right: true };
+  const up = { rightPressed: false, right: false };
+
+  it('the R key on a keg does not light it and explains (once per 4 s); with a Spark Transmitter selected it sends', () => {
+    const t = circuitRig();
+    t.world.setBlock(0, CY, 0, BLOCK.POWDER_KEG);
+    const keg = t.hitAt(0, 0, BLOCK.POWDER_KEG);
+    expect(rKeyStep(keg, { circuits: t.circuits, pocketSelected: false })).toEqual({ kind: 'explain' });
+    for (let i = 0; i < 30; i++) t.frame();
+    expect(t.physics.explosions.isBurning(0, CY, 0)).toBe(false);
+    expect(explainLine(BLOCK.POWDER_KEG, -Infinity, 10)).toBe(KEG_EXPLAIN);
+    expect(explainLine(BLOCK.POWDER_KEG, 10, 12)).toBeNull(); // pressed again 2 s later: nothing
+    expect(explainLine(BLOCK.POWDER_KEG, 10, 14)).toBe(KEG_EXPLAIN);
+    expect(explainLine(BLOCK.COLLAPSAR_CHARGE, -Infinity, 0)).toMatch(/Collapsar Charge/);
+    expect(rKeyStep(keg, { circuits: t.circuits, pocketSelected: true })).toEqual({ kind: 'pocket' });
+    // a part's own R action comes first, even with the transmitter selected (§4.9 step 1)
+    t.world.setBlock(2, CY, 0, BLOCK.KNIFE_SWITCH);
+    const sw = rKeyStep(t.hitAt(2, 0, BLOCK.KNIFE_SWITCH), { circuits: t.circuits, pocketSelected: true });
+    expect(sw.kind).toBe('part');
+    expect(t.circuits.store.get(`2,${CY},0`).on).toBe(true);
+    // a Rune Block next, then nothing at all
+    expect(rKeyStep(t.hitAt(4, 0, BLOCK.RUNE_BLOCK), { circuits: t.circuits, pocketSelected: true })).toEqual({ kind: 'rune' });
+    expect(rKeyStep(t.hitAt(4, 0, BLOCK.STONE), { circuits: t.circuits, pocketSelected: false })).toBeNull();
+  });
+
+  it('right-click on a knife switch toggles it and places nothing; held for 1 s it still toggles once and places nothing', () => {
+    const t = circuitRig();
+    t.world.setBlock(0, CY, 0, BLOCK.KNIFE_SWITCH);
+    const sw = t.hitAt(0, 0, BLOCK.KNIFE_SWITCH);
+    const on = () => Boolean(t.circuits.store.get(`0,${CY},0`)?.on);
+    expect(rightMouseStep(t.latch, down, sw, false, TICK, t.env)).toBe('operate');
+    rightMouseStep(t.latch, up, sw, false, TICK, t.env);
+    expect(on()).toBe(true);
+    expect(t.placed).toHaveLength(0);
+    // pressed and held for a full second (5 × PLACE_REPEAT_S): one toggle, no place
+    rightMouseStep(t.latch, down, sw, false, TICK, t.env);
+    for (let i = 0; i < 60; i++) {
+      expect(rightMouseStep(t.latch, held, sw, false, TICK, t.env)).toBe('hold');
+      t.frame();
+    }
+    rightMouseStep(t.latch, up, sw, false, TICK, t.env);
+    expect(on()).toBe(false);
+    expect(t.placed).toHaveLength(0);
+    // holding right-click while the crosshair slides off the control onto stone: still nothing placed until released
+    rightMouseStep(t.latch, down, sw, false, TICK, t.env);
+    for (let i = 0; i < 30; i++) rightMouseStep(t.latch, held, t.hitAt(5, 0, BLOCK.STONE), false, TICK, t.env);
+    expect(t.placed).toHaveLength(0);
+    rightMouseStep(t.latch, up, null, false, TICK, t.env);
+    // the place repeat never places against a control without Shift
+    rightMouseStep(t.latch, down, t.hitAt(5, 0, BLOCK.STONE), false, TICK, t.env);
+    expect(t.placed).toHaveLength(1);
+    for (let i = 0; i < 30; i++) rightMouseStep(t.latch, held, sw, false, TICK, t.env);
+    expect(t.placed).toHaveLength(1);
+  });
+
+  it('Shift+right-click places against a switch (and does not toggle it)', () => {
+    const t = circuitRig();
+    t.world.setBlock(0, CY, 0, BLOCK.KNIFE_SWITCH);
+    const sw = t.hitAt(0, 0, BLOCK.KNIFE_SWITCH);
+    expect(rightMouseStep(t.latch, down, sw, true, TICK, t.env)).toBe('place');
+    expect(t.placed).toHaveLength(1);
+    expect(Boolean(t.circuits.store.get(`0,${CY},0`)?.on)).toBe(false);
+    // and the shifted hold repeats like any place
+    for (let i = 0; i < Math.round(PLACE_REPEAT_S / TICK) + 1; i++) rightMouseStep(t.latch, held, sw, true, TICK, t.env);
+    expect(t.placed).toHaveLength(2);
+  });
+
+  it('holding right-click on the doorbell\'s button for 2 s rings the bell for 2 s (§4.14 example 1)', () => {
+    const t = circuitRig();
+    t.world.setBlock(0, CY, 0, BLOCK.VOLTAIC_BATTERY);
+    for (let q = 1; q <= 6; q++) t.world.setBlock(q, CY, 0, BLOCK.COPPER_WIRE);
+    t.world.setBlock(7, CY, 0, BLOCK.PUSH_BUTTON);
+    for (let q = 8; q <= 10; q++) t.world.setBlock(q, CY, 0, BLOCK.COPPER_WIRE);
+    t.world.setBlock(11, CY, 0, BLOCK.ELECTRIC_BELL);
+    for (let i = 0; i < 10; i++) t.frame();
+    const bell = () => t.circuits.probe(11, CY, 0);
+    expect(bell().state).not.toBe('ringing');
+    const button = t.hitAt(7, 0, BLOCK.PUSH_BUTTON);
+    rightMouseStep(t.latch, down, button, false, TICK, t.env);
+    let ringing = 0;
+    for (let i = 0; i < 120; i++) {
+      rightMouseStep(t.latch, held, button, false, TICK, t.env);
+      t.frame();
+      if (bell().state === 'ringing') ringing++;
+    }
+    expect(ringing).toBeGreaterThan(110); // all 2 s, but the first tick or two
+    expect(bell().volts).toBeCloseTo(5.4375, 9); // 6 − 9 × 0.0625
+    rightMouseStep(t.latch, up, button, false, TICK, t.env);
+    for (let i = 0; i < 30; i++) t.frame(); // released: 0.1 s more, then silence
+    expect(bell().state).not.toBe('ringing');
+    expect(t.circuits.probe(1, CY, 0).volts).toBe(6); // no current, no drop
+    expect(t.placed).toHaveLength(0);
+  });
+
+  it('a left-click on a keg burning in place (lit by ignite) snuffs it and keeps the keg', () => {
+    const t = circuitRig();
+    t.world.setBlock(0, CY, 0, BLOCK.POWDER_KEG);
+    expect(t.circuits.ignite(0, CY, 0).ok).toBe(true); // 3 s in place
+    const keg = t.hitAt(0, 0, BLOCK.POWDER_KEG);
+    expect(snuffsKeg(keg, t.physics.explosions)).toBe(true);
+    expect(t.physics.explosions.snuff(0, CY, 0)).toBe(true);
+    expect(snuffsKeg(keg, t.physics.explosions)).toBe(false);
+    for (let i = 0; i < 240; i++) t.frame();
+    expect(t.world.getBlock(0, CY, 0)).toBe(BLOCK.POWDER_KEG);
+    expect(t.physics.explosions.blastCount).toBe(0);
+    expect(kegHintText(true, false)).toBe('Powder Keg · light it with a fuse, a torch or an igniter');
+    expect(kegHintText(true, true)).toBe('Powder Keg · burning! left-click: pinch out the fuse');
+    expect(kegHintText(false, false)).toBe('Powder Keg (explosions are off)');
+  });
+
+  it('the device panel: Creative freezes the world under it, Survival keeps it running; its part changing closes it', () => {
+    expect(stateSimulates(STATE.DEVICE)).toBe(false);
+    expect(stateSimulates(STATE.DEVICE, false)).toBe(false);
+    expect(stateSimulates(STATE.DEVICE, true)).toBe(true);
+    expect(stateSimulates(STATE.PACK)).toBe(true); // survival's states unchanged
+    const t = circuitRig();
+    t.world.setBlock(0, CY, 0, BLOCK.CLOCKWORK_TIMER);
+    const view = t.circuits.panelView(0, CY, 0, true);
+    expect(view.key).toBe(`0,${CY},0`);
+    expect(view.actions).toEqual(['start']);
+    // a console-less setblock of the timer's cell (Creative), or a blast removing it (Survival): main closes the panel
+    let closed = false;
+    const prevHook = t.world.onBlockChange;
+    t.world.onBlockChange = (q, y, r, prev, next) => {
+      prevHook(q, y, r, prev, next);
+      if (panelCellChanged(view.key, q, y, r, prev, next)) closed = true;
+    };
+    t.world.setBlock(1, CY, 0, BLOCK.STONE);
+    expect(closed).toBe(false);
+    t.world.setBlock(0, CY, 0, BLOCK.AIR);
+    expect(closed).toBe(true);
+    expect(panelCellChanged(null, 0, CY, 0, 1, 0)).toBe(false);
+  });
+
+  it('a hotbar slot holding the old BLACK_HOLE (66) holds the Collapsar Charge (§2.10)', () => {
+    expect(hotbarFrom([66, 1, 2, 3, 4, 5, 6, 7, 8])[0]).toBe(BLOCK.COLLAPSAR_CHARGE);
+    expect(hotbarFrom([1, 2, 3, 4, 5, 6, 7, 8, 9])).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(hotbarFrom(null)).toEqual(DEFAULT_HOTBAR);
+  });
+
+  it('survival keeps its R priorities, with the parts and the pocket key slotted in (§4.9, §8.3)', () => {
+    const pack = new Pack();
+    const base = { waterHit: null, headInWater: false, pack, partR: (id) => hasRAction(id) };
+    const fuse = { q: 0, y: CY, r: 0, blockId: BLOCK.POWDER_FUSE, face: 0, distance: 2 };
+    expect(interactKind({ ...base, hit: fuse, selectedKey: null })).toMatchObject({ kind: 'fuse_hint', hint: 'Powder Fuse · needs a Fire Drill (R key)' });
+    pack.add({ k: 'fire_drill', n: 1 });
+    expect(interactKind({ ...base, hit: fuse, selectedKey: null })).toMatchObject({ kind: 'circuit', q: 0, y: CY, r: 0 });
+    const sw = { ...fuse, blockId: BLOCK.KNIFE_SWITCH };
+    expect(interactKind({ ...base, hit: sw, selectedKey: 'spark_transmitter' })).toMatchObject({ kind: 'circuit' });
+    const keg = { ...fuse, blockId: BLOCK.POWDER_KEG };
+    expect(interactKind({ ...base, hit: keg, selectedKey: 'spark_transmitter' })).toEqual({ kind: 'pocket' });
+    expect(interactKind({ ...base, hit: keg, selectedKey: null })).toBeNull(); // → the rune, then the keg's explanation
+    expect(interactKind({ ...base, hit: keg, selectedKey: HANDBOOK_KEY })).toMatchObject({ kind: 'read' }); // the Handbook first
+    // without circuits (no partR), survival's old steps are exactly as they were
+    expect(interactKind({ ...base, partR: undefined, hit: fuse, selectedKey: 'spark_transmitter' })).toBeNull();
   });
 });

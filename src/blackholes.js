@@ -354,6 +354,15 @@ export class BlackHoles {
   }
 
   /**
+   * The Collapsar Charge at (q, y, r) has been set off and is still arming (main's circuits hook `chargeArming`: the hint
+   * reads `Collapsar Charge · collapsing!`).
+   * @returns {boolean}
+   */
+  isArming(q, y, r) {
+    return this._arming.size > 0 && this._arming.has(holeKey(q, y, r));
+  }
+
+  /**
    * Something needs update() even with no tracked hole: a charge is arming, a hole is still forming, or events wait
    * to be drained. Main steps black holes while `size > 0 || busy`.
    */
@@ -460,7 +469,7 @@ export class BlackHoles {
   }
 
   /**
-   * World.onBlockChange hook — bookkeeping only (DESIGN-circuits pitfall 33: never a world write from here).
+   * World.onBlockChange hook — bookkeeping only (CONTRACTS pitfall 34: never a world write from here).
    * - BLACK_HOLE appears: a hole at FLASH (`fromCharge` when the cell held a COLLAPSAR_CHARGE); an arming entry there
    *   is consumed.
    * - BLACK_HOLE disappears (broken, replaced): the hole goes, with a `collapsed` event.

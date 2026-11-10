@@ -419,6 +419,20 @@
  * @property {() => void} [interact]                 one press of R on the current target (both modes)
  * @property {(dt: number) => (object|null)} [digTargeted]  one frame of holding LMB on the target in Survival (the real dig path)
  * @property {(dt: number) => ({ progress: number|null }|null)} [useSelected]  one frame of holding RMB with the selected item in Survival
+ * v0.10 circuits and black holes (CONTRACTS §58; DESIGN-circuits §6.6–§6.7): the live objects, drivers and the scenes.
+ * @property {import('./circuits.js').Circuits|null} [circuits]  the world's circuit engine (null before a world exists)
+ * @property {import('./circuitStore.js').CircuitStore} [circuitStore]  the configured parts (one per session)
+ * @property {import('./blackholes.js').BlackHoles} [blackHoles]
+ * @property {import('./infall.js').Infall} [infall]  eaten blocks and swallowed mobs spiralling in
+ * @property {(pressed: boolean, dt?: number) => (string|null)} [rightClick]  one frame of right-click on the target (the latch)
+ * @property {() => void} [rightRelease]             let go of the right mouse button
+ * @property {() => void} [editTarget]               the Shift+R key on the target: the device panel or the rune editor
+ * @property {(q: number, y: number, r: number) => void} [openDevicePanel]
+ * @property {() => void} [closeDevicePanel]
+ * @property {'vortex'|'circuits'|null} [urlScene]  `?scene=` as the page was opened with
+ * @property {(name: string, delay?: number) => { ok: boolean, message: string, named?: Record<string, number[]> }} [buildScene]
+ * @property {Record<string, number[]>|null} [sceneCells]  the named cells of the last scene built
+ * @property {() => number} [circuitSegments]       wire segments drawn (the F3 circuits line)
  */
 
 export {};

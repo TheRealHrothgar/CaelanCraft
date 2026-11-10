@@ -83,8 +83,9 @@ const FACE_UV = new Float32Array(256 * FACE_COUNT * 4);
 const TINTED = new Uint8Array(256 * FACE_COUNT);
 /**
  * FREE_SURFACE[id] = 1 iff water under a cell of `id` has a free, lowered surface (§10.2 step 1): AIR, or a block drawn
- * by its own model (campfire). Under water or any block meshed as a full prism (stone, glass, ice, leaves, a black hole)
- * a FULL water cell (source or falling) stays full height, so a submerged see-through block shows no fake surface ledge.
+ * by its own model (campfire, a black hole, the thin circuit parts: v0.10). Under water or any block meshed as a full prism
+ * (stone, glass, ice, leaves) a FULL water cell (source or falling) stays full height, so a submerged see-through block shows
+ * no fake surface ledge.
  */
 const FREE_SURFACE = new Uint8Array(256);
 /** WET[id] = 1 for the water family (WATER, WATER_FLOW_1..6, WATER_FALL): culled against each other by surface height. */

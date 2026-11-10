@@ -7,7 +7,7 @@
 // have a chance `p`, and may be `natural`: given only when the cell had no edit before the break (main checks
 // `!world.hasEdit(q, y, r)` BEFORE writing AIR). Conditions: the selected tool's type ('spade', 'knife', 'axe', 'pick') or
 // 'knifeInPack' (a knife of tier ≥ 2 anywhere in the pack).
-import { REGROW_MEAN_S, MAX_REGROW_TRACKED } from './config.js';
+import { REGROW_MEAN_S, MAX_REGROW_TRACKED, SEA_LEVEL } from './config.js';
 import { BLOCK, BLOCK_COUNT, getBlockDef } from './blocks.js';
 import { TIER_NAMES, TIER_SPEED, itemForBlock } from './items.js';
 import { forEachEditedCell } from './coords.js';
@@ -21,6 +21,7 @@ import { forEachEditedCell } from './coords.js';
  * @property {number|number[]} n      a count, or an inclusive [min, max] range rolled uniformly
  * @property {number} [p]               chance 0..1 (absent: always)
  * @property {boolean} [natural]        only from a cell that had no edit before the break
+ * @property {boolean} [deep]           only from a cell at y ≤ SEA_LEVEL − DEEP_BELOW_SEA (v0.10: cave saltpetre)
  */
 /** @typedef {{ if: string|null, items: DropItem[] }} DropBranch */
 /** @typedef {DropBranch[]} DropGroup */
@@ -31,12 +32,18 @@ import { forEachEditedCell } from './coords.js';
  * @property {number} tier         the minimum tier of that tool; 0 = bare hands allowed
  * @property {DropGroup[]} drops
  */
-/** @typedef {{ natural?: boolean, knifeInPack?: boolean }} DropContext */
+/** @typedef {{ natural?: boolean, knifeInPack?: boolean, deep?: boolean }} DropContext   `deep`: isDeep(y) of the cell */
 
 /** Breaking with the head under water takes this many times longer (§6.1). */
 export const UNDERWATER_DIG_FACTOR = 2.5;
 /** No block breaks faster than this (s). */
 export const MIN_BREAK_S = 0.05;
+/** v0.10 (DESIGN-circuits §8.1): saltpetre crusts only on cave walls this far below sea level or deeper. */
+export const DEEP_BELOW_SEA = 14;
+/** @param {number} y @returns {boolean} a cell at this height counts as `deep` for drops */
+export function isDeep(y) {
+  return Number.isFinite(y) && y <= SEA_LEVEL - DEEP_BELOW_SEA;
+}
 
 const B = BLOCK;
 /** Placeholder for the block's own item, resolved per id (`itemForBlock`). */
@@ -126,7 +133,7 @@ set([B.OAK_PLANKS, B.SPRUCE_PLANKS, B.BIRCH_PLANKS], 2.0, 'axe', 1, SELF_DROPS);
 set([B.BOOKSHELF], 1.5, 'axe', 1, SELF_DROPS);
 set([B.WORK_STUMP], 2.5, 'axe', 1, SELF_DROPS);
 set([B.WICKER_BASKET], 0.8, 'axe', 0, SELF_DROPS); // + its contents (containers.js)
-set([B.BLAST_BARREL], 2.0, 'axe', 1, SELF_DROPS);
+set([B.POWDER_KEG], 2.0, 'axe', 1, SELF_DROPS); // the BLAST_BARREL row, under its new name
 set([B.PUMPKIN], 1.0, 'axe', 0, SELF_DROPS);
 // Soft blocks a knife cuts
 const WOOLS = [
@@ -146,14 +153,17 @@ set([B.KILN], 3.0, 'pick', 0, SELF_DROPS);
 set([B.BLOOMERY], 4.0, 'pick', 2, SELF_DROPS);
 set([B.FORGE], 5.0, 'pick', 2, SELF_DROPS);
 // Rock: no stone pick exists, so a flint pick is the first way in.
-set([B.STONE], 3.0, 'pick', 2, [always(drop('rock', 2)), always(drop('flint', 1, { p: 0.05, ...natural }))]);
+set([B.STONE], 3.0, 'pick', 2, [
+  always(drop('rock', 2)), always(drop('flint', 1, { p: 0.05, ...natural })),
+  always(drop('saltpetre', 1, { p: 0.06, deep: true, ...natural })), // v0.10 (DESIGN-circuits §8.1): cave saltpetre
+]);
 set([B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.BRICKS], 3.0, 'pick', 2, SELF_DROPS);
 set([B.GRANITE, B.DIORITE, B.ANDESITE, B.SLATE], 3.5, 'pick', 2, SELF_DROPS);
 set([B.SANDSTONE], 2.0, 'pick', 2, SELF_DROPS);
 set([B.OBSIDIAN], 2.5, 'pick', 2, [always(drop('obsidian_shard', [2, 3]))]);
 set([B.RUNE_BLOCK], 2.0, 'pick', 2, SELF_DROPS); // its script is lost, as today
 // Ores
-set([B.COAL_ORE], 3.5, 'pick', 2, [always(drop('coal', [1, 2]))]);
+set([B.COAL_ORE], 3.5, 'pick', 2, [always(drop('coal', [1, 2])), always(drop('pyrite', 1, { p: 0.25, ...natural }))]);
 set([B.COPPER_ORE], 4.0, 'pick', 2, [always(drop('malachite', [1, 2]))]);
 set([B.TIN_ORE], 4.0, 'pick', 3, [always(drop('cassiterite', 1)), always(drop('cassiterite', 1, { p: 0.25 }))]);
 set([B.IRON_ORE], 5.0, 'pick', 4, [always(drop('hematite', [1, 2]))]);
@@ -163,6 +173,14 @@ set([B.DIAMOND_ORE], 4.0, 'pick', 2, [always(drop('rough_gem', 1))]);
 set([B.COAL_BLOCK], 4.0, 'pick', 2, SELF_DROPS);
 set([B.COPPER_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK], 5.0, 'pick', 2, SELF_DROPS);
 set([B.IRON_BLOCK], 6.0, 'pick', 2, SELF_DROPS);
+// v0.10 circuits (DESIGN-circuits §8.3): every part comes away whole. (A battery's charge is not carried yet: KNOWN-ISSUES.)
+set([B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE, B.POWDER_FUSE], 0.2, null, 0, SELF_DROPS);
+set([B.TORCH], 0.3, null, 0, SELF_DROPS);
+set([B.TERMINAL_BOARD, B.RELAY, B.BLASTING_MACHINE, B.SPARK_TRANSMITTER, B.CLOCKWORK_TIMER, B.FILAMENT_LAMP], 1.0, 'axe', 0, SELF_DROPS);
+set([B.VOLTAIC_BATTERY], 1.0, 'axe', 0, SELF_DROPS);
+set([B.KNIFE_SWITCH, B.PUSH_BUTTON, B.ELECTRIC_BELL, B.IGNITER], 1.2, 'pick', 0, SELF_DROPS);
+set([B.SELENIUM_PANEL, B.COHERER_RECEIVER], 0.6, null, 0, SELF_DROPS);
+set([B.COLLAPSAR_CHARGE], 1.5, 'pick', 0, SELF_DROPS); // Creative-made only, but it can be taken up in Survival (§8.2)
 // BEDROCK, AIR and the water family keep the null rule: unbreakable.
 
 /** @template T @param {T} o @returns {T} */
@@ -270,6 +288,7 @@ export function rollGroups(groups, tool, ctx, random) {
     if (!br) continue;
     for (const it of br.items) {
       if (it.natural && !ctx.natural) continue;
+      if (it.deep && !ctx.deep) continue;
       if (it.p !== undefined && !(random() < it.p)) continue;
       const n = rollCount(it.n, random);
       if (n > 0) out.set(it.k, (out.get(it.k) ?? 0) + n);

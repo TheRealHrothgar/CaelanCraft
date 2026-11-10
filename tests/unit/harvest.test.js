@@ -1,13 +1,13 @@
 // Unit tests for src/harvest.js — BLOCK_RULES, break times, drops, picking, tapping, regrowth and mob drops
 // (docs/DESIGN-survival.md §6, §4.2–§4.3).
 import { describe, it, expect } from 'vitest';
-import { REGROW_MEAN_S, MAX_REGROW_TRACKED } from '../../src/config.js';
+import { REGROW_MEAN_S, MAX_REGROW_TRACKED, SEA_LEVEL } from '../../src/config.js';
 import { BLOCK, BLOCKS, BLOCK_COUNT, isWater } from '../../src/blocks.js';
 import { ITEMS, TOOL_TYPES, TIER_SPEED, isItemKey, itemForBlock, getItem } from '../../src/items.js';
 import {
   BLOCK_RULES, ruleFor, canHarvest, breakSeconds, harvestHint, rollDrops, rollGroups, PICKABLE, isPickable, pick, tap,
   Tapped, Regrowth, RIPE_OF, ripeOf, MOB_DROPS, rollMobDrops, toolPower, UNDERWATER_DIG_FACTOR, MIN_BREAK_S,
-  HAND_GATHER, handGatherHint, withArticle, DIG_TOOL_TYPES,
+  HAND_GATHER, handGatherHint, withArticle, DIG_TOOL_TYPES, isDeep, DEEP_BELOW_SEA,
 } from '../../src/harvest.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
 import { mulberry32 } from '../../src/noise.js';
@@ -61,7 +61,7 @@ const TABLE = [
   [[B.BOOKSHELF], 1.5, 'axe', 1],
   [[B.WORK_STUMP], 2.5, 'axe', 1],
   [[B.WICKER_BASKET], 0.8, 'axe', 0],
-  [[B.BLAST_BARREL], 2.0, 'axe', 1],
+  [[B.POWDER_KEG], 2.0, 'axe', 1],
   [[B.PUMPKIN], 1.0, 'axe', 0],
   [[B.HAY_BALE, ...WOOLS, B.HONEYCOMB_BLOCK], 0.8, 'knife', 0],
   [[B.SLEEPING_HIDE], 0.5, 'knife', 0],
@@ -85,15 +85,36 @@ const TABLE = [
   [[B.COAL_BLOCK], 4.0, 'pick', 2],
   [[B.COPPER_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK], 5.0, 'pick', 2],
   [[B.IRON_BLOCK], 6.0, 'pick', 2],
+  // DESIGN-circuits §8.3: the circuit parts
+  [[B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE, B.POWDER_FUSE], 0.2, null, 0],
+  [[B.TORCH], 0.3, null, 0],
+  [[B.TERMINAL_BOARD, B.RELAY, B.BLASTING_MACHINE, B.SPARK_TRANSMITTER, B.CLOCKWORK_TIMER, B.FILAMENT_LAMP, B.VOLTAIC_BATTERY], 1.0, 'axe', 0],
+  [[B.KNIFE_SWITCH, B.PUSH_BUTTON, B.ELECTRIC_BELL, B.IGNITER], 1.2, 'pick', 0],
+  [[B.SELENIUM_PANEL, B.COHERER_RECEIVER], 0.6, null, 0],
+  [[B.COLLAPSAR_CHARGE], 1.5, 'pick', 0],
 ];
 
 describe('BLOCK_RULES (§6.3)', () => {
-  it('has one entry per block id; only AIR, BEDROCK, the water family and the circuit blocks are null', () => {
+  it('has one entry per block id; only AIR, BEDROCK and the water family are null', () => {
     expect(BLOCK_RULES.length).toBe(BLOCK_COUNT);
     const nulls = BLOCK_RULES.map((r, id) => (r ? null : id)).filter((x) => x !== null);
-    // The 20 powder-and-circuits blocks (DESIGN-circuits §1.2) get their rows with survival's build of them (its §8.3).
-    const circuit = (id) => id >= B.COLLAPSAR_CHARGE && id <= B.COHERER_RECEIVER;
-    expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id) || circuit(b.id)).map((b) => b.id));
+    // The 20 powder-and-circuits blocks (DESIGN-circuits §1.2) have their §8.3 rows: every part comes away whole.
+    expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id)).map((b) => b.id));
+    for (let id = B.COLLAPSAR_CHARGE; id <= B.COHERER_RECEIVER; id++) {
+      expect(rollDrops(id, null, {}, () => 0.5), BLOCKS[id].name).toEqual([{ k: BLOCKS[id].name, n: 1 }]);
+    }
+  });
+
+  it('DESIGN-circuits §8.1: coal seams give pyrite, deep stone gives saltpetre (natural cells only)', () => {
+    const pick2 = { type: 'pick', tier: 2, durability: 90, power: 1 };
+    const always = () => 0;
+    expect(asMap(rollDrops(B.COAL_ORE, pick2, { natural: true }, always))).toMatchObject({ pyrite: 1 });
+    expect(asMap(rollDrops(B.COAL_ORE, pick2, { natural: false }, always)).pyrite).toBeUndefined();
+    expect(asMap(rollDrops(B.STONE, pick2, { natural: true, deep: true }, always))).toMatchObject({ saltpetre: 1 });
+    expect(asMap(rollDrops(B.STONE, pick2, { natural: true, deep: false }, always)).saltpetre).toBeUndefined();
+    expect(asMap(rollDrops(B.STONE, pick2, { natural: false, deep: true }, always)).saltpetre).toBeUndefined();
+    expect(isDeep(SEA_LEVEL - DEEP_BELOW_SEA)).toBe(true);
+    expect(isDeep(SEA_LEVEL - DEEP_BELOW_SEA + 1)).toBe(false);
   });
 
   it('matches the table row for row (h, tool, tier)', () => {

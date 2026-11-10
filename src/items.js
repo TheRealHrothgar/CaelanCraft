@@ -101,6 +101,10 @@ const MATERIAL_ROWS = [
   ['clay_pot', 'Clay Pot', 8], ['salt_pot', 'Salt-crusted Pot', 1],
   // boiled in the embers, never drunk as it is
   ['pot_snow', 'Pot of Snow', 1],
+  // v0.10 circuits (DESIGN-circuits §8.1): what black powder, the fuse, the torch, the lamp, the panel and the coherer are
+  // made of. Pyrite comes from coal seams, saltpetre from deep cave walls; the kiln roasts pyrite for sulfur (and selenium).
+  ['pyrite', 'Pyrite', 32], ['sulfur', 'Sulfur', 32], ['selenium', 'Selenium', 16], ['saltpetre', 'Saltpetre', 32],
+  ['black_powder', 'Black Powder', 32], ['carbon_filament', 'Carbon Filament', 32], ['iron_filings', 'Iron Filings', 32],
   // §14 the Survival Handbook: every survival state starts with it; never lost on death, never discarded, never made
   // (inventory.js KEEP_ON_DEATH, handbook.js ensureHandbook). R or RMB with it in hand opens the field book.
   ['handbook', 'Survival Handbook', 1],
@@ -220,6 +224,18 @@ export const ITEMS = Object.freeze(Object.fromEntries(BY_KEY));
 /** Display order: tools, materials, food, bandages, clothes, then the block items in PICKER_ORDER order. */
 export const ITEM_KEYS = Object.freeze([...BY_KEY.keys()]);
 
+/**
+ * Old item keys still found in saves (DESIGN-circuits §8.3): `black_hole` is no longer placeable, so it is no longer an
+ * item — a stack of it is the Collapsar Charge; `blast_barrel` is the Powder Keg's old name. Saved pack, wear, basket and
+ * remains stacks (storage.js, inventory.js, containers.js) and typed item names (resolveItem) read through it.
+ */
+export const ITEM_ALIASES = Object.freeze({ black_hole: 'collapsar_charge', blast_barrel: 'powder_keg' });
+
+/** @param {*} key @returns {*} the current key of a possibly old one (anything else unchanged) */
+export function canonicalItemKey(key) {
+  return typeof key === 'string' && Object.hasOwn(ITEM_ALIASES, key) ? ITEM_ALIASES[key] : key;
+}
+
 /** @param {string} key @returns {ItemDef|null} */
 export function getItem(key) {
   return (typeof key === 'string' && BY_KEY.get(key)) || null;
@@ -275,7 +291,7 @@ export function itemName(key, n) {
  */
 export const SINGULAR_NAMES = Object.freeze({
   honeyberries: 'Honeyberry', acorns: 'Acorn', leached_acorns: 'Leached Acorn', roasted_acorns: 'Roasted Acorn',
-  pine_nuts: 'Pine Nut', glass_shards: 'Glass Shard',
+  pine_nuts: 'Pine Nut', glass_shards: 'Glass Shard', iron_filings: 'Iron Filing',
 });
 
 /**
@@ -289,6 +305,7 @@ export function resolveItem(token) {
   const t = normalizeName(raw);
   if (t === '') return { error: 'expected an item name' };
   if (BY_KEY.has(t)) return { key: t };
+  if (Object.hasOwn(ITEM_ALIASES, t)) return { key: ITEM_ALIASES[t] };
   const key = KEY_OF_NAME.get(t);
   if (key !== undefined) return { key };
   return { error: `unknown item "${raw}" (type items to list them)` };

@@ -1749,8 +1749,9 @@ describe('bookkeeping, the player\'s hands and the readouts', () => {
     ]);
     const lamp = items.find((it) => it.type === 'glow' && it.glow === 'lamp');
     expect(lamp.a).toBeCloseTo((5.9375 - 1.5) / 4.5, 9);
-    expect(items.find((it) => it.type === 'blade').a).toBe(1); // open
-    expect(items.find((it) => it.glow === 'fuse' && it.q === 22).b).toBe(-2);
+    expect(items.find((it) => it.type === 'blade').a).toBe(0); // open (a = closed, circuitGeometry's meaning)
+    expect(items.find((it) => it.type === 'plunger').a).toBe(0); // cocked
+    expect(items.find((it) => it.glow === 'fuse' && it.q === 22).b).toBe(8); // FUSE_AT_BUNG
     expect(c.overlays(x, Y + 1, z, 5).length).toBe(4); // the lamp's three and the switch's blade
     expect(c.overlays(x + 1000, Y, z, 48)).toEqual([]);
     // The cap.

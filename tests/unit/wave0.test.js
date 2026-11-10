@@ -49,7 +49,7 @@ describe('config', () => {
     expect(C.AO_CURVE).toHaveLength(4);
     for (let i = 1; i < 4; i++) expect(C.AO_CURVE[i]).toBeGreaterThan(C.AO_CURVE[i - 1]);
     expect(C.AO_CURVE[3]).toBe(1);
-    expect(C.VERSION).toBe('0.9.0');
+    expect(C.VERSION).toBe('0.10.0');
   });
   it('has the survival constants of DESIGN-survival §9.2 (the pack hotbar is HOTBAR_SIZE)', () => {
     expect({

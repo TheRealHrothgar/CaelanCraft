@@ -19,6 +19,13 @@
 // screen; nothing steps). Death is deferred: damage only sets `pendingDeath`, and `die()` runs at the frame's checkpoints
 // (after black holes, after campfires, after the survival step, after the runes). A mode switch is queued
 // (`pendingModeSwitch`) and applied at the top of the next frame, never inside a command, a hook or a step.
+//
+// v0.10 circuits, powder kegs and black holes v2 (CONTRACTS §50–§58, docs/DESIGN-circuits.md §6.6): one Circuits per world
+// on the session's CircuitStore; right-click operates controls (Shift places) through the ControlLatch; the R key runs
+// the part's own action, then a rune, then the pocket key, then the keg explanation (rKeyStep); a keg burns in place and a
+// left-click snuffs it; a Collapsar Charge is set off by a fuse, a torch, an igniter, a campfire or a blast, and its hole
+// flashes, implodes and forms a vortex that eats blocks (infall.js draws them spiralling in). One more state, DEVICE (the
+// device panel): Creative freezes the world under it, Survival keeps stepping.
 import {
   CHUNK_SIZE, RENDER_DISTANCE, LOADING_BUDGET_MS, REACH, BREAK_REPEAT_S, PLACE_REPEAT_S, MAX_FRAME_DT, FOV,
   SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY, PLAYER_HEIGHT,
@@ -28,6 +35,9 @@ import {
   ZOMBIE_HEIGHT, GEN_LATEST, PIG_MAX, CAMPFIRE_FUEL_START_S, CAMPFIRE_FUEL_MAX_S, ATTACK_REPEAT_S, GULP_GAP_S,
   PIG_REPOP_CHECK_S, PIG_REPOP_TARGET, PIG_REPOP_RADIUS, PIG_REPOP_MIN, PIG_REPOP_MAX, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE,
   FALL_SAFE_SPEED, INTRO_LINE_MS, PACK_MESSAGE_S,
+  ZOMBIE_MAX, MAX_INFALL_MOBS, VORTEX_MODEL_RANGE, VORTEX_MAX_MODELS, VORTEX_MAX_CORES, VORTEX_PARTICLES_PER_S,
+  VORTEX_PARTICLE_HOLES, CIRCUIT_DRAW_RANGE, CIRCUIT_OVERLAY_RANGE, BLACK_HOLE_SCREEN_FLASH_RANGE, BLACK_HOLE_SCREEN_FLASH_MAX,
+  WORLD_HEIGHT,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
@@ -41,7 +51,7 @@ import { raycastHex } from './raycast.js';
 import {
   createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock, isFreeAt, findFreeY, supportingCells,
 } from './physics.js';
-import { advanceTime, computeSky, createSkyState, isDayTime } from './daynight.js';
+import { advanceTime, computeSky, createSkyState, isDayTime, sunDirection } from './daynight.js';
 import {
   SAVE_VERSION, listSlots, loadSlot, saveSlot, deleteSlot, renameSlot, duplicateSlot, migrateLegacySave, storageUsage,
   normalizeWorldName, defaultWorldName,
@@ -49,11 +59,19 @@ import {
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer, fogRangeForRenderDistance } from './renderer.js';
 import { createControls } from './controls.js';
-import { createHUD } from './hud.js';
+import { createHUD, createFlashState, flashStep } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
 import { RuneStore, RuneRunner, runeKey, SOURCE } from './runes.js';
-import { BlackHoles, columnHasEdits } from './blackholes.js';
+import { BlackHoles, columnHasEdits, PHASE } from './blackholes.js';
+import { Infall } from './infall.js';
+import { createVortexRenderer } from './vortexRenderer.js';
+import { CircuitStore, parsePartKey } from './circuitStore.js';
+import { Circuits } from './circuits.js';
+import { isControl, isIgnitable, isPart, partOf, partTip, inputFaceFromYaw, wavelengthOf } from './circuitParts.js';
+import { wireSegments } from './circuitGeometry.js';
+import { createCircuitRenderer } from './circuitRenderer.js';
+import { createDevicePanel } from './devicePanel.js';
 import { Pigs } from './pigs.js';
 import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
@@ -64,7 +82,7 @@ import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST } from './surviv
 import { Pack, slotClick, returnCursor } from './inventory.js';
 import { Containers } from './containers.js';
 import {
-  breakSeconds, rollDrops, harvestHint, handGatherHint, canHarvest, pick, Tapped, Regrowth, rollMobDrops, ripeOf,
+  breakSeconds, rollDrops, harvestHint, handGatherHint, canHarvest, pick, Tapped, Regrowth, rollMobDrops, ripeOf, isDeep,
 } from './harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
@@ -88,7 +106,7 @@ import { createRuneEditor } from './runeEditor.js';
 import { HANDBOOK_KEY, HANDBOOK_CHAT_LINE, buildChapters, ensureHandbook } from './handbook.js';
 import { createHandbookUI } from './handbookUI.js';
 import {
-  parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest,
+  parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest, circuitSceneWrites,
 } from './diagnostics.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -117,6 +135,9 @@ export const STATE = Object.freeze({
   PACK: 'pack',
   BOOK: 'book',
   DEAD: 'dead',
+  // v0.10 circuits (§57): the device panel. Creative freezes the world under it (as the rune editor does); Survival keeps
+  // it running (as PACK does), so the panel is never a pause button.
+  DEVICE: 'device',
 });
 
 /** Loading progress is reported over the hex disc of chunks within distance 2 of the spawn chunk (19 chunks). */
@@ -188,8 +209,13 @@ const SIMULATING_STATES = new Set([STATE.PLAYING, STATE.PACK, STATE.BOOK]);
 /** States in which a queued mode switch is applied (§1.1: playing or paused; an open console or editor is closed first). */
 const MODE_SWITCH_STATES = new Set([STATE.PLAYING, STATE.PAUSED, STATE.CONSOLE, STATE.EDITOR]);
 
-/** @param {string} state @returns {boolean} the world steps in this state (§9.5) */
-export function stateSimulates(state) {
+/**
+ * @param {string} state
+ * @param {boolean} [inSurvival]  the device panel (STATE.DEVICE) runs the world only in Survival (CONTRACTS §57)
+ * @returns {boolean} the world steps in this state (§9.5)
+ */
+export function stateSimulates(state, inSurvival = false) {
+  if (state === STATE.DEVICE) return Boolean(inSurvival);
   return SIMULATING_STATES.has(state);
 }
 
@@ -517,10 +543,13 @@ export function easeFov(fov, target, dt) {
   return fov + Math.sign(diff) * maxStep;
 }
 
-/** @returns {number[]} a valid 9-slot hotbar copy (falls back to DEFAULT_HOTBAR). */
-function hotbarFrom(list) {
+/**
+ * @returns {number[]} a valid 9-slot hotbar copy (falls back to DEFAULT_HOTBAR). v0.10 (DESIGN-circuits §2.10): a slot holding
+ * BLACK_HOLE (66, no longer placeable) holds COLLAPSAR_CHARGE.
+ */
+export function hotbarFrom(list) {
   if (Array.isArray(list) && list.length === HOTBAR_SIZE && list.every((v) => Number.isInteger(v) && v >= 0 && v <= 255)) {
-    return list.slice();
+    return list.map((v) => (v === BLOCK.BLACK_HOLE ? BLOCK.COLLAPSAR_CHARGE : v));
   }
   return DEFAULT_HOTBAR.slice();
 }
@@ -534,6 +563,279 @@ function slotFrom(v) {
 function wrapTime(t) {
   if (!Number.isFinite(t)) return START_TIME;
   return t - Math.floor(t);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Circuits, powder kegs and black holes v2 (v0.10, CONTRACTS §55, §58, docs/DESIGN-circuits.md §4.9, §6.6): the pure parts of
+// main's wiring, exported so the harness and tests/integration/circuits.test.js run main's own rules and hooks.
+// ---------------------------------------------------------------------------------------------
+
+/** The R key on a keg with no Spark Transmitter selected (§3.3): said at most once per KEG_EXPLAIN_GAP_S. */
+export const KEG_EXPLAIN = 'Powder kegs need a flame: lay a Powder Fuse to it and light that with the R key, or wire an Igniter. '
+  + 'Shift+R key on a part tells you more.';
+/** The same for a Collapsar Charge (the design gives the keg's line for both; a charge also answers to the radio). */
+export const CHARGE_EXPLAIN = 'A Collapsar Charge is set off from afar: lay a Powder Fuse to it and light that with the R key, '
+  + 'wire an Igniter, or send a wave to a Coherer Receiver. Shift+R key on a part tells you more.';
+export const KEG_EXPLAIN_GAP_S = 4;
+/** The Creative swallow's chat line (§2.7), throttled by BLACK_HOLE_SWALLOW_LINE_S. */
+export const SWALLOWED_LINE = 'You were swallowed by a black hole!';
+/** Seconds between two device-panel refreshes while the world runs under it (Survival, §4.10). */
+export const DEVICE_REFRESH_S = 0.25;
+/** The wiring is rebuilt when the circuits' geometryVersion changes or the eye moved this far since the last build (§6.6). */
+export const CIRCUIT_REBUILD_MOVE = 16;
+/** Black-hole events of one type that get sound, flash and particles in one frame, nearest first (§6.6 step 7). */
+export const BH_EVENTS_PER_TYPE = 4;
+/** The drone plays for the nearest vortex within this many units (§2.11). */
+export const DRONE_RANGE = 24;
+/** Vortices within this many units of the eye stream particles (§2.4.5). */
+export const VORTEX_PARTICLE_RANGE = 48;
+/** The void flash of a Creative swallow (§2.7). */
+export const VOID_FLASH_LEVEL = 0.75;
+
+/**
+ * The R key acts on this part by itself (§4.9 step 1): the controls, the Relay's armature, the Coherer's tapper and the
+ * Powder Fuse. Kegs and charges have no R action (the R key explains them, or sends the pocket key).
+ * @param {number} id
+ */
+export function hasRAction(id) {
+  return isControl(id) || id === BLOCK.RELAY || id === BLOCK.COHERER_RECEIVER || id === BLOCK.POWDER_FUSE;
+}
+
+/**
+ * The Powder Keg's crosshair hint (§3.3).
+ * @param {boolean} explosionsOn  block physics exists and its explosions switch is on
+ * @param {boolean} burning        it burns in place (explosions.isBurning)
+ */
+export function kegHintText(explosionsOn, burning) {
+  if (!explosionsOn) return 'Powder Keg (explosions are off)';
+  return burning ? 'Powder Keg · burning! left-click: pinch out the fuse' : 'Powder Keg · light it with a fuse, a torch or an igniter';
+}
+
+/**
+ * The R key in Creative (§4.9), in order: (1) the targeted part's own R action (circuits.interact 'r' — it ACTS when it
+ * returns a result); (2) a Rune Block; (3) the pocket key when the selected slot holds a Spark Transmitter, whatever else is
+ * targeted (a keg or a charge included: sending at the keg you want to set off is the point of a remote); (4) a keg or a
+ * charge: the explanation. Survival runs the same steps through survivalControl.interactKind's `circuit` and `pocket` kinds.
+ * @param {RaycastHit|null} h
+ * @param {{ circuits: { interact(q: number, y: number, r: number, via: 'r'|'use'): *}|null, pocketSelected: boolean }} env
+ * @returns {{ kind: 'part', res: { ok: boolean, message?: string, channel?: number } }|{ kind: 'rune'|'pocket'|'explain' }|null}
+ */
+export function rKeyStep(h, env) {
+  if (h && env.circuits) {
+    const res = env.circuits.interact(h.q, h.y, h.r, 'r');
+    if (res) return { kind: 'part', res };
+  }
+  if (h && h.blockId === BLOCK.RUNE_BLOCK) return { kind: 'rune' };
+  if (env.pocketSelected) return { kind: 'pocket' };
+  if (h && (h.blockId === BLOCK.POWDER_KEG || h.blockId === BLOCK.COLLAPSAR_CHARGE)) return { kind: 'explain' };
+  return null;
+}
+
+/**
+ * The R key's explanation on a keg or a charge (§3.3): its line, or null while the last one (at `lastAt`) is younger than
+ * KEG_EXPLAIN_GAP_S. Times in seconds.
+ * @param {number} id  BLOCK.POWDER_KEG or BLOCK.COLLAPSAR_CHARGE
+ */
+export function explainLine(id, lastAt, now) {
+  if (now - lastAt < KEG_EXPLAIN_GAP_S) return null;
+  return id === BLOCK.COLLAPSAR_CHARGE ? CHARGE_EXPLAIN : KEG_EXPLAIN;
+}
+
+/**
+ * A left-click (or a Survival left press) on this hit pinches a keg's fuse out instead of breaking it (§3.2): a Powder Keg
+ * burning in place.
+ * @param {RaycastHit|null} h
+ * @param {{ isBurning(q: number, y: number, r: number): boolean }|null|undefined} explosions
+ */
+export function snuffsKeg(h, explosions) {
+  return !!h && h.blockId === BLOCK.POWDER_KEG && !!explosions && explosions.isBurning(h.q, h.y, h.r);
+}
+
+/**
+ * The device panel's part changed under it (a blast, a vortex, a setblock): main closes the panel (§4.10).
+ * @param {string|null} deviceKey  the panel's "q,y,r"
+ */
+export function panelCellChanged(deviceKey, q, y, r, prev, next) {
+  if (deviceKey === null || prev === next) return false;
+  const c = parsePartKey(deviceKey);
+  return !!c && c[0] === q && c[1] === y && c[2] === r;
+}
+
+/**
+ * The control latch (§4.9): a right-click PRESS on a control (no Shift) operates it and latches; while the button stays
+ * down the hold-repeat does nothing (no place, no second toggle, no survival use) except keep a Push Button pressed while
+ * the crosshair stays on the cell it pressed. *Without it, holding right-click on a switch for PLACE_REPEAT_S would toggle it
+ * and then start placing blocks on it: the user's complaint again.*
+ */
+export class ControlLatch {
+  constructor() {
+    /** right-click went down on a control and has not come up yet */
+    this.on = false;
+    this.q = 0;
+    this.y = 0;
+    this.r = 0;
+    /** seconds toward the next hold-repeat place (Creative) */
+    this.repeat = 0;
+  }
+
+  /** Forget the latch (the button came up, a modal opened, a new world). */
+  release() {
+    this.on = false;
+    this.repeat = 0;
+  }
+
+  /**
+   * The press: a control under the crosshair (no Shift) is operated and latched.
+   * @param {RaycastHit|null} hit @param {boolean} shift
+   * @param {{ isControl(id: number): boolean, operate(h: RaycastHit): void }} env
+   * @returns {boolean} it was a control: nothing is placed or used
+   */
+  press(hit, shift, env) {
+    if (!hit || shift || !env.isControl(hit.blockId)) return false;
+    env.operate(hit);
+    this.on = true;
+    this.q = hit.q;
+    this.y = hit.y;
+    this.r = hit.r;
+    return true;
+  }
+
+  /**
+   * The button is still down after the press frame: while latched, keep the pressed cell held (circuits.hold) as long as
+   * the crosshair stays on it.
+   * @param {RaycastHit|null} hit
+   * @param {{ hold(h: RaycastHit): void }} env
+   * @returns {boolean} latched (the caller neither places nor uses)
+   */
+  holding(hit, env) {
+    if (!this.on) return false;
+    if (hit && hit.q === this.q && hit.y === this.y && hit.r === this.r) env.hold(hit);
+    return true;
+  }
+}
+
+/** The hold-repeat never places against a control without Shift (§4.9). */
+export function repeatBlocked(hit, shift, isControlFn) {
+  return !!hit && !shift && isControlFn(hit.blockId);
+}
+
+/**
+ * One frame of the right mouse button in Creative (§6.6 step 4): press → operate a control or place; held → the latch, or
+ * the place repeat every PLACE_REPEAT_S (never against a control without Shift); up → release.
+ * @param {ControlLatch} latch
+ * @param {{ rightPressed: boolean, right: boolean }} mouse
+ * @param {RaycastHit|null} hit
+ * @param {boolean} shift
+ * @param {number} dt
+ * @param {{ isControl(id: number): boolean, operate(h: RaycastHit): void, hold(h: RaycastHit): void, place(): * }} env
+ * @returns {'operate'|'place'|'hold'|null} what this frame did
+ */
+export function rightMouseStep(latch, mouse, hit, shift, dt, env) {
+  if (mouse.rightPressed) {
+    latch.repeat = 0;
+    if (latch.press(hit, shift, env)) return 'operate';
+    env.place();
+    return 'place';
+  }
+  if (mouse.right) {
+    if (latch.holding(hit, env)) return 'hold';
+    if (repeatBlocked(hit, shift, env.isControl)) return null;
+    latch.repeat += dt;
+    if (latch.repeat < PLACE_REPEAT_S) return null;
+    latch.repeat -= PLACE_REPEAT_S;
+    env.place();
+    return 'place';
+  }
+  latch.release();
+  return null;
+}
+
+/**
+ * The white screen flash of a charge going off (§2.4.6): min(MAX, 0.75·(1 − d/48)·facing·cover), facing = 0.35 + 0.65·max(0,
+ * dot(view, toHole)), cover 0.35 when the line of sight is blocked. 0 beyond BLACK_HOLE_SCREEN_FLASH_RANGE.
+ * @param {number} d          eye → centre distance
+ * @param {number} facingDot  dot(view direction, unit eye → centre)
+ * @param {boolean} covered   a block hides the centre from the eye
+ */
+export function screenFlashLevel(d, facingDot, covered) {
+  if (!(d < BLACK_HOLE_SCREEN_FLASH_RANGE)) return 0;
+  const facing = 0.35 + 0.65 * Math.max(0, Number.isFinite(facingDot) ? facingDot : 0);
+  const level = 0.75 * (1 - Math.max(0, d) / BLACK_HOLE_SCREEN_FLASH_RANGE) * facing * (covered ? 0.35 : 1);
+  return Math.min(BLACK_HOLE_SCREEN_FLASH_MAX, Math.max(0, level));
+}
+
+/** Selenium daylight 0..1 at a time of day (§6.6): the sun's height over 0.5, clamped. */
+export function daylightAt(time, tmp = [0, 0, 0]) {
+  return Math.max(0, Math.min(1, sunDirection(time, tmp)[1] / 0.5));
+}
+
+/**
+ * The world view black holes act on (§6.6): eats are lazy writes; `place` writes a charge's BLACK_HOLE (lazy or not, as
+ * blackholes.js asks).
+ * @param {() => World} w  the live world
+ */
+export function makeBlackHoleWorld(w) {
+  return {
+    getBlock: (q, y, r) => w().getBlock(q, y, r),
+    setBlock: (q, y, r, id) => w().setBlock(q, y, r, id, true),
+    place: (q, y, r, id, lazy) => w().setBlock(q, y, r, id, lazy),
+    isLoaded: (q, r) => w().hasChunkAtCell(q, r),
+    surfaceHeight: (q, r) => w().getSurfaceHeight(q, r),
+    hasEdits: (q, r) => columnHasEdits(w().edits, q, r),
+  };
+}
+
+/**
+ * main's CircuitHooks (§6.6; CONTRACT-ISSUE in circuits.js: igniteKeg forwards the fuse, so `ignite` keeps its 3 s keg, and
+ * chargeArming drives the `collapsing!` hint).
+ * @param {{ world: () => World, physics: () => (BlockPhysics|null), blackHoles: BlackHoles, blackHoleWorld: *,
+ *   daylight: () => number, now: () => number, sound?: Function, particles?: Function, say?: Function }} env
+ * @returns {import('./circuits.js').CircuitHooks}
+ */
+export function makeCircuitHooks(env) {
+  const w = env.world;
+  const noPhysics = { ok: false, message: 'block physics is not available' };
+  return {
+    peek: (q, y, r) => w().peekBlock(q, y, r),
+    setBlock: (q, y, r, id) => w().setBlock(q, y, r, id, true),
+    isLoaded: (q, r) => w().hasChunkAtCell(q, r),
+    isEdit: (q, y, r) => w().hasEdit(q, y, r),
+    now: env.now,
+    igniteKeg: (q, y, r, fuse) => {
+      const p = env.physics();
+      return p ? p.explosions.igniteInPlace(q, y, r, fuse) : noPhysics;
+    },
+    activateCharge: (q, y, r) => env.blackHoles.activate(q, y, r, env.blackHoleWorld),
+    kegBurning: (q, y, r) => {
+      const p = env.physics();
+      return !!p && p.explosions.isBurning(q, y, r);
+    },
+    chargeArming: (q, y, r) => env.blackHoles.isArming(q, y, r),
+    daylight: env.daylight,
+    sound: (name, x, y, z, v) => {
+      if (env.sound) env.sound(name, x, y, z, v);
+    },
+    particles: (kind, x, y, z, n, o) => {
+      if (env.particles) env.particles(kind, x, y, z, n, o);
+    },
+    say: (text) => {
+      if (env.say) env.say(text);
+    },
+  };
+}
+
+/**
+ * The two PhysicsHooks of DESIGN-circuits §3.6 (undo never relights a restored scene).
+ * @param {() => (Circuits|null)} getCircuits
+ */
+export function physicsCircuitHooks(getCircuits) {
+  return {
+    isIgnitable: (id) => isIgnitable(id),
+    ignitesAt: (q, y, r) => {
+      const c = getCircuits();
+      return !!c && c.wouldIgnite(q, y, r);
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -591,6 +893,14 @@ export function boot(win, doc) {
   let watcherRenderer;
   /** @type {import('./campfireRenderer.js').CampfireRenderer} */
   let campfireRenderer;
+  /** @type {ReturnType<typeof createVortexRenderer>} the black holes' vortices (§2.4) */
+  let vortexRenderer;
+  /** @type {import('./circuitRenderer.js').CircuitRenderer} the wiring and the circuit overlays (§4.11) */
+  let circuitRenderer;
+  /** @type {ReturnType<typeof createDevicePanel>} the device panel (§4.10) */
+  let devicePanel;
+  /** @type {import('./audio.js').LoopHandle} the black hole drone (one voice, §2.11) */
+  let droneLoop;
   let controls;
   let menus;
   let audio;
@@ -610,24 +920,31 @@ export function boot(win, doc) {
       moonCanvas: makeMoonCanvas(),
       renderDistance: params.rd ?? RENDER_DISTANCE,
     });
-    pigRenderer = createPigRenderer(renderer.three.scene);
-    zombieRenderer = createZombieRenderer(renderer.three.scene, atlasTexture);
+    // Room for the swallowed mobs' ghosts on top of the live ones (DESIGN-circuits §2.7): a ghost is never dropped.
+    pigRenderer = createPigRenderer(renderer.three.scene, PIG_MAX + MAX_INFALL_MOBS);
+    zombieRenderer = createZombieRenderer(renderer.three.scene, atlasTexture, ZOMBIE_MAX + MAX_INFALL_MOBS);
     watcherRenderer = createWatcherRenderer(renderer.three.scene, atlasTexture);
     campfireRenderer = createCampfireRenderer(renderer.three.scene, { makeCanvas: () => doc.createElement('canvas') });
     fallingRenderer = createFallingRenderer(renderer.three.scene, atlasTexture);
     particles = createParticles(renderer.three.scene);
+    // v0.10: the vortices and the circuit wiring (neither adds a light).
+    vortexRenderer = createVortexRenderer(renderer.three.scene);
+    circuitRenderer = createCircuitRenderer(renderer.three.scene);
     // Pay the shader costs while the game loads (compile now, one hidden draw in the first frame), not on the frame the
     // first fire, fall or dust appears (§32, §34) — and only once every renderer that adds a light exists: the number of
     // PointLights (the campfires' and the explosion flash) is part of every program's key.
     campfireRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     fallingRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     particles.prewarm(renderer.three.renderer, renderer.three.camera);
+    vortexRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    circuitRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     // The Watcher's figure too (§40.4) — only now: the scene's lights are part of every program's key, so compiling it
     // before the campfire and explosion PointLights existed built programs the first sighting could not use.
     watcherRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();
+    droneLoop = audio.startLoop('bhDrone');
     consoleUI = createConsole(doc, {
       onLine: (line) => (runner ? runner.runConsoleLine(line) : { ok: false, message: 'no world is loaded' }),
       onClose: () => closeConsole(),
@@ -652,6 +969,12 @@ export function boot(win, doc) {
       },
       onClose: () => closeEditor(),
     });
+    // The device panel (§4.10): every change goes straight to the world's Circuits, as the rune editor's does.
+    devicePanel = createDevicePanel(doc, {
+      onChange: (key, partial) => devicePanelChange(key, partial),
+      onAction: (key, action) => devicePanelAction(key, action),
+      onClose: () => closeDevicePanel(),
+    }, atlasCanvas);
     // The Pack & Making screen (§5.4, §9.8): clicks are forwarded raw; all item logic is here and in inventory.js.
     packUI = createPackUI(doc, createItemIcons(doc, atlasCanvas), {
       onSlot: (area, index, button, shift) => packSlotClick(area, index, button, shift),
@@ -823,16 +1146,109 @@ export function boot(win, doc) {
     spawn: null,
   };
   /**
-   * World view handed to blackHoles.update and blackHoles.respawnPoint (used once a world exists). Eats are lazy writes
-   * (CONTRACTS §9.2).
+   * World view handed to blackHoles.update, activate and respawnPoint (used once a world exists). Eats are lazy writes
+   * (CONTRACTS §9.2); `place` writes a charge's hole (v0.10, §54).
    */
-  const blackHoleWorld = {
-    getBlock: (q, y, r) => world.getBlock(q, y, r),
-    setBlock: (q, y, r, id) => world.setBlock(q, y, r, id, true),
-    isLoaded: (q, r) => world.hasChunkAtCell(q, r),
-    surfaceHeight: (q, r) => world.getSurfaceHeight(q, r),
-    hasEdits: (q, r) => columnHasEdits(world.edits, q, r),
+  const blackHoleWorld = makeBlackHoleWorld(() => /** @type {World} */ (world));
+
+  // ---- Circuits, kegs and black holes v2 (v0.10, CONTRACTS §50–§58) ------------------------------------------------
+  /** The configured parts: outlives worlds (replaceAll on every load), like the rune store. */
+  const circuitStore = new CircuitStore();
+  /** @type {Circuits|null} the world's circuit engine, created in startLoading */
+  let circuits = null;
+  /** Eaten blocks and swallowed mobs spiralling into their hole (§2.6–§2.7). */
+  const infall = new Infall();
+  /** @type {[number, number, number]} scratch for daylightAt */
+  const sunTmp = [0, 0, 0];
+  /** The CircuitHooks (§6.6): the live world, block physics and black holes through getters. */
+  const circuitHooks = makeCircuitHooks({
+    world: () => /** @type {World} */ (world),
+    physics: () => blockPhysics,
+    blackHoles,
+    blackHoleWorld,
+    daylight: () => daylightAt(time, sunTmp),
+    now: () => now(),
+    sound: (name, x, y, z, v) => playCircuitSound(name, x, y, z, v),
+    particles: (kind, x, y, z, n, o) => particles.emit(kind, x, y, z, n, o),
+    say: (text) => logLine(text),
+  });
+  /** the session's pocket wavelength (§4.6): the last transmitter configured, sent from or targeted; not saved */
+  let pocketChannel = 1;
+  /** part keys whose tip was said this session (§4.13: the first placement of each) */
+  const tipsShown = new Set();
+  /** ?scene= (§6.7): the named cells of the last scene built, and a charge waiting to be set off */
+  /** @type {Record<string, [number, number, number]>|null} */
+  let sceneNamed = null;
+  /** @type {{ q: number, y: number, r: number, at: number }|null} */
+  let sceneCharge = null;
+  /** the screen flash (§2.4.6, hud.flashStep) and its colour */
+  const flashState = createFlashState();
+  /** @type {'white'|'void'} */
+  let flashKind = 'white';
+  /** @type {{ level: number }|null} this frame's screen-flash trigger */
+  let flashTrigger = null;
+  /** right-click on a control (§4.9) */
+  const controlLatch = new ControlLatch();
+  /** @type {[number, number, number]|null} the Push Button or Relay a held R key keeps pressed */
+  let rHeldCell = null;
+  /** fxTime the keg / charge explanation was last said (§3.3: at most once per KEG_EXPLAIN_GAP_S) */
+  let kegExplainAt = -Infinity;
+  /** @type {string|null} the part the device panel shows ("q,y,r"), null when closed */
+  let deviceKey = null;
+  let deviceRefreshAccum = 0;
+  /** versions as last saved (autosave) */
+  let savedPartsVersion = 0;
+  let savedCircuitSwitch = 0;
+  let savedBlackHoleSwitch = 0;
+  /** the wiring as last built: the circuits' geometryVersion and the eye it was built around */
+  let geoVersion = -1;
+  const geoEye = [NaN, NaN, NaN];
+  /** @type {import('./circuitGeometry.js').WireGeometry} reused by wireSegments */
+  const geoTmp = { seg: { data: new Float32Array(0), count: 0 }, knob: { data: new Float32Array(0), count: 0 } };
+  /** @type {import('./types.js').OverlayItem[]} reused by circuits.overlays */
+  const overlayTmp = [];
+  /** @type {import('./types.js').VortexView[]} reused by blackHoles.vortexViews */
+  const vortexViewsTmp = [];
+  /** @type {import('./types.js').BlackHoleEvent[]} reused by blackHoles.drainEvents */
+  const bhEvents = [];
+  /** per vortex (hole key): fractional streaming particles owed (§2.4.5) */
+  const vortexAcc = new Map();
+  /** the moving blocks fallingRenderer draws: block physics' items, then the charge copies, then the infall (a pooled list) */
+  /** @type {{ id: number, x: number, y: number, z: number, rx: number, ry: number, rz: number, scale: number }[]} */
+  const movingItems = [];
+  let movingCount = 0;
+  /** blockphysics' positional push (`push(id, x, y, z, rx, ry, rz, scale)`) into movingItems */
+  const pushMoving = (id, x, y, z, rx = 0, ry = 0, rz = 0, scale = 1) => {
+    let it = movingItems[movingCount];
+    if (!it) movingItems[movingCount] = it = { id: 0, x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0, scale: 1 };
+    it.id = id;
+    it.x = x;
+    it.y = y;
+    it.z = z;
+    it.rx = rx;
+    it.ry = ry;
+    it.rz = rz;
+    it.scale = scale;
+    movingCount++;
   };
+  /** @type {[number, number, number]} the eye this frame (vortexRenderer.sync) */
+  const viewEye = [0, 0, 0];
+  const bhFlash = { x: 0, y: 0, z: 0, intensity: 0, color: 0 };
+  const camFx = { fov: 0, sx: 0, sy: 0, sz: 0 };
+  /** scratch: the mobs pigRenderer / zombieRenderer draw (the live ones plus the infall ghosts) */
+  const pigDraw = /** @type {*[]} */ ([]);
+  const zombieDraw = /** @type {*[]} */ ([]);
+  /** what the control latch (right-click on a control, §4.9) operates and holds */
+  const latchEnv = {
+    isControl: (id) => !!circuits && isControl(id),
+    operate: (h) => operateControl(h),
+    hold: (h) => {
+      if (circuits) circuits.hold(h.q, h.y, h.r);
+    },
+    place: () => placeSelected(),
+  };
+  /** the rKeyStep environment (refreshed on every press) */
+  const rKeyEnv = { circuits: /** @type {Circuits|null} */ (null), pocketSelected: false };
 
   // Block physics (CONTRACTS §33–§38): one BlockPhysics per world, created in startLoading.
   /** @type {BlockPhysics|null} */
@@ -898,6 +1314,8 @@ export function boot(win, doc) {
       // see it; record the player's lift and hurt after the step (never a death from inside a hook).
       if (body === player) pendingCrush += cells;
     },
+    // v0.10 (DESIGN-circuits §3.6): undo restores kegs, fuses and charges last and never where they would catch at once.
+    ...physicsCircuitHooks(() => circuits),
   };
   /** @type {RuneRunner|null} */
   let runner = null;
@@ -1022,6 +1440,9 @@ export function boot(win, doc) {
     tappedToday: (q, y, r) => !tapped.canTap(`${q},${y},${r}`, day),
     salty: (q, r) => isSaltyBiome(world.getBiome(q, r)),
     stationNear: (station) => !!stations[station], // findStations within STATION_RANGE of the feet (§7.2)
+    // v0.10 (DESIGN-circuits §4.9, §8.3): parts with an R action of their own join the hit steps, the pocket key the
+    // selected-item steps.
+    partR: (id) => !!circuits && circuits.enabled && hasRAction(id),
   };
   /** the reused SurvivalEnv (§9.4) */
   const survivalEnv = {
@@ -1093,12 +1514,22 @@ export function boot(win, doc) {
     }
     // A mob or a lit barrel nearer than the water takes R from it too.
     if (waterHit && (litTarget || zombieTarget || pigTarget)) waterHit = null;
+    // §4.6: looking at a Spark Transmitter tunes the pocket key to it.
+    if (hit && hit.blockId === BLOCK.SPARK_TRANSMITTER && circuits) {
+      const st = circuitStore.get(`${hit.q},${hit.y},${hit.r}`);
+      if (st && Number.isInteger(st.ch)) pocketChannel = /** @type {number} */ (st.ch);
+    }
   }
 
   function selectSlot(i) {
     if (!Number.isInteger(i) || i < 0 || i >= HOTBAR_SIZE) return;
     selected = i;
     hud.setSelected(i);
+    // §4.6: a Spark Transmitter in the hand is the pocket key.
+    if (pocketSelected()) {
+      hud.showBlockToast(`Pocket key · ${wavelengthOf(pocketChannel)} m · R key: send`);
+      return;
+    }
     if (survival.inSurvival) {
       const s = pack.slots[i];
       if (s) hud.showBlockToast(itemName(s.k));
@@ -1106,6 +1537,12 @@ export function boot(win, doc) {
     }
     const id = hotbar[i];
     if (id !== BLOCK.AIR) hud.showBlockToast(getBlockDef(id).displayName);
+  }
+
+  /** @returns {boolean} the selected slot holds a Spark Transmitter (the pocket key, §4.6) */
+  function pocketSelected() {
+    if (survival.inSurvival) return selectedKey() === 'spark_transmitter';
+    return hotbar[selected] === BLOCK.SPARK_TRANSMITTER;
   }
 
   /** Put `id` in `slot`, redraw the hotbar and toast the name. */
@@ -1121,7 +1558,11 @@ export function boot(win, doc) {
     hud.addChatLine(text, isError, ms);
   }
 
-  /** World.onBlockChange: keep the rune store, black holes, campfires and block physics in step with the world. */
+  /**
+   * World.onBlockChange: keep the rune store, black holes, campfires, circuits, the device panel, the survival trackers and
+   * block physics in step with the world, in that order (DESIGN-circuits §6.6). Bookkeeping only: nothing here writes a
+   * block (CONTRACTS pitfall 34).
+   */
   function onBlockChanged(q, y, r, prev, next) {
     blackHoles.onBlockChange(q, y, r, prev, next);
     campfires.onBlockChange(q, y, r, prev, next);
@@ -1133,6 +1574,9 @@ export function boot(win, doc) {
       runeStore.delete(key);
       if (state === STATE.EDITOR && editorKey === key) closeEditor();
     }
+    if (circuits) circuits.onBlockChange(q, y, r, prev, next);
+    // The panel's part is gone (a blast, a vortex, a setblock): close it (§4.10).
+    if (state === STATE.DEVICE && panelCellChanged(deviceKey, q, y, r, prev, next)) closeDevicePanel();
     // Survival (§5.6, §4.4, §6.5): containers and fire spots release their stacks when their cell changes (into the pack
     // only when the player broke it in Survival, else they are lost; a burn-out or a relight keeps the spots), and picked
     // bushes are tracked for regrowth. In every mode, so a Creative edit never leaves a stale entry behind.
@@ -1174,6 +1618,20 @@ export function boot(win, doc) {
     const method = PHYSICS_SOUND_METHODS[name];
     const fn = method ? audio[method] : undefined;
     if (typeof fn === 'function') fn(v);
+  }
+
+  /**
+   * A circuit or black-hole sound (circuitSounds recipes, §2.11, §4.12) with the physics sounds' distance falloff: 96 units
+   * for the charge's crack and implosion, 24 for the rest. `fuseHiss` has no recipe: it is audio.playHiss.
+   */
+  function playCircuitSound(name, x, y, z, volume = 1) {
+    if (!player || typeof name !== 'string' || !Number.isFinite(x + y + z)) return;
+    const range = name === 'bhFlash' || name === 'bhImplode' ? BOOM_SOUND_RANGE : PHYSICS_SOUND_RANGE;
+    const d = Math.hypot(x - player.x, y - (player.y + 1), z - player.z);
+    if (!(d < range)) return;
+    const v = (Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1) * (1 - d / range);
+    if (name === 'fuseHiss') audio.playHiss(v);
+    else audio.playRecipe(name, v);
   }
 
   /** A block change made BY THE PLAYER (break / place): physics treats its removals as player-caused (priority seeds). */
@@ -1236,6 +1694,11 @@ export function boot(win, doc) {
         return world.seed;
       },
       survival: survivalCommands,
+      // v0.10 (DESIGN-circuits §6.5): switch / timer / radio / volts / circuits / ignite, and blackholes.
+      get circuits() {
+        return circuits ?? undefined;
+      },
+      blackHoles,
     };
     return c;
   }
@@ -1274,15 +1737,68 @@ export function boot(win, doc) {
     return { ok: true, message: `${m} (saved with this world)` };
   }
 
-  /** Looking at a rune block: R runs it (if it has the Interact trigger); looking at a blast barrel: R lights it. */
+  /**
+   * The R key (§4.9, rKeyStep): the targeted part's own action, else a rune block runs (with the Interact trigger), else the
+   * pocket key sends, else a keg or a charge explains how it is set off. Kegs never light on the R key any more (§3.1).
+   */
   function interactTarget() {
     const h = hit;
-    if (h && h.blockId === BLOCK.BLAST_BARREL && blockPhysics) {
-      if (!blockPhysics.isEnabled('explosions')) logLine('explosions are off — turn them on in Esc → Physics');
-      else blockPhysics.asPlayer(() => blockPhysics.explosions.lightAt(h.q, h.y, h.r));
+    rKeyEnv.circuits = circuits;
+    rKeyEnv.pocketSelected = pocketSelected();
+    const step = rKeyStep(h, rKeyEnv);
+    if (!step) return;
+    if (step.kind === 'part') {
+      const pr = /** @type {{ kind: 'part', res: { ok: boolean, message?: string, channel?: number } }} */ (step);
+      afterPartAction(/** @type {RaycastHit} */ (h), pr.res);
       return;
     }
-    if (!h || h.blockId !== BLOCK.RUNE_BLOCK || !runner) return;
+    if (step.kind === 'pocket') {
+      pocketSend();
+      return;
+    }
+    if (step.kind === 'explain') {
+      explainKeg(/** @type {RaycastHit} */ (h).blockId);
+      return;
+    }
+    runRuneAt(/** @type {RaycastHit} */ (h));
+  }
+
+  /** The R key ran a part's action: its message, the pocket wavelength of a transmitter, and the held-R cell (§4.9). */
+  function afterPartAction(h, res) {
+    if (res.message) logLine(res.message, !res.ok);
+    if (Number.isInteger(res.channel)) pocketChannel = /** @type {number} */ (res.channel);
+    // A held R key keeps a Push Button pressed (and a Relay's armature pushed) while the crosshair stays on it.
+    rHeldCell = res.ok && (h.blockId === BLOCK.PUSH_BUTTON || h.blockId === BLOCK.RELAY) ? [h.q, h.y, h.r] : null;
+  }
+
+  /** Right-click on a control (the control latch, §4.9): operate it; a transmitter sets the pocket wavelength. */
+  function operateControl(h) {
+    if (!circuits) return;
+    const res = circuits.interact(h.q, h.y, h.r, 'use');
+    if (!res) return;
+    if (res.message) logLine(res.message, !res.ok);
+    if (Number.isInteger(res.channel)) pocketChannel = /** @type {number} */ (res.channel);
+  }
+
+  /** The pocket key (§4.6): send on the session's wavelength from the player. */
+  function pocketSend() {
+    if (!circuits || !player) return;
+    const res = circuits.pocketSend(pocketChannel, player.x, player.y + 1, player.z);
+    logLine(res.message, !res.ok);
+    if (res.ok) playCircuitSound('sparkZap', player.x, player.y + 1, player.z, 0.5);
+  }
+
+  /** The R key on a keg or a charge (§3.3): how it is really set off, at most once per KEG_EXPLAIN_GAP_S. */
+  function explainKeg(id) {
+    const line = explainLine(id, kegExplainAt, fxTime);
+    if (line === null) return;
+    kegExplainAt = fxTime;
+    logLine(line);
+  }
+
+  /** R on a rune block: run it when it has the Interact trigger (as before v0.10). */
+  function runRuneAt(h) {
+    if (!runner) return;
     const rune = runeStore.ensure(h.q, h.y, h.r);
     if (rune && !rune.enabled) {
       logLine('this rune block is disabled — Shift+R to edit it');
@@ -1296,39 +1812,129 @@ export function boot(win, doc) {
     if (!res.ok) logLine(res.reason || 'could not run', true);
   }
 
-  /** Shift+R on a rune block: open its editor. */
+  /** Shift+R: the device panel of a part (§4.10), or a rune block's editor. */
   function editTarget() {
     const h = hit;
-    if (!h || h.blockId !== BLOCK.RUNE_BLOCK) return;
-    openEditorFor(h.q, h.y, h.r);
+    if (!h) return;
+    if (h.blockId === BLOCK.RUNE_BLOCK) {
+      openEditorFor(h.q, h.y, h.r);
+      return;
+    }
+    if (circuits && isPart(h.blockId)) openDevicePanel(h.q, h.y, h.r);
+  }
+
+  // ---- the device panel (§4.10, CONTRACTS §57) -------------------------------------------------------------------
+
+  /**
+   * Open the device panel on the part at (q, y, r). The state is set before unlock() (pitfall 24); Creative freezes the
+   * world under it, Survival keeps it running with the controls disabled.
+   */
+  function openDevicePanel(q, y, r) {
+    if (state !== STATE.PLAYING || !circuits) return;
+    const view = circuits.panelView(q, y, r, !survival.inSurvival);
+    if (!view) return;
+    deviceKey = view.key;
+    setState(STATE.DEVICE);
+    controls.setEnabled(false);
+    controls.unlock();
+    breakHeld = 0;
+    placeHeld = 0;
+    controlLatch.release();
+    rHeldCell = null;
+    resetSurvivalInput();
+    deviceRefreshAccum = 0;
+    if (view.k === 'spark_transmitter' && Number.isInteger(view.fields.ch)) pocketChannel = /** @type {number} */ (view.fields.ch);
+    devicePanel.open(view);
+  }
+
+  /** Close the panel (Done, Esc, Enter, the Shift+R key, or its part is gone) and go back to playing. */
+  function closeDevicePanel() {
+    if (state !== STATE.DEVICE) return;
+    deviceKey = null;
+    if (devicePanel.isOpen()) devicePanel.close();
+    enterPlayingFromModal();
+  }
+
+  /** @returns {[number, number, number]|null} the panel's cell */
+  function deviceCell(key) {
+    return typeof key === 'string' ? parsePartKey(key) : null;
+  }
+
+  /** Redraw the panel from the engine. */
+  function refreshDevicePanel() {
+    if (state !== STATE.DEVICE || !circuits || deviceKey === null) return;
+    const c = deviceCell(deviceKey);
+    if (!c) return;
+    const view = circuits.panelView(c[0], c[1], c[2], !survival.inSurvival);
+    if (view) devicePanel.refresh(view);
+    else closeDevicePanel();
+  }
+
+  /** devicePanel.onChange: a setting, through circuits.applySettings (validated), then a refresh. */
+  function devicePanelChange(key, partial) {
+    const c = deviceCell(key);
+    if (!c || !circuits || state !== STATE.DEVICE) return;
+    const st = circuits.applySettings(c[0], c[1], c[2], partial);
+    // (null for a part that is gone: the panel flushes its label as it closes)
+    if (!st && circuits.panelView(c[0], c[1], c[2], true)) hud.showSaveToast('too many configured devices in this world', true);
+    else if (st && st.k === 'spark_transmitter' && Number.isInteger(st.ch)) pocketChannel = /** @type {number} */ (st.ch);
+    refreshDevicePanel();
+  }
+
+  /** devicePanel.onAction: Start / Stop a timer, Send, Tap, Refill (Creative). */
+  function devicePanelAction(key, action) {
+    const c = deviceCell(key);
+    if (!c || !circuits || state !== STATE.DEVICE) return;
+    const [q, y, r] = c;
+    /** @type {{ ok: boolean, message?: string }|null} */
+    let res = null;
+    if (action === 'start' || action === 'stop') res = circuits.timerAt(q, y, r, action);
+    else if (action === 'send') {
+      const st = circuitStore.get(key);
+      const ch = st && Number.isInteger(st.ch) ? /** @type {number} */ (st.ch) : 1;
+      const [x, z] = hexToWorld(q, r);
+      res = circuits.radio(ch, x, y + 0.5, z);
+      pocketChannel = ch;
+    } else if (action === 'tap') res = circuits.interact(q, y, r, 'r');
+    else if (action === 'refill' && !survival.inSurvival) res = { ok: circuits.refill(q, y, r), message: '' };
+    if (res && res.message) logLine(res.message, !res.ok);
+    audio.playClick();
+    refreshDevicePanel();
   }
 
   function openEditorFor(q, y, r) {
     openEditor(runeStore.ensure(q, y, r));
   }
 
-  /** Text under the crosshair while a rune block, a blast barrel or a lit barrel is targeted (Survival: §9.5's hints too). */
+  /**
+   * Text under the crosshair (§6.6 targetHintText, both modes): a lit keg entity, a zombie, a circuit part, a keg, a black
+   * hole, a rune (Survival: §9.5's hints first).
+   */
   function targetHintText() {
     if (flashHint !== null) {
       if (fxTime < flashHintUntil) return flashHint;
       flashHint = null;
     }
     if (survival.inSurvival) return survivalHintText();
-    if (litTarget) return 'lit barrel · click: put it out';
+    if (litTarget) return 'lit keg · left-click: put it out';
     if (zombieTarget) return 'Zombie · click: hit it';
     // §5.5: Creative breaking is instant, so a cell holding survival items is protected (and says why).
     if (hit && isProtectedCell(hit)) return HINT.protectedCell;
-    return barrelOrRuneHint();
+    return blockHintText();
   }
 
-  /** The Blast Barrel and Rune Block hints (both modes). */
-  function barrelOrRuneHint() {
+  /** The circuit part, Powder Keg, Black Hole and Rune Block hints (both modes, §4.9, §3.3). */
+  function blockHintText() {
     const h = hit;
-    if (h && h.blockId === BLOCK.BLAST_BARREL) {
-      if (!blockPhysics || !blockPhysics.isEnabled('explosions')) return 'Blast Barrel (explosions are off)';
-      // A barrel burning in place (caught in a blast, or lit beyond MAX_LIT_BARRELS): breaking it takes its fuse away.
-      return blockPhysics.explosions.isBurning(h.q, h.y, h.r) ? 'Blast Barrel · burning! click: break it' : 'Blast Barrel · R: light';
+    if (h && h.blockId === BLOCK.POWDER_KEG) {
+      const on = !!blockPhysics && blockPhysics.isEnabled('explosions');
+      return kegHintText(on, on && blockPhysics.explosions.isBurning(h.q, h.y, h.r));
     }
+    if (h && circuits && isPart(h.blockId)) {
+      const text = circuits.hintFor(h.q, h.y, h.r);
+      if (text) return text;
+    }
+    if (h && h.blockId === BLOCK.BLACK_HOLE) return 'Black Hole · walk straight away · left-click: break its core';
     if (!h || h.blockId !== BLOCK.RUNE_BLOCK) return null;
     const rune = runeStore.get(runeKey(h.q, h.y, h.r));
     const label = rune && rune.label ? `${rune.label} · ` : '';
@@ -1337,9 +1943,24 @@ export function boot(win, doc) {
     return `${label}${canRun ? 'R run · ' : ''}Shift+R edit${canRun ? '' : ' (no Interact trigger)'}`;
   }
 
+  /** @returns {boolean} the hit is a Powder Keg burning in place (a left-click snuffs it, §3.2) */
+  function isBurningKeg(h) {
+    return snuffsKeg(h, blockPhysics ? blockPhysics.explosions : null);
+  }
+
+  /** Pinch out the fuse of the keg burning in place under the crosshair and keep the keg (§3.2). @returns {boolean} */
+  function snuffTargetedKeg() {
+    const h = hit;
+    if (!isBurningKeg(h) || !blockPhysics) return false;
+    const done = blockPhysics.explosions.snuff(h.q, h.y, h.r);
+    updateHit();
+    return done;
+  }
+
   /** Break rule (§23). @returns {boolean} */
   function breakTargeted() {
     if (!world || !player) return false;
+    if (isBurningKeg(hit)) return snuffTargetedKeg();
     if (litTarget) {
       const snuffed = blockPhysics ? blockPhysics.explosions.snuff(litTarget.target) : false;
       updateHit();
@@ -1386,7 +2007,22 @@ export function boot(win, doc) {
     if (!cell || !placeBlockAt(id, cell)) return false;
     // A freshly placed rune block opens its editor right away (the onBlockChange hook created its entry).
     if (id === BLOCK.RUNE_BLOCK && state === STATE.PLAYING) openEditorFor(cell[0], cell[1], cell[2]);
+    partPlaced(id, cell);
     return true;
+  }
+
+  /**
+   * After a part is placed (§6.6 step 5, both modes): a part with an input face takes the face the player looks toward, and
+   * the first placement this session of each part says its tip (§4.13).
+   */
+  function partPlaced(id, cell) {
+    if (!circuits || !isPart(id)) return;
+    const def = /** @type {import('./types.js').PartDef} */ (partOf(id));
+    if (def.input) circuits.setInputFace(cell[0], cell[1], cell[2], inputFaceFromYaw(controls.yaw));
+    if (tipsShown.has(def.key)) return;
+    tipsShown.add(def.key);
+    const tip = partTip(id);
+    if (tip) logLine(`Tip — ${tip}`, false, INTRO_LINE_MS);
   }
 
   /** The cell a placement would fill: across the targeted face, in height range and replaceable; else null. */
@@ -1405,8 +2041,9 @@ export function boot(win, doc) {
    */
   function placeBlockAt(id, cell) {
     const [tq, ty, tr] = cell;
-    // Black holes and campfires are not solid, but placing one inside yourself would swallow / scorch you on the spot.
-    if ((isSolid(id) || id === BLOCK.BLACK_HOLE || id === BLOCK.CAMPFIRE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
+    // A campfire is not solid, but placing one inside yourself would scorch you on the spot. (A black hole is no longer
+    // placeable, §2.9; a Collapsar Charge is solid, so the solid rule covers it.)
+    if ((isSolid(id) || id === BLOCK.CAMPFIRE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
     if (isSolid(id) && pigs.list.some((pig) => playerIntersectsBlock(pig, tq, ty, tr))) return false; // no entombing pigs
     if (isSolid(id) && zombies.list.some((zb) => playerIntersectsBlock(zb, tq, ty, tr))) return false; // … nor zombies
     // A campfire never goes into or under water, and water never goes on a campfire (§32).
@@ -1754,7 +2391,7 @@ export function boot(win, doc) {
 
   /** @returns {string|null} the Survival target hint */
   function survivalHintText() {
-    if (litTarget) return 'lit barrel · click: put it out';
+    if (litTarget) return 'lit keg · left-click: put it out';
     if (zombieTarget) return 'Zombie · click: hit it';
     if (pigTarget) return selectedTool() ? 'Pig · click: hunt it' : 'Pig · click: shove it (hunting needs a tool)';
     if (digPackFull && digState.active) return HINT.packFull;
@@ -1791,7 +2428,7 @@ export function boot(win, doc) {
       const gather = handGatherHint(h.blockId);
       if (gather) return gather;
     }
-    return barrelOrRuneHint();
+    return blockHintText();
   }
 
   /** `Campfire · 3 roasting (next 14 s) · 2 done · fuel 4:10 · R: take` (§4.4). */
@@ -1838,7 +2475,8 @@ export function boot(win, doc) {
 
   /**
    * R in Survival: tap and relight are held (holdState); put, feed and drinking repeat while held; anything else acts on the
-   * press. With nothing to do, today's barrel and rune behaviour (interactTarget).
+   * press. With nothing to do, the rune, then the keg or charge explanation (interactTarget; the parts' own R actions and
+   * the pocket key came earlier, as interactKind's `circuit` and `pocket` kinds, DESIGN-circuits §4.9).
    */
   function survivalR(pressed, dt) {
     const held = controls.isDown('KeyR');
@@ -1963,8 +2601,24 @@ export function boot(win, doc) {
       case 'read':
         openBook();
         return;
+      case 'circuit': {
+        // §8.3: a fuse lit by hand wears the Fire Drill once (interactKind only offers it with one in the pack).
+        if (!circuits) return;
+        const isFuse = world.getBlock(q, y, r) === BLOCK.POWDER_FUSE;
+        const res = circuits.interact(q, y, r, 'r');
+        if (!res) return;
+        afterPartAction(/** @type {RaycastHit} */ (hit ?? { q, y, r, blockId: world.getBlock(q, y, r) }), res);
+        if (isFuse && res.ok) {
+          const used = pack.useTool('firestarter', 0);
+          if (used && used.broke) toolBroke(used.key);
+        }
+        return;
+      }
+      case 'pocket':
+        pocketSend();
+        return;
       default:
-        if (act.hint) showHint(act.hint); // fire_hint, pit_hint, tap_hint
+        if (act.hint) showHint(act.hint); // fire_hint, pit_hint, tap_hint, fuse_hint
     }
   }
 
@@ -2023,6 +2677,12 @@ export function boot(win, doc) {
 
   function survivalLeft(mouse, dt) {
     digAdvanced = false;
+    // §3.2 / §8.3: a left press on a keg burning in place pinches its fuse out (no dig).
+    if (isBurningKeg(hit)) {
+      digStep(0, false);
+      if (mouse.leftPressed) snuffTargetedKeg();
+      return;
+    }
     if (litTarget) {
       digStep(0, false);
       if (mouse.leftPressed) breakTargeted(); // a click snuffs a lit barrel, as today
@@ -2080,7 +2740,7 @@ export function boot(win, doc) {
   function finishDig(h, tool) {
     const id = h.blockId;
     const natural = !world.hasEdit(h.q, h.y, h.r);
-    const drops = rollDrops(id, tool, { natural, knifeInPack: pack.hasTool('knife', KNIFE_TIER) }, Math.random);
+    const drops = rollDrops(id, tool, { natural, knifeInPack: pack.hasTool('knife', KNIFE_TIER), deep: isDeep(h.y) }, Math.random);
     // A basket, belongings or a fire also give what they hold (§5.6, §4.4): all of it must fit.
     const held = [...containers.contents(h.q, h.y, h.r)];
     const view = id === BLOCK.CAMPFIRE || id === BLOCK.FIRE_PIT ? fireSlots.view(h.q, h.y, h.r) : null;
@@ -2145,6 +2805,16 @@ export function boot(win, doc) {
   // ---- Survival: right mouse — place or use the item in hand (§5.3, §4.5) ----------------------------
 
   function survivalRight(mouse, dt) {
+    // §4.9 / §8.3: a press on a control (no Shift) operates it before "use the item in hand" (the Handbook's read-on-RMB
+    // too), and while that press is held nothing is used or placed (the control latch).
+    const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
+    if (mouse.rightPressed ? controlLatch.press(hit, shift, latchEnv) : mouse.right && controlLatch.holding(hit, latchEnv)) {
+      useState.step(dt, null, false);
+      useProgress = null;
+      placeHeld = 0;
+      return;
+    }
+    if (!mouse.right) controlLatch.release();
     const stack = selectedStack();
     if (stack && stack.k === HANDBOOK_KEY) {
       useState.step(dt, null, false);
@@ -2160,6 +2830,7 @@ export function boot(win, doc) {
         survivalPlace();
         placeHeld = 0;
       } else if (mouse.right) {
+        if (repeatBlocked(hit, shift, latchEnv.isControl)) return; // never placed against a control without Shift
         placeHeld += dt;
         if (placeHeld >= PLACE_REPEAT_S) {
           placeHeld -= PLACE_REPEAT_S;
@@ -2220,6 +2891,7 @@ export function boot(win, doc) {
     pack.consume(selected, 1);
     if (id === BLOCK.CAMPFIRE) fireSlots.light(cell[0], cell[1], cell[2], CAMPFIRE_FUEL_START_S); // §4.4: it needs fuel
     if (id === BLOCK.RUNE_BLOCK && state === STATE.PLAYING) openEditorFor(cell[0], cell[1], cell[2]);
+    partPlaced(id, cell);
     return true;
   }
 
@@ -2591,6 +3263,10 @@ export function boot(win, doc) {
       watcherNight: watcher.lastNight ?? undefined, // … and the night of its last natural sighting (none: not written)
       // v0.9 (§1.4): gen, mode, survival and containers, each only when there is something to say (storage orders them).
       ...survivalSaveFields({ gen: world.gen, survival, pack, fireSlots, containers }),
+      // v0.10 (DESIGN-circuits §6.4): the two switches and the configured parts (storage orders them after containers).
+      blackholes: blackHoles.enabled,
+      circuits: circuits ? circuits.enabled : true,
+      circuitParts: circuitStore.export(),
       meta: { name: worldName, createdAt: worldCreatedAt, lastPlayed: Date.now() }, // §41: the slot's name and times
     };
   }
@@ -2618,6 +3294,7 @@ export function boot(win, doc) {
       savedWatcherSwitch = watcher.switchVersion;
       savedWatcherNight = watcher.lastNight;
       markSurvivalSaved();
+      markCircuitsSaved();
       savedX = player.x;
       savedY = player.y;
       savedZ = player.z;
@@ -2644,13 +3321,23 @@ export function boot(win, doc) {
     autosaveAccum = 0;
     const switchesChanged = (blockPhysics !== null && blockPhysics.switchVersion !== savedSwitchVersion)
       || zombies.switchVersion !== savedZombieSwitch || watcher.switchVersion !== savedWatcherSwitch
-      || watcher.lastNight !== savedWatcherNight;
+      || watcher.lastNight !== savedWatcherNight
+      // v0.10 (§6.6 step 11): a configured part, or the circuits / black holes switch
+      || circuitStore.version !== savedPartsVersion || blackHoles.switchVersion !== savedBlackHoleSwitch
+      || (circuits !== null && circuits.switchVersion !== savedCircuitSwitch);
     // Survival (§9.5 step 13): an active survival saves every interval (the vitals change all the time), and any change of
     // the mode, the pack, the containers or the fire spots saves too.
     const survivalChanged = survival.active || survival.switchVersion !== savedSurvivalSwitch || pack.version !== savedPackVersion
       || containers.version !== savedContainersVersion || fireSlots.version !== savedFiresVersion;
     if (world.editVersion !== savedEditVersion || runeStore.version !== savedRunesVersion || switchesChanged || survivalChanged
       || playerMovedSinceSave()) doSave(false);
+  }
+
+  /** Remember the circuit versions a save carried. */
+  function markCircuitsSaved() {
+    savedPartsVersion = circuitStore.version;
+    savedBlackHoleSwitch = blackHoles.switchVersion;
+    savedCircuitSwitch = circuits ? circuits.switchVersion : 0;
   }
 
   /** Remember the survival versions a save carried. */
@@ -2678,6 +3365,11 @@ export function boot(win, doc) {
   function setState(s) {
     state = s;
     stats.state = s;
+    // A modal (or the title) takes the mouse: a right-click or R key held on a control is let go (§4.9).
+    if (s !== STATE.PLAYING) {
+      controlLatch.release();
+      rHeldCell = null;
+    }
   }
 
   /**
@@ -2695,6 +3387,8 @@ export function boot(win, doc) {
     consoleUI.close();
     runeEditor.close();
     editorKey = null;
+    if (devicePanel.isOpen()) devicePanel.close();
+    deviceKey = null;
     packUI.close();
     menus.hideDeath();
     if (handbookUI.isOpen()) handbookUI.close();
@@ -2764,13 +3458,27 @@ export function boot(win, doc) {
       physicsNotePending = false;
     }
     savedSwitchVersion = blockPhysics.switchVersion;
-    world.onChunkGenerated = (cq, cr) => blockPhysics.onChunkGenerated(cq, cr);
+    // v0.10: a blast that reaches a Collapsar Charge sets it off instead of destroying it (DESIGN-circuits §3.4.6).
+    blockPhysics.explosions.onCharge = (q, y, r) => {
+      blackHoles.activate(q, y, r, blackHoleWorld);
+    };
+    // The circuits (§6.6): the save's configured parts, then the engine, its switch and the black holes' switch.
+    circuitStore.replaceAll(restoring && restoring.circuitParts ? restoring.circuitParts : null);
+    circuits = new Circuits(circuitStore, circuitHooks);
+    circuits.setEnabled(!(restoring && restoring.circuits === false));
+    blackHoles.setEnabled(!(restoring && restoring.blackholes === false));
+    world.onChunkGenerated = (cq, cr) => {
+      blockPhysics.onChunkGenerated(cq, cr);
+      if (circuits) circuits.onChunkLoaded(cq, cr); // a loaded chunk's cells are solved settling: loading fires nothing
+    };
     world.onBlockChange = onBlockChanged;
     litTarget = null;
     particles.clear();
     fallingRenderer.sync([], 0);
     fallingRenderer.setFlash(0, 0, 0, 0);
     blackHoles.loadFromEdits(world.edits);
+    circuits.loadFromEdits(world.edits); // after the holes, settling (§4.7)
+    resetCircuitSession();
     campfires.loadFromEdits(world.edits);
     pigs.load(restoring && Array.isArray(restoring.pigs) ? restoring.pigs : []);
     placeNaturalPigs = !(restoring && Array.isArray(restoring.pigs));
@@ -2968,6 +3676,7 @@ export function boot(win, doc) {
 
     savedEditVersion = world.editVersion;
     savedRunesVersion = runeStore.version;
+    markCircuitsSaved();
     savedX = player.x;
     savedY = player.y;
     savedZ = player.z;
@@ -2989,17 +3698,32 @@ export function boot(win, doc) {
     if (autoplay) {
       enterPlaying();
       showDebugUi();
+      // §6.7: ?scene= for screenshots (the smoke test builds its scene itself, after its own steps).
+      if (params.scene && !params.smoke) buildScene(params.scene, 2);
     } else {
       setState(STATE.CLICK_TO_PLAY);
       menus.showClickToPlay();
     }
   }
 
-  /** `?ui=console|editor|picker` with autoplay: open the console, place a rune block three cells ahead and open its editor, or open the block picker (screenshots). */
+  /**
+   * `?ui=console|editor|picker|pack|device` with autoplay: open the console, place a rune block three cells ahead and open its
+   * editor, open the block picker, the pack screen (Survival) or the device panel on a demo Clockwork Timer (screenshots).
+   */
   function showDebugUi() {
     if (!params.ui || !runner || !player || params.smoke) return; // a modal would stall the smoke sequence
     if (params.ui === 'picker') {
       openPicker();
+      return;
+    }
+    if (params.ui === 'device') {
+      // §6.7: a Clockwork Timer three cells ahead (30 s, repeat, labelled), then its panel.
+      const [fx, fz] = yawToForward(controls.yaw);
+      const [q, r] = worldToHex(player.x + fx * 3, player.z + fz * 3);
+      const y = Math.max(0, Math.floor(player.y) - 1);
+      runner.runConsoleLine(`setblock ${q} ${y} ${r} clockwork_timer`);
+      if (circuits) circuits.applySettings(q, y, r, { s: 30, m: 'repeat', l: 'Quarry clock' });
+      openDevicePanel(q, y, r);
       return;
     }
     if (params.ui === 'pack') {
@@ -3027,6 +3751,52 @@ export function boot(win, doc) {
     if (rune) openEditor(rune);
   }
 
+  /**
+   * `?scene=` (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar Charge 8 cells ahead (`delay` seconds later), 'circuits'
+   * flattens the ground 10 cells ahead and builds the §4.14 worked examples there (diagnostics.circuitSceneWrites).
+   * @param {string} name
+   * @param {number} [delay]
+   * @returns {{ ok: boolean, message: string, named?: Record<string, [number, number, number]> }}
+   */
+  function buildScene(name, delay = 0) {
+    if (!world || !player || !circuits) return { ok: false, message: 'no world is loaded' };
+    const [fx, fz] = yawToForward(controls.yaw);
+    const feet = Math.floor(player.y + 1e-3);
+    if (name === 'vortex') {
+      const [q, r] = worldToHex(player.x + fx * 8, player.z + fz * 8);
+      let y = Math.min(WORLD_HEIGHT - 1, feet + 8);
+      while (y > 1 && !isSolid(world.getBlock(q, y - 1, r))) y--;
+      if (!world.setBlock(q, y, r, BLOCK.COLLAPSAR_CHARGE)) return { ok: false, message: `could not place the charge at (${q}, ${y}, ${r})` };
+      sceneNamed = { charge: [q, y, r] };
+      if (delay > 0) {
+        sceneCharge = { q, y, r, at: fxTime + delay };
+        return { ok: true, message: `a collapsar charge at (${q}, ${y}, ${r}) goes off in ${delay} s`, named: sceneNamed };
+      }
+      const res = blackHoles.activate(q, y, r, blackHoleWorld);
+      return { ok: res.ok, message: res.message, named: sceneNamed };
+    }
+    if (name !== 'circuits') return { ok: false, message: `unknown scene "${name}"` };
+    const [qa, ra] = worldToHex(player.x + fx * 10, player.z + fz * 10);
+    const q0 = qa - 5;
+    const r0 = ra - 4;
+    const scene = circuitSceneWrites(q0, feet, r0);
+    // Flat stone ground under the whole scene (placed stone on natural ground passes the earth walk), open air above.
+    for (let q = q0 - 2; q <= q0 + 13; q++) {
+      for (let r = r0 - 2; r <= r0 + 11; r++) {
+        for (let y = feet; y <= feet + 6 && y < WORLD_HEIGHT; y++) if (world.getBlock(q, y, r) !== BLOCK.AIR) world.setBlock(q, y, r, BLOCK.AIR);
+        for (let y = feet - 1; y >= Math.max(1, feet - 8); y--) {
+          if (isSolid(world.getBlock(q, y, r))) break;
+          world.setBlock(q, y, r, BLOCK.STONE);
+        }
+      }
+    }
+    for (const [q, y, r, id] of scene.blocks) world.setBlock(q, y, r, id);
+    for (const [q, y, r, face] of scene.faces) circuits.setInputFace(q, y, r, face);
+    for (const [q, y, r, partial] of scene.settings) circuits.applySettings(q, y, r, partial);
+    sceneNamed = scene.named;
+    return { ok: true, message: `built the circuit examples at (${q0}, ${feet}, ${r0})`, named: scene.named };
+  }
+
   function enterPlaying() {
     if (survival.dead) return; // §2.5: the death screen is modal; only Wake up leaves it
     menus.hideClickToPlay();
@@ -3050,7 +3820,13 @@ export function boot(win, doc) {
     quitUnsavedArmed = false;
     menus.setZombiesState(zombies.enabled);
     menus.setModeState(survival.mode); // §1.1 the Mode switch
+    menus.setDeviceSwitches(deviceSwitches()); // v0.10 the Devices row
     doSave(false);
+  }
+
+  /** The pause menu's Devices row (§6.2.17). */
+  function deviceSwitches() {
+    return { circuits: circuits ? circuits.enabled : true, blackholes: blackHoles.enabled };
   }
 
   function resume() {
@@ -3067,6 +3843,7 @@ export function boot(win, doc) {
     menus.showPicker(hotbar, selected);
     breakHeld = 0;
     placeHeld = 0;
+    controlLatch.release();
   }
 
   function closePicker() {
@@ -3149,12 +3926,44 @@ export function boot(win, doc) {
     hurtFlash = 0;
     hud.setHurtFlash(0);
     watcher.clear();
+    clearCircuits();
     clearSurvival();
     player = null;
     hit = null;
     waterHit = null;
     renderer.setHighlight(null);
     showTitle(currentSlot, message); // the Worlds screen, the world just left focused
+  }
+
+  /** A new world's circuit session state (startLoading): nothing carries over from the last world but the pocket wavelength. */
+  function resetCircuitSession() {
+    infall.clear();
+    vortexAcc.clear();
+    bhEvents.length = 0;
+    flashState.level = 0;
+    flashState.sinceStart = Infinity;
+    flashKind = 'white';
+    flashTrigger = null;
+    hud.setFlashOverlay(0, 'white');
+    controlLatch.release();
+    rHeldCell = null;
+    kegExplainAt = -Infinity;
+    geoVersion = -1;
+    geoEye[0] = NaN;
+    if (devicePanel.isOpen()) devicePanel.close();
+    deviceKey = null;
+    circuitRenderer.setGeometry(null);
+    circuitRenderer.syncOverlays([], fxTime, 0);
+    vortexRenderer.sync([], fxTime, [0, 0, 0]);
+    droneLoop.set(0, 1);
+  }
+
+  /** §6.6 quitToTitle / dispose: forget the world's circuits, the configured parts, the infall and every circuit drawing. */
+  function clearCircuits() {
+    circuits = null;
+    circuitStore.clear();
+    blackHoles.clear();
+    resetCircuitSession();
   }
 
   /** §9.5 quitToTitle / dispose: forget every survival object and hide its screens and HUD. */
@@ -3289,6 +4098,21 @@ export function boot(win, doc) {
       menus.setZombiesState(on);
       audio.playClick();
       hud.showSaveToast(`Zombies ${on ? 'on' : 'off'}`);
+    },
+    // ---- v0.10 the pause menu's Devices row (§6.2.17): only the inactive half fires ----
+    onSetCircuits(on) {
+      if (state !== STATE.PAUSED || !circuits) return;
+      circuits.setEnabled(Boolean(on)); // on again: everything is solved settling, nothing fires (pitfall 37)
+      menus.setDeviceSwitches(deviceSwitches());
+      audio.playClick();
+      hud.showSaveToast(`Circuits ${on ? 'on' : 'off'}`);
+    },
+    onSetBlackHoles(on) {
+      if (state !== STATE.PAUSED) return;
+      blackHoles.setEnabled(Boolean(on));
+      menus.setDeviceSwitches(deviceSwitches());
+      audio.playClick();
+      hud.showSaveToast(`Black holes ${on ? 'on' : 'off'}`);
     },
     onUndoPhysics() {
       if (state !== STATE.PAUSED || !blockPhysics) return;
@@ -3439,6 +4263,42 @@ export function boot(win, doc) {
     },
     zombies,
     watcher,
+    // ---- v0.10 circuits and black holes (§6.6 debug handle) ----
+    get circuits() {
+      return circuits;
+    },
+    circuitStore,
+    blackHoles,
+    infall,
+    /** One frame of holding right-click on the current target (the real latch path; harness-like drivers). */
+    rightClick: (pressed, dt = 0) => {
+      if (!player || state !== STATE.PLAYING) return null;
+      const mouse = { rightPressed: Boolean(pressed), right: true };
+      const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
+      if (survival.inSurvival) {
+        survivalRight(mouse, dt);
+        return null;
+      }
+      return rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);
+    },
+    /** Let go of the right mouse button. */
+    rightRelease: () => controlLatch.release(),
+    /** Shift+R on the current target: the device panel or the rune editor. */
+    editTarget: () => {
+      if (player && state === STATE.PLAYING) editTarget();
+    },
+    openDevicePanel: (q, y, r) => openDevicePanel(q, y, r),
+    closeDevicePanel: () => closeDevicePanel(),
+    /** `?scene=` (§6.7) as the page was opened with, the scene builder and its named cells. */
+    get urlScene() {
+      return params.scene ?? null;
+    },
+    buildScene: (name, delay) => buildScene(name, delay),
+    get sceneCells() {
+      return sceneNamed;
+    },
+    /** Wire segments drawn (the F3 circuits line). */
+    circuitSegments: () => geoTmp.seg.count,
     // ---- v0.9 Survival (§9.5 GameContext) ----
     survival,
     pack,
@@ -3480,21 +4340,29 @@ export function boot(win, doc) {
   }
 
   /**
-   * Black holes: swallow the player (back to the nearest point near spawn that no hole can reach, §29) and let each
-   * hole eat its neighbourhood.
+   * Black holes (§6.6 step 7): swallow the player (Creative: back to the nearest point near spawn that no hole can reach,
+   * §29, with the void flash; Survival: a death), arm charges, let each vortex eat its neighbourhood (the eaten blocks start
+   * their infall), then the phase events' effects and the vortices' streaming particles.
    */
   function stepBlackHoles(dt) {
-    if (blackHoles.size === 0) return;
-    if (blackHoles.swallowing(player) && survival.active) {
-      // Survival (§2.4): swallowed is a death, and the belongings go with you (no teleport; the checkpoint runs die()).
-      pendingDeath ??= 'blackhole';
-    } else if (blackHoles.swallowing(player)) {
-      const [sx, sy, sz] = blackHoles.respawnPoint(world.findSpawn(), blackHoleWorld);
-      game.teleport(sx, sy, sz);
-      if (fxTime - lastSwallowLineAt >= BLACK_HOLE_SWALLOW_LINE_S) {
-        lastSwallowLineAt = fxTime;
-        logLine('You were swallowed by a black hole!');
-        audio.playBreak('glass');
+    if (blackHoles.size === 0 && !blackHoles.busy) return;
+    if (blackHoles.size > 0) {
+      const swallowed = blackHoles.swallowing(player);
+      if (swallowed && survival.active) {
+        // Survival (§2.4): swallowed is a death, and the belongings go with you (no teleport; the checkpoint runs die()).
+        pendingDeath ??= 'blackhole';
+      } else if (swallowed) {
+        const [sx, sy, sz] = blackHoles.respawnPoint(world.findSpawn(), blackHoleWorld);
+        game.teleport(sx, sy, sz);
+        // §2.7: a near-black void flash in the same frame, a falling whoosh and the chat line (throttled as before).
+        flashState.level = VOID_FLASH_LEVEL;
+        flashState.sinceStart = 0;
+        flashKind = 'void';
+        if (fxTime - lastSwallowLineAt >= BLACK_HOLE_SWALLOW_LINE_S) {
+          lastSwallowLineAt = fxTime;
+          logLine(SWALLOWED_LINE);
+          audio.playRecipe('bhSwallow', 1);
+        }
       }
     }
     if (blackHoles.inert === 0) {
@@ -3504,13 +4372,117 @@ export function boot(win, doc) {
       logLine(`Only ${BLACK_HOLE_MAX_TRACKED} black holes can be active at once: the rest do nothing until some are broken.`);
     }
     const eaten = blackHoles.update(dt, blackHoleWorld);
-    // One crunch per frame at most, and only for cells the player is near enough to hear.
+    const eyeY = player.y + getEyeHeight(player);
+    // One crunch per frame at most, and only for cells the player is near enough to hear; every eaten block spirals in.
+    let crunched = false;
     for (const e of eaten) {
+      infall.addBlock(e, player.x, eyeY, player.z);
+      if (crunched) continue;
       const [ex, ez] = hexToWorld(e.q, e.r);
       if (Math.hypot(ex - player.x, e.y - player.y, ez - player.z) < 16) {
         audio.playBreak(getBlockDef(e.id).soundGroup);
-        break;
+        crunched = true;
       }
+    }
+    blackHoleEvents(eyeY);
+    if (dt > 0) streamVortexParticles(dt, eyeY);
+  }
+
+  /**
+   * The phase events' effects (§6.6 step 7 table), the nearest BH_EVENTS_PER_TYPE of each type per frame: arm → bhArm;
+   * flash → the screen-flash trigger (line of sight, facing, the 0.5 s gap), bhFlash and 24 white sparks; implode → bhImplode
+   * and the spherical inward burst; collapsed → an outward burst and bhCollapse. `formed` and `cancelled` need nothing.
+   */
+  function blackHoleEvents(eyeY) {
+    bhEvents.length = 0;
+    blackHoles.drainEvents(bhEvents);
+    if (bhEvents.length === 0) return;
+    const px = player.x;
+    const pz = player.z;
+    const d2 = (e) => (e.cx - px) ** 2 + (e.cy - eyeY) ** 2 + (e.cz - pz) ** 2;
+    if (bhEvents.length > 1) bhEvents.sort((a, b) => d2(a) - d2(b));
+    /** @type {Record<string, number>} */
+    const done = {};
+    for (const e of bhEvents) {
+      const n = done[e.type] ?? 0;
+      if (n >= BH_EVENTS_PER_TYPE) continue;
+      done[e.type] = n + 1;
+      switch (e.type) {
+        case 'arm':
+          playCircuitSound('bhArm', e.cx, e.cy, e.cz, 1);
+          break;
+        case 'flash': {
+          playCircuitSound('bhFlash', e.cx, e.cy, e.cz, 1);
+          particles.emit('sparks', e.cx, e.cy, e.cz, 24, { color: [1, 1, 1], speed: 1.2 });
+          const level = flashLevelFor(e, eyeY);
+          if (level > 0 && (!flashTrigger || level > flashTrigger.level)) flashTrigger = { level };
+          break;
+        }
+        case 'implode':
+          playCircuitSound('bhImplode', e.cx, e.cy, e.cz, 1);
+          particles.emitOrbit('infall', e.cx, e.cy, e.cz, 64, {
+            rMin: 3.0, rMax: 3.6, hMax: 3.3, spherical: true, radial: true, inward: 2.8, color: [1, 1, 1], hot: [0.69, 0.227, 0.102],
+          });
+          break;
+        case 'collapsed':
+          playCircuitSound('bhCollapse', e.cx, e.cy, e.cz, 1);
+          particles.emit('infall', e.cx, e.cy, e.cz, 24, { speed: 4 });
+          break;
+        default:
+          break; // formed (the renderer flares from the phase), cancelled
+      }
+    }
+    bhEvents.length = 0;
+  }
+
+  /** §2.4.6: how bright a charge's FLASH is on screen — distance, facing and one line-of-sight ray. */
+  function flashLevelFor(e, eyeY) {
+    const dx = e.cx - player.x;
+    const dy = e.cy - eyeY;
+    const dz = e.cz - player.z;
+    const d = Math.hypot(dx, dy, dz);
+    if (!(d < BLACK_HOLE_SCREEN_FLASH_RANGE)) return 0;
+    const cp = Math.cos(controls.pitch);
+    const vx = -Math.sin(controls.yaw) * cp;
+    const vy = Math.sin(controls.pitch);
+    const vz = -Math.cos(controls.yaw) * cp;
+    const dot = d > 1e-6 ? (vx * dx + vy * dy + vz * dz) / d : 1;
+    let covered = false;
+    if (d > 1.0) {
+      // The hole's own cell stops the ray too (it is targetable); only a nearer block hides it.
+      const ray = raycastHex(world.getBlock, player.x, eyeY, player.z, dx / d, dy / d, dz / d, d);
+      covered = !!ray && !(ray.q === e.q && ray.y === e.y && ray.r === e.r) && ray.distance < d - 0.6;
+    }
+    return screenFlashLevel(d, dot, covered);
+  }
+
+  /** §2.4.5: the nearest VORTEX_PARTICLE_HOLES vortices within VORTEX_PARTICLE_RANGE stream VORTEX_PARTICLES_PER_S each. */
+  function streamVortexParticles(dt, eyeY) {
+    if (blackHoles.size === 0) {
+      if (vortexAcc.size > 0) vortexAcc.clear();
+      return;
+    }
+    /** @type {{ h: *, d: number }[]} */
+    const near = [];
+    const r2 = VORTEX_PARTICLE_RANGE * VORTEX_PARTICLE_RANGE;
+    for (const h of blackHoles.holes.values()) {
+      if (h.phase !== PHASE.VORTEX) continue;
+      const d = (h.cx - player.x) ** 2 + (h.cy - eyeY) ** 2 + (h.cz - player.z) ** 2;
+      if (d > r2) continue;
+      if (near.length < VORTEX_PARTICLE_HOLES) near.push({ h, d });
+      else {
+        let worst = 0;
+        for (let i = 1; i < near.length; i++) if (near[i].d > near[worst].d) worst = i;
+        if (d < near[worst].d) near[worst] = { h, d };
+      }
+    }
+    if (vortexAcc.size > 4 * VORTEX_PARTICLE_HOLES) vortexAcc.clear();
+    if (!blackHoles.enabled) return; // a switched-off vortex barely turns (§2.8): no stream
+    for (const { h } of near) {
+      const acc = (vortexAcc.get(h.key) ?? 0) + VORTEX_PARTICLES_PER_S * dt;
+      const n = Math.floor(acc);
+      vortexAcc.set(h.key, acc - n);
+      if (n > 0) particles.emitOrbit('infall', h.cx, h.cy, h.cz, n, { rMin: 2.5, rMax: 4.5, hMax: 0.6, color: 0x2e2620, hot: 0xffc890 });
     }
   }
 
@@ -3556,11 +4528,18 @@ export function boot(win, doc) {
     if (blackHoles.size === 0) return;
     for (let i = pigs.list.length - 1; i >= 0; i--) {
       const pig = pigs.list[i];
-      if (!blackHoles.swallowing(pig)) continue;
+      const hole = blackHoles.swallowing(pig);
+      if (!hole) continue;
       pigs.remove(pig);
-      const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
-      if (d < 16) audio.playSqueal(1 - d / 16);
+      // §2.7: it spirals in as a ghost; the squeal comes at the end of its flight (stepInfall). Past the ghost cap, now.
+      if (!infall.addMob('pig', pig, hole.cx, hole.cy, hole.cz)) pigGoneSqueal(pig);
     }
+  }
+
+  /** A swallowed pig's squeal, fading out by 16 units. */
+  function pigGoneSqueal(pig) {
+    const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
+    if (d < 16) audio.playSqueal(1 - d / 16);
   }
 
   // ---- zombies (CONTRACTS §39) ----------------------------------------------------------------------
@@ -3646,9 +4625,26 @@ export function boot(win, doc) {
     if (blackHoles.size === 0) return;
     for (let i = zombies.list.length - 1; i >= 0; i--) {
       const zb = zombies.list[i];
-      if (!blackHoles.swallowing(zb)) continue;
+      const hole = blackHoles.swallowing(zb);
+      if (!hole) continue;
       zombies.remove(zb);
-      zombieGone(zb, 'ko');
+      // §2.7: a ghost spirals in; the knock-out puff comes at its end (stepInfall). Past the ghost cap, now.
+      if (!infall.addMob('zombie', zb, hole.cx, hole.cy, hole.cz)) zombieGone(zb, 'ko');
+    }
+  }
+
+  /**
+   * §6.6 step 10: the circuit tick (≤ 2 per frame), then the infall — every block that reached the core leaves 3 `infall`
+   * particles, every ghost that did squeals or puffs.
+   */
+  function stepCircuits(dt) {
+    if (circuits) circuits.step(dt);
+    if (infall.size === 0) return;
+    const st = infall.step(dt);
+    for (let i = 0; i + 2 < st.gone.length; i += 3) particles.emit('infall', st.gone[i], st.gone[i + 1], st.gone[i + 2], 3, { spread: 0.1, speed: 0.4 });
+    for (const m of st.mobsDone) {
+      if (m.kind === 'pig') pigGoneSqueal(m.body);
+      else zombieGone(m.body, 'ko');
     }
   }
 
@@ -3801,14 +4797,23 @@ export function boot(win, doc) {
     const rPressed = controls.consumePressed('KeyR');
     const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
     if (rPressed && shift) {
-      editTarget();
+      editTarget(); // a part's device panel (§4.10) or a rune's editor
       if (state !== st0) return;
     } else if (SV) {
-      // §9.4 the R priorities (barrel and rune behave as today when nothing else applies).
+      // §9.4 the R priorities, with the parts' own R actions and the pocket key (DESIGN-circuits §4.9).
       survivalR(rPressed, dt);
       if (state !== st0) return;
     } else if (rPressed) {
       interactTarget();
+    }
+    // §4.9: a held R key keeps the Push Button (or the Relay's armature) it pressed held while the crosshair stays on it.
+    if (rHeldCell && !rPressed) {
+      const h = hit;
+      if (circuits && controls.isDown('KeyR') && h && h.q === rHeldCell[0] && h.y === rHeldCell[1] && h.r === rHeldCell[2]) {
+        circuits.hold(h.q, h.y, h.r);
+      } else {
+        rHeldCell = null;
+      }
     }
 
     // Interaction uses the hit computed at the end of the previous frame (what the highlight showed).
@@ -3832,18 +4837,8 @@ export function boot(win, doc) {
       } else {
         breakHeld = 0;
       }
-      if (mouse.rightPressed) {
-        placeSelected();
-        placeHeld = 0;
-      } else if (mouse.right) {
-        placeHeld += dt;
-        if (placeHeld >= PLACE_REPEAT_S) {
-          placeHeld -= PLACE_REPEAT_S;
-          placeSelected();
-        }
-      } else {
-        placeHeld = 0;
-      }
+      // §4.9: right-click operates a control (Shift: places against it), with the control latch; else it places.
+      rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);
       if (mouse.middlePressed) pickTargeted();
     }
 
@@ -3871,6 +4866,13 @@ export function boot(win, doc) {
     stepWatcher(dt);
     stepBlockPhysics(dt);
     stepCampfires(dt);
+    stepCircuits(dt); // v0.10 (§6.6 step 10): the circuit tick and the infall
+    if (sceneCharge && fxTime >= sceneCharge.at) {
+      const c = sceneCharge;
+      sceneCharge = null;
+      const res = blackHoles.activate(c.q, c.y, c.r, blackHoleWorld);
+      if (!res.ok) logLine(res.message, true);
+    }
     if (checkDeath()) return; // §2.5 checkpoint
     // Bodies collide, push and stand on each other once everything has moved (CONTRACTS §31). Pigs in unloaded
     // chunks are frozen and stay out of it; lit barrels (explosions.js) take part against the player and pigs.
@@ -3912,29 +4914,55 @@ export function boot(win, doc) {
   /** Camera, sky, highlight, HUD and the draw — every state that has a player. */
   function renderFrame(dt) {
     const eyeY = player.y + getEyeHeight(player);
-    // Moving cells, the explosion light and the camera shake (block physics), then the particles (frozen unless playing
-    // with physics running: `physics off` freezes its effects in place too).
+    const live = stateSimulates(state, survival.inSurvival);
+    // Moving cells (block physics' items, then the charge copies and the infall, §6.6), the one flash light (the brighter of
+    // a blast and a charge, with its colour) and the camera shake (a blast plus the implosion), then the particles (frozen
+    // unless the world runs with physics on: `physics off` freezes its effects in place too).
+    movingCount = 0;
+    flash.intensity = 0;
     if (blockPhysics) {
       const list = blockPhysics.renderItems();
-      fallingRenderer.sync(list.items, list.count);
+      for (let i = 0; i < list.count; i++) {
+        const it = list.items[i];
+        pushMoving(it.id, it.x, it.y, it.z, it.rx, it.ry, it.rz, it.scale);
+      }
       blockPhysics.explosions.flash(flash);
-      fallingRenderer.setFlash(flash.x, flash.y, flash.z, flash.intensity);
       blockPhysics.explosions.shakeOffset(player.x, eyeY, player.z, shake);
     } else {
       shake[0] = 0;
       shake[1] = 0;
       shake[2] = 0;
     }
+    blackHoles.renderItems(pushMoving);
+    infall.renderItems(pushMoving);
+    fallingRenderer.sync(movingItems, movingCount);
+    blackHoles.flash(bhFlash);
+    if (bhFlash.intensity > flash.intensity) fallingRenderer.setFlash(bhFlash.x, bhFlash.y, bhFlash.z, bhFlash.intensity, bhFlash.color);
+    else fallingRenderer.setFlash(flash.x, flash.y, flash.z, flash.intensity);
+    blackHoles.cameraFx(player.x, eyeY, player.z, camFx);
     particles.update(state === STATE.PLAYING && !(blockPhysics && blockPhysics.paused) ? dt : 0);
-    renderer.setCamera(player.x + shake[0], eyeY + shake[1], player.z + shake[2], controls.yaw, controls.pitch);
+    renderer.setCamera(player.x + shake[0] + camFx.sx, eyeY + shake[1] + camFx.sy, player.z + shake[2] + camFx.sz, controls.yaw, controls.pitch);
     fov = easeFov(fov, player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV, dt);
-    renderer.setFov(fov);
+    renderer.setFov(fov + camFx.fov);
+    renderCircuitsAndVortices(dt, eyeY, live);
     renderer.setHighlight(hit);
     const SV = survival.inSurvival;
     // §9.9: the dig trace follows the cell's hex outline in honey as it is dug (hidden when not digging).
     renderer.setDigProgress(SV && digHit && digProgress > 0 ? digHit : null, digProgress);
-    pigRenderer.sync(pigs.list);
-    zombieRenderer.sync(zombies.list);
+    // The live mobs plus the swallowed ones still spiralling in (§2.7).
+    if (infall.mobs > 0) {
+      pigDraw.length = 0;
+      for (const p of pigs.list) pigDraw.push(p);
+      infall.ghosts('pig', pigDraw);
+      zombieDraw.length = 0;
+      for (const z of zombies.list) zombieDraw.push(z);
+      infall.ghosts('zombie', zombieDraw);
+      pigRenderer.sync(pigDraw);
+      zombieRenderer.sync(zombieDraw);
+    } else {
+      pigRenderer.sync(pigs.list);
+      zombieRenderer.sync(zombies.list);
+    }
     watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime);
     hurtFlash = Math.max(0, hurtFlash - dt / HURT_FLASH_S);
     hud.setHurtFlash(hurtFlash);
@@ -3973,8 +5001,58 @@ export function boot(win, doc) {
       hud.setJobChip(null);
     }
     hud.setTargetHint(state === STATE.PLAYING ? targetHintText() : null);
+    // The device panel's reading stays live while the world runs under it (Survival, §4.10).
+    if (state === STATE.DEVICE && live) {
+      deviceRefreshAccum += dt;
+      if (deviceRefreshAccum >= DEVICE_REFRESH_S) {
+        deviceRefreshAccum = 0;
+        refreshDevicePanel();
+      }
+    }
     if (hud.isDebugVisible()) hud.setDebugText(buildDebugText(game, stats));
     renderer.render();
+  }
+
+  /**
+   * §6.6 renderFrame: the vortices, the circuit wiring (rebuilt when the circuits' geometry changes or the eye moved
+   * CIRCUIT_REBUILD_MOVE units) and overlays, the screen flash and the drone.
+   */
+  function renderCircuitsAndVortices(dt, eyeY, live) {
+    const eye = viewEye;
+    eye[0] = player.x;
+    eye[1] = eyeY;
+    eye[2] = player.z;
+    vortexRenderer.sync(blackHoles.vortexViews(player.x, eyeY, player.z, VORTEX_MODEL_RANGE, VORTEX_MAX_MODELS, VORTEX_MAX_CORES,
+      vortexViewsTmp), fxTime, eye);
+    if (circuits) {
+      const moved = !(Math.hypot(player.x - geoEye[0], eyeY - geoEye[1], player.z - geoEye[2]) < CIRCUIT_REBUILD_MOVE);
+      if (circuits.geometryVersion !== geoVersion || moved) {
+        geoVersion = circuits.geometryVersion;
+        geoEye[0] = player.x;
+        geoEye[1] = eyeY;
+        geoEye[2] = player.z;
+        circuitRenderer.setGeometry(wireSegments(circuits.geometryView(), player.x, eyeY, player.z, CIRCUIT_DRAW_RANGE, geoTmp));
+      }
+      // Every frame: the engine also keeps this eye for its nearest-first sparks and sounds.
+      circuitRenderer.syncOverlays(circuits.overlays(player.x, eyeY, player.z, CIRCUIT_OVERLAY_RANGE, overlayTmp), fxTime, live ? dt : 0);
+    }
+    // The screen flash (§2.4.6): this frame's trigger, if any, then the fade.
+    const level = flashStep(flashState, live ? dt : 0, flashTrigger);
+    if (flashTrigger && flashKind !== 'white' && flashState.sinceStart === 0) flashKind = 'white';
+    flashTrigger = null;
+    hud.setFlashOverlay(level, flashKind);
+    if (level === 0) flashKind = 'white';
+    // The drone: the nearest vortex within DRONE_RANGE, its pitch rising 10 % within 3 units (§2.11).
+    let dn = Infinity;
+    if (blackHoles.size > 0 && live && blackHoles.enabled) {
+      for (const h of blackHoles.holes.values()) {
+        if (h.phase !== PHASE.VORTEX) continue;
+        const d = Math.hypot(h.cx - player.x, h.cy - eyeY, h.cz - player.z);
+        if (d < dn) dn = d;
+      }
+    }
+    if (dn < DRONE_RANGE) droneLoop.set(0.5 * (1 - dn / DRONE_RANGE), dn < 3 ? 1.1 : 1);
+    else droneLoop.set(0, 1);
   }
 
   function refreshStats(rawDt) {
@@ -4043,6 +5121,9 @@ export function boot(win, doc) {
       case STATE.BOOK: // … and the field book (§14.1)
         stepPlaying(dt);
         break;
+      case STATE.DEVICE: // v0.10 (§57): the device panel runs the world in Survival only
+        if (survival.inSurvival) stepPlaying(dt);
+        break;
       default:
         break; // title / clickToPlay / paused / picker / console / editor / dead: frozen simulation
     }
@@ -4086,14 +5167,19 @@ export function boot(win, doc) {
     if (runner) runner.reset();
     runner = null;
     runeStore.clear();
+    clearCircuits();
     clearSurvival();
     packUI.dispose();
+    devicePanel.dispose();
+    droneLoop.stop();
     if (world) world.dispose();
     world = null;
     blockPhysics = null;
     player = null;
     fallingRenderer.dispose();
     particles.dispose();
+    vortexRenderer.dispose();
+    circuitRenderer.dispose();
     zombieRenderer.dispose();
     zombies.clear();
     watcherRenderer.dispose();

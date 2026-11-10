@@ -809,6 +809,84 @@ const MATERIAL_PAINTERS = {
     paintPot(ic, rng, 0xb8613a, 0xf4f8fc, 0xc8d8e8);
     ic.ellipse(8, 2.6, 3.4, 1.8, 0xf4f8fc); // heaped above the rim
   },
+  // ---- v0.10 circuits (DESIGN-circuits §8.1): the powder, wire and lamp materials ----
+  pyrite(ic, rng) {
+    // "fool's gold": brassy cubes grown together in a scrap of grey coal-seam rock
+    ic.poly([[2, 14], [3, 10], [13, 9], [14, 14]], 0x55565c);
+    const cube = (x0, y0, s) => {
+      ic.rect(x0, y0, x0 + s, y0 + s, 0xc8ae48);
+      ic.line(x0, y0, x0 + s, y0, 0xf2e08a); // the lit top edge
+      ic.line(x0, y0, x0, y0 + s, 0xe6d070);
+      ic.line(x0 + s, y0 + 1, x0 + s, y0 + s, 0x8a7428);
+      ic.line(x0 + 1, y0 + s, x0 + s, y0 + s, 0x8a7428);
+    };
+    cube(3, 5, 4);
+    cube(8, 3, 5);
+    cube(6, 9, 3);
+    ic.jitter(rng, 0.03);
+    ic.set(10, 5, 0xfff4c0);
+  },
+  sulfur(ic, rng) {
+    // brimstone: a crumbly lemon-yellow lump with paler crystal faces
+    paintLump(ic, rng, 8, 9, 6, 5, { base: 0xe2cf3a, dark: 0xb09a1e, light: 0xf6ec8a });
+    speckle(ic, rng, 6, 0xc8b42a);
+    ic.poly([[9, 5], [11, 4], [12, 7]], 0xfaf2a8);
+    ic.set(5, 11, 0x9a8418);
+  },
+  selenium(ic, rng) {
+    // grey metallic selenium: a glassy dark chunk, red where the light passes through its edge
+    ic.poly([[3, 12], [4, 6], [8, 3], [13, 5], [14, 11], [9, 14]], (x, y) => (x + y < 12 ? 0x7a7a84 : x > 11 ? 0x2a2a30 : 0x4a4a52));
+    ic.line(4, 11, 8, 13, 0x8a2a22);
+    ic.line(9, 13, 13, 11, 0x6a1a18);
+    ic.jitter(rng, 0.04);
+    ic.set(6, 5, 0xd8d8e0);
+    ic.set(7, 5, 0xb8b8c4);
+  },
+  saltpetre(ic, rng) {
+    // cave saltpetre: a brown wall flake furred with white nitre needles
+    ic.poly([[2, 13], [3, 7], [7, 5], [13, 6], [14, 13]], 0x7a5e42);
+    ic.jitter(rng, 0.05);
+    for (let x = 3; x <= 13; x++) {
+      const top = 6 + ((x * 5) % 3);
+      for (let y = top; y <= top + 2 + ((x * 3) % 2); y++) ic.set(x, y, (x + y) % 3 === 0 ? 0xdcdcd4 : 0xf6f6f0);
+    }
+    ic.set(5, 4, 0xf6f6f0);
+    ic.set(10, 4, 0xf6f6f0);
+    ic.set(12, 5, 0xdcdcd4);
+  },
+  black_powder(ic, rng) {
+    // a little heap of black grains (ground damp, then dried), with a few grey ones on top
+    ic.poly([[2, 13], [5, 8], [8, 6], [11, 8], [14, 13]], (x) => (x < 8 ? 0x2e2e32 : 0x1e1e22));
+    speckle(ic, rng, 9, 0x5a5a62);
+    speckle(ic, rng, 3, 0x7a6a50);
+    for (const x of [3, 6, 12]) ic.set(x, 14, 0x2e2e32); // spilled grains
+  },
+  carbon_filament(ic) {
+    // Swan's carbonised cotton thread: a black horseshoe filament with copper lead-in ends
+    for (let y = 4; y <= 12; y++) {
+      ic.set(5, y, 0x18181a);
+      ic.set(10, y, 0x18181a);
+    }
+    ic.line(5, 4, 7, 2, 0x18181a);
+    ic.line(10, 4, 8, 2, 0x18181a);
+    ic.set(6, 3, 0x3a3a40);
+    ic.set(9, 3, 0x3a3a40);
+    ic.rect(5, 13, 5, 15, 0xc87a3a);
+    ic.rect(10, 13, 10, 15, 0xc87a3a);
+    ic.set(4, 8, 0x3a3a40);
+  },
+  iron_filings(ic, rng) {
+    // a small drift of filed iron: grey slivers, some bright where they caught the light
+    for (let i = 0; i < 26; i++) {
+      const x = 2 + Math.floor(rng() * 12);
+      const y = 6 + Math.floor(rng() * 8);
+      const c = rng() < 0.3 ? 0xb8bcc4 : rng() < 0.5 ? 0x5a5e66 : 0x7a7e86;
+      ic.set(x, y, c);
+      ic.set(x + (rng() < 0.5 ? 1 : 0), y + 1, tone(c, -0.25));
+    }
+    ic.rect(4, 11, 11, 13, 0x6a6e76);
+    ic.set(7, 10, 0xd8dce4);
+  },
   handbook(ic, rng) {
     // §14 the Survival Handbook: a small leather-bound field book tied with cord, a hex burned into its cover
     const page = (i) => (i & 1 ? 0xf3ead2 : 0xc4b48c);
