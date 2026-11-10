@@ -1,11 +1,14 @@
-// Caelancraft — Zombies: night mobs built from four hexagonal-prism blocks. See src/CONTRACTS.md §39. Pure (no DOM, no
-// three).
+// Caelancraft — Zombies: night mobs, cartoon shamblers in three kinds (walker, runner, alpha). See src/CONTRACTS.md §39
+// and §61. Pure (no DOM, no three).
 //
 // A zombie is a body (physics.createBody, ZOMBIE_RADIUS × ZOMBIE_HEIGHT, ZOMBIE_MASS) driven by a small AI through the
 // same stepPlayer physics as the player and the pigs, so it slides along honeycomb walls, hops one-cell ledges, swims,
 // feels black holes and water currents (world.pullAt) and takes part in resolveBodies (bodies.js). It is a little
-// narrower than the player, so it fits through the same one-cell, two-high doorways. The renderer draws it as two
-// feet side by side, a torso on them and a head on top (zombieRenderer.js).
+// narrower than the player, so it fits through the same one-cell, two-high doorways. The renderer draws it as a cartoon
+// zombie: legs, a hunched torso, arms out in front and a big lolling head (zombieRenderer.js).
+// v0.10 kinds: most are walkers; RUNNER_P of the natural spawns are runners (they sprint, and go down in 3 hits); and when a
+// runner is in a horde (HORDE_SIZE zombies within HORDE_RADIUS) it may become the one alpha (12 hits, harder strikes, it
+// rallies the walkers near it to full speed).
 //
 // Zombies only come out at night (natural spawning around the player, never near a campfire, never in a column the
 // player has built in), shamble about, and chase a player they can see who is on foot and not far above them: straight
@@ -38,6 +41,7 @@ import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js'
  *   burn: number, smoking: boolean, exposed: boolean, sunIn: number, fireIn: number,
  *   fireX: number, fireY: number, fireZ: number,
  *   detour: number, detourYaw: number, side: 1|-1, stuck: number, tilt: number, wallSinceAim: boolean,
+ *   kind: 'walker'|'runner'|'alpha', rallied: boolean,
  * }} Zombie
  * `walkPhase` advances with distance walked (the renderer swings the feet with it); `swing` counts down after an
  * attack (the renderer lurches the torso); `burn` is seconds spent in open daylight (burns away at ZOMBIE_BURN_S) and
@@ -74,7 +78,56 @@ import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js'
  * @property {Zombie[]} scorched    stepped into a campfire and hopped out (one hit)
  * @property {Zombie[]} spawned     placed by natural spawning this frame
  * @property {number} despawned     removed for being farther than ZOMBIE_DESPAWN_DIST from the player
+ * @property {Zombie[]} alphas      v0.10: a runner in a horde became the alpha this frame
  */
+
+// ---- v0.10 kinds (CONTRACTS §61) -----------------------------------------------------------------------------------
+
+/** The kinds of zombie: the common walker, the rarer runner, and the ultra-rare alpha a horde raises from a runner. */
+export const ZOMBIE_KINDS = Object.freeze(['walker', 'runner', 'alpha']);
+/**
+ * Per kind: `chase` the forward input while chasing (×WALK_SPEED, or ×SPRINT_SPEED with `sprint`), `factor` a speed factor
+ * on top (physics speedFactor), `hits` the hits that knock it out, `damage` the strike's damage multiplier (main scales
+ * ZOMBIE_DAMAGE), `groan` the groan interval's multiplier, `drops` how many times main rolls its drops.
+ */
+export const KIND_STATS = Object.freeze({
+  walker: Object.freeze({ chase: ZOMBIE_CHASE_SPEED, sprint: false, factor: 1, hits: ZOMBIE_HITS, damage: 1, groan: 1, drops: 1 }),
+  runner: Object.freeze({ chase: 1, sprint: true, factor: 0.95, hits: 3, damage: 1, groan: 0.7, drops: 1 }),
+  alpha: Object.freeze({ chase: 1, sprint: false, factor: 0.97, hits: 12, damage: 1.75, groan: 1.4, drops: 3 }),
+});
+/** A natural spawn is a runner with this chance (else a walker). */
+export const RUNNER_P = 0.12;
+/** Zombies (the runner too) within HORDE_RADIUS of a runner, at least HORDE_SIZE of them, are a horde … */
+export const HORDE_RADIUS = 10;
+export const HORDE_SIZE = 6;
+/** … checked every HORDE_CHECK_S; then, with ALPHA_CONVERT_P per check, the runner becomes the alpha. At most ALPHA_MAX. */
+export const HORDE_CHECK_S = 2;
+export const ALPHA_CONVERT_P = 0.03;
+export const ALPHA_MAX = 1;
+/** Walkers within ALPHA_RALLY of an alpha chase at full walking speed (it rallies the horde). */
+export const ALPHA_RALLY = 14;
+/** A knock (blast) must be this many times ZOMBIE_KO_KNOCK to knock an alpha out at once. */
+export const ALPHA_KO_KNOCK = 1.6;
+
+/** An alpha's roar when a horde raises it (audio.playRecipe data). */
+export const SOUND_ROAR = Object.freeze({
+  dur: 1.1, gain: 0.55, layers: [
+    { type: 'saw', f0: 120, f1: 70, lp: [900, 300], gain: 0.7, attack: 0.08, decay: 0.95, lfoHz: 9, lfoDepth: 0.25 },
+    { type: 'saw', f0: 182, f1: 104, lp: 1200, gain: 0.35, attack: 0.1, decay: 0.9 },
+    { type: 'noise', f0: 0, bp: [700, 250], q: 1.2, gain: 0.4, attack: 0.05, decay: 0.8 },
+  ],
+});
+
+/** @param {*} zb @returns {'walker'|'runner'|'alpha'} */
+export function kindOf(zb) {
+  const k = zb && zb.kind;
+  return k === 'runner' || k === 'alpha' ? k : 'walker';
+}
+
+/** @param {*} zb the kind's stats (KIND_STATS) */
+export function statsOf(zb) {
+  return KIND_STATS[kindOf(zb)];
+}
 
 const TWO_PI = Math.PI * 2;
 /** A zombie in daylight looks up its column this often (s); the first look after dusk → dawn is immediate. */
@@ -180,7 +233,9 @@ export class Zombies {
     /** seconds to the next natural spawn attempt (counts only at night) */
     this._spawnIn = 6;
     /** @type {ZombieEvents} */
-    this.events = { attacks: [], groans: [], ignited: [], burned: [], knockedOut: [], scorched: [], spawned: [], despawned: 0 };
+    this.events = { attacks: [], groans: [], ignited: [], burned: [], knockedOut: [], scorched: [], spawned: [], despawned: 0, alphas: [] };
+    /** seconds to the next horde check (v0.10) */
+    this._hordeIn = HORDE_CHECK_S;
     /** @type {Set<object>} scratch: bodies some zombie stood on at the end of last frame */
     this._carriers = new Set();
     this._fires = true;
@@ -218,10 +273,10 @@ export class Zombies {
   }
 
   /**
-   * Add a zombie standing at feet (x, y, z) facing `yaw`. @returns {Zombie|null} null when switched off, at
-   * ZOMBIE_MAX, or for a non-finite position
+   * Add a zombie of `kind` (default a walker; anything else is one) standing at feet (x, y, z) facing `yaw`.
+   * @returns {Zombie|null} null when switched off, at ZOMBIE_MAX, or for a non-finite position
    */
-  spawn(x, y, z, yaw = 0) {
+  spawn(x, y, z, yaw = 0, kind = 'walker') {
     if (!this._enabled || this.list.length >= ZOMBIE_MAX || !Number.isFinite(x + y + z + yaw)) return null;
     const zb = /** @type {Zombie} */ (Object.assign(createBody(x, y, z, { radius: ZOMBIE_RADIUS, height: ZOMBIE_HEIGHT, mass: ZOMBIE_MASS }), {
       id: this._nextId++,
@@ -249,6 +304,8 @@ export class Zombies {
       stuck: 0,
       tilt: (this._rng() * 2 - 1) * 0.28,
       wallSinceAim: false,
+      kind: kindOf({ kind }),
+      rallied: false,
     }));
     this.list.push(zb);
     return zb;
@@ -279,6 +336,7 @@ export class Zombies {
     ev.scorched.length = 0;
     ev.spawned.length = 0;
     ev.despawned = 0;
+    ev.alphas.length = 0;
     if (!(dt > 0)) return ev;
     const player = world.player ?? null;
     const getBlock = world.getBlock;
@@ -351,8 +409,12 @@ export class Zombies {
       const near = chasing && player !== null && Math.hypot(player.x - zb.x, player.z - zb.z) < 0.35; // right under / on top
       const moving = zb.mode !== 'idle' && zb.hurt <= 0 && !near && Math.abs(wrapAngle(zb.targetYaw - zb.yaw)) < MOVE_CONE;
       const brisk = zb.mode === 'chase' || zb.mode === 'avoid';
-      input.forward = moving ? (brisk ? ZOMBIE_CHASE_SPEED : 1) : 0;
+      const st = statsOf(zb);
+      // A walker chases at ZOMBIE_CHASE_SPEED (full walking speed near an alpha), a runner sprints, an alpha walks briskly.
+      input.forward = moving ? (brisk ? (zb.rallied && st.chase < 1 ? 1 : st.chase) : 1) : 0;
       input.sneak = moving && !brisk; // a wandering zombie shambles at sneak speed (1.31 m/s)
+      input.sprint = moving && brisk && st.sprint;
+      input.speedFactor = brisk ? st.factor : 1;
       // In water it always paddles up (it floats; pressing into a bank gives SWIM_EXIT_JUMP); on land it hops only a
       // one-cell ledge straight ahead with room for its height.
       const ledge = moving && zb.hitWall && canHop && this._ledgeAhead(zb, getBlock);
@@ -414,9 +476,14 @@ export class Zombies {
 
       zb.groanIn -= dt;
       if (zb.groanIn <= 0) {
-        zb.groanIn = zb.mode === 'chase' ? 3 + this._rng() * 5 : 6 + this._rng() * 10;
+        zb.groanIn = (zb.mode === 'chase' ? 3 + this._rng() * 5 : 6 + this._rng() * 10) * statsOf(zb).groan;
         ev.groans.push(zb);
       }
+    }
+    this._hordeIn -= dt;
+    if (this._hordeIn <= 0) {
+      this._hordeIn = HORDE_CHECK_S;
+      this._hordeCheck(ev);
     }
     return ev;
   }
@@ -677,7 +744,7 @@ export class Zombies {
   hit(zb, fromX, fromZ, power = 1) {
     if (zb.hurt > 0) return null;
     zb.hits += typeof power === 'number' && power > 0 && Number.isFinite(power) ? power : 1;
-    if (zb.hits >= ZOMBIE_HITS) {
+    if (zb.hits >= statsOf(zb).hits) {
       this.remove(zb);
       return 'ko';
     }
@@ -707,7 +774,7 @@ export class Zombies {
    * @returns {'hit'|'ko'}
    */
   knock(zb, vx, vy, vz) {
-    if (Math.hypot(vx, vy, vz) >= ZOMBIE_KO_KNOCK) {
+    if (Math.hypot(vx, vy, vz) >= ZOMBIE_KO_KNOCK * (kindOf(zb) === 'alpha' ? ALPHA_KO_KNOCK : 1)) {
       this.remove(zb);
       return 'ko';
     }
@@ -718,7 +785,7 @@ export class Zombies {
     if (zb.hurt <= 0) {
       zb.hits++;
       zb.hurt = ZOMBIE_HURT_S;
-      if (zb.hits >= ZOMBIE_HITS) {
+      if (zb.hits >= statsOf(zb).hits) {
         this.remove(zb);
         return 'ko';
       }
@@ -766,6 +833,38 @@ export class Zombies {
   }
 
   /**
+   * v0.10 hordes (CONTRACTS §61): mark the walkers an alpha rallies; then, while fewer than ALPHA_MAX alphas are about, a
+   * runner with at least HORDE_SIZE zombies (itself too) within HORDE_RADIUS becomes the alpha with ALPHA_CONVERT_P.
+   * @param {ZombieEvents} ev
+   */
+  _hordeCheck(ev) {
+    const list = this.list;
+    let alphas = 0;
+    for (const zb of list) {
+      zb.rallied = false;
+      if (zb.kind === 'alpha') alphas++;
+    }
+    if (alphas > 0) {
+      for (const a of list) {
+        if (a.kind !== 'alpha') continue;
+        for (const zb of list) if (zb !== a && Math.hypot(zb.x - a.x, zb.y - a.y, zb.z - a.z) <= ALPHA_RALLY) zb.rallied = true;
+      }
+    }
+    if (alphas >= ALPHA_MAX) return;
+    for (const zb of list) {
+      if (zb.kind !== 'runner') continue;
+      let n = 0;
+      for (const o of list) if (Math.hypot(o.x - zb.x, o.y - zb.y, o.z - zb.z) <= HORDE_RADIUS) n++;
+      if (n < HORDE_SIZE) continue;
+      if (this._rng() >= ALPHA_CONVERT_P) continue;
+      zb.kind = 'alpha';
+      zb.hits = 0;
+      ev.alphas.push(zb);
+      return;
+    }
+  }
+
+  /**
    * One natural spawn attempt: 1 zombie (sometimes 2, the second near the first) on natural ground between
    * ZOMBIE_SPAWN_MIN and ZOMBIE_SPAWN_MAX (horizontally) from the player, within ZOMBIE_SPAWN_TRIES columns.
    * @param {PlayerState} player
@@ -797,7 +896,7 @@ export class Zombies {
       const fy = this.spawnHeightAt(world, q, r);
       if (fy === null) continue;
       const yaw = wrapAngle(yawToward(cx, cz, player.x, player.z) + (this._rng() * 2 - 1) * Math.PI * 0.5);
-      const zb = this.spawn(cx, fy, cz, yaw);
+      const zb = this.spawn(cx, fy, cz, yaw, this._rng() < RUNNER_P ? 'runner' : 'walker');
       if (!zb) break;
       this.events.spawned.push(zb);
       if (placed === 0) {

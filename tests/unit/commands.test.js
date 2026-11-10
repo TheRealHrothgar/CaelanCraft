@@ -118,8 +118,8 @@ describe('command table', () => {
     }
     expect(names).toEqual(expect.arrayContaining(['help', 'tp', 'tpw', 'setblock', 'fill', 'hexfill', 'hexring', 'time', 'say', 'run', 'wait', 'stop', 'stopall', 'runes', 'rune']));
     expect(COMMANDS.filter((c) => c.scriptOnly).map((c) => c.name).sort()).toEqual(['stop', 'wait']);
-    // v0.9: `mode` is the only console-only command, and no command is both
-    expect(COMMANDS.filter((c) => c.consoleOnly).map((c) => c.name)).toEqual(['mode']);
+    // v0.9: `mode` is console-only, and v0.10's drop / throw (they move the player's own items); no command is both
+    expect(COMMANDS.filter((c) => c.consoleOnly).map((c) => c.name)).toEqual(['mode', 'drop', 'throw']);
     expect(COMMANDS.filter((c) => c.scriptOnly && c.consoleOnly)).toEqual([]);
     expect(names).toEqual(expect.arrayContaining(['mode', 'vitals', 'pack', 'items']));
     expect(HELP_FOOTER).toHaveLength(3);
@@ -788,7 +788,7 @@ describe('executeCommand — summon / pigs', () => {
     const { ctx } = makeCtx();
     expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining('pigs are not available') });
     ctx.pigs = new Pigs();
-    expect(parseLine('summon cow')).toEqual({ line: 1, message: 'summon: expected one of pig, zombie, watcher, got "cow" — usage: summon pig|zombie|watcher [q y r]' });
+    expect(parseLine('summon cow')).toEqual({ line: 1, message: 'summon: expected one of pig, zombie, runner, alpha, watcher, got "cow" — usage: summon pig|zombie|runner|alpha|watcher [q y r]' });
     expect(exec(ctx, 'summon pig 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
     expect(exec(ctx, 'summon pig 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
     for (let i = 0; i < PIG_MAX; i++) ctx.pigs.spawn(0, FEET, 0);

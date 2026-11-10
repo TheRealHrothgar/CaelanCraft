@@ -43,7 +43,7 @@ import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
 import {
   BLOCK, BIOME, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid, isTargetable,
-  isWaterSource, isWater,
+  isWaterSource, isWater, isMeshed, isLiquid,
 } from './blocks.js';
 import { normalizeSeed } from './noise.js';
 import { World } from './world.js';
@@ -77,9 +77,9 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky } from './zombies.js';
+import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST } from './survival.js';
-import { Pack, slotClick, returnCursor } from './inventory.js';
+import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory.js';
 import { Containers } from './containers.js';
 import {
   breakSeconds, rollDrops, harvestHint, handGatherHint, canHarvest, pick, Tapped, Regrowth, rollMobDrops, ripeOf, isDeep,
@@ -94,7 +94,11 @@ import { heatSource, heatAt, groundChillOf, isSaltyBiome, bodyTarget, CHEST_HEIG
 import { softLandingFactor, knockDamage, crushDamage } from './vitals.js';
 import { getItem, itemName, itemForBlock, maxDurability } from './items.js';
 import { createPackUI, demoPackView } from './packUI.js';
-import { createItemIcons } from './itemIcons.js';
+import { createItemIcons, iconBlockFor } from './itemIcons.js';
+import { createLooseItemRenderer } from './looseItemRenderer.js';
+import {
+  LooseItems, throwOf, DART_KEYS, DART_BREAK_P, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
+} from './looseItems.js';
 import { createZombieRenderer } from './zombieRenderer.js';
 import { Watcher, WATCHER_HEIGHT } from './watcher.js';
 import { createWatcherRenderer } from './watcherRenderer.js';
@@ -317,7 +321,7 @@ export function physicsMenuStateFor(blockPhysics, inSurvival) {
 /**
  * The four survival save fields (§1.4, §9.5 buildSaveData). A world that never entered Survival writes none of them, so its
  * save stays version 2 and byte-identical to before.
- * @param {{ gen: number, survival: Survival, pack: Pack, fireSlots: FireSlots, containers: Containers }} s
+ * @param {{ gen: number, survival: Survival, pack: Pack, fireSlots: FireSlots, containers: Containers, loose?: LooseItems }} s
  * @returns {{ gen?: number, mode?: 'creative'|'survival', survival?: object, containers?: object }}
  */
 export function survivalSaveFields(s) {
@@ -327,6 +331,9 @@ export function survivalSaveFields(s) {
   if (s.survival.hasState) {
     out.mode = s.survival.mode;
     out.survival = { ...s.survival.export(), ...s.pack.export(), fires: s.fireSlots.export() };
+    // v0.10 (§60): the items lying loose in the world, only when there are any
+    const loose = s.loose ? s.loose.serialize() : [];
+    if (loose.length > 0) out.survival.loose = loose;
   }
   if (s.containers.size > 0) out.containers = s.containers.export();
   return out;
@@ -977,6 +984,8 @@ export function boot(win, doc) {
   let renderer;
   /** @type {import('./fallingRenderer.js').FallingRenderer} */
   let fallingRenderer;
+  /** @type {import('./looseItemRenderer.js').LooseItemRenderer} */
+  let looseRenderer;
   /** @type {import('./particles.js').Particles} */
   let particles;
   /** @type {import('./pigRenderer.js').PigRenderer} */
@@ -1020,6 +1029,7 @@ export function boot(win, doc) {
     watcherRenderer = createWatcherRenderer(renderer.three.scene, atlasTexture);
     campfireRenderer = createCampfireRenderer(renderer.three.scene, { makeCanvas: () => doc.createElement('canvas') });
     fallingRenderer = createFallingRenderer(renderer.three.scene, atlasTexture);
+    looseRenderer = createLooseItemRenderer(renderer.three.scene, createItemIcons(doc, atlasCanvas));
     particles = createParticles(renderer.three.scene);
     // v0.10: the vortices and the circuit wiring (neither adds a light).
     vortexRenderer = createVortexRenderer(renderer.three.scene);
@@ -1443,6 +1453,8 @@ export function boot(win, doc) {
   const survival = new Survival();
   const pack = new Pack();
   const containers = new Containers();
+  /** v0.10 (§60): drops flying to the player, and items thrown, dropped or lying on the ground */
+  const loose = new LooseItems();
   const fireSlots = new FireSlots();
   const regrowth = new Regrowth();
   const tapped = new Tapped();
@@ -1686,7 +1698,7 @@ export function boot(win, doc) {
     const releasedSpots = fireSlots.onBlockChange(q, y, r, prev, next);
     regrowth.onBlockChange(q, y, r, prev, next);
     if (releaseToPack && (releasedItems.length > 0 || releasedSpots.length > 0)) {
-      giveStacks([...releasedItems, ...releasedSpots], screenPointOfCell(q, y, r));
+      flyFromCell([...releasedItems, ...releasedSpots], q, y, r);
     }
     // Last, so physics triggers see the trackers already updated.
     if (blockPhysics) blockPhysics.onBlockChange(q, y, r, prev, next);
@@ -1801,6 +1813,7 @@ export function boot(win, doc) {
         return circuits ?? undefined;
       },
       blackHoles,
+      hands: { act: (kind, n) => handAction(kind, n) }, // v0.10 (§60): drop / throw
     };
     return c;
   }
@@ -2093,6 +2106,7 @@ export function boot(win, doc) {
     }
     if (!playerSetBlock(h.q, h.y, h.r, BLOCK.AIR)) return false;
     audio.playBreak(getBlockDef(h.blockId).soundGroup);
+    ghostFromCell(h.blockId, h.q, h.y, h.r); // §60: Creative shows the block flying to the player, nothing more
     updateHit();
     return true;
   }
@@ -2213,11 +2227,6 @@ export function boot(win, doc) {
     return projectToScreen(renderer.three.camera, x, y + 0.5, z, win.innerWidth, win.innerHeight);
   }
 
-  /** @returns {{x: number, y: number}|null} */
-  function screenPointOfBody(b) {
-    return projectToScreen(renderer.three.camera, b.x, b.y + 0.5, b.z, win.innerWidth, win.innerHeight);
-  }
-
   /**
    * Give stacks to the pack (§5.3): each flies to its slot as a hex token from `from`; what does not fit is left behind with
    * one throttled chat line. @returns {ItemStack[]} what did not fit
@@ -2241,6 +2250,235 @@ export function boot(win, doc) {
     if (fxTime - leftBehindAt < 2) return;
     leftBehindAt = fxTime;
     logLine(leftBehindText(stacks));
+  }
+
+  // ---- v0.10 loose items (§60): drops fly to the player; throw and drop ----------------------------------------
+
+  /** The block a loose stack is drawn as (a block item's meshed block: the ripe bush for the bush items), else −1. */
+  function looseBlockOf(key) {
+    const def = getItem(key);
+    if (!def || def.kind !== 'block') return -1;
+    const id = iconBlockFor(key);
+    return id > 0 && isMeshed(id) ? id : -1;
+  }
+
+  /** What a dig, a pick or a kill gives: each stack hops out of (x, y, z) and flies to the player (it enters the pack there). */
+  function flyStacks(stacks, x, y, z) {
+    for (const s of stacks) if (s && s.n > 0) loose.spawnDrop(s, x, y, z, { block: looseBlockOf(s.k) });
+  }
+
+  /** flyStacks from a cell's centre. */
+  function flyFromCell(stacks, q, y, r) {
+    const [x, z] = hexToWorld(q, r);
+    flyStacks(stacks, x, y + 0.5, z);
+  }
+
+  /** Creative: the broken block flies to the player as a ghost (nothing is given). */
+  function ghostFromCell(id, q, y, r) {
+    if (isLiquid(id)) return;
+    const key = itemForBlock(id);
+    const block = isMeshed(id) ? id : -1;
+    if (!key && block < 0) return;
+    const [x, z] = hexToWorld(q, r);
+    loose.spawnDrop({ k: key ?? '', n: 1 }, x, y + 0.5, z, { block, ghost: true });
+  }
+
+  /** Window pixels the HUD token starts from when a loose item reaches the player (just below the crosshair). */
+  function pickupFrom() {
+    return { x: win.innerWidth / 2, y: win.innerHeight * 0.62 };
+  }
+
+  /** A real loose item crossed the player's threshold: into the pack. @returns {ItemStack|null} what did not fit */
+  function collectLoose(it) {
+    const s = it.s;
+    const left = pack.add(s);
+    const got = s.n - (left ? left.n : 0);
+    if (got > 0) {
+      hud.addPickup(s.k, got, pickupFrom());
+      audio.playRecipe(SOUND_PICKUP, 0.6);
+    }
+    if (left) leftBehind([left]);
+    return left;
+  }
+
+  /** What a knocked-out zombie gives: its drops rolled once, an alpha's three times (§61). */
+  function zombieDrops(zb) {
+    const out = [];
+    for (let i = 0; i < statsOf(zb).drops; i++) out.push(...rollMobDrops('zombie', Math.random));
+    return out;
+  }
+
+  /** The first zombie or pig a thrown item's path (x0 → x1) enters. */
+  function looseHitMob(x0, y0, z0, x1, y1, z1) {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const dz = z1 - z0;
+    const len = Math.hypot(dx, dy, dz);
+    if (!(len > 1e-6)) return null;
+    const zh = zombies.raycast(x0, y0, z0, dx / len, dy / len, dz / len, len);
+    const ph = pigs.raycast(x0, y0, z0, dx / len, dy / len, dz / len, len);
+    if (zh && (!ph || zh.distance <= ph.distance)) return { kind: 'zombie', mob: zh.zombie };
+    if (ph) return { kind: 'pig', mob: ph.pig };
+    return null;
+  }
+
+  /**
+   * A thrown item hit a mob with its power: a zombie counts it as hits, a pig is wounded in Survival (shoved in Creative).
+   * A dart may break; a spear takes 1 wear. @returns {boolean} the item broke
+   */
+  function looseOnHit(it, target) {
+    const fromX = it.x - it.vx;
+    const fromZ = it.z - it.vz;
+    const real = survival.inSurvival && !it.ghost;
+    audio.playRecipe(SOUND_THUNK, 0.8);
+    if (target.kind === 'zombie') {
+      const zb = target.mob;
+      const res = zombies.hit(zb, fromX, fromZ, it.power);
+      if (res === 'ko') {
+        zombieGone(zb, 'ko');
+        if (real) flyStacks(zombieDrops(zb), zb.x, zb.y + ZOMBIE_HEIGHT / 2, zb.z);
+      } else if (res === 'hit') {
+        audio.playZombieHurt(1);
+      }
+    } else {
+      const pig = target.mob;
+      if (real) {
+        const res = pigs.wound(pig, it.power, fromX, fromZ);
+        if (res === 'dead') {
+          particles.emit('dust', pig.x, pig.y + 0.45, pig.z, 22, { color: [0.66, 0.57, 0.57], spread: 0.45 });
+          audio.playSqueal(1);
+          flyStacks(rollMobDrops('pig', Math.random), pig.x, pig.y + 0.45, pig.z);
+        } else if (res === 'hit') {
+          audio.playSqueal(1);
+        }
+      } else if (pigs.hit(pig, fromX, fromZ)) {
+        audio.playSqueal();
+      }
+    }
+    if (!real) return false;
+    if (DART_KEYS.includes(it.s.k) && Math.random() < DART_BREAK_P) return true;
+    const max = maxDurability(it.s.k);
+    if (max > 0) {
+      const d = (it.s.d ?? max) - 1;
+      if (d <= 0) {
+        toolBroke(it.s.k);
+        return true;
+      }
+      it.s.d = d;
+    }
+    return false;
+  }
+
+  /** @type {import('./looseItems.js').LooseEnv} */
+  const looseEnv = {
+    solid: (x, y, z) => {
+      if (!world) return false;
+      const [q, r] = worldToHex(x, z);
+      return isSolid(world.getBlock(q, Math.floor(y), r));
+    },
+    liquid: (x, y, z) => {
+      if (!world) return false;
+      const [q, r] = worldToHex(x, z);
+      return isLiquid(world.getBlock(q, Math.floor(y), r));
+    },
+    loaded: (x, z) => Boolean(world && world.hasChunkAt(x, z)),
+    player: null,
+    collect: collectLoose,
+    room: (st) => pack.canGive([...loose.inFlight(), { k: st.k, n: 1 }]),
+    hitMob: looseHitMob,
+    onHit: looseOnHit,
+    onLand: (it, speed) => {
+      if (speed > 5 && !it.ghost) audio.playRecipe(SOUND_THUNK, Math.min(0.6, speed / 20));
+    },
+  };
+
+  /** One step of the loose items: only Survival collects real items; ghosts fly in either mode. */
+  function stepLoose(dt) {
+    if (loose.count === 0) return;
+    looseEnv.player = player && !survival.dead ? player : null;
+    looseEnv.collect = survival.inSurvival ? collectLoose : null;
+    loose.step(dt, looseEnv);
+  }
+
+  /**
+   * Q / G and the drop / throw commands (§60): one item (or `n`, or 'all' for a drop) of the selected stack leaves the hand
+   * — dropped in front of the feet, or thrown where the crosshair points (throwOf: rocks sting, darts and spears hurt,
+   * anything else is chucked a short way). Creative throws a ghost of the hotbar block and takes nothing.
+   * @param {'drop'|'throw'} kind
+   * @param {number|'all'} n
+   * @returns {{ ok: boolean, message: string, loud?: boolean }}
+   */
+  function handAction(kind, n) {
+    if (!world || !player || survival.dead) return { ok: false, message: 'not now' };
+    const SV = survival.inSurvival;
+    /** @type {ItemStack} */
+    let part;
+    let block;
+    if (SV) {
+      const s = pack.slots[selected];
+      if (!s) return { ok: false, message: 'nothing in hand' };
+      if (isKept(s)) return { ok: false, message: KEEP_REFUSED, loud: true };
+      const want = n === 'all' ? s.n : Math.max(1, Math.min(s.n, Math.floor(n)));
+      part = { k: s.k, n: want };
+      if (s.d !== undefined) part.d = s.d;
+      block = looseBlockOf(s.k);
+    } else {
+      const id = hotbar[selected];
+      const key = id ? itemForBlock(id) : null;
+      if (!key) return { ok: false, message: 'nothing in hand' };
+      part = { k: key, n: 1 };
+      block = isMeshed(id) ? id : -1;
+    }
+    const yaw = controls.yaw;
+    const pitch = controls.pitch;
+    const cp = Math.cos(pitch);
+    const dx = -Math.sin(yaw) * cp;
+    const dy = Math.sin(pitch);
+    const dz = -Math.cos(yaw) * cp;
+    const eyeY = player.y + getEyeHeight(player);
+    const count = kind === 'throw' ? part.n : 1; // a throw sends its items one by one, a drop lets the stack go at once
+    const per = kind === 'throw' ? { ...part, n: 1 } : part;
+    for (let i = 0; i < count; i++) {
+      let x;
+      let y;
+      let z;
+      let vx;
+      let vy;
+      let vz;
+      let power = 0;
+      if (kind === 'throw') {
+        const t = throwOf(per.k);
+        power = t.power;
+        const spread = count > 1 ? 0.06 : 0;
+        const ax = dx + (Math.random() - 0.5) * spread;
+        const ay = dy + (Math.random() - 0.5) * spread;
+        const az = dz + (Math.random() - 0.5) * spread;
+        x = player.x + dx * 0.35;
+        y = eyeY - 0.1 + dy * 0.35;
+        z = player.z + dz * 0.35;
+        vx = ax * t.speed + (player.vx || 0);
+        vy = ay * t.speed + 1.5;
+        vz = az * t.speed + (player.vz || 0);
+      } else {
+        const fl = Math.hypot(dx, dz) || 1;
+        x = player.x + (dx / fl) * 0.35;
+        y = player.y + 1.1;
+        z = player.z + (dz / fl) * 0.35;
+        vx = (dx / fl) * DROP_SPEED;
+        vy = 2;
+        vz = (dz / fl) * DROP_SPEED;
+      }
+      if (looseEnv.solid(x, y, z)) {
+        x = player.x;
+        y = eyeY - 0.1;
+        z = player.z;
+      }
+      loose.launch(per, x, y, z, vx, vy, vz, { block, ghost: !SV, power });
+    }
+    if (SV) pack.consume(selected, part.n);
+    audio.playRecipe(SOUND_THROW, kind === 'throw' ? 0.7 : 0.35);
+    const what = `${part.n} ${itemName(part.k)}`;
+    return { ok: true, message: kind === 'throw' ? `threw ${what}` : `dropped ${what}` };
   }
 
   /** Put one `key` into the selected slot when it is empty (a drunk pot comes back into the hand), else anywhere. */
@@ -2307,6 +2545,7 @@ export function boot(win, doc) {
    * from the frame's checkpoints.
    */
   function die(cause) {
+    loose.release(); // §60: what was flying to the player falls where it is
     // 1. The screen open over the running world: the pack screen (its cursor stack goes back first; overflow is lost), the
     // field book, or the device panel (its label flushes as it closes; its key capture goes with it).
     const open = screenClosedOnDeath(state);
@@ -2472,6 +2711,7 @@ export function boot(win, doc) {
       craftQueue.clear();
       pendingDeath = null;
       if (state === STATE.PACK) closePack();
+      loose.release(); // §60: Creative collects nothing; real items wait on the ground for Survival
     }
     resetSurvivalInput();
     updateHit();
@@ -2770,12 +3010,12 @@ export function boot(win, doc) {
     const natural = !world.hasEdit(q, y, r);
     const res = pick(id, { natural, knifeInPack: pack.hasTool('knife', KNIFE_TIER) }, Math.random);
     if (!res) return;
-    if (!pack.canGive(res.drops)) {
+    if (!pack.canGive([...loose.inFlight(), ...res.drops])) {
       showHint(HINT.packFull);
       return;
     }
     if (!playerSetBlock(q, y, r, res.to)) return;
-    giveStacks(res.drops, screenPointOfCell(q, y, r));
+    flyFromCell(res.drops, q, y, r);
     audio.playPick();
     const [x, z] = hexToWorld(q, r);
     if (id === BLOCK.LOOSE_STONES) particles.emit('dust', x, y + 0.2, z, 4, { color: [0.55, 0.53, 0.5], spread: 0.3 });
@@ -2855,7 +3095,7 @@ export function boot(win, doc) {
     const held = [...containers.contents(h.q, h.y, h.r)];
     const view = id === BLOCK.CAMPFIRE || id === BLOCK.FIRE_PIT ? fireSlots.view(h.q, h.y, h.r) : null;
     if (view) for (const s of view.spots) if (s) held.push({ k: s.k, n: 1 });
-    if (!pack.canGive([...drops, ...held])) {
+    if (!pack.canGive([...loose.inFlight(), ...drops, ...held])) {
       digPackFull = true; // the dig stays complete and finishes as soon as there is room (§6.1 step 3)
       return;
     }
@@ -2872,7 +3112,7 @@ export function boot(win, doc) {
     digPackFull = false;
     if (!ok) return;
     audio.playBreak(getBlockDef(id).soundGroup);
-    giveStacks(drops, screenPointOfCell(h.q, h.y, h.r));
+    flyFromCell(drops, h.q, h.y, h.r);
     wearSelectedTool('dig');
     updateHit();
   }
@@ -2885,7 +3125,7 @@ export function boot(win, doc) {
       const res = zombies.hit(zb, player.x, player.z, strikeKind('zombie', tool).power);
       if (res === 'ko') {
         zombieGone(zb, 'ko');
-        giveStacks(rollMobDrops('zombie', Math.random), screenPointOfBody(zb));
+        flyStacks(zombieDrops(zb), zb.x, zb.y + ZOMBIE_HEIGHT / 2, zb.z);
       } else if (res === 'hit') {
         audio.playZombieHurt(1);
       }
@@ -2901,7 +3141,7 @@ export function boot(win, doc) {
       if (res === 'dead') {
         particles.emit('dust', pig.x, pig.y + 0.45, pig.z, 22, { color: [0.66, 0.57, 0.57], spread: 0.45 });
         audio.playSqueal(1);
-        giveStacks(rollMobDrops('pig', Math.random), screenPointOfBody(pig));
+        flyStacks(rollMobDrops('pig', Math.random), pig.x, pig.y + 0.45, pig.z);
       } else if (res === 'hit') {
         audio.playSqueal(1);
       }
@@ -3372,7 +3612,7 @@ export function boot(win, doc) {
       watcher: watcher.enabled, // the switch: the Watcher itself is a sighting, never saved (§40) …
       watcherNight: watcher.lastNight ?? undefined, // … and the night of its last natural sighting (none: not written)
       // v0.9 (§1.4): gen, mode, survival and containers, each only when there is something to say (storage orders them).
-      ...survivalSaveFields({ gen: world.gen, survival, pack, fireSlots, containers }),
+      ...survivalSaveFields({ gen: world.gen, survival, pack, fireSlots, containers, loose }),
       // v0.10 (DESIGN-circuits §6.4): the two switches and the configured parts (storage orders them after containers).
       blackholes: blackHoles.enabled,
       circuits: circuits ? circuits.enabled : true,
@@ -3671,6 +3911,7 @@ export function boot(win, doc) {
     for (const w of fireWarnings) console.warn('Caelancraft fires:', w);
     const containerWarnings = containers.load(restoring ? restoring.containers : null);
     for (const w of containerWarnings) console.warn('Caelancraft containers:', w);
+    loose.load(survival.hasState && restoring && restoring.survival ? restoring.survival.loose : null, looseBlockOf);
     regrowth.loadFromEdits(world.edits);
     tapped.clear();
     craftQueue.clear();
@@ -4416,6 +4657,9 @@ export function boot(win, doc) {
     // ---- v0.9 Survival (§9.5 GameContext) ----
     survival,
     pack,
+    // ---- v0.10 loose items (§60): the list, and Q / G ----
+    loose,
+    handAction: (kind, n = 1) => handAction(kind, n),
     /** Queue a mode switch (applied at the top of the next frame). */
     setMode(mode) {
       requestMode(mode);
@@ -4713,8 +4957,18 @@ export function boot(win, doc) {
     if (ev.attacks.length > 0) {
       hurtFlash = 1;
       audio.playThud(1);
-      // Survival (§2.4): each strike deals ZOMBIE_DAMAGE (zombies.js stays mode-agnostic; the push is unchanged).
-      if (survival.active) hurt(ZOMBIE_DAMAGE * ev.attacks.length, 'zombie');
+      // Survival (§2.4): each strike deals ZOMBIE_DAMAGE, an alpha's more (§61; zombies.js stays mode-agnostic).
+      if (survival.active) {
+        let dmg = 0;
+        for (const zb of ev.attacks) dmg += ZOMBIE_DAMAGE * statsOf(zb).damage;
+        hurt(Math.round(dmg), 'zombie');
+      }
+    }
+    // §61: a horde raised an alpha.
+    for (const zb of ev.alphas) {
+      logLine('A runner in the horde has turned alpha: bigger, tougher, and the others follow it.');
+      audio.playRecipe(SOUND_ROAR, Math.max(0.35, zombieVolume(zb)));
+      particles.emit('dust', zb.x, zb.y + 1, zb.z, 24, { color: [0.4, 0.12, 0.1], spread: 0.6 });
     }
     for (const zb of ev.groans) {
       const v = zombieVolume(zb);
@@ -4904,6 +5158,15 @@ export function boot(win, doc) {
     }
     if (controls.consumePressed('F3')) hud.toggleDebug();
     if (controls.consumePressed('KeyM')) hud.showSaveToast(audio.toggleMuted() ? 'Sound muted' : 'Sound on');
+    // §60: Q drops the item in hand (Shift: the whole stack), G throws one.
+    if (controls.consumePressed('KeyQ')) {
+      const res = handAction('drop', controls.isDown('ShiftLeft') || controls.isDown('ShiftRight') ? 'all' : 1);
+      if (!res.ok && res.loud) logLine(res.message);
+    }
+    if (controls.consumePressed('KeyG')) {
+      const res = handAction('throw', 1);
+      if (!res.ok && res.loud) logLine(res.message);
+    }
 
     const mouse = controls.consumeMouse();
     if (mouse.wheel !== 0) selectSlot(wheelSlot(selected, mouse.wheel));
@@ -4986,6 +5249,7 @@ export function boot(win, doc) {
     if (blockPhysics) blockPhysics.bodies(bodies);
     if (bodies.length > 1) resolveBodies(bodies, world.getBlock);
     const stuck = unstickPlayer();
+    stepLoose(dt); // §60: after the bodies moved, so a drop flies at where the player now is
     // §2.4 crush: falling ground lifted the player — not on a teleport frame, under fall grace, or on top of a knock.
     if (stuck.lifted > 0 && survival.active && !survival.fallGrace && !teleportFrame && !knockHurtThisFrame) {
       hurt(crushDamage(stuck.lifted), 'crush');
@@ -5038,6 +5302,13 @@ export function boot(win, doc) {
     }
     blackHoles.renderItems(pushMoving);
     infall.renderItems(pushMoving);
+    // §60: loose block items as small spinning cells; every other loose item is a picture (looseRenderer)
+    for (const it of loose.list) {
+      if (it.block < 0) continue;
+      const bob = it.mode === 'rest' ? 0.04 + 0.04 * Math.sin(fxTime * 3 + it.spin) : 0;
+      pushMoving(it.block, it.x, it.y + bob, it.z, 0.3, it.spin, 0.2, LOOSE_BLOCK_SCALE);
+    }
+    looseRenderer.sync(loose.list, fxTime, (it) => it.block >= 0);
     fallingRenderer.sync(movingItems, movingCount);
     circuitRenderer.syncMoving(movingItems, movingCount); // devices among them as models: the collapsar's copy, debris
     blackHoles.flash(bhFlash);

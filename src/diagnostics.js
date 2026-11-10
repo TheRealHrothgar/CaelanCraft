@@ -402,6 +402,7 @@ function refreshHandleRefs(handle, game) {
   handle.circuitStore = game ? game.circuitStore ?? null : null;
   handle.blackHoles = game ? game.blackHoles ?? null : null;
   handle.infall = game ? game.infall ?? null : null;
+  handle.loose = game ? game.loose ?? null : null; // v0.10 (CONTRACTS §60)
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;
@@ -470,6 +471,8 @@ export function installDebugHandle(win, game) {
     if (game && typeof game.selectSlot === 'function') game.selectSlot(i);
   };
   handle.digTargeted = (dt) => (game && typeof game.digTargeted === 'function' ? game.digTargeted(dt) : null);
+  // v0.10 (CONTRACTS §60): Q / G — drop or throw the item in hand
+  handle.handAction = (kind, n) => (game && typeof game.handAction === 'function' ? game.handAction(kind, n) : null);
   handle.useSelected = (dt) => (game && typeof game.useSelected === 'function' ? game.useSelected(dt) : null);
   handle.interact = () => {
     if (game && typeof game.interact === 'function') game.interact();

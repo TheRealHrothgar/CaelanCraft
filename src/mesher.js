@@ -16,7 +16,7 @@ import {
   SIDE_FACE_COUNT,
 } from './hex.js';
 import {
-  BLOCK, BIOME, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed, isWater, waterSurfaceHeight,
+  BLOCK, BIOME, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed, isWater, waterSurfaceHeight, getBlockShape,
 } from './blocks.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
@@ -92,6 +92,10 @@ const FREE_SURFACE = new Uint8Array(256);
 const WET = new Uint8Array(256);
 /** SURFACE[id] = waterSurfaceHeight(id, AIR): the free surface of a water cell with no water above it (§10.2 step 1). */
 const SURFACE = new Float64Array(256);
+/** SHAPE[id] (BlockDef.shape): 0 a hexagonal prism, SHAPE_CROSS three crossed pictures, SHAPE_DECAL a picture on the floor. */
+const SHAPE = new Uint8Array(256);
+const SHAPE_CROSS = 1;
+const SHAPE_DECAL = 2;
 
 for (let id = 0; id < 256; id++) {
   OPAQUE[id] = isOpaque(id) ? 1 : 0;
@@ -100,6 +104,8 @@ for (let id = 0; id < 256; id++) {
   FREE_SURFACE[id] = id === BLOCK.AIR || !isMeshed(id) ? 1 : 0;
   WET[id] = isWater(id) ? 1 : 0;
   SURFACE[id] = WET[id] ? waterSurfaceHeight(id, BLOCK.AIR) : 1;
+  const shape = getBlockShape(id);
+  SHAPE[id] = shape === 'cross' ? SHAPE_CROSS : shape === 'decal' ? SHAPE_DECAL : 0;
   for (let f = 0; f < FACE_COUNT; f++) {
     const uv = tileToUV(getFaceTile(id, f));
     const o = (id * FACE_COUNT + f) * 4;
@@ -517,6 +523,83 @@ function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb) {
   bld.faceCount += 1;
 }
 
+/** A crossed plant is three vertical pictures 60° apart through (about) the cell's middle … */
+export const CROSS_PLANES = 3;
+/** … each half this wide (the cell is 1 across its flats) and one cell tall, its bottom on the cell's floor … */
+export const CROSS_HALF_WIDTH = 0.48;
+/** … turned by a per-cell angle and moved off the centre by up to this, so a meadow is not a grid of identical tufts. */
+export const CROSS_JITTER = 0.05;
+/** The pictures darken toward their roots (a little grounding without real occlusion): bottom × this, top × 1. */
+export const CROSS_ROOT_SHADE = 0.72;
+/** A decal lies this far above the cell's floor (clear of the ground's top face, no z-fighting). */
+export const DECAL_Y = 0.02;
+
+/** Deterministic 0..1 from a world cell (the plants' jitter). */
+export function cellHash(q, r, salt = 0) {
+  let h = Math.imul(q | 0, 0x27d4eb2d) ^ Math.imul((r | 0) + salt * 0x9e3779b9, 0x165667b1);
+  h ^= h >>> 15;
+  h = Math.imul(h, 0x2c1b3c6d);
+  h ^= h >>> 12;
+  h = Math.imul(h, 0x297a2d39);
+  h ^= h >>> 15;
+  return (h >>> 0) / 4294967296;
+}
+
+/**
+ * A crossed plant (BlockDef.shape 'cross'): CROSS_PLANES vertical quads of the block's TOP tile through the cell's middle,
+ * 60° apart, turned and nudged per world cell (wq, wr) by cellHash. The cutout material is double-sided, so each plane is one
+ * quad seen from both sides. Normals point up, so the sun lights the plant like the ground it grows on.
+ */
+function emitCross(bld, wq, wr, ly, cx, cz, a, tr, tg, tb) {
+  bld.ensure(4 * CROSS_PLANES, 6 * CROSS_PLANES);
+  const positions = bld.positions;
+  const normals = bld.normals;
+  const uvs = bld.uvs;
+  const colors = bld.colors;
+  const indices = bld.indices;
+  const uo = (a * FACE_COUNT + FACE_TOP) * 4;
+  const u0 = FACE_UV[uo];
+  const v0 = FACE_UV[uo + 1];
+  const u1 = FACE_UV[uo + 2];
+  const v1 = FACE_UV[uo + 3];
+  const turn = cellHash(wq, wr) * (Math.PI / 3);
+  const ox = cx + (cellHash(wq, wr, 1) - 0.5) * 2 * CROSS_JITTER;
+  const oz = cz + (cellHash(wq, wr, 2) - 0.5) * 2 * CROSS_JITTER;
+  const shade = FACE_SHADE[FACE_TOP];
+  let b = bld.vertexCount;
+  let ib = bld.indexCount;
+  for (let p = 0; p < CROSS_PLANES; p++) {
+    const theta = turn + (p * Math.PI) / CROSS_PLANES;
+    const dx = Math.cos(theta) * CROSS_HALF_WIDTH;
+    const dz = Math.sin(theta) * CROSS_HALF_WIDTH;
+    for (let v = 0; v < 4; v++) {
+      const right = v === 1 || v === 2;
+      const top = v >= 2;
+      const p3 = (b + v) * 3;
+      positions[p3] = right ? ox + dx : ox - dx;
+      positions[p3 + 1] = top ? ly + 1 : ly;
+      positions[p3 + 2] = right ? oz + dz : oz - dz;
+      normals[p3] = 0;
+      normals[p3 + 1] = 1;
+      normals[p3 + 2] = 0;
+      const p2 = (b + v) * 2;
+      uvs[p2] = right ? u1 : u0;
+      uvs[p2 + 1] = top ? v0 : v1;
+      const col = shade * (top ? 1 : CROSS_ROOT_SHADE);
+      colors[p3] = col * tr;
+      colors[p3 + 1] = col * tg;
+      colors[p3 + 2] = col * tb;
+    }
+    indices[ib] = b; indices[ib + 1] = b + 1; indices[ib + 2] = b + 2;
+    indices[ib + 3] = b; indices[ib + 4] = b + 2; indices[ib + 5] = b + 3;
+    b += 4;
+    ib += 6;
+  }
+  bld.vertexCount = b;
+  bld.indexCount = ib;
+  bld.faceCount += CROSS_PLANES;
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------------------------------
@@ -569,6 +652,18 @@ export function buildChunkMesh(cq, cr, getChunkData) {
         const layer = LAYER[a];
         const bld = layer === 0 ? opaqueB : layer === 1 ? cutoutB : translucentB;
         const tintRow = a * FACE_COUNT;
+
+        // A plant is crossed pictures and ground litter a picture on the floor: never a hexagonal prism (no faces, no culling).
+        const shape = SHAPE[a];
+        if (shape !== 0) {
+          const t = TINTED[tintRow + FACE_TOP];
+          const tr = t ? tint[0] : 1;
+          const tg = t ? tint[1] : 1;
+          const tb = t ? tint[2] : 1;
+          if (shape === SHAPE_CROSS) emitCross(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, tr, tg, tb);
+          else emitHex(bld, FACE_TOP, pq, pr, ly, cx, cz, DECAL_Y, a, tr, tg, tb);
+          continue;
+        }
 
         for (let f = 0; f < SIDE_FACE_COUNT; f++) {
           const nBase = ((pq + DIR_DQ[f]) * PAD + (pr + DIR_DR[f])) * WORLD_HEIGHT;

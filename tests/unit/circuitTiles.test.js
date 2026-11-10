@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { CIRCUIT_TILE_NAMES, CIRCUIT_RECIPES, CIRCUIT_FLAT_TILES, DEVICE_PICTURES, DEVICE_SWATCHES } from '../../src/circuitTiles.js';
 import { paintTile, TILE_NAMES } from '../../src/tiles.js';
-import { TILE, BLOCKS, getFaceTile, FACE_TOP } from '../../src/blocks.js';
+import { BLOCK, TILE, BLOCKS, getFaceTile, FACE_TOP } from '../../src/blocks.js';
 
 const BYTES = 16 * 16 * 4;
 const CIRCUIT_IDS = Object.keys(CIRCUIT_TILE_NAMES).map(Number);
@@ -70,7 +70,7 @@ describe('circuit tile set (§1.4, §6.2.9)', () => {
   });
 
   it('the flat pictures are exactly the flat-icon blocks\' top tiles: the six thin parts and the 14 devices', () => {
-    const flatBlocks = BLOCKS.filter((b) => b.icon === 'flat');
+    const flatBlocks = BLOCKS.filter((b) => b.icon === 'flat' && b.id >= BLOCK.COLLAPSAR_CHARGE); // plants and litter are flat too
     expect(flatBlocks).toHaveLength(20);
     const want = [...CIRCUIT_FLAT_TILES, ...Object.keys(DEVICE_PICTURES)].sort();
     expect(flatBlocks.map((b) => TILE_NAMES[getFaceTile(b.id, FACE_TOP)]).sort()).toEqual(want);

@@ -887,6 +887,20 @@ const MATERIAL_PAINTERS = {
     ic.rect(4, 11, 11, 13, 0x6a6e76);
     ic.set(7, 10, 0xd8dce4);
   },
+  flint_dart(ic) {
+    // a short throwing dart, corner to corner: a dark flint point, a cord binding, a pale shaft and a fibre flight
+    for (let i = 0; i <= 8; i++) {
+      ic.set(4 + i, 11 - i, WOOD.light); // the shaft, lower left to upper right
+      ic.set(4 + i, 12 - i, WOOD.base);
+    }
+    ic.poly([[11, 2], [14, 1], [13, 5]], () => 0x3b3f4a); // the knapped point
+    ic.set(13, 2, 0x6b7184);
+    ic.set(11, 4, CORD.dark); // the binding
+    ic.set(12, 4, CORD.light);
+    ic.set(11, 5, CORD.light);
+    for (const [x, y] of [[1, 12], [2, 11], [2, 13], [3, 12], [1, 14], [3, 14], [2, 15]]) ic.set(x, y, 0x9ab04a); // the flight
+    ic.set(3, 13, 0x6f8f3a);
+  },
   handbook(ic, rng) {
     // §14 the Survival Handbook: a small leather-bound field book tied with cord, a hex burned into its cover
     const page = (i) => (i & 1 ? 0xf3ead2 : 0xc4b48c);

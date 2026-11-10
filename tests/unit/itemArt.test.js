@@ -43,7 +43,7 @@ function principalAngle(points) {
 
 describe('itemArt: coverage', () => {
   it('every non-block item in ITEMS has art, and only those (block items are drawn from the atlas)', () => {
-    expect(NON_BLOCK.length).toBe(106); // 98 + the Survival Handbook (§14) + the 7 circuit materials (DESIGN-circuits §8.1)
+    expect(NON_BLOCK.length).toBe(107); // 98 + the Survival Handbook (§14) + the 7 circuit materials (DESIGN-circuits §8.1) + the dart (§60)
     expect([...ITEM_ART_KEYS].sort()).toEqual([...NON_BLOCK].sort());
     expect(ITEM_ART_KEYS).toEqual(NON_BLOCK); // same order as ITEM_KEYS (tools, materials, food, bandages, clothes)
     for (const k of NON_BLOCK) expect(hasItemArt(k), k).toBe(true);

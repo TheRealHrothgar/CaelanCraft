@@ -404,9 +404,9 @@ describe('blocks', () => {
       ['HONEYBERRY_BUSH', 78, 'honeyberry_bush', 'Honeyberry Bush', P, 'leaves', ['HONEYBERRY_BUSH', 'HONEYBERRY_BUSH', 'HONEYBERRY_BUSH'], true],
       ['HONEYBERRY_BUSH_BARE', 79, 'honeyberry_bush_bare', 'Picked Honeyberry Bush', P, 'leaves',
         ['HONEYBERRY_BUSH_BARE', 'HONEYBERRY_BUSH_BARE', 'HONEYBERRY_BUSH_BARE'], false],
-      ['TUSSOCK', 80, 'tussock', 'Tussock Grass', P, 'grass', ['TUSSOCK', 'PLANT_TOP_CLEAR', 'PLANT_TOP_CLEAR'], true],
-      ['CATTAILS', 81, 'cattails', 'Cattails', P, 'grass', ['CATTAILS_SIDE', 'CATTAILS_TOP', 'CATTAILS_TOP'], true],
-      ['TUBER_PLANT', 82, 'tuber_plant', 'Wild Tuber Plant', P, 'grass', ['TUBER_PLANT', 'PLANT_TOP_CLEAR', 'PLANT_TOP_CLEAR'], true],
+      ['TUSSOCK', 80, 'tussock', 'Tussock Grass', P, 'grass', ['TUSSOCK', 'TUSSOCK', 'TUSSOCK'], true],
+      ['CATTAILS', 81, 'cattails', 'Cattails', P, 'grass', ['CATTAILS_SIDE', 'CATTAILS_SIDE', 'CATTAILS_SIDE'], true],
+      ['TUBER_PLANT', 82, 'tuber_plant', 'Wild Tuber Plant', P, 'grass', ['TUBER_PLANT', 'TUBER_PLANT', 'TUBER_PLANT'], true],
       ['PRICKLY_PEAR', 83, 'prickly_pear', 'Prickly Pear', P, 'leaves', ['PRICKLY_PEAR', 'PRICKLY_PEAR', 'PRICKLY_PEAR'], true],
       ['PRICKLY_PEAR_BARE', 84, 'prickly_pear_bare', 'Picked Prickly Pear', P, 'leaves',
         ['PRICKLY_PEAR_BARE', 'PRICKLY_PEAR_BARE', 'PRICKLY_PEAR_BARE'], false],
@@ -417,9 +417,9 @@ describe('blocks', () => {
       ['WICKER_BASKET', 89, 'wicker_basket', 'Wicker Basket', S, 'wood', ['BASKET_SIDE', 'BASKET_TOP', 'BASKET_TOP'], true],
       ['SLEEPING_HIDE', 90, 'sleeping_hide', 'Sleeping Hide', S, 'cloth', ['HIDE_SIDE', 'HIDE_TOP', 'HIDE_TOP'], true],
       ['REMAINS', 91, 'remains', 'Your Belongings', P, 'cloth', ['REMAINS_SIDE', 'REMAINS_TOP', 'REMAINS_TOP'], false],
-      ['LOOSE_STONES', 92, 'loose_stones', 'Loose Stones', P, 'stone', ['LOOSE_STONES', 'PLANT_TOP_CLEAR', 'PLANT_TOP_CLEAR'], false],
+      ['LOOSE_STONES', 92, 'loose_stones', 'Loose Stones', P, 'stone', ['LOOSE_STONES', 'LOOSE_STONES', 'LOOSE_STONES'], false],
       ['FALLEN_BRANCHES', 93, 'fallen_branches', 'Fallen Branches', P, 'wood',
-        ['FALLEN_BRANCHES', 'PLANT_TOP_CLEAR', 'PLANT_TOP_CLEAR'], false],
+        ['FALLEN_BRANCHES', 'FALLEN_BRANCHES', 'FALLEN_BRANCHES'], false],
       ['FIRE_PIT', 94, 'fire_pit', 'Cold Fire Pit', P, 'stone', ['FIRE_PIT_SIDE', 'PLANT_TOP_CLEAR', 'PLANT_TOP_CLEAR'], false],
     ];
     expect(TABLE.map((row) => row[1])).toEqual(Array.from({ length: 19 }, (_, i) => 76 + i));
@@ -453,9 +453,10 @@ describe('blocks', () => {
     TILES.forEach((key, i) => expect(TILE[key], key).toBe(77 + i));
     expect(TILE_IDS).toHaveLength(150); // 115 after survival; + the 35 circuit tiles 160..194
     expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
-    // Every survival tile is used by a block face.
+    // Every survival tile is used by a block face — except CATTAILS_TOP: the cattails became a crossed sprite drawn from
+    // CATTAILS_SIDE, and tile ids are fixed, so 83 stays painted but no face names it.
     const used = new Set(BLOCKS.flatMap((d) => d.tiles));
-    for (const key of TILES) expect(used.has(TILE[key]), key).toBe(true);
+    for (const key of TILES) expect(used.has(TILE[key]), key).toBe(key !== 'CATTAILS_TOP');
   });
 
   it('v0.9 survival: PICKER_ORDER inserts the 13 placeable blocks into their groups; WATER last, RUNE_BLOCK before it', () => {
@@ -589,9 +590,9 @@ describe('blocks', () => {
     expect([TILE.BARREL_SIDE, TILE.BARREL_TOP]).toEqual([75, 76]);
   });
 
-  it('BlockDef.icon is "prism" by default and "flat" only on the 20 circuit parts but the keg (thin parts and devices)', () => {
+  it('BlockDef.icon is "prism" by default and "flat" only on the 20 circuit parts but the keg, the 7 plants and the 2 litters', () => {
     const flat = BLOCKS.filter((d) => d.icon === 'flat').map((d) => d.id);
-    expect(flat).toEqual(Array.from({ length: 20 }, (_, i) => BLOCK.COLLAPSAR_CHARGE + i));
+    expect(flat).toEqual([...PLANT_IDS, BLOCK.LOOSE_STONES, BLOCK.FALLEN_BRANCHES, ...Array.from({ length: 20 }, (_, i) => BLOCK.COLLAPSAR_CHARGE + i)]);
     expect(BLOCKS[BLOCK.POWDER_KEG].icon).toBe('prism');
     for (const d of BLOCKS) expect(['prism', 'flat'], d.name).toContain(d.icon);
     expect(getBlockDef(200).icon).toBe('prism'); // unknown ids read as AIR

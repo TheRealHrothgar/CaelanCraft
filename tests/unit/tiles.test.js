@@ -647,8 +647,7 @@ describe('survival tiles (v0.9, DESIGN-survival §8.1–§8.2)', () => {
   it('the short blocks keep their stated upper rows alpha 0 and stand on their bottom row', () => {
     // [tile, last alpha-0 row, the art's top row must lie at or below]
     const SHORT = [
-      [TILE.TUSSOCK, 3, 6], [TILE.TUBER_PLANT, 8, 10], [TILE.LOOSE_STONES, 10, 13], [TILE.FALLEN_BRANCHES, 11, 12],
-      [TILE.FIRE_PIT_SIDE, 9, 11],
+      [TILE.TUSSOCK, 3, 6], [TILE.TUBER_PLANT, 8, 10], [TILE.FIRE_PIT_SIDE, 9, 11],
     ];
     for (const [t, lastClear, topBy] of SHORT) {
       const px = paintTile(t);
@@ -659,6 +658,29 @@ describe('survival tiles (v0.9, DESIGN-survival §8.1–§8.2)', () => {
       expect(firstOpaqueRow, TILE_NAMES[t]).toBeLessThanOrEqual(topBy);
       expect(clearCount(px, [15]), `${TILE_NAMES[t]} bottom row`).toBeLessThanOrEqual(12); // it rests on the ground
     }
+  });
+
+  it('the ground litter is seen from above: art only inside the tile\'s inscribed hexagon, alpha 0 or 255, a scatter (not a strip)', () => {
+    for (const t of [TILE.LOOSE_STONES, TILE.FALLEN_BRANCHES]) {
+      const px = paintTile(t);
+      let art = 0;
+      const rows = new Set();
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const a = px[idx(x, y) + 3];
+          expect(a === 0 || a === 255, TILE_NAMES[t]).toBe(true);
+          if (a !== 255) continue;
+          art++;
+          rows.add(y);
+          expect(Math.hypot(x + 0.5 - 8, y + 0.5 - 8), `${TILE_NAMES[t]} (${x},${y})`).toBeLessThanOrEqual(7.5);
+        }
+      }
+      expect(art, TILE_NAMES[t]).toBeGreaterThan(30);
+      expect(art, TILE_NAMES[t]).toBeLessThan(160); // most of the floor shows through
+      expect(rows.size, TILE_NAMES[t]).toBeGreaterThanOrEqual(8); // spread over the floor, not a row along the bottom
+    }
+    // One of the loose stones is the dark flint nodule.
+    expect(countHex(paintTile(TILE.LOOSE_STONES), 0xc8c4b4) + countHex(paintTile(TILE.LOOSE_STONES), 0x2e3038)).toBeGreaterThan(0);
   });
 
   it('tussock: blades about 45 % alpha 0 (35–55 %), yellow tips above a green base', () => {
@@ -696,9 +718,12 @@ describe('survival tiles (v0.9, DESIGN-survival §8.1–§8.2)', () => {
     expect(countHex(ripe, 0x9aa6d6)).toBeGreaterThanOrEqual(12); // 6–8 clusters of 2–3 berries
     expect(countHex(ripe, 0x3b4a8a)).toBeGreaterThan(countHex(ripe, 0x9aa6d6) / 2);
     for (const hex of BERRY) expect(countHex(bare, hex), hex.toString(16)).toBe(0);
-    expect(clearCount(ripe) / 256).toBeGreaterThan(0.08);
-    expect(clearCount(ripe) / 256).toBeLessThan(0.32);
-    expect(clearCount(bare)).toBeGreaterThan(clearCount(ripe) + 30);
+    // A rounded bush on a clear background (a sprite): the corners are clear, the middle is leafy.
+    for (const [x, y] of [[0, 0], [15, 0], [0, 15], [15, 15]]) expect(rgba(ripe, x, y)[3], `corner (${x},${y})`).toBe(0);
+    expect(rgba(ripe, 8, 15)[3]).toBe(255); // the stem
+    expect(clearCount(ripe) / 256).toBeGreaterThan(0.2);
+    expect(clearCount(ripe) / 256).toBeLessThan(0.55);
+    expect(clearCount(bare)).toBeGreaterThan(clearCount(ripe) + 20);
     // The foliage is blue-green: green above red, blue close behind.
     const leaf = averageColor(TILE.HONEYBERRY_BUSH_BARE);
     expect(leaf[1]).toBeGreaterThan(leaf[0]);
@@ -715,7 +740,7 @@ describe('survival tiles (v0.9, DESIGN-survival §8.1–§8.2)', () => {
         same++;
       }
     }
-    expect(same).toBeGreaterThan(100);
+    expect(same).toBeGreaterThan(60);
   });
 
   it('prickly pears: the same pads (#5d8f3a family) with spines; red-yellow fruit only on the ripe one', () => {

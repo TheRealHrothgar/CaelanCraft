@@ -327,6 +327,8 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 ## 5. `src/blocks.js` (exact — already written)
 
 > **v0.10 amendment (§50):** ids 95–114 (the circuit parts), `BLOCK_COUNT` 115, tiles 160–194, `BlockDef.icon`, `POWDER_KEG` (= BLAST_BARREL 75) and `BLOCK_ALIASES`, BLACK_HOLE unplaceable and unmeshed, `PICKER_ORDER` 99.
+>
+> **v0.10 amendment (§59):** `BlockDef.shape` (`'prism'` default | `'cross'` | `'decal'`) and `getBlockShape(id)`; the wild plants are crossed sprites and the ground litter floor decals.
 
 Block ids (`BLOCK.*`): `AIR 0, STONE 1, GRASS_BLOCK 2, DIRT 3, COBBLESTONE 4, OAK_PLANKS 5, BEDROCK 6, WATER 7,
 SAND 8, GRAVEL 9, OAK_LOG 10, OAK_LEAVES 11, GLASS 12, COAL_ORE 13, IRON_ORE 14, GOLD_ORE 15, DIAMOND_ORE 16,
@@ -610,6 +612,8 @@ Missing `performance` (Node < 16) → use `Date.now`. Tests pass `now: () => 0` 
 export function buildChunkMesh(cq, cr, getChunkData)   // → ChunkMeshData { opaque, cutout, translucent } (null layer when 0 faces)
                                                         //   cells whose block is not isMeshed emit nothing (v0.7); neighbours still
                                                         //   apply shouldRenderFace against them (non-opaque → their faces render)
+                                                        //   v0.10 (§59): a 'cross' / 'decal' cell emits its crossed sprite / floor
+                                                        //   decal into its layer instead of a prism (no AO, no culling either way)
 export function vertexAO(side1, side2, corner)          // (side1 && side2) ? 0 : 3 - (side1 + side2 + corner); args 0|1  (side faces)
 export function hexCornerAO(sideA, sideB)               // 3 - (sideA + sideB)                                            (hex caps)
 export function isTintedFace(id, face)                  // OAK_LEAVES: every face; GRASS_BLOCK: FACE_TOP only
@@ -3132,8 +3136,8 @@ CONTRACT-ISSUE):** a saved spot is kept when its item can be on that kind of spo
   Predicates: `isPlant` (78–84, `PLANT_IDS`), `isLitter`, `isPopOff` (CAMPFIRE, FIRE_PIT, plants, litter — `POP_OFF_IDS`, 11 ids),
   `isStation` (the four workplaces), `isContainerBlock` (WICKER_BASKET, REMAINS). PICKER_ORDER has 80 entries (copper and tin ore after
   DIAMOND_ORE; the five plants after PUMPKIN; the six workplaces and containers before CAMPFIRE; RUNE_BLOCK, WATER last).
-- **Tiles** 77–104 (`TILE_IDS` 115); original procedural art (tiles.js comments are normative). Short blocks (TUSSOCK, TUBER_PLANT,
-  LOOSE_STONES, FALLEN_BRANCHES, FIRE_PIT) have the all-clear `PLANT_TOP_CLEAR` (101) on top and bottom, so `averageColor` of their top is
+- **Tiles** 77–104 (`TILE_IDS` 115); original procedural art (tiles.js comments are normative). Short blocks (FIRE_PIT; before §59
+  also TUSSOCK, TUBER_PLANT, LOOSE_STONES and FALLEN_BRANCHES, which now draw one tile on every face) have the all-clear `PLANT_TOP_CLEAR` (101) on top and bottom, so `averageColor` of their top is
   [0, 0, 0]: **particles.blockParticleColor falls back to the side tile when the top has no opaque texel** (v0.9 fix; dust is never black).
 - **`createWorldGen(seed, { gen = 1 })`** (§8): anything not an integer ≥ 1 is 1, above GEN_LATEST clamped. Generation 1 is byte-identical
   to before (pinned checksums). Generation 2, in order inside `generateChunk`: `ORE_TABLE_GEN2` rows appended after ORE_TABLE (oi 6–8;
@@ -3696,6 +3700,112 @@ loading), `?scene=circuits` (`circuitSceneWrites`: the doorbell, the timed keg, 
 `circuitSceneWrites().bounds` plus 2); the smoke test builds its scene after its own steps (`circuits`: the doorbell rings; `vortex`: one hole 3 s
 later); F3 lines `circuitsDebugLine` / `blackHolesDebugLine`; the debug handle adds `circuits, circuitStore, blackHoles, infall`
 and the drivers `rightClick(pressed, dt), rightRelease, editTarget, buildScene(name)`.
+
+## 59. Plant shapes — crossed sprites and floor decals (`src/blocks.js`, `src/mesher.js`, `src/tiles.js`)
+
+Amends §2, §10, §16 and §47. The terrain stays hexagonal prisms; only the wild plants and the ground litter change, so grass reads
+as grass, not a hex ring.
+
+- **`BlockDef.shape`** — `'prism'` (default), `'cross'` or `'decal'`; `getBlockShape(id)`. Both new shapes draw the block's **TOP
+  tile** and carry `icon: 'flat'` (the picker / hotbar shows that tile as a picture). `'cross'`: HONEYBERRY_BUSH(_BARE), TUSSOCK,
+  CATTAILS, TUBER_PLANT, PRICKLY_PEAR(_BARE) — `tiles(T.X)` (one tile on all 8 faces; CATTAILS uses CATTAILS_SIDE, so tile 83
+  `cattails_top` stays painted but no face names it). `'decal'`: LOOSE_STONES, FALLEN_BRANCHES. FIRE_PIT stays a prism.
+  Every other flag (cutout, walk-through, pop-off, harvest) is unchanged.
+- **Mesher** (exports `CROSS_PLANES 3`, `CROSS_HALF_WIDTH 0.48`, `CROSS_JITTER 0.05`, `CROSS_ROOT_SHADE 0.72`, `DECAL_Y 0.02`,
+  `cellHash(q, r, salt = 0) → [0, 1)`, `emitCross`): a cross cell emits 3 vertical quads (4 verts, 2 triangles each; faceCount
+  +3) through the cell centre, 60° apart, turned by `cellHash(wq, wr) · π/3` and nudged ±CROSS_JITTER in x and z by two more
+  salts, each CROSS_HALF_WIDTH to either side, from the cell floor y to y + 1; u across the quad, v1 at the floor, v0 at the top;
+  normals (0, 1, 0) (lit like a top face); vertex colour FACE_SHADE[FACE_TOP] × tint, × CROSS_ROOT_SHADE on the bottom pair. A
+  decal cell emits one top hex face at floor + DECAL_Y. Both go to the block's layer (cutout: alphaTest 0.5, DoubleSide), use the
+  top face's tint flag, have no AO and cull nothing (neighbours still treat the cell as non-opaque).
+- **Tiles** (tiles.js comments normative): `honeyberry_bush` (79) is a round bush silhouette on alpha 0 (four leaf discs, a 2-px
+  stem on rows 13–15 at x 7–8, the lower rows darker) with 6–8 berry clusters inside the leaves; `honeyberry_bush_bare` (80) the
+  same silhouette from the same foliage seed, thinned, with twigs; `loose_stones` (102) and `fallen_branches` (103) are drawn
+  from ABOVE inside the tile's inscribed hexagon (pebbles with a flint; crossed sticks with twigs, shadows and lichen) so the
+  decal reads as litter lying on the ground. `tussock`, `cattails_side`, `tuber_plant`, `prickly_pear(_bare)` keep their art.
+- **Icons**: `icon: 'flat'` now also covers the 7 cross plants and the 2 decals.
+
+## 60. Loose items — `src/looseItems.js` (PURE), `src/looseItemRenderer.js` (three); drop and throw
+
+Amends §43–§45, §48, §49 and §26 (commands). What a dig, a pick or a kill gives is no longer added to the pack on the spot:
+it flies out of the cell to the player and enters the pack **only when it crosses the player's threshold**.
+
+- **`LooseItems`** (`list`, `count`, `clear`, `spawnDrop(stack, x, y, z, { block?, ghost? })`, `launch(stack, x, y, z, vx, vy,
+  vz, { block?, ghost?, power?, hold?, thrower? })`, `inFlight() → ItemStack[]`, `release()`, `step(dt, env)`,
+  `serialize()`, `load(list, blockOf?)`). An item is a stack copy, a position (its centre), a velocity and a mode: `pop`
+  (POP_S 0.16 s hop: up POP_SPEED 2.6 m/s, sideways ≤ POP_SIDE 0.8), `home` (straight at the chest point PICKUP_CHEST 0.9
+  above the feet, HOME_SPEED 2 + HOME_ACCEL 26·t up to HOME_MAX 16 m/s; within **PICKUP_RADIUS 0.6** it is collected, and
+  after HOME_MAX_S 3 wherever it is), `fly` (gravity ITEM_GRAVITY −16, in water at most WATER_SINK 1.5 down and a drag;
+  sub-steps of ≤ MAX_STEP 0.1 m; per axis against `env.solid` with ITEM_RADIUS 0.12; a bounce keeps BOUNCE 0.3, a landing
+  slower than LAND_SPEED 3 settles) and `rest` (falls again when the cell under it goes; within COLLECT_RADIUS 1.5 of the
+  chest point, after its `hold`, and when `env.room(stack)`, it homes). A thrown or dropped item has hold THROW_HOLD_S 1.2
+  and `away` false: it is collected only after the player has once been more than COLLECT_RADIUS + AWAY_MARGIN 0.5 from it
+  (a dropped stack is never picked straight back up).
+  A collect that returns a leftover (a full pack) puts it at the player's feet as a falling item with that hold. With
+  `env.player` null (dead) or no `env.collect` (Creative) a real homing item falls instead. Items whose column is not
+  loaded (`env.loaded`) are frozen; below FLOOR_Y −8 they are gone. Items a callback adds during a step are kept.
+- **Ghosts** (Creative): the animation only — never collected, gone at the threshold, fade GHOST_REST_S 1.2 after landing,
+  at most GHOST_MAX 48 (the oldest goes). Creative breaks spawn a ghost of the broken block (liquids none); Creative throws
+  a ghost of the hotbar block and takes nothing.
+- **Projectiles**: `power > 0` and at least HIT_MIN_SPEED 4 m/s: each sub-step tests `env.hitMob(segment)` first; a hit calls
+  `env.onHit(item, mob)` once (true: the item breaks and is removed), spends the power, and bounces it back; a wall or the
+  ground also spends it. **`throwOf(key)`**: STONE_KEYS (rock, flint, obsidian_shard) THROW_ROCK `{ speed 13, power 1 }`;
+  DART_KEYS (`flint_dart`) THROW_DART `{ 21, 2 }`; any spear (ToolDef.type 'spear') THROW_SPEAR `{ 17, 4 }`; anything
+  else THROW_CHUCK `{ 6, 0 }` (a block or a stick is just chucked a short way). Main: a zombie takes `zombies.hit(zb, from,
+  power)`; a pig `pigs.wound(pig, power, …)` in Survival (`pigs.hit` in Creative); kills fly their drops to the player; a
+  dart breaks with DART_BREAK_P 0.3; a spear takes 1 wear (it breaks at 0: toolBroke).
+- **Main**: `flyStacks(stacks, x, y, z)` replaces giveStacks for digs (finishDig), picks (pickAt), a broken basket's or
+  fire's contents and mob drops; finishDig and pickAt check `pack.canGive([...loose.inFlight(), …])`. On arrival
+  `collectLoose`: `pack.add`, `hud.addPickup(key, n, pickupFrom())` (the token starts just below the crosshair) and the
+  SOUND_PICKUP blip; leftovers keep leftBehind's line. `stepLoose(dt)` runs after the bodies resolve. Drawing: block items
+  (`looseBlockOf`: a block item's meshed block, the ripe bush for the bush items) go through fallingRenderer at
+  LOOSE_BLOCK_SCALE 0.25, spinning (and bobbing at rest); every other item is a Sprite of its item icon (SPRITE_SIZE 0.38,
+  per-key SpriteMaterial, alphaTest 0.5). `die` and entering Creative call `release()`.
+- **Debug handle**: `__caelancraft.loose` (live) and `handAction(kind, n)`.
+- **Keys** (controls.GAME_KEYS + `KeyQ`, `KeyG`): **Q** drops one of the item in hand in front of the feet (DROP_SPEED 3
+  forward, 2 up: it lands about 2 m ahead), **Shift+Q** the whole stack; **G** throws one where the crosshair points (`throwOf` speed along the
+  look, +1.5 up, plus the player's velocity) from just in front of the eye (from the eye when that point is solid). The
+  Handbook is never dropped or thrown (KEEP_REFUSED). The title sheet keeps 17 rows: `Q / G` joins, and F3 and M share one row (`F3 · M`).
+- **Commands** (console only): `drop [count|all]` and `throw [count]` (1–THROW_MAX 16, one after another with a little spread)
+  through `ctx.hands.act(kind, n) → { ok, message }`; without `hands` they fail.
+- **Items**: `flint_dart` "Flint Dart" (material, stack 16, an itemArt icon); recipe `flint_dart` at hand: flint + stick +
+  plant_fibre → 4, hammer 1, 2 s (115 recipes; 44 at hand).
+- **Save**: `survival.loose` — `[{ k, n, d?, x, y, z }]` (storage `normalizeLooseJSON`: canonical key order, x y z rounded
+  to 3 places, bad entries dropped with `survival.loose[i]: invalid, dropped`, at most LOOSE_SAVE_MAX 2000), written only
+  when non-empty, so every older save is unchanged. Loaded items fall where they were (hold 0). Ghosts are never saved.
+
+## 61. Zombie kinds and the cartoon zombie — `src/zombies.js`, `src/zombieRenderer.js`
+
+Amends §39 (and §26's `summon`). The zombie is no longer four hexagonal-prism blocks with atlas tiles (tiles 240–245 stay
+painted, unused).
+
+- **Kinds** (`ZOMBIE_KINDS` walker | runner | alpha; `Zombie.kind`, `Zombie.rallied`; `kindOf(zb)` → 'walker' for anything
+  else; `statsOf(zb)` → `KIND_STATS[kind]`): walker `{ chase ZOMBIE_CHASE_SPEED, hits ZOMBIE_HITS 4, damage 1, groan 1,
+  drops 1 }`; runner `{ chase 1 with sprint (SPRINT_SPEED), factor 0.95, hits 3, damage 1, groan 0.7, drops 1 }`; alpha
+  `{ chase 1, factor 0.97, hits 12, damage 1.75, groan 1.4, drops 3 }`. While chasing (or avoiding a fire) `input.forward =
+  chase` (a rallied walker 1), `input.sprint = sprint`, `input.speedFactor = factor`; wandering is unchanged (sneak speed).
+  `hit` and `knock` knock out at `statsOf(zb).hits`; an alpha needs a knock of ALPHA_KO_KNOCK 1.6 × ZOMBIE_KO_KNOCK to go at
+  once. Groan intervals × `groan`.
+- **Spawning**: `spawn(x, y, z, yaw, kind = 'walker')`; a natural spawn is a runner with RUNNER_P 0.12. **Hordes**: every
+  HORDE_CHECK_S 2 (`_hordeCheck`) walkers within ALPHA_RALLY 14 of an alpha are `rallied`; then, while fewer than ALPHA_MAX 1
+  alphas exist, the first runner with at least HORDE_SIZE 6 zombies (itself included) within HORDE_RADIUS 10 becomes the
+  alpha with ALPHA_CONVERT_P 0.03 (its hits reset to 0) and is pushed to `events.alphas`.
+- **Main**: a strike hurts `round(Σ ZOMBIE_DAMAGE × damage)`; a knocked-out zombie's drops are rolled `drops` times
+  (`zombieDrops`); `events.alphas` → one chat line, `SOUND_ROAR` (zombies.js, audio.playRecipe data) and a dark red dust puff.
+  `summon pig|zombie|runner|alpha|watcher [q y r]` (`zombie` = a walker).
+- **Model** (zombieRenderer; per-vertex colours, `boxesGeometry(boxes)` merges `[w, h, d, x, y, z, colour, rotZ?]` boxes;
+  `zombieGeometries()` → leg, torso, arm, head, eyes): legs (LEG_H 0.66, at ±LEG_X 0.12) in ragged trousers with shoes and
+  a bare ankle; a torso (TORSO_W 0.5 × TORSO_H 0.6 × TORSO_D 0.28) in a torn shirt with a belt, a collar, a hole and a flap,
+  and a neck; arms (ARM_L 0.58, from shoulders at ±SHOULDER_X 0.32, SHOULDER_Y) with sleeves and hands; a big head (HEAD_W
+  0.5 × HEAD_H 0.46 × HEAD_D 0.44) with mismatched googly eyes and pupils, cocked brows, a nose, a crooked mouth with two teeth,
+  ears and hair tufts on its −Z face. MODEL_HEIGHT ≤ ZOMBIE_HEIGHT. InstancedMeshes `zombie-legs` (2 per zombie),
+  `zombie-arms` (2), `zombie-torso`, `zombie-head` with instance colours, their `-hurt` / `-burn` twins, and
+  `zombie-alpha-eyes` (MeshBasicMaterial ALPHA_EYES, drawn on each alpha's head). Kinds: tint KIND_TINT; runner narrower
+  (RUNNER_WIDTH 0.88 in x and z), alpha ALPHA_SCALE 1.22. Animation: legs swing with walkPhase (walker 0.5 with the right
+  leg's stride × 0.55 — a limp; runner 0.95; alpha 0.55); the torso leans (walker −0.08, chasing −0.17, runner −0.42, alpha
+  −0.3) and sways, lurching LURCH −0.32 × sin(π·swing/SWING_S) after a strike; the arms reach out (1.5 rad + a bob, minus
+  0.6 × lean) — a runner's pump instead — and swipe up 0.55 rad in a strike; the head lolls by `tilt` and looks up against the
+  lean. `renderScale` / `renderSpin` as before. The atlas argument is ignored.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
