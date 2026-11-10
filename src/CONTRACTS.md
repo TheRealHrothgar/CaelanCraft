@@ -327,6 +327,8 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 ## 5. `src/blocks.js` (exact — already written)
 
 > **v0.10 amendment (§50):** ids 95–114 (the circuit parts), `BLOCK_COUNT` 115, tiles 160–194, `BlockDef.icon`, `POWDER_KEG` (= BLAST_BARREL 75) and `BLOCK_ALIASES`, BLACK_HOLE unplaceable and unmeshed, `PICKER_ORDER` 99.
+>
+> **v0.10 amendment (§59):** `BlockDef.shape` (`'prism'` default | `'cross'` | `'decal'`) and `getBlockShape(id)`; the wild plants are crossed sprites and the ground litter floor decals.
 
 Block ids (`BLOCK.*`): `AIR 0, STONE 1, GRASS_BLOCK 2, DIRT 3, COBBLESTONE 4, OAK_PLANKS 5, BEDROCK 6, WATER 7,
 SAND 8, GRAVEL 9, OAK_LOG 10, OAK_LEAVES 11, GLASS 12, COAL_ORE 13, IRON_ORE 14, GOLD_ORE 15, DIAMOND_ORE 16,
@@ -610,6 +612,8 @@ Missing `performance` (Node < 16) → use `Date.now`. Tests pass `now: () => 0` 
 export function buildChunkMesh(cq, cr, getChunkData)   // → ChunkMeshData { opaque, cutout, translucent } (null layer when 0 faces)
                                                         //   cells whose block is not isMeshed emit nothing (v0.7); neighbours still
                                                         //   apply shouldRenderFace against them (non-opaque → their faces render)
+                                                        //   v0.10 (§59): a 'cross' / 'decal' cell emits its crossed sprite / floor
+                                                        //   decal into its layer instead of a prism (no AO, no culling either way)
 export function vertexAO(side1, side2, corner)          // (side1 && side2) ? 0 : 3 - (side1 + side2 + corner); args 0|1  (side faces)
 export function hexCornerAO(sideA, sideB)               // 3 - (sideA + sideB)                                            (hex caps)
 export function isTintedFace(id, face)                  // OAK_LEAVES: every face; GRASS_BLOCK: FACE_TOP only
@@ -3132,8 +3136,8 @@ CONTRACT-ISSUE):** a saved spot is kept when its item can be on that kind of spo
   Predicates: `isPlant` (78–84, `PLANT_IDS`), `isLitter`, `isPopOff` (CAMPFIRE, FIRE_PIT, plants, litter — `POP_OFF_IDS`, 11 ids),
   `isStation` (the four workplaces), `isContainerBlock` (WICKER_BASKET, REMAINS). PICKER_ORDER has 80 entries (copper and tin ore after
   DIAMOND_ORE; the five plants after PUMPKIN; the six workplaces and containers before CAMPFIRE; RUNE_BLOCK, WATER last).
-- **Tiles** 77–104 (`TILE_IDS` 115); original procedural art (tiles.js comments are normative). Short blocks (TUSSOCK, TUBER_PLANT,
-  LOOSE_STONES, FALLEN_BRANCHES, FIRE_PIT) have the all-clear `PLANT_TOP_CLEAR` (101) on top and bottom, so `averageColor` of their top is
+- **Tiles** 77–104 (`TILE_IDS` 115); original procedural art (tiles.js comments are normative). Short blocks (FIRE_PIT; before §59
+  also TUSSOCK, TUBER_PLANT, LOOSE_STONES and FALLEN_BRANCHES, which now draw one tile on every face) have the all-clear `PLANT_TOP_CLEAR` (101) on top and bottom, so `averageColor` of their top is
   [0, 0, 0]: **particles.blockParticleColor falls back to the side tile when the top has no opaque texel** (v0.9 fix; dust is never black).
 - **`createWorldGen(seed, { gen = 1 })`** (§8): anything not an integer ≥ 1 is 1, above GEN_LATEST clamped. Generation 1 is byte-identical
   to before (pinned checksums). Generation 2, in order inside `generateChunk`: `ORE_TABLE_GEN2` rows appended after ORE_TABLE (oi 6–8;
@@ -3696,6 +3700,30 @@ loading), `?scene=circuits` (`circuitSceneWrites`: the doorbell, the timed keg, 
 `circuitSceneWrites().bounds` plus 2); the smoke test builds its scene after its own steps (`circuits`: the doorbell rings; `vortex`: one hole 3 s
 later); F3 lines `circuitsDebugLine` / `blackHolesDebugLine`; the debug handle adds `circuits, circuitStore, blackHoles, infall`
 and the drivers `rightClick(pressed, dt), rightRelease, editTarget, buildScene(name)`.
+
+## 59. Plant shapes — crossed sprites and floor decals (`src/blocks.js`, `src/mesher.js`, `src/tiles.js`)
+
+Amends §2, §10, §16 and §47. The terrain stays hexagonal prisms; only the wild plants and the ground litter change, so grass reads
+as grass, not a hex ring.
+
+- **`BlockDef.shape`** — `'prism'` (default), `'cross'` or `'decal'`; `getBlockShape(id)`. Both new shapes draw the block's **TOP
+  tile** and carry `icon: 'flat'` (the picker / hotbar shows that tile as a picture). `'cross'`: HONEYBERRY_BUSH(_BARE), TUSSOCK,
+  CATTAILS, TUBER_PLANT, PRICKLY_PEAR(_BARE) — `tiles(T.X)` (one tile on all 8 faces; CATTAILS uses CATTAILS_SIDE, so tile 83
+  `cattails_top` stays painted but no face names it). `'decal'`: LOOSE_STONES, FALLEN_BRANCHES. FIRE_PIT stays a prism.
+  Every other flag (cutout, walk-through, pop-off, harvest) is unchanged.
+- **Mesher** (exports `CROSS_PLANES 3`, `CROSS_HALF_WIDTH 0.48`, `CROSS_JITTER 0.05`, `CROSS_ROOT_SHADE 0.72`, `DECAL_Y 0.02`,
+  `cellHash(q, r, salt = 0) → [0, 1)`, `emitCross`): a cross cell emits 3 vertical quads (4 verts, 2 triangles each; faceCount
+  +3) through the cell centre, 60° apart, turned by `cellHash(wq, wr) · π/3` and nudged ±CROSS_JITTER in x and z by two more
+  salts, each CROSS_HALF_WIDTH to either side, from the cell floor y to y + 1; u across the quad, v1 at the floor, v0 at the top;
+  normals (0, 1, 0) (lit like a top face); vertex colour FACE_SHADE[FACE_TOP] × tint, × CROSS_ROOT_SHADE on the bottom pair. A
+  decal cell emits one top hex face at floor + DECAL_Y. Both go to the block's layer (cutout: alphaTest 0.5, DoubleSide), use the
+  top face's tint flag, have no AO and cull nothing (neighbours still treat the cell as non-opaque).
+- **Tiles** (tiles.js comments normative): `honeyberry_bush` (79) is a round bush silhouette on alpha 0 (four leaf discs, a 2-px
+  stem on rows 13–15 at x 7–8, the lower rows darker) with 6–8 berry clusters inside the leaves; `honeyberry_bush_bare` (80) the
+  same silhouette from the same foliage seed, thinned, with twigs; `loose_stones` (102) and `fallen_branches` (103) are drawn
+  from ABOVE inside the tile's inscribed hexagon (pebbles with a flint; crossed sticks with twigs, shadows and lichen) so the
+  decal reads as litter lying on the ground. `tussock`, `cattails_side`, `tuber_plant`, `prickly_pear(_bare)` keep their art.
+- **Icons**: `icon: 'flat'` now also covers the 7 cross plants and the 2 decals.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

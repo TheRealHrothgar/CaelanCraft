@@ -703,6 +703,57 @@ describe('buildChunkMesh — flowing water surfaces (v0.8, CONTRACTS §35.4)', (
   });
 });
 
+describe('buildChunkMesh — plant shapes (crossed sprites and floor decals)', () => {
+  const STONE_UNDER = [A[0], A[1] - 1, A[2], B.STONE];
+  it("a 'cross' plant is three upright quads (12 verts) in the cutout layer, drawn from its top tile, not a hex prism", () => {
+    for (const id of [B.TUSSOCK, B.HONEYBERRY_BUSH, B.CATTAILS, B.PRICKLY_PEAR, B.TUBER_PLANT]) {
+      const m = mesh(world([STONE_UNDER, [...A, id]]));
+      expect(m.cutout.faceCount, `${id}`).toBe(3);
+      expect(m.cutout.vertexCount).toBe(12);
+      expect(m.cutout.indexCount).toBe(18);
+      const ys = [];
+      for (let v = 0; v < 12; v++) ys.push(m.cutout.positions[v * 3 + 1]);
+      expect(Math.min(...ys)).toBeCloseTo(A[1], 5);
+      expect(Math.max(...ys)).toBeCloseTo(A[1] + 1, 5);
+      const [u0, v0, u1, v1] = tileToUV(getFaceTile(id, FACE_TOP));
+      for (let v = 0; v < 12; v++) {
+        const u = m.cutout.uvs[v * 2];
+        const w = m.cutout.uvs[v * 2 + 1];
+        expect(Math.abs(u - u0) < 1e-6 || Math.abs(u - u1) < 1e-6).toBe(true);
+        expect(Math.abs(w - v0) < 1e-6 || Math.abs(w - v1) < 1e-6).toBe(true);
+      }
+      // the stone below keeps its top face: a plant never culls its neighbours
+      expect(m.opaque.faceCount).toBe(8);
+    }
+  });
+  it('the three planes are 60° apart, centred near the cell, and turned per cell', () => {
+    const angle = (m, k) => {
+      const p = m.cutout.positions;
+      const b = k * 4 * 3;
+      return Math.atan2(p[b + 3 + 2] - p[b + 2], p[b + 3] - p[b]);
+    };
+    const m = mesh(world([STONE_UNDER, [...A, B.TUSSOCK]]));
+    const d = (a, b) => (((a - b) % Math.PI) + Math.PI) % Math.PI;
+    expect(d(angle(m, 1), angle(m, 0))).toBeCloseTo(Math.PI / 3, 4);
+    expect(d(angle(m, 2), angle(m, 0))).toBeCloseTo((2 * Math.PI) / 3, 4);
+    const other = mesh(world([[6, 9, 7, B.STONE], [6, 10, 7, B.TUSSOCK]]));
+    expect(Math.abs(angle(other, 0) - angle(m, 0))).toBeGreaterThan(1e-3);
+  });
+  it("a 'decal' (loose stones, fallen branches) is one flat hex lying just above the cell's floor", () => {
+    for (const id of [B.LOOSE_STONES, B.FALLEN_BRANCHES]) {
+      const m = mesh(world([STONE_UNDER, [...A, id]]));
+      expect(m.cutout.faceCount).toBe(1);
+      const p = m.cutout.positions;
+      for (let v = 0; v < m.cutout.vertexCount; v++) expect(p[v * 3 + 1]).toBeCloseTo(A[1] + 0.02, 5);
+      for (let v = 0; v < m.cutout.vertexCount; v++) expect(m.cutout.normals[v * 3 + 1]).toBe(1);
+    }
+  });
+  it('terrain stays hexagonal prisms (grass and stone keep 8 faces)', () => {
+    expect(mesh(world([[...A, B.GRASS_BLOCK]])).opaque.faceCount).toBe(8);
+    expect(mesh(world([[...A, B.STONE]])).opaque.faceCount).toBe(8);
+  });
+});
+
 describe('buildChunkMesh — cutout layer', () => {
   it('GLASS–GLASS culled (14 faces), all in the cutout layer', () => {
     const m = mesh(world([[...A, B.GLASS], [...near(0), B.GLASS]]));

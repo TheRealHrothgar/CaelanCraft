@@ -14,6 +14,8 @@ const DEVICES = [
   BLOCK.ELECTRIC_BELL, BLOCK.SPARK_TRANSMITTER, BLOCK.COHERER_RECEIVER,
 ];
 const FLAT = [...THIN, ...DEVICES];
+/** The wild plants (sprites) and the ground litter (decals) also show their picture as a flat icon. */
+const SPRITES = [78, 79, 80, 81, 82, 83, 84, 92, 93];
 const atlas = { width: 256, height: 256, kind: 'atlas' };
 
 /** A 2D context stand-in: every method call as [name, ...args], and the state each drawImage saw. */
@@ -63,8 +65,8 @@ function fakeContext() {
 const named = (calls, name) => calls.filter((c) => c[0] === name);
 
 describe('flat block icons (§1.5)', () => {
-  it('exactly the six thin parts and the 14 devices are flat; every other block (the keg too) keeps the prism icon', () => {
-    expect(BLOCKS.filter((b) => b.icon === 'flat').map((b) => b.id).sort((a, b) => a - b)).toEqual([...FLAT].sort((a, b) => a - b));
+  it('exactly the six thin parts, the 14 devices, the 7 plants and the 2 litters are flat; every other block (the keg too) keeps the prism icon', () => {
+    expect(BLOCKS.filter((b) => b.icon === 'flat').map((b) => b.id).sort((a, b) => a - b)).toEqual([...FLAT, ...SPRITES].sort((a, b) => a - b));
     expect(BLOCKS[BLOCK.POWDER_KEG].icon).toBe('prism');
     expect(BLOCKS.every((b) => b.icon === 'flat' || b.icon === 'prism')).toBe(true);
   });

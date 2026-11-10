@@ -1539,48 +1539,77 @@ function paintBerryFoliage(px, rng, holes) {
 }
 
 /**
- * 79 honeyberry_bush — the foliage (22 % holes) hung with 6–8 clusters of elongated dusky-blue honeyberries, spread over
- * a 3×3 grid of the tile (each cluster takes a different grid cell, chosen by a Fisher–Yates shuffle): a cluster starts
- * at (1 + 5·gx + randInt(0, 2), 1 + 4·gy + randInt(0, 2)) and is 2–3 berries side by side, every other one a row lower,
- * each berry 1 px wide and 2–3 rows tall: a pale bloom 0x9aa6d6 on its top pixel, 0x3b4a8a below it with one 0x5b6bb0
- * sheen pixel. Berries are opaque even over a hole.
+ * The honeyberry bush's silhouette (a sprite drawn on crossed planes): a rounded clump of four overlapping discs —
+ * centres (4.5, 9.5) r 4.4, (11, 9.5) r 4.4, (7.5, 6.5) r 5 and (7.5, 11) r 4.6 — over rows 2–13, and a 2-px stem at
+ * x 7–8 on rows 13–15. Everything outside stays alpha 0.
  */
-function paintHoneyberryBush(px, rng) {
-  paintBerryFoliage(px, rng, 0.22);
-  const cells = [0, 1, 2, 3, 4, 5, 6, 7, 8];
-  for (let i = cells.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [cells[i], cells[j]] = [cells[j], cells[i]];
+function inBush(x, y) {
+  if (y >= 13 && (x === 7 || x === 8)) return 'stem';
+  if (y > 13) return null;
+  const px = x + 0.5;
+  const py = y + 0.5;
+  for (const [cx, cy, r] of [[4.5, 9.5, 4.4], [11, 9.5, 4.4], [7.5, 6.5, 5], [7.5, 11, 4.6]]) {
+    if ((px - cx) ** 2 + (py - cy) ** 2 <= r * r) return 'leaf';
   }
-  const clusters = randInt(rng, 6, 8);
-  for (let k = 0; k < clusters; k++) {
-    const cx = 1 + 5 * (cells[k] % 3) + randInt(rng, 0, 2);
-    const cy = 1 + 4 * Math.floor(cells[k] / 3) + randInt(rng, 0, 2);
-    const n = randInt(rng, 2, 3);
-    for (let b = 0; b < n; b++) {
-      const x = cx + b;
-      if (x >= W) break;
-      const y0 = cy + (b & 1);
-      const len = randInt(rng, 2, 3);
-      const sheen = randInt(rng, 1, len - 1);
-      for (let j = 0; j < len; j++) set(px, x, y0 + j, j === 0 ? 0x9aa6d6 : j === sheen ? 0x5b6bb0 : 0x3b4a8a);
+  return null;
+}
+
+/** Mask the berry foliage to the bush's silhouette: leaves keep their colour (darker toward the bottom), the stem is bark. */
+function maskBush(px, rng) {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const at = inBush(x, y);
+      const i = (y * W + x) * 4;
+      if (at === 'stem') set(px, x, y, 0x5a4630, delta(rng, 6));
+      else if (at === null) px[i + 3] = 0;
+      else if (y >= 10) { px[i] = Math.round(px[i] * 0.82); px[i + 1] = Math.round(px[i + 1] * 0.82); px[i + 2] = Math.round(px[i + 2] * 0.82); }
     }
   }
 }
 
 /**
- * 80 honeyberry_bush_bare — the same bush, picked: the ripe bush's foliage (painted with the "honeyberry_bush" seed, so
- * the leaves match), sparser — every opaque pixel becomes a hole with p 0.3 (about 45 % holes in all) — with three
- * bare twigs (3-px diagonal strokes 0x5a4630) and no berries.
+ * 79 honeyberry_bush — a rounded bush (inBush) of the berry foliage with 8 % holes, darker on its lower rows, standing on a
+ * short bark stem, hung with 6–8 clusters of elongated dusky-blue honeyberries inside the silhouette: a cluster is 2–3
+ * berries side by side, every other one a row lower, each berry 1 px wide and 2–3 rows tall (a pale bloom 0x9aa6d6 on
+ * its top pixel, 0x3b4a8a below it with one 0x5b6bb0 sheen pixel). Berries are opaque even over a hole.
+ */
+function paintHoneyberryBush(px, rng) {
+  paintBerryFoliage(px, rng, 0.08);
+  maskBush(px, rng);
+  const clusters = randInt(rng, 6, 8);
+  for (let k = 0, tries = 0; k < clusters && tries < 200; tries++) {
+    const cx = randInt(rng, 2, 12);
+    const cy = randInt(rng, 3, 10);
+    if (inBush(cx, cy) !== 'leaf' || inBush(cx + 2, cy + 3) !== 'leaf') continue;
+    const n = randInt(rng, 2, 3);
+    for (let b = 0; b < n; b++) {
+      const x = cx + b;
+      const y0 = cy + (b & 1);
+      const len = randInt(rng, 2, 3);
+      const sheen = randInt(rng, 1, len - 1);
+      for (let j = 0; j < len; j++) if (inBush(x, y0 + j) === 'leaf') set(px, x, y0 + j, j === 0 ? 0x9aa6d6 : j === sheen ? 0x5b6bb0 : 0x3b4a8a);
+    }
+    k++;
+  }
+}
+
+/**
+ * 80 honeyberry_bush_bare — the same bush, picked: the ripe bush's foliage and silhouette (painted with the
+ * "honeyberry_bush" seed, so the leaves match), sparser — every leaf pixel becomes a hole with p 0.3 — with three bare twigs
+ * (3-px diagonal strokes 0x5a4630) inside the clump, and no berries.
  */
 function paintHoneyberryBushBare(px, rng) {
-  paintBerryFoliage(px, makeRng('honeyberry_bush'), 0.22);
-  for (let i = 3; i < BYTES; i += 4) if (px[i] === 255 && rng() < 0.3) px[i] = 0;
-  for (let k = 0; k < 3; k++) {
-    const x = randInt(rng, 2, 12);
-    const y = randInt(rng, 2, 12);
+  const seed = makeRng('honeyberry_bush');
+  paintBerryFoliage(px, seed, 0.08);
+  maskBush(px, seed);
+  for (let y = 0; y < 13; y++) for (let x = 0; x < W; x++) if (inBush(x, y) === 'leaf' && rng() < 0.3) px[(y * W + x) * 4 + 3] = 0;
+  for (let k = 0, tries = 0; k < 3 && tries < 100; tries++) {
+    const x = randInt(rng, 3, 11);
+    const y = randInt(rng, 4, 9);
     const dir = rng() < 0.5 ? -1 : 1;
+    if (inBush(x + 2 * dir, y + 2) !== 'leaf') continue;
     for (let j = 0; j < 3; j++) set(px, x + dir * j, y + j, 0x5a4630, delta(rng, 6));
+    k++;
   }
 }
 
@@ -2165,62 +2194,87 @@ function paintPlantTopClear(px) {
 }
 
 /**
- * 102 loose_stones — rows 0–10 alpha 0; on rows 11–15 a low scatter of five pebbles resting on the bottom row, starting
- * at x 0, 3.5, 6.5, 9.5 and 12.5 (+ randInt(0, 1)): each an ellipse 1.1–1.6 half-wide and 3–5 rows tall standing on
- * row 15 (pixels with ((x + 0.5 − cx)/hw)² + ((y + 0.5 − cy)/hh)² ≤ 1.1), in grey 0x8a8a86 / 0x6e6e6a / 0xa09e98 or
- * ochre 0xa8844a / 0x8e6c3c (±6), lit +18 on its top pixels and shaded −18 on the bottom row. One of the middle three
- * (picked at random) is a dark flint nodule 0x2e3038, 1.6 half-wide and 3 rows tall, with a pale 0xc8c4b4 cortex on its
- * outline. The gaps stay alpha 0.
+ * 102 loose_stones — seen from ABOVE (a decal lying on the cell's floor): on alpha 0, six or seven pebbles scattered inside
+ * the tile's inscribed hexagon (centre (7.5, 7.5), radius 6.3), none touching another: each an ellipse 1.2–2.2 wide and
+ * 1–1.7 tall in grey 0x8a8a86 / 0x6e6e6a / 0xa09e98 or ochre 0xa8844a / 0x8e6c3c (±6), lit +20 on its upper-left outline
+ * and shaded −22 on its lower-right outline, with a dark 0x2a2520 shadow pixel below-right of its lower rim. The first is a
+ * dark flint nodule 0x2e3038 with a pale 0xc8c4b4 cortex on its outline (flint comes from these).
  */
 function paintLooseStones(px, rng) {
   clearTile(px);
   const COLOURS = [0x8a8a86, 0x6e6e6a, 0xa09e98, 0xa8844a, 0x8e6c3c];
-  const flintAt = randInt(rng, 1, 3);
-  const SLOTS = [0, 3.5, 6.5, 9.5, 12.5];
-  for (let k = 0; k < SLOTS.length; k++) {
-    const flint = k === flintAt;
-    const hw = flint ? 1.6 : 1.1 + rng() * 0.5;
-    const hh = flint ? 1.5 : randInt(rng, 3, 5) / 2;
-    const cx = SLOTS[k] + randInt(rng, 0, 1) + hw;
-    const cy = H - hh;
-    const hex = flint ? 0x2e3038 : pick(rng, COLOURS);
-    const inStone = (x, y) => {
-      const ex = (x + 0.5 - cx) / hw;
-      const ey = (y + 0.5 - cy) / hh;
-      return y >= 11 && y < H && x >= 0 && x < W && ex * ex + ey * ey <= 1.1;
-    };
-    for (let y = 11; y < H; y++) {
-      for (let x = Math.floor(cx - hw - 1); x <= Math.ceil(cx + hw); x++) {
-        if (!inStone(x, y)) continue;
-        const rim = !inStone(x - 1, y) || !inStone(x + 1, y) || !inStone(x, y - 1);
-        if (flint && rim) set(px, x, y, 0xc8c4b4, delta(rng, 6));
-        else set(px, x, y, hex, delta(rng, 6) + (!inStone(x, y - 1) ? 18 : y === H - 1 ? -18 : 0));
+  const owner = new Int8Array(W * H).fill(-1);
+  const count = randInt(rng, 6, 7);
+  for (let k = 0, tries = 0; k < count && tries < 400; tries++) {
+    const flint = k === 0;
+    const hw = flint ? 2 : 1.2 + rng() * 1;
+    const hh = flint ? 1.6 : 1 + rng() * 0.7;
+    const cx = 2.5 + rng() * 10;
+    const cy = 2.5 + rng() * 10;
+    if (Math.hypot(cx - 7.5, cy - 7.5) > 6.3 - Math.max(hw, hh)) continue;
+    const inStone = (x, y) => ((x + 0.5 - cx) / hw) ** 2 + ((y + 0.5 - cy) / hh) ** 2 <= 1;
+    /** @type {number[]} */
+    const cells = [];
+    let clash = false;
+    for (let y = Math.floor(cy - hh - 1); y <= Math.ceil(cy + hh + 1) && !clash; y++) {
+      for (let x = Math.floor(cx - hw - 1); x <= Math.ceil(cx + hw + 1); x++) {
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        if (inStone(x, y)) cells.push(x, y);
+        else continue;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < W && ny < H && owner[ny * W + nx] >= 0) clash = true;
+        }
       }
     }
+    if (clash || cells.length < 3) continue;
+    const hex = flint ? 0x2e3038 : pick(rng, COLOURS);
+    for (let i = 0; i < cells.length; i += 2) {
+      const x = cells[i];
+      const y = cells[i + 1];
+      owner[y * W + x] = k;
+      const upLeft = !inStone(x - 1, y) || !inStone(x, y - 1);
+      const downRight = !inStone(x + 1, y) || !inStone(x, y + 1);
+      if (flint && (upLeft || downRight)) set(px, x, y, 0xc8c4b4, delta(rng, 6));
+      else set(px, x, y, hex, delta(rng, 6) + (upLeft ? 20 : downRight ? -22 : 0));
+      if (!inStone(x, y + 1) && !inStone(x + 1, y + 1) && x + 1 < W && y + 1 < H && owner[(y + 1) * W + x + 1] < 0) {
+        set(px, x + 1, y + 1, 0x2a2520, delta(rng, 4));
+        owner[(y + 1) * W + x + 1] = k;
+      }
+    }
+    k++;
   }
 }
 
 /**
- * 103 fallen_branches — rows 0–11 alpha 0; on rows 12–15 three crossed sticks: from (0, 14) to (15, 12), from (1, 12) to
- * (13, 15) and a short one from (5, 15) to (11, 13), in bark 0x5e4228 ±8 with a darker 0x3e2a18 underside pixel below
- * each stick pixel (rows ≤ 15, never over another stick), pale 0xb89868 cut ends, and 5 lichen flecks (0xb8c49a or
- * 0xd0d8b0) on stick pixels.
+ * 103 fallen_branches — seen from ABOVE (a decal lying on the cell's floor): on alpha 0, inside the tile's inscribed hexagon,
+ * two crossed branches 2 px thick — from (2, 5) to (13, 10) and from (4, 12) to (12, 3) — and a 1-px twig from (6, 10) to
+ * (9, 13), in bark 0x5e4228 ±8 with a darker 0x3e2a18 shadow pixel below each stick pixel (never over another stick),
+ * pale 0xb89868 cut ends, two side twigs (2-px 0x6a4a2c strokes) and 5 lichen flecks (0xb8c49a or 0xd0d8b0) on the bark.
  */
 function paintFallenBranches(px, rng) {
   clearTile(px);
   /** @type {number[]} */
   const stick = [];
-  const STICKS = [[0, 14, 15, 12], [1, 12, 13, 15], [5, 15, 11, 13]];
-  for (const [x0, y0, x1, y1] of STICKS) {
+  const STICKS = [[2, 5, 13, 10, 2], [4, 12, 12, 3, 2], [6, 10, 9, 13, 1]];
+  const line = (x0, y0, x1, y1, thick, hex, mark) => {
     const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
     for (let i = 0; i <= n; i++) {
       const x = Math.round(x0 + ((x1 - x0) * i) / n);
       const y = Math.round(y0 + ((y1 - y0) * i) / n);
-      const end = i === 0 || i === n;
-      set(px, x, y, end ? 0xb89868 : 0x5e4228, delta(rng, 8));
-      stick.push(y * W + x);
+      for (let t = 0; t < thick; t++) {
+        const yy = y + t;
+        if (x < 0 || yy < 0 || x >= W || yy >= H) continue;
+        const end = mark && (i === 0 || i === n);
+        set(px, x, yy, end ? 0xb89868 : hex, delta(rng, 8));
+        stick.push(yy * W + x);
+      }
     }
-  }
+  };
+  for (const [x0, y0, x1, y1, thick] of STICKS) line(x0, y0, x1, y1, thick, 0x5e4228, true);
+  line(8, 7, 10, 5, 1, 0x6a4a2c, false);
+  line(6, 9, 4, 8, 1, 0x6a4a2c, false);
   const onStick = new Set(stick);
   for (const p of stick) {
     const x = p % W;

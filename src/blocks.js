@@ -117,7 +117,12 @@ export const SOUND_GROUPS = Object.freeze([
  * @property {boolean} gravity      falls when the cell below is fall-through (sand, red sand, gravel; CONTRACTS §34)
  * @property {'prism'|'flat'} icon  how atlas.drawBlockIcon draws its hotbar / picker icon: 'prism' (default) the hexagonal
  *                                  prism; 'flat' the TOP tile alone as an unskewed 2D picture (the circuit parts but the keg:
- *                                  thin parts and device models, which are not prisms; DESIGN-circuits §1.5)
+ *                                  thin parts and device models, which are not prisms; DESIGN-circuits §1.5; and the plants
+ *                                  and ground litter, which are sprites and decals)
+ * @property {'prism'|'cross'|'decal'} shape  how the chunk mesher draws it: 'prism' (default) the hexagonal prism; 'cross'
+ *                                  three crossed vertical pictures through the cell's middle (the wild plants: they look like
+ *                                  plants, not like a hex ring of panels); 'decal' one flat picture lying on the cell's floor
+ *                                  (the ground litter). Both use the block's TOP tile; the terrain stays hexagonal prisms.
  */
 
 /** tiles helper: six sides, then top, then bottom */
@@ -148,6 +153,7 @@ function def(d) {
     meshed: d.meshed ?? true,
     gravity: d.gravity ?? false,
     icon: d.icon ?? 'prism',
+    shape: d.shape ?? 'prism',
   };
 }
 
@@ -167,6 +173,12 @@ const WATER_FAMILY = Object.freeze({
 const PLANT = Object.freeze({
   solid: false, opaque: false, layer: LAYER_CUTOUT, cullSame: false, soundGroup: 'leaves',
 });
+
+/** The wild plants: PLANT flags drawn as crossed sprites of their picture (every face is that one tile), with a flat icon. */
+const SPRITE = Object.freeze({ ...PLANT, shape: /** @type {'cross'} */ ('cross'), icon: /** @type {'flat'} */ ('flat') });
+
+/** The ground litter: PLANT flags drawn as a flat picture on the cell's floor (every face is that one tile), flat icon. */
+const DECAL = Object.freeze({ ...PLANT, shape: /** @type {'decal'} */ ('decal'), icon: /** @type {'flat'} */ ('flat') });
 
 /**
  * Flags of the thin circuit parts (DESIGN-circuits §1.2 "THIN": the Powder Fuse, the Torch and the four wires): walk-through,
@@ -279,14 +291,14 @@ export const BLOCKS = [
   def({ id: B.COPPER_ORE, name: 'copper_ore', displayName: 'Copper Ore', tiles: tiles(T.COPPER_ORE), soundGroup: 'stone' }),
   def({ id: B.TIN_ORE, name: 'tin_ore', displayName: 'Tin Ore', tiles: tiles(T.TIN_ORE), soundGroup: 'stone' }),
   // Wild plants (PLANT). A picked bush or pear becomes its *_BARE variant, which regrows and is never placed by hand.
-  def({ id: B.HONEYBERRY_BUSH, name: 'honeyberry_bush', displayName: 'Honeyberry Bush', tiles: tiles(T.HONEYBERRY_BUSH), ...PLANT }),
-  def({ id: B.HONEYBERRY_BUSH_BARE, name: 'honeyberry_bush_bare', displayName: 'Picked Honeyberry Bush', tiles: tiles(T.HONEYBERRY_BUSH_BARE), ...PLANT, placeable: false }),
-  // Short plants: top and bottom are PLANT_TOP_CLEAR, because the mesher draws the top hexagon a whole cell up.
-  def({ id: B.TUSSOCK, name: 'tussock', displayName: 'Tussock Grass', tiles: tiles(T.TUSSOCK, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'grass' }),
-  def({ id: B.CATTAILS, name: 'cattails', displayName: 'Cattails', tiles: tiles(T.CATTAILS_SIDE, T.CATTAILS_TOP), ...PLANT, soundGroup: 'grass' }),
-  def({ id: B.TUBER_PLANT, name: 'tuber_plant', displayName: 'Wild Tuber Plant', tiles: tiles(T.TUBER_PLANT, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'grass' }),
-  def({ id: B.PRICKLY_PEAR, name: 'prickly_pear', displayName: 'Prickly Pear', tiles: tiles(T.PRICKLY_PEAR), ...PLANT }),
-  def({ id: B.PRICKLY_PEAR_BARE, name: 'prickly_pear_bare', displayName: 'Picked Prickly Pear', tiles: tiles(T.PRICKLY_PEAR_BARE), ...PLANT, placeable: false }),
+  // Each is a sprite (SPRITE): its picture on three crossed planes, never a hexagonal prism.
+  def({ id: B.HONEYBERRY_BUSH, name: 'honeyberry_bush', displayName: 'Honeyberry Bush', tiles: tiles(T.HONEYBERRY_BUSH), ...SPRITE }),
+  def({ id: B.HONEYBERRY_BUSH_BARE, name: 'honeyberry_bush_bare', displayName: 'Picked Honeyberry Bush', tiles: tiles(T.HONEYBERRY_BUSH_BARE), ...SPRITE, placeable: false }),
+  def({ id: B.TUSSOCK, name: 'tussock', displayName: 'Tussock Grass', tiles: tiles(T.TUSSOCK), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.CATTAILS, name: 'cattails', displayName: 'Cattails', tiles: tiles(T.CATTAILS_SIDE), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.TUBER_PLANT, name: 'tuber_plant', displayName: 'Wild Tuber Plant', tiles: tiles(T.TUBER_PLANT), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.PRICKLY_PEAR, name: 'prickly_pear', displayName: 'Prickly Pear', tiles: tiles(T.PRICKLY_PEAR), ...SPRITE }),
+  def({ id: B.PRICKLY_PEAR_BARE, name: 'prickly_pear_bare', displayName: 'Picked Prickly Pear', tiles: tiles(T.PRICKLY_PEAR_BARE), ...SPRITE, placeable: false }),
   // Workplaces (§7.1): plain solid blocks that crafting.findStations looks for near the player.
   def({ id: B.WORK_STUMP, name: 'work_stump', displayName: 'Work Stump', tiles: tiles(T.STUMP_SIDE, T.STUMP_TOP, T.OAK_LOG_END), soundGroup: 'wood' }),
   def({ id: B.KILN, name: 'kiln', displayName: 'Kiln', tiles: tiles(T.KILN_SIDE, T.KILN_TOP), soundGroup: 'stone' }),
@@ -298,8 +310,8 @@ export const BLOCKS = [
   def({ id: B.REMAINS, name: 'remains', displayName: 'Your Belongings', tiles: tiles(T.REMAINS_SIDE, T.REMAINS_TOP), ...PLANT, soundGroup: 'cloth', placeable: false }),
   // Ground litter (picked with R or broken by hand) and the cold fire pit a burnt-out campfire leaves: a meshed cutout block,
   // so campfires.js, the campfire renderer and the zombie safe zone never see it. None of these is placed by hand.
-  def({ id: B.LOOSE_STONES, name: 'loose_stones', displayName: 'Loose Stones', tiles: tiles(T.LOOSE_STONES, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'stone', placeable: false }),
-  def({ id: B.FALLEN_BRANCHES, name: 'fallen_branches', displayName: 'Fallen Branches', tiles: tiles(T.FALLEN_BRANCHES, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'wood', placeable: false }),
+  def({ id: B.LOOSE_STONES, name: 'loose_stones', displayName: 'Loose Stones', tiles: tiles(T.LOOSE_STONES), ...DECAL, soundGroup: 'stone', placeable: false }),
+  def({ id: B.FALLEN_BRANCHES, name: 'fallen_branches', displayName: 'Fallen Branches', tiles: tiles(T.FALLEN_BRANCHES), ...DECAL, soundGroup: 'wood', placeable: false }),
   def({ id: B.FIRE_PIT, name: 'fire_pit', displayName: 'Cold Fire Pit', tiles: tiles(T.FIRE_PIT_SIDE, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'stone', placeable: false }),
   // ---- Powder and circuits (DESIGN-circuits §1.2). The part table, predicates and connection rules live in circuitParts.js.
   // The devices carry the MODEL flags: solid, unmeshed 3D models drawn by circuitRenderer, whose moving and lit bits are
@@ -409,6 +421,11 @@ export function isTargetable(id) {
   return id !== B.AIR && !getBlockDef(id).liquid;
 }
 /** false for blocks drawn by their own model instead of the chunk mesher (campfire, black hole, the circuit parts but the keg). */
+/** How the chunk mesher draws `id` (BlockDef.shape): 'prism', 'cross' (the wild plants) or 'decal' (the ground litter). */
+export function getBlockShape(id) {
+  return getBlockDef(id).shape;
+}
+
 export function isMeshed(id) {
   return getBlockDef(id).meshed;
 }
