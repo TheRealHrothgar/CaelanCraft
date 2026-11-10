@@ -61,70 +61,70 @@ canvas{image-rendering:pixelated}
 .rune-panel code{color:#ffe08a}
 
 /* ==== The creative inventory (z 20; DESIGN-circuits §5.4, §5.8; CONTRACTS §56 once merged) ====================================
-   A honeycomb of pointy-top hex cells in sections, with a section rail, in the survival palette (dark #1c1a24, honey #e8b04a,
-   text #f3ead8). The hotbar stays visible and clickable under the dimmed layer: it takes the bottom 60px (8px offset, 40px
-   slots + 3px padding + 2px border each side, 2px shadow), so the panel (8vh down) never reaches the bottom 72px. The panel is a
-   border-box flex column: the head (title, search, Show all) and the foot (name, tip, hint) are fixed and only #picker-scroll
-   shrinks and scrolls, keeping at least one honeycomb row (64px). At 1280x720 that region is about 9 rows; the whole collapsed
-   picker is ~950px, so it scrolls by design and the rail jumps to any section in one click. In a window under ~274px tall the
-   panel stays 180px (the head, the name line and one row; the tip and the hint fold away under 320px) and overlaps the hotbar.
-   No square grid, no grey bevel, no +/- glyphs, no tabs along the top. */
+   A tidy grid of plain rounded SQUARE slots in sections, with a section rail, in the survival palette (dark #1c1a24, honey
+   #e8b04a, text #f3ead8). Icons sit on rounded squares, never on hexagons (the user's ask): the slots, the rail buttons, the
+   header chips and the drag ghost are rounded squares, and the badges are round. The hotbar stays visible and clickable under
+   the dimmed layer: it takes the bottom 60px (8px offset, 40px slots + 3px padding + 2px border each side, 2px shadow), so the
+   panel (8vh down) never reaches the bottom 72px. The panel is a border-box flex column: the head (title, search, Show all)
+   and the foot (name, tip, hint) are fixed and only #picker-scroll shrinks and scrolls, keeping at least one row of slots
+   (64px). At 1280x720 that region shows about 6 rows; the whole collapsed picker is taller, so it scrolls by design and the
+   rail jumps to any section in one click. In a window under ~274px tall the panel stays 180px (the head, the name line and
+   one row; the tip and the hint fold away under 320px) and overlaps the hotbar. No grey bevel, no +/- glyphs, no tabs. */
 #block-picker{z-index:20;pointer-events:none;display:flex;align-items:flex-start;justify-content:center;padding-top:8vh;background:rgba(0,0,0,.45)}
-.picker-panel{pointer-events:auto;width:min(980px,calc(100vw - 48px));height:max(180px,min(880px,calc(100vh - 8vh - 72px)));max-height:max(180px,calc(100vh - 8vh - 72px));box-sizing:border-box;display:flex;flex-direction:column;gap:6px;padding:12px;background:#1c1a24;border:3px solid #e8b04a;box-shadow:0 0 0 2px #000,0 10px 28px rgba(0,0,0,.55);color:#f3ead8;font:13px/17px monospace;overflow-y:auto}
+.picker-panel{pointer-events:auto;width:min(980px,calc(100vw - 48px));height:max(180px,min(880px,calc(100vh - 8vh - 72px)));max-height:max(180px,calc(100vh - 8vh - 72px));box-sizing:border-box;display:flex;flex-direction:column;gap:6px;padding:12px;background:#1c1a24;border:3px solid #e8b04a;border-radius:16px;box-shadow:0 0 0 2px #000,0 10px 28px rgba(0,0,0,.55);color:#f3ead8;font:13px/17px monospace;overflow-y:auto}
 .picker-head{flex:0 0 auto;display:flex;align-items:center;gap:12px;height:26px}
 .picker-title{flex:0 0 auto;color:#e8b04a;font:bold 16px/20px monospace;letter-spacing:.06em}
-#picker-search{flex:1 1 auto;min-width:0;max-width:380px;height:26px;box-sizing:border-box;padding:3px 8px;background:#2a2633;color:#f3ead8;border:1px solid #4a4458;font:13px monospace;outline:none}
+#picker-search{flex:1 1 auto;min-width:0;max-width:380px;height:26px;box-sizing:border-box;padding:3px 12px;background:#2a2633;color:#f3ead8;border:1px solid #4a4458;border-radius:13px;font:13px monospace;outline:none}
 #picker-search:focus{border-color:#e8b04a}
 #picker-search::placeholder{color:#8a8298}
 #picker-search::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none;width:11px;height:11px;cursor:pointer;background:linear-gradient(45deg,transparent 42%,#e8b04a 42% 58%,transparent 58%),linear-gradient(-45deg,transparent 42%,#e8b04a 42% 58%,transparent 58%)}
 .picker-showall{flex:0 0 auto;margin-left:auto;display:flex;align-items:center;gap:6px;color:#c8bca4;font:12px monospace;white-space:nowrap;cursor:pointer}
 .picker-showall input{margin:0;accent-color:#e8b04a}
 .picker-body{flex:1 1 auto;min-height:0;display:flex;gap:8px}
-/* the rail: one 28px hex per section; the section at the top of the view is honey */
-#picker-rail{flex:0 0 40px;display:flex;flex-direction:column;align-items:center;gap:3px;padding-top:2px;overflow-y:auto;scrollbar-width:none}
-.picker-rail-btn{position:relative;flex:0 0 32px;width:28px;height:32px;padding:0;border:0;background:#4a4458;cursor:pointer;display:flex;align-items:center;justify-content:center;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
-.picker-rail-btn::before{content:"";position:absolute;inset:2px;background:#2a2633;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
-.picker-rail-btn:hover{background:#c8963e}
-.picker-rail-btn.current{background:#e8b04a}
-.picker-rail-btn.current::before{background:#3a3020}
-.picker-rail-btn:focus-visible{outline:none;background:#fff}
-.picker-rail-icon{position:relative;z-index:1;width:20px;height:20px;pointer-events:none}
-#picker-scroll{position:relative;flex:1 1 auto;min-width:0;min-height:64px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#e8b04a #2a2633;scroll-padding-top:34px;cursor:grab}
+/* the rail: one 34px rounded square per section; the section at the top of the view gets a honey ring */
+#picker-rail{flex:0 0 40px;display:flex;flex-direction:column;align-items:center;gap:4px;padding-top:2px;overflow-y:auto;scrollbar-width:none}
+.picker-rail-btn{flex:0 0 34px;width:34px;height:34px;padding:0;box-sizing:border-box;border:2px solid #3a3446;border-radius:9px;background:#2a2633;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .08s ease,border-color .08s ease}
+.picker-rail-btn:hover{border-color:#c8963e;transform:translateY(-1px)}
+.picker-rail-btn.current{border-color:#e8b04a;background:#3a3020}
+.picker-rail-btn:focus-visible{outline:2px solid #fff;outline-offset:1px}
+.picker-rail-icon{width:24px;height:24px;pointer-events:none}
+#picker-scroll{position:relative;flex:1 1 auto;min-width:0;min-height:64px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#e8b04a #2a2633;scroll-padding-top:44px;cursor:grab}
 #picker-scroll.grabbing{cursor:grabbing}
 #picker-scroll::-webkit-scrollbar{width:8px}
-#picker-scroll::-webkit-scrollbar-track{background:#2a2633}
-#picker-scroll::-webkit-scrollbar-thumb{background:#e8b04a}
+#picker-scroll::-webkit-scrollbar-track{background:#2a2633;border-radius:4px}
+#picker-scroll::-webkit-scrollbar-thumb{background:#e8b04a;border-radius:4px}
 #picker-grid{padding:0 8px 8px;outline:none}
-/* sections: a sticky header (honey small caps over a thin rule) pushed off by the next one */
-.picker-section-head{position:sticky;top:0;z-index:3;height:28px;margin:0 -8px 4px;padding:0 10px;background:#1c1a24;border-bottom:1px solid rgba(232,176,74,.35);color:#e8b04a;font:bold 18px/28px monospace;font-variant:small-caps;letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* sections: a sticky header (the section's icon on a small rounded square, honey small caps, a thin rule) pushed off by the next */
+.picker-section-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:8px;height:34px;margin:0 -8px 8px;padding:0 10px;background:#1c1a24;border-bottom:1px solid rgba(232,176,74,.35);color:#e8b04a;font:bold 18px/34px monospace;font-variant:small-caps;letter-spacing:.05em;white-space:nowrap;overflow:hidden}
+.picker-section-icon{flex:0 0 auto;width:24px;height:24px;padding:2px;border-radius:7px;background:#2a2633}
+.picker-section-title{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .picker-results{padding:4px 2px 10px;color:#b9ad95;font:12px/16px monospace}
-/* the honeycomb: 56x64 cells, columns 58px apart, rows 50px apart (-14px overlap), every odd row indented 29px */
-.picker-comb{width:calc(var(--cols,8) * 58px - 2px);padding:0 0 14px 2px}
-.picker-row{display:flex;gap:2px;height:50px}
-.picker-row.indent{padding-left:29px}
-/* a family's drawer: a band right below the row of its tile, laid out with the same columns */
-.picker-drawer{margin:0 -8px 12px;padding:4px 0 18px;background:#241f2e;border-left:3px solid #e8b04a;border-right:3px solid #e8b04a;box-shadow:inset 0 1px 0 rgba(232,176,74,.35),inset 0 -1px 0 rgba(232,176,74,.35)}
-.picker-drawer::before{content:attr(aria-label);display:block;padding:0 10px 9px;color:#e8b04a;font:bold 11px/16px monospace;letter-spacing:.08em;text-transform:uppercase;opacity:.85}
-.picker-drawer > .picker-row{width:calc(var(--cols,8) * 58px - 2px);margin-left:7px}
-.picker-cell{position:relative;flex:0 0 56px;width:56px;height:64px;padding:0;border:0;background:#2a2633;cursor:pointer;display:flex;align-items:center;justify-content:center;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
-.picker-cell::before{content:"";position:absolute;inset:2px;background:#2a2633;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
-.picker-cell:hover{background:#e8b04a}
-.picker-cell.selected{background:#e8b04a}
-.picker-cell.selected::before{inset:4px;background:#3a3020}
-.picker-cell:focus-visible{outline:none;background:#fff}
-.picker-cell.in-drawer::before{background:#2f2a3a}
-.picker-icon{position:relative;z-index:1;width:48px;height:48px;pointer-events:none}
-/* the slot badge of a block already in the hotbar: a 14px honey hex, top right */
-.picker-badge{position:absolute;z-index:2;right:6px;top:12px;width:14px;height:16px;display:none;align-items:center;justify-content:center;background:#e8b04a;color:#1c1a24;font:bold 10px/16px monospace;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);pointer-events:none}
+/* the slots: 56px rounded squares 6px apart (columns and rows 62px apart), a 48px icon on each, a chunky shadow under */
+.picker-slots{padding:2px 0 16px}
+.picker-row{display:flex;gap:6px;height:56px}
+.picker-row + .picker-row{margin-top:6px}
+.picker-cell{position:relative;flex:0 0 56px;width:56px;height:56px;padding:0;box-sizing:border-box;border:2px solid #3a3446;border-radius:12px;background:linear-gradient(#332e3f,#27232f);box-shadow:0 3px 0 #110f15;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .08s ease,border-color .08s ease}
+.picker-cell:hover{border-color:#e8b04a;transform:translateY(-2px)}
+.picker-cell.selected{border-color:#e8b04a;background:linear-gradient(#54432a,#3a3020)}
+.picker-cell:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.picker-cell.in-drawer{background:linear-gradient(#3b3449,#2d2838)}
+.picker-icon{width:48px;height:48px;pointer-events:none}
+/* the round badge of a block already in the hotbar (its slot number), on the top right corner */
+.picker-badge{position:absolute;z-index:2;right:-6px;top:-6px;width:20px;height:20px;box-sizing:border-box;display:none;align-items:center;justify-content:center;border:2px solid #1c1a24;border-radius:50%;background:#e8b04a;color:#1c1a24;font:bold 11px/16px monospace;pointer-events:none}
 .picker-cell.in-hotbar .picker-badge{display:flex}
-/* a family tile: the fanned stack, the member count and the chevron (▸ closed, ▾ open) */
-.picker-family::before{background:#332d40}
-.picker-family.open{background:#e8b04a}
-.picker-family.open::before{inset:3px;background:#3a3020}
-.picker-count{position:absolute;z-index:2;right:4px;top:13px;min-width:15px;height:13px;padding:0 2px;box-sizing:border-box;background:#1c1a24;border:1px solid #e8b04a;border-radius:7px;color:#e8b04a;font:bold 9px/11px monospace;text-align:center;pointer-events:none}
-.picker-chevron{position:absolute;z-index:2;left:0;right:0;bottom:2px;color:#e8b04a;font:bold 11px/11px monospace;text-align:center;pointer-events:none}
-/* dragging a block onto the hotbar */
-.picker-ghost{position:fixed;left:0;top:0;z-index:70;width:40px;height:40px;pointer-events:none;opacity:.92;filter:drop-shadow(0 3px 4px rgba(0,0,0,.6))}
+/* a family: one slot drawn as a little stack of cards (two edges peek out behind it), the fanned icons, a round count badge
+   and the chevron (▸ closed, ▾ open) */
+.picker-family{box-shadow:3px -3px 0 -1px #4a4458,6px -6px 0 -2px #3a3446,0 3px 0 #110f15}
+.picker-family.open{border-color:#e8b04a;background:linear-gradient(#54432a,#3a3020)}
+.picker-count{position:absolute;z-index:2;right:-7px;top:-8px;min-width:20px;height:18px;padding:0 4px;box-sizing:border-box;border:2px solid #1c1a24;border-radius:9px;background:#f3ead8;color:#1c1a24;font:bold 10px/14px monospace;text-align:center;pointer-events:none}
+.picker-chevron{position:absolute;z-index:2;right:3px;bottom:0;color:#e8b04a;font:bold 13px/14px monospace;text-shadow:0 1px 0 #000;pointer-events:none}
+/* a family's drawer: a rounded honey-edged tray right below the row of its tile, laid out with the same columns (its 2px
+   border and 6px padding sit in the grid's 8px padding), with a notch pointing up at the tile's column (--notch-col) */
+.picker-drawer{position:relative;margin:-6px -8px 16px;padding:6px 6px 12px;background:#241f2e;border:2px solid #e8b04a;border-radius:14px}
+.picker-drawer::before{content:attr(aria-label);display:block;padding:0 2px 8px;color:#e8b04a;font:bold 11px/16px monospace;letter-spacing:.08em;text-transform:uppercase;opacity:.85}
+.picker-drawer::after{content:"";position:absolute;top:-9px;left:calc(var(--notch-col,0) * 62px + 26px);width:14px;height:14px;background:#241f2e;border-left:2px solid #e8b04a;border-top:2px solid #e8b04a;border-radius:3px 0 0;transform:rotate(45deg)}
+/* dragging a block onto the hotbar: the icon on a small rounded square */
+.picker-ghost{position:fixed;left:-6px;top:-6px;z-index:70;width:40px;height:40px;padding:4px;border:2px solid #e8b04a;border-radius:10px;background:#2a2633;pointer-events:none;opacity:.95;box-shadow:0 6px 14px rgba(0,0,0,.55)}
 .picker-ghost canvas{display:block;width:40px;height:40px}
 #block-picker.dragging,#block-picker.dragging .picker-cell{cursor:grabbing}
 .hotbar-slot.drop-target{background:rgba(232,176,74,.55);border-color:#e8b04a}
@@ -134,7 +134,8 @@ canvas{image-rendering:pixelated}
 #picker-blurb{height:30px;color:#d8ccb4;font:12px/15px monospace;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
 .picker-hint{color:#b9ad95;font:12px/15px monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-height:320px){#picker-blurb,.picker-hint{display:none}}
-@media (max-width:520px){.picker-panel{width:calc(100vw - 16px);padding:8px}.picker-head{gap:8px}.picker-title{display:none}#picker-grid{padding:0 2px 8px}.picker-section-head{margin:0 -2px 4px}.picker-drawer{margin:0 -2px 12px}}
+@media (max-width:520px){.picker-panel{width:calc(100vw - 16px);padding:8px}.picker-head{gap:8px}.picker-title{display:none}}
+@media (prefers-reduced-motion:reduce){.picker-cell,.picker-rail-btn{transition:none}.picker-cell:hover,.picker-rail-btn:hover{transform:none}}
 
 /* Pause menu (z 30) */
 #pause-menu{z-index:30;background:rgba(0,0,0,.55);display:flex;align-items:safe center;justify-content:center;overflow-y:auto}
@@ -566,9 +567,11 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 @media (prefers-reduced-motion:reduce){.hb-spread.turn-next .hb-page-inner,.hb-spread.turn-prev .hb-page-inner{animation:none}}
 
 /* ==== Circuits (docs/DESIGN-circuits.md §4.10, §6.2.16, §6.2.17; CONTRACTS §57 once merged) ==================================
-   The pause menu's Devices row ([ Circuits: On | Off ] [ Black holes: On | Off ], survival's Mode-switch halves), the device
-   panel (z 24, the rune editor's layer) and the black hole's screen flash. The survival palette and .hex-button chrome only:
-   never .mc-button or .picker-panel. */
+   The pause menu's Devices row ([ Circuits: On | Off ] [ Black holes: On | Off ], survival's Mode-switch halves: text only,
+   matching the Mode row above it), the device panel (z 24, the rune editor's layer) and the black hole's screen flash. The
+   survival palette; never .mc-button or .picker-panel. The device panel is rounded and friendly: the part's icon on a rounded
+   square (no hexagon badge), pill buttons and rounded square keys (.cc-btn); only the input-face diagram is a hexagon, because
+   it shows the cell's six sides. */
 .device-switch .mode-half{min-width:0;padding:6px 16px}
 .device-switch .mode-half:last-child{min-width:64px}
 #pause-devices .device-switch + .device-switch{margin-left:6px}
@@ -578,73 +581,84 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 #flash-overlay.white{background:radial-gradient(circle,rgba(255,255,255,1) 0,rgba(250,248,244,.9) 60%,rgba(240,236,230,.75) 100%)}
 #flash-overlay.void{background:#0b0908}
 
-/* the device panel: header (icon, name, cell, label), the live reading, the settings, About, Done */
+/* the device panel: header (the icon on a rounded square, name, cell, label), the live reading, the settings, About, Done */
 #device-panel{z-index:24;pointer-events:none;display:flex;align-items:flex-start;justify-content:center;padding:4vh 16px 0;box-sizing:border-box;background:rgba(10,8,14,.5)}
-.cc-panel{pointer-events:auto;width:min(600px,100%);min-width:0;max-height:max(240px,calc(100vh - 4vh - 84px));overflow-x:hidden;overflow-y:auto;box-sizing:border-box;padding:12px 16px 0;background:#1c1a24;border:3px solid #e8b04a;box-shadow:0 0 0 2px #000,0 10px 28px rgba(0,0,0,.55);color:#f3ead8;font:13px/18px monospace;scrollbar-width:thin;scrollbar-color:#e8b04a #2a2633}
-.cc-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding-bottom:10px;border-bottom:1px solid #3a3446}
-.cc-icon{flex:0 0 56px;width:56px;height:64px;display:flex;align-items:center;justify-content:center;background:#e8b04a;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
+.cc-panel{pointer-events:auto;width:min(600px,100%);min-width:0;max-height:max(240px,calc(100vh - 4vh - 84px));overflow-x:hidden;overflow-y:auto;box-sizing:border-box;padding:14px 16px 0;background:#1c1a24;border:3px solid #e8b04a;border-radius:16px;box-shadow:0 0 0 2px #000,0 10px 28px rgba(0,0,0,.55);color:#f3ead8;font:13px/18px monospace;scrollbar-width:thin;scrollbar-color:#e8b04a #2a2633}
+.cc-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding-bottom:12px;border-bottom:1px solid #3a3446}
+.cc-icon{flex:0 0 60px;width:60px;height:60px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border:3px solid #e8b04a;border-radius:14px;background:linear-gradient(#3a3446,#2a2633);box-shadow:0 3px 0 #110f15}
 .cc-icon canvas{width:48px;height:48px;image-rendering:pixelated}
 .cc-titles{flex:1 1 160px;min-width:0}
 .cc-title{color:#e8b04a;font:bold 18px/22px monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cc-coords{color:#8a8298;font:12px/16px monospace}
 .cc-label{flex:1 1 200px;display:flex;align-items:center;gap:8px;color:#c8bca4;font:12px monospace}
-.cc-label-input{flex:1 1 auto;min-width:0;height:26px;box-sizing:border-box;padding:3px 8px;background:#2a2633;color:#f3ead8;border:1px solid #4a4458;font:13px monospace;outline:none}
+.cc-label-input{flex:1 1 auto;min-width:0;height:28px;box-sizing:border-box;padding:3px 12px;background:#2a2633;color:#f3ead8;border:1px solid #4a4458;border-radius:14px;font:13px monospace;outline:none}
 .cc-label-input:focus,.cc-number-input:focus{border-color:#e8b04a}
 .cc-label-input::placeholder{color:#8a8298}
-.cc-section{padding:6px 0 4px;border-bottom:1px solid #3a3446}
+.cc-section{padding:6px 0 5px;border-bottom:1px solid #3a3446}
 .cc-heading{margin-bottom:4px;color:#e8b04a;font:bold 12px/16px monospace;letter-spacing:.1em;text-transform:uppercase}
-.cc-lines{display:grid;grid-template-columns:auto 1fr;gap:1px 12px;margin:0}
+.cc-lines{display:grid;grid-template-columns:auto 1fr;gap:1px 14px;margin:0;padding:5px 12px;border-radius:10px;background:#24202d}
 .cc-lines dt{color:#8a8298}
 .cc-lines dd{margin:0;color:#f3ead8;overflow-wrap:anywhere}
 .cc-row{display:flex;align-items:flex-start;gap:12px;padding:3px 0}
-.cc-row-label{flex:0 0 104px;padding-top:5px;color:#c8bca4}
-.cc-row-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.cc-row-label{flex:0 0 104px;padding-top:6px;color:#c8bca4}
+.cc-row-body{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:8px}
 .cc-number{display:flex;align-items:center;gap:6px}
-.cc-number-input{width:92px;height:28px;box-sizing:border-box;padding:3px 6px;background:#2a2633;color:#f3ead8;border:1px solid #4a4458;font:14px monospace;outline:none}
+.cc-number-input{width:92px;height:30px;box-sizing:border-box;padding:3px 10px;background:#2a2633;color:#f3ead8;border:1px solid #4a4458;border-radius:10px;font:14px monospace;outline:none}
 .cc-unit{color:#8a8298}
-.cc-chips{display:flex;flex-wrap:wrap;gap:4px}
-.cc-panel .hex-button{padding:4px 16px;font-size:13px;background:#2a2633;color:#e8b04a}
-.cc-panel .hex-button:hover:not(:disabled){background:#3a3446}
-.cc-panel .hex-button:focus-visible{background:#f3ead8;color:#1c1a24}
-.cc-panel .hex-button.active{background:#e8b04a;color:#1c1a24}
+/* the panel's buttons: rounded pills (the wavelengths are rounded square keys); the chosen one is honey */
+.cc-btn{min-height:30px;box-sizing:border-box;padding:4px 14px;border:2px solid #4a4458;border-radius:15px;background:#2a2633;color:#e8b04a;font:bold 13px/18px monospace;cursor:pointer;transition:transform .08s ease,border-color .08s ease,background-color .08s ease}
+.cc-btn:hover{border-color:#e8b04a;background:#332d40}
+.cc-btn:focus-visible{outline:2px solid #f3ead8;outline-offset:2px}
+.cc-btn:active{transform:translateY(1px)}
+.cc-btn.active{border-color:#e8b04a;background:#e8b04a;color:#1c1a24}
+.cc-chips{display:flex;flex-wrap:wrap;gap:6px}
 .cc-chip{min-width:58px}
-/* segmented controls: the halves (or thirds) of one elongated hexagon */
-.cc-seg{display:inline-flex;gap:2px}
-.cc-seg .hex-button{min-width:76px;clip-path:none}
-.cc-seg .hex-button:first-child{clip-path:polygon(12px 0,100% 0,100% 100%,12px 100%,0 50%)}
-.cc-seg .hex-button:last-child{clip-path:polygon(0 0,calc(100% - 12px) 0,100% 50%,calc(100% - 12px) 100%,0 100%)}
-/* the input face picker: six side wedges and a top dot, north up, the current face in honey */
-.cc-face{display:flex;align-items:center;gap:10px}
-.cc-face-svg{display:block;cursor:pointer;outline:none}
-.cc-face-svg:focus-visible{filter:drop-shadow(0 0 2px #f3ead8)}
-.cc-wedge polygon,.cc-wedge circle{fill:#2a2633;stroke:#4a4458;stroke-width:1.5}
-.cc-wedge text{fill:#c8bca4;font:bold 10px monospace;pointer-events:none}
+/* segmented controls: pills sitting in one rounded track */
+.cc-seg{display:inline-flex;gap:2px;padding:3px;border:1px solid #3a3446;border-radius:18px;background:#14121a}
+.cc-seg .cc-btn{min-width:76px;border-color:transparent;background:transparent}
+.cc-seg .cc-btn:hover{background:#2a2633}
+.cc-seg .cc-btn.active{border-color:#e8b04a;background:#e8b04a;color:#1c1a24}
+/* the input face picker: the cell from above (north up) as six wedges with their names outside and a round top in the middle */
+.cc-face{display:flex;align-items:center;gap:12px}
+.cc-face-svg{display:block;cursor:pointer;outline:none;border-radius:12px}
+.cc-face-svg:focus-visible{outline:2px solid #f3ead8;outline-offset:2px}
+.cc-wedge polygon,.cc-wedge circle{fill:#2a2633;stroke:#1c1a24;stroke-width:3;stroke-linejoin:round}
 .cc-wedge:hover polygon,.cc-wedge:hover circle{fill:#3a3446}
-.cc-wedge.active polygon,.cc-wedge.active circle{fill:#e8b04a;stroke:#1c1a24}
-.cc-wedge.active text{fill:#1c1a24}
+.cc-wedge.active polygon,.cc-wedge.active circle{fill:#e8b04a}
+.cc-face-name{fill:#8a8298;font:bold 10px monospace}
+.cc-wedge.active .cc-face-name{fill:#e8b04a}
+.cc-top text{fill:#c8bca4;font:bold 9px monospace;pointer-events:none}
+.cc-top.active text{fill:#1c1a24}
 .cc-face-caption{color:#8a8298;font:12px monospace}
-/* the wavelength dial: 16 small hex buttons, two rows of 8, the 600 m distress wavelength in ember */
-.cc-dial{display:flex;flex-direction:column;gap:3px}
-.cc-dial-row{display:flex;gap:3px}
-.cc-dial-row + .cc-dial-row{margin:-8px 0 0 24.5px}
-.cc-panel .cc-wave{width:46px;height:40px;padding:0;font-size:12px;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
-.cc-panel .cc-wave.distress{background:#5a2416;color:#ffb48a}
-.cc-panel .cc-wave.distress.active{background:#d0582a;color:#fff4dc}
-.cc-dial-legend{display:flex;gap:14px;color:#8a8298;font:11px monospace}
+/* the wavelength dial: 16 rounded square keys, two rows of 8, the 600 m distress wavelength in ember */
+.cc-dial{display:flex;flex-direction:column;gap:6px}
+.cc-dial-row{display:grid;grid-template-columns:repeat(8,minmax(0,46px));gap:6px}
+.cc-btn.cc-wave{min-width:0;height:30px;min-height:0;padding:0;border-radius:10px;font-size:12px}
+.cc-btn.cc-wave.distress{border-color:#7a3418;background:#3a1a10;color:#ffb48a}
+.cc-btn.cc-wave.distress:hover{border-color:#d0582a}
+.cc-btn.cc-wave.distress.active{border-color:#d0582a;background:#d0582a;color:#fff4dc}
+.cc-dial-legend{display:flex;align-items:center;gap:14px;color:#8a8298;font:11px monospace}
 .cc-distress-mark{color:#e08a5a}
-.cc-distress-mark::before{content:"";display:inline-block;width:8px;height:9px;margin-right:5px;background:#d0582a;clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)}
-/* the battery's charge bar */
-.cc-charge{position:relative;width:min(300px,100%);height:22px;background:#2a2633;border:1px solid #4a4458}
-.cc-charge-fill{height:100%;width:0;background:linear-gradient(#f0c066,#d99a32)}
+.cc-distress-mark::before{content:"";display:inline-block;width:9px;height:9px;margin-right:5px;border-radius:50%;background:#d0582a;vertical-align:-1px}
+/* the battery's charge bar: a little battery (a rounded body, a nub on the right) filling with honey, ember when low */
+.cc-charge{position:relative;width:min(280px,calc(100% - 8px));height:28px;box-sizing:border-box;padding:3px;border:2px solid #4a4458;border-radius:9px;background:#14121a}
+.cc-charge::after{content:"";position:absolute;right:-8px;top:6px;width:5px;height:12px;border-radius:0 3px 3px 0;background:#4a4458}
+.cc-charge-fill{height:100%;width:0;border-radius:5px;background:linear-gradient(#f0c066,#d99a32)}
 .cc-charge-fill.low{background:linear-gradient(#e07a4a,#d0582a)}
-.cc-charge-text{position:absolute;inset:0;color:#f3ead8;font:bold 12px/22px monospace;text-align:center;text-shadow:1px 1px 0 #000}
-.cc-actions{gap:8px;padding-left:116px}
-.cc-panel .cc-action{min-width:96px;background:linear-gradient(#f0c066,#d99a32);color:#1c1a24}
-.cc-panel .cc-action:hover:not(:disabled){background:linear-gradient(#ffd884,#e8b04a)}
+.cc-charge-text{position:absolute;inset:0;color:#f3ead8;font:bold 12px/24px monospace;text-align:center;text-shadow:1px 1px 0 #000}
+/* the foot's actions (Start / Stop / Send / Tap / Refill): chunky honey keys that press down, Stop in ember; Done a calm pill */
+.cc-actions{display:flex;flex-wrap:wrap;gap:8px}
+.cc-btn.cc-action{min-width:96px;padding:5px 18px;border-color:#b98330;background:linear-gradient(#f0c066,#d99a32);color:#1c1a24;box-shadow:0 3px 0 #7a5418}
+.cc-btn.cc-action:hover{background:linear-gradient(#ffd884,#e8b04a)}
+.cc-btn.cc-action:active{transform:translateY(2px);box-shadow:0 1px 0 #7a5418}
+.cc-btn.cc-action-stop{border-color:#a8441e;background:linear-gradient(#ec845a,#d0582a);color:#fff4dc;box-shadow:0 3px 0 #6a2610}
+.cc-btn.cc-action-stop:hover{background:linear-gradient(#f59a72,#e0663a)}
+.cc-btn.cc-action-stop:active{box-shadow:0 1px 0 #6a2610}
 .cc-about{border-bottom:0}
 .cc-about p{margin:0 0 6px;color:#e8b04a;font:italic 13px/18px monospace}
 .cc-about .cc-origin{color:#c8bca4}
-.cc-foot{position:sticky;bottom:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px 0 12px;background:#1c1a24;border-top:1px solid #3a3446}
+.cc-foot{position:sticky;bottom:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:10px 0 14px;background:#1c1a24;border-top:1px solid #3a3446}
 .cc-keys{flex:1 1 auto;color:#8a8298;font:11px monospace}
-.cc-panel .cc-done{min-width:110px;background:linear-gradient(#f0c066,#d99a32);color:#1c1a24}
-@media (max-width:520px){#device-panel{padding:8px 8px 0}.cc-panel{padding:10px 10px 0}.cc-row{flex-direction:column;gap:4px}.cc-row-label{flex:0 0 auto;padding-top:0}.cc-actions{padding-left:0}.cc-dial-row + .cc-dial-row{margin:-6px 0 0 18.5px}.cc-panel .cc-wave{width:34px;height:32px;font-size:10px}.cc-keys{flex-basis:100%;order:2}}
+.cc-btn.cc-done{min-width:96px;padding:5px 18px;border-color:#e8b04a}
+@media (max-width:520px){#device-panel{padding:8px 8px 0}.cc-panel{padding:10px 10px 0}.cc-row{flex-direction:column;gap:4px}.cc-row-label{flex:0 0 auto;padding-top:0}.cc-dial-row{gap:4px}.cc-btn.cc-wave{height:28px;font-size:10px}.cc-keys{flex-basis:100%;order:2}}
+@media (prefers-reduced-motion:reduce){.cc-btn{transition:none}.cc-btn:active,.cc-btn.cc-action:active{transform:none}}

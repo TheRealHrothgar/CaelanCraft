@@ -9,7 +9,7 @@ import { BLOCK, BLOCKS } from '../../src/blocks.js';
 import { SAVE_SLOTS, HOTBAR_SIZE } from '../../src/config.js';
 import { ITEMS } from '../../src/items.js';
 import { PARTS, isPart, partTip } from '../../src/circuitParts.js';
-import { buildPickerModel, familyLine } from '../../src/pickerModel.js';
+import { buildPickerModel, familyLine, PICKER_COL_W, PICKER_ROW_H } from '../../src/pickerModel.js';
 import { createDevicePanel, panelFields, PANEL_KEYS_HINT, ACTION_LABELS } from '../../src/devicePanel.js';
 import { makeCircuitWorld, FLOOR } from '../helpers/circuitWorld.js';
 import { buildChapters } from '../../src/handbook.js';
@@ -175,7 +175,7 @@ describe('styles.css block picker (DESIGN-circuits §5.4, §5.10)', () => {
   const layer = decls('#block-picker');
   const panel = decls('.picker-panel');
   const scroll = decls('#picker-scroll');
-  const ONE_ROW = 64; // a 56x64 honeycomb cell
+  const ONE_ROW = 64; // one row of 56px slots, with the shadow under them and the badges over their corners
   const panelBottom = (H) => lengthPx(layer.get('padding-top'), H) + lengthPx(panel.get('max-height'), H) + 2; // + 2px shadow
 
   it('the panel ends above the hotbar for heights 274–1440 (an 800x480 window included); its height never exceeds that bound', () => {
@@ -232,15 +232,18 @@ describe('styles.css block picker (DESIGN-circuits §5.4, §5.10)', () => {
     for (const H of [fold + 1, 360, 480, 622]) expect(full, `viewport ${H}`).toBeLessThanOrEqual(lengthPx(panel.get('max-height'), H));
   });
 
-  it('the honeycomb: 56x64 pointy-top cells, rows 50px apart, odd rows indented 29px; sticky honey section headers', () => {
-    const hex = 'polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)';
+  it('the slots: plain 56px rounded squares 6px apart (the model\'s 62px columns and rows); sticky honey section headers', () => {
     const cell = decls('.picker-cell');
-    expect([cell.get('width'), cell.get('height'), cell.get('clip-path')]).toEqual(['56px', '64px', hex]);
-    expect(decls('.picker-cell::before').get('clip-path')).toBe(hex); // the hover ring: an outline cannot follow a clip-path
-    expect(decls('.picker-cell::before').get('inset')).toBe('2px');
-    expect(decls('.picker-row').get('height')).toBe('50px');
-    expect(decls('.picker-row').get('gap')).toBe('2px');
-    expect(decls('.picker-row.indent').get('padding-left')).toBe('29px');
+    expect([cell.get('width'), cell.get('height'), cell.get('border-radius')]).toEqual(['56px', '56px', '12px']);
+    expect(cell.has('clip-path')).toBe(false);
+    expect(cell.get('box-sizing')).toBe('border-box');
+    const row = decls('.picker-row');
+    expect([row.get('height'), row.get('gap')]).toEqual(['56px', '6px']);
+    expect(decls('.picker-row + .picker-row').get('margin-top')).toBe('6px');
+    expect(() => decls('.picker-row.indent')).toThrow(); // no indented rows any more
+    // the CSS agrees with pickerModel: columns and rows are both 62px apart (pickerCols, ↑ / ↓, PageUp / PageDown)
+    expect(toPx(/** @type {string} */ (cell.get('width')), 0) + toPx(/** @type {string} */ (row.get('gap')), 0)).toBe(PICKER_COL_W);
+    expect(toPx(/** @type {string} */ (row.get('height')), 0) + 6).toBe(PICKER_ROW_H);
     expect(decls('.picker-icon').get('width')).toBe('48px');
     const head = decls('.picker-section-head');
     expect(head.get('position')).toBe('sticky');
@@ -249,21 +252,46 @@ describe('styles.css block picker (DESIGN-circuits §5.4, §5.10)', () => {
     expect(head.get('font-variant')).toBe('small-caps');
     expect(head.get('font')).toMatch(/^bold 18px/);
     expect(head.get('color')).toBe('#e8b04a');
-    // the badge of a block already in the hotbar is a 14px honey hex; a family tile has its count and chevron
-    expect(decls('.picker-badge').get('width')).toBe('14px');
+    // the badge of a block already in the hotbar is a round honey dot; a family's count badge is round too
+    expect(decls('.picker-badge').get('width')).toBe('20px');
+    expect(decls('.picker-badge').get('border-radius')).toBe('50%');
     expect(decls('.picker-badge').get('background')).toBe('#e8b04a');
     expect(decls('.picker-cell.in-hotbar .picker-badge').get('display')).toBe('flex');
-    // the drawer: #241f2e with honey left and right edges
+    expect(decls('.picker-count').get('border-radius')).toBe('9px');
+    // the other icon holders are rounded squares too: the rail, the header chips, the drag ghost
+    expect(decls('.picker-rail-btn').get('border-radius')).toBe('9px');
+    expect(decls('.picker-section-icon').get('border-radius')).toBe('7px');
+    expect(decls('.picker-ghost').get('border-radius')).toBe('10px');
+    // the drawer: a rounded #241f2e tray with a honey edge, its slots lined up with the section's (its margin, border and
+    // padding fill the grid's 8px side padding) and its notch at the tile's column, in the model's 62px steps
     const drawer = decls('.picker-drawer');
     expect(drawer.get('background')).toBe('#241f2e');
-    expect(drawer.get('border-left')).toBe('3px solid #e8b04a');
-    expect(drawer.get('border-right')).toBe('3px solid #e8b04a');
+    expect(drawer.get('border')).toBe('2px solid #e8b04a');
+    expect(drawer.get('border-radius')).toBe('14px');
+    const side = (v, i) => toPx(/** @type {string} */ (v).split(/\s+/)[i], 0);
+    const gridPad = side(decls('#picker-grid').get('padding'), 1);
+    expect(gridPad).toBe(8);
+    expect(side(drawer.get('margin'), 1)).toBe(-gridPad);
+    expect(2 + side(drawer.get('padding'), 1)).toBe(gridPad);
+    expect(decls('.picker-drawer::after').get('left')).toBe(`calc(var(--notch-col,0) * ${PICKER_COL_W}px + 26px)`);
     // the look: survival's palette, never the grey bevel
     expect(panel.get('background')).toBe('#1c1a24');
     expect(panel.get('border')).toBe('3px solid #e8b04a');
     expect(panel.get('color')).toBe('#f3ead8');
     expect(decls('.picker-hint').get('color')).toBe('#b9ad95');
     expect(decls('.picker-ghost').get('pointer-events')).toBe('none'); // elementFromPoint finds the hotbar slot under it
+  });
+
+  it('no rule of the picker or the device panel clips anything to a hexagon (the user: no icons on hexagons)', () => {
+    const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    let checked = 0;
+    for (const m of stripped.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sel = m[1].trim();
+      if (!/picker|\.cc-|#device-panel/.test(sel)) continue;
+      checked++;
+      expect(m[2], sel).not.toMatch(/clip-path/);
+    }
+    expect(checked).toBeGreaterThan(80);
   });
 
   it('the picker DOM (§5.9): the ids menus.js binds, the search placeholder and the hint', () => {
@@ -293,7 +321,7 @@ describe('styles.css circuits screens (DESIGN-circuits §4.10, §5.10, §6.2.16�
     expect(z('#device-panel')).toBeLessThan(z('#pause-menu'));
   });
 
-  it('#device-panel, the picker, #btn-circuits and #btn-blackholes hold no .mc-button; every button in #device-panel is a .hex-button', () => {
+  it('#device-panel, the picker, #btn-circuits and #btn-blackholes hold no .mc-button; every button in #device-panel is a rounded .cc-btn', () => {
     const doc = documentFromHTML(readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8'));
     for (const id of ['device-panel', 'block-picker', 'btn-circuits', 'btn-blackholes', 'pause-devices']) {
       const el = /** @type {any} */ (doc.getElementById(id));
@@ -312,15 +340,18 @@ describe('styles.css circuits screens (DESIGN-circuits §4.10, §5.10, §6.2.16�
       env.ticks(1);
       panel.open(/** @type {*} */ (env.circuits.panelView(0, FLOOR, 0, true)));
       for (const b of root.querySelectorAll('button')) {
-        expect(b.classList.contains('hex-button'), `${id}: ${b.textContent}`).toBe(true);
+        expect(b.classList.contains('cc-btn'), `${id}: ${b.textContent}`).toBe(true);
+        expect(b.classList.contains('hex-button'), `${id}: ${b.textContent}`).toBe(false);
         buttons++;
       }
       expect(root.querySelectorAll('.mc-button, .picker-panel')).toHaveLength(0);
     }
     expect(buttons).toBeGreaterThan(40);
     panel.dispose();
+    // the Devices row keeps survival's text-only .hex-button halves (it sits under the Mode row and carries no icon)
     for (const id of ['btn-circuits-on', 'btn-circuits-off', 'btn-blackholes-on', 'btn-blackholes-off']) {
       expect(/** @type {any} */ (doc.getElementById(id)).classList.contains('hex-button'), id).toBe(true);
+      expect(/** @type {any} */ (doc.getElementById(id)).querySelectorAll('canvas, svg, img'), id).toHaveLength(0);
     }
     // and the new modules never create one
     for (const file of ['pickerUI.js', 'pickerModel.js', 'devicePanel.js']) {
@@ -329,6 +360,13 @@ describe('styles.css circuits screens (DESIGN-circuits §4.10, §5.10, §6.2.16�
     }
     expect(decls('.cc-panel').get('background')).toBe('#1c1a24');
     expect(decls('.cc-panel').get('border')).toBe('3px solid #e8b04a');
+    // rounded and friendly: the icon on a rounded square, pill buttons, rounded square wavelength keys, a battery-shaped bar
+    expect(decls('.cc-icon').get('border-radius')).toBe('14px');
+    expect(decls('.cc-btn').get('border-radius')).toBe('15px');
+    expect(decls('.cc-seg').get('border-radius')).toBe('18px');
+    expect(decls('.cc-btn.cc-wave').get('border-radius')).toBe('10px');
+    expect(decls('.cc-distress-mark::before').get('border-radius')).toBe('50%');
+    expect(decls('.cc-charge').get('border-radius')).toBe('9px');
   });
 
   it('no player-facing string has a bare [R] or "R:" (hints of every part, the controls sheet, the §3.3 / §4.6 lines, the panel, tips)', () => {
