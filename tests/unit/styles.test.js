@@ -12,6 +12,7 @@ import { PARTS, isPart, partTip } from '../../src/circuitParts.js';
 import { buildPickerModel, familyLine } from '../../src/pickerModel.js';
 import { createDevicePanel, panelFields, PANEL_KEYS_HINT, ACTION_LABELS } from '../../src/devicePanel.js';
 import { makeCircuitWorld, FLOOR } from '../helpers/circuitWorld.js';
+import { buildChapters } from '../../src/handbook.js';
 import { documentFromHTML } from '../helpers/fakeDom.js';
 
 const css = readFileSync(fileURLToPath(new URL('../../src/styles.css', import.meta.url)), 'utf8');
@@ -535,6 +536,20 @@ describe('styles.css survival screens', () => {
     expect(decls('.hb-text .hb-table th').get('white-space')).toBe('normal');
     const m = /^min\((\d+)px,/.exec(/** @type {string} */ (decls('.hb-book').get('height')));
     expect(Number(m[1])).toBeGreaterThanOrEqual(760);
+  });
+
+  it('the contents page fits a short window: below 600 px the chapter list is compact (play-test round 2: 800×600 scrolled)', () => {
+    // At 800×600 (a 502 px viewport) the page's columns are 285 px tall; ten entries of 16px/1.5 + 3px padding were 306 px.
+    const m = /@media \(max-height:600px\)\{\.hb-toc-entry\{([^{}]*)\}\}/.exec(css);
+    expect(m, 'a max-height media rule for .hb-toc-entry').toBeTruthy();
+    const compact = new Map(m[1].split(';').filter(Boolean).map((d) => d.split(':').map((x) => x.trim())));
+    const size = Number(/^(\d+)px$/.exec(/** @type {string} */ (compact.get('font-size')))[1]);
+    const line = Number(compact.get('line-height'));
+    const pad = Number(/^(\d+)px 0$/.exec(/** @type {string} */ (compact.get('padding')))[1]);
+    const entries = buildChapters().length;
+    const list = toPx(/** @type {string} */ (decls('.hb-toc').get('margin')).split(/\s+/)[0], 0) + entries * (size * line + 2 * pad);
+    expect(list).toBeLessThanOrEqual(285 - 10);
+    expect(size).toBeGreaterThanOrEqual(13); // still legible
   });
 
   it('#death-screen and every new survival element use no .mc-button or .picker-panel; their buttons are .hex-button', () => {

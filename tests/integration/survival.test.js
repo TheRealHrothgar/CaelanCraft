@@ -13,11 +13,11 @@ import { getItem } from '../../src/items.js';
 import { Pack } from '../../src/inventory.js';
 import { Containers } from '../../src/containers.js';
 import { breakSeconds, rollDrops, pick } from '../../src/harvest.js';
-import { DigState, interactKind, chooseBelongingsCell, handKeyOf } from '../../src/survivalControl.js';
+import { DigState, HINT, interactKind, chooseBelongingsCell, handKeyOf } from '../../src/survivalControl.js';
 import { CraftQueue, getRecipe } from '../../src/crafting.js';
 import { FireSlots } from '../../src/cooking.js';
 import { Survival } from '../../src/survival.js';
-import { deathScreenText, spoiledText, stacksText } from '../../src/main.js';
+import { deathScreenText, pitHintText, spoiledText, stacksText } from '../../src/main.js';
 import { blockParticleColor } from '../../src/particles.js';
 
 const B = BLOCK;
@@ -308,6 +308,31 @@ describe('the first day (§7.5)', () => {
     const back = remains.takeAll(...cell, pack);
     expect(back.empty).toBe(true);
     expect(total(pack.export().pack)).toEqual(total([...carried.pack]));
+  });
+});
+
+describe('the cold pit\'s crosshair hint (§4.4, §9.5): what interactKind decides is what the HUD shows', () => {
+  const pit = { q: 2, y: GROUND + 1, r: 3, blockId: B.FIRE_PIT };
+  /** The HUD line main.survivalHintText builds for R on a cold pit, with `holds` in the pack and nothing on the pit. */
+  function hintWith(holds) {
+    const pack = new Pack();
+    pack.addAll(holds);
+    const act = interactKind({ hit: pit, selectedKey: null, pack, fireView: () => null });
+    return { kind: act.kind, text: pitHintText(act, '') };
+  }
+
+  it('names what the relight still lacks (play-test round 2: the HUD showed the generic relight hint whatever the pack held)', () => {
+    expect(hintWith([])).toEqual({ kind: 'pit_hint', text: 'Cold Fire Pit · relight needs a fire drill, tinder and 3 more sticks' });
+    expect(hintWith([{ k: 'fire_drill', n: 1 }, { k: 'stick', n: 2 }]))
+      .toEqual({ kind: 'pit_hint', text: 'Cold Fire Pit · relight needs tinder and 1 more stick' });
+    expect(hintWith([{ k: 'fire_drill', n: 1 }, { k: 'stick', n: 2 }, { k: 'plant_fibre', n: 1 }]))
+      .toEqual({ kind: 'pit_hint', text: 'Cold Fire Pit · relight needs 1 more stick' });
+  });
+
+  it('with the whole kit it is the relight hint itself, and a pit with something on it offers to take it', () => {
+    expect(hintWith([{ k: 'fire_drill', n: 1 }, { k: 'stick', n: 3 }, { k: 'plant_fibre', n: 1 }])).toEqual({ kind: 'pit_relight', text: HINT.pit });
+    expect(pitHintText({ kind: 'pit_take', q: 2, y: GROUND + 1, r: 3 }, '1 done')).toBe('Cold Fire Pit · 1 done · R: take');
+    expect(pitHintText({ kind: 'pit_take', q: 2, y: GROUND + 1, r: 3 }, '')).toBe('Cold Fire Pit · R: take');
   });
 });
 

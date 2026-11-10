@@ -310,6 +310,17 @@ export function knockCause(blastsBefore, blastsAfter) {
   return blastsAfter !== blastsBefore ? 'blast' : 'log';
 }
 
+/**
+ * The cold fire pit's crosshair hint (§4.4, §9.5): `pit_take` offers what is on it; `pit_relight` and `pit_hint` carry their own
+ * hint from `interactKind` (`HINT.pit`, or what the relight still lacks: `Cold Fire Pit · relight needs 1 more stick`).
+ * @param {import('./survivalControl.js').InteractAction} act
+ * @param {string} status what the pit holds (`fireHint`), '' when nothing
+ */
+export function pitHintText(act, status) {
+  if (act.kind === 'pit_take') return `Cold Fire Pit${status ? ` · ${status}` : ''} · R: take`;
+  return act.hint || HINT.pit;
+}
+
 /** Whole cells unstickPlayer lifted the player (crush damage, §2.4): at least 1 for any lift. */
 export function cellsLifted(fromY, toY) {
   return Math.max(1, Math.ceil(toY - fromY - 1e-6));
@@ -1769,7 +1780,7 @@ export function boot(win, doc) {
         case 'pit_take':
         case 'pit_relight':
         case 'pit_hint':
-          return pitHintText(act);
+          return pitHintText(act, act.kind === 'pit_take' ? pitStatus(act) : '');
         case 'pick':
           return `${getBlockDef(/** @type {number} */ (act.id)).displayName} · R: pick`;
         case 'read':
@@ -1794,6 +1805,11 @@ export function boot(win, doc) {
     return barrelOrRuneHint();
   }
 
+  /** What a cold pit still holds (`fireHint` of its spots), for `pitHintText`. @param {import('./survivalControl.js').InteractAction} act */
+  function pitStatus(act) {
+    return fireHint(fireSlots.view(/** @type {number} */ (act.q), /** @type {number} */ (act.y), /** @type {number} */ (act.r)));
+  }
+
   /** `Campfire · 3 roasting (next 14 s) · 2 done · fuel 4:10 · R: take` (§4.4). */
   function campfireHintText(act) {
     const view = fireSlots.view(/** @type {number} */ (act.q), /** @type {number} */ (act.y), /** @type {number} */ (act.r));
@@ -1813,16 +1829,6 @@ export function boot(win, doc) {
       default:
         return status ? `${head} · hold food or a pot and press R` : HINT.fire;
     }
-  }
-
-  /** The cold fire pit's hint (§4.4). */
-  function pitHintText(act) {
-    if (act.kind === 'pit_take') {
-      const view = fireSlots.view(/** @type {number} */ (act.q), /** @type {number} */ (act.y), /** @type {number} */ (act.r));
-      const status = fireHint(view);
-      return `Cold Fire Pit${status ? ` · ${status}` : ''} · R: take`;
-    }
-    return HINT.pit;
   }
 
   /** @returns {boolean} the water at the player's own column is salt (drinking with the head under water) */

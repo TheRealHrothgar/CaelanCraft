@@ -260,6 +260,18 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     expect(rowOf(t, 'raw_pork')[3]).toBe('30 %');
   });
 
+  it('the food table\'s pages carry no margin note (its five columns do not fit beside one); "Goes bad" is explained with the spoilage prose', () => {
+    // play-test round 2: "Food and drink" beside its "Goes bad" tip was 370 px wide in a 317 px column and scrolled sideways
+    const food = CHAPTERS.find((c) => c.id === 'food');
+    const tablePages = food.pages.filter((pg) => pg.some((b) => b.kind === 'table' && b.id === 'food'));
+    expect(tablePages.length).toBeGreaterThan(0);
+    for (const pg of tablePages) expect(pg.filter((b) => b.kind === 'tip' || b.kind === 'warn')).toEqual([]);
+    const spoilage = food.pages.find((pg) => pg.some((b) => b.kind === 'h' && b.text === 'Spoilage and salt'));
+    const goesBad = spoilage.findIndex((b) => b.kind === 'tip' && /^Goes bad/.test(b.text));
+    expect(goesBad).toBeGreaterThan(0);
+    expect(spoilage[goesBad - 1].kind).toBe('p'); // it follows prose, so it never starts a page alone
+  });
+
   it('drinks, fire transforms, heat sources, clothes and bandages come from their tables', () => {
     const drinks = tableById('drinks');
     expect(drinks.keys).toEqual(ITEM_KEYS.filter((k) => ITEMS[k].food?.returns));
