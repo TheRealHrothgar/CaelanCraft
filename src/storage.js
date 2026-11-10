@@ -20,7 +20,7 @@ import {
 import { BLOCK, DEFAULT_HOTBAR } from './blocks.js';
 import { normalizeRunesJSON, validateRunesJSON } from './runes.js';
 import { validatePigsJSON } from './pigs.js';
-import { WEAR_SLOT_NAMES, getItem, maxDurability, stackSize } from './items.js';
+import { WEAR_SLOT_NAMES, canonicalItemKey, getItem, maxDurability, stackSize } from './items.js';
 import { normalizeFiresJSON, parseCellKey } from './cooking.js';
 import { normalizePartsJSON, validatePartsJSON } from './circuitStore.js';
 
@@ -254,14 +254,16 @@ function round3(v) {
 function checkStack(raw) {
   const v = /** @type {Record<string, any>} */ (raw);
   if (!isPlainObject(v) || typeof v.k !== 'string') return { reason: 'not an item stack' };
-  const def = getItem(v.k);
+  // v0.10 (DESIGN-circuits §8.3): `black_hole` and `blast_barrel` stacks are the Collapsar Charge and the Powder Keg now.
+  const k = canonicalItemKey(v.k);
+  const def = getItem(k);
   if (!def) return { reason: `unknown item ${JSON.stringify(v.k)}` };
-  const max = stackSize(v.k);
+  const max = stackSize(k);
   if (!Number.isInteger(v.n) || v.n < 1 || v.n > max) return { reason: `count is not 1–${max}` };
   /** @type {{k: string, n: number, d?: number}} */
-  const stack = { k: v.k, n: v.n };
+  const stack = { k, n: v.n };
   if (v.d === undefined || v.d === null) return { stack };
-  const dmax = maxDurability(v.k);
+  const dmax = maxDurability(k);
   if (dmax === 0) return { stack, note: `durability ignored (${def.name} never wears)` };
   if (!Number.isInteger(v.d) || v.d < 1 || v.d > dmax) return { reason: `durability is not 1–${dmax}` };
   stack.d = v.d;

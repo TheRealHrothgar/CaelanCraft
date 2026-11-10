@@ -1,4 +1,4 @@
-# Known issues (v0.8, PR #3; v0.9 Survival items at the end — S2–S4 fixed in the post-merge follow-up)
+# Known issues (v0.8, PR #3; v0.9 Survival items at the end — S2–S4 fixed in the post-merge follow-up; v0.10 circuits: C1–C6)
 
 Problems found by play-testing and review. Each one was reproduced independently by a second agent before it was
 listed. File and line references in the open tables are from commit c47ce0b, the build the play-test ran on. That build
@@ -103,6 +103,17 @@ Left as found, on purpose:
 | S5 | ~~A Survival world listed by a v0.8 tab loses its "· Survival" label in the Worlds list until it is saved again.~~ | Fixed with P8: a version-3 slot is always parsed, so the label never depended on the index. | — |
 | S6 | **Four timing tests fail when the machine is busy** (they pass run alone): worldgen "generates a warm chunk in ≤ 8 ms" and its generation-2 twin, mesher "meshes a real chunk in under 25 ms", campfires "100 000 fires". | They measure wall-clock time; other sessions' processes on this machine skew them. | Run them alone before believing a failure; consider a CI-only budget multiplier. |
 | S7 | **Closing the pack screen or the field book with `Esc` (or `E`) may fall back to click-to-play.** | Esc is not a user activation, so the pointer-lock request can be refused (the same as the picker, console and editor; CONTRACTS §23). | None (by design); a click resumes. |
+
+## Circuits, powder kegs and black holes v2 (v0.10) — open items from the integration
+
+| # | Problem | Cause | Suggested fix |
+|---|---------|-------|---------------|
+| C1 | **Thin parts block water.** A Powder Fuse, a Torch or a wire is a block id in its cell, so flowing water treats it like any non-water block and stops there instead of washing it away. | The six THIN parts are non-solid but not fall-through for fluids.js (DESIGN-circuits §1.1). | Let water flow into a thin part's cell and wash it away (dropping it in Survival), as Minecraft-like games do with torches. Needs a fluids.js rule change. |
+| C2 | **Every wire placed and every burnt fuse cell re-meshes 1–4 chunks.** | `World.setBlock` marks the chunks around any change dirty, even when both ids are unmeshed (AIR ↔ a thin part). Long fuse burns eat the lazy re-mesh budget. | DESIGN-circuits §7.1's request to survival A: skip `_markDirtyAround` when prev and next are both AIR or unmeshed non-opaque ids. |
+| C3 | **A Voltaic Battery's charge is not carried in Survival.** Breaking a battery gives a full one back, and the §8.2 "battery refill" recipe is not in. | Survival's ItemDef has no durability on block items yet (DESIGN-circuits §8.3: `d` = the charge, stack 1). | Allow `durability` on the battery's block item; write `c = d` on placing, read it back on breaking; add the refill recipe. |
+| C4 | **Huge networks are slow to rebuild**: an 8100-cell network takes about 150 ms on this loaded WSL machine. | The BFS is bound by Map lookups with large packed keys (about 300 ns a `Map.get` here). | A per-chunk typed-array index (B's report). Networks are truncated at 8192 cells and rebuilds are budgeted per tick, so play stays smooth meanwhile. |
+| C5 | **The Collapsar Charge's screen flash is fixed at 0.6 s in a void swallow** (the design says 0.5 s for the void flash). | Both flashes share hud.flashStep's (1 − t/0.6)² fade. | Give flashStep a per-kind length if anyone notices. |
+| C6 | **Undo's look-ahead settles the whole dirty queue.** To see whether a restored igniter is still powered, `circuits.wouldIgnite` first solves every waiting cell as settling (no edge fires), so any other circuit changed in the same frame as an undo also settles instead of firing. | Undo restores cells in one go and the engine only rebuilds networks at its tick. | In practice undo runs from the pause menu, where nothing else is changing. A per-network look-ahead would be exact. |
 
 ## Save slots (minor, from the save-slot check)
 

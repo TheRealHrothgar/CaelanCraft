@@ -13,7 +13,7 @@
 // Stacks are values (see inventory.js): change a slot by replacing it, then call `touch()`.
 import { BASKET_SLOTS, REMAINS_SLOTS, MAX_CONTAINERS } from './config.js';
 import { BLOCK } from './blocks.js';
-import { copyStack, stackProblem, spoilSlots, countsToStacks, aggregateStacks } from './inventory.js';
+import { copyStack, stackProblem, spoilSlots, countsToStacks, aggregateStacks, withCurrentKey } from './inventory.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 /** @typedef {import('./types.js').ContainersJSON} ContainersJSON */
@@ -234,8 +234,9 @@ export class Containers {
       else if (raw.kind === 'basket' && baskets >= MAX_CONTAINERS) warnings.push(`containers[${key}]: too many containers, dropped`);
       else {
         const slots = raw.kind === 'basket' ? new Array(BASKET_SLOTS).fill(null) : new Array(raw.slots.length).fill(null);
-        raw.slots.forEach((/** @type {any} */ s, /** @type {number} */ i) => {
-          if (s === null || s === undefined) return;
+        raw.slots.forEach((/** @type {any} */ s0, /** @type {number} */ i) => {
+          if (s0 === null || s0 === undefined) return;
+          const s = withCurrentKey(s0); // v0.10: an old `black_hole` / `blast_barrel` stack keeps its place
           const why = stackProblem(s);
           if (why) warnings.push(`containers[${key}][${i}]: ${why}, dropped`);
           else slots[i] = copyStack(s);

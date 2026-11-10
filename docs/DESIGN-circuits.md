@@ -2794,3 +2794,23 @@ disagreed:
 | A second fallingRenderer for infall | One more light in every shader key |
 | A two-layer flow-map disk | It made the arms stream outward and pulse; stationary arms with inward dashes are exact and cheaper |
 | Toggle-mode coherers, R-key NO/NC flips | Not how the real devices work (§4.6) |
+
+=====================================================================================================================
+## 12. As built (v0.10; the integrator's notes)
+The normative description is now `src/CONTRACTS.md` §50–§58. Where the build differs from this document:
+- **Torch** for Linstock everywhere (the user's decision at the top).
+- **Pitfalls** §6.8's 32–37 are CONTRACTS pitfalls 33–38 (survival had taken 32).
+- **Overlays.** `OverlayItem.a / .b` follow circuitGeometry's header (C), which the engine (B) now emits: blade a = closed,
+  cap b = NC, plunger a = travel (0 cocked), a keg's bung glow b = `FUSE_AT_BUNG` 8.
+- **Hooks.** `igniteKeg(q, y, r, fuse)` forwards the fuse (`ignite` keeps its 3 s keg); `chargeArming` is a new hook
+  (`blackHoles.isArming`) for the `collapsing!` hint.
+- **Undo's look-ahead** (§3.6): `circuits.wouldIgnite` solves the waiting dirty cells settling before it reads an igniter, so a
+  restored igniter whose circuit survived counts as powered (§7 I's quarry on a battery and a closed switch; KNOWN-ISSUES C6).
+- **The R key on a charge** says its own line (a charge also answers to the radio); the keg's is §3.3's.
+- **Survival** (§8): every part has its harvest row and its recipe (25 recipes, 114 in all), the 7 materials have icons, and
+  `pyrite` / `saltpetre` drop as §8.1 says (`deep` is a new drop flag). Not yet: a battery's charge as item durability and the
+  refill recipe (KNOWN-ISSUES C3). In Survival, R on a part is interactKind step 7b (`circuit`, or `fuse_hint` without a Fire
+  Drill) and the pocket key step 10b; right-click's control latch sits at the top of `survivalRight`.
+- **Scenes.** `?scene=circuits` builds four rows: §4.14 examples 1, 2 (with a keg), 10 with one key, and 7.
+- **A–D's adjudicated CONTRACT-ISSUEs** (vortex shader tuning, extra import edges, the device panel's atlas argument, the snuff
+  overload and the rest) are recorded in CONTRACTS §50–§57.

@@ -1,7 +1,7 @@
 // Caelancraft — every numeric constant and tuning knob. No logic lives here.
 // Units: blocks (metres), seconds, radians. See src/CONTRACTS.md §2.
 
-export const VERSION = '0.9.0';
+export const VERSION = '0.10.0';
 
 // World (cells are hexagonal prisms addressed by axial (q, r) + y; see src/hex.js)
 export const CHUNK_SIZE = 16;                       // q and r extent of a chunk, in cells

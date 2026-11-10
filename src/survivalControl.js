@@ -35,7 +35,12 @@ export const HINT = Object.freeze({
   needsGround: 'needs solid ground',
   protectedCell: 'Holds survival items · switch to Survival to empty it',
   read: 'Handbook · R: read',
+  // v0.10 (DESIGN-circuits §8.3): a fuse is lit by hand only with a Fire Drill in the pack.
+  fuseNeedsDrill: 'Powder Fuse · needs a Fire Drill (R key)',
 });
+
+/** The pocket key's item (DESIGN-circuits §4.6): a Spark Transmitter selected sends with R when nothing nearer does. */
+export const POCKET_ITEM = 'spark_transmitter';
 
 /** The Survival Handbook's item key (handbook.js HANDBOOK_KEY; §14). R (priority 10) and RMB with it in hand read it. */
 export const HANDBOOK_ITEM = 'handbook';
@@ -286,12 +291,15 @@ export function strikeKind(mob, tool) {
  * @property {(q: number, r: number) => boolean} [salty]  water at that column is salt (climate.isSaltyBiome of its biome)
  * @property {(station: string) => boolean} [stationNear]  the workplace of that station id is within STATION_RANGE of the
  *   feet (main: `!!stations[id]` from crafting.findStations); absent → every targeted workplace counts as near
+ * @property {(id: number) => boolean} [partR]  v0.10 (DESIGN-circuits §4.9): the targeted block is a circuit part with an R
+ *   action of its own (main: circuits on and main.hasRAction); absent → no circuit steps (no `circuit`, no `pocket`)
  */
 
 /**
  * @typedef {Object} InteractAction
  * @property {string} kind  fire_put | fire_feed | fire_take | fire_hint | pit_take | pit_relight | pit_hint | pick | tap |
- *   tap_hint | basket | belongings | hide | station | station_far | fill | drink | drink_here | read
+ *   tap_hint | basket | belongings | hide | station | station_far | fill | drink | drink_here | read | circuit | fuse_hint |
+ *   pocket (v0.10)
  * @property {number} [q] @property {number} [y] @property {number} [r]   the cell acted on (the water cell for fill/drink)
  * @property {string} [key]      fire_put / fire_feed: the selected item
  * @property {'skewer'|'centre'} [spot]  fire_put
@@ -321,10 +329,13 @@ function anyFree(spots, from, to) {
  * 6. SLEEPING_HIDE → `hide`;
  * 7. a workplace → `station`, or `station_far` (hint `Kiln · step within 3 cells to work here`) when `stationNear` says
  *    Making does not count it as near;
+ * 7b. v0.10 (DESIGN-circuits §4.9, §8.3): a circuit part with an R action of its own (`partR`) → `circuit` (main runs
+ *    circuits.interact 'r'); a Powder Fuse without a Fire Drill in the pack → `fuse_hint` instead;
  * 8. `waterHit` is water nearer than `hit` (or there is no hit) → `fill` with an empty clay pot selected, else `drink`;
  * 9. the head is under water → `drink_here`;
- * 10. the handbook is selected → `read` (§14.2: before today's barrel and rune behaviour);
- * 11. null: today's barrel and rune behaviour.
+ * 10. the handbook is selected → `read` (§14.2: before the rune and the keg explanation);
+ * 10b. v0.10: a Spark Transmitter is selected (and `partR` is given) → `pocket` (the pocket key sends, §4.6);
+ * 11. null: the rune, then the keg or charge explanation (main's interactTarget; kegs no longer light on the R key).
  * @param {InteractContext} c
  * @returns {InteractAction|null}
  */
@@ -378,6 +389,10 @@ export function interactKind(c) {
       if (c.stationNear && !c.stationNear(station)) return { kind: 'station_far', q, y, r, station, hint: `${name} · ${HINT.stationFar}` };
       return { kind: 'station', q, y, r, station, hint: `${name} · R: open Making` };
     }
+    if (c.partR && c.partR(id)) {
+      if (id === BLOCK.POWDER_FUSE && !c.pack.hasTool('firestarter', 0)) return { kind: 'fuse_hint', q, y, r, hint: HINT.fuseNeedsDrill };
+      return { kind: 'circuit', q, y, r };
+    }
   }
   if (waterFirst) {
     const fill = sel === 'clay_pot';
@@ -391,6 +406,7 @@ export function interactKind(c) {
   }
   if (c.headInWater) return { kind: 'drink_here' };
   if (sel === HANDBOOK_ITEM) return { kind: 'read', hint: HINT.read };
+  if (sel === POCKET_ITEM && c.partR) return { kind: 'pocket' };
   return null;
 }
 

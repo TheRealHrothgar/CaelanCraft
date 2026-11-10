@@ -693,7 +693,7 @@ function bandageTable() {
 /** What hurts, how much and how to avoid it: every DAMAGE_CAUSES key but 'command' (the console). */
 export const DANGER_NAMES = Object.freeze({
   fall: 'Falling', drown: 'Drowning', buried: 'Being buried', crush: 'Falling sand and gravel', fire: 'Campfire flames',
-  zombie: 'Zombies', blast: 'Blast Barrels', log: 'Falling trees', blackhole: 'Black holes', starve: 'Starving',
+  zombie: 'Zombies', blast: 'Powder Kegs', log: 'Falling trees', blackhole: 'Black holes', starve: 'Starving',
   thirst: 'Thirst', cold: 'Cold', heat: 'Heat', sick: 'Sickness', void: 'The void below the bedrock',
 });
 
@@ -705,7 +705,7 @@ const DANGER_AVOID = Object.freeze({
   crush: 'Step back when you undermine sand or gravel: what falls into your cell lifts you and hurts',
   fire: 'Walk around the flames, not through them',
   zombie: 'Stay by a burning fire at night; fight back with a tool',
-  blast: 'Keep well away from a lit barrel',
+  blast: 'Keep well away from a burning keg',
   log: 'Stand to the side when a felled tree topples',
   blackhole: 'Keep away from its pull',
   starve: 'Eat before you are Hungry; keep salted pork',

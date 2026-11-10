@@ -6,7 +6,9 @@ hex, and the physics, ray casting, meshing and streaming are all native to the h
 with a hex skin. Infinite procedurally generated terrain with biomes, caves, ores, trees and oceans; first-person
 movement with sliding collision, swimming and flight; break and place dozens of block types; a day/night cycle
 with a glowing sky; a **Survival** mode with a body to look after, tools from flint to steel and cooking on the
-campfire; and worlds that save themselves in the browser.
+campfire; real-world **circuits** — powder fuses and torches, batteries, switches, timers, relays and spark radio — that set
+off **powder kegs** and **Collapsar Charges** whose black holes swallow the land in a spiralling vortex; and worlds that save
+themselves in the browser.
 
 Everything is generated at runtime — no textures, models, sounds or fonts are downloaded.
 Built with [Three.js](https://threejs.org/) and [Vite](https://vite.dev/) in plain JavaScript.
@@ -88,6 +90,35 @@ pause menu then asks before bringing the survival resources in (they appear wher
 too, and this cannot be undone). A world that stays in Creative is never touched. Saves of Survival or generation-2 worlds are
 version 3, which older versions of the game show as damaged rather than misread.
 
+## Circuits, powder kegs and black holes
+
+The block picker (`E`) has a **Circuits** section. Everything works the way the real thing did, and every part's settings
+panel (**Shift+R** on it) says where it comes from.
+
+- **Mechanical.** A **Powder Fuse** burns 2.5 cells a second, branches where it forks and is gone afterwards; light it with the
+  `R` key or set a **Torch** beside it. Whatever it reaches at its end — a **Powder Keg** or a **Collapsar Charge** — goes off.
+- **Electrical: one wire out, the earth back.** Every source and load needs **earth** under it (soil or stone that reaches the
+  ground; wood, glass and sky platforms do not — run an **Earth Wire** down). Wire volts follow **Ohm's law**: each wire cell
+  drops current × resistance, so a long run or many lamps on one wire run dim. **Voltaic Batteries** (stack them into a pile),
+  the **Blasting Machine** (24 V for a second) and the **Selenium Panel** (daylight) are the sources; **Knife Switches**, **Push
+  Buttons**, **Clockwork Timers** (pulse, hold, repeat) and **Relays** (the telegraph's repeater) are the controls; the
+  **Igniter**, the **Filament Lamp** and the **Electric Bell** are the loads. Copper, brown and white wire join only their own
+  colour; a **Terminal Board** joins every colour. Wires never glow — look at a lamp, listen to a bell, or point at a part:
+  the crosshair hint reads its volts (`volts q y r` in the console gives the exact value).
+- **Radio.** A **Spark Transmitter** closes every **Coherer Receiver** on its wavelength (300–1050 m) within range. Holding a
+  transmitter in the hotbar makes it a **pocket key**: `R` sends, even while you look at the very keg you want to set off.
+- **Right-click works switches, buttons, timers and plungers** instead of placing a block (holding it never places either);
+  **Shift+right-click** places against them. `R` on a keg or a charge only explains how to set it off.
+- **Powder kegs burn in place**: a fuse, a torch or an igniter sets one off a quarter of a second later; a campfire or `ignite`
+  gives you 3 s — a left-click pinches the fuse out. Kegs going off together merge into one blast.
+- **Collapsar Charges** are dormant until a fuse, an igniter, a flame, a blast or the radio sets one off: a brilliant flash, an
+  implosion, then a black vortex that pulls you, pigs and zombies in on a spiral and visibly tears blocks loose and swallows them.
+  Walk straight away to escape. Left-click its core to break it.
+- The pause menu's **Devices** row switches circuits and black holes off and on for the world; `circuits on|off`,
+  `blackholes on|off|list`, `switch`, `timer`, `radio`, `volts` and `ignite` drive them from the console and from Rune Blocks.
+- In **Survival** every part is made at a workplace from what the land gives (pyrite from coal seams, saltpetre from deep cave
+  walls, copper, tin and iron); lighting a fuse by hand needs a Fire Drill. Collapsar Charges are Creative-only.
+
 ## Controls
 
 | Action | Keys |
@@ -98,13 +129,13 @@ version 3, which older versions of the game show as damaged rather than misread.
 | Sprint | double-tap `W` |
 | Toggle flying (Creative) | double-tap `Space` or `F` |
 | Break block (Survival: hold to dig) | Left mouse button |
-| Place block (Survival: use the item in hand) | Right mouse button |
+| Place block (Survival: use the item in hand); work a switch, button, timer or plunger (`Shift`: place against it) | Right mouse button |
 | Pick targeted block into hotbar (Survival: select it if the hotbar holds it) | Middle mouse button |
 | Choose hotbar slot | `1`–`9` or mouse wheel |
 | Block picker (Survival: Pack & Making) | `E` |
 | Command console | `T` (or `/` to start a command) |
-| Use: rune, barrel; in Survival also water, fire, plants, basket, belongings, Handbook | `R` |
-| Edit the targeted Rune Block | `Shift+R` |
+| Use: a switch, timer, fuse, the radio key or a rune; in Survival also water, fire, plants, basket, belongings, Handbook | `R` |
+| Settings of the targeted device, or edit the targeted Rune Block | `Shift+R` |
 | Debug overlay | `F3` |
 | Pause / release mouse | `Esc` |
 
@@ -121,6 +152,8 @@ version 3, which older versions of the game show as damaged rather than misread.
 | `?yaw=90&pitch=-30` | Initial look direction in degrees (yaw 0 = north, 90 = west, 180 = south, 270 = east; negative pitch looks down) |
 | `?ui=console` / `?ui=editor` | With `?autoplay=1`: open the console, or place a sample Rune Block ahead and open its editor (screenshots; use with `?nosave=1` — the editor variant writes to the world) |
 | `?ui=picker` / `?ui=pack` | With `?autoplay=1`: open the block picker, or (in Survival) the Pack & Making screen — with `?nosave=1` an empty pack is stocked with a demo kit |
+| `?ui=device` | With `?autoplay=1`: place a Clockwork Timer ahead and open its settings panel (use with `?nosave=1`) |
+| `?scene=vortex` / `?scene=circuits` | With `?autoplay=1`: set off a Collapsar Charge 8 cells ahead 2 s after loading, or build the worked circuit examples (a doorbell, a timed keg, a switch and igniter, a dusk lamp) 10 cells ahead (use with `?nosave=1`); with `?smoke=1` the self-test checks them |
 | `?mode=survival` / `?mode=creative` | With `?autoplay=1` or `?smoke=1`: the first world's mode. A saved world older than Survival is not upgraded from a URL (use `Esc` → Mode) unless `?nosave=1` |
 | `?autoplay=1` | Skip the title screen |
 | `?slot=3` | With `?autoplay=1`: play save slot 1–6 (default 1; with `?nosave=1` nothing is written) |
@@ -148,6 +181,8 @@ version 3, which older versions of the game show as damaged rather than misread.
   game loop headlessly with a stub renderer; `tests/integration/survival.test.js` plays a Survival first day on paper and
   `survivalData.test.js` checks that every item can be found or made and every recipe reached.
 - `docs/DESIGN-survival.md` — the Survival design (the body, items, harvesting, making, fire, world generation 2, the screens).
+- `docs/DESIGN-circuits.md` — black holes v2, powder kegs, the circuits and the creative inventory (worked examples in §4.14;
+  `tests/integration/circuits.test.js` plays them cell for cell).
 - `docs/SPEC-gameplay.md` — block palette, texture recipes, terrain numbers, controls, UI, day/night, saves.
 - `docs/SPEC-engine.md` — engine architecture and algorithms.
 - `docs/PLAN-build.md` — toolchain, test plan, verification gates.

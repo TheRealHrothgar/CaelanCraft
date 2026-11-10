@@ -9,7 +9,7 @@
 // `Pack` also implements PackOps, the narrow surface crafting.js uses (count, countTag, take, takeTag, canGive, give,
 // hasTool, useTool), so crafting imports no inventory code.
 import { PACK_SLOTS, WEAR_SLOTS, HOTBAR_SIZE } from './config.js';
-import { TAGS, WEAR_SLOT_NAMES, getItem, isItemKey, itemName, stackSize, maxDurability } from './items.js';
+import { TAGS, WEAR_SLOT_NAMES, canonicalItemKey, getItem, isItemKey, itemName, stackSize, maxDurability } from './items.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 /** @typedef {import('./types.js').ToolDef} ToolDef */
@@ -71,6 +71,17 @@ export function durabilityLeft(s) {
   if (!s) return 0;
   const max = maxDurability(s.k);
   return max === 0 ? 0 : (s.d ?? max);
+}
+
+/**
+ * A saved stack with an old item key (items.ITEM_ALIASES: `black_hole`, `blast_barrel`) as a copy under its current key
+ * (DESIGN-circuits §8.3); anything else is returned unchanged.
+ * @param {any} s
+ */
+export function withCurrentKey(s) {
+  if (!s || typeof s !== 'object' || Array.isArray(s) || typeof s.k !== 'string') return s;
+  const k = canonicalItemKey(s.k);
+  return k === s.k ? s : { ...s, k };
 }
 
 /**
@@ -561,7 +572,7 @@ export class Pack {
       }
       if (arr.length !== into.length) warnings.push(`${name}: ${arr.length} slots, not ${into.length}`);
       for (let i = 0; i < into.length && i < arr.length; i++) {
-        const raw = arr[i];
+        const raw = withCurrentKey(arr[i]);
         if (raw === null || raw === undefined) continue;
         const why = stackProblem(raw, isWear ? i : undefined);
         if (why) warnings.push(`${name}[${i}]: ${why}, dropped`);

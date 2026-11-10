@@ -9,7 +9,7 @@
 // The solid parts use MeshLambertMaterial with instance colours, so they are lit like the world (at night a wire is dark, as
 // it should be); the bulb is clear glass (alpha 0.35); the glows are additive camera-facing quads (a radial glow, or a
 // flickering tongue of flame for the torch) that never light anything. **This renderer never adds a light**: lamps do not
-// light their surroundings in v1, and the number of lights is part of every shader's key (pitfall 35).
+// light their surroundings in v1, and the number of lights is part of every shader's key (CONTRACTS pitfall 36).
 //
 // Every mesh sets frustumCulled = false (instances move about; a cached bounding sphere goes stale) and grows by doubling
 // when a frame needs more instances than it holds (the replacement keeps its material, so no program is recompiled).

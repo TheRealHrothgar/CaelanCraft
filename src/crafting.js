@@ -114,7 +114,9 @@ export function findStations(getBlock, q, y, r) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The recipe table (§7.3): 37 at hand, 12 at the stump, 21 at the kiln, 4 at the bloomery and 15 at the forge.
+// The recipe table (§7.3): 37 at hand, 12 at the stump, 21 at the kiln, 4 at the bloomery and 15 at the forge; then the
+// v0.10 circuit parts and their materials (DESIGN-circuits §8.2): 6 more at hand, 11 at the stump, 4 at the kiln, 1 at the
+// bloomery and 3 at the forge (114 in all).
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** "2 #knapstone + stick + 2 cord" → [{tag:'knapstone',n:2}, {k:'stick',n:1}, {k:'cord',n:2}]. */
@@ -186,6 +188,14 @@ const RECIPE_ROWS = [
   ['bricks', 'hand', '6 fired_brick + clay_lump', 'bricks', '', 3],
   ['bloomery', 'hand', '18 fired_brick + 3 clay_lump + bellows', 'bloomery', '', 12],
   ['forge', 'hand', '24 fired_brick + 3 wrought_iron + bellows', 'forge', '', 15],
+  // v0.10 circuits (DESIGN-circuits §8.2): the fuse, the torch (slow match is cord soaked in saltpetre), the braided wires
+  // and the selenium panel
+  ['powder_fuse', 'hand', 'black_powder + 3 cord', '6 powder_fuse', '', 4],
+  ['torch', 'hand', '2 stick + 2 cord + saltpetre', 'torch', 'firestarter 0', 3],
+  ['white_wire', 'hand', '6 copper_wire + 6 plant_fibre', '6 white_wire', '', 5],
+  ['brown_wire', 'hand', '6 copper_wire + 6 plant_fibre + acorns', '6 brown_wire', '', 6], // an oak-tannin dyed braid
+  ['earth_wire', 'hand', '6 copper_wire + 6 plant_fibre + malachite', '6 earth_wire', '', 6], // the green braid
+  ['selenium_panel', 'hand', 'selenium + glass + 3 copper_wire + #planks', 'selenium_panel', '', 8],
   // ---- Work Stump (12); riving a log into sticks is real work: there is no planks-to-sticks shortcut
   ['oak_planks', 'stump', 'oak_log', '3 oak_planks', 'axe 2', 3],
   ['spruce_planks', 'stump', 'spruce_log', '3 spruce_planks', 'axe 2', 3],
@@ -199,6 +209,18 @@ const RECIPE_ROWS = [
   ['sleeping_hide', 'stump', '2 leather + 6 plant_fibre + 6 stick', 'sleeping_hide', 'knife 2', 8],
   ['bellows', 'stump', '3 leather + 3 #planks + cord', 'bellows', 'knife 2', 10],
   ['stone_bricks', 'stump', '6 rock', 'stone_bricks', 'hammer 3', 4],
+  // v0.10 circuits (§8.2): black powder is ground damp in a mortar, which is why it cannot go off at the stump
+  ['black_powder', 'stump', '6 saltpetre + sulfur + charcoal', '6 black_powder', 'hammer 1', 8],
+  ['iron_filings', 'stump', 'wrought_iron', '6 iron_filings', 'hammer 4', 6],
+  ['copper_wire', 'stump', 'copper_ingot', '3 copper_wire', 'hammer 3', 6], // hammered and drawn
+  ['powder_keg', 'stump', '6 black_powder + 3 #planks + copper_ingot', 'powder_keg', 'axe 1, hammer 3', 8], // copper hoops
+  ['terminal_board', 'stump', '#planks + 3 copper_wire + copper_ingot', 'terminal_board', 'knife 2', 6],
+  ['voltaic_battery', 'stump', '6 copper_ingot + 6 tin_ingot + 6 plant_fibre + pot_seawater', 'voltaic_battery + clay_pot', 'hammer 3', 12],
+  ['knife_switch', 'stump', '3 rock + copper_ingot + 2 copper_wire', 'knife_switch', 'hammer 3', 6], // a slate base
+  ['push_button', 'stump', 'rock + bronze_ingot + 2 copper_wire', 'push_button', 'hammer 3', 5],
+  ['relay', 'stump', 'wrought_iron + 6 copper_wire + #planks', 'relay', 'hammer 4', 10],
+  ['spark_transmitter', 'stump', 'relay + 12 copper_wire + 2 bronze_ingot + voltaic_battery', 'spark_transmitter', 'hammer 3', 15],
+  ['coherer_receiver', 'stump', 'glass + 6 iron_filings + relay + 2 copper_wire', 'coherer_receiver', 'hammer 3', 12],
   // ---- Kiln (21; every recipe burns fuel — in the charcoal job the logs themselves smoulder)
   ['charcoal', 'kiln', '6 #log', '8 charcoal', '', 40],
   ['clay_pot', 'kiln', 'greenware_pot + #fuel', 'clay_pot', '', 15],
@@ -213,17 +235,29 @@ const RECIPE_ROWS = [
   // casting a tool remelts ingots, so it needs the crucible as well as the mold
   ...metalToolRows('kiln', 'copper', 'copper_ingot', ['knife', 'spade', 'axe', 'hammer', 'pick'], '#fuel', 'crucible 0, mold 0', 25),
   ...metalToolRows('kiln', 'bronze', 'bronze_ingot', ['knife', 'spade', 'axe', 'hammer', 'pick', 'sword'], '#fuel', 'crucible 0, mold 0', 30),
+  // v0.10 circuits (§8.2): roasting pyrite drives sulfur off (FeS₂ → FeS + S); its residue held Berzelius's selenium (1817)
+  ['sulfur', 'kiln', '3 pyrite + #fuel', '2 sulfur', '', 25],
+  ['selenium', 'kiln', '6 pyrite + 2 #fuel', '3 sulfur + selenium', '', 40],
+  ['carbon_filament', 'kiln', '3 plant_fibre + #fuel', '3 carbon_filament', '', 15], // Swan's carbonised thread
+  ['igniter', 'kiln', 'clay_lump + wrought_iron + 2 copper_wire + #fuel', 'igniter', '', 15], // a bridgewire in fired clay
   // ---- Bloomery (4); salt is the flux that lets sand melt
   ['iron_bloom', 'bloomery', '3 hematite + 4 charcoal', 'iron_bloom', '', 40],
   ['wrought_iron', 'bloomery', 'iron_bloom + charcoal', 'wrought_iron', 'hammer 4', 25],
   ['glass', 'bloomery', '2 #sand + salt + charcoal', 'glass', '', 25],
   ['remelt_glass', 'bloomery', '3 glass_shards + charcoal', 'glass', '', 15],
+  // v0.10 circuits (§8.2): the lamp's glass is sealed hot
+  ['filament_lamp', 'bloomery', 'glass + 3 carbon_filament + copper_wire + #planks', 'filament_lamp', '', 20],
   // ---- Forge (15; charcoal only: carbon matters for iron)
   ...metalToolRows('forge', 'iron', 'wrought_iron', ['knife', 'spade', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 4', 30),
   ['steel_bar', 'forge', 'wrought_iron + 2 charcoal', 'steel_bar', 'hammer 5', 45],
   ...metalToolRows('forge', 'steel', 'steel_bar', ['knife', 'spade', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 5', 40),
   ['iron_block', 'forge', '7 wrought_iron', 'iron_block', 'hammer 4', 20],
   ['diamond_block', 'forge', '7 rough_gem', 'diamond_block', 'hammer 6', 20],
+  // v0.10 circuits (§8.2): the magneto, the clock spring and the bell's gong are steel. The Collapsar Charge has no recipe:
+  // nothing real makes one
+  ['blasting_machine', 'forge', '2 steel_bar + 12 copper_wire + 3 #planks + stick', 'blasting_machine', 'hammer 5', 30],
+  ['clockwork_timer', 'forge', 'steel_bar + 3 bronze_ingot + glass + 2 copper_wire + #planks', 'clockwork_timer', 'hammer 5', 30],
+  ['electric_bell', 'forge', 'steel_bar + relay + #planks', 'electric_bell', 'hammer 4', 15],
 ];
 
 /** @returns {Recipe} a checked, frozen recipe (throws on a typo, so a bad table fails at import) */
