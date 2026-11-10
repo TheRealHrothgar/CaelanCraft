@@ -15,16 +15,24 @@
     <div id="block-toast" class="hidden"></div>
     <div id="save-toast" class="hidden"></div>
     <div id="hotbar">
-      <div class="hotbar-slot selected" data-slot="0"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="1"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="2"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="3"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="4"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="5"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="6"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="7"><canvas class="slot-icon" width="32" height="32"></canvas></div>
-      <div class="hotbar-slot" data-slot="8"><canvas class="slot-icon" width="32" height="32"></canvas></div>
+      <div class="hotbar-slot selected" data-slot="0"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="1"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="2"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="3"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="4"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="5"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="6"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="7"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div class="hotbar-slot" data-slot="8"><canvas class="slot-icon" width="32" height="32"></canvas><span class="slot-count"></span><svg class="slot-wear hidden" viewBox="0 0 40 46" width="40" height="46" aria-hidden="true"><polygon points="20,3.5 36.5,13.25 36.5,32.75 20,42.5 3.5,32.75 3.5,13.25" pathLength="100" stroke-dasharray="100 100"/></svg></div>
+      <div id="pack-glyph" aria-hidden="true"></div>
     </div>
+    <!-- Survival (docs/DESIGN-survival.md §9.8): all hidden in Creative. The vitals cells are built by hud.js. -->
+    <div id="vitals-left" class="vitals hidden" aria-label="Health and Nourishment"></div>
+    <div id="vitals-right" class="vitals hidden" aria-label="Hydration and body temperature"></div>
+    <div id="status-chips" class="status-chips hidden" aria-live="polite"></div>
+    <div id="job-chip" class="job-chip hidden"></div>
+    <div id="action-ring" class="action-ring hidden" aria-hidden="true"></div>
+    <div id="pickup-layer" class="pickup-layer" aria-hidden="true"></div>
     <div id="target-hint" class="hidden"></div>
     <div id="chat-log"></div>
     <pre id="debug-overlay" class="hidden"></pre>
@@ -65,14 +73,37 @@ say Tower built"></textarea>
     </div>
   </div>
 
+  <!-- The creative inventory (DESIGN-circuits §5.9): rounded square slots in sections with a rail; pickerUI.js builds them. -->
   <div id="block-picker" class="layer hidden">
-    <div class="picker-panel">
-      <div class="picker-title">Blocks</div>
-      <div id="picker-grid"></div>
-      <div id="picker-name">&nbsp;</div>
-      <div class="picker-hint">Click: put in selected slot · 1–9 while hovering: put in that slot · E / Esc: close</div>
+    <div class="picker-panel" role="dialog" aria-label="Blocks">
+      <div class="picker-head">
+        <div class="picker-title">Blocks</div>
+        <input id="picker-search" type="search" placeholder="Search blocks  ( / )" autocomplete="off" spellcheck="false" aria-label="Search blocks">
+        <label class="picker-showall"><input id="picker-showall" type="checkbox"> Show all</label>
+      </div>
+      <div class="picker-body">
+        <nav id="picker-rail" aria-label="Sections"></nav>
+        <div id="picker-scroll"><div id="picker-grid" role="grid" aria-label="Blocks"></div></div>
+      </div>
+      <div class="picker-foot">
+        <div id="picker-name">&nbsp;</div>
+        <div id="picker-blurb"></div>
+        <div class="picker-hint">Click: selected slot · 1–9: that slot · drag onto the hotbar · ▸ opens a family · / search · E / Esc: close</div>
+      </div>
     </div>
   </div>
+
+  <!-- The device panel (DESIGN-circuits §4.10; z 24, the rune editor's layer, never open with it). devicePanel.js builds it. -->
+  <div id="device-panel" class="layer hidden" role="dialog" aria-label="Device settings"></div>
+
+  <!-- Survival: the Pack & Making screen (z 20, the picker's layer; never open together). packUI.js builds its content. -->
+  <div id="pack-screen" class="layer hidden" role="dialog" aria-label="Pack and Making"></div>
+
+  <!-- The Survival Handbook (docs/DESIGN-survival.md §14); handbookUI.js builds both. The field book (the `handbook` item,
+       z 21: over the HUD and the pack screen, under the pause menu and the death screen) and the Guide (title screen and
+       pause menu, z 32; over the title screen it lifts to z 55, under the confirm dialog). -->
+  <div id="handbook" class="layer hidden" role="dialog" aria-label="Survival Handbook"></div>
+  <div id="guide" class="layer hidden" role="dialog" aria-label="Survival Guide"></div>
 
   <div id="pause-menu" class="layer hidden">
     <div class="menu-panel">
@@ -93,9 +124,40 @@ say Tower built"></textarea>
         <span class="physics-label">Creatures</span>
         <button id="btn-zombies" class="mc-button toggle" aria-pressed="true">Zombies: ON</button>
       </div>
+      <div id="pause-mode" class="physics-row">
+        <span class="physics-label">Mode</span>
+        <div id="btn-mode" class="mode-switch" role="group" aria-label="Game mode" data-mode="creative">
+          <button id="btn-mode-creative" type="button" class="hex-button mode-half active" aria-pressed="true">Creative</button>
+          <button id="btn-mode-survival" type="button" class="hex-button mode-half" aria-pressed="false">Survival</button>
+        </div>
+      </div>
+      <div id="pause-devices" class="physics-row">
+        <span class="physics-label">Devices</span>
+        <div id="btn-circuits" class="mode-switch device-switch" role="group" aria-label="Circuits" data-on="true">
+          <button id="btn-circuits-on" type="button" class="hex-button mode-half active" aria-pressed="true">Circuits: On</button>
+          <button id="btn-circuits-off" type="button" class="hex-button mode-half" aria-pressed="false" aria-label="Circuits: Off">Off</button>
+        </div>
+        <div id="btn-blackholes" class="mode-switch device-switch" role="group" aria-label="Black holes" data-on="true">
+          <button id="btn-blackholes-on" type="button" class="hex-button mode-half active" aria-pressed="true">Black holes: On</button>
+          <button id="btn-blackholes-off" type="button" class="hex-button mode-half" aria-pressed="false" aria-label="Black holes: Off">Off</button>
+        </div>
+      </div>
+      <button id="btn-guide-pause" type="button" class="hex-button guide-button" title="The Survival Guide: how to stay alive">Survival Guide</button>
       <button id="btn-quit" class="mc-button">Save &amp; Quit</button>
       <div id="pause-seed" class="menu-note">Seed: …</div>
       <div id="pause-controls" class="controls-sheet"></div>
+    </div>
+  </div>
+
+  <!-- Survival: the death screen (z 33). No headline, no score: a honeycomb closing ring by ring (built by menus.js). -->
+  <div id="death-screen" class="layer hidden" role="alertdialog" aria-modal="true" aria-labelledby="death-title" aria-describedby="death-detail">
+    <svg id="death-comb" class="death-comb" aria-hidden="true"></svg>
+    <div class="death-panel">
+      <div id="death-title" class="death-title"></div>
+      <div id="death-detail" class="death-detail"></div>
+      <div id="death-where" class="death-where hidden"></div>
+      <button id="btn-wake" type="button" class="hex-button wake-button">Wake up</button>
+      <button id="btn-death-quit" type="button" class="text-link">Save &amp; quit</button>
     </div>
   </div>
 
@@ -121,9 +183,12 @@ say Tower built"></textarea>
         </div>
         <div id="worlds-message" class="worlds-message" role="status" aria-live="polite"></div>
       </section>
-      <div id="title-controls" class="controls-sheet"></div>
+      <div class="title-side">
+        <div id="title-controls" class="controls-sheet"></div>
+        <button id="btn-guide-title" type="button" class="hex-button guide-button" title="The Survival Guide: how to stay alive">Survival Guide</button>
+      </div>
     </div>
-    <div id="title-footer">Caelancraft v0.8 · a honeycomb world · Three.js · no assets were downloaded</div>
+    <div id="title-footer">Caelancraft v0.10 · a honeycomb world · Three.js · no assets were downloaded</div>
   </div>
 
   <div id="confirm-dialog" class="layer hidden" role="alertdialog" aria-modal="true" aria-labelledby="confirm-text" aria-describedby="confirm-detail">

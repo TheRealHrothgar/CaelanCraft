@@ -4,13 +4,25 @@
 // slotKey(n) (§41); SAVE_KEY is the single save of the versions before save slots, moved into a slot by migrateLegacySave.
 // The only clock is the `now` argument of the functions that stamp times (default Date.now()).
 //
+// v0.9 (docs/DESIGN-survival.md §1.4, §9.6): the optional `gen`, `mode`, `survival` and `containers` fields; a document
+// carrying `gen` ≥ 2 or `survival` is version 3, everything else stays version 2 byte for byte.
+// Circuits (docs/DESIGN-circuits.md §6.4): the optional `blackholes` and `circuits` switches and the configured parts
+// (`circuitParts`), after `containers` and before `meta`. They change no version: an older client ignores them.
+//
 // Note: docs/SPEC-gameplay.md §8 describes a multi-key layout (`caelancraft:v1:meta` +
 // `caelancraft:v1:chunk:<cx>,<cz>`) and an (x-innermost) localIndex formula. CONTRACTS.md wins:
 // one key per world, `(lx*16+lz)*128+ly` local indices as produced by world.exportEdits().
-import { CHUNK_VOLUME, HOTBAR_SIZE, PITCH_LIMIT, SAVE_SLOTS, MAX_WORLD_NAME_CHARS, STORAGE_QUOTA_ESTIMATE } from './config.js';
-import { DEFAULT_HOTBAR } from './blocks.js';
+import {
+  CHUNK_VOLUME, HOTBAR_SIZE, PITCH_LIMIT, SAVE_SLOTS, MAX_WORLD_NAME_CHARS, STORAGE_QUOTA_ESTIMATE, CHUNK_SIZE, WORLD_HEIGHT,
+  GEN_LATEST, PACK_SLOTS, WEAR_SLOTS, BASKET_SLOTS, REMAINS_SLOTS, STAT_MAX, BREATH_MAX_S, BODY_TEMP_NORMAL, BODY_TEMP_MIN,
+  BODY_TEMP_MAX, SICK_MAX_S, HEAL_MAX,
+} from './config.js';
+import { BLOCK, DEFAULT_HOTBAR } from './blocks.js';
 import { normalizeRunesJSON, validateRunesJSON } from './runes.js';
 import { validatePigsJSON } from './pigs.js';
+import { WEAR_SLOT_NAMES, canonicalItemKey, getItem, maxDurability, stackSize } from './items.js';
+import { normalizeFiresJSON, parseCellKey } from './cooking.js';
+import { normalizePartsJSON, validatePartsJSON } from './circuitStore.js';
 
 /** @typedef {import('./types.js').SaveData} SaveData */
 /** @typedef {import('./types.js').EditsJSON} EditsJSON */
@@ -24,6 +36,12 @@ import { validatePigsJSON } from './pigs.js';
 
 export const SAVE_KEY = 'caelancraft:v2:save';
 export const SAVE_VERSION = 2; // v2: edits are keyed by hex (q, r) chunks — v1 cube saves are not loadable
+/**
+ * v0.9 (DESIGN-survival §1.4): a document with `gen` ≥ 2 or a `survival` object is written as version 3, so an older client
+ * reads it as unloadable (a damaged slot it never overwrites) instead of silently dropping the pack and regenerating gen-1
+ * terrain under gen-2 edits. Everything else stays version 2, byte for byte. deserializeSave reads both.
+ */
+export const SURVIVAL_SAVE_VERSION = 3;
 
 /** The canonical default hotbar (re-exported for callers that only know storage). */
 export const DEFAULT_SAVE_HOTBAR = Object.freeze([...DEFAULT_HOTBAR]);
@@ -191,6 +209,283 @@ function compareChunkKeys(a, b) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Survival fields (v0.9; docs/DESIGN-survival.md §1.4, §9.6): gen, mode, survival, containers
+
+/** The survival modes a save may name. */
+export const SAVE_MODES = Object.freeze(['creative', 'survival']);
+
+/** Causes of death a saved `survival.dead` may name (DESIGN-survival §2.4). */
+export const DEATH_CAUSES = Object.freeze([
+  'fall', 'drown', 'buried', 'crush', 'fire', 'zombie', 'blast', 'log', 'blackhole', 'starve', 'thirst', 'cold', 'heat', 'sick',
+  'void', 'command',
+]);
+
+/** Largest bandage payout rate saved (`healRate`, HP/s). */
+const HEAL_RATE_MAX = 5;
+
+/** @returns {readonly [string, number, number, number]} a frozen stat row */
+function statRow(name, lo, hi, fresh) {
+  return /** @type {readonly [string, number, number, number]} */ (Object.freeze([name, lo, hi, fresh]));
+}
+
+/** The stats of a SurvivalJSON in canonical order: [name, min, max, fresh value (§2.1)]. */
+export const SURVIVAL_STATS = Object.freeze([
+  statRow('health', 0, STAT_MAX, STAT_MAX),
+  statRow('satiation', 0, STAT_MAX, 80),
+  statRow('hydration', 0, STAT_MAX, 80),
+  statRow('temp', BODY_TEMP_MIN, BODY_TEMP_MAX, BODY_TEMP_NORMAL),
+  statRow('breath', 0, BREATH_MAX_S, BREATH_MAX_S),
+  statRow('wet', 0, 1, 0),
+  statRow('sick', 0, SICK_MAX_S, 0),
+  statRow('heal', 0, HEAL_MAX, 0),
+  statRow('healRate', 0, HEAL_RATE_MAX, 0),
+]);
+
+/** Three decimal places, never −0 (NaN stays NaN). */
+function round3(v) {
+  return Math.round(v * 1000) / 1000 + 0;
+}
+
+/**
+ * Check one saved item stack (§5.2).
+ * @param {unknown} raw
+ * @returns {{ stack: {k: string, n: number, d?: number}, note?: string }|{ reason: string }}   `note`: a repair made
+ */
+function checkStack(raw) {
+  const v = /** @type {Record<string, any>} */ (raw);
+  if (!isPlainObject(v) || typeof v.k !== 'string') return { reason: 'not an item stack' };
+  // v0.10 (DESIGN-circuits §8.3): `black_hole` and `blast_barrel` stacks are the Collapsar Charge and the Powder Keg now.
+  const k = canonicalItemKey(v.k);
+  const def = getItem(k);
+  if (!def) return { reason: `unknown item ${JSON.stringify(v.k)}` };
+  const max = stackSize(k);
+  if (!Number.isInteger(v.n) || v.n < 1 || v.n > max) return { reason: `count is not 1–${max}` };
+  /** @type {{k: string, n: number, d?: number}} */
+  const stack = { k, n: v.n };
+  if (v.d === undefined || v.d === null) return { stack };
+  const dmax = maxDurability(k);
+  if (dmax === 0) return { stack, note: `durability ignored (${def.name} never wears)` };
+  if (!Number.isInteger(v.d) || v.d < 1 || v.d > dmax) return { reason: `durability is not 1–${dmax}` };
+  stack.d = v.d;
+  return { stack };
+}
+
+/**
+ * A list of stack slots (pack, wear, a container): bad stacks become null with `<at>[i]: <reason>, dropped`.
+ * @param {unknown[]} list
+ * @param {string} at        warning prefix, e.g. 'survival.pack'
+ * @param {string[]} warnings
+ * @param {(def: import('./types.js').ItemDef, i: number) => string} [slotRule]   '' or why slot i may not hold it
+ * @returns {({k: string, n: number, d?: number}|null)[]}
+ */
+function normalizeStacks(list, at, warnings, slotRule) {
+  return list.map((v, i) => {
+    if (v === null || v === undefined) return null;
+    const c = checkStack(v);
+    if ('reason' in c) {
+      warnings.push(`${at}[${i}]: ${c.reason}, dropped`);
+      return null;
+    }
+    const why = slotRule ? slotRule(/** @type {import('./types.js').ItemDef} */ (getItem(c.stack.k)), i) : '';
+    if (why) {
+      warnings.push(`${at}[${i}]: ${why}, dropped`);
+      return null;
+    }
+    if (c.note) warnings.push(`${at}[${i}]: ${c.note}`);
+    return c.stack;
+  });
+}
+
+/** A fixed-size slot list: padded with null or cut, with a warning; a non-array is all empty. */
+function fixedSlots(raw, size, at, warnings) {
+  if (!Array.isArray(raw)) {
+    warnings.push(`${at}: not a list, emptied`);
+    return new Array(size).fill(null);
+  }
+  if (raw.length === size) return raw;
+  warnings.push(`${at}: ${raw.length} slots, expected ${size} (${raw.length < size ? 'padded' : 'cut'})`);
+  return raw.length < size ? raw.concat(new Array(size - raw.length).fill(null)) : raw.slice(0, size);
+}
+
+/** Wear slot i holds only wear items made for it. */
+function wearSlotRule(def, i) {
+  if (def.kind !== 'wear' || !def.wear) return 'not a wear item';
+  return def.wear.slot === WEAR_SLOT_NAMES[i] ? '' : `a ${def.wear.slot} item in the ${WEAR_SLOT_NAMES[i]} slot`;
+}
+
+/**
+ * The id `edits` (repaired EditsJSON: one pair per local index) records at cell (q, y, r), or −1 when none. Builds a
+ * per-chunk lookup in `cache` so many checks against one save stay cheap.
+ * @param {Record<string, number[]>} edits
+ * @param {Map<string, Map<number, number>>} cache
+ */
+function editIdAt(edits, cache, q, y, r) {
+  const cq = Math.floor(q / CHUNK_SIZE);
+  const cr = Math.floor(r / CHUNK_SIZE);
+  const key = `${cq},${cr}`;
+  let cells = cache.get(key);
+  if (!cells) {
+    cells = new Map();
+    const arr = edits && Object.hasOwn(edits, key) ? edits[key] : null;
+    if (Array.isArray(arr)) for (let i = 0; i + 1 < arr.length; i += 2) cells.set(arr[i], arr[i + 1]);
+    cache.set(key, cells);
+  }
+  const li = ((q - cq * CHUNK_SIZE) * CHUNK_SIZE + (r - cr * CHUNK_SIZE)) * WORLD_HEIGHT + y;
+  return cells.get(li) ?? -1;
+}
+
+/**
+ * The `survival` save field in canonical form (§9.6): the stats rounded to 3 decimal places in key order, `spawn`, `deaths`,
+ * `dead` (only when set), `pack` (PACK_SLOTS), `wear` (WEAR_SLOTS) and `fires`. Never fails: a bad stat is reset to its
+ * fresh value (`survival.<stat>: invalid, reset`), a bad stack is dropped (`survival.pack[i]: <reason>, dropped`), a pack or
+ * wear list of the wrong length is padded or cut, and the fires are canonicalised by cooking.normalizeFiresJSON — checked
+ * against `opts.edits` when given (an entry whose cell is not CAMPFIRE or FIRE_PIT there is dropped).
+ * @param {unknown} raw
+ * @param {string[]} [warnings]   repairs are pushed here
+ * @param {{ edits?: Record<string, number[]> }} [opts]
+ * @returns {import('./types.js').SurvivalJSON}
+ */
+export function normalizeSurvivalJSON(raw, warnings = [], opts = {}) {
+  const src = isPlainObject(raw) ? /** @type {Record<string, any>} */ (raw) : {};
+  /** @type {Record<string, any>} */
+  const out = {};
+  for (const [name, lo, hi, fresh] of SURVIVAL_STATS) {
+    const v = isFiniteNumber(src[name]) ? round3(src[name]) : NaN;
+    if (v >= lo && v <= hi) out[name] = v;
+    else {
+      out[name] = fresh;
+      warnings.push(`survival.${name}: invalid, reset`);
+    }
+  }
+  const sp = src.spawn;
+  if (sp === null || sp === undefined) out.spawn = null;
+  else if (Array.isArray(sp) && sp.length === 3 && Number.isSafeInteger(sp[0]) && Number.isSafeInteger(sp[2])
+    && Number.isInteger(sp[1]) && sp[1] >= 0 && sp[1] < WORLD_HEIGHT) out.spawn = [sp[0] + 0, sp[1], sp[2] + 0];
+  else {
+    out.spawn = null;
+    warnings.push('survival.spawn: invalid, reset');
+  }
+  if (Number.isSafeInteger(src.deaths) && src.deaths >= 0) out.deaths = src.deaths;
+  else {
+    out.deaths = 0;
+    warnings.push('survival.deaths: invalid, reset');
+  }
+  if (src.dead !== undefined && src.dead !== null) {
+    if (DEATH_CAUSES.includes(src.dead)) out.dead = src.dead;
+    else warnings.push('survival.dead: not a cause of death, ignored');
+  }
+  out.pack = normalizeStacks(fixedSlots(src.pack, PACK_SLOTS, 'survival.pack', warnings), 'survival.pack', warnings);
+  out.wear = normalizeStacks(fixedSlots(src.wear, WEAR_SLOTS, 'survival.wear', warnings), 'survival.wear', warnings, wearSlotRule);
+  const edits = opts && opts.edits;
+  /** @type {Map<string, Map<number, number>>} */
+  const cache = new Map();
+  const fires = normalizeFiresJSON(src.fires, {
+    prefix: 'survival.fires',
+    cellOk: edits ? (q, y, r) => {
+      const id = editIdAt(edits, cache, q, y, r);
+      return id === BLOCK.CAMPFIRE || id === BLOCK.FIRE_PIT;
+    } : undefined,
+  });
+  for (const w of fires.warnings) warnings.push(w);
+  out.fires = fires.fires;
+  return /** @type {import('./types.js').SurvivalJSON} */ (out);
+}
+
+/**
+ * The `containers` save field in canonical form (§5.6, §9.6): keys "q,y,r" parsed strictly and rewritten canonically (last
+ * write wins), sorted by (q, y, r); each entry `{ kind, slots }`. An entry is dropped for a malformed key, an unknown kind,
+ * slots that are not a list or more than the kind holds (basket BASKET_SLOTS, remains REMAINS_SLOTS), or — when
+ * `opts.edits` is given — a cell not recorded there as WICKER_BASKET (basket) or REMAINS (remains). Bad stacks become null.
+ * @param {unknown} raw
+ * @param {string[]} [warnings]
+ * @param {{ edits?: Record<string, number[]> }} [opts]
+ * @returns {import('./types.js').ContainersJSON}
+ */
+export function normalizeContainersJSON(raw, warnings = [], opts = {}) {
+  if (!isPlainObject(raw)) return {};
+  const src = /** @type {Record<string, any>} */ (raw);
+  const edits = opts && opts.edits;
+  /** @type {Map<string, Map<number, number>>} */
+  const cache = new Map();
+  /** @type {Map<string, { cell: [number, number, number], entry: { kind: 'basket'|'remains', slots: ({k: string, n: number, d?: number}|null)[] } }>} */
+  const kept = new Map();
+  for (const rawKey of Object.keys(src)) {
+    const cell = parseCellKey(rawKey);
+    if (!cell) {
+      warnings.push(`containers: dropped entry with malformed key ${JSON.stringify(rawKey)}`);
+      continue;
+    }
+    const key = `${cell[0]},${cell[1]},${cell[2]}`;
+    const at = `containers[${key}]`;
+    const v = src[rawKey];
+    if (!isPlainObject(v)) {
+      warnings.push(`${at}: not an object, dropped`);
+      continue;
+    }
+    if (v.kind !== 'basket' && v.kind !== 'remains') {
+      warnings.push(`${at}: unknown kind ${JSON.stringify(v.kind ?? null)}, dropped`);
+      continue;
+    }
+    if (!Array.isArray(v.slots)) {
+      warnings.push(`${at}: slots is not a list, dropped`);
+      continue;
+    }
+    const max = v.kind === 'basket' ? BASKET_SLOTS : REMAINS_SLOTS;
+    if (v.slots.length > max) {
+      warnings.push(`${at}: ${v.slots.length} slots, more than a ${v.kind === 'basket' ? 'basket' : 'belongings heap'} holds (${max}), dropped`);
+      continue;
+    }
+    if (edits) {
+      const want = v.kind === 'basket' ? BLOCK.WICKER_BASKET : BLOCK.REMAINS;
+      if (editIdAt(edits, cache, cell[0], cell[1], cell[2]) !== want) {
+        warnings.push(`${at}: no ${v.kind === 'basket' ? 'basket' : 'belongings'} there, dropped`);
+        continue;
+      }
+    }
+    kept.delete(key);
+    kept.set(key, { cell, entry: { kind: v.kind, slots: normalizeStacks(v.slots, `${at}.slots`, warnings) } });
+  }
+  /** @type {Record<string, any>} */
+  const out = {};
+  const sorted = [...kept.values()].sort((a, b) => a.cell[0] - b.cell[0] || a.cell[1] - b.cell[1] || a.cell[2] - b.cell[2]);
+  for (const { cell, entry } of sorted) out[`${cell[0]},${cell[1]},${cell[2]}`] = entry;
+  return out;
+}
+
+/**
+ * Whether a save (or SaveData about to be saved) is a Survival world: `mode: 'survival'` on generation 2 or later (a
+ * Survival mode on generation 1 loads in Creative, §1.3).
+ * @param {unknown} data
+ * @returns {boolean}
+ */
+export function isSurvivalSave(data) {
+  if (!isPlainObject(data)) return false;
+  const d = /** @type {Record<string, unknown>} */ (data);
+  return d.mode === 'survival' && Number.isInteger(d.gen) && /** @type {number} */ (d.gen) >= 2;
+}
+
+/**
+ * Why a save text cannot be loaded, for messages: '' when deserializeSave accepts it.
+ * @param {string} text
+ * @returns {string}  e.g. 'gen 3: made by a newer version of Caelancraft', 'version 4: not a version this game reads'
+ */
+export function unloadableReason(text) {
+  if (deserializeSave(text)) return '';
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return 'not a save (unreadable text)';
+  }
+  if (!isPlainObject(raw)) return 'not a save';
+  if (raw.version !== SAVE_VERSION && raw.version !== SURVIVAL_SAVE_VERSION) {
+    return `version ${JSON.stringify(raw.version ?? null)}: not a version this game reads`;
+  }
+  if (Number.isInteger(raw.gen) && raw.gen > GEN_LATEST) return `gen ${raw.gen}: made by a newer version of Caelancraft`;
+  return 'a required field is missing or invalid';
+}
+
+// ---------------------------------------------------------------------------------------------
 // serialise
 
 /**
@@ -200,7 +495,9 @@ function compareChunkKeys(a, b) {
  *
  * Throws a TypeError instead of producing a document that deserializeSave would reject
  * (non-finite seed/time/day or player numbers, missing player, edits that are not an EditsJSON
+ * object, a `gen` above GEN_LATEST) or silently losing state (a `survival` or `containers` that is not an
  * object). saveGame() turns that into `false` so a good save on disk is never overwritten.
+ * Written as version 3 (SURVIVAL_SAVE_VERSION) exactly when `gen` ≥ 2 or `survival` is present, else version 2.
  * @param {SaveData} data
  * @returns {string}
  */
@@ -221,6 +518,18 @@ export function serializeSave(data) {
     throw new TypeError('serializeSave: runes must be a RunesJSON object (use runes.export())');
   }
   if (data.meta != null && !isPlainObject(data.meta)) throw new TypeError('serializeSave: meta must be an object');
+  if (data.survival != null && (!isPlainObject(data.survival) || data.survival instanceof Map)) {
+    throw new TypeError('serializeSave: survival must be a SurvivalJSON object');
+  }
+  if (data.containers != null && (!isPlainObject(data.containers) || data.containers instanceof Map)) {
+    throw new TypeError('serializeSave: containers must be a ContainersJSON object (use containers.export())');
+  }
+  if (data.circuitParts != null && (!isPlainObject(data.circuitParts) || data.circuitParts instanceof Map)) {
+    throw new TypeError('serializeSave: circuitParts must be a CircuitPartsJSON object (use circuitStore.export())');
+  }
+  if (Number.isInteger(data.gen) && data.gen > GEN_LATEST) {
+    throw new TypeError(`serializeSave: gen ${data.gen} is newer than this game (${GEN_LATEST})`);
+  }
 
   /** @type {Record<string, number[]>} */
   const outEdits = {};
@@ -266,6 +575,28 @@ export function serializeSave(data) {
   // The night of its last natural sighting (§40.1), so a reload in the same night cannot bring a second one. Written only
   // as a night number (anything else is left out); absent — no sighting yet, or an older save — means none.
   if (isNightNumber(data.watcherNight)) /** @type {*} */ (out).watcherNight = data.watcherNight;
+  // Survival (v0.9, DESIGN-survival §1.4 / §9.6), in this order: the generator version (only when ≥ 2: absent = 1, today's
+  // land), the mode, the frozen or live survival state (canonical), and the baskets and belongings (only when non-empty).
+  // None of them is written for a Creative world that never entered Survival, so it serialises byte-identically to before.
+  if (Number.isInteger(data.gen) && data.gen >= 2) /** @type {*} */ (out).gen = data.gen;
+  if (SAVE_MODES.includes(data.mode)) /** @type {*} */ (out).mode = data.mode;
+  if (data.survival != null) /** @type {*} */ (out).survival = normalizeSurvivalJSON(data.survival);
+  if (data.containers != null) {
+    const containers = normalizeContainersJSON(data.containers);
+    if (Object.keys(containers).length > 0) /** @type {*} */ (out).containers = containers;
+  }
+  // Circuits (DESIGN-circuits §6.4), in this order: the black-holes and circuits switches (written whenever given; anything
+  // but `false` is on, the `zombies` rule; absent on load = on) and the configured parts (only when non-empty).
+  if (data.blackholes != null) /** @type {*} */ (out).blackholes = data.blackholes !== false;
+  if (data.circuits != null) /** @type {*} */ (out).circuits = data.circuits !== false;
+  if (data.circuitParts != null) {
+    const parts = normalizePartsJSON(data.circuitParts).parts;
+    if (Object.keys(parts).length > 0) /** @type {*} */ (out).circuitParts = parts;
+  }
+  // Version 3 exactly when gen ≥ 2 or a survival state is present (older clients then show the slot as damaged).
+  if (/** @type {*} */ (out).gen !== undefined || /** @type {*} */ (out).survival !== undefined) {
+    /** @type {*} */ (out).version = SURVIVAL_SAVE_VERSION;
+  }
   // The world's name and times (§41): last, canonical (normalizeWorldMeta), omitted when nothing usable is given.
   const meta = data.meta != null ? normalizeWorldMeta(data.meta) : null;
   if (meta) /** @type {*} */ (out).meta = meta;
@@ -278,7 +609,8 @@ export function serializeSave(data) {
 /**
  * Parse and strictly validate a save document.
  *
- * Returns null on: unparsable/non-object JSON, `version !== SAVE_VERSION`, missing or non-finite
+ * Returns null on: unparsable/non-object JSON, a `version` other than SAVE_VERSION (2) or SURVIVAL_SAVE_VERSION (3), an
+ * integer `gen` above GEN_LATEST (a newer generator: see unloadableReason), missing or non-finite
  * `seed`/`time`/`day`, missing `player` or non-finite `player.{x,y,z,yaw,pitch}`, or `edits`
  * that is not an object. Recoverable problems are repaired instead: invalid hotbar/selected →
  * defaults; edit pairs failing `0 <= localIndex < CHUNK_VOLUME` / `0 <= id <= 255` / integer-ness
@@ -295,6 +627,15 @@ export function serializeSave(data) {
  * number ≥ 0; anything else is dropped with a warning (absent means none).
  * An optional `meta` object (the world's name and times, §41) is kept as normalizeWorldMeta gives it (unusable fields are
  * dropped with a warning, a non-object with `meta: not an object, ignored`).
+ * Survival (v0.9, DESIGN-survival §9.6): `gen` is kept when it is an integer ≥ 2 (1 is dropped, anything else warns
+ * `gen: not a generator version, treated as 1`); `mode` when it is 'creative' or 'survival' (a Survival mode on generation 1
+ * loads as 'creative' with `mode: survival needs generation 2; loaded in Creative`); `survival` through normalizeSurvivalJSON
+ * (its fires checked against the repaired edits); `containers` through normalizeContainersJSON (checked against the edits,
+ * kept when non-empty). The result's `version` is 3 exactly when it has `gen` ≥ 2 or `survival`, else 2.
+ * Circuits (DESIGN-circuits §6.4): booleans `blackholes` and `circuits` are kept (anything else is dropped with
+ * `blackholes: not a boolean, treated as on`); `circuitParts` through circuitStore.validatePartsJSON against the repaired
+ * edits (orphans, unknown kinds, bad keys and fields repaired with a warning each; kept when non-empty; a non-object warns
+ * `circuitParts: not an object, ignored`).
  * Every repair is described in a non-enumerable `warnings: string[]` on the result.
  * @param {string} text
  * @returns {SaveData|null}
@@ -308,7 +649,9 @@ export function deserializeSave(text) {
     return null;
   }
   if (!isPlainObject(raw)) return null;
-  if (raw.version !== SAVE_VERSION) return null;
+  if (raw.version !== SAVE_VERSION && raw.version !== SURVIVAL_SAVE_VERSION) return null;
+  // A world from a newer generator cannot be read: its untouched land would be regenerated wrongly under its edits.
+  if (Number.isInteger(raw.gen) && raw.gen > GEN_LATEST) return null;
   if (!isFiniteNumber(raw.seed) || !isFiniteNumber(raw.time) || !isFiniteNumber(raw.day)) return null;
   const p = raw.player;
   if (!isPlainObject(p)) return null;
@@ -428,6 +771,47 @@ export function deserializeSave(text) {
     if (isNightNumber(raw.watcherNight)) /** @type {*} */ (save).watcherNight = raw.watcherNight;
     else warnings.push('watcherNight: not a night number, ignored');
   }
+  // Survival (v0.9): never a null save for these fields (gen > GEN_LATEST was refused above).
+  let gen = 1;
+  if (raw.gen !== undefined) {
+    if (Number.isInteger(raw.gen) && raw.gen >= 1) gen = raw.gen;
+    else warnings.push('gen: not a generator version, treated as 1');
+  }
+  if (gen >= 2) /** @type {*} */ (save).gen = gen;
+  if (raw.mode !== undefined) {
+    if (!SAVE_MODES.includes(raw.mode)) warnings.push('mode: not creative or survival, treated as creative');
+    else if (raw.mode === 'survival' && gen < 2) {
+      // Only possible by hand-editing (§1.3): no silent terrain rewrite. The pause menu offers the upgrade as usual.
+      warnings.push('mode: survival needs generation 2; loaded in Creative');
+      /** @type {*} */ (save).mode = 'creative';
+    } else /** @type {*} */ (save).mode = raw.mode;
+  }
+  if (raw.survival !== undefined) {
+    if (!isPlainObject(raw.survival)) warnings.push('survival: not an object, ignored');
+    else /** @type {*} */ (save).survival = normalizeSurvivalJSON(raw.survival, warnings, { edits });
+  }
+  if (raw.containers !== undefined) {
+    if (!isPlainObject(raw.containers)) warnings.push('containers: not an object, ignored');
+    else {
+      const containers = normalizeContainersJSON(raw.containers, warnings, { edits });
+      if (Object.keys(containers).length > 0) /** @type {*} */ (save).containers = containers;
+    }
+  }
+  for (const name of ['blackholes', 'circuits']) {
+    if (raw[name] === undefined) continue;
+    if (typeof raw[name] === 'boolean') /** @type {*} */ (save)[name] = raw[name];
+    else warnings.push(`${name}: not a boolean, treated as on`);
+  }
+  if (raw.circuitParts !== undefined) {
+    if (!isPlainObject(raw.circuitParts)) warnings.push('circuitParts: not an object, ignored');
+    else {
+      // The orphan check reuses this function's own per-chunk map of the repaired edits: O(1) per entry.
+      const v = validatePartsJSON(raw.circuitParts, edits, perChunk);
+      for (const w of v.warnings) warnings.push(w);
+      if (Object.keys(v.parts).length > 0) /** @type {*} */ (save).circuitParts = v.parts;
+    }
+  }
+  if (gen >= 2 || /** @type {*} */ (save).survival !== undefined) save.version = SURVIVAL_SAVE_VERSION;
   if (raw.meta !== undefined) {
     if (!isPlainObject(raw.meta)) {
       warnings.push('meta: not an object, ignored');
@@ -557,11 +941,13 @@ export const COPY_SUFFIX = ' (copy)';
  * @property {number} lastPlayed      ms since the epoch, 0 = unknown
  * @property {number} bytes           characters stored for the slot (0 when empty)
  * @property {boolean} legacy         slot 1 still read from LEGACY_SAVE_KEY (its move is pending, §41.3)
+ * @property {'survival'} [mode]      present (v0.9) only for a world in Survival mode
  */
 
 /**
- * @typedef {{ name: string, seed: number, createdAt: number, lastPlayed: number, bytes: number, hash: number }
- *   | { damaged: true, bytes: number, hash: number }} SlotIndexEntry
+ * `mode: 'survival'` marks a Survival world (isSurvivalSave) so the Worlds panel can say "· Survival".
+ * @typedef {{ name: string, seed: number, createdAt: number, lastPlayed: number, bytes: number, hash: number,
+ *   mode?: 'survival' } | { damaged: true, bytes: number, hash: number }} SlotIndexEntry
  */
 
 /**
@@ -688,7 +1074,11 @@ function validIndexEntry(e) {
   const createdAt = cleanTimestamp(e.createdAt);
   const lastPlayed = cleanTimestamp(e.lastPlayed);
   if (createdAt === null || lastPlayed === null) return null;
-  return { name: e.name, seed: e.seed, createdAt, lastPlayed, bytes, hash };
+  if (e.mode !== undefined && e.mode !== 'survival') return null;
+  /** @type {SlotIndexEntry} */
+  const entry = { name: e.name, seed: e.seed, createdAt, lastPlayed, bytes, hash };
+  if (e.mode === 'survival') entry.mode = 'survival';
+  return entry;
 }
 
 /**
@@ -726,23 +1116,58 @@ function writeIndexEntry(storage, slot, entry) {
   writeText(storage, SLOT_INDEX_KEY, indexText(entries));
 }
 
-/** @returns {SlotIndexEntry} what the index says about a slot holding `text` (parses it) */
+/**
+ * A document is written as version 3 (SURVIVAL_SAVE_VERSION) exactly when it has `gen` ≥ 2 or a survival state.
+ * @param {*} data  SaveData, or what deserializeSave returned
+ */
+export function isVersionThree(data) {
+  return isPlainObject(data) && ((Number.isInteger(data.gen) && data.gen >= 2) || data.survival !== undefined);
+}
+
+/**
+ * The index entry WRITTEN for a slot: a version-3 document gets `{ damaged: true, bytes, hash }`, never the rich entry.
+ * §42 / DESIGN-survival §1.4 promise that an older client (v0.8 in another tab, or a rollback) shows such a slot as
+ * damaged and never overwrites it; v0.8 trusts any rich entry whose bytes and hash match, so a rich entry would list the
+ * Survival world as a normal world there and its `?autoplay` boot would save a fresh gen-1 world over it (play-test).
+ * v0.9's listSlots never trusts a damaged entry (it parses the slot again, §41.1), so this client still lists the world.
+ * @param {SlotIndexEntry} entry  the rich entry of the slot's document
+ * @param {boolean} versionThree
+ * @returns {SlotIndexEntry}
+ */
+function indexEntryOf(entry, versionThree) {
+  return versionThree ? { damaged: true, bytes: entry.bytes, hash: entry.hash } : entry;
+}
+
+/**
+ * @returns {{ info: SlotIndexEntry, index: SlotIndexEntry }} what a slot holding `text` is (parses it) — `info` for the
+ *   Worlds screen, `index` the entry to write (indexEntryOf)
+ */
 function entryFromText(text, fallback) {
   const bytes = text.length;
   const hash = textHash(text);
   const save = deserializeSave(text);
-  if (!save) return { damaged: true, bytes, hash };
+  if (!save) {
+    /** @type {SlotIndexEntry} */
+    const damaged = { damaged: true, bytes, hash };
+    return { info: damaged, index: damaged };
+  }
   const meta = /** @type {*} */ (save).meta || {};
-  return { name: meta.name || fallback, seed: save.seed, createdAt: meta.createdAt ?? 0, lastPlayed: meta.lastPlayed ?? 0, bytes, hash };
+  /** @type {SlotIndexEntry} */
+  const entry = { name: meta.name || fallback, seed: save.seed, createdAt: meta.createdAt ?? 0, lastPlayed: meta.lastPlayed ?? 0, bytes, hash };
+  if (isSurvivalSave(save)) entry.mode = 'survival';
+  return { info: entry, index: indexEntryOf(entry, isVersionThree(save)) };
 }
 
-/** @returns {SlotIndexEntry} the entry for `text` = serializeSave(data), just written (no parse) */
+/** @returns {SlotIndexEntry} the entry to WRITE for `text` = serializeSave(data), just written (no parse; indexEntryOf) */
 function entryFromData(data, text, fallback) {
   const meta = normalizeWorldMeta(data.meta) || {};
-  return {
+  /** @type {SlotIndexEntry} */
+  const entry = {
     name: meta.name || fallback, seed: data.seed, createdAt: meta.createdAt ?? 0, lastPlayed: meta.lastPlayed ?? 0,
     bytes: text.length, hash: textHash(text),
   };
+  if (isSurvivalSave(data)) entry.mode = 'survival';
+  return indexEntryOf(entry, isVersionThree(data));
 }
 
 /** @returns {SlotInfo} */
@@ -752,13 +1177,18 @@ function slotInfo(slot, entry, legacy) {
   if (!entry) return info;
   if ('damaged' in entry) return { ...info, status: 'damaged', bytes: entry.bytes, legacy };
   const { name, seed, createdAt, lastPlayed, bytes } = entry;
-  return { ...info, status: 'world', name, seed, createdAt, lastPlayed, bytes, legacy };
+  /** @type {SlotInfo} */
+  const out = { ...info, status: 'world', name, seed, createdAt, lastPlayed, bytes, legacy };
+  if (entry.mode === 'survival') out.mode = 'survival';
+  return out;
 }
 
 /**
  * Every slot, in order, for the Worlds screen. Never throws. A cached index entry is used only when it matches its slot's
- * text (length and hash); otherwise the slot's document is parsed (unparsable → 'damaged') and, with `repair`, the
- * rebuilt index is written back (best effort; pass `repair: false` when nothing may be written, e.g. under ?nosave).
+ * text (length and hash) and is not 'damaged' (a damaged slot is always parsed again: a version-3 world is indexed as
+ * damaged for older clients' sake, indexEntryOf); otherwise the slot's document is parsed (unparsable → 'damaged') and,
+ * with `repair`, the rebuilt index is written back (best effort; pass `repair: false` when nothing may be written, e.g.
+ * under ?nosave). A Survival world's SlotInfo carries `mode: 'survival'`.
  * @param {StorageLike} [storage]
  * @param {{ repair?: boolean }} [opts]
  * @returns {SlotInfo[]}
@@ -773,11 +1203,23 @@ export function listSlots(storage = defaultStorage(), opts = {}) {
   for (let n = 1; n <= SAVE_SLOTS; n++) {
     const { key, text } = readSlot(storage, n);
     let entry = null;
+    let index = null;
     if (text !== null) {
       const c = cached[n - 1];
-      entry = c && c.bytes === text.length && c.hash === textHash(text) ? c : entryFromText(text, fallbackName(n, key));
+      // A cached 'damaged' entry is never trusted (§41.1 v0.9): a version-3 world is INDEXED as damaged on purpose (so an
+      // older client sharing the index never overwrites it), and a v0.8 tab writes the same for it; the slot is parsed
+      // again and listed as the world it is. Truly damaged slots are rare, so the parse is cheap.
+      const usable = c && c.bytes === text.length && c.hash === textHash(text) && !('damaged' in c);
+      if (usable) {
+        entry = c;
+        index = c;
+      } else {
+        const e = entryFromText(text, fallbackName(n, key));
+        entry = e.info;
+        index = e.index;
+      }
     }
-    entries.push(entry);
+    entries.push(index);
     out.push(slotInfo(n, entry, key === LEGACY_SAVE_KEY));
   }
   if (repair) {

@@ -2,12 +2,12 @@
 // bury a body), saving into a copy, undo hooks (CONTRACTS §34). Fake world from the fixtures unless a real World matters.
 import { describe, it, expect } from 'vitest';
 import { MAX_FALLING, MAX_TUMBLING, TERMINAL_VELOCITY, PIG_RADIUS, PIG_HEIGHT, MAX_TOTAL_EDITS } from '../../src/config.js';
-import { BLOCK } from '../../src/blocks.js';
+import { BLOCK, POP_OFF_IDS } from '../../src/blocks.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { createPlayer, createBody } from '../../src/physics.js';
 import { World } from '../../src/world.js';
 import { BlockPhysics } from '../../src/blockphysics.js';
-import { GRAVITY_RULE_IDS, liftFreeY } from '../../src/fallingblocks.js';
+import { GRAVITY_RULE_IDS, liftFreeY, popOffEffect } from '../../src/fallingblocks.js';
 import { createWorldGen } from '../../src/worldgen.js';
 import { findStandingY } from '../../src/physics.js';
 import { makeFakeWorld, attachPhysics, flatWorldGen, trivialWorldGen } from '../helpers/fixtures.js';
@@ -45,8 +45,10 @@ const column = (world, q, r, y0, y1) => {
 };
 
 describe('gravity rule', () => {
-  it('reacts to sand, red sand, gravel and the campfire', () => {
-    expect([...GRAVITY_RULE_IDS].sort()).toEqual([B.SAND, B.GRAVEL, B.RED_SAND, B.CAMPFIRE].sort());
+  it('reacts to sand, red sand, gravel and every pop-off block (the campfire first)', () => {
+    expect([...GRAVITY_RULE_IDS]).toEqual([B.SAND, B.RED_SAND, B.GRAVEL, ...POP_OFF_IDS]);
+    expect(POP_OFF_IDS[0]).toBe(B.CAMPFIRE);
+    expect(Object.isFrozen(GRAVITY_RULE_IDS)).toBe(true);
   });
 
   it('a sand column drops TOGETHER (one tick, same speed) and lands in order', () => {
@@ -103,6 +105,122 @@ describe('gravity rule', () => {
     physics.setSwitch('falling', false);
     physics.tick();
     expect(world.getBlock(0, 20, 0)).toBe(B.SAND);
+  });
+});
+
+describe('pop-off blocks (DESIGN-survival §8.5)', () => {
+  const PLANTS = [B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE];
+
+  it('a plant, litter or a fire pit pops when the dirt below it is removed; nothing drops, nothing falls', () => {
+    for (const id of POP_OFF_IDS) {
+      const { world, physics, fx } = setup();
+      world.setBlock(2, 11, 2, B.DIRT);
+      world.setBlock(2, 12, 2, id);
+      settle(physics);
+      expect(world.getBlock(2, 12, 2), `id ${id} on dirt`).toBe(id); // resting on solid ground
+      world.setBlock(2, 11, 2, B.AIR); // dig the dirt out
+      expect(physics.isQueued('fall', 2, 12, 2)).toBe(true);
+      physics.tick();
+      expect(world.getBlock(2, 12, 2), `id ${id}`).toBe(B.AIR);
+      expect(world.getBlock(2, 11, 2)).toBe(B.AIR); // it did not fall into the hole
+      expect(physics.fallers.count).toBe(0);
+      expect(physics.fallers.tumblerCount).toBe(0);
+      expect(fx.particles.length).toBe(1);
+      expect(fx.sounds.length).toBe(1);
+    }
+  });
+
+  it('each kind pops with its own puff: plants leaves (prickly pear green dust), stones grey dust, branches wood, campfire smoke', () => {
+    const want = (id) => {
+      if (id === B.CAMPFIRE) return { kind: 'smoke', count: 10, sound: 'break:wood' };
+      if (id === B.PRICKLY_PEAR || id === B.PRICKLY_PEAR_BARE) return { kind: 'dust', count: 4, sound: 'break:leaves' };
+      if (PLANTS.includes(id)) return { kind: 'leaves', count: 6, sound: 'break:leaves' };
+      if (id === B.FALLEN_BRANCHES) return { kind: 'dust', count: 4, sound: 'break:wood' };
+      return { kind: 'dust', count: 4, sound: 'break:stone' }; // LOOSE_STONES, FIRE_PIT
+    };
+    for (const id of POP_OFF_IDS) {
+      const { world, physics, fx } = setup();
+      world.setBlock(-3, 20, 5, id); // floating: queued at once
+      physics.tick();
+      expect(world.getBlock(-3, 20, 5)).toBe(B.AIR);
+      const w = want(id);
+      const [x, z] = hexToWorld(-3, 5);
+      expect(fx.particles.length, `id ${id}`).toBe(1);
+      const p = fx.particles[0];
+      expect([p.kind, p.count], `id ${id}`).toEqual([w.kind, w.count]);
+      expect(p.x).toBeCloseTo(x, 9);
+      expect(p.z).toBeCloseTo(z, 9);
+      expect(p.y).toBeGreaterThanOrEqual(20);
+      expect(p.y).toBeLessThan(21);
+      expect(fx.sounds.map((s) => s.name), `id ${id}`).toEqual([w.sound]);
+      expect(popOffEffect(id)).toMatchObject({ kind: w.kind, count: w.count, sound: w.sound });
+      if (id === B.CAMPFIRE) {
+        expect(p.o).toBeUndefined(); // the campfire's puff is unchanged
+      } else {
+        // An explicit colour: the short plants' and litter's top tile is clear, so a block-id colour would be black.
+        expect(p.o.color).toHaveLength(3);
+        for (const c of p.o.color) {
+          expect(c).toBeGreaterThan(0.1);
+          expect(c).toBeLessThan(0.9);
+        }
+        if (w.kind === 'leaves' || id === B.PRICKLY_PEAR) expect(p.o.color[1]).toBeGreaterThan(p.o.color[2]); // green
+      }
+    }
+  });
+
+  it('a pop-off block over water, flowing water, a campfire or air pops; over leaves, glass, a plant or sand it stays', () => {
+    const { world, physics } = setup();
+    const under = [B.WATER, B.WATER_FLOW_3, B.CAMPFIRE, B.AIR, B.OAK_LEAVES, B.GLASS, B.TUSSOCK, B.SAND];
+    under.forEach((u, i) => {
+      world.put(i * 3, 11, 0, u);
+      world.setBlock(i * 3, 12, 0, B.HONEYBERRY_BUSH);
+    });
+    for (let i = 0; i < 30; i++) physics.step(1 / 60);
+    under.forEach((u, i) => {
+      const fallThrough = [B.WATER, B.WATER_FLOW_3, B.CAMPFIRE, B.AIR].includes(u);
+      expect(world.getBlock(i * 3, 12, 0), `bush over ${u}`).toBe(fallThrough ? B.AIR : B.HONEYBERRY_BUSH);
+    });
+  });
+
+  it('pop-off blocks are not fall-through: sand dropped on a tussock rests on it, and a stack of plants pops from the bottom up', () => {
+    const { world, physics } = setup();
+    world.setBlock(0, 11, 0, B.TUSSOCK);
+    world.setBlock(0, 18, 0, B.SAND); // falls and lands on the tussock
+    settle(physics);
+    expect(world.getBlock(0, 11, 0)).toBe(B.TUSSOCK);
+    expect(world.getBlock(0, 12, 0)).toBe(B.SAND);
+    // A column of plants on dirt: taking the dirt pops the lowest, then the next, one tick each.
+    world.setBlock(4, 11, 4, B.DIRT);
+    for (let y = 12; y <= 14; y++) world.setBlock(4, y, 4, PLANTS[y - 12]);
+    settle(physics);
+    expect([12, 13, 14].map((y) => world.getBlock(4, y, 4))).toEqual(PLANTS.slice(0, 3));
+    world.setBlock(4, 11, 4, B.AIR);
+    physics.tick();
+    expect([12, 13, 14].map((y) => world.getBlock(4, y, 4))).toEqual([B.AIR, PLANTS[1], PLANTS[2]]);
+    settle(physics);
+    expect([12, 13, 14].map((y) => world.getBlock(4, y, 4))).toEqual([B.AIR, B.AIR, B.AIR]);
+  });
+
+  it('a campfire still breaks the same way, and the stations / containers never pop', () => {
+    const { world, physics } = setup();
+    for (const [i, id] of [B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WICKER_BASKET, B.SLEEPING_HIDE, B.REMAINS].entries()) {
+      world.setBlock(i * 2, 20, 0, id);
+    }
+    world.setBlock(30, 20, 0, B.CAMPFIRE);
+    settle(physics);
+    for (const [i, id] of [B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WICKER_BASKET, B.SLEEPING_HIDE, B.REMAINS].entries()) {
+      expect(world.getBlock(i * 2, 20, 0), `id ${id}`).toBe(id);
+    }
+    expect(world.getBlock(30, 20, 0)).toBe(B.AIR);
+  });
+
+  it('switched off, pop-off blocks float (the trigger is dropped and never replayed)', () => {
+    const { world, physics } = setup();
+    physics.setSwitch('falling', false);
+    world.setBlock(1, 20, 1, B.LOOSE_STONES);
+    physics.setSwitch('falling', true);
+    settle(physics);
+    expect(world.getBlock(1, 20, 1)).toBe(B.LOOSE_STONES);
   });
 });
 
@@ -197,6 +315,28 @@ describe('landing never buries a body', () => {
     settle(physics);
     expect(world.getBlock(0, 11, 0)).toBe(B.SAND);
     expect(p.y).toBe(12);
+  });
+
+  it('reports the lift through hooks.lifted(body, cells), so main can deal crush damage (§2.4; play-test: the lift happened inside the step and unstickPlayer never saw it)', () => {
+    let p;
+    const lifted = [];
+    const { world, physics } = setup({ hooks: { bodies: () => [p], player: () => p, lifted: (b, cells) => lifted.push([b, cells]) } });
+    p = standing();
+    physics.fallers.spawn(B.SAND, 0, 30, 0);
+    settle(physics);
+    expect(world.getBlock(0, 11, 0)).toBe(B.SAND);
+    expect(lifted).toEqual([[p, 1]]);
+    // more sand on the same column: one lift per landing
+    physics.fallers.spawn(B.SAND, 0, 30, 0);
+    physics.fallers.spawn(B.GRAVEL, 0, 32, 0);
+    settle(physics);
+    expect(p.y).toBe(14);
+    expect(lifted.map(([, c]) => c)).toEqual([1, 1, 1]);
+    // the default hook is a no-op (the hook is optional)
+    const other = setup({ hooks: { bodies: () => [p], player: () => p } });
+    p = standing();
+    other.physics.fallers.spawn(B.SAND, 0, 30, 0);
+    expect(() => settle(other.physics)).not.toThrow();
   });
 
   it('with no room to lift the player the block breaks into dust instead', () => {

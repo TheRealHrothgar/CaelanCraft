@@ -14,7 +14,7 @@ import { BLOCK } from '../../src/blocks.js';
 import { flatGetBlock } from '../helpers/fixtures.js';
 import {
   createPlayer, stepPlayer, getEyeHeight, playerAABB, playerIntersectsBlock, findStandingY, PLAYER_RADIUS,
-  isFreeAt, findFreeY, supportingCells, createBody, isUnderSurface, isSwimWater,
+  isFreeAt, findFreeY, supportingCells, createBody, isUnderSurface, isSwimWater, speedFactorOf,
 } from '../../src/physics.js';
 import { makeGetBlock } from '../helpers/fixtures.js';
 
@@ -879,5 +879,153 @@ describe('supportingCells', () => {
     // Water is not solid → not supporting.
     const wet = (q, y, r) => (q === 0 && r === 0 && y === GROUND ? BLOCK.WATER : floor(q, y, r));
     expect(supportingCells(createPlayer(0, FEET, 0), wet)).toEqual([]);
+  });
+});
+
+// ---- v0.9 survival additions (docs/DESIGN-survival.md §9.3) ----
+
+/** Impact speed of a d-cell fall from rest under the real integrator (§2.4): 28·n/60 for the first n with 28·n(n+1)/7200 ≥ d. */
+function impactSpeed(d) {
+  let n = 1;
+  while ((-GRAVITY * n * (n + 1)) / 7200 < d) n++;
+  return (-GRAVITY * n) / 60;
+}
+
+describe('landSpeed (survival fall damage, DESIGN-survival §9.3)', () => {
+  const floor = flatGetBlock(GROUND);
+
+  it('is 0 without a landing: in free fall, while flying, and while swimming clear of the floor', () => {
+    const p = playerAtCell(0, 0, FEET + 40);
+    run(p, input(), floor, 30, DT, (q) => expect(q.landSpeed).toBe(0));
+    expect(p.vy).toBeLessThan(-10); // really falling
+    const f = playerAtCell(0, 0, FEET + 5);
+    f.flying = true;
+    run(f, input({ forward: 1, jump: true }), floor, 30, DT, (q) => expect(q.landSpeed).toBe(0));
+    const deep = (q, y) => (y < 0 ? BLOCK.AIR : y <= GROUND ? BLOCK.STONE : y <= GROUND + 30 ? BLOCK.WATER : BLOCK.AIR);
+    const s = playerAtCell(0, 0, FEET + 20);
+    run(s, input({ jump: true }), deep, 60, DT, (q) => expect(q.landSpeed).toBe(0));
+    expect(s.inWater).toBe(true);
+    // Reset on entry: a stale value never survives a real step; a dt ≤ 0 step changes nothing at all.
+    const z = playerAtCell(0, 0, FEET + 3);
+    z.landSpeed = 9;
+    stepPlayer(z, input(), floor, 0);
+    stepPlayer(z, input(), floor, NaN);
+    expect(z.landSpeed).toBe(9);
+    stepPlayer(z, input(), floor, DT);
+    expect(z.landSpeed).toBe(0);
+  });
+
+  it('records the impact speed of the landing step, as the integrator predicts (3, 4, 10 and 22 cells)', () => {
+    expect(GRAVITY).toBe(-28);
+    expect(MAX_SUBSTEP_DT).toBeCloseTo(1 / 60, 12);
+    for (const [d, v] of [[3, 13.07], [4, 14.93], [10, 23.8], [22, 35]]) {
+      const p = playerAtCell(1, -2, FEET + d + COLLISION_EPS);
+      let landed = 0;
+      for (let i = 0; i < 600 && !landed; i++) {
+        stepPlayer(p, input(), floor, DT);
+        if (p.landSpeed > 0) landed = p.landSpeed;
+      }
+      expect(landed, `${d} cells`).toBeCloseTo(impactSpeed(d), 9);
+      expect(landed, `${d} cells`).toBeCloseTo(v, 2);
+      expect(p.onGround).toBe(true);
+      expect(p.vy).toBe(0); // recorded before vy is zeroed
+    }
+  });
+
+  it('is the fastest landing of the frame and is reset at the start of the next stepPlayer', () => {
+    const p = playerAtCell(0, 0, FEET + 6 + COLLISION_EPS);
+    let i = 0;
+    for (; i < 600; i++) {
+      stepPlayer(p, input(), floor, DT);
+      if (p.landSpeed > 0) break;
+    }
+    const first = p.landSpeed;
+    expect(first).toBeCloseTo(impactSpeed(6), 9);
+    // Standing on: each step records only one substep of gravity, far below the safe speed.
+    stepPlayer(p, input(), floor, DT);
+    expect(p.landSpeed).toBeCloseTo(-GRAVITY * DT, 9);
+    expect(p.landSpeed).toBeLessThan(1);
+    // A long frame (several substeps): still one standing value, never the sum.
+    stepPlayer(p, input(), floor, MAX_FRAME_DT);
+    expect(p.landSpeed).toBeCloseTo(-GRAVITY * (MAX_FRAME_DT / Math.ceil(MAX_FRAME_DT / MAX_SUBSTEP_DT)), 9);
+  });
+
+  it('a fall into swim-depth water lands on the pool floor at no more than |WATER_MAX_SINK|', () => {
+    const pool = (q, y) => (y < 0 ? BLOCK.AIR : y <= GROUND ? BLOCK.STONE : y <= GROUND + 3 ? BLOCK.WATER : BLOCK.AIR);
+    const p = playerAtCell(0, 0, FEET + 30);
+    let landed = 0;
+    for (let i = 0; i < 1200 && !landed; i++) {
+      stepPlayer(p, input(), pool, DT);
+      landed = p.landSpeed;
+    }
+    expect(landed).toBeGreaterThan(0);
+    expect(landed).toBeLessThanOrEqual(-WATER_MAX_SINK + 1e-9);
+  });
+
+  it('records ceiling hits never (only downward moves), and is set on every body, not just the player', () => {
+    const ceiling = (q, y) => (y < 0 ? BLOCK.AIR : y <= GROUND || y === FEET + 3 ? BLOCK.STONE : BLOCK.AIR);
+    const p = playerAtCell(0, 0, FEET);
+    run(p, input(), ceiling, 5);
+    p.vy = 20; // thrown into the ceiling
+    stepPlayer(p, input(), ceiling, DT);
+    expect(p.landSpeed).toBe(0);
+    const body = createBody(0, FEET + 4, 0, { radius: 0.3, height: 0.9 });
+    let landed = 0;
+    for (let i = 0; i < 200 && !landed; i++) {
+      stepPlayer(body, input(), floor, DT);
+      landed = body.landSpeed;
+    }
+    expect(landed).toBeGreaterThan(13);
+  });
+});
+
+describe('speedFactor (survival slowness, DESIGN-survival §9.3)', () => {
+  const floor = flatGetBlock(GROUND);
+  const speedAfter = (p, inp, n = 120) => {
+    run(p, inp, floor, n);
+    return Math.hypot(p.vx, p.vz);
+  };
+
+  it('speedFactorOf clamps to 0..1 and treats a missing or non-finite factor as 1', () => {
+    expect(speedFactorOf(input())).toBe(1);
+    expect(speedFactorOf(input({ speedFactor: 0.6 }))).toBe(0.6);
+    expect(speedFactorOf(input({ speedFactor: 1.7 }))).toBe(1);
+    expect(speedFactorOf(input({ speedFactor: -2 }))).toBe(0);
+    expect(speedFactorOf(input({ speedFactor: NaN }))).toBe(1);
+    expect(speedFactorOf(input({ speedFactor: Infinity }))).toBe(1);
+    expect(speedFactorOf(input({ speedFactor: /** @type {*} */ ('0.5') }))).toBe(1);
+  });
+
+  it('scales walking, sprinting, sneaking and swimming speed on foot', () => {
+    expect(speedAfter(playerAtCell(0, 0), input({ forward: 1, speedFactor: 0.6 }))).toBeCloseTo(WALK_SPEED * 0.6, 3);
+    expect(speedAfter(playerAtCell(0, 0), input({ forward: 1, sprint: true, speedFactor: 0.75 })))
+      .toBeCloseTo(SPRINT_SPEED * 0.75, 3);
+    expect(speedAfter(playerAtCell(0, 0), input({ forward: 1, sneak: true, speedFactor: 0.9 })))
+      .toBeCloseTo(SNEAK_SPEED * 0.9, 3);
+    expect(speedAfter(playerAtCell(0, 0), input({ forward: 1, speedFactor: 0 }))).toBe(0);
+    expect(speedAfter(playerAtCell(0, 0), input({ forward: 1, speedFactor: 3 }))).toBeCloseTo(WALK_SPEED, 3);
+    const deep = (q, y) => (y < 0 ? BLOCK.AIR : y <= GROUND ? BLOCK.STONE : y <= GROUND + 20 ? BLOCK.WATER : BLOCK.AIR);
+    const s = playerAtCell(0, 0, FEET);
+    run(s, input({ forward: 1, speedFactor: 0.5 }), deep, 30);
+    expect(Math.hypot(s.vx, s.vz)).toBeCloseTo(WALK_SPEED * WATER_SPEED_FACTOR * 0.5, 2);
+  });
+
+  it('never slows flight', () => {
+    const f = playerAtCell(0, 0, FEET + 5);
+    f.flying = true;
+    expect(speedAfter(f, input({ forward: 1, speedFactor: 0.6 }))).toBeCloseTo(FLY_SPEED, 3);
+    f.vx = f.vz = 0;
+    expect(speedAfter(f, input({ forward: 1, sprint: true, speedFactor: 0 }))).toBeCloseTo(FLY_SPRINT_SPEED, 3);
+  });
+
+  it('leaves the vertical motion and external pulls alone', () => {
+    const a = playerAtCell(0, 0, FEET);
+    const b = playerAtCell(0, 0, FEET);
+    run(a, input({ jump: true }), floor, 10);
+    run(b, input({ jump: true, speedFactor: 0.6 }), floor, 10);
+    expect(b.y).toBe(a.y);
+    const c = playerAtCell(0, 0, FEET);
+    run(c, input({ pullX: GROUND_ACCEL * 2, speedFactor: 0 }), floor, 120);
+    expect(c.vx).toBeCloseTo(2, 3); // the pull's drift is not a walking speed
   });
 });

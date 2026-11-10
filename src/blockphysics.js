@@ -22,7 +22,7 @@ import {
   UNDO_WINDOW_S, UNDO_MAX_CELLS, SUPPORT_STARVED_VISITS,
 } from './config.js';
 import {
-  BLOCK, UNLOADED, isFallThrough, isGravityBlock, isSolid, isWater, isWaterSource,
+  BLOCK, UNLOADED, POP_OFF_IDS, isFallThrough, isGravityBlock, isPopOff, isSolid, isWater, isWaterSource,
 } from './blocks.js';
 import { HEX_DIRS } from './hex.js';
 import { chunkKey, localIndex, packCell, unpackCell } from './coords.js';
@@ -122,6 +122,17 @@ export const CAUSE_AREA = Object.freeze({ kind: 'area' });
  *   kinds 'dust' | 'leaves' | 'smoke' | 'sparks' | 'steam'; opts { id?, color?, spread?, speed?, vx?, vy?, vz? } (particles.js)
  * @property {(body: PlayerState, vx: number, vy: number, vz: number, fromX: number, fromZ: number) => void} [knock]
  *   add an impulse to a body (explosions, tree impacts); main also makes a pig flee and squeal
+ * @property {(body: PlayerState, cells: number) => void} [lifted]   a landing block filled the body's cell and
+ *   `_placeLanded` lifted it on top (§34.3), `cells` whole cells (≥ 1); main turns the player's into `crush` damage
+ *   (DESIGN-survival §2.4) after `step` — the body is already free by then, so `unstickPlayer` never sees the lift
+ * @property {(id: number) => boolean} [isIgnitable]   (DESIGN-circuits §3.6; main → circuitParts.isIgnitable) a block a flame
+ *   lights: undo restores these (besides the keg) last, and never where they would catch at once
+ * @property {(q: number, y: number, r: number) => boolean} [ignitesAt]   (DESIGN-circuits §3.6; main → circuits.wouldIgnite) a
+ *   keg or fuse at the cell would catch at once: a torch or a campfire beside it, or an igniter still powered
+ * @property {(q: number, y: number, r: number) => *} [partState]   (CONTRACTS §55; main → circuits.partSnapshot) the settings of
+ *   the circuit part in the cell, or null: read before an event's first write to the cell, kept with the event for undo
+ * @property {(q: number, y: number, r: number, state: *) => void} [restorePart]   (main → circuits.restorePart) undo wrote the
+ *   part back: its settings come back with it (an NC relay stays NC, a timer keeps its delay and input face)
  */
 
 /**
@@ -133,13 +144,15 @@ export const CAUSE_AREA = Object.freeze({ kind: 'area' });
  * @property {Cause} cause
  * @property {number} time              physics.time when it began
  * @property {Map<number, number>} cells  packCell key → prevId·256 + wroteId
+ * @property {Map<number, *>} [parts]   packCell key → hooks.partState of a circuit part the event removed (undo restores it)
  * @property {boolean} truncated        more than UNDO_MAX_CELLS cells: the rest were not recorded
  */
 
 /** One item for fallingRenderer.sync: a moving cell's centre, rotation (Euler order 'YXZ') and uniform scale. */
 /** @typedef {{ id: number, x: number, y: number, z: number, rx: number, ry: number, rz: number, scale: number }} RenderItem */
 
-const HOOK_NAMES = Object.freeze(['say', 'areaJobsActive', 'bodies', 'player', 'sound', 'particles', 'knock']);
+const HOOK_NAMES = Object.freeze(['say', 'areaJobsActive', 'bodies', 'player', 'sound', 'particles', 'knock', 'lifted', 'isIgnitable', 'ignitesAt',
+  'partState', 'restorePart']);
 const NO_BODIES = Object.freeze([]);
 const DEFAULT_HOOKS = Object.freeze({
   say: () => {},
@@ -154,6 +167,11 @@ const DEFAULT_HOOKS = Object.freeze({
     body.vz += vz;
     body.onGround = false;
   },
+  lifted: () => {},
+  isIgnitable: () => false,
+  ignitesAt: () => false,
+  partState: () => null,
+  restorePart: () => {},
 });
 
 const FALL = 0;
@@ -608,7 +626,7 @@ export class BlockPhysics {
   /**
    * Register (or replace, by name) a reseeder: when a chunk is generated (first load, or reloaded after streaming
    * out), every EDITED cell of it whose id is in `ids` is handed to fn(ctx, q, y, r, id), which schedules what must
-   * resume. Built-ins: 'gravity', 'water', 'ignite'.
+   * resume. Built-ins: 'gravity', 'water' (a campfire beside a keg has no reseeder: it lights on block changes only).
    * @param {string} name
    * @param {string|null} feature
    * @param {number[]} ids
@@ -805,9 +823,11 @@ export class BlockPhysics {
    * Undo the last physics event within UNDO_WINDOW_S: remove its fallers, logs and debris still in flight, then restore
    * every recorded cell whose current id is still what the event wrote — or, where the event wrote AIR, water that has
    * flowed in since (a flooded crater fills back in instead of leaving water pockets inside the restored ground,
-   * CONTRACTS §38.3). The event's barrel cells are restored last, and never next to a CAMPFIRE (it would only light
-   * them again); then explosions.cancelEvent stops the event's burning barrels and gives back the lit ones in the cells
-   * they were lit in (§37.4.3). Writes are quiet (no support seeds), lazy and past the edit cap.
+   * CONTRACTS §38.3). The event's keg cells — and its other ignitable cells (hooks.isIgnitable: powder fuses, charges) — are
+   * restored last, each as its own block, and never next to a CAMPFIRE nor where hooks.ignitesAt says it would catch (a
+   * torch or a still-powered igniter beside it; it would only light again and blow the restored scene up a second time,
+   * DESIGN-circuits §3.6); then explosions.cancelEvent stops the event's burning kegs and gives back the lit ones in the
+   * cells they were lit in (§37.4.3). Writes are quiet (no support seeds), lazy and past the edit cap.
    * @returns {{ ok: boolean, message: string, restored: number }}
    */
   undo() {
@@ -828,7 +848,7 @@ export class BlockPhysics {
     let changed = 0;
     let unloaded = 0;
     const c = this._cell;
-    /** @type {number[]} the event's own BLAST_BARREL cells: restored after every other cell (a campfire first) */
+    /** @type {number[]} the event's own keg and ignitable cells and their ids: restored after every other cell (a campfire first) */
     const barrels = [];
     for (const [key, code] of ev.cells) {
       unpackCell(key, c);
@@ -844,17 +864,23 @@ export class BlockPhysics {
         continue;
       }
       if (prev === wrote) continue;
-      if (prev === BLOCK.BLAST_BARREL) barrels.push(key);
-      else if (this._write(c[0], c[1], c[2], prev, WRITE_QUIET, true) === 'ok') restored++;
+      if (prev === BLOCK.BLAST_BARREL || this.hooks.isIgnitable(prev)) barrels.push(key, prev);
+      else if (this._write(c[0], c[1], c[2], prev, WRITE_QUIET, true) === 'ok') {
+        restored++;
+        // A circuit part comes back with its settings, before the kegs' look-ahead below solves its circuit.
+        const part = ev.parts ? ev.parts.get(key) : undefined;
+        if (part !== undefined && part !== null) this.hooks.restorePart(c[0], c[1], c[2], part);
+      }
     }
-    // Barrels: never next to a campfire — an unlit barrel there would catch again (the 'ignite' trigger at once, or
-    // the reseeder on the next load) and blow the restored scene up a second time (§33.8.4).
+    // Kegs (and fuses, charges): never next to a campfire or where a torch or a powered igniter would light them — an
+    // unlit keg there would catch again (the 'ignite' trigger, or the circuits' flame queue, at once: undo's quiet writes
+    // are block changes) and blow the restored scene up a second time (§33.8.4, DESIGN-circuits §3.6).
     let burnt = 0;
     const writeBarrel = (q, y, r) => this._write(q, y, r, BLOCK.BLAST_BARREL, WRITE_QUIET, true) === 'ok';
-    for (const key of barrels) {
-      unpackCell(key, c);
-      if (this._hasNeighbour(c[0], c[1], c[2], BLOCK.CAMPFIRE)) burnt++;
-      else if (writeBarrel(c[0], c[1], c[2])) restored++;
+    for (let i = 0; i < barrels.length; i += 2) {
+      unpackCell(barrels[i], c);
+      if (this._hasNeighbour(c[0], c[1], c[2], BLOCK.CAMPFIRE) || this.hooks.ignitesAt(c[0], c[1], c[2])) burnt++;
+      else if (this._write(c[0], c[1], c[2], barrels[i + 1], WRITE_QUIET, true) === 'ok') restored++;
     }
     const lit = this.explosions.cancelEvent(ev.id, writeBarrel) || {};
     inFlight += lit.putOut | 0;
@@ -864,8 +890,8 @@ export class BlockPhysics {
     if (inFlight > 0) message += `, removed ${inFlight} still in flight`;
     if (changed > 0) message += ` (${changed} changed since, left alone)`;
     if (unloaded > 0) message += ` (${unloaded} in unloaded chunks)`;
-    if (burnt > 0) message += ` (${burnt} barrel${burnt === 1 ? '' : 's'} next to a campfire not given back)`;
-    if (lit.lost > 0) message += ` (${lit.lost} barrel${lit.lost === 1 ? '' : 's'} found no room)`;
+    if (burnt > 0) message += ` (${burnt} ${burnt === 1 ? 'keg or fuse' : 'kegs or fuses'} next to a fire not given back)`;
+    if (lit.lost > 0) message += ` (${lit.lost} keg${lit.lost === 1 ? '' : 's'} found no room)`;
     if (ev.truncated) message += ' (the event was too large to record completely)';
     return { ok: true, message, restored };
   }
@@ -1320,7 +1346,7 @@ export class BlockPhysics {
     const q = s.queued;
     return `physics ${s.paused ? 'PAUSED' : 'running'} · ${sw} · queued ${q.fall + q.water + q.misc} (fall ${q.fall}, water ${q.water}, misc ${q.misc})` +
       ` · parked ${s.parked} · support seeds ${s.seeds} · falling ${s.fallers} · tumbling ${s.tumblers} · trees ${s.trees}` +
-      ` · lit barrels ${s.litBarrels} · edits ${s.edits} / ${MAX_TOTAL_EDITS}${s.canUndo ? ` · undo: ${this.lastEvent.kind}` : ''}`;
+      ` · lit kegs ${s.litBarrels} · edits ${s.edits} / ${MAX_TOTAL_EDITS}${s.canUndo ? ` · undo: ${this.lastEvent.kind}` : ''}`;
   }
 
   /** Drop everything queued and in flight (the world is unchanged). */
@@ -1357,6 +1383,12 @@ export class BlockPhysics {
       }
       return 'capped';
     }
+    // The event's first write to a cell holding a circuit part keeps the part's settings for undo: the write itself deletes
+    // them (Circuits.onBlockChange, §4.8).
+    const ev = this._event;
+    const recording = ev !== null && ev === this.lastEvent;
+    const k = recording ? packCell(q, y, r) : -1;
+    const part = recording && ev.cells.size < UNDO_MAX_CELLS && !ev.cells.has(k) ? this.hooks.partState(q, y, r) : null;
     const prevMode = this._writeMode;
     this._writeMode = mode;
     let ok;
@@ -1367,13 +1399,13 @@ export class BlockPhysics {
     }
     if (!ok) return 'failed';
     this._writeSeq++;
-    const ev = this._event;
-    if (ev !== null && ev === this.lastEvent) {
-      const k = packCell(q, y, r);
+    if (recording) {
       const old = ev.cells.get(k);
       if (old === undefined) {
-        if (ev.cells.size < UNDO_MAX_CELLS) ev.cells.set(k, current * 256 + id);
-        else ev.truncated = true;
+        if (ev.cells.size < UNDO_MAX_CELLS) {
+          ev.cells.set(k, current * 256 + id);
+          if (part !== undefined && part !== null) (ev.parts ??= new Map()).set(k, part);
+        } else ev.truncated = true;
       } else {
         ev.cells.set(k, old - (old % 256) + id);
       }
@@ -1447,27 +1479,28 @@ export class BlockPhysics {
     const world = this.world;
     const peek = (q, y, r) => world.peekBlock(q, y, r);
 
-    // ---- falling: the cell above a cell that became fall-through; a gravity block / campfire placed over one.
+    // ---- falling: the cell above a cell that became fall-through; a gravity block / pop-off block placed over one.
+    // Pop-off blocks (v0.9, DESIGN-survival §8.5: campfire, fire pit, plants, litter) break where a campfire always did.
     this.addTrigger('gravity', 'falling', (q, y, r, prev, next) => {
       if (!isFallThrough(prev) && isFallThrough(next)) {
         const above = this._peekColumn(q, y + 1, r);
-        if (isGravityBlock(above) || above === BLOCK.CAMPFIRE) this.schedule('fall', q, y + 1, r);
+        if (isGravityBlock(above) || isPopOff(above)) this.schedule('fall', q, y + 1, r);
       }
-      if ((isGravityBlock(next) || next === BLOCK.CAMPFIRE) && isFallThrough(this._peekColumn(q, y - 1, r))) this.schedule('fall', q, y, r);
+      if ((isGravityBlock(next) || isPopOff(next)) && isFallThrough(this._peekColumn(q, y - 1, r))) this.schedule('fall', q, y, r);
     });
-    // Reseeder: an edited gravity block / campfire over a fall-through cell, and the cell above an EDITED fall-through
-    // cell that was generated NOT fall-through (dug out) — natural sand whose fall was still queued when the game saved
-    // (rings are not saved) falls on reload. That is exactly when the live trigger fired: a cave or sea cell that only
-    // changed to another fall-through id (a source or campfire put under natural sand) never moved the sand live, so it
-    // does not on load or stream-in either.
+    // Reseeder: an edited gravity block / pop-off block over a fall-through cell, and the cell above an EDITED
+    // fall-through cell that was generated NOT fall-through (dug out) — natural sand (or a natural plant) whose fall was
+    // still queued when the game saved (rings are not saved) falls on reload. That is exactly when the live trigger
+    // fired: a cave or sea cell that only changed to another fall-through id (a source or campfire put under natural
+    // sand) never moved the sand live, so it does not on load or stream-in either.
     const fallThroughIds = [];
     for (let id = 0; id < 256; id++) if (isFallThrough(id)) fallThroughIds.push(id);
     const dugOut = (q, y, r) => typeof world.originAt !== 'function' || !isFallThrough(world.originAt(q, y, r));
-    this.addReseeder('gravity', 'falling', [BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, BLOCK.CAMPFIRE, ...fallThroughIds], (ctx, q, y, r, id) => {
-      if ((isGravityBlock(id) || id === BLOCK.CAMPFIRE) && isFallThrough(peek(q, y - 1, r))) this.schedule('fall', q, y, r);
+    this.addReseeder('gravity', 'falling', [BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, ...POP_OFF_IDS, ...fallThroughIds], (ctx, q, y, r, id) => {
+      if ((isGravityBlock(id) || isPopOff(id)) && isFallThrough(peek(q, y - 1, r))) this.schedule('fall', q, y, r);
       if (isFallThrough(id) && dugOut(q, y, r)) {
         const above = peek(q, y + 1, r);
-        if (isGravityBlock(above) || above === BLOCK.CAMPFIRE) this.schedule('fall', q, y + 1, r);
+        if (isGravityBlock(above) || isPopOff(above)) this.schedule('fall', q, y + 1, r);
       }
     });
 
@@ -1489,6 +1522,9 @@ export class BlockPhysics {
     });
 
     // ---- explosions: a campfire and a barrel ending up next to each other queue the barrel (ignition, misc ring).
+    // Block changes only — there is no 'ignite' reseeder (v0.10, CONTRACTS §33.4.3 and pitfall 37): loading never lights
+    // anything, so a keg resting beside a campfire (laid while explosions were off, or saved while it burned) stays unlit
+    // through a reload or a stream-in, as it does when explosions are switched back on, until a new change beside it.
     this.addTrigger('ignite', 'explosions', (q, y, r, prev, next) => {
       if (next === BLOCK.CAMPFIRE) {
         for (const [dq, dy, dr] of NEIGHBOURS) {
@@ -1497,9 +1533,6 @@ export class BlockPhysics {
       } else if (next === BLOCK.BLAST_BARREL && this._hasNeighbour(q, y, r, BLOCK.CAMPFIRE)) {
         this.schedule('misc', q, y, r);
       }
-    });
-    this.addReseeder('ignite', 'explosions', [BLOCK.BLAST_BARREL], (ctx, q, y, r) => {
-      if (this._hasNeighbour(q, y, r, BLOCK.CAMPFIRE)) this.schedule('misc', q, y, r);
     });
   }
 

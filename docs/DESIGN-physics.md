@@ -300,7 +300,8 @@ are already in `config.js` ("Block physics").
   through the signatures below; they may still be stubs while you work).
 - Registry: `physics.registerRule(name, { ring | rings, feature, ids, update(ctx, q, y, r, id) })`, `physics.addTrigger(name,
   feature, fn(q, y, r, prev, next, mode))`, `physics.addReseeder(name, feature, ids, fn(ctx, q, y, r, id))`; built-in triggers /
-  reseeders 'gravity', 'water', 'ignite' (§2) can be replaced by name.
+  reseeders 'gravity', 'water', 'ignite' (§2) can be replaced by name. *(v0.10: the 'ignite' reseeder is gone — loading never
+  lights anything, CONTRACTS §33.4.3 and pitfall 37.)*
 - Events (undo): `physics.beginEvent(kind, cause)` … `endEvent()` around a batch; things you spawn meanwhile carry
   `physics.openEventId`; later writes for that event go through `physics.enterEvent(id)` / `exitEvent(token)`. Implement
   `cancelEvent(id)` to drop your in-flight entities of event `id` (and refund lit barrels).
@@ -357,7 +358,7 @@ are already in `config.js` ("Block physics").
 
 ### 10.6 Explosives — `src/explosions.js`, class `Explosions` (stub)
 - Constructor registers `'ignite'` on `misc`, feature 'explosions', ids [BLAST_BARREL]; the scheduler already queues barrels
-  next to campfires (trigger + reseeder 'ignite').
+  next to campfires (trigger 'ignite'; v0.10: no reseeder, so a reload or stream-in lights nothing).
 - main calls: `lightAt(q, y, r) → boolean` (R on a targeted barrel, inside `asPlayer`), `raycast(ox, oy, oz, dx, dy, dz, maxDist)
   → { target, distance } | null` (lit barrels, every frame; a hit takes the crosshair), `snuff(target) → boolean` (left-click),
   `bodies(out)` (lit barrel bodies into resolveBodies — currently ALL pairs; skip barrel–barrel in bodies.js if needed),
@@ -434,7 +435,8 @@ Found only with everything running together, and how the merge resolved it:
    is kept, and the barrels are given back after the restore, stacked and settled down their column.
 8. **Undo never leaves an unlit barrel next to a campfire.** Undoing a campfire-lit blast restored the barrel and the campfire, and
    the 'ignite' trigger lit the pair again: the same crater 3 s after every undo (masking the trigger during undo only moves it to
-   the next load — the reseeder lights a saved pair). A used-up barrel next to a campfire is not given back (the chat line says
+   the next load — the reseeder lit a saved pair; v0.10 dropped that reseeder, but the trigger alone still lights the pair at
+   once). A used-up barrel next to a campfire is not given back (the chat line says
    so), and one still burning there keeps burning. *The restored scene stays standing.*
 9. **Every body gets the same push** (CONTRACTS §23, §31, §37.3.3). Pigs got `pigs.hit`'s 5 m/s kick on top of the blast (2.07 m of
    rise at any distance, against the player's 0.59 m); a player riding a pig got its own impulse plus the pig's (the rider's velocity

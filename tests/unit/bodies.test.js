@@ -389,3 +389,62 @@ describe('pigs use their body', () => {
     expect(isFreeAt(getBlock, g.x, g.y, g.z, PIG_RADIUS, PIG_HEIGHT)).toBe(true);
   });
 });
+
+describe('landSpeed on bodies (v0.9 survival, DESIGN-survival §9.3)', () => {
+  it('landing on a body records the speed the stand cut off (falls onto mobs hurt)', () => {
+    const g = pig(0, GROUND, 0);
+    const p = createPlayer(0, GROUND + PIG_HEIGHT - 0.2, 0);
+    p.vy = -15;
+    p.landSpeed = 0;
+    resolveBodies([p, g], flat);
+    expect(p.carrier).toBe(g);
+    expect(p.landSpeed).toBe(15);
+    expect(p.vy).toBe(0);
+  });
+
+  it('keeps the larger of a terrain landing and a body landing; no record when nothing was cut', () => {
+    const g = pig(0, GROUND, 0);
+    const p = createPlayer(0, GROUND + PIG_HEIGHT - 0.2, 0);
+    p.vy = -6;
+    p.landSpeed = 9;
+    resolveBodies([p, g], flat);
+    expect(p.landSpeed).toBe(9);
+    // A rider moving up with a jumping carrier is not landing.
+    const h = pig(0, GROUND, 0);
+    h.vy = 4;
+    const q = createPlayer(0, GROUND + PIG_HEIGHT - 0.2, 0);
+    q.vy = 1;
+    resolveBodies([q, h], flat);
+    expect(q.carrier).toBe(h);
+    expect(q.landSpeed).toBeUndefined();
+  });
+
+  it('a body without the field gets it; the clamp to a falling carrier only records when it cut something', () => {
+    const g = pig(0, GROUND + 5, 0);
+    g.vy = -10; // falling carrier
+    const p = createPlayer(0, GROUND + 5 + PIG_HEIGHT - 0.2, 0);
+    p.vy = -8; // slower than the carrier: nothing cut
+    resolveBodies([p, g], flat);
+    expect(p.landSpeed).toBeUndefined();
+    p.vy = -12;
+    p.y = g.y + PIG_HEIGHT - 0.2;
+    resolveBodies([p, g], flat);
+    expect(p.landSpeed).toBe(12);
+    expect(p.vy).toBe(-10);
+  });
+
+  it('resting on a pig across frames records only the small gravity step each frame', () => {
+    const g = pig(0, GROUND, 0);
+    const p = createPlayer(0, GROUND + 2, 0);
+    let max = 0;
+    for (let i = 0; i < 120; i++) {
+      stepPlayer(g, IDLE, flat, 1 / 60);
+      stepPlayer(p, IDLE, flat, 1 / 60);
+      resolveBodies([p, g], flat);
+      if (i > 60) max = Math.max(max, p.landSpeed);
+    }
+    expect(p.carrier).toBe(g);
+    expect(max).toBeGreaterThan(0);
+    expect(max).toBeLessThan(1);
+  });
+});

@@ -668,13 +668,15 @@ export class Zombies {
   }
 
   /**
-   * The player hits a zombie from a point: knockback away from it, a hop, a red flash and a short stun. The
-   * ZOMBIE_HITS-th hit knocks it out (it is removed; main puffs it away).
+   * The player hits a zombie from a point: knockback away from it, a hop, a red flash and a short stun. Each hit adds
+   * `power` to `hits` (v0.9, DESIGN-survival §9.3: a Survival tool's power; bare hands and Creative 1); reaching
+   * ZOMBIE_HITS knocks it out (it is removed; main puffs it away). A power that is not a positive number counts as 1.
+   * @param {number} [power=1]
    * @returns {'hit'|'ko'|null} null while it is still flashing from the last hit (the hit is ignored)
    */
-  hit(zb, fromX, fromZ) {
+  hit(zb, fromX, fromZ, power = 1) {
     if (zb.hurt > 0) return null;
-    zb.hits++;
+    zb.hits += typeof power === 'number' && power > 0 && Number.isFinite(power) ? power : 1;
     if (zb.hits >= ZOMBIE_HITS) {
       this.remove(zb);
       return 'ko';

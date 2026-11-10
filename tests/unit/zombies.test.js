@@ -695,3 +695,35 @@ describe('Zombies — sounds (main plays each kind at most once a frame, at loud
     expect(burnedFrames).toBe(1);
   });
 });
+
+describe('Zombies.hit power (v0.9 survival, DESIGN-survival §9.3)', () => {
+  it('a hit with power 4 is a knock-out; power adds to hits; bare hands (default) still need ZOMBIE_HITS', () => {
+    expect(ZOMBIE_HITS).toBe(4);
+    const zs = new Zombies(seededRng(31));
+    const a = zs.spawn(2, GROUND, 0);
+    expect(zs.hit(a, 0, 0, 4)).toBe('ko');
+    expect(zs.size).toBe(0);
+    const b = zs.spawn(2, GROUND, 0);
+    expect(zs.hit(b, 0, 0, 3)).toBe('hit');
+    expect(b.hits).toBe(3);
+    expect(zs.hit(b, 0, 0, 3)).toBeNull(); // still flashing: ignored
+    expect(b.hits).toBe(3);
+    run(zs, view(flat, null), ZOMBIE_HURT_S + 0.05);
+    expect(zs.hit(b, 0, 0, 1)).toBe('ko');
+    const c = zs.spawn(2, GROUND, 0);
+    expect(zs.hit(c, 0, 0)).toBe('hit');
+    expect(c.hits).toBe(1);
+    const d = zs.spawn(2, GROUND, 0);
+    expect(zs.hit(d, 0, 0, 5)).toBe('ko'); // a steel sword
+  });
+
+  it('a power that is not a positive number counts as 1', () => {
+    const zs = new Zombies(seededRng(32));
+    for (const bad of [0, -2, NaN, Infinity, '4', null]) {
+      const zb = zs.spawn(2, GROUND, 0);
+      expect(zs.hit(zb, 0, 0, /** @type {*} */ (bad)), String(bad)).toBe('hit');
+      expect(zb.hits).toBe(1);
+      zs.remove(zb);
+    }
+  });
+});

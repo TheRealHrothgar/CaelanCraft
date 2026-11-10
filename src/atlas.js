@@ -103,7 +103,8 @@ function get2D(canvas) {
 /**
  * Build the 256×256 texture atlas. Every id in TILE_IDS is painted with `paintTile` (pure RGBA pixels)
  * and blitted with `putImageData` at its tile origin, so alpha is written verbatim (water 178, glass
- * interior 0, leaf holes 0) rather than composited. Reserved tiles (27–254) stay transparent black.
+ * interior 0, leaf holes 0) rather than composited. Ids that are not tiles (105–239, 246–249, 253–254 as of v0.9: see
+ * TILE_IDS) stay transparent black.
  * @returns {HTMLCanvasElement}
  */
 export function createAtlasCanvas() {
@@ -144,11 +145,14 @@ export function createAtlasTexture(canvas) {
 }
 
 /**
- * Draw the hexagonal-prism icon of `blockId` into the `size`×`size` square at (0,0) of `ctx` (scaled by
- * `size / 32`): the top hexagon (top tile, clipped to the hexagon) above the two front side faces (left
- * shaded 20 %, right 40 %). The square is cleared first, so AIR (or an unknown id) leaves it blank — which
- * is exactly what an empty hotbar slot needs. The context state (transform, clip, composite op, smoothing,
- * fill style) is saved and restored around the drawing.
+ * Draw the icon of `blockId` into the `size`×`size` square at (0,0) of `ctx` (scaled by `size / 32`). A block whose
+ * `icon` is 'prism' (the default) is drawn as a hexagonal prism: the top hexagon (top tile, clipped to the hexagon)
+ * above the two front side faces (left shaded 20 %, right 40 %). A block whose `icon` is 'flat' (the circuit parts but the
+ * keg: the thin fuse, torch and wires, whose prism with transparent sides would read as nothing — DESIGN-circuits §1.5 —
+ * and the 14 devices, which are 3D models rather than prisms) is drawn as its TOP tile, an unskewed 2D picture fitted to
+ * the square with nearest-neighbour scaling: one drawImage, no side faces and no hexagon. The square is cleared first, so AIR (or an unknown id) leaves it blank — which is exactly what an empty
+ * hotbar slot needs. The context state (transform, clip, composite op, smoothing, fill style) is saved and restored
+ * around the drawing.
  * @param {CanvasRenderingContext2D} ctx
  * @param {HTMLCanvasElement} atlasCanvas  from createAtlasCanvas()
  * @param {number} blockId
@@ -162,7 +166,11 @@ export function drawBlockIcon(ctx, atlasCanvas, blockId, size = ICON_BASE_SIZE) 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'source-over';
   ctx.clearRect(0, 0, size, size);
-  if (def.id !== BLOCK.AIR) {
+  if (def.id !== BLOCK.AIR && def.icon === 'flat') {
+    ctx.imageSmoothingEnabled = false;
+    const [sx, sy] = tileOrigin(getFaceTile(def.id, FACE_TOP));
+    ctx.drawImage(atlasCanvas, sx, sy, ATLAS_TILE_PX, ATLAS_TILE_PX, 0, 0, size, size);
+  } else if (def.id !== BLOCK.AIR) {
     ctx.imageSmoothingEnabled = false;
 
     // Side faces first (the top overdraws their shared edge).

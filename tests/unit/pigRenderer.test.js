@@ -1,8 +1,8 @@
 // pigRenderer.js regression tests — Node only (three core objects work without WebGL). CONTRACTS §30.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { createPigRenderer } from '../../src/pigRenderer.js';
-import { PIG_MAX } from '../../src/config.js';
+import { createPigRenderer, renderScaleOf, renderSpinOf } from '../../src/pigRenderer.js';
+import { PIG_MAX, MAX_INFALL_MOBS } from '../../src/config.js';
 
 /** A minimal pig as the renderer reads it. */
 const pig = (x, y, z, extra = {}) => ({ id: 0, x, y, z, yaw: 0, walkPhase: 0, hurt: 0, ...extra });
@@ -129,6 +129,58 @@ describe('createPigRenderer — instanced pig models', () => {
     r.sync(Array.from({ length: 9 }, (_, i) => pig(i, 0, 0)));
     expect(r.count()).toBe(4);
     expect(byName(r, 'pig-legs').count).toBe(16);
+    r.dispose();
+  });
+});
+
+describe('createPigRenderer — black-hole ghosts (renderScale, renderSpin; DESIGN-circuits §2.7, §6.2.13)', () => {
+  /** Every instance matrix of every mesh, as plain arrays. */
+  function snapshot(r) {
+    const out = {};
+    for (const m of r.group.children) out[m.name] = Array.from(m.instanceMatrix.array.slice(0, m.count * 16));
+    return out;
+  }
+  it('without renderScale / renderSpin the output is exactly as before (and 1 / 0 or nonsense change nothing)', () => {
+    const scene = new THREE.Scene();
+    const r = createPigRenderer(scene);
+    const base = [pig(1, 10, 2, { yaw: 0.7, walkPhase: 1.1 }), pig(-3, 11, 4, { yaw: -2, walkPhase: 0.3, hurt: 0.2 })];
+    r.sync(base);
+    const plain = snapshot(r);
+    r.sync(base.map((p) => ({ ...p, renderScale: 1, renderSpin: 0 })));
+    expect(snapshot(r)).toEqual(plain);
+    r.sync(base.map((p) => ({ ...p, renderScale: 0, renderSpin: NaN })));
+    expect(snapshot(r)).toEqual(plain);
+    r.sync(base.map((p) => ({ ...p, renderScale: -2, renderSpin: 'x' })));
+    expect(snapshot(r)).toEqual(plain);
+    expect([renderScaleOf({}), renderScaleOf({ renderScale: 0.4 }), renderSpinOf({}), renderSpinOf({ renderSpin: 2 })]).toEqual([1, 0.4, 0, 2]);
+    r.dispose();
+  });
+  it('renderScale scales the whole pig about its feet; renderSpin adds to its yaw', () => {
+    const scene = new THREE.Scene();
+    const r = createPigRenderer(scene);
+    r.sync([pig(3, 64, -2, { yaw: 0.5, renderScale: 0.25, renderSpin: 1 })]);
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    byName(r, 'pig-skin').getMatrixAt(0, m);
+    m.decompose(p, q, s);
+    expect(p.toArray()).toEqual([3, 64, -2]);
+    expect(s.x).toBeCloseTo(0.25, 6);
+    expect(new THREE.Euler().setFromQuaternion(q, 'YXZ').y).toBeCloseTo(1.5, 6);
+    // The legs shrink with it: the hip is a quarter as high.
+    byName(r, 'pig-legs').getMatrixAt(0, m);
+    expect(translation(m).y).toBeCloseTo(64 + 0.3 * 0.25, 5);
+    r.dispose();
+  });
+  it('the capacity argument holds PIG_MAX + MAX_INFALL_MOBS bodies (so a ghost is never dropped from a full list)', () => {
+    const scene = new THREE.Scene();
+    const r = createPigRenderer(scene, PIG_MAX + MAX_INFALL_MOBS);
+    const all = Array.from({ length: PIG_MAX + MAX_INFALL_MOBS }, (_, i) => pig(i, 10, 0, { renderScale: i >= PIG_MAX ? 0.5 : undefined }));
+    r.sync(all);
+    expect(r.count()).toBe(PIG_MAX + MAX_INFALL_MOBS);
+    expect(byName(r, 'pig-skin').count).toBe(PIG_MAX + MAX_INFALL_MOBS);
+    expect(byName(r, 'pig-legs').count).toBe((PIG_MAX + MAX_INFALL_MOBS) * 4);
     r.dispose();
   });
 });

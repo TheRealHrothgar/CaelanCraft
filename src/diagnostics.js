@@ -28,8 +28,11 @@ import { runeKey } from './runes.js';
  * @property {number|null} time      frozen time of day, clamped to 0..1
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
- * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker
+ * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker, 'pack' the Pack & Making screen (Survival), 'device' the device panel on a demo Clockwork Timer (v0.10)
+ * @property {'vortex'|'circuits'|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar Charge 8 cells ahead 2 s
+ *   after loading; 'circuits' builds the §4.14 worked examples ahead (readSceneParam, circuitSceneWrites)
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
+ * @property {'creative'|'survival'|null} mode  v0.9 (§9.10): the first world's mode with ?autoplay / ?smoke; anything else → null
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -61,7 +64,126 @@ export function parseParams(search = defaultSearch()) {
     pitch: readClampedFloat(params, 'pitch', -89.9, 89.9),
     ui: readUiParam(params),
     slot: readSlotParam(params),
+    mode: readModeParam(params),
+    scene: readSceneParam(params),
   };
+}
+
+/**
+ * `?scene=vortex|circuits` (case-insensitive), anything else null (DESIGN-circuits §6.7).
+ * @param {URLSearchParams} params
+ * @returns {'vortex'|'circuits'|null}
+ */
+export function readSceneParam(params) {
+  const t = readString(params, 'scene');
+  if (t === null) return null;
+  const v = t.toLowerCase();
+  return v === 'vortex' || v === 'circuits' ? v : null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// v0.10 `?scene=circuits`: the named worked examples of DESIGN-circuits §4.14, as cells for main to write
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The worked examples ?scene=circuits builds (§6.7), each one row along +q at one height, rows SCENE_ROW_GAP apart in r:
+ * `[dq, name, id]` cells, the input faces `[dq, face]` and the settings `[dq, partial]`. Example 2 has a keg in place of the
+ * charge; `switch` is example 10 with one key (a Knife Switch firing an Igniter into a keg).
+ */
+export const CIRCUIT_SCENE_ROWS = Object.freeze([
+  Object.freeze({
+    name: 'doorbell', // §4.14 example 1: hold right-click on the button and the bell rings
+    cells: [[0, 'battery', BLOCK.VOLTAIC_BATTERY], ...span(1, 6, BLOCK.COPPER_WIRE), [7, 'button', BLOCK.PUSH_BUTTON],
+      ...span(8, 10, BLOCK.COPPER_WIRE), [11, 'bell', BLOCK.ELECTRIC_BELL]],
+    faces: [],
+    settings: [[7, { l: 'Front door' }]],
+  }),
+  Object.freeze({
+    name: 'timer', // example 2 with a keg: right-click the timer; 30 s later the igniter fires and the keg goes off
+    cells: [[0, 'battery', BLOCK.VOLTAIC_BATTERY], [1, 'timer', BLOCK.CLOCKWORK_TIMER], ...span(2, 5, BLOCK.COPPER_WIRE),
+      [6, 'igniter', BLOCK.IGNITER], [7, 'keg', BLOCK.POWDER_KEG]],
+    faces: [[1, 1]], // SE (unused)
+    settings: [[1, { s: 30, m: 'pulse', l: 'Quarry clock' }]],
+  }),
+  Object.freeze({
+    name: 'switch', // example 10 with one key: close the switch and the keg goes off
+    cells: [[0, 'battery', BLOCK.VOLTAIC_BATTERY], [1, 'knife', BLOCK.KNIFE_SWITCH], ...span(2, 3, BLOCK.COPPER_WIRE),
+      [4, 'igniter', BLOCK.IGNITER], [5, 'keg', BLOCK.POWDER_KEG]],
+    faces: [],
+    settings: [],
+  }),
+  Object.freeze({
+    name: 'lamp', // example 7: the dusk lamp — the NC relay lights the lamp when the selenium panel goes dark
+    cells: [[0, 'panel', BLOCK.SELENIUM_PANEL], [1, 'wire', BLOCK.COPPER_WIRE], [2, 'relay', BLOCK.RELAY],
+      [3, 'battery', BLOCK.VOLTAIC_BATTERY]],
+    extra: [[2, 1, 'lamp', BLOCK.FILAMENT_LAMP]], // [dq, dr, name, id]: on the relay's SE face
+    faces: [[2, 3]], // W
+    settings: [[2, { nc: true }]],
+  }),
+]);
+/**
+ * Rows of ?scene=circuits are this many cells apart in r (5.2 units): more than BLAST_RADIUS 3.5, so the timer row's keg
+ * neither sets off the switch row's keg nor blows up the rows beside it (at 3 apart it took the dusk lamp's relay too).
+ */
+export const SCENE_ROW_GAP = 6;
+
+/** @returns {Array<[number, string, number]>} cells dq0..dq1 of one id (unnamed) */
+function span(dq0, dq1, id) {
+  const out = [];
+  for (let dq = dq0; dq <= dq1; dq++) out.push([dq, '', id]);
+  return out;
+}
+
+/**
+ * The cells, input faces and settings of ?scene=circuits with its first row's first cell at (q0, y, r0) (DESIGN-circuits
+ * §6.7; main flattens the ground, writes the blocks with world.setBlock, then sets the faces and the settings).
+ * @param {number} q0 @param {number} y @param {number} r0
+ * @returns {{ blocks: [number, number, number, number][], faces: [number, number, number, number][],
+ *   settings: [number, number, number, object][], named: Record<string, [number, number, number]>,
+ *   bounds: { q0: number, q1: number, r0: number, r1: number } }}  bounds: the cells' extent (main flattens it, plus 2)
+ */
+export function circuitSceneWrites(q0, y, r0) {
+  /** @type {[number, number, number, number][]} */
+  const blocks = [];
+  /** @type {[number, number, number, number][]} */
+  const faces = [];
+  /** @type {[number, number, number, object][]} */
+  const settings = [];
+  /** @type {Record<string, [number, number, number]>} */
+  const named = {};
+  CIRCUIT_SCENE_ROWS.forEach((row, i) => {
+    const r = r0 + i * SCENE_ROW_GAP;
+    for (const [dq, name, id] of row.cells) {
+      blocks.push([q0 + dq, y, r, id]);
+      if (name) named[`${row.name}.${name}`] = [q0 + dq, y, r];
+    }
+    for (const [dq, dr, name, id] of /** @type {*} */ (row).extra ?? []) {
+      blocks.push([q0 + dq, y, r + dr, id]);
+      named[`${row.name}.${name}`] = [q0 + dq, y, r + dr];
+    }
+    for (const [dq, face] of row.faces) faces.push([q0 + dq, y, r, face]);
+    for (const [dq, partial] of row.settings) settings.push([q0 + dq, y, r, partial]);
+  });
+  const bounds = { q0: Infinity, q1: -Infinity, r0: Infinity, r1: -Infinity };
+  for (const [q, , r] of blocks) {
+    bounds.q0 = Math.min(bounds.q0, q);
+    bounds.q1 = Math.max(bounds.q1, q);
+    bounds.r0 = Math.min(bounds.r0, r);
+    bounds.r1 = Math.max(bounds.r1, r);
+  }
+  return { blocks, faces, settings, named, bounds };
+}
+
+/**
+ * `?mode=creative|survival` (case-insensitive), anything else null (DESIGN-survival §9.10).
+ * @param {URLSearchParams} params
+ * @returns {'creative'|'survival'|null}
+ */
+export function readModeParam(params) {
+  const t = readString(params, 'mode');
+  if (t === null) return null;
+  const v = t.toLowerCase();
+  return v === 'creative' || v === 'survival' ? v : null;
 }
 
 /** An integer 1..SAVE_SLOTS, else null (out of range is ignored rather than clamped: slot=9 must not play slot 6). */
@@ -114,12 +236,12 @@ function readNumber(params, name) {
   return Number.isFinite(n) ? n : null;
 }
 
-/** 'console' | 'editor' | 'picker' | null */
+/** 'console' | 'editor' | 'picker' | 'pack' | 'device' | null */
 function readUiParam(params) {
   const t = readString(params, 'ui');
   if (t === null) return null;
   const v = t.toLowerCase();
-  return v === 'console' || v === 'editor' || v === 'picker' ? v : null;
+  return v === 'console' || v === 'editor' || v === 'picker' || v === 'pack' || v === 'device' ? v : null;
 }
 
 function readClampedInt(params, name, lo, hi) {
@@ -274,6 +396,12 @@ function refreshHandleRefs(handle, game) {
   handle.physics = game ? game.physics ?? null : null;
   handle.zombies = game ? game.zombies ?? null : null;
   handle.watcher = game ? game.watcher ?? null : null;
+  handle.survival = game ? game.survival ?? null : null; // v0.9 (§9.10)
+  handle.pack = game ? game.pack ?? null : null;
+  handle.circuits = game ? game.circuits ?? null : null; // v0.10 (DESIGN-circuits §6.6)
+  handle.circuitStore = game ? game.circuitStore ?? null : null;
+  handle.blackHoles = game ? game.blackHoles ?? null : null;
+  handle.infall = game ? game.infall ?? null : null;
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;
@@ -333,6 +461,28 @@ export function installDebugHandle(win, game) {
     if (game && typeof game.setLook === 'function') game.setLook(yaw, pitch);
   };
   handle.getState = () => (game && typeof game.getState === 'function' ? game.getState() : 'unknown');
+  // v0.9 Survival (§9.10): the mode (switches are queued), and one frame of the real dig / use / R paths for drivers.
+  handle.getMode = () => (game && typeof game.getMode === 'function' ? game.getMode() : 'creative');
+  handle.setMode = (mode) => {
+    if (game && typeof game.setMode === 'function') game.setMode(mode);
+  };
+  handle.selectSlot = (i) => {
+    if (game && typeof game.selectSlot === 'function') game.selectSlot(i);
+  };
+  handle.digTargeted = (dt) => (game && typeof game.digTargeted === 'function' ? game.digTargeted(dt) : null);
+  handle.useSelected = (dt) => (game && typeof game.useSelected === 'function' ? game.useSelected(dt) : null);
+  handle.interact = () => {
+    if (game && typeof game.interact === 'function') game.interact();
+  };
+  // v0.10 (DESIGN-circuits §6.6): one frame of right-click on the target (the real control-latch path), Shift+R, the scenes.
+  handle.rightClick = (pressed, dt) => (game && typeof game.rightClick === 'function' ? game.rightClick(pressed, dt) : null);
+  handle.rightRelease = () => {
+    if (game && typeof game.rightRelease === 'function') game.rightRelease();
+  };
+  handle.editTarget = () => {
+    if (game && typeof game.editTarget === 'function') game.editTarget();
+  };
+  handle.buildScene = (name) => (game && typeof game.buildScene === 'function' ? game.buildScene(name) : null);
   /** One synchronous simulation + render step (screenshots under a virtual-time budget, where rAF is starved). */
   handle.stepFrame = (dt) => {
     if (game && typeof game.stepFrame === 'function') game.stepFrame(dt);
@@ -498,6 +648,13 @@ export function buildDebugText(game, stats) {
       `  tick ${fmt1(st.lastTickMs)} ms${off.length ? `  off: ${off.join(' ')}` : ''}`;
   }
 
+  // v0.10 (DESIGN-circuits §6.7): the circuits and black-hole lines, when there is something to report.
+  let circuitLines = '';
+  const cs = g.circuits && typeof g.circuits.stats === 'function' ? g.circuits.stats() : null;
+  const segs = typeof g.circuitSegments === 'function' ? g.circuitSegments() : 0;
+  if (cs) circuitLines += circuitsDebugLine(cs, segs);
+  circuitLines += blackHolesDebugLine(g.blackHoles ?? null, g.infall ?? null);
+
   return (
     `Caelancraft v${VERSION}  (F3 to hide)\n` +
     `FPS: ${fmtInt(s.fps)}  frame ${fmt1(s.frameMs)} ms\n` +
@@ -509,8 +666,67 @@ export function buildDebugText(game, stats) {
     `Target: ${target}\n` +
     `Time: ${formatClock(time)}  day ${day}  (t=${fmt3(time)})\n` +
     `Mode: ${mode}` +
-    physicsLine
+    survivalDebugLine(g.survival ?? null) +
+    physicsLine +
+    circuitLines
   );
+}
+
+/** "1.1k" for 1100, "214" for 214. */
+function kCount(n) {
+  if (!Number.isFinite(n)) return '0';
+  return n >= 1000 ? `${(Math.round(n / 100) / 10).toString()}k` : String(Math.round(n));
+}
+
+/**
+ * The F3 circuits line (DESIGN-circuits §6.7), only when the world has an indexed cell:
+ * `Circuits: 214 cells · 31 parts · 12 nets (4 active, 0 frozen) · 3 fuses burning · 2 timers · 0.4 ms/tick · 1.1k segments`.
+ * @param {{ cells: number, parts: number, networks: number, active: number, frozen: number, burning: number, timers: number,
+ *   ms: number }} s  circuits.stats()
+ * @param {number} segments  wire segments drawn
+ * @returns {string} '' or the line with its leading newline
+ */
+export function circuitsDebugLine(s, segments = 0) {
+  if (!s || !(s.cells > 0)) return '';
+  return `\nCircuits: ${s.cells} cells · ${s.parts} parts · ${s.networks} nets (${s.active} active, ${s.frozen} frozen)` +
+    ` · ${s.burning} fuse${s.burning === 1 ? '' : 's'} burning · ${s.timers} timer${s.timers === 1 ? '' : 's'}` +
+    ` · ${fmt1(s.ms)} ms/tick · ${kCount(segments)} segments`;
+}
+
+/**
+ * The F3 black-hole line (DESIGN-circuits §6.7), only when a hole, a charge arming or an infall exists:
+ * `Black holes: 3 (1 forming) · 0 inert · infall 12 blocks / 1 mob`.
+ * @param {*} bh  BlackHoles
+ * @param {*} infall  Infall
+ * @returns {string} '' or the line with its leading newline
+ */
+export function blackHolesDebugLine(bh, infall) {
+  if (!bh) return '';
+  const size = Number(bh.size) || 0;
+  const arming = Number(bh.arming) || 0;
+  const inert = Number(bh.inert) || 0;
+  const blocks = infall ? Number(infall.blocks) || 0 : 0;
+  const mobs = infall ? Number(infall.mobs) || 0 : 0;
+  if (size + arming + inert + blocks + mobs === 0) return '';
+  let forming = arming;
+  if (bh.holes && typeof bh.holes.values === 'function') for (const h of bh.holes.values()) if (h.phase !== 3) forming++;
+  return `\nBlack holes: ${size}${forming > 0 ? ` (${forming} forming)` : ''}${bh.enabled === false ? ' · OFF' : ''} · ${inert} inert` +
+    ` · infall ${blocks} block${blocks === 1 ? '' : 's'} / ${mobs} mob${mobs === 1 ? '' : 's'}`;
+}
+
+/**
+ * The F3 survival line (DESIGN-survival §9.10), after `Mode:`, only while Survival is active:
+ * `Survival: HP 87 · Nourishment 64 · Hydration 51 · Breath 20 · body 36.9 °C · felt 12.3 °C (air 9.8) · Chilled`.
+ * @param {*} sv  a Survival (survival.js) or null
+ * @returns {string} '' when there is none or it is not active; otherwise the line with its leading newline
+ */
+export function survivalDebugLine(sv) {
+  if (!sv || !sv.active || !sv.vitals) return '';
+  const v = sv.vitals;
+  const labels = sv.status && Array.isArray(sv.status.labels) ? sv.status.labels : [];
+  return `\nSurvival: HP ${fmtInt(v.health)} · Nourishment ${fmtInt(v.satiation)} · Hydration ${fmtInt(v.hydration)}` +
+    ` · Breath ${fmtInt(v.breath)} · body ${fmt1(v.temp)} °C · felt ${fmt1(sv.felt)} °C (air ${fmt1(sv.air)})` +
+    (labels.length ? ` · ${labels.join(' · ')}` : '');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -527,6 +743,10 @@ export const SMOKE_SPIN_FRAMES = 60;
 export const SMOKE_FLY_FRAMES = 30;
 const SMOKE_REMESH_FRAMES = 30;
 const SMOKE_HIT_RETRY_FRAMES = 10;
+/** v0.9: frames to wait for a queued mode switch; at most this many 1/60 s dig and eat frames in the survival step. */
+const SMOKE_MODE_FRAMES = 10;
+const SMOKE_DIG_FRAMES = 240;
+const SMOKE_EAT_FRAMES = 180;
 const SMOKE_LOOK_DOWN_PITCH = -1.5;
 const SMOKE_TELEPORT_DISTANCE = 3;
 // Must be shorter than the 25 s virtual-time budget in scripts/smoke-windows-chrome.sh so a stalled
@@ -736,6 +956,14 @@ async function runSmokeSequence(game, win, st) {
   }
   st.pass(`state 'playing' after ${waited} frames`);
 
+  // v0.9 (§9.10): the sequence below is Creative's; a world opened in Survival (?mode=survival) switches first. The switch is
+  // queued and applied at the top of the next frame.
+  if (typeof game.getMode === 'function' && typeof game.setMode === 'function' && game.getMode() !== 'creative') {
+    game.setMode('creative');
+    for (let i = 0; i < SMOKE_MODE_FRAMES && game.getMode() !== 'creative'; i++) await tick();
+    st.check(game.getMode() === 'creative', 'switched to Creative for the sequence', `still in ${game.getMode()} mode`);
+  }
+
   const world = game.world;
   const player = game.player;
   const renderer = game.renderer;
@@ -895,6 +1123,13 @@ async function runSmokeSequence(game, win, st) {
     st.info('rune round trip skipped (no runCommand / runes on the game context)');
   }
 
+  // 9c. v0.9 (§9.10): the optional survival step, only for a page opened with ?mode=survival.
+  if (game.urlMode === 'survival') await runSurvivalSmoke(game, world, player, tick, st, yaw0);
+
+  // 9d. v0.10 (DESIGN-circuits §6.7): the scenes, only for a page opened with ?scene=.
+  if (game.urlScene === 'circuits') await runCircuitSceneSmoke(game, tick, st);
+  else if (game.urlScene === 'vortex') await runVortexSceneSmoke(game, tick, st);
+
   // 10. WebGL2 context.
   r.webgl = detectWebGL(renderer, win);
   const hasWebGL2Type = typeof ((win && win.WebGL2RenderingContext) || globalThis.WebGL2RenderingContext) === 'function';
@@ -905,6 +1140,108 @@ async function runSmokeSequence(game, win, st) {
   // 11. No captured errors.
   r.errors = collectErrors(win);
   st.check(r.errors.length === 0, 'no captured errors', `${r.errors.length} captured error(s): ${r.errors[0]}`);
+}
+
+/**
+ * The survival smoke step (DESIGN-survival §9.10): back to Survival, `setblock ~ ~-1 ~ stone` and `pack add flint_pick`,
+ * hold-dig the cell below for its break time (the real dig path, game.digTargeted) and see it become AIR with rock in the
+ * pack, then `pack add honeyberries` and hold to eat one (game.useSelected).
+ * @param {GameContext|*} game @param {*} world @param {*} player @param {() => Promise<void>} tick
+ * @param {ReturnType<typeof createSmokeState>} st @param {number} yaw0
+ */
+async function runSurvivalSmoke(game, world, player, tick, st, yaw0) {
+  if (typeof game.setMode !== 'function' || typeof game.digTargeted !== 'function' || !game.pack) {
+    st.info('survival step skipped (no survival on the game context)');
+    return;
+  }
+  game.setMode('survival');
+  for (let i = 0; i < SMOKE_MODE_FRAMES && game.getMode() !== 'survival'; i++) await tick();
+  if (!st.check(game.getMode() === 'survival', 'switched to Survival', `could not switch to Survival (mode ${game.getMode()})`)) return;
+  let g = 0;
+  while (!player.onGround && g < SMOKE_GROUND_FRAMES) {
+    await tick();
+    g++;
+  }
+  const placed = game.runCommand('setblock ~ ~-1 ~ stone');
+  const added = game.runCommand('pack add flint_pick');
+  st.check(!!placed && placed.ok && !!added && added.ok, 'stone below and a flint pick in the pack',
+    `setup failed: ${placed && placed.message} / ${added && added.message}`);
+  const pickSlot = game.pack.hotbarSlotOf('flint_pick');
+  if (pickSlot >= 0) game.selectSlot(pickSlot);
+  game.setLook(yaw0, SMOKE_LOOK_DOWN_PITCH);
+  await tick();
+  await tick();
+  const hit = await waitForHit(game, tick, (h) => h !== null && h.blockId === BLOCK.STONE, SMOKE_HIT_RETRY_FRAMES);
+  if (!st.check(!!hit, 'looking at the stone below', 'no stone below to dig')) return;
+  const rockBefore = game.pack.count('rock');
+  let dug = 0;
+  for (; dug < SMOKE_DIG_FRAMES; dug++) {
+    game.digTargeted(SMOKE_HEADLESS_DT);
+    if (world.getBlock(hit.q, hit.y, hit.r) === BLOCK.AIR) break;
+  }
+  const broke = world.getBlock(hit.q, hit.y, hit.r) === BLOCK.AIR;
+  st.check(broke && game.pack.count('rock') > rockBefore,
+    `dug the stone with the flint pick in ${((dug + 1) * SMOKE_HEADLESS_DT).toFixed(2)} s; the pack holds ${game.pack.count('rock')} rock`,
+    `hold-dig failed: block is ${blockName(world.getBlock(hit.q, hit.y, hit.r))}, rock ${game.pack.count('rock')}`);
+  await tick();
+  const food = game.runCommand('pack add honeyberries 2');
+  const berrySlot = game.pack.hotbarSlotOf('honeyberries');
+  if (!st.check(!!food && food.ok && berrySlot >= 0, 'honeyberries in the hotbar', `pack add honeyberries failed: ${food && food.message}`)) return;
+  game.selectSlot(berrySlot);
+  const before = game.pack.count('honeyberries');
+  let held = 0;
+  for (; held < SMOKE_EAT_FRAMES && game.pack.count('honeyberries') >= before; held++) game.useSelected(SMOKE_HEADLESS_DT);
+  st.check(game.pack.count('honeyberries') === before - 1, `ate a honeyberry after holding ${((held + 1) * SMOKE_HEADLESS_DT).toFixed(2)} s`,
+    `eating failed: ${game.pack.count('honeyberries')} of ${before} honeyberries left`);
+}
+
+/** Frames the vortex smoke runs the black holes for (3 s at 60 fps) and the doorbell smoke holds the button for. */
+const SMOKE_VORTEX_FRAMES = 180;
+const SMOKE_BELL_FRAMES = 30;
+
+/**
+ * The ?scene=circuits smoke step (DESIGN-circuits §6.7): build the worked examples, press the doorbell's button through the
+ * game's circuits and see the bell ring.
+ * @param {GameContext|*} game @param {() => Promise<void>} tick @param {ReturnType<typeof createSmokeState>} st
+ */
+async function runCircuitSceneSmoke(game, tick, st) {
+  if (typeof game.buildScene !== 'function' || !game.circuits) {
+    st.info('circuits scene skipped (no circuits on the game context)');
+    return;
+  }
+  const scene = game.buildScene('circuits');
+  const button = scene && scene.named ? scene.named['doorbell.button'] : null;
+  const bell = scene && scene.named ? scene.named['doorbell.bell'] : null;
+  if (!st.check(!!button && !!bell, 'the circuits scene is built', 'the circuits scene could not be built')) return;
+  const c = game.circuits;
+  const res = c.interact(button[0], button[1], button[2], 'use');
+  st.check(!!res && res.ok, 'pressed the doorbell button', `the button did not press: ${res && res.message}`);
+  let ringing = false;
+  for (let i = 0; i < SMOKE_BELL_FRAMES && !ringing; i++) {
+    c.hold(button[0], button[1], button[2]);
+    await tick();
+    const pr = c.probe(bell[0], bell[1], bell[2]);
+    ringing = !!pr && pr.state === 'ringing';
+  }
+  const pr = c.probe(bell[0], bell[1], bell[2]);
+  st.check(ringing, `the doorbell rings (${pr ? pr.volts : '?'} V)`, `the bell does not ring: ${pr ? `${pr.state}, ${pr.volts} V` : 'no probe'}`);
+}
+
+/**
+ * The ?scene=vortex smoke step (DESIGN-circuits §6.7): set off a Collapsar Charge 8 cells ahead, run 3 s, and see exactly
+ * one black hole.
+ * @param {GameContext|*} game @param {() => Promise<void>} tick @param {ReturnType<typeof createSmokeState>} st
+ */
+async function runVortexSceneSmoke(game, tick, st) {
+  if (typeof game.buildScene !== 'function' || !game.blackHoles) {
+    st.info('vortex scene skipped (no black holes on the game context)');
+    return;
+  }
+  const scene = game.buildScene('vortex');
+  if (!st.check(!!scene && scene.ok, `set off a collapsar charge ahead${scene && scene.message ? `: ${scene.message}` : ''}`,
+    `the vortex scene failed: ${scene && scene.message}`)) return;
+  for (let i = 0; i < SMOKE_VORTEX_FRAMES; i++) await tick();
+  st.check(game.blackHoles.size === 1, 'one black hole 3 s later', `${game.blackHoles.size} black holes 3 s later`);
 }
 
 /** First FAIL step text (without the prefix), or null. */

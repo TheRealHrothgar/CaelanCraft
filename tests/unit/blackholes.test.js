@@ -1,12 +1,17 @@
-// Unit tests for src/blackholes.js — black hole tracking, pull and swallowing (CONTRACTS §29).
+// Unit tests for src/blackholes.js — black hole tracking, pull and swallowing (CONTRACTS §29), and v2: the Collapsar
+// Charge's activation, the ARM → FLASH → IMPLODE → VORTEX phases, the spiral pull, events, effects, views and the
+// per-world switch (docs/DESIGN-circuits.md §2, §6.2.4, §7 A).
 import { describe, it, expect } from 'vitest';
 import { BLOCK, BLOCKS, isSolid, isOpaque, isPlaceable, isBreakable, isTargetable } from '../../src/blocks.js';
 import {
   BLACK_HOLE_PULL_RADIUS, BLACK_HOLE_PULL_STRENGTH, BLACK_HOLE_EAT_RADIUS, BLACK_HOLE_EAT_INTERVAL_S,
   BLACK_HOLE_MAX_EATS_PER_FRAME, BLACK_HOLE_MAX_EAT_CHUNKS_PER_FRAME, BLACK_HOLE_MAX_TRACKED, CHUNK_SIZE, PLAYER_HEIGHT,
-  SEA_LEVEL,
+  SEA_LEVEL, BLACK_HOLE_ARM_S, BLACK_HOLE_FLASH_S, BLACK_HOLE_IMPLODE_S, BLACK_HOLE_SWIRL, BLACK_HOLE_SWIRL_CORE,
+  BLACK_HOLE_FLASH_INTENSITY, BLACK_HOLE_FLASH_COLOR, BLACK_HOLE_PINCH_DEG, BLACK_HOLE_PINCH_RANGE, BLACK_HOLE_STRETCH_DEG,
 } from '../../src/config.js';
-import { BlackHoles, EAT_OFFSETS, canSwallow, columnHasEdits, holeKey } from '../../src/blackholes.js';
+import {
+  BlackHoles, EAT_OFFSETS, PHASE, canSwallow, columnHasEdits, holeKey, holeSeed, phaseAt, pullFactor,
+} from '../../src/blackholes.js';
 import { hexToWorld, hexDistance, worldToHex } from '../../src/hex.js';
 import { localIndex, chunkKey } from '../../src/coords.js';
 import { createPlayer, stepPlayer } from '../../src/physics.js';
@@ -15,11 +20,17 @@ import { flatWorldGen } from '../helpers/fixtures.js';
 
 const B = BLOCK;
 
-/** A Map-backed world: every cell in `cells` ("q,y,r" → id), AIR elsewhere; `loaded(q, r)` defaults to true. */
+/**
+ * A Map-backed world: every cell in `cells` ("q,y,r" → id), AIR elsewhere; `loaded(q, r)` defaults to true. Writes go
+ * through `holes.onBlockChange` like World.setBlock; `place` (main's blackHoleWorld.place) records its lazy flag.
+ */
 function fakeWorld(cells = new Map(), loaded = () => true) {
   const holes = new BlackHoles();
+  /** @type {{ q: number, y: number, r: number, id: number, lazy: boolean }[]} */
+  const places = [];
   const world = {
     cells,
+    places,
     getBlock: (q, y, r) => cells.get(holeKey(q, y, r)) ?? B.AIR,
     setBlock(q, y, r, id) {
       const k = holeKey(q, y, r);
@@ -30,10 +41,23 @@ function fakeWorld(cells = new Map(), loaded = () => true) {
       holes.onBlockChange(q, y, r, prev, id);
       return true;
     },
+    place(q, y, r, id, lazy) {
+      places.push({ q, y, r, id, lazy });
+      return world.setBlock(q, y, r, id);
+    },
     isLoaded: loaded,
   };
   return { holes, world };
 }
+
+/** A hole that is a full VORTEX at once, as loaded from a save: the cell holds BLACK_HOLE and the tracker knows it. */
+function vortexAt(world, holes, q, y, r) {
+  world.cells.set(holeKey(q, y, r), B.BLACK_HOLE);
+  holes.add(q, y, r);
+}
+
+/** Every eat record without the centre (the v0.5 shape), for compact expectations. */
+const cellsOf = (eaten) => eaten.map(({ q, y, r, id }) => ({ q, y, r, id }));
 
 /** Fill every cell within the eat radius of (0, 10, 0) with `id`. */
 function packBall(cells, id) {
@@ -41,13 +65,13 @@ function packBall(cells, id) {
 }
 
 describe('black_hole block', () => {
-  it('is placeable, breakable and targetable but not solid, so the player can fall in', () => {
+  it('is breakable and targetable but not solid, so the player can fall in; not placeable (DESIGN-circuits §1.1)', () => {
     const d = BLOCKS[B.BLACK_HOLE];
     expect(d.name).toBe('black_hole');
     expect(d.displayName).toBe('Black Hole');
     expect(isSolid(B.BLACK_HOLE)).toBe(false);
     expect(isOpaque(B.BLACK_HOLE)).toBe(false);
-    expect(isPlaceable(B.BLACK_HOLE)).toBe(true);
+    expect(isPlaceable(B.BLACK_HOLE)).toBe(false); // the picker gives the dormant Collapsar Charge instead
     expect(isBreakable(B.BLACK_HOLE)).toBe(true);
     expect(isTargetable(B.BLACK_HOLE)).toBe(true);
   });
@@ -172,19 +196,19 @@ describe('BlackHoles tracking', () => {
 });
 
 describe('BlackHoles.pullAt', () => {
-  it('pulls toward the centre with STRENGTH·(1 − d/R)², nothing at or beyond R', () => {
+  it('pulls toward the centre with STRENGTH·(1 − d/R)² (radial part unchanged by the swirl), nothing at or beyond R', () => {
     const h = new BlackHoles();
     h.add(0, 10, 0); // centre (0, 10.5, 0)
     const [ax, ay, az] = h.pullAt(3, 10.5, 0);
     expect(ax).toBeCloseTo(-BLACK_HOLE_PULL_STRENGTH * (1 - 3 / BLACK_HOLE_PULL_RADIUS) ** 2, 9);
     expect(ay).toBeCloseTo(0, 12);
-    expect(az).toBeCloseTo(0, 12);
+    expect(Math.abs(az)).toBeGreaterThan(1); // the swirl (see the spiral tests below)
     expect(h.pullAt(0, 10.5 + BLACK_HOLE_PULL_RADIUS, 0)).toEqual([0, 0, 0]);
     expect(h.pullAt(0, 10.5, 0)).toEqual([0, 0, 0]); // exactly at the centre: no direction, no NaN
     const up = h.pullAt(0, 6.5, 0);
     expect(up[1]).toBeGreaterThan(0);
   });
-  it('sums several holes (two opposite holes cancel)', () => {
+  it('sums several holes (two opposite holes cancel, swirl included)', () => {
     const h = new BlackHoles();
     h.add(2, 10, 0);
     h.add(-2, 10, 0);
@@ -211,22 +235,23 @@ describe('BlackHoles.update (swallowing)', () => {
   it('eats one cell per interval, nearest first, and records the old id', () => {
     const cells = new Map();
     const { holes, world } = fakeWorld(cells);
-    world.setBlock(0, 10, 0, B.BLACK_HOLE);
+    vortexAt(world, holes, 0, 10, 0);
     packBall(cells, B.STONE);
     expect(holes.update(BLACK_HOLE_EAT_INTERVAL_S * 0.5, world)).toEqual([]);
     const eaten = holes.update(BLACK_HOLE_EAT_INTERVAL_S * 0.5, world);
     expect(eaten).toHaveLength(1);
     const [dq, dy, dr] = EAT_OFFSETS[0];
-    expect(eaten[0]).toEqual({ q: dq, y: 10 + dy, r: dr, id: B.STONE });
+    const [cx, cz] = hexToWorld(0, 0);
+    expect(eaten[0]).toEqual({ q: dq, y: 10 + dy, r: dr, id: B.STONE, cx, cy: 10.5, cz }); // with the eating hole's centre
     expect(world.getBlock(dq, 10 + dy, dr)).toBe(B.AIR);
     // The next interval eats the next-nearest cell.
     const [q2, y2, r2] = EAT_OFFSETS[1];
-    expect(holes.update(BLACK_HOLE_EAT_INTERVAL_S, world)).toEqual([{ q: q2, y: 10 + y2, r: r2, id: B.STONE }]);
+    expect(holes.update(BLACK_HOLE_EAT_INTERVAL_S, world)).toMatchObject([{ q: q2, y: 10 + y2, r: r2, id: B.STONE }]);
   });
   it('empties its whole ball, then goes idle; never touches protected cells', () => {
     const cells = new Map();
     const { holes, world } = fakeWorld(cells);
-    world.setBlock(0, 10, 0, B.BLACK_HOLE);
+    vortexAt(world, holes, 0, 10, 0);
     packBall(cells, B.DIRT);
     const [pq, py, pr] = EAT_OFFSETS[3];
     cells.set(holeKey(pq, 10 + py, pr), B.BEDROCK);
@@ -239,7 +264,7 @@ describe('BlackHoles.update (swallowing)', () => {
     // Idle until new food appears inside the ball.
     expect(holes.update(10, world)).toEqual([]);
     world.setBlock(0, 11, 0, B.SAND);
-    expect(holes.update(BLACK_HOLE_EAT_INTERVAL_S, world)).toEqual([{ q: 0, y: 11, r: 0, id: B.SAND }]);
+    expect(cellsOf(holes.update(BLACK_HOLE_EAT_INTERVAL_S, world))).toEqual([{ q: 0, y: 11, r: 0, id: B.SAND }]);
   });
   it('shares at most BLACK_HOLE_MAX_EATS_PER_FRAME eats per frame across holes', () => {
     const cells = new Map();
@@ -249,7 +274,7 @@ describe('BlackHoles.update (swallowing)', () => {
     let placed = 0;
     for (let q = 2; q <= 13 && placed < count; q++) {
       for (let r = 2; r <= 13 && placed < count; r++, placed++) {
-        world.setBlock(q, 10, r, B.BLACK_HOLE);
+        vortexAt(world, holes, q, 10, r);
         world.setBlock(q, 9, r, B.STONE);
       }
     }
@@ -270,7 +295,7 @@ describe('BlackHoles.update (swallowing)', () => {
       for (let i = 0; i < 3; i++) {
         const q = cq * CHUNK_SIZE + 4 + 3 * i;
         const r = cr * CHUNK_SIZE + 6;
-        world.setBlock(q, 10, r, B.BLACK_HOLE);
+        vortexAt(world, holes, q, 10, r);
         world.setBlock(q, 9, r, B.STONE);
       }
     }
@@ -286,7 +311,7 @@ describe('BlackHoles.update (swallowing)', () => {
     const { holes, world } = fakeWorld(cells);
     // The oldest hole goes first: its stone is on the q = 15 | 16 border, so eating it dirties chunks (0,0) and (1,0).
     for (const q of [15, 5, 20, 40]) {
-      world.setBlock(q, 10, 6, B.BLACK_HOLE);
+      vortexAt(world, holes, q, 10, 6);
       world.setBlock(q, 9, 6, B.STONE);
     }
     expect(holes.update(BLACK_HOLE_EAT_INTERVAL_S, world).map((e) => e.q)).toEqual([15, 5, 20]);
@@ -297,9 +322,9 @@ describe('BlackHoles.update (swallowing)', () => {
     const { holes, world } = fakeWorld(cells);
     const dt = 1 / 60;
     // Two holes in the same chunk whose balls (and their neighbours) stay inside it, packed with stone.
-    world.setBlock(5, 10, 5, B.BLACK_HOLE);
+    vortexAt(world, holes, 5, 10, 5);
     for (let i = 0; i < 5; i++) holes.update(dt, world);
-    world.setBlock(5, 20, 5, B.BLACK_HOLE);
+    vortexAt(world, holes, 5, 20, 5);
     for (const y0 of [10, 20]) for (const [dq, dy, dr] of EAT_OFFSETS) cells.set(holeKey(5 + dq, y0 + dy, 5 + dr), B.STONE);
     let framesWithEats = 0;
     for (let i = 0; i < 121; i++) {
@@ -314,19 +339,19 @@ describe('BlackHoles.update (swallowing)', () => {
     const cells = new Map();
     let loaded = true;
     const { holes, world } = fakeWorld(cells, (q) => loaded || q <= 0);
-    world.setBlock(0, 10, 0, B.BLACK_HOLE);
+    vortexAt(world, holes, 0, 10, 0);
     const [dq, dy, dr] = EAT_OFFSETS.find(([q]) => q > 0);
     cells.set(holeKey(dq, 10 + dy, dr), B.STONE);
     loaded = false;
     for (let i = 0; i < 20; i++) expect(holes.update(BLACK_HOLE_EAT_INTERVAL_S, world)).toEqual([]);
     expect(world.getBlock(dq, 10 + dy, dr)).toBe(B.STONE);
     loaded = true;
-    expect(holes.update(BLACK_HOLE_EAT_INTERVAL_S, world)).toEqual([{ q: dq, y: 10 + dy, r: dr, id: B.STONE }]);
+    expect(cellsOf(holes.update(BLACK_HOLE_EAT_INTERVAL_S, world))).toEqual([{ q: dq, y: 10 + dy, r: dr, id: B.STONE }]);
   });
   it('breaking the hole stops it', () => {
     const cells = new Map();
     const { holes, world } = fakeWorld(cells);
-    world.setBlock(0, 10, 0, B.BLACK_HOLE);
+    vortexAt(world, holes, 0, 10, 0);
     packBall(cells, B.STONE);
     world.setBlock(0, 10, 0, B.AIR);
     expect(holes.size).toBe(0);
@@ -499,13 +524,14 @@ describe('BlackHoles.respawnPoint', () => {
   });
 });
 
-describe('escaping a black hole (pull drift is pull / GROUND_ACCEL in every mode, §12)', () => {
+describe('escaping a black hole (pull drift is pull / GROUND_ACCEL in every mode, §12; the swirl, DESIGN-circuits §2.5)', () => {
   /**
    * A hole sitting on a one-cell-thick stone floor (y = 9, void below) that it eats; the player starts `d` units east
-   * and moves east in `mode` for 6 s at frame time `dt`, in main's order (pull, physics, swallow check, eat).
+   * and moves in `mode` for 6 s at frame time `dt`, in main's order (pull, physics, swallow check, eat). With `aim` it
+   * steers straight away from the hole every frame (yaw = atan2(−(x − cx), −(z − cz))); without it it keeps heading east.
    * @returns {boolean} true when swallowed
    */
-  function swallowed(mode, d, dt) {
+  function swallowed(mode, d, dt, aim) {
     const eaten = new Set();
     const getBlock = (q, y, r) => (y === 9 && !eaten.has(holeKey(q, y, r)) ? B.STONE : B.AIR);
     const holes = new BlackHoles();
@@ -517,6 +543,7 @@ describe('escaping a black hole (pull drift is pull / GROUND_ACCEL in every mode
     const input = { forward: mode === 'still' ? 0 : 1, strafe: 0, jump: mode === 'hop', sneak: false, sprint: mode === 'sprint', yaw: -Math.PI / 2 };
     const pull = [0, 0, 0];
     for (let i = 0; i < Math.round(6 / dt); i++) {
+      if (aim) input.yaw = Math.atan2(-(p.x - cx), -(p.z - cz));
       holes.pullAt(p.x, p.y + PLAYER_HEIGHT / 2, p.z, pull);
       stepPlayer(p, { ...input, pullX: pull[0], pullY: pull[1], pullZ: pull[2] }, getBlock, dt);
       if (holes.swallowing(p)) return true;
@@ -525,10 +552,572 @@ describe('escaping a black hole (pull drift is pull / GROUND_ACCEL in every mode
     return false;
   }
   for (const hz of [30, 60, 144]) {
-    it(`at ${hz} Hz: walking, hopping, sprinting or flying away escapes from 1.5 units; standing still does not`, () => {
-      for (const mode of ['walk', 'hop', 'sprint', 'fly']) expect(swallowed(mode, 1.5, 1 / hz), mode).toBe(false);
-      expect(swallowed('walk', 1.0, 1 / hz)).toBe(true);
-      expect(swallowed('still', 6, 1 / hz)).toBe(true);
+    it(`at ${hz} Hz: steering straight away escapes from 1.5 units in every mode; standing still does not`, () => {
+      for (const mode of ['walk', 'hop', 'sprint', 'fly']) expect(swallowed(mode, 1.5, 1 / hz, true), mode).toBe(false);
+      expect(swallowed('still', 6, 1 / hz, false)).toBe(true);
+    });
+    it(`at ${hz} Hz: on a fixed heading the swirl carries you back in from 1.5 units; every mode escapes from 3`, () => {
+      expect(swallowed('walk', 1.5, 1 / hz, false)).toBe(true);
+      expect(swallowed('walk', 2.5, 1 / hz, false)).toBe(true); // walking is caught from up to 2.5 units
+      for (const mode of ['walk', 'hop', 'sprint', 'fly']) expect(swallowed(mode, 3, 1 / hz, false), mode).toBe(false);
     });
   }
+});
+
+describe('pullAt: the spiral (DESIGN-circuits §2.5)', () => {
+  const R = BLACK_HOLE_PULL_RADIUS;
+  /** Radial (toward the centre) and tangential (+θ) parts of the pull at a point, about hole (0, 10, 0). */
+  function parts(h, x, y, z) {
+    const [cx, cz] = hexToWorld(0, 0);
+    const [ax, ay, az] = h.pullAt(x, y, z);
+    const vx = x - cx;
+    const vy = y - 10.5;
+    const vz = z - cz;
+    const d = Math.hypot(vx, vy, vz);
+    const rho = Math.hypot(vx, vz);
+    const radial = -(ax * vx + ay * vy + az * vz) / d;
+    // The pull minus its radial part, projected on +θ = (−vz, 0, vx)/ρ.
+    const tx = ax + (radial * vx) / d;
+    const ty = ay + (radial * vy) / d;
+    const tz = az + (radial * vz) / d;
+    const tangent = rho > 1e-9 ? (tx * -vz + tz * vx) / rho : 0;
+    const off = Math.hypot(tx, ty, tz) - Math.abs(tangent); // anything neither radial nor along +θ
+    return { radial, tangent, off, d, rho };
+  }
+  it('the radial part is unchanged; the swirl is SWIRL·g·min(1, ρ/1.5), perpendicular, in the +θ sense', () => {
+    const h = new BlackHoles();
+    h.add(0, 10, 0);
+    for (const [x, y, z] of [[3, 10.5, 0], [0, 10.5, -2.2], [-0.8, 11.3, 0.6], [5, 8, 4], [0.2, 10.5, 0.1], [1, 13, -1]]) {
+      const { radial, tangent, off, d, rho } = parts(h, x, y, z);
+      const g = BLACK_HOLE_PULL_STRENGTH * (1 - d / R) ** 2;
+      expect(radial).toBeCloseTo(g, 9);
+      expect(tangent).toBeCloseTo(BLACK_HOLE_SWIRL * g * Math.min(1, rho / BLACK_HOLE_SWIRL_CORE), 9);
+      expect(tangent).toBeGreaterThan(0); // +θ: counter-clockwise from +X toward +Z, like the disk and the particles
+      expect(Math.abs(off)).toBeLessThan(1e-9);
+    }
+    // Straight above the centre there is no swirl (no direction), and nothing is NaN.
+    const above = h.pullAt(0, 13, 0);
+    expect(above[0]).toBe(0);
+    expect(above[2]).toBe(0);
+    expect(above[1]).toBeLessThan(0);
+  });
+  it('the swirl fades inside BLACK_HOLE_SWIRL_CORE, so the last plunge is straight', () => {
+    const h = new BlackHoles();
+    h.add(0, 10, 0);
+    const far = parts(h, 2, 10.5, 0);
+    const near = parts(h, 0.5, 10.5, 0);
+    expect(far.tangent / far.radial).toBeCloseTo(BLACK_HOLE_SWIRL, 9);
+    expect(near.tangent / near.radial).toBeCloseTo(BLACK_HOLE_SWIRL * (0.5 / BLACK_HOLE_SWIRL_CORE), 9);
+  });
+  it('strength by phase: 0 for an arming charge and in FLASH, s² in IMPLODE, 1 in VORTEX; 0 when switched off', () => {
+    const { holes, world } = fakeWorld();
+    world.cells.set(holeKey(0, 10, 0), B.COLLAPSAR_CHARGE);
+    const g = BLACK_HOLE_PULL_STRENGTH * (1 - 3 / R) ** 2;
+    const radial = () => -holes.pullAt(3, 10.5, 0)[0];
+    expect(holes.activate(0, 10, 0, world).ok).toBe(true);
+    expect(radial()).toBeCloseTo(0, 12); // ARM: still a charge
+    holes.update(BLACK_HOLE_ARM_S, world);
+    expect(holes.holes.get('0,10,0').phase).toBe(PHASE.FLASH);
+    expect(radial()).toBeCloseTo(0, 12);
+    holes.update(BLACK_HOLE_FLASH_S, world);
+    expect(holes.holes.get('0,10,0').phase).toBe(PHASE.IMPLODE);
+    for (const s of [0.25, 0.5, 0.75]) {
+      holes.update(0.25 * BLACK_HOLE_IMPLODE_S, world);
+      expect(holes.holes.get('0,10,0').s).toBeCloseTo(s, 9);
+      expect(radial()).toBeCloseTo(g * s * s, 9);
+    }
+    holes.update(0.25 * BLACK_HOLE_IMPLODE_S, world);
+    expect(holes.holes.get('0,10,0').phase).toBe(PHASE.VORTEX);
+    expect(radial()).toBeCloseTo(g, 9);
+    holes.setEnabled(false);
+    expect(holes.pullAt(3, 10.5, 0)).toEqual([0, 0, 0]);
+  });
+  it('a body standing still spirals in on the real stepPlayer: its angle only grows, ≥ 2.4 rad from ρ 8 to 1.5, then it is swallowed', () => {
+    const groundY = 10;
+    const getBlock = (_q, y) => (y < groundY ? B.STONE : B.AIR);
+    for (const hz of [30, 60, 144]) {
+      const h = new BlackHoles();
+      h.add(0, groundY, 0);
+      const [cx, cz] = hexToWorld(0, 0);
+      const p = createPlayer(cx + 8, groundY, cz);
+      const input = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, yaw: 0 };
+      const pull = [0, 0, 0];
+      let theta = 0; // unwrapped angle about the hole
+      let last = Math.atan2(p.z - cz, p.x - cx);
+      let at15 = null;
+      let swallowedAt = -1;
+      for (let i = 0; i < 20 * hz; i++) {
+        h.pullAt(p.x, p.y + PLAYER_HEIGHT / 2, p.z, pull);
+        stepPlayer(p, { ...input, pullX: pull[0], pullY: pull[1], pullZ: pull[2] }, getBlock, 1 / hz);
+        const a = Math.atan2(p.z - cz, p.x - cx);
+        let da = a - last;
+        if (da > Math.PI) da -= 2 * Math.PI;
+        if (da < -Math.PI) da += 2 * Math.PI;
+        last = a;
+        if (h.swallowing(p)) {
+          swallowedAt = i / hz;
+          break;
+        }
+        expect(da, `${hz} Hz, frame ${i}`).toBeGreaterThanOrEqual(-1e-9); // monotonic: always the +θ way
+        theta += da;
+        if (at15 === null && Math.hypot(p.x - cx, p.z - cz) <= 1.5) at15 = theta;
+      }
+      expect(swallowedAt, `${hz} Hz`).toBeGreaterThan(0);
+      expect(at15, `${hz} Hz`).toBeGreaterThanOrEqual(2.4); // more than a third of a turn: a visible spiral
+    }
+  });
+});
+
+describe('phases (DESIGN-circuits §2.3)', () => {
+  it('phaseAt: ARM 0–0.4, FLASH –0.7, IMPLODE –1.9, then VORTEX with its 0.25 s forming flare; Infinity is a settled vortex', () => {
+    expect(PHASE).toEqual({ ARM: 0, FLASH: 1, IMPLODE: 2, VORTEX: 3 });
+    expect(Object.isFrozen(PHASE)).toBe(true);
+    const at = (age) => phaseAt(age, [0, 0]);
+    expect(at(0)).toEqual([PHASE.ARM, 0]);
+    expect(at(0.2)[1]).toBeCloseTo(0.5, 12);
+    expect(at(0.1 + 0.1 + 0.1 + 0.1)[0]).toBe(PHASE.FLASH); // summed dt reaches the boundary
+    expect(at(BLACK_HOLE_ARM_S + BLACK_HOLE_FLASH_S / 2)[1]).toBeCloseTo(0.5, 12);
+    expect(at(BLACK_HOLE_ARM_S + BLACK_HOLE_FLASH_S)[0]).toBe(PHASE.IMPLODE);
+    const vortexAge = BLACK_HOLE_ARM_S + BLACK_HOLE_FLASH_S + BLACK_HOLE_IMPLODE_S;
+    expect(at(vortexAge - 0.01)[0]).toBe(PHASE.IMPLODE);
+    expect(at(vortexAge)).toEqual([PHASE.VORTEX, 0]);
+    expect(at(vortexAge + 0.125)[1]).toBeCloseTo(0.5, 9);
+    expect(at(vortexAge + 5)).toEqual([PHASE.VORTEX, 1]);
+    expect(at(Infinity)).toEqual([PHASE.VORTEX, 1]);
+    expect([pullFactor(PHASE.ARM, 0.5), pullFactor(PHASE.FLASH, 0.5), pullFactor(PHASE.IMPLODE, 0.5), pullFactor(PHASE.VORTEX, 0)]).toEqual([0, 0, 0.25, 1]);
+  });
+  it('add() defaults to VORTEX (no flash, at once: survival’s pig and zombie tests rely on it); loadFromEdits gives VORTEX', () => {
+    const h = new BlackHoles();
+    expect(h.add(1, 20, 2)).toBe(true);
+    expect(h.holes.get('1,20,2')).toMatchObject({ phase: PHASE.VORTEX, age: Infinity, s: 1, fromCharge: false });
+    expect(h.drainEvents()).toEqual([]);
+    expect(h.busy).toBe(false);
+    const edits = new Map([[chunkKey(0, 0), new Map([[localIndex(1, 30, 2), B.BLACK_HOLE]])]]);
+    h.loadFromEdits(edits);
+    expect(h.holes.get('1,30,2')).toMatchObject({ phase: PHASE.VORTEX, age: Infinity });
+    expect(h.drainEvents()).toEqual([]);
+  });
+  it('onBlockChange adds at FLASH with age ARM_S, and sets fromCharge only when the cell held a charge', () => {
+    const h = new BlackHoles();
+    h.onBlockChange(0, 10, 0, B.COLLAPSAR_CHARGE, B.BLACK_HOLE);
+    h.onBlockChange(5, 10, 0, B.STONE, B.BLACK_HOLE); // `setblock … black_hole`: flashes and implodes too
+    h.onBlockChange(9, 10, 0, B.AIR, B.BLACK_HOLE);
+    expect(h.holes.get('0,10,0')).toMatchObject({ phase: PHASE.FLASH, age: BLACK_HOLE_ARM_S, s: 0, fromCharge: true });
+    expect(h.holes.get('5,10,0')).toMatchObject({ phase: PHASE.FLASH, age: BLACK_HOLE_ARM_S, fromCharge: false });
+    expect(h.holes.get('9,10,0').fromCharge).toBe(false);
+    expect(h.drainEvents().map((e) => e.type)).toEqual(['flash', 'flash', 'flash']);
+    expect(h.busy).toBe(true); // still forming
+    expect(h.holes.get('0,10,0').seed).toBe(holeSeed(0, 10, 0));
+    expect(h.holes.get('0,10,0').seed).not.toBe(h.holes.get('5,10,0').seed);
+  });
+  it('ages advance only in update (pausing freezes them); a big frame crosses several phases with every event in order', () => {
+    const { holes, world } = fakeWorld();
+    world.setBlock(0, 10, 0, B.BLACK_HOLE);
+    const before = { ...holes.holes.get('0,10,0') };
+    holes.pullAt(1, 10, 1);
+    holes.swallowing(createPlayer(0, 10, 0));
+    holes.vortexViews(0, 10, 0, 64, 4, 8, []);
+    holes.cameraFx(0, 10, 0);
+    holes.flash();
+    holes.renderItems(() => {});
+    holes.status();
+    holes.update(0, world);
+    expect(holes.holes.get('0,10,0').age).toBe(before.age);
+    holes.drainEvents();
+    holes.update(BLACK_HOLE_FLASH_S + BLACK_HOLE_IMPLODE_S + 0.1, world);
+    expect(holes.drainEvents().map((e) => e.type)).toEqual(['implode', 'formed']);
+    expect(holes.holes.get('0,10,0').phase).toBe(PHASE.VORTEX);
+  });
+  it('eating and swallowing happen only in VORTEX', () => {
+    const cells = new Map();
+    const { holes, world } = fakeWorld(cells);
+    world.setBlock(0, 10, 0, B.BLACK_HOLE); // FLASH
+    packBall(cells, B.STONE);
+    const [x, z] = hexToWorld(0, 0);
+    const inside = createPlayer(x, 9.6, z);
+    const formingFor = BLACK_HOLE_FLASH_S + BLACK_HOLE_IMPLODE_S;
+    const dt = 1 / 60;
+    let t = 0;
+    let eatenWhileForming = 0;
+    while (t + dt < formingFor - 1e-6) {
+      eatenWhileForming += holes.update(dt, world).length;
+      expect(holes.swallowing(inside)).toBeNull();
+      t += dt;
+    }
+    expect(eatenWhileForming).toBe(0);
+    expect(holes.holes.get('0,10,0').phase).toBe(PHASE.IMPLODE);
+    let eaten = 0;
+    for (let i = 0; i < 60; i++) eaten += holes.update(dt, world).length;
+    expect(holes.holes.get('0,10,0').phase).toBe(PHASE.VORTEX);
+    expect(eaten).toBeGreaterThan(0);
+    expect(holes.swallowing(inside)?.key).toBe('0,10,0');
+  });
+});
+
+describe('activate: setting off a Collapsar Charge (DESIGN-circuits §2.2)', () => {
+  it('refuses with the documented messages; a second activate is refused quietly', () => {
+    let loaded = true;
+    const { holes, world } = fakeWorld(new Map(), () => loaded);
+    expect(holes.activate(3, 20, -4, world)).toEqual({ ok: false, message: 'there is no collapsar charge at (3, 20, -4)' });
+    world.cells.set(holeKey(3, 20, -4), B.COLLAPSAR_CHARGE);
+    loaded = false;
+    expect(holes.activate(3, 20, -4, world)).toEqual({ ok: false, message: 'cell (3, 20, -4) is not loaded' });
+    loaded = true;
+    holes.setEnabled(false);
+    expect(holes.activate(3, 20, -4, world)).toEqual({ ok: false, message: 'black holes are off — turn them on with `blackholes on`' });
+    holes.setEnabled(true);
+    expect(holes.activate(3, 20, -4, world)).toEqual({ ok: true, message: 'the collapsar charge at (3, 20, -4) is collapsing' });
+    expect(holes.activate(3, 20, -4, world)).toEqual({ ok: false, quiet: true, message: 'the charge at (3, 20, -4) is already collapsing' });
+    expect(holes.arming).toBe(1);
+    expect(holes.size).toBe(0);
+    expect(holes.busy).toBe(true); // main steps black holes while a charge arms, even with no hole yet
+    // A hole is not a charge.
+    world.cells.set(holeKey(7, 20, 0), B.BLACK_HOLE);
+    expect(holes.activate(7, 20, 0, world).message).toBe('there is no collapsar charge at (7, 20, 0)');
+  });
+  it('arming lasts exactly BLACK_HOLE_ARM_S, then ONE place(…, BLACK_HOLE) turns the cell into a hole at FLASH', () => {
+    const { holes, world } = fakeWorld();
+    world.cells.set(holeKey(0, 10, 0), B.COLLAPSAR_CHARGE);
+    holes.activate(0, 10, 0, world);
+    for (let i = 0; i < 3; i++) {
+      holes.update(0.1, world);
+      expect(world.places).toHaveLength(0);
+      expect(world.getBlock(0, 10, 0)).toBe(B.COLLAPSAR_CHARGE);
+    }
+    holes.update(0.1, world); // 0.4 s
+    expect(world.places).toEqual([{ q: 0, y: 10, r: 0, id: B.BLACK_HOLE, lazy: false }]);
+    expect(world.getBlock(0, 10, 0)).toBe(B.BLACK_HOLE);
+    expect(holes.arming).toBe(0);
+    expect(holes.holes.get('0,10,0')).toMatchObject({ phase: PHASE.FLASH, fromCharge: true });
+    for (let i = 0; i < 40; i++) holes.update(0.1, world);
+    expect(world.places).toHaveLength(1);
+  });
+  it('three charges ending ARM in one update: the first 2 writes are non-lazy, the third lazy', () => {
+    const { holes, world } = fakeWorld();
+    for (const q of [0, 10, 20]) {
+      world.cells.set(holeKey(q, 10, 0), B.COLLAPSAR_CHARGE);
+      holes.activate(q, 10, 0, world);
+    }
+    holes.update(BLACK_HOLE_ARM_S, world);
+    expect(world.places.map((p) => p.lazy)).toEqual([false, false, true]);
+    expect(holes.size).toBe(3);
+    // The next update's budget starts again.
+    world.cells.set(holeKey(30, 10, 0), B.COLLAPSAR_CHARGE);
+    holes.activate(30, 10, 0, world);
+    holes.update(BLACK_HOLE_ARM_S, world);
+    expect(world.places[3].lazy).toBe(false);
+  });
+  it('breaking the charge while it arms cancels (event `cancelled`): it never becomes a hole', () => {
+    const { holes, world } = fakeWorld();
+    world.cells.set(holeKey(0, 10, 0), B.COLLAPSAR_CHARGE);
+    holes.activate(0, 10, 0, world);
+    holes.update(0.2, world);
+    world.setBlock(0, 10, 0, B.AIR);
+    expect(holes.arming).toBe(0);
+    holes.update(1, world);
+    expect(world.places).toHaveLength(0);
+    expect(holes.size).toBe(0);
+    expect(holes.drainEvents().map((e) => e.type)).toEqual(['arm', 'cancelled']);
+    expect(holes.busy).toBe(false);
+  });
+  it('switching black holes off cancels arming charges: they stay dormant charges', () => {
+    const { holes, world } = fakeWorld();
+    world.cells.set(holeKey(0, 10, 0), B.COLLAPSAR_CHARGE);
+    holes.activate(0, 10, 0, world);
+    holes.setEnabled(false);
+    holes.setEnabled(true);
+    holes.update(1, world);
+    expect(world.getBlock(0, 10, 0)).toBe(B.COLLAPSAR_CHARGE);
+    expect(holes.drainEvents().map((e) => e.type)).toEqual(['arm', 'cancelled']);
+  });
+  it('an arming charge whose chunk unloads waits at the end of ARM, then forms once it loads', () => {
+    let loaded = true;
+    const { holes, world } = fakeWorld(new Map(), () => loaded);
+    world.cells.set(holeKey(0, 10, 0), B.COLLAPSAR_CHARGE);
+    holes.activate(0, 10, 0, world);
+    loaded = false;
+    holes.update(2, world);
+    expect(holes.arming).toBe(1);
+    loaded = true;
+    holes.update(0.01, world);
+    expect(world.getBlock(0, 10, 0)).toBe(B.BLACK_HOLE);
+    expect(holes.holes.get('0,10,0').phase).toBe(PHASE.FLASH);
+  });
+  it('a charge swallowed or replaced while arming is cancelled; `setblock black_hole` on it just forms the hole', () => {
+    const { holes, world } = fakeWorld();
+    world.cells.set(holeKey(0, 10, 0), B.COLLAPSAR_CHARGE);
+    world.cells.set(holeKey(5, 10, 0), B.COLLAPSAR_CHARGE);
+    holes.activate(0, 10, 0, world);
+    holes.activate(5, 10, 0, world);
+    world.setBlock(0, 10, 0, B.STONE);
+    world.setBlock(5, 10, 0, B.BLACK_HOLE);
+    expect(holes.drainEvents().map((e) => [e.type, e.q])).toEqual([['arm', 0], ['arm', 5], ['cancelled', 0], ['flash', 5]]);
+    expect(holes.arming).toBe(0);
+    expect(holes.holes.get('5,10,0').fromCharge).toBe(true);
+  });
+  it('past the 256-hole cap the new hole is inert, as before', () => {
+    const { holes, world } = fakeWorld();
+    for (let i = 0; i < BLACK_HOLE_MAX_TRACKED; i++) holes.add(i * 20, 50, 0);
+    world.cells.set(holeKey(0, 10, 0), B.COLLAPSAR_CHARGE);
+    expect(holes.activate(0, 10, 0, world).ok).toBe(true);
+    holes.update(BLACK_HOLE_ARM_S, world);
+    expect(world.getBlock(0, 10, 0)).toBe(B.BLACK_HOLE);
+    expect(holes.inert).toBe(1);
+    expect(holes.size).toBe(BLACK_HOLE_MAX_TRACKED);
+  });
+});
+
+describe('events and effects (DESIGN-circuits §2.3–§2.4)', () => {
+  it('a charge goes arm → flash → implode → formed, each event carrying its cell and centre; breaking the vortex: collapsed', () => {
+    const { holes, world } = fakeWorld();
+    world.cells.set(holeKey(2, 10, -3), B.COLLAPSAR_CHARGE);
+    holes.activate(2, 10, -3, world);
+    const types = [];
+    for (let i = 0; i < 150; i++) {
+      holes.update(1 / 60, world);
+      for (const e of holes.drainEvents()) types.push(e.type);
+    }
+    expect(types).toEqual(['arm', 'flash', 'implode', 'formed']);
+    expect(holes.busy).toBe(false);
+    world.setBlock(2, 10, -3, B.AIR); // a left click on the core
+    const [e] = holes.drainEvents();
+    const [cx, cz] = hexToWorld(2, -3);
+    expect(e).toEqual({ type: 'collapsed', q: 2, y: 10, r: -3, cx, cy: 10.5, cz });
+    expect(holes.size).toBe(0);
+    // drainEvents appends to `out` and empties the queue.
+    const out = ['x'];
+    expect(holes.drainEvents(out)).toBe(out);
+    expect(out).toEqual(['x']);
+  });
+  it('breaking an inert hole also reports collapsed; the pending queue is bounded', () => {
+    const h = new BlackHoles();
+    for (let i = 0; i < BLACK_HOLE_MAX_TRACKED + 1; i++) h.add(i * 20, 50, 0);
+    h.onBlockChange(BLACK_HOLE_MAX_TRACKED * 20, 50, 0, B.BLACK_HOLE, B.AIR);
+    expect(h.drainEvents().map((e) => [e.type, e.q])).toEqual([['collapsed', BLACK_HOLE_MAX_TRACKED * 20]]);
+    for (let i = 0; i < 5000; i++) h.onBlockChange(i, 1, 0, B.AIR, B.BLACK_HOLE) && h.onBlockChange(i, 1, 0, B.BLACK_HOLE, B.AIR);
+    expect(h.drainEvents().length).toBeLessThanOrEqual(1024);
+  });
+  it('flash(): the brightest hole in FLASH, warm white, BLACK_HOLE_FLASH_INTENSITY·(1 − u)² at its centre; 0 otherwise', () => {
+    const { holes, world } = fakeWorld();
+    const out = holes.flash();
+    expect(out).toMatchObject({ intensity: 0, color: BLACK_HOLE_FLASH_COLOR });
+    expect(BLACK_HOLE_FLASH_COLOR).toBe(0xfff4e6);
+    world.setBlock(4, 12, 1, B.BLACK_HOLE);
+    holes.flash(out);
+    const [cx, cz] = hexToWorld(4, 1);
+    expect(out).toEqual({ x: cx, y: 12.5, z: cz, intensity: BLACK_HOLE_FLASH_INTENSITY, color: BLACK_HOLE_FLASH_COLOR });
+    expect(BLACK_HOLE_FLASH_INTENSITY).toBe(220);
+    holes.update(BLACK_HOLE_FLASH_S / 2, world);
+    expect(holes.flash(out).intensity).toBeCloseTo(BLACK_HOLE_FLASH_INTENSITY * 0.25, 9);
+    // A second hole whose flash just began is brighter.
+    world.setBlock(-6, 12, 0, B.BLACK_HOLE);
+    expect(holes.flash(out)).toMatchObject({ intensity: BLACK_HOLE_FLASH_INTENSITY, x: hexToWorld(-6, 0)[0] });
+    holes.update(BLACK_HOLE_FLASH_S, world);
+    expect(holes.flash(out).intensity).toBe(0);
+  });
+  it('cameraFx: the IMPLODE pinch −8°·(1 − d/24)·sin(πs) and its shake, then the stretch inside the pull radius', () => {
+    const { holes, world } = fakeWorld();
+    world.setBlock(0, 10, 0, B.BLACK_HOLE);
+    holes.update(BLACK_HOLE_FLASH_S + BLACK_HOLE_IMPLODE_S / 2, world); // IMPLODE, s = 0.5
+    const h = holes.holes.get('0,10,0');
+    expect(h.s).toBeCloseTo(0.5, 9);
+    const fx = holes.cameraFx(6, 10.5, 0);
+    expect(fx.fov).toBeCloseTo(-BLACK_HOLE_PINCH_DEG * (1 - 6 / BLACK_HOLE_PINCH_RANGE), 9);
+    expect(Math.hypot(fx.sx, fx.sy, fx.sz)).toBeGreaterThan(0);
+    expect(Math.max(Math.abs(fx.sx), Math.abs(fx.sy), Math.abs(fx.sz))).toBeLessThanOrEqual(0.05 * (1 - 6 / 24) + 1e-12);
+    expect(holes.cameraFx(BLACK_HOLE_PINCH_RANGE + 1, 10.5, 0)).toEqual({ fov: 0, sx: 0, sy: 0, sz: 0 });
+    // The shake oscillates with the hole's age.
+    const a = holes.cameraFx(6, 10.5, 0).sx;
+    holes.update(1 / 36, world); // a quarter of a 9 Hz period
+    expect(holes.cameraFx(6, 10.5, 0).sx).not.toBeCloseTo(a, 3);
+    holes.update(BLACK_HOLE_IMPLODE_S, world); // VORTEX
+    const st = holes.cameraFx(4, 10.5, 0);
+    expect(st.fov).toBeCloseTo(BLACK_HOLE_STRETCH_DEG * (1 - 4 / BLACK_HOLE_PULL_RADIUS) ** 2, 9);
+    expect([st.sx, st.sy, st.sz]).toEqual([0, 0, 0]);
+    expect(holes.cameraFx(BLACK_HOLE_PULL_RADIUS + 0.5, 10.5, 0).fov).toBe(0);
+    holes.setEnabled(false);
+    expect(holes.cameraFx(4, 10.5, 0).fov).toBe(0);
+  });
+  it('vortexViews: nearest first, full for the nearest maxFull, arming charges (ARM) and inert holes (0.2), capped at maxCores', () => {
+    const { holes, world } = fakeWorld();
+    for (let i = 0; i < BLACK_HOLE_MAX_TRACKED; i++) holes.add(1000 + i * 3, 50, 0); // far away: the cap is full
+    holes.onBlockChange(20, 10, 0, B.AIR, B.BLACK_HOLE); // inert, 20 east
+    holes.add(1000, 50, 0);
+    world.cells.set(holeKey(5, 10, 0), B.COLLAPSAR_CHARGE);
+    holes.activate(5, 10, 0, world);
+    holes.update(0.1, world);
+    const h0 = new BlackHoles();
+    expect(h0.vortexViews(0, 0, 0, 64, 4, 8)).toEqual([]);
+    // Bring the tracked ones near: a fresh tracker with a mix.
+    const t = new BlackHoles();
+    const w2 = fakeWorld().world;
+    for (const q of [3, -9, 14, 30]) t.add(q, 10, 0);
+    w2.cells.set(holeKey(-5, 10, 0), B.COLLAPSAR_CHARGE);
+    t.activate(-5, 10, 0, w2);
+    t.update(0.2, w2);
+    const views = t.vortexViews(0, 10.5, 0, 25, 2, 256, []);
+    expect(views.map((v) => Math.round(v.cx))).toEqual([3, -5, -9, 14]); // 30 is out of range
+    expect(views.map((v) => v.full)).toEqual([true, true, false, false]);
+    expect(views[1]).toMatchObject({ phase: PHASE.ARM, strength: 1, age: 0.2 });
+    expect(views[1].s).toBeCloseTo(0.2 / BLACK_HOLE_ARM_S, 9);
+    expect(views[0]).toMatchObject({ phase: PHASE.VORTEX, s: 1, strength: 1, age: Infinity, seed: holeSeed(3, 10, 0), cy: 10.5 });
+    expect(t.vortexViews(0, 10.5, 0, 25, 2, 3, []).length).toBe(3); // maxCores
+    // The inert hole of the first tracker is drawn at 0.2, as a vortex.
+    const near = holes.vortexViews(10, 10.5, 0, 30, 16, 256, []);
+    expect(near.map((v) => [Math.round(v.cx), v.phase, v.strength])).toEqual([[5, PHASE.ARM, 1], [20, PHASE.VORTEX, 0.2]]);
+    // Switched off: tracked holes are drawn at 0.2 too.
+    t.setEnabled(false);
+    expect(t.vortexViews(0, 10.5, 0, 25, 2, 256, []).map((v) => v.strength)).toEqual([0.2, 0.2, 0.2]); // the charge was cancelled
+  });
+  it('vortexViews caches the inert scan: it follows inert-set changes and an eye that moved 8 units', () => {
+    const h = new BlackHoles();
+    for (let i = 0; i < BLACK_HOLE_MAX_TRACKED; i++) h.add(5000 + i * 3, 50, 0);
+    h.onBlockChange(10, 10, 0, B.AIR, B.BLACK_HOLE);
+    expect(h.vortexViews(0, 10.5, 0, 20, 4, 256, []).length).toBe(1);
+    h.onBlockChange(-10, 10, 0, B.AIR, B.BLACK_HOLE); // the inert set changed
+    expect(h.vortexViews(0, 10.5, 0, 20, 4, 256, []).length).toBe(2);
+    // Walk east in small steps: the hole 26 east comes into the 20-unit range on time.
+    h.onBlockChange(36, 10, 0, B.AIR, B.BLACK_HOLE);
+    for (let x = 0; x <= 16; x += 1) {
+      const views = h.vortexViews(x, 10.5, 0, 20, 4, 256, []);
+      expect(views.some((v) => Math.round(v.cx) === 36), `x = ${x}`).toBe(36 - x <= 20);
+    }
+    h.onBlockChange(36, 10, 0, B.BLACK_HOLE, B.AIR);
+    expect(h.vortexViews(16, 10.5, 0, 20, 4, 256, []).some((v) => Math.round(v.cx) === 36)).toBe(false);
+  });
+  it('the views are pooled objects written into out (no allocation per frame once warm)', () => {
+    const h = new BlackHoles();
+    h.add(0, 10, 0);
+    h.add(4, 10, 0);
+    const out = [];
+    const a = h.vortexViews(0, 10.5, 0, 64, 4, 8, out);
+    const first = a[0];
+    const b = h.vortexViews(0, 10.5, 0, 64, 4, 8, out);
+    expect(b).toBe(out);
+    expect(b[0]).toBe(first);
+    h.remove(4, 10, 0);
+    expect(h.vortexViews(0, 10.5, 0, 64, 4, 8, out)).toHaveLength(1);
+  });
+  it('renderItems: the charge copy from FLASH start through IMPLODE for a charge-made hole (swelling, then crumpling)', () => {
+    const { holes, world } = fakeWorld();
+    world.cells.set(holeKey(0, 10, 0), B.COLLAPSAR_CHARGE);
+    world.cells.set(holeKey(8, 10, 0), B.STONE);
+    holes.activate(0, 10, 0, world);
+    const items = [];
+    const push = (id, x, y, z, rx, ry, rz, scale) => items.push({ id, x, y, z, rx, ry, rz, scale });
+    holes.renderItems(push);
+    expect(items).toEqual([]); // ARM: the charge is still a block
+    holes.update(BLACK_HOLE_ARM_S, world);
+    world.setBlock(8, 10, 0, B.BLACK_HOLE); // a setblock hole: no copy
+    const dt = 1 / 60;
+    const frames = [];
+    for (let t = 0; t < BLACK_HOLE_FLASH_S + BLACK_HOLE_IMPLODE_S + 0.2; t += dt) {
+      items.length = 0;
+      holes.renderItems(push);
+      const h = holes.holes.get('0,10,0');
+      frames.push({ phase: h.phase, s: h.s, items: items.map((i) => ({ ...i })) });
+      holes.update(dt, world);
+    }
+    const [cx, cz] = hexToWorld(0, 0);
+    for (const f of frames) {
+      for (const it of f.items) {
+        expect(it).toMatchObject({ id: B.COLLAPSAR_CHARGE, x: cx, y: 10.5, z: cz });
+        expect(it.scale).toBeGreaterThan(0);
+      }
+      if (f.phase === PHASE.FLASH) {
+        expect(f.items).toHaveLength(1);
+        expect(f.items[0].scale).toBeCloseTo(1 + 0.1 * Math.sin(Math.PI * f.s), 9);
+        expect(f.items[0].scale).toBeGreaterThanOrEqual(1);
+      } else if (f.phase === PHASE.IMPLODE) {
+        const scale = 1 - f.s / 0.7;
+        if (scale > 0.01) {
+          expect(f.items).toHaveLength(1);
+          expect(f.items[0].scale).toBeCloseTo(scale, 9);
+          expect(f.items[0].ry).toBeCloseTo(14 * f.s * f.s, 9);
+          expect(f.items[0].rx).toBeCloseTo(0.6 * Math.min(1, f.s / 0.7), 9);
+        } else {
+          expect(f.items).toHaveLength(0);
+        }
+      } else {
+        expect(f.items).toHaveLength(0);
+      }
+    }
+    expect(frames.filter((f) => f.phase === PHASE.FLASH).length).toBeGreaterThan(10);
+    expect(frames.some((f) => f.phase === PHASE.IMPLODE && f.items.length === 0)).toBe(true);
+  });
+  it('status() and list() strings', () => {
+    const { holes, world } = fakeWorld();
+    expect(holes.status()).toBe('black holes on · 0 active, 0 inert');
+    expect(holes.list(0, 0, 0)).toEqual([]);
+    holes.add(3, 20, -4);
+    holes.add(30, 20, 0);
+    world.cells.set(holeKey(0, 20, 0), B.COLLAPSAR_CHARGE);
+    holes.activate(0, 20, 0, world);
+    expect(holes.status()).toBe('black holes on · 3 active (1 forming), 0 inert');
+    holes.update(BLACK_HOLE_ARM_S, world);
+    expect(holes.status()).toBe('black holes on · 3 active (1 forming), 0 inert');
+    holes.update(BLACK_HOLE_FLASH_S, world);
+    const [x, z] = hexToWorld(0, 0);
+    expect(holes.list(x, 20.5, z)).toEqual([
+      '(0, 20, 0) · imploding · 0 m',
+      `(3, 20, -4) · vortex · ${Math.round(Math.hypot(hexToWorld(3, -4)[0] - x, hexToWorld(3, -4)[1] - z))} m`,
+      '(30, 20, 0) · vortex · 30 m',
+    ]);
+    expect(holes.list(x, 20.5, z, 1)).toHaveLength(1);
+    holes.update(BLACK_HOLE_IMPLODE_S, world);
+    holes.setEnabled(false);
+    expect(holes.status()).toBe('black holes off · 3 active, 0 inert');
+    for (let i = 0; i < BLACK_HOLE_MAX_TRACKED; i++) holes.add(1000 + i * 3, 50, 0);
+    expect(holes.status()).toBe(`black holes off · ${BLACK_HOLE_MAX_TRACKED} active, 3 inert`);
+    expect(holes.list(1000, 50.5, 0, 2)[0]).toBe('(1000, 50, 0) · vortex · 0 m');
+    world.cells.set(holeKey(0, 30, 0), B.COLLAPSAR_CHARGE);
+    holes.setEnabled(true);
+    holes.activate(0, 30, 0, world);
+    expect(holes.list(x, 30.5, z, 1)).toEqual(['(0, 30, 0) · arming · 0 m']);
+    expect(holes.list(-30, 20.5, 0, 1000).filter((s) => s.includes('inert'))).toHaveLength(3);
+  });
+});
+
+describe('the per-world switch (DESIGN-circuits §2.8)', () => {
+  it('off: no pull, no eating, no swallowing; forming holes jump to VORTEX; on again acts on nothing that happened meanwhile', () => {
+    const cells = new Map();
+    const { holes, world } = fakeWorld(cells);
+    expect(holes.enabled).toBe(true);
+    world.setBlock(0, 10, 0, B.BLACK_HOLE); // FLASH
+    packBall(cells, B.STONE);
+    const v0 = holes.switchVersion;
+    holes.setEnabled(false);
+    expect(holes.switchVersion).toBe(v0 + 1);
+    holes.setEnabled(false);
+    expect(holes.switchVersion).toBe(v0 + 1); // no change, no bump
+    expect(holes.holes.get('0,10,0')).toMatchObject({ phase: PHASE.VORTEX, s: 1 });
+    expect(holes.busy).toBe(true); // the flash event still waits to be drained
+    holes.drainEvents();
+    expect(holes.busy).toBe(false);
+    expect(holes.pullAt(2, 10.5, 0)).toEqual([0, 0, 0]);
+    const [x, z] = hexToWorld(0, 0);
+    expect(holes.swallowing(createPlayer(x, 9.6, z))).toBeNull();
+    for (let i = 0; i < 20; i++) expect(holes.update(BLACK_HOLE_EAT_INTERVAL_S, world)).toEqual([]);
+    expect(holes.flash().intensity).toBe(0);
+    // A hole made while off is a quiet vortex (no flash).
+    world.setBlock(9, 10, 0, B.BLACK_HOLE);
+    expect(holes.holes.get('9,10,0')).toMatchObject({ phase: PHASE.VORTEX, fromCharge: false });
+    expect(holes.drainEvents()).toEqual([]);
+    holes.setEnabled(true);
+    expect(holes.swallowing(createPlayer(x, 9.6, z))?.key).toBe('0,10,0');
+    let eaten = 0;
+    for (let i = 0; i < 5; i++) eaten += holes.update(BLACK_HOLE_EAT_INTERVAL_S, world).length;
+    expect(eaten).toBeGreaterThan(0);
+    expect(holes.drainEvents()).toEqual([]); // no flash, implode or formed replayed
+  });
+  it('clear() and loadFromEdits keep the switch; they forget arming charges and events (a reload during ARM leaves a dormant charge)', () => {
+    const { holes, world } = fakeWorld();
+    world.cells.set(holeKey(0, 10, 0), B.COLLAPSAR_CHARGE);
+    holes.activate(0, 10, 0, world);
+    holes.loadFromEdits(new Map());
+    expect([holes.arming, holes.busy, holes.enabled]).toEqual([0, false, true]);
+    holes.setEnabled(false);
+    holes.clear();
+    expect(holes.enabled).toBe(false);
+  });
 });

@@ -1,7 +1,7 @@
 // Caelancraft — every numeric constant and tuning knob. No logic lives here.
 // Units: blocks (metres), seconds, radians. See src/CONTRACTS.md §2.
 
-export const VERSION = '0.8.0';
+export const VERSION = '0.10.0';
 
 // World (cells are hexagonal prisms addressed by axial (q, r) + y; see src/hex.js)
 export const CHUNK_SIZE = 16;                       // q and r extent of a chunk, in cells
@@ -104,6 +104,7 @@ export const MAX_CONSOLE_LINES = 200;               // console scrollback
 export const CONSOLE_HISTORY = 50;                  // typed lines remembered for ↑/↓ (memory only)
 export const CHAT_LINES = 6;                        // HUD chat-log lines shown at once
 export const CHAT_LINE_MS = 6000;                   // a chat-log line fades after this long
+export const INTRO_LINE_MS = 20000;                 // the Survival intro lines (the only pointer to the Handbook) stay this long
 
 // Body-to-body physics (CONTRACTS §31)
 export const PLAYER_MASS = 1;
@@ -279,4 +280,145 @@ export const AUTOSAVE_INTERVAL_S = 30;
 export const SAVE_SLOTS = 6;                        // worlds kept side by side, one localStorage key each (§41)
 export const MAX_WORLD_NAME_CHARS = 24;             // world names are trimmed and cut to this many characters
 export const STORAGE_QUOTA_ESTIMATE = 5 * 1024 * 1024; // characters a site may keep in localStorage in common browsers (~5 MB; the Worlds usage bar)
-export const HOTBAR_SIZE = 9;
+export const HOTBAR_SIZE = 9;                       // also the survival pack's hotbar: pack slots 0..HOTBAR_SIZE-1
+
+// Survival (§42–§49; docs/DESIGN-survival.md §9.2). Rates are per real second; one game day is DAY_LENGTH_SECONDS.
+export const GEN_LATEST = 2;                        // newest world generator: 2 adds the survival resources (absent `gen` = 1, today's land)
+// Pack and containers (§5)
+export const PACK_SLOTS = 27;                       // 0..8 the hotbar strip, 9..26 the rosette
+export const WEAR_SLOTS = 3;                        // head, body, feet
+export const BASKET_SLOTS = 18;                     // a wicker basket's rosette (6 + 12)
+export const REMAINS_SLOTS = 30;                    // "Your Belongings": every pack and worn stack
+export const MAX_CONTAINERS = 1024;                 // basket entries per world (a death always gets its entry beyond this)
+// Campfires: fire spots and fuel (§4.4)
+export const FIRE_SPOTS = 7;                        // six skewers (0..5) and the embers (6)
+export const MAX_FIRE_SLOTS = 256;                  // fires with spot or fuel entries kept in a save
+export const CAMPFIRE_FUEL_START_S = 300;           // a campfire placed in Survival (and a relit pit) starts with this much fuel
+export const CAMPFIRE_FUEL_MAX_S = 1200;
+export const FUEL_STICK_S = 40;                     // fuel per stick fed …
+export const FUEL_LOG_S = 300;                      // … and per log (six riven sticks give less than the log)
+export const RELIGHT_HOLD_S = 3;                    // hold R this long to relight a cold fire pit
+// Making (§7)
+export const STATION_RANGE = 3;                     // a workplace is near within this hex distance (|dy| ≤ 2): needed to queue a job
+export const PACK_MESSAGE_S = 3;                    // the pack screen's own feedback line (a refusal, a Make result) stays this long
+export const STATION_WORK_RANGE = 16;               // a lane's head job runs while its workplace is within this hex distance
+export const MAX_CRAFT_JOBS = 8;                    // jobs across all lanes
+// The body (§2–§3)
+export const STAT_MAX = 100;                        // health, satiation (shown as Nourishment) and hydration
+export const BREATH_MAX_S = 20;
+export const BREATH_REFILL_PER_S = 5;
+export const BODY_TEMP_NORMAL = 37;                 // °C
+export const BODY_TEMP_MIN = 25;
+export const BODY_TEMP_MAX = 45;
+export const SICK_MAX_S = 600;                      // repeat cases of sickness add up to this
+export const HEAL_MAX = 50;                         // pending bandage healing
+// Damage (§2.4)
+export const FALL_SAFE_SPEED = 14.0;                // m/s: a 3-cell drop (13.07) and a jump off a 2-cell ledge (13.70) are safe; 4 cells (14.93) hurts
+export const FALL_DAMAGE_K = 0.1;                   // HP = K·(v² − FALL_SAFE_SPEED²) × the soft-landing factor
+export const CRUSH_DAMAGE_PER_CELL = 6;             // per cell unstickPlayer lifts the player
+// Input timing (§4.2, §4.5, §6)
+export const ATTACK_REPEAT_S = 0.55;                // held LMB strikes a mob this often (longer than PIG_HURT_S and ZOMBIE_HURT_S)
+export const DIG_TICK_S = 0.25;                     // dig sound and dust cadence
+export const USE_REPEAT_GAP_S = 0.25;               // held RMB starts the next eat / drink after this
+export const GULP_GAP_S = 0.5;                      // one hand gulp of water per this
+export const TAP_HOLD_S = 4;                        // hold R this long to tap a birch
+// Mobs in Survival (§4.3, §2.4)
+export const PIG_HEALTH = 5;
+export const PIG_REPOP_CHECK_S = 150;               // daylight repopulation check interval
+export const PIG_REPOP_TARGET = 3;                  // pigs wanted within PIG_REPOP_RADIUS of the player
+export const PIG_REPOP_RADIUS = 64;
+export const PIG_REPOP_MIN = 24;                    // repopulation spawns this far from the player, min …
+export const PIG_REPOP_MAX = 48;                    // … and max
+export const ZOMBIE_DAMAGE = 8;                     // HP per zombie strike in Survival (the push is unchanged)
+export const FIRE_BURN_DAMAGE = 4;                  // HP per campfire scorch (at most one per 0.5 s)
+// Regrowth (§6.5)
+export const REGROW_MEAN_S = 600;                   // a picked bush regrows after one game day on average
+export const MAX_REGROW_TRACKED = 4096;
+
+// ---- Circuits (§50–§53; docs/DESIGN-circuits.md §4, §6.3). Volts are whole VOLT_UNITs; rates per real second.
+export const CIRCUIT_TICK_S = 0.05;                 // one circuit tick; Circuits.step(dt) runs at most 2 per call
+export const VOLT_UNIT = 0.0625;                    // every voltage is a whole number of these (the solver's bucket queue)
+export const WIRE_OHMS = 0.0625;                    // per wire cell: a cell drops WIRE_OHMS × ⌈I_net⌉ volts (one VOLT_UNIT per amp)
+export const BATTERY_V = 6;                         // a fresh Voltaic Battery …
+export const BATTERY_EMPTY_V = 4.5;                 // … and its voltage just before empty (then 0)
+export const BATTERY_KNEE = 0.25;                   // share of BATTERY_CAPACITY below which the voltage falls
+export const MAX_PILE = 4;                          // batteries stacked in series (24 V); a fifth does nothing
+export const BLASTER_V = 24;                        // the Blasting Machine's pulse
+export const SELENIUM_MAX_V = 3;                    // the Selenium Panel in full open sun
+export const LAMP_MIN_V = 1.5;                      // a Filament Lamp glows from here …
+export const LAMP_FULL_V = 6;                       // … to full brightness here
+export const COIL_MIN_V = 2.5;                      // relay coil, bell, transmitter, timer start, coherer tapper
+export const IGNITER_MIN_V = 3;
+export const LAMP_AMPS = 1;                         // load currents: each is both the load's share of the wire drop and its drain
+export const BELL_AMPS = 1;
+export const IGNITER_AMPS = 2;
+export const COIL_AMPS = 0.5;
+export const BATTERY_CAPACITY = 3600;               // amp-seconds: one lamp burns for an hour of real time
+export const EARTH_WALK_CELLS = 8;                  // earth cells walked down from below a device to reach natural ground
+export const IGNITER_REFIRE_S = 0.5;                // a powered igniter fires on the rising edge, then this often
+export const RELAY_DELAY_TICKS = 1;                 // a relay's contacts follow its coil one tick later (50 ms)
+export const RELAY_HAND_S = 0.5;                    // the R key pushes a relay's armature for this long on a press
+export const BUTTON_PULSE_S = 0.3;                  // a click holds a Push Button at least this long …
+export const BUTTON_RELEASE_S = 0.1;                // … and it releases this long after the button is let go
+export const BLASTER_PULSE_S = 1;                   // the Blasting Machine gives BLASTER_V for this long …
+export const BLASTER_RESET_S = 1.5;                 // … then its handle rises for this long (a plunge is refused meanwhile)
+export const TIMER_MIN_S = 0.5;                     // Clockwork Timer delay, in 0.5 s steps
+export const TIMER_MAX_S = 3600;
+export const TIMER_DEFAULT_S = 5;
+export const TIMER_PULSE_S = 1;                     // pulse mode stays closed this long (and repeat at most this long)
+export const RADIO_CHANNELS = 16;                   // wavelengths RADIO_BASE_M + RADIO_STEP_M·(channel − 1): 300 m … 1050 m
+export const RADIO_BASE_M = 300;
+export const RADIO_STEP_M = 50;
+export const RADIO_DISTRESS_CH = 7;                 // 600 m, the 1906 maritime distress wavelength
+export const RADIO_RANGE = 160;                     // a send reaches receivers whose cell centre is within this (3D)
+export const RADIO_PULSE_S = 1;                     // a receiver in pulse mode stays closed this long
+export const FUSE_CELL_S = 0.4;                     // a Powder Fuse cell burns this long: 2.5 cells/s
+export const MAX_BURNING_FUSES = 2048;              // fuse cells burning at once; more wait in the flame queue
+export const MAX_FLAME_QUEUE = 4096;                // queued flame candidates (parked ones wait for their chunk); beyond this dropped
+export const KEG_DIRECT_FUSE_S = 0.25;              // a keg lit by a fuse, a torch or an igniter goes off this long after
+export const MAX_FUSE_SPARK_CELLS = 16;             // the nearest burning fuse cells that emit spark particles each tick
+export const MAX_FUSE_PUFFS_PER_TICK = 24;          // burnt-out fuse cells that puff smoke per tick
+export const MAX_CIRCUIT_PARTS = 4096;              // configured (non-pristine) parts a world may save
+export const MAX_PART_LABEL_CHARS = 24;
+export const MAX_CIRCUIT_VISITS_PER_TICK = 6000;    // cell visits per tick, checked between networks
+export const CIRCUIT_TICK_BUDGET_MS = 2;            // time per tick (hooks.now), checked between networks
+export const MAX_NETWORK_CELLS = 8192;              // a larger network is truncated (the rest read 0 V)
+export const MAX_CONTACT_CHANGES_PER_TICK = 1024;   // more slip to the next tick
+export const MAX_SETTLE_PASSES = 4;                 // settling passes over contacts a load or reload changes
+export const MAX_CIRCUIT_WRITES_PER_TICK = 32;      // burnt-fuse AIR writes per tick; the rest finish next tick
+export const MAX_IGNITIONS_PER_TICK = 32;           // ignitions dispatched per tick; the rest wait
+export const CIRCUIT_DRAW_RANGE = 64;               // wires and knobs drawn within this of the eye
+export const CIRCUIT_OVERLAY_RANGE = 64;            // moving and lit overlays drawn within this (= the wiring's range) …
+export const MAX_CIRCUIT_OVERLAYS = 512;            // … at most this many, nearest first
+// ---- Black holes v2 (§54; docs/DESIGN-circuits.md §2)
+export const BLACK_HOLE_ARM_S = 0.4;                // ARM: the charge is still a block …
+export const BLACK_HOLE_FLASH_S = 0.3;              // … FLASH: the cell becomes BLACK_HOLE, a light and a screen flash …
+export const BLACK_HOLE_IMPLODE_S = 1.2;            // … IMPLODE: the pull ramps as s², then VORTEX forever
+export const BLACK_HOLE_SWIRL = 1.6;                // tangential pull = SWIRL · radial · min(1, ρ / SWIRL_CORE): a ~58° inward spiral
+export const BLACK_HOLE_SWIRL_CORE = 1.5;
+export const BLACK_HOLE_FLASH_INTENSITY = 220;      // peak of the shared flash PointLight, fading as (1 − u)²
+export const BLACK_HOLE_FLASH_COLOR = 0xfff4e6;     // warm white
+export const BLACK_HOLE_SCREEN_FLASH_RANGE = 48;    // the white screen flash fades out by this distance …
+export const BLACK_HOLE_SCREEN_FLASH_S = 0.6;       // … over this long …
+export const BLACK_HOLE_SCREEN_FLASH_MAX = 0.75;    // … at most this bright …
+export const BLACK_HOLE_SCREEN_FLASH_GAP_S = 0.5;   // … and starts at most once per this (WCAG 2.3.1: under 3 flashes a second)
+export const BLACK_HOLE_PINCH_DEG = 8;              // FOV pinch during IMPLODE …
+export const BLACK_HOLE_PINCH_RANGE = 24;           // … fading out by this distance
+export const BLACK_HOLE_STRETCH_DEG = 4;            // FOV stretch inside the nearest vortex's pull radius
+export const VORTEX_MODEL_RANGE = 128;              // cores and billboards drawn within this …
+export const VORTEX_MAX_MODELS = 16;                // … disks, shells and the lensed band only for the nearest this many …
+export const VORTEX_MAX_CORES = 256;                // … and at most this many cores and billboards
+export const VORTEX_PARTICLES_PER_S = 40;           // streaming particles per vortex …
+export const VORTEX_PARTICLE_HOLES = 4;             // … for the nearest this many vortices
+export const VORTEX_SPIRAL_K = 3.33;                // dθ/d ln ρ of the inflow: the disk's arms, the particles and infall blocks
+export const VORTEX_INFLOW = 1.2;                   // inflow speed: dρ/dt = −VORTEX_INFLOW / √ρ
+export const VORTEX_FLOW_RATE = 9;                  // the disk's dash phase advances this many rad/s
+export const VORTEX_BILLBOARD = 3.6;                // the shadow / photon-ring / lensed-band quad, world units square
+export const VORTEX_CORE_R = 0.3;                   // the black core's radius
+export const VORTEX_EVENT_R = 0.45;                 // particles and infall items vanish inside this radius
+export const MAX_INFALL_BLOCKS = 96;                // eaten blocks drawn spiralling in; past this the oldest finishes at once
+export const MAX_INFALL_MOBS = 8;                   // swallowed pigs / zombies drawn spiralling in
+export const INFALL_VIEW_RANGE = 48;                // eaten blocks farther than this from the eye are not drawn
+export const INFALL_MIN_S = 0.6;                    // an eaten block's flight time is clamped to MIN … MAX
+export const INFALL_MAX_S = 2.4;
+export const INFALL_MOB_S = 1.2;                    // a swallowed mob's flight time

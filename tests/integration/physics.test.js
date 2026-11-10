@@ -559,6 +559,29 @@ describe('switched-off features across a save (play-test G3 / G4)', () => {
     settle(re.physics);
     expect([11, 12, 13, 20, 21, 22].map((y) => re.world.getBlock(3, y, 3))).toEqual(liveCol);
   });
+  it('Explosions off → on: a keg laid beside a campfire meanwhile stays unlit — live, after a reload and after a stream-in', () => {
+    const { world, physics } = realScene();
+    physics.setSwitch('explosions', false);
+    world.setBlock(0, 11, 0, B.CAMPFIRE);
+    world.setBlock(1, 11, 0, B.POWDER_KEG);
+    for (let i = 0; i < 240; i++) physics.step(DT);
+    physics.setSwitch('explosions', true);
+    for (let i = 0; i < 300; i++) physics.step(DT);
+    expect(physics.explosions.blastCount).toBe(0); // switching on acts on nothing after the fact …
+    expect(world.getBlock(1, 11, 0)).toBe(B.POWDER_KEG);
+    const re = realScene({ edits: physics.exportEdits(), switches: physics.exportSwitches() });
+    for (let i = 0; i < 300; i++) re.physics.step(DT);
+    expect(re.physics.explosions.blastCount).toBe(0); // … nor does a reload (CONTRACTS pitfall 37: loading never lights) …
+    expect(re.physics.explosions.litCount).toBe(0);
+    expect(re.world.getBlock(1, 11, 0)).toBe(B.POWDER_KEG);
+    re.physics.onChunkGenerated(0, 0); // … nor its chunk streaming in again
+    for (let i = 0; i < 300; i++) re.physics.step(DT);
+    expect(re.physics.explosions.blastCount).toBe(0);
+    expect(re.world.getBlock(1, 11, 0)).toBe(B.POWDER_KEG);
+    re.world.setBlock(0, 11, 0, B.AIR); // a new change beside it does light it: the campfire put back
+    re.world.setBlock(0, 11, 0, B.CAMPFIRE);
+    expect(stepUntil(re.physics, () => re.physics.explosions.isBurning(1, 11, 0), 60)).toBeLessThan(60);
+  });
 });
 
 // -----------------------------------------------------------------------------------------------------------------------

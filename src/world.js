@@ -15,9 +15,13 @@
 // save; `editCount` is a running count. `setBlock(…, lazy = true)` (physics, black holes, explosions) marks chunks
 // dirty *lazily*: update() re-meshes those nearest-first under LAZY_MESH_BUDGET_MS instead of all at once;
 // `lazy = 'coalesce'` (a big crumble) also waits LAZY_COALESCE_UPDATES calls between two re-meshes of a chunk.
+//
+// v0.9 (docs/DESIGN-survival.md §8.3, §2.5, §3.1): `new World({ …, gen })` picks the generator version (`world.gen`; 2
+// adds the survival resources), `columnAt(q, r)` hands the climate its column, and `findSurvivalSpawn()` is findSpawn's
+// spiral restricted to green land (PLAINS / FOREST), cached per world.
 import {
   CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE, DATA_RADIUS_EXTRA,
-  UNLOAD_RADIUS_EXTRA, BUILD_BUDGET_MS, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS, LAZY_COALESCE_UPDATES,
+  UNLOAD_RADIUS_EXTRA, BUILD_BUDGET_MS, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS, LAZY_COALESCE_UPDATES, GEN_LATEST,
 } from './config.js';
 import { chunkKey, parseChunkKey, localIndex, indexToLocal } from './coords.js';
 import { HEX_DIRS, hexLength, hexNormSq, hexToWorld, worldToHex } from './hex.js';
@@ -39,8 +43,15 @@ import { normalizeSeed } from './noise.js';
  * @property {string|number} [seed]
  * @property {number} [renderDistance]   default RENDER_DISTANCE, clamped 1..16
  * @property {EditsJSON} [edits]         saved edits to merge before any chunk is generated
- * @property {WorldGen} [worldGen]       injected generator (tests); default createWorldGen(seed)
+ * @property {WorldGen} [worldGen]       injected generator (tests); default createWorldGen(seed, { gen })
+ * @property {number} [gen]              generator version (§8.3): 1 (default, today's land) .. GEN_LATEST; anything else is 1.
+ *                                       With an injected worldGen it defaults to that generator's own `gen` (or 1).
  * @property {() => number} [now]        millisecond clock; default performance.now / Date.now
+ */
+
+/**
+ * The column the climate samples (docs/DESIGN-survival.md §3.1).
+ * @typedef {{ height: number, biome: number, temperature: number }} ColumnSample
  */
 
 /**
@@ -95,6 +106,21 @@ function isIntIn(v, lo, hi) {
   return Number.isInteger(v) && v >= lo && v <= hi;
 }
 
+/** @returns {number} a generator version: an integer 1..GEN_LATEST (anything that is not an integer ≥ 1 is 1) */
+function normalizeGen(gen) {
+  return Number.isInteger(gen) && gen >= 1 ? Math.min(gen, GEN_LATEST) : 1;
+}
+
+/** @returns {boolean} the column is green land a survivor can wake on (§2.5): PLAINS or FOREST, at least SEA_LEVEL + 2 */
+function isSurvivalSpawnColumn(col) {
+  return col.height >= SEA_LEVEL + 2 && (col.biome === BIOME.PLAINS || col.biome === BIOME.FOREST);
+}
+
+/** @returns {boolean} the column is a findSpawn column: at least SEA_LEVEL + 2 and not OCEAN / BEACH */
+function isSpawnColumn(col) {
+  return col.height >= SEA_LEVEL + 2 && col.biome !== BIOME.OCEAN && col.biome !== BIOME.BEACH;
+}
+
 export class World {
   /** @param {WorldOptions} [opts] */
   constructor(opts = {}) {
@@ -102,8 +128,12 @@ export class World {
     this.seed = normalizeSeed(opts.seed ?? opts.worldGen?.seed);
     /** @type {number} */
     this.renderDistance = clampRenderDistance(opts.renderDistance ?? RENDER_DISTANCE);
+    /** @type {number} generator version (1 = today's land, 2 = with the survival resources); saved as `gen` when ≥ 2 */
+    this.gen = normalizeGen(opts.gen ?? /** @type {{ gen?: number }} */ (opts.worldGen ?? {}).gen);
     /** @type {WorldGen} */
-    this.worldGen = opts.worldGen ?? createWorldGen(this.seed);
+    this.worldGen = opts.worldGen ?? createWorldGen(this.seed, { gen: this.gen });
+    /** @type {Vec3|null} findSurvivalSpawn's cached answer */
+    this._survivalSpawn = null;
     /** @type {Map<ChunkKey, Chunk>} */
     this.chunks = new Map();
     /** @type {Map<ChunkKey, Map<number, BlockId>>} inner key = localIndex */
@@ -328,6 +358,18 @@ export class World {
   /** @returns {number} biome id from worldGen.getColumn */
   getBiome(q, r) {
     return this.worldGen.getColumn(q, r).biome;
+  }
+
+  /**
+   * The generated column at (q, r) for the climate (DESIGN-survival §3.1): height, biome and the raw temperature noise
+   * (−1..1), straight from worldGen.getColumn (edits are ignored). A fresh object each call.
+   * @param {number} q
+   * @param {number} r
+   * @returns {ColumnSample}
+   */
+  columnAt(q, r) {
+    const col = this.worldGen.getColumn(q, r);
+    return { height: col.height, biome: col.biome, temperature: col.temperature };
   }
 
   // -------------------------------------------------------------------------------------------
@@ -582,25 +624,23 @@ export class World {
    * @returns {Vec3} world [x, height+1, z] of the cell centre
    */
   findSpawn() {
-    const step = SPAWN_STEP;
-    const first = this._spawnAt(0, 0);
-    if (first) return first;
-    for (let n = 1; n <= SPAWN_MAX_RINGS; n++) {
-      // Walk ring n: start at n × direction 4, then n steps along each of the six directions in order.
-      let dq = HEX_DIRS[4][0] * n;
-      let dr = HEX_DIRS[4][1] * n;
-      for (let side = 0; side < 6; side++) {
-        const d = HEX_DIRS[side];
-        for (let j = 0; j < n; j++) {
-          const s = this._spawnAt(dq * step, dr * step);
-          if (s) return s;
-          dq += d[0];
-          dr += d[1];
-        }
-      }
-    }
+    const s = this._spiralSpawn(isSpawnColumn);
+    if (s) return s;
     const col = this.worldGen.getColumn(0, 0);
     return [0, Math.max(col.height, SEA_LEVEL) + 1, 0];
+  }
+
+  /**
+   * Where a survivor wakes without a Sleeping Hide (DESIGN-survival §2.5): the same SPAWN_STEP spiral as findSpawn, but
+   * only PLAINS or FOREST columns at least SEA_LEVEL + 2 high are accepted, so a harsh world spawn (desert, snow,
+   * mountains) is not repeated. Falls back to findSpawn() when the bounded spiral finds none. Pure (getColumn only, no
+   * chunk is loaded) and cached per world; every call returns a fresh copy.
+   * @returns {Vec3} world [x, height+1, z] of the cell centre
+   */
+  findSurvivalSpawn() {
+    if (this._survivalSpawn === null) this._survivalSpawn = this._spiralSpawn(isSurvivalSpawnColumn) ?? this.findSpawn();
+    const s = this._survivalSpawn;
+    return [s[0], s[1], s[2]];
   }
 
   /** Clamp to 1..16 and rebuild the ring offsets; far chunks are dropped on the next update(). */
@@ -624,10 +664,37 @@ export class World {
   // -------------------------------------------------------------------------------------------
   // internals
 
-  /** @returns {Vec3|null} spawn position if cell column (q, r) is a valid spawn */
-  _spawnAt(q, r) {
+  /**
+   * Spiral out from cell (0,0) over hex rings in SPAWN_STEP-cell steps (ring n starts at n × direction 4, then walks n
+   * steps along each of the six directions in order) and return the first column `accept` takes, or null after
+   * SPAWN_MAX_RINGS rings.
+   * @param {(col: import('./types.js').ColumnInfo) => boolean} accept
+   * @returns {Vec3|null} world [x, height+1, z] of the accepted cell centre
+   */
+  _spiralSpawn(accept) {
+    const step = SPAWN_STEP;
+    const first = this._spawnAt(0, 0, accept);
+    if (first) return first;
+    for (let n = 1; n <= SPAWN_MAX_RINGS; n++) {
+      let dq = HEX_DIRS[4][0] * n;
+      let dr = HEX_DIRS[4][1] * n;
+      for (let side = 0; side < 6; side++) {
+        const d = HEX_DIRS[side];
+        for (let j = 0; j < n; j++) {
+          const s = this._spawnAt(dq * step, dr * step, accept);
+          if (s) return s;
+          dq += d[0];
+          dr += d[1];
+        }
+      }
+    }
+    return null;
+  }
+
+  /** @returns {Vec3|null} spawn position if cell column (q, r) passes `accept` */
+  _spawnAt(q, r, accept) {
     const col = this.worldGen.getColumn(q, r);
-    if (col.height >= SEA_LEVEL + 2 && col.biome !== BIOME.OCEAN && col.biome !== BIOME.BEACH) {
+    if (accept(col)) {
       const [x, z] = hexToWorld(q, r);
       return [x, col.height + 1, z];
     }

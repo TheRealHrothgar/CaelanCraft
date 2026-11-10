@@ -1,10 +1,11 @@
 // fallingRenderer.js and particles.js — Node only (Three core objects work without WebGL): instancing per block id
-// and layer, capacity growth, the explosion light, and the one-Points particle system (CONTRACTS §34.4–§34.5).
+// and layer, capacity growth, the explosion light and its colour, and the one-Points particle system with its orbit
+// particles (CONTRACTS §34.4–§34.5; DESIGN-circuits §6.2.10, §6.2.12).
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { PARTICLE_CAPACITY } from '../../src/config.js';
+import { PARTICLE_CAPACITY, BLACK_HOLE_FLASH_COLOR, VORTEX_EVENT_R } from '../../src/config.js';
 import { BLOCK } from '../../src/blocks.js';
-import { createFallingRenderer, PREWARM_IDS } from '../../src/fallingRenderer.js';
+import { createFallingRenderer, PREWARM_IDS, FLASH_COLOR } from '../../src/fallingRenderer.js';
 import { createParticles, PARTICLE_KINDS, blockParticleColor } from '../../src/particles.js';
 
 const item = (id, x, y, z, extra = {}) => ({ id, x, y, z, rx: 0, ry: 0, rz: 0, scale: 1, ...extra });
@@ -72,6 +73,37 @@ describe('fallingRenderer', () => {
     fr.setFlash(0, 0, 0, 0);
     expect(light.intensity).toBe(0);
   });
+
+  it('setFlash takes a colour (default the blast’s 0xffd49a) and sets it on the one light only when it changes', () => {
+    const scene = new THREE.Scene();
+    const fr = createFallingRenderer(scene, new THREE.Texture());
+    const lights = [];
+    scene.traverse((o) => { if (o.isPointLight) lights.push(o); });
+    expect(lights).toHaveLength(1);
+    const light = lights[0];
+    expect(FLASH_COLOR).toBe(0xffd49a);
+    expect(light.color.getHex()).toBe(FLASH_COLOR);
+    let sets = 0;
+    const setHex = light.color.setHex.bind(light.color);
+    light.color.setHex = (...a) => { sets++; return setHex(...a); };
+    fr.setFlash(1, 2, 3, 220, BLACK_HOLE_FLASH_COLOR);
+    expect(light.color.getHex()).toBe(0xfff4e6);
+    expect(light.intensity).toBe(220);
+    fr.setFlash(1, 2, 3, 120, BLACK_HOLE_FLASH_COLOR);
+    fr.setFlash(1, 2, 3, 60, BLACK_HOLE_FLASH_COLOR);
+    expect(sets).toBe(1); // unchanged colour: not set again
+    fr.setFlash(1, 2, 3, 40); // a blast: back to the default
+    expect(light.color.getHex()).toBe(FLASH_COLOR);
+    expect(sets).toBe(2);
+    fr.setFlash(1, 2, 3, 40, -5); // nonsense → the default
+    expect(light.color.getHex()).toBe(FLASH_COLOR);
+    fr.setFlash(0, 0, 0, 0, 0x00ff00); // off: the colour does not matter and is left alone
+    expect(light.color.getHex()).toBe(FLASH_COLOR);
+    let all = 0;
+    scene.traverse((o) => { if (o.isLight) all++; });
+    expect(all).toBe(1); // still one light
+    fr.dispose();
+  });
 });
 
 describe('particles', () => {
@@ -80,7 +112,7 @@ describe('particles', () => {
     const ps = createParticles(scene, { random: () => 0.5 });
     expect(scene.children.filter((o) => o.isPoints).length).toBe(1);
     expect(ps.points.geometry.getAttribute('position').count).toBe(PARTICLE_CAPACITY);
-    expect(PARTICLE_KINDS).toEqual(['dust', 'leaves', 'smoke', 'sparks', 'steam']);
+    expect(PARTICLE_KINDS).toEqual(['dust', 'leaves', 'smoke', 'sparks', 'steam', 'infall']);
     ps.emit('dust', 0, 10, 0, 10, { id: BLOCK.SAND });
     expect(ps.count()).toBe(10);
     ps.emit('sparks', 0, 10, 0, PARTICLE_CAPACITY + 50);
@@ -286,5 +318,200 @@ describe('prewarm: no shader compile on the first falling block / particle (FR-4
     await expect(ps.prewarm({ compileAsync: () => Promise.reject(new Error('x')) }, camera)).resolves.toBeUndefined();
     await expect(ps.prewarm(null, camera)).resolves.toBeUndefined();
     ps.dispose();
+  });
+});
+
+describe('particles: orbit particles spiral into a vortex (DESIGN-circuits §6.2.10)', () => {
+  /** Seeded [0, 1) generator. */
+  function rng(seed = 7) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const C = [3, 20, -2];
+  /** Live slots' (ρ, θ, height, 3D distance) about C. */
+  function polar(ps) {
+    const g = ps.points.geometry;
+    const pos = g.getAttribute('position');
+    const al = g.getAttribute('palpha');
+    const sz = g.getAttribute('psize');
+    const out = [];
+    for (let i = 0; i < pos.count; i++) {
+      if (sz.getX(i) <= 0) continue; // dead (or never used) slots have size 0
+      const dx = pos.getX(i) - C[0];
+      const dy = pos.getY(i) - C[1];
+      const dz = pos.getZ(i) - C[2];
+      out.push({ i, rho: Math.hypot(dx, dz), th: Math.atan2(dz, dx), h: dy, alpha: al.getX(i), r3: Math.hypot(dx, dy, dz) });
+    }
+    return out;
+  }
+
+  it('PARTICLE_KINDS includes infall, and a plain emit of it gives finite, ballistic positions', () => {
+    const ps = createParticles(new THREE.Scene(), { random: rng() });
+    expect(PARTICLE_KINDS).toContain('infall');
+    ps.emit('infall', 0, 10, 0, 24, { speed: 3 });
+    for (let k = 0; k < 10; k++) ps.update(1 / 60);
+    const pos = ps.points.geometry.getAttribute('position');
+    for (let i = 0; i < 24; i++) expect(Number.isFinite(pos.getX(i) + pos.getY(i) + pos.getZ(i))).toBe(true);
+    expect(ps.count()).toBe(24);
+    ps.dispose();
+  });
+
+  it('they spiral in — ρ falls and θ rises every step — and reach ρ < 0.45 before their life ends, from every start radius', () => {
+    for (const r0 of [0.8, 1.5, 2.5, 3.5, 4.5, 6]) {
+      const ps = createParticles(new THREE.Scene(), { random: rng(Math.round(r0 * 10)) });
+      ps.emitOrbit('infall', ...C, 12, { rMin: r0, rMax: r0, hMax: 0.6, color: [0.18, 0.15, 0.13], hot: [1, 0.78, 0.56] });
+      expect(ps.count()).toBe(12);
+      let prev = polar(ps);
+      expect(prev.every((p) => Math.abs(p.rho - r0) < 1e-4)).toBe(true);
+      let t = 0;
+      const life = (r0 ** 1.5 - 0.45 ** 1.5) / 1.8 + 0.3;
+      while (ps.count() > 0 && t < life + 1) {
+        ps.update(1 / 60);
+        t += 1 / 60;
+        const now = polar(ps);
+        for (const p of now) {
+          const q = prev.find((o) => o.i === p.i);
+          if (!q) continue;
+          expect(p.rho).toBeLessThan(q.rho);
+          let dth = p.th - q.th;
+          if (dth < -Math.PI) dth += 2 * Math.PI;
+          expect(dth).toBeGreaterThan(0); // +θ, the swirl's sense
+          expect(p.rho).toBeGreaterThanOrEqual(VORTEX_EVENT_R - 1e-4); // dies below 0.45, never drawn there
+          expect(Math.abs(p.h)).toBeLessThanOrEqual(0.6 + 1e-4); // flattening onto the disk plane
+        }
+        prev = now;
+      }
+      // Every one died at the core, before its life ran out (life = arrival + 0.3 s).
+      expect(ps.count(), `ρ0 ${r0}`).toBe(0);
+      expect(t, `ρ0 ${r0}`).toBeLessThan(life);
+      ps.dispose();
+    }
+  });
+
+  it('they warm from `color` to `hot` near the core and fade in; the height flattens onto the disk plane', () => {
+    const ps = createParticles(new THREE.Scene(), { random: rng(3) });
+    ps.emitOrbit('infall', ...C, 1, { rMin: 3, rMax: 3, hMax: 0.6, color: 0x2e2620, hot: 0xffc890 });
+    const col = ps.points.geometry.getAttribute('pcolor');
+    const red0 = col.getX(0);
+    expect(ps.points.geometry.getAttribute('palpha').getX(0)).toBe(0);
+    const h0 = Math.abs(polar(ps)[0].h);
+    let last = null;
+    for (let k = 0; k < 600 && ps.count() > 0; k++) {
+      ps.update(1 / 120);
+      const p = polar(ps)[0];
+      if (p) last = { ...p, red: col.getX(0) };
+    }
+    expect(last.rho).toBeLessThan(0.7);
+    expect(last.red).toBeGreaterThan(red0 + 0.3); // hot
+    expect(last.alpha).toBeGreaterThan(0.6);
+    expect(Math.abs(last.h)).toBeLessThan(h0 * 0.2 + 1e-4);
+  });
+
+  it('spherical: start on a sphere and move straight at the centre (height = h0·ρ/ρ0; θ fixed when radial)', () => {
+    const ps = createParticles(new THREE.Scene(), { random: rng(11) });
+    ps.emitOrbit('infall', ...C, 64, { rMin: 3.0, rMax: 3.6, hMax: 3.3, spherical: true, radial: true, inward: 2.8, color: [1, 1, 1], hot: [0.69, 0.23, 0.1] });
+    const start = polar(ps);
+    for (const p of start) {
+      expect(p.r3).toBeGreaterThanOrEqual(3.0 - 1e-4);
+      expect(p.r3).toBeLessThanOrEqual(3.6 + 1e-4);
+    }
+    expect(start.some((p) => Math.abs(p.h) > 2)).toBe(true); // a sphere, not a disk
+    ps.update(1 / 60);
+    ps.update(1 / 60);
+    for (const p of polar(ps)) {
+      const s0 = start.find((o) => o.i === p.i);
+      if (s0.rho > 0.05) expect(p.th).toBeCloseTo(s0.th, 4); // radial: straight in
+      expect(p.h / p.r3).toBeCloseTo(s0.h / s0.r3, 4); // the same direction from the centre: height = h0·ρ/ρ0
+      expect(p.r3).toBeLessThan(s0.r3);
+    }
+  });
+
+  it('the implosion burst (rMin 3, rMax 3.6, inward 2.8) arrives in 1.15 ± 0.1 s', () => {
+    const ps = createParticles(new THREE.Scene(), { random: rng(5) });
+    ps.emitOrbit('infall', ...C, 64, { rMin: 3.0, rMax: 3.6, hMax: 3.3, spherical: true, radial: true, inward: 2.8, color: [1, 1, 1], hot: [0.69, 0.23, 0.1] });
+    let t = 0;
+    let deaths = 0;
+    let sum = 0;
+    let last = 64;
+    while (ps.count() > 0 && t < 3) {
+      ps.update(1 / 120);
+      t += 1 / 120;
+      const n = ps.count();
+      sum += (last - n) * t;
+      deaths += last - n;
+      last = n;
+    }
+    expect(deaths).toBe(64);
+    expect(sum / deaths).toBeGreaterThan(1.05);
+    expect(sum / deaths).toBeLessThan(1.25);
+  });
+
+  it('respects capacity: orbit particles share the ring and overwrite the oldest; bad calls emit nothing', () => {
+    const ps = createParticles(new THREE.Scene(), { capacity: 64, random: rng(2) });
+    ps.emit('smoke', 0, 10, 0, 40);
+    ps.emitOrbit('infall', ...C, 50, { rMin: 2.5, rMax: 4.5 });
+    expect(ps.count()).toBe(64);
+    ps.emitOrbit('infall', ...C, 500, { rMin: 2.5, rMax: 4.5 });
+    expect(ps.count()).toBe(64);
+    ps.clear();
+    ps.emitOrbit('nonsense', ...C, 5, { rMin: 2, rMax: 3 });
+    ps.emitOrbit('infall', NaN, 0, 0, 5, { rMin: 2, rMax: 3 });
+    ps.emitOrbit('infall', ...C, 5, { rMin: -1, rMax: 3 });
+    ps.emitOrbit('infall', ...C, 5);
+    expect(ps.count()).toBe(0);
+    ps.emitOrbit('infall', ...C, 5, { rMin: 4, rMax: 2 }); // swapped radii are fine
+    expect(ps.count()).toBe(5);
+  });
+
+  it('an orbit slot overwritten by emit moves ballistically (no stale centre)', () => {
+    const ps = createParticles(new THREE.Scene(), { capacity: 4, random: () => 0.5 });
+    ps.emitOrbit('infall', ...C, 4, { rMin: 3, rMax: 3 });
+    ps.update(0.1);
+    ps.emit('sparks', 50, 60, 70, 4, { spread: 0 });
+    const pos = ps.points.geometry.getAttribute('position');
+    expect([pos.getX(0), pos.getY(0), pos.getZ(0)]).toEqual([50, 60, 70]);
+    ps.update(0.05);
+    for (let i = 0; i < 4; i++) {
+      expect(Math.hypot(pos.getX(i) - C[0], pos.getZ(i) - C[2])).toBeGreaterThan(40); // nowhere near the old centre
+      expect(pos.getY(i)).toBeGreaterThan(60); // sparks fly up first
+    }
+  });
+
+  it('emit is unchanged for ballistic particles: the v0.8 velocity, drag, gravity, growth and fade', () => {
+    const ps = createParticles(new THREE.Scene(), { random: () => 0.5 });
+    ps.emitOrbit('infall', ...C, 3, { rMin: 3, rMax: 3 }); // orbit particles alongside change nothing for the others
+    ps.emit('smoke', 0, 10, 0, 1, { spread: 0 });
+    const i = 3;
+    const pos = ps.points.geometry.getAttribute('position');
+    const size = ps.points.geometry.getAttribute('psize');
+    const alpha = ps.points.geometry.getAttribute('palpha');
+    // The v0.8 model for random() = 0.5: smoke speed 0.45·(0.4 + 0.3) at angle π, up 1.05, life 1.9, size 0.35.
+    let vx = 0.45 * 0.7 * Math.cos(Math.PI);
+    let vy = 1.05;
+    let x = 0;
+    let y = 10;
+    const life = 1.9;
+    let left = life;
+    const dt = 1 / 30;
+    for (let k = 0; k < 20; k++) {
+      ps.update(dt);
+      left -= dt;
+      const f = Math.exp(-0.9 * dt);
+      vx *= f;
+      vy = vy * f + 0.5 * dt;
+      x += vx * dt;
+      y += vy * dt;
+      const age = 1 - left / life;
+      expect(pos.getX(i)).toBeCloseTo(x, 4);
+      expect(pos.getY(i)).toBeCloseTo(y, 4);
+      expect(size.getX(i)).toBeCloseTo(0.35 * (1 + 1.4 * age), 4);
+      expect(alpha.getX(i)).toBeCloseTo(0.5 * Math.min(1, (1 - age) * 2.5), 4);
+    }
   });
 });

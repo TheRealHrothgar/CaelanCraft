@@ -15,6 +15,7 @@ import { Pigs } from '../../src/pigs.js';
 import { Zombies } from '../../src/zombies.js';
 import { Watcher } from '../../src/watcher.js';
 import { BlockPhysics } from '../../src/blockphysics.js';
+import { ITEM_KEYS } from '../../src/items.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 import {
   COMMANDS, HELP_FOOTER, COMPASS, parseLine, parseScript, resolveBlock, parseTimeSpec, parseDurationSpec,
@@ -117,6 +118,10 @@ describe('command table', () => {
     }
     expect(names).toEqual(expect.arrayContaining(['help', 'tp', 'tpw', 'setblock', 'fill', 'hexfill', 'hexring', 'time', 'say', 'run', 'wait', 'stop', 'stopall', 'runes', 'rune']));
     expect(COMMANDS.filter((c) => c.scriptOnly).map((c) => c.name).sort()).toEqual(['stop', 'wait']);
+    // v0.9: `mode` is the only console-only command, and no command is both
+    expect(COMMANDS.filter((c) => c.consoleOnly).map((c) => c.name)).toEqual(['mode']);
+    expect(COMMANDS.filter((c) => c.scriptOnly && c.consoleOnly)).toEqual([]);
+    expect(names).toEqual(expect.arrayContaining(['mode', 'vitals', 'pack', 'items']));
     expect(HELP_FOOTER).toHaveLength(3);
     expect(COMPASS).toEqual({ north: 0, west: 90, south: 180, east: -90 });
   });
@@ -242,7 +247,11 @@ describe('resolveBlock', () => {
     expect(resolveBlock('oak_plank')).toEqual({ id: B.OAK_PLANKS });
     expect(resolveBlock('cobble')).toEqual({ id: B.COBBLESTONE });
     expect(resolveBlock('diamond_o')).toEqual({ id: B.DIAMOND_ORE });
-    expect(resolveBlock('honey')).toEqual({ id: B.HONEYCOMB_BLOCK });
+    // CONTRACT-ISSUE: DESIGN-survival §8.1 names blocks 78/79 honeyberry_bush(_bare), so the prefix "honey" stopped being
+    // unique (it named honeycomb_block before v0.9). W0 changed this line to keep the suite green; package C (owner) keeps
+    // the change: resolveBlock's rules are unchanged, and an ambiguous prefix listing every candidate is the intended result.
+    expect(resolveBlock('honeyc')).toEqual({ id: B.HONEYCOMB_BLOCK });
+    expect(resolveBlock('honey')).toEqual({ error: 'ambiguous block "honey": honeycomb_block, honeyberry_bush, honeyberry_bush_bare' });
     expect(resolveBlock('light_blue_wool')).toEqual({ id: B.WOOL_LIGHT_BLUE });
     expect(resolveBlock('block_of_gold')).toEqual({ id: B.GOLD_BLOCK });
     expect(resolveBlock('diamond')).toEqual({ error: 'ambiguous block "diamond": diamond_ore, diamond_block' });
@@ -1016,6 +1025,20 @@ describe('executeCommand — block physics (physics / undo / ignite / drain)', (
     expect(world.getBlock(2, 11, 2)).toBe(B.BRICKS);
   });
 
+  it('undo refuses in Survival like the pause menu\'s Undo (§1.5; KNOWN-ISSUES S4), and still works in Creative', () => {
+    const { ctx, physics, world } = physicsCtx();
+    world.setBlock(2, 11, 2, B.BRICKS);
+    physics.beginEvent('explosion');
+    physics.ctx.writeQuiet(2, 11, 2, B.AIR);
+    physics.endEvent();
+    ctx.survival = { mode: 'survival', hasState: true };
+    expect(exec(ctx, 'undo')).toEqual({ ok: false, message: 'undo: not in Survival — usage: undo' });
+    expect(world.getBlock(2, 11, 2)).toBe(B.AIR);
+    ctx.survival.mode = 'creative'; // a world switched back to Creative (its state kept) may undo again
+    expect(exec(ctx, 'undo').ok).toBe(true);
+    expect(world.getBlock(2, 11, 2)).toBe(B.BRICKS);
+  });
+
   it('ignite resolves and checks the cell, then asks explosions; drain centres on the player (or the rune)', () => {
     const { ctx, physics } = physicsCtx();
     const ignite = vi.spyOn(physics.explosions, 'ignite').mockReturnValue({ ok: true, message: 'lit' });
@@ -1047,5 +1070,434 @@ describe('executeCommand — block physics (physics / undo / ignite / drain)', (
     expect(world.getBlock(1, FEET, 0)).toBe(B.AIR);
     expect(world.getBlock(9, FEET, 0)).toBe(B.WATER);
     expect(exec(ctx, 'drain 0').message).toBe('no water to drain within 0');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Survival commands (v0.9, docs/DESIGN-survival.md §9.7) against a fake ctx.survival
+
+/** A fake CommandContext.survival: a live survival state with spied methods. */
+function fakeSurvival(over = {}) {
+  const v = { health: 87.4, satiation: 64.2, hydration: 51, temp: 36.94, breath: 20, labels: [] };
+  const sv = {
+    mode: 'survival',
+    hasState: true,
+    v,
+    setMode: vi.fn((m) => ({ ok: true, message: `${m} (saved with this world)` })),
+    vitals: vi.fn(() => (sv.hasState ? { ...v } : null)),
+    setVital: vi.fn((name, value) => {
+      v[name] = value;
+      return true;
+    }),
+    restoreVitals: vi.fn(() => Object.assign(v, { health: 100, satiation: 100, hydration: 100, temp: 37, breath: 20 })),
+    packAdd: vi.fn(() => null),
+    packClear: vi.fn(),
+    packList: vi.fn(() => '1: 12 Rock\n2: Flint Pick (40/90)'),
+    ...over,
+  };
+  return sv;
+}
+
+/** A running script (for the console-only check): what the runner sets while a rune's command runs. */
+const RUNNING = { wave: 1, hops: 0 };
+
+describe('executeCommand — mode (console only)', () => {
+  it('without an argument prints the mode, with the vitals in Survival', () => {
+    const { ctx } = makeCtx({ survival: fakeSurvival() });
+    expect(exec(ctx, 'mode')).toEqual({ ok: true, message: 'mode: survival (Health 87 · Nourishment 64 · Hydration 51 · 36.9 °C)' });
+    ctx.survival.mode = 'creative';
+    expect(exec(ctx, 'mode')).toEqual({ ok: true, message: 'mode: creative' });
+    const noState = fakeSurvival({ vitals: () => null });
+    expect(exec(makeCtx({ survival: noState }).ctx, 'mode').message).toBe('mode: survival');
+    // a context without survival at all is a Creative world
+    expect(exec(makeCtx().ctx, 'mode')).toEqual({ ok: true, message: 'mode: creative' });
+  });
+
+  it('with an argument queues the switch through ctx.survival.setMode and relays its message', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'mode Creative')).toEqual({ ok: true, message: 'creative (saved with this world)' });
+    expect(sv.setMode).toHaveBeenCalledWith('creative');
+    sv.setMode = vi.fn(() => ({ ok: true, message: 'adding survival resources to this world: reloading…' }));
+    expect(exec(ctx, 'mode survival').message).toBe('adding survival resources to this world: reloading…');
+    sv.setMode = vi.fn(() => ({ ok: true, message: 'already creative' }));
+    expect(exec(ctx, 'mode creative')).toEqual({ ok: true, message: 'already creative' });
+    sv.setMode = vi.fn(() => ({ ok: true, message: '' }));
+    expect(exec(ctx, 'mode survival').message).toBe('survival (saved with this world)');
+    sv.setMode = vi.fn(() => ({ ok: false, message: 'not while dead' }));
+    expect(exec(ctx, 'mode creative')).toEqual({ ok: false, message: 'mode: not while dead — usage: mode [creative|survival]' });
+    expect(exec(makeCtx().ctx, 'mode survival')).toEqual({ ok: false, message: 'mode: survival is not available here — usage: mode [creative|survival]' });
+  });
+
+  it('is refused inside a rune script, before anything is touched', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv, running: RUNNING, rune: runeAt(0, 5, 0) });
+    expect(exec(ctx, 'mode survival')).toEqual({ ok: false, message: 'mode: mode is only valid in the console — usage: mode [creative|survival]' });
+    expect(exec(ctx, 'mode')).toEqual({ ok: false, message: 'mode: mode is only valid in the console — usage: mode [creative|survival]' });
+    expect(sv.setMode).not.toHaveBeenCalled();
+    // parse-time checks as for any command
+    expect(parseLine('mode hardcore')).toEqual({ line: 1, message: 'mode: expected one of creative, survival, got "hardcore" — usage: mode [creative|survival]' });
+    expect(parseLine('mode survival now')).toMatchObject({ message: expect.stringContaining('mode: expected [creative|survival] (got 2 args)') });
+  });
+});
+
+describe('executeCommand — vitals', () => {
+  it('fails without a survival state', () => {
+    const fail = { ok: false, message: 'vitals: no survival state in this world (try mode survival) — usage: vitals [full|health|nourishment|hydration|temp|breath] [value]' };
+    expect(exec(makeCtx().ctx, 'vitals')).toEqual(fail);
+    expect(exec(makeCtx({ survival: fakeSurvival({ hasState: false }) }).ctx, 'vitals health 5')).toEqual(fail);
+  });
+
+  it('prints every stat with the breath and the status labels, or one stat', () => {
+    const sv = fakeSurvival();
+    sv.v.labels = ['Hungry', 'Wet'];
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'vitals')).toEqual({ ok: true, message: 'Health 87 · Nourishment 64 · Hydration 51 · 36.9 °C · Breath 20 s · Hungry, Wet' });
+    expect(exec(ctx, 'vitals health').message).toBe('Health 87.4');
+    expect(exec(ctx, 'vitals NOURISHMENT').message).toBe('Nourishment 64.2');
+    expect(exec(ctx, 'vitals temp').message).toBe('Body temperature 36.9 °C');
+    expect(exec(ctx, 'vitals breath').message).toBe('Breath 20 s');
+  });
+
+  it('sets one stat (clamped to its range, ~ relative to the current value) through setVital with the internal key', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'vitals nourishment 30')).toEqual({ ok: true, message: 'Nourishment set to 30' });
+    expect(sv.setVital).toHaveBeenLastCalledWith('satiation', 30);
+    expect(exec(ctx, 'vitals health 150')).toEqual({ ok: true, message: 'Health set to 100 (clamped)' });
+    expect(exec(ctx, 'vitals health -5')).toEqual({ ok: true, message: 'Health set to 0 (clamped)' });
+    expect(sv.setVital).toHaveBeenLastCalledWith('health', 0); // main turns this into pendingDeath 'command'
+    expect(exec(ctx, 'vitals temp 50').message).toBe('Body temperature set to 45 °C (clamped)');
+    expect(exec(ctx, 'vitals temp 10').message).toBe('Body temperature set to 25 °C (clamped)');
+    expect(exec(ctx, 'vitals breath 25').message).toBe('Breath set to 20 s (clamped)');
+    expect(exec(ctx, 'vitals hydration 40').message).toBe('Hydration set to 40');
+    expect(exec(ctx, 'vitals hydration ~-15').message).toBe('Hydration set to 25');
+    expect(exec(ctx, 'vitals hydration ~').message).toBe('Hydration set to 25');
+    expect(exec(ctx, 'vitals temp 38.25').message).toBe('Body temperature set to 38.3 °C');
+    expect(sv.setVital).toHaveBeenLastCalledWith('temp', 38.25);
+    expect(exec(ctx, 'vitals health @5')).toEqual({ ok: false, message: 'vitals: value must be a number (~ is relative to the current value) — usage: vitals [full|health|nourishment|hydration|temp|breath] [value]' });
+    sv.setVital = vi.fn(() => false);
+    expect(exec(ctx, 'vitals health 50').message).toContain('no survival state in this world');
+  });
+
+  it('full restores everything; unknown stats and stray values are refused', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'vitals full')).toEqual({ ok: true, message: 'vitals restored: Health 100 · Nourishment 100 · Hydration 100 · 37.0 °C' });
+    expect(sv.restoreVitals).toHaveBeenCalledTimes(1);
+    expect(exec(ctx, 'vitals full 5').message).toBe('vitals: full takes no value — usage: vitals [full|health|nourishment|hydration|temp|breath] [value]');
+    expect(exec(ctx, 'vitals satiation 5').message).toBe('vitals: expected full, health, nourishment, hydration, temp, breath, got "satiation" — usage: vitals [full|health|nourishment|hydration|temp|breath] [value]');
+    expect(exec(ctx, 'vitals __proto__').ok).toBe(false);
+    expect(exec(ctx, 'vitals constructor 1').ok).toBe(false);
+    expect(parseLine('vitals health lots')).toMatchObject({ message: expect.stringContaining('expected a number for value') });
+    expect(sv.setVital).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeCommand — pack and items', () => {
+  const USAGE = 'usage: pack [list|add|clear] [item] [count]';
+
+  it('pack (list) prints the non-empty slots; an empty pack says so; no survival state fails', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'pack')).toEqual({ ok: true, message: '1: 12 Rock\n2: Flint Pick (40/90)' });
+    expect(exec(ctx, 'pack list').message).toBe('1: 12 Rock\n2: Flint Pick (40/90)');
+    sv.packList = vi.fn(() => '');
+    expect(exec(ctx, 'pack').message).toBe('the pack is empty');
+    expect(exec(ctx, 'pack list rock')).toEqual({ ok: false, message: `pack: list takes no item — ${USAGE}` });
+    expect(exec(makeCtx().ctx, 'pack')).toEqual({ ok: false, message: `pack: no survival state in this world (try mode survival) — ${USAGE}` });
+    expect(exec(makeCtx({ survival: fakeSurvival({ hasState: false }) }).ctx, 'pack add rock').ok).toBe(false);
+  });
+
+  it('pack add resolves item keys and display names, adds 1 by default, and reports what did not fit', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'pack add rock 12')).toEqual({ ok: true, message: 'added 12 Rock' });
+    expect(sv.packAdd).toHaveBeenLastCalledWith('rock', 12);
+    expect(exec(ctx, 'pack add Pot_of_Water')).toEqual({ ok: true, message: 'added 1 Pot of Water' });
+    expect(sv.packAdd).toHaveBeenLastCalledWith('pot_water', 1);
+    expect(exec(ctx, 'pack ADD wrought_iron_bar 3').message).toBe('added 3 Wrought Iron Bar');
+    // what did not fit: a count, an overflow stack, or a list of stacks
+    sv.packAdd = vi.fn(() => 3);
+    expect(exec(ctx, 'pack add rock 12')).toEqual({ ok: true, message: 'added 9 Rock (3 did not fit)' });
+    sv.packAdd = vi.fn(() => ({ k: 'rock', n: 5 }));
+    expect(exec(ctx, 'pack add rock 12').message).toBe('added 7 Rock (5 did not fit)');
+    sv.packAdd = vi.fn(() => [{ k: 'rock', n: 2 }, { k: 'rock', n: 2 }]);
+    expect(exec(ctx, 'pack add rock 12').message).toBe('added 8 Rock (4 did not fit)');
+    sv.packAdd = vi.fn(() => 12);
+    expect(exec(ctx, 'pack add rock 12')).toEqual({ ok: false, message: `pack: the pack is full (12 Rock did not fit) — ${USAGE}` });
+    sv.packAdd = vi.fn(() => 0);
+    expect(exec(ctx, 'pack add flint_pick').message).toBe('added 1 Flint Pick');
+  });
+
+  it('pack add relays a refusal from the game (§14.2: the handbook is never minted twice)', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    sv.packAdd = vi.fn(() => ({ n: 1, refused: 'the pack already has a handbook' }));
+    expect(exec(ctx, 'pack add handbook')).toEqual({ ok: false, message: `pack: the pack already has a handbook — ${USAGE}` });
+    sv.packAdd = vi.fn(() => ({ n: 2, refused: 'one handbook is enough' }));
+    expect(exec(ctx, 'pack add handbook 2').message).toBe(`pack: one handbook is enough — ${USAGE}`);
+    // a refusal that let some through is still a refusal (nothing is reported as added)
+    sv.packAdd = vi.fn(() => ({ n: 0, refused: 'no' }));
+    expect(exec(ctx, 'pack add handbook').ok).toBe(false);
+  });
+
+  it('pack add refuses unknown items, a missing item and counts outside 1–9999', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'pack add nope')).toEqual({ ok: false, message: `pack: unknown item "nope" (type items to list them) — ${USAGE}` });
+    expect(exec(ctx, 'pack add')).toEqual({ ok: false, message: `pack: expected an item name (type items to list them) — ${USAGE}` });
+    expect(exec(ctx, 'pack add rock 0').message).toBe(`pack: count must be 1–9999 — ${USAGE}`);
+    expect(exec(ctx, 'pack add rock 10000').ok).toBe(false);
+    expect(exec(ctx, 'pack add rock -3').ok).toBe(false);
+    expect(parseLine('pack add rock 2.5')).toMatchObject({ message: expect.stringContaining('must be a plain integer') });
+    expect(parseLine('pack give rock')).toMatchObject({ message: expect.stringContaining('expected one of list, add, clear') });
+    expect(sv.packAdd).not.toHaveBeenCalled();
+  });
+
+  it('pack clear empties the pack and what you wear', () => {
+    const sv = fakeSurvival();
+    const { ctx } = makeCtx({ survival: sv });
+    expect(exec(ctx, 'pack clear')).toEqual({ ok: true, message: 'emptied the pack and what you wear' });
+    expect(sv.packClear).toHaveBeenCalledTimes(1);
+    expect(exec(ctx, 'pack clear rock').ok).toBe(false);
+    expect(sv.packClear).toHaveBeenCalledTimes(1);
+  });
+
+  it('items lists every item key, 8 per line, or those containing a filter', () => {
+    const { ctx } = makeCtx();
+    const all = exec(ctx, 'items');
+    expect(all.ok).toBe(true);
+    const lines = all.message.split('\n');
+    expect(lines[0]).toBe(`${ITEM_KEYS.length} items:`);
+    const keys = lines.slice(1).flatMap((l) => l.split(', '));
+    expect(keys).toEqual([...ITEM_KEYS]);
+    for (const l of lines.slice(1, -1)) expect(l.split(', ')).toHaveLength(8);
+    const pots = exec(ctx, 'items POT').message.split('\n');
+    expect(pots[0]).toMatch(/^\d+ items matching "pot":$/);
+    for (const k of pots.slice(1).flatMap((l) => l.split(', '))) expect(k).toContain('pot');
+    expect(exec(ctx, 'items wrought').message).toBe('1 item matching "wrought":\nwrought_iron');
+    expect(exec(ctx, 'items zzz')).toEqual({ ok: true, message: 'no items match "zzz"' });
+  });
+});
+
+describe('executeCommand — Creative-only commands in Survival', () => {
+  it('fly fails in Survival with "not in Survival"; it still works in Creative', () => {
+    const { ctx, player } = makeCtx({ survival: fakeSurvival() });
+    expect(exec(ctx, 'fly on')).toEqual({ ok: false, message: 'fly: not in Survival — usage: fly on|off|toggle' });
+    expect(player.flying).toBe(false);
+    expect(ctx.setFlying).not.toHaveBeenCalled();
+    ctx.survival.mode = 'creative';
+    expect(exec(ctx, 'fly on')).toEqual({ ok: true, message: 'flying' });
+  });
+
+  it('give fails in Survival and points at pack add; it still works in Creative', () => {
+    const { ctx } = makeCtx({ survival: fakeSurvival() });
+    expect(exec(ctx, 'give stone')).toEqual({ ok: false, message: 'give: in Survival use: pack add <item> [count] — usage: give <block> [slot 1-9]' });
+    expect(ctx.setHotbarSlot).not.toHaveBeenCalled();
+    ctx.survival.mode = 'creative';
+    expect(exec(ctx, 'give stone').ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Circuits and black holes (docs/DESIGN-circuits.md §6.5), against fake ctx.circuits / ctx.blackHoles.
+
+/** A fake ctx.circuits: every method a spy with a scripted answer. */
+function fakeCircuits(over = {}) {
+  const c = {
+    enabled: true,
+    setEnabled: vi.fn((on) => {
+      const changed = c.enabled !== on;
+      c.enabled = on;
+      return changed;
+    }),
+    ignite: vi.fn(() => ({ ok: true, message: 'lit' })),
+    switchAt: vi.fn(() => ({ ok: true, message: 'knife switch at (0, 11, 1): closed' })),
+    timerAt: vi.fn(() => ({ ok: true, message: 'timer at (0, 11, 1): 5 s pulse, idle' })),
+    radio: vi.fn(() => ({ ok: true, message: 'sent on 400 m: 2 receivers in range' })),
+    probe: vi.fn(() => null),
+    stats: vi.fn(() => ({ parts: 214, networks: 12, burning: 3, timers: 2 })),
+    ...over,
+  };
+  return c;
+}
+
+/** A fake ctx.blackHoles. */
+function fakeBlackHoles() {
+  const bh = {
+    enabled: true,
+    setEnabled: vi.fn((on) => {
+      bh.enabled = on;
+    }),
+    status: vi.fn(() => 'black holes on · 3 active (1 forming), 0 inert'),
+    list: vi.fn(() => ['hole at 4 70 -2 · vortex · 12 away']),
+  };
+  return bh;
+}
+
+describe('executeCommand — circuits and black holes (DESIGN-circuits §6.5)', () => {
+  it('the table gains switch, timer, radio, volts, circuits and blackholes; none is console- or script-only', () => {
+    const names = COMMANDS.map((c) => c.name);
+    for (const n of ['switch', 'timer', 'radio', 'volts', 'circuits', 'blackholes', 'ignite']) {
+      expect(names).toContain(n);
+      const spec = COMMANDS.find((c) => c.name === n);
+      expect(spec.consoleOnly).toBeUndefined();
+      expect(spec.scriptOnly).toBeUndefined();
+      expect(spec.usage.startsWith(n)).toBe(true);
+    }
+    expect(COMMANDS.find((c) => c.name === 'ignite').summary).toBe('light the powder keg, powder fuse or collapsar charge in that cell');
+    expect(exec(makeCtx().ctx, 'help').message).toContain('radio <channel>');
+  });
+
+  it('ignite lights a keg, fuse or charge through ctx.circuits, else falls back to explosions, else fails', () => {
+    const circuits = fakeCircuits();
+    const { ctx } = makeCtx({ circuits });
+    expect(exec(ctx, 'ignite ~ ~ ~1')).toEqual({ ok: true, message: 'lit' });
+    expect(circuits.ignite).toHaveBeenCalledWith(0, FEET, 1);
+    circuits.ignite.mockReturnValue({ ok: false, message: 'there is nothing to light at (0, 11, 0) — a powder keg, powder fuse or collapsar charge' });
+    expect(exec(ctx, 'ignite 0 11 0')).toEqual({
+      ok: false, message: 'ignite: there is nothing to light at (0, 11, 0) — a powder keg, powder fuse or collapsar charge — usage: ignite q y r',
+    });
+    expect(exec(ctx, 'ignite 9000 11 9000').message).toContain('is not loaded');
+    expect(exec(ctx, 'ignite 0 500 0').message).toContain(`y must be 0..${WORLD_HEIGHT - 1}`);
+    // The fallback: a real keg lit through the physics' explosions (3 s, in place).
+    const made = makeCtx();
+    const physics = new BlockPhysics(made.world);
+    made.world.onBlockChange = (q, y, r, p, n) => physics.onBlockChange(q, y, r, p, n);
+    made.ctx.physics = physics;
+    made.world.setBlock(2, FEET, 2, B.POWDER_KEG);
+    expect(exec(made.ctx, `ignite 2 ${FEET} 2`)).toEqual({ ok: true, message: `lit the powder keg at (2, ${FEET}, 2) — 3 s fuse` });
+    expect(physics.explosions.isBurning(2, FEET, 2)).toBe(true);
+    expect(exec(made.ctx, `ignite 2 ${FEET} 2`).message).toContain(`the keg at (2, ${FEET}, 2) is already burning`);
+    expect(exec(made.ctx, `ignite 3 ${FEET} 3`).message).toContain(`there is no powder keg at (3, ${FEET}, 3)`);
+    expect(exec(makeCtx().ctx, 'ignite 0 11 0').message).toContain('block physics is not available here');
+  });
+
+  it('switch: toggle by default, on / off / press passed through; refusals; unloaded; no circuits', () => {
+    const circuits = fakeCircuits();
+    const { ctx } = makeCtx({ circuits });
+    expect(exec(ctx, 'switch 0 11 1')).toEqual({ ok: true, message: 'knife switch at (0, 11, 1): closed' });
+    expect(circuits.switchAt).toHaveBeenLastCalledWith(0, 11, 1, 'toggle');
+    for (const m of ['on', 'off', 'press', 'toggle', 'ON']) {
+      exec(ctx, `switch ~ ~ ~ ${m}`);
+      expect(circuits.switchAt).toHaveBeenLastCalledWith(0, FEET, 0, m.toLowerCase());
+    }
+    expect(parseLine('switch 0 11 1 flip').message).toContain('expected one of on, off, toggle, press');
+    circuits.switchAt.mockReturnValue({ ok: false, message: 'there is no switch or button at (0, 11, 1)' });
+    expect(exec(ctx, 'switch 0 11 1')).toEqual({ ok: false, message: 'switch: there is no switch or button at (0, 11, 1) — usage: switch q y r [on|off|toggle|press]' });
+    expect(exec(ctx, 'switch 9000 11 9000').message).toContain('is not loaded');
+    expect(exec(makeCtx().ctx, 'switch 0 11 1')).toEqual({ ok: false, message: 'switch: circuits are not available here — usage: switch q y r [on|off|toggle|press]' });
+  });
+
+  it('timer: status with 3 args, start / stop, a delay in seconds, a mode (alone or after the delay); bad words fail', () => {
+    const circuits = fakeCircuits();
+    const { ctx } = makeCtx({ circuits });
+    expect(exec(ctx, 'timer 0 11 1')).toEqual({ ok: true, message: 'timer at (0, 11, 1): 5 s pulse, idle' });
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, undefined, undefined);
+    exec(ctx, 'timer 0 11 1 start');
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, 'start', undefined);
+    exec(ctx, 'timer 0 11 1 STOP');
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, 'stop', undefined);
+    exec(ctx, 'timer 0 11 1 30');
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, 30, undefined);
+    exec(ctx, 'timer 0 11 1 0.5 repeat');
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, 0.5, 'repeat');
+    exec(ctx, 'timer 0 11 1 hold');
+    expect(circuits.timerAt).toHaveBeenLastCalledWith(0, 11, 1, undefined, 'hold');
+    expect(exec(ctx, 'timer 0 11 1 soon')).toEqual({ ok: false, message: 'timer: expected start, stop or a delay in seconds, got "soon" — usage: timer q y r [start|stop|<seconds>] [pulse|hold|repeat]' });
+    expect(exec(ctx, 'timer 0 11 1 -5').ok).toBe(false);
+    expect(parseLine('timer 0 11 1 5 latch').message).toContain('expected one of pulse, hold, repeat');
+    expect(parseLine('timer 0 11').message).toContain('timer: expected q y r');
+  });
+
+  it('radio 3 and radio 400m send from the player (from the rune\'s cell in a script); bad channels fail', () => {
+    const circuits = fakeCircuits();
+    const { ctx, player } = makeCtx({ circuits });
+    expect(exec(ctx, 'radio 3')).toEqual({ ok: true, message: 'sent on 400 m: 2 receivers in range' });
+    expect(circuits.radio).toHaveBeenLastCalledWith(3, player.x, player.y + 1, player.z);
+    exec(ctx, 'radio 400m');
+    expect(circuits.radio).toHaveBeenLastCalledWith(3, player.x, player.y + 1, player.z);
+    exec(ctx, 'radio 1050M');
+    expect(circuits.radio).toHaveBeenLastCalledWith(16, player.x, player.y + 1, player.z);
+    ctx.rune = runeAt(5, 20, -3);
+    exec(ctx, 'radio 7');
+    const [x, z] = hexToWorld(5, -3);
+    expect(circuits.radio).toHaveBeenLastCalledWith(7, x, 20.5, z);
+    for (const bad of ['0', '17', '325m', 'loud', '1100m']) {
+      expect(exec(ctx, `radio ${bad}`)).toEqual({ ok: false, message: `radio: expected a channel 1–16 or a wavelength 300m–1050m, got "${bad}" — usage: radio <channel>` });
+    }
+    circuits.radio.mockReturnValue({ ok: false, message: 'circuits are off — turn them on with `circuits on`' });
+    expect(exec(ctx, 'radio 1').message).toContain('circuits are off');
+    expect(exec(makeCtx().ctx, 'radio 1').message).toContain('circuits are not available here');
+  });
+
+  it('volts: the multimeter line, with earth, the network and a diagnostic; a non-part says so', () => {
+    const circuits = fakeCircuits();
+    const { ctx } = makeCtx({ circuits });
+    expect(exec(ctx, 'volts 0 11 1')).toEqual({ ok: false, message: 'volts: (0, 11, 1) is not part of a circuit — usage: volts q y r' });
+    circuits.probe.mockReturnValue({
+      volts: 5.4375, amps: 2, earthed: true, earthReason: '', state: 'lit', diag: null,
+      net: { cells: 31, sources: 1, loads: 2, partial: false, truncated: false },
+    });
+    expect(exec(ctx, 'volts 0 11 1')).toEqual({ ok: true, message: '5.4375 V · earthed · network: 31 cells, 1 source, 2 loads, 2 A' });
+    circuits.probe.mockReturnValue({
+      volts: 0, amps: 1, earthed: false, earthReason: 'not earthed: wood does not conduct — run an Earth Wire down to the ground',
+      state: 'dark', diag: 'no-wire', net: null,
+    });
+    expect(exec(ctx, 'volts 0 11 1').message).toBe('0 V · not earthed: wood does not conduct — run an Earth Wire down to the ground · no wire: join it to the battery with a wire');
+    circuits.probe.mockReturnValue({
+      volts: 6, amps: 0, earthed: null, earthReason: '', state: 'open', diag: 'bypassed',
+      net: { cells: 1, sources: 1, loads: 1, partial: true, truncated: true },
+    });
+    expect(exec(ctx, 'volts 0 11 1').message).toBe('6 V · network: 1 cell, 1 source, 1 load, 0 A (reaches an unloaded chunk: frozen) (truncated) · bypassed: the wires on either side touch');
+    expect(exec(ctx, 'volts 9000 11 9000').message).toContain('is not loaded');
+  });
+
+  it('circuits: status, on and off (saved), already', () => {
+    const circuits = fakeCircuits();
+    const { ctx } = makeCtx({ circuits });
+    expect(exec(ctx, 'circuits')).toEqual({ ok: true, message: 'circuits on · 214 parts, 12 networks, 3 fuses burning, 2 timers running' });
+    expect(exec(ctx, 'circuits status').message).toBe('circuits on · 214 parts, 12 networks, 3 fuses burning, 2 timers running');
+    expect(exec(ctx, 'circuits on')).toEqual({ ok: true, message: 'circuits are already on' });
+    expect(exec(ctx, 'circuits off')).toEqual({ ok: true, message: 'circuits off (saved with this world)' });
+    expect(circuits.enabled).toBe(false);
+    circuits.stats.mockReturnValue({ parts: 1, networks: 1, burning: 1, timers: 1 });
+    expect(exec(ctx, 'circuits').message).toBe('circuits off · 1 part, 1 network, 1 fuse burning, 1 timer running');
+    expect(exec(ctx, 'circuits on').message).toBe('circuits on (saved with this world)');
+    expect(exec(makeCtx().ctx, 'circuits').message).toContain('circuits are not available here');
+  });
+
+  it('blackholes: status, list (the nearest to the player), on and off (saved), already', () => {
+    const blackHoles = fakeBlackHoles();
+    const { ctx, player } = makeCtx({ blackHoles });
+    expect(exec(ctx, 'blackholes')).toEqual({ ok: true, message: 'black holes on · 3 active (1 forming), 0 inert' });
+    expect(exec(ctx, 'blackholes list')).toEqual({ ok: true, message: 'hole at 4 70 -2 · vortex · 12 away' });
+    expect(blackHoles.list).toHaveBeenCalledWith(player.x, player.y, player.z);
+    blackHoles.list.mockReturnValue([]);
+    expect(exec(ctx, 'blackholes list').message).toBe('no black holes');
+    expect(exec(ctx, 'blackholes on').message).toBe('black holes are already on');
+    expect(exec(ctx, 'blackholes off')).toEqual({ ok: true, message: 'black holes off (saved with this world)' });
+    expect(blackHoles.setEnabled).toHaveBeenCalledWith(false);
+    expect(exec(ctx, 'blackholes off').message).toBe('black holes are already off');
+    expect(exec(ctx, 'blackholes on').message).toBe('black holes on (saved with this world)');
+    expect(exec(makeCtx().ctx, 'blackholes').message).toContain('black holes are not available here');
+  });
+
+  it('give black_hole explains; the blast_barrel alias (and its display form) still names the powder keg', () => {
+    const { ctx, world } = makeCtx();
+    expect(exec(ctx, 'give black_hole')).toEqual({ ok: false, message: 'give: a black hole cannot be held — give collapsar_charge and set it off — usage: give <block> [slot 1-9]' });
+    expect(exec(ctx, 'give collapsar_charge').message).toBe('gave collapsar_charge to slot 1');
+    expect(resolveBlock('blast_barrel')).toEqual({ id: B.POWDER_KEG });
+    expect(resolveBlock('BLAST_BARREL')).toEqual({ id: B.POWDER_KEG });
+    expect(resolveBlock('blast barrel')).toEqual({ id: B.POWDER_KEG });
+    expect(resolveBlock('powder_keg')).toEqual({ id: B.POWDER_KEG });
+    expect(resolveBlock('Powder_Keg')).toEqual({ id: B.POWDER_KEG });
+    expect(resolveBlock('torch')).toEqual({ id: B.TORCH });
+    expect(resolveBlock('black_hole')).toEqual({ id: B.BLACK_HOLE }); // setblock still makes an instant vortex
+    expect(exec(ctx, `setblock 3 ${FEET} 3 blast_barrel`)).toEqual({ ok: true, message: `set powder_keg at (3, ${FEET}, 3)` });
+    expect(world.getBlock(3, FEET, 3)).toBe(B.POWDER_KEG);
+    expect(exec(ctx, 'blocks').message).not.toContain('black_hole');
+    expect(exec(ctx, 'blocks').message).toContain('collapsar_charge');
   });
 });

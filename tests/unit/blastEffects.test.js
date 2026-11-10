@@ -128,7 +128,7 @@ describe('one fizzle per merged group, after the boom (EXP-5)', () => {
     const { world, physics, fx, ex } = setup();
     physics.setSwitch('water', false); // the water stays exactly where it is put
     for (let i = 0; i < MAX_LIT_BARRELS; i++) world.setBlock(40 + 2 * i, GROUND + 1, 40, B.BLAST_BARREL);
-    for (let i = 0; i < MAX_LIT_BARRELS; i++) ex.ignite(40 + 2 * i, GROUND + 1, 40);
+    for (let i = 0; i < MAX_LIT_BARRELS; i++) ex.lightAt(40 + 2 * i, GROUND + 1, 40); // entities (ignite now burns in place)
     for (const rec of ex.lit) rec.fuse = 1e9; // every entity slot taken: the rest burn as fuse timers in place
     const wet = [];
     for (let q = 0; q <= 6; q++) wet.push([q, GROUND + 1, 4]);

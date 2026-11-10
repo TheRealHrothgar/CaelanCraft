@@ -253,6 +253,8 @@ function separatePair(bodies, i, j, getBlock) {
  * `upper` stands on `lower`: grounded, never falling faster than it, and carried by it next frame. A RISING carrier
  * does not hand its upward speed to the rider: the carry already lifts the rider by the carrier's displacement, and
  * adding the speed too would launch it (riders floated 0.13 above a jumping carrier and were dropped).
+ * v0.9: when the clamp cuts `upper.vy`, its speed before (−vy) is recorded in `upper.landSpeed` (the larger one wins),
+ * so landing on a mob hurts like landing on the ground (DESIGN-survival §2.4, §9.3).
  * A rider's horizontal velocity is relative to its carrier (step 1 carries it, step 3 hands the carrier's back when it
  * leaves), so a NEW ride — `lower` is not the carrier it had at the start of the frame (`was`) — turns it from over
  * the ground into relative to `lower`, the mirror of step 3. Landing on a moving body (or being caught by one in
@@ -275,7 +277,12 @@ function standOn(upper, lower, was) {
   }
   upper.onGround = true;
   const floor = Math.min(lower.vy, 0);
-  if (upper.vy < floor) upper.vy = floor;
+  if (upper.vy < floor) {
+    // v0.9 (DESIGN-survival §9.3): landing on a body counts as a landing (fall damage reads landSpeed).
+    const impact = -upper.vy;
+    if (impact > (upper.landSpeed || 0)) upper.landSpeed = impact;
+    upper.vy = floor;
+  }
   upper.carrier = lower;
   upper.carrierAt = [lower.x, lower.y, lower.z];
 }

@@ -1,7 +1,13 @@
 // Unit tests for src/tiles.js — CONTRACTS.md §15 and docs/SPEC-gameplay.md §2.2–§2.5.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { TILE, TILE_IDS } from '../../src/blocks.js';
 import { TILE_NAMES, paintTile, averageColor, createTilePainters } from '../../src/tiles.js';
+import { CIRCUIT_TILE_NAMES, CIRCUIT_RECIPES } from '../../src/circuitTiles.js';
+
+/** The circuit tiles (DESIGN-circuits §1.4): their alpha rules are circuitTiles.test.js's, so the generic ones skip them. */
+const CIRCUIT_IDS = Object.keys(CIRCUIT_TILE_NAMES).map(Number);
 
 const W = 16;
 const H = 16;
@@ -16,6 +22,11 @@ function idx(x, y) {
 function rgba(px, x, y) {
   const i = idx(x, y);
   return [px[i], px[i + 1], px[i + 2], px[i + 3]];
+}
+
+/** @returns {boolean} pixel (x, y) has alpha 255 */
+function opaque(px, x, y) {
+  return px[idx(x, y) + 3] === 255;
 }
 
 function sameBytes(a, b) {
@@ -33,6 +44,13 @@ function countRgbDiff(a, b) {
   return n;
 }
 
+/** v0.9 survival tiles whose empty space is alpha 0 (DESIGN-survival §8.2); every other survival tile is alpha 255. */
+const SURVIVAL_CUTOUT = [
+  TILE.HONEYBERRY_BUSH, TILE.HONEYBERRY_BUSH_BARE, TILE.TUSSOCK, TILE.CATTAILS_SIDE, TILE.CATTAILS_TOP, TILE.TUBER_PLANT,
+  TILE.PRICKLY_PEAR, TILE.PRICKLY_PEAR_BARE, TILE.REMAINS_SIDE, TILE.REMAINS_TOP, TILE.LOOSE_STONES, TILE.FALLEN_BRANCHES,
+  TILE.FIRE_PIT_SIDE,
+];
+
 /** Assert every pixel satisfies `pred(r, g, b, a, x, y)`. */
 function everyPixel(px, pred, rows = null) {
   for (let y = 0; y < H; y++) {
@@ -48,10 +66,15 @@ function everyPixel(px, pred, rows = null) {
 }
 
 describe('TILE_NAMES', () => {
-  it('lists all 77 tiles plus 255 missing, matching blocks.js TILE keys in lower_snake', () => {
+  it('lists all 140 block tiles plus the mob tiles and 255 missing, matching blocks.js TILE keys in lower_snake', () => {
     const keys = Object.keys(TILE_NAMES).map(Number).sort((a, b) => a - b);
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
-    expect(keys.length).toBe(87); // v0.8: + barrel_side 75, barrel_top 76; zombies (§39): + 240–245; the Watcher (§40): + 250–252 (stone, crack glow, smoke)
+    // v0.8: + barrel_side 75, barrel_top 76; zombies (§39): + 240–245; the Watcher (§40): + 250–252 (stone, crack glow, smoke);
+    // v0.9 survival: + 77–104 (DESIGN-survival §8.1); powder and circuits: + 160–194 (DESIGN-circuits §1.4)
+    expect(keys.length).toBe(150);
+    expect(TILE_NAMES[TILE.COPPER_ORE]).toBe('copper_ore');
+    expect(TILE_NAMES[TILE.PLANT_TOP_CLEAR]).toBe('plant_top_clear');
+    expect(TILE_NAMES[TILE.FIRE_PIT_SIDE]).toBe('fire_pit_side');
     expect(TILE_NAMES[TILE.RUNE]).toBe('rune');
     expect(TILE.RUNE).toBe(27);
     for (const [key, id] of Object.entries(TILE)) {
@@ -90,13 +113,17 @@ describe('paintTile — shape and determinism', () => {
     const again = paintTile(TILE.STONE);
     expect(sameBytes(first, again)).toBe(true);
   });
-  it('every tile differs from every other tile', () => {
+  it('every tile differs from every other tile (two wholly transparent tiles may be the same nothing)', () => {
     const all = TILE_IDS.map((t) => [t, paintTile(t)]);
+    const clear = (px) => px.every((v) => v === 0);
     for (let i = 0; i < all.length; i++) {
       for (let j = i + 1; j < all.length; j++) {
+        // plant_top_clear and circuit_clear (DESIGN-circuits §1.4) are both RGBA 0 everywhere, by design.
+        if (clear(all[i][1]) && clear(all[j][1])) continue;
         expect(sameBytes(all[i][1], all[j][1]), `tiles ${all[i][0]} and ${all[j][0]} are identical`).toBe(false);
       }
     }
+    expect(all.filter(([, px]) => clear(px)).map(([t]) => t)).toEqual([TILE.PLANT_TOP_CLEAR, TILE.CIRCUIT_CLEAR]);
   });
 });
 
@@ -150,9 +177,17 @@ describe('paintTile — alpha rules', () => {
     const ice = paintTile(TILE.ICE);
     for (let i = 3; i < BYTES; i += 4) expect(ice[i]).toBe(200);
   });
+  it('plant_top_clear (v0.9) is alpha 0 on every pixel, RGB 0, and averages to black', () => {
+    const px = paintTile(TILE.PLANT_TOP_CLEAR);
+    everyPixel(px, (r, g, b, a) => r === 0 && g === 0 && b === 0 && a === 0);
+    expect(averageColor(TILE.PLANT_TOP_CLEAR)).toEqual([0, 0, 0]);
+  });
   it('every other tile is alpha 255 everywhere', () => {
     const special = new Set([
       TILE.WATER, TILE.GLASS, TILE.OAK_LEAVES, TILE.SPRUCE_LEAVES, TILE.BIRCH_LEAVES, TILE.ICE, TILE.CAMPFIRE_SIDE, TILE.CAMPFIRE_TOP,
+      TILE.PLANT_TOP_CLEAR, // v0.9: all alpha 0 (the test above)
+      ...SURVIVAL_CUTOUT, // v0.9: plants, litter, the fire pit and Your Belongings (DESIGN-survival §8.2; tested below)
+      ...CIRCUIT_IDS, // DESIGN-circuits §6.2.9: circuit_clear and the flat pictures are alpha 0 by design (tested below)
     ]);
     for (const t of TILE_IDS) {
       if (special.has(t)) continue;
@@ -174,7 +209,7 @@ describe('paintTile — recipe details', () => {
   });
   it('unknown tile ids paint the missing checker', () => {
     const missing = paintTile(TILE.MISSING);
-    for (const bad of [77, 100, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) {
+    for (const bad of [105, 159, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) { // 77–104 are tiles since v0.9
       // @ts-ignore — deliberately passing garbage
       expect(sameBytes(paintTile(bad), missing), `tile ${String(bad)}`).toBe(true);
     }
@@ -440,6 +475,11 @@ describe('averageColor', () => {
         }
       }
       const got = averageColor(t);
+      if (n === 0) {
+        // No pixel qualifies (plant_top_clear): the documented [0, 0, 0].
+        expect(got, TILE_NAMES[t]).toEqual([0, 0, 0]);
+        continue;
+      }
       expect(Math.abs(got[0] - r / n), TILE_NAMES[t]).toBeLessThanOrEqual(0.5);
       expect(Math.abs(got[1] - g / n), TILE_NAMES[t]).toBeLessThanOrEqual(0.5);
       expect(Math.abs(got[2] - b / n), TILE_NAMES[t]).toBeLessThanOrEqual(0.5);
@@ -451,8 +491,8 @@ describe('averageColor', () => {
   });
 });
 
-describe('blast barrel tiles (v0.8)', () => {
-  it('side: wooden staves, dark iron bands and a red hazard hexagon; top: a lid with a burning fuse tip; alpha 255', () => {
+describe('powder keg tiles (v0.8; repainted by DESIGN-circuits §3.5, whose art circuitTiles.test.js covers in full)', () => {
+  it('side: wooden staves, copper hoops and a burnt-in brand; top: a lid with an unlit bung; alpha 255', () => {
     const side = paintTile(TILE.BARREL_SIDE);
     const top = paintTile(TILE.BARREL_TOP);
     const px = (t, x, y) => [t[(y * 16 + x) * 4], t[(y * 16 + x) * 4 + 1], t[(y * 16 + x) * 4 + 2], t[(y * 16 + x) * 4 + 3]];
@@ -460,19 +500,354 @@ describe('blast barrel tiles (v0.8)', () => {
       expect(side[i]).toBe(255);
       expect(top[i]).toBe(255);
     }
-    const [r, g, b] = px(side, 8, 8); // inside the hexagon
-    expect(r).toBeGreaterThan(150);
-    expect(g).toBeLessThan(80);
-    expect(b).toBeLessThan(80);
-    const band = px(side, 5, 2); // iron band: grey
-    expect(Math.abs(band[0] - band[2])).toBeLessThan(20);
-    expect(band[0]).toBeLessThan(110);
+    const [r, g, b] = px(side, 8, 4); // the brand's outline: burnt dark, not a red hazard sign
+    expect(r + g + b).toBeLessThan(200);
+    const band = px(side, 5, 2); // copper hoop, not iron grey
+    expect(band[0]).toBeGreaterThan(band[2] + 60);
     const stave = px(side, 1, 6); // wood: brown
     expect(stave[0]).toBeGreaterThan(stave[2] + 30);
-    const tip = px(top, 11, 4); // the fuse tip glows
-    expect(tip[0]).toBeGreaterThan(220);
-    expect(tip[1]).toBeGreaterThan(160);
+    const tip = px(top, 11, 4); // no burning fuse tip on the lid any more
+    expect(tip[0] > 220 && tip[1] > 160).toBe(false);
     expect(averageColor(TILE.BARREL_SIDE)[0]).toBeGreaterThan(averageColor(TILE.BARREL_SIDE)[2]);
+  });
+});
+
+describe('circuit tiles (DESIGN-circuits §1.4, §3.5, §6.2.9; painted by circuitTiles.js)', () => {
+  // The flat pictures: the six thin parts' top tiles and, since the "fun and simple" redo, every device's *_top tile.
+  const FLAT = [
+    TILE.POWDER_FUSE, TILE.TORCH, TILE.COPPER_WIRE, TILE.BROWN_WIRE, TILE.WHITE_WIRE, TILE.EARTH_WIRE, TILE.COLLAPSAR_TOP,
+    TILE.TERMINAL_TOP, TILE.BATTERY_TOP, TILE.BLASTER_TOP, TILE.SELENIUM_TOP, TILE.SWITCH_TOP, TILE.BUTTON_TOP,
+    TILE.TIMER_TOP, TILE.RELAY_TOP, TILE.IGNITER_TOP, TILE.LAMP_TOP, TILE.BELL_TOP, TILE.TX_TOP, TILE.RX_TOP,
+  ];
+
+  it('CIRCUIT_TILE_NAMES is exactly 160–194, spread into TILE_NAMES under the blocks.js TILE names', () => {
+    expect(Object.isFrozen(CIRCUIT_TILE_NAMES)).toBe(true);
+    expect(CIRCUIT_IDS).toEqual(Array.from({ length: 35 }, (_, i) => 160 + i));
+    const tileKeyOf = new Map(Object.entries(TILE).map(([key, id]) => [id, key]));
+    for (const id of CIRCUIT_IDS) {
+      expect(TILE_NAMES[id], `tile ${id}`).toBe(CIRCUIT_TILE_NAMES[id]);
+      expect(CIRCUIT_TILE_NAMES[id]).toBe(tileKeyOf.get(id).toLowerCase());
+    }
+    // The keg keeps its tile ids and names in tiles.js; only its painters moved.
+    expect([TILE_NAMES[75], TILE_NAMES[76]]).toEqual(['barrel_side', 'barrel_top']);
+    expect(Object.hasOwn(CIRCUIT_TILE_NAMES, 75) || Object.hasOwn(CIRCUIT_TILE_NAMES, 76)).toBe(false);
+  });
+
+  it('CIRCUIT_RECIPES holds exactly the circuit tile names plus barrel_side and barrel_top; circuitTiles.js imports nothing', () => {
+    expect(Object.isFrozen(CIRCUIT_RECIPES)).toBe(true);
+    expect(Object.keys(CIRCUIT_RECIPES).sort()).toEqual([...Object.values(CIRCUIT_TILE_NAMES), 'barrel_side', 'barrel_top'].sort());
+    for (const fn of Object.values(CIRCUIT_RECIPES)) expect(typeof fn).toBe('function');
+    const src = readFileSync(fileURLToPath(new URL('../../src/circuitTiles.js', import.meta.url)), 'utf8');
+    expect(src).not.toMatch(/^\s*import\b/m);
+    expect(src).not.toMatch(/Math\.random\(|Date\.now\(|performance\.now\(|document\.|window\./);
+  });
+
+  it('every circuit tile paints deterministically, is not the missing checker, and the keg tiles still paint', () => {
+    const missing = paintTile(TILE.MISSING);
+    for (const t of [...CIRCUIT_IDS, TILE.BARREL_SIDE, TILE.BARREL_TOP]) {
+      const px = paintTile(t);
+      expect(px.length, TILE_NAMES[t]).toBe(BYTES);
+      expect(sameBytes(px, paintTile(t)), TILE_NAMES[t]).toBe(true);
+      expect(sameBytes(px, missing), TILE_NAMES[t]).toBe(false);
+    }
+  });
+
+  it('circuit_clear is RGBA 0 everywhere; the flat pictures have an alpha-0 background (corners) and ≥ 40 opaque pixels', () => {
+    everyPixel(paintTile(TILE.CIRCUIT_CLEAR), (r, g, b, a) => a === 0);
+    for (const t of FLAT) {
+      const px = paintTile(t);
+      for (const [x, y] of [[0, 0], [15, 0], [0, 15], [15, 15]]) expect(px[idx(x, y) + 3], `${TILE_NAMES[t]} (${x},${y})`).toBe(0);
+      let opaqueCount = 0;
+      for (let i = 3; i < BYTES; i += 4) {
+        expect(px[i] === 0 || px[i] === 255, `${TILE_NAMES[t]} alpha ${px[i]}`).toBe(true);
+        if (px[i] === 255) opaqueCount++;
+      }
+      expect(opaqueCount, TILE_NAMES[t]).toBeGreaterThanOrEqual(40);
+    }
+  });
+
+  it('the 14 device swatches (their *_side tiles) and both keg tiles are alpha 255 everywhere', () => {
+    const swatches = CIRCUIT_IDS.filter((t) => t !== TILE.CIRCUIT_CLEAR && !FLAT.includes(t));
+    expect(swatches).toHaveLength(14);
+    for (const t of swatches) expect(TILE_NAMES[t]).toMatch(/_side$/);
+    for (const t of [...swatches, TILE.BARREL_SIDE, TILE.BARREL_TOP]) {
+      const px = paintTile(t);
+      for (let i = 3; i < BYTES; i += 4) expect(px[i], `${TILE_NAMES[t]} byte ${i}`).toBe(255);
+    }
+  });
+
+  it('no circuit or collapsar tile has an opaque violet pixel (hue 250°–300° at saturation above 0.15)', () => {
+    for (const t of CIRCUIT_IDS) {
+      const px = paintTile(t);
+      for (let i = 0; i < BYTES; i += 4) {
+        if (px[i + 3] === 0) continue;
+        const r = px[i] / 255;
+        const g = px[i + 1] / 255;
+        const b = px[i + 2] / 255;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const sat = max === 0 ? 0 : (max - min) / max;
+        if (sat <= 0.15) continue;
+        const d = max - min;
+        let hue = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+        hue = (hue * 60 + 360) % 360;
+        expect(hue >= 250 && hue <= 300, `${TILE_NAMES[t]} pixel ${i / 4} hue ${hue.toFixed(0)}`).toBe(false);
+      }
+    }
+  });
+});
+
+describe('survival tiles (v0.9, DESIGN-survival §8.1–§8.2)', () => {
+  const SURVIVAL = Array.from({ length: 28 }, (_, i) => 77 + i);
+  it('77–104 each have a recipe of their own: not the missing checker, distinct, deterministic', () => {
+    const missing = paintTile(TILE.MISSING);
+    const seen = [];
+    for (const t of SURVIVAL) {
+      expect(Object.hasOwn(TILE_NAMES, t), `tile ${t}`).toBe(true);
+      const px = paintTile(t);
+      expect(sameBytes(px, missing), TILE_NAMES[t]).toBe(false);
+      expect(sameBytes(px, paintTile(t)), TILE_NAMES[t]).toBe(true);
+      for (const [u, other] of seen) expect(sameBytes(px, other), `${TILE_NAMES[t]} vs ${TILE_NAMES[u]}`).toBe(false);
+      seen.push([t, px]);
+    }
+  });
+
+  /** @returns {number} pixels of `px` with alpha 0 (in `rows`, default all) */
+  const clearCount = (px, rows = null) => {
+    let n = 0;
+    for (let y = 0; y < H; y++) {
+      if (rows && !rows.includes(y)) continue;
+      for (let x = 0; x < W; x++) if (px[idx(x, y) + 3] === 0) n++;
+    }
+    return n;
+  };
+  const range = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+  /** @returns {number} pixels whose RGB is `hex` (opaque ones only) */
+  const countHex = (px, hex) => {
+    let n = 0;
+    for (let i = 0; i < BYTES; i += 4) {
+      if (px[i + 3] === 255 && px[i] === ((hex >> 16) & 255) && px[i + 1] === ((hex >> 8) & 255) && px[i + 2] === (hex & 255)) n++;
+    }
+    return n;
+  };
+
+  it('use alpha 0 or 255 only: ores, workplaces, basket and hide fully opaque; plants, litter, fire pit and belongings cut out', () => {
+    for (const t of SURVIVAL) {
+      const px = paintTile(t);
+      for (let i = 3; i < BYTES; i += 4) expect(px[i] === 0 || px[i] === 255, `${TILE_NAMES[t]} alpha ${px[i]}`).toBe(true);
+      const clear = clearCount(px);
+      if (t === TILE.PLANT_TOP_CLEAR) expect(clear).toBe(256);
+      else if (SURVIVAL_CUTOUT.includes(t)) {
+        expect(clear, TILE_NAMES[t]).toBeGreaterThan(20);
+        expect(clear, TILE_NAMES[t]).toBeLessThan(256);
+      } else expect(clear, TILE_NAMES[t]).toBe(0);
+    }
+  });
+
+  it('the short blocks keep their stated upper rows alpha 0 and stand on their bottom row', () => {
+    // [tile, last alpha-0 row, the art's top row must lie at or below]
+    const SHORT = [
+      [TILE.TUSSOCK, 3, 6], [TILE.TUBER_PLANT, 8, 10], [TILE.LOOSE_STONES, 10, 13], [TILE.FALLEN_BRANCHES, 11, 12],
+      [TILE.FIRE_PIT_SIDE, 9, 11],
+    ];
+    for (const [t, lastClear, topBy] of SHORT) {
+      const px = paintTile(t);
+      expect(clearCount(px, range(0, lastClear)), TILE_NAMES[t]).toBe(16 * (lastClear + 1));
+      let firstOpaqueRow = -1;
+      for (let y = 0; y < H && firstOpaqueRow < 0; y++) for (let x = 0; x < W; x++) if (px[idx(x, y) + 3] === 255) firstOpaqueRow = y;
+      expect(firstOpaqueRow, TILE_NAMES[t]).toBeGreaterThan(lastClear);
+      expect(firstOpaqueRow, TILE_NAMES[t]).toBeLessThanOrEqual(topBy);
+      expect(clearCount(px, [15]), `${TILE_NAMES[t]} bottom row`).toBeLessThanOrEqual(12); // it rests on the ground
+    }
+  });
+
+  it('tussock: blades about 45 % alpha 0 (35–55 %), yellow tips above a green base', () => {
+    const px = paintTile(TILE.TUSSOCK);
+    const share = clearCount(px) / 256;
+    expect(share).toBeGreaterThanOrEqual(0.35);
+    expect(share).toBeLessThanOrEqual(0.55);
+    let tips = 0;
+    for (let y = 4; y <= 8; y++) for (let x = 0; x < W; x++) if (opaque(px, x, y) && rgba(px, x, y)[0] > 150) tips++;
+    expect(tips).toBeGreaterThan(5);
+    everyPixel(px, (r, g, b, a) => a === 0 || (g >= b && g > 60), [12, 13, 14, 15]);
+  });
+
+  it('cattails: green stalks and leaves with brown heads on rows 1–4; the top is mostly alpha 0', () => {
+    const side = paintTile(TILE.CATTAILS_SIDE);
+    for (const x of [3, 8, 12]) {
+      for (let y = 1; y <= 4; y++) {
+        const [r, g, b, a] = rgba(side, x, y);
+        expect(a).toBe(255);
+        expect(r).toBeGreaterThan(g); // brown
+        expect(g).toBeGreaterThan(b);
+      }
+      const [r, g, , a] = rgba(side, x, 10);
+      expect(a).toBe(255);
+      expect(g).toBeGreaterThan(r); // a green stalk
+    }
+    const top = paintTile(TILE.CATTAILS_TOP);
+    expect(clearCount(top) / 256).toBeGreaterThan(0.75);
+  });
+
+  it('honeyberry bushes: deep blue-green foliage with holes; ripe berries are dusky blue with a pale bloom; the picked bush is the same bush, sparser, berry-free', () => {
+    const ripe = paintTile(TILE.HONEYBERRY_BUSH);
+    const bare = paintTile(TILE.HONEYBERRY_BUSH_BARE);
+    const BERRY = [0x9aa6d6, 0x5b6bb0, 0x3b4a8a];
+    expect(countHex(ripe, 0x9aa6d6)).toBeGreaterThanOrEqual(12); // 6–8 clusters of 2–3 berries
+    expect(countHex(ripe, 0x3b4a8a)).toBeGreaterThan(countHex(ripe, 0x9aa6d6) / 2);
+    for (const hex of BERRY) expect(countHex(bare, hex), hex.toString(16)).toBe(0);
+    expect(clearCount(ripe) / 256).toBeGreaterThan(0.08);
+    expect(clearCount(ripe) / 256).toBeLessThan(0.32);
+    expect(clearCount(bare)).toBeGreaterThan(clearCount(ripe) + 30);
+    // The foliage is blue-green: green above red, blue close behind.
+    const leaf = averageColor(TILE.HONEYBERRY_BUSH_BARE);
+    expect(leaf[1]).toBeGreaterThan(leaf[0]);
+    expect(leaf[2]).toBeGreaterThan(leaf[0] - 10);
+    // Same bush: every opaque leaf pixel of the picked bush (not a twig) is the ripe bush's pixel or a berry there.
+    let same = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const b = rgba(bare, x, y);
+        if (b[3] !== 255 || (b[0] > b[1])) continue; // holes and brown twigs
+        const r = rgba(ripe, x, y);
+        const berry = BERRY.some((hex) => r[0] === ((hex >> 16) & 255) && r[1] === ((hex >> 8) & 255) && r[2] === (hex & 255));
+        expect(berry || sameBytes(r, b), `(${x},${y})`).toBe(true);
+        same++;
+      }
+    }
+    expect(same).toBeGreaterThan(100);
+  });
+
+  it('prickly pears: the same pads (#5d8f3a family) with spines; red-yellow fruit only on the ripe one', () => {
+    const ripe = paintTile(TILE.PRICKLY_PEAR);
+    const bare = paintTile(TILE.PRICKLY_PEAR_BARE);
+    let fruit = 0;
+    let fruitBare = 0;
+    let differ = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const [r, g, , a] = rgba(ripe, x, y);
+        if (a === 255 && r > g + 40 && r > 120) fruit++;
+        const [r2, g2, , a2] = rgba(bare, x, y);
+        if (a2 === 255 && r2 > g2 + 40 && r2 > 120) fruitBare++;
+        if (!sameBytes(rgba(ripe, x, y), rgba(bare, x, y))) differ++;
+      }
+    }
+    expect(fruit).toBeGreaterThanOrEqual(15); // five 2×2 fruit
+    expect(fruitBare).toBe(0);
+    expect(differ).toBeLessThanOrEqual(5 * 4 + 5); // only the fruit and their scars differ
+    expect(countHex(bare, 0xe6dfae)).toBeGreaterThanOrEqual(10); // spines
+    const pad = averageColor(TILE.PRICKLY_PEAR_BARE);
+    expect(pad[1]).toBeGreaterThan(pad[0]);
+    expect(pad[1]).toBeGreaterThan(pad[2]);
+  });
+
+  it('copper and tin ores start from stone ("stone" seed): malachite bands and copper specks; dark cassiterite with white glints', () => {
+    const stone = paintTile(TILE.STONE);
+    const copper = paintTile(TILE.COPPER_ORE);
+    const tin = paintTile(TILE.TIN_ORE);
+    const cuDiff = countRgbDiff(copper, stone);
+    expect(cuDiff).toBeGreaterThanOrEqual(5 * 5);
+    expect(cuDiff).toBeLessThanOrEqual(5 * 9 + 3);
+    expect(countHex(copper, 0x6fd39a)).toBeGreaterThanOrEqual(1);
+    expect(countHex(copper, 0x2f8f5b) + countHex(copper, 0x1f6b43)).toBeGreaterThanOrEqual(15);
+    expect(countHex(copper, 0x2f8f5b)).toBeGreaterThan(0); // both bands
+    expect(countHex(copper, 0x1f6b43)).toBeGreaterThan(0);
+    const specks = countHex(copper, 0xc8743a);
+    expect(specks).toBeGreaterThanOrEqual(2);
+    expect(specks).toBeLessThanOrEqual(3);
+    for (let x = 0; x < W; x++) expect(rgba(copper, x, 0)).toEqual(rgba(stone, x, 0)); // blobs stay off the top row
+    const snDiff = countRgbDiff(tin, stone);
+    expect(snDiff).toBeGreaterThanOrEqual(5 * 2);
+    expect(snDiff).toBeLessThanOrEqual(5 * 9);
+    expect(countHex(tin, 0x2a211c)).toBeGreaterThan(0);
+    expect(countHex(tin, 0xf4f2ea)).toBeGreaterThanOrEqual(1);
+    expect(countHex(tin, 0xf4f2ea)).toBeLessThanOrEqual(4);
+    for (let x = 0; x < W; x++) expect(rgba(tin, x, 0)).toEqual(rgba(stone, x, 0));
+  });
+
+  it('Your Belongings: a heap with a honey hex tag high on its marker; the top is only a small honey knot', () => {
+    const side = paintTile(TILE.REMAINS_SIDE);
+    let honey = 0;
+    let rim = 0;
+    for (let y = 0; y <= 5; y++) {
+      for (let x = 9; x < W; x++) {
+        if (sameBytes(rgba(side, x, y), [0xe8, 0xb0, 0x4a, 255])) honey++;
+        if (sameBytes(rgba(side, x, y), [0xa8, 0x74, 0x20, 255])) rim++;
+      }
+    }
+    expect(honey).toBeGreaterThanOrEqual(5);
+    expect(honey + rim).toBeGreaterThanOrEqual(16); // a tag big enough to see from about 20 cells
+    expect(countHex(side, 0xe8b04a)).toBe(honey); // the honey is only on the tag
+    expect(clearCount(side, range(0, 5))).toBeGreaterThan(50); // the background is see-through
+    for (let y = 4; y < H; y++) expect(opaque(side, 12, y), `marker stick at row ${y}`).toBe(true);
+    let heap = 0;
+    for (let y = 9; y < H; y++) for (let x = 0; x < 11; x++) if (opaque(side, x, y)) heap++;
+    expect(heap).toBeGreaterThan(30);
+    const top = paintTile(TILE.REMAINS_TOP);
+    expect(clearCount(top) / 256).toBeGreaterThan(0.85);
+    expect(countHex(top, 0xe8b04a)).toBeGreaterThan(0);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) if (opaque(top, x, y)) expect(Math.hypot(x + 0.5 - 8, y + 0.5 - 8)).toBeLessThan(3.2);
+    }
+  });
+
+  it('the workplaces, basket and hide read as what they are', () => {
+    const p = (t, x, y) => rgba(paintTile(t), x, y);
+    const dark = ([r, g, b]) => Math.max(r, g, b) < 60;
+    const glow = ([r, , b]) => r > 190 && r > b + 80;
+    // Work Stump: a dark pith in the middle of pale wood, bark at the corners, a pale notch on the right edge.
+    expect(p(TILE.STUMP_TOP, 7, 7)[0]).toBeLessThan(0x80);
+    expect(p(TILE.STUMP_TOP, 0, 0)[0]).toBeLessThan(p(TILE.STUMP_TOP, 4, 7)[0]);
+    expect(p(TILE.STUMP_SIDE, 15, 7)[0]).toBeGreaterThan(0xb0);
+    // Kiln: a dark arched mouth with embers along its floor; a dark vent on top.
+    expect(dark(p(TILE.KILN_SIDE, 7, 11))).toBe(true);
+    expect(glow(p(TILE.KILN_SIDE, 7, 15))).toBe(true);
+    expect(dark(p(TILE.KILN_TOP, 6, 8))).toBe(true);
+    expect(Math.max(...p(TILE.KILN_TOP, 7, 7).slice(0, 3))).toBeGreaterThan(0x70); // a smoke pixel in the vent
+    expect(p(TILE.KILN_SIDE, 1, 1)[0]).toBeGreaterThan(p(TILE.KILN_SIDE, 1, 1)[2] + 60); // clay orange
+    // Bloomery: the tuyère glows; charcoal fills the throat with dim embers; brick at the corners.
+    expect(p(TILE.BLOOMERY_SIDE, 3, 12)).toEqual([0xff, 0x8a, 0x3a, 255]);
+    expect(dark(p(TILE.BLOOMERY_TOP, 6, 9)) || glow(p(TILE.BLOOMERY_TOP, 6, 9)) || p(TILE.BLOOMERY_TOP, 6, 9)[0] < 0x90).toBe(true);
+    expect(p(TILE.BLOOMERY_TOP, 0, 0)[0]).toBeGreaterThan(p(TILE.BLOOMERY_TOP, 0, 0)[2]);
+    // Forge: a dark opening over glowing coal; a dark iron hexagon with a hardy hole on top.
+    expect(dark(p(TILE.FORGE_SIDE, 8, 8))).toBe(true);
+    expect(glow(p(TILE.FORGE_SIDE, 9, 12)) || p(TILE.FORGE_SIDE, 9, 12)[0] > 0xb0).toBe(true);
+    expect(p(TILE.FORGE_SIDE, 7, 12)).toEqual([0xff, 0xf0, 0xa0, 255]);
+    expect(p(TILE.FORGE_TOP, 9, 8)).toEqual([0x10, 0x10, 0x12, 255]);
+    const iron = p(TILE.FORGE_TOP, 6, 9);
+    expect(Math.abs(iron[0] - iron[2])).toBeLessThan(16);
+    expect(iron[0]).toBeLessThan(80);
+    expect(p(TILE.FORGE_TOP, 0, 0)[0]).toBeGreaterThan(p(TILE.FORGE_TOP, 0, 0)[2] + 20); // bricks beyond the anvil
+    // Basket and hide: straw and leather tones throughout.
+    everyPixel(paintTile(TILE.BASKET_SIDE), (r, g, b) => r > b + 30 && r >= g);
+    everyPixel(paintTile(TILE.BASKET_TOP), (r, g, b) => r > b + 30 && r >= g);
+    everyPixel(paintTile(TILE.HIDE_SIDE), (r, g, b) => r > b + 20 && r >= g);
+    const hide = averageColor(TILE.HIDE_TOP);
+    expect(hide[0]).toBeGreaterThan(hide[2] + 30);
+    expect(p(TILE.HIDE_TOP, 8, 8)[0]).toBeGreaterThan(0x90); // the hide in the middle, earth and stakes at the rim
+  });
+
+  it('litter: grey and ochre pebbles with one dark flint nodule; brown sticks with lichen; a fire pit of stones, charred sticks and ash', () => {
+    const stones = paintTile(TILE.LOOSE_STONES);
+    let flint = 0;
+    for (let y = 11; y < H; y++) for (let x = 0; x < W; x++) if (opaque(stones, x, y) && Math.max(...rgba(stones, x, y).slice(0, 3)) < 0x48) flint++;
+    expect(flint).toBeGreaterThanOrEqual(2);
+    const branches = averageColor(TILE.FALLEN_BRANCHES);
+    expect(branches[0]).toBeGreaterThan(branches[2] + 15);
+    const pit = paintTile(TILE.FIRE_PIT_SIDE);
+    let charred = 0;
+    let ash = 0;
+    for (let y = 10; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (!opaque(pit, x, y)) continue;
+        const m = Math.max(...rgba(pit, x, y).slice(0, 3));
+        if (m < 0x30) charred++;
+        if (m > 0xa8) ash++;
+      }
+    }
+    expect(charred).toBeGreaterThanOrEqual(6);
+    expect(ash).toBeGreaterThanOrEqual(6);
   });
 });
 

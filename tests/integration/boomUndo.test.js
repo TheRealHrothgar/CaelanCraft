@@ -183,7 +183,7 @@ describe('a chain is one undo (EXP-1, EXP-3)', () => {
     settle(physics);
     const snap = snapshot(world, -9, 11, 0, 14, -9, 9);
     physics.asPlayer(() => ex.lightAt(0, 11, 0)); // an entity
-    for (let i = 1; i < MAX_LIT_BARRELS; i++) ex.ignite(40 + 2 * i, 11, 40);
+    for (let i = 1; i < MAX_LIT_BARRELS; i++) ex.lightAt(40 + 2 * i, 11, 40); // entities (ignite now burns in place)
     for (const rec of ex.lit) if (rec.q >= 40) rec.fuse = 1e9; // the far ones never go off
     steps(physics, 1);
     physics.asPlayer(() => ex.lightAt(2, 11, 0)); // a fuse timer, event 0
@@ -275,7 +275,7 @@ describe('undo next to a campfire (F3, EXP-2)', () => {
     expect(world.getBlock(0, 11, 0)).toBe(B.AIR); // the blast broke the campfire
     const res = physics.undo();
     expect(res.ok).toBe(true);
-    expect(res.message).toContain('1 barrel next to a campfire not given back');
+    expect(res.message).toContain('1 keg or fuse next to a fire not given back');
     expect(world.getBlock(0, 11, 0)).toBe(B.CAMPFIRE);
     expect(world.getBlock(1, 11, 0)).toBe(B.AIR);
     steps(physics, 10);
@@ -289,7 +289,7 @@ describe('undo next to a campfire (F3, EXP-2)', () => {
     world.setBlock(0, 11, 0, B.CAMPFIRE);
     world.setBlock(0, 12, 0, B.BLAST_BARREL);
     stepUntil(physics, () => ex.blastCount === 1, 400);
-    expect(physics.undo().message).toContain('next to a campfire not given back');
+    expect(physics.undo().message).toContain('next to a fire not given back');
     expect(world.getBlock(0, 11, 0)).toBe(B.CAMPFIRE);
     expect(world.getBlock(0, 12, 0)).toBe(B.AIR);
     steps(physics, 6);

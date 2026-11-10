@@ -9,6 +9,14 @@
 // console. Cell arguments must resolve to integers. Commands never throw: every failure is a user-facing message
 // that ends with the usage line.
 //
+// Survival (v0.9, docs/DESIGN-survival.md §9.7): `mode` (console only: the new `consoleOnly` flag), `vitals`, `pack` and
+// `items` work through the optional `ctx.survival`; `fly`, `give` and `undo` refuse while the world is in Survival.
+//
+// Circuits (docs/DESIGN-circuits.md §6.5): `ignite` lights a keg, fuse or charge through `ctx.circuits` (falling back to the
+// physics' keg ignite without it); `switch`, `timer`, `radio`, `volts`, `circuits` and `blackholes` reach the optional
+// `ctx.circuits` and `ctx.blackHoles`. None of them is console-only: rune scripts drive circuits. `resolveBlock` accepts the
+// old names in BLOCK_ALIASES (`blast_barrel`), and `give black_hole` explains that a hole cannot be held.
+//
 // Area commands (fill / hexfill / hexring) are validated up front (size cap, y range, every covered chunk loaded,
 // edit budget) and then return a resumable AreaJob that the rune runner advances under a per-frame cell budget in
 // chunk-major order, so a 32k-cell fill never stalls a frame. They skip rune blocks, bedrock and cells the player
@@ -17,14 +25,16 @@ import {
   WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
   GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME, PIG_MAX,
   PIG_RADIUS, PIG_HEIGHT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS,
-  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT,
+  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, STAT_MAX, BREATH_MAX_S, BODY_TEMP_MIN, BODY_TEMP_MAX,
 } from './config.js';
 import { inHeightRange, worldToChunk, yawToForward } from './coords.js';
 import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
-import { BLOCK, BLOCKS, BLOCK_COUNT, getBlockDef, isPlaceable, isSolid } from './blocks.js';
+import { BLOCK, BLOCKS, BLOCK_ALIASES, BLOCK_COUNT, getBlockDef, isPlaceable, isSolid } from './blocks.js';
+import { parseChannel } from './circuitParts.js';
 import { findFreeY, findStandingY, playerIntersectsBlock } from './physics.js';
 import { formatTime } from './daynight.js';
 import { WATCHER_HEIGHT } from './watcher.js';
+import { ITEM_KEYS, itemName, resolveItem } from './items.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
 /** @typedef {import('./types.js').Rune} Rune */
@@ -43,6 +53,7 @@ import { WATCHER_HEIGHT } from './watcher.js';
  * @property {string[]} args       kinds, in order
  * @property {number} min          minimum argument count
  * @property {boolean} [scriptOnly]
+ * @property {boolean} [consoleOnly]   refused inside a rune script (`ctx.running`): `mode` would reload the world under the runner
  */
 
 /** @type {readonly CommandSpec[]} */
@@ -76,9 +87,35 @@ export const COMMANDS = Object.freeze([
   { name: 'watcher', usage: 'watcher [on|off]', summary: 'is the Hollow Watcher about? or switch it on / off for this world (saved)', args: ['choice:on|off'], min: 0 },
   { name: 'physics', usage: 'physics status|on|off | physics falling|water|collapse|explosions on|off', summary: 'block physics: show its counters, pause / resume all of it (not saved), or switch one feature (saved with the world)', args: ['word', 'choice:on|off'], min: 1 },
   { name: 'undo', usage: 'undo', summary: 'undo the last explosion, collapse or falling tree (within 60 s)', args: [], min: 0 },
-  { name: 'ignite', usage: 'ignite q y r', summary: 'light the blast barrel in that cell', args: ['cell', 'cell', 'cell'], min: 3 },
+  { name: 'ignite', usage: 'ignite q y r', summary: 'light the powder keg, powder fuse or collapsar charge in that cell', args: ['cell', 'cell', 'cell'], min: 3 },
   { name: 'drain', usage: 'drain [radius]', summary: `remove the water around you (a rune: around itself), radius 0–${DRAIN_MAX_RADIUS}, default ${DRAIN_DEFAULT_RADIUS}`, args: ['int'], min: 0 },
+  { name: 'mode', usage: 'mode [creative|survival]', summary: 'show this world\'s mode, or switch it (saved with the world; console only)', args: ['choice:creative|survival'], min: 0, consoleOnly: true },
+  { name: 'vitals', usage: 'vitals [full|health|nourishment|hydration|temp|breath] [value]', summary: 'show your Survival stats, set one (~ = relative to now), or restore them all', args: ['word', 'num'], min: 0 },
+  { name: 'pack', usage: 'pack [list|add|clear] [item] [count]', summary: 'list the Survival pack, add items to it, or empty it (and what you wear)', args: ['choice:list|add|clear', 'word', 'int'], min: 0 },
+  { name: 'items', usage: 'items [filter]', summary: 'list the item names pack add takes (filtered by a part of the name)', args: ['word'], min: 0 },
+  // Circuits (DESIGN-circuits §6.5)
+  { name: 'switch', usage: 'switch q y r [on|off|toggle|press]', summary: 'set or toggle the knife switch in that cell, or press the push button there (default toggle)', args: ['cell', 'cell', 'cell', 'choice:on|off|toggle|press'], min: 3 },
+  { name: 'timer', usage: 'timer q y r [start|stop|<seconds>] [pulse|hold|repeat]', summary: 'show the clockwork timer in that cell, start or stop it, or set its delay (0.5–3600 s) and mode', args: ['cell', 'cell', 'cell', 'word', 'choice:pulse|hold|repeat'], min: 3 },
+  { name: 'radio', usage: 'radio <channel>', summary: 'send a radio pulse on channel 1–16 or a wavelength 300m–1050m, from you (a rune: from its cell)', args: ['word'], min: 1 },
+  { name: 'volts', usage: 'volts q y r', summary: 'measure the circuit part in that cell: volts, earth, its network', args: ['cell', 'cell', 'cell'], min: 3 },
+  { name: 'circuits', usage: 'circuits [status|on|off]', summary: 'count the circuit parts, or switch circuits on / off for this world (saved)', args: ['choice:status|on|off'], min: 0 },
+  { name: 'blackholes', usage: 'blackholes [status|on|off|list]', summary: 'count the black holes, list the nearest, or switch them on / off for this world (saved)', args: ['choice:status|on|off|list'], min: 0 },
 ]);
+
+/** `vitals` stat words → the internal key (`satiation` is shown as Nourishment everywhere), label, range and unit. */
+const VITAL_STATS = Object.freeze({
+  health: Object.freeze({ key: 'health', label: 'Health', lo: 0, hi: STAT_MAX, unit: '' }),
+  nourishment: Object.freeze({ key: 'satiation', label: 'Nourishment', lo: 0, hi: STAT_MAX, unit: '' }),
+  hydration: Object.freeze({ key: 'hydration', label: 'Hydration', lo: 0, hi: STAT_MAX, unit: '' }),
+  temp: Object.freeze({ key: 'temp', label: 'Body temperature', lo: BODY_TEMP_MIN, hi: BODY_TEMP_MAX, unit: ' °C' }),
+  breath: Object.freeze({ key: 'breath', label: 'Breath', lo: 0, hi: BREATH_MAX_S, unit: ' s' }),
+});
+
+/** `pack add` takes at most this many at once. */
+const PACK_ADD_MAX = 9999;
+/** `items` prints this many keys per line. */
+const ITEMS_PER_LINE = 8;
+const NO_SURVIVAL_STATE = 'no survival state in this world (try mode survival)';
 
 /** Block-physics feature switches (`physics <feature> on|off`); the same names as BlockPhysics FEATURES. */
 const PHYSICS_FEATURES = Object.freeze(['falling', 'water', 'collapse', 'explosions']);
@@ -200,8 +237,9 @@ export function parseScript(text) {
 // ---------------------------------------------------------------------------------------------------
 
 /**
- * Resolve a block token: exact name, display name with `_` for spaces (`red_wool`), a unique prefix or substring
- * match, or an integer id below BLOCK_COUNT. A `minecraft:` prefix is ignored. Case-insensitive.
+ * Resolve a block token: exact name, an old name in BLOCK_ALIASES (`blast_barrel`, or its display form `blast barrel`),
+ * display name with `_` for spaces (`red_wool`), a unique prefix or substring match, or an integer id below BLOCK_COUNT.
+ * A `minecraft:` prefix is ignored. Case-insensitive.
  * @param {string} token
  * @returns {{ id: number }|{ error: string }}
  */
@@ -215,6 +253,8 @@ export function resolveBlock(token) {
     return { error: `unknown block id ${id} (0..${BLOCK_COUNT - 1}; type blocks to list them)` };
   }
   for (const def of BLOCKS) if (def.name === t) return { id: def.id };
+  const alias = t.replace(/ /g, '_');
+  if (Object.hasOwn(BLOCK_ALIASES, alias)) return { id: BLOCK_ALIASES[alias] };
   const asDisplay = t.replace(/_/g, ' ');
   for (const def of BLOCKS) if (def.displayName.toLowerCase() === asDisplay) return { id: def.id };
   const prefix = BLOCKS.filter((d) => d.name.startsWith(t) || d.displayName.toLowerCase().replace(/ /g, '_').startsWith(t));
@@ -254,6 +294,52 @@ export function resolveBlock(token) {
  * @property {Rune|null} rune                               the executing rune (for `@`), null in the console
  * @property {import('./runes.js').Running|null} running    the executing script, null in the console
  * @property {number} seed
+ * @property {SurvivalCommands} [survival]   v0.9: absent where there is no survival (mode / vitals / pack then fail)
+ * @property {CircuitCommands} [circuits]     absent without circuits (switch / timer / radio / volts / circuits then fail;
+ *                                            ignite falls back to physics.explosions)
+ * @property {BlackHoleCommands} [blackHoles] absent without black holes (`blackholes` then fails)
+ */
+
+/**
+ * What the circuit commands may touch (the world's Circuits, DESIGN-circuits §6.5).
+ * @typedef {Object} CircuitCommands
+ * @property {boolean} enabled
+ * @property {(on: boolean) => boolean} setEnabled   true when it changed
+ * @property {(q: number, y: number, r: number) => { ok: boolean, message: string }} ignite
+ * @property {(q: number, y: number, r: number, mode: string) => { ok: boolean, message: string }} switchAt
+ * @property {(q: number, y: number, r: number, cmd?: string|number, mode?: string) => { ok: boolean, message: string }} timerAt
+ * @property {(ch: number, x: number, y: number, z: number) => { ok: boolean, message: string }} radio
+ * @property {(q: number, y: number, r: number) => ({ volts: number, amps: number, earthed: boolean|null, earthReason: string,
+ *   state: string, diag: string|null, net: { cells: number, sources: number, loads: number, partial: boolean,
+ *   truncated: boolean }|null }|null)} probe
+ * @property {() => { parts: number, networks: number, burning: number, timers: number }} stats
+ */
+
+/**
+ * What `blackholes` may touch (BlackHoles itself, DESIGN-circuits §6.2.4).
+ * @typedef {Object} BlackHoleCommands
+ * @property {boolean} enabled
+ * @property {(on: boolean) => (boolean|void)} setEnabled
+ * @property {() => string} status
+ * @property {(x: number, y: number, z: number) => string[]} list
+ */
+
+/**
+ * What the survival commands may touch (main's implementation, DESIGN-survival §9.5 / §9.7).
+ * @typedef {Object} SurvivalCommands
+ * @property {'creative'|'survival'} mode
+ * @property {boolean} hasState                 the world has entered Survival at least once
+ * @property {(m: 'creative'|'survival') => { ok: boolean, message: string }} setMode   queues the switch (requestMode)
+ * @property {() => ({ health: number, satiation: number, hydration: number, temp: number, breath: number,
+ *   labels?: string[] }|null)} vitals          the current (or frozen) stats; null without a survival state
+ * @property {(name: string, v: number) => boolean} setVital   internal key ('health', 'satiation', 'hydration', 'temp',
+ *   'breath'); the value is already clamped; `health` 0 makes main die with cause 'command'
+ * @property {() => void} restoreVitals
+ * @property {(key: string, n: number) => (number|{n: number, refused?: string}|{n: number}[]|null|undefined)} packAdd
+ *   what did not fit: a count, a stack, a list of stacks, or null/undefined when everything fit; `refused` (a reason) when
+ *   the game would not add the item at all (§14.2: a second handbook)
+ * @property {() => void} packClear              empties the pack and the worn items
+ * @property {() => string} packList             the non-empty slots ('' when there are none)
  */
 
 /**
@@ -674,6 +760,7 @@ function run(spec, args, ctx) {
   const world = ctx.world;
   const p = ctx.player;
   if (spec.scriptOnly && !ctx.running) return fail(spec, `${spec.name} is only valid inside a rune script`);
+  if (spec.consoleOnly && ctx.running) return fail(spec, `${spec.name} is only valid in the console`);
 
   switch (spec.name) {
     case 'help': {
@@ -825,13 +912,16 @@ function run(spec, args, ctx) {
       return ok(`time is now ${formatTime(ctx.getTime())}`);
     }
     case 'fly': {
+      if (inSurvival(ctx)) return fail(spec, 'not in Survival');
       const on = args[0] === 'toggle' ? !p.flying : args[0] === 'on';
       ctx.setFlying(on);
       return ok(on ? 'flying' : 'walking');
     }
     case 'give': {
+      if (inSurvival(ctx)) return fail(spec, 'in Survival use: pack add <item> [count]');
       const rb = resolveBlock(args[0]);
       if ('error' in rb) return fail(spec, rb.error);
+      if (rb.id === BLOCK.BLACK_HOLE) return fail(spec, 'a black hole cannot be held — give collapsar_charge and set it off');
       if (!isPlaceable(rb.id)) return fail(spec, `"${getBlockDef(rb.id).name}" is not placeable`);
       let slot = ctx.selected;
       if (args.length === 2) {
@@ -939,18 +1029,20 @@ function run(spec, args, ctx) {
       return ok(`${what} ${on ? 'on' : 'off'}${changed ? ' (saved with this world)' : ' (already)'}`);
     }
     case 'undo': {
+      if (inSurvival(ctx)) return fail(spec, 'not in Survival'); // like the pause menu's Undo (§1.5)
       if (!ctx.physics) return fail(spec, 'block physics is not available here');
       const res = ctx.physics.undo();
       return res.ok ? ok(res.message) : fail(spec, res.message);
     }
     case 'ignite': {
-      if (!ctx.physics) return fail(spec, 'block physics is not available here');
+      if (!ctx.circuits && !ctx.physics) return fail(spec, 'block physics is not available here');
       const rc = resolveCellTriple(args, 0, ctx);
       if ('error' in rc) return fail(spec, rc.error);
       const [q, y, r] = rc.cell;
       if (!inHeightRange(y)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 1}`);
       if (!world.hasChunkAtCell(q, r)) return fail(spec, `cell (${q}, ${y}, ${r}) is not loaded`);
-      const res = ctx.physics.explosions.ignite(q, y, r);
+      // A keg (3 s in place), a fuse or a charge through the circuits; without them, the physics' keg ignite.
+      const res = ctx.circuits ? ctx.circuits.ignite(q, y, r) : /** @type {*} */ (ctx.physics).explosions.ignite(q, y, r);
       return res.ok ? ok(res.message) : fail(spec, res.message);
     }
     case 'drain': {
@@ -980,7 +1072,235 @@ function run(spec, args, ctx) {
       if (!rune.enabled) ctx.runner.cancel(rune.key);
       return ok(`rune (${q}, ${y}, ${r}) ${rune.enabled ? 'enabled' : 'disabled'}`);
     }
+    case 'mode':
+      return modeCommand(spec, args, ctx);
+    case 'vitals':
+      return vitalsCommand(spec, args, ctx);
+    case 'pack':
+      return packCommand(spec, args, ctx);
+    case 'switch':
+    case 'timer':
+    case 'radio':
+    case 'volts':
+    case 'circuits':
+      return circuitCommand(spec, args, ctx);
+    case 'blackholes':
+      return blackHolesCommand(spec, args, ctx);
+    case 'items': {
+      const filter = args.length === 1 ? args[0].toLowerCase() : '';
+      const keys = ITEM_KEYS.filter((k) => k.includes(filter));
+      if (keys.length === 0) return ok(`no items match "${args[0]}"`);
+      const lines = [`${keys.length} item${keys.length === 1 ? '' : 's'}${filter ? ` matching "${filter}"` : ''}:`];
+      for (let i = 0; i < keys.length; i += ITEMS_PER_LINE) lines.push(keys.slice(i, i + ITEMS_PER_LINE).join(', '));
+      return ok(lines.join('\n'));
+    }
     default:
       return { ok: false, message: `unknown command "${spec.name}"` };
   }
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Circuits and black holes (DESIGN-circuits §6.5). They reach the game through ctx.circuits and ctx.blackHoles.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The §4.5 diagnostics as `volts` prints them. */
+const DIAG_TEXT = Object.freeze({
+  bypassed: 'bypassed: the wires on either side touch',
+  'self-fed': 'its own battery feeds the coil',
+  'no-wire': 'no wire: join it to the battery with a wire',
+});
+/** A delay in seconds as `timer` takes it. */
+const SECONDS_RE = /^(\d+(\.\d*)?|\.\d+)$/;
+const TIMER_MODES = Object.freeze(['pulse', 'hold', 'repeat']);
+
+/** `n word(s)` */
+function plural(n, word) {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+/** @returns {CommandResult} switch / timer / radio / volts / circuits */
+function circuitCommand(spec, args, ctx) {
+  const c = ctx.circuits;
+  if (!c) return fail(spec, 'circuits are not available here');
+  if (spec.name === 'circuits') {
+    if (args.length === 0 || args[0] === 'status') {
+      const s = c.stats();
+      return ok(`circuits ${c.enabled ? 'on' : 'off'} · ${plural(s.parts, 'part')}, ${plural(s.networks, 'network')}, ` +
+        `${plural(s.burning, 'fuse')} burning, ${plural(s.timers, 'timer')} running`);
+    }
+    const on = args[0] === 'on';
+    if (!c.setEnabled(on)) return ok(`circuits are already ${on ? 'on' : 'off'}`);
+    return ok(`circuits ${on ? 'on' : 'off'} (saved with this world)`);
+  }
+  if (spec.name === 'radio') {
+    const ch = parseChannel(args[0]);
+    if (ch === null) return fail(spec, `expected a channel 1–16 or a wavelength 300m–1050m, got "${args[0]}"`);
+    let x;
+    let y;
+    let z;
+    if (ctx.rune) {
+      [x, z] = hexToWorld(ctx.rune.q, ctx.rune.r);
+      y = ctx.rune.y + 0.5;
+    } else {
+      x = ctx.player.x;
+      y = ctx.player.y + 1;
+      z = ctx.player.z;
+    }
+    const res = c.radio(ch, x, y, z);
+    return res.ok ? ok(res.message) : fail(spec, res.message);
+  }
+  const rc = resolveCellTriple(args, 0, ctx);
+  if ('error' in rc) return fail(spec, rc.error);
+  const [q, y, r] = rc.cell;
+  if (!inHeightRange(y)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 1}`);
+  if (!ctx.world.hasChunkAtCell(q, r)) return fail(spec, `cell (${q}, ${y}, ${r}) is not loaded`);
+  if (spec.name === 'switch') {
+    const res = c.switchAt(q, y, r, args.length > 3 ? args[3] : 'toggle');
+    return res.ok ? ok(res.message) : fail(spec, res.message);
+  }
+  if (spec.name === 'timer') {
+    /** @type {string|undefined} */
+    let cmd = args.length > 3 ? args[3].toLowerCase() : undefined;
+    let mode = args.length > 4 ? args[4] : undefined;
+    if (cmd !== undefined && TIMER_MODES.includes(cmd) && mode === undefined) {
+      mode = cmd; // `timer q y r repeat`: the mode alone
+      cmd = undefined;
+    }
+    if (cmd !== undefined && cmd !== 'start' && cmd !== 'stop' && !SECONDS_RE.test(cmd)) {
+      return fail(spec, `expected start, stop or a delay in seconds, got "${args[3]}"`);
+    }
+    const res = c.timerAt(q, y, r, cmd !== undefined && SECONDS_RE.test(cmd) ? Number(cmd) : cmd, mode);
+    return res.ok ? ok(res.message) : fail(spec, res.message);
+  }
+  // volts: the multimeter
+  const pr = c.probe(q, y, r);
+  if (!pr) return fail(spec, `(${q}, ${y}, ${r}) is not part of a circuit`);
+  const parts = [`${pr.volts} V`];
+  if (pr.earthed !== null) parts.push(pr.earthed ? 'earthed' : pr.earthReason || 'not earthed');
+  if (pr.net) {
+    const n = pr.net;
+    let text = `network: ${plural(n.cells, 'cell')}, ${plural(n.sources, 'source')}, ${plural(n.loads, 'load')}, ` +
+      `${Math.round(pr.amps * 100) / 100} A`;
+    if (n.partial) text += ' (reaches an unloaded chunk: frozen)';
+    if (n.truncated) text += ' (truncated)';
+    parts.push(text);
+  }
+  if (pr.diag) parts.push(DIAG_TEXT[pr.diag] ?? pr.diag);
+  return ok(parts.join(' · '));
+}
+
+/** @returns {CommandResult} blackholes [status|on|off|list] */
+function blackHolesCommand(spec, args, ctx) {
+  const bh = ctx.blackHoles;
+  if (!bh) return fail(spec, 'black holes are not available here');
+  const what = args.length === 0 ? 'status' : args[0];
+  if (what === 'status') return ok(bh.status());
+  if (what === 'list') {
+    const p = ctx.player;
+    const lines = bh.list(p.x, p.y, p.z);
+    return ok(Array.isArray(lines) && lines.length > 0 ? lines.join('\n') : 'no black holes');
+  }
+  const on = what === 'on';
+  if (Boolean(bh.enabled) === on || bh.setEnabled(on) === false) return ok(`black holes are already ${on ? 'on' : 'off'}`);
+  return ok(`black holes ${on ? 'on' : 'off'} (saved with this world)`);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Survival (v0.9, DESIGN-survival §9.7): mode, vitals, pack (and `items` above). They reach the game through ctx.survival.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** @returns {boolean} the world is in Survival (dead or alive) */
+function inSurvival(ctx) {
+  return Boolean(ctx.survival && ctx.survival.mode === 'survival');
+}
+
+/** "Health 87 · Nourishment 64 · Hydration 51 · 36.9 °C" (`long` adds the breath and the status labels). */
+function vitalsText(v, long) {
+  const n = (x) => (Number.isFinite(x) ? Math.round(x) : '?');
+  const temp = Number.isFinite(v.temp) ? v.temp.toFixed(1) : '?';
+  let text = `Health ${n(v.health)} · Nourishment ${n(v.satiation)} · Hydration ${n(v.hydration)} · ${temp} °C`;
+  if (long) {
+    text += ` · Breath ${n(v.breath)} s`;
+    if (Array.isArray(v.labels) && v.labels.length > 0) text += ` · ${v.labels.join(', ')}`;
+  }
+  return text;
+}
+
+/** A stat value for messages: at most one decimal. */
+function statValue(v) {
+  return Number.isFinite(v) ? String(Math.round(v * 10) / 10) : '?';
+}
+
+/** @returns {CommandResult} */
+function modeCommand(spec, args, ctx) {
+  const sv = ctx.survival;
+  if (args.length === 0) {
+    if (!sv || sv.mode !== 'survival') return ok('mode: creative');
+    const v = sv.vitals();
+    return ok(v ? `mode: survival (${vitalsText(v, false)})` : 'mode: survival');
+  }
+  if (!sv) return fail(spec, 'survival is not available here');
+  const res = sv.setMode(/** @type {'creative'|'survival'} */ (args[0]));
+  if (!res || !res.ok) return fail(spec, (res && res.message) || `could not switch to ${args[0]}`);
+  return ok(res.message || `${args[0]} (saved with this world)`);
+}
+
+/** @returns {CommandResult} */
+function vitalsCommand(spec, args, ctx) {
+  const sv = ctx.survival;
+  const v = sv && sv.hasState ? sv.vitals() : null;
+  if (!v) return fail(spec, NO_SURVIVAL_STATE);
+  if (args.length === 0) return ok(vitalsText(v, true));
+  const what = args[0].toLowerCase();
+  if (what === 'full') {
+    if (args.length > 1) return fail(spec, 'full takes no value');
+    sv.restoreVitals();
+    const now = sv.vitals();
+    return ok(`vitals restored: ${vitalsText(now || v, false)}`);
+  }
+  if (!Object.hasOwn(VITAL_STATS, what)) {
+    return fail(spec, `expected full, ${Object.keys(VITAL_STATS).join(', ')}, got "${args[0]}"`);
+  }
+  const stat = VITAL_STATS[what];
+  const current = Number(v[stat.key]);
+  if (args.length === 1) return ok(`${stat.label} ${statValue(current)}${stat.unit}`);
+  if (args[1].startsWith('@')) return fail(spec, 'value must be a number (~ is relative to the current value)');
+  const r = resolveNumber(args[1], Number.isFinite(current) ? current : 0, 0, 'value', ctx);
+  if ('error' in r) return fail(spec, r.error);
+  const value = Math.max(stat.lo, Math.min(stat.hi, r.value));
+  if (!sv.setVital(stat.key, value)) return fail(spec, NO_SURVIVAL_STATE);
+  return ok(`${stat.label} set to ${statValue(value)}${stat.unit}${value !== r.value ? ' (clamped)' : ''}`);
+}
+
+/** @returns {number} how many items `left` (packAdd's result) says did not fit */
+function leftoverCount(left) {
+  if (typeof left === 'number') return Number.isFinite(left) && left > 0 ? Math.floor(left) : 0;
+  if (Array.isArray(left)) return left.reduce((s, x) => s + leftoverCount(x), 0);
+  if (left && typeof left === 'object') return leftoverCount(/** @type {{n: unknown}} */ (left).n);
+  return 0;
+}
+
+/** @returns {CommandResult} */
+function packCommand(spec, args, ctx) {
+  const sv = ctx.survival;
+  if (!sv || !sv.hasState) return fail(spec, NO_SURVIVAL_STATE);
+  const what = args.length > 0 ? args[0] : 'list';
+  if (what === 'list' || what === 'clear') {
+    if (args.length > 1) return fail(spec, `${what} takes no item`);
+    if (what === 'list') return ok(sv.packList() || 'the pack is empty');
+    sv.packClear();
+    return ok('emptied the pack and what you wear');
+  }
+  if (args.length < 2) return fail(spec, 'expected an item name (type items to list them)');
+  const ri = resolveItem(args[1]);
+  if ('error' in ri) return fail(spec, ri.error);
+  const n = args.length === 3 ? Number(args[2]) : 1;
+  if (!(Number.isInteger(n) && n >= 1 && n <= PACK_ADD_MAX)) return fail(spec, `count must be 1–${PACK_ADD_MAX}`);
+  const res = sv.packAdd(ri.key, n);
+  if (res && typeof res === 'object' && !Array.isArray(res) && typeof res.refused === 'string') return fail(spec, res.refused);
+  const left = Math.min(n, leftoverCount(res));
+  const name = itemName(ri.key);
+  if (left >= n) return fail(spec, `the pack is full (${n} ${name} did not fit)`);
+  return ok(`added ${n - left} ${name}${left > 0 ? ` (${left} did not fit)` : ''}`);
+}
+

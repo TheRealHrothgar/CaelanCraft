@@ -26,8 +26,14 @@ describe('campfire block', () => {
     expect(isMeshed(B.CAMPFIRE)).toBe(false);
     expect(getFaceTile(B.CAMPFIRE, 0)).toBe(TILE.CAMPFIRE_SIDE);
     expect(getFaceTile(B.CAMPFIRE, FACE_TOP)).toBe(TILE.CAMPFIRE_TOP);
-    // Every other block is meshed as before.
-    expect(BLOCKS.filter((b) => !b.meshed).map((b) => b.name)).toEqual(['campfire']);
+    // Every other block is meshed as before, except the black hole and the circuit parts but the keg (DESIGN-circuits
+    // §1.1–§1.2: the thin parts, and the 14 device models of the "fun and simple" redo), which vortexRenderer and
+    // circuitRenderer draw.
+    expect(BLOCKS.filter((b) => !b.meshed).map((b) => b.name)).toEqual([
+      'black_hole', 'campfire', 'collapsar_charge', 'powder_fuse', 'torch', 'copper_wire', 'brown_wire', 'white_wire',
+      'earth_wire', 'terminal_board', 'voltaic_battery', 'blasting_machine', 'selenium_panel', 'knife_switch', 'push_button',
+      'clockwork_timer', 'relay', 'igniter', 'filament_lamp', 'electric_bell', 'spark_transmitter', 'coherer_receiver',
+    ]);
   });
   it('the mesher skips the campfire cell but still draws the ground under it', () => {
     const chunks = new Map();

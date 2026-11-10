@@ -1,11 +1,11 @@
 // Unit tests for src/explosions.js — lighting (R, campfire, `ignite`), lit barrel entities and fuse timers, snuffing,
 // merged chain blasts, the crater (shape, blast-proof cells, the edit cap), debris, knockback, the rim support seed,
 // flash / shake, saving, undo and streaming (CONTRACTS §37). Fake world from the fixtures unless a real World matters.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   BARREL_FUSE_S, MAX_LIT_BARRELS, MAX_DEBRIS, BLAST_RADIUS, BLAST_MAX_RADIUS, BLAST_IMPULSE, BLAST_MIN_UP,
   BLAST_FLASH_S, BLAST_SHAKE_S, BLAST_SHAKE_RANGE, BLAST_JITTER, BARREL_TIMER_FUSE_MIN_S, BARREL_TIMER_FUSE_MAX_S,
-  MAX_TOTAL_EDITS, PIG_RADIUS, PIG_HEIGHT, PLAYER_HEIGHT,
+  MAX_TOTAL_EDITS, PIG_RADIUS, PIG_HEIGHT, PLAYER_HEIGHT, KEG_DIRECT_FUSE_S,
 } from '../../src/config.js';
 import { BLOCK, isSolid } from '../../src/blocks.js';
 import { HEX_DIRS, hexToWorld, worldToHex } from '../../src/hex.js';
@@ -128,30 +128,31 @@ describe('lighting', () => {
     expect(physics.bodies([])).toEqual([t.body]);
   });
 
-  it('explosions off: nothing lights and `ignite` explains; ignite refuses non-barrels and burning ones', () => {
+  it('explosions off: nothing lights and `ignite` explains; ignite refuses non-kegs and burning ones (DESIGN-circuits §3.3)', () => {
     const { world, physics, ex } = setup();
     world.setBlock(0, 11, 0, B.BLAST_BARREL);
     world.setBlock(2, 11, 0, B.BLAST_BARREL);
     physics.setSwitch('explosions', false);
     expect(ex.lightAt(0, 11, 0)).toBe(false);
     expect(ex.ignite(0, 11, 0)).toEqual({ ok: false, message: expect.stringContaining('explosions are off') });
+    expect(ex.igniteInPlace(0, 11, 0).message).toContain('explosions are off');
     physics.setSwitch('explosions', true);
-    expect(ex.ignite(1, 11, 0).message).toContain('no blast barrel');
-    const res = ex.ignite(0, 11, 0);
-    expect(res.ok).toBe(true);
-    expect(res.message).toContain('lit the blast barrel at (0, 11, 0)');
+    expect(ex.ignite(1, 11, 0)).toEqual({ ok: false, message: 'there is no powder keg at (1, 11, 0)' });
+    // `ignite` makes the keg burn in place with a 3 s fuse: no entity, the block stays.
+    expect(ex.ignite(0, 11, 0)).toEqual({ ok: true, message: 'lit the powder keg at (0, 11, 0) — 3 s fuse' });
     expect(ex.litCount).toBe(1);
-    // The lit entity left AIR behind: igniting it again says it burns (play-test L1: "there is no blast barrel there").
-    expect(ex.ignite(0, 11, 0)).toEqual({ ok: false, message: 'the barrel at (0, 11, 0) is already burning' });
+    expect(ex.lit.length).toBe(0);
+    expect(ex.isBurning(0, 11, 0)).toBe(true);
+    expect(world.getBlock(0, 11, 0)).toBe(B.BLAST_BARREL);
+    expect([...ex.timers.values()][0].fuse).toBe(BARREL_FUSE_S);
+    expect(ex.ignite(0, 11, 0)).toEqual({ ok: false, message: 'the keg at (0, 11, 0) is already burning' });
+    // A lit keg ENTITY (programmatic lighting) left AIR behind: igniting its cell says it burns (play-test L1).
+    expect(ex.lightAt(2, 11, 0)).toBe(true);
+    expect(world.getBlock(2, 11, 0)).toBe(B.AIR);
+    expect(ex.ignite(2, 11, 0)).toEqual({ ok: false, message: 'the keg at (2, 11, 0) is already burning' });
     physics.step(DT);
-    expect(ex.ignite(0, 11, 0).message).toContain('already burning');
-    // A barrel burning in place (a fuse timer) cannot be lit twice.
-    for (let i = 0; i < MAX_LIT_BARRELS; i++) world.setBlock(10 + i * 2, 11, 10, B.BLAST_BARREL);
-    for (let i = 0; i < MAX_LIT_BARRELS; i++) ex.ignite(10 + i * 2, 11, 10);
-    expect(ex.timers.size).toBe(1);
-    expect(ex.ignite(2, 11, 0).ok).toBe(true); // timer (entities are full)
     expect(ex.ignite(2, 11, 0).message).toContain('already burning');
-    expect(ex.lightAt(2, 11, 0)).toBe(false);
+    expect(ex.lightAt(0, 11, 0)).toBe(false); // burning in place already
   });
 
   it('a campfire next to a barrel lights it (misc rule), whichever is placed second', () => {
@@ -164,7 +165,12 @@ describe('lighting', () => {
     world.setBlock(10, 12, 0, B.BLAST_BARREL); // on top of the fire
     physics.tick();
     expect(ex.litCount).toBe(2);
-    expect(world.getBlock(10, 12, 0)).toBe(B.AIR);
+    // DESIGN-circuits §3.2: both burn in place (no entity) with the campfire's BARREL_FUSE_S.
+    expect(ex.lit.length).toBe(0);
+    expect(world.getBlock(0, 11, 0)).toBe(B.BLAST_BARREL);
+    expect(world.getBlock(10, 12, 0)).toBe(B.BLAST_BARREL);
+    expect(ex.isBurning(0, 11, 0) && ex.isBurning(10, 12, 0)).toBe(true);
+    for (const rec of ex.timers.values()) expect(rec.fuse).toBe(BARREL_FUSE_S);
   });
 
   it('the ignition rule waits for an unloaded neighbour chunk and lights once it loads', () => {
@@ -185,7 +191,7 @@ describe('lighting', () => {
     const { world, physics, ex } = setup();
     const n = MAX_LIT_BARRELS + 8;
     for (let i = 0; i < n; i++) world.setBlock(i * 3, 11, 0, B.BLAST_BARREL);
-    for (let i = 0; i < n; i++) expect(ex.ignite(i * 3, 11, 0).ok).toBe(true);
+    for (let i = 0; i < n; i++) expect(ex.lightAt(i * 3, 11, 0)).toBe(true);
     expect(ex.lit.length).toBe(MAX_LIT_BARRELS);
     expect(physics.fallers.tumblerCount).toBe(MAX_LIT_BARRELS);
     expect(ex.timers.size).toBe(8);
@@ -199,7 +205,7 @@ describe('lighting', () => {
   it('a burning barrel block that is broken stops burning', () => {
     const { world, physics, ex } = setup();
     for (let i = 0; i <= MAX_LIT_BARRELS; i++) world.setBlock(i * 3, 11, 0, B.BLAST_BARREL);
-    for (let i = 0; i <= MAX_LIT_BARRELS; i++) ex.ignite(i * 3, 11, 0);
+    for (let i = 0; i <= MAX_LIT_BARRELS; i++) ex.lightAt(i * 3, 11, 0);
     expect(ex.timers.size).toBe(1);
     world.setBlock(MAX_LIT_BARRELS * 3, 11, 0, B.AIR);
     expect(ex.timers.size).toBe(0);
@@ -262,7 +268,7 @@ describe('snuffing', () => {
     world.setBlock(0, 11, 0, B.BLAST_BARREL);
     world.setBlock(1, 11, 0, B.WATER);
     for (let i = 0; i < MAX_LIT_BARRELS; i++) world.setBlock(40 + i * 2, 11, 40, B.BLAST_BARREL);
-    for (let i = 0; i < MAX_LIT_BARRELS; i++) ex.ignite(40 + i * 2, 11, 40);
+    for (let i = 0; i < MAX_LIT_BARRELS; i++) ex.lightAt(40 + i * 2, 11, 40);
     for (const rec of ex.lit) rec.fuse = 100; // keep the entities quiet
     ex.ignite(0, 11, 0);
     expect(ex.timers.size).toBe(1);
@@ -274,7 +280,7 @@ describe('snuffing', () => {
   it('switching explosions off puts every lit barrel out and drops the fuse timers', () => {
     const { world, physics, ex } = setup();
     for (let i = 0; i <= MAX_LIT_BARRELS; i++) world.setBlock(i * 3, 11, 0, B.BLAST_BARREL);
-    for (let i = 0; i <= MAX_LIT_BARRELS; i++) ex.ignite(i * 3, 11, 0);
+    for (let i = 0; i <= MAX_LIT_BARRELS; i++) ex.lightAt(i * 3, 11, 0);
     expect(ex.litCount).toBe(MAX_LIT_BARRELS + 1);
     physics.setSwitch('explosions', false);
     expect(ex.litCount).toBe(0);
@@ -376,7 +382,7 @@ describe('the blast', () => {
     for (const [q, r] of disc(0, 0, 3).slice(0, 30)) pile.push([q, 11, r]);
     for (const [q, y, r] of pile) world.setBlock(q, y, r, B.BLAST_BARREL);
     for (const [q, y, r] of pile) expect(ex.ignite(q, y, r).ok).toBe(true);
-    expect(ex.lit.length).toBe(30);
+    expect(ex.timers.size).toBe(30); // they burn in place (DESIGN-circuits §3.2)
     const blasts = stepRecording(physics, Math.ceil(BARREL_FUSE_S / DT) + 30);
     expect(blasts.length).toBe(1);
     expect(blasts[0].barrels).toBe(30);
@@ -606,7 +612,7 @@ describe('bodies, saving and undo', () => {
     ex.lightAt(0, 11, 0);
     ex.lit[0].tumbler.body.y = 17.2; // knocked up into the air
     for (let i = 0; i < MAX_LIT_BARRELS; i++) world.setBlock(30 + 2 * i, 11, 30, B.BLAST_BARREL);
-    for (let i = 0; i < MAX_LIT_BARRELS - 1; i++) ex.ignite(30 + 2 * i, 11, 30);
+    for (let i = 0; i < MAX_LIT_BARRELS - 1; i++) ex.lightAt(30 + 2 * i, 11, 30);
     ex.ignite(3, 11, 0); // a fuse timer: stays a barrel in the save
     expect(ex.timers.size).toBe(1);
     const edits = physics.exportEdits();
@@ -753,5 +759,143 @@ describe('real worldgen (seed 42)', () => {
       world.update(player.x, player.z, Infinity);
     }
     for (const [q, r] of disc(bq, br, 5)) expect(world.isReadyAtCell(q, r)).toBe(true); // re-meshed
+  });
+});
+
+describe('powder kegs (DESIGN-circuits §3.4)', () => {
+  it('igniteInPlace: the keg burns where it stands for 0.25 s by default (no entity), with a hiss and 6 sparks, then goes off', () => {
+    const { world, physics, fx, ex } = setup();
+    world.setBlock(0, 11, 0, B.POWDER_KEG);
+    const res = ex.igniteInPlace(0, 11, 0);
+    expect(res).toEqual({ ok: true, message: `lit the powder keg at (0, 11, 0) — ${KEG_DIRECT_FUSE_S} s fuse` });
+    expect(ex.lit.length).toBe(0);
+    expect(physics.fallers.tumblerCount).toBe(0);
+    expect(world.getBlock(0, 11, 0)).toBe(B.POWDER_KEG);
+    expect(ex.isBurning(0, 11, 0)).toBe(true);
+    expect([...ex.timers.values()][0].fuse).toBe(KEG_DIRECT_FUSE_S);
+    expect(fx.sounds.filter((s) => s.name === 'hiss').length).toBe(1);
+    expect(fx.particles.find((p) => p.kind === 'sparks').count).toBe(6);
+    const blasts = stepRecording(physics, Math.ceil(KEG_DIRECT_FUSE_S / DT) + 1);
+    expect(blasts.length).toBe(1);
+    expect(blasts[0].frame).toBeLessThanOrEqual(Math.ceil(KEG_DIRECT_FUSE_S / DT));
+    expect(blasts[0].frame).toBeGreaterThanOrEqual(Math.floor(KEG_DIRECT_FUSE_S / DT) - 1);
+  });
+
+  it('igniteInPlace on a burning keg is quiet and never shortens its fuse; a custom fuse; refusals', () => {
+    const { world, physics, ex } = setup();
+    world.setBlock(0, 11, 0, B.POWDER_KEG);
+    expect(ex.igniteInPlace(0, 11, 0, BARREL_FUSE_S).ok).toBe(true);
+    const rec = [...ex.timers.values()][0];
+    expect(rec.fuse).toBe(BARREL_FUSE_S);
+    expect(ex.igniteInPlace(0, 11, 0)).toEqual({ ok: false, quiet: true, message: 'the keg at (0, 11, 0) is already burning' });
+    expect(rec.fuse).toBe(BARREL_FUSE_S); // an igniter refiring every 0.5 s must not shorten it
+    expect(ex.igniteInPlace(5, 11, 0)).toEqual({ ok: false, message: 'there is no powder keg at (5, 11, 0)' });
+    world.unload(3, 3);
+    expect(ex.igniteInPlace(48, 11, 48).message).toBe('cell (48, 11, 48) is not loaded');
+    physics.setSwitch('explosions', false);
+    world.setBlock(2, 11, 0, B.POWDER_KEG);
+    expect(ex.igniteInPlace(2, 11, 0).message).toContain('explosions are off');
+    expect(ex.igniteInPlace(2, 11, 0).ok).toBe(false);
+    // A keg lit as an entity (programmatic) is burning too: quiet.
+    physics.setSwitch('explosions', true);
+    expect(ex.lightAt(2, 11, 0)).toBe(true);
+    expect(ex.igniteInPlace(2, 11, 0)).toMatchObject({ ok: false, quiet: true });
+  });
+
+  it('snuff(q, y, r) pinches out a keg burning in place and keeps the keg, with a soft hiss; false when nothing burns there', () => {
+    const { world, physics, fx, ex } = setup();
+    world.setBlock(0, 11, 0, B.POWDER_KEG);
+    ex.ignite(0, 11, 0);
+    fx.sounds.length = 0;
+    expect(ex.snuff(0, 11, 0)).toBe(true);
+    expect(ex.isBurning(0, 11, 0)).toBe(false);
+    expect(world.getBlock(0, 11, 0)).toBe(B.POWDER_KEG);
+    expect(fx.sounds).toEqual([expect.objectContaining({ name: 'hiss', v: 0.3 })]);
+    expect(ex.snuff(0, 11, 0)).toBe(false);
+    expect(ex.snuff(4, 11, 0)).toBe(false);
+    expect(ex.snuff(0, 200, 0)).toBe(false);
+    for (let i = 0; i < 300; i++) physics.step(DT);
+    expect(ex.blastCount).toBe(0);
+    expect(world.getBlock(0, 11, 0)).toBe(B.POWDER_KEG);
+  });
+
+  it('snuffing a HUNG keg gives it its support check (§38.2)', () => {
+    const { world, physics, ex } = setup();
+    world.setBlock(0, 14, 0, B.POWDER_KEG); // a keg in the air, as a collapse leaves one hanging
+    ex.igniteInPlace(0, 14, 0, BARREL_FUSE_S);
+    expect(ex.hangBurning(0, 14, 0)).toBe(true);
+    const seed = vi.spyOn(physics, 'seedSupport');
+    expect(ex.snuff(0, 14, 0)).toBe(true);
+    expect(seed).toHaveBeenCalledWith([[0, 14, 0]], expect.objectContaining({ cause: expect.any(Object) }));
+  });
+
+  it('a blast sets off every Collapsar Charge in its reach through onCharge and never writes the charge cell', () => {
+    const { world, physics, ex } = setup();
+    world.setBlock(0, 11, 0, B.POWDER_KEG);
+    world.setBlock(2, 11, 0, B.COLLAPSAR_CHARGE); // within the 3.5 radius
+    world.setBlock(1, 10, 0, B.COLLAPSAR_CHARGE); // inside the crater
+    world.setBlock(20, 11, 0, B.COLLAPSAR_CHARGE); // far away
+    /** @type {number[][]} */
+    const calls = [];
+    ex.onCharge = (q, y, r) => {
+      calls.push([q, y, r]);
+      expect(world.getBlock(q, y, r)).toBe(B.COLLAPSAR_CHARGE); // called after the write loop, the cell untouched
+    };
+    ex.igniteInPlace(0, 11, 0);
+    stepUntil(physics, () => ex.blastCount === 1);
+    expect(calls.map(String).sort()).toEqual(['1,10,0', '2,11,0']);
+    expect(ex.lastBlast.charges).toBe(2);
+    expect(world.getBlock(2, 11, 0)).toBe(B.COLLAPSAR_CHARGE);
+    expect(world.getBlock(1, 10, 0)).toBe(B.COLLAPSAR_CHARGE);
+    expect(world.getBlock(20, 11, 0)).toBe(B.COLLAPSAR_CHARGE);
+    expect(world.getBlock(1, 9, 0)).toBe(B.AIR); // the crater around it is gone
+  });
+
+  it('a charge is blast-proof; with no onCharge a blast simply leaves it alone', () => {
+    expect(isBlastProof(B.COLLAPSAR_CHARGE)).toBe(true);
+    expect(BLAST_PROOF_IDS).toContain(B.COLLAPSAR_CHARGE);
+    const { world, physics, ex } = setup();
+    expect(ex.onCharge).toBeNull();
+    world.setBlock(0, 11, 0, B.POWDER_KEG);
+    world.setBlock(1, 11, 0, B.COLLAPSAR_CHARGE);
+    ex.igniteInPlace(0, 11, 0);
+    stepUntil(physics, () => ex.blastCount === 1);
+    expect(world.getBlock(1, 11, 0)).toBe(B.COLLAPSAR_CHARGE);
+    expect(ex.lastBlast.charges).toBe(1);
+  });
+
+  it('undo gives back no keg where the physics hook ignitesAt holds (a torch or a powered igniter beside it), counting it burnt', () => {
+    const { world, physics, ex } = setup();
+    physics.hooks.ignitesAt = (q, y, r) => q === 0 && y === 11 && r === 0;
+    world.setBlock(0, 11, 0, B.POWDER_KEG);
+    ex.lightAt(0, 11, 0); // an entity: its blast uses it up, and undo would give it back in its lit cell
+    stepUntil(physics, () => ex.blastCount === 1);
+    const res = physics.undo();
+    expect(res.ok).toBe(true);
+    expect(res.message).toMatch(/1 (barrel|keg)/);
+    expect(res.message).toContain('not given back');
+    expect(world.getBlock(0, 11, 0)).toBe(B.AIR);
+    // Without the hook the same scene gives the keg back.
+    const b = setup();
+    b.world.setBlock(0, 11, 0, B.POWDER_KEG);
+    b.ex.lightAt(0, 11, 0);
+    stepUntil(b.physics, () => b.ex.blastCount === 1);
+    b.physics.undo();
+    expect(b.world.getBlock(0, 11, 0)).toBe(B.POWDER_KEG);
+  });
+
+  it('undo keeps a caught keg burning (as event 0) where ignitesAt holds, and drops the fuse of the others', () => {
+    const { world, physics, ex } = setup();
+    physics.hooks.ignitesAt = (q, y, r) => q === 2 && y === 11 && r === 0;
+    world.setBlock(0, 11, 0, B.POWDER_KEG);
+    world.setBlock(2, 11, 0, B.POWDER_KEG);
+    world.setBlock(-2, 11, 0, B.POWDER_KEG);
+    ex.lightAt(0, 11, 0);
+    stepUntil(physics, () => ex.blastCount === 1);
+    expect(ex.timers.size).toBe(2);
+    physics.undo();
+    expect(ex.timers.size).toBe(1);
+    expect(ex.isBurning(2, 11, 0)).toBe(true);
+    expect([...ex.timers.values()][0].event).toBe(0);
   });
 });

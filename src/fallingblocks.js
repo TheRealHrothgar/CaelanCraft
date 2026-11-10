@@ -1,6 +1,10 @@
 // Caelancraft — falling blocks: column fallers (sand, gravel, crumble pieces, settling logs), tumbling entities (blast
-// debris, lit barrels), the gravity rule and the campfire-breaks rule. See src/CONTRACTS.md §34 and
-// docs/DESIGN-physics.md §3. PURE: talks to the world only through its BlockPhysics (ctx.peek / ctx.write / hooks).
+// debris, lit barrels), the gravity rule and the pop-off rule. See src/CONTRACTS.md §34 and docs/DESIGN-physics.md §3.
+// PURE: talks to the world only through its BlockPhysics (ctx.peek / ctx.write / hooks).
+//
+// POP-OFF blocks (v0.9, docs/DESIGN-survival.md §8.5: `isPopOff` — the campfire, the cold fire pit, the wild plants and
+// the ground litter) break, like a campfire always has, when the cell below them is fall-through: the cell is written
+// AIR with a puff that suits the block, and nothing drops.
 //
 // A COLUMN FALLER is a cell-sized block falling straight down its (q, r) column, kept in typed arrays. Each frame
 // `vy += GRAVITY·dt` (floored at TERMINAL_VELOCITY) and the bottom sweeps from y to y + vy·dt checking EVERY cell it
@@ -15,7 +19,7 @@ import {
   GRAVITY, TERMINAL_VELOCITY, WORLD_HEIGHT, MAX_FALLING, MAX_TUMBLING, MAX_COLUMN_FALL, FALLER_RADIUS, FALLER_HEIGHT,
   TUMBLE_SUBSTEP, TUMBLE_AIR_DRAG, TUMBLE_GROUND_FRICTION, LANDING_DUST_PER_FRAME,
 } from './config.js';
-import { BLOCK, UNLOADED, isFallThrough, isGravityBlock, isSolid } from './blocks.js';
+import { BLOCK, UNLOADED, POP_OFF_IDS, isFallThrough, isGravityBlock, isPlant, isPopOff, isSolid } from './blocks.js';
 import { HEX_ROW_SPACING, worldToHex } from './hex.js';
 import { bodyHeight, bodyRadius, createBody, displaceBody, isFreeAt, playerIntersectsBlock } from './physics.js';
 
@@ -68,8 +72,38 @@ export function liftFreeY(getBlock, b, maxUp) {
  * @property {*} data             owner payload (explosions.js keeps its fuse here)
  */
 
-/** Gravity blocks and the campfire: what the gravity rule reacts to. */
-export const GRAVITY_RULE_IDS = Object.freeze([BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, BLOCK.CAMPFIRE]);
+/** Gravity blocks and the pop-off blocks (CAMPFIRE first, then the rest of POP_OFF_IDS): what the gravity rule reacts to. */
+export const GRAVITY_RULE_IDS = Object.freeze([BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, ...POP_OFF_IDS]);
+
+/** Grey stone dust (loose stones, a cold fire pit), green pad dust (a prickly pear), bark dust (fallen branches). */
+const POP_GREY = Object.freeze([0.56, 0.55, 0.52]);
+const POP_PAD_GREEN = Object.freeze([0.36, 0.56, 0.23]);
+const POP_BARK = Object.freeze([0.42, 0.3, 0.19]);
+/** Leaf colours of the plants' particles (their tiles' foliage; the short plants' top tile is clear, so not by `id`). */
+const POP_LEAF = Object.freeze({
+  [BLOCK.HONEYBERRY_BUSH]: Object.freeze([0.2, 0.42, 0.31]),
+  [BLOCK.HONEYBERRY_BUSH_BARE]: Object.freeze([0.2, 0.42, 0.31]),
+  [BLOCK.TUSSOCK]: Object.freeze([0.62, 0.64, 0.3]),
+  [BLOCK.CATTAILS]: Object.freeze([0.4, 0.52, 0.23]),
+  [BLOCK.TUBER_PLANT]: Object.freeze([0.33, 0.55, 0.24]),
+});
+
+/**
+ * The puff of a pop-off block (DESIGN-survival §8.5): a campfire keeps its smoke and wood crack; a plant scatters 6
+ * leaves (a prickly pear 4 green dust) with 'break:leaves'; loose stones and a fire pit 4 grey dust with 'break:stone';
+ * fallen branches 4 bark-brown dust with 'break:wood'.
+ * @param {number} id  a pop-off id
+ * @returns {{ kind: 'smoke'|'leaves'|'dust', count: number, dy: number, color: readonly number[]|null, sound: string }}
+ */
+export function popOffEffect(id) {
+  if (id === BLOCK.CAMPFIRE) return { kind: 'smoke', count: 10, dy: 0.3, color: null, sound: 'break:wood' };
+  if (id === BLOCK.PRICKLY_PEAR || id === BLOCK.PRICKLY_PEAR_BARE) {
+    return { kind: 'dust', count: 4, dy: 0.4, color: POP_PAD_GREEN, sound: 'break:leaves' };
+  }
+  if (isPlant(id)) return { kind: 'leaves', count: 6, dy: 0.4, color: POP_LEAF[id], sound: 'break:leaves' };
+  if (id === BLOCK.FALLEN_BRANCHES) return { kind: 'dust', count: 4, dy: 0.15, color: POP_BARK, sound: 'break:wood' };
+  return { kind: 'dust', count: 4, dy: 0.2, color: POP_GREY, sound: 'break:stone' }; // LOOSE_STONES, FIRE_PIT
+}
 
 /** A body a landing block would trap is lifted to the first free height among floor(y)+1 … floor(y)+1+this. */
 const LIFT_MAX_UP = 3;
@@ -534,7 +568,8 @@ export class FallingBlocks {
 
   /**
    * `fall` ring: a gravity block over a fall-through cell drops — together with the gravity blocks stacked on it
-   * (up to MAX_COLUMN_FALL), bottom first; a campfire over a fall-through cell breaks with a puff of smoke.
+   * (up to MAX_COLUMN_FALL), bottom first; a pop-off block (a campfire, a fire pit, a plant, litter) over a fall-through
+   * cell breaks with its puff (popOffEffect) and drops nothing.
    * @param {RuleContext} ctx
    */
   _gravityRule(ctx, q, y, r, id) {
@@ -546,10 +581,11 @@ export class FallingBlocks {
     if (!isFallThrough(below) || this._litAt(q, y - 1, r)) return; // resting on the ground, or on a burning barrel
     const x = q + r / 2;
     const z = r * HEX_ROW_SPACING;
-    if (id === BLOCK.CAMPFIRE) {
+    if (isPopOff(id)) {
       if (ctx.write(q, y, r, BLOCK.AIR) === 'ok') {
-        ctx.particles('smoke', x, y + 0.3, z, 10);
-        ctx.sound('break:wood', x, y + 0.5, z);
+        const fx = popOffEffect(id);
+        ctx.particles(fx.kind, x, y + fx.dy, z, fx.count, fx.color ? { color: [...fx.color] } : undefined);
+        ctx.sound(fx.sound, x, y + 0.5, z);
       }
       return;
     }
@@ -614,8 +650,8 @@ export class FallingBlocks {
 
   /**
    * Land block `id` into cell (q, cy, r). A body the block would trap is lifted with liftFreeY (from floor(y)+1, up to
-   * LIFT_MAX_UP, sweeping up one cell at a time so it never passes through a solid roof); when one has no room the block
-   * breaks into dust instead (never bury the player). A refused write
+   * LIFT_MAX_UP, sweeping up one cell at a time so it never passes through a solid roof) and reported through
+   * `hooks.lifted(body, cells)`; when one has no room the block breaks into dust instead (never bury the player). A refused write
    * ('capped' / 'failed') also breaks it. The write is recorded into event `ev` while that is still undoable.
    * @returns {boolean} placed
    */
@@ -666,8 +702,11 @@ export class FallingBlocks {
     }
     for (let i = 0; i < lifts.length; i += 2) {
       const b = /** @type {PlayerState} */ (lifts[i]);
-      b.y = /** @type {number} */ (lifts[i + 1]);
+      const fy = /** @type {number} */ (lifts[i + 1]);
+      const cells = Math.max(1, Math.ceil(fy - b.y - 1e-6));
+      b.y = fy;
       if (b.vy < 0) b.vy = 0;
+      physics.hooks.lifted(b, cells); // the body is free now: only this tells main it was crushed (§2.4)
     }
     lifts.length = 0;
     this._noteLanding(id, x, cy, z);

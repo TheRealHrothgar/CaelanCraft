@@ -2,7 +2,8 @@
 // Everything runs against Map-backed fakes of the Web Storage subset the module uses; the quota fake throws a
 // QuotaExceededError like a full localStorage does and never changes anything when it throws.
 import { describe, it, expect } from 'vitest';
-import { DEFAULT_HOTBAR } from '../../src/blocks.js';
+import { PACK_SLOTS } from '../../src/config.js';
+import { BLOCK, DEFAULT_HOTBAR } from '../../src/blocks.js';
 import {
   SAVE_VERSION, SAVE_KEY, SAVE_SLOTS, MAX_WORLD_NAME_CHARS, STORAGE_QUOTA_ESTIMATE, LEGACY_SAVE_KEY, SLOT_INDEX_KEY,
   MIGRATED_WORLD_NAME, serializeSave, deserializeSave, slotKey, isSlot, cleanWorldName, defaultWorldName, normalizeWorldName,
@@ -573,5 +574,219 @@ describe('save slots: moving the old single save into slot 1', () => {
     expect(migrateLegacySave(storage, NOW + 1)).toEqual({ status: 'migrated', slot: 2 });
     expect(loadSlot(1, storage).day).toBe(2);
     expect(loadSlot(2, storage).day).toBe(30);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// v0.9 survival fields through the slot API (docs/DESIGN-survival.md §9.6)
+
+/** A Survival world: generation 2, mode survival, a pack, a fire on a campfire cell and a basket. */
+function survivalWorld(seed = 50, overrides = {}) {
+  // cells (0, 64, 0) and (1, 64, 0) live in chunk 0,0: local index (lq·16 + lr)·128 + y
+  const fireLi = (0 * 16 + 0) * 128 + 64;
+  const basketLi = (1 * 16 + 0) * 128 + 64;
+  return makeSave(seed, {
+    edits: { '0,0': [fireLi, BLOCK.CAMPFIRE, basketLi, BLOCK.WICKER_BASKET] },
+    gen: 2,
+    mode: 'survival',
+    survival: {
+      health: 90, satiation: 70, hydration: 60, temp: 37, breath: 20, wet: 0, sick: 0, heal: 0, healRate: 0,
+      spawn: null, deaths: 0,
+      pack: [{ k: 'rock', n: 5 }, ...new Array(PACK_SLOTS - 1).fill(null)],
+      wear: [null, null, null],
+      fires: { '0,64,0': { s: [{ k: 'raw_pork', t: 3 }, null, null, null, null, null, null], f: 200 } },
+    },
+    containers: { '1,64,0': { kind: 'basket', slots: [{ k: 'stick', n: 4 }] } },
+    ...overrides,
+  });
+}
+
+/** The four survival fields of a loaded save. */
+function survivalFields(save) {
+  expect(save).not.toBeNull();
+  return { gen: save.gen, mode: save.mode, survival: save.survival, containers: save.containers, version: save.version };
+}
+
+describe('save slots: survival worlds (v0.9)', () => {
+  it('save, load and list a Survival world: version 3, the fields intact, "mode: survival" on its SlotInfo', () => {
+    const world = survivalWorld(50, { meta: { name: 'Wild' } });
+    const storage = withWorlds([[2, world], [3, makeSave(3, { meta: { name: 'Builder' } })]]);
+    expect(JSON.parse(storage.map.get(slotKey(2))).version).toBe(3);
+    const loaded = loadSlot(2, storage);
+    expect(loaded.warnings).toEqual([]);
+    expect(survivalFields(loaded)).toEqual({
+      gen: 2, mode: 'survival', survival: deserializeSave(serializeSave(world)).survival, containers: world.containers, version: 3,
+    });
+    const slots = listSlots(storage);
+    expect(slots[1]).toMatchObject({ status: 'world', name: 'Wild', mode: 'survival' });
+    expect(slots[2]).toMatchObject({ status: 'world', name: 'Builder' });
+    expect('mode' in slots[2]).toBe(false); // Creative worlds carry no mode
+    expect(JSON.parse(storage.map.get(slotKey(3))).version).toBe(2);
+  });
+
+  it('the mode is listed from both entry paths (a fresh save, and a rebuild from the text); version-3 slots are indexed damaged', () => {
+    const storage = withWorlds([[1, survivalWorld()], [2, makeSave(2)], [3, survivalWorld(51, { mode: 'creative' })]]);
+    let index = JSON.parse(storage.map.get(SLOT_INDEX_KEY));
+    expect(index.slots[0]).toMatchObject({ damaged: true }); // entryFromData (saveSlot): a version-3 document, never a rich entry
+    expect(index.slots[1].mode).toBeUndefined(); // a version-2 Creative world keeps its rich entry
+    expect(index.slots[1].name).toBe('World 2');
+    expect(index.slots[2]).toMatchObject({ damaged: true }); // gen 2 with a frozen survival state: version 3 as well
+    expect(listSlots(storage).map((s) => s.mode)).toEqual(['survival', undefined, undefined, undefined, undefined, undefined]);
+    expect(listSlots(storage).map((s) => s.status)).toEqual(['world', 'world', 'world', 'empty', 'empty', 'empty']);
+    storage.map.delete(SLOT_INDEX_KEY);
+    expect(listSlots(storage).map((s) => s.mode)).toEqual(['survival', undefined, undefined, undefined, undefined, undefined]);
+    index = JSON.parse(storage.map.get(SLOT_INDEX_KEY));
+    expect(index.slots[0]).toMatchObject({ damaged: true }); // entryFromText (the rebuild) writes the same form
+    expect(index.slots[1].name).toBe('World 2');
+    // a consistent index is used as is for the version-2 slot (no rewrite)
+    const writes = storage.writes;
+    expect(listSlots(storage)[1].name).toBe('World 2');
+    expect(storage.writes).toBe(writes);
+    // an index entry with a mode that is not 'survival' is not trusted: rebuilt from the document
+    index.slots[1] = { ...index.slots[1], mode: 'hardcore' };
+    storage.map.set(SLOT_INDEX_KEY, JSON.stringify(index));
+    expect(listSlots(storage)[1].mode).toBeUndefined();
+    expect(JSON.parse(storage.map.get(SLOT_INDEX_KEY)).slots[1].mode).toBeUndefined();
+  });
+
+  it('a hand-edited Survival mode on generation 1 is listed (and loads) as a Creative world', () => {
+    const storage = fakeStorage([[slotKey(1), serializeSave(makeSave(1, { mode: 'survival' }))]]);
+    expect(listSlots(storage)[0].mode).toBeUndefined();
+    const s = loadSlot(1, storage);
+    expect(s.mode).toBe('creative');
+    expect(s.warnings).toContain('mode: survival needs generation 2; loaded in Creative');
+  });
+
+  it('rename, duplicate and the legacy move keep gen, mode, survival and containers', () => {
+    const world = survivalWorld(60, { meta: { name: 'Wild', createdAt: 100, lastPlayed: 200 } });
+    const expected = survivalFields(deserializeSave(serializeSave(world)));
+    const storage = withWorlds([[3, world]]);
+    expect(renameSlot(3, 'Wilder', storage).ok).toBe(true);
+    expect(survivalFields(loadSlot(3, storage))).toEqual(expected);
+    expect(listSlots(storage)[2]).toMatchObject({ name: 'Wilder', mode: 'survival' });
+    expect(duplicateSlot(3, storage, NOW)).toMatchObject({ ok: true, slot: 1, name: 'Wilder (copy)' });
+    expect(survivalFields(loadSlot(1, storage))).toEqual(expected);
+    expect(listSlots(storage)[0]).toMatchObject({ name: 'Wilder (copy)', mode: 'survival' });
+    const legacy = fakeStorage([[LEGACY_SAVE_KEY, serializeSave({ ...world, meta: undefined })]]);
+    expect(listSlots(legacy, { repair: false })[0]).toMatchObject({ legacy: true, mode: 'survival' });
+    expect(migrateLegacySave(legacy, NOW)).toMatchObject({ status: 'migrated', slot: 1 });
+    expect(survivalFields(loadSlot(1, legacy))).toEqual(expected);
+  });
+
+  it('a world from a newer generator is damaged: never loaded, renamed or copied, only deleted', () => {
+    const raw = JSON.parse(serializeSave(survivalWorld()));
+    const newer = JSON.stringify({ ...raw, gen: 3 });
+    const storage = fakeStorage([[slotKey(4), newer]]);
+    expect(listSlots(storage)[3]).toMatchObject({ status: 'damaged', bytes: newer.length });
+    expect(loadSlot(4, storage)).toBeNull();
+    expect(renameSlot(4, 'x', storage)).toEqual({ ok: false, reason: 'damaged' });
+    expect(duplicateSlot(4, storage, NOW)).toEqual({ ok: false, reason: 'damaged' });
+    expect(storage.map.get(slotKey(4))).toBe(newer);
+  });
+
+  it('a world an older client called "damaged" in the shared index is checked again and listed as the world it is', () => {
+    const text = serializeSave(survivalWorld(70, { meta: { name: 'Newer' } }));
+    // what a v0.8 tab writes after listing a version-3 slot it cannot read
+    const index = { version: 1, slots: [{ damaged: true, bytes: text.length, hash: textHash(text) }, null, null, null, null, null] };
+    const storage = fakeStorage([[slotKey(1), text], [SLOT_INDEX_KEY, JSON.stringify(index)]]);
+    expect(listSlots(storage)[0]).toMatchObject({ status: 'world', name: 'Newer', seed: 70, mode: 'survival' });
+    // and the index keeps the damaged form for it (§41.1 v0.9): a version-3 world is never indexed as a world an older client
+    // would trust — see 'a version-3 save is indexed as damaged' below
+    expect(JSON.parse(storage.map.get(SLOT_INDEX_KEY)).slots[0]).toEqual({ damaged: true, bytes: text.length, hash: textHash(text) });
+    // a truly damaged slot stays damaged, and its (unchanged) index entry is not rewritten
+    const junk = fakeStorage([[slotKey(2), '{broken']]);
+    listSlots(junk);
+    const writes = junk.writes;
+    expect(listSlots(junk)[1].status).toBe('damaged');
+    expect(junk.writes).toBe(writes);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Circuits (docs/DESIGN-circuits.md §6.4): the black-holes and circuits switches and the configured parts.
+
+describe('save slots: circuit fields', () => {
+  /** A world with both switches off and two configured parts (their blocks recorded in the edits). */
+  const circuitWorld = (seed = 80, overrides = {}) => makeSave(seed, {
+    // (5, 64, 0) is chunk (0, 0), local index (5·16 + 0)·128 + 64; (−3, 70, 2) is chunk (−1, 0), local (13·16 + 2)·128 + 70
+    edits: { '0,0': [(5 * 16) * 128 + 64, BLOCK.KNIFE_SWITCH], '-1,0': [(13 * 16 + 2) * 128 + 70, BLOCK.SPARK_TRANSMITTER] },
+    blackholes: false,
+    circuits: false,
+    circuitParts: { '5,64,0': { k: 'switch', on: true }, '-3,70,2': { k: 'tx', l: 'Gate', ch: 7 } },
+    ...overrides,
+  });
+  /** The three circuit fields of a loaded save. */
+  const circuitFields = (save) => {
+    expect(save).not.toBeNull();
+    return { blackholes: save.blackholes, circuits: save.circuits, circuitParts: save.circuitParts };
+  };
+
+  it('save and load keep them; a world without them stays version 2 and byte-identical', () => {
+    const storage = withWorlds([[1, circuitWorld()], [2, makeSave(2)]]);
+    expect(circuitFields(loadSlot(1, storage))).toEqual({
+      blackholes: false, circuits: false, circuitParts: { '-3,70,2': { k: 'tx', l: 'Gate', ch: 7 }, '5,64,0': { k: 'switch', on: true } },
+    });
+    expect(loadSlot(1, storage).version).toBe(SAVE_VERSION);
+    expect(storage.map.get(slotKey(2))).toBe(serializeSave(makeSave(2)));
+    expect(storage.map.get(slotKey(2))).not.toContain('circuit');
+  });
+
+  it('rename, duplicate and the legacy move keep blackholes, circuits and circuitParts', () => {
+    const world = circuitWorld(81, { meta: { name: 'Wired', createdAt: 100, lastPlayed: 200 } });
+    const expected = circuitFields(deserializeSave(serializeSave(world)));
+    expect(expected.circuitParts).toBeDefined();
+    const storage = withWorlds([[3, world]]);
+    expect(renameSlot(3, 'Rewired', storage).ok).toBe(true);
+    expect(circuitFields(loadSlot(3, storage))).toEqual(expected);
+    expect(duplicateSlot(3, storage, NOW)).toMatchObject({ ok: true, slot: 1, name: 'Rewired (copy)' });
+    expect(circuitFields(loadSlot(1, storage))).toEqual(expected);
+    const legacy = fakeStorage([[LEGACY_SAVE_KEY, serializeSave({ ...world, meta: undefined })]]);
+    expect(migrateLegacySave(legacy, NOW)).toMatchObject({ status: 'migrated', slot: 1 });
+    expect(circuitFields(loadSlot(1, legacy))).toEqual(expected);
+  });
+});
+
+describe('a version-3 save seen by an older client through the shared slot index (§42, DESIGN-survival §1.4)', () => {
+  /** v0.8's index-entry trust rule, as src/storage.js@24b63f9 had it (validIndexEntry + listSlots): any well-formed rich entry
+   *  whose bytes and hash match the slot text is listed as a WORLD without parsing the document. */
+  function v08TrustsAsWorld(entry, text) {
+    if (!entry || typeof entry !== 'object') return false;
+    const { bytes, hash } = entry;
+    if (!Number.isInteger(bytes) || bytes <= 0 || !Number.isInteger(hash) || hash < 0 || hash > 0xffffffff) return false;
+    if (entry.damaged === true) return false; // v0.8 shows the slot as damaged: what §42 wants
+    if (typeof entry.name !== 'string' || entry.name === '' || typeof entry.seed !== 'number') return false;
+    return bytes === text.length && hash === textHash(text);
+  }
+
+  it('a version-3 save is indexed as damaged, so a v0.8 client never lists it as a world it could overwrite (play-test: its ?autoplay boot saved a fresh gen-1 world over it)', () => {
+    const storage = fakeStorage();
+    const world = survivalWorld(42, { meta: { name: 'My survival world' } });
+    expect(saveSlot(1, world, storage).ok).toBe(true);
+    const text = storage.map.get(slotKey(1));
+    expect(JSON.parse(text).version).toBe(3);
+    const entry = JSON.parse(storage.map.get(SLOT_INDEX_KEY)).slots[0];
+    expect(entry).toEqual({ damaged: true, bytes: text.length, hash: textHash(text) });
+    expect(v08TrustsAsWorld(entry, text)).toBe(false);
+    // this client still lists it as the Survival world it is (a damaged entry is always parsed again, §41.1)
+    expect(listSlots(storage)[0]).toMatchObject({ status: 'world', name: 'My survival world', seed: 42, mode: 'survival' });
+    // and a listing does not "repair" the entry back into a rich one
+    expect(JSON.parse(storage.map.get(SLOT_INDEX_KEY)).slots[0]).toEqual(entry);
+    // rename and duplicate keep the rule
+    expect(renameSlot(1, 'Renamed', storage).ok).toBe(true);
+    expect(JSON.parse(storage.map.get(SLOT_INDEX_KEY)).slots[0].damaged).toBe(true);
+    expect(duplicateSlot(1, storage, NOW).ok).toBe(true);
+    const copy = JSON.parse(storage.map.get(SLOT_INDEX_KEY)).slots[1];
+    expect(copy.damaged).toBe(true);
+    expect(listSlots(storage)[1]).toMatchObject({ status: 'world', name: 'Renamed (copy)', mode: 'survival' });
+  });
+
+  it('a version-2 (Creative, generation 1) save keeps its rich entry, byte for byte as before', () => {
+    const storage = fakeStorage();
+    expect(saveSlot(2, makeSave(2, { meta: { name: 'Builder', createdAt: 5, lastPlayed: 6 } }), storage).ok).toBe(true);
+    const text = storage.map.get(slotKey(2));
+    expect(JSON.parse(text).version).toBe(2);
+    const entry = JSON.parse(storage.map.get(SLOT_INDEX_KEY)).slots[1];
+    expect(entry).toEqual({ name: 'Builder', seed: 2, createdAt: 5, lastPlayed: 6, bytes: text.length, hash: textHash(text) });
+    expect(v08TrustsAsWorld(entry, text)).toBe(true);
   });
 });

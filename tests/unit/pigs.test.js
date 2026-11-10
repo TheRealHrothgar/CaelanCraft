@@ -1,7 +1,10 @@
 // Unit tests for src/pigs.js — pig AI, physics, hits, ray targeting and save validation (CONTRACTS §30).
 import { describe, it, expect } from 'vitest';
 import { BLOCK } from '../../src/blocks.js';
-import { PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_HURT_S, WORLD_HEIGHT } from '../../src/config.js';
+import {
+  PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_HURT_S, WORLD_HEIGHT, PIG_HEALTH, ATTACK_REPEAT_S, PIG_REPOP_RADIUS,
+} from '../../src/config.js';
+import { getItem } from '../../src/items.js';
 import { Pigs, seededRng, validatePigsJSON, SHORE_SEARCHES_PER_UPDATE, PIG_HEAD_BOX } from '../../src/pigs.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { BlackHoles } from '../../src/blackholes.js';
@@ -517,5 +520,178 @@ describe('Pigs.spawnNatural', () => {
     // No grass anywhere → no pigs (and no endless loop).
     const c = new Pigs();
     expect(c.spawnNatural(5, 0, 0, 42, (_q, y) => (y < GROUND ? B.SAND : B.AIR), () => true)).toBe(0);
+  });
+});
+
+describe('Survival: health, wound, pruneFar, spawnNatural surfaces (DESIGN-survival §4.3, §9.3)', () => {
+  const world = { getBlock: flat, isLoaded: loaded };
+  const power = (key) => getItem(key).tool.power;
+
+  it('spawn and load give every pig PIG_HEALTH; health is never saved', () => {
+    const pigs = new Pigs(seededRng(4));
+    const pig = pigs.spawn(0, GROUND, 0);
+    expect(PIG_HEALTH).toBe(5);
+    expect(pig.health).toBe(PIG_HEALTH);
+    pig.health = 1;
+    const json = pigs.export();
+    expect(json[0]).not.toHaveProperty('health');
+    const back = new Pigs(seededRng(4));
+    back.load(json);
+    expect(back.list[0].health).toBe(PIG_HEALTH); // pigs heal on reload
+  });
+
+  it('wound subtracts the power and reports dead at 0 (5 power in all); a wound is a hit too', () => {
+    const pigs = new Pigs(seededRng(5));
+    const pig = pigs.spawn(3, GROUND, 0);
+    pig.onGround = true;
+    expect(pigs.wound(pig, 2, 0, 0)).toBe('hit');
+    expect(pig.health).toBe(3);
+    expect(pig.hurt).toBe(PIG_HURT_S);
+    expect(pig.mode).toBe('flee');
+    expect(pig.vx).toBeGreaterThan(0); // knocked away from the hitter
+    run(pigs, world, PIG_HURT_S + 0.05);
+    expect(pigs.wound(pig, 2, 0, 0)).toBe('hit');
+    expect(pig.health).toBe(1);
+    run(pigs, world, PIG_HURT_S + 0.05);
+    expect(pigs.wound(pig, 1, 0, 0)).toBe('dead');
+    expect(pigs.size).toBe(0);
+    expect(pigs.wound(pig, 1, 0, 0)).toBeNull(); // a dead pig is gone
+  });
+
+  it('a Stone Chopper (2) kills in three hits, a Flint Spear (3) in two; bare hands never wound', () => {
+    for (const [key, hits] of [['stone_chopper', 3], ['flint_spear', 2], ['steel_sword', 1], ['hammerstone', 5]]) {
+      const pigs = new Pigs(seededRng(6));
+      const pig = pigs.spawn(0, GROUND, 0);
+      let n = 0;
+      let res = null;
+      while (res !== 'dead' && n < 10) {
+        res = pigs.wound(pig, power(key), 2, 0);
+        n++;
+        run(pigs, world, PIG_HURT_S + 0.05);
+      }
+      expect(n, key).toBe(hits);
+    }
+    // Bare hands (Creative, or no tool): hit only, which never kills.
+    const pigs = new Pigs(seededRng(7));
+    const pig = pigs.spawn(0, GROUND, 0);
+    for (let i = 0; i < 20; i++) {
+      pigs.hit(pig, 2, 0);
+      run(pigs, world, PIG_HURT_S + 0.05);
+    }
+    expect(pig.health).toBe(PIG_HEALTH);
+    expect(pigs.size).toBe(1);
+  });
+
+  it('the invulnerability window: wounds during the flash are ignored (null) and cost nothing', () => {
+    const pigs = new Pigs(seededRng(8));
+    const pig = pigs.spawn(0, GROUND, 0);
+    expect(pigs.wound(pig, 1, 2, 0)).toBe('hit');
+    expect(pigs.wound(pig, 3, 2, 0)).toBeNull();
+    expect(pig.health).toBe(4);
+    run(pigs, world, PIG_HURT_S - 0.1);
+    expect(pigs.wound(pig, 3, 2, 0)).toBeNull();
+    expect(pig.health).toBe(4);
+    run(pigs, world, 0.15);
+    expect(pigs.wound(pig, 1, 2, 0)).toBe('hit');
+    expect(pig.health).toBe(3);
+  });
+
+  it('holding attack at ATTACK_REPEAT_S for 3 s lands one wound per repeat (never inside the flash)', () => {
+    expect(ATTACK_REPEAT_S).toBeGreaterThan(PIG_HURT_S);
+    const pigs = new Pigs(seededRng(9));
+    const pig = pigs.spawn(0, GROUND, 0);
+    pig.health = 1000; // count the wounds
+    const dt = 1 / 60;
+    let cooldown = 0; // main's repeat timer: strike on the press, then every ATTACK_REPEAT_S while held
+    let strikes = 0;
+    let wounds = 0;
+    for (let f = 0; f < 3 * 60; f++) {
+      cooldown -= dt;
+      if (cooldown <= 1e-9) {
+        strikes++;
+        if (pigs.wound(pig, 1, pig.x + 1, pig.z) === 'hit') wounds++;
+        cooldown += ATTACK_REPEAT_S;
+      }
+      pigs.update(dt, world);
+    }
+    expect(strikes).toBe(Math.floor(3 / ATTACK_REPEAT_S) + 1);
+    expect(wounds).toBe(strikes);
+    expect(pig.health).toBe(1000 - strikes);
+    // With the real PIG_HEALTH and power 1, the fifth repeat kills.
+    const p2 = new Pigs(seededRng(10));
+    const pig2 = p2.spawn(0, GROUND, 0);
+    const results = [];
+    cooldown = 0;
+    for (let f = 0; f < 3 * 60; f++) {
+      cooldown -= dt;
+      if (cooldown <= 1e-9) {
+        results.push(p2.wound(pig2, 1, pig2.x + 1, pig2.z));
+        cooldown += ATTACK_REPEAT_S;
+      }
+      p2.update(dt, world);
+    }
+    expect(results).toEqual(['hit', 'hit', 'hit', 'hit', 'dead', null]);
+  });
+
+  it('a power that is not a positive number shoves without wounding', () => {
+    const pigs = new Pigs(seededRng(11));
+    const pig = pigs.spawn(0, GROUND, 0);
+    for (const bad of [0, -3, NaN, Infinity, undefined, '2']) {
+      pig.hurt = 0;
+      expect(pigs.wound(pig, /** @type {*} */ (bad), 2, 0)).toBe('hit');
+      expect(pig.health).toBe(PIG_HEALTH);
+    }
+    pig.hurt = 0;
+    pig.health = NaN; // a corrupted value is treated as full health
+    expect(pigs.wound(pig, 1, 2, 0)).toBe('hit');
+    expect(pig.health).toBe(PIG_HEALTH - 1);
+  });
+
+  it('pruneFar removes the farthest pig in an unloaded chunk beyond minDist, one per call', () => {
+    const pigs = new Pigs(seededRng(12));
+    const near = pigs.spawn(10, GROUND, 0);
+    const mid = pigs.spawn(-150, GROUND, 0);
+    pigs.spawn(0, GROUND, 300);
+    const loadedFar = pigs.spawn(400, GROUND, 0);
+    const minDist = 2 * PIG_REPOP_RADIUS;
+    // Loaded: the cells east of x = 350 (and around the origin).
+    const isLoadedCell = (q, r) => {
+      const [x, z] = hexToWorld(q, r);
+      return x > 350 || Math.hypot(x, z) < 20;
+    };
+    expect(pigs.pruneFar(0, 0, isLoadedCell, minDist)).toBe(true);
+    expect(pigs.list).toEqual([near, mid, loadedFar]); // the pig 300 away went first
+    expect(pigs.pruneFar(0, 0, isLoadedCell, minDist)).toBe(true);
+    expect(pigs.list).toEqual([near, loadedFar]);
+    expect(pigs.pruneFar(0, 0, isLoadedCell, minDist)).toBe(false); // near is close, loadedFar is loaded
+    expect(pigs.size).toBe(2);
+    // Distance is measured from (x, z): from far away, `near` qualifies.
+    expect(pigs.pruneFar(1000, 1000, () => false, minDist)).toBe(true);
+    expect(pigs.size).toBe(1);
+    expect(new Pigs().pruneFar(0, 0, () => false, 0)).toBe(false);
+    // Exactly at minDist does not qualify.
+    const edge = new Pigs();
+    edge.spawn(minDist, GROUND, 0);
+    expect(edge.pruneFar(0, 0, () => false, minDist)).toBe(false);
+  });
+
+  it('spawnNatural takes the ground ids a pig may stand on; grass only by default', () => {
+    const snowy = (_q, y) => (y < GROUND - 1 ? B.STONE : y === GROUND - 1 ? B.SNOWY_GRASS : B.AIR);
+    const a = new Pigs();
+    expect(a.spawnNatural(3, 0, 0, 77, snowy, () => true, 24, 48)).toBe(0);
+    const b = new Pigs();
+    expect(b.spawnNatural(3, 0, 0, 77, snowy, () => true, 24, 48, [B.GRASS_BLOCK, B.SNOWY_GRASS])).toBe(3);
+    for (const p of b.list) {
+      const [q, r] = worldToHex(p.x, p.z);
+      expect(snowy(q, GROUND - 1, r)).toBe(B.SNOWY_GRASS);
+      const d = Math.hypot(p.x, p.z);
+      expect(d).toBeGreaterThan(23);
+      expect(d).toBeLessThan(49);
+      expect(p.health).toBe(PIG_HEALTH);
+    }
+    const c = new Pigs();
+    expect(c.spawnNatural(3, 0, 0, 77, flat, () => true, 24, 48, [B.SNOWY_GRASS])).toBe(0); // grass is not in the list
+    const d = new Pigs();
+    expect(d.spawnNatural(3, 0, 0, 77, flat, () => true, 24, 48, [B.GRASS_BLOCK, B.SNOWY_GRASS])).toBe(3);
   });
 });

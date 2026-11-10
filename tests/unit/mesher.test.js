@@ -548,7 +548,7 @@ describe('buildChunkMesh — water', () => {
     for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + 1 + WATER_SURFACE_HEIGHT, 6);
   });
   it('water under any block meshed as a full prism stays full height: no fake surface under submerged glass, ice or leaves', () => {
-    for (const above of [B.GLASS, B.ICE, B.OAK_LEAVES, B.BLACK_HOLE, B.STONE]) {
+    for (const above of [B.GLASS, B.ICE, B.OAK_LEAVES, B.STONE]) {
       const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, above]]));
       const water = facesAt(m, AQ, AY, AR);
       expect(water.length).toBeGreaterThan(0);
@@ -558,10 +558,29 @@ describe('buildChunkMesh — water', () => {
       expect(water.some((f) => f.face === FACE_TOP)).toBe(!isOpaque(above));
     }
   });
+  it('a circuit device (a 3D model: solid but unmeshed and not opaque) leaves no hole: every face round it is drawn', () => {
+    for (const id of [B.VOLTAIC_BATTERY, B.FILAMENT_LAMP, B.COLLAPSAR_CHARGE, B.KNIFE_SWITCH, B.RELAY]) {
+      // A device on a stone floor, walled by stone on every side and roofed with stone.
+      const cells = [[...A, id], [AQ, AY - 1, AR, B.STONE], [AQ, AY + 1, AR, B.STONE]];
+      for (let j = 0; j < 6; j++) cells.push([...near(j), B.STONE]);
+      const m = mesh(world(cells));
+      expect(facesAt(m, AQ, AY, AR), `${id}`).toHaveLength(0); // the device itself is not meshed
+      expect(faceSet(facesAt(m, AQ, AY - 1, AR)), `${id}`).toContain(FACE_TOP); // the floor under it
+      expect(faceSet(facesAt(m, AQ, AY + 1, AR)), `${id}`).toContain(FACE_BOTTOM); // the roof over it
+      for (let j = 0; j < 6; j++) {
+        const [q, y, r] = near(j);
+        expect(faceSet(facesAt(m, q, y, r)), `${id} wall ${j}`).toContain(FACE_OPPOSITE[j]); // each wall's face toward it
+      }
+    }
+  });
   it('water under a campfire (drawn by its own model, the cell is mostly air) keeps the lowered free surface', () => {
-    const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, B.CAMPFIRE]]));
-    const top = facesAt(m, AQ, AY, AR).find((f) => f.face === FACE_TOP);
-    for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    // Also under the other blocks with their own model: the black hole (vortexRenderer) and a thin circuit part
+    // (circuitRenderer), unmeshed since DESIGN-circuits §1.1–§1.2.
+    for (const above of [B.CAMPFIRE, B.BLACK_HOLE, B.COPPER_WIRE]) {
+      const m = mesh(world([[...A, B.WATER], [AQ, AY + 1, AR, above]]));
+      const top = facesAt(m, AQ, AY, AR).find((f) => f.face === FACE_TOP);
+      for (const v of top.verts) expect(v[1]).toBeCloseTo(AY + WATER_SURFACE_HEIGHT, 6);
+    }
   });
   it('two side-by-side water cells cull their shared face (cullSame)', () => {
     const m = mesh(world([[...A, B.WATER], [...near(2), B.WATER]]));

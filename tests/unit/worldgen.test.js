@@ -1,15 +1,18 @@
-// Tests for src/worldgen.js -- see src/CONTRACTS.md §8.
+// Tests for src/worldgen.js -- see src/CONTRACTS.md §8 and, for generation 2, docs/DESIGN-survival.md §8.3–§8.4.
 // Cells are hexagonal prisms addressed by axial (q, r) + y. Every sample point is derived from fixed
 // seeds / mulberry32, so the suite is fully deterministic.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import {
-  CHUNK_SIZE, WORLD_HEIGHT, CHUNK_AREA, CHUNK_VOLUME, SEA_LEVEL, MIN_TERRAIN_HEIGHT, MAX_TERRAIN_HEIGHT,
+  CHUNK_SIZE, WORLD_HEIGHT, CHUNK_AREA, CHUNK_VOLUME, SEA_LEVEL, MIN_TERRAIN_HEIGHT, MAX_TERRAIN_HEIGHT, GEN_LATEST,
 } from '../../src/config.js';
 import { columnIndex, localIndex, floorDiv } from '../../src/coords.js';
 import { HEX_DIRS, hexLength, hexToWorld } from '../../src/hex.js';
-import { BLOCK, BIOME } from '../../src/blocks.js';
-import { normalizeSeed, hash2, rand3, mulberry32 } from '../../src/noise.js';
-import { createWorldGen, TREE_CELL, TREE_DENSITY, ORE_TABLE } from '../../src/worldgen.js';
+import { BLOCK, BIOME, isSolid } from '../../src/blocks.js';
+import { normalizeSeed, hash2, hash3, rand3, mulberry32 } from '../../src/noise.js';
+import {
+  createWorldGen, TREE_CELL, TREE_DENSITY, ORE_TABLE, ORE_TABLE_GEN2, FLORA_TABLE, POND_CELL, POND_SALT, FLORA_SALT,
+} from '../../src/worldgen.js';
 
 const B = BLOCK;
 const SEED = 'caelancraft-test';
@@ -38,9 +41,9 @@ function at(data, lq, ly, lr) {
 
 /**
  * Merge an ncq x ncr block of chunks (starting at chunk cq0, cr0) into one cell-coordinate view.
- * get(q, y, r) returns -1 outside the view.
+ * get(q, y, r) returns -1 outside the view. `getChunk` defaults to the gen-1 cache.
  */
-function mergedView(cq0, cr0, ncq, ncr) {
+function mergedView(cq0, cr0, ncq, ncr, getChunk = chunk) {
   const W = ncq * CHUNK_SIZE;
   const D = ncr * CHUNK_SIZE;
   const blocks = new Uint8Array(W * D * WORLD_HEIGHT);
@@ -48,7 +51,7 @@ function mergedView(cq0, cr0, ncq, ncr) {
   const biomes = new Uint8Array(W * D);
   for (let cq = cq0; cq < cq0 + ncq; cq++) {
     for (let cr = cr0; cr < cr0 + ncr; cr++) {
-      const data = chunk(cq, cr);
+      const data = getChunk(cq, cr);
       for (let lq = 0; lq < CHUNK_SIZE; lq++) {
         for (let lr = 0; lr < CHUNK_SIZE; lr++) {
           const vq = (cq - cq0) * CHUNK_SIZE + lq;
@@ -740,5 +743,628 @@ describe('performance', () => {
     for (let i = 0; i < 10; i++) gen.generateChunk(60 + i, -60 + i);
     const avg = (performance.now() - t0) / 10;
     expect(avg).toBeLessThan(8);
+  });
+
+  it('generates a warm generation-2 chunk in ≤ 8 ms on average over 10 chunks (DESIGN-survival §8.3)', () => {
+    const g2 = createWorldGen(SEED, { gen: 2 });
+    for (let i = 0; i < 3; i++) g2.generateChunk(50 + i, 50); // warm up
+    const t0 = performance.now();
+    for (let i = 0; i < 10; i++) g2.generateChunk(60 + i, -60 + i);
+    const avg = (performance.now() - t0) / 10;
+    expect(avg).toBeLessThan(8);
+  });
+});
+
+// =============================================================================================
+// Generation 2: the survival resources (docs/DESIGN-survival.md §8.3–§8.4, package A tests 1–9).
+
+const gen2 = createWorldGen(SEED, { gen: 2 });
+const chunk2Cache = new Map();
+/** A cached generation-2 chunk of SEED. */
+function chunk2(cq, cr) {
+  const key = `${cq},${cr}`;
+  let c = chunk2Cache.get(key);
+  if (!c) {
+    c = gen2.generateChunk(cq, cr);
+    chunk2Cache.set(key, c);
+  }
+  return c;
+}
+/** Block at cell (q, y, r) of the generation-2 world (generates the chunk on demand). */
+function cell2(q, y, r) {
+  const cq = floorDiv(q, CHUNK_SIZE);
+  const cr = floorDiv(r, CHUNK_SIZE);
+  return at(chunk2(cq, cr), q - cq * CHUNK_SIZE, y, r - cr * CHUNK_SIZE);
+}
+
+/** sha256 of a chunk's three arrays (first 32 hex digits). */
+function digest(d) {
+  return createHash('sha256').update(d.blocks).update(d.biomes).update(d.heights).digest('hex').slice(0, 32);
+}
+
+/** Chunks of SEED compared cell by cell between generation 1 and 2. */
+const CMP = [[0, 0], [1, 0], [0, 1], [-1, 2], [3, -4], [-2, -2], [5, 5], [12, -7], [2, 2], [-3, 1], [4, -1], [-5, 3]];
+
+/** The flora / litter ids of FLORA_TABLE (the rows that stand on the surface; gravel tops excluded). */
+const FLORA_IDS = new Set(FLORA_TABLE.filter(Boolean).flatMap((t) => t.rows.filter((row) => !row.top).map((row) => row.id)));
+const LEAF_IDS = new Set([B.OAK_LEAVES, B.SPRUCE_LEAVES, B.BIRCH_LEAVES]);
+const POND_BIOMES = [BIOME.PLAINS, BIOME.FOREST, BIOME.SNOWY];
+
+/** A sparse scan of 121 generation-2 chunks spread over 130 chunks each way (for rates and ponds). */
+let scanCache = null;
+function scan() {
+  if (!scanCache) {
+    scanCache = [];
+    for (let i = -5; i <= 5; i++) for (let j = -5; j <= 5; j++) scanCache.push([i * 13, j * 13]);
+  }
+  return scanCache;
+}
+
+/** The accepted pond centres of grid cells kq, kr in [k0, k1] (pondAt holds at a centre exactly when it is accepted). */
+function pondCentres(g, k0, k1) {
+  const out = [];
+  for (let kq = k0; kq <= k1; kq++) {
+    for (let kr = k0; kr <= k1; kr++) {
+      const h = hash2(kq, kr, g.seed ^ POND_SALT);
+      const q = kq * POND_CELL + 2 + (h & 7);
+      const r = kr * POND_CELL + 2 + ((h >>> 3) & 7);
+      if (g.pondAt(q, r)) out.push({ kq, kr, q, r, h, H: g.getColumn(q, r).height, biome: g.getColumn(q, r).biome });
+    }
+  }
+  return out;
+}
+
+/** The hex offsets within distance 2 (19 columns, centre first). */
+const DISC2 = [];
+for (let dq = -2; dq <= 2; dq++) for (let dr = -2; dr <= 2; dr++) if (hexLength(dq, dr) <= 2) DISC2.push([dq, dr, hexLength(dq, dr)]);
+DISC2.sort((a, b) => a[2] - b[2]);
+
+describe('generation 2: the generator surface', () => {
+  it('gen 1 is byte-identical to the generator before v0.9 (checksums pinned before the change)', () => {
+    const PINNED = [
+      ['caelancraft-test', 0, 0, 'ba19062a5808524ea11789c6b23f7c51'], ['caelancraft-test', 1, 0, '848b42776e4f7c4c51ab16d7d8dfcfbb'],
+      ['caelancraft-test', -1, 2, 'a9944a0f1601507ec9ee4f2a654d7492'], ['caelancraft-test', 3, -4, 'b92d33159fbb4b2d24f5bc52ba43aa6d'],
+      ['caelancraft-test', -2, -2, '9f43864b239f7d2fc01cb4215de92d87'], ['caelancraft-test', 5, 5, '65909b7ae138783979528a34da4cce1d'],
+      ['caelancraft-test', 12, -7, '8e9b35b4a991adae0df3d18127c43550'], [1, 0, 0, '2791ec977c4934e4ef477ab8fcfcccaf'],
+      [1, -3, 1, '95b586bf372526523aedc043b372fa10'], [1, 2, 2, 'f8f3d23c77e11137c6902b8be4db292d'],
+      ['survival', 0, 0, 'a2dd4003a283bdb39480e033eb8c4bd2'], ['survival', 4, -1, 'b77dbbb874c202a6a2c788a8d4d1b413'],
+    ];
+    for (const [seed, cq, cr, sum] of PINNED) {
+      expect(digest(createWorldGen(seed).generateChunk(cq, cr)), `${seed} ${cq},${cr}`).toBe(sum);
+      expect(digest(createWorldGen(seed, { gen: 1 }).generateChunk(cq, cr)), `${seed} ${cq},${cr} gen 1`).toBe(sum);
+    }
+    // Anything that is not an integer ≥ 1 is generation 1 too.
+    for (const bad of [0, -2, 1.5, '2', null, undefined, NaN]) {
+      const g = createWorldGen(1, { gen: /** @type {*} */ (bad) });
+      expect(g.gen, String(bad)).toBe(1);
+      expect(digest(g.generateChunk(0, 0))).toBe('2791ec977c4934e4ef477ab8fcfcccaf');
+    }
+    // …and generation 2 differs.
+    expect(digest(createWorldGen(1, { gen: 2 }).generateChunk(0, 0))).not.toBe('2791ec977c4934e4ef477ab8fcfcccaf');
+  });
+
+  it('exposes gen, pondAt, treeTrunkAt and FLORA_TABLE on the generator; gen is clamped to 1..GEN_LATEST', () => {
+    expect(gen.gen).toBe(1);
+    expect(gen2.gen).toBe(2);
+    expect(createWorldGen(1, { gen: 99 }).gen).toBe(GEN_LATEST);
+    for (const g of [gen, gen2]) {
+      expect(typeof g.pondAt).toBe('function');
+      expect(typeof g.treeTrunkAt).toBe('function');
+      expect(g.FLORA_TABLE).toBe(FLORA_TABLE);
+    }
+    // Generation 1 has no ponds.
+    for (const p of pondCentres(gen2, -6, 6)) expect(gen.pondAt(p.q, p.r)).toBe(false);
+    expect(ORE_TABLE.length).toBe(6); // the gen-1 rows are untouched
+    expect(Object.isFrozen(ORE_TABLE_GEN2)).toBe(true);
+    expect(Object.isFrozen(FLORA_TABLE)).toBe(true);
+    expect(POND_CELL).toBe(20);
+    expect(typeof POND_SALT).toBe('number');
+    expect(typeof FLORA_SALT).toBe('number');
+  });
+
+  it('ORE_TABLE_GEN2 is the §8.3 table: copper, tin, clay (clay replaces sand, gravel and dirt)', () => {
+    const rows = ORE_TABLE_GEN2.map((o) => [o.id, o.attempts, o.minY, o.maxY, o.minSize, o.maxSize, o.replaces ? [...o.replaces] : null]);
+    expect(rows).toEqual([
+      [B.COPPER_ORE, 10, 30, 80, 4, 8, null],
+      [B.TIN_ORE, 4, 20, 64, 3, 6, null],
+      [B.CLAY, 3, 52, 62, 6, 12, [B.SAND, B.GRAVEL, B.DIRT]],
+    ]);
+  });
+
+  it('FLORA_TABLE is the §8.3 table, indexed by biome (cumulative chances below 1)', () => {
+    const view = (biome) => {
+      const t = FLORA_TABLE[biome];
+      return t && { surface: t.surface, rows: t.rows.map((row) => [row.id, row.chance, row.top ? 'top' : 'on']) };
+    };
+    expect(FLORA_TABLE.length).toBe(8);
+    expect(view(BIOME.OCEAN)).toBe(null);
+    expect(view(BIOME.SNOWY_PEAKS)).toBe(null);
+    expect(view(BIOME.PLAINS)).toEqual({
+      surface: B.GRASS_BLOCK,
+      rows: [[B.GRAVEL, 0.015, 'top'], [B.LOOSE_STONES, 0.012, 'on'], [B.FALLEN_BRANCHES, 0.005, 'on'], [B.TUSSOCK, 0.06, 'on'],
+        [B.TUBER_PLANT, 0.008, 'on'], [B.HONEYBERRY_BUSH, 0.006, 'on']],
+    });
+    expect(view(BIOME.FOREST)).toEqual({
+      surface: B.GRASS_BLOCK,
+      rows: [[B.GRAVEL, 0.02, 'top'], [B.LOOSE_STONES, 0.01, 'on'], [B.FALLEN_BRANCHES, 0.04, 'on'], [B.TUSSOCK, 0.03, 'on'],
+        [B.TUBER_PLANT, 0.004, 'on'], [B.HONEYBERRY_BUSH, 0.02, 'on']],
+    });
+    expect(view(BIOME.SNOWY)).toEqual({
+      surface: B.SNOWY_GRASS,
+      rows: [[B.GRAVEL, 0.02, 'top'], [B.LOOSE_STONES, 0.02, 'on'], [B.FALLEN_BRANCHES, 0.015, 'on'], [B.TUSSOCK, 0.02, 'on'],
+        [B.HONEYBERRY_BUSH, 0.005, 'on']],
+    });
+    expect(view(BIOME.DESERT)).toEqual({ surface: B.SAND, rows: [[B.LOOSE_STONES, 0.01, 'on'], [B.PRICKLY_PEAR, 0.008, 'on']] });
+    expect(view(BIOME.BEACH)).toEqual({
+      surface: B.SAND, rows: [[B.GRAVEL, 0.12, 'top'], [B.LOOSE_STONES, 0.06, 'on'], [B.CATTAILS, 0.03, 'on']],
+    });
+    const cattails = FLORA_TABLE[BIOME.BEACH].rows[2];
+    expect([cattails.minHeight, cattails.maxHeight, cattails.besideBelow]).toEqual([62, 63, 62]);
+    expect(view(BIOME.MOUNTAINS)).toEqual({ surface: B.STONE, rows: [[B.GRAVEL, 0.06, 'top'], [B.LOOSE_STONES, 0.05, 'on']] });
+    for (const t of FLORA_TABLE) if (t) expect(t.rows.reduce((s, row) => s + row.chance, 0)).toBeLessThan(1);
+  });
+});
+
+describe('generation 2: determinism and chunk borders', () => {
+  it('is deterministic and every chunk is the same whichever order its neighbours are generated in', () => {
+    const coords = [[0, 0], [1, 0], [0, 1], [1, -1], [-1, 1], [-1, 0], [0, -1]];
+    const a = createWorldGen(SEED, { gen: 2 });
+    const b = createWorldGen(SEED, { gen: 2 });
+    const first = coords.map(([q, r]) => digest(a.generateChunk(q, r)));
+    const second = [...coords].reverse().map(([q, r]) => digest(b.generateChunk(q, r))).reverse();
+    expect(second).toEqual(first);
+    expect(first).toEqual(coords.map(([q, r]) => digest(chunk2(q, r))));
+  });
+
+  it('pond water is exactly where pondAt says, on both sides of every chunk border', () => {
+    let straddling = 0;
+    for (const p of pondCentres(gen2, -12, 12)) {
+      const chunks = new Set();
+      for (const [dq, dr, d] of DISC2) {
+        if (d > 1) continue;
+        const q = p.q + dq;
+        const r = p.r + dr;
+        if (gen2.getColumn(q, r).height !== p.H) continue;
+        chunks.add(`${floorDiv(q, CHUNK_SIZE)},${floorDiv(r, CHUNK_SIZE)}`);
+        expect(gen2.pondAt(q, r)).toBe(true);
+        expect([B.WATER, B.ICE]).toContain(cell2(q, p.H, r));
+      }
+      if (chunks.size > 1) straddling++;
+    }
+    expect(straddling).toBeGreaterThan(0);
+    // Conversely, every water or ice cell above sea level in these chunks belongs to a pond column.
+    for (const [cq, cr] of [[-1, -1], [0, 0], [1, 2], [-2, 3], [4, 4], [6, -3]]) {
+      const d = chunk2(cq, cr);
+      for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+        for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+          for (let y = SEA_LEVEL + 1; y < WORLD_HEIGHT; y++) {
+            const v = at(d, lq, y, lr);
+            if (v === B.WATER || v === B.ICE) expect(gen2.pondAt(cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr)).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  it('spruce and birch trees whose canopy straddles a chunk border keep their species on both sides', () => {
+    let checked = 0;
+    let straddling = 0;
+    for (let kq = -40; kq <= 40 && checked < 24; kq++) {
+      for (let kr = -40; kr <= 40 && checked < 24; kr++) {
+        const t = gen2.treeTrunkAt(kq, kr);
+        if (!t || t.species === 'oak') continue;
+        // Only isolated trees (no other trunk within 5, so no canopy overlaps): every canopy cell is this tree's.
+        let isolated = true;
+        for (let okq = kq - 2; okq <= kq + 2; okq++) {
+          for (let okr = kr - 2; okr <= kr + 2; okr++) {
+            if (okq === kq && okr === kr) continue;
+            const o = gen2.treeTrunkAt(okq, okr);
+            if (o && hexLength(o.tq - t.tq, o.tr - t.tr) < 5) isolated = false;
+          }
+        }
+        if (!isolated) continue;
+        const log = t.species === 'spruce' ? B.SPRUCE_LOG : B.BIRCH_LOG;
+        const leaves = t.species === 'spruce' ? B.SPRUCE_LEAVES : B.BIRCH_LEAVES;
+        const top = t.height + t.trunk;
+        for (let y = t.height + 1; y <= top; y++) expect(cell2(t.tq, y, t.tr)).toBe(log);
+        const chunks = new Set();
+        for (const [dq, dr, d] of DISC2) {
+          const q = t.tq + dq;
+          const r = t.tr + dr;
+          chunks.add(`${floorDiv(q, CHUNK_SIZE)},${floorDiv(r, CHUNK_SIZE)}`);
+          // Layer top+1 (d ≤ 1) is above all terrain within reach, so it is always this tree's leaves.
+          if (d <= 1) expect(cell2(q, top + 1, r), `${q},${top + 1},${r}`).toBe(leaves);
+          for (let y = top - 1; y <= top + 2; y++) {
+            const v = cell2(q, y, r);
+            if (LEAF_IDS.has(v)) expect(v).toBe(leaves);
+          }
+        }
+        if (chunks.size > 1) straddling++;
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
+    expect(straddling).toBeGreaterThan(0);
+  });
+});
+
+describe('generation 2: ores and clay', () => {
+  it('every gen-1 vein is unchanged; every other difference from gen 1 is a survival resource', () => {
+    const counts = new Map();
+    for (const [cq, cr] of CMP) {
+      const a = chunk(cq, cr);
+      const b = chunk2(cq, cr);
+      for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+        for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+          const height = a.heights[columnIndex(lq, lr)];
+          for (let y = 0; y < WORLD_HEIGHT; y++) {
+            const u = at(a, lq, y, lr);
+            const v = at(b, lq, y, lr);
+            if (ORE_IDS.has(u)) expect(v, 'gen-1 ore').toBe(u);
+            if (u === v) continue;
+            const ok =
+              (u === B.STONE && (v === B.COPPER_ORE || v === B.TIN_ORE)) ||
+              ((u === B.SAND || u === B.GRAVEL || u === B.DIRT) && v === B.CLAY) ||
+              ((u === B.GRASS_BLOCK || u === B.SNOWY_GRASS) && (v === B.WATER || v === B.ICE) && y === height) ||
+              ([B.GRASS_BLOCK, B.SNOWY_GRASS, B.SAND, B.STONE].includes(u) && v === B.GRAVEL && y === height) ||
+              ((u === B.AIR || LEAF_IDS.has(u)) && FLORA_IDS.has(v) && y === height + 1) ||
+              (u === B.OAK_LOG && (v === B.SPRUCE_LOG || v === B.BIRCH_LOG)) ||
+              (u === B.OAK_LEAVES && (v === B.SPRUCE_LEAVES || v === B.BIRCH_LEAVES));
+            expect(ok, `${cq},${cr} (${lq},${y},${lr}): ${u} → ${v}`).toBe(true);
+            counts.set(v, (counts.get(v) ?? 0) + 1);
+          }
+        }
+      }
+    }
+    for (const id of [B.COPPER_ORE, B.TIN_ORE, B.CLAY, B.TUSSOCK, B.LOOSE_STONES]) expect(counts.get(id) ?? 0, `id ${id}`).toBeGreaterThan(0);
+  });
+
+  it('copper and tin stay in their y ranges and replace STONE only; clay replaces only sand, gravel and dirt', () => {
+    const range = (o) => [o.minY - o.maxSize, o.maxY + o.maxSize];
+    const [cu, sn, clay] = ORE_TABLE_GEN2.map(range);
+    const seen = { cu: 0, sn: 0, clay: 0 };
+    for (const [cq, cr] of CMP) {
+      const a = chunk(cq, cr);
+      const b = chunk2(cq, cr);
+      for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+        for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+          const q = cq * CHUNK_SIZE + lq;
+          const r = cr * CHUNK_SIZE + lr;
+          const height = b.heights[columnIndex(lq, lr)];
+          for (let y = 0; y < WORLD_HEIGHT; y++) {
+            const v = at(b, lq, y, lr);
+            const u = at(a, lq, y, lr);
+            if (v === B.COPPER_ORE) {
+              seen.cu++;
+              expect(u).toBe(B.STONE);
+              expect(y).toBeGreaterThanOrEqual(cu[0]);
+              expect(y).toBeLessThanOrEqual(cu[1]);
+            } else if (v === B.TIN_ORE) {
+              seen.sn++;
+              expect(u).toBe(B.STONE);
+              expect(y).toBeGreaterThanOrEqual(sn[0]);
+              expect(y).toBeLessThanOrEqual(sn[1]);
+            } else if (v === B.CLAY) {
+              seen.clay++;
+              expect([B.SAND, B.GRAVEL, B.DIRT]).toContain(u);
+              const pondFloor = y === height - 1 && gen2.pondAt(q, r);
+              if (!pondFloor) {
+                expect(y).toBeGreaterThanOrEqual(clay[0]);
+                expect(y).toBeLessThanOrEqual(clay[1]);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(seen.cu).toBeGreaterThan(seen.sn); // 10 attempts against 4
+    expect(seen.sn).toBeGreaterThan(0);
+    expect(seen.clay).toBeGreaterThan(0);
+  });
+});
+
+describe('generation 2: flora (§8.3 step 4)', () => {
+  it('each eligible column gets exactly what its one roll against the cumulative FLORA_TABLE picks', () => {
+    let placed = 0;
+    let eligible = 0;
+    for (const [cq, cr] of CMP) {
+      const a = chunk(cq, cr);
+      const b = chunk2(cq, cr);
+      for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+        for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+          const q = cq * CHUNK_SIZE + lq;
+          const r = cr * CHUNK_SIZE + lr;
+          const ci = columnIndex(lq, lr);
+          const table = FLORA_TABLE[b.biomes[ci]];
+          const h = b.heights[ci];
+          if (!table || at(a, lq, h, lr) !== table.surface || at(a, lq, h + 1, lr) !== B.AIR) continue;
+          // Ponds and their rims (written before the flora pass) and new-species canopies are not flora's business.
+          let nearPond = false;
+          for (const [dq, dr] of DISC2) if (gen2.pondAt(q + dq, r + dr)) nearPond = true;
+          if (nearPond || LEAF_IDS.has(at(b, lq, h + 1, lr))) continue;
+          eligible++;
+          const u = rand3(q, r, FLORA_SALT, gen2.seed);
+          let acc = 0;
+          let want = null;
+          for (const row of table.rows) {
+            acc += row.chance;
+            if (u < acc) {
+              const shore = row.besideBelow === undefined ||
+                HEX_DIRS.some(([dq, dr]) => gen2.getColumn(q + dq, r + dr).height < row.besideBelow);
+              const fits = (row.minHeight === undefined || h >= row.minHeight) && (row.maxHeight === undefined || h <= row.maxHeight) && shore;
+              want = fits ? row : null;
+              break;
+            }
+          }
+          const top = at(b, lq, h, lr);
+          const above = at(b, lq, h + 1, lr);
+          if (!want) {
+            expect([top, above], `${q},${r}`).toEqual([table.surface, B.AIR]);
+          } else if (want.top) {
+            expect([top, above], `${q},${r}`).toEqual([want.id, B.AIR]);
+            placed++;
+          } else {
+            expect([top, above], `${q},${r}`).toEqual([table.surface, want.id]);
+            placed++;
+          }
+        }
+      }
+    }
+    expect(eligible).toBeGreaterThan(1000);
+    expect(placed).toBeGreaterThan(20);
+  });
+
+  it('plants and litter stand on their biome surface (or a pond rim); over a scan each rate is within ±50 % of §8.3', () => {
+    const eligible = new Map();
+    const hits = new Map();
+    const shore = { n: 0, cattails: 0 };
+    for (const [cq, cr] of scan()) {
+      const d = chunk2(cq, cr);
+      for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+        for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+          const ci = columnIndex(lq, lr);
+          const biome = d.biomes[ci];
+          const table = FLORA_TABLE[biome];
+          const h = d.heights[ci];
+          const top = at(d, lq, h, lr);
+          const above = at(d, lq, h + 1, lr);
+          const q = cq * CHUNK_SIZE + lq;
+          const r = cr * CHUNK_SIZE + lr;
+          if (FLORA_IDS.has(above)) {
+            expect(isSolid(top), `${q},${r}`).toBe(true);
+            if (table && table.rows.some((row) => row.id === above && !row.top) && top === table.surface) {
+              // a flora row of this biome on its surface
+            } else {
+              // otherwise only a pond rim's cattails or loose stones, on a pond biome's surface
+              expect([B.CATTAILS, B.LOOSE_STONES], `${q},${r}`).toContain(above);
+              expect(POND_BIOMES).toContain(biome);
+              expect([B.GRASS_BLOCK, B.SNOWY_GRASS]).toContain(top);
+            }
+          }
+          if (!table) {
+            expect(FLORA_IDS.has(above) && !POND_BIOMES.includes(biome), `flora in biome ${biome}`).toBe(false);
+            continue;
+          }
+          // Eligible after the fact: the surface (or a gravel top) with AIR or one flora block above it.
+          const gravelTop = top === B.GRAVEL && table.rows[0].top;
+          if (!((top === table.surface && (above === B.AIR || FLORA_IDS.has(above))) || (gravelTop && above === B.AIR))) continue;
+          eligible.set(biome, (eligible.get(biome) ?? 0) + 1);
+          const id = gravelTop ? B.GRAVEL : above;
+          if (id !== B.AIR) hits.set(`${biome}:${id}`, (hits.get(`${biome}:${id}`) ?? 0) + 1);
+          if (biome === BIOME.BEACH && h >= 62 && h <= 63 && HEX_DIRS.some(([dq, dr]) => gen2.getColumn(q + dq, r + dr).height < 62)) {
+            shore.n++;
+            if (above === B.CATTAILS) shore.cattails++;
+          }
+        }
+      }
+    }
+    let rows = 0;
+    for (const biome of [BIOME.BEACH, BIOME.PLAINS, BIOME.FOREST, BIOME.DESERT, BIOME.SNOWY, BIOME.MOUNTAINS]) {
+      const n = eligible.get(biome) ?? 0;
+      expect(n, `eligible columns in biome ${biome}`).toBeGreaterThan(250);
+      for (const row of FLORA_TABLE[biome].rows) {
+        if (row.besideBelow !== undefined) continue; // conditional: measured on the shore below
+        const ratio = (hits.get(`${biome}:${row.id}`) ?? 0) / (row.chance * n);
+        expect(ratio, `biome ${biome} id ${row.id}`).toBeGreaterThanOrEqual(0.5);
+        expect(ratio, `biome ${biome} id ${row.id}`).toBeLessThanOrEqual(1.5);
+        rows++;
+      }
+    }
+    expect(rows).toBe(23); // every unconditional row of the six tables
+    expect(shore.n * 0.03).toBeGreaterThan(10);
+    const ratio = shore.cattails / (shore.n * 0.03);
+    expect(ratio).toBeGreaterThanOrEqual(0.5);
+    expect(ratio).toBeLessThanOrEqual(1.5);
+  });
+});
+
+describe('generation 2: hex ponds (§8.4)', () => {
+  it('accepts exactly the candidates of the §8.4 rule (roll, biomes, heights ≥ H, no trunk within 2)', () => {
+    let accepted = 0;
+    let rejectedRolls = 0;
+    for (let kq = -15; kq <= 15; kq++) {
+      for (let kr = -15; kr <= 15; kr++) {
+        const h = hash2(kq, kr, gen2.seed ^ POND_SALT);
+        const q = kq * POND_CELL + 2 + (h & 7);
+        const r = kr * POND_CELL + 2 + ((h >>> 3) & 7);
+        const H = gen2.getColumn(q, r).height;
+        let want = ((h >>> 8) & 0xffff) / 65536 < 0.5;
+        if (!want) rejectedRolls++;
+        for (const [dq, dr] of DISC2) {
+          const c = gen2.getColumn(q + dq, r + dr);
+          if (c.height < H || !POND_BIOMES.includes(c.biome)) want = false;
+        }
+        for (let tkq = floorDiv(q - 8, TREE_CELL); tkq <= floorDiv(q + 8, TREE_CELL) && want; tkq++) {
+          for (let tkr = floorDiv(r - 8, TREE_CELL); tkr <= floorDiv(r + 8, TREE_CELL); tkr++) {
+            const t = gen2.treeTrunkAt(tkq, tkr);
+            if (t && hexLength(t.tq - q, t.tr - r) <= 2) want = false;
+          }
+        }
+        expect(gen2.pondAt(q, r), `pond ${kq},${kr}`).toBe(want);
+        if (want) accepted++;
+      }
+    }
+    expect(accepted).toBeGreaterThan(20);
+    expect(rejectedRolls).toBeGreaterThan(300); // about half of the 961 candidates fail the roll
+  });
+
+  it('writes water (ice when snowy) over clay within distance 1, the rim plants at distance 2, and nothing flows', () => {
+    let water = 0;
+    let ice = 0;
+    let cattails = 0;
+    let stones = 0;
+    for (const p of pondCentres(gen2, -12, 12)) {
+      const liquid = p.biome === BIOME.SNOWY ? B.ICE : B.WATER;
+      if (liquid === B.ICE) ice++;
+      else water++;
+      for (const [dq, dr, d] of DISC2) {
+        const q = p.q + dq;
+        const r = p.r + dr;
+        const height = gen2.getColumn(q, r).height;
+        expect(height).toBeGreaterThanOrEqual(p.H);
+        if (d <= 1) {
+          if (height === p.H) {
+            expect(cell2(q, p.H, r)).toBe(liquid);
+            expect(cell2(q, p.H - 1, r)).toBe(B.CLAY);
+            expect([B.AIR, ...LEAF_IDS]).toContain(cell2(q, p.H + 1, r)); // open water: no trunk, no plant
+            // Every side neighbour at H is the same water or solid, so the pond never flows.
+            for (const [nq, nr] of HEX_DIRS) {
+              const n = cell2(q + nq, p.H, r + nr);
+              expect(n === liquid || isSolid(n), `${q + nq},${p.H},${r + nr} = ${n}`).toBe(true);
+            }
+          } else {
+            expect(gen2.pondAt(q, r)).toBe(false);
+            expect(cell2(q, p.H, r)).not.toBe(liquid);
+          }
+        } else if (height === p.H) {
+          const rim = hash3(q, r, POND_SALT, gen2.seed);
+          const v = cell2(q, p.H + 1, r);
+          if ((rim & 3) === 0) {
+            expect(v).toBe(B.CATTAILS);
+            cattails++;
+          } else if ((rim & 7) === 1) {
+            expect(v).toBe(B.LOOSE_STONES);
+            stones++;
+          } else {
+            // No rim plant (flora may still put loose stones or a plant there later; it never grows cattails here).
+            expect(v, `${q},${r}`).not.toBe(B.CATTAILS);
+          }
+        }
+      }
+    }
+    expect(water).toBeGreaterThan(0);
+    expect(ice).toBeGreaterThan(0);
+    expect(cattails).toBeGreaterThan(0);
+    expect(stones).toBeGreaterThan(0);
+  });
+
+  it('a pond is never in OCEAN / BEACH / DESERT / mountain land, and pondAt is false for every column of a gen-1 world', () => {
+    for (const p of pondCentres(gen2, -12, 12)) {
+      expect(POND_BIOMES).toContain(p.biome);
+      expect(p.H).toBeGreaterThanOrEqual(SEA_LEVEL + 3);
+      expect(gen.pondAt(p.q, p.r)).toBe(false);
+    }
+  });
+});
+
+describe('generation 2: trees (§8.3 step 3)', () => {
+  it('treeTrunkAt is exactly the gen-1 acceptance test, in both generations', () => {
+    const want = new Map(expectedTrees(gen, -200, 200, -200, 200).map((t) => [`${t.tq},${t.tr}`, t]));
+    let n = 0;
+    for (let kq = floorDiv(-200, TREE_CELL) - 1; kq <= floorDiv(200, TREE_CELL) + 1; kq++) {
+      for (let kr = floorDiv(-200, TREE_CELL) - 1; kr <= floorDiv(200, TREE_CELL) + 1; kr++) {
+        const t1 = gen.treeTrunkAt(kq, kr);
+        const t2 = gen2.treeTrunkAt(kq, kr);
+        expect(t2 === null).toBe(t1 === null);
+        if (!t1) continue;
+        expect({ ...t2, species: 'oak' }).toEqual(t1);
+        if (t1.tq < -200 || t1.tq > 200 || t1.tr < -200 || t1.tr > 200) continue;
+        const e = want.get(`${t1.tq},${t1.tr}`);
+        expect(e, `${t1.tq},${t1.tr}`).toBeDefined();
+        expect([e.base, e.top]).toEqual([t1.height + 1, t1.height + t1.trunk]);
+        n++;
+      }
+    }
+    expect(n).toBe(want.size);
+  });
+
+  it('spruce in SNOWY, birch in FOREST when ((hsh >>> 24) & 3) === 0, oak elsewhere; generation 1 is all oak', () => {
+    const species = { oak: 0, spruce: 0, birch: 0 };
+    for (let kq = -80; kq <= 80; kq++) {
+      for (let kr = -80; kr <= 80; kr++) {
+        const t1 = gen.treeTrunkAt(kq, kr);
+        if (t1) expect(t1.species).toBe('oak');
+        const t = gen2.treeTrunkAt(kq, kr);
+        if (!t) continue;
+        const hsh = hash2(kq, kr, gen2.seed ^ 0x7ee5);
+        let want = 'oak';
+        if (t.biome === BIOME.SNOWY) want = 'spruce';
+        else if (t.biome === BIOME.FOREST && ((hsh >>> 24) & 3) === 0) want = 'birch';
+        expect(t.species).toBe(want);
+        species[t.species]++;
+      }
+    }
+    expect(species.spruce).toBeGreaterThan(0);
+    expect(species.birch).toBeGreaterThan(0);
+    expect(species.oak).toBeGreaterThan(species.birch); // birch is a quarter of the forest
+  });
+
+  it('the scan holds spruce logs only in SNOWY columns and birch logs in FOREST ones (with their own leaves)', () => {
+    const found = { spruce: 0, birch: 0, spruceLeaves: 0, birchLeaves: 0 };
+    for (const [cq, cr] of scan()) {
+      const d = chunk2(cq, cr);
+      for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+        for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+          const biome = d.biomes[columnIndex(lq, lr)];
+          for (let y = 1; y < WORLD_HEIGHT; y++) {
+            const v = at(d, lq, y, lr);
+            if (v === B.SPRUCE_LEAVES) found.spruceLeaves++;
+            else if (v === B.BIRCH_LEAVES) found.birchLeaves++;
+            if (at(d, lq, y - 1, lr) === v) continue; // count trunk bases only
+            if (v === B.SPRUCE_LOG) {
+              expect(biome).toBe(BIOME.SNOWY);
+              found.spruce++;
+            } else if (v === B.BIRCH_LOG) {
+              expect(biome).toBe(BIOME.FOREST);
+              found.birch++;
+            } else if (v === B.OAK_LOG) {
+              expect(biome).not.toBe(BIOME.SNOWY);
+            }
+          }
+        }
+      }
+    }
+    expect(found.spruce).toBeGreaterThan(0);
+    expect(found.birch).toBeGreaterThan(0);
+    expect(found.spruceLeaves).toBeGreaterThan(found.spruce);
+    expect(found.birchLeaves).toBeGreaterThan(found.birch);
+  });
+
+  it('no trunk stands in or beside a pond, and treeTrunkAt never consults ponds (spy)', () => {
+    const g = createWorldGen(SEED, { gen: 2 });
+    expect(g.treeTrunkAt.toString()).not.toMatch(/pond/i);
+    const pondSpy = vi.spyOn(g, 'pondAt');
+    for (let kq = -40; kq <= 40; kq++) for (let kr = -40; kr <= 40; kr++) g.treeTrunkAt(kq, kr);
+    for (const [cq, cr] of [[0, 0], [1, 1], [-2, 3]]) g.generateChunk(cq, cr);
+    expect(pondSpy).not.toHaveBeenCalled();
+    pondSpy.mockRestore();
+    // Ponds do consult the trees (through the same treeTrunkAt that places them).
+    const trunkSpy = vi.spyOn(g, 'treeTrunkAt');
+    const ponds = pondCentres(g, -12, 12);
+    expect(trunkSpy).toHaveBeenCalled();
+    trunkSpy.mockRestore();
+    // Every trunk is at least 3 from every pond centre, so never on or next to its water.
+    for (const p of ponds) {
+      for (let tkq = floorDiv(p.q - 8, TREE_CELL); tkq <= floorDiv(p.q + 8, TREE_CELL); tkq++) {
+        for (let tkr = floorDiv(p.r - 8, TREE_CELL); tkr <= floorDiv(p.r + 8, TREE_CELL); tkr++) {
+          const t = g.treeTrunkAt(tkq, tkr);
+          if (t) expect(hexLength(t.tq - p.q, t.tr - p.r)).toBeGreaterThanOrEqual(3);
+        }
+      }
+      for (const [dq, dr, d] of DISC2) {
+        if (d > 1) continue;
+        for (let y = p.H; y <= p.H + 6; y++) expect([B.OAK_LOG, B.SPRUCE_LOG, B.BIRCH_LOG]).not.toContain(cell2(p.q + dq, y, p.r + dr));
+      }
+    }
   });
 });

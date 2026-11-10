@@ -1,9 +1,11 @@
 // Caelancraft — procedural 16×16 tile painters. See src/CONTRACTS.md §15 and docs/SPEC-gameplay.md §2.2–§2.5.
 //
-// PURE: no DOM, no three, no imports, no Math.random. Every tile is painted from a private mulberry32 stream
+// PURE: no DOM, no three, no Math.random; the only import is circuitTiles.js (the powder-and-circuits tiles and the Powder
+// Keg's painters, DESIGN-circuits §6.2.9). Every tile is painted from a private mulberry32 stream
 // seeded with fnv1a(tileName), so textures never depend on the world seed and are bit-identical across runs.
 // Output is a Uint8ClampedArray(16*16*4) in RGBA order with idx = (y*16 + x)*4; y grows DOWN the tile image
 // (row 0 is the world-up edge of side faces, see CONTRACTS.md §0 — flipY = false).
+import { CIRCUIT_TILE_NAMES, CIRCUIT_RECIPES } from './circuitTiles.js';
 
 const W = 16;
 const H = 16;
@@ -92,6 +94,37 @@ export const TILE_NAMES = Object.freeze({
   74: 'campfire_top',
   75: 'barrel_side',
   76: 'barrel_top',
+  // v0.9 survival tiles (docs/DESIGN-survival.md §8.1)
+  77: 'copper_ore',
+  78: 'tin_ore',
+  79: 'honeyberry_bush',
+  80: 'honeyberry_bush_bare',
+  81: 'tussock',
+  82: 'cattails_side',
+  83: 'cattails_top',
+  84: 'tuber_plant',
+  85: 'prickly_pear',
+  86: 'prickly_pear_bare',
+  87: 'stump_side',
+  88: 'stump_top',
+  89: 'kiln_side',
+  90: 'kiln_top',
+  91: 'bloomery_side',
+  92: 'bloomery_top',
+  93: 'forge_side',
+  94: 'forge_top',
+  95: 'basket_side',
+  96: 'basket_top',
+  97: 'hide_side',
+  98: 'hide_top',
+  99: 'remains_side',
+  100: 'remains_top',
+  101: 'plant_top_clear',
+  102: 'loose_stones',
+  103: 'fallen_branches',
+  104: 'fire_pit_side',
+  // powder and circuits: 160–194 (DESIGN-circuits §1.4), painted by circuitTiles.js
+  ...CIRCUIT_TILE_NAMES,
   240: 'zombie_face',
   241: 'zombie_head_side',
   242: 'zombie_scalp',
@@ -1070,73 +1103,6 @@ function inHexagon(x, y, cx, cy, R) {
   return ax <= inr && ax * 0.5 + Math.abs(dy) * (Math.sqrt(3) / 2) <= inr;
 }
 
-/**
- * 75 barrel_side — the Blast Barrel's staves: four vertical staves (3–4 px wide, three warm browns, noise 6) split by
- * dark 0x3e2612 seams, two dark iron bands on rows 1–3 and 12–14 (0x3a3d42, a 0x5f646c highlight row, 0x9aa0a8
- * rivets at x 2 and 13), and between them a red hazard hexagon (pointy-top, circumradius 4.2 around (8, 7.5):
- * 0xc8281e fill with a one-pixel 0x5e0c08 outline) carrying a pale 0xffe9a0 exclamation mark. Alpha 255.
- */
-function paintBarrelSide(px, rng) {
-  const STAVES = [[0, 3, 0x8a5a2e], [4, 7, 0x7a4c26], [8, 11, 0x93623a], [12, 15, 0x80522a]];
-  for (const [x0, x1, hex] of STAVES) {
-    for (let y = 0; y < H; y++) {
-      for (let x = x0; x <= x1; x++) set(px, x, y, hex, delta(rng, 6) + (y % 5 === 0 ? -4 : 0));
-    }
-  }
-  for (let y = 0; y < H; y++) for (const x of [3, 7, 11]) set(px, x, y, 0x3e2612, delta(rng, 4));
-  for (const [y0, y1] of [[1, 3], [12, 14]]) {
-    for (let y = y0; y <= y1; y++) {
-      for (let x = 0; x < W; x++) set(px, x, y, y === y0 ? 0x5f646c : 0x3a3d42, delta(rng, 4));
-    }
-    set(px, 2, y0 + 1, 0x9aa0a8);
-    set(px, 13, y0 + 1, 0x9aa0a8);
-  }
-  const CX = 8;
-  const CY = 7.5;
-  for (let y = 4; y <= 11; y++) {
-    for (let x = 3; x <= 12; x++) {
-      if (!inHexagon(x, y, CX, CY, 4.2)) continue;
-      const edge = !inHexagon(x - 1, y, CX, CY, 4.2) || !inHexagon(x + 1, y, CX, CY, 4.2) ||
-        !inHexagon(x, y - 1, CX, CY, 4.2) || !inHexagon(x, y + 1, CX, CY, 4.2);
-      set(px, x, y, edge ? 0x5e0c08 : 0xc8281e, edge ? 0 : delta(rng, 8));
-    }
-  }
-  for (const y of [5, 6, 7]) {
-    set(px, 7, y, 0xffe9a0);
-    set(px, 8, y, 0xffe9a0);
-  }
-  set(px, 7, 9, 0xffe9a0);
-  set(px, 8, 9, 0xffe9a0);
-}
-
-/**
- * 76 barrel_top — the lid: horizontal planks (rows of 3, 0x9a6a3a / 0x8a5c30, noise 5, 0x4a3018 seams), a dark iron rim
- * (0x3a3d42) on every pixel whose centre lies 6.2–7.9 from (8, 8), a 2×2 0x6a7078 fuse socket at (7..8, 7..8), and a
- * short fuse cord (0x2a2420) from the socket up-right to (11, 4) whose tip burns 0xffd040 with a 0xff7a1a ember beside it.
- * Alpha 255.
- */
-function paintBarrelTop(px, rng) {
-  for (let y = 0; y < H; y++) {
-    const band = Math.floor(y / 3);
-    const seam = y % 3 === 2;
-    for (let x = 0; x < W; x++) set(px, x, y, seam ? 0x4a3018 : band % 2 === 0 ? 0x9a6a3a : 0x8a5c30, delta(rng, 5));
-  }
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const d = Math.hypot(x + 0.5 - 8, y + 0.5 - 8);
-      if (d >= 6.2 && d < 7.9) set(px, x, y, 0x3a3d42, delta(rng, 4));
-      else if (d >= 7.9) set(px, x, y, 0x2e3034, delta(rng, 3));
-    }
-  }
-  for (let y = 7; y <= 8; y++) for (let x = 7; x <= 8; x++) set(px, x, y, 0x6a7078);
-  line(px, 8, 6, 9, 5, 0x2a2420);
-  line(px, 9, 5, 10, 5, 0x2a2420);
-  line(px, 10, 5, 11, 4, 0x2a2420);
-  set(px, 11, 4, 0xffd040);
-  set(px, 12, 3, 0xff7a1a);
-  set(px, 11, 3, 0xffb02e);
-}
-
 // ---------------------------------------------------------------------------------------------------------------
 // Zombie parts (CONTRACTS §39). Not block faces: the zombie renderer maps them onto its four hex prisms. The side
 // faces they land on are about twice as tall as they are wide, so features are drawn short and wide (an eye socket
@@ -1459,6 +1425,860 @@ function paintMissing(px) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// v0.9 survival tiles 77–104 (docs/DESIGN-survival.md §8.1–§8.2; original designs, these comments are normative).
+// Alpha 255 everywhere except: the plants (honeyberry bushes, tussock, cattails, tuber plant, prickly pears), the litter
+// (loose stones, fallen branches), the fire pit's side and Your Belongings, whose empty space is alpha 0 with RGB 0
+// (honeyberry holes keep their RGB, like leaves); plant_top_clear is alpha 0 everywhere. The short blocks (tussock,
+// tuber plant, loose stones, fallen branches, fire pit) keep the stated upper rows alpha 0, so a full cell reads short.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** `mix(a, b, t)`: packed colour a + (b − a)·t per channel, rounded; t is clamped to 0..1. */
+function mixHex(a, b, t) {
+  const k = t < 0 ? 0 : t > 1 ? 1 : t;
+  let out = 0;
+  for (const sh of [16, 8, 0]) {
+    const ca = (a >> sh) & 255;
+    const cb = (b >> sh) & 255;
+    out |= Math.round(ca + (cb - ca) * k) << sh;
+  }
+  return out;
+}
+
+/** Every pixel alpha 0 with RGB 0 (the empty space of the plants, the litter and the belongings). */
+function clearTile(px) {
+  px.fill(0);
+}
+
+/** @returns {boolean} pixel (x, y) is inside the tile and opaque */
+function opaqueAt(px, x, y) {
+  return x >= 0 && x < W && y >= 0 && y < H && px[idx(x, y) + 3] === 255;
+}
+
+/** `set` for coordinates that may fall outside the tile (skipped) or above row `minRow` (skipped). */
+function setClipped(px, x, y, hex, d = 0, minRow = 0) {
+  if (x < 0 || x >= W || y < minRow || y >= H) return;
+  set(px, x, y, hex, d);
+}
+
+/**
+ * 77 copper_ore — stone (seed "stone") with 5 banded malachite blobs, each anchored at (x, y) ∈ [1,12]²: (x, y), (x+1, y),
+ * (x, y+1), (x+1, y+1) and (x+2, y+1) always, (x+2, y) and (x+1, y+2) with p 0.6, (x−1, y+1) and (x, y+2) with p 0.4.
+ * The blob pixels follow its rows in bands — 0x2f8f5b on one parity, 0x1f6b43 on the other (the phase random per blob)
+ * — and the anchor is the highlight 0x6fd39a; then 2–3 copper-orange 0xc8743a specks on stone pixels in [1,14]².
+ */
+function paintCopperOre(px, rng) {
+  paintStone(px, makeRng('stone'));
+  for (let k = 0; k < 5; k++) {
+    const x = randInt(rng, 1, 12);
+    const y = randInt(rng, 1, 12);
+    const phase = randInt(rng, 0, 1);
+    const band = (yy) => (((yy + phase) & 1) === 0 ? 0x2f8f5b : 0x1f6b43);
+    for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [2, 1]]) set(px, x + dx, y + dy, band(y + dy));
+    if (rng() < 0.6) set(px, x + 2, y, band(y));
+    if (rng() < 0.6) set(px, x + 1, y + 2, band(y + 2));
+    if (rng() < 0.4) set(px, x - 1, y + 1, band(y + 1));
+    if (rng() < 0.4) set(px, x, y + 2, band(y + 2));
+    set(px, x, y, 0x6fd39a);
+  }
+  const specks = randInt(rng, 2, 3);
+  for (let k = 0, tries = 0; k < specks && tries < 64; tries++) {
+    const x = randInt(rng, 1, 14);
+    const y = randInt(rng, 1, 14);
+    const i = idx(x, y);
+    if (px[i + 1] > px[i] + 8) continue; // a malachite pixel: keep looking for stone
+    set(px, x, y, 0xc8743a);
+    k++;
+  }
+}
+
+/**
+ * 78 tin_ore — stone (seed "stone") with 5 cassiterite crystals: each a short prism anchored at (x, y) ∈ [1,13] × [2,12],
+ * 1–2 px wide and 2–3 rows tall, its left column dark 0x2a211c and its right column the lit face 0x4a3a30, with a
+ * 1-px 0x2a211c tip above it with p 0.5 and a 2-row twin to its right with p 0.4; then 4 single-pixel white glints
+ * 0xf4f2ea on crystal pixels.
+ */
+function paintTinOre(px, rng) {
+  paintStone(px, makeRng('stone'));
+  /** @type {number[]} crystal pixel indices (y·16 + x) */
+  const crystal = [];
+  const put = (x, y, hex) => {
+    if (x < 0 || x >= W || y < 0 || y >= H) return;
+    set(px, x, y, hex);
+    crystal.push(y * W + x);
+  };
+  for (let k = 0; k < 5; k++) {
+    const x = randInt(rng, 1, 13);
+    const y = randInt(rng, 2, 12);
+    const w = randInt(rng, 1, 2);
+    const h = randInt(rng, 2, 3);
+    for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) put(x + dx, y + dy, dx === 0 ? 0x2a211c : 0x4a3a30);
+    if (rng() < 0.5) put(x, y - 1, 0x2a211c);
+    if (rng() < 0.4) {
+      put(x + w, y + 1, 0x2a211c);
+      put(x + w, y + 2, 0x4a3a30);
+    }
+  }
+  for (let k = 0; k < 4 && crystal.length > 0; k++) {
+    const p = crystal[Math.floor(rng() * crystal.length)];
+    set(px, p % W, Math.floor(p / W), 0xf4f2ea);
+  }
+}
+
+/**
+ * Shared foliage of the honeyberry bushes: a deeper blue-green leaves recipe — 0x2e6448, 2×2 cell noise 14, noise 7,
+ * 12 specks 0x4d8a62 and 6 specks 0x1f4a34 — with alpha-0 holes at probability `holes` (RGB kept, like leaves).
+ */
+function paintBerryFoliage(px, rng, holes) {
+  fill(px, 0x2e6448);
+  cellNoise(px, rng, 2, 14);
+  noise(px, rng, 7);
+  speck(px, rng, 12, [0x4d8a62]);
+  speck(px, rng, 6, [0x1f4a34]);
+  for (let i = 3; i < BYTES; i += 4) px[i] = rng() < holes ? 0 : 255;
+}
+
+/**
+ * 79 honeyberry_bush — the foliage (22 % holes) hung with 6–8 clusters of elongated dusky-blue honeyberries, spread over
+ * a 3×3 grid of the tile (each cluster takes a different grid cell, chosen by a Fisher–Yates shuffle): a cluster starts
+ * at (1 + 5·gx + randInt(0, 2), 1 + 4·gy + randInt(0, 2)) and is 2–3 berries side by side, every other one a row lower,
+ * each berry 1 px wide and 2–3 rows tall: a pale bloom 0x9aa6d6 on its top pixel, 0x3b4a8a below it with one 0x5b6bb0
+ * sheen pixel. Berries are opaque even over a hole.
+ */
+function paintHoneyberryBush(px, rng) {
+  paintBerryFoliage(px, rng, 0.22);
+  const cells = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+  for (let i = cells.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [cells[i], cells[j]] = [cells[j], cells[i]];
+  }
+  const clusters = randInt(rng, 6, 8);
+  for (let k = 0; k < clusters; k++) {
+    const cx = 1 + 5 * (cells[k] % 3) + randInt(rng, 0, 2);
+    const cy = 1 + 4 * Math.floor(cells[k] / 3) + randInt(rng, 0, 2);
+    const n = randInt(rng, 2, 3);
+    for (let b = 0; b < n; b++) {
+      const x = cx + b;
+      if (x >= W) break;
+      const y0 = cy + (b & 1);
+      const len = randInt(rng, 2, 3);
+      const sheen = randInt(rng, 1, len - 1);
+      for (let j = 0; j < len; j++) set(px, x, y0 + j, j === 0 ? 0x9aa6d6 : j === sheen ? 0x5b6bb0 : 0x3b4a8a);
+    }
+  }
+}
+
+/**
+ * 80 honeyberry_bush_bare — the same bush, picked: the ripe bush's foliage (painted with the "honeyberry_bush" seed, so
+ * the leaves match), sparser — every opaque pixel becomes a hole with p 0.3 (about 45 % holes in all) — with three
+ * bare twigs (3-px diagonal strokes 0x5a4630) and no berries.
+ */
+function paintHoneyberryBushBare(px, rng) {
+  paintBerryFoliage(px, makeRng('honeyberry_bush'), 0.22);
+  for (let i = 3; i < BYTES; i += 4) if (px[i] === 255 && rng() < 0.3) px[i] = 0;
+  for (let k = 0; k < 3; k++) {
+    const x = randInt(rng, 2, 12);
+    const y = randInt(rng, 2, 12);
+    const dir = rng() < 0.5 ? -1 : 1;
+    for (let j = 0; j < 3; j++) set(px, x + dir * j, y + j, 0x5a4630, delta(rng, 6));
+  }
+}
+
+/**
+ * 81 tussock — a tuft of grass blades on alpha 0, rows 4–15 only (rows 0–3 stay alpha 0). A dense base on rows 12–15
+ * (each pixel 0x55722a ±6 with p 0.9), then one blade per column x0: a 1-px line from (x0, 15) up to its tip row
+ * t = 4 + round(|x0 − 7.5|·0.5) + randInt(0, 2) (taller in the middle), leaning outward by up to 2 columns
+ * (sign(x0 − 7.5)·randInt(0, 2), clipped to the tile). Colour by height in the blade, f = (y − t) / (15 − t): yellow tips
+ * 0xd8c860 at f 0 through straw-green 0x8fa244 at f 0.5 to 0x55722a at the base, ±6, blades from odd columns 10 darker.
+ * About 45 % of the tile stays alpha 0.
+ */
+function paintTussock(px, rng) {
+  clearTile(px);
+  for (let y = 12; y < H; y++) for (let x = 0; x < W; x++) if (rng() < 0.9) set(px, x, y, 0x55722a, delta(rng, 6));
+  for (let x0 = 0; x0 < W; x0++) {
+    const t = 4 + Math.round(Math.abs(x0 - 7.5) * 0.5) + randInt(rng, 0, 2);
+    const lean = Math.sign(x0 - 7.5) * randInt(rng, 0, 2);
+    const shade = x0 % 2 === 1 ? -10 : 0;
+    for (let y = H - 1; y >= t; y--) {
+      const f = (y - t) / (H - 1 - t);
+      const hex = f < 0.5 ? mixHex(0xd8c860, 0x8fa244, f / 0.5) : mixHex(0x8fa244, 0x55722a, (f - 0.5) / 0.5);
+      const x = x0 + Math.round((lean * (H - 1 - y)) / (H - 1 - t));
+      setClipped(px, x, y, hex, delta(rng, 6) + shade);
+    }
+  }
+}
+
+/**
+ * 82 cattails_side — on alpha 0, five long leaves and three flower stalks rising from the bottom row. A leaf runs from
+ * (x0, 15), x0 ∈ [0,15], to a tip 1–2 columns aside on row 3–7, 0x5f8a34 ±6, doubled one column over on rows 12–15
+ * (0x4e7a2c); the stalks (0x6b7f30) stand at x 3, 8 and 12 from row 15 up to row 5, each topped by a brown cattail head
+ * 2 px wide over rows 1–4 (left column 0x6b4423, right 0x8a5a30, ±6) with a thin 0xa09060 spike on row 0.
+ */
+function paintCattailsSide(px, rng) {
+  clearTile(px);
+  for (let k = 0; k < 5; k++) {
+    const x0 = randInt(rng, 0, 15);
+    const tip = randInt(rng, 3, 7);
+    const dx = (rng() < 0.5 ? -1 : 1) * randInt(rng, 1, 2);
+    for (let y = H - 1; y >= tip; y--) {
+      const x = x0 + Math.round((dx * (H - 1 - y)) / (H - 1 - tip));
+      setClipped(px, x, y, 0x5f8a34, delta(rng, 6));
+      if (y >= 12) setClipped(px, x + 1, y, 0x4e7a2c, delta(rng, 6));
+    }
+  }
+  for (const x of [3, 8, 12]) {
+    for (let y = 5; y < H; y++) set(px, x, y, 0x6b7f30, delta(rng, 5));
+    for (let y = 1; y <= 4; y++) {
+      set(px, x, y, 0x6b4423, delta(rng, 6));
+      set(px, x + 1, y, 0x8a5a30, delta(rng, 6));
+    }
+    set(px, x, 0, 0xa09060);
+  }
+}
+
+/**
+ * 83 cattails_top — mostly alpha 0: the plant from above — three 2×2 brown head tops (0x6b4423 with a 0x8a5a30 pixel)
+ * at (3, 9), (8, 4) and (11, 10), and 10 single leaf-tip pixels 0x6f9a3c ±8 at random.
+ */
+function paintCattailsTop(px, rng) {
+  clearTile(px);
+  for (let k = 0; k < 10; k++) set(px, randInt(rng, 0, 15), randInt(rng, 0, 15), 0x6f9a3c, delta(rng, 8));
+  for (const [x, y] of [[3, 9], [8, 4], [11, 10]]) {
+    set(px, x, y, 0x8a5a30);
+    set(px, x + 1, y, 0x6b4423);
+    set(px, x, y + 1, 0x6b4423);
+    set(px, x + 1, y + 1, 0x6b4423, -10);
+  }
+}
+
+/**
+ * 84 tuber_plant — rows 0–8 alpha 0; a low leafy rosette on rows 9–15: five broad leaves, discs of radius 2.3 centred
+ * 3.8 × 3.0 from (7.5, 13.2) at angles 180°, 225°, 270°, 315° and 360° (pointing up and out). A pixel belongs to the
+ * nearest leaf whose disc holds it: 0x4f8a3a ±8, its upper-left half 12 lighter, 26 darker where a 4-neighbour belongs to
+ * another leaf or to nothing (the leaves' outlines). A 0x78b04e midrib runs from (7, 14) to each leaf's centre; two
+ * purple-brown stems 0x6a3a4a stand on rows 14–15 at x 7–8, with a 0x8a6a3a soil-bump pixel either side on row 15.
+ */
+function paintTuberPlant(px, rng) {
+  clearTile(px);
+  const BX = 7.5;
+  const BY = 13.2;
+  const R2 = 2.3 * 2.3;
+  /** @type {[number, number][]} */
+  const centres = [];
+  for (let k = 0; k < 5; k++) {
+    const a = Math.PI + (k * Math.PI) / 4;
+    centres.push([BX + Math.cos(a) * 3.8, BY + Math.sin(a) * 3.0]);
+  }
+  /** @returns {number} the leaf pixel (x, y) belongs to, or −1 */
+  const leafOf = (x, y) => {
+    if (x < 0 || x >= W || y < 9 || y >= H) return -1;
+    let best = -1;
+    let bestD = R2;
+    for (let k = 0; k < centres.length; k++) {
+      const dx = x + 0.5 - centres[k][0];
+      const dy = y + 0.5 - centres[k][1];
+      const d = dx * dx + dy * dy;
+      if (d <= bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    return best;
+  };
+  for (let y = 9; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const k = leafOf(x, y);
+      if (k < 0) continue;
+      const outline = leafOf(x - 1, y) !== k || leafOf(x + 1, y) !== k || leafOf(x, y - 1) !== k || leafOf(x, y + 1) !== k;
+      const lit = x + 0.5 - centres[k][0] + (y + 0.5 - centres[k][1]) < 0;
+      set(px, x, y, 0x4f8a3a, delta(rng, 8) + (lit ? 12 : 0) - (outline ? 26 : 0));
+    }
+  }
+  for (const [cx, cy] of centres) line(px, 7, 14, Math.round(cx - 0.5), Math.max(9, Math.round(cy - 0.5)), 0x78b04e);
+  for (let y = 14; y < H; y++) {
+    set(px, 7, y, 0x6a3a4a);
+    set(px, 8, y, 0x6a3a4a, -8);
+  }
+  set(px, 6, 15, 0x8a6a3a);
+  set(px, 9, 15, 0x8a6a3a);
+}
+
+/** The prickly pear's pads: [cx, cy, rx, ry] ellipses (bottom pad, then the two upper pads). */
+const PEAR_PADS = Object.freeze([[8, 11.6, 3.7, 4.2], [4.3, 5.4, 2.9, 3.5], [11.6, 4.6, 2.9, 3.5]]);
+
+/**
+ * Shared pads of the prickly pears (always painted with the "prickly_pear" seed, so the picked plant matches): on alpha 0,
+ * three oval pads PEAR_PADS (bottom (8, 11.6) 3.7×4.2; upper (4.3, 5.4) and (11.6, 4.6), 2.9×3.5) in 0x5d8f3a ±6, a
+ * lighter 0x7fb04e sheen on their upper-left quarter, a darker 0x3f6a26 rim on every pad pixel with a transparent
+ * 4-neighbour, and 14 pale 0xe6dfae spine dots on interior pad pixels.
+ */
+function paintPearPads(px, rng) {
+  clearTile(px);
+  for (const [cx, cy, rx, ry] of PEAR_PADS) {
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const ex = (x + 0.5 - cx) / rx;
+        const ey = (y + 0.5 - cy) / ry;
+        if (ex * ex + ey * ey > 1) continue;
+        set(px, x, y, ex < -0.15 && ey < -0.15 ? 0x7fb04e : 0x5d8f3a, delta(rng, 6));
+      }
+    }
+  }
+  /** @type {[number, number][]} */
+  const rim = [];
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!opaqueAt(px, x, y)) continue;
+      if (!opaqueAt(px, x - 1, y) || !opaqueAt(px, x + 1, y) || !opaqueAt(px, x, y - 1) || !opaqueAt(px, x, y + 1)) rim.push([x, y]);
+    }
+  }
+  for (const [x, y] of rim) set(px, x, y, 0x3f6a26, delta(rng, 5));
+  for (let k = 0, tries = 0; k < 14 && tries < 200; tries++) {
+    const x = randInt(rng, 1, 14);
+    const y = randInt(rng, 1, 14);
+    if (!opaqueAt(px, x - 1, y) || !opaqueAt(px, x + 1, y) || !opaqueAt(px, x, y - 1) || !opaqueAt(px, x, y + 1)) continue;
+    set(px, x, y, 0xe6dfae);
+    k++;
+  }
+}
+
+/** Where the pears' fruit sit: [x, y] of each 2×2 fruit's top-left pixel, on the upper pads' rims and the bottom pad's. */
+const PEAR_FRUIT = Object.freeze([[2, 1], [5, 1], [10, 0], [13, 1], [10, 7]]);
+
+/**
+ * 85 prickly_pear — the pads with five ripe fruit (tunas) on their rims at PEAR_FRUIT: 2×2, 0xc8302a ±8 with a
+ * red-yellow 0xf0b030 highlight top-left and a 0x8a1a1a shade bottom-right.
+ */
+function paintPricklyPear(px, rng) {
+  paintPearPads(px, makeRng('prickly_pear'));
+  for (const [x, y] of PEAR_FRUIT) {
+    set(px, x, y, 0xf0b030, delta(rng, 6));
+    set(px, x + 1, y, 0xc8302a, delta(rng, 8));
+    set(px, x, y + 1, 0xc8302a, delta(rng, 8));
+    set(px, x + 1, y + 1, 0x8a1a1a, delta(rng, 6));
+  }
+}
+
+/**
+ * 86 prickly_pear_bare — the same pads, picked: no fruit; a pale 0xb0a878 scar pixel where each fruit's base met its pad
+ * (the fruit's bottom-left pixel, when that is a pad pixel).
+ */
+function paintPricklyPearBare(px, rng) {
+  paintPearPads(px, makeRng('prickly_pear'));
+  for (const [x, y] of PEAR_FRUIT) if (opaqueAt(px, x, y + 1)) set(px, x, y + 1, 0xb0a878, delta(rng, 6));
+}
+
+/**
+ * 87 stump_side — the Work Stump's bark: oak bark (paintBarkSide 0x6b5032 / 0x4a3620, this tile's seed) under a pale
+ * sawn rim (row 0 0xb8935c ±6, row 1 0x8f7345), with a pale axe notch cut into the right edge: on rows 5–10 the
+ * wedge reaches depth 5 − 1.4·|y + 0.5 − 8| columns in from x 15, its upper face fresh wood 0xd8b47a and its lower face
+ * 0xb8935c (±6), with a dark 0x3e2c18 lip on the bark pixel just above and below the cut.
+ */
+function paintStumpSide(px, rng) {
+  paintBarkSide(px, rng, 0x6b5032, 0x4a3620);
+  for (let x = 0; x < W; x++) {
+    set(px, x, 0, 0xb8935c, delta(rng, 6));
+    set(px, x, 1, 0x8f7345, delta(rng, 6));
+  }
+  const depth = (y) => 5 - 1.4 * Math.abs(y + 0.5 - 8);
+  for (let y = 5; y <= 10; y++) {
+    const d = depth(y);
+    if (d <= 0) continue;
+    for (let x = W - 1; x >= W - d; x--) set(px, x, y, y < 8 ? 0xd8b47a : 0xb8935c, delta(rng, 6));
+  }
+  for (let x = 10; x < W; x++) {
+    for (const y of [4, 11]) {
+      const inner = y === 4 ? 5 : 10;
+      if (x >= W - depth(inner)) set(px, x, y, 0x3e2c18);
+    }
+  }
+}
+
+/**
+ * 88 stump_top — a chopped top: bark 0x5e4630 ±8 where the distance d from (8, 8) is ≥ 7, wood 0xb8935c ±5 inside it
+ * with growth rings 0x8f7345 wherever frac(d / 1.7) < 0.3, a 2×2 dark pith 0x6a5030 at (7..8, 7..8), and a set of three
+ * parallel chop marks: dark 0x4a3620 strokes 4 px long at one random angle, 2 px apart across it, centred on a random
+ * point 2–3.5 from the middle, each with a pale 0xdcc08a lip pixel beside its first pixel.
+ */
+function paintStumpTop(px, rng) {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x + 0.5 - 8, y + 0.5 - 8);
+      if (d >= 7) set(px, x, y, 0x5e4630, delta(rng, 8));
+      else set(px, x, y, (d / 1.7) % 1 < 0.3 ? 0x8f7345 : 0xb8935c, delta(rng, 5));
+    }
+  }
+  for (let y = 7; y <= 8; y++) for (let x = 7; x <= 8; x++) set(px, x, y, 0x6a5030);
+  const a = rng() * Math.PI;
+  const ux = Math.cos(a);
+  const uy = Math.sin(a);
+  const r0 = 2 + rng() * 1.5;
+  const b = rng() * Math.PI * 2;
+  const mx = 7.5 + Math.cos(b) * r0;
+  const my = 7.5 + Math.sin(b) * r0;
+  for (const off of [-2, 0, 2]) {
+    const cx = mx - uy * off;
+    const cy = my + ux * off;
+    const x0 = Math.round(cx - ux * 1.5);
+    const y0 = Math.round(cy - uy * 1.5);
+    line(px, x0, y0, Math.round(cx + ux * 1.5), Math.round(cy + uy * 1.5), 0x4a3620);
+    setClipped(px, x0 - Math.round(uy), y0 + Math.round(ux), 0xdcc08a);
+  }
+}
+
+/** @returns {boolean} (x, y) lies in the kiln's arched mouth: x 4–11, rows ≥ 11, or within 3.6 of (8, 11), from row 8 */
+function inKilnMouth(x, y) {
+  if (x < 4 || x > 11 || y < 8) return false;
+  return y >= 11 || Math.hypot(x + 0.5 - 8, y + 0.5 - 11) <= 3.6;
+}
+
+/**
+ * 89 kiln_side — clay coil courses: rows in threes, each course 0xc0703a (every other one 0xb0622f) ±6 with a lighter
+ * top row (+14) and a dark 0x7a3e1c seam on its last row; a dark arched mouth 0x1c1210 (x 4–11 from row 11 down, arched
+ * above within 3.6 of (8, 11) from row 8) framed by a fired-clay rim 0x8a4422 on the pixels next to it, and an ember
+ * line on the mouth's bottom two rows: 0xff7a1a / 0xffb02e alternating, ±10.
+ */
+function paintKilnSide(px, rng) {
+  for (let y = 0; y < H; y++) {
+    const course = Math.floor(y / 3);
+    const row = y % 3;
+    const base = course % 2 === 0 ? 0xc0703a : 0xb0622f;
+    for (let x = 0; x < W; x++) {
+      if (row === 2) set(px, x, y, 0x7a3e1c, delta(rng, 5));
+      else set(px, x, y, base, delta(rng, 6) + (row === 0 ? 14 : 0));
+    }
+  }
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (inKilnMouth(x, y)) {
+        const ember = y >= 14;
+        set(px, x, y, ember ? ((x + y) % 2 === 0 ? 0xff7a1a : 0xffb02e) : 0x1c1210, ember ? delta(rng, 10) : delta(rng, 3));
+      } else if (inKilnMouth(x - 1, y) || inKilnMouth(x + 1, y) || inKilnMouth(x, y + 1)) {
+        set(px, x, y, 0x8a4422, delta(rng, 5));
+      }
+    }
+  }
+}
+
+/**
+ * 90 kiln_top — the dome from above: clay coils as rings 2 px wide around (8, 8) (0xb8683a / 0xa85c30 alternating, ±6),
+ * a sooty ring 0x4a3a30 for 2.6 ≤ d < 3.6, a dark smoke vent 0x140e0c for d < 2.6 with three pale-grey 0x8a8580 smoke
+ * pixels inside it.
+ */
+function paintKilnTop(px, rng) {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x + 0.5 - 8, y + 0.5 - 8);
+      if (d < 2.6) set(px, x, y, 0x140e0c, delta(rng, 3));
+      else if (d < 3.6) set(px, x, y, 0x4a3a30, delta(rng, 6));
+      else set(px, x, y, Math.floor(d / 2) % 2 === 0 ? 0xb8683a : 0xa85c30, delta(rng, 6));
+    }
+  }
+  for (const [x, y] of [[7, 7], [8, 6], [8, 8]]) set(px, x, y, 0x8a8580, delta(rng, 6));
+}
+
+/**
+ * Small-brick courses (bloomery): bricks 4 px wide and 2 rows tall, every other course offset by 2; each brick
+ * `brickHex` with one ±10 tint, the mortar (a brick's last row and last column) `mortarHex` ±4, noise 4.
+ */
+function paintSmallBricks(px, rng, brickHex, mortarHex) {
+  for (let course = 0; course < H / 2; course++) {
+    const off = (course % 2) * 2;
+    for (let b = -1; b < W / 4; b++) {
+      const tint = delta(rng, 10);
+      for (let dy = 0; dy < 2; dy++) {
+        for (let dx = 0; dx < 4; dx++) {
+          const x = b * 4 + off + dx;
+          if (x < 0 || x >= W) continue;
+          const y = course * 2 + dy;
+          const mortar = dy === 1 || dx === 3;
+          set(px, x, y, mortar ? mortarHex : brickHex, mortar ? delta(rng, 4) : tint);
+        }
+      }
+    }
+  }
+  noise(px, rng, 4);
+}
+
+/**
+ * 91 bloomery_side — a tall brick stack: small bricks (paintSmallBricks 0x8a4a32 / mortar 0x4e3326), sooted on rows 0–2
+ * (−24); four dark slag dribbles running from a start row 6–10 down to the bottom row, 2 px wide (0x221c18 and
+ * 0x3a2e28 beside it, ±4, with a glassy 0x6a5a4a glint pixel with p 0.15), wandering a column aside with p 0.25 a row
+ * (x 6–14) and pooling in a 3-px drop on the bottom row; and a tuyère near the bottom left: a 3×3 clay ring 0xa86a3a ±6
+ * around (3, 12), its middle a 0xff8a3a glow, two of its corners dark 0x120c0a.
+ */
+function paintBloomerySide(px, rng) {
+  paintSmallBricks(px, rng, 0x8a4a32, 0x4e3326);
+  for (let y = 0; y <= 2; y++) for (let x = 0; x < W; x++) adjAt(px, x, y, -24);
+  for (let k = 0; k < 4; k++) {
+    let x = randInt(rng, 6, 14);
+    for (let y = randInt(rng, 6, 10); y < H; y++) {
+      set(px, x, y, rng() < 0.15 ? 0x6a5a4a : 0x221c18, delta(rng, 4));
+      setClipped(px, x + 1, y, 0x3a2e28, delta(rng, 4));
+      if (rng() < 0.25) x = Math.max(6, Math.min(14, x + (rng() < 0.5 ? -1 : 1)));
+    }
+    setClipped(px, x - 1, H - 1, 0x221c18);
+    setClipped(px, x + 2, H - 1, 0x3a2e28);
+  }
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) set(px, 3 + dx, 12 + dy, 0xa86a3a, delta(rng, 6));
+  set(px, 3, 12, 0xff8a3a);
+  for (const [x, y] of [[2, 11], [4, 13]]) set(px, x, y, 0x120c0a);
+}
+
+/**
+ * 92 bloomery_top — the throat from above: the small bricks (0x8a4a32 / 0x4e3326) outside d 5.6 from (8, 8), a dark clay
+ * lip 0x3e2a20 for 4.8 ≤ d < 5.6, and inside it charcoal lumps — 2×2 cells of 0x1e1e20, 0x2e2e30 or 0x3a3a3e at random —
+ * with 8 dim glow pixels between them (0x8a3010, every third 0xc04a18).
+ */
+function paintBloomeryTop(px, rng) {
+  paintSmallBricks(px, rng, 0x8a4a32, 0x4e3326);
+  const CHAR = [0x1e1e20, 0x2e2e30, 0x3a3a3e];
+  for (let cy = 0; cy < H; cy += 2) {
+    for (let cx = 0; cx < W; cx += 2) {
+      const lump = pick(rng, CHAR);
+      for (let y = cy; y < cy + 2; y++) {
+        for (let x = cx; x < cx + 2; x++) {
+          const d = Math.hypot(x + 0.5 - 8, y + 0.5 - 8);
+          if (d < 4.8) set(px, x, y, lump, delta(rng, 4));
+          else if (d < 5.6) set(px, x, y, 0x3e2a20, delta(rng, 4));
+        }
+      }
+    }
+  }
+  for (let k = 0; k < 8; k++) {
+    const a = rng() * Math.PI * 2;
+    const r = rng() * 4;
+    set(px, Math.floor(8 + Math.cos(a) * r), Math.floor(8 + Math.sin(a) * r), k % 3 === 2 ? 0xc04a18 : 0x8a3010);
+  }
+}
+
+/**
+ * 93 forge_side — a brick hearth: the shared brick layout (paintBrickLayout) in 0x7a4030 with 0x4a3428 mortar; a grey
+ * stone lintel 0x6e6e6a ±6 across rows 5–6 (x 2–13) over the opening, the opening (x 4–11, rows 7–13) dark 0x16100e, its
+ * rows 11–13 a bed of glowing coal (0xc02a0a, 0xff6a1a, 0xffb02e at random, ±8) with a 0xfff0a0 hot spot at (7–8, 12).
+ */
+function paintForgeSide(px, rng) {
+  paintBrickLayout(px, rng, 0x4a3428, 4, 0x7a4030, 12, 5);
+  for (let y = 5; y <= 6; y++) for (let x = 2; x <= 13; x++) set(px, x, y, 0x6e6e6a, delta(rng, 6) + (y === 5 ? 10 : 0));
+  for (let y = 7; y <= 13; y++) {
+    for (let x = 4; x <= 11; x++) {
+      if (y >= 11) set(px, x, y, pick(rng, [0xc02a0a, 0xff6a1a, 0xffb02e]), delta(rng, 8));
+      else set(px, x, y, 0x16100e, delta(rng, 3));
+    }
+  }
+  set(px, 7, 12, 0xfff0a0);
+  set(px, 8, 12, 0xfff0a0);
+}
+
+/**
+ * 94 forge_top — a dark iron hexagonal anvil face on bricks: the forge's brick layout (this seed), then a pointy-top
+ * hexagon of circumradius 6.4 around (8, 8) in iron 0x3a3d42 ±4, its edge pixels (a 4-neighbour outside) lit 0x6a7078
+ * on the upper-left half and 0x24262a on the lower-right, a 2×2 square hardy hole 0x101012 at (9..10, 8..9) and a round
+ * pritchel hole 0x101012 at (5, 6).
+ */
+function paintForgeTop(px, rng) {
+  paintBrickLayout(px, rng, 0x4a3428, 4, 0x7a4030, 12, 5);
+  const inHex = (x, y) => inHexagon(x, y, 8, 8, 6.4);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!inHex(x, y)) continue;
+      const edge = !inHex(x - 1, y) || !inHex(x + 1, y) || !inHex(x, y - 1) || !inHex(x, y + 1);
+      if (edge) set(px, x, y, x + y < 15 ? 0x6a7078 : 0x24262a, delta(rng, 3));
+      else set(px, x, y, 0x3a3d42, delta(rng, 4));
+    }
+  }
+  for (const [x, y] of [[9, 8], [10, 8], [9, 9], [10, 9], [5, 6]]) set(px, x, y, 0x101012);
+}
+
+/**
+ * 95 basket_side — a diagonal straw weave: strands run along both diagonals in 3-px bands, and the strand on top at a
+ * pixel alternates with the band parity ((floor((x + y) / 3) + floor((x − y + 16) / 3)) & 1): straw 0xc8a45a or the
+ * shaded 0xa8843e, ±8; where the band along the visible strand changes (its first pixel) a dark 0x6a5228 gap; the rim
+ * on rows 0–1 is darker 0x8a6a32 ±6.
+ */
+function paintBasketSide(px, rng) {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const a = Math.floor((x + y) / 3);
+      const b = Math.floor((x - y + 16) / 3);
+      const upA = ((a + b) & 1) === 0;
+      const along = upA ? (x - y + 16) % 3 : (x + y) % 3;
+      if (along === 0) set(px, x, y, 0x6a5228, delta(rng, 5));
+      else set(px, x, y, upA ? 0xc8a45a : 0xa8843e, delta(rng, 8));
+    }
+  }
+  for (let y = 0; y <= 1; y++) for (let x = 0; x < W; x++) set(px, x, y, 0x8a6a32, delta(rng, 6) + (y === 0 ? 10 : 0));
+}
+
+/**
+ * 96 basket_top — a coiled straw lid: rings 2 px wide around (8, 8) alternating 0xc8a45a / 0xb08c48 ±6, with a dark
+ * 0x6a5228 stitch on every third pixel of each ring's inner row; a 0x8a6a32 rim beyond d 7.2; and a cord knot in the
+ * middle — cords 0x7a5a3a crossing it two pixels each way, a 2×2 knot 0x5a3e24 with a 0x9a7a52 highlight pixel, and two
+ * short tails hanging down-right.
+ */
+function paintBasketTop(px, rng) {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x + 0.5 - 8, y + 0.5 - 8);
+      if (d >= 7.2) {
+        set(px, x, y, 0x8a6a32, delta(rng, 6));
+        continue;
+      }
+      const ring = Math.floor(d / 2);
+      const inner = d - ring * 2 < 0.7;
+      if (inner && (x + 2 * y) % 3 === 0) set(px, x, y, 0x6a5228, delta(rng, 4));
+      else set(px, x, y, ring % 2 === 0 ? 0xc8a45a : 0xb08c48, delta(rng, 6));
+    }
+  }
+  for (let k = -3; k <= 4; k++) {
+    if (k >= 0 && k <= 1) continue;
+    set(px, 7 + k, 7, 0x7a5a3a, delta(rng, 4));
+    set(px, 7, 7 + k, 0x7a5a3a, delta(rng, 4));
+  }
+  for (let y = 7; y <= 8; y++) for (let x = 7; x <= 8; x++) set(px, x, y, 0x5a3e24);
+  set(px, 7, 7, 0x9a7a52);
+  for (const [x, y] of [[9, 9], [10, 10], [9, 10], [9, 11]]) set(px, x, y, 0x7a5a3a, delta(rng, 4));
+}
+
+/**
+ * 97 hide_side — the Sleeping Hide's edge: rawhide 0xa8825a (2×2 cell noise 10, noise 5) under a rolled edge on rows 0–2
+ * (0xc8a070 ±6) with a dark 0x5a4030 line on row 3, and three stake heads along the edge at x 2, 7 and 12: 2×2 pegs
+ * 0x6a4a2a on rows 1–2 with a lighter 0x9a7448 top pixel, each with a lashing cord 0x4a3424 slanting down-right to row 6.
+ */
+function paintHideSide(px, rng) {
+  fill(px, 0xa8825a);
+  cellNoise(px, rng, 2, 10);
+  noise(px, rng, 5);
+  for (let y = 0; y <= 2; y++) for (let x = 0; x < W; x++) set(px, x, y, 0xc8a070, delta(rng, 6) + (y === 2 ? -10 : 0));
+  for (let x = 0; x < W; x++) set(px, x, 3, 0x5a4030, delta(rng, 4));
+  for (const sx of [2, 7, 12]) {
+    for (let y = 1; y <= 2; y++) for (let x = sx; x <= sx + 1; x++) set(px, x, y, 0x6a4a2a, delta(rng, 4));
+    set(px, sx, 1, 0x9a7448);
+    line(px, sx + 1, 3, sx + 3, 6, 0x4a3424);
+  }
+}
+
+/**
+ * 98 hide_top — a hide pegged out at six corner stakes: dark trampled earth 0x3e3226 (noise 6) around a pointy-top
+ * hexagon of circumradius 7 at (8, 8) of hide 0xb8905e (2×2 cell noise 10, noise 4) with a darker 0x8a6a40 edge; a stake
+ * at each of the six corners (2×2 0x5a3a1e with a 0x8a6a40 top-left pixel, clamped into the tile).
+ */
+function paintHideTop(px, rng) {
+  fill(px, 0x3e3226);
+  noise(px, rng, 6);
+  const inHex = (x, y) => inHexagon(x, y, 8, 8, 7);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!inHex(x, y)) continue;
+      const edge = !inHex(x - 1, y) || !inHex(x + 1, y) || !inHex(x, y - 1) || !inHex(x, y + 1);
+      set(px, x, y, edge ? 0x8a6a40 : 0xb8905e, delta(rng, 4));
+    }
+  }
+  cellNoiseMasked(px, rng, 2, 10, inHex);
+  for (let k = 0; k < 6; k++) {
+    const a = ((60 * k - 90) * Math.PI) / 180;
+    const sx = Math.max(0, Math.min(14, Math.round(8 + Math.cos(a) * 7 - 1)));
+    const sy = Math.max(0, Math.min(14, Math.round(8 + Math.sin(a) * 7 - 1)));
+    for (let y = sy; y <= sy + 1; y++) for (let x = sx; x <= sx + 1; x++) set(px, x, y, 0x5a3a1e, delta(rng, 4));
+    set(px, sx, sy, 0x8a6a40);
+  }
+}
+
+/** `cellNoise`, applied only to the pixels where `mask(x, y)` holds. */
+function cellNoiseMasked(px, rng, size, amp, mask) {
+  for (let cy = 0; cy < H; cy += size) {
+    for (let cx = 0; cx < W; cx += size) {
+      const d = delta(rng, amp);
+      for (let y = cy; y < cy + size; y++) for (let x = cx; x < cx + size; x++) if (mask(x, y)) adjAt(px, x, y, d);
+    }
+  }
+}
+
+/** Honey tag colours of Your Belongings (the honey of the survival screens, #e8b04a). */
+const TAG_HONEY = 0xe8b04a;
+const TAG_EDGE = 0xa87420;
+const TAG_HOLE = 0x5a3a10;
+
+/** A honey hex tag: a pointy-top hexagon of circumradius R at (cx, cy), honey with a darker outline. */
+function paintHexTag(px, cx, cy, R) {
+  const inHex = (x, y) => inHexagon(x, y, cx, cy, R);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!inHex(x, y)) continue;
+      const edge = !inHex(x - 1, y) || !inHex(x + 1, y) || !inHex(x, y - 1) || !inHex(x, y + 1);
+      set(px, x, y, edge ? TAG_EDGE : TAG_HONEY);
+    }
+  }
+}
+
+/**
+ * 99 remains_side — Your Belongings, on alpha 0: a hide-wrapped heap on rows 9–15 (pixels inside the half-ellipse at
+ * (7, 16), 6.2 wide and 6.6 tall: hide 0x8a6a48 ±8, its lower half 0x6a4e34, a 0x5a4030 outline on pixels with a
+ * transparent 4-neighbour) tied with cord 0x4a3424 in a hex knot (the outline of a pointy-top hexagon of circumradius 2.2
+ * at (7, 12.5)); a tall marker stick 0x6a4a2a ±6 at x 12 from row 15 up to row 4; and at its top a honey hex tag
+ * (pointy-top hexagon of circumradius 3 at (12.5, 3): 0xe8b04a, outline 0xa87420) with a dark 0x5a3a10 hole.
+ */
+function paintRemainsSide(px, rng) {
+  clearTile(px);
+  const inHeap = (x, y) => {
+    if (y < 9 || x < 0 || x >= W || y >= H) return false;
+    const ex = (x + 0.5 - 7) / 6.2;
+    const ey = (y + 0.5 - 16) / 6.6;
+    return ex * ex + ey * ey <= 1;
+  };
+  for (let y = 9; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!inHeap(x, y)) continue;
+      const edge = !inHeap(x - 1, y) || !inHeap(x + 1, y) || !inHeap(x, y - 1);
+      set(px, x, y, edge ? 0x5a4030 : y >= 13 ? 0x6a4e34 : 0x8a6a48, delta(rng, 8));
+    }
+  }
+  const inKnot = (x, y) => inHexagon(x, y, 7, 12.5, 2.2);
+  for (let y = 9; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!inKnot(x, y)) continue;
+      if (!inKnot(x - 1, y) || !inKnot(x + 1, y) || !inKnot(x, y - 1) || !inKnot(x, y + 1)) set(px, x, y, 0x4a3424);
+    }
+  }
+  for (let y = 4; y < H; y++) set(px, 12, y, 0x6a4a2a, delta(rng, 6));
+  paintHexTag(px, 12.5, 3, 3);
+  set(px, 12, 2, TAG_HOLE);
+}
+
+/**
+ * 100 remains_top — the marker's tag from above, on alpha 0: a small honey hex knot at the centre (pointy-top hexagon of
+ * circumradius 2.4 at (8, 8): 0xe8b04a, outline 0xa87420, a 0x5a3a10 centre pixel at (7, 7)). Everything else stays
+ * alpha 0: the top face is drawn a whole cell up, so it must stay small.
+ */
+function paintRemainsTop(px) {
+  clearTile(px);
+  paintHexTag(px, 8, 8, 2.4);
+  set(px, 7, 7, TAG_HOLE);
+}
+
+/**
+ * 101 plant_top_clear — every pixel alpha 0 (RGB 0): the top and bottom faces of the short plants, the litter and the fire
+ * pit, which the mesher draws a whole cell up (§8.1), so nothing shows there.
+ */
+function paintPlantTopClear(px) {
+  px.fill(0);
+}
+
+/**
+ * 102 loose_stones — rows 0–10 alpha 0; on rows 11–15 a low scatter of five pebbles resting on the bottom row, starting
+ * at x 0, 3.5, 6.5, 9.5 and 12.5 (+ randInt(0, 1)): each an ellipse 1.1–1.6 half-wide and 3–5 rows tall standing on
+ * row 15 (pixels with ((x + 0.5 − cx)/hw)² + ((y + 0.5 − cy)/hh)² ≤ 1.1), in grey 0x8a8a86 / 0x6e6e6a / 0xa09e98 or
+ * ochre 0xa8844a / 0x8e6c3c (±6), lit +18 on its top pixels and shaded −18 on the bottom row. One of the middle three
+ * (picked at random) is a dark flint nodule 0x2e3038, 1.6 half-wide and 3 rows tall, with a pale 0xc8c4b4 cortex on its
+ * outline. The gaps stay alpha 0.
+ */
+function paintLooseStones(px, rng) {
+  clearTile(px);
+  const COLOURS = [0x8a8a86, 0x6e6e6a, 0xa09e98, 0xa8844a, 0x8e6c3c];
+  const flintAt = randInt(rng, 1, 3);
+  const SLOTS = [0, 3.5, 6.5, 9.5, 12.5];
+  for (let k = 0; k < SLOTS.length; k++) {
+    const flint = k === flintAt;
+    const hw = flint ? 1.6 : 1.1 + rng() * 0.5;
+    const hh = flint ? 1.5 : randInt(rng, 3, 5) / 2;
+    const cx = SLOTS[k] + randInt(rng, 0, 1) + hw;
+    const cy = H - hh;
+    const hex = flint ? 0x2e3038 : pick(rng, COLOURS);
+    const inStone = (x, y) => {
+      const ex = (x + 0.5 - cx) / hw;
+      const ey = (y + 0.5 - cy) / hh;
+      return y >= 11 && y < H && x >= 0 && x < W && ex * ex + ey * ey <= 1.1;
+    };
+    for (let y = 11; y < H; y++) {
+      for (let x = Math.floor(cx - hw - 1); x <= Math.ceil(cx + hw); x++) {
+        if (!inStone(x, y)) continue;
+        const rim = !inStone(x - 1, y) || !inStone(x + 1, y) || !inStone(x, y - 1);
+        if (flint && rim) set(px, x, y, 0xc8c4b4, delta(rng, 6));
+        else set(px, x, y, hex, delta(rng, 6) + (!inStone(x, y - 1) ? 18 : y === H - 1 ? -18 : 0));
+      }
+    }
+  }
+}
+
+/**
+ * 103 fallen_branches — rows 0–11 alpha 0; on rows 12–15 three crossed sticks: from (0, 14) to (15, 12), from (1, 12) to
+ * (13, 15) and a short one from (5, 15) to (11, 13), in bark 0x5e4228 ±8 with a darker 0x3e2a18 underside pixel below
+ * each stick pixel (rows ≤ 15, never over another stick), pale 0xb89868 cut ends, and 5 lichen flecks (0xb8c49a or
+ * 0xd0d8b0) on stick pixels.
+ */
+function paintFallenBranches(px, rng) {
+  clearTile(px);
+  /** @type {number[]} */
+  const stick = [];
+  const STICKS = [[0, 14, 15, 12], [1, 12, 13, 15], [5, 15, 11, 13]];
+  for (const [x0, y0, x1, y1] of STICKS) {
+    const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
+    for (let i = 0; i <= n; i++) {
+      const x = Math.round(x0 + ((x1 - x0) * i) / n);
+      const y = Math.round(y0 + ((y1 - y0) * i) / n);
+      const end = i === 0 || i === n;
+      set(px, x, y, end ? 0xb89868 : 0x5e4228, delta(rng, 8));
+      stick.push(y * W + x);
+    }
+  }
+  const onStick = new Set(stick);
+  for (const p of stick) {
+    const x = p % W;
+    const y = Math.floor(p / W) + 1;
+    if (y < H && !onStick.has(y * W + x)) set(px, x, y, 0x3e2a18, delta(rng, 4));
+  }
+  for (let k = 0; k < 5; k++) {
+    const p = stick[Math.floor(rng() * stick.length)];
+    set(px, p % W, Math.floor(p / W), rng() < 0.5 ? 0xb8c49a : 0xd0d8b0);
+  }
+}
+
+/**
+ * 104 fire_pit_side — the Cold Fire Pit: rows 0–9 alpha 0; three charred sticks leaning out of the pit, 2 px wide, from
+ * (x0, 13) up to a top row 10 or 11 one column aside, at x0 4, 7 and 10 (0x1a1612 ±4, a 0x3a302a end pixel and a 0x8a8680
+ * ash tip); pale ash 0xd8d4cc / 0xb8b4ac (±5) filling rows 13–15 between them; and in front, four rounded fire stones
+ * over rows 12–15 centred at x 2, 6, 10 and 14 (half-width 1.8, 1.7–2.2 rows high, standing on row 15: grey 0x6e6e6a /
+ * 0x5e5e5a ±8, lit +18 on their top pixels, −22 on the other outline pixels, and the top pixel nearest the middle
+ * sooted −30).
+ */
+function paintFirePitSide(px, rng) {
+  clearTile(px);
+  for (let y = 13; y < H; y++) for (let x = 0; x < W; x++) set(px, x, y, rng() < 0.5 ? 0xd8d4cc : 0xb8b4ac, delta(rng, 5));
+  for (const [x0, lean] of [[4, -1], [7, 1], [10, 1]]) {
+    const top = randInt(rng, 10, 11);
+    for (let y = top; y <= 13; y++) {
+      const xs = x0 + (y <= top + 1 ? lean : 0);
+      for (let x = xs; x <= xs + 1; x++) set(px, x, y, 0x1a1612, delta(rng, 4));
+    }
+    set(px, x0 + lean, top, 0x3a302a);
+    set(px, x0 + lean + 1, top, 0x8a8680);
+  }
+  for (const cx of [2, 6, 10, 14]) {
+    const hw = 1.8;
+    const hh = 1.7 + rng() * 0.5;
+    const hex = rng() < 0.5 ? 0x6e6e6a : 0x5e5e5a;
+    const inStone = (x, y) => {
+      const ex = (x + 0.5 - cx) / hw;
+      const ey = (y + 0.5 - (H - hh)) / hh;
+      return y >= 12 && y < H && ex * ex + ey * ey <= 1.1;
+    };
+    let sooted = false;
+    for (let y = 12; y < H; y++) {
+      for (let x = Math.max(0, Math.floor(cx - hw)); x <= Math.min(W - 1, Math.ceil(cx + hw)); x++) {
+        if (!inStone(x, y)) continue;
+        const lit = !inStone(x, y - 1);
+        const outline = !inStone(x - 1, y) || !inStone(x + 1, y);
+        let d = delta(rng, 8) + (lit ? 18 : outline ? -22 : 0);
+        if (lit && !sooted && Math.abs(x + 0.5 - 8) < Math.abs(cx - 8)) {
+          d -= 30;
+          sooted = true;
+        }
+        set(px, x, y, hex, d);
+      }
+    }
+  }
+}
+
 /** @type {Readonly<Record<string, (px: Uint8ClampedArray, rng: Rng) => void>>} */
 const RECIPES = Object.freeze({
   stone: paintStone,
@@ -1522,8 +2342,34 @@ const RECIPES = Object.freeze({
   black_hole: paintBlackHole,
   campfire_side: paintCampfireSide,
   campfire_top: paintCampfireTop,
-  barrel_side: paintBarrelSide,
-  barrel_top: paintBarrelTop,
+  copper_ore: paintCopperOre,
+  tin_ore: paintTinOre,
+  honeyberry_bush: paintHoneyberryBush,
+  honeyberry_bush_bare: paintHoneyberryBushBare,
+  tussock: paintTussock,
+  cattails_side: paintCattailsSide,
+  cattails_top: paintCattailsTop,
+  tuber_plant: paintTuberPlant,
+  prickly_pear: paintPricklyPear,
+  prickly_pear_bare: paintPricklyPearBare,
+  stump_side: paintStumpSide,
+  stump_top: paintStumpTop,
+  kiln_side: paintKilnSide,
+  kiln_top: paintKilnTop,
+  bloomery_side: paintBloomerySide,
+  bloomery_top: paintBloomeryTop,
+  forge_side: paintForgeSide,
+  forge_top: paintForgeTop,
+  basket_side: paintBasketSide,
+  basket_top: paintBasketTop,
+  hide_side: paintHideSide,
+  hide_top: paintHideTop,
+  remains_side: paintRemainsSide,
+  remains_top: paintRemainsTop,
+  plant_top_clear: paintPlantTopClear,
+  loose_stones: paintLooseStones,
+  fallen_branches: paintFallenBranches,
+  fire_pit_side: paintFirePitSide,
   zombie_face: paintZombieFace,
   zombie_head_side: paintZombieHeadSide,
   zombie_scalp: paintZombieScalp,
@@ -1535,6 +2381,8 @@ const RECIPES = Object.freeze({
   watcher_smoke: paintWatcherSmoke,
   ...Object.fromEntries(Object.entries(WOOL_HEX).map(([name, hex]) => [name, (px, rng) => paintWool(px, rng, hex)])),
   missing: paintMissing,
+  // Last: the 35 powder-and-circuits tiles and the Powder Keg's barrel_side / barrel_top (circuitTiles.js, §6.2.9).
+  ...CIRCUIT_RECIPES,
 });
 
 // ---------------------------------------------------------------------------------------------------------------
