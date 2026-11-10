@@ -3725,6 +3725,55 @@ as grass, not a hex ring.
   decal reads as litter lying on the ground. `tussock`, `cattails_side`, `tuber_plant`, `prickly_pear(_bare)` keep their art.
 - **Icons**: `icon: 'flat'` now also covers the 7 cross plants and the 2 decals.
 
+## 60. Loose items — `src/looseItems.js` (PURE), `src/looseItemRenderer.js` (three); drop and throw
+
+Amends §43–§45, §48, §49 and §26 (commands). What a dig, a pick or a kill gives is no longer added to the pack on the spot:
+it flies out of the cell to the player and enters the pack **only when it crosses the player's threshold**.
+
+- **`LooseItems`** (`list`, `count`, `clear`, `spawnDrop(stack, x, y, z, { block?, ghost? })`, `launch(stack, x, y, z, vx, vy,
+  vz, { block?, ghost?, power?, hold?, thrower? })`, `inFlight() → ItemStack[]`, `release()`, `step(dt, env)`,
+  `serialize()`, `load(list, blockOf?)`). An item is a stack copy, a position (its centre), a velocity and a mode: `pop`
+  (POP_S 0.16 s hop: up POP_SPEED 2.6 m/s, sideways ≤ POP_SIDE 0.8), `home` (straight at the chest point PICKUP_CHEST 0.9
+  above the feet, HOME_SPEED 2 + HOME_ACCEL 26·t up to HOME_MAX 16 m/s; within **PICKUP_RADIUS 0.6** it is collected, and
+  after HOME_MAX_S 3 wherever it is), `fly` (gravity ITEM_GRAVITY −16, in water at most WATER_SINK 1.5 down and a drag;
+  sub-steps of ≤ MAX_STEP 0.1 m; per axis against `env.solid` with ITEM_RADIUS 0.12; a bounce keeps BOUNCE 0.3, a landing
+  slower than LAND_SPEED 3 settles) and `rest` (falls again when the cell under it goes; within COLLECT_RADIUS 1.5 of the
+  chest point, after its `hold`, and when `env.room(stack)`, it homes). A thrown or dropped item has hold THROW_HOLD_S 1.2
+  and `away` false: it is collected only after the player has once been more than COLLECT_RADIUS + AWAY_MARGIN 0.5 from it
+  (a dropped stack is never picked straight back up).
+  A collect that returns a leftover (a full pack) puts it at the player's feet as a falling item with that hold. With
+  `env.player` null (dead) or no `env.collect` (Creative) a real homing item falls instead. Items whose column is not
+  loaded (`env.loaded`) are frozen; below FLOOR_Y −8 they are gone. Items a callback adds during a step are kept.
+- **Ghosts** (Creative): the animation only — never collected, gone at the threshold, fade GHOST_REST_S 1.2 after landing,
+  at most GHOST_MAX 48 (the oldest goes). Creative breaks spawn a ghost of the broken block (liquids none); Creative throws
+  a ghost of the hotbar block and takes nothing.
+- **Projectiles**: `power > 0` and at least HIT_MIN_SPEED 4 m/s: each sub-step tests `env.hitMob(segment)` first; a hit calls
+  `env.onHit(item, mob)` once (true: the item breaks and is removed), spends the power, and bounces it back; a wall or the
+  ground also spends it. **`throwOf(key)`**: STONE_KEYS (rock, flint, obsidian_shard) THROW_ROCK `{ speed 13, power 1 }`;
+  DART_KEYS (`flint_dart`) THROW_DART `{ 21, 2 }`; any spear (ToolDef.type 'spear') THROW_SPEAR `{ 17, 4 }`; anything
+  else THROW_CHUCK `{ 6, 0 }` (a block or a stick is just chucked a short way). Main: a zombie takes `zombies.hit(zb, from,
+  power)`; a pig `pigs.wound(pig, power, …)` in Survival (`pigs.hit` in Creative); kills fly their drops to the player; a
+  dart breaks with DART_BREAK_P 0.3; a spear takes 1 wear (it breaks at 0: toolBroke).
+- **Main**: `flyStacks(stacks, x, y, z)` replaces giveStacks for digs (finishDig), picks (pickAt), a broken basket's or
+  fire's contents and mob drops; finishDig and pickAt check `pack.canGive([...loose.inFlight(), …])`. On arrival
+  `collectLoose`: `pack.add`, `hud.addPickup(key, n, pickupFrom())` (the token starts just below the crosshair) and the
+  SOUND_PICKUP blip; leftovers keep leftBehind's line. `stepLoose(dt)` runs after the bodies resolve. Drawing: block items
+  (`looseBlockOf`: a block item's meshed block, the ripe bush for the bush items) go through fallingRenderer at
+  LOOSE_BLOCK_SCALE 0.25, spinning (and bobbing at rest); every other item is a Sprite of its item icon (SPRITE_SIZE 0.38,
+  per-key SpriteMaterial, alphaTest 0.5). `die` and entering Creative call `release()`.
+- **Debug handle**: `__caelancraft.loose` (live) and `handAction(kind, n)`.
+- **Keys** (controls.GAME_KEYS + `KeyQ`, `KeyG`): **Q** drops one of the item in hand in front of the feet (DROP_SPEED 3
+  forward, 2 up: it lands about 2 m ahead), **Shift+Q** the whole stack; **G** throws one where the crosshair points (`throwOf` speed along the
+  look, +1.5 up, plus the player's velocity) from just in front of the eye (from the eye when that point is solid). The
+  Handbook is never dropped or thrown (KEEP_REFUSED). The title sheet keeps 17 rows: `Q / G` joins, and F3 and M share one row (`F3 · M`).
+- **Commands** (console only): `drop [count|all]` and `throw [count]` (1–THROW_MAX 16, one after another with a little spread)
+  through `ctx.hands.act(kind, n) → { ok, message }`; without `hands` they fail.
+- **Items**: `flint_dart` "Flint Dart" (material, stack 16, an itemArt icon); recipe `flint_dart` at hand: flint + stick +
+  plant_fibre → 4, hammer 1, 2 s (115 recipes; 44 at hand).
+- **Save**: `survival.loose` — `[{ k, n, d?, x, y, z }]` (storage `normalizeLooseJSON`: canonical key order, x y z rounded
+  to 3 places, bad entries dropped with `survival.loose[i]: invalid, dropped`, at most LOOSE_SAVE_MAX 2000), written only
+  when non-empty, so every older save is unchanged. Loaded items fall where they were (hold 0). Ghosts are never saved.
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),

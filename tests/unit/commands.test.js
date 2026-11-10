@@ -118,8 +118,8 @@ describe('command table', () => {
     }
     expect(names).toEqual(expect.arrayContaining(['help', 'tp', 'tpw', 'setblock', 'fill', 'hexfill', 'hexring', 'time', 'say', 'run', 'wait', 'stop', 'stopall', 'runes', 'rune']));
     expect(COMMANDS.filter((c) => c.scriptOnly).map((c) => c.name).sort()).toEqual(['stop', 'wait']);
-    // v0.9: `mode` is the only console-only command, and no command is both
-    expect(COMMANDS.filter((c) => c.consoleOnly).map((c) => c.name)).toEqual(['mode']);
+    // v0.9: `mode` is console-only, and v0.10's drop / throw (they move the player's own items); no command is both
+    expect(COMMANDS.filter((c) => c.consoleOnly).map((c) => c.name)).toEqual(['mode', 'drop', 'throw']);
     expect(COMMANDS.filter((c) => c.scriptOnly && c.consoleOnly)).toEqual([]);
     expect(names).toEqual(expect.arrayContaining(['mode', 'vitals', 'pack', 'items']));
     expect(HELP_FOOTER).toHaveLength(3);

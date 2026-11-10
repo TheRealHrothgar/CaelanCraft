@@ -54,6 +54,7 @@ export const GAME_KEYS = new Set([
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'ShiftLeft', 'ShiftRight',
   'KeyE', 'KeyF', 'KeyM', 'KeyT', 'KeyR', 'Slash',
+  'KeyQ', 'KeyG', // v0.10 drop and throw (CONTRACTS §60)
 ]);
 
 /** Upper bound on queued keydown edges per code; protects against unbounded growth for keys nobody consumes. */

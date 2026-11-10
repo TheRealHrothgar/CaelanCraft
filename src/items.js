@@ -105,6 +105,8 @@ const MATERIAL_ROWS = [
   // made of. Pyrite comes from coal seams, saltpetre from deep cave walls; the kiln roasts pyrite for sulfur (and selenium).
   ['pyrite', 'Pyrite', 32], ['sulfur', 'Sulfur', 32], ['selenium', 'Selenium', 16], ['saltpetre', 'Saltpetre', 32],
   ['black_powder', 'Black Powder', 32], ['carbon_filament', 'Carbon Filament', 32], ['iron_filings', 'Iron Filings', 32],
+  // v0.10 throwing (CONTRACTS §60): a dart flies far and hurts more than a rock; made by hand, four at a time
+  ['flint_dart', 'Flint Dart', 16],
   // §14 the Survival Handbook: every survival state starts with it; never lost on death, never discarded, never made
   // (inventory.js KEEP_ON_DEATH, handbook.js ensureHandbook). R or RMB with it in hand opens the field book.
   ['handbook', 'Survival Handbook', 1],

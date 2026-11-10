@@ -388,7 +388,54 @@ export function normalizeSurvivalJSON(raw, warnings = [], opts = {}) {
   });
   for (const w of fires.warnings) warnings.push(w);
   out.fires = fires.fires;
+  // v0.10 (CONTRACTS §60): the items lying loose in the world, written only when there are any.
+  if (src.loose !== undefined) {
+    const loose = normalizeLooseJSON(src.loose, warnings);
+    if (loose.length > 0) out.loose = loose;
+  }
   return /** @type {import('./types.js').SurvivalJSON} */ (out);
+}
+
+/** At most this many loose items are kept in a save (the rest are dropped with one warning). */
+export const LOOSE_SAVE_MAX = 2000;
+
+/**
+ * The `survival.loose` list in canonical form (CONTRACTS §60): `{ k, n, d?, x, y, z }` in that key order, `k` a non-empty
+ * string, `n` an integer 1–999, `d` (a tool's wear left) an integer ≥ 0 or absent, x y z finite (rounded to 3 places). Bad
+ * entries are dropped with a warning; anything but an array is ignored.
+ * @param {*} raw
+ * @param {string[]} [warnings]
+ * @returns {{ k: string, n: number, d?: number, x: number, y: number, z: number }[]}
+ */
+export function normalizeLooseJSON(raw, warnings = []) {
+  if (!Array.isArray(raw)) {
+    warnings.push('survival.loose: not a list, ignored');
+    return [];
+  }
+  /** @type {{ k: string, n: number, d?: number, x: number, y: number, z: number }[]} */
+  const out = [];
+  for (let i = 0; i < raw.length; i++) {
+    const o = raw[i];
+    const okStack = isPlainObject(o) && typeof o.k === 'string' && o.k !== '' && Number.isInteger(o.n) && o.n >= 1 && o.n <= 999;
+    const okPos = okStack && isFiniteNumber(o.x) && isFiniteNumber(o.y) && isFiniteNumber(o.z);
+    const okD = okPos && (o.d === undefined || (Number.isInteger(o.d) && o.d >= 0));
+    if (!okD) {
+      warnings.push(`survival.loose[${i}]: invalid, dropped`);
+      continue;
+    }
+    if (out.length >= LOOSE_SAVE_MAX) {
+      warnings.push(`survival.loose: more than ${LOOSE_SAVE_MAX} items, the rest dropped`);
+      break;
+    }
+    /** @type {*} */
+    const e = { k: o.k, n: o.n };
+    if (o.d !== undefined) e.d = o.d;
+    e.x = round3(o.x);
+    e.y = round3(o.y);
+    e.z = round3(o.z);
+    out.push(e);
+  }
+  return out;
 }
 
 /**

@@ -12,6 +12,7 @@ import { BLOCK_RULES, PICKABLE, MOB_DROPS, canHarvest, tap } from '../../src/har
 import { RECIPES } from '../../src/crafting.js';
 import { FIRE_TRANSFORMS, fuelSeconds } from '../../src/cooking.js';
 import { FLORA_TABLE } from '../../src/worldgen.js';
+import { DART_KEYS } from '../../src/looseItems.js';
 
 const B = BLOCK;
 /** Items the game gives rather than the world (§14.2: the Handbook is in the pack when a survival state begins). */
@@ -55,6 +56,7 @@ describe('every item has a source and a use (§10 I-1)', () => {
   for (const rec of RECIPES) for (const opts of inputOptions(rec)) for (const k of opts) uses.add(k);
   for (const k of Object.keys(FIRE_TRANSFORMS)) uses.add(k);
   uses.add('clay_pot'); // filled at water and tapped into (§4.2)
+  for (const k of DART_KEYS) uses.add(k); // thrown (CONTRACTS §60)
 
   it.each(nonBlockKeys)('%s comes from somewhere', (key) => {
     expect(sources.has(key) || GIVEN.has(key)).toBe(true);

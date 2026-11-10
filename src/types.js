@@ -231,6 +231,8 @@
  * @property {(ItemStack|null)[]} pack   PACK_SLOTS (27) entries
  * @property {(ItemStack|null)[]} wear   WEAR_SLOTS (3) entries: head, body, feet
  * @property {FireSlotsJSON} fires
+ * @property {{ k: string, n: number, d?: number, x: number, y: number, z: number }[]} [loose]  v0.10 (CONTRACTS §60) the items lying
+ *   loose in the world; absent = none
  */
 
 /**

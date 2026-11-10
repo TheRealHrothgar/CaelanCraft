@@ -66,8 +66,8 @@ export const CONTROLS_SHEET = Object.freeze([
   Object.freeze(['R', 'R key: use a switch, timer, fuse, radio key or rune · Survival: fire, water, plants, basket']),
   Object.freeze(['Shift R', 'Shift+R key: settings of the targeted device or Rune Block']),
   Object.freeze(['Esc', 'Pause · close menus']),
-  Object.freeze(['F3', 'Toggle the debug overlay']),
-  Object.freeze(['M', 'Mute / unmute sound']),
+  Object.freeze(['Q / G', 'Drop the item in hand (Shift: the stack) · throw it']),
+  Object.freeze(['F3 · M', 'Debug overlay · mute / unmute sound']),
 ]);
 
 // ---- Worlds panel text (pure, §41) ------------------------------------------------------------------

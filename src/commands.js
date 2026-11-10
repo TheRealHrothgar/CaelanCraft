@@ -100,7 +100,13 @@ export const COMMANDS = Object.freeze([
   { name: 'volts', usage: 'volts q y r', summary: 'measure the circuit part in that cell: volts, earth, its network', args: ['cell', 'cell', 'cell'], min: 3 },
   { name: 'circuits', usage: 'circuits [status|on|off]', summary: 'count the circuit parts, or switch circuits on / off for this world (saved)', args: ['choice:status|on|off'], min: 0 },
   { name: 'blackholes', usage: 'blackholes [status|on|off|list]', summary: 'count the black holes, list the nearest, or switch them on / off for this world (saved)', args: ['choice:status|on|off|list'], min: 0 },
+  // v0.10 hands (CONTRACTS §60): the Q and G keys as commands
+  { name: 'drop', usage: 'drop [count|all]', summary: 'drop the item in hand in front of you (default 1; Q, Shift+Q for the stack)', args: ['word'], min: 0, consoleOnly: true },
+  { name: 'throw', usage: 'throw [count]', summary: 'throw the item in hand where you look (G): rocks sting, darts and spears hurt, the rest is chucked a short way', args: ['int'], min: 0, consoleOnly: true },
 ]);
+
+/** Most items one `throw` sends. */
+export const THROW_MAX = 16;
 
 /** `vitals` stat words → the internal key (`satiation` is shown as Nourishment everywhere), label, range and unit. */
 const VITAL_STATS = Object.freeze({
@@ -298,6 +304,13 @@ export function resolveBlock(token) {
  * @property {CircuitCommands} [circuits]     absent without circuits (switch / timer / radio / volts / circuits then fail;
  *                                            ignite falls back to physics.explosions)
  * @property {BlackHoleCommands} [blackHoles] absent without black holes (`blackholes` then fails)
+ * @property {HandCommands} [hands]           absent where nothing can be held (drop / throw then fail)
+ */
+
+/**
+ * What drop / throw may touch (main's Q / G actions, CONTRACTS §60).
+ * @typedef {Object} HandCommands
+ * @property {(kind: 'drop'|'throw', n: number|'all') => { ok: boolean, message: string }} act
  */
 
 /**
@@ -1086,6 +1099,21 @@ function run(spec, args, ctx) {
       return circuitCommand(spec, args, ctx);
     case 'blackholes':
       return blackHolesCommand(spec, args, ctx);
+    case 'drop':
+    case 'throw': {
+      if (!ctx.hands) return fail(spec, 'nothing can be held here');
+      let n = /** @type {number|'all'} */ (1);
+      if (args.length === 1) {
+        if (spec.name === 'drop' && args[0].toLowerCase() === 'all') n = 'all';
+        else {
+          n = Number(args[0]);
+          const max = spec.name === 'throw' ? THROW_MAX : 999;
+          if (!(Number.isInteger(n) && n >= 1 && n <= max)) return fail(spec, `count must be 1–${max}${spec.name === 'drop' ? ' or all' : ''}`);
+        }
+      }
+      const res = ctx.hands.act(/** @type {'drop'|'throw'} */ (spec.name), n);
+      return res.ok ? ok(res.message) : fail(spec, res.message);
+    }
     case 'items': {
       const filter = args.length === 1 ? args[0].toLowerCase() : '';
       const keys = ITEM_KEYS.filter((k) => k.includes(filter));

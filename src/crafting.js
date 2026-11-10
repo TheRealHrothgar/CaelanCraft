@@ -160,6 +160,7 @@ const RECIPE_ROWS = [
   ['flint_pick', 'hand', '2 #knapstone + stick + 2 cord', 'flint_pick', 'hammer 1', 5],
   ['flint_spade', 'hand', '#knapstone + stick + cord', 'flint_spade', 'hammer 1', 4],
   ['flint_spear', 'hand', '#knapstone + 2 stick + cord', 'flint_spear', 'hammer 1', 3],
+  ['flint_dart', 'hand', 'flint + stick + plant_fibre', '4 flint_dart', 'hammer 1', 2],
   ['fire_drill', 'hand', '2 stick + cord', 'fire_drill', '', 2],
   ['campfire', 'hand', '6 rock + 3 stick + #tinder', 'campfire', 'firestarter 0', 5],
   ['cobblestone', 'hand', '6 rock', 'cobblestone', '', 2],
