@@ -81,7 +81,7 @@ export const COMMANDS = Object.freeze([
   { name: 'resume', usage: 'resume', summary: 'let rune triggers fire again after stopall', args: [], min: 0 },
   { name: 'runes', usage: 'runes', summary: 'list the rune blocks with scripts or settings', args: [], min: 0 },
   { name: 'rune', usage: 'rune q y r on|off', summary: 'enable or disable every trigger of one rune block', args: ['cell', 'cell', 'cell', 'choice:on|off'], min: 4 },
-  { name: 'summon', usage: 'summon pig|zombie|watcher [q y r]', summary: 'put a pig or a zombie two cells in front of you, or in a cell (watcher: far away in view)', args: ['choice:pig|zombie|watcher', 'cell', 'cell', 'cell'], min: 1 },
+  { name: 'summon', usage: 'summon pig|zombie|runner|alpha|watcher [q y r]', summary: 'put a pig or a zombie (a runner, an alpha) two cells in front of you, or in a cell (watcher: far away in view)', args: ['choice:pig|zombie|runner|alpha|watcher', 'cell', 'cell', 'cell'], min: 1 },
   { name: 'pigs', usage: 'pigs [clear]', summary: 'count the pigs, or remove them all', args: ['choice:clear'], min: 0 },
   { name: 'zombies', usage: 'zombies [clear|on|off]', summary: 'count the zombies, remove them all, or switch zombies on / off for this world (saved)', args: ['choice:clear|on|off'], min: 0 },
   { name: 'watcher', usage: 'watcher [on|off]', summary: 'is the Hollow Watcher about? or switch it on / off for this world (saved)', args: ['choice:on|off'], min: 0 },
@@ -691,10 +691,11 @@ function summonZombie(spec, args, ctx) {
     if (fy === null) return fail(spec, 'no room in front of you');
   }
   // It turns to face you.
-  const zb = zs.spawn(x, fy, z, Math.atan2(-(p.x - x), -(p.z - z)));
+  const kind = args[0] === 'zombie' ? 'walker' : args[0];
+  const zb = zs.spawn(x, fy, z, Math.atan2(-(p.x - x), -(p.z - z)), kind);
   if (!zb) return fail(spec, `too many zombies (max ${ZOMBIE_MAX})`);
   const [pq, pr] = worldToHex(x, z);
-  return ok(`summoned a zombie at ${pq} ${fy} ${pr}`);
+  return ok(`summoned ${kind === 'walker' ? 'a zombie' : kind === 'runner' ? 'a runner zombie' : 'an alpha zombie'} at ${pq} ${fy} ${pr}`);
 }
 
 /** @returns {CommandResult} */
@@ -981,7 +982,7 @@ function run(spec, args, ctx) {
       return ok(lines.join('\n'));
     }
     case 'summon': {
-      if (args[0] === 'zombie') return summonZombie(spec, args, ctx);
+      if (args[0] === 'zombie' || args[0] === 'runner' || args[0] === 'alpha') return summonZombie(spec, args, ctx);
       if (args[0] === 'watcher') return summonWatcher(spec, args, ctx);
       if (!ctx.pigs) return fail(spec, 'pigs are not available here');
       if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);

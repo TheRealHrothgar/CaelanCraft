@@ -77,7 +77,7 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky } from './zombies.js';
+import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST } from './survival.js';
 import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory.js';
 import { Containers } from './containers.js';
@@ -2301,6 +2301,13 @@ export function boot(win, doc) {
     return left;
   }
 
+  /** What a knocked-out zombie gives: its drops rolled once, an alpha's three times (§61). */
+  function zombieDrops(zb) {
+    const out = [];
+    for (let i = 0; i < statsOf(zb).drops; i++) out.push(...rollMobDrops('zombie', Math.random));
+    return out;
+  }
+
   /** The first zombie or pig a thrown item's path (x0 → x1) enters. */
   function looseHitMob(x0, y0, z0, x1, y1, z1) {
     const dx = x1 - x0;
@@ -2329,7 +2336,7 @@ export function boot(win, doc) {
       const res = zombies.hit(zb, fromX, fromZ, it.power);
       if (res === 'ko') {
         zombieGone(zb, 'ko');
-        if (real) flyStacks(rollMobDrops('zombie', Math.random), zb.x, zb.y + ZOMBIE_HEIGHT / 2, zb.z);
+        if (real) flyStacks(zombieDrops(zb), zb.x, zb.y + ZOMBIE_HEIGHT / 2, zb.z);
       } else if (res === 'hit') {
         audio.playZombieHurt(1);
       }
@@ -3118,7 +3125,7 @@ export function boot(win, doc) {
       const res = zombies.hit(zb, player.x, player.z, strikeKind('zombie', tool).power);
       if (res === 'ko') {
         zombieGone(zb, 'ko');
-        flyStacks(rollMobDrops('zombie', Math.random), zb.x, zb.y + ZOMBIE_HEIGHT / 2, zb.z);
+        flyStacks(zombieDrops(zb), zb.x, zb.y + ZOMBIE_HEIGHT / 2, zb.z);
       } else if (res === 'hit') {
         audio.playZombieHurt(1);
       }
@@ -4950,8 +4957,18 @@ export function boot(win, doc) {
     if (ev.attacks.length > 0) {
       hurtFlash = 1;
       audio.playThud(1);
-      // Survival (§2.4): each strike deals ZOMBIE_DAMAGE (zombies.js stays mode-agnostic; the push is unchanged).
-      if (survival.active) hurt(ZOMBIE_DAMAGE * ev.attacks.length, 'zombie');
+      // Survival (§2.4): each strike deals ZOMBIE_DAMAGE, an alpha's more (§61; zombies.js stays mode-agnostic).
+      if (survival.active) {
+        let dmg = 0;
+        for (const zb of ev.attacks) dmg += ZOMBIE_DAMAGE * statsOf(zb).damage;
+        hurt(Math.round(dmg), 'zombie');
+      }
+    }
+    // §61: a horde raised an alpha.
+    for (const zb of ev.alphas) {
+      logLine('A runner in the horde has turned alpha: bigger, tougher, and the others follow it.');
+      audio.playRecipe(SOUND_ROAR, Math.max(0.35, zombieVolume(zb)));
+      particles.emit('dust', zb.x, zb.y + 1, zb.z, 24, { color: [0.4, 0.12, 0.1], spread: 0.6 });
     }
     for (const zb of ev.groans) {
       const v = zombieVolume(zb);

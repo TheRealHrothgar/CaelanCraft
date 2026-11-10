@@ -3774,6 +3774,39 @@ it flies out of the cell to the player and enters the pack **only when it crosse
   to 3 places, bad entries dropped with `survival.loose[i]: invalid, dropped`, at most LOOSE_SAVE_MAX 2000), written only
   when non-empty, so every older save is unchanged. Loaded items fall where they were (hold 0). Ghosts are never saved.
 
+## 61. Zombie kinds and the cartoon zombie — `src/zombies.js`, `src/zombieRenderer.js`
+
+Amends §39 (and §26's `summon`). The zombie is no longer four hexagonal-prism blocks with atlas tiles (tiles 240–245 stay
+painted, unused).
+
+- **Kinds** (`ZOMBIE_KINDS` walker | runner | alpha; `Zombie.kind`, `Zombie.rallied`; `kindOf(zb)` → 'walker' for anything
+  else; `statsOf(zb)` → `KIND_STATS[kind]`): walker `{ chase ZOMBIE_CHASE_SPEED, hits ZOMBIE_HITS 4, damage 1, groan 1,
+  drops 1 }`; runner `{ chase 1 with sprint (SPRINT_SPEED), factor 0.95, hits 3, damage 1, groan 0.7, drops 1 }`; alpha
+  `{ chase 1, factor 0.97, hits 12, damage 1.75, groan 1.4, drops 3 }`. While chasing (or avoiding a fire) `input.forward =
+  chase` (a rallied walker 1), `input.sprint = sprint`, `input.speedFactor = factor`; wandering is unchanged (sneak speed).
+  `hit` and `knock` knock out at `statsOf(zb).hits`; an alpha needs a knock of ALPHA_KO_KNOCK 1.6 × ZOMBIE_KO_KNOCK to go at
+  once. Groan intervals × `groan`.
+- **Spawning**: `spawn(x, y, z, yaw, kind = 'walker')`; a natural spawn is a runner with RUNNER_P 0.12. **Hordes**: every
+  HORDE_CHECK_S 2 (`_hordeCheck`) walkers within ALPHA_RALLY 14 of an alpha are `rallied`; then, while fewer than ALPHA_MAX 1
+  alphas exist, the first runner with at least HORDE_SIZE 6 zombies (itself included) within HORDE_RADIUS 10 becomes the
+  alpha with ALPHA_CONVERT_P 0.03 (its hits reset to 0) and is pushed to `events.alphas`.
+- **Main**: a strike hurts `round(Σ ZOMBIE_DAMAGE × damage)`; a knocked-out zombie's drops are rolled `drops` times
+  (`zombieDrops`); `events.alphas` → one chat line, `SOUND_ROAR` (zombies.js, audio.playRecipe data) and a dark red dust puff.
+  `summon pig|zombie|runner|alpha|watcher [q y r]` (`zombie` = a walker).
+- **Model** (zombieRenderer; per-vertex colours, `boxesGeometry(boxes)` merges `[w, h, d, x, y, z, colour, rotZ?]` boxes;
+  `zombieGeometries()` → leg, torso, arm, head, eyes): legs (LEG_H 0.66, at ±LEG_X 0.12) in ragged trousers with shoes and
+  a bare ankle; a torso (TORSO_W 0.5 × TORSO_H 0.6 × TORSO_D 0.28) in a torn shirt with a belt, a collar, a hole and a flap,
+  and a neck; arms (ARM_L 0.58, from shoulders at ±SHOULDER_X 0.32, SHOULDER_Y) with sleeves and hands; a big head (HEAD_W
+  0.5 × HEAD_H 0.46 × HEAD_D 0.44) with mismatched googly eyes and pupils, cocked brows, a nose, a crooked mouth with two teeth,
+  ears and hair tufts on its −Z face. MODEL_HEIGHT ≤ ZOMBIE_HEIGHT. InstancedMeshes `zombie-legs` (2 per zombie),
+  `zombie-arms` (2), `zombie-torso`, `zombie-head` with instance colours, their `-hurt` / `-burn` twins, and
+  `zombie-alpha-eyes` (MeshBasicMaterial ALPHA_EYES, drawn on each alpha's head). Kinds: tint KIND_TINT; runner narrower
+  (RUNNER_WIDTH 0.88 in x and z), alpha ALPHA_SCALE 1.22. Animation: legs swing with walkPhase (walker 0.5 with the right
+  leg's stride × 0.55 — a limp; runner 0.95; alpha 0.55); the torso leans (walker −0.08, chasing −0.17, runner −0.42, alpha
+  −0.3) and sways, lurching LURCH −0.32 × sin(π·swing/SWING_S) after a strike; the arms reach out (1.5 rad + a bob, minus
+  0.6 × lean) — a runner's pump instead — and swipe up 0.55 rad in a strike; the head lolls by `tilt` and looks up against the
+  lean. `renderScale` / `renderSpin` as before. The atlas argument is ignored.
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),
