@@ -41,7 +41,7 @@ import { Containers } from '../../src/containers.js';
 import { FireSlots } from '../../src/cooking.js';
 import { CraftQueue } from '../../src/crafting.js';
 import { parseLine, executeCommand } from '../../src/commands.js';
-import { parseParams, survivalDebugLine, buildDebugText } from '../../src/diagnostics.js';
+import { parseParams, survivalDebugLine, buildDebugText, circuitSceneWrites } from '../../src/diagnostics.js';
 import { createMenus } from '../../src/menus.js';
 import {
   STATE, stateSimulates, stateAfterLoading, loadingGen, loadingMode, modeParamPlan, consumeModeParam, survivalSaveFields,
@@ -63,6 +63,9 @@ import {
   rKeyStep, rightMouseStep, ControlLatch, explainLine, snuffsKeg, panelCellChanged, kegHintText, hotbarFrom, hasRAction,
   makeCircuitHooks, makeBlackHoleWorld, physicsCircuitHooks, KEG_EXPLAIN,
 } from '../../src/main.js';
+import * as mainModule from '../../src/main.js';
+import { canHarvest, harvestHint } from '../../src/harvest.js';
+import { getBlockDef } from '../../src/blocks.js';
 
 const SEED = 1;
 const RD = 2;
@@ -1353,6 +1356,155 @@ describe('v0.10 circuits through main\'s rules (§7 I-2)', () => {
     expect(kegHintText(false, false)).toBe('Powder Keg (explosions are off)');
   });
 
+  it('the moving copies main draws reach the circuit renderer too: the collapsar charge\'s swelling copy is a device model', () => {
+    // A charge going off pushes its own block as a moving copy in FLASH and IMPLODE; devices are not meshed (the art redo),
+    // so only circuitRenderer.syncMoving can draw it.
+    const t = circuitRig();
+    t.world.setBlock(0, CY, 0, BLOCK.COLLAPSAR_CHARGE);
+    const holes = new BlackHoles();
+    const bhWorld = makeBlackHoleWorld(() => t.world);
+    expect(holes.activate(0, CY, 0, bhWorld).ok).toBe(true);
+    const seen = new Set();
+    for (let i = 0; i < 240; i++) {
+      holes.update(TICK, bhWorld);
+      holes.renderItems((id, x, y, z, rx, ry, rz, s) => seen.add(`${id}:${s > 0}`));
+    }
+    expect(seen.has(`${BLOCK.COLLAPSAR_CHARGE}:true`)).toBe(true);
+    expect(getBlockDef(BLOCK.COLLAPSAR_CHARGE).meshed).toBe(false);
+    // main: every frame's moving list goes to both renderers, and both are cleared together.
+    const src = readFileSync(fileURLToPath(new URL('../../src/main.js', import.meta.url)), 'utf8');
+    expect(src).toMatch(/fallingRenderer\.sync\(movingItems, movingCount\);\n\s+circuitRenderer\.syncMoving\(movingItems, movingCount\);/);
+    const clears = src.match(/fallingRenderer\.sync\(\[\], 0\);\n\s+circuitRenderer\.syncMoving\(null\);/g) ?? [];
+    expect(clears.length).toBe((src.match(/fallingRenderer\.sync\(\[\], 0\);/g) ?? []).length);
+    expect(clears.length).toBeGreaterThan(0);
+  });
+
+  it('Creative: holding the left button on a burning keg pinches it out and keeps it; the hold does not break it after', () => {
+    const step = /** @type {*} */ (mainModule).leftMouseStep;
+    expect(typeof step).toBe('function');
+    const t = circuitRig();
+    t.world.setBlock(0, CY, 0, BLOCK.POWDER_KEG);
+    t.world.setBlock(2, CY, 0, BLOCK.STONE);
+    expect(t.circuits.ignite(0, CY, 0).ok).toBe(true);
+    let target = t.hitAt(0, 0, BLOCK.POWDER_KEG);
+    const env = {
+      snuffs: () => snuffsKeg(target, t.physics.explosions),
+      // main's breakTargeted: a keg burning in place is snuffed, anything else broken
+      act: () => (snuffsKeg(target, t.physics.explosions) ? t.physics.explosions.snuff(target.q, target.y, target.r)
+        : t.world.setBlock(target.q, target.y, target.r, BLOCK.AIR)),
+    };
+    const st = { held: 0, snuffed: false };
+    const did = [];
+    did.push(step(st, { leftPressed: true, left: true }, TICK, env));
+    for (let i = 0; i < 90; i++) {
+      did.push(step(st, { leftPressed: false, left: true }, TICK, env)); // held 1.5 s
+      t.frame();
+    }
+    expect(did[0]).toBe('snuff');
+    expect(did.filter((d) => d === 'break')).toEqual([]);
+    expect(t.world.getBlock(0, CY, 0)).toBe(BLOCK.POWDER_KEG);
+    expect(t.physics.explosions.isBurning(0, CY, 0)).toBe(false);
+    step(st, { leftPressed: false, left: false }, TICK, env); // released
+    // Holding on anything else still repeats the break every BREAK_REPEAT_S.
+    target = t.hitAt(2, 0, BLOCK.STONE);
+    expect(step(st, { leftPressed: true, left: true }, TICK, env)).toBe('break');
+    expect(t.world.getBlock(2, CY, 0)).toBe(BLOCK.AIR);
+    t.world.setBlock(2, CY, 0, BLOCK.STONE);
+    let breaks = 0;
+    for (let i = 0; i < 40; i++) if (step(st, { leftPressed: false, left: true }, TICK, env) === 'break') breaks++;
+    expect(breaks).toBe(2); // 0.67 s held: the repeat at 0.25 s and at 0.5 s
+  });
+
+  it('Survival: a keg burning in place says how to put it out, not which axe it needs (the snuff needs no tool)', () => {
+    const t = circuitRig();
+    t.world.setBlock(0, CY, 0, BLOCK.POWDER_KEG);
+    const keg = t.hitAt(0, 0, BLOCK.POWDER_KEG);
+    const burningKegHint = /** @type {*} */ (mainModule).burningKegHint;
+    expect(typeof burningKegHint).toBe('function');
+    expect(burningKegHint(keg, t.physics.explosions)).toBeNull(); // not lit: the usual hints apply
+    expect(harvestHint(BLOCK.POWDER_KEG)).toMatch(/axe/); // … and bare-handed that is the tool requirement
+    expect(canHarvest(BLOCK.POWDER_KEG, null)).toBe(false);
+    expect(t.circuits.ignite(0, CY, 0).ok).toBe(true); // lit in place (a campfire's way)
+    expect(burningKegHint(keg, t.physics.explosions)).toBe('Powder Keg · burning! left-click: pinch out the fuse');
+    expect(burningKegHint(keg, null)).toBeNull();
+    // survivalHintText asks for it before the tool requirement.
+    const src = readFileSync(fileURLToPath(new URL('../../src/main.js', import.meta.url)), 'utf8');
+    const at = src.indexOf('  function survivalHintText() {');
+    const body = src.slice(at, src.indexOf('\n  }\n', at));
+    expect(body.indexOf('burningKegHint(h,')).toBeGreaterThan(0);
+    expect(body.indexOf('burningKegHint(h,')).toBeLessThan(body.indexOf('harvestHint('));
+  });
+
+  it('a fuse burning beside a big wired area rebuilds the wiring at most once a second; a placed part at once', () => {
+    const due = /** @type {*} */ (mainModule).wiringRebuildDue;
+    expect(typeof due).toBe('function');
+    const S = /** @type {*} */ (mainModule).FUSE_REBUILD_S;
+    expect(S).toBe(1);
+    const t = circuitRig();
+    for (let q = 0; q < 30; q++) for (let r = 0; r < 30; r++) t.world.setBlock(q, CY, r, BLOCK.COPPER_WIRE);
+    for (let q = 0; q < 40; q++) t.world.setBlock(q, CY, -3, BLOCK.POWDER_FUSE);
+    const built = { geometry: -1, burn: -1, at: -Infinity };
+    let rebuilds = 0;
+    let time = 0;
+    const frame = () => {
+      t.circuits.step(TICK);
+      time += TICK;
+      if (due(built, t.circuits.geometryVersion, t.circuits.burnVersion, false, time)) {
+        built.geometry = t.circuits.geometryVersion;
+        built.burn = t.circuits.burnVersion;
+        built.at = time;
+        t.circuits.geometryBuilt();
+        rebuilds++;
+      }
+    };
+    for (let i = 0; i < 10; i++) frame();
+    rebuilds = 0;
+    expect(t.circuits.ignite(0, CY, -3).ok).toBe(true);
+    for (let i = 0; i < 18 * 60; i++) frame(); // the 40 cells burn for 16 s, one every 0.4 s
+    expect(t.world.getBlock(39, CY, -3)).toBe(BLOCK.AIR);
+    expect(rebuilds).toBeGreaterThan(10);
+    expect(rebuilds).toBeLessThanOrEqual(18); // not 40 (one per burnt cell)
+    expect(built.burn).toBe(t.circuits.burnVersion); // and the last burnt cells are gone from the wiring
+    // A part placed: the very next frame.
+    rebuilds = 0;
+    t.world.setBlock(50, CY, 0, BLOCK.COPPER_WIRE);
+    frame();
+    expect(rebuilds).toBe(1);
+    expect(due(built, built.geometry, built.burn, true, time)).toBe(true); // the eye moved
+    expect(due(built, built.geometry, built.burn, false, time + 5)).toBe(false); // nothing changed
+  });
+
+  it('?scene=circuits: the timer row\'s keg going off leaves the other rows standing (rows more than a blast apart)', () => {
+    const t = circuitRig();
+    const scene = circuitSceneWrites(0, CY, 0);
+    for (const [q, y, r, id] of scene.blocks) t.world.setBlock(q, y, r, id);
+    for (const [q, y, r, face] of scene.faces) t.circuits.setInputFace(q, y, r, face);
+    for (const [q, y, r, partial] of scene.settings) t.circuits.applySettings(q, y, r, partial);
+    for (let i = 0; i < 10; i++) t.frame();
+    const [kq, ky, kr] = scene.named['timer.keg'];
+    expect(t.circuits.ignite(kq, ky, kr).ok).toBe(true);
+    for (let i = 0; i < 6 * 60 && t.physics.explosions.blastCount === 0; i++) t.frame();
+    for (let i = 0; i < 120; i++) t.frame();
+    expect(t.physics.explosions.blastCount).toBe(1); // the switch row's keg did not follow
+    expect(t.world.getBlock(kq, ky, kr)).not.toBe(BLOCK.POWDER_KEG);
+    for (const name of ['switch.keg', 'switch.igniter', 'switch.knife', 'lamp.relay', 'lamp.battery', 'lamp.lamp', 'doorbell.button', 'doorbell.bell']) {
+      const [q, y, r] = scene.named[name];
+      expect(t.world.getBlock(q, y, r), name).not.toBe(BLOCK.AIR);
+    }
+    expect(scene.bounds).toEqual({ q0: 0, q1: 11, r0: 0, r1: 3 * 6 + 1 }); // what main flattens (plus 2)
+  });
+
+  it('placing a timer, relay or coherer gives it the face back at the player unless a battery stands there (partPlaced)', () => {
+    const t = circuitRig();
+    t.world.setBlock(0, CY, 0, BLOCK.VOLTAIC_BATTERY);
+    t.world.setBlock(1, CY, 0, BLOCK.CLOCKWORK_TIMER);
+    expect(t.circuits.placementInputFace(1, CY, 0, 3)).toBe(4);
+    const src = readFileSync(fileURLToPath(new URL('../../src/main.js', import.meta.url)), 'utf8');
+    const at = src.indexOf('  function partPlaced(id, cell) {');
+    const body = src.slice(at, src.indexOf('\n  }\n', at));
+    expect(body).toMatch(/circuits\.placementInputFace\(cell\[0\], cell\[1\], cell\[2\], inputFaceFromYaw\(controls\.yaw\)\)/);
+  });
+
   it('the device panel: Creative freezes the world under it, Survival keeps it running; its part changing closes it', () => {
     expect(stateSimulates(STATE.DEVICE)).toBe(false);
     expect(stateSimulates(STATE.DEVICE, false)).toBe(false);
@@ -1375,6 +1527,31 @@ describe('v0.10 circuits through main\'s rules (§7 I-2)', () => {
     t.world.setBlock(0, CY, 0, BLOCK.AIR);
     expect(closed).toBe(true);
     expect(panelCellChanged(null, 0, CY, 0, 1, 0)).toBe(false);
+  });
+
+  it('dying in Survival with the device panel open closes it first: no screen is left up over the death screen (§2.5, §57)', () => {
+    // Every state but PLAYING in which Survival's world steps is a screen over a world that can kill: die() closes it.
+    const closes = /** @type {*} */ (mainModule).screenClosedOnDeath;
+    expect(typeof closes).toBe('function');
+    for (const s of Object.values(STATE)) {
+      if (s === STATE.PLAYING || !stateSimulates(s, true)) expect(closes(s), s).toBeNull();
+      else expect(closes(s), s).not.toBeNull();
+    }
+    expect(closes(STATE.DEVICE)).toBe('device');
+    // … and main's die() does so before the death state; closing the panel never resumes play from there, and a panel
+    // still showing outside STATE.DEVICE is closed rather than left with its key capture on (Done / Esc / Shift+R).
+    const src = readFileSync(fileURLToPath(new URL('../../src/main.js', import.meta.url)), 'utf8');
+    const dieAt = src.indexOf('  function die(cause) {');
+    const die = src.slice(dieAt, src.indexOf('\n  }\n', dieAt));
+    const deadAt = die.indexOf('setState(STATE.DEAD)');
+    expect(deadAt).toBeGreaterThan(0);
+    expect(die.slice(0, deadAt)).toMatch(/screenClosedOnDeath\(state\)/);
+    expect(die.slice(0, deadAt)).toMatch(/=== 'device'\) closeDevicePanel\(false\)/);
+    const closeAt = src.indexOf('  function closeDevicePanel(');
+    const close = src.slice(closeAt, src.indexOf('\n  }\n', closeAt));
+    expect(close).not.toMatch(/if \(state !== STATE\.DEVICE\) return;/);
+    expect(close).toMatch(/if \(devicePanel\.isOpen\(\)\) devicePanel\.close\(\);/);
+    expect(close).toMatch(/if \(inDevice && resume\) enterPlayingFromModal\(\);/);
   });
 
   it('a hotbar slot holding the old BLACK_HOLE (66) holds the Collapsar Charge (§2.10)', () => {

@@ -374,7 +374,7 @@ export const RADIO_RANGE = 160;                     // a send reaches receivers 
 export const RADIO_PULSE_S = 1;                     // a receiver in pulse mode stays closed this long
 export const FUSE_CELL_S = 0.4;                     // a Powder Fuse cell burns this long: 2.5 cells/s
 export const MAX_BURNING_FUSES = 2048;              // fuse cells burning at once; more wait in the flame queue
-export const MAX_FLAME_QUEUE = 4096;                // queued flame candidates; beyond this they are dropped (stream-in re-queues)
+export const MAX_FLAME_QUEUE = 4096;                // queued flame candidates (parked ones wait for their chunk); beyond this dropped
 export const KEG_DIRECT_FUSE_S = 0.25;              // a keg lit by a fuse, a torch or an igniter goes off this long after
 export const MAX_FUSE_SPARK_CELLS = 16;             // the nearest burning fuse cells that emit spark particles each tick
 export const MAX_FUSE_PUFFS_PER_TICK = 24;          // burnt-out fuse cells that puff smoke per tick
@@ -388,7 +388,7 @@ export const MAX_SETTLE_PASSES = 4;                 // settling passes over cont
 export const MAX_CIRCUIT_WRITES_PER_TICK = 32;      // burnt-fuse AIR writes per tick; the rest finish next tick
 export const MAX_IGNITIONS_PER_TICK = 32;           // ignitions dispatched per tick; the rest wait
 export const CIRCUIT_DRAW_RANGE = 64;               // wires and knobs drawn within this of the eye
-export const CIRCUIT_OVERLAY_RANGE = 48;            // moving and lit overlays drawn within this …
+export const CIRCUIT_OVERLAY_RANGE = 64;            // moving and lit overlays drawn within this (= the wiring's range) …
 export const MAX_CIRCUIT_OVERLAYS = 512;            // … at most this many, nearest first
 // ---- Black holes v2 (§54; docs/DESIGN-circuits.md §2)
 export const BLACK_HOLE_ARM_S = 0.4;                // ARM: the charge is still a block …

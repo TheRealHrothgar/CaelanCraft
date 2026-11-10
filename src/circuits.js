@@ -42,7 +42,7 @@ import {
   DEFAULT_INPUT_FACE, PARTS, conductorAccepts, isEarth, isFlame, isIgnitable, isPart, liveFaces, partOf, partOrigin, partTip,
   parseChannel, wavelengthOf,
 } from './circuitParts.js';
-import { partKey } from './circuitStore.js';
+import { partKey, partToJSON } from './circuitStore.js';
 
 /** @typedef {import('./circuitStore.js').CircuitStore} CircuitStore */
 /** @typedef {import('./types.js').PartState} PartState */
@@ -138,6 +138,12 @@ const BLASTER_UNITS = units(BLASTER_V);
 const LAMP_MIN_UNITS = units(LAMP_MIN_V);
 /** OverlayItem.b of a keg's bung glow (circuitGeometry.FUSE_AT_BUNG: the spark sits on a keg burning in place). */
 const FUSE_AT_BUNG = 8;
+/**
+ * Store fields that are running state, not settings (block id → field names): undo's partSnapshot leaves them out (§55). A
+ * Knife Switch's `on` is where the player set it, a setting; a timer's running clock and latch and a coherer's latch are not.
+ * @type {Readonly<Record<number, readonly string[]>>}
+ */
+const RUNNING_FIELDS = Object.freeze({ [B.CLOCKWORK_TIMER]: Object.freeze(['run', 'on']), [B.COHERER_RECEIVER]: Object.freeze(['on']) });
 
 // Packed cell arithmetic (coords.packCell: ((q + 2^20)·2^21 + (r + 2^20))·128 + y): a neighbour is pc + a constant.
 const H = WORLD_HEIGHT;
@@ -175,6 +181,10 @@ const TRUNCATED = `This circuit is larger than ${MAX_NETWORK_CELLS} cells; split
 const TOO_MANY = 'too many configured devices in this world';
 const BYPASSED = 'bypassed: the wires on either side touch — run them out of opposite faces, or use brown on one side and white on the other';
 const SELF_FED = 'its own battery feeds the coil — move the battery away from the input face';
+/** A frozen network's parts (§4.7): the circuit runs into a chunk that is not loaded, so nothing on it changes meanwhile. */
+const FROZEN_NOTE = 'waiting: the circuit reaches an unloaded area';
+/** A source set against a timer's, relay's or coherer's input face feeds nothing there (worked examples 2 and 5 built facing east). */
+const sourceOnInput = (name) => `the ${name} is on its input face and feeds nothing there — move it, or turn the input face (Shift+R key)`;
 const NO_WIRE = '0 V: join it to the battery with a wire';
 const STRAP_NOT_GROUNDED = 'not earthed: its Earth Wire is not grounded — run it down to soil or stone';
 const WOOD_NAMES = /(_log|_planks)$|^bookshelf$/;
@@ -250,6 +260,12 @@ export class Circuits {
     this.switchVersion = 0;
     /** bumps whenever the drawn wiring may change (a part added or removed, an input face, an earth-wire clamp) */
     this.geometryVersion = 0;
+    /**
+     * bumps instead when only a burnt-out fuse cell left (its AIR write): main rebuilds the wiring for these at most every
+     * FUSE_REBUILD_S (a full rebuild per burnt cell is ~10–20 ms near a big wired area), and overlays() draws the cell's char
+     * over its stale cord until geometryBuilt() says the wiring was rebuilt
+     */
+    this.burnVersion = 0;
     /** ticks run so far */
     this.tickCount = 0;
 
@@ -267,8 +283,10 @@ export class Circuits {
 
     /** @type {Map<number, { ticks: number, total: number, from: number, start: number }>} burning fuse cells */
     this.burning = new Map();
-    /** @type {Set<number>} fuse cells that finished and wait for their AIR write */
-    this.spent = new Set();
+    /** @type {Map<number, number>} fuse cells that finished and wait for their AIR write → the face the flame came in by */
+    this.spent = new Map();
+    /** @type {Map<number, number>} burnt-out fuse cells (AIR now) not yet gone from the drawn wiring → the flame's entry face */
+    this._ash = new Map();
     /** @type {number[]} spent cells to write AIR */
     this._writeQ = [];
     /** @type {{ pc: number, from: number, src: number }[]} the flame queue (§4.3) */
@@ -297,6 +315,8 @@ export class Circuits {
     this._dqHead = 0;
     /** @type {Map<number, boolean>} */
     this._dflag = new Map();
+    /** how many of `_dflag`'s flags are true (settling marks waiting in the FIFO): _settlePending reads it, never scans */
+    this._dsettle = 0;
     /** @type {Map<number, boolean>} */
     this._settleNext = new Map();
     /** @type {Map<number, boolean>} */
@@ -336,7 +356,8 @@ export class Circuits {
 
   /**
    * The per-world switch (§4.7, saved). Off freezes everything: no ticks, no flame dispatch. On again marks every part
-   * dirty for SETTLING (nothing fires from switching on) and re-queues the flame candidates.
+   * dirty for SETTLING (nothing fires from switching on). Flames are not re-queued: a fuse, keg or charge laid against a
+   * Torch while circuits were off is not lit by switching them on (CONTRACTS pitfall 28) — only a new block change lights it.
    * @param {boolean} on
    * @returns {boolean} it changed
    */
@@ -347,15 +368,16 @@ export class Circuits {
     this.switchVersion++;
     if (v) {
       this._loadedCache.clear();
-      for (const pc of this.cells.keys()) this._markDirty(pc, true);
-      this._queueAllFlames();
+      this._markAllSettling(this.cells.keys());
     }
     return true;
   }
 
   /**
    * Build the index (§4.7) from World.edits (Map<chunkKey, Map<localIndex, id>>, or an EditsJSON object): every cell whose id
-   * is a part, the keg or a flame. Everything is dirtied for SETTLING and every ignitable with a flame neighbour is queued.
+   * is a part, the keg or a flame. Everything is dirtied for SETTLING. Nothing is put in the flame queue: the flame rule acts
+   * on block changes only, so an ignitable resting beside a flame (refused while black holes or explosions were off, or laid
+   * while circuits were off) is not lit by loading (CONTRACTS pitfall 37).
    * Transient state (burning fuses, presses, pulses, networks) starts empty; timers latched in `hold` and running `repeat`
    * clocks come back from the store.
    * @param {Map<string, Map<number, number>>|Record<string, number[]>} edits
@@ -377,8 +399,7 @@ export class Circuits {
         if (Array.isArray(arr)) for (let i = 0; i + 1 < arr.length; i += 2) add(key, arr[i], arr[i + 1]);
       }
     }
-    for (const pc of this.cells.keys()) this._markDirty(pc, true);
-    if (this.enabled) this._queueAllFlames();
+    this._markAllSettling(this.cells.keys());
     this.geometryVersion++;
   }
 
@@ -393,6 +414,7 @@ export class Circuits {
     const pc = packCell(q, y, r);
     const prevIdx = partOf(prev) !== null;
     const nextIdx = partOf(next) !== null;
+    const spentFrom = this.spent.get(pc);
     this.spent.delete(pc);
     if (prevIdx || this.cells.has(pc)) {
       this._indexRemove(pc);
@@ -403,7 +425,14 @@ export class Circuits {
       const p = /** @type {*} */ (partOf(next));
       if (p.fields.length > 0) this.store.ensure(q, y, r, p.key);
     }
-    if (prevIdx || nextIdx) this.geometryVersion++;
+    if (spentFrom !== undefined && prev === B.POWDER_FUSE && next === B.AIR) {
+      // A fuse cell burnt out (the engine's own lazy write): the wiring may follow lazily, its char covers the cord.
+      this._ash.set(pc, spentFrom);
+      this.burnVersion++;
+    } else {
+      this._ash.delete(pc);
+      if (prevIdx || nextIdx) this.geometryVersion++;
+    }
     // Earth wires: a change here (or anywhere below one) can merge, split or ground an earth net.
     if (prev === B.EARTH_WIRE || next === B.EARTH_WIRE) {
       this._invalidateEarthNet(pc);
@@ -432,7 +461,8 @@ export class Circuits {
 
   /**
    * A chunk was (re)generated and is loaded: its indexed cells are dirtied for SETTLING (frozen networks reaching into it are
-   * solved again), its flame candidates re-queued and its earth nets re-checked. Clocks resume by themselves.
+   * solved again) and its earth nets re-checked. Clocks resume by themselves, and flame-queue entries parked on it are
+   * dispatched by the next drain; nothing else is queued (as for loadFromEdits, a stream-in never lights anything).
    */
   onChunkLoaded(cq, cr) {
     this._loadedCache.clear();
@@ -440,9 +470,26 @@ export class Circuits {
     if (!set) return;
     for (const pc of set) {
       if (this.cells.get(pc) === B.EARTH_WIRE) this._invalidateEarthNet(pc, true);
-      this._markDirty(pc, true);
-      if (this.enabled && isIgnitable(this.cells.get(pc) ?? 0)) this._queueFlameFor(pc, /** @type {number} */ (this.cells.get(pc)));
     }
+    this._markAllSettling(set);
+  }
+
+  /**
+   * Dirty a batch of cells for SETTLING (a load, a stream-in, switching on), RELAYS FIRST: expanding a relay builds its coil
+   * network and evaluates it, so most relays take their coil's state before the rest of the batch is built on their contacts.
+   * Not all: expanding a relay also builds the networks on its 8 neighbours, and one of those may run through the contacts of
+   * another relay of the batch not evaluated yet (still at its unsaved rest position, an energised NC relay closed). An igniter
+   * powered that way stays powered until that relay's turn comes, which on a big load can be longer than its refire clock — so
+   * the refire clock waits while any settle is under way (_stepClocks, _settlePending; CONTRACTS pitfall 37).
+   * @param {Iterable<number>} cells
+   */
+  _markAllSettling(cells) {
+    const rest = [];
+    for (const pc of cells) {
+      if (this.cells.get(pc) === B.RELAY) this._markDirty(pc, true);
+      else rest.push(pc);
+    }
+    for (const pc of rest) this._markDirty(pc, true);
   }
 
   /** Drop the transient state (burning fuses, queues, presses, pulses, networks); the index and the store stay. Everything is dirtied for settling. */
@@ -451,6 +498,7 @@ export class Circuits {
     this._clocks.clear();
     this.burning.clear();
     this.spent.clear();
+    this._ash.clear();
     this._writeQ.length = 0;
     this._flameQ.length = 0;
     this._flameSet.clear();
@@ -465,6 +513,7 @@ export class Circuits {
     this._dq.length = 0;
     this._dqHead = 0;
     this._dflag.clear();
+    this._dsettle = 0;
     this._settleNext.clear();
     this._later.clear();
     this._evalSet.clear();
@@ -476,7 +525,7 @@ export class Circuits {
     this._said.clear();
     this._acc = 0;
     this._bellAcc = 0;
-    for (const pc of this.cells.keys()) this._markDirty(pc, true);
+    this._markAllSettling(this.cells.keys());
   }
 
   /** Forget everything but the store (main's quitToTitle; loadFromEdits starts with it). */
@@ -485,6 +534,7 @@ export class Circuits {
     this._dq.length = 0;
     this._dqHead = 0;
     this._dflag.clear();
+    this._dsettle = 0;
     this._dmark.clear();
     this.cells.clear();
     this.byChunk.clear();
@@ -553,7 +603,7 @@ export class Circuits {
       id, closed: false, press: 0, hand: 0, arm: false, armTarget: false, armPending: 0, energised: false, coilKnown: false,
       uncertain: false, tphase: T_IDLE, tleft: 0, pulse: 0, reset: 0, arrive: 0, rxPulse: 0, glow: 0, flash: 0,
       lastSend: -1, lastCount: 0, volts: 0, powered: false, inPowered: false, refire: 0, frozenFeed: false, bright: 0, sel: -1,
-      shaded: false, swTick: -100,
+      shaded: false, swTick: -100, settleTick: -1, settleFlips: 0,
     };
     this.rt.set(pc, rt);
     if (id === B.CLOCKWORK_TIMER) {
@@ -674,8 +724,21 @@ export class Circuits {
     } else {
       const had = this._dflag.get(pc);
       if (had === undefined) this._dq.push(pc);
+      if (s && had !== true) this._dsettle++;
       this._dflag.set(pc, (had ?? false) || s);
     }
+  }
+
+  /**
+   * A settle is under way: settling marks wait in the dirty FIFO or for the next settling pass, or settling seeds wait to be
+   * built (the budget cut a pass short between them). Until it is over, a network built through a relay that has not taken
+   * its coil's state yet may show that relay's contacts at rest (CONTRACTS pitfall 37), so _stepClocks holds igniter refires.
+   * @returns {boolean}
+   */
+  _settlePending() {
+    if (this._dsettle > 0 || this._settleNext.size > 0) return true;
+    for (let i = this._seedHead; i < this._seedSettle.length; i++) if (this._seedSettle[i]) return true;
+    return false;
   }
 
   // -------------------------------------------------------------------------------------------------------------------
@@ -961,6 +1024,9 @@ export class Circuits {
   // ---- 1. clocks
 
   _stepClocks() {
+    // While a settle is under way an igniter's power may come from a relay's contacts at rest (one not evaluated yet): its
+    // refire clock waits, as it does on a frozen feed, until the settle is over (CONTRACTS pitfall 37).
+    const settling = this._settlePending();
     for (const pc of [...this._clocks]) {
       const id = this.cells.get(pc);
       const rt = this.rt.get(pc);
@@ -1017,7 +1083,7 @@ export class Circuits {
       }
       if (rt.refire > 0 && rt.powered) {
         busy = true;
-        if (!rt.frozenFeed) {
+        if (!rt.frozenFeed && !settling) {
           rt.refire--;
           if (rt.refire === 0) {
             rt.refire = IGNITER_REFIRE_TICKS;
@@ -1181,9 +1247,10 @@ export class Circuits {
 
   /** A burning cell's time is up: it is spent (AIR written later) and lights every fuse, keg and charge beside it. */
   _finishFuse(pc) {
+    const from = this.burning.get(pc)?.from ?? -1;
     this.burning.delete(pc);
     if (this.cells.get(pc) !== B.POWDER_FUSE) return; // cut
-    this.spent.add(pc);
+    this.spent.set(pc, from);
     this._writeQ.push(pc);
     for (let f = 0; f < 8; f++) {
       const n = nb(pc, f);
@@ -1230,11 +1297,6 @@ export class Circuits {
     }
   }
 
-  /** Every indexed ignitable with a flame beside it (load, stream-in, switching on). */
-  _queueAllFlames() {
-    for (const [pc, id] of this.cells) if (isIgnitable(id)) this._queueFlameFor(pc, id);
-  }
-
   _drainFlameQueue() {
     const n = this._flameQ.length;
     if (n === 0) return;
@@ -1244,7 +1306,7 @@ export class Circuits {
       const id = this.cells.get(it.pc);
       if (id === undefined) continue;
       if (!this._loaded(it.pc)) {
-        this._enqueueFlame(it.pc, it.from, it.src); // parks until its chunk loads (stream-in re-queues it too)
+        this._enqueueFlame(it.pc, it.from, it.src); // parks until its chunk loads
         continue;
       }
       if (id === B.POWDER_FUSE) this._lightFuse(it.pc, it.from, it.src);
@@ -1277,8 +1339,22 @@ export class Circuits {
     } finally {
       this._inNetworks = false;
     }
-    // Whatever waits (settling marks past the pass limit, edges' changes) is solved next tick.
-    for (const [pc, s] of this._settleNext) this._markDirty(pc, s);
+    // Whatever waits is solved next tick. Settling marks (past the pass limit, or the budget ran out first) go to the FRONT of
+    // the FIFO: they finish a settle already under way (a relay that took its coil's state must have its contact networks
+    // rebuilt before an igniter left powered on its stale contacts counts down its refire clock), so they never wait behind
+    // the rest of a big load. Edges' changes go to the back.
+    if (this._settleNext.size > 0) {
+      const front = [];
+      for (const pc of this._settleNext.keys()) {
+        this._earthCache.delete(pc);
+        this._dmark.set(pc, this._serial);
+        if (this._dflag.get(pc) !== true) this._dsettle++;
+        this._dflag.set(pc, true);
+        front.push(pc); // a copy of it further back is skipped once this one is taken (its flag is gone by then)
+      }
+      this._dq = this._dqHead >= this._dq.length ? front : front.concat(this._dq.slice(this._dqHead));
+      this._dqHead = 0;
+    }
     for (const [pc, s] of this._later) this._markDirty(pc, s);
     this._settleNext.clear();
     this._later.clear();
@@ -1335,8 +1411,12 @@ export class Circuits {
       if (head >= queue.length) break;
       if (main && this._overBudget()) break;
       const pc = queue[head++];
+      if (main && !flags.has(pc)) continue; // a copy already taken (settling marks are moved to the front)
       const settle = flags.get(pc) ?? false;
-      if (main) flags.delete(pc);
+      if (main) {
+        flags.delete(pc);
+        if (settle) this._dsettle--;
+      }
       this._expand(pc, settle);
     }
     if (main) {
@@ -1347,6 +1427,14 @@ export class Circuits {
       } else if (head > 4096 && head * 2 > queue.length) {
         queue.splice(0, head);
         this._dqHead = 0;
+      }
+    } else {
+      // A settling pass the budget cut short: the cells it did not reach go back with their flags (the relays whose coils
+      // settled in an earlier pass must still have their contact networks rebuilt; dropping one leaves an igniter on stale
+      // NC contacts powered, and its refire clock would light the keg — CONTRACTS pitfall 37).
+      for (let i = head; i < queue.length; i++) {
+        const pc = queue[i];
+        this._settleNext.set(pc, (this._settleNext.get(pc) ?? false) || (flags.get(pc) ?? true));
       }
     }
     const evals = this._evalSet;
@@ -1698,27 +1786,47 @@ export class Circuits {
     } else {
       rt.coilKnown = true;
       rt.inPowered = powered;
+      // A relay that already took its coil's state twice by settling this tick is in a loop with its own contacts (a buzzer
+      // after a reload): it flips live from now on, one flip per RELAY_DELAY, instead of flipping unseen in every settling
+      // pass of every tick and never leaving settling.
+      const looping = settle && rt.settleTick === this.tickCount && rt.settleFlips >= 2;
+      const instant = settle && !looping;
       if (powered !== rt.energised) {
         rt.energised = powered;
-        if (settle) {
+        if (instant) {
           rt.arm = powered;
           rt.armPending = 0;
+          this._settleFlip(rt);
           this._refresh(pc, true);
         } else if (rt.arm !== powered || rt.armPending > 0) {
           rt.armTarget = powered;
           rt.armPending = rt.arm === powered ? 0 : RELAY_DELAY_TICKS;
           if (rt.armPending > 0) this._clocks.add(pc);
         }
-      } else if (settle && rt.arm !== powered) {
+      } else if (instant && rt.arm !== powered) {
         rt.arm = powered;
         rt.armPending = 0;
+        this._settleFlip(rt);
         this._refresh(pc, true);
+      } else if (looping && rt.arm !== powered && rt.armPending === 0) {
+        rt.armTarget = powered;
+        rt.armPending = RELAY_DELAY_TICKS;
+        this._clocks.add(pc);
       }
     }
     if (uncertain !== rt.uncertain) {
       rt.uncertain = uncertain;
       this._markDirty(pc, true);
     }
+  }
+
+  /** Count a relay's settling flip in this tick (_evalRelay's loop check). */
+  _settleFlip(rt) {
+    if (rt.settleTick !== this.tickCount) {
+      rt.settleTick = this.tickCount;
+      rt.settleFlips = 0;
+    }
+    rt.settleFlips++;
   }
 
   /** An igniter fires: every fuse, keg and charge beside it is lit (deferred to step 6). */
@@ -2099,7 +2207,7 @@ export class Circuits {
         // CONTRACT-ISSUE (integrator): undo restores the igniter and its wires just before the kegs, so their networks are
         // still dirty and the restored igniter has no runtime state yet: solve the waiting cells now, SETTLING (no edge
         // fires), so "powered" is what the next tick would find (§3.6: the quarry on a battery and a closed switch).
-        if (this._dq.length > this._dqHead) this._settleNow();
+        if (this._dflag.size > 0) this._settleNow();
         const rt = this.rt.get(n);
         if (rt && rt.id === id && rt.powered) return true;
       }
@@ -2114,6 +2222,7 @@ export class Circuits {
   _settleNow() {
     if (this._inNetworks || !this.enabled) return;
     for (const pc of this._dflag.keys()) this._dflag.set(pc, true);
+    this._dsettle = this._dflag.size;
     this._loadedCache.clear();
     this._t0 = this._now();
     this._visits = 0;
@@ -2255,6 +2364,43 @@ export class Circuits {
     return st;
   }
 
+  /**
+   * The settings of the part at (q, y, r) for the undo record of a physics event (the physics hook `partState`, §55): its
+   * non-default store fields with its id, or null (no part, or one at its defaults). Settings only, never running state: a
+   * Clockwork Timer's running repeat clock (`run`) and its hold latch (`on`), and a Coherer Receiver's latch (`on`), are left
+   * out (RUNNING_FIELDS) — a repeat timer given back running would close again on its own and light the keg undo had just
+   * given back (DESIGN-circuits §3.6). Block physics reads it BEFORE its write removes the part — onBlockChange then deletes
+   * the entry (§4.8).
+   * @returns {{ id: number, fields: Record<string, *> }|null}
+   */
+  partSnapshot(q, y, r) {
+    if (!(y >= 0 && y < H)) return null;
+    const pc = packCell(q, y, r);
+    const id = this.cells.get(pc);
+    if (id === undefined || !isPart(id)) return null;
+    const json = partToJSON(/** @type {*} */ (this._st(pc)));
+    if (!json) return null;
+    /** @type {Record<string, *>} */
+    const fields = { ...json };
+    delete fields.k;
+    for (const f of RUNNING_FIELDS[id] ?? []) delete fields[f];
+    if (Object.keys(fields).length === 0) return null;
+    return { id, fields };
+  }
+
+  /**
+   * Undo gave a blasted part back (the physics hook `restorePart`): its settings come back with it — an NC relay stays NC, a
+   * timer keeps its delay, mode and input face, a battery its charge, a label its text. A part broken and placed again by
+   * the player still starts at its defaults (§4.8); only undo restores.
+   * @param {{ id: number, fields: Record<string, *> }|null} snap  from partSnapshot
+   * @returns {boolean} applied
+   */
+  restorePart(q, y, r, snap) {
+    if (!snap || !snap.fields || !(y >= 0 && y < H)) return false;
+    if (this.cells.get(packCell(q, y, r)) !== snap.id) return false;
+    return this.applySettings(q, y, r, snap.fields) !== null;
+  }
+
   /** Creative's Refill: the battery at the cell is full again. @returns {boolean} */
   refill(q, y, r) {
     if (!(y >= 0 && y < H)) return false;
@@ -2270,7 +2416,7 @@ export class Circuits {
 
   /**
    * @returns {{ volts: number, amps: number, earthed: boolean|null, earthReason: string, state: string,
-   *   diag: 'bypassed'|'self-fed'|'no-wire'|null, net: { cells: number, sources: number, loads: number, partial: boolean,
+   *   diag: 'source-on-input'|'bypassed'|'self-fed'|'no-wire'|null, net: { cells: number, sources: number, loads: number, partial: boolean,
    *   truncated: boolean }|null }|null} the multimeter reading of a part (§6.5 `volts`); null for anything else
    */
   probe(q, y, r) {
@@ -2365,13 +2511,15 @@ export class Circuits {
   }
 
   /**
-   * The §4.5 diagnostics: a bypassed open contact, a relay or coherer fed by its own battery, a load set against a source
-   * with no conductor. @returns {'bypassed'|'self-fed'|'no-wire'|null}
+   * The §4.5 diagnostics: a source set against a timer's, relay's or coherer's input face (it feeds nothing there: a source
+   * reaches an input only through a conductor), a bypassed open contact, a relay or coherer fed by its own battery, a load set
+   * against a source with no conductor. @returns {'source-on-input'|'bypassed'|'self-fed'|'no-wire'|null}
    */
   _diag(pc, id) {
     const p = partOf(id);
     if (!p) return null;
     const rt = this._rt(pc);
+    if (p.input && this._sourceOnInput(pc) !== null) return 'source-on-input';
     if ((id === B.RELAY || id === B.COHERER_RECEIVER) && this._selfFed(pc)) return 'self-fed';
     if (p.role === 'contact' && !this._contactClosed(pc, id, rt) && this._bypassed(pc, id)) return 'bypassed';
     if (p.role === 'load' || p.input) {
@@ -2445,6 +2593,39 @@ export class Circuits {
     return groups.size <= 1;
   }
 
+  /** @returns {number|null} the id of the source standing across the part's input face, or null */
+  _sourceOnInput(pc) {
+    const n = nb(pc, this._inputFace(pc));
+    const nid = n < 0 ? undefined : this.cells.get(n);
+    return nid !== undefined && partOf(nid)?.role === 'source' ? nid : null;
+  }
+
+  /**
+   * The input face main gives a timer, relay or coherer it has just placed (§4.6): `preferred`, the face back at the player
+   * (circuitParts.inputFaceFromYaw), unless a source stands across it — a battery on an input face feeds nothing, and the
+   * device was meant to switch it: walking east, battery first, the battery is behind the device (worked examples 2 and 5).
+   * Then the nearest side face round from `preferred` with open air across it (a wire can go there), else with no part
+   * across it; `preferred` when there is neither.
+   * @returns {number}
+   */
+  placementInputFace(q, y, r, preferred) {
+    if (!(y >= 0 && y < H) || !Number.isInteger(preferred) || preferred < 0 || preferred > 5) return preferred;
+    const pc = packCell(q, y, r);
+    const across = (f) => nb(pc, f);
+    const isSource = (f) => {
+      const id = this.cells.get(across(f));
+      return id !== undefined && partOf(id)?.role === 'source';
+    };
+    if (!isSource(preferred)) return preferred;
+    const order = [1, 5, 2, 4, 3].map((k) => (preferred + k) % 6);
+    for (const f of order) {
+      const [dq, dr] = HEX_DIRS[f];
+      if (!this.cells.has(across(f)) && this.hooks.peek(q + dq, y, r + dr) === B.AIR) return f;
+    }
+    for (const f of order) if (!this.cells.has(across(f))) return f;
+    return preferred;
+  }
+
   /** @returns {boolean} a source on the relay's (or coherer's) input network also touches one of its contact faces */
   _selfFed(pc) {
     const input = this._inputFace(pc);
@@ -2461,10 +2642,39 @@ export class Circuits {
 
   /**
    * The crosshair hint for a part (§4.9), or null for anything that is not one (and for the Powder Keg, whose hints are
-   * main's, §3.3, and the Campfire).
+   * main's, §3.3, and the Campfire). A part on a FROZEN network (§4.7: it reaches an unloaded area, or a relay whose coil is
+   * there) says so: switching it changes nothing until that area loads.
    * @returns {string|null}
    */
   hintFor(q, y, r) {
+    const text = this._hint(q, y, r);
+    if (text === null) return null;
+    const pc = packCell(q, y, r);
+    return this._frozenHere(pc, /** @type {number} */ (this.cells.get(pc))) ? `${text} · ${FROZEN_NOTE}` : text;
+  }
+
+  /**
+   * The cell is in, attached to or switching a frozen network: its own, a load's feed, or one on a contact's or source's faces.
+   * @returns {boolean}
+   */
+  _frozenHere(pc, id) {
+    const p = partOf(id);
+    if (!p) return false;
+    const own = this.nodeNet.get(pc);
+    if (own && own.alive && own.frozen && this._isConductor(pc, id)) return true;
+    if (Circuits._isLoadish(id) && this._loadFeed(pc, id).frozen) return true;
+    if (p.role === 'contact' || p.role === 'source') {
+      for (let f = 0; f < 8; f++) {
+        const n = nb(pc, f);
+        const net = n < 0 ? undefined : this.nodeNet.get(n);
+        if (net && net.alive && net.frozen) return true;
+      }
+    }
+    return false;
+  }
+
+  /** hintFor without the frozen note. @returns {string|null} */
+  _hint(q, y, r) {
     if (!(y >= 0 && y < H)) return null;
     const pc = packCell(q, y, r);
     const id = this.cells.get(pc);
@@ -2477,6 +2687,7 @@ export class Circuits {
     const head = `${label}${name}`;
     const e = p.earth ? this._earth(pc) : null;
     const diag = this._diag(pc, id);
+    if (diag === 'source-on-input') return `${head} · ${sourceOnInput(nameOf(/** @type {number} */ (this._sourceOnInput(pc))))}`;
     if (diag === 'self-fed') return `${head} · ${SELF_FED}`;
     if (diag === 'bypassed') return `${head} · ${BYPASSED}`;
     switch (id) {
@@ -2585,7 +2796,10 @@ export class Circuits {
     if (p.role !== 'fuse' && p.role !== 'flame' && p.role !== 'ignitable') readout.push(`Volts: ${formatVolts(units(pr.volts))}`);
     if (pr.net) readout.push(`Current: ${pr.net ? Math.round(pr.amps * 100) / 100 : 0} A on ${pr.net.cells} cells`);
     if (pr.earthed !== null && id !== B.EARTH_WIRE) readout.push(pr.earthed ? 'Earthed: yes' : `Earthed: no — ${pr.earthReason.replace(/^not earthed: /, '')}`);
-    if (pr.diag === 'bypassed') readout.push(`Bypassed: ${BYPASSED.replace(/^bypassed: /, '')}`);
+    if (this._frozenHere(pc, id)) readout.push(`Frozen: ${FROZEN_NOTE.replace(/^waiting: /, '')} — it acts again once that area loads`);
+    if (pr.diag === 'source-on-input') {
+      readout.push(`Input face: ${sourceOnInput(nameOf(/** @type {number} */ (this._sourceOnInput(pc))))}`);
+    } else if (pr.diag === 'bypassed') readout.push(`Bypassed: ${BYPASSED.replace(/^bypassed: /, '')}`);
     else if (pr.diag === 'self-fed') readout.push(`Self-fed: ${SELF_FED}`);
     else if (pr.diag === 'no-wire') readout.push(NO_WIRE);
     if (id === B.VOLTAIC_BATTERY) {
@@ -2626,8 +2840,22 @@ export class Circuits {
       if (out.length >= MAX_CIRCUIT_OVERLAYS) break;
       this._overlaysOf(pc, /** @type {number} */ (this.cells.get(pc)), out);
     }
+    // Burnt-out fuse cells whose cord is still in the drawn wiring (rebuilt lazily, burnVersion): fully charred.
+    if (this._ash.size > 0) {
+      const r2 = range * range;
+      for (const [pc, from] of this._ash) {
+        if (out.length >= MAX_CIRCUIT_OVERLAYS) break;
+        if (this._dist2(pc, x, y, z) > r2) continue;
+        out.push(/** @type {OverlayItem} */ ({ type: 'staff', q: qOf(pc), y: yOf(pc), r: rOf(pc), a: 1, b: from, staff: 'char' }));
+      }
+    }
     if (out.length > MAX_CIRCUIT_OVERLAYS) out.length = MAX_CIRCUIT_OVERLAYS;
     return out;
+  }
+
+  /** main rebuilt the wiring from geometryView(): the burnt-out fuse cells are gone from it, so their chars go too. */
+  geometryBuilt() {
+    this._ash.clear();
   }
 
   /** @returns {boolean} the part may draw an overlay */
@@ -2780,7 +3008,7 @@ export class Circuits {
     }
     return {
       cells: this.cells.size, parts, networks: this.networks.size, active, frozen, burning: this.burning.size, timers, scheduled,
-      dirty: this._dq.length - this._dqHead, visits: this._stats.visits, ms: this._stats.ms,
+      dirty: this._dflag.size, visits: this._stats.visits, ms: this._stats.ms,
     };
   }
 
@@ -2808,8 +3036,13 @@ function insulatorReason(id) {
   if (id === B.AIR || (!getBlockDef(id).solid && !isPart(id))) return 'not earthed: it stands on nothing that conducts — set it on soil or stone';
   const def = getBlockDef(id);
   if (WOOD_NAMES.test(def.name)) return 'not earthed: wood does not conduct — run an Earth Wire down to the ground';
-  const what = isPart(id) ? `a ${def.displayName}` : def.displayName.toLowerCase();
-  return `not earthed: ${what} does not conduct — run an Earth Wire down to the ground`;
+  if (isPart(id)) {
+    // A signal wire, a terminal board or a contact conducts — but it is a live line, not earth.
+    const role = partOf(id)?.role;
+    const live = role === 'wire' || role === 'junction' || role === 'contact';
+    return `not earthed: a ${def.displayName} ${live ? 'is a live wire, not earth' : 'is not earth'} — run an Earth Wire down to the ground`;
+  }
+  return `not earthed: ${def.displayName.toLowerCase()} does not conduct — run an Earth Wire down to the ground`;
 }
 
 /** The repeat timer's closed time in seconds for a delay s (§4.6), exported for tests and the panel. */

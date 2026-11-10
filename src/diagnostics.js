@@ -121,8 +121,11 @@ export const CIRCUIT_SCENE_ROWS = Object.freeze([
     settings: [[2, { nc: true }]],
   }),
 ]);
-/** Rows of ?scene=circuits are this many cells apart in r. */
-export const SCENE_ROW_GAP = 3;
+/**
+ * Rows of ?scene=circuits are this many cells apart in r (5.2 units): more than BLAST_RADIUS 3.5, so the timer row's keg
+ * neither sets off the switch row's keg nor blows up the rows beside it (at 3 apart it took the dusk lamp's relay too).
+ */
+export const SCENE_ROW_GAP = 6;
 
 /** @returns {Array<[number, string, number]>} cells dq0..dq1 of one id (unnamed) */
 function span(dq0, dq1, id) {
@@ -136,7 +139,8 @@ function span(dq0, dq1, id) {
  * §6.7; main flattens the ground, writes the blocks with world.setBlock, then sets the faces and the settings).
  * @param {number} q0 @param {number} y @param {number} r0
  * @returns {{ blocks: [number, number, number, number][], faces: [number, number, number, number][],
- *   settings: [number, number, number, object][], named: Record<string, [number, number, number]> }}
+ *   settings: [number, number, number, object][], named: Record<string, [number, number, number]>,
+ *   bounds: { q0: number, q1: number, r0: number, r1: number } }}  bounds: the cells' extent (main flattens it, plus 2)
  */
 export function circuitSceneWrites(q0, y, r0) {
   /** @type {[number, number, number, number][]} */
@@ -160,7 +164,14 @@ export function circuitSceneWrites(q0, y, r0) {
     for (const [dq, face] of row.faces) faces.push([q0 + dq, y, r, face]);
     for (const [dq, partial] of row.settings) settings.push([q0 + dq, y, r, partial]);
   });
-  return { blocks, faces, settings, named };
+  const bounds = { q0: Infinity, q1: -Infinity, r0: Infinity, r1: -Infinity };
+  for (const [q, , r] of blocks) {
+    bounds.q0 = Math.min(bounds.q0, q);
+    bounds.q1 = Math.max(bounds.q1, q);
+    bounds.r0 = Math.min(bounds.r0, r);
+    bounds.r1 = Math.max(bounds.r1, r);
+  }
+  return { blocks, faces, settings, named, bounds };
 }
 
 /**

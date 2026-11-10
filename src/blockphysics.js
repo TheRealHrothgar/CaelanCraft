@@ -129,6 +129,10 @@ export const CAUSE_AREA = Object.freeze({ kind: 'area' });
  *   lights: undo restores these (besides the keg) last, and never where they would catch at once
  * @property {(q: number, y: number, r: number) => boolean} [ignitesAt]   (DESIGN-circuits §3.6; main → circuits.wouldIgnite) a
  *   keg or fuse at the cell would catch at once: a torch or a campfire beside it, or an igniter still powered
+ * @property {(q: number, y: number, r: number) => *} [partState]   (CONTRACTS §55; main → circuits.partSnapshot) the settings of
+ *   the circuit part in the cell, or null: read before an event's first write to the cell, kept with the event for undo
+ * @property {(q: number, y: number, r: number, state: *) => void} [restorePart]   (main → circuits.restorePart) undo wrote the
+ *   part back: its settings come back with it (an NC relay stays NC, a timer keeps its delay and input face)
  */
 
 /**
@@ -140,13 +144,15 @@ export const CAUSE_AREA = Object.freeze({ kind: 'area' });
  * @property {Cause} cause
  * @property {number} time              physics.time when it began
  * @property {Map<number, number>} cells  packCell key → prevId·256 + wroteId
+ * @property {Map<number, *>} [parts]   packCell key → hooks.partState of a circuit part the event removed (undo restores it)
  * @property {boolean} truncated        more than UNDO_MAX_CELLS cells: the rest were not recorded
  */
 
 /** One item for fallingRenderer.sync: a moving cell's centre, rotation (Euler order 'YXZ') and uniform scale. */
 /** @typedef {{ id: number, x: number, y: number, z: number, rx: number, ry: number, rz: number, scale: number }} RenderItem */
 
-const HOOK_NAMES = Object.freeze(['say', 'areaJobsActive', 'bodies', 'player', 'sound', 'particles', 'knock', 'lifted', 'isIgnitable', 'ignitesAt']);
+const HOOK_NAMES = Object.freeze(['say', 'areaJobsActive', 'bodies', 'player', 'sound', 'particles', 'knock', 'lifted', 'isIgnitable', 'ignitesAt',
+  'partState', 'restorePart']);
 const NO_BODIES = Object.freeze([]);
 const DEFAULT_HOOKS = Object.freeze({
   say: () => {},
@@ -164,6 +170,8 @@ const DEFAULT_HOOKS = Object.freeze({
   lifted: () => {},
   isIgnitable: () => false,
   ignitesAt: () => false,
+  partState: () => null,
+  restorePart: () => {},
 });
 
 const FALL = 0;
@@ -618,7 +626,7 @@ export class BlockPhysics {
   /**
    * Register (or replace, by name) a reseeder: when a chunk is generated (first load, or reloaded after streaming
    * out), every EDITED cell of it whose id is in `ids` is handed to fn(ctx, q, y, r, id), which schedules what must
-   * resume. Built-ins: 'gravity', 'water', 'ignite'.
+   * resume. Built-ins: 'gravity', 'water' (a campfire beside a keg has no reseeder: it lights on block changes only).
    * @param {string} name
    * @param {string|null} feature
    * @param {number[]} ids
@@ -857,11 +865,16 @@ export class BlockPhysics {
       }
       if (prev === wrote) continue;
       if (prev === BLOCK.BLAST_BARREL || this.hooks.isIgnitable(prev)) barrels.push(key, prev);
-      else if (this._write(c[0], c[1], c[2], prev, WRITE_QUIET, true) === 'ok') restored++;
+      else if (this._write(c[0], c[1], c[2], prev, WRITE_QUIET, true) === 'ok') {
+        restored++;
+        // A circuit part comes back with its settings, before the kegs' look-ahead below solves its circuit.
+        const part = ev.parts ? ev.parts.get(key) : undefined;
+        if (part !== undefined && part !== null) this.hooks.restorePart(c[0], c[1], c[2], part);
+      }
     }
     // Kegs (and fuses, charges): never next to a campfire or where a torch or a powered igniter would light them — an
-    // unlit keg there would catch again (the 'ignite' trigger at once, or the reseeder on the next load) and blow the
-    // restored scene up a second time (§33.8.4, DESIGN-circuits §3.6).
+    // unlit keg there would catch again (the 'ignite' trigger, or the circuits' flame queue, at once: undo's quiet writes
+    // are block changes) and blow the restored scene up a second time (§33.8.4, DESIGN-circuits §3.6).
     let burnt = 0;
     const writeBarrel = (q, y, r) => this._write(q, y, r, BLOCK.BLAST_BARREL, WRITE_QUIET, true) === 'ok';
     for (let i = 0; i < barrels.length; i += 2) {
@@ -1370,6 +1383,12 @@ export class BlockPhysics {
       }
       return 'capped';
     }
+    // The event's first write to a cell holding a circuit part keeps the part's settings for undo: the write itself deletes
+    // them (Circuits.onBlockChange, §4.8).
+    const ev = this._event;
+    const recording = ev !== null && ev === this.lastEvent;
+    const k = recording ? packCell(q, y, r) : -1;
+    const part = recording && ev.cells.size < UNDO_MAX_CELLS && !ev.cells.has(k) ? this.hooks.partState(q, y, r) : null;
     const prevMode = this._writeMode;
     this._writeMode = mode;
     let ok;
@@ -1380,13 +1399,13 @@ export class BlockPhysics {
     }
     if (!ok) return 'failed';
     this._writeSeq++;
-    const ev = this._event;
-    if (ev !== null && ev === this.lastEvent) {
-      const k = packCell(q, y, r);
+    if (recording) {
       const old = ev.cells.get(k);
       if (old === undefined) {
-        if (ev.cells.size < UNDO_MAX_CELLS) ev.cells.set(k, current * 256 + id);
-        else ev.truncated = true;
+        if (ev.cells.size < UNDO_MAX_CELLS) {
+          ev.cells.set(k, current * 256 + id);
+          if (part !== undefined && part !== null) (ev.parts ??= new Map()).set(k, part);
+        } else ev.truncated = true;
       } else {
         ev.cells.set(k, old - (old % 256) + id);
       }
@@ -1503,6 +1522,9 @@ export class BlockPhysics {
     });
 
     // ---- explosions: a campfire and a barrel ending up next to each other queue the barrel (ignition, misc ring).
+    // Block changes only — there is no 'ignite' reseeder (v0.10, CONTRACTS §33.4.3 and pitfall 37): loading never lights
+    // anything, so a keg resting beside a campfire (laid while explosions were off, or saved while it burned) stays unlit
+    // through a reload or a stream-in, as it does when explosions are switched back on, until a new change beside it.
     this.addTrigger('ignite', 'explosions', (q, y, r, prev, next) => {
       if (next === BLOCK.CAMPFIRE) {
         for (const [dq, dy, dr] of NEIGHBOURS) {
@@ -1511,9 +1533,6 @@ export class BlockPhysics {
       } else if (next === BLOCK.BLAST_BARREL && this._hasNeighbour(q, y, r, BLOCK.CAMPFIRE)) {
         this.schedule('misc', q, y, r);
       }
-    });
-    this.addReseeder('ignite', 'explosions', [BLOCK.BLAST_BARREL], (ctx, q, y, r) => {
-      if (this._hasNeighbour(q, y, r, BLOCK.CAMPFIRE)) this.schedule('misc', q, y, r);
     });
   }
 

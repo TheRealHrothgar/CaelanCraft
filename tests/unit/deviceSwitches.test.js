@@ -101,7 +101,7 @@ describe('the controls sheet (§4.9, §7.1)', () => {
   it('17 rows; RMB, R and Shift R carry the merged circuits wording; keys are written in full', () => {
     expect(CONTROLS_SHEET).toHaveLength(17);
     const row = (k) => CONTROLS_SHEET.find(([key]) => key === k)?.[1];
-    expect(row('RMB')).toBe('Place · right-click works switches, timers, plungers (Shift: place) · Survival: use the item in hand');
+    expect(row('RMB')).toBe('Place · right-click works switches, buttons, timers, plungers (Shift: place) · Survival: use the item in hand');
     expect(row('R')).toBe('R key: use a switch, timer, fuse, radio key or rune · Survival: fire, water, plants, basket');
     expect(row('Shift R')).toBe('Shift+R key: settings of the targeted device or Rune Block');
     expect(row('E')).toBe('Blocks · Survival: pack & making');
