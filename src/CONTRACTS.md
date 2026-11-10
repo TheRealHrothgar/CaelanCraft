@@ -1747,8 +1747,10 @@ steps; §36.3.1).
    tell more: a cell back at its generated id carries no edit, so a fall still queued over a cave cell filled and dug out again right
    before a save is lost; 'water' (water):
    WATER → its open neighbours (AIR, CAMPFIRE, FLOW, FALL) per §33.5.2, FLOW/FALL → `scheduleWaterAround` (fluids.js replaces it
-   by name with a superset, §35.3); 'ignite' (explosions):
-   BLAST_BARREL with a CAMPFIRE among its 8 neighbours → `misc`.
+   by name with a superset, §35.3). There is **no 'ignite' reseeder** (v0.10, pitfall 37: loading never lights anything; it
+   re-queued every barrel beside a campfire on load, so a barrel laid there while explosions were off went off on the next reload
+   or stream-in although switching explosions on had not lit it): a barrel and a campfire light only through the 'ignite'
+   trigger, on a block change.
 ### 33.5 Triggers (`onBlockChange`, every change from any source)
 1. Registered triggers run in order, each only while its feature is on, with `(q, y, r, prev, next, mode)`.
 2. Built-ins: **'gravity'** (falling): `!isFallThrough(prev) && isFallThrough(next)` and the cell above is a gravity block or a
@@ -1809,7 +1811,7 @@ x, y, z, count, opts)` (§34.5), `knock(body, vx, vy, vz, fromX, fromZ)` (defaul
    given back in the cells they were lit in, through the same quiet uncapped write). So no barrel takes a cell the restore needs (a
    campfire it fell into, sand that dropped into its lit cell).
    **Undo never leaves an unlit BLAST_BARREL next to a CAMPFIRE** (8-neighbourhood, as the world stands after the other restores): it
-   would only catch again — through the 'ignite' trigger at once, or through the reseeder on the next load — and blow the restored
+   would only catch again — through the 'ignite' trigger at once (a reload would not light it: no reseeder) — and blow the restored
    scene up a second time. Such a barrel cell is not restored, such a used-up barrel is not given back (both counted as "not given
    back"), and a barrel of the event still burning there keeps burning as the campfire's (§37.4.3).
    Message: `undid the <kind>: restored N block(s)[, removed M still in flight][ (K changed since, left alone)][ (U in unloaded
@@ -2252,7 +2254,7 @@ export class Trees {                 // physics.trees
 
 > **v0.10: amended by §55** (Powder Kegs: burning in place, `igniteInPlace`, `snuff(q, y, r)`, `onCharge`, the messages; the R key no longer lights a keg).
 
-Rationale: `docs/DESIGN-physics.md` §7. Wired elsewhere: the 'ignite' trigger / reseeder (§33.4–§33.5), R / left-click / raycast /
+Rationale: `docs/DESIGN-physics.md` §7. Wired elsewhere: the 'ignite' trigger (§33.5; v0.10: no reseeder, §33.4.3), R / left-click / raycast /
 flash / shake / bodies in main (§23), `ignite` (§26), the BLAST_BARREL block and tiles (§5, §15), `group` in resolveBodies (§31).
 ```js
 export const BLAST_PROOF_IDS         // AIR, WATER, WATER_FLOW_1..6, WATER_FALL, BEDROCK, OBSIDIAN, RUNE_BLOCK, BLACK_HOLE
@@ -2373,7 +2375,7 @@ real World for saving and reloading).
 ### 38.1 Wiring (as merged)
 1. Construction order in `BlockPhysics`: fallers, fluids, support, trees, explosions. Rings: `fall` = ['gravity', 'water'], `water` =
    ['water'], `misc` = ['ignite']. Triggers, in order: 'gravity', 'water', 'ignite' (built in), 'water-floor' (fluids), 'support'
-   (collapse), 'barrel-timers' (explosions). Reseeders: 'gravity', 'water' (fluids' replacement), 'ignite'.
+   (collapse), 'barrel-timers' (explosions). Reseeders: 'gravity', 'water' (fluids' replacement); none for explosions (§33.4.3).
 2. Shared files: `audio.js` has ONE `playCreak` (the trees feature's sawtooth groan; the explosives branch's copy was dropped) beside
    `playThud`, `playSplash`, `playBoom`, `playHiss`, `playFizzle`; `config.js` keeps one "Block physics" section with a block per
    feature; main's frame order is §23 / DESIGN §9 unchanged.
@@ -3417,10 +3419,15 @@ repeatClosedTicks, repeatClosedSeconds`.
   line) and form a BFS boundary.
 - **Settling** (pitfall 37): cells dirtied by `loadFromEdits`, `onChunkLoaded` or `setEnabled(true)` are solved with no edge
   actions; a network that reaches an unloaded chunk, or touches a relay whose coil cannot be known yet, is frozen. Such a batch is
-  dirtied **relays first** (expanding a relay builds its coil network, so it takes its coil's state before any network is built on
-  its contacts), and settling marks that wait — past `MAX_SETTLE_PASSES`, or in a settling pass the budget cut short, whose
-  unreached cells are kept, never dropped — go to the **front** of the dirty FIFO: a settle under way is finished before the rest
-  of a big load, so an igniter left powered on stale contacts never lives out its 0.5 s refire clock.
+  dirtied **relays first**, and settling marks that wait — past `MAX_SETTLE_PASSES`, or in a settling pass the budget cut short,
+  whose unreached cells are kept, never dropped — go to the **front** of the dirty FIFO, so a settle under way is finished before
+  the rest of a big load. That does not make every relay take its coil's state before a network is built on its contacts:
+  expanding a relay also builds the networks on its 8 neighbours, and one of them may run through the contacts of another relay
+  of the batch still at its rest position (two relays in series: an energised NC dead-man relay reads closed until its own turn).
+  So **an igniter's refire clock waits while any settle is under way** (`_settlePending`: settling marks in the FIFO or for the
+  next pass, or settling seeds not built yet — a count, never a scan), as it does on a frozen feed; an igniter left powered on
+  stale contacts never lives out its 0.5 s refire clock. The cost: a steadily powered igniter's refire pauses while a load or a
+  stream-in settles (usually a tick).
 - **The flame rule acts on block changes only** (pitfalls 28 and 37; amends DESIGN-circuits §4.3 "Load and stream-in"):
   `onBlockChange` queues the flame candidates; `loadFromEdits`, `onChunkLoaded` and `setEnabled(true)` queue none. A fuse, keg or
   charge resting beside a Torch — laid while circuits were off, or refused while black holes or explosions were off — is lit only
@@ -3563,7 +3570,10 @@ table, blockphysics' undo notes `(N kegs or fuses next to a fire not given back)
   `circuits.partSnapshot`: the part's non-default store fields and id, read before the event's first write to the cell and kept in
   `PhysicsEvent.parts`) and `restorePart(q, y, r, state)` (main → `circuits.restorePart`, called right after undo writes the part
   back, before the kegs' look-ahead): an NC relay stays NC, a timer keeps its delay, mode and input face, a battery its charge, a
-  label its text. Only undo restores: a part broken and placed again still starts at its defaults (DESIGN-circuits §4.8).
+  label its text, a Knife Switch where it was set. **Settings, never running state**: a Clockwork Timer comes back stopped and
+  unlatched (`run` and `on` are left out) and a Coherer Receiver unlatched (`on`) — a repeat timer given back running would close
+  on its own and light the keg undo had just given back (the "quarry clock": 30 s repeat → igniter → kegs). Only undo restores:
+  a part broken and placed again still starts at its defaults (DESIGN-circuits §4.8).
 - **Survival**: `POWDER_KEG` keeps the BLAST_BARREL harvest row; old `blast_barrel` item stacks load as `powder_keg` (§58).
 
 ## 56. Creative inventory — `src/pickerModel.js` (PURE), `src/pickerUI.js` (DOM)
@@ -3761,5 +3771,7 @@ and a fake clock; `put`, `ticks`) and `reload(env)` (a fresh Circuits over the s
     re-running the prewarm order.
 37. (v0.10) Loading never fires anything: cells that load, and networks that span an unloaded chunk, are solved settling, with no
     edge actions (§52). Undo's look-ahead (`wouldIgnite`) settles too. The tick budget may split a settle, never drop it: relays
-    are dirtied first, and settling marks that wait go to the front. Loading queues no flames (only block changes do).
+    are dirtied first, settling marks that wait go to the front, and igniter refires wait until no settle is under way. Loading
+    queues no flames (only block changes do): neither the circuits' flame queue (a Torch) nor block physics (a Campfire; there is
+    no 'ignite' reseeder, §33.4.3).
 38. (v0.10) On a hex, cells on neighbouring side faces touch. Any rule or test about "the two sides" of a device must name its faces.

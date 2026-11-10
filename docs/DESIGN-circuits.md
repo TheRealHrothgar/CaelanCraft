@@ -513,7 +513,7 @@ its bung, and it goes off when its fuse ends.
 | A Powder Fuse finishing next to it (§4.3) | `KEG_DIRECT_FUSE_S` 0.25 s | *When the flame reaches the powder, the keg goes off. Fuse length and the clockwork timer are the timing devices* |
 | A powered Igniter firing next to it (§4.6) | 0.25 s | *"Push the plunger, BOOM"* |
 | A Linstock beside it (circuits' flame queue, §4.3) | 0.25 s | |
-| A Campfire beside it (today's `ignite` trigger, reseeder and rule; the rule now calls `igniteInPlace`) | `BARREL_FUSE_S` 3 s | *A fire set beside a keg gives you time to react* |
+| A Campfire beside it (today's `ignite` trigger and rule; the rule now calls `igniteInPlace`; v0.10 integration: no reseeder, a load lights nothing) | `BARREL_FUSE_S` 3 s | *A fire set beside a keg gives you time to react* |
 | `ignite q y r` | 3 s | The same |
 | A blast reaching it | today's 0.3–0.8 s fuse timers, unchanged | |
 
@@ -684,9 +684,11 @@ the **flame queue** in `Circuits` (pure; drained once per circuit tick, §4.7):
 - **Load and stream-in** (amended by the circuits review, CONTRACTS §52): `loadFromEdits`, `onChunkLoaded` and `setEnabled(true)`
   queue **nothing**: the flame rule acts on block changes only. *Re-queueing on load lit what a feature switched off had refused —
   a charge beside a Torch while black holes were off went off on the next reload or stream-in (pitfall 37), and switching
-  circuits on lit fuses laid against a Torch meanwhile (pitfall 28). A new change beside the flame lights it.*
-- **Drain.** A queued cell whose chunk is not loaded stays queued (at most `MAX_FLAME_QUEUE` 4096; beyond that it is dropped,
-  and stream-in re-queues it). Otherwise the cell is dispatched by id:
+  circuits on lit fuses laid against a Torch meanwhile (pitfall 28). A new change beside the flame lights it.* Block physics'
+  campfire rule follows suit: its 'ignite' reseeder is gone (CONTRACTS §33.4.3), so a keg laid beside a Campfire while
+  explosions were off stays unlit through a reload or a stream-in, as it does when explosions are switched on.
+- **Drain.** A queued cell whose chunk is not loaded stays queued (at most `MAX_FLAME_QUEUE` 4096; beyond that it is
+  dropped). Otherwise the cell is dispatched by id:
 
   | Id | Dispatched to |
   |---|---|
@@ -975,7 +977,10 @@ network whose BFS meets an unloaded cell (`partial`), are solved with **`settlin
   networks this changes are solved in the same settling pass, at most `MAX_SETTLE_PASSES` 4 passes or until no contact
   changes;
 - **edge actions are not taken** (igniter fire, transmitter send, timer start, tap, bell sound): each load's previous state
-  is simply set to its current one. A powered igniter starts its refire clock from 0.
+  is simply set to its current one. A powered igniter starts its refire clock from 0, and the clock **waits while any settle
+  is under way** (amended by the circuits re-check, CONTRACTS §52): a network built during a load may run through a relay that
+  has not taken its coil's state yet (two relays in series), and an igniter powered through its contacts at rest must not live
+  out its refire clock before that relay's turn comes.
 - **Frozen networks.** A network that gains a cell in an unloaded chunk keeps its last solved voltages and load states, takes
   no edges and drains nothing until all its chunks are loaded again; then it is solved settling.
 
@@ -1063,7 +1068,9 @@ always the part's `PartDef.key`, and the fields it may hold are its `PartDef.fie
 - **Removal.** When a part's cell changes to anything else (broken, blasted, swallowed, crumbled, replaced), its entry is
   deleted. A part broken and placed again starts at its **default settings**. *Tombstones would also resurrect settings for a
   player who broke and re-placed a timer on purpose; not worth it.* **Undo** of a blast is a restore, not a re-place: the
-  physics event keeps each removed part's settings (`partState`) and undo gives them back (`restorePart`, CONTRACTS §55).
+  physics event keeps each removed part's settings (`partState`) and undo gives them back (`restorePart`, CONTRACTS §55) —
+  settings only: a timer comes back stopped and unlatched, a coherer unlatched (*a repeat timer given back running relit the
+  keg undo had just given back, §3.6*).
 - **Saving.** See §6.4. Keys are canonical `"q,y,r"`. Validation drops entries whose cell in the repaired `edits` is not that
   kind's block (orphans), mapping `k` to its block id through `PARTS`.
 

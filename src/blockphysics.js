@@ -626,7 +626,7 @@ export class BlockPhysics {
   /**
    * Register (or replace, by name) a reseeder: when a chunk is generated (first load, or reloaded after streaming
    * out), every EDITED cell of it whose id is in `ids` is handed to fn(ctx, q, y, r, id), which schedules what must
-   * resume. Built-ins: 'gravity', 'water', 'ignite'.
+   * resume. Built-ins: 'gravity', 'water' (a campfire beside a keg has no reseeder: it lights on block changes only).
    * @param {string} name
    * @param {string|null} feature
    * @param {number[]} ids
@@ -873,8 +873,8 @@ export class BlockPhysics {
       }
     }
     // Kegs (and fuses, charges): never next to a campfire or where a torch or a powered igniter would light them — an
-    // unlit keg there would catch again (the 'ignite' trigger at once, or the reseeder on the next load) and blow the
-    // restored scene up a second time (§33.8.4, DESIGN-circuits §3.6).
+    // unlit keg there would catch again (the 'ignite' trigger, or the circuits' flame queue, at once: undo's quiet writes
+    // are block changes) and blow the restored scene up a second time (§33.8.4, DESIGN-circuits §3.6).
     let burnt = 0;
     const writeBarrel = (q, y, r) => this._write(q, y, r, BLOCK.BLAST_BARREL, WRITE_QUIET, true) === 'ok';
     for (let i = 0; i < barrels.length; i += 2) {
@@ -1522,6 +1522,9 @@ export class BlockPhysics {
     });
 
     // ---- explosions: a campfire and a barrel ending up next to each other queue the barrel (ignition, misc ring).
+    // Block changes only — there is no 'ignite' reseeder (v0.10, CONTRACTS §33.4.3 and pitfall 37): loading never lights
+    // anything, so a keg resting beside a campfire (laid while explosions were off, or saved while it burned) stays unlit
+    // through a reload or a stream-in, as it does when explosions are switched back on, until a new change beside it.
     this.addTrigger('ignite', 'explosions', (q, y, r, prev, next) => {
       if (next === BLOCK.CAMPFIRE) {
         for (const [dq, dy, dr] of NEIGHBOURS) {
@@ -1530,9 +1533,6 @@ export class BlockPhysics {
       } else if (next === BLOCK.BLAST_BARREL && this._hasNeighbour(q, y, r, BLOCK.CAMPFIRE)) {
         this.schedule('misc', q, y, r);
       }
-    });
-    this.addReseeder('ignite', 'explosions', [BLOCK.BLAST_BARREL], (ctx, q, y, r) => {
-      if (this._hasNeighbour(q, y, r, BLOCK.CAMPFIRE)) this.schedule('misc', q, y, r);
     });
   }
 

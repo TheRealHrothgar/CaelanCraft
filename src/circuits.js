@@ -138,6 +138,12 @@ const BLASTER_UNITS = units(BLASTER_V);
 const LAMP_MIN_UNITS = units(LAMP_MIN_V);
 /** OverlayItem.b of a keg's bung glow (circuitGeometry.FUSE_AT_BUNG: the spark sits on a keg burning in place). */
 const FUSE_AT_BUNG = 8;
+/**
+ * Store fields that are running state, not settings (block id → field names): undo's partSnapshot leaves them out (§55). A
+ * Knife Switch's `on` is where the player set it, a setting; a timer's running clock and latch and a coherer's latch are not.
+ * @type {Readonly<Record<number, readonly string[]>>}
+ */
+const RUNNING_FIELDS = Object.freeze({ [B.CLOCKWORK_TIMER]: Object.freeze(['run', 'on']), [B.COHERER_RECEIVER]: Object.freeze(['on']) });
 
 // Packed cell arithmetic (coords.packCell: ((q + 2^20)·2^21 + (r + 2^20))·128 + y): a neighbour is pc + a constant.
 const H = WORLD_HEIGHT;
@@ -309,6 +315,8 @@ export class Circuits {
     this._dqHead = 0;
     /** @type {Map<number, boolean>} */
     this._dflag = new Map();
+    /** how many of `_dflag`'s flags are true (settling marks waiting in the FIFO): _settlePending reads it, never scans */
+    this._dsettle = 0;
     /** @type {Map<number, boolean>} */
     this._settleNext = new Map();
     /** @type {Map<number, boolean>} */
@@ -468,10 +476,11 @@ export class Circuits {
 
   /**
    * Dirty a batch of cells for SETTLING (a load, a stream-in, switching on), RELAYS FIRST: expanding a relay builds its coil
-   * network and evaluates it, so it takes its coil's state before any other network of the batch is built on its contacts. A
-   * network built through a relay that has not been evaluated yet would see its contacts in their unsaved rest position (an
-   * energised NC relay as closed) and leave an igniter on them powered until the relay's turn comes, which on a big load can be
-   * longer than its refire clock (CONTRACTS pitfall 37).
+   * network and evaluates it, so most relays take their coil's state before the rest of the batch is built on their contacts.
+   * Not all: expanding a relay also builds the networks on its 8 neighbours, and one of those may run through the contacts of
+   * another relay of the batch not evaluated yet (still at its unsaved rest position, an energised NC relay closed). An igniter
+   * powered that way stays powered until that relay's turn comes, which on a big load can be longer than its refire clock — so
+   * the refire clock waits while any settle is under way (_stepClocks, _settlePending; CONTRACTS pitfall 37).
    * @param {Iterable<number>} cells
    */
   _markAllSettling(cells) {
@@ -504,6 +513,7 @@ export class Circuits {
     this._dq.length = 0;
     this._dqHead = 0;
     this._dflag.clear();
+    this._dsettle = 0;
     this._settleNext.clear();
     this._later.clear();
     this._evalSet.clear();
@@ -524,6 +534,7 @@ export class Circuits {
     this._dq.length = 0;
     this._dqHead = 0;
     this._dflag.clear();
+    this._dsettle = 0;
     this._dmark.clear();
     this.cells.clear();
     this.byChunk.clear();
@@ -713,8 +724,21 @@ export class Circuits {
     } else {
       const had = this._dflag.get(pc);
       if (had === undefined) this._dq.push(pc);
+      if (s && had !== true) this._dsettle++;
       this._dflag.set(pc, (had ?? false) || s);
     }
+  }
+
+  /**
+   * A settle is under way: settling marks wait in the dirty FIFO or for the next settling pass, or settling seeds wait to be
+   * built (the budget cut a pass short between them). Until it is over, a network built through a relay that has not taken
+   * its coil's state yet may show that relay's contacts at rest (CONTRACTS pitfall 37), so _stepClocks holds igniter refires.
+   * @returns {boolean}
+   */
+  _settlePending() {
+    if (this._dsettle > 0 || this._settleNext.size > 0) return true;
+    for (let i = this._seedHead; i < this._seedSettle.length; i++) if (this._seedSettle[i]) return true;
+    return false;
   }
 
   // -------------------------------------------------------------------------------------------------------------------
@@ -1000,6 +1024,9 @@ export class Circuits {
   // ---- 1. clocks
 
   _stepClocks() {
+    // While a settle is under way an igniter's power may come from a relay's contacts at rest (one not evaluated yet): its
+    // refire clock waits, as it does on a frozen feed, until the settle is over (CONTRACTS pitfall 37).
+    const settling = this._settlePending();
     for (const pc of [...this._clocks]) {
       const id = this.cells.get(pc);
       const rt = this.rt.get(pc);
@@ -1056,7 +1083,7 @@ export class Circuits {
       }
       if (rt.refire > 0 && rt.powered) {
         busy = true;
-        if (!rt.frozenFeed) {
+        if (!rt.frozenFeed && !settling) {
           rt.refire--;
           if (rt.refire === 0) {
             rt.refire = IGNITER_REFIRE_TICKS;
@@ -1321,6 +1348,7 @@ export class Circuits {
       for (const pc of this._settleNext.keys()) {
         this._earthCache.delete(pc);
         this._dmark.set(pc, this._serial);
+        if (this._dflag.get(pc) !== true) this._dsettle++;
         this._dflag.set(pc, true);
         front.push(pc); // a copy of it further back is skipped once this one is taken (its flag is gone by then)
       }
@@ -1385,7 +1413,10 @@ export class Circuits {
       const pc = queue[head++];
       if (main && !flags.has(pc)) continue; // a copy already taken (settling marks are moved to the front)
       const settle = flags.get(pc) ?? false;
-      if (main) flags.delete(pc);
+      if (main) {
+        flags.delete(pc);
+        if (settle) this._dsettle--;
+      }
       this._expand(pc, settle);
     }
     if (main) {
@@ -2191,6 +2222,7 @@ export class Circuits {
   _settleNow() {
     if (this._inNetworks || !this.enabled) return;
     for (const pc of this._dflag.keys()) this._dflag.set(pc, true);
+    this._dsettle = this._dflag.size;
     this._loadedCache.clear();
     this._t0 = this._now();
     this._visits = 0;
@@ -2334,8 +2366,11 @@ export class Circuits {
 
   /**
    * The settings of the part at (q, y, r) for the undo record of a physics event (the physics hook `partState`, §55): its
-   * non-default store fields with its id, or null (no part, or one at its defaults). Block physics reads it BEFORE its write
-   * removes the part — onBlockChange then deletes the entry (§4.8).
+   * non-default store fields with its id, or null (no part, or one at its defaults). Settings only, never running state: a
+   * Clockwork Timer's running repeat clock (`run`) and its hold latch (`on`), and a Coherer Receiver's latch (`on`), are left
+   * out (RUNNING_FIELDS) — a repeat timer given back running would close again on its own and light the keg undo had just
+   * given back (DESIGN-circuits §3.6). Block physics reads it BEFORE its write removes the part — onBlockChange then deletes
+   * the entry (§4.8).
    * @returns {{ id: number, fields: Record<string, *> }|null}
    */
   partSnapshot(q, y, r) {
@@ -2348,6 +2383,8 @@ export class Circuits {
     /** @type {Record<string, *>} */
     const fields = { ...json };
     delete fields.k;
+    for (const f of RUNNING_FIELDS[id] ?? []) delete fields[f];
+    if (Object.keys(fields).length === 0) return null;
     return { id, fields };
   }
 

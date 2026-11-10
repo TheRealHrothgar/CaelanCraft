@@ -195,7 +195,8 @@ export class Explosions {
     this._p0 = [0, 0, 0];
     this._kick = [0, 0, 0];
 
-    // (b) a campfire next to a keg: the scheduler's 'ignite' trigger / reseeder queue the keg in `misc`; it burns in place.
+    // (b) a campfire next to a keg: the scheduler's 'ignite' trigger queues the keg in `misc` (block changes only: no reseeder,
+    // so loading never lights one); it burns in place.
     physics.registerRule('ignite', {
       ring: 'misc',
       feature: 'explosions',
@@ -1120,7 +1121,7 @@ export class Explosions {
    * entities of the event — those its blasts used up and those still burning — are given back as BLAST_BARREL blocks
    * in the cell they were LIT in, lowest first, each moved up past cells that are neither AIR nor water (two barrels
    * of one cell stack) and down while the cell below is AIR or water. Undo never leaves an unlit barrel next to a
-   * CAMPFIRE, which would only light it again (at once through the 'ignite' trigger, or on the next load through the
+   * CAMPFIRE, which would only light it again at once through the 'ignite' trigger (a reload would not: there is no
    * reseeder): a burning one there keeps burning (as the campfire's, event 0), a used-up one is not given back. The same
    * holds where the physics hook `ignitesAt(q, y, r)` says the cell would catch at once (a torch, or an igniter still
    * powered, beside it: main's circuits.wouldIgnite, DESIGN-circuits §3.4.7, §3.6); such kegs count in `burnt`.

@@ -423,6 +423,36 @@ describe('undo after a blast that reached a configured circuit (CONTRACTS §55):
     expect(env.circuits.hintFor(1, Y, 0)).toBe('Clockwork Timer · 30 s pulse · right-click: wind and start · Shift+R key: set');
   });
 
+  for (const mode of ['repeat', 'hold']) {
+    it(`a running ${mode} timer destroyed by its own keg comes back with its settings, stopped: the restored keg stays (§3.6)`, () => {
+      const env = rig();
+      // Battery (4, 0) on the timer's W contact, the igniter (6, 0) on its E contact, the keg (7, 0) beside the igniter; the
+      // timer's input on SE. The keg's blast takes the battery, the timer and the igniter.
+      env.put(4, 0, B.VOLTAIC_BATTERY);
+      env.put(5, 0, B.CLOCKWORK_TIMER);
+      env.circuits.setInputFace(5, Y, 0, 1);
+      env.circuits.applySettings(5, Y, 0, { s: 1, m: mode, l: 'Quarry clock' });
+      env.put(6, 0, B.IGNITER);
+      env.put(7, 0, B.POWDER_KEG);
+      env.run(0.5);
+      expect(env.circuits.interact(5, Y, 0, 'use')?.ok).toBe(true);
+      env.runUntil(() => env.ex.blastCount > 0, 6);
+      expect(env.ex.blastCount).toBe(1);
+      env.run(2);
+      expect([4, 5, 6, 7].map((q) => env.world.getBlock(q, Y, 0))).toEqual([B.AIR, B.AIR, B.AIR, B.AIR]);
+      const u = env.physics.undo();
+      expect(u.ok).toBe(true);
+      env.run(2 * 1 + 1); // twice its delay, and more
+      expect(env.ex.blastCount).toBe(1);
+      expect(u.message).not.toMatch(/not given back/);
+      expect(env.world.getBlock(7, Y, 0)).toBe(B.POWDER_KEG); // given back, and nothing lights it
+      expect(env.circuits.probe(6, Y, 0).state).toBe('cold');
+      // Its settings came back (§55), not its running clock or latch.
+      expect(env.store.get(`5,${Y},0`)).toMatchObject({ s: 1, m: mode, f: 1, l: 'Quarry clock', run: false, on: false });
+      expect(env.circuits.hintFor(5, Y, 0)).toBe(`Quarry clock · Clockwork Timer · 1 s ${mode} · right-click: wind and start · Shift+R key: set`);
+    });
+  }
+
   it('a part the player breaks and places again still starts at its defaults (§4.8)', () => {
     const env = rig();
     env.put(2, 0, B.RELAY);
