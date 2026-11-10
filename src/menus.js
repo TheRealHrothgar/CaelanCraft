@@ -4,9 +4,9 @@
 // switch, Undo disabled in Survival, the death screen (a honeycomb closing ring by ring, "Wake up"), a general
 // `confirm()` on the old delete dialog, the New World form's "Survival resources" checkbox and "· Survival" on Worlds rows.
 // §14: a Guide button on the title screen (under the controls sheet) and in the pause menu → callbacks.onGuide(from).
-// Circuits (docs/DESIGN-circuits.md §5, §6.2.14, §6.2.17; CONTRACTS §56 once merged): the block picker is pickerUI.js's
-// honeycomb (this module binds its elements and delegates showPicker / hidePicker / isPickerOpen, so main's API is unchanged);
-// the pause menu's Devices row `[ Circuits: On | Off ]` `[ Black holes: On | Off ]`; the reworded controls sheet (§4.9).
+// Circuits (docs/DESIGN-circuits.md §5, §6.2.14, §6.2.17; CONTRACTS §56): the block picker is pickerUI.js's grid of rounded
+// square slots (this module binds its elements and delegates showPicker / hidePicker / isPickerOpen, so main's API is
+// unchanged); the pause menu's Devices row `[ Circuits: On | Off ]` `[ Black holes: On | Off ]`; the reworded controls sheet (§4.9).
 //
 // DOM module. Every DOM access goes through the `doc` handed to createMenus and happens inside a
 // function, so this file can be imported in Node. Imports: config, blocks, atlas, storage (world names only; per the
@@ -58,7 +58,7 @@ export const CONTROLS_SHEET = Object.freeze([
   Object.freeze(['W W', 'Double-tap: sprint (while W is held)']),
   Object.freeze(['Space Space', 'Double-tap: fly (or F) · Creative']),
   Object.freeze(['LMB', 'Break block (hold) · Survival: hold to dig']),
-  Object.freeze(['RMB', 'Place · right-click works switches, timers, plungers (Shift: place) · Survival: use the item in hand']),
+  Object.freeze(['RMB', 'Place · right-click works switches, buttons, timers, plungers (Shift: place) · Survival: use the item in hand']),
   Object.freeze(['MMB', 'Pick the targeted block into the hotbar']),
   Object.freeze(['1–9', 'Select hotbar slot (or scroll wheel)']),
   Object.freeze(['E', 'Blocks · Survival: pack & making']),
@@ -1258,7 +1258,8 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
   }
 
   // Static content that does not depend on showTitle: the pause-menu cheat sheet (autoplay/smoke runs never call showTitle
-  // but can still pause). The picker built its rail above; its honeycomb is laid out when it opens (it measures its width).
+  // but can still pause). The picker built its rail above; its grid of square slots is laid out when it opens (it measures
+  // its width).
   renderControlsSheets();
   setModeState('creative'); // new worlds start in Creative; main calls setModeState(survival.mode) on every pause
   setDeviceSwitches({ circuits: true, blackholes: true }); // main calls setDeviceSwitches with the world's switches on pause

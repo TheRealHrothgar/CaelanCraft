@@ -15,6 +15,7 @@ import { packCell } from '../../src/coords.js';
 import { hexToWorld } from '../../src/hex.js';
 import { Circuits, batteryUnits, formatVolts, exactVolts, repeatClosedTicks, repeatClosedSeconds } from '../../src/circuits.js';
 import { CircuitStore } from '../../src/circuitStore.js';
+import { BlackHoles } from '../../src/blackholes.js';
 import { makeCircuitWorld, reload, FLOOR } from '../helpers/circuitWorld.js';
 
 const B = BLOCK;
@@ -226,6 +227,30 @@ describe('the worked examples (§4.14)', () => {
     for (let q = 1; q <= 20; q++) expect(env.world.getBlock(q, Y, 0)).toBe(B.AIR);
     expect(env.circuits.burning.size).toBe(0);
     expect(env.circuits.spent.size).toBe(0);
+  });
+
+  it('a fuse cell burning out bumps burnVersion, not geometryVersion; its char stays drawn until the wiring is rebuilt', () => {
+    const env = makeCircuitWorld();
+    const c = env.circuits;
+    line(env, 1, 3, B.POWDER_FUSE);
+    env.ticks(2);
+    const g0 = c.geometryVersion;
+    const b0 = c.burnVersion;
+    c.ignite(3, Y, 0);
+    env.ticks(10); // 0.4 s: the first cell burns out and its AIR write lands
+    expect(env.world.getBlock(3, Y, 0)).toBe(B.AIR);
+    expect(c.geometryVersion).toBe(g0);
+    expect(c.burnVersion).toBeGreaterThan(b0);
+    const [x, z] = hexToWorld(3, 0);
+    const chars = () => c.overlays(x, Y + 1.6, z, 48).filter((o) => o.staff === 'char' && o.q === 3 && o.a === 1);
+    expect(chars().length).toBe(1); // the burnt-out cell, fully charred over its stale cord
+    c.geometryBuilt();
+    expect(chars().length).toBe(0);
+    // Anything else still bumps geometryVersion at once: cutting the burning fuse, or a new cell.
+    env.put(2, 0, B.AIR);
+    expect(c.geometryVersion).toBe(g0 + 1);
+    env.put(5, 0, B.POWDER_FUSE);
+    expect(c.geometryVersion).toBe(g0 + 2);
   });
 
   it('7. dusk lamp: by day the coil holds the NC contacts open; when daylight drops below about 0.57 the lamp lights at 6 V', () => {
@@ -832,7 +857,7 @@ describe('earth (§4.4)', () => {
       [B.WOOL_WHITE, 'not earthed: white wool does not conduct — run an Earth Wire down to the ground'],
       [B.OBSIDIAN, 'not earthed: obsidian does not conduct — run an Earth Wire down to the ground'],
       [B.SPRUCE_LOG, 'not earthed: wood does not conduct — run an Earth Wire down to the ground'],
-      [B.TERMINAL_BOARD, 'not earthed: a Terminal Board does not conduct — run an Earth Wire down to the ground'],
+      [B.TERMINAL_BOARD, 'not earthed: a Terminal Board is a live wire, not earth — run an Earth Wire down to the ground'],
     ]) {
       const env = makeCircuitWorld();
       env.put(0, 0, id);
@@ -957,6 +982,47 @@ describe('settling: loading never fires anything (§4.7)', () => {
     }
   });
 
+  it('a device standing on a signal wire or a terminal board is not earthed: they are live lines, not earth', () => {
+    const env = makeCircuitWorld();
+    env.put(0, 0, B.COPPER_WIRE);
+    env.put(0, 0, B.FILAMENT_LAMP, Y + 1);
+    env.put(3, 0, B.TERMINAL_BOARD);
+    env.put(3, 0, B.FILAMENT_LAMP, Y + 1);
+    env.put(6, 0, B.VOLTAIC_BATTERY);
+    env.put(6, 0, B.FILAMENT_LAMP, Y + 1);
+    env.ticks(2);
+    const fix = 'run an Earth Wire down to the ground';
+    expect(env.circuits.hintFor(0, Y + 1, 0)).toBe(`Filament Lamp · not earthed: a Copper Wire is a live wire, not earth — ${fix}`);
+    expect(env.circuits.hintFor(3, Y + 1, 0)).toBe(`Filament Lamp · not earthed: a Terminal Board is a live wire, not earth — ${fix}`);
+    expect(env.circuits.hintFor(6, Y + 1, 0)).toMatch(/not earthed: a Voltaic Battery is not earth — /);
+  });
+
+  it('the hints and the panel of a frozen network\'s parts say it reaches an unloaded area; the note goes when it loads', () => {
+    const env = makeCircuitWorld();
+    const c = env.circuits;
+    env.put(-1, 0, B.COPPER_WIRE); // a branch into chunk (−1, 0)
+    env.put(0, 0, B.COPPER_WIRE);
+    env.put(1, 0, B.KNIFE_SWITCH);
+    env.put(2, 0, B.COPPER_WIRE);
+    env.put(2, 1, B.FILAMENT_LAMP);
+    env.put(5, 0, B.VOLTAIC_BATTERY); // a circuit of its own, not frozen
+    env.put(6, 0, B.FILAMENT_LAMP);
+    env.ticks(2);
+    const note = 'waiting: the circuit reaches an unloaded area';
+    expect(c.hintFor(0, Y, 0)).not.toContain(note);
+    env.world.unload(-1, 0);
+    env.ticks(20); // the unload check
+    expect(c.hintFor(0, Y, 0)).toBe(`Copper Wire · 0 V · ${note}`);
+    expect(c.hintFor(1, Y, 0)).toBe(`Knife Switch · open · right-click: close it · ${note}`); // switching it does nothing yet
+    expect(c.hintFor(2, Y, 0)).toBe('Copper Wire · 0 V'); // across the open switch: not frozen
+    expect(c.hintFor(6, Y, 0)).not.toContain(note);
+    expect(c.panelView(1, Y, 0, true)?.readout).toContain('Frozen: the circuit reaches an unloaded area — it acts again once that area loads');
+    env.world.load(-1, 0);
+    env.ticks(1);
+    expect(c.hintFor(0, Y, 0)).toBe('Copper Wire · 0 V');
+    expect(c.panelView(1, Y, 0, true)?.readout.some((l) => l.startsWith('Frozen'))).toBe(false);
+  });
+
   it('a network that gains an unloaded cell freezes (no edges, no drain) and is solved settling when it loads again', () => {
     const env = makeCircuitWorld();
     env.put(-1, 0, B.COPPER_WIRE); // a branch into chunk (−1, 0)
@@ -1049,6 +1115,29 @@ describe('ticks and clocks (§4.6, §4.7)', () => {
       seen.push(state(env, 2, 0).endsWith('closed'));
     }
     for (let i = 1; i < seen.length; i++) expect(seen[i]).toBe(!seen[i - 1]);
+  });
+
+  it('the buzzer keeps buzzing after a reload: settling hands a relay in a loop with its own contacts back to live flips', () => {
+    const env = makeCircuitWorld();
+    const c = env.circuits;
+    env.put(0, 0, B.VOLTAIC_BATTERY);
+    env.put(1, 0, B.COPPER_WIRE);
+    env.put(2, 0, B.RELAY);
+    c.setInputFace(2, Y, 0, 0); // E
+    c.applySettings(2, Y, 0, { nc: true });
+    env.put(3, -1, B.COPPER_WIRE);
+    env.put(3, 0, B.COPPER_WIRE);
+    env.put(2, -1, B.FILAMENT_LAMP); // on its NW contact: it flickers with the buzzer
+    env.ticks(5);
+    const next = reload(env);
+    next.ticks(4);
+    const seen = [];
+    for (let i = 0; i < 8; i++) {
+      next.ticks(1);
+      seen.push(next.circuits.probe(2, Y, 0).state.endsWith('closed'));
+    }
+    for (let i = 1; i < seen.length; i++) expect(seen[i]).toBe(!seen[i - 1]);
+    expect(next.circuits.stats().dirty).toBeLessThanOrEqual(2); // not a settling mark carried every tick for ever
   });
 
   it('the R key pushes a relay\'s armature: 0.5 s on a press, as long as it is held (+ 0.1 s)', () => {
@@ -1459,24 +1548,104 @@ describe('powder fuses and the flame rule (§4.3)', () => {
     expect(late.circuits.burningAt(1, Y, 0)).toEqual({ t: 0.4, from: 3 });
   });
 
-  it('loadFromEdits and onChunkLoaded queue the flame candidates; cells in unloaded chunks park until they load', () => {
+  it('the flame rule acts on block changes only: what was laid while circuits were off is lit by no switch-on, load or stream-in', () => {
+    // CONTRACTS pitfalls 28 and 37: a fuse, keg or charge laid against a torch while circuits were off …
     const env = makeCircuitWorld({ enabled: false });
     env.put(0, 0, B.TORCH);
     env.put(1, 0, B.POWDER_FUSE);
     env.put(-20, 0, B.TORCH);
     env.put(-19, 0, B.POWDER_FUSE);
+    env.put(5, 0, B.POWDER_KEG);
+    env.put(6, 0, B.TORCH);
     env.ticks(5);
     expect(env.circuits.burning.size).toBe(0);
+    // … is not lit by switching circuits on …
+    env.circuits.setEnabled(true);
+    env.ticks(40);
+    expect(env.circuits.burning.size).toBe(0);
+    expect(env.fx.kegs.length).toBe(0);
+    // … nor by a reload, nor by its chunk streaming in again.
     env.world.unload(-2, 0);
     const next = reload(env);
+    next.ticks(40);
+    next.world.load(-2, 0);
+    next.ticks(40);
+    expect(next.circuits.burning.size).toBe(0);
+    expect(next.fx.kegs.length).toBe(0);
+    expect(next.world.getBlock(1, Y, 0)).toBe(B.POWDER_FUSE);
+    // A new block change does light it: the torch put back.
+    next.put(0, 0, B.AIR);
+    next.put(0, 0, B.TORCH);
     next.ticks(1);
     expect(next.circuits.burningAt(1, Y, 0)).not.toBeNull();
-    expect(next.circuits.burningAt(-19, Y, 0)).toBeNull();
+  });
+
+  it('a charge and a keg a torch could not light (black holes / explosions off) stay dormant: switch-on, reload, stream-in', () => {
+    const holes = new BlackHoles();
+    const env = makeCircuitWorld();
+    const bhWorld = { getBlock: (q, y, r) => env.world.getBlock(q, y, r), isLoaded: () => true };
+    let explosionsOn = false;
+    const wire = (e) => {
+      e.fx.chargeResult = (q, y, r) => holes.activate(q, y, r, bhWorld);
+      e.fx.kegResult = () => (explosionsOn ? { ok: true, message: 'lit' } : { ok: false, message: 'explosions are off' });
+    };
+    wire(env);
+    holes.setEnabled(false);
+    env.put(0, 0, B.COLLAPSAR_CHARGE);
+    env.put(1, 0, B.TORCH);
+    env.put(-20, 0, B.POWDER_KEG); // chunk (-2, 0)
+    env.put(-21, 0, B.TORCH);
+    env.ticks(5);
+    expect(env.fx.charges.length).toBe(1); // tried once, refused: black holes are off
+    expect(env.fx.kegs.length).toBe(1); // tried once, refused: explosions are off
+    expect(holes.arming).toBe(0);
+    holes.setEnabled(true); // the pause menu's "Black holes: On" (pitfall 28: it acts on nothing laid meanwhile)
+    explosionsOn = true;
+    env.ticks(40);
+    // Save and reload: the same world and edits; then the keg's chunk streams out and in again.
+    const next = reload(env);
+    wire(next);
+    next.ticks(40);
+    next.world.unload(-2, 0);
     next.ticks(5);
-    expect(next.circuits.burningAt(-19, Y, 0)).toBeNull();
     next.world.load(-2, 0);
-    next.ticks(1);
-    expect(next.circuits.burningAt(-19, Y, 0)).not.toBeNull();
+    next.ticks(40);
+    expect(next.fx.charges.length).toBe(0);
+    expect(next.fx.kegs.length).toBe(0);
+    expect(holes.arming).toBe(0);
+  });
+
+  it('placementInputFace keeps the face back at the player unless a source stands across it; then a free face round from it', () => {
+    const env = makeCircuitWorld();
+    const c = env.circuits;
+    env.put(1, 0, B.CLOCKWORK_TIMER);
+    expect(c.placementInputFace(1, Y, 0, 3)).toBe(3); // nothing on W
+    env.put(0, 0, B.COPPER_WIRE);
+    expect(c.placementInputFace(1, Y, 0, 3)).toBe(3); // a wire on W is what an input face is for
+    env.put(0, 0, B.VOLTAIC_BATTERY);
+    expect(c.placementInputFace(1, Y, 0, 3)).toBe(4); // a battery on W: NW, the nearest face round from it
+    env.put(1, -1, B.STONE); // NW holds stone: SW is open air
+    expect(c.placementInputFace(1, Y, 0, 3)).toBe(2);
+    for (const [q, r] of [[0, 1], [2, -1], [1, 1]]) env.put(q, r, B.STONE); // SW, NE, SE stone too: E is the open one
+    expect(c.placementInputFace(1, Y, 0, 3)).toBe(0);
+    env.put(2, 0, B.STONE); // no open air left: the first face without a part
+    expect(c.placementInputFace(1, Y, 0, 3)).toBe(4);
+    for (const [q, r] of [[1, -1], [0, 1], [2, -1], [1, 1], [2, 0]]) env.put(q, r, B.COPPER_WIRE); // every face a part
+    expect(c.placementInputFace(1, Y, 0, 3)).toBe(3);
+    expect(c.placementInputFace(1, Y, 0, 6)).toBe(6); // the top is never moved
+  });
+
+  it('a flame trigger whose ignitable is in an unloaded chunk parks in the queue until that chunk loads', () => {
+    const env = makeCircuitWorld();
+    env.put(-1, 0, B.POWDER_FUSE); // chunk (-1, 0)
+    env.ticks(2);
+    env.world.unload(-1, 0);
+    env.put(0, 0, B.TORCH); // chunk (0, 0): the trigger queues the fuse across the chunk edge
+    env.ticks(10);
+    expect(env.circuits.burningAt(-1, Y, 0)).toBeNull();
+    env.world.load(-1, 0);
+    env.ticks(1);
+    expect(env.circuits.burningAt(-1, Y, 0)).not.toBeNull();
   });
 
   it('wouldIgnite: a flame or a powered igniter beside the cell', () => {

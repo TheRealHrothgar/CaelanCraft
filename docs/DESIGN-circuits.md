@@ -681,8 +681,10 @@ the **flame queue** in `Circuits` (pure; drained once per circuit tick, §4.7):
   - `next` is a flame → queue each ignitable neighbour;
   - `next` is an ignitable with a flame neighbour → queue it.
   - CAMPFIRE next to POWDER_KEG is left to today's `ignite` trigger and rule (now in place, §3.4), so it is never lit twice.
-- **Load and stream-in.** `loadFromEdits` and `onChunkLoaded` queue every indexed ignitable that has a flame neighbour. Every
-  part and flame is an edit, because worldgen emits none of them.
+- **Load and stream-in** (amended by the circuits review, CONTRACTS §52): `loadFromEdits`, `onChunkLoaded` and `setEnabled(true)`
+  queue **nothing**: the flame rule acts on block changes only. *Re-queueing on load lit what a feature switched off had refused —
+  a charge beside a Torch while black holes were off went off on the next reload or stream-in (pitfall 37), and switching
+  circuits on lit fuses laid against a Torch meanwhile (pitfall 28). A new change beside the flame lights it.*
 - **Drain.** A queued cell whose chunk is not loaded stays queued (at most `MAX_FLAME_QUEUE` 4096; beyond that it is dropped,
   and stream-in re-queues it). Otherwise the cell is dispatched by id:
 
@@ -1028,8 +1030,8 @@ to.
   - queues flame candidates.
 
   *It runs inside `World.setBlock`; doing work there would recurse into writes.*
-- **`onChunkLoaded(cq, cr)`** marks every indexed cell of that chunk dirty for settling, re-queues its flame candidates and
-  resumes its clocks.
+- **`onChunkLoaded(cq, cr)`** marks every indexed cell of that chunk dirty for settling (relays first) and resumes its clocks;
+  flame-queue entries parked on it are dispatched by the next drain (nothing new is queued, §4.3).
 - **`stats().ms`** is measured with `hooks.now`. *A pure module never reads a clock itself.*
 
 ### 4.8 State: `CircuitStore` (`src/circuitStore.js`, pure; package B)
@@ -1059,8 +1061,9 @@ always the part's `PartDef.key`, and the fields it may hold are its `PartDef.fie
   countdowns, blaster pulses, relay energisation, lamp brightness and radio in flight. All of these are rebuilt (settling,
   §4.7) or idle after a reload. *As with keg fuses.*
 - **Removal.** When a part's cell changes to anything else (broken, blasted, swallowed, crumbled, replaced), its entry is
-  deleted. **Undo** of a blast restores the block with **default settings**. *Tombstones would also resurrect settings for a
-  player who broke and re-placed a timer on purpose; not worth it.*
+  deleted. A part broken and placed again starts at its **default settings**. *Tombstones would also resurrect settings for a
+  player who broke and re-placed a timer on purpose; not worth it.* **Undo** of a blast is a restore, not a re-place: the
+  physics event keeps each removed part's settings (`partState`) and undo gives them back (`restorePart`, CONTRACTS §55).
 - **Saving.** See §6.4. Keys are canonical `"q,y,r"`. Validation drops entries whose cell in the repaired `edits` is not that
   kind's block (orphans), mapping `k` to its block id through `PARTS`.
 
@@ -1140,6 +1143,9 @@ API: §6.2.2.
 - Shift R: `Shift+R key: settings of the targeted device or Rune Block`.
 
 ### 4.10 The device panel (`src/devicePanel.js`, DOM; package D)
+*The art redo replaced this section's hexagon look (`.hex-button`, hex chips, the hex badge) with rounded `.cc-btn` buttons, pill
+chips, rounded square wavelength keys and a rounded square header icon, and moved Start/Stop, Send, Tap and Refill into the foot
+beside Done; CONTRACTS §57 is normative for the look.*
 - **Opening.** The Shift+R key on a part opens `#device-panel`, at z 24: the rune editor's layer; the two are never open
   together. Main uses a new state `STATE.DEVICE`: controls are disabled and the pointer unlocked, and the modal state is set
   **before** `controls.unlock()` (pitfall 24).
@@ -1373,6 +1379,9 @@ W face" means the neighbouring cell in that direction. Cells not listed are AIR.
 
 =====================================================================================================================
 ## 5. The creative inventory (block picker)
+*The art redo replaced the honeycomb below with a grid of 56 px rounded square slots (the user chose square slots; no icon sits
+on a hexagon), families drawn as card stacks with a notched honey drawer tray, 34 px rounded square rail buttons and round
+badges; ↑ ↓ keep the column. CONTRACTS §56 is normative for the layout and look; the rest of this section still holds.*
 
 ### 5.1 What it is
 - **Opening.** E opens it, as today.
@@ -1942,7 +1951,7 @@ export const MAX_CIRCUIT_PARTS = 4096, MAX_PART_LABEL_CHARS = 24;
 export const MAX_CIRCUIT_VISITS_PER_TICK = 6000, CIRCUIT_TICK_BUDGET_MS = 2, MAX_NETWORK_CELLS = 8192;
 export const MAX_CONTACT_CHANGES_PER_TICK = 1024, MAX_SETTLE_PASSES = 4;
 export const MAX_CIRCUIT_WRITES_PER_TICK = 32, MAX_IGNITIONS_PER_TICK = 32;
-export const CIRCUIT_DRAW_RANGE = 64, CIRCUIT_OVERLAY_RANGE = 48, MAX_CIRCUIT_OVERLAYS = 512;
+export const CIRCUIT_DRAW_RANGE = 64, CIRCUIT_OVERLAY_RANGE = 64, MAX_CIRCUIT_OVERLAYS = 512;
 // ---- Black holes v2 (§54)
 export const BLACK_HOLE_ARM_S = 0.4, BLACK_HOLE_FLASH_S = 0.3, BLACK_HOLE_IMPLODE_S = 1.2;
 export const BLACK_HOLE_SWIRL = 1.6, BLACK_HOLE_SWIRL_CORE = 1.5;
@@ -2286,7 +2295,7 @@ styles. Survival's ids are blocks 76–94 (`BLOCK_COUNT` 95), tiles 77–104 (`T
 
 | Key | Text |
 |---|---|
-| RMB | `Place · right-click works switches, timers, plungers (Shift: place) · Survival: use the item in hand` |
+| RMB | `Place · right-click works switches, buttons, timers, plungers (Shift: place) · Survival: use the item in hand` |
 | R | `R key: use a switch, timer, fuse, radio key or rune · Survival: fire, water, plants, basket` |
 | E | `Blocks · Survival: pack & making` (survival's) |
 | Shift R | `Shift+R key: settings of the targeted device or Rune Block` |

@@ -1,4 +1,4 @@
-# Known issues (v0.8, PR #3; v0.9 Survival items at the end — S2–S4 fixed in the post-merge follow-up; v0.10 circuits: C1–C6)
+# Known issues (v0.8, PR #3; v0.9 Survival items at the end — S2–S4 fixed in the post-merge follow-up; v0.10 circuits: C1–C10)
 
 Problems found by play-testing and review. Each one was reproduced independently by a second agent before it was
 listed. File and line references in the open tables are from commit c47ce0b, the build the play-test ran on. That build
@@ -111,9 +111,13 @@ Left as found, on purpose:
 | C1 | **Thin parts block water.** A Powder Fuse, a Torch or a wire is a block id in its cell, so flowing water treats it like any non-water block and stops there instead of washing it away. | The six THIN parts are non-solid but not fall-through for fluids.js (DESIGN-circuits §1.1). | Let water flow into a thin part's cell and wash it away (dropping it in Survival), as Minecraft-like games do with torches. Needs a fluids.js rule change. |
 | C2 | **Every wire placed and every burnt fuse cell re-meshes 1–4 chunks.** | `World.setBlock` marks the chunks around any change dirty, even when both ids are unmeshed (AIR ↔ a thin part). Long fuse burns eat the lazy re-mesh budget. | DESIGN-circuits §7.1's request to survival A: skip `_markDirtyAround` when prev and next are both AIR or unmeshed non-opaque ids. |
 | C3 | **A Voltaic Battery's charge is not carried in Survival.** Breaking a battery gives a full one back, and the §8.2 "battery refill" recipe is not in. | Survival's ItemDef has no durability on block items yet (DESIGN-circuits §8.3: `d` = the charge, stack 1). | Allow `durability` on the battery's block item; write `c = d` on placing, read it back on breaking; add the refill recipe. |
-| C4 | **Huge networks are slow to rebuild**: an 8100-cell network takes about 150 ms on this loaded WSL machine. | The BFS is bound by Map lookups with large packed keys (about 300 ns a `Map.get` here). | A per-chunk typed-array index (B's report). Networks are truncated at 8192 cells and rebuilds are budgeted per tick, so play stays smooth meanwhile. |
+| C4 | **perf. Huge networks are slow to rebuild, and the tick budget cannot split one**: an 8100-cell network takes about 150 ms on this loaded WSL machine, and an 8192-cell network rebuilt every tick (a relay buzzer, or a 0.5 s repeat timer, on a big terminal-board field or a long line) costs 10–20 ms a tick on an idle one — a hitch every tick while it runs. | The BFS is bound by Map lookups with large packed keys (about 300 ns a `Map.get` here). The 2 ms budget is checked between networks (CONTRACTS §52), so a network once started is finished in that tick; circuitsBudget.test.js's oscillator test only proves the check, with a fake clock. | A per-chunk typed-array index (B's report); or a BFS and solve that resume across ticks (keeping the old voltages until the new solve is done); or a lower `MAX_NETWORK_CELLS` (about 2000 fits the budget here) with the truncation line saying so. |
 | C5 | **The Collapsar Charge's screen flash is fixed at 0.6 s in a void swallow** (the design says 0.5 s for the void flash). | Both flashes share hud.flashStep's (1 − t/0.6)² fade. | Give flashStep a per-kind length if anyone notices. |
 | C6 | **Undo's look-ahead settles the whole dirty queue.** To see whether a restored igniter is still powered, `circuits.wouldIgnite` first solves every waiting cell as settling (no edge fires), so any other circuit changed in the same frame as an undo also settles instead of firing. | Undo restores cells in one go and the engine only rebuilds networks at its tick. | In practice undo runs from the pause menu, where nothing else is changing. A per-network look-ahead would be exact. |
+| C7 | **A network that reaches an unloaded chunk is frozen whole** (by design, DESIGN-circuits §4.7 and adjudication 12): a switch beside the player does nothing to the lamp beside it while the line runs on past the unload radius (about 160 cells at render distance 7, less at a lower `?rd`). Its hints and panel now say `waiting: the circuit reaches an unloaded area`. | Solving the loaded part alone would let walking away until a coil's battery unloads fire a dead-man circuit. | Split long lines with a relay near the player (the coil side may freeze; the contact side stays live), or raise the design question with its owner. |
+| C8 | **visual. The 3D device models (the art redo) change three things.** A device no longer shades a Selenium Panel below it; a device swallowed by a vortex vanishes without a spiralling copy; a block or a body resting on a short device sits at the full cell top, a little above the model (the battery is full height, so piles touch). | Devices are solid but not opaque and not meshed (CONTRACTS §50): only opaque blocks shade, infall skips unmeshed blocks (as for wires and campfires), and collision is per cell. | Shade with `solid` instead of `opaque` for the panel; give infall a model copy through `circuitRenderer.syncMoving` (it already draws moving device copies); per-model collision heights. |
+| C9 | **visual. A burnt-out fuse cell's cord stays in the drawn wiring for up to 1 s**, under a full char overlay. | Rebuilding the wiring costs 10–20 ms near a big wired area, so cells that only burnt out rebuild it at most every `FUSE_REBUILD_S` (main.wiringRebuildDue); the char covers the stale cord meanwhile. | Per-chunk wiring buffers, so a burnt cell rebuilds only its chunk. |
+| C10 | **A keg laid beside a Campfire while explosions were off burns on the next reload or stream-in.** Circuits' own flame rule (a Torch beside a fuse, keg or charge) no longer does this (CONTRACTS §52: flames act on block changes only). | Block physics' explosions 'ignite' reseeder (v0.8, CONTRACTS §33) re-queues every keg beside a campfire when its chunk loads, whatever the switch was when it was laid. | Give the 'ignite' reseeder the same rule as the circuits' flame queue (block changes only), or skip it for kegs that were refused. |
 
 ## Save slots (minor, from the save-slot check)
 
@@ -149,6 +153,27 @@ the local branches `worktree-wf_6c9efe31-dfa-4` and `old-watcher-merge`; it was 
 | **Cave sightings had no line of sight** but used up the night. | A natural sighting needs line of sight; otherwise the night's roll waits for a later check. |
 
 Design note: at sighting distances (30–80 m) the two lights merge into one cyan point; they separate only up close.
+
+## Fixed in the circuits review follow-up (v0.10)
+
+Found by the circuits review (two lenses and a skeptic each); each fix has a regression test that fails on the code before it.
+- **Settling under the tick budget** (HIGH, pitfall 37): a settling pass cut short by the budget dropped the cells it had not
+  reached, so on a reload an energised NC dead-man relay's igniter kept the closed-contact power of the first pass and its
+  refire clock lit the keg. Settling passes now keep their unreached cells, waiting settling marks go to the front of the
+  dirty FIFO, and whole-world settles dirty relays first (circuitsBudget.test.js).
+- **Dying with the device panel open** (HIGH): the panel stayed up after Wake up and its key capture swallowed every key.
+  die() closes it (`screenClosedOnDeath`), and `closeDevicePanel` closes a panel still showing in any state.
+- Undo gives blasted parts back with their settings (an NC relay stays NC, a timer keeps its delay and face).
+- Survival: a keg burning in place hints how to put it out, not which axe breaks it.
+- Switching circuits on, a reload and a stream-in no longer light a fuse, keg or charge laid against a Torch meanwhile (or
+  refused while black holes or explosions were off): the flame rule acts on block changes only.
+- Worked examples 2 and 5 built walking east: a timer, relay or coherer placed against its battery takes a free input face, and
+  a source left on an input face is named in the hint and the panel.
+- A burning fuse no longer rebuilds all the wiring within 64 units once per burnt cell (at most once a second, C9).
+- Smaller: the earth hint for a device on a wire or a terminal board; `?scene=circuits` rows a blast apart; the controls sheet
+  names push buttons (as §4.9 does); holding the left button on a burning keg in Creative no longer breaks it after the snuff;
+  a relay buzzer keeps buzzing after a reload (it never left settling); the art redo's moving device copies (the collapsar's
+  swelling copy) are drawn; overlays reach 64 units, like the wiring.
 
 ## Refuted (not issues)
 

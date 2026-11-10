@@ -3360,7 +3360,13 @@ Design: `docs/DESIGN-circuits.md` (§1, §4.2, §4.4, §4.5). The user named the
 WHITE_WIRE, EARTH_WIRE, TERMINAL_BOARD, VOLTAIC_BATTERY, BLASTING_MACHINE, SELENIUM_PANEL, KNIFE_SWITCH, PUSH_BUTTON,
 CLOCKWORK_TIMER, RELAY, IGNITER, FILAMENT_LAMP, ELECTRIC_BELL, SPARK_TRANSMITTER, COHERER_RECEIVER 114`.
 - The six THIN parts (the fuse, the torch, the four wires) are not solid, not opaque, cutout, **unmeshed** (circuitRenderer draws
-  them), `icon: 'flat'`, with `CIRCUIT_CLEAR` (160) on their sides and bottom. The 14 cabinets are plain meshed opaque prisms.
+  them), `icon: 'flat'`, with `CIRCUIT_CLEAR` (160) on their sides and bottom. The 14 devices carry the **MODEL** flags (the art
+  redo; they replace the design's CAB set): solid, not opaque, cutout, `cullSame: false`, **unmeshed** — circuitRenderer draws each
+  as a small 3D model (circuitGeometry `MODELS`, §53) — and `icon: 'flat'`. Tile triples are unchanged (side, top, bottom = top):
+  each `*_top` is a 16 × 16 picture of its model (alpha 0 or 255, `DEVICE_PICTURES`), each `*_side` a swatch of its main colour
+  that nothing draws (`DEVICE_SWATCHES`). No icon sits on a hexagon (§56, §57). Consequences (KNOWN-ISSUES): a device does not
+  shade a Selenium Panel below it (only opaque blocks shade), vortex infall skips it like any unmeshed block, and a block or a
+  body resting on a short device sits at the full cell top.
 - `BlockDef.icon` (`'prism'` default | `'flat'`). `BLOCK.POWDER_KEG = 75` is the keg's canonical key (name `powder_keg`, "Powder Keg");
   `BLAST_BARREL = 75` stays as an alias, and `BLOCK_ALIASES = { blast_barrel: POWDER_KEG }` is read by `commands.resolveBlock`.
 - `BLACK_HOLE` (66) is no longer placeable and is unmeshed (vortexRenderer draws it). `PICKER_ORDER` has 99 entries: the black
@@ -3410,7 +3416,21 @@ repeatClosedTicks, repeatClosedSeconds`.
 - **Budget**: 6000 visits and 2 ms (`hooks.now`) a tick, checked between networks; networks past 8192 cells are truncated (one chat
   line) and form a BFS boundary.
 - **Settling** (pitfall 37): cells dirtied by `loadFromEdits`, `onChunkLoaded` or `setEnabled(true)` are solved with no edge
-  actions; a network that reaches an unloaded chunk, or touches a relay whose coil cannot be known yet, is frozen.
+  actions; a network that reaches an unloaded chunk, or touches a relay whose coil cannot be known yet, is frozen. Such a batch is
+  dirtied **relays first** (expanding a relay builds its coil network, so it takes its coil's state before any network is built on
+  its contacts), and settling marks that wait — past `MAX_SETTLE_PASSES`, or in a settling pass the budget cut short, whose
+  unreached cells are kept, never dropped — go to the **front** of the dirty FIFO: a settle under way is finished before the rest
+  of a big load, so an igniter left powered on stale contacts never lives out its 0.5 s refire clock.
+- **The flame rule acts on block changes only** (pitfalls 28 and 37; amends DESIGN-circuits §4.3 "Load and stream-in"):
+  `onBlockChange` queues the flame candidates; `loadFromEdits`, `onChunkLoaded` and `setEnabled(true)` queue none. A fuse, keg or
+  charge resting beside a Torch — laid while circuits were off, or refused while black holes or explosions were off — is lit only
+  by a new change beside it, never by switching on, a reload or a stream-in. A queued cell in an unloaded chunk parks in the queue
+  until it loads (beyond `MAX_FLAME_QUEUE` it is dropped).
+- **Also** (this integration): `placementInputFace(q, y, r, preferred)` (main's partPlaced: `preferred` unless a source stands
+  across it, then the nearest side face round from it with open air across, else with no part across); `partSnapshot(q, y, r)`
+  and `restorePart(q, y, r, snap)` (undo's part settings, §55); `burnVersion` and `geometryBuilt()`: a burnt-out fuse cell's
+  own AIR write bumps `burnVersion` instead of `geometryVersion`, and `overlays()` draws that cell's full char over its stale cord
+  until main calls `geometryBuilt()` after its next wiring rebuild (§58). `spent` is a Map (cell → the flame's entry face).
 - **Hooks** (`CircuitHooks`; main builds them with `main.makeCircuitHooks`, §58): `peek, setBlock (lazy), isLoaded, isEdit, now,
   igniteKeg(q, y, r, fuse?), activateCharge, kegBurning, chargeArming, daylight, sound, particles, say`. Adjudicated (B's
   CONTRACT-ISSUE): `igniteKeg` takes the fuse (`ignite` lights a keg for BARREL_FUSE_S 3 s; undefined → KEG_DIRECT_FUSE_S 0.25 s);
@@ -3426,25 +3446,49 @@ repeatClosedTicks, repeatClosedSeconds`.
   `FUSE_AT_BUNG` on a keg burning in place); staff `torch` (the design's `linstock` is accepted too), `filament`, `char`.
 - **Hints** (§4.9's table; `hintFor` is null for the keg and the campfire — main owns those, §55). Strings the design left open
   (earth reasons, the strap, a flat battery, the blaster's pulse, a repeat timer, a latched coherer, the Torch, the ignition refusal)
-  are worded in circuits.js. Sound names it emits: `switchClack, buttonClick, relayClick, timerWind, timerTick, timerDing, bellRing,
+  are worded in circuits.js. Earth reasons for a device standing on a part: `a Copper Wire is a live wire, not earth` (signal
+  wires, the Terminal Board, contacts), `a Voltaic Battery is not earth` (any other part). The `source-on-input` diagnostic
+  (`probe().diag`): a timer, relay or coherer with a source across its input face hints `the Voltaic Battery is on its input face
+  and feeds nothing there — move it, or turn the input face (Shift+R key)` (panel: `Input face: …`). A part in, attached to or
+  switching a **frozen** network adds `· waiting: the circuit reaches an unloaded area` to its hint (panel: `Frozen: the circuit
+  reaches an unloaded area — it acts again once that area loads`). Sound names it emits: `switchClack, buttonClick, relayClick, timerWind, timerTick, timerDing, bellRing,
   sparkZap, plunger, igniterPop, fuseLight, fuseHiss` (main: `fuseHiss` → `audio.playHiss`, the rest → `audio.playRecipe`).
-- Performance: an 8100-cell network rebuild is bound by Map lookups (about 150 ms on a loaded machine); KNOWN-ISSUES.
+- Performance: the budget is checked between networks, so a network once started is finished: one 8192-cell network rebuilt every
+  tick (a relay buzzer on a terminal-board field) costs about 10–20 ms a tick on an idle machine, and an 8100-cell rebuild is bound
+  by Map lookups (about 150 ms on a loaded one); KNOWN-ISSUES C4.
 
 ## 53. Circuit look and sound — circuitGeometry, circuitRenderer, circuitTiles, circuitSounds, audio, flat icons
 
-- **`src/circuitTiles.js`** (PURE painters, no imports): `CIRCUIT_TILE_NAMES` (160–194) and `CIRCUIT_RECIPES` (those 35 plus
-  `barrel_side` and `barrel_top`, the keg's copper-hoop art); tiles.js spreads both last. The six flat pictures and `circuit_clear`
-  have alpha 0 or 255 only; every cabinet tile is alpha 255; no violet, no red/blue/green/yellow signal wire. (§15/§16 amendment:
+- **`src/circuitTiles.js`** (PURE painters, no imports): `CIRCUIT_TILE_NAMES` (160–194, all 35 ids and names kept by the art redo)
+  and `CIRCUIT_RECIPES` (those 35 plus `barrel_side` and `barrel_top`, the keg's copper-hoop art); tiles.js spreads both last. The
+  six thin parts' flat pictures, the 14 device pictures (`DEVICE_PICTURES`: each `*_top`, a bold outlined picture of the model on a
+  clear background, never a hexagon) and `circuit_clear` have alpha 0 or 255 only; each device's `*_side` is a plain swatch of its
+  main colour (`DEVICE_SWATCHES`, alpha 255, drawn by nothing); no violet, no red/blue/green/yellow signal wire. (§15/§16 amendment:
   the keg's tiles live here; tiles.test.js exempts `CIRCUIT_TILE_NAMES` from "alpha 255 everywhere" and skips pairs of fully
   transparent tiles in "every tile differs" — `circuit_clear` equals survival's `plant_top_clear`.)
 - **`src/circuitGeometry.js`** (PURE): `wireSegments(view, x, y, z, range, out)` — knob-and-tube signal wires (a porcelain knob per
   cell, the wire at groove height to every joined or attached face, a tube for an upward join), striped green-and-yellow earth
-  cord with ground straps and a copper clamp where `grounded`, kinked powder fuses (seeded `hash3`) running into kegs and charges,
-  brass binding posts on relay / timer / coherer input faces; `overlayPose(item, t, out)`; `SEGMENT_STRIDE 8, KNOB_STRIDE 5,
-  SEGMENT_COLOURS`, `FUSE_AT_BUNG 8`, `MAX_POSES`. Imports `coords` too (adjudicated: `geometryView().cellsNear` returns packCells).
+  cord with ground straps and a copper clamp where `grounded`, kinked powder fuses (seeded `hash3`, a frayed tuft at a free end)
+  running into kegs and charges, and every device as its **model**: `MODELS` (per id: `parts`, `foot`, `top`, `topPosts`; the
+  origin on the cell's floor centre, the front along local +x), `MODEL_IDS`, `hasModel`, `faceYaw`, `modelPoses`, `PAL`. A wire,
+  cord or fuse reaching a device carries on into its cell as a short lead to the model's foot, ending on a brass stud (a copper
+  clamp for earth); relays, timers and receivers turn to face their input face and show two brass binding posts at the foot of
+  that side (`POST_H`, `STUD_H`; `POST_PROUD` / `POST_Y` are gone). The output gains `body` (`BODY_STRIDE 11`: the model parts)
+  and `turn` (`TURN_STRIDE 4`: q, y, r, input face), created on a reused output that lacks them. Devices are drawn out to
+  `DEVICE_DRAW_RANGE` 96 (wires to the `range` passed, CIRCUIT_DRAW_RANGE 64). `overlayPose(item, t, out, face?)` (the optional
+  face turns a relay's armature and a timer's hand with the model; poses carry `batch`, an index into `BATCHES` / `BATCH`: box,
+  hex, cyl, ball, bell, glass, lit, lit-box, glow), with `CAP_Y, HAND_HUB, ARM_PIVOT, ARM_LEN, PLUNGER_BASE, HAMMER_PIVOT,
+  HAMMER_BALL, RING_BLINK_HZ, BULB_Y, BULB_D, GLASS_ALPHA`; the engine's blade a = closed and plunger a = travel match it (no 1 − a).
+  `SEGMENT_STRIDE 8, KNOB_STRIDE 5, SEGMENT_COLOURS`, `FUSE_AT_BUNG 8` (the engine's −2 reads the same), `MAX_POSES`. Imports
+  `coords` too (adjudicated: `geometryView().cellsNear` returns packCells).
 - **`src/circuitRenderer.js`** (three): `createCircuitRenderer(scene) → { setGeometry(geo|null), syncOverlays(items, t, dt),
-  prewarm, count, dispose }`; 11 InstancedMeshes at most (1 segment, 1 knob, 9 overlay), `frustumCulled = false`, doubling
-  capacity; never adds a light (pitfall 36).
+  syncMoving(items|null, count?), prewarm, count, dispose }`; 17 InstancedMeshes (`MESH_NAMES`: one static mesh per
+  `STATIC_BATCHES` entry — every batch but the glow — rebuilt by setGeometry only, and one animated mesh per batch rewritten by
+  syncOverlays / syncMoving), so at most 17 draw calls however many parts are in view (an empty mesh costs none);
+  `frustumCulled = false`, doubling capacity without losing what a frame already wrote, nothing allocated per frame once grown;
+  `prewarm` compiles all four materials; never adds a light (pitfall 36). **`syncMoving(items, count)`** draws the device blocks
+  among the falling renderer's moving items as their models (devices are unmeshed, so fallingRenderer draws nothing for them):
+  main passes the same list it gives `fallingRenderer.sync` every frame, and `null` wherever it clears that renderer (§58).
 - **`src/circuitSounds.js`** (pure data): `SOUND_RECIPES` — every §2.11 and §4.12 recipe. Schema `{ dur, gain, layers: [{ type,
   f0, f1?, lp?, hp?, bp?, q?, gain, delay?, attack? (0.002), decay, lfoHz?, lfoDepth? }], repeat? }`; `lp/hp/bp` a number or a
   `[from, to]` sweep; every low black-hole sound carries a partial ≥ 100 Hz. `bellRing` is one strike (the engine repeats it).
@@ -3515,18 +3559,30 @@ table, blockphysics' undo notes `(N kegs or fuses next to a fire not given back)
 - **Undo never relights a restored scene** (§33.8.4 amendment): PhysicsHooks gain optional `isIgnitable(id)` (main →
   `circuitParts.isIgnitable`) and `ignitesAt(q, y, r)` (main → `circuits.wouldIgnite`). Undo restores kegs, fuses and charges last,
   each as its own block, and skips (counts in the note) any beside a CAMPFIRE or where `ignitesAt` holds.
+- **Undo gives a blasted part back with its settings**: PhysicsHooks gain optional `partState(q, y, r)` (main →
+  `circuits.partSnapshot`: the part's non-default store fields and id, read before the event's first write to the cell and kept in
+  `PhysicsEvent.parts`) and `restorePart(q, y, r, state)` (main → `circuits.restorePart`, called right after undo writes the part
+  back, before the kegs' look-ahead): an NC relay stays NC, a timer keeps its delay, mode and input face, a battery its charge, a
+  label its text. Only undo restores: a part broken and placed again still starts at its defaults (DESIGN-circuits §4.8).
 - **Survival**: `POWDER_KEG` keeps the BLAST_BARREL harvest row; old `blast_barrel` item stacks load as `powder_keg` (§58).
 
 ## 56. Creative inventory — `src/pickerModel.js` (PURE), `src/pickerUI.js` (DOM)
 
 Amends §20's picker. `PICKER_SECTIONS` (11 sections by block name; unknown or unplaceable names skipped; one-member families
 become singles; an "Other" section for anything unnamed), `PICKER_ALIASES` (the Torch answers to "linstock", "slow match", "match",
-"pitch torch"; the keg to "barrel", "blast barrel"; …), `buildPickerModel, searchBlocks, layoutPicker (rows of cols and cols − 1;
-an open family's members in drawer rows after its row; Show all flattens; a search is one flat honeycomb), navigate (← → ↑ ↓,
-PageUp/PageDown, Home/End), pushRecent, blurbFor, familyLine, pickerCols, normalizeQuery`. `createPickerUI(doc, els, atlasCanvas,
-callbacks)`: a scrollable honeycomb of 56 × 64 hex cells, sticky section headers, a 40 px section rail, family stacks with a count
-badge, drawers, search (Enter picks the first; Esc clears, then closes), drag to a hotbar slot, slot badges, Show all and a Recent
-row. `menus.js` builds it once and maps `showPicker, hidePicker, isPickerOpen, onPickBlock(id, slot), onPickerClose` onto it
+"pitch torch"; the keg to "barrel", "blast barrel"; …), `buildPickerModel, searchBlocks, layoutPicker (full rows of `cols` slots, the last of a section shorter;
+nothing indented, and a CellsRow has no `indent`; an open family's members in drawer rows after its row; Show all flattens; a search
+is one flat grid), navigate (← →; ↑ ↓ keep the column or take a shorter row's last slot; PageUp/PageDown, Home/End), pushRecent,
+blurbFor, familyLine, pickerCols, normalizeQuery`, `PICKER_SLOT_PX` 56, `PICKER_GAP_PX` 6, `PICKER_COL_W` = `PICKER_ROW_H` 62
+(`PICKER_CELL_W`, `PICKER_CELL_H` and `PICKER_INDENT` are gone). `pickerCols(w) = max(4, floor((w + 6) / 62))` (`w` = the scroll
+region's `clientWidth − 16`: 14 columns at 1280 × 720). `createPickerUI(doc, els, atlasCanvas, callbacks)`: a scrollable grid of
+**56 px rounded square slots** 6 px apart (a 48 px icon, a chunky shadow, a 2 px lift and a honey border on hover — the user chose
+square slots: no icon sits on a hexagon in the picker or the device panel), sticky section headers each with a
+`.picker-section-icon` chip (`PICKER_HEAD_ICON_PX` 32, a pickerUI export), a rail of 34 px rounded square buttons (a honey ring on
+the current section), a family as one slot drawn as a stack of cards (three fanned member icons, a round `.picker-count` badge
+and ▸) whose drawer `.picker-drawer` is a rounded honey tray below its row with a notch at `--notch-col` (also `data-tile-col`),
+search (Enter picks the first; Esc clears, then closes), drag to a hotbar slot, 20 px round honey slot badges, Show all and a
+Recent row. No picker or panel CSS rule uses clip-path. (§48's "no square slot grids" is Survival's screens only.) `menus.js` builds it once and maps `showPicker, hidePicker, isPickerOpen, onPickBlock(id, slot), onPickerClose` onto it
 (unchanged for main). `.picker-panel` keeps 980 px and a fixed height of `max(180px, min(880px, 100vh − 8vh − 72px))`.
 
 ## 57. The device panel — `src/devicePanel.js` (DOM) and `STATE.DEVICE`
@@ -3534,23 +3590,33 @@ row. `menus.js` builds it once and maps `showPicker, hidePicker, isPickerOpen, o
 `createDevicePanel(doc, { onChange(key, partial), onAction(key, action), onClose() }, atlasCanvas?) → { open(view), refresh(view),
 close(), isOpen(), getKey(), dispose() }`; pure `panelFields(view)`, `clampSetting(k, field, value)`, `readoutPairs`. The third
 argument (the 48 px part icon) and the imports circuitStore, circuits (pure helpers) and atlas are adjudicated additions. Survival
-palette, `.hex-button` everywhere, `.cc-panel` for the container (never `.mc-button` or `.picker-panel`), `#device-panel` at z 24.
+palette, rounded `.cc-btn` buttons everywhere (never `.hex-button`, `.mc-button` or `.picker-panel`), `.cc-panel` for the container,
+`#device-panel` at z 24. The header icon sits in `.cc-icon`, a 60 px rounded square with a honey border (no hexagon badge); timer
+presets are pill chips and segmented controls pills in one rounded track; the 16 wavelengths are `.cc-btn.cc-wave` rounded square
+keys (600 m in ember); the battery's charge bar is a small battery with a nub; the reading sits in a rounded inset card; the
+input-face picker stays a hexagon DIAGRAM of the cell's six sides (plain wedges, `.cc-face-name` labels outside, a round "top"
+button for face 6, the chosen face in honey) — it is not an icon.
 Contents: header (icon, name, cell, a 24-character label), live reading, settings by kind (timer: delay + presets, `Pulse | Hold |
 Repeat`, input face; relay: `NO | NC` + input face; button: `NO | NC`; transmitter / receiver: the 16-wavelength dial; receiver:
 `Pulse | Latch` + the tapper face; switch: `Open | Closed`; battery: the charge bar), actions (Start/Stop, Send, Tap, Refill in
-Creative only), About (origin and tip), Done. Esc, Enter in a field and the Shift+R key close it (its own capture-phase listener).
+Creative only: chunky keys in the sticky foot, `.cc-foot .cc-actions`, before Done `.cc-done`, so they stay in view and the timer
+and receiver panels fit 1280 × 720 — the design put Start/Stop under the timer's settings), About (origin and tip), Done. Esc, Enter in a field and the Shift+R key close it (its own capture-phase listener).
 **`STATE.DEVICE = 'device'`** (§23 amendment): main sets it before `controls.unlock()` (pitfall 24). In Creative the world is
 frozen under it (`stateSimulates(DEVICE, false)` is false); in Survival it keeps stepping with the controls disabled, and the
 reading refreshes every `DEVICE_REFRESH_S` 0.25 s. If the part's cell changes while it is open (a blast, a vortex, a setblock), main
-closes it (`panelCellChanged`, from `onBlockChanged` step 5).
+closes it (`panelCellChanged`, from `onBlockChanged` step 5). **Dying with it open** (Survival: a black hole, a zombie, a keg the
+timer being set lights): `die()` closes it first (`screenClosedOnDeath(state)` → `'device'`, with the pack screen and the field
+book; `closeDevicePanel(false)`: the label flushes, play is not resumed) — its key capture must never outlive it.
+`closeDevicePanel` closes a panel still showing in any state, and resumes play only from STATE.DEVICE.
 
 ## 58. Circuits integration — `src/main.js` and `src/diagnostics.js`
 
 **Objects.** Session: `circuitStore` (outlives worlds), `infall`, `vortexRenderer`, `circuitRenderer`, `devicePanel`, `droneLoop`,
 `pocketChannel` (1), `tipsShown`, `flashState` / `flashKind`, the `ControlLatch`, `rHeldCell`. Per world: `circuits` (null until
 `startLoading`). The pure parts are exported for the tests: `makeCircuitHooks, makeBlackHoleWorld, physicsCircuitHooks, rKeyStep,
-ControlLatch, rightMouseStep, repeatBlocked, hasRAction, kegHintText, explainLine, snuffsKeg, panelCellChanged, screenFlashLevel,
-daylightAt, hotbarFrom` and the texts `KEG_EXPLAIN, CHARGE_EXPLAIN, SWALLOWED_LINE`.
+ControlLatch, rightMouseStep, leftMouseStep, repeatBlocked, hasRAction, kegHintText, burningKegHint, explainLine, snuffsKeg,
+panelCellChanged, screenClosedOnDeath, screenFlashLevel, wiringRebuildDue, daylightAt, hotbarFrom`, `FUSE_REBUILD_S` and the texts
+`KEG_EXPLAIN, CHARGE_EXPLAIN, SWALLOWED_LINE`. `physicsCircuitHooks` gives `isIgnitable, ignitesAt, partState, restorePart` (§55).
 **Renderers.** vortexRenderer and circuitRenderer are created after particles and prewarmed after the falling renderer (neither
 adds a light); pigRenderer / zombieRenderer get `PIG_MAX + MAX_INFALL_MOBS` / `ZOMBIE_MAX + MAX_INFALL_MOBS`.
 **`startLoading`**: `explosions.onCharge → blackHoles.activate`; `circuitStore.replaceAll(save.circuitParts)`; `new Circuits(store,
@@ -3568,14 +3634,18 @@ trackers, block physics last. All bookkeeping (pitfall 34).
    a Powder Fuse without a Fire Drill → `fuse_hint` `Powder Fuse · needs a Fire Drill (R key)`; lighting one wears the drill once) and
    step 10b (`spark_transmitter` selected → `pocket`); its null case is the rune, then the explanation. **Shift+R** on a part opens
    the device panel (on a rune block, the editor).
-2. **The left mouse button**: on a keg burning in place, `explosions.snuff(q, y, r)` instead of breaking (both modes).
+2. **The left mouse button**: on a keg burning in place, `explosions.snuff(q, y, r)` instead of breaking (both modes). Creative's
+   `leftMouseStep`: a press breaks or snuffs, holding repeats the break every BREAK_REPEAT_S, and a snuff holds the repeat off
+   until the button is released (the hold never breaks the keg it just saved).
 3. **The right mouse button** (`rightMouseStep`; Survival: `ControlLatch.press` / `holding` at the top of `survivalRight`, before
    the Handbook's read and "use the item in hand"): a press on a control (`isControl`, no Shift) operates it
    (`circuits.interact 'use'`, its message logged, a transmitter's wavelength becomes the pocket wavelength) and latches; while
    latched nothing is placed, used or operated again, except that a Push Button is kept pressed while the crosshair stays on it;
    the hold-repeat never places against a control without Shift; Shift+right-click places as usual.
-4. **Placing a part** (both modes): a part with an input face takes `inputFaceFromYaw(yaw)`; the first placement this session of
-   each part says `Tip — <tip>`.
+4. **Placing a part** (both modes): a part with an input face takes `circuits.placementInputFace(q, y, r, inputFaceFromYaw(yaw))`
+   — the face back at the player unless a source stands across it (built walking east, battery first, the battery is behind the
+   device: worked examples 2 and 5), then the nearest free face round from it; the first placement this session of each part says
+   `Tip — <tip>`.
 5. **Black holes** run while `size > 0 || busy`: a Creative swallow teleports, the void flash (`hud.setFlashOverlay(0.75, 'void')`),
    `bhSwallow` and `You were swallowed by a black hole!`; Survival → `pendingDeath`. Eaten blocks → `infall.addBlock`. Events, the
    nearest 4 of each type a frame: arm → `bhArm`; flash → the screen-flash trigger `screenFlashLevel(d, facing, covered)` (one
@@ -3586,12 +3656,16 @@ trackers, block physics last. All bookkeeping (pitfall 34).
 7. **Autosave** also on `circuitStore.version`, `circuits.switchVersion` and `blackHoles.switchVersion`.
 **`stepFrame`**: STATE.DEVICE steps the world only in Survival.
 **`renderFrame`**: fallingRenderer gets block physics' items, then the charge copies, then the infall (one pooled list, positional
-push); the flash light is the brighter of the blast's and the charge's (with its colour); shake = blast + `cameraFx`; FOV +
+push), and `circuitRenderer.syncMoving` the same list (the devices among it — the charge's swelling and crumpling copy, device
+debris — are drawn as models; both renderers are cleared together, `syncMoving(null)`); the flash light is the brighter of the blast's and the charge's (with its colour); shake = blast + `cameraFx`; FOV +
 `cameraFx.fov`; `vortexRenderer.sync(blackHoles.vortexViews(eye, 128, 16, 256))`; the wiring is rebuilt (`wireSegments`) when
-`geometryVersion` changes or the eye moved 16 units, the overlays synced every frame; the screen flash (`flashStep`); the drone at
+`geometryVersion` changes or the eye moved 16 units, and when only `burnVersion` changed at most every `FUSE_REBUILD_S` 1 s
+(`wiringRebuildDue`; a rebuild near a big wired area costs 10–20 ms and a burning fuse loses a cell every 0.4 s), then
+`circuits.geometryBuilt()`; the overlays (within CIRCUIT_OVERLAY_RANGE 64, the wiring's range) synced every frame; the screen flash (`flashStep`); the drone at
 the nearest vortex within 24 units (`0.5·(1 − d/24)`, pitch +10 % within 3); pigs and zombies drawn with their ghosts.
 **Hints** (`targetHintText`): lit keg entity, zombie, (protected cell), keg (§55), a part (`circuits.hintFor`), Black Hole `Black
-Hole · walk straight away · left-click: break its core`, rune. Survival's hint falls through to the same.
+Hole · walk straight away · left-click: break its core`, rune. Survival's hint falls through to the same, but shows a keg burning
+in place (`burningKegHint`) before any tool requirement: the snuff needs no tool.
 **Saving** (§14 amendment): `buildSaveData` adds `blackholes, circuits, circuitParts` (storage writes them after `containers` and
 before `meta`; absent → on / none; an older client ignores them). A save with `BLACK_HOLE` edits loads full vortices; `hotbar` 66
 loads as the charge; old `black_hole` / `blast_barrel` item stacks load as `collapsar_charge` / `powder_keg`
@@ -3608,7 +3682,8 @@ and `blackHoles` (`blackholes [status|on|off|list]`); `give black_hole` explains
 `carbon_filament`, `iron_filings`, each with an itemArt icon; 25 recipes (§8.2; 114 in all; the Collapsar Charge has none).
 **Diagnostics** (§22 amendment): `?ui=device` (a demo timer's panel), `?scene=vortex` (a charge 8 cells ahead, set off 2 s after
 loading), `?scene=circuits` (`circuitSceneWrites`: the doorbell, the timed keg, one-key firing and the dusk lamp on flattened stone
-10 cells ahead); the smoke test builds its scene after its own steps (`circuits`: the doorbell rings; `vortex`: one hole 3 s
+10 cells ahead, rows `SCENE_ROW_GAP` 6 apart — more than a keg's blast, so one row's keg leaves the others standing — over
+`circuitSceneWrites().bounds` plus 2); the smoke test builds its scene after its own steps (`circuits`: the doorbell rings; `vortex`: one hole 3 s
 later); F3 lines `circuitsDebugLine` / `blackHolesDebugLine`; the debug handle adds `circuits, circuitStore, blackHoles, infall`
 and the drivers `rightClick(pressed, dt), rightRelease, editTarget, buildScene(name)`.
 
@@ -3685,5 +3760,6 @@ and a fake clock; `put`, `ticks`) and `reload(env)` (a fresh Circuits over the s
 36. (v0.10) There is one PointLight for flashes: share it (`setFlash` colour), and never add a renderer that adds a light without
     re-running the prewarm order.
 37. (v0.10) Loading never fires anything: cells that load, and networks that span an unloaded chunk, are solved settling, with no
-    edge actions (§52). Undo's look-ahead (`wouldIgnite`) settles too.
+    edge actions (§52). Undo's look-ahead (`wouldIgnite`) settles too. The tick budget may split a settle, never drop it: relays
+    are dirtied first, and settling marks that wait go to the front. Loading queues no flames (only block changes do).
 38. (v0.10) On a hex, cells on neighbouring side faces touch. Any rule or test about "the two sides" of a device must name its faces.

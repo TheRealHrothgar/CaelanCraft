@@ -107,6 +107,7 @@ import { HANDBOOK_KEY, HANDBOOK_CHAT_LINE, buildChapters, ensureHandbook } from 
 import { createHandbookUI } from './handbookUI.js';
 import {
   parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest, circuitSceneWrites,
+  CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP,
 } from './diagnostics.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -217,6 +218,21 @@ const MODE_SWITCH_STATES = new Set([STATE.PLAYING, STATE.PAUSED, STATE.CONSOLE, 
 export function stateSimulates(state, inSurvival = false) {
   if (state === STATE.DEVICE) return Boolean(inSurvival);
   return SIMULATING_STATES.has(state);
+}
+
+/**
+ * The screen die() closes first (§2.5 step 1, CONTRACTS §57): every state but PLAYING in which Survival's world keeps
+ * stepping is a screen open over a world that can kill the player — the pack screen, the field book and the device panel.
+ * Leaving one open over the death screen strands it: after Wake up its close paths no longer apply, and the device panel's
+ * key capture swallows every key.
+ * @param {string} state
+ * @returns {'pack'|'book'|'device'|null}
+ */
+export function screenClosedOnDeath(state) {
+  if (state === STATE.PACK) return 'pack';
+  if (state === STATE.BOOK) return 'book';
+  if (state === STATE.DEVICE) return 'device';
+  return null;
 }
 
 /**
@@ -594,6 +610,21 @@ export const SWALLOWED_LINE = 'You were swallowed by a black hole!';
 export const DEVICE_REFRESH_S = 0.25;
 /** The wiring is rebuilt when the circuits' geometryVersion changes or the eye moved this far since the last build (§6.6). */
 export const CIRCUIT_REBUILD_MOVE = 16;
+/** Burnt-out fuse cells alone (circuits.burnVersion) rebuild the wiring at most this often (s); their chars cover the cords. */
+export const FUSE_REBUILD_S = 1;
+
+/**
+ * Is a wiring rebuild due this frame (§6.6)? A part added or removed (circuits.geometryVersion) or the eye moving
+ * CIRCUIT_REBUILD_MOVE rebuilds at once; fuse cells that burnt out (circuits.burnVersion) at most every FUSE_REBUILD_S —
+ * a rebuild near a big wired area costs 10–20 ms, and a fuse burns out a cell every 0.4 s (a fuse fill dozens a tick).
+ * @param {{ geometry: number, burn: number, at: number }} built  the versions and the time of the last build
+ * @param {number} geometryVersion @param {number} burnVersion @param {boolean} moved @param {number} t  seconds
+ * @returns {boolean}
+ */
+export function wiringRebuildDue(built, geometryVersion, burnVersion, moved, t) {
+  if (moved || geometryVersion !== built.geometry) return true;
+  return burnVersion !== built.burn && !(t - built.at < FUSE_REBUILD_S);
+}
 /** Black-hole events of one type that get sound, flash and particles in one frame, nearest first (§6.6 step 7). */
 export const BH_EVENTS_PER_TYPE = 4;
 /** The drone plays for the nearest vortex within this many units (§2.11). */
@@ -660,6 +691,17 @@ export function explainLine(id, lastAt, now) {
  */
 export function snuffsKeg(h, explosions) {
   return !!h && h.blockId === BLOCK.POWDER_KEG && !!explosions && explosions.isBurning(h.q, h.y, h.r);
+}
+
+/**
+ * The hint for a Powder Keg burning in place under the crosshair, or null. Survival shows it BEFORE any tool requirement:
+ * a keg lit by a campfire or `ignite` must say how to put it out, not which axe would break it (the snuff needs no tool).
+ * @param {RaycastHit|null} h
+ * @param {{ isBurning(q: number, y: number, r: number): boolean }|null|undefined} explosions
+ * @returns {string|null}
+ */
+export function burningKegHint(h, explosions) {
+  return snuffsKeg(h, explosions) ? kegHintText(true, true) : null;
 }
 
 /**
@@ -762,6 +804,37 @@ export function rightMouseStep(latch, mouse, hit, shift, dt, env) {
 }
 
 /**
+ * One frame of the left mouse button in Creative (§23, DESIGN-circuits §3.2): a press breaks the target — or pinches out a
+ * keg burning in place — and holding repeats the break every BREAK_REPEAT_S. A snuff holds the repeat off until the button
+ * is released: otherwise the hold would break the keg it had just saved, 0.25 s later.
+ * @param {{ held: number, snuffed: boolean }} st  main's, kept between frames
+ * @param {{ leftPressed: boolean, left: boolean }} mouse
+ * @param {number} dt
+ * @param {{ snuffs(): boolean, act(): void }} env  snuffs: the target is a keg burning in place; act: main's breakTargeted
+ * @returns {'snuff'|'break'|null} what this frame did
+ */
+export function leftMouseStep(st, mouse, dt, env) {
+  if (mouse.leftPressed) {
+    st.held = 0;
+    st.snuffed = env.snuffs();
+    env.act();
+    return st.snuffed ? 'snuff' : 'break';
+  }
+  if (!mouse.left) {
+    st.held = 0;
+    st.snuffed = false;
+    return null;
+  }
+  if (st.snuffed) return null;
+  st.held += dt;
+  if (st.held < BREAK_REPEAT_S) return null;
+  st.held -= BREAK_REPEAT_S;
+  st.snuffed = env.snuffs();
+  env.act();
+  return st.snuffed ? 'snuff' : 'break';
+}
+
+/**
  * The white screen flash of a charge going off (§2.4.6): min(MAX, 0.75·(1 − d/48)·facing·cover), facing = 0.35 + 0.65·max(0,
  * dot(view, toHole)), cover 0.35 when the line of sight is blocked. 0 beyond BLACK_HOLE_SCREEN_FLASH_RANGE.
  * @param {number} d          eye → centre distance
@@ -836,7 +909,8 @@ export function makeCircuitHooks(env) {
 }
 
 /**
- * The two PhysicsHooks of DESIGN-circuits §3.6 (undo never relights a restored scene).
+ * The PhysicsHooks of DESIGN-circuits §3.6 (undo never relights a restored scene) and of CONTRACTS §55 (undo gives a blasted
+ * part back with its settings).
  * @param {() => (Circuits|null)} getCircuits
  */
 export function physicsCircuitHooks(getCircuits) {
@@ -845,6 +919,15 @@ export function physicsCircuitHooks(getCircuits) {
     ignitesAt: (q, y, r) => {
       const c = getCircuits();
       return !!c && c.wouldIgnite(q, y, r);
+    },
+    // Undo gives a blasted circuit part back with its settings (an NC relay stays NC, a timer keeps its delay and face).
+    partState: (q, y, r) => {
+      const c = getCircuits();
+      return c ? c.partSnapshot(q, y, r) : null;
+    },
+    restorePart: (q, y, r, state) => {
+      const c = getCircuits();
+      if (c) c.restorePart(q, y, r, state);
     },
   };
 }
@@ -1037,7 +1120,8 @@ export function boot(win, doc) {
   let selected = 0;
 
   let fov = FOV;
-  let breakHeld = 0;
+  /** Creative's left button between frames (leftMouseStep): the repeat clock and "this hold snuffed a keg" */
+  const leftHold = { held: 0, snuffed: false };
   let placeHeld = 0;
 
   let lastTs = NaN;
@@ -1211,8 +1295,8 @@ export function boot(win, doc) {
   let savedPartsVersion = 0;
   let savedCircuitSwitch = 0;
   let savedBlackHoleSwitch = 0;
-  /** the wiring as last built: the circuits' geometryVersion and the eye it was built around */
-  let geoVersion = -1;
+  /** the wiring as last built: the circuits' geometryVersion and burnVersion, when (fxTime), and the eye it was built around */
+  const geoBuilt = { geometry: -1, burn: -1, at: -Infinity };
   const geoEye = [NaN, NaN, NaN];
   /** @type {import('./circuitGeometry.js').WireGeometry} reused by wireSegments */
   const geoTmp = { seg: { data: new Float32Array(0), count: 0 }, knob: { data: new Float32Array(0), count: 0 } };
@@ -1250,6 +1334,13 @@ export function boot(win, doc) {
   const pigDraw = /** @type {*[]} */ ([]);
   const zombieDraw = /** @type {*[]} */ ([]);
   /** what the control latch (right-click on a control, §4.9) operates and holds */
+  /** leftMouseStep's view of main (Creative): the target under the crosshair as the frame began */
+  const leftEnv = {
+    snuffs: () => isBurningKeg(hit),
+    act: () => {
+      breakTargeted();
+    },
+  };
   const latchEnv = {
     isControl: (id) => !!circuits && isControl(id),
     operate: (h) => operateControl(h),
@@ -1848,7 +1939,7 @@ export function boot(win, doc) {
     setState(STATE.DEVICE);
     controls.setEnabled(false);
     controls.unlock();
-    breakHeld = 0;
+    leftHold.held = 0;
     placeHeld = 0;
     controlLatch.release();
     rHeldCell = null;
@@ -1858,12 +1949,17 @@ export function boot(win, doc) {
     devicePanel.open(view);
   }
 
-  /** Close the panel (Done, Esc, Enter, the Shift+R key, or its part is gone) and go back to playing. */
-  function closeDevicePanel() {
-    if (state !== STATE.DEVICE) return;
+  /**
+   * Close the panel (Done, Esc, Enter, the Shift+R key, or its part is gone) and go back to playing; die() passes
+   * `resume` false (the death state follows). Outside STATE.DEVICE a panel still showing is only closed: it must never be
+   * left up with its key capture swallowing the game's keys.
+   * @param {boolean} [resume]
+   */
+  function closeDevicePanel(resume = true) {
+    const inDevice = state === STATE.DEVICE;
     deviceKey = null;
     if (devicePanel.isOpen()) devicePanel.close();
-    enterPlayingFromModal();
+    if (inDevice && resume) enterPlayingFromModal();
   }
 
   /** @returns {[number, number, number]|null} the panel's cell */
@@ -2029,7 +2125,11 @@ export function boot(win, doc) {
   function partPlaced(id, cell) {
     if (!circuits || !isPart(id)) return;
     const def = /** @type {import('./types.js').PartDef} */ (partOf(id));
-    if (def.input) circuits.setInputFace(cell[0], cell[1], cell[2], inputFaceFromYaw(controls.yaw));
+    if (def.input) {
+      // The face back at the player, unless a battery stands there (it would feed nothing): then a free face round from it.
+      const face = circuits.placementInputFace(cell[0], cell[1], cell[2], inputFaceFromYaw(controls.yaw));
+      circuits.setInputFace(cell[0], cell[1], cell[2], face);
+    }
     if (tipsShown.has(def.key)) return;
     tipsShown.add(def.key);
     const tip = partTip(id);
@@ -2207,12 +2307,14 @@ export function boot(win, doc) {
    * from the frame's checkpoints.
    */
   function die(cause) {
-    // 1. The pack screen (its cursor stack goes back first; overflow is lost) and the field book.
-    if (state === STATE.PACK) closePack(false);
-    if (state === STATE.BOOK) {
+    // 1. The screen open over the running world: the pack screen (its cursor stack goes back first; overflow is lost), the
+    // field book, or the device panel (its label flushes as it closes; its key capture goes with it).
+    const open = screenClosedOnDeath(state);
+    if (open === 'pack') closePack(false);
+    else if (open === 'book') {
       setState(STATE.PLAYING); // first, so the book's onClose does not try to resume play
       handbookUI.close();
-    }
+    } else if (open === 'device') closeDevicePanel(false); // still DEVICE: its label flushes; the death state follows
     // 2. The belongings: every pack and worn stack (the Handbook stays, §14.2) into a REMAINS cell — beyond MAX_CONTAINERS.
     const stacks = pack.dumpAll();
     /** @type {[number, number, number]|null} */
@@ -2231,7 +2333,7 @@ export function boot(win, doc) {
     survival.deaths++;
     craftQueue.clear();
     resetSurvivalInput();
-    breakHeld = 0;
+    leftHold.held = 0;
     placeHeld = 0;
     setState(STATE.DEAD); // before unlock(): the lock-change handler must not read 'playing' (pitfall 24)
     controls.setEnabled(false);
@@ -2430,6 +2532,8 @@ export function boot(win, doc) {
     }
     const h = hit;
     if (h) {
+      const burning = burningKegHint(h, blockPhysics ? blockPhysics.explosions : null);
+      if (burning) return burning; // before the tool requirement: a left press puts it out with any tool or none
       const tool = selectedTool();
       if (!canHarvest(h.blockId, tool)) {
         const need = harvestHint(h.blockId);
@@ -3095,7 +3199,7 @@ export function boot(win, doc) {
     setState(STATE.PACK); // before unlock(): the lock-change handler must not read 'playing'
     controls.setEnabled(false);
     controls.unlock();
-    breakHeld = 0;
+    leftHold.held = 0;
     placeHeld = 0;
     resetSurvivalInput();
     packSession.cursor = null;
@@ -3221,7 +3325,7 @@ export function boot(win, doc) {
     setState(STATE.BOOK); // before unlock()
     controls.setEnabled(false);
     controls.unlock();
-    breakHeld = 0;
+    leftHold.held = 0;
     placeHeld = 0;
     resetSurvivalInput();
     handbookUI.openRustic();
@@ -3481,6 +3585,7 @@ export function boot(win, doc) {
     litTarget = null;
     particles.clear();
     fallingRenderer.sync([], 0);
+    circuitRenderer.syncMoving(null);
     fallingRenderer.setFlash(0, 0, 0, 0);
     blackHoles.loadFromEdits(world.edits);
     circuits.loadFromEdits(world.edits); // after the holes, settling (§4.7)
@@ -3689,7 +3794,7 @@ export function boot(win, doc) {
     autosaveAccum = 0;
     if (!restoring) doSave(false); // a new world claims its slot at once (§41); a no-op under ?nosave
     fov = FOV;
-    breakHeld = 0;
+    leftHold.held = 0;
     placeHeld = 0;
     updateHit();
 
@@ -3784,11 +3889,12 @@ export function boot(win, doc) {
     if (name !== 'circuits') return { ok: false, message: `unknown scene "${name}"` };
     const [qa, ra] = worldToHex(player.x + fx * 10, player.z + fz * 10);
     const q0 = qa - 5;
-    const r0 = ra - 4;
+    const r0 = ra - Math.floor(((CIRCUIT_SCENE_ROWS.length - 1) * SCENE_ROW_GAP) / 2);
     const scene = circuitSceneWrites(q0, feet, r0);
+    const box = scene.bounds;
     // Flat stone ground under the whole scene (placed stone on natural ground passes the earth walk), open air above.
-    for (let q = q0 - 2; q <= q0 + 13; q++) {
-      for (let r = r0 - 2; r <= r0 + 11; r++) {
+    for (let q = box.q0 - 2; q <= box.q1 + 2; q++) {
+      for (let r = box.r0 - 2; r <= box.r1 + 2; r++) {
         for (let y = feet; y <= feet + 6 && y < WORLD_HEIGHT; y++) if (world.getBlock(q, y, r) !== BLOCK.AIR) world.setBlock(q, y, r, BLOCK.AIR);
         for (let y = feet - 1; y >= Math.max(1, feet - 8); y--) {
           if (isSolid(world.getBlock(q, y, r))) break;
@@ -3847,7 +3953,7 @@ export function boot(win, doc) {
     controls.unlock();
     hud.setPickerOpen(true);
     menus.showPicker(hotbar, selected);
-    breakHeld = 0;
+    leftHold.held = 0;
     placeHeld = 0;
     controlLatch.release();
   }
@@ -3880,7 +3986,7 @@ export function boot(win, doc) {
     controls.setEnabled(false);
     controls.unlock();
     consoleUI.open(prefill);
-    breakHeld = 0;
+    leftHold.held = 0;
     placeHeld = 0;
   }
 
@@ -3898,7 +4004,7 @@ export function boot(win, doc) {
     controls.setEnabled(false);
     controls.unlock();
     runeEditor.open(rune, runner ? runner.getLastRun(rune.key) : null);
-    breakHeld = 0;
+    leftHold.held = 0;
     placeHeld = 0;
   }
 
@@ -3926,6 +4032,7 @@ export function boot(win, doc) {
     litTarget = null;
     particles.clear();
     fallingRenderer.sync([], 0);
+    circuitRenderer.syncMoving(null);
     fallingRenderer.setFlash(0, 0, 0, 0);
     zombies.clear();
     zombieTarget = null;
@@ -3954,7 +4061,8 @@ export function boot(win, doc) {
     controlLatch.release();
     rHeldCell = null;
     kegExplainAt = -Infinity;
-    geoVersion = -1;
+    geoBuilt.geometry = -1;
+    geoBuilt.at = -Infinity;
     geoEye[0] = NaN;
     if (devicePanel.isOpen()) devicePanel.close();
     deviceKey = null;
@@ -4831,18 +4939,7 @@ export function boot(win, doc) {
       if (state !== st0) return;
       if (mouse.middlePressed) selectSlotHolding(hit);
     } else {
-      if (mouse.leftPressed) {
-        breakTargeted();
-        breakHeld = 0;
-      } else if (mouse.left) {
-        breakHeld += dt;
-        if (breakHeld >= BREAK_REPEAT_S) {
-          breakHeld -= BREAK_REPEAT_S;
-          breakTargeted();
-        }
-      } else {
-        breakHeld = 0;
-      }
+      leftMouseStep(leftHold, mouse, dt, leftEnv); // a press breaks (or snuffs a burning keg); held, it repeats
       // §4.9: right-click operates a control (Shift: places against it), with the control latch; else it places.
       rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);
       if (mouse.middlePressed) pickTargeted();
@@ -4942,6 +5039,7 @@ export function boot(win, doc) {
     blackHoles.renderItems(pushMoving);
     infall.renderItems(pushMoving);
     fallingRenderer.sync(movingItems, movingCount);
+    circuitRenderer.syncMoving(movingItems, movingCount); // devices among them as models: the collapsar's copy, debris
     blackHoles.flash(bhFlash);
     if (bhFlash.intensity > flash.intensity) fallingRenderer.setFlash(bhFlash.x, bhFlash.y, bhFlash.z, bhFlash.intensity, bhFlash.color);
     else fallingRenderer.setFlash(flash.x, flash.y, flash.z, flash.intensity);
@@ -5032,12 +5130,15 @@ export function boot(win, doc) {
       vortexViewsTmp), fxTime, eye);
     if (circuits) {
       const moved = !(Math.hypot(player.x - geoEye[0], eyeY - geoEye[1], player.z - geoEye[2]) < CIRCUIT_REBUILD_MOVE);
-      if (circuits.geometryVersion !== geoVersion || moved) {
-        geoVersion = circuits.geometryVersion;
+      if (wiringRebuildDue(geoBuilt, circuits.geometryVersion, circuits.burnVersion, moved, fxTime)) {
+        geoBuilt.geometry = circuits.geometryVersion;
+        geoBuilt.burn = circuits.burnVersion;
+        geoBuilt.at = fxTime;
         geoEye[0] = player.x;
         geoEye[1] = eyeY;
         geoEye[2] = player.z;
         circuitRenderer.setGeometry(wireSegments(circuits.geometryView(), player.x, eyeY, player.z, CIRCUIT_DRAW_RANGE, geoTmp));
+        circuits.geometryBuilt(); // the burnt-out cords are gone from it: their chars go too
       }
       // Every frame: the engine also keeps this eye for its nearest-first sparks and sounds.
       circuitRenderer.syncOverlays(circuits.overlays(player.x, eyeY, player.z, CIRCUIT_OVERLAY_RANGE, overlayTmp), fxTime, live ? dt : 0);

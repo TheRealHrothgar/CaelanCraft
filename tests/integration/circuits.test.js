@@ -21,6 +21,7 @@ import {
   makeCircuitHooks, makeBlackHoleWorld, physicsCircuitHooks, hotbarFrom, rKeyStep, rightMouseStep, ControlLatch, hasRAction,
   KEG_EXPLAIN,
 } from '../../src/main.js';
+import { inputFaceFromYaw } from '../../src/circuitParts.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 
 const B = BLOCK;
@@ -192,6 +193,63 @@ describe('§4.14 example 2, the timed charge: all the way to a vortex', () => {
   });
 });
 
+describe('§4.14 examples 2 and 5 built walking east (the device placed right after its battery)', () => {
+  const YAW_EAST = -Math.PI / 2; // looking along +X: the face back at the player is W, where the battery is
+  /** main's partPlaced: the face back at the player, unless a battery stands there. */
+  const placed = (env, q, r) => env.circuits.setInputFace(q, Y, r, env.circuits.placementInputFace(q, Y, r, inputFaceFromYaw(YAW_EAST)));
+
+  it('the timed charge: the timer takes a free input face, so its contacts carry the battery and the charge goes off', () => {
+    const env = rig();
+    expect(inputFaceFromYaw(YAW_EAST)).toBe(3);
+    env.put(0, 0, B.VOLTAIC_BATTERY);
+    env.put(1, 0, B.CLOCKWORK_TIMER);
+    placed(env, 1, 0);
+    expect(env.store.get(`1,${Y},0`)?.f).toBe(4); // NW: open air, the nearest face round from W
+    line(env, 2, 5, 0, B.COPPER_WIRE);
+    env.put(6, 0, B.IGNITER);
+    env.put(7, 0, B.COLLAPSAR_CHARGE);
+    env.circuits.applySettings(1, Y, 0, { s: 1, m: 'pulse' });
+    env.run(0.2);
+    expect(env.circuits.interact(1, Y, 0, 'use')?.ok).toBe(true);
+    const t = env.runUntil(() => env.blackHoles.arming > 0 || env.blackHoles.size > 0, 3);
+    expect(t).toBeGreaterThan(0.9);
+    expect(t).toBeLessThan(1.6);
+  });
+
+  it('the radio: the coherer takes a free tapper face and the keg goes off when the transmitter sends', () => {
+    const env = rig();
+    env.put(0, 0, B.VOLTAIC_BATTERY);
+    env.put(1, 0, B.COHERER_RECEIVER);
+    placed(env, 1, 0);
+    expect(env.store.get(`1,${Y},0`)?.f).not.toBe(3);
+    line(env, 2, 3, 0, B.COPPER_WIRE);
+    env.put(4, 0, B.IGNITER);
+    env.put(5, 0, B.POWDER_KEG);
+    env.circuits.applySettings(1, Y, 0, { ch: 3, m: 'pulse' });
+    env.run(0.2);
+    const [x, z] = hexToWorld(20, 0);
+    expect(env.circuits.pocketSend(3, x, Y + 1, z).ok).toBe(true);
+    const t = env.runUntil(() => env.ex.blastCount > 0, 2);
+    expect(t).toBeLessThan(0.6);
+  });
+
+  it('a battery set on the input face afterwards: the timer\'s hint and panel say why nothing fires', () => {
+    const env = rig();
+    env.put(1, 0, B.CLOCKWORK_TIMER);
+    env.circuits.setInputFace(1, Y, 0, 3); // W
+    env.put(0, 0, B.VOLTAIC_BATTERY); // … then the battery on its W face
+    line(env, 2, 5, 0, B.COPPER_WIRE);
+    env.put(6, 0, B.IGNITER);
+    env.run(0.2);
+    const why = 'the Voltaic Battery is on its input face and feeds nothing there — move it, or turn the input face (Shift+R key)';
+    expect(env.circuits.hintFor(1, Y, 0)).toBe(`Clockwork Timer · ${why}`);
+    expect(env.circuits.panelView(1, Y, 0, true)?.readout).toContain(`Input face: ${why}`);
+    env.circuits.applySettings(1, Y, 0, { f: 1 }); // turned to SE in the panel: the battery is on a contact face now
+    env.run(0.2);
+    expect(env.circuits.hintFor(1, Y, 0)).toMatch(/right-click: wind and start/);
+  });
+});
+
 describe('§4.14 example 4, the quarry', () => {
   /** The quarry, on rock: a 120-cell run from the plunger, 6 kegs round the igniter (5 sides and the top). */
   function quarry(env, source = 'machine') {
@@ -313,6 +371,66 @@ describe('§4.14 example 6, the fuse and the torch', () => {
     expect(t).toBeGreaterThan(8.0);
     expect(t).toBeLessThan(8.6);
     for (let q = 1; q <= 20; q++) expect(env.world.getBlock(q, Y, 0)).toBe(B.AIR);
+  });
+});
+
+describe('undo after a blast that reached a configured circuit (CONTRACTS §55): the parts come back with their settings', () => {
+  /** A stray keg goes off at (q, r) and the blast is undone. @returns {boolean} the blast destroyed the cell (cq, cr) */
+  function blastAndUndo(env, q, r, cq, cr, id) {
+    env.put(q, r, B.POWDER_KEG);
+    env.run(0.1);
+    expect(env.circuits.ignite(q, Y, r).ok).toBe(true);
+    env.runUntil(() => env.ex.blastCount > 0, 5);
+    env.run(2);
+    const gone = env.world.getBlock(cq, Y, cr) !== id;
+    expect(env.physics.undo().ok).toBe(true);
+    env.run(2);
+    expect(env.world.getBlock(cq, Y, cr)).toBe(id);
+    return gone;
+  }
+
+  it('the dusk lamp (§4.14 example 7): its NC relay and its label come back, so the lamp stays dark by day', () => {
+    const env = rig();
+    env.put(0, 0, B.SELENIUM_PANEL);
+    env.put(1, 0, B.COPPER_WIRE);
+    env.put(2, 0, B.RELAY);
+    env.circuits.setInputFace(2, Y, 0, 3);
+    env.circuits.applySettings(2, Y, 0, { nc: true, l: 'Dusk' });
+    env.put(3, 0, B.VOLTAIC_BATTERY);
+    env.put(2, 1, B.FILAMENT_LAMP);
+    env.run(2);
+    expect(env.circuits.probe(2, Y, 1).state).toBe('dark'); // daylight 1: the NC contacts are open
+    expect(blastAndUndo(env, 3, -3, 2, 0, B.RELAY)).toBe(true);
+    expect(env.store.get(`2,${Y},0`)).toMatchObject({ k: 'relay', nc: true, l: 'Dusk', f: 3 });
+    expect(env.circuits.probe(2, Y, 1).state).toBe('dark');
+  });
+
+  it('the timed charge (§4.14 example 2): the timer keeps its 30 s delay and its SE input face; the battery its charge', () => {
+    const env = rig();
+    env.put(0, 0, B.VOLTAIC_BATTERY);
+    env.put(1, 0, B.CLOCKWORK_TIMER);
+    env.circuits.setInputFace(1, Y, 0, 1);
+    env.circuits.applySettings(1, Y, 0, { s: 30, m: 'pulse' });
+    line(env, 2, 5, 0, B.COPPER_WIRE);
+    env.put(6, 0, B.IGNITER);
+    env.put(7, 0, B.POWDER_KEG);
+    env.store.setCharge(0, Y, 0, 1234);
+    env.run(0.5);
+    const charge = Math.round(/** @type {*} */ (env.store.get(`0,${Y},0`)).c);
+    expect(blastAndUndo(env, 1, -2, 1, 0, B.CLOCKWORK_TIMER)).toBe(true);
+    expect(env.store.get(`1,${Y},0`)).toMatchObject({ s: 30, m: 'pulse', f: 1 });
+    expect(Math.round(/** @type {*} */ (env.store.get(`0,${Y},0`)).c)).toBe(charge);
+    expect(env.circuits.hintFor(1, Y, 0)).toBe('Clockwork Timer · 30 s pulse · right-click: wind and start · Shift+R key: set');
+  });
+
+  it('a part the player breaks and places again still starts at its defaults (§4.8)', () => {
+    const env = rig();
+    env.put(2, 0, B.RELAY);
+    env.circuits.applySettings(2, Y, 0, { nc: true, l: 'Dusk' });
+    env.put(2, 0, B.AIR);
+    env.put(2, 0, B.RELAY);
+    expect(env.store.get(`2,${Y},0`)?.nc).toBe(false);
+    expect(env.store.get(`2,${Y},0`)?.l).toBe('');
   });
 });
 

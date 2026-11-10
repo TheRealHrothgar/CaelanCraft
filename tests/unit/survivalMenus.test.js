@@ -250,7 +250,7 @@ describe('the controls sheet (§9.8)', () => {
     expect(CONTROLS_SHEET).toHaveLength(17);
     const row = (k) => CONTROLS_SHEET.find(([key]) => key === k)?.[1];
     expect(row('LMB')).toBe('Break block (hold) · Survival: hold to dig');
-    expect(row('RMB')).toBe('Place · right-click works switches, timers, plungers (Shift: place) · Survival: use the item in hand');
+    expect(row('RMB')).toBe('Place · right-click works switches, buttons, timers, plungers (Shift: place) · Survival: use the item in hand');
     expect(row('E')).toBe('Blocks · Survival: pack & making');
     expect(row('R')).toBe('R key: use a switch, timer, fuse, radio key or rune · Survival: fire, water, plants, basket');
     expect(row('Space Space')).toBe('Double-tap: fly (or F) · Creative');
