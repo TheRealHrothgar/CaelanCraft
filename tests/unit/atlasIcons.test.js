@@ -1,12 +1,19 @@
 // atlas.drawBlockIcon's flat icons (docs/DESIGN-circuits.md §1.5, §7 C): a block with `icon: 'flat'` (the six thin circuit
-// parts) is drawn as its TOP tile, unskewed, fitted to the icon square with nearest-neighbour scaling — one drawImage and
-// no side faces. Every 'prism' block draws exactly as before. A fake 2D context records the calls.
+// parts and, since the user's "fun and simple" redo, the 14 device models) is drawn as its TOP tile, unskewed, fitted to
+// the icon square with nearest-neighbour scaling — one drawImage, no side faces and no hexagon. Every 'prism' block draws
+// exactly as before. A fake 2D context records the calls.
 import { describe, it, expect } from 'vitest';
 import { drawBlockIcon, iconTopCorner, tileOrigin, ICON_BASE_SIZE } from '../../src/atlas.js';
 import { BLOCK, BLOCKS, TILE, getFaceTile, FACE_TOP } from '../../src/blocks.js';
 import { ATLAS_TILE_PX } from '../../src/config.js';
 
 const THIN = [BLOCK.POWDER_FUSE, BLOCK.TORCH, BLOCK.COPPER_WIRE, BLOCK.BROWN_WIRE, BLOCK.WHITE_WIRE, BLOCK.EARTH_WIRE];
+const DEVICES = [
+  BLOCK.COLLAPSAR_CHARGE, BLOCK.TERMINAL_BOARD, BLOCK.VOLTAIC_BATTERY, BLOCK.BLASTING_MACHINE, BLOCK.SELENIUM_PANEL,
+  BLOCK.KNIFE_SWITCH, BLOCK.PUSH_BUTTON, BLOCK.CLOCKWORK_TIMER, BLOCK.RELAY, BLOCK.IGNITER, BLOCK.FILAMENT_LAMP,
+  BLOCK.ELECTRIC_BELL, BLOCK.SPARK_TRANSMITTER, BLOCK.COHERER_RECEIVER,
+];
+const FLAT = [...THIN, ...DEVICES];
 const atlas = { width: 256, height: 256, kind: 'atlas' };
 
 /** A 2D context stand-in: every method call as [name, ...args], and the state each drawImage saw. */
@@ -56,14 +63,15 @@ function fakeContext() {
 const named = (calls, name) => calls.filter((c) => c[0] === name);
 
 describe('flat block icons (§1.5)', () => {
-  it('exactly the six thin parts are flat; every other block keeps the prism icon', () => {
-    expect(BLOCKS.filter((b) => b.icon === 'flat').map((b) => b.id).sort((a, b) => a - b)).toEqual([...THIN].sort((a, b) => a - b));
+  it('exactly the six thin parts and the 14 devices are flat; every other block (the keg too) keeps the prism icon', () => {
+    expect(BLOCKS.filter((b) => b.icon === 'flat').map((b) => b.id).sort((a, b) => a - b)).toEqual([...FLAT].sort((a, b) => a - b));
+    expect(BLOCKS[BLOCK.POWDER_KEG].icon).toBe('prism');
     expect(BLOCKS.every((b) => b.icon === 'flat' || b.icon === 'prism')).toBe(true);
   });
 
   for (const size of [16, 32, 48, 64]) {
     it(`a flat icon at ${size} px is one nearest-neighbour drawImage of the top tile over the whole square, no side faces`, () => {
-      for (const id of THIN) {
+      for (const id of FLAT) {
         const ctx = fakeContext();
         drawBlockIcon(ctx, atlas, id, size);
         const draws = named(ctx.calls, 'drawImage');
@@ -82,12 +90,18 @@ describe('flat block icons (§1.5)', () => {
     });
   }
 
-  it('draws the fuse, torch and wire pictures from their own atlas cells', () => {
+  it('draws the fuse, torch, wire and device pictures from their own atlas cells', () => {
     const want = {
       [BLOCK.POWDER_FUSE]: TILE.POWDER_FUSE, [BLOCK.TORCH]: TILE.TORCH, [BLOCK.COPPER_WIRE]: TILE.COPPER_WIRE,
       [BLOCK.BROWN_WIRE]: TILE.BROWN_WIRE, [BLOCK.WHITE_WIRE]: TILE.WHITE_WIRE, [BLOCK.EARTH_WIRE]: TILE.EARTH_WIRE,
+      [BLOCK.COLLAPSAR_CHARGE]: TILE.COLLAPSAR_TOP, [BLOCK.TERMINAL_BOARD]: TILE.TERMINAL_TOP,
+      [BLOCK.VOLTAIC_BATTERY]: TILE.BATTERY_TOP, [BLOCK.BLASTING_MACHINE]: TILE.BLASTER_TOP,
+      [BLOCK.SELENIUM_PANEL]: TILE.SELENIUM_TOP, [BLOCK.KNIFE_SWITCH]: TILE.SWITCH_TOP, [BLOCK.PUSH_BUTTON]: TILE.BUTTON_TOP,
+      [BLOCK.CLOCKWORK_TIMER]: TILE.TIMER_TOP, [BLOCK.RELAY]: TILE.RELAY_TOP, [BLOCK.IGNITER]: TILE.IGNITER_TOP,
+      [BLOCK.FILAMENT_LAMP]: TILE.LAMP_TOP, [BLOCK.ELECTRIC_BELL]: TILE.BELL_TOP,
+      [BLOCK.SPARK_TRANSMITTER]: TILE.TX_TOP, [BLOCK.COHERER_RECEIVER]: TILE.RX_TOP,
     };
-    for (const id of THIN) {
+    for (const id of FLAT) {
       const ctx = fakeContext();
       drawBlockIcon(ctx, atlas, id, 32);
       expect(named(ctx.calls, 'drawImage')[0].slice(2, 4)).toEqual(tileOrigin(want[id]));

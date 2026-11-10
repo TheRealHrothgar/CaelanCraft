@@ -3,11 +3,14 @@
 // The geometry view is a fake (package C does not need B's engine).
 import { describe, it, expect } from 'vitest';
 import {
-  wireSegments, overlayPose, fuseKink, torchAxis, SEGMENT_STRIDE, KNOB_STRIDE, KNOB_KIND, SEGMENT_COLOURS, COLOUR,
-  WIRE_Y, WIRE_W, KNOB_H, TUBE_LEN, EARTH_Y, EARTH_W, EARTH_PIECE, FUSE_Y, FUSE_W, FUSE_KINK, FRAY_LEN, POST_W,
-  POST_PROUD, POST_Y, POST_SPREAD, CLAMP_H, BLADE_OPEN_RAD, BLADE_LEN, BLADE_HINGE_X, CAP_TRAVEL, HAND_LEN, ARM_TILT,
-  PLUNGER_UP, PLUNGER_DOWN, HAMMER_JITTER, BULB_ALPHA, TORCH_LEN, TORCH_LEAN, CHAR_W, FUSE_AT_BUNG, GLOW, MAX_POSES,
+  wireSegments, overlayPose, modelPoses, hasModel, fuseKink, torchAxis, SEGMENT_STRIDE, KNOB_STRIDE, BODY_STRIDE, TURN_STRIDE,
+  KNOB_KIND, SEGMENT_COLOURS, COLOUR, WIRE_Y, WIRE_W, KNOB_H, TUBE_LEN, EARTH_Y, EARTH_W, EARTH_PIECE, FUSE_Y, FUSE_W, FUSE_KINK,
+  FRAY_LEN, POST_W, POST_H, POST_SPREAD, STUD_H, CLAMP_H, BLADE_OPEN_RAD, BLADE_LEN, BLADE_HINGE_X, BLADE_Y, CAP_TRAVEL, CAP_Y,
+  HAND_LEN, HAND_HUB, ARM_TILT, ARM_PIVOT, ARM_LEN, PLUNGER_UP, PLUNGER_DOWN, PLUNGER_BASE, HAMMER_JITTER, RING_BLINK_HZ,
+  BULB_ALPHA, GLASS_ALPHA, BULB_Y, BULB_D, TORCH_LEN, TORCH_LEAN, CHAR_W, FUSE_AT_BUNG, GLOW, MAX_POSES, MODELS, MODEL_IDS, PAL,
+  BATCHES, BATCH, DEVICE_DRAW_RANGE,
 } from '../../src/circuitGeometry.js';
+import { partOf } from '../../src/circuitParts.js';
 import { BLOCK } from '../../src/blocks.js';
 import { packCell } from '../../src/coords.js';
 import { hexToWorld, FACE_NORMALS } from '../../src/hex.js';
@@ -53,6 +56,15 @@ function segs(out) {
   }
   return s;
 }
+/** The body records as poses. */
+function bodies(out) {
+  const b = [];
+  for (let i = 0; i < out.body.count; i++) {
+    const d = out.body.data.subarray(i * BODY_STRIDE, (i + 1) * BODY_STRIDE);
+    b.push({ x: d[0], y: d[1], z: d[2], rx: d[3], ry: d[4], rz: d[5], sx: d[6], sy: d[7], sz: d[8], colour: d[9], batch: d[10] });
+  }
+  return b;
+}
 function knobs(out, kind) {
   const k = [];
   for (let i = 0; i < out.knob.count; i++) {
@@ -85,20 +97,29 @@ describe('wireSegments: knob-and-tube signal wiring (§4.11)', () => {
     const w = fakeWorld().set(0, 0, 0, B.VOLTAIC_BATTERY).set(4, 0, 0, B.FILAMENT_LAMP);
     for (let q = 1; q <= 3; q++) w.set(q, 0, 0, B.COPPER_WIRE);
     const out = build(w);
-    const k = knobs(out);
+    const k = knobs(out, KNOB_KIND.KNOB);
     expect(k).toHaveLength(3);
     expect(k.map((n) => [n.x, n.y, n.z, n.kind, n.len])).toEqual([1, 2, 3].map((q) => [q, 0, 0, KNOB_KIND.KNOB, KNOB_H].map(Math.fround)));
     const s = segs(out);
-    expect(s).toHaveLength(6);
+    expect(s).toHaveLength(8); // six halves in the wire cells and a lead into each device
     for (const g of s) {
       expect(close(g.y0, WIRE_Y) && close(g.y1, WIRE_Y)).toBe(true);
       expect(close(g.w, WIRE_W)).toBe(true);
       expect(g.c).toBe(COLOUR.COPPER);
-      expect(close(Math.abs(g.x1 - g.x0), 0.5) && close(g.z0, 0) && close(g.z1, 0)).toBe(true);
+      expect(close(g.z0, 0) && close(g.z1, 0)).toBe(true);
     }
-    // Continuous from the battery's face (0.5) to the lamp's face (3.5), each half from a knob to a face midpoint.
+    // Continuous from the battery's foot to the lamp's foot: each half from a knob to a face midpoint, and a lead from the
+    // device's face on to its foot, where it is screwed to a brass stud.
+    const rb = MODELS[B.VOLTAIC_BATTERY].foot.r;
+    const rl = MODELS[B.FILAMENT_LAMP].foot.r;
     const spans = s.map((g) => [Math.min(g.x0, g.x1), Math.max(g.x0, g.x1)]).sort((a, b) => a[0] - b[0]);
-    expect(spans.map(([a, b]) => [a, b])).toEqual([[0.5, 1], [1, 1.5], [1.5, 2], [2, 2.5], [2.5, 3], [3, 3.5]]);
+    const want = [[rb, 0.5], [0.5, 1], [1, 1.5], [1.5, 2], [2, 2.5], [2.5, 3], [3, 3.5], [3.5, 4 - rl]];
+    spans.forEach(([a, b], i) => expect(close(a, want[i][0]) && close(b, want[i][1]), `span ${i}`).toBe(true));
+    const studs = knobs(out, KNOB_KIND.POST);
+    expect(studs).toHaveLength(2);
+    expect(studs.map((p) => p.x).sort((a, b) => a - b).map((x) => Math.round(x * 100) / 100))
+      .toEqual([rb + POST_W / 2, 4 - rl - POST_W / 2].map((x) => Math.round(x * 100) / 100));
+    expect(studs.every((p) => p.y === 0 && close(p.len, STUD_H))).toBe(true);
   });
 
   it('a T (three arms on faces two apart) and a six-way star (neighbouring ring cells touch, so they join too)', () => {
@@ -152,14 +173,20 @@ describe('wireSegments: knob-and-tube signal wiring (§4.11)', () => {
   it('follows §4.5: same kinds join, colours meet only on a terminal board, contacts (taken as closed) and input faces connect', () => {
     expect(segs(build(fakeWorld().set(0, 0, 0, B.COPPER_WIRE).set(1, 0, 0, B.BROWN_WIRE)))).toHaveLength(0);
     const board = segs(build(fakeWorld().set(0, 0, 0, B.COPPER_WIRE).set(1, 0, 0, B.TERMINAL_BOARD).set(2, 0, 0, B.BROWN_WIRE)));
-    expect(board.map((g) => g.c).sort()).toEqual([COLOUR.COPPER, COLOUR.BROWN]);
+    expect([...from(board, 0, 0, WIRE_Y), ...from(board, 2, 0, WIRE_Y)].map((g) => g.c).sort()).toEqual([COLOUR.COPPER, COLOUR.BROWN]);
+    expect(board.map((g) => g.c).sort()).toEqual([COLOUR.COPPER, COLOUR.COPPER, COLOUR.BROWN, COLOUR.BROWN]); // + the leads
     for (const id of [B.KNIFE_SWITCH, B.PUSH_BUTTON, B.CLOCKWORK_TIMER, B.RELAY, B.COHERER_RECEIVER, B.IGNITER,
       B.SPARK_TRANSMITTER, B.SELENIUM_PANEL, B.BLASTING_MACHINE, B.ELECTRIC_BELL]) {
-      expect(segs(build(fakeWorld().set(0, 0, 0, B.COPPER_WIRE).set(1, 0, 0, id, 3))), `${id}`).toHaveLength(1);
+      const s = segs(build(fakeWorld().set(0, 0, 0, B.COPPER_WIRE).set(1, 0, 0, id, 3)));
+      expect(from(s, 0, 0, WIRE_Y), `${id}`).toHaveLength(1);
+      expect(s, `${id}`).toHaveLength(2); // and its lead from the device's face to its foot
     }
     // A relay's input face attaches; its other faces are contact terminals: a wire on either side reaches it.
     const relay = fakeWorld().set(1, 0, 0, B.RELAY, 3).set(0, 0, 0, B.COPPER_WIRE).set(2, 0, 0, B.WHITE_WIRE);
-    expect(segs(build(relay))).toHaveLength(2);
+    const rs = segs(build(relay));
+    expect(from(rs, 0, 0, WIRE_Y)).toHaveLength(1);
+    expect(from(rs, 2, 0, WIRE_Y)).toHaveLength(1);
+    expect(rs).toHaveLength(4);
     // Nothing that is not a conductor or a device's live face draws a wire: fuses, torches, kegs, charges, earth wire, a
     // campfire, ordinary blocks.
     for (const id of [B.POWDER_FUSE, B.TORCH, B.POWDER_KEG, B.COLLAPSAR_CHARGE, B.EARTH_WIRE, B.CAMPFIRE, B.STONE]) {
@@ -181,12 +208,16 @@ describe('wireSegments: knob-and-tube signal wiring (§4.11)', () => {
       }
     }
     const out = build(w, 6, 0.5, 2);
-    const ids = [...w.cells.values()];
     expect(knobs(out, KNOB_KIND.KNOB)).toHaveLength(wires);
-    expect(knobs(out, KNOB_KIND.POST)).toHaveLength(2 * ids.filter((id) => id === B.RELAY).length);
     expect(knobs(out, KNOB_KIND.TUBE)).toHaveLength(0);
-    expect(knobs(out, KNOB_KIND.CLAMP)).toHaveLength(0);
-    expect(out.knob.count).toBe(wires + 2 * ids.filter((id) => id === B.RELAY).length);
+    // Every post (a relay's binding posts, a lead's stud) and clamp (an earth lead's) stands in a device's cell, never on a
+    // wire: a wire cell has its knob and nothing else.
+    const deviceCells = [...w.cells].filter(([, id]) => MODELS[id]).map(([k]) => hexToWorld(...k.split(',').map(Number).filter((_, i) => i !== 1)));
+    for (const p of [...knobs(out, KNOB_KIND.POST), ...knobs(out, KNOB_KIND.CLAMP)]) {
+      expect(deviceCells.some(([x, z]) => Math.hypot(p.x - x, p.z - z) < 0.5), `post at ${p.x}, ${p.z}`).toBe(true);
+    }
+    const relays = [...w.cells.values()].filter((id) => id === B.RELAY).length;
+    expect(knobs(out, KNOB_KIND.POST).length).toBeGreaterThanOrEqual(2 * relays);
   });
 
   it('signal wire colours are copper, brown and white — never red, blue, green or yellow; the earth is green and yellow', () => {
@@ -220,9 +251,17 @@ describe('wireSegments: earth wire (§4.4, §4.11)', () => {
   });
 
   it('straps to a device that needs earth through a side face; a lone cell is a short stub; a riser joins an earth wire above', () => {
-    const strap = segs(build(fakeWorld().set(0, 0, 0, B.EARTH_WIRE).set(1, 0, 0, B.VOLTAIC_BATTERY)));
-    expect(strap).toHaveLength(2);
-    expect(close(Math.max(...strap.map((g) => Math.max(g.x0, g.x1))), 0.5)).toBe(true);
+    const strapOut = build(fakeWorld().set(0, 0, 0, B.EARTH_WIRE).set(1, 0, 0, B.VOLTAIC_BATTERY));
+    const strap = segs(strapOut);
+    const own = strap.filter((g) => Math.max(g.x0, g.x1) <= 0.5 + 1e-6);
+    expect(own).toHaveLength(2);
+    expect(close(Math.max(...own.map((g) => Math.max(g.x0, g.x1))), 0.5)).toBe(true);
+    // The battery's lead carries the stripes on from its face to its foot, where a copper clamp holds it.
+    const lead = strap.filter((g) => Math.min(g.x0, g.x1) >= 0.5 - 1e-6);
+    expect(lead).toHaveLength(1);
+    expect(close(Math.max(lead[0].x0, lead[0].x1), 1 - MODELS[B.VOLTAIC_BATTERY].foot.r)).toBe(true);
+    expect(lead[0].c).not.toBe(own.sort((a, b) => a.x0 - b.x0).at(-1).c);
+    expect(knobs(strapOut, KNOB_KIND.CLAMP)).toHaveLength(1);
     const lone = segs(build(fakeWorld().set(0, 0, 0, B.EARTH_WIRE).set(1, 0, 0, B.TERMINAL_BOARD)));
     expect(lone).toHaveLength(2);
     expect(close(Math.min(...lone.map((g) => g.x0)), -0.2) && close(Math.max(...lone.map((g) => g.x1)), 0.2)).toBe(true);
@@ -301,10 +340,14 @@ describe('wireSegments: powder fuse (§4.11)', () => {
   it('runs into a keg or a collapsar charge beside it, rises to a fuse above, and ignores other blocks', () => {
     for (const id of [B.POWDER_KEG, B.COLLAPSAR_CHARGE]) {
       const s = segs(build(fakeWorld().set(0, 0, 0, B.POWDER_FUSE).set(1, 0, 0, id)));
-      const cord = s.filter((g) => g.c === COLOUR.FUSE);
+      const cord = s.filter((g) => g.c === COLOUR.FUSE && Math.max(g.x0, g.x1) <= 0.5 + 1e-6);
       expect(cord).toHaveLength(4); // the half into the keg and the free half
       expect(close(Math.max(...cord.map((g) => g.x1)), 0.5)).toBe(true);
       expect(s.filter((g) => g.c === COLOUR.FRAY).every((g) => g.x1 < 0)).toBe(true);
+      // The keg is a full prism; the charge is a model, so the cord carries on as a lead to its cradle.
+      const lead = s.filter((g) => g.c === COLOUR.FUSE && Math.min(g.x0, g.x1) >= 0.5 - 1e-6);
+      expect(lead, `${id}`).toHaveLength(id === B.COLLAPSAR_CHARGE ? 1 : 0);
+      if (lead.length) expect(close(Math.max(lead[0].x0, lead[0].x1), 1 - MODELS[B.COLLAPSAR_CHARGE].foot.r)).toBe(true);
     }
     const up = segs(build(fakeWorld().set(0, 0, 0, B.POWDER_FUSE).set(0, 1, 0, B.POWDER_FUSE)));
     const riser = up.filter((g) => g.c === COLOUR.FUSE && g.y1 > g.y0 + 0.5);
@@ -316,44 +359,101 @@ describe('wireSegments: powder fuse (§4.11)', () => {
   });
 });
 
-describe('wireSegments: binding posts, range and buffers', () => {
-  it('relays, timers and coherers carry two brass posts on their input face, POST_PROUD proud of it', () => {
+describe('wireSegments: device models, binding posts, range and buffers', () => {
+  it('every device draws its model: one body record per part, in its cell, in a known batch, never violet', () => {
+    expect(MODEL_IDS).toEqual([B.COLLAPSAR_CHARGE, ...Array.from({ length: 13 }, (_, i) => B.TERMINAL_BOARD + i)]);
+    for (const id of MODEL_IDS) {
+      const out = build(fakeWorld().set(3, 10, -2, id), 0, 10.5, 0);
+      const b = bodies(out);
+      expect(b, `${id}`).toHaveLength(MODELS[id].parts.length);
+      expect(b.length, `${id}`).toBeGreaterThanOrEqual(2); // a few bold parts …
+      expect(b.length, `${id}`).toBeLessThanOrEqual(16); // … never a detailed engraving
+      const [cx, cz] = hexToWorld(3, -2);
+      for (const p of b) {
+        expect(Number.isInteger(p.batch) && p.batch >= 0 && p.batch < BATCHES.length && p.batch !== BATCH.GLOW, `${id}`).toBe(true);
+        // Inside its own cell: within the hex inradius of the centre, between the floor and the cell's top.
+        const reach = Math.hypot(p.x - cx, p.z - cz) + Math.max(p.sx, p.sz) / 2 * 0.9;
+        expect(reach, `${id} part at ${p.x - cx}, ${p.z - cz}`).toBeLessThanOrEqual(0.5);
+        expect(p.y - p.sy / 2, `${id}`).toBeGreaterThanOrEqual(10 - 1e-6);
+        expect(p.y, `${id}`).toBeLessThanOrEqual(11);
+        const { hue, sat } = hs(p.colour);
+        expect(sat > 0.15 && hue >= 250 && hue <= 300, `${id} colour ${p.colour.toString(16)}`).toBe(false);
+      }
+      // A device's own records are its model, and modelPoses gives the same parts.
+      const ps = [];
+      expect(modelPoses(id, ps, cx, 10, cz, 0)).toBe(b.length);
+      if (!partOf(id).input) ps.forEach((p, i) => expect(close(p.x, b[i].x) && close(p.y, b[i].y) && close(p.z, b[i].z)).toBe(true));
+      expect(out.knob.count + out.seg.count, `${id}`).toBe(partOf(id).input ? 2 : 0); // a lone device: its binding posts only
+    }
+    expect(hasModel(B.POWDER_KEG) || hasModel(B.COPPER_WIRE) || hasModel(B.TORCH) || hasModel(B.STONE)).toBe(false);
+    expect(modelPoses(B.POWDER_KEG, [])).toBe(0);
+  });
+
+  it('the battery is full height (a pile stacks nub to foot), the lamp holds a glass bulb, the charge a lit seam', () => {
+    const top = (id) => Math.max(...bodies(build(fakeWorld().set(0, 0, 0, id))).map((p) => p.y + p.sy / 2));
+    expect(top(B.VOLTAIC_BATTERY)).toBeCloseTo(1, 6);
+    const lamp = bodies(build(fakeWorld().set(0, 0, 0, B.FILAMENT_LAMP)));
+    expect(lamp.filter((p) => p.batch === BATCH.GLASS)).toHaveLength(1);
+    expect(lamp.find((p) => p.batch === BATCH.GLASS).y).toBeCloseTo(BULB_Y, 6);
+    const charge = bodies(build(fakeWorld().set(0, 0, 0, B.COLLAPSAR_CHARGE)));
+    expect(charge.filter((p) => p.batch === BATCH.LIT).length).toBeGreaterThanOrEqual(1);
+    expect(charge.some((p) => p.batch === BATCH.BALL && p.colour === PAL.black)).toBe(true);
+    expect(bodies(build(fakeWorld().set(0, 0, 0, B.ELECTRIC_BELL))).some((p) => p.batch === BATCH.BELL)).toBe(true);
+  });
+
+  it('relays, timers and coherers are turned toward their input face, with two brass posts at its foot (on top for the top face)', () => {
     for (const id of [B.RELAY, B.CLOCKWORK_TIMER, B.COHERER_RECEIVER]) {
+      const foot = MODELS[id].foot;
+      const front = (foot.r ?? foot.hx) + POST_W / 2;
       for (const f of [0, 1, 2, 3, 4, 5]) {
         const out = build(fakeWorld().set(0, 0, 0, id, f));
         const posts = knobs(out, KNOB_KIND.POST);
         expect(posts, `${id} face ${f}`).toHaveLength(2);
         const n = FACE_NORMALS[f];
         for (const p of posts) {
-          const along = p.x * n[0] + p.z * n[2];
-          expect(close(along + POST_W / 2, 0.5 + POST_PROUD, 1e-5)).toBe(true);
-          expect(close(p.y, POST_Y - POST_W / 2) && close(p.len, POST_W)).toBe(true);
+          expect(close(p.x * n[0] + p.z * n[2], front, 1e-5) && p.y === 0 && close(p.len, POST_H)).toBe(true);
         }
         const across = posts.map((p) => -p.x * n[2] + p.z * n[0]).sort((a, b) => a - b);
         expect(close(across[0], -POST_SPREAD, 1e-5) && close(across[1], POST_SPREAD, 1e-5)).toBe(true);
+        // The turn record, and the model turned by −60°·f: its parts are face 0's, rotated about the cell's axis.
+        expect([...out.turn.data.subarray(0, TURN_STRIDE)]).toEqual([0, 0, 0, f]);
+        const base = bodies(build(fakeWorld().set(0, 0, 0, id, 0)));
+        const turned = bodies(out);
+        const a = -f * (Math.PI / 3);
+        turned.forEach((p, i) => {
+          const q = base[i];
+          expect(close(p.x, Math.cos(a) * q.x + Math.sin(a) * q.z, 1e-5) && close(p.z, -Math.sin(a) * q.x + Math.cos(a) * q.z, 1e-5)).toBe(true);
+          expect(close(p.ry, q.ry + a, 1e-6)).toBe(true);
+        });
       }
       const topPosts = knobs(build(fakeWorld().set(0, 0, 0, id, 6)), KNOB_KIND.POST);
       expect(topPosts).toHaveLength(2);
-      for (const p of topPosts) expect(close(p.y + p.len, 1 + POST_PROUD)).toBe(true);
+      for (const p of topPosts) expect(close(p.y, MODELS[id].top)).toBe(true);
       // Without a stored face, the default (W) is used.
       const def = knobs(wireSegments({ ...fakeWorld().set(0, 0, 0, id).view, inputFace: () => undefined }, 0, 0, 0, 64), KNOB_KIND.POST);
-      expect(def.every((p) => p.x < -0.4)).toBe(true);
+      expect(def.every((p) => p.x < -0.15)).toBe(true);
     }
     for (const id of [B.KNIFE_SWITCH, B.PUSH_BUTTON, B.IGNITER, B.VOLTAIC_BATTERY]) {
-      expect(build(fakeWorld().set(0, 0, 0, id)).knob.count, `${id}`).toBe(0);
+      const out = build(fakeWorld().set(0, 0, 0, id));
+      expect(out.knob.count + out.turn.count, `${id}`).toBe(0);
     }
   });
 
-  it('draws only the cells within range of the eye (default CIRCUIT_DRAW_RANGE)', () => {
+  it('draws only the cells within range of the eye (default CIRCUIT_DRAW_RANGE), devices out to DEVICE_DRAW_RANGE', () => {
     const w = fakeWorld().set(0, 0, 0, B.COPPER_WIRE).set(30, 0, 0, B.COPPER_WIRE).set(100, 0, 0, B.COPPER_WIRE);
     expect(build(w, 0, 0.5, 0, 10).knob.count).toBe(1);
     expect(build(w, 0, 0.5, 0, 40).knob.count).toBe(2);
     expect(build(w, 0, 0.5, 0, 200).knob.count).toBe(3);
     expect(wireSegments(w.view, 0, 0.5, 0, NaN).knob.count).toBe(CIRCUIT_DRAW_RANGE >= 100 ? 3 : 2);
     expect(build(w, 100, 0.5, 0, 10).knob.count).toBe(1);
+    const d = fakeWorld().set(0, 0, 0, B.VOLTAIC_BATTERY).set(DEVICE_DRAW_RANGE - 4, 0, 0, B.FILAMENT_LAMP).set(DEVICE_DRAW_RANGE + 8, 0, 0, B.RELAY);
+    const n = MODELS[B.VOLTAIC_BATTERY].parts.length + MODELS[B.FILAMENT_LAMP].parts.length;
+    expect(build(d, 0, 0.5, 0, CIRCUIT_DRAW_RANGE).body.count).toBe(n);
+    expect(build(d, 0, 0.5, 0, 500).body.count).toBe(n + MODELS[B.RELAY].parts.length);
+    expect(DEVICE_DRAW_RANGE).toBeGreaterThanOrEqual(CIRCUIT_DRAW_RANGE);
   });
 
-  it('reuses and grows the output buffers; a missing view gives nothing', () => {
+  it('reuses and grows the output buffers (adding body and turn to an old one); a missing view gives nothing', () => {
     const w = fakeWorld();
     for (let q = 0; q < 200; q++) w.set(q, 0, 0, B.COPPER_WIRE);
     const out = { seg: { data: new Float32Array(8), count: 99 }, knob: { data: new Float32Array(5), count: 99 } };
@@ -362,117 +462,157 @@ describe('wireSegments: binding posts, range and buffers', () => {
     expect(out.knob.count).toBe(200);
     expect(out.seg.count).toBe(2 * 198 + 2);
     expect(out.seg.data.length).toBeGreaterThanOrEqual(out.seg.count * SEGMENT_STRIDE);
+    expect(out.body.count + out.turn.count).toBe(0);
+    for (let q = 0; q < 50; q++) w.set(q, 1, 0, B.RELAY, q % 6);
+    wireSegments(w.view, 25, 1.5, 0, 200, out);
+    expect(out.body.count).toBe(50 * MODELS[B.RELAY].parts.length);
+    expect(out.body.data.length).toBeGreaterThanOrEqual(out.body.count * BODY_STRIDE);
+    expect(out.turn.count).toBe(50);
     const again = wireSegments(fakeWorld().view, 0, 0, 0, 64, out);
-    expect(again.seg.count + again.knob.count).toBe(0);
+    expect(again.seg.count + again.knob.count + again.body.count + again.turn.count).toBe(0);
     expect(wireSegments(null, 0, 0, 0, 64, out).seg.count).toBe(0);
   });
 });
 
 /** Run overlayPose and return copies of the poses. */
-function poses(item, t = 0) {
+function poses(item, t = 0, face) {
   const out = [];
-  const n = overlayPose(item, t, out);
+  const n = overlayPose(item, t, out, face);
   return out.slice(0, n).map((p) => ({ ...p }));
 }
 const at = (type, extra = {}) => ({ type, q: 3, y: 10, r: -2, a: 0, b: 0, ...extra });
 const [CX, CZ] = hexToWorld(3, -2);
+/** The top of the cell (a keg's lid, where a keg burning in place shows its spark). */
 const TOP = 11;
 
 describe('overlayPose (§4.11)', () => {
-  it('blade: hinged on the top\'s west, flat in the jaws when closed and raised 65° when open', () => {
+  it('blade: the copper lever, hinged at the west cheeks, down in the jaws when closed and raised 65° when open, red knob up', () => {
     const closed = poses(at('blade', { a: 1 }));
-    expect(closed).toHaveLength(6);
+    expect(closed).toHaveLength(3);
+    expect(closed.map((p) => p.batch)).toEqual([BATCH.BOX, BATCH.CYL, BATCH.BALL]);
     expect(closed[0].rz).toBe(0);
     expect(close(closed[0].x, CX + BLADE_HINGE_X + BLADE_LEN / 2) && close(closed[0].sx, BLADE_LEN)).toBe(true);
     const open = poses(at('blade', { a: 0 }));
     expect(close(open[0].rz, BLADE_OPEN_RAD)).toBe(true);
     expect(close(BLADE_OPEN_RAD, (65 * Math.PI) / 180)).toBe(true);
-    // The hinge end stays put: centre − half the blade along its angle is the hinge.
+    // The hinge end stays put: centre − half the lever along its angle is the hinge.
     for (const p of [closed[0], open[0], poses(at('blade', { a: 0.5 }))[0]]) {
-      expect(close(p.x - Math.cos(p.rz) * BLADE_LEN / 2, CX + BLADE_HINGE_X) && close(p.y - Math.sin(p.rz) * BLADE_LEN / 2, TOP + 0.08)).toBe(true);
+      expect(close(p.x - Math.cos(p.rz) * BLADE_LEN / 2, CX + BLADE_HINGE_X) && close(p.y - Math.sin(p.rz) * BLADE_LEN / 2, 10 + BLADE_Y)).toBe(true);
     }
     expect(open[0].y).toBeGreaterThan(closed[0].y + 0.15);
-    expect(open[1].y).toBeGreaterThan(open[0].y); // the handle at the raised free end
+    expect(open[2].y).toBeGreaterThan(open[0].y); // the knob rides the raised free end
+    expect(closed[2].y).toBeGreaterThan(closed[0].y + 0.1); // and stands up from it when closed
+    expect(closed[2].colour).toBe(PAL.red);
     expect(close(poses(at('blade', { a: 0.5 }))[0].rz, BLADE_OPEN_RAD / 2)).toBe(true);
-    expect(closed.slice(2).map((p) => p.x)).toEqual(open.slice(2).map((p) => p.x)); // the hinge cheeks and jaws stay put
   });
 
-  it('cap: sinks CAP_TRAVEL while pressed; an NC button\'s cap is dark', () => {
+  it('cap: a big round cap that sinks CAP_TRAVEL while pressed; red, or black for an NC button', () => {
     const up = poses(at('cap'));
     const down = poses(at('cap', { a: 1 }));
-    expect(close(up[0].y - down[0].y, CAP_TRAVEL)).toBe(true);
+    expect(up.map((p) => p.batch)).toEqual([BATCH.CYL, BATCH.BALL]);
+    expect(close(up[0].y - down[0].y, CAP_TRAVEL) && close(up[1].y - down[1].y, CAP_TRAVEL)).toBe(true);
     expect(close(CAP_TRAVEL, 0.05)).toBe(true);
+    expect(up[0].colour).toBe(PAL.red);
     expect(poses(at('cap', { b: 1 }))[0].colour).not.toBe(up[0].colour);
-    expect(up[0].y).toBeGreaterThan(TOP);
+    expect(down[0].y - down[0].sy / 2).toBeGreaterThanOrEqual(10 + CAP_Y - CAP_TRAVEL - 1e-9); // on its collar
+    expect(up[0].sx).toBeGreaterThan(0.3); // big
   });
 
-  it('hand: points at 2π·(left / s), clockwise from north; honey while holding', () => {
-    const dirOf = (p) => [Math.cos(-p.ry), Math.sin(-p.ry)];
-    const north = poses(at('hand', { a: 0 }))[0];
-    expect(close(north.x, CX) && close(north.z, CZ - HAND_LEN / 2)).toBe(true);
-    const east = poses(at('hand', { a: 0.25 }))[0];
-    expect(close(east.x, CX + HAND_LEN / 2) && close(east.z, CZ)).toBe(true);
-    const south = poses(at('hand', { a: 0.5 }))[0];
-    expect(close(south.z, CZ + HAND_LEN / 2)).toBe(true);
-    const sevenTenths = poses(at('hand', { a: 0.7 }))[0];
-    const [dx, dz] = dirOf(sevenTenths);
-    const want = 2 * Math.PI * 0.7;
-    expect(close(dx * HAND_LEN / 2, sevenTenths.x - CX) && close(dz * HAND_LEN / 2, sevenTenths.z - CZ)).toBe(true);
-    expect(close(Math.sin(want) * HAND_LEN / 2, sevenTenths.x - CX) && close(-Math.cos(want) * HAND_LEN / 2, sevenTenths.z - CZ)).toBe(true);
+  it('hand: on the clock\'s upright face, turned with the timer; 12 o\'clock up, clockwise seen from the front; honey while holding', () => {
+    const [hx, hy] = HAND_HUB;
+    // Face 0: the front is +x, so 3 o'clock (the viewer's right) is −z.
+    const up = poses(at('hand', { a: 0 }), 0, 0)[0];
+    expect(close(up.x, CX + hx) && close(up.y, 10 + hy + HAND_LEN / 2) && close(up.z, CZ)).toBe(true);
+    const three = poses(at('hand', { a: 0.25 }), 0, 0)[0];
+    expect(close(three.y, 10 + hy, 1e-9) && close(three.z, CZ - HAND_LEN / 2)).toBe(true);
+    const six = poses(at('hand', { a: 0.5 }), 0, 0)[0];
+    expect(close(six.y, 10 + hy - HAND_LEN / 2)).toBe(true);
+    // The hand's long axis is its direction: Rx(−2πa) turns +y to (0, cos, −sin).
+    const p = poses(at('hand', { a: 0.7 }), 0, 0)[0];
+    const phi = 2 * Math.PI * 0.7;
+    expect(close(p.rx, -phi) && close(p.y - 10 - hy, Math.cos(phi) * HAND_LEN / 2) && close(p.z - CZ, -Math.sin(phi) * HAND_LEN / 2)).toBe(true);
+    // Face 3 (the default): the clock faces −x, and 3 o'clock is +z.
+    const back = poses(at('hand', { a: 0.25 }), 0, 3)[0];
+    expect(close(back.x, CX - hx) && close(back.z, CZ + HAND_LEN / 2)).toBe(true);
+    expect(poses(at('hand', { a: 0.25 }), 0)[0]).toEqual(back); // a missing face is the default
     expect(poses(at('hand', { a: 0.3, b: 1 }))[0].colour).toBe(0xe8b04a);
-    expect(east.colour).not.toBe(0xe8b04a);
+    expect(three.colour).not.toBe(0xe8b04a);
   });
 
-  it('arm: the armature tilts 12° when energised or pushed; the NC flag only on NC relays', () => {
-    expect(poses(at('arm'))[0].rz).toBe(0);
-    expect(close(poses(at('arm', { a: 1 }))[0].rz, ARM_TILT)).toBe(true);
+  it('arm: the armature tilts 12° down onto the coil when energised or pushed, turned with the relay; NC relays carry a flag', () => {
+    expect(close(poses(at('arm'), 0, 0)[0].rz, 0)).toBe(true);
+    expect(close(poses(at('arm', { a: 1 }), 0, 0)[0].rz, -ARM_TILT)).toBe(true);
     expect(close(ARM_TILT, (12 * Math.PI) / 180)).toBe(true);
+    // Face 0: it reaches from its pivot at the back over the coil at the front (+x); pulled, its front end drops.
+    const rest = poses(at('arm'), 0, 0)[0];
+    const pulled = poses(at('arm', { a: 1 }), 0, 0)[0];
+    expect(close(rest.x, CX + ARM_PIVOT[0] + ARM_LEN / 2) && close(rest.y, 10 + ARM_PIVOT[1])).toBe(true);
+    expect(pulled.y).toBeLessThan(rest.y);
+    // Face 3 turns it half round.
+    expect(close(poses(at('arm'), 0, 3)[0].x, CX - ARM_PIVOT[0] - ARM_LEN / 2)).toBe(true);
     expect(poses(at('arm', { b: 1 }))).toHaveLength(poses(at('arm')).length + 1);
   });
 
-  it('plunger: the T-handle travels from +0.6 above the top (cocked) to +0.1 (pushed home)', () => {
+  it('plunger: the T-handle travels from PLUNGER_UP above the bushing (cocked) to PLUNGER_DOWN (pushed home)', () => {
     const up = poses(at('plunger'));
     const down = poses(at('plunger', { a: 1 }));
+    expect(up.map((p) => p.batch)).toEqual([BATCH.CYL, BATCH.CYL, BATCH.BALL, BATCH.BALL]);
     expect(close(up[0].sy, PLUNGER_UP) && close(down[0].sy, PLUNGER_DOWN)).toBe(true);
-    expect(close(up[1].y, TOP + PLUNGER_UP + 0.035) && close(down[1].y, TOP + PLUNGER_DOWN + 0.035)).toBe(true);
-    expect(close(poses(at('plunger', { a: 0.5 }))[1].y, TOP + 0.35 + 0.035)).toBe(true);
+    expect(close(up[1].y, 10 + PLUNGER_BASE + PLUNGER_UP + 0.045) && close(down[1].y, 10 + PLUNGER_BASE + PLUNGER_DOWN + 0.045)).toBe(true);
+    expect(up[1].y + 0.05).toBeLessThanOrEqual(11); // the cocked handle stays inside the cell
+    expect(close(poses(at('plunger', { a: 0.5 }))[0].sy, (PLUNGER_UP + PLUNGER_DOWN) / 2)).toBe(true);
   });
 
-  it('hammer: still when silent; jitters within ±10° at 15 Hz while ringing', () => {
-    const still = [0, 0.01, 0.02, 0.033].map((t) => poses(at('hammer'), t)[0].ry);
+  it('hammer: still when silent; jitters within ±10° at 15 Hz while ringing, with flashing "ring" dashes round the bell', () => {
+    const still = [0, 0.01, 0.02, 0.033].map((t) => poses(at('hammer'), t)[0].rz);
     expect(new Set(still).size).toBe(1);
+    expect(poses(at('hammer'), 0.05)).toHaveLength(2);
     const base = still[0];
     const ring = [];
-    for (let k = 0; k < 40; k++) ring.push(poses(at('hammer', { a: 1 }), k / 600)[0].ry);
-    for (const ry of ring) expect(Math.abs(ry - base)).toBeLessThanOrEqual(HAMMER_JITTER + 1e-9);
+    for (let k = 0; k < 40; k++) ring.push(poses(at('hammer', { a: 1 }), k / 600)[0].rz);
+    for (const rz of ring) expect(Math.abs(rz - base)).toBeLessThanOrEqual(HAMMER_JITTER + 1e-9);
     expect(Math.max(...ring) - Math.min(...ring)).toBeGreaterThan(HAMMER_JITTER * 1.5);
     // 15 Hz: the pose repeats after 1/15 s.
-    expect(close(poses(at('hammer', { a: 1 }), 0.013)[0].ry, poses(at('hammer', { a: 1 }), 0.013 + 1 / 15)[0].ry)).toBe(true);
+    expect(close(poses(at('hammer', { a: 1 }), 0.013)[0].rz, poses(at('hammer', { a: 1 }), 0.013 + 1 / 15)[0].rz)).toBe(true);
+    // The dashes: six unlit yellow bars, on 60 % of each 1/RING_BLINK_HZ period.
+    const on = poses(at('hammer', { a: 1 }), 0.1 / RING_BLINK_HZ);
+    expect(on).toHaveLength(8);
+    expect(on.slice(2).every((p) => p.batch === BATCH.LIT_BOX)).toBe(true);
+    expect(poses(at('hammer', { a: 1 }), 0.8 / RING_BLINK_HZ)).toHaveLength(2);
   });
 
-  it('bulb: clear glass (alpha 0.35) in two stacked hex prisms — a narrow neck under a wide body — and a tip pip', () => {
-    const b = poses(at('bulb'));
-    expect(b).toHaveLength(3);
-    expect(b.every((p) => p.alpha === BULB_ALPHA)).toBe(true);
-    expect(b[0].sx).toBeLessThan(b[1].sx);
-    expect(b[0].y).toBeLessThan(b[1].y);
-    expect(b[2].y).toBeGreaterThan(b[1].y + b[1].sy / 2 - 0.01);
-    expect(b[0].y - b[0].sy / 2).toBeGreaterThanOrEqual(TOP - 1e-9);
+  it('bulb: a dark lamp shows its clear glass only; a lit one fills it with a warm unlit core, brighter as it brightens', () => {
+    expect(poses(at('bulb', { a: 0 }))).toHaveLength(0);
+    const dim = poses(at('bulb', { a: 0.2 }));
+    const full = poses(at('bulb', { a: 1 }));
+    expect(full).toHaveLength(1);
+    expect(full[0].batch).toBe(BATCH.LIT);
+    expect(close(full[0].y, 10 + BULB_Y) && full[0].sx < BULB_D).toBe(true);
+    const lum = (c) => ((c >> 16) & 255) + ((c >> 8) & 255) + (c & 255);
+    expect(lum(full[0].colour)).toBeGreaterThan(lum(dim[0].colour));
+    expect(BULB_ALPHA).toBe(GLASS_ALPHA);
   });
 
-  it('glow sizes and colours (§4.11); a dark lamp or a spent flash draws nothing', () => {
+  it('glow sizes and colours (§4.11); a dark lamp or a spent flash draws nothing; a hot igniter\'s coil glows too', () => {
     const lamp = poses(at('glow', { glow: 'lamp', a: 0.5 }));
     expect(lamp).toHaveLength(1);
-    expect(close(lamp[0].sx, 0.2 + 0.4 * 0.5) && lamp[0].alpha === 0.5 && lamp[0].colour === 0xffd27a).toBe(true);
+    expect(close(lamp[0].sx, GLOW.lamp.size + 0.55 * 0.5) && lamp[0].alpha === 0.5 && lamp[0].colour === 0xffd27a).toBe(true);
+    expect(close(lamp[0].y, 10 + BULB_Y)).toBe(true);
     expect(poses(at('glow', { glow: 'lamp', a: 0 }))).toHaveLength(0);
-    const sizes = { igniter: [0.35, 0xff4a1a], spark: [0.6, 0xcfe4ff], coherer: [0.25, 0x9fd0ff], charge: [0.12, 0xf4f1ea], fuse: [0.22, 0xffcf6a] };
+    const sizes = { spark: [0.6, 0xcfe4ff], coherer: [0.35, 0x9fd0ff], charge: [0.14, 0xf4f1ea], fuse: [0.22, 0xffcf6a] };
     for (const [kind, [size, colour]] of Object.entries(sizes)) {
       const p = poses(at('glow', { glow: kind, a: 1, b: -1 }), 1.3);
       expect(p.length, kind).toBeGreaterThanOrEqual(1);
+      expect(p[0].batch, kind).toBe(BATCH.GLOW);
       expect(close(p[0].sx, size) && p[0].colour === colour && p[0].sy <= p[0].sx * 1.2, kind).toBe(true);
       expect(p[0].alpha).toBeGreaterThan(0);
       expect(GLOW[kind].size).toBe(size);
     }
+    const ig = poses(at('glow', { glow: 'igniter', a: 1 }), 0.4);
+    expect(ig).toHaveLength(5);
+    expect(ig.slice(0, 4).every((p) => p.batch === BATCH.LIT_BOX)).toBe(true);
+    expect(ig[4].batch === BATCH.GLOW && close(ig[4].sx, GLOW.igniter.size) && ig[4].colour === 0xff4a1a).toBe(true);
+    expect(poses(at('glow', { glow: 'igniter', a: 0 }))).toHaveLength(0);
     expect(poses(at('glow', { glow: 'spark', a: 0 }))).toHaveLength(0);
     expect(poses(at('glow', { glow: 'coherer', a: 0 }))).toHaveLength(0);
     // The torch's flame: 0.10 wide, taller than wide (drawn as a tongue of flame), with a dim halo.
@@ -480,11 +620,14 @@ describe('overlayPose (§4.11)', () => {
     expect(ember).toHaveLength(2);
     expect(close(ember[0].sx, 0.1) && ember[0].sy > 1.2 * ember[0].sx && ember[0].colour === 0xff7a2a).toBe(true);
     expect(ember[1].alpha).toBeLessThan(ember[0].alpha);
-    // The charge twinkles irregularly but never goes out.
+    // The charge twinkles irregularly on the sphere's crown but never goes out.
     const tw = [];
     for (let k = 0; k < 200; k++) tw.push(poses(at('glow', { glow: 'charge', a: 1 }), k * 0.05)[0].alpha);
     expect(Math.min(...tw)).toBeGreaterThan(0.3);
     expect(Math.max(...tw) - Math.min(...tw)).toBeGreaterThan(0.3);
+    const crown = Math.max(...bodies(build(fakeWorld().set(3, 10, -2, B.COLLAPSAR_CHARGE), 0, 10.5, 0))
+      .filter((p) => p.batch === BATCH.BALL).map((p) => p.y + p.sy / 2));
+    expect(Math.abs(poses(at('glow', { glow: 'charge', a: 1 }))[0].y - crown)).toBeLessThan(0.03);
     expect(poses(at('glow', { glow: 'bogus', a: 1 }))).toHaveLength(0);
   });
 
@@ -556,9 +699,12 @@ describe('overlayPose (§4.11)', () => {
     expect(close(lit[0].x, CX) && lit[0].sx > CHAR_W).toBe(true);
     const cold = poses(at('staff', { staff: 'filament', a: 0 }));
     const hot = poses(at('staff', { staff: 'filament', a: 1 }));
-    expect(cold).toHaveLength(3);
-    expect(cold[0].colour).toBe(0x2a2622);
-    expect(hot[0].colour).toBe(0xffe6a8);
+    expect(cold).toHaveLength(5); // two supports and a three-piece carbon loop, inside the bulb, unlit (they glow)
+    expect(cold.every((p) => p.batch === BATCH.LIT_BOX)).toBe(true);
+    for (const p of cold) expect(Math.hypot(p.x - CX, p.y - 10 - BULB_Y, p.z - CZ)).toBeLessThan(BULB_D / 2);
+    expect(cold[2].colour).toBe(0x2a2622);
+    expect(hot[2].colour).toBe(0xffe6a8);
+    expect(hot[0].colour).toBe(cold[0].colour); // the supports do not glow
   });
 
   it('writes nothing for unknown types or bad cells, never more than MAX_POSES, and reuses its pose objects', () => {
@@ -567,8 +713,9 @@ describe('overlayPose (§4.11)', () => {
     expect(overlayPose(null, 0, [])).toBe(0);
     const out = [];
     for (const type of Object.keys(MAX_POSES)) {
-      for (const extra of [{ a: 1, b: 1 }, { a: 0, b: 0 }, { glow: 'ember', a: 1 }, { staff: 'torch' }, { glow: 'lamp', a: 1 }, { staff: 'char', a: 1, b: 2 }]) {
-        expect(overlayPose(at(type, extra), 0.4, out)).toBeLessThanOrEqual(MAX_POSES[type]);
+      for (const extra of [{ a: 1, b: 1 }, { a: 0, b: 0 }, { glow: 'ember', a: 1 }, { staff: 'torch' }, { glow: 'lamp', a: 1 },
+        { staff: 'char', a: 1, b: 2 }, { glow: 'igniter', a: 1 }, { staff: 'filament', a: 1 }]) {
+        for (const t of [0, 0.4, 0.05]) expect(overlayPose(at(type, extra), t, out, 2)).toBeLessThanOrEqual(MAX_POSES[type]);
       }
     }
     const first = out[0];

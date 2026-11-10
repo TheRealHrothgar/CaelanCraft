@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { CIRCUIT_TILE_NAMES, CIRCUIT_RECIPES, CIRCUIT_FLAT_TILES } from '../../src/circuitTiles.js';
+import { CIRCUIT_TILE_NAMES, CIRCUIT_RECIPES, CIRCUIT_FLAT_TILES, DEVICE_PICTURES, DEVICE_SWATCHES } from '../../src/circuitTiles.js';
 import { paintTile, TILE_NAMES } from '../../src/tiles.js';
 import { TILE, BLOCKS, getFaceTile, FACE_TOP } from '../../src/blocks.js';
 
@@ -11,8 +11,15 @@ const BYTES = 16 * 16 * 4;
 const CIRCUIT_IDS = Object.keys(CIRCUIT_TILE_NAMES).map(Number);
 const KEG_IDS = [TILE.BARREL_SIDE, TILE.BARREL_TOP];
 const ALL = [...CIRCUIT_IDS, ...KEG_IDS];
-const FLAT = [TILE.POWDER_FUSE, TILE.TORCH, TILE.COPPER_WIRE, TILE.BROWN_WIRE, TILE.WHITE_WIRE, TILE.EARTH_WIRE];
-const CABINETS = CIRCUIT_IDS.filter((t) => t !== TILE.CIRCUIT_CLEAR && !FLAT.includes(t));
+const THIN_FLAT = [TILE.POWDER_FUSE, TILE.TORCH, TILE.COPPER_WIRE, TILE.BROWN_WIRE, TILE.WHITE_WIRE, TILE.EARTH_WIRE];
+/** The 14 device pictures (their *_top tiles: the icon of each 3D model, since the "fun and simple" redo). */
+const PICTURES = [
+  TILE.COLLAPSAR_TOP, TILE.TERMINAL_TOP, TILE.BATTERY_TOP, TILE.BLASTER_TOP, TILE.SELENIUM_TOP, TILE.SWITCH_TOP,
+  TILE.BUTTON_TOP, TILE.TIMER_TOP, TILE.RELAY_TOP, TILE.IGNITER_TOP, TILE.LAMP_TOP, TILE.BELL_TOP, TILE.TX_TOP, TILE.RX_TOP,
+];
+const FLAT = [...THIN_FLAT, ...PICTURES];
+/** The 14 device swatches (their *_side tiles, which nothing draws). */
+const SWATCHES = CIRCUIT_IDS.filter((t) => t !== TILE.CIRCUIT_CLEAR && !FLAT.includes(t));
 /** FNV-1a of the v0.8 painters' output (before §3.5's repaint), recorded when package C started. */
 const OLD_HASH = Object.freeze({ [TILE.BARREL_SIDE]: 0xc2b6fbee, [TILE.BARREL_TOP]: 0xd2c176e8 });
 
@@ -59,13 +66,35 @@ describe('circuit tile set (§1.4, §6.2.9)', () => {
     for (const name of Object.values(CIRCUIT_TILE_NAMES)) expect(typeof CIRCUIT_RECIPES[name], name).toBe('function');
     expect(Object.keys(CIRCUIT_RECIPES).sort()).toEqual([...Object.values(CIRCUIT_TILE_NAMES), 'barrel_side', 'barrel_top'].sort());
     expect(Object.isFrozen(CIRCUIT_RECIPES) && Object.isFrozen(CIRCUIT_TILE_NAMES) && Object.isFrozen(CIRCUIT_FLAT_TILES)).toBe(true);
+    expect(Object.isFrozen(DEVICE_PICTURES) && Object.isFrozen(DEVICE_SWATCHES)).toBe(true);
   });
 
-  it('the flat pictures are exactly the THIN blocks\' top tiles', () => {
+  it('the flat pictures are exactly the flat-icon blocks\' top tiles: the six thin parts and the 14 devices', () => {
     const flatBlocks = BLOCKS.filter((b) => b.icon === 'flat');
-    expect(flatBlocks).toHaveLength(6);
-    expect(flatBlocks.map((b) => TILE_NAMES[getFaceTile(b.id, FACE_TOP)]).sort()).toEqual([...CIRCUIT_FLAT_TILES].sort());
-    expect(FLAT.map((t) => TILE_NAMES[t]).sort()).toEqual([...CIRCUIT_FLAT_TILES].sort());
+    expect(flatBlocks).toHaveLength(20);
+    const want = [...CIRCUIT_FLAT_TILES, ...Object.keys(DEVICE_PICTURES)].sort();
+    expect(flatBlocks.map((b) => TILE_NAMES[getFaceTile(b.id, FACE_TOP)]).sort()).toEqual(want);
+    expect(FLAT.map((t) => TILE_NAMES[t]).sort()).toEqual(want);
+    expect(THIN_FLAT.map((t) => TILE_NAMES[t]).sort()).toEqual([...CIRCUIT_FLAT_TILES].sort());
+    // Each device's side tile is its swatch, which nothing draws (the device is a model, not a meshed prism).
+    expect(SWATCHES.map((t) => TILE_NAMES[t]).sort()).toEqual(Object.keys(DEVICE_SWATCHES).sort());
+  });
+
+  it('every device picture is 16 rows of 16 letters, each with a colour, and uses a colour of every letter it defines', () => {
+    expect(Object.keys(DEVICE_PICTURES)).toHaveLength(14);
+    for (const [name, art] of Object.entries(DEVICE_PICTURES)) {
+      expect(art.rows, name).toHaveLength(16);
+      const used = new Set();
+      for (const row of art.rows) {
+        expect(row, name).toHaveLength(16);
+        for (const ch of row) {
+          if (ch === '.') continue;
+          expect(Number.isInteger(art.pal[ch]) && art.pal[ch] >= 0 && art.pal[ch] <= 0xffffff, `${name} '${ch}'`).toBe(true);
+          used.add(ch);
+        }
+      }
+      expect([...used].sort(), name).toEqual(Object.keys(art.pal).sort());
+    }
   });
 
   it('paints deterministically: twice through paintTile, and once more straight from the recipe with a fresh stream', () => {
@@ -104,7 +133,7 @@ describe('circuit tile alpha (§1.4)', () => {
     for (let i = 3; i < BYTES; i += 4) expect(px[i]).toBe(0);
   });
 
-  it('the flat pictures have alpha-0 corners, at least 40 opaque pixels and no partial alpha', () => {
+  it('the flat pictures (thin parts and devices) have alpha-0 corners, at least 40 opaque pixels and no partial alpha', () => {
     for (const t of FLAT) {
       const px = paintTile(t);
       for (const [x, y] of [[0, 0], [15, 0], [0, 15], [15, 15]]) expect(px[idx(x, y) + 3], `${TILE_NAMES[t]} (${x},${y})`).toBe(0);
@@ -118,9 +147,9 @@ describe('circuit tile alpha (§1.4)', () => {
     }
   });
 
-  it('the 28 cabinet tiles and both keg tiles are alpha 255 everywhere', () => {
-    expect(CABINETS).toHaveLength(28);
-    for (const t of [...CABINETS, ...KEG_IDS]) {
+  it('the 14 device swatches and both keg tiles are alpha 255 everywhere', () => {
+    expect(SWATCHES).toHaveLength(14);
+    for (const t of [...SWATCHES, ...KEG_IDS]) {
       const px = paintTile(t);
       for (let i = 3; i < BYTES; i += 4) expect(px[i], `${TILE_NAMES[t]} byte ${i}`).toBe(255);
     }
@@ -180,18 +209,55 @@ describe('circuit tile art (§1.4, §3.5, §9)', () => {
     expect(opaque(TILE.WHITE_WIRE).map(([r, g, b]) => (r << 16) | (g << 8) | b)).toContain(0xe8e2d0);
   });
 
-  it('cabinet tops carry their working faces: the charge\'s pinprick, the timer\'s cream dial, the bell\'s nickel gong', () => {
-    const lens = paintTile(TILE.COLLAPSAR_TOP);
-    const centre = [rgba(lens, 7, 7), rgba(lens, 8, 8)];
-    expect(centre.every(([r, g, b]) => r > 230 && g > 230 && b > 220)).toBe(true);
-    expect(rgba(lens, 8, 5).slice(0, 3).every((v) => v < 30)).toBe(true); // the black lens round it
-    const dial = paintTile(TILE.TIMER_TOP);
-    const [r, g, b] = rgba(dial, 5, 9);
-    expect(r > 200 && g > 190 && b > 160).toBe(true);
-    const gong = paintTile(TILE.BELL_TOP);
-    const [gr, gg, gb] = rgba(gong, 11, 9);
-    expect(Math.min(gr, gg, gb)).toBeGreaterThan(150);
-    expect(hsv(gr, gg, gb).sat).toBeLessThan(0.15); // nickel, not brass
+  it('the device pictures show their models: the black charge and its amber seam, the battery\'s "+", the big red button…', () => {
+    const colours = (t) => opaque(t).map(([r, g, b]) => (r << 16) | (g << 8) | b);
+    const count = (t, hex) => colours(t).filter((c) => c === hex).length;
+    // The collapsar: a black sphere (mostly near-black), its amber seam across the middle, a white pinprick on the crown.
+    const charge = paintTile(TILE.COLLAPSAR_TOP);
+    expect(opaque(TILE.COLLAPSAR_TOP).filter(([r, g, b]) => Math.max(r, g, b) < 40).length).toBeGreaterThan(60);
+    for (let x = 1; x <= 14; x++) expect(rgba(charge, x, 7).slice(0, 3), `seam ${x}`).toEqual([0xff, 0xa0, 0x40]);
+    expect(rgba(charge, 7, 1).slice(0, 3).every((v) => v > 220)).toBe(true);
+    // The battery: teal, a copper cap, and a yellow "+" in its dark band.
+    const battery = paintTile(TILE.BATTERY_TOP);
+    expect(count(TILE.BATTERY_TOP, 0x2f9e8f)).toBeGreaterThan(15);
+    expect(count(TILE.BATTERY_TOP, 0xd9843f)).toBeGreaterThan(2);
+    for (const [x, y] of [[7, 8], [6, 9], [7, 9], [8, 9], [7, 10]]) expect(rgba(battery, x, y).slice(0, 3)).toEqual([0xf5, 0xc5, 0x42]);
+    // The big red button, the red bell, the alarm clock's cream face, the lamp's glass and glowing filament.
+    expect(count(TILE.BUTTON_TOP, 0xe0402a)).toBeGreaterThan(20);
+    expect(count(TILE.BELL_TOP, 0xd23c2c)).toBeGreaterThan(20);
+    expect(count(TILE.TIMER_TOP, 0xfaf3df)).toBeGreaterThan(20);
+    expect(count(TILE.TIMER_TOP, 0x3a86d4)).toBeGreaterThan(5);
+    expect(count(TILE.LAMP_TOP, 0xeaf4ff)).toBeGreaterThan(20);
+    expect(colours(TILE.LAMP_TOP)).toContain(0xff9a20);
+    // The switch's red knob and copper lever; the transmitter's blue waves; the selenium dish's blue cells.
+    expect(colours(TILE.SWITCH_TOP)).toEqual(expect.arrayContaining([0xe0402a, 0xe08a44]));
+    expect(count(TILE.TX_TOP, 0x7ab8ff)).toBeGreaterThan(6);
+    expect(count(TILE.SELENIUM_TOP, 0x2a4a8a)).toBeGreaterThan(8);
+    // Every picture has a dark outline: a darker pixel on every row it occupies, at its left edge.
+    for (const t of PICTURES) {
+      const px = paintTile(t);
+      for (let y = 0; y < 16; y++) {
+        let x = 0;
+        while (x < 16 && px[idx(x, y) + 3] === 0) x++;
+        if (x === 16) continue;
+        const [r, g, b] = rgba(px, x, y);
+        const yellowDash = r > 200 && g > 200; // the bell's and igniter's "ringing" / sparks stand free of the outline
+        const blueWave = b > 200 && r < 150;
+        if (yellowDash || blueWave) continue;
+        expect(Math.max(r, g, b), `${TILE_NAMES[t]} row ${y}`).toBeLessThan(100);
+      }
+    }
+  });
+
+  it('the device swatches are their models\' main colours, all different', () => {
+    expect(new Set(Object.values(DEVICE_SWATCHES)).size).toBe(14);
+    for (const [name, hex] of Object.entries(DEVICE_SWATCHES)) {
+      const t = Number(Object.keys(CIRCUIT_TILE_NAMES).find((id) => CIRCUIT_TILE_NAMES[id] === name));
+      const px = opaque(t);
+      const mean = [0, 1, 2].map((c) => px.reduce((s, p) => s + p[c], 0) / px.length);
+      const want = [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
+      for (let c = 0; c < 3; c++) expect(Math.abs(mean[c] - want[c]), `${name} channel ${c}`).toBeLessThan(3);
+    }
   });
 });
 
