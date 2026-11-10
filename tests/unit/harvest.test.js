@@ -7,6 +7,7 @@ import { ITEMS, TOOL_TYPES, TIER_SPEED, isItemKey, itemForBlock, getItem } from 
 import {
   BLOCK_RULES, ruleFor, canHarvest, breakSeconds, harvestHint, rollDrops, rollGroups, PICKABLE, isPickable, pick, tap,
   Tapped, Regrowth, RIPE_OF, ripeOf, MOB_DROPS, rollMobDrops, toolPower, UNDERWATER_DIG_FACTOR, MIN_BREAK_S,
+  HAND_GATHER, handGatherHint, withArticle, DIG_TOOL_TYPES,
 } from '../../src/harvest.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
 import { mulberry32 } from '../../src/noise.js';
@@ -647,5 +648,42 @@ describe('mob drops and tool power (§4.3, §5.1)', () => {
     expect(toolPower(tool('flint_spear'))).toBe(3);
     expect(toolPower(tool('steel_sword'))).toBe(5);
     for (const def of Object.values(ITEMS)) if (def.tool) expect(toolPower(def.tool)).toBe(def.tool.power);
+  });
+});
+
+describe('the bare-hand gathering hint (§6.2; play-test fb-first-hour)', () => {
+  const B = BLOCK;
+  it('tussock, cattails, the tuber plant, gravel and clay say to hold the left mouse button, with the Handbook\'s verb', () => {
+    // their neighbours (loose stones, fallen branches) say "R: pick"; these gave no hint at all and R did nothing
+    expect(handGatherHint(B.TUSSOCK)).toBe('Tussock Grass · hold LMB: pull');
+    expect(handGatherHint(B.CATTAILS)).toBe('Cattails · hold LMB: pull');
+    expect(handGatherHint(B.TUBER_PLANT)).toBe('Wild Tuber Plant · hold LMB: pull');
+    expect(handGatherHint(B.GRAVEL)).toBe('Gravel · hold LMB: dig');
+    expect(handGatherHint(B.CLAY)).toBe('Clay · hold LMB: dig');
+    for (const id of Object.keys(HAND_GATHER).map(Number)) {
+      expect(isPickable(id), String(id)).toBe(false); // R picks none of them …
+      expect(canHarvest(id, null), String(id)).toBe(true); // … and bare hands break all of them
+      expect(harvestHint(id)).toBe(null); // no tier hint competes
+    }
+  });
+
+  it('every other block has none (ordinary digging has no hint, as in Creative)', () => {
+    for (const id of [B.DIRT, B.STONE, B.OAK_LEAVES, B.LOOSE_STONES, B.HONEYBERRY_BUSH, B.AIR, -1, 999]) expect(handGatherHint(id)).toBe(null);
+    expect(handGatherHint(/** @type {any} */ ('constructor'))).toBe(null);
+  });
+});
+
+describe('articles and dig-tool types', () => {
+  it('withArticle: "a bronze pick", "an iron hammer" (play-test: "needs a iron hammer")', () => {
+    expect(withArticle('bronze pick')).toBe('a bronze pick');
+    expect(withArticle('iron hammer or better')).toBe('an iron hammer or better');
+    expect(withArticle('obsidian knife')).toBe('an obsidian knife');
+  });
+
+  it('DIG_TOOL_TYPES are the five that break blocks; spear, sword and the kiln kit are not among them', () => {
+    expect([...DIG_TOOL_TYPES].sort()).toEqual(['axe', 'hammer', 'knife', 'pick', 'spade']);
+    for (const t of ['spear', 'sword', 'firestarter', 'crucible', 'mold']) expect(DIG_TOOL_TYPES.has(t)).toBe(false);
+    // every rule's tool is a dig-tool type
+    for (const rule of BLOCK_RULES) if (rule && rule.tool) expect(DIG_TOOL_TYPES.has(rule.tool), rule.tool).toBe(true);
   });
 });

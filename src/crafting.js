@@ -23,6 +23,8 @@ import { TAGS, TIER_NAMES, TOOL_TYPES, isItemKey, itemName } from './items.js';
  * @property {(key: string, n: number) => unknown} take        removes n of that key (callers check count first)
  * @property {(tag: string, n: number) => unknown} takeTag     removes n of the tag's members, in TAGS order
  * @property {(stacks: {k: string, n: number}[]) => boolean} canGive   all of them would fit
+ * @property {(takes: Iterable<[string, number]>, gives: {k: string, n: number}[]) => boolean} [canExchange]   all of
+ *   `gives` would fit once `takes` ([key, n] pairs) are removed (inventory.js Pack has it; `canGive(gives)` otherwise)
  * @property {(key: string, n: number) => number} give         adds n; returns how many did not fit
  * @property {(type: string, minTier: number) => boolean} hasTool
  * @property {(type: string, minTier: number) => ({key: string, broke: boolean}|null)} useTool   1 wear on the qualifying
@@ -293,6 +295,11 @@ export function inputLabel(inp) {
   return 'tag' in inp ? TAG_LABELS[inp.tag] ?? `#${inp.tag}` : itemName(inp.k);
 }
 
+/** "a stone hammer or better", "an iron hammer or better". @param {string} label a toolLabel */
+export function withArticle(label) {
+  return `${/^[aeiou]/i.test(label) ? 'an' : 'a'} ${label}`;
+}
+
 /**
  * @param {string} type @param {number} tier
  * @returns {string} "flint knife or better", "steel hammer" (nothing is better), "fire drill" (tier-0 kit)
@@ -522,7 +529,7 @@ export class CraftQueue {
       }
       const tools = missingTools(rec, pack);
       if (tools.length) {
-        reason = `needs a ${tools.join(' and a ')}`;
+        reason = `needs ${tools.map(withArticle).join(' and ')}`;
         break;
       }
       const list = [...this.jobs().map((j) => j.recipe), rec];
@@ -611,14 +618,18 @@ export class CraftQueue {
   /** @returns {'done'|'wait'|'failed'} */
   _complete(job, pack, ev) {
     const rec = job.recipe;
-    if (!pack.canGive(rec.outputs.map((o) => ({ k: o.k, n: o.n })))) return 'wait';
     // Take what the queue-wide reservation gives this job, so a tag input never eats an exact key that a job queued later
     // reserved (7 coal for a Coal Block, while a kiln job's #fuel takes the charcoal); when the pack changed so much that
     // the whole queue no longer fits, the job takes what it alone can.
     const all = this.jobs();
     const joint = allocate(all.map((j) => j.recipe), packCounts(pack))[all.indexOf(job)];
     const alloc = joint && joint.short.every((v) => v === 0) ? joint : allocate([rec], packCounts(pack))[0];
-    const missing = shortLabels([rec], [alloc]).concat(missingTools(rec, pack).map((t) => `a ${t}`));
+    const outputs = rec.outputs.map((o) => ({ k: o.k, n: o.n }));
+    // "Pack full" is judged on the pack as it will be once the inputs are taken, so a recipe that gives back the slot it
+    // empties (scrape_salt: Salt-crusted Pot → Salt + Clay Pot) completes in a full pack (play-test).
+    const fits = typeof pack.canExchange === 'function' ? pack.canExchange(alloc.takes, outputs) : pack.canGive(outputs);
+    if (!fits) return 'wait';
+    const missing = shortLabels([rec], [alloc]).concat(missingTools(rec, pack).map(withArticle));
     if (missing.length) {
       this._fail(/** @type {CraftJob[]} */ (this._lanes.get(job.station)), ev, `missing ${missing.join(', ')}`);
       return 'failed';

@@ -290,7 +290,8 @@ const PICKER_OPEN = 'picker-open';
  * @property {(level: number, kind?: 'white'|'void') => void} setFlashOverlay   the black hole's screen flash (#flash-overlay,
  *   created before the crosshair when index.html has none): opacity = level 0..1 in 1/32 steps, hidden at 0, white or void;
  *   the DOM is touched only when the step or the kind changes
- * @property {(text: string, isError?: boolean) => void} addChatLine  HUD chat log (last CHAT_LINES lines, each fades after CHAT_LINE_MS)
+ * @property {(text: string, isError?: boolean, ms?: number) => void} addChatLine  HUD chat log (last CHAT_LINES lines, each
+ *   fades after CHAT_LINE_MS, or after `ms` when given: the Survival intro lines stay INTRO_LINE_MS, §1.2)
  * @property {(slot: number) => void} onSlotClick                     assignable; fired for hotbar slot clicks while the picker is open
  * @property {() => void} dispose                                     clears timers and removes listeners
  *
@@ -638,7 +639,8 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
   const chatTimers = new Set();
 
   /** @param {string} text @param {boolean} [isError=false] */
-  function addChatLine(text, isError = false) {
+  function addChatLine(text, isError = false, ms = CHAT_LINE_MS) {
+    const life = Number.isFinite(ms) && ms > 0 ? ms : CHAT_LINE_MS;
     const lines = String(text ?? '').split('\n');
     for (const line of lines) {
       const div = doc.createElement('div');
@@ -653,7 +655,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
           if (div.parentNode === chatLogEl) chatLogEl.removeChild(div);
         }, TOAST_FADE_MS);
         chatTimers.add(t2);
-      }, CHAT_LINE_MS);
+      }, life);
       chatTimers.add(timer);
     }
     while (chatLogEl.childNodes.length > CHAT_LINES && chatLogEl.firstChild) chatLogEl.removeChild(chatLogEl.firstChild);

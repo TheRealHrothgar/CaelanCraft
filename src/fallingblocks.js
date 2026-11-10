@@ -650,8 +650,8 @@ export class FallingBlocks {
 
   /**
    * Land block `id` into cell (q, cy, r). A body the block would trap is lifted with liftFreeY (from floor(y)+1, up to
-   * LIFT_MAX_UP, sweeping up one cell at a time so it never passes through a solid roof); when one has no room the block
-   * breaks into dust instead (never bury the player). A refused write
+   * LIFT_MAX_UP, sweeping up one cell at a time so it never passes through a solid roof) and reported through
+   * `hooks.lifted(body, cells)`; when one has no room the block breaks into dust instead (never bury the player). A refused write
    * ('capped' / 'failed') also breaks it. The write is recorded into event `ev` while that is still undoable.
    * @returns {boolean} placed
    */
@@ -702,8 +702,11 @@ export class FallingBlocks {
     }
     for (let i = 0; i < lifts.length; i += 2) {
       const b = /** @type {PlayerState} */ (lifts[i]);
-      b.y = /** @type {number} */ (lifts[i + 1]);
+      const fy = /** @type {number} */ (lifts[i + 1]);
+      const cells = Math.max(1, Math.ceil(fy - b.y - 1e-6));
+      b.y = fy;
       if (b.vy < 0) b.vy = 0;
+      physics.hooks.lifted(b, cells); // the body is free now: only this tells main it was crushed (§2.4)
     }
     lifts.length = 0;
     this._noteLanding(id, x, cy, z);

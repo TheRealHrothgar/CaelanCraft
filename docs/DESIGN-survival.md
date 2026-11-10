@@ -147,7 +147,10 @@ validation is in §9.6.
 - `containers`: wicker baskets and belongings, keyed by cell. It is written only when non-empty.
 - **Version.** `serializeSave` writes `version: 3` when `gen` ≥ 2 or a `survival` object is present, and `version: 2`
   otherwise. *An older client (v0.8 in another tab, or a rollback) reads version 3 as unloadable and shows the slot as damaged,
-  which it never overwrites, instead of silently dropping the pack and regenerating gen-1 terrain under gen-2 edits.*
+  which it never overwrites, instead of silently dropping the pack and regenerating gen-1 terrain under gen-2 edits. The slot-index
+  entry written for a version-3 document is the damaged form `{ damaged: true, bytes, hash }` as well (storage `indexEntryOf`), because
+  v0.8 trusts any rich entry whose bytes and hash match — with one it listed the Survival world as a normal world and its `?autoplay`
+  boot saved a fresh gen-1 world over it (play-test). v0.9 never trusts a damaged entry, so it still lists the world.*
 - *A Creative world that never entered Survival writes none of these and stays version 2, so it serialises byte-identically to
   before (tested).*
 
@@ -254,10 +257,10 @@ Main applies the result:
 
 | Cause key | Source | Amount | Hook |
 |---|---|---|---|
-| `fall` | Landing at impact speed v (m/s) | `FALL_DAMAGE_K·(v² − FALL_SAFE_SPEED²)` = `0.1·(v² − 13.5²)` when v > 13.5, × soft-landing factor | `player.landSpeed` (physics, §9.3), consumed by `survival.step` |
+| `fall` | Landing at impact speed v (m/s) | `FALL_DAMAGE_K·(v² − FALL_SAFE_SPEED²)` = `0.1·(v² − 14²)` when v > 14, × soft-landing factor | `player.landSpeed` (physics, §9.3), consumed by `survival.step` |
 | `drown` | Breath 0 with the head under water | 8 HP/s | `headInWater` |
 | `buried` | Breath 0 with the eye inside a solid cell and no free space within 3 above | 8 HP/s | `unstickPlayer` (§9.5) |
-| `crush` | Falling ground (sand, gravel, a collapse) fills the player's cell | `CRUSH_DAMAGE_PER_CELL` = 6 × cells lifted | `unstickPlayer` (§9.5) |
+| `crush` | Falling ground (sand, gravel, a collapse) fills the player's cell | `CRUSH_DAMAGE_PER_CELL` = 6 × cells lifted | the `lifted` physics hook (§9.5 step 9), or `unstickPlayer` for any other write |
 | `fire` | Scorched by stepping into a campfire | 4 HP per scorch (at most one per 0.5 s) | `stepCampfires` → `scorchPlayer` |
 | `zombie` | A zombie's strike | `ZOMBIE_DAMAGE` = 8 per strike (push unchanged) | `stepZombies` `ev.attacks` |
 | `blast` / `log` | A blast or a toppled log | `6·max(0, dv − 5)`, dv = impulse speed | `physicsHooks.knock` player branch → `pendingKnock` |
@@ -271,15 +274,17 @@ Main applies the result:
 Notes on the table:
 - **Fall.**
   - **Impact speeds** come from the real integrator: `stepPlayer` is semi-implicit Euler at 1/60 s, so a fall of d cells lands at
-    `v = 28·n/60`, where n is the first step with `28·n(n+1)/7200 ≥ d`. With the safe speed 13.5 m/s:
+    `v = 28·n/60`, where n is the first step with `28·n(n+1)/7200 ≥ d`. With the safe speed 14 m/s:
 
     | Cells fallen | 3 | 4 | 5 | 6 | 8 | 10 | 12 | 15 | 20 | 21 | 22 |
     |---|---|---|---|---|---|---|---|---|---|---|---|
     | v (m/s) | 13.07 | 14.93 | 16.80 | 18.20 | 21.00 | 23.80 | 26.13 | 28.93 | 33.60 | 34.07 | 35.00 |
-    | HP lost | 0 | 4.1 | 10.0 | 14.9 | 25.9 | 38.4 | 50.1 | 65.5 | 94.7 | 97.8 | 104.3 |
+    | HP lost | 0 | 2.7 | 8.6 | 13.5 | 24.5 | 37.0 | 48.7 | 64.1 | 93.3 | 96.5 | 102.9 |
 
-    So 3 cells is safe, 21 cells leaves about 2 HP from full health, and 22 cells kills. *The safe speed is 13.5, not 13, because
-    the integrator lands a 3-cell drop at 13.07 m/s.*
+    So 3 cells is safe, 21 cells leaves about 3.5 HP from full health, and 22 cells kills. *The safe speed is 14, not 13 or 13.5:
+    the integrator lands a 3-cell drop at 13.07 m/s, and a plain JUMP off a 2-cell ledge (JUMP_VELOCITY 8.7 added to the fall)
+    lands at 13.70 m/s — at 13.5 the most ordinary hop in a voxel game cost 0.54 HP with the full hurt flash and sound (play-test).
+    A 4-cell drop (14.93) still hurts.*
   - **Water** cushions completely, because physics cuts a fall to −3 m/s in swim-depth water. Wading water does not.
   - **Soft landings.** The factor is the **softest** over the cells under the feet (`physics.supportingCells(player, getBlock)`)
     when the player lands. *The factors follow how much each surface gives.*
@@ -303,9 +308,12 @@ Notes on the table:
   - **Choosing the cause.** The knock hook runs inside `_blast`, before `explosions.lastBlast` and `blastCount` are updated, so
     the hook only records `pendingKnock = max(pendingKnock, |Δv|)`. Main then compares `blastCount` before and after
     `blockPhysics.step` (§9.5): changed → `'blast'`, else `'log'`.
-- **Crush and buried.** `unstickPlayer` lifts the player out of a cell that has filled in.
-  - When it lifts the player in Survival, on a frame that is not a teleport frame, with no `fallGrace` and no `log` or `blast`
-    damage this frame: `hurt(6 × cellsLifted, 'crush')`.
+- **Crush and buried.** A landing block (sand, gravel, a collapse) that fills the player's cell lifts the player itself, inside
+  `blockPhysics.step` (`_placeLanded`, §34.3), and reports the lift through the `lifted(body, cells)` physics hook; main sums the
+  player's into `pendingCrush` and, right after the step, in Survival, on a frame that is not a teleport frame, with no `fallGrace`
+  and no `log` or `blast` damage this frame: `hurt(6 × cells, 'crush')`. *Before the play-test the crush was expected from
+  `unstickPlayer`, which runs after the step and found the player already standing on the sand — the danger class was dead.*
+  `unstickPlayer` still lifts the player out of a cell filled by anything else (a command, a rune, the Watcher) under the same rule.
   - When `findFreeY` returns null (buried more than 3 deep) and the eye cell is solid, `buried` is true for that frame: breath
     drains as under water, and at breath 0 the player takes 8 HP/s with cause `buried`.
 - **Damage feedback:**
@@ -326,8 +334,12 @@ happens in the middle of another system's step.*
      the first cell that stands on a solid one (at most 8 cells), so a death in mid-air leaves the belongings on the ground.
      It tries that cell, then up to 3 cells above it, then its 6 side neighbours;
    - the first cell that `isReplaceable` (AIR or a liquid) takes it, written with `world.setBlock`;
+   - when none is — a burial: a cave-in, a block written onto the player — the same candidates are tried again for the first
+     solid cell that is not BEDROCK, so the heap replaces the block that killed the player and is dug out like any other
+     (play-test: a `buried` death lost the whole pack, the harshest outcome in the game for the one death a fitting cell can never
+     survive);
    - the contents go into `containers` (§5.6). *A death bypasses `MAX_CONTAINERS`.*
-   - if no cell fits, or the cause is `blackhole` or `void`, the items are **lost**.
+   - if every candidate is bedrock, or the cause is `blackhole` or `void`, the items are **lost**.
 3. **State.**
    - `survival.dead = cause`, `deaths++`;
    - clear the craft lanes and the dig and use state;
@@ -598,7 +610,9 @@ safe zone for good*):
   spot items stay on the pit, frozen; R on the pit takes them.
 - **Relighting.** R on an empty FIRE_PIT with a Fire Drill in the pack, 1 `#tinder` and 3 sticks: hold R for
   `RELIGHT_HOLD_S` (3 s). It takes the tinder and sticks, costs the drill 1 wear, writes CAMPFIRE with `playerSetBlock`, and
-  starts the fuel at 300 s. Hint: `Cold Fire Pit · hold R to relight (drill, tinder, 3 sticks)`.
+  starts the fuel at 300 s. Hint: `Cold Fire Pit · hold R to relight (drill, tinder, 3 sticks)`; when something is missing the
+  hint names it — `Cold Fire Pit · relight needs a fire drill and 1 more stick` (`survivalControl.relightMissing`; play-test: a
+  first-night fire went cold with two sticks in the pack and the generic hint).
 - **Fires with no fuel entry** — placed in Creative, or from before v0.9 — burn forever, as today. Feeding them does nothing and
   shows `This fire needs no fuel`. *A Creative player's decorative fires are never turned into cold pits by a visit in
   Survival.*
@@ -866,17 +880,24 @@ seconds = max(0.05, rule.h / speed) × (underwater ? 2.5 : 1)          // underw
    as soon as there is room and the button is still held).
 4. Break the cell with `playerSetBlock(…, AIR)` inside `releaseToPack = true`.
 5. `playBreak`; give the drops (each flies to its slot as a hex token, §9.8).
-6. The selected tool takes 1 wear.
+6. The selected tool takes 1 wear — when it is a digging tool (`wearsFromDigging`: an axe, spade, pick, knife or hammer). A spear
+   or sword never wears from a dig, and neither does the kiln kit (fire drill, crucible, casting mold: `wearsFromStriking` false
+   too) — a freshly fired mold lands in the hotbar, often the selected hand, and digging eight blocks of clay with it destroyed it
+   (play-test).
 
 **When a block cannot be harvested** (`need = Infinity`):
-- the hint reads `Iron Ore · needs a bronze pick or better`;
+- the hint reads `Iron Ore · needs a bronze pick or better` (`needs an iron …` where the article demands it);
+- the Handbook's first-day targets that R does not pick say how they are taken: `Tussock Grass · hold LMB: pull`, `Gravel · hold
+  LMB: dig` (`harvest.handGatherHint`, HAND_GATHER: tussock, cattails, tuber plant, gravel, clay). Every other block keeps no dig
+  hint, as in Creative;
 - holding LMB plays a dull `playDig(group, 0.15)` every 0.5 s and nothing else happens.
 
 **Mobs.** LMB on a pig or zombie strikes on the press. Holding repeats every `ATTACK_REPEAT_S` = 0.55 s. *That is longer than
 `PIG_HURT_S` (0.5) and `ZOMBIE_HURT_S` (0.45), so no repeat lands inside an invulnerability window by rounding.*
 - **Zombies:** `zombies.hit(zb, x, z, power)` (bare hands: power 1).
 - **Pigs:** with a tool selected, `pigs.wound(pig, power, x, z)`; bare-handed, `pigs.hit(pig, x, z)` only.
-- Each hit that lands costs the selected tool 1 wear. **Lit barrels**: a click snuffs them, as today.
+- Each hit that lands costs the selected tool 1 wear (everything but the kiln kit, `wearsFromStriking`). **Lit barrels**: a click
+  snuffs them, as today.
 
 ### 6.2 The first tools
 1. **Bare hands** can break dirt, sand, gravel, clay, snow, leaves, plants, ground litter and glass:
@@ -1484,7 +1505,7 @@ export const CAMPFIRE_FUEL_START_S = 300, CAMPFIRE_FUEL_MAX_S = 1200, FUEL_STICK
 export const STATION_RANGE = 3, STATION_WORK_RANGE = 16, MAX_CRAFT_JOBS = 8;
 export const STAT_MAX = 100, BREATH_MAX_S = 20, BREATH_REFILL_PER_S = 5;
 export const BODY_TEMP_NORMAL = 37, BODY_TEMP_MIN = 25, BODY_TEMP_MAX = 45, SICK_MAX_S = 600, HEAL_MAX = 50;
-export const FALL_SAFE_SPEED = 13.5, FALL_DAMAGE_K = 0.1, CRUSH_DAMAGE_PER_CELL = 6;
+export const FALL_SAFE_SPEED = 14.0, FALL_DAMAGE_K = 0.1, CRUSH_DAMAGE_PER_CELL = 6;
 export const ATTACK_REPEAT_S = 0.55, DIG_TICK_S = 0.25, USE_REPEAT_GAP_S = 0.25, GULP_GAP_S = 0.5, TAP_HOLD_S = 4;
 export const PIG_HEALTH = 5, PIG_REPOP_CHECK_S = 150, PIG_REPOP_TARGET = 3, PIG_REPOP_RADIUS = 64, PIG_REPOP_MIN = 24, PIG_REPOP_MAX = 48;
 export const ZOMBIE_DAMAGE = 8, FIRE_BURN_DAMAGE = 4;
@@ -1664,7 +1685,9 @@ export function buildPackView(input) // → the packUI view (§9.8), from pack, 
 4. hit is BIRCH_LOG, an empty clay_pot is selected and a knife ≥ 2 is in the pack → `tap` (hint otherwise);
 5. hit is WICKER_BASKET → `basket`; REMAINS → `belongings`;
 6. hit is SLEEPING_HIDE → `hide` (remember it as the waking place);
-7. hit is a station → `station` (open Making on that tab);
+7. hit is a station → `station` (open Making on that tab), or `station_far` when `ctx.stationNear(id)` says Making does not count
+   it as near (R reaches 5 cells, a workplace is near within STATION_RANGE 3): nothing happens on R and the hint reads
+   `Kiln · step within 3 cells to work here`;
 8. `waterHit` is water nearer than `hit` (or `hit` is null) → `fill` with an empty clay_pot selected, else `drink`;
 9. the head is under water → `drink_here`;
 10. otherwise today's barrel and rune behaviour.
@@ -1711,12 +1734,16 @@ export function buildPackView(input) // → the packUI view (§9.8), from pack, 
 9. **`stepWatcher`, `stepBlockPhysics`:**
    ```js
    const b0 = blockPhysics.explosions.blastCount;
-   blockPhysics.step(dt);                       // the knock hook's player branch only records pendingKnock
+   blockPhysics.step(dt);                       // the knock hook's player branch only records pendingKnock; the lifted hook's
+                                                // player branch adds to pendingCrush
    if (pendingKnock > 0 && S) hurt(knockDamage(pendingKnock), blockPhysics.explosions.blastCount !== b0 ? 'blast' : 'log');
    pendingKnock = 0;
+   if (pendingCrush > 0 && S && !fallGrace && !teleportFrame && !knockHurtThisFrame) hurt(crushDamage(pendingCrush), 'crush');
+   pendingCrush = 0;
    ```
 10. **`stepCampfires`:** scorch && S → `hurt(FIRE_BURN_DAMAGE, 'fire')`, throttled to 0.5 s. **Check** `pendingDeath`.
-11. **Bodies:** `resolveBodies`, then `unstickPlayer`, which now reports `{ lifted, buried }`:
+11. **Bodies:** `resolveBodies`, then `unstickPlayer`, which now reports `{ lifted, buried }` (a block written into the player
+    by anything but a landing — landings lift in step 9):
     - `lifted > 0`, S, no `fallGrace`, not a teleport frame, and no `log`/`blast` damage this frame →
       `hurt(CRUSH_DAMAGE_PER_CELL · lifted, 'crush')`;
     - `buried` (findFreeY null and the eye cell solid) goes into the survival env.
@@ -1746,7 +1773,10 @@ WATER-selected behaviour stays Creative-only.
 **`targetHintText`** adds:
 - the dig hint (`needs a … or better`) and `Pack full`;
 - the water, campfire (spots and fuel), fire pit, bush, litter, birch, basket, belongings (`Your Belongings · R: take back`),
-  Sleeping Hide (`Sleeping Hide · R: wake here`) and workplace (`Kiln · R: open Making`) hints;
+  Sleeping Hide (`Sleeping Hide · R: wake here`) and workplace (`Kiln · R: open Making`, or `Kiln · step within 3 cells to work
+  here`) hints, then the bare-hand gathering hint (`Tussock Grass · hold LMB: pull`);
+- nothing while the pack screen is open: its refusals and Make results go to the screen's own `.pack-message` line
+  (`packSay`, PACK_MESSAGE_S 3 s) — the HUD hint and the save toast lie under the screen (play-test);
 - in Creative, `Holds survival items · switch to Survival to empty it` on a protected cell (§5.5).
 
 **`breakTargeted`** (Creative) refuses the protected cells of §5.5.
@@ -2397,7 +2427,9 @@ Every must-fix from the three reviews is applied. The should-fix and nice items 
     green bricks 3 at a time, fired bricks 6 a batch), although the rule only binds packing recipes.
 16. **Spoilage.** Realism's option 1 (stateless), applied to baskets and belongings in loaded chunks as well as the pack:
     *a wicker basket is not a larder.*
-17. **Fall model.** The safe speed is 13.5 m/s, not 13: the real integrator lands a 3-cell drop at 13.07 m/s, which would hurt.
+17. **Fall model.** The safe speed is 14 m/s, not 13 or 13.5: the real integrator lands a 3-cell drop at 13.07 m/s and a jump off
+    a 2-cell ledge at 13.70 m/s; both would hurt at 13 or 13.5 (the play-test found the hop flashing red), while a 4-cell drop
+    (14.93) still does.
 18. **Snowy worked examples** include the −2 ground chill of standing on snowy grass, so the snowy night is Freezing from
     ~1.7 min and fatal at ~4.5 min (the reviews' 2 min / 5.7–6 min assumed no ground term).
 19. **`survivalControl.js` belongs to B**, not D: D already owns seven files.

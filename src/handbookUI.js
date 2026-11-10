@@ -16,9 +16,12 @@ import { buildChapters, inlineParts } from './handbook.js';
 
 /** @typedef {import('./handbook.js').Chapter} Chapter */
 /** @typedef {import('./handbook.js').Block} Block */
+/** @typedef {import('./handbook.js').TableBlock} TableBlock */
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const HIDDEN = 'hidden';
+/** Screens a reader can open over, made `inert` while it is open (Tab must not reach their buttons). */
+export const INERT_BENEATH = Object.freeze(['title-screen', 'pause-menu']);
 /** Below this window width the field book shows one page at a time. */
 export const SINGLE_PAGE_BELOW_PX = 900;
 
@@ -122,6 +125,116 @@ export function bookPages(chapters) {
 }
 
 /**
+ * Re-page every chapter by MEASURED height: `fits(blocks)` says whether a page of those blocks fits the field book's page
+ * (the UI renders them into a real page and compares scrollHeight with clientHeight; a test passes any rule). A page that
+ * does not fit is cut after the last block that does; a heading is never left alone at the foot of a page, and a margin note
+ * (tip, warning) never starts a page alone — the text block before it comes along; a table (list) too
+ * tall for one page is split by rows (items), the rest carrying on under the same caption "(continued)" (a numbered list
+ * keeps counting). The chapter's text never
+ * changes, only where its pages end, so no page needs a scrollbar (play-test: the gathering table lost its last three
+ * rows below the fold at 1280×720). Pure.
+ * @param {readonly Chapter[]} chapters
+ * @param {(blocks: readonly Block[]) => boolean} fits
+ * @returns {Chapter[]}
+ */
+export function fitChapterPages(chapters, fits) {
+  return chapters.map((c) => ({ ...c, pages: c.pages.flatMap((page) => fitPage(page, fits)) }));
+}
+
+/**
+ * One source page into as many pages as it needs under `fits` (see fitChapterPages). A single block that does not fit
+ * even alone (a figure) keeps a page of its own.
+ * @param {readonly Block[]} blocks
+ * @param {(blocks: readonly Block[]) => boolean} fits
+ * @returns {Block[][]}
+ */
+export function fitPage(blocks, fits) {
+  /** @type {Block[][]} */
+  const out = [];
+  let rest = [...blocks];
+  for (let guard = 0; rest.length > 0 && guard < 400; guard++) {
+    if (fits(rest)) {
+      out.push(rest);
+      break;
+    }
+    let n = rest.length - 1;
+    while (n > 0 && !fits(rest.slice(0, n))) n--;
+    while (n > 1 && rest[n - 1].kind === 'h') n--; // no heading orphaned at the foot of a page
+    // margin notes never start a page of their own: the text block they follow goes over with them
+    while (n > 1 && rest.slice(n).every(isNote)) n--;
+    const head = rest[0];
+    const next = rest[1];
+    if (n === 1 && rest.length > 1 && rest.slice(1).every(isNote) && splittable(head)) {
+      // only notes would follow a table (or list) that fits alone but not beside them (they narrow the text column):
+      // split it so its last rows carry the notes
+      const notes = rest.slice(1);
+      const k = largestFit(partCount(head) - 1, (rows) => fits([blockPart(head, 0, rows, false)]) && fits([blockPart(head, rows, partCount(head), true), ...notes]));
+      if (k > 0) {
+        out.push([blockPart(head, 0, k, false)]);
+        rest = [blockPart(head, k, partCount(head), true), ...notes];
+        continue;
+      }
+    }
+    if (n <= 1 && head.kind === 'h' && next && splittable(next)) {
+      // a heading over a table or list too tall for the page: keep the heading with its first rows
+      const k = largestFit(partCount(next) - 1, (rows) => fits([head, blockPart(next, 0, rows, false)]));
+      if (k > 0) {
+        out.push([head, blockPart(next, 0, k, false)]);
+        rest = [blockPart(next, k, partCount(next), true), ...rest.slice(2)];
+        continue;
+      }
+    }
+    if (n === 0) {
+      if (splittable(head)) {
+        const k = Math.max(1, largestFit(partCount(head) - 1, (rows) => fits([blockPart(head, 0, rows, false)])));
+        out.push([blockPart(head, 0, k, false)]);
+        rest = [blockPart(head, k, partCount(head), true), ...rest.slice(1)];
+        continue;
+      }
+      n = 1; // a block that does not fit alone gets its own page (the page scrolls as a last resort)
+    }
+    out.push(rest.slice(0, n));
+    rest = rest.slice(n);
+  }
+  return out.length > 0 ? out : [[...blocks]];
+}
+
+/** @param {Block} b a tip or a warning (the field book's margin) */
+function isNote(b) {
+  return b.kind === 'tip' || b.kind === 'warn';
+}
+
+/** The largest k in 1..max with ok(k), else 0. @param {number} max @param {(k: number) => boolean} ok */
+function largestFit(max, ok) {
+  for (let k = max; k >= 1; k--) if (ok(k)) return k;
+  return 0;
+}
+
+/** A table of several rows or a list of several items: it can be cut between them. @param {Block} b */
+function splittable(b) {
+  return (b.kind === 'table' && b.rows.length > 1) || (b.kind === 'list' && b.items.length > 1);
+}
+
+/** Rows of a table, items of a list. @param {Block} b */
+function partCount(b) {
+  return b.kind === 'table' ? b.rows.length : b.kind === 'list' ? b.items.length : 1;
+}
+
+/**
+ * Rows (items) `from`..`to` of a table (list) block: a table's continuation is marked in its caption, a numbered list's
+ * carries on its numbering (`start`).
+ * @param {Block} b @param {number} from @param {number} to @param {boolean} continued
+ * @returns {Block}
+ */
+function blockPart(b, from, to, continued) {
+  if (b.kind === 'list') return { ...b, items: b.items.slice(from, to), start: (b.start ?? 1) + from };
+  const t = /** @type {TableBlock} */ (b);
+  const keys = Array.isArray(t.keys) ? t.keys.slice(from, to) : undefined;
+  const caption = continued && !/\(continued\)$/.test(t.caption) ? `${t.caption} (continued)` : t.caption;
+  return { ...t, caption, rows: t.rows.slice(from, to), ...(keys ? { keys } : {}) };
+}
+
+/**
  * Glue a number to its unit with a no-break space ("−11.2 °C", "50 %", "8 HP/s", "40 s"), so a narrow table cell never
  * leaves the unit alone on the next line. @param {string} text
  */
@@ -189,7 +302,11 @@ export const GLYPHS = Object.freeze({
 export function createHandbookUI(doc, { chapters, onClose } = {}) {
   if (!doc || typeof doc.createElement !== 'function') throw new TypeError('createHandbookUI: a Document is required');
   const book = chapters && chapters.length ? chapters : buildChapters();
-  const layout = bookPages(book);
+  /** the field book's chapters re-paged to the measured page height (fitChapterPages); `book` until a page is measured */
+  let fitted = book;
+  let layout = bookPages(fitted);
+  /** the page size the current `fitted` was measured at ('' = never) */
+  let fitKey = '';
 
   /** @type {Array<[EventTarget, string, EventListener]>} */
   const listeners = [];
@@ -249,6 +366,8 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
     /** Field book position: the first page shown (even in two-page mode) */
     spread: 0,
     perView: 2,
+    /** @type {Set<string>} ids of the screens a reader made inert (setInertBeneath) */
+    madeInert: new Set(),
     /** @type {HTMLElement|null} focused before a reader opened; gets the focus back on close */
     returnFocus: null,
   };
@@ -418,6 +537,7 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
         (notes || text).appendChild(box);
       } else if (b.kind === 'list') {
         const list = make(b.ordered ? 'ol' : 'ul', 'hb-list');
+        if (b.ordered && Number(b.start) > 1) list.setAttribute('start', String(b.start)); // a numbered list cut over two pages
         for (const item of b.items) list.appendChild(inline(make('li'), item));
         text.appendChild(list);
       } else if (b.kind === 'table') text.appendChild(renderTable(b));
@@ -674,7 +794,7 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
       pg.page.classList.add('blank-page');
       pg.running.textContent = 'Notes';
     } else {
-      const c = book[/** @type {number} */ (entry.chapter)];
+      const c = fitted[/** @type {number} */ (entry.chapter)];
       pg.running.textContent = c.title;
       renderBlocks(c.pages[/** @type {number} */ (entry.page)], pg.text, pg.notes);
     }
@@ -691,8 +811,48 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
     return -1;
   }
 
+  /**
+   * Does a page of these blocks fit the field book's page? Rendered into the left page (cleared again before anything is
+   * painted: all within one task) and judged by its columns' scrollHeight. Null when the book is not laid out (hidden, or a
+   * DOM without layout), so nothing is re-paged.
+   * @param {readonly Block[]} blocks
+   */
+  function measureFits(blocks) {
+    const pg = r.left;
+    const c = pg.columns;
+    if (!pg.running.textContent) pg.running.textContent = 'Measure'; // a chapter page has a running title: the title page has none
+    clear(pg.text);
+    clear(pg.notes);
+    renderBlocks(blocks, pg.text, pg.notes);
+    c.classList.toggle('has-notes', pg.notes.children.length > 0);
+    const ok = c.scrollHeight <= c.clientHeight + 1;
+    clear(pg.text);
+    clear(pg.notes);
+    return ok;
+  }
+
+  /**
+   * Re-page the chapters when the page size changed since the last measurement (first open, a resize, one page or two).
+   * The current spread keeps its chapter.
+   */
+  function refit() {
+    // the page's size, not the columns': a scrollbar on an overflowing page (the last resort) narrows the columns, and the
+    // title page's empty running header makes them taller, so the columns' own size would flip the key between renders
+    const w = Number(r.left.page.clientWidth) || 0;
+    const h = Number(r.left.page.clientHeight) || 0;
+    if (h <= 0 || w <= 0) return; // not laid out: keep the chapters' own pages
+    const key = `${w}x${h}`;
+    if (key === fitKey) return;
+    fitKey = key;
+    const chapter = spreadChapter();
+    fitted = fitChapterPages(book, measureFits);
+    layout = bookPages(fitted);
+    if (chapter >= 0) state.spread = layout.start[book[chapter].id];
+  }
+
   function renderRustic(direction = 0) {
     state.perView = perView();
+    refit();
     state.spread = spreadStart(state.spread);
     r.book.classList.toggle('single', state.perView === 1);
     fillPage(r.left, state.spread);
@@ -790,6 +950,7 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
     showGuide(ci >= 0 ? ci : state.gChapter, ci >= 0 ? 0 : state.gPage);
     g.root.classList.remove(HIDDEN);
     state.mode = 'guide';
+    setInertBeneath(true);
     attachKeys();
     focusEl(g.chapterButtons[state.gChapter]);
   }
@@ -800,12 +961,34 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
     rememberFocus();
     if (state.mode === 'guide') g.root.classList.add(HIDDEN);
     buildRustic();
-    if (chapterId && Object.hasOwn(layout.start, chapterId)) state.spread = layout.start[chapterId];
     state.mode = 'rustic';
+    r.root.classList.remove(HIDDEN); // before the render: the pages are measured (refit) only while the book is laid out
+    refit();
+    if (chapterId && Object.hasOwn(layout.start, chapterId)) state.spread = layout.start[chapterId];
     renderRustic(0);
-    r.root.classList.remove(HIDDEN);
+    setInertBeneath(true);
     attachKeys();
     focusEl(r.book); // not a button: a stray Space or Enter must not close the book
+  }
+
+  /**
+   * While a reader is open the screens beneath it (the title screen, the pause menu) are `inert`: Tab stays inside the
+   * reader instead of walking on into the Worlds panel under it (play-test). Only the screens this made inert are freed.
+   * @param {boolean} on
+   */
+  function setInertBeneath(on) {
+    for (const id of INERT_BENEATH) {
+      const el = doc.getElementById(id);
+      if (!el) continue;
+      if (on) {
+        if (el.hasAttribute('inert')) continue;
+        el.setAttribute('inert', '');
+        state.madeInert.add(id);
+      } else if (state.madeInert.has(id)) {
+        el.removeAttribute('inert');
+        state.madeInert.delete(id);
+      }
+    }
   }
 
   function close() {
@@ -814,6 +997,7 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
     state.mode = null;
     if (g.root) g.root.classList.add(HIDDEN);
     if (r.root) r.root.classList.add(HIDDEN);
+    setInertBeneath(false);
     detachKeys();
     const back = state.returnFocus;
     state.returnFocus = null;
@@ -882,6 +1066,7 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
   function dispose() {
     if (state.disposed) return;
     state.mode = null;
+    setInertBeneath(false);
     detachKeys();
     state.disposed = true;
     for (const [target, type, fn] of listeners) target.removeEventListener(type, fn);

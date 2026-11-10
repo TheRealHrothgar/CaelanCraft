@@ -258,10 +258,25 @@ export function hasTag(key, tag) {
   return typeof tag === 'string' && Object.hasOwn(TAGS, tag) && TAGS[tag].includes(key);
 }
 
-/** @param {string} key @returns {string} the display name; '?' for unknown keys */
-export function itemName(key) {
-  return getItem(key)?.name ?? '?';
+/**
+ * @param {string} key @param {number} [n]  a count: 1 picks the singular of a plural display name (SINGULAR_NAMES)
+ * @returns {string} the display name; '?' for unknown keys
+ */
+export function itemName(key, n) {
+  const def = getItem(key);
+  if (!def) return '?';
+  return n === 1 && Object.hasOwn(SINGULAR_NAMES, key) ? SINGULAR_NAMES[key] : def.name;
 }
+
+/**
+ * Display names that are plural, and what ONE of them is called (`itemName(key, 1)`: "1 Honeyberry went bad.", not
+ * "1 Honeyberries"). Stack labels and recipe rows keep the plural.
+ * @type {Readonly<Record<string, string>>}
+ */
+export const SINGULAR_NAMES = Object.freeze({
+  honeyberries: 'Honeyberry', acorns: 'Acorn', leached_acorns: 'Leached Acorn', roasted_acorns: 'Roasted Acorn',
+  pine_nuts: 'Pine Nut', glass_shards: 'Glass Shard',
+});
 
 /**
  * Resolve a typed item token (console `pack add`): an item key, or a display name with spaces written as '_'

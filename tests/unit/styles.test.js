@@ -515,10 +515,26 @@ describe('styles.css survival screens', () => {
     const left = 18 + 4 + board + 4 + 17 + 4 + Math.round(Math.sqrt(3) * S * 1.5) + 6 + 15;
     const [padY] = /** @type {string} */ (panel.get('padding')).split(/\s+/).map((v) => toPx(v, 0));
     expect(left + 2 * padY + 4).toBeLessThanOrEqual(lengthPx(panel.get('max-height'), 622));
-    // width: the strip beside the Making panel
+    // width: the strip beside the Making panel; the Making column shrinks before it wraps (play-test: at a 1002 px
+    // viewport a fixed 520 px column wrapped under the board, below the fold)
     const stripW = 1.5 * S * 8 + 2 * S;
-    const right = Number(/min\((\d+)px/.exec(/** @type {string} */ (decls('.pack-right').get('width')))?.[1]);
-    expect(stripW + 22 + right + 2 * 18 + 4).toBeLessThanOrEqual(1258 - 32);
+    const right = decls('.pack-right');
+    const rightMax = toPx(/** @type {string} */ (right.get('max-width')), 0);
+    const rightMin = toPx(/** @type {string} */ (right.get('min-width')), 0);
+    expect(right.get('flex')).toMatch(/^1 1 /);
+    expect(stripW + 22 + rightMax + 2 * 18 + 4).toBeLessThanOrEqual(1258 - 32);
+    expect(stripW + 22 + rightMin + 2 * 18 + 4).toBeLessThanOrEqual(1002 - 32);
+  });
+
+  it('a field-book page never shows a horizontal scrollbar, its table heads wrap, and the book grows on tall windows', () => {
+    // play-test: the rotated margin notes pushed 2–3 px past the column and Chrome painted a scrollbar strip on every
+    // right-hand page with a tip; "Food and drink" was 382 px wide in a 317 px column because its heads could not wrap
+    const cols = decls('.hb-columns');
+    expect(cols.get('overflow-x')).toBe('hidden');
+    expect(cols.get('overflow-y')).toBe('auto'); // a last resort only: pages are re-paged to their measured height
+    expect(decls('.hb-text .hb-table th').get('white-space')).toBe('normal');
+    const m = /^min\((\d+)px,/.exec(/** @type {string} */ (decls('.hb-book').get('height')));
+    expect(Number(m[1])).toBeGreaterThanOrEqual(760);
   });
 
   it('#death-screen and every new survival element use no .mc-button or .picker-panel; their buttons are .hex-button', () => {

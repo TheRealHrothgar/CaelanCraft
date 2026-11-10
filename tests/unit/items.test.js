@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   TIER, TIER_NAMES, TIER_SPEED, TOOL_TYPES, WEAR_SLOT_NAMES, TAGS, ITEMS, ITEM_KEYS,
-  getItem, isItemKey, stackSize, maxDurability, itemForBlock, blockForItem, hasTag, itemName, resolveItem,
+  getItem, isItemKey, stackSize, maxDurability, itemForBlock, blockForItem, hasTag, itemName, resolveItem, SINGULAR_NAMES,
 } from '../../src/items.js';
 import { BLOCK, BLOCKS, BLOCK_COUNT, PICKER_ORDER, isPlaceable } from '../../src/blocks.js';
 
@@ -443,5 +443,24 @@ describe('items — resolveItem', () => {
     for (const bad of ['roc', 'flint_p', 'water', 'your_belongings', 'loose_stones', 'honeyberry_bush_bare', '__proto__', 'constructor']) {
       expect('error' in resolveItem(bad), bad).toBe(true);
     }
+  });
+});
+
+describe('itemName with a count: the singular of a plural display name', () => {
+  it('"1 Honeyberry", not "1 Honeyberries" (play-test: "1 Honeyberries went bad.")', () => {
+    expect(itemName('honeyberries', 1)).toBe('Honeyberry');
+    expect(itemName('honeyberries', 2)).toBe('Honeyberries');
+    expect(itemName('honeyberries')).toBe('Honeyberries');
+    expect(itemName('acorns', 1)).toBe('Acorn');
+    expect(itemName('pine_nuts', 1)).toBe('Pine Nut');
+    expect(itemName('raw_pork', 1)).toBe('Raw Pork'); // singular names are unchanged
+    expect(itemName('nope', 1)).toBe('?');
+  });
+
+  it('every plural-named item (a display name ending in "s" that is not a mass noun) has a singular, and every singular names a real item', () => {
+    for (const k of Object.keys(SINGULAR_NAMES)) expect(isItemKey(k), k).toBe(true);
+    // (food and materials: a pair of shoes or a hat is one thing already)
+    const plural = ITEM_KEYS.map((k) => getItem(k)).filter((d) => /s$/.test(d.name) && d.key !== 'bellows' && (d.kind === 'food' || d.kind === 'material'));
+    for (const d of plural) expect(Object.hasOwn(SINGULAR_NAMES, d.key), d.key).toBe(true);
   });
 });

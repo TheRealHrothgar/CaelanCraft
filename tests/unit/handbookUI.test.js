@@ -4,7 +4,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createHandbookUI, paintPaperGrain, bookPages, folioOf, keepUnits, GLYPHS, SINGLE_PAGE_BELOW_PX } from '../../src/handbookUI.js';
+import {
+  createHandbookUI, paintPaperGrain, bookPages, folioOf, keepUnits, GLYPHS, SINGLE_PAGE_BELOW_PX, fitPage, fitChapterPages,
+  INERT_BENEATH,
+} from '../../src/handbookUI.js';
 import { buildChapters } from '../../src/handbook.js';
 import { createMenus } from '../../src/menus.js';
 import { documentFromHTML, fire } from '../helpers/fakeDom.js';
@@ -410,5 +413,194 @@ describe('both readers', () => {
     ui.openGuide(); // disposed: nothing happens
     expect(ui.isOpen()).toBe(null);
     expect(() => createHandbookUI(/** @type {any} */ (null))).toThrow(TypeError);
+  });
+});
+
+describe('fitPage / fitChapterPages: pages re-paged to a measured height (play-test: tables cut off below the fold)', () => {
+  const h = (text) => ({ kind: 'h', text });
+  const p = (text) => ({ kind: 'p', text });
+  const tip = (text) => ({ kind: 'tip', text });
+  const table = (rows, caption = 'T') => ({ kind: 'table', id: 't', caption, head: ['A'], rows: rows.map((r) => [String(r)]), keys: rows, source: null, part: 1, parts: 1 });
+  /** A page "fits" when its text blocks weigh at most `max`: a paragraph or heading 1, a table 1 + its rows; a margin note 0. */
+  const fitsWithin = (max) => (blocks) => blocks.reduce((n, b) => n + (b.kind === 'tip' || b.kind === 'warn' ? 0 : b.kind === 'table' ? 1 + b.rows.length : 1), 0) <= max;
+
+  it('a page that fits is kept as it is', () => {
+    const page = [h('A'), p('x'), tip('t')];
+    expect(fitPage(page, fitsWithin(5))).toEqual([page]);
+    expect(fitPage([], fitsWithin(5))).toEqual([[]]);
+  });
+
+  it('a long page is cut after the last block that fits; a heading is never left alone at the foot', () => {
+    const page = [h('A'), p('1'), p('2'), h('B'), p('3'), p('4')];
+    expect(fitPage(page, fitsWithin(3))).toEqual([[h('A'), p('1'), p('2')], [h('B'), p('3'), p('4')]]);
+    // the heading B would end page 1 at a cut of 4: it moves to the next page with its text
+    expect(fitPage(page, fitsWithin(4))).toEqual([[h('A'), p('1'), p('2')], [h('B'), p('3'), p('4')]]);
+  });
+
+  it('a margin note never starts a page alone: the text block before it goes over with it (play-test: the kit page left its tip on an empty page)', () => {
+    // the note narrows the text column, so [table, p, tip] overflowed where [table, p] fit: the cut goes before the paragraph
+    const page = [table([1, 2, 3, 4, 5, 6, 7, 8]), p('In all: …'), tip('A + after a tool …')];
+    const fits = (blocks) => blocks.reduce((n, b) => n + (b.kind === 'table' ? 1 + b.rows.length : b.kind === 'p' ? 1 : b.kind === 'tip' ? 2 : 0), 0) <= 10;
+    expect(fitPage(page, fits)).toEqual([[table([1, 2, 3, 4, 5, 6, 7, 8])], [p('In all: …'), tip('A + after a tool …')]]);
+    // a note that fits nowhere but alone still gets its own page
+    expect(fitPage([p('x'), tip('t')], (blocks) => blocks.length <= 1)).toEqual([[p('x')], [tip('t')]]);
+    // a table that fits alone but not beside its note (a taller window) is split so its last rows carry the note
+    const gather = [table([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'Gathering with bare hands'), tip('wild only')];
+    const tall = (blocks) => blocks.reduce((n, b) => n + (b.kind === 'table' ? 1 + b.rows.length : b.kind === 'tip' ? 4 : 1), 0) <= 12;
+    expect(tall(gather)).toBe(false);
+    expect(tall([gather[0]])).toBe(true);
+    const split = fitPage(gather, tall);
+    expect(split.length).toBe(2);
+    // the largest first part whose rest still fits beside the note: 9 rows, then 1 row + the note
+    expect(split[0]).toEqual([table([1, 2, 3, 4, 5, 6, 7, 8, 9], 'Gathering with bare hands')]);
+    expect(split[1][0]).toMatchObject({ caption: 'Gathering with bare hands (continued)', rows: [['10']], keys: [10] });
+    expect(split[1][1]).toEqual(tip('wild only'));
+  });
+
+  it('a table too tall for a page is split by rows and carries on "(continued)"; its keys travel with the rows', () => {
+    const page = [table([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 'Gathering with bare hands'), tip('wild only')];
+    const out = fitPage(page, fitsWithin(6));
+    expect(out.length).toBe(2);
+    expect(out[0]).toEqual([{ ...table([1, 2, 3, 4, 5], 'Gathering with bare hands') }]);
+    expect(out[1][0]).toMatchObject({ kind: 'table', caption: 'Gathering with bare hands (continued)', rows: [['6'], ['7'], ['8'], ['9'], ['10']], keys: [6, 7, 8, 9, 10] });
+    expect(out[1][1]).toEqual(tip('wild only'));
+    // a three-way split marks "(continued)" once
+    const three = fitPage([table([1, 2, 3, 4, 5, 6, 7, 8, 9], 'T')], fitsWithin(4));
+    expect(three.map((pg) => pg[0].caption)).toEqual(['T', 'T (continued)', 'T (continued)']);
+    expect(three.map((pg) => pg[0].rows.length)).toEqual([3, 3, 3]);
+  });
+
+  it('a numbered list too tall for a page is split by items and keeps counting (play-test, narrow window: "Before dusk" left its heading alone)', () => {
+    const steps = { kind: 'list', ordered: true, items: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] };
+    const fits = (blocks) => blocks.reduce((n, b) => n + (b.kind === 'list' ? b.items.length : 1), 0) <= 5;
+    const out = fitPage([h('Before dusk, step by step'), steps], fits);
+    expect(out).toEqual([
+      [h('Before dusk, step by step'), { kind: 'list', ordered: true, items: ['a', 'b', 'c', 'd'], start: 1 }],
+      [{ kind: 'list', ordered: true, items: ['e', 'f', 'g', 'h'], start: 5 }],
+    ]);
+    const { ui, doc } = setup();
+    ui.openRustic();
+    expect(doc.querySelector('#handbook ol[start]')).toBe(null);
+  });
+
+  it('a heading over a tall table keeps the heading with the table\'s first rows', () => {
+    const out = fitPage([h('Hits'), table([1, 2, 3, 4, 5, 6])], fitsWithin(5));
+    expect(out[0]).toEqual([h('Hits'), table([1, 2, 3])]);
+    expect(out[1][0]).toMatchObject({ caption: 'T (continued)', rows: [['4'], ['5'], ['6']] });
+  });
+
+  it('a single block that never fits keeps a page of its own (the page scrolls as a last resort); the loop always ends', () => {
+    const fig = { kind: 'figure', id: 'f', caption: 'c' };
+    expect(fitPage([fig, p('after')], () => false)).toEqual([[fig], [p('after')]]);
+    expect(fitPage([table([1], 'one row'), p('x')], () => false)).toEqual([[table([1], 'one row')], [p('x')]]);
+  });
+
+  it('fitChapterPages keeps every chapter\'s id, title and text, only adding pages, and bookPages stays even', () => {
+    const fitted = fitChapterPages(CHAPTERS, fitsWithin(6));
+    expect(fitted.map((c) => c.id)).toEqual(CHAPTERS.map((c) => c.id));
+    const words = (chs) => chs.flatMap((c) => c.pages.flat()).flatMap((b) => (b.kind === 'table' ? b.rows.map((r) => r.join('|')) : [b.text ?? b.items?.join('|') ?? b.id])).join('\n');
+    expect(words(fitted)).toBe(words(CHAPTERS));
+    expect(fitted.reduce((n, c) => n + c.pages.length, 0)).toBeGreaterThan(CHAPTERS.reduce((n, c) => n + c.pages.length, 0));
+    expect(bookPages(fitted).pages.length % 2).toBe(0);
+    // everything fits now (nothing is left over)
+    for (const c of fitted) for (const pg of c.pages) if (!(pg.length === 1 && !fitsWithin(6)([pg[0]]))) expect(fitsWithin(6)(pg)).toBe(true);
+    // and the unfitted book is untouched
+    expect(fitChapterPages(CHAPTERS, () => true)).toEqual(CHAPTERS.map((c) => ({ ...c, pages: c.pages.map((pg) => [...pg]) })));
+  });
+});
+
+describe('the field book measures its pages and re-pages the chapters (play-test: scrollbars on the parchment)', () => {
+  /** Give the fake columns a layout: 400 px tall, and a scrollHeight that counts what was rendered into the text column. */
+  function layOut(doc, clientHeight = 400) {
+    for (const side of ['left', 'right']) {
+      const col = doc.querySelector(`#handbook .hb-${side} .hb-columns`);
+      Object.defineProperty(doc.querySelector(`#handbook .hb-${side}`), 'clientWidth', { value: 540, configurable: true });
+      Object.defineProperty(doc.querySelector(`#handbook .hb-${side}`), 'clientHeight', { value: clientHeight + 60, configurable: true });
+      Object.defineProperty(col, 'clientHeight', { value: clientHeight, configurable: true });
+      Object.defineProperty(col, 'clientWidth', { value: 500, configurable: true });
+      Object.defineProperty(col, 'scrollHeight', {
+        configurable: true,
+        get() {
+          const text = col.querySelector('.hb-text');
+          let hpx = 0;
+          for (const child of Array.from(text.children)) {
+            hpx += child.tagName === 'DIV' && child.classList.contains('hb-table-wrap') ? 40 + 58 * child.querySelectorAll('tbody tr').length : 60;
+          }
+          return hpx;
+        },
+      });
+    }
+  }
+
+  it('the gathering table (10 rows of 2–3 lines) is split over two pages at a 400 px page; the kit page keeps its "In all" line', () => {
+    const { ui, book, doc } = setup();
+    ui.openRustic('first-day');
+    layOut(doc); // the book exists now
+    ui.close();
+    ui.openRustic('first-day');
+    expect(book.classList.contains('hidden')).toBe(false);
+    const captions = [];
+    const seen = new Set();
+    for (let i = 0; i < 200; i++) {
+      const pos = ui.position();
+      if (seen.has(pos.spread)) break;
+      seen.add(pos.spread);
+      for (const c of Array.from(doc.querySelectorAll('#handbook .hb-table caption'))) captions.push(c.textContent);
+      if (pos.chapter !== 'first-day' && pos.chapter !== '') break;
+      ui.handleKey(key('ArrowRight'));
+    }
+    expect(captions).toContain('Gathering with bare hands');
+    expect(captions).toContain('Gathering with bare hands (continued)');
+    // every rendered page fits its 400 px
+    ui.openRustic('first-day');
+    for (let i = 0; i < 80; i++) {
+      for (const side of ['left', 'right']) {
+        const col = doc.querySelector(`#handbook .hb-${side} .hb-columns`);
+        const pg = doc.querySelector(`#handbook .hb-${side}`);
+        if (pg.classList.contains('hidden')) continue;
+        if (col.querySelector('.hb-text').children.length > 1) expect(col.scrollHeight, `page ${i} ${side}`).toBeLessThanOrEqual(401);
+      }
+      ui.handleKey(key('ArrowRight'));
+    }
+  });
+
+  it('without a layout (clientHeight 0) nothing is re-paged: the chapters\' own pages are shown', () => {
+    const { ui, doc } = setup();
+    ui.openRustic('first-day');
+    const captions = Array.from(doc.querySelectorAll('#handbook .hb-table caption')).map((c) => c.textContent);
+    expect(captions.some((c) => / \(continued\)$/.test(c))).toBe(false);
+  });
+});
+
+describe('a reader makes the screens beneath it inert (play-test: Tab reached the Worlds panel under the Guide)', () => {
+  it('the title screen and the pause menu are inert while the Guide or the field book is open, and free again after', () => {
+    const { ui, doc } = setup();
+    const title = doc.getElementById('title-screen');
+    const pause = doc.getElementById('pause-menu');
+    expect(INERT_BENEATH).toEqual(['title-screen', 'pause-menu']);
+    expect(title.hasAttribute('inert')).toBe(false);
+    ui.openGuide();
+    expect(title.hasAttribute('inert')).toBe(true);
+    expect(pause.hasAttribute('inert')).toBe(true);
+    ui.close();
+    expect(title.hasAttribute('inert')).toBe(false);
+    expect(pause.hasAttribute('inert')).toBe(false);
+    ui.openRustic();
+    expect(title.hasAttribute('inert')).toBe(true);
+    ui.close();
+    expect(title.hasAttribute('inert')).toBe(false);
+  });
+
+  it('a screen that was already inert stays inert when the reader closes', () => {
+    const { ui, doc } = setup();
+    const pause = doc.getElementById('pause-menu');
+    pause.setAttribute('inert', '');
+    ui.openGuide();
+    ui.close();
+    expect(pause.hasAttribute('inert')).toBe(true);
+    expect(doc.getElementById('title-screen').hasAttribute('inert')).toBe(false);
+    ui.openGuide();
+    ui.dispose();
+    expect(doc.getElementById('title-screen').hasAttribute('inert')).toBe(false);
   });
 });

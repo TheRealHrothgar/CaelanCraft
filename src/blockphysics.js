@@ -122,6 +122,9 @@ export const CAUSE_AREA = Object.freeze({ kind: 'area' });
  *   kinds 'dust' | 'leaves' | 'smoke' | 'sparks' | 'steam'; opts { id?, color?, spread?, speed?, vx?, vy?, vz? } (particles.js)
  * @property {(body: PlayerState, vx: number, vy: number, vz: number, fromX: number, fromZ: number) => void} [knock]
  *   add an impulse to a body (explosions, tree impacts); main also makes a pig flee and squeal
+ * @property {(body: PlayerState, cells: number) => void} [lifted]   a landing block filled the body's cell and
+ *   `_placeLanded` lifted it on top (§34.3), `cells` whole cells (≥ 1); main turns the player's into `crush` damage
+ *   (DESIGN-survival §2.4) after `step` — the body is already free by then, so `unstickPlayer` never sees the lift
  * @property {(id: number) => boolean} [isIgnitable]   (DESIGN-circuits §3.6; main → circuitParts.isIgnitable) a block a flame
  *   lights: undo restores these (besides the keg) last, and never where they would catch at once
  * @property {(q: number, y: number, r: number) => boolean} [ignitesAt]   (DESIGN-circuits §3.6; main → circuits.wouldIgnite) a
@@ -143,7 +146,7 @@ export const CAUSE_AREA = Object.freeze({ kind: 'area' });
 /** One item for fallingRenderer.sync: a moving cell's centre, rotation (Euler order 'YXZ') and uniform scale. */
 /** @typedef {{ id: number, x: number, y: number, z: number, rx: number, ry: number, rz: number, scale: number }} RenderItem */
 
-const HOOK_NAMES = Object.freeze(['say', 'areaJobsActive', 'bodies', 'player', 'sound', 'particles', 'knock', 'isIgnitable', 'ignitesAt']);
+const HOOK_NAMES = Object.freeze(['say', 'areaJobsActive', 'bodies', 'player', 'sound', 'particles', 'knock', 'lifted', 'isIgnitable', 'ignitesAt']);
 const NO_BODIES = Object.freeze([]);
 const DEFAULT_HOOKS = Object.freeze({
   say: () => {},
@@ -158,6 +161,7 @@ const DEFAULT_HOOKS = Object.freeze({
     body.vz += vz;
     body.onGround = false;
   },
+  lifted: () => {},
   isIgnitable: () => false,
   ignitesAt: () => false,
 });

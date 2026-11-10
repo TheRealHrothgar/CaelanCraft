@@ -317,6 +317,28 @@ describe('landing never buries a body', () => {
     expect(p.y).toBe(12);
   });
 
+  it('reports the lift through hooks.lifted(body, cells), so main can deal crush damage (§2.4; play-test: the lift happened inside the step and unstickPlayer never saw it)', () => {
+    let p;
+    const lifted = [];
+    const { world, physics } = setup({ hooks: { bodies: () => [p], player: () => p, lifted: (b, cells) => lifted.push([b, cells]) } });
+    p = standing();
+    physics.fallers.spawn(B.SAND, 0, 30, 0);
+    settle(physics);
+    expect(world.getBlock(0, 11, 0)).toBe(B.SAND);
+    expect(lifted).toEqual([[p, 1]]);
+    // more sand on the same column: one lift per landing
+    physics.fallers.spawn(B.SAND, 0, 30, 0);
+    physics.fallers.spawn(B.GRAVEL, 0, 32, 0);
+    settle(physics);
+    expect(p.y).toBe(14);
+    expect(lifted.map(([, c]) => c)).toEqual([1, 1, 1]);
+    // the default hook is a no-op (the hook is optional)
+    const other = setup({ hooks: { bodies: () => [p], player: () => p } });
+    p = standing();
+    other.physics.fallers.spawn(B.SAND, 0, 30, 0);
+    expect(() => settle(other.physics)).not.toThrow();
+  });
+
   it('with no room to lift the player the block breaks into dust instead', () => {
     let p;
     const { world, physics, fx } = setup({ hooks: { bodies: () => [p], player: () => p } });

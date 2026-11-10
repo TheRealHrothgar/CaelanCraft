@@ -61,12 +61,46 @@ Nothing open (L1 and L2 are fixed, see above).
 | S3 | **`types.js`'s GameContext typedef lacked the v0.9 members.** | Added (`survival`, `pack`, `setMode`, `getMode`, `urlMode`, `selectSlot`, `interact`, `digTargeted`, `useSelected`, plus `physics`, `zombies`, `watcher`); CONTRACTS §3. |
 | S4 | **The console `undo` still undid in Survival** (could duplicate mined debris). | `undo` fails `not in Survival`, like `fly` (CONTRACTS §26.4, §33.8). Also: `pack add handbook` no longer mints a second copy (it gives one only when the pack has none) and `pack clear` gives the Handbook back. |
 
+## Survival (v0.9) — fixed after the play-test
+
+Found by the Survival play-test (five lenses, each finding checked by a skeptic); every fix has a regression test that fails on the
+code before it (tests/integration/survivalBody.test.js, toolLadder.test.js and the unit suites named).
+
+| # | Problem | Fix |
+|---|---------|-----|
+| P1 | **Falling sand, gravel and collapses never crushed the player** (6 HP per cell promised by §45 and the Handbook): the landing lifted the player inside `blockPhysics.step`, so `unstickPlayer` found nothing to lift. | A `lifted(body, cells)` physics hook from `_placeLanded`; main sums the player's lifts into `pendingCrush` and hurts right after the step under the same guards (CONTRACTS §33.7, §34.3, §45, §47). |
+| P2 | **Field-book pages overflowed and scrolled** (the gathering table lost its last three rows below the fold at 1280×720), and every right-hand page with a margin note had a horizontal scrollbar. | Pages are re-paged to their measured height on open and on resize (`fitChapterPages`, tables split "(continued)"); `.hb-columns` hides horizontal overflow, table heads wrap, the book grows to 760 px on tall windows (§48). |
+| P3 | **A workplace 4–5 cells away opened Making with every card greyed "build a Kiln nearby"** (R reaches 5, Making counts a workplace as near within 3). | `interactKind` returns `station_far` with `Kiln · step within 3 cells to work here`; R does nothing (§44). |
+| P4 | **The kiln kit (crucible, mold, fire drill) and the spear wore out while digging** when selected. | A dig wears only digging tools (`wearsFromDigging`); blows wear everything but the kit (§47, Handbook "Wear"). |
+| P5 | **A plain jump off a 2-cell ledge cost 0.54 HP** with the full hurt flash. | `FALL_SAFE_SPEED` 13.5 → 14.0; 3 cells and the 2-cell hop are safe, 4 cells hurts 2.7, 22 still kills (§45, DESIGN §2.4 table, decision 17). |
+| P6 | **Dying buried lost every belonging** (only AIR or a liquid could take the REMAINS). | `chooseBelongingsCell` falls back to the first solid, non-bedrock candidate: the heap replaces the block that killed you (§49, DESIGN §2.5). |
+| P7 | **The pack screen never showed the Handbook's refusal** (or a Make result): the HUD hint and the save toast lie under the screen. | The screen's own `.pack-message` line (`packSay`, 3 s) carries refusals and Make results (§48). |
+| P8 | **A v0.8 client listed a version-3 Survival save as a normal world** through the shared slot index (and its `?autoplay` boot saved a fresh gen-1 world over it). | A version-3 document's index entry is written as `{ damaged: true, bytes, hash }`; v0.9 parses such slots and lists them as the worlds they are (§41.1, §42). This also closes S5 below. |
+| P9 | **Tussock, gravel, tubers and cattails gave no crosshair hint** while their neighbours said "R: pick" (R is not their action — the skeptic refuted the bug, the wording was still unclear). | `Tussock Grass · hold LMB: pull`, `Gravel · hold LMB: dig` crosshair hints; the Handbook's step 1 and gathering table say "hold the left mouse button" (§48). |
+| P10 | The Survival intro — the only pointer to the Handbook — faded after 6 s. | The intro lines live `INTRO_LINE_MS` 20 s (`addChatLine(text, isError, ms)`). |
+| P11 | A cold pit's hint did not say what the relight lacked. | `Cold Fire Pit · relight needs a fire drill and 1 more stick` (`relightMissing`, §44). |
+| P12 | "needs a iron hammer or better". | `withArticle` in crafting and harvest hints. |
+| P13 | A recipe that gives back the slot it takes (scrape_salt, pot_snow, leached_acorns, rag_bandage) waited "Pack full" for ever in a full pack. | `Pack.canExchange(takes, gives)`: room is judged after the inputs are taken (§43, §44). |
+| P14 | A lethal hit while reading the field book resumed play (pointer lock, audio) before `die()` ran. | `hurt()` returns on a lethal hit; `die()` closes the book itself (§49). |
+| P15 | The Making panel wrapped below the fold at 1024-wide windows. | `.pack-right` is `flex: 1 1 320px`, 300–520 px (§48). |
+| P16 | Tab escaped the Guide and the field book onto the title screen's controls. | `#title-screen` and `#pause-menu` are `inert` while a reader is open (§48). |
+| P17 | "1 Honeyberries went bad." | `itemName(key, 1)` → `SINGULAR_NAMES` ("1 Honeyberry went bad."). |
+
+Left as found, on purpose:
+
+- **Nothing points to fresh water** (the nearest pond is 16–66 cells from spawn) and the harsh-biome line gives bare cell
+  coordinates. A direction line needs a pond scan over `worldGen.pondAt` and a bearing helper: a design addition, not a fix.
+- **× 5 queues more tool-using jobs than the tool has uses left**; the extra ones fail at completion with nothing lost. Counting
+  uses across queued jobs is a reservation change in `enqueue`; the failure lines already say why.
+- **A fire dying at night gives no low-fuel chat warning.** The pit hint now names what is missing (P11); a "burning low" line
+  needs a per-fire flag in `FireSlots.step`.
+
 ## Survival (v0.9) — open items from the integration
 
 | # | Problem | Cause | Suggested fix |
 |---|---------|-------|---------------|
 | S1 | **The inherited menus still look like Minecraft's.** The title, pause and block-picker screens keep `.mc-button`'s grey #6f6f6f bevel, the #c6c6c6 picker with its #404040 title and the rotating yellow splash text. Every new Survival screen uses the honey palette and `.hex-button` (DESIGN-survival §11), so the two looks now sit side by side. | Restyling the existing screens would change how Creative looks, which v0.9 promised not to do. | **The user's call.** Proposed follow-up: move the title, pause and picker screens onto the survival palette (#1c1a24 / honey #e8b04a / ember #d0582a) and `.hex-button`, drop the splash text's rotating yellow, and re-shoot the Creative screenshots. |
-| S5 | **A Survival world listed by a v0.8 tab loses its "· Survival" label** in the Worlds list until it is saved again. | An older tab rewrites the shared slot index without the `mode` field (the world itself loads correctly). | None needed beyond a resave; noted for completeness. |
+| S5 | ~~A Survival world listed by a v0.8 tab loses its "· Survival" label in the Worlds list until it is saved again.~~ | Fixed with P8: a version-3 slot is always parsed, so the label never depended on the index. | — |
 | S6 | **Four timing tests fail when the machine is busy** (they pass run alone): worldgen "generates a warm chunk in ≤ 8 ms" and its generation-2 twin, mesher "meshes a real chunk in under 25 ms", campfires "100 000 fires". | They measure wall-clock time; other sessions' processes on this machine skew them. | Run them alone before believing a failure; consider a CI-only budget multiplier. |
 | S7 | **Closing the pack screen or the field book with `Esc` (or `E`) may fall back to click-to-play.** | Esc is not a user activation, so the pointer-lock request can be refused (the same as the picker, console and editor; CONTRACTS §23). | None (by design); a click resumes. |
 
