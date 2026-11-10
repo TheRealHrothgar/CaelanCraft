@@ -513,7 +513,12 @@ describe('powder keg tiles (v0.8; repainted by DESIGN-circuits §3.5, whose art 
 });
 
 describe('circuit tiles (DESIGN-circuits §1.4, §3.5, §6.2.9; painted by circuitTiles.js)', () => {
-  const FLAT = [TILE.POWDER_FUSE, TILE.TORCH, TILE.COPPER_WIRE, TILE.BROWN_WIRE, TILE.WHITE_WIRE, TILE.EARTH_WIRE];
+  // The flat pictures: the six thin parts' top tiles and, since the "fun and simple" redo, every device's *_top tile.
+  const FLAT = [
+    TILE.POWDER_FUSE, TILE.TORCH, TILE.COPPER_WIRE, TILE.BROWN_WIRE, TILE.WHITE_WIRE, TILE.EARTH_WIRE, TILE.COLLAPSAR_TOP,
+    TILE.TERMINAL_TOP, TILE.BATTERY_TOP, TILE.BLASTER_TOP, TILE.SELENIUM_TOP, TILE.SWITCH_TOP, TILE.BUTTON_TOP,
+    TILE.TIMER_TOP, TILE.RELAY_TOP, TILE.IGNITER_TOP, TILE.LAMP_TOP, TILE.BELL_TOP, TILE.TX_TOP, TILE.RX_TOP,
+  ];
 
   it('CIRCUIT_TILE_NAMES is exactly 160–194, spread into TILE_NAMES under the blocks.js TILE names', () => {
     expect(Object.isFrozen(CIRCUIT_TILE_NAMES)).toBe(true);
@@ -561,10 +566,11 @@ describe('circuit tiles (DESIGN-circuits §1.4, §3.5, §6.2.9; painted by circu
     }
   });
 
-  it('the cabinet tiles and both keg tiles are alpha 255 everywhere', () => {
-    const cabinets = CIRCUIT_IDS.filter((t) => t !== TILE.CIRCUIT_CLEAR && !FLAT.includes(t));
-    expect(cabinets).toHaveLength(28);
-    for (const t of [...cabinets, TILE.BARREL_SIDE, TILE.BARREL_TOP]) {
+  it('the 14 device swatches (their *_side tiles) and both keg tiles are alpha 255 everywhere', () => {
+    const swatches = CIRCUIT_IDS.filter((t) => t !== TILE.CIRCUIT_CLEAR && !FLAT.includes(t));
+    expect(swatches).toHaveLength(14);
+    for (const t of swatches) expect(TILE_NAMES[t]).toMatch(/_side$/);
+    for (const t of [...swatches, TILE.BARREL_SIDE, TILE.BARREL_TOP]) {
       const px = paintTile(t);
       for (let i = 3; i < BYTES; i += 4) expect(px[i], `${TILE_NAMES[t]} byte ${i}`).toBe(255);
     }

@@ -67,7 +67,8 @@ export const TILE = Object.freeze({
   HIDE_TOP: 98, REMAINS_SIDE: 99, REMAINS_TOP: 100, PLANT_TOP_CLEAR: 101, LOOSE_STONES: 102, FALLEN_BRANCHES: 103,
   FIRE_PIT_SIDE: 104,
   // Powder and circuits (DESIGN-circuits §1.4; painted by circuitTiles.js). CIRCUIT_CLEAR is all alpha 0: the sides and bottom
-  // of the thin parts. POWDER_FUSE, TORCH and the four wires are flat pictures on an alpha-0 background, drawn only as icons.
+  // of the thin parts. POWDER_FUSE, TORCH, the four wires and every device's *_TOP are flat pictures on an alpha-0 background,
+  // drawn only as icons; a device's *_SIDE is a swatch of its model's main colour that nothing draws.
   CIRCUIT_CLEAR: 160, COLLAPSAR_SIDE: 161, COLLAPSAR_TOP: 162, POWDER_FUSE: 163, TORCH: 164, COPPER_WIRE: 165, BROWN_WIRE: 166,
   WHITE_WIRE: 167, EARTH_WIRE: 168, TERMINAL_SIDE: 169, TERMINAL_TOP: 170, BATTERY_SIDE: 171, BATTERY_TOP: 172,
   BLASTER_SIDE: 173, BLASTER_TOP: 174, SELENIUM_SIDE: 175, SELENIUM_TOP: 176, SWITCH_SIDE: 177, SWITCH_TOP: 178,
@@ -112,11 +113,11 @@ export const SOUND_GROUPS = Object.freeze([
  * @property {number} layer         RenderLayer
  * @property {string|null} soundGroup
  * @property {boolean} meshed       drawn by the chunk mesher; false for blocks with their own model (campfire, black hole,
- *                                  the thin circuit parts), whose tiles are then used only for the hotbar / picker icon
+ *                                  the circuit parts but the keg), whose tiles are then used only for the hotbar / picker icon
  * @property {boolean} gravity      falls when the cell below is fall-through (sand, red sand, gravel; CONTRACTS §34)
  * @property {'prism'|'flat'} icon  how atlas.drawBlockIcon draws its hotbar / picker icon: 'prism' (default) the hexagonal
- *                                  prism; 'flat' the TOP tile alone as an unskewed 2D picture (the thin circuit parts, whose
- *                                  transparent sides would draw nothing; DESIGN-circuits §1.5)
+ *                                  prism; 'flat' the TOP tile alone as an unskewed 2D picture (the circuit parts but the keg:
+ *                                  thin parts and device models, which are not prisms; DESIGN-circuits §1.5)
  */
 
 /** tiles helper: six sides, then top, then bottom */
@@ -174,6 +175,17 @@ const PLANT = Object.freeze({
  */
 const THIN = Object.freeze({
   solid: false, opaque: false, layer: LAYER_CUTOUT, cullSame: false, meshed: false, icon: /** @type {'flat'} */ ('flat'),
+});
+
+/**
+ * Flags of the 14 circuit devices (the user's "fun and simple" redo of DESIGN-circuits §1.2 "CAB"): each is a small 3D
+ * model drawn by circuitRenderer (circuitGeometry.MODELS), not a meshed hex cabinet. Still solid (the cell collides,
+ * targets, carries what is put on it and is load-bearing as a whole cell), but not opaque, so the terrain draws every face
+ * round it, and not meshed. The icon is its top tile, a flat picture of the model; the side tile is a swatch of its main
+ * colour that nothing draws.
+ */
+const MODEL = Object.freeze({
+  opaque: false, layer: LAYER_CUTOUT, cullSame: false, meshed: false, icon: /** @type {'flat'} */ ('flat'),
 });
 
 /** The v0.4 wool colours (white and red predate them): BLOCK/TILE key suffix and display label. */
@@ -290,30 +302,29 @@ export const BLOCKS = [
   def({ id: B.FALLEN_BRANCHES, name: 'fallen_branches', displayName: 'Fallen Branches', tiles: tiles(T.FALLEN_BRANCHES, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'wood', placeable: false }),
   def({ id: B.FIRE_PIT, name: 'fire_pit', displayName: 'Cold Fire Pit', tiles: tiles(T.FIRE_PIT_SIDE, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'stone', placeable: false }),
   // ---- Powder and circuits (DESIGN-circuits §1.2). The part table, predicates and connection rules live in circuitParts.js.
-  // CAB ("cabinet") devices are plain solid, opaque, meshed prisms (def defaults) with their working part on top; their moving
-  // and lit bits are circuitRenderer overlays, so a state change never re-meshes a chunk. THIN parts are drawn by
-  // circuitRenderer: their top tile is the icon picture, their sides and bottom CIRCUIT_CLEAR.
-  def({ id: B.COLLAPSAR_CHARGE, name: 'collapsar_charge', displayName: 'Collapsar Charge', tiles: tiles(T.COLLAPSAR_SIDE, T.COLLAPSAR_TOP), soundGroup: 'glass' }),
+  // The devices carry the MODEL flags: solid, unmeshed 3D models drawn by circuitRenderer, whose moving and lit bits are
+  // overlays, so a state change never re-meshes a chunk; their top tile is the icon picture. THIN parts are drawn by
+  // circuitRenderer too: their top tile is the icon picture, their sides and bottom CIRCUIT_CLEAR.
+  def({ id: B.COLLAPSAR_CHARGE, name: 'collapsar_charge', displayName: 'Collapsar Charge', tiles: tiles(T.COLLAPSAR_SIDE, T.COLLAPSAR_TOP), ...MODEL, soundGroup: 'glass' }),
   def({ id: B.POWDER_FUSE, name: 'powder_fuse', displayName: 'Powder Fuse', tiles: tiles(T.CIRCUIT_CLEAR, T.POWDER_FUSE, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'cloth' }),
   def({ id: B.TORCH, name: 'torch', displayName: 'Torch', tiles: tiles(T.CIRCUIT_CLEAR, T.TORCH, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'wood' }),
   def({ id: B.COPPER_WIRE, name: 'copper_wire', displayName: 'Copper Wire', tiles: tiles(T.CIRCUIT_CLEAR, T.COPPER_WIRE, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'cloth' }),
   def({ id: B.BROWN_WIRE, name: 'brown_wire', displayName: 'Brown Wire', tiles: tiles(T.CIRCUIT_CLEAR, T.BROWN_WIRE, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'cloth' }),
   def({ id: B.WHITE_WIRE, name: 'white_wire', displayName: 'White Wire', tiles: tiles(T.CIRCUIT_CLEAR, T.WHITE_WIRE, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'cloth' }),
   def({ id: B.EARTH_WIRE, name: 'earth_wire', displayName: 'Earth Wire', tiles: tiles(T.CIRCUIT_CLEAR, T.EARTH_WIRE, T.CIRCUIT_CLEAR), ...THIN, soundGroup: 'cloth' }),
-  def({ id: B.TERMINAL_BOARD, name: 'terminal_board', displayName: 'Terminal Board', tiles: tiles(T.TERMINAL_SIDE, T.TERMINAL_TOP), soundGroup: 'wood' }),
-  def({ id: B.VOLTAIC_BATTERY, name: 'voltaic_battery', displayName: 'Voltaic Battery', tiles: tiles(T.BATTERY_SIDE, T.BATTERY_TOP), soundGroup: 'wood' }),
-  def({ id: B.BLASTING_MACHINE, name: 'blasting_machine', displayName: 'Blasting Machine', tiles: tiles(T.BLASTER_SIDE, T.BLASTER_TOP), soundGroup: 'wood' }),
-  def({ id: B.SELENIUM_PANEL, name: 'selenium_panel', displayName: 'Selenium Panel', tiles: tiles(T.SELENIUM_SIDE, T.SELENIUM_TOP), soundGroup: 'glass' }),
-  def({ id: B.KNIFE_SWITCH, name: 'knife_switch', displayName: 'Knife Switch', tiles: tiles(T.SWITCH_SIDE, T.SWITCH_TOP), soundGroup: 'stone' }),
-  def({ id: B.PUSH_BUTTON, name: 'push_button', displayName: 'Push Button', tiles: tiles(T.BUTTON_SIDE, T.BUTTON_TOP), soundGroup: 'stone' }),
-  def({ id: B.CLOCKWORK_TIMER, name: 'clockwork_timer', displayName: 'Clockwork Timer', tiles: tiles(T.TIMER_SIDE, T.TIMER_TOP), soundGroup: 'wood' }),
-  def({ id: B.RELAY, name: 'relay', displayName: 'Relay', tiles: tiles(T.RELAY_SIDE, T.RELAY_TOP), soundGroup: 'wood' }),
-  def({ id: B.IGNITER, name: 'igniter', displayName: 'Igniter', tiles: tiles(T.IGNITER_SIDE, T.IGNITER_TOP), soundGroup: 'stone' }),
-  // An opaque oak cabinet: the glass bulb is a circuitRenderer overlay.
-  def({ id: B.FILAMENT_LAMP, name: 'filament_lamp', displayName: 'Filament Lamp', tiles: tiles(T.LAMP_SIDE, T.LAMP_TOP), soundGroup: 'wood' }),
-  def({ id: B.ELECTRIC_BELL, name: 'electric_bell', displayName: 'Electric Bell', tiles: tiles(T.BELL_SIDE, T.BELL_TOP), soundGroup: 'stone' }),
-  def({ id: B.SPARK_TRANSMITTER, name: 'spark_transmitter', displayName: 'Spark Transmitter', tiles: tiles(T.TX_SIDE, T.TX_TOP), soundGroup: 'wood' }),
-  def({ id: B.COHERER_RECEIVER, name: 'coherer_receiver', displayName: 'Coherer Receiver', tiles: tiles(T.RX_SIDE, T.RX_TOP), soundGroup: 'glass' }),
+  def({ id: B.TERMINAL_BOARD, name: 'terminal_board', displayName: 'Terminal Board', tiles: tiles(T.TERMINAL_SIDE, T.TERMINAL_TOP), ...MODEL, soundGroup: 'wood' }),
+  def({ id: B.VOLTAIC_BATTERY, name: 'voltaic_battery', displayName: 'Voltaic Battery', tiles: tiles(T.BATTERY_SIDE, T.BATTERY_TOP), ...MODEL, soundGroup: 'wood' }),
+  def({ id: B.BLASTING_MACHINE, name: 'blasting_machine', displayName: 'Blasting Machine', tiles: tiles(T.BLASTER_SIDE, T.BLASTER_TOP), ...MODEL, soundGroup: 'wood' }),
+  def({ id: B.SELENIUM_PANEL, name: 'selenium_panel', displayName: 'Selenium Panel', tiles: tiles(T.SELENIUM_SIDE, T.SELENIUM_TOP), ...MODEL, soundGroup: 'glass' }),
+  def({ id: B.KNIFE_SWITCH, name: 'knife_switch', displayName: 'Knife Switch', tiles: tiles(T.SWITCH_SIDE, T.SWITCH_TOP), ...MODEL, soundGroup: 'stone' }),
+  def({ id: B.PUSH_BUTTON, name: 'push_button', displayName: 'Push Button', tiles: tiles(T.BUTTON_SIDE, T.BUTTON_TOP), ...MODEL, soundGroup: 'stone' }),
+  def({ id: B.CLOCKWORK_TIMER, name: 'clockwork_timer', displayName: 'Clockwork Timer', tiles: tiles(T.TIMER_SIDE, T.TIMER_TOP), ...MODEL, soundGroup: 'wood' }),
+  def({ id: B.RELAY, name: 'relay', displayName: 'Relay', tiles: tiles(T.RELAY_SIDE, T.RELAY_TOP), ...MODEL, soundGroup: 'wood' }),
+  def({ id: B.IGNITER, name: 'igniter', displayName: 'Igniter', tiles: tiles(T.IGNITER_SIDE, T.IGNITER_TOP), ...MODEL, soundGroup: 'stone' }),
+  def({ id: B.FILAMENT_LAMP, name: 'filament_lamp', displayName: 'Filament Lamp', tiles: tiles(T.LAMP_SIDE, T.LAMP_TOP), ...MODEL, soundGroup: 'wood' }),
+  def({ id: B.ELECTRIC_BELL, name: 'electric_bell', displayName: 'Electric Bell', tiles: tiles(T.BELL_SIDE, T.BELL_TOP), ...MODEL, soundGroup: 'stone' }),
+  def({ id: B.SPARK_TRANSMITTER, name: 'spark_transmitter', displayName: 'Spark Transmitter', tiles: tiles(T.TX_SIDE, T.TX_TOP), ...MODEL, soundGroup: 'wood' }),
+  def({ id: B.COHERER_RECEIVER, name: 'coherer_receiver', displayName: 'Coherer Receiver', tiles: tiles(T.RX_SIDE, T.RX_TOP), ...MODEL, soundGroup: 'glass' }),
 ];
 
 /**
@@ -397,7 +408,7 @@ export function isReplaceable(id) {
 export function isTargetable(id) {
   return id !== B.AIR && !getBlockDef(id).liquid;
 }
-/** false for blocks drawn by their own model instead of the chunk mesher (campfire, black hole, the thin circuit parts). */
+/** false for blocks drawn by their own model instead of the chunk mesher (campfire, black hole, the circuit parts but the keg). */
 export function isMeshed(id) {
   return getBlockDef(id).meshed;
 }

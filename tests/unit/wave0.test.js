@@ -500,38 +500,39 @@ describe('blocks', () => {
     // circuit parts share those flags but are unmeshed: DESIGN-circuits §1.2 "THIN", tested below.)
     const plantFlagged = BLOCKS.filter((d) => d.layer === LAYER_CUTOUT && !d.solid && !d.cullSame && d.meshed).map((d) => d.id);
     expect(plantFlagged).toEqual([...PLANT_IDS, B.REMAINS, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT]);
-    // FIRE_PIT is a meshed cutout block. Only CAMPFIRE, the Black Hole and the thin circuit parts have their own models,
-    // and only CAMPFIRE is fall-through.
+    // FIRE_PIT is a meshed cutout block. Only CAMPFIRE, the Black Hole and the circuit parts but the keg (the thin parts and
+    // the 14 device models) have their own models, and only CAMPFIRE is fall-through.
     expect(BLOCKS.filter((d) => !d.meshed).map((d) => d.id)).toEqual([
-      B.BLACK_HOLE, B.CAMPFIRE, B.POWDER_FUSE, B.TORCH, B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE,
+      B.BLACK_HOLE, B.CAMPFIRE, ...Array.from({ length: 20 }, (_, i) => B.COLLAPSAR_CHARGE + i),
     ]);
     expect(isFallThrough(B.FIRE_PIT) || isFallThrough(B.TUSSOCK) || isFallThrough(B.REMAINS)).toBe(false);
   });
 
   // DESIGN-circuits §1.2–§1.4 (final ids, §1.3: BLOCK_COUNT 95 after survival + working id − 140). The user named the
-  // design's Linstock a Torch: key TORCH, name torch, display name "Torch", tile 164 TORCH.
+  // design's Linstock a Torch: key TORCH, name torch, display name "Torch", tile 164 TORCH. The design's 14 "CAB" cabinets
+  // are 3D models since the user's "fun and simple" redo: shape MODEL below.
   const CIRCUIT_BLOCKS = [
     // [BLOCK key, id, name, displayName, shape, soundGroup, [side, top] TILE keys] (bottom = top; THIN: CIRCUIT_CLEAR)
-    ['COLLAPSAR_CHARGE', 95, 'collapsar_charge', 'Collapsar Charge', 'CAB', 'glass', ['COLLAPSAR_SIDE', 'COLLAPSAR_TOP']],
+    ['COLLAPSAR_CHARGE', 95, 'collapsar_charge', 'Collapsar Charge', 'MODEL', 'glass', ['COLLAPSAR_SIDE', 'COLLAPSAR_TOP']],
     ['POWDER_FUSE', 96, 'powder_fuse', 'Powder Fuse', 'THIN', 'cloth', ['CIRCUIT_CLEAR', 'POWDER_FUSE']],
     ['TORCH', 97, 'torch', 'Torch', 'THIN', 'wood', ['CIRCUIT_CLEAR', 'TORCH']],
     ['COPPER_WIRE', 98, 'copper_wire', 'Copper Wire', 'THIN', 'cloth', ['CIRCUIT_CLEAR', 'COPPER_WIRE']],
     ['BROWN_WIRE', 99, 'brown_wire', 'Brown Wire', 'THIN', 'cloth', ['CIRCUIT_CLEAR', 'BROWN_WIRE']],
     ['WHITE_WIRE', 100, 'white_wire', 'White Wire', 'THIN', 'cloth', ['CIRCUIT_CLEAR', 'WHITE_WIRE']],
     ['EARTH_WIRE', 101, 'earth_wire', 'Earth Wire', 'THIN', 'cloth', ['CIRCUIT_CLEAR', 'EARTH_WIRE']],
-    ['TERMINAL_BOARD', 102, 'terminal_board', 'Terminal Board', 'CAB', 'wood', ['TERMINAL_SIDE', 'TERMINAL_TOP']],
-    ['VOLTAIC_BATTERY', 103, 'voltaic_battery', 'Voltaic Battery', 'CAB', 'wood', ['BATTERY_SIDE', 'BATTERY_TOP']],
-    ['BLASTING_MACHINE', 104, 'blasting_machine', 'Blasting Machine', 'CAB', 'wood', ['BLASTER_SIDE', 'BLASTER_TOP']],
-    ['SELENIUM_PANEL', 105, 'selenium_panel', 'Selenium Panel', 'CAB', 'glass', ['SELENIUM_SIDE', 'SELENIUM_TOP']],
-    ['KNIFE_SWITCH', 106, 'knife_switch', 'Knife Switch', 'CAB', 'stone', ['SWITCH_SIDE', 'SWITCH_TOP']],
-    ['PUSH_BUTTON', 107, 'push_button', 'Push Button', 'CAB', 'stone', ['BUTTON_SIDE', 'BUTTON_TOP']],
-    ['CLOCKWORK_TIMER', 108, 'clockwork_timer', 'Clockwork Timer', 'CAB', 'wood', ['TIMER_SIDE', 'TIMER_TOP']],
-    ['RELAY', 109, 'relay', 'Relay', 'CAB', 'wood', ['RELAY_SIDE', 'RELAY_TOP']],
-    ['IGNITER', 110, 'igniter', 'Igniter', 'CAB', 'stone', ['IGNITER_SIDE', 'IGNITER_TOP']],
-    ['FILAMENT_LAMP', 111, 'filament_lamp', 'Filament Lamp', 'CAB', 'wood', ['LAMP_SIDE', 'LAMP_TOP']],
-    ['ELECTRIC_BELL', 112, 'electric_bell', 'Electric Bell', 'CAB', 'stone', ['BELL_SIDE', 'BELL_TOP']],
-    ['SPARK_TRANSMITTER', 113, 'spark_transmitter', 'Spark Transmitter', 'CAB', 'wood', ['TX_SIDE', 'TX_TOP']],
-    ['COHERER_RECEIVER', 114, 'coherer_receiver', 'Coherer Receiver', 'CAB', 'glass', ['RX_SIDE', 'RX_TOP']],
+    ['TERMINAL_BOARD', 102, 'terminal_board', 'Terminal Board', 'MODEL', 'wood', ['TERMINAL_SIDE', 'TERMINAL_TOP']],
+    ['VOLTAIC_BATTERY', 103, 'voltaic_battery', 'Voltaic Battery', 'MODEL', 'wood', ['BATTERY_SIDE', 'BATTERY_TOP']],
+    ['BLASTING_MACHINE', 104, 'blasting_machine', 'Blasting Machine', 'MODEL', 'wood', ['BLASTER_SIDE', 'BLASTER_TOP']],
+    ['SELENIUM_PANEL', 105, 'selenium_panel', 'Selenium Panel', 'MODEL', 'glass', ['SELENIUM_SIDE', 'SELENIUM_TOP']],
+    ['KNIFE_SWITCH', 106, 'knife_switch', 'Knife Switch', 'MODEL', 'stone', ['SWITCH_SIDE', 'SWITCH_TOP']],
+    ['PUSH_BUTTON', 107, 'push_button', 'Push Button', 'MODEL', 'stone', ['BUTTON_SIDE', 'BUTTON_TOP']],
+    ['CLOCKWORK_TIMER', 108, 'clockwork_timer', 'Clockwork Timer', 'MODEL', 'wood', ['TIMER_SIDE', 'TIMER_TOP']],
+    ['RELAY', 109, 'relay', 'Relay', 'MODEL', 'wood', ['RELAY_SIDE', 'RELAY_TOP']],
+    ['IGNITER', 110, 'igniter', 'Igniter', 'MODEL', 'stone', ['IGNITER_SIDE', 'IGNITER_TOP']],
+    ['FILAMENT_LAMP', 111, 'filament_lamp', 'Filament Lamp', 'MODEL', 'wood', ['LAMP_SIDE', 'LAMP_TOP']],
+    ['ELECTRIC_BELL', 112, 'electric_bell', 'Electric Bell', 'MODEL', 'stone', ['BELL_SIDE', 'BELL_TOP']],
+    ['SPARK_TRANSMITTER', 113, 'spark_transmitter', 'Spark Transmitter', 'MODEL', 'wood', ['TX_SIDE', 'TX_TOP']],
+    ['COHERER_RECEIVER', 114, 'coherer_receiver', 'Coherer Receiver', 'MODEL', 'glass', ['RX_SIDE', 'RX_TOP']],
   ];
   const CIRCUIT_TILES = [
     'CIRCUIT_CLEAR', 'COLLAPSAR_SIDE', 'COLLAPSAR_TOP', 'POWDER_FUSE', 'TORCH', 'COPPER_WIRE', 'BROWN_WIRE', 'WHITE_WIRE',
@@ -541,7 +542,7 @@ describe('blocks', () => {
     'TX_TOP', 'RX_SIDE', 'RX_TOP',
   ];
 
-  it('powder and circuits: blocks 95..114 exactly as DESIGN-circuits §1.2 (THIN and CAB), BLOCK_COUNT 115', () => {
+  it('powder and circuits: blocks 95..114 exactly as DESIGN-circuits §1.2 (THIN and MODEL), BLOCK_COUNT 115', () => {
     expect(CIRCUIT_BLOCKS.map((row) => row[1])).toEqual(Array.from({ length: 20 }, (_, i) => 95 + i));
     expect(BLOCK_COUNT).toBe(115);
     for (const [key, id, name, displayName, shape, sound, [side, top]] of CIRCUIT_BLOCKS) {
@@ -560,14 +561,18 @@ describe('blocks', () => {
         expect(getFaceTile(id, FACE_BOTTOM), key).toBe(TILE.CIRCUIT_CLEAR);
         expect(shouldRenderFace(BLOCK.STONE, id), key).toBe(true); // never hides the stone it lies on
       } else {
-        // A cabinet: a solid, opaque, meshed full prism with def defaults; bottom = top.
-        expect([d.solid, d.opaque, d.layer, d.cullSame, d.meshed, d.icon], key).toEqual([true, true, LAYER_OPAQUE, true, true, 'prism']);
+        // A device model: solid (the whole cell collides, targets and bears load) but not opaque and not meshed, so the
+        // terrain draws every face round it (no holes); a flat icon of its top tile; bottom = top.
+        expect([d.solid, d.opaque, d.layer, d.cullSame, d.meshed, d.icon], key).toEqual([true, false, LAYER_CUTOUT, false, false, 'flat']);
         expect(getFaceTile(id, FACE_BOTTOM), key).toBe(TILE[top]);
+        for (const n of [BLOCK.STONE, BLOCK.GRASS_BLOCK, BLOCK.WATER]) expect(shouldRenderFace(n, id), `${key} beside ${n}`).toBe(true);
+        expect(isSolid(id) && isTargetable(id), key).toBe(true);
       }
     }
-    // 6 thin parts (the fuse, the torch, four wires) and 14 cabinets; the lamp is an opaque cabinet (its bulb is an overlay).
+    // 6 thin parts (the fuse, the torch, four wires) and 14 device models.
     expect(CIRCUIT_BLOCKS.filter((row) => row[4] === 'THIN')).toHaveLength(6);
-    expect(isOpaque(BLOCK.FILAMENT_LAMP) && isMeshed(BLOCK.FILAMENT_LAMP)).toBe(true);
+    expect(CIRCUIT_BLOCKS.filter((row) => row[4] === 'MODEL')).toHaveLength(14);
+    expect(isOpaque(BLOCK.FILAMENT_LAMP) || isMeshed(BLOCK.FILAMENT_LAMP)).toBe(false);
     // Worldgen-era survival blocks keep their ids.
     expect([BLOCK.COPPER_ORE, BLOCK.FIRE_PIT]).toEqual([76, 94]);
   });
@@ -584,9 +589,10 @@ describe('blocks', () => {
     expect([TILE.BARREL_SIDE, TILE.BARREL_TOP]).toEqual([75, 76]);
   });
 
-  it('BlockDef.icon is "prism" by default and "flat" only on the six thin parts', () => {
+  it('BlockDef.icon is "prism" by default and "flat" only on the 20 circuit parts but the keg (thin parts and devices)', () => {
     const flat = BLOCKS.filter((d) => d.icon === 'flat').map((d) => d.id);
-    expect(flat).toEqual([BLOCK.POWDER_FUSE, BLOCK.TORCH, BLOCK.COPPER_WIRE, BLOCK.BROWN_WIRE, BLOCK.WHITE_WIRE, BLOCK.EARTH_WIRE]);
+    expect(flat).toEqual(Array.from({ length: 20 }, (_, i) => BLOCK.COLLAPSAR_CHARGE + i));
+    expect(BLOCKS[BLOCK.POWDER_KEG].icon).toBe('prism');
     for (const d of BLOCKS) expect(['prism', 'flat'], d.name).toContain(d.icon);
     expect(getBlockDef(200).icon).toBe('prism'); // unknown ids read as AIR
   });

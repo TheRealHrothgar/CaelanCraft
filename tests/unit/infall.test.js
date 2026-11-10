@@ -175,9 +175,12 @@ describe('Infall — eaten blocks', () => {
     const [fx, fz] = hexToWorld(INFALL_VIEW_RANGE + 5, 0);
     expect(inf.addBlock(rec(INFALL_VIEW_RANGE + 5, 10, 0, B.STONE, INFALL_VIEW_RANGE + 6), 0, 10.5, 0)).toBe(false);
     expect(inf.addBlock(rec(INFALL_VIEW_RANGE + 5, 10, 0, B.STONE, INFALL_VIEW_RANGE + 6), fx - 10, 10.5, fz)).toBe(true);
-    for (const id of [B.CAMPFIRE, B.BLACK_HOLE, B.TORCH, B.COPPER_WIRE, B.POWDER_FUSE]) expect(inf.addBlock(rec(1, 10, 0, id), ...EYE), String(id)).toBe(false);
+    // The circuit parts but the keg are unmeshed models (the thin parts, and the devices since the "fun and simple" redo).
+    for (const id of [B.CAMPFIRE, B.BLACK_HOLE, B.TORCH, B.COPPER_WIRE, B.POWDER_FUSE, B.COLLAPSAR_CHARGE, B.FILAMENT_LAMP]) {
+      expect(inf.addBlock(rec(1, 10, 0, id), ...EYE), String(id)).toBe(false);
+    }
     expect(inf.addBlock({ q: 1, y: 10, r: 0, id: B.STONE }, ...EYE)).toBe(false); // a v0.5 record: no centre
-    expect(inf.addBlock(rec(1, 10, 0, B.COLLAPSAR_CHARGE), ...EYE)).toBe(true); // cabinets are meshed
+    expect(inf.addBlock(rec(1, 10, 0, B.POWDER_KEG), ...EYE)).toBe(true); // the keg is a meshed prism
     expect(inf.size).toBe(2);
   });
   it(`at ${MAX_INFALL_BLOCKS} flights the oldest finishes at once (its gone point comes with the next step)`, () => {

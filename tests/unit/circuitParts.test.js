@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { BLOCK, BLOCKS, UNLOADED, BLOCK_ALIASES, LAYER_OPAQUE, LAYER_CUTOUT, isMeshed, isOpaque, isSolid } from '../../src/blocks.js';
+import { BLOCK, BLOCKS, UNLOADED, BLOCK_ALIASES, LAYER_CUTOUT, isMeshed, isOpaque, isSolid } from '../../src/blocks.js';
 import { FACE_OPPOSITE, FACE_NORMALS } from '../../src/hex.js';
 import * as C from '../../src/config.js';
 import {
@@ -561,13 +561,15 @@ describe('the new blocks as parts (§1.2, §1.5)', () => {
     }
   });
 
-  it('CABs (the lamp included) are meshed, solid, opaque prisms', () => {
+  it('the 14 devices (the design\'s CABs, the lamp included) are solid, unmeshed, see-through 3D models with flat icons', () => {
+    // The user's "fun and simple" redo: every device is a small model (circuitGeometry.MODELS), not a hex cabinet. The cell
+    // still collides, targets and bears load as a whole (solid); the terrain draws every face round it (not opaque).
     expect(CAB_KEYS).toHaveLength(14);
     expect(CAB_KEYS).toContain('FILAMENT_LAMP');
     for (const k of CAB_KEYS) {
       const d = BLOCKS[B[k]];
-      expect([d.meshed, d.icon, d.solid, d.opaque, d.layer], k).toEqual([true, 'prism', true, true, LAYER_OPAQUE]);
-      expect(isOpaque(B[k]), k).toBe(true);
+      expect([d.meshed, d.icon, d.solid, d.opaque, d.layer], k).toEqual([false, 'flat', true, false, LAYER_CUTOUT]);
+      expect(isOpaque(B[k]), k).toBe(false);
     }
   });
 
