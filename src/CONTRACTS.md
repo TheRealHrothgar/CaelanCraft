@@ -2929,7 +2929,8 @@ cell); `strikeKind(mob, tool)` (bare hands only shove a pig); `chooseBelongingsC
 **`interactKind(ctx)`** — R in Survival, the first that applies: 1 CAMPFIRE → `fire_put` (a skewer food or centre pot selected and a
 free spot of that kind) / `fire_feed` (a stick or `#log`) / `fire_take` / `fire_hint`; 2 FIRE_PIT → `pit_take` / `pit_relight`
 (drill, 1 `#tinder`, 3 sticks; held RELIGHT_HOLD_S; hint `HINT.pit`) / `pit_hint` (hint `Cold Fire Pit · relight needs a fire drill
-and 1 more stick`, from `relightMissing`); 3 ripe bush, prickly pear, loose stones, fallen branches → `pick`
+and 1 more stick`, from `relightMissing`; main's `pitHintText(act, status)` shows `act.hint` for both, and `Cold Fire Pit · <status>
+· R: take` for `pit_take`); 3 ripe bush, prickly pear, loose stones, fallen branches → `pick`
 (whatever is in the hand); 4 BIRCH_LOG → `tap` (empty clay pot selected, knife ≥ 2 in the pack, not tapped today; held TAP_HOLD_S) /
 `tap_hint`; 5 WICKER_BASKET → `basket`, REMAINS → `belongings`; 6 SLEEPING_HIDE → `hide`; 7 a workplace → `station`, or
 `station_far` (hint `Kiln · step within 3 cells to work here`; main does nothing on R) when `ctx.stationNear(id)` is false — R reaches
@@ -3138,9 +3139,16 @@ CONTRACT-ISSUE):** a saved spot is kept when its item can be on that kind of spo
   pencilled margin; opened by R / RMB with the item or the pack screen's "Read" hex (`packUI.onRead`). **Pages fit** (v0.9 play-test):
   on open and whenever the measured page size changes (`refit`, keyed by the columns' clientWidth × clientHeight; skipped when the
   book has no layout), every chapter is re-paged with the pure `fitChapterPages(chapters, fits)` / `fitPage(blocks, fits)` — `fits`
-  renders the blocks into the left page and compares scrollHeight with clientHeight; a page is cut after the last block that fits, a
-  heading never ends a page, a table too tall for a page is split by rows under its caption "(continued)" — so no page scrolls
-  (`.hb-columns` keeps `overflow-y: auto` as a last resort and `overflow-x: hidden`, table heads wrap, `.hb-book` is capped at 760 px).
+  renders the blocks into the left page and compares scrollHeight with clientHeight AND every rendered `.hb-table-wrap`'s
+  scrollWidth with its clientWidth (a margin note narrows the text column to 71 %: "Food and drink" beside its "Goes bad" tip was
+  370 px in 317); a page is cut after the last block that fits, a heading never ends a page, a table too tall for a page is split
+  by rows under its caption "(continued)", a table that fits alone but not beside its notes is split so its last rows carry them,
+  and when no split helps the table takes a page alone and the notes follow on their own (the last resort; the book's own pages
+  avoid it — the food table's pages carry no note, "Goes bad" is explained under "Spoilage and salt") — so no page scrolls
+  (`.hb-columns` keeps `overflow-y: auto` as a last resort and `overflow-x: hidden`, `.hb-table-wrap` `overflow-x: auto`, table heads
+  wrap, `.hb-book` is capped at 760 px). The title and contents pages are not re-paged: below a 600 px viewport
+  (`@media (max-height: 600px)`) the contents list is compact (14px/1.3, 1 px padding) so its ten entries fit the 285 px page an
+  800×600 window gives.
   While a reader is open `#title-screen` and `#pause-menu` are `inert` (`INERT_BENEATH`; only the ones it made inert are freed on
   close). **z-order** (styles.test):
   `#handbook` 21 (over the HUD 10 and the pack screen 20; under the console 22, the pause menu 30 and the death screen 33); `#guide`

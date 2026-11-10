@@ -125,12 +125,15 @@ export function bookPages(chapters) {
 }
 
 /**
- * Re-page every chapter by MEASURED height: `fits(blocks)` says whether a page of those blocks fits the field book's page
- * (the UI renders them into a real page and compares scrollHeight with clientHeight; a test passes any rule). A page that
+ * Re-page every chapter by MEASURED size: `fits(blocks)` says whether a page of those blocks fits the field book's page
+ * (the UI renders them into a real page and compares scrollHeight with clientHeight, and every table's scrollWidth with its
+ * clientWidth; a test passes any rule). A page that
  * does not fit is cut after the last block that does; a heading is never left alone at the foot of a page, and a margin note
  * (tip, warning) never starts a page alone — the text block before it comes along; a table (list) too
  * tall for one page is split by rows (items), the rest carrying on under the same caption "(continued)" (a numbered list
- * keeps counting). The chapter's text never
+ * keeps counting). A table that fits alone but not beside its notes (they narrow the column) is split so its last rows carry
+ * them; when no split helps (the table is too wide beside any note) the table takes a page of its own and the notes follow
+ * on the next — the one case a note stands alone, a last resort the book's own pages avoid. The chapter's text never
  * changes, only where its pages end, so no page needs a scrollbar (play-test: the gathering table lost its last three
  * rows below the fold at 1280×720). Pure.
  * @param {readonly Chapter[]} chapters
@@ -813,8 +816,10 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
 
   /**
    * Does a page of these blocks fit the field book's page? Rendered into the left page (cleared again before anything is
-   * painted: all within one task) and judged by its columns' scrollHeight. Null when the book is not laid out (hidden, or a
-   * DOM without layout), so nothing is re-paged.
+   * painted: all within one task) and judged by its columns' scrollHeight AND by every table's width: a margin note narrows
+   * the text column to 71 %, and a five-column table that fits the full column may then need `.hb-table-wrap`'s horizontal
+   * scroll (play-test: "Food and drink" beside its "Goes bad" note, 370 px in 317). Only called when the book is laid out
+   * (`refit`), so a DOM without layout never re-pages.
    * @param {readonly Block[]} blocks
    */
   function measureFits(blocks) {
@@ -825,10 +830,15 @@ export function createHandbookUI(doc, { chapters, onClose } = {}) {
     clear(pg.notes);
     renderBlocks(blocks, pg.text, pg.notes);
     c.classList.toggle('has-notes', pg.notes.children.length > 0);
-    const ok = c.scrollHeight <= c.clientHeight + 1;
+    const ok = c.scrollHeight <= c.clientHeight + 1 && Array.from(pg.text.querySelectorAll('.hb-table-wrap')).every(wrapFitsWidth);
     clear(pg.text);
     clear(pg.notes);
     return ok;
+  }
+
+  /** A rendered table needs no horizontal scroll (a DOM without layout reports 0/0 and passes). @param {Element} wrap */
+  function wrapFitsWidth(wrap) {
+    return (Number(wrap.scrollWidth) || 0) <= (Number(wrap.clientWidth) || 0) + 1;
   }
 
   /**

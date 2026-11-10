@@ -990,10 +990,12 @@ function makeChapters() {
       tip(`A log split into sticks gives ${sticksFromLog} s of fuel; burnt whole it gives ${FUEL_LOG_S} s.`),
       tip('Fires lit in Creative burn forever and need no feeding.'),
     ],
-    ...foodTable().map((t, i) => (i === 0 ? [t, tip('Goes bad: the average time one item lasts. Carry fewer and each lasts longer.')] : [t])),
+    // the food table takes its pages alone: beside a margin note its five columns are wider than the text column (play-test)
+    ...foodTable().map((t) => [t]),
     [
       h('Spoilage and salt'),
       p(`Berries and meat go bad in your pack, in baskets and in your belongings. The more of one kind you carry, the sooner one of them turns: carry ten raw pork and one spoils about every ${fmtDurationLong((food('raw_pork').spoilS ?? 0) / 10)}.`),
+      tip('Goes bad, in the table: the average time one item lasts. Carry fewer and each lasts longer.'),
       p('*Salted Pork* never spoils and needs no fire: rub Raw Pork with Salt, a hand job. Salt comes from boiling seawater.'),
       warn(`Raw pork turns the stomach ${fmtPct(food('raw_pork').sick)} of the time. Cook it.`),
     ],

@@ -495,6 +495,13 @@ describe('fitPage / fitChapterPages: pages re-paged to a measured height (play-t
     expect(fitPage([table([1], 'one row'), p('x')], () => false)).toEqual([[table([1], 'one row')], [p('x')]]);
   });
 
+  it('a table that fits alone but not beside its notes, however it is split, takes its page alone; the notes follow on their own (the last resort)', () => {
+    // the real book has no such page (handbook.test: the food table's pages carry no note); measureFits judges width too
+    const noNoteBesideATable = (blocks) => fitsWithin(6)(blocks) && !(blocks.some((b) => b.kind === 'table') && blocks.some((b) => b.kind === 'tip'));
+    expect(fitPage([table([1, 2, 3]), tip('n')], noNoteBesideATable)).toEqual([[table([1, 2, 3])], [tip('n')]]);
+    expect(fitPage([h('A'), p('x'), table([1, 2, 3]), tip('n')], noNoteBesideATable)).toEqual([[h('A'), p('x')], [table([1, 2, 3])], [tip('n')]]);
+  });
+
   it('fitChapterPages keeps every chapter\'s id, title and text, only adding pages, and bookPages stays even', () => {
     const fitted = fitChapterPages(CHAPTERS, fitsWithin(6));
     expect(fitted.map((c) => c.id)).toEqual(CHAPTERS.map((c) => c.id));
@@ -562,6 +569,58 @@ describe('the field book measures its pages and re-pages the chapters (play-test
       }
       ui.handleKey(key('ArrowRight'));
     }
+  });
+
+  /** Give every rendered table a width: 370 px of content in a 317 px column beside margin notes (71 % of the text), 485 px without. */
+  function tableWidths(doc) {
+    const create = doc.createElement.bind(doc);
+    doc.createElement = (tag) => {
+      const el = create(tag);
+      if (tag !== 'div') return el;
+      Object.defineProperty(el, 'scrollWidth', { configurable: true, get: () => (el.classList.contains('hb-table-wrap') ? 370 : 0) });
+      Object.defineProperty(el, 'clientWidth', {
+        configurable: true,
+        get() {
+          if (!el.classList.contains('hb-table-wrap')) return 0;
+          const col = el.closest('.hb-columns');
+          return col && col.classList.contains('has-notes') ? 317 : 485;
+        },
+      });
+      return el;
+    };
+  }
+
+  it('a table too wide beside a margin note takes a page without the note (play-test round 2: "Food and drink" scrolled sideways beside "Goes bad")', () => {
+    const wide = { kind: 'table', id: 'wide', caption: 'Wide', head: ['A', 'B', 'C', 'D', 'E'], keys: [0, 1, 2, 3], source: null, part: 1, parts: 1,
+      rows: [0, 1, 2, 3].map((i) => ['a', 'b', 'c', 'd', String(i)]) };
+    const chapters = [{ id: 'one', title: 'One', short: 'One', icon: 'flame', pages: [
+      [{ kind: 'h', text: 'Heading' }, { kind: 'p', text: 'Prose.' }],
+      [wide, { kind: 'tip', text: 'Goes bad: a note.' }],
+    ] }];
+    const { ui, doc } = setup({ chapters });
+    tableWidths(doc);
+    ui.openRustic('one');
+    layOut(doc);
+    ui.close();
+    ui.openRustic('one');
+    const wraps = [];
+    const tips = [];
+    const seen = new Set();
+    for (let i = 0; i < 20; i++) {
+      const pos = ui.position();
+      if (seen.has(pos.spread)) break;
+      seen.add(pos.spread);
+      for (const side of ['left', 'right']) {
+        const pg = doc.querySelector(`#handbook .hb-${side}`);
+        if (pg.classList.contains('hidden')) continue;
+        for (const w of Array.from(pg.querySelectorAll('.hb-table-wrap'))) wraps.push([w.scrollWidth, w.clientWidth]);
+        for (const t of Array.from(pg.querySelectorAll('.hb-notes .hb-note, .hb-notes'))) if (t.textContent) tips.push(t.textContent);
+      }
+      ui.handleKey(key('ArrowRight'));
+    }
+    expect(wraps.length).toBeGreaterThan(0);
+    for (const [sw, cw] of wraps) expect(sw, 'no table scrolls sideways').toBeLessThanOrEqual(cw + 1);
+    expect(tips.some((t) => t.includes('Goes bad: a note.'))).toBe(true); // the note is still in the book
   });
 
   it('without a layout (clientHeight 0) nothing is re-paged: the chapters\' own pages are shown', () => {
