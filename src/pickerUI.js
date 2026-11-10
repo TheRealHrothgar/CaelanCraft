@@ -1,8 +1,9 @@
-// Caelancraft — the creative inventory's DOM: a honeycomb of hex cells in sections with a section rail, families that open in
-// a drawer band below their row, smooth scrolling (wheel, scrollbar, drag on empty space, keyboard), a search box with
-// aliases, drag-to-hotbar and slot badges, in the survival honey palette. docs/DESIGN-circuits.md §5 (CONTRACTS §56 once
-// merged). The model (sections, families, search, layout, navigation) is pickerModel.js; menus.js builds one of these and
-// maps showPicker / hidePicker / isPickerOpen onto it, so main's picker API is unchanged.
+// Caelancraft — the creative inventory's DOM: a tidy grid of plain rounded SQUARE slots in sections with a section rail,
+// families as one slot (a little stack with a round count badge) that opens a drawer band below its row, smooth scrolling
+// (wheel, scrollbar, drag on empty space, keyboard), a search box with aliases, drag-to-hotbar and round slot badges, in the
+// survival honey palette. Icons always sit on rounded squares, never on hexagons (the user's ask). docs/DESIGN-circuits.md
+// §5 (CONTRACTS §56 once merged). The model (sections, families, search, layout, navigation) is pickerModel.js; menus.js
+// builds one of these and maps showPicker / hidePicker / isPickerOpen onto it, so main's picker API is unchanged.
 //
 // DOM module. Every DOM access goes through the `doc` and elements handed to createPickerUI and happens inside a function,
 // so the module can be imported (and unit-tested on a fake DOM) under Node. Imports: config, blocks, atlas, pickerModel.
@@ -19,6 +20,8 @@ export const PICKER_ICON_PX = 64;
 /** The drag ghost and the rail icons. */
 export const PICKER_GHOST_PX = 40;
 export const PICKER_RAIL_ICON_PX = 32;
+/** The section headers' icon chips. */
+export const PICKER_HEAD_ICON_PX = 32;
 /** A pointer that moves more than this many px after pointerdown drags (and the click is suppressed). */
 export const DRAG_START_PX = 6;
 /** `#picker-name` while nothing is hovered: a non-breaking space keeps the line's height. */
@@ -29,7 +32,7 @@ export const noMatchText = (q) => `No blocks match "${q}"`;
 /**
  * @typedef {Object} PickerElements  the picker's static elements in index.html (menus.js binds and checks them)
  * @property {HTMLElement} blockPicker   #block-picker, the layer
- * @property {HTMLElement} pickerGrid    #picker-grid, the honeycomb (inside #picker-scroll)
+ * @property {HTMLElement} pickerGrid    #picker-grid, the grid of slots (inside #picker-scroll)
  * @property {HTMLElement} pickerName    #picker-name
  * @property {HTMLElement} pickerBlurb   #picker-blurb, the tip or the family line
  * @property {HTMLElement} pickerSearch  #picker-search
@@ -121,6 +124,8 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
   const cellCache = new Map();
   /** @type {Map<string, HTMLElement>} rail buttons by section id */
   const railButtons = new Map();
+  /** @type {Map<string, HTMLCanvasElement>} the section headers' icon chips by `<section>:<block id>` */
+  const headIcons = new Map();
   /** @type {Array<[EventTarget, string, EventListener, boolean]>} */
   const listeners = [];
   /** @type {Set<string>} */
@@ -222,7 +227,10 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
     return cell;
   }
 
-  /** A family tile: three member icons fanned in a stack (composited once), the count badge and the ▸ chevron (§5.2). */
+  /**
+   * A family tile: one slot drawn as a little stack of cards, three member icons fanned on it (composited once), a round
+   * count badge and the ▸ chevron (§5.2).
+   */
   function familyCell(family) {
     const cacheKey = `fam:${family.key}`;
     let cell = cellCache.get(cacheKey);
@@ -271,6 +279,19 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
     }
   }
 
+  /** A section header's icon chip (the rail's icon, on a small rounded square). @param {import('./pickerModel.js').PickerSection} section */
+  function headIcon(section) {
+    const cacheKey = `${section.id}:${section.iconId}`;
+    let chip = headIcons.get(cacheKey);
+    if (!chip) {
+      chip = iconCanvas(section.iconId, PICKER_HEAD_ICON_PX);
+      chip.className = 'picker-section-icon';
+      chip.setAttribute('aria-hidden', 'true');
+      headIcons.set(cacheKey, chip);
+    }
+    return chip;
+  }
+
   /** @param {import('./pickerModel.js').Entry} entry @param {string} ctx */
   function cellFor(entry, ctx) {
     return entry.type === 'family' ? familyCell(entry) : blockCell(entry.id, ctx);
@@ -278,7 +299,7 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
 
   // ---- slot badges --------------------------------------------------------------------------------------------------------
 
-  /** Badges on the blocks already in the hotbar (their slot number) and a honey ring on the block in the selected slot. */
+  /** Round badges on the blocks already in the hotbar (their slot number) and a honey ring on the block in the selected slot. */
   function markHotbar() {
     const bar = state.hotbar;
     for (const [cacheKey, cell] of cellCache) {
@@ -355,19 +376,22 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
     /** @type {HTMLElement} */
     let container = grid;
     /** @type {HTMLElement|null} */
-    let combEl = null;
+    let slotsEl = null;
     /** @type {HTMLElement|null} */
     let drawerEl = null;
+    /** @type {import('./pickerModel.js').CellsRow|null} the last row outside a drawer (it holds an open family's tile) */
+    let lastRow = null;
     for (const row of rows) {
       if (row.kind === 'header') {
         const section = make('section', 'picker-section');
         section.dataset.section = row.section.id;
         const head = make('div', 'picker-section-head');
+        head.appendChild(headIcon(row.section));
         head.appendChild(make('span', 'picker-section-title', row.section.title));
         section.appendChild(head);
         grid.appendChild(section);
         container = section;
-        combEl = null;
+        slotsEl = null;
         drawerEl = null;
         continue;
       }
@@ -379,19 +403,24 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
           drawerEl.setAttribute('role', 'group');
           const family = model.families.get(row.drawerOf);
           if (family) drawerEl.setAttribute('aria-label', family.name);
+          // the band's little notch points up at the tile's column
+          const col = Math.max(0, lastRow ? lastRow.cells.findIndex((e) => e.type === 'family' && e.key === row.drawerOf) : 0);
+          drawerEl.dataset.tileCol = String(col);
+          drawerEl.style.setProperty('--notch-col', String(col));
           container.appendChild(drawerEl);
-          combEl = null;
+          slotsEl = null;
         }
         parent = drawerEl;
       } else {
-        if (!combEl) {
-          combEl = make('div', 'picker-comb');
-          container.appendChild(combEl);
+        lastRow = row;
+        if (!slotsEl) {
+          slotsEl = make('div', 'picker-slots');
+          container.appendChild(slotsEl);
           drawerEl = null;
         }
-        parent = combEl;
+        parent = slotsEl;
       }
-      const rowEl = make('div', row.indent ? 'picker-row indent' : 'picker-row');
+      const rowEl = make('div', 'picker-row');
       rowEl.setAttribute('role', 'row');
       const ctx = container.dataset && container.dataset.section === RECENT_SECTION_ID ? 'r' : 'm';
       for (const entry of row.cells) {
@@ -923,6 +952,7 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
     clear(grid);
     clear(els.pickerRail);
     cellCache.clear();
+    headIcons.clear();
     railButtons.clear();
     flat = [];
   }

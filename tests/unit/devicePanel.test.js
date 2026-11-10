@@ -1,12 +1,14 @@
 // Unit tests for src/devicePanel.js (DESIGN-circuits §4.10, §6.2.15): the pure helpers panelFields (which controls each kind
 // shows: the timer's presets, the wavelength dial with its distress mark, the push button's NO | NC, the receiver's
 // Pulse | Latch …) and clampSetting, with views from the real engine (circuits.panelView); then the panel itself on a fake
-// DOM: .hex-button chrome only, onChange / onAction, the label's debounce, refresh, and Done / Esc / Enter / the Shift+R key.
+// DOM: rounded .cc-btn buttons and the icon on a rounded square (no icons on hexagons), onChange / onAction, the label's
+// debounce, refresh, and Done / Esc / Enter / the Shift+R key.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   panelFields, clampSetting, readoutPairs, createDevicePanel, TIMER_PRESETS, ACTION_LABELS, LABEL_DEBOUNCE_MS, FACE_NAMES,
+  PANEL_ICON_PX,
 } from '../../src/devicePanel.js';
 import { BLOCK } from '../../src/blocks.js';
 import { BATTERY_CAPACITY, MAX_PART_LABEL_CHARS, RADIO_DISTRESS_CH, TIMER_MAX_S, TIMER_MIN_S } from '../../src/config.js';
@@ -158,19 +160,37 @@ describe('the panel on a fake DOM', () => {
   const ALL = [BLOCK.CLOCKWORK_TIMER, BLOCK.RELAY, BLOCK.PUSH_BUTTON, BLOCK.SPARK_TRANSMITTER, BLOCK.COHERER_RECEIVER,
     BLOCK.KNIFE_SWITCH, BLOCK.VOLTAIC_BATTERY, BLOCK.FILAMENT_LAMP, BLOCK.COPPER_WIRE, BLOCK.TORCH, BLOCK.POWDER_KEG];
 
-  it('#device-panel sits in index.html; every button in it is a .hex-button; no .mc-button or .picker-panel anywhere', () => {
+  it('#device-panel sits in index.html; every button in it is a rounded .cc-btn (never a .hex-button, .mc-button or .picker-panel)', () => {
     for (const id of ALL) {
       const { root, panel } = setup(viewOf(id));
       expect(root.classList.contains('hidden')).toBe(false);
       const buttons = root.querySelectorAll('button');
       expect(buttons.length, String(id)).toBeGreaterThan(0);
-      for (const b of buttons) expect(b.classList.contains('hex-button'), `${id}: ${b.textContent}`).toBe(true);
-      expect(root.querySelectorAll('.mc-button, .picker-panel'), String(id)).toHaveLength(0);
+      for (const b of buttons) {
+        expect(b.classList.contains('cc-btn'), `${id}: ${b.textContent}`).toBe(true);
+        expect(b.classList.contains('hex-button'), `${id}: ${b.textContent}`).toBe(false);
+        expect(b.getAttribute('type'), `${id}: ${b.textContent}`).toBe('button');
+      }
+      expect(root.querySelectorAll('.mc-button, .picker-panel, .hex-button'), String(id)).toHaveLength(0);
       expect(root.querySelector('.cc-panel')).toBeTruthy();
       panel.dispose();
     }
     const src = readFileSync(fileURLToPath(new URL('../../src/devicePanel.js', import.meta.url)), 'utf8');
-    expect(src.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, '')).not.toMatch(/mc-button|picker-panel/);
+    expect(src.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, '')).not.toMatch(/mc-button|picker-panel|hex-button/);
+  });
+
+  it('the header shows the part\'s 48 px icon on a rounded square box (.cc-icon), not on a hexagon badge', () => {
+    const doc = documentFromHTML(html);
+    const panel = createDevicePanel(/** @type {any} */ (doc), {}, /** @type {*} */ ({ width: 256, height: 256 }));
+    const root = /** @type {any} */ (doc.getElementById('device-panel'));
+    panel.open(viewOf(BLOCK.CLOCKWORK_TIMER));
+    const box = root.querySelector('.cc-head .cc-icon');
+    expect(box).toBeTruthy();
+    expect(box.children).toHaveLength(1);
+    expect(box.children[0].tagName).toBe('CANVAS');
+    expect([box.children[0].width, box.children[0].height]).toEqual([PANEL_ICON_PX, PANEL_ICON_PX]);
+    expect(PANEL_ICON_PX).toBe(48);
+    panel.dispose();
   });
 
   it('header, reading, settings, About (the origin and the tip) and Done; a wire shows only About', () => {
@@ -186,10 +206,20 @@ describe('the panel on a fake DOM', () => {
     expect(root.querySelector('.cc-chip.active').textContent).toBe('5 s');
     expect(root.querySelectorAll('.cc-face-svg [data-face]')).toHaveLength(7);
     expect(root.querySelector('.cc-wedge.active').getAttribute('data-face')).toBe('3');
+    // the input-face diagram: six plain wedges, each side's name just outside it, and a round top in the middle
+    expect(root.querySelectorAll('.cc-face-svg .cc-face-name').map((t) => t.textContent)).toEqual(FACE_NAMES.slice(0, 6));
+    expect(root.querySelectorAll('.cc-face-svg polygon')).toHaveLength(6);
+    expect(root.querySelectorAll('.cc-face-svg circle')).toHaveLength(1);
+    // the actions sit in the foot, before Done (always in view); the settings hold none
+    expect(root.querySelectorAll('.cc-foot .cc-action').map((b) => b.textContent)).toEqual(['Start']);
+    expect(root.querySelector('.cc-settings .cc-action')).toBeNull();
+    const foot = root.querySelector('.cc-foot');
+    expect(foot.children.map((c) => c.className)).toEqual(['cc-keys', 'cc-actions', 'cc-btn cc-done']);
     panel.open(viewOf(BLOCK.COPPER_WIRE));
     expect(root.querySelector('.cc-readout')).toBeNull();
     expect(root.querySelector('.cc-settings')).toBeNull();
     expect(root.querySelector('.cc-label-input')).toBeNull();
+    expect(root.querySelector('.cc-actions')).toBeNull(); // nothing to do: the foot holds Done only
     expect(root.querySelector('.cc-about .cc-tip').textContent).toBe(partTip(BLOCK.COPPER_WIRE));
   });
 

@@ -1,10 +1,11 @@
 // Unit tests for src/pickerModel.js, the creative inventory's pure model (DESIGN-circuits §5.2–§5.7, §5.10): sections and
-// families resolved by name (with and without survival's blocks), search with aliases, the honeycomb layout with its
-// drawer bands, keyboard navigation and the Recent list.
+// families resolved by name (with and without survival's blocks), search with aliases, the grid of rounded square slots
+// with its drawer bands, keyboard navigation and the Recent list.
 import { describe, it, expect } from 'vitest';
 import {
   buildPickerModel, searchBlocks, layoutPicker, navigate, pushRecent, blurbFor, familyLine, normalizeQuery, pickerCols,
   PICKER_SECTIONS, PICKER_ALIASES, STARTER_PARTS, OTHER_SECTION_ID, RECENT_SECTION_ID, PICKER_RECENT_MAX,
+  PICKER_SLOT_PX, PICKER_GAP_PX, PICKER_COL_W, PICKER_ROW_H,
 } from '../../src/pickerModel.js';
 import { BLOCKS, BLOCK, PICKER_ORDER, isPlaceable } from '../../src/blocks.js';
 import { partTip } from '../../src/circuitParts.js';
@@ -156,15 +157,19 @@ describe('searchBlocks (§5.5)', () => {
   });
 });
 
-describe('layoutPicker: the honeycomb (§5.3, §5.4)', () => {
+describe('layoutPicker: the grid of square slots (§5.3, §5.4)', () => {
   const model = buildPickerModel();
   const cellRows = (rows) => rows.filter((r) => r.kind === 'cells');
 
-  it('headers come first in each section; row lengths alternate cols / cols − 1 (odd rows indented)', () => {
+  it('slots are 56 px squares 6 px apart: columns and rows are both 62 px apart', () => {
+    expect([PICKER_SLOT_PX, PICKER_GAP_PX, PICKER_COL_W, PICKER_ROW_H]).toEqual([56, 6, 62, 62]);
+  });
+
+  it('headers come first in each section; every row holds `cols` slots but the last of a section; nothing is indented', () => {
     const rows = layoutPicker(model, { cols: 5, showAll: true });
     expect(rows[0].kind).toBe('header');
-    let inSection = -1;
     let seen = 0;
+    let inSection = -1;
     for (const r of rows) {
       if (r.kind === 'header') {
         inSection = 0;
@@ -172,9 +177,9 @@ describe('layoutPicker: the honeycomb (§5.3, §5.4)', () => {
         continue;
       }
       expect(inSection).toBeGreaterThanOrEqual(0);
-      expect(r.indent).toBe(inSection % 2 === 1);
-      const full = r.indent ? 4 : 5;
-      expect(r.cells.length).toBeLessThanOrEqual(full);
+      expect(r.cells.length).toBeGreaterThan(0);
+      expect(r.cells.length).toBeLessThanOrEqual(5);
+      expect(r).not.toHaveProperty('indent');
       inSection++;
     }
     expect(seen).toBe(model.sections.length);
@@ -182,7 +187,12 @@ describe('layoutPicker: the honeycomb (§5.3, §5.4)', () => {
     const circuitsAt = rows.findIndex((r) => r.kind === 'header' && r.section.id === 'circuits');
     const circuitRows = [];
     for (let i = circuitsAt + 1; i < rows.length && rows[i].kind === 'cells'; i++) circuitRows.push(rows[i]);
-    expect(circuitRows.map((r) => r.cells.length)).toEqual([5, 4, 5, 3]); // 17 parts flattened
+    expect(circuitRows.map((r) => r.cells.length)).toEqual([5, 5, 5, 2]); // 17 parts flattened
+    // collapsed at 14 columns (1280 px wide) the Circuits section is one row: 14 entries, Radio and the wires as tiles
+    const wide = layoutPicker(model, { cols: 14 });
+    const at = wide.findIndex((r) => r.kind === 'header' && r.section.id === 'circuits');
+    expect(wide[at + 1].kind === 'cells' && wide[at + 1].cells.length).toBe(14);
+    expect(wide[at + 2].kind).toBe('header');
   });
 
   it('with show-all every family is flattened into its section, members in place', () => {
@@ -208,10 +218,10 @@ describe('layoutPicker: the honeycomb (§5.3, §5.4)', () => {
       for (let i = tileRow + 1; i < rows.length && rows[i].kind === 'cells' && rows[i].drawerOf === key; i++) drawer.push(rows[i]);
       expect(drawer.length).toBeGreaterThan(0);
       expect(drawer.flatMap((r) => r.cells).map((e) => e.type === 'block' && e.id)).toEqual(family.ids);
-      // the drawer is laid out with the same columns: full, then indented one shorter
+      // the drawer is laid out with the same columns: full rows, the last one may be shorter
       drawer.forEach((r, i) => {
-        expect(r.indent).toBe(i % 2 === 1);
-        expect(r.cells.length).toBeLessThanOrEqual(r.indent ? 5 : 6);
+        if (i < drawer.length - 1) expect(r.cells.length).toBe(6);
+        else expect(r.cells.length).toBeLessThanOrEqual(6);
       });
       // nowhere else
       const elsewhere = rows.filter((r) => r.kind === 'cells' && r.drawerOf !== key).flatMap((r) => r.cells);
@@ -223,7 +233,7 @@ describe('layoutPicker: the honeycomb (§5.3, §5.4)', () => {
   });
 
   it('a section\'s rows continue after the drawer: the drawer never shifts the rows of its section', () => {
-    // with 4 columns Circuits has rows [4, 3, 4, 3]: Radio (11th entry) sits in the third row
+    // with 4 columns Circuits has rows [4, 4, 4, 2]: Radio (11th entry) sits in the third row
     const closed = cellRows(layoutPicker(model, { cols: 4 }));
     const open = cellRows(layoutPicker(model, { cols: 4, openFamily: 'radio' }));
     expect(open.filter((r) => r.drawerOf === null)).toEqual(closed);
@@ -232,11 +242,12 @@ describe('layoutPicker: the honeycomb (§5.3, §5.4)', () => {
     expect(open[at + 2].drawerOf).toBe(null);
   });
 
-  it('a query replaces the sections with one flat honeycomb of the matches (no headers, families flattened)', () => {
+  it('a query replaces the sections with one flat grid of the matches (no headers, families flattened)', () => {
     const rows = layoutPicker(model, { cols: 4, query: 'wool', openFamily: 'wool', recent: [BLOCK.STONE] });
     expect(rows.every((r) => r.kind === 'cells')).toBe(true);
     expect(rows.flatMap((r) => /** @type {*} */ (r).cells).map((e) => e.id)).toEqual(searchBlocks(model, 'wool'));
-    expect(rows.map((r) => /** @type {*} */ (r).cells.length)).toEqual([4, 3, 4, 3, 2]);
+    expect(rows.map((r) => /** @type {*} */ (r).cells.length)).toEqual([4, 4, 4, 4]);
+    expect(layoutPicker(model, { cols: 5, query: 'circuits' }).map((r) => /** @type {*} */ (r).cells.length)).toEqual([5, 5, 5, 2]);
     expect(layoutPicker(model, { cols: 4, query: 'zzz' })).toEqual([]);
   });
 
@@ -248,10 +259,10 @@ describe('layoutPicker: the honeycomb (§5.3, §5.4)', () => {
     expect(layoutPicker(model, { cols: 6, recent: [] })[0]).toMatchObject({ kind: 'header', section: { id: 'stone' } });
   });
 
-  it('pickerCols: max(4, floor((width − 29) / 58))', () => {
-    expect(pickerCols(876)).toBe(14);
-    expect(pickerCols(29 + 58 * 10)).toBe(10);
-    expect(pickerCols(29 + 58 * 10 - 1)).toBe(9);
+  it('pickerCols: max(4, floor((width + 6) / 62)) — n slots need n · 62 − 6 px', () => {
+    expect(pickerCols(878)).toBe(14); // the grid at 1280 x 720
+    expect(pickerCols(62 * 10 - 6)).toBe(10);
+    expect(pickerCols(62 * 10 - 7)).toBe(9);
     expect(pickerCols(100)).toBe(4);
     expect(pickerCols(0)).toBe(4);
     expect(pickerCols(NaN)).toBe(4);
@@ -259,16 +270,16 @@ describe('layoutPicker: the honeycomb (§5.3, §5.4)', () => {
 });
 
 describe('navigate (§5.7)', () => {
-  // a hand-made layout: header, rows of 4 / 3 (indented) / 4, a header, a row of 2
+  // a hand-made layout: header, rows of 4 / 3 (a section's short last row) / 4, a header, a row of 2
   const b = (id) => ({ type: 'block', id });
   /** @type {any[]} */
   const rows = [
     { kind: 'header', section: { id: 'a' } },
-    { kind: 'cells', cells: [b(0), b(1), b(2), b(3)], indent: false, drawerOf: null },
-    { kind: 'cells', cells: [b(4), b(5), b(6)], indent: true, drawerOf: null },
-    { kind: 'cells', cells: [b(7), b(8), b(9), b(10)], indent: false, drawerOf: null },
+    { kind: 'cells', cells: [b(0), b(1), b(2), b(3)], drawerOf: null },
+    { kind: 'cells', cells: [b(4), b(5), b(6)], drawerOf: null },
+    { kind: 'cells', cells: [b(7), b(8), b(9), b(10)], drawerOf: null },
     { kind: 'header', section: { id: 'b' } },
-    { kind: 'cells', cells: [b(11), b(12)], indent: false, drawerOf: null },
+    { kind: 'cells', cells: [b(11), b(12)], drawerOf: null },
   ];
 
   it('← / → walk the reading order and wrap across rows (and headers), stopping at the ends', () => {
@@ -280,20 +291,22 @@ describe('navigate (§5.7)', () => {
     expect(navigate(rows, 12, 'ArrowRight')).toBe(12);
   });
 
-  it('↑ / ↓ go to the cell of the row above / below whose centre x is nearest (indented rows sit half a column right)', () => {
-    // row 1 centres 28, 86, 144, 202; the indented row 57, 115, 173
-    expect(navigate(rows, 0, 'ArrowDown')).toBe(4); // 28 → 57
-    expect(navigate(rows, 1, 'ArrowDown')).toBe(5); // 86: 57 and 115 tie → the same column
-    expect(navigate(rows, 3, 'ArrowDown')).toBe(6); // 202 → 173
-    expect(navigate(rows, 5, 'ArrowUp')).toBe(1); // 115: 86 and 144 tie → the same column
+  it('↑ / ↓ go to the same column of the row above / below, or to its last cell when that row is shorter', () => {
+    expect(navigate(rows, 0, 'ArrowDown')).toBe(4);
+    expect(navigate(rows, 1, 'ArrowDown')).toBe(5);
+    expect(navigate(rows, 3, 'ArrowDown')).toBe(6); // column 3 → the short row's last cell
+    expect(navigate(rows, 5, 'ArrowUp')).toBe(1);
+    expect(navigate(rows, 6, 'ArrowUp')).toBe(2);
     expect(navigate(rows, 5, 'ArrowDown')).toBe(8);
     expect(navigate(rows, 6, 'ArrowDown')).toBe(9);
-    // up and down again comes back
+    // straight down and up again comes back, column for column
     for (let i = 0; i < 11; i++) {
       const down = navigate(rows, i, 'ArrowDown');
-      if (i >= 4 && i <= 6) expect(navigate(rows, down, 'ArrowUp')).toBe(i);
+      if (i <= 2 || (i >= 4 && i <= 6)) expect(navigate(rows, down, 'ArrowUp'), String(i)).toBe(i);
     }
-    expect(navigate(rows, 10, 'ArrowDown')).toBe(12); // 202 → the short row's last cell
+    expect(navigate(rows, 9, 'ArrowDown')).toBe(12); // across the header: column 2 → the short row's last cell
+    expect(navigate(rows, 10, 'ArrowDown')).toBe(12);
+    expect(navigate(rows, 11, 'ArrowUp')).toBe(7);
     expect(navigate(rows, 0, 'ArrowUp')).toBe(0); // the first row stays
     expect(navigate(rows, 12, 'ArrowDown')).toBe(12); // the last row stays
   });

@@ -1,7 +1,7 @@
 // Unit tests for the creative inventory's DOM (src/pickerUI.js through src/menus.js; DESIGN-circuits §5.3–§5.9), on a fake
 // DOM built from index.html: the public picker API is unchanged (showPicker, hidePicker, isPickerOpen, onPickBlock(id, slot)
-// and onPickerClose), families open in a drawer band below their row, the search, the keyboard, drag-to-hotbar, the slot
-// badges, Show all, the rail and the Recent row.
+// and onPickerClose), plain rounded square slots (no icons on hexagons), families open in a drawer band below their row,
+// the search, the keyboard, drag-to-hotbar, the slot badges, Show all, the rail and the Recent row.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -84,21 +84,43 @@ describe('the picker keeps its public API (§5.6)', () => {
   });
 });
 
-describe('the honeycomb, the rail and the name line (§5.4, §5.8)', () => {
-  it('sections with sticky headers, rows of cells; the rail has a button per section', () => {
+describe('the slots, the rail and the name line (§5.4, §5.8)', () => {
+  it('sections with sticky headers, rows of slots; the rail has a button per section', () => {
     const { menus, grid, $ } = setup({}, 900);
     menus.showPicker([...DEFAULT_HOTBAR], 0);
     const sections = grid.querySelectorAll('.picker-section');
     expect(sections.map((s) => s.dataset.section)).toEqual(['stone', 'earth', 'wood', 'ores', 'colour', 'glass', 'camp',
       'powder', 'circuits', 'exotic', 'liquids']);
-    for (const s of sections) expect(s.children[0].classList.contains('picker-section-head')).toBe(true);
+    for (const s of sections) {
+      const head = s.children[0];
+      expect(head.classList.contains('picker-section-head')).toBe(true);
+      // the section's icon on a small rounded square chip, then the title
+      expect(head.children.map((c) => c.className)).toEqual(['picker-section-icon', 'picker-section-title']);
+      expect(head.children[0].tagName).toBe('CANVAS');
+    }
     expect($('picker-rail').querySelectorAll('.picker-rail-btn')).toHaveLength(11);
-    // 900 px wide: (900 − 16 − 29) / 58 → 14 columns
+    // 900 px wide: (900 − 16 + 6) / 62 → 14 columns; every section fits one row of slots, none is indented
     const rows = grid.querySelectorAll('.picker-row');
     expect(Math.max(...rows.map((r) => r.children.length))).toBe(14);
-    expect(rows.some((r) => r.classList.contains('indent'))).toBe(false); // no section needs a second row at 14 columns
+    expect(rows.every((r) => r.className === 'picker-row')).toBe(true);
+    expect(grid.querySelectorAll('.picker-slots')).toHaveLength(11);
+    expect(grid.querySelectorAll('.picker-slots').every((s) => s.children.length === 1)).toBe(true);
     // one roving tab stop among the cells
     expect(grid.querySelectorAll('.picker-cell[tabindex="0"]')).toHaveLength(1);
+  });
+
+  it('a slot is a plain button holding the 64 px icon canvas and a (hidden) round badge; a family slot has its count and ▸', () => {
+    const { menus, cell, tile } = setup();
+    menus.showPicker([...DEFAULT_HOTBAR], 0);
+    const c = cell(BLOCK.BRICKS);
+    expect(c.tagName).toBe('BUTTON');
+    expect(c.children.map((x) => x.className)).toEqual(['picker-icon', 'picker-badge']);
+    expect([c.children[0].width, c.children[0].height]).toEqual([64, 64]);
+    const f = tile('wool');
+    expect(f.classList.contains('picker-family')).toBe(true);
+    expect(f.children.map((x) => x.className)).toEqual(['picker-icon', 'picker-count', 'picker-chevron']);
+    expect(f.querySelector('.picker-count').textContent).toBe('16');
+    expect(f.querySelector('.picker-chevron').textContent).toBe('▸');
   });
 
   it('hovering a block shows its name and its tip; a family shows its line', () => {
@@ -146,15 +168,27 @@ describe('families open in a drawer band below their row (§5.3)', () => {
     expect(drawer.querySelectorAll('.picker-cell')).toHaveLength(16);
     expect(grid.querySelectorAll(`.picker-cell[data-block-id="${BLOCK.WOOL_RED}"]`)).toHaveLength(1);
     expect(drawer.contains(cell(BLOCK.WOOL_RED))).toBe(true);
-    // the band comes right after the comb holding the tile's row
-    const comb = tile('wool').parentNode.parentNode;
-    expect(comb.classList.contains('picker-comb')).toBe(true);
-    expect(comb.parentNode.children.indexOf(drawer)).toBe(comb.parentNode.children.indexOf(comb) + 1);
+    // the band comes right after the block of slots holding the tile's row, its notch at the tile's column
+    const slots = tile('wool').parentNode.parentNode;
+    expect(slots.classList.contains('picker-slots')).toBe(true);
+    expect(slots.parentNode.children.indexOf(drawer)).toBe(slots.parentNode.children.indexOf(slots) + 1);
+    expect(drawer.dataset.tileCol).toBe('0');
     expect(tile('wool').classList.contains('open')).toBe(true);
     expect(tile('wool').getAttribute('aria-expanded')).toBe('true');
     expect(tile('wool').querySelector('.picker-chevron').textContent).toBe('▾');
     // drawer cells pick like any block
     fire(cell(BLOCK.WOOL_RED), 'click');
+  });
+
+  it('the notch points at the tile\'s column: Radio is the 11th entry of Circuits (column 10 at 14 columns, 2 at 4)', () => {
+    const wide = setup({}, 900);
+    wide.menus.showPicker([...DEFAULT_HOTBAR], 0);
+    fire(wide.tile('radio'), 'click');
+    expect(wide.grid.querySelector('.picker-drawer').dataset.tileCol).toBe('10');
+    const narrow = setup({}, 300);
+    narrow.menus.showPicker([...DEFAULT_HOTBAR], 0);
+    fire(narrow.tile('radio'), 'click');
+    expect(narrow.grid.querySelector('.picker-drawer').dataset.tileCol).toBe('2');
   });
 
   it('one drawer at a time; clicking the tile again closes it', () => {
@@ -218,7 +252,7 @@ describe('families open in a drawer band below their row (§5.3)', () => {
 });
 
 describe('search (§5.5)', () => {
-  it('typing filters: one flat honeycomb of matches; "No blocks match" when nothing does', () => {
+  it('typing filters: one flat grid of matches; "No blocks match" when nothing does', () => {
     const { menus, grid, $ } = setup();
     menus.showPicker([...DEFAULT_HOTBAR], 0);
     const search = $('picker-search');
@@ -275,7 +309,7 @@ describe('search (§5.5)', () => {
 });
 
 describe('keyboard in the grid (§5.7)', () => {
-  it('arrows move the roving focus (honeycomb-aware), Enter picks, digits put the focused block in a slot', () => {
+  it('arrows move the roving focus (column by column), Enter picks, digits put the focused block in a slot', () => {
     const { menus, grid, doc, key, cell, onPickBlock } = setup({}, 900);
     menus.showPicker([...DEFAULT_HOTBAR], 0);
     // with focus on the page, an arrow focuses the roving cell (the first)

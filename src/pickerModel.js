@@ -1,5 +1,5 @@
-// Caelancraft — the creative inventory's model: sections, families, search with aliases, the honeycomb layout and keyboard
-// navigation. docs/DESIGN-circuits.md §5 (CONTRACTS §56 once merged). PURE: no DOM, no three, no time, no Math.random.
+// Caelancraft — the creative inventory's model: sections, families, search with aliases, the grid of rounded square slots
+// and keyboard navigation. docs/DESIGN-circuits.md §5 (CONTRACTS §56 once merged). PURE: no DOM, no three, no time, no Math.random.
 //
 // The tables name blocks by their `name` string and resolve them through the BLOCKS list they are given, skipping names that
 // are unknown or not placeable, so the model works with or without survival's blocks. Every placeable block no section names
@@ -9,13 +9,14 @@
 import { BLOCKS } from './blocks.js';
 import { partTip } from './circuitParts.js';
 
-/** A honeycomb cell is 56 px wide; columns are 58 px apart (2 px gap) and every odd row is indented half a column. */
-export const PICKER_CELL_W = 56;
-export const PICKER_CELL_H = 64;
-export const PICKER_COL_W = 58;
-export const PICKER_INDENT = 29;
-/** Rows are 50 px apart: a 64 px hex overlaps the row below by 14 px. */
-export const PICKER_ROW_H = 50;
+/**
+ * A slot is a plain 56 px rounded square (the user asked for no icons on hexagons); slots sit 6 px apart, so columns and
+ * rows are both 62 px apart. Every row is full (`cols` slots) but the last of a run; nothing is indented.
+ */
+export const PICKER_SLOT_PX = 56;
+export const PICKER_GAP_PX = 6;
+export const PICKER_COL_W = PICKER_SLOT_PX + PICKER_GAP_PX;
+export const PICKER_ROW_H = PICKER_SLOT_PX + PICKER_GAP_PX;
 /** The Recent row holds this many blocks. */
 export const PICKER_RECENT_MAX = 9;
 
@@ -25,7 +26,7 @@ export const PICKER_RECENT_MAX = 9;
  * @typedef {BlockEntry|Family} Entry
  * @typedef {{ id: string, title: string, iconId: number, entries: Entry[] }} PickerSection
  * @typedef {{ kind: 'header', section: PickerSection }} HeaderRow
- * @typedef {{ kind: 'cells', cells: Entry[], indent: boolean, drawerOf: string|null }} CellsRow
+ * @typedef {{ kind: 'cells', cells: Entry[], drawerOf: string|null }} CellsRow
  * @typedef {HeaderRow|CellsRow} Row
  * @typedef {{ sections: PickerSection[], families: Map<string, Family>, order: number[],
  *   info: Map<number, { name: string, displayName: string, section: string, family: string|null, text: string }> }} PickerModel
@@ -257,20 +258,14 @@ export function searchBlocks(model, query) {
 }
 
 /**
- * Lay entries out as honeycomb rows: `cols`, then `cols − 1` (indented), alternating, from a full row.
+ * Lay entries out as rows of `cols` square slots (the last row of a run may be shorter).
  * @param {Entry[]} entries @param {number} cols @param {string|null} drawerOf
  * @returns {CellsRow[]}
  */
-function comb(entries, cols, drawerOf) {
+function gridRows(entries, cols, drawerOf) {
   /** @type {CellsRow[]} */
   const rows = [];
-  let i = 0;
-  while (i < entries.length) {
-    const indent = rows.length % 2 === 1;
-    const n = indent ? cols - 1 : cols;
-    rows.push({ kind: 'cells', cells: entries.slice(i, i + n), indent, drawerOf });
-    i += n;
-  }
+  for (let i = 0; i < entries.length; i += cols) rows.push({ kind: 'cells', cells: entries.slice(i, i + cols), drawerOf });
   return rows;
 }
 
@@ -286,10 +281,10 @@ function flatten(entries) {
 }
 
 /**
- * The picker's rows (§5.3, §5.4). A non-empty query gives one flat honeycomb of the matches (no headers). Otherwise the
- * Recent row (when it has blocks) and then each section: a header row, then honeycomb rows whose lengths alternate `cols` and
- * `cols − 1`. An open family's members never flow inline: they appear only in drawer rows (`drawerOf` = its key), laid out
- * with the same columns right after the row holding the family's tile. Show all flattens every family into its section.
+ * The picker's rows (§5.3, §5.4). A non-empty query gives one flat grid of the matches (no headers). Otherwise the Recent
+ * row (when it has blocks) and then each section: a header row, then rows of `cols` slots. An open family's members never
+ * flow inline: they appear only in drawer rows (`drawerOf` = its key), laid out with the same columns right after the row
+ * holding the family's tile. Show all flattens every family into its section.
  * @param {PickerModel} model
  * @param {{ cols: number, openFamily?: string|null, showAll?: boolean, query?: string, recent?: number[] }} opts
  * @returns {Row[]}
@@ -302,7 +297,7 @@ export function layoutPicker(model, opts) {
   /** @type {Row[]} */
   const rows = [];
   if (query) {
-    rows.push(...comb(searchBlocks(model, query).map((id) => ({ type: 'block', id })), cols, null));
+    rows.push(...gridRows(searchBlocks(model, query).map((id) => ({ type: 'block', id })), cols, null));
     return rows;
   }
   const recent = (opts && Array.isArray(opts.recent) ? opts.recent : []).filter((id) => model.info.has(id));
@@ -310,15 +305,15 @@ export function layoutPicker(model, opts) {
     /** @type {PickerSection} */
     const section = { id: RECENT_SECTION_ID, title: 'Recent', iconId: recent[0], entries: recent.map((id) => ({ type: 'block', id })) };
     rows.push({ kind: 'header', section });
-    rows.push(...comb(section.entries, cols, null));
+    rows.push(...gridRows(section.entries, cols, null));
   }
   for (const section of model.sections) {
     rows.push({ kind: 'header', section });
-    for (const row of comb(showAll ? flatten(section.entries) : section.entries, cols, null)) {
+    for (const row of gridRows(showAll ? flatten(section.entries) : section.entries, cols, null)) {
       rows.push(row);
       const family = open ? row.cells.find((e) => e.type === 'family' && e.key === open) : undefined;
       if (family && family.type === 'family') {
-        rows.push(...comb(family.ids.map((id) => ({ type: 'block', id })), cols, family.key));
+        rows.push(...gridRows(family.ids.map((id) => ({ type: 'block', id })), cols, family.key));
       }
     }
   }
@@ -326,24 +321,20 @@ export function layoutPicker(model, opts) {
 }
 
 /**
- * The number of honeycomb columns that fit a scroll region `width` px wide: max(4, floor((width − 29) / 58)) (§5.4).
+ * The number of slot columns that fit a grid `width` px wide: max(4, floor((width + 6) / 62)) — n slots of 56 px need
+ * n · 62 − 6 px (§5.4).
  * @param {number} width
  */
 export function pickerCols(width) {
   const w = Number(width);
-  return Math.max(4, Math.floor(((Number.isFinite(w) ? w : 0) - PICKER_INDENT) / PICKER_COL_W));
-}
-
-/** @param {CellsRow} row @param {number} col @returns {number} the cell's centre x in px */
-function centreX(row, col) {
-  return col * PICKER_COL_W + PICKER_CELL_W / 2 + (row.indent ? PICKER_INDENT : 0);
+  return Math.max(4, Math.floor(((Number.isFinite(w) ? w : 0) + PICKER_GAP_PX) / PICKER_COL_W));
 }
 
 /**
  * The next focused cell for a key (§5.7). `index` counts the cells of every `cells` row in reading order (headers skipped).
  * - ArrowLeft / ArrowRight: the previous / next cell in reading order, wrapping across rows (and stopping at the ends);
- * - ArrowUp / ArrowDown: the cell of the row above / below whose centre x is nearest (indented rows are half a column right;
- *   a tie goes to the cell in the same column, else the left one), staying put at the first / last row;
+ * - ArrowUp / ArrowDown: the cell in the same column of the row above / below, or that row's last cell when it is shorter,
+ *   staying put at the first / last row;
  * - PageUp / PageDown: `pageRows` rows up / down the same way; from the first / last row they go to the first / last cell;
  * - Home / End: the first / last cell.
  * Anything else returns `index`. With no cells it returns −1.
@@ -365,20 +356,7 @@ export function navigate(rows, index, key, pageRows = 1) {
   while (ri + 1 < cellRows.length && starts[ri + 1] <= cur) ri++;
   const col = cur - starts[ri];
   /** @param {number} target */
-  const toRow = (target) => {
-    const row = cellRows[target];
-    const x = centreX(cellRows[ri], col);
-    let best = 0;
-    let bestD = Infinity;
-    for (let c = 0; c < row.cells.length; c++) {
-      const d = Math.abs(centreX(row, c) - x);
-      if (d < bestD || (d === bestD && c === col)) {
-        best = c;
-        bestD = d;
-      }
-    }
-    return starts[target] + best;
-  };
+  const toRow = (target) => starts[target] + Math.min(col, cellRows[target].cells.length - 1);
   const n = Math.max(1, Math.floor(Number(pageRows) || 1));
   switch (key) {
     case 'ArrowLeft':

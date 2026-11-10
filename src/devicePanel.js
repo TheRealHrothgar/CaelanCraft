@@ -8,8 +8,10 @@
 // calls refresh(view); buttons send onAction(key, 'start'|'stop'|'send'|'tap'|'refill'). Done, Esc, Enter in a field and the
 // Shift+R key close it through onClose. If the cell stops being that part while the panel is open, main closes it.
 //
-// Look: the survival palette (dark #1c1a24, honey #e8b04a, ember #d0582a, text #f3ead8). Every button and segmented control
-// is survival's `.hex-button`; `.cc-panel` is only the container. Never `.mc-button` or `.picker-panel` (tested).
+// Look: the survival palette (dark #1c1a24, honey #e8b04a, ember #d0582a, text #f3ead8), friendly and simple. The part's icon
+// sits on a rounded square (never a hexagon badge: the user asked for no icons on hexagons). Every button is the panel's own
+// rounded `.cc-btn` (pills, and rounded square keys for the wavelengths); the input-face picker stays a plain hexagon diagram
+// because it shows the cell's six sides. `.cc-panel` is the container. Never `.mc-button` or `.picker-panel` (tested).
 //
 // DOM module: nothing touches the document at module top level, so the pure helpers (panelFields, clampSetting) and the panel
 // itself can be tested under Node on a fake DOM. Imports: config, circuitParts, circuitStore (normalizePart's rules), circuits
@@ -85,7 +87,7 @@ function settingsOf(view) {
  * Which controls the panel shows for a view, in order (§4.10): the label (when the kind has one), then by kind
  * - Clockwork Timer: the delay (0.5–3600 s, step 0.5), the preset chips, `Pulse | Hold | Repeat`, the input face;
  * - Relay: `NO | NC` and the input face; Push Button: `NO | NC`;
- * - Spark Transmitter: the wavelength dial (16 hex buttons, 300…1050 m, 600 m marked distress);
+ * - Spark Transmitter: the wavelength dial (16 rounded buttons, 300…1050 m, 600 m marked distress);
  * - Coherer Receiver: the dial, `Pulse | Latch` and the input face (the tapper);
  * - Knife Switch: `Open | Closed`; Voltaic Battery: the charge bar;
  * then one button per action the view offers (Start / Stop, Send, Tap, Refill — Refill only in Creative). Wires, fuses and
@@ -203,7 +205,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
  * Bind the device panel to `#device-panel` (created in `doc.body` when index.html has none).
  * @param {Document} doc
  * @param {DevicePanelCallbacks} [callbacks]
- * @param {HTMLCanvasElement|null} [atlasCanvas]  draws the header icon (a plain honey hex without it).
+ * @param {HTMLCanvasElement|null} [atlasCanvas]  draws the header icon (a plain rounded square without it).
  *   CONTRACT-ISSUE: §6.2.15's createDevicePanel(doc, callbacks) has no atlas, but §4.10 asks for the part's 48 px icon; the
  *   atlas is an optional third argument.
  * @returns {DevicePanel}
@@ -263,9 +265,9 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
     for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, String(v));
     return node;
   }
-  /** A `.hex-button` (every button in the panel is one). @param {string} text @param {string} [extra] */
-  function hexButton(text, extra = '') {
-    const b = make('button', `hex-button${extra ? ' ' + extra : ''}`, text);
+  /** A rounded `.cc-btn` (every button in the panel is one). @param {string} text @param {string} [extra] */
+  function button(text, extra = '') {
+    const b = make('button', `cc-btn${extra ? ' ' + extra : ''}`, text);
     b.setAttribute('type', 'button');
     return b;
   }
@@ -322,7 +324,7 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
     panel.dataset.kind = v.k;
     root.appendChild(panel);
 
-    // 1. the header: icon, name, cell, label
+    // 1. the header: the icon on a rounded square, name, cell, label
     const head = make('div', 'cc-head');
     const iconBox = make('div', 'cc-icon');
     const icon = /** @type {HTMLCanvasElement} */ (make('canvas'));
@@ -390,24 +392,14 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
       syncers.push(fill);
     }
 
-    // 3. the settings
-    const controls = fields.filter((f) => f.kind !== 'label');
+    // 3. the settings (the actions go in the foot, next to Done)
+    const controls = fields.filter((f) => f.kind !== 'label' && f.kind !== 'action');
     if (controls.length > 0) {
       const sec = make('div', 'cc-section cc-settings');
       sec.appendChild(make('div', 'cc-heading', 'Settings'));
       /** @type {HTMLElement|null} */
-      let actionsRow = null;
-      /** @type {HTMLElement|null} */
       let lastBody = null;
       for (const f of controls) {
-        if (f.kind === 'action') {
-          if (!actionsRow) {
-            actionsRow = make('div', 'cc-row cc-actions');
-            sec.appendChild(actionsRow);
-          }
-          actionsRow.appendChild(buildAction(f));
-          continue;
-        }
         if (f.kind === 'presets') {
           (lastBody || sec).appendChild(buildPresets(f)); // under the delay it sets
           continue;
@@ -435,10 +427,16 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
     about.appendChild(make('p', 'cc-tip', v.about || ''));
     panel.appendChild(about);
 
-    // 5. Done
+    // 5. the foot, always in view: the keys, the part's actions (Start / Stop, Send, Tap, Refill) as big keys, and Done
     const foot = make('div', 'cc-foot');
     foot.appendChild(make('span', 'cc-keys', PANEL_KEYS_HINT));
-    const done = hexButton('Done', 'cc-done');
+    const actions = fields.filter((f) => f.kind === 'action');
+    if (actions.length > 0) {
+      const row = make('div', 'cc-actions');
+      for (const f of actions) if (f.kind === 'action') row.appendChild(buildAction(f));
+      foot.appendChild(row);
+    }
+    const done = button('Done', 'cc-done');
     on(done, 'click', () => requestClose());
     foot.appendChild(done);
     panel.appendChild(foot);
@@ -491,7 +489,7 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
     /** @type {[HTMLElement, number][]} */
     const items = [];
     for (const o of f.options) {
-      const b = hexButton(o.label, 'cc-chip');
+      const b = button(o.label, 'cc-chip');
       b.dataset.value = String(o.value);
       on(b, 'click', () => change({ [f.field]: o.value }));
       chips.appendChild(b);
@@ -518,7 +516,7 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
     /** @type {[HTMLElement, *][]} */
     const items = [];
     for (const o of f.options) {
-      const b = hexButton(o.label, 'cc-seg-btn');
+      const b = button(o.label, 'cc-seg-btn');
       b.dataset.value = String(o.value);
       on(b, 'click', () => {
         if (current(f.field) !== o.value) change({ [f.field]: o.value });
@@ -539,14 +537,15 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
   }
 
   /**
-   * The input face picker: a small SVG hex of six side wedges plus a top dot, north up, the current face in honey. ←/→
-   * walk the faces when it has the focus.
+   * The input face picker: a plain hexagon diagram of the cell seen from above, north up. Its six sides are six wedges with
+   * their compass names just outside, the top is a round button in the middle, and the current face is honey. ←/→ walk the
+   * faces when it has the focus. (It draws the cell's sides, so it may stay a hexagon: no icon sits on it.)
    * @param {Extract<PanelField, { kind: 'face' }>} f
    */
   function buildFace(f) {
     const wrap = make('div', 'cc-face');
-    const R = 40;
-    const root = svg('svg', { viewBox: '-46 -46 92 92', width: 80, height: 80, class: 'cc-face-svg', role: 'radiogroup',
+    const R = 34;
+    const root = svg('svg', { viewBox: '-50 -44 100 88', width: 100, height: 88, class: 'cc-face-svg', role: 'radiogroup',
       tabindex: 0, 'aria-label': f.label });
     const corner = (k) => {
       const a = (Math.PI / 3) * k - Math.PI / 6;
@@ -559,15 +558,18 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
       const [x1, y1] = corner(j + 1);
       const g = svg('g', { class: 'cc-wedge', role: 'radio', 'data-face': j, 'aria-label': `${FACE_NAMES[j]} side (face ${j})` });
       g.appendChild(svg('polygon', { points: `0,0 ${x0.toFixed(2)},${y0.toFixed(2)} ${x1.toFixed(2)},${y1.toFixed(2)}` }));
+      // the side's name, just outside its edge (the edge's middle is R·cos 30° from the centre)
       const a = (Math.PI / 3) * j;
-      const t = svg('text', { x: (R * 0.62 * Math.cos(a)).toFixed(2), y: (R * 0.62 * Math.sin(a) + 3.5).toFixed(2), 'text-anchor': 'middle' });
+      const d = R * Math.cos(Math.PI / 6) + 12;
+      const t = svg('text', { class: 'cc-face-name', x: (d * Math.cos(a)).toFixed(2), y: (d * Math.sin(a) + 3.5).toFixed(2),
+        'text-anchor': 'middle' });
       t.textContent = FACE_NAMES[j];
       g.appendChild(t);
       root.appendChild(g);
       items.push([g, j]);
     }
     const top = svg('g', { class: 'cc-wedge cc-top', role: 'radio', 'data-face': 6, 'aria-label': 'top (face 6)' });
-    top.appendChild(svg('circle', { cx: 0, cy: 0, r: 10 }));
+    top.appendChild(svg('circle', { cx: 0, cy: 0, r: 12 }));
     const tt = svg('text', { x: 0, y: 3, 'text-anchor': 'middle' });
     tt.textContent = 'top';
     top.appendChild(tt);
@@ -597,7 +599,7 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
     return wrap;
   }
 
-  /** The wavelength dial: 16 small hex buttons in two rows of 8, the 600 m one marked distress. @param {Extract<PanelField, { kind: 'dial' }>} f */
+  /** The wavelength dial: 16 rounded square keys in two rows of 8, the 600 m one marked distress (ember). @param {Extract<PanelField, { kind: 'dial' }>} f */
   function buildDial(f) {
     const wrap = make('div', 'cc-dial');
     wrap.setAttribute('role', 'group');
@@ -607,7 +609,7 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
     for (let row = 0; row < 2; row++) {
       const r = make('div', 'cc-dial-row');
       for (const o of f.options.slice(row * 8, row * 8 + 8)) {
-        const b = hexButton(o.label, `cc-wave${o.distress ? ' distress' : ''}`);
+        const b = button(o.label, `cc-wave${o.distress ? ' distress' : ''}`);
         b.dataset.value = String(o.value);
         b.title = o.distress ? `${o.label} m — the distress wavelength` : `${o.label} m`;
         on(b, 'click', () => {
@@ -634,7 +636,7 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
     return wrap;
   }
 
-  /** The battery's charge bar with its volts. @param {Extract<PanelField, { kind: 'charge' }>} f */
+  /** The battery's charge bar with its volts, drawn as a little battery (a rounded body and a nub). @param {Extract<PanelField, { kind: 'charge' }>} f */
   function buildCharge(f) {
     const wrap = make('div', 'cc-charge');
     wrap.setAttribute('role', 'meter');
@@ -659,7 +661,7 @@ export function createDevicePanel(doc, callbacks = {}, atlasCanvas = null) {
 
   /** @param {Extract<PanelField, { kind: 'action' }>} f */
   function buildAction(f) {
-    const b = hexButton(f.label, `cc-action cc-action-${f.action}`);
+    const b = button(f.label, `cc-action cc-action-${f.action}`);
     b.dataset.action = f.action;
     on(b, 'click', () => {
       if (view) fire('onAction', view.key, f.action);
