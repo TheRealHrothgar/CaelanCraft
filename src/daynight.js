@@ -1,7 +1,7 @@
 // Caelancraft — day/night cycle: keyframed sky colours and light intensities, sun/moon direction,
 // clock formatting. See src/CONTRACTS.md §13 and docs/SPEC-gameplay.md §6. Pure: no DOM, no clock,
 // no randomness. `lerp`/`clamp` are private copies so this module has no runtime dependency on noise.js.
-import { DAY_LENGTH_SECONDS } from './config.js';
+import { DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME } from './config.js';
 
 /** @typedef {import('./types.js').SkyState} SkyState */
 /** @typedef {import('./types.js').Vec3} Vec3 */
@@ -107,8 +107,9 @@ function lerpColor(out, a, b, u) {
 }
 
 /**
- * Advance the day clock by `dt` seconds. Result is always in [0,1) (wraps both ways).
- * Non-finite `dt` or a non-positive/NaN day length leaves the (wrapped) time unchanged.
+ * Advance the day clock by `dt` real seconds (one game hour is DAY_LENGTH_SECONDS / 24: a real minute since v0.11).
+ * Result is always in [0,1) (wraps both ways). Non-finite `dt` or a non-positive/NaN day length leaves the (wrapped)
+ * time unchanged.
  * @param {number} time  current day fraction
  * @param {number} dt    seconds elapsed (may be negative)
  * @param {number} [dayLengthSeconds]
@@ -119,6 +120,38 @@ export function advanceTime(time, dt, dayLengthSeconds = DAY_LENGTH_SECONDS) {
   return wrapTime(time + dt / dayLengthSeconds);
 }
 
+/** Real seconds from day fraction `from` forward to `to` (0 when equal). @param {number} from @param {number} to */
+export function realSecondsBetween(from, to, dayLengthSeconds = DAY_LENGTH_SECONDS) {
+  const d = wrapTime(to) - wrapTime(from);
+  return (d < 0 ? d + 1 : d) * dayLengthSeconds;
+}
+
+/** v0.11 (CONTRACTS §68): the clock times of sunrise (04:30) and sunset (19:30) — DAYLIGHT_HOURS centred on noon. */
+export const SUNRISE = SUNRISE_TIME;
+export const SUNSET = SUNSET_TIME;
+
+/**
+ * Clock time → solar time. The sky keyframes, the sun's path and the stars run on solar time, in which the sun rises at
+ * 0.25 and sets at 0.75 (SPEC-gameplay §6); the clock maps onto it piecewise linearly — midnight 0 → 0, SUNRISE → 0.25,
+ * noon 0.5 → 0.5, SUNSET → 0.75 — so the long day stretches the daytime keyframes and the short night squeezes the night.
+ * @param {number} time  clock day fraction
+ * @returns {number} solar day fraction in [0,1)
+ */
+export function solarTime(time) {
+  const t = wrapTime(time);
+  if (t < SUNRISE) return (t / SUNRISE) * DAWN;
+  if (t < SUNSET) return DAWN + ((t - SUNRISE) / (SUNSET - SUNRISE)) * (DUSK - DAWN);
+  return wrapTime(DUSK + ((t - SUNSET) / (1 - SUNSET)) * (1 - DUSK));
+}
+
+/** Solar time → clock time (solarTime's inverse). @param {number} solar @returns {number} clock day fraction in [0,1) */
+export function clockTime(solar) {
+  const s = wrapTime(solar);
+  if (s < DAWN) return (s / DAWN) * SUNRISE;
+  if (s < DUSK) return SUNRISE + ((s - DAWN) / (DUSK - DAWN)) * (SUNSET - SUNRISE);
+  return wrapTime(SUNSET + ((s - DUSK) / (1 - DUSK)) * (1 - SUNSET));
+}
+
 /**
  * Unit vector toward the sun: θ = (t − 0.25)·2π, normalize(cos θ, sin θ, 0.25).
  * Rises at +X (06:00), overhead at noon, sets at −X (18:00), below the horizon at night.
@@ -127,7 +160,7 @@ export function advanceTime(time, dt, dayLengthSeconds = DAY_LENGTH_SECONDS) {
  * @returns {Vec3}
  */
 export function sunDirection(time, out) {
-  const th = (wrapTime(time) - DAWN) * TWO_PI;
+  const th = (solarTime(time) - DAWN) * TWO_PI;
   const x = Math.cos(th);
   const y = Math.sin(th);
   const inv = 1 / Math.sqrt(x * x + y * y + SUN_TILT_Z * SUN_TILT_Z);
@@ -145,6 +178,7 @@ export function sunDirection(time, out) {
 export function createSkyState() {
   return {
     time: 0,
+    solar: 0,
     isDay: false,
     sunDir: [0, 0, 0],
     sunColor: [0, 0, 0],
@@ -167,7 +201,8 @@ export function createSkyState() {
  * @returns {SkyState}
  */
 export function computeSky(time, out) {
-  const t = wrapTime(time);
+  const clock = wrapTime(time);
+  const t = solarTime(clock); // the sky runs on solar time (§68)
   const s = out ?? createSkyState();
 
   // Locate the segment a.t <= t < b.t. t < 1 = KEYFRAMES[last].t so a segment always exists.
@@ -178,14 +213,15 @@ export function computeSky(time, out) {
   const u = (t - a.t) / (b.t - a.t);
 
   const isDay = t >= DAWN && t < DUSK;
-  const dir = sunDirection(t, s.sunDir);
+  const dir = sunDirection(clock, s.sunDir); // sunDirection maps the clock onto solar time itself
   if (!isDay) {
     dir[0] = -dir[0];
     dir[1] = -dir[1];
     dir[2] = -dir[2];
   }
 
-  s.time = t;
+  s.time = clock;
+  s.solar = t;
   s.isDay = isDay;
   lerpColor(s.sunColor, a.sunColor, b.sunColor, u);
   s.sunIntensity = Math.max(0, lerp(a.sun, b.sun, u));
@@ -199,13 +235,13 @@ export function computeSky(time, out) {
 }
 
 /**
- * True by day (dawn 0.25 ≤ t < dusk 0.75), exactly SkyState.isDay without computing the sky (zombies, §39).
+ * True by day (SUNRISE 04:30 ≤ t < SUNSET 19:30; v0.11 §68), exactly SkyState.isDay without computing the sky (zombies, §39).
  * @param {number} time
  * @returns {boolean}
  */
 export function isDayTime(time) {
   const t = wrapTime(time);
-  return t >= DAWN && t < DUSK;
+  return t >= SUNRISE && t < SUNSET;
 }
 
 /**

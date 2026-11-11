@@ -3985,6 +3985,27 @@ itself), and the handbook's workplace and recipe tables.
   stump), the filament_lamp (bloomery) and the materials. 116 recipes: hand 44, stump 20, kiln 24, bloomery 5, forge 15,
   workbench 8.
 
+## 68. A longer, kinder day — `src/config.js`, `src/daynight.js`, `src/zombies.js` and the time users
+
+Amends §8 (day/night), §39, §40, §45 (climate) and §65. **One real minute is one game hour**: DAY_LENGTH_SECONDS **1440**
+(24 real minutes), the clock linear (`advanceTime` unchanged in form). **DAYLIGHT_HOURS 15** centred on noon: SUNRISE_TIME
+0.1875 (04:30), SUNSET_TIME 0.8125 (19:30); DAYTIME_SECONDS 900 (15 min) and NIGHT_SECONDS 540 (9 min).
+
+- **Sky on solar time**: `solarTime(clock)` maps the clock piecewise linearly onto the SPEC-gameplay §6 solar day (midnight
+  0 → 0, SUNRISE → 0.25, noon → 0.5, SUNSET → 0.75); `clockTime(solar)` is its inverse. `computeSky` interpolates the
+  keyframes at the solar time (`SkyState.time` stays the clock, new `SkyState.solar`), `sunDirection` uses
+  θ = (solarTime(t) − 0.25)·2π, the stars turn with `sky.solar`, and `isDayTime` / `isDay` are SUNRISE ≤ t < SUNSET.
+  `realSecondsBetween(from, to)` gives real seconds between clock times.
+- **Everything else that meant 06:00 / 18:00 follows**: climate DAY_START / DAY_END (the sun's warmth) = SUNRISE_TIME /
+  SUNSET_TIME; the Watcher's `nightKey` turns at SUNSET_TIME and WATCHER_CHECK_CHANCE spreads over NIGHT_SECONDS; `time set
+  day` / `night` are SUNRISE_TIME / SUNSET_TIME; the handbook's first-day line reads the sunset and the hour from config.
+- **Zombies**: natural spawning stays night-only, every 14–36 s (ZOMBIE_SPAWN_INTERVAL_MIN_S / MAX_S, was 8–20) so a
+  9-minute night brings about as many as the old 5-minute one. ZOMBIE_CHASE_SPEED **0.7** (≈ 3.0 m/s, was 0.82). **By day
+  the idle ones burrow away**: a zombie that is daylit and not chasing adds dt to `daylitFor` (shade or night winds it down);
+  at its own `burrowAt` (DAWN_BURROW_MIN_S 10 + up to DAWN_BURROW_RAND_S 20, drawn at spawn) it is removed and pushed to
+  `events.burrowed` (main: a soil-coloured dust puff, no sound). One chasing you stays (nerfed, §65) until it gives up.
+- REGROW_MEAN_S stays 600 (a picked bush now regrows in about 10 real minutes, under half a game day).
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),

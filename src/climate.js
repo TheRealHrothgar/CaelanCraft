@@ -9,7 +9,7 @@
 // CONTRACT-ISSUE (import graph, DESIGN-survival §9.1): the graph lists `climate → config, blocks`; this file also imports
 // hex.js (hexToWorld, for heatSource's cell centres). hex.js imports only config.js, so the graph stays acyclic, and the
 // alternative was to copy the axial → world formula that CONTRACTS §0 keeps in hex.js.
-import { BODY_TEMP_NORMAL } from './config.js';
+import { BODY_TEMP_NORMAL, SUNRISE_TIME, SUNSET_TIME } from './config.js';
 import { BLOCK, BIOME } from './blocks.js';
 import { hexToWorld } from './hex.js';
 
@@ -36,10 +36,13 @@ export const ALTITUDE_LAPSE = 0.25;
 
 // ---- Felt temperature (§3.2) ----
 
-/** The sun under open sky adds up to SUN_HEAT °C, as sin(π·(t − DAY_START) / (DAY_END − DAY_START)) between 06:00 and 18:00. */
+/**
+ * The sun under open sky adds up to SUN_HEAT °C, as sin(π·(t − DAY_START) / (DAY_END − DAY_START)) between sunrise and
+ * sunset (v0.11 §68: 04:30 and 19:30).
+ */
 export const SUN_HEAT = 4;
-export const DAY_START = 0.25;
-export const DAY_END = 0.75;
+export const DAY_START = SUNRISE_TIME;
+export const DAY_END = SUNSET_TIME;
 /** Without open sky (a roof, a cave), air below SHELTER_BELOW °C feels SHELTER_HEAT warmer. */
 export const SHELTER_HEAT = 3;
 export const SHELTER_BELOW = 10;
@@ -177,7 +180,7 @@ export function isDaytime(time) {
 }
 
 /**
- * The sun's strength (§3.2): sin(π·(t − 0.25) / 0.5) between 06:00 and 18:00 (1 at noon), 0 at night.
+ * The sun's strength (§3.2): sin(π·(t − DAY_START) / (DAY_END − DAY_START)) between sunrise and sunset (1 at noon), 0 at night.
  * @param {number} time  day fraction (wrapped)
  * @returns {number} 0..1
  */

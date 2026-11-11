@@ -266,7 +266,7 @@ describe('the step: climate and vitals together (§2, §3, §9.4)', () => {
     const s = started();
     const ev = s.step(1, envFor(stander(), flatGetBlock(GROUND), { time: H(14) }));
     expect(ev.air).toBeCloseTo(18, 1);
-    expect(ev.felt).toBeCloseTo(21.5, 1);
+    expect(ev.felt).toBeCloseTo(21.65, 1); // v0.11 (§68): the sun stands higher at 14:00 in the 15-hour day
     expect([s.felt, s.air]).toEqual([ev.felt, ev.air]);
     expect(s.vitals.temp).toBe(37);
     expect(ev.died).toBeNull();

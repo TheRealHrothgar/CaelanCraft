@@ -2,8 +2,13 @@
 import { describe, it, expect } from 'vitest';
 import { DAY_LENGTH_SECONDS, START_TIME } from '../../src/config.js';
 import {
-  KEYFRAMES, advanceTime, computeSky, formatTime, sunDirection, hexToRGB, createSkyState,
+  KEYFRAMES, advanceTime, computeSky, formatTime, sunDirection, hexToRGB, createSkyState, solarTime, clockTime, SUNRISE, SUNSET,
 } from '../../src/daynight.js';
+
+/** v0.11 (§68): the sky runs on solar time; `at(s)` is the clock time whose solar time is s. */
+const at = (s) => clockTime(s);
+/** Colours equal to 12 places (solar ↔ clock round trips are floating point). */
+const expectColorClose = (a, b) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 9));
 
 /** SPEC-gameplay §6 table, verbatim. KEYFRAMES must reproduce it exactly (plus a wrap row at t = 1). */
 const SPEC_TABLE = [
@@ -116,8 +121,8 @@ describe('sunDirection', () => {
     }
   });
 
-  it('rises at +X (06:00), is overhead at noon, sets at -X (18:00), is below the horizon at midnight', () => {
-    const dawn = sunDirection(0.25);
+  it('rises at +X (04:30 since v0.11), is overhead at noon, sets at -X (19:30), is below the horizon at midnight', () => {
+    const dawn = sunDirection(SUNRISE);
     expect(dawn[0]).toBeGreaterThan(0.9);
     expect(Math.abs(dawn[1])).toBeLessThan(1e-9);
 
@@ -125,7 +130,7 @@ describe('sunDirection', () => {
     expect(noon[1]).toBeGreaterThan(0.8);
     expect(Math.abs(noon[0])).toBeLessThan(1e-9);
 
-    const dusk = sunDirection(0.75);
+    const dusk = sunDirection(SUNSET);
     expect(dusk[0]).toBeLessThan(-0.9);
     expect(Math.abs(dusk[1])).toBeLessThan(1e-9);
 
@@ -133,9 +138,9 @@ describe('sunDirection', () => {
     expect(midnight[1]).toBeLessThan(-0.8);
   });
 
-  it('matches normalize(cos θ, sin θ, 0.25) with θ = (t − 0.25)·2π', () => {
+  it('matches normalize(cos θ, sin θ, 0.25) with θ = (solarTime(t) − 0.25)·2π', () => {
     for (const t of [0, 0.1, 0.25, 0.33, 0.5, 0.66, 0.75, 0.9]) {
-      const th = (t - 0.25) * Math.PI * 2;
+      const th = (solarTime(t) - 0.25) * Math.PI * 2;
       const len = Math.hypot(Math.cos(th), Math.sin(th), 0.25);
       expectVec3Close(sunDirection(t), [Math.cos(th) / len, Math.sin(th) / len, 0.25 / len]);
     }
@@ -155,7 +160,7 @@ describe('computeSky', () => {
   it('returns a complete SkyState', () => {
     const s = computeSky(0.4);
     expect(Object.keys(s).sort()).toEqual([
-      'daylight', 'fogColor', 'hemiIntensity', 'horizonColor', 'isDay', 'stars', 'sunColor', 'sunDir', 'sunIntensity',
+      'daylight', 'fogColor', 'hemiIntensity', 'horizonColor', 'isDay', 'solar', 'stars', 'sunColor', 'sunDir', 'sunIntensity',
       'time', 'zenithColor',
     ]);
     expect(typeof s.time).toBe('number');
@@ -196,47 +201,61 @@ describe('computeSky', () => {
   });
 
   it('sunDir points at the sun by day and at the moon (= −sun) by night', () => {
-    for (const t of [0.25, 0.3, 0.5, 0.7, 0.7499]) {
+    for (const t of [0.25, 0.3, 0.5, 0.7, 0.7499].map(at)) {
       expectVec3Close(computeSky(t).sunDir, sunDirection(t));
     }
-    for (const t of [0, 0.1, 0.2, 0.2499, 0.75, 0.8, 0.95]) {
+    for (const t of [0, 0.1, 0.2, 0.2499, 0.75, 0.8, 0.95].map(at)) {
       const sun = sunDirection(t);
       const s = computeSky(t);
       expectVec3Close(s.sunDir, [-sun[0], -sun[1], -sun[2]]);
       // Moon is on or above the horizon all night (exactly on it at the 18:00 instant).
       expect(s.sunDir[1]).toBeGreaterThanOrEqual(-1e-12);
     }
-    expect(computeSky(0.8).sunDir[1]).toBeGreaterThan(0.2);
-    expect(computeSky(0.2).sunDir[1]).toBeGreaterThan(0.2);
+    expect(computeSky(at(0.8)).sunDir[1]).toBeGreaterThan(0.2);
+    expect(computeSky(at(0.2)).sunDir[1]).toBeGreaterThan(0.2);
   });
 
-  it('isDay is 0.25 <= t < 0.75', () => {
-    expect(computeSky(0.25).isDay).toBe(true);
-    expect(computeSky(0.7499).isDay).toBe(true);
-    expect(computeSky(0.75).isDay).toBe(false);
-    expect(computeSky(0.2499).isDay).toBe(false);
+  it('isDay is SUNRISE <= t < SUNSET (v0.11: 04:30–19:30, 15 hours)', () => {
+    expect(SUNRISE).toBe(4.5 / 24);
+    expect(SUNSET).toBe(19.5 / 24);
+    expect(computeSky(SUNRISE).isDay).toBe(true);
+    expect(computeSky(SUNSET - 1e-4).isDay).toBe(true);
+    expect(computeSky(SUNSET).isDay).toBe(false);
+    expect(computeSky(SUNRISE - 1e-4).isDay).toBe(false);
+    expect(computeSky(0.25).isDay).toBe(true); // 06:00 is daylight now
     expect(computeSky(0).isDay).toBe(false);
     expect(computeSky(0.9999).isDay).toBe(false);
   });
 
-  it('hits every keyframe exactly at its time', () => {
+  it('hits every keyframe at its solar time (the clock time clockTime(row.t), v0.11 §68)', () => {
     SPEC_TABLE.forEach((row) => {
-      const s = computeSky(row.t);
-      expect(s.time).toBe(row.t);
-      expect(s.zenithColor).toEqual(hexToRGB(row.zenith));
-      expect(s.horizonColor).toEqual(hexToRGB(row.horizon));
-      expect(s.fogColor).toEqual(hexToRGB(row.fog));
-      expect(s.sunColor).toEqual(hexToRGB(row.sunColor));
-      expect(s.sunIntensity).toBe(row.sun);
-      expect(s.hemiIntensity).toBe(row.amb);
-      expect(s.daylight).toBe(row.daylight);
-      expect(s.stars).toBe(row.stars);
+      const s = computeSky(at(row.t));
+      expect(s.time).toBeCloseTo(at(row.t), 12);
+      expect(s.solar).toBeCloseTo(row.t, 12);
+      expectColorClose(s.zenithColor, hexToRGB(row.zenith));
+      expectColorClose(s.horizonColor, hexToRGB(row.horizon));
+      expectColorClose(s.fogColor, hexToRGB(row.fog));
+      expectColorClose(s.sunColor, hexToRGB(row.sunColor));
+      expect(s.sunIntensity).toBeCloseTo(row.sun, 9);
+      expect(s.hemiIntensity).toBeCloseTo(row.amb, 9);
+      expect(s.daylight).toBeCloseTo(row.daylight, 9);
+      expect(s.stars).toBeCloseTo(row.stars, 9);
     });
   });
 
+  it('solarTime maps midnight, sunrise, noon and sunset onto 0, ¼, ½, ¾, and clockTime undoes it', () => {
+    expect(solarTime(0)).toBe(0);
+    expect(solarTime(SUNRISE)).toBeCloseTo(0.25, 12);
+    expect(solarTime(0.5)).toBeCloseTo(0.5, 12);
+    expect(solarTime(SUNSET)).toBeCloseTo(0.75, 12);
+    for (let t = 0; t < 1; t += 0.037) expect(clockTime(solarTime(t))).toBeCloseTo(t, 12);
+    // the day half of the sky is stretched over 15 clock hours, the night half squeezed into 9
+    expect(SUNSET - SUNRISE).toBeCloseTo(15 / 24, 12);
+  });
+
   it('interpolates linearly between neighbouring keyframes', () => {
-    // 0.40 is halfway between the 07:12 and 12:00 rows.
-    const mid = computeSky(0.4);
+    // solar 0.40 is halfway between the solar 07:12 and 12:00 rows.
+    const mid = computeSky(at(0.4));
     expect(mid.sunIntensity).toBeCloseTo((1.8 + 2.0) / 2, 12);
     expect(mid.hemiIntensity).toBeCloseTo((1.3 + 1.4) / 2, 12);
     expect(mid.daylight).toBeCloseTo((0.9 + 1.0) / 2, 12);
@@ -244,14 +263,14 @@ describe('computeSky', () => {
     const zb = hexToRGB('#6DA7FF');
     expectVec3Close(mid.zenithColor, [(za[0] + zb[0]) / 2, (za[1] + zb[1]) / 2, (za[2] + zb[2]) / 2]);
 
-    // 0.225 is halfway between 04:48 and 06:00: stars fade 1.0 → 0.3, sun 0.45 → 1.10.
-    const dawn = computeSky(0.225);
-    expect(dawn.stars).toBeCloseTo(0.65, 12);
-    expect(dawn.sunIntensity).toBeCloseTo(0.775, 12);
+    // solar 0.225 is halfway between the solar 04:48 and 06:00 rows: stars fade 1.0 → 0.3, sun 0.45 → 1.10.
+    const dawn = computeSky(at(0.225));
+    expect(dawn.stars).toBeCloseTo(0.65, 9);
+    expect(dawn.sunIntensity).toBeCloseTo(0.775, 9);
 
-    // Quarter of the way from 19:12 to midnight (0.85): sun 0.45 → 0.35.
-    const dusk = computeSky(0.85);
-    expect(dusk.sunIntensity).toBeCloseTo(0.45 + (0.35 - 0.45) * 0.25, 12);
+    // A quarter of the way from the solar 19:12 row to midnight (solar 0.85): sun 0.45 → 0.35.
+    const dusk = computeSky(at(0.85));
+    expect(dusk.sunIntensity).toBeCloseTo(0.45 + (0.35 - 0.45) * 0.25, 9);
     expect(dusk.stars).toBe(1);
   });
 

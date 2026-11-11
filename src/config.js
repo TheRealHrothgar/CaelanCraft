@@ -157,7 +157,7 @@ export const ZOMBIE_RADIUS = 0.27;                  // body cylinder: just under
 export const ZOMBIE_HEIGHT = 1.9;                   // feet 0.56 + torso 0.76 + head 0.58
 export const ZOMBIE_MASS = 1.2;                     // a little heavier than the player (PLAYER_MASS 1)
 export const ZOMBIE_TARGET_RADIUS = 0.3;            // ray-target cylinder: the drawn torso's corner radius
-export const ZOMBIE_CHASE_SPEED = 0.82;             // forward input while chasing: 0.82 × WALK_SPEED ≈ 3.5 m/s (the player walks 4.3)
+export const ZOMBIE_CHASE_SPEED = 0.7;              // forward input while chasing: 0.7 × WALK_SPEED ≈ 3.0 m/s (the player walks 4.3; v0.11 §68, was 0.82)
 export const ZOMBIE_TURN_RATE = 3.5;                // rad/s
 export const ZOMBIE_SIGHT = 24;                     // chases a player within this distance …
 export const ZOMBIE_CHASE_MAX_RISE = 5;             // … unless flying or more than this many units above its feet
@@ -177,8 +177,8 @@ export const ZOMBIE_FIRE_FEAR = 4;                  // a campfire's safe zone (f
 export const ZOMBIE_SPAWN_FIRE_CLEAR = 8;           // … and never spawns within this of one
 export const ZOMBIE_SPAWN_MIN = 16;                 // natural spawns: horizontal distance from the player, min …
 export const ZOMBIE_SPAWN_MAX = 40;                 // … and max
-export const ZOMBIE_SPAWN_INTERVAL_MIN_S = 8;       // one spawn attempt (1–2 zombies) every 8–20 s at night: a few a minute
-export const ZOMBIE_SPAWN_INTERVAL_MAX_S = 20;
+export const ZOMBIE_SPAWN_INTERVAL_MIN_S = 14;      // one spawn attempt (1–2 zombies) every 14–36 s at night: as many a night
+export const ZOMBIE_SPAWN_INTERVAL_MAX_S = 36;      // as before v0.11 (§68: 8–20 s over 5 min), spread over the 9-minute night
 export const ZOMBIE_SPAWN_TRIES = 12;               // columns tried per attempt
 export const ZOMBIE_DESPAWN_DIST = 80;              // farther than this from the player: gone
 export const ZOMBIE_SOUND_RANGE = 24;               // groans and knock-outs fade out linearly by this distance
@@ -274,7 +274,13 @@ export const BLAST_SHAKE_S = 0.6;                   // camera shake duration …
 export const BLAST_SHAKE_AMPLITUDE = 0.16;          // … and amplitude (m) at the blast for one barrel (× √(R / BLAST_RADIUS)), fading to 0 at BLAST_SHAKE_RANGE
 
 // Time / saving / UI
-export const DAY_LENGTH_SECONDS = 600;
+// v0.11 (CONTRACTS §68): one real minute is one game hour, and the day is long: 15 hours of daylight, 9 of dark
+export const DAY_LENGTH_SECONDS = 1440;             // a whole game day: 24 real minutes
+export const DAYLIGHT_HOURS = 15;                   // sunrise to sunset, centred on noon …
+export const SUNRISE_TIME = 0.5 - DAYLIGHT_HOURS / 48; // … so the sun rises at 04:30 (0.1875) …
+export const SUNSET_TIME = 0.5 + DAYLIGHT_HOURS / 48;  // … and sets at 19:30 (0.8125)
+export const DAYTIME_SECONDS = (DAY_LENGTH_SECONDS * DAYLIGHT_HOURS) / 24; // 900: 15 real minutes of daylight
+export const NIGHT_SECONDS = DAY_LENGTH_SECONDS - DAYTIME_SECONDS;         // 540: 9 real minutes of dark
 export const START_TIME = 0.30;                     // 07:12
 export const AUTOSAVE_INTERVAL_S = 30;
 export const SAVE_SLOTS = 6;                        // worlds kept side by side, one localStorage key each (§41)
@@ -332,7 +338,7 @@ export const PIG_REPOP_MAX = 48;                    // … and max
 export const ZOMBIE_DAMAGE = 8;                     // HP per zombie strike in Survival (the push is unchanged)
 export const FIRE_BURN_DAMAGE = 4;                  // HP per campfire scorch (at most one per 0.5 s)
 // Regrowth (§6.5)
-export const REGROW_MEAN_S = 600;                   // a picked bush regrows after one game day on average
+export const REGROW_MEAN_S = 600;                   // a picked bush regrows after about 10 real minutes on average
 export const MAX_REGROW_TRACKED = 4096;
 
 // ---- Circuits (§50–§53; docs/DESIGN-circuits.md §4, §6.3). Volts are whole VOLT_UNITs; rates per real second.

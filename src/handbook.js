@@ -18,7 +18,7 @@
 //
 // Imports are read-only data and pure functions: config, blocks, items, crafting, harvest, climate, vitals, cooking.
 import {
-  DAY_LENGTH_SECONDS, START_TIME, HOTBAR_SIZE, PACK_SLOTS, STATION_RANGE, STATION_WORK_RANGE, MAX_CRAFT_JOBS,
+  DAY_LENGTH_SECONDS, SUNSET_TIME, NIGHT_SECONDS, START_TIME, HOTBAR_SIZE, PACK_SLOTS, STATION_RANGE, STATION_WORK_RANGE, MAX_CRAFT_JOBS,
   CAMPFIRE_FUEL_START_S, CAMPFIRE_FUEL_MAX_S, FUEL_STICK_S, FUEL_LOG_S, RELIGHT_HOLD_S, GULP_GAP_S, TAP_HOLD_S,
   PIG_HEALTH, ZOMBIE_DAMAGE, ZOMBIE_HITS, ZOMBIE_FIRE_FEAR, ZOMBIE_SPAWN_FIRE_CLEAR, FIRE_BURN_DAMAGE,
   CRUSH_DAMAGE_PER_CELL, BREATH_MAX_S, REGROW_MEAN_S, GRAVITY, MAX_SUBSTEP_DT, TERMINAL_VELOCITY,
@@ -33,6 +33,7 @@ import {
   GROUND_CHILL, WET_CHILL, WET_INSULATION_LOSS, WET_DRY_S, INSULATION_HOT_FROM, COMFORT_LOW, COMFORT_HIGH,
   feltTemperature, bodyTarget, heatAt,
 } from './climate.js';
+import { realSecondsBetween } from './daynight.js';
 import { RATES, DAMAGE_CAUSES, SOFT_LANDING, fallDamage, tempBand } from './vitals.js';
 import { FIRE_TRANSFORMS, SKEWER_SPOTS } from './cooking.js';
 
@@ -834,8 +835,8 @@ function fireFigure() {
 function makeChapters() {
   const R = RATES;
   const hour = DAY_LENGTH_SECONDS / 24;
-  const dusk = (0.75 - START_TIME) * DAY_LENGTH_SECONDS;
-  const night = DAY_LENGTH_SECONDS / 2;
+  const dusk = realSecondsBetween(START_TIME, SUNSET_TIME);
+  const night = NIGHT_SECONDS;
   const kit = firstDayKit();
   const food = (k) => /** @type {import('./types.js').FoodDef} */ (getItem(k)?.food);
   const satiationRest = 100 / R.SATIATION_DRAIN;
@@ -875,7 +876,7 @@ function makeChapters() {
       h('Welcome to the honeycomb'),
       p('In Survival you arrive with an empty pack and this book. Everything else you gather, make and carry yourself: water from ponds, food from bushes and pigs, tools knapped from flint, and fire from a drill and a pinch of dry fibre.'),
       p('Four things keep you alive: *Health*, *Nourishment*, *Hydration* and your *body temperature*. They sit beside your hotbar as hex cells. Your breath is the Health cell\'s border: it darkens edge by edge while your head is under water.'),
-      p(`A new world begins at ${fmtClock(START_TIME)}. Dusk falls at 18:00, only ${fmtDurationLong(dusk)} later, and the zombies come with it. One game hour is ${hour} seconds, so the first day goes quickly: use it.`),
+      p(`A new world begins at ${fmtClock(START_TIME)}. Dusk falls at ${fmtClock(SUNSET_TIME)}, ${fmtDurationLong(dusk)} later, and the zombies come with it. One game hour is ${hour} seconds, so use the daylight well.`),
       tip(`This book never leaves you. Hold it and press [R], or right-click it in your pack, to read it. The *Guide* button on the title screen and in the pause menu shows the same pages.`),
     ],
     [
