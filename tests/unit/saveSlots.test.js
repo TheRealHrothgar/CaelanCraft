@@ -110,6 +110,11 @@ describe('save slots: constants, names and the meta field', () => {
     expect(cleanWorldName('line\nbreak\ttab')).toBe('line break tab');
     expect(cleanWorldName('😀'.repeat(30))).toBe('😀'.repeat(24)); // code points: an emoji is never split
     for (const bad of ['', '   ', '\n\t', 42, null, undefined, {}]) expect(cleanWorldName(bad)).toBe('');
+    // KNOWN-ISSUES (save slots): invisible format characters are dropped, so an invisible-only name is no name and
+    // bidi controls cannot garble the list
+    for (const invisible of ['\u200b', '\u200b\u200d\ufeff', '\u202e\u202c', ' \u2060 ']) expect(cleanWorldName(invisible)).toBe('');
+    expect(cleanWorldName('Ca\u200bstle\u202e')).toBe('Castle');
+    expect(normalizeWorldName('\u200b\u200b', 3)).toBe('World 3');
     expect(defaultWorldName(4)).toBe('World 4');
     expect(normalizeWorldName('   ', 4)).toBe('World 4');
     expect(normalizeWorldName(undefined, 2)).toBe('World 2');

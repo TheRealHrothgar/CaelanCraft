@@ -111,6 +111,8 @@ export const ALPHA_CONVERT_P = 0.03;
 export const ALPHA_MAX = 1;
 /** Walkers within ALPHA_RALLY of an alpha chase at full walking speed (it rallies the horde). */
 export const ALPHA_RALLY = 14;
+/** The alpha is this much bigger than the others: drawn so (zombieRenderer) and targeted so (raycast). */
+export const ALPHA_SCALE = 1.22;
 /** A knock (blast) must be this many times ZOMBIE_KO_KNOCK to knock an alpha out at once. */
 export const ALPHA_KO_KNOCK = 1.6;
 
@@ -144,6 +146,9 @@ export function statsOf(zb) {
  */
 export const DAWN_BURROW_MIN_S = 10;
 export const DAWN_BURROW_RAND_S = 20;
+
+/** The ray target is this much fatter than ZOMBIE_TARGET_RADIUS (the arms reach out in front of the torso). */
+export const ZOMBIE_TARGET_PAD = 0.1;
 
 /** A dormant walker wakes for a player this close (m), … */
 export const WALKER_WAKE_RANGE = 4;
@@ -904,7 +909,10 @@ export class Zombies {
     let best = null;
     let bestT = maxDist;
     for (const zb of this.list) {
-      const t = rayCylinder(ox, oy, oz, dx, dy, dz, zb.x, zb.y, zb.z, ZOMBIE_TARGET_RADIUS, ZOMBIE_HEIGHT);
+      // v0.11 (§72): the crosshair hits what is drawn — an alpha's target is ALPHA_SCALE bigger; and the target is a little
+      // fatter than the torso so the arms held out in front are not clicked through.
+      const k = zb.kind === 'alpha' ? ALPHA_SCALE : 1;
+      const t = rayCylinder(ox, oy, oz, dx, dy, dz, zb.x, zb.y, zb.z, (ZOMBIE_TARGET_RADIUS + ZOMBIE_TARGET_PAD) * k, ZOMBIE_HEIGHT * k);
       if (t >= 0 && t < bestT) {
         bestT = t;
         best = zb;

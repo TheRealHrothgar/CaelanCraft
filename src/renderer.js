@@ -39,6 +39,7 @@ import {
 } from './config.js';
 import { CHUNK_RING_INRADIUS, HEX_CORNERS, HEX_SIZE, chunkOrigin, hexToWorld, hexLength, worldToHex } from './hex.js';
 import { LIGHT_ATTRIBUTE, applyChunkLight, installObjectLighting, lightVolume } from './lightShader.js';
+import { compileHidden } from './prewarm.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
@@ -56,6 +57,7 @@ import { LIGHT_ATTRIBUTE, applyChunkLight, installObjectLighting, lightVolume } 
  * @property {(key: string) => void} removeChunkMesh
  * @property {(x: number, y: number, z: number, yaw: number, pitch: number) => void} setCamera
  * @property {(fov: number) => void} setFov
+ * @property {() => Promise<void>} prewarm   compile the highlight, dig trace and chunk programs now (§72)
  * @property {(hit: RaycastHit|null|undefined) => void} setHighlight
  * @property {(hit: {q: number, y: number, r: number}|null|undefined, p: number) => void} setDigProgress
  *   Survival hold-to-dig feedback (DESIGN-survival §9.9): traces the first 2·ceil(12·p) line vertices of the cell's
@@ -727,6 +729,29 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
         camera.fov = fov;
         camera.updateProjectionMatrix();
       }
+    },
+
+    /**
+     * Compile the block highlight's, the dig trace's and the three chunk materials' programs while the game loads, so the
+     * first block under the crosshair and the first trees in view do not freeze it (KNOWN-ISSUES P1; CONTRACTS §72).
+     * @returns {Promise<void>}
+     */
+    prewarm() {
+      // one hidden triangle with a chunk layer's attributes (position, normal, uv, colour, light)
+      const warmGeometry = buildLayerGeometry({
+        positions: new Float32Array(9), normals: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]), uvs: new Float32Array(6),
+        colors: new Float32Array(9).fill(1), indices: new Uint32Array([0, 1, 2]), vertexCount: 3, indexCount: 3, faceCount: 1,
+      });
+      const warm = layerMaterials.map((m) => {
+        const mesh = new THREE.Mesh(warmGeometry, m);
+        mesh.frustumCulled = false;
+        scene.add(mesh);
+        return mesh;
+      });
+      const done = compileHidden([highlight, digTrace, ...warm], renderer, camera, scene);
+      for (const mesh of warm) scene.remove(mesh);
+      done.then(() => warmGeometry.dispose());
+      return done;
     },
 
     setHighlight(hit) {

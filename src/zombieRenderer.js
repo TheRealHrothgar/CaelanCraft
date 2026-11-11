@@ -18,7 +18,10 @@
 // (default 1) and `renderSpin` (default 0, extra yaw) draw a black hole's shrinking, spinning ghost (infall.js).
 import * as THREE from 'three';
 import { ZOMBIE_MAX } from './config.js';
-import { SWING_S, kindOf, isDormant } from './zombies.js';
+import { SWING_S, kindOf, isDormant, ALPHA_SCALE } from './zombies.js';
+import { compileHidden } from './prewarm.js';
+
+export { ALPHA_SCALE };
 
 /** @typedef {import('./zombies.js').Zombie} Zombie */
 
@@ -37,8 +40,7 @@ export const SHOULDER_X = 0.32;
 export const SHOULDER_Y = TORSO_H - 0.07;
 /** The walker's height to the top of its hair (≤ ZOMBIE_HEIGHT 1.9). */
 export const MODEL_HEIGHT = LEG_H + TORSO_H + NECK_H + HEAD_H + 0.06;
-/** The alpha is drawn this much bigger; the runner this much narrower. */
-export const ALPHA_SCALE = 1.22;
+/** The runner is drawn this much narrower (the alpha ALPHA_SCALE bigger: zombies.js, shared with its ray target). */
 export const RUNNER_WIDTH = 0.88;
 
 /** Colours (sRGB). */
@@ -74,6 +76,7 @@ const LURCH = -0.32;
  * @property {() => number} count                 zombies drawn by the last sync
  * @property {() => void} dispose
  * @property {THREE.Group} group                  the instanced meshes (for tests and diagnostics)
+ * @property {(webgl: *, camera: THREE.Camera) => Promise<void>} prewarm  compile its programs now (prewarm.compileHidden)
  */
 
 /** A body's model scale: its `renderScale` when a positive number, else 1 (pigRenderer's rule). */
@@ -333,5 +336,8 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
     drawn = 0;
   }
 
-  return { sync, count: () => drawn, dispose, group };
+  /** Compile every zombie program while the game loads, so the first zombie of a session does not freeze it (P2). */
+  const prewarm = (webgl, camera) => compileHidden([group], webgl, camera, scene);
+
+  return { sync, count: () => drawn, dispose, group, prewarm };
 }

@@ -6,11 +6,12 @@ import {
   ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, ZOMBIE_HITS, ZOMBIE_HURT_S, ZOMBIE_BURN_S, ZOMBIE_REACH,
   ZOMBIE_ATTACK_COOLDOWN_S, ZOMBIE_HIT_PUSH, ZOMBIE_HIT_LIFT, ZOMBIE_FIRE_FEAR, ZOMBIE_SPAWN_MIN, ZOMBIE_SPAWN_MAX,
   ZOMBIE_SPAWN_FIRE_CLEAR, ZOMBIE_DESPAWN_DIST, ZOMBIE_KO_KNOCK, ZOMBIE_MAX_DROP, WALK_SPEED, BLAST_RADIUS,
-  BLAST_IMPULSE, ZOMBIE_SOUND_RANGE, ZOMBIE_CHASE_SPEED,
+  BLAST_IMPULSE, ZOMBIE_SOUND_RANGE, ZOMBIE_CHASE_SPEED, ZOMBIE_TARGET_RADIUS,
 } from '../../src/config.js';
 import {
   Zombies, openSky, zombieVolume, loudestVolume, isDormant, gaitOf, damageOf, maxClimb, KIND_STATS, WALKER_WAKE_RANGE,
-  PROVOKE_S, HORDE_CHECK_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE, DAWN_BURROW_MIN_S, DAWN_BURROW_RAND_S,
+  PROVOKE_S, HORDE_CHECK_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE, DAWN_BURROW_MIN_S, DAWN_BURROW_RAND_S, ALPHA_SCALE,
+  ZOMBIE_TARGET_PAD,
 } from '../../src/zombies.js';
 import { seededRng, wrapAngle } from '../../src/pigs.js';
 import { createPlayer, createBody, isFreeAt, stepPlayer } from '../../src/physics.js';
@@ -457,7 +458,7 @@ describe('Zombies.hit / knock — the player fights back', () => {
     const near = zs.spawn(0, GROUND, -3);
     const hit = zs.raycast(0, GROUND + 1.6, 0, 0, 0, -1, 10);
     expect(hit.zombie).toBe(near);
-    expect(hit.distance).toBeCloseTo(3 - 0.3, 6);
+    expect(hit.distance).toBeCloseTo(3 - (ZOMBIE_TARGET_RADIUS + ZOMBIE_TARGET_PAD), 6); // the padded target (§72)
     expect(zs.raycast(0, GROUND + 1.6, 0, 0, 0, -1, 2)).toBeNull();
     expect(zs.raycast(0, GROUND + 2.5, 0, 0, 0, -1, 10)).toBeNull(); // over its head
     const down = zs.raycast(0, GROUND + 5, -3, 0, -1, 0, 10); // looking down on it
@@ -835,5 +836,24 @@ describe('Zombies — v0.11 by day the idle ones burrow away (CONTRACTS §68)', 
     });
     expect(zs.list).toEqual([zb]);
     expect(zb.daylitFor).toBeLessThan(1); // at most the frame before it noticed you
+  });
+});
+
+describe('Zombies.raycast — the target follows what is drawn (CONTRACTS §72)', () => {
+  it('an alpha\'s target is ALPHA_SCALE bigger; the target is padded so outstretched arms are not clicked through', () => {
+    const zs = new Zombies(seededRng(60));
+    const walker = zs.spawn(0, GROUND, 0);
+    const alpha = zs.spawn(10, GROUND, 0, 0, 'alpha');
+    // a ray straight down the z axis, just above a walker's head height
+    const overWalker = zs.raycast(0, GROUND + ZOMBIE_HEIGHT + 0.15, -5, 0, 0, 1, 20);
+    expect(overWalker).toBeNull();
+    const overAlpha = zs.raycast(10, GROUND + ZOMBIE_HEIGHT + 0.15, -5, 0, 0, 1, 20);
+    expect(overAlpha && overAlpha.zombie).toBe(alpha);
+    expect(ZOMBIE_HEIGHT * ALPHA_SCALE).toBeGreaterThan(ZOMBIE_HEIGHT + 0.15);
+    // beside the torso: inside the padded radius, outside the bare one
+    const x = ZOMBIE_TARGET_RADIUS + ZOMBIE_TARGET_PAD * 0.5;
+    const side = zs.raycast(x, GROUND + 1, -5, 0, 0, 1, 20);
+    expect(side && side.zombie).toBe(walker);
+    expect(zs.raycast(ZOMBIE_TARGET_RADIUS + ZOMBIE_TARGET_PAD + 0.05, GROUND + 1, -5, 0, 0, 1, 20)).toBeNull();
   });
 });

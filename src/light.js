@@ -157,6 +157,56 @@ export class LightEngine {
     this._pending = [];
     /** bumps whenever any stored level changes (the renderer's light volume refreshes on it) */
     this.version = 0;
+    /**
+     * v0.11 (CONTRACTS §72): extra emitters by cell, on top of a block's own light — a lit Filament Lamp. "cq,cr" → (local
+     * index → level). A lit chunk points at its own map through `chunk.lightExtra` (null when it has none); the entries
+     * outlive the chunk, so a lamp left burning is lit again when its chunk comes back.
+     * @type {Map<string, Map<number, number>>}
+     */
+    this._extra = new Map();
+  }
+
+  /**
+   * Give cell (q, y, r) its own light `level` (0..LIGHT_MAX) on top of whatever its block emits; 0 takes it away. The
+   * change is re-lit at the next flush() (World.update), like an edit.
+   * @returns {boolean} true when the level changed
+   */
+  setEmitter(q, y, r, level) {
+    if (!Number.isInteger(q) || !Number.isInteger(r) || !(y >= 0 && y < WORLD_HEIGHT)) return false;
+    const lv = Math.max(0, Math.min(LIGHT_MAX, Math.floor(level) || 0));
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
+    const li = ((q - cq * CHUNK_SIZE) << 11) | ((r - cr * CHUNK_SIZE) << 7) | y;
+    const key = `${cq},${cr}`;
+    let m = this._extra.get(key) ?? null;
+    if ((m ? m.get(li) ?? 0 : 0) === lv) return false;
+    if (lv === 0) {
+      /** @type {Map<number, number>} */ (m).delete(li);
+      if (/** @type {Map<number, number>} */ (m).size === 0) {
+        this._extra.delete(key);
+        m = null;
+      }
+    } else {
+      if (!m) {
+        m = new Map();
+        this._extra.set(key, m);
+      }
+      m.set(li, lv);
+    }
+    const chunk = this._lit(cq, cr);
+    if (chunk) {
+      /** @type {*} */ (chunk).lightExtra = m;
+      this.noteChange(chunk, li);
+    }
+    return true;
+  }
+
+  /** @returns {number} the extra light given to cell (q, y, r) by setEmitter (0: none) */
+  emitterAt(q, y, r) {
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
+    const m = this._extra.get(`${cq},${cr}`);
+    return m ? m.get(((q - cq * CHUNK_SIZE) << 11) | ((r - cr * CHUNK_SIZE) << 7) | y) ?? 0 : 0;
   }
 
   /** @returns {boolean} edits are waiting for flush() */
@@ -284,12 +334,22 @@ export class LightEngine {
       lowLit[col] = low;
     }
 
-    // 2. Emitters.
+    // 2. Emitters: the blocks that glow, then the cells given their own light (setEmitter).
     for (let i = 0; i < CHUNK_VOLUME; i++) {
       const e = EM[B[i]];
       if (e !== 0) {
         L[i] |= e;
         block.push(tag | i);
+      }
+    }
+    const extra = this._extra.get(`${chunk.cq},${chunk.cr}`) ?? null;
+    /** @type {*} */ (chunk).lightExtra = extra;
+    if (extra) {
+      for (const [i, e] of extra) {
+        if (e > (L[i] & 15)) {
+          L[i] = (L[i] & 0xf0) | e;
+          block.push(tag | i);
+        }
       }
     }
 
@@ -378,14 +438,16 @@ export class LightEngine {
       this._free.push(slot);
     }
     /** @type {*} */ (chunk).lightSlot = -1;
+    /** @type {*} */ (chunk).lightExtra = null;
   }
 
-  /** Forget every chunk (World.dispose). */
+  /** Forget every chunk and every extra emitter (World.dispose). */
   clear() {
     for (const c of this._slots) if (c) /** @type {*} */ (c).lightSlot = -1;
     this._slots.length = 0;
     this._free.length = 0;
     this._pending.length = 0;
+    this._extra.clear();
   }
 
   // -------------------------------------------------------------------------------------------
@@ -437,7 +499,12 @@ export class LightEngine {
       const L = chunk.light;
       const id = chunk.blocks[li];
       const tag = /** @type {*} */ (chunk).lightSlot << CHUNK_SHIFT;
-      const em = LIGHT_EMISSION[id];
+      let em = LIGHT_EMISSION[id];
+      const X = /** @type {*} */ (chunk).lightExtra;
+      if (X) {
+        const x = X.get(li);
+        if (x > em) em = x;
+      }
       if (em > (L[li] & 15)) {
         L[li] = (L[li] & 0xf0) | em;
         this._touch(chunk, li);
@@ -791,7 +858,12 @@ export class LightEngine {
         const l = KL[n] & 15;
         if (l === 0) continue;
         if (l < old) {
-          const em = EM[K.blocks[n]];
+          let em = EM[K.blocks[n]];
+          const X = /** @type {*} */ (K).lightExtra;
+          if (X) {
+            const x = X.get(n);
+            if (x > em) em = x;
+          }
           KL[n] = (KL[n] & 0xf0) | em;
           this._touch(K, n);
           q.push(ktag | n, l);

@@ -8,7 +8,7 @@ import {
   createMenus, SURVIVAL_RESOURCES_LABEL,
 } from '../../src/menus.js';
 import { documentFromHTML, fire } from '../helpers/fakeDom.js';
-import { saveFailMessage, worldsFailMessage } from '../../src/main.js';
+import { saveFailMessage, worldsFailMessage, quitUnsavedMessage } from '../../src/main.js';
 import { parseParams } from '../../src/diagnostics.js';
 import { STORAGE_QUOTA_ESTIMATE } from '../../src/storage.js';
 
@@ -88,6 +88,12 @@ describe('save failure messages (main)', () => {
     expect(saveFailMessage('quota')).toMatch(/storage full/);
     expect(saveFailMessage('quota')).toMatch(/delete a world/);
     expect(saveFailMessage('error')).toBe('Save failed');
+    // KNOWN-ISSUES (save slots): the line after quitting unsaved says why, and whether an older save is still there
+    expect(quitUnsavedMessage('Castle', 'quota', true)).toBe('“Castle” was not saved: storage is full. Its last save is kept. Delete a world to make room.');
+    expect(quitUnsavedMessage('Castle', 'quota', false)).toMatch(/never been saved, so it is gone/);
+    expect(quitUnsavedMessage('Castle', 'unavailable', false)).toMatch(/not letting the game store anything/);
+    expect(quitUnsavedMessage('Castle', 'unavailable', false)).not.toMatch(/storage is full|last save is kept/);
+    expect(quitUnsavedMessage('Castle', undefined, true)).toBe('“Castle” was not saved. Its last save is kept.');
     expect(saveFailMessage(undefined)).toBe('Save failed');
     expect(worldsFailMessage('duplicate', 'quota')).toMatch(/delete a world/);
     expect(worldsFailMessage('duplicate', 'full')).toMatch(/No empty slot/);

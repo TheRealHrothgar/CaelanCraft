@@ -470,3 +470,31 @@ describe('animals — milk (CONTRACTS §72)', () => {
     expect(as.milk(as.spawn('horse', 6, GROUND, 0))).toBe(false);
   });
 });
+
+describe('animalRenderer — a black hole\'s ghost (renderScale, renderSpin)', () => {
+  it('scales the whole animal about its feet and adds the spin to its yaw; without them nothing changes', () => {
+    const scene = new THREE.Scene();
+    const r = createAnimalRenderer(scene);
+    const mesh = r.group.children.find((m) => m.name === 'cow-body');
+    const legs = r.group.children.find((m) => m.name === 'cow-legs');
+    const base = { kind: 'cow', x: 2, y: 10, z: 3, yaw: 0.4, walkPhase: 0, hurt: 0, shorn: 0, tamed: false };
+    const mat = (m, i = 0) => {
+      const out = new THREE.Matrix4();
+      m.getMatrixAt(i, out);
+      return out;
+    };
+    r.sync([base]);
+    const plain = mat(mesh).toArray();
+    r.sync([{ ...base, renderScale: 1, renderSpin: 0 }]);
+    expect(mat(mesh).toArray()).toEqual(plain);
+    r.sync([{ ...base, renderScale: 0.5, renderSpin: 1 }]);
+    const s = new THREE.Vector3().setFromMatrixScale(mat(mesh));
+    expect(s.x).toBeCloseTo(0.5, 5);
+    expect(s.y).toBeCloseTo(0.5, 5);
+    const hip = new THREE.Vector3().setFromMatrixPosition(mat(legs));
+    expect(hip.y).toBeCloseTo(10 + MODELS.cow.legH * 0.5, 5); // the hips, half as high
+    const e = new THREE.Euler().setFromRotationMatrix(mat(mesh), 'YXZ');
+    expect(e.y).toBeCloseTo(1.4, 5);
+    r.dispose();
+  });
+});
