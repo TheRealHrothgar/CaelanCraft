@@ -4156,35 +4156,59 @@ Amends §43 (the Handbook), §48 and §1 (imports); DESIGN-survival §14.1's cha
 - **Still hand-written** (no exported constant to read): the workplace reach "2 up or down", the marker's "about 20 cells", zombies
   rising "one or two at a time", the pig's "grass and snowy grass", and "within half a minute" for a snowy swim.
 
-## 74. Zombies that look like people — `src/zombieRenderer.js`
+## 74. Zombies: pixel-art dead people, spooky not frightening — `src/zombieSkin.js` (PURE), `src/zombieRenderer.js`
 
-Replaces §71's model and face (its sounds stand) and amends §61. A zombie is a dead PERSON, not a green child and not a
-golem: a grown body (HEAD 0.40 × 0.40 × 0.38 on a TORSO 0.52 wide and 0.64 tall, SHOULDER_X 0.335, LEG_H 0.72, ARM_L 0.60 to
-the wrist; MODEL_HEIGHT 1.84 ≤ ZOMBIE_HEIGHT), a head of hair, ears, eyebrows, a nose, a neck, a buttoned shirt with a
-collar, a tear and a tail hanging out, a belt, trousers and shoes. The skin is a pallid grey-green (SKIN 0xb2b89c).
-**Every kind has narrow eye slits**: a near-black plate SLIT (0x101210) `SLIT_H` 0.028 tall and about 0.11 wide in a dark
-hollow `SOCKET_H` 0.052 tall, at (±EYE_X 0.095, EYE_Y 0.225) — no whites, no round eyes. Nothing is gory and no eye is red.
+Replaces §71's model and face (its sounds stand) and amends §61. A zombie is a dead PERSON under moonlight — not a green
+child, not a golem, and not another game's zombie: a few plain boxes wrapped in pixel art in the terrain's style. Nothing
+is gory (no blood, wounds, bones or fangs) and no texel is red or pure white.
 
-- **Three heads** (`zombieGeometries()` → `head`, `headRunner`, `headAlpha`; meshes `zombie-head`, `zombie-head-runner`,
-  `zombie-head-alpha`, each with its `-hurt` / `-burn` twin). The hair differs: dull brown, dirty straw, black.
-  - *Walker — vacant.* Level brows, two level empty slits, a slack mouth a little open; below `HAIRLINE_Y` the face is
-    mirror-symmetric and nothing on it is paler than the skin.
-  - *Runner — wired.* One brow hitched up, uneven slits each with one pale pinprick, dark rings under them, a crooked
-    clenched mouth showing a line of teeth, hair standing on end. Its head is cocked `RUNNER_COCK` (0.16 rad) to its own
-    side and JERKS: `twitchOf(t, id)` is 0 except for a sharp jerk `TWITCH_HZ` (1.7) times a second, lasting `TWITCH_PART`
-    (0.16) of the beat and reaching `TWITCH_ANGLE` (0.26 rad), to alternate sides; `id` shifts the beat. RUNNER_WIDTH 0.9.
-  - *Alpha — ominous.* A brow ridge and black brows slanted `ALPHA_BROW_SLANT` (0.3 rad) down to the nose over two black
-    pits; in them the glow mesh `zombie-alpha-eyes`: two slits slanted `ALPHA_SLIT_SLANT` (0.22 rad), unlit, `ALPHA_EYES`
-    0xffa42e (a hot amber). A down-turned mouth over a jutting jaw, an old scar, long hair. Over its torso the overlay
-    `zombie-alpha-hide`: a ragged dark coat on hulking shoulders. KIND_TINT alpha 0x9a96a0, runner 0xf6f0cc.
-- **Shirts.** A walker's or a runner's torso and arms are tinted `SHIRT_TINTS[id mod 7]` × its kind's tint (pale colours,
-  so the hands barely change); legs and heads take the kind's tint alone; the alpha keeps its kind's tint.
-- **Bearing.** A walker's arms hang (`ARMS_HANG` 0.3 rad forward) until its mode is `chase`, then come up in front
-  (`ARMS_CHASE` 1.15); with nobody to chase its head hangs `WALKER_DROOP` (0.14). The alpha's arms are always up
-  (`ARMS_ALPHA` 0.95) and spread `ALPHA_SPREAD` (0.3 rad) to the sides, and it holds its head low and steady.
-- **Draw calls.** Legs, arms and torso are shared; a crowd of walkers costs 4 draw calls, +1 with runners about, +3 with
-  an alpha (its head, its coat, its eyes).
-- **API.** `sync(zombies, t = 0)`: `t` is seconds on any steady clock (main passes `fxTime`); without it nothing twitches.
+**The skin** (`zombieSkin.js`, no three, no DOM). `paintZombieAtlas() → { width, height, data, glow }`: two RGBA sheets
+`ATLAS_W` 128 × `ATLAS_H` 192 (sRGB bytes, row 0 at the top), a `SKIN_W` 128 × `SKIN_H` 64 page per kind in `SKIN_KINDS`
+order (walker, runner, alpha); the same bytes every call. A texel is `SKIN_TEXEL` = 1/32 m. `PARTS` gives each box in
+texels and where it unwraps on a page: head 13 × 13 × 12, `hair` (a layer round the head), leg 7 × 24 × 7, torso
+16 × 20 × 8, `coat` (a layer round the torso), upperArm 5 × 11 × 5, foreArm 5 × 12 × 5. `faceRect(part, face)` is the
+usual unwrap: top and bottom side by side (each w × d) over a strip of right, front, left, back (h tall); the right
+side's last column and the left side's first are the ones next to the front. Body parts are painted solid; `hair` and
+`coat` have alpha 0 where there is none, and only the alpha has a coat (open down the front).
+
+- **Every kind has narrow eye slits** on the head's front face at row `EYE_ROW` 6, columns `EYE_COLS` (1–4 and 8–11), in
+  a shadowed hollow under an eyebrow — never a round eye.
+  - *Walker — vacant.* Two level slits of `SLIT` (0x0c0e0c), four texels wide and one tall; a slack mouth hanging open.
+  - *Runner — wired.* One brow hitched up, a four-texel and a three-texel slit, one pale pinprick in each, dark rings, a
+    row of clenched teeth, wild straw hair.
+  - *Alpha — ominous.* A black scowl stepping down to the nose; four amber texels a side, the inner two a row lower than
+    the outer two; a hard down-turned mouth, a heavy jaw, an old scar, long dark hair, a ragged dark coat.
+- **Clothes.** A buttoned shirt with a collar, a pocket, a tear and a tail hanging out, a belt with a buckle, trousers
+  frayed above a bare ankle, old shoes; a sleeve torn off below the elbow over a thin forearm and a hand. Cloth is painted
+  as folds, skin as a light mottle. Each kind has its own hair colour; the walker's and the runner's shirt cloth is the
+  same pale grey, because it is tinted per zombie.
+- **The glow sheet.** `NIGHT_GLOW` (0x1c2418) wherever `data` is opaque, nothing where it is not, and `EYE_GLOW` on the
+  eyes: walker 0x6aa873 (a faint marsh green, on its slits), runner 0xdfe6a8 (its two pinpricks), alpha 0xffa42e (amber).
+
+**The model** (`zombieRenderer.js`). Sizes come from `PARTS` × `SKIN_TEXEL`: LEG_H 0.75, LEG_X 0.125, TORSO 0.5 × 0.625
+× 0.25, HEAD 0.406 × 0.406 × 0.375, UPPER_L 0.344 + FORE_L 0.375 = ARM_L, SHOULDER_X 0.328, SHOULDER_Y = TORSO_H − one
+texel; `MODEL_HEIGHT` 1.80 ≤ ZOMBIE_HEIGHT. `skinBox(part, kind, { puff, x, y, z })` is a box with each side mapped to
+that face of the unwrap on `kind`'s page (UVs inset 0.02 texel; the front is −Z). `zombieGeometries(kind)` → `{ leg,
+upperArm, foreArm, torso, head }`: the head carries its hair box (`HAIR_PUFF` half a texel larger) and the alpha's torso
+its coat box (`COAT_PUFF` 0.7 texel). `boxesGeometry` stays for the animals.
+
+- **Meshes.** Per kind and per state: `zombie-legs-<kind>`, `zombie-upper-arms-<kind>`, `zombie-forearms-<kind>`,
+  `zombie-torso-<kind>`, `zombie-head-<kind>` (+ `-hurt`, `-burn`). One DataTexture (nearest, no mipmaps, sRGB) and one
+  MeshLambertMaterial for all of them (`alphaTest` 0.5; `emissive` white × the glow sheet as `emissiveMap`); the hurt
+  and burn twins share the map and have a plain emissive. A crowd of one kind costs 5 draw calls.
+- **Shirts.** A walker's or a runner's torso, upper arms and forearms take the instance colour `SHIRT_TINTS[id mod 7]`
+  (pale, so the hands barely change); legs and heads stay white; the alpha is as painted. RUNNER_WIDTH 0.9; the alpha
+  is ALPHA_SCALE bigger.
+- **Bearing** (`ARMS`: `reach` at the shoulder, `bend` at the elbow, `spread` to the sides, radians). A walker's arms
+  hang (`hang` 0.16 / 0.3) until its mode is `chase`, then come up in front (`chase` 1.0 / 0.4); dormant by day they hang
+  straight. A runner pumps bent elbows (`runner` bend 1.25), its head cocked `RUNNER_COCK` (0.16) and jerking:
+  `twitchOf(t, id)` is 0 except for a sharp jerk `TWITCH_HZ` (1.7) times a second, lasting `TWITCH_PART` (0.16) of the
+  beat and reaching `TWITCH_ANGLE` (0.26), to alternate sides. The alpha's arms are spread wide with the forearms up
+  (`alpha` 0.6 / 0.95 / spread 0.36) and it holds its head low and steady. A walker with nobody to chase lets its head
+  hang `WALKER_DROOP` (0.14).
+- **API.** `sync(zombies, t = 0, dark = 1)`: `t` is seconds on any steady clock (main passes `fxTime`), `dark` runs from
+  0 in full daylight to 1 at night (main passes `1 − sky.daylight`) and sets the base material's `emissiveIntensity` to
+  `GLOW_DAY` (0.2) + (1 − GLOW_DAY) × dark — by day a walker's slits are black, in the dark they glow.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

@@ -5843,7 +5843,7 @@ export function boot(win, doc) {
       for (const z of zombies.list) zombieDraw.push(z);
       infall.ghosts('zombie', zombieDraw);
       pigRenderer.sync(pigDraw);
-      zombieRenderer.sync(zombieDraw, fxTime);
+      zombieRenderer.sync(zombieDraw, fxTime, 1 - sky.daylight);
       animalDraw.length = 0;
       for (const a of animals.list) animalDraw.push(a);
       infall.ghosts('animal', animalDraw);
@@ -5851,7 +5851,7 @@ export function boot(win, doc) {
     } else {
       animalRenderer.sync(animals.list);
       pigRenderer.sync(pigs.list);
-      zombieRenderer.sync(zombies.list, fxTime);
+      zombieRenderer.sync(zombies.list, fxTime, 1 - sky.daylight);
     }
     watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime);
     hurtFlash = Math.max(0, hurtFlash - dt / HURT_FLASH_S);
