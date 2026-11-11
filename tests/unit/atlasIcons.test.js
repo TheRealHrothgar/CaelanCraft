@@ -15,7 +15,7 @@ const DEVICES = [
 ];
 const FLAT = [...THIN, ...DEVICES];
 /** The wild plants (sprites) and the ground litter (decals) also show their picture as a flat icon. */
-const SPRITES = [78, 79, 80, 81, 82, 83, 84, 92, 93];
+const SPRITES = [78, 79, 80, 81, 82, 83, 84, 92, 93, 116, 117, 118]; // + the three snares (§69)
 const atlas = { width: 256, height: 256, kind: 'atlas' };
 
 /** A 2D context stand-in: every method call as [name, ...args], and the state each drawImage saw. */

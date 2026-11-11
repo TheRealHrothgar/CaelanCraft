@@ -20,6 +20,7 @@ import {
 import { BLOCK, DEFAULT_HOTBAR } from './blocks.js';
 import { normalizeRunesJSON, validateRunesJSON } from './runes.js';
 import { validatePigsJSON } from './pigs.js';
+import { validateAnimalsJSON } from './animals.js';
 import { WEAR_SLOT_NAMES, canonicalItemKey, getItem, maxDurability, stackSize } from './items.js';
 import { normalizeFiresJSON, parseCellKey } from './cooking.js';
 import { normalizePartsJSON, validatePartsJSON } from './circuitStore.js';
@@ -618,6 +619,11 @@ export function serializeSave(data) {
   // Pigs are optional too, but an empty list IS written: "this world's pigs are all gone" must survive a reload
   // (an absent field means "never had pigs" and main places natural ones).
   if (data.pigs != null) /** @type {*} */ (out).pigs = validatePigsJSON(data.pigs).pigs;
+  // v0.11 (CONTRACTS §69): cattle, sheep, horses and wolves — written only when there are any.
+  if (data.animals != null) {
+    const animals = validateAnimalsJSON(data.animals).animals;
+    if (animals.length > 0) /** @type {*} */ (out).animals = animals;
+  }
   // Block-physics switches (v0.8): written whenever given. An absent field on load means "saved before v0.8".
   if (data.physics != null) /** @type {*} */ (out).physics = normalizePhysicsSwitches(data.physics);
   // Zombies switch (§39): written whenever given (anything but `false` is on). Absent on load = on.
@@ -799,6 +805,11 @@ export function deserializeSave(text) {
     const v = validatePigsJSON(raw.pigs);
     for (const w of v.warnings) warnings.push(w);
     save.pigs = v.pigs;
+  }
+  if (raw.animals !== undefined) {
+    const v = validateAnimalsJSON(raw.animals);
+    for (const w of v.warnings) warnings.push(w);
+    if (v.animals.length > 0) /** @type {*} */ (save).animals = v.animals;
   }
   if (raw.physics !== undefined) {
     if (!isPlainObject(raw.physics)) {

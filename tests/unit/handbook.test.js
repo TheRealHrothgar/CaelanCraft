@@ -121,7 +121,7 @@ describe('handbook: the chapters (§14.1)', () => {
       expect(list, id).toEqual(list.map((_, i) => i + 1));
     }
     // even splits: Hands (44 recipes with DESIGN-circuits §8.2's six and the dart) in five pages of 9, 9, 9, 9, 8
-    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([9, 9, 9, 9, 8]);
+    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([9, 9, 9, 9, 9]); // 45 with the Snare (§69)
   });
 
   it('teaches the real survival ideas the design asks for', () => {
@@ -161,7 +161,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 20, 24, 5, 15, 8]); // v0.11: + the Workbench (§67)
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([45, 20, 24, 5, 15, 8]); // v0.11: + the Workbench (§67)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {

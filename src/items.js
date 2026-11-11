@@ -133,6 +133,11 @@ const FOOD_ROWS = [
   ['charred_meat', 'Charred Meat', 16, { satiation: 6, hydration: -4, sick: 0, useS: 1.4 }],
   ['salted_pork', 'Salted Pork', 16, { satiation: 18, hydration: -6, sick: 0, useS: 1.4 }], // keeps; no fire needed
   ['pig_fat', 'Pig Fat', 16, { satiation: 6, hydration: -2, sick: 0.1, useS: 1.2 }],
+  // v0.11 (CONTRACTS §69): cattle and sheep
+  ['raw_beef', 'Raw Beef', 16, { satiation: 7, hydration: 0, sick: 0.3, useS: 1.4, spoilS: 1200 }],
+  ['roast_beef', 'Roast Beef', 16, { satiation: 36, hydration: -2, sick: 0, useS: 1.6, spoilS: 2400 }],
+  ['raw_mutton', 'Raw Mutton', 16, { satiation: 5, hydration: 0, sick: 0.3, useS: 1.4, spoilS: 1200 }],
+  ['roast_mutton', 'Roast Mutton', 16, { satiation: 26, hydration: -2, sick: 0, useS: 1.6, spoilS: 2400 }],
   ['snow', 'Snow', 32, { satiation: 0, hydration: 3, sick: 0, useS: 0.6, temp: -0.2 }],
   // v0.11 (CONTRACTS §66): unboiled water poisons you one time in five; boil it on a campfire (Pot of Boiled Water: safe)
   ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.2, useS: 1.0, returns: 'clay_pot' }],
@@ -169,6 +174,8 @@ const PLACES_AS = new Map([
 ]);
 /** Picked variant → the ripe block whose item it belongs to. @type {Map<number, number>} */
 const ITEM_BLOCK_OF = new Map([...PLACES_AS].map(([ripe, bare]) => [bare, ripe]));
+/** v0.11 (CONTRACTS §69): states of a block that give its item back (a baited or sprung snare is still the Snare). */
+const SAME_ITEM = new Map([[BLOCK.SNARE_BAITED, BLOCK.SNARE], [BLOCK.SNARE_SPRUNG, BLOCK.SNARE]]);
 
 /** @returns {ItemDef[]} every item in ITEM_KEYS order, not yet frozen and without tags */
 function buildDefs() {
@@ -221,6 +228,7 @@ for (const def of buildDefs()) {
   if (def.kind === 'block') KEY_OF_BLOCK.set(ITEM_BLOCK_OF.get(def.block) ?? def.block, def.key);
 }
 for (const [bare, ripe] of ITEM_BLOCK_OF) KEY_OF_BLOCK.set(bare, /** @type {string} */ (KEY_OF_BLOCK.get(ripe)));
+for (const [state, base] of SAME_ITEM) KEY_OF_BLOCK.set(state, /** @type {string} */ (KEY_OF_BLOCK.get(base)));
 
 /** Every item by key, in ITEM_KEYS order. @type {Readonly<Record<string, ItemDef>>} */
 export const ITEMS = Object.freeze(Object.fromEntries(BY_KEY));

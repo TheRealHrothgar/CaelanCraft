@@ -1,14 +1,16 @@
 // Caelancraft — zombie models (three). See src/CONTRACTS.md §39 and §61.
 //
-// A cartoon shambler built from chunky boxes coloured per vertex (like the pigs; no atlas, no hexagons): two legs in
-// ragged trousers and shoes, a hunched torso in a torn shirt with a belt and a hole showing skin, two arms reaching out
-// in front, and a big lolling head with mismatched googly eyes, heavy brows, a gappy mouth, ears and a few tufts of hair.
+// A shambler built from chunky boxes coloured per vertex (like the pigs; no atlas, no hexagons): two legs in ragged
+// trousers and shoes, a hunched torso in a torn shirt with a belt and a hole showing skin, two arms held out low in front,
+// and a head with a calm, weary face — two level, half-lidded eyes, plain brows, a small closed mouth — under a cap of
+// dark hair. v0.11 (CONTRACTS §71): it is meant to read as a tired sleepwalker, neither a goofy cartoon (no googly eyes,
+// no gappy grin) nor something to frighten a young player (no teeth, no red eyes: the alpha's glow is a warm amber).
 // The model faces −Z with its origin at the feet, so a rotation of `zombie.yaw` about +Y matches yawToForward.
 //
 // The three kinds (zombies.js `kind`) share the meshes and differ by an instance tint, a scale and a gait:
 //   walker — limps (one leg strides short), sways side to side, arms out front bobbing;
 //   runner — leaner and paler, leans far forward, legs and arms pumping;
-//   alpha  — bigger (ALPHA_SCALE) and darker, hunched, with red glowing eyes (their own small unlit mesh).
+//   alpha  — bigger (ALPHA_SCALE) and darker, hunched, with warm amber eyes (their own small unlit mesh).
 // Every zombie shares the InstancedMeshes (legs ×2, arms ×2, torso, head), so any number of them costs 4 draw calls
 // (5 with an alpha about); their twins with a red emissive (`hurt > 0`) or an ember glow (smouldering in daylight) only
 // draw while one flashes or burns. The legs swing from the hip with `walkPhase`, the torso leans into a chase and lurches
@@ -27,36 +29,35 @@ export const TORSO_W = 0.5;
 export const TORSO_H = 0.6;
 export const TORSO_D = 0.28;
 export const NECK_H = 0.06;
-export const HEAD_W = 0.5;
-export const HEAD_H = 0.46;
-export const HEAD_D = 0.44;
+export const HEAD_W = 0.46;
+export const HEAD_H = 0.44;
+export const HEAD_D = 0.42;
 export const ARM_L = 0.58;
 export const SHOULDER_X = 0.32;
 export const SHOULDER_Y = TORSO_H - 0.07;
 /** The walker's height to the top of its hair (≤ ZOMBIE_HEIGHT 1.9). */
-export const MODEL_HEIGHT = LEG_H + TORSO_H + NECK_H + HEAD_H + 0.07;
+export const MODEL_HEIGHT = LEG_H + TORSO_H + NECK_H + HEAD_H + 0.06;
 /** The alpha is drawn this much bigger; the runner this much narrower. */
 export const ALPHA_SCALE = 1.22;
 export const RUNNER_WIDTH = 0.88;
 
 /** Colours (sRGB). */
-export const SKIN = 0x93b07a;
-const SKIN_DARK = 0x6f8c5c;
+export const SKIN = 0x93a88a;
+const SKIN_DARK = 0x71866a;
 const SHIRT = 0x6d8f86;
 const SHIRT_DARK = 0x4e6b64;
 const BELT = 0x3a2e24;
 const TROUSERS = 0x4d4458;
 const TROUSERS_DARK = 0x3a3344;
 const SHOE = 0x2b211c;
-const EYE = 0xf4f1e4;
-const PUPIL = 0x161214;
-const MOUTH = 0x2a1418;
-const TOOTH = 0xe8e2c8;
-const HAIR = 0x2e2a26;
+const EYE = 0xe9e6d2;
+const PUPIL = 0x2a2a30;
+const MOUTH = 0x4a3a3a;
+const HAIR = 0x35302c;
 /** Instance tints by kind (multiplied into the vertex colours). */
-export const KIND_TINT = Object.freeze({ walker: 0xffffff, runner: 0xf2dcb4, alpha: 0x9c8c84 });
+export const KIND_TINT = Object.freeze({ walker: 0xffffff, runner: 0xfff0d6, alpha: 0xa2928a });
 /** The alpha's eyes. */
-export const ALPHA_EYES = 0xff3a1e;
+export const ALPHA_EYES = 0xffb648;
 
 const HURT = 0xff2a2a;
 const HURT_INTENSITY = 0.85;
@@ -161,30 +162,28 @@ export function zombieGeometries() {
   ]);
   const head = boxesGeometry([
     [HEAD_W, HEAD_H, HEAD_D, 0, HEAD_H / 2, 0, SKIN],
-    [0.06, 0.1, 0.1, -HEAD_W / 2 - 0.02, 0.24, 0.02, SKIN_DARK], // ears
-    [0.06, 0.09, 0.1, HEAD_W / 2 + 0.02, 0.22, 0.02, SKIN_DARK],
-    // the eyes: a big round-ish left one and a small right one, pupils looking two ways
-    [0.17, 0.16, 0.02, -0.11, 0.29, FACE_Z, EYE],
-    [0.06, 0.06, 0.02, -0.08, 0.26, FACE_Z - 0.008, PUPIL],
-    [0.11, 0.11, 0.02, 0.12, 0.27, FACE_Z, EYE],
-    [0.045, 0.045, 0.02, 0.145, 0.3, FACE_Z - 0.008, PUPIL],
-    // heavy brows, one cocked
-    [0.17, 0.035, 0.03, -0.11, 0.39, FACE_Z, HAIR, -0.18],
-    [0.13, 0.035, 0.03, 0.12, 0.36, FACE_Z, HAIR, 0.32],
-    // a nose, and a crooked gappy mouth with two teeth
-    [0.06, 0.07, 0.05, 0.01, 0.19, FACE_Z - 0.01, SKIN_DARK],
-    [0.26, 0.08, 0.02, 0.02, 0.09, FACE_Z, MOUTH, 0.06],
-    [0.045, 0.04, 0.02, -0.04, 0.115, FACE_Z - 0.006, TOOTH],
-    [0.04, 0.035, 0.02, 0.07, 0.12, FACE_Z - 0.006, TOOTH],
-    // a few tufts of hair
-    [0.12, 0.06, 0.12, -0.12, HEAD_H + 0.03, 0.05, HAIR],
-    [0.08, 0.07, 0.1, 0.08, HEAD_H + 0.035, -0.06, HAIR],
-    [0.1, 0.05, 0.1, 0.14, HEAD_H + 0.025, 0.12, HAIR],
+    [0.05, 0.1, 0.1, -HEAD_W / 2 - 0.02, 0.22, 0.02, SKIN_DARK], // ears
+    [0.05, 0.1, 0.1, HEAD_W / 2 + 0.02, 0.22, 0.02, SKIN_DARK],
+    // two level eyes, half closed: a pale eye, a small pupil low in it, and a heavy lid over its top
+    [0.12, 0.09, 0.02, -0.105, 0.255, FACE_Z, EYE],
+    [0.12, 0.09, 0.02, 0.105, 0.255, FACE_Z, EYE],
+    [0.045, 0.045, 0.02, -0.105, 0.24, FACE_Z - 0.008, PUPIL],
+    [0.045, 0.045, 0.02, 0.105, 0.24, FACE_Z - 0.008, PUPIL],
+    [0.13, 0.04, 0.03, -0.105, 0.295, FACE_Z - 0.004, SKIN_DARK],
+    [0.13, 0.04, 0.03, 0.105, 0.295, FACE_Z - 0.004, SKIN_DARK],
+    // plain brows, a small nose, a short closed mouth
+    [0.13, 0.025, 0.03, -0.105, 0.34, FACE_Z, HAIR],
+    [0.13, 0.025, 0.03, 0.105, 0.34, FACE_Z, HAIR],
+    [0.05, 0.07, 0.04, 0, 0.185, FACE_Z - 0.008, SKIN_DARK],
+    [0.14, 0.028, 0.02, 0, 0.095, FACE_Z, MOUTH],
+    // a cap of hair
+    [HEAD_W + 0.02, 0.07, HEAD_D + 0.02, 0, HEAD_H + 0.02, 0.01, HAIR],
+    [HEAD_W + 0.02, 0.14, 0.08, 0, HEAD_H - 0.06, HEAD_D / 2 - 0.02, HAIR],
   ]);
-  // The alpha's glow: two small boxes over the eyes' pupils (drawn on top of the head's own eyes).
+  // The alpha's glow: two small warm lights over its eyes (drawn on top of the head's own eyes).
   const eyes = boxesGeometry([
-    [0.1, 0.09, 0.02, -0.1, 0.28, FACE_Z - 0.016, 0xffffff],
-    [0.08, 0.07, 0.02, 0.13, 0.28, FACE_Z - 0.016, 0xffffff],
+    [0.1, 0.06, 0.02, -0.105, 0.25, FACE_Z - 0.016, 0xffffff],
+    [0.1, 0.06, 0.02, 0.105, 0.25, FACE_Z - 0.016, 0xffffff],
   ]);
   return { leg, torso, arm, head, eyes };
 }
@@ -281,7 +280,7 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
       }
       // Torso on the hips: hunched forward (more in a chase, most for a runner), swaying, lurching after a strike.
       const lean = (run ? -0.42 : alpha ? -0.3 : chase ? -0.17 : -0.08) + LURCH * attack;
-      const sway = sw * (kind === 'walker' ? 0.09 : 0.04);
+      const sway = sw * (kind === 'walker' ? 0.045 : 0.03);
       torsoM.multiplyMatrices(bodyM, tmp.makeTranslation(0, LEG_H, 0))
         .multiply(rot.makeRotationX(lean))
         .multiply(tmp.makeRotationZ(sway));
@@ -292,7 +291,7 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
         const side = k === 0 ? -1 : 1;
         const reach = run
           ? 0.45 + side * sw * 0.9
-          : dormant ? 0.12 - lean * 0.6 : 1.5 + 0.1 * Math.sin(phase + side * 1.4) - lean * 0.6;
+          : dormant ? 0.12 - lean * 0.6 : 1.15 + 0.06 * Math.sin(phase + side * 1.4) - lean * 0.6;
         partM.multiplyMatrices(torsoM, tmp.makeTranslation(side * SHOULDER_X, SHOULDER_Y, 0))
           .multiply(rot.makeRotationX(reach + 0.55 * attack))
           .multiply(tmp.makeRotationZ(side * (run ? 0.12 : 0.06)));

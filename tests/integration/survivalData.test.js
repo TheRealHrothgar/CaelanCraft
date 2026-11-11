@@ -103,7 +103,7 @@ function reach() {
       const id = blockForItem(key);
       if (id >= 0 && breakableNow(id)) gather(BLOCK_RULES[id].drops, false);
     }
-    if (hasAnyTool()) gather(MOB_DROPS.pig); // bare hands only shove pigs (§4.3)
+    if (hasAnyTool()) for (const mob of ['pig', 'cow', 'sheep', 'horse', 'wolf']) gather(MOB_DROPS[mob]); // bare hands only shove (§4.3, §69)
     gather(MOB_DROPS.zombie);
     if (have.has('clay_pot')) {
       have.add('pot_water');

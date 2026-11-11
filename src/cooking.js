@@ -29,6 +29,11 @@ export const EMBERS_SPOT = 6;
 export const FIRE_TRANSFORMS = Object.freeze({
   raw_pork: Object.freeze({ to: 'roast_pork', seconds: 20, spot: 'skewer' }),
   roast_pork: Object.freeze({ to: 'charred_meat', seconds: 40, spot: 'skewer' }),
+  // v0.11 (CONTRACTS §69): beef and mutton roast like pork
+  raw_beef: Object.freeze({ to: 'roast_beef', seconds: 24, spot: 'skewer' }),
+  roast_beef: Object.freeze({ to: 'charred_meat', seconds: 40, spot: 'skewer' }),
+  raw_mutton: Object.freeze({ to: 'roast_mutton', seconds: 18, spot: 'skewer' }),
+  roast_mutton: Object.freeze({ to: 'charred_meat', seconds: 40, spot: 'skewer' }),
   wild_tuber: Object.freeze({ to: 'baked_tuber', seconds: 25, spot: 'skewer' }),
   cattail_root: Object.freeze({ to: 'roasted_cattail_root', seconds: 15, spot: 'skewer' }),
   leached_acorns: Object.freeze({ to: 'roasted_acorns', seconds: 15, spot: 'skewer' }),
@@ -43,7 +48,7 @@ export const FIRE_TRANSFORMS = Object.freeze({
 const TRANSFORM = new Map(Object.entries(FIRE_TRANSFORMS));
 
 /** The food a player can put on a skewer (§4.4). */
-export const SKEWER_FOODS = Object.freeze(['raw_pork', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit']);
+export const SKEWER_FOODS = Object.freeze(['raw_pork', 'raw_beef', 'raw_mutton', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit']);
 /** The pots a player can put in the embers. */
 export const CENTRE_POTS = Object.freeze(['pot_water', 'pot_seawater', 'pot_snow', 'greenware_pot']);
 

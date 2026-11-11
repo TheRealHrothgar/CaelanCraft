@@ -24,7 +24,8 @@ import {
   SIDE_FACE_COUNT,
 } from './hex.js';
 import {
-  BLOCK, BIOME, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed, isWater, waterSurfaceHeight, getBlockShape,
+  BLOCK, BIOME, TILE, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed, isWater, waterSurfaceHeight, getBlockShape,
+  flintAt,
 } from './blocks.js';
 import { FULL_SKY, LIGHT_EMISSION } from './light.js';
 
@@ -515,6 +516,11 @@ function emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, tr, tg, tb) {
  * Emit the hexagonal top (f = 6) or bottom (f = 7) face as a 6-triangle fan around a centre vertex whose
  * colour is the mean of the six corners (smooth AO across the face).
  */
+/** §70: when set, emitHex draws this tile rect [u0, v0, u1, v1] instead of the block's own (a decal's variant picture). */
+let decalUV = /** @type {Float32Array|null} */ (null);
+/** The flint variant of the loose stones (tile LOOSE_STONES_FLINT). */
+const FLINT_UV = Float32Array.from(tileToUV(TILE.LOOSE_STONES_FLINT));
+
 function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb, own = -1) {
   bld.ensure(7, 18);
   const positions = bld.positions;
@@ -529,11 +535,12 @@ function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb, own = -1) {
   const ny = isTop ? 1 : -1;
   const yPos = isTop ? ly + topY : ly;
   const shade = FACE_SHADE[f];
-  const uo = (a * FACE_COUNT + f) * 4;
-  const u0 = FACE_UV[uo];
-  const v0 = FACE_UV[uo + 1];
-  const u1 = FACE_UV[uo + 2];
-  const v1 = FACE_UV[uo + 3];
+  const uvs4 = decalUV ?? FACE_UV;
+  const ub = decalUV ? 0 : (a * FACE_COUNT + f) * 4;
+  const u0 = uvs4[ub];
+  const v0 = uvs4[ub + 1];
+  const u1 = uvs4[ub + 2];
+  const v1 = uvs4[ub + 3];
   const du = u1 - u0;
   const dv = v1 - v0;
   const uSign = isTop ? TOP_UV_SCALE : -TOP_UV_SCALE; // the bottom face is seen mirrored
@@ -759,7 +766,12 @@ export function buildChunkMesh(cq, cr, getChunkData) {
           const tb = t ? tint[2] : 1;
           const own = lightAt(pq, ly, pr); // a plant or a decal is lit by its own cell (§62)
           if (shape === SHAPE_CROSS) emitCross(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, tr, tg, tb, own);
-          else emitHex(bld, FACE_TOP, pq, pr, ly, cx, cz, DECAL_Y, a, tr, tg, tb, own);
+          else {
+            // §70: the loose stones that hold flint are drawn with the flint tile, so flint can be seen where it lies.
+            decalUV = a === BLOCK.LOOSE_STONES && flintAt(cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr) ? FLINT_UV : null;
+            emitHex(bld, FACE_TOP, pq, pr, ly, cx, cz, DECAL_Y, a, tr, tg, tb, own);
+            decalUV = null;
+          }
           continue;
         }
 

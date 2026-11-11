@@ -71,7 +71,7 @@ describe('TILE_NAMES', () => {
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
     // v0.8: + barrel_side 75, barrel_top 76; zombies (§39): + 240–245; the Watcher (§40): + 250–252 (stone, crack glow, smoke);
     // v0.9 survival: + 77–104 (DESIGN-survival §8.1); powder and circuits: + 160–194 (DESIGN-circuits §1.4)
-    expect(keys.length).toBe(152); // v0.11: + workbench_side 195, workbench_top 196 (§67)
+    expect(keys.length).toBe(156); // + the snares 197–199 and loose_stones_flint 200 (§69, §70); // v0.11: + workbench_side 195, workbench_top 196 (§67)
     expect(TILE_NAMES[TILE.COPPER_ORE]).toBe('copper_ore');
     expect(TILE_NAMES[TILE.PLANT_TOP_CLEAR]).toBe('plant_top_clear');
     expect(TILE_NAMES[TILE.FIRE_PIT_SIDE]).toBe('fire_pit_side');
@@ -188,6 +188,7 @@ describe('paintTile — alpha rules', () => {
       TILE.PLANT_TOP_CLEAR, // v0.9: all alpha 0 (the test above)
       ...SURVIVAL_CUTOUT, // v0.9: plants, litter, the fire pit and Your Belongings (DESIGN-survival §8.2; tested below)
       ...CIRCUIT_IDS, // DESIGN-circuits §6.2.9: circuit_clear and the flat pictures are alpha 0 by design (tested below)
+      TILE.SNARE, TILE.SNARE_BAITED, TILE.SNARE_SPRUNG, TILE.LOOSE_STONES_FLINT, // v0.11: floor decals on alpha 0 (§69, §70)
     ]);
     for (const t of TILE_IDS) {
       if (special.has(t)) continue;
@@ -661,7 +662,7 @@ describe('survival tiles (v0.9, DESIGN-survival §8.1–§8.2)', () => {
   });
 
   it('the ground litter is seen from above: art only inside the tile\'s inscribed hexagon, alpha 0 or 255, a scatter (not a strip)', () => {
-    for (const t of [TILE.LOOSE_STONES, TILE.FALLEN_BRANCHES]) {
+    for (const t of [TILE.LOOSE_STONES, TILE.LOOSE_STONES_FLINT, TILE.FALLEN_BRANCHES, TILE.SNARE, TILE.SNARE_BAITED]) {
       const px = paintTile(t);
       let art = 0;
       const rows = new Set();
@@ -679,8 +680,13 @@ describe('survival tiles (v0.9, DESIGN-survival §8.1–§8.2)', () => {
       expect(art, TILE_NAMES[t]).toBeLessThan(160); // most of the floor shows through
       expect(rows.size, TILE_NAMES[t]).toBeGreaterThanOrEqual(8); // spread over the floor, not a row along the bottom
     }
-    // One of the loose stones is the dark flint nodule.
-    expect(countHex(paintTile(TILE.LOOSE_STONES), 0xc8c4b4) + countHex(paintTile(TILE.LOOSE_STONES), 0x2e3038)).toBeGreaterThan(0);
+    // v0.11 (§70): flint is shown where it lies — the flint tile has a blue-black nodule in a chalk-white rim, the plain
+    // stones have neither; and every piece of litter wears the dark outline that makes it stand out.
+    const dark = (px) => { let n = 0; for (let i = 0; i < BYTES; i += 4) if (px[i + 3] === 255 && px[i] < 0x40 && px[i + 2] > px[i] + 6) n++; return n; };
+    expect(dark(paintTile(TILE.LOOSE_STONES_FLINT))).toBeGreaterThan(10);
+    expect(dark(paintTile(TILE.LOOSE_STONES))).toBe(0);
+    expect(countHex(paintTile(TILE.LOOSE_STONES_FLINT), 0xffffff)).toBeGreaterThan(0);
+    for (const t of [TILE.LOOSE_STONES, TILE.LOOSE_STONES_FLINT, TILE.FALLEN_BRANCHES]) expect(countHex(paintTile(t), 0x1c1a16), TILE_NAMES[t]).toBeGreaterThan(20);
   });
 
   it('tussock: blades about 45 % alpha 0 (35–55 %), yellow tips above a green base', () => {

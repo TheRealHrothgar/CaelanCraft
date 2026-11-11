@@ -87,6 +87,10 @@ const FOODS = {
   charred_meat: ['Charred Meat', 16, 6, -4, 0, 1.4, {}],
   salted_pork: ['Salted Pork', 16, 18, -6, 0, 1.4, {}],
   pig_fat: ['Pig Fat', 16, 6, -2, 0.1, 1.2, {}],
+  raw_beef: ['Raw Beef', 16, 7, 0, 0.3, 1.4, { spoilS: 1200 }], // v0.11 (CONTRACTS §69)
+  roast_beef: ['Roast Beef', 16, 36, -2, 0, 1.6, { spoilS: 2400 }],
+  raw_mutton: ['Raw Mutton', 16, 5, 0, 0.3, 1.4, { spoilS: 1200 }],
+  roast_mutton: ['Roast Mutton', 16, 26, -2, 0, 1.6, { spoilS: 2400 }],
   snow: ['Snow', 32, 0, 3, 0, 0.6, { temp: -0.2 }],
   pot_water: ['Pot of Water', 1, 0, 30, 0.2, 1.0, { returns: 'clay_pot' }], // v0.11 (§66): 20 % poisoning
   pot_boiled: ['Pot of Boiled Water', 1, 0, 30, 0, 1.0, { returns: 'clay_pot' }],
@@ -187,8 +191,8 @@ describe('items — the registry', () => {
     // 5 clothes and the 98 placeable blocks other than water (DESIGN-circuits §1.5: PICKER_ORDER drops the black hole and gains
     // the 20 circuit blocks; the blast barrel's key is now powder_keg).
     const count = (kind) => ITEM_KEYS.filter((k) => ITEMS[k].kind === kind).length;
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 20, 2, 5, 99]); // + the flint dart (§60), + the Workbench (§67)
-    expect(ITEM_KEYS).toHaveLength(206);
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 24, 2, 5, 100]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(211);
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -283,7 +287,7 @@ describe('items — the registry', () => {
       if (f.returns !== undefined) expect(isItemKey(f.returns), def.key).toBe(true);
       if (f.spoilS !== undefined) expect(f.spoilS, def.key).toBeGreaterThan(0);
     }
-    expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork']);
+    expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton']);
     // pot_snow and unpeeled_cactus_fruit are materials: boiled, singed or peeled first, never eaten as they are.
     expect(getItem('pot_snow').kind).toBe('material');
     expect(getItem('unpeeled_cactus_fruit').kind).toBe('material');
@@ -327,6 +331,7 @@ describe('items — block items', () => {
     }
     for (const d of BLOCKS) {
       if (d.placeable || d.id === BLOCK.HONEYBERRY_BUSH_BARE || d.id === BLOCK.PRICKLY_PEAR_BARE) continue;
+      if (d.id === BLOCK.SNARE_BAITED || d.id === BLOCK.SNARE_SPRUNG) continue; // states of the Snare: they give it back (§69)
       expect(itemForBlock(d.id), d.name).toBeNull();
       expect(isItemKey(d.name), d.name).toBe(false);
     }

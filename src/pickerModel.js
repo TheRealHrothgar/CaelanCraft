@@ -79,7 +79,7 @@ export const PICKER_SECTIONS = Object.freeze([
   sec('camp', 'Camp & Crafts', 'campfire', [
     'campfire',
     fam('workplaces', 'Workplaces', ['work_stump', 'kiln', 'bloomery', 'forge', 'workbench'], 'workplaces'),
-    'wicker_basket', 'sleeping_hide',
+    'wicker_basket', 'sleeping_hide', 'snare',
   ]),
   sec('powder', 'Black Powder', 'powder_keg', ['powder_keg', 'powder_fuse', 'torch']),
   sec('circuits', 'Circuits', 'voltaic_battery', [

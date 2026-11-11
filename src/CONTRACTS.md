@@ -4006,6 +4006,76 @@ Amends §8 (day/night), §39, §40, §45 (climate) and §65. **One real minute i
   `events.burrowed` (main: a soil-coloured dust puff, no sound). One chasing you stays (nerfed, §65) until it gives up.
 - REGROW_MEAN_S stays 600 (a picked bush now regrows in about 10 real minutes, under half a game day).
 
+## 69. Animals — `src/animals.js` (PURE), `src/animalRenderer.js` (three); snares; wary pigs
+
+Cattle, sheep, horses and wolves: bodies through stepPlayer like the pigs (§30), in `Animals` (`list`, `spawn(kind, x, y,
+z, yaw)`, `remove`, `update(dt, world) → events`, `wound`, `feed`, `shear`, `mount` / `dismount` / `ride`, `raycast`,
+`export` / `load`, `validateAnimalsJSON`). At most ANIMAL_MAX 24.
+
+- **Species** (`SPECIES`): cow (r 0.44 × h 1.3, health 10, notice 9, runs 1.0 × WALK_SPEED, herd 2–4), sheep (0.36 × 0.95, 6,
+  10, 1.1 × walk, 2–4), horse (0.44 × 1.55, 12, 13, 1.45 × SPRINT_SPEED, 2–3, tame 3), wolf (0.3 × 0.8, 8, 11, 1.15 × sprint,
+  2–3, tame 3). `lure`: PLANT_LURE (wild_tuber, honeyberries, tussock, cattail_root) for the grazers, MEAT_LURE (pork, beef,
+  mutton, raw or roast) for the wolf. physics gains a body's optional **`speedScale`** (on foot only).
+- **Wary** (`noticeRange`): a wild animal runs from an on-foot player nearer than its `notice` — × SNEAK_NOTICE 0.4 when the
+  player sneaks, × SPRINT_NOTICE 1.35 when sprinting (config WARY_*_FACTOR) — and the others of its kind within HERD_ALARM
+  12 run with it (`events.startled`), until the player is CALM_FACTOR 2.2 × notice away. Running, it swings aside at an
+  edge, water, a wall or a fire. A flying player scares nothing.
+- **Lure and feed**: the player holding its food (`world.heldKey`) and not sprinting: it does not run and comes within
+  LURE_STOP 2.2 from LURE_RANGE 11. `feed(a, key)`: cattle and sheep stay calm FED_CALM_S 40; a horse or a wolf gains trust
+  and is **tamed** at its `tame` feeds; food heals a tame animal 3.
+- **Tame**: never runs, never despawns. A tame horse grazes within HOME_RANGE 4 of where it was left and is ridden: `mount`
+  makes its body RIDER_HEIGHT 1.25 taller, `ride(a, input, getBlock, dt)` steers it by the rider's input at RIDE_SCALE 1.55 ×
+  the walking / sprinting speed, hopping ledges and leaping RIDE_LEAP 2.2 cells on jump; the rider sits SADDLE_Y 1.15 above
+  its feet. A tame wolf follows beyond FOLLOW_NEAR 3.5 (running beyond 9, brought back beyond FOLLOW_TELEPORT 32), sits when
+  told, and goes for a `world.threats` body within WOLF_GUARD 9: `events.bites` every WOLF_BITE_S 1 within 1.25 (main:
+  `zombies.hit` with WOLF_BITE 2).
+- **Hunting**: `wound(a, power, fromX, fromZ)` → 'hit' | 'dead' | null (ANIMAL_HURT_S 0.5 flash; knockback; the herd runs
+  HIT_FLEE_S 6). Main: like a pig only a tool wounds (a bare hand shoves), thrown stones, darts and spears wound, a tame
+  animal is not struck; drops fly to the player — harvest MOB_DROPS cow (raw_beef 3–5, rawhide 1–2), sheep (raw_mutton 1–2,
+  wool_white 1–2), horse (rawhide 1–2), wolf (rawhide 1). `shear(sheep)` → SHEAR_WOOL 1–2 wool, regrown in SHEAR_REGROW_S 300
+  (main: R with a knife in the pack; 1 knife wear).
+- **Snares**: blocks SNARE 116 (placeable; hand recipe 2 cord + 3 stick), SNARE_BAITED 117, SNARE_SPRUNG 118 (floor decals,
+  tiles 197–199; all three give the Snare; BLOCK_COUNT 119). R on a Snare with food baits it. A wild animal whose feet cell
+  is a SNARE or SNARE_BAITED is caught (`events.caught` → main writes SNARE_SPRUNG): held in place TRAP_HOLD_S 90, then
+  free (`events.freed` → main writes SNARE) and immune TRAP_IMMUNE_S 20; breaking the snare or the animal's death frees it at
+  once. A calm animal walks to a SNARE_BAITED within BAIT_RANGE 7 cells (checked every 2 s). Pigs are snared the same way
+  (main `stepSnaredPigs`, `Pig.trapped`).
+- **Herds** (`_spawnHerd`): every HERD_CHECK_S 60 with HERD_CHANCE 0.45, while fewer than HERD_TARGET 5 wild animals are
+  within HERD_RADIUS 96: one herd of a kind HERD_WEIGHTS gives the biome (plains: cow, sheep, horse; forest: wolf, sheep,
+  cow; mountains: sheep, wolf; snowy: wolf, sheep), HERD_MIN 34..HERD_MAX 64 from the player on natural grass. A wild animal
+  beyond DESPAWN_DIST 150 goes.
+- **Pigs are wary and scarcer**: a pig runs from a walking player within PIG_NOTICE 6 (same sneak / sprint factors);
+  PIG_NATURAL_COUNT 3, PIG_REPOP_TARGET 2, PIG_REPOP_CHECK_S 240.
+- **Main**: `animalTarget` (crosshair, between pigs and zombies), hints, R (`animalR`: feed / shear / ride / sit; Creative
+  tames at once; `snareR`), riding (`stepRide`: Shift gets off, the player is carried and left out of resolveBodies), voices
+  (`SOUNDS`), the save field **`animals`** (written only when non-empty; storage validates it), `summon cow|sheep|horse|wolf`,
+  the debug handle's `animals`, `animalR()`, `getRiding()`.
+- **Items**: raw_beef / roast_beef (36), raw_mutton / roast_mutton (26), roasted on a skewer (24 s / 18 s), spoiling like
+  pork; 211 items, 117 recipes.
+- **Models** (animalRenderer `MODELS`, zombieRenderer.boxesGeometry): per species a body (and an `alt`: shorn sheep, saddled
+  horse, collared wolf) and four legs swinging in diagonal pairs; red-flash twins for `hurt`.
+
+## 70. Flint you can see; bolder ground litter — `src/blocks.js`, `src/mesher.js`, `src/tiles.js`, `src/harvest.js`
+
+- **`flintAt(q, r)`** (blocks.js; FLINT_SHARE 0.5): a fixed coin toss per column. The mesher draws the loose stones of
+  those columns with tile **200 `loose_stones_flint`** (`decalUV`), and main passes `decided: { flint: flintAt(q, r) }` to
+  `rollDrops` / `pick` for LOOSE_STONES, so the stones that show a flint nodule give flint and the others do not
+  (harvest `DropContext.decided`: a chance item the caller has decided is not rolled). The hint reads "Loose Stones with
+  Flint · R: pick". The 5 % flint from mined stone is unchanged.
+- **Tiles**: 102 `loose_stones` (four pebbles with a dark LITTER_OUTLINE rim, lit upper left, shaded lower right, a glint;
+  no flint), 200 the same with the big pebble a blue-black flint nodule in a chalk-white cortex, 103 `fallen_branches`
+  (three outlined sticks with pale cut ends and green leaves). TILE_IDS 156.
+
+## 71. A calmer zombie — `src/zombieRenderer.js`, `src/audio.js`, `src/zombies.js`
+
+Amends §61. The face is level and weary, not goofy and not frightening: two equal half-lidded eyes (a pale eye, a small low
+pupil, a heavy lid), plain brows, a small nose, a short closed mouth, no teeth, under a cap of dark hair; the head is a
+little smaller (HEAD_W 0.46 × HEAD_H 0.44 × HEAD_D 0.42); the skin is a muted grey-green. The walker sways less (0.045 rad)
+and holds its arms lower (1.15 rad). The alpha's eye glow is a warm amber (ALPHA_EYES 0xffb648), never red; KIND_TINT
+runner 0xfff0d6, alpha 0xa2928a. Sounds: the groan is a muffled, sagging "mmmh" (GROAN_CUTOFF_HZ 320, GROAN_GAIN 0.22,
+0.9 s) with a soft octave and a breath; the hurt grunt and the knock-out are softer (GRUNT_GAIN 0.22, ZOMBIE_DOWN_GAIN
+0.24); the alpha's SOUND_ROAR is a deep slow call (gain 0.34, no rattle).
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),

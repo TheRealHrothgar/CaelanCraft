@@ -126,6 +126,11 @@ export const TILE_NAMES = Object.freeze({
   // v0.11 (CONTRACTS §67)
   195: 'workbench_side',
   196: 'workbench_top',
+  // v0.11 (CONTRACTS §69, §70)
+  197: 'snare',
+  198: 'snare_baited',
+  199: 'snare_sprung',
+  200: 'loose_stones_flint',
   // powder and circuits: 160–194 (DESIGN-circuits §1.4), painted by circuitTiles.js
   ...CIRCUIT_TILE_NAMES,
   240: 'zombie_face',
@@ -2254,98 +2259,175 @@ function paintPlantTopClear(px) {
   px.fill(0);
 }
 
+/** The dark outline every piece of ground litter is drawn with, so it stands out on grass, sand and snow. */
+const LITTER_OUTLINE = 0x1c1a16;
+
+/** The pebbles of the loose-stones decals: [centre x, centre y, radius x, radius y]; the first is the big one. */
+const PEBBLES = Object.freeze([[5.2, 6.2, 3.3, 2.7], [10.8, 5.4, 2.4, 2.1], [10.2, 10.6, 2.9, 2.4], [4.6, 11.2, 2.1, 1.8]]);
+
 /**
- * 102 loose_stones — seen from ABOVE (a decal lying on the cell's floor): on alpha 0, six or seven pebbles scattered inside
- * the tile's inscribed hexagon (centre (7.5, 7.5), radius 6.3), none touching another: each an ellipse 1.2–2.2 wide and
- * 1–1.7 tall in grey 0x8a8a86 / 0x6e6e6a / 0xa09e98 or ochre 0xa8844a / 0x8e6c3c (±6), lit +20 on its upper-left outline
- * and shaded −22 on its lower-right outline, with a dark 0x2a2520 shadow pixel below-right of its lower rim. The first is a
- * dark flint nodule 0x2e3038 with a pale 0xc8c4b4 cortex on its outline (flint comes from these).
+ * Paint one bold pebble: a LITTER_OUTLINE rim one pixel wide, a body of `base` shaded from a bright upper left
+ * (`light`) to a dark lower right (`dark`), and a white glint. @returns {void}
  */
-function paintLooseStones(px, rng) {
-  clearTile(px);
-  const COLOURS = [0x8a8a86, 0x6e6e6a, 0xa09e98, 0xa8844a, 0x8e6c3c];
-  const owner = new Int8Array(W * H).fill(-1);
-  const count = randInt(rng, 6, 7);
-  for (let k = 0, tries = 0; k < count && tries < 400; tries++) {
-    const flint = k === 0;
-    const hw = flint ? 2 : 1.2 + rng() * 1;
-    const hh = flint ? 1.6 : 1 + rng() * 0.7;
-    const cx = 2.5 + rng() * 10;
-    const cy = 2.5 + rng() * 10;
-    if (Math.hypot(cx - 7.5, cy - 7.5) > 6.3 - Math.max(hw, hh)) continue;
-    const inStone = (x, y) => ((x + 0.5 - cx) / hw) ** 2 + ((y + 0.5 - cy) / hh) ** 2 <= 1;
-    /** @type {number[]} */
-    const cells = [];
-    let clash = false;
-    for (let y = Math.floor(cy - hh - 1); y <= Math.ceil(cy + hh + 1) && !clash; y++) {
-      for (let x = Math.floor(cx - hw - 1); x <= Math.ceil(cx + hw + 1); x++) {
-        if (x < 0 || y < 0 || x >= W || y >= H) continue;
-        if (inStone(x, y)) cells.push(x, y);
-        else continue;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx >= 0 && ny >= 0 && nx < W && ny < H && owner[ny * W + nx] >= 0) clash = true;
-        }
+function paintPebble(px, rng, cx, cy, rx, ry, base, light, dark) {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const u = (x + 0.5 - cx) / rx;
+      const v = (y + 0.5 - cy) / ry;
+      const d = u * u + v * v;
+      if (d > 1.55) continue;
+      if (d > 1) {
+        set(px, x, y, LITTER_OUTLINE);
+        continue;
       }
+      const side = u + v; // −: upper left, +: lower right
+      set(px, x, y, side < -0.55 ? light : side > 0.55 ? dark : base, delta(rng, 5));
     }
-    if (clash || cells.length < 3) continue;
-    const hex = flint ? 0x2e3038 : pick(rng, COLOURS);
-    for (let i = 0; i < cells.length; i += 2) {
-      const x = cells[i];
-      const y = cells[i + 1];
-      owner[y * W + x] = k;
-      const upLeft = !inStone(x - 1, y) || !inStone(x, y - 1);
-      const downRight = !inStone(x + 1, y) || !inStone(x, y + 1);
-      if (flint && (upLeft || downRight)) set(px, x, y, 0xc8c4b4, delta(rng, 6));
-      else set(px, x, y, hex, delta(rng, 6) + (upLeft ? 20 : downRight ? -22 : 0));
-      if (!inStone(x, y + 1) && !inStone(x + 1, y + 1) && x + 1 < W && y + 1 < H && owner[(y + 1) * W + x + 1] < 0) {
-        set(px, x + 1, y + 1, 0x2a2520, delta(rng, 4));
-        owner[(y + 1) * W + x + 1] = k;
-      }
-    }
-    k++;
   }
+  set(px, Math.round(cx - rx * 0.45), Math.round(cy - ry * 0.5), 0xffffff);
+}
+
+/** The plain pebbles shared by tiles 102 and 200 (`skipFirst`: leave room for the flint). */
+function paintPebbles(px, rng, skipFirst) {
+  clearTile(px);
+  const TONES = [[0xb9b4a8, 0xe9e5da, 0x7c776c], [0xc9bda6, 0xf0e8d6, 0x8a7e68], [0xa9a8a4, 0xdedcd6, 0x6e6c68], [0xbfb7ad, 0xebe5dc, 0x80786e]];
+  PEBBLES.forEach(([cx, cy, rx, ry], i) => {
+    if (i === 0 && skipFirst) return;
+    const [base, light, dark] = TONES[i % TONES.length];
+    paintPebble(px, rng, cx, cy, rx, ry, base, light, dark);
+  });
 }
 
 /**
- * 103 fallen_branches — seen from ABOVE (a decal lying on the cell's floor): on alpha 0, inside the tile's inscribed hexagon,
- * two crossed branches 2 px thick — from (2, 5) to (13, 10) and from (4, 12) to (12, 3) — and a 1-px twig from (6, 10) to
- * (9, 13), in bark 0x5e4228 ±8 with a darker 0x3e2a18 shadow pixel below each stick pixel (never over another stick),
- * pale 0xb89868 cut ends, two side twigs (2-px 0x6a4a2c strokes) and 5 lichen flecks (0xb8c49a or 0xd0d8b0) on the bark.
+ * 102 loose_stones — seen from ABOVE (a decal lying on the cell's floor): on alpha 0, inside the tile's inscribed hexagon,
+ * four bold pebbles (PEBBLES), each with a dark LITTER_OUTLINE rim, a pale warm-grey body lit from the upper left and
+ * shaded to the lower right, and a white glint — drawn to stand out on grass. No flint: tile 200 is the one with flint.
+ */
+function paintLooseStones(px, rng) {
+  paintPebbles(px, rng, false);
+}
+
+/**
+ * 200 loose_stones_flint — the same pebbles, but the big one is a FLINT nodule, unmistakable: a glossy blue-black body
+ * (0x1b1f2c, lit 0x4a5674, shaded 0x0c0e16) in a chalk-white cortex (0xf6f2e6 on its lower right rim), split to show a
+ * blue-grey conchoidal face (0x6a7898 strokes) and two white glints. The mesher draws this tile for the loose stones
+ * that hold flint (blocks.flintAt), so the player can see where flint is.
+ */
+function paintLooseStonesFlint(px, rng) {
+  paintPebbles(px, rng, true);
+  const [cx, cy, rx, ry] = PEBBLES[0];
+  paintPebble(px, rng, cx, cy, rx + 0.3, ry + 0.3, 0x1b1f2c, 0x4a5674, 0x0c0e16);
+  // the chalk cortex along the lower right, the split face, the glints
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const u = (x + 0.5 - cx) / (rx + 0.3);
+      const v = (y + 0.5 - cy) / (ry + 0.3);
+      const d = u * u + v * v;
+      if (d <= 1 && d > 0.5 && u + v > 0.5) set(px, x, y, 0xf6f2e6, delta(rng, 4));
+    }
+  }
+  set(px, 4, 6, 0x6a7898);
+  set(px, 5, 5, 0x6a7898);
+  set(px, 6, 6, 0x6a7898);
+  set(px, 3, 5, 0xffffff);
+  set(px, 5, 7, 0xdfe6ff);
+}
+
+/**
+ * 103 fallen_branches — seen from ABOVE (a decal lying on the cell's floor): on alpha 0, inside the tile's inscribed
+ * hexagon, three crossed sticks drawn bold: each a LITTER_OUTLINE silhouette one pixel fatter than its warm bark core
+ * (0xb9834a with a 0xe6b877 lit upper edge), pale cut ends (0xf6dfa6), a side twig, and three fresh green leaves
+ * (0x6cc23c / 0x4b9a2a) so the pile reads at a glance.
  */
 function paintFallenBranches(px, rng) {
   clearTile(px);
-  /** @type {number[]} */
-  const stick = [];
-  const STICKS = [[2, 5, 13, 10, 2], [4, 12, 12, 3, 2], [6, 10, 9, 13, 1]];
-  const line = (x0, y0, x1, y1, thick, hex, mark) => {
-    const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
-    for (let i = 0; i <= n; i++) {
-      const x = Math.round(x0 + ((x1 - x0) * i) / n);
-      const y = Math.round(y0 + ((y1 - y0) * i) / n);
-      for (let t = 0; t < thick; t++) {
-        const yy = y + t;
-        if (x < 0 || yy < 0 || x >= W || yy >= H) continue;
-        const end = mark && (i === 0 || i === n);
-        set(px, x, yy, end ? 0xb89868 : hex, delta(rng, 8));
-        stick.push(yy * W + x);
+  const STICKS = [[2.5, 5.5, 12.5, 9.5], [4.5, 12, 11.5, 3.5], [6, 9.5, 9.5, 12.5]];
+  const dist = (x, y, [x0, y0, x1, y1]) => {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const t = Math.max(0, Math.min(1, ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy)));
+    return [Math.hypot(x - (x0 + dx * t), y - (y0 + dy * t)), t];
+  };
+  // silhouettes first, so every stick keeps its outline where they cross
+  for (let pass = 0; pass < 2; pass++) {
+    for (const st of STICKS) {
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const [d, t] = dist(x + 0.5, y + 0.5, st);
+          if (pass === 0) {
+            if (d <= 1.75) set(px, x, y, LITTER_OUTLINE);
+          } else if (d <= 0.95) {
+            const end = t < 0.06 || t > 0.94;
+            const lit = (y + 0.5) < st[1] + (st[3] - st[1]) * t; // the upper side of the stick
+            set(px, x, y, end ? 0xf6dfa6 : lit ? 0xe6b877 : 0xb9834a, delta(rng, 5));
+          }
+        }
       }
     }
-  };
-  for (const [x0, y0, x1, y1, thick] of STICKS) line(x0, y0, x1, y1, thick, 0x5e4228, true);
-  line(8, 7, 10, 5, 1, 0x6a4a2c, false);
-  line(6, 9, 4, 8, 1, 0x6a4a2c, false);
-  const onStick = new Set(stick);
-  for (const p of stick) {
-    const x = p % W;
-    const y = Math.floor(p / W) + 1;
-    if (y < H && !onStick.has(y * W + x)) set(px, x, y, 0x3e2a18, delta(rng, 4));
   }
-  for (let k = 0; k < 5; k++) {
-    const p = stick[Math.floor(rng() * stick.length)];
-    set(px, p % W, Math.floor(p / W), rng() < 0.5 ? 0xb8c49a : 0xd0d8b0);
+  // a side twig and three leaves
+  for (const [x, y] of [[9, 6], [10, 5]]) set(px, x, y, 0xb9834a, delta(rng, 5));
+  for (const [x, y, c] of [[11, 4, 0x6cc23c], [12, 5, 0x4b9a2a], [5, 4, 0x6cc23c], [4, 5, 0x4b9a2a], [10, 12, 0x6cc23c]]) set(px, x, y, c);
+}
+
+/** A ring of cord (the snare's noose) of radius `r` around (cx, cy): LITTER_OUTLINE either side of a pale cord. */
+function paintNoose(px, cx, cy, r) {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+      if (Math.abs(d - r) <= 1.2) set(px, x, y, LITTER_OUTLINE);
+    }
   }
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+      if (Math.abs(d - r) <= 0.55) set(px, x, y, (x + y) % 2 ? 0xe9d39a : 0xc9ae6e);
+    }
+  }
+}
+
+/** The snare's peg and bent stick, shared by its three tiles: a stake at (8, 2) and the cord running down from it. */
+function paintSnareFrame(px, cordToY) {
+  for (let y = 1; y <= 4; y++) for (let x = 7; x <= 9; x++) set(px, x, y, LITTER_OUTLINE);
+  set(px, 8, 2, 0xb9834a);
+  set(px, 8, 3, 0xe6b877);
+  for (let y = 5; y <= cordToY; y++) set(px, 8, y, (y % 2) ? 0xe9d39a : 0xc9ae6e);
+}
+
+/**
+ * 197 snare — a set snare seen from above (a floor decal): on alpha 0 a wide noose of pale cord (radius 4.2 around
+ * (8, 10)) with a dark outline, tied to a wooden stake at the top.
+ */
+function paintSnare(px) {
+  clearTile(px);
+  paintNoose(px, 8, 10, 4.2);
+  paintSnareFrame(px, 5);
+}
+
+/**
+ * 198 snare_baited — the set snare with bait in the noose: three red berries (0xd92b3f with 0xff8a94 glints) and a
+ * green leaf (0x6cc23c) at its middle.
+ */
+function paintSnareBaited(px) {
+  paintSnare(px);
+  for (const [x, y] of [[7, 10], [9, 10], [8, 11]]) {
+    set(px, x, y, 0xd92b3f);
+    set(px, x, y - 1, 0xd92b3f);
+  }
+  set(px, 7, 9, 0xff8a94);
+  set(px, 9, 9, 0xff8a94);
+  set(px, 8, 8, 0x6cc23c);
+  set(px, 9, 8, 0x4b9a2a);
+}
+
+/**
+ * 199 snare_sprung — the noose pulled tight (radius 1.8 around (8, 11)) on a taut cord from the stake: something is
+ * caught in it.
+ */
+function paintSnareSprung(px) {
+  clearTile(px);
+  paintNoose(px, 8, 11, 1.8);
+  paintSnareFrame(px, 9);
 }
 
 /**
@@ -2487,6 +2569,10 @@ const RECIPES = Object.freeze({
   fire_pit_side: paintFirePitSide,
   workbench_side: paintWorkbenchSide,
   workbench_top: paintWorkbenchTop,
+  snare: paintSnare,
+  snare_baited: paintSnareBaited,
+  snare_sprung: paintSnareSprung,
+  loose_stones_flint: paintLooseStonesFlint,
   zombie_face: paintZombieFace,
   zombie_head_side: paintZombieHeadSide,
   zombie_scalp: paintZombieScalp,

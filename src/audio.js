@@ -145,13 +145,14 @@ export const FIZZLE_SAG_GAIN = 0.08;
 // Zombies (CONTRACTS §39). A groan is a low sawtooth moan rising then sagging (92 → 118 → 70 Hz over 1 s) through a
 // dark lowpass, with a detuned fifth above it and a breathy noise; a hit grunt is a short 170 → 230 → 110 Hz bark
 // over a noise slap; a knock-out is a moan sinking 130 → 40 Hz under a soft noise poof and a low thump.
-export const GROAN_DURATION_S = 1.0;
-export const GROAN_CUTOFF_HZ = 520;
-export const GROAN_GAIN = 0.32;
-export const GRUNT_DURATION_S = 0.22;
-export const GRUNT_GAIN = 0.3;
-export const ZOMBIE_DOWN_S = 0.8;
-export const ZOMBIE_DOWN_GAIN = 0.32;
+// v0.11 (CONTRACTS §71): the zombie's voice is a low, tired murmur — muffled and soft, neither a cartoon moan nor a snarl.
+export const GROAN_DURATION_S = 0.9;
+export const GROAN_CUTOFF_HZ = 320;
+export const GROAN_GAIN = 0.22;
+export const GRUNT_DURATION_S = 0.2;
+export const GRUNT_GAIN = 0.22;
+export const ZOMBIE_DOWN_S = 0.7;
+export const ZOMBIE_DOWN_GAIN = 0.24;
 // The Hollow Watcher (CONTRACTS §40) vanishing: a faint, low exhale — two sine tones a few hertz apart sinking 68 → 30
 // Hz over 1.6 s (they beat slowly against each other), a hollow 240 Hz noise breath and a soft 900 Hz air rush at the
 // start. Quiet on purpose: you are not sure you heard it.
@@ -744,9 +745,10 @@ export function createAudio(opts = {}) {
       const p = randomPitch();
       const d = GROAN_DURATION_S * (0.85 + Math.random() * 0.3);
       const t0 = c.currentTime;
-      buzz(c, t0, d, [[0, 92 * p], [d * 0.4, 118 * p], [d, 70 * p]], GROAN_CUTOFF_HZ, GROAN_GAIN * v);
-      buzz(c, t0 + 0.03, d * 0.9, [[0, 139 * p], [d * 0.4, 176 * p], [d * 0.9, 104 * p]], GROAN_CUTOFF_HZ * 1.3, GROAN_GAIN * 0.35 * v);
-      noiseBurst(c, t0, d * 0.7, 400, 0.1 * v, p);
+      // A sighed "mmmh": a muffled voice that sags a little, a soft octave above it, and a breath.
+      buzz(c, t0, d, [[0, 106 * p], [d * 0.35, 100 * p], [d, 88 * p]], GROAN_CUTOFF_HZ, GROAN_GAIN * v);
+      tone(c, t0 + 0.04, d * 0.8, 212 * p, 180 * p, GROAN_GAIN * 0.3 * v);
+      noiseBurst(c, t0, d * 0.6, 300, 0.05 * v, p);
     } catch (err) {
       warnOnce(err);
     }
@@ -761,8 +763,9 @@ export function createAudio(opts = {}) {
       const p = randomPitch();
       const d = GRUNT_DURATION_S;
       const t0 = c.currentTime;
-      buzz(c, t0, d, [[0, 170 * p], [d * 0.3, 230 * p], [d, 110 * p]], 900, GRUNT_GAIN * v);
-      noiseBurst(c, t0, 0.05, 1200, 0.25 * v, p);
+      // A short, soft "oof".
+      buzz(c, t0, d, [[0, 150 * p], [d, 118 * p]], 560, GRUNT_GAIN * v);
+      noiseBurst(c, t0, 0.04, 800, 0.1 * v, p);
     } catch (err) {
       warnOnce(err);
     }
@@ -777,9 +780,10 @@ export function createAudio(opts = {}) {
       const p = randomPitch();
       const d = ZOMBIE_DOWN_S;
       const t0 = c.currentTime;
-      buzz(c, t0, d, [[0, 130 * p], [d, 40 * p]], 500, ZOMBIE_DOWN_GAIN * v);
-      noiseBurst(c, t0 + 0.1, 0.3, 300, 0.4 * v, p);
-      tone(c, t0 + 0.12, 0.2, 90 * p, 40 * p, 0.4 * v);
+      // A falling "ohh" and a soft puff as it goes.
+      buzz(c, t0, d, [[0, 120 * p], [d, 62 * p]], 380, ZOMBIE_DOWN_GAIN * v);
+      noiseBurst(c, t0 + 0.1, 0.25, 260, 0.2 * v, p);
+      tone(c, t0 + 0.12, 0.2, 90 * p, 55 * p, 0.2 * v);
     } catch (err) {
       warnOnce(err);
     }
