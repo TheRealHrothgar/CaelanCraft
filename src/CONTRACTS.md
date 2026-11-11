@@ -4076,6 +4076,53 @@ runner 0xfff0d6, alpha 0xa2928a. Sounds: the groan is a muffled, sagging "mmmh" 
 0.9 s) with a soft octave and a breath; the hurt grunt and the knock-out are softer (GRUNT_GAIN 0.22, ZOMBIE_DOWN_GAIN
 0.24); the alpha's SOUND_ROAR is a deep slow call (gain 0.34, no rattle).
 
+## 72. Closing the backlog — milk, holes that swallow animals, lamp light, prewarm, floating, save-slot nits
+
+**Milk.** `Animals.milk(a)` gives true for a cow not milked in the last `MILK_REGROW_S` (240 s) and stamps `a.milked`
+(saved as `m`). In main's `animalR()`, R on a cow with a `clay_pot` in hand consumes the pot and gives `pot_milk` (food:
+satiation 12, hydration 20, never sickens, returns the `clay_pot`). The cow's hint says so.
+
+**Black holes swallow animals.** After `stepSnaredPigs()`, every animal with `blackHoles.swallowing(a)` is removed
+(a ridden horse dismounts its rider first) and handed to `infall.addMob('animal', a, cx, cy, cz)`; `mobsDone` accepts
+`'animal'`. The animal renderer is sized `ANIMAL_MAX + MAX_INFALL_MOBS` and draws `infall.ghosts('animal', …)`, honouring
+each ghost's `renderScale` / `renderSpin`. No drops, as for pigs and zombies.
+
+**Extra light emitters; lit lamps shine.** `LightEngine.setEmitter(q, y, r, level)` (0 clears) and `emitterAt(q, y, r)`
+keep a per-chunk map of cells that emit block light on top of their block's own `light` (`chunk.lightExtra`; used by
+`lightChunk`, `flush` and the un-spread pass; dropped by `clear()` and `releaseChunk`). `Circuits.litLamps(out)` returns
+flat `[q, y, r, brightness]` for every Filament Lamp with brightness > 0. Every 6th frame main's `syncLampLight()` sets
+each lit lamp's emitter to `round(LAMP_LIGHT_MIN + (LAMP_LIGHT_MAX − LAMP_LIGHT_MIN) × brightness)` (7..14) and clears
+the ones that went dark; the set is emptied on load. Emitters are not saved: they are rebuilt from the circuit state.
+
+**Prewarm.** `prewarm.compileHidden(objects, webgl, camera, scene)` shows each object (an InstancedMesh gets count ≥ 1),
+compiles (`compileAsync` when the renderer has it, else `compile`), restores what it changed, and never rejects.
+`renderer.prewarm()` covers the block highlight, the dig trace and the three chunk materials (through a hidden
+one-triangle layer mesh); `zombieRenderer`, `pigRenderer` and `animalRenderer` each have `prewarm(webgl, camera)`. main
+calls all four while loading, so the first crosshair hit and the first mob of a session do not freeze the game.
+
+**The zombie's target.** `ALPHA_SCALE` (1.22) lives in zombies.js (zombieRenderer re-exports it). `Zombies.raycast` tests
+a cylinder of radius `(ZOMBIE_TARGET_RADIUS + ZOMBIE_TARGET_PAD) × k` and height `ZOMBIE_HEIGHT × k`, k = `ALPHA_SCALE`
+for an alpha and 1 otherwise; `ZOMBIE_TARGET_PAD` is 0.1, so a blow aimed at the drawn arms lands.
+
+**Floating** (amends §30, §39 and §69). `physics.shouldPaddle(getBlock, body)` is true only for a body in water whose
+float point — `FLOAT_POINT` (0.45) of its height above its feet — is under the surface, or that presses into a bank
+(`hitWall`, the exit jump). Pigs, zombies and animals jump on `shouldPaddle(…) || (!inWater && <their ledge rule>)`.
+Right after `stepPlayer` each calls `physics.settleFloat(getBlock, body, dt)`: it does nothing on the ground, at a bank,
+during an exit jump (`vy > SWIM_UP_SPEED`), where the column has no water surface between head and feet, or for a body
+more than `(1 − FLOAT_POINT) × height` above its float line; otherwise a body above the line sinks to it at
+`FLOAT_SETTLE` (2 m/s) with `vy ≤ 0`, and a body within `FLOAT_NEAR` (0.25) below it rises at no more than `FLOAT_RISE`
+(0.8 m/s). A swimmer therefore rides about 45% under water, steady to a few centimetres. The player is not affected.
+
+**Save slots.** `quitUnsavedMessage(name, reason, hasSave)` builds the "not saved" line from storage's failure reason
+(`'quota'`, `'unavailable'`, other) and says whether an earlier save is kept or the world is gone. `cleanWorldName` also
+strips format characters (`\p{Cf}`), so an invisible-only name is empty; `.slot-name` is `unicode-bidi: isolate`.
+`#title-footer` has `pointer-events: none`. When `?autoplay`'s own guard switches saving off (a damaged slot, or a
+`?seed` that is not the slot's), main marks it `autoNoSave`; picking or creating a world on the Worlds screen calls
+`resumeSaving()`, and the toast says "Saving is off for this world (its slot is protected)" instead of blaming `?nosave`.
+
+**Diagnostics.** The debug handle gains `breakTargeted()`, `animalR()` and `getRiding()`. The smoke test's place step
+retries `placeSelected()` for up to `SMOKE_HIT_RETRY_FRAMES` frames (a wary pig may be standing in the hole).
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),

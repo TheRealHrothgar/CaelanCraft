@@ -1,10 +1,11 @@
-# Known issues (v0.8, PR #3; v0.9 Survival items at the end — S2–S4 fixed in the post-merge follow-up; v0.10 circuits: C1–C9)
+# Known issues (v0.8, PR #3; v0.9 Survival items at the end — S2–S4 fixed in the post-merge follow-up; v0.10 circuits: C1–C9; v0.12 backlog pass at the very end)
 
 Problems found by play-testing and review. Each one was reproduced independently by a second agent before it was
 listed. File and line references in the open tables are from commit c47ce0b, the build the play-test ran on. That build
 is the pushed branch plus the unshipped Hollow Watcher, minus save slots, so line numbers can be off by a few. All the
-bugs and glitches are fixed now (first table), and so is everything that held the Hollow Watcher back (its section). The visual,
-performance and save-slot items below are still open.
+bugs and glitches are fixed now (first table), and so is everything that held the Hollow Watcher back (its section). The
+v0.12 backlog pass (CONTRACTS §72) closed V1, P1, P2 and the four save-slot items; what is still open is listed once more,
+in one place, in the last section.
 
 Severity: **bug** = wrong behaviour or lost state; **glitch** = wrong but recoverable; **visual**; **perf** = frame
 hitch; **polish**.
@@ -37,15 +38,15 @@ Every bug and glitch below now has a regression test that fails on the old code,
 
 | # | Problem | Cause | Suggested fix |
 |---|---------|-------|---------------|
-| V1 | **Pigs and zombies float above water** with their feet at or above the surface; they look like they stand on it. | Mobs paddle up on every in-water frame (pigs.js:421, zombies.js:359 → physics.js:359), which launches them clear of the surface. | Paddle only while a float point (≈ 0.45 up the body) is under water, so they sit partly submerged. |
+| V1 | ~~Pigs and zombies float above water with their feet at or above the surface.~~ | Fixed in v0.12: mobs paddle only while their float point (0.45 of their height) is under water, and settle back to that line (`physics.shouldPaddle` / `settleFloat`, CONTRACTS §72). Measured in game: sheep, cow, wolf and walker ride 44–45% submerged, steady to 3 cm. | — |
 | V2 | **Pig heads go through walls and other pigs** when pressed against something. | The model reaches 0.77 ahead of centre; the collider is a 0.42 cylinder (pigRenderer.js:113). | Shorten the model, or stop fleeing/pushed pigs facing a solid cell. (B5 made the head clickable; it still clips.) |
 
 ## Performance
 
 | # | Problem | Cause | Suggested fix |
 |---|---------|-------|---------------|
-| P1 | **0.7–1.9 s freeze the first time the crosshair lands on a block** in a new world. | The block-highlight material is compiled on first draw (renderer.js:445); loading doesn't pre-warm it. The chunk cutout (leaves) program is not pre-warmed either: it compiles the first time trees come into view (seen in the Watcher review). | Add `renderer.prewarm` (compile plus one hidden draw for the highlight and the chunk materials) and call it while loading. |
-| P2 | **The first zombie of a session freezes the game** (up to several seconds on this machine). | zombieRenderer has no pre-warm (zombieRenderer.js:142). | Add `zombieRenderer.prewarm` like `fallingRenderer.prewarm` and call it while loading. |
+| P1 | ~~0.7–1.9 s freeze the first time the crosshair lands on a block in a new world.~~ | Fixed in v0.12: `renderer.prewarm()` compiles the highlight, the dig trace and the three chunk materials while loading (CONTRACTS §72). | — |
+| P2 | ~~The first zombie of a session freezes the game.~~ | Fixed in v0.12: `zombieRenderer.prewarm`, and the same for pigs and the new animals, called while loading. | — |
 | P3 | **After a big sand fill, other sand waits 2–10 s before falling.** | The fill's column releases fill the fall queue ahead of the player's dig; ~70% of queued updates are no-ops (blockphysics.js:1103/1131). | A priority lane for player-caused falls, and don't queue a released column's own cells. |
 | P4 | **Leaf decay after a fall re-draws a chunk almost every frame for ~1.4 s** (15–35 ms frames when several trees fall). | Each decaying leaf is a separate lazy write at a random time (trees.js:667/685). | Use coalesced writes (`physics.coalesceMesh`) or decay in 3–4 waves. |
 
@@ -118,12 +119,12 @@ Left as found, on purpose:
 | C8 | **visual. The 3D device models (the art redo) change three things.** A device no longer shades a Selenium Panel below it; a device swallowed by a vortex vanishes without a spiralling copy; a block or a body resting on a short device sits at the full cell top, a little above the model (the battery is full height, so piles touch). | Devices are solid but not opaque and not meshed (CONTRACTS §50): only opaque blocks shade, infall skips unmeshed blocks (as for wires and campfires), and collision is per cell. | Shade with `solid` instead of `opaque` for the panel; give infall a model copy through `circuitRenderer.syncMoving` (it already draws moving device copies); per-model collision heights. |
 | C9 | **visual. A burnt-out fuse cell's cord stays in the drawn wiring for up to 1 s**, under a full char overlay. | Rebuilding the wiring costs 10–20 ms near a big wired area, so cells that only burnt out rebuild it at most every `FUSE_REBUILD_S` (main.wiringRebuildDue); the char covers the stale cord meanwhile. | Per-chunk wiring buffers, so a burnt cell rebuilds only its chunk. |
 
-## Save slots (minor, from the save-slot check)
+## Save slots (minor, from the save-slot check) — all fixed in v0.12
 
-- **Wrong "Quit Without Saving" message:** it always says "storage full, its last save is kept", even for a world that was never saved or when storage is blocked. Build the message from the actual failure reason.
-- **Footer covers buttons:** in short windows the title footer sits over the Worlds-row buttons and blocks clicks. Give `#title-footer` `pointer-events: none`, or move it into the page flow.
-- **Invisible names:** names made only of invisible characters get past the "no empty names" rule, and bidi control characters garble names. Strip `\p{Cf}`, treat an invisible-only name as empty, and display names with `unicode-bidi: isolate`.
-- **Damaged slot turns saving off:** `?autoplay` on a damaged slot turns saving off for the whole session, including healthy worlds played afterwards, and blames `?nosave`. Limit the no-save flag to that one slot.
+- ~~Wrong "Quit Without Saving" message.~~ `quitUnsavedMessage` now builds it from the real failure reason and says whether an earlier save is kept.
+- ~~Footer covers buttons.~~ `#title-footer` has `pointer-events: none`.
+- ~~Invisible names.~~ `cleanWorldName` strips `\p{Cf}`, so an invisible-only name is empty; names are shown with `unicode-bidi: isolate`.
+- ~~Damaged slot turns saving off.~~ The protection now covers only the world `?autoplay` opened; choosing a world on the Worlds screen switches saving back on, and the toast no longer blames `?nosave`.
 
 ## Smaller leftovers from earlier rounds
 
@@ -184,3 +185,29 @@ The play-test skeptics refuted 7 reports:
 - zombies popping into view
 - blink of just-landed sand
 - a dead fountain after Water off/on (it's the same bug as G3)
+
+## Still open after the v0.12 backlog pass
+
+Closed in that pass (CONTRACTS §72): V1, P1, P2, the four save-slot items, animals swallowed by black holes, lit Filament
+Lamps giving light, and milk. Everything below was looked at and left, with the reason.
+
+| Item | Why it is still open |
+|------|----------------------|
+| **S1** menus still look like Minecraft's | The user's call: restyling them changes how Creative looks. |
+| **V2** pig heads clip into walls and other pigs | Needs a shorter model or a facing rule; cosmetic. |
+| **P3** sand waits after a big fill, **P4** leaf decay re-draws a chunk every frame | Both need changes inside the block-physics queues; not attempted. |
+| **C1–C9** circuits | Each is a design change in fluids, saves or the solver (see their table); not attempted. |
+| **S6** timing tests, **S7** Esc falling back to click-to-play | Machine load, and a browser rule; nothing to fix. |
+| The "smaller leftovers" list above | Rare or cosmetic; not attempted. |
+
+Light (v0.11) and loose items (v0.10), new in this list:
+
+- **Burning fuses and powder kegs give no light.** `LightEngine.setEmitter` (§72) would do it; a long fuse burn would then
+  re-light a cell every step, on top of C2's re-meshing, so it wants C2 fixed first.
+- **A very large crumble (about 7,000 cells) costs one ~24 ms frame** in the light engine's flush.
+- **Mobs more than about 32 cells from the player are lit as if under open sky.**
+- **A future material with its own `onBeforeCompile` bypasses the light shader hook** (`lightShader.js`); nothing does today.
+- **Zombies still decide "under open sky" by walking the column**, not from `world.lightAt`.
+- **A thrown item shows no landing marker.**
+- **Loose items across a save and reload are covered by unit tests only** (serialize → storage's canonical form → load),
+  not by an in-browser reload.
