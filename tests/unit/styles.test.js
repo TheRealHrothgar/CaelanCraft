@@ -691,3 +691,10 @@ describe('styles.css the Survival Handbook (§14)', () => {
     expect(decls('.hb-page').get('font')).toMatch(/serif$/);
   });
 });
+
+describe('KNOWN-ISSUES save-slot nits (CONTRACTS §72)', () => {
+  it('the title footer never takes clicks meant for the Worlds buttons, and world names are bidi-isolated', () => {
+    expect(decls('#title-footer').get('pointer-events')).toBe('none');
+    expect(decls('.slot-name').get('unicode-bidi')).toBe('isolate');
+  });
+});

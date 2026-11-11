@@ -2864,6 +2864,21 @@ export class Circuits {
       && id !== B.VOLTAIC_BATTERY && id !== B.SELENIUM_PANEL;
   }
 
+  /**
+   * v0.11 (CONTRACTS §72): the lit Filament Lamps, as flat [q, y, r, brightness 0..1] quadruples written to `out` (main
+   * gives each its light through world.light.setEmitter).
+   * @param {number[]} [out]
+   * @returns {number[]}
+   */
+  litLamps(out = []) {
+    out.length = 0;
+    for (const [pc, rt] of this.rt) {
+      if (rt.id !== B.FILAMENT_LAMP || !(rt.bright > 0) || this.cells.get(pc) !== B.FILAMENT_LAMP) continue;
+      out.push(qOf(pc), yOf(pc), rOf(pc), rt.bright);
+    }
+    return out;
+  }
+
   _overlaysOf(pc, id, out) {
     const q = qOf(pc);
     const y = yOf(pc);

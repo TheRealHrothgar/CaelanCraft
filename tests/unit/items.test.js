@@ -96,6 +96,7 @@ const FOODS = {
   pot_boiled: ['Pot of Boiled Water', 1, 0, 30, 0, 1.0, { returns: 'clay_pot' }],
   pot_seawater: ['Pot of Seawater', 1, 0, -10, 0, 1.0, { returns: 'clay_pot' }],
   pot_sap: ['Pot of Birch Sap', 1, 2, 25, 0, 1.0, { returns: 'clay_pot' }],
+  pot_milk: ['Pot of Milk', 1, 12, 20, 0, 1.0, { returns: 'clay_pot' }], // v0.11 (CONTRACTS §72)
 };
 
 /** §5.1 bandages: key → [display name, stack, hp, rate, useS]. */
@@ -191,8 +192,8 @@ describe('items — the registry', () => {
     // 5 clothes and the 98 placeable blocks other than water (DESIGN-circuits §1.5: PICKER_ORDER drops the black hole and gains
     // the 20 circuit blocks; the blast barrel's key is now powder_keg).
     const count = (kind) => ITEM_KEYS.filter((k) => ITEMS[k].kind === kind).length;
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 24, 2, 5, 100]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(211);
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 25, 2, 5, 100]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(212); // + the Pot of Milk (§72)
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();

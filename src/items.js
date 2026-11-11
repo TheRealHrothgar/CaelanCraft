@@ -144,6 +144,8 @@ const FOOD_ROWS = [
   ['pot_boiled', 'Pot of Boiled Water', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_seawater', 'Pot of Seawater', 1, { satiation: 0, hydration: -10, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_sap', 'Pot of Birch Sap', 1, { satiation: 2, hydration: 25, sick: 0, useS: 1.0, returns: 'clay_pot' }],
+  // v0.11 (CONTRACTS §72): milked from a cow with an empty clay pot — food and drink in one, always safe
+  ['pot_milk', 'Pot of Milk', 1, { satiation: 12, hydration: 20, sick: 0, useS: 1.0, returns: 'clay_pot' }],
 ];
 
 /**

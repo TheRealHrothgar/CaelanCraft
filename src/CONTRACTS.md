@@ -2960,7 +2960,7 @@ isLoadedCell)`, `size, version, touch, export()` (keys sorted; empty baskets too
 validated against the repaired `edits` like runes (§14).
 **The Survival Handbook** (DESIGN-survival §14; `src/handbook.js`, PURE): item `handbook` (non-block, stack 1, never spoils, no
 recipe makes or takes it). API: `HANDBOOK_KEY 'handbook'`, `HANDBOOK_CHAT_LINE` (main's `HANDBOOK_INTRO`, the §1.2 sentence "Your
-handbook is in the last hotbar slot — hold it and press R to read."), `buildChapters() → Chapter[]` (cached; ten chapters `{ id, title,
+handbook is in the last hotbar slot — hold it and press R to read."), `buildChapters() → Chapter[]` (cached; eleven chapters since §73 `{ id, title,
 short, icon, pages: Block[][] }` of hand-written prose and tables GENERATED from RECIPES, ITEMS, BLOCK_RULES, the climate and vitals
 tables — each table names its `source` and its rows' `keys`, so a test can walk it against the data; `TABLE_ROWS_PER_PAGE 10` splits
 long ones), `chapterIds()`, `ensureHandbook(pack, preferSlot = 8) → boolean` (gives one when the pack — slots and wear — has none:
@@ -4075,6 +4075,84 @@ and holds its arms lower (1.15 rad). The alpha's eye glow is a warm amber (ALPHA
 runner 0xfff0d6, alpha 0xa2928a. Sounds: the groan is a muffled, sagging "mmmh" (GROAN_CUTOFF_HZ 320, GROAN_GAIN 0.22,
 0.9 s) with a soft octave and a breath; the hurt grunt and the knock-out are softer (GRUNT_GAIN 0.22, ZOMBIE_DOWN_GAIN
 0.24); the alpha's SOUND_ROAR is a deep slow call (gain 0.34, no rattle).
+
+## 72. Closing the backlog — milk, holes that swallow animals, lamp light, prewarm, floating, save-slot nits
+
+**Milk.** `Animals.milk(a)` gives true for a cow not milked in the last `MILK_REGROW_S` (240 s) and stamps `a.milked`
+(saved as `m`). In main's `animalR()`, R on a cow with a `clay_pot` in hand consumes the pot and gives `pot_milk` (food:
+satiation 12, hydration 20, never sickens, returns the `clay_pot`). The cow's hint says so.
+
+**Black holes swallow animals.** After `stepSnaredPigs()`, every animal with `blackHoles.swallowing(a)` is removed
+(a ridden horse dismounts its rider first) and handed to `infall.addMob('animal', a, cx, cy, cz)`; `mobsDone` accepts
+`'animal'`. The animal renderer is sized `ANIMAL_MAX + MAX_INFALL_MOBS` and draws `infall.ghosts('animal', …)`, honouring
+each ghost's `renderScale` / `renderSpin`. No drops, as for pigs and zombies.
+
+**Extra light emitters; lit lamps shine.** `LightEngine.setEmitter(q, y, r, level)` (0 clears) and `emitterAt(q, y, r)`
+keep a per-chunk map of cells that emit block light on top of their block's own `light` (`chunk.lightExtra`; used by
+`lightChunk`, `flush` and the un-spread pass; dropped by `clear()` and `releaseChunk`). `Circuits.litLamps(out)` returns
+flat `[q, y, r, brightness]` for every Filament Lamp with brightness > 0. Every 6th frame main's `syncLampLight()` sets
+each lit lamp's emitter to `round(LAMP_LIGHT_MIN + (LAMP_LIGHT_MAX − LAMP_LIGHT_MIN) × brightness)` (7..14) and clears
+the ones that went dark; the set is emptied on load. Emitters are not saved: they are rebuilt from the circuit state.
+
+**Prewarm.** `prewarm.compileHidden(objects, webgl, camera, scene)` shows each object (an InstancedMesh gets count ≥ 1),
+compiles (`compileAsync` when the renderer has it, else `compile`), restores what it changed, and never rejects.
+`renderer.prewarm()` covers the block highlight, the dig trace and the three chunk materials (through a hidden
+one-triangle layer mesh); `zombieRenderer`, `pigRenderer` and `animalRenderer` each have `prewarm(webgl, camera)`. main
+calls all four while loading, so the first crosshair hit and the first mob of a session do not freeze the game.
+
+**The zombie's target.** `ALPHA_SCALE` (1.22) lives in zombies.js (zombieRenderer re-exports it). `Zombies.raycast` tests
+a cylinder of radius `(ZOMBIE_TARGET_RADIUS + ZOMBIE_TARGET_PAD) × k` and height `ZOMBIE_HEIGHT × k`, k = `ALPHA_SCALE`
+for an alpha and 1 otherwise; `ZOMBIE_TARGET_PAD` is 0.1, so a blow aimed at the drawn arms lands.
+
+**Floating** (amends §30, §39 and §69). `physics.shouldPaddle(getBlock, body)` is true only for a body in water whose
+float point — `FLOAT_POINT` (0.45) of its height above its feet — is under the surface, or that presses into a bank
+(`hitWall`, the exit jump). Pigs, zombies and animals jump on `shouldPaddle(…) || (!inWater && <their ledge rule>)`.
+Right after `stepPlayer` each calls `physics.settleFloat(getBlock, body, dt)`: it does nothing on the ground, at a bank,
+during an exit jump (`vy > SWIM_UP_SPEED`), where the column has no water surface between head and feet, or for a body
+more than `(1 − FLOAT_POINT) × height` above its float line; otherwise a body above the line sinks to it at
+`FLOAT_SETTLE` (2 m/s) with `vy ≤ 0`, and a body within `FLOAT_NEAR` (0.25) below it rises at no more than `FLOAT_RISE`
+(0.8 m/s). A swimmer therefore rides about 45% under water, steady to a few centimetres. The player is not affected.
+
+**Save slots.** `quitUnsavedMessage(name, reason, hasSave)` builds the "not saved" line from storage's failure reason
+(`'quota'`, `'unavailable'`, other) and says whether an earlier save is kept or the world is gone. `cleanWorldName` also
+strips format characters (`\p{Cf}`), so an invisible-only name is empty; `.slot-name` is `unicode-bidi: isolate`.
+`#title-footer` has `pointer-events: none`. When `?autoplay`'s own guard switches saving off (a damaged slot, or a
+`?seed` that is not the slot's), main marks it `autoNoSave`; picking or creating a world on the Worlds screen calls
+`resumeSaving()`, and the toast says "Saving is off for this world (its slot is protected)" instead of blaming `?nosave`.
+
+**Diagnostics.** The debug handle gains `breakTargeted()`, `animalR()` and `getRiding()`. The smoke test's place step
+retries `placeSelected()` for up to `SMOKE_HIT_RETRY_FRAMES` frames (a wary pig may be standing in the hole).
+
+## 73. The Survival Guide, rewritten — `src/handbook.js`, `tests/unit/handbook.test.js`
+
+Amends §43 (the Handbook), §48 and §1 (imports); DESIGN-survival §14.1's chapter list gains one. The prose now tells the game of
+§59–§72; the readers (handbookUI) are unchanged.
+
+- **Eleven chapters** (`chapterIds()`): first-day, water, food, warmth, ages, making, **animals** ("Animals", icon `hex`, after the
+  workplaces), dangers, death, controls, modes. Hunting moved from *Food and fire* (which keeps "Meat and milk") to *Animals*.
+- **Animals**: shy herds by land, the notice distances (walking / sneaking / sprinting), luring and feeding, hunting (only a tool
+  wounds), milk and wool, taming and riding a horse, the wolf (follow, guard, sit), snares, and that a black hole swallows animals.
+- **Dangers**: zombies come out only at night; the three kinds; daylight does not burn them (dormant walkers that wake within
+  WALKER_WAKE_RANGE, when hit or near an alpha; shambling runners; a weaker alpha; the burrow after DAWN_BURROW_MIN_S to
+  + DAWN_BURROW_RAND_S); leaps; fighting back. Healing names Poisoned; the danger table gives the alpha's strike.
+- **Elsewhere**: the day (one real minute is one game hour, DAYTIME_SECONDS / NIGHT_SECONDS, sunrise and sunset from config);
+  raw water and Poisoned (§66); flint from the stones that show a nodule (§70); "Light underground" (§62: caves and sealed rooms
+  are dark, CAMPFIRE_LIGHT / TORCH_LIGHT, a lit Filament Lamp, the torch and its saltpetre); "The Workbench" (§67); Controls: Q / G,
+  the riding keys, R on animals and snares first, "Dropping and throwing", "Things on the ground" (§60, §63).
+- **Tables** (id · source): `animals`, `wary`, `blows-animals` · animals; `zombies`, `blows-zombies` · zombies; `throws` · loose;
+  `keys-ride` (hand-written); `power` is now [In your hand, Power]; `keys-hands` has Q and G. `TABLE_SOURCES` gains 'animals',
+  'zombies', 'loose'. The gathering row for Loose Stones reads "Flint (if a dark nodule shows, wild only)" (`FLINT_SEEN`).
+- **Exports added**: `FLINT_SEEN`, `ANIMAL_R`, `HERD_WORDS`, `ELEMENTARY_PARTS`, `toolPowers()`, `huntTargets()`, `zombieTargets()`,
+  `herdBiomes(kind)`, `lureText(lure)`, `zombieStrike(kind) → { night, day }`; `describeDrops(groups, prose, seen)`,
+  `listJoin(parts, word = 'and')`.
+- **Imports** (§1): handbook → config, blocks, items, crafting, harvest, climate, daynight, vitals, cooking, zombies, animals,
+  looseItems, survivalControl (constants and pure functions only).
+- **Rules the tests keep**: every number the new prose quotes is read from a constant or a recipe; every clock time in the prose is
+  one the game defines; no sentence pairs the sun with burning unless it says "does not burn"; the status is "Poisoned" (never
+  "sick"); no old tool name and no item key in prose or cells; a page holds at most 220 words of text (110 beside a table) and 14
+  table rows; the three widest new tables (`blows-animals`, `blows-zombies`, `zombies`) share their page with no margin note.
+- **Still hand-written** (no exported constant to read): the workplace reach "2 up or down", the marker's "about 20 cells", zombies
+  rising "one or two at a time", the pig's "grass and snowy grass", and "within half a minute" for a snowy swim.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

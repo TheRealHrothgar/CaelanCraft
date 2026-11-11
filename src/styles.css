@@ -184,7 +184,7 @@ canvas{image-rendering:pixelated}
 .world-slot.damaged{background:rgba(110,30,30,.45)}
 .slot-num{flex:0 0 18px;color:#a8a8a8;font:bold 16px monospace;text-align:center;text-shadow:1px 1px 0 #000}
 .slot-body{flex:1 1 180px;min-width:0}
-.slot-name{color:#fff;font:bold 15px monospace;text-shadow:1px 1px 0 #000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slot-name{color:#fff;font:bold 15px monospace;text-shadow:1px 1px 0 #000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;unicode-bidi:isolate}
 .world-slot.empty .slot-name{color:#9a9a9a;font-weight:normal;font-style:italic}
 .world-slot.damaged .slot-name{color:#ff9a9a}
 .slot-detail{margin-top:2px;color:#c8c8c8;font:12px monospace;text-shadow:1px 1px 0 #000}
@@ -222,7 +222,7 @@ canvas{image-rendering:pixelated}
 .controls-sheet{margin-top:12px;display:grid;grid-template-columns:auto minmax(0,58ch);gap:2px 16px;color:#e0e0e0;font:13px monospace;text-shadow:1px 1px 0 #000}
 .controls-sheet > kbd{align-self:start}
 kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;border:1px solid #777;border-bottom-width:3px;color:#fff;font:bold 12px monospace;text-align:center}
-#title-footer{position:absolute;bottom:8px;left:8px;color:#c0c0c0;font:12px monospace;text-shadow:1px 1px 0 #000}
+#title-footer{position:absolute;bottom:8px;left:8px;color:#c0c0c0;font:12px monospace;text-shadow:1px 1px 0 #000;pointer-events:none}
 
 /* ==== Survival (docs/DESIGN-survival.md §9.8; CONTRACTS §48 once merged) ======================================================
    The pack screen's palette: dark #1c1a24, honey #e8b04a, ember #d0582a. No new element uses .mc-button or .picker-panel:

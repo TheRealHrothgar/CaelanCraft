@@ -29,7 +29,7 @@ import {
   ZOMBIE_SPAWN_INTERVAL_MAX_S, ZOMBIE_SPAWN_TRIES, ZOMBIE_DESPAWN_DIST, ZOMBIE_SOUND_RANGE, WORLD_HEIGHT, PLAYER_HEIGHT,
   GRAVITY,
 } from './config.js';
-import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater } from './physics.js';
+import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
 import { hexToWorld, worldToHex } from './hex.js';
 import { BLOCK, isSolid, isLiquid } from './blocks.js';
 import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js';
@@ -111,6 +111,8 @@ export const ALPHA_CONVERT_P = 0.03;
 export const ALPHA_MAX = 1;
 /** Walkers within ALPHA_RALLY of an alpha chase at full walking speed (it rallies the horde). */
 export const ALPHA_RALLY = 14;
+/** The alpha is this much bigger than the others: drawn so (zombieRenderer) and targeted so (raycast). */
+export const ALPHA_SCALE = 1.22;
 /** A knock (blast) must be this many times ZOMBIE_KO_KNOCK to knock an alpha out at once. */
 export const ALPHA_KO_KNOCK = 1.6;
 
@@ -144,6 +146,9 @@ export function statsOf(zb) {
  */
 export const DAWN_BURROW_MIN_S = 10;
 export const DAWN_BURROW_RAND_S = 20;
+
+/** The ray target is this much fatter than ZOMBIE_TARGET_RADIUS (the arms reach out in front of the torso). */
+export const ZOMBIE_TARGET_PAD = 0.1;
 
 /** A dormant walker wakes for a player this close (m), … */
 export const WALKER_WAKE_RANGE = 4;
@@ -486,7 +491,7 @@ export class Zombies {
       // In water it always paddles up (it floats; pressing into a bank gives SWIM_EXIT_JUMP); on land it hops only a
       // one-cell ledge straight ahead with room for its height.
       const ledge = moving && zb.hitWall && canHop ? this._ledgeAhead(zb, getBlock) : 0;
-      input.jump = zb.inWater || ledge === 1;
+      input.jump = shouldPaddle(getBlock, zb) || (!zb.inWater && ledge === 1);
       // A higher wall (runners 2 at night, alphas 4 at night, 2 by day): one leap tall enough to clear it.
       if (ledge >= 2 && zb.onGround) {
         zb.vy = Math.sqrt(2 * -GRAVITY * (ledge + LEAP_MARGIN));
@@ -506,6 +511,7 @@ export class Zombies {
       const x0 = zb.x;
       const z0 = zb.z;
       stepPlayer(zb, input, getBlock, dt);
+      settleFloat(getBlock, zb, dt);
       zb.sneaking = false;
       if (zb.hitWall) zb.wallSinceAim = true;
       // A chaser pressing into a wall it cannot hop turns aside after STUCK_S.
@@ -904,7 +910,10 @@ export class Zombies {
     let best = null;
     let bestT = maxDist;
     for (const zb of this.list) {
-      const t = rayCylinder(ox, oy, oz, dx, dy, dz, zb.x, zb.y, zb.z, ZOMBIE_TARGET_RADIUS, ZOMBIE_HEIGHT);
+      // v0.11 (§72): the crosshair hits what is drawn — an alpha's target is ALPHA_SCALE bigger; and the target is a little
+      // fatter than the torso so the arms held out in front are not clicked through.
+      const k = zb.kind === 'alpha' ? ALPHA_SCALE : 1;
+      const t = rayCylinder(ox, oy, oz, dx, dy, dz, zb.x, zb.y, zb.z, (ZOMBIE_TARGET_RADIUS + ZOMBIE_TARGET_PAD) * k, ZOMBIE_HEIGHT * k);
       if (t >= 0 && t < bestT) {
         bestT = t;
         best = zb;

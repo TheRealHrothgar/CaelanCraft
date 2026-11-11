@@ -6,17 +6,36 @@ import {
   buildChapters, chapterIds, ensureHandbook, inlineParts, plainText, fmtNum, fmtSigned, fmtPct, fmtTemp, fmtDuration,
   fmtDurationLong, fmtClock, listJoin, numWord, describeDrops, recipeInputs, recipeInputsProse, recipeOutputs, recipeTools,
   toolNeedLabel, firstDayKit, fallSpeedForCells, climateExample, exampleBreakSeconds, temperatureBands,
+  FLINT_SEEN, ANIMAL_R, HERD_WORDS, ELEMENTARY_PARTS, toolPowers, huntTargets, zombieTargets, herdBiomes, lureText, zombieStrike,
 } from '../../src/handbook.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, itemName, isItemKey } from '../../src/items.js';
 import { RECIPES, STATION_IDS, STATION_NAMES, inputLabel } from '../../src/crafting.js';
-import { BLOCK_RULES, MOB_DROPS, PICKABLE, breakSeconds, ruleFor } from '../../src/harvest.js';
-import { HEAT_SOURCES } from '../../src/climate.js';
+import { BLOCK_RULES, MOB_DROPS, PICKABLE, DEEP_BELOW_SEA, breakSeconds, ruleFor, toolPower } from '../../src/harvest.js';
+import { HEAT_SOURCES, DIURNAL_PEAK_T } from '../../src/climate.js';
 import { RATES, DAMAGE_CAUSES, SOFT_LANDING, fallDamage } from '../../src/vitals.js';
 import { FIRE_TRANSFORMS } from '../../src/cooking.js';
-import { BLOCK, getBlockDef } from '../../src/blocks.js';
-import { HOTBAR_SIZE, PACK_SLOTS } from '../../src/config.js';
+import { BLOCK, BIOME, FLINT_SHARE, getBlockDef } from '../../src/blocks.js';
+import {
+  HOTBAR_SIZE, PACK_SLOTS, DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, FUEL_LOG_S,
+  PIG_HEALTH, PIG_NOTICE, REACH, WALK_SPEED, SPRINT_SPEED, ZOMBIE_DAMAGE, ZOMBIE_HITS, ZOMBIE_SIGHT, ZOMBIE_SPAWN_MIN, ZOMBIE_MAX_DROP,
+  ZOMBIE_CHASE_MAX_RISE, ZOMBIE_FIRE_FEAR, GLOWSTONE_LIGHT, CAMPFIRE_LIGHT, TORCH_LIGHT,
+} from '../../src/config.js';
+import {
+  ZOMBIE_KINDS, KIND_STATS, RUNNER_P, HORDE_SIZE, HORDE_RADIUS, HORDE_CHECK_S, ALPHA_CONVERT_P, ALPHA_MAX, ALPHA_RALLY, CLIMB,
+  WALKER_WAKE_RANGE, PROVOKE_S, DAWN_BURROW_MIN_S, DAWN_BURROW_RAND_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE, gaitOf, damageOf, maxClimb,
+} from '../../src/zombies.js';
+import {
+  SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
+  SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, HOME_RANGE, RIDE_SCALE,
+  RIDE_LEAP, fleeSpeed,
+} from '../../src/animals.js';
+import {
+  throwOf, STONE_KEYS, DART_KEYS, DART_BREAK_P, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS, THROW_ROCK, THROW_DART, THROW_SPEAR,
+  THROW_CHUCK,
+} from '../../src/looseItems.js';
 import { Pack, KEEP_ON_DEATH, slotClick } from '../../src/inventory.js';
 import { Survival } from '../../src/survival.js';
+import { RELIGHT_STICKS } from '../../src/survivalControl.js';
 
 const CHAPTERS = buildChapters();
 const KINDS = ['h', 'p', 'tip', 'warn', 'list', 'table', 'figure'];
@@ -49,11 +68,34 @@ function allProse() {
   return out.join('\n');
 }
 
-describe('handbook: the chapters (§14.1)', () => {
-  it('ten chapters in the order of §14.1, every one with pages, every page with blocks', () => {
-    expect(chapterIds()).toEqual(['first-day', 'water', 'food', 'warmth', 'ages', 'making', 'dangers', 'death', 'controls', 'modes']);
+/** Every table caption, head and cell of the book as one string. */
+function allCells() {
+  const out = [];
+  for (const { block: b } of blocks()) if (b.kind === 'table') out.push(b.caption, ...b.head, ...b.rows.flat());
+  return out.join('\n');
+}
+/** The book's prose cut into sentences (a colon ends one too: lists follow them). */
+function sentences() {
+  return allProse().split(/\n|(?<=[.!?:])\s+/).filter(Boolean);
+}
+/** The words of a page's text blocks, and its table rows. */
+function pageSize(page) {
+  const words = (s) => plainText(s).split(/\s+/).filter(Boolean).length;
+  let n = 0;
+  let rows = 0;
+  for (const b of page) {
+    if ('text' in b) n += words(b.text);
+    if (b.kind === 'list') n += b.items.reduce((sum, it) => sum + words(it), 0);
+    if (b.kind === 'table') rows += b.rows.length;
+  }
+  return { words: n, rows };
+}
+
+describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
+  it('eleven chapters: the ten of §14.1 in their order, and Animals (§73) after the workplaces; every one with pages, every page with blocks', () => {
+    expect(chapterIds()).toEqual(['first-day', 'water', 'food', 'warmth', 'ages', 'making', 'animals', 'dangers', 'death', 'controls', 'modes']);
     expect(CHAPTERS.map((c) => c.title)).toEqual(['Your first day', 'Water', 'Food and fire', 'Warm and cool', 'Tools and the ages',
-      'Workplaces and making', 'Dangers', 'Death and waking', 'Controls', 'Creative and Survival']);
+      'Workplaces and making', 'Animals', 'Dangers', 'Death and waking', 'Controls', 'Creative and Survival']);
     for (const c of CHAPTERS) {
       expect(c.pages.length, c.id).toBeGreaterThan(0);
       expect(typeof c.short === 'string' && c.short.length > 0 && c.short.length <= 8, `${c.id} tab label`).toBe(true);
@@ -69,6 +111,27 @@ describe('handbook: the chapters (§14.1)', () => {
     expect(Object.isFrozen(CHAPTERS)).toBe(true);
     for (const { block } of blocks()) expect(Object.isFrozen(block)).toBe(true);
     expect(Object.isFrozen(CHAPTERS[0].pages[0])).toBe(true);
+  });
+
+  it('pages stay page-sized: at most 220 words of text, or 110 beside a table; at most 14 table rows on a page', () => {
+    // the field book re-pages what does not fit its window (handbookUI fitPage), but a page written to this budget fits
+    // the Guide without scrolling and the field book at its full size without a cut
+    for (const c of CHAPTERS) {
+      c.pages.forEach((page, i) => {
+        const { words, rows } = pageSize(page);
+        expect(words, `${c.id} page ${i + 1}: words`).toBeLessThanOrEqual(rows > 0 ? 110 : 220);
+        expect(rows, `${c.id} page ${i + 1}: rows`).toBeLessThanOrEqual(14);
+      });
+    }
+  });
+
+  it('the tables added in §73 that are five or more columns wide share their page with no margin note', () => {
+    // beside a note the text column is 71 % wide (play-test round 2: "Food and drink" scrolled sideways beside "Goes bad")
+    for (const id of ['blows-animals', 'blows-zombies', 'zombies']) {
+      const page = [...blocks()].find((x) => x.block.kind === 'table' && x.block.id === id);
+      expect(tableById(id).head.length, id).toBeGreaterThanOrEqual(5);
+      expect(page.chapter.pages[page.page].filter((b) => b.kind === 'tip' || b.kind === 'warn'), id).toEqual([]);
+    }
   });
 
   it('every block is well formed', () => {
@@ -133,6 +196,24 @@ describe('handbook: the chapters (§14.1)', () => {
     // our own words: Nourishment, never "satiation"; no "crafting table", "furnace", "chest" or "bed"
     expect(text).not.toMatch(/satiation|crafting table|furnace|\bchest\b|\bbed\b/i);
     expect(text).toMatch(/Nourishment/);
+  });
+
+  it('older pages read their numbers from the recipes too: acorns to leach, snow and ice to a pot, sticks to relight', () => {
+    const text = allProse();
+    const takes = (id, k) => RECIPES.find((r) => r.id === id).inputs.find((i) => i.k === k).n;
+    expect(text).toContain(`Soak ${takes('leached_acorns', 'acorns')} in a Pot of Water to leach them`);
+    expect(text).toContain(`Pack ${takes('pot_snow', 'snow')} Snow or ${takes('pot_snow_ice', 'ice_chunk')} Ice Chunks into a Clay Pot`);
+    expect(text).toContain(`a pinch of tinder and ${RELIGHT_STICKS} Sticks in your pack`);
+    expect([takes('leached_acorns', 'acorns'), takes('pot_snow', 'snow'), takes('pot_snow_ice', 'ice_chunk'), RELIGHT_STICKS]).toEqual([6, 3, 2, 3]);
+  });
+
+  it('names things as the game does: the everyday tool names (§64), "Poisoned" (§66), and never an item key', () => {
+    const everything = `${allProse()}\n${allCells()}`;
+    expect(everything).not.toMatch(/hammerstone|chopper|digging stick|\bspades?\b/i);
+    expect(everything).not.toMatch(/\bsick(ness)?\b/i); // the status is Poisoned
+    expect(everything).not.toMatch(/[a-z]_[a-z]/); // "stone_hammer" once leaked into a first-day step
+    for (const name of ['Stone Hammer', 'Stone Axe', 'Wooden Shovel', 'Flint Shovel']) expect(everything).toContain(name);
+    expect(allProse()).toContain('When you are Poisoned');
   });
 });
 
@@ -276,7 +357,10 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     const drinks = tableById('drinks');
     expect(drinks.keys).toEqual(ITEM_KEYS.filter((k) => ITEMS[k].food?.returns));
     expect(rowOf(drinks, 'pot_seawater').slice(1)).toEqual(['−10', '0', 'salty']);
-    expect(rowOf(drinks, 'pot_water')[3]).toBe('20 % sick'); // v0.11 (§66)
+    expect(rowOf(drinks, 'pot_water')[3]).toBe('poisons 20 %'); // v0.11 (§66); the status is called Poisoned
+    expect(rowOf(drinks, 'pot_water')[3]).toBe(`poisons ${fmtPct(ITEMS.pot_water.food.sick)}`);
+    expect(rowOf(drinks, 'pot_boiled')[3]).toBe('safe');
+    expect(rowOf(drinks, 'pot_milk')).toEqual(['Pot of Milk', '+20', '+12', 'safe']); // §72
 
     const fire = tableById('fire');
     expect(fire.keys).toEqual(Object.keys(FIRE_TRANSFORMS));
@@ -375,7 +459,9 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       expect(avoid.length, c).toBeGreaterThan(0);
     }
     expect(rowOf(t, 'drown')[1]).toContain(`${RATES.DROWN_DPS} HP/s`);
-    expect(rowOf(t, 'zombie')[1]).toBe('8 HP a strike');
+    expect(rowOf(t, 'zombie')[1]).toBe('8 HP a strike; an alpha 14');
+    expect(rowOf(t, 'zombie')[1]).toBe(`${ZOMBIE_DAMAGE} HP a strike; an alpha ${Math.round(ZOMBIE_DAMAGE * KIND_STATS.alpha.damage)}`);
+    expect(rowOf(t, 'sick')[0]).toBe('Poisoning');
     expect(rowOf(t, 'starve')[1]).toContain(String(RATES.STARVE_DPS));
     expect(rowOf(t, 'thirst')[1]).toContain(String(RATES.THIRST_DPS));
     expect(rowOf(t, 'sick')[1]).toContain(`never below ${RATES.SICK_FLOOR} HP`);
@@ -431,7 +517,8 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     for (const id of t.keys) {
       const row = rowOf(t, id);
       const picked = Object.hasOwn(PICKABLE, id);
-      expect(row[2]).toBe(describeDrops(picked ? PICKABLE[id].drops : ruleFor(id).drops));
+      // loose stones: the flint is what the column shows (§70), not a roll, so the row says how to tell
+      expect(row[2]).toBe(describeDrops(picked ? PICKABLE[id].drops : ruleFor(id).drops, false, id === BLOCK.LOOSE_STONES ? FLINT_SEEN : null));
       // play-test: "break it" never told a new player which button; the crosshair hint (harvest.handGatherHint) says the same
       expect(row[1].startsWith(picked ? 'R, or hold LMB' : 'hold LMB to ')).toBe(true);
     }
@@ -439,20 +526,378 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     expect(rowOf(t, BLOCK.GRAVEL)[1]).toBe('hold LMB to dig it (a shovel is faster)');
     expect(rowOf(t, BLOCK.OAK_LEAVES)[1]).toBe('hold LMB to break it (an axe is faster)');
     expect(allProse()).toContain('hold the left mouse button on it until it breaks');
-    expect(rowOf(t, BLOCK.LOOSE_STONES)[2]).toBe('1–2 Rock · Flint (50 %, wild only)');
+    expect(rowOf(t, BLOCK.LOOSE_STONES)[2]).toBe('1–2 Rock · Flint (if a dark nodule shows, wild only)');
+    expect(describeDrops(PICKABLE[BLOCK.LOOSE_STONES].drops)).toBe('1–2 Rock · Flint (50 %, wild only)'); // the rule itself
+    expect(allCells()).not.toContain('Flint (50 %'); // the book never quotes it as a chance
     expect(rowOf(t, BLOCK.TUSSOCK)[2]).toBe('with a shovel: Tussock Grass; with a knife: 2–3 Plant Fibre; otherwise: 1–2 Plant Fibre');
   });
 
-  it('the striking-power table groups the tools by power, with hits for a pig and a zombie', () => {
+  it('the striking-power table groups the tools by power; bare hands count against zombies only', () => {
     const t = tableById('power');
-    expect(rowOf(t, 'hand')[2]).toBe('never: only shoves');
-    const powers = [...new Set(ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool').map((k) => ITEMS[k].tool.power))].sort((a, b) => a - b);
+    expect(t.head).toEqual(['In your hand', 'Power']);
+    expect(rowOf(t, 'hand')).toEqual(['Bare hands (against zombies only)', String(toolPower(null))]);
+    expect(allProse()).toContain('Bare hands only shove an animal aside. Any tool in your hand wounds it');
+    const tools = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool');
+    const powers = [...new Set(tools.map((k) => ITEMS[k].tool.power))].sort((x, y) => x - y);
+    expect(toolPowers()).toEqual(powers);
     expect(t.keys.slice(1)).toEqual(powers);
+    for (const pw of powers) {
+      const mine = tools.filter((k) => ITEMS[k].tool.power === pw);
+      expect(rowOf(t, pw)[1]).toBe(String(pw));
+      if (pw === 1) expect(rowOf(t, pw)[0]).toBe(`Every other tool (${mine.length})`);
+      else expect(rowOf(t, pw)[0].split(', ')).toEqual(mine.map((k) => itemName(k)));
+    }
     expect(rowOf(t, 2)[0]).toContain('Stone Axe');
-    expect(rowOf(t, 2).slice(2)).toEqual(['3', '2']); // a chopper: three blows for a pig (§4.3)
     expect(rowOf(t, 3)[0]).toContain('Flint Spear');
-    expect(rowOf(t, 3)[2]).toBe('2');
     expect(describeDrops(MOB_DROPS.pig, true)).toBe('2–3 Raw Pork, Rawhide and Pig Fat (60 %)');
+  });
+});
+
+describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombies, animals, throwing, flint, water, light, the Workbench', () => {
+  const text = allProse();
+  const sunrise = fmtClock(SUNRISE_TIME);
+  const sunset = fmtClock(SUNSET_TIME);
+  /** Every item of a block rule's or a pick's drop groups. */
+  const dropItems = (groups) => groups.flat().flatMap((br) => br.items);
+
+  it('the day follows config (§68): one real minute is one game hour, 15 of daylight and 9 of dark', () => {
+    expect(DAY_LENGTH_SECONDS / 24).toBe(60);
+    expect(DAYTIME_SECONDS + NIGHT_SECONDS).toBe(DAY_LENGTH_SECONDS);
+    expect(text).toContain(`One real minute is one game hour: ${fmtDurationLong(DAYTIME_SECONDS)} of daylight, from ${sunrise} to ${sunset}, and ${fmtDurationLong(NIGHT_SECONDS)} of dark.`);
+    expect(text).toContain('One real minute is one game hour: 15 minutes of daylight, from 04:30 to 19:30, and 9 minutes of dark.');
+    expect(text).toContain(`A new world begins at ${fmtClock(START_TIME)}, about ${Math.round(((SUNSET_TIME - START_TIME) * DAY_LENGTH_SECONDS) / 60)} minutes before the zombies come out.`);
+    expect(text).toContain(`Night lasts ${fmtDurationLong(NIGHT_SECONDS)}, from ${sunset} to ${sunrise}.`);
+    expect(text).toContain(`Before sunset at ${sunset}, feed the fire a log and stay within ${ZOMBIE_FIRE_FEAR} cells of it.`);
+    expect(Math.ceil(NIGHT_SECONDS / FUEL_LOG_S)).toBe(2);
+    expect(text).toContain('Two logs carry a fire through the whole night.');
+    // every clock time the prose names is one the game defines: no 18:00 dusk, no 06:00 dawn
+    const known = new Set([sunrise, sunset, fmtClock(START_TIME), fmtClock(DIURNAL_PEAK_T), fmtClock(DIURNAL_PEAK_T + 0.5)]);
+    const named = [...text.matchAll(/\b\d\d:\d\d\b/g)].map((m) => m[0]);
+    expect(named.length).toBeGreaterThan(5);
+    for (const t of named) expect(known.has(t), t).toBe(true);
+    // Nourishment at rest lasts 30 minutes against a 24-minute day: no more "about 1 game days"
+    expect(text).not.toMatch(/\b1 game days/);
+    expect(text).toContain('in 30 minutes at rest, a little over a game day');
+    expect(100 / RATES.SATIATION_DRAIN / DAY_LENGTH_SECONDS).toBeGreaterThan(1.1);
+    expect(100 / RATES.SATIATION_DRAIN / DAY_LENGTH_SECONDS).toBeLessThan(1.5);
+  });
+
+  it('sunlight burns no zombie any more (§65): every sentence that pairs the sun with burning says so', () => {
+    expect(text).not.toMatch(/smoulder/i);
+    const sunBurn = sentences().filter((s) => /\b(sun|sunlight|dawn|morning|daylight)\b/i.test(s) && /\bburn/i.test(s));
+    expect(sunBurn.length).toBeGreaterThanOrEqual(2);
+    for (const s of sunBurn) expect(s).toMatch(/does not burn/);
+    expect(text).toContain('Sunlight does not burn zombies away.');
+    expect(text).toContain(`Morning does not burn the zombies away. A walker dozing in the light wakes if you come within ${WALKER_WAKE_RANGE} cells: look around before you leave the fire.`);
+  });
+
+  it('the zombie kinds table is KIND_STATS, CLIMB and the day constants (§61, §65)', () => {
+    const t = tableById('zombies');
+    expect(t.source).toBe('zombies');
+    expect(t.head).toEqual(['Kind', 'Pace', 'Knock-out', 'Strike', 'Leaps']);
+    expect(t.keys).toEqual([...ZOMBIE_KINDS]);
+    for (const k of ZOMBIE_KINDS) {
+      const [name, pace, ko, strike, leap] = rowOf(t, k);
+      expect(name.toLowerCase()).toBe(k);
+      // the pace is the chase input × the kind's factor, of the player's walk or sprint (zombies.gaitOf at night)
+      const gait = gaitOf({ kind: k, daylit: false });
+      expect(pace).toBe(`${fmtPct(gait.chase * gait.factor)} of your ${gait.sprint ? 'sprint' : 'walk'}`);
+      expect(ko).toBe(`${KIND_STATS[k].hits} power`);
+      const night = Math.round(ZOMBIE_DAMAGE * damageOf({ kind: k, daylit: false }));
+      const day = Math.round(ZOMBIE_DAMAGE * damageOf({ kind: k, daylit: true }));
+      expect(zombieStrike(k)).toEqual({ night, day });
+      expect(strike).toBe(day === night ? `${night} HP` : `${night} HP (${day} by day)`);
+      const up = maxClimb({ kind: k, daylit: false });
+      const upDay = maxClimb({ kind: k, daylit: true });
+      expect([up, upDay]).toEqual([CLIMB[k].night, CLIMB[k].day]);
+      expect(leap).toBe(upDay === up ? `${up} cell${up === 1 ? '' : 's'}` : `${up} cells (${upDay} by day)`);
+    }
+    expect(t.rows).toEqual([
+      ['Walker', '70 % of your walk', '4 power', '8 HP', '1 cell'],
+      ['Runner', '95 % of your sprint', '3 power', '8 HP', '2 cells (1 by day)'],
+      ['Alpha', '97 % of your walk', '12 power', '14 HP (10 by day)', '4 cells (2 by day)'],
+    ]);
+    expect(KIND_STATS.walker.hits).toBe(ZOMBIE_HITS);
+    // "of your walk / sprint": a walker is slower than a walking player, a runner than a sprinting one
+    expect(KIND_STATS.walker.chase * KIND_STATS.walker.factor * WALK_SPEED).toBeLessThan(WALK_SPEED);
+    expect(KIND_STATS.runner.chase * KIND_STATS.runner.factor * SPRINT_SPEED).toBeLessThan(SPRINT_SPEED);
+  });
+
+  it('the zombie pages quote the game: night only, the horde and its alpha, dormant by day, the burrow, the leaps', () => {
+    expect(text).toContain(`only in the dark, from ${sunset} to ${sunrise}: one or two at a time, never nearer than ${ZOMBIE_SPAWN_MIN} cells.`);
+    expect(text).toContain(`One that notices you within ${ZOMBIE_SIGHT} cells comes for you. Each strike costs ${ZOMBIE_DAMAGE} HP and knocks you back.`);
+    expect(text).toContain(`a drop deeper than ${ZOMBIE_MAX_DROP} cells, and it gives up on anyone standing more than ${ZOMBIE_CHASE_MAX_RISE} cells above it.`);
+    expect(text).toContain(`About one in ${numWord(Math.round(1 / RUNNER_P))} is a runner`);
+    expect(text).toContain(`When ${numWord(HORDE_SIZE)} or more zombies crowd within ${HORDE_RADIUS} cells of a runner, the runner may rise as the alpha (${fmtPct(ALPHA_CONVERT_P)} every ${HORDE_CHECK_S} seconds; never more than ${numWord(ALPHA_MAX)} at a time).`);
+    expect(text).toContain(`Walkers within ${ALPHA_RALLY} cells of it hurry along at your own walking pace.`);
+    expect(gaitOf({ kind: 'walker', daylit: false, rallied: true }).chase).toBe(1); // "your own walking pace"
+    expect(text).toContain(`One wakes if you come within ${WALKER_WAKE_RANGE} cells, if you hit it (it stays awake for ${PROVOKE_S} seconds), or if an alpha is near.`);
+    // by day a runner shambles at a walker's pace
+    expect(gaitOf({ kind: 'runner', daylit: true })).toEqual(gaitOf({ kind: 'walker', daylit: false }));
+    expect(text).toContain(`Runners only shamble, at a walker's pace, and leap ${CLIMB.runner.day} cell instead of ${CLIMB.runner.night}.`);
+    const alpha = zombieStrike('alpha');
+    const dayGait = gaitOf({ kind: 'alpha', daylit: true });
+    expect(dayGait.factor).toBe(DAY_ALPHA_FACTOR);
+    expect(alpha.day).toBe(Math.round(ZOMBIE_DAMAGE * DAY_ALPHA_DAMAGE));
+    expect(text).toContain(`The alpha slows to ${fmtPct(dayGait.chase * dayGait.factor)} of your walk, strikes for ${alpha.day} HP instead of ${alpha.night}, and leaps ${CLIMB.alpha.day} cells instead of ${CLIMB.alpha.night}.`);
+    expect(text).toContain(`after ${DAWN_BURROW_MIN_S} to ${DAWN_BURROW_MIN_S + DAWN_BURROW_RAND_S} seconds of daylight it burrows back into the ground.`);
+    expect(text).toContain(`A wall ${CLIMB.walker.night + 1} cells high stops a walker.`);
+  });
+
+  it('the two blows tables divide what a target takes by every tool power', () => {
+    const powers = toolPowers();
+    const check = (id, targets, lead) => {
+      const t = tableById(id);
+      expect(t.head).toEqual([...lead, ...powers.map((pw) => `Power ${pw}`)]);
+      expect(t.keys).toEqual(targets.map((x) => x.key));
+      for (const x of targets) expect(rowOf(t, x.key)).toEqual([x.name, String(x.points), ...powers.map((pw) => String(Math.ceil(x.points / pw)))]);
+    };
+    check('blows-zombies', zombieTargets(), ['Zombie', 'Takes']);
+    check('blows-animals', huntTargets(), ['Animal', 'Health']);
+    expect(zombieTargets().map((x) => [x.key, x.points])).toEqual(ZOMBIE_KINDS.map((k) => [k, KIND_STATS[k].hits]));
+    expect(Object.fromEntries(huntTargets().map((x) => [x.key, x.points])))
+      .toEqual({ pig: PIG_HEALTH, ...Object.fromEntries(ANIMAL_KINDS.map((k) => [k, SPECIES[k].health])) });
+    const health = huntTargets().map((x) => x.points);
+    expect(health).toEqual([...health].sort((x, y) => x - y)); // the weakest first
+    // the pinned examples: a stone axe (power 2) takes three blows for a pig and two for a walker (§4.3); an alpha, twelve punches
+    const axe = powers.indexOf(ITEMS.stone_axe.tool.power) + 2;
+    expect(rowOf(tableById('blows-animals'), 'pig')[axe]).toBe('3');
+    expect(rowOf(tableById('blows-zombies'), 'walker')[axe]).toBe('2');
+    expect(rowOf(tableById('blows-zombies'), 'alpha')[2]).toBe('12');
+    expect(text).toContain('strike three times with the Stone Axe');
+    expect(text).toContain(`bare hands count for ${toolPower(null)}`);
+    expect(text).toContain(`a tame wolf bites for ${WOLF_BITE}`);
+    expect(text).toContain(`may leave a ${describeDrops(MOB_DROPS.zombie, true)}; an alpha has ${numWord(KIND_STATS.alpha.drops)} chances at one.`);
+  });
+
+  it('the animals table is SPECIES, HERD_WEIGHTS and MOB_DROPS (§69)', () => {
+    const t = tableById('animals');
+    expect(t.source).toBe('animals');
+    expect(t.head).toEqual(['Animal', 'Where', 'Gives', 'Press R']);
+    expect(t.keys).toEqual(['pig', ...ANIMAL_KINDS]);
+    expect(rowOf(t, 'pig')).toEqual(['Pig', 'grass and snowy grass', describeDrops(MOB_DROPS.pig, true), '—']);
+    const WORDS = { [BIOME.PLAINS]: 'plains', [BIOME.FOREST]: 'forest', [BIOME.MOUNTAINS]: 'mountains', [BIOME.SNOWY]: 'snowy land' };
+    const herdLands = Object.keys(HERD_WEIGHTS).map(Number);
+    for (const b of herdLands) expect(typeof WORDS[b], `biome ${b}`).toBe('string'); // every land that grows herds has a word
+    const share = (b, k) => (HERD_WEIGHTS[b][k] ?? 0) / Object.values(HERD_WEIGHTS[b]).reduce((sum, x) => sum + x, 0);
+    for (const k of ANIMAL_KINDS) {
+      const [name, where, gives, r] = rowOf(t, k);
+      expect(name).toBe(SPECIES[k].name);
+      // exactly the lands whose herds can be of this kind …
+      const lands = herdLands.filter((b) => (HERD_WEIGHTS[b][k] ?? 0) > 0);
+      expect(lands.length, k).toBeGreaterThan(0);
+      expect(where.split(', ').sort()).toEqual(lands.map((b) => WORDS[b]).sort());
+      // … the likeliest first: where the largest share of the herds is of this kind
+      const order = herdBiomes(k);
+      expect([...order].sort()).toEqual([...lands].sort());
+      expect(where).toBe(order.map((b) => WORDS[b]).join(', '));
+      for (let i = 1; i < order.length; i++) expect(share(order[i - 1], k)).toBeGreaterThanOrEqual(share(order[i], k));
+      expect(gives).toBe(describeDrops(MOB_DROPS[k], true));
+      expect(typeof ANIMAL_R[k], k).toBe('string');
+      expect(r).toBe(ANIMAL_R[k].replace('{tame}', String(SPECIES[k].tame)));
+      // only an animal that can be tamed says so, with its number of feeds
+      expect(/tame/.test(r), k).toBe(SPECIES[k].tame > 0);
+      if (SPECIES[k].tame > 0) expect(r).toContain(`${SPECIES[k].tame} times`);
+      expect(typeof HERD_WORDS[k], k).toBe('string');
+    }
+    expect(rowOf(t, 'cow')).toEqual(['Cow', 'plains, forest', '3–5 Raw Beef and 1–2 Rawhide', 'with an empty Clay Pot in hand: milk']);
+    expect(rowOf(t, 'sheep')[2]).toBe('1–2 Raw Mutton and 1–2 White Wool');
+    expect(rowOf(t, 'horse')).toEqual(['Horse', 'plains', '1–2 Rawhide', 'with its food, 3 times: tame; then ride']);
+    expect(rowOf(t, 'wolf')[1]).toBe('snowy land, forest, mountains');
+  });
+
+  it('how near you can come: the notice distances walking, sneaking and sprinting; food brings an animal to you', () => {
+    const t = tableById('wary');
+    expect(t.source).toBe('animals');
+    expect(t.keys).toEqual(['pig', ...ANIMAL_KINDS]);
+    const cells = (n) => `${fmtNum(n, 1)} cells`;
+    expect(rowOf(t, 'pig')).toEqual(['Pig', cells(PIG_NOTICE), cells(PIG_NOTICE * SNEAK_NOTICE), cells(PIG_NOTICE * SPRINT_NOTICE)]);
+    for (const k of ANIMAL_KINDS) {
+      const n = SPECIES[k].notice;
+      expect(rowOf(t, k)).toEqual([SPECIES[k].name, cells(n), cells(n * SNEAK_NOTICE), cells(n * SPRINT_NOTICE)]);
+    }
+    expect(rowOf(t, 'horse')).toEqual(['Horse', '13 cells', '5.2 cells', '17.6 cells']);
+    expect(text).toContain(`an animal notices you at only ${fmtPct(SNEAK_NOTICE)} of its usual distance`);
+    expect(text).toContain(`it spots you from ${fmtPct(SPRINT_NOTICE - 1)} farther off`);
+    // sneaking brings every animal but the horse within reach; the horse is the wariest, and it outruns a sprinter
+    expect(ANIMAL_KINDS.filter((k) => SPECIES[k].notice * SNEAK_NOTICE > REACH)).toEqual(['horse']);
+    expect(PIG_NOTICE * SNEAK_NOTICE).toBeLessThan(REACH);
+    expect(text).toContain(`Your arm reaches ${REACH} cells. Sneaking brings you inside that with every animal but the horse: that one wants a treat.`);
+    expect(Math.max(...ANIMAL_KINDS.map((k) => SPECIES[k].notice))).toBe(SPECIES.horse.notice);
+    expect(fleeSpeed('horse')).toBeGreaterThan(SPRINT_SPEED);
+    expect(text).toContain('A wild horse spots you from farther off than any other animal, and it outruns you.');
+    // what they come to
+    expect(lureText(SPECIES.wolf.lure)).toBe('pork, beef or mutton, raw or roast');
+    expect(lureText(SPECIES.cow.lure)).toBe('Wild Tuber, Honeyberries, Tussock Grass or Cattail Root');
+    for (const k of ANIMAL_KINDS) {
+      for (const key of SPECIES[k].lure) {
+        expect(isItemKey(key), key).toBe(true);
+        expect(lureText(SPECIES[k].lure), key).toContain(/^(raw|roast)_/.test(key) ? key.replace(/^(raw|roast)_/, '') : itemName(key));
+      }
+    }
+    expect(text).toContain('Cattle, sheep and horses come to Wild Tuber, Honeyberries, Tussock Grass or Cattail Root; wolves come to pork, beef or mutton, raw or roast.');
+    expect(text).toContain(`from ${LURE_RANGE} cells away it trots up and waits beside you`);
+    expect(text).toContain(`Cattle and sheep stay calm for ${FED_CALM_S} seconds after a mouthful`);
+    expect(SPECIES.wolf.tame).toBe(SPECIES.horse.tame);
+    expect(text).toContain(`A horse or a wolf is tamed by ${numWord(SPECIES.horse.tame)} feeds.`);
+    expect([SPECIES.cow.tame, SPECIES.sheep.tame]).toEqual([0, 0]); // "cannot be tamed"
+    expect(text).toContain('Cattle and sheep cannot be tamed');
+  });
+
+  it('the animal pages quote the game: herds, hunting, meat and milk, wool, riding, the wolf, snares', () => {
+    expect(text).toContain('roam the land in small herds: 2–4 cattle or sheep, 2–3 horses or wolves.');
+    for (const k of ANIMAL_KINDS) expect(text).toContain(`${SPECIES[k].herd[0]}–${SPECIES[k].herd[1]} `);
+    expect(text).toContain(`${HERD_MIN} to ${HERD_MAX} cells from where you stand`);
+    expect(text).toContain('A moo, a baa, a neigh or a woof means a herd is near');
+    for (const k of ANIMAL_KINDS) expect(text.toLowerCase()).toContain(`a ${SPECIES[k].voice}`);
+    expect(text).toContain(`for at least ${HIT_FLEE_S} seconds`);
+    expect(text).toContain(`a rock counts ${THROW_ROCK.power}, a Flint Dart ${THROW_DART.power} and a Flint Spear ${THROW_SPEAR.power}.`);
+    // milk (§72)
+    const milk = ITEMS.pot_milk.food;
+    expect(milk).toMatchObject({ satiation: 12, hydration: 20, sick: 0, returns: 'clay_pot' });
+    expect(text).toContain(`A Pot of Milk gives ${fmtSigned(milk.satiation)} Nourishment and ${fmtSigned(milk.hydration)} Hydration, never poisons you, and leaves you the pot.`);
+    expect(text).toContain(`She has more after ${fmtDurationLong(MILK_REGROW_S)}.`);
+    expect(text).toContain(`A cow has milk again ${fmtDurationLong(MILK_REGROW_S)} after you milked her.`);
+    expect(fmtDurationLong(MILK_REGROW_S)).toBe('4 minutes');
+    // wool
+    expect(text).toContain(`Shearing gives ${SHEAR_WOOL[0]}–${SHEAR_WOOL[1]} White Wool and costs the knife one use; the fleece is back in ${fmtDurationLong(SHEAR_REGROW_S)}.`);
+    // the horse
+    expect(text).toContain(`It goes where you look at ${fmtNum(RIDE_SCALE)} times your own pace`);
+    expect(text).toContain(`leaps a wall ${Math.floor(RIDE_LEAP)} cells high when you press Space. Shift gets you off.`);
+    expect(text).toContain(`it grazes within ${HOME_RANGE} cells of where you left it`);
+    // the wolf
+    expect(text).toContain(`It goes for any zombie within ${WOLF_GUARD} cells and bites it: ${WOLF_BITE} power every second.`);
+    expect(text).toContain('Wolves keep to snowy land, forest and mountains');
+    // snares
+    const snare = RECIPES.find((r) => r.id === 'snare');
+    expect(snare.station).toBe('hand');
+    expect(text).toContain(`made at hand from ${recipeInputsProse(snare)}.`);
+    expect(text).toContain(`is held fast for ${fmtDurationLong(TRAP_HOLD_S)}`);
+    expect(text).toContain(`nothing catches it again for ${TRAP_IMMUNE_S} seconds`);
+    expect(text).toContain(`calm cattle, sheep, horses and wolves within ${BAIT_RANGE} cells wander over to it`);
+    // black holes take animals as they take pigs
+    expect(text).toContain('A black hole swallows animals');
+    // meat: one figure for the three raw meats, so they must share it
+    for (const k of ['raw_pork', 'raw_beef', 'raw_mutton']) expect(ITEMS[k].food.sick).toBe(ITEMS.raw_pork.food.sick);
+    expect(text).toContain(`Raw meat feeds you little and poisons you ${fmtPct(ITEMS.raw_pork.food.sick)} of the time.`);
+    const roast = (k) => fmtSigned(ITEMS[k].food.satiation);
+    expect(text).toContain(`Roast Mutton gives ${roast('roast_mutton')} Nourishment, Roast Pork ${roast('roast_pork')} and Roast Beef ${roast('roast_beef')}.`);
+    expect(ITEMS.roast_pork.food.spoilS).toBe(2 * ITEMS.raw_pork.food.spoilS);
+    expect(text).toContain('Roast meat keeps twice as long as raw.');
+  });
+
+  it('dropping and throwing (§60, §63): the throws table is throwOf; things on the ground come to you, blink and go', () => {
+    const t = tableById('throws');
+    expect(t.source).toBe('loose');
+    expect(t.keys).toEqual(['stone', 'dart', 'spear', 'chuck']);
+    const spears = ITEM_KEYS.filter((k) => ITEMS[k].tool?.type === 'spear');
+    expect(spears.length).toBeGreaterThan(0);
+    const names = (keys) => keys.map((k) => itemName(k)).join(', ');
+    expect(rowOf(t, 'stone').slice(0, 3)).toEqual([names(STONE_KEYS), `${THROW_ROCK.speed} m/s`, String(THROW_ROCK.power)]);
+    expect(rowOf(t, 'dart')).toEqual([names(DART_KEYS), `${THROW_DART.speed} m/s`, String(THROW_DART.power), `breaks on ${fmtPct(DART_BREAK_P)} of its hits`]);
+    expect(rowOf(t, 'spear').slice(0, 3)).toEqual([names(spears), `${THROW_SPEAR.speed} m/s`, String(THROW_SPEAR.power)]);
+    expect(rowOf(t, 'chuck').slice(0, 3)).toEqual(['Anything else', `${THROW_CHUCK.speed} m/s`, String(THROW_CHUCK.power)]);
+    for (const k of STONE_KEYS) expect(throwOf(k)).toBe(THROW_ROCK);
+    for (const k of DART_KEYS) expect(throwOf(k)).toBe(THROW_DART);
+    for (const k of spears) expect(throwOf(k)).toBe(THROW_SPEAR);
+    expect(throwOf('stick')).toBe(THROW_CHUCK);
+    expect(t.rows.map((r) => r.slice(0, 3))).toEqual([['Rock, Flint, Obsidian Shard', '13 m/s', '1'], ['Flint Dart', '21 m/s', '2'],
+      ['Flint Spear', '17 m/s', '4'], ['Anything else', '6 m/s', '0']]);
+    expect(text).toContain(`Walk within ${fmtNum(COLLECT_RADIUS)} cells of something lying loose and it comes to you`);
+    expect(text).toContain(`After ${fmtDurationLong(LOOSE_DESPAWN_S)} on the ground a thing is gone; it blinks for its last ${LOOSE_BLINK_S} seconds to warn you.`);
+    expect(text).toContain('After 5 minutes on the ground');
+    expect(text).toContain('A burning campfire burns up whatever lands in it.');
+    expect(text).toContain('It pops out, flies to you, and is yours when it reaches you.');
+    // the dart's recipe, in words
+    const dart = RECIPES.find((r) => r.id === 'flint_dart');
+    expect(dart.inputs.map((i) => [i.k, i.n])).toEqual([['flint', 1], ['stick', 1], ['plant_fibre', 1]]);
+    expect(text).toContain(`One Flint, one Stick and one Plant Fibre make ${numWord(dart.outputs[0].n)} Flint Darts at hand, with a Stone Hammer.`);
+  });
+
+  it('the controls chapter has Q and G, the riding keys, and R on animals and snares before everything else', () => {
+    const keyRow = (t, key) => t.rows.find((r) => r[0] === key);
+    const hands = tableById('keys-hands');
+    expect(keyRow(hands, 'Q')[1]).toBe('drop one of what you hold (with Shift: the whole stack)');
+    expect(keyRow(hands, 'G')[1]).toBe('throw one of what you hold where you look');
+    expect(keyRow(tableById('keys-move'), 'Shift')[1]).toMatch(/^sneak: .*animals/);
+    const ride = tableById('keys-ride');
+    expect(ride.source).toBe(null);
+    expect(ride.rows.map((r) => r[0])).toEqual(['R', 'Mouse', 'W A S D', 'W W', 'Space', 'Shift']);
+    expect(keyRow(ride, 'Space')[1]).toBe(`leap a wall ${Math.floor(RIDE_LEAP)} cells high`);
+    expect(keyRow(ride, 'Shift')[1]).toBe('get off');
+    const controls = CHAPTERS.find((c) => c.id === 'controls');
+    const rList = controls.pages.flat().find((b) => b.kind === 'list' && b.ordered);
+    // main asks animalR() and snareR() before every other R case (§69)
+    expect(rList.items[0]).toMatch(/^An animal: .*milk a cow, shear a sheep, ride your horse, .*sit or follow/);
+    expect(rList.items[1]).toMatch(/^A snare: bait it/);
+    expect(rList.items[2]).toMatch(/^A campfire/);
+    expect(rList.items.at(-1)).toMatch(/handbook in hand: read it/);
+    expect(text).toContain('Q drops one of the thing in your hand');
+    expect(text).toContain('G throws one where the crosshair points.');
+    expect(text).toContain('This book can be neither dropped nor thrown.');
+  });
+
+  it('flint (§70): the stones that show a nodule give it, about half of them; plain ones never; a little from mined stone', () => {
+    expect(dropItems(PICKABLE[BLOCK.LOOSE_STONES].drops).find((it) => it.k === 'flint').p).toBe(FLINT_SHARE);
+    expect(FLINT_SHARE).toBe(0.5); // "about half of them"
+    const mined = dropItems(ruleFor(BLOCK.STONE).drops).find((it) => it.k === 'flint');
+    expect(text).toContain(`about half of them show a dark, glossy nodule, and those give a Flint. Plain ones never do. Now and then (${fmtPct(mined.p)}) one turns up in stone you mine.`);
+    expect(text).toContain('Loose Stones give Rock, and those with a dark, glossy lump a Flint too.');
+    expect(text).not.toMatch(/half the time a Flint/);
+  });
+
+  it('raw water poisons and boiling makes it safe (§66); Poisoned blocks healing, a bandage still works', () => {
+    const R = RATES;
+    expect(text).toContain(`A gulp from a pond poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(ITEMS.pot_water.food.sick)}.`);
+    expect(text).toContain('poisons you 6 % of the time (ten gulps in a row: 46 %), a Pot of Water 20 %.');
+    expect(text).toContain(`your stomach turns at once: ${fmtSigned(R.POISON_THIRST)} Hydration and ${fmtSigned(R.POISON_HUNGER)} Nourishment. For the next ${R.SICK_S} seconds you do not heal, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though never below ${R.SICK_FLOOR} HP.`);
+    expect(ITEMS.pot_boiled.food.sick).toBe(0);
+    expect(FIRE_TRANSFORMS.pot_water).toMatchObject({ to: 'pot_boiled', spot: 'centre' });
+    expect(text).toContain('Water boiled in the embers of a campfire is always safe.');
+    expect(rowOf(tableById('status'), 'Poisoned')[2]).toContain('no healing');
+    expect(text).toContain(`You heal ${fmtNum(R.REGEN)} HP a second while Nourishment and Hydration are at least ${R.REGEN_MIN_SATIATION}, your body is between ${R.REGEN_TEMP_MIN} and ${R.REGEN_TEMP_MAX} °C, you are not Poisoned and you have breath.`);
+    expect(R.REGEN_MIN_HYDRATION).toBe(R.REGEN_MIN_SATIATION); // one figure for both
+    expect(R.REGEN_FIRE_MULT).toBe(2); // "twice as fast"
+    expect(text).toContain('A bandage heals whatever your state, even while you are Poisoned.');
+  });
+
+  it('light (§62): dark underground; campfires, torches and lamps shine; the torch\'s recipe and its saltpetre', () => {
+    expect(GLOWSTONE_LIGHT).toBeGreaterThan(CAMPFIRE_LIGHT);
+    expect(CAMPFIRE_LIGHT).toBeGreaterThan(TORCH_LIGHT);
+    expect(text).toContain('A cave, a mine or a room closed in on every side is dark even at noon');
+    expect(text).toContain('A burning Campfire, a Torch and a lit Filament Lamp shine by themselves.');
+    expect(text).toContain(`a campfire's is gone ${CAMPFIRE_LIGHT} cells away, a Torch's ${TORCH_LIGHT}.`);
+    expect(text).toContain('Glowstone, a builder\'s block from Creative, shines brightest of all.');
+    expect(isItemKey('glowstone')).toBe(true);
+    expect(RECIPES.some((r) => r.outputs.some((o) => o.k === 'glowstone'))).toBe(false); // … which is why it is a builder's block
+    const torch = RECIPES.find((r) => r.id === 'torch');
+    expect(torch.station).toBe('hand');
+    expect(text).toContain(`A Torch is made at hand from ${recipeInputsProse(torch)}, with a Fire Drill.`);
+    const salt = dropItems(ruleFor(BLOCK.STONE).drops).find((it) => it.k === 'saltpetre');
+    expect(salt.deep).toBe(true);
+    expect(text).toContain(`${fmtPct(salt.p)} of the stone you mine ${DEEP_BELOW_SEA} cells or more below sea level gives some.`);
+  });
+
+  it('the Workbench (§67): built last from steel, glass, copper wire and tin; its devices stand on the simple parts', () => {
+    const made = (k) => RECIPES.find((r) => r.outputs[0].k === k);
+    const bench = RECIPES.find((r) => r.id === 'workbench');
+    expect(bench.station).toBe('hand');
+    expect(toolNeedLabel(bench.tools[0].type, bench.tools[0].tier)).toBe('Iron Hammer+');
+    expect(text).toContain(`It is built at hand from ${recipeInputsProse(bench)}, with an Iron Hammer: steel from the Forge, glass from the Bloomery, copper wire drawn at the Work Stump and tin smelted in the Kiln.`);
+    // … and each of those comes from where the sentence says
+    expect(bench.inputs.filter((i) => 'k' in i).map((i) => [i.k, made(i.k).station]))
+      .toEqual([['steel_bar', 'forge'], ['glass', 'bloomery'], ['copper_wire', 'stump'], ['tin_ingot', 'kiln']]);
+    const atBench = RECIPES.filter((r) => r.station === 'workbench');
+    const benchMade = new Set(atBench.map((r) => r.outputs[0].k));
+    for (const k of ELEMENTARY_PARTS) {
+      expect(made(k).station, k).toBe('stump');
+      expect(atBench.some((r) => r.inputs.some((i) => i.k === k)), k).toBe(true);
+    }
+    // every device starts from a simple part, or from a device that does
+    for (const r of atBench) expect(ELEMENTARY_PARTS.includes(r.inputs[0].k) || benchMade.has(r.inputs[0].k), r.id).toBe(true);
+    expect(text).toContain(`The simple parts are made at the Work Stump: the ${listJoin(ELEMENTARY_PARTS.map((k) => itemName(k)))}.`);
+    expect(text).toContain(`The Workbench builds the clever devices on top of them: the ${listJoin(atBench.map((r) => itemName(r.outputs[0].k)))}.`);
+    expect(text).toContain('the Forge, the Workbench) has its own lane');
   });
 });
 
@@ -466,6 +911,7 @@ describe('handbook: formatting', () => {
     expect([fmtDurationLong(270), fmtDurationLong(1200), fmtDurationLong(60), fmtDurationLong(25)]).toEqual(['4½ minutes', '20 minutes', 'a minute', '25 seconds']);
     expect([fmtClock(0.3), fmtClock(0.75), fmtClock(0)]).toEqual(['07:12', '18:00', '00:00']);
     expect([listJoin([]), listJoin(['a']), listJoin(['a', 'b']), listJoin(['a', 'b', 'c'])]).toEqual(['', 'a', 'a and b', 'a, b and c']);
+    expect([listJoin(['a', 'b'], 'or'), listJoin(['a', 'b', 'c'], 'or')]).toEqual(['a or b', 'a, b or c']);
     expect([numWord(7), numWord(6), numWord(0), numWord(12), numWord(13), numWord(1.5)]).toEqual(['seven', 'six', 'no', 'twelve', '13', '1.5']);
   });
 

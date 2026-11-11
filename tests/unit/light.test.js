@@ -544,3 +544,62 @@ describe('shader patch and geometry', () => {
     expect(a2.getY(0)).toBe(0);
   });
 });
+
+describe('extra emitters (a lit Filament Lamp; CONTRACTS §72)', () => {
+  /** A sealed stone room 5 cells across and 3 high, y 10..12, around the origin, in a world whose ground reaches y 30. */
+  function room() {
+    const { world } = flatWorld(30);
+    disc(world, 0, 0, 3, 10, 12, B.AIR);
+    world.update(0, 0, Infinity);
+    return world;
+  }
+  it('setEmitter lights a cell that holds no glowing block, falling off one level a cell; 0 takes it away', () => {
+    const world = room();
+    expect(blk(world, 0, 10, 0)).toBe(0);
+    expect(world.light.setEmitter(0, 10, 0, 14)).toBe(true);
+    expect(world.light.setEmitter(0, 10, 0, 14)).toBe(false); // unchanged
+    expect(world.light.emitterAt(0, 10, 0)).toBe(14);
+    world.update(0, 0, Infinity);
+    expect(blk(world, 0, 10, 0)).toBe(14);
+    expect(blk(world, 2, 10, 0)).toBe(12);
+    expect(blk(world, 0, 12, 0)).toBe(12);
+    // dimmer, then out
+    world.light.setEmitter(0, 10, 0, 7);
+    world.update(0, 0, Infinity);
+    expect(blk(world, 0, 10, 0)).toBe(7);
+    expect(blk(world, 2, 10, 0)).toBe(5);
+    world.light.setEmitter(0, 10, 0, 0);
+    world.update(0, 0, Infinity);
+    for (const [q, y, r] of [[0, 10, 0], [2, 10, 0], [0, 12, 0], [-3, 11, 1]]) expect(blk(world, q, y, r)).toBe(0);
+    expect(world.light.emitterAt(0, 10, 0)).toBe(0);
+  });
+
+  it('adds to a glowing block rather than replacing it, survives edits around it, and is forgotten by clear()', () => {
+    const world = room();
+    world.light.setEmitter(1, 10, 0, 9);
+    world.setBlock(-2, 10, 0, B.GLOWSTONE);
+    world.update(0, 0, Infinity);
+    expect(blk(world, 1, 10, 0)).toBe(Math.max(9, GLOWSTONE_LIGHT - 3));
+    // a wall goes up between them and comes down again: the emitter's own light is still there
+    world.setBlock(0, 10, 0, B.STONE);
+    world.setBlock(0, 10, 0, B.AIR);
+    world.setBlock(-2, 10, 0, B.AIR);
+    world.update(0, 0, Infinity);
+    expect(blk(world, 1, 10, 0)).toBe(9);
+    expect(blk(world, 3, 10, 0)).toBe(7);
+    // a new engine state has no emitters
+    world.light.clear();
+    expect(world.light.emitterAt(1, 10, 0)).toBe(0);
+  });
+
+  it('an emitter set in a chunk that is not loaded lights up when the chunk arrives', () => {
+    const chunk = new Chunk(2, 0, makeChunkData()); // all air
+    const lit = new Map();
+    const e2 = new LightEngine({ getChunkData: (cq, cr) => lit.get(chunkKey(cq, cr)) ?? null });
+    expect(e2.setEmitter(40, 20, 3, 12)).toBe(true); // nothing loaded there yet
+    lit.set(chunkKey(2, 0), chunk);
+    e2.lightChunk(chunk);
+    expect(blockLevel(chunk.light[localIndex(40 - 2 * CHUNK_SIZE, 20, 3)])).toBe(12);
+    expect(blockLevel(chunk.light[localIndex(40 - 2 * CHUNK_SIZE + 2, 20, 3)])).toBe(10);
+  });
+});

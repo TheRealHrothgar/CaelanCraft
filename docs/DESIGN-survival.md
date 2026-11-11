@@ -2461,6 +2461,8 @@ version that can be placed in the player's inventory on spawn."* It is built as 
   *Death and waking* (belongings, the Sleeping Hide), *Controls* (R interact, hold LMB dig, RMB place/use, E pack, the hotbar),
   and *Creative and Survival* (the switch, what is kept). Plain, friendly, accurate; teaches real survival ideas where true
   (salt water dehydrates, wet clothes chill, charcoal for high heat, tin bronze).
+  *v0.12 (CONTRACTS §73): an eleventh chapter, **Animals**, sits after *Workplaces and making*; hunting moved there from
+  *Food and fire*; the status once called sickness is Poisoned.*
 - **The Guide (tutorial menu)**: a new `Guide` button on the title screen (next to the controls sheet) and in the pause menu opens
   `#guide` — a clean, readable two-pane reader (chapter list + scrollable page), in the survival palette and `.hex-button`
   chrome, usable in Creative too (reading only; nothing to do with the mode). Esc / the close button return to where it was

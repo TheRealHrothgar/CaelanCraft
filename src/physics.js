@@ -226,6 +226,58 @@ export function isUnderSurface(getBlock, q, py, r) {
 }
 
 /**
+ * Whether a swimming mob should paddle up this frame (KNOWN-ISSUES V1; CONTRACTS §72): only while its float point —
+ * FLOAT_POINT of the way up its body — is under water, or it presses into a bank (the exit jump). So it rides low in the
+ * water with its back out instead of being launched clear of the surface and looking as if it stood on it.
+ * @param {GetBlockFn} getBlock @param {PlayerState} p  a body with `inWater` / `hitWall` from its last step
+ * @returns {boolean}
+ */
+export function shouldPaddle(getBlock, p) {
+  if (!p.inWater) return false;
+  if (p.hitWall) return true;
+  const [q, r] = worldToHex(p.x, p.z);
+  return isUnderSurface(getBlock, q, p.y + bodyHeight(p) * FLOAT_POINT, r);
+}
+/** Where a swimming mob floats: this share of its height is under water. */
+export const FLOAT_POINT = 0.45;
+/** A swimmer riding higher than its float line settles back at this speed (m/s); within FLOAT_NEAR below it, it rises gently. */
+export const FLOAT_SETTLE = 2;
+export const FLOAT_NEAR = 0.25;
+export const FLOAT_RISE = 0.8;
+
+/**
+ * After a mob's step in water (KNOWN-ISSUES V1): keep it at its float line — the surface of the water column it is in,
+ * FLOAT_POINT of its height above its feet. Riding higher (the paddle carried it up), it settles back down and stops
+ * rising; just under the line it rises gently, so it does not overshoot and bob. Left alone: a body on the ground, one
+ * pressing into a bank or still carried up by an exit jump (so it can climb out), and one over no water.
+ * @param {GetBlockFn} getBlock @param {PlayerState} p @param {number} dt
+ */
+export function settleFloat(getBlock, p, dt) {
+  if (p.onGround || p.hitWall || p.vy > SWIM_UP_SPEED + 0.01) return;
+  const [q, r] = worldToHex(p.x, p.z);
+  const h = bodyHeight(p);
+  // The water surface of this column, looking down from just above the head to the feet.
+  let surface = NaN;
+  for (let cy = Math.floor(p.y + h); cy >= Math.floor(p.y) - 1; cy--) {
+    const id = getBlock(q, cy, r);
+    if (!isLiquid(id)) continue;
+    const above = getBlock(q, cy + 1, r);
+    if (isLiquid(above)) continue;
+    surface = cy + waterSurfaceHeight(id, above);
+    break;
+  }
+  if (Number.isNaN(surface)) return;
+  const line = surface - h * FLOAT_POINT; // where its feet belong
+  if (p.y > line) {
+    if (p.y - line > h * (1 - FLOAT_POINT)) return; // well clear of the water (falling in, or thrown): leave it to gravity
+    p.y = Math.max(line, p.y - FLOAT_SETTLE * dt);
+    if (p.vy > 0) p.vy = 0;
+  } else if (line - p.y < FLOAT_NEAR && p.vy > FLOAT_RISE) {
+    p.vy = FLOAT_RISE;
+  }
+}
+
+/**
  * Would a body standing on the floor below cell (q, y, r) — or one step down, in (q, y − 1, r) — have to SWIM there?
  * True when that water is two or more cells deep or its surface is more than WADE_DEPTH above the floor; a shallow film
  * is wading. Pigs use it to keep out of deep water only (CONTRACTS §30).

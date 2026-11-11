@@ -13,7 +13,7 @@
 // are TAMED by feeding: a tame horse waits where it is left and can be ridden (`ride`), a tame wolf follows the player
 // and bites the zombies near it. Tame animals never flee, never despawn and are saved; so is every other animal.
 import { GRAVITY, WALK_SPEED, SPRINT_SPEED, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR } from './config.js';
-import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater } from './physics.js';
+import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
 import { hexToWorld, worldToHex } from './hex.js';
 import { yawToForward } from './coords.js';
 import { BLOCK, BIOME, isSolid } from './blocks.js';
@@ -64,6 +64,8 @@ export const ANIMAL_KNOCKBACK = 4.5;
 /** A sheared sheep's fleece is back after this long (s). Shearing gives SHEAR_WOOL[0]..[1] wool. */
 export const SHEAR_REGROW_S = 300;
 export const SHEAR_WOOL = Object.freeze([1, 2]);
+/** A milked cow gives milk again after this long (s). */
+export const MILK_REGROW_S = 240;
 
 /** Snares: a caught animal is held this long (s), then breaks free and cannot be caught again for TRAP_IMMUNE_S. */
 export const TRAP_HOLD_S = 90;
@@ -124,7 +126,7 @@ export const SOUNDS = Object.freeze({
  * @typedef {PlayerState & {
  *   id: number, kind: AnimalKind, yaw: number, targetYaw: number, mode: 'idle'|'walk'|'flee'|'lure'|'bait'|'follow'|'hunt',
  *   timer: number, hurt: number, health: number, walkPhase: number, voiceIn: number,
- *   tamed: boolean, trust: number, calm: number, shorn: number, sitting: boolean, ridden: boolean,
+ *   tamed: boolean, trust: number, calm: number, shorn: number, milked: number, sitting: boolean, ridden: boolean,
  *   homeX: number, homeZ: number, trapped: number, trapT: number, trapCell: [number, number, number]|null, immune: number,
  *   baitIn: number, baitX: number, baitZ: number, biteIn: number, side: 1|-1, speedScale: number, wallSinceAim: boolean,
  * }} Animal
@@ -250,6 +252,7 @@ export class Animals {
       trust: 0,
       calm: 0,
       shorn: 0,
+      milked: 0,
       sitting: false,
       ridden: false,
       homeX: x,
@@ -328,6 +331,7 @@ export class Animals {
       if (a.hurt > 0) a.hurt = Math.max(0, a.hurt - dt);
       if (a.calm > 0) a.calm = Math.max(0, a.calm - dt);
       if (a.shorn > 0) a.shorn = Math.max(0, a.shorn - dt);
+      if (a.milked > 0) a.milked = Math.max(0, a.milked - dt);
       if (a.immune > 0) a.immune = Math.max(0, a.immune - dt);
       if (a.biteIn > 0) a.biteIn -= dt;
       a.voiceIn -= dt;
@@ -370,7 +374,7 @@ export class Animals {
       input.sprint = moving && gait === 'run' && sp.fleeSprint;
       a.speedScale = gait === 'run' ? sp.fleeScale : gait === 'trot' ? 0.75 : 1;
       const ledge = moving && a.hitWall && this._ledgeAhead(a, getBlock);
-      input.jump = a.inWater || ledge;
+      input.jump = shouldPaddle(getBlock, a) || (!a.inWater && ledge);
       input.yaw = a.yaw;
       if (world.pullAt) {
         world.pullAt(a.x, a.y + 0.5, a.z, this._pull);
@@ -385,6 +389,7 @@ export class Animals {
       const x0 = a.x;
       const z0 = a.z;
       stepPlayer(a, input, getBlock, dt);
+      settleFloat(getBlock, a, dt);
       a.sneaking = false;
       a.sprinting = false;
       if (a.hitWall) a.wallSinceAim = true;
@@ -757,6 +762,16 @@ export class Animals {
     return { ok: true, tamed: true };
   }
 
+  /**
+   * Milk a cow into an empty clay pot: true when it gave milk (a cow that was milked less than MILK_REGROW_S ago, or
+   * anything that is not a cow, gives none).
+   */
+  milk(a) {
+    if (a.kind !== 'cow' || a.milked > 0 || !this.list.includes(a)) return false;
+    a.milked = MILK_REGROW_S;
+    return true;
+  }
+
   /** Shear a sheep that has its fleece: SHEAR_WOOL wool, and it grows back in SHEAR_REGROW_S. @returns {number} wool */
   shear(a) {
     if (a.kind !== 'sheep' || a.shorn > 0 || !this.list.includes(a)) return 0;
@@ -909,6 +924,7 @@ export class Animals {
       if (a.tamed) o.t = 1;
       else if (a.trust > 0) o.tr = a.trust;
       if (a.shorn > 0) o.s = Math.ceil(a.shorn);
+      if (a.milked > 0) o.m = Math.ceil(a.milked);
       if (a.sitting) o.sit = 1;
       if (a.trapped > 0 && a.trapCell) {
         o.tp = Math.ceil(a.trapped);
@@ -930,6 +946,7 @@ export class Animals {
       a.tamed = o.t === 1;
       a.trust = o.tr ?? 0;
       a.shorn = o.s ?? 0;
+      a.milked = o.m ?? 0;
       a.sitting = o.sit === 1;
       if (o.tp && o.tc) {
         a.trapped = o.tp;
@@ -979,6 +996,7 @@ export function validateAnimalsJSON(raw) {
     if (o.t === 1 && sp.tame > 0) e.t = 1;
     else if (Number.isInteger(o.tr) && o.tr > 0 && o.tr < sp.tame) e.tr = o.tr;
     if (Number.isInteger(o.s) && o.s > 0 && o.k === 'sheep') e.s = Math.min(SHEAR_REGROW_S, o.s);
+    if (Number.isInteger(o.m) && o.m > 0 && o.k === 'cow') e.m = Math.min(MILK_REGROW_S, o.m);
     if (o.sit === 1 && e.t === 1 && o.k === 'wolf') e.sit = 1;
     if (Number.isInteger(o.tp) && o.tp > 0 && Array.isArray(o.tc) && o.tc.length === 3 && o.tc.every(Number.isSafeInteger)) {
       e.tp = Math.min(TRAP_HOLD_S, o.tp);

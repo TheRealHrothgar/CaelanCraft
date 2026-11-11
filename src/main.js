@@ -32,7 +32,7 @@ import {
   PIG_NATURAL_COUNT, CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
   BLACK_HOLE_MAX_TRACKED, BLACK_HOLE_SWALLOW_LINE_S,
   PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S,
-  ZOMBIE_HEIGHT, GEN_LATEST, PIG_MAX, CAMPFIRE_FUEL_START_S, CAMPFIRE_FUEL_MAX_S, ATTACK_REPEAT_S, GULP_GAP_S,
+  ZOMBIE_HEIGHT, GEN_LATEST, PIG_MAX, LAMP_LIGHT_MIN, LAMP_LIGHT_MAX, CAMPFIRE_FUEL_START_S, CAMPFIRE_FUEL_MAX_S, ATTACK_REPEAT_S, GULP_GAP_S,
   PIG_REPOP_CHECK_S, PIG_REPOP_TARGET, PIG_REPOP_RADIUS, PIG_REPOP_MIN, PIG_REPOP_MAX, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE,
   FALL_SAFE_SPEED, INTRO_LINE_MS, PACK_MESSAGE_S,
   ZOMBIE_MAX, MAX_INFALL_MOBS, VORTEX_MODEL_RANGE, VORTEX_MAX_MODELS, VORTEX_MAX_CORES, VORTEX_PARTICLES_PER_S,
@@ -77,7 +77,7 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Animals, SPECIES, SOUNDS as ANIMAL_SOUNDS, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S } from './animals.js';
+import { Animals, SPECIES, SOUNDS as ANIMAL_SOUNDS, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX } from './animals.js';
 import { createAnimalRenderer } from './animalRenderer.js';
 import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, damageOf, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST, SICK_MESSAGE, BOIL_TIP } from './survival.js';
@@ -525,6 +525,18 @@ export function seedFromInput(text, random = Math.random) {
  * deleted (all six slots share the browser's ~5 MB); the slot's previous save is untouched either way.
  * @param {string|undefined} reason
  */
+/**
+ * The title screen's line after quitting a world whose save failed (§41): why, and whether an older save of it is
+ * still there (`hasSave`: the slot held a save before this session's failure).
+ * @param {string} name @param {string|undefined} reason  storage.saveSlot's reason @param {boolean} hasSave
+ */
+export function quitUnsavedMessage(name, reason, hasSave) {
+  const kept = hasSave ? ' Its last save is kept.' : ' It had never been saved, so it is gone.';
+  if (reason === 'quota') return `“${name}” was not saved: storage is full.${kept} Delete a world to make room.`;
+  if (reason === 'unavailable') return `“${name}” was not saved: this browser is not letting the game store anything.${kept}`;
+  return `“${name}” was not saved.${kept}`;
+}
+
 export function saveFailMessage(reason) {
   if (reason === 'quota') return 'Save failed: storage full — delete a world on the Worlds screen to make room';
   if (reason === 'unavailable') return 'Save failed: this browser is not letting the game store anything';
@@ -1030,7 +1042,7 @@ export function boot(win, doc) {
     });
     // Room for the swallowed mobs' ghosts on top of the live ones (DESIGN-circuits §2.7): a ghost is never dropped.
     pigRenderer = createPigRenderer(renderer.three.scene, PIG_MAX + MAX_INFALL_MOBS);
-    animalRenderer = createAnimalRenderer(renderer.three.scene);
+    animalRenderer = createAnimalRenderer(renderer.three.scene, ANIMAL_MAX + MAX_INFALL_MOBS); // room for the swallowed ones' ghosts
     zombieRenderer = createZombieRenderer(renderer.three.scene, atlasTexture, ZOMBIE_MAX + MAX_INFALL_MOBS);
     watcherRenderer = createWatcherRenderer(renderer.three.scene, atlasTexture);
     campfireRenderer = createCampfireRenderer(renderer.three.scene, { makeCanvas: () => doc.createElement('canvas') });
@@ -1044,6 +1056,12 @@ export function boot(win, doc) {
     // first fire, fall or dust appears (§32, §34) — and only once every renderer that adds a light exists: the number of
     // PointLights (the campfires' and the explosion flash) is part of every program's key.
     campfireRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    // KNOWN-ISSUES P1, P2 (CONTRACTS §72): the block highlight, the chunk materials and the mob models too — the first block
+    // under the crosshair, the first trees and the first zombie of a session used to freeze the game while they compiled.
+    renderer.prewarm();
+    zombieRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    pigRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    animalRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     fallingRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     particles.prewarm(renderer.three.renderer, renderer.three.camera);
     vortexRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
@@ -1117,6 +1135,13 @@ export function boot(win, doc) {
   }
   /** the save slot (1..SAVE_SLOTS) the live world is saved to */
   let currentSlot = params.slot ?? 1;
+  /** storage.saveSlot's reason for the last failed save (quitUnsavedMessage) */
+  let lastSaveFailReason = /** @type {string|undefined} */ (undefined);
+  /**
+   * `params.nosave` was switched on by ?autoplay's own guards (a damaged slot, or a ?seed that is not the slot's), not by
+   * the URL: it protects that one world, so choosing a world on the Worlds screen switches saving back on.
+   */
+  let autoNoSave = false;
   /** the live world's name and creation time, written into every save's `meta` */
   let worldName = defaultWorldName(currentSlot);
   let worldCreatedAt = 0;
@@ -1377,6 +1402,7 @@ export function boot(win, doc) {
   const camFx = { fov: 0, sx: 0, sy: 0, sz: 0 };
   /** scratch: the mobs pigRenderer / zombieRenderer draw (the live ones plus the infall ghosts) */
   const pigDraw = /** @type {*[]} */ ([]);
+  const animalDraw = /** @type {*[]} */ ([]);
   const zombieDraw = /** @type {*[]} */ ([]);
   /** what the control latch (right-click on a control, §4.9) operates and holds */
   /** leftMouseStep's view of main (Creative): the target under the crosshair as the frame began */
@@ -2398,7 +2424,7 @@ export function boot(win, doc) {
     if (a.kind === 'horse') return `Horse${snared} · R with a Wild Tuber or Honeyberries: feed it (${a.trust}/${sp.tame} to tame)`;
     if (a.kind === 'wolf') return `Wolf${snared} · R with meat: feed it (${a.trust}/${sp.tame} to tame)`;
     if (a.kind === 'sheep') return `Sheep${snared} · ${hunt} · R with a knife: shear`;
-    return `${sp.name}${snared} · ${hunt}`;
+    return `${sp.name}${snared} · ${hunt}${a.kind === 'cow' ? ' · R with a Clay Pot: milk it' : ''}`;
   }
 
   /** Little hearts over an animal. */
@@ -2428,6 +2454,20 @@ export function boot(win, doc) {
         else if (res.calmed) showHint(`The ${sp.name.toLowerCase()} calms down.`);
         return true;
       }
+    }
+    if (a.kind === 'cow' && key === 'clay_pot') {
+      // §72: an empty clay pot under a cow fills with milk (a milked cow needs a few minutes).
+      if (a.milked > 0) showHint('This cow has no more milk for now.');
+      else if (animals.milk(a)) {
+        if (SV) {
+          pack.consume(selected, 1);
+          giveToHand('pot_milk');
+        }
+        audio.playDrink();
+        animalVoice(a, 0.6);
+        showHint('A Pot of Milk.');
+      }
+      return true;
     }
     if (a.kind === 'sheep' && !a.tamed) {
       if (SV && !pack.hasTool('knife', KNIFE_TIER)) showHint('Shearing needs a knife.');
@@ -2593,6 +2633,17 @@ export function boot(win, doc) {
       }
     }
     stepSnaredPigs();
+    // §72: a black hole swallows animals like pigs — a ghost spirals in, and its call comes at the end (stepInfall).
+    if (blackHoles.size === 0) return;
+    for (let i = animals.list.length - 1; i >= 0; i--) {
+      const a = animals.list[i];
+      const hole = blackHoles.swallowing(a);
+      if (!hole) continue;
+      if (riding === a) dismountHorse(); // the rider is the black hole's own business (stepBlackHoles)
+      animals.remove(a); // frees its snare too
+      if (animalTarget && animalTarget.animal === a) animalTarget = null;
+      if (!infall.addMob('animal', a, hole.cx, hole.cy, hole.cz)) animalVoice(a, 1);
+    }
   }
 
   /** A snare went off: the snap, a puff, and a line when it is within earshot. */
@@ -4012,7 +4063,7 @@ export function boot(win, doc) {
    */
   function doSave(announce) {
     if (params.nosave) {
-      if (announce) hud.showSaveToast('Saving disabled (?nosave=1)', true);
+      if (announce) hud.showSaveToast(autoNoSave ? 'Saving is off for this world (its slot is protected)' : 'Saving disabled (?nosave=1)', true);
       return false;
     }
     const data = buildSaveData();
@@ -4034,9 +4085,23 @@ export function boot(win, doc) {
       autosaveAccum = 0;
       if (announce) hud.showSaveToast('World saved');
     } else {
+      lastSaveFailReason = res.reason;
       hud.showSaveToast(saveFailMessage(res.reason), true);
     }
     return ok;
+  }
+
+  /** A world chosen on the Worlds screen saves normally again: ?autoplay's protection was for the world it opened. */
+  function resumeSaving() {
+    if (!autoNoSave) return;
+    autoNoSave = false;
+    params.nosave = false;
+  }
+
+  /** The current slot holds a readable save (so a failed save leaves that one in place). */
+  function slotHasSave() {
+    const status = listSlots()[currentSlot - 1]?.status;
+    return status !== undefined && status !== 'empty' && status !== 'damaged';
   }
 
   function playerMovedSinceSave() {
@@ -4217,6 +4282,7 @@ export function boot(win, doc) {
     campfires.loadFromEdits(world.edits);
     pigs.load(restoring && Array.isArray(restoring.pigs) ? restoring.pigs : []);
     animals.load(restoring ? restoring.animals : null);
+    lampLights.clear(); // §72: the new world's light engine starts without extra emitters
     riding = null;
     animalTarget = null;
     snaredPigs.clear();
@@ -4744,6 +4810,7 @@ export function boot(win, doc) {
     // ---- the Worlds panel (§41): every action works on one slot; nothing is written under ?nosave ----
     onPlayWorld(slot) {
       if (state !== STATE.TITLE) return;
+      resumeSaving();
       const data = loadSlot(slot);
       if (!data) {
         refreshWorlds(`World ${slot} could not be loaded`, true, slot); // emptied or damaged meanwhile (another tab)
@@ -4757,6 +4824,7 @@ export function boot(win, doc) {
     },
     onNewWorld(slot, name, seedText, opts) {
       if (state !== STATE.TITLE) return;
+      resumeSaving();
       if (!params.nosave && listSlots()[slot - 1]?.status !== 'empty') {
         refreshWorlds(`Slot ${slot} is not empty any more`, true, slot);
         return;
@@ -4824,7 +4892,7 @@ export function boot(win, doc) {
         menus.setQuitUnsaved(true);
         return;
       }
-      quitToTitle(saved ? '' : `“${worldName}” was not saved (storage full) — its last save is kept. Delete a world to make room.`);
+      quitToTitle(saved ? '' : quitUnsavedMessage(worldName, lastSaveFailReason, slotHasSave()));
     },
     onPhysicsToggle(name) {
       if (state !== STATE.PAUSED || !blockPhysics) return;
@@ -4908,7 +4976,7 @@ export function boot(win, doc) {
     onDeathQuit() {
       if (state !== STATE.DEAD) return;
       const saved = params.nosave || doSave(false);
-      quitToTitle(saved ? '' : `“${worldName}” was not saved (storage full) — its last save is kept. Delete a world to make room.`);
+      quitToTitle(saved ? '' : quitUnsavedMessage(worldName, lastSaveFailReason, slotHasSave()));
     },
     /** §14.4: the Guide button on the title screen and in the pause menu. */
     onGuide() {
@@ -5411,12 +5479,44 @@ export function boot(win, doc) {
    */
   function stepCircuits(dt) {
     if (circuits) circuits.step(dt);
+    syncLampLight();
     if (infall.size === 0) return;
     const st = infall.step(dt);
     for (let i = 0; i + 2 < st.gone.length; i += 3) particles.emit('infall', st.gone[i], st.gone[i + 1], st.gone[i + 2], 3, { spread: 0.1, speed: 0.4 });
     for (const m of st.mobsDone) {
       if (m.kind === 'pig') pigGoneSqueal(m.body);
+      else if (m.kind === 'animal') animalVoice(m.body, 1);
       else zombieGone(m.body, 'ko');
+    }
+  }
+
+  /** lit lamps as last given to the light engine: "q,y,r" → level (§72) */
+  const lampLights = new Map();
+  const lampScratch = /** @type {number[]} */ ([]);
+  let lampFrame = 0;
+
+  /**
+   * §72: every lit Filament Lamp lights its surroundings — LAMP_LIGHT_MIN..LAMP_LIGHT_MAX by its brightness — through an
+   * extra emitter on its cell (light.setEmitter); a lamp that goes out, or is gone, loses it. Checked every 6th frame.
+   */
+  function syncLampLight() {
+    if (!world || (lampFrame++ % 6 !== 0)) return;
+    const lit = circuits ? circuits.litLamps(lampScratch) : (lampScratch.length = 0, lampScratch);
+    if (lit.length === 0 && lampLights.size === 0) return;
+    const seen = new Set();
+    for (let i = 0; i + 3 < lit.length; i += 4) {
+      const key = `${lit[i]},${lit[i + 1]},${lit[i + 2]}`;
+      const level = Math.round(LAMP_LIGHT_MIN + (LAMP_LIGHT_MAX - LAMP_LIGHT_MIN) * Math.min(1, lit[i + 3]));
+      seen.add(key);
+      if (lampLights.get(key) === level) continue;
+      lampLights.set(key, level);
+      world.light.setEmitter(lit[i], lit[i + 1], lit[i + 2], level);
+    }
+    for (const key of lampLights.keys()) {
+      if (seen.has(key)) continue;
+      const [q, y, r] = key.split(',').map(Number);
+      world.light.setEmitter(q, y, r, 0);
+      lampLights.delete(key);
     }
   }
 
@@ -5744,11 +5844,15 @@ export function boot(win, doc) {
       infall.ghosts('zombie', zombieDraw);
       pigRenderer.sync(pigDraw);
       zombieRenderer.sync(zombieDraw);
+      animalDraw.length = 0;
+      for (const a of animals.list) animalDraw.push(a);
+      infall.ghosts('animal', animalDraw);
+      animalRenderer.sync(animalDraw);
     } else {
+      animalRenderer.sync(animals.list);
       pigRenderer.sync(pigs.list);
       zombieRenderer.sync(zombies.list);
     }
-    animalRenderer.sync(animals.list);
     watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime);
     hurtFlash = Math.max(0, hurtFlash - dt / HURT_FLASH_S);
     hud.setHurtFlash(hurtFlash);
@@ -5994,6 +6098,7 @@ export function boot(win, doc) {
     if (!params.nosave && !save && listSlots()[currentSlot - 1].status === 'damaged') {
       // Never overwrite a damaged save from a URL: the player decides on the Worlds screen.
       params.nosave = true;
+      autoNoSave = true;
       console.warn(`Caelancraft: ?autoplay on the damaged slot ${currentSlot} — saving disabled for this session.`);
     }
     let restoring = null;
@@ -6005,6 +6110,7 @@ export function boot(win, doc) {
       } else if (save && !params.nosave) {
         // A debugging URL must never clobber the player's saved world: run this seed without saving.
         params.nosave = true;
+        autoNoSave = true;
         console.warn('Caelancraft: ?autoplay with a different ?seed than the saved world — saving disabled for this session.');
       }
     } else if (save) {

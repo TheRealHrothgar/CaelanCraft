@@ -474,6 +474,8 @@ export function installDebugHandle(win, game) {
   handle.digTargeted = (dt) => (game && typeof game.digTargeted === 'function' ? game.digTargeted(dt) : null);
   // v0.10 (CONTRACTS §60): Q / G — drop or throw the item in hand
   handle.handAction = (kind, n) => (game && typeof game.handAction === 'function' ? game.handAction(kind, n) : null);
+  // v0.11 (§72): a left click on the target, as the smoke test drives it (Creative breaks; a mob is struck)
+  handle.breakTargeted = () => (game && typeof game.breakTargeted === 'function' ? game.breakTargeted() : null);
   // v0.11 (CONTRACTS §69): R on the targeted animal, and the horse being ridden
   handle.animalR = () => (game && typeof game.animalR === 'function' ? game.animalR() : false);
   handle.getRiding = () => (game && typeof game.getRiding === 'function' ? game.getRiding() : null);
@@ -1048,7 +1050,12 @@ async function runSmokeSequence(game, win, st) {
           st.fail('no target below the hole for placing');
         } else {
           const [tq, ty, tr] = faceNeighbor(hit2.q, hit2.y, hit2.r, hit2.face);
-          const placedReturn = game.placeSelected();
+          // A mob may be in the way for a moment (a wary pig running through the hole: CONTRACTS §69): try for a few frames.
+          let placedReturn = game.placeSelected();
+          for (let f = 0; placedReturn !== true && f < SMOKE_HIT_RETRY_FRAMES; f++) {
+            await tick();
+            placedReturn = game.placeSelected();
+          }
           const placedId = world.getBlock(tq, ty, tr);
           const placed = placedReturn === true && placedId !== BLOCK.AIR;
           r.breakPlaceRoundTrip = placed; // `broke` is already true on this path

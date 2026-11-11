@@ -5,10 +5,12 @@
 // models face −Z with their origin at the feet, so a rotation of `animal.yaw` about +Y matches yawToForward.
 // Variants are their own bodies: a shorn sheep is thin and pink-grey, a tame horse wears a saddle and a blanket, a tame
 // wolf a red collar. All animals share the InstancedMeshes (per species: a body or its variant, and the legs), and an
-// animal with `hurt > 0` is drawn on the red-flash twins.
+// animal with `hurt > 0` is drawn on the red-flash twins. An animal's optional `renderScale` / `renderSpin` draw a black
+// hole's shrinking, spinning ghost (infall.js), like the pigs' and the zombies'.
 import * as THREE from 'three';
 import { boxesGeometry } from './zombieRenderer.js';
 import { ANIMAL_MAX, ANIMAL_KINDS } from './animals.js';
+import { compileHidden } from './prewarm.js';
 
 /** @typedef {import('./animals.js').Animal} Animal */
 
@@ -120,6 +122,7 @@ function wolfBody(tame) {
  * @property {() => number} count
  * @property {() => void} dispose
  * @property {THREE.Group} group
+ * @property {(webgl: *, camera: THREE.Camera) => Promise<void>} prewarm
  */
 
 /** Which body an animal is drawn with: its species' `alt` for a shorn sheep, a tame horse or a tame wolf. */
@@ -207,7 +210,12 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
       const sw = Math.sin(phase);
       // a little bob with the stride; a snared animal strains from side to side
       const bob = Math.abs(sw) * 0.025;
-      bodyM.compose(at.set(a.x, a.y + bob, a.z), q.setFromAxisAngle(UP, a.yaw), scl);
+      // `renderScale` / `renderSpin` (infall.js): a black hole's shrinking, spinning ghost, as for pigs and zombies.
+      const ghost = /** @type {{ renderScale?: number, renderSpin?: number }} */ (a);
+      const rs = typeof ghost.renderScale === 'number' && ghost.renderScale > 0 && Number.isFinite(ghost.renderScale) ? ghost.renderScale : 1;
+      const spin = typeof ghost.renderSpin === 'number' && Number.isFinite(ghost.renderSpin) ? ghost.renderSpin : 0;
+      scl.set(rs, rs, rs);
+      bodyM.compose(at.set(a.x, a.y + bob * rs, a.z), q.setFromAxisAngle(UP, a.yaw + spin), scl);
       which.setMatrixAt(which.count++, bodyM);
       bodyM.compose(at.set(a.x, a.y, a.z), q, scl);
       for (let k = 0; k < 4; k++) {
@@ -241,5 +249,8 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
     drawn = 0;
   }
 
-  return { sync, count: () => drawn, dispose, group };
+  /** Compile every animal program while the game loads (prewarm.compileHidden). */
+  const prewarm = (webgl, camera) => compileHidden([group], webgl, camera, scene);
+
+  return { sync, count: () => drawn, dispose, group, prewarm };
 }

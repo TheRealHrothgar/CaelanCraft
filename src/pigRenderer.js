@@ -15,6 +15,7 @@
 //   skinHurt / legsHurt  the same geometry with the red emissive flash: a pig with `hurt > 0` is drawn there
 import * as THREE from 'three';
 import { PIG_MAX } from './config.js';
+import { compileHidden } from './prewarm.js';
 
 /** @typedef {import('./pigs.js').Pig} Pig */
 
@@ -41,6 +42,7 @@ const LEG_SIGN = [1, -1, -1, 1];
  *                                          renderSpin when set)
  * @property {() => number} count           pigs drawn by the last sync
  * @property {() => void} dispose
+ * @property {(webgl: *, camera: THREE.Camera) => Promise<void>} prewarm  compile its programs now
  * @property {THREE.Group} group            the instanced meshes (for tests and diagnostics)
  */
 
@@ -237,5 +239,8 @@ export function createPigRenderer(scene, capacity = PIG_MAX) {
     drawn = 0;
   }
 
-  return { sync, count: () => drawn, dispose, group };
+  /** Compile every pig program while the game loads (prewarm.compileHidden; KNOWN-ISSUES P2's twin). */
+  const prewarm = (webgl, camera) => compileHidden([group], webgl, camera, scene);
+
+  return { sync, count: () => drawn, dispose, group, prewarm };
 }

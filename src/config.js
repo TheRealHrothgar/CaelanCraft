@@ -152,6 +152,9 @@ export const PIG_FLEE_S = 3;                        // run away after being hit
 export const PIG_TURN_RATE = 4;                     // rad/s
 // v0.11 (CONTRACTS §69): animals are wary. A pig runs from a walking player this near; a sneaking player gets within
 // WARY_SNEAK_FACTOR of that, a sprinting one is noticed from WARY_SPRINT_FACTOR times as far.
+// v0.11 (CONTRACTS §72): a lit Filament Lamp gives LAMP_LIGHT_MIN (barely glowing) to LAMP_LIGHT_MAX (full) block light.
+export const LAMP_LIGHT_MIN = 7;
+export const LAMP_LIGHT_MAX = 14;
 export const PIG_NOTICE = 6;
 export const WARY_SNEAK_FACTOR = 0.4;
 export const WARY_SPRINT_FACTOR = 1.35;

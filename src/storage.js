@@ -73,14 +73,16 @@ export function normalizePhysicsSwitches(raw) {
 export { SAVE_SLOTS, MAX_WORLD_NAME_CHARS, STORAGE_QUOTA_ESTIMATE };
 
 /**
- * A world name as stored: control characters become spaces, then trimmed and cut to MAX_WORLD_NAME_CHARS characters
- * (code points, so an emoji is never split) and trimmed again. '' when nothing usable is left (or `raw` is not a string).
+ * A world name as stored: control characters become spaces and invisible format characters (zero-width spaces and
+ * joiners, bidi marks and overrides: Unicode Cf) are removed, then trimmed and cut to MAX_WORLD_NAME_CHARS characters
+ * (code points, so an emoji is never split) and trimmed again. '' when nothing visible is left (or `raw` is not a
+ * string) — so a name made only of invisible characters counts as no name.
  * @param {unknown} raw
  * @returns {string}
  */
 export function cleanWorldName(raw) {
   if (typeof raw !== 'string') return '';
-  const chars = Array.from(raw.replace(/\p{Cc}/gu, ' ').trim());
+  const chars = Array.from(raw.replace(/\p{Cc}/gu, ' ').replace(/\p{Cf}/gu, '').trim());
   return chars.slice(0, MAX_WORLD_NAME_CHARS).join('').trim();
 }
 

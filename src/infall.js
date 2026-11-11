@@ -158,7 +158,7 @@ export function infallPose(s, rho0, theta0, h0, out = /** @type {InfallPose} */ 
 
 /**
  * @typedef {Object} InfallMob
- * @property {'pig'|'zombie'} kind
+ * @property {'pig'|'zombie'|'animal'} kind   'animal': a cow, sheep, horse or wolf (v0.11, CONTRACTS §72)
  * @property {Body & { renderScale?: number, renderSpin?: number, yaw?: number, height?: number }} body
  * @property {number} cx
  * @property {number} cy
@@ -174,7 +174,7 @@ export function infallPose(s, rho0, theta0, h0, out = /** @type {InfallPose} */ 
 /**
  * @typedef {Object} InfallStep  step's result (the same object every call: read it before the next step)
  * @property {number[]} gone  x, y, z triples: where a block or ghost vanished (the core)
- * @property {{ kind: 'pig'|'zombie', body: * }[]} mobsDone  ghosts that finished this step (squeal / knock-out puff now)
+ * @property {{ kind: 'pig'|'zombie'|'animal', body: * }[]} mobsDone  ghosts that finished this step (squeal / knock-out puff now)
  */
 
 export class Infall {
@@ -261,7 +261,7 @@ export class Infall {
    * Start a swallowed mob's flight as a ghost (no tear, INFALL_MOB_S long). Main has already removed the mob from its
    * list; it passes `pigs.list` plus `ghosts('pig', …)` to pigRenderer (zombies likewise). Its middle rides the spiral,
    * shrinking from renderScale 1 to 0.1 and spinning (renderSpin). Past MAX_INFALL_MOBS there is no ghost.
-   * @param {'pig'|'zombie'} kind
+   * @param {'pig'|'zombie'|'animal'} kind
    * @param {*} body the removed pig or zombie (x, y, z feet; yaw; height)
    * @param {number} cx the hole's centre
    * @param {number} cy
@@ -383,7 +383,7 @@ export class Infall {
 
   /**
    * Append the ghost bodies of one kind to `out` (main: `pigs.list` plus the pig ghosts → pigRenderer.sync).
-   * @param {'pig'|'zombie'} kind
+   * @param {'pig'|'zombie'|'animal'} kind
    * @param {*[]} [out]
    * @returns {*[]} out
    */
