@@ -19,6 +19,12 @@
 // v0.9 (docs/DESIGN-survival.md §8.3, §2.5, §3.1): `new World({ …, gen })` picks the generator version (`world.gen`; 2
 // adds the survival resources), `columnAt(q, r)` hands the climate its column, and `findSurvivalSpawn()` is findSpawn's
 // spiral restricted to green land (PLAINS / FOREST), cached per world.
+//
+// Light (CONTRACTS §62): `world.light` is the LightEngine (light.js). Every generated chunk is lit as it is registered
+// (its own blocks plus its loaded neighbours; light reaching meshed neighbours re-meshes them lazily); every successful
+// setBlock / loaded importEdits pair is noted and the whole batch is re-lit at the start of the next update(), before
+// anything is meshed, so a re-mesh always sees light that matches its blocks. The chunks the edit itself dirties follow
+// the write's lazy flag; chunks dirtied only by the light it moved are re-meshed lazily (nearest first).
 import {
   CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE, DATA_RADIUS_EXTRA,
   UNLOAD_RADIUS_EXTRA, BUILD_BUDGET_MS, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS, LAZY_COALESCE_UPDATES, GEN_LATEST,
@@ -29,6 +35,7 @@ import { BLOCK, BIOME, UNLOADED, isSolid } from './blocks.js';
 import { Chunk } from './chunk.js';
 import { createWorldGen } from './worldgen.js';
 import { buildChunkMesh } from './mesher.js';
+import { LightEngine } from './light.js';
 import { normalizeSeed } from './noise.js';
 
 /** @typedef {import('./types.js').BlockId} BlockId */
@@ -182,6 +189,15 @@ export class World {
     this._lazyScratch = [];
     /** update() calls so far (a 'coalesce' chunk's wait, §9.2) */
     this._updateCalls = 0;
+
+    /** Per-cell sky and block light of every loaded chunk (§62). */
+    this.light = new LightEngine(this);
+    /**
+     * How the chunks re-lit by the pending edits are dirtied: 'coalesce' while every pending write was a 'coalesce' one,
+     * otherwise lazily (null: nothing pending).
+     * @type {true|'coalesce'|null}
+     */
+    this._lightLazy = null;
 
     /** RING_OFFSETS as parallel typed arrays, sorted nearest-first (see _computeRing). */
     this._ringDq = new Int16Array(0);
@@ -372,6 +388,30 @@ export class World {
     return { height: col.height, biome: col.biome, temperature: col.temperature };
   }
 
+  /**
+   * Light at cell (q, y, r) (§62), packed `sky << 4 | block` (light.skyLevel / blockLevel unpack it): FULL_SKY (15, 0)
+   * above the world and in unloaded chunks, 0 below it. Pending edits are re-lit first.
+   * @returns {number}
+   */
+  lightAt(q, y, r) {
+    this.flushLight();
+    return this.light.get(q, y, r);
+  }
+
+  /**
+   * Re-light every edit since the last call (update() does this first thing). Chunks whose meshes show the change are
+   * dirtied: the edited cells' own chunks were already dirtied by the write; any other meshed chunk lazily ('coalesce'
+   * when every write of the batch was one).
+   */
+  flushLight() {
+    if (!this.light.hasPending) return;
+    const lazy = this._lightLazy ?? true;
+    this._lightLazy = null;
+    for (const c of this.light.flush()) {
+      if (c.meshed) this._markChunkDirty(c, lazy);
+    }
+  }
+
   // -------------------------------------------------------------------------------------------
   // edits
 
@@ -410,6 +450,7 @@ export class World {
     this._recordEdit(chunk.key, li, prev, id);
     this.editVersion++;
     this._markDirtyAround(q, r, lazy);
+    this._noteLight(chunk, li, lazy);
     this.onBlockChange(q, y, r, prev, id);
     return true;
   }
@@ -490,6 +531,7 @@ export class World {
           chunk.blocks[li] = id;
           const [lq, , lr] = indexToLocal(li);
           this._markDirtyAround(cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr);
+          this._noteLight(chunk, li, false);
         } else {
           // Not generated yet: recorded without an origin; _generate fills it in (or drops a redundant edit).
           let chunkEdits = this.edits.get(key);
@@ -519,6 +561,8 @@ export class World {
   update(px, pz, budgetMs = BUILD_BUDGET_MS) {
     // A non-finite position would generate and mesh a phantom 'NaN,NaN' chunk that nothing ever unloads.
     if (!Number.isFinite(px + pz)) return { generated: 0, meshed: 0, unloaded: 0, pendingGen: 0, pendingMesh: 0 };
+    // 0. Re-light this frame's edits first (§62), so every mesh built below sees light that matches its blocks.
+    this.flushLight();
     const [pq, pr] = worldToHex(px, pz);
     const pcq = Math.floor(pq / CHUNK_SIZE);
     const pcr = Math.floor(pr / CHUNK_SIZE);
@@ -654,6 +698,8 @@ export class World {
   /** Remove every chunk, firing onChunkUnload for the meshed ones. Edits are kept. */
   dispose() {
     for (const chunk of this.chunks.values()) this._removeChunk(chunk);
+    this.light.clear();
+    this._lightLazy = null;
     this.chunks.clear();
     this._byId.clear();
     this._lastChunk = null;
@@ -750,6 +796,18 @@ export class World {
   }
 
   /**
+   * Note an edited cell for the next flushLight (§62) and fold the write's lazy flag into the batch's.
+   * @param {Chunk} chunk
+   * @param {number} li
+   * @param {boolean|'coalesce'} lazy
+   */
+  _noteLight(chunk, li, lazy) {
+    this.light.noteChange(chunk, li);
+    if (lazy !== 'coalesce') this._lightLazy = true;
+    else if (this._lightLazy === null) this._lightLazy = 'coalesce';
+  }
+
+  /**
    * Mark dirty every loaded chunk containing cell (q, r) or one of its six neighbours: 1 to 4 chunks (4 only for
    * the two index-space corner cells lq=15,lr=0 and lq=0,lr=15, whose neighbours span three other chunks).
    * @param {number} q
@@ -771,6 +829,15 @@ export class World {
   _markDirtyCell(q, r, lazy = false) {
     const chunk = this._byId.get(packId(Math.floor(q / CHUNK_SIZE), Math.floor(r / CHUNK_SIZE)));
     if (chunk === undefined) return;
+    this._markChunkDirty(chunk, lazy);
+  }
+
+  /**
+   * _markDirtyCell's rule for one chunk.
+   * @param {Chunk} chunk
+   * @param {boolean|'coalesce'} [lazy=false]
+   */
+  _markChunkDirty(chunk, lazy = false) {
     if (!lazy) {
       chunk.dirty = true;
       chunk.lazy = false;
@@ -815,6 +882,10 @@ export class World {
     }
     this.chunks.set(chunk.key, chunk);
     this._byId.set(packId(cq, cr), chunk);
+    // Light it (§62): light it hands its loaded neighbours re-meshes the meshed ones, lazily.
+    for (const c of this.light.lightChunk(chunk)) {
+      if (c !== chunk && c.meshed) this._markChunkDirty(c, true);
+    }
     this.onChunkGenerated(cq, cr);
     return chunk;
   }
@@ -832,6 +903,7 @@ export class World {
 
   /** Drop a chunk from both indices, firing onChunkUnload if it had been meshed. */
   _removeChunk(chunk) {
+    this.light.releaseChunk(chunk);
     this.chunks.delete(chunk.key);
     this._byId.delete(packId(chunk.cq, chunk.cr));
     if (chunk === this._lastChunk) {

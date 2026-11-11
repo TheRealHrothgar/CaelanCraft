@@ -29,6 +29,8 @@
  * @property {Float32Array} normals    3 per vertex, unit face normals (hex.FACE_NORMALS)
  * @property {Float32Array} uvs        2 per vertex, atlas UVs (flipY = false convention)
  * @property {Float32Array} colors     3 per vertex, 0..1 = tint * FACE_SHADE * AO_CURVE
+ * @property {Uint8Array}   [light]    2 per vertex (§62): sky level · 17, block level · 17 (0..255, normalised in the shader);
+ *                                     the mesher always writes it, hand-made MeshData may leave it out (read as open sky)
  * @property {Uint32Array}  indices    6 per side quad, 18 per hexagonal top/bottom face
  * @property {number} vertexCount
  * @property {number} indexCount
