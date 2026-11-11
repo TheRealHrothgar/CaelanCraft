@@ -131,6 +131,10 @@ export const TILE_NAMES = Object.freeze({
   198: 'snare_baited',
   199: 'snare_sprung',
   200: 'loose_stones_flint',
+  201: 'litter_rock',
+  202: 'litter_flint',
+  203: 'litter_stick',
+  204: 'flint_gravel',
   // powder and circuits: 160–194 (DESIGN-circuits §1.4), painted by circuitTiles.js
   ...CIRCUIT_TILE_NAMES,
   240: 'zombie_face',
@@ -2299,6 +2303,75 @@ function paintPebbles(px, rng, skipFirst) {
 }
 
 /**
+ * 201 litter_rock — the SKIN of the 3D loose stones (CONTRACTS §75; the mesher cuts each small face from it): a pale
+ * warm-grey rock surface (0x9a968e) in 2-px blotches with fine grain, light flecks (0xbdb9b0) and a few dark pits
+ * (0x6a665f). Opaque, no picture: the shape is in the mesh.
+ */
+function paintLitterRock(px, rng) {
+  fill(px, 0x9a968e);
+  cellNoise(px, rng, 2, 9);
+  noise(px, rng, 5);
+  speck(px, rng, 14, [0xbdb9b0, 0xb0aca4]);
+  speck(px, rng, 9, [0x6a665f, 0x777369]);
+}
+
+/**
+ * 202 litter_flint — the skin of a FLINT nodule among loose stones: glossy blue-black (0x1f2434) with slanting blue-grey
+ * conchoidal streaks (0x55628a), white glints, and flecks of chalky cortex (0xe9e3d2).
+ */
+function paintLitterFlint(px, rng) {
+  fill(px, 0x1f2434);
+  noise(px, rng, 5);
+  for (let k = 0; k < 7; k++) {
+    const x0 = randInt(rng, 0, 15);
+    const y0 = randInt(rng, 0, 15);
+    for (let t = 0; t < 3; t++) set(px, wrap16(x0 + t), wrap16(y0 - t), 0x55628a, delta(rng, 6));
+  }
+  speck(px, rng, 8, [0xe9e3d2, 0xd9d3c2]);
+  speck(px, rng, 5, [0xf4f6ff]);
+}
+
+/**
+ * 203 litter_stick — the skin of the 3D fallen branches: bark running ALONG the tile (grain in x): each row its own brown
+ * (0x7d5c38 ± 14), fine noise, short dark splits (0x4d3820) and pale flecks (0xa98656).
+ */
+function paintLitterStick(px, rng) {
+  for (let y = 0; y < H; y++) {
+    const d = delta(rng, 14);
+    for (let x = 0; x < W; x++) set(px, x, y, 0x7d5c38, d);
+  }
+  noise(px, rng, 5);
+  for (let k = 0; k < 10; k++) {
+    const x0 = randInt(rng, 0, 15);
+    const y0 = randInt(rng, 0, 15);
+    const len = randInt(rng, 2, 4);
+    for (let t = 0; t < len; t++) set(px, wrap16(x0 + t), y0, 0x4d3820, delta(rng, 5));
+  }
+  speck(px, rng, 10, [0xa98656, 0x96744a]);
+}
+
+/** The flint nodules in tile 204: [x, y, w, h] in texels (kept off the tile's edges so they never wrap). */
+const FLINT_NODULES = Object.freeze([[2, 2, 3, 3], [10, 3, 4, 3], [5, 8, 3, 2], [11, 11, 3, 3], [1, 12, 3, 2]]);
+
+/**
+ * 204 flint_gravel — gravel (tile 9's recipe on its own seed, so the stones match) with five FLINT nodules in it, plain to
+ * see: glossy blue-black lumps (0x1b1f2c), each lit blue-grey on its upper-left texel (0x46527a) and with one chalk-white
+ * cortex texel on its lower right (0xe9e3d2).
+ */
+function paintFlintGravel(px, rng) {
+  paintGravel(px, makeRng('gravel'));
+  for (const [x0, y0, w, h] of FLINT_NODULES) {
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) {
+        const lit = dx === 0 && dy === 0;
+        const rim = dx === w - 1 && dy === h - 1;
+        set(px, x0 + dx, y0 + dy, rim ? 0xe9e3d2 : lit ? 0x46527a : 0x1b1f2c, rim ? 0 : delta(rng, 3));
+      }
+    }
+  }
+}
+
+/**
  * 102 loose_stones — seen from ABOVE (a decal lying on the cell's floor): on alpha 0, inside the tile's inscribed hexagon,
  * four bold pebbles (PEBBLES), each with a dark LITTER_OUTLINE rim, a pale warm-grey body lit from the upper left and
  * shaded to the lower right, and a white glint — drawn to stand out on grass. No flint: tile 200 is the one with flint.
@@ -2573,6 +2646,10 @@ const RECIPES = Object.freeze({
   snare_baited: paintSnareBaited,
   snare_sprung: paintSnareSprung,
   loose_stones_flint: paintLooseStonesFlint,
+  litter_rock: paintLitterRock,
+  litter_flint: paintLitterFlint,
+  litter_stick: paintLitterStick,
+  flint_gravel: paintFlintGravel,
   zombie_face: paintZombieFace,
   zombie_head_side: paintZombieHeadSide,
   zombie_scalp: paintZombieScalp,

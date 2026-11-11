@@ -65,10 +65,11 @@ describe('the first day (§7.5)', () => {
   const survival = new Survival();
   let gatherSeconds = 0;
 
-  // The start: 20 loose stones, 3 gravel tops and 12 tussocks around (0, 0), and an oak canopy of 8 leaves overhead.
+  // The start: 20 loose stones, 4 Flinty Gravel tops (§75: where flint comes from) and 12 tussocks around (0, 0), and an
+  // oak canopy of 8 leaves overhead.
   beforeAll(() => {
     for (let i = 0; i < 20; i++) world.put(i - 10, GROUND + 1, 4, B.LOOSE_STONES);
-    for (let i = 0; i < 3; i++) world.put(i, GROUND, -4, B.GRAVEL);
+    for (let i = 0; i < 4; i++) world.put(i, GROUND, -4, B.FLINT_GRAVEL);
     for (let i = 0; i < 12; i++) world.put(i - 6, GROUND + 1, 7, B.TUSSOCK);
     for (let i = 0; i < 8; i++) world.put(i - 4, GROUND + 5, -7, B.OAK_LEAVES);
     survival.setMode('survival');
@@ -120,16 +121,16 @@ describe('the first day (§7.5)', () => {
 
   const made = [];
 
-  it('hands gather rock, flint and fibre from loose stones, gravel tops and tussock', () => {
+  it('hands gather rock, flint and fibre from loose stones, Flinty Gravel tops and tussock', () => {
     for (let i = 0; i < 20; i++) pickAt(i - 10, GROUND + 1, 4);
-    for (let i = 0; i < 3; i++) gatherSeconds += digAt(i, GROUND, -4, HOTBAR_SIZE - 1);
+    for (let i = 0; i < 4; i++) gatherSeconds += digAt(i, GROUND, -4, HOTBAR_SIZE - 1);
     for (let i = 0; i < 12; i++) gatherSeconds += digAt(i - 6, GROUND + 1, 7, HOTBAR_SIZE - 1);
     expect(pack.count('rock')).toBeGreaterThanOrEqual(9);
     expect(pack.countTag('knapstone')).toBeGreaterThanOrEqual(4);
     expect(pack.count('plant_fibre')).toBeGreaterThanOrEqual(11);
-    // Gravel by hand is 1.2 s a cell, tussock 0.2 s (§6.3): 6 s of digging, give or take a frame a cell.
-    expect(gatherSeconds).toBeGreaterThanOrEqual(3 * 1.2 + 12 * 0.2 - 1e-9);
-    expect(gatherSeconds).toBeLessThan(3 * 1.2 + 12 * 0.2 + 15 * FRAME + 1e-9);
+    // Gravel by hand is 1.2 s a cell, tussock 0.2 s (§6.3): 7.2 s of digging, give or take a frame a cell.
+    expect(gatherSeconds).toBeGreaterThanOrEqual(4 * 1.2 + 12 * 0.2 - 1e-9);
+    expect(gatherSeconds).toBeLessThan(4 * 1.2 + 12 * 0.2 + 16 * FRAME + 1e-9);
     // Everything beyond the kit's 9 rock, 4 knapstone and 11 fibre is set aside, so "nothing left over" can be checked.
     store.ensureBasket(0, GROUND + 1, -1);
     const aside = [['rock', pack.count('rock') - 9], ['flint', pack.count('flint') - 4], ['plant_fibre', pack.count('plant_fibre') - 11]];

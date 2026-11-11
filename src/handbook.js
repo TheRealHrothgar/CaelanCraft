@@ -29,7 +29,7 @@ import {
   CRUSH_DAMAGE_PER_CELL, BREATH_MAX_S, REGROW_MEAN_S, GRAVITY, MAX_SUBSTEP_DT, TERMINAL_VELOCITY,
   BODY_TEMP_NORMAL, BASKET_SLOTS, REACH, CAMPFIRE_LIGHT, TORCH_LIGHT,
 } from './config.js';
-import { BLOCK, BIOME, BIOME_NAMES, FLINT_SHARE, getBlockDef } from './blocks.js';
+import { BLOCK, BIOME, BIOME_NAMES, FLINT_SHARE, FLINT_PILE_SHARE, FLINT_GRAVEL_SHARE, getBlockDef } from './blocks.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, getItem, itemName } from './items.js';
 import { RECIPES, STATION_IDS, STATION_NAMES, STATION_BLOCKS, getRecipe, inputLabel } from './crafting.js';
 import {
@@ -439,7 +439,7 @@ export function firstDayKit() {
 
 /** What your hands can gather on the first day, and how (generated from PICKABLE and BLOCK_RULES). */
 const GATHER = [
-  BLOCK.LOOSE_STONES, BLOCK.FALLEN_BRANCHES, BLOCK.TUSSOCK, BLOCK.GRAVEL, BLOCK.HONEYBERRY_BUSH, BLOCK.PRICKLY_PEAR,
+  BLOCK.LOOSE_STONES, BLOCK.FALLEN_BRANCHES, BLOCK.TUSSOCK, BLOCK.FLINT_GRAVEL, BLOCK.HONEYBERRY_BUSH, BLOCK.PRICKLY_PEAR,
   BLOCK.TUBER_PLANT, BLOCK.CATTAILS, BLOCK.OAK_LEAVES, BLOCK.CLAY,
 ];
 
@@ -1049,7 +1049,6 @@ function makeChapters() {
   const rawSick = food('raw_pork').sick;
   const roastKeeps = (food('roast_pork').spoilS ?? 0) / (food('raw_pork').spoilS ?? 1);
   const stoneAxeBlows = Math.ceil(PIG_HEALTH / (getItem('stone_axe')?.tool?.power ?? 1));
-  const flintShare = FLINT_SHARE === 0.5 ? 'about half of them' : `${fmtPct(FLINT_SHARE)} of them`;
   // animals
   const herdNames = listJoin(ANIMAL_KINDS.map((k) => HERD_WORDS[k] ?? `${SPECIES[k].name.toLowerCase()}s`));
   /** @type {Map<string, string[]>} herd sizes → the species that keep them */
@@ -1103,7 +1102,7 @@ function makeChapters() {
       h('Before dusk, step by step'),
       steps([
         'Pull *tussock grass* with your bare hands for Plant Fibre: hold the left mouse button on it until it breaks. Eight tussocks give about a dozen.',
-        'Look down. *Loose Stones* give Rock, and those with a dark, glossy lump a Flint too. *Fallen Branches* give Sticks. Press [R] on them.',
+        'Look down. *Loose Stones* give Rock and *Fallen Branches* give Sticks: press [R] on them. For Flint, dig *Flinty Gravel*: gravel with dark, glossy lumps in it.',
         'Press [E] and make a *Stone Hammer*, then a *Stone Axe* and some *Cord*. Hand jobs carry on while you walk.',
         'With the Stone Axe in hand, lop leaves for Sticks and fell a tree: logs need an axe.',
         'Knap your flint with the Stone Hammer: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
@@ -1290,7 +1289,7 @@ function makeChapters() {
     [
       h('Stone and flint'),
       p('The *Stone Hammer* is a fist-sized cobble, the knapper\'s hammer: every flint tool is struck with it. The *Stone Axe* is a sharp-edged cobble, your first axe: it fells trees and lops leaves for sticks.'),
-      p(`*Flint* lies among the *Loose Stones* on the ground. Look before you pick: ${flintShare} show a dark, glossy nodule, and those give a Flint. Plain ones never do. Now and then (${fmtPct(dropChance(BLOCK.STONE, 'flint'))}) one turns up in stone you mine.`),
+      p(`*Flint* comes from *Flinty Gravel*: gravel with dark, glossy lumps in it. Dig it, by hand or with a shovel, and each cell gives a Flint. Not every gravel pile holds any: about ${fmtPct(FLINT_PILE_SHARE)} of the piles do, and in those about ${fmtPct(FLINT_GRAVEL_SHARE)} of the gravel. Plain gravel never gives flint. A few *Loose Stones* (${fmtPct(FLINT_SHARE)}) show a dark nodule and give one too.`),
       p('Flint, or obsidian (volcanic glass), knaps into a knife, an axe, a shovel, a spear and a pick. Each needs a stick and cord to haft it.'),
       p(`The Flint Pick breaks stone, ${flintOres.map((n) => n.toLowerCase()).join(', ')} and obsidian.`),
       tip('Obsidian and gems are brittle: any pick that cuts stone breaks them.'),

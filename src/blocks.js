@@ -39,8 +39,10 @@ export const BLOCK = Object.freeze({
   WORKBENCH: 115,
   // v0.11 (CONTRACTS §69): the Snare — set, baited (R with food), and sprung (holding an animal); all three give the Snare
   SNARE: 116, SNARE_BAITED: 117, SNARE_SPRUNG: 118,
+  // v0.13 (CONTRACTS §75): gravel with flint nodules in it — where flint comes from. Generated, never placed by hand.
+  FLINT_GRAVEL: 119,
 });
-export const BLOCK_COUNT = 119;
+export const BLOCK_COUNT = 120;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -83,6 +85,8 @@ export const TILE = Object.freeze({
   WORKBENCH_SIDE: 195, WORKBENCH_TOP: 196,
   // v0.11 (CONTRACTS §69, §70): the snares (floor decals), and loose stones that hold flint
   SNARE: 197, SNARE_BAITED: 198, SNARE_SPRUNG: 199, LOOSE_STONES_FLINT: 200,
+  // v0.13 (CONTRACTS §75): the skins of the 3D ground litter (a rock, a flint nodule, a stick) and the Flinty Gravel
+  LITTER_ROCK: 201, LITTER_FLINT: 202, LITTER_STICK: 203, FLINT_GRAVEL: 204,
   // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
   ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
   // The Hollow Watcher (§40; atlas row 15, not block faces): its ash-grey stone, the glow mask of that stone's cracks
@@ -127,10 +131,12 @@ export const SOUND_GROUPS = Object.freeze([
  *                                  prism; 'flat' the TOP tile alone as an unskewed 2D picture (the circuit parts but the keg:
  *                                  thin parts and device models, which are not prisms; DESIGN-circuits §1.5; and the plants
  *                                  and ground litter, which are sprites and decals)
- * @property {'prism'|'cross'|'decal'} shape  how the chunk mesher draws it: 'prism' (default) the hexagonal prism; 'cross'
- *                                  three crossed vertical pictures through the cell's middle (the wild plants: they look like
- *                                  plants, not like a hex ring of panels); 'decal' one flat picture lying on the cell's floor
- *                                  (the ground litter). Both use the block's TOP tile; the terrain stays hexagonal prisms.
+ * @property {'prism'|'cross'|'decal'|'litter'} shape  how the chunk mesher draws it: 'prism' (default) the hexagonal prism;
+ *                                  'cross' three crossed vertical pictures through the cell's middle (the wild plants: they
+ *                                  look like plants, not like a hex ring of panels); 'decal' one flat picture lying on the
+ *                                  cell's floor (the snares), both of the block's TOP tile; 'litter' a few small 3D pieces
+ *                                  lying on the floor (loose stones, fallen branches: CONTRACTS §75). The terrain stays
+ *                                  hexagonal prisms.
  */
 
 /** tiles helper: six sides, then top, then bottom */
@@ -185,7 +191,10 @@ const PLANT = Object.freeze({
 /** The wild plants: PLANT flags drawn as crossed sprites of their picture (every face is that one tile), with a flat icon. */
 const SPRITE = Object.freeze({ ...PLANT, shape: /** @type {'cross'} */ ('cross'), icon: /** @type {'flat'} */ ('flat') });
 
-/** The ground litter: PLANT flags drawn as a flat picture on the cell's floor (every face is that one tile), flat icon. */
+/** The ground litter: PLANT flags drawn as small 3D rocks or sticks on the cell's floor (§75); its icon is its flat picture. */
+const LITTER = Object.freeze({ ...PLANT, shape: /** @type {'litter'} */ ('litter'), icon: /** @type {'flat'} */ ('flat') });
+
+/** The snares: PLANT flags drawn as a flat picture on the cell's floor (every face is that one tile), flat icon. */
 const DECAL = Object.freeze({ ...PLANT, shape: /** @type {'decal'} */ ('decal'), icon: /** @type {'flat'} */ ('flat') });
 
 /**
@@ -318,8 +327,8 @@ export const BLOCKS = [
   def({ id: B.REMAINS, name: 'remains', displayName: 'Your Belongings', tiles: tiles(T.REMAINS_SIDE, T.REMAINS_TOP), ...PLANT, soundGroup: 'cloth', placeable: false }),
   // Ground litter (picked with R or broken by hand) and the cold fire pit a burnt-out campfire leaves: a meshed cutout block,
   // so campfires.js, the campfire renderer and the zombie safe zone never see it. None of these is placed by hand.
-  def({ id: B.LOOSE_STONES, name: 'loose_stones', displayName: 'Loose Stones', tiles: tiles(T.LOOSE_STONES), ...DECAL, soundGroup: 'stone', placeable: false }),
-  def({ id: B.FALLEN_BRANCHES, name: 'fallen_branches', displayName: 'Fallen Branches', tiles: tiles(T.FALLEN_BRANCHES), ...DECAL, soundGroup: 'wood', placeable: false }),
+  def({ id: B.LOOSE_STONES, name: 'loose_stones', displayName: 'Loose Stones', tiles: tiles(T.LOOSE_STONES), ...LITTER, soundGroup: 'stone', placeable: false }),
+  def({ id: B.FALLEN_BRANCHES, name: 'fallen_branches', displayName: 'Fallen Branches', tiles: tiles(T.FALLEN_BRANCHES), ...LITTER, soundGroup: 'wood', placeable: false }),
   def({ id: B.FIRE_PIT, name: 'fire_pit', displayName: 'Cold Fire Pit', tiles: tiles(T.FIRE_PIT_SIDE, T.PLANT_TOP_CLEAR, T.PLANT_TOP_CLEAR), ...PLANT, soundGroup: 'stone', placeable: false }),
   // ---- Powder and circuits (DESIGN-circuits §1.2). The part table, predicates and connection rules live in circuitParts.js.
   // The devices carry the MODEL flags: solid, unmeshed 3D models drawn by circuitRenderer, whose moving and lit bits are
@@ -351,6 +360,8 @@ export const BLOCKS = [
   def({ id: B.SNARE, name: 'snare', displayName: 'Snare', tiles: tiles(T.SNARE), ...DECAL, soundGroup: 'wood' }),
   def({ id: B.SNARE_BAITED, name: 'snare_baited', displayName: 'Baited Snare', tiles: tiles(T.SNARE_BAITED), ...DECAL, soundGroup: 'wood', placeable: false }),
   def({ id: B.SNARE_SPRUNG, name: 'snare_sprung', displayName: 'Sprung Snare', tiles: tiles(T.SNARE_SPRUNG), ...DECAL, soundGroup: 'wood', placeable: false }),
+  // v0.13 (CONTRACTS §75): gravel that holds flint. It falls like gravel; digging it gives gravel (or rock) and a Flint.
+  def({ id: B.FLINT_GRAVEL, name: 'flint_gravel', displayName: 'Flinty Gravel', tiles: tiles(T.FLINT_GRAVEL), soundGroup: 'gravel', gravity: true, placeable: false }),
 ];
 
 /**
@@ -435,9 +446,17 @@ export function isTargetable(id) {
   return id !== B.AIR && !getBlockDef(id).liquid;
 }
 /** false for blocks drawn by their own model instead of the chunk mesher (campfire, black hole, the circuit parts but the keg). */
-/** How the chunk mesher draws `id` (BlockDef.shape): 'prism', 'cross' (the wild plants) or 'decal' (the ground litter). */
-/** The share of natural loose stones that hold flint (harvest's 50 % chance, made visible: CONTRACTS §70). */
-export const FLINT_SHARE = 0.5;
+/** How the chunk mesher draws `id` (BlockDef.shape): 'prism', 'cross' (the wild plants), 'decal' (the snares) or 'litter'. */
+/**
+ * The share of natural loose stones that hold flint (made visible: CONTRACTS §70). v0.13 (§75): 0.06, down from 0.5 —
+ * flint is rarer and comes mostly from Flinty Gravel.
+ */
+export const FLINT_SHARE = 0.06;
+/** §75: the share of gravel PILES (8 × 8 × 8-cell regions) that hold any flint, and of their gravel cells that do. */
+export const FLINT_PILE_SHARE = 0.4;
+export const FLINT_GRAVEL_SHARE = 0.3;
+/** A gravel pile, for flint: cells that share `q >> 3, y >> 3, r >> 3`. */
+export const FLINT_PILE_SHIFT = 3;
 
 /**
  * Whether the loose stones at column (q, r) hold flint: a fixed coin toss per column, so the mesher can draw those with
@@ -449,6 +468,27 @@ export function flintAt(q, r) {
   h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296 < FLINT_SHARE;
+}
+
+/** A 0..1 hash of three integers and a seed (the flint in gravel: worldgen and tests share it). */
+function hash01(a, b, c, seed) {
+  let h = (Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul(b | 0, 0x165667b1) ^ Math.imul(c | 0, 0x9e3779b1) ^ Math.imul(seed | 0, 0x85ebca6b)) | 0;
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+  return ((h ^ (h >>> 15)) >>> 0) / 4294967296;
+}
+
+/** §75: whether the gravel pile round cell (q, y, r) holds any flint at all (FLINT_PILE_SHARE of the piles do). */
+export function flintPileAt(q, y, r, seed = 0) {
+  return hash01(q >> FLINT_PILE_SHIFT, y >> FLINT_PILE_SHIFT, r >> FLINT_PILE_SHIFT, seed ^ 0x51f1) < FLINT_PILE_SHARE;
+}
+
+/**
+ * §75: whether generated gravel at cell (q, y, r) is Flinty Gravel: its pile holds flint (flintPileAt) and this cell is
+ * one of the FLINT_GRAVEL_SHARE of that pile's cells that do. Pure; worldgen writes FLINT_GRAVEL where it is true.
+ */
+export function flintGravelAt(q, y, r, seed = 0) {
+  return flintPileAt(q, y, r, seed) && hash01(q, y, r, seed ^ 0x7a31) < FLINT_GRAVEL_SHARE;
 }
 
 export function getBlockShape(id) {

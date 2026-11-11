@@ -1496,7 +1496,7 @@ export class BlockPhysics {
     const fallThroughIds = [];
     for (let id = 0; id < 256; id++) if (isFallThrough(id)) fallThroughIds.push(id);
     const dugOut = (q, y, r) => typeof world.originAt !== 'function' || !isFallThrough(world.originAt(q, y, r));
-    this.addReseeder('gravity', 'falling', [BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, ...POP_OFF_IDS, ...fallThroughIds], (ctx, q, y, r, id) => {
+    this.addReseeder('gravity', 'falling', [BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, BLOCK.FLINT_GRAVEL, ...POP_OFF_IDS, ...fallThroughIds], (ctx, q, y, r, id) => {
       if ((isGravityBlock(id) || isPopOff(id)) && isFallThrough(peek(q, y - 1, r))) this.schedule('fall', q, y, r);
       if (isFallThrough(id) && dugOut(q, y, r)) {
         const above = peek(q, y + 1, r);

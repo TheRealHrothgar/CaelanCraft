@@ -14,7 +14,7 @@ import { BLOCK_RULES, MOB_DROPS, PICKABLE, DEEP_BELOW_SEA, breakSeconds, ruleFor
 import { HEAT_SOURCES, DIURNAL_PEAK_T } from '../../src/climate.js';
 import { RATES, DAMAGE_CAUSES, SOFT_LANDING, fallDamage } from '../../src/vitals.js';
 import { FIRE_TRANSFORMS } from '../../src/cooking.js';
-import { BLOCK, BIOME, FLINT_SHARE, getBlockDef } from '../../src/blocks.js';
+import { BLOCK, BIOME, FLINT_SHARE, FLINT_PILE_SHARE, FLINT_GRAVEL_SHARE, getBlockDef } from '../../src/blocks.js';
 import {
   HOTBAR_SIZE, PACK_SLOTS, DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, FUEL_LOG_S,
   PIG_HEALTH, PIG_NOTICE, REACH, WALK_SPEED, SPRINT_SPEED, ZOMBIE_DAMAGE, ZOMBIE_HITS, ZOMBIE_SIGHT, ZOMBIE_SPAWN_MIN, ZOMBIE_MAX_DROP,
@@ -523,12 +523,16 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       expect(row[1].startsWith(picked ? 'R, or hold LMB' : 'hold LMB to ')).toBe(true);
     }
     expect(rowOf(t, BLOCK.TUSSOCK)[1]).toBe('hold LMB to pull it (a knife is faster)');
-    expect(rowOf(t, BLOCK.GRAVEL)[1]).toBe('hold LMB to dig it (a shovel is faster)');
     expect(rowOf(t, BLOCK.OAK_LEAVES)[1]).toBe('hold LMB to break it (an axe is faster)');
     expect(allProse()).toContain('hold the left mouse button on it until it breaks');
     expect(rowOf(t, BLOCK.LOOSE_STONES)[2]).toBe('1–2 Rock · Flint (if a dark nodule shows, wild only)');
-    expect(describeDrops(PICKABLE[BLOCK.LOOSE_STONES].drops)).toBe('1–2 Rock · Flint (50 %, wild only)'); // the rule itself
-    expect(allCells()).not.toContain('Flint (50 %'); // the book never quotes it as a chance
+    expect(describeDrops(PICKABLE[BLOCK.LOOSE_STONES].drops)).toBe('1–2 Rock · Flint (6 %, wild only)'); // the rule itself
+    expect(allCells()).not.toContain('Flint (6 %'); // the book never quotes it as a chance
+    // §75: Flinty Gravel is where flint comes from, by hand or with a shovel
+    expect(rowOf(t, BLOCK.FLINT_GRAVEL)[0]).toBe('Flinty Gravel');
+    expect(rowOf(t, BLOCK.FLINT_GRAVEL)[1]).toBe('hold LMB to dig it (a shovel is faster)');
+    expect(rowOf(t, BLOCK.FLINT_GRAVEL)[2]).toBe('with a shovel: Gravel; otherwise: 2 Rock · Flint');
+    expect(t.keys).not.toContain(BLOCK.GRAVEL); // plain gravel gives no flint: the table lists the gravel worth digging
     expect(rowOf(t, BLOCK.TUSSOCK)[2]).toBe('with a shovel: Tussock Grass; with a knife: 2–3 Plant Fibre; otherwise: 1–2 Plant Fibre');
   });
 
@@ -837,13 +841,20 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain('This book can be neither dropped nor thrown.');
   });
 
-  it('flint (§70): the stones that show a nodule give it, about half of them; plain ones never; a little from mined stone', () => {
+  it('flint (§75): it comes from Flinty Gravel, in some piles only; a few loose stones show a nodule; never from mined stone', () => {
     expect(dropItems(PICKABLE[BLOCK.LOOSE_STONES].drops).find((it) => it.k === 'flint').p).toBe(FLINT_SHARE);
-    expect(FLINT_SHARE).toBe(0.5); // "about half of them"
-    const mined = dropItems(ruleFor(BLOCK.STONE).drops).find((it) => it.k === 'flint');
-    expect(text).toContain(`about half of them show a dark, glossy nodule, and those give a Flint. Plain ones never do. Now and then (${fmtPct(mined.p)}) one turns up in stone you mine.`);
-    expect(text).toContain('Loose Stones give Rock, and those with a dark, glossy lump a Flint too.');
-    expect(text).not.toMatch(/half the time a Flint/);
+    expect([FLINT_SHARE, FLINT_PILE_SHARE, FLINT_GRAVEL_SHARE]).toEqual([0.06, 0.4, 0.3]);
+    expect(dropItems(ruleFor(BLOCK.STONE).drops).find((it) => it.k === 'flint')).toBeUndefined();
+    expect(dropItems(ruleFor(BLOCK.GRAVEL).drops).find((it) => it.k === 'flint')).toBeUndefined();
+    const fromGravel = dropItems(ruleFor(BLOCK.FLINT_GRAVEL).drops).find((it) => it.k === 'flint');
+    expect([fromGravel.n, fromGravel.p]).toEqual([1, undefined]); // always, one
+    expect(text).toContain('Flint comes from Flinty Gravel: gravel with dark, glossy lumps in it. Dig it, by hand or with a shovel, and each cell gives a Flint.');
+    expect(text).toContain(`Not every gravel pile holds any: about ${fmtPct(FLINT_PILE_SHARE)} of the piles do, and in those about ${fmtPct(FLINT_GRAVEL_SHARE)} of the gravel. Plain gravel never gives flint.`);
+    expect(text).toContain('about 40 % of the piles do, and in those about 30 % of the gravel.');
+    expect(text).toContain(`A few Loose Stones (${fmtPct(FLINT_SHARE)}) show a dark nodule and give one too.`);
+    expect(text).toContain('For Flint, dig Flinty Gravel: gravel with dark, glossy lumps in it.');
+    expect(text).not.toMatch(/turns up in stone you mine/);
+    expect(text).not.toMatch(/about half of them/);
   });
 
   it('raw water poisons and boiling makes it safe (§66); Poisoned blocks healing, a bandage still works', () => {

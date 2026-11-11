@@ -2,8 +2,8 @@
 // (docs/DESIGN-survival.md §6, §4.2–§4.3).
 import { describe, it, expect } from 'vitest';
 import { REGROW_MEAN_S, MAX_REGROW_TRACKED, SEA_LEVEL } from '../../src/config.js';
-import { BLOCK, BLOCKS, BLOCK_COUNT, isWater } from '../../src/blocks.js';
-import { ITEMS, TOOL_TYPES, TIER_SPEED, isItemKey, itemForBlock, getItem } from '../../src/items.js';
+import { BLOCK, BLOCKS, BLOCK_COUNT, isWater, FLINT_SHARE } from '../../src/blocks.js';
+import { ITEMS, TOOL_TYPES, TIER_SPEED, isItemKey, itemForBlock, blockForItem, getItem } from '../../src/items.js';
 import {
   BLOCK_RULES, ruleFor, canHarvest, breakSeconds, harvestHint, rollDrops, rollGroups, PICKABLE, isPickable, pick, tap,
   Tapped, Regrowth, RIPE_OF, ripeOf, MOB_DROPS, rollMobDrops, toolPower, UNDERWATER_DIG_FACTOR, MIN_BREAK_S,
@@ -45,7 +45,7 @@ const TABLE = [
   [[B.DIRT], 0.9, 'shovel', 0],
   [[B.GRASS_BLOCK, B.SNOWY_GRASS], 1.0, 'shovel', 0],
   [[B.SAND, B.RED_SAND], 0.8, 'shovel', 0],
-  [[B.GRAVEL], 1.2, 'shovel', 0],
+  [[B.GRAVEL, B.FLINT_GRAVEL], 1.2, 'shovel', 0], // §75: Flinty Gravel digs like gravel
   [[B.CLAY], 1.4, 'shovel', 0],
   [[B.SNOW_BLOCK], 0.5, 'shovel', 0],
   [[B.ICE], 1.0, 'pick', 0],
@@ -264,6 +264,13 @@ describe('rollDrops (§6.3)', () => {
     expect(rollDrops(B.GRAVEL, tool('flint_shovel'), {}, seq(0))).toEqual([{ k: 'gravel', n: 1 }]);
     expect(rollDrops(B.GRAVEL, HAND, {}, seq(0))).toEqual([{ k: 'rock', n: 2 }]);
     expect(rollDrops(B.GRAVEL, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'rock', n: 2 }]);
+    // §75: plain gravel never holds flint; Flinty Gravel always gives one, with or without a shovel, wild or not —
+    // and the gravel it gives back is plain, so it cannot be dug twice
+    expect(sample((r) => rollDrops(B.GRAVEL, HAND, { natural: true }, r), 300, 5).flint).toBeUndefined();
+    expect(rollDrops(B.FLINT_GRAVEL, tool('flint_shovel'), {}, seq(0.99))).toEqual([{ k: 'gravel', n: 1 }, { k: 'flint', n: 1 }]);
+    expect(rollDrops(B.FLINT_GRAVEL, HAND, { natural: false }, seq(0.99))).toEqual([{ k: 'rock', n: 2 }, { k: 'flint', n: 1 }]);
+    expect(itemForBlock(B.FLINT_GRAVEL)).toBeNull();
+    expect(blockForItem('gravel')).toBe(B.GRAVEL);
     expect(rollDrops(B.ICE, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'ice_chunk', n: 2 }]);
     expect(rollDrops(B.ICE, HAND, {}, seq(0))).toEqual([{ k: 'ice_chunk', n: 1 }]);
     expect(rollDrops(B.CLAY, HAND, {}, seq(0))).toEqual([{ k: 'clay_lump', n: 6 }]);
@@ -281,11 +288,12 @@ describe('rollDrops (§6.3)', () => {
     expect(rollDrops(B.SNOWY_GRASS, tool('flint_shovel'), { natural: true }, seq(0))).toEqual([{ k: 'snowy_grass', n: 1 }]);
   });
 
-  it('natural loose stones give flint about half the time over 400 seeded rolls; never when natural is false', () => {
-    const nat = sample((r) => rollDrops(B.LOOSE_STONES, HAND, { natural: true }, r), 400, 11);
-    expect(nat.flint.length / 400).toBeGreaterThan(0.42);
-    expect(nat.flint.length / 400).toBeLessThan(0.58);
-    expect(nat.rock.length).toBe(400);
+  it('natural loose stones give flint FLINT_SHARE of the time over 2000 seeded rolls (§75: rare); never when natural is false', () => {
+    expect(FLINT_SHARE).toBe(0.06);
+    const nat = sample((r) => rollDrops(B.LOOSE_STONES, HAND, { natural: true }, r), 2000, 11);
+    expect(nat.flint.length / 2000).toBeGreaterThan(FLINT_SHARE - 0.025);
+    expect(nat.flint.length / 2000).toBeLessThan(FLINT_SHARE + 0.025);
+    expect(nat.rock.length).toBe(2000);
     expect(new Set(nat.rock)).toEqual(new Set([1, 2]));
     const edited = sample((r) => rollDrops(B.LOOSE_STONES, HAND, { natural: false }, r), 400, 11);
     expect(edited.flint).toBeUndefined();
@@ -311,9 +319,10 @@ describe('rollDrops (§6.3)', () => {
     expect(calls).toBe(2);
   });
 
-  it('stone gives rock, and flint at p 0.05 from untouched stone', () => {
-    expect(rollDrops(B.STONE, tool('flint_pick'), { natural: true }, seq(0.04))).toEqual([{ k: 'rock', n: 2 }, { k: 'flint', n: 1 }]);
-    expect(rollDrops(B.STONE, tool('flint_pick'), { natural: true }, seq(0.06))).toEqual([{ k: 'rock', n: 2 }]);
+  it('stone gives rock and never flint (§75: flint comes from Flinty Gravel)', () => {
+    expect(rollDrops(B.STONE, tool('flint_pick'), { natural: true }, seq(0.99))).toEqual([{ k: 'rock', n: 2 }]);
+    const mined = sample((r) => rollDrops(B.STONE, tool('flint_pick'), { natural: true }, r), 400, 13);
+    expect(mined.flint).toBeUndefined();
     expect(rollDrops(B.STONE, tool('flint_pick'), { natural: false }, seq(0))).toEqual([{ k: 'rock', n: 2 }]);
     expect(rollDrops(B.STONE, HAND, { natural: true }, seq(0))).toEqual([]); // cannot be harvested by hand
   });
@@ -469,14 +478,14 @@ describe('picking with R (§6.4)', () => {
     expect(pick(B.PRICKLY_PEAR, { knifeInPack: false }, seq(0))).toEqual({ to: B.PRICKLY_PEAR_BARE, drops: [{ k: 'unpeeled_cactus_fruit', n: 1 }] });
   });
 
-  it('loose stones become AIR: rock 1–2 and natural flint at p 0.5', () => {
-    expect(pick(B.LOOSE_STONES, { natural: true }, seq(0, 0.49))).toEqual({ to: B.AIR, drops: [{ k: 'rock', n: 1 }, { k: 'flint', n: 1 }] });
-    expect(pick(B.LOOSE_STONES, { natural: true }, seq(0.6, 0.51))).toEqual({ to: B.AIR, drops: [{ k: 'rock', n: 2 }] });
+  it('loose stones become AIR: rock 1–2 and natural flint at p FLINT_SHARE', () => {
+    expect(pick(B.LOOSE_STONES, { natural: true }, seq(0, FLINT_SHARE - 0.01))).toEqual({ to: B.AIR, drops: [{ k: 'rock', n: 1 }, { k: 'flint', n: 1 }] });
+    expect(pick(B.LOOSE_STONES, { natural: true }, seq(0.6, FLINT_SHARE + 0.01))).toEqual({ to: B.AIR, drops: [{ k: 'rock', n: 2 }] });
     const edited = sample((r) => pick(B.LOOSE_STONES, { natural: false }, r).drops, 300, 12);
     expect(edited.flint).toBeUndefined();
-    const nat = sample((r) => pick(B.LOOSE_STONES, { natural: true }, r).drops, 400, 12);
-    expect(nat.flint.length / 400).toBeGreaterThan(0.42);
-    expect(nat.flint.length / 400).toBeLessThan(0.58);
+    const nat = sample((r) => pick(B.LOOSE_STONES, { natural: true }, r).drops, 2000, 12);
+    expect(nat.flint.length / 2000).toBeGreaterThan(FLINT_SHARE - 0.025);
+    expect(nat.flint.length / 2000).toBeLessThan(FLINT_SHARE + 0.025);
   });
 
   it('fallen branches become AIR: 2–3 sticks', () => {
