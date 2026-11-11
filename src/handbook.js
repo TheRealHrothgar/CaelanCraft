@@ -1,6 +1,8 @@
-// Caelancraft — the Survival Handbook's content: ten chapters of hand-written prose, and every table that restates game
-// data GENERATED from the game's own tables (recipes, tool tiers, block rules, food values, climate, damage), so the book
-// can never disagree with the game. Pure: no DOM. See docs/DESIGN-survival.md §14 (CONTRACTS §48 once merged).
+// Caelancraft — the Survival Handbook's content: eleven chapters of hand-written prose, and every table that restates game
+// data GENERATED from the game's own tables (recipes, tool tiers, block rules, food values, climate, damage, the animals,
+// the zombie kinds, throws), so the book can never disagree with the game. The numbers the prose quotes about the game
+// are read from its constants and recipes too (a few real-world figures and rough distances aside). Pure: no DOM. See
+// docs/DESIGN-survival.md §14 and CONTRACTS §43, §48 and §73.
 //
 // One text, two books: handbookUI.js draws these chapters as the clean Guide (title screen and pause menu) and as the
 // rustic field book (the `handbook` item). A chapter is `{ id, title, short, icon, pages }`; a page is a list of blocks:
@@ -16,26 +18,44 @@
 // Text in h, p, tip, warn and list items may carry two marks (inlineParts): *emphasis* and [Key] (a key cap). Table cells
 // are plain text.
 //
-// Imports are read-only data and pure functions: config, blocks, items, crafting, harvest, climate, vitals, cooking.
+// Imports are read-only data and pure functions: config, blocks, items, crafting, harvest, climate, daynight, vitals,
+// cooking, and the constants of zombies, animals, looseItems and survivalControl.
 import {
-  DAY_LENGTH_SECONDS, SUNSET_TIME, NIGHT_SECONDS, START_TIME, HOTBAR_SIZE, PACK_SLOTS, STATION_RANGE, STATION_WORK_RANGE, MAX_CRAFT_JOBS,
+  DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, HOTBAR_SIZE, PACK_SLOTS,
+  STATION_RANGE, STATION_WORK_RANGE, MAX_CRAFT_JOBS,
   CAMPFIRE_FUEL_START_S, CAMPFIRE_FUEL_MAX_S, FUEL_STICK_S, FUEL_LOG_S, RELIGHT_HOLD_S, GULP_GAP_S, TAP_HOLD_S,
-  PIG_HEALTH, ZOMBIE_DAMAGE, ZOMBIE_HITS, ZOMBIE_FIRE_FEAR, ZOMBIE_SPAWN_FIRE_CLEAR, FIRE_BURN_DAMAGE,
+  PIG_HEALTH, PIG_NOTICE, ZOMBIE_DAMAGE, ZOMBIE_SIGHT, ZOMBIE_CHASE_MAX_RISE, ZOMBIE_MAX_DROP, ZOMBIE_SPAWN_MIN, ZOMBIE_FIRE_FEAR,
+  ZOMBIE_SPAWN_FIRE_CLEAR, FIRE_BURN_DAMAGE,
   CRUSH_DAMAGE_PER_CELL, BREATH_MAX_S, REGROW_MEAN_S, GRAVITY, MAX_SUBSTEP_DT, TERMINAL_VELOCITY,
-  BODY_TEMP_NORMAL, BASKET_SLOTS,
+  BODY_TEMP_NORMAL, BASKET_SLOTS, REACH, CAMPFIRE_LIGHT, TORCH_LIGHT,
 } from './config.js';
-import { BLOCK, BIOME, getBlockDef } from './blocks.js';
+import { BLOCK, BIOME, BIOME_NAMES, FLINT_SHARE, getBlockDef } from './blocks.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, getItem, itemName } from './items.js';
 import { RECIPES, STATION_IDS, STATION_NAMES, STATION_BLOCKS, getRecipe, inputLabel } from './crafting.js';
-import { BLOCK_RULES, PICKABLE, HAND_GATHER, MOB_DROPS, breakSeconds, ruleFor, UNDERWATER_DIG_FACTOR } from './harvest.js';
 import {
-  HEAT_SOURCES, DIURNAL_AMPLITUDE, ALTITUDE_LAPSE, ALTITUDE_REF_Y, SUN_HEAT, SHELTER_HEAT, SHELTER_BELOW, ACTIVITY_HEAT,
-  GROUND_CHILL, WET_CHILL, WET_INSULATION_LOSS, WET_DRY_S, INSULATION_HOT_FROM, COMFORT_LOW, COMFORT_HIGH,
+  BLOCK_RULES, PICKABLE, HAND_GATHER, MOB_DROPS, breakSeconds, ruleFor, toolPower, UNDERWATER_DIG_FACTOR, DEEP_BELOW_SEA,
+} from './harvest.js';
+import {
+  HEAT_SOURCES, DIURNAL_AMPLITUDE, DIURNAL_PEAK_T, ALTITUDE_LAPSE, ALTITUDE_REF_Y, SUN_HEAT, SHELTER_HEAT, SHELTER_BELOW,
+  ACTIVITY_HEAT, GROUND_CHILL, WET_CHILL, WET_INSULATION_LOSS, WET_DRY_S, INSULATION_HOT_FROM, COMFORT_LOW, COMFORT_HIGH,
   feltTemperature, bodyTarget, heatAt,
 } from './climate.js';
 import { realSecondsBetween } from './daynight.js';
 import { RATES, DAMAGE_CAUSES, SOFT_LANDING, fallDamage, tempBand } from './vitals.js';
 import { FIRE_TRANSFORMS, SKEWER_SPOTS } from './cooking.js';
+import {
+  ZOMBIE_KINDS, KIND_STATS, RUNNER_P, HORDE_SIZE, HORDE_RADIUS, HORDE_CHECK_S, ALPHA_CONVERT_P, ALPHA_MAX, ALPHA_RALLY, CLIMB,
+  WALKER_WAKE_RANGE, PROVOKE_S, DAWN_BURROW_MIN_S, DAWN_BURROW_RAND_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE,
+} from './zombies.js';
+import {
+  SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
+  SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, WOLF_BITE_S,
+  HOME_RANGE, RIDE_SCALE, RIDE_LEAP,
+} from './animals.js';
+import {
+  throwOf, STONE_KEYS, DART_KEYS, DART_BREAK_P, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
+} from './looseItems.js';
+import { RELIGHT_STICKS } from './survivalControl.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 
@@ -209,10 +229,10 @@ function proseInput(inp) {
   return `${inp.n} ${COUNTABLE.test(name) ? `${name}s` : name}`;
 }
 
-/** "a, b and c". @param {string[]} parts */
-export function listJoin(parts) {
+/** "a, b and c" (or "a, b or c"). @param {string[]} parts @param {string} [word='and'] */
+export function listJoin(parts, word = 'and') {
   if (parts.length <= 1) return parts.join('');
-  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+  return `${parts.slice(0, -1).join(', ')} ${word} ${parts[parts.length - 1]}`;
 }
 
 /** A recipe's inputs in prose: "2 Leather, 6 Plant Fibre and 6 Sticks". @param {import('./crafting.js').Recipe} rec */
@@ -239,26 +259,37 @@ function conditionText(cond) {
   return `with ${/^[aeiou]/.test(cond) ? 'an' : 'a'} ${cond}`;
 }
 
-/** One drop: "1–2 Rock", "Flint (50 %, wild only)". @param {import('./harvest.js').DropItem} it */
-function dropText(it) {
+/**
+ * One drop: "1–2 Rock", "Flint (50 %, wild only)". `seen[key]` replaces a chance the game does not roll with what the
+ * player sees instead ("Flint (if a dark nodule shows, wild only)").
+ * @param {import('./harvest.js').DropItem} it @param {Readonly<Record<string, string>>|null} [seen]
+ */
+function dropText(it, seen = null) {
   const notes = [];
-  if (it.p !== undefined) notes.push(fmtPct(it.p));
+  if (it.p !== undefined) notes.push(seen && Object.hasOwn(seen, it.k) ? seen[it.k] : fmtPct(it.p));
   if (it.natural) notes.push('wild only');
   return `${countPrefix(it.n)}${itemName(it.k)}${notes.length ? ` (${notes.join(', ')})` : ''}`;
 }
+
+/**
+ * Loose Stones (CONTRACTS §70): the flint is not a roll but what the column shows (blocks.flintAt), so the gathering
+ * table says how to tell instead of quoting FLINT_SHARE as a chance.
+ */
+export const FLINT_SEEN = Object.freeze({ flint: 'if a dark nodule shows' });
 
 /**
  * Drop groups as text (§6.3's notation in words): each group gives at most one branch, the first whose condition holds.
  * `[[shovel → bush], [always → berries 2–4]]` → "with a shovel: Honeyberry Bush · 2–4 Honeyberries".
  * @param {ReadonlyArray<import('./harvest.js').DropGroup>} groups
  * @param {boolean} [prose=false] join the groups as a sentence ("2–3 Raw Pork, Rawhide and Pig Fat (60 %)")
+ * @param {Readonly<Record<string, string>>|null} [seen=null] chances shown as what the player sees (dropText)
  * @returns {string} '' when nothing drops
  */
-export function describeDrops(groups, prose = false) {
+export function describeDrops(groups, prose = false, seen = null) {
   const parts = [];
   for (const group of groups) {
     const branches = group.map((br) => {
-      const items = br.items.map(dropText).join(' + ') || 'nothing';
+      const items = br.items.map((it) => dropText(it, seen)).join(' + ') || 'nothing';
       if (group.length === 1 && br.if === null) return items;
       return `${conditionText(br.if)}: ${items}`;
     });
@@ -418,7 +449,8 @@ function gatherTable() {
     const picked = Object.hasOwn(PICKABLE, id);
     const verb = Object.hasOwn(HAND_GATHER, id) ? HAND_GATHER[id] : 'break';
     const how = picked ? 'R, or hold LMB' : `hold LMB to ${verb} it${rule.tool ? ` (${/^[aeiou]/.test(rule.tool) ? 'an' : 'a'} ${rule.tool} is faster)` : ''}`;
-    return [getBlockDef(id).displayName, how, describeDrops(picked ? PICKABLE[id].drops : rule.drops)];
+    return [getBlockDef(id).displayName, how, describeDrops(picked ? PICKABLE[id].drops : rule.drops, false,
+      id === BLOCK.LOOSE_STONES ? FLINT_SEEN : null)];
   });
   return table({ id: 'gather', caption: 'Gathering with bare hands', head: ['Find', 'Take it', 'You get'], rows, keys: GATHER,
     source: 'harvest' });
@@ -435,7 +467,7 @@ function drinksTable() {
   const keys = ITEM_KEYS.filter((k) => ITEMS[k].food?.returns);
   const rows = keys.map((k) => {
     const f = /** @type {import('./types.js').FoodDef} */ (ITEMS[k].food);
-    const risk = f.sick > 0 ? `${fmtPct(f.sick)} sick` : f.hydration < 0 ? 'salty' : 'safe';
+    const risk = f.sick > 0 ? `poisons ${fmtPct(f.sick)}` : f.hydration < 0 ? 'salty' : 'safe';
     return [itemName(k), fmtSigned(f.hydration), fmtSigned(f.satiation), risk];
   });
   return table({ id: 'drinks', caption: 'Pots to drink (you keep the pot)', head: ['Pot', 'Hydration', 'Nourishment', 'Risk'],
@@ -463,11 +495,16 @@ function foodTable() {
     return [itemName(k), fmtSigned(f.satiation), fmtSigned(f.hydration), f.sick > 0 ? fmtPct(f.sick) : '—',
       f.spoilS ? `~${fmtDuration(f.spoilS)}` : 'keeps'];
   });
-  return table({ id: 'food', caption: 'Food and drink', head: ['Food', 'Nourishment', 'Hydration', 'Sickness', 'Goes bad'],
+  return table({ id: 'food', caption: 'Food and drink', head: ['Food', 'Nourishment', 'Hydration', 'Poisons', 'Goes bad'],
     rows, keys, source: 'items' });
 }
 
-/** Striking power: tools grouped by power, with the hits a pig and a zombie take. */
+/** The distinct striking powers of the tools, ascending. */
+export function toolPowers() {
+  return [...new Set(TOOL_KEYS.map((k) => /** @type {any} */ (ITEMS[k].tool).power))].sort((x, y) => x - y);
+}
+
+/** Striking power: the tools grouped by their power (how many blows that makes is in the two blows tables). */
 function powerTable() {
   /** @type {Map<number, string[]>} */
   const byPower = new Map();
@@ -476,17 +513,137 @@ function powerTable() {
     if (!byPower.has(power)) byPower.set(power, []);
     /** @type {string[]} */ (byPower.get(power)).push(k);
   }
-  const powers = [...byPower.keys()].sort((a, b) => a - b);
-  const rows = [['Bare hands', '1', 'never: only shoves', `${Math.ceil(ZOMBIE_HITS / 1)}`]];
+  const rows = [['Bare hands (against zombies only)', String(toolPower(null))]];
   const keys = /** @type {(string|number)[]} */ (['hand']);
-  for (const pw of powers) {
+  for (const pw of toolPowers()) {
     const tools = /** @type {string[]} */ (byPower.get(pw));
-    const label = pw === 1 ? `Every other tool (${tools.length})` : tools.map(itemName).join(', ');
-    rows.push([label, String(pw), String(Math.ceil(PIG_HEALTH / pw)), String(Math.ceil(ZOMBIE_HITS / pw))]);
+    rows.push([pw === 1 ? `Every other tool (${tools.length})` : tools.map((k) => itemName(k)).join(', '), String(pw)]);
     keys.push(pw);
   }
-  return table({ id: 'power', caption: 'Hits to bring down a pig or knock out a zombie', head: ['Weapon', 'Power', 'Pig', 'Zombie'],
-    rows, keys, source: 'items' });
+  return table({ id: 'power', caption: 'The power of a blow', head: ['In your hand', 'Power'], rows, keys, source: 'items' });
+}
+
+/** What you hunt, the weakest first: the pig and every species of animals.js, with the health a blow's power comes off. */
+export function huntTargets() {
+  const list = [{ key: 'pig', name: 'Pig', points: PIG_HEALTH },
+    ...ANIMAL_KINDS.map((k) => ({ key: /** @type {string} */ (k), name: SPECIES[k].name, points: SPECIES[k].health }))];
+  return list.sort((x, y) => x.points - y.points);
+}
+
+/** The zombie kinds, with the points of power that knock each one out. */
+export function zombieTargets() {
+  return ZOMBIE_KINDS.map((k) => ({ key: /** @type {string} */ (k), name: cap(k), points: KIND_STATS[k].hits }));
+}
+
+/**
+ * How many blows a target takes, by the power of the blow: ceil(points / power) for every tool power.
+ * @param {string} id @param {string} caption @param {string[]} lead the first two column heads
+ * @param {Array<{ key: string, name: string, points: number }>} targets @param {string} source
+ */
+function blowsTable(id, caption, lead, targets, source) {
+  const powers = toolPowers();
+  const rows = targets.map((t) => [t.name, String(t.points), ...powers.map((pw) => String(Math.ceil(t.points / pw)))]);
+  return table({ id, caption, head: [...lead, ...powers.map((pw) => `Power ${pw}`)], rows, keys: targets.map((t) => t.key), source });
+}
+
+/** How a biome reads in prose: "plains", "snowy land", "snowy peaks". @param {number} id */
+function biomeWord(id) {
+  const name = (BIOME_NAMES[id] ?? '').replace(/_/g, ' ');
+  return name === 'snowy' ? 'snowy land' : name;
+}
+
+/**
+ * Where a species' herds appear: the biomes whose HERD_WEIGHTS give it a weight, the land where a herd is likeliest to be
+ * of this kind first. @param {string} kind @returns {number[]} BIOME ids
+ */
+export function herdBiomes(kind) {
+  const share = (/** @type {number} */ b) => {
+    const w = /** @type {Record<string, number>} */ (HERD_WEIGHTS[b]);
+    const total = Object.values(w).reduce((sum, x) => sum + x, 0);
+    return total > 0 ? (w[kind] ?? 0) / total : 0;
+  };
+  return Object.keys(HERD_WEIGHTS).map(Number).filter((b) => share(b) > 0).sort((x, y) => share(y) - share(x) || x - y);
+}
+
+/**
+ * What a species comes to, in a few words: "pork, beef or mutton, raw or roast" when every key is a raw or roast meat,
+ * else the foods' names ("Wild Tuber, Honeyberries, Tussock Grass or Cattail Root"). @param {ReadonlyArray<string>} lure
+ */
+export function lureText(lure) {
+  if (lure.length > 0 && lure.every((k) => /^(raw|roast)_/.test(k))) {
+    const meats = [...new Set(lure.map((k) => k.replace(/^(raw|roast)_/, '')))];
+    return `${listJoin(meats, 'or')}, raw or roast`;
+  }
+  return listJoin(lure.map((k) => itemName(k)), 'or');
+}
+
+/** What R does to each animal (hand-written; a test checks every species has a line). `{tame}` is its feeds to tame. */
+export const ANIMAL_R = Object.freeze({
+  pig: '—',
+  cow: 'with an empty Clay Pot in hand: milk',
+  sheep: 'with a knife in your pack: shear',
+  horse: 'with its food, {tame} times: tame; then ride',
+  wolf: 'with its food, {tame} times: tame; then sit or follow',
+});
+
+/** The animals: where their herds appear (HERD_WEIGHTS), what a hunt gives (MOB_DROPS) and what R does. */
+function animalsTable() {
+  const rows = [['Pig', 'grass and snowy grass', describeDrops(MOB_DROPS.pig, true), ANIMAL_R.pig]];
+  for (const k of ANIMAL_KINDS) {
+    const sp = SPECIES[k];
+    rows.push([sp.name, herdBiomes(k).map(biomeWord).join(', '), describeDrops(MOB_DROPS[k], true),
+      (ANIMAL_R[k] ?? '—').replace('{tame}', String(sp.tame))]);
+  }
+  return table({ id: 'animals', caption: 'The animals', head: ['Animal', 'Where', 'Gives', 'Press R'], rows,
+    keys: ['pig', ...ANIMAL_KINDS], source: 'animals' });
+}
+
+/** How near a walking, sneaking or sprinting player may come before it runs (SPECIES.notice, PIG_NOTICE × the factors). */
+function waryTable() {
+  const cells = (/** @type {number} */ n) => `${fmtNum(n, 1)} cells`;
+  const row = (/** @type {string} */ name, /** @type {number} */ notice) => [name, cells(notice), cells(notice * SNEAK_NOTICE),
+    cells(notice * SPRINT_NOTICE)];
+  const rows = [row('Pig', PIG_NOTICE), ...ANIMAL_KINDS.map((k) => row(SPECIES[k].name, SPECIES[k].notice))];
+  return table({ id: 'wary', caption: 'How near you can come before it runs', head: ['Animal', 'Walking', 'Sneaking', 'Sprinting'],
+    rows, keys: ['pig', ...ANIMAL_KINDS], source: 'animals' });
+}
+
+/** A zombie kind's strike in HP, at night and in open daylight (they differ only for the alpha). @param {string} kind */
+export function zombieStrike(kind) {
+  const night = Math.round(ZOMBIE_DAMAGE * KIND_STATS[kind].damage);
+  return { night, day: kind === 'alpha' ? Math.round(ZOMBIE_DAMAGE * DAY_ALPHA_DAMAGE) : night };
+}
+
+/** The zombie kinds at night, from KIND_STATS and CLIMB: pace, the power that knocks one out, its strike and its leap. */
+function zombiesTable() {
+  const cellsOf = (/** @type {number} */ n) => `${n} cell${n === 1 ? '' : 's'}`;
+  const rows = ZOMBIE_KINDS.map((k) => {
+    const st = KIND_STATS[k];
+    const strike = zombieStrike(k);
+    const climb = CLIMB[k];
+    return [cap(k), `${fmtPct(st.chase * st.factor)} of your ${st.sprint ? 'sprint' : 'walk'}`, `${st.hits} power`,
+      strike.day === strike.night ? `${strike.night} HP` : `${strike.night} HP (${strike.day} by day)`,
+      climb.day === climb.night ? cellsOf(climb.night) : `${cellsOf(climb.night)} (${climb.day} by day)`];
+  });
+  return table({ id: 'zombies', caption: 'The three kinds of zombie, at night', head: ['Kind', 'Pace', 'Knock-out', 'Strike', 'Leaps'],
+    rows, keys: [...ZOMBIE_KINDS], source: 'zombies' });
+}
+
+/** What a throw does (looseItems.throwOf): stones, darts, spears, and everything else. */
+function throwsTable() {
+  const spears = TOOL_KEYS.filter((k) => ITEMS[k].tool?.type === 'spear');
+  const kinds = [
+    { key: 'stone', what: STONE_KEYS.map((k) => itemName(k)).join(', '), sample: STONE_KEYS[0], after: 'pick it up and throw it again' },
+    { key: 'dart', what: DART_KEYS.map((k) => itemName(k)).join(', '), sample: DART_KEYS[0], after: `breaks on ${fmtPct(DART_BREAK_P)} of its hits` },
+    { key: 'spear', what: spears.map((k) => itemName(k)).join(', '), sample: spears[0], after: 'loses one use when it hits' },
+    { key: 'chuck', what: 'Anything else', sample: 'stick', after: 'no harm done' },
+  ].filter((t) => typeof t.sample === 'string');
+  const rows = kinds.map((t) => {
+    const th = throwOf(t.sample);
+    return [t.what, `${th.speed} m/s`, String(th.power), t.after];
+  });
+  return table({ id: 'throws', caption: 'What a throw does', head: ['Thrown', 'Speed', 'Power', 'Afterwards'], rows,
+    keys: kinds.map((t) => t.key), source: 'loose' });
 }
 
 /** HEAT_SOURCES. */
@@ -602,7 +759,7 @@ function agesTable() {
     const d = keys.map((k) => /** @type {any} */ (ITEMS[k].tool).durability);
     const lo = Math.min(...d);
     const hi = Math.max(...d);
-    return [cap(TIER_NAMES[t]), `×${fmtNum(TIER_SPEED[t])}`, keys.map(itemName).join(', '), lo === hi ? `${lo} uses` : `${lo}–${hi} uses`];
+    return [cap(TIER_NAMES[t]), `×${fmtNum(TIER_SPEED[t])}`, keys.map((k) => itemName(k)).join(', '), lo === hi ? `${lo} uses` : `${lo}–${hi} uses`];
   });
   return table({ id: 'ages', caption: 'The ages of tools', head: ['Age', 'Dig speed', 'Tools', 'Lasts'], rows, keys: tiers,
     source: 'items' });
@@ -695,7 +852,7 @@ function bandageTable() {
 export const DANGER_NAMES = Object.freeze({
   fall: 'Falling', drown: 'Drowning', buried: 'Being buried', crush: 'Falling sand and gravel', fire: 'Campfire flames',
   zombie: 'Zombies', blast: 'Powder Kegs', log: 'Falling trees', blackhole: 'Black holes', starve: 'Starving',
-  thirst: 'Thirst', cold: 'Cold', heat: 'Heat', sick: 'Sickness', void: 'The void below the bedrock',
+  thirst: 'Thirst', cold: 'Cold', heat: 'Heat', sick: 'Poisoning', void: 'The void below the bedrock',
 });
 
 /** How to avoid each danger (hand-written; a test checks every cause has one). */
@@ -726,7 +883,7 @@ function dangerTable() {
     buried: `${fmtNum(R.BURIED_DPS)} HP/s once your breath is gone`,
     crush: `${CRUSH_DAMAGE_PER_CELL} HP per cell it lifts you`,
     fire: `${FIRE_BURN_DAMAGE} HP per scorch`,
-    zombie: `${ZOMBIE_DAMAGE} HP a strike`,
+    zombie: `${zombieStrike('walker').night} HP a strike; an alpha ${zombieStrike('alpha').night}`,
     blast: `${R.KNOCK_K} HP per m/s it throws you beyond ${R.KNOCK_SAFE}`,
     log: `${R.KNOCK_K} HP per m/s it knocks you beyond ${R.KNOCK_SAFE}`,
     blackhole: 'death, and your belongings are lost',
@@ -831,14 +988,25 @@ function fireFigure() {
 // The chapters
 // ---------------------------------------------------------------------------------------------------------------------
 
+/** The simple circuit parts the Workbench's devices are built on (CONTRACTS §67); a test checks each against RECIPES. */
+export const ELEMENTARY_PARTS = Object.freeze(['knife_switch', 'push_button', 'terminal_board', 'voltaic_battery']);
+
+/** The species as a crowd, for prose ("cattle, sheep, horses and wolves"); a test checks every species has a word. */
+export const HERD_WORDS = Object.freeze({ cow: 'cattle', sheep: 'sheep', horse: 'horses', wolf: 'wolves' });
+
 /** @returns {Chapter[]} */
 function makeChapters() {
   const R = RATES;
   const hour = DAY_LENGTH_SECONDS / 24;
-  const dusk = realSecondsBetween(START_TIME, SUNSET_TIME);
-  const night = NIGHT_SECONDS;
+  const hourLine = hour === 60 ? 'One real minute is one game hour' : `One game hour is ${fmtDurationLong(hour)}`;
+  const sunrise = fmtClock(SUNRISE_TIME);
+  const sunset = fmtClock(SUNSET_TIME);
+  const firstLight = realSecondsBetween(START_TIME, SUNSET_TIME);
+  const nightLogs = Math.ceil(NIGHT_SECONDS / FUEL_LOG_S);
   const kit = firstDayKit();
   const food = (k) => /** @type {import('./types.js').FoodDef} */ (getItem(k)?.food);
+  const rec = (id) => /** @type {import('./crafting.js').Recipe} */ (getRecipe(id));
+  const plain = (/** @type {string} */ label) => label.replace(/\+$/, '');
   const satiationRest = 100 / R.SATIATION_DRAIN;
   const hydrationRest = 100 / R.HYDRATION_DRAIN;
   const busy = 1.5; // a day of walking and digging
@@ -848,22 +1016,74 @@ function makeChapters() {
     const v = Math.round(x * 2) / 2;
     return Number.isInteger(v) ? String(v) : `${Math.floor(v)}½`;
   };
-  const greenware = /** @type {import('./crafting.js').Recipe} */ (getRecipe('greenware_pot'));
-  const bronze = /** @type {import('./crafting.js').Recipe} */ (getRecipe('bronze_ingot'));
+  /** A stretch of real time as game days, in words. */
+  const gameDays = (seconds) => {
+    const d = seconds / DAY_LENGTH_SECONDS;
+    if (d < 0.9) return 'less than a game day';
+    if (d <= 1.1) return 'about a game day';
+    if (d < 1.5) return 'a little over a game day';
+    return `about ${halves(d)} game days`;
+  };
+  const greenware = rec('greenware_pot');
+  const bronze = rec('bronze_ingot');
   const copperIn = bronze.inputs.find((i) => 'k' in i && i.k === 'copper_ingot')?.n ?? 0;
   const tinIn = bronze.inputs.find((i) => 'k' in i && i.k === 'tin_ingot')?.n ?? 0;
   const bronzeOut = bronze.outputs[0].n;
-  const copperIngot = /** @type {import('./crafting.js').Recipe} */ (getRecipe('copper_ingot'));
-  const charcoal = /** @type {import('./crafting.js').Recipe} */ (getRecipe('charcoal'));
-  const hide = /** @type {import('./crafting.js').Recipe} */ (getRecipe('sleeping_hide'));
-  const basket = /** @type {import('./crafting.js').Recipe} */ (getRecipe('wicker_basket'));
-  const stump = /** @type {import('./crafting.js').Recipe} */ (getRecipe('work_stump'));
-  const splitSticks = /** @type {import('./crafting.js').Recipe} */ (getRecipe('split_sticks'));
+  const copperIngot = rec('copper_ingot');
+  const charcoal = rec('charcoal');
+  const hide = rec('sleeping_hide');
+  const basket = rec('wicker_basket');
+  const stump = rec('work_stump');
+  const splitSticks = rec('split_sticks');
+  const workbench = rec('workbench');
+  const torch = rec('torch');
+  const snare = rec('snare');
+  const dartRec = rec('flint_dart');
+  /** How many of item `k` recipe `id` takes. */
+  const takes = (id, k) => rec(id).inputs.find((i) => 'k' in i && i.k === k)?.n ?? 0;
   const flintOres = blocksNeeding('pick', 2).filter((n) => / Ore$/.test(n));
   const oresAt = (t) => blocksNeeding('pick', t).filter((n) => / Ore$/.test(n)).map((n) => n.toLowerCase()).join(' and ');
-  const pigDrops = describeDrops(MOB_DROPS.pig, true);
   const sticksFromLog = (splitSticks.outputs[0].n) * FUEL_STICK_S;
   const potSick = food('pot_water').sick;
+  const milk = food('pot_milk');
+  const rawSick = food('raw_pork').sick;
+  const roastKeeps = (food('roast_pork').spoilS ?? 0) / (food('raw_pork').spoilS ?? 1);
+  const stoneAxeBlows = Math.ceil(PIG_HEALTH / (getItem('stone_axe')?.tool?.power ?? 1));
+  const flintShare = FLINT_SHARE === 0.5 ? 'about half of them' : `${fmtPct(FLINT_SHARE)} of them`;
+  // animals
+  const herdNames = listJoin(ANIMAL_KINDS.map((k) => HERD_WORDS[k] ?? `${SPECIES[k].name.toLowerCase()}s`));
+  /** @type {Map<string, string[]>} herd sizes → the species that keep them */
+  const bySize = new Map();
+  for (const k of ANIMAL_KINDS) {
+    const size = `${SPECIES[k].herd[0]}–${SPECIES[k].herd[1]}`;
+    bySize.set(size, [...(bySize.get(size) ?? []), HERD_WORDS[k] ?? SPECIES[k].name.toLowerCase()]);
+  }
+  const herdSizes = [...bySize].map(([size, names]) => `${size} ${listJoin(names, 'or')}`).join(', ');
+  const voices = listJoin(ANIMAL_KINDS.map((k) => `a ${SPECIES[k].voice}`), 'or');
+  const outOfReach = ANIMAL_KINDS.filter((k) => SPECIES[k].notice * SNEAK_NOTICE > REACH).map((k) => SPECIES[k].name.toLowerCase());
+  const reachTip = outOfReach.length
+    ? `Your arm reaches ${REACH} cells. Sneaking brings you inside that with every animal but the ${listJoin(outOfReach)}: that one wants a treat.`
+    : `Your arm reaches ${REACH} cells, and sneaking brings you inside that with every animal.`;
+  /** @type {Map<string, string[]>} what they come to → who comes */
+  const byLure = new Map();
+  for (const k of ANIMAL_KINDS) {
+    const what = lureText(SPECIES[k].lure);
+    byLure.set(what, [...(byLure.get(what) ?? []), HERD_WORDS[k] ?? SPECIES[k].name.toLowerCase()]);
+  }
+  const lureLine = [...byLure].map(([what, who]) => `${listJoin(who)} come to ${what}`).join('; ');
+  const tameLine = SPECIES.horse.tame === SPECIES.wolf.tame
+    ? `A horse or a wolf is *tamed* by ${numWord(SPECIES.horse.tame)} feeds`
+    : `A horse is *tamed* by ${numWord(SPECIES.horse.tame)} feeds, a wolf by ${numWord(SPECIES.wolf.tame)}`;
+  const wolfLands = listJoin(herdBiomes('wolf').map(biomeWord));
+  const spearKey = TOOL_KEYS.find((k) => ITEMS[k].tool?.type === 'spear') ?? 'flint_spear';
+  const rockThrow = throwOf(STONE_KEYS[0]);
+  const dartThrow = throwOf(DART_KEYS[0]);
+  const spearThrow = throwOf(spearKey);
+  // zombies
+  const alphaStrike = zombieStrike('alpha');
+  const everySeconds = (/** @type {number} */ n) => (n === 1 ? 'every second' : `every ${n} seconds`);
+  // the Workbench
+  const devices = RECIPES.filter((r) => /** @type {string} */ (r.station) === 'workbench').map((r) => itemName(r.outputs[0].k));
 
   /** @type {Chapter[]} */
   const chapters = [];
@@ -874,22 +1094,22 @@ function makeChapters() {
   chapter('first-day', 'Your first day', 'Day one', 'sun', [
     [
       h('Welcome to the honeycomb'),
-      p('In Survival you arrive with an empty pack and this book. Everything else you gather, make and carry yourself: water from ponds, food from bushes and pigs, tools knapped from flint, and fire from a drill and a pinch of dry fibre.'),
+      p('In Survival you arrive with an empty pack and this book. Everything else you gather and make yourself: water from ponds, food from bushes and animals, tools knapped from flint, and fire from a drill and a pinch of dry fibre.'),
       p('Four things keep you alive: *Health*, *Nourishment*, *Hydration* and your *body temperature*. They sit beside your hotbar as hex cells. Your breath is the Health cell\'s border: it darkens edge by edge while your head is under water.'),
-      p(`A new world begins at ${fmtClock(START_TIME)}. Dusk falls at ${fmtClock(SUNSET_TIME)}, ${fmtDurationLong(dusk)} later, and the zombies come with it. One game hour is ${hour} seconds, so use the daylight well.`),
-      tip(`This book never leaves you. Hold it and press [R], or right-click it in your pack, to read it. The *Guide* button on the title screen and in the pause menu shows the same pages.`),
+      p(`${hourLine}: ${fmtDurationLong(DAYTIME_SECONDS)} of daylight, from ${sunrise} to ${sunset}, and ${fmtDurationLong(NIGHT_SECONDS)} of dark. A new world begins at ${fmtClock(START_TIME)}, about ${Math.round(firstLight / 60)} minutes before the zombies come out.`),
+      tip('This book never leaves you. Hold it and press [R], or right-click it in your pack, to read it. The *Guide* button on the title screen and in the pause menu shows the same pages.'),
     ],
     [
       h('Before dusk, step by step'),
       steps([
         'Pull *tussock grass* with your bare hands for Plant Fibre: hold the left mouse button on it until it breaks. Eight tussocks give about a dozen.',
-        'Look at the ground as you walk. *Loose Stones* give Rock, and about half the time a Flint; *Fallen Branches* give Sticks. Press [R] on them. Gravel dug by hand (hold the left mouse button) gives Rock too.',
+        'Look down. *Loose Stones* give Rock, and those with a dark, glossy lump a Flint too. *Fallen Branches* give Sticks. Press [R] on them.',
         'Press [E] and make a *Stone Hammer*, then a *Stone Axe* and some *Cord*. Hand jobs carry on while you walk.',
-        'With the stone axe in hand, lop leaves for Sticks and fell a tree: logs need an axe.',
-        'Knap your flint with the stone_hammer: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
-        'Make a *Fire Drill*, then build a *Campfire* beside fresh water.',
-        'Eat honeyberries as you find them. A pig takes three blows of the stone axe; roast the pork on the fire\'s skewers.',
-        `Before 18:00, feed the fire a log and stay within ${ZOMBIE_FIRE_FEAR} cells of it.`,
+        'With the Stone Axe in hand, lop leaves for Sticks and fell a tree: logs need an axe.',
+        'Knap your flint with the Stone Hammer: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
+        'Make a *Fire Drill*, then build a *Campfire* beside fresh water. Raw water can poison: boil it once you have a pot.',
+        `Eat honeyberries as you go. Pigs are shy: sneak up with [Shift], strike ${numWord(stoneAxeBlows)} times with the Stone Axe, and roast the pork.`,
+        `Before sunset at ${sunset}, feed the fire a log and stay within ${ZOMBIE_FIRE_FEAR} cells of it.`,
       ]),
     ],
     [
@@ -903,10 +1123,10 @@ function makeChapters() {
     ],
     [
       h('Your first night'),
-      p(`Night lasts ${fmtDurationLong(night)}. A campfire gives warmth (+${HEAT_SOURCES.campfire.heat} °C at the flames, fading over ${HEAT_SOURCES.campfire.radius} cells), light, a place to cook, and a circle of safety: zombies keep ${ZOMBIE_FIRE_FEAR} cells away from a burning fire and never strike anyone inside it.`),
-      p(`A fire built in Survival burns for ${fmtDurationLong(CAMPFIRE_FUEL_START_S)}, then goes cold. Feed it with [R]: a stick adds ${FUEL_STICK_S} seconds, a log ${fmtDurationLong(FUEL_LOG_S)}, up to ${fmtDurationLong(CAMPFIRE_FUEL_MAX_S)} in all.`),
+      p(`Night lasts ${fmtDurationLong(NIGHT_SECONDS)}, from ${sunset} to ${sunrise}. A campfire gives warmth (+${HEAT_SOURCES.campfire.heat} °C at the flames, fading over ${HEAT_SOURCES.campfire.radius} cells), light, a place to cook, and a circle of safety: zombies keep ${ZOMBIE_FIRE_FEAR} cells away from a burning fire and never strike anyone inside it.`),
+      p(`A fire built in Survival burns for ${fmtDurationLong(CAMPFIRE_FUEL_START_S)}, then goes cold. Feed it with [R]: a stick adds ${FUEL_STICK_S} seconds, a log ${fmtDurationLong(FUEL_LOG_S)}, up to ${fmtDurationLong(CAMPFIRE_FUEL_MAX_S)} in all. ${cap(numWord(nightLogs))} log${nightLogs === 1 ? ' carries' : 's carry'} a fire through the whole night.`),
       p('Plains nights are cool, not dangerous. In snowy land the night can kill: wear what you have and keep close to the fire.'),
-      warn('Zombies burn away in the morning sun, but one standing in shade lingers. Look around before you leave the fire.'),
+      warn(`Morning does not burn the zombies away. A walker dozing in the light wakes if you come within ${WALKER_WAKE_RANGE} cells: look around before you leave the fire.`),
     ],
   ]);
 
@@ -922,22 +1142,22 @@ function makeChapters() {
     [
       h('Drinking'),
       p(`Look at water and press [R] to take a gulp, whatever you are holding: ${fmtSigned(R.GULP_FRESH)} Hydration, one gulp every ${GULP_GAP_S} s. With your head under water, [R] drinks where you are.`),
-      p(`Raw water can poison you (${fmtPct(R.GULP_FRESH_SICK)} a gulp, ${fmtPct(potSick)} a potful). Boil a pot of it on a campfire's centre spot: boiled water is always safe.`),
-      p(`*Poisoning* hits at once (${fmtSigned(R.POISON_THIRST)} Hydration, ${fmtSigned(R.POISON_HUNGER)} Nourishment) and lasts ${R.SICK_S} s; each new case adds more. While poisoned you heal nothing, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though poisoning alone never takes you below ${R.SICK_FLOOR} HP.`),
+      p(`Raw water is a gamble. A gulp from a pond poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(potSick)}. Water boiled in the embers of a campfire is always safe.`),
+      p(`When you are *Poisoned* your stomach turns at once: ${fmtSigned(R.POISON_THIRST)} Hydration and ${fmtSigned(R.POISON_HUNGER)} Nourishment. For the next ${R.SICK_S} seconds you do not heal, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though never below ${R.SICK_FLOOR} HP. Every new dose adds its time on top.`),
       tip('Boil before you drink, and cook before you eat.'),
     ],
     [
       h('Pots'),
       p(`A *Clay Pot* carries water. Shape a Greenware Pot from ${recipeInputsProse(greenware)} (dig clay at the bottom of a pond), then fire it in the embers of a campfire for ${FIRE_TRANSFORMS.greenware_pot.seconds} s, the oldest way of making pottery, or in a Kiln.`),
-      p('With an empty Clay Pot in hand, [R] on water fills it. Hold [RMB] to drink a pot; you keep the empty pot.'),
+      p('With an empty Clay Pot in hand, [R] on water fills it. Hold [RMB] to drink a pot; you keep the empty pot. A cow fills a pot too, with milk: see *Animals*.'),
       ...drinksTable(),
     ],
     [
       h('Boiling'),
-      p('Put a pot into the embers at the centre of a burning campfire: press [R] with the pot in hand. Boiling kills what makes you sick.'),
+      p('Put a pot into the embers at the centre of a burning campfire: press [R] with the pot in hand. Boiling kills what makes raw water bad for you.'),
       ...fireTable('embers', 'In the embers', 'centre'),
       p('Boiling never makes the sea drinkable, but the water leaves its salt behind: scrape the salt-crusted pot (a hand job) for Salt and your pot back. Salt keeps meat and tans hides.'),
-      tip('Snow and ice are fresh. Pack 3 Snow or 2 Ice Chunks into a Clay Pot and boil it.'),
+      tip(`Snow and ice are fresh. Pack ${takes('pot_snow', 'snow')} Snow or ${takes('pot_snow_ice', 'ice_chunk')} Ice Chunks into a Clay Pot and boil it.`),
     ],
     [
       h('Water from plants'),
@@ -951,22 +1171,23 @@ function makeChapters() {
   chapter('food', 'Food and fire', 'Food', 'flame', [
     [
       h('Hunger'),
-      p(`Nourishment falls from full to nothing in ${fmtDurationLong(Math.round(satiationRest / 60) * 60)} at rest, about ${Math.round(satiationRest / DAY_LENGTH_SECONDS)} game days, and faster when you work or when the cold makes you burn more. Below ${R.REGEN_MIN_SATIATION} you stop healing; below ${R.HUNGRY} you are Hungry; at 0 you starve.`),
-      p(`A busy day of walking and digging costs about ${dayFood} Nourishment and ${dayWater} Hydration: ${halves(dayFood / food('roast_pork').satiation)} roast pork and ${halves(dayWater / food('pot_boiled').hydration)} pots of water.`),
+      p(`Nourishment falls from full to nothing in ${fmtDurationLong(Math.round(satiationRest / 60) * 60)} at rest, ${gameDays(satiationRest)}, and faster when you work or when the cold makes you burn more. Below ${R.REGEN_MIN_SATIATION} you stop healing; below ${R.HUNGRY} you are Hungry; at 0 you starve.`),
+      p(`A busy game day of walking and digging costs about ${dayFood} Nourishment and ${dayWater} Hydration: ${halves(dayFood / food('roast_pork').satiation)} roast pork and ${halves(dayWater / food('pot_boiled').hydration)} pots of water.`),
       p('Hold [RMB] with food in hand to eat; the hex ring round the crosshair shows how long it takes. Keep holding to eat the next one.'),
     ],
     [
       h('Foraging'),
       p(`*Honeyberries* hang on low blue-green bushes: [R] picks a handful. A picked bush regrows in about ${REGROW_MEAN_S === DAY_LENGTH_SECONDS ? 'a game day' : fmtDurationLong(REGROW_MEAN_S)}.`),
       p(`*Wild tubers* grow as low leafy rosettes: a shovel digs up more of them. *Cattails* stand at pond edges: their roots are food, their leaves fibre. Oak leaves sometimes drop *acorns* (${fmtPct(dropChance(BLOCK.OAK_LEAVES, 'acorns'))}), spruce leaves *pine nuts* (${fmtPct(dropChance(BLOCK.SPRUCE_LEAVES, 'pine_nuts'))}).`),
-      p('Raw acorns are bitter with tannins and cost you water. Soak 6 in a Pot of Water to leach them, then roast them on a skewer.'),
+      p(`Raw acorns are bitter with tannins and cost you water. Soak ${takes('leached_acorns', 'acorns')} in a Pot of Water to leach them, then roast them on a skewer.`),
       tip('A dug-up bush has to take root again: it is replanted bare and fruits only after it regrows.'),
     ],
     [
-      h('Hunting'),
-      p(`Pigs root about on grass and snowy grass. Bare hands only shove a pig away; any tool wounds it. A pig takes ${PIG_HEALTH} points of harm, and each blow deals the tool's *power*.`),
-      ...powerTable(),
-      p(`A pig gives ${pigDrops}. Pigs come back to the land over time.`),
+      h('Meat and milk'),
+      p('Meat is the richest food there is. Pigs, cattle and sheep give it; the chapter *Animals* tells how to come near them and what a hunt takes.'),
+      p(`Raw meat feeds you little and poisons you ${fmtPct(rawSick)} of the time. Roast it on a skewer: Roast Mutton gives ${fmtSigned(food('roast_mutton').satiation)} Nourishment, Roast Pork ${fmtSigned(food('roast_pork').satiation)} and Roast Beef ${fmtSigned(food('roast_beef').satiation)}.`),
+      p(`Milk is food and drink in one. A *Pot of Milk* gives ${fmtSigned(milk.satiation)} Nourishment and ${fmtSigned(milk.hydration)} Hydration, never poisons you, and leaves you the pot. Press [R] on a cow with an empty Clay Pot in hand.`),
+      tip(`A cow has milk again ${fmtDurationLong(MILK_REGROW_S)} after you milked her.`),
     ],
     [
       h(`The ${numWord(SKEWER_SPOTS + 1)} fire spots`),
@@ -981,12 +1202,12 @@ function makeChapters() {
     ],
     [
       ...fireTable('fire', 'What the fire does', null),
-      warn(`Meat left on a skewer chars: roast pork turns to charred meat after another ${FIRE_TRANSFORMS.roast_pork.seconds} s.`),
+      warn(`Roast meat left on its skewer chars after another ${FIRE_TRANSFORMS.roast_pork.seconds} s. Take it off in time.`),
     ],
     [
       h('Fuel and the cold pit'),
       p(`A fire built in Survival starts with ${fmtDurationLong(CAMPFIRE_FUEL_START_S)} of fuel. A stick adds ${FUEL_STICK_S} seconds and a log ${fmtDurationLong(FUEL_LOG_S)}, up to ${fmtDurationLong(CAMPFIRE_FUEL_MAX_S)}.`),
-      p(`When the fuel runs out the fire goes cold. A *Cold Fire Pit* gives no heat, no light and no safety; whatever was cooking waits on it. To relight it, hold [R] for ${RELIGHT_HOLD_S} s with a Fire Drill, a pinch of tinder and 3 Sticks in your pack.`),
+      p(`When the fuel runs out the fire goes cold. A *Cold Fire Pit* gives no heat, no light and no safety; whatever was cooking waits on it. To relight it, hold [R] for ${RELIGHT_HOLD_S} s with a Fire Drill, a pinch of tinder and ${RELIGHT_STICKS} Sticks in your pack.`),
       p('Logs are fuel, not food for the fire: an open fire burns wood to ash. Charcoal comes from the slow, airless burn of a Kiln, and one lump from each cold pit you break.'),
       tip(`A log split into sticks gives ${sticksFromLog} s of fuel; burnt whole it gives ${FUEL_LOG_S} s.`),
       tip('Fires lit in Creative burn forever and need no feeding.'),
@@ -998,7 +1219,7 @@ function makeChapters() {
       p(`Berries and meat go bad in your pack, in baskets and in your belongings. The more of one kind you carry, the sooner one of them turns: carry ten raw pork and one spoils about every ${fmtDurationLong((food('raw_pork').spoilS ?? 0) / 10)}.`),
       tip('Goes bad, in the table: the average time one item lasts. Carry fewer and each lasts longer.'),
       p('*Salted Pork* never spoils and needs no fire: rub Raw Pork with Salt, a hand job. Salt comes from boiling seawater.'),
-      warn(`Raw pork turns the stomach ${fmtPct(food('raw_pork').sick)} of the time. Cook it.`),
+      tip(`Roast meat keeps ${roastKeeps === 2 ? 'twice' : `${fmtNum(roastKeeps)} times`} as long as raw. Cook what you cannot eat today.`),
     ],
   ]);
 
@@ -1014,7 +1235,7 @@ function makeChapters() {
       h('What sets the air'),
       bullets([
         '*The land.* Deserts are hot and snowy lands cold; the sea evens out the coast.',
-        `*The hour.* The warmest time is 14:00, the coldest just before dawn. Deserts swing ±${DIURNAL_AMPLITUDE[BIOME.DESERT]} °C over a day, plains ±${DIURNAL_AMPLITUDE[BIOME.PLAINS]}.`,
+        `*The hour.* The warmest time is ${fmtClock(DIURNAL_PEAK_T)}, the coldest ${fmtClock(DIURNAL_PEAK_T + 0.5)}. Deserts swing ±${DIURNAL_AMPLITUDE[BIOME.DESERT]} °C over a day, plains ±${DIURNAL_AMPLITUDE[BIOME.PLAINS]}.`,
         `*Height.* The air cools by ${fmtNum(ALTITUDE_LAPSE)} °C for every cell above height ${ALTITUDE_REF_Y}.`,
         '*Caves* sit at the land\'s daily mean, day and night: a refuge from the desert noon, still freezing under snow.',
       ]),
@@ -1034,8 +1255,7 @@ function makeChapters() {
     ],
     [
       ...clothesTable(),
-      p('Clothes add their warmth to what you feel. Leather is the warmest: a full set (hood, coat and shoes) turns a deadly snowy night into a merely cold one.'),
-      tip('In the desert, wear the straw hat and little else.'),
+      p('Clothes add their warmth to what you feel. Leather is the warmest: a full set (hood, coat and shoes) turns a deadly snowy night into a merely cold one. In the desert, wear the straw hat and little else.'),
     ],
     [
       h('Wet and cold water'),
@@ -1070,9 +1290,18 @@ function makeChapters() {
     [
       h('Stone and flint'),
       p('The *Stone Hammer* is a fist-sized cobble, the knapper\'s hammer: every flint tool is struck with it. The *Stone Axe* is a sharp-edged cobble, your first axe: it fells trees and lops leaves for sticks.'),
-      p('*Flint*, or obsidian (volcanic glass), knaps into a knife, an axe, a shovel, a spear and a pick. Each needs a stick and cord to haft it.'),
+      p(`*Flint* lies among the *Loose Stones* on the ground. Look before you pick: ${flintShare} show a dark, glossy nodule, and those give a Flint. Plain ones never do. Now and then (${fmtPct(dropChance(BLOCK.STONE, 'flint'))}) one turns up in stone you mine.`),
+      p('Flint, or obsidian (volcanic glass), knaps into a knife, an axe, a shovel, a spear and a pick. Each needs a stick and cord to haft it.'),
       p(`The Flint Pick breaks stone, ${flintOres.map((n) => n.toLowerCase()).join(', ')} and obsidian.`),
       tip('Obsidian and gems are brittle: any pick that cuts stone breaks them.'),
+    ],
+    [
+      h('Light underground'),
+      p('Daylight does not follow you down. A cave, a mine or a room closed in on every side is dark even at noon, and darker the farther you go from the open sky.'),
+      p(`A burning *Campfire*, a *Torch* and a lit *Filament Lamp* shine by themselves. Their glow thins out cell by cell: a campfire's is gone ${CAMPFIRE_LIGHT} cells away, a Torch's ${TORCH_LIGHT}. Glowstone, a builder's block from Creative, shines brightest of all.`),
+      p(`A Torch is made at hand from ${recipeInputsProse(torch)}, with a ${plain(recipeTools(torch))}. *Saltpetre* crusts on deep stone: ${fmtPct(dropChance(BLOCK.STONE, 'saltpetre'))} of the stone you mine ${DEEP_BELOW_SEA} cells or more below sea level gives some.`),
+      tip('Take torches when you dig, and set one at every fork: you will find your way back.'),
+      tip('A window of glass or a gap in the roof lets the daylight in.'),
     ],
     [
       h('Copper and bronze'),
@@ -1108,13 +1337,12 @@ function makeChapters() {
       h('Making things'),
       p('Press [E] to open your pack and *Making*. There is no crafting grid: the list shows what you can make from what you carry at the workplaces near you, the things you can make right now first. Recipes for workplaces you have not built are greyed out, so the list doubles as your road map.'),
       p(`A workplace counts as near within ${STATION_RANGE} cells (and 2 up or down). Click *Make*, or *×5* for five.`),
-      p(`Each workplace (your hands, a Work Stump, a Kiln, a Bloomery, the Forge) has its own *lane*, and all the lanes work at once. A job takes its inputs only when it finishes, so cancelling costs nothing. Up to ${MAX_CRAFT_JOBS} jobs wait in all.`),
+      p(`Each workplace (your hands, a Work Stump, a Kiln, a Bloomery, the Forge, the Workbench) has its own *lane*, and all the lanes work at once. A job takes its inputs only when it finishes, so cancelling costs nothing. Up to ${MAX_CRAFT_JOBS} jobs wait in all.`),
       p(`Once started, a job keeps going while you stay within ${STATION_WORK_RANGE} cells of its workplace: tend the fire, fetch water or dig clay while the Kiln works.`),
     ],
     [
       ...workplacesTable(),
-      p(`The Work Stump comes first: ${recipeInputsProse(stump)} and an axe. It splits a log into ${splitSticks.outputs[0].n} sticks, cuts planks and works leather.`),
-      tip('A Kiln, a Bloomery or the Forge at work is a warm place to stand.'),
+      p(`The Work Stump comes first: ${recipeInputsProse(stump)} and an axe. It splits a log into ${splitSticks.outputs[0].n} sticks, cuts planks and works leather. A Kiln, a Bloomery or the Forge at work is a warm place to stand.`),
     ],
     ...recipeTable('hand').map((t) => [t]),
     ...recipeTable('stump').map((t) => [t]),
@@ -1124,6 +1352,12 @@ function makeChapters() {
       p('Sand alone melts at about 1 700 °C, far beyond any kiln. A flux lowers that, and at the Bloomery salt plays the part.'),
     ],
     ...recipeTable('forge').map((t) => [t]),
+    [
+      h('The Workbench'),
+      p(`The *Workbench* comes last of all. It is built at hand from ${recipeInputsProse(workbench)}, with an ${plain(recipeTools(workbench))}: steel from the Forge, glass from the Bloomery, copper wire drawn at the Work Stump and tin smelted in the Kiln.`),
+      p(`It is where circuits grow up. The simple parts are made at the Work Stump: the ${listJoin(ELEMENTARY_PARTS.map((k) => itemName(k)))}. The Workbench builds the clever devices on top of them: the ${listJoin(devices)}.`),
+      tip('Every device at the Workbench is built on a simple part, so make those first.'),
+    ],
     ...recipeTable('workbench').map((t) => [t]),
     [
       h('Why these steps'),
@@ -1134,7 +1368,72 @@ function makeChapters() {
     ],
   ]);
 
-  // ---- 7. Dangers
+  // ---- 7. Animals
+  chapter('animals', 'Animals', 'Animals', 'hex', [
+    [
+      h('Shy herds'),
+      p(`Pigs root about on the grass, and ${herdNames} roam the land in small herds: ${herdSizes}. They are few, and they are shy. An animal that notices you runs, and the rest of its herd runs with it.`),
+      p(`A herd turns up now and then on wild grass, ${HERD_MIN} to ${HERD_MAX} cells from where you stand, and only while few animals are about. The land decides which kind it is: the table shows where to look.`),
+      p(`Listen as you walk. ${cap(voices)} means a herd is near, often before you can see it.`),
+      tip('An animal you have tamed never runs away, cannot be hurt by your own blows, and is saved with your world.'),
+    ],
+    [
+      ...animalsTable(),
+      p('*Where* lists the lands its herds appear in, the likeliest first. *Gives* is what a hunt brings.'),
+    ],
+    [
+      h('Getting close'),
+      p(`How near you may come depends on how you move. *Sneak* with [Shift] and an animal notices you at only ${fmtPct(SNEAK_NOTICE)} of its usual distance. *Sprint* and it spots you from ${fmtPct(SPRINT_NOTICE - 1)} farther off.`),
+      ...waryTable(),
+      p(reachTip),
+    ],
+    [
+      h('A treat in your hand'),
+      p(`Better than stalking: hold out a food the animal likes. It will not run from you, and from ${LURE_RANGE} cells away it trots up and waits beside you. Just do not sprint.`),
+      p(`${cap(lureLine)}. A pig comes to nothing: that one you stalk.`),
+      p(`Then feed it with [R]. Cattle and sheep stay calm for ${FED_CALM_S} seconds after a mouthful, however close you stand. ${tameLine}.`),
+    ],
+    [
+      h('Hunting'),
+      p('Bare hands only shove an animal aside. Any tool in your hand wounds it: every blow takes the tool\'s *power* off the animal\'s health.'),
+      ...powerTable(),
+      p(`A wounded animal bolts, and its herd with it, for at least ${HIT_FLEE_S} seconds. Be quick.`),
+    ],
+    [
+      ...blowsTable('blows-animals', 'Blows to bring an animal down', ['Animal', 'Health'], huntTargets(), 'animals'),
+      p(`You can throw as well, with [G]: a rock counts ${rockThrow.power}, a ${itemName(DART_KEYS[0])} ${dartThrow.power} and a ${itemName(spearKey)} ${spearThrow.power}. ${cap(listJoin(dartRec.inputs.map((i) => `${numWord(i.n)} ${inputLabel(/** @type {any} */ (i))}`)))} make ${numWord(dartRec.outputs[0].n)} ${itemName(dartRec.outputs[0].k)}s at hand, with a ${plain(recipeTools(dartRec))}.`),
+      p('What an animal gives flies to you, like anything you dig. Rawhide becomes leather at the Work Stump: clothes, bellows and your Sleeping Hide.'),
+    ],
+    [
+      h('Cattle and sheep'),
+      p('Cattle and sheep cannot be tamed, but each gives something again and again.'),
+      p(`*Milk.* Press [R] on a cow with an empty Clay Pot in hand for a Pot of Milk: ${fmtSigned(milk.satiation)} Nourishment and ${fmtSigned(milk.hydration)} Hydration. She has more after ${fmtDurationLong(MILK_REGROW_S)}.`),
+      p(`*Wool.* Press [R] on a sheep with a knife in your pack. Shearing gives ${SHEAR_WOOL[0]}–${SHEAR_WOOL[1]} ${itemName('wool_white')} and costs the knife one use; the fleece is back in ${fmtDurationLong(SHEAR_REGROW_S)}. Wool is a soft block to build with and to land on.`),
+      tip('Hunt them only when you need meat or hide.'),
+    ],
+    [
+      h('Horses'),
+      p(`A wild horse spots you from farther off than any other animal, and it outruns you. So bring it a treat: ${lureText(SPECIES.horse.lure)}. Feed it with [R], ${numWord(SPECIES.horse.tame)} times, and it trusts you for good.`),
+      p(`Press [R] on your horse to get on. It goes where you look at ${fmtNum(RIDE_SCALE)} times your own pace, walking or sprinting, hops single steps by itself, and leaps a wall ${Math.floor(RIDE_LEAP)} cells high when you press [Space]. [Shift] gets you off.`),
+      p(`A tame horse waits for you: it grazes within ${HOME_RANGE} cells of where you left it. If it is hurt, its food heals it.`),
+    ],
+    [
+      h('Wolves'),
+      p(`Wolves keep to ${wolfLands}, and a wild one runs from you like any other animal. It comes to ${lureText(SPECIES.wolf.lure)}. Feed it with [R], ${numWord(SPECIES.wolf.tame)} times, and it is yours.`),
+      p(`Your wolf follows you, runs to keep up, and finds you again if it is left far behind. It goes for any zombie within ${WOLF_GUARD} cells and bites it: ${WOLF_BITE} power ${everySeconds(WOLF_BITE_S)}.`),
+      p('Press [R] on your wolf to tell it to *sit* and wait, and [R] again to *follow*. Meat heals it when it is hurt.'),
+      warn('A black hole swallows animals as it swallows everything else. Keep your horse and your wolf well away from one.'),
+    ],
+    [
+      h('Snares'),
+      p(`A *Snare* is a noose of cord on a bent stick, made at hand from ${recipeInputsProse(snare)}. Set it on the ground where animals walk.`),
+      p(`A wild animal that steps into it, a pig too, is held fast for ${fmtDurationLong(TRAP_HOLD_S)}: time to walk up and feed it, shear it, milk it or hunt it. Then it pulls free, and nothing catches it again for ${TRAP_IMMUNE_S} seconds. The snare sets itself once more, without its bait.`),
+      p(`Bait beats luck. Press [R] on a set snare with any food in hand: calm ${herdNames} within ${BAIT_RANGE} cells wander over to it. Keep well back, or you will scare them off.`),
+      tip('Feed a snared horse or wolf until it is tame, and it steps out of the noose as your friend.'),
+    ],
+  ]);
+
+  // ---- 8. Dangers
   chapter('dangers', 'Dangers', 'Dangers', 'hazard', [
     [
       h('Your body\'s warnings'),
@@ -1143,9 +1442,9 @@ function makeChapters() {
     ],
     [
       h('Healing'),
-      p(`You heal ${fmtNum(R.REGEN)} HP a second while Nourishment and Hydration are at least ${R.REGEN_MIN_SATIATION}, your body is between ${R.REGEN_TEMP_MIN} and ${R.REGEN_TEMP_MAX} °C, you are not sick and you have breath. Each point healed costs ${fmtNum(R.REGEN_COST)} Nourishment. Stand still beside a burning campfire for ${R.REGEN_STILL_S} s and you heal twice as fast.`),
+      p(`You heal ${fmtNum(R.REGEN)} HP a second while Nourishment and Hydration are at least ${R.REGEN_MIN_SATIATION}, your body is between ${R.REGEN_TEMP_MIN} and ${R.REGEN_TEMP_MAX} °C, you are not Poisoned and you have breath. Each point healed costs ${fmtNum(R.REGEN_COST)} Nourishment. Stand still beside a burning campfire for ${R.REGEN_STILL_S} s and you heal twice as fast.`),
       ...bandageTable(),
-      p('A bandage heals whatever your state. A rag from a zombie is not clean enough to bind a wound until it has been boiled: the Rag Bandage takes a Pot of Boiled Water.'),
+      p('A bandage heals whatever your state, even while you are Poisoned. A rag from a zombie is not clean enough to bind a wound until it has been boiled: the Rag Bandage takes a Pot of Boiled Water.'),
     ],
     ...dangerTable().map((t) => [t]),
     [
@@ -1159,14 +1458,37 @@ function makeChapters() {
     ],
     [
       h('Zombies'),
-      p(`Zombies come out after dusk and shamble toward you when they see you. Each strike costs ${ZOMBIE_DAMAGE} HP and knocks you back.`),
+      p(`Zombies come up out of the ground only in the dark, from ${sunset} to ${sunrise}: one or two at a time, never nearer than ${ZOMBIE_SPAWN_MIN} cells. One that notices you within ${ZOMBIE_SIGHT} cells comes for you. Each strike costs ${ZOMBIE_DAMAGE} HP and knocks you back.`),
       p(`They keep ${ZOMBIE_FIRE_FEAR} cells away from a burning campfire and never strike anyone inside that circle. None appears within ${ZOMBIE_SPAWN_FIRE_CLEAR} cells of a fire, or in a column you have built in.`),
-      p('At dawn, a zombie under open sky smoulders and burns away; one in shade or water lasts until it walks into the light.'),
-      p(`Fight back: ${ZOMBIE_HITS} points of power knock one out (${ZOMBIE_HITS} punches, or 2 blows of a stone axe). One you knock out may drop a Grave Rag.`),
+      p(`A zombie never steps off a drop deeper than ${ZOMBIE_MAX_DROP} cells, and it gives up on anyone standing more than ${ZOMBIE_CHASE_MAX_RISE} cells above it.`),
+      tip(`A wall ${CLIMB.walker.night + 1} cells high stops a walker. Runners and the alpha jump higher: the table tells how high.`),
+    ],
+    [
+      h('Three kinds'),
+      p(`Most zombies are *walkers*. About one in ${numWord(Math.round(1 / RUNNER_P))} is a *runner*: lean, quick, and easier to knock out.`),
+      ...zombiesTable(),
+      p(`The *alpha* is rare. When ${numWord(HORDE_SIZE)} or more zombies crowd within ${HORDE_RADIUS} cells of a runner, the runner may rise as the alpha (${fmtPct(ALPHA_CONVERT_P)} ${everySeconds(HORDE_CHECK_S)}; never more than ${numWord(ALPHA_MAX)} at a time). You will hear its deep call and see its amber eyes. Walkers within ${ALPHA_RALLY} cells of it hurry along at your own walking pace. So never let a crowd gather round a runner.`),
+    ],
+    [
+      h('Zombies by day'),
+      p('Sunlight does not burn zombies away. Out under the open sky it only weakens them:'),
+      bullets([
+        `*Walkers* go dormant and stand still, arms hanging. One wakes if you come within ${WALKER_WAKE_RANGE} cells, if you hit it (it stays awake for ${PROVOKE_S} seconds), or if an alpha is near.`,
+        `*Runners* only shamble, at a walker's pace, and leap ${CLIMB.runner.day} cell${CLIMB.runner.day === 1 ? '' : 's'} instead of ${CLIMB.runner.night}.`,
+        `*The alpha* slows to ${fmtPct(KIND_STATS.alpha.chase * DAY_ALPHA_FACTOR)} of your walk, strikes for ${alphaStrike.day} HP instead of ${alphaStrike.night}, and leaps ${CLIMB.alpha.day} cells instead of ${CLIMB.alpha.night}.`,
+      ]),
+      p(`A zombie with nobody to chase does not stay out long: after ${DAWN_BURROW_MIN_S} to ${DAWN_BURROW_MIN_S + DAWN_BURROW_RAND_S} seconds of daylight it burrows back into the ground. One that is chasing you stays until it loses you.`),
+      warn('Shade keeps a zombie strong: under a tree or a roof it is as dangerous by day as at night.'),
+    ],
+    [
+      h('Fighting back'),
+      p(`Every blow takes its power off a zombie, and bare hands count for ${toolPower(null)}. The powers of the tools are listed under *Animals*, in Hunting.`),
+      ...blowsTable('blows-zombies', 'Blows to knock a zombie out', ['Zombie', 'Takes'], zombieTargets(), 'zombies'),
+      p(`A thrown rock, dart or spear counts as well, and a tame wolf bites for ${WOLF_BITE}. A zombie you knock out may leave a ${describeDrops(MOB_DROPS.zombie, true)}; an alpha has ${numWord(KIND_STATS.alpha.drops)} chances at one.`),
     ],
   ]);
 
-  // ---- 8. Death and waking
+  // ---- 9. Death and waking
   chapter('death', 'Death and waking', 'Death', 'hide', [
     [
       h('When you fall'),
@@ -1180,22 +1502,23 @@ function makeChapters() {
       ...wakeTable(),
       p('*Wake up* puts you back on your feet: on your Sleeping Hide if you have one, otherwise in green land (plains or forest) near the world\'s spawn, so a harsh land never kills you twice.'),
       p('Jobs in the making lanes are dropped when you die, but nothing is lost: inputs are only taken when a job finishes.'),
+      tip('Your horse waits where you left it. A wolf that was following you finds you again.'),
     ],
     [
       h('The Sleeping Hide'),
-      p(`A Sleeping Hide is a hide pegged out at six stakes. Make it at a Work Stump from ${recipeInputsProse(hide)}, with a ${toolNeedLabel('knife', 2).replace(/\+$/, '')}. Place it, then press [R] on it: from then on you wake there.`),
+      p(`A Sleeping Hide is a hide pegged out at six stakes. Make it at a Work Stump from ${recipeInputsProse(hide)}, with a ${plain(toolNeedLabel('knife', 2))}. Place it, then press [R] on it: from then on you wake there.`),
       p('It does not skip the night (the world\'s clock is shared), but it keeps your camp, your fire and your stores close when things go wrong.'),
       tip(`Keep spare food, a pot and tools in a Wicker Basket (${recipeInputsProse(basket)}; ${BASKET_SLOTS} slots) beside your hide.`),
     ],
   ]);
 
-  // ---- 9. Controls
+  // ---- 10. Controls
   chapter('controls', 'Controls', 'Keys', 'keys', [
     [
       ...table({ id: 'keys-move', caption: 'Moving', head: ['Key', 'Does'], rows: [
         ['W A S D', 'walk (arrow keys work too)'],
         ['Space', 'jump; swim up'],
-        ['Shift', 'sneak: slow and low'],
+        ['Shift', 'sneak: slow, low, and harder for animals to notice'],
         ['W W', 'double-tap and hold to sprint (hungry, thirsty work)'],
         ['Mouse', 'look around'],
         ['1–9, wheel', 'choose a hotbar slot'],
@@ -1213,6 +1536,8 @@ function makeChapters() {
         ['Hold RMB', 'eat, drink a pot, bandage; wear clothes'],
         ['MMB', 'pick the hotbar slot holding that block'],
         ['R', 'use whatever you look at (next page)'],
+        ['Q', 'drop one of what you hold (with Shift: the whole stack)'],
+        ['G', 'throw one of what you hold where you look'],
         ['E', 'your pack and Making'],
       ] }),
       p('The ring round the crosshair fills while you dig, eat, tap a birch or relight a fire. Let go to stop.'),
@@ -1220,6 +1545,8 @@ function makeChapters() {
     [
       h('[R] does the nearest useful thing'),
       steps([
+        'An animal: feed it what it likes, milk a cow, shear a sheep, ride your horse, or tell your wolf to sit or follow.',
+        'A snare: bait it with the food in your hand.',
         'A campfire: put food or a pot on, feed it, or take what is done.',
         'A cold fire pit: take what was left, or relight it.',
         'A ripe bush, a prickly pear, loose stones or branches: pick.',
@@ -1232,20 +1559,45 @@ function makeChapters() {
       ]),
     ],
     [
+      h('Riding'),
+      ...table({ id: 'keys-ride', caption: 'On your horse', head: ['Key', 'Does'], rows: [
+        ['R', 'get on your tame horse'],
+        ['Mouse', 'turn: the horse goes where you look'],
+        ['W A S D', 'ride'],
+        ['W W', 'double-tap and hold to gallop'],
+        ['Space', `leap a wall ${Math.floor(RIDE_LEAP)} cells high`],
+        ['Shift', 'get off'],
+      ] }),
+      p('A horse hops single steps by itself and swims. It waits where you get off.'),
+    ],
+    [
+      h('Dropping and throwing'),
+      p('[Q] drops one of the thing in your hand a step ahead of you; hold [Shift] as well and the whole stack goes. [G] throws one where the crosshair points.'),
+      ...throwsTable(),
+      p('Aim a little high: a throw sinks as it flies. This book can be neither dropped nor thrown.'),
+    ],
+    [
+      h('Things on the ground'),
+      p('What you dig, pick or win does not land in your pack at once. It pops out, flies to you, and is yours when it reaches you. A block will not break while your pack has no room for what it gives: the hint says *Pack full*.'),
+      p(`Walk within ${fmtNum(COLLECT_RADIUS)} cells of something lying loose and it comes to you, if you have room. A thing you dropped or threw waits until you have stepped away from it once, so it never hops straight back.`),
+      p(`Nothing lies there for ever. After ${fmtDurationLong(LOOSE_DESPAWN_S)} on the ground a thing is gone; it blinks for its last ${LOOSE_BLINK_S} seconds to warn you. A burning campfire burns up whatever lands in it.`),
+      tip('What you mean to keep belongs in a Wicker Basket, not on the ground.'),
+    ],
+    [
       h('The pack'),
       p(`Your pack has ${PACK_SLOTS} slots: the ${HOTBAR_SIZE}-slot hotbar strip and a rosette of ${PACK_SLOTS - HOTBAR_SIZE} round a centre hex that shows what you point at. On the left are the clothes you wear (head, body, feet) and the red discard hex.`),
       bullets([
         'Click: pick up a stack, or put it down.',
         'Right-click: pick up half, or put down one.',
         'Shift-click: move between the hotbar and the rosette, or into an open basket.',
-        'Drop a stack on the discard hex to throw it away.',
+        'Put a stack on the discard hex to destroy it.',
         'Right-click the handbook to read it.',
       ]),
       tip('New finds go to the hotbar first. The world keeps running while the pack is open.'),
     ],
   ]);
 
-  // ---- 10. Creative and Survival
+  // ---- 11. Creative and Survival
   chapter('modes', 'Creative and Survival', 'Modes', 'switch', [
     [
       h('Two ways to play'),
@@ -1257,8 +1609,12 @@ function makeChapters() {
       h('Older worlds'),
       p('Worlds made before Survival have no wild plants, ponds, copper or tin. The first time you switch one to Survival you are asked to bring them in: they appear wherever the land is untouched, near your builds too. This cannot be undone.'),
       p('New worlds have them unless you untick *Survival resources* when you create the world.'),
+    ],
+    [
+      h('Good to know'),
       bullets([
         'Fires lit in Creative burn forever; only Survival fires need fuel.',
+        'In Creative, [R] tames a horse or a wolf at once, and your blows only shove an animal.',
         'The pause menu\'s Undo is off in Survival: it would hand back what you mined.',
         'Creative will not break a basket, your belongings or a fire that holds survival things.',
         'In the console, “vitals”, “pack” and “items” show your state.',
@@ -1324,7 +1680,7 @@ export function ensureHandbook(pack, preferSlot = HOTBAR_SIZE - 1) {
 }
 
 /** Everything a generated table may name as its `source`. */
-export const TABLE_SOURCES = Object.freeze(['recipes', 'items', 'harvest', 'fire', 'climate', 'vitals']);
+export const TABLE_SOURCES = Object.freeze(['recipes', 'items', 'harvest', 'fire', 'climate', 'vitals', 'animals', 'zombies', 'loose']);
 
 /** For tests: every block id the book's generated tables read (so a renamed block fails loudly). */
 export const BOOK_BLOCKS = Object.freeze([...GATHER, ...BREAK_EXAMPLES, ...Object.values(STATION_BLOCKS)]);
