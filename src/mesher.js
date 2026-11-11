@@ -9,6 +9,14 @@
 // Performance notes: this runs on the main thread inside world.update()'s time budget, so the hot loop is
 // allocation-free. The padded 18×18×128 volume and the three mesh builders are module-level scratch buffers
 // reused between calls; the only allocations per call are the exact-length output arrays.
+//
+// Light (CONTRACTS §62): every vertex also carries `light` (2 bytes: sky, block, each level·17 so 255 = 15), read from a
+// second padded volume filled from the chunks' `light` arrays (a chunk without one — or no chunk — reads as open sky,
+// 15 / 0, i.e. exactly today's look). The level is SMOOTHED per vertex like the AO: the mean over the see-through cells
+// that touch the vertex in front of the face (the face's own front cell always; the AO samples whenever they are not
+// opaque; the diagonal only when it is not cut off by both sides), so light falls off across a face instead of stepping
+// cell by cell. A face whose front cell is opaque (a lowered water surface under a block) and the plant shapes use their
+// own cell's light; an emitter's faces carry at least its own block level (glowstone is fully lit).
 import { CHUNK_SIZE, WORLD_HEIGHT, AO_CURVE, TOP_UV_SCALE } from './config.js';
 import { floorDiv, mod, localIndex } from './coords.js';
 import {
@@ -18,6 +26,7 @@ import {
 import {
   BLOCK, BIOME, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed, isWater, waterSurfaceHeight, getBlockShape,
 } from './blocks.js';
+import { FULL_SKY, LIGHT_EMISSION } from './light.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
@@ -34,6 +43,10 @@ const PAD = CHUNK_SIZE + 2; // 18
 
 /** Module-level scratch volume, zero-filled at the start of every build. */
 const padded = new Uint8Array(PAD * PAD * WORLD_HEIGHT);
+/** The same cells' packed light (sky << 4 | block, §62); FULL_SKY where a chunk has no light array or is missing. */
+const paddedLight = new Uint8Array(PAD * PAD * WORLD_HEIGHT);
+/** Scratch 3×3 array of neighbour chunk light arrays (same index as neighbourData). */
+const neighbourLight = new Array(9).fill(null);
 
 /** Scratch 3×3 array of neighbour chunk block arrays (index = (dcq+1)*3 + (dcr+1)); cleared after each build. */
 const neighbourData = new Array(9).fill(null);
@@ -212,6 +225,7 @@ export function hexCornerAO(sideA, sideB) {
  * @property {Float32Array} normals
  * @property {Float32Array} uvs
  * @property {Float32Array} colors
+ * @property {Uint8Array} light          2 per vertex: sky·17, block·17 (§62)
  * @property {Uint32Array} indices
  * @property {number} vertexCount
  * @property {number} indexCount
@@ -238,6 +252,7 @@ export function createMeshBuilder(initialVertices = 1024) {
     normals: new Float32Array(vcap0 * 3),
     uvs: new Float32Array(vcap0 * 2),
     colors: new Float32Array(vcap0 * 3),
+    light: new Uint8Array(vcap0 * 2),
     indices: new Uint32Array(icap0),
     vertexCount: 0,
     indexCount: 0,
@@ -262,10 +277,13 @@ export function createMeshBuilder(initialVertices = 1024) {
         uvs.set(b.uvs.subarray(0, b.vertexCount * 2));
         const colors = new Float32Array(cap * 3);
         colors.set(b.colors.subarray(0, b.vertexCount * 3));
+        const light = new Uint8Array(cap * 2);
+        light.set(b.light.subarray(0, b.vertexCount * 2));
         b.positions = positions;
         b.normals = normals;
         b.uvs = uvs;
         b.colors = colors;
+        b.light = light;
         b.vertexCapacity = cap;
       }
       const needI = b.indexCount + indices;
@@ -286,6 +304,7 @@ export function createMeshBuilder(initialVertices = 1024) {
         normals: b.normals.slice(0, vc * 3),
         uvs: b.uvs.slice(0, vc * 2),
         colors: b.colors.slice(0, vc * 3),
+        light: b.light.slice(0, vc * 2),
         indices: b.indices.slice(0, b.indexCount),
         vertexCount: vc,
         indexCount: b.indexCount,
@@ -317,18 +336,22 @@ let centreBiomes = null;
  */
 function fillPadded(cq, cr, getChunkData) {
   padded.fill(0);
+  paddedLight.fill(FULL_SKY);
   centreBiomes = null;
   let hasCentre = false;
   for (let dcq = -1; dcq <= 1; dcq++) {
     for (let dcr = -1; dcr <= 1; dcr++) {
       if (dcq === dcr && dcq !== 0) {
         neighbourData[(dcq + 1) * 3 + (dcr + 1)] = null;
+        neighbourLight[(dcq + 1) * 3 + (dcr + 1)] = null;
         continue;
       }
       const data = getChunkData(cq + dcq, cr + dcr);
       const blocks = data && data.blocks;
       const ok = !!blocks && typeof blocks.subarray === 'function' && blocks.length >= WORLD_HEIGHT * CHUNK_SIZE * CHUNK_SIZE;
       neighbourData[(dcq + 1) * 3 + (dcr + 1)] = ok ? blocks : null;
+      const light = ok ? /** @type {{ light?: Uint8Array|null }} */ (data).light : null;
+      neighbourLight[(dcq + 1) * 3 + (dcr + 1)] = light instanceof Uint8Array && light.length >= blocks.length ? light : null;
       if (dcq === 0 && dcr === 0 && ok) {
         hasCentre = true;
         const biomes = data.biomes;
@@ -346,9 +369,12 @@ function fillPadded(cq, cr, getChunkData) {
       const slr = mod(pr - 1, CHUNK_SIZE);
       const base = localIndex(slq, 0, slr);
       padded.set(blocks.subarray(base, base + WORLD_HEIGHT), pIndex(pq, 0, pr));
+      const light = neighbourLight[(dcq + 1) * 3 + (dcr + 1)];
+      if (light) paddedLight.set(light.subarray(base, base + WORLD_HEIGHT), pIndex(pq, 0, pr));
     }
   }
   neighbourData.fill(null); // do not retain references to chunk arrays between calls
+  neighbourLight.fill(null);
   return hasCentre;
 }
 
@@ -361,6 +387,22 @@ function opaqueAt(pq, py, pr) {
   if (py < 0) return 1;
   if (py >= WORLD_HEIGHT) return 0;
   return OPAQUE[padded[(pq * PAD + pr) * WORLD_HEIGHT + py]];
+}
+
+/**
+ * Packed light (sky << 4 | block) of the padded cell (pq, py, pr): open sky above the world, dark below it.
+ * @returns {number}
+ */
+function lightAt(pq, py, pr) {
+  if (py < 0) return 0;
+  if (py >= WORLD_HEIGHT) return FULL_SKY;
+  return paddedLight[(pq * PAD + pr) * WORLD_HEIGHT + py];
+}
+
+/** Sky·17 and block·17 of a packed light byte (a whole level → a multiple of 17, 15 → 255). */
+function writeLight(out, o, packed) {
+  out[o] = (packed >> 4) * 17;
+  out[o + 1] = (packed & 15) * 17;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -395,6 +437,12 @@ function emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, tr, tg, tb) {
   const vBottom = bottomY === 0 ? v1 : v1 - (v1 - v0) * bottomY;
   const qq = pq + DIR_DQ[f];
   const qr = pr + DIR_DR[f];
+  const light = bld.light;
+  // §62: the face's front cell (its own cell when that is opaque), then per vertex the see-through AO samples.
+  const front = opaqueAt(qq, ly, qr) ? lightAt(pq, ly, pr) : lightAt(qq, ly, qr);
+  const frontSky = front >> 4;
+  const frontBlock = front & 15;
+  const emit = LIGHT_EMISSION[a];
 
   let ao0 = 0, ao1 = 0, ao2 = 0, ao3 = 0;
   for (let v = 0; v < 4; v++) {
@@ -412,6 +460,24 @@ function emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, tr, tg, tb) {
     const c = opaqueAt(tq, ly + dy, trr);
     const ao = (s1 & s2) ? 0 : 3 - (s1 + s2 + c);
     if (v === 0) ao0 = ao; else if (v === 1) ao1 = ao; else if (v === 2) ao2 = ao; else ao3 = ao;
+    let sky = frontSky;
+    let blk = frontBlock;
+    let n = 1;
+    if (s1 === 0) {
+      const l = lightAt(tq, ly, trr);
+      sky += l >> 4; blk += l & 15; n++;
+    }
+    if (s2 === 0) {
+      const l = lightAt(qq, ly + dy, qr);
+      sky += l >> 4; blk += l & 15; n++;
+    }
+    if (c === 0 && (s1 & s2) === 0) {
+      const l = lightAt(tq, ly + dy, trr);
+      sky += l >> 4; blk += l & 15; n++;
+    }
+    const lb = blk / n;
+    light[(b + v) * 2] = Math.round((sky / n) * 17);
+    light[(b + v) * 2 + 1] = Math.round((lb > emit ? lb : emit) * 17);
 
     const vi = b + v;
     const p3 = vi * 3;
@@ -449,7 +515,7 @@ function emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, tr, tg, tb) {
  * Emit the hexagonal top (f = 6) or bottom (f = 7) face as a 6-triangle fan around a centre vertex whose
  * colour is the mean of the six corners (smooth AO across the face).
  */
-function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb) {
+function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb, own = -1) {
   bld.ensure(7, 18);
   const positions = bld.positions;
   const normals = bld.normals;
@@ -471,6 +537,13 @@ function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb) {
   const du = u1 - u0;
   const dv = v1 - v0;
   const uSign = isTop ? TOP_UV_SCALE : -TOP_UV_SCALE; // the bottom face is seen mirrored
+  const light = bld.light;
+  // §62: the cell in front of the cap (its own cell when that is opaque, or for a decal: `own`), then per corner the two
+  // see-through side cells that share it.
+  const front = own >= 0 ? own : opaqueAt(pq, ly + dy, pr) ? lightAt(pq, ly, pr) : lightAt(pq, ly + dy, pr);
+  const emit = LIGHT_EMISSION[a];
+  let skySum = 0;
+  let blockSum = 0;
 
   let sum = 0;
   for (let m = 0; m < 6; m++) {
@@ -482,6 +555,26 @@ function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb) {
     const col = shade * AO_CURVE[3 - (sA + sB)];
     sum += col;
     const vi = b + 1 + m;
+    let sky = front >> 4;
+    let blk = front & 15;
+    if (own < 0) {
+      let n = 1;
+      if (sA === 0) {
+        const l = lightAt(pq + DIR_DQ[dA], ly + dy, pr + DIR_DR[dA]);
+        sky += l >> 4; blk += l & 15; n++;
+      }
+      if (sB === 0) {
+        const l = lightAt(pq + DIR_DQ[dB], ly + dy, pr + DIR_DR[dB]);
+        sky += l >> 4; blk += l & 15; n++;
+      }
+      sky /= n;
+      blk /= n;
+    }
+    if (blk < emit) blk = emit;
+    skySum += sky;
+    blockSum += blk;
+    light[vi * 2] = Math.round(sky * 17);
+    light[vi * 2 + 1] = Math.round(blk * 17);
     const p3 = vi * 3;
     positions[p3] = cx + CORNER_X[k];
     positions[p3 + 1] = yPos;
@@ -510,6 +603,8 @@ function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb) {
   colors[c3] = cc * tr;
   colors[c3 + 1] = cc * tg;
   colors[c3 + 2] = cc * tb;
+  light[b * 2] = Math.round((skySum / 6) * 17);
+  light[b * 2 + 1] = Math.round((blockSum / 6) * 17);
 
   const ib = bld.indexCount;
   for (let m = 0; m < 6; m++) {
@@ -550,8 +645,9 @@ export function cellHash(q, r, salt = 0) {
  * 60° apart, turned and nudged per world cell (wq, wr) by cellHash. The cutout material is double-sided, so each plane is one
  * quad seen from both sides. Normals point up, so the sun lights the plant like the ground it grows on.
  */
-function emitCross(bld, wq, wr, ly, cx, cz, a, tr, tg, tb) {
+function emitCross(bld, wq, wr, ly, cx, cz, a, tr, tg, tb, own) {
   bld.ensure(4 * CROSS_PLANES, 6 * CROSS_PLANES);
+  const light = bld.light;
   const positions = bld.positions;
   const normals = bld.normals;
   const uvs = bld.uvs;
@@ -589,6 +685,7 @@ function emitCross(bld, wq, wr, ly, cx, cz, a, tr, tg, tb) {
       colors[p3] = col * tr;
       colors[p3 + 1] = col * tg;
       colors[p3 + 2] = col * tb;
+      writeLight(light, (b + v) * 2, own);
     }
     indices[ib] = b; indices[ib + 1] = b + 1; indices[ib + 2] = b + 2;
     indices[ib + 3] = b; indices[ib + 4] = b + 2; indices[ib + 5] = b + 3;
@@ -660,8 +757,9 @@ export function buildChunkMesh(cq, cr, getChunkData) {
           const tr = t ? tint[0] : 1;
           const tg = t ? tint[1] : 1;
           const tb = t ? tint[2] : 1;
-          if (shape === SHAPE_CROSS) emitCross(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, tr, tg, tb);
-          else emitHex(bld, FACE_TOP, pq, pr, ly, cx, cz, DECAL_Y, a, tr, tg, tb);
+          const own = lightAt(pq, ly, pr); // a plant or a decal is lit by its own cell (§62)
+          if (shape === SHAPE_CROSS) emitCross(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, tr, tg, tb, own);
+          else emitHex(bld, FACE_TOP, pq, pr, ly, cx, cz, DECAL_Y, a, tr, tg, tb, own);
           continue;
         }
 

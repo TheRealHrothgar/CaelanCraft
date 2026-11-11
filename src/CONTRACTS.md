@@ -329,6 +329,8 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 > **v0.10 amendment (§50):** ids 95–114 (the circuit parts), `BLOCK_COUNT` 115, tiles 160–194, `BlockDef.icon`, `POWDER_KEG` (= BLAST_BARREL 75) and `BLOCK_ALIASES`, BLACK_HOLE unplaceable and unmeshed, `PICKER_ORDER` 99.
 >
 > **v0.10 amendment (§59):** `BlockDef.shape` (`'prism'` default | `'cross'` | `'decal'`) and `getBlockShape(id)`; the wild plants are crossed sprites and the ground litter floor decals.
+>
+> **Light amendment (§62):** GLOWSTONE now really glows: it, the CAMPFIRE and the TORCH emit block light (15, 14, 13); leaves, water and ice dim light (`light.js` LIGHT_EMISSION / LIGHT_OPACITY).
 
 Block ids (`BLOCK.*`): `AIR 0, STONE 1, GRASS_BLOCK 2, DIRT 3, COBBLESTONE 4, OAK_PLANKS 5, BEDROCK 6, WATER 7,
 SAND 8, GRAVEL 9, OAK_LOG 10, OAK_LEAVES 11, GLASS 12, COAL_ORE 13, IRON_ORE 14, GOLD_ORE 15, DIAMOND_ORE 16,
@@ -394,6 +396,8 @@ UV rule: `tileToUV(t)`: `tx = t % 16, ty = floor(t/16)`, `u0 = tx*TILE_UV + UV_I
 `v0 = ty*TILE_UV + UV_INSET` (image top), `v1 = (ty+1)*TILE_UV − UV_INSET` (image bottom).
 
 ## 6. `src/chunk.js` (exact — already written)
+
+> **Light amendment (§62):** a Chunk also has `light` (Uint8Array(CHUNK_VOLUME) | null — sky << 4 | block per cell, same index as `blocks`), `lightTop` (Uint8Array(CHUNK_AREA) | null) and `lightSlot` (−1); World's LightEngine fills them.
 
 ```js
 export class Chunk {
@@ -511,6 +515,8 @@ exposes `gen, pondAt, treeTrunkAt, FLORA_TABLE`. A warm generation-2 chunk is al
 
 ## 9. `src/world.js`
 
+> **Light amendment (§62):** `light` (the LightEngine), `lightAt(q, y, r)` (packed, flushes first), `flushLight()`; update() re-lights the frame's edits first (step 0); `_generate` lights each chunk as it registers it (before onChunkGenerated); setBlock and loaded importEdits note the cell for the next flush; light that changes another meshed chunk dirties it lazily.
+
 ```js
 export class World {
   constructor(opts)   // { seed: string|number, renderDistance?: number = RENDER_DISTANCE, edits?: EditsJSON,
@@ -607,6 +613,8 @@ Missing `performance` (Node < 16) → use `Date.now`. Tests pass `now: () => 0` 
 4. `editCount` is a running count equal to Σ `edits` sizes at all times.
 
 ## 10. `src/mesher.js`
+
+> **Light amendment (§62):** every MeshData layer also carries `light` (Uint8Array, 2 per vertex: sky level · 17, block level · 17), read from the chunks' `light` arrays (open sky without them) and smoothed per vertex over the see-through AO samples in front of the face; a second padded volume like §10.1's holds the levels.
 
 ```js
 export function buildChunkMesh(cq, cr, getChunkData)   // → ChunkMeshData { opaque, cutout, translucent } (null layer when 0 faces)
@@ -898,6 +906,8 @@ below their top edge, drawn with `setTransform` from the 16×16 tile; the top ti
 (x 3..29, y 1..17) clipped to the hexagon. Shades use `source-atop` so transparent texels stay transparent.
 
 ## 17. `src/renderer.js` (three)
+
+> **Light amendment (§62):** `setLightField(field | null)`; `buildLayerGeometry` adds the `caelLight` attribute; the three chunk materials are patched by `lightShader.applyChunkLight` and every other lit material by `installObjectLighting` (sun, moon and sky × the sky level's brightness, block light added, a floor in the dark); `setSky` also sets the `caelDaylight` uniform.
 
 ```js
 export function createRenderer(canvas, atlasTexture, opts = {})   // opts: { sunCanvas?, moonCanvas?, renderDistance? }
@@ -3807,6 +3817,92 @@ painted, unused).
   0.6 × lean) — a runner's pump instead — and swipe up 0.55 rad in a strike; the head lolls by `tilt` and looks up against the
   lean. `renderScale` / `renderSpin` as before. The atlas argument is ignored.
 
+## 62. Light — sky and block light per cell (`src/light.js` PURE, `src/lightShader.js` three; chunk, world, mesher, renderer, main)
+
+Amends §1, §5, §6, §9, §10, §17 and §23. Being underground is dark in the daytime; glowstone, campfires and torches light
+what is around them. Before this, chunk faces were lit only by the DirectionalLight (sun / moon) and the HemisphereLight, so
+a cave at noon was as bright as the surface.
+
+- **Levels.** Every cell has a SKY level and a BLOCK level, 0..LIGHT_MAX (15). A lit chunk holds them in `chunk.light`
+  (Uint8Array(CHUNK_VOLUME), index = localIndex, one byte = `sky << 4 | block`), with `chunk.lightTop` (per column: the
+  lowest y of the unbroken run of sky-15 cells from the top of the world, WORLD_HEIGHT when the top cell is dark) and
+  `chunk.lightSlot` (the engine's handle). `FULL_SKY = 0xF0` (15, 0) is what unloaded space, a chunk without light and
+  everything above the world read as; below the world reads 0. The light is cached with the chunk and goes when it unloads.
+- **Propagation** (`LIGHT_OPACITY[id]`, `LIGHT_EMISSION[id]`): a breadth-first flood over a cell's 8 neighbours (6 sides,
+  up, down). Entering a cell costs `max(1, opacity)` levels; opacity LIGHT_MAX (every `isOpaque` block) takes no light.
+  Sky light enters at the top of the world at 15 and **falls straight down for free** from a sky-15 cell into a cell of
+  opacity 0 (air, glass, plants, litter, campfire, thin parts, device models), so an open column is 15 down to the first
+  opaque or dimming cell; from there it floods sideways and down. Leaves (`isLeaves`), the whole water family and ice have
+  opacity 1 (LEAVES_ / WATER_ / ICE_LIGHT_OPACITY): no free fall through them — a lake's floor d cells down gets 15 − d,
+  the column under a single leaf is lit sideways at 14. Emitters hold their level in their own cell, opaque or not:
+  GLOWSTONE 15, CAMPFIRE 14, TORCH 13 (GLOWSTONE_LIGHT, CAMPFIRE_LIGHT, TORCH_LIGHT; the Torch always burns,
+  circuitParts). A cold FIRE_PIT, the FILAMENT_LAMP and every other block emit nothing.
+- **`LightEngine(source)`** (`source.getChunkData(cq, cr)`; World is the source): `lightChunk(chunk)` → Chunk[] — the sky
+  column pass, the emitters, seeds only where light can move (a lit cell beside a darker see-through one, inside the chunk
+  and both ways across every border with a loaded, lit hex neighbour), then one flood, which may brighten the neighbours
+  too; `releaseChunk(chunk)`; `clear()`; `noteChange(chunk, li)` (a written cell, after the write); `flush()` → Chunk[] —
+  every noted cell is darkened and the standard removal flood runs with the old levels (a neighbour no brighter than the
+  lost level goes dark too, and so does a sky-15 cell straight below a lost 15; brighter ones re-seed), then the emitters,
+  the top of the world and every noted cell's neighbours re-seed one flood, and the edited columns' `lightTop` is
+  recomputed; `hasPending`, `chunkCount`, `version` (bumps whenever a level changed); `get(q, y, r)` (packed), `skyAt`,
+  `blockAt`, `sampleWorld(x, y, z)`; `fillVolume(q0, r0, n, out)` (layout `((dq·n) + dr)·WORLD_HEIGHT + y`; FULL_SKY where
+  nothing is lit). Both operations return the chunks whose meshes may show the change: a changed cell's chunk and, for a
+  cell on a chunk border, the chunks across it (their faces sample it). Helpers: `lightOpacity(id)`, `lightEmission(id)`,
+  `skyLevel(p)`, `blockLevel(p)`, `lightBrightness(level)` = x / (1 + LIGHT_CURVE_K·(1 − x)) with x = level / 15 (1 at 15,
+  0.5 at 12, 0.18 at 7, 0 at 0) — the curve the shaders use.
+- **Unloaded neighbours count as nothing** (no cells, no light), not as sky-lit borders. Adding a chunk can then only ADD
+  light anywhere, so loading never needs a removal pass, and the result does not depend on the order chunks load in (tested
+  against a brute-force reference). Light that should arrive from a chunk that is not loaded yet arrives when it loads, and
+  the meshed chunks it reaches re-mesh lazily. A meshed chunk always has its six hex neighbours loaded (§9.1), so only light
+  routed through a neighbour from two chunks away (a corner path, rare) can arrive late. Light an unloaded chunk gave its
+  neighbours stays there (the same light returns when it reloads; an edit near the border re-floods it from what is loaded).
+- **World** (§9): `world.light`; `_generate` lights each chunk as it registers it (before `onChunkGenerated`) and lazily
+  dirties every OTHER meshed chunk the light reached; `setBlock` (and `importEdits` into a loaded chunk) notes the cell;
+  **`update()` starts with `flushLight()`** (step 0, before unloading and meshing), so every mesh it builds sees light that
+  matches its blocks, and a batch of physics writes is re-lit once per frame, not once per write. Chunks dirtied only by
+  light are dirtied lazily ('coalesce' when every write of the batch was a 'coalesce' one); the written cells' own chunks
+  keep the write's flag (§9.2), so a player's edit and the light around it re-mesh at once. `lightAt(q, y, r)` flushes
+  first.
+- **Mesher** (§10): every layer has `light` (Uint8Array, 2 per vertex, sky·17 and block·17: whole levels are exact, 255 =
+  15). A second padded 18×18×WORLD_HEIGHT volume is filled from the chunks' `light` (FULL_SKY without). A vertex's level is
+  the MEAN over the face's front cell — the face's own cell when the front is opaque (a lowered water surface under a block)
+  — and those AO samples that are not opaque: a side vertex adds the third cell, the front cell at ly ± 1 and the third
+  cell at ly ± 1 (that diagonal only when the two sides are not both opaque); a cap corner adds its two side cells at
+  ly ± 1; the cap centre is the mean of its corners. Cross plants and decals use their own cell's level. An emitter's own
+  faces carry at least its emission (glowstone's faces are 255). Why per-vertex smoothing rather than one level per face:
+  it reuses the AO samples, costs ≈ 0.4 ms of a real chunk's ≈ 3.2 ms, and flat per-face levels show hard hexagonal steps
+  across every floor and wall a light falls on.
+- **Shaders** (`lightShader.js`): `applyChunkLight(material)` (the three chunk materials: attribute `caelLight` →
+  `vCaelLight`, cache key 'caelancraft-chunk-light'); `installObjectLighting()` (createRenderer, once per page) gives
+  `THREE.Material.prototype` an onBeforeCompile that patches every MeshLambert / Phong / Standard / Toon material WITHOUT one
+  of its own — pigs, zombies, the Watcher, falling blocks and loose block items, campfire and circuit models — to read
+  `vCaelLight` per vertex from the **light volume**: an R8 `Data3DTexture` of LIGHT_VOLUME_QR × LIGHT_VOLUME_QR columns
+  (q, r) × WORLD_HEIGHT around the camera (width = y, height = r, depth = q; the packed byte), sampled at the vertex's world
+  position + 0.3 along its normal, or 0.5 above it when that is brighter (feet on a floor, a block on the ground); outside
+  the volume everything reads open sky. Fragment (both): `caelSky = curve(sky)`, `caelBlock = curve(block) · (1 −
+  BLOCK_LIGHT_DAY_WASH · caelDaylight · caelSky)`; three's `lights_fragment_begin` is patched so the DirectionalLight colour
+  (and a SunLight's) and every HemisphereLight irradiance are × caelSky, and the irradiance gains `BLOCK_LIGHT_COLOR` (sRGB
+  → linear) × BLOCK_LIGHT_INTENSITY × caelBlock + LIGHT_FLOOR × (1 − caelSky) — through the material's diffuse term, so ×
+  the texture albedo and the vertex colour (shade, AO, tint). PointLights (the campfire pool, the flash) are untouched. The
+  day / night cycle stays in the lights' computeSky intensities and the `caelDaylight` uniform (SkyState.daylight): nothing
+  re-meshes when the time changes. Sky 15 with no block light ⇒ caelSky = 1 and nothing added: the surface by day and by
+  night looks exactly as before. `patchLightsFragmentBegin` throws when three's chunk has lost one of its anchors (tests
+  check the installed three).
+- **Renderer** (§17): `setLightField(field | null)` (`{ version, fillVolume }`; null → the volume is off: open sky);
+  `render()` keeps the volume centred: refilled when the camera's cell is LIGHT_VOLUME_RECENTRE (hex distance) from its
+  centre, or — at most every LIGHT_VOLUME_MIN_S — when `version` changed. `buildLayerGeometry` adds `caelLight`
+  (normalised Uint8 × 2; a layer without `light` gets open sky, 255 / 0). `setSky` sets `caelDaylight`.
+- **Main** (§23): `renderer.setLightField(world.light)` right after creating the world. Nothing else.
+- **Config** (section "Light (§62)"): LIGHT_MAX, GLOWSTONE_LIGHT, CAMPFIRE_LIGHT, TORCH_LIGHT, LEAVES_LIGHT_OPACITY,
+  WATER_LIGHT_OPACITY, ICE_LIGHT_OPACITY, LIGHT_CURVE_K, LIGHT_FLOOR, BLOCK_LIGHT_COLOR, BLOCK_LIGHT_INTENSITY,
+  BLOCK_LIGHT_DAY_WASH, LIGHT_VOLUME_QR, LIGHT_VOLUME_RECENTRE, LIGHT_VOLUME_MIN_S.
+- **Imports** (§1): light → config, hex, blocks; lightShader → three, config; world → … + light; mesher → … + light;
+  renderer → … + lightShader. Tests: `tests/unit/light.test.js`.
+- **Cost**: lighting a real worldgen chunk takes ≈ 0.6–1 ms in Node, outside worldgen and the mesher (their ≤ 8 ms and
+  ≤ 25 ms budgets are unchanged); an edit's flush is a local flood; a volume refill copies 64·64 columns and uploads 512 KB.
+- **Not yet** (follow-ups): the Filament Lamp's light (its brightness lives in circuits.js; it needs an emission hook and a
+  `noteChange` when a lamp crosses lit / unlit — pitfall 33: at most a few re-meshes a second); burning fuses and kegs;
+  coloured block light; the campfire's PointLight now adds to its block light (kept for the flicker).
 ## 63. Loose item despawns — `src/looseItems.js`
 
 Amends §60. A real item lying loose (`fly` or `rest`: thrown, dropped, turned away by a full pack, or loaded from a save)

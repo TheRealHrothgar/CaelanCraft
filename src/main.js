@@ -3825,6 +3825,7 @@ export function boot(win, doc) {
     world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: restoring ? restoring.edits : undefined, gen });
     world.onChunkMesh = (key, cq, cr, meshData) => renderer.setChunkMesh(key, cq, cr, meshData);
     world.onChunkUnload = (key) => renderer.removeChunkMesh(key);
+    renderer.setLightField(world.light); // §62: mobs, items and falling blocks are lit from the world's light
     // Block physics before the first chunk is generated: onChunkGenerated re-seeds edited cells as chunks stream in.
     blockPhysics = new BlockPhysics(world, physicsHooks);
     // A save from before v0.8 has no `physics` field: collapse starts off there (old sky bases must not fall the first
