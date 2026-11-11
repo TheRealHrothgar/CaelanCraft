@@ -1093,6 +1093,9 @@ const FOOD_PAINTERS = {
   pot_sap(ic, rng) {
     paintPot(ic, rng, 0xb8613a, 0xd9a441, 0xf4d488);
   },
+  pot_milk(ic, rng) {
+    paintPot(ic, rng, 0xb8613a, 0xf2efe6, 0xffffff);
+  },
 };
 
 // ---------------------------------------------------------------------------------------------------------------

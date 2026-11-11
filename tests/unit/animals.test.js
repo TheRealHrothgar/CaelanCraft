@@ -7,7 +7,7 @@ import {
   Animals, SPECIES, ANIMAL_KINDS, ANIMAL_MAX, noticeRange, fleeSpeed, validateAnimalsJSON, isAnimalKind,
   SNEAK_NOTICE, CALM_FACTOR, FED_CALM_S, LURE_STOP, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, SHEAR_REGROW_S, SHEAR_WOOL,
   WOLF_BITE_S, FOLLOW_NEAR, SADDLE_Y, RIDER_HEIGHT, RIDE_SCALE, HERD_MIN, HERD_MAX, HERD_CHECK_S, HERD_TARGET, DESPAWN_DIST,
-  HIT_FLEE_S, ANIMAL_HURT_S,
+  HIT_FLEE_S, ANIMAL_HURT_S, MILK_REGROW_S,
 } from '../../src/animals.js';
 import { Pigs, seededRng } from '../../src/pigs.js';
 import { createPlayer } from '../../src/physics.js';
@@ -450,5 +450,23 @@ describe('animalRenderer — chunky box models', () => {
     r.sync([]);
     expect(r.group.children.every((m) => m.count === 0 && !m.visible)).toBe(true);
     r.dispose();
+  });
+});
+
+describe('animals — milk (CONTRACTS §72)', () => {
+  it('a cow gives milk once, then again after MILK_REGROW_S; nothing else is milked; the wait is saved', () => {
+    const as = new Animals(seededRng(40));
+    const cow = as.spawn('cow', 0, GROUND, 0);
+    expect(as.milk(cow)).toBe(true);
+    expect(cow.milked).toBe(MILK_REGROW_S);
+    expect(as.milk(cow)).toBe(false);
+    expect(as.export()[0].m).toBe(MILK_REGROW_S);
+    const back = new Animals(seededRng(41));
+    back.load(as.export());
+    expect(back.list[0].milked).toBe(MILK_REGROW_S);
+    cow.milked = 0;
+    expect(as.milk(cow)).toBe(true);
+    expect(as.milk(as.spawn('sheep', 3, GROUND, 0))).toBe(false);
+    expect(as.milk(as.spawn('horse', 6, GROUND, 0))).toBe(false);
   });
 });

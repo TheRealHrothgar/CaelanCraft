@@ -48,6 +48,7 @@ describe('every item has a source and a use (§10 I-1)', () => {
   for (const groups of Object.values(MOB_DROPS)) for (const k of groupKeys(groups)) sources.add(k);
   sources.add(tap(B.BIRCH_LOG, 'clay_pot', true).gives);
   sources.add('pot_water'); // R on fresh water with an empty clay pot (§4.2)
+  sources.add('pot_milk'); // R on a cow with an empty clay pot (§72)
   sources.add('pot_seawater'); // … on salt water
   for (const rec of RECIPES) for (const o of rec.outputs) sources.add(o.k);
   for (const tr of Object.values(FIRE_TRANSFORMS)) sources.add(tr.to);
@@ -107,6 +108,7 @@ function reach() {
     gather(MOB_DROPS.zombie);
     if (have.has('clay_pot')) {
       have.add('pot_water');
+      have.add('pot_milk'); // a cow, lured or snared (§72)
       have.add('pot_seawater');
       if (hasTool('knife', 2)) have.add('pot_sap');
     }

@@ -2398,7 +2398,7 @@ export function boot(win, doc) {
     if (a.kind === 'horse') return `Horse${snared} · R with a Wild Tuber or Honeyberries: feed it (${a.trust}/${sp.tame} to tame)`;
     if (a.kind === 'wolf') return `Wolf${snared} · R with meat: feed it (${a.trust}/${sp.tame} to tame)`;
     if (a.kind === 'sheep') return `Sheep${snared} · ${hunt} · R with a knife: shear`;
-    return `${sp.name}${snared} · ${hunt}`;
+    return `${sp.name}${snared} · ${hunt}${a.kind === 'cow' ? ' · R with a Clay Pot: milk it' : ''}`;
   }
 
   /** Little hearts over an animal. */
@@ -2428,6 +2428,20 @@ export function boot(win, doc) {
         else if (res.calmed) showHint(`The ${sp.name.toLowerCase()} calms down.`);
         return true;
       }
+    }
+    if (a.kind === 'cow' && key === 'clay_pot') {
+      // §72: an empty clay pot under a cow fills with milk (a milked cow needs a few minutes).
+      if (a.milked > 0) showHint('This cow has no more milk for now.');
+      else if (animals.milk(a)) {
+        if (SV) {
+          pack.consume(selected, 1);
+          giveToHand('pot_milk');
+        }
+        audio.playDrink();
+        animalVoice(a, 0.6);
+        showHint('A Pot of Milk.');
+      }
+      return true;
     }
     if (a.kind === 'sheep' && !a.tamed) {
       if (SV && !pack.hasTool('knife', KNIFE_TIER)) showHint('Shearing needs a knife.');
