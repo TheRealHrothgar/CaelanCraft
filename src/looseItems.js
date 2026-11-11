@@ -8,6 +8,9 @@
 //   'fly'  — thrown, dropped or falling: gravity, bounces on the cells, a projectile hits one mob;
 //   'rest' — lying on a cell; walked within COLLECT_RADIUS (after `hold`) it homes again, when the pack has room.
 // A ghost item (Creative) is only the animation: it is never collected into anything and fades when it lands.
+// Despawns (CONTRACTS §63): a real item lying loose for LOOSE_DESPAWN_S is gone (it blinks for the last LOOSE_BLINK_S);
+// one that lands in a lit campfire burns at once; beyond LOOSE_MAX the oldest go; `despawnNear` clears an area (the
+// `despawn` command, from the console or a Rune Block). Its age is saved.
 // The world, the player, the pack and the mobs come in through LooseEnv each step; nothing here touches them directly.
 import { getItem } from './items.js';
 
@@ -51,6 +54,23 @@ export const GHOST_MAX = 48;
 export const FLOOR_Y = -8;
 /** A block item is drawn as a cell this size (fallingRenderer's instance scale). */
 export const LOOSE_BLOCK_SCALE = 0.25;
+/** A real item lying loose (thrown, dropped or turned away by a full pack) despawns after this long in a loaded chunk (s). */
+export const LOOSE_DESPAWN_S = 300;
+/** … blinking for its last LOOSE_BLINK_S, LOOSE_BLINK_HZ times a second. */
+export const LOOSE_BLINK_S = 10;
+export const LOOSE_BLINK_HZ = 4;
+/** At most this many real loose items: past it, the oldest lying ones despawn first. */
+export const LOOSE_MAX = 256;
+
+/**
+ * Whether a loose item is in its blink-off phase this frame (the last LOOSE_BLINK_S of its life).
+ * @param {LooseItem} it @param {number} time  any running clock (s)
+ */
+export function blinkHidden(it, time) {
+  if (it.ghost || it.mode === 'pop' || it.mode === 'home') return false;
+  if (LOOSE_DESPAWN_S - it.age > LOOSE_BLINK_S) return false;
+  return Math.floor(time * LOOSE_BLINK_HZ * 2) % 2 === 1;
+}
 
 /** The sounds (audio.playRecipe data, circuitSounds' format): a throw's whoosh, the pickup blip, a hit's thunk. */
 export const SOUND_THROW = Object.freeze({
@@ -116,6 +136,8 @@ export function throwOf(key) {
  * @property {number} spin          a turn (radians) for the drawing
  * @property {boolean} away        the player has been away from it since it was thrown or dropped (only then is it
  *   collected: a dropped stack is not picked straight back up)
+ * @property {number} age           seconds it has lain loose (thrown, dropped or falling) in a loaded chunk; despawns at
+ *   LOOSE_DESPAWN_S
  */
 
 /**
@@ -131,6 +153,8 @@ export function throwOf(key) {
  *   the segment enters, or null
  * @property {(item: LooseItem, mob: *) => (boolean|void)} [onHit]    a projectile hit `mob`; true: the item breaks
  * @property {(item: LooseItem, speed: number) => void} [onLand]      it hit the ground or a wall at this speed
+ * @property {(x: number, y: number, z: number) => boolean} [burning]  the point is in a lit fire: a real item there burns
+ * @property {(item: LooseItem, why: 'time'|'fire'|'cap'|'clear') => void} [onDespawn]  a real item despawned
  */
 
 export class LooseItems {
@@ -170,6 +194,7 @@ export class LooseItems {
       s: stack, block: Number.isInteger(block) ? block : -1, x, y, z, vx, vy, vz, mode, t: 0,
       hold: opts && opts.hold > 0 ? opts.hold : 0, power: opts && opts.power > 0 ? opts.power : 0, ghost,
       spin: this._random() * Math.PI * 2, away: !(opts && opts.away === false),
+      age: opts && opts.age > 0 ? opts.age : 0,
     });
     if (this._pending) this._pending.push(it);
     else this.list.push(it);
@@ -246,6 +271,15 @@ export class LooseItems {
       it.t += dt;
       if (it.hold > 0) it.hold = Math.max(0, it.hold - dt);
       let alive = true;
+      // Despawns: a real item lying loose ages; one in a lit fire burns at once.
+      if (!it.ghost && (it.mode === 'fly' || it.mode === 'rest')) {
+        it.age += dt;
+        const why = it.age >= LOOSE_DESPAWN_S ? 'time' : env.burning && env.burning(it.x, it.y, it.z) ? 'fire' : null;
+        if (why) {
+          if (env.onDespawn) env.onDespawn(it, why);
+          continue;
+        }
+      }
       if (it.mode === 'pop') {
         it.vy += ITEM_GRAVITY * dt;
         it.x += it.vx * dt;
@@ -269,6 +303,36 @@ export class LooseItems {
     for (const it of this._pending) keep.push(it);
     this._pending = null;
     this.list = keep;
+    this._cap(env);
+  }
+
+  /** Past LOOSE_MAX real items, the oldest lying ones (by age) despawn. */
+  _cap(env) {
+    let real = 0;
+    for (const it of this.list) if (!it.ghost) real++;
+    if (real <= LOOSE_MAX) return;
+    const lying = this.list.filter((it) => !it.ghost && (it.mode === 'fly' || it.mode === 'rest')).sort((a, b) => b.age - a.age);
+    const gone = new Set(lying.slice(0, real - LOOSE_MAX));
+    for (const it of gone) if (env && env.onDespawn) env.onDespawn(it, 'cap');
+    this.list = this.list.filter((it) => !gone.has(it));
+  }
+
+  /**
+   * Despawn the real items lying loose within `radius` of (x, y, z) (Infinity: everywhere). Drops flying to the player are
+   * spared (they are already on their way into the pack); ghosts too.
+   * @param {(item: LooseItem, why: 'clear') => void} [onDespawn]
+   * @returns {number} how many went
+   */
+  despawnNear(x, y, z, radius = Infinity, onDespawn) {
+    let n = 0;
+    this.list = this.list.filter((it) => {
+      if (it.ghost || it.mode === 'pop' || it.mode === 'home') return true;
+      if (Number.isFinite(radius) && Math.hypot(it.x - x, it.y - y, it.z - z) > radius) return true;
+      if (onDespawn) onDespawn(it, 'clear');
+      n++;
+      return false;
+    });
+    return n;
   }
 
   /** @returns {boolean} still in the world */
@@ -414,11 +478,16 @@ export class LooseItems {
     return true;
   }
 
-  /** The real items for the save: `[{ k, n, d?, x, y, z }]` (ghosts are not saved). */
+  /** The real items for the save: `[{ k, n, d?, a?, x, y, z }]` (`a` its age in whole seconds when > 0; ghosts not saved). */
   serialize() {
     return this.list.filter((it) => !it.ghost).map((it) => {
-      const o = /** @type {*} */ ({ k: it.s.k, n: it.s.n, x: round3(it.x), y: round3(it.y), z: round3(it.z) });
+      const o = /** @type {*} */ ({ k: it.s.k, n: it.s.n });
       if (it.s.d !== undefined) o.d = it.s.d;
+      const a = Math.floor(it.age);
+      if (a > 0) o.a = Math.min(a, LOOSE_DESPAWN_S);
+      o.x = round3(it.x);
+      o.y = round3(it.y);
+      o.z = round3(it.z);
       return o;
     });
   }
@@ -438,7 +507,8 @@ export class LooseItems {
       /** @type {ItemStack} */
       const s = { k: o.k, n: o.n };
       if (Number.isInteger(o.d) && o.d >= 0) s.d = o.d;
-      const it = this._add(s, blockOf ? blockOf(o.k) : -1, o.x, o.y, o.z, 0, 0, 0, 'fly', { hold: 0 });
+      const age = Number.isFinite(o.a) && o.a > 0 ? Math.min(o.a, LOOSE_DESPAWN_S) : 0;
+      const it = this._add(s, blockOf ? blockOf(o.k) : -1, o.x, o.y, o.z, 0, 0, 0, 'fly', { hold: 0, age });
       it.t = 0;
     }
     return this.list.length;

@@ -3807,6 +3807,24 @@ painted, unused).
   0.6 × lean) — a runner's pump instead — and swipe up 0.55 rad in a strike; the head lolls by `tilt` and looks up against the
   lean. `renderScale` / `renderSpin` as before. The atlas argument is ignored.
 
+## 63. Loose item despawns — `src/looseItems.js`
+
+Amends §60. A real item lying loose (`fly` or `rest`: thrown, dropped, turned away by a full pack, or loaded from a save)
+ages by dt while its column is loaded (`LooseItem.age`; drops flying home and ghosts never age; frozen items do not age).
+
+- **Timer**: at LOOSE_DESPAWN_S 300 it despawns (`env.onDespawn(it, 'time')`). For the last LOOSE_BLINK_S 10 it blinks:
+  `blinkHidden(it, time)` is true for every other 1 / (2 × LOOSE_BLINK_HZ 4) s, and both main's block-item loop and
+  looseRenderer skip it then.
+- **Fire**: a real item whose centre is in a lit fire (`env.burning`; main: the cell is a CAMPFIRE) despawns at once
+  (`'fire'`: main puffs smoke and plays the sizzle).
+- **Cap**: after each step, past LOOSE_MAX 256 real items the oldest lying ones (by age) despawn (`'cap'`).
+- **Clear**: `despawnNear(x, y, z, radius = Infinity, onDespawn?)` despawns the lying real items within radius (`'clear'`)
+  and returns how many; drops flying home and ghosts are spared. Command `despawn [radius]` (radius 0–256; none: all) —
+  around the player from the console, around the rune's cell from a Rune Block (so a rune trigger can sweep an area);
+  through `ctx.loose.despawnNear`; without `loose` it fails.
+- **Save**: `survival.loose` entries gain `a` (whole seconds lying loose, 1–LOOSE_AGE_MAX 300; 0 is not written), in the
+  key order `k, n, d?, a?, x, y, z`; `load` restores it as the age.
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),

@@ -98,6 +98,7 @@ import { createItemIcons, iconBlockFor } from './itemIcons.js';
 import { createLooseItemRenderer } from './looseItemRenderer.js';
 import {
   LooseItems, throwOf, DART_KEYS, DART_BREAK_P, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
+  blinkHidden,
 } from './looseItems.js';
 import { createZombieRenderer } from './zombieRenderer.js';
 import { Watcher, WATCHER_HEIGHT } from './watcher.js';
@@ -1814,6 +1815,7 @@ export function boot(win, doc) {
       },
       blackHoles,
       hands: { act: (kind, n) => handAction(kind, n) }, // v0.10 (§60): drop / throw
+      loose: { despawnNear: (x, y, z, radius) => loose.despawnNear(x, y, z, radius, looseDespawned) }, // §63: despawn
     };
     return c;
   }
@@ -2390,7 +2392,24 @@ export function boot(win, doc) {
     onLand: (it, speed) => {
       if (speed > 5 && !it.ghost) audio.playRecipe(SOUND_THUNK, Math.min(0.6, speed / 20));
     },
+    // §63: a lit campfire burns what lands in it; a despawn leaves a puff (smoke and a sizzle for the fire).
+    burning: (x, y, z) => {
+      if (!world) return false;
+      const [q, r] = worldToHex(x, z);
+      return world.getBlock(q, Math.floor(y), r) === BLOCK.CAMPFIRE;
+    },
+    onDespawn: looseDespawned,
   };
+
+  /** §63: a loose item despawned: a puff where it was (smoke and a sizzle when it burned). */
+  function looseDespawned(it, why) {
+    if (why === 'fire') {
+      particles.emit('smoke', it.x, it.y + 0.2, it.z, 6, { spread: 0.2 });
+      audio.playSizzle(0.5);
+    } else if (why === 'time' || why === 'clear') {
+      particles.emit('dust', it.x, it.y, it.z, 4, { color: [0.85, 0.85, 0.8], spread: 0.15 });
+    }
+  }
 
   /** One step of the loose items: only Survival collects real items; ghosts fly in either mode. */
   function stepLoose(dt) {
@@ -5304,11 +5323,11 @@ export function boot(win, doc) {
     infall.renderItems(pushMoving);
     // §60: loose block items as small spinning cells; every other loose item is a picture (looseRenderer)
     for (const it of loose.list) {
-      if (it.block < 0) continue;
+      if (it.block < 0 || blinkHidden(it, fxTime)) continue;
       const bob = it.mode === 'rest' ? 0.04 + 0.04 * Math.sin(fxTime * 3 + it.spin) : 0;
       pushMoving(it.block, it.x, it.y + bob, it.z, 0.3, it.spin, 0.2, LOOSE_BLOCK_SCALE);
     }
-    looseRenderer.sync(loose.list, fxTime, (it) => it.block >= 0);
+    looseRenderer.sync(loose.list, fxTime, (it) => it.block >= 0 || blinkHidden(it, fxTime));
     fallingRenderer.sync(movingItems, movingCount);
     circuitRenderer.syncMoving(movingItems, movingCount); // devices among them as models: the collapsar's copy, debris
     blackHoles.flash(bhFlash);
