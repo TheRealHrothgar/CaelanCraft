@@ -12,7 +12,7 @@
 // two-high pen on each other's backs.
 import {
   PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_MASS, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
-  WADE_DEPTH, PIG_HEALTH,
+  WADE_DEPTH, PIG_HEALTH, PIG_NOTICE, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR,
 } from './config.js';
 import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt, isSwimWater } from './physics.js';
 import { yawToForward } from './coords.js';
@@ -27,7 +27,8 @@ import { BLOCK, isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
 /**
  * @typedef {PlayerState & {
  *   id: number, yaw: number, targetYaw: number, mode: 'idle'|'walk'|'flee', timer: number,
- *   hurt: number, walkPhase: number, oinkIn: number, health: number, wallSinceAim?: boolean,
+ *   hurt: number, walkPhase: number, oinkIn: number, health: number, wallSinceAim?: boolean, trapped?: number,
+ *   snareImmune?: number,
  * }} Pig
  * `walkPhase` advances with distance walked (the renderer swings the legs with it) and settles to a multiple of π
  * while the pig stands (legs straight); `oinkIn` counts down to the next ambient oink. `health` (v0.9) starts at
@@ -451,6 +452,27 @@ export class Pigs {
       }
       if (!world.isLoaded(pig.x, pig.z)) continue;
       unstick(pig, world.getBlock);
+      // v0.11 (CONTRACTS §69): held by a snare (main sets `trapped` and pins it) — it strains on the spot.
+      if (pig.trapped > 0) {
+        pig.trapped = Math.max(0, pig.trapped - dt);
+        pig.vx = 0;
+        pig.vz = 0;
+        pig.walkPhase = (pig.walkPhase + dt * 9) % TWO_PI;
+        if (pig.hurt > 0) pig.hurt = Math.max(0, pig.hurt - dt);
+        continue;
+      }
+      // §69: pigs are wary — one that notices the player (nearer when sneaking, farther when sprinting) runs.
+      const pl = world.player;
+      if (pl && !pl.flying && pig.mode !== 'flee') {
+        const notice = PIG_NOTICE * (pl.sneaking ? WARY_SNEAK_FACTOR : pl.sprinting ? WARY_SPRINT_FACTOR : 1);
+        const dx = pig.x - pl.x;
+        const dz = pig.z - pl.z;
+        if (Math.hypot(dx, pig.y - pl.y, dz) < notice) {
+          pig.mode = 'flee';
+          pig.timer = PIG_FLEE_S;
+          pig.targetYaw = Math.atan2(-dx, -dz); // yawToForward(yaw) = (−sin, −cos): straight away from the player
+        }
+      }
       // A pig standing on another body, or carrying a pig, never hops: stacked pigs would climb any wall.
       const canHop = !pig.carrier && !carriers.has(pig);
       this._think(pig, dt, world.getBlock, canHop);

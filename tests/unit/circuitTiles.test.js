@@ -70,7 +70,7 @@ describe('circuit tile set (§1.4, §6.2.9)', () => {
   });
 
   it('the flat pictures are exactly the flat-icon blocks\' top tiles: the six thin parts and the 14 devices', () => {
-    const flatBlocks = BLOCKS.filter((b) => b.icon === 'flat' && b.id >= BLOCK.COLLAPSAR_CHARGE); // plants and litter are flat too
+    const flatBlocks = BLOCKS.filter((b) => b.icon === 'flat' && b.id >= BLOCK.COLLAPSAR_CHARGE && b.id <= BLOCK.COHERER_RECEIVER); // plants and litter are flat too
     expect(flatBlocks).toHaveLength(20);
     const want = [...CIRCUIT_FLAT_TILES, ...Object.keys(DEVICE_PICTURES)].sort();
     expect(flatBlocks.map((b) => TILE_NAMES[getFaceTile(b.id, FACE_TOP)]).sort()).toEqual(want);

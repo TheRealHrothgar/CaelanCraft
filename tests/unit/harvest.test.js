@@ -61,6 +61,7 @@ const TABLE = [
   [[B.BOOKSHELF], 1.5, 'axe', 1],
   [[B.WORK_STUMP], 2.5, 'axe', 1],
   [[B.WORKBENCH], 3.0, 'axe', 1], // v0.11 (CONTRACTS §67)
+  [[B.SNARE, B.SNARE_BAITED, B.SNARE_SPRUNG], 0.3, null, 0], // §69
   [[B.WICKER_BASKET], 0.8, 'axe', 0],
   [[B.POWDER_KEG], 2.0, 'axe', 1],
   [[B.PUMPKIN], 1.0, 'axe', 0],
@@ -660,7 +661,12 @@ describe('mob drops and tool power (§4.3, §5.1)', () => {
   it('a zombie gives a grave rag at p 0.5; unknown mobs nothing', () => {
     expect(rollMobDrops('zombie', seq(0.49))).toEqual([{ k: 'grave_rag', n: 1 }]);
     expect(rollMobDrops('zombie', seq(0.5))).toEqual([]);
-    expect(rollMobDrops('cow', seq(0))).toEqual([]);
+    expect(rollMobDrops('dragon', seq(0))).toEqual([]);
+    // v0.11 (§69): cattle give beef and hide, sheep mutton and wool, horses and wolves hide
+    expect(rollMobDrops('cow', seq(0))).toEqual([{ k: 'raw_beef', n: 3 }, { k: 'rawhide', n: 1 }]);
+    expect(rollMobDrops('sheep', seq(0.99))).toEqual([{ k: 'raw_mutton', n: 2 }, { k: 'wool_white', n: 2 }]);
+    expect(rollMobDrops('horse', seq(0)).map((s) => s.k)).toEqual(['rawhide']);
+    expect(rollMobDrops('wolf', seq(0))).toEqual([{ k: 'rawhide', n: 1 }]);
     expect(rollMobDrops('__proto__', seq(0))).toEqual([]);
   });
 

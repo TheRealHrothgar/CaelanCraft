@@ -1051,6 +1051,28 @@ const FOOD_PAINTERS = {
     paintLump(ic, rng, 8, 9, 5.6, 4.4, { base: 0xf0e6d0, dark: 0xd0c09a, light: 0xffffff });
     ic.line(5, 10, 11, 9, 0xe8d4a8);
   },
+  raw_beef(ic, rng) {
+    paintMeat(ic, rng, 0xb8303a, 0xf0e0d4);
+    ic.line(5, 9, 11, 6, 0xf0c8c0);
+    ic.line(6, 11, 10, 9, 0xf0c8c0);
+  },
+  roast_beef(ic, rng) {
+    paintMeat(ic, rng, 0x7a3a1c, 0xb87840, 0x4a2010);
+    ic.set(6, 7, 0xe0a060);
+    ic.set(10, 9, 0xe0a060);
+    ic.set(8, 10, 0x9a4a3a); // pink in the middle
+  },
+  raw_mutton(ic, rng) {
+    paintMeat(ic, rng, 0xd06a72, 0xf6ece2);
+    ic.line(11, 5, 13, 3, 0xf6f0e6); // the bone
+    ic.set(13, 2, 0xfffaf0);
+  },
+  roast_mutton(ic, rng) {
+    paintMeat(ic, rng, 0x8e5226, 0xc8884a, 0x5e3014);
+    ic.line(11, 5, 13, 3, 0xf0e6d2);
+    ic.set(13, 2, 0xfffaf0);
+    ic.set(7, 8, 0xe8b070);
+  },
   snow(ic, rng) {
     // a packed snowball heap
     paintLump(ic, rng, 8, 9.5, 5.6, 4.6, { base: 0xf4f8fc, dark: 0xc8d8e8, light: 0xffffff });

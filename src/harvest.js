@@ -32,7 +32,10 @@ import { forEachEditedCell } from './coords.js';
  * @property {number} tier         the minimum tier of that tool; 0 = bare hands allowed
  * @property {DropGroup[]} drops
  */
-/** @typedef {{ natural?: boolean, knifeInPack?: boolean, deep?: boolean }} DropContext   `deep`: isDeep(y) of the cell */
+/**
+ * @typedef {{ natural?: boolean, knifeInPack?: boolean, deep?: boolean, decided?: Record<string, boolean> }} DropContext
+ * `deep`: isDeep(y) of the cell; `decided[key]`: a chance item's outcome fixed by the caller (not rolled: §70 flint)
+ */
 
 /** Breaking with the head under water takes this many times longer (§6.1). */
 export const UNDERWATER_DIG_FACTOR = 2.5;
@@ -133,6 +136,7 @@ set([B.OAK_PLANKS, B.SPRUCE_PLANKS, B.BIRCH_PLANKS], 2.0, 'axe', 1, SELF_DROPS);
 set([B.BOOKSHELF], 1.5, 'axe', 1, SELF_DROPS);
 set([B.WORK_STUMP], 2.5, 'axe', 1, SELF_DROPS);
 set([B.WORKBENCH], 3.0, 'axe', 1, SELF_DROPS); // v0.11 (CONTRACTS §67)
+set([B.SNARE, B.SNARE_BAITED, B.SNARE_SPRUNG], 0.3, null, 0, SELF_DROPS); // §69: any state gives the Snare back
 set([B.WICKER_BASKET], 0.8, 'axe', 0, SELF_DROPS); // + its contents (containers.js)
 set([B.POWDER_KEG], 2.0, 'axe', 1, SELF_DROPS); // the BLAST_BARREL row, under its new name
 set([B.PUMPKIN], 1.0, 'axe', 0, SELF_DROPS);
@@ -290,7 +294,10 @@ export function rollGroups(groups, tool, ctx, random) {
     for (const it of br.items) {
       if (it.natural && !ctx.natural) continue;
       if (it.deep && !ctx.deep) continue;
-      if (it.p !== undefined && !(random() < it.p)) continue;
+      // A chance the caller has already decided (`ctx.decided[key]`: the flint the player can see in loose stones, §70)
+      // is not rolled again.
+      const decided = ctx.decided && Object.hasOwn(ctx.decided, it.k) ? ctx.decided[it.k] : undefined;
+      if (it.p !== undefined && (decided !== undefined ? !decided : !(random() < it.p))) continue;
       const n = rollCount(it.n, random);
       if (n > 0) out.set(it.k, (out.get(it.k) ?? 0) + n);
     }
@@ -476,10 +483,15 @@ export class Regrowth {
 /** What a mob killed (pig) or knocked out (zombie) by the player gives, straight into the pack. */
 export const MOB_DROPS = deepFreeze({
   pig: [always(drop('raw_pork', [2, 3])), always(drop('rawhide', 1)), always(drop('pig_fat', 1, { p: 0.6 }))],
+  // v0.11 (CONTRACTS §69)
+  cow: [always(drop('raw_beef', [3, 5])), always(drop('rawhide', [1, 2]))],
+  sheep: [always(drop('raw_mutton', [1, 2])), always(drop('wool_white', [1, 2]))],
+  horse: [always(drop('rawhide', [1, 2]))],
+  wolf: [always(drop('rawhide', 1))],
   zombie: [always(drop('grave_rag', 1, { p: 0.5 }))],
 });
 
-/** @param {'pig'|'zombie'} kind @param {() => number} random @returns {ItemStack[]} */
+/** @param {'pig'|'zombie'|'cow'|'sheep'|'horse'|'wolf'} kind @param {() => number} random @returns {ItemStack[]} */
 export function rollMobDrops(kind, random) {
   const groups = Object.hasOwn(MOB_DROPS, kind) ? MOB_DROPS[kind] : null;
   return groups ? rollGroups(groups, null, {}, random) : [];

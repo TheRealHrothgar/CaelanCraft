@@ -351,6 +351,8 @@ function substep(p, input, getBlock, h, wx, wz) {
   else if (wading && !flying) speed *= WADE_SPEED_FACTOR;
   // v0.9 (DESIGN-survival §9.3): survival slowness (hunger, cold, wounds…) scales the target speed on foot, never in flight.
   if (!flying) speed *= speedFactorOf(input);
+  // v0.11 (CONTRACTS §69): a body's own `speedScale` (a running horse, a trotting sheep) scales it too; absent or bad = 1.
+  if (!flying && typeof p.speedScale === 'number' && p.speedScale > 0 && Number.isFinite(p.speedScale)) speed *= p.speedScale;
   const accel = flying || p.onGround ? GROUND_ACCEL : inWater ? WATER_ACCEL : AIR_ACCEL;
   const k = 1 - Math.exp(-accel * h);
   // External pull (black holes) moves the velocity the relaxation heads for by pull / GROUND_ACCEL, in every mode.

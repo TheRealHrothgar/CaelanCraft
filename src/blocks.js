@@ -37,8 +37,10 @@ export const BLOCK = Object.freeze({
   COHERER_RECEIVER: 114,
   // v0.11 (CONTRACTS §67): the Workbench, the workshop where the advanced circuit devices are made
   WORKBENCH: 115,
+  // v0.11 (CONTRACTS §69): the Snare — set, baited (R with food), and sprung (holding an animal); all three give the Snare
+  SNARE: 116, SNARE_BAITED: 117, SNARE_SPRUNG: 118,
 });
-export const BLOCK_COUNT = 116;
+export const BLOCK_COUNT = 119;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -79,6 +81,8 @@ export const TILE = Object.freeze({
   RX_TOP: 194,
   // v0.11 (CONTRACTS §67): the Workbench
   WORKBENCH_SIDE: 195, WORKBENCH_TOP: 196,
+  // v0.11 (CONTRACTS §69, §70): the snares (floor decals), and loose stones that hold flint
+  SNARE: 197, SNARE_BAITED: 198, SNARE_SPRUNG: 199, LOOSE_STONES_FLINT: 200,
   // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
   ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
   // The Hollow Watcher (§40; atlas row 15, not block faces): its ash-grey stone, the glow mask of that stone's cracks
@@ -343,6 +347,10 @@ export const BLOCKS = [
   def({ id: B.COHERER_RECEIVER, name: 'coherer_receiver', displayName: 'Coherer Receiver', tiles: tiles(T.RX_SIDE, T.RX_TOP), ...MODEL, soundGroup: 'glass' }),
   // v0.11 (CONTRACTS §67): the Workbench (a workplace; appended so ids stay positional)
   def({ id: B.WORKBENCH, name: 'workbench', displayName: 'Workbench', tiles: tiles(T.WORKBENCH_SIDE, T.WORKBENCH_TOP, T.OAK_PLANKS), soundGroup: 'wood' }),
+  // v0.11 (CONTRACTS §69): the snares lie on the ground like litter; only the set one is placeable (and is the item)
+  def({ id: B.SNARE, name: 'snare', displayName: 'Snare', tiles: tiles(T.SNARE), ...DECAL, soundGroup: 'wood' }),
+  def({ id: B.SNARE_BAITED, name: 'snare_baited', displayName: 'Baited Snare', tiles: tiles(T.SNARE_BAITED), ...DECAL, soundGroup: 'wood', placeable: false }),
+  def({ id: B.SNARE_SPRUNG, name: 'snare_sprung', displayName: 'Sprung Snare', tiles: tiles(T.SNARE_SPRUNG), ...DECAL, soundGroup: 'wood', placeable: false }),
 ];
 
 /**
@@ -379,7 +387,7 @@ export const PICKER_ORDER = Object.freeze([
   B.WOOL_WHITE, B.WOOL_LIGHT_GRAY, B.WOOL_GRAY, B.WOOL_BLACK, B.WOOL_BROWN, B.WOOL_RED, B.WOOL_ORANGE, B.WOOL_YELLOW,
   B.WOOL_LIME, B.WOOL_GREEN, B.WOOL_CYAN, B.WOOL_LIGHT_BLUE, B.WOOL_BLUE, B.WOOL_PURPLE, B.WOOL_MAGENTA, B.WOOL_PINK,
   // special (v0.9: the workplaces, the basket and the Sleeping Hide right before the campfire)
-  B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WORKBENCH, B.WICKER_BASKET, B.SLEEPING_HIDE,
+  B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WORKBENCH, B.WICKER_BASKET, B.SLEEPING_HIDE, B.SNARE,
   B.CAMPFIRE, B.POWDER_KEG,
   // powder and circuits (DESIGN-circuits §1.2 table order)
   B.COLLAPSAR_CHARGE, B.POWDER_FUSE, B.TORCH, B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE, B.TERMINAL_BOARD,
@@ -428,6 +436,21 @@ export function isTargetable(id) {
 }
 /** false for blocks drawn by their own model instead of the chunk mesher (campfire, black hole, the circuit parts but the keg). */
 /** How the chunk mesher draws `id` (BlockDef.shape): 'prism', 'cross' (the wild plants) or 'decal' (the ground litter). */
+/** The share of natural loose stones that hold flint (harvest's 50 % chance, made visible: CONTRACTS §70). */
+export const FLINT_SHARE = 0.5;
+
+/**
+ * Whether the loose stones at column (q, r) hold flint: a fixed coin toss per column, so the mesher can draw those with
+ * the flint tile (LOOSE_STONES_FLINT) and picking them gives exactly what the player saw.
+ * @param {number} q @param {number} r @returns {boolean}
+ */
+export function flintAt(q, r) {
+  let h = (Math.imul(q | 0, 0x27d4eb2d) ^ Math.imul(r | 0, 0x165667b1) ^ 0x5f1a7e) | 0;
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296 < FLINT_SHARE;
+}
+
 export function getBlockShape(id) {
   return getBlockDef(id).shape;
 }

@@ -402,6 +402,7 @@ function refreshHandleRefs(handle, game) {
   handle.circuitStore = game ? game.circuitStore ?? null : null;
   handle.blackHoles = game ? game.blackHoles ?? null : null;
   handle.infall = game ? game.infall ?? null : null;
+  handle.animals = game ? game.animals ?? null : null; // v0.11 (CONTRACTS §69)
   handle.loose = game ? game.loose ?? null : null; // v0.10 (CONTRACTS §60)
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
@@ -473,6 +474,9 @@ export function installDebugHandle(win, game) {
   handle.digTargeted = (dt) => (game && typeof game.digTargeted === 'function' ? game.digTargeted(dt) : null);
   // v0.10 (CONTRACTS §60): Q / G — drop or throw the item in hand
   handle.handAction = (kind, n) => (game && typeof game.handAction === 'function' ? game.handAction(kind, n) : null);
+  // v0.11 (CONTRACTS §69): R on the targeted animal, and the horse being ridden
+  handle.animalR = () => (game && typeof game.animalR === 'function' ? game.animalR() : false);
+  handle.getRiding = () => (game && typeof game.getRiding === 'function' ? game.getRiding() : null);
   handle.useSelected = (dt) => (game && typeof game.useSelected === 'function' ? game.useSelected(dt) : null);
   handle.interact = () => {
     if (game && typeof game.interact === 'function') game.interact();

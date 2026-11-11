@@ -31,6 +31,10 @@ describe('the cooking tables', () => {
     expect(FIRE_TRANSFORMS).toEqual({
       raw_pork: { to: 'roast_pork', seconds: 20, spot: 'skewer' },
       roast_pork: { to: 'charred_meat', seconds: 40, spot: 'skewer' },
+      raw_beef: { to: 'roast_beef', seconds: 24, spot: 'skewer' },
+      roast_beef: { to: 'charred_meat', seconds: 40, spot: 'skewer' },
+      raw_mutton: { to: 'roast_mutton', seconds: 18, spot: 'skewer' },
+      roast_mutton: { to: 'charred_meat', seconds: 40, spot: 'skewer' },
       wild_tuber: { to: 'baked_tuber', seconds: 25, spot: 'skewer' },
       cattail_root: { to: 'roasted_cattail_root', seconds: 15, spot: 'skewer' },
       leached_acorns: { to: 'roasted_acorns', seconds: 15, spot: 'skewer' },
@@ -53,7 +57,7 @@ describe('the cooking tables', () => {
     expect(FIRE_SPOTS).toBe(7);
     expect(SKEWER_SPOTS).toBe(6);
     expect(EMBERS_SPOT).toBe(6);
-    expect(SKEWER_FOODS).toEqual(['raw_pork', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit']);
+    expect(SKEWER_FOODS).toEqual(['raw_pork', 'raw_beef', 'raw_mutton', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit']);
     expect(CENTRE_POTS).toEqual(['pot_water', 'pot_seawater', 'pot_snow', 'greenware_pot']);
     for (const k of SKEWER_FOODS) expect(FIRE_TRANSFORMS[k].spot).toBe('skewer');
     for (const k of CENTRE_POTS) expect(FIRE_TRANSFORMS[k].spot).toBe('centre');

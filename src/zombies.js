@@ -116,10 +116,11 @@ export const ALPHA_KO_KNOCK = 1.6;
 
 /** An alpha's roar when a horde raises it (audio.playRecipe data). */
 export const SOUND_ROAR = Object.freeze({
-  dur: 1.1, gain: 0.55, layers: [
-    { type: 'saw', f0: 120, f1: 70, lp: [900, 300], gain: 0.7, attack: 0.08, decay: 0.95, lfoHz: 9, lfoDepth: 0.25 },
-    { type: 'saw', f0: 182, f1: 104, lp: 1200, gain: 0.35, attack: 0.1, decay: 0.9 },
-    { type: 'noise', f0: 0, bp: [700, 250], q: 1.2, gain: 0.4, attack: 0.05, decay: 0.8 },
+  // v0.11 (CONTRACTS §71): a deep, slow call rather than a snarl — it announces the alpha without frightening
+  dur: 1.0, gain: 0.34, layers: [
+    { type: 'saw', f0: 110, f1: 78, lp: [520, 260], gain: 0.7, attack: 0.15, decay: 0.8 },
+    { type: 'sine', f0: 165, f1: 117, gain: 0.3, attack: 0.15, decay: 0.75 },
+    { type: 'noise', f0: 0, bp: [420, 220], q: 1, gain: 0.15, attack: 0.1, decay: 0.6 },
   ],
 });
 

@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   createZombieRenderer, zombieGeometries, boxesGeometry, LEG_H, LEG_X, TORSO_H, NECK_H, HEAD_H, HEAD_D, MODEL_HEIGHT,
-  ALPHA_SCALE, RUNNER_WIDTH, KIND_TINT, SKIN, ARM_L, SHOULDER_Y,
+  ALPHA_SCALE, RUNNER_WIDTH, KIND_TINT, SKIN, ARM_L, SHOULDER_Y, ALPHA_EYES,
 } from '../../src/zombieRenderer.js';
 import { ZOMBIE_MAX, ZOMBIE_HEIGHT, MAX_INFALL_MOBS } from '../../src/config.js';
 
@@ -35,8 +35,8 @@ describe('zombie model: a cartoon shambler of chunky boxes (no hexagons, no atla
   it('stands under ZOMBIE_HEIGHT: legs to the hips, the torso, the neck, a big head and its hair', () => {
     expect(MODEL_HEIGHT).toBeLessThanOrEqual(ZOMBIE_HEIGHT);
     expect(MODEL_HEIGHT).toBeGreaterThan(ZOMBIE_HEIGHT - 0.15);
-    // a big cartoon head: almost as wide as the torso and nearly as tall as it
-    expect(HEAD_H / TORSO_H).toBeGreaterThan(0.7);
+    // a head a little large for the body (chunky, not a caricature)
+    expect(HEAD_H / TORSO_H).toBeGreaterThan(0.65);
   });
 
   it('every part is coloured per vertex, with closed boxes and outward normals; the face is on the −Z side', () => {
@@ -107,12 +107,14 @@ describe('createZombieRenderer — instanced zombie models', () => {
     const head = boxUnder(g.head, matrixOf(byName(r, 'zombie-head'), 0));
     expect(head.min.y).toBeGreaterThan(20 + LEG_H + TORSO_H * 0.8);
     expect(head.max.y).toBeLessThanOrEqual(20 + ZOMBIE_HEIGHT + 0.02);
-    // the arms reach out in front (−Z at yaw 0), hands about shoulder high
+    // the arms are held out in front (−Z at yaw 0), a little below the shoulders (v0.11: lower and calmer)
     for (let k = 0; k < 2; k++) {
       const m = matrixOf(byName(r, 'zombie-arms'), k);
       const hand = new THREE.Vector3(0, -ARM_L, 0).applyMatrix4(m);
-      expect(hand.z).toBeLessThan(-3 - 0.45);
-      expect(Math.abs(hand.y - (20 + LEG_H + SHOULDER_Y))).toBeLessThan(0.15);
+      expect(hand.z).toBeLessThan(-3 - 0.4);
+      const drop = 20 + LEG_H + SHOULDER_Y - hand.y;
+      expect(drop).toBeGreaterThan(0.1);
+      expect(drop).toBeLessThan(0.4);
     }
     expect(LEG_H + TORSO_H + NECK_H + HEAD_H).toBeLessThan(MODEL_HEIGHT);
     for (const geo of Object.values(g)) geo.dispose();
@@ -236,5 +238,29 @@ describe('createZombieRenderer — black-hole ghosts (renderScale, renderSpin; D
     expect(byName(r, 'zombie-legs').count).toBe((ZOMBIE_MAX + MAX_INFALL_MOBS) * 2);
     expect(byName(r, 'zombie-alpha-eyes').count).toBe(ZOMBIE_MAX + MAX_INFALL_MOBS);
     r.dispose();
+  });
+});
+
+describe('v0.11 a calm face (CONTRACTS §71): level half-lidded eyes, no teeth, no red', () => {
+  it('the two eyes mirror each other, nothing on the face is white-toothed or red, and the alpha glows amber', () => {
+    const g = zombieGeometries();
+    const pos = g.head.getAttribute('position');
+    const col = g.head.getAttribute('color');
+    const left = [];
+    const right = [];
+    for (let i = 0; i < pos.count; i++) {
+      if (pos.getZ(i) > -HEAD_D / 2 - 0.005) continue; // only what sits on the face
+      const c = new THREE.Color(col.getX(i), col.getY(i), col.getZ(i)).getHex(THREE.SRGBColorSpace);
+      const red = (c >> 16) & 255;
+      const green = (c >> 8) & 255;
+      expect(red > 200 && green < 90, `no red on the face (${c.toString(16)})`).toBe(false);
+      const key = `${Math.abs(pos.getX(i)).toFixed(3)},${pos.getY(i).toFixed(3)},${c}`;
+      if (pos.getX(i) < -1e-6) left.push(key);
+      else if (pos.getX(i) > 1e-6) right.push(key);
+    }
+    expect(left.sort()).toEqual(right.sort()); // a symmetric face: no googly mismatch, no cocked brow
+    const amber = new THREE.Color(ALPHA_EYES);
+    expect(amber.g).toBeGreaterThan(0.3); // not red
+    for (const geo of Object.values(g)) geo.dispose();
   });
 });

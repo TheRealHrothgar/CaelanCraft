@@ -43,7 +43,7 @@ import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
 import {
   BLOCK, BIOME, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid, isTargetable,
-  isWaterSource, isWater, isMeshed, isLiquid,
+  isWaterSource, isWater, isMeshed, isLiquid, flintAt,
 } from './blocks.js';
 import { normalizeSeed } from './noise.js';
 import { World } from './world.js';
@@ -77,6 +77,8 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
+import { Animals, SPECIES, SOUNDS as ANIMAL_SOUNDS, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S } from './animals.js';
+import { createAnimalRenderer } from './animalRenderer.js';
 import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, damageOf, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST, SICK_MESSAGE, BOIL_TIP } from './survival.js';
 import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory.js';
@@ -991,6 +993,8 @@ export function boot(win, doc) {
   let particles;
   /** @type {import('./pigRenderer.js').PigRenderer} */
   let pigRenderer;
+  /** @type {import('./animalRenderer.js').AnimalRenderer} */
+  let animalRenderer;
   /** @type {import('./zombieRenderer.js').ZombieRenderer} */
   let zombieRenderer;
   /** @type {import('./watcherRenderer.js').WatcherRenderer} */
@@ -1026,6 +1030,7 @@ export function boot(win, doc) {
     });
     // Room for the swallowed mobs' ghosts on top of the live ones (DESIGN-circuits §2.7): a ghost is never dropped.
     pigRenderer = createPigRenderer(renderer.three.scene, PIG_MAX + MAX_INFALL_MOBS);
+    animalRenderer = createAnimalRenderer(renderer.three.scene);
     zombieRenderer = createZombieRenderer(renderer.three.scene, atlasTexture, ZOMBIE_MAX + MAX_INFALL_MOBS);
     watcherRenderer = createWatcherRenderer(renderer.three.scene, atlasTexture);
     campfireRenderer = createCampfireRenderer(renderer.three.scene, { makeCanvas: () => doc.createElement('canvas') });
@@ -1197,6 +1202,8 @@ export function boot(win, doc) {
     },
     // Every CAMPFIRE cell is known to `campfires` (tracked or refused): with none, pigs skip the fire look-ahead.
     hasCampfires: () => campfires.total > 0,
+    /** @type {PlayerState|null} whom the pigs run from (§69; stepPigs refreshes it) */
+    player: null,
   };
   // Zombies (CONTRACTS §39): night mobs, never saved; the per-world switch is (startLoading sets it from the save).
   const zombies = new Zombies();
@@ -1219,6 +1226,33 @@ export function boot(win, doc) {
     groundHeight: (q, r) => world.terrainHeightAt(q, r),
     isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
     columnEdited: (q, r) => columnHasEdits(world.edits, q, r),
+  };
+  // Animals (CONTRACTS §69): cattle, sheep, horses and wolves — wary, rare, hunted, snared, and (horses, wolves) tamed.
+  const animals = new Animals();
+  /** @type {{ animal: import('./animals.js').Animal, distance: number }|null} the animal under the crosshair */
+  let animalTarget = null;
+  /** @type {import('./animals.js').Animal|null} the tame horse being ridden */
+  let riding = null;
+  /** Shift as it was last frame while riding (its press gets off) */
+  let rideShift = false;
+  /** pigs held by a snare → the snare's cell (pigs.js only counts `trapped` down) */
+  const snaredPigs = new Map();
+  const animalWorld = {
+    getBlock: pigWorld.getBlock,
+    isLoaded: pigWorld.isLoaded,
+    pullAt: pigWorld.pullAt,
+    hasCampfires: pigWorld.hasCampfires,
+    /** @type {PlayerState|null} */
+    player: null,
+    /** @type {string|null} */
+    heldKey: null,
+    get threats() {
+      return zombies.list;
+    },
+    getBiome: (q, r) => world.getBiome(q, r),
+    isLoadedCell: (q, r) => world.hasChunkAtCell(q, r),
+    groundHeight: (q, r) => world.terrainHeightAt(q, r),
+    isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
   };
   // The Hollow Watcher (CONTRACTS §40): a rare sighting, never saved; the per-world switch and the night of its last
   // natural sighting are (startLoading restores both).
@@ -1393,6 +1427,7 @@ export function boot(win, doc) {
       physicsBodies.length = 0;
       if (player) physicsBodies.push(player);
       if (world) for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) physicsBodies.push(pig);
+      if (world) for (const a of animals.list) if (world.hasChunkAt(a.x, a.z)) physicsBodies.push(a);
       if (world) for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) physicsBodies.push(zb);
       return physicsBodies;
     },
@@ -1584,6 +1619,7 @@ export function boot(win, doc) {
       hit = null;
       waterHit = null;
       pigTarget = null;
+      animalTarget = null;
       zombieTarget = null;
       return;
     }
@@ -1612,23 +1648,32 @@ export function boot(win, doc) {
     // A pig in front of the targeted block takes the crosshair (and hides the block highlight).
     pigTarget = pigs.size > 0 ? pigs.raycast(player.x, eyeY, player.z, dx, dy, dz, hit ? hit.distance : REACH) : null;
     if (pigTarget) hit = null;
-    // A zombie in front of both takes the crosshair from them (§39).
-    zombieTarget = zombies.size > 0
-      ? zombies.raycast(player.x, eyeY, player.z, dx, dy, dz, pigTarget ? pigTarget.distance : hit ? hit.distance : REACH) : null;
-    if (zombieTarget) {
+    // §69: so does an animal (the nearer of the two wins).
+    animalTarget = animals.size > 0
+      ? animals.raycast(player.x, eyeY, player.z, dx, dy, dz, pigTarget ? pigTarget.distance : hit ? hit.distance : REACH) : null;
+    if (animalTarget) {
       hit = null;
       pigTarget = null;
     }
+    // A zombie in front of them takes the crosshair from them (§39).
+    const mobReach = animalTarget ? animalTarget.distance : pigTarget ? pigTarget.distance : hit ? hit.distance : REACH;
+    zombieTarget = zombies.size > 0 ? zombies.raycast(player.x, eyeY, player.z, dx, dy, dz, mobReach) : null;
+    if (zombieTarget) {
+      hit = null;
+      pigTarget = null;
+      animalTarget = null;
+    }
     // A lit barrel in front of all of them takes it from them (left-click puts it out).
-    const reach = zombieTarget ? zombieTarget.distance : pigTarget ? pigTarget.distance : hit ? hit.distance : REACH;
+    const reach = zombieTarget ? zombieTarget.distance : mobReach;
     litTarget = blockPhysics ? blockPhysics.explosions.raycast(player.x, eyeY, player.z, dx, dy, dz, reach) : null;
     if (litTarget) {
       hit = null;
       pigTarget = null;
+      animalTarget = null;
       zombieTarget = null;
     }
     // A mob or a lit barrel nearer than the water takes R from it too.
-    if (waterHit && (litTarget || zombieTarget || pigTarget)) waterHit = null;
+    if (waterHit && (litTarget || zombieTarget || pigTarget || animalTarget)) waterHit = null;
     // §4.6: looking at a Spark Transmitter tunes the pocket key to it.
     if (hit && hit.blockId === BLOCK.SPARK_TRANSMITTER && circuits) {
       const st = circuitStore.get(`${hit.q},${hit.y},${hit.r}`);
@@ -1815,6 +1860,7 @@ export function boot(win, doc) {
       },
       blackHoles,
       hands: { act: (kind, n) => handAction(kind, n) }, // v0.10 (§60): drop / throw
+      animals, // §69: summon cow|sheep|horse|wolf
       loose: { despawnNear: (x, y, z, radius) => loose.despawnNear(x, y, z, radius, looseDespawned) }, // §63: despawn
     };
     return c;
@@ -2097,6 +2143,11 @@ export function boot(win, doc) {
       if (pigs.hit(pigTarget.pig, player.x, player.z)) audio.playSqueal();
       return true;
     }
+    if (animalTarget) {
+      // Creative never wounds: a shove, and a wild one runs.
+      if (animals.wound(animalTarget.animal, 0, player.x, player.z)) animalVoice(animalTarget.animal, 1);
+      return true;
+    }
     const h = hit;
     // A water source is not breakable, but with WATER selected left-click takes it away (the flow drains by itself).
     const takeWater = h && h.blockId === BLOCK.WATER && hotbar[selected] === BLOCK.WATER;
@@ -2172,6 +2223,7 @@ export function boot(win, doc) {
     // placeable, §2.9; a Collapsar Charge is solid, so the solid rule covers it.)
     if ((isSolid(id) || id === BLOCK.CAMPFIRE) && playerIntersectsBlock(player, tq, ty, tr)) return false;
     if (isSolid(id) && pigs.list.some((pig) => playerIntersectsBlock(pig, tq, ty, tr))) return false; // no entombing pigs
+    if (isSolid(id) && animals.list.some((a) => playerIntersectsBlock(a, tq, ty, tr))) return false; // … or animals
     if (isSolid(id) && zombies.list.some((zb) => playerIntersectsBlock(zb, tq, ty, tr))) return false; // … nor zombies
     // A campfire never goes into or under water, and water never goes on a campfire (§32).
     if (wouldDouseCampfire(world.getBlock, id, tq, ty, tr)) {
@@ -2310,6 +2362,273 @@ export function boot(win, doc) {
     return out;
   }
 
+  // ---- Animals (CONTRACTS §69) -----------------------------------------------------------------------------------
+
+  /** The item in the player's hand as a key: the selected pack stack in Survival, the hotbar block's item in Creative. */
+  function heldItemKey() {
+    if (survival.inSurvival) return selectedKey();
+    const id = hotbar[selected];
+    return id ? itemForBlock(id) : null;
+  }
+
+  /** An animal's call (its species' voice), by distance. */
+  function animalVoice(a, scale = 1) {
+    const v = zombieVolume(a) * scale;
+    if (v > 0) audio.playRecipe(ANIMAL_SOUNDS[SPECIES[a.kind].voice], v);
+  }
+
+  /** It is dead: a puff, and (Survival) what it gives flies to the player. */
+  function animalDied(a, real) {
+    particles.emit('dust', a.x, a.y + a.height * 0.5, a.z, 24, { color: [0.72, 0.62, 0.55], spread: 0.5 });
+    animalVoice(a, 1);
+    if (real && survival.inSurvival) flyStacks(rollMobDrops(a.kind, Math.random), a.x, a.y + a.height * 0.5, a.z);
+    if (riding === a) riding = null;
+    if (animalTarget && animalTarget.animal === a) animalTarget = null;
+  }
+
+  /** The target hint for an animal. */
+  function animalHint(a) {
+    const sp = SPECIES[a.kind];
+    const snared = a.trapped > 0 ? ' (snared)' : '';
+    if (a.tamed) {
+      if (a.kind === 'horse') return 'Your Horse · R: ride';
+      return `Your Wolf · R: ${a.sitting ? 'follow me' : 'sit'} · feed it meat to heal it`;
+    }
+    const hunt = selectedTool() ? 'click: hunt it' : 'hunting needs a tool';
+    if (a.kind === 'horse') return `Horse${snared} · R with a Wild Tuber or Honeyberries: feed it (${a.trust}/${sp.tame} to tame)`;
+    if (a.kind === 'wolf') return `Wolf${snared} · R with meat: feed it (${a.trust}/${sp.tame} to tame)`;
+    if (a.kind === 'sheep') return `Sheep${snared} · ${hunt} · R with a knife: shear`;
+    return `${sp.name}${snared} · ${hunt}`;
+  }
+
+  /** Little hearts over an animal. */
+  function animalHearts(a, n = 6) {
+    particles.emit('dust', a.x, a.y + a.height + 0.25, a.z, n, { color: [1, 0.42, 0.56], spread: 0.3 });
+  }
+
+  /**
+   * R on the animal under the crosshair: feed it what it likes (cattle and sheep calm down; a horse or a wolf is tamed
+   * after its species' feeds), shear a sheep with a knife, ride a tame horse, tell a tame wolf to sit or follow. In
+   * Creative R tames at once. @returns {boolean} handled
+   */
+  function animalR() {
+    if (riding || !animalTarget) return false;
+    const a = animalTarget.animal;
+    const sp = SPECIES[a.kind];
+    const SV = survival.inSurvival;
+    const key = heldItemKey();
+    if (key && sp.lure.includes(key) && !(a.tamed && a.health >= sp.health)) {
+      const res = animals.feed(a, key);
+      if (res.ok) {
+        if (SV) pack.consume(selected, 1);
+        audio.playEat();
+        animalHearts(a, res.tamed ? 14 : 5);
+        if (res.tamed) animalTamed(a);
+        else if (sp.tame > 0 && !a.tamed) showHint(`${sp.name}: fed ${a.trust} of ${sp.tame}`);
+        else if (res.calmed) showHint(`The ${sp.name.toLowerCase()} calms down.`);
+        return true;
+      }
+    }
+    if (a.kind === 'sheep' && !a.tamed) {
+      if (SV && !pack.hasTool('knife', KNIFE_TIER)) showHint('Shearing needs a knife.');
+      else if (a.shorn > 0) showHint('Its fleece is growing back.');
+      else {
+        const n = animals.shear(a);
+        if (n > 0) {
+          audio.playPick();
+          if (SV) {
+            flyStacks([{ k: 'wool_white', n }], a.x, a.y + 0.6, a.z);
+            const used = pack.useTool('knife', KNIFE_TIER);
+            if (used && used.broke) toolBroke(used.key);
+          }
+        }
+      }
+      return true;
+    }
+    if (a.tamed && a.kind === 'horse') {
+      mountHorse(a);
+      return true;
+    }
+    if (a.tamed && a.kind === 'wolf') {
+      a.sitting = !a.sitting;
+      showHint(a.sitting ? 'The wolf sits and waits.' : 'The wolf follows you.');
+      animalVoice(a, 0.7);
+      return true;
+    }
+    if (!SV && sp.tame > 0) {
+      let res = { ok: true, tamed: false };
+      for (let i = 0; i < sp.tame && res.ok && !res.tamed; i++) res = animals.feed(a, sp.lure[0]);
+      if (res.tamed) {
+        animalHearts(a, 14);
+        animalTamed(a);
+      }
+      return true;
+    }
+    return true; // R on an animal never falls through to the block behind it
+  }
+
+  /** A horse or a wolf has just been tamed. */
+  function animalTamed(a) {
+    audio.playRecipe(ANIMAL_SOUNDS.tame, 0.8);
+    logLine(a.kind === 'horse'
+      ? 'The horse trusts you. Press R to ride it; Shift gets off, Space jumps. It waits where you leave it.'
+      : 'The wolf trusts you. It follows you and bites zombies that come near. R tells it to sit or follow.');
+  }
+
+  /** R on a Snare with food in hand baits it (Creative: R toggles the bait). @returns {boolean} handled */
+  function snareR() {
+    const h = hit;
+    if (!h || (h.blockId !== BLOCK.SNARE && h.blockId !== BLOCK.SNARE_BAITED)) return false;
+    const SV = survival.inSurvival;
+    if (h.blockId === BLOCK.SNARE_BAITED) {
+      if (SV) showHint('It is baited already.');
+      else playerSetBlock(h.q, h.y, h.r, BLOCK.SNARE);
+      return true;
+    }
+    const key = heldItemKey();
+    const food = key ? getItem(key)?.food : null;
+    if (SV && !food) {
+      showHint('Hold some food and press R to bait the snare.');
+      return true;
+    }
+    if (!playerSetBlock(h.q, h.y, h.r, BLOCK.SNARE_BAITED)) return true;
+    if (SV) pack.consume(selected, 1);
+    audio.playPick();
+    showHint('Baited. Animals nearby will come to it; keep away so you do not scare them.');
+    updateHit();
+    return true;
+  }
+
+  /** Get on a tame horse. */
+  function mountHorse(a) {
+    if (!animals.mount(a)) return;
+    riding = a;
+    rideShift = true; // the Shift that may be held now is not a press
+    player.flying = false;
+    showHint('Riding · Shift: get off · Space: jump · double-tap W: gallop', 3);
+    animalVoice(a, 0.8);
+  }
+
+  /** Get off: beside the horse where there is room, else on its back. */
+  function dismountHorse() {
+    const a = riding;
+    if (!a) return;
+    riding = null;
+    animals.dismount(a);
+    const [fx, fz] = yawToForward(a.yaw);
+    let placed = false;
+    for (const [ox, oz] of [[fz, -fx], [-fz, fx], [-fx, -fz]]) {
+      const x = a.x + ox * 1.05;
+      const z = a.z + oz * 1.05;
+      if (!isFreeAt(world.getBlock, x, a.y, z)) continue;
+      player.x = x;
+      player.y = a.y;
+      player.z = z;
+      placed = true;
+      break;
+    }
+    if (!placed) player.y = a.y + a.height;
+    player.vx = 0;
+    player.vy = 0;
+    player.vz = 0;
+    player.landSpeed = 0;
+    if (survival.inSurvival) survival.fallGrace = true;
+  }
+
+  /** While riding: Shift gets off; the horse moves by the player's input and carries the player on its back. */
+  function stepRide(input, dt) {
+    if (!riding) return;
+    if (!animals.list.includes(riding)) {
+      riding = null;
+      return;
+    }
+    const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
+    if (shift && !rideShift) {
+      dismountHorse();
+      rideShift = shift;
+      return;
+    }
+    rideShift = shift;
+    const a = riding;
+    if (world.hasChunkAt(a.x, a.z)) animals.ride(a, input, world.getBlock, dt);
+    player.x = a.x;
+    player.y = a.y + SADDLE_Y;
+    player.z = a.z;
+    player.vx = a.vx;
+    player.vy = 0;
+    player.vz = a.vz;
+    player.onGround = true;
+    player.sneaking = false;
+    player.landSpeed = 0;
+  }
+
+  /** Animals: natural herds, AI and physics; then their calls, the snares and the wolves' bites. */
+  function stepAnimals(dt) {
+    animalWorld.player = player && !survival.dead ? player : null;
+    animalWorld.heldKey = heldItemKey();
+    const ev = animals.update(dt, animalWorld);
+    for (const a of ev.voices) {
+      if (zombieVolume(a) > 0) {
+        animalVoice(a, 0.7);
+        break; // one call a frame at most
+      }
+    }
+    for (const c of ev.caught) {
+      world.setBlock(c.cell[0], c.cell[1], c.cell[2], BLOCK.SNARE_SPRUNG);
+      snareSprung(c.animal, SPECIES[c.animal.kind].name);
+    }
+    for (const f of ev.freed) {
+      if (world.getBlock(f.cell[0], f.cell[1], f.cell[2]) === BLOCK.SNARE_SPRUNG) world.setBlock(f.cell[0], f.cell[1], f.cell[2], BLOCK.SNARE);
+    }
+    for (const b of ev.bites) {
+      const zb = b.target;
+      if (!zombies.list.includes(zb)) continue;
+      audio.playRecipe(ANIMAL_SOUNDS.woof, Math.max(0.3, zombieVolume(b.wolf)));
+      const res = zombies.hit(zb, b.wolf.x, b.wolf.z, WOLF_BITE);
+      if (res === 'ko') {
+        zombieGone(zb, 'ko');
+        if (survival.inSurvival) flyStacks(zombieDrops(zb), zb.x, zb.y + ZOMBIE_HEIGHT / 2, zb.z);
+      } else if (res === 'hit') {
+        audio.playZombieHurt(0.6);
+      }
+    }
+    stepSnaredPigs();
+  }
+
+  /** A snare went off: the snap, a puff, and a line when it is within earshot. */
+  function snareSprung(body, name) {
+    const v = zombieVolume(body);
+    if (v > 0) audio.playRecipe(ANIMAL_SOUNDS.snare, Math.max(0.3, v));
+    particles.emit('dust', body.x, body.y + 0.2, body.z, 8, { color: [0.85, 0.78, 0.6], spread: 0.3 });
+    logLine(`A snare has caught a ${name.toLowerCase()}. It will hold for about ${Math.round(TRAP_HOLD_S / 60 * 2) / 2} minutes.`);
+  }
+
+  /** Pigs and snares: a pig that steps into a set snare is held (pigs.js counts `trapped` down); then the snare resets. */
+  function stepSnaredPigs() {
+    for (const pig of pigs.list) {
+      if (pig.trapped > 0 || pig.snareImmune > fxTime || !world.hasChunkAt(pig.x, pig.z)) continue;
+      const [q, r] = worldToHex(pig.x, pig.z);
+      const y = Math.floor(pig.y + 0.05);
+      const id = world.getBlock(q, y, r);
+      if (id !== BLOCK.SNARE && id !== BLOCK.SNARE_BAITED) continue;
+      pig.trapped = TRAP_HOLD_S;
+      const [cx, cz] = hexToWorld(q, r);
+      pig.x = cx;
+      pig.z = cz;
+      snaredPigs.set(pig, [q, y, r]);
+      world.setBlock(q, y, r, BLOCK.SNARE_SPRUNG);
+      snareSprung(pig, 'pig');
+    }
+    for (const [pig, cell] of snaredPigs) {
+      const held = pigs.list.includes(pig) && pig.trapped > 0 && world.getBlock(cell[0], cell[1], cell[2]) === BLOCK.SNARE_SPRUNG;
+      if (held) continue;
+      snaredPigs.delete(pig);
+      pig.trapped = 0;
+      pig.snareImmune = fxTime + 20;
+      if (world.getBlock(cell[0], cell[1], cell[2]) === BLOCK.SNARE_SPRUNG) world.setBlock(cell[0], cell[1], cell[2], BLOCK.SNARE);
+    }
+  }
+
   /** The first zombie or pig a thrown item's path (x0 → x1) enters. */
   function looseHitMob(x0, y0, z0, x1, y1, z1) {
     const dx = x1 - x0;
@@ -2319,8 +2638,11 @@ export function boot(win, doc) {
     if (!(len > 1e-6)) return null;
     const zh = zombies.raycast(x0, y0, z0, dx / len, dy / len, dz / len, len);
     const ph = pigs.raycast(x0, y0, z0, dx / len, dy / len, dz / len, len);
-    if (zh && (!ph || zh.distance <= ph.distance)) return { kind: 'zombie', mob: zh.zombie };
-    if (ph) return { kind: 'pig', mob: ph.pig };
+    const ah = animals.raycast(x0, y0, z0, dx / len, dy / len, dz / len, len);
+    const near = Math.min(zh ? zh.distance : Infinity, ph ? ph.distance : Infinity, ah ? ah.distance : Infinity);
+    if (zh && zh.distance === near) return { kind: 'zombie', mob: zh.zombie };
+    if (ph && ph.distance === near) return { kind: 'pig', mob: ph.pig };
+    if (ah) return { kind: 'animal', mob: ah.animal };
     return null;
   }
 
@@ -2342,6 +2664,11 @@ export function boot(win, doc) {
       } else if (res === 'hit') {
         audio.playZombieHurt(1);
       }
+    } else if (target.kind === 'animal') {
+      const a = target.mob;
+      const res = animals.wound(a, real && !a.tamed ? it.power : 0, fromX, fromZ);
+      if (res === 'dead') animalDied(a, real);
+      else if (res === 'hit') animalVoice(a, 1);
     } else {
       const pig = target.mob;
       if (real) {
@@ -2573,6 +2900,7 @@ export function boot(win, doc) {
    */
   function die(cause) {
     loose.release(); // §60: what was flying to the player falls where it is
+    if (riding) dismountHorse();
     // 1. The screen open over the running world: the pack screen (its cursor stack goes back first; overflow is lost), the
     // field book, or the device panel (its label flushes as it closes; its key capture goes with it).
     const open = screenClosedOnDeath(state);
@@ -2774,6 +3102,10 @@ export function boot(win, doc) {
     if (litTarget) return 'lit keg · left-click: put it out';
     if (zombieTarget) return 'Zombie · click: hit it';
     if (pigTarget) return selectedTool() ? 'Pig · click: hunt it' : 'Pig · click: shove it (hunting needs a tool)';
+    if (animalTarget) return animalHint(animalTarget.animal);
+    if (hit && hit.blockId === BLOCK.SNARE) return 'Snare · R with food in hand: bait it';
+    if (hit && hit.blockId === BLOCK.SNARE_BAITED) return 'Baited Snare · animals nearby will come to it';
+    if (hit && hit.blockId === BLOCK.SNARE_SPRUNG) return 'Sprung Snare · it holds what it caught for a while';
     if (digPackFull && digState.active) return HINT.packFull;
     const act = interactAction();
     if (act) {
@@ -2788,6 +3120,8 @@ export function boot(win, doc) {
         case 'pit_hint':
           return pitHintText(act, act.kind === 'pit_take' ? pitStatus(act) : '');
         case 'pick':
+          // §70: the loose stones that show a dark flint nodule hold flint, and say so.
+          if (act.id === BLOCK.LOOSE_STONES) return flintAt(act.q, act.r) ? 'Loose Stones with Flint · R: pick' : 'Loose Stones · R: pick';
           return `${getBlockDef(/** @type {number} */ (act.id)).displayName} · R: pick`;
         case 'read':
           return 'Handbook · R: read';
@@ -3033,10 +3367,15 @@ export function boot(win, doc) {
     audio.playCrackle(1);
   }
 
+  /** §70: whether loose stones give flint is what the player sees there (blocks.flintAt), not a roll. */
+  function flintDecided(id, q, r) {
+    return id === BLOCK.LOOSE_STONES ? { flint: flintAt(q, r) } : undefined;
+  }
+
   /** §6.4 picking with R: natural before the write, room checked, the picked block written by the player. */
   function pickAt(q, y, r, id) {
     const natural = !world.hasEdit(q, y, r);
-    const res = pick(id, { natural, knifeInPack: pack.hasTool('knife', KNIFE_TIER) }, Math.random);
+    const res = pick(id, { natural, knifeInPack: pack.hasTool('knife', KNIFE_TIER), decided: flintDecided(id, q, r) }, Math.random);
     if (!res) return;
     if (!pack.canGive([...loose.inFlight(), ...res.drops])) {
       showHint(HINT.packFull);
@@ -3066,7 +3405,7 @@ export function boot(win, doc) {
       if (mouse.leftPressed) breakTargeted(); // a click snuffs a lit barrel, as today
       return;
     }
-    if (zombieTarget || pigTarget) {
+    if (zombieTarget || pigTarget || animalTarget) {
       digStep(0, false);
       if (mouse.leftPressed) {
         attackHeld = 0;
@@ -3118,7 +3457,7 @@ export function boot(win, doc) {
   function finishDig(h, tool) {
     const id = h.blockId;
     const natural = !world.hasEdit(h.q, h.y, h.r);
-    const drops = rollDrops(id, tool, { natural, knifeInPack: pack.hasTool('knife', KNIFE_TIER), deep: isDeep(h.y) }, Math.random);
+    const drops = rollDrops(id, tool, { natural, knifeInPack: pack.hasTool('knife', KNIFE_TIER), deep: isDeep(h.y), decided: flintDecided(id, h.q, h.r) }, Math.random);
     // A basket, belongings or a fire also give what they hold (§5.6, §4.4): all of it must fit.
     const held = [...containers.contents(h.q, h.y, h.r)];
     const view = id === BLOCK.CAMPFIRE || id === BLOCK.FIRE_PIT ? fireSlots.view(h.q, h.y, h.r) : null;
@@ -3158,6 +3497,20 @@ export function boot(win, doc) {
         audio.playZombieHurt(1);
       }
       if (res) wearSelectedTool('strike');
+      updateHit();
+      return;
+    }
+    if (animalTarget) {
+      const a = animalTarget.animal;
+      if (a.tamed) {
+        showHint(`Your ${SPECIES[a.kind].name.toLowerCase()} trusts you.`);
+        return;
+      }
+      const ka = strikeKind('pig', tool); // like a pig: only a tool wounds, a bare hand shoves
+      const res = animals.wound(a, ka.call === 'wound' ? ka.power : 0, player.x, player.z);
+      if (res === 'dead') animalDied(a, true);
+      else if (res === 'hit') animalVoice(a, 1);
+      if (res && ka.call === 'wound') wearSelectedTool('strike');
       updateHit();
       return;
     }
@@ -3636,6 +3989,7 @@ export function boot(win, doc) {
       edits: blockPhysics ? blockPhysics.exportEdits() : world.exportEdits(),
       runes: runeStore.export(),
       pigs: pigs.export(),
+      animals: animals.size > 0 ? animals.export() : undefined, // §69: written only when there are any
       physics: blockPhysics ? blockPhysics.exportSwitches() : undefined,
       zombies: zombies.enabled, // the switch only: zombies themselves are never saved (§39)
       watcher: watcher.enabled, // the switch: the Watcher itself is a sighting, never saved (§40) …
@@ -3862,6 +4216,10 @@ export function boot(win, doc) {
     resetCircuitSession();
     campfires.loadFromEdits(world.edits);
     pigs.load(restoring && Array.isArray(restoring.pigs) ? restoring.pigs : []);
+    animals.load(restoring ? restoring.animals : null);
+    riding = null;
+    animalTarget = null;
+    snaredPigs.clear();
     placeNaturalPigs = !(restoring && Array.isArray(restoring.pigs));
     pigTarget = null;
     // Zombies are never saved; their switch is (absent — a new world or an older save — means on).
@@ -4623,6 +4981,10 @@ export function boot(win, doc) {
       player.landSpeed = 0;
       teleportFrame = true;
       if (survival.inSurvival) survival.fallGrace = true;
+      if (riding) {
+        animals.dismount(riding); // a teleport leaves the horse behind
+        riding = null;
+      }
       detachBody(player, pigs.list); // a pig on the player's head (or under its feet) stays behind (§31)
       detachBody(player, zombies.list); // … and so does a zombie
       if (world) world.update(x, z);
@@ -4688,6 +5050,10 @@ export function boot(win, doc) {
     survival,
     pack,
     // ---- v0.10 loose items (§60): the list, and Q / G ----
+    animals,
+    /** §69: R on the animal under the crosshair (feed, shear, ride, sit), and the horse being ridden. */
+    animalR: () => animalR(),
+    getRiding: () => riding,
     loose,
     handAction: (kind, n = 1) => handAction(kind, n),
     /** Queue a mode switch (applied at the top of the next frame). */
@@ -4901,6 +5267,7 @@ export function boot(win, doc) {
   /** Pigs wander (and feel black holes); ambient oinks fade out by 16 units; a swallowed pig is gone. */
   function stepPigs(dt) {
     if (pigs.size === 0) return;
+    pigWorld.player = player && !survival.dead ? player : null;
     const oinks = pigs.update(dt, pigWorld);
     for (const pig of pigs.scorched) {
       const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
@@ -5210,7 +5577,10 @@ export function boot(win, doc) {
 
     const rPressed = controls.consumePressed('KeyR');
     const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
-    if (rPressed && shift) {
+    // §69: R on an animal or a snare comes first, sneaking or not (you sneak up to feed and to shear).
+    if (rPressed && (animalR() || snareR())) {
+      // handled
+    } else if (rPressed && shift) {
       editTarget(); // a part's device panel (§4.10) or a rune's editor
       if (state !== st0) return;
     } else if (SV) {
@@ -5261,10 +5631,12 @@ export function boot(win, doc) {
     input.pullX = pull[0] + (blockPhysics ? current[0] : 0);
     input.pullY = pull[1] + (blockPhysics ? current[1] : 0);
     input.pullZ = pull[2] + (blockPhysics ? current[2] : 0);
-    if (world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt);
+    stepRide(input, dt);
+    if (!riding && world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt);
     stepBlackHoles(dt);
     if (checkDeath()) return; // §2.5 checkpoint
     stepPigs(dt);
+    stepAnimals(dt);
     stepZombies(dt);
     stepWatcher(dt);
     stepBlockPhysics(dt);
@@ -5280,12 +5652,13 @@ export function boot(win, doc) {
     // Bodies collide, push and stand on each other once everything has moved (CONTRACTS §31). Pigs in unloaded
     // chunks are frozen and stay out of it; lit barrels (explosions.js) take part against the player and pigs.
     bodies.length = 0;
-    bodies.push(player);
+    if (!riding) bodies.push(player); // a rider sits in the horse's own (taller) body
     for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) bodies.push(pig);
+    for (const a of animals.list) if (world.hasChunkAt(a.x, a.z)) bodies.push(a);
     for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) bodies.push(zb);
     if (blockPhysics) blockPhysics.bodies(bodies);
     if (bodies.length > 1) resolveBodies(bodies, world.getBlock);
-    const stuck = unstickPlayer();
+    const stuck = riding ? NOT_STUCK : unstickPlayer();
     stepLoose(dt); // §60: after the bodies moved, so a drop flies at where the player now is
     // §2.4 crush: falling ground lifted the player — not on a teleport frame, under fall grace, or on top of a knock.
     if (stuck.lifted > 0 && survival.active && !survival.fallGrace && !teleportFrame && !knockHurtThisFrame) {
@@ -5375,6 +5748,7 @@ export function boot(win, doc) {
       pigRenderer.sync(pigs.list);
       zombieRenderer.sync(zombies.list);
     }
+    animalRenderer.sync(animals.list);
     watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime);
     hurtFlash = Math.max(0, hurtFlash - dt / HURT_FLASH_S);
     hud.setHurtFlash(hurtFlash);
