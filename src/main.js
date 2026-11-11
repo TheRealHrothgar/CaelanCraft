@@ -4956,6 +4956,12 @@ export function boot(win, doc) {
   /** A zombie is gone — knocked out ('ko', a dull grey-green puff) or burned away ('burn', ash, smoke and embers). */
   function zombieGone(zb, how) {
     const cy = zb.y + ZOMBIE_HEIGHT / 2;
+    if (how === 'burrow') {
+      // §68: it sinks back into the ground by day — a puff of soil at its feet, no knock-out sound.
+      particles.emit('dust', zb.x, zb.y + 0.3, zb.z, 22, { color: [0.42, 0.32, 0.22], spread: 0.5 });
+      if (zombieTarget && zombieTarget.zombie === zb) zombieTarget = null;
+      return;
+    }
     if (how === 'burn') {
       particles.emit('smoke', zb.x, cy + 0.3, zb.z, 14, { spread: 0.45 });
       particles.emit('sparks', zb.x, cy, zb.z, 10, { speed: 0.35 });
@@ -5014,6 +5020,7 @@ export function boot(win, doc) {
     if (yelp > 0) audio.playZombieHurt(yelp);
     for (const zb of ev.burned) zombieGone(zb, 'burn');
     for (const zb of ev.knockedOut) zombieGone(zb, 'ko');
+    for (const zb of ev.burrowed) zombieGone(zb, 'burrow');
     for (const zb of zombies.list) {
       if (!zb.smoking) continue;
       // Smoke thickens as it burns; now and then an ember.

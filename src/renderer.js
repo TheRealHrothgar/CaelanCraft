@@ -796,7 +796,7 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
       starMaterial.opacity = starOpacity;
       stars.visible = starOpacity > 0.001;
       // Stars rotate with the sun angle φ = (t − 0.25)·2π about Z (the sun's orbit plane is XY).
-      stars.rotation.z = (sky.time - 0.25) * Math.PI * 2;
+      stars.rotation.z = ((sky.solar ?? sky.time) - 0.25) * Math.PI * 2; // solar time (§68)
       updateSkyPositions();
     },
 

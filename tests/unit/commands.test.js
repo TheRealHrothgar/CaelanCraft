@@ -274,8 +274,8 @@ describe('parseTimeSpec', () => {
   it('maps the named times, HH:MM, bare hours and fractions', () => {
     expect(parseTimeSpec('noon')).toBe(0.5);
     expect(parseTimeSpec('MIDNIGHT')).toBe(0);
-    expect(parseTimeSpec('day')).toBe(0.25);
-    expect(parseTimeSpec('night')).toBe(0.75);
+    expect(parseTimeSpec('day')).toBe(0.1875); // v0.11 (§68): sunrise 04:30 …
+    expect(parseTimeSpec('night')).toBe(0.8125); // … and sunset 19:30
     expect(parseTimeSpec('06:30')).toBeCloseTo(6.5 / 24, 12);
     expect(parseTimeSpec('0:00')).toBe(0);
     expect(parseTimeSpec('23:59')).toBeCloseTo((23 * 60 + 59) / 1440, 12);

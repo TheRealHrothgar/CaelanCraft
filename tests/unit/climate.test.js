@@ -132,19 +132,19 @@ describe('air temperature (§3.1)', () => {
 });
 
 describe('sun, day and heat sources (§3.2)', () => {
-  it('sunFactor is 0 at night, 1 at noon and sin(π(t − ¼)/½) in between', () => {
+  it('sunFactor is 0 at night, 1 at noon and sin(π(t − sunrise)/(sunset − sunrise)) in between (v0.11: 04:30–19:30)', () => {
     expect(sunFactor(0.5)).toBeCloseTo(1, 12);
-    expect(sunFactor(H(6))).toBe(0);
-    expect(sunFactor(H(18))).toBe(0);
+    expect(sunFactor(H(4, 30))).toBe(0);
+    expect(sunFactor(H(19, 30))).toBe(0);
     expect(sunFactor(H(2))).toBe(0);
     expect(sunFactor(H(22))).toBe(0);
-    expect(sunFactor(H(9))).toBeCloseTo(Math.sin(Math.PI * (H(9) - 0.25) / 0.5), 12);
-    expect(sunFactor(NOON2)).toBeCloseTo(Math.sqrt(3) / 2, 3);
+    expect(sunFactor(H(9))).toBeCloseTo(Math.sin((Math.PI * (H(9) - H(4, 30))) / (H(19, 30) - H(4, 30))), 12);
+    expect(sunFactor(H(6))).toBeGreaterThan(0); // sunlit since v0.11
     expect(sunFactor(1.5)).toBeCloseTo(1, 12); // wraps
     expect(sunFactor(NaN)).toBe(0);
-    expect(isDaytime(H(6))).toBe(true);
-    expect(isDaytime(H(17, 59))).toBe(true);
-    expect(isDaytime(H(18))).toBe(false);
+    expect(isDaytime(H(4, 30))).toBe(true);
+    expect(isDaytime(H(19, 29))).toBe(true);
+    expect(isDaytime(H(19, 30))).toBe(false);
     expect(isDaytime(H(3))).toBe(false);
   });
 

@@ -25,7 +25,7 @@ import {
   WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
   GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME, PIG_MAX,
   PIG_RADIUS, PIG_HEIGHT, DRAIN_MAX_RADIUS, DRAIN_DEFAULT_RADIUS,
-  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, STAT_MAX, BREATH_MAX_S, BODY_TEMP_MIN, BODY_TEMP_MAX,
+  ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, STAT_MAX, BREATH_MAX_S, BODY_TEMP_MIN, BODY_TEMP_MAX, SUNRISE_TIME, SUNSET_TIME,
 } from './config.js';
 import { inHeightRange, worldToChunk, yawToForward } from './coords.js';
 import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
@@ -465,15 +465,15 @@ function parseClock(token) {
 
 /**
  * Parse a `time set` specification into a day fraction in [0, 1), or null.
- * noon 0.5, midnight 0, day 0.25 (06:00), night 0.75 (18:00); HH:MM; a bare integer 0..24 = hours;
+ * noon 0.5, midnight 0, day SUNRISE_TIME (04:30), night SUNSET_TIME (19:30; v0.11 §68); HH:MM; a bare integer 0..24 = hours;
  * a number with a decimal point in [0, 1] = fraction of the day.
  */
 export function parseTimeSpec(token) {
   const t = String(token).toLowerCase();
   if (t === 'noon') return 0.5;
   if (t === 'midnight') return 0;
-  if (t === 'day') return 0.25;
-  if (t === 'night') return 0.75;
+  if (t === 'day') return SUNRISE_TIME;
+  if (t === 'night') return SUNSET_TIME;
   const clock = parseClock(t);
   if (clock !== null) return clock;
   if (/^\d{1,2}$/.test(t)) {

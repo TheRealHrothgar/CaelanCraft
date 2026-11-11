@@ -117,6 +117,7 @@
 /**
  * @typedef {Object} SkyState  Colours are [r,g,b] floats 0..1 in sRGB.
  * @property {number} time
+ * @property {number} solar  v0.11 (§68): solar time — sunrise 0.25, sunset 0.75 — the sky and the stars run on
  * @property {boolean} isDay
  * @property {Vec3} sunDir          unit vector toward the active light (sun by day, moon by night)
  * @property {Vec3} sunColor

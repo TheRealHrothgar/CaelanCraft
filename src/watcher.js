@@ -21,7 +21,7 @@
 //
 // Nothing about the figure is saved; the world keeps only the per-world switch (`enabled`) and the night of the last
 // natural sighting (`lastNight`, so a reload cannot bring a second one that night).
-import { WORLD_HEIGHT, DAY_LENGTH_SECONDS, FOV, TREE_MAX_CELLS } from './config.js';
+import { WORLD_HEIGHT, NIGHT_SECONDS, FOV, TREE_MAX_CELLS, SUNSET_TIME } from './config.js';
 import { HEX_DIRS, hexToWorld, worldToHex } from './hex.js';
 import { BLOCK, isSolid, isOpaque, isLeaves, isLog, isLiquid } from './blocks.js';
 import { raycastHex } from './raycast.js';
@@ -65,10 +65,10 @@ export const WATCHER_DEFAULT_ASPECT = 16 / 9;
 export const WATCHER_UNSEEN_S = 30;
 /** A natural appearance is rolled this often (s) while one may happen. */
 export const WATCHER_CHECK_S = 5;
-/** Chance that a whole night (half a day: DAY_LENGTH_SECONDS / 2, ~5 real minutes) brings a sighting. */
+/** Chance that a whole night (NIGHT_SECONDS, 10 real minutes since v0.11) brings a sighting. */
 export const WATCHER_NIGHT_CHANCE = 1 / 3;
 /** Per-check chance: 1 − (1 − NIGHT_CHANCE)^(CHECK_S / night length), so a night of checks adds up to NIGHT_CHANCE. */
-export const WATCHER_CHECK_CHANCE = 1 - Math.pow(1 - WATCHER_NIGHT_CHANCE, WATCHER_CHECK_S / (DAY_LENGTH_SECONDS / 2));
+export const WATCHER_CHECK_CHANCE = 1 - Math.pow(1 - WATCHER_NIGHT_CHANCE, WATCHER_CHECK_S / NIGHT_SECONDS);
 /** Columns tried per placement. */
 export const WATCHER_PLACE_TRIES = 24;
 /**
@@ -198,14 +198,14 @@ function approach(from, to, step) {
 
 /**
  * The in-game night a moment belongs to: dusk of day N up to dusk of day N + 1 (the night and the day after it) is
- * night N. main's `day` is bumped at midnight, so t ≥ 0.75 → `day`, earlier → `day − 1`.
+ * night N. main's `day` is bumped at midnight, so t ≥ SUNSET_TIME (19:30 since v0.11) → `day`, earlier → `day − 1`.
  * @param {number} time  day fraction
  * @param {number} day
  * @returns {number}
  */
 export function nightKey(time, day) {
   const t = time - Math.floor(time);
-  return t >= 0.75 ? day : day - 1;
+  return t >= SUNSET_TIME ? day : day - 1;
 }
 
 /** Sight is blocked by opaque cells and by leaves (glass, water and air let it through). */

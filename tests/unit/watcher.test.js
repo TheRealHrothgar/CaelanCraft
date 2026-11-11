@@ -5,7 +5,7 @@
 // attacks or writes while it is there, the switch, summon, and its three traces with their safety rules (applied
 // through a real BlockPhysics: nothing else falls; never anything the player made).
 import { describe, it, expect } from 'vitest';
-import { WORLD_HEIGHT, DAY_LENGTH_SECONDS } from '../../src/config.js';
+import { WORLD_HEIGHT, NIGHT_SECONDS } from '../../src/config.js';
 import { HEX_DIRS, hexLength, hexToWorld, worldToHex } from '../../src/hex.js';
 import { BLOCK, isSolid, isLeaves, isLog } from '../../src/blocks.js';
 import { lookDirection } from '../../src/coords.js';
@@ -144,10 +144,10 @@ describe('rules of sight', () => {
   });
 
   it('nightKey: one key from dusk to the next dusk (main bumps `day` at midnight)', () => {
-    expect(nightKey(0.8, 1)).toBe(1);
+    expect(nightKey(0.85, 1)).toBe(1);
     expect(nightKey(0.1, 2)).toBe(1); // after midnight: the same night
     expect(nightKey(0.5, 2)).toBe(1); // the day after it
-    expect(nightKey(0.76, 2)).toBe(2); // the next dusk
+    expect(nightKey(0.82, 2)).toBe(2); // the next dusk
   });
 
   it('deep underground = the eye at least 8 below the generated surface with a roof over it', () => {
@@ -163,9 +163,9 @@ describe('rules of sight', () => {
 });
 
 describe('natural appearances (night, deep caves, once a night, ~1 night in 3)', () => {
-  it('the per-check chance adds up to one sighting in three over a night (~5 real minutes)', () => {
-    const checks = DAY_LENGTH_SECONDS / 2 / WATCHER_CHECK_S;
-    expect(checks).toBe(60);
+  it('the per-check chance adds up to one sighting in three over a night (9 real minutes since v0.11)', () => {
+    const checks = NIGHT_SECONDS / WATCHER_CHECK_S;
+    expect(checks).toBe(108);
     expect(1 - Math.pow(1 - WATCHER_CHECK_CHANCE, checks)).toBeCloseTo(WATCHER_NIGHT_CHANCE, 9);
     // Simulated nights on open ground: about one in three brings a sighting.
     const world = makeFakeWorld({ groundY: GROUND });
@@ -174,7 +174,7 @@ describe('natural appearances (night, deep caves, once a night, ~1 night in 3)',
     const NIGHTS = 1500;
     for (let n = 0; n < NIGHTS; n++) {
       const w = new Watcher(rng);
-      const v = view(world, { time: 0.8 });
+      const v = view(world, { time: 0.85 });
       for (let k = 0; k < checks; k++) {
         if (w.update(WATCHER_CHECK_S, v).appeared) {
           sightings++;
@@ -220,7 +220,7 @@ describe('natural appearances (night, deep caves, once a night, ~1 night in 3)',
   it('at most one at a time, and at most one sighting per in-game night', () => {
     const world = makeFakeWorld({ groundY: GROUND });
     const w = new Watcher(() => 0);
-    const v = view(world, { time: 0.8, day: 3 });
+    const v = view(world, { time: 0.85, day: 3 });
     const f = w.update(WATCHER_CHECK_S, v).appeared;
     expect(f).not.toBeNull();
     for (let k = 0; k < 20; k++) {
@@ -240,7 +240,7 @@ describe('natural appearances (night, deep caves, once a night, ~1 night in 3)',
       for (let k = 0; k < 30; k++) expect(w.update(WATCHER_CHECK_S, v).appeared).toBeNull();
     }
     // The next night it may come again.
-    v.time = 0.8;
+    v.time = 0.85;
     v.day = 4;
     expect(w.update(WATCHER_CHECK_S, v).appeared).not.toBeNull();
   });
@@ -248,13 +248,13 @@ describe('natural appearances (night, deep caves, once a night, ~1 night in 3)',
   it('a reload in the same night brings no second sighting (lastNight is saved as watcherNight); the next night still can', () => {
     const world = makeFakeWorld({ groundY: GROUND });
     const a = new Watcher(() => 0);
-    const v = view(world, { time: 0.8, day: 3 });
+    const v = view(world, { time: 0.85, day: 3 });
     expect(a.lastNight).toBeNull();
     expect(a.update(WATCHER_CHECK_S, v).appeared).not.toBeNull();
     expect(a.lastNight).toBe(3);
     // main saves the world (time, day and the night of the sighting) and the page is reloaded …
     const text = serializeSave({
-      version: 2, seed: 1, time: 0.81, day: 3, player: { x: 0, y: FEET, z: 0, yaw: 0, pitch: 0, flying: false },
+      version: 2, seed: 1, time: 0.86, day: 3, player: { x: 0, y: FEET, z: 0, yaw: 0, pitch: 0, flying: false },
       hotbar: [1, 2, 3, 4, 5, 6, 7, 8, 9], selected: 0, edits: {}, watcher: a.enabled, watcherNight: a.lastNight,
     });
     const save = deserializeSave(text);
@@ -264,12 +264,12 @@ describe('natural appearances (night, deep caves, once a night, ~1 night in 3)',
     expect(b.setLastNight(save.watcherNight)).toBe(true);
     expect(b.lastNight).toBe(3);
     const v2 = view(world, { time: save.time, day: save.day });
-    for (const [time, day] of [[0.81, 3], [0.95, 3], [0.1, 4], [0.24, 4], [0.5, 4], [0.74, 4]]) {
+    for (const [time, day] of [[0.86, 3], [0.95, 3], [0.1, 4], [0.24, 4], [0.5, 4], [0.8, 4]]) { // v0.11: sunset 19:30 (0.8125)
       v2.time = time;
       v2.day = day;
       for (let k = 0; k < 30; k++) expect(b.update(WATCHER_CHECK_S, v2).appeared).toBeNull();
     }
-    v2.time = 0.76; // the next dusk
+    v2.time = 0.82; // the next dusk
     v2.day = 4;
     expect(b.update(WATCHER_CHECK_S, v2).appeared).not.toBeNull();
     expect(b.lastNight).toBe(4);
@@ -476,7 +476,7 @@ describe('placement', () => {
     }
     expect(new Watcher(mulberry32(1)).summon(view(world, { time: 0.5, pitch: -70 * DEG }))).toBeNull();
     const w = new Watcher(() => 0);
-    const v = view(world, { time: 0.8 });
+    const v = view(world, { time: 0.85 });
     w.summon(v);
     moveTo(v, w.figure.x, FEET, w.figure.z + 5);
     w.update(0.1, v); // gone
@@ -605,12 +605,12 @@ describe('vanishing', () => {
   it('a natural night sighting fades at dawn; a summoned one does not', () => {
     const world = makeFakeWorld({ groundY: GROUND });
     const w = new Watcher(() => 0);
-    const v = view(world, { time: 0.24 });
+    const v = view(world, { time: 0.18 });
     expect(w.update(WATCHER_CHECK_S, v).appeared).not.toBeNull();
     lookBeside(v, w.figure, 30);
     w.update(0.1, v);
     expect(w.present).toBe(true);
-    v.time = 0.26;
+    v.time = 0.2;
     expect(w.update(0.1, v).vanished).toMatchObject({ reason: 'dawn' });
     const s = summonedAt(world, v, 0, -45);
     lookBeside(v, s.f, 30);
@@ -1182,7 +1182,7 @@ describe('review follow-ups', () => {
     v.time = 0; // `time set midnight`: 00:00 on day 5 — key 4, the same dark night
     for (let i = 0; i < 4; i++) expect(w.update(WATCHER_CHECK_S, v).appeared).toBeNull();
     expect(w.lastNight).toBe(4); // a remembered night ahead of the clock counts as tonight …
-    v.time = 0.8; // … and the next evening (day 5, key 5) may bring one again
+    v.time = 0.85; // … and the next evening (day 5, key 5) may bring one again
     expect(w.update(WATCHER_CHECK_S, v).appeared).not.toBeNull();
   });
 

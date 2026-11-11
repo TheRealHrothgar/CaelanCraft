@@ -10,7 +10,7 @@ import {
 } from '../../src/config.js';
 import {
   Zombies, openSky, zombieVolume, loudestVolume, isDormant, gaitOf, damageOf, maxClimb, KIND_STATS, WALKER_WAKE_RANGE,
-  PROVOKE_S, HORDE_CHECK_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE,
+  PROVOKE_S, HORDE_CHECK_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE, DAWN_BURROW_MIN_S, DAWN_BURROW_RAND_S,
 } from '../../src/zombies.js';
 import { seededRng, wrapAngle } from '../../src/pigs.js';
 import { createPlayer, createBody, isFreeAt, stepPlayer } from '../../src/physics.js';
@@ -151,7 +151,7 @@ describe('Zombies.update — chase and attack', () => {
     });
     expect(first).toBeGreaterThan(0);
     expect(zb.mode).toBe('chase');
-    expect(maxSpeed).toBeGreaterThan(0.7 * WALK_SPEED);
+    expect(maxSpeed).toBeGreaterThan(0.6 * WALK_SPEED); // v0.11 (§68): 0.7 × WALK_SPEED, a bit slower
     expect(maxSpeed).toBeLessThan(WALK_SPEED);
     expect(Math.hypot(player.x - zb.x, player.z - zb.z)).toBeLessThanOrEqual(ZOMBIE_REACH);
     // The strike knocked the player straight away from the zombie and up (no damage: velocity only).
@@ -798,5 +798,42 @@ describe('Zombies.hit power (v0.9 survival, DESIGN-survival §9.3)', () => {
       expect(zb.hits).toBe(1);
       zs.remove(zb);
     }
+  });
+});
+
+describe('Zombies — v0.11 by day the idle ones burrow away (CONTRACTS §68)', () => {
+  const day = (getBlock, player) => ({ getBlock, isLoaded: loaded, player, isDay: true });
+  it('a zombie idling in open daylight burrows after its own 10–30 s, with an event; in shade it stays', () => {
+    const roofed = (q, y, r) => (q <= 0 && y === GROUND + 4 ? B.STONE : flat(q, y, r));
+    const zs = new Zombies(seededRng(51));
+    const lit = zs.spawn(...[hexToWorld(8, 0)[0], GROUND, hexToWorld(8, 0)[1]]);
+    const shaded = zs.spawn(...[hexToWorld(-4, 0)[0], GROUND, hexToWorld(-4, 0)[1]]);
+    expect(lit.burrowAt).toBeGreaterThanOrEqual(DAWN_BURROW_MIN_S);
+    expect(lit.burrowAt).toBeLessThanOrEqual(DAWN_BURROW_MIN_S + DAWN_BURROW_RAND_S);
+    let burrowedAt = -1;
+    run(zs, day(roofed, null), DAWN_BURROW_MIN_S + DAWN_BURROW_RAND_S + 1, (ev, f) => {
+      if (ev.burrowed.includes(lit)) burrowedAt = f / 60;
+    });
+    expect(burrowedAt).toBeGreaterThanOrEqual(DAWN_BURROW_MIN_S - 0.1);
+    expect(burrowedAt).toBeLessThanOrEqual(lit.burrowAt + 0.5);
+    expect(zs.list).toEqual([shaded]);
+    // nothing burrows at night
+    const night = new Zombies(seededRng(52));
+    night.spawn(0, GROUND, 0);
+    run(night, view(flat, null), DAWN_BURROW_MIN_S + DAWN_BURROW_RAND_S + 1);
+    expect(night.size).toBe(1);
+  });
+  it('one chasing you does not burrow while it chases', () => {
+    const zs = new Zombies(seededRng(53));
+    const zb = zs.spawn(0, GROUND, 0, 0, 'runner'); // a runner chases by day too
+    const player = standing(6, 0);
+    player.flying = false;
+    // keep the player just out of reach so the chase goes on
+    run(zs, day(flat, player), DAWN_BURROW_MIN_S + DAWN_BURROW_RAND_S + 1, () => {
+      const d = Math.hypot(player.x - zb.x, player.z - zb.z);
+      if (d < 4) player.x = zb.x + 6;
+    });
+    expect(zs.list).toEqual([zb]);
+    expect(zb.daylitFor).toBeLessThan(1); // at most the frame before it noticed you
   });
 });

@@ -44,7 +44,7 @@ import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js'
  *   burn: number, smoking: boolean, exposed: boolean, sunIn: number, fireIn: number,
  *   fireX: number, fireY: number, fireZ: number,
  *   detour: number, detourYaw: number, side: 1|-1, stuck: number, tilt: number, wallSinceAim: boolean,
- *   kind: 'walker'|'runner'|'alpha', rallied: boolean, daylit: boolean, provoked: number,
+ *   kind: 'walker'|'runner'|'alpha', rallied: boolean, daylit: boolean, provoked: number, daylitFor: number, burrowAt: number,
  * }} Zombie
  * `walkPhase` advances with distance walked (the renderer swings the feet with it); `swing` counts down after an
  * attack (the renderer lurches the torso); `burn` stays 0 and `smoking` false (v0.11: daylight no longer burns);
@@ -83,6 +83,7 @@ import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js'
  * @property {Zombie[]} spawned     placed by natural spawning this frame
  * @property {number} despawned     removed for being farther than ZOMBIE_DESPAWN_DIST from the player
  * @property {Zombie[]} alphas      v0.10: a runner in a horde became the alpha this frame
+ * @property {Zombie[]} burrowed    v0.11 (§68): burrowed back into the ground by day this frame (removed)
  */
 
 // ---- v0.10 kinds (CONTRACTS §61) -----------------------------------------------------------------------------------
@@ -134,6 +135,14 @@ export function statsOf(zb) {
 }
 
 // ---- v0.11 day and night, jumps (CONTRACTS §65) ---------------------------------------------------------------------
+
+/**
+ * v0.11 (CONTRACTS §68): a zombie in open daylight that is not chasing anyone burrows back into the ground after
+ * DAWN_BURROW_MIN_S + up to DAWN_BURROW_RAND_S of it (its own draw, so a crowd goes one by one); time in shade or at night
+ * winds its count back down. One chasing you stays until it gives up.
+ */
+export const DAWN_BURROW_MIN_S = 10;
+export const DAWN_BURROW_RAND_S = 20;
 
 /** A dormant walker wakes for a player this close (m), … */
 export const WALKER_WAKE_RANGE = 4;
@@ -282,7 +291,7 @@ export class Zombies {
     /** seconds to the next natural spawn attempt (counts only at night) */
     this._spawnIn = 6;
     /** @type {ZombieEvents} */
-    this.events = { attacks: [], groans: [], ignited: [], burned: [], knockedOut: [], scorched: [], spawned: [], despawned: 0, alphas: [] };
+    this.events = { attacks: [], groans: [], ignited: [], burned: [], knockedOut: [], scorched: [], spawned: [], despawned: 0, alphas: [], burrowed: [] };
     /** seconds to the next horde check (v0.10) */
     this._hordeIn = HORDE_CHECK_S;
     /** @type {Set<object>} scratch: bodies some zombie stood on at the end of last frame */
@@ -357,6 +366,8 @@ export class Zombies {
       rallied: false,
       daylit: false,
       provoked: 0,
+      daylitFor: 0,
+      burrowAt: DAWN_BURROW_MIN_S + this._rng() * DAWN_BURROW_RAND_S,
     }));
     this.list.push(zb);
     return zb;
@@ -388,6 +399,7 @@ export class Zombies {
     ev.spawned.length = 0;
     ev.despawned = 0;
     ev.alphas.length = 0;
+    ev.burrowed.length = 0;
     if (!(dt > 0)) return ev;
     const player = world.player ?? null;
     const getBlock = world.getBlock;
@@ -442,6 +454,17 @@ export class Zombies {
       zb.smoking = false;
       zb.burn = 0;
       if (zb.provoked > 0) zb.provoked = Math.max(0, zb.provoked - dt);
+      // §68: out in the daylight with nobody to chase, it burrows away after its own while.
+      if (zb.daylit && zb.mode !== 'chase') {
+        zb.daylitFor += dt;
+        if (zb.daylitFor >= zb.burrowAt) {
+          this.list.splice(i, 1);
+          ev.burrowed.push(zb);
+          continue;
+        }
+      } else if (!zb.daylit) {
+        zb.daylitFor = Math.max(0, zb.daylitFor - dt);
+      }
 
       const canHop = !zb.carrier && !carriers.has(zb);
       const chasing = this._think(zb, dt, world, player, canHop);
