@@ -12,7 +12,7 @@
 // one that lands in a lit campfire burns at once; beyond LOOSE_MAX the oldest go; `despawnNear` clears an area (the
 // `despawn` command, from the console or a Rune Block). Its age is saved.
 // The world, the player, the pack and the mobs come in through LooseEnv each step; nothing here touches them directly.
-import { getItem } from './items.js';
+import { getItem, canonicalItemKey } from './items.js';
 
 /** The player's threshold: an item within this distance of the chest point (m) enters the pack. */
 export const PICKUP_RADIUS = 0.6;
@@ -501,7 +501,8 @@ export class LooseItems {
   load(list, blockOf) {
     this.clear();
     if (!Array.isArray(list)) return 0;
-    for (const o of list) {
+    for (const raw of list) {
+      const o = raw && typeof raw.k === 'string' ? { ...raw, k: canonicalItemKey(raw.k) } : raw; // old tool names (§64)
       if (!o || typeof o.k !== 'string' || !getItem(o.k) || !Number.isInteger(o.n) || o.n < 1) continue;
       if (!Number.isFinite(o.x) || !Number.isFinite(o.y) || !Number.isFinite(o.z)) continue;
       /** @type {ItemStack} */

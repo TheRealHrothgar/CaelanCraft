@@ -166,7 +166,7 @@ export function plainText(text) {
 const TOOL_KEYS = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool');
 
 /**
- * The cheapest tool item that satisfies a requirement, written "Hammerstone+" when better ones of its kind exist ("+" =
+ * The cheapest tool item that satisfies a requirement, written "Stone Hammer+" when better ones of its kind exist ("+" =
  * that tool or any better one), plain for tier-0 kit and for the best of its kind.
  * @param {string} type @param {number} tier
  */
@@ -226,12 +226,12 @@ export function recipeOutputs(rec) {
   return nameTimes(first.k, first.n) + (extra ? ` (+ ${extra} back)` : '');
 }
 
-/** A recipe's tools: "Hammerstone+", "Crucible, Casting Mold", "" for none. @param {import('./crafting.js').Recipe} rec */
+/** A recipe's tools: "Stone Hammer+", "Crucible, Casting Mold", "" for none. @param {import('./crafting.js').Recipe} rec */
 export function recipeTools(rec) {
   return rec.tools.map((t) => toolNeedLabel(t.type, t.tier)).join(', ');
 }
 
-/** "with a spade", "with a knife in your pack", "otherwise". */
+/** "with a shovel", "with a knife in your pack", "otherwise". */
 function conditionText(cond) {
   if (cond === null) return 'otherwise';
   if (cond === 'knifeInPack') return 'with a knife in your pack';
@@ -248,7 +248,7 @@ function dropText(it) {
 
 /**
  * Drop groups as text (§6.3's notation in words): each group gives at most one branch, the first whose condition holds.
- * `[[spade → bush], [always → berries 2–4]]` → "with a spade: Honeyberry Bush · 2–4 Honeyberries".
+ * `[[shovel → bush], [always → berries 2–4]]` → "with a shovel: Honeyberry Bush · 2–4 Honeyberries".
  * @param {ReadonlyArray<import('./harvest.js').DropGroup>} groups
  * @param {boolean} [prose=false] join the groups as a sentence ("2–3 Raw Pork, Rawhide and Pig Fat (60 %)")
  * @returns {string} '' when nothing drops
@@ -376,7 +376,7 @@ function table({ id, caption, head, rows, keys, source = null }) {
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The first-day kit (§7.5), in making order; cord's count is whatever the rest of the kit needs. */
-const KIT = ['hammerstone', 'stone_chopper', 'cord', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire'];
+const KIT = ['stone_hammer', 'stone_axe', 'cord', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire'];
 
 /**
  * The first-day kit as rows and its totals: raw materials after cord is expanded into fibre (tinder counted as fibre), and
@@ -883,18 +883,18 @@ function makeChapters() {
       steps([
         'Pull *tussock grass* with your bare hands for Plant Fibre: hold the left mouse button on it until it breaks. Eight tussocks give about a dozen.',
         'Look at the ground as you walk. *Loose Stones* give Rock, and about half the time a Flint; *Fallen Branches* give Sticks. Press [R] on them. Gravel dug by hand (hold the left mouse button) gives Rock too.',
-        'Press [E] and make a *Hammerstone*, then a *Stone Chopper* and some *Cord*. Hand jobs carry on while you walk.',
-        'With the chopper in hand, lop leaves for Sticks and fell a tree: logs need an axe.',
-        'Knap your flint with the hammerstone: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
+        'Press [E] and make a *Stone Hammer*, then a *Stone Axe* and some *Cord*. Hand jobs carry on while you walk.',
+        'With the stone axe in hand, lop leaves for Sticks and fell a tree: logs need an axe.',
+        'Knap your flint with the stone_hammer: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
         'Make a *Fire Drill*, then build a *Campfire* beside fresh water.',
-        'Eat honeyberries as you find them. A pig takes three blows of the chopper; roast the pork on the fire\'s skewers.',
+        'Eat honeyberries as you find them. A pig takes three blows of the stone axe; roast the pork on the fire\'s skewers.',
         `Before 18:00, feed the fire a log and stay within ${ZOMBIE_FIRE_FEAR} cells of it.`,
       ]),
     ],
     [
       ...kitTable(),
       p(`In all: ${kit.rock} Rock, ${kit.knapstone} Flint, ${kit.fibre} Plant Fibre and ${kit.sticks} Sticks, and ${kit.seconds} seconds of hand jobs.`),
-      tip('A + after a tool means that tool or any better one of its kind. The flint spade and spear can wait for day two.'),
+      tip('A + after a tool means that tool or any better one of its kind. The flint shovel and spear can wait for day two.'),
     ],
     [
       ...gatherTable(),
@@ -957,7 +957,7 @@ function makeChapters() {
     [
       h('Foraging'),
       p(`*Honeyberries* hang on low blue-green bushes: [R] picks a handful. A picked bush regrows in about ${REGROW_MEAN_S === DAY_LENGTH_SECONDS ? 'a game day' : fmtDurationLong(REGROW_MEAN_S)}.`),
-      p(`*Wild tubers* grow as low leafy rosettes: a spade digs up more of them. *Cattails* stand at pond edges: their roots are food, their leaves fibre. Oak leaves sometimes drop *acorns* (${fmtPct(dropChance(BLOCK.OAK_LEAVES, 'acorns'))}), spruce leaves *pine nuts* (${fmtPct(dropChance(BLOCK.SPRUCE_LEAVES, 'pine_nuts'))}).`),
+      p(`*Wild tubers* grow as low leafy rosettes: a shovel digs up more of them. *Cattails* stand at pond edges: their roots are food, their leaves fibre. Oak leaves sometimes drop *acorns* (${fmtPct(dropChance(BLOCK.OAK_LEAVES, 'acorns'))}), spruce leaves *pine nuts* (${fmtPct(dropChance(BLOCK.SPRUCE_LEAVES, 'pine_nuts'))}).`),
       p('Raw acorns are bitter with tannins and cost you water. Soak 6 in a Pot of Water to leach them, then roast them on a skewer.'),
       tip('A dug-up bush has to take root again: it is replanted bare and fruits only after it regrows.'),
     ],
@@ -1061,15 +1061,15 @@ function makeChapters() {
   chapter('ages', 'Tools and the ages', 'Ages', 'pick', [
     [
       h('From stone to steel'),
-      p('Every tool has a *kind* (axe, pick, spade, knife, hammer, spear, sword) and an *age*. The right kind breaks its own blocks faster, a later age faster still and for longer, and some blocks need at least a certain age.'),
+      p('Every tool has a *kind* (axe, pick, shovel, knife, hammer, spear, sword) and an *age*. The right kind breaks its own blocks faster, a later age faster still and for longer, and some blocks need at least a certain age.'),
       agesFigure(),
       p('There is no stone pick: rock is too soft to cut rock. A *Flint Pick* is your first way into stone.'),
     ],
     [...agesTable(), p('Dig speed multiplies how fast the right kind of tool breaks its blocks; bare hands are ×1.')],
     [
       h('Stone and flint'),
-      p('The *Hammerstone* is a fist-sized cobble, the knapper\'s hammer: every flint tool is struck with it. The *Stone Chopper* is a sharp-edged cobble, your first axe: it fells trees and lops leaves for sticks.'),
-      p('*Flint*, or obsidian (volcanic glass), knaps into a knife, an axe, a spade, a spear and a pick. Each needs a stick and cord to haft it.'),
+      p('The *Stone Hammer* is a fist-sized cobble, the knapper\'s hammer: every flint tool is struck with it. The *Stone Axe* is a sharp-edged cobble, your first axe: it fells trees and lops leaves for sticks.'),
+      p('*Flint*, or obsidian (volcanic glass), knaps into a knife, an axe, a shovel, a spear and a pick. Each needs a stick and cord to haft it.'),
       p(`The Flint Pick breaks stone, ${flintOres.map((n) => n.toLowerCase()).join(', ')} and obsidian.`),
       tip('Obsidian and gems are brittle: any pick that cuts stone breaks them.'),
     ],
@@ -1094,7 +1094,7 @@ function makeChapters() {
     ],
     [
       h('Wear'),
-      p('A digging tool (an axe, spade, pick, knife or hammer) loses one use for every block it breaks, whatever the block, and every blow it lands; a spear or sword wears only on its blows. The hex outline round its slot drains as it wears; at nothing, it breaks.'),
+      p('A digging tool (an axe, shovel, pick, knife or hammer) loses one use for every block it breaks, whatever the block, and every blow it lands; a spear or sword wears only on its blows. The hex outline round its slot drains as it wears; at nothing, it breaks.'),
       p('So choose the right tool: a pick wears just as fast on dirt. The kiln kit (fire drill, crucible, casting mold) wears only in the jobs that need it, never by digging with it in hand.'),
       p('When a job needs a tool, the most worn one of the lowest good-enough age is used, so your best tools last.'),
       p(`Breaking a block with your head under water takes ${fmtNum(UNDERWATER_DIG_FACTOR)} times as long.`),
@@ -1160,7 +1160,7 @@ function makeChapters() {
       p(`Zombies come out after dusk and shamble toward you when they see you. Each strike costs ${ZOMBIE_DAMAGE} HP and knocks you back.`),
       p(`They keep ${ZOMBIE_FIRE_FEAR} cells away from a burning campfire and never strike anyone inside that circle. None appears within ${ZOMBIE_SPAWN_FIRE_CLEAR} cells of a fire, or in a column you have built in.`),
       p('At dawn, a zombie under open sky smoulders and burns away; one in shade or water lasts until it walks into the light.'),
-      p(`Fight back: ${ZOMBIE_HITS} points of power knock one out (${ZOMBIE_HITS} punches, or 2 blows of a chopper). One you knock out may drop a Grave Rag.`),
+      p(`Fight back: ${ZOMBIE_HITS} points of power knock one out (${ZOMBIE_HITS} punches, or 2 blows of a stone axe). One you knock out may drop a Grave Rag.`),
     ],
   ]);
 

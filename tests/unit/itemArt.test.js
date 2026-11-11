@@ -10,8 +10,8 @@ import { FakeDocument } from '../helpers/fakeDom.js';
 const N = ITEM_ART_SIZE;
 const NON_BLOCK = ITEM_KEYS.filter((k) => ITEMS[k].kind !== 'block');
 const TOOLS = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool');
-/** Tools with a haft (everything but the hammerstone and the tier-0 kit: drill, crucible, mold). */
-const HAFTED = TOOLS.filter((k) => k !== 'hammerstone' && ITEMS[k].tool.tier > 0);
+/** Tools with a haft (everything but the stone hammer and the tier-0 kit: drill, crucible, mold). */
+const HAFTED = TOOLS.filter((k) => k !== 'stone_hammer' && ITEMS[k].tool.tier > 0);
 
 /** @param {Uint8ClampedArray} px @returns {Array<[number, number]>} opaque pixels */
 function opaque(px) {
@@ -115,7 +115,7 @@ describe('itemArt: the art rules (§9.8, §11)', () => {
       expect(rowsWithHaft.size, `${k}: rows crossing columns 7–8`).toBeGreaterThanOrEqual(13);
       // nothing of the haft strays: every row from the binding down to the bottom has pixels in columns 6–9
       const outsideHaft = pts.filter(([x, y]) => y >= 12 && (x < 6 || x > 9)).length;
-      if (ITEMS[k].tool.type !== 'spade') expect(outsideHaft, `${k}: lower half outside columns 6–9`).toBe(0);
+      if (ITEMS[k].tool.type !== 'shovel') expect(outsideHaft, `${k}: lower half outside columns 6–9`).toBe(0);
       const angle = principalAngle(pts);
       // vertical (±90) or, for the wide pick and hammer heads, horizontal (0) — never the 45° of a diagonal tool
       const fromDiagonal = Math.min(Math.abs(Math.abs(angle) - 45), 90);
@@ -126,14 +126,14 @@ describe('itemArt: the art rules (§9.8, §11)', () => {
     }
   });
 
-  it('the working end is at the top, except spades, whose blade is at the bottom', () => {
+  it('the working end is at the top, except shovels, whose blade is at the bottom', () => {
     for (const k of HAFTED) {
       const pts = opaque(paintItem(k));
       const wide = (y0, y1) => pts.filter(([x, y]) => y >= y0 && y <= y1 && (x < 6 || x > 9)).length;
       const top = wide(0, 7);
       const bottom = wide(9, 15);
       const type = ITEMS[k].tool.type;
-      if (type === 'spade') expect(bottom, k).toBeGreaterThan(top);
+      if (type === 'shovel') expect(bottom, k).toBeGreaterThan(top);
       else if (['axe', 'pick', 'hammer'].includes(type)) expect(top, k).toBeGreaterThan(bottom);
       else if (type === 'sword') {
         // a long narrow blade pointing up over a crossguard in the lower half

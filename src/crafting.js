@@ -139,7 +139,7 @@ function parseTools(text) {
 }
 
 /** Metal tool amounts (§7.3): [tool, metal N, sticks S]. */
-const METAL_TOOLS = Object.freeze([['knife', 1, 1], ['spade', 1, 1], ['axe', 2, 1], ['hammer', 2, 1], ['pick', 2, 2], ['sword', 3, 1]]);
+const METAL_TOOLS = Object.freeze([['knife', 1, 1], ['shovel', 1, 1], ['axe', 2, 1], ['hammer', 2, 1], ['pick', 2, 2], ['sword', 3, 1]]);
 
 /** @returns {Array<[string, string, string, string, string, number]>} the metal tool rows of one station */
 function metalToolRows(station, metal, ingot, tools, extra, toolsText, seconds) {
@@ -152,13 +152,13 @@ function metalToolRows(station, metal, ingot, tools, extra, toolsText, seconds) 
 const RECIPE_ROWS = [
   // ---- Hand (37)
   ['cord', 'hand', '2 plant_fibre', 'cord', '', 1],
-  ['hammerstone', 'hand', 'rock', 'hammerstone', '', 1],
-  ['stone_chopper', 'hand', '2 rock', 'stone_chopper', 'hammer 1', 3],
-  ['digging_stick', 'hand', 'stick', 'digging_stick', 'axe 1', 2],
+  ['stone_hammer', 'hand', 'rock', 'stone_hammer', '', 1],
+  ['stone_axe', 'hand', '2 rock', 'stone_axe', 'hammer 1', 3],
+  ['wooden_shovel', 'hand', 'stick', 'wooden_shovel', 'axe 1', 2],
   ['flint_knife', 'hand', '#knapstone + stick + cord', 'flint_knife', 'hammer 1', 3],
   ['flint_axe', 'hand', '#knapstone + stick + cord', 'flint_axe', 'hammer 1', 4],
   ['flint_pick', 'hand', '2 #knapstone + stick + 2 cord', 'flint_pick', 'hammer 1', 5],
-  ['flint_spade', 'hand', '#knapstone + stick + cord', 'flint_spade', 'hammer 1', 4],
+  ['flint_shovel', 'hand', '#knapstone + stick + cord', 'flint_shovel', 'hammer 1', 4],
   ['flint_spear', 'hand', '#knapstone + 2 stick + cord', 'flint_spear', 'hammer 1', 3],
   ['flint_dart', 'hand', 'flint + stick + plant_fibre', '4 flint_dart', 'hammer 1', 2],
   ['fire_drill', 'hand', '2 stick + cord', 'fire_drill', '', 2],
@@ -234,8 +234,8 @@ const RECIPE_ROWS = [
   ['copper_block', 'kiln', '7 copper_ingot + #fuel', 'copper_block', 'crucible 0', 30],
   ['gold_block', 'kiln', '7 gold_nugget + 2 #fuel', 'gold_block', 'crucible 0', 40],
   // casting a tool remelts ingots, so it needs the crucible as well as the mold
-  ...metalToolRows('kiln', 'copper', 'copper_ingot', ['knife', 'spade', 'axe', 'hammer', 'pick'], '#fuel', 'crucible 0, mold 0', 25),
-  ...metalToolRows('kiln', 'bronze', 'bronze_ingot', ['knife', 'spade', 'axe', 'hammer', 'pick', 'sword'], '#fuel', 'crucible 0, mold 0', 30),
+  ...metalToolRows('kiln', 'copper', 'copper_ingot', ['knife', 'shovel', 'axe', 'hammer', 'pick'], '#fuel', 'crucible 0, mold 0', 25),
+  ...metalToolRows('kiln', 'bronze', 'bronze_ingot', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], '#fuel', 'crucible 0, mold 0', 30),
   // v0.10 circuits (§8.2): roasting pyrite drives sulfur off (FeS₂ → FeS + S); its residue held Berzelius's selenium (1817)
   ['sulfur', 'kiln', '3 pyrite + #fuel', '2 sulfur', '', 25],
   ['selenium', 'kiln', '6 pyrite + 2 #fuel', '3 sulfur + selenium', '', 40],
@@ -249,9 +249,9 @@ const RECIPE_ROWS = [
   // v0.10 circuits (§8.2): the lamp's glass is sealed hot
   ['filament_lamp', 'bloomery', 'glass + 3 carbon_filament + copper_wire + #planks', 'filament_lamp', '', 20],
   // ---- Forge (15; charcoal only: carbon matters for iron)
-  ...metalToolRows('forge', 'iron', 'wrought_iron', ['knife', 'spade', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 4', 30),
+  ...metalToolRows('forge', 'iron', 'wrought_iron', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 4', 30),
   ['steel_bar', 'forge', 'wrought_iron + 2 charcoal', 'steel_bar', 'hammer 5', 45],
-  ...metalToolRows('forge', 'steel', 'steel_bar', ['knife', 'spade', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 5', 40),
+  ...metalToolRows('forge', 'steel', 'steel_bar', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 5', 40),
   ['iron_block', 'forge', '7 wrought_iron', 'iron_block', 'hammer 4', 20],
   ['diamond_block', 'forge', '7 rough_gem', 'diamond_block', 'hammer 6', 20],
   // v0.10 circuits (§8.2): the magneto, the clock spring and the bell's gong are steel. The Collapsar Charge has no recipe:

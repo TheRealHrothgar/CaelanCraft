@@ -163,7 +163,7 @@
 
 /**
  * @typedef {Object} ToolDef
- * @property {string} type        one of items.TOOL_TYPES ('hammer', 'axe', 'spade', 'knife', 'pick', 'spear', 'sword',
+ * @property {string} type        one of items.TOOL_TYPES ('hammer', 'axe', 'shovel', 'knife', 'pick', 'spear', 'sword',
  *                                'firestarter', 'crucible', 'mold')
  * @property {number} tier        0..6, index into items.TIER_NAMES / TIER_SPEED
  * @property {number} durability  uses when new

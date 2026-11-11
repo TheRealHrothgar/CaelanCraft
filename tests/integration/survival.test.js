@@ -140,10 +140,10 @@ describe('the first day (§7.5)', () => {
     expect([pack.count('rock'), pack.count('flint'), pack.count('plant_fibre'), pack.count('stick')]).toEqual([9, 4, 11, 0]);
   });
 
-  it('a hammerstone, then a stone chopper that lops 8 leaves for 8 sticks', () => {
-    made.push(...make('hammerstone'));
-    made.push(...make('stone_chopper'));
-    const chopper = slotOf(pack, 'stone_chopper');
+  it('a stone hammer, then a stone axe that lops 8 leaves for 8 sticks', () => {
+    made.push(...make('stone_hammer'));
+    made.push(...make('stone_axe'));
+    const chopper = slotOf(pack, 'stone_axe');
     let lop = 0;
     for (let i = 0; i < 8; i++) lop += digAt(i - 4, GROUND + 5, -7, chopper);
     expect(lop / 8).toBeCloseTo(0.4 / 1.5, 1); // 0.27 s a leaf (§7.5)
@@ -162,16 +162,16 @@ describe('the first day (§7.5)', () => {
     made.push(...make('fire_drill'));
     made.push(...make('campfire'));
     expect(made).toEqual([
-      'hammerstone', 'stone_chopper', 'cord', 'cord', 'cord', 'cord', 'cord', 'flint_knife', 'flint_axe', 'flint_pick',
+      'stone_hammer', 'stone_axe', 'cord', 'cord', 'cord', 'cord', 'cord', 'flint_knife', 'flint_axe', 'flint_pick',
       'fire_drill', 'campfire',
     ]);
     const handSeconds = made.reduce((s, id) => s + getRecipe(id).seconds, 0);
     expect(handSeconds).toBe(28);
     for (const k of ['rock', 'flint', 'obsidian_shard', 'plant_fibre', 'cord', 'stick', 'birch_bark']) expect(pack.count(k), k).toBe(0);
     const kit = pack.slots.filter(Boolean).map((s) => s.k).sort();
-    expect(kit).toEqual(['campfire', 'fire_drill', 'flint_axe', 'flint_knife', 'flint_pick', 'hammerstone', 'stone_chopper'].sort());
-    // The tools that were needed took their wear: the hammerstone struck 4 times (chopper, knife, axe, pick).
-    expect(pack.slots[slotOf(pack, 'hammerstone')].d).toBe(getItem('hammerstone').tool.durability - 4);
+    expect(kit).toEqual(['campfire', 'fire_drill', 'flint_axe', 'flint_knife', 'flint_pick', 'stone_hammer', 'stone_axe'].sort());
+    // The tools that were needed took their wear: the stone hammer struck 4 times (stone axe, knife, axe, pick).
+    expect(pack.slots[slotOf(pack, 'stone_hammer')].d).toBe(getItem('stone_hammer').tool.durability - 4);
   });
 
   it('the flint pick cuts a STONE cell in 1.5 s (§6.3)', () => {

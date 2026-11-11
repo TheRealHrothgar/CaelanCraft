@@ -8,9 +8,9 @@
 //
 // Art rules (§9.8):
 // - Tools are UPRIGHT (never the 45° diagonal of other games): the haft is columns 7–8 (6–9 with its dark rim), the
-//   working end at the top (axe, pick, hammer, knife, spear, sword) or at the bottom (spade). The tier shows in the head
+//   working end at the top (axe, pick, hammer, knife, spear, sword) or at the bottom (shovel). The tier shows in the head
 //   colour AND in the binding: a cord wrap (stone, flint), a cast socket ring (copper, bronze), a forged eye with a rivet
-//   pixel (iron, steel). The hammerstone is a plain cobble with a pale strike scar.
+//   pixel (iron, steel). The stone hammer is a plain cobble with a pale strike scar.
 // - Ingots and bars are hexagonal bars; ores are mineral lumps in their mineral's colours; pots have a hexagonal rim and
 //   show their fill (water, sea-green, sap amber, snow).
 // - Everything else is a small original pictogram (honeyberries are elongated dusky-blue berries with a pale bloom).
@@ -297,10 +297,10 @@ function paintKnife(ic, tier) {
   ic.set(7, 15, WOOD.dark);
 }
 
-function paintAxe(ic, tier, chopper = false) {
+function paintAxe(ic, tier, rough = false) {
   const pal = tierPal(tier);
   haft(ic, 1, 15);
-  if (chopper) {
+  if (rough) {
     // a knapped cobble lashed to the haft's right side, its chipped edge bright
     ic.ellipse(11.2, 5, 3.4, 3.4, (x, y) => (x >= 13 ? pal.light : y <= 3 ? tone(pal.base, 0.15) : pal.base));
     ic.set(13, 4, 0xe6e0d4);
@@ -348,10 +348,10 @@ function paintHammer(ic, tier) {
   binding(ic, tier, 6);
 }
 
-function paintSpade(ic, tier, stick = false) {
+function paintShovel(ic, tier, stick = false) {
   const pal = tierPal(tier);
   if (stick) {
-    // the digging stick: a pole with a fire-hardened point at the bottom and a lashed foot peg
+    // the wooden shovel: a pole with a fire-hardened point at the bottom and a lashed foot peg
     haft(ic, 0, 13);
     ic.set(7, 14, WOOD.dark);
     ic.set(8, 14, 0x3a2414);
@@ -361,7 +361,7 @@ function paintSpade(ic, tier, stick = false) {
     binding(ic, tier, 8);
     return;
   }
-  // a T grip at the top, the blade at the bottom (§9.8: a spade's working end is at the bottom)
+  // a T grip at the top, the blade at the bottom (§9.8: a shovel's working end is at the bottom)
   ic.rect(5, 0, 10, 0, WOOD.light);
   ic.rect(5, 1, 6, 1, WOOD.dark);
   ic.rect(9, 1, 10, 1, WOOD.dark);
@@ -418,7 +418,7 @@ function paintSword(ic, tier) {
   ic.set(8, 15, pal.base);
 }
 
-function paintHammerstone(ic, rng) {
+function paintStoneHammer(ic, rng) {
   ic.ellipse(7.8, 8.6, 5.6, 4.6, (x, y, u, v) => (u + v < -0.9 ? 0xb4b0a8 : u + v > 0.9 ? 0x6a6660 : 0x8f8b84));
   ic.jitter(rng, 0.08);
   // the pale strike scar where it has knocked flint, with a dark fracture line
@@ -467,15 +467,15 @@ function paintMold(ic, rng, clay) {
 
 /** The tools of §5.1 by type (and the tier from the ToolDef). */
 function paintTool(ic, rng, key, type, tier) {
-  if (key === 'hammerstone') return paintHammerstone(ic, rng);
-  if (key === 'stone_chopper') return paintAxe(ic, tier, true);
-  if (key === 'digging_stick') return paintSpade(ic, tier, true);
+  if (key === 'stone_hammer') return paintStoneHammer(ic, rng);
+  if (key === 'stone_axe') return paintAxe(ic, tier, true);
+  if (key === 'wooden_shovel') return paintShovel(ic, tier, true);
   switch (type) {
     case 'knife': return paintKnife(ic, tier);
     case 'axe': return paintAxe(ic, tier);
     case 'pick': return paintPick(ic, tier);
     case 'hammer': return paintHammer(ic, tier);
-    case 'spade': return paintSpade(ic, tier);
+    case 'shovel': return paintShovel(ic, tier);
     case 'spear': return paintSpear(ic, tier);
     case 'sword': return paintSword(ic, tier);
     case 'firestarter': return paintFireDrill(ic);
@@ -1146,14 +1146,14 @@ const OTHER_PAINTERS = {
  * @type {Readonly<Record<string, readonly [string, number]>>}
  */
 const TOOL_ART = Object.freeze({
-  hammerstone: ['hammer', 1], stone_chopper: ['axe', 1], digging_stick: ['spade', 1],
-  flint_knife: ['knife', 2], flint_axe: ['axe', 2], flint_pick: ['pick', 2], flint_spade: ['spade', 2], flint_spear: ['spear', 2],
-  copper_knife: ['knife', 3], copper_axe: ['axe', 3], copper_pick: ['pick', 3], copper_spade: ['spade', 3], copper_hammer: ['hammer', 3],
-  bronze_knife: ['knife', 4], bronze_axe: ['axe', 4], bronze_pick: ['pick', 4], bronze_spade: ['spade', 4], bronze_hammer: ['hammer', 4],
+  stone_hammer: ['hammer', 1], stone_axe: ['axe', 1], wooden_shovel: ['shovel', 1],
+  flint_knife: ['knife', 2], flint_axe: ['axe', 2], flint_pick: ['pick', 2], flint_shovel: ['shovel', 2], flint_spear: ['spear', 2],
+  copper_knife: ['knife', 3], copper_axe: ['axe', 3], copper_pick: ['pick', 3], copper_shovel: ['shovel', 3], copper_hammer: ['hammer', 3],
+  bronze_knife: ['knife', 4], bronze_axe: ['axe', 4], bronze_pick: ['pick', 4], bronze_shovel: ['shovel', 4], bronze_hammer: ['hammer', 4],
   bronze_sword: ['sword', 4],
-  iron_knife: ['knife', 5], iron_axe: ['axe', 5], iron_pick: ['pick', 5], iron_spade: ['spade', 5], iron_hammer: ['hammer', 5],
+  iron_knife: ['knife', 5], iron_axe: ['axe', 5], iron_pick: ['pick', 5], iron_shovel: ['shovel', 5], iron_hammer: ['hammer', 5],
   iron_sword: ['sword', 5],
-  steel_knife: ['knife', 6], steel_axe: ['axe', 6], steel_pick: ['pick', 6], steel_spade: ['spade', 6], steel_hammer: ['hammer', 6],
+  steel_knife: ['knife', 6], steel_axe: ['axe', 6], steel_pick: ['pick', 6], steel_shovel: ['shovel', 6], steel_hammer: ['hammer', 6],
   steel_sword: ['sword', 6],
   fire_drill: ['firestarter', 0], crucible: ['crucible', 0], casting_mold: ['mold', 0],
 });

@@ -42,20 +42,20 @@ const WOOLS = BLOCKS.filter((b) => b.name.startsWith('wool_')).map((b) => b.id);
 
 /** §6.3 h / tool / tier for every breakable block. */
 const TABLE = [
-  [[B.DIRT], 0.9, 'spade', 0],
-  [[B.GRASS_BLOCK, B.SNOWY_GRASS], 1.0, 'spade', 0],
-  [[B.SAND, B.RED_SAND], 0.8, 'spade', 0],
-  [[B.GRAVEL], 1.2, 'spade', 0],
-  [[B.CLAY], 1.4, 'spade', 0],
-  [[B.SNOW_BLOCK], 0.5, 'spade', 0],
+  [[B.DIRT], 0.9, 'shovel', 0],
+  [[B.GRASS_BLOCK, B.SNOWY_GRASS], 1.0, 'shovel', 0],
+  [[B.SAND, B.RED_SAND], 0.8, 'shovel', 0],
+  [[B.GRAVEL], 1.2, 'shovel', 0],
+  [[B.CLAY], 1.4, 'shovel', 0],
+  [[B.SNOW_BLOCK], 0.5, 'shovel', 0],
   [[B.ICE], 1.0, 'pick', 0],
   [[B.PACKED_ICE], 2.0, 'pick', 2],
   [[B.LOOSE_STONES, B.FALLEN_BRANCHES], 0.2, null, 0],
   [[B.OAK_LEAVES, B.SPRUCE_LEAVES, B.BIRCH_LEAVES], 0.4, 'axe', 0],
-  [[B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE], 0.5, 'spade', 0],
+  [[B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE], 0.5, 'shovel', 0],
   [[B.TUSSOCK], 0.2, 'knife', 0],
   [[B.CATTAILS], 0.3, 'knife', 0],
-  [[B.TUBER_PLANT], 0.4, 'spade', 0],
+  [[B.TUBER_PLANT], 0.4, 'shovel', 0],
   [[B.OAK_LOG, B.SPRUCE_LOG, B.BIRCH_LOG], 3.0, 'axe', 1],
   [[B.OAK_PLANKS, B.SPRUCE_PLANKS, B.BIRCH_PLANKS], 2.0, 'axe', 1],
   [[B.BOOKSHELF], 1.5, 'axe', 1],
@@ -141,7 +141,7 @@ describe('BLOCK_RULES (§6.3)', () => {
       for (const group of rule.drops) {
         expect(group.length).toBeGreaterThan(0);
         group.forEach((br, i) => {
-          expect([null, 'spade', 'knife', 'axe', 'pick', 'knifeInPack']).toContain(br.if);
+          expect([null, 'shovel', 'knife', 'axe', 'pick', 'knifeInPack']).toContain(br.if);
           if (br.if === null) expect(i).toBe(group.length - 1); // an unconditional branch is always last
           for (const it of br.items) {
             expect(isItemKey(it.k), `${BLOCKS[id].name} → ${it.k}`).toBe(true);
@@ -158,7 +158,7 @@ describe('BLOCK_RULES (§6.3)', () => {
     expect(rollDrops(B.DIRT, HAND, {}, Math.random)).toEqual([{ k: 'dirt', n: 1 }]);
     expect(rollDrops(B.RUNE_BLOCK, tool('flint_pick'), {}, Math.random)).toEqual([{ k: 'rune_block', n: 1 }]);
     expect(rollDrops(B.WOOL_PINK, HAND, {}, Math.random)).toEqual([{ k: 'wool_pink', n: 1 }]);
-    expect(rollDrops(B.WORK_STUMP, tool('stone_chopper'), {}, Math.random)).toEqual([{ k: 'work_stump', n: 1 }]);
+    expect(rollDrops(B.WORK_STUMP, tool('stone_axe'), {}, Math.random)).toEqual([{ k: 'work_stump', n: 1 }]);
   });
 
   it('is deeply frozen', () => {
@@ -177,8 +177,8 @@ describe('breakSeconds and canHarvest (§6.1)', () => {
   it('the worked example times', () => {
     const rows = [
       [B.DIRT, HAND, 0.9],
-      [B.DIRT, 'digging_stick', 0.6],
-      [B.OAK_LOG, 'stone_chopper', 2.0],
+      [B.DIRT, 'wooden_shovel', 0.6],
+      [B.OAK_LOG, 'stone_axe', 2.0],
       [B.OAK_LOG, 'flint_axe', 1.5],
       [B.OAK_LOG, 'steel_axe', 0.5],
       [B.STONE, 'flint_pick', 1.5],
@@ -198,13 +198,13 @@ describe('breakSeconds and canHarvest (§6.1)', () => {
   it('speed is TIER_SPEED of the tool tier, for every tier', () => {
     const picks = ['flint_pick', 'copper_pick', 'bronze_pick', 'iron_pick', 'steel_pick'];
     for (const k of picks) expect(breakSeconds(B.STONE, tool(k))).toBeCloseTo(3 / TIER_SPEED[tool(k).tier], 9);
-    expect(breakSeconds(B.DIRT, tool('digging_stick'))).toBeCloseTo(0.9 / 1.5, 9);
+    expect(breakSeconds(B.DIRT, tool('wooden_shovel'))).toBeCloseTo(0.9 / 1.5, 9);
   });
 
   it('cannot: below the tier, the wrong type, or the hand where a tier is needed → Infinity', () => {
     expect(breakSeconds(B.STONE, HAND)).toBe(Infinity);
-    expect(breakSeconds(B.STONE, tool('stone_chopper'))).toBe(Infinity);
-    expect(breakSeconds(B.STONE, tool('hammerstone'))).toBe(Infinity); // no stone pick exists: flint is the first way in
+    expect(breakSeconds(B.STONE, tool('stone_axe'))).toBe(Infinity);
+    expect(breakSeconds(B.STONE, tool('stone_hammer'))).toBe(Infinity); // no stone pick exists: flint is the first way in
     expect(breakSeconds(B.OAK_LOG, HAND)).toBe(Infinity);
     expect(breakSeconds(B.OAK_LOG, tool('flint_knife'))).toBe(Infinity);
     expect(breakSeconds(B.PACKED_ICE, HAND)).toBe(Infinity);
@@ -259,7 +259,7 @@ describe('breakSeconds and canHarvest (§6.1)', () => {
 
 describe('rollDrops (§6.3)', () => {
   it('a group gives the first branch whose condition holds', () => {
-    expect(rollDrops(B.GRAVEL, tool('flint_spade'), {}, seq(0))).toEqual([{ k: 'gravel', n: 1 }]);
+    expect(rollDrops(B.GRAVEL, tool('flint_shovel'), {}, seq(0))).toEqual([{ k: 'gravel', n: 1 }]);
     expect(rollDrops(B.GRAVEL, HAND, {}, seq(0))).toEqual([{ k: 'rock', n: 2 }]);
     expect(rollDrops(B.GRAVEL, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'rock', n: 2 }]);
     expect(rollDrops(B.ICE, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'ice_chunk', n: 2 }]);
@@ -269,14 +269,14 @@ describe('rollDrops (§6.3)', () => {
     expect(rollDrops(B.PACKED_ICE, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'ice_chunk', n: 3 }]);
   });
 
-  it('grass and snowy grass: self with a spade; else dirt and a natural extra', () => {
-    expect(rollDrops(B.GRASS_BLOCK, tool('digging_stick'), { natural: true }, seq(0))).toEqual([{ k: 'grass_block', n: 1 }]);
+  it('grass and snowy grass: self with a shovel; else dirt and a natural extra', () => {
+    expect(rollDrops(B.GRASS_BLOCK, tool('wooden_shovel'), { natural: true }, seq(0))).toEqual([{ k: 'grass_block', n: 1 }]);
     expect(rollDrops(B.GRASS_BLOCK, HAND, { natural: true }, seq(0.1))).toEqual([{ k: 'dirt', n: 1 }, { k: 'plant_fibre', n: 1 }]);
     expect(rollDrops(B.GRASS_BLOCK, HAND, { natural: true }, seq(0.3))).toEqual([{ k: 'dirt', n: 1 }]);
     expect(rollDrops(B.GRASS_BLOCK, HAND, { natural: false }, seq(0))).toEqual([{ k: 'dirt', n: 1 }]);
     expect(rollDrops(B.SNOWY_GRASS, HAND, { natural: true }, seq(0))).toEqual([{ k: 'dirt', n: 1 }, { k: 'snow', n: 1 }]);
     expect(rollDrops(B.SNOWY_GRASS, HAND, { natural: false }, seq(0))).toEqual([{ k: 'dirt', n: 1 }]);
-    expect(rollDrops(B.SNOWY_GRASS, tool('flint_spade'), { natural: true }, seq(0))).toEqual([{ k: 'snowy_grass', n: 1 }]);
+    expect(rollDrops(B.SNOWY_GRASS, tool('flint_shovel'), { natural: true }, seq(0))).toEqual([{ k: 'snowy_grass', n: 1 }]);
   });
 
   it('natural loose stones give flint about half the time over 400 seeded rolls; never when natural is false', () => {
@@ -323,29 +323,29 @@ describe('rollDrops (§6.3)', () => {
     expect(hand.acorns.length / 2000).toBeGreaterThan(0.06);
     expect(hand.acorns.length / 2000).toBeLessThan(0.1);
     expect(rollDrops(B.BIRCH_LEAVES, HAND, { natural: true }, seq(0))).toEqual([]);
-    expect(rollDrops(B.OAK_LEAVES, tool('stone_chopper'), { natural: true }, seq(0.5))).toEqual([{ k: 'oak_leaves', n: 1 }, { k: 'stick', n: 1 }]);
-    expect(rollDrops(B.OAK_LEAVES, tool('stone_chopper'), { natural: false }, seq(0))).toEqual([{ k: 'oak_leaves', n: 1 }]);
+    expect(rollDrops(B.OAK_LEAVES, tool('stone_axe'), { natural: true }, seq(0.5))).toEqual([{ k: 'oak_leaves', n: 1 }, { k: 'stick', n: 1 }]);
+    expect(rollDrops(B.OAK_LEAVES, tool('stone_axe'), { natural: false }, seq(0))).toEqual([{ k: 'oak_leaves', n: 1 }]);
     expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: true }, seq(0.07))).toEqual([{ k: 'pine_nuts', n: 1 }]);
     expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: false }, seq(0))).toEqual([]);
     expect(rollDrops(B.BIRCH_LEAVES, tool('flint_axe'), { natural: true }, seq(0))).toEqual([{ k: 'birch_leaves', n: 1 }, { k: 'stick', n: 1 }]);
   });
 
-  it('plants give themselves only with a spade', () => {
+  it('plants give themselves only with a shovel', () => {
     for (const id of [B.TUSSOCK, B.CATTAILS, B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE, B.TUBER_PLANT]) {
       const self = itemForBlock(id);
       for (const t of [HAND, tool('flint_knife'), tool('flint_axe'), tool('flint_pick')]) {
         const got = sample((r) => rollDrops(id, t, { natural: true, knifeInPack: true }, r), 50, id);
-        expect(got[self], `${BLOCKS[id].name} without a spade`).toBeUndefined();
+        expect(got[self], `${BLOCKS[id].name} without a shovel`).toBeUndefined();
       }
       if (id !== B.TUBER_PLANT) {
-        const dug = rollDrops(id, tool('digging_stick'), { natural: true }, seq(0));
-        expect(asMap(dug)[self], `${BLOCKS[id].name} with a spade`).toBe(1);
+        const dug = rollDrops(id, tool('wooden_shovel'), { natural: true }, seq(0));
+        expect(asMap(dug)[self], `${BLOCKS[id].name} with a shovel`).toBe(1);
       }
     }
   });
 
-  it('tussock: spade → self; knife → fibre 2–3; else fibre 1–2', () => {
-    expect(rollDrops(B.TUSSOCK, tool('flint_spade'), {}, seq(0))).toEqual([{ k: 'tussock', n: 1 }]);
+  it('tussock: shovel → self; knife → fibre 2–3; else fibre 1–2', () => {
+    expect(rollDrops(B.TUSSOCK, tool('flint_shovel'), {}, seq(0))).toEqual([{ k: 'tussock', n: 1 }]);
     const knife = sample((r) => rollDrops(B.TUSSOCK, tool('flint_knife'), {}, r), 300, 5);
     expect(new Set(knife.plant_fibre)).toEqual(new Set([2, 3]));
     const hand = sample((r) => rollDrops(B.TUSSOCK, HAND, {}, r), 300, 5);
@@ -357,36 +357,36 @@ describe('rollDrops (§6.3)', () => {
     expect(rollDrops(B.CATTAILS, tool('copper_knife'), {}, seq(0.51))).toEqual([{ k: 'plant_fibre', n: 3 }]);
     expect(rollDrops(B.CATTAILS, HAND, {}, seq(0.29))).toEqual([{ k: 'plant_fibre', n: 2 }, { k: 'cattail_root', n: 1 }]);
     expect(rollDrops(B.CATTAILS, HAND, {}, seq(0.31))).toEqual([{ k: 'plant_fibre', n: 2 }]);
-    expect(rollDrops(B.CATTAILS, tool('flint_spade'), {}, seq(0))).toEqual([{ k: 'cattails', n: 1 }]);
+    expect(rollDrops(B.CATTAILS, tool('flint_shovel'), {}, seq(0))).toEqual([{ k: 'cattails', n: 1 }]);
   });
 
-  it('tuber: spade → 2–3 tubers + fibre; else 1 tuber + fibre', () => {
-    const dug = sample((r) => rollDrops(B.TUBER_PLANT, tool('digging_stick'), {}, r), 200, 9);
+  it('tuber: shovel → 2–3 tubers + fibre; else 1 tuber + fibre', () => {
+    const dug = sample((r) => rollDrops(B.TUBER_PLANT, tool('wooden_shovel'), {}, r), 200, 9);
     expect(new Set(dug.wild_tuber)).toEqual(new Set([2, 3]));
     expect(new Set(dug.plant_fibre)).toEqual(new Set([1]));
     expect(rollDrops(B.TUBER_PLANT, HAND, {}, seq(0.9))).toEqual([{ k: 'wild_tuber', n: 1 }, { k: 'plant_fibre', n: 1 }]);
   });
 
-  it('honeyberry bush: berries 2–4 and sticks 1–2 always; the bush itself with a spade', () => {
+  it('honeyberry bush: berries 2–4 and sticks 1–2 always; the bush itself with a shovel', () => {
     const hand = sample((r) => rollDrops(B.HONEYBERRY_BUSH, HAND, {}, r), 400, 2);
     expect(new Set(hand.honeyberries)).toEqual(new Set([2, 3, 4]));
     expect(new Set(hand.stick)).toEqual(new Set([1, 2]));
     expect(hand.honeyberry_bush).toBeUndefined();
-    expect(rollDrops(B.HONEYBERRY_BUSH, tool('flint_spade'), {}, seq(0))).toEqual([
+    expect(rollDrops(B.HONEYBERRY_BUSH, tool('flint_shovel'), {}, seq(0))).toEqual([
       { k: 'honeyberry_bush', n: 1 }, { k: 'honeyberries', n: 2 }, { k: 'stick', n: 1 },
     ]);
-    expect(rollDrops(B.HONEYBERRY_BUSH_BARE, tool('flint_spade'), {}, seq(0.99))).toEqual([{ k: 'honeyberry_bush', n: 1 }, { k: 'stick', n: 2 }]);
+    expect(rollDrops(B.HONEYBERRY_BUSH_BARE, tool('flint_shovel'), {}, seq(0.99))).toEqual([{ k: 'honeyberry_bush', n: 1 }, { k: 'stick', n: 2 }]);
     expect(rollDrops(B.HONEYBERRY_BUSH_BARE, HAND, {}, seq(0))).toEqual([{ k: 'stick', n: 1 }]);
   });
 
   it('prickly pear: knife in pack → cactus fruit; else unpeeled', () => {
     expect(rollDrops(B.PRICKLY_PEAR, HAND, { knifeInPack: true }, seq(0))).toEqual([{ k: 'cactus_fruit', n: 1 }]);
     expect(rollDrops(B.PRICKLY_PEAR, HAND, { knifeInPack: false }, seq(0.99))).toEqual([{ k: 'unpeeled_cactus_fruit', n: 2 }]);
-    expect(rollDrops(B.PRICKLY_PEAR, tool('flint_spade'), { knifeInPack: true }, seq(0))).toEqual([
+    expect(rollDrops(B.PRICKLY_PEAR, tool('flint_shovel'), { knifeInPack: true }, seq(0))).toEqual([
       { k: 'prickly_pear', n: 1 }, { k: 'cactus_fruit', n: 1 },
     ]);
     expect(rollDrops(B.PRICKLY_PEAR_BARE, HAND, { knifeInPack: true }, seq(0))).toEqual([]);
-    expect(rollDrops(B.PRICKLY_PEAR_BARE, tool('flint_spade'), {}, seq(0))).toEqual([{ k: 'prickly_pear', n: 1 }]);
+    expect(rollDrops(B.PRICKLY_PEAR_BARE, tool('flint_shovel'), {}, seq(0))).toEqual([{ k: 'prickly_pear', n: 1 }]);
   });
 
   it('birch logs: self, and birch bark at p 0.5 from untouched logs', () => {
@@ -665,7 +665,7 @@ describe('mob drops and tool power (§4.3, §5.1)', () => {
 
   it('toolPower: the tool power; bare hands 1', () => {
     expect(toolPower(null)).toBe(1);
-    expect(toolPower(tool('stone_chopper'))).toBe(2);
+    expect(toolPower(tool('stone_axe'))).toBe(2);
     expect(toolPower(tool('flint_spear'))).toBe(3);
     expect(toolPower(tool('steel_sword'))).toBe(5);
     for (const def of Object.values(ITEMS)) if (def.tool) expect(toolPower(def.tool)).toBe(def.tool.power);
@@ -702,7 +702,7 @@ describe('articles and dig-tool types', () => {
   });
 
   it('DIG_TOOL_TYPES are the five that break blocks; spear, sword and the kiln kit are not among them', () => {
-    expect([...DIG_TOOL_TYPES].sort()).toEqual(['axe', 'hammer', 'knife', 'pick', 'spade']);
+    expect([...DIG_TOOL_TYPES].sort()).toEqual(['axe', 'hammer', 'knife', 'pick', 'shovel']);
     for (const t of ['spear', 'sword', 'firestarter', 'crucible', 'mold']) expect(DIG_TOOL_TYPES.has(t)).toBe(false);
     // every rule's tool is a dig-tool type
     for (const rule of BLOCK_RULES) if (rule && rule.tool) expect(DIG_TOOL_TYPES.has(rule.tool), rule.tool).toBe(true);

@@ -35,7 +35,7 @@ function make(q, pack, stations, id, times = 1) {
 
 describe('the ore gates and break times (§6.3, handbook §5)', () => {
   it('each ore needs exactly the pick of the age before it, and the hint names it', () => {
-    expect(canHarvest(BLOCK.STONE, tool('stone_chopper'))).toBe(false);
+    expect(canHarvest(BLOCK.STONE, tool('stone_axe'))).toBe(false);
     expect(canHarvest(BLOCK.STONE, tool('flint_pick'))).toBe(true);
     expect(canHarvest(BLOCK.COPPER_ORE, tool('flint_pick'))).toBe(true);
     expect(canHarvest(BLOCK.COAL_ORE, tool('flint_pick'))).toBe(true);
@@ -48,7 +48,7 @@ describe('the ore gates and break times (§6.3, handbook §5)', () => {
     expect(canHarvest(BLOCK.OBSIDIAN, tool('flint_pick'))).toBe(true);
     expect(harvestHint(BLOCK.TIN_ORE)).toBe('Tin Ore · needs a copper pick or better');
     expect(harvestHint(BLOCK.IRON_ORE)).toBe('Iron Ore · needs a bronze pick or better');
-    // a hammer, spade or axe of a high tier never stands in for the pick
+    // a hammer, shovel or axe of a high tier never stands in for the pick
     expect(canHarvest(BLOCK.STONE, tool('steel_axe'))).toBe(false);
     expect(canHarvest(BLOCK.IRON_ORE, tool('steel_hammer'))).toBe(false);
   });
@@ -59,8 +59,8 @@ describe('the ore gates and break times (§6.3, handbook §5)', () => {
     expect(breakSeconds(BLOCK.IRON_ORE, tool('bronze_pick'))).toBeCloseTo(5 / 3.4);
     expect(breakSeconds(BLOCK.OBSIDIAN, tool('flint_pick'))).toBeCloseTo(1.25);
     expect(breakSeconds(BLOCK.OAK_LOG, tool('steel_axe'))).toBeCloseTo(0.5);
-    expect(breakSeconds(BLOCK.OAK_LOG, tool('stone_chopper'))).toBeCloseTo(2);
-    expect(breakSeconds(BLOCK.DIRT, tool('digging_stick'))).toBeCloseTo(0.6);
+    expect(breakSeconds(BLOCK.OAK_LOG, tool('stone_axe'))).toBeCloseTo(2);
+    expect(breakSeconds(BLOCK.DIRT, tool('wooden_shovel'))).toBeCloseTo(0.6);
     expect(breakSeconds(BLOCK.COPPER_ORE, tool('flint_pick'))).toBeCloseTo(2);
     expect(breakSeconds(BLOCK.TIN_ORE, tool('copper_pick'))).toBeCloseTo(4 / 2.6);
     expect(TIER_SPEED).toEqual([1, 1.5, 2, 2.6, 3.4, 4.5, 6]);
@@ -100,11 +100,11 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     pack.add({ k: 'stick', n: 8 });
 
     // 2. Stone, flint
-    expect(q.enqueue('stone_chopper', 1, pack, stationsNow()).ok).toBe(false); // needs a hammer first
-    make(q, pack, stationsNow(), 'hammerstone');
+    expect(q.enqueue('stone_axe', 1, pack, stationsNow()).ok).toBe(false); // needs a hammer first
+    make(q, pack, stationsNow(), 'stone_hammer');
     runLane(q, pack, world, feet);
     make(q, pack, stationsNow(), 'cord', 5);
-    make(q, pack, stationsNow(), 'stone_chopper');
+    make(q, pack, stationsNow(), 'stone_axe');
     runLane(q, pack, world, feet);
     expect(q.enqueue('flint_pick', 1, pack, stationsNow()).ok).toBe(true);
     make(q, pack, stationsNow(), 'flint_axe');
@@ -113,11 +113,11 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     expect(pack.hasTool('pick', 2)).toBe(true);
     expect(pack.hasTool('axe', 2)).toBe(true);
     expect(pack.count('flint')).toBe(0);
-    expect(pack.count('rock')).toBe(6); // 1 hammerstone + 2 chopper
+    expect(pack.count('rock')).toBe(6); // 1 stone hammer + 2 chopper
 
     // 3. Wood: a log needs axe ≥ 1; the stump is a hand recipe
     expect(canHarvest(BLOCK.OAK_LOG, null)).toBe(false);
-    expect(canHarvest(BLOCK.OAK_LOG, tool('stone_chopper'))).toBe(true);
+    expect(canHarvest(BLOCK.OAK_LOG, tool('stone_axe'))).toBe(true);
     pack.add({ k: 'oak_log', n: 20 });
     expect(q.enqueue('split_sticks', 1, pack, stationsNow()).message).toContain('build a Work Stump nearby');
     make(q, pack, stationsNow(), 'work_stump');
@@ -301,7 +301,7 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     const pack = new Pack();
     pack.add({ k: 'rock', n: 2 });
     const views = listRecipes(pack, { hand: true }, {});
-    expect(views[0].id).toBe('hammerstone');
+    expect(views[0].id).toBe('stone_hammer');
     expect(views[0].craftable).toBe(true);
     const forge = views.find((v) => v.id === 'steel_bar');
     expect(forge.stationOk).toBe(false);
@@ -329,7 +329,7 @@ describe('what the play-test found and the fixes (progression lens)', () => {
 
   it('a recipe that frees its own slot (scrape_salt) completes in a full pack instead of waiting "Pack full" for ever', () => {
     const pack = new Pack();
-    for (let i = 0; i < PACK_SLOTS; i++) pack.setSlot(i, { k: i === 0 ? 'salt_pot' : i === 1 ? 'salt' : 'hammerstone', n: 1 });
+    for (let i = 0; i < PACK_SLOTS; i++) pack.setSlot(i, { k: i === 0 ? 'salt_pot' : i === 1 ? 'salt' : 'stone_hammer', n: 1 });
     const q = new CraftQueue();
     expect(q.enqueue('scrape_salt', 1, pack, { hand: true }).ok).toBe(true);
     const e = q.step(60, pack, null, [0, 64, 0]);
@@ -344,15 +344,15 @@ describe('what the play-test found and the fixes (progression lens)', () => {
     pack.add({ k: 'clay_lump', n: 9 });
     pack.add({ k: 'plant_fibre', n: 20 });
     pack.add({ k: 'rock', n: 10 });
-    pack.setSlot(5, { k: 'hammerstone', n: 1, d: 1 }); // one use left
+    pack.setSlot(5, { k: 'stone_hammer', n: 1, d: 1 }); // one use left
     const q = new CraftQueue();
-    const res = q.enqueue('stone_chopper', 5, pack, { hand: true });
+    const res = q.enqueue('stone_axe', 5, pack, { hand: true });
     expect(res.queued).toBe(5);
     const e = q.step(100, pack, null, [0, 64, 0]);
     expect(e.done.length).toBe(1);
-    expect(e.broke).toEqual(['hammerstone']);
+    expect(e.broke).toEqual(['stone_hammer']);
     expect(e.failed.length).toBe(4);
-    expect(e.messages[0]).toBe("Couldn't make Stone Chopper: missing a stone hammer or better.");
+    expect(e.messages[0]).toBe("Couldn't make Stone Axe: missing a stone hammer or better.");
     expect(pack.count('rock')).toBe(8); // only the finished job took its inputs
   });
 
@@ -376,11 +376,11 @@ describe('what the play-test found and the fixes (progression lens)', () => {
     expect(breakSeconds(BLOCK.KILN, tool('flint_pick'))).toBe(1.5);
   });
 
-  it('useTool picks the lowest qualifying tier, so a copper hammer in the pack is spared when a hammerstone will do', () => {
+  it('useTool picks the lowest qualifying tier, so a copper hammer in the pack is spared when a stone hammer will do', () => {
     const pack = new Pack();
     pack.add({ k: 'copper_hammer', n: 1 });
-    pack.add({ k: 'hammerstone', n: 1 });
-    expect(pack.useTool('hammer', 1)).toEqual({ key: 'hammerstone', broke: false });
+    pack.add({ k: 'stone_hammer', n: 1 });
+    expect(pack.useTool('hammer', 1)).toEqual({ key: 'stone_hammer', broke: false });
     expect(pack.useTool('hammer', 3)).toEqual({ key: 'copper_hammer', broke: false });
   });
 

@@ -99,7 +99,7 @@ describe('DigState (§6.1)', () => {
 
   it('a tool breaking mid-dig changes the hand key and resets', () => {
     const d = new DigState();
-    dig(d, 32, cell, 1, handKeyOf(0, { k: 'flint_spade', n: 1, d: 1 }));
+    dig(d, 32, cell, 1, handKeyOf(0, { k: 'flint_shovel', n: 1, d: 1 }));
     d.step(DT, cell, true, 0.9, handKeyOf(0, null));
     expect(d.t).toBeCloseTo(DT, 9);
   });
@@ -289,7 +289,7 @@ describe('strikeKind (§4.3, §6.1)', () => {
   });
 
   it('any held tool wounds a pig with its power', () => {
-    expect(strikeKind('pig', getItem('stone_chopper').tool)).toEqual({ call: 'wound', power: 2 });
+    expect(strikeKind('pig', getItem('stone_axe').tool)).toEqual({ call: 'wound', power: 2 });
     expect(strikeKind('pig', 'flint_spear')).toEqual({ call: 'wound', power: 3 });
     expect(strikeKind('pig', 'fire_drill')).toEqual({ call: 'wound', power: 1 });
   });
@@ -680,8 +680,8 @@ describe('buildPackView (§9.8)', () => {
 
 describe('wear on a dig or a blow (§6.1 step 6)', () => {
   const tool = (k) => getItem(k).tool;
-  it('a dig wears only digging tools: axe, spade, pick, knife, hammer', () => {
-    for (const k of ['stone_chopper', 'flint_spade', 'flint_pick', 'flint_knife', 'hammerstone', 'steel_axe', 'iron_hammer']) {
+  it('a dig wears only digging tools: axe, shovel, pick, knife, hammer', () => {
+    for (const k of ['stone_axe', 'flint_shovel', 'flint_pick', 'flint_knife', 'stone_hammer', 'steel_axe', 'iron_hammer']) {
       expect(wearsFromDigging(tool(k)), k).toBe(true);
     }
     // play-test: a Crucible (20), Casting Mold (12) or Fire Drill (8) in the hand was used up by digging dirt
@@ -691,7 +691,7 @@ describe('wear on a dig or a blow (§6.1 step 6)', () => {
   });
 
   it('a blow that lands wears everything but the kiln kit', () => {
-    for (const k of ['stone_chopper', 'flint_spear', 'bronze_sword', 'flint_pick']) expect(wearsFromStriking(tool(k)), k).toBe(true);
+    for (const k of ['stone_axe', 'flint_spear', 'bronze_sword', 'flint_pick']) expect(wearsFromStriking(tool(k)), k).toBe(true);
     for (const k of ['crucible', 'casting_mold', 'fire_drill']) expect(wearsFromStriking(tool(k)), k).toBe(false);
     expect([...KIT_TOOL_TYPES].sort()).toEqual(['crucible', 'firestarter', 'mold']);
     expect(wearsFromStriking(null)).toBe(false);

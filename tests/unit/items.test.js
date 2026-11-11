@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   TIER, TIER_NAMES, TIER_SPEED, TOOL_TYPES, WEAR_SLOT_NAMES, TAGS, ITEMS, ITEM_KEYS,
   getItem, isItemKey, stackSize, maxDurability, itemForBlock, blockForItem, hasTag, itemName, resolveItem, SINGULAR_NAMES,
+  canonicalItemKey,
 } from '../../src/items.js';
 import { BLOCK, BLOCKS, BLOCK_COUNT, PICKER_ORDER, isPlaceable } from '../../src/blocks.js';
 
@@ -13,35 +14,35 @@ const LOWER_SNAKE = /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
 
 /** §5.1 tools: key → [display name, type, tier, durability, power]. */
 const TOOLS = {
-  hammerstone: ['Hammerstone', 'hammer', 1, 60, 1],
-  stone_chopper: ['Stone Chopper', 'axe', 1, 40, 2],
-  digging_stick: ['Digging Stick', 'spade', 1, 40, 1],
+  stone_hammer: ['Stone Hammer', 'hammer', 1, 60, 1],
+  stone_axe: ['Stone Axe', 'axe', 1, 40, 2],
+  wooden_shovel: ['Wooden Shovel', 'shovel', 1, 40, 1],
   flint_knife: ['Flint Knife', 'knife', 2, 70, 1],
   flint_axe: ['Flint Axe', 'axe', 2, 90, 2],
   flint_pick: ['Flint Pick', 'pick', 2, 90, 1],
-  flint_spade: ['Flint Spade', 'spade', 2, 90, 1],
+  flint_shovel: ['Flint Shovel', 'shovel', 2, 90, 1],
   flint_spear: ['Flint Spear', 'spear', 2, 60, 3],
   copper_knife: ['Copper Knife', 'knife', 3, 140, 2],
   copper_axe: ['Copper Axe', 'axe', 3, 160, 2],
   copper_pick: ['Copper Pick', 'pick', 3, 160, 1],
-  copper_spade: ['Copper Spade', 'spade', 3, 160, 1],
+  copper_shovel: ['Copper Shovel', 'shovel', 3, 160, 1],
   copper_hammer: ['Copper Hammer', 'hammer', 3, 160, 1],
   bronze_knife: ['Bronze Knife', 'knife', 4, 260, 2],
   bronze_axe: ['Bronze Axe', 'axe', 4, 320, 3],
   bronze_pick: ['Bronze Pick', 'pick', 4, 320, 1],
-  bronze_spade: ['Bronze Spade', 'spade', 4, 320, 1],
+  bronze_shovel: ['Bronze Shovel', 'shovel', 4, 320, 1],
   bronze_hammer: ['Bronze Hammer', 'hammer', 4, 320, 1],
   bronze_sword: ['Bronze Sword', 'sword', 4, 280, 3],
   iron_knife: ['Iron Knife', 'knife', 5, 500, 3],
   iron_axe: ['Iron Axe', 'axe', 5, 600, 3],
   iron_pick: ['Iron Pick', 'pick', 5, 600, 1],
-  iron_spade: ['Iron Spade', 'spade', 5, 600, 1],
+  iron_shovel: ['Iron Shovel', 'shovel', 5, 600, 1],
   iron_hammer: ['Iron Hammer', 'hammer', 5, 600, 1],
   iron_sword: ['Iron Sword', 'sword', 5, 550, 4],
   steel_knife: ['Steel Knife', 'knife', 6, 1000, 3],
   steel_axe: ['Steel Axe', 'axe', 6, 1200, 4],
   steel_pick: ['Steel Pick', 'pick', 6, 1200, 1],
-  steel_spade: ['Steel Spade', 'spade', 6, 1200, 1],
+  steel_shovel: ['Steel Shovel', 'shovel', 6, 1200, 1],
   steel_hammer: ['Steel Hammer', 'hammer', 6, 1200, 1],
   steel_sword: ['Steel Sword', 'sword', 6, 1100, 5],
   fire_drill: ['Fire Drill', 'firestarter', 0, 8, 1],
@@ -123,13 +124,13 @@ const REFERENCED = [
   'roast_pork', 'charred_meat', 'baked_tuber', 'roasted_cattail_root', 'leached_acorns', 'roasted_acorns', 'pot_water',
   'pot_boiled', 'pot_seawater', 'salt_pot', 'pot_snow', 'greenware_pot',
   // recipes: hand, stump, kiln, bloomery, forge
-  'cord', 'hammerstone', 'stone_chopper', 'digging_stick', 'flint_knife', 'flint_axe', 'flint_pick', 'flint_spade',
+  'cord', 'stone_hammer', 'stone_axe', 'wooden_shovel', 'flint_knife', 'flint_axe', 'flint_pick', 'flint_shovel',
   'flint_spear', 'fire_drill', 'green_brick', 'greenware_crucible', 'greenware_mold', 'straw_hat', 'grass_cape',
   'fibre_bandage', 'rag_bandage', 'salt', 'salted_pork', 'fired_brick', 'bellows', 'wrought_iron', 'leather',
   'leather_hood', 'leather_coat', 'hide_shoes', 'crucible', 'casting_mold', 'copper_ingot', 'tin_ingot', 'bronze_ingot',
   'iron_bloom', 'steel_bar',
-  ...['knife', 'spade', 'axe', 'hammer', 'pick'].map((t) => `copper_${t}`),
-  ...['bronze', 'iron', 'steel'].flatMap((m) => ['knife', 'spade', 'axe', 'hammer', 'pick', 'sword'].map((t) => `${m}_${t}`)),
+  ...['knife', 'shovel', 'axe', 'hammer', 'pick'].map((t) => `copper_${t}`),
+  ...['bronze', 'iron', 'steel'].flatMap((m) => ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'].map((t) => `${m}_${t}`)),
 ];
 /** Block items the design names as drops, recipe outputs, tag members or inputs. */
 const REFERENCED_BLOCKS = [
@@ -152,7 +153,7 @@ describe('items — tiers, tool types, wear slots', () => {
     for (let t = 1; t < TIER_SPEED.length; t++) expect(TIER_SPEED[t]).toBeGreaterThan(TIER_SPEED[t - 1]);
   });
   it('TOOL_TYPES lists every tool type once; WEAR_SLOT_NAMES is head, body, feet', () => {
-    expect([...TOOL_TYPES].sort()).toEqual(['axe', 'crucible', 'firestarter', 'hammer', 'knife', 'mold', 'pick', 'spade', 'spear', 'sword']);
+    expect([...TOOL_TYPES].sort()).toEqual(['axe', 'crucible', 'firestarter', 'hammer', 'knife', 'mold', 'pick', 'shovel', 'spear', 'sword']);
     expect(new Set(Object.values(TOOLS).map((t) => t[1]))).toEqual(new Set(TOOL_TYPES));
     expect(WEAR_SLOT_NAMES).toEqual(['head', 'body', 'feet']);
   });
@@ -244,9 +245,9 @@ describe('items — the registry', () => {
       expect(tier >= 0 && tier < TIER_NAMES.length).toBe(true);
     }
     for (const def of Object.values(ITEMS)) expect(maxDurability(def.key) > 0, def.key).toBe(def.kind === 'tool');
-    // The metal tiers are complete: knife, axe, pick, spade and hammer from copper up, swords from bronze up.
+    // The metal tiers are complete: knife, axe, pick, shovel and hammer from copper up, swords from bronze up.
     for (const [metal, tier] of [['copper', 3], ['bronze', 4], ['iron', 5], ['steel', 6]]) {
-      for (const t of ['knife', 'axe', 'pick', 'spade', 'hammer', ...(tier >= 4 ? ['sword'] : [])]) {
+      for (const t of ['knife', 'axe', 'pick', 'shovel', 'hammer', ...(tier >= 4 ? ['sword'] : [])]) {
         expect(getItem(`${metal}_${t}`)?.tool, `${metal}_${t}`).toMatchObject({ type: t, tier });
       }
     }
@@ -467,5 +468,20 @@ describe('itemName with a count: the singular of a plural display name', () => {
     // (food and materials: a pair of shoes or a hat is one thing already)
     const plural = ITEM_KEYS.map((k) => getItem(k)).filter((d) => /s$/.test(d.name) && d.key !== 'bellows' && (d.kind === 'food' || d.kind === 'material'));
     for (const d of plural) expect(Object.hasOwn(SINGULAR_NAMES, d.key), d.key).toBe(true);
+  });
+});
+
+describe('v0.11 normative tool names (CONTRACTS §64)', () => {
+  it('the tools are called what they are: stone hammer, stone axe, wooden shovel, shovels; old keys read through ITEM_ALIASES', () => {
+    expect(ITEMS.stone_hammer.name).toBe('Stone Hammer');
+    expect(ITEMS.stone_axe.name).toBe('Stone Axe');
+    expect(ITEMS.wooden_shovel.name).toBe('Wooden Shovel');
+    expect(ITEMS.flint_shovel.tool.type).toBe('shovel');
+    for (const k of ITEM_KEYS) {
+      expect(k).not.toMatch(/spade|hammerstone|chopper|digging_stick/);
+      expect(ITEMS[k].name).not.toMatch(/Spade|Hammerstone|Chopper|Digging Stick/);
+    }
+    const old = { hammerstone: 'stone_hammer', stone_chopper: 'stone_axe', digging_stick: 'wooden_shovel', flint_spade: 'flint_shovel', steel_spade: 'steel_shovel' };
+    for (const [from, to] of Object.entries(old)) expect(canonicalItemKey(from)).toBe(to);
   });
 });

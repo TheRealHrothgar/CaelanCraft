@@ -151,9 +151,9 @@ describe('label formatters', () => {
   });
 
   it('a required tool shows the cheapest tool that qualifies', () => {
-    expect(toolIconKey('axe', 1)).toBe('stone_chopper');
+    expect(toolIconKey('axe', 1)).toBe('stone_axe');
     expect(toolIconKey('axe', 2)).toBe('flint_axe');
-    expect(toolIconKey('hammer', 1)).toBe('hammerstone');
+    expect(toolIconKey('hammer', 1)).toBe('stone_hammer');
     expect(toolIconKey('hammer', 4)).toBe('bronze_hammer');
     expect(toolIconKey('knife', 2)).toBe('flint_knife');
     expect(toolIconKey('firestarter', 0)).toBe('fire_drill');

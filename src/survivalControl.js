@@ -435,7 +435,7 @@ function listJoin(parts) {
 
 /**
  * Wear from digging (§6.1 step 6): a block broken wears the selected tool only when it is a digging tool — an axe,
- * spade, pick, knife or hammer. A spear or sword wears on the blows it lands (`wearsFromStriking`), never on a dig; the
+ * shovel, pick, knife or hammer. A spear or sword wears on the blows it lands (`wearsFromStriking`), never on a dig; the
  * kiln kit (fire drill, crucible, casting mold) wears only in the jobs that need it (play-test: a fresh mold in the hand
  * was destroyed by digging eight blocks of clay).
  * @param {ToolDef|null|undefined} tool  the selected stack's ToolDef

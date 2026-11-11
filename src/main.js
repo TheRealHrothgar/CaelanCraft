@@ -2514,7 +2514,7 @@ export function boot(win, doc) {
 
   /** The selected tool takes 1 wear (a block broken, a mob hit, §5.3); nothing for a bare hand or a non-tool item. */
   /**
-   * 1 wear on the selected tool (§6.1 step 6): on a dig only a digging tool wears (axe, spade, pick, knife, hammer), on a
+   * 1 wear on the selected tool (§6.1 step 6): on a dig only a digging tool wears (axe, shovel, pick, knife, hammer), on a
    * blow everything but the kiln kit — a spear digs nothing and a crucible in the hand must not be used up by digging clay.
    * @param {'dig'|'strike'} how
    */

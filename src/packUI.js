@@ -293,7 +293,7 @@ export function demoPackView(opts = {}) {
   /** @type {(ItemStack|null)[]} */
   const slots = Array(PACK_SLOTS).fill(null);
   const put = (i, k, n = 1, d) => { slots[i] = d === undefined ? { k, n } : { k, n, d }; };
-  put(0, 'flint_pick', 1, 51); put(1, 'flint_axe', 1, 18); put(2, 'stone_chopper'); put(3, 'roast_pork', 3);
+  put(0, 'flint_pick', 1, 51); put(1, 'flint_axe', 1, 18); put(2, 'stone_axe'); put(3, 'roast_pork', 3);
   put(4, 'pot_boiled'); put(5, 'campfire', 2); put(6, 'rock', 23); put(7, 'stick', 14); put(8, 'flint_knife', 1, 9);
   put(9, 'plant_fibre', 31); put(10, 'cord', 4); put(11, 'flint', 3); put(12, 'clay_lump', 12); put(13, 'honeyberries', 9);
   put(14, 'oak_log', 6); put(15, 'raw_pork', 2); put(16, 'rawhide', 1); put(17, 'pig_fat', 1); put(19, 'malachite', 5);

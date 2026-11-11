@@ -2972,7 +2972,7 @@ export const BLOCK_RULES                      // index = block id: { h (s by han
 export function ruleFor(id), canHarvest(id, tool), breakSeconds(id, tool, underwater) /* Infinity = cannot */, harvestHint(id)
 export function rollDrops(id, tool, { natural, knifeInPack }, random) → ItemStack[]   // aggregated by key; [] when it cannot
 export const PICKABLE; export function isPickable(id), pick(id, ctx, random) → { to, drops } | null
-export const HAND_GATHER /* id → 'pull' | 'dig' */, DIG_TOOL_TYPES /* axe spade pick knife hammer */
+export const HAND_GATHER /* id → 'pull' | 'dig' */, DIG_TOOL_TYPES /* axe shovel pick knife hammer */
 export function handGatherHint(id) → 'Tussock Grass · hold LMB: pull' | null, withArticle(noun) → 'an iron hammer'
 export function tap(id, selectedKey, knifeInPack) → { gives: 'pot_sap', takes: 'clay_pot', wears: 'knife' } | null
 export class Tapped { canTap(key, day), mark(key, day), clear() }          // once per birch cell per game day; not saved
@@ -2999,7 +2999,7 @@ out: wear does not reset a dig, a tool breaking does); `useActionOf(stack)` (RMB
 wear (needS 0, once) / place); `placeRefusal(getBlock, id, q, y, r)` (`needs solid ground` for a pop-off block over a non-solid
 cell); `strikeKind(mob, tool)` (bare hands only shove a pig); `chooseBelongingsCell` (§45); `buildPackView` (§48); `HINT`,
 `STATION_OF_BLOCK`, `STATION_TABS`, `KNIFE_TIER` 2, `waterHint`; v0.9 play-test: `relightMissing(pack) → ['a fire drill', 'tinder',
-'2 more sticks']` (what a relight still lacks, RELIGHT_STICKS 3), `wearsFromDigging(tool)` (an axe, spade, pick, knife or hammer:
+'2 more sticks']` (what a relight still lacks, RELIGHT_STICKS 3), `wearsFromDigging(tool)` (an axe, shovel, pick, knife or hammer:
 `harvest.DIG_TOOL_TYPES`), `wearsFromStriking(tool)` (everything but `KIT_TOOL_TYPES` firestarter / crucible / mold).
 **`interactKind(ctx)`** — R in Survival, the first that applies: 1 CAMPFIRE → `fire_put` (a skewer food or centre pot selected and a
 free spot of that kind) / `fire_feed` (a stick or `#log`) / `fire_take` / `fire_hint`; 2 FIRE_PIT → `pit_take` / `pit_relight`
@@ -3264,7 +3264,7 @@ stations or the tab change.
    `playDig(group, 0.35)` and 3 dust motes `{ id }` at the hit face; a block the hand cannot break: a dull `playDig(group, 0.15)` every
    0.5 s). **Finishing**, in order: `natural = !world.hasEdit` (BEFORE), `rollDrops`, `pack.canGive(drops + container contents + fire
    spots)` else the hint `Pack full` and the dig stays complete, the break `playerSetBlock(AIR)` inside `releaseToPack = true`,
-   `playBreak`, the drops with pickup tokens, 1 wear on the selected tool when it is a digging tool (`wearsFromDigging`: axe, spade,
+   `playBreak`, the drops with pickup tokens, 1 wear on the selected tool when it is a digging tool (`wearsFromDigging`: axe, shovel,
    pick, knife, hammer — a spear, a sword and the kiln kit never wear from a dig; a blow that lands wears all but the kit,
    `wearsFromStriking`) ("Your Flint Axe broke." + `playToolBreak`). RMB → the
    Handbook opens at once; a block item places (Creative's rules, `placeRefusal`'s `needs solid ground`, `pack.consume(selected, 1)`,
@@ -3824,6 +3824,15 @@ ages by dt while its column is loaded (`LooseItem.age`; drops flying home and gh
   through `ctx.loose.despawnNear`; without `loose` it fails.
 - **Save**: `survival.loose` entries gain `a` (whole seconds lying loose, 1–LOOSE_AGE_MAX 300; 0 is not written), in the
   key order `k, n, d?, a?, x, y, z`; `load` restores it as the age.
+
+## 64. Normative tool names — `src/items.js` and everything that names a tool
+
+The tools carry their everyday names (amends §43–§47 and every table that lists them): `hammerstone` → **`stone_hammer`**
+"Stone Hammer", `stone_chopper` → **`stone_axe`** "Stone Axe", `digging_stick` → **`wooden_shovel`** "Wooden Shovel", every
+`*_spade` → **`*_shovel`** "… Shovel", and the tool type `spade` → **`shovel`** (TOOL_TYPES, harvest rules, recipe tool
+requirements, itemArt's TOOL_ART and paintShovel). Recipe ids follow their outputs. Old keys read through `ITEM_ALIASES`
+(`canonicalItemKey`): saved pack, wear, basket, remains and loose stacks and typed item names (`pack add hammerstone`) land
+on the new keys. Prose in CONTRACTS, DESIGN-survival and the handbook uses the new names.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
