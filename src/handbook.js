@@ -1458,7 +1458,7 @@ function makeChapters() {
     ],
     [
       h('Zombies'),
-      p(`Zombies come up out of the ground only in the dark, from ${sunset} to ${sunrise}: one or two at a time, never nearer than ${ZOMBIE_SPAWN_MIN} cells. One that notices you within ${ZOMBIE_SIGHT} cells comes for you. Each strike costs ${ZOMBIE_DAMAGE} HP and knocks you back.`),
+      p(`Zombies come up out of the ground only in the dark, from ${sunset} to ${sunrise}: one or two at a time, never nearer than ${ZOMBIE_SPAWN_MIN} cells. One that notices you within ${ZOMBIE_SIGHT} cells comes for you. Each strike costs ${ZOMBIE_DAMAGE} HP and knocks you back. A walker's arms hang until it has seen you, then come up in front.`),
       p(`They keep ${ZOMBIE_FIRE_FEAR} cells away from a burning campfire and never strike anyone inside that circle. None appears within ${ZOMBIE_SPAWN_FIRE_CLEAR} cells of a fire, or in a column you have built in.`),
       p(`A zombie never steps off a drop deeper than ${ZOMBIE_MAX_DROP} cells, and it gives up on anyone standing more than ${ZOMBIE_CHASE_MAX_RISE} cells above it.`),
       tip(`A wall ${CLIMB.walker.night + 1} cells high stops a walker. Runners and the alpha jump higher: the table tells how high.`),

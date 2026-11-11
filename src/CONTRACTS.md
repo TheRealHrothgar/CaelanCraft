@@ -4068,6 +4068,8 @@ z, yaw)`, `remove`, `update(dt, world) → events`, `wound`, `feed`, `shear`, `m
 
 ## 71. A calmer zombie — `src/zombieRenderer.js`, `src/audio.js`, `src/zombies.js`
 
+*The model and the face described here were replaced by §74 (v0.13); the sounds stand.*
+
 Amends §61. The face is level and weary, not goofy and not frightening: two equal half-lidded eyes (a pale eye, a small low
 pupil, a heavy lid), plain brows, a small nose, a short closed mouth, no teeth, under a cap of dark hair; the head is a
 little smaller (HEAD_W 0.46 × HEAD_H 0.44 × HEAD_D 0.42); the skin is a muted grey-green. The walker sways less (0.045 rad)
@@ -4153,6 +4155,36 @@ Amends §43 (the Handbook), §48 and §1 (imports); DESIGN-survival §14.1's cha
   table rows; the three widest new tables (`blows-animals`, `blows-zombies`, `zombies`) share their page with no margin note.
 - **Still hand-written** (no exported constant to read): the workplace reach "2 up or down", the marker's "about 20 cells", zombies
   rising "one or two at a time", the pig's "grass and snowy grass", and "within half a minute" for a snowy swim.
+
+## 74. Zombies that look like people — `src/zombieRenderer.js`
+
+Replaces §71's model and face (its sounds stand) and amends §61. A zombie is a dead PERSON, not a green child and not a
+golem: a grown body (HEAD 0.40 × 0.40 × 0.38 on a TORSO 0.52 wide and 0.64 tall, SHOULDER_X 0.335, LEG_H 0.72, ARM_L 0.60 to
+the wrist; MODEL_HEIGHT 1.84 ≤ ZOMBIE_HEIGHT), a head of hair, ears, eyebrows, a nose, a neck, a buttoned shirt with a
+collar, a tear and a tail hanging out, a belt, trousers and shoes. The skin is a pallid grey-green (SKIN 0xb2b89c).
+**Every kind has narrow eye slits**: a near-black plate SLIT (0x101210) `SLIT_H` 0.028 tall and about 0.11 wide in a dark
+hollow `SOCKET_H` 0.052 tall, at (±EYE_X 0.095, EYE_Y 0.225) — no whites, no round eyes. Nothing is gory and no eye is red.
+
+- **Three heads** (`zombieGeometries()` → `head`, `headRunner`, `headAlpha`; meshes `zombie-head`, `zombie-head-runner`,
+  `zombie-head-alpha`, each with its `-hurt` / `-burn` twin). The hair differs: dull brown, dirty straw, black.
+  - *Walker — vacant.* Level brows, two level empty slits, a slack mouth a little open; below `HAIRLINE_Y` the face is
+    mirror-symmetric and nothing on it is paler than the skin.
+  - *Runner — wired.* One brow hitched up, uneven slits each with one pale pinprick, dark rings under them, a crooked
+    clenched mouth showing a line of teeth, hair standing on end. Its head is cocked `RUNNER_COCK` (0.16 rad) to its own
+    side and JERKS: `twitchOf(t, id)` is 0 except for a sharp jerk `TWITCH_HZ` (1.7) times a second, lasting `TWITCH_PART`
+    (0.16) of the beat and reaching `TWITCH_ANGLE` (0.26 rad), to alternate sides; `id` shifts the beat. RUNNER_WIDTH 0.9.
+  - *Alpha — ominous.* A brow ridge and black brows slanted `ALPHA_BROW_SLANT` (0.3 rad) down to the nose over two black
+    pits; in them the glow mesh `zombie-alpha-eyes`: two slits slanted `ALPHA_SLIT_SLANT` (0.22 rad), unlit, `ALPHA_EYES`
+    0xffa42e (a hot amber). A down-turned mouth over a jutting jaw, an old scar, long hair. Over its torso the overlay
+    `zombie-alpha-hide`: a ragged dark coat on hulking shoulders. KIND_TINT alpha 0x9a96a0, runner 0xf6f0cc.
+- **Shirts.** A walker's or a runner's torso and arms are tinted `SHIRT_TINTS[id mod 7]` × its kind's tint (pale colours,
+  so the hands barely change); legs and heads take the kind's tint alone; the alpha keeps its kind's tint.
+- **Bearing.** A walker's arms hang (`ARMS_HANG` 0.3 rad forward) until its mode is `chase`, then come up in front
+  (`ARMS_CHASE` 1.15); with nobody to chase its head hangs `WALKER_DROOP` (0.14). The alpha's arms are always up
+  (`ARMS_ALPHA` 0.95) and spread `ALPHA_SPREAD` (0.3 rad) to the sides, and it holds its head low and steady.
+- **Draw calls.** Legs, arms and torso are shared; a crowd of walkers costs 4 draw calls, +1 with runners about, +3 with
+  an alpha (its head, its coat, its eyes).
+- **API.** `sync(zombies, t = 0)`: `t` is seconds on any steady clock (main passes `fxTime`); without it nothing twitches.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
