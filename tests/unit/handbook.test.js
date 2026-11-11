@@ -276,7 +276,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     const drinks = tableById('drinks');
     expect(drinks.keys).toEqual(ITEM_KEYS.filter((k) => ITEMS[k].food?.returns));
     expect(rowOf(drinks, 'pot_seawater').slice(1)).toEqual(['−10', '0', 'salty']);
-    expect(rowOf(drinks, 'pot_water')[3]).toBe('3 % sick');
+    expect(rowOf(drinks, 'pot_water')[3]).toBe('20 % sick'); // v0.11 (§66)
 
     const fire = tableById('fire');
     expect(fire.keys).toEqual(Object.keys(FIRE_TRANSFORMS));

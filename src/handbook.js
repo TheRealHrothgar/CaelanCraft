@@ -670,7 +670,7 @@ function statusTable() {
     ['Thirsty', `Hydration below ${R.THIRSTY}`, 'no healing'],
     ['Parched', `Hydration below ${R.PARCHED}`, `no sprinting, ${fmtPct(1 - R.SLOW_PARCHED)} slower; at 0, ${fmtNum(R.THIRST_DPS)} HP/s`],
     ['Wounded', `Health below ${R.WOUNDED}`, `${fmtPct(1 - R.SLOW_WOUNDED)} slower`],
-    ['Sick', 'after bad food or water', `${fmtNum(R.SICK_DPS)} HP/s (never below ${R.SICK_FLOOR}), no healing, hunger and thirst ×${fmtNum(R.SICK_FACTOR)}`],
+    ['Poisoned', 'after bad food or raw water', `${fmtNum(R.SICK_DPS)} HP/s (never below ${R.SICK_FLOOR}), no healing, hunger and thirst ×${fmtNum(R.SICK_FACTOR)}`],
     ['Wet', 'out of the water', `feels ${WET_CHILL} °C colder until you dry`],
     ['Drowning', 'no breath, head under water', `${fmtNum(R.DROWN_DPS)} HP/s`],
     ['Smothering', 'no breath, buried', `${fmtNum(R.BURIED_DPS)} HP/s`],
@@ -921,8 +921,8 @@ function makeChapters() {
     [
       h('Drinking'),
       p(`Look at water and press [R] to take a gulp, whatever you are holding: ${fmtSigned(R.GULP_FRESH)} Hydration, one gulp every ${GULP_GAP_S} s. With your head under water, [R] drinks where you are.`),
-      p(`Unboiled water is usually fine, but now and then (${fmtPct(R.GULP_FRESH_SICK)} a gulp, ${fmtPct(potSick)} a potful) it turns your stomach.`),
-      p(`*Sickness* lasts ${R.SICK_S} s, and each new case adds more. While sick you heal nothing, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though sickness alone never takes you below ${R.SICK_FLOOR} HP.`),
+      p(`Raw water can poison you (${fmtPct(R.GULP_FRESH_SICK)} a gulp, ${fmtPct(potSick)} a potful). Boil a pot of it on a campfire's centre spot: boiled water is always safe.`),
+      p(`*Poisoning* hits at once (${fmtSigned(R.POISON_THIRST)} Hydration, ${fmtSigned(R.POISON_HUNGER)} Nourishment) and lasts ${R.SICK_S} s; each new case adds more. While poisoned you heal nothing, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though poisoning alone never takes you below ${R.SICK_FLOOR} HP.`),
       tip('Boil before you drink, and cook before you eat.'),
     ],
     [

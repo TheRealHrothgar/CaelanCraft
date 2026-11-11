@@ -88,7 +88,7 @@ const FOODS = {
   salted_pork: ['Salted Pork', 16, 18, -6, 0, 1.4, {}],
   pig_fat: ['Pig Fat', 16, 6, -2, 0.1, 1.2, {}],
   snow: ['Snow', 32, 0, 3, 0, 0.6, { temp: -0.2 }],
-  pot_water: ['Pot of Water', 1, 0, 30, 0.03, 1.0, { returns: 'clay_pot' }],
+  pot_water: ['Pot of Water', 1, 0, 30, 0.2, 1.0, { returns: 'clay_pot' }], // v0.11 (§66): 20 % poisoning
   pot_boiled: ['Pot of Boiled Water', 1, 0, 30, 0, 1.0, { returns: 'clay_pot' }],
   pot_seawater: ['Pot of Seawater', 1, 0, -10, 0, 1.0, { returns: 'clay_pot' }],
   pot_sap: ['Pot of Birch Sap', 1, 2, 25, 0, 1.0, { returns: 'clay_pot' }],

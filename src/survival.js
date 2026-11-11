@@ -58,7 +58,9 @@ import { feltTemperature, activityHeat, dryingRate } from './climate.js';
 /** The two modes; anything else is refused. */
 export const MODES = Object.freeze(['creative', 'survival']);
 /** Chat lines (§4.2, §4.5). */
-export const SICK_MESSAGE = 'Your stomach turns.';
+export const SICK_MESSAGE = 'Your stomach turns: you are poisoned.';
+/** v0.11 (§66): the first time raw water poisons you this session, how to make it safe. */
+export const BOIL_TIP = 'Tip — raw water can poison you. Fill a clay pot and set it on a campfire: boiled water is always safe.';
 export const SALT_MESSAGE = 'Salt water only makes you thirstier.';
 /** A salty hand gulp says SALT_MESSAGE at most once per this many seconds of Survival (§4.2). */
 export const SALT_MESSAGE_GAP_S = 5;
@@ -347,7 +349,7 @@ export class Survival {
   }
 
   /**
-   * One hand gulp of water (§4.2) while active: fresh +8 hydration with a 1 % chance of sickness ("Your stomach turns."),
+   * One hand gulp of water (§4.2) while active: fresh +8 hydration with a GULP_FRESH_SICK chance of poisoning (SICK_MESSAGE),
    * salt −4 with "Salt water only makes you thirstier." at most once per SALT_MESSAGE_GAP_S of Survival time.
    * @param {boolean} salty
    * @param {() => number} [random]

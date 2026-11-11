@@ -3854,6 +3854,17 @@ Amends §39 and §61. **Daylight no longer burns zombies**: `burn` stays 0, `smo
   accepts a climbable wall; in `update` a wall of 1 is the normal hop (`input.jump`), one of h ≥ 2 sets
   `vy = sqrt(2 × −GRAVITY × (h + LEAP_MARGIN 0.35))` from the ground.
 
+## 66. Raw water poisons; boiling makes it safe — `src/vitals.js`, `src/items.js`, `src/survival.js`
+
+Amends §45 (sickness, gulps) and §43 (food). Sickness is now called **Poisoned** (the status label; hud maps it to the
+`sick` class). Its rates and effects stand (SICK_S 45 s per case up to SICK_MAX, SICK_DPS 0.15 HP/s never below SICK_FLOOR
+10, no regeneration, hunger and thirst ×SICK_FACTOR 1.6), and every case now also hits at once: `makeSick` adds
+POISON_THIRST −8 Hydration and POISON_HUNGER −4 Nourishment (clamped). Raw water is the risk: a hand gulp of fresh water
+poisons with GULP_FRESH_SICK **0.06** (was 0.01); a Pot of Water (`pot_water`) with `sick` **0.2** (was 0.03). Boiling stays
+the cure: `pot_water` on a campfire's centre spot becomes `pot_boiled` (sick 0) in 15 s (cooking FIRE_TRANSFORMS, unchanged).
+`SICK_MESSAGE` is "Your stomach turns: you are poisoned."; the first raw-water poisoning of a session (a gulp, or a Pot of
+Water) also logs `BOIL_TIP`. The handbook's numbers follow from the constants.
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),

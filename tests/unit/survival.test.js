@@ -531,16 +531,16 @@ describe('eating, drinking and bandages (§2.3, §4.2, §4.5)', () => {
     expect(s.eat('honeyberries').ok).toBe(false);
   });
 
-  it('drink: fresh +8 (1 % sick), salt −4 with the salty line at most once per 5 s of Survival', () => {
+  it('drink: fresh +8 (6 % poisoned: −8 at once), salt −4 with the salty line at most once per 5 s of Survival', () => {
     const s = started();
     s.vitals.hydration = 50;
     expect(s.drink(false, () => 0.5)).toBe('');
     expect(s.vitals.hydration).toBe(58);
     expect(s.drink(false, () => 0.001)).toBe(SICK_MESSAGE);
     expect(s.drink(true, () => 0.5)).toBe(SALT_MESSAGE);
-    expect(s.vitals.hydration).toBe(62);
+    expect(s.vitals.hydration).toBe(54); // 58, poisoned (+8 − 8), salty −4
     expect(s.drink(true)).toBe(''); // throttled
-    expect(s.vitals.hydration).toBe(58); // still salty
+    expect(s.vitals.hydration).toBe(50); // still salty
     s.step(SALT_MESSAGE_GAP_S, envFor(stander(), flatGetBlock(GROUND)));
     expect(s.drink(true)).toBe(SALT_MESSAGE);
     const c = new Survival();

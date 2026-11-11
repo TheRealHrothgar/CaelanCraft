@@ -78,7 +78,7 @@ import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
 import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, damageOf, SOUND_ROAR } from './zombies.js';
-import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST } from './survival.js';
+import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST, SICK_MESSAGE, BOIL_TIP } from './survival.js';
 import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory.js';
 import { Containers } from './containers.js';
 import {
@@ -2506,6 +2506,14 @@ export function boot(win, doc) {
     else giveStacks([{ k: key, n: 1 }]);
   }
 
+  /** §66: once a session, after raw water poisoned the player: boil it. */
+  let boilTipShown = false;
+  function boilTip() {
+    if (boilTipShown) return;
+    boilTipShown = true;
+    logLine(BOIL_TIP, false, INTRO_LINE_MS);
+  }
+
   /** "Your Flint Axe broke." and the snap (§5.3). */
   function toolBroke(key) {
     logLine(`Your ${itemName(key)} broke.`);
@@ -2965,6 +2973,7 @@ export function boot(win, doc) {
         const line = survival.drink(salty, Math.random);
         audio.playDrink();
         if (line) logLine(line);
+        if (line === SICK_MESSAGE) boilTip(); // §66: the first raw-water poisoning says how to make water safe
         return;
       }
       case 'read':
@@ -3232,6 +3241,7 @@ export function boot(win, doc) {
       if (act.kind === 'drink') audio.playDrink();
       else audio.playEat();
       if (res.message) logLine(res.message);
+      if (res.message === SICK_MESSAGE && act.key === 'pot_water') boilTip();
     } else if (act.kind === 'bandage') {
       if (!survival.bandage(act.key)) {
         showHint('No more healing can be queued yet');

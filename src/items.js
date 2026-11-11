@@ -134,7 +134,8 @@ const FOOD_ROWS = [
   ['salted_pork', 'Salted Pork', 16, { satiation: 18, hydration: -6, sick: 0, useS: 1.4 }], // keeps; no fire needed
   ['pig_fat', 'Pig Fat', 16, { satiation: 6, hydration: -2, sick: 0.1, useS: 1.2 }],
   ['snow', 'Snow', 32, { satiation: 0, hydration: 3, sick: 0, useS: 0.6, temp: -0.2 }],
-  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.03, useS: 1.0, returns: 'clay_pot' }],
+  // v0.11 (CONTRACTS §66): unboiled water poisons you one time in five; boil it on a campfire (Pot of Boiled Water: safe)
+  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.2, useS: 1.0, returns: 'clay_pot' }],
   ['pot_boiled', 'Pot of Boiled Water', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_seawater', 'Pot of Seawater', 1, { satiation: 0, hydration: -10, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_sap', 'Pot of Birch Sap', 1, { satiation: 2, hydration: 25, sick: 0, useS: 1.0, returns: 'clay_pot' }],

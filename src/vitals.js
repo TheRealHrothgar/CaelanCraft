@@ -126,6 +126,9 @@ export const RATES = Object.freeze({
   SICK_FLOOR: 10,             // sickness never takes health below this
   // §4.5 sickness
   SICK_S: 45,                 // one case; cases add up to SICK_MAX
+  // v0.11 (§66): a case of poisoning also hits at once — thirstier and hungrier
+  POISON_THIRST: -8,
+  POISON_HUNGER: -4,
   SICK_MAX: SICK_MAX_S,
   // §2.3 bandages
   HEAL_MAX,
@@ -144,7 +147,7 @@ export const RATES = Object.freeze({
   FIRE: FIRE_BURN_DAMAGE,
   // §4.2 hand gulps
   GULP_FRESH: 8,
-  GULP_FRESH_SICK: 0.01,
+  GULP_FRESH_SICK: 0.06,      // v0.11 (CONTRACTS §66): raw water from a source poisons you now and then
   GULP_SALT: -4,
 });
 
@@ -311,7 +314,7 @@ export function statusOf(v, inp) {
   const noBreath = !(v.breath > 0);
   if (noBreath && inp?.headInWater) labels.push('Drowning');
   else if (noBreath && inp?.buried) labels.push('Smothering');
-  if (v.sick > 0) labels.push('Sick');
+  if (v.sick > 0) labels.push('Poisoned');
   if (v.wet > RATES.WET_LABEL) labels.push('Wet');
   const regen = v.satiation >= RATES.REGEN_MIN_SATIATION && v.hydration >= RATES.REGEN_MIN_HYDRATION
     && v.temp >= RATES.REGEN_TEMP_MIN && v.temp <= RATES.REGEN_TEMP_MAX && !(v.sick > 0) && !noBreath;
@@ -479,6 +482,9 @@ export function crushDamage(cells) {
  */
 export function makeSick(v) {
   v.sick = Math.min(RATES.SICK_MAX, Math.max(0, finite(v.sick) ? v.sick : 0) + RATES.SICK_S);
+  // v0.11 (§66): poisoning hits at once too
+  v.hydration = clamp((finite(v.hydration) ? v.hydration : 0) + RATES.POISON_THIRST, 0, STAT_MAX);
+  v.satiation = clamp((finite(v.satiation) ? v.satiation : 0) + RATES.POISON_HUNGER, 0, STAT_MAX);
 }
 
 /**
@@ -499,7 +505,7 @@ export function eatFood(v, food, random) {
 }
 
 /**
- * One hand gulp of water (§4.2): fresh +8 hydration with a 1 % chance of sickness; salt −4 hydration.
+ * One hand gulp of water (§4.2): fresh +8 hydration with a GULP_FRESH_SICK (6 %) chance of poisoning; salt −4 hydration.
  * @param {Vitals} v
  * @param {boolean} salty
  * @param {() => number} random
