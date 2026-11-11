@@ -749,6 +749,8 @@ const SMOKE_HIT_RETRY_FRAMES = 10;
 /** v0.9: frames to wait for a queued mode switch; at most this many 1/60 s dig and eat frames in the survival step. */
 const SMOKE_MODE_FRAMES = 10;
 const SMOKE_DIG_FRAMES = 240;
+/** Frames the smoke test waits for a dug rock to fly into the pack (CONTRACTS §60: about half a second). */
+const SMOKE_PICKUP_FRAMES = 120;
 const SMOKE_EAT_FRAMES = 180;
 const SMOKE_LOOK_DOWN_PITCH = -1.5;
 const SMOKE_TELEPORT_DISTANCE = 3;
@@ -1183,6 +1185,8 @@ async function runSurvivalSmoke(game, world, player, tick, st, yaw0) {
     if (world.getBlock(hit.q, hit.y, hit.r) === BLOCK.AIR) break;
   }
   const broke = world.getBlock(hit.q, hit.y, hit.r) === BLOCK.AIR;
+  // v0.10 (CONTRACTS §60): the rock flies to the player and enters the pack at the threshold — wait for it to arrive.
+  for (let f = 0; broke && f < SMOKE_PICKUP_FRAMES && game.pack.count('rock') <= rockBefore; f++) await tick();
   st.check(broke && game.pack.count('rock') > rockBefore,
     `dug the stone with the flint pick in ${((dug + 1) * SMOKE_HEADLESS_DT).toFixed(2)} s; the pack holds ${game.pack.count('rock')} rock`,
     `hold-dig failed: block is ${blockName(world.getBlock(hit.q, hit.y, hit.r))}, rock ${game.pack.count('rock')}`);
