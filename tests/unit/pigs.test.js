@@ -558,8 +558,8 @@ describe('Survival: health, wound, pruneFar, spawnNatural surfaces (DESIGN-survi
     expect(pigs.wound(pig, 1, 0, 0)).toBeNull(); // a dead pig is gone
   });
 
-  it('a Stone Chopper (2) kills in three hits, a Flint Spear (3) in two; bare hands never wound', () => {
-    for (const [key, hits] of [['stone_chopper', 3], ['flint_spear', 2], ['steel_sword', 1], ['hammerstone', 5]]) {
+  it('a Stone Axe (2) kills in three hits, a Flint Spear (3) in two; bare hands never wound', () => {
+    for (const [key, hits] of [['stone_axe', 3], ['flint_spear', 2], ['steel_sword', 1], ['stone_hammer', 5]]) {
       const pigs = new Pigs(seededRng(6));
       const pig = pigs.spawn(0, GROUND, 0);
       let n = 0;

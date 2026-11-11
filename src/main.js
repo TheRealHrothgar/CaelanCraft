@@ -77,8 +77,8 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, SOUND_ROAR } from './zombies.js';
-import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST } from './survival.js';
+import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, damageOf, SOUND_ROAR } from './zombies.js';
+import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST, SICK_MESSAGE, BOIL_TIP } from './survival.js';
 import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory.js';
 import { Containers } from './containers.js';
 import {
@@ -98,6 +98,7 @@ import { createItemIcons, iconBlockFor } from './itemIcons.js';
 import { createLooseItemRenderer } from './looseItemRenderer.js';
 import {
   LooseItems, throwOf, DART_KEYS, DART_BREAK_P, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
+  blinkHidden,
 } from './looseItems.js';
 import { createZombieRenderer } from './zombieRenderer.js';
 import { Watcher, WATCHER_HEIGHT } from './watcher.js';
@@ -1814,6 +1815,7 @@ export function boot(win, doc) {
       },
       blackHoles,
       hands: { act: (kind, n) => handAction(kind, n) }, // v0.10 (§60): drop / throw
+      loose: { despawnNear: (x, y, z, radius) => loose.despawnNear(x, y, z, radius, looseDespawned) }, // §63: despawn
     };
     return c;
   }
@@ -2390,7 +2392,24 @@ export function boot(win, doc) {
     onLand: (it, speed) => {
       if (speed > 5 && !it.ghost) audio.playRecipe(SOUND_THUNK, Math.min(0.6, speed / 20));
     },
+    // §63: a lit campfire burns what lands in it; a despawn leaves a puff (smoke and a sizzle for the fire).
+    burning: (x, y, z) => {
+      if (!world) return false;
+      const [q, r] = worldToHex(x, z);
+      return world.getBlock(q, Math.floor(y), r) === BLOCK.CAMPFIRE;
+    },
+    onDespawn: looseDespawned,
   };
+
+  /** §63: a loose item despawned: a puff where it was (smoke and a sizzle when it burned). */
+  function looseDespawned(it, why) {
+    if (why === 'fire') {
+      particles.emit('smoke', it.x, it.y + 0.2, it.z, 6, { spread: 0.2 });
+      audio.playSizzle(0.5);
+    } else if (why === 'time' || why === 'clear') {
+      particles.emit('dust', it.x, it.y, it.z, 4, { color: [0.85, 0.85, 0.8], spread: 0.15 });
+    }
+  }
 
   /** One step of the loose items: only Survival collects real items; ghosts fly in either mode. */
   function stepLoose(dt) {
@@ -2487,6 +2506,14 @@ export function boot(win, doc) {
     else giveStacks([{ k: key, n: 1 }]);
   }
 
+  /** §66: once a session, after raw water poisoned the player: boil it. */
+  let boilTipShown = false;
+  function boilTip() {
+    if (boilTipShown) return;
+    boilTipShown = true;
+    logLine(BOIL_TIP, false, INTRO_LINE_MS);
+  }
+
   /** "Your Flint Axe broke." and the snap (§5.3). */
   function toolBroke(key) {
     logLine(`Your ${itemName(key)} broke.`);
@@ -2495,7 +2522,7 @@ export function boot(win, doc) {
 
   /** The selected tool takes 1 wear (a block broken, a mob hit, §5.3); nothing for a bare hand or a non-tool item. */
   /**
-   * 1 wear on the selected tool (§6.1 step 6): on a dig only a digging tool wears (axe, spade, pick, knife, hammer), on a
+   * 1 wear on the selected tool (§6.1 step 6): on a dig only a digging tool wears (axe, shovel, pick, knife, hammer), on a
    * blow everything but the kiln kit — a spear digs nothing and a crucible in the hand must not be used up by digging clay.
    * @param {'dig'|'strike'} how
    */
@@ -2946,6 +2973,7 @@ export function boot(win, doc) {
         const line = survival.drink(salty, Math.random);
         audio.playDrink();
         if (line) logLine(line);
+        if (line === SICK_MESSAGE) boilTip(); // §66: the first raw-water poisoning says how to make water safe
         return;
       }
       case 'read':
@@ -3213,6 +3241,7 @@ export function boot(win, doc) {
       if (act.kind === 'drink') audio.playDrink();
       else audio.playEat();
       if (res.message) logLine(res.message);
+      if (res.message === SICK_MESSAGE && act.key === 'pot_water') boilTip();
     } else if (act.kind === 'bandage') {
       if (!survival.bandage(act.key)) {
         showHint('No more healing can be queued yet');
@@ -3796,6 +3825,7 @@ export function boot(win, doc) {
     world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: restoring ? restoring.edits : undefined, gen });
     world.onChunkMesh = (key, cq, cr, meshData) => renderer.setChunkMesh(key, cq, cr, meshData);
     world.onChunkUnload = (key) => renderer.removeChunkMesh(key);
+    renderer.setLightField(world.light); // §62: mobs, items and falling blocks are lit from the world's light
     // Block physics before the first chunk is generated: onChunkGenerated re-seeds edited cells as chunks stream in.
     blockPhysics = new BlockPhysics(world, physicsHooks);
     // A save from before v0.8 has no `physics` field: collapse starts off there (old sky bases must not fall the first
@@ -4957,10 +4987,10 @@ export function boot(win, doc) {
     if (ev.attacks.length > 0) {
       hurtFlash = 1;
       audio.playThud(1);
-      // Survival (§2.4): each strike deals ZOMBIE_DAMAGE, an alpha's more (§61; zombies.js stays mode-agnostic).
+      // Survival (§2.4): each strike deals ZOMBIE_DAMAGE, an alpha's more (§61, §65; zombies.js stays mode-agnostic).
       if (survival.active) {
         let dmg = 0;
-        for (const zb of ev.attacks) dmg += ZOMBIE_DAMAGE * statsOf(zb).damage;
+        for (const zb of ev.attacks) dmg += ZOMBIE_DAMAGE * damageOf(zb); // an alpha hits softer by day (§65)
         hurt(Math.round(dmg), 'zombie');
       }
     }
@@ -5304,11 +5334,11 @@ export function boot(win, doc) {
     infall.renderItems(pushMoving);
     // §60: loose block items as small spinning cells; every other loose item is a picture (looseRenderer)
     for (const it of loose.list) {
-      if (it.block < 0) continue;
+      if (it.block < 0 || blinkHidden(it, fxTime)) continue;
       const bob = it.mode === 'rest' ? 0.04 + 0.04 * Math.sin(fxTime * 3 + it.spin) : 0;
       pushMoving(it.block, it.x, it.y + bob, it.z, 0.3, it.spin, 0.2, LOOSE_BLOCK_SCALE);
     }
-    looseRenderer.sync(loose.list, fxTime, (it) => it.block >= 0);
+    looseRenderer.sync(loose.list, fxTime, (it) => it.block >= 0 || blinkHidden(it, fxTime));
     fallingRenderer.sync(movingItems, movingCount);
     circuitRenderer.syncMoving(movingItems, movingCount); // devices among them as models: the collapsar's copy, debris
     blackHoles.flash(bhFlash);

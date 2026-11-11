@@ -161,12 +161,12 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 23, 25, 5, 18]);
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 20, 24, 5, 15, 8]); // v0.11: + the Workbench (§67)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
-    expect(toolNeedLabel('hammer', 1)).toBe('Hammerstone+');
-    expect(toolNeedLabel('axe', 1)).toBe('Stone Chopper+');
+    expect(toolNeedLabel('hammer', 1)).toBe('Stone Hammer+');
+    expect(toolNeedLabel('axe', 1)).toBe('Stone Axe+');
     expect(toolNeedLabel('knife', 2)).toBe('Flint Knife+');
     expect(toolNeedLabel('hammer', 4)).toBe('Bronze Hammer+');
     expect(toolNeedLabel('hammer', 6)).toBe('Steel Hammer');
@@ -276,7 +276,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     const drinks = tableById('drinks');
     expect(drinks.keys).toEqual(ITEM_KEYS.filter((k) => ITEMS[k].food?.returns));
     expect(rowOf(drinks, 'pot_seawater').slice(1)).toEqual(['−10', '0', 'salty']);
-    expect(rowOf(drinks, 'pot_water')[3]).toBe('3 % sick');
+    expect(rowOf(drinks, 'pot_water')[3]).toBe('20 % sick'); // v0.11 (§66)
 
     const fire = tableById('fire');
     expect(fire.keys).toEqual(Object.keys(FIRE_TRANSFORMS));
@@ -313,9 +313,10 @@ describe('handbook: generated tables match the game (§14.1)', () => {
 
   it('the workplaces table: what builds each workplace, and its heat while working', () => {
     const t = tableById('workplaces');
-    expect(t.keys).toEqual(['stump', 'kiln', 'bloomery', 'forge']);
+    expect(t.keys).toEqual(['stump', 'kiln', 'bloomery', 'forge', 'workbench']);
+    expect(rowOf(t, 'workbench')[1]).toContain('2 Steel Bar');
     expect(rowOf(t, 'kiln')).toEqual(['Kiln', '8 Clay Lump + 6 Rock', '+12 °C, 4 cells']);
-    expect(rowOf(t, 'stump')[1]).toBe('Any Log (Stone Chopper+)');
+    expect(rowOf(t, 'stump')[1]).toBe('Any Log (Stone Axe+)');
     expect(rowOf(t, 'forge')[1]).toContain('24 Fired Brick');
   });
 
@@ -420,7 +421,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     const kit = firstDayKit();
     expect([kit.rock, kit.knapstone, kit.fibre, kit.sticks, kit.seconds, kit.cords]).toEqual([9, 4, 11, 8, 28, 5]);
     const t = tableById('kit');
-    expect(t.keys).toEqual(['hammerstone', 'stone_chopper', 'cord', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire']);
+    expect(t.keys).toEqual(['stone_hammer', 'stone_axe', 'cord', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire']);
     expect(rowOf(t, 'cord')).toEqual(['Cord ×5', '10 Plant Fibre', '—', '5 s']);
     expect(allProse()).toContain('In all: 9 Rock, 4 Flint, 11 Plant Fibre and 8 Sticks, and 28 seconds of hand jobs.');
   });
@@ -435,11 +436,11 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       expect(row[1].startsWith(picked ? 'R, or hold LMB' : 'hold LMB to ')).toBe(true);
     }
     expect(rowOf(t, BLOCK.TUSSOCK)[1]).toBe('hold LMB to pull it (a knife is faster)');
-    expect(rowOf(t, BLOCK.GRAVEL)[1]).toBe('hold LMB to dig it (a spade is faster)');
+    expect(rowOf(t, BLOCK.GRAVEL)[1]).toBe('hold LMB to dig it (a shovel is faster)');
     expect(rowOf(t, BLOCK.OAK_LEAVES)[1]).toBe('hold LMB to break it (an axe is faster)');
     expect(allProse()).toContain('hold the left mouse button on it until it breaks');
     expect(rowOf(t, BLOCK.LOOSE_STONES)[2]).toBe('1–2 Rock · Flint (50 %, wild only)');
-    expect(rowOf(t, BLOCK.TUSSOCK)[2]).toBe('with a spade: Tussock Grass; with a knife: 2–3 Plant Fibre; otherwise: 1–2 Plant Fibre');
+    expect(rowOf(t, BLOCK.TUSSOCK)[2]).toBe('with a shovel: Tussock Grass; with a knife: 2–3 Plant Fibre; otherwise: 1–2 Plant Fibre');
   });
 
   it('the striking-power table groups the tools by power, with hits for a pig and a zombie', () => {
@@ -447,7 +448,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     expect(rowOf(t, 'hand')[2]).toBe('never: only shoves');
     const powers = [...new Set(ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool').map((k) => ITEMS[k].tool.power))].sort((a, b) => a - b);
     expect(t.keys.slice(1)).toEqual(powers);
-    expect(rowOf(t, 2)[0]).toContain('Stone Chopper');
+    expect(rowOf(t, 2)[0]).toContain('Stone Axe');
     expect(rowOf(t, 2).slice(2)).toEqual(['3', '2']); // a chopper: three blows for a pig (§4.3)
     expect(rowOf(t, 3)[0]).toContain('Flint Spear');
     expect(rowOf(t, 3)[2]).toBe('2');

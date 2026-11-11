@@ -21,7 +21,7 @@ const HANDBOOK_ITEM = 'handbook';
  * One recipe as crafting.listRecipes describes it (§9.8).
  * @typedef {Object} RecipeView
  * @property {string} id
- * @property {string} station  'hand' | 'stump' | 'kiln' | 'bloomery' | 'forge'
+ * @property {string} station  'hand' | 'stump' | 'kiln' | 'bloomery' | 'forge' | 'workbench'
  * @property {{k: string, n: number}} out
  * @property {Array<{k?: string, tag?: string, label: string, need: number, have: number}>} inputs
  * @property {Array<{type: string, tier: number, label: string, ok: boolean}>} tools
@@ -121,9 +121,10 @@ export function stripCells(n, s) {
 export const STATION_TABS = Object.freeze([
   Object.freeze(['all', 'All']), Object.freeze(['hand', 'Hands']), Object.freeze(['stump', 'Stump']),
   Object.freeze(['kiln', 'Kiln']), Object.freeze(['bloomery', 'Bloomery']), Object.freeze(['forge', 'Forge']),
+  Object.freeze(['workbench', 'Bench']),
 ]);
 /** Full names of the workplaces (§7.1), for hints and lane rows. */
-export const STATION_NAMES = Object.freeze({ hand: 'Hands', stump: 'Work Stump', kiln: 'Kiln', bloomery: 'Bloomery', forge: 'Forge' });
+export const STATION_NAMES = Object.freeze({ hand: 'Hands', stump: 'Work Stump', kiln: 'Kiln', bloomery: 'Bloomery', forge: 'Forge', workbench: 'Workbench' });
 
 /** @param {string} id @returns {string} the tab label ('All', 'Hands', 'Stump', …); unknown ids as given */
 export function tabLabel(id) {
@@ -293,7 +294,7 @@ export function demoPackView(opts = {}) {
   /** @type {(ItemStack|null)[]} */
   const slots = Array(PACK_SLOTS).fill(null);
   const put = (i, k, n = 1, d) => { slots[i] = d === undefined ? { k, n } : { k, n, d }; };
-  put(0, 'flint_pick', 1, 51); put(1, 'flint_axe', 1, 18); put(2, 'stone_chopper'); put(3, 'roast_pork', 3);
+  put(0, 'flint_pick', 1, 51); put(1, 'flint_axe', 1, 18); put(2, 'stone_axe'); put(3, 'roast_pork', 3);
   put(4, 'pot_boiled'); put(5, 'campfire', 2); put(6, 'rock', 23); put(7, 'stick', 14); put(8, 'flint_knife', 1, 9);
   put(9, 'plant_fibre', 31); put(10, 'cord', 4); put(11, 'flint', 3); put(12, 'clay_lump', 12); put(13, 'honeyberries', 9);
   put(14, 'oak_log', 6); put(15, 'raw_pork', 2); put(16, 'rawhide', 1); put(17, 'pig_fat', 1); put(19, 'malachite', 5);
@@ -331,6 +332,7 @@ export function demoPackView(opts = {}) {
     stations: [
       { id: 'hand', label: 'Hands', near: true }, { id: 'stump', label: 'Stump', near: true }, { id: 'kiln', label: 'Kiln', near: false },
       { id: 'bloomery', label: 'Bloomery', near: false }, { id: 'forge', label: 'Forge', near: false },
+      { id: 'workbench', label: 'Bench', near: false },
     ],
     tab: opts.tab || 'all',
     recipes,

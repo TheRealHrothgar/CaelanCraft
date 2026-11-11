@@ -329,6 +329,8 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 > **v0.10 amendment (§50):** ids 95–114 (the circuit parts), `BLOCK_COUNT` 115, tiles 160–194, `BlockDef.icon`, `POWDER_KEG` (= BLAST_BARREL 75) and `BLOCK_ALIASES`, BLACK_HOLE unplaceable and unmeshed, `PICKER_ORDER` 99.
 >
 > **v0.10 amendment (§59):** `BlockDef.shape` (`'prism'` default | `'cross'` | `'decal'`) and `getBlockShape(id)`; the wild plants are crossed sprites and the ground litter floor decals.
+>
+> **Light amendment (§62):** GLOWSTONE now really glows: it, the CAMPFIRE and the TORCH emit block light (15, 14, 13); leaves, water and ice dim light (`light.js` LIGHT_EMISSION / LIGHT_OPACITY).
 
 Block ids (`BLOCK.*`): `AIR 0, STONE 1, GRASS_BLOCK 2, DIRT 3, COBBLESTONE 4, OAK_PLANKS 5, BEDROCK 6, WATER 7,
 SAND 8, GRAVEL 9, OAK_LOG 10, OAK_LEAVES 11, GLASS 12, COAL_ORE 13, IRON_ORE 14, GOLD_ORE 15, DIAMOND_ORE 16,
@@ -394,6 +396,8 @@ UV rule: `tileToUV(t)`: `tx = t % 16, ty = floor(t/16)`, `u0 = tx*TILE_UV + UV_I
 `v0 = ty*TILE_UV + UV_INSET` (image top), `v1 = (ty+1)*TILE_UV − UV_INSET` (image bottom).
 
 ## 6. `src/chunk.js` (exact — already written)
+
+> **Light amendment (§62):** a Chunk also has `light` (Uint8Array(CHUNK_VOLUME) | null — sky << 4 | block per cell, same index as `blocks`), `lightTop` (Uint8Array(CHUNK_AREA) | null) and `lightSlot` (−1); World's LightEngine fills them.
 
 ```js
 export class Chunk {
@@ -511,6 +515,8 @@ exposes `gen, pondAt, treeTrunkAt, FLORA_TABLE`. A warm generation-2 chunk is al
 
 ## 9. `src/world.js`
 
+> **Light amendment (§62):** `light` (the LightEngine), `lightAt(q, y, r)` (packed, flushes first), `flushLight()`; update() re-lights the frame's edits first (step 0); `_generate` lights each chunk as it registers it (before onChunkGenerated); setBlock and loaded importEdits note the cell for the next flush; light that changes another meshed chunk dirties it lazily.
+
 ```js
 export class World {
   constructor(opts)   // { seed: string|number, renderDistance?: number = RENDER_DISTANCE, edits?: EditsJSON,
@@ -607,6 +613,8 @@ Missing `performance` (Node < 16) → use `Date.now`. Tests pass `now: () => 0` 
 4. `editCount` is a running count equal to Σ `edits` sizes at all times.
 
 ## 10. `src/mesher.js`
+
+> **Light amendment (§62):** every MeshData layer also carries `light` (Uint8Array, 2 per vertex: sky level · 17, block level · 17), read from the chunks' `light` arrays (open sky without them) and smoothed per vertex over the see-through AO samples in front of the face; a second padded volume like §10.1's holds the levels.
 
 ```js
 export function buildChunkMesh(cq, cr, getChunkData)   // → ChunkMeshData { opaque, cutout, translucent } (null layer when 0 faces)
@@ -898,6 +906,8 @@ below their top edge, drawn with `setTransform` from the 16×16 tile; the top ti
 (x 3..29, y 1..17) clipped to the hexagon. Shades use `source-atop` so transparent texels stay transparent.
 
 ## 17. `src/renderer.js` (three)
+
+> **Light amendment (§62):** `setLightField(field | null)`; `buildLayerGeometry` adds the `caelLight` attribute; the three chunk materials are patched by `lightShader.applyChunkLight` and every other lit material by `installObjectLighting` (sun, moon and sky × the sky level's brightness, block light added, a floor in the dark); `setSky` also sets the `caelDaylight` uniform.
 
 ```js
 export function createRenderer(canvas, atlasTexture, opts = {})   // opts: { sunCanvas?, moonCanvas?, renderDistance? }
@@ -2972,7 +2982,7 @@ export const BLOCK_RULES                      // index = block id: { h (s by han
 export function ruleFor(id), canHarvest(id, tool), breakSeconds(id, tool, underwater) /* Infinity = cannot */, harvestHint(id)
 export function rollDrops(id, tool, { natural, knifeInPack }, random) → ItemStack[]   // aggregated by key; [] when it cannot
 export const PICKABLE; export function isPickable(id), pick(id, ctx, random) → { to, drops } | null
-export const HAND_GATHER /* id → 'pull' | 'dig' */, DIG_TOOL_TYPES /* axe spade pick knife hammer */
+export const HAND_GATHER /* id → 'pull' | 'dig' */, DIG_TOOL_TYPES /* axe shovel pick knife hammer */
 export function handGatherHint(id) → 'Tussock Grass · hold LMB: pull' | null, withArticle(noun) → 'an iron hammer'
 export function tap(id, selectedKey, knifeInPack) → { gives: 'pot_sap', takes: 'clay_pot', wears: 'knife' } | null
 export class Tapped { canTap(key, day), mark(key, day), clear() }          // once per birch cell per game day; not saved
@@ -2999,7 +3009,7 @@ out: wear does not reset a dig, a tool breaking does); `useActionOf(stack)` (RMB
 wear (needS 0, once) / place); `placeRefusal(getBlock, id, q, y, r)` (`needs solid ground` for a pop-off block over a non-solid
 cell); `strikeKind(mob, tool)` (bare hands only shove a pig); `chooseBelongingsCell` (§45); `buildPackView` (§48); `HINT`,
 `STATION_OF_BLOCK`, `STATION_TABS`, `KNIFE_TIER` 2, `waterHint`; v0.9 play-test: `relightMissing(pack) → ['a fire drill', 'tinder',
-'2 more sticks']` (what a relight still lacks, RELIGHT_STICKS 3), `wearsFromDigging(tool)` (an axe, spade, pick, knife or hammer:
+'2 more sticks']` (what a relight still lacks, RELIGHT_STICKS 3), `wearsFromDigging(tool)` (an axe, shovel, pick, knife or hammer:
 `harvest.DIG_TOOL_TYPES`), `wearsFromStriking(tool)` (everything but `KIT_TOOL_TYPES` firestarter / crucible / mold).
 **`interactKind(ctx)`** — R in Survival, the first that applies: 1 CAMPFIRE → `fire_put` (a skewer food or centre pot selected and a
 free spot of that kind) / `fire_feed` (a stick or `#log`) / `fire_take` / `fire_hint`; 2 FIRE_PIT → `pit_take` / `pit_relight`
@@ -3264,7 +3274,7 @@ stations or the tab change.
    `playDig(group, 0.35)` and 3 dust motes `{ id }` at the hit face; a block the hand cannot break: a dull `playDig(group, 0.15)` every
    0.5 s). **Finishing**, in order: `natural = !world.hasEdit` (BEFORE), `rollDrops`, `pack.canGive(drops + container contents + fire
    spots)` else the hint `Pack full` and the dig stays complete, the break `playerSetBlock(AIR)` inside `releaseToPack = true`,
-   `playBreak`, the drops with pickup tokens, 1 wear on the selected tool when it is a digging tool (`wearsFromDigging`: axe, spade,
+   `playBreak`, the drops with pickup tokens, 1 wear on the selected tool when it is a digging tool (`wearsFromDigging`: axe, shovel,
    pick, knife, hammer — a spear, a sword and the kiln kit never wear from a dig; a blow that lands wears all but the kit,
    `wearsFromStriking`) ("Your Flint Axe broke." + `playToolBreak`). RMB → the
    Handbook opens at once; a block item places (Creative's rules, `placeRefusal`'s `needs solid ground`, `pack.consume(selected, 1)`,
@@ -3806,6 +3816,174 @@ painted, unused).
   −0.3) and sways, lurching LURCH −0.32 × sin(π·swing/SWING_S) after a strike; the arms reach out (1.5 rad + a bob, minus
   0.6 × lean) — a runner's pump instead — and swipe up 0.55 rad in a strike; the head lolls by `tilt` and looks up against the
   lean. `renderScale` / `renderSpin` as before. The atlas argument is ignored.
+
+## 62. Light — sky and block light per cell (`src/light.js` PURE, `src/lightShader.js` three; chunk, world, mesher, renderer, main)
+
+Amends §1, §5, §6, §9, §10, §17 and §23. Being underground is dark in the daytime; glowstone, campfires and torches light
+what is around them. Before this, chunk faces were lit only by the DirectionalLight (sun / moon) and the HemisphereLight, so
+a cave at noon was as bright as the surface.
+
+- **Levels.** Every cell has a SKY level and a BLOCK level, 0..LIGHT_MAX (15). A lit chunk holds them in `chunk.light`
+  (Uint8Array(CHUNK_VOLUME), index = localIndex, one byte = `sky << 4 | block`), with `chunk.lightTop` (per column: the
+  lowest y of the unbroken run of sky-15 cells from the top of the world, WORLD_HEIGHT when the top cell is dark) and
+  `chunk.lightSlot` (the engine's handle). `FULL_SKY = 0xF0` (15, 0) is what unloaded space, a chunk without light and
+  everything above the world read as; below the world reads 0. The light is cached with the chunk and goes when it unloads.
+- **Propagation** (`LIGHT_OPACITY[id]`, `LIGHT_EMISSION[id]`): a breadth-first flood over a cell's 8 neighbours (6 sides,
+  up, down). Entering a cell costs `max(1, opacity)` levels; opacity LIGHT_MAX (every `isOpaque` block) takes no light.
+  Sky light enters at the top of the world at 15 and **falls straight down for free** from a sky-15 cell into a cell of
+  opacity 0 (air, glass, plants, litter, campfire, thin parts, device models), so an open column is 15 down to the first
+  opaque or dimming cell; from there it floods sideways and down. Leaves (`isLeaves`), the whole water family and ice have
+  opacity 1 (LEAVES_ / WATER_ / ICE_LIGHT_OPACITY): no free fall through them — a lake's floor d cells down gets 15 − d,
+  the column under a single leaf is lit sideways at 14. Emitters hold their level in their own cell, opaque or not:
+  GLOWSTONE 15, CAMPFIRE 14, TORCH 13 (GLOWSTONE_LIGHT, CAMPFIRE_LIGHT, TORCH_LIGHT; the Torch always burns,
+  circuitParts). A cold FIRE_PIT, the FILAMENT_LAMP and every other block emit nothing.
+- **`LightEngine(source)`** (`source.getChunkData(cq, cr)`; World is the source): `lightChunk(chunk)` → Chunk[] — the sky
+  column pass, the emitters, seeds only where light can move (a lit cell beside a darker see-through one, inside the chunk
+  and both ways across every border with a loaded, lit hex neighbour), then one flood, which may brighten the neighbours
+  too; `releaseChunk(chunk)`; `clear()`; `noteChange(chunk, li)` (a written cell, after the write); `flush()` → Chunk[] —
+  every noted cell is darkened and the standard removal flood runs with the old levels (a neighbour no brighter than the
+  lost level goes dark too, and so does a sky-15 cell straight below a lost 15; brighter ones re-seed), then the emitters,
+  the top of the world and every noted cell's neighbours re-seed one flood, and the edited columns' `lightTop` is
+  recomputed; `hasPending`, `chunkCount`, `version` (bumps whenever a level changed); `get(q, y, r)` (packed), `skyAt`,
+  `blockAt`, `sampleWorld(x, y, z)`; `fillVolume(q0, r0, n, out)` (layout `((dq·n) + dr)·WORLD_HEIGHT + y`; FULL_SKY where
+  nothing is lit). Both operations return the chunks whose meshes may show the change: a changed cell's chunk and, for a
+  cell on a chunk border, the chunks across it (their faces sample it). Helpers: `lightOpacity(id)`, `lightEmission(id)`,
+  `skyLevel(p)`, `blockLevel(p)`, `lightBrightness(level)` = x / (1 + LIGHT_CURVE_K·(1 − x)) with x = level / 15 (1 at 15,
+  0.5 at 12, 0.18 at 7, 0 at 0) — the curve the shaders use.
+- **Unloaded neighbours count as nothing** (no cells, no light), not as sky-lit borders. Adding a chunk can then only ADD
+  light anywhere, so loading never needs a removal pass, and the result does not depend on the order chunks load in (tested
+  against a brute-force reference). Light that should arrive from a chunk that is not loaded yet arrives when it loads, and
+  the meshed chunks it reaches re-mesh lazily. A meshed chunk always has its six hex neighbours loaded (§9.1), so only light
+  routed through a neighbour from two chunks away (a corner path, rare) can arrive late. Light an unloaded chunk gave its
+  neighbours stays there (the same light returns when it reloads; an edit near the border re-floods it from what is loaded).
+- **World** (§9): `world.light`; `_generate` lights each chunk as it registers it (before `onChunkGenerated`) and lazily
+  dirties every OTHER meshed chunk the light reached; `setBlock` (and `importEdits` into a loaded chunk) notes the cell;
+  **`update()` starts with `flushLight()`** (step 0, before unloading and meshing), so every mesh it builds sees light that
+  matches its blocks, and a batch of physics writes is re-lit once per frame, not once per write. Chunks dirtied only by
+  light are dirtied lazily ('coalesce' when every write of the batch was a 'coalesce' one); the written cells' own chunks
+  keep the write's flag (§9.2), so a player's edit and the light around it re-mesh at once. `lightAt(q, y, r)` flushes
+  first.
+- **Mesher** (§10): every layer has `light` (Uint8Array, 2 per vertex, sky·17 and block·17: whole levels are exact, 255 =
+  15). A second padded 18×18×WORLD_HEIGHT volume is filled from the chunks' `light` (FULL_SKY without). A vertex's level is
+  the MEAN over the face's front cell — the face's own cell when the front is opaque (a lowered water surface under a block)
+  — and those AO samples that are not opaque: a side vertex adds the third cell, the front cell at ly ± 1 and the third
+  cell at ly ± 1 (that diagonal only when the two sides are not both opaque); a cap corner adds its two side cells at
+  ly ± 1; the cap centre is the mean of its corners. Cross plants and decals use their own cell's level. An emitter's own
+  faces carry at least its emission (glowstone's faces are 255). Why per-vertex smoothing rather than one level per face:
+  it reuses the AO samples, costs ≈ 0.4 ms of a real chunk's ≈ 3.2 ms, and flat per-face levels show hard hexagonal steps
+  across every floor and wall a light falls on.
+- **Shaders** (`lightShader.js`): `applyChunkLight(material)` (the three chunk materials: attribute `caelLight` →
+  `vCaelLight`, cache key 'caelancraft-chunk-light'); `installObjectLighting()` (createRenderer, once per page) gives
+  `THREE.Material.prototype` an onBeforeCompile that patches every MeshLambert / Phong / Standard / Toon material WITHOUT one
+  of its own — pigs, zombies, the Watcher, falling blocks and loose block items, campfire and circuit models — to read
+  `vCaelLight` per vertex from the **light volume**: an R8 `Data3DTexture` of LIGHT_VOLUME_QR × LIGHT_VOLUME_QR columns
+  (q, r) × WORLD_HEIGHT around the camera (width = y, height = r, depth = q; the packed byte), sampled at the vertex's world
+  position + 0.3 along its normal, or 0.5 above it when that is brighter (feet on a floor, a block on the ground); outside
+  the volume everything reads open sky. Fragment (both): `caelSky = curve(sky)`, `caelBlock = curve(block) · (1 −
+  BLOCK_LIGHT_DAY_WASH · caelDaylight · caelSky)`; three's `lights_fragment_begin` is patched so the DirectionalLight colour
+  (and a SunLight's) and every HemisphereLight irradiance are × caelSky, and the irradiance gains `BLOCK_LIGHT_COLOR` (sRGB
+  → linear) × BLOCK_LIGHT_INTENSITY × caelBlock + LIGHT_FLOOR × (1 − caelSky) — through the material's diffuse term, so ×
+  the texture albedo and the vertex colour (shade, AO, tint). PointLights (the campfire pool, the flash) are untouched. The
+  day / night cycle stays in the lights' computeSky intensities and the `caelDaylight` uniform (SkyState.daylight): nothing
+  re-meshes when the time changes. Sky 15 with no block light ⇒ caelSky = 1 and nothing added: the surface by day and by
+  night looks exactly as before. `patchLightsFragmentBegin` throws when three's chunk has lost one of its anchors (tests
+  check the installed three).
+- **Renderer** (§17): `setLightField(field | null)` (`{ version, fillVolume }`; null → the volume is off: open sky);
+  `render()` keeps the volume centred: refilled when the camera's cell is LIGHT_VOLUME_RECENTRE (hex distance) from its
+  centre, or — at most every LIGHT_VOLUME_MIN_S — when `version` changed. `buildLayerGeometry` adds `caelLight`
+  (normalised Uint8 × 2; a layer without `light` gets open sky, 255 / 0). `setSky` sets `caelDaylight`.
+- **Main** (§23): `renderer.setLightField(world.light)` right after creating the world. Nothing else.
+- **Config** (section "Light (§62)"): LIGHT_MAX, GLOWSTONE_LIGHT, CAMPFIRE_LIGHT, TORCH_LIGHT, LEAVES_LIGHT_OPACITY,
+  WATER_LIGHT_OPACITY, ICE_LIGHT_OPACITY, LIGHT_CURVE_K, LIGHT_FLOOR, BLOCK_LIGHT_COLOR, BLOCK_LIGHT_INTENSITY,
+  BLOCK_LIGHT_DAY_WASH, LIGHT_VOLUME_QR, LIGHT_VOLUME_RECENTRE, LIGHT_VOLUME_MIN_S.
+- **Imports** (§1): light → config, hex, blocks; lightShader → three, config; world → … + light; mesher → … + light;
+  renderer → … + lightShader. Tests: `tests/unit/light.test.js`.
+- **Cost**: lighting a real worldgen chunk takes ≈ 0.6–1 ms in Node, outside worldgen and the mesher (their ≤ 8 ms and
+  ≤ 25 ms budgets are unchanged); an edit's flush is a local flood; a volume refill copies 64·64 columns and uploads 512 KB.
+- **Not yet** (follow-ups): the Filament Lamp's light (its brightness lives in circuits.js; it needs an emission hook and a
+  `noteChange` when a lamp crosses lit / unlit — pitfall 33: at most a few re-meshes a second); burning fuses and kegs;
+  coloured block light; the campfire's PointLight now adds to its block light (kept for the flicker).
+## 63. Loose item despawns — `src/looseItems.js`
+
+Amends §60. A real item lying loose (`fly` or `rest`: thrown, dropped, turned away by a full pack, or loaded from a save)
+ages by dt while its column is loaded (`LooseItem.age`; drops flying home and ghosts never age; frozen items do not age).
+
+- **Timer**: at LOOSE_DESPAWN_S 300 it despawns (`env.onDespawn(it, 'time')`). For the last LOOSE_BLINK_S 10 it blinks:
+  `blinkHidden(it, time)` is true for every other 1 / (2 × LOOSE_BLINK_HZ 4) s, and both main's block-item loop and
+  looseRenderer skip it then.
+- **Fire**: a real item whose centre is in a lit fire (`env.burning`; main: the cell is a CAMPFIRE) despawns at once
+  (`'fire'`: main puffs smoke and plays the sizzle).
+- **Cap**: after each step, past LOOSE_MAX 256 real items the oldest lying ones (by age) despawn (`'cap'`).
+- **Clear**: `despawnNear(x, y, z, radius = Infinity, onDespawn?)` despawns the lying real items within radius (`'clear'`)
+  and returns how many; drops flying home and ghosts are spared. Command `despawn [radius]` (radius 0–256; none: all) —
+  around the player from the console, around the rune's cell from a Rune Block (so a rune trigger can sweep an area);
+  through `ctx.loose.despawnNear`; without `loose` it fails.
+- **Save**: `survival.loose` entries gain `a` (whole seconds lying loose, 1–LOOSE_AGE_MAX 300; 0 is not written), in the
+  key order `k, n, d?, a?, x, y, z`; `load` restores it as the age.
+
+## 64. Normative tool names — `src/items.js` and everything that names a tool
+
+The tools carry their everyday names (amends §43–§47 and every table that lists them): `hammerstone` → **`stone_hammer`**
+"Stone Hammer", `stone_chopper` → **`stone_axe`** "Stone Axe", `digging_stick` → **`wooden_shovel`** "Wooden Shovel", every
+`*_spade` → **`*_shovel`** "… Shovel", and the tool type `spade` → **`shovel`** (TOOL_TYPES, harvest rules, recipe tool
+requirements, itemArt's TOOL_ART and paintShovel). Recipe ids follow their outputs. Old keys read through `ITEM_ALIASES`
+(`canonicalItemKey`): saved pack, wear, basket, remains and loose stacks and typed item names (`pack add hammerstone`) land
+on the new keys. Prose in CONTRACTS, DESIGN-survival and the handbook uses the new names.
+
+## 65. Zombies by day and by night; leaps — `src/zombies.js`, `src/zombieRenderer.js`
+
+Amends §39 and §61. **Daylight no longer burns zombies**: `burn` stays 0, `smoking` false, `events.ignited` and
+`events.burned` stay empty (kept for compatibility). The sun check still sets `exposed` (open sky, out of water, by day), and
+`daylit = exposed`; a zombie in shade, underground or at night is at full strength.
+
+- **Dormant walkers** (`isDormant(zb)`: a walker, daylit, `provoked` 0, not `rallied`): `_think` keeps it idle in place (no
+  wandering), and `_canChase` wakes it only for a player within WALKER_WAKE_RANGE 4 (instead of ZOMBIE_SIGHT). `hit` and
+  `knock` set `provoked = PROVOKE_S 20` (it counts down each update); a walker within ALPHA_RALLY of an alpha is rallied.
+  The renderer draws a dormant walker with its arms hanging (reach 0.12) and its head drooped (−0.45 rad).
+- **Gait** (`gaitOf(zb)` → `{ chase, sprint, factor }`): a daylit runner shambles — `{ ZOMBIE_CHASE_SPEED, no sprint, 1 }` —
+  but keeps the normal sight and reach; a daylit alpha keeps `chase 1` with DAY_ALPHA_FACTOR 0.82; otherwise its kind's
+  stats (a rallied walker chases at 1). **Damage** (`damageOf(zb)`): an alpha's DAY_ALPHA_DAMAGE 1.25 by day, else its
+  kind's; main hurts `round(Σ ZOMBIE_DAMAGE × damageOf)`.
+- **Leaps** (`maxClimb(zb)` from CLIMB): walker 1 / 1, runner 2 at night / 1 by day, alpha 4 at night / 2 by day (cells).
+  `_climbAt(zb, getBlock, q, fy, r)` → the height of the solid run starting at the cell ahead when it is ≤ maxClimb, with
+  two open cells on top and, for a leap of 2 or more, open cells over its own column up to fy + h + 1; else 0. `_safeAhead`
+  accepts a climbable wall; in `update` a wall of 1 is the normal hop (`input.jump`), one of h ≥ 2 sets
+  `vy = sqrt(2 × −GRAVITY × (h + LEAP_MARGIN 0.35))` from the ground.
+
+## 66. Raw water poisons; boiling makes it safe — `src/vitals.js`, `src/items.js`, `src/survival.js`
+
+Amends §45 (sickness, gulps) and §43 (food). Sickness is now called **Poisoned** (the status label; hud maps it to the
+`sick` class). Its rates and effects stand (SICK_S 45 s per case up to SICK_MAX, SICK_DPS 0.15 HP/s never below SICK_FLOOR
+10, no regeneration, hunger and thirst ×SICK_FACTOR 1.6), and every case now also hits at once: `makeSick` adds
+POISON_THIRST −8 Hydration and POISON_HUNGER −4 Nourishment (clamped). Raw water is the risk: a hand gulp of fresh water
+poisons with GULP_FRESH_SICK **0.06** (was 0.01); a Pot of Water (`pot_water`) with `sick` **0.2** (was 0.03). Boiling stays
+the cure: `pot_water` on a campfire's centre spot becomes `pot_boiled` (sick 0) in 15 s (cooking FIRE_TRANSFORMS, unchanged).
+`SICK_MESSAGE` is "Your stomach turns: you are poisoned."; the first raw-water poisoning of a session (a gulp, or a Pot of
+Water) also logs `BOIL_TIP`. The handbook's numbers follow from the constants.
+
+## 67. The Workbench — advanced circuits come later (`src/blocks.js`, `src/tiles.js`, `src/crafting.js` and the station lists)
+
+Amends §47, §50 and DESIGN-circuits §8.2. A new workplace block **WORKBENCH 115** (`workbench`, "Workbench", appended so ids
+stay positional; **BLOCK_COUNT 116**), a solid wood-sounding prism with tiles **195 `workbench_side`** (the bench front:
+oak top, drawers with brass knobs, an iron vice, a coil of copper wire, legs before a dark recess) and **196
+`workbench_top`** (planks with a flask, a wire coil, a cell and screws), bottom OAK_PLANKS (TILE_IDS 152). It is a station
+everywhere the others are: `isStation`, crafting `STATION_IDS` (… 'forge', **'workbench'**), `STATION_BLOCKS`,
+`STATION_NAMES` ("Workbench"), survivalControl `STATION_OF_BLOCK` / `STATION_TABS` and packUI `STATION_TABS` (tab
+"Bench"), the picker's Workplaces family and PICKER_ORDER (after FORGE; 100 entries), harvest (axe tier 1, 3.0 s, drops
+itself), and the handbook's workplace and recipe tables.
+
+- **Recipe**: `workbench` at hand — 5 #planks + 2 steel_bar + 2 glass + 12 copper_wire + 2 tin_ingot, hammer 5, 20 s (after
+  the Forge).
+- **At the Workbench** (8), each built on an elementary part: relay (knife_switch + wrought_iron + 6 copper_wire, hammer 4),
+  selenium_panel (terminal_board + selenium + glass + 3 copper_wire), igniter (terminal_board + carbon_filament + 2
+  copper_wire + fired_brick), clockwork_timer (terminal_board + steel_bar + 3 bronze_ingot + glass, hammer 5),
+  electric_bell (push_button + relay + steel_bar, hammer 4), blasting_machine (push_button + terminal_board + 2 steel_bar +
+  12 copper_wire, hammer 5), spark_transmitter (push_button + relay + voltaic_battery + 12 copper_wire + 2 bronze_ingot,
+  hammer 3), coherer_receiver (relay + terminal_board + glass + 6 iron_filings, hammer 3).
+- **Unchanged**: the elementary parts (knife_switch, push_button, terminal_board, voltaic_battery at the stump), the
+  consumables (powder_fuse, torch and the wires at hand; copper_wire, black_powder, iron_filings and the powder_keg at the
+  stump), the filament_lamp (bloomery) and the materials. 116 recipes: hand 44, stump 20, kiln 24, bloomery 5, forge 15,
+  workbench 8.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

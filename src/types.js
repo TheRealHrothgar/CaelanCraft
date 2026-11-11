@@ -29,6 +29,8 @@
  * @property {Float32Array} normals    3 per vertex, unit face normals (hex.FACE_NORMALS)
  * @property {Float32Array} uvs        2 per vertex, atlas UVs (flipY = false convention)
  * @property {Float32Array} colors     3 per vertex, 0..1 = tint * FACE_SHADE * AO_CURVE
+ * @property {Uint8Array}   [light]    2 per vertex (§62): sky level · 17, block level · 17 (0..255, normalised in the shader);
+ *                                     the mesher always writes it, hand-made MeshData may leave it out (read as open sky)
  * @property {Uint32Array}  indices    6 per side quad, 18 per hexagonal top/bottom face
  * @property {number} vertexCount
  * @property {number} indexCount
@@ -163,7 +165,7 @@
 
 /**
  * @typedef {Object} ToolDef
- * @property {string} type        one of items.TOOL_TYPES ('hammer', 'axe', 'spade', 'knife', 'pick', 'spear', 'sword',
+ * @property {string} type        one of items.TOOL_TYPES ('hammer', 'axe', 'shovel', 'knife', 'pick', 'spear', 'sword',
  *                                'firestarter', 'crucible', 'mold')
  * @property {number} tier        0..6, index into items.TIER_NAMES / TIER_SPEED
  * @property {number} durability  uses when new
@@ -231,7 +233,7 @@
  * @property {(ItemStack|null)[]} pack   PACK_SLOTS (27) entries
  * @property {(ItemStack|null)[]} wear   WEAR_SLOTS (3) entries: head, body, feet
  * @property {FireSlotsJSON} fires
- * @property {{ k: string, n: number, d?: number, x: number, y: number, z: number }[]} [loose]  v0.10 (CONTRACTS §60) the items lying
+ * @property {{ k: string, n: number, d?: number, a?: number, x: number, y: number, z: number }[]} [loose]  v0.10 (CONTRACTS §60, §63) the items lying
  *   loose in the world; absent = none
  */
 

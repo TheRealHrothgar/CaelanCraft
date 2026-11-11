@@ -351,7 +351,7 @@ describe('count, take and tags', () => {
 
 describe('tools: choice, wear and breaking (§5.3)', () => {
   it('hasTool needs the type and a tier ≥ minTier', () => {
-    const p = packWith({ 5: { k: 'flint_knife', n: 1 }, 6: { k: 'stone_chopper', n: 1 } });
+    const p = packWith({ 5: { k: 'flint_knife', n: 1 }, 6: { k: 'stone_axe', n: 1 } });
     expect(p.hasTool('knife', 2)).toBe(true);
     expect(p.hasTool('knife', 3)).toBe(false);
     expect(p.hasTool('axe', 1)).toBe(true);
@@ -362,7 +362,7 @@ describe('tools: choice, wear and breaking (§5.3)', () => {
   });
 
   it('useTool picks the lowest qualifying tier', () => {
-    const p = packWith({ 0: { k: 'bronze_hammer', n: 1 }, 1: { k: 'copper_hammer', n: 1 }, 2: { k: 'hammerstone', n: 1 } });
+    const p = packWith({ 0: { k: 'bronze_hammer', n: 1 }, 1: { k: 'copper_hammer', n: 1 }, 2: { k: 'stone_hammer', n: 1 } });
     expect(p.findTool('hammer', 3)).toBe(1);
     expect(p.useTool('hammer', 3)).toEqual({ key: 'copper_hammer', broke: false });
     expect(p.slots[1]).toEqual({ k: 'copper_hammer', n: 1, d: 159 });
@@ -928,7 +928,7 @@ describe('§14.2 the handbook stays with you (KEEP_ON_DEATH)', () => {
 describe('Pack.canExchange: room once the inputs are gone (§7.2 "Pack full")', () => {
   it('a recipe that gives back the slot it takes fits a full pack (play-test: scrape_salt waited "Pack full" for ever)', () => {
     const pack = new Pack();
-    for (let i = 0; i < PACK_SLOTS; i++) pack.setSlot(i, { k: i === 0 ? 'salt_pot' : 'hammerstone', n: 1 });
+    for (let i = 0; i < PACK_SLOTS; i++) pack.setSlot(i, { k: i === 0 ? 'salt_pot' : 'stone_hammer', n: 1 });
     expect(pack.canGive([{ k: 'salt', n: 1 }, { k: 'clay_pot', n: 1 }])).toBe(false);
     // once the salt pot is taken its slot is free; salt and the pot both need a slot, so only one of the two outputs fits …
     expect(pack.canExchange([['salt_pot', 1]], [{ k: 'salt', n: 1 }, { k: 'clay_pot', n: 1 }])).toBe(false);
@@ -943,7 +943,7 @@ describe('Pack.canExchange: room once the inputs are gone (§7.2 "Pack full")', 
     const pack = new Pack();
     pack.setSlot(0, { k: 'rock', n: 5 });
     pack.setSlot(26, { k: 'rock', n: 2 });
-    for (let i = 1; i < 26; i++) pack.setSlot(i, { k: 'hammerstone', n: 1 });
+    for (let i = 1; i < 26; i++) pack.setSlot(i, { k: 'stone_hammer', n: 1 });
     // taking 2 rock empties slot 26 only; a stick then fits there
     expect(pack.canExchange([['rock', 2]], [{ k: 'stick', n: 1 }])).toBe(true);
     // taking 1 rock leaves slot 26 with one rock: no free slot for the stick

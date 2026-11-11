@@ -566,7 +566,7 @@ sticks.
 **Pigs.**
 - **Health:** in Survival a pig has `PIG_HEALTH` = 5.
 - **Bare hands never wound a pig.** A bare-hand hit calls `pigs.hit` (a shove; the pig flees). Any held tool wounds it with its
-  power (§5.1): a Stone Chopper (2) kills in three hits, a Flint Spear (3) in two.
+  power (§5.1): a Stone Axe (2) kills in three hits, a Flint Spear (3) in two.
 - **Drops**, straight into the pack: Raw Pork 2–3, Rawhide 1, Pig Fat 1 (60 %).
 - **On death** the pig is removed with a grey-pink dust puff and a squeal. No gore.
 - **Repopulation** (Survival active only), every `PIG_REPOP_CHECK_S` = 150 s in daylight:
@@ -716,16 +716,16 @@ peeled first.
 
 | Tier | Item keys (type) | Durability | Power |
 |---|---|---|---|
-| 1 stone | hammerstone (hammer), stone_chopper (axe), digging_stick (spade) | 60, 40, 40 | 1, 2, 1 |
-| 2 flint | flint_knife (knife), flint_axe, flint_pick, flint_spade, flint_spear (spear) | 70, 90, 90, 90, 60 | 1, 2, 1, 1, 3 |
-| 3 copper | copper_knife, copper_axe, copper_pick, copper_spade, copper_hammer | 140, 160, 160, 160, 160 | 2, 2, 1, 1, 1 |
-| 4 bronze | bronze_knife, bronze_axe, bronze_pick, bronze_spade, bronze_hammer, bronze_sword | 260, 320 ×4, 280 | 2, 3, 1, 1, 1, 3 |
-| 5 iron | iron_knife, iron_axe, iron_pick, iron_spade, iron_hammer, iron_sword | 500, 600 ×4, 550 | 3, 3, 1, 1, 1, 4 |
-| 6 steel | steel_knife, steel_axe, steel_pick, steel_spade, steel_hammer, steel_sword | 1000, 1200 ×4, 1100 | 3, 4, 1, 1, 1, 5 |
+| 1 stone | stone hammer (hammer), stone_axe (axe), wooden_shovel (shovel) | 60, 40, 40 | 1, 2, 1 |
+| 2 flint | flint_knife (knife), flint_axe, flint_pick, flint_shovel, flint_spear (spear) | 70, 90, 90, 90, 60 | 1, 2, 1, 1, 3 |
+| 3 copper | copper_knife, copper_axe, copper_pick, copper_shovel, copper_hammer | 140, 160, 160, 160, 160 | 2, 2, 1, 1, 1 |
+| 4 bronze | bronze_knife, bronze_axe, bronze_pick, bronze_shovel, bronze_hammer, bronze_sword | 260, 320 ×4, 280 | 2, 3, 1, 1, 1, 3 |
+| 5 iron | iron_knife, iron_axe, iron_pick, iron_shovel, iron_hammer, iron_sword | 500, 600 ×4, 550 | 3, 3, 1, 1, 1, 4 |
+| 6 steel | steel_knife, steel_axe, steel_pick, steel_shovel, steel_hammer, steel_sword | 1000, 1200 ×4, 1100 | 3, 4, 1, 1, 1, 5 |
 | 0 | fire_drill (firestarter) · crucible (crucible) · casting_mold (mold) | 8 · 20 · 12 | 1 |
 
-Display names are "Hammerstone", "Stone Chopper", "Digging Stick", "Flint Knife", …, "Steel Sword", "Fire Drill", "Crucible"
-and "Casting Mold". *A hammerstone is the fist-sized cobble every knapper strikes flint with: flint cannot be shaped without
+Display names are "Stone Hammer", "Stone Axe", "Wooden Shovel", "Flint Knife", …, "Steel Sword", "Fire Drill", "Crucible"
+and "Casting Mold". *A stone hammer is the fist-sized cobble every knapper strikes flint with: flint cannot be shaped without
 one, so the stone tier is a real step.*
 
 **Tags** (`TAGS`). A tag is taken from its members in the order listed:
@@ -880,7 +880,7 @@ seconds = max(0.05, rule.h / speed) × (underwater ? 2.5 : 1)          // underw
    as soon as there is room and the button is still held).
 4. Break the cell with `playerSetBlock(…, AIR)` inside `releaseToPack = true`.
 5. `playBreak`; give the drops (each flies to its slot as a hex token, §9.8).
-6. The selected tool takes 1 wear — when it is a digging tool (`wearsFromDigging`: an axe, spade, pick, knife or hammer). A spear
+6. The selected tool takes 1 wear — when it is a digging tool (`wearsFromDigging`: an axe, shovel, pick, knife or hammer). A spear
    or sword never wears from a dig, and neither does the kiln kit (fire drill, crucible, casting mold: `wearsFromStriking` false
    too) — a freshly fired mold lands in the hotbar, often the selected hand, and digging eight blocks of clay with it destroyed it
    (play-test).
@@ -905,8 +905,8 @@ seconds = max(0.05, rule.h / speed) × (underwater ? 2.5 : 1)          // underw
    - **fallen branches** → 2–3 Sticks;
    - gravel → 2 Rock;
    - tussock → 1–2 Plant Fibre.
-2. **Hand-made at once:** Cord (2 fibre) and a **Hammerstone** (1 rock). With the hammerstone: the **Stone Chopper** (2 rock, an
-   axe of tier 1, which fells trees and lops branches) and the knapped flint tools — Knife, Axe, Spade, Spear and **Flint Pick**
+2. **Hand-made at once:** Cord (2 fibre) and a **Stone Hammer** (1 rock). With the stone_hammer: the **Stone Axe** (2 rock, an
+   axe of tier 1, which fells trees and lops branches) and the knapped flint tools — Knife, Axe, Shovel, Spear and **Flint Pick**
    (tier 2: stone, coal, copper ore, obsidian and gems). Also the Fire Drill.
 3. **Felling:** a log needs an axe of at least tier 1. Stone needs a pick of at least tier 2. *There is no stone pick, so a
    flint pick is the first way into rock, as in prehistory.*
@@ -918,8 +918,8 @@ Columns:
 - **tier** = the minimum tier with that tool (0 = hands allowed).
 
 **Drops notation.** Drops are written as groups separated by `·`. Each group gives at most one **branch**, the first whose
-condition holds: `spade → …; knife → …; else → …`. A group with no condition always gives. Conditions:
-- a tool type (`spade`, `knife`, `axe`, `pick`) — the selected tool has that type;
+condition holds: `shovel → …; knife → …; else → …`. A group with no condition always gives. Conditions:
+- a tool type (`shovel`, `knife`, `axe`, `pick`) — the selected tool has that type;
 - `knife in pack` — a knife of tier ≥ 2 is anywhere in the pack;
 - `natural` (on an item) — only if the cell had no edit **before** the break (§6.1). *Chance drops come only from untouched
   cells, so placing a block and digging it again cannot farm them.*
@@ -930,25 +930,25 @@ condition holds: `spade → …; knife → …; else → …`. A group with no c
 
 | Blocks | h | tool | tier | Drops |
 |---|---|---|---|---|
-| DIRT | 0.9 | spade | 0 | self |
-| GRASS_BLOCK | 1.0 | spade | 0 | spade → self; else → dirt + plant_fibre p 0.2 natural |
-| SNOWY_GRASS | 1.0 | spade | 0 | spade → self; else → dirt + snow 1 natural |
-| SAND, RED_SAND | 0.8 | spade | 0 | self |
-| GRAVEL | 1.2 | spade | 0 | spade → self; else → rock 2 |
-| CLAY | 1.4 | spade | 0 | clay_lump 6 |
-| SNOW_BLOCK | 0.5 | spade | 0 | snow 6 |
+| DIRT | 0.9 | shovel | 0 | self |
+| GRASS_BLOCK | 1.0 | shovel | 0 | shovel → self; else → dirt + plant_fibre p 0.2 natural |
+| SNOWY_GRASS | 1.0 | shovel | 0 | shovel → self; else → dirt + snow 1 natural |
+| SAND, RED_SAND | 0.8 | shovel | 0 | self |
+| GRAVEL | 1.2 | shovel | 0 | shovel → self; else → rock 2 |
+| CLAY | 1.4 | shovel | 0 | clay_lump 6 |
+| SNOW_BLOCK | 0.5 | shovel | 0 | snow 6 |
 | ICE | 1.0 | pick | 0 | pick → ice_chunk 2; else → ice_chunk 1 |
 | PACKED_ICE | 2.0 | pick | 2 | ice_chunk 3 |
 | LOOSE_STONES | 0.2 | — | 0 | rock [1,2] · flint p 0.5 natural |
 | FALLEN_BRANCHES | 0.2 | — | 0 | stick [2,3] |
 | OAK_LEAVES, SPRUCE_LEAVES, BIRCH_LEAVES | 0.4 | axe | 0 | axe → self + stick 1 natural; else → nothing · oak: acorns p 0.08 natural · spruce: pine_nuts p 0.08 natural |
-| HONEYBERRY_BUSH | 0.5 | spade | 0 | spade → honeyberry_bush · honeyberries [2,4] · stick [1,2] |
-| HONEYBERRY_BUSH_BARE | 0.5 | spade | 0 | spade → honeyberry_bush · stick [1,2] |
-| PRICKLY_PEAR | 0.5 | spade | 0 | spade → prickly_pear · knife in pack → cactus_fruit [1,2]; else → unpeeled_cactus_fruit [1,2] |
-| PRICKLY_PEAR_BARE | 0.5 | spade | 0 | spade → prickly_pear |
-| TUSSOCK | 0.2 | knife | 0 | spade → self; knife → plant_fibre [2,3]; else → plant_fibre [1,2] |
-| CATTAILS | 0.3 | knife | 0 | spade → self; knife → plant_fibre 3 + cattail_root p 0.5; else → plant_fibre 2 + cattail_root p 0.3 |
-| TUBER_PLANT | 0.4 | spade | 0 | spade → wild_tuber [2,3] + plant_fibre 1; else → wild_tuber 1 + plant_fibre 1 |
+| HONEYBERRY_BUSH | 0.5 | shovel | 0 | shovel → honeyberry_bush · honeyberries [2,4] · stick [1,2] |
+| HONEYBERRY_BUSH_BARE | 0.5 | shovel | 0 | shovel → honeyberry_bush · stick [1,2] |
+| PRICKLY_PEAR | 0.5 | shovel | 0 | shovel → prickly_pear · knife in pack → cactus_fruit [1,2]; else → unpeeled_cactus_fruit [1,2] |
+| PRICKLY_PEAR_BARE | 0.5 | shovel | 0 | shovel → prickly_pear |
+| TUSSOCK | 0.2 | knife | 0 | shovel → self; knife → plant_fibre [2,3]; else → plant_fibre [1,2] |
+| CATTAILS | 0.3 | knife | 0 | shovel → self; knife → plant_fibre 3 + cattail_root p 0.5; else → plant_fibre 2 + cattail_root p 0.3 |
+| TUBER_PLANT | 0.4 | shovel | 0 | shovel → wild_tuber [2,3] + plant_fibre 1; else → wild_tuber 1 + plant_fibre 1 |
 | OAK_LOG, SPRUCE_LOG | 3.0 | axe | 1 | self |
 | BIRCH_LOG | 3.0 | axe | 1 | self · birch_bark p 0.5 natural |
 | *_PLANKS, BOOKSHELF | 2.0 / 1.5 | axe | 1 | self |
@@ -1107,13 +1107,13 @@ Notation:
 | id | inputs → outputs | tools | s |
 |---|---|---|---|
 | cord | 2 plant_fibre → cord | | 1 |
-| hammerstone | rock → hammerstone | | 1 |
-| stone_chopper | 2 rock → stone_chopper | hammer≥1 | 3 |
-| digging_stick | stick → digging_stick | axe≥1 | 2 |
+| stone hammer | rock → stone hammer | | 1 |
+| stone_axe | 2 rock → stone_axe | hammer≥1 | 3 |
+| wooden_shovel | stick → wooden_shovel | axe≥1 | 2 |
 | flint_knife | #knapstone + stick + cord → flint_knife | hammer≥1 | 3 |
 | flint_axe | #knapstone + stick + cord → flint_axe | hammer≥1 | 4 |
 | flint_pick | 2 #knapstone + stick + 2 cord → flint_pick | hammer≥1 | 5 |
-| flint_spade | #knapstone + stick + cord → flint_spade | hammer≥1 | 4 |
+| flint_shovel | #knapstone + stick + cord → flint_shovel | hammer≥1 | 4 |
 | flint_spear | #knapstone + 2 stick + cord → flint_spear | hammer≥1 | 3 |
 | fire_drill | 2 stick + cord → fire_drill | | 2 |
 | campfire | 6 rock + 3 stick + #tinder → campfire | firestarter≥0 | 5 |
@@ -1177,8 +1177,8 @@ Notation:
 | bronze_ingot | 7 copper_ingot + tin_ingot + 3 #fuel → 8 bronze_ingot | crucible | 45 |
 | copper_block | 7 copper_ingot + #fuel → copper_block | crucible | 30 |
 | gold_block | 7 gold_nugget + 2 #fuel → gold_block | crucible | 40 |
-| copper_{knife,spade,axe,hammer,pick} | N copper_ingot + S stick + #fuel | crucible, mold | 25 |
-| bronze_{knife,spade,axe,hammer,pick,sword} | N bronze_ingot + S stick + #fuel | crucible, mold | 30 |
+| copper_{knife,shovel,axe,hammer,pick} | N copper_ingot + S stick + #fuel | crucible, mold | 25 |
+| bronze_{knife,shovel,axe,hammer,pick,sword} | N bronze_ingot + S stick + #fuel | crucible, mold | 30 |
 
 *In the charcoal job the logs themselves smoulder; it takes no other fuel. Bronze is 7 : 1, 12.5 % tin, the classic tool
 bronze; a full bronze kit (11 ingots) is two batches. Casting a tool remelts ingots, so it needs the crucible as well as the
@@ -1199,9 +1199,9 @@ mold.*
 
 | id | inputs → outputs | tools | s |
 |---|---|---|---|
-| iron_{knife,spade,axe,hammer,pick,sword} | N wrought_iron + S stick + charcoal | hammer≥4 | 30 |
+| iron_{knife,shovel,axe,hammer,pick,sword} | N wrought_iron + S stick + charcoal | hammer≥4 | 30 |
 | steel_bar | wrought_iron + 2 charcoal → steel_bar | hammer≥5 | 45 |
-| steel_{knife,spade,axe,hammer,pick,sword} | N steel_bar + S stick + charcoal | hammer≥5 | 40 |
+| steel_{knife,shovel,axe,hammer,pick,sword} | N steel_bar + S stick + charcoal | hammer≥5 | 40 |
 | iron_block | 7 wrought_iron → iron_block | hammer≥4 | 20 |
 | diamond_block | 7 rough_gem → diamond_block | hammer≥6 | 20 |
 
@@ -1210,7 +1210,7 @@ mold.*
 | Tool | N | S |
 |---|---|---|
 | knife | 1 | 1 |
-| spade | 1 | 1 |
+| shovel | 1 | 1 |
 | axe | 2 | 1 |
 | hammer | 2 | 1 |
 | pick | 2 | 2 |
@@ -1227,8 +1227,8 @@ the player gathers ore, fuel and food nearby.
 1. **Hands.** Loose stones give rock and flint, fallen branches give sticks, tussock gives fibre. Bushes, ponds, birch sap and
    nuts give food and water.
 2. **Stone, flint and fire.**
-   - Tools: **Hammerstone → Stone Chopper → knapped flint tools** (knife, axe, spade, spear and **pick**). *Flint is knapped
-     with a hammerstone; there is no way around the stone step.*
+   - Tools: **Stone Hammer → Stone Axe → knapped flint tools** (knife, axe, shovel, spear and **pick**). *Flint is knapped
+     with a stone hammer; there is no way around the stone step.*
    - Fire: the Fire Drill, then a campfire, for warmth, cooking and boiling. It must be fed.
 3. **Wood, hide and clay.**
    - The Work Stump: planks, split sticks, leather, clothing, the Sleeping Hide and bellows.
@@ -1248,14 +1248,14 @@ the player gathers ore, fuel and food nearby.
    - Steel brings speed (`TIER_SPEED` 6) and durability, not exclusive blocks. *Obsidian and gems need only a flint pick.*
 
 ### 7.5 A first day, as playtested on paper
-**The starting kit**, counted: Hammerstone, Stone Chopper, Flint Knife, Flint Axe, Flint Pick, Fire Drill and a Campfire need
-**9 rock, 4 knapstone, 11 plant fibre** (5 cord and 1 tinder) **and 8 sticks**, and 28 s of hand jobs. The flint spade and spear
+**The starting kit**, counted: Stone Hammer, Stone Axe, Flint Knife, Flint Axe, Flint Pick, Fire Drill and a Campfire need
+**9 rock, 4 knapstone, 11 plant fibre** (5 cord and 1 tinder) **and 8 sticks**, and 28 s of hand jobs. The flint shovel and spear
 (2 more flint) can wait for day two.
 
 Times are real time from a new world's 07:12 start (1 game hour = 25 s), on plains:
 - **0:00 (07:12), spawn.** Pull 8 tussocks (0.2 s each, about 12 fibre). On the way, pick up loose stones and dig 3 gravel tops
   by hand (1.2 s each): about 10 rock and 1–2 flint, all within 10 cells.
-- **1:00 (09:36).** Hammerstone, Stone Chopper and 5 Cord (9 s of hand jobs, made while walking). Lop 8 leaf cells with the
+- **1:00 (09:36).** Stone Hammer, Stone Axe and 5 Cord (9 s of hand jobs, made while walking). Lop 8 leaf cells with the
   chopper (0.27 s each) for 8 sticks.
 - **1:00–2:30.** Walk a 15-cell circle for more loose stones. Plains hold about 1.2 % of them, so ≈ 9 lie within 15 cells: about
   4 flint in all. Eat honeyberries on the way, and drink at a pond by hand.
@@ -2022,10 +2022,10 @@ accents.
 **`itemArt.js`.** `paintItem(key) → Uint8ClampedArray(1024)` (16×16 RGBA, a deterministic per-key rng like tiles.js), plus
 `ITEM_ART_KEYS`. Unknown keys get the magenta checker. Art rules:
 - **Tools are upright**, centred for the pointy-top slot: the haft in columns 7–8, the working end at the top (axe, pick,
-  hammer, knife, spear, sword) or at the bottom (spade). The tier shows in the head colour **and** the binding: a cord wrap
+  hammer, knife, spear, sword) or at the bottom (shovel). The tier shows in the head colour **and** the binding: a cord wrap
   (stone, flint), a cast socket ring (copper, bronze), a forged eye with a rivet pixel (iron, steel). Colours: stone grey,
   flint #3b3f4a with a pale cortex, copper #c8743a, bronze #b08d3a, iron #8a8f96, steel #c9d3dc with a blue glint. The
-  hammerstone is a plain cobble with a pale strike scar.
+  stone hammer is a plain cobble with a pale strike scar.
 - **Ingots** are **hexagonal bars**.
 - **Ores:** mineral lumps in their mineral's colours.
 - **Pots:** a hex-rimmed pot; filled pots show a water, sea-green, sap-amber or snow fill.
@@ -2169,7 +2169,7 @@ own them; I's version bump touches W0's and E's files only after every merge.
   - `breakSeconds` for each row family and the "cannot" cases;
   - `rollDrops` with a seeded rng: branches and groups, `knife in pack`, aggregation; `natural` comes **from the argument**:
     natural loose stones give flint at about 50 % over 400 seeded rolls, and never when `natural` is false; leaves by hand give
-    no stick; plants give `self` only with a spade;
+    no stick; plants give `self` only with a shovel;
   - every `PICKABLE` row; `tap` and `Tapped` (once per cell per day);
   - Regrowth: track/untrack, the 4096 cap, loadFromEdits, probability over many 1 s steps, unloaded cells frozen;
   - spoilage: rate against `spoilS`, never-spoiling items untouched;
@@ -2277,7 +2277,7 @@ own them; I's version bump touches W0's and E's files only after every merge.
   2. **First day** (`survival.test.js`, pure modules only), built from §7.5:
      - start from an empty pack in a fake world with loose stones, gravel tops, tussock and leaves;
      - harvest (seeded) the kit and assert that **9 rock, 4 knapstone, 11 plant fibre and 8 sticks** make, in order, the
-       hammerstone, the chopper, 5 cord, the flint knife, axe and pick, the fire drill and a campfire, in 28 s of hand jobs,
+       stone hammer, the chopper, 5 cord, the flint knife, axe and pick, the fire drill and a campfire, in 28 s of hand jobs,
        with nothing left over;
      - mine a STONE cell with the flint pick in 1.5 s;
      - drink at a fake pond with all nine hotbar slots full;
@@ -2335,12 +2335,12 @@ Survival is a genre, and Caelancraft's version must be its own. These rules bind
   workplace. There is no grid, no shaped recipe, and no "crafting table", "furnace", "chest", "bed", "bucket" or "torch". We
   use real historical names: Work Stump, Kiln, Bloomery, Forge, Wicker Basket, Sleeping Hide, Clay Pot.
 - **Not like the realism mods.** Primitive-tech mods have knapping grids, percentage alloy windows and anvil mini-games. We have
-  none of those: knapping is a plain recipe that needs a hammerstone, bronze is fixed 7 : 1 (12.5 % tin) in a crucible, and the
+  none of those: knapping is a plain recipe that needs a stone hammer, bronze is fixed 7 : 1 (12.5 % tin) in a crucible, and the
   hammer is a required tool, not a mini-game. Clay is "greenware" before firing, the potter's word.
 - **The look is hexagonal:** the rosette pack, the hex hotbar, the vitals bookends, breath on the Health cell's border, the
   hex dig trace, hexagonal ingots, the Forge's hex anvil face, the hex-knot belongings tag.
-- **Our own words.** Nourishment and Hydration; body temperature with a felt-temperature trend; "Spade"; Malachite,
-  Cassiterite, Hematite; Rock, Flint, Cord, Hammerstone; "Your Belongings"; "Wake up"; `mode` and `pack add` in the console.
+- **Our own words.** Nourishment and Hydration; body temperature with a felt-temperature trend; "Shovel"; Malachite,
+  Cassiterite, Hematite; Rock, Flint, Cord, Stone Hammer; "Your Belongings"; "Wake up"; `mode` and `pack add` in the console.
 - **Familiar tropes avoided.** Oak does not drop apples; mining stone gives Rock; zombies drop a Grave Rag, which must be boiled;
   there are no golden or diamond tools, and gems and obsidian need only a flint pick.
 

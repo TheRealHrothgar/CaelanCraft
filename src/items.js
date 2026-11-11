@@ -19,7 +19,7 @@ export const TIER_NAMES = Object.freeze(['hand', 'stone', 'flint', 'copper', 'br
 export const TIER_SPEED = Object.freeze([1, 1.5, 2, 2.6, 3.4, 4.5, 6]);
 /** Every `ToolDef.type`, in the order the tool table first uses them. */
 export const TOOL_TYPES = Object.freeze([
-  'hammer', 'axe', 'spade', 'knife', 'pick', 'spear', 'sword', 'firestarter', 'crucible', 'mold',
+  'hammer', 'axe', 'shovel', 'knife', 'pick', 'spear', 'sword', 'firestarter', 'crucible', 'mold',
 ]);
 /** The three wear slots, index = wear slot (`Pack.wear[i]`). */
 export const WEAR_SLOT_NAMES = Object.freeze(['head', 'body', 'feet']);
@@ -42,40 +42,40 @@ const BLOCK_ITEM_STACK = 64;
  */
 const TOOL_ROWS = [
   // tier 1, stone
-  ['hammerstone', 'Hammerstone', 'hammer', 1, 60, 1],
-  ['stone_chopper', 'Stone Chopper', 'axe', 1, 40, 2],
-  ['digging_stick', 'Digging Stick', 'spade', 1, 40, 1],
-  // tier 2, flint (knapped with the hammerstone)
+  ['stone_hammer', 'Stone Hammer', 'hammer', 1, 60, 1],
+  ['stone_axe', 'Stone Axe', 'axe', 1, 40, 2],
+  ['wooden_shovel', 'Wooden Shovel', 'shovel', 1, 40, 1],
+  // tier 2, flint (knapped with the stone hammer)
   ['flint_knife', 'Flint Knife', 'knife', 2, 70, 1],
   ['flint_axe', 'Flint Axe', 'axe', 2, 90, 2],
   ['flint_pick', 'Flint Pick', 'pick', 2, 90, 1],
-  ['flint_spade', 'Flint Spade', 'spade', 2, 90, 1],
+  ['flint_shovel', 'Flint Shovel', 'shovel', 2, 90, 1],
   ['flint_spear', 'Flint Spear', 'spear', 2, 60, 3],
   // tier 3, copper
   ['copper_knife', 'Copper Knife', 'knife', 3, 140, 2],
   ['copper_axe', 'Copper Axe', 'axe', 3, 160, 2],
   ['copper_pick', 'Copper Pick', 'pick', 3, 160, 1],
-  ['copper_spade', 'Copper Spade', 'spade', 3, 160, 1],
+  ['copper_shovel', 'Copper Shovel', 'shovel', 3, 160, 1],
   ['copper_hammer', 'Copper Hammer', 'hammer', 3, 160, 1],
   // tier 4, bronze
   ['bronze_knife', 'Bronze Knife', 'knife', 4, 260, 2],
   ['bronze_axe', 'Bronze Axe', 'axe', 4, 320, 3],
   ['bronze_pick', 'Bronze Pick', 'pick', 4, 320, 1],
-  ['bronze_spade', 'Bronze Spade', 'spade', 4, 320, 1],
+  ['bronze_shovel', 'Bronze Shovel', 'shovel', 4, 320, 1],
   ['bronze_hammer', 'Bronze Hammer', 'hammer', 4, 320, 1],
   ['bronze_sword', 'Bronze Sword', 'sword', 4, 280, 3],
   // tier 5, iron
   ['iron_knife', 'Iron Knife', 'knife', 5, 500, 3],
   ['iron_axe', 'Iron Axe', 'axe', 5, 600, 3],
   ['iron_pick', 'Iron Pick', 'pick', 5, 600, 1],
-  ['iron_spade', 'Iron Spade', 'spade', 5, 600, 1],
+  ['iron_shovel', 'Iron Shovel', 'shovel', 5, 600, 1],
   ['iron_hammer', 'Iron Hammer', 'hammer', 5, 600, 1],
   ['iron_sword', 'Iron Sword', 'sword', 5, 550, 4],
   // tier 6, steel
   ['steel_knife', 'Steel Knife', 'knife', 6, 1000, 3],
   ['steel_axe', 'Steel Axe', 'axe', 6, 1200, 4],
   ['steel_pick', 'Steel Pick', 'pick', 6, 1200, 1],
-  ['steel_spade', 'Steel Spade', 'spade', 6, 1200, 1],
+  ['steel_shovel', 'Steel Shovel', 'shovel', 6, 1200, 1],
   ['steel_hammer', 'Steel Hammer', 'hammer', 6, 1200, 1],
   ['steel_sword', 'Steel Sword', 'sword', 6, 1100, 5],
   // tier 0: kit that wears out but cuts nothing
@@ -134,7 +134,8 @@ const FOOD_ROWS = [
   ['salted_pork', 'Salted Pork', 16, { satiation: 18, hydration: -6, sick: 0, useS: 1.4 }], // keeps; no fire needed
   ['pig_fat', 'Pig Fat', 16, { satiation: 6, hydration: -2, sick: 0.1, useS: 1.2 }],
   ['snow', 'Snow', 32, { satiation: 0, hydration: 3, sick: 0, useS: 0.6, temp: -0.2 }],
-  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.03, useS: 1.0, returns: 'clay_pot' }],
+  // v0.11 (CONTRACTS §66): unboiled water poisons you one time in five; boil it on a campfire (Pot of Boiled Water: safe)
+  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.2, useS: 1.0, returns: 'clay_pot' }],
   ['pot_boiled', 'Pot of Boiled Water', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_seawater', 'Pot of Seawater', 1, { satiation: 0, hydration: -10, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_sap', 'Pot of Birch Sap', 1, { satiation: 2, hydration: 25, sick: 0, useS: 1.0, returns: 'clay_pot' }],
@@ -228,10 +229,17 @@ export const ITEM_KEYS = Object.freeze([...BY_KEY.keys()]);
 
 /**
  * Old item keys still found in saves (DESIGN-circuits §8.3): `black_hole` is no longer placeable, so it is no longer an
- * item — a stack of it is the Collapsar Charge; `blast_barrel` is the Powder Keg's old name. Saved pack, wear, basket and
+ * item — a stack of it is the Collapsar Charge; `blast_barrel` is the Powder Keg's old name; v0.11 renamed the tools to
+ * their everyday names (hammerstone → stone_hammer, stone_chopper → stone_axe, digging_stick → wooden_shovel, *_spade →
+ * *_shovel; CONTRACTS §64). Saved pack, wear, basket and
  * remains stacks (storage.js, inventory.js, containers.js) and typed item names (resolveItem) read through it.
  */
-export const ITEM_ALIASES = Object.freeze({ black_hole: 'collapsar_charge', blast_barrel: 'powder_keg' });
+export const ITEM_ALIASES = Object.freeze({
+  black_hole: 'collapsar_charge', blast_barrel: 'powder_keg',
+  // v0.11 normative tool names (CONTRACTS §64)
+  hammerstone: 'stone_hammer', stone_chopper: 'stone_axe', digging_stick: 'wooden_shovel', flint_spade: 'flint_shovel',
+  copper_spade: 'copper_shovel', bronze_spade: 'bronze_shovel', iron_spade: 'iron_shovel', steel_spade: 'steel_shovel',
+});
 
 /** @param {*} key @returns {*} the current key of a possibly old one (anything else unchanged) */
 export function canonicalItemKey(key) {

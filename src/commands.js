@@ -102,6 +102,7 @@ export const COMMANDS = Object.freeze([
   { name: 'blackholes', usage: 'blackholes [status|on|off|list]', summary: 'count the black holes, list the nearest, or switch them on / off for this world (saved)', args: ['choice:status|on|off|list'], min: 0 },
   // v0.10 hands (CONTRACTS §60): the Q and G keys as commands
   { name: 'drop', usage: 'drop [count|all]', summary: 'drop the item in hand in front of you (default 1; Q, Shift+Q for the stack)', args: ['word'], min: 0, consoleOnly: true },
+  { name: 'despawn', usage: 'despawn [radius]', summary: 'remove the items lying loose within radius cells of you (a rune: of itself); no radius: all of them', args: ['num'], min: 0 },
   { name: 'throw', usage: 'throw [count]', summary: 'throw the item in hand where you look (G): rocks sting, darts and spears hurt, the rest is chucked a short way', args: ['int'], min: 0, consoleOnly: true },
 ]);
 
@@ -305,6 +306,7 @@ export function resolveBlock(token) {
  *                                            ignite falls back to physics.explosions)
  * @property {BlackHoleCommands} [blackHoles] absent without black holes (`blackholes` then fails)
  * @property {HandCommands} [hands]           absent where nothing can be held (drop / throw then fail)
+ * @property {{ despawnNear(x: number, y: number, z: number, radius: number): number }} [loose]  the loose items (despawn)
  */
 
 /**
@@ -1100,6 +1102,20 @@ function run(spec, args, ctx) {
       return circuitCommand(spec, args, ctx);
     case 'blackholes':
       return blackHolesCommand(spec, args, ctx);
+    case 'despawn': {
+      if (!ctx.loose) return fail(spec, 'there are no loose items here');
+      const radius = args.length === 1 ? Number(args[0]) : Infinity;
+      if (!(radius === Infinity || (Number.isFinite(radius) && radius > 0 && radius <= 256))) return fail(spec, 'radius must be 0–256');
+      let x = ctx.player.x;
+      let y = ctx.player.y + 1;
+      let z = ctx.player.z;
+      if (ctx.rune) {
+        [x, z] = hexToWorld(ctx.rune.q, ctx.rune.r);
+        y = ctx.rune.y + 0.5;
+      }
+      const n = ctx.loose.despawnNear(x, y, z, radius);
+      return ok(n === 0 ? 'no loose items there' : `despawned ${n} loose item${n === 1 ? '' : 's'}`);
+    }
     case 'drop':
     case 'throw': {
       if (!ctx.hands) return fail(spec, 'nothing can be held here');

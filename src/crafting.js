@@ -50,7 +50,7 @@ import { TAGS, TIER_NAMES, TOOL_TYPES, isItemKey, itemName } from './items.js';
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** Every station id, in lane order (the order of the Making panel's tabs after `All`). */
-export const STATION_IDS = Object.freeze(['hand', 'stump', 'kiln', 'bloomery', 'forge']);
+export const STATION_IDS = Object.freeze(['hand', 'stump', 'kiln', 'bloomery', 'forge', 'workbench']);
 
 /** Station id → the block that is that workplace (`hand` has none: it is always there). */
 export const STATION_BLOCKS = Object.freeze({
@@ -58,6 +58,7 @@ export const STATION_BLOCKS = Object.freeze({
   kiln: BLOCK.KILN,
   bloomery: BLOCK.BLOOMERY,
   forge: BLOCK.FORGE,
+  workbench: BLOCK.WORKBENCH, // v0.11 (CONTRACTS §67)
 });
 
 /** Station id → its name in chips, hints and messages ("Kiln too far", "build a Work Stump nearby"). */
@@ -67,6 +68,7 @@ export const STATION_NAMES = Object.freeze({
   kiln: 'Kiln',
   bloomery: 'Bloomery',
   forge: 'Forge',
+  workbench: 'Workbench',
 });
 
 /** @type {Map<number, string>} workplace block id → station id */
@@ -139,7 +141,7 @@ function parseTools(text) {
 }
 
 /** Metal tool amounts (§7.3): [tool, metal N, sticks S]. */
-const METAL_TOOLS = Object.freeze([['knife', 1, 1], ['spade', 1, 1], ['axe', 2, 1], ['hammer', 2, 1], ['pick', 2, 2], ['sword', 3, 1]]);
+const METAL_TOOLS = Object.freeze([['knife', 1, 1], ['shovel', 1, 1], ['axe', 2, 1], ['hammer', 2, 1], ['pick', 2, 2], ['sword', 3, 1]]);
 
 /** @returns {Array<[string, string, string, string, string, number]>} the metal tool rows of one station */
 function metalToolRows(station, metal, ingot, tools, extra, toolsText, seconds) {
@@ -152,13 +154,13 @@ function metalToolRows(station, metal, ingot, tools, extra, toolsText, seconds) 
 const RECIPE_ROWS = [
   // ---- Hand (37)
   ['cord', 'hand', '2 plant_fibre', 'cord', '', 1],
-  ['hammerstone', 'hand', 'rock', 'hammerstone', '', 1],
-  ['stone_chopper', 'hand', '2 rock', 'stone_chopper', 'hammer 1', 3],
-  ['digging_stick', 'hand', 'stick', 'digging_stick', 'axe 1', 2],
+  ['stone_hammer', 'hand', 'rock', 'stone_hammer', '', 1],
+  ['stone_axe', 'hand', '2 rock', 'stone_axe', 'hammer 1', 3],
+  ['wooden_shovel', 'hand', 'stick', 'wooden_shovel', 'axe 1', 2],
   ['flint_knife', 'hand', '#knapstone + stick + cord', 'flint_knife', 'hammer 1', 3],
   ['flint_axe', 'hand', '#knapstone + stick + cord', 'flint_axe', 'hammer 1', 4],
   ['flint_pick', 'hand', '2 #knapstone + stick + 2 cord', 'flint_pick', 'hammer 1', 5],
-  ['flint_spade', 'hand', '#knapstone + stick + cord', 'flint_spade', 'hammer 1', 4],
+  ['flint_shovel', 'hand', '#knapstone + stick + cord', 'flint_shovel', 'hammer 1', 4],
   ['flint_spear', 'hand', '#knapstone + 2 stick + cord', 'flint_spear', 'hammer 1', 3],
   ['flint_dart', 'hand', 'flint + stick + plant_fibre', '4 flint_dart', 'hammer 1', 2],
   ['fire_drill', 'hand', '2 stick + cord', 'fire_drill', '', 2],
@@ -196,7 +198,8 @@ const RECIPE_ROWS = [
   ['white_wire', 'hand', '6 copper_wire + 6 plant_fibre', '6 white_wire', '', 5],
   ['brown_wire', 'hand', '6 copper_wire + 6 plant_fibre + acorns', '6 brown_wire', '', 6], // an oak-tannin dyed braid
   ['earth_wire', 'hand', '6 copper_wire + 6 plant_fibre + malachite', '6 earth_wire', '', 6], // the green braid
-  ['selenium_panel', 'hand', 'selenium + glass + 3 copper_wire + #planks', 'selenium_panel', '', 8],
+  // v0.11 (CONTRACTS §67): the Workbench itself — steel, glass, drawn copper and tin: it comes after the Forge
+  ['workbench', 'hand', '5 #planks + 2 steel_bar + 2 glass + 12 copper_wire + 2 tin_ingot', 'workbench', 'hammer 5', 20],
   // ---- Work Stump (12); riving a log into sticks is real work: there is no planks-to-sticks shortcut
   ['oak_planks', 'stump', 'oak_log', '3 oak_planks', 'axe 2', 3],
   ['spruce_planks', 'stump', 'spruce_log', '3 spruce_planks', 'axe 2', 3],
@@ -219,9 +222,6 @@ const RECIPE_ROWS = [
   ['voltaic_battery', 'stump', '6 copper_ingot + 6 tin_ingot + 6 plant_fibre + pot_seawater', 'voltaic_battery + clay_pot', 'hammer 3', 12],
   ['knife_switch', 'stump', '3 rock + copper_ingot + 2 copper_wire', 'knife_switch', 'hammer 3', 6], // a slate base
   ['push_button', 'stump', 'rock + bronze_ingot + 2 copper_wire', 'push_button', 'hammer 3', 5],
-  ['relay', 'stump', 'wrought_iron + 6 copper_wire + #planks', 'relay', 'hammer 4', 10],
-  ['spark_transmitter', 'stump', 'relay + 12 copper_wire + 2 bronze_ingot + voltaic_battery', 'spark_transmitter', 'hammer 3', 15],
-  ['coherer_receiver', 'stump', 'glass + 6 iron_filings + relay + 2 copper_wire', 'coherer_receiver', 'hammer 3', 12],
   // ---- Kiln (21; every recipe burns fuel — in the charcoal job the logs themselves smoulder)
   ['charcoal', 'kiln', '6 #log', '8 charcoal', '', 40],
   ['clay_pot', 'kiln', 'greenware_pot + #fuel', 'clay_pot', '', 15],
@@ -234,13 +234,12 @@ const RECIPE_ROWS = [
   ['copper_block', 'kiln', '7 copper_ingot + #fuel', 'copper_block', 'crucible 0', 30],
   ['gold_block', 'kiln', '7 gold_nugget + 2 #fuel', 'gold_block', 'crucible 0', 40],
   // casting a tool remelts ingots, so it needs the crucible as well as the mold
-  ...metalToolRows('kiln', 'copper', 'copper_ingot', ['knife', 'spade', 'axe', 'hammer', 'pick'], '#fuel', 'crucible 0, mold 0', 25),
-  ...metalToolRows('kiln', 'bronze', 'bronze_ingot', ['knife', 'spade', 'axe', 'hammer', 'pick', 'sword'], '#fuel', 'crucible 0, mold 0', 30),
+  ...metalToolRows('kiln', 'copper', 'copper_ingot', ['knife', 'shovel', 'axe', 'hammer', 'pick'], '#fuel', 'crucible 0, mold 0', 25),
+  ...metalToolRows('kiln', 'bronze', 'bronze_ingot', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], '#fuel', 'crucible 0, mold 0', 30),
   // v0.10 circuits (§8.2): roasting pyrite drives sulfur off (FeS₂ → FeS + S); its residue held Berzelius's selenium (1817)
   ['sulfur', 'kiln', '3 pyrite + #fuel', '2 sulfur', '', 25],
   ['selenium', 'kiln', '6 pyrite + 2 #fuel', '3 sulfur + selenium', '', 40],
   ['carbon_filament', 'kiln', '3 plant_fibre + #fuel', '3 carbon_filament', '', 15], // Swan's carbonised thread
-  ['igniter', 'kiln', 'clay_lump + wrought_iron + 2 copper_wire + #fuel', 'igniter', '', 15], // a bridgewire in fired clay
   // ---- Bloomery (4); salt is the flux that lets sand melt
   ['iron_bloom', 'bloomery', '3 hematite + 4 charcoal', 'iron_bloom', '', 40],
   ['wrought_iron', 'bloomery', 'iron_bloom + charcoal', 'wrought_iron', 'hammer 4', 25],
@@ -249,16 +248,22 @@ const RECIPE_ROWS = [
   // v0.10 circuits (§8.2): the lamp's glass is sealed hot
   ['filament_lamp', 'bloomery', 'glass + 3 carbon_filament + copper_wire + #planks', 'filament_lamp', '', 20],
   // ---- Forge (15; charcoal only: carbon matters for iron)
-  ...metalToolRows('forge', 'iron', 'wrought_iron', ['knife', 'spade', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 4', 30),
+  ...metalToolRows('forge', 'iron', 'wrought_iron', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 4', 30),
   ['steel_bar', 'forge', 'wrought_iron + 2 charcoal', 'steel_bar', 'hammer 5', 45],
-  ...metalToolRows('forge', 'steel', 'steel_bar', ['knife', 'spade', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 5', 40),
+  ...metalToolRows('forge', 'steel', 'steel_bar', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 5', 40),
   ['iron_block', 'forge', '7 wrought_iron', 'iron_block', 'hammer 4', 20],
   ['diamond_block', 'forge', '7 rough_gem', 'diamond_block', 'hammer 6', 20],
   // v0.10 circuits (§8.2): the magneto, the clock spring and the bell's gong are steel. The Collapsar Charge has no recipe:
   // nothing real makes one
-  ['blasting_machine', 'forge', '2 steel_bar + 12 copper_wire + 3 #planks + stick', 'blasting_machine', 'hammer 5', 30],
-  ['clockwork_timer', 'forge', 'steel_bar + 3 bronze_ingot + glass + 2 copper_wire + #planks', 'clockwork_timer', 'hammer 5', 30],
-  ['electric_bell', 'forge', 'steel_bar + relay + #planks', 'electric_bell', 'hammer 4', 15],
+  // ---- Workbench (v0.11, CONTRACTS §67): the advanced devices, each built on the elementary parts made at the stump
+  ['relay', 'workbench', 'knife_switch + wrought_iron + 6 copper_wire', 'relay', 'hammer 4', 10],
+  ['selenium_panel', 'workbench', 'terminal_board + selenium + glass + 3 copper_wire', 'selenium_panel', '', 8],
+  ['igniter', 'workbench', 'terminal_board + carbon_filament + 2 copper_wire + fired_brick', 'igniter', '', 15], // a bridgewire
+  ['clockwork_timer', 'workbench', 'terminal_board + steel_bar + 3 bronze_ingot + glass', 'clockwork_timer', 'hammer 5', 30],
+  ['electric_bell', 'workbench', 'push_button + relay + steel_bar', 'electric_bell', 'hammer 4', 15],
+  ['blasting_machine', 'workbench', 'push_button + terminal_board + 2 steel_bar + 12 copper_wire', 'blasting_machine', 'hammer 5', 30],
+  ['spark_transmitter', 'workbench', 'push_button + relay + voltaic_battery + 12 copper_wire + 2 bronze_ingot', 'spark_transmitter', 'hammer 3', 15],
+  ['coherer_receiver', 'workbench', 'relay + terminal_board + glass + 6 iron_filings', 'coherer_receiver', 'hammer 3', 12],
 ];
 
 /** @returns {Recipe} a checked, frozen recipe (throws on a typo, so a bad table fails at import) */

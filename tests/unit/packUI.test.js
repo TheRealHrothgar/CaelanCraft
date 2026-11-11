@@ -136,7 +136,7 @@ describe('label formatters', () => {
   });
 
   it('stations, tabs, hints, jobs, tools', () => {
-    expect(STATION_TABS.map(([, l]) => l)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge']);
+    expect(STATION_TABS.map(([, l]) => l)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge', 'Bench']);
     expect(tabLabel('kiln')).toBe('Kiln');
     expect(tabLabel('all')).toBe('All');
     expect(stationName('stump')).toBe('Work Stump');
@@ -151,9 +151,9 @@ describe('label formatters', () => {
   });
 
   it('a required tool shows the cheapest tool that qualifies', () => {
-    expect(toolIconKey('axe', 1)).toBe('stone_chopper');
+    expect(toolIconKey('axe', 1)).toBe('stone_axe');
     expect(toolIconKey('axe', 2)).toBe('flint_axe');
-    expect(toolIconKey('hammer', 1)).toBe('hammerstone');
+    expect(toolIconKey('hammer', 1)).toBe('stone_hammer');
     expect(toolIconKey('hammer', 4)).toBe('bronze_hammer');
     expect(toolIconKey('knife', 2)).toBe('flint_knife');
     expect(toolIconKey('firestarter', 0)).toBe('fire_drill');
@@ -332,7 +332,7 @@ describe('the pack screen on a page', () => {
     const v = demoPackView();
     ui.open(v);
     const tabs = root.querySelectorAll('.making-tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge']);
+    expect(tabs.map((t) => t.textContent)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge', 'Bench']);
     expect(tabs[0].classList.contains('active')).toBe(true);
     expect(tabs[3].classList.contains('far')).toBe(true);
     expect(tabs[3].title).toBe('build a Kiln nearby');

@@ -422,3 +422,19 @@ export const INFALL_VIEW_RANGE = 48;                // eaten blocks farther than
 export const INFALL_MIN_S = 0.6;                    // an eaten block's flight time is clamped to MIN … MAX
 export const INFALL_MAX_S = 2.4;
 export const INFALL_MOB_S = 1.2;                    // a swallowed mob's flight time
+// ---- Light (§62): per-cell SKY and BLOCK light levels 0..LIGHT_MAX, carried into the chunk meshes
+export const LIGHT_MAX = 15;                        // a level is 0..15; it drops by max(1, opacity) per step (sky: 0 straight down at 15)
+export const GLOWSTONE_LIGHT = 15;                  // emitters' levels (block light)
+export const CAMPFIRE_LIGHT = 14;
+export const TORCH_LIGHT = 13;
+export const LEAVES_LIGHT_OPACITY = 1;              // see-through cells that dim light: no free fall of sky light, max(1, o) per step
+export const WATER_LIGHT_OPACITY = 1;
+export const ICE_LIGHT_OPACITY = 1;
+export const LIGHT_CURVE_K = 3;                     // brightness of level l: x / (1 + K·(1 − x)) with x = l / 15 (1 at 15, 0 at 0)
+export const LIGHT_FLOOR = 0.08;                    // irradiance that keeps a pitch-dark cave from being pure black (× (1 − sky brightness))
+export const BLOCK_LIGHT_COLOR = [1.0, 0.8, 0.56];  // warm sRGB colour of block light …
+export const BLOCK_LIGHT_INTENSITY = 2.4;           // … and its irradiance at level 15 (the noon sun is 2, the sky 1.4)
+export const BLOCK_LIGHT_DAY_WASH = 0.6;            // block light × (1 − WASH · daylight · sky brightness): a lamp outdoors at noon barely shows
+export const LIGHT_VOLUME_QR = 64;                  // moving things sample a 64 × 64 (q, r) × WORLD_HEIGHT light volume around the camera …
+export const LIGHT_VOLUME_RECENTRE = 8;             // … re-centred once the camera is this many cells from its centre …
+export const LIGHT_VOLUME_MIN_S = 0.25;             // … and refilled at most this often when the light changes

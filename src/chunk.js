@@ -27,6 +27,19 @@ export class Chunk {
     this.meshedAt = -Infinity;
     /** has been handed to the renderer at least once */
     this.meshed = false;
+    /**
+     * Light levels (§62), indexed like `blocks`: one byte per cell, sky << 4 | block. Null until World lights the chunk
+     * (light.js LightEngine.lightChunk); the mesher reads a missing array as open sky.
+     * @type {Uint8Array|null}
+     */
+    this.light = null;
+    /**
+     * Per column (columnIndex): the lowest y of the unbroken sky-15 run from the top (light.js); null until lit.
+     * @type {Uint8Array|null}
+     */
+    this.lightTop = null;
+    /** light.js bookkeeping: the engine slot naming this chunk in its flood queues (−1: not lit) */
+    this.lightSlot = -1;
   }
 
   /** @returns {number} block id, or AIR (0) when out of range */

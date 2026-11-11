@@ -51,6 +51,7 @@ export const STATION_OF_BLOCK = Object.freeze({
   [BLOCK.KILN]: 'kiln',
   [BLOCK.BLOOMERY]: 'bloomery',
   [BLOCK.FORGE]: 'forge',
+  [BLOCK.WORKBENCH]: 'workbench',
 });
 
 /** The Making tabs after `All`, in order: station id and label. */
@@ -60,6 +61,7 @@ export const STATION_TABS = Object.freeze([
   Object.freeze({ id: 'kiln', label: 'Kiln' }),
   Object.freeze({ id: 'bloomery', label: 'Bloomery' }),
   Object.freeze({ id: 'forge', label: 'Forge' }),
+  Object.freeze({ id: 'workbench', label: 'Bench' }),
 ]);
 
 /** @param {number} blockId @returns {string|null} the station id of a workplace block */
@@ -435,7 +437,7 @@ function listJoin(parts) {
 
 /**
  * Wear from digging (§6.1 step 6): a block broken wears the selected tool only when it is a digging tool — an axe,
- * spade, pick, knife or hammer. A spear or sword wears on the blows it lands (`wearsFromStriking`), never on a dig; the
+ * shovel, pick, knife or hammer. A spear or sword wears on the blows it lands (`wearsFromStriking`), never on a dig; the
  * kiln kit (fire drill, crucible, casting mold) wears only in the jobs that need it (play-test: a fresh mold in the hand
  * was destroyed by digging eight blocks of clay).
  * @param {ToolDef|null|undefined} tool  the selected stack's ToolDef

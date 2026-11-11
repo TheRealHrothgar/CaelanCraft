@@ -20,6 +20,11 @@
 // the sprite is in the OPAQUE pass, so this file keeps every §6 parameter verbatim and additionally sets
 // `transparent:false` + `alphaTest:0.5` (a parameter §6 does not constrain). Recommended spec amendment:
 // simply say `depthTest:true, depthWrite:false` — the dome and stars do not write depth, so that also works.
+//
+// Light (CONTRACTS §62, lightShader.js): the three chunk materials read the meshes' `caelLight` attribute (sky and block
+// levels per vertex); every other lit material reads the light volume around the camera, which render() keeps filled
+// from the light field main hands setLightField (world.light). setSky feeds `caelDaylight`; the sun, moon and sky
+// lights keep their computeSky intensities, scaled in the shader by the sky level's brightness.
 
 import * as THREE from 'three';
 import {
@@ -29,13 +34,20 @@ import {
   MAX_PIXEL_RATIO,
   RENDER_DISTANCE,
   FOG_FAR_CHUNK_MARGIN,
+  LIGHT_VOLUME_RECENTRE,
+  LIGHT_VOLUME_MIN_S,
 } from './config.js';
-import { CHUNK_RING_INRADIUS, HEX_CORNERS, HEX_SIZE, chunkOrigin, hexToWorld } from './hex.js';
+import { CHUNK_RING_INRADIUS, HEX_CORNERS, HEX_SIZE, chunkOrigin, hexToWorld, hexLength, worldToHex } from './hex.js';
+import { LIGHT_ATTRIBUTE, applyChunkLight, installObjectLighting, lightVolume } from './lightShader.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
 /** @typedef {import('./types.js').RaycastHit} RaycastHit */
 /** @typedef {import('./types.js').SkyState} SkyState */
+/**
+ * The renderer's view of the light (light.js LightEngine satisfies it).
+ * @typedef {{ version: number, fillVolume: (q0: number, r0: number, n: number, out: Uint8Array) => void }} LightField
+ */
 
 /**
  * @typedef {Object} Renderer
@@ -54,6 +66,8 @@ import { CHUNK_RING_INRADIUS, HEX_CORNERS, HEX_SIZE, chunkOrigin, hexToWorld } f
  * @property {(width: number, height: number) => void} resize
  * @property {() => void} render
  * @property {() => { chunkMeshes: number, triangles: number, drawCalls: number, geometries: number }} getStats
+ * @property {(field: LightField|null) => void} setLightField  where the light volume for everything but the chunks
+ *   comes from (§62: world.light); null → everything outside the chunks reads open sky
  * @property {() => void} onContextRestored  assignable hook (additive to CONTRACTS §17): fired after a WebGL
  *   context loss/restore, once every chunk mesh has been dropped — the owner must re-mesh (see buildLayerGeometry)
  * @property {() => void} dispose
@@ -284,12 +298,19 @@ export function buildLayerGeometry(layer) {
   const uvs = trimTyped(layer.uvs, vertexCount * 2);
   const colors = trimTyped(layer.colors, vertexCount * 3);
   const indices = trimTyped(layer.indices, indexCount);
+  // §62: sky·17, block·17 per vertex (normalised in the shader). A layer without it reads as open sky (15, 0).
+  let light = layer.light instanceof Uint8Array && layer.light.length >= vertexCount * 2 ? trimTyped(layer.light, vertexCount * 2) : null;
+  if (light === null) {
+    light = new Uint8Array(vertexCount * 2);
+    for (let i = 0; i < light.length; i += 2) light[i] = 255;
+  }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
   geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute(LIGHT_ATTRIBUTE, new THREE.BufferAttribute(light, 2, true));
   // Uint32 indices are always fine: WebGL2 is guaranteed (SPEC-engine §11, CONTRACTS §25.15).
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
   // Needs the position array, so it must run BEFORE the arrays can be released by the first upload.
@@ -302,7 +323,7 @@ export function buildLayerGeometry(layer) {
 }
 
 /**
- * @template {Float32Array|Uint32Array} T
+ * @template {Float32Array|Uint32Array|Uint8Array} T
  * @param {T} arr
  * @param {number} length
  * @returns {T}
@@ -371,6 +392,14 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   camera.rotation.order = 'YXZ';
   camera.position.set(0, 80, 0);
 
+  // --- Light (§62): every other lit material reads the light volume (a Material.prototype hook, installed once) ----
+  installObjectLighting();
+  const volume = lightVolume();
+  /** @type {LightField|null} */
+  let lightField = null;
+  let volumeVersion = -1;
+  let volumeAt = -Infinity;
+
   // --- Shared chunk materials (never disposed on chunk removal) ------------------------------
   const opaqueMaterial = new THREE.MeshLambertMaterial({ map: atlasTexture, vertexColors: true });
   const cutoutMaterial = new THREE.MeshLambertMaterial({
@@ -388,6 +417,7 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   });
   /** Layer order matches RenderLayer: 0 opaque, 1 cutout, 2 translucent. */
   const layerMaterials = [opaqueMaterial, cutoutMaterial, translucentMaterial];
+  for (const m of layerMaterials) applyChunkLight(m);
   const layerRenderOrder = [0, 0, 1];
   const layerNames = /** @type {const} */ (['opaque', 'cutout', 'translucent']);
 
@@ -584,6 +614,31 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
     moonSprite.visible = -trueSunDir.y > HORIZON_HIDE_Y;
   }
 
+  /**
+   * Keep the light volume (§62) centred on the camera: refill it when the camera has moved LIGHT_VOLUME_RECENTRE cells
+   * from its centre, or — at most every LIGHT_VOLUME_MIN_S — when the light field changed.
+   */
+  function updateLightVolume() {
+    const info = volume.uniforms.caelVolInfo.value;
+    if (lightField === null) {
+      info.w = 0;
+      return;
+    }
+    const half = volume.size / 2;
+    const [cq, cr] = worldToHex(camera.position.x, camera.position.z);
+    const moved = info.w === 0 || hexLength(cq - (info.x + half), cr - (info.y + half)) >= LIGHT_VOLUME_RECENTRE;
+    const clock = globalThis.performance;
+    const now = clock && typeof clock.now === 'function' ? clock.now() / 1000 : Date.now() / 1000;
+    if (!moved && (lightField.version === volumeVersion || now - volumeAt < LIGHT_VOLUME_MIN_S)) return;
+    const q0 = moved ? cq - half : info.x;
+    const r0 = moved ? cr - half : info.y;
+    lightField.fillVolume(q0, r0, volume.size, volume.data);
+    volume.texture.needsUpdate = true;
+    volumeVersion = lightField.version;
+    volumeAt = now;
+    info.set(q0, r0, volume.size, 1);
+  }
+
   /** Apply light intensities, dimmed ×0.7 while underwater (SPEC-gameplay §7). */
   function applyLightIntensities() {
     const k = underwater ? UNDERWATER_LIGHT_FACTOR : 1;
@@ -710,6 +765,8 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
       lastSunIntensity = Math.max(0, sky.sunIntensity);
       lastHemiIntensity = Math.max(0, sky.hemiIntensity);
       applyLightIntensities();
+      // §62: block light washes out under the open sky by day.
+      volume.uniforms.caelDaylight.value = Math.min(1, Math.max(0, sky.daylight || 0));
 
       // Hemisphere: sky = horizon colour, ground = darkened fog colour.
       hemiLight.color.setRGB(horizon[0], horizon[1], horizon[2], THREE.SRGBColorSpace);
@@ -772,7 +829,15 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
 
     render() {
       if (disposed) return;
+      updateLightVolume();
       renderer.render(scene, camera);
+    },
+
+    setLightField(field) {
+      lightField = field && typeof field.fillVolume === 'function' ? field : null;
+      volumeVersion = -1;
+      volumeAt = -Infinity;
+      volume.uniforms.caelVolInfo.value.w = 0;
     },
 
     getStats() {

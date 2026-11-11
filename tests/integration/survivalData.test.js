@@ -9,7 +9,7 @@ import { BLOCK, BLOCK_COUNT } from '../../src/blocks.js';
 import { hexDiscCount } from '../../src/hex.js';
 import { ITEMS, ITEM_KEYS, TAGS, getItem, itemForBlock, blockForItem } from '../../src/items.js';
 import { BLOCK_RULES, PICKABLE, MOB_DROPS, canHarvest, tap } from '../../src/harvest.js';
-import { RECIPES } from '../../src/crafting.js';
+import { RECIPES, STATION_BLOCKS } from '../../src/crafting.js';
 import { FIRE_TRANSFORMS, fuelSeconds } from '../../src/cooking.js';
 import { FLORA_TABLE } from '../../src/worldgen.js';
 import { DART_KEYS } from '../../src/looseItems.js';
@@ -112,7 +112,7 @@ function reach() {
     }
     if (have.has('campfire')) for (const [k, tr] of Object.entries(FIRE_TRANSFORMS)) if (have.has(k)) have.add(tr.to);
     for (const rec of RECIPES) {
-      const station = rec.station === 'hand' || have.has(itemForBlock({ stump: B.WORK_STUMP, kiln: B.KILN, bloomery: B.BLOOMERY, forge: B.FORGE }[rec.station]));
+      const station = rec.station === 'hand' || have.has(itemForBlock(STATION_BLOCKS[rec.station])); // every workplace (v0.11: + the Workbench)
       const inputs = inputOptions(rec).every((opts) => opts.some((k) => have.has(k)));
       const tl = rec.tools.every((t) => hasTool(t.type, t.tier));
       if (station && inputs && tl) {
@@ -145,14 +145,14 @@ describe('the tech tree closes from bare hands (§7.4, §10 I-1)', () => {
   });
 
   it('the first hand-made things need nothing made before them', () => {
-    // Before any tool: rock, flint, sticks and fibre come by hand, so cord and the hammerstone are the first makes.
+    // Before any tool: rock, flint, sticks and fibre come by hand, so cord and the stone hammer are the first makes.
     const first = new Set();
     for (const id of [B.LOOSE_STONES, B.FALLEN_BRANCHES, B.TUSSOCK]) {
       for (const k of groupKeys(PICKABLE[id] ? PICKABLE[id].drops : BLOCK_RULES[id].drops)) first.add(k);
     }
     for (const k of ['rock', 'flint', 'stick', 'plant_fibre']) expect(first.has(k), k).toBe(true);
     const hand = RECIPES.filter((r) => r.station === 'hand' && r.tools.length === 0 && r.inputs.every((i) => 'k' in i && first.has(i.k)));
-    expect(hand.map((r) => r.id)).toEqual(expect.arrayContaining(['cord', 'hammerstone']));
+    expect(hand.map((r) => r.id)).toEqual(expect.arrayContaining(['cord', 'stone_hammer']));
   });
 });
 
@@ -160,7 +160,7 @@ describe('each pick tier opens the next tier of ore (§6.3, §7.4)', () => {
   const pickOf = (key) => getItem(key).tool;
   it('bare hands and a stone tool cannot cut rock; a flint pick can (no stone pick exists)', () => {
     expect(canHarvest(B.STONE, null)).toBe(false);
-    expect(canHarvest(B.STONE, getItem('stone_chopper').tool)).toBe(false);
+    expect(canHarvest(B.STONE, getItem('stone_axe').tool)).toBe(false);
     expect(ITEMS.stone_pick).toBeUndefined();
     expect(canHarvest(B.STONE, pickOf('flint_pick'))).toBe(true);
   });

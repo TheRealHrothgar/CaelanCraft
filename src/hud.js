@@ -135,7 +135,7 @@ export function chipKind(label) {
     case 'Hot': case 'Overheating': case 'Heatstroke': return 'heat';
     case 'Chilled': case 'Cold': case 'Freezing': case 'Hypothermic': return 'cold';
     case 'Drowning': case 'Smothering': return 'breath';
-    case 'Sick': return 'sick';
+    case 'Poisoned': return 'sick';
     case 'Wet': return 'wet';
     default: return 'other';
   }

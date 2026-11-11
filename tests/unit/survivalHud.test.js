@@ -93,7 +93,7 @@ describe('survival HUD helpers', () => {
     const table = {
       Hungry: 'hunger', Starving: 'hunger', Thirsty: 'thirst', Parched: 'thirst', Wounded: 'hurt', Heatstroke: 'heat',
       Overheating: 'heat', Hot: 'heat', Chilled: 'cold', Cold: 'cold', Freezing: 'cold', Hypothermic: 'cold',
-      Drowning: 'breath', Smothering: 'breath', Sick: 'sick', Wet: 'wet',
+      Drowning: 'breath', Smothering: 'breath', Poisoned: 'sick', Wet: 'wet', // v0.11: Sick → Poisoned (§66)
     };
     for (const [label, kind] of Object.entries(table)) expect(chipKind(label), label).toBe(kind);
     expect(chipKind('Something')).toBe('other');

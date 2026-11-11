@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   LooseItems, PICKUP_RADIUS, PICKUP_CHEST, POP_S, ITEM_RADIUS, THROW_HOLD_S, COLLECT_RADIUS, HOME_MAX_S, GHOST_MAX,
   throwOf, THROW_ROCK, THROW_DART, THROW_SPEAR, THROW_CHUCK,
+  LOOSE_DESPAWN_S, LOOSE_BLINK_S, LOOSE_MAX, blinkHidden,
 } from '../../src/looseItems.js';
 import { normalizeLooseJSON, normalizeSurvivalJSON } from '../../src/storage.js';
 import { executeCommand, parseLine, COMMANDS } from '../../src/commands.js';
@@ -296,5 +297,116 @@ describe('commands — drop and throw (console only)', () => {
     expect(exec(ctx(log), 'drop 0').ok).toBe(false);
     expect(exec({}, 'drop').ok).toBe(false);
     expect(COMMANDS.filter((c) => c.name === 'drop' || c.name === 'throw').every((c) => c.consoleOnly)).toBe(true);
+  });
+});
+
+describe('looseItems — despawns (CONTRACTS §63)', () => {
+  it('an item lying loose despawns after LOOSE_DESPAWN_S, blinking for the last LOOSE_BLINK_S; a drop flying home never ages', () => {
+    const loose = new LooseItems(() => 0.5);
+    const gone = [];
+    const { env } = makeEnv({ player: { x: -50, y: 10, z: 0 } });
+    env.onDespawn = (it, why) => gone.push([it.s.k, why]);
+    loose.launch({ k: 'rock', n: 2 }, 0, 10.5, 0, 0, 0, 0);
+    const it = loose.list[0];
+    loose.step(1, env);
+    expect(it.age).toBeCloseTo(1, 6);
+    expect(blinkHidden(it, 0.2)).toBe(false);
+    for (let i = 0; i < LOOSE_DESPAWN_S - LOOSE_BLINK_S; i++) loose.step(1, env);
+    expect(loose.count).toBe(1);
+    // in the blink window it is hidden every other 1 / (2 × LOOSE_BLINK_HZ) s
+    const hidden = [0, 0.13, 0.26, 0.38].map((t) => blinkHidden(it, t));
+    expect(hidden).toContain(true);
+    expect(hidden).toContain(false);
+    for (let i = 0; i < LOOSE_BLINK_S + 1; i++) loose.step(1, env);
+    expect(loose.count).toBe(0);
+    expect(gone).toEqual([['rock', 'time']]);
+    // a drop on its way to the player does not age
+    const home = new LooseItems(() => 0.5);
+    const near = makeEnv();
+    home.spawnDrop({ k: 'rock', n: 1 }, 3, 10.5, 0);
+    home.step(0.1, near.env);
+    expect(home.list[0].age).toBe(0);
+  });
+
+  it('frozen in an unloaded chunk, it does not age', () => {
+    const loose = new LooseItems(() => 0.5);
+    const { env } = makeEnv({ loaded: () => false, player: { x: -50, y: 10, z: 0 } });
+    loose.launch({ k: 'rock', n: 1 }, 0, 10.5, 0, 0, 0, 0);
+    for (let i = 0; i < LOOSE_DESPAWN_S + 5; i++) loose.step(1, env);
+    expect(loose.count).toBe(1);
+    expect(loose.list[0].age).toBe(0);
+  });
+
+  it('a real item landing in a lit fire burns at once; a ghost does not', () => {
+    const loose = new LooseItems(() => 0.5);
+    const gone = [];
+    const { env } = makeEnv({ player: { x: -50, y: 10, z: 0 } });
+    env.burning = (x, y) => x > 2 && x < 3 && y < 11;
+    env.onDespawn = (it, why) => gone.push([it.s.k, why]);
+    loose.launch({ k: 'stick', n: 3 }, 0, 11.5, 0, 4, 1, 0);
+    loose.launch({ k: 'dirt', n: 1 }, 0, 11.5, 0, 4, 1, 0, { ghost: true });
+    run(loose, env, 2);
+    expect(gone).toEqual([['stick', 'fire']]);
+  });
+
+  it('past LOOSE_MAX real items the oldest lying ones despawn first (drops flying home are kept)', () => {
+    const loose = new LooseItems(() => 0.5);
+    const gone = [];
+    const { env } = makeEnv({ player: { x: -50, y: 10, z: 0 } });
+    env.onDespawn = (it, why) => gone.push([it.s.n, why]);
+    for (let i = 0; i < LOOSE_MAX; i++) loose.launch({ k: 'rock', n: 1 }, i * 0.01, 10.5, 5, 0, 0, 0, { age: i === 7 ? 200 : 0 });
+    loose.step(DT, env);
+    expect(gone).toEqual([]);
+    loose.launch({ k: 'rock', n: 2 }, 0, 10.5, 5, 0, 0, 0);
+    loose.spawnDrop({ k: 'rock', n: 3 }, 0, 10.5, 5);
+    loose.step(DT, env);
+    expect(gone).toEqual([[1, 'cap'], [1, 'cap']]);
+    expect(loose.list.filter((it) => !it.ghost)).toHaveLength(LOOSE_MAX);
+    expect(loose.list.some((it) => it.age > 100)).toBe(false); // the oldest went first
+    expect(loose.list.some((it) => it.s.n === 3)).toBe(true);
+  });
+
+  it('despawnNear clears the lying items in a radius (or all), sparing drops flying home and ghosts', () => {
+    const loose = new LooseItems(() => 0.5);
+    loose.launch({ k: 'rock', n: 1 }, 0, 10.5, 0, 0, 0, 0);
+    loose.launch({ k: 'rock', n: 2 }, 20, 10.5, 0, 0, 0, 0);
+    loose.spawnDrop({ k: 'rock', n: 3 }, 1, 10.5, 0);
+    loose.launch({ k: 'dirt', n: 1 }, 1, 10.5, 0, 0, 0, 0, { ghost: true });
+    const cleared = [];
+    expect(loose.despawnNear(0, 10.5, 0, 5, (it, why) => cleared.push([it.s.n, why]))).toBe(1);
+    expect(cleared).toEqual([[1, 'clear']]);
+    expect(loose.despawnNear(0, 0, 0)).toBe(1);
+    expect(loose.list.map((it) => it.s.n).sort()).toEqual([1, 3]);
+  });
+
+  it('the age is saved (whole seconds, `a`) and restored; storage keeps a canonical a and drops a bad one', () => {
+    const loose = new LooseItems(() => 0.5);
+    const { env } = makeEnv({ player: { x: -50, y: 10, z: 0 } });
+    loose.launch({ k: 'flint_spear', n: 1, d: 9 }, 0, 10.5, 0, 0, 0, 0);
+    loose.launch({ k: 'rock', n: 1 }, 1, 10.5, 0, 0, 0, 0);
+    run(loose, env, 1); // settle with real frames
+    loose.list[0].age = 42.3;
+    loose.list[1].age = 0.4;
+    const saved = loose.serialize();
+    expect(saved[0]).toEqual({ k: 'flint_spear', n: 1, d: 9, a: 42, x: 0, y: 10 + ITEM_RADIUS, z: 0 });
+    expect('a' in saved[1]).toBe(false);
+    const back = new LooseItems(() => 0.5);
+    back.load(saved);
+    expect(back.list[0].age).toBe(42);
+    const w = [];
+    expect(normalizeLooseJSON([{ k: 'rock', n: 1, a: 42, x: 0, y: 0, z: 0 }, { k: 'rock', n: 1, a: 9999, x: 0, y: 0, z: 0 },
+      { k: 'rock', n: 1, a: 0, x: 0, y: 0, z: 0 }], w)).toEqual([{ k: 'rock', n: 1, a: 42, x: 0, y: 0, z: 0 }, { k: 'rock', n: 1, x: 0, y: 0, z: 0 }]);
+    expect(w).toEqual(['survival.loose[1]: invalid, dropped']);
+  });
+
+  it('despawn [radius] runs from the console (around the player) or a rune (around itself)', () => {
+    const calls = [];
+    const ctx = { player: { x: 1, y: 10, z: 2 }, loose: { despawnNear: (x, y, z, r) => (calls.push([x, y, z, r]), 2) } };
+    expect(exec(ctx, 'despawn')).toEqual({ ok: true, message: 'despawned 2 loose items' });
+    expect(exec(ctx, 'despawn 8').ok).toBe(true);
+    expect(exec({ ...ctx, rune: { q: 0, y: 5, r: 0 } }, 'despawn 3').ok).toBe(true);
+    expect(calls).toEqual([[1, 11, 2, Infinity], [1, 11, 2, 8], [0, 5.5, 0, 3]]);
+    expect(exec(ctx, 'despawn -1').ok).toBe(false);
+    expect(exec({ player: ctx.player }, 'despawn').ok).toBe(false);
   });
 });

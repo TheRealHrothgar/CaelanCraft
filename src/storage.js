@@ -398,10 +398,13 @@ export function normalizeSurvivalJSON(raw, warnings = [], opts = {}) {
 
 /** At most this many loose items are kept in a save (the rest are dropped with one warning). */
 export const LOOSE_SAVE_MAX = 2000;
+/** A saved loose item's age `a` (whole seconds lying loose) is at most this (looseItems.LOOSE_DESPAWN_S). */
+export const LOOSE_AGE_MAX = 300;
 
 /**
- * The `survival.loose` list in canonical form (CONTRACTS §60): `{ k, n, d?, x, y, z }` in that key order, `k` a non-empty
- * string, `n` an integer 1–999, `d` (a tool's wear left) an integer ≥ 0 or absent, x y z finite (rounded to 3 places). Bad
+ * The `survival.loose` list in canonical form (CONTRACTS §60, §63): `{ k, n, d?, a?, x, y, z }` in that key order, `k` a
+ * non-empty string, `n` an integer 1–999, `d` (a tool's wear left) an integer ≥ 0 or absent, `a` (seconds lying loose) an
+ * integer 1–LOOSE_AGE_MAX or absent (0 is dropped), x y z finite (rounded to 3 places). Bad
  * entries are dropped with a warning; anything but an array is ignored.
  * @param {*} raw
  * @param {string[]} [warnings]
@@ -412,14 +415,15 @@ export function normalizeLooseJSON(raw, warnings = []) {
     warnings.push('survival.loose: not a list, ignored');
     return [];
   }
-  /** @type {{ k: string, n: number, d?: number, x: number, y: number, z: number }[]} */
+  /** @type {{ k: string, n: number, d?: number, a?: number, x: number, y: number, z: number }[]} */
   const out = [];
   for (let i = 0; i < raw.length; i++) {
     const o = raw[i];
     const okStack = isPlainObject(o) && typeof o.k === 'string' && o.k !== '' && Number.isInteger(o.n) && o.n >= 1 && o.n <= 999;
     const okPos = okStack && isFiniteNumber(o.x) && isFiniteNumber(o.y) && isFiniteNumber(o.z);
     const okD = okPos && (o.d === undefined || (Number.isInteger(o.d) && o.d >= 0));
-    if (!okD) {
+    const okA = okD && (o.a === undefined || (Number.isInteger(o.a) && o.a >= 0 && o.a <= LOOSE_AGE_MAX));
+    if (!okA) {
       warnings.push(`survival.loose[${i}]: invalid, dropped`);
       continue;
     }
@@ -430,6 +434,7 @@ export function normalizeLooseJSON(raw, warnings = []) {
     /** @type {*} */
     const e = { k: o.k, n: o.n };
     if (o.d !== undefined) e.d = o.d;
+    if (o.a) e.a = o.a;
     e.x = round3(o.x);
     e.y = round3(o.y);
     e.z = round3(o.z);

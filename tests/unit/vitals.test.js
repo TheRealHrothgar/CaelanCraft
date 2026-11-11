@@ -207,8 +207,8 @@ describe('statusOf (§2.3): every threshold row', () => {
     expect(status({ breath: 0.01 }).regen).toBe(true);
   });
 
-  it('Sick (no regeneration) and Wet (> 0.2, shown only)', () => {
-    expect(status({ sick: 1 })).toEqual({ canSprint: true, moveFactor: 1, regen: false, labels: ['Sick'] });
+  it('Poisoned (no regeneration) and Wet (> 0.2, shown only)', () => {
+    expect(status({ sick: 1 })).toEqual({ canSprint: true, moveFactor: 1, regen: false, labels: ['Poisoned'] });
     expect(status({ wet: 0.2 }).labels).toEqual([]);
     expect(status({ wet: 0.21 })).toEqual({ canSprint: true, moveFactor: 1, regen: true, labels: ['Wet'] });
   });
@@ -222,7 +222,7 @@ describe('statusOf (§2.3): every threshold row', () => {
 
   it('labels follow the table order; the slow factors multiply but never under 0.6', () => {
     const s = status({ satiation: 5, hydration: 5, health: 10, temp: 30, breath: 0, sick: 10, wet: 1 }, { headInWater: true });
-    expect(s.labels).toEqual(['Starving', 'Parched', 'Wounded', 'Hypothermic', 'Drowning', 'Sick', 'Wet']);
+    expect(s.labels).toEqual(['Starving', 'Parched', 'Wounded', 'Hypothermic', 'Drowning', 'Poisoned', 'Wet']);
     expect(0.9 * 0.9 * 0.9 * 0.75).toBeLessThan(0.6);
     expect(s.moveFactor).toBe(0.6);
     expect(s.canSprint).toBe(false);
@@ -524,12 +524,15 @@ describe('eating and drinking (§4.2, §4.5)', () => {
     expect(cold.temp).toBe(25);
   });
 
-  it('hand gulps: fresh +8 with a 1 % chance of sickness, salt −4', () => {
-    const v = vitals({ hydration: 50 });
+  it('hand gulps: fresh +8 with a 6 % chance of poisoning (which costs 8 Hydration and 4 Nourishment at once), salt −4', () => {
+    const v = vitals({ hydration: 50, satiation: 50 });
     expect(gulpWater(v, false, () => 0.5)).toEqual({ sick: false });
-    expect(v.hydration).toBe(58);
-    expect(gulpWater(v, false, () => 0.0099)).toEqual({ sick: true });
+    expect(gulpWater(v, false, () => 0.061)).toEqual({ sick: false });
+    expect(v.hydration).toBe(66);
+    expect(gulpWater(v, false, () => 0.059)).toEqual({ sick: true });
     expect(v.sick).toBe(45);
+    expect(v.hydration).toBe(66); // +8 − 8
+    expect(v.satiation).toBe(46);
     expect(gulpWater(v, true, () => 0)).toEqual({ sick: false });
     expect(v.hydration).toBe(62);
     const dry = vitals({ hydration: 2 });

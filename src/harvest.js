@@ -5,7 +5,7 @@
 // Drops are written as GROUPS. Each group gives at most one BRANCH: the first whose condition holds (a group whose only
 // branch has a condition gives nothing when it fails). An item in a branch is a fixed count or an inclusive range, may
 // have a chance `p`, and may be `natural`: given only when the cell had no edit before the break (main checks
-// `!world.hasEdit(q, y, r)` BEFORE writing AIR). Conditions: the selected tool's type ('spade', 'knife', 'axe', 'pick') or
+// `!world.hasEdit(q, y, r)` BEFORE writing AIR). Conditions: the selected tool's type ('shovel', 'knife', 'axe', 'pick') or
 // 'knifeInPack' (a knife of tier ≥ 2 anywhere in the pack).
 import { REGROW_MEAN_S, MAX_REGROW_TRACKED, SEA_LEVEL } from './config.js';
 import { BLOCK, BLOCK_COUNT, getBlockDef } from './blocks.js';
@@ -28,7 +28,7 @@ import { forEachEditedCell } from './coords.js';
 /**
  * @typedef {Object} BlockRule
  * @property {number} h            seconds by hand
- * @property {string|null} tool    the preferred tool type ('spade', 'axe', 'pick', 'knife'), null when none is faster
+ * @property {string|null} tool    the preferred tool type ('shovel', 'axe', 'pick', 'knife'), null when none is faster
  * @property {number} tier         the minimum tier of that tool; 0 = bare hands allowed
  * @property {DropGroup[]} drops
  */
@@ -92,13 +92,13 @@ function set(ids, h, tool, tier, drops) {
 }
 
 // ---- §6.3, row by row ----
-set([B.DIRT], 0.9, 'spade', 0, SELF_DROPS);
-set([B.GRASS_BLOCK], 1.0, 'spade', 0, [[when('spade', drop(SELF)), when(null, drop('dirt'), drop('plant_fibre', 1, { p: 0.2, ...natural }))]]);
-set([B.SNOWY_GRASS], 1.0, 'spade', 0, [[when('spade', drop(SELF)), when(null, drop('dirt'), drop('snow', 1, natural))]]);
-set([B.SAND, B.RED_SAND], 0.8, 'spade', 0, SELF_DROPS);
-set([B.GRAVEL], 1.2, 'spade', 0, [[when('spade', drop(SELF)), when(null, drop('rock', 2))]]);
-set([B.CLAY], 1.4, 'spade', 0, [always(drop('clay_lump', 6))]);
-set([B.SNOW_BLOCK], 0.5, 'spade', 0, [always(drop('snow', 6))]);
+set([B.DIRT], 0.9, 'shovel', 0, SELF_DROPS);
+set([B.GRASS_BLOCK], 1.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('plant_fibre', 1, { p: 0.2, ...natural }))]]);
+set([B.SNOWY_GRASS], 1.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('snow', 1, natural))]]);
+set([B.SAND, B.RED_SAND], 0.8, 'shovel', 0, SELF_DROPS);
+set([B.GRAVEL], 1.2, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('rock', 2))]]);
+set([B.CLAY], 1.4, 'shovel', 0, [always(drop('clay_lump', 6))]);
+set([B.SNOW_BLOCK], 0.5, 'shovel', 0, [always(drop('snow', 6))]);
 set([B.ICE], 1.0, 'pick', 0, [[when('pick', drop('ice_chunk', 2)), when(null, drop('ice_chunk', 1))]]);
 set([B.PACKED_ICE], 2.0, 'pick', 2, [always(drop('ice_chunk', 3))]);
 set([B.LOOSE_STONES], 0.2, null, 0, [always(drop('rock', [1, 2])), always(drop('flint', 1, { p: 0.5, ...natural }))]);
@@ -108,22 +108,22 @@ const LOP = [when('axe', drop(SELF), drop('stick', 1, natural))];
 set([B.OAK_LEAVES], 0.4, 'axe', 0, [LOP, always(drop('acorns', 1, { p: 0.08, ...natural }))]);
 set([B.SPRUCE_LEAVES], 0.4, 'axe', 0, [LOP, always(drop('pine_nuts', 1, { p: 0.08, ...natural }))]);
 set([B.BIRCH_LEAVES], 0.4, 'axe', 0, [LOP]);
-// Wild plants: a spade digs the plant up (its item places the picked variant, which must regrow).
-set([B.HONEYBERRY_BUSH], 0.5, 'spade', 0, [[when('spade', drop('honeyberry_bush'))], always(drop('honeyberries', [2, 4])), always(drop('stick', [1, 2]))]);
-set([B.HONEYBERRY_BUSH_BARE], 0.5, 'spade', 0, [[when('spade', drop('honeyberry_bush'))], always(drop('stick', [1, 2]))]);
-set([B.PRICKLY_PEAR], 0.5, 'spade', 0, [
-  [when('spade', drop('prickly_pear'))],
+// Wild plants: a shovel digs the plant up (its item places the picked variant, which must regrow).
+set([B.HONEYBERRY_BUSH], 0.5, 'shovel', 0, [[when('shovel', drop('honeyberry_bush'))], always(drop('honeyberries', [2, 4])), always(drop('stick', [1, 2]))]);
+set([B.HONEYBERRY_BUSH_BARE], 0.5, 'shovel', 0, [[when('shovel', drop('honeyberry_bush'))], always(drop('stick', [1, 2]))]);
+set([B.PRICKLY_PEAR], 0.5, 'shovel', 0, [
+  [when('shovel', drop('prickly_pear'))],
   [when('knifeInPack', drop('cactus_fruit', [1, 2])), when(null, drop('unpeeled_cactus_fruit', [1, 2]))],
 ]);
-set([B.PRICKLY_PEAR_BARE], 0.5, 'spade', 0, [[when('spade', drop('prickly_pear'))]]);
-set([B.TUSSOCK], 0.2, 'knife', 0, [[when('spade', drop(SELF)), when('knife', drop('plant_fibre', [2, 3])), when(null, drop('plant_fibre', [1, 2]))]]);
+set([B.PRICKLY_PEAR_BARE], 0.5, 'shovel', 0, [[when('shovel', drop('prickly_pear'))]]);
+set([B.TUSSOCK], 0.2, 'knife', 0, [[when('shovel', drop(SELF)), when('knife', drop('plant_fibre', [2, 3])), when(null, drop('plant_fibre', [1, 2]))]]);
 set([B.CATTAILS], 0.3, 'knife', 0, [[
-  when('spade', drop(SELF)),
+  when('shovel', drop(SELF)),
   when('knife', drop('plant_fibre', 3), drop('cattail_root', 1, { p: 0.5 })),
   when(null, drop('plant_fibre', 2), drop('cattail_root', 1, { p: 0.3 })),
 ]]);
-set([B.TUBER_PLANT], 0.4, 'spade', 0, [[
-  when('spade', drop('wild_tuber', [2, 3]), drop('plant_fibre', 1)),
+set([B.TUBER_PLANT], 0.4, 'shovel', 0, [[
+  when('shovel', drop('wild_tuber', [2, 3]), drop('plant_fibre', 1)),
   when(null, drop('wild_tuber', 1), drop('plant_fibre', 1)),
 ]]);
 // Wood
@@ -132,6 +132,7 @@ set([B.BIRCH_LOG], 3.0, 'axe', 1, [always(drop(SELF)), always(drop('birch_bark',
 set([B.OAK_PLANKS, B.SPRUCE_PLANKS, B.BIRCH_PLANKS], 2.0, 'axe', 1, SELF_DROPS);
 set([B.BOOKSHELF], 1.5, 'axe', 1, SELF_DROPS);
 set([B.WORK_STUMP], 2.5, 'axe', 1, SELF_DROPS);
+set([B.WORKBENCH], 3.0, 'axe', 1, SELF_DROPS); // v0.11 (CONTRACTS §67)
 set([B.WICKER_BASKET], 0.8, 'axe', 0, SELF_DROPS); // + its contents (containers.js)
 set([B.POWDER_KEG], 2.0, 'axe', 1, SELF_DROPS); // the BLAST_BARREL row, under its new name
 set([B.PUMPKIN], 1.0, 'axe', 0, SELF_DROPS);
@@ -238,7 +239,7 @@ export function withArticle(noun) {
 }
 
 /** Tool types that wear on a block they break (§6.1 step 6); a spear or sword wears only on blows, the kiln kit never digs. */
-export const DIG_TOOL_TYPES = Object.freeze(new Set(['axe', 'spade', 'pick', 'knife', 'hammer']));
+export const DIG_TOOL_TYPES = Object.freeze(new Set(['axe', 'shovel', 'pick', 'knife', 'hammer']));
 
 /**
  * The bare-hand gathering targets the Handbook names that R does NOT pick (§6.2: tussock, cattails, the tuber plant,
