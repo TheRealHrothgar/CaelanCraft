@@ -218,7 +218,7 @@ export function isControl(id) {
  * builds with or without survival's ores.
  */
 const EARTH_NAMES = Object.freeze([
-  'stone', 'dirt', 'grass_block', 'snowy_grass', 'sand', 'red_sand', 'gravel', 'clay', 'cobblestone', 'mossy_cobblestone',
+  'stone', 'dirt', 'grass_block', 'snowy_grass', 'sand', 'red_sand', 'gravel', 'flint_gravel', 'clay', 'cobblestone', 'mossy_cobblestone',
   'stone_bricks', 'mossy_stone_bricks', 'bricks', 'granite', 'diorite', 'andesite', 'slate', 'sandstone', 'bedrock',
   'coal_ore', 'iron_ore', 'gold_ore', 'diamond_ore', 'copper_ore', 'tin_ore',
   'coal_block', 'iron_block', 'gold_block', 'copper_block',

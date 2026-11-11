@@ -46,7 +46,7 @@ const column = (world, q, r, y0, y1) => {
 
 describe('gravity rule', () => {
   it('reacts to sand, red sand, gravel and every pop-off block (the campfire first)', () => {
-    expect([...GRAVITY_RULE_IDS]).toEqual([B.SAND, B.RED_SAND, B.GRAVEL, ...POP_OFF_IDS]);
+    expect([...GRAVITY_RULE_IDS]).toEqual([B.SAND, B.RED_SAND, B.GRAVEL, B.FLINT_GRAVEL, ...POP_OFF_IDS]);
     expect(POP_OFF_IDS[0]).toBe(B.CAMPFIRE);
     expect(Object.isFrozen(GRAVITY_RULE_IDS)).toBe(true);
   });

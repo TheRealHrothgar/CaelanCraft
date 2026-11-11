@@ -4210,6 +4210,46 @@ its coat box (`COAT_PUFF` 0.7 texel). `boxesGeometry` stays for the animals.
   0 in full daylight to 1 at night (main passes `1 − sky.daylight`) and sets the base material's `emissiveIntensity` to
   `GLOW_DAY` (0.2) + (1 − GLOW_DAY) × dark — by day a walker's slits are black, in the dark they glow.
 
+## 75. Rocks and sticks in 3D; flint in gravel — `src/mesher.js`, `src/blocks.js`, `src/worldgen.js`, `src/harvest.js`, `src/tiles.js`, `src/itemArt.js`
+
+Amends §59 (litter), §70 (visible flint) and DESIGN-survival §6.3 / §8.3.
+
+**Litter is 3D.** LOOSE_STONES and FALLEN_BRANCHES have `BlockDef.shape` `'litter'` (the snares keep `'decal'`): the
+mesher's `emitLitter` builds them from small boxes in the cutout layer, lit by their own cell, turned and placed per world
+cell by `cellHash`, so no two cells look alike. Their flat pictures (tiles 102, 103, 200) remain their icons.
+
+- **Stones** (`LITTER_ROCKS`: distance from the cell's middle, width, height, depth, cap scale, cap height): three lumps —
+  0.36 × 0.15 × 0.29 with a cap, 0.25 × 0.115 × 0.2 with a cap, and a 0.15 × 0.085 × 0.13 pebble — standing on the floor;
+  the tallest reaches 0.235 m. Where `flintAt(q, r)` the middle stone is a dark flint nodule (skin tile LITTER_FLINT).
+- **Branches** (`LITTER_STICKS`: length, thickness, offset along the first, turn, pitch, height of its middle): a 0.8 m
+  stick lying flat, a 0.56 m one resting across it (pitch 0.17), a 0.26 m twig standing off it (pitch 0.6), and a short
+  0.3 m piece beside them.
+- **Boxes.** A piece lying flat has 5 faces (no underside), a tilted one 6. Each face is cut from its skin tile (LITTER_ROCK
+  201, LITTER_FLINT 202, LITTER_STICK 203; 16 texels to the metre, sized by the face) with real normals, wound
+  counter-clockwise from outside, and a baked shade: brightest on top, darker by where the face looks, and
+  × `LITTER_GROUND_SHADE` (0.78) on vertices within 3 cm of the floor.
+- **Icons.** The `rock` and `stick` item pictures (the pack, and the loose items in the world) are repainted with a 3D
+  pop: a dark rim, a lit upper-left plane, a shaded lower-right one and a ground shadow; the stick is a stout branch with
+  a twig, a knot and pale cut ends.
+
+**Flint is rarer and lives in gravel.**
+
+- **Flinty Gravel** — block FLINT_GRAVEL 119 (`flint_gravel`, tile 204: gravel with five glossy blue-black nodules), solid,
+  `gravity: true`, `placeable: false` (no item, not in the picker). It is in every gravel list: GRAVITY_RULE_IDS, the
+  gravity reseeder, circuit earth, HAND_GATHER 'dig', the clay veins' `replaces`. BLOCK_COUNT 120; TILE_IDS 160.
+- **Where** (generation 2 only; generation 1 has none). `blocks.flintPileAt(q, y, r, seed)`: a pile is the cells sharing
+  `q >> 3, y >> 3, r >> 3` (`FLINT_PILE_SHIFT`), and `FLINT_PILE_SHARE` (0.4) of piles hold flint.
+  `blocks.flintGravelAt(q, y, r, seed)`: in such a pile, `FLINT_GRAVEL_SHARE` (0.3) of the cells. Worldgen writes
+  FLINT_GRAVEL instead of GRAVEL where it is true, for vein gravel (ORE_TABLE) and for the surface gravel of the flora
+  pass; no rng stream changes. Ocean-floor gravel stays plain. So not every pile has flint, and those that do show it.
+- **Drops.** FLINT_GRAVEL (1.2 s by hand, a shovel is faster): with a shovel `gravel`, otherwise 2 `rock`; and always 1
+  `flint`, natural or not. The gravel it gives is plain, so it cannot be dug twice. Plain GRAVEL never gives flint. STONE
+  no longer gives flint (it was 5 %). Loose stones: `FLINT_SHARE` 0.06 (it was 0.5), still decided by `flintAt` and shown.
+- **How much.** Expected within hex distance 20 on plains or forest: about 3–4 flint (it was 6–7), more than two thirds of
+  it in gravel.
+- **Guide.** The first-day step and "Stone and flint" name Flinty Gravel, quote the three shares, and say plain gravel and
+  mined stone give none; the gathering table lists Flinty Gravel in place of plain gravel (still ten rows).
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),

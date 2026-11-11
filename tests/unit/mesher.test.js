@@ -5,8 +5,10 @@ import { chunkKey, columnIndex, localIndex } from '../../src/coords.js';
 import {
   HEX_DIRS, HEX_CORNERS, HEX_SIZE, HEX_ROW_SPACING, FACE_NORMALS, FACE_SHADE, FACE_OPPOSITE, FACE_TOP, FACE_BOTTOM,
 } from '../../src/hex.js';
-import { BLOCK, BIOME, getFaceTile, tileToUV, isOpaque } from '../../src/blocks.js';
-import { buildChunkMesh, vertexAO, hexCornerAO, createMeshBuilder, BIOME_TINT, isTintedFace } from '../../src/mesher.js';
+import { BLOCK, TILE, BIOME, getFaceTile, tileToUV, isOpaque, flintAt } from '../../src/blocks.js';
+import {
+  buildChunkMesh, vertexAO, hexCornerAO, createMeshBuilder, BIOME_TINT, isTintedFace, LITTER_ROCKS, LITTER_STICKS, LITTER_GROUND_SHADE,
+} from '../../src/mesher.js';
 import { createWorldGen } from '../../src/worldgen.js';
 import { makeChunkData, makeChunkDataGetter, setWorldBlock, countFaces } from '../helpers/fixtures.js';
 
@@ -739,14 +741,113 @@ describe('buildChunkMesh — plant shapes (crossed sprites and floor decals)', (
     const other = mesh(world([[6, 9, 7, B.STONE], [6, 10, 7, B.TUSSOCK]]));
     expect(Math.abs(angle(other, 0) - angle(m, 0))).toBeGreaterThan(1e-3);
   });
-  it("a 'decal' (loose stones, fallen branches) is one flat hex lying just above the cell's floor", () => {
-    for (const id of [B.LOOSE_STONES, B.FALLEN_BRANCHES]) {
+  it("a 'decal' (the snares) is one flat hex lying just above the cell's floor", () => {
+    for (const id of [B.SNARE, B.SNARE_BAITED, B.SNARE_SPRUNG]) {
       const m = mesh(world([STONE_UNDER, [...A, id]]));
       expect(m.cutout.faceCount).toBe(1);
       const p = m.cutout.positions;
       for (let v = 0; v < m.cutout.vertexCount; v++) expect(p[v * 3 + 1]).toBeCloseTo(A[1] + 0.02, 5);
       for (let v = 0; v < m.cutout.vertexCount; v++) expect(m.cutout.normals[v * 3 + 1]).toBe(1);
     }
+  });
+  describe("'litter' (CONTRACTS §75): loose stones and fallen branches are small 3D pieces", () => {
+    /** The boxes of a litter mesh: each face is 4 vertices; a box lying flat has 5 faces, a tilted one 6. */
+    const bounds = (m) => {
+      const p = m.cutout.positions;
+      const lo = [Infinity, Infinity, Infinity];
+      const hi = [-Infinity, -Infinity, -Infinity];
+      for (let v = 0; v < m.cutout.vertexCount; v++) {
+        for (let k = 0; k < 3; k++) {
+          lo[k] = Math.min(lo[k], p[v * 3 + k]);
+          hi[k] = Math.max(hi[k], p[v * 3 + k]);
+        }
+      }
+      return { lo, hi };
+    };
+    /** A cell's centre in the mesh's chunk-local space. */
+    const cellXZ = (q, r) => [q + r * 0.5, r * HEX_ROW_SPACING];
+    const cellCentre = () => cellXZ(A[0], A[2]);
+    it('stones: three lumps (two of them capped) standing on the floor, inside the cell, with real height', () => {
+      const m = mesh(world([STONE_UNDER, [...A, B.LOOSE_STONES]]));
+      expect(m.cutout.faceCount).toBe((LITTER_ROCKS.length + LITTER_ROCKS.filter((r) => r[4] > 0).length) * 5);
+      expect(m.cutout.vertexCount).toBe(m.cutout.faceCount * 4);
+      expect(m.cutout.indexCount).toBe(m.cutout.faceCount * 6);
+      const { lo, hi } = bounds(m);
+      expect(lo[1]).toBeCloseTo(A[1], 5); // on the floor
+      const tallest = Math.max(...LITTER_ROCKS.map((r) => r[2] + r[5]));
+      expect(hi[1]).toBeCloseTo(A[1] + tallest, 5);
+      expect(tallest).toBeGreaterThan(0.18); // a 3D pop, not a picture
+      const [cx, cz] = cellCentre();
+      for (const [a, b, c] of [[lo[0], hi[0], cx], [lo[2], hi[2], cz]]) {
+        expect(a).toBeGreaterThan(c - 0.5);
+        expect(b).toBeLessThan(c + 0.5);
+      }
+      // the stone below keeps its top face
+      expect(m.opaque.faceCount).toBe(8);
+    });
+    it('branches: sticks lying across each other, one propped and a twig standing up', () => {
+      const m = mesh(world([STONE_UNDER, [...A, B.FALLEN_BRANCHES]]));
+      const flat = LITTER_STICKS.filter((s) => s[4] === 0).length;
+      expect(m.cutout.faceCount).toBe(flat * 5 + (LITTER_STICKS.length - flat) * 6);
+      const { lo, hi } = bounds(m);
+      expect(lo[1]).toBeGreaterThanOrEqual(A[1] - 1e-6);
+      expect(hi[1]).toBeGreaterThan(A[1] + 0.15); // the twig stands well clear of the ground
+      expect(hi[1]).toBeLessThan(A[1] + 0.4);
+      expect(Math.max(hi[0] - lo[0], hi[2] - lo[2])).toBeGreaterThan(0.55); // a real stick's length
+      expect(Math.max(...LITTER_STICKS.map((s) => s[0]))).toBeLessThanOrEqual(0.85);
+    });
+    it('every face is shaded by where it faces: tops brightest, and darker where a piece meets the ground', () => {
+      const m = mesh(world([STONE_UNDER, [...A, B.LOOSE_STONES]]));
+      const { positions: p, normals: n, colors: c } = m.cutout;
+      let top = 0;
+      let side = 1;
+      let grounded = 0;
+      for (let v = 0; v < m.cutout.vertexCount; v++) {
+        const len = Math.hypot(n[v * 3], n[v * 3 + 1], n[v * 3 + 2]);
+        expect(len).toBeCloseTo(1, 5);
+        expect(c[v * 3]).toBe(c[v * 3 + 1]); // untinted grey
+        if (n[v * 3 + 1] > 0.99) top = Math.max(top, c[v * 3]);
+        else {
+          side = Math.min(side, c[v * 3]);
+          if (p[v * 3 + 1] - A[1] < 0.01) grounded++;
+        }
+      }
+      expect(top).toBeGreaterThan(0.9);
+      expect(side).toBeLessThan(top * LITTER_GROUND_SHADE);
+      expect(grounded).toBeGreaterThan(0);
+    });
+    it('each face is cut from its skin tile, and no two cells look alike', () => {
+      const rock = tileToUV(TILE.LITTER_ROCK);
+      const flint = tileToUV(TILE.LITTER_FLINT);
+      const stick = tileToUV(TILE.LITTER_STICK);
+      const inside = (uvs, i, r) => uvs[i * 2] >= r[0] - 1e-6 && uvs[i * 2] <= r[2] + 1e-6 && uvs[i * 2 + 1] >= r[1] - 1e-6 && uvs[i * 2 + 1] <= r[3] + 1e-6;
+      const s = mesh(world([STONE_UNDER, [...A, B.FALLEN_BRANCHES]]));
+      for (let v = 0; v < s.cutout.vertexCount; v++) expect(inside(s.cutout.uvs, v, stick)).toBe(true);
+      // a column that holds flint shows one dark nodule among its stones; a plain one shows none
+      let withFlint = null;
+      let plain = null;
+      for (let q = 1; q < 14 && !(withFlint && plain); q++) {
+        for (let r = 1; r < 14 && !(withFlint && plain); r++) {
+          if (flintAt(q, r)) withFlint ??= [q, r];
+          else plain ??= [q, r];
+        }
+      }
+      for (const [cell, expectFlint] of [[withFlint, true], [plain, false]]) {
+        const m = mesh(world([[cell[0], 9, cell[1], B.STONE], [cell[0], 10, cell[1], B.LOOSE_STONES]]));
+        let flintVerts = 0;
+        for (let v = 0; v < m.cutout.vertexCount; v++) {
+          if (inside(m.cutout.uvs, v, flint)) flintVerts++;
+          else expect(inside(m.cutout.uvs, v, rock)).toBe(true);
+        }
+        expect(flintVerts > 0).toBe(expectFlint);
+        if (expectFlint) expect(flintVerts).toBe(2 * 5 * 4); // the middle stone and its cap
+      }
+      const a = mesh(world([STONE_UNDER, [...A, B.LOOSE_STONES]]));
+      const b = mesh(world([[6, 9, 7, B.STONE], [6, 10, 7, B.LOOSE_STONES]]));
+      const [ax, az] = cellXZ(A[0], A[2]);
+      const [bx, bz] = cellXZ(6, 7);
+      expect(Math.abs((a.cutout.positions[0] - ax) - (b.cutout.positions[0] - bx)) + Math.abs((a.cutout.positions[2] - az) - (b.cutout.positions[2] - bz))).toBeGreaterThan(1e-3);
+    });
   });
   it('terrain stays hexagonal prisms (grass and stone keep 8 faces)', () => {
     expect(mesh(world([[...A, B.GRASS_BLOCK]])).opaque.faceCount).toBe(8);

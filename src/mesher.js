@@ -110,6 +110,7 @@ const SURFACE = new Float64Array(256);
 const SHAPE = new Uint8Array(256);
 const SHAPE_CROSS = 1;
 const SHAPE_DECAL = 2;
+const SHAPE_LITTER = 3;
 
 for (let id = 0; id < 256; id++) {
   OPAQUE[id] = isOpaque(id) ? 1 : 0;
@@ -119,7 +120,7 @@ for (let id = 0; id < 256; id++) {
   WET[id] = isWater(id) ? 1 : 0;
   SURFACE[id] = WET[id] ? waterSurfaceHeight(id, BLOCK.AIR) : 1;
   const shape = getBlockShape(id);
-  SHAPE[id] = shape === 'cross' ? SHAPE_CROSS : shape === 'decal' ? SHAPE_DECAL : 0;
+  SHAPE[id] = shape === 'cross' ? SHAPE_CROSS : shape === 'decal' ? SHAPE_DECAL : shape === 'litter' ? SHAPE_LITTER : 0;
   for (let f = 0; f < FACE_COUNT; f++) {
     const uv = tileToUV(getFaceTile(id, f));
     const o = (id * FACE_COUNT + f) * 4;
@@ -705,6 +706,167 @@ function emitCross(bld, wq, wr, ly, cx, cz, a, tr, tg, tb, own) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// §75: ground litter as small 3D pieces
+// ---------------------------------------------------------------------------------------------------
+
+/** The skins the litter's faces are cut from (tile rects [u0, v0, u1, v1]). */
+const ROCK_UV = Float32Array.from(tileToUV(TILE.LITTER_ROCK));
+const FLINT_ROCK_UV = Float32Array.from(tileToUV(TILE.LITTER_FLINT));
+const STICK_UV = Float32Array.from(tileToUV(TILE.LITTER_STICK));
+/** Texels per metre on the litter (the terrain's own density: a 16-texel tile spans one cell). */
+const LITTER_TEXELS = 16;
+
+/**
+ * The loose stones of one cell: [distance from the cell's middle, width, height, depth, cap scale, cap height] (m). A
+ * stone is a block with a smaller block on top (the cap), so it reads as a rounded lump, not a cube.
+ */
+export const LITTER_ROCKS = Object.freeze([
+  Object.freeze([0.15, 0.36, 0.15, 0.29, 0.64, 0.085]),
+  Object.freeze([0.23, 0.25, 0.115, 0.2, 0.6, 0.06]),
+  Object.freeze([0.28, 0.15, 0.085, 0.13, 0, 0]),
+]);
+/**
+ * The fallen branches of one cell: [length, thickness, offset along the first stick, turn from it (rad), pitch (rad),
+ * height of its middle] (m). The first lies flat; the second rests across it; the third is a twig standing off it.
+ */
+export const LITTER_STICKS = Object.freeze([
+  Object.freeze([0.8, 0.085, 0, 0, 0, 0.0425]),
+  Object.freeze([0.56, 0.07, 0.07, 1.15, 0.17, 0.115]),
+  Object.freeze([0.26, 0.055, 0.2, 0.8, 0.6, 0.115]),
+  Object.freeze([0.3, 0.06, -0.26, 2.3, 0, 0.03]),
+]);
+/** How much darker the faces of a piece are where it meets the ground (contact shade), and the light on its faces. */
+export const LITTER_GROUND_SHADE = 0.78;
+const LITTER_KEY_X = 0.35;
+const LITTER_KEY_Y = 0.85;
+const LITTER_KEY_Z = 0.4;
+
+/** The three axes of a box face: [normal axis, u axis, v axis] (0 x, 1 y, 2 z), +face then −face of each axis. */
+const BOX_AXES = [[0, 2, 1], [1, 0, 2], [2, 0, 1]];
+/** Whether u × v points along +normal for each of those (1) or against it (−1): it decides the winding. */
+const BOX_PARITY = [-1, -1, 1];
+const boxP = [0, 0, 0];
+
+/**
+ * One box of the litter: half sizes (hx, hy, hz), centre (x, y, z) in chunk-local space, turned `pitch` about its own z
+ * axis (its +x end lifts) and then `yaw` about +y. Every face is cut from `uv` at texel offset (tu, tv), sized by the
+ * face's own size, and shaded by where it faces (top brightest) and darker where it meets the ground.
+ */
+function emitBox(bld, x, y, z, hx, hy, hz, yaw, pitch, uv, tu, tv, own, floorY) {
+  bld.ensure(24, 36);
+  const positions = bld.positions;
+  const normals = bld.normals;
+  const uvs = bld.uvs;
+  const colors = bld.colors;
+  const indices = bld.indices;
+  const light = bld.light;
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const cp = Math.cos(pitch);
+  const sp = Math.sin(pitch);
+  const half = [hx, hy, hz];
+  const du = (uv[2] - uv[0]) / LITTER_TEXELS;
+  const dv = (uv[3] - uv[1]) / LITTER_TEXELS;
+  let b = bld.vertexCount;
+  let ib = bld.indexCount;
+  let faces = 0;
+  for (let ax = 0; ax < 3; ax++) {
+    const [na, ua, va] = BOX_AXES[ax];
+    for (let sign = 1; sign >= -1; sign -= 2) {
+      if (na === 1 && sign < 0 && pitch === 0) continue; // a piece lying flat: its underside is never seen
+      // the face's size in texels, and where on the skin it is cut from (kept inside the tile)
+      const wu = Math.max(1, Math.min(LITTER_TEXELS, half[ua] * 2 * LITTER_TEXELS));
+      const wv = Math.max(1, Math.min(LITTER_TEXELS, half[va] * 2 * LITTER_TEXELS));
+      const u0 = Math.min(tu + faces * 3, LITTER_TEXELS - wu);
+      const v0 = Math.min(tv + faces * 2, LITTER_TEXELS - wv);
+      // the outward normal, turned
+      boxP[0] = 0; boxP[1] = 0; boxP[2] = 0;
+      boxP[na] = sign;
+      const nx0 = boxP[0] * cp - boxP[1] * sp;
+      const ny = boxP[0] * sp + boxP[1] * cp;
+      const nx = nx0 * cy + boxP[2] * sy;
+      const nz = -nx0 * sy + boxP[2] * cy;
+      const shade = 0.58 + 0.42 * Math.min(1, Math.max(0, 0.5 + 0.5 * (nx * LITTER_KEY_X + ny * LITTER_KEY_Y + nz * LITTER_KEY_Z)));
+      for (let v = 0; v < 4; v++) {
+        const su = v === 1 || v === 2 ? 1 : -1;
+        const sv = v >= 2 ? 1 : -1;
+        boxP[na] = sign * half[na];
+        boxP[ua] = su * half[ua];
+        boxP[va] = sv * half[va];
+        const px0 = boxP[0] * cp - boxP[1] * sp;
+        const py = boxP[0] * sp + boxP[1] * cp;
+        const wx = px0 * cy + boxP[2] * sy;
+        const wz = -px0 * sy + boxP[2] * cy;
+        const p3 = (b + v) * 3;
+        positions[p3] = x + wx;
+        positions[p3 + 1] = y + py;
+        positions[p3 + 2] = z + wz;
+        normals[p3] = nx;
+        normals[p3 + 1] = ny;
+        normals[p3 + 2] = nz;
+        const p2 = (b + v) * 2;
+        uvs[p2] = uv[0] + (u0 + (su > 0 ? wu : 0)) * du;
+        uvs[p2 + 1] = uv[1] + (v0 + (sv > 0 ? 0 : wv)) * dv;
+        const col = shade * (y + py - floorY < 0.03 ? LITTER_GROUND_SHADE : 1);
+        colors[p3] = col;
+        colors[p3 + 1] = col;
+        colors[p3 + 2] = col;
+        writeLight(light, (b + v) * 2, own);
+      }
+      // counter-clockwise seen from outside, so the two-sided cutout material lights the outside
+      if (BOX_PARITY[ax] * sign > 0) {
+        indices[ib] = b; indices[ib + 1] = b + 1; indices[ib + 2] = b + 2;
+        indices[ib + 3] = b; indices[ib + 4] = b + 2; indices[ib + 5] = b + 3;
+      } else {
+        indices[ib] = b; indices[ib + 1] = b + 2; indices[ib + 2] = b + 1;
+        indices[ib + 3] = b; indices[ib + 4] = b + 3; indices[ib + 5] = b + 2;
+      }
+      b += 4;
+      ib += 6;
+      faces++;
+    }
+  }
+  bld.vertexCount = b;
+  bld.indexCount = ib;
+  bld.faceCount += faces;
+}
+
+/**
+ * Ground litter (BlockDef.shape 'litter', CONTRACTS §75): LOOSE_STONES as three stones of different sizes (one of them a
+ * dark FLINT nodule where blocks.flintAt says the column holds flint), FALLEN_BRANCHES as sticks lying across each other
+ * with a twig standing up. Every cell's pieces are turned and placed by cellHash, so no two cells look alike. They are in
+ * the cutout layer, lit by their own cell.
+ */
+function emitLitter(bld, wq, wr, ly, cx, cz, a, own) {
+  const turn = cellHash(wq, wr, 3) * Math.PI * 2;
+  if (a === BLOCK.LOOSE_STONES) {
+    const flint = flintAt(wq, wr);
+    for (let i = 0; i < LITTER_ROCKS.length; i++) {
+      const [dist, w, h, d, cap, capH] = LITTER_ROCKS[i];
+      const ang = turn + i * 2.2 + (cellHash(wq, wr, 4 + i) - 0.5) * 0.7;
+      const x = cx + Math.cos(ang) * dist;
+      const z = cz + Math.sin(ang) * dist;
+      const yaw = cellHash(wq, wr, 8 + i) * Math.PI;
+      const uv = flint && i === 1 ? FLINT_ROCK_UV : ROCK_UV;
+      const tu = Math.floor(cellHash(wq, wr, 12 + i) * 8);
+      const tv = Math.floor(cellHash(wq, wr, 16 + i) * 8);
+      emitBox(bld, x, ly + h / 2, z, w / 2, h / 2, d / 2, yaw, 0, uv, tu, tv, own, ly);
+      if (cap > 0) emitBox(bld, x, ly + h + capH / 2, z, (w * cap) / 2, capH / 2, (d * cap) / 2, yaw + 0.35, 0, uv, tu + 3, tv + 2, own, ly);
+    }
+    return;
+  }
+  const ax = Math.cos(turn);
+  const az = -Math.sin(turn);
+  for (let i = 0; i < LITTER_STICKS.length; i++) {
+    const [len, thick, along, off, pitch, mid] = LITTER_STICKS[i];
+    const jitter = (cellHash(wq, wr, 20 + i) - 0.5) * 0.5;
+    const tu = Math.floor(cellHash(wq, wr, 24 + i) * 3);
+    const tv = Math.floor(cellHash(wq, wr, 28 + i) * 12);
+    emitBox(bld, cx + ax * along, ly + mid, cz + az * along, len / 2, thick / 2, thick / 2, turn + (i === 0 ? 0 : off + jitter), pitch, STICK_UV, tu, tv, own, ly);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------------------------------
 
@@ -766,6 +928,7 @@ export function buildChunkMesh(cq, cr, getChunkData) {
           const tb = t ? tint[2] : 1;
           const own = lightAt(pq, ly, pr); // a plant or a decal is lit by its own cell (§62)
           if (shape === SHAPE_CROSS) emitCross(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, tr, tg, tb, own);
+          else if (shape === SHAPE_LITTER) emitLitter(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, own);
           else {
             // §70: the loose stones that hold flint are drawn with the flint tile, so flint can be seen where it lies.
             decalUV = a === BLOCK.LOOSE_STONES && flintAt(cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr) ? FLINT_UV : null;

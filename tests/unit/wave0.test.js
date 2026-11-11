@@ -303,10 +303,10 @@ describe('blocks', () => {
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
     // v0.8 appended 68..75 (see the block-physics test below), v0.9 survival 76..94, powder and circuits 95..114, v0.11 the Workbench 115
-    expect(BLOCK_COUNT).toBe(119); // … and the three snares 116–118
+    expect(BLOCK_COUNT).toBe(120); // … the three snares 116–118 and Flinty Gravel 119 (§75)
     // + 6 zombie part tiles 240–245 (§39), + 3 Watcher tiles 250–252 (§40: stone, crack glow, smoke), not block faces;
     // v0.9 survival + 28 (77–104); powder and circuits + 35 (160–194)
-    expect(TILE_IDS).toHaveLength(156); // v0.11: + the Workbench 195, 196
+    expect(TILE_IDS).toHaveLength(160); // v0.11: + the Workbench 195, 196; v0.13: + 201–204 (§75)
     expect(BLOCK.BLACK_HOLE).toBe(66);
     expect(TILE.BLACK_HOLE).toBe(72);
     expect(BLOCK.STONE).toBe(1);
@@ -380,7 +380,7 @@ describe('blocks', () => {
     expect(getFaceTile(BLOCK.BLAST_BARREL, FACE_BOTTOM)).toBe(TILE.BARREL_TOP);
     expect(PICKER_ORDER.indexOf(BLOCK.BLAST_BARREL)).toBe(PICKER_ORDER.indexOf(BLOCK.CAMPFIRE) + 1);
     // Gravity and fall-through.
-    expect(BLOCKS.filter((d) => d.gravity).map((d) => d.id).sort((a, c) => a - c)).toEqual([BLOCK.SAND, BLOCK.GRAVEL, BLOCK.RED_SAND]);
+    expect(BLOCKS.filter((d) => d.gravity).map((d) => d.id).sort((a, c) => a - c)).toEqual([BLOCK.SAND, BLOCK.GRAVEL, BLOCK.RED_SAND, BLOCK.FLINT_GRAVEL]);
     expect(isGravityBlock(BLOCK.SAND)).toBe(true);
     expect(isGravityBlock(BLOCK.SANDSTONE)).toBe(false);
     const through = BLOCKS.filter((d) => isFallThrough(d.id)).map((d) => d.id);
@@ -393,8 +393,8 @@ describe('blocks', () => {
     expect(isLeaves(BLOCK.OAK_LOG) || isLog(BLOCK.OAK_PLANKS)).toBe(false);
   });
   it('v0.9 survival: blocks 76..94 exactly as DESIGN-survival §8.1, tiles 77..104 (powder and circuits follow at 95)', () => {
-    expect(BLOCK_COUNT).toBe(119); // 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118
-    expect(BLOCKS).toHaveLength(119);
+    expect(BLOCK_COUNT).toBe(120); // 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119
+    expect(BLOCKS).toHaveLength(120);
     const P = 'plant'; // the PLANT flags: walk-through, see-through cutout, never culled against itself
     const S = 'solid'; // a plain full block (def defaults)
     // [key, id, name, displayName, flags, soundGroup, [side, top, bottom] TILE keys, placeable]
@@ -451,7 +451,7 @@ describe('blocks', () => {
       'PLANT_TOP_CLEAR', 'LOOSE_STONES', 'FALLEN_BRANCHES', 'FIRE_PIT_SIDE',
     ];
     TILES.forEach((key, i) => expect(TILE[key], key).toBe(77 + i));
-    expect(TILE_IDS).toHaveLength(156); // 115 after survival; + the 35 circuit tiles 160..194; + the Workbench 195, 196
+    expect(TILE_IDS).toHaveLength(160); // 115 after survival; + the 35 circuit tiles 160..194; + the Workbench 195, 196; + 201–204 (§75)
     expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
     // Every survival tile is used by a block face — except CATTAILS_TOP: the cattails became a crossed sprite drawn from
     // CATTAILS_SIDE, and tile ids are fixed, so 83 stays painted but no face names it.
@@ -545,7 +545,7 @@ describe('blocks', () => {
 
   it('powder and circuits: blocks 95..114 exactly as DESIGN-circuits §1.2 (THIN and MODEL), BLOCK_COUNT 115', () => {
     expect(CIRCUIT_BLOCKS.map((row) => row[1])).toEqual(Array.from({ length: 20 }, (_, i) => 95 + i));
-    expect(BLOCK_COUNT).toBe(119); // + v0.11's Workbench at 115 and the snares 116–118
+    expect(BLOCK_COUNT).toBe(120); // + v0.11's Workbench at 115, the snares 116–118 and v0.13's Flinty Gravel 119
     for (const [key, id, name, displayName, shape, sound, [side, top]] of CIRCUIT_BLOCKS) {
       expect(BLOCK[key], key).toBe(id);
       const d = BLOCKS[id];
@@ -580,7 +580,7 @@ describe('blocks', () => {
 
   it('powder and circuits: tiles 160..194 (§1.4), each used by a block face; TILE_IDS 150', () => {
     CIRCUIT_TILES.forEach((key, i) => expect(TILE[key], key).toBe(160 + i));
-    expect(TILE_IDS).toHaveLength(156); // + the Workbench's 195, 196 (§67)
+    expect(TILE_IDS).toHaveLength(160); // + the Workbench's 195, 196 (§67) and 201–204 (§75)
     expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
     const used = new Set(BLOCKS.flatMap((d) => d.tiles));
     for (const key of CIRCUIT_TILES) expect(used.has(TILE[key]), key).toBe(true);

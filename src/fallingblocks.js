@@ -73,7 +73,7 @@ export function liftFreeY(getBlock, b, maxUp) {
  */
 
 /** Gravity blocks and the pop-off blocks (CAMPFIRE first, then the rest of POP_OFF_IDS): what the gravity rule reacts to. */
-export const GRAVITY_RULE_IDS = Object.freeze([BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, ...POP_OFF_IDS]);
+export const GRAVITY_RULE_IDS = Object.freeze([BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, BLOCK.FLINT_GRAVEL, ...POP_OFF_IDS]);
 
 /** Grey stone dust (loose stones, a cold fire pit), green pad dust (a prickly pear), bark dust (fallen branches). */
 const POP_GREY = Object.freeze([0.56, 0.55, 0.52]);

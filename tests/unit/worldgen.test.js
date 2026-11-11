@@ -8,7 +8,9 @@ import {
 } from '../../src/config.js';
 import { columnIndex, localIndex, floorDiv } from '../../src/coords.js';
 import { HEX_DIRS, hexLength, hexToWorld } from '../../src/hex.js';
-import { BLOCK, BIOME, isSolid } from '../../src/blocks.js';
+import {
+  BLOCK, BIOME, isSolid, flintGravelAt, flintPileAt, FLINT_PILE_SHARE, FLINT_GRAVEL_SHARE, FLINT_PILE_SHIFT, FLINT_SHARE, isGravityBlock,
+} from '../../src/blocks.js';
 import { normalizeSeed, hash2, hash3, rand3, mulberry32 } from '../../src/noise.js';
 import {
   createWorldGen, TREE_CELL, TREE_DENSITY, ORE_TABLE, ORE_TABLE_GEN2, FLORA_TABLE, POND_CELL, POND_SALT, FLORA_SALT,
@@ -867,7 +869,7 @@ describe('generation 2: the generator surface', () => {
     expect(rows).toEqual([
       [B.COPPER_ORE, 10, 30, 80, 4, 8, null],
       [B.TIN_ORE, 4, 20, 64, 3, 6, null],
-      [B.CLAY, 3, 52, 62, 6, 12, [B.SAND, B.GRAVEL, B.DIRT]],
+      [B.CLAY, 3, 52, 62, 6, 12, [B.SAND, B.GRAVEL, B.FLINT_GRAVEL, B.DIRT]], // §75: flinty gravel is gravel to the clay
     ]);
   });
 
@@ -1002,11 +1004,16 @@ describe('generation 2: ores and clay', () => {
             const v = at(b, lq, y, lr);
             if (ORE_IDS.has(u)) expect(v, 'gen-1 ore').toBe(u);
             if (u === v) continue;
+            const wq = cq * CHUNK_SIZE + lq;
+            const wr = cr * CHUNK_SIZE + lr;
             const ok =
               (u === B.STONE && (v === B.COPPER_ORE || v === B.TIN_ORE)) ||
               ((u === B.SAND || u === B.GRAVEL || u === B.DIRT) && v === B.CLAY) ||
+              // §75: gravel in a flint-bearing pile may be Flinty Gravel (vein gravel, and the gravel on the surface)
+              (u === B.GRAVEL && v === B.FLINT_GRAVEL && flintGravelAt(wq, y, wr, gen2.seed)) ||
               ((u === B.GRASS_BLOCK || u === B.SNOWY_GRASS) && (v === B.WATER || v === B.ICE) && y === height) ||
-              ([B.GRASS_BLOCK, B.SNOWY_GRASS, B.SAND, B.STONE].includes(u) && v === B.GRAVEL && y === height) ||
+              ([B.GRASS_BLOCK, B.SNOWY_GRASS, B.SAND, B.STONE].includes(u) && y === height &&
+                v === (flintGravelAt(wq, y, wr, gen2.seed) ? B.FLINT_GRAVEL : B.GRAVEL)) ||
               ((u === B.AIR || LEAF_IDS.has(u)) && FLORA_IDS.has(v) && y === height + 1) ||
               (u === B.OAK_LOG && (v === B.SPRUCE_LOG || v === B.BIRCH_LOG)) ||
               (u === B.OAK_LEAVES && (v === B.SPRUCE_LEAVES || v === B.BIRCH_LEAVES));
@@ -1017,6 +1024,76 @@ describe('generation 2: ores and clay', () => {
       }
     }
     for (const id of [B.COPPER_ORE, B.TIN_ORE, B.CLAY, B.TUSSOCK, B.LOOSE_STONES]) expect(counts.get(id) ?? 0, `id ${id}`).toBeGreaterThan(0);
+  });
+
+  it('§75 Flinty Gravel: only in generation 2, only where flintGravelAt says, in some piles and not in others', () => {
+    let gravel = 0;
+    let flinty = 0;
+    const piles = new Map(); // pile key → [gravel cells, flinty cells]
+    for (const [cq, cr] of CMP) {
+      const a = chunk(cq, cr);
+      const b = chunk2(cq, cr);
+      for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+        for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+          const q = cq * CHUNK_SIZE + lq;
+          const r = cr * CHUNK_SIZE + lr;
+          for (let y = 0; y < WORLD_HEIGHT; y++) {
+            expect(at(a, lq, y, lr)).not.toBe(B.FLINT_GRAVEL); // never in generation 1
+            const v = at(b, lq, y, lr);
+            if (v !== B.GRAVEL && v !== B.FLINT_GRAVEL) continue;
+            const key = `${q >> FLINT_PILE_SHIFT},${y >> FLINT_PILE_SHIFT},${r >> FLINT_PILE_SHIFT}`;
+            const pile = piles.get(key) ?? piles.set(key, [0, 0]).get(key);
+            pile[0]++;
+            if (v === B.FLINT_GRAVEL) {
+              flinty++;
+              pile[1]++;
+              expect(flintGravelAt(q, y, r, gen2.seed), `${q},${y},${r}`).toBe(true);
+              expect(flintPileAt(q, y, r, gen2.seed)).toBe(true);
+            } else gravel++;
+          }
+        }
+      }
+    }
+    expect(flinty).toBeGreaterThan(20);
+    // a minority of all gravel: about FLINT_PILE_SHARE × FLINT_GRAVEL_SHARE of what the veins and the surface lay down
+    expect(flinty / (flinty + gravel)).toBeGreaterThan(0.03);
+    expect(flinty / (flinty + gravel)).toBeLessThan(0.2);
+    // not every pile holds flint: some sizeable piles have none, and some have several
+    const big = [...piles.values()].filter(([n]) => n >= 6);
+    expect(big.filter(([, f]) => f === 0).length).toBeGreaterThan(big.length * 0.3);
+    expect(big.filter(([, f]) => f >= 2).length).toBeGreaterThan(0);
+    expect([FLINT_PILE_SHARE, FLINT_GRAVEL_SHARE, FLINT_SHARE]).toEqual([0.4, 0.3, 0.06]);
+    expect(isGravityBlock(B.FLINT_GRAVEL)).toBe(true);
+  });
+
+  it('§75 flintGravelAt is a fixed toss per cell: the same answer every time, about the shares it names', () => {
+    let pilesOn = 0;
+    let cells = 0;
+    let cellsOn = 0;
+    for (let i = 0; i < 4000; i++) {
+      const q = (i * 37) % 4001 - 2000;
+      const r = (i * 91) % 3989 - 1990;
+      const y = 8 + (i * 13) % 80;
+      const on = flintPileAt(q, y, r, 99);
+      if (on) pilesOn++;
+      expect(flintPileAt(q, y, r, 99)).toBe(on);
+      // every cell of a pile agrees about the pile
+      expect(flintPileAt((q >> FLINT_PILE_SHIFT << FLINT_PILE_SHIFT) + 5, (y >> FLINT_PILE_SHIFT << FLINT_PILE_SHIFT) + 2, (r >> FLINT_PILE_SHIFT << FLINT_PILE_SHIFT) + 7, 99)).toBe(on);
+      if (!on) {
+        expect(flintGravelAt(q, y, r, 99)).toBe(false);
+        continue;
+      }
+      cells++;
+      if (flintGravelAt(q, y, r, 99)) cellsOn++;
+    }
+    expect(pilesOn / 4000).toBeGreaterThan(FLINT_PILE_SHARE - 0.05);
+    expect(pilesOn / 4000).toBeLessThan(FLINT_PILE_SHARE + 0.05);
+    expect(cellsOn / cells).toBeGreaterThan(FLINT_GRAVEL_SHARE - 0.06);
+    expect(cellsOn / cells).toBeLessThan(FLINT_GRAVEL_SHARE + 0.06);
+    // another seed, another layout
+    let differ = 0;
+    for (let i = 0; i < 400; i++) if (flintPileAt(i * 8, 40, 0, 1) !== flintPileAt(i * 8, 40, 0, 2)) differ++;
+    expect(differ).toBeGreaterThan(100);
   });
 
   it('copper and tin stay in their y ranges and replace STONE only; clay replaces only sand, gravel and dirt', () => {
@@ -1101,7 +1178,9 @@ describe('generation 2: flora (§8.3 step 4)', () => {
           if (!want) {
             expect([top, above], `${q},${r}`).toEqual([table.surface, B.AIR]);
           } else if (want.top) {
-            expect([top, above], `${q},${r}`).toEqual([want.id, B.AIR]);
+            // §75: surface gravel in a flint-bearing pile may be Flinty Gravel
+            const id = want.id === B.GRAVEL && flintGravelAt(q, h, r, gen2.seed) ? B.FLINT_GRAVEL : want.id;
+            expect([top, above], `${q},${r}`).toEqual([id, B.AIR]);
             placed++;
           } else {
             expect([top, above], `${q},${r}`).toEqual([table.surface, want.id]);

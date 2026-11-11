@@ -8,7 +8,7 @@
 // `!world.hasEdit(q, y, r)` BEFORE writing AIR). Conditions: the selected tool's type ('shovel', 'knife', 'axe', 'pick') or
 // 'knifeInPack' (a knife of tier ≥ 2 anywhere in the pack).
 import { REGROW_MEAN_S, MAX_REGROW_TRACKED, SEA_LEVEL } from './config.js';
-import { BLOCK, BLOCK_COUNT, getBlockDef } from './blocks.js';
+import { BLOCK, BLOCK_COUNT, getBlockDef, FLINT_SHARE } from './blocks.js';
 import { TIER_NAMES, TIER_SPEED, itemForBlock } from './items.js';
 import { forEachEditedCell } from './coords.js';
 
@@ -100,11 +100,13 @@ set([B.GRASS_BLOCK], 1.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, 
 set([B.SNOWY_GRASS], 1.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('snow', 1, natural))]]);
 set([B.SAND, B.RED_SAND], 0.8, 'shovel', 0, SELF_DROPS);
 set([B.GRAVEL], 1.2, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('rock', 2))]]);
+// v0.13 (§75): Flinty Gravel is where flint comes from — the gravel (or the rock) and one Flint, with or without a shovel.
+set([B.FLINT_GRAVEL], 1.2, 'shovel', 0, [[when('shovel', drop('gravel')), when(null, drop('rock', 2))], always(drop('flint', 1))]);
 set([B.CLAY], 1.4, 'shovel', 0, [always(drop('clay_lump', 6))]);
 set([B.SNOW_BLOCK], 0.5, 'shovel', 0, [always(drop('snow', 6))]);
 set([B.ICE], 1.0, 'pick', 0, [[when('pick', drop('ice_chunk', 2)), when(null, drop('ice_chunk', 1))]]);
 set([B.PACKED_ICE], 2.0, 'pick', 2, [always(drop('ice_chunk', 3))]);
-set([B.LOOSE_STONES], 0.2, null, 0, [always(drop('rock', [1, 2])), always(drop('flint', 1, { p: 0.5, ...natural }))]);
+set([B.LOOSE_STONES], 0.2, null, 0, [always(drop('rock', [1, 2])), always(drop('flint', 1, { p: FLINT_SHARE, ...natural }))]);
 set([B.FALLEN_BRANCHES], 0.2, null, 0, [always(drop('stick', [2, 3]))]);
 // Leaves: only an axe lops them (self, and a stick from untouched leaves); by hand they give nothing but the odd nut.
 const LOP = [when('axe', drop(SELF), drop('stick', 1, natural))];
@@ -159,7 +161,7 @@ set([B.BLOOMERY], 4.0, 'pick', 2, SELF_DROPS);
 set([B.FORGE], 5.0, 'pick', 2, SELF_DROPS);
 // Rock: no stone pick exists, so a flint pick is the first way in.
 set([B.STONE], 3.0, 'pick', 2, [
-  always(drop('rock', 2)), always(drop('flint', 1, { p: 0.05, ...natural })),
+  always(drop('rock', 2)),
   always(drop('saltpetre', 1, { p: 0.06, deep: true, ...natural })), // v0.10 (DESIGN-circuits §8.1): cave saltpetre
 ]);
 set([B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.BRICKS], 3.0, 'pick', 2, SELF_DROPS);
@@ -252,7 +254,7 @@ export const DIG_TOOL_TYPES = Object.freeze(new Set(['axe', 'shovel', 'pick', 'k
  * @type {Readonly<Record<number, string>>}
  */
 export const HAND_GATHER = Object.freeze({
-  [B.TUSSOCK]: 'pull', [B.CATTAILS]: 'pull', [B.TUBER_PLANT]: 'pull', [B.GRAVEL]: 'dig', [B.CLAY]: 'dig',
+  [B.TUSSOCK]: 'pull', [B.CATTAILS]: 'pull', [B.TUBER_PLANT]: 'pull', [B.GRAVEL]: 'dig', [B.FLINT_GRAVEL]: 'dig', [B.CLAY]: 'dig',
 });
 
 /**
@@ -328,7 +330,7 @@ export const PICKABLE = deepFreeze({
     to: B.PRICKLY_PEAR_BARE,
     drops: [[when('knifeInPack', drop('cactus_fruit', [1, 2])), when(null, drop('unpeeled_cactus_fruit', [1, 2]))]],
   },
-  [B.LOOSE_STONES]: { to: B.AIR, drops: [always(drop('rock', [1, 2])), always(drop('flint', 1, { p: 0.5, ...natural }))] },
+  [B.LOOSE_STONES]: { to: B.AIR, drops: [always(drop('rock', [1, 2])), always(drop('flint', 1, { p: FLINT_SHARE, ...natural }))] },
   [B.FALLEN_BRANCHES]: { to: B.AIR, drops: [always(drop('stick', [2, 3]))] },
 });
 

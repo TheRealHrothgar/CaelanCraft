@@ -578,10 +578,17 @@ function paintBrick(ic, rng, base) {
 /** @type {Record<string, (ic: Icon, rng: Rng) => void>} */
 const MATERIAL_PAINTERS = {
   rock(ic, rng) {
-    ic.poly([[3, 7], [6, 4], [11, 4], [14, 8], [12, 13], [5, 13]], (x, y) => (x + y < 12 ? 0xa8a49c : x + y > 21 ? 0x66625c : 0x87837c));
-    ic.jitter(rng, 0.07);
-    ic.set(7, 6, 0xc8c4bc);
-    ic.set(10, 10, 0x55524c);
+    // a chunky cobble with a 3D pop: a dark rim, a lit top-left plane, a mid face, a deep shadow plane, a ground shadow
+    ic.ellipse(8.6, 13.4, 6.2, 1.5, 0x2a2a30);
+    ic.poly([[2, 8], [5, 3], [11, 2], [14, 6], [14, 10], [11, 13], [5, 13], [2, 11]], 0x3f3c38);
+    ic.poly([[3, 8], [6, 4], [11, 3], [13, 6], [13, 10], [10, 12], [5, 12], [3, 10]], (x, y) => (x + y < 13 ? 0xc9c5bc : x + y > 20 ? 0x625e58 : 0x928e86));
+    ic.jitter(rng, 0.05);
+    ic.line(8, 4, 12, 7, 0xa9a59c);
+    ic.line(5, 9, 9, 11, 0x77736c);
+    ic.set(6, 5, 0xf2efe8);
+    ic.set(7, 5, 0xe2dfd6);
+    ic.set(5, 6, 0xe2dfd6);
+    ic.set(11, 10, 0x4c4944);
   },
   flint(ic, rng) {
     // a dark nodule in a pale chalky cortex, broken open to show conchoidal ripples
@@ -598,15 +605,28 @@ const MATERIAL_PAINTERS = {
     ic.set(9, 4, 0xa890d0);
   },
   stick(ic) {
-    // a crooked stick with a side twig and a knot
-    for (let y = 1; y <= 14; y++) {
-      const x = y < 6 ? 9 : y < 11 ? 8 : 7;
-      ic.set(x, y, WOOD.light);
-      ic.set(x + 1, y, WOOD.base);
+    // a stout crooked branch with a 3D pop: a dark outline, a lit upper edge, a shaded underside, a knot, a forked twig,
+    // a pale cut end and a ground shadow
+    ic.line(4, 15, 13, 12, 0x2a2a30);
+    const spine = [[2, 12], [5, 10], [8, 9], [11, 6], [14, 3]];
+    for (let i = 0; i + 1 < spine.length; i++) {
+      const [x0, y0] = spine[i];
+      const [x1, y1] = spine[i + 1];
+      for (const [dx, dy, c] of [[0, -2, 0x3a2a18], [0, 2, 0x3a2a18], [0, -1, WOOD.light], [0, 0, WOOD.base], [0, 1, WOOD.dark]]) ic.line(x0 + dx, y0 + dy, x1 + dx, y1 + dy, c);
     }
-    ic.line(10, 8, 13, 5, WOOD.base);
-    ic.set(13, 4, 0x6f9a3a);
-    ic.set(9, 9, WOOD.dark);
+    // the twig
+    ic.line(7, 8, 5, 4, 0x3a2a18);
+    ic.line(8, 8, 6, 4, WOOD.base);
+    ic.set(6, 3, WOOD.light);
+    ic.set(5, 3, 0x6f9a3a);
+    ic.set(4, 2, 0x86b04a);
+    // the knot and the cut ends
+    ic.set(10, 7, 0x3a2a18);
+    ic.set(10, 8, WOOD.dark);
+    ic.set(14, 2, 0xe6cfa0);
+    ic.set(15, 3, 0xd4b987);
+    ic.set(1, 12, 0xd4b987);
+    ic.set(1, 13, 0xb89a68);
   },
   plant_fibre(ic, rng) {
     const greens = [0x9ab04a, 0xc8c070, 0x6f8f3a, 0xb0b860];
