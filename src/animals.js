@@ -13,7 +13,7 @@
 // are TAMED by feeding: a tame horse waits where it is left and can be ridden (`ride`), a tame wolf follows the player
 // and bites the zombies near it. Tame animals never flee, never despawn and are saved; so is every other animal.
 import { GRAVITY, WALK_SPEED, SPRINT_SPEED, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR } from './config.js';
-import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater } from './physics.js';
+import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
 import { hexToWorld, worldToHex } from './hex.js';
 import { yawToForward } from './coords.js';
 import { BLOCK, BIOME, isSolid } from './blocks.js';
@@ -374,7 +374,7 @@ export class Animals {
       input.sprint = moving && gait === 'run' && sp.fleeSprint;
       a.speedScale = gait === 'run' ? sp.fleeScale : gait === 'trot' ? 0.75 : 1;
       const ledge = moving && a.hitWall && this._ledgeAhead(a, getBlock);
-      input.jump = a.inWater || ledge;
+      input.jump = shouldPaddle(getBlock, a) || (!a.inWater && ledge);
       input.yaw = a.yaw;
       if (world.pullAt) {
         world.pullAt(a.x, a.y + 0.5, a.z, this._pull);
@@ -389,6 +389,7 @@ export class Animals {
       const x0 = a.x;
       const z0 = a.z;
       stepPlayer(a, input, getBlock, dt);
+      settleFloat(getBlock, a, dt);
       a.sneaking = false;
       a.sprinting = false;
       if (a.hitWall) a.wallSinceAim = true;

@@ -10,7 +10,7 @@ import {
   HIT_FLEE_S, ANIMAL_HURT_S, MILK_REGROW_S,
 } from '../../src/animals.js';
 import { Pigs, seededRng } from '../../src/pigs.js';
-import { createPlayer } from '../../src/physics.js';
+import { createPlayer, shouldPaddle, settleFloat, FLOAT_POINT } from '../../src/physics.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { createAnimalRenderer, bodyVariant, MODELS } from '../../src/animalRenderer.js';
 import * as THREE from 'three';
@@ -496,5 +496,48 @@ describe('animalRenderer — a black hole\'s ghost (renderScale, renderSpin)', (
     const e = new THREE.Euler().setFromRotationMatrix(mat(mesh), 'YXZ');
     expect(e.y).toBeCloseTo(1.4, 5);
     r.dispose();
+  });
+});
+
+describe('swimming mobs float low and steady (KNOWN-ISSUES V1; CONTRACTS §72)', () => {
+  /** A lake: stone below y 4, water y 4..9 (its surface at 9.875), air above. */
+  const lake = (_q, y) => (y < 4 ? B.STONE : y < GROUND ? B.WATER : B.AIR);
+  const SURFACE = GROUND - 1 + 0.875;
+  it('shouldPaddle: only while the float point is under water, or pressing into a bank', () => {
+    const body = { x: 0, z: 0, y: SURFACE - 1, height: 1, radius: 0.3, inWater: true, hitWall: false };
+    expect(shouldPaddle(lake, body)).toBe(true); // deep
+    body.y = SURFACE - 1 * FLOAT_POINT + 0.05; // the float point just above the surface
+    expect(shouldPaddle(lake, body)).toBe(false);
+    body.hitWall = true;
+    expect(shouldPaddle(lake, body)).toBe(true); // the exit jump at a bank
+    expect(shouldPaddle(lake, { ...body, inWater: false })).toBe(false);
+  });
+  it('an animal and a zombie dropped in a lake settle with FLOAT_POINT of their height under water, without bobbing', () => {
+    const as = new Animals(seededRng(50));
+    const cow = as.spawn('cow', 0, GROUND + 0.5, 0);
+    cow.timer = 999;
+    const ys = [];
+    for (let f = 0; f < 300; f++) {
+      as.update(DT, { getBlock: lake, isLoaded: () => true, player: null });
+      if (f >= 150) ys.push(cow.y);
+    }
+    const line = SURFACE - cow.height * FLOAT_POINT;
+    expect(Math.max(...ys) - Math.min(...ys)).toBeLessThan(0.08); // steady
+    expect(Math.abs((Math.max(...ys) + Math.min(...ys)) / 2 - line)).toBeLessThan(0.08); // at its float line
+    expect(Math.max(...ys) + cow.height).toBeGreaterThan(SURFACE + 0.3); // its back shows …
+    expect(Math.max(...ys)).toBeLessThan(SURFACE - 0.3); // … and its feet never reach the surface
+  });
+  it('settleFloat leaves a body on the ground, at a bank, in an exit jump, or well above the water alone', () => {
+    const mk = (more) => ({ x: 0, z: 0, y: SURFACE - 0.2, vy: 1, height: 1, radius: 0.3, onGround: false, hitWall: false, ...more });
+    for (const more of [{ onGround: true }, { hitWall: true }, { vy: 8.7 }, { y: SURFACE + 0.4 }]) {
+      const b = mk(more);
+      const before = { y: b.y, vy: b.vy };
+      settleFloat(lake, b, DT);
+      expect({ y: b.y, vy: b.vy }, JSON.stringify(more)).toEqual(before);
+    }
+    const high = mk({});
+    settleFloat(lake, high, DT);
+    expect(high.y).toBeLessThan(SURFACE - 0.2); // riding too high: it settles back …
+    expect(high.vy).toBe(0); // … and stops rising
   });
 });

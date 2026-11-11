@@ -14,7 +14,7 @@ import {
   PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_MASS, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
   WADE_DEPTH, PIG_HEALTH, PIG_NOTICE, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR,
 } from './config.js';
-import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt, isSwimWater } from './physics.js';
+import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
 import { yawToForward } from './coords.js';
 import {
   HEX_DIRS, HEX_INRADIUS, HEX_ROW_SPACING, FACE_NORMALS, hexToWorld, worldToHex, hexLength, hexCircleContact,
@@ -487,7 +487,7 @@ export class Pigs {
       input.sneak = pig.mode === 'walk'; // sneak speed (1.31 m/s) is a pig's amble; fleeing uses walk speed
       // In water a pig always paddles up (it floats, and pressing into a bank gives SWIM_EXIT_JUMP); on land it
       // hops only at a one-cell ledge straight ahead.
-      input.jump = pig.inWater || (moving && pig.hitWall && canHop && this._ledgeAhead(pig, world.getBlock));
+      input.jump = shouldPaddle(world.getBlock, pig) || (!pig.inWater && moving && pig.hitWall && canHop && this._ledgeAhead(pig, world.getBlock));
       // The swim exit jump (SWIM_EXIT_JUMP at a bank) is a hop too: a pig carrying or riding another would launch its
       // rider over a wall no single pig can climb (play-test PB-1).
       input.noExitJump = !canHop;
@@ -505,6 +505,7 @@ export class Pigs {
       const x0 = pig.x;
       const z0 = pig.z;
       stepPlayer(pig, input, world.getBlock, dt);
+      settleFloat(world.getBlock, pig, dt);
       pig.sneaking = false; // a pig has no eye height to lower; keep the flag meaningful for the player only
       // Remembered until the next swim re-aim: a swimmer pressed into a high wall exit-jumps and only touches it on
       // some frames, so the instant hitWall at re-aim time is usually false and it would never turn away.

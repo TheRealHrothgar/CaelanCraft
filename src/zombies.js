@@ -29,7 +29,7 @@ import {
   ZOMBIE_SPAWN_INTERVAL_MAX_S, ZOMBIE_SPAWN_TRIES, ZOMBIE_DESPAWN_DIST, ZOMBIE_SOUND_RANGE, WORLD_HEIGHT, PLAYER_HEIGHT,
   GRAVITY,
 } from './config.js';
-import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater } from './physics.js';
+import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
 import { hexToWorld, worldToHex } from './hex.js';
 import { BLOCK, isSolid, isLiquid } from './blocks.js';
 import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js';
@@ -491,7 +491,7 @@ export class Zombies {
       // In water it always paddles up (it floats; pressing into a bank gives SWIM_EXIT_JUMP); on land it hops only a
       // one-cell ledge straight ahead with room for its height.
       const ledge = moving && zb.hitWall && canHop ? this._ledgeAhead(zb, getBlock) : 0;
-      input.jump = zb.inWater || ledge === 1;
+      input.jump = shouldPaddle(getBlock, zb) || (!zb.inWater && ledge === 1);
       // A higher wall (runners 2 at night, alphas 4 at night, 2 by day): one leap tall enough to clear it.
       if (ledge >= 2 && zb.onGround) {
         zb.vy = Math.sqrt(2 * -GRAVITY * (ledge + LEAP_MARGIN));
@@ -511,6 +511,7 @@ export class Zombies {
       const x0 = zb.x;
       const z0 = zb.z;
       stepPlayer(zb, input, getBlock, dt);
+      settleFloat(getBlock, zb, dt);
       zb.sneaking = false;
       if (zb.hitWall) zb.wallSinceAim = true;
       // A chaser pressing into a wall it cannot hop turns aside after STUCK_S.
