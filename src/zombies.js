@@ -16,15 +16,18 @@
 // than ZOMBIE_MAX_DROP cells and never into a campfire's safe zone (ZOMBIE_FIRE_FEAR: one inside turns straight away,
 // and nobody inside is struck). Within ZOMBIE_REACH they lash out once a second: the player is knocked back (main
 // flashes the screen red). There is no health: nothing dies.
-// From dawn a zombie under open sky smoulders and burns away after ZOMBIE_BURN_S; in shade (or water) it survives
-// until it walks into the light. The player knocks one out with ZOMBIE_HITS hits; a blast near it, a black hole or
+// v0.11: daylight no longer burns them. A zombie under open sky by day is `daylit` and nerfed (CONTRACTS §65): a walker
+// goes dormant (it stands still and wakes only for a player within WALKER_WAKE_RANGE, a hit, or an alpha near), a runner
+// shambles at walker speed, an alpha slows and hits softer; walls it leaps are lower by day. The player knocks one out
+// with its kind's hits (ZOMBIE_HITS for a walker); a blast near it, a black hole or
 // being farther than ZOMBIE_DESPAWN_DIST away also ends it. Zombies are never saved: the per-world switch is.
 import {
   ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, ZOMBIE_MASS, ZOMBIE_TARGET_RADIUS, ZOMBIE_CHASE_SPEED, ZOMBIE_TURN_RATE,
   ZOMBIE_SIGHT, ZOMBIE_CHASE_MAX_RISE, ZOMBIE_MAX_DROP, ZOMBIE_REACH, ZOMBIE_REACH_OVERLAP, ZOMBIE_ATTACK_COOLDOWN_S,
-  ZOMBIE_HIT_PUSH, ZOMBIE_HIT_LIFT, ZOMBIE_HITS, ZOMBIE_KNOCKBACK, ZOMBIE_KNOCK_LIFT, ZOMBIE_HURT_S, ZOMBIE_KO_KNOCK, ZOMBIE_BURN_S,
+  ZOMBIE_HIT_PUSH, ZOMBIE_HIT_LIFT, ZOMBIE_HITS, ZOMBIE_KNOCKBACK, ZOMBIE_KNOCK_LIFT, ZOMBIE_HURT_S, ZOMBIE_KO_KNOCK,
   ZOMBIE_FIRE_FEAR, ZOMBIE_SPAWN_FIRE_CLEAR, ZOMBIE_SPAWN_MIN, ZOMBIE_SPAWN_MAX, ZOMBIE_SPAWN_INTERVAL_MIN_S,
   ZOMBIE_SPAWN_INTERVAL_MAX_S, ZOMBIE_SPAWN_TRIES, ZOMBIE_DESPAWN_DIST, ZOMBIE_SOUND_RANGE, WORLD_HEIGHT, PLAYER_HEIGHT,
+  GRAVITY,
 } from './config.js';
 import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater } from './physics.js';
 import { hexToWorld, worldToHex } from './hex.js';
@@ -41,11 +44,12 @@ import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js'
  *   burn: number, smoking: boolean, exposed: boolean, sunIn: number, fireIn: number,
  *   fireX: number, fireY: number, fireZ: number,
  *   detour: number, detourYaw: number, side: 1|-1, stuck: number, tilt: number, wallSinceAim: boolean,
- *   kind: 'walker'|'runner'|'alpha', rallied: boolean,
+ *   kind: 'walker'|'runner'|'alpha', rallied: boolean, daylit: boolean, provoked: number,
  * }} Zombie
  * `walkPhase` advances with distance walked (the renderer swings the feet with it); `swing` counts down after an
- * attack (the renderer lurches the torso); `burn` is seconds spent in open daylight (burns away at ZOMBIE_BURN_S) and
- * `smoking` is true while it is exposed; `tilt` is the head's fixed lean (radians), chosen at spawn. `fireX/Y/Z` is the
+ * attack (the renderer lurches the torso); `burn` stays 0 and `smoking` false (v0.11: daylight no longer burns);
+ * `exposed` / `daylit` are true under open daylight; `provoked` counts down PROVOKE_S after a hit; `tilt` is the head's
+ * fixed lean (radians), chosen at spawn. `fireX/Y/Z` is the
  * floor centre of the nearest campfire within ZOMBIE_FIRE_FEAR + FIRE_WATCH at the last fire check (fireX NaN: none),
  * which it steers around between checks.
  */
@@ -127,6 +131,51 @@ export function kindOf(zb) {
 /** @param {*} zb the kind's stats (KIND_STATS) */
 export function statsOf(zb) {
   return KIND_STATS[kindOf(zb)];
+}
+
+// ---- v0.11 day and night, jumps (CONTRACTS §65) ---------------------------------------------------------------------
+
+/** A dormant walker wakes for a player this close (m), … */
+export const WALKER_WAKE_RANGE = 4;
+/** … and stays awake this long after a hit or a knock (s). */
+export const PROVOKE_S = 20;
+/** By day an alpha moves at this speed factor and strikes for this damage multiplier. */
+export const DAY_ALPHA_FACTOR = 0.82;
+export const DAY_ALPHA_DAMAGE = 1.25;
+/** The highest wall (cells) each kind gets on top of, at night (or in shade) and in open daylight. */
+export const CLIMB = Object.freeze({
+  walker: Object.freeze({ night: 1, day: 1 }),
+  runner: Object.freeze({ night: 2, day: 1 }),
+  alpha: Object.freeze({ night: 4, day: 2 }),
+});
+/** A leap clears the wall by this much (cells). */
+export const LEAP_MARGIN = 0.35;
+
+/** @param {*} zb @returns {number} the highest wall it climbs now */
+export function maxClimb(zb) {
+  const c = CLIMB[kindOf(zb)];
+  return zb && zb.daylit ? c.day : c.night;
+}
+
+/** @param {*} zb @returns {boolean} a walker in open daylight, not provoked and not rallied by an alpha */
+export function isDormant(zb) {
+  return kindOf(zb) === 'walker' && Boolean(zb.daylit) && !(zb.provoked > 0) && !zb.rallied;
+}
+
+/** @param {*} zb @returns {{ chase: number, sprint: boolean, factor: number }} how it chases now */
+export function gaitOf(zb) {
+  const st = statsOf(zb);
+  const kind = kindOf(zb);
+  if (zb && zb.daylit) {
+    if (kind === 'runner') return { chase: ZOMBIE_CHASE_SPEED, sprint: false, factor: 1 }; // a shambler by day
+    if (kind === 'alpha') return { chase: st.chase, sprint: false, factor: DAY_ALPHA_FACTOR };
+  }
+  return { chase: zb && zb.rallied && st.chase < 1 ? 1 : st.chase, sprint: st.sprint, factor: st.factor };
+}
+
+/** @param {*} zb @returns {number} its strike's damage multiplier now (main × ZOMBIE_DAMAGE) */
+export function damageOf(zb) {
+  return kindOf(zb) === 'alpha' && zb && zb.daylit ? DAY_ALPHA_DAMAGE : statsOf(zb).damage;
 }
 
 const TWO_PI = Math.PI * 2;
@@ -306,6 +355,8 @@ export class Zombies {
       wallSinceAim: false,
       kind: kindOf({ kind }),
       rallied: false,
+      daylit: false,
+      provoked: 0,
     }));
     this.list.push(zb);
     return zb;
@@ -372,7 +423,8 @@ export class Zombies {
       if (!world.isLoaded(zb.x, zb.z)) continue; // frozen until its chunk is back
       this._unstick(zb, getBlock);
 
-      // Daylight: under open sky (and out of water) it smoulders, and burns away after ZOMBIE_BURN_S; in shade it cools.
+      // Daylight: under open sky (and out of water) it is `daylit` — no longer burned (v0.11, CONTRACTS §65) but nerfed by
+      // kind (dormant walkers, shambling runners, a tamer alpha); in shade, underground or at night it is at full strength.
       if (isDay) {
         zb.sunIn -= dt;
         if (zb.sunIn <= 0) {
@@ -386,19 +438,10 @@ export class Zombies {
         zb.exposed = false;
         zb.sunIn = 0;
       }
-      if (zb.exposed) {
-        if (!zb.smoking) ev.ignited.push(zb);
-        zb.smoking = true;
-        zb.burn += dt;
-        if (zb.burn >= ZOMBIE_BURN_S) {
-          this.list.splice(i, 1);
-          ev.burned.push(zb);
-          continue;
-        }
-      } else {
-        zb.smoking = false;
-        zb.burn = Math.max(0, zb.burn - dt);
-      }
+      zb.daylit = zb.exposed;
+      zb.smoking = false;
+      zb.burn = 0;
+      if (zb.provoked > 0) zb.provoked = Math.max(0, zb.provoked - dt);
 
       const canHop = !zb.carrier && !carriers.has(zb);
       const chasing = this._think(zb, dt, world, player, canHop);
@@ -409,16 +452,22 @@ export class Zombies {
       const near = chasing && player !== null && Math.hypot(player.x - zb.x, player.z - zb.z) < 0.35; // right under / on top
       const moving = zb.mode !== 'idle' && zb.hurt <= 0 && !near && Math.abs(wrapAngle(zb.targetYaw - zb.yaw)) < MOVE_CONE;
       const brisk = zb.mode === 'chase' || zb.mode === 'avoid';
-      const st = statsOf(zb);
-      // A walker chases at ZOMBIE_CHASE_SPEED (full walking speed near an alpha), a runner sprints, an alpha walks briskly.
-      input.forward = moving ? (brisk ? (zb.rallied && st.chase < 1 ? 1 : st.chase) : 1) : 0;
+      const gait = gaitOf(zb);
+      // A walker chases at ZOMBIE_CHASE_SPEED (full walking speed near an alpha), a runner sprints (by day it shambles like
+      // a walker), an alpha walks briskly (slower by day).
+      input.forward = moving ? (brisk ? gait.chase : 1) : 0;
       input.sneak = moving && !brisk; // a wandering zombie shambles at sneak speed (1.31 m/s)
-      input.sprint = moving && brisk && st.sprint;
-      input.speedFactor = brisk ? st.factor : 1;
+      input.sprint = moving && brisk && gait.sprint;
+      input.speedFactor = brisk ? gait.factor : 1;
       // In water it always paddles up (it floats; pressing into a bank gives SWIM_EXIT_JUMP); on land it hops only a
       // one-cell ledge straight ahead with room for its height.
-      const ledge = moving && zb.hitWall && canHop && this._ledgeAhead(zb, getBlock);
-      input.jump = zb.inWater || ledge;
+      const ledge = moving && zb.hitWall && canHop ? this._ledgeAhead(zb, getBlock) : 0;
+      input.jump = zb.inWater || ledge === 1;
+      // A higher wall (runners 2 at night, alphas 4 at night, 2 by day): one leap tall enough to clear it.
+      if (ledge >= 2 && zb.onGround) {
+        zb.vy = Math.sqrt(2 * -GRAVITY * (ledge + LEAP_MARGIN));
+        zb.onGround = false;
+      }
       input.yaw = zb.yaw;
       if (world.pullAt) {
         world.pullAt(zb.x, zb.y + 0.5, zb.z, this._pull);
@@ -493,7 +542,10 @@ export class Zombies {
     if (!player || player.flying) return false;
     const dy = player.y - zb.y;
     if (dy > ZOMBIE_CHASE_MAX_RISE) return false;
-    return Math.hypot(player.x - zb.x, dy, player.z - zb.z) <= ZOMBIE_SIGHT;
+    const d = Math.hypot(player.x - zb.x, dy, player.z - zb.z);
+    // A dormant walker (in open daylight, not provoked, no alpha near) wakes only for a player within WALKER_WAKE_RANGE.
+    if (isDormant(zb)) return d <= WALKER_WAKE_RANGE;
+    return d <= ZOMBIE_SIGHT;
   }
 
   /**
@@ -568,6 +620,12 @@ export class Zombies {
       zb.mode = 'idle';
       zb.timer = 1 + this._rng() * 2;
       zb.detour = 0;
+    }
+    if (isDormant(zb)) {
+      // Dormant by day: it stands where it is, swaying, until something wakes it.
+      zb.mode = 'idle';
+      zb.timer = Math.max(zb.timer, 0.5);
+      return false;
     }
     if (zb.timer <= 0) {
       if (zb.mode === 'idle') {
@@ -667,7 +725,7 @@ export class Zombies {
     const [q, r, fy] = this._aheadCell(zb);
     if (!chasing && isSwimWater(getBlock, q, fy, r)) return false;
     if (this._fires && (fireAhead(getBlock, zb.x, zb.z, zb.yaw, fy) || this._intoFire(zb))) return false;
-    if (isSolid(getBlock(q, fy, r))) return canHop && isOpen(getBlock(q, fy + 1, r)) && isOpen(getBlock(q, fy + 2, r));
+    if (isSolid(getBlock(q, fy, r))) return canHop && this._climbAt(zb, getBlock, q, fy, r) > 0;
     if (isSolid(getBlock(q, fy + 1, r))) return false; // a one-high gap: too low for a zombie
     for (let d = 1; d <= ZOMBIE_MAX_DROP + 1; d++) {
       const id = getBlock(q, fy - d, r);
@@ -677,10 +735,28 @@ export class Zombies {
     return false;
   }
 
-  /** A one-cell ledge straight ahead with room for a zombie on it: the only wall worth hopping at. */
+  /**
+   * The wall straight ahead it can get on top of: its height in cells (1 = a hop; up to `maxClimb(zb)`) when there is room
+   * for a zombie on top and head room above itself, else 0.
+   */
   _ledgeAhead(zb, getBlock) {
     const [q, r, fy] = this._aheadCell(zb);
-    return isSolid(getBlock(q, fy, r)) && isOpen(getBlock(q, fy + 1, r)) && isOpen(getBlock(q, fy + 2, r));
+    return this._climbAt(zb, getBlock, q, fy, r);
+  }
+
+  /** The height of the wall starting at cell (q, fy, r) when this zombie can climb it (≤ maxClimb, room on top), else 0. */
+  _climbAt(zb, getBlock, q, fy, r) {
+    const max = maxClimb(zb);
+    let h = 0;
+    while (h <= max && isSolid(getBlock(q, fy + h, r))) h++;
+    if (h === 0 || h > max) return 0;
+    if (!isOpen(getBlock(q, fy + h, r)) || !isOpen(getBlock(q, fy + h + 1, r))) return 0;
+    // a leap (2 cells or more) needs head room over its own cell
+    if (h >= 2) {
+      const [mq, mr] = worldToHex(zb.x, zb.z);
+      for (let k = 2; k <= h + 1; k++) if (!isOpen(getBlock(mq, fy + k, mr))) return 0;
+    }
+    return h;
   }
 
   /**
@@ -743,6 +819,7 @@ export class Zombies {
    */
   hit(zb, fromX, fromZ, power = 1) {
     if (zb.hurt > 0) return null;
+    zb.provoked = PROVOKE_S; // v0.11: a hit wakes a dormant walker
     zb.hits += typeof power === 'number' && power > 0 && Number.isFinite(power) ? power : 1;
     if (zb.hits >= statsOf(zb).hits) {
       this.remove(zb);
@@ -774,6 +851,7 @@ export class Zombies {
    * @returns {'hit'|'ko'}
    */
   knock(zb, vx, vy, vz) {
+    zb.provoked = PROVOKE_S;
     if (Math.hypot(vx, vy, vz) >= ZOMBIE_KO_KNOCK * (kindOf(zb) === 'alpha' ? ALPHA_KO_KNOCK : 1)) {
       this.remove(zb);
       return 'ko';

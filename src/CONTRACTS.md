@@ -3834,6 +3834,26 @@ requirements, itemArt's TOOL_ART and paintShovel). Recipe ids follow their outpu
 (`canonicalItemKey`): saved pack, wear, basket, remains and loose stacks and typed item names (`pack add hammerstone`) land
 on the new keys. Prose in CONTRACTS, DESIGN-survival and the handbook uses the new names.
 
+## 65. Zombies by day and by night; leaps — `src/zombies.js`, `src/zombieRenderer.js`
+
+Amends §39 and §61. **Daylight no longer burns zombies**: `burn` stays 0, `smoking` false, `events.ignited` and
+`events.burned` stay empty (kept for compatibility). The sun check still sets `exposed` (open sky, out of water, by day), and
+`daylit = exposed`; a zombie in shade, underground or at night is at full strength.
+
+- **Dormant walkers** (`isDormant(zb)`: a walker, daylit, `provoked` 0, not `rallied`): `_think` keeps it idle in place (no
+  wandering), and `_canChase` wakes it only for a player within WALKER_WAKE_RANGE 4 (instead of ZOMBIE_SIGHT). `hit` and
+  `knock` set `provoked = PROVOKE_S 20` (it counts down each update); a walker within ALPHA_RALLY of an alpha is rallied.
+  The renderer draws a dormant walker with its arms hanging (reach 0.12) and its head drooped (−0.45 rad).
+- **Gait** (`gaitOf(zb)` → `{ chase, sprint, factor }`): a daylit runner shambles — `{ ZOMBIE_CHASE_SPEED, no sprint, 1 }` —
+  but keeps the normal sight and reach; a daylit alpha keeps `chase 1` with DAY_ALPHA_FACTOR 0.82; otherwise its kind's
+  stats (a rallied walker chases at 1). **Damage** (`damageOf(zb)`): an alpha's DAY_ALPHA_DAMAGE 1.25 by day, else its
+  kind's; main hurts `round(Σ ZOMBIE_DAMAGE × damageOf)`.
+- **Leaps** (`maxClimb(zb)` from CLIMB): walker 1 / 1, runner 2 at night / 1 by day, alpha 4 at night / 2 by day (cells).
+  `_climbAt(zb, getBlock, q, fy, r)` → the height of the solid run starting at the cell ahead when it is ≤ maxClimb, with
+  two open cells on top and, for a leap of 2 or more, open cells over its own column up to fy + h + 1; else 0. `_safeAhead`
+  accepts a climbable wall; in `update` a wall of 1 is the normal hop (`input.jump`), one of h ≥ 2 sets
+  `vy = sqrt(2 × −GRAVITY × (h + LEAP_MARGIN 0.35))` from the ground.
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),

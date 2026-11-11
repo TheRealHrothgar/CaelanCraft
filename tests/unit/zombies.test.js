@@ -6,9 +6,12 @@ import {
   ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, ZOMBIE_HITS, ZOMBIE_HURT_S, ZOMBIE_BURN_S, ZOMBIE_REACH,
   ZOMBIE_ATTACK_COOLDOWN_S, ZOMBIE_HIT_PUSH, ZOMBIE_HIT_LIFT, ZOMBIE_FIRE_FEAR, ZOMBIE_SPAWN_MIN, ZOMBIE_SPAWN_MAX,
   ZOMBIE_SPAWN_FIRE_CLEAR, ZOMBIE_DESPAWN_DIST, ZOMBIE_KO_KNOCK, ZOMBIE_MAX_DROP, WALK_SPEED, BLAST_RADIUS,
-  BLAST_IMPULSE, ZOMBIE_SOUND_RANGE,
+  BLAST_IMPULSE, ZOMBIE_SOUND_RANGE, ZOMBIE_CHASE_SPEED,
 } from '../../src/config.js';
-import { Zombies, openSky, zombieVolume, loudestVolume } from '../../src/zombies.js';
+import {
+  Zombies, openSky, zombieVolume, loudestVolume, isDormant, gaitOf, damageOf, maxClimb, KIND_STATS, WALKER_WAKE_RANGE,
+  PROVOKE_S, HORDE_CHECK_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE,
+} from '../../src/zombies.js';
 import { seededRng, wrapAngle } from '../../src/pigs.js';
 import { createPlayer, createBody, isFreeAt, stepPlayer } from '../../src/physics.js';
 import { hexToWorld, worldToHex, hexLength } from '../../src/hex.js';
@@ -269,21 +272,19 @@ describe('Zombies.update — chase and attack', () => {
 });
 
 describe('Zombies.update — daylight', () => {
-  it('under open sky by day it smoulders and burns away after ZOMBIE_BURN_S', () => {
+  it('v0.11: under open sky by day it no longer burns: it lives on, never smokes, and is daylit', () => {
     const zs = new Zombies(seededRng(12));
     const zb = zs.spawn(0, GROUND, 0);
-    let ignitedAt = -1;
-    let burnedAt = -1;
-    run(zs, { getBlock: flat, isLoaded: loaded, player: null, isDay: true }, 8, (ev, f) => {
-      if (ev.ignited.includes(zb)) ignitedAt = f / 60;
-      if (ev.burned.includes(zb)) burnedAt = f / 60;
-      if (ignitedAt >= 0 && burnedAt < 0) expect(zb.smoking).toBe(true);
-      return burnedAt < 0;
+    run(zs, { getBlock: flat, isLoaded: loaded, player: null, isDay: true }, ZOMBIE_BURN_S + 4, (ev) => {
+      expect(ev.ignited).toEqual([]);
+      expect(ev.burned).toEqual([]);
     });
-    expect(ignitedAt).toBeGreaterThanOrEqual(0);
-    expect(ignitedAt).toBeLessThan(0.1);
-    expect(burnedAt - ignitedAt).toBeCloseTo(ZOMBIE_BURN_S, 1);
-    expect(zs.size).toBe(0);
+    expect(zs.list).toEqual([zb]);
+    expect(zb.smoking).toBe(false);
+    expect(zb.daylit).toBe(true);
+    // at night it is not daylit
+    run(zs, view(flat, null), 1);
+    expect(zb.daylit).toBe(false);
   });
   it('in shade (any solid cell above, however high) or in water it survives the day; at night nothing burns', () => {
     const roofed = (q, y, r) => (y === GROUND + 20 ? B.OAK_LEAVES : flat(q, y, r));
@@ -306,20 +307,105 @@ describe('Zombies.update — daylight', () => {
     run(wet, { getBlock: lake, isLoaded: loaded, player: null, isDay: true }, 8);
     expect(wet.list).toEqual([wz]);
   });
-  it('a zombie in shade catches fire once it walks out into the light', () => {
-    // A roof over q ≤ 0 only; the player stands in the sun to lure it out.
+  it('in shade a walker is at full strength by day; out in the light it goes dormant', () => {
+    // A roof over q ≤ 0 only.
     const getBlock = (q, y, r) => (q <= 0 && y === GROUND + 4 ? B.STONE : flat(q, y, r));
     const zs = new Zombies(seededRng(16));
-    const [x, z] = hexToWorld(-3, 0);
-    const zb = zs.spawn(x, GROUND, z, -Math.PI / 2);
-    const player = standing(hexToWorld(5, 0)[0], 0);
-    let ignited = false;
-    run(zs, { getBlock, isLoaded: loaded, player, isDay: true }, 10, (ev) => {
-      ignited ||= ev.ignited.includes(zb);
-      return !ignited;
-    });
-    expect(ignited).toBe(true);
-    expect(worldToHex(zb.x, zb.z)[0]).toBeGreaterThan(0);
+    const shaded = zs.spawn(...[hexToWorld(-3, 0)[0], GROUND, hexToWorld(-3, 0)[1]]);
+    const lit = zs.spawn(...[hexToWorld(6, 3)[0], GROUND, hexToWorld(6, 3)[1]]);
+    run(zs, { getBlock, isLoaded: loaded, player: null, isDay: true }, 1);
+    expect(shaded.daylit).toBe(false);
+    expect(isDormant(shaded)).toBe(false);
+    expect(lit.daylit).toBe(true);
+    expect(isDormant(lit)).toBe(true);
+  });
+});
+
+describe('Zombies — v0.11 by day: dormant walkers, shambling runners, a tamer alpha (CONTRACTS §65)', () => {
+  const day = (getBlock, player) => ({ getBlock, isLoaded: loaded, player, isDay: true });
+  it('a dormant walker stands still and ignores a player 10 m away, but wakes within WALKER_WAKE_RANGE', () => {
+    const zs = new Zombies(seededRng(31));
+    const zb = zs.spawn(0, GROUND, 0, 0);
+    const far = standing(10, 0);
+    run(zs, day(flat, far), 6);
+    expect(zb.mode).toBe('idle');
+    expect(Math.hypot(zb.x, zb.z)).toBeLessThan(0.3); // it never wandered
+    const near = standing(WALKER_WAKE_RANGE - 0.5, 0);
+    run(zs, day(flat, near), 0.3);
+    expect(zb.mode).toBe('chase');
+  });
+  it('a hit provokes it for PROVOKE_S: then it chases from afar; an alpha near rallies it too', () => {
+    const zs = new Zombies(seededRng(32));
+    const zb = zs.spawn(0, GROUND, 0, 0);
+    const player = standing(10, 0);
+    run(zs, day(flat, player), 1);
+    expect(isDormant(zb)).toBe(true);
+    zs.hit(zb, 10, 0);
+    expect(zb.provoked).toBe(PROVOKE_S);
+    run(zs, day(flat, player), 1);
+    expect(zb.mode).toBe('chase');
+    // an alpha within ALPHA_RALLY wakes the dormant walkers around it
+    const zs2 = new Zombies(seededRng(33));
+    const w = zs2.spawn(0, GROUND, 0, 0);
+    zs2.spawn(3, GROUND, 3, 0, 'alpha');
+    run(zs2, day(flat, null), HORDE_CHECK_S + 0.1);
+    expect(w.rallied).toBe(true);
+    expect(isDormant(w)).toBe(false);
+  });
+  it('by day a runner shambles (walker chase speed, no sprint) and an alpha slows and hits softer', () => {
+    const runner = { kind: 'runner', daylit: true };
+    expect(gaitOf(runner)).toEqual({ chase: ZOMBIE_CHASE_SPEED, sprint: false, factor: 1 });
+    expect(gaitOf({ kind: 'runner', daylit: false }).sprint).toBe(true);
+    expect(gaitOf({ kind: 'alpha', daylit: true }).factor).toBe(DAY_ALPHA_FACTOR);
+    expect(damageOf({ kind: 'alpha', daylit: true })).toBe(DAY_ALPHA_DAMAGE);
+    expect(damageOf({ kind: 'alpha', daylit: false })).toBe(KIND_STATS.alpha.damage);
+    expect(DAY_ALPHA_DAMAGE).toBeLessThan(KIND_STATS.alpha.damage);
+    expect(DAY_ALPHA_DAMAGE).toBeGreaterThan(1);
+    // a daylit runner still chases at the normal sight range (it is not dormant)
+    const zs = new Zombies(seededRng(34));
+    const zb = zs.spawn(0, GROUND, 0, 0, 'runner');
+    run(zs, day(flat, standing(15, 0)), 0.5);
+    expect(zb.mode).toBe('chase');
+    // and it is slower than at night
+    const speed = (isDay) => {
+      const z2 = new Zombies(seededRng(35));
+      const r = z2.spawn(0, GROUND, 0, -Math.PI / 2, 'runner');
+      const p = standing(20, 0);
+      p.flying = false;
+      run(z2, isDay ? day(flat, p) : view(flat, p), 2);
+      return r.x;
+    };
+    expect(speed(true)).toBeLessThan(speed(false) - 1.5);
+  });
+});
+
+describe('Zombies — v0.11 jumps: runners 1–2 cells, alphas 2–4 (day vs night), walkers 1', () => {
+  /** A wall `h` cells high for q ≥ 3; the player stands on top of it. */
+  const wallWorld = (h) => (q, y, r) => (q >= 3 && y >= GROUND && y < GROUND + h ? B.STONE : flat(q, y, r));
+  function reaches(kind, h, isDay) {
+    const zs = new Zombies(seededRng(40 + h));
+    const [x, z] = hexToWorld(0, 0);
+    const zb = zs.spawn(x, GROUND, z, -Math.PI / 2, kind);
+    const player = standing(hexToWorld(6, 0)[0], 0, GROUND + h);
+    run(zs, { getBlock: wallWorld(h), isLoaded: loaded, player, isDay }, 8, () => zb.y < GROUND + h - 0.01);
+    return zb.y >= GROUND + h - 0.01;
+  }
+  it('the climb table', () => {
+    expect(maxClimb({ kind: 'walker' })).toBe(1);
+    expect(maxClimb({ kind: 'runner' })).toBe(2);
+    expect(maxClimb({ kind: 'runner', daylit: true })).toBe(1);
+    expect(maxClimb({ kind: 'alpha' })).toBe(4);
+    expect(maxClimb({ kind: 'alpha', daylit: true })).toBe(2);
+  });
+  it('a runner leaps a 2-cell wall at night but not by day; a walker never does', () => {
+    expect(reaches('runner', 2, false)).toBe(true);
+    expect(reaches('runner', 2, true)).toBe(false);
+    expect(reaches('walker', 2, false)).toBe(false);
+  });
+  it('an alpha leaps a 4-cell wall at night, only 2 by day', () => {
+    expect(reaches('alpha', 4, false)).toBe(true);
+    expect(reaches('alpha', 4, true)).toBe(false);
+    expect(reaches('alpha', 2, true)).toBe(true);
   });
 });
 
@@ -670,29 +756,16 @@ describe('Zombies — sounds (main plays each kind at most once a frame, at loud
     const crowd = [3, 12, 1.5, 20].map((d) => ({ x: d, y: GROUND, z: 0 }));
     expect(loudestVolume(crowd, at)).toBeCloseTo(1 - 1.5 / ZOMBIE_SOUND_RANGE, 12);
   });
-  it('a crowd under open sky ignites on one frame at dawn and burns out on one frame: one voice each, the loudest', () => {
+  it('v0.11: a crowd under open sky at dawn neither ignites nor burns out', () => {
     const zs = new Zombies(seededRng(40));
     const player = standing(0, 0);
-    player.flying = true; // nobody chases: they stand about where they were put
+    player.flying = true;
     for (let k = 0; k < 12; k++) zs.spawn(Math.cos(k) * (2 + k), GROUND, Math.sin(k) * (2 + k));
     run(zs, view(flat, player), 1);
-    let ignitedFrames = 0;
-    let burnedFrames = 0;
-    let most = 0;
     run(zs, { ...view(flat, player), isDay: true }, ZOMBIE_BURN_S + 1, (ev) => {
-      for (const list of [ev.ignited, ev.burned]) {
-        if (list.length === 0) continue;
-        most = Math.max(most, list.length);
-        const loudest = Math.max(...list.map((zb) => zombieVolume(zb, player)));
-        expect(loudestVolume(list, player)).toBe(loudest);
-      }
-      if (ev.ignited.length) ignitedFrames++;
-      if (ev.burned.length) burnedFrames++;
+      expect(ev.ignited.length + ev.burned.length).toBe(0);
     });
-    expect(zs.size).toBe(0);
-    expect(most).toBe(12); // why main must not play one hiss and one down sound per zombie
-    expect(ignitedFrames).toBe(1);
-    expect(burnedFrames).toBe(1);
+    expect(zs.size).toBe(12);
   });
 });
 

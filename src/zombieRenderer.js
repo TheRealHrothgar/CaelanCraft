@@ -16,7 +16,7 @@
 // (default 1) and `renderSpin` (default 0, extra yaw) draw a black hole's shrinking, spinning ghost (infall.js).
 import * as THREE from 'three';
 import { ZOMBIE_MAX } from './config.js';
-import { SWING_S, kindOf } from './zombies.js';
+import { SWING_S, kindOf, isDormant } from './zombies.js';
 
 /** @typedef {import('./zombies.js').Zombie} Zombie */
 
@@ -269,6 +269,7 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
       const swingK = zb.swing > 0 ? zb.swing / SWING_S : 0;
       const attack = Math.sin(Math.PI * swingK);
       const chase = zb.mode === 'chase';
+      const dormant = isDormant(zb); // a walker asleep on its feet by day (§65): arms hanging, head drooped
       // Legs from the hips: a walker limps (its right leg strides short), a runner pumps them.
       const legAmp = run ? 0.95 : alpha ? 0.55 : 0.5;
       for (let k = 0; k < 2; k++) {
@@ -291,7 +292,7 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
         const side = k === 0 ? -1 : 1;
         const reach = run
           ? 0.45 + side * sw * 0.9
-          : 1.5 + 0.1 * Math.sin(phase + side * 1.4) - lean * 0.6;
+          : dormant ? 0.12 - lean * 0.6 : 1.5 + 0.1 * Math.sin(phase + side * 1.4) - lean * 0.6;
         partM.multiplyMatrices(torsoM, tmp.makeTranslation(side * SHOULDER_X, SHOULDER_Y, 0))
           .multiply(rot.makeRotationX(reach + 0.55 * attack))
           .multiply(tmp.makeRotationZ(side * (run ? 0.12 : 0.06)));
@@ -301,7 +302,7 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
       // Head on the neck, lolling to its own side and nodding with the stride; a runner's looks up ahead.
       headM.multiplyMatrices(torsoM, tmp.makeTranslation(0, TORSO_H + NECK_H, 0))
         .multiply(rot.makeRotationZ((zb.tilt || 0) + Math.sin(phase * 0.5) * 0.05))
-        .multiply(tmp.makeRotationX(Math.cos(phase) * 0.06 - lean * (run ? 0.8 : 0.5)));
+        .multiply(tmp.makeRotationX(Math.cos(phase) * 0.06 - lean * (run ? 0.8 : 0.5) - (dormant ? 0.45 : 0)));
       set.head.setMatrixAt(slot, headM);
       set.head.setColorAt(slot, tint);
       if (alpha && eyeCount < capacity) eyesMesh.setMatrixAt(eyeCount++, headM);

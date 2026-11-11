@@ -77,7 +77,7 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, SOUND_ROAR } from './zombies.js';
+import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, damageOf, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST } from './survival.js';
 import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory.js';
 import { Containers } from './containers.js';
@@ -4976,10 +4976,10 @@ export function boot(win, doc) {
     if (ev.attacks.length > 0) {
       hurtFlash = 1;
       audio.playThud(1);
-      // Survival (§2.4): each strike deals ZOMBIE_DAMAGE, an alpha's more (§61; zombies.js stays mode-agnostic).
+      // Survival (§2.4): each strike deals ZOMBIE_DAMAGE, an alpha's more (§61, §65; zombies.js stays mode-agnostic).
       if (survival.active) {
         let dmg = 0;
-        for (const zb of ev.attacks) dmg += ZOMBIE_DAMAGE * statsOf(zb).damage;
+        for (const zb of ev.attacks) dmg += ZOMBIE_DAMAGE * damageOf(zb); // an alpha hits softer by day (§65)
         hurt(Math.round(dmg), 'zombie');
       }
     }
