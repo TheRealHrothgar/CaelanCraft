@@ -211,8 +211,9 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
       // a little bob with the stride; a snared animal strains from side to side
       const bob = Math.abs(sw) * 0.025;
       // `renderScale` / `renderSpin` (infall.js): a black hole's shrinking, spinning ghost, as for pigs and zombies.
-      const rs = typeof a.renderScale === 'number' && a.renderScale > 0 && Number.isFinite(a.renderScale) ? a.renderScale : 1;
-      const spin = typeof a.renderSpin === 'number' && Number.isFinite(a.renderSpin) ? a.renderSpin : 0;
+      const ghost = /** @type {{ renderScale?: number, renderSpin?: number }} */ (a);
+      const rs = typeof ghost.renderScale === 'number' && ghost.renderScale > 0 && Number.isFinite(ghost.renderScale) ? ghost.renderScale : 1;
+      const spin = typeof ghost.renderSpin === 'number' && Number.isFinite(ghost.renderSpin) ? ghost.renderSpin : 0;
       scl.set(rs, rs, rs);
       bodyM.compose(at.set(a.x, a.y + bob * rs, a.z), q.setFromAxisAngle(UP, a.yaw + spin), scl);
       which.setMatrixAt(which.count++, bodyM);

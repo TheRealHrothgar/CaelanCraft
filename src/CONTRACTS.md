@@ -2960,7 +2960,7 @@ isLoadedCell)`, `size, version, touch, export()` (keys sorted; empty baskets too
 validated against the repaired `edits` like runes (§14).
 **The Survival Handbook** (DESIGN-survival §14; `src/handbook.js`, PURE): item `handbook` (non-block, stack 1, never spoils, no
 recipe makes or takes it). API: `HANDBOOK_KEY 'handbook'`, `HANDBOOK_CHAT_LINE` (main's `HANDBOOK_INTRO`, the §1.2 sentence "Your
-handbook is in the last hotbar slot — hold it and press R to read."), `buildChapters() → Chapter[]` (cached; ten chapters `{ id, title,
+handbook is in the last hotbar slot — hold it and press R to read."), `buildChapters() → Chapter[]` (cached; eleven chapters since §73 `{ id, title,
 short, icon, pages: Block[][] }` of hand-written prose and tables GENERATED from RECIPES, ITEMS, BLOCK_RULES, the climate and vitals
 tables — each table names its `source` and its rows' `keys`, so a test can walk it against the data; `TABLE_ROWS_PER_PAGE 10` splits
 long ones), `chapterIds()`, `ensureHandbook(pack, preferSlot = 8) → boolean` (gives one when the pack — slots and wear — has none:
@@ -4122,6 +4122,37 @@ strips format characters (`\p{Cf}`), so an invisible-only name is empty; `.slot-
 
 **Diagnostics.** The debug handle gains `breakTargeted()`, `animalR()` and `getRiding()`. The smoke test's place step
 retries `placeSelected()` for up to `SMOKE_HIT_RETRY_FRAMES` frames (a wary pig may be standing in the hole).
+
+## 73. The Survival Guide, rewritten — `src/handbook.js`, `tests/unit/handbook.test.js`
+
+Amends §43 (the Handbook), §48 and §1 (imports); DESIGN-survival §14.1's chapter list gains one. The prose now tells the game of
+§59–§72; the readers (handbookUI) are unchanged.
+
+- **Eleven chapters** (`chapterIds()`): first-day, water, food, warmth, ages, making, **animals** ("Animals", icon `hex`, after the
+  workplaces), dangers, death, controls, modes. Hunting moved from *Food and fire* (which keeps "Meat and milk") to *Animals*.
+- **Animals**: shy herds by land, the notice distances (walking / sneaking / sprinting), luring and feeding, hunting (only a tool
+  wounds), milk and wool, taming and riding a horse, the wolf (follow, guard, sit), snares, and that a black hole swallows animals.
+- **Dangers**: zombies come out only at night; the three kinds; daylight does not burn them (dormant walkers that wake within
+  WALKER_WAKE_RANGE, when hit or near an alpha; shambling runners; a weaker alpha; the burrow after DAWN_BURROW_MIN_S to
+  + DAWN_BURROW_RAND_S); leaps; fighting back. Healing names Poisoned; the danger table gives the alpha's strike.
+- **Elsewhere**: the day (one real minute is one game hour, DAYTIME_SECONDS / NIGHT_SECONDS, sunrise and sunset from config);
+  raw water and Poisoned (§66); flint from the stones that show a nodule (§70); "Light underground" (§62: caves and sealed rooms
+  are dark, CAMPFIRE_LIGHT / TORCH_LIGHT, a lit Filament Lamp, the torch and its saltpetre); "The Workbench" (§67); Controls: Q / G,
+  the riding keys, R on animals and snares first, "Dropping and throwing", "Things on the ground" (§60, §63).
+- **Tables** (id · source): `animals`, `wary`, `blows-animals` · animals; `zombies`, `blows-zombies` · zombies; `throws` · loose;
+  `keys-ride` (hand-written); `power` is now [In your hand, Power]; `keys-hands` has Q and G. `TABLE_SOURCES` gains 'animals',
+  'zombies', 'loose'. The gathering row for Loose Stones reads "Flint (if a dark nodule shows, wild only)" (`FLINT_SEEN`).
+- **Exports added**: `FLINT_SEEN`, `ANIMAL_R`, `HERD_WORDS`, `ELEMENTARY_PARTS`, `toolPowers()`, `huntTargets()`, `zombieTargets()`,
+  `herdBiomes(kind)`, `lureText(lure)`, `zombieStrike(kind) → { night, day }`; `describeDrops(groups, prose, seen)`,
+  `listJoin(parts, word = 'and')`.
+- **Imports** (§1): handbook → config, blocks, items, crafting, harvest, climate, daynight, vitals, cooking, zombies, animals,
+  looseItems, survivalControl (constants and pure functions only).
+- **Rules the tests keep**: every number the new prose quotes is read from a constant or a recipe; every clock time in the prose is
+  one the game defines; no sentence pairs the sun with burning unless it says "does not burn"; the status is "Poisoned" (never
+  "sick"); no old tool name and no item key in prose or cells; a page holds at most 220 words of text (110 beside a table) and 14
+  table rows; the three widest new tables (`blows-animals`, `blows-zombies`, `zombies`) share their page with no margin note.
+- **Still hand-written** (no exported constant to read): the workplace reach "2 up or down", the marker's "about 20 cells", zombies
+  rising "one or two at a time", the pig's "grass and snowy grass", and "within half a minute" for a snowy swim.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
