@@ -13,7 +13,7 @@ import { partTip } from '../../src/circuitParts.js';
 /** Survival's blocks (DESIGN-survival §8.1): ids 76–94. A BLOCKS list without them is what main looked like before W0. */
 const SURVIVAL_NAMES = new Set(['copper_ore', 'tin_ore', 'honeyberry_bush', 'honeyberry_bush_bare', 'tussock', 'cattails',
   'tuber_plant', 'prickly_pear', 'prickly_pear_bare', 'work_stump', 'kiln', 'bloomery', 'forge', 'wicker_basket',
-  'sleeping_hide', 'remains', 'loose_stones', 'fallen_branches', 'fire_pit']);
+  'sleeping_hide', 'remains', 'loose_stones', 'fallen_branches', 'fire_pit', 'workbench']); // + v0.11's Workbench (a workplace)
 const NO_SURVIVAL = BLOCKS.filter((b) => !SURVIVAL_NAMES.has(b.name));
 
 /** @param {ReturnType<typeof buildPickerModel>} model @returns {number[]} every id across sections (families expanded) */

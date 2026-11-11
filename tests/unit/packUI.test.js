@@ -136,7 +136,7 @@ describe('label formatters', () => {
   });
 
   it('stations, tabs, hints, jobs, tools', () => {
-    expect(STATION_TABS.map(([, l]) => l)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge']);
+    expect(STATION_TABS.map(([, l]) => l)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge', 'Bench']);
     expect(tabLabel('kiln')).toBe('Kiln');
     expect(tabLabel('all')).toBe('All');
     expect(stationName('stump')).toBe('Work Stump');
@@ -332,7 +332,7 @@ describe('the pack screen on a page', () => {
     const v = demoPackView();
     ui.open(v);
     const tabs = root.querySelectorAll('.making-tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge']);
+    expect(tabs.map((t) => t.textContent)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge', 'Bench']);
     expect(tabs[0].classList.contains('active')).toBe(true);
     expect(tabs[3].classList.contains('far')).toBe(true);
     expect(tabs[3].title).toBe('build a Kiln nearby');

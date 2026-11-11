@@ -38,8 +38,9 @@ describe('handKeyOf / stationIdOf / waterHint', () => {
     expect(stationIdOf(B.BLOOMERY)).toBe('bloomery');
     expect(stationIdOf(B.FORGE)).toBe('forge');
     for (const id of [B.STONE, B.CAMPFIRE, -1, 'constructor', null]) expect(stationIdOf(id)).toBe(null);
-    expect(Object.keys(STATION_OF_BLOCK).length).toBe(4);
-    expect(STATION_TABS.map((t) => t.id)).toEqual(['hand', 'stump', 'kiln', 'bloomery', 'forge']);
+    expect(stationIdOf(B.WORKBENCH)).toBe('workbench');
+    expect(Object.keys(STATION_OF_BLOCK).length).toBe(5);
+    expect(STATION_TABS.map((t) => t.id)).toEqual(['hand', 'stump', 'kiln', 'bloomery', 'forge', 'workbench']);
   });
 
   it('waterHint (§4.1)', () => {
@@ -641,7 +642,7 @@ describe('buildPackView (§9.8)', () => {
     expect(buildPackView({ pack, selected: 0, container: { kind: 'basket', slots } }).container.slots[0]).not.toBe(slots[0]);
   });
 
-  it('stations: the five tabs; Hands is always near, the rest when findStations found them', () => {
+  it('stations: the six tabs; Hands is always near, the rest when findStations found them', () => {
     const view = buildPackView({ pack: new Pack(), selected: 0, stations: { hand: true, kiln: [1, 2, 3] } });
     expect(view.stations).toEqual([
       { id: 'hand', label: 'Hands', near: true },
@@ -649,6 +650,7 @@ describe('buildPackView (§9.8)', () => {
       { id: 'kiln', label: 'Kiln', near: true },
       { id: 'bloomery', label: 'Bloomery', near: false },
       { id: 'forge', label: 'Forge', near: false },
+      { id: 'workbench', label: 'Bench', near: false },
     ]);
     expect(buildPackView({ pack: new Pack(), selected: 0 }).stations.filter((s) => s.near).map((s) => s.id)).toEqual(['hand']);
   });

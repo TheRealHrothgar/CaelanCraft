@@ -161,7 +161,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 23, 25, 5, 18]);
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 20, 24, 5, 15, 8]); // v0.11: + the Workbench (§67)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
@@ -313,7 +313,8 @@ describe('handbook: generated tables match the game (§14.1)', () => {
 
   it('the workplaces table: what builds each workplace, and its heat while working', () => {
     const t = tableById('workplaces');
-    expect(t.keys).toEqual(['stump', 'kiln', 'bloomery', 'forge']);
+    expect(t.keys).toEqual(['stump', 'kiln', 'bloomery', 'forge', 'workbench']);
+    expect(rowOf(t, 'workbench')[1]).toContain('2 Steel Bar');
     expect(rowOf(t, 'kiln')).toEqual(['Kiln', '8 Clay Lump + 6 Rock', '+12 °C, 4 cells']);
     expect(rowOf(t, 'stump')[1]).toBe('Any Log (Stone Axe+)');
     expect(rowOf(t, 'forge')[1]).toContain('24 Fired Brick');

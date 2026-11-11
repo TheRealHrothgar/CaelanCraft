@@ -9,7 +9,7 @@ import { BLOCK, BLOCK_COUNT } from '../../src/blocks.js';
 import { hexDiscCount } from '../../src/hex.js';
 import { ITEMS, ITEM_KEYS, TAGS, getItem, itemForBlock, blockForItem } from '../../src/items.js';
 import { BLOCK_RULES, PICKABLE, MOB_DROPS, canHarvest, tap } from '../../src/harvest.js';
-import { RECIPES } from '../../src/crafting.js';
+import { RECIPES, STATION_BLOCKS } from '../../src/crafting.js';
 import { FIRE_TRANSFORMS, fuelSeconds } from '../../src/cooking.js';
 import { FLORA_TABLE } from '../../src/worldgen.js';
 import { DART_KEYS } from '../../src/looseItems.js';
@@ -112,7 +112,7 @@ function reach() {
     }
     if (have.has('campfire')) for (const [k, tr] of Object.entries(FIRE_TRANSFORMS)) if (have.has(k)) have.add(tr.to);
     for (const rec of RECIPES) {
-      const station = rec.station === 'hand' || have.has(itemForBlock({ stump: B.WORK_STUMP, kiln: B.KILN, bloomery: B.BLOOMERY, forge: B.FORGE }[rec.station]));
+      const station = rec.station === 'hand' || have.has(itemForBlock(STATION_BLOCKS[rec.station])); // every workplace (v0.11: + the Workbench)
       const inputs = inputOptions(rec).every((opts) => opts.some((k) => have.has(k)));
       const tl = rec.tools.every((t) => hasTool(t.type, t.tier));
       if (station && inputs && tl) {

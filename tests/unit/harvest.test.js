@@ -60,6 +60,7 @@ const TABLE = [
   [[B.OAK_PLANKS, B.SPRUCE_PLANKS, B.BIRCH_PLANKS], 2.0, 'axe', 1],
   [[B.BOOKSHELF], 1.5, 'axe', 1],
   [[B.WORK_STUMP], 2.5, 'axe', 1],
+  [[B.WORKBENCH], 3.0, 'axe', 1], // v0.11 (CONTRACTS §67)
   [[B.WICKER_BASKET], 0.8, 'axe', 0],
   [[B.POWDER_KEG], 2.0, 'axe', 1],
   [[B.PUMPKIN], 1.0, 'axe', 0],

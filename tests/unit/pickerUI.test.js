@@ -243,7 +243,7 @@ describe('families open in a drawer band below their row (§5.3)', () => {
     expect(grid.querySelectorAll('.picker-family')).toHaveLength(0);
     expect(grid.querySelectorAll('.picker-drawer')).toHaveLength(0);
     expect(cell(BLOCK.WOOL_RED)).not.toBeNull();
-    expect(grid.querySelectorAll('.picker-cell')).toHaveLength(99);
+    expect(grid.querySelectorAll('.picker-cell')).toHaveLength(100); // + the Workbench (§67)
     menus.hidePicker();
     menus.showPicker([...DEFAULT_HOTBAR], 0);
     expect($('picker-showall').checked).toBe(true);

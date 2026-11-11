@@ -51,6 +51,7 @@ export const STATION_OF_BLOCK = Object.freeze({
   [BLOCK.KILN]: 'kiln',
   [BLOCK.BLOOMERY]: 'bloomery',
   [BLOCK.FORGE]: 'forge',
+  [BLOCK.WORKBENCH]: 'workbench',
 });
 
 /** The Making tabs after `All`, in order: station id and label. */
@@ -60,6 +61,7 @@ export const STATION_TABS = Object.freeze([
   Object.freeze({ id: 'kiln', label: 'Kiln' }),
   Object.freeze({ id: 'bloomery', label: 'Bloomery' }),
   Object.freeze({ id: 'forge', label: 'Forge' }),
+  Object.freeze({ id: 'workbench', label: 'Bench' }),
 ]);
 
 /** @param {number} blockId @returns {string|null} the station id of a workplace block */

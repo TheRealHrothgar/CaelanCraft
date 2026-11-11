@@ -1123,6 +1123,7 @@ function makeChapters() {
       p('Sand alone melts at about 1 700 °C, far beyond any kiln. A flux lowers that, and at the Bloomery salt plays the part.'),
     ],
     ...recipeTable('forge').map((t) => [t]),
+    ...recipeTable('workbench').map((t) => [t]),
     [
       h('Why these steps'),
       p(`*Charcoal* is wood baked without air: it burns hotter and cleaner than wood, which is why iron needs it. The Kiln bakes ${recipeInputsProse(charcoal)} into ${charcoal.outputs[0].n} Charcoal.`),

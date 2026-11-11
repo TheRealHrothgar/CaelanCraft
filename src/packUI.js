@@ -21,7 +21,7 @@ const HANDBOOK_ITEM = 'handbook';
  * One recipe as crafting.listRecipes describes it (§9.8).
  * @typedef {Object} RecipeView
  * @property {string} id
- * @property {string} station  'hand' | 'stump' | 'kiln' | 'bloomery' | 'forge'
+ * @property {string} station  'hand' | 'stump' | 'kiln' | 'bloomery' | 'forge' | 'workbench'
  * @property {{k: string, n: number}} out
  * @property {Array<{k?: string, tag?: string, label: string, need: number, have: number}>} inputs
  * @property {Array<{type: string, tier: number, label: string, ok: boolean}>} tools
@@ -121,9 +121,10 @@ export function stripCells(n, s) {
 export const STATION_TABS = Object.freeze([
   Object.freeze(['all', 'All']), Object.freeze(['hand', 'Hands']), Object.freeze(['stump', 'Stump']),
   Object.freeze(['kiln', 'Kiln']), Object.freeze(['bloomery', 'Bloomery']), Object.freeze(['forge', 'Forge']),
+  Object.freeze(['workbench', 'Bench']),
 ]);
 /** Full names of the workplaces (§7.1), for hints and lane rows. */
-export const STATION_NAMES = Object.freeze({ hand: 'Hands', stump: 'Work Stump', kiln: 'Kiln', bloomery: 'Bloomery', forge: 'Forge' });
+export const STATION_NAMES = Object.freeze({ hand: 'Hands', stump: 'Work Stump', kiln: 'Kiln', bloomery: 'Bloomery', forge: 'Forge', workbench: 'Workbench' });
 
 /** @param {string} id @returns {string} the tab label ('All', 'Hands', 'Stump', …); unknown ids as given */
 export function tabLabel(id) {
@@ -331,6 +332,7 @@ export function demoPackView(opts = {}) {
     stations: [
       { id: 'hand', label: 'Hands', near: true }, { id: 'stump', label: 'Stump', near: true }, { id: 'kiln', label: 'Kiln', near: false },
       { id: 'bloomery', label: 'Bloomery', near: false }, { id: 'forge', label: 'Forge', near: false },
+      { id: 'workbench', label: 'Bench', near: false },
     ],
     tab: opts.tab || 'all',
     recipes,

@@ -3865,6 +3865,30 @@ the cure: `pot_water` on a campfire's centre spot becomes `pot_boiled` (sick 0) 
 `SICK_MESSAGE` is "Your stomach turns: you are poisoned."; the first raw-water poisoning of a session (a gulp, or a Pot of
 Water) also logs `BOIL_TIP`. The handbook's numbers follow from the constants.
 
+## 67. The Workbench — advanced circuits come later (`src/blocks.js`, `src/tiles.js`, `src/crafting.js` and the station lists)
+
+Amends §47, §50 and DESIGN-circuits §8.2. A new workplace block **WORKBENCH 115** (`workbench`, "Workbench", appended so ids
+stay positional; **BLOCK_COUNT 116**), a solid wood-sounding prism with tiles **195 `workbench_side`** (the bench front:
+oak top, drawers with brass knobs, an iron vice, a coil of copper wire, legs before a dark recess) and **196
+`workbench_top`** (planks with a flask, a wire coil, a cell and screws), bottom OAK_PLANKS (TILE_IDS 152). It is a station
+everywhere the others are: `isStation`, crafting `STATION_IDS` (… 'forge', **'workbench'**), `STATION_BLOCKS`,
+`STATION_NAMES` ("Workbench"), survivalControl `STATION_OF_BLOCK` / `STATION_TABS` and packUI `STATION_TABS` (tab
+"Bench"), the picker's Workplaces family and PICKER_ORDER (after FORGE; 100 entries), harvest (axe tier 1, 3.0 s, drops
+itself), and the handbook's workplace and recipe tables.
+
+- **Recipe**: `workbench` at hand — 5 #planks + 2 steel_bar + 2 glass + 12 copper_wire + 2 tin_ingot, hammer 5, 20 s (after
+  the Forge).
+- **At the Workbench** (8), each built on an elementary part: relay (knife_switch + wrought_iron + 6 copper_wire, hammer 4),
+  selenium_panel (terminal_board + selenium + glass + 3 copper_wire), igniter (terminal_board + carbon_filament + 2
+  copper_wire + fired_brick), clockwork_timer (terminal_board + steel_bar + 3 bronze_ingot + glass, hammer 5),
+  electric_bell (push_button + relay + steel_bar, hammer 4), blasting_machine (push_button + terminal_board + 2 steel_bar +
+  12 copper_wire, hammer 5), spark_transmitter (push_button + relay + voltaic_battery + 12 copper_wire + 2 bronze_ingot,
+  hammer 3), coherer_receiver (relay + terminal_board + glass + 6 iron_filings, hammer 3).
+- **Unchanged**: the elementary parts (knife_switch, push_button, terminal_board, voltaic_battery at the stump), the
+  consumables (powder_fuse, torch and the wires at hand; copper_wire, black_powder, iron_filings and the powder_keg at the
+  stump), the filament_lamp (bloomery) and the materials. 116 recipes: hand 44, stump 20, kiln 24, bloomery 5, forge 15,
+  workbench 8.
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),

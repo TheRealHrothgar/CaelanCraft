@@ -35,8 +35,10 @@ export const BLOCK = Object.freeze({
   TERMINAL_BOARD: 102, VOLTAIC_BATTERY: 103, BLASTING_MACHINE: 104, SELENIUM_PANEL: 105, KNIFE_SWITCH: 106, PUSH_BUTTON: 107,
   CLOCKWORK_TIMER: 108, RELAY: 109, IGNITER: 110, FILAMENT_LAMP: 111, ELECTRIC_BELL: 112, SPARK_TRANSMITTER: 113,
   COHERER_RECEIVER: 114,
+  // v0.11 (CONTRACTS §67): the Workbench, the workshop where the advanced circuit devices are made
+  WORKBENCH: 115,
 });
-export const BLOCK_COUNT = 115;
+export const BLOCK_COUNT = 116;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -75,6 +77,8 @@ export const TILE = Object.freeze({
   BUTTON_SIDE: 179, BUTTON_TOP: 180, TIMER_SIDE: 181, TIMER_TOP: 182, RELAY_SIDE: 183, RELAY_TOP: 184, IGNITER_SIDE: 185,
   IGNITER_TOP: 186, LAMP_SIDE: 187, LAMP_TOP: 188, BELL_SIDE: 189, BELL_TOP: 190, TX_SIDE: 191, TX_TOP: 192, RX_SIDE: 193,
   RX_TOP: 194,
+  // v0.11 (CONTRACTS §67): the Workbench
+  WORKBENCH_SIDE: 195, WORKBENCH_TOP: 196,
   // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
   ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
   // The Hollow Watcher (§40; atlas row 15, not block faces): its ash-grey stone, the glow mask of that stone's cracks
@@ -337,6 +341,8 @@ export const BLOCKS = [
   def({ id: B.ELECTRIC_BELL, name: 'electric_bell', displayName: 'Electric Bell', tiles: tiles(T.BELL_SIDE, T.BELL_TOP), ...MODEL, soundGroup: 'stone' }),
   def({ id: B.SPARK_TRANSMITTER, name: 'spark_transmitter', displayName: 'Spark Transmitter', tiles: tiles(T.TX_SIDE, T.TX_TOP), ...MODEL, soundGroup: 'wood' }),
   def({ id: B.COHERER_RECEIVER, name: 'coherer_receiver', displayName: 'Coherer Receiver', tiles: tiles(T.RX_SIDE, T.RX_TOP), ...MODEL, soundGroup: 'glass' }),
+  // v0.11 (CONTRACTS §67): the Workbench (a workplace; appended so ids stay positional)
+  def({ id: B.WORKBENCH, name: 'workbench', displayName: 'Workbench', tiles: tiles(T.WORKBENCH_SIDE, T.WORKBENCH_TOP, T.OAK_PLANKS), soundGroup: 'wood' }),
 ];
 
 /**
@@ -373,7 +379,7 @@ export const PICKER_ORDER = Object.freeze([
   B.WOOL_WHITE, B.WOOL_LIGHT_GRAY, B.WOOL_GRAY, B.WOOL_BLACK, B.WOOL_BROWN, B.WOOL_RED, B.WOOL_ORANGE, B.WOOL_YELLOW,
   B.WOOL_LIME, B.WOOL_GREEN, B.WOOL_CYAN, B.WOOL_LIGHT_BLUE, B.WOOL_BLUE, B.WOOL_PURPLE, B.WOOL_MAGENTA, B.WOOL_PINK,
   // special (v0.9: the workplaces, the basket and the Sleeping Hide right before the campfire)
-  B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WICKER_BASKET, B.SLEEPING_HIDE,
+  B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WORKBENCH, B.WICKER_BASKET, B.SLEEPING_HIDE,
   B.CAMPFIRE, B.POWDER_KEG,
   // powder and circuits (DESIGN-circuits §1.2 table order)
   B.COLLAPSAR_CHARGE, B.POWDER_FUSE, B.TORCH, B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE, B.TERMINAL_BOARD,
@@ -455,7 +461,7 @@ export function isPopOff(id) {
 }
 /** A workplace (§7.1): WORK_STUMP, KILN, BLOOMERY or FORGE. */
 export function isStation(id) {
-  return id === B.WORK_STUMP || id === B.KILN || id === B.BLOOMERY || id === B.FORGE;
+  return id === B.WORK_STUMP || id === B.KILN || id === B.BLOOMERY || id === B.FORGE || id === B.WORKBENCH;
 }
 /** A block whose contents live in containers.js (§5.6): WICKER_BASKET or REMAINS. */
 export function isContainerBlock(id) {

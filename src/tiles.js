@@ -123,6 +123,9 @@ export const TILE_NAMES = Object.freeze({
   102: 'loose_stones',
   103: 'fallen_branches',
   104: 'fire_pit_side',
+  // v0.11 (CONTRACTS §67)
+  195: 'workbench_side',
+  196: 'workbench_top',
   // powder and circuits: 160–194 (DESIGN-circuits §1.4), painted by circuitTiles.js
   ...CIRCUIT_TILE_NAMES,
   240: 'zombie_face',
@@ -2020,6 +2023,64 @@ function paintForgeTop(px, rng) {
 }
 
 /**
+ * 195 workbench_side — the workshop bench seen from the front: a thick oak top (rows 0–3, 0xa8743c ±6, a lit 0xc89058 top
+ * row and a 0x5a3a1c lip on row 3), a cabinet below (rows 4–13, 0x8a5a2c ±6) with two drawers (rows 5–8 and 9–12, x 3–12,
+ * 0x6e4622 outlines, brass 0xe0b040 knobs at x 7–8), a grey iron vice clamped to the left end (x 0–2, rows 0–6, 0x6e7278
+ * lit 0x9aa0a8), a coil of copper wire hanging on the right (x 12–15, rows 4–8, 0xd07a38 / 0xa85a24 rings) and two dark
+ * 0x3a2614 legs (x 1–2 and 13–14) on rows 14–15 in front of a dark 0x24160c recess (the tile is opaque everywhere).
+ */
+function paintWorkbenchSide(px, rng) {
+  fill(px, 0x24160c);
+  for (let y = 0; y <= 13; y++) {
+    for (let x = 0; x < W; x++) {
+      if (y <= 3) set(px, x, y, y === 0 ? 0xc89058 : y === 3 ? 0x5a3a1c : 0xa8743c, delta(rng, 6));
+      else set(px, x, y, 0x8a5a2c, delta(rng, 6));
+    }
+  }
+  for (const [y0, y1] of [[5, 8], [9, 12]]) {
+    for (let y = y0; y <= y1; y++) {
+      for (let x = 3; x <= 12; x++) {
+        const edge = y === y0 || y === y1 || x === 3 || x === 12;
+        if (edge) set(px, x, y, 0x6e4622, delta(rng, 4));
+      }
+    }
+    set(px, 7, y0 + 1, 0xe0b040);
+    set(px, 8, y0 + 1, 0xe0b040);
+    set(px, 7, y0 + 2, 0xa8801c);
+    set(px, 8, y0 + 2, 0xa8801c);
+  }
+  // the vice
+  for (let y = 0; y <= 6; y++) for (let x = 0; x <= 2; x++) set(px, x, y, y <= 1 ? 0x9aa0a8 : 0x6e7278, delta(rng, 5));
+  set(px, 1, 4, 0x3a3c40);
+  // a coil of copper wire on a peg
+  for (let y = 4; y <= 8; y++) for (let x = 12; x <= 15; x++) set(px, x, y, (x + y) % 2 === 0 ? 0xd07a38 : 0xa85a24, delta(rng, 6));
+  set(px, 13, 6, 0x5a3a1c);
+  set(px, 14, 6, 0x5a3a1c);
+  for (let y = 14; y <= 15; y++) for (const x of [1, 2, 13, 14]) set(px, x, y, 0x3a2614, delta(rng, 4));
+}
+
+/**
+ * 196 workbench_top — the bench top from above: oak planks (paintPlanks 0xa8743c / seams 0x6e4622) with, inside the inscribed
+ * hexagon, a round glass flask (a ring of radius 2.5 around (5, 6) in 0xd8eef0 holding 0x58c0a8 liquid, a 0xffffff glint),
+ * a coil of copper wire (rings of radius 1.5 and 2.6 around (10.5, 10.5) in 0xd07a38 / 0xa85a24), a little battery cell
+ * (x 9–12, rows 3–5, 0x2c2c34 with a 0xd07a38 cap on x 12) and three brass 0xe0b040 screws.
+ */
+function paintWorkbenchTop(px, rng) {
+  paintPlanks(px, rng, 0xa8743c, 0x6e4622);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x - 5, y - 6);
+      if (d <= 2.6) set(px, x, y, d >= 1.9 ? 0xd8eef0 : 0x58c0a8, delta(rng, 4));
+      const c = Math.hypot(x - 10.5, y - 10.5);
+      if ((c >= 1.1 && c <= 1.8) || (c >= 2.3 && c <= 3)) set(px, x, y, (x + y) % 2 ? 0xd07a38 : 0xa85a24, delta(rng, 5));
+    }
+  }
+  set(px, 4, 5, 0xffffff);
+  for (let y = 3; y <= 5; y++) for (let x = 9; x <= 12; x++) set(px, x, y, x === 12 ? 0xd07a38 : 0x2c2c34, delta(rng, 3));
+  for (const [x, y] of [[3, 11], [6, 12], [12, 7]]) set(px, x, y, 0xe0b040);
+}
+
+/**
  * 95 basket_side — a diagonal straw weave: strands run along both diagonals in 3-px bands, and the strand on top at a
  * pixel alternates with the band parity ((floor((x + y) / 3) + floor((x − y + 16) / 3)) & 1): straw 0xc8a45a or the
  * shaded 0xa8843e, ±8; where the band along the visible strand changes (its first pixel) a dark 0x6a5228 gap; the rim
@@ -2424,6 +2485,8 @@ const RECIPES = Object.freeze({
   loose_stones: paintLooseStones,
   fallen_branches: paintFallenBranches,
   fire_pit_side: paintFirePitSide,
+  workbench_side: paintWorkbenchSide,
+  workbench_top: paintWorkbenchTop,
   zombie_face: paintZombieFace,
   zombie_head_side: paintZombieHeadSide,
   zombie_scalp: paintZombieScalp,
