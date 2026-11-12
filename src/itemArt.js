@@ -973,6 +973,63 @@ function paintTuberShape(ic, rng, skin) {
   paintLump(ic, rng, 8, 9, 6, 4.2, { base: skin, dark: tone(skin, -0.3), light: tone(skin, 0.25) });
 }
 
+// v0.14 (§76 flora): the two mushrooms' icons keep what tells the plants apart (tiles.js MUSHROOMS) — the Honeycap a
+// smooth honey dome over a pale sponge on a fat cream stem; the Frecklecap a flatter, peaked, tawny cap with pale
+// freckles over white gills, on a thin stem with a ring and a bulb. Roasting browns both and hides neither sign.
+
+/** Rows as [y, x0, x1]. @param {Icon} ic @param {number[][]} rows @param {number|((x: number, y: number) => number)} c */
+function paintRows(ic, rows, c) {
+  for (const [y, x0, x1] of rows) for (let x = x0; x <= x1; x++) ic.set(x, y, typeof c === 'function' ? c(x, y) : c);
+}
+
+/** A Honeycap: `cap` its dome, `sponge` the row under it, `stem` its fat stem. */
+function paintHoneycapIcon(ic, cap, sponge, stem) {
+  paintRows(ic, [[2, 6, 9], [3, 4, 11], [4, 3, 12], [5, 2, 13], [6, 2, 13]], (x, y) => (y === 2 || (y === 3 && x < 7) ? tone(cap, 0.22) : y === 6 ? tone(cap, -0.2) : cap));
+  paintRows(ic, [[7, 3, 12]], sponge);
+  paintRows(ic, [[8, 6, 9], [9, 6, 9], [10, 6, 9], [11, 5, 10], [12, 5, 10], [13, 5, 10]], (x) => (x >= 9 ? tone(stem, -0.16) : x <= 6 ? tone(stem, 0.2) : stem));
+}
+
+/** A Frecklecap: `cap` its flat peaked cap, `freckle` its dots, `gill` / `gillLine` the row under it, `stem` its thin stem. */
+function paintFrecklecapIcon(ic, cap, freckle, gill, gillLine, stem) {
+  paintRows(ic, [[2, 7, 8], [3, 5, 10], [4, 3, 12], [5, 1, 14], [6, 1, 14]], (x, y) => (y === 2 || (y === 3 && x < 7) ? tone(cap, 0.2) : y === 6 ? tone(cap, -0.2) : cap));
+  for (const [x, y] of [[9, 3], [5, 4], [11, 4], [2, 5], [7, 5], [13, 6], [4, 6]]) ic.set(x, y, freckle);
+  paintRows(ic, [[7, 3, 12]], (x) => (x % 2 === 0 ? gillLine : gill));
+  paintRows(ic, [[8, 7, 8], [9, 7, 8], [10, 7, 8], [11, 7, 8], [12, 6, 9], [13, 5, 10]], (x) => (x >= 8 ? tone(stem, -0.14) : stem));
+  paintRows(ic, [[9, 5, 10]], (x) => (x === 5 || x === 10 ? tone(stem, -0.3) : tone(stem, -0.12))); // the ring
+}
+
+/** An onion bulb with its neck and root hairs; `skin` its colour. */
+function paintOnionBulb(ic, skin) {
+  ic.ellipse(8, 10, 4.6, 3.9, (x, y, u, v) => (u + v < -0.6 ? tone(skin, 0.3) : u > 0.45 ? tone(skin, -0.2) : skin));
+  ic.rect(7, 5, 8, 6, tone(skin, -0.12));
+  for (const x of [6, 8, 10]) ic.set(x, 14, 0xa08a5a);
+}
+
+/** A carrot root, point down; `skin` its colour, `ring` its growth rings. */
+function paintCarrotRoot(ic, skin, ring) {
+  ic.poly([[4.6, 4], [11.4, 4], [9, 14.6], [7, 14.6]], (x) => (x <= 6 ? tone(skin, 0.25) : x >= 10 ? tone(skin, -0.22) : skin));
+  ic.rect(5, 4, 10, 4, tone(skin, 0.12));
+  for (const [x0, x1, y] of [[6, 8, 7], [8, 9, 10], [7, 8, 12]]) ic.rect(x0, y, x1, y, ring);
+}
+
+/** Three hazelnuts, apart: round, each with the pale scar across its top where the husk held it. */
+function paintHazelnutsIcon(ic, shell, scar) {
+  for (const [cx, cy] of [[4.5, 5.5], [11.5, 6], [8, 12]]) {
+    ic.ellipse(cx, cy, 2.6, 2.6, (x, y, u, v) => (u + v < -0.5 ? tone(shell, 0.28) : u + v > 0.7 ? tone(shell, -0.28) : shell));
+    ic.rect(Math.floor(cx) - 1, Math.floor(cy) - 2, Math.floor(cx) + 1, Math.floor(cy) - 2, scar);
+  }
+}
+
+/** Two crab apples, apart, on their stalks; `skin` their colour, `shine` the light on them. */
+function paintCrabApplesIcon(ic, skin, shine) {
+  for (const [cx, cy, r] of [[4.5, 10.5, 3], [11.5, 9, 2.9]]) {
+    ic.ellipse(cx, cy, r, r, (x, y, u, v) => (u + v > 0.7 ? tone(skin, -0.3) : skin));
+    ic.set(Math.floor(cx) - 1, Math.floor(cy) - 2, shine);
+    ic.set(Math.floor(cx) - 2, Math.floor(cy) - 1, shine);
+    ic.line(Math.floor(cx), Math.floor(cy - r) - 1, Math.floor(cx) + 1, Math.floor(cy - r) - 3, 0x6b4a2c);
+  }
+}
+
 /** @type {Record<string, (ic: Icon, rng: Rng) => void>} */
 const FOOD_PAINTERS = {
   honeyberries(ic) {
@@ -1115,6 +1172,84 @@ const FOOD_PAINTERS = {
   },
   pot_milk(ic, rng) {
     paintPot(ic, rng, 0xb8613a, 0xf2efe6, 0xffffff);
+  },
+  // ---- v0.14 (§76 flora): the wild food of generation 3
+  honeycap(ic) {
+    paintHoneycapIcon(ic, 0xdb9c2c, 0xead48c, 0xecdcb4);
+  },
+  roasted_honeycap(ic) {
+    paintHoneycapIcon(ic, 0xa8681e, 0xc8a05a, 0xcfae78);
+    // scorched along the rim and on the stem — never dots on the cap: dots are the Frecklecap's sign
+    ic.rect(2, 6, 13, 6, 0x5e3414);
+    ic.rect(6, 10, 9, 10, 0x8a6a3a);
+  },
+  frecklecap(ic) {
+    paintFrecklecapIcon(ic, 0xc27a30, 0xfff3d2, 0xf4eedc, 0xb0a488, 0xf2ecdc);
+  },
+  roasted_frecklecap(ic) {
+    paintFrecklecapIcon(ic, 0x94521c, 0xf0dcae, 0xd8c8a0, 0x8a7a58, 0xd6c49a);
+    for (const [x, y] of [[9, 5], [3, 6], [7, 12]]) ic.set(x, y, 0x4a2a12);
+  },
+  wild_onion(ic) {
+    // a white bulb with a rose neck and two green shoots
+    paintOnionBulb(ic, 0xf4f0e2);
+    ic.rect(7, 5, 8, 6, 0xb878a8);
+    ic.line(7, 4, 4, 1, 0x4f9a86);
+    ic.line(8, 4, 11, 1, 0x3f8472);
+    ic.set(8, 3, 0x4f9a86);
+  },
+  roasted_onion(ic) {
+    paintOnionBulb(ic, 0xd49a44);
+    ic.line(6, 8, 6, 12, 0x8a5a1e);
+    ic.line(10, 8, 10, 12, 0x8a5a1e);
+    ic.set(8, 10, 0x4a2a12);
+  },
+  wild_carrot(ic) {
+    paintCarrotRoot(ic, 0xe8842c, 0xbf6418);
+    // its feathery top
+    ic.line(8, 3, 8, 1, 0x2f7d2c);
+    ic.line(7, 3, 4, 1, 0x3f8f34);
+    ic.line(9, 3, 12, 1, 0x3f8f34);
+    for (const [x, y] of [[6, 1], [10, 1], [7, 2], [9, 2]]) ic.set(x, y, 0x7fca4e);
+  },
+  roasted_carrot(ic) {
+    paintCarrotRoot(ic, 0xb8601e, 0x5e2e10);
+    ic.rect(7, 3, 8, 3, 0x4a3a1c); // the charred stub of its top
+  },
+  hazelnuts(ic) {
+    paintHazelnutsIcon(ic, 0xb07a3c, 0xe6d2a4);
+  },
+  roasted_hazelnuts(ic) {
+    paintHazelnutsIcon(ic, 0x7a4a22, 0xc8a06a);
+    for (const [x, y] of [[6, 7], [12, 8], [8, 12]]) ic.set(x, y, 0x3a2010); // split by the heat
+  },
+  crab_apple(ic) {
+    paintCrabApplesIcon(ic, 0xd8372b, 0xff9a78);
+    ic.rect(7, 4, 9, 4, 0x4f9040); // a leaf between the stalks
+    ic.set(8, 5, 0x2f6a2c);
+  },
+  baked_crab_apple(ic) {
+    // browned and wrinkled, the juice gone to syrup
+    paintCrabApplesIcon(ic, 0xa8522a, 0xe8b070);
+    for (const [x, y] of [[4, 11], [5, 12], [11, 10], [12, 10]]) ic.set(x, y, 0x6a2e16);
+  },
+  healwort(ic) {
+    // a sprig: silver-green leaves on a stem, a violet flower spike at its tip
+    ic.line(8, 14, 8, 5, 0x6f9a78);
+    ic.poly([[3, 10], [7.6, 9], [7.6, 11.6], [5, 12.4]], 0xa9cfae);
+    ic.poly([[8.4, 7], [13, 6], [11.6, 9], [8.4, 9.6]], 0xa9cfae);
+    ic.line(4, 11, 7, 10, 0x7dac8a);
+    ic.line(9, 8, 12, 7, 0x7dac8a);
+    for (let k = 0; k < 5; k++) {
+      ic.set(8, 1 + k, k === 0 ? 0xdcb4f8 : 0x9b4fd6);
+      if (k > 0) ic.set(8 + (k % 2 === 1 ? -1 : 1), 1 + k, 0xb87cec);
+    }
+  },
+  pot_healwort_tea(ic, rng) {
+    // a pale green brew with a violet floret afloat, steaming
+    paintPot(ic, rng, 0xb8613a, 0x9fbf5a, 0xd6e69a);
+    ic.set(8, 4, 0x9b4fd6);
+    for (const [x, y] of [[6, 1], [7, 0], [10, 1], [9, 0]]) ic.set(x, y, 0xf0f4f8);
   },
 };
 

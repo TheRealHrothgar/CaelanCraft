@@ -10,6 +10,12 @@
 // some birch in FOREST) and the surface pass `placeFlora` (FLORA_TABLE: gravel tops, loose stones, fallen branches and
 // the wild plants). With `gen: 1` (the default) the output is byte-identical to the generator before v0.9.
 //
+// Generation 3 (v0.14, CONTRACTS §76 flora): food is scarcer and grows in bunches. The surface pass no longer sprinkles the
+// FOOD plants one roll per column: they come from PATCH_TABLE (seed-derived patch centres per plant kind, dense inside a
+// patch, nothing between patches), which also brings the new plants (mushrooms, wild onion and carrot, hazel, crab apple,
+// healwort); mushroom troops also grow on cave floors (CAVE_TROOP). Gravel, loose stones, fallen branches and tussock keep
+// the generation-2 roll. Generations 1 and 2 are byte for byte what they were.
+//
 // Cells are hexagonal prisms addressed by axial (q, r). Continuous noise is always sampled at the cell's
 // WORLD position (hex.hexToWorld) so terrain, climate and caves are isotropic rather than sheared along
 // the axial axes; discrete hashes (bedrock, dirt depth, ores, trees) use the integer cell coordinates.
@@ -52,6 +58,7 @@ import { normalizeSeed, hash2, hash3, rand3, mulberry32, clamp, createNoise } fr
  *   treeTrunkAt: (kq: number, kr: number) => TreeTrunk|null,
  *   streamAt: (q: number, r: number) => boolean,
  *   FLORA_TABLE: typeof FLORA_TABLE,
+ *   PATCH_TABLE: typeof PATCH_TABLE,
  * }} SurvivalWorldGen
  */
 
@@ -197,6 +204,93 @@ export const FLORA_TABLE = Object.freeze([
   }),
   /* SNOWY_PEAKS */ null,
 ]);
+
+// ---- v0.14 (§76 flora): food in bunches (generation 3) ---------------------------------------------------------------
+
+/**
+ * Salt of the patch hashes: `hash3(kq, kr, PATCH_SALT + i, seed)` is grid cell (kq, kr) of PATCH_TABLE row i (its centre
+ * and its roll), `rand3(q, r, PATCH_SALT + i, seed)` a column's fill roll for that row and
+ * `rand3(q, r, PATCH_SALT + PATCH_MIX_STEP + i, seed)` its look-alike roll. The cave troops use row index PATCH_TABLE.length.
+ */
+export const PATCH_SALT = 0x9a7c00;
+/** Offset of the look-alike roll's salt from the fill roll's (above any row index). */
+export const PATCH_MIX_STEP = 64;
+
+/**
+ * One kind of food patch (generation 3). Grid cell (kq, kr) of a `cell` × `cell` grid over (q, r) holds at most one patch
+ * centre, anywhere in the cell; it exists when the cell's roll is below `chance[biome of the centre column]`. A column
+ * within `radius` of the centre (exactly AT `radius` for a `ring`) whose own biome has a chance above 0 holds the plant
+ * when its fill roll is below `fill`. The surface pass then places it under the same conditions as any flora (the biome's
+ * surface with AIR above, and the row's own `minHeight` / `maxHeight` / `besideBelow`).
+ * @typedef {Object} PatchRow
+ * @property {string} key                    the kind's name
+ * @property {number} id                     the plant block
+ * @property {number} cell                   grid cell side, 8..256
+ * @property {readonly number[]} chance      index = BIOME id (0: the kind never grows there)
+ * @property {number} radius                 hex radius of a patch
+ * @property {number} fill                   share of a patch's columns that hold a plant
+ * @property {boolean} [ring]                a fairy ring: plants only at distance `radius`
+ * @property {number} [mixId]                a second block mixed in (the look-alike)
+ * @property {readonly number[]} [mixShares] the look-alike's share of a patch's plants: one of these, picked per patch
+ * @property {number} [edgeBelow]            a FOREST centre needs humidity below this (the forest's edge, next to plains)
+ * @property {number} [minHeight]
+ * @property {number} [maxHeight]
+ * @property {number} [besideBelow]
+ */
+
+/** @returns {Readonly<PatchRow>} `chances` is { BIOME key: chance }; every other biome gets 0 */
+function patchRow(key, id, cell, chances, radius, fill, extra = {}) {
+  const chance = Object.freeze(Object.keys(BIOME).map((k) => chances[k] ?? 0));
+  return Object.freeze({ key, id, cell, chance, radius, fill, ...extra });
+}
+
+/**
+ * The humidity where FOREST begins (getColumn: 0.15) plus a margin: a forest column drier than this is the forest's edge.
+ * Wild onion and carrot grow on plains and along that edge, never deep in the woods.
+ */
+export const FOREST_EDGE_HUMIDITY = 0.22;
+
+/**
+ * The share of Frecklecaps in a mushroom troop, picked per troop: some are all good, most are mixed, some are all bad —
+ * so every mushroom has to be looked at.
+ */
+export const FRECKLECAP_SHARES = Object.freeze([0, 0.15, 0.3, 0.5, 1]);
+
+/**
+ * The food patches of generation 3, in priority order (where two patches overlap, the earlier row has the column). The
+ * numbers are tuned so that a land biome holds about half the food plants it had in generation 2, counting the new kinds
+ * (worldgenFlora.test.js measures it): what was sprinkled one plant here, one there, now stands in bunches of 3–8 with long
+ * empty stretches between them.
+ * @type {readonly Readonly<PatchRow>[]}
+ */
+export const PATCH_TABLE = Object.freeze([
+  patchRow('honeyberry', BLOCK.HONEYBERRY_BUSH, 32, { PLAINS: 0.19, FOREST: 0.62, SNOWY: 0.25 }, 2, 0.35),
+  patchRow('tuber', BLOCK.TUBER_PLANT, 36, { PLAINS: 0.42, FOREST: 0.27 }, 2, 0.3),
+  patchRow('prickly_pear', BLOCK.PRICKLY_PEAR, 28, { DESERT: 0.45 }, 2, 0.4),
+  // reed beds: only the shore columns of a patch take cattails (the generation-2 shore rule)
+  patchRow('cattails', BLOCK.CATTAILS, 24, { BEACH: 0.6 }, 3, 0.7, { minHeight: SEA_LEVEL, maxHeight: SEA_LEVEL + 1, besideBelow: SEA_LEVEL }),
+  // fairy rings in the woods: Honeycaps with Frecklecaps among them
+  patchRow('mushrooms', BLOCK.HONEYCAP_MUSHROOM, 36, { FOREST: 0.6 }, 2, 0.7, {
+    ring: true, mixId: BLOCK.FRECKLECAP_MUSHROOM, mixShares: FRECKLECAP_SHARES,
+  }),
+  patchRow('onion', BLOCK.ONION_PLANT, 40, { PLAINS: 0.2, FOREST: 0.27 }, 2, 0.4, { edgeBelow: FOREST_EDGE_HUMIDITY }),
+  patchRow('carrot', BLOCK.CARROT_PLANT, 40, { PLAINS: 0.31, FOREST: 0.31 }, 2, 0.35, { edgeBelow: FOREST_EDGE_HUMIDITY }),
+  patchRow('hazel', BLOCK.HAZEL_THICKET, 40, { FOREST: 0.43 }, 1, 0.8),
+  patchRow('crab_apple', BLOCK.CRAB_APPLE_BUSH, 44, { PLAINS: 0.46, FOREST: 0.46 }, 2, 0.22),
+  // rare: about one small patch (two to four plants) in 10 000 columns of plains or forest — the nearest is some 50 cells
+  // away, so it is found by exploring, and once found it is worth more cut (it regrows) than pulled up
+  patchRow('healwort', BLOCK.HEALWORT_PLANT, 64, { PLAINS: 0.4, FOREST: 0.4, SNOWY: 0.2 }, 1, 0.45),
+]);
+
+/**
+ * Mushroom troops on cave floors (generation 3): the same two mushrooms, in the dark. A grid cell holds a troop with
+ * `chance`; each column within `radius` whose fill roll passes gets a mushroom on the floor of its HIGHEST cave — the
+ * first AIR cell with STONE under it, looking down from the cave ceiling limit — if it has one.
+ */
+export const CAVE_TROOP = Object.freeze({
+  key: 'cave_mushrooms', id: BLOCK.HONEYCAP_MUSHROOM, cell: 28, chance: 0.3, radius: 2, fill: 0.5,
+  mixId: BLOCK.FRECKLECAP_MUSHROOM, mixShares: FRECKLECAP_SHARES,
+});
 
 /** Hex offsets at distance 1..2 from a centre (the 18 columns a pond checks besides its centre). */
 const DISC2_RING = Object.freeze((() => {
@@ -608,6 +702,8 @@ export function createWorldGen(seed, opts = {}) {
   function placeFlora(blocks, heights, biomes, cq, cr) {
     const oq = cq * CHUNK_SIZE;
     const or = cr * CHUNK_SIZE;
+    // Generation 3 (§76 flora): the food plants stand in patches; the per-column roll below keeps only the other rows.
+    if (gen3) markPatches(biomes, cq, cr);
     for (let lq = 0; lq < CHUNK_SIZE; lq++) {
       for (let lr = 0; lr < CHUNK_SIZE; lr++) {
         const ci = lq * CHUNK_SIZE + lr;
@@ -618,17 +714,134 @@ export function createWorldGen(seed, opts = {}) {
         if (blocks[top] !== table.surface || blocks[top + 1] !== BLOCK.AIR) continue;
         const q = oq + lq;
         const r = or + lr;
+        if (gen3 && patchRowOf[ci] !== 0 && floraFits(PATCH_TABLE[patchRowOf[ci] - 1], q, r, height)) {
+          blocks[top + 1] = patchPlant[ci];
+          continue;
+        }
         const u = rand3(q, r, FLORA_SALT, s);
         let acc = 0;
         for (let i = 0; i < table.rows.length; i++) {
           const row = table.rows[i];
           acc += row.chance;
           if (u >= acc) continue;
+          // Generation 3: a food row's slice of the roll places nothing, so the other rows fall exactly where they did.
+          if (gen3 && PATCH_FOOD[row.id] === 1) break;
           if (floraFits(row, q, r, height)) blocks[row.top ? top : top + 1] = row.id;
           break;
         }
       }
     }
+  }
+
+  // ---- food patches (generation 3, §76 flora) ----------------------------------------------------------------------
+
+  /** Scratch of markPatches, per column of the chunk being generated: PATCH_TABLE row index + 1 (0: none) and the plant. */
+  const patchRowOf = new Uint8Array(gen3 ? CHUNK_AREA : 0);
+  const patchPlant = new Uint8Array(gen3 ? CHUNK_AREA : 0);
+
+  /**
+   * The patch of grid cell (kq, kr) of a patch row (`salt` = PATCH_SALT + its index): its centre and its look-alike
+   * share, or null when the cell holds none. `chanceOf(col)` is the chance at the centre column. Pure in (seed, kq, kr).
+   * @param {{ cell: number, mixShares?: readonly number[] }} row
+   * @param {number} salt @param {number} kq @param {number} kr @param {number} maxChance
+   * @param {(col: ColumnInfo) => number} chanceOf
+   * @returns {{ q: number, r: number, share: number }|null}
+   */
+  function patchCentre(row, salt, kq, kr, maxChance, chanceOf) {
+    const h = hash3(kq, kr, salt, s);
+    const roll = (h >>> 16) / 65536;
+    if (roll >= maxChance) return null; // cheapest first: most cells are empty whatever their biome
+    const pq = kq * row.cell + (((h & 0xff) * row.cell) >> 8);
+    const pr = kr * row.cell + ((((h >>> 8) & 0xff) * row.cell) >> 8);
+    if (roll >= chanceOf(getColumn(pq, pr))) return null;
+    const shares = row.mixShares;
+    const share = shares ? shares[hash3(kr, kq, salt + PATCH_MIX_STEP, s) % shares.length] : 0;
+    return { q: pq, r: pr, share };
+  }
+
+  /**
+   * Call `visit(lq, lr, plantId)` for every column of chunk (cq, cr) that a patch of `row` covers and whose fill roll
+   * passes, patch by patch in grid order (kq, then kr). Every decision depends only on (seed, q, r) and the row, so a
+   * patch that straddles chunks is the same patch in each of them.
+   * @param {{ id: number, cell: number, radius: number, fill: number, ring?: boolean, mixId?: number,
+   *   mixShares?: readonly number[] }} row
+   * @param {number} salt @param {number} maxChance @param {(col: ColumnInfo) => number} chanceOf
+   * @param {number} cq @param {number} cr
+   * @param {(lq: number, lr: number, plantId: number) => void} visit
+   */
+  function forEachPatchColumn(row, salt, maxChance, chanceOf, cq, cr, visit) {
+    const oq = cq * CHUNK_SIZE;
+    const or = cr * CHUNK_SIZE;
+    const R = row.radius;
+    for (let kq = floorDiv(oq - R, row.cell); kq <= floorDiv(oq + CHUNK_SIZE - 1 + R, row.cell); kq++) {
+      for (let kr = floorDiv(or - R, row.cell); kr <= floorDiv(or + CHUNK_SIZE - 1 + R, row.cell); kr++) {
+        const patch = patchCentre(row, salt, kq, kr, maxChance, chanceOf);
+        if (patch === null) continue;
+        const lq0 = patch.q - oq;
+        const lr0 = patch.r - or;
+        for (let dq = -R; dq <= R; dq++) {
+          const lq = lq0 + dq;
+          if (lq < 0 || lq >= CHUNK_SIZE) continue;
+          for (let dr = -R; dr <= R; dr++) {
+            const lr = lr0 + dr;
+            if (lr < 0 || lr >= CHUNK_SIZE) continue;
+            const d = hexLength(dq, dr);
+            if (row.ring ? d !== R : d > R) continue;
+            const q = oq + lq;
+            const r = or + lr;
+            if (rand3(q, r, salt, s) >= row.fill) continue;
+            const mixed = patch.share > 0 && rand3(q, r, salt + PATCH_MIX_STEP, s) < patch.share;
+            visit(lq, lr, mixed ? /** @type {number} */ (row.mixId) : row.id);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Fill patchRowOf / patchPlant for chunk (cq, cr): the first PATCH_TABLE row (then the first patch in grid order) that
+   * covers a column and passes its fill roll has it. A column takes a kind only where its own biome grows it.
+   * @param {Uint8Array} biomes
+   * @param {number} cq
+   * @param {number} cr
+   */
+  function markPatches(biomes, cq, cr) {
+    patchRowOf.fill(0);
+    for (let i = 0; i < PATCH_TABLE.length; i++) {
+      const row = PATCH_TABLE[i];
+      const chanceOf = (col) => (
+        row.edgeBelow !== undefined && col.biome === BIOME.FOREST && col.humidity >= row.edgeBelow ? 0 : row.chance[col.biome]
+      );
+      forEachPatchColumn(row, PATCH_SALT + i, PATCH_MAX_CHANCE[i], chanceOf, cq, cr, (lq, lr, plantId) => {
+        const ci = lq * CHUNK_SIZE + lr;
+        if (patchRowOf[ci] !== 0 || row.chance[biomes[ci]] === 0) return;
+        patchRowOf[ci] = i + 1;
+        patchPlant[ci] = plantId;
+      });
+    }
+  }
+
+  /**
+   * Generation 3: mushroom troops on cave floors (CAVE_TROOP). A covered column gets a mushroom in the first AIR cell
+   * with STONE under it, looking down from the caves' ceiling limit: the floor of its highest cave. Reads and writes only
+   * that column, so chunks agree.
+   * @param {Uint8Array} blocks
+   * @param {Uint8Array} heights
+   * @param {number} cq
+   * @param {number} cr
+   */
+  function placeCaveTroops(blocks, heights, cq, cr) {
+    const chanceOf = () => CAVE_TROOP.chance;
+    forEachPatchColumn(CAVE_TROOP, PATCH_SALT + PATCH_TABLE.length, CAVE_TROOP.chance, chanceOf, cq, cr, (lq, lr, plantId) => {
+      const ci = lq * CHUNK_SIZE + lr;
+      const base = ci * WORLD_HEIGHT;
+      for (let y = heights[ci] - CAVE_TOP_MARGIN; y > CAVE_MIN_Y; y--) {
+        if (blocks[base + y] !== BLOCK.AIR) continue;
+        if (blocks[base + y - 1] === BLOCK.AIR) continue; // still inside the cave: keep going down to its floor
+        if (blocks[base + y - 1] === BLOCK.STONE) blocks[base + y] = plantId;
+        return; // the highest cave only, whatever its floor is made of
+      }
+    });
   }
 
   /** @returns {boolean} the row's height / shore condition holds at column (q, r) (a row without one always fits) */
@@ -685,13 +898,14 @@ export function createWorldGen(seed, opts = {}) {
     if (gen2) placePonds(blocks, heights, cq, cr);
     placeTrees(blocks, cq, cr);
     if (gen2) placeFlora(blocks, heights, biomes, cq, cr);
+    if (gen3) placeCaveTroops(blocks, heights, cq, cr);
 
     return { blocks, biomes, heights };
   }
 
   // Internal cross-calls (trees and ponds → treeTrunkAt) go through this object, so tests can spy on them.
   /** @type {SurvivalWorldGen} */
-  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, FLORA_TABLE };
+  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, FLORA_TABLE, PATCH_TABLE };
   return api;
 }
 
@@ -721,6 +935,10 @@ function idMask(ids) {
 const STONE_ONLY = idMask([BLOCK.STONE]);
 /** Masks of the ORE_TABLE_GEN2 rows (their `replaces`, default STONE). */
 const GEN2_REPLACES = Object.freeze(ORE_TABLE_GEN2.map((o) => (o.replaces ? idMask(o.replaces) : STONE_ONLY)));
+/** The ids PATCH_TABLE places (§76 flora): in generation 3 the per-column flora roll never places these. */
+const PATCH_FOOD = idMask(PATCH_TABLE.map((row) => row.id));
+/** The largest chance of each PATCH_TABLE row over the biomes: a grid cell whose roll is not below it holds no patch. */
+const PATCH_MAX_CHANCE = Object.freeze(PATCH_TABLE.map((row) => Math.max(...row.chance)));
 /** [log, leaves] ids per species. */
 const SPECIES_IDS = Object.freeze({
   oak: Object.freeze([BLOCK.OAK_LOG, BLOCK.OAK_LEAVES]),

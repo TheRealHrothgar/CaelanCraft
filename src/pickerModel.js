@@ -56,7 +56,9 @@ export const PICKER_SECTIONS = Object.freeze([
     fam('soil', 'Soil', ['dirt', 'grass_block', 'snowy_grass', 'clay']),
     fam('sand-gravel', 'Sand & Gravel', ['sand', 'red_sand', 'gravel']),
     fam('snow-ice', 'Snow & Ice', ['snow_block', 'ice', 'packed_ice']),
-    fam('wild-plants', 'Wild Plants', ['tussock', 'cattails', 'tuber_plant', 'honeyberry_bush', 'prickly_pear'], 'plants'),
+    fam('wild-plants', 'Wild Plants', ['tussock', 'cattails', 'tuber_plant', 'honeyberry_bush', 'prickly_pear',
+      // v0.14 (§76 flora)
+      'onion_plant', 'carrot_plant', 'honeycap_mushroom', 'frecklecap_mushroom', 'hazel_thicket', 'crab_apple_bush', 'healwort_plant'], 'plants'),
     'hay_bale', 'pumpkin',
   ]),
   sec('wood', 'Wood', 'oak_log', [

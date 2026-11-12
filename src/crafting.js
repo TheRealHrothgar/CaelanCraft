@@ -186,6 +186,7 @@ const RECIPE_ROWS = [
   ['salted_pork', 'hand', 'raw_pork + salt', 'salted_pork', '', 2],
   ['leached_acorns', 'hand', '6 acorns + pot_water', '6 leached_acorns + clay_pot', '', 2],
   ['peel_cactus_fruit', 'hand', 'unpeeled_cactus_fruit', 'cactus_fruit', 'knife 2', 1],
+  ['pot_healwort_tea', 'hand', 'healwort + pot_boiled', 'pot_healwort_tea', '', 2], // v0.14 (§76 flora): steeped, not boiled
   ['snow_block', 'hand', '6 snow', 'snow_block', '', 1],
   ['ice', 'hand', '3 ice_chunk', 'ice', '', 1],
   ['coal_block', 'hand', '7 coal', 'coal_block', '', 2],

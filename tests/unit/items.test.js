@@ -97,6 +97,21 @@ const FOODS = {
   pot_seawater: ['Pot of Seawater', 1, 0, -10, 0, 1.0, { returns: 'clay_pot' }],
   pot_sap: ['Pot of Birch Sap', 1, 2, 25, 0, 1.0, { returns: 'clay_pot' }],
   pot_milk: ['Pot of Milk', 1, 12, 20, 0, 1.0, { returns: 'clay_pot' }], // v0.11 (CONTRACTS §72)
+  // v0.14 (§76 flora): the wild food of generation 3
+  honeycap: ['Honeycap', 16, 3, 1, 0, 1.0, { spoilS: 1500 }],
+  roasted_honeycap: ['Roasted Honeycap', 16, 7, 0, 0, 1.0, {}],
+  frecklecap: ['Frecklecap', 16, 3, 1, 1, 1.0, { spoilS: 1500 }], // always poisons …
+  roasted_frecklecap: ['Roasted Frecklecap', 16, 7, 0, 1, 1.0, {}], // … roasted too
+  wild_onion: ['Wild Onion', 16, 2, 1, 0, 1.0, {}],
+  roasted_onion: ['Roasted Onion', 16, 5, 0, 0, 1.0, {}],
+  wild_carrot: ['Wild Carrot', 16, 3, 1, 0, 1.0, {}],
+  roasted_carrot: ['Roasted Carrot', 16, 7, 0, 0, 1.0, {}],
+  hazelnuts: ['Hazelnuts', 32, 3, 0, 0, 1.0, {}],
+  roasted_hazelnuts: ['Roasted Hazelnuts', 32, 5, 0, 0, 1.0, {}],
+  crab_apple: ['Crab Apple', 16, 2, 3, 0, 1.0, { spoilS: 2400 }],
+  baked_crab_apple: ['Baked Crab Apple', 16, 5, 2, 0, 1.0, {}],
+  healwort: ['Healwort', 16, 0, -2, 0, 1.2, { cures: true }],
+  pot_healwort_tea: ['Pot of Healwort Tea', 1, 0, 30, 0, 1.0, { returns: 'clay_pot', cures: true }],
 };
 
 /** §5.1 bandages: key → [display name, stack, hp, rate, useS]. */
@@ -192,8 +207,9 @@ describe('items — the registry', () => {
     // 5 clothes and the 98 placeable blocks other than water (DESIGN-circuits §1.5: PICKER_ORDER drops the black hole and gains
     // the 20 circuit blocks; the blast barrel's key is now powder_keg).
     const count = (kind) => ITEM_KEYS.filter((k) => ITEMS[k].kind === kind).length;
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 25, 2, 5, 100]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(212); // + the Pot of Milk (§72)
+    // v0.14 (§76 flora): + 14 foods and the 7 placeable plants
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 39, 2, 5, 107]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(233); // + the Pot of Milk (§72); + the 21 items of §76 flora
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -288,7 +304,8 @@ describe('items — the registry', () => {
       if (f.returns !== undefined) expect(isItemKey(f.returns), def.key).toBe(true);
       if (f.spoilS !== undefined) expect(f.spoilS, def.key).toBeGreaterThan(0);
     }
-    expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton']);
+    expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton',
+      'honeycap', 'frecklecap', 'crab_apple']); // v0.14 (§76 flora): raw mushrooms and crab apples go bad too
     // pot_snow and unpeeled_cactus_fruit are materials: boiled, singed or peeled first, never eaten as they are.
     expect(getItem('pot_snow').kind).toBe('material');
     expect(getItem('unpeeled_cactus_fruit').kind).toBe('material');
@@ -332,6 +349,8 @@ describe('items — block items', () => {
     }
     for (const d of BLOCKS) {
       if (d.placeable || d.id === BLOCK.HONEYBERRY_BUSH_BARE || d.id === BLOCK.PRICKLY_PEAR_BARE) continue;
+      // v0.14 (§76 flora): the picked thicket and bush and the cut Healwort give their ripe plant's item
+      if (d.id === BLOCK.HAZEL_THICKET_BARE || d.id === BLOCK.CRAB_APPLE_BUSH_BARE || d.id === BLOCK.HEALWORT_PLANT_BARE) continue;
       if (d.id === BLOCK.SNARE_BAITED || d.id === BLOCK.SNARE_SPRUNG) continue; // states of the Snare: they give it back (§69)
       expect(itemForBlock(d.id), d.name).toBeNull();
       expect(isItemKey(d.name), d.name).toBe(false);

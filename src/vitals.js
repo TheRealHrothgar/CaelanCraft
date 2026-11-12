@@ -489,19 +489,32 @@ export function makeSick(v) {
 
 /**
  * Eat or drink one food item (§4.5): satiation, hydration (never below 0, never above 100) and the instant body
- * temperature change (snow); then the sickness roll (`random() < food.sick`).
+ * temperature change (snow); then the cure (v0.14, §76 flora: a food that `cures` ends a poisoning at once); then the
+ * sickness roll (`random() < food.sick`).
  * @param {Vitals} v
  * @param {import('./types.js').FoodDef} food
  * @param {() => number} random
- * @returns {{ sick: boolean }}
+ * @returns {{ sick: boolean, cured: boolean }}  `cured`: the food ended a poisoning that was there
  */
 export function eatFood(v, food, random) {
   v.satiation = clamp(v.satiation + (food.satiation || 0), 0, STAT_MAX);
   v.hydration = clamp(v.hydration + (food.hydration || 0), 0, STAT_MAX);
   if (food.temp) v.temp = clamp(v.temp + food.temp, BODY_TEMP_MIN, BODY_TEMP_MAX);
+  const cured = !!food.cures && cureSick(v);
   const sick = food.sick > 0 && random() < food.sick;
   if (sick) makeSick(v);
-  return { sick };
+  return { sick, cured };
+}
+
+/**
+ * End a poisoning at once (v0.14, §76 flora: Healwort and its tea). What the poison already took is not given back.
+ * @param {Vitals} v
+ * @returns {boolean} whether there was a poisoning to end
+ */
+export function cureSick(v) {
+  const was = v.sick > 0;
+  v.sick = 0;
+  return was;
 }
 
 /**
