@@ -92,7 +92,7 @@ const FOODS = {
   raw_mutton: ['Raw Mutton', 16, 5, 0, 0.3, 1.4, { spoilS: 1200 }],
   roast_mutton: ['Roast Mutton', 16, 26, -2, 0, 1.6, { spoilS: 2400 }],
   snow: ['Snow', 32, 0, 3, 0, 0.6, { temp: -0.2 }],
-  pot_water: ['Pot of Water', 1, 0, 30, 0.2, 1.0, { returns: 'clay_pot' }], // v0.11 (§66): 20 % poisoning
+  pot_water: ['Pot of Water', 1, 0, 30, 0.2, 1.0, { returns: 'clay_pot', spoilS: 2880, spoilsTo: 'pot_tainted' }], // v0.11 (§66): 20 % poisoning; §76 water: it turns tainted
   pot_boiled: ['Pot of Boiled Water', 1, 0, 30, 0, 1.0, { returns: 'clay_pot' }],
   pot_seawater: ['Pot of Seawater', 1, 0, -10, 0, 1.0, { returns: 'clay_pot' }],
   pot_sap: ['Pot of Birch Sap', 1, 2, 25, 0, 1.0, { returns: 'clay_pot' }],
@@ -112,6 +112,7 @@ const FOODS = {
   baked_crab_apple: ['Baked Crab Apple', 16, 5, 2, 0, 1.0, {}],
   healwort: ['Healwort', 16, 0, -2, 0, 1.2, { cures: true }],
   pot_healwort_tea: ['Pot of Healwort Tea', 1, 0, 30, 0, 1.0, { returns: 'clay_pot', cures: true }],
+  pot_tainted: ['Pot of Tainted Water', 1, 0, 30, 0.6, 1.0, { returns: 'clay_pot' }], // v0.14 (CONTRACTS §76 water)
 };
 
 /** §5.1 bandages: key → [display name, stack, hp, rate, useS]. */
@@ -207,9 +208,9 @@ describe('items — the registry', () => {
     // 5 clothes and the 98 placeable blocks other than water (DESIGN-circuits §1.5: PICKER_ORDER drops the black hole and gains
     // the 20 circuit blocks; the blast barrel's key is now powder_keg).
     const count = (kind) => ITEM_KEYS.filter((k) => ITEMS[k].kind === kind).length;
-    // v0.14 (§76 flora): + 14 foods and the 7 placeable plants
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 39, 2, 5, 107]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(233); // + the Pot of Milk (§72); + the 21 items of §76 flora
+    // v0.14 (§76): + 14 foods and the 7 placeable plants (flora), + the Pot of Tainted Water (water)
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 40, 2, 5, 107]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(234); // + the Pot of Milk (§72); + the 21 items of §76 flora; + the Pot of Tainted Water
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -305,7 +306,7 @@ describe('items — the registry', () => {
       if (f.spoilS !== undefined) expect(f.spoilS, def.key).toBeGreaterThan(0);
     }
     expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton',
-      'honeycap', 'frecklecap', 'crab_apple']); // v0.14 (§76 flora): raw mushrooms and crab apples go bad too
+      'pot_water', 'honeycap', 'frecklecap', 'crab_apple']); // v0.14 (§76): the Pot of Water turns tainted (water); raw mushrooms and crab apples go bad (flora)
     // pot_snow and unpeeled_cactus_fruit are materials: boiled, singed or peeled first, never eaten as they are.
     expect(getItem('pot_snow').kind).toBe('material');
     expect(getItem('unpeeled_cactus_fruit').kind).toBe('material');

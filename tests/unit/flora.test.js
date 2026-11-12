@@ -98,8 +98,9 @@ describe('the plant blocks 122–131 (blocks.js)', () => {
     expect(POP_OFF_IDS.slice(-10)).toEqual(PLANT_BLOCK_IDS);
   });
 
-  it('120 and 121 are clearly marked placeholders for the water work: plain stone, never placed, never generated', () => {
-    for (const id of [120, 121]) {
+  it('121 is a clearly marked placeholder (BLOCKS is positional): plain stone, never placed, never generated', () => {
+    expect(BLOCKS[120].name).toBe('tainted_water'); // the water work took 120
+    for (const id of [121]) {
       const d = BLOCKS[id];
       expect(d.name).toBe(`reserved_${id}`);
       expect(B[`RESERVED_${id}`]).toBe(id);
@@ -263,7 +264,7 @@ describe('the food (items.js) and its icons (itemArt.js)', () => {
 
   it('the 14 foods follow the Pot of Milk, each with an icon of its own; the seven plants are block items', () => {
     const foods = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'food');
-    expect(foods.slice(foods.indexOf('pot_milk') + 1)).toEqual(FOODS);
+    expect(foods.slice(foods.indexOf('pot_milk') + 1, foods.indexOf('pot_milk') + 1 + FOODS.length)).toEqual(FOODS);
     const icons = FOODS.map((k) => Buffer.from(paintItem(k)).toString('hex'));
     expect(new Set(icons).size).toBe(FOODS.length);
     for (const k of FOODS) {

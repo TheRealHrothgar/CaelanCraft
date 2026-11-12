@@ -1251,6 +1251,13 @@ const FOOD_PAINTERS = {
     ic.set(8, 4, 0x9b4fd6);
     for (const [x, y] of [[6, 1], [7, 0], [10, 1], [9, 0]]) ic.set(x, y, 0xf0f4f8);
   },
+  // v0.14 (§76 water): the pot of murky pond water — the tainted tile's olive-brown with pale scum, and two green
+  // dribbles down the shoulder so it is never taken for the blue Pot of Water at a glance
+  pot_tainted(ic, rng) {
+    paintPot(ic, rng, 0xb8613a, 0x566029, 0x93a658);
+    ic.line(4, 6, 4, 8, 0x7f8f3c);
+    ic.line(11, 6, 11, 7, 0x7f8f3c);
+  },
 };
 
 // ---------------------------------------------------------------------------------------------------------------

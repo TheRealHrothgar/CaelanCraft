@@ -134,6 +134,8 @@ export const TILE_NAMES = Object.freeze({
   201: 'litter_rock',
   202: 'litter_flint',
   203: 'litter_stick',
+  // v0.14 (§76 water)
+  204: 'tainted_water',
   // v0.14 (§76 flora): the wild plants of generation 3
   208: 'honeycap_mushroom',
   209: 'frecklecap_mushroom',
@@ -2361,6 +2363,25 @@ function paintLitterStick(px, rng) {
 }
 
 /**
+ * 204 tainted_water (§76 water) — still, murky pond water, told from fresh water (blue, rippled) at a glance: a dull
+ * olive base (0x566029) clouded in 2×2 patches, six dark silt smears two pixels long (0x3d4220, wrap x) where water has
+ * ripples, and pale green scum flecks (0x93a658, 0x7c9048). Alpha 216 everywhere: cloudier than water (178), so the bed
+ * barely shows through.
+ */
+function paintTaintedWater(px, rng) {
+  fill(px, 0x566029);
+  cellNoise(px, rng, 2, 12);
+  noise(px, rng, 4);
+  for (let k = 0; k < 6; k++) {
+    const x0 = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 15);
+    for (let i = 0; i < 2; i++) set(px, wrap16(x0 + i), y, 0x3d4220, delta(rng, 4));
+  }
+  speck(px, rng, 9, [0x93a658, 0x7c9048]);
+  for (let i = 3; i < BYTES; i += 4) px[i] = 216;
+}
+
+/**
  * 102 loose_stones — seen from ABOVE (a decal lying on the cell's floor): on alpha 0, inside the tile's inscribed hexagon,
  * four bold pebbles (PEBBLES), each with a dark LITTER_OUTLINE rim, a pale warm-grey body lit from the upper left and
  * shaded to the lower right, and a white glint — drawn to stand out on grass. No flint: tile 200 is the one with flint.
@@ -3001,6 +3022,7 @@ const RECIPES = Object.freeze({
   crab_apple_bush_bare: paintCrabAppleBushBare,
   healwort_plant: paintHealwortPlant,
   healwort_plant_bare: paintHealwortPlantBare,
+  tainted_water: paintTaintedWater, // v0.14 (§76 water)
   zombie_face: paintZombieFace,
   zombie_head_side: paintZombieHeadSide,
   zombie_scalp: paintZombieScalp,

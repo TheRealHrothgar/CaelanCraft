@@ -131,6 +131,7 @@ export const SPOT_ITEMS = Object.freeze({
   pot_snow: Object.freeze({ kind: 'pot', stage: 0 }),
   greenware_pot: Object.freeze({ kind: 'pot', stage: 0 }),
   clay_pot: Object.freeze({ kind: 'pot', stage: 1 }),
+  pot_tainted: Object.freeze({ kind: 'pot', stage: 0 }), // v0.14 (§76 water)
 });
 
 /**

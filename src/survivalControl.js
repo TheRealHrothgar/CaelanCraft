@@ -291,6 +291,8 @@ export function strikeKind(mob, tool) {
  *   'embers'), or null (main passes cooking.js's FIRE_TRANSFORMS lookup)
  * @property {(q: number, y: number, r: number) => boolean} [tappedToday]  harvest.Tapped for today's game day
  * @property {(q: number, r: number) => boolean} [salty]  water at that column is salt (climate.isSaltyBiome of its biome)
+ * @property {(q: number, y: number, r: number) => WaterQuality} [waterQuality]  v0.14 (§76 water): what the water in that
+ *   cell is (main: `waterKind` of fluids.waterQualityAt and the column's biome); when given it is used instead of `salty`
  * @property {(station: string) => boolean} [stationNear]  the workplace of that station id is within STATION_RANGE of the
  *   feet (main: `!!stations[id]` from crafting.findStations); absent → every targeted workplace counts as near
  * @property {(id: number) => boolean} [partR]  v0.10 (DESIGN-circuits §4.9): the targeted block is a circuit part with an R
@@ -309,7 +311,8 @@ export function strikeKind(mob, tool) {
  * @property {number} [id]       pick: the block picked
  * @property {number} [needS]    tap / pit_relight: seconds R must be held
  * @property {string} [station]  station: its id ('stump', 'kiln', 'bloomery', 'forge')
- * @property {boolean} [salty]   fill / drink, when the context gives `salty`
+ * @property {boolean} [salty]   fill / drink, when the context gives `salty` (or `waterQuality`: quality === 'salt')
+ * @property {WaterQuality} [quality]  fill / drink, when the context gives `waterQuality` (§76)
  * @property {string} [hint]     the target hint text, where it is fixed
  */
 
@@ -400,7 +403,12 @@ export function interactKind(c) {
     const fill = sel === 'clay_pot';
     /** @type {InteractAction} */
     const act = { kind: fill ? 'fill' : 'drink', q: water.q, y: water.y, r: water.r };
-    if (c.salty) {
+    if (c.waterQuality) {
+      // §76: the hint names what the player is looking at — fresh, salt or tainted — and the action carries it
+      act.quality = c.waterQuality(water.q, water.y, water.r);
+      act.salty = act.quality === 'salt';
+      act.hint = waterHint(act.quality, fill);
+    } else if (c.salty) {
       act.salty = c.salty(water.q, water.r);
       act.hint = waterHint(act.salty, fill);
     }
@@ -457,12 +465,43 @@ export function wearsFromStriking(tool) {
 export const KIT_TOOL_TYPES = Object.freeze(new Set(['firestarter', 'crucible', 'mold']));
 
 /**
- * The water target hint (§4.1): `Fresh water · R: drink`, `Sea water (salty) · R: drink`, or `… · R: fill the pot` with an
- * empty clay pot selected.
- * @param {boolean} salty @param {boolean} potSelected
+ * What a cell of water is to drink (v0.14, CONTRACTS §76 water): 'fresh' (a small risk raw), 'salt' (sea water: it only
+ * makes you thirstier) or 'tainted' (murky standing water, or water flowing out of it: a high risk raw).
+ * @typedef {'fresh'|'salt'|'tainted'} WaterQuality
  */
-export function waterHint(salty, potSelected) {
-  return `${salty ? 'Sea water (salty)' : 'Fresh water'} · R: ${potSelected ? 'fill the pot' : 'drink'}`;
+
+/**
+ * The quality of a water cell from its facts: tainted wins (a Tainted Water source, or water traced back to one —
+ * fluids.waterQualityAt); then a generated stream's column is fresh, also where the stream crosses a beach on its way to
+ * the sea (worldGen.streamAt: running water is always fresh); then the biome's salt (climate.isSaltyBiome); else fresh.
+ * @param {boolean} tainted @param {boolean} salty @param {boolean} [stream] @returns {WaterQuality}
+ */
+export function waterKind(tainted, salty, stream = false) {
+  return tainted ? 'tainted' : salty && !stream ? 'salt' : 'fresh';
+}
+
+/** The pot a Clay Pot becomes when filled from water of each quality (§4.1, §76). */
+export const WATER_POTS = Object.freeze({ fresh: 'pot_water', salt: 'pot_seawater', tainted: 'pot_tainted' });
+
+/** @param {WaterQuality|boolean} quality  (a boolean is the old `salty` flag) @returns {WaterQuality} */
+function qualityOf(quality) {
+  if (quality === 'tainted' || quality === 'salt' || quality === 'fresh') return quality;
+  return quality ? 'salt' : 'fresh';
+}
+
+/** The first part of the water hint, per quality. */
+const WATER_LABELS = Object.freeze({ fresh: 'Fresh water', salt: 'Sea water (salty)', tainted: 'Tainted water' });
+
+/**
+ * The water target hint (§4.1, §76): `Fresh water · R: drink`, `Sea water (salty) · R: drink`, `Tainted water · R: drink
+ * (risky)`, or `… · R: fill the pot` with an empty clay pot selected.
+ * @param {WaterQuality|boolean} quality  what the water is (a boolean is the old `salty` flag: true = salt)
+ * @param {boolean} potSelected
+ */
+export function waterHint(quality, potSelected) {
+  const q = qualityOf(quality);
+  const verb = potSelected ? 'fill the pot' : q === 'tainted' ? 'drink (risky)' : 'drink';
+  return `${WATER_LABELS[q]} · R: ${verb}`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -52,6 +52,7 @@ describe('every item has a source and a use (§10 I-1)', () => {
   sources.add('pot_water'); // R on fresh water with an empty clay pot (§4.2)
   sources.add('pot_milk'); // R on a cow with an empty clay pot (§72)
   sources.add('pot_seawater'); // … on salt water
+  sources.add('pot_tainted'); // … on tainted water (§76 water)
   for (const rec of RECIPES) for (const o of rec.outputs) sources.add(o.k);
   for (const tr of Object.values(FIRE_TRANSFORMS)) sources.add(tr.to);
 
@@ -112,6 +113,7 @@ function reach() {
       have.add('pot_water');
       have.add('pot_milk'); // a cow, lured or snared (§72)
       have.add('pot_seawater');
+      have.add('pot_tainted'); // tainted water (§76 water)
       if (hasTool('knife', 2)) have.add('pot_sap');
     }
     if (have.has('campfire')) for (const [k, tr] of Object.entries(FIRE_TRANSFORMS)) if (have.has(k)) have.add(tr.to);

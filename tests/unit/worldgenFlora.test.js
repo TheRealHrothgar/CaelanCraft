@@ -51,6 +51,17 @@ const MUSHROOMS = new Set([B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM]);
 const DISC2 = [];
 for (let dq = -2; dq <= 2; dq++) for (let dr = -2; dr <= 2; dr++) if (hexLength(dq, dr) <= 2) DISC2.push([dq, dr]);
 
+/**
+ * Generation 3 also has STREAMS (§76 water) and shallow COAL SEAMS (§77), which are not flora's business. A stream
+ * carves its column and firms its banks, and a tree standing in it is left out whole, so columns within `d` of a stream
+ * column are set aside by these tests (1 for the channel and its banks, 3 for a left-out tree's crown).
+ */
+const DISC3 = [];
+for (let dq = -3; dq <= 3; dq++) for (let dr = -3; dr <= 3; dr++) if (hexLength(dq, dr) <= 3) DISC3.push([dq, dr, hexLength(dq, dr)]);
+const nearStream = (q, r, d) => DISC3.some(([dq, dr, len]) => len <= d && gen3.streamAt(q + dq, r + dr));
+/** A tainted pond is the pond it was, of other water. */
+const sameWater = (id) => (id === B.TAINTED_WATER ? B.WATER : id);
+
 // ---- the contract, re-derived (independent of the generator's own loops) ----------------------------------------------
 
 /** @type {Map<string, { q: number, r: number, share: number }|null>} */
@@ -306,7 +317,7 @@ describe('generations 1 and 2 are byte for byte what they were', () => {
     // generation 3 never generates a picked variant or a placeholder either
     for (const [cq, cr] of [[0, 0], [1, 0], [40, -30], [-60, 20]]) {
       const blocks = chunkOf(gen3, cq, cr).blocks;
-      for (const id of [B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT_BARE, B.HONEYBERRY_BUSH_BARE, B.RESERVED_120, B.RESERVED_121]) {
+      for (const id of [B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT_BARE, B.HONEYBERRY_BUSH_BARE, B.RESERVED_121]) {
         expect(blocks.includes(id), BLOCKS[id].name).toBe(false);
       }
     }
@@ -431,6 +442,8 @@ describe('generation 3: every column is what the contract says (and chunks agree
           const got = [at(c, lq, h, lr), at(c, lq, h + 1, lr)];
           const was = [at(b, lq, h, lr), at(b, lq, h + 1, lr)];
           const table = FLORA_TABLE[biome];
+          if (nearStream(q, r, 3)) continue; // a stream, its banks, or the crown of a tree it left out (§76 water)
+          if (got[0] === B.COAL_ORE && was[0] !== B.COAL_ORE) continue; // a coal seam at the surface (§77): nothing grows on it
           // Eligible for the surface pass: the biome's surface with AIR over it when the pass begins. Generation 1 shows
           // the land before ponds and flora; a clay vein (generation 2 and up) may have taken a beach's top sand since.
           const eligible = !!table && at(a, lq, h, lr) === table.surface && at(a, lq, h + 1, lr) === B.AIR && !LEAF_IDS.has(was[1])
@@ -442,7 +455,8 @@ describe('generation 3: every column is what the contract says (and chunks agree
             // ponds and their rims are written before the flora pass: the rim plants stay, and a free rim column takes
             // flora like any other. Either way it is the generation-2 cell or a patch plant on the surface.
             const p = table ? patchPlantAt(gen3, q, r, biome) : null;
-            if (got.join() !== was.join() && !(p && got[0] === table.surface && got[1] === p.id) && !(got[0] === table?.surface && got[1] === B.AIR)) {
+            // (a tainted pond is the same pond: its water differs, nothing else)
+            if (got.map(sameWater).join() !== was.join() && !(p && got[0] === table.surface && got[1] === p.id) && !(got[0] === table?.surface && got[1] === B.AIR)) {
               violations.push(`${q},${r} beside a pond: ${was} → ${got}`);
             }
             continue;
@@ -515,6 +529,7 @@ describe('generation 3: every column is what the contract says (and chunks agree
               break;
             }
           }
+          if (nearStream(q, r, 3)) continue; // a stream's channel and banks, or a tree it left out (§76 water)
           for (let y = 0; y < WORLD_HEIGHT; y++) {
             if (y === h || y === h + 1) continue; // the surface pass (the test above)
             const u = at(b, lq, y, lr);
@@ -522,6 +537,7 @@ describe('generation 3: every column is what the contract says (and chunks agree
             const want = y === wantY ? wantId : u;
             // generation 3's shallow coal seams (§77) stand where stone or subsoil was: not flora's business
             if (v === B.COAL_ORE && (u === B.STONE || u === B.DIRT)) continue;
+            if (sameWater(v) === u) continue; // a tainted pond (§76 water)
             if (v !== want) violations.push(`${q},${y},${r}: gen 2 ${u}, gen 3 ${v}, want ${want}`);
           }
           if (wantY >= 0) {

@@ -88,8 +88,9 @@ import {
 } from './harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
-  wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER,
+  wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterKind, waterHint, WATER_POTS,
 } from './survivalControl.js';
+import { waterQualityAt } from './fluids.js';
 import { CraftQueue, findStations, listRecipes } from './crafting.js';
 import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
 import { heatSource, heatAt, groundChillOf, isSaltyBiome, bodyTarget, CHEST_HEIGHT, HEAT_SOURCES } from './climate.js';
@@ -390,9 +391,19 @@ export function leftBehindText(stacks) {
   return `Pack full: ${stacksText(stacks)} left behind`;
 }
 
-/** "1 Raw Pork went bad.", "1 Honeyberry went bad." (§4.5; items.SINGULAR_NAMES). */
+/**
+ * "1 Raw Pork went bad.", "1 Honeyberry went bad." (§4.5; items.SINGULAR_NAMES). v0.14 (§76 water): an item that spoils INTO
+ * another (`food.spoilsTo`: a Pot of Water left standing) says what it became — "1 Pot of Water stood too long: now Pot of
+ * Tainted Water." — after the plain line when both happened in the same second.
+ */
 export function spoiledText(stacks) {
-  return `${stacksText(stacks)} went bad.`;
+  const gone = stacks.filter((s) => !getItem(s.k)?.food?.spoilsTo);
+  const lines = gone.length > 0 ? [`${stacksText(gone)} went bad.`] : [];
+  for (const s of stacks) {
+    const to = getItem(s.k)?.food?.spoilsTo;
+    if (to) lines.push(`${stacksText([s])} stood too long: now ${itemName(to, s.n)}.`);
+  }
+  return lines.join(' ');
 }
 
 /** The `pack list` text (§9.7): one line per non-empty slot, "3: Flint Pick (51/90)", then the worn items. */
@@ -1615,6 +1626,7 @@ export function boot(win, doc) {
     fireSpotKind: fireSpotKindFn,
     tappedToday: (q, y, r) => !tapped.canTap(`${q},${y},${r}`, day),
     salty: (q, r) => isSaltyBiome(world.getBiome(q, r)),
+    waterQuality: (q, y, r) => waterQualityOf(q, y, r), // §76 water: fresh, salt or tainted
     stationNear: (station) => !!stations[station], // findStations within STATION_RANGE of the feet (§7.2)
     // v0.10 (DESIGN-circuits §4.9, §8.3): parts with an R action of their own join the hit steps, the pocket key the
     // selected-item steps.
@@ -2176,7 +2188,7 @@ export function boot(win, doc) {
     }
     const h = hit;
     // A water source is not breakable, but with WATER selected left-click takes it away (the flow drains by itself).
-    const takeWater = h && h.blockId === BLOCK.WATER && hotbar[selected] === BLOCK.WATER;
+    const takeWater = h && isWaterSource(h.blockId) && hotbar[selected] === BLOCK.WATER; // (a tainted source too: §76)
     if (!h || (!isBreakable(h.blockId) && !takeWater)) return false;
     // §5.5: a basket or belongings holding items, or a fire whose spots hold anything, are kept safe from Creative.
     if (isProtectedCell(h)) {
@@ -3177,7 +3189,7 @@ export function boot(win, doc) {
         case 'read':
           return 'Handbook · R: read';
         case 'drink_here':
-          return `${saltyHere() ? 'Sea water (salty)' : 'Fresh water'} · R: drink`;
+          return waterHint(qualityHere(), false);
         default:
           if (act.hint) return act.hint;
       }
@@ -3224,10 +3236,23 @@ export function boot(win, doc) {
     }
   }
 
-  /** @returns {boolean} the water at the player's own column is salt (drinking with the head under water) */
-  function saltyHere() {
+  /**
+   * §76 water: what the water in cell (q, y, r) is to drink — 'tainted' for a Tainted Water source and for flowing or
+   * falling water traced back to one (fluids.waterQualityAt), else 'salt' in an OCEAN / BEACH column — but never in the
+   * column of a generated stream, which runs fresh across the beach to the sea — else 'fresh'.
+   * @returns {import('./survivalControl.js').WaterQuality}
+   */
+  function waterQualityOf(q, y, r) {
+    const salty = isSaltyBiome(world.getBiome(q, r));
+    const gen = /** @type {{ streamAt?: (q: number, r: number) => boolean }} */ (world.worldGen); // (a test's generator has none)
+    const stream = salty && typeof gen.streamAt === 'function' && gen.streamAt(q, r);
+    return waterKind(waterQualityAt(world.getBlock, q, y, r) === 'tainted', salty, stream);
+  }
+
+  /** @returns {import('./survivalControl.js').WaterQuality} the water round the player's head (drinking with the head under water) */
+  function qualityHere() {
     const [q, r] = worldToHex(player.x, player.z);
-    return isSaltyBiome(world.getBiome(q, r));
+    return waterQualityOf(q, Math.floor(player.y + getEyeHeight(player)), r);
   }
 
   // ---- Survival: R (§9.4 priorities) -----------------------------------------------------------------
@@ -3344,9 +3369,10 @@ export function boot(win, doc) {
         return; // the target hint says to step closer (§7.2): Making would only grey every card of that workplace
       case 'fill': {
         if (selectedKey() !== 'clay_pot') return;
-        const salty = act.salty ?? isSaltyBiome(world.getBiome(q, r));
+        // §76 water: the pot holds what the water is — Pot of Water, Pot of Seawater or Pot of Tainted Water
+        const quality = act.quality ?? waterQualityOf(q, y, r);
         pack.consume(selected, 1);
-        giveToHand(salty ? 'pot_seawater' : 'pot_water');
+        giveToHand(WATER_POTS[quality]);
         audio.playPick();
         return;
       }
@@ -3354,8 +3380,8 @@ export function boot(win, doc) {
       case 'drink_here': {
         if (fxTime - gulpAt < GULP_GAP_S) return;
         gulpAt = fxTime;
-        const salty = act.kind === 'drink' ? (act.salty ?? isSaltyBiome(world.getBiome(q, r))) : saltyHere();
-        const line = survival.drink(salty, Math.random);
+        const quality = act.kind === 'drink' ? (act.quality ?? waterQualityOf(q, y, r)) : qualityHere();
+        const line = survival.drink(quality, Math.random);
         audio.playDrink();
         if (line) logLine(line);
         if (line === SICK_MESSAGE) boilTip(); // §66: the first raw-water poisoning says how to make water safe
@@ -3645,7 +3671,7 @@ export function boot(win, doc) {
       if (act.kind === 'drink') audio.playDrink();
       else audio.playEat();
       if (res.message) logLine(res.message);
-      if (res.message === SICK_MESSAGE && act.key === 'pot_water') boilTip();
+      if (res.message === SICK_MESSAGE && (act.key === 'pot_water' || act.key === 'pot_tainted')) boilTip();
     } else if (act.kind === 'bandage') {
       if (!survival.bandage(act.key)) {
         showHint('No more healing can be queued yet');

@@ -42,8 +42,11 @@ export const BLOCK = Object.freeze({
   // v0.13's Flinty Gravel, withdrawn in v0.14 (CONTRACTS §76: it read as coal). The id stays for saves made in between:
   // it looks, digs and falls exactly like gravel and is never generated or placed.
   FLINT_GRAVEL: 119,
-  // v0.14 (§76 water): reserved for the water work — placeholders here, replaced when the branches merge.
-  RESERVED_120: 120, RESERVED_121: 121,
+  // v0.14 (§76 water): Tainted Water — a murky still-water SOURCE (most generation-3 ponds). It is water in every respect
+  // (isWater, isWaterSource, level 7, fall-through, liquid); only its look and what drinking it does differ.
+  TAINTED_WATER: 120,
+  // 121: a placeholder until the fauna work lands (BLOCKS is positional, so there can be no hole).
+  RESERVED_121: 121,
   // v0.14 (§76 flora): the new wild plants of generation 3. Two mushrooms that look alike (one feeds, one poisons), two
   // roots, a nut thicket and a fruit bush with their picked variants (which regrow), and the healing herb with its cut
   // variant. Ids 132–133 of the flora range are unused.
@@ -96,6 +99,8 @@ export const TILE = Object.freeze({
   // v0.13 (CONTRACTS §75): the skins of the 3D ground litter (a rock, a flint nodule, a stick). 204 was the Flinty Gravel's
   // (withdrawn, §76) and is free.
   LITTER_ROCK: 201, LITTER_FLINT: 202, LITTER_STICK: 203,
+  // v0.14 (§76 water): the murky green-brown of Tainted Water (204; 205–207 are unused)
+  TAINTED_WATER: 204,
   // v0.14 (§76 flora): the new wild plants, one sprite each (218–227 of the flora range are unused)
   HONEYCAP_MUSHROOM: 208, FRECKLECAP_MUSHROOM: 209, ONION_PLANT: 210, CARROT_PLANT: 211, HAZEL_THICKET: 212,
   HAZEL_THICKET_BARE: 213, CRAB_APPLE_BUSH: 214, CRAB_APPLE_BUSH_BARE: 215, HEALWORT_PLANT: 216, HEALWORT_PLANT_BARE: 217,
@@ -374,9 +379,10 @@ export const BLOCKS = [
   def({ id: B.SNARE_SPRUNG, name: 'snare_sprung', displayName: 'Sprung Snare', tiles: tiles(T.SNARE_SPRUNG), ...DECAL, soundGroup: 'wood', placeable: false }),
   // v0.13's Flinty Gravel (withdrawn, §76): kept so saves that hold id 119 still load. It is gravel in all but its id.
   def({ id: B.FLINT_GRAVEL, name: 'flint_gravel', displayName: 'Gravel', tiles: tiles(T.GRAVEL), soundGroup: 'gravel', gravity: true, placeable: false }),
-  // ---- v0.14 (§76 water) PLACEHOLDERS for ids 120–121: plain stone that nothing generates or places. BLOCKS is
-  // positional, so the flora blocks below need them; the water branch's real defs replace these two lines at merge.
-  def({ id: B.RESERVED_120, name: 'reserved_120', displayName: 'Reserved 120', tiles: tiles(T.STONE), soundGroup: 'stone', placeable: false }),
+  // v0.14 (§76 water): Tainted Water, a second water SOURCE with WATER's flags and its own murky tile. Worldgen writes it
+  // (generation-3 ponds) and `setblock … tainted_water` can; it is never placed by hand, so it has no picker entry and no item.
+  def({ id: B.TAINTED_WATER, name: 'tainted_water', displayName: 'Tainted Water', tiles: tiles(T.TAINTED_WATER), solid: false, opaque: false, liquid: true, breakable: false, placeable: false, layer: LAYER_TRANSLUCENT, soundGroup: 'water' }),
+  // 121: a placeholder (plain stone that nothing generates or places) until the fauna work lands.
   def({ id: B.RESERVED_121, name: 'reserved_121', displayName: 'Reserved 121', tiles: tiles(T.STONE), soundGroup: 'stone', placeable: false }),
   // ---- v0.14 (§76 flora): the wild plants of generation 3, all crossed sprites (SPRITE) picked with R. The two mushrooms
   // look alike on purpose: the Honeycap feeds, the Frecklecap poisons, and only their caps and stems tell them apart. A
@@ -542,17 +548,17 @@ export function isStation(id) {
 export function isContainerBlock(id) {
   return id === B.WICKER_BASKET || id === B.REMAINS;
 }
-/** WATER, WATER_FLOW_1..6 or WATER_FALL. */
+/** WATER, WATER_FLOW_1..6, WATER_FALL or TAINTED_WATER (v0.14, §76: the second source). */
 export function isWater(id) {
-  return id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL);
+  return id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL) || id === B.TAINTED_WATER;
 }
-/** Only WATER is a source (never changes by itself; FLOW/FALL are derived from sources). */
+/** WATER and TAINTED_WATER are the sources (they never change by themselves; FLOW/FALL are derived from sources). */
 export function isWaterSource(id) {
-  return id === B.WATER;
+  return id === B.WATER || id === B.TAINTED_WATER;
 }
-/** Water level: WATER and WATER_FALL → 7, WATER_FLOW_k → k, anything else → 0. */
+/** Water level: a source (WATER, TAINTED_WATER) and WATER_FALL → 7, WATER_FLOW_k → k, anything else → 0. */
 export function waterLevel(id) {
-  if (id === B.WATER || id === B.WATER_FALL) return 7;
+  if (id === B.WATER || id === B.WATER_FALL || id === B.TAINTED_WATER) return 7;
   if (id >= B.WATER_FLOW_1 && id <= B.WATER_FLOW_6) return id - B.WATER_FLOW_1 + 1;
   return 0;
 }
@@ -561,7 +567,7 @@ export function waterLevel(id) {
  * sand sinks to the bottom of a lake, CONTRACTS §35.6) or a CAMPFIRE. NOT the UNLOADED sentinel.
  */
 export function isFallThrough(id) {
-  return id === B.AIR || id === B.CAMPFIRE || id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL);
+  return id === B.AIR || id === B.CAMPFIRE || id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL) || id === B.TAINTED_WATER;
 }
 /**
  * Height of the water surface inside a water cell, above the cell's bottom (CONTRACTS §35.4): 1 when water is above it

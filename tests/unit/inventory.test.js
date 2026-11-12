@@ -511,7 +511,7 @@ describe('dumpAll, spoil, export and load', () => {
   it('spoil aggregates by key and never touches items that do not spoil', () => {
     const p = packWith({
       0: { k: 'raw_pork', n: 2 }, 1: { k: 'raw_pork', n: 3 }, 2: { k: 'salted_pork', n: 5 }, 3: { k: 'baked_tuber', n: 4 },
-      4: { k: 'rock', n: 9 }, 5: { k: 'pot_water', n: 1 },
+      4: { k: 'rock', n: 9 }, 5: { k: 'pot_boiled', n: 1 },
     });
     let calls = 0;
     const out = p.spoil(1, () => {
@@ -522,14 +522,14 @@ describe('dumpAll, spoil, export and load', () => {
     expect(out).toEqual([{ k: 'raw_pork', n: 2 }]);
     expect(filled(p)).toEqual({
       0: { k: 'raw_pork', n: 1 }, 1: { k: 'raw_pork', n: 2 }, 2: { k: 'salted_pork', n: 5 }, 3: { k: 'baked_tuber', n: 4 },
-      4: { k: 'rock', n: 9 }, 5: { k: 'pot_water', n: 1 },
+      4: { k: 'rock', n: 9 }, 5: { k: 'pot_boiled', n: 1 },
     });
   });
 
   it('every perishable item is food with a spoilS; nothing else spoils', () => {
     const perishable = ITEM_KEYS.filter((k) => ITEMS[k].food?.spoilS);
-    expect(perishable.sort()).toEqual(['crab_apple', 'frecklecap', 'honeyberries', 'honeycap', 'raw_beef', 'raw_mutton', 'raw_pork', 'roast_beef', 'roast_mutton',
-      'roast_pork']); // v0.14 (§76 flora): + raw mushrooms and crab apples
+    expect(perishable.sort()).toEqual(['crab_apple', 'frecklecap', 'honeyberries', 'honeycap', 'pot_water', 'raw_beef', 'raw_mutton', 'raw_pork', 'roast_beef',
+      'roast_mutton', 'roast_pork']); // v0.14 (§76): + raw mushrooms and crab apples (flora), + the Pot of Water, which turns tainted (water)
     const p = new Pack();
     ITEM_KEYS.filter((k) => !perishable.includes(k)).slice(0, PACK_SLOTS).forEach((k, i) => (p.slots[i] = { k, n: 1 }));
     const before = JSON.stringify(p.slots);

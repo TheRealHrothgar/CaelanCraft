@@ -156,22 +156,41 @@ const ROSETTE_ORDER = Object.freeze(range(HOTBAR_SIZE, PACK_SLOTS));
 /**
  * Stateless spoilage (§4.5) over one slot array: each perishable stack (`food.spoilS`) loses 1 item with probability
  * `min(1, n·dt / spoilS)`. Exactly one `random()` per perishable stack, in slot order; none for anything else.
+ * v0.14 (§76 water): a food with `spoilsTo` does not vanish — the spoiled item TURNS INTO that item (a Pot of Water left
+ * standing becomes a Pot of Tainted Water). A stack of one turns where it lies; from a bigger stack the turned item is put
+ * with `fitStack` (a stack of its kind, else the first empty slot of this array) and, when there is no room for it, nothing
+ * spoils this time. The roll, its probability and the one-`random()`-per-perishable-stack rule are unchanged.
  * @param {(ItemStack|null)[]} slots   changed in place (new stack objects)
  * @param {number} dt seconds
  * @param {() => number} random [0, 1)
- * @param {Map<string, number>} spoiled  key → count that went bad (added to)
+ * @param {Map<string, number>} spoiled  key → count that went bad (added to; the ORIGINAL key, also for one that turned)
+ * @param {(key: string) => ({ food?: import('./types.js').FoodDef }|null)} [itemOf]  the item registry (items.getItem;
+ *   a test's stand-in)
  * @returns {boolean} whether anything spoiled
  */
-export function spoilSlots(slots, dt, random, spoiled) {
+export function spoilSlots(slots, dt, random, spoiled, itemOf = getItem) {
   if (!(dt > 0)) return false;
   let changed = false;
   for (let i = 0; i < slots.length; i++) {
     const s = slots[i];
     if (!s) continue;
-    const spoilS = getItem(s.k)?.food?.spoilS;
+    const food = itemOf(s.k)?.food;
+    const spoilS = food?.spoilS;
     if (!spoilS) continue;
     if (random() < Math.min(1, (s.n * dt) / spoilS)) {
-      slots[i] = s.n > 1 ? withCount(s, s.n - 1) : null;
+      const to = food.spoilsTo;
+      if (to === undefined) {
+        slots[i] = s.n > 1 ? withCount(s, s.n - 1) : null;
+      } else if (s.n === 1) {
+        slots[i] = { k: to, n: 1 };
+      } else {
+        // one of several turns: it needs a place of its own in this slot array, or the stack stays good for now
+        slots[i] = withCount(s, s.n - 1);
+        if (fitStack(slots, { k: to, n: 1 }, range(0, slots.length)) > 0) {
+          slots[i] = s;
+          continue;
+        }
+      }
       spoiled.set(s.k, (spoiled.get(s.k) ?? 0) + 1);
       changed = true;
     }
