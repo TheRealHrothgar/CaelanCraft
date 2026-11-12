@@ -62,6 +62,8 @@ export const SICK_MESSAGE = 'Your stomach turns: you are poisoned.';
 /** v0.11 (§66): the first time raw water poisons you this session, how to make it safe. */
 export const BOIL_TIP = 'Tip — raw water can poison you. Fill a clay pot and set it on a campfire: boiled water is always safe.';
 export const SALT_MESSAGE = 'Salt water only makes you thirstier.';
+/** v0.14 (§76 flora): Healwort or its tea ended a poisoning. */
+export const CURED_MESSAGE = 'The bitter herb settles your stomach: you are no longer poisoned.';
 /** A salty hand gulp says SALT_MESSAGE at most once per this many seconds of Survival (§4.2). */
 export const SALT_MESSAGE_GAP_S = 5;
 /** Damage over time pulses the hurt flash once per this many HP lost (§2.4). */
@@ -339,10 +341,11 @@ export class Survival {
     if (!item || !item.food) return { ok: false, message: item ? `${item.name} cannot be eaten` : 'not food' };
     if (!this.active) return { ok: false };
     const food = item.food;
-    const { sick } = eatFood(this.vitals, food, typeof random === 'function' ? random : NEVER);
+    const { sick, cured } = eatFood(this.vitals, food, typeof random === 'function' ? random : NEVER);
     /** @type {{ ok: boolean, message?: string, returns?: string }} */
     const out = { ok: true };
     if (sick) out.message = SICK_MESSAGE;
+    else if (cured) out.message = CURED_MESSAGE;
     else if (food.hydration < 0 && key === 'pot_seawater') out.message = SALT_MESSAGE;
     if (food.returns) out.returns = food.returns;
     return out;

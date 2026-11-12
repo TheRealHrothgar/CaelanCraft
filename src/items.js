@@ -146,6 +146,24 @@ const FOOD_ROWS = [
   ['pot_sap', 'Pot of Birch Sap', 1, { satiation: 2, hydration: 25, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   // v0.11 (CONTRACTS §72): milked from a cow with an empty clay pot — food and drink in one, always safe
   ['pot_milk', 'Pot of Milk', 1, { satiation: 12, hydration: 20, sick: 0, useS: 1.0, returns: 'clay_pot' }],
+  // v0.14 (§76 flora): the wild food of generation 3 — small raw, better off a skewer, never a feast. The Frecklecap is the
+  // Honeycap's look-alike: it feeds the same and ALWAYS poisons, roasted or not (its name never says so; its cap does).
+  ['honeycap', 'Honeycap', 16, { satiation: 3, hydration: 1, sick: 0, useS: 1.0, spoilS: 1500 }],
+  ['roasted_honeycap', 'Roasted Honeycap', 16, { satiation: 7, hydration: 0, sick: 0, useS: 1.0 }],
+  ['frecklecap', 'Frecklecap', 16, { satiation: 3, hydration: 1, sick: 1, useS: 1.0, spoilS: 1500 }],
+  ['roasted_frecklecap', 'Roasted Frecklecap', 16, { satiation: 7, hydration: 0, sick: 1, useS: 1.0 }],
+  ['wild_onion', 'Wild Onion', 16, { satiation: 2, hydration: 1, sick: 0, useS: 1.0 }],
+  ['roasted_onion', 'Roasted Onion', 16, { satiation: 5, hydration: 0, sick: 0, useS: 1.0 }],
+  ['wild_carrot', 'Wild Carrot', 16, { satiation: 3, hydration: 1, sick: 0, useS: 1.0 }],
+  ['roasted_carrot', 'Roasted Carrot', 16, { satiation: 7, hydration: 0, sick: 0, useS: 1.0 }],
+  ['hazelnuts', 'Hazelnuts', 32, { satiation: 3, hydration: 0, sick: 0, useS: 1.0 }], // they keep: the food to store
+  ['roasted_hazelnuts', 'Roasted Hazelnuts', 32, { satiation: 5, hydration: 0, sick: 0, useS: 1.0 }],
+  ['crab_apple', 'Crab Apple', 16, { satiation: 2, hydration: 3, sick: 0, useS: 1.0, spoilS: 2400 }], // sour and wet
+  ['baked_crab_apple', 'Baked Crab Apple', 16, { satiation: 5, hydration: 2, sick: 0, useS: 1.0 }],
+  // The healing herb: bitter, no food at all, but it ends a poisoning at once (`cures`, honoured by vitals.eatFood). Steeped
+  // in a Pot of Boiled Water it is a safe drink that cures as well.
+  ['healwort', 'Healwort', 16, { satiation: 0, hydration: -2, sick: 0, useS: 1.2, cures: true }],
+  ['pot_healwort_tea', 'Pot of Healwort Tea', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot', cures: true }],
 ];
 
 /**
@@ -173,6 +191,10 @@ const WEAR_ROWS = [
 const PLACES_AS = new Map([
   [BLOCK.HONEYBERRY_BUSH, BLOCK.HONEYBERRY_BUSH_BARE],
   [BLOCK.PRICKLY_PEAR, BLOCK.PRICKLY_PEAR_BARE],
+  // v0.14 (§76 flora): a transplanted thicket, bush or Healwort must regrow before it gives anything
+  [BLOCK.HAZEL_THICKET, BLOCK.HAZEL_THICKET_BARE],
+  [BLOCK.CRAB_APPLE_BUSH, BLOCK.CRAB_APPLE_BUSH_BARE],
+  [BLOCK.HEALWORT_PLANT, BLOCK.HEALWORT_PLANT_BARE],
 ]);
 /** Picked variant → the ripe block whose item it belongs to. @type {Map<number, number>} */
 const ITEM_BLOCK_OF = new Map([...PLACES_AS].map(([ripe, bare]) => [bare, ripe]));
@@ -312,6 +334,7 @@ export function itemName(key, n) {
 export const SINGULAR_NAMES = Object.freeze({
   honeyberries: 'Honeyberry', acorns: 'Acorn', leached_acorns: 'Leached Acorn', roasted_acorns: 'Roasted Acorn',
   pine_nuts: 'Pine Nut', glass_shards: 'Glass Shard', iron_filings: 'Iron Filing',
+  hazelnuts: 'Hazelnut', roasted_hazelnuts: 'Roasted Hazelnut', // v0.14 (§76 flora)
 });
 
 /**

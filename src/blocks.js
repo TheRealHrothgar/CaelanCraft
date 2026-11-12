@@ -42,8 +42,15 @@ export const BLOCK = Object.freeze({
   // v0.13's Flinty Gravel, withdrawn in v0.14 (CONTRACTS §76: it read as coal). The id stays for saves made in between:
   // it looks, digs and falls exactly like gravel and is never generated or placed.
   FLINT_GRAVEL: 119,
+  // v0.14 (§76 water): reserved for the water work — placeholders here, replaced when the branches merge.
+  RESERVED_120: 120, RESERVED_121: 121,
+  // v0.14 (§76 flora): the new wild plants of generation 3. Two mushrooms that look alike (one feeds, one poisons), two
+  // roots, a nut thicket and a fruit bush with their picked variants (which regrow), and the healing herb with its cut
+  // variant. Ids 132–133 of the flora range are unused.
+  HONEYCAP_MUSHROOM: 122, FRECKLECAP_MUSHROOM: 123, ONION_PLANT: 124, CARROT_PLANT: 125, HAZEL_THICKET: 126,
+  HAZEL_THICKET_BARE: 127, CRAB_APPLE_BUSH: 128, CRAB_APPLE_BUSH_BARE: 129, HEALWORT_PLANT: 130, HEALWORT_PLANT_BARE: 131,
 });
-export const BLOCK_COUNT = 120;
+export const BLOCK_COUNT = 132;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -89,6 +96,9 @@ export const TILE = Object.freeze({
   // v0.13 (CONTRACTS §75): the skins of the 3D ground litter (a rock, a flint nodule, a stick). 204 was the Flinty Gravel's
   // (withdrawn, §76) and is free.
   LITTER_ROCK: 201, LITTER_FLINT: 202, LITTER_STICK: 203,
+  // v0.14 (§76 flora): the new wild plants, one sprite each (218–227 of the flora range are unused)
+  HONEYCAP_MUSHROOM: 208, FRECKLECAP_MUSHROOM: 209, ONION_PLANT: 210, CARROT_PLANT: 211, HAZEL_THICKET: 212,
+  HAZEL_THICKET_BARE: 213, CRAB_APPLE_BUSH: 214, CRAB_APPLE_BUSH_BARE: 215, HEALWORT_PLANT: 216, HEALWORT_PLANT_BARE: 217,
   // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
   ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
   // The Hollow Watcher (§40; atlas row 15, not block faces): its ash-grey stone, the glow mask of that stone's cracks
@@ -364,6 +374,23 @@ export const BLOCKS = [
   def({ id: B.SNARE_SPRUNG, name: 'snare_sprung', displayName: 'Sprung Snare', tiles: tiles(T.SNARE_SPRUNG), ...DECAL, soundGroup: 'wood', placeable: false }),
   // v0.13's Flinty Gravel (withdrawn, §76): kept so saves that hold id 119 still load. It is gravel in all but its id.
   def({ id: B.FLINT_GRAVEL, name: 'flint_gravel', displayName: 'Gravel', tiles: tiles(T.GRAVEL), soundGroup: 'gravel', gravity: true, placeable: false }),
+  // ---- v0.14 (§76 water) PLACEHOLDERS for ids 120–121: plain stone that nothing generates or places. BLOCKS is
+  // positional, so the flora blocks below need them; the water branch's real defs replace these two lines at merge.
+  def({ id: B.RESERVED_120, name: 'reserved_120', displayName: 'Reserved 120', tiles: tiles(T.STONE), soundGroup: 'stone', placeable: false }),
+  def({ id: B.RESERVED_121, name: 'reserved_121', displayName: 'Reserved 121', tiles: tiles(T.STONE), soundGroup: 'stone', placeable: false }),
+  // ---- v0.14 (§76 flora): the wild plants of generation 3, all crossed sprites (SPRITE) picked with R. The two mushrooms
+  // look alike on purpose: the Honeycap feeds, the Frecklecap poisons, and only their caps and stems tell them apart. A
+  // picked thicket or bush, and a cut Healwort, is its *_BARE variant: it regrows and is never placed by hand.
+  def({ id: B.HONEYCAP_MUSHROOM, name: 'honeycap_mushroom', displayName: 'Honeycap Mushroom', tiles: tiles(T.HONEYCAP_MUSHROOM), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.FRECKLECAP_MUSHROOM, name: 'frecklecap_mushroom', displayName: 'Frecklecap Mushroom', tiles: tiles(T.FRECKLECAP_MUSHROOM), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.ONION_PLANT, name: 'onion_plant', displayName: 'Wild Onion Plant', tiles: tiles(T.ONION_PLANT), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.CARROT_PLANT, name: 'carrot_plant', displayName: 'Wild Carrot Plant', tiles: tiles(T.CARROT_PLANT), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.HAZEL_THICKET, name: 'hazel_thicket', displayName: 'Hazel Thicket', tiles: tiles(T.HAZEL_THICKET), ...SPRITE }),
+  def({ id: B.HAZEL_THICKET_BARE, name: 'hazel_thicket_bare', displayName: 'Picked Hazel Thicket', tiles: tiles(T.HAZEL_THICKET_BARE), ...SPRITE, placeable: false }),
+  def({ id: B.CRAB_APPLE_BUSH, name: 'crab_apple_bush', displayName: 'Crab Apple Bush', tiles: tiles(T.CRAB_APPLE_BUSH), ...SPRITE }),
+  def({ id: B.CRAB_APPLE_BUSH_BARE, name: 'crab_apple_bush_bare', displayName: 'Picked Crab Apple Bush', tiles: tiles(T.CRAB_APPLE_BUSH_BARE), ...SPRITE, placeable: false }),
+  def({ id: B.HEALWORT_PLANT, name: 'healwort_plant', displayName: 'Healwort Plant', tiles: tiles(T.HEALWORT_PLANT), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.HEALWORT_PLANT_BARE, name: 'healwort_plant_bare', displayName: 'Cut Healwort Plant', tiles: tiles(T.HEALWORT_PLANT_BARE), ...SPRITE, soundGroup: 'grass', placeable: false }),
 ];
 
 /**
@@ -390,6 +417,8 @@ export const PICKER_ORDER = Object.freeze([
   // earth (v0.9: the wild plants right after the pumpkin)
   B.DIRT, B.GRASS_BLOCK, B.SNOWY_GRASS, B.SAND, B.RED_SAND, B.GRAVEL, B.CLAY, B.SNOW_BLOCK, B.ICE, B.PACKED_ICE,
   B.HAY_BALE, B.PUMPKIN, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.HONEYBERRY_BUSH, B.PRICKLY_PEAR,
+  // v0.14 (§76 flora): the seven new wild plants, after the old five
+  B.ONION_PLANT, B.CARROT_PLANT, B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT,
   // wood
   B.OAK_LOG, B.OAK_PLANKS, B.OAK_LEAVES, B.SPRUCE_LOG, B.SPRUCE_PLANKS, B.SPRUCE_LEAVES, B.BIRCH_LOG, B.BIRCH_PLANKS,
   B.BIRCH_LEAVES, B.BOOKSHELF, B.GLASS, B.GLOWSTONE,
@@ -409,16 +438,23 @@ export const PICKER_ORDER = Object.freeze([
   B.RUNE_BLOCK, B.WATER,
 ]);
 
-/** The seven wild-plant ids (§8.1 "PLANT"), ripe and picked: HONEYBERRY_BUSH … PRICKLY_PEAR_BARE (78–84), in id order. */
+/**
+ * The 17 wild-plant ids (§8.1 "PLANT"), ripe and picked, in id order: HONEYBERRY_BUSH … PRICKLY_PEAR_BARE (78–84) and,
+ * since v0.14 (§76 flora), HONEYCAP_MUSHROOM … HEALWORT_PLANT_BARE (122–131).
+ */
 export const PLANT_IDS = Object.freeze([
   B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE,
+  B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.HAZEL_THICKET_BARE,
+  B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE,
 ]);
 
 /**
- * The 11 pop-off ids (§8.5), in id order: CAMPFIRE, the seven plants, the two kinds of litter and FIRE_PIT. A pop-off block
+ * The 21 pop-off ids (§8.5), in id order: CAMPFIRE, the plants, the two kinds of litter and FIRE_PIT. A pop-off block
  * breaks (is written AIR and drops nothing) when the cell below it becomes fall-through.
  */
-export const POP_OFF_IDS = Object.freeze([B.CAMPFIRE, ...PLANT_IDS, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT]);
+export const POP_OFF_IDS = Object.freeze(
+  [B.CAMPFIRE, ...PLANT_IDS, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT].sort((a, b) => a - b),
+);
 
 /** @returns {BlockDef} the block definition; unknown ids return the AIR definition */
 export function getBlockDef(id) {
@@ -486,9 +522,9 @@ export function isLeaves(id) {
 export function isLog(id) {
   return id === B.OAK_LOG || id === B.SPRUCE_LOG || id === B.BIRCH_LOG;
 }
-/** One of the seven wild plants, ripe or picked (`PLANT_IDS`, 78–84). */
+/** One of the wild plants, ripe or picked (`PLANT_IDS`: 78–84 and, since v0.14, 122–131). */
 export function isPlant(id) {
-  return id >= B.HONEYBERRY_BUSH && id <= B.PRICKLY_PEAR_BARE;
+  return (id >= B.HONEYBERRY_BUSH && id <= B.PRICKLY_PEAR_BARE) || (id >= B.HONEYCAP_MUSHROOM && id <= B.HEALWORT_PLANT_BARE);
 }
 /** Ground litter: LOOSE_STONES or FALLEN_BRANCHES. */
 export function isLitter(id) {

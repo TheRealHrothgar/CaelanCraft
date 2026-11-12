@@ -42,13 +42,21 @@ export const FIRE_TRANSFORMS = Object.freeze({
   pot_seawater: Object.freeze({ to: 'salt_pot', seconds: 30, spot: 'centre' }),
   pot_snow: Object.freeze({ to: 'pot_boiled', seconds: 25, spot: 'centre' }),
   greenware_pot: Object.freeze({ to: 'clay_pot', seconds: 60, spot: 'centre' }), // pit firing: the first pottery needs no kiln
+  // v0.14 (§76 flora): the wild food of generation 3 roasts on a skewer. Fire does NOT make a Frecklecap safe.
+  honeycap: Object.freeze({ to: 'roasted_honeycap', seconds: 15, spot: 'skewer' }),
+  frecklecap: Object.freeze({ to: 'roasted_frecklecap', seconds: 15, spot: 'skewer' }),
+  wild_onion: Object.freeze({ to: 'roasted_onion', seconds: 15, spot: 'skewer' }),
+  wild_carrot: Object.freeze({ to: 'roasted_carrot', seconds: 20, spot: 'skewer' }),
+  hazelnuts: Object.freeze({ to: 'roasted_hazelnuts', seconds: 12, spot: 'skewer' }),
+  crab_apple: Object.freeze({ to: 'baked_crab_apple', seconds: 18, spot: 'skewer' }),
 });
 
 /** @type {Map<string, { to: string, seconds: number, spot: string }>} the same, safe against '__proto__' and friends */
 const TRANSFORM = new Map(Object.entries(FIRE_TRANSFORMS));
 
 /** The food a player can put on a skewer (§4.4). */
-export const SKEWER_FOODS = Object.freeze(['raw_pork', 'raw_beef', 'raw_mutton', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit']);
+export const SKEWER_FOODS = Object.freeze(['raw_pork', 'raw_beef', 'raw_mutton', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit',
+  'honeycap', 'frecklecap', 'wild_onion', 'wild_carrot', 'hazelnuts', 'crab_apple']); // v0.14 (§76 flora)
 /** The pots a player can put in the embers. */
 export const CENTRE_POTS = Object.freeze(['pot_water', 'pot_seawater', 'pot_snow', 'greenware_pot']);
 

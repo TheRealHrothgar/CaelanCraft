@@ -753,6 +753,15 @@ describe('performance', () => {
     const avg = (performance.now() - t0) / 10;
     expect(avg).toBeLessThan(8);
   });
+
+  it('generates a warm generation-3 chunk in ≤ 8 ms on average over 10 chunks (§76 flora: the food patches and cave troops)', () => {
+    const g3 = createWorldGen(SEED, { gen: 3 });
+    for (let i = 0; i < 3; i++) g3.generateChunk(50 + i, 50); // warm up
+    const t0 = performance.now();
+    for (let i = 0; i < 10; i++) g3.generateChunk(60 + i, -60 + i);
+    const avg = (performance.now() - t0) / 10;
+    expect(avg).toBeLessThan(8);
+  });
 });
 
 // =============================================================================================

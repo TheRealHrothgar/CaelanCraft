@@ -1201,10 +1201,9 @@ function makeChapters() {
         '[R] with anything else: take what is done (or everything, if nothing is).',
       ]),
     ],
-    [
-      ...fireTable('fire', 'What the fire does', null),
-      warn(`Roast meat left on its skewer chars after another ${FIRE_TRANSFORMS.roast_pork.seconds} s. Take it off in time.`),
-    ],
+    // v0.14 (§76 flora): the wild food made the fire table longer than a page, so each part takes its own, the warning last
+    ...fireTable('fire', 'What the fire does', null).map((t, i, all) => (i < all.length - 1 ? [t]
+      : [t, warn(`Roast meat left on its skewer chars after another ${FIRE_TRANSFORMS.roast_pork.seconds} s. Take it off in time.`)])),
     [
       h('Fuel and the cold pit'),
       p(`A fire built in Survival starts with ${fmtDurationLong(CAMPFIRE_FUEL_START_S)} of fuel. A stick adds ${FUEL_STICK_S} seconds and a log ${fmtDurationLong(FUEL_LOG_S)}, up to ${fmtDurationLong(CAMPFIRE_FUEL_MAX_S)}.`),

@@ -137,6 +137,19 @@ set([B.TUBER_PLANT], 0.4, 'shovel', 0, [[
   when('shovel', drop('wild_tuber', [2, 3]), drop('plant_fibre', 1)),
   when(null, drop('wild_tuber', 1), drop('plant_fibre', 1)),
 ]]);
+// v0.14 (§76 flora): the wild plants of generation 3. R picks each of them (PICKABLE below); breaking one by hand gives
+// what a pick gives and destroys the plant. A shovel digs up more roots, and lifts a thicket, a bush or a Healwort whole
+// (its item places the picked variant, which must regrow). Breaking a Healwort by hand is the mistake to avoid.
+set([B.HONEYCAP_MUSHROOM], 0.2, null, 0, [always(drop('honeycap', [1, 2]))]);
+set([B.FRECKLECAP_MUSHROOM], 0.2, null, 0, [always(drop('frecklecap', [1, 2]))]);
+set([B.ONION_PLANT], 0.4, 'shovel', 0, [[when('shovel', drop('wild_onion', [2, 3])), when(null, drop('wild_onion', [1, 2]))]]);
+set([B.CARROT_PLANT], 0.4, 'shovel', 0, [[when('shovel', drop('wild_carrot', [1, 2])), when(null, drop('wild_carrot', 1))]]);
+set([B.HAZEL_THICKET], 0.6, 'shovel', 0, [[when('shovel', drop('hazel_thicket'))], always(drop('hazelnuts', [1, 3])), always(drop('stick', [2, 3]))]);
+set([B.HAZEL_THICKET_BARE], 0.6, 'shovel', 0, [[when('shovel', drop('hazel_thicket'))], always(drop('stick', [2, 3]))]);
+set([B.CRAB_APPLE_BUSH], 0.6, 'shovel', 0, [[when('shovel', drop('crab_apple_bush'))], always(drop('crab_apple', [2, 3])), always(drop('stick', [1, 2]))]);
+set([B.CRAB_APPLE_BUSH_BARE], 0.6, 'shovel', 0, [[when('shovel', drop('crab_apple_bush'))], always(drop('stick', [1, 2]))]);
+set([B.HEALWORT_PLANT], 0.3, 'shovel', 0, [[when('shovel', drop('healwort_plant'))], always(drop('healwort', 1))]);
+set([B.HEALWORT_PLANT_BARE], 0.3, 'shovel', 0, [[when('shovel', drop('healwort_plant'))]]);
 // Wood
 set([B.OAK_LOG, B.SPRUCE_LOG], 3.0, 'axe', 1, SELF_DROPS);
 set([B.BIRCH_LOG], 3.0, 'axe', 1, [always(drop(SELF)), always(drop('birch_bark', 1, { p: 0.5, ...natural }))]);
@@ -350,6 +363,14 @@ export const PICKABLE = deepFreeze({
   },
   [B.LOOSE_STONES]: { to: B.AIR, drops: [always(drop('rock', [1, 2])), always(drop('flint', 1, { p: FLINT_SHARE, ...natural }))] },
   [B.FALLEN_BRANCHES]: { to: B.AIR, drops: [always(drop('stick', [2, 3]))] },
+  // v0.14 (§76 flora): mushrooms and roots come away whole; a thicket, a bush and a Healwort stay, picked, and regrow
+  [B.HONEYCAP_MUSHROOM]: { to: B.AIR, drops: [always(drop('honeycap', [1, 2]))] },
+  [B.FRECKLECAP_MUSHROOM]: { to: B.AIR, drops: [always(drop('frecklecap', [1, 2]))] },
+  [B.ONION_PLANT]: { to: B.AIR, drops: [always(drop('wild_onion', [1, 2]))] },
+  [B.CARROT_PLANT]: { to: B.AIR, drops: [always(drop('wild_carrot', 1))] },
+  [B.HAZEL_THICKET]: { to: B.HAZEL_THICKET_BARE, drops: [always(drop('hazelnuts', [1, 3]))] },
+  [B.CRAB_APPLE_BUSH]: { to: B.CRAB_APPLE_BUSH_BARE, drops: [always(drop('crab_apple', [2, 3]))] },
+  [B.HEALWORT_PLANT]: { to: B.HEALWORT_PLANT_BARE, drops: [always(drop('healwort', 1))] },
 });
 
 /** @param {number} id @returns {boolean} R picks it */
@@ -410,9 +431,13 @@ export class Tapped {
 export const RIPE_OF = Object.freeze({
   [B.HONEYBERRY_BUSH_BARE]: B.HONEYBERRY_BUSH,
   [B.PRICKLY_PEAR_BARE]: B.PRICKLY_PEAR,
+  // v0.14 (§76 flora)
+  [B.HAZEL_THICKET_BARE]: B.HAZEL_THICKET,
+  [B.CRAB_APPLE_BUSH_BARE]: B.CRAB_APPLE_BUSH,
+  [B.HEALWORT_PLANT_BARE]: B.HEALWORT_PLANT,
 });
-/** The picked ids Regrowth tracks. */
-const BARE_IDS = Object.freeze([B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR_BARE]);
+/** The picked ids Regrowth tracks (every key of RIPE_OF). */
+const BARE_IDS = Object.freeze(Object.keys(RIPE_OF).map(Number));
 
 /** @param {number} id @returns {number} the ripe id a picked block regrows into, or −1 */
 export function ripeOf(id) {

@@ -298,14 +298,16 @@ describe('parking and re-seeding', () => {
     for (const id of [B.STONE, B.DIRT, B.WORK_STUMP, B.WICKER_BASKET, B.REMAINS, B.BLAST_BARREL]) expect(gravity.mask[id], `id ${id}`).toBe(0);
     // Behaviour: pop-off blocks left hanging at save time (falling off) are queued when their chunk comes back.
     physics.setSwitch('falling', false);
-    POP_OFF_IDS.forEach((id, i) => world.setBlock(i, 20, 4, id));
+    // (two rows of chunk (0, 0): v0.14's plants made the list longer than one chunk row)
+    const at = (i) => [i % 16, 20, 4 + Math.floor(i / 16)];
+    POP_OFF_IDS.forEach((id, i) => world.setBlock(...at(i), id));
     expect(physics.queued()).toBe(0);
     physics.setSwitch('falling', true);
     world.unload(0, 0);
     world.load(0, 0);
-    POP_OFF_IDS.forEach((id, i) => expect(physics.isQueued('fall', i, 20, 4), `id ${id}`).toBe(true));
+    POP_OFF_IDS.forEach((id, i) => expect(physics.isQueued('fall', ...at(i)), `id ${id}`).toBe(true));
     physics.tick();
-    POP_OFF_IDS.forEach((id, i) => expect(world.getBlock(i, 20, 4), `id ${id}`).toBe(B.AIR));
+    POP_OFF_IDS.forEach((id, i) => expect(world.getBlock(...at(i)), `id ${id}`).toBe(B.AIR));
   });
 
   it('a natural plant whose floor was dug out before a save is re-seeded through the edited AIR below it', () => {
