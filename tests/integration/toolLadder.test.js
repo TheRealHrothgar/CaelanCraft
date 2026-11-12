@@ -43,11 +43,21 @@ describe('the ore gates and break times (§6.3, handbook §5)', () => {
     expect(canHarvest(BLOCK.TIN_ORE, tool('copper_pick'))).toBe(true);
     expect(canHarvest(BLOCK.IRON_ORE, tool('copper_pick'))).toBe(false);
     expect(canHarvest(BLOCK.IRON_ORE, tool('bronze_pick'))).toBe(true);
-    expect(canHarvest(BLOCK.GOLD_ORE, tool('bronze_pick'))).toBe(true);
-    expect(canHarvest(BLOCK.DIAMOND_ORE, tool('flint_pick'))).toBe(true);
-    expect(canHarvest(BLOCK.OBSIDIAN, tool('flint_pick'))).toBe(true);
+    // v0.14 (§77): the iron pick opens gold and the steel pick gems, so every pick opens something
+    expect(canHarvest(BLOCK.GOLD_ORE, tool('bronze_pick'))).toBe(false);
+    expect(canHarvest(BLOCK.GOLD_ORE, tool('iron_pick'))).toBe(true);
+    expect(canHarvest(BLOCK.DIAMOND_ORE, tool('iron_pick'))).toBe(false);
+    expect(canHarvest(BLOCK.DIAMOND_ORE, tool('steel_pick'))).toBe(true);
+    expect(canHarvest(BLOCK.OBSIDIAN, tool('flint_pick'))).toBe(true); // volcanic glass knaps like flint: it stays early
     expect(harvestHint(BLOCK.TIN_ORE)).toBe('Tin Ore · needs a copper pick or better');
     expect(harvestHint(BLOCK.IRON_ORE)).toBe('Iron Ore · needs a bronze pick or better');
+    expect(harvestHint(BLOCK.GOLD_ORE)).toBe('Gold Ore · needs an iron pick or better');
+    expect(harvestHint(BLOCK.DIAMOND_ORE)).toBe('Diamond Ore · needs a steel pick or better');
+    // … and clay needs a shovel: the Wooden Shovel is what gates the Kiln
+    expect(canHarvest(BLOCK.CLAY, null)).toBe(false);
+    expect(canHarvest(BLOCK.CLAY, tool('stone_axe'))).toBe(false);
+    expect(canHarvest(BLOCK.CLAY, tool('wooden_shovel'))).toBe(true);
+    expect(harvestHint(BLOCK.CLAY)).toBe('Clay · needs a wooden shovel or better');
     // a hammer, shovel or axe of a high tier never stands in for the pick
     expect(canHarvest(BLOCK.STONE, tool('steel_axe'))).toBe(false);
     expect(canHarvest(BLOCK.IRON_ORE, tool('steel_hammer'))).toBe(false);
@@ -132,8 +142,12 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     expect(pack.count('oak_planks')).toBe(3);
     expect(pack.count('stick')).toBeGreaterThanOrEqual(12);
 
-    // 4. Clay and the Kiln (a hand recipe, no tool)
-    expect(rollDrops(BLOCK.CLAY, null, {}, rnd)).toEqual([{ k: 'clay_lump', n: 6 }]);
+    // 4. Clay and the Kiln (a hand recipe, no tool) — but clay needs a shovel, and the first shovel needs the axe (§77)
+    expect(rollDrops(BLOCK.CLAY, null, {}, rnd)).toEqual([]);
+    make(q, pack, stationsNow(), 'wooden_shovel');
+    runLane(q, pack, world, feet);
+    expect(pack.hasTool('shovel', 1)).toBe(true);
+    expect(rollDrops(BLOCK.CLAY, tool('wooden_shovel'), {}, rnd)).toEqual([{ k: 'clay_lump', n: 6 }]);
     pack.add({ k: 'clay_lump', n: 32 });
     pack.add({ k: 'rock', n: 10 });
     make(q, pack, stationsNow(), 'kiln');
@@ -160,15 +174,19 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     expect(pack.hasTool('mold', 0)).toBe(true);
     expect(pack.count('charcoal')).toBe(6);
 
-    // 6. Copper: ore with the flint pick, 2 malachite + 2 fuel → ingot; the copper pick is cast with crucible + mold
+    // 6. Copper: ore with the flint pick, 2 malachite + 2 COAL → ingot (§77: charcoal will not smelt ore); the copper pick
+    // is cast with crucible + mold
     expect(canHarvest(BLOCK.COPPER_ORE, tool('flint_pick'))).toBe(true);
+    expect(canHarvest(BLOCK.COAL_ORE, tool('flint_pick'))).toBe(true);
     pack.add({ k: 'malachite', n: 20 });
+    expect(pack.count('charcoal')).toBe(6);
+    expect(q.enqueue('copper_ingot', 1, pack, stationsNow()).message).toContain('missing Coal'); // charcoal alone is no use
     pack.add({ k: 'coal', n: 30 });
     expect(q.enqueue('copper_pick', 1, pack, stationsNow()).message).toContain('missing Copper Ingot');
     make(q, pack, stationsNow(), 'copper_ingot', 5);
     runLane(q, pack, world, feet);
     expect(pack.count('copper_ingot')).toBe(5);
-    expect(pack.count('coal')).toBe(20); // coal is spent before charcoal (TAGS order)
+    expect(pack.count('coal')).toBe(20); // 2 coal an ingot; the charcoal is untouched
     expect(pack.count('charcoal')).toBe(6);
     make(q, pack, stationsNow(), 'copper_pick');
     const cast = runLane(q, pack, world, feet);

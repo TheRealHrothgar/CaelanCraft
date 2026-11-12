@@ -96,6 +96,19 @@ export const ORE_TABLE_GEN2 = Object.freeze([
   }),
 ]);
 
+/**
+ * Generation-3 vein rows (v0.14, CONTRACTS §77), run after ORE_TABLE_GEN2 with `oi` continuing, so every older vein keeps
+ * its rng stream. COAL SEAMS YOU CAN SEE: long, shallow seams from just under the sea's level up into the hills that
+ * replace the subsoil as well as stone, so they show black in cliff sides, stream banks and on bare mountain rock.
+ * @type {readonly (OreRow & { replaces?: readonly number[] })[]}
+ */
+export const ORE_TABLE_GEN3 = Object.freeze([
+  Object.freeze({
+    id: BLOCK.COAL_ORE, attempts: 8, minY: SEA_LEVEL - 4, maxY: SEA_LEVEL + 18, minSize: 12, maxSize: 20,
+    replaces: Object.freeze([BLOCK.STONE, BLOCK.DIRT]),
+  }),
+]);
+
 /** Pond grid (§8.4): one candidate per POND_CELL × POND_CELL cell of (q, r) index space, jittered by 0–7. */
 export const POND_CELL = 20;
 /** Salt of the pond hashes: `hash2(kq, kr, seed ^ POND_SALT)` for the candidate, `hash3(q, r, POND_SALT, seed)` for the rim. */
@@ -398,6 +411,11 @@ export function createWorldGen(seed, opts = {}) {
     // Generation 2: appended rows, so `oi` (the rng stream) of every gen-1 row is unchanged.
     for (let k = 0; k < ORE_TABLE_GEN2.length; k++) {
       placeVeins(blocks, cq, cr, ORE_TABLE.length + k, ORE_TABLE_GEN2[k], GEN2_REPLACES[k]);
+    }
+    if (!gen3) return;
+    // Generation 3 (§77): the shallow coal seams, again appended.
+    for (let k = 0; k < ORE_TABLE_GEN3.length; k++) {
+      placeVeins(blocks, cq, cr, ORE_TABLE.length + ORE_TABLE_GEN2.length + k, ORE_TABLE_GEN3[k], GEN3_REPLACES[k]);
     }
   }
 
@@ -721,6 +739,7 @@ function idMask(ids) {
 const STONE_ONLY = idMask([BLOCK.STONE]);
 /** Masks of the ORE_TABLE_GEN2 rows (their `replaces`, default STONE). */
 const GEN2_REPLACES = Object.freeze(ORE_TABLE_GEN2.map((o) => (o.replaces ? idMask(o.replaces) : STONE_ONLY)));
+const GEN3_REPLACES = Object.freeze(ORE_TABLE_GEN3.map((o) => (o.replaces ? idMask(o.replaces) : STONE_ONLY)));
 /** [log, leaves] ids per species. */
 const SPECIES_IDS = Object.freeze({
   oak: Object.freeze([BLOCK.OAK_LOG, BLOCK.OAK_LEAVES]),

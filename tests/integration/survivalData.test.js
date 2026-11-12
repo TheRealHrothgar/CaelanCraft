@@ -179,9 +179,12 @@ describe('each pick tier opens the next tier of ore (§6.3, §7.4)', () => {
     if (next !== null) expect(canHarvest(next, pickOf(pickKey))).toBe(false);
   });
 
-  it('obsidian and gems need only a flint pick (§6.3)', () => {
+  it('obsidian needs only a flint pick; gold needs iron and gems need steel (§77)', () => {
     expect(canHarvest(B.OBSIDIAN, pickOf('flint_pick'))).toBe(true);
-    expect(canHarvest(B.DIAMOND_ORE, pickOf('flint_pick'))).toBe(true);
+    expect(canHarvest(B.GOLD_ORE, pickOf('bronze_pick'))).toBe(false);
+    expect(canHarvest(B.GOLD_ORE, pickOf('iron_pick'))).toBe(true);
+    expect(canHarvest(B.DIAMOND_ORE, pickOf('iron_pick'))).toBe(false);
+    expect(canHarvest(B.DIAMOND_ORE, pickOf('steel_pick'))).toBe(true);
   });
 
   it('each tier\'s pick is made from what the tier before it mines', () => {

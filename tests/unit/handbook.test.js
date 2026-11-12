@@ -280,10 +280,14 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       seen.set(getBlockDef(id).displayName, (seen.get(getBlockDef(id).displayName) ?? new Set()).add(`${rule.tool}:${rule.tier}`));
     });
     for (const [name, rows] of seen) expect(rows.size, name).toBe(1);
-    // the gating chain of §7.4: flint → copper ore; copper → tin; bronze → iron and gold
+    // the gating chain of §7.4 and §77: flint → copper ore and coal; copper → tin; bronze → iron; iron → gold; steel → gems
     expect(rowOf(t, 'pick:2')[2]).toContain('Copper Ore');
+    expect(rowOf(t, 'pick:2')[2]).toContain('Coal Ore');
     expect(rowOf(t, 'pick:3')[2]).toBe('Tin Ore');
-    expect(rowOf(t, 'pick:4')[2]).toBe('Iron Ore, Gold Ore');
+    expect(rowOf(t, 'pick:4')[2]).toBe('Iron Ore');
+    expect(rowOf(t, 'pick:5')[2]).toBe('Gold Ore');
+    expect(rowOf(t, 'pick:6')[2]).toBe('Diamond Ore');
+    expect(rowOf(t, 'shovel:1')[2]).toBe('Clay'); // the first shovel opens clay, and with it the Kiln
     expect(rowOf(t, 'pick:2')[1]).toBe('Flint Pick');
   });
 
@@ -291,10 +295,12 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     const figs = [...blocks()].map((x) => x.block).filter((b) => b.kind === 'figure');
     const ages = figs.find((f) => f.figure === 'ages').data;
     expect(ages.map((a) => a.name)).toEqual(['Hand', 'Stone', 'Flint', 'Copper', 'Bronze', 'Iron', 'Steel']);
-    expect(ages[1].opens).toEqual(['logs']);
+    expect(ages[1].opens).toEqual(['logs', 'clay']); // the stone axe and the wooden shovel
     expect(ages[2].opens.slice(0, 2)).toEqual(['stone', 'copper']); // the flint pick opens stone and copper first
     expect(ages[3].opens).toEqual(['tin']);
-    expect(ages[4].opens).toEqual(['iron', 'gold']);
+    expect(ages[4].opens).toEqual(['iron']);
+    expect(ages[5].opens).toEqual(['gold']);
+    expect(ages[6].opens).toEqual(['diamond']);
     for (const a of ages) expect(a.opens.length).toBeLessThanOrEqual(4);
     const bands = figs.find((f) => f.figure === 'bands').data;
     expect(bands.map((b) => b.label)).toEqual(temperatureBands().map((b) => b.label));

@@ -205,7 +205,7 @@ describe('the recipe table (§7.3)', () => {
     expect(row('stone_bricks').tools).toEqual([{ type: 'hammer', tier: 3 }]);
     expect(row('charcoal')).toEqual({ station: 'kiln', inputs: [{ tag: 'log', n: 6 }], outputs: [{ k: 'charcoal', n: 8 }], tools: [], seconds: 40 });
     expect(row('bronze_ingot')).toEqual({
-      station: 'kiln', inputs: [{ k: 'copper_ingot', n: 7 }, { k: 'tin_ingot', n: 1 }, { tag: 'fuel', n: 3 }],
+      station: 'kiln', inputs: [{ k: 'copper_ingot', n: 7 }, { k: 'tin_ingot', n: 1 }, { k: 'coal', n: 3 }], // §77: coal, not any fuel
       outputs: [{ k: 'bronze_ingot', n: 8 }], tools: [{ type: 'crucible', tier: 0 }], seconds: 45,
     });
     expect(row('iron_bloom')).toEqual({ station: 'bloomery', inputs: [{ k: 'hematite', n: 3 }, { k: 'charcoal', n: 4 }], outputs: [{ k: 'iron_bloom', n: 1 }], tools: [], seconds: 40 });
@@ -217,8 +217,8 @@ describe('the recipe table (§7.3)', () => {
   it('metal tools: id = item key, N metal and S sticks by tool, the right fuel, tools and seconds per station', () => {
     const NS = { knife: [1, 1], shovel: [1, 1], axe: [2, 1], hammer: [2, 1], pick: [2, 2], sword: [3, 1] };
     const metals = {
-      copper: { station: 'kiln', ingot: 'copper_ingot', fuel: { tag: 'fuel', n: 1 }, tools: [{ type: 'crucible', tier: 0 }, { type: 'mold', tier: 0 }], s: 25, kinds: ['knife', 'shovel', 'axe', 'hammer', 'pick'] },
-      bronze: { station: 'kiln', ingot: 'bronze_ingot', fuel: { tag: 'fuel', n: 1 }, tools: [{ type: 'crucible', tier: 0 }, { type: 'mold', tier: 0 }], s: 30, kinds: Object.keys(NS) },
+      copper: { station: 'kiln', ingot: 'copper_ingot', fuel: { k: 'coal', n: 1 }, tools: [{ type: 'crucible', tier: 0 }, { type: 'mold', tier: 0 }], s: 25, kinds: ['knife', 'shovel', 'axe', 'hammer', 'pick'] },
+      bronze: { station: 'kiln', ingot: 'bronze_ingot', fuel: { k: 'coal', n: 1 }, tools: [{ type: 'crucible', tier: 0 }, { type: 'mold', tier: 0 }], s: 30, kinds: Object.keys(NS) },
       iron: { station: 'forge', ingot: 'wrought_iron', fuel: { k: 'charcoal', n: 1 }, tools: [{ type: 'hammer', tier: 4 }], s: 30, kinds: Object.keys(NS) },
       steel: { station: 'forge', ingot: 'steel_bar', fuel: { k: 'charcoal', n: 1 }, tools: [{ type: 'hammer', tier: 5 }], s: 40, kinds: Object.keys(NS) },
     };

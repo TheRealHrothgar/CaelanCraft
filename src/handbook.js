@@ -441,7 +441,7 @@ export function firstDayKit() {
 /** What your hands can gather on the first day, and how (generated from PICKABLE and BLOCK_RULES). */
 const GATHER = [
   BLOCK.LOOSE_STONES, BLOCK.FALLEN_BRANCHES, BLOCK.TUSSOCK, BLOCK.GRAVEL, BLOCK.HONEYBERRY_BUSH, BLOCK.PRICKLY_PEAR,
-  BLOCK.TUBER_PLANT, BLOCK.CATTAILS, BLOCK.OAK_LEAVES, BLOCK.CLAY,
+  BLOCK.TUBER_PLANT, BLOCK.CATTAILS, BLOCK.OAK_LEAVES, BLOCK.SNOW_BLOCK,
 ];
 
 function gatherTable() {
@@ -948,7 +948,7 @@ function wakeTable() {
 // Figures
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** The ages figure: each tier and what a tool of that age newly opens (ores for picks, logs for the first axe). */
+/** The ages figure: each tier and what a tool of that age newly opens (ores for picks, logs for the first axe, clay for the first shovel). */
 function agesFigure() {
   const data = [0, 1, 2, 3, 4, 5, 6].map((t) => {
     /** @type {string[]} */
@@ -967,6 +967,7 @@ function agesFigure() {
         if (tool === 'pick' && names.includes('Stone')) opens.push('stone');
         opens.push(...ores);
         if (tool === 'axe') opens.push('logs');
+        if (tool === 'shovel' && names.includes('Clay')) opens.push('clay'); // §77: the first shovel opens clay
       }
     }
     if (t === 0) opens = ['dirt', 'plants', 'litter'];
@@ -1148,7 +1149,7 @@ function makeChapters() {
     ],
     [
       h('Pots'),
-      p(`A *Clay Pot* carries water. Shape a Greenware Pot from ${recipeInputsProse(greenware)} (dig clay at the bottom of a pond), then fire it in the embers of a campfire for ${FIRE_TRANSFORMS.greenware_pot.seconds} s, the oldest way of making pottery, or in a Kiln.`),
+      p(`A *Clay Pot* carries water. Shape a Greenware Pot from ${recipeInputsProse(greenware)} (dig clay at the bottom of a pond: it needs a shovel), then fire it in the embers of a campfire for ${FIRE_TRANSFORMS.greenware_pot.seconds} s, the oldest way of making pottery, or in a Kiln.`),
       p('With an empty Clay Pot in hand, [R] on water fills it. Hold [RMB] to drink a pot; you keep the empty pot. A cow fills a pot too, with milk: see *Animals*.'),
       ...drinksTable(),
     ],
@@ -1293,7 +1294,7 @@ function makeChapters() {
       p(`*Flint* hides in *gravel*. Dig wild gravel, by hand or with a shovel, and about one cell in ${Math.round(1 / GRAVEL_FLINT_P)} (${fmtPct(GRAVEL_FLINT_P)}) turns up a Flint. Gravel you have put down yourself gives none. A few *Loose Stones* (${fmtPct(FLINT_SHARE)}) show a dark nodule and give one too.`),
       p('Flint, or obsidian (volcanic glass), knaps into a knife, an axe, a shovel, a spear and a pick. Each needs a stick and cord to haft it.'),
       p(`The Flint Pick breaks stone, ${flintOres.map((n) => n.toLowerCase()).join(', ')} and obsidian.`),
-      tip('Obsidian and gems are brittle: any pick that cuts stone breaks them.'),
+      tip('Obsidian is brittle: any pick that cuts stone breaks it. Gold wants an iron pick, and gems a steel one.'),
     ],
     [
       h('Light underground'),

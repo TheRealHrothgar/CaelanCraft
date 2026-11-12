@@ -107,7 +107,8 @@ set([B.SAND, B.RED_SAND], 0.8, 'shovel', 0, SELF_DROPS);
 set([B.GRAVEL, B.FLINT_GRAVEL], 1.2, 'shovel', 0, [
   [when('shovel', drop('gravel')), when(null, drop('rock', 2))], always(drop('flint', 1, { p: GRAVEL_FLINT_P, ...natural })),
 ]);
-set([B.CLAY], 1.4, 'shovel', 0, [always(drop('clay_lump', 6))]);
+// v0.14 (§77): clay needs a shovel (the Wooden Shovel will do): that is what the first shovel is for, and it gates the Kiln.
+set([B.CLAY], 1.4, 'shovel', 1, [always(drop('clay_lump', 6))]);
 set([B.SNOW_BLOCK], 0.5, 'shovel', 0, [always(drop('snow', 6))]);
 set([B.ICE], 1.0, 'pick', 0, [[when('pick', drop('ice_chunk', 2)), when(null, drop('ice_chunk', 1))]]);
 set([B.PACKED_ICE], 2.0, 'pick', 2, [always(drop('ice_chunk', 3))]);
@@ -179,8 +180,10 @@ set([B.COAL_ORE], 3.5, 'pick', 2, [always(drop('coal', [1, 2])), always(drop('py
 set([B.COPPER_ORE], 4.0, 'pick', 2, [always(drop('malachite', [1, 2]))]);
 set([B.TIN_ORE], 4.0, 'pick', 3, [always(drop('cassiterite', 1)), always(drop('cassiterite', 1, { p: 0.25 }))]);
 set([B.IRON_ORE], 5.0, 'pick', 4, [always(drop('hematite', [1, 2]))]);
-set([B.GOLD_ORE], 5.0, 'pick', 4, [always(drop('gold_nugget', [1, 2]))]);
-set([B.DIAMOND_ORE], 4.0, 'pick', 2, [always(drop('rough_gem', 1))]);
+// v0.14 (§77): every pick opens something — flint: stone, coal, copper ore; copper: tin; bronze: iron; iron: gold;
+// steel: gems.
+set([B.GOLD_ORE], 5.0, 'pick', 5, [always(drop('gold_nugget', [1, 2]))]);
+set([B.DIAMOND_ORE], 4.0, 'pick', 6, [always(drop('rough_gem', 1))]);
 // Storage blocks come apart with any pick.
 set([B.COAL_BLOCK], 4.0, 'pick', 2, SELF_DROPS);
 set([B.COPPER_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK], 5.0, 'pick', 2, SELF_DROPS);
@@ -241,7 +244,17 @@ export function breakSeconds(id, tool, underwater = false) {
 export function harvestHint(id) {
   const rule = ruleFor(id);
   if (!rule || rule.tier === 0) return null;
-  return `${getBlockDef(id).displayName} · needs ${withArticle(`${TIER_NAMES[rule.tier]} ${rule.tool}`)} or better`;
+  return `${getBlockDef(id).displayName} · needs ${withArticle(gateToolName(/** @type {string} */ (rule.tool), rule.tier))} or better`;
+}
+
+/**
+ * What to call the least tool of `type` that reaches `tier`: the tier's name and the type ("bronze pick"), except where
+ * the real tool is named otherwise — the tier-1 shovel is the Wooden Shovel (§77).
+ * @param {string} type @param {number} tier @returns {string}
+ */
+export function gateToolName(type, tier) {
+  if (type === 'shovel' && tier === 1) return 'wooden shovel';
+  return `${TIER_NAMES[tier]} ${type}`;
 }
 
 /** "a bronze pick", "an iron hammer". @param {string} noun */
@@ -259,7 +272,7 @@ export const DIG_TOOL_TYPES = Object.freeze(new Set(['axe', 'shovel', 'pick', 'k
  * @type {Readonly<Record<number, string>>}
  */
 export const HAND_GATHER = Object.freeze({
-  [B.TUSSOCK]: 'pull', [B.CATTAILS]: 'pull', [B.TUBER_PLANT]: 'pull', [B.GRAVEL]: 'dig', [B.FLINT_GRAVEL]: 'dig', [B.CLAY]: 'dig',
+  [B.TUSSOCK]: 'pull', [B.CATTAILS]: 'pull', [B.TUBER_PLANT]: 'pull', [B.GRAVEL]: 'dig', [B.FLINT_GRAVEL]: 'dig',
 });
 
 /**

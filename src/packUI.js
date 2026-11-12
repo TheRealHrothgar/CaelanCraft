@@ -10,6 +10,7 @@
 // zig-zags half a cell up and down (the hotbar strip, §5.4). Axial (q, r) → pixel: x = 1.5·s·q, y = √3·s·(r + q/2).
 import { PACK_SLOTS, HOTBAR_SIZE, WEAR_SLOTS } from './config.js';
 import { ITEMS, ITEM_KEYS, TAGS, itemName, maxDurability, WEAR_SLOT_NAMES } from './items.js';
+import { purposeOf } from './purpose.js';
 
 /** The Survival Handbook's item key (§14; handbook.js HANDBOOK_KEY): right-click on it, or "Read", fires onRead. */
 const HANDBOOK_ITEM = 'handbook';
@@ -28,6 +29,7 @@ const HANDBOOK_ITEM = 'handbook';
  * @property {number} seconds
  * @property {boolean} craftable
  * @property {boolean} stationOk
+ * @property {string} [purpose]  one line on what the output is for ('' or absent: none; CONTRACTS §77)
  */
 
 /**
@@ -304,7 +306,7 @@ export function demoPackView(opts = {}) {
     const ins = inputs.map(([k, need, have, tag]) => (tag ? { tag, label: `#${tag}`, need, have } : { k, label: itemName(k), need, have }));
     const tl = tools.map(([type, tier, ok]) => ({ type, tier, label: `${type}≥${tier}`, ok }));
     const craftable = stationOk && ins.every((i) => i.have >= i.need) && tl.every((t) => t.ok);
-    return { id, station, out, inputs: ins, tools: tl, seconds, craftable, stationOk };
+    return { id, station, out, inputs: ins, tools: tl, seconds, craftable, stationOk, purpose: purposeOf(out.k) };
   };
   const recipes = [
     recipe('cord', 'hand', { k: 'cord', n: 1 }, [['plant_fibre', 2, 31]], [], 1),
@@ -860,7 +862,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
   /** A card's fixed parts (they never change for a recipe id). @param {RecipeView} r */
   function staticSig(r) {
     return `${r.station}|${r.out.k}:${r.out.n}|${r.inputs.map((i) => `${i.k || '#' + i.tag}:${i.need}`).join(',')}|`
-      + `${(r.tools || []).map((t) => `${t.type}${t.tier}`).join(',')}|${r.seconds}`;
+      + `${(r.tools || []).map((t) => `${t.type}${t.tier}`).join(',')}|${r.seconds}|${r.purpose || ''}`;
   }
 
   /** A mini rosette cell on a card. @param {string} pos @param {string|null} key @param {number} iconPx @param {string} cls */
@@ -917,6 +919,12 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     const side = make('div', 'card-side');
     card.appendChild(side);
     side.appendChild(make('div', 'card-name', recipeTitle(r.out)));
+    // §77: what it is for, on its own line (the whole line again as a tooltip: a narrow card cuts it short)
+    if (r.purpose) {
+      const why = /** @type {HTMLElement} */ (make('div', 'card-purpose', r.purpose));
+      why.title = r.purpose;
+      side.appendChild(why);
+    }
     const meta = /** @type {HTMLElement} */ (make('div', 'card-meta', ''));
     side.appendChild(meta);
     const buttons = make('div', 'card-buttons');
