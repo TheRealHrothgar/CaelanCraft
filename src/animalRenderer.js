@@ -161,8 +161,9 @@ export const MODELS = Object.freeze({
     rear: { y: 0.75, z: 0.48, angle: 1.2, arms: 0.55, swipe: 1.1 },
     body: [
       [0.86, 0.74, 1.45, 0, 0.97, 0.02, BEAR],
-      [0.74, 0.18, 0.62, 0, 1.42, -0.32, 0x86643c], // the shoulder hump, grizzled
-      [0.7, 0.04, 0.7, 0, 1.36, 0.36, 0x7a5832], // the same pale fur along its back
+      // one smooth back: a thin strip of paler, grizzled fur from the shoulders to the rump (no hump: it read as a second
+      // back on top of the first)
+      [0.7, 0.04, 1.3, 0, 1.36, 0.02, 0x7a5832],
       [0.56, 0.04, 0.66, 0, 0.585, -0.3, 0x9a7646], // a pale chest: under it on all fours, facing you when it rears
       [0.14, 0.12, 0.08, 0, 1.1, 0.78, BEAR_DARK], // tail
     ],
