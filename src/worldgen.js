@@ -21,7 +21,7 @@ import {
 } from './config.js';
 import { floorDiv } from './coords.js';
 import { HEX_DIRS, hexToWorld, hexLength } from './hex.js';
-import { BLOCK, BIOME } from './blocks.js';
+import { BLOCK, BIOME, isSolid } from './blocks.js';
 import { normalizeSeed, hash2, hash3, rand3, mulberry32, clamp, createNoise } from './noise.js';
 
 /** @typedef {import('./types.js').ChunkData} ChunkData */
@@ -51,6 +51,8 @@ import { normalizeSeed, hash2, hash3, rand3, mulberry32, clamp, createNoise } fr
  *   pondAt: (q: number, r: number) => boolean,
  *   treeTrunkAt: (kq: number, kr: number) => TreeTrunk|null,
  *   streamAt: (q: number, r: number) => boolean,
+ *   streamLevelAt: (q: number, r: number) => number,
+ *   pondTaintedAt: (q: number, r: number) => boolean,
  *   FLORA_TABLE: typeof FLORA_TABLE,
  * }} SurvivalWorldGen
  */
@@ -102,6 +104,108 @@ export const POND_CELL = 20;
 export const POND_SALT = 0x90d5;
 /** Salt of the flora roll `rand3(q, r, FLORA_SALT, seed)` (§8.3 step 4). */
 export const FLORA_SALT = 0xf107a;
+
+// ---- v0.14 (§76 water): tainted ponds and streams — generation 3 only ------------------------------------------------
+/** The share of generation-3 ponds whose water is TAINTED_WATER: `rand3(kq, POND_TAINT_SALT, kr, seed ^ POND_SALT)` below it. */
+export const POND_TAINTED_SHARE = 0.75;
+/** The `y` of the pond taint roll (see POND_TAINTED_SHARE). */
+export const POND_TAINT_SALT = 0x7a1;
+/** Spring grid: one candidate per STREAM_CELL × STREAM_CELL cell of (q, r) index space, anywhere in it. */
+export const STREAM_CELL = 48;
+/** Salt of the stream hashes: `hash2(kq, kr, seed ^ STREAM_SALT)` rolls the spring, `hash3(kq, 1, kr, …)` places it. */
+export const STREAM_SALT = 0x57e4;
+/** The share of spring-grid cells that try a spring at all (the land decides the rest). */
+export const STREAM_CHANCE = 0.5;
+/** A spring climbs at most this many columns uphill from its grid spot before it rises: streams start on higher ground. */
+export const STREAM_ASCENT = 12;
+/** A spring never climbs onto ground this high (bare rock, BIOME.MOUNTAINS): channels down cliffs would be deep slots. */
+export const STREAM_SPRING_MAX_HEIGHT = 83;
+/** … and needs ground at least this high (above the beaches). */
+export const STREAM_SPRING_MIN_HEIGHT = SEA_LEVEL + 3;
+/** Most columns of one stream's channel (the small pool at its end comes on top). */
+export const STREAM_MAX_LEN = 64;
+/** A channel shorter than this is no stream: its spring is dropped. */
+export const STREAM_MIN_LEN = 10;
+/**
+ * How far a stream's columns can lie from its grid spot, in |dq| and in |dr|: the climb, the channel and the pool's ring.
+ * A chunk asks every spring-grid cell within this reach for its stream.
+ */
+export const STREAM_REACH = STREAM_ASCENT + STREAM_MAX_LEN + 1;
+/** Biomes a spring may rise in (index = BIOME id). A stream may run on into any land. */
+const SPRING_BIOME = Object.freeze([false, false, true, true, false, true, false, false]);
+/** Columns around a chunk whose stream levels the chunk needs: a channel's neighbours' neighbours decide its shape. */
+export const STREAM_MARGIN = 2;
+/** Side of a chunk's stream-level map (the chunk plus STREAM_MARGIN either side). */
+export const STREAM_MAP_SIDE = CHUNK_SIZE + 2 * STREAM_MARGIN;
+/** Traced streams / chunk maps / pond candidates kept by a generator (oldest dropped first: tracing is pure). */
+const STREAM_CACHE_MAX = 1024;
+const STREAM_MAP_CACHE_MAX = 512;
+const POND_CACHE_MAX = 2048;
+
+/**
+ * A traced stream (§76 water): its columns as (q, r, level) triples — `level` is the y of the column's water SOURCE — and
+ * their bounding box.
+ * @typedef {{ cells: Int32Array, minQ: number, maxQ: number, minR: number, maxR: number }} Stream
+ */
+
+/**
+ * The y of the lowest water cell of the stream column at index `i` of a stream-level map (rule 3 of the streams, see
+ * createWorldGen): its level, or — a lip, with a lower stream column beside it — one cell below the lowest such
+ * neighbour's level. −1 when the column has no stream. `i` must lie at least one column inside the map's edge.
+ * @param {Int16Array} map  STREAM_MAP_SIDE² levels, −1 for no stream
+ * @param {number} i
+ * @returns {number}
+ */
+export function streamBottom(map, i) {
+  const level = map[i];
+  if (level < 0) return -1;
+  let low = level;
+  for (let j = 0; j < 6; j++) {
+    const n = map[i + HEX_DIRS[j][0] * STREAM_MAP_SIDE + HEX_DIRS[j][1]];
+    if (n >= 0 && n < low) low = n;
+  }
+  return low < level ? low - 1 : level;
+}
+
+/**
+ * Write a chunk's cells of every stream column in or beside it (rules 2 and 3 of the streams). Pure on its arguments.
+ * A stream column in the chunk: AIR above its level up to one cell over the generated surface (whatever stood there), the
+ * WATER source at its level, WATER_FALL below it down to `streamBottom`, and a solid bed (STONE where a cave left none).
+ * For every stream column in the chunk or one column outside it: any AIR (a cave) in this chunk beside one of its water
+ * cells becomes STONE — except in the part of a neighbouring stream column that is that column's own water and carved air.
+ * @param {Uint8Array} blocks   the chunk's blocks
+ * @param {Uint8Array} heights  its generated heights
+ * @param {Int16Array} map      the stream levels of the chunk's columns plus STREAM_MARGIN either side: entry
+ *   `(lq + STREAM_MARGIN) · STREAM_MAP_SIDE + lr + STREAM_MARGIN`, −1 for no stream
+ */
+export function stampStreams(blocks, heights, map) {
+  for (let lq = -1; lq <= CHUNK_SIZE; lq++) {
+    for (let lr = -1; lr <= CHUNK_SIZE; lr++) {
+      const i = (lq + STREAM_MARGIN) * STREAM_MAP_SIDE + lr + STREAM_MARGIN;
+      const level = map[i];
+      if (level < 0) continue;
+      const bottom = streamBottom(map, i);
+      if (lq >= 0 && lq < CHUNK_SIZE && lr >= 0 && lr < CHUNK_SIZE) {
+        const ci = lq * CHUNK_SIZE + lr;
+        const base = ci * WORLD_HEIGHT;
+        blocks.fill(BLOCK.AIR, base + level + 1, base + Math.min(heights[ci] + 2, WORLD_HEIGHT));
+        blocks[base + level] = BLOCK.WATER;
+        if (bottom < level) blocks.fill(BLOCK.WATER_FALL, base + bottom, base + level);
+        if (!isSolid(blocks[base + bottom - 1])) blocks[base + bottom - 1] = BLOCK.STONE;
+      }
+      for (let j = 0; j < 6; j++) {
+        const nlq = lq + HEX_DIRS[j][0];
+        const nlr = lr + HEX_DIRS[j][1];
+        if (nlq < 0 || nlq >= CHUNK_SIZE || nlr < 0 || nlr >= CHUNK_SIZE) continue;
+        // a neighbouring stream column owns its cells from its own lowest water cell up
+        const nBottom = streamBottom(map, i + HEX_DIRS[j][0] * STREAM_MAP_SIDE + HEX_DIRS[j][1]);
+        const top = nBottom >= 0 && nBottom <= level ? nBottom - 1 : level;
+        const nbase = (nlq * CHUNK_SIZE + nlr) * WORLD_HEIGHT;
+        for (let y = bottom; y <= top; y++) if (blocks[nbase + y] === BLOCK.AIR) blocks[nbase + y] = BLOCK.STONE;
+      }
+    }
+  }
+}
 /**
  * Biomes a pond may lie in (its centre and every column within hex distance 2).
  * @type {readonly number[]}
@@ -438,8 +542,9 @@ export function createWorldGen(seed, opts = {}) {
    * @param {Uint8Array} blocks
    * @param {number} cq
    * @param {number} cr
+   * @param {Int16Array|null} [streamMap]  generation 3: the chunk's stream levels (`streamLevels`), or null
    */
-  function placeTrees(blocks, cq, cr) {
+  function placeTrees(blocks, cq, cr, streamMap = null) {
     const oq = cq * CHUNK_SIZE;
     const or = cr * CHUNK_SIZE;
     const kq0 = floorDiv(oq - 3, TREE_CELL);
@@ -456,6 +561,9 @@ export function createWorldGen(seed, opts = {}) {
             lr0 < -CANOPY_RADIUS || lr0 >= CHUNK_SIZE + CANOPY_RADIUS) continue;
         const t = api.treeTrunkAt(kq, kr);
         if (t === null) continue;
+        // §76 water (generation 3): no tree grows in a stream — its column is carved, the trunk would hang over the water.
+        // (treeTrunkAt itself stays the gen-1 test; the trunk is within STREAM_MARGIN of the chunk, so the map covers it.)
+        if (streamMap !== null && streamMap[(lq0 + STREAM_MARGIN) * STREAM_MAP_SIDE + lr0 + STREAM_MARGIN] >= 0) continue;
         const ids = SPECIES_IDS[t.species];
         stampTree(blocks, lq0, lr0, t.height + 1, t.height + t.trunk, ids[0], ids[1]);
       }
@@ -569,7 +677,8 @@ export function createWorldGen(seed, opts = {}) {
         if (pq + 2 < oq || pq - 2 >= oq + CHUNK_SIZE || pr + 2 < or || pr - 2 >= or + CHUNK_SIZE) continue;
         const pond = pondCandidate(kq, kr);
         if (pond === null) continue;
-        const water = pond.biome === BIOME.SNOWY ? BLOCK.ICE : BLOCK.WATER;
+        // §76 water (generation 3): standing water is usually tainted — the whole pond or none of it (a frozen pond stays ice)
+        const water = pond.biome === BIOME.SNOWY ? BLOCK.ICE : gen3 && pondTainted(kq, kr) ? BLOCK.TAINTED_WATER : BLOCK.WATER;
         for (let i = -1; i < DISC2_RING.length; i++) {
           const dq = i < 0 ? 0 : DISC2_RING[i][0];
           const dr = i < 0 ? 0 : DISC2_RING[i][1];
@@ -644,13 +753,332 @@ export function createWorldGen(seed, opts = {}) {
     return true;
   }
 
+  // ---- v0.14 (§76 water): tainted ponds and streams — generation 3 only ---------------------------------------------
+  //
+  // A STREAM is a one-column-wide ribbon of fresh WATER sources that starts at a spring on higher ground and runs down
+  // the land until it meets the sea, a pond or a hollow (where it ends in a small pool). Three rules make it cheap,
+  // the same from every chunk, and AT REST for the fluid simulation (fluids.js: loading it floods nothing, dries nothing):
+  //
+  // 1. WHERE. One spring candidate per STREAM_CELL grid cell, from hashes of the seed. It climbs a few columns uphill,
+  //    then the channel follows steepest descent on `rawHeight` — the terrain height before rounding, a smooth field
+  //    with no flat terraces — so a path never loops or touches itself. Everything is a pure function of (seed, grid
+  //    cell): a chunk asks the grid cells within STREAM_REACH for their streams (traced once, cached) and writes the
+  //    columns that fall inside it.
+  // 2. HOW HIGH. A stream column's water SOURCE is at `level` = the lowest generated height among the column itself and
+  //    its six neighbours (never below SEA_LEVEL): the lowest bank holds it, and the column is carved down to it. The
+  //    level depends on the column alone, so two streams that share a column agree.
+  // 3. WHERE THE LEVEL DROPS. A source standing on a floor spreads into any open cell beside it — and the column of a
+  //    lower neighbouring stream column IS open beside it (carved). So a stream column with a lower stream neighbour is
+  //    a LIP: under its source the column is a shaft of WATER_FALL down to one cell below the lowest such neighbour's
+  //    level, on a solid bed. A source over falling water does not spread (CONTRACTS §35.1), the shaft's cells are fed
+  //    from the source above them, and its bottom stands one cell under every neighbouring source, beside their beds:
+  //    nothing next to it is open, and no cell beside it is a source that could turn it into one. Any air a cave left in
+  //    a bed or beside a water cell is filled with stone.
+  //
+  // Ponds keep their ground (every column within 2 of a pond's centre): a stream ends beside it, or — when the rim
+  // column would stand exactly at the pond's level — in it. No tree grows in a stream column, and the flora pass skips
+  // one by itself (its top is water or air, not the biome's surface).
+
+  const streamSeed = s ^ STREAM_SALT;
+  /** @type {Map<string, Stream|null>} traced streams by spring-grid cell "kq,kr" */
+  const streamCache = new Map();
+  /** @type {Map<string, Int16Array|null>} stream levels around a chunk by "cq,cr" (see streamLevels) */
+  const streamMapCache = new Map();
+  /** @type {Map<string, Pond|null>} pond candidates the stream tracer has asked about, by "kq,kr" */
+  const pondCache = new Map();
+  /** rawHeight of the columns the current trace has looked at, keyed by their offset from (memoQ, memoR). */
+  const fieldMemo = new Map();
+  let memoQ = 0;
+  let memoR = 0;
+
+  /** Keep `cache` under `max` entries: the oldest half goes first (everything in it can be computed again). */
+  function trimCache(cache, max) {
+    if (cache.size < max) return;
+    let drop = cache.size - (max >> 1);
+    for (const key of cache.keys()) {
+      cache.delete(key);
+      if (--drop <= 0) break;
+    }
+  }
+
+  /** @returns {boolean} the accepted pond of grid cell (kq, kr) holds TAINTED_WATER in generation 3 (a frozen one: ice) */
+  function pondTainted(kq, kr) {
+    return rand3(kq, POND_TAINT_SALT, kr, pondSeed) < POND_TAINTED_SHARE;
+  }
+
   /**
-   * Whether column (q, r) is on a generated STREAM: running fresh water (generation 3, CONTRACTS §76). Pure. Always false
-   * below generation 3 — and until the streams are generated, false everywhere.
-   * @param {number} _q @param {number} _r @returns {boolean}
+   * True for the pond water columns (`pondAt`) of a pond whose water is tainted: generation 3, the pond's roll, and not
+   * a frozen pond. Pure; false below generation 3.
+   * @param {number} q @param {number} r @returns {boolean}
    */
-  function streamAt(_q, _r) {
-    return gen3 && false;
+  function pondTaintedAt(q, r) {
+    if (!gen3) return false;
+    for (let kq = floorDiv(q - 10, POND_CELL); kq <= floorDiv(q - 1, POND_CELL); kq++) {
+      for (let kr = floorDiv(r - 10, POND_CELL); kr <= floorDiv(r - 1, POND_CELL); kr++) {
+        const h = hash2(kq, kr, pondSeed);
+        const pq = kq * POND_CELL + 2 + (h & 7);
+        const pr = kr * POND_CELL + 2 + ((h >>> 3) & 7);
+        if (hexLength(q - pq, r - pr) > 1) continue;
+        const pond = pondOf(kq, kr);
+        if (pond !== null && getColumn(q, r).height === pond.H) return pond.biome !== BIOME.SNOWY && pondTainted(kq, kr);
+      }
+    }
+    return false;
+  }
+
+  /** `pondCandidate(kq, kr)`, remembered: a stream skirting a pond asks about it column after column. */
+  function pondOf(kq, kr) {
+    const key = `${kq},${kr}`;
+    let pond = pondCache.get(key);
+    if (pond === undefined) {
+      trimCache(pondCache, POND_CACHE_MAX);
+      pond = pondCandidate(kq, kr);
+      pondCache.set(key, pond);
+    }
+    return pond;
+  }
+
+  /**
+   * The accepted pond whose ground holds column (q, r) — a column within hex distance 2 of its centre: its water, its
+   * rim — or null. (Centres lie at k·20 + 2..9, at least 13 apart: at most one pond is that near.)
+   * @param {number} q @param {number} r @returns {Pond|null}
+   */
+  function pondNear(q, r) {
+    for (let kq = floorDiv(q - 11, POND_CELL); kq <= floorDiv(q, POND_CELL); kq++) {
+      for (let kr = floorDiv(r - 11, POND_CELL); kr <= floorDiv(r, POND_CELL); kr++) {
+        const h = hash2(kq, kr, pondSeed);
+        const pq = kq * POND_CELL + 2 + (h & 7);
+        const pr = kr * POND_CELL + 2 + ((h >>> 3) & 7);
+        if (hexLength(q - pq, r - pr) > 2) continue;
+        const pond = pondOf(kq, kr);
+        if (pond !== null) return pond;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The terrain height of column (q, r) BEFORE rounding and clamping: getColumn's own formula, so that
+   * `groundOf(rawHeight(q, r)) === getColumn(q, r).height` (a test holds the two together). Streams run down this smooth
+   * field: the rounded heights are terraces, where steepest descent has nowhere to go.
+   * @param {number} q @param {number} r @returns {number}
+   */
+  function rawHeight(q, r) {
+    const [wx, wz] = hexToWorld(q, r);
+    const c = nCont.fbm2D(wx / 500, wz / 500, 3);
+    const d = nDetail.fbm2D(wx / 50, wz / 50, 2);
+    const mRaw = nMount.fbm2D(wx / 250, wz / 250, 2);
+    const m = clamp((mRaw - 0.25) / 0.75, 0, 1);
+    const T = nTemp.fbm2D(wx / 400 + 1000, wz / 400, 2);
+    // (desert — hot and dry — halves the detail; the humidity is only looked at where it is hot enough to matter)
+    const desert = T > 0.35 && nHumid.fbm2D(wx / 400, wz / 400 + 1000, 2) < 0;
+    return 66 + c * 14 + d * (desert ? 2 : 4) + m * m * 48;
+  }
+
+  /** @returns {number} the generated terrain height a raw height rounds to */
+  function groundOf(raw) {
+    return clamp(Math.round(raw), MIN_TERRAIN_HEIGHT, MAX_TERRAIN_HEIGHT);
+  }
+
+  /** rawHeight(q, r), remembered for the trace in hand (a path looks at each column from several sides). */
+  function field(q, r) {
+    const key = ((q - memoQ + 512) << 10) | (r - memoR + 512);
+    let v = fieldMemo.get(key);
+    if (v === undefined) {
+      v = rawHeight(q, r);
+      fieldMemo.set(key, v);
+    }
+    return v;
+  }
+
+  /**
+   * The level a stream has in column (q, r) (rule 2): the lowest generated height among the column and its six
+   * neighbours, never below SEA_LEVEL. Every neighbour is then solid at that y, or sea water.
+   * @param {number} q @param {number} r @returns {number}
+   */
+  function levelOf(q, r) {
+    let m = groundOf(field(q, r));
+    for (let j = 0; j < 6; j++) {
+      const g = groundOf(field(q + HEX_DIRS[j][0], r + HEX_DIRS[j][1]));
+      if (g < m) m = g;
+    }
+    return m > SEA_LEVEL ? m : SEA_LEVEL;
+  }
+
+  /**
+   * Trace the stream of spring-grid cell (kq, kr), or null when it has none (rule 1). Pure in (seed, kq, kr).
+   * @param {number} kq @param {number} kr @returns {Stream|null}
+   */
+  function traceStream(kq, kr) {
+    if (((hash2(kq, kr, streamSeed) >>> 8) & 0xffff) / 65536 >= STREAM_CHANCE) return null;
+    const spot = hash3(kq, 1, kr, streamSeed);
+    let cq = kq * STREAM_CELL + (spot % STREAM_CELL);
+    let cr = kr * STREAM_CELL + ((spot >>> 8) % STREAM_CELL);
+    fieldMemo.clear();
+    memoQ = cq;
+    memoR = cr;
+
+    // The spring: up to STREAM_ASCENT columns uphill from the grid spot, but not onto bare rock. (A spot in the sea or on
+    // the rock has no spring: said first, it saves the climb.)
+    const spotGround = groundOf(field(cq, cr));
+    if (spotGround < SEA_LEVEL || spotGround > STREAM_SPRING_MAX_HEIGHT) return null;
+    for (let step = 0; step < STREAM_ASCENT; step++) {
+      let best = field(cq, cr);
+      let bj = -1;
+      for (let j = 0; j < 6; j++) {
+        const v = field(cq + HEX_DIRS[j][0], cr + HEX_DIRS[j][1]);
+        if (v > best) {
+          best = v;
+          bj = j;
+        }
+      }
+      if (bj < 0 || groundOf(best) > STREAM_SPRING_MAX_HEIGHT) break;
+      cq += HEX_DIRS[bj][0];
+      cr += HEX_DIRS[bj][1];
+    }
+    const spring = getColumn(cq, cr);
+    if (!SPRING_BIOME[spring.biome] || spring.height < STREAM_SPRING_MIN_HEIGHT || pondNear(cq, cr) !== null) return null;
+
+    // The channel: steepest descent on the raw height until the sea, a pond, a hollow or STREAM_MAX_LEN columns.
+    /** @type {number[]} (q, r) pairs */
+    const path = [];
+    let hollow = false;
+    for (;;) {
+      path.push(cq, cr);
+      if (path.length >= 2 * STREAM_MAX_LEN) break;
+      let best = field(cq, cr);
+      let bj = -1;
+      for (let j = 0; j < 6; j++) {
+        const v = field(cq + HEX_DIRS[j][0], cr + HEX_DIRS[j][1]);
+        if (v < best) {
+          best = v;
+          bj = j;
+        }
+      }
+      if (bj < 0) {
+        hollow = true; // nowhere lower: the stream ends here, in a pool
+        break;
+      }
+      if (groundOf(best) < SEA_LEVEL) break; // the next column is sea: this one is the mouth (its level is SEA_LEVEL)
+      const nq = cq + HEX_DIRS[bj][0];
+      const nr = cr + HEX_DIRS[bj][1];
+      const pond = pondNear(nq, nr);
+      if (pond !== null) {
+        // A pond's ground is the pond's: carving it lower would let the pond run out. The stream ends beside it — or on
+        // the rim column, when that would stand exactly at the pond's level (a mouth, flush with the pond's water).
+        if (levelOf(nq, nr) === pond.H) path.push(nq, nr);
+        break;
+      }
+      cq = nq;
+      cr = nr;
+    }
+    if (path.length < 2 * STREAM_MIN_LEN) return null;
+
+    // The pool in a hollow: the neighbours of the last column that are land at its water's level or one cell above it and
+    // would stand at the same level themselves (so their own banks hold it) — never a pond's ground.
+    if (hollow) {
+      const level = levelOf(cq, cr);
+      const pq = path[path.length - 4];
+      const pr = path[path.length - 3];
+      for (let j = 0; j < 6; j++) {
+        const nq = cq + HEX_DIRS[j][0];
+        const nr = cr + HEX_DIRS[j][1];
+        if (nq === pq && nr === pr) continue; // the channel itself
+        const ground = groundOf(field(nq, nr));
+        if (ground < level || ground > level + 1 || levelOf(nq, nr) !== level || pondNear(nq, nr) !== null) continue;
+        path.push(nq, nr);
+      }
+    }
+
+    const n = path.length / 2;
+    const cells = new Int32Array(n * 3);
+    let minQ = Infinity;
+    let maxQ = -Infinity;
+    let minR = Infinity;
+    let maxR = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const q = path[2 * i];
+      const r = path[2 * i + 1];
+      cells[3 * i] = q;
+      cells[3 * i + 1] = r;
+      cells[3 * i + 2] = levelOf(q, r);
+      if (q < minQ) minQ = q;
+      if (q > maxQ) maxQ = q;
+      if (r < minR) minR = r;
+      if (r > maxR) maxR = r;
+    }
+    return { cells, minQ, maxQ, minR, maxR };
+  }
+
+  /** The stream of spring-grid cell (kq, kr), traced once. @returns {Stream|null} */
+  function streamOf(kq, kr) {
+    const key = `${kq},${kr}`;
+    let stream = streamCache.get(key);
+    if (stream === undefined) {
+      trimCache(streamCache, STREAM_CACHE_MAX);
+      stream = traceStream(kq, kr);
+      streamCache.set(key, stream);
+    }
+    return stream;
+  }
+
+  /**
+   * The stream levels around chunk (cq, cr): a STREAM_MAP_SIDE² map over the chunk's columns plus STREAM_MARGIN either
+   * side — entry `(lq + STREAM_MARGIN) · STREAM_MAP_SIDE + lr + STREAM_MARGIN` is the level of the stream in column
+   * (oq + lq, or + lr), −1 for none — or null when no stream comes that near (most chunks). Remembered per chunk.
+   * @param {number} cq @param {number} cr @returns {Int16Array|null}
+   */
+  function streamLevels(cq, cr) {
+    const key = `${cq},${cr}`;
+    const cached = streamMapCache.get(key);
+    if (cached !== undefined) return cached;
+    const q0 = cq * CHUNK_SIZE - STREAM_MARGIN;
+    const r0 = cr * CHUNK_SIZE - STREAM_MARGIN;
+    const q1 = q0 + STREAM_MAP_SIDE - 1;
+    const r1 = r0 + STREAM_MAP_SIDE - 1;
+    /** @type {Int16Array|null} */
+    let map = null;
+    for (let kq = floorDiv(q0 - STREAM_REACH, STREAM_CELL); kq <= floorDiv(q1 + STREAM_REACH, STREAM_CELL); kq++) {
+      for (let kr = floorDiv(r0 - STREAM_REACH, STREAM_CELL); kr <= floorDiv(r1 + STREAM_REACH, STREAM_CELL); kr++) {
+        const stream = streamOf(kq, kr);
+        if (stream === null || stream.maxQ < q0 || stream.minQ > q1 || stream.maxR < r0 || stream.minR > r1) continue;
+        const cells = stream.cells;
+        for (let i = 0; i < cells.length; i += 3) {
+          const lq = cells[i] - q0;
+          const lr = cells[i + 1] - r0;
+          if (lq < 0 || lq >= STREAM_MAP_SIDE || lr < 0 || lr >= STREAM_MAP_SIDE) continue;
+          if (map === null) map = new Int16Array(STREAM_MAP_SIDE * STREAM_MAP_SIDE).fill(-1);
+          map[lq * STREAM_MAP_SIDE + lr] = cells[i + 2]; // (two streams in one column agree: the level is the column's)
+        }
+      }
+    }
+    trimCache(streamMapCache, STREAM_MAP_CACHE_MAX);
+    streamMapCache.set(key, map);
+    return map;
+  }
+
+  /**
+   * Whether column (q, r) is on a generated STREAM: running fresh water (generation 3, CONTRACTS §76) — a column of its
+   * channel or of the pool at its end. Pure. Always false below generation 3. The stream's water is the WATER source at
+   * `streamLevelAt(q, r)` (with falling water under it at a step); it is there until someone moves it.
+   * @param {number} q @param {number} r @returns {boolean}
+   */
+  function streamAt(q, r) {
+    return streamLevelAt(q, r) >= 0;
+  }
+
+  /**
+   * The y of the water source of the stream in column (q, r) as generated, or −1 when the column has no stream
+   * (generation 3; always −1 below it). Pure.
+   * @param {number} q @param {number} r @returns {number}
+   */
+  function streamLevelAt(q, r) {
+    if (!gen3 || !Number.isInteger(q) || !Number.isInteger(r)) return -1;
+    const cq = floorDiv(q, CHUNK_SIZE);
+    const cr = floorDiv(r, CHUNK_SIZE);
+    const map = streamLevels(cq, cr);
+    if (map === null) return -1;
+    return map[(q - cq * CHUNK_SIZE + STREAM_MARGIN) * STREAM_MAP_SIDE + (r - cr * CHUNK_SIZE) + STREAM_MARGIN];
   }
 
   /**
@@ -683,7 +1111,11 @@ export function createWorldGen(seed, opts = {}) {
 
     placeOres(blocks, cq, cr);
     if (gen2) placePonds(blocks, heights, cq, cr);
-    placeTrees(blocks, cq, cr);
+    // §76 water (generation 3): streams after the ponds (a stream's mouth clears the rim plant it replaces) and before
+    // the trees and the flora (neither grows in a stream column).
+    const streamMap = gen3 ? streamLevels(cq, cr) : null;
+    if (streamMap !== null) stampStreams(blocks, heights, streamMap);
+    placeTrees(blocks, cq, cr, streamMap);
     if (gen2) placeFlora(blocks, heights, biomes, cq, cr);
 
     return { blocks, biomes, heights };
@@ -691,7 +1123,7 @@ export function createWorldGen(seed, opts = {}) {
 
   // Internal cross-calls (trees and ponds → treeTrunkAt) go through this object, so tests can spy on them.
   /** @type {SurvivalWorldGen} */
-  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, FLORA_TABLE };
+  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, streamLevelAt, pondTaintedAt, FLORA_TABLE };
   return api;
 }
 

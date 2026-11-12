@@ -42,8 +42,11 @@ export const BLOCK = Object.freeze({
   // v0.13's Flinty Gravel, withdrawn in v0.14 (CONTRACTS §76: it read as coal). The id stays for saves made in between:
   // it looks, digs and falls exactly like gravel and is never generated or placed.
   FLINT_GRAVEL: 119,
+  // v0.14 (§76 water): Tainted Water — a murky still-water SOURCE (most generation-3 ponds). It is water in every respect
+  // (isWater, isWaterSource, level 7, fall-through, liquid); only its look and what drinking it does differ. 121 is unused.
+  TAINTED_WATER: 120,
 });
-export const BLOCK_COUNT = 120;
+export const BLOCK_COUNT = 121;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -89,6 +92,8 @@ export const TILE = Object.freeze({
   // v0.13 (CONTRACTS §75): the skins of the 3D ground litter (a rock, a flint nodule, a stick). 204 was the Flinty Gravel's
   // (withdrawn, §76) and is free.
   LITTER_ROCK: 201, LITTER_FLINT: 202, LITTER_STICK: 203,
+  // v0.14 (§76 water): the murky green-brown of Tainted Water (204; 205–207 are unused)
+  TAINTED_WATER: 204,
   // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
   ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
   // The Hollow Watcher (§40; atlas row 15, not block faces): its ash-grey stone, the glow mask of that stone's cracks
@@ -364,6 +369,9 @@ export const BLOCKS = [
   def({ id: B.SNARE_SPRUNG, name: 'snare_sprung', displayName: 'Sprung Snare', tiles: tiles(T.SNARE_SPRUNG), ...DECAL, soundGroup: 'wood', placeable: false }),
   // v0.13's Flinty Gravel (withdrawn, §76): kept so saves that hold id 119 still load. It is gravel in all but its id.
   def({ id: B.FLINT_GRAVEL, name: 'flint_gravel', displayName: 'Gravel', tiles: tiles(T.GRAVEL), soundGroup: 'gravel', gravity: true, placeable: false }),
+  // v0.14 (§76 water): Tainted Water, a second water SOURCE with WATER's flags and its own murky tile. Worldgen writes it
+  // (generation-3 ponds) and `setblock … tainted_water` can; it is never placed by hand, so it has no picker entry and no item.
+  def({ id: B.TAINTED_WATER, name: 'tainted_water', displayName: 'Tainted Water', tiles: tiles(T.TAINTED_WATER), solid: false, opaque: false, liquid: true, breakable: false, placeable: false, layer: LAYER_TRANSLUCENT, soundGroup: 'water' }),
 ];
 
 /**
@@ -506,17 +514,17 @@ export function isStation(id) {
 export function isContainerBlock(id) {
   return id === B.WICKER_BASKET || id === B.REMAINS;
 }
-/** WATER, WATER_FLOW_1..6 or WATER_FALL. */
+/** WATER, WATER_FLOW_1..6, WATER_FALL or TAINTED_WATER (v0.14, §76: the second source). */
 export function isWater(id) {
-  return id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL);
+  return id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL) || id === B.TAINTED_WATER;
 }
-/** Only WATER is a source (never changes by itself; FLOW/FALL are derived from sources). */
+/** WATER and TAINTED_WATER are the sources (they never change by themselves; FLOW/FALL are derived from sources). */
 export function isWaterSource(id) {
-  return id === B.WATER;
+  return id === B.WATER || id === B.TAINTED_WATER;
 }
-/** Water level: WATER and WATER_FALL → 7, WATER_FLOW_k → k, anything else → 0. */
+/** Water level: a source (WATER, TAINTED_WATER) and WATER_FALL → 7, WATER_FLOW_k → k, anything else → 0. */
 export function waterLevel(id) {
-  if (id === B.WATER || id === B.WATER_FALL) return 7;
+  if (id === B.WATER || id === B.WATER_FALL || id === B.TAINTED_WATER) return 7;
   if (id >= B.WATER_FLOW_1 && id <= B.WATER_FLOW_6) return id - B.WATER_FLOW_1 + 1;
   return 0;
 }
@@ -525,7 +533,7 @@ export function waterLevel(id) {
  * sand sinks to the bottom of a lake, CONTRACTS §35.6) or a CAMPFIRE. NOT the UNLOADED sentinel.
  */
 export function isFallThrough(id) {
-  return id === B.AIR || id === B.CAMPFIRE || id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL);
+  return id === B.AIR || id === B.CAMPFIRE || id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL) || id === B.TAINTED_WATER;
 }
 /**
  * Height of the water surface inside a water cell, above the cell's bottom (CONTRACTS §35.4): 1 when water is above it

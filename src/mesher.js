@@ -24,7 +24,7 @@ import {
   SIDE_FACE_COUNT,
 } from './hex.js';
 import {
-  BLOCK, BIOME, TILE, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed, isWater, waterSurfaceHeight, getBlockShape,
+  BLOCK, BIOME, TILE, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed, isWater, waterLevel, waterSurfaceHeight, getBlockShape,
   flintAt,
 } from './blocks.js';
 import { FULL_SKY, LIGHT_EMISSION } from './light.js';
@@ -102,8 +102,13 @@ const TINTED = new Uint8Array(256 * FACE_COUNT);
  * no fake surface ledge.
  */
 const FREE_SURFACE = new Uint8Array(256);
-/** WET[id] = 1 for the water family (WATER, WATER_FLOW_1..6, WATER_FALL): culled against each other by surface height. */
+/**
+ * WET[id] = 1 for the water family (WATER, WATER_FLOW_1..6, WATER_FALL, and TAINTED_WATER since §76): culled against each
+ * other by surface height — so fresh and tainted water side by side show no wall between them.
+ */
 const WET = new Uint8Array(256);
+/** FULL_WATER[id] = 1 for a full water cell: a source (WATER, TAINTED_WATER) or falling water (level 7). */
+const FULL_WATER = new Uint8Array(256);
 /** SURFACE[id] = waterSurfaceHeight(id, AIR): the free surface of a water cell with no water above it (§10.2 step 1). */
 const SURFACE = new Float64Array(256);
 /** SHAPE[id] (BlockDef.shape): 0 a hexagonal prism, SHAPE_CROSS three crossed pictures, SHAPE_DECAL a picture on the floor. */
@@ -118,6 +123,7 @@ for (let id = 0; id < 256; id++) {
   UNMESHED[id] = isMeshed(id) ? 0 : 1;
   FREE_SURFACE[id] = id === BLOCK.AIR || !isMeshed(id) ? 1 : 0;
   WET[id] = isWater(id) ? 1 : 0;
+  FULL_WATER[id] = waterLevel(id) === 7 ? 1 : 0;
   SURFACE[id] = WET[id] ? waterSurfaceHeight(id, BLOCK.AIR) : 1;
   const shape = getBlockShape(id);
   SHAPE[id] = shape === 'cross' ? SHAPE_CROSS : shape === 'decal' ? SHAPE_DECAL : shape === 'litter' ? SHAPE_LITTER : 0;
@@ -142,7 +148,7 @@ for (let a = 0; a < 256; a++) {
  * nothing between them (a glass floor over a pool shows no honeycomb of coincident strips).
  */
 function waterTopY(a, above) {
-  if (WET[above] === 1 || (FREE_SURFACE[above] === 0 && (a === BLOCK.WATER || a === BLOCK.WATER_FALL))) return 1;
+  if (WET[above] === 1 || (FREE_SURFACE[above] === 0 && FULL_WATER[a] === 1)) return 1;
   return SURFACE[a];
 }
 

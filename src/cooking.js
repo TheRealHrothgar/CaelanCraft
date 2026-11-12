@@ -39,6 +39,7 @@ export const FIRE_TRANSFORMS = Object.freeze({
   leached_acorns: Object.freeze({ to: 'roasted_acorns', seconds: 15, spot: 'skewer' }),
   unpeeled_cactus_fruit: Object.freeze({ to: 'cactus_fruit', seconds: 6, spot: 'skewer' }),
   pot_water: Object.freeze({ to: 'pot_boiled', seconds: 15, spot: 'centre' }),
+  pot_tainted: Object.freeze({ to: 'pot_boiled', seconds: 15, spot: 'centre' }), // v0.14 (§76 water): boiling cures taint too
   pot_seawater: Object.freeze({ to: 'salt_pot', seconds: 30, spot: 'centre' }),
   pot_snow: Object.freeze({ to: 'pot_boiled', seconds: 25, spot: 'centre' }),
   greenware_pot: Object.freeze({ to: 'clay_pot', seconds: 60, spot: 'centre' }), // pit firing: the first pottery needs no kiln
@@ -50,7 +51,7 @@ const TRANSFORM = new Map(Object.entries(FIRE_TRANSFORMS));
 /** The food a player can put on a skewer (§4.4). */
 export const SKEWER_FOODS = Object.freeze(['raw_pork', 'raw_beef', 'raw_mutton', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit']);
 /** The pots a player can put in the embers. */
-export const CENTRE_POTS = Object.freeze(['pot_water', 'pot_seawater', 'pot_snow', 'greenware_pot']);
+export const CENTRE_POTS = Object.freeze(['pot_water', 'pot_seawater', 'pot_snow', 'greenware_pot', 'pot_tainted']);
 
 const SKEWER_FOOD_SET = new Set(SKEWER_FOODS);
 const CENTRE_POT_SET = new Set(CENTRE_POTS);

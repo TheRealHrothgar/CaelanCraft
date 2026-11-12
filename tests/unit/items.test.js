@@ -92,11 +92,12 @@ const FOODS = {
   raw_mutton: ['Raw Mutton', 16, 5, 0, 0.3, 1.4, { spoilS: 1200 }],
   roast_mutton: ['Roast Mutton', 16, 26, -2, 0, 1.6, { spoilS: 2400 }],
   snow: ['Snow', 32, 0, 3, 0, 0.6, { temp: -0.2 }],
-  pot_water: ['Pot of Water', 1, 0, 30, 0.2, 1.0, { returns: 'clay_pot' }], // v0.11 (§66): 20 % poisoning
+  pot_water: ['Pot of Water', 1, 0, 30, 0.2, 1.0, { returns: 'clay_pot', spoilS: 2880, spoilsTo: 'pot_tainted' }], // v0.11 (§66): 20 % poisoning; §76 water: it turns tainted
   pot_boiled: ['Pot of Boiled Water', 1, 0, 30, 0, 1.0, { returns: 'clay_pot' }],
   pot_seawater: ['Pot of Seawater', 1, 0, -10, 0, 1.0, { returns: 'clay_pot' }],
   pot_sap: ['Pot of Birch Sap', 1, 2, 25, 0, 1.0, { returns: 'clay_pot' }],
   pot_milk: ['Pot of Milk', 1, 12, 20, 0, 1.0, { returns: 'clay_pot' }], // v0.11 (CONTRACTS §72)
+  pot_tainted: ['Pot of Tainted Water', 1, 0, 30, 0.6, 1.0, { returns: 'clay_pot' }], // v0.14 (CONTRACTS §76 water)
 };
 
 /** §5.1 bandages: key → [display name, stack, hp, rate, useS]. */
@@ -192,8 +193,8 @@ describe('items — the registry', () => {
     // 5 clothes and the 98 placeable blocks other than water (DESIGN-circuits §1.5: PICKER_ORDER drops the black hole and gains
     // the 20 circuit blocks; the blast barrel's key is now powder_keg).
     const count = (kind) => ITEM_KEYS.filter((k) => ITEMS[k].kind === kind).length;
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 25, 2, 5, 100]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(212); // + the Pot of Milk (§72)
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 26, 2, 5, 100]); // + the Pot of Tainted Water (§76 water); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(213); // + the Pot of Tainted Water (§76 water); // + the Pot of Milk (§72)
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -288,7 +289,7 @@ describe('items — the registry', () => {
       if (f.returns !== undefined) expect(isItemKey(f.returns), def.key).toBe(true);
       if (f.spoilS !== undefined) expect(f.spoilS, def.key).toBeGreaterThan(0);
     }
-    expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton']);
+    expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton', 'pot_water']); // + the Pot of Water, which turns tainted (§76 water)
     // pot_snow and unpeeled_cactus_fruit are materials: boiled, singed or peeled first, never eaten as they are.
     expect(getItem('pot_snow').kind).toBe('material');
     expect(getItem('unpeeled_cactus_fruit').kind).toBe('material');

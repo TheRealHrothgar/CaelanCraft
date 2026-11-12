@@ -350,14 +350,16 @@ export class Survival {
 
   /**
    * One hand gulp of water (§4.2) while active: fresh +8 hydration with a GULP_FRESH_SICK chance of poisoning (SICK_MESSAGE),
-   * salt −4 with "Salt water only makes you thirstier." at most once per SALT_MESSAGE_GAP_S of Survival time.
-   * @param {boolean} salty
+   * salt −4 with "Salt water only makes you thirstier." at most once per SALT_MESSAGE_GAP_S of Survival time. v0.14 (§76
+   * water): tainted water is fresh water's +8 with the GULP_TAINTED_SICK chance.
+   * @param {boolean|'fresh'|'salt'|'tainted'} quality  what the water is; a boolean is the old `salty` flag (true = salt)
    * @param {() => number} [random]
    * @returns {string} the chat line, or '' for none
    */
-  drink(salty, random) {
+  drink(quality, random) {
     if (!this.active) return '';
-    const { sick } = gulpWater(this.vitals, !!salty, typeof random === 'function' ? random : NEVER);
+    const salty = typeof quality === 'string' ? quality === 'salt' : !!quality;
+    const { sick } = gulpWater(this.vitals, salty ? 'salt' : quality === 'tainted' ? 'tainted' : 'fresh', typeof random === 'function' ? random : NEVER);
     if (sick) return SICK_MESSAGE;
     if (!salty || this.clock - this._saltAt < SALT_MESSAGE_GAP_S) return '';
     this._saltAt = this.clock;

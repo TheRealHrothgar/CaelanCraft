@@ -40,6 +40,7 @@ describe('the cooking tables', () => {
       leached_acorns: { to: 'roasted_acorns', seconds: 15, spot: 'skewer' },
       unpeeled_cactus_fruit: { to: 'cactus_fruit', seconds: 6, spot: 'skewer' },
       pot_water: { to: 'pot_boiled', seconds: 15, spot: 'centre' },
+      pot_tainted: { to: 'pot_boiled', seconds: 15, spot: 'centre' }, // §76 water: boiling cures taint
       pot_seawater: { to: 'salt_pot', seconds: 30, spot: 'centre' },
       pot_snow: { to: 'pot_boiled', seconds: 25, spot: 'centre' },
       greenware_pot: { to: 'clay_pot', seconds: 60, spot: 'centre' },
@@ -58,7 +59,7 @@ describe('the cooking tables', () => {
     expect(SKEWER_SPOTS).toBe(6);
     expect(EMBERS_SPOT).toBe(6);
     expect(SKEWER_FOODS).toEqual(['raw_pork', 'raw_beef', 'raw_mutton', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit']);
-    expect(CENTRE_POTS).toEqual(['pot_water', 'pot_seawater', 'pot_snow', 'greenware_pot']);
+    expect(CENTRE_POTS).toEqual(['pot_water', 'pot_seawater', 'pot_snow', 'greenware_pot', 'pot_tainted']); // + §76 water
     for (const k of SKEWER_FOODS) expect(FIRE_TRANSFORMS[k].spot).toBe('skewer');
     for (const k of CENTRE_POTS) expect(FIRE_TRANSFORMS[k].spot).toBe('centre');
     expect([0, 1, 2, 3, 4, 5, 6].map(spotKind)).toEqual(['skewer', 'skewer', 'skewer', 'skewer', 'skewer', 'skewer', 'centre']);

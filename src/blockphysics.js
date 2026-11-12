@@ -428,7 +428,7 @@ export class SaveOverlay {
         let id = rawId;
         if (!this.keepFlow && isWater(id) && !isWaterSource(id)) {
           const origin = chunkOrigins ? chunkOrigins.get(li) : undefined;
-          if (origin === BLOCK.AIR || origin === BLOCK.WATER) continue;
+          if (origin === BLOCK.AIR || isWaterSource(origin)) continue; // (a source: WATER, or TAINTED_WATER since §76)
           id = BLOCK.AIR;
         }
         arr.push(li, id);
@@ -1514,7 +1514,7 @@ export class BlockPhysics {
       }
     });
     const waterIds = [BLOCK.WATER, BLOCK.WATER_FLOW_1, BLOCK.WATER_FLOW_2, BLOCK.WATER_FLOW_3, BLOCK.WATER_FLOW_4,
-      BLOCK.WATER_FLOW_5, BLOCK.WATER_FLOW_6, BLOCK.WATER_FALL];
+      BLOCK.WATER_FLOW_5, BLOCK.WATER_FLOW_6, BLOCK.WATER_FALL, BLOCK.TAINTED_WATER];
     this.addReseeder('water', 'water', waterIds, (ctx, q, y, r, id) => {
       // Sources only wake their open neighbours (flow edits are not saved: this is how a lake re-flows on load).
       if (isWaterSource(id)) this._scheduleOpenNeighbours(q, y, r);

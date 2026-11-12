@@ -148,6 +148,7 @@ export const RATES = Object.freeze({
   // §4.2 hand gulps
   GULP_FRESH: 8,
   GULP_FRESH_SICK: 0.06,      // v0.11 (CONTRACTS §66): raw water from a source poisons you now and then
+  GULP_TAINTED_SICK: 0.4,     // v0.14 (CONTRACTS §76 water): a gulp of tainted water poisons two times in five
   GULP_SALT: -4,
 });
 
@@ -506,18 +507,20 @@ export function eatFood(v, food, random) {
 
 /**
  * One hand gulp of water (§4.2): fresh +8 hydration with a GULP_FRESH_SICK (6 %) chance of poisoning; salt −4 hydration.
+ * v0.14 (§76 water): tainted water gives the same +8 with a GULP_TAINTED_SICK (40 %) chance. One `random()` per fresh or
+ * tainted gulp, none for salt.
  * @param {Vitals} v
- * @param {boolean} salty
+ * @param {boolean|'fresh'|'salt'|'tainted'} quality  what the water is; a boolean is the old `salty` flag (true = salt)
  * @param {() => number} random
  * @returns {{ sick: boolean }}
  */
-export function gulpWater(v, salty, random) {
-  if (salty) {
+export function gulpWater(v, quality, random) {
+  if (typeof quality === 'string' ? quality === 'salt' : quality) {
     v.hydration = clamp(v.hydration + RATES.GULP_SALT, 0, STAT_MAX);
     return { sick: false };
   }
   v.hydration = clamp(v.hydration + RATES.GULP_FRESH, 0, STAT_MAX);
-  const sick = random() < RATES.GULP_FRESH_SICK;
+  const sick = random() < (quality === 'tainted' ? RATES.GULP_TAINTED_SICK : RATES.GULP_FRESH_SICK);
   if (sick) makeSick(v);
   return { sick };
 }

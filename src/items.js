@@ -113,8 +113,15 @@ const MATERIAL_ROWS = [
 ];
 
 /**
+ * v0.14 (CONTRACTS §76 water): mean seconds before a Pot of Water left standing turns tainted — two game days
+ * (2 × config.DAY_LENGTH_SECONDS; items.js imports blocks only, so the number is written out and a test ties the two).
+ */
+export const POT_WATER_SPOIL_S = 2880;
+
+/**
  * Food and drink (§4.5): [key, display name, stack, FoodDef]. `sick` is a chance 0..1; `spoilS` the mean seconds per item
  * (absent: never spoils); `returns` the item given back (the clay pot); `temp` an instant body-temperature change in °C.
+ * v0.14 (§76 water): `spoilsTo` — the item a spoiled one turns INTO instead of vanishing (absent: it is lost).
  * @type {ReadonlyArray<[string, string, number, FoodDef]>}
  */
 const FOOD_ROWS = [
@@ -140,12 +147,16 @@ const FOOD_ROWS = [
   ['roast_mutton', 'Roast Mutton', 16, { satiation: 26, hydration: -2, sick: 0, useS: 1.6, spoilS: 2400 }],
   ['snow', 'Snow', 32, { satiation: 0, hydration: 3, sick: 0, useS: 0.6, temp: -0.2 }],
   // v0.11 (CONTRACTS §66): unboiled water poisons you one time in five; boil it on a campfire (Pot of Boiled Water: safe)
-  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.2, useS: 1.0, returns: 'clay_pot' }],
+  // v0.14 (§76 water): fresh water left standing spoils — after about two game days a Pot of Water turns tainted
+  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.2, useS: 1.0, returns: 'clay_pot', spoilS: POT_WATER_SPOIL_S, spoilsTo: 'pot_tainted' }],
   ['pot_boiled', 'Pot of Boiled Water', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_seawater', 'Pot of Seawater', 1, { satiation: 0, hydration: -10, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_sap', 'Pot of Birch Sap', 1, { satiation: 2, hydration: 25, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   // v0.11 (CONTRACTS §72): milked from a cow with an empty clay pot — food and drink in one, always safe
   ['pot_milk', 'Pot of Milk', 1, { satiation: 12, hydration: 20, sick: 0, useS: 1.0, returns: 'clay_pot' }],
+  // v0.14 (§76 water): filled from Tainted Water (or a Pot of Water that stood too long) — it poisons three times in five;
+  // boiling makes it a Pot of Boiled Water like any other. It keeps: it cannot get worse.
+  ['pot_tainted', 'Pot of Tainted Water', 1, { satiation: 0, hydration: 30, sick: 0.6, useS: 1.0, returns: 'clay_pot' }],
 ];
 
 /**
