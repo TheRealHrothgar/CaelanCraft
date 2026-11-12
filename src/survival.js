@@ -86,6 +86,7 @@ export const DEATH_TITLES = Object.freeze({
   heat: 'The heat took you.',
   void: 'You slipped beneath the bedrock.',
   command: 'You collapsed.',
+  bear: 'A bear brought you down.', // v0.14 (§76 fauna)
 });
 /** The death screen's detail line (§2.5). */
 export const BELONGINGS_KEPT = 'Your belongings lie where you fell.';

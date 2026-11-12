@@ -110,6 +110,9 @@ const MATERIAL_ROWS = [
   // §14 the Survival Handbook: every survival state starts with it; never lost on death, never discarded, never made
   // (inventory.js KEEP_ON_DEATH, handbook.js ensureHandbook). R or RMB with it in hand opens the field book.
   ['handbook', 'Survival Handbook', 1],
+  // v0.14 (§76 fauna): feathers come off pheasants and wild turkeys (and out of their nests); a dart fletched with them
+  // flies faster and straighter than the plain Flint Dart, hits harder and breaks less often (looseItems THROW_FLETCHED)
+  ['feather', 'Feather', 32], ['fletched_dart', 'Fletched Dart', 16],
 ];
 
 /**
@@ -172,6 +175,20 @@ const FOOD_ROWS = [
   // in a Pot of Boiled Water it is a safe drink that cures as well.
   ['healwort', 'Healwort', 16, { satiation: 0, hydration: -2, sick: 0, useS: 1.2, cures: true }],
   ['pot_healwort_tea', 'Pot of Healwort Tea', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot', cures: true }],
+  // v0.14 (§76 fauna): game. Venison is the big hunt's meat, a rabbit or a bird is a small meal, a fish goes bad fast,
+  // a bear is a feast. An egg keeps for a long time; raw it is a risk, roasted at the fire it is good food.
+  ['raw_venison', 'Raw Venison', 16, { satiation: 6, hydration: 0, sick: 0.3, useS: 1.4, spoilS: 1200 }],
+  ['roast_venison', 'Roast Venison', 16, { satiation: 32, hydration: -2, sick: 0, useS: 1.6, spoilS: 2400 }],
+  ['raw_rabbit', 'Raw Rabbit', 16, { satiation: 4, hydration: 0, sick: 0.3, useS: 1.2, spoilS: 1200 }],
+  ['roast_rabbit', 'Roast Rabbit', 16, { satiation: 16, hydration: -1, sick: 0, useS: 1.4, spoilS: 2400 }],
+  ['raw_fowl', 'Raw Fowl', 16, { satiation: 4, hydration: 0, sick: 0.35, useS: 1.2, spoilS: 1200 }],
+  ['roast_fowl', 'Roast Fowl', 16, { satiation: 20, hydration: -1, sick: 0, useS: 1.4, spoilS: 2400 }],
+  ['raw_fish', 'Raw Fish', 16, { satiation: 4, hydration: 1, sick: 0.25, useS: 1.2, spoilS: 900 }],
+  ['roast_fish', 'Roast Fish', 16, { satiation: 18, hydration: 0, sick: 0, useS: 1.4, spoilS: 1800 }],
+  ['raw_bear', 'Raw Bear Meat', 16, { satiation: 7, hydration: 0, sick: 0.35, useS: 1.4, spoilS: 1200 }],
+  ['roast_bear', 'Roast Bear Meat', 16, { satiation: 34, hydration: -2, sick: 0, useS: 1.6, spoilS: 2400 }],
+  ['raw_egg', 'Raw Egg', 16, { satiation: 5, hydration: 2, sick: 0.25, useS: 0.8, spoilS: 3600 }],
+  ['roast_egg', 'Roast Egg', 16, { satiation: 14, hydration: 0, sick: 0, useS: 1.0, spoilS: 2400 }],
   // v0.14 (§76 water): filled from Tainted Water (or a Pot of Water that stood too long) — it poisons three times in five;
   // boiling makes it a Pot of Boiled Water like any other. It keeps: it cannot get worse.
   ['pot_tainted', 'Pot of Tainted Water', 1, { satiation: 0, hydration: 30, sick: 0.6, useS: 1.0, returns: 'clay_pot' }],

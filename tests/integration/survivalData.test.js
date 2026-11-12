@@ -107,7 +107,9 @@ function reach() {
       const id = blockForItem(key);
       if (id >= 0 && breakableNow(id)) gather(BLOCK_RULES[id].drops, false);
     }
-    if (hasAnyTool()) for (const mob of ['pig', 'cow', 'sheep', 'horse', 'wolf']) gather(MOB_DROPS[mob]); // bare hands only shove (§4.3, §69)
+    if (hasAnyTool()) for (const mob of ['pig', 'cow', 'sheep', 'horse', 'wolf', 'deer', 'rabbit', 'pheasant', 'turkey', 'bear']) gather(MOB_DROPS[mob]); // bare hands only shove (§4.3, §69; §76 fauna)
+    if (hasTool('spear', 0)) gather(MOB_DROPS.fish); // only a spear catches a fish (§76 fauna)
+    gather(PICKABLE[B.GROUND_NEST].drops); // wild pheasants and turkeys lay them; R takes the eggs (§76 fauna)
     gather(MOB_DROPS.zombie);
     if (have.has('clay_pot')) {
       have.add('pot_water');

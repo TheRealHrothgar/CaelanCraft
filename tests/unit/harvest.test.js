@@ -100,6 +100,7 @@ const TABLE = [
   [[B.ONION_PLANT, B.CARROT_PLANT], 0.4, 'shovel', 0],
   [[B.HAZEL_THICKET, B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE], 0.6, 'shovel', 0],
   [[B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE], 0.3, 'shovel', 0],
+  [[B.GROUND_NEST, B.GROUND_NEST_EMPTY], 0.3, null, 0], // v0.14 (§76 fauna)
 ];
 
 describe('BLOCK_RULES (§6.3)', () => {
@@ -107,7 +108,7 @@ describe('BLOCK_RULES (§6.3)', () => {
     expect(BLOCK_RULES.length).toBe(BLOCK_COUNT);
     const nulls = BLOCK_RULES.map((r, id) => (r ? null : id)).filter((x) => x !== null);
     // The 20 powder-and-circuits blocks (DESIGN-circuits §1.2) have their §8.3 rows: every part comes away whole.
-    // (v0.14: and the `reserved_*` placeholders that hold ids for the water work until the branches merge.)
+    // (v0.14: harmless now — the ids once held by `reserved_*` placeholders are all real blocks.)
     expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id) || b.name.startsWith('reserved_')).map((b) => b.id));
     for (let id = B.COLLAPSAR_CHARGE; id <= B.COHERER_RECEIVER; id++) {
       expect(rollDrops(id, null, {}, () => 0.5), BLOCKS[id].name).toEqual([{ k: BLOCKS[id].name, n: 1 }]);
@@ -482,9 +483,9 @@ describe('rollDrops (§6.3)', () => {
 });
 
 describe('picking with R (§6.4)', () => {
-  it('PICKABLE has exactly the four rows of v0.9 and the seven plants of v0.14 (§76 flora)', () => {
+  it('PICKABLE has exactly the four rows of v0.9, the Ground Nest (§76 fauna) and the seven plants of v0.14 (§76 flora)', () => {
     expect(Object.keys(PICKABLE).map(Number).sort((a, b) => a - b)).toEqual([B.HONEYBERRY_BUSH, B.PRICKLY_PEAR, B.LOOSE_STONES, B.FALLEN_BRANCHES,
-      B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT]);
+      B.GROUND_NEST, B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT]);
     expect(isPickable(B.HONEYBERRY_BUSH)).toBe(true);
     for (const id of [B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR_BARE, B.TUSSOCK, B.STONE, B.AIR, -1, 'toString', undefined]) {
       expect(isPickable(id)).toBe(false);

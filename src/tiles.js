@@ -147,6 +147,11 @@ export const TILE_NAMES = Object.freeze({
   215: 'crab_apple_bush_bare',
   216: 'healwort_plant',
   217: 'healwort_plant_bare',
+  // v0.14 (§76 fauna): the ground nest
+  228: 'ground_nest',
+  229: 'ground_nest_empty',
+  230: 'litter_nest',
+  231: 'litter_egg',
   // powder and circuits: 160–194 (DESIGN-circuits §1.4), painted by circuitTiles.js
   ...CIRCUIT_TILE_NAMES,
   240: 'zombie_face',
@@ -2362,6 +2367,80 @@ function paintLitterStick(px, rng) {
   speck(px, rng, 10, [0xa98656, 0x96744a]);
 }
 
+// ---- v0.14 (§76 fauna): the ground nest ----
+
+/** The nest's eggs in its picture: [centre x, centre y]. */
+const NEST_EGGS = Object.freeze([[6, 7], [10, 7], [8, 10.5]]);
+
+/**
+ * The nest seen from above, shared by tiles 228 and 229: on alpha 0 a round bowl of woven dry grass — a LITTER_OUTLINE
+ * rim (radius 6.9 around (8, 8.5)), a ring of straw (0xc49a56 / 0x93703a, the strands alternating along the ring) and a
+ * shadowed hollow (0x5e4526 ± 6, radius 3.9).
+ */
+function paintNestBowl(px, rng) {
+  clearTile(px);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const dx = x + 0.5 - 8;
+      const dy = y + 0.5 - 8.5;
+      const d = Math.hypot(dx, dy);
+      if (d > 6.9) continue;
+      if (d > 5.9) {
+        set(px, x, y, LITTER_OUTLINE);
+      } else if (d > 3.9) {
+        // strands run round the ring: light and dark by the angle, a little brighter toward the upper left
+        const strand = Math.floor((Math.atan2(dy, dx) + Math.PI) * 4.5 + d * 0.9) % 2 === 0;
+        set(px, x, y, strand ? 0xc49a56 : 0x93703a, delta(rng, 7) + (dx + dy < -3 ? 14 : dx + dy > 4 ? -14 : 0));
+      } else {
+        set(px, x, y, 0x5e4526, delta(rng, 6));
+      }
+    }
+  }
+}
+
+/**
+ * 228 ground_nest — the Ground Nest's picture (its icon; the block itself is 3D pieces, like the loose stones): the bowl
+ * with three eggs in it, cream (0xf3ead6, lit 0xfffaf0 upper left, 0xcbbd9c lower right) with a brown speckle each.
+ */
+function paintGroundNest(px, rng) {
+  paintNestBowl(px, rng);
+  for (const [cx, cy] of NEST_EGGS) {
+    paintPebble(px, rng, cx, cy, 1.9, 2.2, 0xf3ead6, 0xfffaf0, 0xcbbd9c);
+    set(px, Math.round(cx + 0.4), Math.round(cy + 0.3), 0x9a7a52);
+  }
+}
+
+/** 229 ground_nest_empty — the same bowl with nothing in it but a few flecks of pale down (0xe9e2d0). */
+function paintGroundNestEmpty(px, rng) {
+  paintNestBowl(px, rng);
+  for (const [x, y] of [[7, 8], [9, 9], [8, 7]]) set(px, x, y, 0xe9e2d0, delta(rng, 6));
+}
+
+/**
+ * 230 litter_nest — the SKIN of the 3D nest (the mesher cuts each small face from it): woven dry grass — rows of straw
+ * (0xb88e4e ± 12 by row), fine noise, slanting dark gaps (0x6a4e28) and pale stalks (0xdcc07e). Opaque.
+ */
+function paintLitterNest(px, rng) {
+  for (let y = 0; y < H; y++) {
+    const d = delta(rng, 12);
+    for (let x = 0; x < W; x++) set(px, x, y, 0xb88e4e, d);
+  }
+  noise(px, rng, 5);
+  for (let k = 0; k < 12; k++) {
+    const x0 = randInt(rng, 0, 15);
+    const y0 = randInt(rng, 0, 15);
+    for (let t = 0; t < 3; t++) set(px, wrap16(x0 + t), wrap16(y0 + (t >> 1)), 0x6a4e28, delta(rng, 5));
+  }
+  speck(px, rng, 14, [0xdcc07e, 0xcdb06c]);
+}
+
+/** 231 litter_egg — the skin of an egg in the nest: cream shell (0xf1e8d2), fine noise, a few brown speckles (0x9a7a52). */
+function paintLitterEgg(px, rng) {
+  fill(px, 0xf1e8d2);
+  noise(px, rng, 4);
+  speck(px, rng, 9, [0x9a7a52, 0xb39468]);
+}
+
 /**
  * 204 tainted_water (§76 water) — still, murky pond water, told from fresh water (blue, rippled) at a glance: a dull
  * olive base (0x566029) clouded in 2×2 patches, six dark silt smears two pixels long (0x3d4220, wrap x) where water has
@@ -3023,6 +3102,10 @@ const RECIPES = Object.freeze({
   healwort_plant: paintHealwortPlant,
   healwort_plant_bare: paintHealwortPlantBare,
   tainted_water: paintTaintedWater, // v0.14 (§76 water)
+  ground_nest: paintGroundNest,
+  ground_nest_empty: paintGroundNestEmpty,
+  litter_nest: paintLitterNest,
+  litter_egg: paintLitterEgg,
   zombie_face: paintZombieFace,
   zombie_head_side: paintZombieHeadSide,
   zombie_scalp: paintZombieScalp,

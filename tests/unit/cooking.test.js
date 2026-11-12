@@ -51,6 +51,18 @@ describe('the cooking tables', () => {
       wild_carrot: { to: 'roasted_carrot', seconds: 20, spot: 'skewer' },
       hazelnuts: { to: 'roasted_hazelnuts', seconds: 12, spot: 'skewer' },
       crab_apple: { to: 'baked_crab_apple', seconds: 18, spot: 'skewer' },
+      // v0.14 (§76 fauna): game roasts and chars like pork; an egg roasts and does not burn
+      raw_venison: { to: 'roast_venison', seconds: 22, spot: 'skewer' },
+      roast_venison: { to: 'charred_meat', seconds: 40, spot: 'skewer' },
+      raw_rabbit: { to: 'roast_rabbit', seconds: 14, spot: 'skewer' },
+      roast_rabbit: { to: 'charred_meat', seconds: 40, spot: 'skewer' },
+      raw_fowl: { to: 'roast_fowl', seconds: 16, spot: 'skewer' },
+      roast_fowl: { to: 'charred_meat', seconds: 40, spot: 'skewer' },
+      raw_fish: { to: 'roast_fish', seconds: 12, spot: 'skewer' },
+      roast_fish: { to: 'charred_meat', seconds: 40, spot: 'skewer' },
+      raw_bear: { to: 'roast_bear', seconds: 26, spot: 'skewer' },
+      roast_bear: { to: 'charred_meat', seconds: 40, spot: 'skewer' },
+      raw_egg: { to: 'roast_egg', seconds: 12, spot: 'skewer' },
     });
     for (const [k, t] of Object.entries(FIRE_TRANSFORMS)) {
       expect(Object.hasOwn(ITEMS, k), k).toBe(true);
@@ -66,7 +78,8 @@ describe('the cooking tables', () => {
     expect(SKEWER_SPOTS).toBe(6);
     expect(EMBERS_SPOT).toBe(6);
     expect(SKEWER_FOODS).toEqual(['raw_pork', 'raw_beef', 'raw_mutton', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit',
-      'honeycap', 'frecklecap', 'wild_onion', 'wild_carrot', 'hazelnuts', 'crab_apple']); // v0.14 (§76 flora)
+      'honeycap', 'frecklecap', 'wild_onion', 'wild_carrot', 'hazelnuts', 'crab_apple', // v0.14 (§76 flora)
+      'raw_venison', 'raw_rabbit', 'raw_fowl', 'raw_fish', 'raw_bear', 'raw_egg']); // v0.14 (§76 fauna)
     expect(CENTRE_POTS).toEqual(['pot_water', 'pot_seawater', 'pot_snow', 'greenware_pot', 'pot_tainted']); // + §76 water
     for (const k of SKEWER_FOODS) expect(FIRE_TRANSFORMS[k].spot).toBe('skewer');
     for (const k of CENTRE_POTS) expect(FIRE_TRANSFORMS[k].spot).toBe('centre');

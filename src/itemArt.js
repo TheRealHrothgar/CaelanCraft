@@ -950,6 +950,33 @@ const MATERIAL_PAINTERS = {
     ic.set(14, 12, TWINE.dark);
     ic.set(14, 13, TWINE.base);
   },
+  // v0.14 (§76 fauna)
+  feather(ic) {
+    // a pheasant's feather, corner to corner: a barred russet vane tapering to a point round a pale shaft, split here
+    // and there as feathers are, and a bare quill at the foot
+    ic.poly([[3.5, 12.5], [3, 9.5], [6, 5], [10, 2], [14.5, 0.5], [14, 4.5], [11.5, 8], [8, 11.5], [5.5, 13.5]],
+      (x, y) => ((x - y + 32) % 4 === 0 ? 0x5a3418 : x + y < 16 ? 0xd09652 : 0xa86a30));
+    for (let i = 0; i <= 10; i++) ic.set(3 + i, 13 - i, 0xf6ead0); // the shaft, down its middle
+    for (const [x, y] of [[10, 9], [9, 10], [5, 7], [4, 8]]) ic.clear(x, y); // splits in the vane, one each side
+    ic.set(2, 14, 0xe0d2b0);
+    ic.set(1, 15, 0xc8b890); // the quill
+  },
+  fletched_dart(ic) {
+    // the flint dart with a flight of two feathers: russet vanes with pale edges where the plain dart has grass
+    for (let i = 0; i <= 8; i++) {
+      ic.set(4 + i, 11 - i, WOOD.light);
+      ic.set(4 + i, 12 - i, WOOD.base);
+    }
+    ic.poly([[11, 2], [14, 1], [13, 5]], () => 0x3b3f4a);
+    ic.set(13, 2, 0x6b7184);
+    ic.set(11, 4, CORD.dark);
+    ic.set(12, 4, CORD.light);
+    ic.set(11, 5, CORD.light);
+    for (const [x, y] of [[1, 10], [2, 9], [2, 10], [3, 9], [3, 10], [4, 9]]) ic.set(x, y, (x + y) & 1 ? 0xc98a4a : 0x8a4e22); // upper vane
+    for (const [x, y] of [[4, 13], [5, 12], [5, 13], [5, 14], [6, 13], [6, 14]]) ic.set(x, y, (x + y) & 1 ? 0xc98a4a : 0x8a4e22); // lower vane
+    for (const [x, y] of [[1, 9], [2, 8], [6, 15], [7, 14]]) ic.set(x, y, 0xf3e6c8);
+    ic.set(3, 12, CORD.dark); // the flight's binding
+  },
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1251,6 +1278,65 @@ const FOOD_PAINTERS = {
     ic.set(8, 4, 0x9b4fd6);
     for (const [x, y] of [[6, 1], [7, 0], [10, 1], [9, 0]]) ic.set(x, y, 0xf0f4f8);
   },
+  // v0.14 (§76 fauna): game. Each meat has its own shape, so it reads at a glance: venison a dark lean steak, rabbit a
+  // small leg on its bone, fowl a whole plucked bird, fish a fish, bear a thick slab under a band of fat; and an egg.
+  raw_venison(ic, rng) {
+    paintMeat(ic, rng, 0x8e2430, 0xe8d6c8);
+    ic.line(4, 9, 9, 6, 0xc86a70); // lean: two thin sinews, no marbling
+    ic.line(7, 11, 12, 8, 0xc86a70);
+  },
+  roast_venison(ic, rng) {
+    paintMeat(ic, rng, 0x6a3018, 0xa8703a, 0x3e1a0c);
+    ic.line(4, 9, 9, 6, 0x3e1a0c); // the grill's marks
+    ic.line(7, 11, 12, 8, 0x3e1a0c);
+    ic.set(10, 6, 0xd89858);
+  },
+  raw_rabbit(ic, rng) {
+    paintLeg(ic, rng, 0xe6a2a2, 0xf6d0cc, 0xb86a70);
+  },
+  roast_rabbit(ic, rng) {
+    paintLeg(ic, rng, 0xb8763a, 0xe0a860, 0x7a4418);
+  },
+  raw_fowl(ic, rng) {
+    paintBird(ic, rng, 0xeec9a8, 0xfbe6d2, 0xc89878);
+  },
+  roast_fowl(ic, rng) {
+    paintBird(ic, rng, 0xc8873a, 0xeeb868, 0x8a5220);
+    ic.set(6, 9, 0xfad890); // the crackling's shine
+  },
+  raw_fish(ic) {
+    paintFish(ic, 0x86a8c4, 0x55738e, 0xe2ebf0);
+    ic.set(4, 8, 0x1c2630); // the eye
+  },
+  roast_fish(ic) {
+    paintFish(ic, 0xb88448, 0x8a5a26, 0xe0b878);
+    for (const x of [6, 8, 10]) ic.line(x, 7, x - 1, 10, 0x4a2c10); // the grill's marks
+    ic.set(4, 8, 0xf4ecd8); // a cooked eye
+  },
+  raw_bear(ic, rng) {
+    paintMeat(ic, rng, 0x7a1e26, 0xf0e2c8);
+    ic.line(2, 7, 6, 4, 0xf0e2c8); // a thick band of fat under the rind
+    ic.line(6, 4, 13, 5, 0xf0e2c8);
+    for (const [x, y] of [[6, 8], [9, 9], [11, 7], [7, 11]]) ic.set(x, y, 0xb85a5e); // marbling
+  },
+  roast_bear(ic, rng) {
+    paintMeat(ic, rng, 0x54260f, 0xc89850, 0x2e1408);
+    ic.line(2, 7, 6, 4, 0xc89850);
+    ic.line(6, 4, 13, 5, 0xc89850);
+    for (const [x, y] of [[6, 8], [9, 9], [11, 7]]) ic.set(x, y, 0x8a4a20);
+  },
+  raw_egg(ic, rng) {
+    paintEgg(ic, 0xf3ead6);
+    speckle(ic, rng, 5, 0xa08058);
+  },
+  roast_egg(ic) {
+    // roasted in its shell: the top broken off, the white set and the yolk showing; the shell scorched below
+    paintEgg(ic, 0xe6d3ac);
+    ic.ellipse(8, 5.6, 3.3, 2.6, 0xfffdf6);
+    ic.ellipse(8.2, 5.8, 1.5, 1.3, 0xf2b63c);
+    for (const [x, y] of [[4, 8], [5, 7], [11, 7], [12, 8], [7, 8], [9, 8]]) ic.set(x, y, 0xb8a078); // the broken rim
+    for (const [x, y] of [[6, 13], [7, 13], [9, 12], [10, 13], [5, 11]]) ic.set(x, y, 0x6a4a2a); // scorch
+  },
   // v0.14 (§76 water): the pot of murky pond water — the tainted tile's olive-brown with pale scum, and two green
   // dribbles down the shoulder so it is never taken for the blue Pot of Water at a glance
   pot_tainted(ic, rng) {
@@ -1259,6 +1345,42 @@ const FOOD_PAINTERS = {
     ic.line(11, 6, 11, 7, 0x7f8f3c);
   },
 };
+
+/** A small leg on its bone (rabbit): the meat low on the left, the bone running up to the right with a knuckle. */
+function paintLeg(ic, rng, meat, light, dark) {
+  ic.line(10, 7, 13, 3, 0xf3ead8);
+  ic.line(11, 7, 14, 3, 0xd8ccb4);
+  ic.rect(13, 2, 14, 3, 0xfffaf0);
+  ic.set(12, 2, 0xfffaf0);
+  ic.ellipse(7, 9.5, 5, 3.8, (x, y, u, v) => (u + v < -0.6 ? light : u + v > 0.7 ? dark : meat));
+  ic.jitter(rng, 0.05);
+}
+
+/** A whole plucked bird (pheasant, turkey), breast up: a plump body, two drumsticks standing up, a wing folded at its side. */
+function paintBird(ic, rng, skin, light, dark) {
+  ic.ellipse(8, 10, 5.6, 4, (x, y, u, v) => (u + v < -0.6 ? light : u + v > 0.75 ? dark : skin));
+  for (const cx of [5, 11]) {
+    ic.ellipse(cx, 6, 1.7, 2.4, cx < 8 ? light : skin); // a drumstick
+    ic.set(cx, 3, 0xf3ead8); // its bone end
+    ic.set(cx, 2, 0xfffaf0);
+  }
+  ic.line(4, 11, 7, 12, dark); // the wing's fold
+  ic.jitter(rng, 0.04);
+}
+
+/** A small fish lying on its side, head to the left: a dark back, a pale belly and a forked tail. */
+function paintFish(ic, body, back, belly) {
+  ic.poly([[11, 8.5], [15, 4.5], [14, 8.5], [15, 12.5]], back); // the tail
+  ic.ellipse(7, 8.5, 5.6, 3.2, (x, y, u, v) => (v < -0.35 ? back : v > 0.4 ? belly : body));
+  ic.line(6, 5, 9, 5, back); // the back fin
+  ic.set(7, 4, back);
+  ic.line(5, 7, 5, 10, back); // the gill
+}
+
+/** An egg standing on its blunt end, lit from the upper left. */
+function paintEgg(ic, shell) {
+  ic.ellipse(8, 9, 4.3, 5.6, (x, y, u, v) => (u + v < -0.55 ? tone(shell, 0.5) : u + v > 0.7 ? tone(shell, -0.22) : shell));
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Bandages and clothes

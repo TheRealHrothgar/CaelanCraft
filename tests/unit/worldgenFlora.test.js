@@ -305,7 +305,7 @@ describe('generations 1 and 2 are byte for byte what they were', () => {
   it('no generation below 3 ever holds a new plant, on the surface or in a cave', () => {
     const NEW = new Uint8Array(256);
     for (const id of [B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.HAZEL_THICKET_BARE,
-      B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE, B.RESERVED_120, B.RESERVED_121]) NEW[id] = 1;
+      B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE]) NEW[id] = 1;
     for (const g of [gen1, gen2]) {
       for (const [cq, cr] of [[0, 0], [1, 0], [3, -4], [-2, -2], [5, 5], [12, -7], [40, -30], [-60, 20]]) {
         const blocks = chunkOf(g, cq, cr).blocks;
@@ -317,7 +317,7 @@ describe('generations 1 and 2 are byte for byte what they were', () => {
     // generation 3 never generates a picked variant or a placeholder either
     for (const [cq, cr] of [[0, 0], [1, 0], [40, -30], [-60, 20]]) {
       const blocks = chunkOf(gen3, cq, cr).blocks;
-      for (const id of [B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT_BARE, B.HONEYBERRY_BUSH_BARE, B.RESERVED_121]) {
+      for (const id of [B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT_BARE, B.HONEYBERRY_BUSH_BARE]) {
         expect(blocks.includes(id), BLOCKS[id].name).toBe(false);
       }
     }

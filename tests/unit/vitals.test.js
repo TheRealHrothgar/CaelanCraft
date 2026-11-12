@@ -487,7 +487,7 @@ describe('damage formulas (§2.4)', () => {
 
   it('the cause keys of §2.4', () => {
     expect(DAMAGE_CAUSES).toEqual(['fall', 'drown', 'buried', 'crush', 'fire', 'zombie', 'blast', 'log', 'blackhole',
-      'starve', 'thirst', 'cold', 'heat', 'sick', 'void', 'command']);
+      'starve', 'thirst', 'cold', 'heat', 'sick', 'void', 'command', 'bear']); // + a bear's maul (§76 fauna)
   });
 });
 

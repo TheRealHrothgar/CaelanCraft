@@ -10,7 +10,7 @@ import { paintTile, averageColor, TILE_NAMES } from '../../src/tiles.js';
 import { ITEMS, ITEM_KEYS, getItem, itemForBlock, blockForItem, itemName } from '../../src/items.js';
 import { paintItem, hasItemArt } from '../../src/itemArt.js';
 import {
-  BLOCK_RULES, PICKABLE, RIPE_OF, Regrowth, isPickable, pick, rollDrops, ripeOf, breakSeconds, handGatherHint,
+  PICKABLE, RIPE_OF, Regrowth, isPickable, pick, rollDrops, ripeOf, breakSeconds, handGatherHint,
 } from '../../src/harvest.js';
 import { FIRE_TRANSFORMS, SKEWER_FOODS, FireSlots, isSkewerFood } from '../../src/cooking.js';
 import { RECIPES } from '../../src/crafting.js';
@@ -73,9 +73,9 @@ const FRECKLE = 0xfff3d2;
 const mask = (px) => pixels(px).map((p) => p[3] === 255);
 
 describe('the plant blocks 122–131 (blocks.js)', () => {
-  it('ids, names, flags and tiles: crossed sprites with the PLANT flags, flat icons, appended after the two reserved ids', () => {
-    expect(BLOCK_COUNT).toBe(132);
-    expect(BLOCKS).toHaveLength(132);
+  it('ids, names, flags and tiles: crossed sprites with the PLANT flags, flat icons, ids 122–131', () => {
+    expect(BLOCK_COUNT).toBe(133);
+    expect(BLOCKS).toHaveLength(133);
     for (const [key, id, name, displayName, sound, tile, placeable] of PLANTS) {
       expect(B[key], key).toBe(id);
       const d = BLOCKS[id];
@@ -98,19 +98,6 @@ describe('the plant blocks 122–131 (blocks.js)', () => {
     expect(POP_OFF_IDS.slice(-10)).toEqual(PLANT_BLOCK_IDS);
   });
 
-  it('121 is a clearly marked placeholder (BLOCKS is positional): plain stone, never placed, never generated', () => {
-    expect(BLOCKS[120].name).toBe('tainted_water'); // the water work took 120
-    for (const id of [121]) {
-      const d = BLOCKS[id];
-      expect(d.name).toBe(`reserved_${id}`);
-      expect(B[`RESERVED_${id}`]).toBe(id);
-      expect([d.placeable, d.solid, d.opaque]).toEqual([false, true, true]);
-      for (let f = 0; f < 8; f++) expect(getFaceTile(id, f)).toBe(T.STONE);
-      expect(PICKER_ORDER).not.toContain(id);
-      expect(itemForBlock(id)).toBeNull();
-      expect(BLOCK_RULES[id]).toBeNull();
-    }
-  });
 
   it('no name gives the Frecklecap away: nothing a player reads says poison', () => {
     const words = /poison|toxic|deadly|venom|bad|fool|false|death|sick/i;
@@ -449,8 +436,8 @@ describe('roasting (cooking.js)', () => {
   const burn = (fs, seconds) => fs.step(seconds, () => true, () => true);
 
   it('the six new skewer foods roast in 12–20 s; nothing else of the new food goes on a fire', () => {
-    expect(SKEWER_FOODS.slice(-6)).toEqual(['honeycap', 'frecklecap', 'wild_onion', 'wild_carrot', 'hazelnuts', 'crab_apple']);
-    for (const k of SKEWER_FOODS.slice(-6)) {
+    expect(SKEWER_FOODS.slice(7, 13)).toEqual(['honeycap', 'frecklecap', 'wild_onion', 'wild_carrot', 'hazelnuts', 'crab_apple']);
+    for (const k of SKEWER_FOODS.slice(7, 13)) {
       const tr = FIRE_TRANSFORMS[k];
       expect(tr.spot, k).toBe('skewer');
       expect(tr.seconds, k).toBeGreaterThanOrEqual(12);

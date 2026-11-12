@@ -45,15 +45,17 @@ export const BLOCK = Object.freeze({
   // v0.14 (§76 water): Tainted Water — a murky still-water SOURCE (most generation-3 ponds). It is water in every respect
   // (isWater, isWaterSource, level 7, fall-through, liquid); only its look and what drinking it does differ.
   TAINTED_WATER: 120,
-  // 121: a placeholder until the fauna work lands (BLOCKS is positional, so there can be no hole).
-  RESERVED_121: 121,
+  // v0.14 (§76 fauna): a pheasant's or turkey's nest on the ground, with eggs (R picks them). Its picked twin is 132.
+  GROUND_NEST: 121,
   // v0.14 (§76 flora): the new wild plants of generation 3. Two mushrooms that look alike (one feeds, one poisons), two
   // roots, a nut thicket and a fruit bush with their picked variants (which regrow), and the healing herb with its cut
-  // variant. Ids 132–133 of the flora range are unused.
+  // variant.
   HONEYCAP_MUSHROOM: 122, FRECKLECAP_MUSHROOM: 123, ONION_PLANT: 124, CARROT_PLANT: 125, HAZEL_THICKET: 126,
   HAZEL_THICKET_BARE: 127, CRAB_APPLE_BUSH: 128, CRAB_APPLE_BUSH_BARE: 129, HEALWORT_PLANT: 130, HEALWORT_PLANT_BARE: 131,
+  // v0.14 (§76 fauna): the nest once its eggs are taken (a hen lays in it again)
+  GROUND_NEST_EMPTY: 132,
 });
-export const BLOCK_COUNT = 132;
+export const BLOCK_COUNT = 133;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -104,6 +106,9 @@ export const TILE = Object.freeze({
   // v0.14 (§76 flora): the new wild plants, one sprite each (218–227 of the flora range are unused)
   HONEYCAP_MUSHROOM: 208, FRECKLECAP_MUSHROOM: 209, ONION_PLANT: 210, CARROT_PLANT: 211, HAZEL_THICKET: 212,
   HAZEL_THICKET_BARE: 213, CRAB_APPLE_BUSH: 214, CRAB_APPLE_BUSH_BARE: 215, HEALWORT_PLANT: 216, HEALWORT_PLANT_BARE: 217,
+  // v0.14 (§76 fauna): the ground nest's pictures (its icon, and what its crumbs are coloured from) and the skins its 3D
+  // pieces are cut from (woven dry grass, a speckled eggshell)
+  GROUND_NEST: 228, GROUND_NEST_EMPTY: 229, LITTER_NEST: 230, LITTER_EGG: 231,
   // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
   ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
   // The Hollow Watcher (§40; atlas row 15, not block faces): its ash-grey stone, the glow mask of that stone's cracks
@@ -382,8 +387,8 @@ export const BLOCKS = [
   // v0.14 (§76 water): Tainted Water, a second water SOURCE with WATER's flags and its own murky tile. Worldgen writes it
   // (generation-3 ponds) and `setblock … tainted_water` can; it is never placed by hand, so it has no picker entry and no item.
   def({ id: B.TAINTED_WATER, name: 'tainted_water', displayName: 'Tainted Water', tiles: tiles(T.TAINTED_WATER), solid: false, opaque: false, liquid: true, breakable: false, placeable: false, layer: LAYER_TRANSLUCENT, soundGroup: 'water' }),
-  // 121: a placeholder (plain stone that nothing generates or places) until the fauna work lands.
-  def({ id: B.RESERVED_121, name: 'reserved_121', displayName: 'Reserved 121', tiles: tiles(T.STONE), soundGroup: 'stone', placeable: false }),
+  // v0.14 (§76 fauna): the ground nest lies on the ground like litter (small 3D pieces); it is never placed by hand
+  def({ id: B.GROUND_NEST, name: 'ground_nest', displayName: 'Ground Nest', tiles: tiles(T.GROUND_NEST), ...LITTER, soundGroup: 'grass', placeable: false }),
   // ---- v0.14 (§76 flora): the wild plants of generation 3, all crossed sprites (SPRITE) picked with R. The two mushrooms
   // look alike on purpose: the Honeycap feeds, the Frecklecap poisons, and only their caps and stems tell them apart. A
   // picked thicket or bush, and a cut Healwort, is its *_BARE variant: it regrows and is never placed by hand.
@@ -397,6 +402,8 @@ export const BLOCKS = [
   def({ id: B.CRAB_APPLE_BUSH_BARE, name: 'crab_apple_bush_bare', displayName: 'Picked Crab Apple Bush', tiles: tiles(T.CRAB_APPLE_BUSH_BARE), ...SPRITE, placeable: false }),
   def({ id: B.HEALWORT_PLANT, name: 'healwort_plant', displayName: 'Healwort Plant', tiles: tiles(T.HEALWORT_PLANT), ...SPRITE, soundGroup: 'grass' }),
   def({ id: B.HEALWORT_PLANT_BARE, name: 'healwort_plant_bare', displayName: 'Cut Healwort Plant', tiles: tiles(T.HEALWORT_PLANT_BARE), ...SPRITE, soundGroup: 'grass', placeable: false }),
+  // v0.14 (§76 fauna): the nest once its eggs are taken
+  def({ id: B.GROUND_NEST_EMPTY, name: 'ground_nest_empty', displayName: 'Empty Nest', tiles: tiles(T.GROUND_NEST_EMPTY), ...LITTER, soundGroup: 'grass', placeable: false }),
 ];
 
 /**
