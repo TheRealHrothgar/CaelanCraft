@@ -73,16 +73,16 @@ const FRECKLE = 0xfff3d2;
 const mask = (px) => pixels(px).map((p) => p[3] === 255);
 
 describe('the plant blocks 122–131 (blocks.js)', () => {
-  it('ids, names, flags and tiles: crossed sprites with the PLANT flags, flat icons, ids 122–131', () => {
+  it('ids, names, flags and tiles: 3D models (§78) with the PLANT flags, flat icons, ids 122–131', () => {
     expect(BLOCK_COUNT).toBe(133);
     expect(BLOCKS).toHaveLength(133);
     for (const [key, id, name, displayName, sound, tile, placeable] of PLANTS) {
       expect(B[key], key).toBe(id);
       const d = BLOCKS[id];
       expect([d.id, d.name, d.displayName, d.soundGroup, d.placeable], key).toEqual([id, name, displayName, sound, placeable]);
-      expect([d.solid, d.opaque, d.layer, d.cullSame, d.meshed, d.icon, d.shape], key).toEqual([false, false, LAYER_CUTOUT, false, true, 'flat', 'cross']);
+      expect([d.solid, d.opaque, d.layer, d.cullSame, d.meshed, d.icon, d.shape], key).toEqual([false, false, LAYER_CUTOUT, false, true, 'flat', 'model']);
       expect(d.breakable && !d.liquid && !d.gravity, key).toBe(true);
-      expect(getBlockShape(id), key).toBe('cross');
+      expect(getBlockShape(id), key).toBe('model');
       for (let f = 0; f < 8; f++) expect(getFaceTile(id, f), `${key} face ${f}`).toBe(T[tile]);
       expect(T[tile], key).toBe(208 + (id - 122)); // one sprite per block, in id order
       expect(TILE_NAMES[T[tile]], key).toBe(name);
@@ -138,7 +138,7 @@ describe('the plant sprites 208–217 (tiles.js)', () => {
       expect(n, `${TILE_NAMES[t]} opaque pixels`).toBeGreaterThanOrEqual(40); // chunky enough to see
       expect(n, `${TILE_NAMES[t]} opaque pixels`).toBeLessThanOrEqual(150); // and plainly a sprite, not a panel
       expect(mask(p).slice(240).some(Boolean), `${TILE_NAMES[t]} stands on the ground`).toBe(true);
-      // the corners are clear, so the crossed planes never show their edges
+      // the corners are clear: the picture is a cut-out (the Pack's icon, and the skin the 3D model is cut from)
       for (const i of [0, 15, 240, 255]) expect(mask(p)[i], `${TILE_NAMES[t]} corner`).toBe(false);
     }
   });

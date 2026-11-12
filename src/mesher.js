@@ -28,6 +28,7 @@ import {
   flintAt,
 } from './blocks.js';
 import { FULL_SKY, LIGHT_EMISSION } from './light.js';
+import { plantModel, plantModelTile, PLANT_QUAD_STRIDE } from './plantModels.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
@@ -111,11 +112,14 @@ const WET = new Uint8Array(256);
 const FULL_WATER = new Uint8Array(256);
 /** SURFACE[id] = waterSurfaceHeight(id, AIR): the free surface of a water cell with no water above it (§10.2 step 1). */
 const SURFACE = new Float64Array(256);
-/** SHAPE[id] (BlockDef.shape): 0 a hexagonal prism, SHAPE_CROSS three crossed pictures, SHAPE_DECAL a picture on the floor. */
+/** SHAPE[id] (BlockDef.shape): 0 a hexagonal prism, SHAPE_DECAL a picture on the floor, SHAPE_LITTER and SHAPE_MODEL small 3D pieces. */
 const SHAPE = new Uint8Array(256);
-const SHAPE_CROSS = 1;
 const SHAPE_DECAL = 2;
 const SHAPE_LITTER = 3;
+const SHAPE_MODEL = 4;
+/** MODELS[id]: the compiled quads of a 'model' block (plantModels.js), and MODEL_UV[id] the tile rect they are cut from. */
+const MODELS = /** @type {(Float32Array|null)[]} */ (new Array(256).fill(null));
+const MODEL_UV = /** @type {(number[]|null)[]} */ (new Array(256).fill(null));
 
 for (let id = 0; id < 256; id++) {
   OPAQUE[id] = isOpaque(id) ? 1 : 0;
@@ -126,7 +130,11 @@ for (let id = 0; id < 256; id++) {
   FULL_WATER[id] = waterLevel(id) === 7 ? 1 : 0;
   SURFACE[id] = WET[id] ? waterSurfaceHeight(id, BLOCK.AIR) : 1;
   const shape = getBlockShape(id);
-  SHAPE[id] = shape === 'cross' ? SHAPE_CROSS : shape === 'decal' ? SHAPE_DECAL : shape === 'litter' ? SHAPE_LITTER : 0;
+  SHAPE[id] = shape === 'decal' ? SHAPE_DECAL : shape === 'litter' ? SHAPE_LITTER : shape === 'model' ? SHAPE_MODEL : 0;
+  if (shape === 'model') {
+    MODELS[id] = plantModel(id);
+    MODEL_UV[id] = tileToUV(plantModelTile(id) ?? getFaceTile(id, FACE_TOP));
+  }
   for (let f = 0; f < FACE_COUNT; f++) {
     const uv = tileToUV(getFaceTile(id, f));
     const o = (id * FACE_COUNT + f) * 4;
@@ -632,18 +640,10 @@ function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb, own = -1) {
   bld.faceCount += 1;
 }
 
-/** A crossed plant is three vertical pictures 60° apart through (about) the cell's middle … */
-export const CROSS_PLANES = 3;
-/** … each half this wide (the cell is 1 across its flats) and one cell tall, its bottom on the cell's floor … */
-export const CROSS_HALF_WIDTH = 0.48;
-/** … turned by a per-cell angle and moved off the centre by up to this, so a meadow is not a grid of identical tufts. */
-export const CROSS_JITTER = 0.05;
-/** The pictures darken toward their roots (a little grounding without real occlusion): bottom × this, top × 1. */
-export const CROSS_ROOT_SHADE = 0.72;
 /** A decal lies this far above the cell's floor (clear of the ground's top face, no z-fighting). */
 export const DECAL_Y = 0.02;
 
-/** Deterministic 0..1 from a world cell (the plants' jitter). */
+/** Deterministic 0..1 from a world cell (how a plant or a piece of litter is turned, nudged and sized). */
 export function cellHash(q, r, salt = 0) {
   let h = Math.imul(q | 0, 0x27d4eb2d) ^ Math.imul((r | 0) + salt * 0x9e3779b9, 0x165667b1);
   h ^= h >>> 15;
@@ -652,63 +652,6 @@ export function cellHash(q, r, salt = 0) {
   h = Math.imul(h, 0x297a2d39);
   h ^= h >>> 15;
   return (h >>> 0) / 4294967296;
-}
-
-/**
- * A crossed plant (BlockDef.shape 'cross'): CROSS_PLANES vertical quads of the block's TOP tile through the cell's middle,
- * 60° apart, turned and nudged per world cell (wq, wr) by cellHash. The cutout material is double-sided, so each plane is one
- * quad seen from both sides. Normals point up, so the sun lights the plant like the ground it grows on.
- */
-function emitCross(bld, wq, wr, ly, cx, cz, a, tr, tg, tb, own) {
-  bld.ensure(4 * CROSS_PLANES, 6 * CROSS_PLANES);
-  const light = bld.light;
-  const positions = bld.positions;
-  const normals = bld.normals;
-  const uvs = bld.uvs;
-  const colors = bld.colors;
-  const indices = bld.indices;
-  const uo = (a * FACE_COUNT + FACE_TOP) * 4;
-  const u0 = FACE_UV[uo];
-  const v0 = FACE_UV[uo + 1];
-  const u1 = FACE_UV[uo + 2];
-  const v1 = FACE_UV[uo + 3];
-  const turn = cellHash(wq, wr) * (Math.PI / 3);
-  const ox = cx + (cellHash(wq, wr, 1) - 0.5) * 2 * CROSS_JITTER;
-  const oz = cz + (cellHash(wq, wr, 2) - 0.5) * 2 * CROSS_JITTER;
-  const shade = FACE_SHADE[FACE_TOP];
-  let b = bld.vertexCount;
-  let ib = bld.indexCount;
-  for (let p = 0; p < CROSS_PLANES; p++) {
-    const theta = turn + (p * Math.PI) / CROSS_PLANES;
-    const dx = Math.cos(theta) * CROSS_HALF_WIDTH;
-    const dz = Math.sin(theta) * CROSS_HALF_WIDTH;
-    for (let v = 0; v < 4; v++) {
-      const right = v === 1 || v === 2;
-      const top = v >= 2;
-      const p3 = (b + v) * 3;
-      positions[p3] = right ? ox + dx : ox - dx;
-      positions[p3 + 1] = top ? ly + 1 : ly;
-      positions[p3 + 2] = right ? oz + dz : oz - dz;
-      normals[p3] = 0;
-      normals[p3 + 1] = 1;
-      normals[p3 + 2] = 0;
-      const p2 = (b + v) * 2;
-      uvs[p2] = right ? u1 : u0;
-      uvs[p2 + 1] = top ? v0 : v1;
-      const col = shade * (top ? 1 : CROSS_ROOT_SHADE);
-      colors[p3] = col * tr;
-      colors[p3 + 1] = col * tg;
-      colors[p3 + 2] = col * tb;
-      writeLight(light, (b + v) * 2, own);
-    }
-    indices[ib] = b; indices[ib + 1] = b + 1; indices[ib + 2] = b + 2;
-    indices[ib + 3] = b; indices[ib + 4] = b + 2; indices[ib + 5] = b + 3;
-    b += 4;
-    ib += 6;
-  }
-  bld.vertexCount = b;
-  bld.indexCount = ib;
-  bld.faceCount += CROSS_PLANES;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -917,6 +860,81 @@ function emitLitter(bld, wq, wr, ly, cx, cz, a, own) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// §78: the wild plants as small 3D models
+// ---------------------------------------------------------------------------------------------------
+
+/** A plant model is turned by any angle, moved off the cell's middle by up to MODEL_JITTER (m) … */
+export const MODEL_JITTER = 0.04;
+/** … and sized between MODEL_SCALE_MIN and MODEL_SCALE_MAX of its drawing, per world cell: no two plants quite alike. */
+export const MODEL_SCALE_MIN = 0.9;
+export const MODEL_SCALE_MAX = 1.05;
+
+/**
+ * A plant (BlockDef.shape 'model', CONTRACTS §78): the compiled quads of plantModels.js, turned, nudged and sized per
+ * world cell by cellHash, cut from the plant's own tile, in the cutout layer. Faces are shaded like the litter (by where
+ * they face, darker where they meet the ground) and lit by the plant's own cell.
+ */
+function emitModel(bld, wq, wr, ly, cx, cz, a, own) {
+  const quads = MODELS[a];
+  const uv = MODEL_UV[a];
+  if (quads === null || uv === null) return;
+  const n = quads.length / PLANT_QUAD_STRIDE;
+  bld.ensure(4 * n, 6 * n);
+  const positions = bld.positions;
+  const normals = bld.normals;
+  const uvs = bld.uvs;
+  const colors = bld.colors;
+  const indices = bld.indices;
+  const light = bld.light;
+  const turn = cellHash(wq, wr) * Math.PI * 2;
+  const c = Math.cos(turn);
+  const s = Math.sin(turn);
+  const k = MODEL_SCALE_MIN + (MODEL_SCALE_MAX - MODEL_SCALE_MIN) * cellHash(wq, wr, 5);
+  const ox = cx + (cellHash(wq, wr, 1) - 0.5) * 2 * MODEL_JITTER;
+  const oz = cz + (cellHash(wq, wr, 2) - 0.5) * 2 * MODEL_JITTER;
+  const du = (uv[2] - uv[0]) / LITTER_TEXELS;
+  const dv = (uv[3] - uv[1]) / LITTER_TEXELS;
+  let b = bld.vertexCount;
+  let ib = bld.indexCount;
+  for (let q = 0, o = 0; q < n; q++, o += PLANT_QUAD_STRIDE) {
+    const mx = quads[o + 20];
+    const ny = quads[o + 21];
+    const mz = quads[o + 22];
+    const nx = mx * c + mz * s;
+    const nz = -mx * s + mz * c;
+    const shade = quads[o + 23] * (0.58 + 0.42 * Math.min(1, Math.max(0, 0.5 + 0.5 * (nx * LITTER_KEY_X + ny * LITTER_KEY_Y + nz * LITTER_KEY_Z))));
+    for (let v = 0; v < 4; v++) {
+      const p = o + v * 5;
+      const x = quads[p];
+      const y = quads[p + 1];
+      const z = quads[p + 2];
+      const p3 = (b + v) * 3;
+      positions[p3] = ox + (x * c + z * s) * k;
+      positions[p3 + 1] = ly + y * k;
+      positions[p3 + 2] = oz + (-x * s + z * c) * k;
+      normals[p3] = nx;
+      normals[p3 + 1] = ny;
+      normals[p3 + 2] = nz;
+      const p2 = (b + v) * 2;
+      uvs[p2] = uv[0] + quads[p + 3] * du;
+      uvs[p2 + 1] = uv[1] + quads[p + 4] * dv;
+      const col = shade * (y < 0.03 ? LITTER_GROUND_SHADE : 1);
+      colors[p3] = col;
+      colors[p3 + 1] = col;
+      colors[p3 + 2] = col;
+      writeLight(light, (b + v) * 2, own);
+    }
+    indices[ib] = b; indices[ib + 1] = b + 1; indices[ib + 2] = b + 2;
+    indices[ib + 3] = b; indices[ib + 4] = b + 2; indices[ib + 5] = b + 3;
+    b += 4;
+    ib += 6;
+  }
+  bld.vertexCount = b;
+  bld.indexCount = ib;
+  bld.faceCount += n;
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------------------------------
 
@@ -969,7 +987,7 @@ export function buildChunkMesh(cq, cr, getChunkData) {
         const bld = layer === 0 ? opaqueB : layer === 1 ? cutoutB : translucentB;
         const tintRow = a * FACE_COUNT;
 
-        // A plant is crossed pictures and ground litter a picture on the floor: never a hexagonal prism (no faces, no culling).
+        // A plant is a small 3D model, litter a few 3D pieces, a snare a picture on the floor: never a hexagonal prism (no faces, no culling).
         const shape = SHAPE[a];
         if (shape !== 0) {
           const t = TINTED[tintRow + FACE_TOP];
@@ -977,7 +995,7 @@ export function buildChunkMesh(cq, cr, getChunkData) {
           const tg = t ? tint[1] : 1;
           const tb = t ? tint[2] : 1;
           const own = lightAt(pq, ly, pr); // a plant or a decal is lit by its own cell (§62)
-          if (shape === SHAPE_CROSS) emitCross(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, tr, tg, tb, own);
+          if (shape === SHAPE_MODEL) emitModel(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, own);
           else if (shape === SHAPE_LITTER) emitLitter(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, own);
           else {
             // §70: the loose stones that hold flint are drawn with the flint tile, so flint can be seen where it lies.

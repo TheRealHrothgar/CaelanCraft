@@ -235,3 +235,18 @@ From the build of CONTRACTS §76–§77. None blocks play.
 - **The world-generation timing tests** (≤ 8 ms a chunk, four of them now) fail when the machine is busy; best-of-eight
   runs measure 4.9 / 6.0 / 6.0 ms for generations 1 / 2 / 3.
 
+
+## Wild plants in 3D (v0.15) — open items
+
+From the build of CONTRACTS §78. None blocks play.
+
+- **A plant is confined to its one cell**, so the hazel thicket and the crab apple are waist-high shrubs (0.9 m), not
+  small trees. A taller model would poke into whatever is built above it.
+- **A wide plant can reach about 0.1 m into the next cell** (0.54 m from the middle × 1.05, plus the nudge): a mushroom
+  growing against a cave wall can show a corner of its cap sunk in the rock.
+- **The picked Honeyberry is plain dark lumps**, cut from a leafy corner of the bush's picture; its own twiggy picture is
+  too sparse to wrap a box.
+- **Plants do not sway**, and their faces have no ambient occlusion: only the shade by direction and the darker ground
+  contact.
+- **Seen in headless screenshots only**; nobody has walked through a meadow of them yet. The chunk-mesh timing test still
+  passes (a tussock is 9 quads, it was 3).
