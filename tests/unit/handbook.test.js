@@ -27,7 +27,7 @@ import {
 import {
   SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, HOME_RANGE, RIDE_SCALE,
-  RIDE_LEAP, fleeSpeed, poolOf, BEAR_DAMAGE,
+  RIDE_LEAP, fleeSpeed, poolOf, BEAR_DAMAGE, BEAR_WARN_S, BEAR_CHARGE_DIST, BEAR_CHASE_S, BEAR_GIVE_UP,
 } from '../../src/animals.js';
 import {
   throwOf, STONE_KEYS, DART_KEYS, DART_BREAK_P, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS, THROW_ROCK, THROW_DART, THROW_SPEAR,
@@ -888,9 +888,48 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).not.toMatch(/turns up in stone you mine/);
   });
 
+  it('the harder Survival (§76, §77): tainted water and streams, food in bunches, game, the bear, what gates what', () => {
+    const R = RATES;
+    // water: what it is, what it costs, that it spoils — every number from the rules
+    expect(text).toContain('clear blue water is fresh, murky green-brown water is tainted. Most ponds are tainted');
+    expect(text).toContain('Streams always run fresh');
+    expect(text).toContain(`Tainted water is far worse: ${fmtPct(R.GULP_TAINTED_SICK)} a gulp, ${fmtPct(ITEMS.pot_tainted.food.sick)} a pot.`);
+    expect(text).toContain('Tainted water is far worse: 40 % a gulp, 60 % a pot.');
+    expect(R.GULP_TAINTED_SICK).toBeGreaterThan(R.GULP_FRESH_SICK * 5);
+    expect(text).toContain('Water that flows out of a tainted pond is still tainted, though it looks clear.');
+    expect(ITEMS.pot_water.food).toMatchObject({ spoilS: 2 * DAY_LENGTH_SECONDS, spoilsTo: 'pot_tainted' });
+    expect(text).toContain('A Pot of Water left standing in your pack or a basket turns into a Pot of Tainted Water, on average after about 2 game days.');
+    expect(ITEMS.pot_boiled.food.spoilS).toBeUndefined();
+    expect(FIRE_TRANSFORMS.pot_tainted).toMatchObject({ to: 'pot_boiled', spot: 'centre' });
+    expect(text).toContain('Boiled water keeps for good, and boiling a tainted pot makes it safe.');
+    expect(text).not.toMatch(/Ponds inland are fresh/);
+    expect(rowOf(tableById('drinks'), 'pot_tainted')[3]).toBe('poisons 60 %');
+    // food in bunches: the look-alike is described by its look, and the herb by what it does
+    expect(text).toContain('Wild food grows in bunches.');
+    expect(text).toContain('The Frecklecap grows among them and looks much the same: its cap is flatter and dotted with pale freckles, its stem thin, with a ring. It always poisons you, and roasting does not help.');
+    expect([ITEMS.frecklecap.food.sick, ITEMS.roasted_frecklecap.food.sick, ITEMS.honeycap.food.sick]).toEqual([1, 1, 0]);
+    expect(ITEMS.hazelnuts.food.spoilS).toBeUndefined(); // "nuts that never go bad"
+    expect([ITEMS.healwort.food.cures, ITEMS.pot_healwort_tea.food.cures]).toEqual([true, true]);
+    expect(text).toContain('A leaf ends a poisoning at once; steeped in a Pot of Boiled Water it makes Healwort Tea, which cures and quenches.');
+    // game
+    expect(text).toContain(`Deer keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}.`);
+    expect(SPECIES.deer.notice).toBe(Math.max(...ANIMAL_KINDS.filter((k) => poolOf(k) !== 'fish' && !SPECIES[k].predator).map((k) => SPECIES[k].notice))); // "the wariest animal there is"
+    expect(text).toContain('a Fletched Dart flies faster, hits harder and breaks less often than a Flint Dart.');
+    expect(text).toContain('Only a spear catches one: thrust with it, or throw it with G.');
+    expect(text).toContain(`it warns you for ${fmtNum(BEAR_WARN_S)} seconds. If you stay, come within ${fmtNum(BEAR_CHARGE_DIST)} cells of it, or hurt it, it charges`);
+    expect(text).toContain(`A maul costs ${BEAR_DAMAGE} HP and throws you.`);
+    expect(text).toContain(`It gives up after ${BEAR_CHASE_S} seconds, or once you are ${BEAR_GIVE_UP} cells away.`);
+    expect(text).toContain('A bear is the richest kill there is: 6–8 Raw Bear Meat and 2–3 Rawhide.');
+    // what gates what
+    expect(text).toContain('Clay needs a shovel. The Wooden Shovel will do, and clay builds the Kiln.');
+    expect(text).toContain('Smelting and casting copper and bronze burn coal itself: charcoal will not do.');
+    expect(text).toContain('A copper pick mines tin, a bronze pick iron, an iron pick gold and a steel pick gems.');
+    expect(text).toContain('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only.');
+  });
+
   it('raw water poisons and boiling makes it safe (§66); Poisoned blocks healing, a bandage still works', () => {
     const R = RATES;
-    expect(text).toContain(`A gulp from a pond poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(ITEMS.pot_water.food.sick)}.`);
+    expect(text).toContain(`A gulp of fresh water poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(ITEMS.pot_water.food.sick)}.`);
     expect(text).toContain('poisons you 6 % of the time (ten gulps in a row: 46 %), a Pot of Water 20 %.');
     expect(text).toContain(`your stomach turns at once: ${fmtSigned(R.POISON_THIRST)} Hydration and ${fmtSigned(R.POISON_HUNGER)} Nourishment. For the next ${R.SICK_S} seconds you do not heal, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though never below ${R.SICK_FLOOR} HP.`);
     expect(ITEMS.pot_boiled.food.sick).toBe(0);

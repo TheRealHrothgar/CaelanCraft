@@ -52,7 +52,7 @@ import {
   SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, WOLF_BITE_S,
   HOME_RANGE, RIDE_SCALE, RIDE_LEAP,
-  BEAR_DAMAGE, poolOf,
+  BEAR_DAMAGE, BEAR_WARN_S, BEAR_CHARGE_DIST, BEAR_CHASE_S, BEAR_GIVE_UP, poolOf,
 } from './animals.js';
 import {
   throwOf, STONE_KEYS, DART_KEYS, dartBreakP, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
@@ -1156,23 +1156,25 @@ function makeChapters() {
   // ---- 2. Water
   chapter('water', 'Water', 'Water', 'drop', [
     [
-      h('Fresh and salt'),
+      h('Fresh, tainted and salt'),
       p(`Water is your most urgent need. Hydration falls from full to nothing in ${fmtDurationLong(Math.round(hydrationRest / 60) * 60)} even at rest: faster when you work, faster still in the heat.`),
-      p('The sea and every beach are salt. Ponds inland are fresh: small hex-shaped pools ringed with cattails and loose stones, with clay at the bottom. In snowy land they freeze over.'),
+      p('The sea and every beach are salt. Inland, look before you drink: clear blue water is fresh, murky green-brown water is *tainted*. Most ponds are tainted: small hex-shaped pools ringed with cattails and loose stones, with clay at the bottom. In snowy land they freeze over.'),
+      p('*Streams* always run fresh: narrow channels from a spring on higher ground down to the sea, a pond or a small pool.'),
       p(`Salt water makes thirst worse: your body spends more water getting rid of the salt than the sip gave you. A gulp of the sea costs ${-R.GULP_SALT} Hydration.`),
-      tip('The hint under your crosshair names it: *Fresh water* or *Sea water (salty)*.'),
+      tip('The hint under your crosshair names it: *Fresh water*, *Tainted water* or *Sea water (salty)*.'),
     ],
     [
       h('Drinking'),
       p(`Look at water and press [R] to take a gulp, whatever you are holding: ${fmtSigned(R.GULP_FRESH)} Hydration, one gulp every ${GULP_GAP_S} s. With your head under water, [R] drinks where you are.`),
-      p(`Raw water is a gamble. A gulp from a pond poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(potSick)}. Water boiled in the embers of a campfire is always safe.`),
+      p(`Raw water is a gamble. A gulp of fresh water poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(potSick)}. Tainted water is far worse: ${fmtPct(R.GULP_TAINTED_SICK)} a gulp, ${fmtPct(food('pot_tainted').sick)} a pot. Water boiled in the embers of a campfire is always safe.`),
       p(`When you are *Poisoned* your stomach turns at once: ${fmtSigned(R.POISON_THIRST)} Hydration and ${fmtSigned(R.POISON_HUNGER)} Nourishment. For the next ${R.SICK_S} seconds you do not heal, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though never below ${R.SICK_FLOOR} HP. Every new dose adds its time on top.`),
       tip('Boil before you drink, and cook before you eat.'),
+      warn('Water that flows out of a tainted pond is still tainted, though it looks clear.'),
     ],
     [
       h('Pots'),
       p(`A *Clay Pot* carries water. Shape a Greenware Pot from ${recipeInputsProse(greenware)} (dig clay at the bottom of a pond: it needs a shovel), then fire it in the embers of a campfire for ${FIRE_TRANSFORMS.greenware_pot.seconds} s, the oldest way of making pottery, or in a Kiln.`),
-      p('With an empty Clay Pot in hand, [R] on water fills it. Hold [RMB] to drink a pot; you keep the empty pot. A cow fills a pot too, with milk: see *Animals*.'),
+      p('With an empty Clay Pot in hand, [R] on water fills it with whatever that water is. Hold [RMB] to drink a pot; you keep the empty pot. A cow fills a pot too, with milk: see *Animals*.'),
       ...drinksTable(),
     ],
     [
@@ -1181,6 +1183,12 @@ function makeChapters() {
       ...fireTable('embers', 'In the embers', 'centre'),
       p('Boiling never makes the sea drinkable, but the water leaves its salt behind: scrape the salt-crusted pot (a hand job) for Salt and your pot back. Salt keeps meat and tans hides.'),
       tip(`Snow and ice are fresh. Pack ${takes('pot_snow', 'snow')} Snow or ${takes('pot_snow_ice', 'ice_chunk')} Ice Chunks into a Clay Pot and boil it.`),
+    ],
+    [
+      h('Water that stands'),
+      p(`Fresh water does not keep. A *Pot of Water* left standing in your pack or a basket turns into a Pot of Tainted Water, on average after ${gameDays(food('pot_water').spoilS ?? 0)}. Boiled water keeps for good, and boiling a tainted pot makes it safe.`),
+      p('So carry your water boiled, and know where the nearest stream is. Follow one uphill and you come to its spring; follow it down and it ends at the sea, a pond or a pool.'),
+      tip('A stream stays fresh all the way across a beach. The sea is still salt.'),
     ],
     [
       h('Water from plants'),
@@ -1206,8 +1214,16 @@ function makeChapters() {
       tip('A dug-up bush has to take root again: it is replanted bare and fruits only after it regrows.'),
     ],
     [
+      h('Food in bunches'),
+      p('Wild food grows in bunches. You may walk a long way and find nothing, then a whole patch: remember where it was.'),
+      p('*Honeycaps* grow in rings under forest trees and on cave floors: [R] picks them, and they roast well. Look before you eat. The *Frecklecap* grows among them and looks much the same: its cap is flatter and dotted with pale freckles, its stem thin, with a ring. It always poisons you, and roasting does not help.'),
+      p('*Wild onions* and *wild carrots* grow in patches on the plains and at the forest\'s edge: small raw, better roasted, and a shovel digs up more. *Hazel thickets* give nuts that never go bad. *Crab apples* are sour and wet, and bake well. Thicket and bush regrow after picking.'),
+      p('*Healwort* is rare: silver leaves under violet flower spikes. A leaf ends a poisoning at once; steeped in a Pot of Boiled Water it makes *Healwort Tea*, which cures and quenches. Pick it with [R] and it grows back. Pull it up and it is gone.'),
+      tip('A shovel lifts a thicket, a bush or a Healwort whole: plant it by your camp.'),
+    ],
+    [
       h('Meat and milk'),
-      p('Meat is the richest food there is. Pigs, cattle and sheep give it; the chapter *Animals* tells how to come near them and what a hunt takes.'),
+      p('Meat is the richest food there is. Pigs, cattle, sheep, deer, rabbits, birds, fish and the bear give it; the chapter *Animals* tells how to come near them and what a hunt takes.'),
       p(`Raw meat feeds you little and poisons you ${fmtPct(rawSick)} of the time. Roast it on a skewer: Roast Mutton gives ${fmtSigned(food('roast_mutton').satiation)} Nourishment, Roast Pork ${fmtSigned(food('roast_pork').satiation)} and Roast Beef ${fmtSigned(food('roast_beef').satiation)}.`),
       p(`Milk is food and drink in one. A *Pot of Milk* gives ${fmtSigned(milk.satiation)} Nourishment and ${fmtSigned(milk.hydration)} Hydration, never poisons you, and leaves you the pot. Press [R] on a cow with an empty Clay Pot in hand.`),
       tip(`A cow has milk again ${fmtDurationLong(MILK_REGROW_S)} after you milked her.`),
@@ -1310,6 +1326,17 @@ function makeChapters() {
       p('There is no stone pick: rock is too soft to cut rock. A *Flint Pick* is your first way into stone.'),
     ],
     [...agesTable(), p('Dig speed multiplies how fast the right kind of tool breaks its blocks; bare hands are ×1.')],
+    [
+      h('What gates what'),
+      p('Each step of the ladder opens the next. The Making panel says under every tool what it is for.'),
+      bullets([
+        'Clay needs a shovel. The Wooden Shovel will do, and clay builds the Kiln.',
+        'Coal needs a Flint Pick. Smelting and casting copper and bronze burn coal itself: charcoal will not do.',
+        'Charcoal, burnt from logs in the Kiln, fires clay and is the only fuel for iron and steel.',
+        'A copper pick mines tin, a bronze pick iron, an iron pick gold and a steel pick gems.',
+      ]),
+      p('Look for coal as black seams in cliff sides, stream banks and bare mountain rock.'),
+    ],
     [
       h('Stone and flint'),
       p('The *Stone Hammer* is a fist-sized cobble, the knapper\'s hammer: every flint tool is struck with it. The *Stone Axe* is a sharp-edged cobble, your first axe: it fells trees and lops leaves for sticks.'),
@@ -1453,6 +1480,29 @@ function makeChapters() {
       p(`A wild animal that steps into it, a pig too, is held fast for ${fmtDurationLong(TRAP_HOLD_S)}: time to walk up and feed it, shear it, milk it or hunt it. Then it pulls free, and nothing catches it again for ${TRAP_IMMUNE_S} seconds. The snare sets itself once more, without its bait.`),
       p(`Bait beats luck. Press [R] on a set snare with any food in hand: calm ${herdNames} within ${BAIT_RANGE} cells wander over to it. Keep well back, or you will scare them off.`),
       tip('Feed a snared horse or wolf until it is tame, and it steps out of the noose as your friend.'),
+    ],
+    [
+      h('Deer and small game'),
+      p(`*Deer* keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}. They are the wariest animal there is: sneaking will not bring you within reach, so throw a spear or a dart, or set a snare. Every herd has one stag: you know it by its antlers.`),
+      p('*Rabbits* are small and quick and swerve as they run. A baited Snare is the easy way to catch one.'),
+      p('*Pheasants* and *wild turkeys* feed on the ground. Come too close and a pheasant bursts into the air and flies off; a turkey glides a little way and runs.'),
+      p('Birds give meat and *Feathers*. Feathers fletch a better dart: a *Fletched Dart* flies faster, hits harder and breaks less often than a Flint Dart.'),
+      p('Leave the birds in peace and some of them lay a *Ground Nest*. Press [R] on it for the eggs, and a hen lays in the empty nest again. A raw egg can poison you: roast it.'),
+    ],
+    [
+      h('Fish'),
+      p('*Fish* live in the streams and never leave the water. Look for a fin cutting the surface. They dart away when you come near: sneak.'),
+      p('Only a spear catches one: thrust with it, or throw it with [G]. A thrown spear stays where it fell, so you wade in for it.'),
+      tip('Fish goes bad faster than any other meat. Roast it soon.'),
+    ],
+    [
+      h('The bear'),
+      p('A *bear* lives alone, in forest, mountains and snowy land. It does not run from you.'),
+      p(`When a bear rears up and growls, back away at once: it warns you for ${fmtNum(BEAR_WARN_S)} seconds. If you stay, come within ${fmtNum(BEAR_CHARGE_DIST)} cells of it, or hurt it, it charges, and it runs faster than you can sprint.`),
+      p(`A maul costs ${BEAR_DAMAGE} HP and throws you. The bear gathers itself for a moment afterwards: that is your chance to run. It gives up after ${BEAR_CHASE_S} seconds, or once you are ${BEAR_GIVE_UP} cells away.`),
+      p('Water deep enough to swim in, a burning campfire or a wall two cells high stops a charge.'),
+      warn('Do not strike a bear unless you mean to finish it: one blow and it charges from any distance.'),
+      tip(`A bear is the richest kill there is: ${describeDrops(MOB_DROPS.bear, true)}.`),
     ],
   ]);
 
@@ -1632,6 +1682,7 @@ function makeChapters() {
       h('Older worlds'),
       p('Worlds made before Survival have no wild plants, ponds, copper or tin. The first time you switch one to Survival you are asked to bring them in: they appear wherever the land is untouched, near your builds too. This cannot be undone.'),
       p('New worlds have them unless you untick *Survival resources* when you create the world.'),
+      p('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only. A world made before them keeps its land: every pond in it is fresh. The rules for things you carry and hunt are the same everywhere.'),
     ],
     [
       h('Good to know'),

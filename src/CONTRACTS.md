@@ -4407,6 +4407,85 @@ once per grid cell and stream-level maps kept per chunk (bounded caches; pure). 
 run on every generated water cell changes nothing. Measured: stream columns are about 0.4–0.5 % of the land; from a plains or
 forest start the nearest stream is a median 25–29 columns away, within 60 for about nine starts in ten.
 
+### 76.4 Game animals — deer, rabbits, pheasants, wild turkeys, the bear, fish (`src/animals.js`, `src/animalRenderer.js`)
+
+Amends §69 and §72. Six kinds join `SPECIES` (`ANIMAL_KINDS`: cow, sheep, horse, wolf, deer, rabbit, pheasant, turkey, bear,
+fish). None is lured or tamed (`lure: NO_LURE`, `tame: 0`). Optional species fields: `pool` ('herd' when absent, 'small',
+'fish'; `poolOf(kind)`), `calm` (its own CALM_FACTOR), `zigzag`, `flush` ('fly' | 'glide') with `cruise` (m above the
+ground), `nests`, `predator`, `snare: false`, `water`, `pad` (extra crosshair reach), `despawn`, `alarm`. ANIMAL_MAX 40.
+
+- **Species**: deer (r 0.36 × h 1.25, health 8, notice 16, 1.3 × SPRINT_SPEED, herd 3–5, calm 2.5), rabbit (0.18 × 0.4, 2,
+  8, 1.3 × sprint, 1–3, small, zigzag), pheasant (0.2 × 0.5, 2, 7, 2–4, small, flush 'fly', cruise 2.6, nests), turkey
+  ("Wild Turkey", 0.28 × 0.8, 4, 9, 1.2 × sprint, 2–4, small, flush 'glide', cruise 0.9, nests), bear (0.48 × 1.45, 30,
+  notice 9, 1.1 × sprint, 1–1, predator, snare false), fish (0.16 × 0.2, 2, 4.5, 2–4, pool fish, water, snare false, pad
+  0.14, despawn 70, alarm 4).
+- **Deer** run until `notice × calm` (40 m) away. A natural herd's first deer is a stag: `variant` 1 (saved `v: 1`; drawn on
+  the `alt` body, antlers). **Rabbits** in flight swerve ZIG_ANGLE 0.7 rad to one side of straight away and change side
+  every ZIG_S 0.3–0.6 s.
+- **Flush**: `_startle` gives a bird on the ground `air` = FLUSH_S 2.4–3.2 s (pheasant) or TURKEY_GLIDE_S 0.9 (turkey) and
+  queues `events.flushed`. While `air ≠ 0` the body is `flying` (physics: no gravity, config FLY_SPEED = FLUSH_SPEED): it
+  goes forward only once it has turned to within 1.2 rad of its line, and its height is steered through `input.pullY`
+  toward `cruise` above what lies below (climb ≤ FLUSH_CLIMB 6.5, sink ≤ FLUSH_SINK 3.5; a wall ahead: climb; over water
+  up to FLUSH_OVER_WATER_S 2.5 longer), then down at FLUSH_SINK until stepPlayer lands it (`air` 0). Water ends a flight.
+  `walkPhase` beats at WING_BEAT 26 rad/s in the air.
+- **Nests**: blocks GROUND_NEST **121** and GROUND_NEST_EMPTY **132** (shape 'litter', not placeable, not pop-off; tiles
+  228–231: the two pictures, the straw skin, the egg skin; mesher `emitNest`: a bed, NEST_WALL.count 6 bundles in a ring,
+  NEST_EGGS 3 eggs only in the full one). NEST_HEN_P 0.5 of spawned pheasants and turkeys have a finite `nestIn`
+  (NEST_FIRST_S 60–180, then NEST_EVERY_S 240–420; a failed try: NEST_RETRY_S 30). `_layNest`: a calm, wild bird on the
+  ground, nobody within NEST_PRIVACY 10, no GROUND_NEST within NEST_SPACING 6 cells; a GROUND_NEST_EMPTY that near is
+  refilled, else its own empty cell over solid ground → `events.laid { cell, refill }` (main writes GROUND_NEST). harvest:
+  PICKABLE GROUND_NEST → GROUND_NEST_EMPTY with raw_egg 1–3 and feather 50 %; rules h 0.3 by hand (full: raw_egg 1–2 +
+  plant_fibre; empty: plant_fibre). World generation places no nest.
+- **Bear** (`_bear`; modes 'warn', 'charge'): no reaction beyond `bearRange(a, player)` = max(noticeRange, BEAR_CHARGE_DIST
+  3.5 + BEAR_SNEAK_MARGIN 1.5). Inside: 'warn' (`events.warned`; it stands, faces the player; `rear` eases to 1 at REAR_RATE
+  5/s) for BEAR_WARN_S 2.5; then 'charge' if the player is within range × BEAR_BACK_OFF 1.35, else it stands down. Within
+  BEAR_CHARGE_DIST, or on any `wound`, it charges at once (`_provoke`, `events.charged`; `chase` = BEAR_CHASE_S 9). In
+  reach (BEAR_REACH 1.7, heights overlapping, no wall) it mauls every BEAR_MAUL_S 1.4: the player is thrown BEAR_PUSH 8 /
+  BEAR_LIFT 5, `events.mauls` (main: BEAR_DAMAGE 18, cause **'bear'**). After a maul it does not advance for BEAR_RECOVER_S
+  1. The charge ends when `chase` is out, the player is beyond BEAR_GIVE_UP 24 or gone: `rest` = BEAR_REST_S 8, during which
+  it neither warns nor charges unless hurt. A blow moves it BEAR_KNOCK 0.35 × ANIMAL_KNOCKBACK and never makes it run. No
+  snare holds or draws it. Swim water, a burning campfire in its path and a two-high wall stop a charge. Its model has ONE
+  smooth back (a thin paler strip from shoulders to rump): no hump.
+- **Fish** (`_fish`, never stepPlayer): `fishDepth(getBlock, q, r, y)` is the feet height FISH_UNDER 0.24 below the water
+  surface of that column (a cell up or down counts), NaN without water or where it is shallower than FISH_MIN_WATER 0.3.
+  A fish moves only to where fishDepth is a number, swinging aside or holding still where the water ends, and is removed
+  when its own cell has none. Cruise FISH_CRUISE 0.9; a player inside `notice` makes the school (alarm 4) dart at FISH_DART
+  5.5 for FISH_DART_S 1.1, then it holds still FISH_REST_S 1.5. `wound` neither knocks nor lifts it. Main: only a spear
+  (thrust or thrown) wounds a fish; a fish is left out of resolveBodies and the block-physics bodies; a fish under the
+  crosshair does not take R from the water.
+- **Spawning**: HERD_WEIGHTS gains deer, bear, rabbit, pheasant, turkey; a kind is weighed against its own pool only. Each
+  HERD_CHECK_S: `_spawnHerd(player, world, 'herd')` (HERD_CHANCE 0.35, HERD_TARGET 5 herd animals within HERD_RADIUS) and
+  `(…, 'small')` (SMALL_CHANCE 0.4, SMALL_TARGET 4); no bear while BEAR_NEAR 1 is within the radius. Fish: `world.streamAt`
+  (AnimalWorld, optional; main: worldGen.streamAt, §76.3) every FISH_CHECK_S 20 with FISH_CHANCE 0.6, in stream water
+  FISH_MIN 8..FISH_MAX 30 from the player, while fewer than FISH_TARGET 5 are within FISH_RADIUS 40; FISH_CAP 10. Fish
+  therefore live only in generation-3 worlds.
+- **Events**: `flushed`, `warned`, `charged`, `mauls`, `laid`. `freed`, `flushed` and `charged` may be queued between two
+  updates (remove, wound); each entry is reported by exactly one update (this also ends §69's `freed` entries being
+  repeated for good, which reset a snare the moment it caught a second time).
+- **Drops** (harvest MOB_DROPS): deer raw_venison 2–3 + rawhide; rabbit raw_rabbit + rawhide 40 %; pheasant raw_fowl +
+  feather 2–4; turkey raw_fowl 2–3 + feather 2–4; bear raw_bear 6–8 + rawhide 2–3; fish raw_fish.
+- **Items**: materials feather, fletched_dart; foods raw/roast venison (6 / 32), rabbit (4 / 16), fowl (4 / 20), fish
+  (4 / 18), bear (7 / 34), egg (5 / 14); raw ones poison 25–35 %. cooking: each raw → roast on a skewer (venison 22 s,
+  rabbit 14, fowl 16, fish 12, bear 26, egg 12); the five roasts char in 40 s, a roast egg does not. looseItems:
+  THROW_FLETCHED { speed 26, power 3 }, FLETCHED_BREAK_P 0.15, `dartBreakP(key)`, DART_KEYS + fletched_dart. crafting:
+  `fletched_dart` at hand, flint + stick + 2 feather + plant_fibre → 4, hammer 1, 3 s. MEAT_LURE gains venison, rabbit,
+  fowl and bear, raw and roast. campfireRenderer SPOT_ITEMS gains them (and beef and mutton, which were missing).
+- **Damage**: vitals DAMAGE_CAUSES, storage DEATH_CAUSES and survival DEATH_TITLES gain 'bear' ("A bear brought you down.").
+- **Models** (animalRenderer MODELS): optional `legs` (2 birds, 0 fish), `hop`, `wiggle`, `wing` (two boards drawn only
+  while `air ≠ 0`, legs tucked), `rear` (the body pitches up about the hips by `animal.rear`, the forelegs with it; `swipe`
+  swings them) and `head` (its own mesh, kept level while the body rears). `bodyVariant`: a stag is `alt`.
+- **Commands**: `summon deer|stag|rabbit|pheasant|turkey|bear|fish [q y r]`; a fish only into water.
+- **Save**: the `animals` field gains `v` (1 = stag, deer only); at most ANIMAL_MAX 40; a list written before v0.14 validates
+  to itself. `air`, the bear's warn / chase / rest and a fish's dart are not saved.
+
+### 76.5 Totals and the guide
+
+After the three parts: BLOCK_COUNT 133 (120 Tainted Water, 121 Ground Nest, 122–131 the plants, 132 Empty Nest); TILE_IDS
+174; 248 items (34 tools, 48 materials, 52 foods, 2 heals, 5 wear, 107 blocks), the foods running plants, game, then the Pot
+of Tainted Water last; 119 recipes (47 at hand). The Survival Guide tells all of it: "Fresh, tainted and salt", "Water that
+stands", "Food in bunches", "What gates what", "Deer and small game", "Fish", "The bear", and a line on older worlds;
+handbook.test.js pins each new sentence's numbers to the constants above.
+
 ## 77. The build tree: a purpose for every tool, real gates, coal — `src/purpose.js` (PURE), `src/harvest.js`, `src/crafting.js`, `src/worldgen.js`
 
 **A purpose line.** `purpose.PURPOSE` maps an item key to one sentence of at most `PURPOSE_MAX` (64) characters on what
