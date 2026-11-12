@@ -38,8 +38,14 @@
 // it lands. It replaces the built-in 'water' reseeder with one that also wakes edited AIR next to water (a dug-out hole
 // beside the sea: flow is never saved) and neighbours in chunks that are not loaded yet (they wait for their chunk), so
 // streamed / reloaded water flows on.
+//
+// v0.14 (CONTRACTS §76 water): TAINTED_WATER is a second SOURCE. Everything above that says "WATER source" means either
+// (`isWaterSource`): it never changes by itself, has E = 7, is a floor that water spreads over, and what flows out of it
+// is ordinary FLOW / FALL. A new source made by rule 2 is TAINTED_WATER when one of the sources beside it is (taint
+// spreads, it never dilutes), and natural water refills as the source it was generated as. `waterQualityAt` says whether
+// the water in a cell is tainted, tracing flowing and falling water back to the sources that feed it.
 import { WORLD_HEIGHT, WATER_CURRENT, DRAIN_MAX_RADIUS, WATER_SOURCE_NEIGHBOURS } from './config.js';
-import { BLOCK, UNLOADED, isSolid, isWater, waterLevel } from './blocks.js';
+import { BLOCK, UNLOADED, isSolid, isWater, isWaterSource, waterLevel } from './blocks.js';
 import { HEX_DIRS, FACE_NORMALS, hexToWorld, worldToHex } from './hex.js';
 
 /** @typedef {import('./blockphysics.js').BlockPhysics} BlockPhysics */
@@ -49,10 +55,10 @@ const B = BLOCK;
 /** FLOW_k = FLOW_ID0 + k for k = 1..6. */
 const FLOW_ID0 = B.WATER_FLOW_1 - 1;
 
-/** Block ids the water rule reacts to (CONTRACTS §35.1). */
+/** Block ids the water rule reacts to (CONTRACTS §35.1; TAINTED_WATER, the second source, since §76). */
 export const WATER_RULE_IDS = Object.freeze([
   B.AIR, B.CAMPFIRE, B.WATER, B.WATER_FLOW_1, B.WATER_FLOW_2, B.WATER_FLOW_3, B.WATER_FLOW_4, B.WATER_FLOW_5,
-  B.WATER_FLOW_6, B.WATER_FALL,
+  B.WATER_FLOW_6, B.WATER_FALL, B.TAINTED_WATER,
 ]);
 /** Edited ids the 'water' reseeder looks at when a chunk is generated: the water family and AIR. */
 const RESEED_IDS = Object.freeze([B.AIR, ...WATER_RULE_IDS.slice(2)]);
@@ -68,9 +74,9 @@ export function isFlowingWater(id) {
   return id >= B.WATER_FLOW_1 && id <= B.WATER_FLOW_6;
 }
 
-/** @returns {boolean} water standing on `below` spreads sideways: a solid floor or a WATER source (DESIGN §4) */
+/** @returns {boolean} water standing on `below` spreads sideways: a solid floor or a water source (DESIGN §4) */
 export function isWaterFloor(below) {
-  return below === B.WATER || isSolid(below);
+  return isWaterSource(below) || isSolid(below);
 }
 
 /** @returns {number} the id of flowing water of level `level` (1..6); ≤ 0 → AIR, ≥ 7 → WATER_FLOW_6 */
@@ -90,12 +96,67 @@ export function fallLevel(ctx, q, y, r) {
   let yy = y + 1;
   let top = ctx.peek(q, yy, r);
   while (top === B.WATER_FALL) top = ctx.peek(q, ++yy, r);
-  return top === B.WATER || isFlowingWater(top) ? waterLevel(top) : 0;
+  return isWaterSource(top) || isFlowingWater(top) ? waterLevel(top) : 0;
 }
 
 /** @returns {boolean} the scheduler may need to (re)run the water rule here: open, flowing or falling, or not loaded yet */
 function isWakeable(id) {
   return id === B.AIR || id === B.CAMPFIRE || id === B.WATER_FALL || isFlowingWater(id) || id === UNLOADED;
+}
+
+/** Most cells one `waterQualityAt` trace visits: a reach-6 cone of FLOW cells plus the fall columns that feed it. */
+export const QUALITY_TRACE_MAX = 256;
+
+/**
+ * Whether the water in cell (q, y, r) is fresh or tainted (CONTRACTS §76 water). A source is what it is: WATER fresh,
+ * TAINTED_WATER tainted. Flowing and falling water is whatever feeds it, traced upstream:
+ *   - falling water (WATER_FALL) is fed by the water above it;
+ *   - flowing water (WATER_FLOW_k) is fed by each side neighbour that spreads (it stands on a floor) with E = k + 1 — the
+ *     neighbours the water rule took its level from — and by any water above it (a trickle landing in a stream).
+ * The water is TAINTED when ANY source reached that way is TAINTED_WATER (taint never dilutes: a spillway dug out of a
+ * tainted pond runs tainted all the way), else fresh — also when the bounded search (QUALITY_TRACE_MAX cells, UNLOADED
+ * cells skipped) finds no source at all (stale water that is about to drain). Not water → 'fresh'. Salt is a matter of
+ * the biome (climate.isSaltyBiome), judged by the caller.
+ * @param {(q: number, y: number, r: number) => number} getBlock  world.getBlock or world.peekBlock
+ * @param {number} q @param {number} y @param {number} r
+ * @returns {'fresh'|'tainted'}
+ */
+export function waterQualityAt(getBlock, q, y, r) {
+  const id0 = getBlock(q, y, r);
+  if (id0 === B.TAINTED_WATER) return 'tainted';
+  if (id0 === B.WATER || !isWater(id0)) return 'fresh';
+  const peekCtx = { peek: getBlock };
+  /** @type {number[]} cells to look at, as (q, y, r) triples */
+  const todo = [q, y, r];
+  const seen = new Set([`${q},${y},${r}`]);
+  const push = (nq, ny, nr) => {
+    const key = `${nq},${ny},${nr}`;
+    if (seen.has(key) || seen.size >= QUALITY_TRACE_MAX) return;
+    seen.add(key);
+    todo.push(nq, ny, nr);
+  };
+  for (let i = 0; i < todo.length; i += 3) {
+    const cq = todo[i];
+    const cy = todo[i + 1];
+    const cr = todo[i + 2];
+    const id = getBlock(cq, cy, cr);
+    if (id === B.TAINTED_WATER) return 'tainted';
+    if (id === B.WATER || !isWater(id)) continue;
+    // FLOW or FALL: the water above it feeds it …
+    if (isWater(getBlock(cq, cy + 1, cr))) push(cq, cy + 1, cr);
+    if (id === B.WATER_FALL) continue;
+    // … and a FLOW_k also takes its level from the spreading side neighbours one level up.
+    const level = waterLevel(id);
+    for (let j = 0; j < 6; j++) {
+      const nq = cq + DQ[j];
+      const nr = cr + DR[j];
+      const n = getBlock(nq, cy, nr);
+      if (!isWater(n) || !isWaterFloor(getBlock(nq, cy - 1, nr))) continue;
+      const e = n === B.WATER_FALL ? fallLevel(peekCtx, nq, cy, nr) : waterLevel(n);
+      if (e === level + 1) push(nq, cy, nr);
+    }
+  }
+  return 'fresh';
 }
 
 export class Fluids {
@@ -127,9 +188,10 @@ export class Fluids {
   _update(ctx, q, y, r, id) {
     this.stats.updates++;
     let target = id;
-    if (id !== B.WATER) {
+    if (!isWaterSource(id)) {
       let fed = 0;
       let sources = 0;
+      let tainted = false; // §76: one of those sources is TAINTED_WATER
       for (let j = 0; j < 6; j++) {
         const nq = q + DQ[j];
         const nr = r + DR[j];
@@ -141,16 +203,22 @@ export class Fluids {
           return;
         }
         if (!isWater(n)) continue;
-        if (n === B.WATER) sources++;
+        if (isWaterSource(n)) {
+          sources++;
+          if (n === B.TAINTED_WATER) tainted = true;
+        }
         if (isWaterFloor(ctx.peek(nq, y - 1, nr))) {
           const l = (n === B.WATER_FALL ? fallLevel(ctx, nq, y, nr) : waterLevel(n)) - 1;
           if (l > fed) fed = l;
         }
       }
       const above = ctx.peek(q, y + 1, r);
-      if (id !== B.AIR && id !== B.CAMPFIRE
-        && ((sources >= WATER_SOURCE_NEIGHBOURS && isWaterFloor(ctx.peek(q, y - 1, r))) || this._isNaturalWater(q, y, r))) {
-        target = B.WATER; // infinite source (a hole in a lake refills as lake); natural water refills as natural water
+      const natural = id !== B.AIR && id !== B.CAMPFIRE ? this._naturalSource(q, y, r) : 0;
+      if (natural !== 0) {
+        target = natural; // natural water refills as the source it was generated as (WATER, or TAINTED_WATER: §76)
+      } else if (id !== B.AIR && id !== B.CAMPFIRE && sources >= WATER_SOURCE_NEIGHBOURS && isWaterFloor(ctx.peek(q, y - 1, r))) {
+        // infinite source (a hole in a lake refills as lake) — tainted when a source beside it is: taint never dilutes
+        target = tainted ? B.TAINTED_WATER : B.WATER;
       } else if (isWater(above) && (fed === 0 || fallLevel(ctx, q, y, r) >= fed)) {
         target = B.WATER_FALL; // the water pouring in from above feeds it at least as well as its sides do
       } else if (fed > 0) {
@@ -176,7 +244,7 @@ export class Fluids {
     // 6. Downward: a settled source or flowing cell over an open cell (or over flowing water no higher than itself)
     // falls into it. Falling water's front is left to the trigger (it queued the cell below), or a waterfall would
     // advance two cells a tick. A FLOW below that is higher than this cell is fed better from its sides: left alone.
-    if ((target === B.WATER || isFlowingWater(target)) && y > 0) {
+    if ((isWaterSource(target) || isFlowingWater(target)) && y > 0) {
       const below = ctx.peek(q, y - 1, r);
       if (below === B.AIR || below === B.CAMPFIRE || (isFlowingWater(below) && waterLevel(below) <= waterLevel(target))) {
         if (ctx.write(q, y - 1, r, B.WATER_FALL) === 'ok') {
@@ -189,12 +257,20 @@ export class Fluids {
   }
 
   /**
-   * @returns {boolean} the cell was generated as WATER (natural sea / lake): flowing or falling water there is the sea
-   *   coming back, saved as WATER anyway (§33.9 drops the edit), so the rule makes it a source in the live world too.
+   * @returns {number} the source the cell was generated as (WATER: natural sea / lake / stream; TAINTED_WATER: a tainted
+   *   pond, §76), else 0. Flowing or falling water there is that water coming back, saved as generated anyway (§33.9
+   *   drops the edit), so the rule makes it that source in the live world too.
    */
-  _isNaturalWater(q, y, r) {
+  _naturalSource(q, y, r) {
     const world = this.physics.world;
-    return typeof world.originAt === 'function' && world.originAt(q, y, r) === B.WATER;
+    if (typeof world.originAt !== 'function') return 0;
+    const origin = world.originAt(q, y, r);
+    return isWaterSource(origin) ? origin : 0;
+  }
+
+  /** @returns {boolean} the cell was generated as a water source (see `_naturalSource`) */
+  _isNaturalWater(q, y, r) {
+    return this._naturalSource(q, y, r) !== 0;
   }
 
   /** A campfire was flooded: it is out (the write already replaced it). */
@@ -262,7 +338,7 @@ export class Fluids {
       if (this._touchesWater(q, y, r)) this._wake(q, y, r);
       return;
     }
-    if (id !== B.WATER) this._wake(q, y, r);
+    if (!isWaterSource(id)) this._wake(q, y, r);
     for (let j = 0; j < 6; j++) this._wakeIfOpen(q + DQ[j], y, r + DR[j]);
     this._wakeIfOpen(q, y + 1, r);
     this._wakeIfOpen(q, y - 1, r);
@@ -288,7 +364,7 @@ export class Fluids {
   _wake(q, y, r) {
     const world = this.physics.world;
     const id = world.peekBlock(q, y, r);
-    const intoFall = id === B.WATER_FALL || (id !== B.WATER && id !== UNLOADED && isWater(world.peekBlock(q, y + 1, r)));
+    const intoFall = id === B.WATER_FALL || (!isWaterSource(id) && id !== UNLOADED && isWater(world.peekBlock(q, y + 1, r)));
     this.physics.schedule(intoFall ? 'fall' : 'water', q, y, r);
   }
 
@@ -328,7 +404,7 @@ export class Fluids {
         for (let cy = y0; cy <= y1; cy++) {
           const id = world.peekBlock(cq, cy, cr);
           if (!isWater(id)) continue;
-          const wasNatural = id === B.WATER && !world.hasEdit(cq, cy, cr);
+          const wasNatural = isWaterSource(id) && !world.hasEdit(cq, cy, cr);
           const res = ctx.write(cq, cy, cr, B.AIR);
           if (res === 'capped') {
             capped = true;

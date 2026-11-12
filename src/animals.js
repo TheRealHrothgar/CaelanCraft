@@ -1,4 +1,5 @@
-// Caelancraft — animals: cattle, sheep, horses and wolves (PURE). See src/CONTRACTS.md §69.
+// Caelancraft — animals: cattle, sheep, horses and wolves (PURE; CONTRACTS §69), and the game of the harder land
+// (v0.14, §76 fauna): deer, rabbits, pheasants, wild turkeys, bears and the fish of the streams.
 //
 // An animal is a body (physics.createBody) driven through the same stepPlayer physics as the player, the pigs and the
 // zombies, so it slides along honeycomb walls, hops one-cell ledges, swims and takes part in resolveBodies.
@@ -12,11 +13,22 @@
 // Cattle and sheep give meat, hide and wool (a sheep can also be sheared, and its fleece grows back). Horses and wolves
 // are TAMED by feeding: a tame horse waits where it is left and can be ridden (`ride`), a tame wolf follows the player
 // and bites the zombies near it. Tame animals never flee, never despawn and are saved; so is every other animal.
-import { GRAVITY, WALK_SPEED, SPRINT_SPEED, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR } from './config.js';
+//
+// v0.14 (§76 fauna). None of the new kinds is lured or tamed; each is its own kind of work:
+//   - deer: herds in forest and plains, the wariest animal on land — they notice from far and bolt fast and far;
+//   - rabbits: small, quick, and they zig-zag as they run: hard to hit, a natural catch for a Snare;
+//   - pheasants and wild turkeys: on the ground almost always. Spooked, a pheasant FLUSHES (it bursts into the air and
+//     flies off low and fast, landing well away), a turkey darts off at a run after a short flapping glide. Left in
+//     peace, the hens lay Ground Nests (eggs);
+//   - the bear: solitary, and it does not run. Come too close and it REARS and growls (the warning: back away); stay,
+//     come closer, or hurt it, and it CHARGES and mauls. It gives up after a chase;
+//   - fish: in stream water, never out of it (they do not use stepPlayer at all). They dart away from a player who
+//     comes near; only a spear, thrust or thrown, catches one.
+import { GRAVITY, WALK_SPEED, SPRINT_SPEED, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR, GROUND_ACCEL, FLY_SPEED, PLAYER_HEIGHT } from './config.js';
 import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
 import { hexToWorld, worldToHex } from './hex.js';
 import { yawToForward } from './coords.js';
-import { BLOCK, BIOME, isSolid } from './blocks.js';
+import { BLOCK, BIOME, isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
 import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js';
 
 /** @typedef {import('./types.js').GetBlockFn} GetBlockFn */
@@ -27,24 +39,44 @@ const TWO_PI = Math.PI * 2;
 /** What the grazers come to: plants. */
 export const PLANT_LURE = Object.freeze(['wild_tuber', 'honeyberries', 'tussock', 'cattail_root']);
 /** What a wolf comes to: meat, raw or roast. */
-export const MEAT_LURE = Object.freeze(['raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton']);
+export const MEAT_LURE = Object.freeze([
+  'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton',
+  // v0.14 (§76 fauna): the game meats too
+  'raw_venison', 'roast_venison', 'raw_rabbit', 'roast_rabbit', 'raw_fowl', 'roast_fowl', 'raw_bear', 'roast_bear',
+]);
+/** v0.14 (§76 fauna): what the game animals come to — nothing. They are neither lured nor tamed. */
+export const NO_LURE = Object.freeze(/** @type {string[]} */ ([]));
 
 /**
  * The species. `radius` / `height` / `mass` the body; `health` hit points; `notice` how near (m) a walking player may
  * come before it runs, `fleeScale` (× WALK_SPEED, or × SPRINT_SPEED with `fleeSprint`) how fast; `turn` rad/s; `herd`
  * the natural group size [min, max]; `lure` the food it comes to and is fed; `tame` the feeds that tame it (0: never).
+ *
+ * v0.14 (§76 fauna), all optional: `pool` which spawn pool it belongs to ('herd' when absent; 'small' the small game,
+ * 'fish'); `calm` its own CALM_FACTOR (how far it bolts); `zigzag` it swerves as it runs; `flush` what a spooked bird
+ * does ('fly': FLUSH_S in the air at `cruise` m above the ground; 'glide': a short one); `nests` it lays Ground Nests;
+ * `predator` it does not run — it warns and charges (the bear; `notice` is then how near a walking player may come
+ * before it rears); `snare: false` a snare neither holds nor draws it; `water` it lives in water and never leaves it;
+ * `pad` extra reach (m) of its crosshair target; `despawn` its own DESPAWN_DIST; `alarm` its own HERD_ALARM.
  */
 export const SPECIES = Object.freeze({
   cow: Object.freeze({ name: 'Cow', radius: 0.44, height: 1.3, mass: 2.4, health: 10, notice: 9, fleeScale: 1.0, fleeSprint: false, turn: 3.2, herd: Object.freeze([2, 4]), lure: PLANT_LURE, tame: 0, voice: 'moo' }),
   sheep: Object.freeze({ name: 'Sheep', radius: 0.36, height: 0.95, mass: 0.9, health: 6, notice: 10, fleeScale: 1.1, fleeSprint: false, turn: 4, herd: Object.freeze([2, 4]), lure: PLANT_LURE, tame: 0, voice: 'baa' }),
   horse: Object.freeze({ name: 'Horse', radius: 0.44, height: 1.55, mass: 2.6, health: 12, notice: 13, fleeScale: 1.45, fleeSprint: true, turn: 3.5, herd: Object.freeze([2, 3]), lure: PLANT_LURE, tame: 3, voice: 'neigh' }),
   wolf: Object.freeze({ name: 'Wolf', radius: 0.3, height: 0.8, mass: 0.8, health: 8, notice: 11, fleeScale: 1.15, fleeSprint: true, turn: 5, herd: Object.freeze([2, 3]), lure: MEAT_LURE, tame: 3, voice: 'woof' }),
+  // v0.14 (§76 fauna)
+  deer: Object.freeze({ name: 'Deer', radius: 0.36, height: 1.25, mass: 1.4, health: 8, notice: 16, fleeScale: 1.3, fleeSprint: true, turn: 4.5, herd: Object.freeze([3, 5]), lure: NO_LURE, tame: 0, voice: 'bleat', calm: 2.5 }),
+  rabbit: Object.freeze({ name: 'Rabbit', radius: 0.18, height: 0.4, mass: 0.25, health: 2, notice: 8, fleeScale: 1.3, fleeSprint: true, turn: 9, herd: Object.freeze([1, 3]), lure: NO_LURE, tame: 0, voice: 'squeak', pool: 'small', zigzag: true }),
+  pheasant: Object.freeze({ name: 'Pheasant', radius: 0.2, height: 0.5, mass: 0.3, health: 2, notice: 7, fleeScale: 1, fleeSprint: true, turn: 7, herd: Object.freeze([2, 4]), lure: NO_LURE, tame: 0, voice: 'cackle', pool: 'small', flush: 'fly', cruise: 2.6, nests: true }),
+  turkey: Object.freeze({ name: 'Wild Turkey', radius: 0.28, height: 0.8, mass: 0.7, health: 4, notice: 9, fleeScale: 1.2, fleeSprint: true, turn: 6, herd: Object.freeze([2, 4]), lure: NO_LURE, tame: 0, voice: 'gobble', pool: 'small', flush: 'glide', cruise: 0.9, nests: true }),
+  bear: Object.freeze({ name: 'Bear', radius: 0.48, height: 1.45, mass: 4, health: 30, notice: 9, fleeScale: 1.1, fleeSprint: true, turn: 3.6, herd: Object.freeze([1, 1]), lure: NO_LURE, tame: 0, voice: 'grunt', predator: true, snare: false }),
+  fish: Object.freeze({ name: 'Fish', radius: 0.16, height: 0.2, mass: 0.1, health: 2, notice: 4.5, fleeScale: 1, fleeSprint: false, turn: 10, herd: Object.freeze([2, 4]), lure: NO_LURE, tame: 0, voice: 'plop', pool: 'fish', water: true, snare: false, pad: 0.14, despawn: 70, alarm: 4 }),
 });
-/** @typedef {'cow'|'sheep'|'horse'|'wolf'} AnimalKind */
+/** @typedef {'cow'|'sheep'|'horse'|'wolf'|'deer'|'rabbit'|'pheasant'|'turkey'|'bear'|'fish'} AnimalKind */
 export const ANIMAL_KINDS = Object.freeze(/** @type {AnimalKind[]} */ (Object.keys(SPECIES)));
 
-/** At most this many animals in a world. */
-export const ANIMAL_MAX = 24;
+/** At most this many animals in a world (24 until v0.14: the small game and the fish need room beside the herds). */
+export const ANIMAL_MAX = 40;
 /** A sneaking player is noticed at this share of `notice`; a sprinting one from this much farther. */
 export const SNEAK_NOTICE = WARY_SNEAK_FACTOR;
 export const SPRINT_NOTICE = WARY_SPRINT_FACTOR;
@@ -96,7 +128,7 @@ export const RIDE_LEAP = 2.2;
 /** Natural herds: checked every HERD_CHECK_S; a herd appears with HERD_CHANCE while fewer than HERD_TARGET wild animals
  * are within HERD_RADIUS of the player — HERD_MIN..HERD_MAX away, on natural grass. Beyond DESPAWN_DIST a wild one goes. */
 export const HERD_CHECK_S = 60;
-export const HERD_CHANCE = 0.45;
+export const HERD_CHANCE = 0.35; // 0.45 until v0.14: the harder land's herds are a little slower to come back
 export const HERD_TARGET = 5;
 export const HERD_RADIUS = 96;
 export const HERD_MIN = 34;
@@ -105,11 +137,112 @@ export const HERD_TRIES = 10;
 export const DESPAWN_DIST = 150;
 /** Species weights by biome (index = BIOME id); a biome with no weights grows no herds. */
 export const HERD_WEIGHTS = Object.freeze({
-  [BIOME.PLAINS]: Object.freeze({ cow: 3, sheep: 3, horse: 1.5 }),
-  [BIOME.FOREST]: Object.freeze({ wolf: 2, sheep: 1, cow: 1 }),
-  [BIOME.MOUNTAINS]: Object.freeze({ sheep: 3, wolf: 1 }),
-  [BIOME.SNOWY]: Object.freeze({ wolf: 2, sheep: 0.5 }),
+  // v0.14 (§76 fauna): deer, the bear and the small game (rabbit, pheasant, turkey) joined each land's table. A kind is
+  // weighed only against the others of its own pool (poolOf): herds and small game appear independently.
+  [BIOME.PLAINS]: Object.freeze({ cow: 3, sheep: 3, horse: 1.5, deer: 2, rabbit: 3, pheasant: 2, turkey: 1 }),
+  [BIOME.FOREST]: Object.freeze({ wolf: 2, sheep: 1, cow: 1, deer: 4, bear: 0.5, rabbit: 2, pheasant: 1.5, turkey: 2.5 }),
+  [BIOME.MOUNTAINS]: Object.freeze({ sheep: 3, wolf: 1, bear: 0.6, rabbit: 1 }),
+  [BIOME.SNOWY]: Object.freeze({ wolf: 2, sheep: 0.5, bear: 0.6, rabbit: 1 }),
 });
+
+// ---- v0.14 (§76 fauna): the game of the harder land -----------------------------------------------------------------
+
+/** @typedef {'herd'|'small'|'fish'} SpawnPool */
+/** The spawn pool a kind belongs to: 'herd' (the big animals), 'small' (rabbits and the birds) or 'fish'. @returns {SpawnPool} */
+export function poolOf(kind) {
+  return (isAnimalKind(kind) && /** @type {*} */ (SPECIES[kind]).pool) || 'herd';
+}
+/**
+ * Small game has its own count beside the herds: at every HERD_CHECK_S a group appears with SMALL_CHANCE while fewer
+ * than SMALL_TARGET small animals are within HERD_RADIUS (same distances and ground as a herd).
+ */
+export const SMALL_CHANCE = 0.4;
+export const SMALL_TARGET = 4;
+/** The bear is solitary: no second one appears while this many are within HERD_RADIUS. */
+export const BEAR_NEAR = 1;
+
+/** A running rabbit swerves ZIG_ANGLE (rad) to one side of straight away, and changes side every ZIG_S[0]..[1] seconds. */
+export const ZIG_ANGLE = 0.7;
+export const ZIG_S = Object.freeze([0.3, 0.6]);
+
+/**
+ * A flushed pheasant is in the air FLUSH_S[0]..[1] seconds, a turkey's glide lasts TURKEY_GLIDE_S; both fly at
+ * config.FLY_SPEED, climbing at up to FLUSH_CLIMB and sinking at up to FLUSH_SINK (m/s) toward their species' `cruise`
+ * height above the ground. Over deep water a bird stays up for up to FLUSH_OVER_WATER_S more. Wings beat WING_BEAT rad/s.
+ */
+export const FLUSH_S = Object.freeze([2.4, 3.2]);
+export const TURKEY_GLIDE_S = 0.9;
+/** How fast a bird flies (m/s): physics moves a flying body at config.FLY_SPEED — about twice the player's sprint. */
+export const FLUSH_SPEED = FLY_SPEED;
+export const FLUSH_CLIMB = 6.5;
+export const FLUSH_SINK = 3.5;
+export const FLUSH_OVER_WATER_S = 2.5;
+export const WING_BEAT = 26;
+
+/**
+ * Ground nests: NEST_HEN_P of the wild pheasants and turkeys are laying hens. A hen left in peace lays a nest where she
+ * stands — the first NEST_FIRST_S[0]..[1] after she appeared (a flock that is scared off at once leaves none), then
+ * every NEST_EVERY_S[0]..[1] — unless the player is within NEST_PRIVACY (m) or a nest with eggs lies within NEST_SPACING
+ * cells. An EMPTY nest that near is laid in again instead. A try that fails comes back in NEST_RETRY_S.
+ */
+export const NEST_HEN_P = 0.5;
+export const NEST_FIRST_S = Object.freeze([60, 180]);
+export const NEST_EVERY_S = Object.freeze([240, 420]);
+export const NEST_RETRY_S = 30;
+export const NEST_PRIVACY = 10;
+export const NEST_SPACING = 6;
+
+/**
+ * The bear. It ignores a player beyond its warning distance (bearRange: its `notice`, by the sneak / sprint factors,
+ * never less than BEAR_CHARGE_DIST + BEAR_SNEAK_MARGIN). Inside it the bear REARS and growls for BEAR_WARN_S: a player
+ * who is BEAR_BACK_OFF times that distance away by then is left alone. One who is not — or who comes within
+ * BEAR_CHARGE_DIST, or hurts it — is CHARGED: it runs at them for BEAR_CHASE_S (a blow starts the count again), mauls
+ * within BEAR_REACH every BEAR_MAUL_S (main: BEAR_DAMAGE health; here: a throw of BEAR_PUSH m/s and BEAR_LIFT up), and
+ * gives up when the time is out or the player is BEAR_GIVE_UP away; then it leaves the player alone for BEAR_REST_S.
+ * After a maul it gathers itself for BEAR_RECOVER_S before it moves again: it is only a little faster than a sprint, so
+ * that pause is what lets a player who turns and runs get away with ONE maul — while one who stays in reach is mauled
+ * again every BEAR_MAUL_S.
+ */
+export const BEAR_WARN_S = 2.5;
+export const BEAR_BACK_OFF = 1.35;
+export const BEAR_CHARGE_DIST = 3.5;
+export const BEAR_SNEAK_MARGIN = 1.5;
+export const BEAR_CHASE_S = 9;
+export const BEAR_GIVE_UP = 24;
+export const BEAR_REST_S = 8;
+export const BEAR_REACH = 1.7;
+export const BEAR_MAUL_S = 1.4;
+export const BEAR_RECOVER_S = 1;
+export const BEAR_DAMAGE = 18;
+export const BEAR_PUSH = 8;
+export const BEAR_LIFT = 5;
+/** The swipe's pose lasts BEAR_SWIPE_S; the rear-up eases in and out at REAR_RATE per second; a blow moves a bear only BEAR_KNOCK of ANIMAL_KNOCKBACK. */
+export const BEAR_SWIPE_S = 0.4;
+export const REAR_RATE = 5;
+export const BEAR_KNOCK = 0.35;
+
+/**
+ * Fish. They swim only where the water is at least FISH_MIN_WATER deep, FISH_UNDER below its surface (fishDepth: their
+ * body is just under it and the back fin cuts the surface, which is how a fish is spotted from the bank), at
+ * FISH_CRUISE (m/s); a player within their notice makes the school dart at FISH_DART for FISH_DART_S, then hold still for
+ * FISH_REST_S before it can dart again. Schools appear in STREAM water (world.streamAt): every FISH_CHECK_S with
+ * FISH_CHANCE while fewer than FISH_TARGET fish are within FISH_RADIUS, FISH_MIN..FISH_MAX from the player (FISH_TRIES
+ * tries a check); at most FISH_CAP fish in a world.
+ */
+export const FISH_MIN_WATER = 0.3;
+export const FISH_UNDER = 0.24;
+export const FISH_CRUISE = 0.9;
+export const FISH_DART = 5.5;
+export const FISH_DART_S = 1.1;
+export const FISH_REST_S = 1.5;
+export const FISH_CHECK_S = 20;
+export const FISH_CHANCE = 0.6;
+export const FISH_TARGET = 5;
+export const FISH_RADIUS = 40;
+export const FISH_MIN = 8;
+export const FISH_MAX = 30;
+export const FISH_TRIES = 24;
+export const FISH_CAP = 10;
 
 /** The voices and the snare's snap (audio.playRecipe data). Gentle, short, never startling. */
 export const SOUNDS = Object.freeze({
@@ -120,16 +253,36 @@ export const SOUNDS = Object.freeze({
   whine: Object.freeze({ dur: 0.35, gain: 0.22, layers: [{ type: 'sine', f0: 700, f1: 980, gain: 0.6, attack: 0.05, decay: 0.28 }] }),
   snare: Object.freeze({ dur: 0.18, gain: 0.4, layers: [{ type: 'noise', f0: 0, hp: 1800, gain: 0.7, attack: 0.002, decay: 0.08 }, { type: 'sine', f0: 520, f1: 240, gain: 0.4, attack: 0.002, decay: 0.14 }] }),
   tame: Object.freeze({ dur: 0.5, gain: 0.25, layers: [{ type: 'sine', f0: 523, f1: 523, gain: 0.5, attack: 0.01, decay: 0.2 }, { type: 'sine', f0: 784, f1: 784, gain: 0.5, attack: 0.01, decay: 0.3, delay: 0.14 }] }),
+  // v0.14 (§76 fauna): a deer's bleat, a rabbit's squeak, a pheasant's two-note cackle, a turkey's gobble, a fish's plop;
+  // the bear's grunt (in passing), growl (the warning: low and long, so it is heard in time) and roar (the charge); and
+  // the whirr of wings when a bird flushes.
+  bleat: Object.freeze({ dur: 0.4, gain: 0.24, layers: [{ type: 'saw', f0: 560, f1: 430, lp: 1500, gain: 0.6, attack: 0.03, decay: 0.34, lfoHz: 9, lfoDepth: 0.3 }] }),
+  squeak: Object.freeze({ dur: 0.14, gain: 0.16, layers: [{ type: 'sine', f0: 1500, f1: 2200, gain: 0.6, attack: 0.01, decay: 0.11 }] }),
+  cackle: Object.freeze({ dur: 0.42, gain: 0.24, layers: [{ type: 'saw', f0: 980, f1: 760, lp: 2600, gain: 0.55, attack: 0.005, decay: 0.12 }, { type: 'saw', f0: 820, f1: 620, lp: 2400, gain: 0.5, attack: 0.005, decay: 0.16, delay: 0.17 }] }),
+  gobble: Object.freeze({ dur: 0.6, gain: 0.26, layers: [{ type: 'saw', f0: 620, f1: 330, lp: 1700, gain: 0.6, attack: 0.02, decay: 0.52, lfoHz: 17, lfoDepth: 0.8 }] }),
+  grunt: Object.freeze({ dur: 0.45, gain: 0.26, layers: [{ type: 'saw', f0: 96, f1: 74, lp: 340, gain: 0.8, attack: 0.05, decay: 0.36 }] }),
+  growl: Object.freeze({ dur: 1.3, gain: 0.36, layers: [{ type: 'saw', f0: 84, f1: 66, lp: 420, gain: 0.8, attack: 0.15, decay: 1.05, lfoHz: 21, lfoDepth: 0.45 }, { type: 'noise', f0: 0, lp: 500, gain: 0.25, attack: 0.15, decay: 0.9 }] }),
+  roar: Object.freeze({ dur: 0.9, gain: 0.4, layers: [{ type: 'saw', f0: 150, f1: 88, lp: 700, gain: 0.8, attack: 0.06, decay: 0.78, lfoHz: 14, lfoDepth: 0.3 }, { type: 'noise', f0: 0, bp: 500, q: 0.8, gain: 0.3, attack: 0.05, decay: 0.6 }] }),
+  plop: Object.freeze({ dur: 0.16, gain: 0.16, layers: [{ type: 'sine', f0: 520, f1: 210, gain: 0.6, attack: 0.004, decay: 0.12 }, { type: 'noise', f0: 0, hp: 1500, gain: 0.2, attack: 0.002, decay: 0.05 }] }),
+  flush: Object.freeze({ dur: 0.7, gain: 0.3, layers: [{ type: 'noise', f0: 0, bp: [900, 500], q: 1.2, gain: 0.8, attack: 0.02, decay: 0.62, lfoHz: 19, lfoDepth: 0.85 }] }),
 });
 
 /**
  * @typedef {PlayerState & {
- *   id: number, kind: AnimalKind, yaw: number, targetYaw: number, mode: 'idle'|'walk'|'flee'|'lure'|'bait'|'follow'|'hunt',
+ *   id: number, kind: AnimalKind, yaw: number, targetYaw: number,
+ *   mode: 'idle'|'walk'|'flee'|'lure'|'bait'|'follow'|'hunt'|'warn'|'charge',
  *   timer: number, hurt: number, health: number, walkPhase: number, voiceIn: number,
  *   tamed: boolean, trust: number, calm: number, shorn: number, milked: number, sitting: boolean, ridden: boolean,
  *   homeX: number, homeZ: number, trapped: number, trapT: number, trapCell: [number, number, number]|null, immune: number,
  *   baitIn: number, baitX: number, baitZ: number, biteIn: number, side: 1|-1, speedScale: number, wallSinceAim: boolean,
+ *   variant: number, air: number, zigIn: number, nestIn: number,
+ *   rear: number, warn: number, chase: number, rest: number, maulIn: number, swipe: number,
  * }} Animal
+ * v0.14 (§76 fauna): `variant` 1 = a stag (antlers; saved); `air` > 0 the seconds a flushed bird still flies, < 0 it
+ * is coming down, 0 on the ground; `zigIn` until a rabbit's next swerve; `nestIn` until a hen's next nest (Infinity:
+ * it never lays); the bear's
+ * `rear` 0..1 (how far it has reared up, for the model), `warn` the seconds it has warned, `chase` the seconds of charge
+ * left, `rest` the seconds it leaves the player alone, `maulIn` until it can maul again, `swipe` the swipe's pose time.
  */
 
 /**
@@ -145,6 +298,7 @@ export const SOUNDS = Object.freeze({
  * @property {(q: number, r: number) => number} [groundHeight]
  * @property {(q: number, y: number, r: number) => boolean} [isNaturalGround]
  * @property {(q: number, r: number) => boolean} [isLoadedCell]
+ * @property {(q: number, r: number) => boolean} [streamAt]   v0.14: the column is on a generated stream (fish appear there)
  */
 
 /**
@@ -157,6 +311,12 @@ export const SOUNDS = Object.freeze({
  * @property {{ wolf: Animal, target: * }[]} bites   a tame wolf bit a threat (main applies it)
  * @property {Animal[]} spawned     placed by natural spawning
  * @property {number} despawned
+ * @property {Animal[]} flushed     v0.14 (§76 fauna): birds that took to the air this frame (main: the whirr of wings)
+ * @property {Animal[]} warned      bears that reared up this frame (main: the growl)
+ * @property {Animal[]} charged     bears that began a charge this frame (main: the roar)
+ * @property {Animal[]} mauls       bears that mauled the player this frame (main: BEAR_DAMAGE each; the throw is done here)
+ * @property {{ cell: [number, number, number], refill: boolean }[]} laid   a hen laid a nest in this cell (main writes
+ *   GROUND_NEST there: into AIR, or — `refill` — over the GROUND_NEST_EMPTY that is there)
  */
 
 /** Ray (origin o, unit direction d) against an upright cylinder at feet (cx, y0, cz): entry distance, or −1. */
@@ -206,6 +366,62 @@ export function noticeRange(a, player) {
   return n;
 }
 
+/**
+ * v0.14 (§76 fauna): how near the player may come before a bear rears up (m): noticeRange, but never so near that the
+ * warning would come inside the distance at which it charges at once (a sneaking player is warned too).
+ */
+export function bearRange(a, player) {
+  return Math.max(noticeRange(a, player), BEAR_CHARGE_DIST + BEAR_SNEAK_MARGIN);
+}
+
+/**
+ * v0.14 (§76 fauna): where a fish swims in column (q, r) near height y — the feet height that keeps it FISH_UNDER below
+ * the water surface, never lower than just above the bed — or NaN when there is no water at that height (one cell up or
+ * down counts: a stream steps) or it is shallower than FISH_MIN_WATER. Fish only ever move to where this is a number,
+ * which is what keeps them in the water.
+ * @param {GetBlockFn} getBlock @param {number} q @param {number} r @param {number} y @returns {number}
+ */
+export function fishDepth(getBlock, q, r, y) {
+  let cy = Math.floor(y);
+  if (!isLiquid(getBlock(q, cy, r))) {
+    if (isLiquid(getBlock(q, cy + 1, r))) cy += 1;
+    else if (isLiquid(getBlock(q, cy - 1, r))) cy -= 1;
+    else return NaN;
+  }
+  let top = cy;
+  while (top - cy < 8 && isLiquid(getBlock(q, top + 1, r))) top++;
+  let bottom = cy;
+  while (cy - bottom < 8 && isLiquid(getBlock(q, bottom - 1, r))) bottom--;
+  const surface = top + waterSurfaceHeight(getBlock(q, top, r), getBlock(q, top + 1, r));
+  if (surface - bottom < FISH_MIN_WATER) return NaN;
+  return Math.max(bottom + 0.06, surface - FISH_UNDER);
+}
+
+/** How fast the legs go: radians of walkPhase per metre walked (3.6 when a kind is not listed). Small legs go faster. */
+const STRIDE_RATE = /** @type {Record<string, number>} */ (Object.freeze({ horse: 2.4, cow: 2.4, bear: 2.4, deer: 2.8, rabbit: 5.5, pheasant: 7, turkey: 5 }));
+
+/** How far down a flying bird looks for the ground (cells). */
+const FLIGHT_LOOK_DOWN = 16;
+/**
+ * The height of what lies under (x, z) at or below y: the top of the first solid cell or the surface of the first
+ * water, looking down FLIGHT_LOOK_DOWN cells (y − FLIGHT_LOOK_DOWN when there is nothing). `out.water` says which.
+ * @param {GetBlockFn} getBlock @param {{ water: boolean }} out @returns {number}
+ */
+function groundBelow(getBlock, x, y, z, out) {
+  const [q, r] = worldToHex(x, z);
+  const y0 = Math.floor(y);
+  out.water = false;
+  for (let cy = y0; cy >= y0 - FLIGHT_LOOK_DOWN && cy >= 0; cy--) {
+    const id = getBlock(q, cy, r);
+    if (isSolid(id)) return cy + 1;
+    if (isLiquid(id)) {
+      out.water = true;
+      return cy + 1;
+    }
+  }
+  return y - FLIGHT_LOOK_DOWN;
+}
+
 export class Animals {
   /** @param {() => number} [rng] uniform [0, 1) */
   constructor(rng = Math.random) {
@@ -214,8 +430,16 @@ export class Animals {
     this._rng = rng;
     this._nextId = 1;
     this._spawnIn = HERD_CHECK_S / 3;
+    this._fishIn = FISH_CHECK_S / 2;
     /** @type {AnimalEvents} */
-    this.events = { voices: [], startled: [], caught: [], freed: [], bites: [], spawned: [], despawned: 0 };
+    this.events = {
+      voices: [], startled: [], caught: [], freed: [], bites: [], spawned: [], despawned: 0,
+      flushed: [], warned: [], charged: [], mauls: [], laid: [],
+    };
+    /** how many entries of the carried event lists the last update reported (update drops those first) */
+    this._seen = { freed: 0, flushed: 0, charged: 0 };
+    /** scratch for groundBelow */
+    this._under = { water: false };
     /** @type {[number, number, number]} */
     this._pull = [0, 0, 0];
     this._fires = true;
@@ -268,6 +492,18 @@ export class Animals {
       side: this._rng() < 0.5 ? 1 : -1,
       speedScale: 1,
       wallSinceAim: false,
+      // v0.14 (§76 fauna)
+      variant: 0,
+      air: 0,
+      zigIn: 0,
+      // a laying hen's time to her first nest; Infinity for a bird (or a kind) that never lays
+      nestIn: /** @type {*} */ (sp).nests && this._rng() < NEST_HEN_P ? NEST_FIRST_S[0] + this._rng() * (NEST_FIRST_S[1] - NEST_FIRST_S[0]) : Infinity,
+      rear: 0,
+      warn: 0,
+      chase: 0,
+      rest: 0,
+      maulIn: 0,
+      swipe: 0,
     }));
     this.list.push(a);
     return a;
@@ -297,12 +533,16 @@ export class Animals {
     ev.bites.length = 0;
     ev.spawned.length = 0;
     ev.despawned = 0;
-    const queued = ev.freed.splice(0);
-    if (!(dt > 0)) {
-      for (const f of queued) ev.freed.push(f);
-      return ev;
-    }
-    for (const f of queued) ev.freed.push(f);
+    ev.warned.length = 0;
+    ev.mauls.length = 0;
+    ev.laid.length = 0;
+    // `freed`, `flushed` and `charged` can also be queued BETWEEN updates (remove() frees a snare; wound() flushes a
+    // bird and provokes a bear): those are reported by this update. What the last update already reported goes — it
+    // used to stay in `freed` for good, so a snare that had once let go was reset again the moment it next caught.
+    ev.freed.splice(0, this._seen.freed);
+    ev.flushed.splice(0, this._seen.flushed);
+    ev.charged.splice(0, this._seen.charged);
+    if (!(dt > 0)) return this._reported(ev);
     const player = world.player ?? null;
     const getBlock = world.getBlock;
     this._fires = world.hasCampfires ? !!world.hasCampfires() : true;
@@ -312,17 +552,27 @@ export class Animals {
       if (this._spawnIn <= 0) {
         this._spawnIn = HERD_CHECK_S;
         this._spawnHerd(player, world);
+        this._spawnHerd(player, world, 'small'); // v0.14: the small game is counted by itself
+      }
+      // v0.14 (§76 fauna): schools of fish, where there is a stream
+      if (world.streamAt) {
+        this._fishIn -= dt;
+        if (this._fishIn <= 0) {
+          this._fishIn = FISH_CHECK_S;
+          this._spawnFish(player, world);
+        }
       }
     }
 
     const input = this._input;
     for (let i = this.list.length - 1; i >= 0; i--) {
       const a = this.list[i];
+      const sp = /** @type {*} */ (SPECIES[a.kind]);
       if (a.y < -16) {
         this.remove(a);
         continue;
       }
-      if (player && !a.tamed && !(a.trapped > 0) && Math.hypot(a.x - player.x, a.z - player.z) > DESPAWN_DIST) {
+      if (player && !a.tamed && !(a.trapped > 0) && Math.hypot(a.x - player.x, a.z - player.z) > (sp.despawn ?? DESPAWN_DIST)) {
         this.list.splice(i, 1);
         ev.despawned++;
         continue;
@@ -340,6 +590,22 @@ export class Animals {
         ev.voices.push(a);
       }
       if (a.ridden) continue; // ride() moves it
+
+      // v0.14 (§76 fauna): a fish swims by its own rule (never through stepPlayer) and is gone when its water is.
+      if (sp.water) {
+        if (!this._fish(a, dt, world, player, ev)) {
+          this.list.splice(i, 1);
+          ev.despawned++;
+        }
+        continue;
+      }
+      if (sp.predator) {
+        if (a.rest > 0) a.rest = Math.max(0, a.rest - dt);
+        if (a.maulIn > 0) a.maulIn = Math.max(0, a.maulIn - dt);
+        if (a.swipe > 0) a.swipe = Math.max(0, a.swipe - dt);
+        // the rear-up eases in while it warns and out again afterwards (the model reads `rear`)
+        a.rear += ((a.mode === 'warn' ? 1 : 0) - a.rear) * (1 - Math.exp(-REAR_RATE * dt));
+      }
 
       // Held by a snare: it struggles on the spot until the time is up, or the snare is gone.
       if (a.trapped > 0) {
@@ -362,7 +628,6 @@ export class Animals {
       }
 
       this._unstick(a, getBlock);
-      const sp = SPECIES[a.kind];
       const gait = this._think(a, dt, world, player, ev);
 
       const dYaw = wrapAngle(a.targetYaw - a.yaw);
@@ -386,6 +651,8 @@ export class Animals {
         input.pullY = 0;
         input.pullZ = 0;
       }
+      // v0.14 (§76 fauna): a flushed bird is in the air — it flies instead of walking
+      if (a.air !== 0) this._steerFlight(a, dt, getBlock, input);
       const x0 = a.x;
       const z0 = a.z;
       stepPlayer(a, input, getBlock, dt);
@@ -393,10 +660,23 @@ export class Animals {
       a.sneaking = false;
       a.sprinting = false;
       if (a.hitWall) a.wallSinceAim = true;
-      this._stride(a, x0, z0, dt);
+      if (a.air !== 0) {
+        a.walkPhase = (a.walkPhase + dt * WING_BEAT) % TWO_PI; // the wings beat
+        if (!a.flying) a.air = 0; // it touched down (stepPlayer ends a flight on landing)
+      } else {
+        this._stride(a, x0, z0, dt);
+      }
+      // v0.14: a hen left in peace lays a nest now and then
+      if (sp.nests && !a.tamed) {
+        a.nestIn -= dt;
+        if (a.nestIn <= 0) {
+          const laid = this._layNest(a, world, player, ev);
+          a.nestIn = laid ? NEST_EVERY_S[0] + this._rng() * (NEST_EVERY_S[1] - NEST_EVERY_S[0]) : NEST_RETRY_S;
+        }
+      }
 
-      // A snare underfoot catches a wild animal.
-      if (!a.tamed && a.immune <= 0) {
+      // A snare underfoot catches a wild animal (not a bear: it is too strong for a noose of cord).
+      if (!a.tamed && a.immune <= 0 && sp.snare !== false) {
         const [q, r] = worldToHex(a.x, a.z);
         const y = Math.floor(a.y + 0.05);
         const id = getBlock(q, y, r);
@@ -409,13 +689,21 @@ export class Animals {
         }
       }
     }
+    return this._reported(ev);
+  }
+
+  /** Remember how much of the carried event lists this update reports (see update). @param {AnimalEvents} ev */
+  _reported(ev) {
+    this._seen.freed = ev.freed.length;
+    this._seen.flushed = ev.flushed.length;
+    this._seen.charged = ev.charged.length;
     return ev;
   }
 
   /** The legs: walkPhase advances with the distance walked and settles straight when standing. */
   _stride(a, x0, z0, dt) {
     const stride = Math.hypot(a.x - x0, a.z - z0);
-    a.walkPhase = (a.walkPhase + stride * (a.kind === 'horse' || a.kind === 'cow' ? 2.4 : 3.6)) % TWO_PI;
+    a.walkPhase = (a.walkPhase + stride * (STRIDE_RATE[a.kind] ?? 3.6)) % TWO_PI;
     if (stride < 0.2 * dt) {
       const straight = Math.round(a.walkPhase / Math.PI) * Math.PI;
       a.walkPhase += (straight - a.walkPhase) * (1 - Math.exp(-10 * dt));
@@ -445,19 +733,32 @@ export class Animals {
     if (a.inWater) return this._swim(a, getBlock);
     if (a.tamed) return a.kind === 'wolf' ? this._tameWolf(a, dt, world, player, ev) : this._tameHorse(a, getBlock);
 
+    // v0.14 (§76 fauna): in the air a bird holds the line it took when it flushed.
+    if (a.air !== 0) return 'run';
     const p = player && !player.flying ? player : null;
     const d = p ? Math.hypot(p.x - a.x, p.y - a.y, p.z - a.z) : Infinity;
-    const sp = SPECIES[a.kind];
+    const sp = /** @type {*} */ (SPECIES[a.kind]);
+    // v0.14: the bear does not run from the player — it warns, and charges.
+    if (sp.predator) return this._bear(a, dt, getBlock, p, d, ev);
     const lured = p !== null && !p.sprinting && typeof world.heldKey === 'string' && sp.lure.includes(world.heldKey);
 
     // Running: until the player is far enough (and any hit's time is up).
     if (a.mode === 'flee') {
-      const far = d > sp.notice * CALM_FACTOR;
+      const calmAt = sp.notice * (sp.calm ?? CALM_FACTOR); // v0.14: deer bolt farther than the rest
+      const far = d > calmAt;
       if ((far && a.timer <= 0) || (lured && a.timer <= 0 && d > LURE_STOP)) {
         a.mode = 'idle';
         a.timer = 1 + this._rng() * 2;
       } else {
-        if (p && d < sp.notice * CALM_FACTOR) this._aimAway(a, p.x, p.z);
+        if (sp.zigzag) {
+          // v0.14: a rabbit swerves from side to side as it runs
+          a.zigIn -= dt;
+          if (a.zigIn <= 0) {
+            a.side = a.side > 0 ? -1 : 1;
+            a.zigIn = ZIG_S[0] + this._rng() * (ZIG_S[1] - ZIG_S[0]);
+          }
+        }
+        if (p && d < calmAt) this._aimAway(a, p.x, p.z);
         this._steerSafe(a, getBlock);
         return 'run';
       }
@@ -480,7 +781,7 @@ export class Animals {
     }
     // A baited snare nearby: it wanders over.
     a.baitIn -= dt;
-    if (a.baitIn <= 0) {
+    if (a.baitIn <= 0 && sp.snare !== false) {
       a.baitIn = BAIT_CHECK_S;
       this._findBait(a, getBlock);
     }
@@ -603,21 +904,330 @@ export class Animals {
 
   /** It notices the player and runs; the herd within HERD_ALARM runs with it. */
   _startle(a, fromX, fromZ, ev, seconds = 0) {
+    const sp = /** @type {*} */ (SPECIES[a.kind]);
+    const alarm = sp.alarm ?? HERD_ALARM;
     for (const o of this.list) {
       if (o.kind !== a.kind || o.tamed || o.trapped > 0 || o.ridden) continue;
-      if (o !== a && Math.hypot(o.x - a.x, o.z - a.z) > HERD_ALARM) continue;
+      if (o !== a && Math.hypot(o.x - a.x, o.z - a.z) > alarm) continue;
       const left = o.mode === 'flee' ? Math.max(0, o.timer) : 0;
       if (o.mode !== 'flee' && ev) ev.startled.push(o);
       o.mode = 'flee';
       o.timer = Math.max(left, seconds, 1);
       o.calm = 0;
       this._aimAway(o, fromX, fromZ);
+      // v0.14 (§76 fauna): a spooked bird on the ground takes to the air — a pheasant flies off, a turkey glides a
+      // little way and runs on. (Queued on this.events: a blow between two updates flushes a bird too.)
+      if (sp.flush && o.air === 0 && !o.inWater) {
+        o.air = sp.flush === 'fly' ? FLUSH_S[0] + this._rng() * (FLUSH_S[1] - FLUSH_S[0]) : TURKEY_GLIDE_S;
+        this.events.flushed.push(o);
+      }
     }
   }
 
-  /** Head straight away from (x, z), a little to its own side so a herd fans out. */
+  /** Head straight away from (x, z), a little to its own side so a herd fans out (a rabbit: ZIG_ANGLE to its side). */
   _aimAway(a, x, z) {
-    a.targetYaw = wrapAngle(yawToward(a.x, a.z, x, z) + Math.PI + a.side * 0.25);
+    const off = /** @type {*} */ (SPECIES[a.kind]).zigzag ? ZIG_ANGLE : 0.25;
+    a.targetYaw = wrapAngle(yawToward(a.x, a.z, x, z) + Math.PI + a.side * off);
+  }
+
+  // ---- v0.14 (§76 fauna): flight, nests, the bear, fish -------------------------------------------------------------
+
+  /**
+   * One frame of a flushed bird's flight, written into `input` before stepPlayer: the body flies (physics `flying`: no
+   * gravity, config.FLY_SPEED along its yaw) and its height is steered through the vertical pull — toward its species'
+   * `cruise` height over whatever lies below while `air` lasts, then down until it lands (stepPlayer ends the flight
+   * when it touches the ground). A wall or a trunk ahead is climbed over; water ends the flight (it swims ashore).
+   * It bursts UP first: it only flies forward once it has turned to its line (a bird that faced the player when it was
+   * spooked rises on the spot and wheels round, instead of flying at them).
+   */
+  _steerFlight(a, dt, getBlock, input) {
+    if (a.inWater) {
+      a.flying = false;
+      a.air = 0;
+      return;
+    }
+    const sp = /** @type {*} */ (SPECIES[a.kind]);
+    a.air -= dt;
+    if (a.air === 0) a.air = -1e-6; // 0 means "on the ground": keep it flying until it lands
+    a.flying = true;
+    input.forward = Math.abs(wrapAngle(a.targetYaw - a.yaw)) < 1.2 ? 1 : 0;
+    input.sneak = false;
+    input.sprint = false;
+    input.jump = false;
+    const under = this._under;
+    const ground = groundBelow(getBlock, a.x, a.y, a.z, under);
+    let vy;
+    if (a.hitWall) vy = FLUSH_CLIMB;
+    else if (a.air > 0 || (under.water && a.air > -FLUSH_OVER_WATER_S)) vy = Math.max(-FLUSH_SINK, Math.min(FLUSH_CLIMB, (ground + sp.cruise - a.y) * 4));
+    else vy = -FLUSH_SINK;
+    // physics turns a flying body's pull into a target speed of pull / GROUND_ACCEL
+    input.pullY += vy * GROUND_ACCEL;
+  }
+
+  /**
+   * A hen's try at a nest: only a calm bird on the ground, in an empty cell with solid ground under it, with nobody
+   * within NEST_PRIVACY. An empty nest within NEST_SPACING cells is laid in again; a full one that near means no new nest.
+   * @returns {boolean} it laid (the cell is queued in `ev.laid`; main writes the block)
+   */
+  _layNest(a, world, player, ev) {
+    if (a.air !== 0 || a.trapped > 0 || !a.onGround || a.inWater || (a.mode !== 'idle' && a.mode !== 'walk')) return false;
+    if (player && Math.hypot(player.x - a.x, player.z - a.z) < NEST_PRIVACY) return false;
+    const getBlock = world.getBlock;
+    const [q0, r0] = worldToHex(a.x, a.z);
+    const y0 = Math.floor(a.y + 0.05);
+    /** @type {[number, number, number]|null} */
+    let empty = null;
+    for (let dq = -NEST_SPACING; dq <= NEST_SPACING; dq++) {
+      for (let dr = Math.max(-NEST_SPACING, -dq - NEST_SPACING); dr <= Math.min(NEST_SPACING, -dq + NEST_SPACING); dr++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          const id = getBlock(q0 + dq, y0 + dy, r0 + dr);
+          if (id === BLOCK.GROUND_NEST) return false;
+          if (id === BLOCK.GROUND_NEST_EMPTY && !empty) empty = [q0 + dq, y0 + dy, r0 + dr];
+        }
+      }
+    }
+    if (empty) {
+      ev.laid.push({ cell: empty, refill: true });
+      return true;
+    }
+    if (getBlock(q0, y0, r0) !== BLOCK.AIR || !isSolid(getBlock(q0, y0 - 1, r0))) return false;
+    ev.laid.push({ cell: [q0, y0, r0], refill: false });
+    return true;
+  }
+
+  /**
+   * The bear's mind (see the BEAR_* constants): wander → warn (rear up, growl) → charge → give up and rest.
+   * @param {Animal} a @param {number} dt @param {GetBlockFn} getBlock @param {PlayerState|null} p the player on foot
+   * @param {number} d the distance to them @param {AnimalEvents} ev
+   * @returns {'stand'|'amble'|'run'}
+   */
+  _bear(a, dt, getBlock, p, d, ev) {
+    if (a.mode === 'charge') {
+      a.chase -= dt;
+      if (!p || a.chase <= 0 || d > BEAR_GIVE_UP) {
+        // It gives up: it turns away and leaves the player alone for a while.
+        a.mode = 'idle';
+        a.timer = 1.5 + this._rng() * 2;
+        a.rest = BEAR_REST_S;
+        a.chase = 0;
+        return 'stand';
+      }
+      a.targetYaw = yawToward(a.x, a.z, p.x, p.z);
+      if (this._inReach(a, p, getBlock)) {
+        if (a.maulIn <= 0) this._maul(a, p, ev);
+        return 'stand';
+      }
+      // it has just mauled: it gathers itself before it comes on again (the moment to run)
+      if (a.maulIn > BEAR_MAUL_S - BEAR_RECOVER_S) return 'stand';
+      return a.onGround && !this._safeAhead(a, getBlock) ? 'stand' : 'run';
+    }
+    if (!p || a.rest > 0) {
+      if (a.mode === 'warn') {
+        a.mode = 'idle';
+        a.timer = 1;
+      }
+      return this._wander(a, getBlock);
+    }
+    const range = bearRange(a, p);
+    if (a.mode === 'warn') {
+      a.warn += dt;
+      a.targetYaw = yawToward(a.x, a.z, p.x, p.z);
+      if (d < BEAR_CHARGE_DIST) {
+        this._provoke(a);
+      } else if (a.warn >= BEAR_WARN_S) {
+        // The warning is over: a player who has backed away is left alone; one who has not is charged.
+        if (d < range * BEAR_BACK_OFF) {
+          this._provoke(a);
+        } else {
+          a.mode = 'idle';
+          a.timer = 1 + this._rng() * 2;
+        }
+      }
+      return 'stand';
+    }
+    if (d < range) {
+      a.mode = 'warn';
+      a.warn = 0;
+      a.targetYaw = yawToward(a.x, a.z, p.x, p.z);
+      ev.warned.push(a);
+      return 'stand';
+    }
+    return this._wander(a, getBlock);
+  }
+
+  /** The bear charges (queued on this.events: a blow between two updates provokes it too). A blow starts the chase again. */
+  _provoke(a) {
+    if (a.mode !== 'charge') this.events.charged.push(a);
+    a.mode = 'charge';
+    a.chase = BEAR_CHASE_S;
+    a.rest = 0;
+    a.warn = 0;
+  }
+
+  /** The player is within the bear's reach: BEAR_REACH away, at its height, with no wall between them. */
+  _inReach(a, p, getBlock) {
+    const dx = p.x - a.x;
+    const dz = p.z - a.z;
+    if (dx * dx + dz * dz > BEAR_REACH * BEAR_REACH) return false;
+    if (!(a.y < p.y + (p.height ?? PLAYER_HEIGHT) && p.y < a.y + a.height + 0.3)) return false;
+    const cy = Math.floor((a.y + p.y) / 2 + 1);
+    for (let k = 1; k <= 2; k++) {
+      const [q, r] = worldToHex(a.x + (dx * k) / 3, a.z + (dz * k) / 3);
+      if (isSolid(getBlock(q, cy, r))) return false;
+    }
+    return true;
+  }
+
+  /** The maul: the player is thrown BEAR_PUSH away and BEAR_LIFT up (main takes BEAR_DAMAGE health for `ev.mauls`). */
+  _maul(a, p, ev) {
+    let dx = p.x - a.x;
+    let dz = p.z - a.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 1e-6) [dx, dz] = yawToForward(a.yaw);
+    else {
+      dx /= d;
+      dz /= d;
+    }
+    p.vx = dx * BEAR_PUSH;
+    p.vz = dz * BEAR_PUSH;
+    p.vy = Math.max(p.vy, BEAR_LIFT);
+    p.onGround = false;
+    a.maulIn = BEAR_MAUL_S;
+    a.swipe = BEAR_SWIPE_S;
+    ev.mauls.push(a);
+  }
+
+  /**
+   * One frame of a fish. It keeps to the water: it only ever moves to a point where fishDepth is a number, turning
+   * aside (or holding still, cornered) where the water ends. @returns {boolean} false when its own cell has no water
+   * left for it (it is gone)
+   */
+  _fish(a, dt, world, player, ev) {
+    const getBlock = world.getBlock;
+    const sp = SPECIES[a.kind];
+    const [q, r] = worldToHex(a.x, a.z);
+    const depth = fishDepth(getBlock, q, r, a.y + a.height / 2);
+    if (Number.isNaN(depth)) return false;
+    a.y += (depth - a.y) * (1 - Math.exp(-8 * dt)); // a stream steps down: it eases to the new level
+    a.vy = 0;
+    a.inWater = true;
+    a.onGround = false;
+    a.timer -= dt;
+    const p = player && !player.flying ? player : null;
+    const d = p ? Math.hypot(p.x - a.x, p.y - a.y, p.z - a.z) : Infinity;
+    let speed = 0;
+    if (a.mode === 'flee' && a.timer <= 0) {
+      // The dart is over: it holds still, wary, before it can dart again.
+      a.mode = 'idle';
+      a.timer = FISH_REST_S + this._rng();
+      a.calm = FISH_REST_S;
+    }
+    if (a.mode !== 'flee' && p && a.calm <= 0 && d < noticeRange(a, p)) this._startle(a, p.x, p.z, ev, FISH_DART_S);
+    if (a.mode === 'flee') {
+      speed = FISH_DART;
+    } else {
+      if (a.timer <= 0) {
+        if (a.mode === 'idle') {
+          a.mode = 'walk';
+          a.targetYaw = wrapAngle(a.yaw + (this._rng() * 2 - 1) * Math.PI);
+          const mate = this._nearestKin(a); // the school keeps together
+          if (mate && this._rng() < 0.6 && Math.hypot(mate.x - a.x, mate.z - a.z) > 2) a.targetYaw = yawToward(a.x, a.z, mate.x, mate.z);
+          a.timer = 1 + this._rng() * 3;
+        } else {
+          a.mode = 'idle';
+          a.timer = 1 + this._rng() * 3;
+        }
+      }
+      if (a.mode === 'walk') speed = FISH_CRUISE;
+    }
+    if (speed > 0 && !this._fishWay(a, a.targetYaw, getBlock)) {
+      // Water ends that way: swing to the nearest heading that stays in it, or hold still.
+      let found = false;
+      for (const turn of [0.6, -0.6, 1.2, -1.2, 1.9, -1.9, 2.6, -2.6, Math.PI]) {
+        const yaw = wrapAngle(a.targetYaw + turn * a.side);
+        if (this._fishWay(a, yaw, getBlock)) {
+          a.targetYaw = yaw;
+          found = true;
+          break;
+        }
+      }
+      if (!found) speed = 0;
+    }
+    const dYaw = wrapAngle(a.targetYaw - a.yaw);
+    const maxTurn = sp.turn * dt;
+    a.yaw = wrapAngle(a.yaw + Math.max(-maxTurn, Math.min(maxTurn, dYaw)));
+    let moved = 0;
+    if (speed > 0 && Math.abs(wrapAngle(a.targetYaw - a.yaw)) < 1.2 && this._fishWay(a, a.yaw, getBlock)) {
+      const [fx, fz] = yawToForward(a.yaw);
+      a.x += fx * speed * dt;
+      a.z += fz * speed * dt;
+      moved = speed;
+    }
+    a.vx = 0;
+    a.vz = 0;
+    a.walkPhase = (a.walkPhase + dt * (3 + moved * 4)) % TWO_PI; // the tail beats, faster when it darts
+    return true;
+  }
+
+  /** There is water for a fish a body's length ahead of `a` along `yaw` (and so along the whole step it takes). */
+  _fishWay(a, yaw, getBlock) {
+    const [fx, fz] = yawToForward(yaw);
+    const lead = a.radius + 0.22;
+    const [q, r] = worldToHex(a.x + fx * lead, a.z + fz * lead);
+    return !Number.isNaN(fishDepth(getBlock, q, r, a.y + a.height / 2));
+  }
+
+  /**
+   * Schools of fish: one try per check. A school of the fish's `herd` size appears in stream water (world.streamAt)
+   * FISH_MIN..FISH_MAX from the player while fewer than FISH_TARGET fish are within FISH_RADIUS (and FISH_CAP in all).
+   * @returns {number} fish placed
+   */
+  _spawnFish(player, world) {
+    if (!world.streamAt || !world.isLoadedCell || !world.groundHeight) return 0;
+    let near = 0;
+    let total = 0;
+    for (const a of this.list) {
+      if (!(/** @type {*} */ (SPECIES[a.kind]).water)) continue;
+      total++;
+      if (Math.hypot(a.x - player.x, a.z - player.z) <= FISH_RADIUS) near++;
+    }
+    if (near >= FISH_TARGET || total >= FISH_CAP || this.list.length >= ANIMAL_MAX || this._rng() >= FISH_CHANCE) return 0;
+    const sp = SPECIES.fish;
+    for (let k = 0; k < FISH_TRIES; k++) {
+      const ang = this._rng() * TWO_PI;
+      const d = FISH_MIN + this._rng() * (FISH_MAX - FISH_MIN);
+      const [q, r] = worldToHex(player.x + Math.cos(ang) * d, player.z + Math.sin(ang) * d);
+      if (!world.isLoadedCell(q, r) || !world.streamAt(q, r) || Number.isNaN(this._fishSpot(world, q, r))) continue;
+      const n = sp.herd[0] + Math.floor(this._rng() * (sp.herd[1] - sp.herd[0] + 1));
+      let placed = 0;
+      for (let m = 0; m < n * 4 && placed < n && total + placed < FISH_CAP && this.list.length < ANIMAL_MAX; m++) {
+        const mq = m === 0 ? q : q + Math.round((this._rng() * 2 - 1) * 2);
+        const mr = m === 0 ? r : r + Math.round((this._rng() * 2 - 1) * 2);
+        if (!world.isLoadedCell(mq, mr)) continue;
+        const y = this._fishSpot(world, mq, mr);
+        if (Number.isNaN(y)) continue;
+        const [x, z] = hexToWorld(mq, mr);
+        // a little off the middle of the cell, so a school in one cell is not one fish
+        const a = this.spawn('fish', x + (this._rng() - 0.5) * 0.4, y, z + (this._rng() - 0.5) * 0.4, this._rng() * TWO_PI);
+        if (!a) break;
+        this.events.spawned.push(a);
+        placed++;
+      }
+      if (placed > 0) return placed;
+    }
+    return 0;
+  }
+
+  /** Where a fish may be put in column (q, r): its swim height in the water lying on the generated ground, or NaN. */
+  _fishSpot(world, q, r) {
+    const h = world.groundHeight(q, r);
+    if (!(h >= 0)) return NaN;
+    const getBlock = world.getBlock;
+    // the stream's water lies in the bed: on the generated height or a cell or two under it
+    for (let y = h + 1; y >= h - 3; y--) {
+      if (isLiquid(getBlock(q, y, r))) return fishDepth(getBlock, q, r, y);
+    }
+    return NaN;
   }
 
   /** Running at an edge, water, a wall or a fire: swing to the clearer side instead of stopping. */
@@ -720,12 +1330,25 @@ export class Animals {
       return 'dead';
     }
     a.hurt = ANIMAL_HURT_S;
+    const sp = /** @type {*} */ (SPECIES[a.kind]);
+    if (sp.water) {
+      // v0.14 (§76 fauna): a fish is not knocked about (it stays in its water); it and its school dart off
+      this._startle(a, fromX, fromZ, null, FISH_DART_S);
+      return 'hit';
+    }
     if (!(a.trapped > 0) && !a.ridden) {
       let dx = a.x - fromX;
       let dz = a.z - fromZ;
       const d = Math.hypot(dx, dz) || 1;
       dx /= d;
       dz /= d;
+      if (sp.predator) {
+        // v0.14: a blow barely moves a bear, and it does not run: it charges
+        a.vx = dx * ANIMAL_KNOCKBACK * BEAR_KNOCK;
+        a.vz = dz * ANIMAL_KNOCKBACK * BEAR_KNOCK;
+        this._provoke(a);
+        return 'hit';
+      }
       a.vx = dx * ANIMAL_KNOCKBACK;
       a.vz = dz * ANIMAL_KNOCKBACK;
       a.vy = Math.max(a.vy, 4);
@@ -846,7 +1469,9 @@ export class Animals {
     let bestT = maxDist;
     for (const a of this.list) {
       if (a.ridden) continue;
-      const t = rayCylinder(ox, oy, oz, dx, dy, dz, a.x, a.y, a.z, a.radius + 0.06, a.height);
+      // v0.14: a species' `pad` widens its target all round (a small fish under water would else be a pixel to aim at)
+      const pad = /** @type {*} */ (SPECIES[a.kind]).pad ?? 0;
+      const t = rayCylinder(ox, oy, oz, dx, dy, dz, a.x, a.y - pad, a.z, a.radius + 0.06 + pad, a.height + 2 * pad);
       if (t >= 0 && t < bestT) {
         bestT = t;
         best = a;
@@ -858,20 +1483,32 @@ export class Animals {
   /**
    * Natural herds: one try per check. A herd of a kind the biome grows appears HERD_MIN..HERD_MAX from the player on
    * natural ground with two open cells above, while fewer than HERD_TARGET wild animals are within HERD_RADIUS.
+   * v0.14 (§76 fauna): per `pool` — the herds count only the big animals (HERD_CHANCE, HERD_TARGET), the small game
+   * only itself (SMALL_CHANCE, SMALL_TARGET) — and no second bear comes while BEAR_NEAR are about.
+   * @param {PlayerState} player @param {AnimalWorld} world @param {SpawnPool} [pool]
    * @returns {number} animals placed
    */
-  _spawnHerd(player, world) {
+  _spawnHerd(player, world, pool = 'herd') {
     let near = 0;
-    for (const a of this.list) if (!a.tamed && Math.hypot(a.x - player.x, a.z - player.z) <= HERD_RADIUS) near++;
-    if (near >= HERD_TARGET || this.list.length >= ANIMAL_MAX || this._rng() >= HERD_CHANCE) return 0;
+    let bears = 0;
+    for (const a of this.list) {
+      if (a.tamed || poolOf(a.kind) !== pool || Math.hypot(a.x - player.x, a.z - player.z) > HERD_RADIUS) continue;
+      near++;
+      if (/** @type {*} */ (SPECIES[a.kind]).predator) bears++;
+    }
+    const target = pool === 'small' ? SMALL_TARGET : HERD_TARGET;
+    const chance = pool === 'small' ? SMALL_CHANCE : HERD_CHANCE;
+    if (near >= target || this.list.length >= ANIMAL_MAX || this._rng() >= chance) return 0;
     for (let k = 0; k < HERD_TRIES; k++) {
       const ang = this._rng() * TWO_PI;
       const d = HERD_MIN + this._rng() * (HERD_MAX - HERD_MIN);
       const [q, r] = worldToHex(player.x + Math.cos(ang) * d, player.z + Math.sin(ang) * d);
       const weights = HERD_WEIGHTS[/** @type {number} */ (/** @type {*} */ (world).getBiome(q, r))];
       if (!weights) continue;
-      const kind = this._pickKind(weights);
+      const kind = this._pickKind(weights, pool);
+      if (!kind) continue;
       const sp = SPECIES[kind];
+      if (/** @type {*} */ (sp).predator && bears >= BEAR_NEAR) continue;
       const n = sp.herd[0] + Math.floor(this._rng() * (sp.herd[1] - sp.herd[0] + 1));
       let placed = 0;
       for (let m = 0; m < n * 3 && placed < n && this.list.length < ANIMAL_MAX; m++) {
@@ -883,6 +1520,7 @@ export class Animals {
         if (this.list.some((o) => Math.hypot(o.x - x, o.z - z) < 1)) continue;
         const a = this.spawn(kind, x, fy, z, this._rng() * TWO_PI);
         if (!a) break;
+        if (kind === 'deer' && placed === 0) a.variant = 1; // v0.14: every herd of deer has its stag
         this.events.spawned.push(a);
         placed++;
       }
@@ -891,16 +1529,21 @@ export class Animals {
     return 0;
   }
 
-  /** @param {Record<string, number>} weights @returns {AnimalKind} */
-  _pickKind(weights) {
+  /**
+   * A kind by the biome's weights, among the kinds of `pool` only (v0.14).
+   * @param {Record<string, number>} weights @param {SpawnPool} [pool] @returns {AnimalKind|null} null: none of that pool here
+   */
+  _pickKind(weights, pool = 'herd') {
+    const kinds = Object.keys(weights).filter((k) => poolOf(k) === pool);
     let total = 0;
-    for (const w of Object.values(weights)) total += w;
+    for (const k of kinds) total += weights[k];
+    if (!(total > 0)) return null;
     let roll = this._rng() * total;
-    for (const [k, w] of Object.entries(weights)) {
-      roll -= w;
+    for (const k of kinds) {
+      roll -= weights[k];
       if (roll < 0) return /** @type {AnimalKind} */ (k);
     }
-    return /** @type {AnimalKind} */ (Object.keys(weights)[0]);
+    return /** @type {AnimalKind} */ (kinds[0]);
   }
 
   /** The feet y an animal may appear at in column (q, r): loaded, natural ground, two open cells above, room. Else null. */
@@ -930,6 +1573,7 @@ export class Animals {
         o.tp = Math.ceil(a.trapped);
         o.tc = [a.trapCell[0], a.trapCell[1], a.trapCell[2]];
       }
+      if (a.variant === 1) o.v = 1; // v0.14: a stag stays a stag
       return o;
     });
   }
@@ -938,6 +1582,9 @@ export class Animals {
   load(list) {
     this.clear();
     this.events.freed.length = 0;
+    this.events.flushed.length = 0;
+    this.events.charged.length = 0;
+    this._reported(this.events);
     const { animals } = validateAnimalsJSON(list);
     for (const o of animals) {
       const a = this.spawn(/** @type {AnimalKind} */ (o.k), o.x, o.y, o.z, o.yaw);
@@ -953,6 +1600,7 @@ export class Animals {
         a.trapT = 1;
         a.trapCell = [o.tc[0], o.tc[1], o.tc[2]];
       }
+      a.variant = o.v === 1 ? 1 : 0;
     }
   }
 }
@@ -963,8 +1611,10 @@ function round2(v) {
 }
 
 /**
- * The `animals` save field in canonical form: `[{ k, x, y, z, yaw, h, t?, tr?, s?, sit?, tp?, tc? }]`, at most ANIMAL_MAX;
- * bad entries are dropped with a warning.
+ * The `animals` save field in canonical form: `[{ k, x, y, z, yaw, h, t?, tr?, s?, sit?, tp?, tc?, v? }]`, at most
+ * ANIMAL_MAX; bad entries are dropped with a warning. v0.14 (§76 fauna): the new kinds are entries like any other, `v: 1`
+ * marks a stag, and a save from before (four kinds, at most 24) reads exactly as it did. What a bird, a bear or a fish
+ * was doing (flying, charging, darting) is not saved: it starts calm.
  * @param {*} raw
  * @returns {{ animals: *[], warnings: string[] }}
  */
@@ -1002,6 +1652,7 @@ export function validateAnimalsJSON(raw) {
       e.tp = Math.min(TRAP_HOLD_S, o.tp);
       e.tc = [o.tc[0], o.tc[1], o.tc[2]];
     }
+    if (o.v === 1 && o.k === 'deer') e.v = 1;
     animals.push(e);
   }
   return { animals, warnings };

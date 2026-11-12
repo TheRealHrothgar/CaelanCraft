@@ -24,7 +24,7 @@ import {
   SIDE_FACE_COUNT,
 } from './hex.js';
 import {
-  BLOCK, BIOME, TILE, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed, isWater, waterSurfaceHeight, getBlockShape,
+  BLOCK, BIOME, TILE, isOpaque, shouldRenderFace, getRenderLayer, getFaceTile, tileToUV, isMeshed, isWater, waterLevel, waterSurfaceHeight, getBlockShape,
   flintAt,
 } from './blocks.js';
 import { FULL_SKY, LIGHT_EMISSION } from './light.js';
@@ -102,8 +102,13 @@ const TINTED = new Uint8Array(256 * FACE_COUNT);
  * no fake surface ledge.
  */
 const FREE_SURFACE = new Uint8Array(256);
-/** WET[id] = 1 for the water family (WATER, WATER_FLOW_1..6, WATER_FALL): culled against each other by surface height. */
+/**
+ * WET[id] = 1 for the water family (WATER, WATER_FLOW_1..6, WATER_FALL, and TAINTED_WATER since §76): culled against each
+ * other by surface height — so fresh and tainted water side by side show no wall between them.
+ */
 const WET = new Uint8Array(256);
+/** FULL_WATER[id] = 1 for a full water cell: a source (WATER, TAINTED_WATER) or falling water (level 7). */
+const FULL_WATER = new Uint8Array(256);
 /** SURFACE[id] = waterSurfaceHeight(id, AIR): the free surface of a water cell with no water above it (§10.2 step 1). */
 const SURFACE = new Float64Array(256);
 /** SHAPE[id] (BlockDef.shape): 0 a hexagonal prism, SHAPE_CROSS three crossed pictures, SHAPE_DECAL a picture on the floor. */
@@ -118,6 +123,7 @@ for (let id = 0; id < 256; id++) {
   UNMESHED[id] = isMeshed(id) ? 0 : 1;
   FREE_SURFACE[id] = id === BLOCK.AIR || !isMeshed(id) ? 1 : 0;
   WET[id] = isWater(id) ? 1 : 0;
+  FULL_WATER[id] = waterLevel(id) === 7 ? 1 : 0;
   SURFACE[id] = WET[id] ? waterSurfaceHeight(id, BLOCK.AIR) : 1;
   const shape = getBlockShape(id);
   SHAPE[id] = shape === 'cross' ? SHAPE_CROSS : shape === 'decal' ? SHAPE_DECAL : shape === 'litter' ? SHAPE_LITTER : 0;
@@ -142,7 +148,7 @@ for (let a = 0; a < 256; a++) {
  * nothing between them (a glass floor over a pool shows no honeycomb of coincident strips).
  */
 function waterTopY(a, above) {
-  if (WET[above] === 1 || (FREE_SURFACE[above] === 0 && (a === BLOCK.WATER || a === BLOCK.WATER_FALL))) return 1;
+  if (WET[above] === 1 || (FREE_SURFACE[above] === 0 && FULL_WATER[a] === 1)) return 1;
   return SURFACE[a];
 }
 
@@ -831,6 +837,46 @@ function emitBox(bld, x, y, z, hx, hy, hz, yaw, pitch, uv, tu, tv, own, floorY) 
   bld.faceCount += faces;
 }
 
+// v0.14 (§76 fauna): the ground nest, in the litter's style
+const NEST_UV = Float32Array.from(tileToUV(TILE.LITTER_NEST));
+const EGG_UV = Float32Array.from(tileToUV(TILE.LITTER_EGG));
+/**
+ * The nest's wall: NEST_WALL.count bundles of dry grass in a ring of radius `r` (m), each `len` long, `thick` wide and
+ * `h` high; its bed is a flat pad `bed` across and `bedH` thick. The eggs: NEST_EGGS of them, `eggR` from the middle,
+ * each `egg` wide and `eggH` high with a smaller cap on top (so it reads as rounded, like the stones).
+ */
+export const NEST_WALL = Object.freeze({ count: 6, r: 0.27, len: 0.33, thick: 0.11, h: 0.13, bed: 0.36, bedH: 0.045 });
+export const NEST_EGGS = 3;
+export const NEST_EGG = Object.freeze({ r: 0.085, w: 0.11, h: 0.1, cap: 0.6, capH: 0.045 });
+
+/**
+ * A Ground Nest (BLOCK.GROUND_NEST / GROUND_NEST_EMPTY): a low ring of grass bundles round a bed, and — `eggs` — three
+ * pale eggs lying in it. Turned per cell like the rest of the litter.
+ */
+function emitNest(bld, wq, wr, ly, cx, cz, eggs, turn, own) {
+  const W = NEST_WALL;
+  emitBox(bld, cx, ly + W.bedH / 2, cz, W.bed / 2, W.bedH / 2, W.bed / 2, turn, 0, NEST_UV, 9, 9, own, ly);
+  for (let i = 0; i < W.count; i++) {
+    const ang = turn + (i * Math.PI * 2) / W.count;
+    const h = W.h * (0.85 + 0.3 * cellHash(wq, wr, 40 + i)); // an uneven rim
+    // yaw π/2 − ang lays the bundle along the ring (emitBox turns a box's long x axis to (cos yaw, −sin yaw))
+    emitBox(bld, cx + Math.cos(ang) * W.r, ly + h / 2, cz + Math.sin(ang) * W.r, W.len / 2, h / 2, W.thick / 2, Math.PI / 2 - ang, 0, NEST_UV,
+      Math.floor(cellHash(wq, wr, 46 + i) * 8), Math.floor(cellHash(wq, wr, 52 + i) * 8), own, ly);
+  }
+  if (!eggs) return;
+  const E = NEST_EGG;
+  for (let i = 0; i < NEST_EGGS; i++) {
+    const ang = turn + 0.5 + (i * Math.PI * 2) / NEST_EGGS;
+    const x = cx + Math.cos(ang) * E.r;
+    const z = cz + Math.sin(ang) * E.r;
+    const yaw = cellHash(wq, wr, 58 + i) * Math.PI;
+    const y0 = ly + W.bedH;
+    // floorY far below: an egg lies on the bed, not on the ground — no contact shade on its sides
+    emitBox(bld, x, y0 + E.h / 2, z, E.w / 2, E.h / 2, E.w / 2, yaw, 0, EGG_UV, i * 4, i * 3, own, ly - 1);
+    emitBox(bld, x, y0 + E.h + E.capH / 2, z, (E.w * E.cap) / 2, E.capH / 2, (E.w * E.cap) / 2, yaw, 0, EGG_UV, i * 4 + 2, i * 3 + 1, own, ly - 1);
+  }
+}
+
 /**
  * Ground litter (BlockDef.shape 'litter', CONTRACTS §75): LOOSE_STONES as three stones of different sizes (one of them a
  * dark FLINT nodule where blocks.flintAt says the column holds flint), FALLEN_BRANCHES as sticks lying across each other
@@ -839,6 +885,10 @@ function emitBox(bld, x, y, z, hx, hy, hz, yaw, pitch, uv, tu, tv, own, floorY) 
  */
 function emitLitter(bld, wq, wr, ly, cx, cz, a, own) {
   const turn = cellHash(wq, wr, 3) * Math.PI * 2;
+  if (a === BLOCK.GROUND_NEST || a === BLOCK.GROUND_NEST_EMPTY) {
+    emitNest(bld, wq, wr, ly, cx, cz, a === BLOCK.GROUND_NEST, turn, own);
+    return;
+  }
   if (a === BLOCK.LOOSE_STONES) {
     const flint = flintAt(wq, wr);
     for (let i = 0; i < LITTER_ROCKS.length; i++) {

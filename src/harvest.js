@@ -37,6 +37,8 @@ import { forEachEditedCell } from './coords.js';
  * `deep`: isDeep(y) of the cell; `decided[key]`: a chance item's outcome fixed by the caller (not rolled: §70 flint)
  */
 
+/** v0.14 (§76): the chance that digging a cell of wild gravel gives a Flint. */
+export const GRAVEL_FLINT_P = 0.12;
 /** Breaking with the head under water takes this many times longer (§6.1). */
 export const UNDERWATER_DIG_FACTOR = 2.5;
 /** No block breaks faster than this (s). */
@@ -99,10 +101,14 @@ set([B.DIRT], 0.9, 'shovel', 0, SELF_DROPS);
 set([B.GRASS_BLOCK], 1.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('plant_fibre', 1, { p: 0.2, ...natural }))]]);
 set([B.SNOWY_GRASS], 1.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('snow', 1, natural))]]);
 set([B.SAND, B.RED_SAND], 0.8, 'shovel', 0, SELF_DROPS);
-set([B.GRAVEL], 1.2, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('rock', 2))]]);
-// v0.13 (§75): Flinty Gravel is where flint comes from — the gravel (or the rock) and one Flint, with or without a shovel.
-set([B.FLINT_GRAVEL], 1.2, 'shovel', 0, [[when('shovel', drop('gravel')), when(null, drop('rock', 2))], always(drop('flint', 1))]);
-set([B.CLAY], 1.4, 'shovel', 0, [always(drop('clay_lump', 6))]);
+// v0.14 (§76): digging WILD gravel sometimes turns up a Flint (GRAVEL_FLINT_P), with or without a shovel — this is where
+// most flint comes from. Gravel you put down yourself, or that fell, gives none, so it cannot be dug over and over.
+// FLINT_GRAVEL is v0.13's withdrawn block: the same rule (its gravel is plain gravel).
+set([B.GRAVEL, B.FLINT_GRAVEL], 1.2, 'shovel', 0, [
+  [when('shovel', drop('gravel')), when(null, drop('rock', 2))], always(drop('flint', 1, { p: GRAVEL_FLINT_P, ...natural })),
+]);
+// v0.14 (§77): clay needs a shovel (the Wooden Shovel will do): that is what the first shovel is for, and it gates the Kiln.
+set([B.CLAY], 1.4, 'shovel', 1, [always(drop('clay_lump', 6))]);
 set([B.SNOW_BLOCK], 0.5, 'shovel', 0, [always(drop('snow', 6))]);
 set([B.ICE], 1.0, 'pick', 0, [[when('pick', drop('ice_chunk', 2)), when(null, drop('ice_chunk', 1))]]);
 set([B.PACKED_ICE], 2.0, 'pick', 2, [always(drop('ice_chunk', 3))]);
@@ -131,6 +137,19 @@ set([B.TUBER_PLANT], 0.4, 'shovel', 0, [[
   when('shovel', drop('wild_tuber', [2, 3]), drop('plant_fibre', 1)),
   when(null, drop('wild_tuber', 1), drop('plant_fibre', 1)),
 ]]);
+// v0.14 (§76 flora): the wild plants of generation 3. R picks each of them (PICKABLE below); breaking one by hand gives
+// what a pick gives and destroys the plant. A shovel digs up more roots, and lifts a thicket, a bush or a Healwort whole
+// (its item places the picked variant, which must regrow). Breaking a Healwort by hand is the mistake to avoid.
+set([B.HONEYCAP_MUSHROOM], 0.2, null, 0, [always(drop('honeycap', [1, 2]))]);
+set([B.FRECKLECAP_MUSHROOM], 0.2, null, 0, [always(drop('frecklecap', [1, 2]))]);
+set([B.ONION_PLANT], 0.4, 'shovel', 0, [[when('shovel', drop('wild_onion', [2, 3])), when(null, drop('wild_onion', [1, 2]))]]);
+set([B.CARROT_PLANT], 0.4, 'shovel', 0, [[when('shovel', drop('wild_carrot', [1, 2])), when(null, drop('wild_carrot', 1))]]);
+set([B.HAZEL_THICKET], 0.6, 'shovel', 0, [[when('shovel', drop('hazel_thicket'))], always(drop('hazelnuts', [1, 3])), always(drop('stick', [2, 3]))]);
+set([B.HAZEL_THICKET_BARE], 0.6, 'shovel', 0, [[when('shovel', drop('hazel_thicket'))], always(drop('stick', [2, 3]))]);
+set([B.CRAB_APPLE_BUSH], 0.6, 'shovel', 0, [[when('shovel', drop('crab_apple_bush'))], always(drop('crab_apple', [2, 3])), always(drop('stick', [1, 2]))]);
+set([B.CRAB_APPLE_BUSH_BARE], 0.6, 'shovel', 0, [[when('shovel', drop('crab_apple_bush'))], always(drop('stick', [1, 2]))]);
+set([B.HEALWORT_PLANT], 0.3, 'shovel', 0, [[when('shovel', drop('healwort_plant'))], always(drop('healwort', 1))]);
+set([B.HEALWORT_PLANT_BARE], 0.3, 'shovel', 0, [[when('shovel', drop('healwort_plant'))]]);
 // Wood
 set([B.OAK_LOG, B.SPRUCE_LOG], 3.0, 'axe', 1, SELF_DROPS);
 set([B.BIRCH_LOG], 3.0, 'axe', 1, [always(drop(SELF)), always(drop('birch_bark', 1, { p: 0.5, ...natural }))]);
@@ -174,8 +193,10 @@ set([B.COAL_ORE], 3.5, 'pick', 2, [always(drop('coal', [1, 2])), always(drop('py
 set([B.COPPER_ORE], 4.0, 'pick', 2, [always(drop('malachite', [1, 2]))]);
 set([B.TIN_ORE], 4.0, 'pick', 3, [always(drop('cassiterite', 1)), always(drop('cassiterite', 1, { p: 0.25 }))]);
 set([B.IRON_ORE], 5.0, 'pick', 4, [always(drop('hematite', [1, 2]))]);
-set([B.GOLD_ORE], 5.0, 'pick', 4, [always(drop('gold_nugget', [1, 2]))]);
-set([B.DIAMOND_ORE], 4.0, 'pick', 2, [always(drop('rough_gem', 1))]);
+// v0.14 (§77): every pick opens something — flint: stone, coal, copper ore; copper: tin; bronze: iron; iron: gold;
+// steel: gems.
+set([B.GOLD_ORE], 5.0, 'pick', 5, [always(drop('gold_nugget', [1, 2]))]);
+set([B.DIAMOND_ORE], 4.0, 'pick', 6, [always(drop('rough_gem', 1))]);
 // Storage blocks come apart with any pick.
 set([B.COAL_BLOCK], 4.0, 'pick', 2, SELF_DROPS);
 set([B.COPPER_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK], 5.0, 'pick', 2, SELF_DROPS);
@@ -188,6 +209,10 @@ set([B.VOLTAIC_BATTERY], 1.0, 'axe', 0, SELF_DROPS);
 set([B.KNIFE_SWITCH, B.PUSH_BUTTON, B.ELECTRIC_BELL, B.IGNITER], 1.2, 'pick', 0, SELF_DROPS);
 set([B.SELENIUM_PANEL, B.COHERER_RECEIVER], 0.6, null, 0, SELF_DROPS);
 set([B.COLLAPSAR_CHARGE], 1.5, 'pick', 0, SELF_DROPS); // Creative-made only, but it can be taken up in Survival (§8.2)
+// v0.14 (§76 fauna): a ground nest pulled apart by hand gives its dry grass — and fewer eggs than picking them with R
+// (PICKABLE below), which also leaves the nest for the hen to lay in again.
+set([B.GROUND_NEST], 0.3, null, 0, [always(drop('raw_egg', [1, 2])), always(drop('plant_fibre', 1))]);
+set([B.GROUND_NEST_EMPTY], 0.3, null, 0, [always(drop('plant_fibre', 1))]);
 // BEDROCK, AIR and the water family keep the null rule: unbreakable.
 
 /** @template T @param {T} o @returns {T} */
@@ -236,7 +261,17 @@ export function breakSeconds(id, tool, underwater = false) {
 export function harvestHint(id) {
   const rule = ruleFor(id);
   if (!rule || rule.tier === 0) return null;
-  return `${getBlockDef(id).displayName} · needs ${withArticle(`${TIER_NAMES[rule.tier]} ${rule.tool}`)} or better`;
+  return `${getBlockDef(id).displayName} · needs ${withArticle(gateToolName(/** @type {string} */ (rule.tool), rule.tier))} or better`;
+}
+
+/**
+ * What to call the least tool of `type` that reaches `tier`: the tier's name and the type ("bronze pick"), except where
+ * the real tool is named otherwise — the tier-1 shovel is the Wooden Shovel (§77).
+ * @param {string} type @param {number} tier @returns {string}
+ */
+export function gateToolName(type, tier) {
+  if (type === 'shovel' && tier === 1) return 'wooden shovel';
+  return `${TIER_NAMES[tier]} ${type}`;
 }
 
 /** "a bronze pick", "an iron hammer". @param {string} noun */
@@ -254,7 +289,7 @@ export const DIG_TOOL_TYPES = Object.freeze(new Set(['axe', 'shovel', 'pick', 'k
  * @type {Readonly<Record<number, string>>}
  */
 export const HAND_GATHER = Object.freeze({
-  [B.TUSSOCK]: 'pull', [B.CATTAILS]: 'pull', [B.TUBER_PLANT]: 'pull', [B.GRAVEL]: 'dig', [B.FLINT_GRAVEL]: 'dig', [B.CLAY]: 'dig',
+  [B.TUSSOCK]: 'pull', [B.CATTAILS]: 'pull', [B.TUBER_PLANT]: 'pull', [B.GRAVEL]: 'dig', [B.FLINT_GRAVEL]: 'dig',
 });
 
 /**
@@ -332,6 +367,16 @@ export const PICKABLE = deepFreeze({
   },
   [B.LOOSE_STONES]: { to: B.AIR, drops: [always(drop('rock', [1, 2])), always(drop('flint', 1, { p: FLINT_SHARE, ...natural }))] },
   [B.FALLEN_BRANCHES]: { to: B.AIR, drops: [always(drop('stick', [2, 3]))] },
+  // v0.14 (§76 flora): mushrooms and roots come away whole; a thicket, a bush and a Healwort stay, picked, and regrow
+  [B.HONEYCAP_MUSHROOM]: { to: B.AIR, drops: [always(drop('honeycap', [1, 2]))] },
+  [B.FRECKLECAP_MUSHROOM]: { to: B.AIR, drops: [always(drop('frecklecap', [1, 2]))] },
+  [B.ONION_PLANT]: { to: B.AIR, drops: [always(drop('wild_onion', [1, 2]))] },
+  [B.CARROT_PLANT]: { to: B.AIR, drops: [always(drop('wild_carrot', 1))] },
+  [B.HAZEL_THICKET]: { to: B.HAZEL_THICKET_BARE, drops: [always(drop('hazelnuts', [1, 3]))] },
+  [B.CRAB_APPLE_BUSH]: { to: B.CRAB_APPLE_BUSH_BARE, drops: [always(drop('crab_apple', [2, 3]))] },
+  [B.HEALWORT_PLANT]: { to: B.HEALWORT_PLANT_BARE, drops: [always(drop('healwort', 1))] },
+  // v0.14 (§76 fauna): the eggs of a ground nest (and now and then a feather); the nest stays, empty
+  [B.GROUND_NEST]: { to: B.GROUND_NEST_EMPTY, drops: [always(drop('raw_egg', [1, 3])), always(drop('feather', 1, { p: 0.5 }))] },
 });
 
 /** @param {number} id @returns {boolean} R picks it */
@@ -392,9 +437,13 @@ export class Tapped {
 export const RIPE_OF = Object.freeze({
   [B.HONEYBERRY_BUSH_BARE]: B.HONEYBERRY_BUSH,
   [B.PRICKLY_PEAR_BARE]: B.PRICKLY_PEAR,
+  // v0.14 (§76 flora)
+  [B.HAZEL_THICKET_BARE]: B.HAZEL_THICKET,
+  [B.CRAB_APPLE_BUSH_BARE]: B.CRAB_APPLE_BUSH,
+  [B.HEALWORT_PLANT_BARE]: B.HEALWORT_PLANT,
 });
-/** The picked ids Regrowth tracks. */
-const BARE_IDS = Object.freeze([B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR_BARE]);
+/** The picked ids Regrowth tracks (every key of RIPE_OF). */
+const BARE_IDS = Object.freeze(Object.keys(RIPE_OF).map(Number));
 
 /** @param {number} id @returns {number} the ripe id a picked block regrows into, or −1 */
 export function ripeOf(id) {
@@ -491,9 +540,17 @@ export const MOB_DROPS = deepFreeze({
   horse: [always(drop('rawhide', [1, 2]))],
   wolf: [always(drop('rawhide', 1))],
   zombie: [always(drop('grave_rag', 1, { p: 0.5 }))],
+  // v0.14 (§76 fauna): venison and a hide; a rabbit is one small meal (and sometimes a skin); the birds give meat and
+  // feathers; a fish is a fish; the bear is the big reward
+  deer: [always(drop('raw_venison', [2, 3])), always(drop('rawhide', 1))],
+  rabbit: [always(drop('raw_rabbit', 1)), always(drop('rawhide', 1, { p: 0.4 }))],
+  pheasant: [always(drop('raw_fowl', 1)), always(drop('feather', [2, 4]))],
+  turkey: [always(drop('raw_fowl', [2, 3])), always(drop('feather', [2, 4]))],
+  bear: [always(drop('raw_bear', [6, 8])), always(drop('rawhide', [2, 3]))],
+  fish: [always(drop('raw_fish', 1))],
 });
 
-/** @param {'pig'|'zombie'|'cow'|'sheep'|'horse'|'wolf'} kind @param {() => number} random @returns {ItemStack[]} */
+/** @param {string} kind 'pig', 'zombie' or an animals.js kind @param {() => number} random @returns {ItemStack[]} */
 export function rollMobDrops(kind, random) {
   const groups = Object.hasOwn(MOB_DROPS, kind) ? MOB_DROPS[kind] : null;
   return groups ? rollGroups(groups, null, {}, random) : [];

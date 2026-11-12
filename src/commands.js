@@ -21,7 +21,7 @@
 // edit budget) and then return a resumable AreaJob that the rune runner advances under a per-frame cell budget in
 // chunk-major order, so a 32k-cell fill never stalls a frame. They skip rune blocks, bedrock and cells the player
 // occupies, and report what they skipped.
-import { SPECIES, ANIMAL_MAX, isAnimalKind } from './animals.js';
+import { SPECIES, ANIMAL_MAX, isAnimalKind, fishDepth } from './animals.js';
 import {
   WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
   GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME, PIG_MAX,
@@ -82,7 +82,7 @@ export const COMMANDS = Object.freeze([
   { name: 'resume', usage: 'resume', summary: 'let rune triggers fire again after stopall', args: [], min: 0 },
   { name: 'runes', usage: 'runes', summary: 'list the rune blocks with scripts or settings', args: [], min: 0 },
   { name: 'rune', usage: 'rune q y r on|off', summary: 'enable or disable every trigger of one rune block', args: ['cell', 'cell', 'cell', 'choice:on|off'], min: 4 },
-  { name: 'summon', usage: 'summon pig|cow|sheep|horse|wolf|zombie|runner|alpha|watcher [q y r]', summary: 'put an animal or a zombie (a runner, an alpha) two cells in front of you, or in a cell (watcher: far away in view)', args: ['choice:pig|cow|sheep|horse|wolf|zombie|runner|alpha|watcher', 'cell', 'cell', 'cell'], min: 1 },
+  { name: 'summon', usage: 'summon pig|cow|sheep|horse|wolf|deer|stag|rabbit|pheasant|turkey|bear|fish|zombie|runner|alpha|watcher [q y r]', summary: 'put an animal or a zombie (a runner, an alpha) two cells in front of you, or in a cell (a fish: in the water there; watcher: far away in view)', args: ['choice:pig|cow|sheep|horse|wolf|deer|stag|rabbit|pheasant|turkey|bear|fish|zombie|runner|alpha|watcher', 'cell', 'cell', 'cell'], min: 1 },
   { name: 'pigs', usage: 'pigs [clear]', summary: 'count the pigs, or remove them all', args: ['choice:clear'], min: 0 },
   { name: 'zombies', usage: 'zombies [clear|on|off]', summary: 'count the zombies, remove them all, or switch zombies on / off for this world (saved)', args: ['choice:clear|on|off'], min: 0 },
   { name: 'watcher', usage: 'watcher [on|off]', summary: 'is the Hollow Watcher about? or switch it on / off for this world (saved)', args: ['choice:on|off'], min: 0 },
@@ -702,12 +702,18 @@ function summonZombie(spec, args, ctx) {
   return ok(`summoned ${kind === 'walker' ? 'a zombie' : kind === 'runner' ? 'a runner zombie' : 'an alpha zombie'} at ${pq} ${fy} ${pr}`);
 }
 
-/** `summon cow|sheep|horse|wolf [q y r]` (CONTRACTS §69). @returns {CommandResult} */
+/**
+ * `summon cow|sheep|horse|wolf [q y r]` (CONTRACTS §69). v0.14 (§76 fauna): also deer, stag (a deer with antlers), rabbit,
+ * pheasant, turkey, bear and fish — a fish only into water (the cell's, or the water just under where you look).
+ * @returns {CommandResult}
+ */
 function summonAnimal(spec, args, ctx) {
   const as = ctx.animals;
   if (!as) return fail(spec, 'animals are not available here');
   if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
-  const sp = SPECIES[args[0]];
+  const stag = args[0] === 'stag';
+  const kind = stag ? 'deer' : args[0];
+  const sp = SPECIES[kind];
   const world = ctx.world;
   const p = ctx.player;
   let q;
@@ -725,11 +731,21 @@ function summonAnimal(spec, args, ctx) {
   }
   if (!world.hasChunkAtCell(q, r)) return fail(spec, 'target is not loaded');
   const [x, z] = hexToWorld(q, r);
+  if (/** @type {*} */ (sp).water) {
+    // a fish goes into the water of that column: at the cell's height, or the first water within a few cells below it
+    let wy = NaN;
+    for (let dy = 1; dy >= -4 && Number.isNaN(wy); dy--) wy = fishDepth(world.getBlock, q, r, y + dy + 0.5);
+    if (Number.isNaN(wy)) return fail(spec, 'a fish needs water (none there, or it is too shallow)');
+    const f = as.spawn(kind, x, wy, z, Math.atan2(-(p.x - x), -(p.z - z)));
+    if (!f) return fail(spec, `too many animals (max ${ANIMAL_MAX})`);
+    return ok(`summoned a fish at ${q} ${Math.floor(wy)} ${r}`);
+  }
   const fy = findFreeY(world.getBlock, x, z, y, 2, sp.radius, sp.height);
   if (fy === null) return fail(spec, args.length === 4 ? 'target is inside a block' : 'no room in front of you');
-  const a = as.spawn(args[0], x, fy, z, Math.atan2(-(p.x - x), -(p.z - z)));
+  const a = as.spawn(kind, x, fy, z, Math.atan2(-(p.x - x), -(p.z - z)));
   if (!a) return fail(spec, `too many animals (max ${ANIMAL_MAX})`);
-  return ok(`summoned a ${sp.name.toLowerCase()} at ${q} ${fy} ${r}`);
+  if (stag) a.variant = 1;
+  return ok(`summoned a ${stag ? 'stag' : sp.name.toLowerCase()} at ${q} ${fy} ${r}`);
 }
 
 /** @returns {CommandResult} */
@@ -1018,7 +1034,7 @@ function run(spec, args, ctx) {
     case 'summon': {
       if (args[0] === 'zombie' || args[0] === 'runner' || args[0] === 'alpha') return summonZombie(spec, args, ctx);
       if (args[0] === 'watcher') return summonWatcher(spec, args, ctx);
-      if (isAnimalKind(args[0])) return summonAnimal(spec, args, ctx);
+      if (isAnimalKind(args[0]) || args[0] === 'stag') return summonAnimal(spec, args, ctx);
       if (!ctx.pigs) return fail(spec, 'pigs are not available here');
       if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
       let x;

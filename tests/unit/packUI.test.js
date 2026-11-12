@@ -346,6 +346,10 @@ describe('the pack screen on a page', () => {
     expect(spear.querySelector('.card-tool').classList.contains('short')).toBe(true);
     expect(spear.querySelectorAll('.card-badge').map((b) => b.textContent)).toEqual(['3/1', '14/2', '4/1']);
     expect(spear.querySelector('.card-make').hasAttribute('disabled')).toBe(true); // no hammer
+    // §77: what the thing is for, one line under its name, with the whole line as a tooltip
+    expect(spear.querySelector('.card-purpose').textContent).toBe('The hunting weapon: thrust it or throw it.');
+    expect(spear.querySelector('.card-purpose').title).toBe('The hunting weapon: thrust it or throw it.');
+    expect(root.querySelector('.recipe-card[data-recipe="cord"] .card-purpose').textContent).toBe('Binds every hafted tool.');
     const cord = root.querySelector('.recipe-card[data-recipe="cord"]');
     expect(cord.classList.contains('craftable')).toBe(true);
     const [make1, make5] = cord.querySelectorAll('.card-make');

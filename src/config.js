@@ -297,7 +297,7 @@ export const STORAGE_QUOTA_ESTIMATE = 5 * 1024 * 1024; // characters a site may 
 export const HOTBAR_SIZE = 9;                       // also the survival pack's hotbar: pack slots 0..HOTBAR_SIZE-1
 
 // Survival (§42–§49; docs/DESIGN-survival.md §9.2). Rates are per real second; one game day is DAY_LENGTH_SECONDS.
-export const GEN_LATEST = 2;                        // newest world generator: 2 adds the survival resources (absent `gen` = 1, today's land)
+export const GEN_LATEST = 3;                        // newest world generator: 2 adds the survival resources (absent `gen` = 1, today's land); 3 (v0.14, CONTRACTS §76) the harder land: streams, tainted ponds, scarcer food in bunches
 // Pack and containers (§5)
 export const PACK_SLOTS = 27;                       // 0..8 the hotbar strip, 9..26 the rosette
 export const WEAR_SLOTS = 3;                        // head, body, feet

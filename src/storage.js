@@ -221,6 +221,7 @@ export const SAVE_MODES = Object.freeze(['creative', 'survival']);
 export const DEATH_CAUSES = Object.freeze([
   'fall', 'drown', 'buried', 'crush', 'fire', 'zombie', 'blast', 'log', 'blackhole', 'starve', 'thirst', 'cold', 'heat', 'sick',
   'void', 'command',
+  'bear', // v0.14 (§76 fauna)
 ]);
 
 /** Largest bandage payout rate saved (`healRate`, HP/s). */

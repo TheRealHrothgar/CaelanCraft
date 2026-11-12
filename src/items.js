@@ -110,11 +110,21 @@ const MATERIAL_ROWS = [
   // §14 the Survival Handbook: every survival state starts with it; never lost on death, never discarded, never made
   // (inventory.js KEEP_ON_DEATH, handbook.js ensureHandbook). R or RMB with it in hand opens the field book.
   ['handbook', 'Survival Handbook', 1],
+  // v0.14 (§76 fauna): feathers come off pheasants and wild turkeys (and out of their nests); a dart fletched with them
+  // flies faster and straighter than the plain Flint Dart, hits harder and breaks less often (looseItems THROW_FLETCHED)
+  ['feather', 'Feather', 32], ['fletched_dart', 'Fletched Dart', 16],
 ];
+
+/**
+ * v0.14 (CONTRACTS §76 water): mean seconds before a Pot of Water left standing turns tainted — two game days
+ * (2 × config.DAY_LENGTH_SECONDS; items.js imports blocks only, so the number is written out and a test ties the two).
+ */
+export const POT_WATER_SPOIL_S = 2880;
 
 /**
  * Food and drink (§4.5): [key, display name, stack, FoodDef]. `sick` is a chance 0..1; `spoilS` the mean seconds per item
  * (absent: never spoils); `returns` the item given back (the clay pot); `temp` an instant body-temperature change in °C.
+ * v0.14 (§76 water): `spoilsTo` — the item a spoiled one turns INTO instead of vanishing (absent: it is lost).
  * @type {ReadonlyArray<[string, string, number, FoodDef]>}
  */
 const FOOD_ROWS = [
@@ -140,12 +150,48 @@ const FOOD_ROWS = [
   ['roast_mutton', 'Roast Mutton', 16, { satiation: 26, hydration: -2, sick: 0, useS: 1.6, spoilS: 2400 }],
   ['snow', 'Snow', 32, { satiation: 0, hydration: 3, sick: 0, useS: 0.6, temp: -0.2 }],
   // v0.11 (CONTRACTS §66): unboiled water poisons you one time in five; boil it on a campfire (Pot of Boiled Water: safe)
-  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.2, useS: 1.0, returns: 'clay_pot' }],
+  // v0.14 (§76 water): fresh water left standing spoils — after about two game days a Pot of Water turns tainted
+  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.2, useS: 1.0, returns: 'clay_pot', spoilS: POT_WATER_SPOIL_S, spoilsTo: 'pot_tainted' }],
   ['pot_boiled', 'Pot of Boiled Water', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_seawater', 'Pot of Seawater', 1, { satiation: 0, hydration: -10, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_sap', 'Pot of Birch Sap', 1, { satiation: 2, hydration: 25, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   // v0.11 (CONTRACTS §72): milked from a cow with an empty clay pot — food and drink in one, always safe
   ['pot_milk', 'Pot of Milk', 1, { satiation: 12, hydration: 20, sick: 0, useS: 1.0, returns: 'clay_pot' }],
+  // v0.14 (§76 flora): the wild food of generation 3 — small raw, better off a skewer, never a feast. The Frecklecap is the
+  // Honeycap's look-alike: it feeds the same and ALWAYS poisons, roasted or not (its name never says so; its cap does).
+  ['honeycap', 'Honeycap', 16, { satiation: 3, hydration: 1, sick: 0, useS: 1.0, spoilS: 1500 }],
+  ['roasted_honeycap', 'Roasted Honeycap', 16, { satiation: 7, hydration: 0, sick: 0, useS: 1.0 }],
+  ['frecklecap', 'Frecklecap', 16, { satiation: 3, hydration: 1, sick: 1, useS: 1.0, spoilS: 1500 }],
+  ['roasted_frecklecap', 'Roasted Frecklecap', 16, { satiation: 7, hydration: 0, sick: 1, useS: 1.0 }],
+  ['wild_onion', 'Wild Onion', 16, { satiation: 2, hydration: 1, sick: 0, useS: 1.0 }],
+  ['roasted_onion', 'Roasted Onion', 16, { satiation: 5, hydration: 0, sick: 0, useS: 1.0 }],
+  ['wild_carrot', 'Wild Carrot', 16, { satiation: 3, hydration: 1, sick: 0, useS: 1.0 }],
+  ['roasted_carrot', 'Roasted Carrot', 16, { satiation: 7, hydration: 0, sick: 0, useS: 1.0 }],
+  ['hazelnuts', 'Hazelnuts', 32, { satiation: 3, hydration: 0, sick: 0, useS: 1.0 }], // they keep: the food to store
+  ['roasted_hazelnuts', 'Roasted Hazelnuts', 32, { satiation: 5, hydration: 0, sick: 0, useS: 1.0 }],
+  ['crab_apple', 'Crab Apple', 16, { satiation: 2, hydration: 3, sick: 0, useS: 1.0, spoilS: 2400 }], // sour and wet
+  ['baked_crab_apple', 'Baked Crab Apple', 16, { satiation: 5, hydration: 2, sick: 0, useS: 1.0 }],
+  // The healing herb: bitter, no food at all, but it ends a poisoning at once (`cures`, honoured by vitals.eatFood). Steeped
+  // in a Pot of Boiled Water it is a safe drink that cures as well.
+  ['healwort', 'Healwort', 16, { satiation: 0, hydration: -2, sick: 0, useS: 1.2, cures: true }],
+  ['pot_healwort_tea', 'Pot of Healwort Tea', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot', cures: true }],
+  // v0.14 (§76 fauna): game. Venison is the big hunt's meat, a rabbit or a bird is a small meal, a fish goes bad fast,
+  // a bear is a feast. An egg keeps for a long time; raw it is a risk, roasted at the fire it is good food.
+  ['raw_venison', 'Raw Venison', 16, { satiation: 6, hydration: 0, sick: 0.3, useS: 1.4, spoilS: 1200 }],
+  ['roast_venison', 'Roast Venison', 16, { satiation: 32, hydration: -2, sick: 0, useS: 1.6, spoilS: 2400 }],
+  ['raw_rabbit', 'Raw Rabbit', 16, { satiation: 4, hydration: 0, sick: 0.3, useS: 1.2, spoilS: 1200 }],
+  ['roast_rabbit', 'Roast Rabbit', 16, { satiation: 16, hydration: -1, sick: 0, useS: 1.4, spoilS: 2400 }],
+  ['raw_fowl', 'Raw Fowl', 16, { satiation: 4, hydration: 0, sick: 0.35, useS: 1.2, spoilS: 1200 }],
+  ['roast_fowl', 'Roast Fowl', 16, { satiation: 20, hydration: -1, sick: 0, useS: 1.4, spoilS: 2400 }],
+  ['raw_fish', 'Raw Fish', 16, { satiation: 4, hydration: 1, sick: 0.25, useS: 1.2, spoilS: 900 }],
+  ['roast_fish', 'Roast Fish', 16, { satiation: 18, hydration: 0, sick: 0, useS: 1.4, spoilS: 1800 }],
+  ['raw_bear', 'Raw Bear Meat', 16, { satiation: 7, hydration: 0, sick: 0.35, useS: 1.4, spoilS: 1200 }],
+  ['roast_bear', 'Roast Bear Meat', 16, { satiation: 34, hydration: -2, sick: 0, useS: 1.6, spoilS: 2400 }],
+  ['raw_egg', 'Raw Egg', 16, { satiation: 5, hydration: 2, sick: 0.25, useS: 0.8, spoilS: 3600 }],
+  ['roast_egg', 'Roast Egg', 16, { satiation: 14, hydration: 0, sick: 0, useS: 1.0, spoilS: 2400 }],
+  // v0.14 (§76 water): filled from Tainted Water (or a Pot of Water that stood too long) — it poisons three times in five;
+  // boiling makes it a Pot of Boiled Water like any other. It keeps: it cannot get worse.
+  ['pot_tainted', 'Pot of Tainted Water', 1, { satiation: 0, hydration: 30, sick: 0.6, useS: 1.0, returns: 'clay_pot' }],
 ];
 
 /**
@@ -173,6 +219,10 @@ const WEAR_ROWS = [
 const PLACES_AS = new Map([
   [BLOCK.HONEYBERRY_BUSH, BLOCK.HONEYBERRY_BUSH_BARE],
   [BLOCK.PRICKLY_PEAR, BLOCK.PRICKLY_PEAR_BARE],
+  // v0.14 (§76 flora): a transplanted thicket, bush or Healwort must regrow before it gives anything
+  [BLOCK.HAZEL_THICKET, BLOCK.HAZEL_THICKET_BARE],
+  [BLOCK.CRAB_APPLE_BUSH, BLOCK.CRAB_APPLE_BUSH_BARE],
+  [BLOCK.HEALWORT_PLANT, BLOCK.HEALWORT_PLANT_BARE],
 ]);
 /** Picked variant → the ripe block whose item it belongs to. @type {Map<number, number>} */
 const ITEM_BLOCK_OF = new Map([...PLACES_AS].map(([ripe, bare]) => [bare, ripe]));
@@ -312,6 +362,7 @@ export function itemName(key, n) {
 export const SINGULAR_NAMES = Object.freeze({
   honeyberries: 'Honeyberry', acorns: 'Acorn', leached_acorns: 'Leached Acorn', roasted_acorns: 'Roasted Acorn',
   pine_nuts: 'Pine Nut', glass_shards: 'Glass Shard', iron_filings: 'Iron Filing',
+  hazelnuts: 'Hazelnut', roasted_hazelnuts: 'Roasted Hazelnut', // v0.14 (§76 flora)
 });
 
 /**

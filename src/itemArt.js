@@ -950,6 +950,33 @@ const MATERIAL_PAINTERS = {
     ic.set(14, 12, TWINE.dark);
     ic.set(14, 13, TWINE.base);
   },
+  // v0.14 (§76 fauna)
+  feather(ic) {
+    // a pheasant's feather, corner to corner: a barred russet vane tapering to a point round a pale shaft, split here
+    // and there as feathers are, and a bare quill at the foot
+    ic.poly([[3.5, 12.5], [3, 9.5], [6, 5], [10, 2], [14.5, 0.5], [14, 4.5], [11.5, 8], [8, 11.5], [5.5, 13.5]],
+      (x, y) => ((x - y + 32) % 4 === 0 ? 0x5a3418 : x + y < 16 ? 0xd09652 : 0xa86a30));
+    for (let i = 0; i <= 10; i++) ic.set(3 + i, 13 - i, 0xf6ead0); // the shaft, down its middle
+    for (const [x, y] of [[10, 9], [9, 10], [5, 7], [4, 8]]) ic.clear(x, y); // splits in the vane, one each side
+    ic.set(2, 14, 0xe0d2b0);
+    ic.set(1, 15, 0xc8b890); // the quill
+  },
+  fletched_dart(ic) {
+    // the flint dart with a flight of two feathers: russet vanes with pale edges where the plain dart has grass
+    for (let i = 0; i <= 8; i++) {
+      ic.set(4 + i, 11 - i, WOOD.light);
+      ic.set(4 + i, 12 - i, WOOD.base);
+    }
+    ic.poly([[11, 2], [14, 1], [13, 5]], () => 0x3b3f4a);
+    ic.set(13, 2, 0x6b7184);
+    ic.set(11, 4, CORD.dark);
+    ic.set(12, 4, CORD.light);
+    ic.set(11, 5, CORD.light);
+    for (const [x, y] of [[1, 10], [2, 9], [2, 10], [3, 9], [3, 10], [4, 9]]) ic.set(x, y, (x + y) & 1 ? 0xc98a4a : 0x8a4e22); // upper vane
+    for (const [x, y] of [[4, 13], [5, 12], [5, 13], [5, 14], [6, 13], [6, 14]]) ic.set(x, y, (x + y) & 1 ? 0xc98a4a : 0x8a4e22); // lower vane
+    for (const [x, y] of [[1, 9], [2, 8], [6, 15], [7, 14]]) ic.set(x, y, 0xf3e6c8);
+    ic.set(3, 12, CORD.dark); // the flight's binding
+  },
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -971,6 +998,63 @@ function paintMeat(ic, rng, meat, fat, edge) {
 /** A tuber shape: a knobbly oval. */
 function paintTuberShape(ic, rng, skin) {
   paintLump(ic, rng, 8, 9, 6, 4.2, { base: skin, dark: tone(skin, -0.3), light: tone(skin, 0.25) });
+}
+
+// v0.14 (§76 flora): the two mushrooms' icons keep what tells the plants apart (tiles.js MUSHROOMS) — the Honeycap a
+// smooth honey dome over a pale sponge on a fat cream stem; the Frecklecap a flatter, peaked, tawny cap with pale
+// freckles over white gills, on a thin stem with a ring and a bulb. Roasting browns both and hides neither sign.
+
+/** Rows as [y, x0, x1]. @param {Icon} ic @param {number[][]} rows @param {number|((x: number, y: number) => number)} c */
+function paintRows(ic, rows, c) {
+  for (const [y, x0, x1] of rows) for (let x = x0; x <= x1; x++) ic.set(x, y, typeof c === 'function' ? c(x, y) : c);
+}
+
+/** A Honeycap: `cap` its dome, `sponge` the row under it, `stem` its fat stem. */
+function paintHoneycapIcon(ic, cap, sponge, stem) {
+  paintRows(ic, [[2, 6, 9], [3, 4, 11], [4, 3, 12], [5, 2, 13], [6, 2, 13]], (x, y) => (y === 2 || (y === 3 && x < 7) ? tone(cap, 0.22) : y === 6 ? tone(cap, -0.2) : cap));
+  paintRows(ic, [[7, 3, 12]], sponge);
+  paintRows(ic, [[8, 6, 9], [9, 6, 9], [10, 6, 9], [11, 5, 10], [12, 5, 10], [13, 5, 10]], (x) => (x >= 9 ? tone(stem, -0.16) : x <= 6 ? tone(stem, 0.2) : stem));
+}
+
+/** A Frecklecap: `cap` its flat peaked cap, `freckle` its dots, `gill` / `gillLine` the row under it, `stem` its thin stem. */
+function paintFrecklecapIcon(ic, cap, freckle, gill, gillLine, stem) {
+  paintRows(ic, [[2, 7, 8], [3, 5, 10], [4, 3, 12], [5, 1, 14], [6, 1, 14]], (x, y) => (y === 2 || (y === 3 && x < 7) ? tone(cap, 0.2) : y === 6 ? tone(cap, -0.2) : cap));
+  for (const [x, y] of [[9, 3], [5, 4], [11, 4], [2, 5], [7, 5], [13, 6], [4, 6]]) ic.set(x, y, freckle);
+  paintRows(ic, [[7, 3, 12]], (x) => (x % 2 === 0 ? gillLine : gill));
+  paintRows(ic, [[8, 7, 8], [9, 7, 8], [10, 7, 8], [11, 7, 8], [12, 6, 9], [13, 5, 10]], (x) => (x >= 8 ? tone(stem, -0.14) : stem));
+  paintRows(ic, [[9, 5, 10]], (x) => (x === 5 || x === 10 ? tone(stem, -0.3) : tone(stem, -0.12))); // the ring
+}
+
+/** An onion bulb with its neck and root hairs; `skin` its colour. */
+function paintOnionBulb(ic, skin) {
+  ic.ellipse(8, 10, 4.6, 3.9, (x, y, u, v) => (u + v < -0.6 ? tone(skin, 0.3) : u > 0.45 ? tone(skin, -0.2) : skin));
+  ic.rect(7, 5, 8, 6, tone(skin, -0.12));
+  for (const x of [6, 8, 10]) ic.set(x, 14, 0xa08a5a);
+}
+
+/** A carrot root, point down; `skin` its colour, `ring` its growth rings. */
+function paintCarrotRoot(ic, skin, ring) {
+  ic.poly([[4.6, 4], [11.4, 4], [9, 14.6], [7, 14.6]], (x) => (x <= 6 ? tone(skin, 0.25) : x >= 10 ? tone(skin, -0.22) : skin));
+  ic.rect(5, 4, 10, 4, tone(skin, 0.12));
+  for (const [x0, x1, y] of [[6, 8, 7], [8, 9, 10], [7, 8, 12]]) ic.rect(x0, y, x1, y, ring);
+}
+
+/** Three hazelnuts, apart: round, each with the pale scar across its top where the husk held it. */
+function paintHazelnutsIcon(ic, shell, scar) {
+  for (const [cx, cy] of [[4.5, 5.5], [11.5, 6], [8, 12]]) {
+    ic.ellipse(cx, cy, 2.6, 2.6, (x, y, u, v) => (u + v < -0.5 ? tone(shell, 0.28) : u + v > 0.7 ? tone(shell, -0.28) : shell));
+    ic.rect(Math.floor(cx) - 1, Math.floor(cy) - 2, Math.floor(cx) + 1, Math.floor(cy) - 2, scar);
+  }
+}
+
+/** Two crab apples, apart, on their stalks; `skin` their colour, `shine` the light on them. */
+function paintCrabApplesIcon(ic, skin, shine) {
+  for (const [cx, cy, r] of [[4.5, 10.5, 3], [11.5, 9, 2.9]]) {
+    ic.ellipse(cx, cy, r, r, (x, y, u, v) => (u + v > 0.7 ? tone(skin, -0.3) : skin));
+    ic.set(Math.floor(cx) - 1, Math.floor(cy) - 2, shine);
+    ic.set(Math.floor(cx) - 2, Math.floor(cy) - 1, shine);
+    ic.line(Math.floor(cx), Math.floor(cy - r) - 1, Math.floor(cx) + 1, Math.floor(cy - r) - 3, 0x6b4a2c);
+  }
 }
 
 /** @type {Record<string, (ic: Icon, rng: Rng) => void>} */
@@ -1116,7 +1200,187 @@ const FOOD_PAINTERS = {
   pot_milk(ic, rng) {
     paintPot(ic, rng, 0xb8613a, 0xf2efe6, 0xffffff);
   },
+  // ---- v0.14 (§76 flora): the wild food of generation 3
+  honeycap(ic) {
+    paintHoneycapIcon(ic, 0xdb9c2c, 0xead48c, 0xecdcb4);
+  },
+  roasted_honeycap(ic) {
+    paintHoneycapIcon(ic, 0xa8681e, 0xc8a05a, 0xcfae78);
+    // scorched along the rim and on the stem — never dots on the cap: dots are the Frecklecap's sign
+    ic.rect(2, 6, 13, 6, 0x5e3414);
+    ic.rect(6, 10, 9, 10, 0x8a6a3a);
+  },
+  frecklecap(ic) {
+    paintFrecklecapIcon(ic, 0xc27a30, 0xfff3d2, 0xf4eedc, 0xb0a488, 0xf2ecdc);
+  },
+  roasted_frecklecap(ic) {
+    paintFrecklecapIcon(ic, 0x94521c, 0xf0dcae, 0xd8c8a0, 0x8a7a58, 0xd6c49a);
+    for (const [x, y] of [[9, 5], [3, 6], [7, 12]]) ic.set(x, y, 0x4a2a12);
+  },
+  wild_onion(ic) {
+    // a white bulb with a rose neck and two green shoots
+    paintOnionBulb(ic, 0xf4f0e2);
+    ic.rect(7, 5, 8, 6, 0xb878a8);
+    ic.line(7, 4, 4, 1, 0x4f9a86);
+    ic.line(8, 4, 11, 1, 0x3f8472);
+    ic.set(8, 3, 0x4f9a86);
+  },
+  roasted_onion(ic) {
+    paintOnionBulb(ic, 0xd49a44);
+    ic.line(6, 8, 6, 12, 0x8a5a1e);
+    ic.line(10, 8, 10, 12, 0x8a5a1e);
+    ic.set(8, 10, 0x4a2a12);
+  },
+  wild_carrot(ic) {
+    paintCarrotRoot(ic, 0xe8842c, 0xbf6418);
+    // its feathery top
+    ic.line(8, 3, 8, 1, 0x2f7d2c);
+    ic.line(7, 3, 4, 1, 0x3f8f34);
+    ic.line(9, 3, 12, 1, 0x3f8f34);
+    for (const [x, y] of [[6, 1], [10, 1], [7, 2], [9, 2]]) ic.set(x, y, 0x7fca4e);
+  },
+  roasted_carrot(ic) {
+    paintCarrotRoot(ic, 0xb8601e, 0x5e2e10);
+    ic.rect(7, 3, 8, 3, 0x4a3a1c); // the charred stub of its top
+  },
+  hazelnuts(ic) {
+    paintHazelnutsIcon(ic, 0xb07a3c, 0xe6d2a4);
+  },
+  roasted_hazelnuts(ic) {
+    paintHazelnutsIcon(ic, 0x7a4a22, 0xc8a06a);
+    for (const [x, y] of [[6, 7], [12, 8], [8, 12]]) ic.set(x, y, 0x3a2010); // split by the heat
+  },
+  crab_apple(ic) {
+    paintCrabApplesIcon(ic, 0xd8372b, 0xff9a78);
+    ic.rect(7, 4, 9, 4, 0x4f9040); // a leaf between the stalks
+    ic.set(8, 5, 0x2f6a2c);
+  },
+  baked_crab_apple(ic) {
+    // browned and wrinkled, the juice gone to syrup
+    paintCrabApplesIcon(ic, 0xa8522a, 0xe8b070);
+    for (const [x, y] of [[4, 11], [5, 12], [11, 10], [12, 10]]) ic.set(x, y, 0x6a2e16);
+  },
+  healwort(ic) {
+    // a sprig: silver-green leaves on a stem, a violet flower spike at its tip
+    ic.line(8, 14, 8, 5, 0x6f9a78);
+    ic.poly([[3, 10], [7.6, 9], [7.6, 11.6], [5, 12.4]], 0xa9cfae);
+    ic.poly([[8.4, 7], [13, 6], [11.6, 9], [8.4, 9.6]], 0xa9cfae);
+    ic.line(4, 11, 7, 10, 0x7dac8a);
+    ic.line(9, 8, 12, 7, 0x7dac8a);
+    for (let k = 0; k < 5; k++) {
+      ic.set(8, 1 + k, k === 0 ? 0xdcb4f8 : 0x9b4fd6);
+      if (k > 0) ic.set(8 + (k % 2 === 1 ? -1 : 1), 1 + k, 0xb87cec);
+    }
+  },
+  pot_healwort_tea(ic, rng) {
+    // a pale green brew with a violet floret afloat, steaming
+    paintPot(ic, rng, 0xb8613a, 0x9fbf5a, 0xd6e69a);
+    ic.set(8, 4, 0x9b4fd6);
+    for (const [x, y] of [[6, 1], [7, 0], [10, 1], [9, 0]]) ic.set(x, y, 0xf0f4f8);
+  },
+  // v0.14 (§76 fauna): game. Each meat has its own shape, so it reads at a glance: venison a dark lean steak, rabbit a
+  // small leg on its bone, fowl a whole plucked bird, fish a fish, bear a thick slab under a band of fat; and an egg.
+  raw_venison(ic, rng) {
+    paintMeat(ic, rng, 0x8e2430, 0xe8d6c8);
+    ic.line(4, 9, 9, 6, 0xc86a70); // lean: two thin sinews, no marbling
+    ic.line(7, 11, 12, 8, 0xc86a70);
+  },
+  roast_venison(ic, rng) {
+    paintMeat(ic, rng, 0x6a3018, 0xa8703a, 0x3e1a0c);
+    ic.line(4, 9, 9, 6, 0x3e1a0c); // the grill's marks
+    ic.line(7, 11, 12, 8, 0x3e1a0c);
+    ic.set(10, 6, 0xd89858);
+  },
+  raw_rabbit(ic, rng) {
+    paintLeg(ic, rng, 0xe6a2a2, 0xf6d0cc, 0xb86a70);
+  },
+  roast_rabbit(ic, rng) {
+    paintLeg(ic, rng, 0xb8763a, 0xe0a860, 0x7a4418);
+  },
+  raw_fowl(ic, rng) {
+    paintBird(ic, rng, 0xeec9a8, 0xfbe6d2, 0xc89878);
+  },
+  roast_fowl(ic, rng) {
+    paintBird(ic, rng, 0xc8873a, 0xeeb868, 0x8a5220);
+    ic.set(6, 9, 0xfad890); // the crackling's shine
+  },
+  raw_fish(ic) {
+    paintFish(ic, 0x86a8c4, 0x55738e, 0xe2ebf0);
+    ic.set(4, 8, 0x1c2630); // the eye
+  },
+  roast_fish(ic) {
+    paintFish(ic, 0xb88448, 0x8a5a26, 0xe0b878);
+    for (const x of [6, 8, 10]) ic.line(x, 7, x - 1, 10, 0x4a2c10); // the grill's marks
+    ic.set(4, 8, 0xf4ecd8); // a cooked eye
+  },
+  raw_bear(ic, rng) {
+    paintMeat(ic, rng, 0x7a1e26, 0xf0e2c8);
+    ic.line(2, 7, 6, 4, 0xf0e2c8); // a thick band of fat under the rind
+    ic.line(6, 4, 13, 5, 0xf0e2c8);
+    for (const [x, y] of [[6, 8], [9, 9], [11, 7], [7, 11]]) ic.set(x, y, 0xb85a5e); // marbling
+  },
+  roast_bear(ic, rng) {
+    paintMeat(ic, rng, 0x54260f, 0xc89850, 0x2e1408);
+    ic.line(2, 7, 6, 4, 0xc89850);
+    ic.line(6, 4, 13, 5, 0xc89850);
+    for (const [x, y] of [[6, 8], [9, 9], [11, 7]]) ic.set(x, y, 0x8a4a20);
+  },
+  raw_egg(ic, rng) {
+    paintEgg(ic, 0xf3ead6);
+    speckle(ic, rng, 5, 0xa08058);
+  },
+  roast_egg(ic) {
+    // roasted in its shell: the top broken off, the white set and the yolk showing; the shell scorched below
+    paintEgg(ic, 0xe6d3ac);
+    ic.ellipse(8, 5.6, 3.3, 2.6, 0xfffdf6);
+    ic.ellipse(8.2, 5.8, 1.5, 1.3, 0xf2b63c);
+    for (const [x, y] of [[4, 8], [5, 7], [11, 7], [12, 8], [7, 8], [9, 8]]) ic.set(x, y, 0xb8a078); // the broken rim
+    for (const [x, y] of [[6, 13], [7, 13], [9, 12], [10, 13], [5, 11]]) ic.set(x, y, 0x6a4a2a); // scorch
+  },
+  // v0.14 (§76 water): the pot of murky pond water — the tainted tile's olive-brown with pale scum, and two green
+  // dribbles down the shoulder so it is never taken for the blue Pot of Water at a glance
+  pot_tainted(ic, rng) {
+    paintPot(ic, rng, 0xb8613a, 0x566029, 0x93a658);
+    ic.line(4, 6, 4, 8, 0x7f8f3c);
+    ic.line(11, 6, 11, 7, 0x7f8f3c);
+  },
 };
+
+/** A small leg on its bone (rabbit): the meat low on the left, the bone running up to the right with a knuckle. */
+function paintLeg(ic, rng, meat, light, dark) {
+  ic.line(10, 7, 13, 3, 0xf3ead8);
+  ic.line(11, 7, 14, 3, 0xd8ccb4);
+  ic.rect(13, 2, 14, 3, 0xfffaf0);
+  ic.set(12, 2, 0xfffaf0);
+  ic.ellipse(7, 9.5, 5, 3.8, (x, y, u, v) => (u + v < -0.6 ? light : u + v > 0.7 ? dark : meat));
+  ic.jitter(rng, 0.05);
+}
+
+/** A whole plucked bird (pheasant, turkey), breast up: a plump body, two drumsticks standing up, a wing folded at its side. */
+function paintBird(ic, rng, skin, light, dark) {
+  ic.ellipse(8, 10, 5.6, 4, (x, y, u, v) => (u + v < -0.6 ? light : u + v > 0.75 ? dark : skin));
+  for (const cx of [5, 11]) {
+    ic.ellipse(cx, 6, 1.7, 2.4, cx < 8 ? light : skin); // a drumstick
+    ic.set(cx, 3, 0xf3ead8); // its bone end
+    ic.set(cx, 2, 0xfffaf0);
+  }
+  ic.line(4, 11, 7, 12, dark); // the wing's fold
+  ic.jitter(rng, 0.04);
+}
+
+/** A small fish lying on its side, head to the left: a dark back, a pale belly and a forked tail. */
+function paintFish(ic, body, back, belly) {
+  ic.poly([[11, 8.5], [15, 4.5], [14, 8.5], [15, 12.5]], back); // the tail
+  ic.ellipse(7, 8.5, 5.6, 3.2, (x, y, u, v) => (v < -0.35 ? back : v > 0.4 ? belly : body));
+  ic.line(6, 5, 9, 5, back); // the back fin
+  ic.set(7, 4, back);
+  ic.line(5, 7, 5, 10, back); // the gill
+}
+
+/** An egg standing on its blunt end, lit from the upper left. */
+function paintEgg(ic, shell) {
+  ic.ellipse(8, 9, 4.3, 5.6, (x, y, u, v) => (u + v < -0.55 ? tone(shell, 0.5) : u + v > 0.7 ? tone(shell, -0.22) : shell));
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Bandages and clothes

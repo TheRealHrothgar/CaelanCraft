@@ -29,11 +29,12 @@ import {
   CRUSH_DAMAGE_PER_CELL, BREATH_MAX_S, REGROW_MEAN_S, GRAVITY, MAX_SUBSTEP_DT, TERMINAL_VELOCITY,
   BODY_TEMP_NORMAL, BASKET_SLOTS, REACH, CAMPFIRE_LIGHT, TORCH_LIGHT,
 } from './config.js';
-import { BLOCK, BIOME, BIOME_NAMES, FLINT_SHARE, FLINT_PILE_SHARE, FLINT_GRAVEL_SHARE, getBlockDef } from './blocks.js';
+import { BLOCK, BIOME, BIOME_NAMES, FLINT_SHARE, getBlockDef } from './blocks.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, getItem, itemName } from './items.js';
 import { RECIPES, STATION_IDS, STATION_NAMES, STATION_BLOCKS, getRecipe, inputLabel } from './crafting.js';
 import {
   BLOCK_RULES, PICKABLE, HAND_GATHER, MOB_DROPS, breakSeconds, ruleFor, toolPower, UNDERWATER_DIG_FACTOR, DEEP_BELOW_SEA,
+  GRAVEL_FLINT_P,
 } from './harvest.js';
 import {
   HEAT_SOURCES, DIURNAL_AMPLITUDE, DIURNAL_PEAK_T, ALTITUDE_LAPSE, ALTITUDE_REF_Y, SUN_HEAT, SHELTER_HEAT, SHELTER_BELOW,
@@ -51,9 +52,10 @@ import {
   SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, WOLF_BITE_S,
   HOME_RANGE, RIDE_SCALE, RIDE_LEAP,
+  BEAR_DAMAGE, BEAR_WARN_S, BEAR_CHARGE_DIST, BEAR_CHASE_S, BEAR_GIVE_UP, poolOf,
 } from './animals.js';
 import {
-  throwOf, STONE_KEYS, DART_KEYS, DART_BREAK_P, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
+  throwOf, STONE_KEYS, DART_KEYS, dartBreakP, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
 } from './looseItems.js';
 import { RELIGHT_STICKS } from './survivalControl.js';
 
@@ -439,8 +441,8 @@ export function firstDayKit() {
 
 /** What your hands can gather on the first day, and how (generated from PICKABLE and BLOCK_RULES). */
 const GATHER = [
-  BLOCK.LOOSE_STONES, BLOCK.FALLEN_BRANCHES, BLOCK.TUSSOCK, BLOCK.FLINT_GRAVEL, BLOCK.HONEYBERRY_BUSH, BLOCK.PRICKLY_PEAR,
-  BLOCK.TUBER_PLANT, BLOCK.CATTAILS, BLOCK.OAK_LEAVES, BLOCK.CLAY,
+  BLOCK.LOOSE_STONES, BLOCK.FALLEN_BRANCHES, BLOCK.TUSSOCK, BLOCK.GRAVEL, BLOCK.HONEYBERRY_BUSH, BLOCK.PRICKLY_PEAR,
+  BLOCK.TUBER_PLANT, BLOCK.CATTAILS, BLOCK.OAK_LEAVES, BLOCK.SNOW_BLOCK,
 ];
 
 function gatherTable() {
@@ -559,7 +561,8 @@ function biomeWord(id) {
 export function herdBiomes(kind) {
   const share = (/** @type {number} */ b) => {
     const w = /** @type {Record<string, number>} */ (HERD_WEIGHTS[b]);
-    const total = Object.values(w).reduce((sum, x) => sum + x, 0);
+    // v0.14 (§76 fauna): among the kinds of its own pool (herds and small game appear independently)
+    const total = Object.keys(w).filter((k) => poolOf(k) === poolOf(kind)).reduce((sum, k) => sum + w[k], 0);
     return total > 0 ? (w[kind] ?? 0) / total : 0;
   };
   return Object.keys(HERD_WEIGHTS).map(Number).filter((b) => share(b) > 0).sort((x, y) => share(y) - share(x) || x - y);
@@ -584,6 +587,8 @@ export const ANIMAL_R = Object.freeze({
   sheep: 'with a knife in your pack: shear',
   horse: 'with its food, {tame} times: tame; then ride',
   wolf: 'with its food, {tame} times: tame; then sit or follow',
+  // v0.14 (§76 fauna): nothing — the game animals are only hunted
+  deer: '—', rabbit: '—', pheasant: '—', turkey: '—', bear: '—', fish: '—',
 });
 
 /** The animals: where their herds appear (HERD_WEIGHTS), what a hunt gives (MOB_DROPS) and what R does. */
@@ -591,7 +596,8 @@ function animalsTable() {
   const rows = [['Pig', 'grass and snowy grass', describeDrops(MOB_DROPS.pig, true), ANIMAL_R.pig]];
   for (const k of ANIMAL_KINDS) {
     const sp = SPECIES[k];
-    rows.push([sp.name, herdBiomes(k).map(biomeWord).join(', '), describeDrops(MOB_DROPS[k], true),
+    // v0.14 (§76 fauna): fish are not of a land — they live in the streams
+    rows.push([sp.name, /** @type {*} */ (sp).water ? 'streams' : herdBiomes(k).map(biomeWord).join(', '), describeDrops(MOB_DROPS[k], true),
       (ANIMAL_R[k] ?? '—').replace('{tame}', String(sp.tame))]);
   }
   return table({ id: 'animals', caption: 'The animals', head: ['Animal', 'Where', 'Gives', 'Press R'], rows,
@@ -603,9 +609,10 @@ function waryTable() {
   const cells = (/** @type {number} */ n) => `${fmtNum(n, 1)} cells`;
   const row = (/** @type {string} */ name, /** @type {number} */ notice) => [name, cells(notice), cells(notice * SNEAK_NOTICE),
     cells(notice * SPRINT_NOTICE)];
-  const rows = [row('Pig', PIG_NOTICE), ...ANIMAL_KINDS.map((k) => row(SPECIES[k].name, SPECIES[k].notice))];
+  const kinds = ANIMAL_KINDS.filter((k) => !(/** @type {*} */ (SPECIES[k]).predator)); // v0.14: a bear does not run
+  const rows = [row('Pig', PIG_NOTICE), ...kinds.map((k) => row(SPECIES[k].name, SPECIES[k].notice))];
   return table({ id: 'wary', caption: 'How near you can come before it runs', head: ['Animal', 'Walking', 'Sneaking', 'Sprinting'],
-    rows, keys: ['pig', ...ANIMAL_KINDS], source: 'animals' });
+    rows, keys: ['pig', ...kinds], source: 'animals' });
 }
 
 /** A zombie kind's strike in HP, at night and in open daylight (they differ only for the alpha). @param {string} kind */
@@ -634,7 +641,8 @@ function throwsTable() {
   const spears = TOOL_KEYS.filter((k) => ITEMS[k].tool?.type === 'spear');
   const kinds = [
     { key: 'stone', what: STONE_KEYS.map((k) => itemName(k)).join(', '), sample: STONE_KEYS[0], after: 'pick it up and throw it again' },
-    { key: 'dart', what: DART_KEYS.map((k) => itemName(k)).join(', '), sample: DART_KEYS[0], after: `breaks on ${fmtPct(DART_BREAK_P)} of its hits` },
+    // v0.14 (§76 fauna): a row for each dart — the Fletched Dart flies faster, hits harder and breaks less (key: its item key)
+    ...DART_KEYS.map((k, i) => ({ key: i === 0 ? 'dart' : k, what: itemName(k), sample: k, after: `breaks on ${fmtPct(dartBreakP(k))} of its hits` })),
     { key: 'spear', what: spears.map((k) => itemName(k)).join(', '), sample: spears[0], after: 'loses one use when it hits' },
     { key: 'chuck', what: 'Anything else', sample: 'stick', after: 'no harm done' },
   ].filter((t) => typeof t.sample === 'string');
@@ -853,6 +861,7 @@ export const DANGER_NAMES = Object.freeze({
   fall: 'Falling', drown: 'Drowning', buried: 'Being buried', crush: 'Falling sand and gravel', fire: 'Campfire flames',
   zombie: 'Zombies', blast: 'Powder Kegs', log: 'Falling trees', blackhole: 'Black holes', starve: 'Starving',
   thirst: 'Thirst', cold: 'Cold', heat: 'Heat', sick: 'Poisoning', void: 'The void below the bedrock',
+  bear: 'Bears', // v0.14 (§76 fauna)
 });
 
 /** How to avoid each danger (hand-written; a test checks every cause has one). */
@@ -872,6 +881,7 @@ const DANGER_AVOID = Object.freeze({
   heat: 'Shade, a straw hat, caves at noon; walk, don\'t sprint',
   sick: 'Boil water, cook meat; it passes',
   void: 'Do not dig through the bedrock\'s gaps',
+  bear: 'Back away when it rears up and growls; do not strike one unless you mean to finish it', // v0.14 (§76 fauna)
 });
 
 function dangerTable() {
@@ -893,6 +903,7 @@ function dangerTable() {
     heat: `${fmtNum(R.OVERHEAT_DPS)} HP/s Overheating, ${fmtNum(R.HEATSTROKE_DPS)} Heatstroke`,
     sick: `${fmtNum(R.SICK_DPS)} HP/s, never below ${R.SICK_FLOOR} HP`,
     void: 'death, and your belongings are lost',
+    bear: `${BEAR_DAMAGE} HP a maul, and it throws you`, // v0.14 (§76 fauna)
   };
   const keys = DAMAGE_CAUSES.filter((c) => c !== 'command');
   const rows = keys.map((c) => [DANGER_NAMES[c] ?? cap(c), harm[c] ?? '', DANGER_AVOID[c] ?? '']);
@@ -947,7 +958,7 @@ function wakeTable() {
 // Figures
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** The ages figure: each tier and what a tool of that age newly opens (ores for picks, logs for the first axe). */
+/** The ages figure: each tier and what a tool of that age newly opens (ores for picks, logs for the first axe, clay for the first shovel). */
 function agesFigure() {
   const data = [0, 1, 2, 3, 4, 5, 6].map((t) => {
     /** @type {string[]} */
@@ -966,6 +977,7 @@ function agesFigure() {
         if (tool === 'pick' && names.includes('Stone')) opens.push('stone');
         opens.push(...ores);
         if (tool === 'axe') opens.push('logs');
+        if (tool === 'shovel' && names.includes('Clay')) opens.push('clay'); // §77: the first shovel opens clay
       }
     }
     if (t === 0) opens = ['dirt', 'plants', 'litter'];
@@ -992,7 +1004,17 @@ function fireFigure() {
 export const ELEMENTARY_PARTS = Object.freeze(['knife_switch', 'push_button', 'terminal_board', 'voltaic_battery']);
 
 /** The species as a crowd, for prose ("cattle, sheep, horses and wolves"); a test checks every species has a word. */
-export const HERD_WORDS = Object.freeze({ cow: 'cattle', sheep: 'sheep', horse: 'horses', wolf: 'wolves' });
+export const HERD_WORDS = Object.freeze({
+  cow: 'cattle', sheep: 'sheep', horse: 'horses', wolf: 'wolves',
+  // v0.14 (§76 fauna)
+  deer: 'deer', rabbit: 'rabbits', pheasant: 'pheasants', turkey: 'wild turkeys', bear: 'bears', fish: 'fish',
+});
+/**
+ * v0.14 (§76 fauna): the kinds the Animals chapter's PROSE was written about — the ones that come to food (cattle, sheep,
+ * horses, wolves). The game animals (deer, rabbits, the birds, the bear, fish) are in the chapter's tables; their own
+ * pages are still to be written, so the sentences below are not stretched over them.
+ */
+export const PROSE_KINDS = Object.freeze(ANIMAL_KINDS.filter((k) => SPECIES[k].lure.length > 0));
 
 /** @returns {Chapter[]} */
 function makeChapters() {
@@ -1050,22 +1072,24 @@ function makeChapters() {
   const roastKeeps = (food('roast_pork').spoilS ?? 0) / (food('raw_pork').spoilS ?? 1);
   const stoneAxeBlows = Math.ceil(PIG_HEALTH / (getItem('stone_axe')?.tool?.power ?? 1));
   // animals
-  const herdNames = listJoin(ANIMAL_KINDS.map((k) => HERD_WORDS[k] ?? `${SPECIES[k].name.toLowerCase()}s`));
+  const herdNames = listJoin(PROSE_KINDS.map((k) => HERD_WORDS[k] ?? `${SPECIES[k].name.toLowerCase()}s`));
   /** @type {Map<string, string[]>} herd sizes → the species that keep them */
   const bySize = new Map();
-  for (const k of ANIMAL_KINDS) {
+  for (const k of PROSE_KINDS) {
     const size = `${SPECIES[k].herd[0]}–${SPECIES[k].herd[1]}`;
     bySize.set(size, [...(bySize.get(size) ?? []), HERD_WORDS[k] ?? SPECIES[k].name.toLowerCase()]);
   }
   const herdSizes = [...bySize].map(([size, names]) => `${size} ${listJoin(names, 'or')}`).join(', ');
-  const voices = listJoin(ANIMAL_KINDS.map((k) => `a ${SPECIES[k].voice}`), 'or');
-  const outOfReach = ANIMAL_KINDS.filter((k) => SPECIES[k].notice * SNEAK_NOTICE > REACH).map((k) => SPECIES[k].name.toLowerCase());
+  const voices = listJoin(PROSE_KINDS.map((k) => `a ${SPECIES[k].voice}`), 'or');
+  // v0.14 (§76 fauna): every kind that runs from you (not the bear), so the deer is named too
+  const outOfReach = ANIMAL_KINDS.filter((k) => !(/** @type {*} */ (SPECIES[k]).predator) && SPECIES[k].notice * SNEAK_NOTICE > REACH)
+    .map((k) => `the ${SPECIES[k].name.toLowerCase()}`);
   const reachTip = outOfReach.length
-    ? `Your arm reaches ${REACH} cells. Sneaking brings you inside that with every animal but the ${listJoin(outOfReach)}: that one wants a treat.`
+    ? `Your arm reaches ${REACH} cells. Sneaking brings you inside that with every animal but ${listJoin(outOfReach)}.`
     : `Your arm reaches ${REACH} cells, and sneaking brings you inside that with every animal.`;
   /** @type {Map<string, string[]>} what they come to → who comes */
   const byLure = new Map();
-  for (const k of ANIMAL_KINDS) {
+  for (const k of PROSE_KINDS) {
     const what = lureText(SPECIES[k].lure);
     byLure.set(what, [...(byLure.get(what) ?? []), HERD_WORDS[k] ?? SPECIES[k].name.toLowerCase()]);
   }
@@ -1102,7 +1126,7 @@ function makeChapters() {
       h('Before dusk, step by step'),
       steps([
         'Pull *tussock grass* with your bare hands for Plant Fibre: hold the left mouse button on it until it breaks. Eight tussocks give about a dozen.',
-        'Look down. *Loose Stones* give Rock and *Fallen Branches* give Sticks: press [R] on them. For Flint, dig *Flinty Gravel*: gravel with dark, glossy lumps in it.',
+        'Look down. *Loose Stones* give Rock and *Fallen Branches* give Sticks: press [R] on them. For Flint, dig *gravel*: now and then a cell turns one up.',
         'Press [E] and make a *Stone Hammer*, then a *Stone Axe* and some *Cord*. Hand jobs carry on while you walk.',
         'With the Stone Axe in hand, lop leaves for Sticks and fell a tree: logs need an axe.',
         'Knap your flint with the Stone Hammer: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
@@ -1132,23 +1156,25 @@ function makeChapters() {
   // ---- 2. Water
   chapter('water', 'Water', 'Water', 'drop', [
     [
-      h('Fresh and salt'),
+      h('Fresh, tainted and salt'),
       p(`Water is your most urgent need. Hydration falls from full to nothing in ${fmtDurationLong(Math.round(hydrationRest / 60) * 60)} even at rest: faster when you work, faster still in the heat.`),
-      p('The sea and every beach are salt. Ponds inland are fresh: small hex-shaped pools ringed with cattails and loose stones, with clay at the bottom. In snowy land they freeze over.'),
+      p('The sea and every beach are salt. Inland, look before you drink: clear blue water is fresh, murky green-brown water is *tainted*. Most ponds are tainted: small hex-shaped pools ringed with cattails and loose stones, with clay at the bottom. In snowy land they freeze over.'),
+      p('*Streams* always run fresh: narrow channels from a spring on higher ground down to the sea, a pond or a small pool.'),
       p(`Salt water makes thirst worse: your body spends more water getting rid of the salt than the sip gave you. A gulp of the sea costs ${-R.GULP_SALT} Hydration.`),
-      tip('The hint under your crosshair names it: *Fresh water* or *Sea water (salty)*.'),
+      tip('The hint under your crosshair names it: *Fresh water*, *Tainted water* or *Sea water (salty)*.'),
     ],
     [
       h('Drinking'),
       p(`Look at water and press [R] to take a gulp, whatever you are holding: ${fmtSigned(R.GULP_FRESH)} Hydration, one gulp every ${GULP_GAP_S} s. With your head under water, [R] drinks where you are.`),
-      p(`Raw water is a gamble. A gulp from a pond poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(potSick)}. Water boiled in the embers of a campfire is always safe.`),
+      p(`Raw water is a gamble. A gulp of fresh water poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(potSick)}. Tainted water is far worse: ${fmtPct(R.GULP_TAINTED_SICK)} a gulp, ${fmtPct(food('pot_tainted').sick)} a pot. Water boiled in the embers of a campfire is always safe.`),
       p(`When you are *Poisoned* your stomach turns at once: ${fmtSigned(R.POISON_THIRST)} Hydration and ${fmtSigned(R.POISON_HUNGER)} Nourishment. For the next ${R.SICK_S} seconds you do not heal, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though never below ${R.SICK_FLOOR} HP. Every new dose adds its time on top.`),
       tip('Boil before you drink, and cook before you eat.'),
+      warn('Water that flows out of a tainted pond is still tainted, though it looks clear.'),
     ],
     [
       h('Pots'),
-      p(`A *Clay Pot* carries water. Shape a Greenware Pot from ${recipeInputsProse(greenware)} (dig clay at the bottom of a pond), then fire it in the embers of a campfire for ${FIRE_TRANSFORMS.greenware_pot.seconds} s, the oldest way of making pottery, or in a Kiln.`),
-      p('With an empty Clay Pot in hand, [R] on water fills it. Hold [RMB] to drink a pot; you keep the empty pot. A cow fills a pot too, with milk: see *Animals*.'),
+      p(`A *Clay Pot* carries water. Shape a Greenware Pot from ${recipeInputsProse(greenware)} (dig clay at the bottom of a pond: it needs a shovel), then fire it in the embers of a campfire for ${FIRE_TRANSFORMS.greenware_pot.seconds} s, the oldest way of making pottery, or in a Kiln.`),
+      p('With an empty Clay Pot in hand, [R] on water fills it with whatever that water is. Hold [RMB] to drink a pot; you keep the empty pot. A cow fills a pot too, with milk: see *Animals*.'),
       ...drinksTable(),
     ],
     [
@@ -1157,6 +1183,12 @@ function makeChapters() {
       ...fireTable('embers', 'In the embers', 'centre'),
       p('Boiling never makes the sea drinkable, but the water leaves its salt behind: scrape the salt-crusted pot (a hand job) for Salt and your pot back. Salt keeps meat and tans hides.'),
       tip(`Snow and ice are fresh. Pack ${takes('pot_snow', 'snow')} Snow or ${takes('pot_snow_ice', 'ice_chunk')} Ice Chunks into a Clay Pot and boil it.`),
+    ],
+    [
+      h('Water that stands'),
+      p(`Fresh water does not keep. A *Pot of Water* left standing in your pack or a basket turns into a Pot of Tainted Water, on average after ${gameDays(food('pot_water').spoilS ?? 0)}. Boiled water keeps for good, and boiling a tainted pot makes it safe.`),
+      p('So carry your water boiled, and know where the nearest stream is. Follow one uphill and you come to its spring; follow it down and it ends at the sea, a pond or a pool.'),
+      tip('A stream stays fresh all the way across a beach. The sea is still salt.'),
     ],
     [
       h('Water from plants'),
@@ -1182,8 +1214,16 @@ function makeChapters() {
       tip('A dug-up bush has to take root again: it is replanted bare and fruits only after it regrows.'),
     ],
     [
+      h('Food in bunches'),
+      p('Wild food grows in bunches. You may walk a long way and find nothing, then a whole patch: remember where it was.'),
+      p('*Honeycaps* grow in rings under forest trees and on cave floors: [R] picks them, and they roast well. Look before you eat. The *Frecklecap* grows among them and looks much the same: its cap is flatter and dotted with pale freckles, its stem thin, with a ring. It always poisons you, and roasting does not help.'),
+      p('*Wild onions* and *wild carrots* grow in patches on the plains and at the forest\'s edge: small raw, better roasted, and a shovel digs up more. *Hazel thickets* give nuts that never go bad. *Crab apples* are sour and wet, and bake well. Thicket and bush regrow after picking.'),
+      p('*Healwort* is rare: silver leaves under violet flower spikes. A leaf ends a poisoning at once; steeped in a Pot of Boiled Water it makes *Healwort Tea*, which cures and quenches. Pick it with [R] and it grows back. Pull it up and it is gone.'),
+      tip('A shovel lifts a thicket, a bush or a Healwort whole: plant it by your camp.'),
+    ],
+    [
       h('Meat and milk'),
-      p('Meat is the richest food there is. Pigs, cattle and sheep give it; the chapter *Animals* tells how to come near them and what a hunt takes.'),
+      p('Meat is the richest food there is. Pigs, cattle, sheep, deer, rabbits, birds, fish and the bear give it; the chapter *Animals* tells how to come near them and what a hunt takes.'),
       p(`Raw meat feeds you little and poisons you ${fmtPct(rawSick)} of the time. Roast it on a skewer: Roast Mutton gives ${fmtSigned(food('roast_mutton').satiation)} Nourishment, Roast Pork ${fmtSigned(food('roast_pork').satiation)} and Roast Beef ${fmtSigned(food('roast_beef').satiation)}.`),
       p(`Milk is food and drink in one. A *Pot of Milk* gives ${fmtSigned(milk.satiation)} Nourishment and ${fmtSigned(milk.hydration)} Hydration, never poisons you, and leaves you the pot. Press [R] on a cow with an empty Clay Pot in hand.`),
       tip(`A cow has milk again ${fmtDurationLong(MILK_REGROW_S)} after you milked her.`),
@@ -1199,10 +1239,10 @@ function makeChapters() {
         '[R] with anything else: take what is done (or everything, if nothing is).',
       ]),
     ],
-    [
-      ...fireTable('fire', 'What the fire does', null),
-      warn(`Roast meat left on its skewer chars after another ${FIRE_TRANSFORMS.roast_pork.seconds} s. Take it off in time.`),
-    ],
+    // v0.14 (§76): the wild food and the game meats made the fire table longer than a page, so each part takes its own, the
+    // warning last
+    ...fireTable('fire', 'What the fire does', null).map((t, i, all) => (i < all.length - 1 ? [t]
+      : [t, warn(`Roast meat left on its skewer chars after another ${FIRE_TRANSFORMS.roast_pork.seconds} s. Take it off in time.`)])),
     [
       h('Fuel and the cold pit'),
       p(`A fire built in Survival starts with ${fmtDurationLong(CAMPFIRE_FUEL_START_S)} of fuel. A stick adds ${FUEL_STICK_S} seconds and a log ${fmtDurationLong(FUEL_LOG_S)}, up to ${fmtDurationLong(CAMPFIRE_FUEL_MAX_S)}.`),
@@ -1287,12 +1327,23 @@ function makeChapters() {
     ],
     [...agesTable(), p('Dig speed multiplies how fast the right kind of tool breaks its blocks; bare hands are ×1.')],
     [
+      h('What gates what'),
+      p('Each step of the ladder opens the next. The Making panel says under every tool what it is for.'),
+      bullets([
+        'Clay needs a shovel. The Wooden Shovel will do, and clay builds the Kiln.',
+        'Coal needs a Flint Pick. Smelting and casting copper and bronze burn coal itself: charcoal will not do.',
+        'Charcoal, burnt from logs in the Kiln, fires clay and is the only fuel for iron and steel.',
+        'A copper pick mines tin, a bronze pick iron, an iron pick gold and a steel pick gems.',
+      ]),
+      p('Look for coal as black seams in cliff sides, stream banks and bare mountain rock.'),
+    ],
+    [
       h('Stone and flint'),
       p('The *Stone Hammer* is a fist-sized cobble, the knapper\'s hammer: every flint tool is struck with it. The *Stone Axe* is a sharp-edged cobble, your first axe: it fells trees and lops leaves for sticks.'),
-      p(`*Flint* comes from *Flinty Gravel*: gravel with dark, glossy lumps in it. Dig it, by hand or with a shovel, and each cell gives a Flint. Not every gravel pile holds any: about ${fmtPct(FLINT_PILE_SHARE)} of the piles do, and in those about ${fmtPct(FLINT_GRAVEL_SHARE)} of the gravel. Plain gravel never gives flint. A few *Loose Stones* (${fmtPct(FLINT_SHARE)}) show a dark nodule and give one too.`),
+      p(`*Flint* hides in *gravel*. Dig wild gravel, by hand or with a shovel, and about one cell in ${Math.round(1 / GRAVEL_FLINT_P)} (${fmtPct(GRAVEL_FLINT_P)}) turns up a Flint. Gravel you have put down yourself gives none. A few *Loose Stones* (${fmtPct(FLINT_SHARE)}) show a dark nodule and give one too.`),
       p('Flint, or obsidian (volcanic glass), knaps into a knife, an axe, a shovel, a spear and a pick. Each needs a stick and cord to haft it.'),
       p(`The Flint Pick breaks stone, ${flintOres.map((n) => n.toLowerCase()).join(', ')} and obsidian.`),
-      tip('Obsidian and gems are brittle: any pick that cuts stone breaks them.'),
+      tip('Obsidian is brittle: any pick that cuts stone breaks it. Gold wants an iron pick, and gems a steel one.'),
     ],
     [
       h('Light underground'),
@@ -1412,7 +1463,7 @@ function makeChapters() {
     ],
     [
       h('Horses'),
-      p(`A wild horse spots you from farther off than any other animal, and it outruns you. So bring it a treat: ${lureText(SPECIES.horse.lure)}. Feed it with [R], ${numWord(SPECIES.horse.tame)} times, and it trusts you for good.`),
+      p(`A wild horse spots you from far off, and it outruns you. So bring it a treat: ${lureText(SPECIES.horse.lure)}. Feed it with [R], ${numWord(SPECIES.horse.tame)} times, and it trusts you for good.`),
       p(`Press [R] on your horse to get on. It goes where you look at ${fmtNum(RIDE_SCALE)} times your own pace, walking or sprinting, hops single steps by itself, and leaps a wall ${Math.floor(RIDE_LEAP)} cells high when you press [Space]. [Shift] gets you off.`),
       p(`A tame horse waits for you: it grazes within ${HOME_RANGE} cells of where you left it. If it is hurt, its food heals it.`),
     ],
@@ -1429,6 +1480,29 @@ function makeChapters() {
       p(`A wild animal that steps into it, a pig too, is held fast for ${fmtDurationLong(TRAP_HOLD_S)}: time to walk up and feed it, shear it, milk it or hunt it. Then it pulls free, and nothing catches it again for ${TRAP_IMMUNE_S} seconds. The snare sets itself once more, without its bait.`),
       p(`Bait beats luck. Press [R] on a set snare with any food in hand: calm ${herdNames} within ${BAIT_RANGE} cells wander over to it. Keep well back, or you will scare them off.`),
       tip('Feed a snared horse or wolf until it is tame, and it steps out of the noose as your friend.'),
+    ],
+    [
+      h('Deer and small game'),
+      p(`*Deer* keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}. They are the wariest animal there is: sneaking will not bring you within reach, so throw a spear or a dart, or set a snare. Every herd has one stag: you know it by its antlers.`),
+      p('*Rabbits* are small and quick and swerve as they run. A baited Snare is the easy way to catch one.'),
+      p('*Pheasants* and *wild turkeys* feed on the ground. Come too close and a pheasant bursts into the air and flies off; a turkey glides a little way and runs.'),
+      p('Birds give meat and *Feathers*. Feathers fletch a better dart: a *Fletched Dart* flies faster, hits harder and breaks less often than a Flint Dart.'),
+      p('Leave the birds in peace and some of them lay a *Ground Nest*. Press [R] on it for the eggs, and a hen lays in the empty nest again. A raw egg can poison you: roast it.'),
+    ],
+    [
+      h('Fish'),
+      p('*Fish* live in the streams and never leave the water. Look for a fin cutting the surface. They dart away when you come near: sneak.'),
+      p('Only a spear catches one: thrust with it, or throw it with [G]. A thrown spear stays where it fell, so you wade in for it.'),
+      tip('Fish goes bad faster than any other meat. Roast it soon.'),
+    ],
+    [
+      h('The bear'),
+      p('A *bear* lives alone, in forest, mountains and snowy land. It does not run from you.'),
+      p(`When a bear rears up and growls, back away at once: it warns you for ${fmtNum(BEAR_WARN_S)} seconds. If you stay, come within ${fmtNum(BEAR_CHARGE_DIST)} cells of it, or hurt it, it charges, and it runs faster than you can sprint.`),
+      p(`A maul costs ${BEAR_DAMAGE} HP and throws you. The bear gathers itself for a moment afterwards: that is your chance to run. It gives up after ${BEAR_CHASE_S} seconds, or once you are ${BEAR_GIVE_UP} cells away.`),
+      p('Water deep enough to swim in, a burning campfire or a wall two cells high stops a charge.'),
+      warn('Do not strike a bear unless you mean to finish it: one blow and it charges from any distance.'),
+      tip(`A bear is the richest kill there is: ${describeDrops(MOB_DROPS.bear, true)}.`),
     ],
   ]);
 
@@ -1608,6 +1682,7 @@ function makeChapters() {
       h('Older worlds'),
       p('Worlds made before Survival have no wild plants, ponds, copper or tin. The first time you switch one to Survival you are asked to bring them in: they appear wherever the land is untouched, near your builds too. This cannot be undone.'),
       p('New worlds have them unless you untick *Survival resources* when you create the world.'),
+      p('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only. A world made before them keeps its land: every pond in it is fresh. The rules for things you carry and hunt are the same everywhere.'),
     ],
     [
       h('Good to know'),

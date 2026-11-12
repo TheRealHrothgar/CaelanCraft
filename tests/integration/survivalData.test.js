@@ -5,10 +5,10 @@
 // out from what a generation-2 world offers by hand, every recipe must become makeable without a cycle that needs itself,
 // each pick tier must open the next tier's ore, and the loose stones of plains and forest must hold enough flint (§7.5).
 import { describe, it, expect } from 'vitest';
-import { BLOCK, BLOCK_COUNT, FLINT_SHARE, FLINT_PILE_SHARE, FLINT_GRAVEL_SHARE } from '../../src/blocks.js';
+import { BLOCK, BLOCK_COUNT, FLINT_SHARE } from '../../src/blocks.js';
 import { hexDiscCount } from '../../src/hex.js';
 import { ITEMS, ITEM_KEYS, TAGS, getItem, itemForBlock, blockForItem } from '../../src/items.js';
-import { BLOCK_RULES, PICKABLE, MOB_DROPS, canHarvest, tap } from '../../src/harvest.js';
+import { BLOCK_RULES, PICKABLE, MOB_DROPS, GRAVEL_FLINT_P, canHarvest, tap } from '../../src/harvest.js';
 import { RECIPES, STATION_BLOCKS } from '../../src/crafting.js';
 import { FIRE_TRANSFORMS, fuelSeconds } from '../../src/cooking.js';
 import { FLORA_TABLE } from '../../src/worldgen.js';
@@ -23,6 +23,8 @@ const NATURAL_BLOCKS = [
   B.OAK_LOG, B.OAK_LEAVES, B.SPRUCE_LOG, B.SPRUCE_LEAVES, B.BIRCH_LOG, B.BIRCH_LEAVES,
   B.COAL_ORE, B.IRON_ORE, B.GOLD_ORE, B.DIAMOND_ORE, B.COPPER_ORE, B.TIN_ORE,
   B.TUSSOCK, B.TUBER_PLANT, B.HONEYBERRY_BUSH, B.PRICKLY_PEAR, B.CATTAILS, B.LOOSE_STONES, B.FALLEN_BRANCHES,
+  // v0.14 (§76 flora): what a generation-3 world grows besides
+  B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT,
   // Not terrain, but left in the world by the Hollow Watcher's pillar traces (CONTRACTS §40.3): the only obsidian.
   B.OBSIDIAN,
 ];
@@ -50,6 +52,7 @@ describe('every item has a source and a use (§10 I-1)', () => {
   sources.add('pot_water'); // R on fresh water with an empty clay pot (§4.2)
   sources.add('pot_milk'); // R on a cow with an empty clay pot (§72)
   sources.add('pot_seawater'); // … on salt water
+  sources.add('pot_tainted'); // … on tainted water (§76 water)
   for (const rec of RECIPES) for (const o of rec.outputs) sources.add(o.k);
   for (const tr of Object.values(FIRE_TRANSFORMS)) sources.add(tr.to);
 
@@ -104,12 +107,15 @@ function reach() {
       const id = blockForItem(key);
       if (id >= 0 && breakableNow(id)) gather(BLOCK_RULES[id].drops, false);
     }
-    if (hasAnyTool()) for (const mob of ['pig', 'cow', 'sheep', 'horse', 'wolf']) gather(MOB_DROPS[mob]); // bare hands only shove (§4.3, §69)
+    if (hasAnyTool()) for (const mob of ['pig', 'cow', 'sheep', 'horse', 'wolf', 'deer', 'rabbit', 'pheasant', 'turkey', 'bear']) gather(MOB_DROPS[mob]); // bare hands only shove (§4.3, §69; §76 fauna)
+    if (hasTool('spear', 0)) gather(MOB_DROPS.fish); // only a spear catches a fish (§76 fauna)
+    gather(PICKABLE[B.GROUND_NEST].drops); // wild pheasants and turkeys lay them; R takes the eggs (§76 fauna)
     gather(MOB_DROPS.zombie);
     if (have.has('clay_pot')) {
       have.add('pot_water');
       have.add('pot_milk'); // a cow, lured or snared (§72)
       have.add('pot_seawater');
+      have.add('pot_tainted'); // tainted water (§76 water)
       if (hasTool('knife', 2)) have.add('pot_sap');
     }
     if (have.has('campfire')) for (const [k, tr] of Object.entries(FIRE_TRANSFORMS)) if (have.has(k)) have.add(tr.to);
@@ -179,9 +185,12 @@ describe('each pick tier opens the next tier of ore (§6.3, §7.4)', () => {
     if (next !== null) expect(canHarvest(next, pickOf(pickKey))).toBe(false);
   });
 
-  it('obsidian and gems need only a flint pick (§6.3)', () => {
+  it('obsidian needs only a flint pick; gold needs iron and gems need steel (§77)', () => {
     expect(canHarvest(B.OBSIDIAN, pickOf('flint_pick'))).toBe(true);
-    expect(canHarvest(B.DIAMOND_ORE, pickOf('flint_pick'))).toBe(true);
+    expect(canHarvest(B.GOLD_ORE, pickOf('bronze_pick'))).toBe(false);
+    expect(canHarvest(B.GOLD_ORE, pickOf('iron_pick'))).toBe(true);
+    expect(canHarvest(B.DIAMOND_ORE, pickOf('iron_pick'))).toBe(false);
+    expect(canHarvest(B.DIAMOND_ORE, pickOf('steel_pick'))).toBe(true);
   });
 
   it('each tier\'s pick is made from what the tier before it mines', () => {
@@ -198,21 +207,20 @@ describe('flint near a plains or forest start (§7.5, §8.3)', () => {
   const flintChance = PICKABLE[B.LOOSE_STONES].drops.flatMap((g) => g.flatMap((br) => br.items)).find((it) => it.k === 'flint').p;
   const columns = hexDiscCount(20); // 1 261 columns within hex distance 20
 
-  // v0.13 (§75): flint is rarer (it was 6–7 within distance 20, all from loose stones) and comes mostly from Flinty Gravel.
-  it.each([['PLAINS', 2], ['FOREST', 3]])('%s: about 3–4 flint expected within hex distance 20, most of it in gravel', (_name, biome) => {
+  // v0.14 (§76): flint is rare (it was 6–7 within distance 20, all from loose stones) and comes mostly from digging gravel.
+  it.each([['PLAINS', 2], ['FOREST', 3]])('%s: about 3 flint expected within hex distance 20, most of it from gravel', (_name, biome) => {
     const stones = FLORA_TABLE[biome].rows.find((r) => r.id === B.LOOSE_STONES);
     const gravel = FLORA_TABLE[biome].rows.find((r) => r.id === B.GRAVEL);
     const fromStones = columns * stones.chance * flintChance;
-    const fromGravel = columns * gravel.chance * FLINT_PILE_SHARE * FLINT_GRAVEL_SHARE;
+    const fromGravel = columns * gravel.chance * GRAVEL_FLINT_P;
     expect(flintChance).toBe(FLINT_SHARE);
     expect(fromStones + fromGravel).toBeGreaterThanOrEqual(3); // still there to be found on the first day
     expect(fromStones + fromGravel).toBeLessThan(5); // rarer than it was
     expect(fromGravel).toBeGreaterThan(fromStones * 2); // usually found by digging gravel
   });
 
-  it('plain gravel never gives flint; Flinty Gravel always gives one, by hand or with a shovel', () => {
-    expect([...groupKeys(BLOCK_RULES[B.GRAVEL].drops)]).not.toContain('flint');
-    expect([...groupKeys(BLOCK_RULES[B.FLINT_GRAVEL].drops)]).toContain('flint');
+  it('wild gravel gives flint by chance, by hand or with a shovel; mined stone never', () => {
+    expect([...groupKeys(BLOCK_RULES[B.GRAVEL].drops)]).toContain('flint');
     expect([...groupKeys(BLOCK_RULES[B.STONE].drops)]).not.toContain('flint');
   });
 });

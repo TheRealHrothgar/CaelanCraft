@@ -7,7 +7,7 @@ import {
   Animals, SPECIES, ANIMAL_KINDS, ANIMAL_MAX, noticeRange, fleeSpeed, validateAnimalsJSON, isAnimalKind,
   SNEAK_NOTICE, CALM_FACTOR, FED_CALM_S, LURE_STOP, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, SHEAR_REGROW_S, SHEAR_WOOL,
   WOLF_BITE_S, FOLLOW_NEAR, SADDLE_Y, RIDER_HEIGHT, RIDE_SCALE, HERD_MIN, HERD_MAX, HERD_CHECK_S, HERD_TARGET, DESPAWN_DIST,
-  HIT_FLEE_S, ANIMAL_HURT_S, MILK_REGROW_S,
+  HIT_FLEE_S, ANIMAL_HURT_S, MILK_REGROW_S, HERD_WEIGHTS, SMALL_TARGET, poolOf,
 } from '../../src/animals.js';
 import { Pigs, seededRng } from '../../src/pigs.js';
 import { createPlayer, shouldPaddle, settleFloat, FLOAT_POINT } from '../../src/physics.js';
@@ -33,8 +33,10 @@ function run(as, world, seconds, each) {
 }
 
 describe('animals — the species', () => {
-  it('four kinds with bodies that fit the collider; spawn refuses junk and stops at ANIMAL_MAX', () => {
-    expect(ANIMAL_KINDS).toEqual(['cow', 'sheep', 'horse', 'wolf']);
+  it('the kinds, with bodies that fit the collider; spawn refuses junk and stops at ANIMAL_MAX', () => {
+    // v0.14 (§76 fauna): + deer, rabbit, pheasant, turkey, bear and fish (tests/unit/fauna.test.js)
+    expect(ANIMAL_KINDS).toEqual(['cow', 'sheep', 'horse', 'wolf', 'deer', 'rabbit', 'pheasant', 'turkey', 'bear', 'fish']);
+    expect(ANIMAL_MAX).toBe(40); // 24 until v0.14
     const as = new Animals(seededRng(1));
     for (const k of ANIMAL_KINDS) {
       const a = as.spawn(k, 0, GROUND, 0);
@@ -338,14 +340,23 @@ describe('animals — herds are rare and far; the save', () => {
     const player = standing(0, 0, { flying: true });
     const world = view(flatWorld(), player, hooks(BIOME.PLAINS));
     let spawned = [];
-    run(as, world, HERD_CHECK_S * 6, (ev) => {
+    // (twenty checks: with HERD_CHANCE 0.35 a herd is all but certain to have come by then)
+    run(as, world, HERD_CHECK_S * 20, (ev) => {
       if (ev.spawned.length && spawned.length === 0) spawned = [...ev.spawned];
     });
-    expect(spawned.length).toBeGreaterThanOrEqual(2);
-    const kind = spawned[0].kind;
-    expect(['cow', 'sheep', 'horse']).toContain(kind);
-    expect(spawned.every((a) => a.kind === kind)).toBe(true);
-    expect(as.size).toBeLessThanOrEqual(HERD_TARGET + 4);
+    // v0.14 (§76 fauna): a check may place a herd and a group of small game; each group is of one kind the plains grow,
+    // and neither pool grows past its own target by more than its last group
+    expect(spawned.length).toBeGreaterThanOrEqual(1);
+    for (const pool of ['herd', 'small']) {
+      const group = spawned.filter((a) => poolOf(a.kind) === pool);
+      if (group.length === 0) continue;
+      expect(Object.keys(HERD_WEIGHTS[BIOME.PLAINS])).toContain(group[0].kind);
+      expect(group.every((a) => a.kind === group[0].kind)).toBe(true);
+    }
+    const count = (pool) => as.list.filter((a) => poolOf(a.kind) === pool).length;
+    expect(count('herd')).toBeGreaterThanOrEqual(2);
+    expect(count('herd')).toBeLessThanOrEqual(HERD_TARGET + 4);
+    expect(count('small')).toBeLessThanOrEqual(SMALL_TARGET + 3);
     const as2 = new Animals(seededRng(19));
     let first = [];
     run(as2, view(flatWorld(), standing(0, 0, { flying: true }), hooks(BIOME.PLAINS)), HERD_CHECK_S * 8, (ev) => {

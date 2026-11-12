@@ -86,6 +86,17 @@ const POP_LEAF = Object.freeze({
   [BLOCK.TUSSOCK]: Object.freeze([0.62, 0.64, 0.3]),
   [BLOCK.CATTAILS]: Object.freeze([0.4, 0.52, 0.23]),
   [BLOCK.TUBER_PLANT]: Object.freeze([0.33, 0.55, 0.24]),
+  // v0.14 (§76 flora): the mushrooms scatter cap-brown, the rest their leaf colour
+  [BLOCK.HONEYCAP_MUSHROOM]: Object.freeze([0.8, 0.58, 0.22]),
+  [BLOCK.FRECKLECAP_MUSHROOM]: Object.freeze([0.76, 0.5, 0.2]),
+  [BLOCK.ONION_PLANT]: Object.freeze([0.36, 0.6, 0.5]),
+  [BLOCK.CARROT_PLANT]: Object.freeze([0.38, 0.66, 0.26]),
+  [BLOCK.HAZEL_THICKET]: Object.freeze([0.62, 0.71, 0.24]),
+  [BLOCK.HAZEL_THICKET_BARE]: Object.freeze([0.62, 0.71, 0.24]),
+  [BLOCK.CRAB_APPLE_BUSH]: Object.freeze([0.19, 0.42, 0.18]),
+  [BLOCK.CRAB_APPLE_BUSH_BARE]: Object.freeze([0.19, 0.42, 0.18]),
+  [BLOCK.HEALWORT_PLANT]: Object.freeze([0.62, 0.76, 0.62]),
+  [BLOCK.HEALWORT_PLANT_BARE]: Object.freeze([0.62, 0.76, 0.62]),
 });
 
 /**

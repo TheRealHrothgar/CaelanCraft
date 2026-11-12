@@ -250,8 +250,10 @@ describe('resolveBlock', () => {
     // CONTRACT-ISSUE: DESIGN-survival §8.1 names blocks 78/79 honeyberry_bush(_bare), so the prefix "honey" stopped being
     // unique (it named honeycomb_block before v0.9). W0 changed this line to keep the suite green; package C (owner) keeps
     // the change: resolveBlock's rules are unchanged, and an ambiguous prefix listing every candidate is the intended result.
-    expect(resolveBlock('honeyc')).toEqual({ id: B.HONEYCOMB_BLOCK });
-    expect(resolveBlock('honey')).toEqual({ error: 'ambiguous block "honey": honeycomb_block, honeyberry_bush, honeyberry_bush_bare' });
+    // v0.14 (§76 flora): the Honeycap Mushroom shares "honeyc" with the Honeycomb Block, so one more letter is needed.
+    expect(resolveBlock('honeyco')).toEqual({ id: B.HONEYCOMB_BLOCK });
+    expect(resolveBlock('honeyca')).toEqual({ id: B.HONEYCAP_MUSHROOM });
+    expect(resolveBlock('honey')).toEqual({ error: 'ambiguous block "honey": honeycomb_block, honeyberry_bush, honeyberry_bush_bare, honeycap_mushroom' });
     expect(resolveBlock('light_blue_wool')).toEqual({ id: B.WOOL_LIGHT_BLUE });
     expect(resolveBlock('block_of_gold')).toEqual({ id: B.GOLD_BLOCK });
     expect(resolveBlock('diamond')).toEqual({ error: 'ambiguous block "diamond": diamond_ore, diamond_block' });
@@ -788,7 +790,7 @@ describe('executeCommand — summon / pigs', () => {
     const { ctx } = makeCtx();
     expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining('pigs are not available') });
     ctx.pigs = new Pigs();
-    expect(parseLine('summon dragon')).toEqual({ line: 1, message: 'summon: expected one of pig, cow, sheep, horse, wolf, zombie, runner, alpha, watcher, got "dragon" — usage: summon pig|cow|sheep|horse|wolf|zombie|runner|alpha|watcher [q y r]' });
+    expect(parseLine('summon dragon')).toEqual({ line: 1, message: 'summon: expected one of pig, cow, sheep, horse, wolf, deer, stag, rabbit, pheasant, turkey, bear, fish, zombie, runner, alpha, watcher, got "dragon" — usage: summon pig|cow|sheep|horse|wolf|deer|stag|rabbit|pheasant|turkey|bear|fish|zombie|runner|alpha|watcher [q y r]' });
     expect(exec(ctx, 'summon pig 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
     expect(exec(ctx, 'summon pig 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
     for (let i = 0; i < PIG_MAX; i++) ctx.pigs.spawn(0, FEET, 0);

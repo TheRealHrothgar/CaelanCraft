@@ -432,7 +432,12 @@ describe('fire spots: what each item is drawn as', () => {
       expect(SPOT_ITEMS[to].stage, `${from} → ${to}`).toBe(SPOT_ITEMS[from].stage + 1);
     }
     for (const k of Object.keys(SPOT_ITEMS)) expect(isItemKey(k), k).toBe(true);
-    expect(Object.keys(SPOT_ITEMS).filter((k) => SPOT_ITEMS[k].kind === 'meat').sort()).toEqual(['charred_meat', 'raw_pork', 'roast_pork']);
+    // v0.14 (§76 fauna): the game meats, and beef and mutton (§69), which were missing and drawn as vegetables
+    const MEATS = ['pork', 'beef', 'mutton', 'venison', 'rabbit', 'fowl', 'fish', 'bear'];
+    expect(Object.keys(SPOT_ITEMS).filter((k) => SPOT_ITEMS[k].kind === 'meat').sort())
+      .toEqual(['charred_meat', ...MEATS.map((m) => `raw_${m}`), ...MEATS.map((m) => `roast_${m}`)].sort());
+    for (const m of MEATS) expect([SPOT_ITEMS[`raw_${m}`].stage, SPOT_ITEMS[`roast_${m}`].stage], m).toEqual([0, 1]);
+    expect([SPOT_ITEMS.raw_egg, SPOT_ITEMS.roast_egg]).toEqual([{ kind: 'veg', stage: 0 }, { kind: 'veg', stage: 1 }]);
     expect(SPOT_ITEMS.raw_pork.stage).toBe(0);
     expect(SPOT_ITEMS.charred_meat.stage).toBe(2);
     expect(Object.isFrozen(SPOT_ITEMS)).toBe(true);

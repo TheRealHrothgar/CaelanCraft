@@ -367,6 +367,7 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 .card-n{color:#1c1a24;text-shadow:none}
 .card-side{display:flex;flex-direction:column;gap:3px;min-width:0}
 .card-name{color:#f1e6cf;font:bold 12px monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-purpose{color:#cdbf9c;font:italic 10px/12px monospace;white-space:normal;max-width:320px}
 .card-meta{color:#a89eb8;font:11px monospace}
 .card-buttons{display:flex;gap:4px}
 .card-make{padding:2px 12px;font-size:11px}

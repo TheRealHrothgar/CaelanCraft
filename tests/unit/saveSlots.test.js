@@ -2,7 +2,7 @@
 // Everything runs against Map-backed fakes of the Web Storage subset the module uses; the quota fake throws a
 // QuotaExceededError like a full localStorage does and never changes anything when it throws.
 import { describe, it, expect } from 'vitest';
-import { PACK_SLOTS } from '../../src/config.js';
+import { PACK_SLOTS, GEN_LATEST } from '../../src/config.js';
 import { BLOCK, DEFAULT_HOTBAR } from '../../src/blocks.js';
 import {
   SAVE_VERSION, SAVE_KEY, SAVE_SLOTS, MAX_WORLD_NAME_CHARS, STORAGE_QUOTA_ESTIMATE, LEGACY_SAVE_KEY, SLOT_INDEX_KEY,
@@ -680,7 +680,7 @@ describe('save slots: survival worlds (v0.9)', () => {
 
   it('a world from a newer generator is damaged: never loaded, renamed or copied, only deleted', () => {
     const raw = JSON.parse(serializeSave(survivalWorld()));
-    const newer = JSON.stringify({ ...raw, gen: 3 });
+    const newer = JSON.stringify({ ...raw, gen: GEN_LATEST + 1 });
     const storage = fakeStorage([[slotKey(4), newer]]);
     expect(listSlots(storage)[3]).toMatchObject({ status: 'damaged', bytes: newer.length });
     expect(loadSlot(4, storage)).toBeNull();

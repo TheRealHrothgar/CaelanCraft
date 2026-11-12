@@ -131,6 +131,25 @@ export const SPOT_ITEMS = Object.freeze({
   pot_snow: Object.freeze({ kind: 'pot', stage: 0 }),
   greenware_pot: Object.freeze({ kind: 'pot', stage: 0 }),
   clay_pot: Object.freeze({ kind: 'pot', stage: 1 }),
+  pot_tainted: Object.freeze({ kind: 'pot', stage: 0 }), // v0.14 (§76 water)
+  // v0.14 (§76 fauna): game on a skewer is meat that browns as it roasts; an egg is drawn as a pale chunk (veg). Beef and
+  // mutton (§69) were missing here and were drawn as raw vegetables that never browned: listed now too.
+  raw_beef: Object.freeze({ kind: 'meat', stage: 0 }),
+  roast_beef: Object.freeze({ kind: 'meat', stage: 1 }),
+  raw_mutton: Object.freeze({ kind: 'meat', stage: 0 }),
+  roast_mutton: Object.freeze({ kind: 'meat', stage: 1 }),
+  raw_venison: Object.freeze({ kind: 'meat', stage: 0 }),
+  roast_venison: Object.freeze({ kind: 'meat', stage: 1 }),
+  raw_rabbit: Object.freeze({ kind: 'meat', stage: 0 }),
+  roast_rabbit: Object.freeze({ kind: 'meat', stage: 1 }),
+  raw_fowl: Object.freeze({ kind: 'meat', stage: 0 }),
+  roast_fowl: Object.freeze({ kind: 'meat', stage: 1 }),
+  raw_fish: Object.freeze({ kind: 'meat', stage: 0 }),
+  roast_fish: Object.freeze({ kind: 'meat', stage: 1 }),
+  raw_bear: Object.freeze({ kind: 'meat', stage: 0 }),
+  roast_bear: Object.freeze({ kind: 'meat', stage: 1 }),
+  raw_egg: Object.freeze({ kind: 'veg', stage: 0 }),
+  roast_egg: Object.freeze({ kind: 'veg', stage: 1 }),
 });
 
 /**

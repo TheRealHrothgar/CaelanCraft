@@ -183,6 +183,9 @@
  * @property {number} [temp]      instant change of body temperature, °C (snow −0.2)
  * @property {string} [returns]   item key given back after use (the clay pot)
  * @property {number} [spoilS]    mean seconds per item before it goes bad; absent = never spoils
+ * @property {boolean} [cures]    v0.14 (§76 flora): eating it ends a poisoning at once (Healwort and its tea)
+ * @property {string} [spoilsTo]  v0.14 (§76 water): the item key a spoiled one turns INTO (a Pot of Water → a Pot of Tainted
+ *                                Water); absent = a spoiled item is lost
  */
 
 /**

@@ -487,14 +487,14 @@ describe('damage formulas (§2.4)', () => {
 
   it('the cause keys of §2.4', () => {
     expect(DAMAGE_CAUSES).toEqual(['fall', 'drown', 'buried', 'crush', 'fire', 'zombie', 'blast', 'log', 'blackhole',
-      'starve', 'thirst', 'cold', 'heat', 'sick', 'void', 'command']);
+      'starve', 'thirst', 'cold', 'heat', 'sick', 'void', 'command', 'bear']); // + a bear's maul (§76 fauna)
   });
 });
 
 describe('eating and drinking (§4.2, §4.5)', () => {
   it('applies Nourishment and Hydration, capped at 100 and never below 0', () => {
     const v = vitals({ satiation: 90, hydration: 3 });
-    expect(eatFood(v, getItem('roast_pork').food, () => 0.99)).toEqual({ sick: false });
+    expect(eatFood(v, getItem('roast_pork').food, () => 0.99)).toEqual({ sick: false, cured: false }); // `cured`: v0.14 (§76 flora)
     expect(v.satiation).toBe(100);
     expect(v.hydration).toBe(1);
     eatFood(v, getItem('charred_meat').food, () => 0.99);

@@ -77,7 +77,7 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Animals, SPECIES, SOUNDS as ANIMAL_SOUNDS, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX } from './animals.js';
+import { Animals, SPECIES, SOUNDS as ANIMAL_SOUNDS, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE } from './animals.js';
 import { createAnimalRenderer } from './animalRenderer.js';
 import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, damageOf, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST, SICK_MESSAGE, BOIL_TIP } from './survival.js';
@@ -88,8 +88,9 @@ import {
 } from './harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
-  wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER,
+  wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterKind, waterHint, WATER_POTS,
 } from './survivalControl.js';
+import { waterQualityAt } from './fluids.js';
 import { CraftQueue, findStations, listRecipes } from './crafting.js';
 import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
 import { heatSource, heatAt, groundChillOf, isSaltyBiome, bodyTarget, CHEST_HEIGHT, HEAT_SOURCES } from './climate.js';
@@ -99,7 +100,7 @@ import { createPackUI, demoPackView } from './packUI.js';
 import { createItemIcons, iconBlockFor } from './itemIcons.js';
 import { createLooseItemRenderer } from './looseItemRenderer.js';
 import {
-  LooseItems, throwOf, DART_KEYS, DART_BREAK_P, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
+  LooseItems, throwOf, dartBreakP, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
   blinkHidden,
 } from './looseItems.js';
 import { createZombieRenderer } from './zombieRenderer.js';
@@ -390,9 +391,19 @@ export function leftBehindText(stacks) {
   return `Pack full: ${stacksText(stacks)} left behind`;
 }
 
-/** "1 Raw Pork went bad.", "1 Honeyberry went bad." (§4.5; items.SINGULAR_NAMES). */
+/**
+ * "1 Raw Pork went bad.", "1 Honeyberry went bad." (§4.5; items.SINGULAR_NAMES). v0.14 (§76 water): an item that spoils INTO
+ * another (`food.spoilsTo`: a Pot of Water left standing) says what it became — "1 Pot of Water stood too long: now Pot of
+ * Tainted Water." — after the plain line when both happened in the same second.
+ */
 export function spoiledText(stacks) {
-  return `${stacksText(stacks)} went bad.`;
+  const gone = stacks.filter((s) => !getItem(s.k)?.food?.spoilsTo);
+  const lines = gone.length > 0 ? [`${stacksText(gone)} went bad.`] : [];
+  for (const s of stacks) {
+    const to = getItem(s.k)?.food?.spoilsTo;
+    if (to) lines.push(`${stacksText([s])} stood too long: now ${itemName(to, s.n)}.`);
+  }
+  return lines.join(' ');
 }
 
 /** The `pack list` text (§9.7): one line per non-empty slot, "3: Flint Pick (51/90)", then the worn items. */
@@ -1278,7 +1289,14 @@ export function boot(win, doc) {
     isLoadedCell: (q, r) => world.hasChunkAtCell(q, r),
     groundHeight: (q, r) => world.terrainHeightAt(q, r),
     isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
+    // v0.14 (§76 fauna): fish appear in the generated streams (false everywhere in a world without them)
+    streamAt: (q, r) => {
+      const gen = /** @type {{ streamAt?: (q: number, r: number) => boolean }} */ (world.worldGen);
+      return typeof gen.streamAt === 'function' ? gen.streamAt(q, r) : false;
+    },
   };
+  /** v0.14 (§76 fauna): a fish is in the water, not among the bodies that push, carry and are blown about. */
+  const isBodyAnimal = (a) => !(/** @type {*} */ (SPECIES[a.kind]).water);
   // The Hollow Watcher (CONTRACTS §40): a rare sighting, never saved; the per-world switch and the night of its last
   // natural sighting are (startLoading restores both).
   const watcher = new Watcher();
@@ -1453,7 +1471,7 @@ export function boot(win, doc) {
       physicsBodies.length = 0;
       if (player) physicsBodies.push(player);
       if (world) for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) physicsBodies.push(pig);
-      if (world) for (const a of animals.list) if (world.hasChunkAt(a.x, a.z)) physicsBodies.push(a);
+      if (world) for (const a of animals.list) if (isBodyAnimal(a) && world.hasChunkAt(a.x, a.z)) physicsBodies.push(a);
       if (world) for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) physicsBodies.push(zb);
       return physicsBodies;
     },
@@ -1615,6 +1633,7 @@ export function boot(win, doc) {
     fireSpotKind: fireSpotKindFn,
     tappedToday: (q, y, r) => !tapped.canTap(`${q},${y},${r}`, day),
     salty: (q, r) => isSaltyBiome(world.getBiome(q, r)),
+    waterQuality: (q, y, r) => waterQualityOf(q, y, r), // §76 water: fresh, salt or tainted
     stationNear: (station) => !!stations[station], // findStations within STATION_RANGE of the feet (§7.2)
     // v0.10 (DESIGN-circuits §4.9, §8.3): parts with an R action of their own join the hit steps, the pocket key the
     // selected-item steps.
@@ -1699,7 +1718,8 @@ export function boot(win, doc) {
       zombieTarget = null;
     }
     // A mob or a lit barrel nearer than the water takes R from it too.
-    if (waterHit && (litTarget || zombieTarget || pigTarget || animalTarget)) waterHit = null;
+    // (v0.14: not a fish — you still drink from, and fill a pot at, the water it swims in.)
+    if (waterHit && (litTarget || zombieTarget || pigTarget || (animalTarget && isBodyAnimal(animalTarget.animal)))) waterHit = null;
     // §4.6: looking at a Spark Transmitter tunes the pocket key to it.
     if (hit && hit.blockId === BLOCK.SPARK_TRANSMITTER && circuits) {
       const st = circuitStore.get(`${hit.q},${hit.y},${hit.r}`);
@@ -1886,7 +1906,7 @@ export function boot(win, doc) {
       },
       blackHoles,
       hands: { act: (kind, n) => handAction(kind, n) }, // v0.10 (§60): drop / throw
-      animals, // §69: summon cow|sheep|horse|wolf
+      animals, // §69: summon cow|sheep|horse|wolf (v0.14: and deer, stag, rabbit, pheasant, turkey, bear, fish)
       loose: { despawnNear: (x, y, z, radius) => loose.despawnNear(x, y, z, radius, looseDespawned) }, // §63: despawn
     };
     return c;
@@ -2176,7 +2196,7 @@ export function boot(win, doc) {
     }
     const h = hit;
     // A water source is not breakable, but with WATER selected left-click takes it away (the flow drains by itself).
-    const takeWater = h && h.blockId === BLOCK.WATER && hotbar[selected] === BLOCK.WATER;
+    const takeWater = h && isWaterSource(h.blockId) && hotbar[selected] === BLOCK.WATER; // (a tainted source too: §76)
     if (!h || (!isBreakable(h.blockId) && !takeWater)) return false;
     // §5.5: a basket or belongings holding items, or a fire whose spots hold anything, are kept safe from Creative.
     if (isProtectedCell(h)) {
@@ -2421,6 +2441,14 @@ export function boot(win, doc) {
       return `Your Wolf · R: ${a.sitting ? 'follow me' : 'sit'} · feed it meat to heal it`;
     }
     const hunt = selectedTool() ? 'click: hunt it' : 'hunting needs a tool';
+    // v0.14 (§76 fauna)
+    if (a.kind === 'fish') return selectedTool()?.type === 'spear' ? 'Fish · click: spear it · G: throw the spear' : 'Fish · it takes a spear to catch one';
+    if (a.kind === 'bear') {
+      if (a.mode === 'charge') return 'Bear · it is charging: run, or fight';
+      if (a.mode === 'warn') return 'Bear · it is warning you: back away';
+      return `Bear · keep your distance · ${hunt}`;
+    }
+    if (a.kind === 'deer') return `${a.variant === 1 ? 'Stag' : 'Deer'}${snared} · ${hunt}`;
     if (a.kind === 'horse') return `Horse${snared} · R with a Wild Tuber or Honeyberries: feed it (${a.trust}/${sp.tame} to tame)`;
     if (a.kind === 'wolf') return `Wolf${snared} · R with meat: feed it (${a.trust}/${sp.tame} to tame)`;
     if (a.kind === 'sheep') return `Sheep${snared} · ${hunt} · R with a knife: shear`;
@@ -2440,6 +2468,7 @@ export function boot(win, doc) {
   function animalR() {
     if (riding || !animalTarget) return false;
     const a = animalTarget.animal;
+    if (!isBodyAnimal(a)) return false; // v0.14: R on a fish is R on the water (drink, fill a pot)
     const sp = SPECIES[a.kind];
     const SV = survival.inSurvival;
     const key = heldItemKey();
@@ -2617,6 +2646,7 @@ export function boot(win, doc) {
       world.setBlock(c.cell[0], c.cell[1], c.cell[2], BLOCK.SNARE_SPRUNG);
       snareSprung(c.animal, SPECIES[c.animal.kind].name);
     }
+    applyFaunaEvents(ev);
     for (const f of ev.freed) {
       if (world.getBlock(f.cell[0], f.cell[1], f.cell[2]) === BLOCK.SNARE_SPRUNG) world.setBlock(f.cell[0], f.cell[1], f.cell[2], BLOCK.SNARE);
     }
@@ -2646,6 +2676,42 @@ export function boot(win, doc) {
     }
   }
 
+  /** v0.14 (§76 fauna): the bears that have had their warning line said (one line per bear, however often it rears) */
+  const bearWarned = new WeakSet();
+
+  /**
+   * v0.14 (§76 fauna): what the game animals did this frame — birds flushed (the whirr of wings, a few feathers), a bear
+   * reared up (its growl, and the warning line once per bear), charged (its roar) or mauled the player (BEAR_DAMAGE each,
+   * cause 'bear'; the throw is animals.js's), a hen laid a nest (the block).
+   * @param {import('./animals.js').AnimalEvents} ev
+   */
+  function applyFaunaEvents(ev) {
+    let whirr = 0;
+    for (const a of ev.flushed) {
+      whirr = Math.max(whirr, zombieVolume(a));
+      particles.emit('dust', a.x, a.y + 0.3, a.z, 5, { color: [0.8, 0.62, 0.42], spread: 0.3 });
+    }
+    if (whirr > 0) audio.playRecipe(ANIMAL_SOUNDS.flush, Math.max(0.35, whirr));
+    for (const a of ev.warned) {
+      audio.playRecipe(ANIMAL_SOUNDS.growl, Math.max(0.5, zombieVolume(a)));
+      if (!bearWarned.has(a)) {
+        bearWarned.add(a);
+        logLine('A bear rears up and growls at you. Back away, slowly or fast: if you stay it will charge.');
+      }
+    }
+    for (const a of ev.charged) audio.playRecipe(ANIMAL_SOUNDS.roar, Math.max(0.5, zombieVolume(a)));
+    if (ev.mauls.length > 0) {
+      hurtFlash = 1;
+      audio.playThud(1);
+      audio.playRecipe(ANIMAL_SOUNDS.growl, 0.8);
+      if (survival.active) hurt(BEAR_DAMAGE * ev.mauls.length, 'bear');
+    }
+    for (const n of ev.laid) {
+      const [q, y, r] = n.cell;
+      if (!world.hasChunkAtCell(q, r)) continue;
+      if (world.getBlock(q, y, r) === (n.refill ? BLOCK.GROUND_NEST_EMPTY : BLOCK.AIR)) world.setBlock(q, y, r, BLOCK.GROUND_NEST);
+    }
+  }
   /** A snare went off: the snap, a puff, and a line when it is within earshot. */
   function snareSprung(body, name) {
     const v = zombieVolume(body);
@@ -2717,7 +2783,9 @@ export function boot(win, doc) {
       }
     } else if (target.kind === 'animal') {
       const a = target.mob;
-      const res = animals.wound(a, real && !a.tamed ? it.power : 0, fromX, fromZ);
+      // v0.14 (§76 fauna): only a spear catches a fish — a rock or a dart just scares it off
+      const counts = isBodyAnimal(a) || getItem(it.s.k)?.tool?.type === 'spear';
+      const res = animals.wound(a, real && !a.tamed && counts ? it.power : 0, fromX, fromZ);
       if (res === 'dead') animalDied(a, real);
       else if (res === 'hit') animalVoice(a, 1);
     } else {
@@ -2736,7 +2804,7 @@ export function boot(win, doc) {
       }
     }
     if (!real) return false;
-    if (DART_KEYS.includes(it.s.k) && Math.random() < DART_BREAK_P) return true;
+    if (Math.random() < dartBreakP(it.s.k)) return true; // (0 for anything that is not a dart)
     const max = maxDurability(it.s.k);
     if (max > 0) {
       const d = (it.s.d ?? max) - 1;
@@ -3157,6 +3225,8 @@ export function boot(win, doc) {
     if (hit && hit.blockId === BLOCK.SNARE) return 'Snare · R with food in hand: bait it';
     if (hit && hit.blockId === BLOCK.SNARE_BAITED) return 'Baited Snare · animals nearby will come to it';
     if (hit && hit.blockId === BLOCK.SNARE_SPRUNG) return 'Sprung Snare · it holds what it caught for a while';
+    // v0.14 (§76 fauna)
+    if (hit && hit.blockId === BLOCK.GROUND_NEST_EMPTY) return 'Empty Nest · a hen left in peace lays in it again';
     if (digPackFull && digState.active) return HINT.packFull;
     const act = interactAction();
     if (act) {
@@ -3173,11 +3243,12 @@ export function boot(win, doc) {
         case 'pick':
           // §70: the loose stones that show a dark flint nodule hold flint, and say so.
           if (act.id === BLOCK.LOOSE_STONES) return flintAt(act.q, act.r) ? 'Loose Stones with Flint · R: pick' : 'Loose Stones · R: pick';
+          if (act.id === BLOCK.GROUND_NEST) return 'Ground Nest · R: take the eggs'; // v0.14 (§76 fauna)
           return `${getBlockDef(/** @type {number} */ (act.id)).displayName} · R: pick`;
         case 'read':
           return 'Handbook · R: read';
         case 'drink_here':
-          return `${saltyHere() ? 'Sea water (salty)' : 'Fresh water'} · R: drink`;
+          return waterHint(qualityHere(), false);
         default:
           if (act.hint) return act.hint;
       }
@@ -3224,10 +3295,23 @@ export function boot(win, doc) {
     }
   }
 
-  /** @returns {boolean} the water at the player's own column is salt (drinking with the head under water) */
-  function saltyHere() {
+  /**
+   * §76 water: what the water in cell (q, y, r) is to drink — 'tainted' for a Tainted Water source and for flowing or
+   * falling water traced back to one (fluids.waterQualityAt), else 'salt' in an OCEAN / BEACH column — but never in the
+   * column of a generated stream, which runs fresh across the beach to the sea — else 'fresh'.
+   * @returns {import('./survivalControl.js').WaterQuality}
+   */
+  function waterQualityOf(q, y, r) {
+    const salty = isSaltyBiome(world.getBiome(q, r));
+    const gen = /** @type {{ streamAt?: (q: number, r: number) => boolean }} */ (world.worldGen); // (a test's generator has none)
+    const stream = salty && typeof gen.streamAt === 'function' && gen.streamAt(q, r);
+    return waterKind(waterQualityAt(world.getBlock, q, y, r) === 'tainted', salty, stream);
+  }
+
+  /** @returns {import('./survivalControl.js').WaterQuality} the water round the player's head (drinking with the head under water) */
+  function qualityHere() {
     const [q, r] = worldToHex(player.x, player.z);
-    return isSaltyBiome(world.getBiome(q, r));
+    return waterQualityOf(q, Math.floor(player.y + getEyeHeight(player)), r);
   }
 
   // ---- Survival: R (§9.4 priorities) -----------------------------------------------------------------
@@ -3344,9 +3428,10 @@ export function boot(win, doc) {
         return; // the target hint says to step closer (§7.2): Making would only grey every card of that workplace
       case 'fill': {
         if (selectedKey() !== 'clay_pot') return;
-        const salty = act.salty ?? isSaltyBiome(world.getBiome(q, r));
+        // §76 water: the pot holds what the water is — Pot of Water, Pot of Seawater or Pot of Tainted Water
+        const quality = act.quality ?? waterQualityOf(q, y, r);
         pack.consume(selected, 1);
-        giveToHand(salty ? 'pot_seawater' : 'pot_water');
+        giveToHand(WATER_POTS[quality]);
         audio.playPick();
         return;
       }
@@ -3354,8 +3439,8 @@ export function boot(win, doc) {
       case 'drink_here': {
         if (fxTime - gulpAt < GULP_GAP_S) return;
         gulpAt = fxTime;
-        const salty = act.kind === 'drink' ? (act.salty ?? isSaltyBiome(world.getBiome(q, r))) : saltyHere();
-        const line = survival.drink(salty, Math.random);
+        const quality = act.kind === 'drink' ? (act.quality ?? waterQualityOf(q, y, r)) : qualityHere();
+        const line = survival.drink(quality, Math.random);
         audio.playDrink();
         if (line) logLine(line);
         if (line === SICK_MESSAGE) boilTip(); // §66: the first raw-water poisoning says how to make water safe
@@ -3558,10 +3643,14 @@ export function boot(win, doc) {
         return;
       }
       const ka = strikeKind('pig', tool); // like a pig: only a tool wounds, a bare hand shoves
-      const res = animals.wound(a, ka.call === 'wound' ? ka.power : 0, player.x, player.z);
+      // v0.14 (§76 fauna): a fish is caught with a spear's thrust and nothing else (anything else only scares it)
+      const spearOnly = !isBodyAnimal(a) && tool?.type !== 'spear';
+      if (spearOnly) showHint('A fish is caught with a spear: thrust with it, or throw it (G).');
+      const wounds = ka.call === 'wound' && !spearOnly;
+      const res = animals.wound(a, wounds ? ka.power : 0, player.x, player.z);
       if (res === 'dead') animalDied(a, true);
       else if (res === 'hit') animalVoice(a, 1);
-      if (res && ka.call === 'wound') wearSelectedTool('strike');
+      if (res && wounds) wearSelectedTool('strike');
       updateHit();
       return;
     }
@@ -3645,7 +3734,7 @@ export function boot(win, doc) {
       if (act.kind === 'drink') audio.playDrink();
       else audio.playEat();
       if (res.message) logLine(res.message);
-      if (res.message === SICK_MESSAGE && act.key === 'pot_water') boilTip();
+      if (res.message === SICK_MESSAGE && (act.key === 'pot_water' || act.key === 'pot_tainted')) boilTip();
     } else if (act.kind === 'bandage') {
       if (!survival.bandage(act.key)) {
         showHint('No more healing can be queued yet');
@@ -5754,7 +5843,7 @@ export function boot(win, doc) {
     bodies.length = 0;
     if (!riding) bodies.push(player); // a rider sits in the horse's own (taller) body
     for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) bodies.push(pig);
-    for (const a of animals.list) if (world.hasChunkAt(a.x, a.z)) bodies.push(a);
+    for (const a of animals.list) if (isBodyAnimal(a) && world.hasChunkAt(a.x, a.z)) bodies.push(a);
     for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) bodies.push(zb);
     if (blockPhysics) blockPhysics.bodies(bodies);
     if (bodies.length > 1) resolveBodies(bodies, world.getBlock);

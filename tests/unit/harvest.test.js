@@ -7,7 +7,7 @@ import { ITEMS, TOOL_TYPES, TIER_SPEED, isItemKey, itemForBlock, blockForItem, g
 import {
   BLOCK_RULES, ruleFor, canHarvest, breakSeconds, harvestHint, rollDrops, rollGroups, PICKABLE, isPickable, pick, tap,
   Tapped, Regrowth, RIPE_OF, ripeOf, MOB_DROPS, rollMobDrops, toolPower, UNDERWATER_DIG_FACTOR, MIN_BREAK_S,
-  HAND_GATHER, handGatherHint, withArticle, DIG_TOOL_TYPES, isDeep, DEEP_BELOW_SEA,
+  HAND_GATHER, handGatherHint, withArticle, DIG_TOOL_TYPES, isDeep, DEEP_BELOW_SEA, GRAVEL_FLINT_P,
 } from '../../src/harvest.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
 import { mulberry32 } from '../../src/noise.js';
@@ -45,8 +45,8 @@ const TABLE = [
   [[B.DIRT], 0.9, 'shovel', 0],
   [[B.GRASS_BLOCK, B.SNOWY_GRASS], 1.0, 'shovel', 0],
   [[B.SAND, B.RED_SAND], 0.8, 'shovel', 0],
-  [[B.GRAVEL, B.FLINT_GRAVEL], 1.2, 'shovel', 0], // §75: Flinty Gravel digs like gravel
-  [[B.CLAY], 1.4, 'shovel', 0],
+  [[B.GRAVEL, B.FLINT_GRAVEL], 1.2, 'shovel', 0], // §76: 119 is v0.13's withdrawn Flinty Gravel, now plain gravel
+  [[B.CLAY], 1.4, 'shovel', 1], // §77: clay needs a shovel
   [[B.SNOW_BLOCK], 0.5, 'shovel', 0],
   [[B.ICE], 1.0, 'pick', 0],
   [[B.PACKED_ICE], 2.0, 'pick', 2],
@@ -82,8 +82,9 @@ const TABLE = [
   [[B.COAL_ORE], 3.5, 'pick', 2],
   [[B.COPPER_ORE], 4.0, 'pick', 2],
   [[B.TIN_ORE], 4.0, 'pick', 3],
-  [[B.IRON_ORE, B.GOLD_ORE], 5.0, 'pick', 4],
-  [[B.DIAMOND_ORE], 4.0, 'pick', 2],
+  [[B.IRON_ORE], 5.0, 'pick', 4],
+  [[B.GOLD_ORE], 5.0, 'pick', 5], // §77: the iron pick opens gold …
+  [[B.DIAMOND_ORE], 4.0, 'pick', 6], // … and the steel pick gems
   [[B.COAL_BLOCK], 4.0, 'pick', 2],
   [[B.COPPER_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK], 5.0, 'pick', 2],
   [[B.IRON_BLOCK], 6.0, 'pick', 2],
@@ -94,6 +95,12 @@ const TABLE = [
   [[B.KNIFE_SWITCH, B.PUSH_BUTTON, B.ELECTRIC_BELL, B.IGNITER], 1.2, 'pick', 0],
   [[B.SELENIUM_PANEL, B.COHERER_RECEIVER], 0.6, null, 0],
   [[B.COLLAPSAR_CHARGE], 1.5, 'pick', 0],
+  // v0.14 (§76 flora): the wild plants of generation 3
+  [[B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM], 0.2, null, 0],
+  [[B.ONION_PLANT, B.CARROT_PLANT], 0.4, 'shovel', 0],
+  [[B.HAZEL_THICKET, B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE], 0.6, 'shovel', 0],
+  [[B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE], 0.3, 'shovel', 0],
+  [[B.GROUND_NEST, B.GROUND_NEST_EMPTY], 0.3, null, 0], // v0.14 (§76 fauna)
 ];
 
 describe('BLOCK_RULES (§6.3)', () => {
@@ -101,7 +108,8 @@ describe('BLOCK_RULES (§6.3)', () => {
     expect(BLOCK_RULES.length).toBe(BLOCK_COUNT);
     const nulls = BLOCK_RULES.map((r, id) => (r ? null : id)).filter((x) => x !== null);
     // The 20 powder-and-circuits blocks (DESIGN-circuits §1.2) have their §8.3 rows: every part comes away whole.
-    expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id)).map((b) => b.id));
+    // (v0.14: harmless now — the ids once held by `reserved_*` placeholders are all real blocks.)
+    expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id) || b.name.startsWith('reserved_')).map((b) => b.id));
     for (let id = B.COLLAPSAR_CHARGE; id <= B.COHERER_RECEIVER; id++) {
       expect(rollDrops(id, null, {}, () => 0.5), BLOCKS[id].name).toEqual([{ k: BLOCKS[id].name, n: 1 }]);
     }
@@ -213,21 +221,28 @@ describe('breakSeconds and canHarvest (§6.1)', () => {
     expect(breakSeconds(B.TIN_ORE, tool('flint_pick'))).toBe(Infinity);
     expect(breakSeconds(B.TIN_ORE, tool('copper_pick'))).toBeCloseTo(4 / 2.6, 9);
     expect(breakSeconds(B.IRON_ORE, tool('copper_pick'))).toBe(Infinity);
-    expect(breakSeconds(B.GOLD_ORE, tool('bronze_pick'))).toBeCloseTo(5 / 3.4, 9);
+    expect(breakSeconds(B.GOLD_ORE, tool('bronze_pick'))).toBe(Infinity); // §77: gold needs the iron pick …
+    expect(breakSeconds(B.GOLD_ORE, tool('iron_pick'))).toBeCloseTo(5 / TIER_SPEED[5], 9);
+    expect(breakSeconds(B.DIAMOND_ORE, tool('iron_pick'))).toBe(Infinity); // … and gems the steel pick
+    expect(breakSeconds(B.DIAMOND_ORE, tool('steel_pick'))).toBeCloseTo(4 / TIER_SPEED[6], 9);
+    expect(breakSeconds(B.CLAY, HAND)).toBe(Infinity); // clay needs a shovel
+    expect(breakSeconds(B.CLAY, tool('wooden_shovel'))).toBeCloseTo(1.4 / TIER_SPEED[1], 9);
     expect(breakSeconds(B.BLOOMERY, HAND)).toBe(Infinity);
     expect(canHarvest(B.STONE, HAND)).toBe(false);
     expect(canHarvest(B.STONE, tool('flint_pick'))).toBe(true);
     expect(canHarvest(B.DIRT, HAND)).toBe(true);
   });
 
-  it('obsidian, gems and storage blocks need only a flint pick', () => {
-    for (const id of [B.OBSIDIAN, B.DIAMOND_ORE, B.COAL_BLOCK, B.COPPER_BLOCK, B.GOLD_BLOCK, B.IRON_BLOCK, B.DIAMOND_BLOCK]) {
+  it('obsidian and storage blocks need only a flint pick (gems need steel: §77)', () => {
+    expect(canHarvest(B.DIAMOND_ORE, tool('flint_pick'))).toBe(false);
+    for (const id of [B.OBSIDIAN, B.COAL_BLOCK, B.COPPER_BLOCK, B.GOLD_BLOCK, B.IRON_BLOCK, B.DIAMOND_BLOCK]) {
       expect(canHarvest(id, tool('flint_pick')), BLOCKS[id].name).toBe(true);
     }
   });
 
-  it('bare hands can break dirt, sand, gravel, clay, snow, leaves, plants, litter and glass (§6.2)', () => {
-    const ids = [B.DIRT, B.SAND, B.GRAVEL, B.CLAY, B.SNOW_BLOCK, B.OAK_LEAVES, B.TUSSOCK, B.HONEYBERRY_BUSH, B.LOOSE_STONES,
+  it('bare hands can break dirt, sand, gravel, snow, leaves, plants, litter and glass (§6.2); not clay (§77)', () => {
+    expect(breakSeconds(B.CLAY, HAND)).toBe(Infinity);
+    const ids = [B.DIRT, B.SAND, B.GRAVEL, B.SNOW_BLOCK, B.OAK_LEAVES, B.TUSSOCK, B.HONEYBERRY_BUSH, B.LOOSE_STONES,
       B.FALLEN_BRANCHES, B.GLASS, B.CATTAILS, B.TUBER_PLANT, B.PRICKLY_PEAR];
     for (const id of ids) expect(breakSeconds(id, HAND), BLOCKS[id].name).toBeLessThan(Infinity);
   });
@@ -264,16 +279,25 @@ describe('rollDrops (§6.3)', () => {
     expect(rollDrops(B.GRAVEL, tool('flint_shovel'), {}, seq(0))).toEqual([{ k: 'gravel', n: 1 }]);
     expect(rollDrops(B.GRAVEL, HAND, {}, seq(0))).toEqual([{ k: 'rock', n: 2 }]);
     expect(rollDrops(B.GRAVEL, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'rock', n: 2 }]);
-    // §75: plain gravel never holds flint; Flinty Gravel always gives one, with or without a shovel, wild or not —
-    // and the gravel it gives back is plain, so it cannot be dug twice
-    expect(sample((r) => rollDrops(B.GRAVEL, HAND, { natural: true }, r), 300, 5).flint).toBeUndefined();
-    expect(rollDrops(B.FLINT_GRAVEL, tool('flint_shovel'), {}, seq(0.99))).toEqual([{ k: 'gravel', n: 1 }, { k: 'flint', n: 1 }]);
-    expect(rollDrops(B.FLINT_GRAVEL, HAND, { natural: false }, seq(0.99))).toEqual([{ k: 'rock', n: 2 }, { k: 'flint', n: 1 }]);
+    // §76: WILD gravel turns up a Flint GRAVEL_FLINT_P of the time, with or without a shovel; gravel that was put down
+    // (or fell) never does, so it cannot be dug over and over
+    expect(GRAVEL_FLINT_P).toBe(0.12);
+    expect(rollDrops(B.GRAVEL, HAND, { natural: true }, seq(GRAVEL_FLINT_P - 0.01))).toEqual([{ k: 'rock', n: 2 }, { k: 'flint', n: 1 }]);
+    expect(rollDrops(B.GRAVEL, HAND, { natural: true }, seq(GRAVEL_FLINT_P + 0.01))).toEqual([{ k: 'rock', n: 2 }]);
+    expect(rollDrops(B.GRAVEL, tool('flint_shovel'), { natural: true }, seq(0))).toEqual([{ k: 'gravel', n: 1 }, { k: 'flint', n: 1 }]);
+    const wild = sample((r) => rollDrops(B.GRAVEL, HAND, { natural: true }, r), 2000, 5);
+    expect(wild.flint.length / 2000).toBeGreaterThan(GRAVEL_FLINT_P - 0.03);
+    expect(wild.flint.length / 2000).toBeLessThan(GRAVEL_FLINT_P + 0.03);
+    expect(sample((r) => rollDrops(B.GRAVEL, HAND, { natural: false }, r), 300, 5).flint).toBeUndefined();
+    // v0.13's withdrawn Flinty Gravel: the same rule, and no item of its own
+    expect(rollDrops(B.FLINT_GRAVEL, tool('flint_shovel'), {}, seq(0))).toEqual([{ k: 'gravel', n: 1 }]);
+    expect(rollDrops(B.FLINT_GRAVEL, HAND, { natural: true }, seq(0))).toEqual([{ k: 'rock', n: 2 }, { k: 'flint', n: 1 }]);
     expect(itemForBlock(B.FLINT_GRAVEL)).toBeNull();
     expect(blockForItem('gravel')).toBe(B.GRAVEL);
     expect(rollDrops(B.ICE, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'ice_chunk', n: 2 }]);
     expect(rollDrops(B.ICE, HAND, {}, seq(0))).toEqual([{ k: 'ice_chunk', n: 1 }]);
-    expect(rollDrops(B.CLAY, HAND, {}, seq(0))).toEqual([{ k: 'clay_lump', n: 6 }]);
+    expect(rollDrops(B.CLAY, HAND, {}, seq(0))).toEqual([]); // §77: clay needs a shovel
+    expect(rollDrops(B.CLAY, tool('wooden_shovel'), {}, seq(0))).toEqual([{ k: 'clay_lump', n: 6 }]);
     expect(rollDrops(B.SNOW_BLOCK, HAND, {}, seq(0))).toEqual([{ k: 'snow', n: 6 }]);
     expect(rollDrops(B.PACKED_ICE, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'ice_chunk', n: 3 }]);
   });
@@ -319,7 +343,7 @@ describe('rollDrops (§6.3)', () => {
     expect(calls).toBe(2);
   });
 
-  it('stone gives rock and never flint (§75: flint comes from Flinty Gravel)', () => {
+  it('stone gives rock and never flint (§75; flint comes from digging gravel, §76)', () => {
     expect(rollDrops(B.STONE, tool('flint_pick'), { natural: true }, seq(0.99))).toEqual([{ k: 'rock', n: 2 }]);
     const mined = sample((r) => rollDrops(B.STONE, tool('flint_pick'), { natural: true }, r), 400, 13);
     expect(mined.flint).toBeUndefined();
@@ -412,7 +436,9 @@ describe('rollDrops (§6.3)', () => {
     expect(rollDrops(B.COPPER_ORE, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'malachite', n: 1 }]);
     expect(rollDrops(B.IRON_ORE, tool('bronze_pick'), {}, seq(0.6))).toEqual([{ k: 'hematite', n: 2 }]);
     expect(rollDrops(B.GOLD_ORE, tool('iron_pick'), {}, seq(0))).toEqual([{ k: 'gold_nugget', n: 1 }]);
-    expect(rollDrops(B.DIAMOND_ORE, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'rough_gem', n: 1 }]);
+    expect(rollDrops(B.DIAMOND_ORE, tool('steel_pick'), {}, seq(0))).toEqual([{ k: 'rough_gem', n: 1 }]);
+    expect(rollDrops(B.DIAMOND_ORE, tool('iron_pick'), {}, seq(0))).toEqual([]);
+    expect(rollDrops(B.GOLD_ORE, tool('bronze_pick'), {}, seq(0))).toEqual([]);
     expect(rollDrops(B.OBSIDIAN, tool('flint_pick'), {}, seq(0.99))).toEqual([{ k: 'obsidian_shard', n: 3 }]);
     expect(rollDrops(B.GLASS, HAND, {}, seq(0))).toEqual([{ k: 'glass_shards', n: 1 }]);
     expect(rollDrops(B.CAMPFIRE, HAND, {}, seq(0))).toEqual([{ k: 'rock', n: 4 }]);
@@ -457,8 +483,9 @@ describe('rollDrops (§6.3)', () => {
 });
 
 describe('picking with R (§6.4)', () => {
-  it('PICKABLE has exactly the four rows', () => {
-    expect(Object.keys(PICKABLE).map(Number).sort((a, b) => a - b)).toEqual([B.HONEYBERRY_BUSH, B.PRICKLY_PEAR, B.LOOSE_STONES, B.FALLEN_BRANCHES]);
+  it('PICKABLE has exactly the four rows of v0.9, the Ground Nest (§76 fauna) and the seven plants of v0.14 (§76 flora)', () => {
+    expect(Object.keys(PICKABLE).map(Number).sort((a, b) => a - b)).toEqual([B.HONEYBERRY_BUSH, B.PRICKLY_PEAR, B.LOOSE_STONES, B.FALLEN_BRANCHES,
+      B.GROUND_NEST, B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT]);
     expect(isPickable(B.HONEYBERRY_BUSH)).toBe(true);
     for (const id of [B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR_BARE, B.TUSSOCK, B.STONE, B.AIR, -1, 'toString', undefined]) {
       expect(isPickable(id)).toBe(false);
@@ -690,13 +717,13 @@ describe('mob drops and tool power (§4.3, §5.1)', () => {
 
 describe('the bare-hand gathering hint (§6.2; play-test fb-first-hour)', () => {
   const B = BLOCK;
-  it('tussock, cattails, the tuber plant, gravel and clay say to hold the left mouse button, with the Handbook\'s verb', () => {
+  it('tussock, cattails, the tuber plant and gravel say to hold the left mouse button, with the Handbook\'s verb', () => {
     // their neighbours (loose stones, fallen branches) say "R: pick"; these gave no hint at all and R did nothing
     expect(handGatherHint(B.TUSSOCK)).toBe('Tussock Grass · hold LMB: pull');
     expect(handGatherHint(B.CATTAILS)).toBe('Cattails · hold LMB: pull');
     expect(handGatherHint(B.TUBER_PLANT)).toBe('Wild Tuber Plant · hold LMB: pull');
     expect(handGatherHint(B.GRAVEL)).toBe('Gravel · hold LMB: dig');
-    expect(handGatherHint(B.CLAY)).toBe('Clay · hold LMB: dig');
+    expect(handGatherHint(B.CLAY)).toBeNull(); // §77: clay needs a shovel, so it is not a bare-hand job
     for (const id of Object.keys(HAND_GATHER).map(Number)) {
       expect(isPickable(id), String(id)).toBe(false); // R picks none of them …
       expect(canHarvest(id, null), String(id)).toBe(true); // … and bare hands break all of them

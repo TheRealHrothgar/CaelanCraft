@@ -12,6 +12,7 @@ import { MAX_CRAFT_JOBS, STATION_RANGE, STATION_WORK_RANGE, WORLD_HEIGHT } from 
 import { BLOCK, UNLOADED } from './blocks.js';
 import { hexDistance, hexLength } from './hex.js';
 import { TAGS, TIER_NAMES, TOOL_TYPES, isItemKey, itemName } from './items.js';
+import { purposeOf } from './purpose.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 
@@ -186,6 +187,7 @@ const RECIPE_ROWS = [
   ['salted_pork', 'hand', 'raw_pork + salt', 'salted_pork', '', 2],
   ['leached_acorns', 'hand', '6 acorns + pot_water', '6 leached_acorns + clay_pot', '', 2],
   ['peel_cactus_fruit', 'hand', 'unpeeled_cactus_fruit', 'cactus_fruit', 'knife 2', 1],
+  ['pot_healwort_tea', 'hand', 'healwort + pot_boiled', 'pot_healwort_tea', '', 2], // v0.14 (§76 flora): steeped, not boiled
   ['snow_block', 'hand', '6 snow', 'snow_block', '', 1],
   ['ice', 'hand', '3 ice_chunk', 'ice', '', 1],
   ['coal_block', 'hand', '7 coal', 'coal_block', '', 2],
@@ -201,6 +203,8 @@ const RECIPE_ROWS = [
   ['earth_wire', 'hand', '6 copper_wire + 6 plant_fibre + malachite', '6 earth_wire', '', 6], // the green braid
   // v0.11 (CONTRACTS §67): the Workbench itself — steel, glass, drawn copper and tin: it comes after the Forge
   ['workbench', 'hand', '5 #planks + 2 steel_bar + 2 glass + 12 copper_wire + 2 tin_ingot', 'workbench', 'hammer 5', 20],
+  // v0.14 (§76 fauna): what feathers are for — the Flint Dart with a feathered flight (faster, harder, tougher)
+  ['fletched_dart', 'hand', 'flint + stick + 2 feather + plant_fibre', '4 fletched_dart', 'hammer 1', 3],
   // ---- Work Stump (12); riving a log into sticks is real work: there is no planks-to-sticks shortcut
   ['oak_planks', 'stump', 'oak_log', '3 oak_planks', 'axe 2', 3],
   ['spruce_planks', 'stump', 'spruce_log', '3 spruce_planks', 'axe 2', 3],
@@ -229,14 +233,16 @@ const RECIPE_ROWS = [
   ['fired_brick', 'kiln', '6 green_brick + #fuel', '6 fired_brick', '', 30],
   ['crucible', 'kiln', 'greenware_crucible + #fuel', 'crucible', '', 25],
   ['casting_mold', 'kiln', 'greenware_mold + #fuel', 'casting_mold', '', 20],
-  ['copper_ingot', 'kiln', '2 malachite + 2 #fuel', 'copper_ingot', '', 30],
-  ['tin_ingot', 'kiln', '2 cassiterite + #fuel', 'tin_ingot', '', 20],
-  ['bronze_ingot', 'kiln', '7 copper_ingot + tin_ingot + 3 #fuel', '8 bronze_ingot', 'crucible 0', 45], // 7 : 1, 12.5 % tin
-  ['copper_block', 'kiln', '7 copper_ingot + #fuel', 'copper_block', 'crucible 0', 30],
-  ['gold_block', 'kiln', '7 gold_nugget + 2 #fuel', 'gold_block', 'crucible 0', 40],
+  // v0.14 (§77): smelting ore and melting metal burn COAL — charcoal fires clay but does not get a kiln hot enough for
+  // ore, so coal (a flint pick's work) is the gate to the metal ages. Iron and steel still want charcoal (the forge).
+  ['copper_ingot', 'kiln', '2 malachite + 2 coal', 'copper_ingot', '', 30],
+  ['tin_ingot', 'kiln', '2 cassiterite + coal', 'tin_ingot', '', 20],
+  ['bronze_ingot', 'kiln', '7 copper_ingot + tin_ingot + 3 coal', '8 bronze_ingot', 'crucible 0', 45], // 7 : 1, 12.5 % tin
+  ['copper_block', 'kiln', '7 copper_ingot + coal', 'copper_block', 'crucible 0', 30],
+  ['gold_block', 'kiln', '7 gold_nugget + 2 coal', 'gold_block', 'crucible 0', 40],
   // casting a tool remelts ingots, so it needs the crucible as well as the mold
-  ...metalToolRows('kiln', 'copper', 'copper_ingot', ['knife', 'shovel', 'axe', 'hammer', 'pick'], '#fuel', 'crucible 0, mold 0', 25),
-  ...metalToolRows('kiln', 'bronze', 'bronze_ingot', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], '#fuel', 'crucible 0, mold 0', 30),
+  ...metalToolRows('kiln', 'copper', 'copper_ingot', ['knife', 'shovel', 'axe', 'hammer', 'pick'], 'coal', 'crucible 0, mold 0', 25),
+  ...metalToolRows('kiln', 'bronze', 'bronze_ingot', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'coal', 'crucible 0, mold 0', 30),
   // v0.10 circuits (§8.2): roasting pyrite drives sulfur off (FeS₂ → FeS + S); its residue held Berzelius's selenium (1817)
   ['sulfur', 'kiln', '3 pyrite + #fuel', '2 sulfur', '', 25],
   ['selenium', 'kiln', '6 pyrite + 2 #fuel', '3 sulfur + selenium', '', 40],
@@ -438,6 +444,7 @@ function isCell(p) {
  * @property {boolean} stationOk   the station is near (hands always are)
  * @property {number} missing      input units still missing (the second sort key)
  * @property {string} hint         '' or "build a Kiln nearby" when the station is not near
+ * @property {string} purpose      one line on what the output is for, '' when purpose.js has none (CONTRACTS §77)
  */
 
 /**
@@ -482,6 +489,8 @@ export function listRecipes(pack, stations, opts = {}) {
       stationOk,
       missing,
       hint: stationOk ? '' : `build a ${STATION_NAMES[rec.station]} nearby`,
+      // §77: what the thing is for, one line ('' when purpose.js says nothing about it)
+      purpose: purposeOf(rec.outputs[0].k),
     });
   }
   views.sort((a, b) => (Number(b.craftable) - Number(a.craftable)) || (a.missing - b.missing)

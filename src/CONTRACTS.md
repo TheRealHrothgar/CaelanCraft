@@ -4250,6 +4250,275 @@ cell by `cellHash`, so no two cells look alike. Their flat pictures (tiles 102, 
 - **Guide.** The first-day step and "Stone and flint" name Flinty Gravel, quote the three shares, and say plain gravel and
   mined stone give none; the gathering table lists Flinty Gravel in place of plain gravel (still ten rows).
 
+## 76. The harder Survival — generation 3: flint from gravel, food in bunches, tainted water and streams, more animals
+
+v0.14. Survival is meant to be harder. Everything about how the LAND is made is behind generation 3 (`GEN_LATEST` 3;
+`gen3` inside createWorldGen): new worlds get it, existing worlds keep generation 2 and their land, byte for byte. Rules
+about items, drops and animals apply to every world.
+
+### 76.1 Flint by chance from gravel (amends §70, §75)
+
+v0.13's Flinty Gravel read as coal and is withdrawn: nothing generates or places block 119 any more. The id stays for saves
+made in between as plain gravel (`displayName` "Gravel", the GRAVEL tile, `gravity`, `placeable: false`, the gravel
+rule); `flintPileAt` / `flintGravelAt` and tile 204 are gone. Digging WILD gravel (`ctx.natural`) gives a Flint with
+chance `harvest.GRAVEL_FLINT_P` (0.12), with or without a shovel, on top of the gravel (shovel) or 2 rock (hand); gravel
+that was placed or that fell gives none, so it cannot be dug over and over. Loose stones keep `FLINT_SHARE` 0.06, shown
+as a nodule; mined stone gives no flint. Expected within hex distance 20 on plains or forest: about 3 flint.
+
+### 76.2 Wild food in bunches — mushrooms, roots, nuts, fruit and a healing herb
+
+Amends §43 (items), §44 (harvest), §45 (eating), §46 (fire, recipes), §47 (blocks, tiles, worldgen) and §59 (sprites).
+
+**Blocks** 122–131, all `SPRITE` (crossed sprite, flat icon, PLANT flags), one tile each (208–217, same order):
+HONEYCAP_MUSHROOM 122 "Honeycap Mushroom", FRECKLECAP_MUSHROOM 123 "Frecklecap Mushroom", ONION_PLANT 124 "Wild Onion
+Plant", CARROT_PLANT 125 "Wild Carrot Plant", HAZEL_THICKET 126 / HAZEL_THICKET_BARE 127 ("Picked Hazel Thicket"),
+CRAB_APPLE_BUSH 128 / CRAB_APPLE_BUSH_BARE 129 ("Picked Crab Apple Bush"), HEALWORT_PLANT 130 / HEALWORT_PLANT_BARE 131
+("Cut Healwort Plant"). The three `*_BARE` blocks are not placeable; the other seven follow PRICKLY_PEAR in PICKER_ORDER
+and in the picker's Wild Plants family. `isPlant` / `PLANT_IDS` (17 ids) and `isPopOff` / `POP_OFF_IDS` (21 ids, in id
+order) include all ten.
+
+**Sprites** (tiles.js comments normative). The two mushrooms share one layout (a big mushroom and a small one) and differ
+in three places: the Honeycap has a smooth honey-gold dome, a pale yellow sponge under it and a fat plain stem; the
+Frecklecap a flatter, peaked, duller tawny cap with pale freckles, white gills with dark lines, and a thin stem with a
+ring and a bulb. No block or item name says which one poisons. Every other plant has a sign no other has: white bulbs
+and a white flower head (onion), an orange root under ferny fronds (carrot), pale-husked nuts on a yellow-green shrub
+(hazel), red apples on a small dark-crowned tree (crab apple), violet flower spikes over a silver rosette (healwort).
+A picked or cut variant is the same picture without its crop.
+
+**Items** (FOOD_ROWS, after pot_milk; satiation / hydration): honeycap 3 / +1 (spoilS 1500), roasted_honeycap 7 / 0;
+frecklecap 3 / +1 and roasted_frecklecap 7 / 0, both `sick: 1`; wild_onion 2 / +1, roasted_onion 5 / 0; wild_carrot
+3 / +1, roasted_carrot 7 / 0; hazelnuts 3 / 0 (stack 32, never spoil), roasted_hazelnuts 5 / 0; crab_apple 2 / +3
+(spoilS 2400), baked_crab_apple 5 / +2; healwort 0 / −2 with `cures: true` (useS 1.2); pot_healwort_tea 0 / +30 with
+`cures: true`, returns clay_pot. The hazel_thicket, crab_apple_bush and healwort_plant items place their `*_BARE` block.
+
+**Cure.** `FoodDef.cures` (boolean): `vitals.eatFood` ends a poisoning (`sick = 0`) before the sickness roll and returns
+`{ sick, cured }`; `vitals.cureSick(v)`. What the poison already took is not given back. `Survival.eat` returns
+`CURED_MESSAGE` when a poisoning was ended.
+
+**Harvest.** R picks all seven ripe plants (`PICKABLE`): Honeycap / Frecklecap → AIR, 1–2 of its mushroom; onion → AIR,
+1–2 wild_onion; carrot → AIR, 1 wild_carrot; hazel → HAZEL_THICKET_BARE, 1–3 hazelnuts; crab apple →
+CRAB_APPLE_BUSH_BARE, 2–3 crab_apple; healwort → HEALWORT_PLANT_BARE, 1 healwort. `RIPE_OF` maps the three `*_BARE`
+blocks back; `Regrowth` tracks every key of `RIPE_OF`. Breaking by hand gives the pick's drops and destroys the plant
+(a thicket also gives 2–3 sticks, a bush 1–2). A shovel gives 2–3 wild_onion or 1–2 wild_carrot, and lifts a thicket,
+a bush or a Healwort as its block item (ripe or picked). Break times: mushrooms 0.2 s, roots 0.4 s, thicket and bush
+0.6 s, Healwort 0.3 s; tool `shovel` except the mushrooms (none); tier 0.
+
+**Fire and recipes.** FIRE_TRANSFORMS (skewer): honeycap → roasted_honeycap 15 s, frecklecap → roasted_frecklecap 15 s,
+wild_onion → roasted_onion 15 s, wild_carrot → roasted_carrot 20 s, hazelnuts → roasted_hazelnuts 12 s, crab_apple →
+baked_crab_apple 18 s; none of the results chars. Hand recipe `pot_healwort_tea`: healwort + pot_boiled →
+pot_healwort_tea, 2 s.
+
+**Worldgen (generation 3).** The per-column flora roll is unchanged except that a roll landing on a FOOD row
+(an id that PATCH_TABLE places: HONEYBERRY_BUSH, TUBER_PLANT, PRICKLY_PEAR, CATTAILS) places nothing. Food comes from
+`PATCH_TABLE`, rows `{ key, id, cell, chance[8 by BIOME], radius, fill, ring?, mixId?, mixShares?, edgeBelow?,
+minHeight?, maxHeight?, besideBelow? }`. For row i and grid cell (kq, kr): `h = hash3(kq, kr, PATCH_SALT + i, seed)`;
+centre `(kq·cell + ((h & 255)·cell >> 8), kr·cell + (((h >>> 8) & 255)·cell >> 8))`; the patch exists when
+`(h >>> 16) / 65536 < chance[biome of the centre]` (0 for a FOREST centre whose humidity ≥ `edgeBelow`). A column within
+`radius` of the centre (exactly at `radius` when `ring`) whose own biome has a chance above 0 takes the plant when
+`rand3(q, r, PATCH_SALT + i, seed) < fill`; it is `mixId` instead when the patch's share
+`mixShares[hash3(kr, kq, PATCH_SALT + PATCH_MIX_STEP + i, seed) % length]` is above
+`rand3(q, r, PATCH_SALT + PATCH_MIX_STEP + i, seed)`. The first row (then the first patch in grid order kq, kr) to
+claim a column has it. The surface pass places the claimed plant under the usual conditions (the biome's surface with
+AIR above, and the row's height / shore conditions); otherwise the column takes its ordinary roll.
+Rows: honeyberry (32; PLAINS 0.19, FOREST 0.62, SNOWY 0.25; r 2; fill 0.35), tuber (36; PLAINS 0.42, FOREST 0.27; 2;
+0.3), prickly_pear (28; DESERT 0.45; 2; 0.4), cattails (24; BEACH 0.6; 3; 0.7; the §47 shore conditions), mushrooms
+(36; FOREST 0.6; ring at 2; 0.7; mixId FRECKLECAP_MUSHROOM, mixShares `FRECKLECAP_SHARES` [0, 0.15, 0.3, 0.5, 1]),
+onion (40; PLAINS 0.2, FOREST 0.27; 2; 0.4; edgeBelow `FOREST_EDGE_HUMIDITY` 0.22), carrot (40; PLAINS 0.31, FOREST
+0.31; 2; 0.35; same edge), hazel (40; FOREST 0.43; 1; 0.8), crab_apple (44; PLAINS 0.46, FOREST 0.46; 2; 0.22),
+healwort (64; PLAINS 0.4, FOREST 0.4, SNOWY 0.2; 1; 0.45). `PATCH_SALT` 0x9a7c00, `PATCH_MIX_STEP` 64.
+`CAVE_TROOP` (cell 28, chance 0.3 in any biome, radius 2, fill 0.5, the same mix; row index PATCH_TABLE.length), run
+last: a covered column gets a mushroom in the first AIR cell with a non-AIR cell under it, looking down from
+height − 4 to y 7, and only when that cell under it is STONE. The generator exposes `PATCH_TABLE`; the module also
+exports `PATCH_SALT, PATCH_MIX_STEP, FOREST_EDGE_HUMIDITY, FRECKLECAP_SHARES, CAVE_TROOP`. Pond-rim cattails (§47) are
+unchanged. Measured (worldgenFlora.test.js, 736 chunks): 47 % of generation 2's food plants; 94 % of them have another
+of their kind within 3 cells (35 % in generation 2); 67 % of mostly-land chunks hold no food plant (16 %).
+
+### 76.3 Tainted water, streams, water that spoils
+
+Blocks, tiles, fluids, blockphysics, mesher, worldgen, vitals, survival, survivalControl, items, inventory, cooking, main.
+
+**Block and tile.** `TAINTED_WATER` 120 (`tainted_water`, "Tainted Water"): WATER's flags (not solid, not opaque, liquid,
+unbreakable, LAYER_TRANSLUCENT, sound water), tile `TAINTED_WATER` 204 on every face, **not placeable** (no picker entry, no
+item; `setblock … tainted_water`). `isWater`, `isWaterSource` (WATER or TAINTED_WATER), `waterLevel` 7, `isFallThrough`,
+`isLiquid` hold for it; `isEarth` too. Tile 204: olive base 0x566029, 2×2 clouding, six dark smears 0x3d4220, scum flecks
+0x93a658 / 0x7c9048, alpha 216 everywhere. The mesher culls it against the rest of the water family by surface height (no wall
+between fresh and tainted water) and keeps a full cell full under a meshed block (`FULL_WATER`: level 7). Block 121 is a
+placeholder (`reserved_121`, plain stone, never generated or placed) until the animals' block lands.
+
+**Fluids (amends §33.9, §35).** Wherever §35 says "WATER source" read `isWaterSource`. `WATER_RULE_IDS` ends with TAINTED_WATER.
+Rule 2a: a FLOW / FALL cell generated as a source becomes THAT source again (`_naturalSource`: `world.originAt` is WATER or
+TAINTED_WATER); else with ≥ WATER_SOURCE_NEIGHBOURS source side neighbours over a floor it becomes TAINTED_WATER when any of
+them is, else WATER. §33.9: a FLOW / FALL edit is dropped when its origin is AIR or a source. Flowing and falling water out of
+a tainted source are the ordinary WATER_FLOW_k / WATER_FALL blocks (so it LOOKS like any water: only the hint tells).
+`waterQualityAt(getBlock, q, y, r) → 'fresh' | 'tainted'` (QUALITY_TRACE_MAX 256 cells): TAINTED_WATER → tainted; WATER or not
+water → fresh; WATER_FALL is fed by the water above it; WATER_FLOW_k by every side neighbour that spreads with E = k + 1 and by
+any water above it; tainted when ANY source reached is tainted, else fresh (also when no source is found). So a spillway
+never makes a pond fresh.
+
+**Drinking.** `RATES.GULP_TAINTED_SICK` 0.4 (fresh stays `GULP_FRESH_SICK` 0.06). `gulpWater(v, quality, random)` and
+`Survival.drink(quality, random)`: quality 'fresh' | 'salt' | 'tainted' (a boolean is the old salty flag); tainted = fresh's
++8 with the 0.4 chance; one `random()` per fresh or tainted gulp, none for salt. Item `pot_tainted` "Pot of Tainted Water"
+(food, stack 1, hydration 30, sick 0.6, useS 1, returns clay_pot, never spoils; the last food).
+`FIRE_TRANSFORMS.pot_tainted = { to: 'pot_boiled', seconds: 15, spot: 'centre' }`; `CENTRE_POTS` ends with it.
+survivalControl: `WaterQuality`, `waterKind(tainted, salty, stream = false)` (tainted wins; a generated stream's column is
+never salt; else the biome), `WATER_POTS { fresh: 'pot_water', salt: 'pot_seawater', tainted: 'pot_tainted' }`,
+`waterHint(quality | salty, potSelected)` → `Fresh water` / `Sea water (salty)` / `Tainted water` + ` · R: drink` (tainted:
+`drink (risky)`) or ` · R: fill the pot`. `interactKind`: with `ctx.waterQuality(q, y, r)` the fill / drink action carries
+`quality`, `salty` (quality === 'salt') and the hint; without it `ctx.salty` works as before. main:
+`waterQualityOf(q, y, r) = waterKind(waterQualityAt(…) === 'tainted', isSaltyBiome(biome), worldGen.streamAt(q, r))`; fill
+gives `WATER_POTS[quality]`; drinking with the head under water uses the eye cell; the boil tip also follows a poisoning by
+`pot_tainted`.
+
+**Spoiling into.** `FoodDef.spoilsTo` (item key): a spoiled item turns INTO it. `spoilSlots(slots, dt, random, spoiled,
+itemOf = getItem)`: one `random()` per perishable stack, probability `min(1, n·dt / spoilS)`, as before; with `spoilsTo` a
+stack of one becomes `{ k: spoilsTo, n: 1 }` in place, one of a bigger stack is put with `fitStack` over the same slot array
+and, when it does not fit, nothing spoils that time; `spoiled` counts the original key. `pot_water`: `spoilS`
+`POT_WATER_SPOIL_S` 2880 (2 × DAY_LENGTH_SECONDS), `spoilsTo: 'pot_tainted'`. `main.spoiledText`: lost items as before, then
+`N <name> stood too long: now <spoilsTo name>.` per turning key. This is an item rule: it holds in every Survival world.
+
+**Generation 3 ponds.** A liquid pond is TAINTED_WATER when `rand3(kq, POND_TAINT_SALT 0x7a1, kr, seed ^ POND_SALT) <
+POND_TAINTED_SHARE` (0.75), the whole pond; a SNOWY pond stays ICE. `worldGen.pondTaintedAt(q, r)`: true for the pond water
+columns of a tainted pond (false below generation 3).
+
+**Generation 3 streams.** Constants: `STREAM_CELL` 48, `STREAM_SALT` 0x57e4, `STREAM_CHANCE` 0.5, `STREAM_ASCENT` 12,
+`STREAM_SPRING_MIN_HEIGHT` SEA_LEVEL + 3, `STREAM_SPRING_MAX_HEIGHT` 83, `STREAM_MAX_LEN` 64, `STREAM_MIN_LEN` 10,
+`STREAM_REACH` = ASCENT + MAX_LEN + 1, `STREAM_MARGIN` 2, `STREAM_MAP_SIDE` 20.
+1. *Where.* Grid cell (kq, kr) has a candidate when `((hash2(kq, kr, seed ^ STREAM_SALT) >>> 8) & 0xffff) / 65536 <
+   STREAM_CHANCE`, at `(kq·48 + spot % 48, kr·48 + (spot >>> 8) % 48)`, `spot = hash3(kq, 1, kr, seed ^ STREAM_SALT)`; none
+   when that column is sea or above 83. It climbs up to STREAM_ASCENT columns to the highest neighbour by `rawHeight` (getColumn's
+   height before rounding), never above 83; the spring must be PLAINS / FOREST / SNOWY, at least SEA_LEVEL + 3 high and not
+   within 2 of an accepted pond centre. The channel steps to the lowest neighbour by `rawHeight` while one is lower; it ends
+   before a sea column (height < SEA_LEVEL), before a column within 2 of an accepted pond centre (that column is included, and
+   ends it, only when its own level equals the pond's), in a hollow, or at STREAM_MAX_LEN columns. Fewer than STREAM_MIN_LEN
+   columns: no stream. In a hollow the neighbours of the last column join as a pool when their height is its level or one above,
+   their own level equals it and they are not on a pond's ground.
+2. *Level.* A stream column's WATER source is at `level = max(SEA_LEVEL, min(height of the column and of its six neighbours))`.
+3. *Steps.* `streamBottom`: with a lower stream column beside it, a column holds WATER_FALL below its source down to one cell
+   below the lowest such neighbour's level; else nothing below the source. `stampStreams(blocks, heights, map)`: AIR from
+   level + 1 to height + 1, WATER at level, WATER_FALL down to the bottom, STONE in the bed cell when it is not solid; and for
+   every stream column in the chunk or one column outside it, AIR in this chunk beside one of its water cells becomes STONE,
+   except from a neighbouring stream column's own lowest water cell up.
+
+`generateChunk` (generation 3): ores (with §77's coal seams), ponds, **streams**, trees (a tree whose trunk column is a stream
+column is left out; `treeTrunkAt` is unchanged, so callers that place things by it also check `streamAt`), flora (skips
+stream columns: their top is not the biome's surface). `chunk.heights` stays the generated terrain height. Streams are traced
+once per grid cell and stream-level maps kept per chunk (bounded caches; pure). `worldGen.streamAt(q, r)`,
+`worldGen.streamLevelAt(q, r)` (the source's y, or −1): pure, false / −1 below generation 3. **At rest:** the real water rule
+run on every generated water cell changes nothing. Measured: stream columns are about 0.4–0.5 % of the land; from a plains or
+forest start the nearest stream is a median 25–29 columns away, within 60 for about nine starts in ten.
+
+### 76.4 Game animals — deer, rabbits, pheasants, wild turkeys, the bear, fish (`src/animals.js`, `src/animalRenderer.js`)
+
+Amends §69 and §72. Six kinds join `SPECIES` (`ANIMAL_KINDS`: cow, sheep, horse, wolf, deer, rabbit, pheasant, turkey, bear,
+fish). None is lured or tamed (`lure: NO_LURE`, `tame: 0`). Optional species fields: `pool` ('herd' when absent, 'small',
+'fish'; `poolOf(kind)`), `calm` (its own CALM_FACTOR), `zigzag`, `flush` ('fly' | 'glide') with `cruise` (m above the
+ground), `nests`, `predator`, `snare: false`, `water`, `pad` (extra crosshair reach), `despawn`, `alarm`. ANIMAL_MAX 40.
+
+- **Species**: deer (r 0.36 × h 1.25, health 8, notice 16, 1.3 × SPRINT_SPEED, herd 3–5, calm 2.5), rabbit (0.18 × 0.4, 2,
+  8, 1.3 × sprint, 1–3, small, zigzag), pheasant (0.2 × 0.5, 2, 7, 2–4, small, flush 'fly', cruise 2.6, nests), turkey
+  ("Wild Turkey", 0.28 × 0.8, 4, 9, 1.2 × sprint, 2–4, small, flush 'glide', cruise 0.9, nests), bear (0.48 × 1.45, 30,
+  notice 9, 1.1 × sprint, 1–1, predator, snare false), fish (0.16 × 0.2, 2, 4.5, 2–4, pool fish, water, snare false, pad
+  0.14, despawn 70, alarm 4).
+- **Deer** run until `notice × calm` (40 m) away. A natural herd's first deer is a stag: `variant` 1 (saved `v: 1`; drawn on
+  the `alt` body, antlers). **Rabbits** in flight swerve ZIG_ANGLE 0.7 rad to one side of straight away and change side
+  every ZIG_S 0.3–0.6 s.
+- **Flush**: `_startle` gives a bird on the ground `air` = FLUSH_S 2.4–3.2 s (pheasant) or TURKEY_GLIDE_S 0.9 (turkey) and
+  queues `events.flushed`. While `air ≠ 0` the body is `flying` (physics: no gravity, config FLY_SPEED = FLUSH_SPEED): it
+  goes forward only once it has turned to within 1.2 rad of its line, and its height is steered through `input.pullY`
+  toward `cruise` above what lies below (climb ≤ FLUSH_CLIMB 6.5, sink ≤ FLUSH_SINK 3.5; a wall ahead: climb; over water
+  up to FLUSH_OVER_WATER_S 2.5 longer), then down at FLUSH_SINK until stepPlayer lands it (`air` 0). Water ends a flight.
+  `walkPhase` beats at WING_BEAT 26 rad/s in the air.
+- **Nests**: blocks GROUND_NEST **121** and GROUND_NEST_EMPTY **132** (shape 'litter', not placeable, not pop-off; tiles
+  228–231: the two pictures, the straw skin, the egg skin; mesher `emitNest`: a bed, NEST_WALL.count 6 bundles in a ring,
+  NEST_EGGS 3 eggs only in the full one). NEST_HEN_P 0.5 of spawned pheasants and turkeys have a finite `nestIn`
+  (NEST_FIRST_S 60–180, then NEST_EVERY_S 240–420; a failed try: NEST_RETRY_S 30). `_layNest`: a calm, wild bird on the
+  ground, nobody within NEST_PRIVACY 10, no GROUND_NEST within NEST_SPACING 6 cells; a GROUND_NEST_EMPTY that near is
+  refilled, else its own empty cell over solid ground → `events.laid { cell, refill }` (main writes GROUND_NEST). harvest:
+  PICKABLE GROUND_NEST → GROUND_NEST_EMPTY with raw_egg 1–3 and feather 50 %; rules h 0.3 by hand (full: raw_egg 1–2 +
+  plant_fibre; empty: plant_fibre). World generation places no nest.
+- **Bear** (`_bear`; modes 'warn', 'charge'): no reaction beyond `bearRange(a, player)` = max(noticeRange, BEAR_CHARGE_DIST
+  3.5 + BEAR_SNEAK_MARGIN 1.5). Inside: 'warn' (`events.warned`; it stands, faces the player; `rear` eases to 1 at REAR_RATE
+  5/s) for BEAR_WARN_S 2.5; then 'charge' if the player is within range × BEAR_BACK_OFF 1.35, else it stands down. Within
+  BEAR_CHARGE_DIST, or on any `wound`, it charges at once (`_provoke`, `events.charged`; `chase` = BEAR_CHASE_S 9). In
+  reach (BEAR_REACH 1.7, heights overlapping, no wall) it mauls every BEAR_MAUL_S 1.4: the player is thrown BEAR_PUSH 8 /
+  BEAR_LIFT 5, `events.mauls` (main: BEAR_DAMAGE 18, cause **'bear'**). After a maul it does not advance for BEAR_RECOVER_S
+  1. The charge ends when `chase` is out, the player is beyond BEAR_GIVE_UP 24 or gone: `rest` = BEAR_REST_S 8, during which
+  it neither warns nor charges unless hurt. A blow moves it BEAR_KNOCK 0.35 × ANIMAL_KNOCKBACK and never makes it run. No
+  snare holds or draws it. Swim water, a burning campfire in its path and a two-high wall stop a charge. Its model has ONE
+  smooth back (a thin paler strip from shoulders to rump): no hump.
+- **Fish** (`_fish`, never stepPlayer): `fishDepth(getBlock, q, r, y)` is the feet height FISH_UNDER 0.24 below the water
+  surface of that column (a cell up or down counts), NaN without water or where it is shallower than FISH_MIN_WATER 0.3.
+  A fish moves only to where fishDepth is a number, swinging aside or holding still where the water ends, and is removed
+  when its own cell has none. Cruise FISH_CRUISE 0.9; a player inside `notice` makes the school (alarm 4) dart at FISH_DART
+  5.5 for FISH_DART_S 1.1, then it holds still FISH_REST_S 1.5. `wound` neither knocks nor lifts it. Main: only a spear
+  (thrust or thrown) wounds a fish; a fish is left out of resolveBodies and the block-physics bodies; a fish under the
+  crosshair does not take R from the water.
+- **Spawning**: HERD_WEIGHTS gains deer, bear, rabbit, pheasant, turkey; a kind is weighed against its own pool only. Each
+  HERD_CHECK_S: `_spawnHerd(player, world, 'herd')` (HERD_CHANCE 0.35, HERD_TARGET 5 herd animals within HERD_RADIUS) and
+  `(…, 'small')` (SMALL_CHANCE 0.4, SMALL_TARGET 4); no bear while BEAR_NEAR 1 is within the radius. Fish: `world.streamAt`
+  (AnimalWorld, optional; main: worldGen.streamAt, §76.3) every FISH_CHECK_S 20 with FISH_CHANCE 0.6, in stream water
+  FISH_MIN 8..FISH_MAX 30 from the player, while fewer than FISH_TARGET 5 are within FISH_RADIUS 40; FISH_CAP 10. Fish
+  therefore live only in generation-3 worlds.
+- **Events**: `flushed`, `warned`, `charged`, `mauls`, `laid`. `freed`, `flushed` and `charged` may be queued between two
+  updates (remove, wound); each entry is reported by exactly one update (this also ends §69's `freed` entries being
+  repeated for good, which reset a snare the moment it caught a second time).
+- **Drops** (harvest MOB_DROPS): deer raw_venison 2–3 + rawhide; rabbit raw_rabbit + rawhide 40 %; pheasant raw_fowl +
+  feather 2–4; turkey raw_fowl 2–3 + feather 2–4; bear raw_bear 6–8 + rawhide 2–3; fish raw_fish.
+- **Items**: materials feather, fletched_dart; foods raw/roast venison (6 / 32), rabbit (4 / 16), fowl (4 / 20), fish
+  (4 / 18), bear (7 / 34), egg (5 / 14); raw ones poison 25–35 %. cooking: each raw → roast on a skewer (venison 22 s,
+  rabbit 14, fowl 16, fish 12, bear 26, egg 12); the five roasts char in 40 s, a roast egg does not. looseItems:
+  THROW_FLETCHED { speed 26, power 3 }, FLETCHED_BREAK_P 0.15, `dartBreakP(key)`, DART_KEYS + fletched_dart. crafting:
+  `fletched_dart` at hand, flint + stick + 2 feather + plant_fibre → 4, hammer 1, 3 s. MEAT_LURE gains venison, rabbit,
+  fowl and bear, raw and roast. campfireRenderer SPOT_ITEMS gains them (and beef and mutton, which were missing).
+- **Damage**: vitals DAMAGE_CAUSES, storage DEATH_CAUSES and survival DEATH_TITLES gain 'bear' ("A bear brought you down.").
+- **Models** (animalRenderer MODELS): optional `legs` (2 birds, 0 fish), `hop`, `wiggle`, `wing` (two boards drawn only
+  while `air ≠ 0`, legs tucked), `rear` (the body pitches up about the hips by `animal.rear`, the forelegs with it; `swipe`
+  swings them) and `head` (its own mesh, kept level while the body rears). `bodyVariant`: a stag is `alt`.
+- **Commands**: `summon deer|stag|rabbit|pheasant|turkey|bear|fish [q y r]`; a fish only into water.
+- **Save**: the `animals` field gains `v` (1 = stag, deer only); at most ANIMAL_MAX 40; a list written before v0.14 validates
+  to itself. `air`, the bear's warn / chase / rest and a fish's dart are not saved.
+
+### 76.5 Totals and the guide
+
+After the three parts: BLOCK_COUNT 133 (120 Tainted Water, 121 Ground Nest, 122–131 the plants, 132 Empty Nest); TILE_IDS
+174; 248 items (34 tools, 48 materials, 52 foods, 2 heals, 5 wear, 107 blocks), the foods running plants, game, then the Pot
+of Tainted Water last; 119 recipes (47 at hand). The Survival Guide tells all of it: "Fresh, tainted and salt", "Water that
+stands", "Food in bunches", "What gates what", "Deer and small game", "Fish", "The bear", and a line on older worlds;
+handbook.test.js pins each new sentence's numbers to the constants above.
+
+## 77. The build tree: a purpose for every tool, real gates, coal — `src/purpose.js` (PURE), `src/harvest.js`, `src/crafting.js`, `src/worldgen.js`
+
+**A purpose line.** `purpose.PURPOSE` maps an item key to one sentence of at most `PURPOSE_MAX` (64) characters on what
+the thing is for and what it unlocks: every tool (a test checks all of them), the five workplaces ("Workplace: …") and the
+key parts (cord, campfire, snare, bellows, clay pot, charcoal, torch, sleeping hide, basket). `purposeOf(key)` → the line
+or ''. `crafting.listRecipes` puts it on every RecipeView as `purpose` (of the main output); packUI draws it on the card
+as `.card-purpose` under the name, with the whole line as its tooltip. Tests check each gate a line names against
+`BLOCK_RULES` and `RECIPES`.
+
+**The gates.** Each step of the ladder opens something no lesser tool does:
+
+- **Shovel 1.** CLAY needs a shovel (tier 1; `harvestHint`: "Clay · needs a wooden shovel or better" — `gateToolName`
+  names the real tool). Clay builds the Kiln, so the first shovel gates it. Clay is no longer a bare-hand job
+  (not in `HAND_GATHER`).
+- **Picks.** Flint (2): stone, coal ore, copper ore, obsidian. Copper (3): tin ore. Bronze (4): iron ore. Iron (5): gold
+  ore (it was 4). Steel (6): diamond ore (it was 2).
+- **Coal.** Smelting and casting copper and bronze burn `coal` itself, not `#fuel`: copper_ingot (2), tin_ingot (1),
+  bronze_ingot (3), copper_block (1), gold_block (2) and the eleven copper and bronze tools (1 each). Firing clay (pot,
+  bricks, crucible, mold) and the kiln's other jobs still take `#fuel` (coal or charcoal); the Bloomery and the Forge
+  still take charcoal only. So coal — a flint pick's work — gates the metal ages.
+- Unchanged gates, now tested: hammer 1 knaps flint; axe 1 for logs and the Work Stump, axe 2 for planks; knife 2 for
+  leather; hammer 3 draws wire, 4 works iron, 5 forges steel and builds the Workbench, 6 sets gems; the crucible and the
+  mold cast; the bellows build the Bloomery and the Forge.
+- A gate is "a tool of that kind at that tier OR BETTER": a flint axe stands in for the stone axe, any knife cuts
+  leather, a steel pick mines gold. `tests/integration/progression.test.js` works out everything obtainable from bare
+  hands in a generated world, checks that every tool, workplace and recipe is reachable, and that taking any gate away
+  (with every better tool of its kind) closes exactly the next step.
+
+**Coal seams you can see (generation 3).** `ORE_TABLE_GEN3`, run after ORE_TABLE_GEN2 with `oi` continuing (older veins
+keep their rng streams): COAL_ORE, 8 attempts a chunk, y SEA_LEVEL − 4 … SEA_LEVEL + 18, 12–20 cells, replacing STONE
+and DIRT. About 30 cells a chunk, of which about one is open to the air: seams show in cliff sides, stream banks and on
+bare rock.
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),

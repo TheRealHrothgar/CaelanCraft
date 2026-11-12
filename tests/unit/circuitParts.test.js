@@ -260,7 +260,7 @@ describe('isEarth (§4.4)', () => {
     ...BLOCKS.filter((b) => b.name.startsWith('wool_')).map((b) => b.name),
   ];
   const idOf = new Map(BLOCKS.map((b) => [b.name, b.id]));
-  const isWaterFamily = (b) => b.name === 'water' || b.name === 'water_fall' || b.name.startsWith('water_flow_');
+  const isWaterFamily = (b) => b.name === 'water' || b.name === 'water_fall' || b.name.startsWith('water_flow_') || b.name === 'tainted_water';
 
   it('is true for every ground block of the list (all exist with survival merged) and for the whole water family', () => {
     for (const name of EARTH) {
@@ -268,7 +268,7 @@ describe('isEarth (§4.4)', () => {
       expect(isEarth(idOf.get(name)), name).toBe(true);
     }
     const water = BLOCKS.filter(isWaterFamily).map((b) => b.id);
-    expect(water).toHaveLength(8);
+    expect(water).toHaveLength(9); // + Tainted Water (§76 water)
     for (const id of water) expect(isEarth(id), BLOCKS[id].name).toBe(true);
     // Nothing else is earth.
     const expected = [...EARTH.map((n) => idOf.get(n)), ...water].sort((a, b) => a - b);

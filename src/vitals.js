@@ -148,6 +148,7 @@ export const RATES = Object.freeze({
   // §4.2 hand gulps
   GULP_FRESH: 8,
   GULP_FRESH_SICK: 0.06,      // v0.11 (CONTRACTS §66): raw water from a source poisons you now and then
+  GULP_TAINTED_SICK: 0.4,     // v0.14 (CONTRACTS §76 water): a gulp of tainted water poisons two times in five
   GULP_SALT: -4,
 });
 
@@ -155,6 +156,7 @@ export const RATES = Object.freeze({
 export const DAMAGE_CAUSES = Object.freeze([
   'fall', 'drown', 'buried', 'crush', 'fire', 'zombie', 'blast', 'log', 'blackhole', 'starve', 'thirst', 'cold', 'heat',
   'sick', 'void', 'command',
+  'bear', // v0.14 (§76 fauna): a bear's maul (animals.BEAR_DAMAGE)
 ]);
 
 /** Soft landings (§2.4): block landed on → fall damage factor; anything else 1. */
@@ -489,35 +491,50 @@ export function makeSick(v) {
 
 /**
  * Eat or drink one food item (§4.5): satiation, hydration (never below 0, never above 100) and the instant body
- * temperature change (snow); then the sickness roll (`random() < food.sick`).
+ * temperature change (snow); then the cure (v0.14, §76 flora: a food that `cures` ends a poisoning at once); then the
+ * sickness roll (`random() < food.sick`).
  * @param {Vitals} v
  * @param {import('./types.js').FoodDef} food
  * @param {() => number} random
- * @returns {{ sick: boolean }}
+ * @returns {{ sick: boolean, cured: boolean }}  `cured`: the food ended a poisoning that was there
  */
 export function eatFood(v, food, random) {
   v.satiation = clamp(v.satiation + (food.satiation || 0), 0, STAT_MAX);
   v.hydration = clamp(v.hydration + (food.hydration || 0), 0, STAT_MAX);
   if (food.temp) v.temp = clamp(v.temp + food.temp, BODY_TEMP_MIN, BODY_TEMP_MAX);
+  const cured = !!food.cures && cureSick(v);
   const sick = food.sick > 0 && random() < food.sick;
   if (sick) makeSick(v);
-  return { sick };
+  return { sick, cured };
+}
+
+/**
+ * End a poisoning at once (v0.14, §76 flora: Healwort and its tea). What the poison already took is not given back.
+ * @param {Vitals} v
+ * @returns {boolean} whether there was a poisoning to end
+ */
+export function cureSick(v) {
+  const was = v.sick > 0;
+  v.sick = 0;
+  return was;
 }
 
 /**
  * One hand gulp of water (§4.2): fresh +8 hydration with a GULP_FRESH_SICK (6 %) chance of poisoning; salt −4 hydration.
+ * v0.14 (§76 water): tainted water gives the same +8 with a GULP_TAINTED_SICK (40 %) chance. One `random()` per fresh or
+ * tainted gulp, none for salt.
  * @param {Vitals} v
- * @param {boolean} salty
+ * @param {boolean|'fresh'|'salt'|'tainted'} quality  what the water is; a boolean is the old `salty` flag (true = salt)
  * @param {() => number} random
  * @returns {{ sick: boolean }}
  */
-export function gulpWater(v, salty, random) {
-  if (salty) {
+export function gulpWater(v, quality, random) {
+  if (typeof quality === 'string' ? quality === 'salt' : quality) {
     v.hydration = clamp(v.hydration + RATES.GULP_SALT, 0, STAT_MAX);
     return { sick: false };
   }
   v.hydration = clamp(v.hydration + RATES.GULP_FRESH, 0, STAT_MAX);
-  const sick = random() < RATES.GULP_FRESH_SICK;
+  const sick = random() < (quality === 'tainted' ? RATES.GULP_TAINTED_SICK : RATES.GULP_FRESH_SICK);
   if (sick) makeSick(v);
   return { sick };
 }

@@ -211,3 +211,27 @@ Light (v0.11) and loose items (v0.10), new in this list:
 - **A thrown item shows no landing marker.**
 - **Loose items across a save and reload are covered by unit tests only** (serialize → storage's canonical form → load),
   not by an in-browser reload.
+
+## The harder Survival (v0.14) — open items
+
+From the build of CONTRACTS §76–§77. None blocks play.
+
+- **Tainted water that flows looks like fresh water.** Flowing and falling water share their blocks, so water running out of
+  a tainted pond is blue; only the crosshair hint says "Tainted water". A tainted set of flowing blocks would fix the look.
+- **Under tainted water the fog and overlay are the ordinary blue.** Generated tainted ponds are one cell deep, so it shows
+  only in deeper tainted water made with commands.
+- **Streams are short** (median about 28 columns, longest 64 plus a pool) and most end in a hollow, not the sea.
+- **Visible coal is sparse**: about one exposed cell a chunk; on the test seed the nearest was 54 cells from spawn.
+- **Upgrading an old Creative world to Survival** regenerates its untouched land at the newest generation, so it gains
+  streams and tainted ponds. Existing Survival worlds keep generation 2.
+- **Nests are not pop-off blocks**: dig the ground from under one and it floats. They never expire.
+- **A thrown spear that kills a fish stays on the stream bed.**
+- **Balance is untested by a person**: the bear's 18 damage and 1 s recovery, how often hens lay, how many animals appear,
+  Healwort's rarity, the Frecklecap's single dose of Poisoned, 12 % flint from gravel.
+- **Sounds of the new animals were never heard** (headless runs only); their recipes are checked structurally.
+- **Not checked in the running game** (unit tests only): a pot spoiling over time, boiling a tainted pot on a real
+  campfire, drinking with the head under water, cave mushrooms, the picked crab apple and cut Healwort, the Healwort tea.
+- **Mushrooms, onions and carrots do not regrow**; only the hazel thicket, the crab-apple bush and the Healwort do.
+- **The world-generation timing tests** (≤ 8 ms a chunk, four of them now) fail when the machine is busy; best-of-eight
+  runs measure 4.9 / 6.0 / 6.0 ms for generations 1 / 2 / 3.
+

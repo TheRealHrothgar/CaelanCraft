@@ -134,7 +134,24 @@ export const TILE_NAMES = Object.freeze({
   201: 'litter_rock',
   202: 'litter_flint',
   203: 'litter_stick',
-  204: 'flint_gravel',
+  // v0.14 (§76 water)
+  204: 'tainted_water',
+  // v0.14 (§76 flora): the wild plants of generation 3
+  208: 'honeycap_mushroom',
+  209: 'frecklecap_mushroom',
+  210: 'onion_plant',
+  211: 'carrot_plant',
+  212: 'hazel_thicket',
+  213: 'hazel_thicket_bare',
+  214: 'crab_apple_bush',
+  215: 'crab_apple_bush_bare',
+  216: 'healwort_plant',
+  217: 'healwort_plant_bare',
+  // v0.14 (§76 fauna): the ground nest
+  228: 'ground_nest',
+  229: 'ground_nest_empty',
+  230: 'litter_nest',
+  231: 'litter_egg',
   // powder and circuits: 160–194 (DESIGN-circuits §1.4), painted by circuitTiles.js
   ...CIRCUIT_TILE_NAMES,
   240: 'zombie_face',
@@ -2350,25 +2367,97 @@ function paintLitterStick(px, rng) {
   speck(px, rng, 10, [0xa98656, 0x96744a]);
 }
 
-/** The flint nodules in tile 204: [x, y, w, h] in texels (kept off the tile's edges so they never wrap). */
-const FLINT_NODULES = Object.freeze([[2, 2, 3, 3], [10, 3, 4, 3], [5, 8, 3, 2], [11, 11, 3, 3], [1, 12, 3, 2]]);
+// ---- v0.14 (§76 fauna): the ground nest ----
+
+/** The nest's eggs in its picture: [centre x, centre y]. */
+const NEST_EGGS = Object.freeze([[6, 7], [10, 7], [8, 10.5]]);
 
 /**
- * 204 flint_gravel — gravel (tile 9's recipe on its own seed, so the stones match) with five FLINT nodules in it, plain to
- * see: glossy blue-black lumps (0x1b1f2c), each lit blue-grey on its upper-left texel (0x46527a) and with one chalk-white
- * cortex texel on its lower right (0xe9e3d2).
+ * The nest seen from above, shared by tiles 228 and 229: on alpha 0 a round bowl of woven dry grass — a LITTER_OUTLINE
+ * rim (radius 6.9 around (8, 8.5)), a ring of straw (0xc49a56 / 0x93703a, the strands alternating along the ring) and a
+ * shadowed hollow (0x5e4526 ± 6, radius 3.9).
  */
-function paintFlintGravel(px, rng) {
-  paintGravel(px, makeRng('gravel'));
-  for (const [x0, y0, w, h] of FLINT_NODULES) {
-    for (let dy = 0; dy < h; dy++) {
-      for (let dx = 0; dx < w; dx++) {
-        const lit = dx === 0 && dy === 0;
-        const rim = dx === w - 1 && dy === h - 1;
-        set(px, x0 + dx, y0 + dy, rim ? 0xe9e3d2 : lit ? 0x46527a : 0x1b1f2c, rim ? 0 : delta(rng, 3));
+function paintNestBowl(px, rng) {
+  clearTile(px);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const dx = x + 0.5 - 8;
+      const dy = y + 0.5 - 8.5;
+      const d = Math.hypot(dx, dy);
+      if (d > 6.9) continue;
+      if (d > 5.9) {
+        set(px, x, y, LITTER_OUTLINE);
+      } else if (d > 3.9) {
+        // strands run round the ring: light and dark by the angle, a little brighter toward the upper left
+        const strand = Math.floor((Math.atan2(dy, dx) + Math.PI) * 4.5 + d * 0.9) % 2 === 0;
+        set(px, x, y, strand ? 0xc49a56 : 0x93703a, delta(rng, 7) + (dx + dy < -3 ? 14 : dx + dy > 4 ? -14 : 0));
+      } else {
+        set(px, x, y, 0x5e4526, delta(rng, 6));
       }
     }
   }
+}
+
+/**
+ * 228 ground_nest — the Ground Nest's picture (its icon; the block itself is 3D pieces, like the loose stones): the bowl
+ * with three eggs in it, cream (0xf3ead6, lit 0xfffaf0 upper left, 0xcbbd9c lower right) with a brown speckle each.
+ */
+function paintGroundNest(px, rng) {
+  paintNestBowl(px, rng);
+  for (const [cx, cy] of NEST_EGGS) {
+    paintPebble(px, rng, cx, cy, 1.9, 2.2, 0xf3ead6, 0xfffaf0, 0xcbbd9c);
+    set(px, Math.round(cx + 0.4), Math.round(cy + 0.3), 0x9a7a52);
+  }
+}
+
+/** 229 ground_nest_empty — the same bowl with nothing in it but a few flecks of pale down (0xe9e2d0). */
+function paintGroundNestEmpty(px, rng) {
+  paintNestBowl(px, rng);
+  for (const [x, y] of [[7, 8], [9, 9], [8, 7]]) set(px, x, y, 0xe9e2d0, delta(rng, 6));
+}
+
+/**
+ * 230 litter_nest — the SKIN of the 3D nest (the mesher cuts each small face from it): woven dry grass — rows of straw
+ * (0xb88e4e ± 12 by row), fine noise, slanting dark gaps (0x6a4e28) and pale stalks (0xdcc07e). Opaque.
+ */
+function paintLitterNest(px, rng) {
+  for (let y = 0; y < H; y++) {
+    const d = delta(rng, 12);
+    for (let x = 0; x < W; x++) set(px, x, y, 0xb88e4e, d);
+  }
+  noise(px, rng, 5);
+  for (let k = 0; k < 12; k++) {
+    const x0 = randInt(rng, 0, 15);
+    const y0 = randInt(rng, 0, 15);
+    for (let t = 0; t < 3; t++) set(px, wrap16(x0 + t), wrap16(y0 + (t >> 1)), 0x6a4e28, delta(rng, 5));
+  }
+  speck(px, rng, 14, [0xdcc07e, 0xcdb06c]);
+}
+
+/** 231 litter_egg — the skin of an egg in the nest: cream shell (0xf1e8d2), fine noise, a few brown speckles (0x9a7a52). */
+function paintLitterEgg(px, rng) {
+  fill(px, 0xf1e8d2);
+  noise(px, rng, 4);
+  speck(px, rng, 9, [0x9a7a52, 0xb39468]);
+}
+
+/**
+ * 204 tainted_water (§76 water) — still, murky pond water, told from fresh water (blue, rippled) at a glance: a dull
+ * olive base (0x566029) clouded in 2×2 patches, six dark silt smears two pixels long (0x3d4220, wrap x) where water has
+ * ripples, and pale green scum flecks (0x93a658, 0x7c9048). Alpha 216 everywhere: cloudier than water (178), so the bed
+ * barely shows through.
+ */
+function paintTaintedWater(px, rng) {
+  fill(px, 0x566029);
+  cellNoise(px, rng, 2, 12);
+  noise(px, rng, 4);
+  for (let k = 0; k < 6; k++) {
+    const x0 = randInt(rng, 0, 15);
+    const y = randInt(rng, 0, 15);
+    for (let i = 0; i < 2; i++) set(px, wrap16(x0 + i), y, 0x3d4220, delta(rng, 4));
+  }
+  speck(px, rng, 9, [0x93a658, 0x7c9048]);
+  for (let i = 3; i < BYTES; i += 4) px[i] = 216;
 }
 
 /**
@@ -2549,6 +2638,359 @@ function paintFirePitSide(px, rng) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// v0.14 (§76 flora) tiles 208–217: the wild plants of generation 3 (original designs; these comments are normative).
+// Each is a sprite on alpha 0 with RGB 0, alpha 0 or 255 only, drawn on three crossed planes: a bold shape standing on
+// the bottom row, in a colour no other plant has — honey and tawny caps, white bulbs, an orange root, pale-husked nuts,
+// red apples, violet flower spikes — so each reads against grass and none is taken for another. Only the two mushrooms
+// look alike, and that is the point.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** `set` every pixel of the inclusive span x0..x1 on row y (clipped to the tile). */
+function span(px, y, x0, x1, hex, d = 0) {
+  for (let x = x0; x <= x1; x++) setClipped(px, x, y, hex, d);
+}
+
+/**
+ * One mushroom of a mushroom tile. Rows are [y, x0, x1] spans.
+ * @typedef {Object} MushroomShape
+ * @property {number[][]} cap       the cap's rows, top first
+ * @property {number[]} gills       the row under the cap
+ * @property {number[][]} stem      the stem's rows, down to row 15
+ * @property {number[]} [ring]      a ring round the stem (one row), if it has one
+ * @property {number[][]} freckles  [x, y] pale dots on the cap
+ */
+
+/**
+ * The two mushrooms share one layout — a big mushroom with a small one at its right foot — so at a glance they are the
+ * same plant. What tells them apart is drawn in three places, on both mushrooms of the tile:
+ * - the CAP: the Honeycap's is a smooth round dome of honey gold 0xdb9c2c; the Frecklecap's is flatter and wider under a
+ *   pointed peak, a duller tawny 0xc27a30, dotted with pale freckles 0xfff3d2;
+ * - under the cap: the Honeycap has a pale yellow sponge 0xead48c; the Frecklecap white gills 0xf4eedc with a dark
+ *   0xb0a488 line on every other pixel;
+ * - the STEM: the Honeycap's is fat and plain cream 0xecdcb4, widening to its foot; the Frecklecap's is thin and white
+ *   0xf2ecdc, with a ring 0xd6ccb2 under the cap and a bulb at its foot.
+ * @type {Readonly<Record<string, { capHex: number, gillA: number, gillB: number, stemHex: number, ringHex: number, big: MushroomShape, small: MushroomShape }>>}
+ */
+const MUSHROOMS = Object.freeze({
+  honeycap: {
+    capHex: 0xdb9c2c, gillA: 0xead48c, gillB: 0xead48c, stemHex: 0xecdcb4, ringHex: 0,
+    big: {
+      cap: [[4, 6, 9], [5, 4, 11], [6, 3, 12], [7, 2, 13], [8, 2, 13]], gills: [9, 3, 12],
+      stem: [[10, 6, 9], [11, 6, 9], [12, 6, 9], [13, 5, 10], [14, 5, 10], [15, 5, 10]], freckles: [],
+    },
+    small: { cap: [[10, 12, 14], [11, 11, 15]], gills: [12, 12, 14], stem: [[13, 12, 14], [14, 12, 14], [15, 12, 14]], freckles: [] },
+  },
+  frecklecap: {
+    capHex: 0xc27a30, gillA: 0xf4eedc, gillB: 0xb0a488, stemHex: 0xf2ecdc, ringHex: 0xd6ccb2,
+    big: {
+      cap: [[4, 7, 8], [5, 5, 10], [6, 3, 12], [7, 1, 14], [8, 1, 14]], gills: [9, 3, 12],
+      stem: [[10, 7, 8], [11, 7, 8], [12, 7, 8], [13, 7, 8], [14, 6, 9], [15, 5, 10]], ring: [11, 5, 10],
+      freckles: [[9, 5], [5, 6], [11, 6], [2, 7], [7, 7], [13, 8], [4, 8]],
+    },
+    small: {
+      cap: [[10, 13, 13], [11, 11, 15]], gills: [12, 12, 14], stem: [[13, 13, 13], [14, 13, 13], [15, 12, 14]],
+      freckles: [[12, 11], [14, 11]],
+    },
+  },
+});
+
+/**
+ * Paint one MushroomShape: the cap in `capHex` ±5 — 20 lighter on its top row and on the left third of the next, 22
+ * darker on its bottom row (the rim's shadow) and 12 darker on the last pixel of every row — then its freckles; the
+ * gill row (gillA, with gillB on every other pixel, its two end pixels 26 darker); the stem (its first column 10
+ * lighter, its last 24 darker when it is wider than 1) and the ring over it (its end pixels 22 darker).
+ */
+function paintMushroomShape(px, rng, kind, shape) {
+  const top = shape.cap[0][0];
+  const rim = shape.cap[shape.cap.length - 1][0];
+  for (const [y, x0, x1] of shape.cap) {
+    for (let x = x0; x <= x1; x++) {
+      let d = delta(rng, 5);
+      if (y === top || (y === top + 1 && x < x0 + (x1 - x0 + 1) / 3)) d += 20;
+      else if (y === rim) d -= 22;
+      if (x === x1 && y !== top) d -= 12;
+      set(px, x, y, kind.capHex, d);
+    }
+  }
+  for (const [x, y] of shape.freckles) set(px, x, y, 0xfff3d2);
+  const [gy, g0, g1] = shape.gills;
+  for (let x = g0; x <= g1; x++) set(px, x, gy, (x - g0) % 2 === 1 ? kind.gillB : kind.gillA, x === g0 || x === g1 ? -26 : 0);
+  for (const [y, x0, x1] of shape.stem) {
+    for (let x = x0; x <= x1; x++) set(px, x, y, kind.stemHex, delta(rng, 4) + (x1 > x0 && x === x1 ? -24 : x === x0 ? 10 : 0));
+  }
+  if (shape.ring) {
+    const [y, x0, x1] = shape.ring;
+    for (let x = x0; x <= x1; x++) set(px, x, y, kind.ringHex, x === x0 || x === x1 ? -22 : 0);
+  }
+}
+
+/** 208 honeycap_mushroom — the good one: MUSHROOMS.honeycap, big and small (see MUSHROOMS for how to tell it). */
+function paintHoneycapMushroom(px, rng) {
+  clearTile(px);
+  paintMushroomShape(px, rng, MUSHROOMS.honeycap, MUSHROOMS.honeycap.big);
+  paintMushroomShape(px, rng, MUSHROOMS.honeycap, MUSHROOMS.honeycap.small);
+}
+
+/** 209 frecklecap_mushroom — the look-alike that poisons: MUSHROOMS.frecklecap, big and small. */
+function paintFrecklecapMushroom(px, rng) {
+  clearTile(px);
+  paintMushroomShape(px, rng, MUSHROOMS.frecklecap, MUSHROOMS.frecklecap.big);
+  paintMushroomShape(px, rng, MUSHROOMS.frecklecap, MUSHROOMS.frecklecap.small);
+}
+
+/**
+ * 210 onion_plant — wild onion: two white bulbs showing at the soil, centred at x 4 and x 11 (3 px wide on rows 14–15,
+ * 0xf4f0e2, their right pixel 0xd4ccb4; a rose-purple 0xb878a8 neck pixel on row 13), each sending up three thin hollow
+ * leaves of blue-green 0x4f9a86 ±6 from its neck — tips at (1, 6), (4, 4), (6, 8) and (9, 8), (11, 4), (14, 6), the middle
+ * leaf of each 16 darker — and between them a pale stalk 0x9cc0a2 at x 7 from row 13 up to row 4, carrying a round
+ * white flower head on rows 0–3 (x 7–8 on rows 0 and 3, x 6–9 on rows 1–2: 0xfbf8ff, lilac-grey 0xcbbfe0 on its lower
+ * right pixels (8, 3), (9, 2), and a 0xe6dcf4 pixel at (7, 2)).
+ */
+function paintOnionPlant(px, rng) {
+  clearTile(px);
+  for (let y = 4; y <= 13; y++) set(px, 7, y, 0x9cc0a2, delta(rng, 4));
+  /** @type {Array<[number, number[][]]>} each bulb's centre column and its three leaf tips */
+  const bulbs = [[4, [[1, 6], [4, 4], [6, 8]]], [11, [[9, 8], [11, 4], [14, 6]]]];
+  for (const [bx, tips] of bulbs) {
+    tips.forEach(([tx, ty], k) => {
+      const d = delta(rng, 6) + (k === 1 ? -16 : 0);
+      const steps = 12 - ty;
+      for (let i = 0; i <= steps; i++) {
+        const x = Math.round(bx + ((tx - bx) * i) / steps);
+        set(px, x, 12 - i, 0x4f9a86, d);
+      }
+    });
+    set(px, bx, 13, 0xb878a8);
+    for (let y = 14; y < H; y++) {
+      span(px, y, bx - 1, bx, 0xf4f0e2);
+      set(px, bx + 1, y, 0xd4ccb4);
+    }
+  }
+  span(px, 0, 7, 8, 0xfbf8ff);
+  span(px, 1, 6, 9, 0xfbf8ff);
+  span(px, 2, 6, 9, 0xfbf8ff);
+  span(px, 3, 7, 8, 0xfbf8ff);
+  set(px, 7, 2, 0xe6dcf4);
+  set(px, 9, 2, 0xcbbfe0);
+  set(px, 8, 3, 0xcbbfe0);
+}
+
+/**
+ * 211 carrot_plant — wild carrot: the orange shoulder of its root stands out of the soil (x 7–8 on row 12, x 6–9 on rows
+ * 13–15: 0xe8842c, its first column 0xf6a44e, its last 0xbf6418, a darker 0xc86a1c growth ring across x 7–8 on row 14)
+ * under a spray of five feathery fronds: ribs 0x2f7d2c ±5 from the crown (7 or 8, 11) to tips at (1, 7), (3, 2), (7, 0),
+ * (12, 2) and (14, 7), and at every second rib pixel from the third a pair of leaflets 0x7fca4e ±6, one either side (left
+ * and right of a steep rib, above and below a shallow one) — a fern's ladder, not a blade of grass.
+ */
+function paintCarrotPlant(px, rng) {
+  clearTile(px);
+  const fronds = [[1, 7], [3, 2], [7, 0], [12, 2], [14, 7]];
+  // every leaflet first, then every rib, so no leaflet lies over a rib
+  for (let pass = 0; pass < 2; pass++) {
+    for (const [tx, ty] of fronds) {
+      const x0 = tx < 8 ? 7 : 8;
+      const steps = Math.max(Math.abs(tx - x0), 11 - ty);
+      const steep = 11 - ty >= Math.abs(tx - x0);
+      for (let i = 0; i <= steps; i++) {
+        const x = Math.round(x0 + ((tx - x0) * i) / steps);
+        const y = Math.round(11 + ((ty - 11) * i) / steps);
+        if (pass === 1) set(px, x, y, 0x2f7d2c, delta(rng, 5));
+        else if (i >= 2 && i % 2 === 0) {
+          for (const side of [-1, 1]) setClipped(px, steep ? x + side : x, steep ? y : y + side, 0x7fca4e, delta(rng, 6));
+        }
+      }
+    }
+  }
+  span(px, 12, 7, 8, 0xe8842c);
+  set(px, 7, 12, 0xf6a44e);
+  for (let y = 13; y < H; y++) {
+    set(px, 6, y, 0xf6a44e);
+    span(px, y, 7, 8, y === 14 ? 0xc86a1c : 0xe8842c);
+    set(px, 9, y, 0xbf6418);
+  }
+}
+
+/** The hazel thicket's crown: [cx, cy, r] discs. */
+const HAZEL_CROWN = Object.freeze([[3.5, 5.5, 3.3], [8, 3.6, 3.6], [12.5, 5.5, 3.3], [6, 8, 2.4], [10.5, 8, 2.4]]);
+/** Where its nut clusters hang: the top-left pixel of each 2×2 cluster. */
+const HAZEL_NUTS = Object.freeze([[2, 4], [6, 2], [10, 2], [13, 5], [5, 7], [9, 6]]);
+
+/**
+ * Shared leaves of the hazel thickets (always painted with the "hazel_thicket" seed, so the picked thicket matches): on
+ * alpha 0, five hazel rods 0x7d6248 ±6 fanning from the foot (x 7–8 on row 15) up to (2, 8), (5, 6), (8, 5), (10, 6) and
+ * (13, 8), under a wide crown of broad yellow-green leaves — the discs HAZEL_CROWN — in 0x9eb53c (much yellower than
+ * the grass it stands on) with 2×2 cell noise 12 and noise 6, 10 lighter 0xbfd45c and 8 darker 0x738f2c specks, and 26
+ * darker on every leaf pixel with no leaf below it (the crown's underside). No holes: a thicket is dense.
+ */
+function paintHazelLeaves(px, rng) {
+  const leaves = new Uint8ClampedArray(BYTES);
+  fill(leaves, 0x9eb53c);
+  cellNoise(leaves, rng, 2, 12);
+  noise(leaves, rng, 6);
+  speck(leaves, rng, 10, [0xbfd45c]);
+  speck(leaves, rng, 8, [0x738f2c]);
+  clearTile(px);
+  for (const [tx, ty] of [[2, 8], [5, 6], [8, 5], [10, 6], [13, 8]]) {
+    const x0 = tx < 8 ? 7 : 8;
+    const d = delta(rng, 6);
+    const steps = 15 - ty;
+    for (let i = 0; i <= steps; i++) set(px, Math.round(x0 + ((tx - x0) * i) / steps), 15 - i, 0x7d6248, d);
+  }
+  const inCrown = (x, y) => HAZEL_CROWN.some(([cx, cy, r]) => (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= r * r);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      if (!inCrown(x, y)) continue;
+      const i = idx(x, y);
+      const shade = inCrown(x, y + 1) ? 0 : 26;
+      px[i] = leaves[i] - shade;
+      px[i + 1] = leaves[i + 1] - shade;
+      px[i + 2] = leaves[i + 2] - shade;
+      px[i + 3] = 255;
+    }
+  }
+}
+
+/**
+ * 212 hazel_thicket — the leaves and rods of paintHazelLeaves hung with six clusters of hazelnuts at HAZEL_NUTS: each
+ * 2×2, a pale green husk on top (0xdfe8a8, then 0xbccb76) over two brown nuts (0xb8803e, then 0x8c5a26).
+ */
+function paintHazelThicket(px) {
+  paintHazelLeaves(px, makeRng('hazel_thicket'));
+  for (const [x, y] of HAZEL_NUTS) {
+    set(px, x, y, 0xdfe8a8);
+    set(px, x + 1, y, 0xbccb76);
+    set(px, x, y + 1, 0xb8803e);
+    set(px, x + 1, y + 1, 0x8c5a26);
+  }
+}
+
+/**
+ * 213 hazel_thicket_bare — the same thicket, picked: no nuts; where each cluster hung, its top-left pixel is an empty
+ * husk 0xc8d27e.
+ */
+function paintHazelThicketBare(px) {
+  paintHazelLeaves(px, makeRng('hazel_thicket'));
+  for (const [x, y] of HAZEL_NUTS) set(px, x, y, 0xc8d27e);
+}
+
+/** Where the crab apples hang: the top-left pixel of each 2×2 apple. */
+const CRAB_APPLES = Object.freeze([[2, 4], [5, 1], [9, 2], [12, 4], [4, 6], [8, 5], [11, 7]]);
+
+/**
+ * Shared tree of the crab apple bushes (always painted with the "crab_apple_bush" seed): a little tree. A trunk 2 px
+ * wide at x 7–8 on rows 9–15 (0x73502f, then 0x553a22, ±5) with a root flare on row 15 (x 6 and x 9, 0x553a22) and a
+ * branch stub either side under the crown ((6, 10) and (9, 10)); over it a round crown, the ellipse centred (8, 5) with
+ * radii 6.6 × 5.2 (rows 0–9): a deep apple-leaf green 0x2f6a2c (darker than the grass round it) with 2×2 cell noise 12
+ * and noise 6, 10 lighter 0x4f9040 specks, 14 lighter where it faces up and left (ex + ey < −0.5) and 24 darker on every
+ * crown pixel with no crown below it.
+ */
+function paintCrabAppleTree(px, rng) {
+  const leaves = new Uint8ClampedArray(BYTES);
+  fill(leaves, 0x2f6a2c);
+  cellNoise(leaves, rng, 2, 12);
+  noise(leaves, rng, 6);
+  speck(leaves, rng, 10, [0x4f9040]);
+  clearTile(px);
+  for (let y = 9; y < H; y++) {
+    set(px, 7, y, 0x73502f, delta(rng, 5));
+    set(px, 8, y, 0x553a22, delta(rng, 5));
+  }
+  for (const [x, y] of [[6, 15], [9, 15], [6, 10], [9, 10]]) set(px, x, y, 0x553a22);
+  const at = (x, y) => {
+    const ex = (x + 0.5 - 8) / 6.6;
+    const ey = (y + 0.5 - 5) / 5.2;
+    return ex * ex + ey * ey <= 1 ? ex + ey : null;
+  };
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const lit = at(x, y);
+      if (lit === null) continue;
+      const i = idx(x, y);
+      const d = (lit < -0.5 ? 14 : 0) - (at(x, y + 1) === null ? 24 : 0);
+      px[i] = leaves[i] + d;
+      px[i + 1] = leaves[i + 1] + d;
+      px[i + 2] = leaves[i + 2] + d;
+      px[i + 3] = 255;
+    }
+  }
+}
+
+/**
+ * 214 crab_apple_bush — the tree of paintCrabAppleTree hung with seven red apples at CRAB_APPLES: each 2×2, 0xd8372b
+ * with a 0xff9a78 shine on its top-left pixel and a 0x9c1f1d shade on its bottom-right.
+ */
+function paintCrabAppleBush(px) {
+  paintCrabAppleTree(px, makeRng('crab_apple_bush'));
+  for (const [x, y] of CRAB_APPLES) {
+    set(px, x, y, 0xff9a78);
+    set(px, x + 1, y, 0xd8372b);
+    set(px, x, y + 1, 0xd8372b);
+    set(px, x + 1, y + 1, 0x9c1f1d);
+  }
+}
+
+/**
+ * 215 crab_apple_bush_bare — the same tree, picked: no apples; where each hung, its top-left pixel is a bare twig
+ * 0x6b4a2c.
+ */
+function paintCrabAppleBushBare(px) {
+  paintCrabAppleTree(px, makeRng('crab_apple_bush'));
+  for (const [x, y] of CRAB_APPLES) set(px, x, y, 0x6b4a2c);
+}
+
+/** The Healwort's flower stalks: [x, top row, foot row]. */
+const HEALWORT_STALKS = Object.freeze([[4, 4, 11], [8, 1, 12], [11, 3, 11]]);
+
+/**
+ * Shared rosette of the Healworts (always painted with the "healwort_plant" seed): six narrow silver-green leaves
+ * fanning from the foot (x 7 or 8, row 15) to tips at (1, 12), (3, 9), (6, 10), (9, 10), (12, 9) and (14, 12) — each a
+ * stroke of 0xa9cfae ±5 with a darker 0x7dac8a stroke one row under it (its shaded underside) — and three stalks
+ * 0x6f9a78 at HEALWORT_STALKS, each standing from its foot row up to `stalkTop(stalk)`.
+ */
+function paintHealwortRosette(px, rng, stalkTop) {
+  clearTile(px);
+  for (const [x, top, foot] of HEALWORT_STALKS) for (let y = stalkTop([x, top, foot]); y <= foot; y++) set(px, x, y, 0x6f9a78);
+  for (const [tx, ty] of [[1, 12], [3, 9], [6, 10], [9, 10], [12, 9], [14, 12]]) {
+    const x0 = tx < 8 ? 7 : 8;
+    const steps = Math.max(Math.abs(tx - x0), 15 - ty);
+    const d = delta(rng, 5);
+    for (let pass = 0; pass < 2; pass++) {
+      // the underside first, then the leaf over it
+      for (let i = 0; i <= steps; i++) {
+        const x = Math.round(x0 + ((tx - x0) * i) / steps);
+        const y = Math.round(15 + ((ty - 15) * i) / steps);
+        if (pass === 0) setClipped(px, x, y + 1, 0x7dac8a, d);
+        else set(px, x, y, 0xa9cfae, d);
+      }
+    }
+  }
+}
+
+/**
+ * 216 healwort_plant — the rosette with its three stalks in flower: on the top five rows of each stalk a spike of
+ * violet florets — the stalk pixel itself 0x9b4fd6 (its top one a pale 0xdcb4f8), and a floret 0xb87cec beside it, left
+ * on the spike's 2nd and 4th row, right on its 3rd and 5th. No other plant is violet: this is the one to protect.
+ */
+function paintHealwortPlant(px) {
+  paintHealwortRosette(px, makeRng('healwort_plant'), ([, top]) => top);
+  for (const [x, top] of HEALWORT_STALKS) {
+    for (let k = 0; k < 5; k++) {
+      set(px, x, top + k, k === 0 ? 0xdcb4f8 : 0x9b4fd6);
+      if (k > 0) set(px, x + (k % 2 === 1 ? -1 : 1), top + k, 0xb87cec);
+    }
+  }
+}
+
+/**
+ * 217 healwort_plant_bare — the same rosette, cut: each stalk is a stub of its lowest two rows under a pale cut end
+ * 0xdfeacc, and nothing is violet.
+ */
+function paintHealwortPlantBare(px) {
+  paintHealwortRosette(px, makeRng('healwort_plant'), ([, , foot]) => foot - 1);
+  for (const [x, , foot] of HEALWORT_STALKS) set(px, x, foot - 2, 0xdfeacc);
+}
+
 /** @type {Readonly<Record<string, (px: Uint8ClampedArray, rng: Rng) => void>>} */
 const RECIPES = Object.freeze({
   stone: paintStone,
@@ -2649,7 +3091,21 @@ const RECIPES = Object.freeze({
   litter_rock: paintLitterRock,
   litter_flint: paintLitterFlint,
   litter_stick: paintLitterStick,
-  flint_gravel: paintFlintGravel,
+  honeycap_mushroom: paintHoneycapMushroom,
+  frecklecap_mushroom: paintFrecklecapMushroom,
+  onion_plant: paintOnionPlant,
+  carrot_plant: paintCarrotPlant,
+  hazel_thicket: paintHazelThicket,
+  hazel_thicket_bare: paintHazelThicketBare,
+  crab_apple_bush: paintCrabAppleBush,
+  crab_apple_bush_bare: paintCrabAppleBushBare,
+  healwort_plant: paintHealwortPlant,
+  healwort_plant_bare: paintHealwortPlantBare,
+  tainted_water: paintTaintedWater, // v0.14 (§76 water)
+  ground_nest: paintGroundNest,
+  ground_nest_empty: paintGroundNestEmpty,
+  litter_nest: paintLitterNest,
+  litter_egg: paintLitterEgg,
   zombie_face: paintZombieFace,
   zombie_head_side: paintZombieHeadSide,
   zombie_scalp: paintZombieScalp,

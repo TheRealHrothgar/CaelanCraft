@@ -62,6 +62,8 @@ export const SICK_MESSAGE = 'Your stomach turns: you are poisoned.';
 /** v0.11 (§66): the first time raw water poisons you this session, how to make it safe. */
 export const BOIL_TIP = 'Tip — raw water can poison you. Fill a clay pot and set it on a campfire: boiled water is always safe.';
 export const SALT_MESSAGE = 'Salt water only makes you thirstier.';
+/** v0.14 (§76 flora): Healwort or its tea ended a poisoning. */
+export const CURED_MESSAGE = 'The bitter herb settles your stomach: you are no longer poisoned.';
 /** A salty hand gulp says SALT_MESSAGE at most once per this many seconds of Survival (§4.2). */
 export const SALT_MESSAGE_GAP_S = 5;
 /** Damage over time pulses the hurt flash once per this many HP lost (§2.4). */
@@ -84,6 +86,7 @@ export const DEATH_TITLES = Object.freeze({
   heat: 'The heat took you.',
   void: 'You slipped beneath the bedrock.',
   command: 'You collapsed.',
+  bear: 'A bear brought you down.', // v0.14 (§76 fauna)
 });
 /** The death screen's detail line (§2.5). */
 export const BELONGINGS_KEPT = 'Your belongings lie where you fell.';
@@ -339,10 +342,11 @@ export class Survival {
     if (!item || !item.food) return { ok: false, message: item ? `${item.name} cannot be eaten` : 'not food' };
     if (!this.active) return { ok: false };
     const food = item.food;
-    const { sick } = eatFood(this.vitals, food, typeof random === 'function' ? random : NEVER);
+    const { sick, cured } = eatFood(this.vitals, food, typeof random === 'function' ? random : NEVER);
     /** @type {{ ok: boolean, message?: string, returns?: string }} */
     const out = { ok: true };
     if (sick) out.message = SICK_MESSAGE;
+    else if (cured) out.message = CURED_MESSAGE;
     else if (food.hydration < 0 && key === 'pot_seawater') out.message = SALT_MESSAGE;
     if (food.returns) out.returns = food.returns;
     return out;
@@ -350,14 +354,16 @@ export class Survival {
 
   /**
    * One hand gulp of water (§4.2) while active: fresh +8 hydration with a GULP_FRESH_SICK chance of poisoning (SICK_MESSAGE),
-   * salt −4 with "Salt water only makes you thirstier." at most once per SALT_MESSAGE_GAP_S of Survival time.
-   * @param {boolean} salty
+   * salt −4 with "Salt water only makes you thirstier." at most once per SALT_MESSAGE_GAP_S of Survival time. v0.14 (§76
+   * water): tainted water is fresh water's +8 with the GULP_TAINTED_SICK chance.
+   * @param {boolean|'fresh'|'salt'|'tainted'} quality  what the water is; a boolean is the old `salty` flag (true = salt)
    * @param {() => number} [random]
    * @returns {string} the chat line, or '' for none
    */
-  drink(salty, random) {
+  drink(quality, random) {
     if (!this.active) return '';
-    const { sick } = gulpWater(this.vitals, !!salty, typeof random === 'function' ? random : NEVER);
+    const salty = typeof quality === 'string' ? quality === 'salt' : !!quality;
+    const { sick } = gulpWater(this.vitals, salty ? 'salt' : quality === 'tainted' ? 'tainted' : 'fresh', typeof random === 'function' ? random : NEVER);
     if (sick) return SICK_MESSAGE;
     if (!salty || this.clock - this._saltAt < SALT_MESSAGE_GAP_S) return '';
     this._saltAt = this.clock;
