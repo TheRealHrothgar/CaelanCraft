@@ -4333,6 +4333,80 @@ exports `PATCH_SALT, PATCH_MIX_STEP, FOREST_EDGE_HUMIDITY, FRECKLECAP_SHARES, CA
 unchanged. Measured (worldgenFlora.test.js, 736 chunks): 47 % of generation 2's food plants; 94 % of them have another
 of their kind within 3 cells (35 % in generation 2); 67 % of mostly-land chunks hold no food plant (16 %).
 
+### 76.3 Tainted water, streams, water that spoils
+
+Blocks, tiles, fluids, blockphysics, mesher, worldgen, vitals, survival, survivalControl, items, inventory, cooking, main.
+
+**Block and tile.** `TAINTED_WATER` 120 (`tainted_water`, "Tainted Water"): WATER's flags (not solid, not opaque, liquid,
+unbreakable, LAYER_TRANSLUCENT, sound water), tile `TAINTED_WATER` 204 on every face, **not placeable** (no picker entry, no
+item; `setblock … tainted_water`). `isWater`, `isWaterSource` (WATER or TAINTED_WATER), `waterLevel` 7, `isFallThrough`,
+`isLiquid` hold for it; `isEarth` too. Tile 204: olive base 0x566029, 2×2 clouding, six dark smears 0x3d4220, scum flecks
+0x93a658 / 0x7c9048, alpha 216 everywhere. The mesher culls it against the rest of the water family by surface height (no wall
+between fresh and tainted water) and keeps a full cell full under a meshed block (`FULL_WATER`: level 7). Block 121 is a
+placeholder (`reserved_121`, plain stone, never generated or placed) until the animals' block lands.
+
+**Fluids (amends §33.9, §35).** Wherever §35 says "WATER source" read `isWaterSource`. `WATER_RULE_IDS` ends with TAINTED_WATER.
+Rule 2a: a FLOW / FALL cell generated as a source becomes THAT source again (`_naturalSource`: `world.originAt` is WATER or
+TAINTED_WATER); else with ≥ WATER_SOURCE_NEIGHBOURS source side neighbours over a floor it becomes TAINTED_WATER when any of
+them is, else WATER. §33.9: a FLOW / FALL edit is dropped when its origin is AIR or a source. Flowing and falling water out of
+a tainted source are the ordinary WATER_FLOW_k / WATER_FALL blocks (so it LOOKS like any water: only the hint tells).
+`waterQualityAt(getBlock, q, y, r) → 'fresh' | 'tainted'` (QUALITY_TRACE_MAX 256 cells): TAINTED_WATER → tainted; WATER or not
+water → fresh; WATER_FALL is fed by the water above it; WATER_FLOW_k by every side neighbour that spreads with E = k + 1 and by
+any water above it; tainted when ANY source reached is tainted, else fresh (also when no source is found). So a spillway
+never makes a pond fresh.
+
+**Drinking.** `RATES.GULP_TAINTED_SICK` 0.4 (fresh stays `GULP_FRESH_SICK` 0.06). `gulpWater(v, quality, random)` and
+`Survival.drink(quality, random)`: quality 'fresh' | 'salt' | 'tainted' (a boolean is the old salty flag); tainted = fresh's
++8 with the 0.4 chance; one `random()` per fresh or tainted gulp, none for salt. Item `pot_tainted` "Pot of Tainted Water"
+(food, stack 1, hydration 30, sick 0.6, useS 1, returns clay_pot, never spoils; the last food).
+`FIRE_TRANSFORMS.pot_tainted = { to: 'pot_boiled', seconds: 15, spot: 'centre' }`; `CENTRE_POTS` ends with it.
+survivalControl: `WaterQuality`, `waterKind(tainted, salty, stream = false)` (tainted wins; a generated stream's column is
+never salt; else the biome), `WATER_POTS { fresh: 'pot_water', salt: 'pot_seawater', tainted: 'pot_tainted' }`,
+`waterHint(quality | salty, potSelected)` → `Fresh water` / `Sea water (salty)` / `Tainted water` + ` · R: drink` (tainted:
+`drink (risky)`) or ` · R: fill the pot`. `interactKind`: with `ctx.waterQuality(q, y, r)` the fill / drink action carries
+`quality`, `salty` (quality === 'salt') and the hint; without it `ctx.salty` works as before. main:
+`waterQualityOf(q, y, r) = waterKind(waterQualityAt(…) === 'tainted', isSaltyBiome(biome), worldGen.streamAt(q, r))`; fill
+gives `WATER_POTS[quality]`; drinking with the head under water uses the eye cell; the boil tip also follows a poisoning by
+`pot_tainted`.
+
+**Spoiling into.** `FoodDef.spoilsTo` (item key): a spoiled item turns INTO it. `spoilSlots(slots, dt, random, spoiled,
+itemOf = getItem)`: one `random()` per perishable stack, probability `min(1, n·dt / spoilS)`, as before; with `spoilsTo` a
+stack of one becomes `{ k: spoilsTo, n: 1 }` in place, one of a bigger stack is put with `fitStack` over the same slot array
+and, when it does not fit, nothing spoils that time; `spoiled` counts the original key. `pot_water`: `spoilS`
+`POT_WATER_SPOIL_S` 2880 (2 × DAY_LENGTH_SECONDS), `spoilsTo: 'pot_tainted'`. `main.spoiledText`: lost items as before, then
+`N <name> stood too long: now <spoilsTo name>.` per turning key. This is an item rule: it holds in every Survival world.
+
+**Generation 3 ponds.** A liquid pond is TAINTED_WATER when `rand3(kq, POND_TAINT_SALT 0x7a1, kr, seed ^ POND_SALT) <
+POND_TAINTED_SHARE` (0.75), the whole pond; a SNOWY pond stays ICE. `worldGen.pondTaintedAt(q, r)`: true for the pond water
+columns of a tainted pond (false below generation 3).
+
+**Generation 3 streams.** Constants: `STREAM_CELL` 48, `STREAM_SALT` 0x57e4, `STREAM_CHANCE` 0.5, `STREAM_ASCENT` 12,
+`STREAM_SPRING_MIN_HEIGHT` SEA_LEVEL + 3, `STREAM_SPRING_MAX_HEIGHT` 83, `STREAM_MAX_LEN` 64, `STREAM_MIN_LEN` 10,
+`STREAM_REACH` = ASCENT + MAX_LEN + 1, `STREAM_MARGIN` 2, `STREAM_MAP_SIDE` 20.
+1. *Where.* Grid cell (kq, kr) has a candidate when `((hash2(kq, kr, seed ^ STREAM_SALT) >>> 8) & 0xffff) / 65536 <
+   STREAM_CHANCE`, at `(kq·48 + spot % 48, kr·48 + (spot >>> 8) % 48)`, `spot = hash3(kq, 1, kr, seed ^ STREAM_SALT)`; none
+   when that column is sea or above 83. It climbs up to STREAM_ASCENT columns to the highest neighbour by `rawHeight` (getColumn's
+   height before rounding), never above 83; the spring must be PLAINS / FOREST / SNOWY, at least SEA_LEVEL + 3 high and not
+   within 2 of an accepted pond centre. The channel steps to the lowest neighbour by `rawHeight` while one is lower; it ends
+   before a sea column (height < SEA_LEVEL), before a column within 2 of an accepted pond centre (that column is included, and
+   ends it, only when its own level equals the pond's), in a hollow, or at STREAM_MAX_LEN columns. Fewer than STREAM_MIN_LEN
+   columns: no stream. In a hollow the neighbours of the last column join as a pool when their height is its level or one above,
+   their own level equals it and they are not on a pond's ground.
+2. *Level.* A stream column's WATER source is at `level = max(SEA_LEVEL, min(height of the column and of its six neighbours))`.
+3. *Steps.* `streamBottom`: with a lower stream column beside it, a column holds WATER_FALL below its source down to one cell
+   below the lowest such neighbour's level; else nothing below the source. `stampStreams(blocks, heights, map)`: AIR from
+   level + 1 to height + 1, WATER at level, WATER_FALL down to the bottom, STONE in the bed cell when it is not solid; and for
+   every stream column in the chunk or one column outside it, AIR in this chunk beside one of its water cells becomes STONE,
+   except from a neighbouring stream column's own lowest water cell up.
+
+`generateChunk` (generation 3): ores (with §77's coal seams), ponds, **streams**, trees (a tree whose trunk column is a stream
+column is left out; `treeTrunkAt` is unchanged, so callers that place things by it also check `streamAt`), flora (skips
+stream columns: their top is not the biome's surface). `chunk.heights` stays the generated terrain height. Streams are traced
+once per grid cell and stream-level maps kept per chunk (bounded caches; pure). `worldGen.streamAt(q, r)`,
+`worldGen.streamLevelAt(q, r)` (the source's y, or −1): pure, false / −1 below generation 3. **At rest:** the real water rule
+run on every generated water cell changes nothing. Measured: stream columns are about 0.4–0.5 % of the land; from a plains or
+forest start the nearest stream is a median 25–29 columns away, within 60 for about nine starts in ten.
+
 ## 77. The build tree: a purpose for every tool, real gates, coal — `src/purpose.js` (PURE), `src/harvest.js`, `src/crafting.js`, `src/worldgen.js`
 
 **A purpose line.** `purpose.PURPOSE` maps an item key to one sentence of at most `PURPOSE_MAX` (64) characters on what
