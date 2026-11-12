@@ -193,6 +193,10 @@ set([B.VOLTAIC_BATTERY], 1.0, 'axe', 0, SELF_DROPS);
 set([B.KNIFE_SWITCH, B.PUSH_BUTTON, B.ELECTRIC_BELL, B.IGNITER], 1.2, 'pick', 0, SELF_DROPS);
 set([B.SELENIUM_PANEL, B.COHERER_RECEIVER], 0.6, null, 0, SELF_DROPS);
 set([B.COLLAPSAR_CHARGE], 1.5, 'pick', 0, SELF_DROPS); // Creative-made only, but it can be taken up in Survival (§8.2)
+// v0.14 (§76 fauna): a ground nest pulled apart by hand gives its dry grass — and fewer eggs than picking them with R
+// (PICKABLE below), which also leaves the nest for the hen to lay in again.
+set([B.GROUND_NEST], 0.3, null, 0, [always(drop('raw_egg', [1, 2])), always(drop('plant_fibre', 1))]);
+set([B.GROUND_NEST_EMPTY], 0.3, null, 0, [always(drop('plant_fibre', 1))]);
 // BEDROCK, AIR and the water family keep the null rule: unbreakable.
 
 /** @template T @param {T} o @returns {T} */
@@ -337,6 +341,8 @@ export const PICKABLE = deepFreeze({
   },
   [B.LOOSE_STONES]: { to: B.AIR, drops: [always(drop('rock', [1, 2])), always(drop('flint', 1, { p: FLINT_SHARE, ...natural }))] },
   [B.FALLEN_BRANCHES]: { to: B.AIR, drops: [always(drop('stick', [2, 3]))] },
+  // v0.14 (§76 fauna): the eggs of a ground nest (and now and then a feather); the nest stays, empty
+  [B.GROUND_NEST]: { to: B.GROUND_NEST_EMPTY, drops: [always(drop('raw_egg', [1, 3])), always(drop('feather', 1, { p: 0.5 }))] },
 });
 
 /** @param {number} id @returns {boolean} R picks it */
@@ -496,9 +502,17 @@ export const MOB_DROPS = deepFreeze({
   horse: [always(drop('rawhide', [1, 2]))],
   wolf: [always(drop('rawhide', 1))],
   zombie: [always(drop('grave_rag', 1, { p: 0.5 }))],
+  // v0.14 (§76 fauna): venison and a hide; a rabbit is one small meal (and sometimes a skin); the birds give meat and
+  // feathers; a fish is a fish; the bear is the big reward
+  deer: [always(drop('raw_venison', [2, 3])), always(drop('rawhide', 1))],
+  rabbit: [always(drop('raw_rabbit', 1)), always(drop('rawhide', 1, { p: 0.4 }))],
+  pheasant: [always(drop('raw_fowl', 1)), always(drop('feather', [2, 4]))],
+  turkey: [always(drop('raw_fowl', [2, 3])), always(drop('feather', [2, 4]))],
+  bear: [always(drop('raw_bear', [6, 8])), always(drop('rawhide', [2, 3]))],
+  fish: [always(drop('raw_fish', 1))],
 });
 
-/** @param {'pig'|'zombie'|'cow'|'sheep'|'horse'|'wolf'} kind @param {() => number} random @returns {ItemStack[]} */
+/** @param {string} kind 'pig', 'zombie' or an animals.js kind @param {() => number} random @returns {ItemStack[]} */
 export function rollMobDrops(kind, random) {
   const groups = Object.hasOwn(MOB_DROPS, kind) ? MOB_DROPS[kind] : null;
   return groups ? rollGroups(groups, null, {}, random) : [];

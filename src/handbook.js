@@ -52,9 +52,10 @@ import {
   SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, WOLF_BITE_S,
   HOME_RANGE, RIDE_SCALE, RIDE_LEAP,
+  BEAR_DAMAGE, poolOf,
 } from './animals.js';
 import {
-  throwOf, STONE_KEYS, DART_KEYS, DART_BREAK_P, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
+  throwOf, STONE_KEYS, DART_KEYS, dartBreakP, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
 } from './looseItems.js';
 import { RELIGHT_STICKS } from './survivalControl.js';
 
@@ -560,7 +561,8 @@ function biomeWord(id) {
 export function herdBiomes(kind) {
   const share = (/** @type {number} */ b) => {
     const w = /** @type {Record<string, number>} */ (HERD_WEIGHTS[b]);
-    const total = Object.values(w).reduce((sum, x) => sum + x, 0);
+    // v0.14 (§76 fauna): among the kinds of its own pool (herds and small game appear independently)
+    const total = Object.keys(w).filter((k) => poolOf(k) === poolOf(kind)).reduce((sum, k) => sum + w[k], 0);
     return total > 0 ? (w[kind] ?? 0) / total : 0;
   };
   return Object.keys(HERD_WEIGHTS).map(Number).filter((b) => share(b) > 0).sort((x, y) => share(y) - share(x) || x - y);
@@ -585,6 +587,8 @@ export const ANIMAL_R = Object.freeze({
   sheep: 'with a knife in your pack: shear',
   horse: 'with its food, {tame} times: tame; then ride',
   wolf: 'with its food, {tame} times: tame; then sit or follow',
+  // v0.14 (§76 fauna): nothing — the game animals are only hunted
+  deer: '—', rabbit: '—', pheasant: '—', turkey: '—', bear: '—', fish: '—',
 });
 
 /** The animals: where their herds appear (HERD_WEIGHTS), what a hunt gives (MOB_DROPS) and what R does. */
@@ -592,7 +596,8 @@ function animalsTable() {
   const rows = [['Pig', 'grass and snowy grass', describeDrops(MOB_DROPS.pig, true), ANIMAL_R.pig]];
   for (const k of ANIMAL_KINDS) {
     const sp = SPECIES[k];
-    rows.push([sp.name, herdBiomes(k).map(biomeWord).join(', '), describeDrops(MOB_DROPS[k], true),
+    // v0.14 (§76 fauna): fish are not of a land — they live in the streams
+    rows.push([sp.name, /** @type {*} */ (sp).water ? 'streams' : herdBiomes(k).map(biomeWord).join(', '), describeDrops(MOB_DROPS[k], true),
       (ANIMAL_R[k] ?? '—').replace('{tame}', String(sp.tame))]);
   }
   return table({ id: 'animals', caption: 'The animals', head: ['Animal', 'Where', 'Gives', 'Press R'], rows,
@@ -604,9 +609,10 @@ function waryTable() {
   const cells = (/** @type {number} */ n) => `${fmtNum(n, 1)} cells`;
   const row = (/** @type {string} */ name, /** @type {number} */ notice) => [name, cells(notice), cells(notice * SNEAK_NOTICE),
     cells(notice * SPRINT_NOTICE)];
-  const rows = [row('Pig', PIG_NOTICE), ...ANIMAL_KINDS.map((k) => row(SPECIES[k].name, SPECIES[k].notice))];
+  const kinds = ANIMAL_KINDS.filter((k) => !(/** @type {*} */ (SPECIES[k]).predator)); // v0.14: a bear does not run
+  const rows = [row('Pig', PIG_NOTICE), ...kinds.map((k) => row(SPECIES[k].name, SPECIES[k].notice))];
   return table({ id: 'wary', caption: 'How near you can come before it runs', head: ['Animal', 'Walking', 'Sneaking', 'Sprinting'],
-    rows, keys: ['pig', ...ANIMAL_KINDS], source: 'animals' });
+    rows, keys: ['pig', ...kinds], source: 'animals' });
 }
 
 /** A zombie kind's strike in HP, at night and in open daylight (they differ only for the alpha). @param {string} kind */
@@ -635,7 +641,8 @@ function throwsTable() {
   const spears = TOOL_KEYS.filter((k) => ITEMS[k].tool?.type === 'spear');
   const kinds = [
     { key: 'stone', what: STONE_KEYS.map((k) => itemName(k)).join(', '), sample: STONE_KEYS[0], after: 'pick it up and throw it again' },
-    { key: 'dart', what: DART_KEYS.map((k) => itemName(k)).join(', '), sample: DART_KEYS[0], after: `breaks on ${fmtPct(DART_BREAK_P)} of its hits` },
+    // v0.14 (§76 fauna): a row for each dart — the Fletched Dart flies faster, hits harder and breaks less (key: its item key)
+    ...DART_KEYS.map((k, i) => ({ key: i === 0 ? 'dart' : k, what: itemName(k), sample: k, after: `breaks on ${fmtPct(dartBreakP(k))} of its hits` })),
     { key: 'spear', what: spears.map((k) => itemName(k)).join(', '), sample: spears[0], after: 'loses one use when it hits' },
     { key: 'chuck', what: 'Anything else', sample: 'stick', after: 'no harm done' },
   ].filter((t) => typeof t.sample === 'string');
@@ -854,6 +861,7 @@ export const DANGER_NAMES = Object.freeze({
   fall: 'Falling', drown: 'Drowning', buried: 'Being buried', crush: 'Falling sand and gravel', fire: 'Campfire flames',
   zombie: 'Zombies', blast: 'Powder Kegs', log: 'Falling trees', blackhole: 'Black holes', starve: 'Starving',
   thirst: 'Thirst', cold: 'Cold', heat: 'Heat', sick: 'Poisoning', void: 'The void below the bedrock',
+  bear: 'Bears', // v0.14 (§76 fauna)
 });
 
 /** How to avoid each danger (hand-written; a test checks every cause has one). */
@@ -873,6 +881,7 @@ const DANGER_AVOID = Object.freeze({
   heat: 'Shade, a straw hat, caves at noon; walk, don\'t sprint',
   sick: 'Boil water, cook meat; it passes',
   void: 'Do not dig through the bedrock\'s gaps',
+  bear: 'Back away when it rears up and growls; do not strike one unless you mean to finish it', // v0.14 (§76 fauna)
 });
 
 function dangerTable() {
@@ -894,6 +903,7 @@ function dangerTable() {
     heat: `${fmtNum(R.OVERHEAT_DPS)} HP/s Overheating, ${fmtNum(R.HEATSTROKE_DPS)} Heatstroke`,
     sick: `${fmtNum(R.SICK_DPS)} HP/s, never below ${R.SICK_FLOOR} HP`,
     void: 'death, and your belongings are lost',
+    bear: `${BEAR_DAMAGE} HP a maul, and it throws you`, // v0.14 (§76 fauna)
   };
   const keys = DAMAGE_CAUSES.filter((c) => c !== 'command');
   const rows = keys.map((c) => [DANGER_NAMES[c] ?? cap(c), harm[c] ?? '', DANGER_AVOID[c] ?? '']);
@@ -993,7 +1003,17 @@ function fireFigure() {
 export const ELEMENTARY_PARTS = Object.freeze(['knife_switch', 'push_button', 'terminal_board', 'voltaic_battery']);
 
 /** The species as a crowd, for prose ("cattle, sheep, horses and wolves"); a test checks every species has a word. */
-export const HERD_WORDS = Object.freeze({ cow: 'cattle', sheep: 'sheep', horse: 'horses', wolf: 'wolves' });
+export const HERD_WORDS = Object.freeze({
+  cow: 'cattle', sheep: 'sheep', horse: 'horses', wolf: 'wolves',
+  // v0.14 (§76 fauna)
+  deer: 'deer', rabbit: 'rabbits', pheasant: 'pheasants', turkey: 'wild turkeys', bear: 'bears', fish: 'fish',
+});
+/**
+ * v0.14 (§76 fauna): the kinds the Animals chapter's PROSE was written about — the ones that come to food (cattle, sheep,
+ * horses, wolves). The game animals (deer, rabbits, the birds, the bear, fish) are in the chapter's tables; their own
+ * pages are still to be written, so the sentences below are not stretched over them.
+ */
+export const PROSE_KINDS = Object.freeze(ANIMAL_KINDS.filter((k) => SPECIES[k].lure.length > 0));
 
 /** @returns {Chapter[]} */
 function makeChapters() {
@@ -1051,22 +1071,24 @@ function makeChapters() {
   const roastKeeps = (food('roast_pork').spoilS ?? 0) / (food('raw_pork').spoilS ?? 1);
   const stoneAxeBlows = Math.ceil(PIG_HEALTH / (getItem('stone_axe')?.tool?.power ?? 1));
   // animals
-  const herdNames = listJoin(ANIMAL_KINDS.map((k) => HERD_WORDS[k] ?? `${SPECIES[k].name.toLowerCase()}s`));
+  const herdNames = listJoin(PROSE_KINDS.map((k) => HERD_WORDS[k] ?? `${SPECIES[k].name.toLowerCase()}s`));
   /** @type {Map<string, string[]>} herd sizes → the species that keep them */
   const bySize = new Map();
-  for (const k of ANIMAL_KINDS) {
+  for (const k of PROSE_KINDS) {
     const size = `${SPECIES[k].herd[0]}–${SPECIES[k].herd[1]}`;
     bySize.set(size, [...(bySize.get(size) ?? []), HERD_WORDS[k] ?? SPECIES[k].name.toLowerCase()]);
   }
   const herdSizes = [...bySize].map(([size, names]) => `${size} ${listJoin(names, 'or')}`).join(', ');
-  const voices = listJoin(ANIMAL_KINDS.map((k) => `a ${SPECIES[k].voice}`), 'or');
-  const outOfReach = ANIMAL_KINDS.filter((k) => SPECIES[k].notice * SNEAK_NOTICE > REACH).map((k) => SPECIES[k].name.toLowerCase());
+  const voices = listJoin(PROSE_KINDS.map((k) => `a ${SPECIES[k].voice}`), 'or');
+  // v0.14 (§76 fauna): every kind that runs from you (not the bear), so the deer is named too
+  const outOfReach = ANIMAL_KINDS.filter((k) => !(/** @type {*} */ (SPECIES[k]).predator) && SPECIES[k].notice * SNEAK_NOTICE > REACH)
+    .map((k) => `the ${SPECIES[k].name.toLowerCase()}`);
   const reachTip = outOfReach.length
-    ? `Your arm reaches ${REACH} cells. Sneaking brings you inside that with every animal but the ${listJoin(outOfReach)}: that one wants a treat.`
+    ? `Your arm reaches ${REACH} cells. Sneaking brings you inside that with every animal but ${listJoin(outOfReach)}.`
     : `Your arm reaches ${REACH} cells, and sneaking brings you inside that with every animal.`;
   /** @type {Map<string, string[]>} what they come to → who comes */
   const byLure = new Map();
-  for (const k of ANIMAL_KINDS) {
+  for (const k of PROSE_KINDS) {
     const what = lureText(SPECIES[k].lure);
     byLure.set(what, [...(byLure.get(what) ?? []), HERD_WORDS[k] ?? SPECIES[k].name.toLowerCase()]);
   }
@@ -1200,10 +1222,10 @@ function makeChapters() {
         '[R] with anything else: take what is done (or everything, if nothing is).',
       ]),
     ],
-    [
-      ...fireTable('fire', 'What the fire does', null),
-      warn(`Roast meat left on its skewer chars after another ${FIRE_TRANSFORMS.roast_pork.seconds} s. Take it off in time.`),
-    ],
+    // v0.14 (§76 fauna): with the game meats the fire's table no longer fits one page — each part takes its own, and
+    // the warning stands under the last
+    ...fireTable('fire', 'What the fire does', null).map((t, i, all) => (i < all.length - 1 ? [t]
+      : [t, warn(`Roast meat left on its skewer chars after another ${FIRE_TRANSFORMS.roast_pork.seconds} s. Take it off in time.`)])),
     [
       h('Fuel and the cold pit'),
       p(`A fire built in Survival starts with ${fmtDurationLong(CAMPFIRE_FUEL_START_S)} of fuel. A stick adds ${FUEL_STICK_S} seconds and a log ${fmtDurationLong(FUEL_LOG_S)}, up to ${fmtDurationLong(CAMPFIRE_FUEL_MAX_S)}.`),
@@ -1413,7 +1435,7 @@ function makeChapters() {
     ],
     [
       h('Horses'),
-      p(`A wild horse spots you from farther off than any other animal, and it outruns you. So bring it a treat: ${lureText(SPECIES.horse.lure)}. Feed it with [R], ${numWord(SPECIES.horse.tame)} times, and it trusts you for good.`),
+      p(`A wild horse spots you from far off, and it outruns you. So bring it a treat: ${lureText(SPECIES.horse.lure)}. Feed it with [R], ${numWord(SPECIES.horse.tame)} times, and it trusts you for good.`),
       p(`Press [R] on your horse to get on. It goes where you look at ${fmtNum(RIDE_SCALE)} times your own pace, walking or sprinting, hops single steps by itself, and leaps a wall ${Math.floor(RIDE_LEAP)} cells high when you press [Space]. [Shift] gets you off.`),
       p(`A tame horse waits for you: it grazes within ${HOME_RANGE} cells of where you left it. If it is hurt, its food heals it.`),
     ],

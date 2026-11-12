@@ -42,13 +42,30 @@ export const FIRE_TRANSFORMS = Object.freeze({
   pot_seawater: Object.freeze({ to: 'salt_pot', seconds: 30, spot: 'centre' }),
   pot_snow: Object.freeze({ to: 'pot_boiled', seconds: 25, spot: 'centre' }),
   greenware_pot: Object.freeze({ to: 'clay_pot', seconds: 60, spot: 'centre' }), // pit firing: the first pottery needs no kiln
+  // v0.14 (§76 fauna): game roasts on a skewer like pork and chars if left; an egg is roasted in its shell at the fire's
+  // edge (a skewer spot) and does not burn
+  raw_venison: Object.freeze({ to: 'roast_venison', seconds: 22, spot: 'skewer' }),
+  roast_venison: Object.freeze({ to: 'charred_meat', seconds: 40, spot: 'skewer' }),
+  raw_rabbit: Object.freeze({ to: 'roast_rabbit', seconds: 14, spot: 'skewer' }),
+  roast_rabbit: Object.freeze({ to: 'charred_meat', seconds: 40, spot: 'skewer' }),
+  raw_fowl: Object.freeze({ to: 'roast_fowl', seconds: 16, spot: 'skewer' }),
+  roast_fowl: Object.freeze({ to: 'charred_meat', seconds: 40, spot: 'skewer' }),
+  raw_fish: Object.freeze({ to: 'roast_fish', seconds: 12, spot: 'skewer' }),
+  roast_fish: Object.freeze({ to: 'charred_meat', seconds: 40, spot: 'skewer' }),
+  raw_bear: Object.freeze({ to: 'roast_bear', seconds: 26, spot: 'skewer' }),
+  roast_bear: Object.freeze({ to: 'charred_meat', seconds: 40, spot: 'skewer' }),
+  raw_egg: Object.freeze({ to: 'roast_egg', seconds: 12, spot: 'skewer' }),
 });
 
 /** @type {Map<string, { to: string, seconds: number, spot: string }>} the same, safe against '__proto__' and friends */
 const TRANSFORM = new Map(Object.entries(FIRE_TRANSFORMS));
 
 /** The food a player can put on a skewer (§4.4). */
-export const SKEWER_FOODS = Object.freeze(['raw_pork', 'raw_beef', 'raw_mutton', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit']);
+export const SKEWER_FOODS = Object.freeze([
+  'raw_pork', 'raw_beef', 'raw_mutton', 'wild_tuber', 'cattail_root', 'leached_acorns', 'unpeeled_cactus_fruit',
+  // v0.14 (§76 fauna)
+  'raw_venison', 'raw_rabbit', 'raw_fowl', 'raw_fish', 'raw_bear', 'raw_egg',
+]);
 /** The pots a player can put in the embers. */
 export const CENTRE_POTS = Object.freeze(['pot_water', 'pot_seawater', 'pot_snow', 'greenware_pot']);
 

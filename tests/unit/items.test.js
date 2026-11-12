@@ -67,7 +67,8 @@ const MATERIALS = {
   pyrite: ['Pyrite', 32], sulfur: ['Sulfur', 32], selenium: ['Selenium', 16], saltpetre: ['Saltpetre', 32],
   black_powder: ['Black Powder', 32], carbon_filament: ['Carbon Filament', 32], iron_filings: ['Iron Filings', 32],
   flint_dart: ['Flint Dart', 16], // v0.10 throwing (CONTRACTS §60)
-  handbook: ['Survival Handbook', 1], // §14: added by package H, the last material
+  handbook: ['Survival Handbook', 1], // §14: added by package H
+  feather: ['Feather', 32], fletched_dart: ['Fletched Dart', 16], // v0.14 (§76 fauna)
 };
 
 /** §5.1 / §4.5 food: key → [display name, stack, satiation, hydration, sick, useS, extra]. */
@@ -97,6 +98,19 @@ const FOODS = {
   pot_seawater: ['Pot of Seawater', 1, 0, -10, 0, 1.0, { returns: 'clay_pot' }],
   pot_sap: ['Pot of Birch Sap', 1, 2, 25, 0, 1.0, { returns: 'clay_pot' }],
   pot_milk: ['Pot of Milk', 1, 12, 20, 0, 1.0, { returns: 'clay_pot' }], // v0.11 (CONTRACTS §72)
+  // v0.14 (§76 fauna): game
+  raw_venison: ['Raw Venison', 16, 6, 0, 0.3, 1.4, { spoilS: 1200 }],
+  roast_venison: ['Roast Venison', 16, 32, -2, 0, 1.6, { spoilS: 2400 }],
+  raw_rabbit: ['Raw Rabbit', 16, 4, 0, 0.3, 1.2, { spoilS: 1200 }],
+  roast_rabbit: ['Roast Rabbit', 16, 16, -1, 0, 1.4, { spoilS: 2400 }],
+  raw_fowl: ['Raw Fowl', 16, 4, 0, 0.35, 1.2, { spoilS: 1200 }],
+  roast_fowl: ['Roast Fowl', 16, 20, -1, 0, 1.4, { spoilS: 2400 }],
+  raw_fish: ['Raw Fish', 16, 4, 1, 0.25, 1.2, { spoilS: 900 }],
+  roast_fish: ['Roast Fish', 16, 18, 0, 0, 1.4, { spoilS: 1800 }],
+  raw_bear: ['Raw Bear Meat', 16, 7, 0, 0.35, 1.4, { spoilS: 1200 }],
+  roast_bear: ['Roast Bear Meat', 16, 34, -2, 0, 1.6, { spoilS: 2400 }],
+  raw_egg: ['Raw Egg', 16, 5, 2, 0.25, 0.8, { spoilS: 3600 }],
+  roast_egg: ['Roast Egg', 16, 14, 0, 0, 1.0, { spoilS: 2400 }],
 };
 
 /** §5.1 bandages: key → [display name, stack, hp, rate, useS]. */
@@ -192,8 +206,8 @@ describe('items — the registry', () => {
     // 5 clothes and the 98 placeable blocks other than water (DESIGN-circuits §1.5: PICKER_ORDER drops the black hole and gains
     // the 20 circuit blocks; the blast barrel's key is now powder_keg).
     const count = (kind) => ITEM_KEYS.filter((k) => ITEMS[k].kind === kind).length;
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 46, 25, 2, 5, 100]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(212); // + the Pot of Milk (§72)
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 48, 37, 2, 5, 100]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69); v0.14 (§76 fauna): + feather, fletched dart and twelve game foods
+    expect(ITEM_KEYS).toHaveLength(226); // + the Pot of Milk (§72); + 14 (§76 fauna)
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -288,7 +302,10 @@ describe('items — the registry', () => {
       if (f.returns !== undefined) expect(isItemKey(f.returns), def.key).toBe(true);
       if (f.spoilS !== undefined) expect(f.spoilS, def.key).toBeGreaterThan(0);
     }
-    expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton']);
+    expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton',
+      // v0.14 (§76 fauna): game and eggs go bad too
+      'raw_venison', 'roast_venison', 'raw_rabbit', 'roast_rabbit', 'raw_fowl', 'roast_fowl', 'raw_fish', 'roast_fish', 'raw_bear', 'roast_bear',
+      'raw_egg', 'roast_egg']);
     // pot_snow and unpeeled_cactus_fruit are materials: boiled, singed or peeled first, never eaten as they are.
     expect(getItem('pot_snow').kind).toBe('material');
     expect(getItem('unpeeled_cactus_fruit').kind).toBe('material');
@@ -300,9 +317,9 @@ describe('items — the registry', () => {
     expect(blockForItem('handbook')).toBe(-1);
     expect(resolveItem('handbook')).toEqual({ key: 'handbook' });
     expect(resolveItem('Survival Handbook')).toEqual({ key: 'handbook' });
-    // the last material, right before the food (ITEM_KEYS order)
+    // the last material of the first releases; v0.14's feather and Fletched Dart follow it (§76 fauna)
     const materials = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'material');
-    expect(materials[materials.length - 1]).toBe('handbook');
+    expect(materials.slice(materials.indexOf('handbook'))).toEqual(['handbook', 'feather', 'fletched_dart']);
   });
   it('every key the rest of the design names exists (drops, picks, fire spots, recipes, workplaces)', () => {
     for (const key of REFERENCED) expect(isItemKey(key), key).toBe(true);

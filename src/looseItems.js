@@ -101,16 +101,29 @@ export const THROW_CHUCK = Object.freeze({ speed: 6, power: 0 });
 export const DROP_SPEED = 3;
 /** The items that are thrown as stones. */
 export const STONE_KEYS = Object.freeze(['rock', 'flint', 'obsidian_shard']);
-/** The darts (made by hand: flint, a stick and plant fibre). */
-export const DART_KEYS = Object.freeze(['flint_dart']);
+/** The darts (made by hand: flint, a stick and plant fibre; v0.14: the Fletched Dart has feathers for its flight). */
+export const DART_KEYS = Object.freeze(['flint_dart', 'fletched_dart']);
 /** A dart that hits a mob breaks with this chance (a spear takes 1 wear instead). */
 export const DART_BREAK_P = 0.3;
+/**
+ * v0.14 (§76 fauna): the Fletched Dart — feathers steady it, so it leaves the hand faster (it flies flatter and
+ * farther), hits harder than the plain dart and survives more hits (FLETCHED_BREAK_P).
+ */
+export const THROW_FLETCHED = Object.freeze({ speed: 26, power: 3 });
+export const FLETCHED_BREAK_P = 0.15;
+
+/** The chance that dart `key` breaks on a mob it hits; 0 for anything that is not a dart. @param {string} key */
+export function dartBreakP(key) {
+  if (key === 'fletched_dart') return FLETCHED_BREAK_P;
+  return DART_KEYS.includes(key) ? DART_BREAK_P : 0;
+}
 
 /**
  * How an item flies when thrown. @param {string} key @returns {{ speed: number, power: number }}
  */
 export function throwOf(key) {
   if (STONE_KEYS.includes(key)) return THROW_ROCK;
+  if (key === 'fletched_dart') return THROW_FLETCHED;
   if (DART_KEYS.includes(key)) return THROW_DART;
   const def = getItem(key);
   if (def && def.tool && def.tool.type === 'spear') return THROW_SPEAR;

@@ -6,7 +6,7 @@ import {
   buildChapters, chapterIds, ensureHandbook, inlineParts, plainText, fmtNum, fmtSigned, fmtPct, fmtTemp, fmtDuration,
   fmtDurationLong, fmtClock, listJoin, numWord, describeDrops, recipeInputs, recipeInputsProse, recipeOutputs, recipeTools,
   toolNeedLabel, firstDayKit, fallSpeedForCells, climateExample, exampleBreakSeconds, temperatureBands,
-  FLINT_SEEN, ANIMAL_R, HERD_WORDS, ELEMENTARY_PARTS, toolPowers, huntTargets, zombieTargets, herdBiomes, lureText, zombieStrike,
+  FLINT_SEEN, ANIMAL_R, HERD_WORDS, PROSE_KINDS, ELEMENTARY_PARTS, toolPowers, huntTargets, zombieTargets, herdBiomes, lureText, zombieStrike,
 } from '../../src/handbook.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, itemName, isItemKey } from '../../src/items.js';
 import { RECIPES, STATION_IDS, STATION_NAMES, inputLabel } from '../../src/crafting.js';
@@ -27,11 +27,11 @@ import {
 import {
   SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, HOME_RANGE, RIDE_SCALE,
-  RIDE_LEAP, fleeSpeed,
+  RIDE_LEAP, fleeSpeed, poolOf, BEAR_DAMAGE,
 } from '../../src/animals.js';
 import {
   throwOf, STONE_KEYS, DART_KEYS, DART_BREAK_P, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS, THROW_ROCK, THROW_DART, THROW_SPEAR,
-  THROW_CHUCK,
+  THROW_CHUCK, THROW_FLETCHED, FLETCHED_BREAK_P, dartBreakP,
 } from '../../src/looseItems.js';
 import { Pack, KEEP_ON_DEATH, slotClick } from '../../src/inventory.js';
 import { Survival } from '../../src/survival.js';
@@ -184,7 +184,7 @@ describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
       expect(list, id).toEqual(list.map((_, i) => i + 1));
     }
     // even splits: Hands (44 recipes with DESIGN-circuits §8.2's six and the dart) in five pages of 9, 9, 9, 9, 8
-    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([9, 9, 9, 9, 9]); // 45 with the Snare (§69)
+    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([10, 9, 9, 9, 9]); // 45 with the Snare (§69); 46 with the Fletched Dart (§76 fauna)
   });
 
   it('teaches the real survival ideas the design asks for', () => {
@@ -242,7 +242,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([45, 20, 24, 5, 15, 8]); // v0.11: + the Workbench (§67)
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([46, 20, 24, 5, 15, 8]); // v0.11: + the Workbench (§67); v0.14: + the Fletched Dart (§76 fauna)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
@@ -461,6 +461,8 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     expect(rowOf(t, 'drown')[1]).toContain(`${RATES.DROWN_DPS} HP/s`);
     expect(rowOf(t, 'zombie')[1]).toBe('8 HP a strike; an alpha 14');
     expect(rowOf(t, 'zombie')[1]).toBe(`${ZOMBIE_DAMAGE} HP a strike; an alpha ${Math.round(ZOMBIE_DAMAGE * KIND_STATS.alpha.damage)}`);
+    expect(rowOf(t, 'bear')).toEqual(['Bears', `${BEAR_DAMAGE} HP a maul, and it throws you`,
+      'Back away when it rears up and growls; do not strike one unless you mean to finish it']); // v0.14 (§76 fauna)
     expect(rowOf(t, 'sick')[0]).toBe('Poisoning');
     expect(rowOf(t, 'starve')[1]).toContain(String(RATES.STARVE_DPS));
     expect(rowOf(t, 'thirst')[1]).toContain(String(RATES.THIRST_DPS));
@@ -682,10 +684,18 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     const WORDS = { [BIOME.PLAINS]: 'plains', [BIOME.FOREST]: 'forest', [BIOME.MOUNTAINS]: 'mountains', [BIOME.SNOWY]: 'snowy land' };
     const herdLands = Object.keys(HERD_WEIGHTS).map(Number);
     for (const b of herdLands) expect(typeof WORDS[b], `biome ${b}`).toBe('string'); // every land that grows herds has a word
-    const share = (b, k) => (HERD_WEIGHTS[b][k] ?? 0) / Object.values(HERD_WEIGHTS[b]).reduce((sum, x) => sum + x, 0);
+    // v0.14 (§76 fauna): a kind is weighed against the others of its own pool (herds and small game appear independently)
+    const share = (b, k) => (HERD_WEIGHTS[b][k] ?? 0)
+      / Object.keys(HERD_WEIGHTS[b]).filter((o) => poolOf(o) === poolOf(k)).reduce((sum, o) => sum + HERD_WEIGHTS[b][o], 0);
     for (const k of ANIMAL_KINDS) {
       const [name, where, gives, r] = rowOf(t, k);
       expect(name).toBe(SPECIES[k].name);
+      if (SPECIES[k].water) {
+        // fish are not of a land: they appear in the streams, and no HERD_WEIGHTS row names them
+        expect([where, gives, r]).toEqual(['streams', describeDrops(MOB_DROPS[k], true), '—']);
+        expect(herdLands.some((b) => Object.hasOwn(HERD_WEIGHTS[b], k))).toBe(false);
+        continue;
+      }
       // exactly the lands whose herds can be of this kind …
       const lands = herdLands.filter((b) => (HERD_WEIGHTS[b][k] ?? 0) > 0);
       expect(lands.length, k).toBeGreaterThan(0);
@@ -707,30 +717,42 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(rowOf(t, 'sheep')[2]).toBe('1–2 Raw Mutton and 1–2 White Wool');
     expect(rowOf(t, 'horse')).toEqual(['Horse', 'plains', '1–2 Rawhide', 'with its food, 3 times: tame; then ride']);
     expect(rowOf(t, 'wolf')[1]).toBe('snowy land, forest, mountains');
+    // v0.14 (§76 fauna): the game of the harder land
+    expect(rowOf(t, 'deer')).toEqual(['Deer', 'forest, plains', '2–3 Raw Venison and Rawhide', '—']);
+    expect(rowOf(t, 'rabbit')).toEqual(['Rabbit', 'snowy land, mountains, plains, forest', 'Raw Rabbit and Rawhide (40 %)', '—']);
+    expect(rowOf(t, 'pheasant')).toEqual(['Pheasant', 'plains, forest', 'Raw Fowl and 2–4 Feather', '—']);
+    expect(rowOf(t, 'turkey')).toEqual(['Wild Turkey', 'forest, plains', '2–3 Raw Fowl and 2–4 Feather', '—']);
+    expect(rowOf(t, 'bear')).toEqual(['Bear', 'snowy land, mountains, forest', '6–8 Raw Bear Meat and 2–3 Rawhide', '—']);
+    expect(rowOf(t, 'fish')).toEqual(['Fish', 'streams', 'Raw Fish', '—']);
   });
 
   it('how near you can come: the notice distances walking, sneaking and sprinting; food brings an animal to you', () => {
     const t = tableById('wary');
     expect(t.source).toBe('animals');
-    expect(t.keys).toEqual(['pig', ...ANIMAL_KINDS]);
+    const runners = ANIMAL_KINDS.filter((k) => !SPECIES[k].predator); // v0.14 (§76 fauna): a bear does not run
+    expect(runners).toEqual(ANIMAL_KINDS.filter((k) => k !== 'bear'));
+    expect(t.keys).toEqual(['pig', ...runners]);
     const cells = (n) => `${fmtNum(n, 1)} cells`;
     expect(rowOf(t, 'pig')).toEqual(['Pig', cells(PIG_NOTICE), cells(PIG_NOTICE * SNEAK_NOTICE), cells(PIG_NOTICE * SPRINT_NOTICE)]);
-    for (const k of ANIMAL_KINDS) {
+    for (const k of runners) {
       const n = SPECIES[k].notice;
       expect(rowOf(t, k)).toEqual([SPECIES[k].name, cells(n), cells(n * SNEAK_NOTICE), cells(n * SPRINT_NOTICE)]);
     }
+    expect(rowOf(t, 'deer')).toEqual(['Deer', '16 cells', '6.4 cells', '21.6 cells']); // v0.14: the wariest of all
     expect(rowOf(t, 'horse')).toEqual(['Horse', '13 cells', '5.2 cells', '17.6 cells']);
     expect(text).toContain(`an animal notices you at only ${fmtPct(SNEAK_NOTICE)} of its usual distance`);
     expect(text).toContain(`it spots you from ${fmtPct(SPRINT_NOTICE - 1)} farther off`);
-    // sneaking brings every animal but the horse within reach; the horse is the wariest, and it outruns a sprinter
-    expect(ANIMAL_KINDS.filter((k) => SPECIES[k].notice * SNEAK_NOTICE > REACH)).toEqual(['horse']);
+    // sneaking brings every animal but the horse and (v0.14, §76 fauna) the deer within reach; the deer is the wariest;
+    // the horse outruns a sprinter
+    expect(runners.filter((k) => SPECIES[k].notice * SNEAK_NOTICE > REACH)).toEqual(['horse', 'deer']);
     expect(PIG_NOTICE * SNEAK_NOTICE).toBeLessThan(REACH);
-    expect(text).toContain(`Your arm reaches ${REACH} cells. Sneaking brings you inside that with every animal but the horse: that one wants a treat.`);
-    expect(Math.max(...ANIMAL_KINDS.map((k) => SPECIES[k].notice))).toBe(SPECIES.horse.notice);
+    expect(text).toContain(`Your arm reaches ${REACH} cells. Sneaking brings you inside that with every animal but the horse and the deer.`);
+    expect(Math.max(...runners.map((k) => SPECIES[k].notice))).toBe(SPECIES.deer.notice);
+    expect(Math.max(...PROSE_KINDS.map((k) => SPECIES[k].notice))).toBe(SPECIES.horse.notice);
     expect(fleeSpeed('horse')).toBeGreaterThan(SPRINT_SPEED);
-    expect(text).toContain('A wild horse spots you from farther off than any other animal, and it outruns you.');
+    expect(text).toContain('A wild horse spots you from far off, and it outruns you.');
     // what they come to
-    expect(lureText(SPECIES.wolf.lure)).toBe('pork, beef or mutton, raw or roast');
+    expect(lureText(SPECIES.wolf.lure)).toBe('pork, beef, mutton, venison, rabbit, fowl or bear, raw or roast'); // v0.14: + the game meats
     expect(lureText(SPECIES.cow.lure)).toBe('Wild Tuber, Honeyberries, Tussock Grass or Cattail Root');
     for (const k of ANIMAL_KINDS) {
       for (const key of SPECIES[k].lure) {
@@ -738,7 +760,10 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
         expect(lureText(SPECIES[k].lure), key).toContain(/^(raw|roast)_/.test(key) ? key.replace(/^(raw|roast)_/, '') : itemName(key));
       }
     }
-    expect(text).toContain('Cattle, sheep and horses come to Wild Tuber, Honeyberries, Tussock Grass or Cattail Root; wolves come to pork, beef or mutton, raw or roast.');
+    expect(text).toContain('Cattle, sheep and horses come to Wild Tuber, Honeyberries, Tussock Grass or Cattail Root; wolves come to pork, beef, mutton, venison, rabbit, fowl or bear, raw or roast.');
+    // v0.14 (§76 fauna): the game animals come to nothing and are never tamed; the prose above is about the four that do
+    expect(PROSE_KINDS).toEqual(['cow', 'sheep', 'horse', 'wolf']);
+    expect(ANIMAL_KINDS.filter((k) => !PROSE_KINDS.includes(k)).every((k) => SPECIES[k].lure.length === 0 && SPECIES[k].tame === 0)).toBe(true);
     expect(text).toContain(`from ${LURE_RANGE} cells away it trots up and waits beside you`);
     expect(text).toContain(`Cattle and sheep stay calm for ${FED_CALM_S} seconds after a mouthful`);
     expect(SPECIES.wolf.tame).toBe(SPECIES.horse.tame);
@@ -749,10 +774,10 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
 
   it('the animal pages quote the game: herds, hunting, meat and milk, wool, riding, the wolf, snares', () => {
     expect(text).toContain('roam the land in small herds: 2–4 cattle or sheep, 2–3 horses or wolves.');
-    for (const k of ANIMAL_KINDS) expect(text).toContain(`${SPECIES[k].herd[0]}–${SPECIES[k].herd[1]} `);
+    for (const k of PROSE_KINDS) expect(text).toContain(`${SPECIES[k].herd[0]}–${SPECIES[k].herd[1]} `);
     expect(text).toContain(`${HERD_MIN} to ${HERD_MAX} cells from where you stand`);
     expect(text).toContain('A moo, a baa, a neigh or a woof means a herd is near');
-    for (const k of ANIMAL_KINDS) expect(text.toLowerCase()).toContain(`a ${SPECIES[k].voice}`);
+    for (const k of PROSE_KINDS) expect(text.toLowerCase()).toContain(`a ${SPECIES[k].voice}`);
     expect(text).toContain(`for at least ${HIT_FLEE_S} seconds`);
     expect(text).toContain(`a rock counts ${THROW_ROCK.power}, a Flint Dart ${THROW_DART.power} and a Flint Spear ${THROW_SPEAR.power}.`);
     // milk (§72)
@@ -792,20 +817,24 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
   it('dropping and throwing (§60, §63): the throws table is throwOf; things on the ground come to you, blink and go', () => {
     const t = tableById('throws');
     expect(t.source).toBe('loose');
-    expect(t.keys).toEqual(['stone', 'dart', 'spear', 'chuck']);
+    expect(t.keys).toEqual(['stone', 'dart', 'fletched_dart', 'spear', 'chuck']); // v0.14 (§76 fauna): a row per dart
     const spears = ITEM_KEYS.filter((k) => ITEMS[k].tool?.type === 'spear');
     expect(spears.length).toBeGreaterThan(0);
     const names = (keys) => keys.map((k) => itemName(k)).join(', ');
     expect(rowOf(t, 'stone').slice(0, 3)).toEqual([names(STONE_KEYS), `${THROW_ROCK.speed} m/s`, String(THROW_ROCK.power)]);
-    expect(rowOf(t, 'dart')).toEqual([names(DART_KEYS), `${THROW_DART.speed} m/s`, String(THROW_DART.power), `breaks on ${fmtPct(DART_BREAK_P)} of its hits`]);
+    expect(DART_KEYS).toEqual(['flint_dart', 'fletched_dart']);
+    expect(rowOf(t, 'dart')).toEqual(['Flint Dart', `${THROW_DART.speed} m/s`, String(THROW_DART.power), `breaks on ${fmtPct(DART_BREAK_P)} of its hits`]);
+    expect(rowOf(t, 'fletched_dart')).toEqual(['Fletched Dart', `${THROW_FLETCHED.speed} m/s`, String(THROW_FLETCHED.power), `breaks on ${fmtPct(FLETCHED_BREAK_P)} of its hits`]);
+    expect([dartBreakP('flint_dart'), dartBreakP('fletched_dart'), dartBreakP('rock')]).toEqual([DART_BREAK_P, FLETCHED_BREAK_P, 0]);
     expect(rowOf(t, 'spear').slice(0, 3)).toEqual([names(spears), `${THROW_SPEAR.speed} m/s`, String(THROW_SPEAR.power)]);
     expect(rowOf(t, 'chuck').slice(0, 3)).toEqual(['Anything else', `${THROW_CHUCK.speed} m/s`, String(THROW_CHUCK.power)]);
     for (const k of STONE_KEYS) expect(throwOf(k)).toBe(THROW_ROCK);
-    for (const k of DART_KEYS) expect(throwOf(k)).toBe(THROW_DART);
+    expect([throwOf('flint_dart'), throwOf('fletched_dart')]).toEqual([THROW_DART, THROW_FLETCHED]);
+    expect(THROW_FLETCHED.speed > THROW_DART.speed && THROW_FLETCHED.power > THROW_DART.power && FLETCHED_BREAK_P < DART_BREAK_P).toBe(true);
     for (const k of spears) expect(throwOf(k)).toBe(THROW_SPEAR);
     expect(throwOf('stick')).toBe(THROW_CHUCK);
     expect(t.rows.map((r) => r.slice(0, 3))).toEqual([['Rock, Flint, Obsidian Shard', '13 m/s', '1'], ['Flint Dart', '21 m/s', '2'],
-      ['Flint Spear', '17 m/s', '4'], ['Anything else', '6 m/s', '0']]);
+      ['Fletched Dart', '26 m/s', '3'], ['Flint Spear', '17 m/s', '4'], ['Anything else', '6 m/s', '0']]);
     expect(text).toContain(`Walk within ${fmtNum(COLLECT_RADIUS)} cells of something lying loose and it comes to you`);
     expect(text).toContain(`After ${fmtDurationLong(LOOSE_DESPAWN_S)} on the ground a thing is gone; it blinks for its last ${LOOSE_BLINK_S} seconds to warn you.`);
     expect(text).toContain('After 5 minutes on the ground');

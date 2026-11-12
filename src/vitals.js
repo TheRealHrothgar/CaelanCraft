@@ -155,6 +155,7 @@ export const RATES = Object.freeze({
 export const DAMAGE_CAUSES = Object.freeze([
   'fall', 'drown', 'buried', 'crush', 'fire', 'zombie', 'blast', 'log', 'blackhole', 'starve', 'thirst', 'cold', 'heat',
   'sick', 'void', 'command',
+  'bear', // v0.14 (§76 fauna): a bear's maul (animals.BEAR_DAMAGE)
 ]);
 
 /** Soft landings (§2.4): block landed on → fall damage factor; anything else 1. */

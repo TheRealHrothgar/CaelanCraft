@@ -42,8 +42,14 @@ export const BLOCK = Object.freeze({
   // v0.13's Flinty Gravel, withdrawn in v0.14 (CONTRACTS §76: it read as coal). The id stays for saves made in between:
   // it looks, digs and falls exactly like gravel and is never generated or placed.
   FLINT_GRAVEL: 119,
+  // v0.14 (§76 fauna): a pheasant's or turkey's nest on the ground — with eggs (R picks them), and picked. 120–133 belong
+  // to the water and flora work of the same release (placeholder defs below until they are merged in).
+  GROUND_NEST: 134, GROUND_NEST_EMPTY: 135,
+  // PLACEHOLDER keys RESERVED_120 … RESERVED_133 for the ids in between (every block's name is a key here): they go when
+  // the water and flora blocks take those ids.
+  ...Object.fromEntries(Array.from({ length: 14 }, (_, i) => [`RESERVED_${120 + i}`, 120 + i])),
 });
-export const BLOCK_COUNT = 120;
+export const BLOCK_COUNT = 136;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -89,6 +95,9 @@ export const TILE = Object.freeze({
   // v0.13 (CONTRACTS §75): the skins of the 3D ground litter (a rock, a flint nodule, a stick). 204 was the Flinty Gravel's
   // (withdrawn, §76) and is free.
   LITTER_ROCK: 201, LITTER_FLINT: 202, LITTER_STICK: 203,
+  // v0.14 (§76 fauna): the ground nest's pictures (its icon, and what its crumbs are coloured from) and the skins its 3D
+  // pieces are cut from (woven dry grass, a speckled eggshell)
+  GROUND_NEST: 228, GROUND_NEST_EMPTY: 229, LITTER_NEST: 230, LITTER_EGG: 231,
   // Zombie parts (§39; atlas row 15, not block faces): the head's front, its other sides, its top; shirt; trousers; soles.
   ZOMBIE_FACE: 240, ZOMBIE_HEAD_SIDE: 241, ZOMBIE_SCALP: 242, ZOMBIE_SHIRT: 243, ZOMBIE_TROUSERS: 244, ZOMBIE_SOLE: 245,
   // The Hollow Watcher (§40; atlas row 15, not block faces): its ash-grey stone, the glow mask of that stone's cracks
@@ -364,6 +373,12 @@ export const BLOCKS = [
   def({ id: B.SNARE_SPRUNG, name: 'snare_sprung', displayName: 'Sprung Snare', tiles: tiles(T.SNARE_SPRUNG), ...DECAL, soundGroup: 'wood', placeable: false }),
   // v0.13's Flinty Gravel (withdrawn, §76): kept so saves that hold id 119 still load. It is gravel in all but its id.
   def({ id: B.FLINT_GRAVEL, name: 'flint_gravel', displayName: 'Gravel', tiles: tiles(T.GRAVEL), soundGroup: 'gravel', gravity: true, placeable: false }),
+  // v0.14 (§76 fauna) PLACEHOLDERS for ids 120–133, which the water (120–121) and flora (122–133) branches define: BLOCKS
+  // is positional, so the nests at 134–135 need something in between. REPLACE these fourteen at the merge.
+  ...Array.from({ length: 14 }, (_, i) => def({ id: 120 + i, name: `reserved_${120 + i}`, displayName: `Reserved ${120 + i}`, tiles: tiles(T.STONE), soundGroup: 'stone', placeable: false })),
+  // v0.14 (§76 fauna): the ground nests lie on the ground like litter (small 3D pieces); neither is placed by hand
+  def({ id: B.GROUND_NEST, name: 'ground_nest', displayName: 'Ground Nest', tiles: tiles(T.GROUND_NEST), ...LITTER, soundGroup: 'grass', placeable: false }),
+  def({ id: B.GROUND_NEST_EMPTY, name: 'ground_nest_empty', displayName: 'Empty Nest', tiles: tiles(T.GROUND_NEST_EMPTY), ...LITTER, soundGroup: 'grass', placeable: false }),
 ];
 
 /**

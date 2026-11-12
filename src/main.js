@@ -77,7 +77,7 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Animals, SPECIES, SOUNDS as ANIMAL_SOUNDS, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX } from './animals.js';
+import { Animals, SPECIES, SOUNDS as ANIMAL_SOUNDS, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE } from './animals.js';
 import { createAnimalRenderer } from './animalRenderer.js';
 import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, damageOf, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST, SICK_MESSAGE, BOIL_TIP } from './survival.js';
@@ -99,7 +99,7 @@ import { createPackUI, demoPackView } from './packUI.js';
 import { createItemIcons, iconBlockFor } from './itemIcons.js';
 import { createLooseItemRenderer } from './looseItemRenderer.js';
 import {
-  LooseItems, throwOf, DART_KEYS, DART_BREAK_P, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
+  LooseItems, throwOf, dartBreakP, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
   blinkHidden,
 } from './looseItems.js';
 import { createZombieRenderer } from './zombieRenderer.js';
@@ -1278,7 +1278,14 @@ export function boot(win, doc) {
     isLoadedCell: (q, r) => world.hasChunkAtCell(q, r),
     groundHeight: (q, r) => world.terrainHeightAt(q, r),
     isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
+    // v0.14 (§76 fauna): fish appear in the generated streams (false everywhere in a world without them)
+    streamAt: (q, r) => {
+      const gen = /** @type {{ streamAt?: (q: number, r: number) => boolean }} */ (world.worldGen);
+      return typeof gen.streamAt === 'function' ? gen.streamAt(q, r) : false;
+    },
   };
+  /** v0.14 (§76 fauna): a fish is in the water, not among the bodies that push, carry and are blown about. */
+  const isBodyAnimal = (a) => !(/** @type {*} */ (SPECIES[a.kind]).water);
   // The Hollow Watcher (CONTRACTS §40): a rare sighting, never saved; the per-world switch and the night of its last
   // natural sighting are (startLoading restores both).
   const watcher = new Watcher();
@@ -1453,7 +1460,7 @@ export function boot(win, doc) {
       physicsBodies.length = 0;
       if (player) physicsBodies.push(player);
       if (world) for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) physicsBodies.push(pig);
-      if (world) for (const a of animals.list) if (world.hasChunkAt(a.x, a.z)) physicsBodies.push(a);
+      if (world) for (const a of animals.list) if (isBodyAnimal(a) && world.hasChunkAt(a.x, a.z)) physicsBodies.push(a);
       if (world) for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) physicsBodies.push(zb);
       return physicsBodies;
     },
@@ -1699,7 +1706,8 @@ export function boot(win, doc) {
       zombieTarget = null;
     }
     // A mob or a lit barrel nearer than the water takes R from it too.
-    if (waterHit && (litTarget || zombieTarget || pigTarget || animalTarget)) waterHit = null;
+    // (v0.14: not a fish — you still drink from, and fill a pot at, the water it swims in.)
+    if (waterHit && (litTarget || zombieTarget || pigTarget || (animalTarget && isBodyAnimal(animalTarget.animal)))) waterHit = null;
     // §4.6: looking at a Spark Transmitter tunes the pocket key to it.
     if (hit && hit.blockId === BLOCK.SPARK_TRANSMITTER && circuits) {
       const st = circuitStore.get(`${hit.q},${hit.y},${hit.r}`);
@@ -1886,7 +1894,7 @@ export function boot(win, doc) {
       },
       blackHoles,
       hands: { act: (kind, n) => handAction(kind, n) }, // v0.10 (§60): drop / throw
-      animals, // §69: summon cow|sheep|horse|wolf
+      animals, // §69: summon cow|sheep|horse|wolf (v0.14: and deer, stag, rabbit, pheasant, turkey, bear, fish)
       loose: { despawnNear: (x, y, z, radius) => loose.despawnNear(x, y, z, radius, looseDespawned) }, // §63: despawn
     };
     return c;
@@ -2421,6 +2429,14 @@ export function boot(win, doc) {
       return `Your Wolf · R: ${a.sitting ? 'follow me' : 'sit'} · feed it meat to heal it`;
     }
     const hunt = selectedTool() ? 'click: hunt it' : 'hunting needs a tool';
+    // v0.14 (§76 fauna)
+    if (a.kind === 'fish') return selectedTool()?.type === 'spear' ? 'Fish · click: spear it · G: throw the spear' : 'Fish · it takes a spear to catch one';
+    if (a.kind === 'bear') {
+      if (a.mode === 'charge') return 'Bear · it is charging: run, or fight';
+      if (a.mode === 'warn') return 'Bear · it is warning you: back away';
+      return `Bear · keep your distance · ${hunt}`;
+    }
+    if (a.kind === 'deer') return `${a.variant === 1 ? 'Stag' : 'Deer'}${snared} · ${hunt}`;
     if (a.kind === 'horse') return `Horse${snared} · R with a Wild Tuber or Honeyberries: feed it (${a.trust}/${sp.tame} to tame)`;
     if (a.kind === 'wolf') return `Wolf${snared} · R with meat: feed it (${a.trust}/${sp.tame} to tame)`;
     if (a.kind === 'sheep') return `Sheep${snared} · ${hunt} · R with a knife: shear`;
@@ -2440,6 +2456,7 @@ export function boot(win, doc) {
   function animalR() {
     if (riding || !animalTarget) return false;
     const a = animalTarget.animal;
+    if (!isBodyAnimal(a)) return false; // v0.14: R on a fish is R on the water (drink, fill a pot)
     const sp = SPECIES[a.kind];
     const SV = survival.inSurvival;
     const key = heldItemKey();
@@ -2617,6 +2634,7 @@ export function boot(win, doc) {
       world.setBlock(c.cell[0], c.cell[1], c.cell[2], BLOCK.SNARE_SPRUNG);
       snareSprung(c.animal, SPECIES[c.animal.kind].name);
     }
+    applyFaunaEvents(ev);
     for (const f of ev.freed) {
       if (world.getBlock(f.cell[0], f.cell[1], f.cell[2]) === BLOCK.SNARE_SPRUNG) world.setBlock(f.cell[0], f.cell[1], f.cell[2], BLOCK.SNARE);
     }
@@ -2646,6 +2664,42 @@ export function boot(win, doc) {
     }
   }
 
+  /** v0.14 (§76 fauna): the bears that have had their warning line said (one line per bear, however often it rears) */
+  const bearWarned = new WeakSet();
+
+  /**
+   * v0.14 (§76 fauna): what the game animals did this frame — birds flushed (the whirr of wings, a few feathers), a bear
+   * reared up (its growl, and the warning line once per bear), charged (its roar) or mauled the player (BEAR_DAMAGE each,
+   * cause 'bear'; the throw is animals.js's), a hen laid a nest (the block).
+   * @param {import('./animals.js').AnimalEvents} ev
+   */
+  function applyFaunaEvents(ev) {
+    let whirr = 0;
+    for (const a of ev.flushed) {
+      whirr = Math.max(whirr, zombieVolume(a));
+      particles.emit('dust', a.x, a.y + 0.3, a.z, 5, { color: [0.8, 0.62, 0.42], spread: 0.3 });
+    }
+    if (whirr > 0) audio.playRecipe(ANIMAL_SOUNDS.flush, Math.max(0.35, whirr));
+    for (const a of ev.warned) {
+      audio.playRecipe(ANIMAL_SOUNDS.growl, Math.max(0.5, zombieVolume(a)));
+      if (!bearWarned.has(a)) {
+        bearWarned.add(a);
+        logLine('A bear rears up and growls at you. Back away, slowly or fast: if you stay it will charge.');
+      }
+    }
+    for (const a of ev.charged) audio.playRecipe(ANIMAL_SOUNDS.roar, Math.max(0.5, zombieVolume(a)));
+    if (ev.mauls.length > 0) {
+      hurtFlash = 1;
+      audio.playThud(1);
+      audio.playRecipe(ANIMAL_SOUNDS.growl, 0.8);
+      if (survival.active) hurt(BEAR_DAMAGE * ev.mauls.length, 'bear');
+    }
+    for (const n of ev.laid) {
+      const [q, y, r] = n.cell;
+      if (!world.hasChunkAtCell(q, r)) continue;
+      if (world.getBlock(q, y, r) === (n.refill ? BLOCK.GROUND_NEST_EMPTY : BLOCK.AIR)) world.setBlock(q, y, r, BLOCK.GROUND_NEST);
+    }
+  }
   /** A snare went off: the snap, a puff, and a line when it is within earshot. */
   function snareSprung(body, name) {
     const v = zombieVolume(body);
@@ -2717,7 +2771,9 @@ export function boot(win, doc) {
       }
     } else if (target.kind === 'animal') {
       const a = target.mob;
-      const res = animals.wound(a, real && !a.tamed ? it.power : 0, fromX, fromZ);
+      // v0.14 (§76 fauna): only a spear catches a fish — a rock or a dart just scares it off
+      const counts = isBodyAnimal(a) || getItem(it.s.k)?.tool?.type === 'spear';
+      const res = animals.wound(a, real && !a.tamed && counts ? it.power : 0, fromX, fromZ);
       if (res === 'dead') animalDied(a, real);
       else if (res === 'hit') animalVoice(a, 1);
     } else {
@@ -2736,7 +2792,7 @@ export function boot(win, doc) {
       }
     }
     if (!real) return false;
-    if (DART_KEYS.includes(it.s.k) && Math.random() < DART_BREAK_P) return true;
+    if (Math.random() < dartBreakP(it.s.k)) return true; // (0 for anything that is not a dart)
     const max = maxDurability(it.s.k);
     if (max > 0) {
       const d = (it.s.d ?? max) - 1;
@@ -3157,6 +3213,8 @@ export function boot(win, doc) {
     if (hit && hit.blockId === BLOCK.SNARE) return 'Snare · R with food in hand: bait it';
     if (hit && hit.blockId === BLOCK.SNARE_BAITED) return 'Baited Snare · animals nearby will come to it';
     if (hit && hit.blockId === BLOCK.SNARE_SPRUNG) return 'Sprung Snare · it holds what it caught for a while';
+    // v0.14 (§76 fauna)
+    if (hit && hit.blockId === BLOCK.GROUND_NEST_EMPTY) return 'Empty Nest · a hen left in peace lays in it again';
     if (digPackFull && digState.active) return HINT.packFull;
     const act = interactAction();
     if (act) {
@@ -3173,6 +3231,7 @@ export function boot(win, doc) {
         case 'pick':
           // §70: the loose stones that show a dark flint nodule hold flint, and say so.
           if (act.id === BLOCK.LOOSE_STONES) return flintAt(act.q, act.r) ? 'Loose Stones with Flint · R: pick' : 'Loose Stones · R: pick';
+          if (act.id === BLOCK.GROUND_NEST) return 'Ground Nest · R: take the eggs'; // v0.14 (§76 fauna)
           return `${getBlockDef(/** @type {number} */ (act.id)).displayName} · R: pick`;
         case 'read':
           return 'Handbook · R: read';
@@ -3558,10 +3617,14 @@ export function boot(win, doc) {
         return;
       }
       const ka = strikeKind('pig', tool); // like a pig: only a tool wounds, a bare hand shoves
-      const res = animals.wound(a, ka.call === 'wound' ? ka.power : 0, player.x, player.z);
+      // v0.14 (§76 fauna): a fish is caught with a spear's thrust and nothing else (anything else only scares it)
+      const spearOnly = !isBodyAnimal(a) && tool?.type !== 'spear';
+      if (spearOnly) showHint('A fish is caught with a spear: thrust with it, or throw it (G).');
+      const wounds = ka.call === 'wound' && !spearOnly;
+      const res = animals.wound(a, wounds ? ka.power : 0, player.x, player.z);
       if (res === 'dead') animalDied(a, true);
       else if (res === 'hit') animalVoice(a, 1);
-      if (res && ka.call === 'wound') wearSelectedTool('strike');
+      if (res && wounds) wearSelectedTool('strike');
       updateHit();
       return;
     }
@@ -5754,7 +5817,7 @@ export function boot(win, doc) {
     bodies.length = 0;
     if (!riding) bodies.push(player); // a rider sits in the horse's own (taller) body
     for (const pig of pigs.list) if (world.hasChunkAt(pig.x, pig.z)) bodies.push(pig);
-    for (const a of animals.list) if (world.hasChunkAt(a.x, a.z)) bodies.push(a);
+    for (const a of animals.list) if (isBodyAnimal(a) && world.hasChunkAt(a.x, a.z)) bodies.push(a);
     for (const zb of zombies.list) if (world.hasChunkAt(zb.x, zb.z)) bodies.push(zb);
     if (blockPhysics) blockPhysics.bodies(bodies);
     if (bodies.length > 1) resolveBodies(bodies, world.getBlock);

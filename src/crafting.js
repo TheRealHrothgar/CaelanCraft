@@ -201,6 +201,8 @@ const RECIPE_ROWS = [
   ['earth_wire', 'hand', '6 copper_wire + 6 plant_fibre + malachite', '6 earth_wire', '', 6], // the green braid
   // v0.11 (CONTRACTS §67): the Workbench itself — steel, glass, drawn copper and tin: it comes after the Forge
   ['workbench', 'hand', '5 #planks + 2 steel_bar + 2 glass + 12 copper_wire + 2 tin_ingot', 'workbench', 'hammer 5', 20],
+  // v0.14 (§76 fauna): what feathers are for — the Flint Dart with a feathered flight (faster, harder, tougher)
+  ['fletched_dart', 'hand', 'flint + stick + 2 feather + plant_fibre', '4 fletched_dart', 'hammer 1', 3],
   // ---- Work Stump (12); riving a log into sticks is real work: there is no planks-to-sticks shortcut
   ['oak_planks', 'stump', 'oak_log', '3 oak_planks', 'axe 2', 3],
   ['spruce_planks', 'stump', 'spruce_log', '3 spruce_planks', 'axe 2', 3],

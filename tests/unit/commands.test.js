@@ -788,7 +788,7 @@ describe('executeCommand — summon / pigs', () => {
     const { ctx } = makeCtx();
     expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining('pigs are not available') });
     ctx.pigs = new Pigs();
-    expect(parseLine('summon dragon')).toEqual({ line: 1, message: 'summon: expected one of pig, cow, sheep, horse, wolf, zombie, runner, alpha, watcher, got "dragon" — usage: summon pig|cow|sheep|horse|wolf|zombie|runner|alpha|watcher [q y r]' });
+    expect(parseLine('summon dragon')).toEqual({ line: 1, message: 'summon: expected one of pig, cow, sheep, horse, wolf, deer, stag, rabbit, pheasant, turkey, bear, fish, zombie, runner, alpha, watcher, got "dragon" — usage: summon pig|cow|sheep|horse|wolf|deer|stag|rabbit|pheasant|turkey|bear|fish|zombie|runner|alpha|watcher [q y r]' });
     expect(exec(ctx, 'summon pig 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
     expect(exec(ctx, 'summon pig 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
     for (let i = 0; i < PIG_MAX; i++) ctx.pigs.spawn(0, FEET, 0);

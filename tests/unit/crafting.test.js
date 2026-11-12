@@ -122,16 +122,16 @@ const isBlockItem = (k) => ITEMS[k].kind === 'block';
 // ---------------------------------------------------------------------------------------------
 
 describe('the recipe table (§7.3)', () => {
-  it('has 117 recipes with unique ids: 45 at hand, 20 at the stump, 24 at the kiln, 5 at the bloomery, 15 at the forge and 8 at the workbench', () => {
+  it('has 118 recipes with unique ids: 46 at hand, 20 at the stump, 24 at the kiln, 5 at the bloomery, 15 at the forge and 8 at the workbench', () => {
     // §7.3's 89, plus DESIGN-circuits §8.2's 25 (6 at hand, 11 at the stump, 4 at the kiln, 1 at the bloomery, 3 at the forge)
     // + the flint dart (CONTRACTS §60) and the Workbench (§67), whose 8 advanced devices moved off the stump (3), the kiln
     // (1), the forge (3) and the hands (1)
-    expect(RECIPES).toHaveLength(117); // + the Snare (§69)
+    expect(RECIPES).toHaveLength(118); // + the Snare (§69); + the Fletched Dart (§76 fauna)
     const ids = RECIPES.map((r) => r.id);
-    expect(new Set(ids).size).toBe(117);
+    expect(new Set(ids).size).toBe(118);
     const by = {};
     for (const r of RECIPES) by[r.station] = (by[r.station] ?? 0) + 1;
-    expect(by).toEqual({ hand: 45, stump: 20, kiln: 24, bloomery: 5, forge: 15, workbench: 8 });
+    expect(by).toEqual({ hand: 46, stump: 20, kiln: 24, bloomery: 5, forge: 15, workbench: 8 });
     // listed station by station, in lane order
     const order = RECIPES.map((r) => STATION_IDS.indexOf(r.station));
     expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -332,7 +332,7 @@ describe('listRecipes', () => {
   it('sorts craftable first, then by missing input units, then in recipe order', () => {
     const pack = new FakePack({ plant_fibre: 2, rock: 1 });
     const list = listRecipes(pack, { hand: true });
-    expect(list).toHaveLength(117);
+    expect(list).toHaveLength(118);
     expect(list.slice(0, 2).map((r) => r.id)).toEqual(['cord', 'stone_hammer']);
     expect(list.filter((r) => r.craftable).map((r) => r.id)).toEqual(['cord', 'stone_hammer']);
     for (let i = 1; i < list.length; i++) {
@@ -380,7 +380,7 @@ describe('listRecipes', () => {
   it('filters by station, and counts what queued jobs reserve as gone', () => {
     const pack = new FakePack({ plant_fibre: 4 });
     expect(listRecipes(pack, { hand: true }, { station: 'kiln' }).map((r) => r.station)).toEqual(new Array(24).fill('kiln'));
-    expect(listRecipes(pack, { hand: true }, { station: 'all' })).toHaveLength(117);
+    expect(listRecipes(pack, { hand: true }, { station: 'all' })).toHaveLength(118);
     const q = new CraftQueue();
     expect(q.enqueue('fibre_bandage', 1, pack, { hand: true }).ok).toBe(true); // reserves 3 of the 4 fibre
     const cord = listRecipes(pack, { hand: true }, { queue: q }).find((r) => r.id === 'cord');
