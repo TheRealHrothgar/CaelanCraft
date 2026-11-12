@@ -5,10 +5,10 @@
 // out from what a generation-2 world offers by hand, every recipe must become makeable without a cycle that needs itself,
 // each pick tier must open the next tier's ore, and the loose stones of plains and forest must hold enough flint (§7.5).
 import { describe, it, expect } from 'vitest';
-import { BLOCK, BLOCK_COUNT, FLINT_SHARE, FLINT_PILE_SHARE, FLINT_GRAVEL_SHARE } from '../../src/blocks.js';
+import { BLOCK, BLOCK_COUNT, FLINT_SHARE } from '../../src/blocks.js';
 import { hexDiscCount } from '../../src/hex.js';
 import { ITEMS, ITEM_KEYS, TAGS, getItem, itemForBlock, blockForItem } from '../../src/items.js';
-import { BLOCK_RULES, PICKABLE, MOB_DROPS, canHarvest, tap } from '../../src/harvest.js';
+import { BLOCK_RULES, PICKABLE, MOB_DROPS, GRAVEL_FLINT_P, canHarvest, tap } from '../../src/harvest.js';
 import { RECIPES, STATION_BLOCKS } from '../../src/crafting.js';
 import { FIRE_TRANSFORMS, fuelSeconds } from '../../src/cooking.js';
 import { FLORA_TABLE } from '../../src/worldgen.js';
@@ -198,21 +198,20 @@ describe('flint near a plains or forest start (§7.5, §8.3)', () => {
   const flintChance = PICKABLE[B.LOOSE_STONES].drops.flatMap((g) => g.flatMap((br) => br.items)).find((it) => it.k === 'flint').p;
   const columns = hexDiscCount(20); // 1 261 columns within hex distance 20
 
-  // v0.13 (§75): flint is rarer (it was 6–7 within distance 20, all from loose stones) and comes mostly from Flinty Gravel.
-  it.each([['PLAINS', 2], ['FOREST', 3]])('%s: about 3–4 flint expected within hex distance 20, most of it in gravel', (_name, biome) => {
+  // v0.14 (§76): flint is rare (it was 6–7 within distance 20, all from loose stones) and comes mostly from digging gravel.
+  it.each([['PLAINS', 2], ['FOREST', 3]])('%s: about 3 flint expected within hex distance 20, most of it from gravel', (_name, biome) => {
     const stones = FLORA_TABLE[biome].rows.find((r) => r.id === B.LOOSE_STONES);
     const gravel = FLORA_TABLE[biome].rows.find((r) => r.id === B.GRAVEL);
     const fromStones = columns * stones.chance * flintChance;
-    const fromGravel = columns * gravel.chance * FLINT_PILE_SHARE * FLINT_GRAVEL_SHARE;
+    const fromGravel = columns * gravel.chance * GRAVEL_FLINT_P;
     expect(flintChance).toBe(FLINT_SHARE);
     expect(fromStones + fromGravel).toBeGreaterThanOrEqual(3); // still there to be found on the first day
     expect(fromStones + fromGravel).toBeLessThan(5); // rarer than it was
     expect(fromGravel).toBeGreaterThan(fromStones * 2); // usually found by digging gravel
   });
 
-  it('plain gravel never gives flint; Flinty Gravel always gives one, by hand or with a shovel', () => {
-    expect([...groupKeys(BLOCK_RULES[B.GRAVEL].drops)]).not.toContain('flint');
-    expect([...groupKeys(BLOCK_RULES[B.FLINT_GRAVEL].drops)]).toContain('flint');
+  it('wild gravel gives flint by chance, by hand or with a shovel; mined stone never', () => {
+    expect([...groupKeys(BLOCK_RULES[B.GRAVEL].drops)]).toContain('flint');
     expect([...groupKeys(BLOCK_RULES[B.STONE].drops)]).not.toContain('flint');
   });
 });

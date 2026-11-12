@@ -37,6 +37,8 @@ import { forEachEditedCell } from './coords.js';
  * `deep`: isDeep(y) of the cell; `decided[key]`: a chance item's outcome fixed by the caller (not rolled: §70 flint)
  */
 
+/** v0.14 (§76): the chance that digging a cell of wild gravel gives a Flint. */
+export const GRAVEL_FLINT_P = 0.12;
 /** Breaking with the head under water takes this many times longer (§6.1). */
 export const UNDERWATER_DIG_FACTOR = 2.5;
 /** No block breaks faster than this (s). */
@@ -99,9 +101,12 @@ set([B.DIRT], 0.9, 'shovel', 0, SELF_DROPS);
 set([B.GRASS_BLOCK], 1.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('plant_fibre', 1, { p: 0.2, ...natural }))]]);
 set([B.SNOWY_GRASS], 1.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('snow', 1, natural))]]);
 set([B.SAND, B.RED_SAND], 0.8, 'shovel', 0, SELF_DROPS);
-set([B.GRAVEL], 1.2, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('rock', 2))]]);
-// v0.13 (§75): Flinty Gravel is where flint comes from — the gravel (or the rock) and one Flint, with or without a shovel.
-set([B.FLINT_GRAVEL], 1.2, 'shovel', 0, [[when('shovel', drop('gravel')), when(null, drop('rock', 2))], always(drop('flint', 1))]);
+// v0.14 (§76): digging WILD gravel sometimes turns up a Flint (GRAVEL_FLINT_P), with or without a shovel — this is where
+// most flint comes from. Gravel you put down yourself, or that fell, gives none, so it cannot be dug over and over.
+// FLINT_GRAVEL is v0.13's withdrawn block: the same rule (its gravel is plain gravel).
+set([B.GRAVEL, B.FLINT_GRAVEL], 1.2, 'shovel', 0, [
+  [when('shovel', drop('gravel')), when(null, drop('rock', 2))], always(drop('flint', 1, { p: GRAVEL_FLINT_P, ...natural })),
+]);
 set([B.CLAY], 1.4, 'shovel', 0, [always(drop('clay_lump', 6))]);
 set([B.SNOW_BLOCK], 0.5, 'shovel', 0, [always(drop('snow', 6))]);
 set([B.ICE], 1.0, 'pick', 0, [[when('pick', drop('ice_chunk', 2)), when(null, drop('ice_chunk', 1))]]);

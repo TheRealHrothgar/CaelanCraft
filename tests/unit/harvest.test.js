@@ -7,7 +7,7 @@ import { ITEMS, TOOL_TYPES, TIER_SPEED, isItemKey, itemForBlock, blockForItem, g
 import {
   BLOCK_RULES, ruleFor, canHarvest, breakSeconds, harvestHint, rollDrops, rollGroups, PICKABLE, isPickable, pick, tap,
   Tapped, Regrowth, RIPE_OF, ripeOf, MOB_DROPS, rollMobDrops, toolPower, UNDERWATER_DIG_FACTOR, MIN_BREAK_S,
-  HAND_GATHER, handGatherHint, withArticle, DIG_TOOL_TYPES, isDeep, DEEP_BELOW_SEA,
+  HAND_GATHER, handGatherHint, withArticle, DIG_TOOL_TYPES, isDeep, DEEP_BELOW_SEA, GRAVEL_FLINT_P,
 } from '../../src/harvest.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
 import { mulberry32 } from '../../src/noise.js';
@@ -45,7 +45,7 @@ const TABLE = [
   [[B.DIRT], 0.9, 'shovel', 0],
   [[B.GRASS_BLOCK, B.SNOWY_GRASS], 1.0, 'shovel', 0],
   [[B.SAND, B.RED_SAND], 0.8, 'shovel', 0],
-  [[B.GRAVEL, B.FLINT_GRAVEL], 1.2, 'shovel', 0], // §75: Flinty Gravel digs like gravel
+  [[B.GRAVEL, B.FLINT_GRAVEL], 1.2, 'shovel', 0], // §76: 119 is v0.13's withdrawn Flinty Gravel, now plain gravel
   [[B.CLAY], 1.4, 'shovel', 0],
   [[B.SNOW_BLOCK], 0.5, 'shovel', 0],
   [[B.ICE], 1.0, 'pick', 0],
@@ -264,11 +264,19 @@ describe('rollDrops (§6.3)', () => {
     expect(rollDrops(B.GRAVEL, tool('flint_shovel'), {}, seq(0))).toEqual([{ k: 'gravel', n: 1 }]);
     expect(rollDrops(B.GRAVEL, HAND, {}, seq(0))).toEqual([{ k: 'rock', n: 2 }]);
     expect(rollDrops(B.GRAVEL, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'rock', n: 2 }]);
-    // §75: plain gravel never holds flint; Flinty Gravel always gives one, with or without a shovel, wild or not —
-    // and the gravel it gives back is plain, so it cannot be dug twice
-    expect(sample((r) => rollDrops(B.GRAVEL, HAND, { natural: true }, r), 300, 5).flint).toBeUndefined();
-    expect(rollDrops(B.FLINT_GRAVEL, tool('flint_shovel'), {}, seq(0.99))).toEqual([{ k: 'gravel', n: 1 }, { k: 'flint', n: 1 }]);
-    expect(rollDrops(B.FLINT_GRAVEL, HAND, { natural: false }, seq(0.99))).toEqual([{ k: 'rock', n: 2 }, { k: 'flint', n: 1 }]);
+    // §76: WILD gravel turns up a Flint GRAVEL_FLINT_P of the time, with or without a shovel; gravel that was put down
+    // (or fell) never does, so it cannot be dug over and over
+    expect(GRAVEL_FLINT_P).toBe(0.12);
+    expect(rollDrops(B.GRAVEL, HAND, { natural: true }, seq(GRAVEL_FLINT_P - 0.01))).toEqual([{ k: 'rock', n: 2 }, { k: 'flint', n: 1 }]);
+    expect(rollDrops(B.GRAVEL, HAND, { natural: true }, seq(GRAVEL_FLINT_P + 0.01))).toEqual([{ k: 'rock', n: 2 }]);
+    expect(rollDrops(B.GRAVEL, tool('flint_shovel'), { natural: true }, seq(0))).toEqual([{ k: 'gravel', n: 1 }, { k: 'flint', n: 1 }]);
+    const wild = sample((r) => rollDrops(B.GRAVEL, HAND, { natural: true }, r), 2000, 5);
+    expect(wild.flint.length / 2000).toBeGreaterThan(GRAVEL_FLINT_P - 0.03);
+    expect(wild.flint.length / 2000).toBeLessThan(GRAVEL_FLINT_P + 0.03);
+    expect(sample((r) => rollDrops(B.GRAVEL, HAND, { natural: false }, r), 300, 5).flint).toBeUndefined();
+    // v0.13's withdrawn Flinty Gravel: the same rule, and no item of its own
+    expect(rollDrops(B.FLINT_GRAVEL, tool('flint_shovel'), {}, seq(0))).toEqual([{ k: 'gravel', n: 1 }]);
+    expect(rollDrops(B.FLINT_GRAVEL, HAND, { natural: true }, seq(0))).toEqual([{ k: 'rock', n: 2 }, { k: 'flint', n: 1 }]);
     expect(itemForBlock(B.FLINT_GRAVEL)).toBeNull();
     expect(blockForItem('gravel')).toBe(B.GRAVEL);
     expect(rollDrops(B.ICE, tool('flint_pick'), {}, seq(0))).toEqual([{ k: 'ice_chunk', n: 2 }]);
@@ -319,7 +327,7 @@ describe('rollDrops (§6.3)', () => {
     expect(calls).toBe(2);
   });
 
-  it('stone gives rock and never flint (§75: flint comes from Flinty Gravel)', () => {
+  it('stone gives rock and never flint (§75; flint comes from digging gravel, §76)', () => {
     expect(rollDrops(B.STONE, tool('flint_pick'), { natural: true }, seq(0.99))).toEqual([{ k: 'rock', n: 2 }]);
     const mined = sample((r) => rollDrops(B.STONE, tool('flint_pick'), { natural: true }, r), 400, 13);
     expect(mined.flint).toBeUndefined();

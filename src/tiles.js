@@ -134,7 +134,6 @@ export const TILE_NAMES = Object.freeze({
   201: 'litter_rock',
   202: 'litter_flint',
   203: 'litter_stick',
-  204: 'flint_gravel',
   // powder and circuits: 160–194 (DESIGN-circuits §1.4), painted by circuitTiles.js
   ...CIRCUIT_TILE_NAMES,
   240: 'zombie_face',
@@ -2350,27 +2349,6 @@ function paintLitterStick(px, rng) {
   speck(px, rng, 10, [0xa98656, 0x96744a]);
 }
 
-/** The flint nodules in tile 204: [x, y, w, h] in texels (kept off the tile's edges so they never wrap). */
-const FLINT_NODULES = Object.freeze([[2, 2, 3, 3], [10, 3, 4, 3], [5, 8, 3, 2], [11, 11, 3, 3], [1, 12, 3, 2]]);
-
-/**
- * 204 flint_gravel — gravel (tile 9's recipe on its own seed, so the stones match) with five FLINT nodules in it, plain to
- * see: glossy blue-black lumps (0x1b1f2c), each lit blue-grey on its upper-left texel (0x46527a) and with one chalk-white
- * cortex texel on its lower right (0xe9e3d2).
- */
-function paintFlintGravel(px, rng) {
-  paintGravel(px, makeRng('gravel'));
-  for (const [x0, y0, w, h] of FLINT_NODULES) {
-    for (let dy = 0; dy < h; dy++) {
-      for (let dx = 0; dx < w; dx++) {
-        const lit = dx === 0 && dy === 0;
-        const rim = dx === w - 1 && dy === h - 1;
-        set(px, x0 + dx, y0 + dy, rim ? 0xe9e3d2 : lit ? 0x46527a : 0x1b1f2c, rim ? 0 : delta(rng, 3));
-      }
-    }
-  }
-}
-
 /**
  * 102 loose_stones — seen from ABOVE (a decal lying on the cell's floor): on alpha 0, inside the tile's inscribed hexagon,
  * four bold pebbles (PEBBLES), each with a dark LITTER_OUTLINE rim, a pale warm-grey body lit from the upper left and
@@ -2649,7 +2627,6 @@ const RECIPES = Object.freeze({
   litter_rock: paintLitterRock,
   litter_flint: paintLitterFlint,
   litter_stick: paintLitterStick,
-  flint_gravel: paintFlintGravel,
   zombie_face: paintZombieFace,
   zombie_head_side: paintZombieHeadSide,
   zombie_scalp: paintZombieScalp,

@@ -21,7 +21,7 @@ import {
 } from './config.js';
 import { floorDiv } from './coords.js';
 import { HEX_DIRS, hexToWorld, hexLength } from './hex.js';
-import { BLOCK, BIOME, flintGravelAt } from './blocks.js';
+import { BLOCK, BIOME } from './blocks.js';
 import { normalizeSeed, hash2, hash3, rand3, mulberry32, clamp, createNoise } from './noise.js';
 
 /** @typedef {import('./types.js').ChunkData} ChunkData */
@@ -50,6 +50,7 @@ import { normalizeSeed, hash2, hash3, rand3, mulberry32, clamp, createNoise } fr
  *   gen: number,
  *   pondAt: (q: number, r: number) => boolean,
  *   treeTrunkAt: (kq: number, kr: number) => TreeTrunk|null,
+ *   streamAt: (q: number, r: number) => boolean,
  *   FLORA_TABLE: typeof FLORA_TABLE,
  * }} SurvivalWorldGen
  */
@@ -91,7 +92,7 @@ export const ORE_TABLE_GEN2 = Object.freeze([
   Object.freeze({ id: BLOCK.TIN_ORE, attempts: 4, minY: 20, maxY: 64, minSize: 3, maxSize: 6 }),
   Object.freeze({
     id: BLOCK.CLAY, attempts: 3, minY: 52, maxY: 62, minSize: 6, maxSize: 12,
-    replaces: Object.freeze([BLOCK.SAND, BLOCK.GRAVEL, BLOCK.FLINT_GRAVEL, BLOCK.DIRT]),
+    replaces: Object.freeze([BLOCK.SAND, BLOCK.GRAVEL, BLOCK.DIRT]),
   }),
 ]);
 
@@ -133,9 +134,9 @@ function floraRow(id, chance, extra = {}) {
 
 /**
  * The surface pass (§8.3 step 4), indexed by BIOME id (null: nothing grows). One roll `u = rand3(q, r, FLORA_SALT, s)`
- * per eligible column is compared with the cumulative chances, left to right. v0.13 (§75): a PLAINS or FOREST column has
- * about 3–4 flint, expected, within hex distance 20 — most of it Flinty Gravel (surface gravel × FLINT_PILE_SHARE ×
- * FLINT_GRAVEL_SHARE), the rest loose stones × FLINT_SHARE. It was 6–7, all from loose stones.
+ * per eligible column is compared with the cumulative chances, left to right. v0.14 (§76): a PLAINS or FOREST column has
+ * about 3 flint, expected, within hex distance 20 — most of it from digging surface gravel (× harvest.GRAVEL_FLINT_P), the
+ * rest loose stones × FLINT_SHARE. It was 6–7 before v0.13, all from loose stones.
  * @type {readonly (Readonly<FloraBiome>|null)[]}
  */
 export const FLORA_TABLE = Object.freeze([
@@ -233,13 +234,16 @@ const CROWN_DIRS = Object.freeze([0, 2, 4]);
 /**
  * Create a deterministic world generator.
  * @param {string|number|null|undefined} seed  user-facing seed; normalised with `normalizeSeed`
- * @param {{ gen?: number }} [opts]  `gen` 1 (default: today's terrain, byte for byte) or 2 (the survival resources)
+ * @param {{ gen?: number }} [opts]  `gen` 1 (default: today's terrain, byte for byte), 2 (the survival resources) or 3
+ *   (v0.14: the harder land)
  * @returns {SurvivalWorldGen}
  */
 export function createWorldGen(seed, opts = {}) {
   const s = normalizeSeed(seed);
   const gen = normalizeGen(opts?.gen ?? 1);
   const gen2 = gen >= 2;
+  /** v0.14 (CONTRACTS §76): the harder land — streams, tainted ponds, scarcer food in bunches, new plants. New worlds only. */
+  const gen3 = gen >= 3;
 
   // Derived noise seeds, salts 1..8 in contract order.
   const nCont = createNoise(hash3(s, 1, 0, 0));
@@ -407,18 +411,13 @@ export function createWorldGen(seed, opts = {}) {
    * @param {Uint8Array} replaces  256-entry mask
    */
   function placeVeins(blocks, cq, cr, oi, o, replaces) {
-    // §75 (generation 2): some gravel piles hold flint — those cells are written as Flinty Gravel (no extra rng draws).
-    const flinty = gen2 && o.id === BLOCK.GRAVEL;
-    const oq = cq * CHUNK_SIZE;
-    const or = cr * CHUNK_SIZE;
-    const idAt = (lq, y, lr) => (flinty && flintGravelAt(oq + lq, y, or + lr, s) ? BLOCK.FLINT_GRAVEL : o.id);
     for (let i = 0; i < o.attempts; i++) {
       const rng = mulberry32(hash3(cq, cr, oi * 1000 + i, s));
       let lq = Math.floor(rng() * CHUNK_SIZE);
       let lr = Math.floor(rng() * CHUNK_SIZE);
       let y = o.minY + Math.floor(rng() * (o.maxY - o.minY + 1));
       const size = o.minSize + Math.floor(rng() * (o.maxSize - o.minSize + 1));
-      placeOreCell(blocks, lq, y, lr, idAt(lq, y, lr), replaces);
+      placeOreCell(blocks, lq, y, lr, o.id, replaces);
       for (let step = 0; step < size; step++) {
         const dir = Math.floor(rng() * 8);
         if (dir === 6) y += 1;
@@ -427,7 +426,7 @@ export function createWorldGen(seed, opts = {}) {
           lq += HEX_DIRS[dir][0];
           lr += HEX_DIRS[dir][1];
         }
-        placeOreCell(blocks, lq, y, lr, idAt(lq, y, lr), replaces);
+        placeOreCell(blocks, lq, y, lr, o.id, replaces);
       }
     }
   }
@@ -625,11 +624,7 @@ export function createWorldGen(seed, opts = {}) {
           const row = table.rows[i];
           acc += row.chance;
           if (u >= acc) continue;
-          if (floraFits(row, q, r, height)) {
-            // §75: surface gravel in a flint-bearing pile may be Flinty Gravel
-            const id = row.id === BLOCK.GRAVEL && flintGravelAt(q, height, r, s) ? BLOCK.FLINT_GRAVEL : row.id;
-            blocks[row.top ? top : top + 1] = id;
-          }
+          if (floraFits(row, q, r, height)) blocks[row.top ? top : top + 1] = row.id;
           break;
         }
       }
@@ -647,6 +642,15 @@ export function createWorldGen(seed, opts = {}) {
       return false;
     }
     return true;
+  }
+
+  /**
+   * Whether column (q, r) is on a generated STREAM: running fresh water (generation 3, CONTRACTS §76). Pure. Always false
+   * below generation 3 — and until the streams are generated, false everywhere.
+   * @param {number} _q @param {number} _r @returns {boolean}
+   */
+  function streamAt(_q, _r) {
+    return gen3 && false;
   }
 
   /**
@@ -687,7 +691,7 @@ export function createWorldGen(seed, opts = {}) {
 
   // Internal cross-calls (trees and ponds → treeTrunkAt) go through this object, so tests can spy on them.
   /** @type {SurvivalWorldGen} */
-  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, FLORA_TABLE };
+  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, FLORA_TABLE };
   return api;
 }
 
