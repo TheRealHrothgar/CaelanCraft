@@ -4250,6 +4250,122 @@ cell by `cellHash`, so no two cells look alike. Their flat pictures (tiles 102, 
 - **Guide.** The first-day step and "Stone and flint" name Flinty Gravel, quote the three shares, and say plain gravel and
   mined stone give none; the gathering table lists Flinty Gravel in place of plain gravel (still ten rows).
 
+## 76. The harder Survival — generation 3: flint from gravel, food in bunches, tainted water and streams, more animals
+
+v0.14. Survival is meant to be harder. Everything about how the LAND is made is behind generation 3 (`GEN_LATEST` 3;
+`gen3` inside createWorldGen): new worlds get it, existing worlds keep generation 2 and their land, byte for byte. Rules
+about items, drops and animals apply to every world.
+
+### 76.1 Flint by chance from gravel (amends §70, §75)
+
+v0.13's Flinty Gravel read as coal and is withdrawn: nothing generates or places block 119 any more. The id stays for saves
+made in between as plain gravel (`displayName` "Gravel", the GRAVEL tile, `gravity`, `placeable: false`, the gravel
+rule); `flintPileAt` / `flintGravelAt` and tile 204 are gone. Digging WILD gravel (`ctx.natural`) gives a Flint with
+chance `harvest.GRAVEL_FLINT_P` (0.12), with or without a shovel, on top of the gravel (shovel) or 2 rock (hand); gravel
+that was placed or that fell gives none, so it cannot be dug over and over. Loose stones keep `FLINT_SHARE` 0.06, shown
+as a nodule; mined stone gives no flint. Expected within hex distance 20 on plains or forest: about 3 flint.
+
+### 76.2 Wild food in bunches — mushrooms, roots, nuts, fruit and a healing herb
+
+Amends §43 (items), §44 (harvest), §45 (eating), §46 (fire, recipes), §47 (blocks, tiles, worldgen) and §59 (sprites).
+
+**Blocks** 122–131, all `SPRITE` (crossed sprite, flat icon, PLANT flags), one tile each (208–217, same order):
+HONEYCAP_MUSHROOM 122 "Honeycap Mushroom", FRECKLECAP_MUSHROOM 123 "Frecklecap Mushroom", ONION_PLANT 124 "Wild Onion
+Plant", CARROT_PLANT 125 "Wild Carrot Plant", HAZEL_THICKET 126 / HAZEL_THICKET_BARE 127 ("Picked Hazel Thicket"),
+CRAB_APPLE_BUSH 128 / CRAB_APPLE_BUSH_BARE 129 ("Picked Crab Apple Bush"), HEALWORT_PLANT 130 / HEALWORT_PLANT_BARE 131
+("Cut Healwort Plant"). The three `*_BARE` blocks are not placeable; the other seven follow PRICKLY_PEAR in PICKER_ORDER
+and in the picker's Wild Plants family. `isPlant` / `PLANT_IDS` (17 ids) and `isPopOff` / `POP_OFF_IDS` (21 ids, in id
+order) include all ten.
+
+**Sprites** (tiles.js comments normative). The two mushrooms share one layout (a big mushroom and a small one) and differ
+in three places: the Honeycap has a smooth honey-gold dome, a pale yellow sponge under it and a fat plain stem; the
+Frecklecap a flatter, peaked, duller tawny cap with pale freckles, white gills with dark lines, and a thin stem with a
+ring and a bulb. No block or item name says which one poisons. Every other plant has a sign no other has: white bulbs
+and a white flower head (onion), an orange root under ferny fronds (carrot), pale-husked nuts on a yellow-green shrub
+(hazel), red apples on a small dark-crowned tree (crab apple), violet flower spikes over a silver rosette (healwort).
+A picked or cut variant is the same picture without its crop.
+
+**Items** (FOOD_ROWS, after pot_milk; satiation / hydration): honeycap 3 / +1 (spoilS 1500), roasted_honeycap 7 / 0;
+frecklecap 3 / +1 and roasted_frecklecap 7 / 0, both `sick: 1`; wild_onion 2 / +1, roasted_onion 5 / 0; wild_carrot
+3 / +1, roasted_carrot 7 / 0; hazelnuts 3 / 0 (stack 32, never spoil), roasted_hazelnuts 5 / 0; crab_apple 2 / +3
+(spoilS 2400), baked_crab_apple 5 / +2; healwort 0 / −2 with `cures: true` (useS 1.2); pot_healwort_tea 0 / +30 with
+`cures: true`, returns clay_pot. The hazel_thicket, crab_apple_bush and healwort_plant items place their `*_BARE` block.
+
+**Cure.** `FoodDef.cures` (boolean): `vitals.eatFood` ends a poisoning (`sick = 0`) before the sickness roll and returns
+`{ sick, cured }`; `vitals.cureSick(v)`. What the poison already took is not given back. `Survival.eat` returns
+`CURED_MESSAGE` when a poisoning was ended.
+
+**Harvest.** R picks all seven ripe plants (`PICKABLE`): Honeycap / Frecklecap → AIR, 1–2 of its mushroom; onion → AIR,
+1–2 wild_onion; carrot → AIR, 1 wild_carrot; hazel → HAZEL_THICKET_BARE, 1–3 hazelnuts; crab apple →
+CRAB_APPLE_BUSH_BARE, 2–3 crab_apple; healwort → HEALWORT_PLANT_BARE, 1 healwort. `RIPE_OF` maps the three `*_BARE`
+blocks back; `Regrowth` tracks every key of `RIPE_OF`. Breaking by hand gives the pick's drops and destroys the plant
+(a thicket also gives 2–3 sticks, a bush 1–2). A shovel gives 2–3 wild_onion or 1–2 wild_carrot, and lifts a thicket,
+a bush or a Healwort as its block item (ripe or picked). Break times: mushrooms 0.2 s, roots 0.4 s, thicket and bush
+0.6 s, Healwort 0.3 s; tool `shovel` except the mushrooms (none); tier 0.
+
+**Fire and recipes.** FIRE_TRANSFORMS (skewer): honeycap → roasted_honeycap 15 s, frecklecap → roasted_frecklecap 15 s,
+wild_onion → roasted_onion 15 s, wild_carrot → roasted_carrot 20 s, hazelnuts → roasted_hazelnuts 12 s, crab_apple →
+baked_crab_apple 18 s; none of the results chars. Hand recipe `pot_healwort_tea`: healwort + pot_boiled →
+pot_healwort_tea, 2 s.
+
+**Worldgen (generation 3).** The per-column flora roll is unchanged except that a roll landing on a FOOD row
+(an id that PATCH_TABLE places: HONEYBERRY_BUSH, TUBER_PLANT, PRICKLY_PEAR, CATTAILS) places nothing. Food comes from
+`PATCH_TABLE`, rows `{ key, id, cell, chance[8 by BIOME], radius, fill, ring?, mixId?, mixShares?, edgeBelow?,
+minHeight?, maxHeight?, besideBelow? }`. For row i and grid cell (kq, kr): `h = hash3(kq, kr, PATCH_SALT + i, seed)`;
+centre `(kq·cell + ((h & 255)·cell >> 8), kr·cell + (((h >>> 8) & 255)·cell >> 8))`; the patch exists when
+`(h >>> 16) / 65536 < chance[biome of the centre]` (0 for a FOREST centre whose humidity ≥ `edgeBelow`). A column within
+`radius` of the centre (exactly at `radius` when `ring`) whose own biome has a chance above 0 takes the plant when
+`rand3(q, r, PATCH_SALT + i, seed) < fill`; it is `mixId` instead when the patch's share
+`mixShares[hash3(kr, kq, PATCH_SALT + PATCH_MIX_STEP + i, seed) % length]` is above
+`rand3(q, r, PATCH_SALT + PATCH_MIX_STEP + i, seed)`. The first row (then the first patch in grid order kq, kr) to
+claim a column has it. The surface pass places the claimed plant under the usual conditions (the biome's surface with
+AIR above, and the row's height / shore conditions); otherwise the column takes its ordinary roll.
+Rows: honeyberry (32; PLAINS 0.19, FOREST 0.62, SNOWY 0.25; r 2; fill 0.35), tuber (36; PLAINS 0.42, FOREST 0.27; 2;
+0.3), prickly_pear (28; DESERT 0.45; 2; 0.4), cattails (24; BEACH 0.6; 3; 0.7; the §47 shore conditions), mushrooms
+(36; FOREST 0.6; ring at 2; 0.7; mixId FRECKLECAP_MUSHROOM, mixShares `FRECKLECAP_SHARES` [0, 0.15, 0.3, 0.5, 1]),
+onion (40; PLAINS 0.2, FOREST 0.27; 2; 0.4; edgeBelow `FOREST_EDGE_HUMIDITY` 0.22), carrot (40; PLAINS 0.31, FOREST
+0.31; 2; 0.35; same edge), hazel (40; FOREST 0.43; 1; 0.8), crab_apple (44; PLAINS 0.46, FOREST 0.46; 2; 0.22),
+healwort (64; PLAINS 0.4, FOREST 0.4, SNOWY 0.2; 1; 0.45). `PATCH_SALT` 0x9a7c00, `PATCH_MIX_STEP` 64.
+`CAVE_TROOP` (cell 28, chance 0.3 in any biome, radius 2, fill 0.5, the same mix; row index PATCH_TABLE.length), run
+last: a covered column gets a mushroom in the first AIR cell with a non-AIR cell under it, looking down from
+height − 4 to y 7, and only when that cell under it is STONE. The generator exposes `PATCH_TABLE`; the module also
+exports `PATCH_SALT, PATCH_MIX_STEP, FOREST_EDGE_HUMIDITY, FRECKLECAP_SHARES, CAVE_TROOP`. Pond-rim cattails (§47) are
+unchanged. Measured (worldgenFlora.test.js, 736 chunks): 47 % of generation 2's food plants; 94 % of them have another
+of their kind within 3 cells (35 % in generation 2); 67 % of mostly-land chunks hold no food plant (16 %).
+
+## 77. The build tree: a purpose for every tool, real gates, coal — `src/purpose.js` (PURE), `src/harvest.js`, `src/crafting.js`, `src/worldgen.js`
+
+**A purpose line.** `purpose.PURPOSE` maps an item key to one sentence of at most `PURPOSE_MAX` (64) characters on what
+the thing is for and what it unlocks: every tool (a test checks all of them), the five workplaces ("Workplace: …") and the
+key parts (cord, campfire, snare, bellows, clay pot, charcoal, torch, sleeping hide, basket). `purposeOf(key)` → the line
+or ''. `crafting.listRecipes` puts it on every RecipeView as `purpose` (of the main output); packUI draws it on the card
+as `.card-purpose` under the name, with the whole line as its tooltip. Tests check each gate a line names against
+`BLOCK_RULES` and `RECIPES`.
+
+**The gates.** Each step of the ladder opens something no lesser tool does:
+
+- **Shovel 1.** CLAY needs a shovel (tier 1; `harvestHint`: "Clay · needs a wooden shovel or better" — `gateToolName`
+  names the real tool). Clay builds the Kiln, so the first shovel gates it. Clay is no longer a bare-hand job
+  (not in `HAND_GATHER`).
+- **Picks.** Flint (2): stone, coal ore, copper ore, obsidian. Copper (3): tin ore. Bronze (4): iron ore. Iron (5): gold
+  ore (it was 4). Steel (6): diamond ore (it was 2).
+- **Coal.** Smelting and casting copper and bronze burn `coal` itself, not `#fuel`: copper_ingot (2), tin_ingot (1),
+  bronze_ingot (3), copper_block (1), gold_block (2) and the eleven copper and bronze tools (1 each). Firing clay (pot,
+  bricks, crucible, mold) and the kiln's other jobs still take `#fuel` (coal or charcoal); the Bloomery and the Forge
+  still take charcoal only. So coal — a flint pick's work — gates the metal ages.
+- Unchanged gates, now tested: hammer 1 knaps flint; axe 1 for logs and the Work Stump, axe 2 for planks; knife 2 for
+  leather; hammer 3 draws wire, 4 works iron, 5 forges steel and builds the Workbench, 6 sets gems; the crucible and the
+  mold cast; the bellows build the Bloomery and the Forge.
+- A gate is "a tool of that kind at that tier OR BETTER": a flint axe stands in for the stone axe, any knife cuts
+  leather, a steel pick mines gold. `tests/integration/progression.test.js` works out everything obtainable from bare
+  hands in a generated world, checks that every tool, workplace and recipe is reachable, and that taking any gate away
+  (with every better tool of its kind) closes exactly the next step.
+
+**Coal seams you can see (generation 3).** `ORE_TABLE_GEN3`, run after ORE_TABLE_GEN2 with `oi` continuing (older veins
+keep their rng streams): COAL_ORE, 8 attempts a chunk, y SEA_LEVEL − 4 … SEA_LEVEL + 18, 12–20 cells, replacing STONE
+and DIRT. About 30 cells a chunk, of which about one is open to the air: seams show in cliff sides, stream banks and on
+bare rock.
+
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
 `makeGetBlock(map, fill = AIR)` (map keyed `"q,y,r"`), `makeChunkDataGetter(chunks)` (Map keyed chunkKey → ChunkData|Chunk),
