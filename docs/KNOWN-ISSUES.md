@@ -300,3 +300,16 @@ From the build of CONTRACTS §80, which was unit-tested only: no browser, no bui
 - **`setblock … carrot` is now ambiguous** (carrot_plant, carrot_sprout), as `onion` and `tuber` are: type the full
   name.
 - **The sprout BLOCK keys are `CARROT_SPROUT` …**, not `SPROUT_CARROT`: a key must be its block's name in capitals.
+
+## The lean Survival (v0.15) — open items
+
+From the build of CONTRACTS §79. None blocks play.
+
+- **Balance is untested by a person**: one food patch in three, herds of 1–3 kept to three near you, a raw gulp
+  poisoning one time in five. Each is one constant to change.
+- **Worlds made before this keep their land** (generation 3 or older), so they have about three times the wild food of a
+  new world. The sparser animals, the riskier raw water, spreading and farming apply to every Survival world.
+- **Seen in the running game** (headless): a new world is generation 4 with about half the food plants near spawn that
+  the same seed had; R plants a Carrot Seed and the hint reads `Planted Wild Carrot · dry: slow, and it may not take`; of
+  twelve carrots planted beside a stream ten grew in eight game days, of twelve on dry ground three did. Not seen: a
+  whole season of play, a cattail bed, a bush planted and fruiting.
