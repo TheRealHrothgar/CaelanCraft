@@ -411,3 +411,54 @@ From the build of CONTRACTS §82 (materials, footsteps, voices, ambience, the So
 - **Found on the way, fixed:** every animal call with a wobble (baa, neigh, bleat, gobble, growl, roar, wings) used to
   end with a click, because the wobble was added to the envelope and did not die away with it. The wobble is a gain
   stage of its own now (§82.1).
+
+## Zombies and light — open items
+
+From the build of CONTRACTS §86 (no spawning on lit ground, dread, shy idlers, weaker in the light). None blocks play.
+
+- **None of it has been seen in the game.** It was built and tested without a browser: on flat test worlds with a faked
+  light field, and on a real `World` with its own `LightEngine` for the torch, the wall, the lamp and the burned-out
+  fire. Whether a torch-lit yard *feels* safe, and whether the numbers are kind enough for a child, is for play to say.
+  The knobs are the constants at the top of the §86 block in `zombies.js`.
+- **The arm across the face was posed by arithmetic.** A zombie in light of 7 or more brings one forearm up before its
+  eye and leans its head away (`SHIELD_ARM`, `SHIELD_NOD`, `SHIELD_ROLL` in `zombieRenderer.js`). The tests show that the
+  hand ends up before the eye and that the arm never cuts into the head; nobody has looked at it. It may read as a
+  salute or a wave.
+- **You cannot read a light level in the game.** The Guide gives each light's strength and says it loses 1 a cell, so a
+  player counts cells from the torch. There is no number on the F3 overlay and no mark on the ground where the safe
+  ring ends. On the console, `__caelancraft.zombies.spawnReport(q, r)` answers `{ y, why, light, chance }` for a
+  column, and every zombie carries `light`, `glare` and `shield`.
+- **Lights do not add up.** The light model keeps the brightest light that reaches a cell, so two torches side by side
+  are no stronger than one. More torches widen the lit ground; they never make an alpha turn back. Only a burning
+  campfire (its safe zone) or Glowstone (strength 15, lit 13 or more for 2 cells) stops an alpha.
+- **Light goes round small things.** It stops at opaque blocks but floods round and over them, one level a cell: a low
+  or short wall only dims what is behind it. The Guide says a torch protects the side it shines on, which is the whole
+  truth only for a wall big enough to be a house.
+- **A torch does not make you untouchable.** Walkers and runners stop where the light is 9, four cells from a torch,
+  and reach 1.3 m: stand two cells or nearer to the torch. One knocked or shoved into strong light backs out for 0.8 s
+  at a time and does not strike while it does; one with no darker cell beside it (a hall lit evenly, a pit) stands
+  where it is and can still strike what comes within reach.
+- **A runner at a sprint can clip the corner of a lit cell** for a frame or two (it steers by the cell 0.8 m ahead of
+  where it faces, like the campfire's zone), and a swimmer can drift into the outermost lit cell before it has turned.
+  Neither is ever deeper than the outermost dread ring, and neither strikes from there in the tests.
+- **A swimmer with nobody to chase** still makes for the nearest bank (as before), lit or not; once ashore in strong
+  light it turns and leaves.
+- **Light holds a crowd at its edge, and a crowd makes an alpha.** Walkers and runners that cannot reach you stay
+  where the light begins, still after you. Six of them round a runner can raise the alpha (§61), and the alpha walks
+  in between the torches. On generated terrain, with a ring of torches round a player who never moved or fought, an
+  alpha arose in two nights of four and was the only zombie that ever got inside. A burning campfire is the answer
+  to it, as the Guide says; whether that is too hard on a child is for play to say.
+- **A lit place has fewer zombies, not the same number elsewhere.** A spawn attempt tries 12 columns; those that land
+  on lit ground are lost. Ringing the whole spawning distance (16 to 40 cells) with light would stop nearly all of
+  them. That is a lot of torches, and arguably the reward.
+- **Steps and slopes.** "A Torch every 7 cells" holds along level ground. Light loses 1 a cell upward too, so on a
+  slope or a wall top the lit ring is smaller.
+- **The light a zombie reads is one frame behind an edit** (`LightEngine.blockAt` does not flush; `World.update` does,
+  once a frame), a lit lamp's light follows the lamp by up to six frames (§72), and a zombie looks at its own light
+  every half second. A torch set down beside a zombie is noticed within 0.5 s.
+- **Only zombies care.** The Hollow Watcher, bears and the other animals take no notice of light.
+- **The danger table still says** "Stay by a burning fire at night" for zombies: only the zombie pages of the Guide
+  were in scope. The two new pages say the rest.
+- **A strike is rounded by itself now** (`strikeDamage`: whole HP, never below 1) and the strikes of one frame are
+  summed, where the sum used to be rounded. With two strikes on the same frame the total can differ by 1 HP from the
+  old rule; in the dark the figures are whole and nothing changes.

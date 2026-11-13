@@ -84,7 +84,7 @@ import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
 import { Animals, SPECIES, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE } from './animals.js';
 import { createAnimalRenderer } from './animalRenderer.js';
-import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, damageOf, SOUND_ROAR } from './zombies.js';
+import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, strikeDamage, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST, SICK_MESSAGE, BOIL_TIP } from './survival.js';
 import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory.js';
 import { Containers } from './containers.js';
@@ -1423,6 +1423,8 @@ export function boot(win, doc) {
     groundHeight: (q, r) => world.terrainHeightAt(q, r),
     isNaturalGround: (q, y, r) => world.isNaturalGround(q, y, r),
     columnEdited: (q, r) => columnHasEdits(world.edits, q, r),
+    // §86: the BLOCK light of a cell (torches, lit lamps, campfires, glowstone; not the sky), as the chunks hold it
+    blockLight: (q, y, r) => world.light.blockAt(q, y, r),
   };
   // Animals (CONTRACTS §69): cattle, sheep, horses and wolves — wary, rare, hunted, snared, and (horses, wolves) tamed.
   const animals = new Animals();
@@ -5765,8 +5767,9 @@ export function boot(win, doc) {
       // Survival (§2.4): each strike deals ZOMBIE_DAMAGE, an alpha's more (§61, §65; zombies.js stays mode-agnostic).
       if (survival.active) {
         let dmg = 0;
-        for (const zb of ev.attacks) dmg += ZOMBIE_DAMAGE * damageOf(zb); // an alpha hits softer by day (§65)
-        hurt(Math.round(dmg), 'zombie');
+        // an alpha hits softer by day (§65), every kind softer in block light (§86): whole HP, never below 1 a strike
+        for (const zb of ev.attacks) dmg += strikeDamage(zb, ZOMBIE_DAMAGE);
+        hurt(dmg, 'zombie');
       }
     }
     // §61: a horde raised an alpha.
