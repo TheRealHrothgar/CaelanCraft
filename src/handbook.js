@@ -1325,7 +1325,7 @@ function makeChapters() {
       p('A pool is not endless. It stands at one of three depths: *full*, *low* or *shallow*. After shallow it is dry. Shallow water is ankle-deep: you walk through it.'),
       p(`Every gulp and every pot comes out of the pool you take it from. Each cell of a pool holds ${CELL_GULPS} gulps for each depth, and filling a pot takes ${POT_GULPS} gulps. A pond of seven cells gives about ${7 * CELL_GULPS} gulps before it drops a depth and about ${3 * 7 * CELL_GULPS} in all; a single cell gives about ${3 * CELL_GULPS}.`),
       p(`The sun dries a pool too. In dry weather it loses a depth ${everyGameDays(DRY_MEAN_S)}; under a roof or in a cave that takes ${numWord(ROOF_DRY_FACTOR)} times as long. Rain fills it again: a depth for about every ${fmtDurationLong(FILL_MEAN_S)} of hard rain, up to full. A dry pond takes water again in the rain, but it never grows larger than it was.`),
-      p(`*Streams* dwindle the same way: full after rain, a trickle in dry weather, dry in a drought. Without rain a stream loses a depth ${everyGameDays(STREAM_DRY_MEAN_S)}. Drinking does not lower a stream. The sea never runs out, and it is always salt.`),
+      p(`*Streams* dwindle the same way: full after rain, a trickle in dry weather, dry in a drought, all but the head. Without rain a stream loses a depth ${everyGameDays(STREAM_DRY_MEAN_S)}. Drinking does not lower a stream. The sea never runs out, and it is always salt.`),
       tip('A gulp of the water that flows out of a pool is taken from that pool.'),
     ],
     [

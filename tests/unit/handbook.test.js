@@ -1073,7 +1073,7 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain(`Rain fills it again: a depth for about every ${fmtDurationLong(FILL_MEAN_S)} of hard rain, up to full.`);
     expect(text).toContain('a depth for about every 6 minutes of hard rain');
     expect(text).toContain('A dry pond takes water again in the rain, but it never grows larger than it was.');
-    expect(text).toContain('Streams dwindle the same way: full after rain, a trickle in dry weather, dry in a drought. Without rain a stream loses a depth about every 2 game days. Drinking does not lower a stream.');
+    expect(text).toContain('Streams dwindle the same way: full after rain, a trickle in dry weather, dry in a drought, all but the head. Without rain a stream loses a depth about every 2 game days. Drinking does not lower a stream.');
     expect(text).toContain('The sea never runs out, and it is always salt.');
     expect(text).toContain(`The sea is salt, and so is any lake too big to be a pool: water whose surface is more than ${BODY_MAX_CELLS} cells is sea.`);
     expect(BODY_MAX_CELLS).toBe(128);

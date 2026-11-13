@@ -163,6 +163,11 @@ export const DRY_MEAN_S = 4320;
 export const STREAM_DRY_MEAN_S = 2880;
 /** A body with no open sky over any of its cells (a cave pool, a roofed cistern) dries this many times slower. */
 export const ROOF_DRY_FACTOR = 10;
+/**
+ * The spring keeps a stream's head wet: when a stream that is down to a trickle (shallow) dries, its STREAM_HEAD_CELLS
+ * highest cells stay shallow, all year, whatever the drought. The rest of its bed fills again in the rain.
+ */
+export const STREAM_HEAD_CELLS = 3;
 /** A body under the open sky gains a level this often on average in full rain; a dry bed or a clay basin takes its first water as often. */
 export const FILL_MEAN_S = 360;
 /** Most seconds one `waterStep` of the debug handle runs. */
@@ -471,9 +476,33 @@ export function cycleStep(dt, random, w, env) {
       mean *= ROOF_DRY_FACTOR;
       if (!(u < lookChance(dt, mean) / body.levels[depth])) continue;
     }
-    return { kind: 'dry', q, y: found.y, r, count: body.count, stream: body.stream, quality: body.quality, writes: depthWrites(w, body, -1) };
+    // a stream down to a trickle dries from its mouth up, and its head never does (the spring behind it)
+    const writes = body.stream && depth === 1 ? streamDryWrites(w, body) : depthWrites(w, body, -1);
+    if (writes.length === 0) continue;
+    return { kind: 'dry', q, y: found.y, r, count: body.count, stream: body.stream, quality: body.quality, writes };
   }
   return null;
+}
+
+/**
+ * The writes by which a shallow STREAM dries: every shallow cell becomes AIR but its STREAM_HEAD_CELLS highest (the
+ * head, where the spring is; ties go to the smaller q, then r). A stream that is only its head any more loses nothing.
+ * @param {WaterWorld} w @param {WaterBody} body
+ * @returns {number[]} (q, y, r, id) quadruples
+ */
+export function streamDryWrites(w, body) {
+  /** @type {number[][]} */
+  const shallow = [];
+  const cells = body.cells;
+  for (let i = 0; i < cells.length; i += 3) {
+    if (waterDepth(w.peek(cells[i], cells[i + 1], cells[i + 2])) === 1) shallow.push([cells[i], cells[i + 1], cells[i + 2]]);
+  }
+  if (shallow.length * 3 !== cells.length) return depthWrites(w, body, -1); // not all shallow yet: an ordinary level
+  shallow.sort((a, b) => b[1] - a[1] || a[0] - b[0] || a[2] - b[2]);
+  /** @type {number[]} */
+  const out = [];
+  for (let i = STREAM_HEAD_CELLS; i < shallow.length; i++) out.push(shallow[i][0], shallow[i][1], shallow[i][2], BLOCK.AIR);
+  return out;
 }
 
 /**

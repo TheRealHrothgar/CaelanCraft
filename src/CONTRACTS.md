@@ -5284,6 +5284,14 @@ renderer against signals whose numbers are known.
 
 ## 83. The laws of water; pools that run out — `src/fluids.js` (PURE), `src/waterBodies.js` (PURE), `src/blocks.js`, `src/blockphysics.js`, `src/survivalControl.js`, `src/circuitParts.js`, `src/main.js`, `src/diagnostics.js`, `src/handbook.js`
 
+> **Amendment (by the lead, on merging §83 with §84):** (1) the cycle's `env` is the real weather: `rain(q, r)` is
+> `weather.rainAt(now, biome of the column)` and `dryness()` is `seasonOf(day + time).dryness`, both only while the
+> real weather is on (Survival); otherwise rain 0 and dryness 1. (2) **A stream never dries at its head.** When a
+> stream that is all shallow dries, its `STREAM_HEAD_CELLS` (3) highest cells stay shallow (ties: smaller q, then r)
+> and only the rest becomes AIR (`waterBodies.streamDryWrites`); a stream that is only its head loses nothing more.
+> The dry bed below it fills again in the rain as any dry bed does. This is the user's choice ("only the spring at a
+> stream's head keeps a little water all year") and what keeps a dry season survivable before wells and barrels.
+
 Amends §5 (blocks), §33 (the scheduler: one more context write, the fall ring, saving, undo), §35 (the water rule),
 §44 (the water hint) and §76.3 (tainted water, streams). World generation is untouched: every generation is byte for
 byte what it was, and its water is at rest under these laws.

@@ -14,7 +14,7 @@ import { createWorldGen } from '../../src/worldgen.js';
 import { BlockPhysics } from '../../src/blockphysics.js';
 import { BODY_MAX_CELLS, waterBodyAt } from '../../src/fluids.js';
 import {
-  CELL_GULPS, POT_GULPS, CYCLE_SAMPLES, CYCLE_RANGE, CYCLE_COLUMNS, DRY_MEAN_S, STREAM_DRY_MEAN_S, ROOF_DRY_FACTOR, FILL_MEAN_S,
+  CELL_GULPS, POT_GULPS, CYCLE_SAMPLES, CYCLE_RANGE, CYCLE_COLUMNS, DRY_MEAN_S, STREAM_DRY_MEAN_S, STREAM_HEAD_CELLS, streamDryWrites, ROOF_DRY_FACTOR, FILL_MEAN_S,
   WATER_STEP_MAX_S, WaterCycle, waterAt, topBody, depthWrites, drawWater, columnWater, dryBedAt, clayBasinAt, cycleStep,
   applyWaterWrites,
 } from '../../src/waterBodies.js';
@@ -577,7 +577,7 @@ describe('the water cycle: sun and rain (cycleStep)', () => {
     expect(dryBedAt(sea, 0, G, 15, false)).toBeNull();
   });
 
-  it('a dry stream comes back in the rain along its whole bed; a stream neither spills dry nor is used up, it only follows the weather', () => {
+  it('a stream in a drought dries to its head (the spring keeps three cells wet) and comes back in the rain along its whole bed', () => {
     const w = grid();
     const cells = [];
     for (let q = -6; q <= 6; q++) {
@@ -588,7 +588,8 @@ describe('the water cycle: sun and rain (cycleStep)', () => {
       cells.push([q, y, 0]);
     }
     expect(waterBodyAt(w.peek, 0, G, 0, w.springLevelAt)).toMatchObject({ count: 13, stream: true });
-    // drought: three drying events take it from full to dry, every cell together
+    // drought: three drying events take it from full to a trickle and then to its head — the three HIGHEST cells stay
+    // shallow (the spring is behind them), the rest of the bed is dry
     const rnd = mulberry32(5);
     let events = 0;
     for (let t = 0; t < 40 * STREAM_DRY_MEAN_S && events < 3; t += 5) {
@@ -597,19 +598,23 @@ describe('the water cycle: sun and rain (cycleStep)', () => {
       expect([ev.kind, ev.stream, ev.count]).toEqual(['dry', true, 13]);
       w.apply(ev.writes);
       events++;
-      expect(cells.map(([q, y, r]) => waterDepth(w.peek(q, y, r)))).toEqual(all(3 - events, 13));
+      if (events < 3) expect(cells.map(([q, y, r]) => waterDepth(w.peek(q, y, r)))).toEqual(all(3 - events, 13));
     }
     expect(events).toBe(3);
-    expect(cells.every(([q, y, r]) => w.peek(q, y, r) === B.AIR)).toBe(true);
-    simulate(w, DRY, 20 * STREAM_DRY_MEAN_S, 24, 6, () => expect.fail('a dry stream stays dry in dry weather'));
+    expect(STREAM_HEAD_CELLS).toBe(3);
+    const head = (q, y) => y === G + 1 && q <= -4; // the upper reach is q −6 … −1; its first three cells are the head
+    expect(cells.map(([q, y, r]) => w.peek(q, y, r))).toEqual(cells.map(([q, y]) => (head(q, y) ? B.WATER_SHALLOW : B.AIR)));
+    expect(waterBodyAt(w.peek, -6, G + 1, 0, w.springLevelAt)).toMatchObject({ count: 3, stream: true, depth: 1 });
+    simulate(w, DRY, 20 * STREAM_DRY_MEAN_S, 24, 6, () => expect.fail('the head of a stream never dries, and its dry bed stays dry in dry weather'));
+    expect(streamDryWrites(w, waterBodyAt(w.peek, -6, G + 1, 0, w.springLevelAt))).toEqual([]);
     // rain: the whole bed takes water at once, shallow; then it fills level by level to full
-    expect(dryBedAt(w, 3, G, 0, true)).toMatchObject({ count: 13, tainted: false });
+    expect(dryBedAt(w, 3, G, 0, true)).toMatchObject({ count: 10, tainted: false });
     const seen = [];
     for (let t = 0; t < 60 * FILL_MEAN_S && seen.length < 3; t += 1) {
       const ev = cycleStep(1, rnd, w, RAIN);
       if (!ev) continue;
       seen.push(ev.kind);
-      expect([ev.stream, ev.count]).toEqual([true, 13]);
+      expect([ev.stream, ev.count]).toEqual([true, ev.kind === 'bed' ? 10 : 13]);
       w.apply(ev.writes);
     }
     expect(seen).toEqual(['bed', 'fill', 'fill']);
