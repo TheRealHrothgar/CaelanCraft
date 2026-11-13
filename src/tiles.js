@@ -136,6 +136,9 @@ export const TILE_NAMES = Object.freeze({
   203: 'litter_stick',
   // v0.14 (§76 water)
   204: 'tainted_water',
+  // §80 farming: a planted seed and its sprout
+  205: 'seedbed',
+  206: 'sprout',
   // v0.14 (§76 flora): the wild plants of generation 3
   208: 'honeycap_mushroom',
   209: 'frecklecap_mushroom',
@@ -2991,6 +2994,75 @@ function paintHealwortPlantBare(px) {
   for (const [x, , foot] of HEALWORT_STALKS) set(px, x, foot - 2, 0xdfeacc);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// §80 farming, tiles 205–206: a planted seed and its sprout (original designs; these comments are normative). Both are
+// cut-outs on alpha 0 (RGB 0, alpha 0 or 255 only) and both stand on the same mound, so a sprout is plainly the seedbed
+// it came from. plantModels.js cuts the faces of their 3D models from these pictures: the rectangles it names are solid.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The mound's rows, [y, x0, x1]: a low heap of earth six rows high, widest on the bottom three. */
+const SEED_MOUND = Object.freeze([[10, 5, 10], [11, 3, 12], [12, 2, 13], [13, 1, 14], [14, 1, 14], [15, 1, 14]]);
+
+/**
+ * Shared mound of the two farm tiles (always painted with the "seedbed" seed, so the sprout stands on the very same
+ * earth): on alpha 0, the rows SEED_MOUND in dark tilled earth 0x5b3d26 ±5. It is 16 lighter on the crest row and on
+ * the first two pixels of the next two rows (lit from the upper left), 18 darker along row 13 (the furrow a tilled bed
+ * shows), 8 darker on the bottom row and 14 darker on the last pixel of every row. Then four pale crumbs 0x80603f at
+ * (4, 12), (9, 11), (6, 14) and (11, 14).
+ */
+function paintSeedMound(px) {
+  clearTile(px);
+  const rng = makeRng('seedbed');
+  for (const [y, x0, x1] of SEED_MOUND) {
+    for (let x = x0; x <= x1; x++) {
+      let d = delta(rng, 5);
+      if (y === 10 || (y <= 12 && x < x0 + 2)) d += 16;
+      if (y === 13) d -= 18;
+      if (y === 15) d -= 8;
+      if (x === x1) d -= 14;
+      set(px, x, y, 0x5b3d26, d);
+    }
+  }
+  for (const [x, y] of [[4, 12], [9, 11], [6, 14], [11, 14]]) set(px, x, y, 0x80603f);
+}
+
+/**
+ * 205 seedbed — a planted seed: the mound, and a short marker twig standing in it at x 7–8 from row 3 down to row 9
+ * (0xa98252 on its left pixel, 0x74552f on its right, its top row 12 lighter), with a pale rag tied to it as a flag on
+ * rows 4–5 at x 9–11 (0xe2cf9a, the lower row 0xbfa66a). Nothing green: the seed has not come up.
+ */
+function paintSeedbed(px) {
+  paintSeedMound(px);
+  for (let y = 3; y <= 9; y++) {
+    set(px, 7, y, 0xa98252, y === 3 ? 12 : 0);
+    set(px, 8, y, 0x74552f, y === 3 ? 12 : 0);
+  }
+  span(px, 4, 9, 11, 0xe2cf9a);
+  span(px, 5, 9, 11, 0xbfa66a);
+}
+
+/**
+ * 206 sprout — the seed has come up: the same mound, a green stem at x 7–8 from row 5 down to row 9 (0x5fa83c on its
+ * left pixel, 0x3f7f2c on its right) and two seed leaves spread like a Y. The left leaf lies on rows 3–5 (x 2–5, 1–6,
+ * 2–6), the right one a row higher on rows 2–4 (x 10–13, 9–14, 9–13): bright 0x7fca4e, 18 lighter on a leaf's top row,
+ * 20 darker on its bottom row, with a midrib 0x4f9a3a along its middle row but for the two end pixels.
+ */
+function paintSprout(px) {
+  paintSeedMound(px);
+  for (let y = 5; y <= 9; y++) {
+    set(px, 7, y, 0x5fa83c);
+    set(px, 8, y, 0x3f7f2c);
+  }
+  for (const rows of [[[3, 2, 5], [4, 1, 6], [5, 2, 6]], [[2, 10, 13], [3, 9, 14], [4, 9, 13]]]) {
+    rows.forEach(([y, x0, x1], k) => {
+      for (let x = x0; x <= x1; x++) {
+        if (k === 1 && x > x0 && x < x1) set(px, x, y, 0x4f9a3a);
+        else set(px, x, y, 0x7fca4e, k === 0 ? 18 : k === 2 ? -20 : 0);
+      }
+    });
+  }
+}
+
 /** @type {Readonly<Record<string, (px: Uint8ClampedArray, rng: Rng) => void>>} */
 const RECIPES = Object.freeze({
   stone: paintStone,
@@ -3102,6 +3174,8 @@ const RECIPES = Object.freeze({
   healwort_plant: paintHealwortPlant,
   healwort_plant_bare: paintHealwortPlantBare,
   tainted_water: paintTaintedWater, // v0.14 (§76 water)
+  seedbed: paintSeedbed, // §80 farming
+  sprout: paintSprout,
   ground_nest: paintGroundNest,
   ground_nest_empty: paintGroundNestEmpty,
   litter_nest: paintLitterNest,

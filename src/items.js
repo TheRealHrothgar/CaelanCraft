@@ -113,6 +113,9 @@ const MATERIAL_ROWS = [
   // v0.14 (§76 fauna): feathers come off pheasants and wild turkeys (and out of their nests); a dart fletched with them
   // flies faster and straighter than the plain Flint Dart, hits harder and breaks less often (looseItems THROW_FLETCHED)
   ['feather', 'Feather', 32], ['fletched_dart', 'Fletched Dart', 16],
+  // §80 farming: seed shaken out of a picked Wild Carrot, a Wild Onion or a cut Healwort. R plants one on grass or dirt
+  // (farming.js PLANTABLE); the other crops are planted from the food itself (a tuber, a berry, a nut, a fruit, a root).
+  ['carrot_seeds', 'Carrot Seeds', 32], ['onion_seeds', 'Onion Seeds', 32], ['healwort_seeds', 'Healwort Seeds', 32],
 ];
 
 /**
@@ -363,6 +366,7 @@ export const SINGULAR_NAMES = Object.freeze({
   honeyberries: 'Honeyberry', acorns: 'Acorn', leached_acorns: 'Leached Acorn', roasted_acorns: 'Roasted Acorn',
   pine_nuts: 'Pine Nut', glass_shards: 'Glass Shard', iron_filings: 'Iron Filing',
   hazelnuts: 'Hazelnut', roasted_hazelnuts: 'Roasted Hazelnut', // v0.14 (§76 flora)
+  carrot_seeds: 'Carrot Seed', onion_seeds: 'Onion Seed', healwort_seeds: 'Healwort Seed', // §80 farming
 });
 
 /**

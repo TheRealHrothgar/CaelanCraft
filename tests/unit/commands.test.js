@@ -253,7 +253,12 @@ describe('resolveBlock', () => {
     // v0.14 (§76 flora): the Honeycap Mushroom shares "honeyc" with the Honeycomb Block, so one more letter is needed.
     expect(resolveBlock('honeyco')).toEqual({ id: B.HONEYCOMB_BLOCK });
     expect(resolveBlock('honeyca')).toEqual({ id: B.HONEYCAP_MUSHROOM });
-    expect(resolveBlock('honey')).toEqual({ error: 'ambiguous block "honey": honeycomb_block, honeyberry_bush, honeyberry_bush_bare, honeycap_mushroom' });
+    // §80 farming: the Honeyberry Bush Sprout (honeyberry_sprout) joins the list.
+    expect(resolveBlock('honey')).toEqual({ error: 'ambiguous block "honey": honeycomb_block, honeyberry_bush, honeyberry_bush_bare, honeycap_mushroom, honeyberry_sprout' });
+    expect(resolveBlock('planted_carrot')).toEqual({ id: B.PLANTED_CARROT });
+    expect(resolveBlock('carrot_sprout')).toEqual({ id: B.CARROT_SPROUT });
+    expect(resolveBlock('Wild Carrot Sprout')).toEqual({ id: B.CARROT_SPROUT });
+    expect(resolveBlock('carrot')).toEqual({ error: 'ambiguous block "carrot": carrot_plant, carrot_sprout' }); // it named the plant alone before §80
     expect(resolveBlock('light_blue_wool')).toEqual({ id: B.WOOL_LIGHT_BLUE });
     expect(resolveBlock('block_of_gold')).toEqual({ id: B.GOLD_BLOCK });
     expect(resolveBlock('diamond')).toEqual({ error: 'ambiguous block "diamond": diamond_ore, diamond_block' });

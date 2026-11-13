@@ -8,7 +8,8 @@ import {
 import { BLOCK, getBlockDef, isPopOff, isReplaceable, isSolid, isWater } from './blocks.js';
 import { getItem, hasTag, itemName, maxDurability } from './items.js';
 import { isPickable, tap, toolPower, DIG_TOOL_TYPES } from './harvest.js';
-import { HEX_DIRS } from './hex.js';
+import { HEX_DIRS, FACE_TOP } from './hex.js';
+import { plantAt } from './farming.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 /** @typedef {import('./types.js').ToolDef} ToolDef */
@@ -276,7 +277,8 @@ export function strikeKind(mob, tool) {
 // R (§9.4)
 
 /**
- * @typedef {{q: number, y: number, r: number, blockId: number, distance?: number}} TargetHit  a RaycastHit (or its fields)
+ * @typedef {{q: number, y: number, r: number, blockId: number, distance?: number, face?: number}} TargetHit  a RaycastHit (or
+ *   its fields; `face` is the FaceIndex the ray entered through, read by the planting step)
  */
 
 /**
@@ -297,18 +299,21 @@ export function strikeKind(mob, tool) {
  *   feet (main: `!!stations[id]` from crafting.findStations); absent → every targeted workplace counts as near
  * @property {(id: number) => boolean} [partR]  v0.10 (DESIGN-circuits §4.9): the targeted block is a circuit part with an R
  *   action of its own (main: circuits on and main.hasRAction); absent → no circuit steps (no `circuit`, no `pocket`)
+ * @property {(q: number, y: number, r: number) => number} [getBlock]  the world, for the planting step of §80 (the soil
+ *   and the cell above it); absent → no `plant`
  */
 
 /**
  * @typedef {Object} InteractAction
  * @property {string} kind  fire_put | fire_feed | fire_take | fire_hint | pit_take | pit_relight | pit_hint | pick | tap |
  *   tap_hint | basket | belongings | hide | station | station_far | fill | drink | drink_here | read | circuit | fuse_hint |
- *   pocket (v0.10)
+ *   pocket (v0.10) | plant (§80)
  * @property {number} [q] @property {number} [y] @property {number} [r]   the cell acted on (the water cell for fill/drink)
- * @property {string} [key]      fire_put / fire_feed: the selected item
+ * @property {string} [key]      fire_put / fire_feed / plant: the selected item
  * @property {'skewer'|'centre'} [spot]  fire_put
  * @property {number} [seconds]  fire_feed: fuel one item adds (FUEL_STICK_S or FUEL_LOG_S)
  * @property {number} [id]       pick: the block picked
+ * @property {number} [block]    plant: the PLANTED_* block to write in the cell above (q, y, r), the soil
  * @property {number} [needS]    tap / pit_relight: seconds R must be held
  * @property {string} [station]  station: its id ('stump', 'kiln', 'bloomery', 'forge')
  * @property {boolean} [salty]   fill / drink, when the context gives `salty` (or `waterQuality`: quality === 'salt')
@@ -336,6 +341,9 @@ function anyFree(spots, from, to) {
  *    Making does not count it as near;
  * 7b. v0.10 (DESIGN-circuits §4.9, §8.3): a circuit part with an R action of its own (`partR`) → `circuit` (main runs
  *    circuits.interact 'r'); a Powder Fuse without a Fire Drill in the pack → `fuse_hint` instead;
+ * 7c. §80: a plantable item is selected (farming.PLANTABLE) and the ray entered the TOP of a block that is soil for its
+ *    crop, with AIR above → `plant` (hint `Grass Block · R: plant Carrot Seeds`; `getBlock` must be given). Soil is
+ *    none of the blocks of cases 1–7b, so whatever R did before, it still does: a plant in the crosshair is picked;
  * 8. `waterHit` is water nearer than `hit` (or there is no hit) → `fill` with an empty clay pot selected, else `drink`;
  * 9. the head is under water → `drink_here`;
  * 10. the handbook is selected → `read` (§14.2: before the rune and the keg explanation);
@@ -397,6 +405,10 @@ export function interactKind(c) {
     if (c.partR && c.partR(id)) {
       if (id === BLOCK.POWDER_FUSE && !c.pack.hasTool('firestarter', 0)) return { kind: 'fuse_hint', q, y, r, hint: HINT.fuseNeedsDrill };
       return { kind: 'circuit', q, y, r };
+    }
+    if (sel && c.getBlock && h.face === FACE_TOP) {
+      const planting = plantAt(c.getBlock, sel, q, y, r);
+      if (planting) return { kind: 'plant', q, y, r, key: sel, block: planting.block, hint: planting.hint };
     }
   }
   if (waterFirst) {

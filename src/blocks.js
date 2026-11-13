@@ -54,8 +54,14 @@ export const BLOCK = Object.freeze({
   HAZEL_THICKET_BARE: 127, CRAB_APPLE_BUSH: 128, CRAB_APPLE_BUSH_BARE: 129, HEALWORT_PLANT: 130, HEALWORT_PLANT_BARE: 131,
   // v0.14 (§76 fauna): the nest once its eggs are taken (a hen lays in it again)
   GROUND_NEST_EMPTY: 132,
+  // §80 farming: a seed in the ground and the sprout it becomes, one of each per crop kind, in CROP_ROWS order.
+  // The id carries the whole state of a planted cell (farming.js Growth reads it), so a save needs no field for it.
+  PLANTED_CARROT: 133, PLANTED_ONION: 134, PLANTED_TUBER: 135, PLANTED_HONEYBERRY: 136, PLANTED_HAZEL: 137,
+  PLANTED_CRAB_APPLE: 138, PLANTED_HEALWORT: 139, PLANTED_PRICKLY_PEAR: 140, PLANTED_CATTAILS: 141,
+  CARROT_SPROUT: 142, ONION_SPROUT: 143, TUBER_SPROUT: 144, HONEYBERRY_SPROUT: 145, HAZEL_SPROUT: 146,
+  CRAB_APPLE_SPROUT: 147, HEALWORT_SPROUT: 148, PRICKLY_PEAR_SPROUT: 149, CATTAILS_SPROUT: 150,
 });
-export const BLOCK_COUNT = 133;
+export const BLOCK_COUNT = 151;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -101,8 +107,11 @@ export const TILE = Object.freeze({
   // v0.13 (CONTRACTS §75): the skins of the 3D ground litter (a rock, a flint nodule, a stick). 204 was the Flinty Gravel's
   // (withdrawn, §76) and is free.
   LITTER_ROCK: 201, LITTER_FLINT: 202, LITTER_STICK: 203,
-  // v0.14 (§76 water): the murky green-brown of Tainted Water (204; 205–207 are unused)
+  // v0.14 (§76 water): the murky green-brown of Tainted Water (204)
   TAINTED_WATER: 204,
+  // §80 farming: a mound of tilled earth with a marker twig, and the same mound with a two-leaf seedling. Every
+  // planted block shares the first and every sprout the second (207 is unused).
+  SEEDBED: 205, SPROUT: 206,
   // v0.14 (§76 flora): the new wild plants, one sprite each (218–227 of the flora range are unused)
   HONEYCAP_MUSHROOM: 208, FRECKLECAP_MUSHROOM: 209, ONION_PLANT: 210, CARROT_PLANT: 211, HAZEL_THICKET: 212,
   HAZEL_THICKET_BARE: 213, CRAB_APPLE_BUSH: 214, CRAB_APPLE_BUSH_BARE: 215, HEALWORT_PLANT: 216, HEALWORT_PLANT_BARE: 217,
@@ -155,7 +164,8 @@ export const SOUND_GROUPS = Object.freeze([
  *                                  and ground litter, which are sprites and decals)
  * @property {'prism'|'model'|'decal'|'litter'} shape  how the chunk mesher draws it: 'prism' (default) the hexagonal prism;
  *                                  'model' a small 3D model of boxes and leaf cards cut from the block's TOP tile (the wild
- *                                  plants: plantModels.js, CONTRACTS §78; they were three crossed pictures until v0.15);
+ *                                  plants: plantModels.js, CONTRACTS §78; they were three crossed pictures until v0.15;
+ *                                  and the planted seeds and sprouts of §80);
  *                                  'decal' one flat picture of the TOP tile lying on the cell's floor (the snares); 'litter'
  *                                  a few small 3D pieces lying on the floor (loose stones, fallen branches: CONTRACTS §75).
  *                                  The terrain stays hexagonal prisms.
@@ -245,6 +255,19 @@ const WOOL_COLORS = [
   ['LIGHT_BLUE', 'Light Blue'], ['BLUE', 'Blue'], ['PURPLE', 'Purple'], ['MAGENTA', 'Magenta'], ['PINK', 'Pink'],
   ['BROWN', 'Brown'], ['BLACK', 'Black'], ['GRAY', 'Gray'], ['LIGHT_GRAY', 'Light Gray'],
 ];
+
+/**
+ * The nine crop kinds of §80, in block-id order: [BLOCK key suffix, kind key, the crop's name]. The name is the display
+ * name of the plant the crop grows into, less a closing " Plant": "Planted Wild Carrot", "Wild Carrot Sprout".
+ * farming.js CROPS has the rest of each row (what it is planted from, its soil, what it grows into).
+ * @type {ReadonlyArray<readonly [string, string, string]>}
+ */
+export const CROP_ROWS = Object.freeze(/** @type {Array<readonly [string, string, string]>} */ ([
+  ['CARROT', 'carrot', 'Wild Carrot'], ['ONION', 'onion', 'Wild Onion'], ['TUBER', 'tuber', 'Wild Tuber'],
+  ['HONEYBERRY', 'honeyberry', 'Honeyberry Bush'], ['HAZEL', 'hazel', 'Hazel Thicket'],
+  ['CRAB_APPLE', 'crab_apple', 'Crab Apple Bush'], ['HEALWORT', 'healwort', 'Healwort'],
+  ['PRICKLY_PEAR', 'prickly_pear', 'Prickly Pear'], ['CATTAILS', 'cattails', 'Cattails'],
+]).map((row) => Object.freeze(row)));
 
 /** @type {BlockDef[]} indexed by id */
 export const BLOCKS = [
@@ -404,6 +427,15 @@ export const BLOCKS = [
   def({ id: B.HEALWORT_PLANT_BARE, name: 'healwort_plant_bare', displayName: 'Cut Healwort Plant', tiles: tiles(T.HEALWORT_PLANT_BARE), ...SPRITE, soundGroup: 'grass', placeable: false }),
   // v0.14 (§76 fauna): the nest once its eggs are taken
   def({ id: B.GROUND_NEST_EMPTY, name: 'ground_nest_empty', displayName: 'Empty Nest', tiles: tiles(T.GROUND_NEST_EMPTY), ...LITTER, soundGroup: 'grass', placeable: false }),
+  // ---- §80 farming: a planted seed (133–141) and its sprout (142–150), one of each per crop kind. Small 3D models
+  // (SPRITE) like the plants: every planted block is the one seedbed, every sprout the one seedling. Never placed by
+  // hand (R with a seed plants one: farming.js), so they have no picker entry and no item; they pop off like a plant.
+  ...CROP_ROWS.map(([key, name, label]) => def({
+    id: B[`PLANTED_${key}`], name: `planted_${name}`, displayName: `Planted ${label}`, tiles: tiles(T.SEEDBED), ...SPRITE, soundGroup: 'grass', placeable: false,
+  })),
+  ...CROP_ROWS.map(([key, name, label]) => def({
+    id: B[`${key}_SPROUT`], name: `${name}_sprout`, displayName: `${label} Sprout`, tiles: tiles(T.SPROUT), ...SPRITE, soundGroup: 'grass', placeable: false,
+  })),
 ];
 
 /**
@@ -462,11 +494,17 @@ export const PLANT_IDS = Object.freeze([
 ]);
 
 /**
- * The 21 pop-off ids (§8.5), in id order: CAMPFIRE, the plants, the two kinds of litter and FIRE_PIT. A pop-off block
- * breaks (is written AIR and drops nothing) when the cell below it becomes fall-through.
+ * The 18 farm ids of §80, in id order: the nine planted blocks (133–141), then the nine sprouts (142–150). They are not
+ * wild plants (`isPlant` is false: nothing generates them, nothing picks them), but they pop off like one.
+ */
+export const FARM_IDS = Object.freeze(Array.from({ length: 2 * CROP_ROWS.length }, (_, i) => B.PLANTED_CARROT + i));
+
+/**
+ * The 39 pop-off ids (§8.5), in id order: CAMPFIRE, the plants, the two kinds of litter, FIRE_PIT and, since §80, the 18
+ * farm blocks. A pop-off block breaks (is written AIR and drops nothing) when the cell below it becomes fall-through.
  */
 export const POP_OFF_IDS = Object.freeze(
-  [B.CAMPFIRE, ...PLANT_IDS, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT].sort((a, b) => a - b),
+  [B.CAMPFIRE, ...PLANT_IDS, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT, ...FARM_IDS].sort((a, b) => a - b),
 );
 
 /** @returns {BlockDef} the block definition; unknown ids return the AIR definition */
@@ -543,9 +581,13 @@ export function isPlant(id) {
 export function isLitter(id) {
   return id === B.LOOSE_STONES || id === B.FALLEN_BRANCHES;
 }
-/** CAMPFIRE, FIRE_PIT, a plant or litter (`POP_OFF_IDS`): breaks when the cell below becomes fall-through (§8.5). */
+/** A planted seed or a sprout (§80; `FARM_IDS`: 133–150). */
+export function isFarmBlock(id) {
+  return id >= B.PLANTED_CARROT && id <= B.CATTAILS_SPROUT;
+}
+/** CAMPFIRE, FIRE_PIT, a plant, litter or a farm block (`POP_OFF_IDS`): breaks when the cell below becomes fall-through (§8.5). */
 export function isPopOff(id) {
-  return id === B.CAMPFIRE || id === B.FIRE_PIT || isPlant(id) || isLitter(id);
+  return id === B.CAMPFIRE || id === B.FIRE_PIT || isPlant(id) || isLitter(id) || isFarmBlock(id);
 }
 /** A workplace (§7.1): WORK_STUMP, KILN, BLOOMERY or FORGE. */
 export function isStation(id) {

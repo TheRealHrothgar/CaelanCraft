@@ -5,7 +5,7 @@
 // 16 × 16 tile — the picture the Pack shows — so the model and its icon are plainly the same plant. All sizes are in
 // TEXELS (16 to the metre, the terrain's own density); x and z are measured from the middle of the cell, y from its
 // floor. compilePlantModel turns a part list into flat quads the chunk mesher copies out, turned and sized per cell.
-import { BLOCK, TILE } from './blocks.js';
+import { BLOCK, TILE, FARM_IDS } from './blocks.js';
 
 /** Texels per metre. */
 export const PLANT_TEXELS = 16;
@@ -326,6 +326,33 @@ const PRICKLY_PEAR = [
 ];
 
 /**
+ * The farm blocks (CONTRACTS §80). A planted seed is a low mound of tilled earth in two steps with a short marker twig
+ * standing in it, a pale rag tied to the twig; a sprout is the same mound with a two-leaf seedling. Every planted
+ * block shares the first model and every sprout the second: what was planted is told by the block's name.
+ */
+const SEED_MOUND = [
+  box([0, 0, 0], [10, 1.5, 10], [2, 14, 10, 2], { top: [2, 12, 10, 4] }),
+  box([0, 1.5, 0], [7, 1.5, 7], [4, 12, 7, 2], { top: [4, 11, 7, 3] }),
+];
+const SEEDBED = [
+  ...SEED_MOUND,
+  group([1, 3, -0.5], { lean: 0.1 }, [
+    box([0, 0, 0], [1.5, 6, 1.5], [7, 3, 2, 6], { top: [7, 3, 2, 1] }),
+    box([0, 3.5, -2.25], [0.75, 2, 3], [9, 4, 1, 2], { end: [9, 4, 3, 2], top: [9, 4, 3, 1], under: [9, 5, 3, 1] }),
+  ]),
+];
+/** @param {number} yaw @param {Rect} top @param {Rect} edge @returns {PlantPart} one seed leaf, lifting away from the stem */
+const seedLeaf = (yaw, top, edge) => group([0, 6.5, 0], { yaw, lean: -0.5 }, [
+  box([3, 0, 0], [5, 1, 3.5], edge, { top, under: edge }),
+]);
+const SPROUT = [
+  ...SEED_MOUND,
+  box([0, 3, 0], [1.5, 4, 1.5], [7, 6, 2, 4], { top: [7, 5, 2, 1] }),
+  seedLeaf(0.3, [2, 3, 4, 3], [2, 5, 4, 1]),
+  seedLeaf(0.3 + Math.PI, [10, 2, 4, 3], [10, 4, 4, 1]),
+];
+
+/**
  * @typedef {Object} PlantModelDef
  * @property {PlantPart[]} parts
  * @property {boolean} [bare]  a picked plant: the same parts less the fruit, cut from the picked block's own tile
@@ -354,6 +381,8 @@ export const PLANT_MODELS = Object.freeze({
   [BLOCK.TUBER_PLANT]: { parts: TUBER },
   [BLOCK.PRICKLY_PEAR]: { parts: PRICKLY_PEAR },
   [BLOCK.PRICKLY_PEAR_BARE]: { parts: PRICKLY_PEAR, bare: true },
+  // §80: the nine planted blocks are one seedbed, the nine sprouts one seedling (FARM_IDS: planted first, then sprouts)
+  ...Object.fromEntries(FARM_IDS.map((id) => [id, { parts: id < BLOCK.CARROT_SPROUT ? SEEDBED : SPROUT }])),
 });
 
 /**

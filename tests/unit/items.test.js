@@ -69,6 +69,7 @@ const MATERIALS = {
   flint_dart: ['Flint Dart', 16], // v0.10 throwing (CONTRACTS §60)
   handbook: ['Survival Handbook', 1], // §14: added by package H
   feather: ['Feather', 32], fletched_dart: ['Fletched Dart', 16], // v0.14 (§76 fauna)
+  carrot_seeds: ['Carrot Seeds', 32], onion_seeds: ['Onion Seeds', 32], healwort_seeds: ['Healwort Seeds', 32], // §80 farming
 };
 
 /** §5.1 / §4.5 food: key → [display name, stack, satiation, hydration, sick, useS, extra]. */
@@ -224,8 +225,9 @@ describe('items — the registry', () => {
     const count = (kind) => ITEM_KEYS.filter((k) => ITEMS[k].kind === kind).length;
     // v0.14 (§76): + 14 foods and the 7 placeable plants (flora), + the Pot of Tainted Water (water), + feather, fletched dart and
     // twelve game foods (fauna)
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 48, 52, 2, 5, 107]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(248); // + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna)
+    // §80: + the three seeds (materials). The 18 farm blocks are not placeable, so they are no items.
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 52, 2, 5, 107]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(251); // + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -338,7 +340,7 @@ describe('items — the registry', () => {
     expect(resolveItem('Survival Handbook')).toEqual({ key: 'handbook' });
     // the last material of the first releases; v0.14's feather and Fletched Dart follow it (§76 fauna)
     const materials = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'material');
-    expect(materials.slice(materials.indexOf('handbook'))).toEqual(['handbook', 'feather', 'fletched_dart']);
+    expect(materials.slice(materials.indexOf('handbook'))).toEqual(['handbook', 'feather', 'fletched_dart', 'carrot_seeds', 'onion_seeds', 'healwort_seeds']); // + the seeds (§80)
   });
   it('every key the rest of the design names exists (drops, picks, fire spots, recipes, workplaces)', () => {
     for (const key of REFERENCED) expect(isItemKey(key), key).toBe(true);

@@ -10,7 +10,7 @@ import { paintTile, averageColor, TILE_NAMES } from '../../src/tiles.js';
 import { ITEMS, ITEM_KEYS, getItem, itemForBlock, blockForItem, itemName } from '../../src/items.js';
 import { paintItem, hasItemArt } from '../../src/itemArt.js';
 import {
-  PICKABLE, RIPE_OF, Regrowth, isPickable, pick, rollDrops, ripeOf, breakSeconds, handGatherHint,
+  PICKABLE, RIPE_OF, Regrowth, isPickable, pick, rollDrops, ripeOf, breakSeconds, handGatherHint, SEED_DROPS,
 } from '../../src/harvest.js';
 import { FIRE_TRANSFORMS, SKEWER_FOODS, FireSlots, isSkewerFood } from '../../src/cooking.js';
 import { RECIPES } from '../../src/crafting.js';
@@ -74,8 +74,8 @@ const mask = (px) => pixels(px).map((p) => p[3] === 255);
 
 describe('the plant blocks 122–131 (blocks.js)', () => {
   it('ids, names, flags and tiles: 3D models (§78) with the PLANT flags, flat icons, ids 122–131', () => {
-    expect(BLOCK_COUNT).toBe(133);
-    expect(BLOCKS).toHaveLength(133);
+    expect(BLOCK_COUNT).toBe(151); // §80: the 18 farm blocks follow at 133–150
+    expect(BLOCKS).toHaveLength(151);
     for (const [key, id, name, displayName, sound, tile, placeable] of PLANTS) {
       expect(B[key], key).toBe(id);
       const d = BLOCKS[id];
@@ -95,7 +95,7 @@ describe('the plant blocks 122–131 (blocks.js)', () => {
       expect(popOffEffect(id).color, key).toHaveLength(3);
     }
     expect(PLANT_IDS.slice(7)).toEqual(PLANT_BLOCK_IDS);
-    expect(POP_OFF_IDS.slice(-10)).toEqual(PLANT_BLOCK_IDS);
+    expect(POP_OFF_IDS.slice(-28, -18)).toEqual(PLANT_BLOCK_IDS); // the last 18 are the farm blocks (§80)
   });
 
 
@@ -353,12 +353,22 @@ describe('gathering (harvest.js)', () => {
       [B.HAZEL_THICKET, B.HAZEL_THICKET_BARE, 'hazelnuts', [1, 3]], [B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE, 'crab_apple', [2, 3]],
       [B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE, 'healwort', [1, 1]],
     ];
+    // §80: a ripe onion, carrot or Healwort also gives its seed, on a roll of its own after the crop's
+    const SEED = { [B.ONION_PLANT]: ['onion_seeds', 2], [B.CARROT_PLANT]: ['carrot_seeds', 2], [B.HEALWORT_PLANT]: ['healwort_seeds', 1] };
     for (const [id, to, key, [lo, hi]] of rows) {
       expect(isPickable(id), key).toBe(true);
-      expect(pick(id, {}, seq(0)), key).toEqual({ to, drops: [{ k: key, n: lo }] });
+      const seed = SEED[id];
+      // every roll 0: the fewest of the crop, and the seed's chance comes up (with the fewest seeds)
+      expect(pick(id, {}, seq(0)), key).toEqual({ to, drops: seed ? [{ k: key, n: lo }, { k: seed[0], n: 1 }] : [{ k: key, n: lo }] });
+      // every roll 0.999: the most of the crop, and no seed
       expect(pick(id, {}, seq(0.999)), key).toEqual({ to, drops: [{ k: key, n: hi }] });
+      // the seed's chance comes up and its count rolls high: 1–2 seeds of a root, one of the Healwort
+      if (seed) expect(asMap(pick(id, {}, seq(...(lo === hi ? [] : [0.999]), 0, 0.999)).drops), key).toEqual({ [key]: hi, [seed[0]]: seed[1] });
       expect(handGatherHint(id), key).toBeNull(); // R picks it: the hint is main's "… · R: pick"
     }
+    expect([SEED_DROPS.carrot, SEED_DROPS.onion, SEED_DROPS.healwort]).toEqual([
+      { k: 'carrot_seeds', n: [1, 2], p: 0.5 }, { k: 'onion_seeds', n: [1, 2], p: 0.5 }, { k: 'healwort_seeds', n: 1, p: 0.35 },
+    ]);
     // the picked variants give nothing more until they regrow
     for (const id of [B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT_BARE]) {
       expect(isPickable(id)).toBe(false);
@@ -369,8 +379,10 @@ describe('gathering (harvest.js)', () => {
   });
 
   it('breaking by hand gives what a pick gives and destroys the plant; a shovel digs more roots and lifts the plants whole', () => {
-    const hand = (id, r = 0) => asMap(rollDrops(id, null, {}, seq(r)));
-    const dug = (id, r = 0) => asMap(rollDrops(id, SHOVEL, {}, seq(r)));
+    // (the seeds of §80 are left out here: their roll is tested below)
+    const crop = (stacks) => asMap(stacks.filter((s) => !/_seeds$/.test(s.k)));
+    const hand = (id, r = 0) => crop(rollDrops(id, null, {}, seq(r)));
+    const dug = (id, r = 0) => crop(rollDrops(id, SHOVEL, {}, seq(r)));
     expect(hand(B.HONEYCAP_MUSHROOM)).toEqual({ honeycap: 1 });
     expect(dug(B.FRECKLECAP_MUSHROOM, 0.999)).toEqual({ frecklecap: 2 }); // a mushroom is not transplanted
     expect([hand(B.ONION_PLANT), hand(B.ONION_PLANT, 0.999)]).toEqual([{ wild_onion: 1 }, { wild_onion: 2 }]);
@@ -387,6 +399,13 @@ describe('gathering (harvest.js)', () => {
     expect(hand(B.HEALWORT_PLANT_BARE)).toEqual({});
     expect(dug(B.HEALWORT_PLANT)).toEqual({ healwort_plant: 1, healwort: 1 });
     expect(dug(B.HEALWORT_PLANT_BARE)).toEqual({ healwort_plant: 1 });
+    // §80: broken ripe, by hand or with a shovel, the three seed plants give their seed as a pick does
+    const all = (id, tool) => asMap(rollDrops(id, tool, {}, seq(0)));
+    expect(all(B.ONION_PLANT, null)).toEqual({ wild_onion: 1, onion_seeds: 1 });
+    expect(all(B.CARROT_PLANT, SHOVEL)).toEqual({ wild_carrot: 1, carrot_seeds: 1 });
+    expect(all(B.HEALWORT_PLANT, null)).toEqual({ healwort: 1, healwort_seeds: 1 });
+    expect(all(B.HEALWORT_PLANT, SHOVEL)).toEqual({ healwort_plant: 1, healwort: 1, healwort_seeds: 1 });
+    expect(all(B.HEALWORT_PLANT_BARE, SHOVEL)).toEqual({ healwort_plant: 1 }); // a cut one has no seed left
     // quick to break, a shovel quicker
     for (const id of PLANT_BLOCK_IDS) {
       expect(breakSeconds(id, null), BLOCKS[id].name).toBeLessThanOrEqual(0.6);

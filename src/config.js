@@ -346,7 +346,7 @@ export const PIG_REPOP_MAX = 48;                    // … and max
 export const ZOMBIE_DAMAGE = 8;                     // HP per zombie strike in Survival (the push is unchanged)
 export const FIRE_BURN_DAMAGE = 4;                  // HP per campfire scorch (at most one per 0.5 s)
 // Regrowth (§6.5)
-export const REGROW_MEAN_S = 600;                   // a picked bush regrows after about 10 real minutes on average
+export const REGROW_MEAN_S = 2880;                  // a picked bush regrows after about two game days on average (§80; it was 600)
 export const MAX_REGROW_TRACKED = 4096;
 
 // ---- Circuits (§50–§53; docs/DESIGN-circuits.md §4, §6.3). Volts are whole VOLT_UNITs; rates per real second.

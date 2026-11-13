@@ -11,6 +11,7 @@ import { REGROW_MEAN_S, MAX_REGROW_TRACKED, SEA_LEVEL } from './config.js';
 import { BLOCK, BLOCK_COUNT, getBlockDef, FLINT_SHARE } from './blocks.js';
 import { TIER_NAMES, TIER_SPEED, itemForBlock } from './items.js';
 import { forEachEditedCell } from './coords.js';
+import { CROPS, SEED_BACK_P } from './farming.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 /** @typedef {import('./types.js').ToolDef} ToolDef */
@@ -39,6 +40,16 @@ import { forEachEditedCell } from './coords.js';
 
 /** v0.14 (§76): the chance that digging a cell of wild gravel gives a Flint. */
 export const GRAVEL_FLINT_P = 0.12;
+/**
+ * §80 farming: the seed a ripe plant also gives, picked with R or broken. A Wild Carrot and a Wild Onion give 1–2 of
+ * their seeds half the time; a cut Healwort gives one of its seeds about one time in three.
+ * @type {Readonly<Record<string, DropItem>>}
+ */
+export const SEED_DROPS = deepFreeze({
+  carrot: drop('carrot_seeds', [1, 2], { p: 0.5 }),
+  onion: drop('onion_seeds', [1, 2], { p: 0.5 }),
+  healwort: drop('healwort_seeds', 1, { p: 0.35 }),
+});
 /** Breaking with the head under water takes this many times longer (§6.1). */
 export const UNDERWATER_DIG_FACTOR = 2.5;
 /** No block breaks faster than this (s). */
@@ -142,13 +153,14 @@ set([B.TUBER_PLANT], 0.4, 'shovel', 0, [[
 // (its item places the picked variant, which must regrow). Breaking a Healwort by hand is the mistake to avoid.
 set([B.HONEYCAP_MUSHROOM], 0.2, null, 0, [always(drop('honeycap', [1, 2]))]);
 set([B.FRECKLECAP_MUSHROOM], 0.2, null, 0, [always(drop('frecklecap', [1, 2]))]);
-set([B.ONION_PLANT], 0.4, 'shovel', 0, [[when('shovel', drop('wild_onion', [2, 3])), when(null, drop('wild_onion', [1, 2]))]]);
-set([B.CARROT_PLANT], 0.4, 'shovel', 0, [[when('shovel', drop('wild_carrot', [1, 2])), when(null, drop('wild_carrot', 1))]]);
+// §80: a ripe onion, carrot or Healwort also gives its seed (SEED_DROPS), however it is taken.
+set([B.ONION_PLANT], 0.4, 'shovel', 0, [[when('shovel', drop('wild_onion', [2, 3])), when(null, drop('wild_onion', [1, 2]))], always(SEED_DROPS.onion)]);
+set([B.CARROT_PLANT], 0.4, 'shovel', 0, [[when('shovel', drop('wild_carrot', [1, 2])), when(null, drop('wild_carrot', 1))], always(SEED_DROPS.carrot)]);
 set([B.HAZEL_THICKET], 0.6, 'shovel', 0, [[when('shovel', drop('hazel_thicket'))], always(drop('hazelnuts', [1, 3])), always(drop('stick', [2, 3]))]);
 set([B.HAZEL_THICKET_BARE], 0.6, 'shovel', 0, [[when('shovel', drop('hazel_thicket'))], always(drop('stick', [2, 3]))]);
 set([B.CRAB_APPLE_BUSH], 0.6, 'shovel', 0, [[when('shovel', drop('crab_apple_bush'))], always(drop('crab_apple', [2, 3])), always(drop('stick', [1, 2]))]);
 set([B.CRAB_APPLE_BUSH_BARE], 0.6, 'shovel', 0, [[when('shovel', drop('crab_apple_bush'))], always(drop('stick', [1, 2]))]);
-set([B.HEALWORT_PLANT], 0.3, 'shovel', 0, [[when('shovel', drop('healwort_plant'))], always(drop('healwort', 1))]);
+set([B.HEALWORT_PLANT], 0.3, 'shovel', 0, [[when('shovel', drop('healwort_plant'))], always(drop('healwort', 1)), always(SEED_DROPS.healwort)]);
 set([B.HEALWORT_PLANT_BARE], 0.3, 'shovel', 0, [[when('shovel', drop('healwort_plant'))]]);
 // Wood
 set([B.OAK_LOG, B.SPRUCE_LOG], 3.0, 'axe', 1, SELF_DROPS);
@@ -213,6 +225,11 @@ set([B.COLLAPSAR_CHARGE], 1.5, 'pick', 0, SELF_DROPS); // Creative-made only, bu
 // (PICKABLE below), which also leaves the nest for the hen to lay in again.
 set([B.GROUND_NEST], 0.3, null, 0, [always(drop('raw_egg', [1, 2])), always(drop('plant_fibre', 1))]);
 set([B.GROUND_NEST_EMPTY], 0.3, null, 0, [always(drop('plant_fibre', 1))]);
+// §80 farming: a planted seed dug out by hand comes back about half the time (SEED_BACK_P); a sprout gives nothing.
+for (const crop of CROPS) {
+  set([crop.planted], 0.3, null, 0, [always(drop(crop.back, 1, { p: SEED_BACK_P }))]);
+  set([crop.sprout], 0.3, null, 0, []);
+}
 // BEDROCK, AIR and the water family keep the null rule: unbreakable.
 
 /** @template T @param {T} o @returns {T} */
@@ -370,11 +387,11 @@ export const PICKABLE = deepFreeze({
   // v0.14 (§76 flora): mushrooms and roots come away whole; a thicket, a bush and a Healwort stay, picked, and regrow
   [B.HONEYCAP_MUSHROOM]: { to: B.AIR, drops: [always(drop('honeycap', [1, 2]))] },
   [B.FRECKLECAP_MUSHROOM]: { to: B.AIR, drops: [always(drop('frecklecap', [1, 2]))] },
-  [B.ONION_PLANT]: { to: B.AIR, drops: [always(drop('wild_onion', [1, 2]))] },
-  [B.CARROT_PLANT]: { to: B.AIR, drops: [always(drop('wild_carrot', 1))] },
+  [B.ONION_PLANT]: { to: B.AIR, drops: [always(drop('wild_onion', [1, 2])), always(SEED_DROPS.onion)] },
+  [B.CARROT_PLANT]: { to: B.AIR, drops: [always(drop('wild_carrot', 1)), always(SEED_DROPS.carrot)] },
   [B.HAZEL_THICKET]: { to: B.HAZEL_THICKET_BARE, drops: [always(drop('hazelnuts', [1, 3]))] },
   [B.CRAB_APPLE_BUSH]: { to: B.CRAB_APPLE_BUSH_BARE, drops: [always(drop('crab_apple', [2, 3]))] },
-  [B.HEALWORT_PLANT]: { to: B.HEALWORT_PLANT_BARE, drops: [always(drop('healwort', 1))] },
+  [B.HEALWORT_PLANT]: { to: B.HEALWORT_PLANT_BARE, drops: [always(drop('healwort', 1)), always(SEED_DROPS.healwort)] },
   // v0.14 (§76 fauna): the eggs of a ground nest (and now and then a feather); the nest stays, empty
   [B.GROUND_NEST]: { to: B.GROUND_NEST_EMPTY, drops: [always(drop('raw_egg', [1, 3])), always(drop('feather', 1, { p: 0.5 }))] },
 });
