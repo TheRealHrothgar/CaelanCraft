@@ -19,7 +19,7 @@
 // are plain text.
 //
 // Imports are read-only data and pure functions: config, blocks, items, crafting, harvest, climate, daynight, vitals,
-// cooking, and the constants of zombies, animals, looseItems, survivalControl, farming and spread.
+// cooking, and the constants of zombies, animals, looseItems, survivalControl, farming, spread and light (LIGHT_EMISSION).
 import {
   DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, HOTBAR_SIZE, PACK_SLOTS,
   STATION_RANGE, STATION_WORK_RANGE, MAX_CRAFT_JOBS,
@@ -27,7 +27,7 @@ import {
   PIG_HEALTH, PIG_NOTICE, ZOMBIE_DAMAGE, ZOMBIE_SIGHT, ZOMBIE_CHASE_MAX_RISE, ZOMBIE_MAX_DROP, ZOMBIE_SPAWN_MIN, ZOMBIE_FIRE_FEAR,
   ZOMBIE_SPAWN_FIRE_CLEAR, FIRE_BURN_DAMAGE,
   CRUSH_DAMAGE_PER_CELL, BREATH_MAX_S, REGROW_MEAN_S, GRAVITY, MAX_SUBSTEP_DT, TERMINAL_VELOCITY,
-  BODY_TEMP_NORMAL, BASKET_SLOTS, REACH, CAMPFIRE_LIGHT, TORCH_LIGHT,
+  BODY_TEMP_NORMAL, BASKET_SLOTS, REACH, CAMPFIRE_LIGHT, TORCH_LIGHT, LIGHT_MAX, LAMP_LIGHT_MIN, LAMP_LIGHT_MAX,
 } from './config.js';
 import { BLOCK, BIOME, BIOME_NAMES, FLINT_SHARE, getBlockDef } from './blocks.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, getItem, itemName } from './items.js';
@@ -47,7 +47,9 @@ import { FIRE_TRANSFORMS, SKEWER_SPOTS } from './cooking.js';
 import {
   ZOMBIE_KINDS, KIND_STATS, RUNNER_P, HORDE_SIZE, HORDE_RADIUS, HORDE_CHECK_S, ALPHA_CONVERT_P, ALPHA_MAX, ALPHA_RALLY, CLIMB,
   WALKER_WAKE_RANGE, PROVOKE_S, DAWN_BURROW_MIN_S, DAWN_BURROW_RAND_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE,
+  ZOMBIE_SPAWN_LIGHT_MAX, ZOMBIE_DREAD_LIGHT, ALPHA_DREAD_LIGHT, ZOMBIE_SHY_LIGHT, GLARE_CLIMB, glareSpeed, strikeDamage,
 } from './zombies.js';
+import { LIGHT_EMISSION } from './light.js'; // §86: the lights that keep zombies off
 import {
   SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, BEHIND_NOTICE, VIEW_HALF_ANGLE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, WOLF_BITE_S,
@@ -667,6 +669,45 @@ function zombiesTable() {
     rows, keys: [...ZOMBIE_KINDS], source: 'zombies' });
 }
 
+/**
+ * The lights that keep zombies off (CONTRACTS §86), weakest first: every block that gives off block light
+ * (light.LIGHT_EMISSION) and the lit Filament Lamp, whose light runs from LAMP_LIGHT_MIN to LAMP_LIGHT_MAX. Per light:
+ * `min` / `max` its strength, `keep` how many cells off walkers and runners keep (the cells around it that are lit
+ * ZOMBIE_DREAD_LIGHT or more; a campfire's safe zone if that is wider), `clear` the cells around it in which no zombie
+ * comes up (lit ZOMBIE_SPAWN_LIGHT_MAX or more; a campfire's ZOMBIE_SPAWN_FIRE_CLEAR if that is wider) — both at `max`,
+ * on open, level ground, where light falls by 1 a cell.
+ * @returns {{ key: string, name: string, min: number, max: number, keep: number, clear: number }[]}
+ */
+export function zombieLights() {
+  /** @type {{ key: string, name: string, min: number, max: number, fire: boolean }[]} */
+  const lights = [];
+  for (let id = 0; id < LIGHT_EMISSION.length; id++) {
+    if (LIGHT_EMISSION[id] <= 0) continue;
+    const def = getBlockDef(id);
+    lights.push({ key: def.name, name: def.displayName, min: LIGHT_EMISSION[id], max: LIGHT_EMISSION[id], fire: id === BLOCK.CAMPFIRE });
+  }
+  const lamp = getBlockDef(BLOCK.FILAMENT_LAMP);
+  lights.push({ key: lamp.name, name: `${lamp.displayName}, lit`, min: LAMP_LIGHT_MIN, max: LAMP_LIGHT_MAX, fire: false });
+  lights.sort((a, b) => a.max - b.max || a.min - b.min);
+  return lights.map(({ key, name, min, max, fire }) => ({
+    key, name, min, max,
+    keep: Math.max(0, max - ZOMBIE_DREAD_LIGHT, fire ? ZOMBIE_FIRE_FEAR : 0),
+    clear: Math.max(0, max - ZOMBIE_SPAWN_LIGHT_MAX, fire ? ZOMBIE_SPAWN_FIRE_CLEAR : 0),
+  }));
+}
+
+/** The lights and how far each keeps zombies off, from zombieLights(). */
+function lightsTable() {
+  const cellsOf = (/** @type {number} */ n) => `${n} cell${n === 1 ? '' : 's'}`;
+  const lights = zombieLights();
+  const rows = lights.map((l) => {
+    const upTo = l.min === l.max ? '' : 'up to ';
+    return [l.name, l.min === l.max ? String(l.max) : `${l.min} to ${l.max}`, `${upTo}${cellsOf(l.keep)} off`, `${upTo}${cellsOf(l.clear)}`];
+  });
+  return table({ id: 'lights', caption: 'What a light keeps off', head: ['Light', 'Strength', 'Walkers and runners keep', 'None comes up within'],
+    rows, keys: lights.map((l) => l.key), source: 'zombies' });
+}
+
 /** What a throw does (looseItems.throwOf): stones, darts, spears, and everything else. */
 function throwsTable() {
   const spears = TOOL_KEYS.filter((k) => ITEMS[k].tool?.type === 'spear');
@@ -1154,6 +1195,13 @@ function makeChapters() {
   // zombies
   const alphaStrike = zombieStrike('alpha');
   const everySeconds = (/** @type {number} */ n) => (n === 1 ? 'every second' : `every ${n} seconds`);
+  // zombies and light (§86): the brightest light a walker stands in (the edge of any glow); the light beside a Torch,
+  // where the alpha stops; the first whole light level at which a zombie leaps only its day height; and how far apart
+  // torches may stand with no gap that a walker would step into between them
+  const atEdge = { glare: (ZOMBIE_DREAD_LIGHT - 1) / LIGHT_MAX };
+  const byTorch = { glare: (TORCH_LIGHT - 1) / LIGHT_MAX };
+  const climbLight = Math.ceil(GLARE_CLIMB * LIGHT_MAX);
+  const torchEvery = 2 * (TORCH_LIGHT - ZOMBIE_DREAD_LIGHT) + 1;
   // the Workbench
   const devices = RECIPES.filter((r) => /** @type {string} */ (r.station) === 'workbench').map((r) => itemName(r.outputs[0].k));
 
@@ -1645,6 +1693,20 @@ function makeChapters() {
       ]),
       p(`A zombie with nobody to chase does not stay out long: after ${DAWN_BURROW_MIN_S} to ${DAWN_BURROW_MIN_S + DAWN_BURROW_RAND_S} seconds of daylight it burrows back into the ground. One that is chasing you stays until it loses you.`),
       warn('Shade keeps a zombie strong: under a tree or a roof it is as dangerous by day as at night.'),
+    ],
+    [
+      h('Light keeps them off'),
+      p('Zombies hate the light of a flame or a lamp. None comes up out of well-lit ground, and no walker or runner steps into strong light. Stand in that light yourself and they leave you alone: they do not even wait at its edge, unless you strike one.'),
+      ...lightsTable(),
+      p(`Light loses 1 of its strength with every cell. Walkers and runners will not step where it is ${ZOMBIE_DREAD_LIGHT} or more. None comes up where it is ${ZOMBIE_SPAWN_LIGHT_MAX} or more, and fewer the brighter the ground below that.`),
+    ],
+    [
+      h('Weaker in the light'),
+      p(`Light weakens a zombie too, the brighter the more. At the edge of a Torch's glow a walker is slowed to ${fmtPct(glareSpeed(atEdge))} of its pace and strikes for ${strikeDamage({ kind: 'walker', ...atEdge })} HP instead of ${strikeDamage({ kind: 'walker' })}. From light ${climbLight} up, runners and the alpha leap only as high as by day.`),
+      p(`The *alpha* fears only light of ${ALPHA_DREAD_LIGHT} or more. It walks right up to a Torch, slowed to ${fmtPct(glareSpeed(byTorch))} of its pace and striking for ${strikeDamage({ kind: 'alpha', ...byTorch })} HP instead of ${strikeDamage({ kind: 'alpha' })}. A burning campfire still keeps it ${ZOMBIE_FIRE_FEAR} cells away.`),
+      p(`A zombie with nobody to chase keeps off ground lit ${ZOMBIE_SHY_LIGHT} or more and wanders away into the dark.`),
+      p(`*Making a home safe at night.* Give it a floor: none comes up in a column you have built in. A wall ${CLIMB.walker.night + 1} cells high stops walkers, ${CLIMB.runner.night + 1} runners and ${CLIMB.alpha.night + 1} the alpha. Stand a Torch every ${torchEvery} cells around the outside, and keep a campfire burning: nobody within ${ZOMBIE_FIRE_FEAR} cells of it is ever struck.`),
+      warn('Light behind a wall does not count: a Torch protects only the side it shines on. A fire that has burned out protects nothing.'),
     ],
     [
       h('Fighting back'),

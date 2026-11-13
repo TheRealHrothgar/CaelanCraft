@@ -21,16 +21,20 @@
 // shambles at walker speed, an alpha slows and hits softer; walls it leaps are lower by day. The player knocks one out
 // with its kind's hits (ZOMBIE_HITS for a walker); a blast near it, a black hole or
 // being farther than ZOMBIE_DESPAWN_DIST away also ends it. Zombies are never saved: the per-world switch is.
+// Light is a defence (CONTRACTS §86): BLOCK light — a torch, a lit lamp, a campfire, glowstone; never the sky's — reaches
+// this module through `world.blockLight(q, y, r)`. None comes up on lit ground, walkers and runners will not step into
+// strong light (the alpha only into the strongest), idle ones keep off lit ground and drift away from it, and in the
+// light a zombie is slower, hits softer and climbs lower, in proportion to its `glare` (its cell's light / LIGHT_MAX).
 import {
   ZOMBIE_MAX, ZOMBIE_RADIUS, ZOMBIE_HEIGHT, ZOMBIE_MASS, ZOMBIE_TARGET_RADIUS, ZOMBIE_CHASE_SPEED, ZOMBIE_TURN_RATE,
   ZOMBIE_SIGHT, ZOMBIE_CHASE_MAX_RISE, ZOMBIE_MAX_DROP, ZOMBIE_REACH, ZOMBIE_REACH_OVERLAP, ZOMBIE_ATTACK_COOLDOWN_S,
   ZOMBIE_HIT_PUSH, ZOMBIE_HIT_LIFT, ZOMBIE_HITS, ZOMBIE_KNOCKBACK, ZOMBIE_KNOCK_LIFT, ZOMBIE_HURT_S, ZOMBIE_KO_KNOCK,
   ZOMBIE_FIRE_FEAR, ZOMBIE_SPAWN_FIRE_CLEAR, ZOMBIE_SPAWN_MIN, ZOMBIE_SPAWN_MAX, ZOMBIE_SPAWN_INTERVAL_MIN_S,
   ZOMBIE_SPAWN_INTERVAL_MAX_S, ZOMBIE_SPAWN_TRIES, ZOMBIE_DESPAWN_DIST, ZOMBIE_SOUND_RANGE, WORLD_HEIGHT, PLAYER_HEIGHT,
-  GRAVITY,
+  GRAVITY, LIGHT_MAX, ZOMBIE_DAMAGE,
 } from './config.js';
 import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
-import { hexToWorld, worldToHex } from './hex.js';
+import { hexToWorld, worldToHex, HEX_DIRS } from './hex.js';
 import { BLOCK, isSolid, isLiquid } from './blocks.js';
 import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js';
 
@@ -45,13 +49,16 @@ import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js'
  *   fireX: number, fireY: number, fireZ: number,
  *   detour: number, detourYaw: number, side: 1|-1, stuck: number, tilt: number, wallSinceAim: boolean,
  *   kind: 'walker'|'runner'|'alpha', rallied: boolean, daylit: boolean, provoked: number, daylitFor: number, burrowAt: number,
+ *   light: number, glare: number, glareIn: number, shield: number,
  * }} Zombie
  * `walkPhase` advances with distance walked (the renderer swings the feet with it); `swing` counts down after an
  * attack (the renderer lurches the torso); `burn` stays 0 and `smoking` false (v0.11: daylight no longer burns);
  * `exposed` / `daylit` are true under open daylight; `provoked` counts down PROVOKE_S after a hit; `tilt` is the head's
  * fixed lean (radians), chosen at spawn. `fireX/Y/Z` is the
  * floor centre of the nearest campfire within ZOMBIE_FIRE_FEAR + FIRE_WATCH at the last fire check (fireX NaN: none),
- * which it steers around between checks.
+ * which it steers around between checks. `light` is the block light (0..LIGHT_MAX) of its own cell at the last look
+ * (every GLARE_CHECK_S; the brighter of its feet and head cells) and `glare` that as 0..1 (CONTRACTS §86); `shield` (0..1)
+ * follows `shieldTarget` smoothly: how far it has an arm up across its face (the renderer draws it).
  */
 
 /**
@@ -69,6 +76,8 @@ import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js'
  * @property {(q: number, r: number) => number} [groundHeight]    generated terrain height (top solid cell), −1 unloaded
  * @property {(q: number, y: number, r: number) => boolean} [isNaturalGround]   untouched terrain (World.isNaturalGround)
  * @property {(q: number, r: number) => boolean} [columnEdited]  when given: the player built in the column (no spawning there)
+ * @property {(q: number, y: number, r: number) => number} [blockLight]  BLOCK light 0..LIGHT_MAX of a cell (never the
+ *   sky's; main: LightEngine.blockAt). Without it no light rule applies: every cell counts as dark.
  */
 
 /**
@@ -166,10 +175,83 @@ export const CLIMB = Object.freeze({
 /** A leap clears the wall by this much (cells). */
 export const LEAP_MARGIN = 0.35;
 
+// ---- light as a defence (CONTRACTS §86) ------------------------------------------------------------------------------
+
+/** A zombie reads the block light of its own cell this often (s); its first look is immediate. */
+export const GLARE_CHECK_S = 0.5;
+/** No zombie comes up where the block light is this or more; below it, with the chance 1 − light / this. */
+export const ZOMBIE_SPAWN_LIGHT_MAX = 7;
+/** A walker or a runner will not step into a cell with this much block light or more … */
+export const ZOMBIE_DREAD_LIGHT = 10;
+/** … the alpha only into this much. */
+export const ALPHA_DREAD_LIGHT = 13;
+/** A zombie that is not chasing will not step from darker ground into a cell with this much block light or more. */
+export const ZOMBIE_SHY_LIGHT = 6;
+/** In glare g (0..1) a zombie moves at × (1 − GLARE_SLOW·g) … */
+export const GLARE_SLOW = 0.5;
+/** … strikes for × (1 − GLARE_WEAK·g) of its damage … */
+export const GLARE_WEAK = 0.7;
+/** … and from this much glare up it climbs only its day height (CLIMB[kind].day). */
+export const GLARE_CLIMB = 0.5;
+/** An idle zombie standing in block light sets off toward darker ground, within this of straight at it (rad). */
+export const DRIFT_SPREAD = 0.5;
+/** `shield` follows `shieldTarget` at this rate (1/s). */
+export const SHIELD_RATE = 5;
+/** Why natural spawning refuses a column (`Zombies.spawnReport(q, r).why`); index 0 is "not refused". */
+export const SPAWN_REFUSALS = Object.freeze(['', 'no spawning hooks', 'not loaded', 'no ground', 'ground not natural',
+  'not open air above', 'column built in', 'lit', 'campfire near', 'no room']);
+
+/** @param {*} zb @returns {number} its glare, 0 (dark) .. 1 (block light LIGHT_MAX); 0 for anything else */
+export function glareOf(zb) {
+  const g = zb ? zb.glare : 0;
+  return g > 0 ? Math.min(1, g) : 0;
+}
+
+/** @param {*} zb @returns {number} the block light it will not step into: ALPHA_DREAD_LIGHT for an alpha, else ZOMBIE_DREAD_LIGHT */
+export function dreadLight(zb) {
+  return kindOf(zb) === 'alpha' ? ALPHA_DREAD_LIGHT : ZOMBIE_DREAD_LIGHT;
+}
+
+/** @param {*} zb @returns {number} the speed factor its glare leaves it: 1 in the dark, 1 − GLARE_SLOW in full light */
+export function glareSpeed(zb) {
+  return 1 - GLARE_SLOW * glareOf(zb);
+}
+
+/**
+ * The chance that natural spawning accepts ground with this much block light: 1 in the dark, 1 − light /
+ * ZOMBIE_SPAWN_LIGHT_MAX below ZOMBIE_SPAWN_LIGHT_MAX, 0 from there up.
+ * @param {number} light 0..LIGHT_MAX
+ */
+export function spawnChance(light) {
+  if (!(light > 0)) return 1;
+  return light >= ZOMBIE_SPAWN_LIGHT_MAX ? 0 : 1 - light / ZOMBIE_SPAWN_LIGHT_MAX;
+}
+
+/**
+ * The block light a zombie whose feet are in cell (q, y, r) stands in: the brighter of that cell and the one above it
+ * (its head). 0 without an accessor.
+ * @param {((q: number, y: number, r: number) => number)|null|undefined} blockLight
+ */
+export function standLight(blockLight, q, y, r) {
+  if (!blockLight) return 0;
+  const l = Math.max(blockLight(q, y, r), blockLight(q, y + 1, r));
+  return l > 0 ? Math.min(LIGHT_MAX, l) : 0;
+}
+
+/**
+ * How far (0..1) a zombie has an arm up across its face: nothing up to ZOMBIE_SHY_LIGHT, all the way at the light it
+ * dreads. `Zombie.shield` follows this at SHIELD_RATE.
+ * @param {*} zb
+ */
+export function shieldTarget(zb) {
+  const t = (glareOf(zb) * LIGHT_MAX - ZOMBIE_SHY_LIGHT) / (dreadLight(zb) - ZOMBIE_SHY_LIGHT);
+  return t > 0 ? Math.min(1, t) : 0;
+}
+
 /** @param {*} zb @returns {number} the highest wall it climbs now */
 export function maxClimb(zb) {
   const c = CLIMB[kindOf(zb)];
-  return zb && zb.daylit ? c.day : c.night;
+  return zb && (zb.daylit || glareOf(zb) >= GLARE_CLIMB) ? c.day : c.night;
 }
 
 /** @param {*} zb @returns {boolean} a walker in open daylight, not provoked and not rallied by an alpha */
@@ -177,20 +259,34 @@ export function isDormant(zb) {
   return kindOf(zb) === 'walker' && Boolean(zb.daylit) && !(zb.provoked > 0) && !zb.rallied;
 }
 
-/** @param {*} zb @returns {{ chase: number, sprint: boolean, factor: number }} how it chases now */
+/**
+ * @param {*} zb
+ * @returns {{ chase: number, sprint: boolean, factor: number }} how it chases now; `factor` carries its glare (× glareSpeed)
+ */
 export function gaitOf(zb) {
   const st = statsOf(zb);
   const kind = kindOf(zb);
+  const slow = glareSpeed(zb); // §86: block light slows it on top of everything else
   if (zb && zb.daylit) {
-    if (kind === 'runner') return { chase: ZOMBIE_CHASE_SPEED, sprint: false, factor: 1 }; // a shambler by day
-    if (kind === 'alpha') return { chase: st.chase, sprint: false, factor: DAY_ALPHA_FACTOR };
+    if (kind === 'runner') return { chase: ZOMBIE_CHASE_SPEED, sprint: false, factor: slow }; // a shambler by day
+    if (kind === 'alpha') return { chase: st.chase, sprint: false, factor: DAY_ALPHA_FACTOR * slow };
   }
-  return { chase: zb && zb.rallied && st.chase < 1 ? 1 : st.chase, sprint: st.sprint, factor: st.factor };
+  return { chase: zb && zb.rallied && st.chase < 1 ? 1 : st.chase, sprint: st.sprint, factor: st.factor * slow };
 }
 
-/** @param {*} zb @returns {number} its strike's damage multiplier now (main × ZOMBIE_DAMAGE) */
+/** @param {*} zb @returns {number} its strike's damage multiplier now: its kind's (an alpha's softer by day) × (1 − GLARE_WEAK·glare) */
 export function damageOf(zb) {
-  return kindOf(zb) === 'alpha' && zb && zb.daylit ? DAY_ALPHA_DAMAGE : statsOf(zb).damage;
+  const base = kindOf(zb) === 'alpha' && zb && zb.daylit ? DAY_ALPHA_DAMAGE : statsOf(zb).damage;
+  return base * (1 - GLARE_WEAK * glareOf(zb));
+}
+
+/**
+ * What one strike of this zombie costs, in whole HP: `base` (ZOMBIE_DAMAGE) × damageOf, rounded, never below 1.
+ * @param {*} zb
+ * @param {number} [base=ZOMBIE_DAMAGE]
+ */
+export function strikeDamage(zb, base = ZOMBIE_DAMAGE) {
+  return Math.max(1, Math.round(base * damageOf(zb)));
 }
 
 const TWO_PI = Math.PI * 2;
@@ -303,6 +399,15 @@ export class Zombies {
     /** @type {Set<object>} scratch: bodies some zombie stood on at the end of last frame */
     this._carriers = new Set();
     this._fires = true;
+    /** @type {((q: number, y: number, r: number) => number)|null} this update's world.blockLight (§86); null: no light rules */
+    this._light = null;
+    /** The block light the player stands in at this update (0 without a light accessor or a player). */
+    this._playerLight = 0;
+    /**
+     * The world view of the last update (null before the first): for the console, e.g. `zombies.spawnReport(q, r)`.
+     * @type {ZombieWorld|null}
+     */
+    this.world = null;
     this._shoreBudget = ZOMBIE_SHORE_SEARCHES;
     /** @type {[number, number, number]} */
     this._pull = [0, 0, 0];
@@ -374,6 +479,10 @@ export class Zombies {
       provoked: 0,
       daylitFor: 0,
       burrowAt: DAWN_BURROW_MIN_S + this._rng() * DAWN_BURROW_RAND_S,
+      light: 0,
+      glare: 0,
+      glareIn: 0,
+      shield: 0,
     }));
     this.list.push(zb);
     return zb;
@@ -388,8 +497,8 @@ export class Zombies {
   }
 
   /**
-   * Natural spawning, then every zombie: despawn far away, freeze in unloaded chunks, daylight, AI, physics, campfire
-   * scorch and attacks.
+   * Natural spawning, then every zombie: despawn far away, freeze in unloaded chunks, daylight, block light, AI, physics,
+   * campfire scorch and attacks.
    * @param {number} dt
    * @param {ZombieWorld} world
    * @returns {ZombieEvents} this.events (reused)
@@ -411,6 +520,14 @@ export class Zombies {
     const getBlock = world.getBlock;
     const isDay = !!world.isDay;
     this._fires = world.hasCampfires ? !!world.hasCampfires() : true;
+    this._light = world.blockLight ?? null;
+    // §86 (sanctuary): the block light the player stands in, read once an update
+    this._playerLight = 0;
+    if (this._light && player) {
+      const [plq, plr] = worldToHex(player.x, player.z);
+      this._playerLight = standLight(this._light, plq, Math.floor(player.y + 0.01), plr);
+    }
+    this.world = world;
     this._shoreBudget = ZOMBIE_SHORE_SEARCHES;
 
     if (this._enabled && player && !isDay && world.groundHeight) {
@@ -473,6 +590,7 @@ export class Zombies {
       }
 
       const canHop = !zb.carrier && !carriers.has(zb);
+      this._senseLight(zb, dt, getBlock, canHop);
       const chasing = this._think(zb, dt, world, player, canHop);
 
       const dYaw = wrapAngle(zb.targetYaw - zb.yaw);
@@ -483,11 +601,11 @@ export class Zombies {
       const brisk = zb.mode === 'chase' || zb.mode === 'avoid';
       const gait = gaitOf(zb);
       // A walker chases at ZOMBIE_CHASE_SPEED (full walking speed near an alpha), a runner sprints (by day it shambles like
-      // a walker), an alpha walks briskly (slower by day).
+      // a walker), an alpha walks briskly (slower by day). Block light slows every gait by its glare (§86).
       input.forward = moving ? (brisk ? gait.chase : 1) : 0;
       input.sneak = moving && !brisk; // a wandering zombie shambles at sneak speed (1.31 m/s)
       input.sprint = moving && brisk && gait.sprint;
-      input.speedFactor = brisk ? gait.factor : 1;
+      input.speedFactor = brisk ? gait.factor : glareSpeed(zb);
       // In water it always paddles up (it floats; pressing into a bank gives SWIM_EXIT_JUMP); on land it hops only a
       // one-cell ledge straight ahead with room for its height.
       const ledge = moving && zb.hitWall && canHop ? this._ledgeAhead(zb, getBlock) : 0;
@@ -575,6 +693,10 @@ export class Zombies {
     const d = Math.hypot(player.x - zb.x, dy, player.z - zb.z);
     // A dormant walker (in open daylight, not provoked, no alpha near) wakes only for a player within WALKER_WAKE_RANGE.
     if (isDormant(zb)) return d <= WALKER_WAKE_RANGE;
+    // §86 (sanctuary): a walker or a runner leaves alone a player who stands in light it dreads — it does not wait at
+    // the edge of the glow, where a waiting crowd would raise an alpha — unless it was struck a moment ago (PROVOKE_S).
+    // The alpha is not put off: it comes on, weakened.
+    if (kindOf(zb) !== 'alpha' && this._playerLight >= ZOMBIE_DREAD_LIGHT && !(zb.provoked > 0)) return false;
     return d <= ZOMBIE_SIGHT;
   }
 
@@ -613,6 +735,11 @@ export class Zombies {
       if (chase) {
         zb.mode = 'chase';
         zb.targetYaw = yawToward(zb.x, zb.z, player.x, player.z);
+        // §86: it does not swim (or wade) into light it dreads either: it turns back for darker water and tries again.
+        if (this._light && Math.abs(wrapAngle(zb.targetYaw - zb.yaw)) < MOVE_CONE && this._litAhead(zb, getBlock)) {
+          this._turnFromLight(zb, getBlock, canHop, true);
+          return false;
+        }
         return true;
       }
       // Swimming with no one to chase: head for the nearest bank it can reach and climb, like a pig (pigs.js).
@@ -643,6 +770,11 @@ export class Zombies {
       // new detour turns it further toward its side, until the way ahead is clear.
       if (zb.onGround && Math.abs(wrapAngle(zb.targetYaw - zb.yaw)) < MOVE_CONE && !this._safeAhead(zb, getBlock, canHop, true)) {
         this._startDetour(zb);
+      } else if (!zb.onGround && this._light && Math.abs(wrapAngle(zb.targetYaw - zb.yaw)) < MOVE_CONE && this._litAhead(zb, getBlock)) {
+        // §86: off its feet (bobbing at the surface of the water, mid-hop, knocked back) the way ahead is not tested for
+        // drops or walls, but it still will not carry on into light it dreads.
+        this._turnFromLight(zb, getBlock, canHop, true);
+        return false;
       }
       return true;
     }
@@ -660,7 +792,10 @@ export class Zombies {
     if (zb.timer <= 0) {
       if (zb.mode === 'idle') {
         zb.mode = 'walk';
-        zb.targetYaw = wrapAngle(zb.yaw + (this._rng() * 2 - 1) * Math.PI);
+        const turn = this._rng() * 2 - 1;
+        // §86: standing in block light it sets off toward darker ground, so the idle ones drift away from a lit place.
+        const dark = zb.light > 0 ? this._darkerYaw(zb, getBlock, canHop) : NaN;
+        zb.targetYaw = wrapAngle(Number.isNaN(dark) ? zb.yaw + turn * Math.PI : dark + turn * DRIFT_SPREAD);
         zb.timer = 1.5 + this._rng() * 4;
       } else {
         zb.mode = 'idle';
@@ -747,22 +882,147 @@ export class Zombies {
   /**
    * The cell 0.8 ahead is fine to walk into: not water a wanderer would swim in (a chaser wades in after you), no
    * campfire within FIRE_MARGIN of the next steps (pigs.fireAhead), not deeper into a campfire's safe zone (_intoFire),
-   * room for the body (open at the feet and the cell above, or a one-cell ledge with two open cells on it while
-   * `canHop`), and a drop of at most ZOMBIE_MAX_DROP cells: ground within ZOMBIE_MAX_DROP + 1 cells below the feet
-   * level (ground at fy − d is a drop of d − 1; water to land in counts for a chaser).
+   * somewhere to stand there (_standLevel: room for the body, a wall it can climb, a drop of at most ZOMBIE_MAX_DROP
+   * cells), and no light there that it will not step into (_lightBars, §86).
    */
   _safeAhead(zb, getBlock, canHop, chasing) {
     const [q, r, fy] = this._aheadCell(zb);
     if (!chasing && isSwimWater(getBlock, q, fy, r)) return false;
     if (this._fires && (fireAhead(getBlock, zb.x, zb.z, zb.yaw, fy) || this._intoFire(zb))) return false;
-    if (isSolid(getBlock(q, fy, r))) return canHop && this._climbAt(zb, getBlock, q, fy, r) > 0;
-    if (isSolid(getBlock(q, fy + 1, r))) return false; // a one-high gap: too low for a zombie
+    const sy = this._standLevel(zb, getBlock, q, fy, r, canHop, chasing);
+    return sy !== null && !this._lightBars(zb, q, sy, r, chasing);
+  }
+
+  /**
+   * The feet level it would stand at in column (q, r), coming on foot from feet level fy: fy + h on top of a wall it can
+   * climb (while `canHop`: a one-cell ledge, or its kind's leap, with two open cells on it); fy − d + 1 where the floor
+   * is d cells down, with fy and fy + 1 not solid (a one-high gap is too low) and d at most ZOMBIE_MAX_DROP + 1 (ground
+   * at fy − d is a drop of d − 1 cells; water to land in counts for a chaser and ends the search for anyone else).
+   * @returns {number|null} null when it cannot go there
+   */
+  _standLevel(zb, getBlock, q, fy, r, canHop, chasing) {
+    if (isSolid(getBlock(q, fy, r))) {
+      const h = canHop ? this._climbAt(zb, getBlock, q, fy, r) : 0;
+      return h > 0 ? fy + h : null;
+    }
+    if (isSolid(getBlock(q, fy + 1, r))) return null; // a one-high gap: too low for a zombie
     for (let d = 1; d <= ZOMBIE_MAX_DROP + 1; d++) {
       const id = getBlock(q, fy - d, r);
-      if (isSolid(id)) return true;
-      if (isLiquid(id)) return chasing;
+      if (isSolid(id)) return fy - d + 1;
+      if (isLiquid(id)) return chasing ? fy - d + 1 : null;
     }
-    return false;
+    return null;
+  }
+
+  /**
+   * §86: block light forbids the step into column (q, r), where it would stand at feet level sy. Dread: light of
+   * `dreadLight(zb)` or more is never stepped into, unless it is darker than where the zombie stands now (its way out
+   * of light it finds itself in; one already backing out, mode `avoid`, may also step along light as bright as its
+   * own while it turns, never into brighter). Shy: one that is not chasing does not step from darker ground into
+   * ZOMBIE_SHY_LIGHT or more. The cell it is already in never bars it. Two reads where the way ahead is dark (the
+   * usual case).
+   */
+  _lightBars(zb, q, sy, r, chasing) {
+    const blockLight = this._light;
+    if (!blockLight) return false;
+    const ahead = standLight(blockLight, q, sy, r);
+    if (ahead < ZOMBIE_SHY_LIGHT) return false;
+    const [mq, mr] = worldToHex(zb.x, zb.z);
+    if (mq === q && mr === r) return false;
+    const own = standLight(blockLight, mq, Math.floor(zb.y + 0.01), mr);
+    if (ahead >= dreadLight(zb)) return zb.mode === 'avoid' ? ahead > own : ahead >= own;
+    return !chasing && ahead > own;
+  }
+
+  /**
+   * §86: look at the block light of its own cell every GLARE_CHECK_S (`light`, `glare`), ease `shield` toward its
+   * target, and — in light it dreads, unless it is a walker dormant by day — turn toward the darkest ground (or water)
+   * beside it (_turnFromLight). With nowhere darker to go it stays as it is.
+   */
+  _senseLight(zb, dt, getBlock, canHop) {
+    const blockLight = this._light;
+    if (!blockLight) {
+      zb.light = 0;
+      zb.glare = 0;
+      zb.shield = 0;
+      return;
+    }
+    zb.glareIn -= dt;
+    if (zb.glareIn <= 0) {
+      zb.glareIn = GLARE_CHECK_S;
+      const [q, r] = worldToHex(zb.x, zb.z);
+      zb.light = standLight(blockLight, q, Math.floor(zb.y + 0.01), r);
+      zb.glare = zb.light / LIGHT_MAX;
+      if (zb.light >= dreadLight(zb) && !isDormant(zb)) this._turnFromLight(zb, getBlock, canHop, false);
+    }
+    zb.shield += (shieldTarget(zb) - zb.shield) * Math.min(1, dt * SHIELD_RATE);
+  }
+
+  /**
+   * §86: turn away from the light: mode `avoid` for AVOID_S toward `_darkerYaw`, like turning away from a campfire (so
+   * it does not strike while it backs out). When no cell beside it is darker: straight back the way it faces if
+   * `back`, else nothing. @returns {boolean} true when it turned
+   */
+  _turnFromLight(zb, getBlock, canHop, back) {
+    const yaw = this._darkerYaw(zb, getBlock, canHop);
+    if (Number.isNaN(yaw) && !back) return false;
+    zb.mode = 'avoid';
+    zb.timer = AVOID_S;
+    zb.detour = 0;
+    zb.targetYaw = Number.isNaN(yaw) ? wrapAngle(zb.yaw + Math.PI) : yaw;
+    return true;
+  }
+
+  /**
+   * §86, for a chaser that is not walking on the ground (swimming, wading, bobbing at the surface, in the air): the
+   * cell 0.8 ahead holds light it will not go into (_lightBars as a chaser), read where it would be there: at its own
+   * level, or on top of a bank up to two cells above that.
+   */
+  _litAhead(zb, getBlock) {
+    const [q, r, fy] = this._aheadCell(zb);
+    let sy = fy;
+    while (sy < fy + 2 && isSolid(getBlock(q, sy, r))) sy++;
+    return this._lightBars(zb, q, sy, r, true);
+  }
+
+  /**
+   * §86: the yaw toward the centre of the darkest of the six columns beside the zombie that it can go into — somewhere
+   * to stand (_standLevel as a wanderer) with no water to swim in, or, for one that is in the water, water to swim on
+   * through — and that is DARKER than where it is; among equally dark ones, the one it has to turn least for. NaN when
+   * none is darker (or it is in the dark already).
+   */
+  _darkerYaw(zb, getBlock, canHop) {
+    const blockLight = this._light;
+    if (!blockLight) return NaN;
+    const [q, r] = worldToHex(zb.x, zb.z);
+    const fy = Math.floor(zb.y + 0.01);
+    let best = standLight(blockLight, q, fy, r);
+    if (best <= 0) return NaN;
+    let bestYaw = NaN;
+    let bestTurn = Infinity;
+    for (let k = 0; k < 6; k++) {
+      const nq = q + HEX_DIRS[k][0];
+      const nr = r + HEX_DIRS[k][1];
+      let sy;
+      if (isSwimWater(getBlock, nq, fy, nr)) {
+        if (!zb.inWater) continue;
+        sy = fy;
+      } else {
+        sy = this._standLevel(zb, getBlock, nq, fy, nr, canHop, false);
+        if (sy === null) continue;
+      }
+      const l = standLight(blockLight, nq, sy, nr);
+      if (l > best) continue;
+      const [nx, nz] = hexToWorld(nq, nr);
+      const yaw = yawToward(zb.x, zb.z, nx, nz);
+      const turn = Math.abs(wrapAngle(yaw - zb.yaw));
+      if (l < best || (!Number.isNaN(bestYaw) && turn < bestTurn)) {
+        best = l;
+        bestYaw = yaw;
+        bestTurn = turn;
+      }
+    }
+    return bestYaw;
   }
 
   /**
@@ -924,23 +1184,67 @@ export class Zombies {
 
   /**
    * Whether a zombie may spawn standing on natural ground at column (q, r): loaded, its generated top cell untouched
-   * and solid, two AIR cells above it (no water, fire, leaves or logs), no player edits in the column, no campfire
-   * within ZOMBIE_SPAWN_FIRE_CLEAR and room for the body. @returns {number|null} the feet y, or null
+   * and solid, two AIR cells above it (no water, fire, leaves or logs), no player edits in the column, block light
+   * below ZOMBIE_SPAWN_LIGHT_MAX where it would stand (§86; dimmer light only thins them out: `spawnChanceAt`), no
+   * campfire within ZOMBIE_SPAWN_FIRE_CLEAR and room for the body. @returns {number|null} the feet y, or null
    * @param {ZombieWorld} world
    */
   spawnHeightAt(world, q, r) {
-    if (!world.isLoadedCell || !world.groundHeight || !world.isNaturalGround) return null;
-    if (!world.isLoadedCell(q, r)) return null;
+    const y = this._spawnTest(world, q, r);
+    return y >= 0 ? y : null;
+  }
+
+  /**
+   * spawnHeightAt's test for column (q, r). @returns {number} the feet y (≥ 1), or −(the index of the reason in
+   * SPAWN_REFUSALS) when no zombie may come up there
+   * @param {ZombieWorld} world
+   */
+  _spawnTest(world, q, r) {
+    if (!world.isLoadedCell || !world.groundHeight || !world.isNaturalGround) return -1;
+    if (!world.isLoadedCell(q, r)) return -2;
     const h = world.groundHeight(q, r);
-    if (!(h >= 0 && h + 3 < WORLD_HEIGHT)) return null;
-    if (!world.isNaturalGround(q, h, r)) return null;
+    if (!(h >= 0 && h + 3 < WORLD_HEIGHT)) return -3;
+    if (!world.isNaturalGround(q, h, r)) return -4;
     const getBlock = world.getBlock;
-    if (getBlock(q, h + 1, r) !== BLOCK.AIR || getBlock(q, h + 2, r) !== BLOCK.AIR) return null;
-    if (world.columnEdited && world.columnEdited(q, r)) return null;
+    if (getBlock(q, h + 1, r) !== BLOCK.AIR || getBlock(q, h + 2, r) !== BLOCK.AIR) return -5;
+    if (world.columnEdited && world.columnEdited(q, r)) return -6;
+    if (standLight(world.blockLight, q, h + 1, r) >= ZOMBIE_SPAWN_LIGHT_MAX) return -7;
     const [x, z] = hexToWorld(q, r);
-    if (world.nearestFire && this._fires && world.nearestFire(x, h + 1, z, ZOMBIE_SPAWN_FIRE_CLEAR, this._fire) <= ZOMBIE_SPAWN_FIRE_CLEAR) return null;
-    if (!isFreeAt(getBlock, x, h + 1, z, ZOMBIE_RADIUS, ZOMBIE_HEIGHT)) return null;
+    if (world.nearestFire && this._fires && world.nearestFire(x, h + 1, z, ZOMBIE_SPAWN_FIRE_CLEAR, this._fire) <= ZOMBIE_SPAWN_FIRE_CLEAR) return -8;
+    if (!isFreeAt(getBlock, x, h + 1, z, ZOMBIE_RADIUS, ZOMBIE_HEIGHT)) return -9;
     return h + 1;
+  }
+
+  /**
+   * §86: the chance that a natural spawn attempt landing on column (q, r) puts a zombie there: 0 where spawnHeightAt
+   * refuses, else `spawnChance` of the block light where it would stand (1 in the dark).
+   * @param {ZombieWorld} world
+   * @returns {number} 0..1
+   */
+  spawnChanceAt(world, q, r) {
+    const y = this._spawnTest(world, q, r);
+    return y >= 0 ? spawnChance(standLight(world.blockLight, q, y, r)) : 0;
+  }
+
+  /**
+   * For the console (`__caelancraft.zombies.spawnReport(q, r)`): what natural spawning makes of column (q, r) in the
+   * world view of the last update — `y` the feet height (null: refused), `why` the reason it is refused (SPAWN_REFUSALS;
+   * '' when it is not), `light` the block light where a zombie would stand (null when there is no such place) and
+   * `chance` (spawnChanceAt).
+   * @param {number} q
+   * @param {number} r
+   * @param {ZombieWorld|null} [world=this.world]
+   * @returns {{ y: number|null, why: string, light: number|null, chance: number }}
+   */
+  spawnReport(q, r, world = this.world) {
+    if (!world) return { y: null, why: SPAWN_REFUSALS[1], light: null, chance: 0 };
+    const y = this._spawnTest(world, q, r);
+    if (y >= 0) {
+      const light = standLight(world.blockLight, q, y, r);
+      return { y, why: '', light, chance: spawnChance(light) };
+    }
+    const h = world.groundHeight && world.isLoadedCell && world.isLoadedCell(q, r) ? world.groundHeight(q, r) : -1;
+    return { y: null, why: SPAWN_REFUSALS[-y], light: h >= 0 ? standLight(world.blockLight, q, h + 1, r) : null, chance: 0 };
   }
 
   /**
@@ -1006,6 +1310,9 @@ export class Zombies {
       if (dh < ZOMBIE_SPAWN_MIN || dh > ZOMBIE_SPAWN_MAX + 1) continue;
       const fy = this.spawnHeightAt(world, q, r);
       if (fy === null) continue;
+      // §86: dim block light thins them out — one roll against spawnChance (no roll, and no change, in the dark).
+      const light = standLight(world.blockLight, q, fy, r);
+      if (light > 0 && this._rng() >= spawnChance(light)) continue;
       const yaw = wrapAngle(yawToward(cx, cz, player.x, player.z) + (this._rng() * 2 - 1) * Math.PI * 0.5);
       const zb = this.spawn(cx, fy, cz, yaw, this._rng() < RUNNER_P ? 'runner' : 'walker');
       if (!zb) break;

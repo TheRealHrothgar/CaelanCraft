@@ -29,6 +29,13 @@ import {
   ZOMBIE_KINDS, KIND_STATS, RUNNER_P, HORDE_SIZE, HORDE_RADIUS, HORDE_CHECK_S, ALPHA_CONVERT_P, ALPHA_MAX, ALPHA_RALLY, CLIMB,
   WALKER_WAKE_RANGE, PROVOKE_S, DAWN_BURROW_MIN_S, DAWN_BURROW_RAND_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE, gaitOf, damageOf, maxClimb,
 } from '../../src/zombies.js';
+// §86: zombies and light
+import {
+  ZOMBIE_SPAWN_LIGHT_MAX, ZOMBIE_DREAD_LIGHT, ALPHA_DREAD_LIGHT, ZOMBIE_SHY_LIGHT, GLARE_SLOW, GLARE_WEAK, GLARE_CLIMB, glareSpeed, strikeDamage,
+} from '../../src/zombies.js';
+import { zombieLights } from '../../src/handbook.js';
+import { LIGHT_EMISSION } from '../../src/light.js';
+import { LIGHT_MAX, LAMP_LIGHT_MIN, LAMP_LIGHT_MAX, ZOMBIE_SPAWN_FIRE_CLEAR } from '../../src/config.js';
 import {
   SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, BEHIND_NOTICE, VIEW_HALF_ANGLE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, HOME_RANGE, RIDE_SCALE,
@@ -670,6 +677,78 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain(`The alpha slows to ${fmtPct(dayGait.chase * dayGait.factor)} of your walk, strikes for ${alpha.day} HP instead of ${alpha.night}, and leaps ${CLIMB.alpha.day} cells instead of ${CLIMB.alpha.night}.`);
     expect(text).toContain(`after ${DAWN_BURROW_MIN_S} to ${DAWN_BURROW_MIN_S + DAWN_BURROW_RAND_S} seconds of daylight it burrows back into the ground.`);
     expect(text).toContain(`A wall ${CLIMB.walker.night + 1} cells high stops a walker.`);
+  });
+
+  it('light keeps them off (§86): the lights table is LIGHT_EMISSION and the zombie constants, and the prose quotes them', () => {
+    const t = tableById('lights');
+    expect(t.source).toBe('zombies');
+    expect(t.head).toEqual(['Light', 'Strength', 'Walkers and runners keep', 'None comes up within']);
+    const lights = zombieLights();
+    expect(t.keys).toEqual(lights.map((l) => l.key));
+    // every block the light model lets shine is a row, and the lit Filament Lamp (lit through LightEngine.setEmitter)
+    const emitters = [];
+    for (let id = 0; id < LIGHT_EMISSION.length; id++) if (LIGHT_EMISSION[id] > 0) emitters.push(id);
+    expect(emitters.sort((a, b) => a - b)).toEqual([BLOCK.GLOWSTONE, BLOCK.CAMPFIRE, BLOCK.TORCH]);
+    expect([...t.keys].sort()).toEqual([...emitters.map((id) => getBlockDef(id).name), getBlockDef(BLOCK.FILAMENT_LAMP).name].sort());
+    for (const l of lights) {
+      const fire = l.key === 'campfire';
+      const id = BLOCK[l.key.toUpperCase()];
+      if (l.key === 'filament_lamp') expect([l.min, l.max]).toEqual([LAMP_LIGHT_MIN, LAMP_LIGHT_MAX]);
+      else expect([l.min, l.max], l.key).toEqual([LIGHT_EMISSION[id], LIGHT_EMISSION[id]]);
+      // light falls by 1 a cell: lit 10 or more out to (strength − 10) cells, 7 or more out to (strength − 7)
+      expect(l.keep, l.key).toBe(Math.max(l.max - ZOMBIE_DREAD_LIGHT, fire ? ZOMBIE_FIRE_FEAR : 0));
+      expect(l.clear, l.key).toBe(Math.max(l.max - ZOMBIE_SPAWN_LIGHT_MAX, fire ? ZOMBIE_SPAWN_FIRE_CLEAR : 0));
+      const upTo = l.min === l.max ? '' : 'up to ';
+      expect(rowOf(t, l.key)).toEqual([l.name, l.min === l.max ? String(l.max) : `${l.min} to ${l.max}`, `${upTo}${l.keep} cells off`, `${upTo}${l.clear} cells`]);
+    }
+    expect(t.rows).toEqual([
+      ['Torch', '13', '3 cells off', '6 cells'],
+      ['Filament Lamp, lit', '7 to 14', 'up to 4 cells off', 'up to 7 cells'],
+      ['Campfire', '14', '4 cells off', '8 cells'],
+      ['Glowstone', '15', '5 cells off', '8 cells'],
+    ]);
+    expect(lights.map((l) => l.max)).toEqual([...lights.map((l) => l.max)].sort((a, b) => a - b)); // the weakest first
+    // a campfire's light and its safe zone agree: 14 − 10 = ZOMBIE_FIRE_FEAR; its spawn rule (8) is wider than its light's (7)
+    expect(CAMPFIRE_LIGHT - ZOMBIE_DREAD_LIGHT).toBe(ZOMBIE_FIRE_FEAR);
+    expect(ZOMBIE_SPAWN_FIRE_CLEAR).toBeGreaterThan(CAMPFIRE_LIGHT - ZOMBIE_SPAWN_LIGHT_MAX);
+
+    // ---- the prose
+    expect(text).toContain('None comes up out of well-lit ground, and no walker or runner steps into strong light. Stand in that light yourself and they leave you alone: they do not even wait at its edge, unless you strike one.');
+    expect(text).toContain(`Light loses 1 of its strength with every cell. Walkers and runners will not step where it is ${ZOMBIE_DREAD_LIGHT} or more. None comes up where it is ${ZOMBIE_SPAWN_LIGHT_MAX} or more, and fewer the brighter the ground below that.`);
+    // weaker in proportion: a walker in the brightest light it will stand in (one below its dread) …
+    const edge = { glare: (ZOMBIE_DREAD_LIGHT - 1) / LIGHT_MAX };
+    expect(glareSpeed(edge)).toBeCloseTo(1 - GLARE_SLOW * (9 / 15), 12);
+    expect(strikeDamage({ kind: 'walker', ...edge })).toBe(Math.round(ZOMBIE_DAMAGE * (1 - GLARE_WEAK * (9 / 15))));
+    expect(text).toContain(`At the edge of a Torch's glow a walker is slowed to ${fmtPct(glareSpeed(edge))} of its pace and strikes for ${strikeDamage({ kind: 'walker', ...edge })} HP instead of ${ZOMBIE_DAMAGE}.`);
+    expect(text).toContain('At the edge of a Torch\'s glow a walker is slowed to 70 % of its pace and strikes for 5 HP instead of 8.');
+    // … the day leap from the first whole light level at or over GLARE_CLIMB …
+    const climbLight = Math.ceil(GLARE_CLIMB * LIGHT_MAX);
+    expect(climbLight).toBe(8);
+    expect(maxClimb({ kind: 'runner', glare: climbLight / LIGHT_MAX })).toBe(CLIMB.runner.day);
+    expect(maxClimb({ kind: 'alpha', glare: (climbLight - 1) / LIGHT_MAX })).toBe(CLIMB.alpha.night);
+    expect(text).toContain(`From light ${climbLight} up, runners and the alpha leap only as high as by day.`);
+    // … and the alpha beside a Torch, the brightest place it will stand
+    expect(TORCH_LIGHT - 1).toBeLessThan(ALPHA_DREAD_LIGHT);
+    expect(TORCH_LIGHT).toBeGreaterThanOrEqual(ALPHA_DREAD_LIGHT); // "right up to a Torch", not onto it
+    const byTorch = { glare: (TORCH_LIGHT - 1) / LIGHT_MAX };
+    const alphaDark = strikeDamage({ kind: 'alpha' });
+    expect(alphaDark).toBe(zombieStrike('alpha').night);
+    expect(text).toContain(`The alpha fears only light of ${ALPHA_DREAD_LIGHT} or more. It walks right up to a Torch, slowed to ${fmtPct(glareSpeed(byTorch))} of its pace and striking for ${strikeDamage({ kind: 'alpha', ...byTorch })} HP instead of ${alphaDark}. A burning campfire still keeps it ${ZOMBIE_FIRE_FEAR} cells away.`);
+    expect(text).toContain('slowed to 60 % of its pace and striking for 6 HP instead of 14.');
+    expect(text).toContain(`A zombie with nobody to chase keeps off ground lit ${ZOMBIE_SHY_LIGHT} or more and wanders away into the dark.`);
+    // making a home safe: the floor, the walls by kind, torches with no gap between their dread, the campfire
+    const torchEvery = 2 * (TORCH_LIGHT - ZOMBIE_DREAD_LIGHT) + 1;
+    expect(torchEvery).toBe(7);
+    for (let d = 1; d < torchEvery; d++) expect(Math.max(TORCH_LIGHT - d, TORCH_LIGHT - (torchEvery - d)), `cell ${d} between two torches`).toBeGreaterThanOrEqual(ZOMBIE_DREAD_LIGHT);
+    expect(text).toContain(`Making a home safe at night. Give it a floor: none comes up in a column you have built in. A wall ${CLIMB.walker.night + 1} cells high stops walkers, ${CLIMB.runner.night + 1} runners and ${CLIMB.alpha.night + 1} the alpha. Stand a Torch every ${torchEvery} cells around the outside, and keep a campfire burning: nobody within ${ZOMBIE_FIRE_FEAR} cells of it is ever struck.`);
+    expect(text).toContain('A wall 2 cells high stops walkers, 3 runners and 5 the alpha.');
+    expect(text).toContain('Light behind a wall does not count: a Torch protects only the side it shines on. A fire that has burned out protects nothing.');
+    // the page with the table keeps to the budget of a page with a table, and carries no margin note
+    const page = [...blocks()].find((x) => x.block.kind === 'table' && x.block.id === 'lights');
+    expect(page.chapter.id).toBe('dangers');
+    expect(page.chapter.pages[page.page].filter((b) => b.kind === 'tip' || b.kind === 'warn')).toEqual([]);
+    expect(page.chapter.pages[page.page][0]).toMatchObject({ kind: 'h', text: 'Light keeps them off' });
+    expect(page.chapter.pages[page.page + 1][0]).toMatchObject({ kind: 'h', text: 'Weaker in the light' });
   });
 
   it('the two blows tables divide what a target takes by every tool power', () => {
