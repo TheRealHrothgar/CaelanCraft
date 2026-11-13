@@ -648,9 +648,10 @@ const AMBIENCE = {
    * Rain (§84): a broad, even hiss with a softer body under it and a low wash, each swelling a little at its own slow
    * rate. worldSounds sets its level by the rain's strength and the cover overhead, and lowers its bands under a roof.
    */
-  ambRain: { dur: 4.05, gain: 0.085, layers: [
-    noise({ hp: 1800, lp: 7500, gain: 0.3, decay: 4, lfoHz: 0.23, lfoDepth: 0.3 }),
-    noise({ bp: 1300, q: 0.7, gain: 0.65, decay: 4, lfoHz: 0.31, lfoDepth: 0.35 }),
+  ambRain: { dur: 4.05, gain: 0.07, layers: [
+    // (v0.16, a calmer world: the top of the hiss is rolled off at 4.4 kHz and the whole loop sits 2 dB lower)
+    noise({ hp: 1500, lp: 4400, gain: 0.26, decay: 4, lfoHz: 0.23, lfoDepth: 0.3 }),
+    noise({ bp: 1100, q: 0.7, gain: 0.65, decay: 4, lfoHz: 0.31, lfoDepth: 0.35 }),
     noise({ lp: 420, gain: 0.4, decay: 4, lfoHz: 0.13, lfoDepth: 0.4 }),
   ] },
 

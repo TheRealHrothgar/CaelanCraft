@@ -743,18 +743,20 @@ describe('ambience sounds (§82)', () => {
     const rain = measure(loop('ambRain'));
     const wind = measure(loop('ambWind'));
     const stream = measure(loop('ambStream'));
-    expect(rain.centroid).toBeGreaterThan(2500);
-    expect(rain.centroid).toBeLessThan(6000);
-    expect(rain.centroid).toBeGreaterThan(wind.centroid * 3);
+    expect(rain.centroid).toBeGreaterThan(1800);
+    expect(rain.centroid).toBeLessThan(4500);
+    expect(rain.centroid).toBeGreaterThan(wind.centroid * 2.5);
     expect(rain.centroid).toBeGreaterThan(stream.centroid);
     expect(rain.lowShare).toBeLessThan(0.05);
-    expect(bandShare(rain, 1000, 8000)).toBeGreaterThan(0.75); // broad: most of it between 1 and 8 kHz
-    expect(bandShare(rain, 2000, 12000)).toBeGreaterThan(0.4);
+    expect(bandShare(rain, 1000, 8000)).toBeGreaterThan(0.6); // broad: most of it between 1 and 8 kHz
+    expect(bandShare(rain, 2000, 12000)).toBeGreaterThan(0.25);
+    expect(bandShare(rain, 6000, 16000)).toBeLessThan(0.08); // (v0.16) no sizzle at the top
     expect(bandShare(rain, 300, 2000)).toBeGreaterThan(0.15); // with a body under the hiss
-    // even: it does not bubble like the stream
-    expect(tremoloOf(loop('ambRain', 1, 1, 3), 2, 12).depth).toBeLessThan(tremoloOf(loop('ambStream', 1, 1, 3), 2, 12).depth);
-    // as loud as the stream at full level, within 3 dB: a downpour is the loudest thing the weather does
-    expect(Math.abs(rain.level - stream.level)).toBeLessThan(3);
+    // even: it does not pump (no loop does since v0.16)
+    expect(tremoloOf(loop('ambRain', 1, 1, 3), 2, 12).depth).toBeLessThan(0.07);
+    // a downpour is the loudest thing the weather does: over the stream (which v0.16 made 6 dB softer), by no more than 5 dB
+    expect(rain.level).toBeGreaterThan(stream.level);
+    expect(rain.level - stream.level).toBeLessThan(5);
   });
 
   it('under a roof the rain is duller: the rate worldSounds gives it there lowers every band', () => {

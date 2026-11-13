@@ -229,6 +229,12 @@ export const RAINS_DEAL_DAYS = 2;
  * row are empty: under two and a half days.)
  */
 export const RAINS_MAX_DRY_DAYS = 3;
+/**
+ * A fair start: no shower falls in the first FAIR_START_DAYS game days of a world, so a new player's first nights are
+ * dry (the first fire stays lit without a roof, and nobody starts wet and cold). The rains are already in the
+ * calendar; they simply have not broken yet. Only the very beginning of a world: later years are not spared.
+ */
+export const FAIR_START_DAYS = 2;
 /** `nextChange` looks at most this far ahead (two years). */
 export const NEXT_CHANGE_HORIZON_S = 2 * YEAR_DAYS * DAY_LENGTH_SECONDS;
 
@@ -345,7 +351,7 @@ export function createWeather(seed) {
   }
 
   /** The slot's shower falls on the biome. @param {number} s @param {number} biome */
-  const falls = (s, biome) => rankOf(s) < showerChance(biome, seasonOfSlot(s));
+  const falls = (s, biome) => !(s >= 0 && s < FAIR_START_DAYS * SLOTS_PER_DAY) && rankOf(s) < showerChance(biome, seasonOfSlot(s));
 
   /** A smooth seeded wave in 0..1 over time, for the swell within a shower. @param {number} t */
   function swell(t) {

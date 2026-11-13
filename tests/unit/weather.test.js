@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  YEAR_DAYS, RAINS_DAYS, DRY_DAYS, DRYNESS_RAINS, DRYNESS_DRY, SEASON_TURN_DAYS, SEASON_NAMES, SEASON_LINES, RAIN_SHARE,
+  YEAR_DAYS, FAIR_START_DAYS, RAINS_DAYS, DRY_DAYS, DRYNESS_RAINS, DRYNESS_DRY, SEASON_TURN_DAYS, SEASON_NAMES, SEASON_LINES, RAIN_SHARE,
   SHOWER_SLOT_S, SLOTS_PER_DAY, SHOWER_MIN_S, SHOWER_MAX_S, SHOWER_RAMP_S, SHOWER_PEAK_MIN, SHOWER_SWELL_MIN, SHOWER_MEAN_S,
   RAINS_DEAL_DAYS, RAINS_MAX_DRY_DAYS, NEXT_CHANGE_HORIZON_S, LEAF_COVER, WATER_SURFACE_DROP, OVERCAST_GREY, OVERCAST_SUN_LOSS, OVERCAST_SKY_LOSS,
   OVERCAST_TAU_S,
@@ -24,7 +24,8 @@ const YEAR = YEAR_DAYS * DAY;
 const SEEDS = [1, 2, 3, 7, 42, 1234, 99999, 0xdeadbeef];
 const YEARS = 30;
 /** The first second of the rains and of the dry season of year `y` (from 0). */
-const rainsOf = (y) => [y * YEAR, y * YEAR + RAINS_DAYS * DAY];
+/** The rains of year `y`, as [from, to] seconds; the world's first rains are counted from the end of the fair start. */
+const rainsOf = (y) => [y * YEAR + (y === 0 ? FAIR_START_DAYS * DAY : 0), y * YEAR + RAINS_DAYS * DAY];
 const dryOf = (y) => [y * YEAR + RAINS_DAYS * DAY, (y + 1) * YEAR];
 /** The longest stretch without rain inside [from, to), in seconds. */
 function longestDry(showers, from, to) {
@@ -286,6 +287,25 @@ describe('rain: the share of the time it rains (§84)', () => {
     expect(rainsLen / rainsN).toBeLessThan(SHOWER_MEAN_S.rains + 6);
     expect(dryLen / dryN).toBeGreaterThan(SHOWER_MEAN_S.dry - 6);
     expect(dryLen / dryN).toBeLessThan(SHOWER_MEAN_S.dry + 6);
+  });
+
+  it('a fair start: no shower in the first two days of a world, in any land; after them the rains break as in any year', () => {
+    expect(FAIR_START_DAYS).toBe(2);
+    for (const seed of SEEDS) {
+      const w = createWeather(seed);
+      for (const biome of Object.values(BIOME)) {
+        for (let t = 0; t < FAIR_START_DAYS * DAY; t += 7) {
+          if (w.rainAt(t, biome) !== 0) throw new Error(`seed ${seed} biome ${biome}: rain at ${t} s`);
+        }
+        expect(w.rainedWithin(FAIR_START_DAYS * DAY - 1, biome, FAIR_START_DAYS * DAY - 1), `${seed} ${biome}`).toBe(false);
+      }
+      // the rest of the first rains has showers, and the second year's first two days are not spared
+      expect(w.showers(FAIR_START_DAYS * DAY, RAINS_DAYS * DAY, BIOME.PLAINS).length).toBeGreaterThan(8);
+    }
+    const spared = SEEDS.filter((seed) => createWeather(seed).showers(YEAR, YEAR + FAIR_START_DAYS * DAY, BIOME.FOREST).length === 0);
+    expect(spared).toEqual([]);
+    // the calendar is not moved: day 1 is still the first day of the rains
+    expect(seasonOf(1)).toMatchObject({ key: 'rains', dayOfSeason: 1 });
   });
 
   it('the rains never go three days without rain (they do not even go two): plains, forest, mountains, beach, snow', () => {

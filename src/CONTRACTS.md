@@ -5255,6 +5255,11 @@ renderer against signals whose numbers are known.
 
 ## 84. Seasons and rain — `src/weather.js` (PURE), `src/rainRenderer.js` (three), `src/farming.js`, `src/campfires.js`, `src/climate.js`, `src/survival.js`, `src/soundBank.js`, `src/worldSounds.js`, `src/soundTest.js`, `src/hud.js`, `src/renderer.js`, `src/main.js`, `src/diagnostics.js`, `src/handbook.js`, `src/handbookUI.js`
 
+> **Amendment (a fair start, by the lead):** no shower falls in the first `FAIR_START_DAYS` (2) game days of a world
+> (slots 0–11 never fall, whatever their rank), so the first two nights are dry: the first fire needs no roof and nobody
+> starts wet and cold. The calendar is not moved (day 1 is the first day of the rains) and later years are not spared.
+> The rain loop is 2 dB lower and rolled off above 4.4 kHz, and the patter's ticks start softly (§82's calmer bed).
+
 Amends §13 (the sky), §19 and §48 (the HUD), §23 and §49 (main), §32 (campfires), §45 (the body: wet), §73 (the guide),
 §80.6–§80.7 (farming: watered) and §82 (the ambience). A calendar with a wet and a dry season, rain in showers, how it
 looks and sounds, and what it does: it waters crops, puts out unsheltered fires, and makes the player wet and cold.

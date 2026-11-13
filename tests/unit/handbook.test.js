@@ -47,7 +47,7 @@ import {
 import { SPREAD_KINDS, SPREAD_MEAN_S, SPREAD_STEP, SPREAD_RADIUS, SPREAD_RANGE, SPONTANEOUS_MEAN_S } from '../../src/spread.js';
 import { RAIN_LANDS } from '../../src/handbook.js';
 import {
-  YEAR_DAYS, RAINS_DAYS, DRY_DAYS, RAIN_SHARE, SHOWER_MIN_S, SHOWER_MAX_S, RAINS_MAX_DRY_DAYS, LEAF_COVER, SEASON_LINES,
+  YEAR_DAYS, FAIR_START_DAYS, RAINS_DAYS, DRY_DAYS, RAIN_SHARE, SHOWER_MIN_S, SHOWER_MAX_S, RAINS_MAX_DRY_DAYS, LEAF_COVER, SEASON_LINES,
   calendarLine, createWeather, fallsAsSnow,
 } from '../../src/weather.js';
 import { RAIN_WATERS_S } from '../../src/farming.js';
@@ -1201,7 +1201,8 @@ describe('handbook: Seasons and rain (CONTRACTS §84)', () => {
     expect(text).toContain(`The rains are its first ${RAINS_DAYS} days`);
     expect(text).toContain(`The dry season is the other ${DRY_DAYS}`);
     expect([YEAR_DAYS, RAINS_DAYS, DRY_DAYS]).toEqual([28, 10, 18]);
-    expect(text).toContain('A new world begins on the first day of the rains.');
+    expect(text).toContain('A new world begins on the first day of the rains, with two fair days before the first shower.');
+    expect(FAIR_START_DAYS).toBe(2);
     // how to read the season: the HUD line as the game writes it, the word Rain, and the log's warning
     expect(text).toContain(calendarLine(12));
     expect(text).toContain('Day 12 · The dry season, day 2 of 18');
@@ -1293,14 +1294,20 @@ describe('handbook: Seasons and rain (CONTRACTS §84)', () => {
   it('the first night is warned: a new world begins in the rains, and an open fire needs a roof', () => {
     const night = CHAPTERS[0].pages.find((page) => page.some((b) => b.kind === 'h' && b.text === 'Your first night'));
     expect(night.filter((b) => b.kind === 'tip').map((b) => plainText(b.text))).toEqual([
-      'A new world begins in the rains. Rain puts out a fire under the open sky: set a block or two over your campfire as a roof. See Seasons and rain.',
+      'A new world begins in the rains, but the first two days stay fair. After that, rain puts out a fire under the open sky: set a block or two over your campfire as a roof. See Seasons and rain.',
     ]);
-    // it is no idle warning: on most worlds it rains during the first night (19:30 to 04:30) on the plains
+    // the fair start keeps the first two nights dry on every world; it is no idle warning after that: on most worlds it
+    // rains during the THIRD night (19:30 to 04:30) on the plains
     const DAY = DAY_LENGTH_SECONDS;
+    let firstNights = 0;
     let rainy = 0;
     for (let seed = 1; seed <= 200; seed++) {
-      if (createWeather(seed * 7919).showers(SUNSET_TIME * DAY, (1 + SUNRISE_TIME) * DAY, BIOME.PLAINS).length > 0) rainy++;
+      const w = createWeather(seed * 7919);
+      if (w.showers(SUNSET_TIME * DAY, (1 + SUNRISE_TIME) * DAY, BIOME.PLAINS).length > 0) firstNights++;
+      if (w.showers((1 + SUNSET_TIME) * DAY, (2 + SUNRISE_TIME) * DAY, BIOME.PLAINS).length > 0) firstNights++;
+      if (w.showers((2 + SUNSET_TIME) * DAY, (3 + SUNRISE_TIME) * DAY, BIOME.PLAINS).length > 0) rainy++;
     }
+    expect(firstNights).toBe(0);
     expect(rainy / 200).toBeGreaterThan(0.8);
   });
 

@@ -66,7 +66,7 @@ import {
 import { SPREAD_KINDS, SPREAD_MEAN_S, SPREAD_STEP, SPREAD_RADIUS, SPREAD_RANGE, SPONTANEOUS_MEAN_S } from './spread.js';
 // §84: the seasons and the rain
 import {
-  YEAR_DAYS, RAINS_DAYS, DRY_DAYS, RAIN_SHARE, SHOWER_MIN_S, SHOWER_MAX_S, SLOTS_PER_DAY, RAINS_MAX_DRY_DAYS, LEAF_COVER,
+  YEAR_DAYS, RAINS_DAYS, DRY_DAYS, FAIR_START_DAYS, RAIN_SHARE, SHOWER_MIN_S, SHOWER_MAX_S, SLOTS_PER_DAY, RAINS_MAX_DRY_DAYS, LEAF_COVER,
   SEASON_LINES, calendarLine, showerChance,
 } from './weather.js';
 import { RAIN_WATERS_S } from './farming.js';
@@ -1218,8 +1218,8 @@ function makeChapters() {
       p(`A fire built in Survival burns for ${fmtDurationLong(CAMPFIRE_FUEL_START_S)}, then goes cold. Feed it with [R]: a stick adds ${FUEL_STICK_S} seconds, a log ${fmtDurationLong(FUEL_LOG_S)}, up to ${fmtDurationLong(CAMPFIRE_FUEL_MAX_S)} in all. ${cap(numWord(nightLogs))} log${nightLogs === 1 ? ' carries' : 's carry'} a fire through the whole night.`),
       p('Plains nights are cool, not dangerous. In snowy land the night can kill: wear what you have and keep close to the fire.'),
       warn(`Morning does not burn the zombies away. A walker dozing in the light wakes if you come within ${WALKER_WAKE_RANGE} cells: look around before you leave the fire.`),
-      // §84: a new world begins in the rains, and most first nights see a shower
-      tip('A new world begins in the rains. Rain puts out a fire under the open sky: set a block or two over your campfire as a roof. See *Seasons and rain*.'),
+      // §84: a new world begins in the rains, but its first days are fair (weather.FAIR_START_DAYS)
+      tip(`A new world begins in the rains, but the first ${numWord(FAIR_START_DAYS)} days stay fair. After that, rain puts out a fire under the open sky: set a block or two over your campfire as a roof. See *Seasons and rain*.`),
     ],
   ]);
 
@@ -1274,7 +1274,7 @@ function makeChapters() {
     [
       h('The year'),
       p('In many parts of the world the year is not summer and winter but a *wet season* and a *dry season*. People, animals and plants there plan their whole year around water: they grow and gather while it rains, and store, travel or wait when it does not. This land is like that.'),
-      p(`A year here is ${YEAR_DAYS} game days. *The rains* are its first ${RAINS_DAYS} days: showers come nearly every day. *The dry season* is the other ${DRY_DAYS}: rain is rare, and the land dries out. A new world begins on the first day of the rains.`),
+      p(`A year here is ${YEAR_DAYS} game days. *The rains* are its first ${RAINS_DAYS} days: showers come nearly every day. *The dry season* is the other ${DRY_DAYS}: rain is rare, and the land dries out. A new world begins on the first day of the rains, with ${numWord(FAIR_START_DAYS)} fair days before the first shower.`),
       p(`The line at the top of the screen tells you where in the year you are: *${calendarLine(RAINS_DAYS + 2)}*. While rain is falling it ends with the word *Rain*.`),
       tip(`On the last day of the rains the log warns you: "${SEASON_LINES.ending}"`),
     ],
