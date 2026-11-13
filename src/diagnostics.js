@@ -423,6 +423,7 @@ function refreshHandleRefs(handle, game) {
   handle.waterCycle = game ? game.waterCycle ?? null : null; // §83: the water cycle and its counts (waterBodies.js WaterCycle)
   handle.sleep = game ? game.sleep ?? null : null; // §87: the sleep (sleep.js Sleep: phase, hours, spot)
   handle.tiredFx = game ? game.tiredFx ?? null : null; // §87: yawns, the figure, the nods and their timers (sleep.js TiredFx)
+  handle.refill = game ? game.refill ?? null : null; // §85: the drawn springs, the wells and the rain barrels with room (homestead.js Refill)
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;
@@ -516,6 +517,9 @@ export function installDebugHandle(win, game) {
   handle.sleepHere = () => (game && typeof game.sleepHere === 'function' ? game.sleepHere() : false);
   handle.secureAt = (q, y, r) => (game && typeof game.secureAt === 'function' ? game.secureAt(q, y, r) : null);
   handle.sleepStep = (hours) => (game && typeof game.sleepStep === 'function' ? game.sleepStep(hours) : null);
+  // §85: run the refill of springs, wells and rain barrels as if `seconds` had passed, in the weather of `env` when given
+  // (`{ rain: 1, dryness: 0.3 }`): the in-game check of a place to stay
+  handle.homesteadStep = (seconds, env) => (game && typeof game.homesteadStep === 'function' ? game.homesteadStep(seconds, env) : null);
   handle.interact = () => {
     if (game && typeof game.interact === 'function') game.interact();
   };

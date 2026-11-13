@@ -18,7 +18,9 @@ const SURVIVAL_NAMES = new Set(['copper_ore', 'tin_ore', 'honeyberry_bush', 'hon
   'honeycap_mushroom', 'frecklecap_mushroom', 'onion_plant', 'carrot_plant', 'hazel_thicket', 'hazel_thicket_bare', 'crab_apple_bush',
   'crab_apple_bush_bare', 'healwort_plant', 'healwort_plant_bare',
   // §81: the plants that are not food
-  'fern', 'meadow_daisies', 'thistle', 'hemlock', 'nightshade_bush', 'nightshade_bush_bare', 'flax', 'aloe']);
+  'fern', 'meadow_daisies', 'thistle', 'hemlock', 'nightshade_bush', 'nightshade_bush_bare', 'flax', 'aloe',
+  // §85: a place to stay
+  'spring', 'spring_drawn', 'well', 'well_drawn', 'rain_barrel', 'rain_barrel_1', 'rain_barrel_2', 'rain_barrel_3', 'grass_bed', 'bed']);
 const NO_SURVIVAL = BLOCKS.filter((b) => !SURVIVAL_NAMES.has(b.name));
 
 /** @param {ReturnType<typeof buildPickerModel>} model @returns {number[]} every id across sections (families expanded) */
@@ -122,7 +124,7 @@ describe('searchBlocks (§5.5)', () => {
     expect(find('linstock')).toEqual(['torch']);
     expect(find('slow match')).toEqual(['torch']);
     expect(find('black hole')).toEqual(['collapsar_charge']);
-    expect(find('barrel')).toEqual(['powder_keg']);
+    expect(find('barrel')).toEqual(['rain_barrel', 'powder_keg']); // §85: the Rain Barrel by its name, then the keg by its alias
     expect(find('ignition switch')).toEqual(['knife_switch']);
     expect(find('power source')).toEqual(['voltaic_battery']);
     expect(find('repeater')).toEqual(['relay']);

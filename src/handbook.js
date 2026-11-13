@@ -20,7 +20,7 @@
 //
 // Imports are read-only data and pure functions: config, blocks, items, crafting, harvest, climate, daynight, vitals,
 // cooking, and the constants of zombies, animals, looseItems, survivalControl, farming, spread, weather, campfires,
-// light (LIGHT_EMISSION) and sleep.
+// light (LIGHT_EMISSION), homestead and sleep.
 import {
   DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, HOTBAR_SIZE, PACK_SLOTS,
   STATION_RANGE, STATION_WORK_RANGE, MAX_CRAFT_JOBS,
@@ -81,6 +81,12 @@ import {
   SPOTS, SLEEP_MIN_FATIGUE, SLEEP_RATE, SLEEP_FULL_H, SLEEP_MAX_H, SLEEP_ZOMBIE_NEAR, NIGHT_ATTACK_P, LIGHT_GUARD_FULL, ATTACK_MIN,
   ATTACK_MAX, SECURE_RADIUS, SECURE_RISE, SECURE_MAX_CELLS, SECURE_REASONS, SLEEP_LINES, nightAttackChance,
 } from './sleep.js';
+// §85: a place to stay
+import {
+  SPRING_DRAUGHT, SPRING_MEAN_S, SPRING_NEAREST_CELLS, WELL_GULPS, WELL_MEAN_S, WELL_DESERT_FACTOR, WELL_SHARE, BARREL_POTS,
+  BARREL_FILL_MEAN_S,
+} from './homestead.js';
+import { HAND_WATER_S, handWaterChance } from './farming.js';
 // §83: water that runs out
 import { BODY_MAX_CELLS, SPILL_STEP_S } from './fluids.js';
 import { CELL_GULPS, POT_GULPS, DRY_MEAN_S, STREAM_DRY_MEAN_S, ROOF_DRY_FACTOR, FILL_MEAN_S } from './waterBodies.js';
@@ -243,7 +249,7 @@ const COUNTABLE = /(Stick|Lump|Ingot|Brick|Rag|Chunk|Nugget|Gem|Pot|Bar)$/;
 /** How a `#tag` reads in prose: [one, many]. */
 const TAG_PROSE = Object.freeze({
   log: ['a log', 'logs'], planks: ['a plank', 'planks'], fuel: ['fuel', 'fuel'], tinder: ['tinder', 'tinder'],
-  knapstone: ['a knapping stone', 'knapping stones'], sand: ['sand', 'sand'],
+  knapstone: ['a knapping stone', 'knapping stones'], sand: ['sand', 'sand'], wool: ['wool', 'wool'],
 });
 
 /** One recipe input in prose: "6 Sticks", "a log", "2 fuel". @param {{k?: string, tag?: string, n: number}} inp */
@@ -1705,6 +1711,81 @@ function makeChapters() {
     ],
   ]);
 
+  // ---- A place to stay (CONTRACTS §85), between the workplaces and the animals
+  const well = rec('well');
+  const barrel = rec('rain_barrel');
+  const perDay = (/** @type {number} */ mean) => Math.round(DAY_LENGTH_SECONDS / mean);
+  const oneIn = (/** @type {number} */ chance) => numWord(Math.round(1 / chance));
+  chapter('homestead', 'A place to stay', 'Home', 'home', [
+    [
+      h('Why the land moves you on'),
+      p('This land does not keep you in one place for nothing. Left alone, it gives a little everywhere and never much in one spot.'),
+      bullets([
+        `*Water dries.* In dry weather a pond loses a depth ${everyGameDays(DRY_MEAN_S)} and a stream shrinks to a trickle at its head. Every gulp you take comes out of it too.`,
+        `*Food comes back slowly.* A picked bush fruits again after ${gameDays(REGROW_MEAN_S)}. A patch you leave a few plants in gains one new plant ${everyGameDays(SPREAD_MEAN_S)}.`,
+        '*Herds are few.* Hunt one and the next is a long walk away.',
+      ]),
+      p('So the easy way to live is to *move*: drink and gather where there is plenty, walk on when it runs low, and come back after the land has had days or weeks to recover. People have lived like that for most of history.'),
+      p('To *stay* you must make a place give you what the land will not: a *homestead*. It takes work before it gives anything back.'),
+    ],
+    [
+      h('What a homestead needs'),
+      bullets([
+        '*Water all year.* A spring if you are lucky, a well, rain barrels, a cistern: the next pages. Have more than one, for the dry season.',
+        `*Food you grow.* A field within ${numWord(FARM_WATER_REACH)} cells of fresh water, or one you water yourself. See *Planting*.`,
+        '*A fire under a roof.* Rain puts out an open fire. A block or two overhead keeps it burning.',
+        '*Walls against the night.* A closed room, with light inside it. See *Dangers*.',
+        `*A place to lie down.* A *Grass Bed* is ${recipeInputsProse(rec('grass_bed'))}, made by hand. A *Bed* is ${recipeInputsProse(rec('bed'))}, made at the Work Stump.`,
+      ]),
+      tip('Settle where two kinds of water are close together. Then build the rest around them.'),
+    ],
+    [
+      h('Springs'),
+      p('A *spring* is ground water coming up by itself. Rain that sank into the hills finds its way out again, often years later, at the foot of a slope or in a hollow. The ground has filtered it on the way, so spring water is clean: you can drink it as it is.'),
+      p(`Look for a ring of wet stones round bright, clear water. Springs are rare: the nearest is usually ${SPRING_NEAREST_CELLS[0]} to ${SPRING_NEAREST_CELLS[1]} cells away. There are few in the desert and none on a beach.`),
+      p(`Press [R] to drink: one draught is worth ${numWord(SPRING_DRAUGHT)} gulps (${fmtSigned(SPRING_DRAUGHT * R.GULP_FRESH)} Hydration) and never poisons you. With an empty Clay Pot in hand, [R] fills a *Pot of Spring Water*: ${fmtSigned(food('pot_spring').hydration)} Hydration, safe, and it keeps as boiled water does.`),
+      p(`Then the spring is *drawn*: only a trickle is left. It wells up again after about ${fmtDurationLong(SPRING_MEAN_S)}, so it gives about ${numWord(perDay(SPRING_MEAN_S))} draws a game day, in the rains and in the dry season alike. That is one person's water and no more.`),
+      tip('A spring cannot be dug out or moved: the rock runs deep. Build beside it.'),
+    ],
+    [
+      h('The well'),
+      p('A *well* is a hole dug down to the same ground water. What seeps into it has not come as far through the rock: well water is fresh but raw. Boil it.'),
+      p(`Make a Well at the Work Stump, with a shovel in your pack: ${recipeInputsProse(well).replace(/ and Clay Pot$/, ' and a Clay Pot')}. Set it on grass, dirt, sand, gravel or clay. It is dug into the ground, so it cannot stand on rock.`),
+      p(`[R] with an empty Clay Pot fills a Pot of Water. Without a pot, [R] drinks ${numWord(WELL_GULPS)} gulps, with the usual risk of raw water.`),
+      p(`Then the well is *drawn* and the ground fills it again: after about ${fmtDurationLong(WELL_MEAN_S.rains)} in the rains and ${fmtDurationLong(WELL_MEAN_S.dry)} in the dry season. That is about ${numWord(perDay(WELL_MEAN_S.rains))} pots a game day in the rains and ${numWord(perDay(WELL_MEAN_S.dry))} in the dry season. In the desert it takes ${numWord(WELL_DESERT_FACTOR)} times as long.`),
+      warn(`Wells share the water in the ground. Two wells within ${WELL_SHARE} cells of each other each fill half as fast, three a third as fast. A second well gives more only if it stands further away.`),
+    ],
+    [
+      h('The rain barrel'),
+      p('A *rain barrel* catches the rain and keeps it for the dry months.'),
+      p(`Make one at the Work Stump from ${recipeInputsProse(barrel)}, and set it under the open sky. In hard rain it gains a pot about every ${fmtDurationLong(BARREL_FILL_MEAN_S)}, in light rain more slowly. Under leaves it gets about a third of the rain, under a roof none. It holds ${numWord(BARREL_POTS)} pots, and the sun takes nothing from it.`),
+      p('[R] with an empty Clay Pot takes a Pot of Water out: fresh and raw, so boil it. [R] with a Pot of Water, a Pot of Boiled Water or a Pot of Spring Water pours it in.'),
+      p(`Water in a barrel never goes bad. In a pot, fresh water turns tainted after ${gameDays(food('pot_water').spoilS ?? 0)}. So a row of full barrels is your store for the dry season: fill them from the well while it is quick.`),
+      warn('Breaking a barrel spills what it holds. You get the barrel back, not the water.'),
+      tip('Where it snows instead of raining, a barrel catches nothing.'),
+    ],
+    [
+      h('The cistern'),
+      p('A *cistern* is a pond you make. Water sinks through earth and sand, but not through clay: a pit floored with clay holds the rain.'),
+      steps([
+        `Dig clay with a shovel, at the bottom of a pond, and press it into Clay blocks: ${takes('clay', 'clay_lump')} Clay Lumps each, a hand job.`,
+        'Dig a pit one cell deep, open to the sky.',
+        'Lay Clay under every cell of it.',
+        'See that every side of the pit is a solid block.',
+        `Wait for rain. The pit takes its first water, shallow, then gains a depth for about every ${fmtDurationLong(FILL_MEAN_S)} of hard rain until it is full.`,
+      ]),
+      p(`From then on it is a pool like any other. Its water is fresh and raw. It waters crops within ${numWord(FARM_WATER_REACH)} cells. It is used up as you drink, it dries a depth ${everyGameDays(DRY_MEAN_S)} in dry weather, and it runs out through a gap in its side. Each cell holds about ${3 * CELL_GULPS} gulps when full: dig it wide.`),
+    ],
+    [
+      h('Watering by hand'),
+      p(`A crop wants fresh water within ${numWord(FARM_WATER_REACH)} cells, or rain. When it has neither, carry the water to it: [R] with a Pot of Water, a Pot of Boiled Water or a Pot of Spring Water on a planted seed or a sprout pours it on. You keep the pot.`),
+      p(`One pot is worth ${HAND_WATER_S * 2 === DAY_LENGTH_SECONDS ? 'half a game day' : fmtDurationLong(HAND_WATER_S)} of watered growing, all at once. For a planted seed the wait is over on the spot one time in ${oneIn(handWaterChance(BLOCK.PLANTED_CARROT))}: it sprouts, as ${fmtPct(SEED_TAKES.watered)} of watered seeds do, or it fails. A sprout is grown on the spot one time in ${oneIn(handWaterChance(BLOCK.CARROT_SPROUT))}. If nothing shows, nothing is lost but the water: pour again, or wait.`),
+      p('Tainted water and sea water will not do. Water cannot replace the sky either: a crop under a roof stays as it is, and a cattail must still stand beside water.'),
+      tip('With a pot of water in hand the hint of a planted cell ends *R: water it*.'),
+      tip('Water the seeds first. A seed on dry ground often fails; a sprout only grows slowly.'),
+    ],
+  ]);
+
   // ---- 7. Animals
   chapter('animals', 'Animals', 'Animals', 'hex', [
     [
@@ -1990,6 +2071,7 @@ function makeChapters() {
       p('Worlds made before Survival have no wild plants, ponds, copper or tin. The first time you switch one to Survival you are asked to bring them in: they appear wherever the land is untouched, near your builds too. This cannot be undone.'),
       p('New worlds have them unless you untick *Survival resources* when you create the world.'),
       p('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only. A world made before them keeps its land: every pond in it is fresh. The newest worlds are leaner still: about one food patch in three is left. Only their land has Hemlock, Nightshade, flax, aloe, ferns, daisies and thistles from the start. The rules for things you carry, plant and hunt are the same everywhere.'),
+      p('Natural springs rise only in the land of the very newest worlds, and only there does gravel lie in small beds, not as single cells scattered everywhere. Wells, rain barrels and cisterns work in every world.'),
     ],
     [
       h('Good to know'),

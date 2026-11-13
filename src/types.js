@@ -474,6 +474,11 @@
  *   a sleep spot in that cell secure
  * @property {(hours: number) => ({ hours: number, woke: string|null }|null)} [sleepStep]  sleep that many game hours at
  *   once (lying down or asleep); null when nobody sleeps
+ *
+ * A place to stay (CONTRACTS §85): the tracker of drawn springs, wells and rain barrels, and time for it alone.
+ * @property {import('./homestead.js').Refill} [refill]  what brings their water back
+ * @property {(seconds: number, env?: { rain?: number|((q: number, y: number, r: number) => number), dryness?: number|(() => number) }) => ({ seconds: number, springs: number, wells: number, barrels: number }|null)} [homesteadStep]
+ *   run the refill step as if `seconds` had passed, in another weather when `env` is given
  */
 
 export {};

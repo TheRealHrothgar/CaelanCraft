@@ -69,8 +69,14 @@ export const BLOCK = Object.freeze({
   // SOURCES with less in the cell: low (about two thirds) and shallow (ankle-deep). Never placed by hand, no item: a
   // pool gets there by being drunk from, drying in the sun, spilling through a breach or filling in the rain.
   WATER_LOW: 159, WATER_SHALLOW: 160, TAINTED_WATER_LOW: 161, TAINTED_WATER_SHALLOW: 162,
+  // §85 (a place to stay): what a homestead is built from. A natural SPRING (only generation-5 worlds generate it) and
+  // a WELL give water a few times a day: drawn from, each becomes its *_DRAWN twin and comes back by itself. A
+  // RAIN_BARREL fills in the rain and stores water: the id carries how many pots it holds (0..3), so a save needs no
+  // field for it. Two places to sleep: a GRASS_BED and a BED (furniture: the sleep rules read these keys).
+  SPRING: 163, SPRING_DRAWN: 164, WELL: 165, WELL_DRAWN: 166,
+  RAIN_BARREL: 167, RAIN_BARREL_1: 168, RAIN_BARREL_2: 169, RAIN_BARREL_3: 170, GRASS_BED: 171, BED: 172,
 });
-export const BLOCK_COUNT = 163;
+export const BLOCK_COUNT = 173;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -127,6 +133,12 @@ export const TILE = Object.freeze({
   // §81: the plants that are not food, one sprite each (the picked Nightshade shows the picked Honeyberry's; 225–227 of
   // the flora range are unused)
   FERN: 218, MEADOW_DAISIES: 219, THISTLE: 220, HEMLOCK: 221, NIGHTSHADE_BUSH: 222, FLAX: 223, ALOE: 224,
+  // §85 (a place to stay), in the ids the flora range left free (207, 225–227) and the eight after the nest's (232–239;
+  // 238 and 239 stay free). The spring is a prism: its rocky side, its pool, its pool drawn. The others are small 3D
+  // models: each has its PICTURE (the Pack's icon, a flat 2D drawing) and, where the picture has too little solid colour
+  // to wrap a box, a SKIN of plain swatches its faces are cut from (plantModels.js `tile`).
+  SPRING_SIDE: 207, SPRING_TOP: 225, SPRING_DRAWN_TOP: 226, WELL: 227,
+  WELL_SKIN: 232, RAIN_BARREL: 233, RAIN_BARREL_SKIN: 234, GRASS_BED: 235, BED: 236, BED_SKIN: 237,
   // v0.14 (§76 fauna): the ground nest's pictures (its icon, and what its crumbs are coloured from) and the skins its 3D
   // pieces are cut from (woven dry grass, a speckled eggshell)
   GROUND_NEST: 228, GROUND_NEST_EMPTY: 229, LITTER_NEST: 230, LITTER_EGG: 231,
@@ -177,7 +189,8 @@ export const SOUND_GROUPS = Object.freeze([
  * @property {'prism'|'model'|'decal'|'litter'} shape  how the chunk mesher draws it: 'prism' (default) the hexagonal prism;
  *                                  'model' a small 3D model of boxes and leaf cards cut from the block's TOP tile (the wild
  *                                  plants: plantModels.js, CONTRACTS §78; they were three crossed pictures until v0.15;
- *                                  and the planted seeds and sprouts of §80);
+ *                                  the planted seeds and sprouts of §80; and the well, the rain barrel and the two beds
+ *                                  of §85);
  *                                  'decal' one flat picture of the TOP tile lying on the cell's floor (the snares); 'litter'
  *                                  a few small 3D pieces lying on the floor (loose stones, fallen branches: CONTRACTS §75).
  *                                  The terrain stays hexagonal prisms.
@@ -234,6 +247,14 @@ const PLANT = Object.freeze({
 
 /** The wild plants: PLANT flags drawn as small 3D models cut from their picture (plantModels.js, §78), with that picture as a flat icon. */
 const SPRITE = Object.freeze({ ...PLANT, shape: /** @type {'model'} */ ('model'), icon: /** @type {'flat'} */ ('flat') });
+
+/**
+ * §85: the well and the rain barrel — SOLID blocks (the cell collides, carries what is put on it and holds water back)
+ * drawn as a small 3D model like a plant, so not opaque: the terrain draws every face round them. Flat icon.
+ */
+const FURNITURE = Object.freeze({
+  opaque: false, layer: LAYER_CUTOUT, cullSame: false, shape: /** @type {'model'} */ ('model'), icon: /** @type {'flat'} */ ('flat'),
+});
 
 /** The ground litter: PLANT flags drawn as small 3D rocks or sticks on the cell's floor (§75); its icon is its flat picture. */
 const LITTER = Object.freeze({ ...PLANT, shape: /** @type {'litter'} */ ('litter'), icon: /** @type {'flat'} */ ('flat') });
@@ -465,6 +486,22 @@ export const BLOCKS = [
   def({ id: B.WATER_SHALLOW, name: 'water_shallow', displayName: 'Shallow Water', tiles: tiles(T.WATER), ...WATER_FAMILY }),
   def({ id: B.TAINTED_WATER_LOW, name: 'tainted_water_low', displayName: 'Low Tainted Water', tiles: tiles(T.TAINTED_WATER), ...WATER_FAMILY }),
   def({ id: B.TAINTED_WATER_SHALLOW, name: 'tainted_water_shallow', displayName: 'Shallow Tainted Water', tiles: tiles(T.TAINTED_WATER), ...WATER_FAMILY }),
+  // ---- §85: a place to stay. The SPRING is ground: a solid, opaque prism of rock with a pool in its top, set into the
+  // land by generation 5 in place of the surface block. It is no water block (nothing flows from it, it waters no crop):
+  // it is a place to drink. Never placed by hand, no item; harvest.js gives it no rule, so Survival cannot break it.
+  def({ id: B.SPRING, name: 'spring', displayName: 'Spring', tiles: tiles(T.SPRING_SIDE, T.SPRING_TOP, T.STONE), soundGroup: 'stone', placeable: false }),
+  def({ id: B.SPRING_DRAWN, name: 'spring_drawn', displayName: 'Spring (drawn)', tiles: tiles(T.SPRING_SIDE, T.SPRING_DRAWN_TOP, T.STONE), soundGroup: 'stone', placeable: false }),
+  // The well and the rain barrel: solid 3D models (FURNITURE). Only the full well and the empty barrel are placed by
+  // hand (and are the items); the other states are reached by drawing, by the ground's water and by the rain.
+  def({ id: B.WELL, name: 'well', displayName: 'Well', tiles: tiles(T.WELL), ...FURNITURE, soundGroup: 'stone' }),
+  def({ id: B.WELL_DRAWN, name: 'well_drawn', displayName: 'Well (drawn)', tiles: tiles(T.WELL), ...FURNITURE, soundGroup: 'stone', placeable: false }),
+  def({ id: B.RAIN_BARREL, name: 'rain_barrel', displayName: 'Rain Barrel', tiles: tiles(T.RAIN_BARREL), ...FURNITURE, soundGroup: 'wood' }),
+  ...[1, 2, 3].map((k) => def({
+    id: B[`RAIN_BARREL_${k}`], name: `rain_barrel_${k}`, displayName: `Rain Barrel (${k} ${k === 1 ? 'pot' : 'pots'})`, tiles: tiles(T.RAIN_BARREL), ...FURNITURE, soundGroup: 'wood', placeable: false,
+  })),
+  // The two beds: low 3D models you walk over (the PLANT flags, like a snare or a seedbed), one cell each.
+  def({ id: B.GRASS_BED, name: 'grass_bed', displayName: 'Grass Bed', tiles: tiles(T.GRASS_BED), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.BED, name: 'bed', displayName: 'Bed', tiles: tiles(T.BED), ...SPRITE, soundGroup: 'wood' }),
 ];
 
 /**
@@ -480,7 +517,7 @@ export const DEFAULT_HOTBAR = Object.freeze([
 ]);
 
 /**
- * Order of the 115 placeable blocks, grouped by family; RUNE_BLOCK and WATER stay last. It is the flat list of every placeable
+ * Order of the 119 placeable blocks, grouped by family; RUNE_BLOCK and WATER stay last. It is the flat list of every placeable
  * block (survival's ITEM_KEYS and the `blocks` command use it); the picker's sections come from pickerModel.js. The Black
  * Hole is not placeable (DESIGN-circuits §1.5); the Powder Keg follows the campfire, then the 20 circuit blocks in §1.2 order.
  */
@@ -506,6 +543,8 @@ export const PICKER_ORDER = Object.freeze([
   B.WOOL_LIME, B.WOOL_GREEN, B.WOOL_CYAN, B.WOOL_LIGHT_BLUE, B.WOOL_BLUE, B.WOOL_PURPLE, B.WOOL_MAGENTA, B.WOOL_PINK,
   // special (v0.9: the workplaces, the basket and the Sleeping Hide right before the campfire)
   B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WORKBENCH, B.WICKER_BASKET, B.SLEEPING_HIDE, B.SNARE,
+  // §85: the two beds, the well and the rain barrel, after the snare
+  B.GRASS_BED, B.BED, B.WELL, B.RAIN_BARREL,
   B.CAMPFIRE, B.POWDER_KEG,
   // powder and circuits (DESIGN-circuits §1.2 table order)
   B.COLLAPSAR_CHARGE, B.POWDER_FUSE, B.TORCH, B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE, B.TERMINAL_BOARD,
@@ -539,6 +578,17 @@ export const FARM_IDS = Object.freeze(Array.from({ length: 2 * CROP_ROWS.length 
 export const POP_OFF_IDS = Object.freeze(
   [B.CAMPFIRE, ...PLANT_IDS, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT, ...FARM_IDS].sort((a, b) => a - b),
 );
+
+/**
+ * The ten homestead ids of §85, in id order: SPRING, SPRING_DRAWN, WELL, WELL_DRAWN, RAIN_BARREL, RAIN_BARREL_1..3,
+ * GRASS_BED, BED.
+ */
+export const HOMESTEAD_IDS = Object.freeze(Array.from({ length: 10 }, (_, i) => B.SPRING + i));
+/**
+ * The eight of them drawn as small 3D models (plantModels.js): the two wells, the four barrels, the two beds. With the
+ * wild plants and the farm blocks they are every `'model'` block there is.
+ */
+export const FURNITURE_MODEL_IDS = Object.freeze(HOMESTEAD_IDS.filter((id) => id >= B.WELL));
 
 /** @returns {BlockDef} the block definition; unknown ids return the AIR definition */
 export function getBlockDef(id) {
@@ -626,6 +676,18 @@ export function isPopOff(id) {
 /** A workplace (§7.1): WORK_STUMP, KILN, BLOOMERY or FORGE. */
 export function isStation(id) {
   return id === B.WORK_STUMP || id === B.KILN || id === B.BLOOMERY || id === B.FORGE || id === B.WORKBENCH;
+}
+/** A natural spring, welling or drawn (§85): SPRING or SPRING_DRAWN. */
+export function isSpring(id) {
+  return id === B.SPRING || id === B.SPRING_DRAWN;
+}
+/** A well, full or drawn (§85): WELL or WELL_DRAWN. */
+export function isWell(id) {
+  return id === B.WELL || id === B.WELL_DRAWN;
+}
+/** A rain barrel, whatever it holds (§85): RAIN_BARREL, RAIN_BARREL_1, _2 or _3. */
+export function isRainBarrel(id) {
+  return id >= B.RAIN_BARREL && id <= B.RAIN_BARREL_3;
 }
 /** A block whose contents live in containers.js (§5.6): WICKER_BASKET or REMAINS. */
 export function isContainerBlock(id) {

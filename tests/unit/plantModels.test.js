@@ -1,6 +1,6 @@
 // Tests for src/plantModels.js — the wild plants as small 3D models (CONTRACTS §78).
 import { describe, it, expect } from 'vitest';
-import { BLOCK, BLOCKS, TILE, PLANT_IDS, FARM_IDS, getBlockShape, getFaceTile } from '../../src/blocks.js';
+import { BLOCK, BLOCKS, TILE, PLANT_IDS, FARM_IDS, FURNITURE_MODEL_IDS, getBlockShape, getFaceTile } from '../../src/blocks.js';
 import { FACE_TOP } from '../../src/hex.js';
 import { paintTile } from '../../src/tiles.js';
 import {
@@ -44,18 +44,19 @@ function opaqueShare(tile, uv) {
 }
 
 describe('the plant models (plantModels.js, CONTRACTS §78)', () => {
-  it("every 'model' block has a model and every model is a plant block's: the 25 wild plants (§81: eight more) and the 18 farm blocks (§80)", () => {
+  it("every 'model' block has a model and every model is such a block's: the 25 wild plants (§81: eight more), the 18 farm blocks (§80) and the 8 pieces of furniture (§85)", () => {
     const shaped = BLOCKS.filter((d) => d.shape === 'model').map((d) => d.id);
     expect(shaped).toEqual(IDS);
-    expect(IDS).toHaveLength(43);
+    expect(IDS).toHaveLength(51);
     expect(IDS).toEqual([
       B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE,
       B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.HAZEL_THICKET_BARE,
       B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE,
       ...FARM_IDS, // the nine planted blocks, then the nine sprouts
       B.FERN, B.MEADOW_DAISIES, B.THISTLE, B.HEMLOCK, B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE, B.FLAX, B.ALOE, // §81
+      B.WELL, B.WELL_DRAWN, B.RAIN_BARREL, B.RAIN_BARREL_1, B.RAIN_BARREL_2, B.RAIN_BARREL_3, B.GRASS_BED, B.BED, // §85
     ]);
-    expect([...PLANT_IDS, ...FARM_IDS].sort((a, b) => a - b)).toEqual(IDS);
+    expect([...PLANT_IDS, ...FARM_IDS, ...FURNITURE_MODEL_IDS].sort((a, b) => a - b)).toEqual(IDS);
     for (const id of IDS) {
       expect(getBlockShape(id), name(id)).toBe('model');
       expect(BLOCKS[id].icon, name(id)).toBe('flat'); // the Pack keeps the picture the model is cut from
@@ -151,7 +152,11 @@ describe('the plant models (plantModels.js, CONTRACTS §78)', () => {
     expect(plantModelTile(B.NIGHTSHADE_BUSH_BARE)).toBe(TILE.HONEYBERRY_BUSH);
     expect([...plantModel(B.NIGHTSHADE_BUSH_BARE)]).toEqual([...plantModel(B.HONEYBERRY_BUSH_BARE)]);
     const BARE_BUSHES = [B.HONEYBERRY_BUSH_BARE, B.NIGHTSHADE_BUSH_BARE];
-    for (const id of IDS) if (!BARE_BUSHES.includes(id)) expect(plantModelTile(id), name(id)).toBeNull();
+    // §85: the well, the rain barrel and the bed are cut from skins of their own (their tile is a picture for the Pack);
+    // the grass bed, like a plant, from its own picture
+    const SKINNED = { [B.WELL]: TILE.WELL_SKIN, [B.WELL_DRAWN]: TILE.WELL_SKIN, [B.BED]: TILE.BED_SKIN,
+      ...Object.fromEntries([B.RAIN_BARREL, B.RAIN_BARREL_1, B.RAIN_BARREL_2, B.RAIN_BARREL_3].map((id) => [id, TILE.RAIN_BARREL_SKIN])) };
+    for (const id of IDS) if (!BARE_BUSHES.includes(id)) expect(plantModelTile(id), name(id)).toBe(SKINNED[id] ?? null);
     const violet = (r, g, b) => r > g + 40 && b > g + 70;
     const bush = paintTile(TILE.HONEYBERRY_BUSH);
     for (const q of BARE_BUSHES.flatMap((id) => quadsOf(plantModel(id)))) {

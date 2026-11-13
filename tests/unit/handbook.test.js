@@ -61,6 +61,12 @@ import {
   calendarLine, createWeather, fallsAsSnow,
 } from '../../src/weather.js';
 import { RAIN_WATERS_S } from '../../src/farming.js';
+// §85: a place to stay
+import {
+  SPRING_DRAUGHT, SPRING_MEAN_S, SPRING_NEAREST_CELLS, WELL_GULPS, WELL_MEAN_S, WELL_DESERT_FACTOR, WELL_SHARE, WELL_GROUND, BARREL_POTS,
+  BARREL_FILL_MEAN_S, WATERING_POTS, HOMESTEAD_HINT, wellMeanS,
+} from '../../src/homestead.js';
+import { HAND_WATER_S, handWaterChance } from '../../src/farming.js';
 import { RAIN_DOUSE_MEAN_S } from '../../src/campfires.js';
 import { RAIN_WET_S, WET_CHILL, WET_DRY_S, WET_INSULATION_LOSS } from '../../src/climate.js';
 // §87: sleep
@@ -128,10 +134,10 @@ function pageSize(page) {
 }
 
 describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
-  it('thirteen chapters: the ten of §14.1 in their order, Animals (§73) after the workplaces, Seasons and rain (§84) after Water, and Sleep (§87) after Warm and cool; every one with pages, every page with blocks', () => {
-    expect(chapterIds()).toEqual(['first-day', 'water', 'seasons', 'food', 'warmth', 'sleep', 'ages', 'making', 'animals', 'dangers', 'death', 'controls', 'modes']);
+  it('fourteen chapters: the ten of §14.1 in their order, Animals (§73) after the workplaces, Seasons and rain (§84) after Water, Sleep (§87) after Warm and cool, and A place to stay (§85) after the workplaces; every one with pages, every page with a heading', () => {
+    expect(chapterIds()).toEqual(['first-day', 'water', 'seasons', 'food', 'warmth', 'sleep', 'ages', 'making', 'homestead', 'animals', 'dangers', 'death', 'controls', 'modes']);
     expect(CHAPTERS.map((c) => c.title)).toEqual(['Your first day', 'Water', 'Seasons and rain', 'Food and fire', 'Warm and cool', 'Sleep', 'Tools and the ages',
-      'Workplaces and making', 'Animals', 'Dangers', 'Death and waking', 'Controls', 'Creative and Survival']);
+      'Workplaces and making', 'A place to stay', 'Animals', 'Dangers', 'Death and waking', 'Controls', 'Creative and Survival']);
     for (const c of CHAPTERS) {
       expect(c.pages.length, c.id).toBeGreaterThan(0);
       expect(typeof c.short === 'string' && c.short.length > 0 && c.short.length <= 8, `${c.id} tab label`).toBe(true);
@@ -220,7 +226,7 @@ describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
       expect(list, id).toEqual(list.map((_, i) => i + 1));
     }
     // even splits: Hands (44 recipes with DESIGN-circuits §8.2's six and the dart) in five pages of 9, 9, 9, 9, 8
-    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([10, 10, 9, 9, 9]); // 45 with the Snare (§69); 47 with Healwort tea and the Fletched Dart (§76)
+    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([10, 10, 10, 9, 9]); // 45 with the Snare (§69); 47 with Healwort tea and the Fletched Dart (§76); 48 with the Grass Bed (§85)
   });
 
   it('teaches the real survival ideas the design asks for', () => {
@@ -232,6 +238,7 @@ describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
     // our own words: Nourishment, never "satiation"; no "crafting table", "furnace", "chest" or "bed" — except (§85, §87, on
     // purpose) as the NAMES of the two beds: a "Grass Bed" and a "Bed", written with their capitals (sleep.SPOT_ROWS); any
     // other "bed" (a river bed, "go to bed", "bedroll") stays out
+    expect(text).toMatch(/\bGrass Bed\b/);
     expect(text.replace(/\b(Grass )?Bed\b/g, '')).not.toMatch(/satiation|crafting table|furnace|\bchest\b|\bbed\b/i);
     expect('Sleep on a Grass Bed or a Bed.'.replace(/\b(Grass )?Bed\b/g, '')).not.toMatch(/\bbed\b/i);
     expect('Go to bed.'.replace(/\b(Grass )?Bed\b/g, '')).toMatch(/\bbed\b/i);
@@ -283,7 +290,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([47, 20, 24, 5, 15, 8]); // v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([48, 23, 24, 5, 15, 8]); // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
@@ -1669,5 +1676,142 @@ describe('handbook: the item (§14.2)', () => {
     expect(res.refused).toBe('The handbook stays with you.');
     expect(res.changed).toBe(false);
     expect(session.cursor).toEqual({ k: 'handbook', n: 1 });
+  });
+});
+
+describe('handbook: A place to stay (CONTRACTS §85)', () => {
+  const chapter = CHAPTERS.find((c) => c.id === 'homestead');
+  const pageText = (page) => page.flatMap((b) => ('text' in b ? [plainText(b.text)] : b.kind === 'list' ? b.items.map(plainText) : [])).join('\n');
+  const text = chapter.pages.map(pageText).join('\n');
+  const page = (title) => pageText(chapter.pages.find((pg) => pg.some((b) => b.kind === 'h' && b.text === title)));
+  const rec = (id) => RECIPES.find((r) => r.id === id);
+
+  it('its own chapter after the workplaces, seven pages: why the land moves you on, what a homestead needs, and a page each for the five ways to water', () => {
+    expect(chapter).toMatchObject({ title: 'A place to stay', short: 'Home', icon: 'home' });
+    expect(CHAPTERS.indexOf(chapter)).toBe(CHAPTERS.findIndex((c) => c.id === 'making') + 1);
+    expect(chapter.pages.map((pg) => pg.find((b) => b.kind === 'h')?.text)).toEqual([
+      'Why the land moves you on', 'What a homestead needs', 'Springs', 'The well', 'The rain barrel', 'The cistern', 'Watering by hand',
+    ]);
+    for (const pg of chapter.pages) expect(pg[0].kind).toBe('h');
+  });
+
+  it('why the land favours moving on: water dries, food comes back slowly, herds are few — with the land\'s own numbers', () => {
+    const why = page('Why the land moves you on');
+    expect(why).toContain(`In dry weather a pond loses a depth about every ${DRY_MEAN_S / DAY_LENGTH_SECONDS} game days`);
+    expect(why).toContain(`A picked bush fruits again after about ${REGROW_MEAN_S / DAY_LENGTH_SECONDS} game days.`);
+    expect(why).toContain(`gains one new plant about every ${SPREAD_MEAN_S / DAY_LENGTH_SECONDS} game days`);
+    expect([DRY_MEAN_S, REGROW_MEAN_S, SPREAD_MEAN_S].map((x) => x / DAY_LENGTH_SECONDS)).toEqual([3, 2, 3]);
+    expect(why).toContain('Herds are few.');
+    expect(why).toMatch(/the easy way to live is to move/);
+    expect(why).toMatch(/To stay you must make a place give you what the land will not: a homestead\./);
+  });
+
+  it('what a homestead needs: water all year, food you grow, a fire under a roof, walls against the night, a place to lie down', () => {
+    const needs = page('What a homestead needs');
+    for (const head of ['Water all year.', 'Food you grow.', 'A fire under a roof.', 'Walls against the night.', 'A place to lie down.']) expect(needs).toContain(head);
+    expect(needs).toContain(`A field within ${numWord(FARM_WATER_REACH)} cells of fresh water, or one you water yourself.`);
+    // the two beds are named, with what they are made of: no sleep rule is told here (another chapter's)
+    expect(needs).toContain(`A Grass Bed is ${recipeInputsProse(rec('grass_bed'))}, made by hand.`);
+    expect(needs).toContain('A Grass Bed is 8 Plant Fibre and 3 Sticks, made by hand.');
+    expect(needs).toContain(`A Bed is ${recipeInputsProse(rec('bed'))}, made at the Work Stump.`);
+    expect(needs).toContain('A Bed is 6 planks, 3 Cord, 3 wool and Leather, made at the Work Stump.');
+    expect([rec('grass_bed').station, rec('bed').station]).toEqual(['hand', 'stump']);
+    expect(needs).not.toMatch(/\bsleep|\bheal|\bhours\b|\bfatigue|\btired/i);
+  });
+
+  it('springs: ground water coming up by itself, clean; three gulps a draught, about five draws a day; rare', () => {
+    const springs = page('Springs');
+    expect(springs).toContain('A spring is ground water coming up by itself.');
+    expect(springs).toMatch(/The ground has filtered it on the way, so spring water is clean: you can drink it as it is\./);
+    expect(springs).toContain(`the nearest is usually ${SPRING_NEAREST_CELLS[0]} to ${SPRING_NEAREST_CELLS[1]} cells away`);
+    expect(springs).toContain('There are few in the desert and none on a beach.');
+    expect(springs).toContain(`one draught is worth ${numWord(SPRING_DRAUGHT)} gulps (${fmtSigned(SPRING_DRAUGHT * RATES.GULP_FRESH)} Hydration) and never poisons you`);
+    expect(springs).toContain('one draught is worth three gulps (+24 Hydration)');
+    expect(springs).toContain(`R fills a Pot of Spring Water: ${fmtSigned(ITEMS.pot_spring.food.hydration)} Hydration, safe, and it keeps as boiled water does.`);
+    expect([ITEMS.pot_spring.food.sick, ITEMS.pot_spring.food.spoilS, ITEMS.pot_boiled.food.spoilS]).toEqual([0, undefined, undefined]);
+    expect(springs).toContain(`It wells up again after about ${fmtDurationLong(SPRING_MEAN_S)}, so it gives about ${numWord(DAY_LENGTH_SECONDS / SPRING_MEAN_S)} draws a game day, in the rains and in the dry season alike.`);
+    expect(springs).toContain('after about 5 minutes, so it gives about five draws a game day');
+    expect(springs).toContain("That is one person's water and no more.");
+    expect(springs).toContain('A spring cannot be dug out or moved: the rock runs deep.');
+    expect(BLOCK_RULES[BLOCK.SPRING]).toBeNull();
+  });
+
+  it('the well: it reaches down to the ground water; raw; its recipe and its ground; six pots a day in the rains and two in the dry season; wells share', () => {
+    const well = page('The well');
+    expect(well).toContain('A well is a hole dug down to the same ground water.');
+    expect(well).toContain('well water is fresh but raw. Boil it.');
+    expect(well).toContain('Make a Well at the Work Stump, with a shovel in your pack: 12 Cobblestone, 3 Cord, 2 planks and a Clay Pot.');
+    expect(rec('well')).toMatchObject({ station: 'stump', tools: [{ type: 'shovel', tier: 1 }] });
+    expect(rec('well').inputs).toEqual([{ k: 'cobblestone', n: 12 }, { k: 'cord', n: 3 }, { tag: 'planks', n: 2 }, { k: 'clay_pot', n: 1 }]);
+    expect(well).toContain('Set it on grass, dirt, sand, gravel or clay. It is dug into the ground, so it cannot stand on rock.');
+    for (const id of [BLOCK.GRASS_BLOCK, BLOCK.DIRT, BLOCK.SAND, BLOCK.RED_SAND, BLOCK.GRAVEL, BLOCK.CLAY]) expect(WELL_GROUND).toContain(id);
+    expect(WELL_GROUND).not.toContain(BLOCK.STONE);
+    expect(well).toContain(`Without a pot, R drinks ${numWord(WELL_GULPS)} gulps, with the usual risk of raw water.`);
+    expect(well).toContain(`after about ${fmtDurationLong(WELL_MEAN_S.rains)} in the rains and ${fmtDurationLong(WELL_MEAN_S.dry)} in the dry season`);
+    expect(well).toContain('after about 4 minutes in the rains and 12 minutes in the dry season');
+    expect(well).toContain(`That is about ${numWord(DAY_LENGTH_SECONDS / WELL_MEAN_S.rains)} pots a game day in the rains and ${numWord(DAY_LENGTH_SECONDS / WELL_MEAN_S.dry)} in the dry season.`);
+    expect(well).toContain('about six pots a game day in the rains and two in the dry season');
+    expect(well).toContain(`In the desert it takes ${numWord(WELL_DESERT_FACTOR)} times as long.`);
+    expect(wellMeanS(1, BIOME.DESERT) / wellMeanS(1, BIOME.PLAINS)).toBe(3);
+    expect(well).toContain(`Two wells within ${WELL_SHARE} cells of each other each fill half as fast, three a third as fast.`);
+    expect([wellMeanS(0.3, BIOME.PLAINS, 2) / wellMeanS(0.3, BIOME.PLAINS, 1), wellMeanS(0.3, BIOME.PLAINS, 3) / wellMeanS(0.3, BIOME.PLAINS, 1)]).toEqual([2, 3]);
+  });
+
+  it('the rain barrel: it catches the rain for the dry months; its recipe; a pot every four minutes of hard rain, three pots; what goes in and out; it never spoils', () => {
+    const barrel = page('The rain barrel');
+    expect(barrel).toContain('A rain barrel catches the rain and keeps it for the dry months.');
+    expect(barrel).toContain('Make one at the Work Stump from 6 planks and 2 Cord, and set it under the open sky.');
+    expect(rec('rain_barrel').inputs).toEqual([{ tag: 'planks', n: 6 }, { k: 'cord', n: 2 }]);
+    expect(barrel).toContain(`In hard rain it gains a pot about every ${fmtDurationLong(BARREL_FILL_MEAN_S)}, in light rain more slowly.`);
+    expect(barrel).toContain('about every 4 minutes');
+    expect(barrel).toContain('Under leaves it gets about a third of the rain, under a roof none.');
+    expect(Math.round(LEAF_COVER * 3)).toBe(1);
+    expect(barrel).toContain(`It holds ${numWord(BARREL_POTS)} pots, and the sun takes nothing from it.`);
+    expect(barrel).toContain('R with an empty Clay Pot takes a Pot of Water out: fresh and raw, so boil it.');
+    expect(barrel).toContain(`R with a ${itemName(WATERING_POTS[0])}, a ${itemName(WATERING_POTS[1])} or a ${itemName(WATERING_POTS[2])} pours it in.`);
+    expect(barrel).toContain('Water in a barrel never goes bad. In a pot, fresh water turns tainted after about 2 game days.');
+    expect(ITEMS.pot_water.food.spoilS).toBe(2 * DAY_LENGTH_SECONDS);
+    expect(barrel).toContain('Breaking a barrel spills what it holds. You get the barrel back, not the water.');
+    expect(barrel).toContain('Where it snows instead of raining, a barrel catches nothing.');
+  });
+
+  it('the cistern: clay holds the rain; five steps a player can follow; from then on a pool like any other', () => {
+    const cistern = page('The cistern');
+    expect(cistern).toContain('A cistern is a pond you make. Water sinks through earth and sand, but not through clay: a pit floored with clay holds the rain.');
+    const steps = chapter.pages.find((pg) => pg.some((b) => b.kind === 'h' && b.text === 'The cistern')).find((b) => b.kind === 'list');
+    expect(steps.ordered).toBe(true);
+    expect(steps.items).toHaveLength(5);
+    expect(cistern).toContain('press it into Clay blocks: 6 Clay Lumps each, a hand job');
+    expect(rec('clay')).toMatchObject({ station: 'hand', inputs: [{ k: 'clay_lump', n: 6 }] });
+    expect(BLOCK_RULES[BLOCK.CLAY]).toMatchObject({ tool: 'shovel', tier: 1 });
+    expect(cistern).toContain('Dig a pit one cell deep, open to the sky.');
+    expect(cistern).toContain('Lay Clay under every cell of it.');
+    expect(cistern).toContain('See that every side of the pit is a solid block.');
+    expect(cistern).toContain(`then gains a depth for about every ${fmtDurationLong(FILL_MEAN_S)} of hard rain until it is full`);
+    expect(cistern).toContain(`It waters crops within ${numWord(FARM_WATER_REACH)} cells.`);
+    expect(cistern).toContain(`it dries a depth about every ${DRY_MEAN_S / DAY_LENGTH_SECONDS} game days in dry weather`);
+    expect(cistern).toContain(`Each cell holds about ${3 * CELL_GULPS} gulps when full: dig it wide.`);
+  });
+
+  it('watering by hand: which pots, half a game day of watered growing, one time in two for a seed and one in four for a sprout; what water cannot do', () => {
+    const hand = page('Watering by hand');
+    expect(hand).toContain(`R with a ${itemName('pot_water')}, a ${itemName('pot_boiled')} or a ${itemName('pot_spring')} on a planted seed or a sprout pours it on. You keep the pot.`);
+    expect(hand).toContain('One pot is worth half a game day of watered growing, all at once.');
+    expect(HAND_WATER_S * 2).toBe(DAY_LENGTH_SECONDS);
+    expect(hand).toContain(`For a planted seed the wait is over on the spot one time in ${numWord(1 / handWaterChance(BLOCK.PLANTED_CARROT))}: it sprouts, as ${fmtPct(SEED_TAKES.watered)} of watered seeds do, or it fails.`);
+    expect(hand).toContain(`A sprout is grown on the spot one time in ${numWord(1 / handWaterChance(BLOCK.CARROT_SPROUT))}.`);
+    expect([1 / handWaterChance(BLOCK.PLANTED_CARROT), 1 / handWaterChance(BLOCK.CARROT_SPROUT)]).toEqual([2, 4]);
+    expect(hand).toContain('Tainted water and sea water will not do.');
+    expect(hand).toContain('a crop under a roof stays as it is, and a cattail must still stand beside water');
+    expect(hand).toContain('the hint of a planted cell ends R: water it');
+  });
+
+  it('the hint words the chapter leans on are the hints\' own, and the older-worlds page says where springs and gravel beds are', () => {
+    expect([HOMESTEAD_HINT.springDrink, HOMESTEAD_HINT.springFill, HOMESTEAD_HINT.springDrawn]).toEqual(['Spring · R: drink', 'Spring · R: fill the pot', 'Spring · drawn, it wells up again']);
+    const modes = CHAPTERS.find((c) => c.id === 'modes').pages.map(pageText).join('\n');
+    expect(modes).toContain('Natural springs rise only in the land of the very newest worlds, and only there does gravel lie in small beds, not as single cells scattered everywhere. Wells, rain barrels and cisterns work in every world.');
+    // no page of the chapter is a wall of text
+    for (const pg of chapter.pages) expect(pageText(pg).split(/\s+/).length).toBeLessThanOrEqual(225);
+    expect(text).not.toMatch(/undefined|NaN/);
   });
 });

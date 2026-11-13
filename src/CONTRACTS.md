@@ -142,6 +142,7 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/pickerUI.js` | DOM, the honeycomb picker (§56) | v0.10 D | `tests/unit/pickerUI.test.js` |
 | `src/devicePanel.js` | DOM (+ pure field helpers), the device panel (§57) | v0.10 D | `tests/unit/devicePanel.test.js` |
 | `src/weather.js` | PURE, the calendar (wet and dry season), rain in showers, what rain reaches, the sky under rain (§84) | seasons and rain | `tests/unit/weather.test.js`, `tests/unit/rainEffects.test.js` |
+| `src/homestead.js` | PURE, springs, wells and rain barrels: what R does, what brings their water back (§85) | a place to stay | `tests/unit/homestead.test.js`, `tests/unit/worldgenHomestead.test.js` |
 | `src/rainRenderer.js` | three (+ the pure `RainField`), rain and snow as one mesh of quads (§84) | seasons and rain | `tests/unit/rainRenderer.test.js` |
 | `src/sleep.js` | PURE, sleep spots, lying down, a sleep and its reasons to wake, the secure place, the night attack, the effects of being awake too long (§87) | sleep | `tests/unit/sleep.test.js` |
 | `src/phantomRenderer.js` | three, the figure at the edge of sight: three dark boxes, drawing only (§87) | sleep | `tests/unit/sleep.test.js` |
@@ -276,6 +277,7 @@ FUEL_STICK_S 40, FUEL_LOG_S 300, RELIGHT_HOLD_S 3; STATION_RANGE 3, STATION_WORK
 FALL_DAMAGE_K 0.1, CRUSH_DAMAGE_PER_CELL 6; ATTACK_REPEAT_S 0.55, DIG_TICK_S 0.25, USE_REPEAT_GAP_S 0.25, GULP_GAP_S 0.5, TAP_HOLD_S 4;
 PIG_HEALTH 5, PIG_REPOP_CHECK_S 150, PIG_REPOP_TARGET 3, PIG_REPOP_RADIUS 64, PIG_REPOP_MIN 24, PIG_REPOP_MAX 48; ZOMBIE_DAMAGE 8,
 FIRE_BURN_DAMAGE 4; REGROW_MEAN_S 600, MAX_REGROW_TRACKED 4096`. HOTBAR_SIZE (9) is also the pack's hotbar.
+(`GEN_LATEST` is 5 since §85: 3 in §76, 4 in §79.)
 
 ## 3. `src/types.js` (exact — already written)
 
@@ -341,6 +343,8 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 > **Plants amendment (§81):** ids 151–158 (FERN … ALOE: eight more wild plants, `'model'`; the picked Nightshade not placeable), `BLOCK_COUNT` 159, tiles 218–224 (`TILE_IDS` 183), `PICKER_ORDER` 115; `isPlant` / `PLANT_IDS` (25 ids) and `isPopOff` / `POP_OFF_IDS` (47 ids) include them.
 >
 > **Water amendment (§83):** ids 159–162 (`WATER_LOW`, `WATER_SHALLOW`, `TAINTED_WATER_LOW`, `TAINTED_WATER_SHALLOW`: sources at a lower depth, not placeable), `BLOCK_COUNT` 163; `isWater`, `isWaterSource`, `isFallThrough` include them; `waterLevel` 5 and 3, `waterSurfaceHeight` 0.55 and 0.22; new `isTaintedWater`, `waterDepth`, `waterAtDepth`.
+>
+> **Homestead amendment (§85):** ids 163–172 (`SPRING`, `SPRING_DRAWN`: solid opaque prisms, not placeable; `WELL`, `WELL_DRAWN`, `RAIN_BARREL`, `RAIN_BARREL_1`..`_3`: solid `'model'` blocks; `GRASS_BED`, `BED`: walk-over `'model'` blocks), `BLOCK_COUNT` 173, tiles 207, 225–227 and 232–237 (`TILE_IDS` 193), `PICKER_ORDER` 119; new `HOMESTEAD_IDS`, `FURNITURE_MODEL_IDS`, `isSpring`, `isWell`, `isRainBarrel`. `'model'` is no longer only the plants' shape.
 >
 > **Light amendment (§62):** GLOWSTONE now really glows: it, the CAMPFIRE and the TORCH emit block light (15, 14, 13); leaves, water and ice dim light (`light.js` LIGHT_EMISSION / LIGHT_OPACITY).
 
@@ -5875,6 +5879,270 @@ rules of §65 and §68 stand exactly as they are, and the two multiply. Light th
   climb at several levels, by night and by day; a wall in the way, a lamp, a burned-out fire on a real World and
   LightEngine; the campfire's rules; the cost, counted and timed), `zombieRenderer.test.js` (the shield pose),
   `handbook.test.js` (the table and the prose).
+
+## 85. A place to stay: springs, wells, rain barrels, watering by hand; gravel in patches — `src/homestead.js` (PURE), `src/worldgen.js`, `src/config.js`, `src/blocks.js`, `src/tiles.js`, `src/plantModels.js`, `src/items.js`, `src/itemArt.js`, `src/harvest.js`, `src/crafting.js`, `src/purpose.js`, `src/farming.js`, `src/survivalControl.js`, `src/pickerModel.js`, `src/main.js`, `src/diagnostics.js`, `src/handbook.js`, `src/handbookUI.js`
+
+Amends §5 (blocks, tiles), §8 and §79 (world generation: generation 5), §43 (items), §44 (harvest, the R priority),
+§46 (recipes), §73 (the guide), §77 (purposes), §78 (the models), §80 (farming: watering by hand) and §83.6 (the dug
+cistern, documented and tested end to end; no rule of it changes).
+
+The land favours moving on: pools dry (§83), food comes back slowly (§80), herds are few (§79). Staying in one place
+takes water all the year, and this section is where it comes from: a **spring** (rare, found, a few draws a day), a
+**well** and a **rain barrel** (built), the **cistern** of §83.6, and **watering by hand**. It also registers two
+places to sleep as furniture and moves surface gravel into small beds.
+
+**Nothing is saved.** A drawn spring, a drawn well and what a barrel holds are each a block id, and everything that
+comes back does so by a memoryless chance per second (as `harvest.Regrowth` does). The rules about blocks, items and
+recipes hold in every world; only generation 5 GROWS springs and lays gravel in beds (generations 1–4 are byte for
+byte what they were: worldgenHomestead.test.js holds their digests).
+
+**Nobody who built this could see it.** The pictures and models were looked at as software renderings, never in the
+game (docs/KNOWN-ISSUES.md).
+
+### 85.1 Blocks, tiles, the item
+
+**Blocks** 163–172, appended in id order; `BLOCK_COUNT` 173. `HOMESTEAD_IDS` (the ten), `FURNITURE_MODEL_IDS` (165–172);
+`isSpring`, `isWell`, `isRainBarrel`.
+
+| id | key | display name | what it is |
+|---|---|---|---|
+| 163 | SPRING | Spring | a natural spring, welling |
+| 164 | SPRING_DRAWN | Spring (drawn) | just drawn from: wet rock and a trickle |
+| 165 | WELL | Well | a full well |
+| 166 | WELL_DRAWN | Well (drawn) | drawn, filling |
+| 167 | RAIN_BARREL | Rain Barrel | empty |
+| 168–170 | RAIN_BARREL_1, _2, _3 | Rain Barrel (1 pot), (2 pots), (3 pots) | holding that many pots |
+| 171 | GRASS_BED | Grass Bed | a heap of dry grass on three sticks |
+| 172 | BED | Bed | a frame, a mattress, a pillow, a blanket |
+
+- **The spring is ground**: a solid, opaque hexagonal prism (sound stone; side `SPRING_SIDE`, bottom STONE, top
+  `SPRING_TOP` or `SPRING_DRAWN_TOP`). It is NOT water: not liquid, no part of the fluid rule, `isWater` false, it
+  waters no crop. Not placeable, no item, `breakable` true (Creative may remove one) and no harvest rule, so
+  Survival cannot break it.
+- **The well and the rain barrel** are SOLID blocks drawn as 3D models (`FURNITURE` flags: not opaque,
+  `LAYER_CUTOUT`, `cullSame` false, shape `'model'`, a flat icon): the cell collides, carries what is put on it and is
+  a wall to a pool of water. Sound stone / wood. Placeable: WELL and RAIN_BARREL only.
+- **The beds** are low models that are walked over (the PLANT flags, shape `'model'`, a flat icon; sound grass / wood),
+  one cell each, both placeable. They are not pop-off blocks: digging under one does not destroy it. *(The Sleeping
+  Hide is a full solid prism; a hex prism a metre high reads badly as a bed, so these are low.)* No sleep rule is
+  defined here: the sleep rules read `BLOCK.GRASS_BED` and `BLOCK.BED`.
+- The four placeable ones follow SNARE in `PICKER_ORDER` (119 entries: GRASS_BED, BED, WELL, RAIN_BARREL) and in the
+  picker's Camp & Crafts section, and are block items. `items.SAME_ITEM`: WELL_DRAWN gives `well`, every barrel
+  `rain_barrel`.
+
+**Tiles** (tiles.js comments normative), in the ids §81 left free and the six after the nest's; `TILE_IDS` 193; 238
+and 239 stay free:
+
+| tile | id | |
+|---|---|---|
+| SPRING_SIDE | 207 | darkened stone, a rim of pale stones along the top, water running down the middle |
+| SPRING_TOP | 225 | eight rim stones (bold pebbles) round a pool of bright clear water, white where it wells up |
+| SPRING_DRAWN_TOP | 226 | the same rim stone for stone; the pool's wet dark bed and a trickle |
+| WELL | 227 | picture: a ring of stones in two courses, two posts and a beam, a clay pot on a cord |
+| WELL_SKIN | 232 | masonry, water, a stone's top, a post, the cord, the dark of the shaft, the pot's clay, the beam |
+| RAIN_BARREL | 233 | picture: an open barrel of staves with two cord hoops, water in it, a raindrop falling in |
+| RAIN_BARREL_SKIN | 234 | staves with the two hoops, water, the dark bottom boards, the staves' cut tops |
+| GRASS_BED | 235 | picture and skin in one: a heap of straw on stick ends |
+| BED | 236 | picture: headboard, pillow, striped red blanket, mattress, frame and legs, from the side |
+| BED_SKIN | 237 | boards, the blanket, the mattress's ticking, the pillow, leg wood |
+
+A PICTURE is a cut-out on alpha 0 with RGB 0 (alpha 0 or 255): the Pack's icon. A SKIN and the spring's three faces
+are opaque. The pool of a spring is far lighter than the water tile: it is meant to be seen from a distance.
+
+**Models** (plantModels.js; §78's parts and limits, unrelaxed; `PLANT_MODELS[id].tile` names the skin). A hexagonal
+ring of six wall boxes is the well's stones and the barrel's staves; neighbouring walls differ in height, so two box
+tops that overlap at a corner never lie in one plane.
+
+| block | model | quads |
+|---|---|---|
+| WELL | six stones 3 × 7 (or 6) × 7 texels at radius 5.25; the dark of the shaft 1.5 up; water 5 up (`fruit`); two posts on opposite stones and a beam across at 13; a coil of cord on the beam and a cord down the shaft; the pot and its rim hanging at 6–10 (`fruit`) | 76 |
+| WELL_DRAWN | the well compiled `bare`: no water, no pot — the cord runs down into the dark | 59 |
+| RAIN_BARREL, _1.._3 | six staves 2 × 13 (or 12.5) × 6.2 at radius 4.5, open at the top; inside a plate 7.1 × 8.2: the dark bottom 1 up, or water 1 + 3.5 × pots up (4.5, 8, 11.5) | 35 |
+| GRASS_BED | three sticks 14.5 long side by side; heaps of straw 13 × 3 × 9, 10 × 2 × 7 and a bolster 4 × 1.5 × 6 at the head; 0.5 m high | 30 |
+| BED | four legs, a frame 13 × 2 × 9, a headboard 8 high and a footboard 4 high, a mattress, a pillow, the blanket; 0.69 m high at the headboard, the blanket's top 0.5 m up | 47 |
+
+A model is turned, nudged and sized per cell like a plant (§78), so a bed cannot be aimed.
+
+**Item** `pot_spring` "Pot of Spring Water", a food, the last one (after `pot_tainted`): `{ satiation 0, hydration 30,
+sick 0, useS 1, returns clay_pot }`, no `spoilS` — the Pot of Boiled Water's numbers exactly. Its icon: the pot with
+the spring's bright water, a white heart and a four-point sparkle over the rim. 266 items (34 tools, 51 materials, 55
+foods, 3 heals, 5 wear, 118 blocks).
+
+### 85.2 Recipes, purposes, breaking
+
+`TAGS.wool`: the sixteen wool items, `wool_white` first (`TAG_LABELS.wool` "Any Wool"). 123 recipes (48 at hand, 23 at
+the stump):
+
+| id | station | inputs | tools | s | purpose line |
+|---|---|---|---|---|---|
+| grass_bed | hand | 8 plant_fibre + 3 stick | | 4 | A poor place to sleep. Better than none. |
+| well | stump | 12 cobblestone + 3 cord + 2 #planks + clay_pot | shovel 1 | 12 | Water all year, a few pots a day. Dig it into earth. |
+| rain_barrel | stump | 6 #planks + 2 cord | axe 1 | 8 | Catches rain. Stores 3 pots of water that never spoil. |
+| bed | stump | 6 #planks + 3 cord + 3 #wool + leather | knife 2 | 12 | The best sleep: you heal most and need the fewest hours. |
+
+*(The Work Stump, not the Workbench: the Workbench is the late electrical bench and takes steel. 3 cord and 3 sticks,
+not 4: no recipe that makes a block takes 4 or 9 of one input, crafting.test.js.)*
+
+`BLOCK_RULES`: WELL and WELL_DRAWN 3.0 s, `pick`, tier 0 (the kiln's row); the four barrels 1.5 s, `axe`, 0; GRASS_BED
+0.4 s, no tool; BED 1.5 s, `axe`, 0 — each drops its item. **Breaking a barrel spills what it holds**: the item is the
+empty barrel. SPRING and SPRING_DRAWN have no rule; `homestead.deepHint(id)` → `Spring · the rock runs deep: it cannot
+be broken`, which main shows while the dig is held on one.
+
+`survivalControl.placeRefusal`: a WELL is refused (`WELL_GROUND_HINT` "A Well is dug into earth, sand, gravel or
+clay") unless the block under it is in `WELL_GROUND`: GRASS_BLOCK, SNOWY_GRASS, DIRT, SAND, RED_SAND, GRAVEL, CLAY.
+Creative places one anywhere.
+
+### 85.3 What R does (`homestead.homesteadAction`, `survivalControl.interactKind` steps 7d and 7e)
+
+`homesteadAction(id, selectedKey, q, y, r)` → `{ kind: 'draw' | 'homestead_hint', q, y, r, source: 'spring' | 'well' |
+'barrel', mode?: 'drink' | 'fill' | 'pour', gives?, gulps?, safe?, to?, hint }` or null for any other block. Step 7d
+(after planting, before water) returns it; none of these blocks is one of steps 1–7c.
+
+| block | in hand | action | hint |
+|---|---|---|---|
+| SPRING | an empty Clay Pot | fill: `pot_spring`; → SPRING_DRAWN | `Spring · R: fill the pot` |
+| SPRING | anything else | drink `SPRING_DRAUGHT` **3** gulps, `safe`; → SPRING_DRAWN | `Spring · R: drink` |
+| SPRING_DRAWN | | (hint) | `Spring · drawn, it wells up again` |
+| WELL | an empty Clay Pot | fill: `pot_water`; → WELL_DRAWN | `Well · full · R: fill the pot` |
+| WELL | anything else | drink `WELL_GULPS` **2** gulps, raw; → WELL_DRAWN | `Well · full · R: drink` |
+| WELL_DRAWN | | (hint) | `Well · drawn, it is filling` |
+| a barrel holding n > 0 | an empty Clay Pot | fill: `pot_water`; → n − 1 | `Rain Barrel · 2 pots of 3 · R: fill the pot` |
+| a barrel holding n < 3 | `WATERING_POTS` | pour: `clay_pot` back; → n + 1 | `Rain Barrel · empty · R: pour it in` |
+| a full barrel | `WATERING_POTS` | (hint) | `Rain Barrel · 3 pots of 3 · full` |
+| a barrel | anything else | (hint) | `Rain Barrel · 1 pot of 3 · R with an empty pot: take water`, `Rain Barrel · empty: it fills in the rain` |
+
+`WATERING_POTS` = `pot_water`, `pot_boiled`, `pot_spring` (never tainted or salt water). Whatever is poured in comes
+out as a Pot of Water: fresh and raw. **Water in a barrel does not spoil** (it is the block, not an item).
+
+main `homesteadDraw(act)`: `homesteadAction` again on the block as it stands and what is in the hand; a drink waits for
+`GULP_GAP_S`, writes `to` with `playerSetBlock`, then `survival.drink('fresh', random)` once a gulp — with `() => 1` for a
+`safe` draught, so a spring can never poison (3 × `RATES.GULP_FRESH` = +24 Hydration), with `Math.random` at a well
+(the usual `GULP_FRESH_SICK` a gulp; `SICK_MESSAGE` and the boil tip as at a pond). A fill or a pour writes the block,
+then uses up the pot in hand and gives the other. `draw` acts on the press and does not repeat while R is held.
+
+### 85.4 What comes back (`homestead.Refill`, `homesteadSecondOn`)
+
+`Refill` is modelled on Regrowth: `cells` ("q,y,r" → `{ q, y, r, id }`), `size`, `has`, `track` (only `REFILL_IDS`:
+SPRING_DRAWN, WELL, WELL_DRAWN, RAIN_BARREL, _1, _2; at most `MAX_REFILL_TRACKED` 1024), `untrack`, `onBlockChange`,
+`loadFromEdits(edits)`, `clear`, `wellsNear(q, r)` and
+
+`step(dt, random, isLoadedCell, env)` → `RefillEvent[]` `{ q, y, r, from, to }`, with `env = { dryness() → number,
+biome(q, r) → BIOME, rain(q, y, r) → 0..1 }`:
+
+- Cells in unloaded chunks are frozen (no roll). A full WELL draws none: it is tracked only to be counted.
+- Every other tracked cell draws one `random()` `u`, in tracking order.
+- **A drawn spring** wells up when `u < dt / SPRING_MEAN_S` (**288** s, a fifth of a game day: about five draws a
+  day). The season and the land do not change it.
+- **A drawn well** is full when `u < dt / wellMeanS(dryness, biome, wells)`: `WELL_MEAN_S.rains` **240** s at dryness
+  0.3 (`DRYNESS_RAINS`) to `WELL_MEAN_S.dry` **720** s at dryness 1, in a straight line between and no further; ×
+  `WELL_DESERT_FACTOR` **3** in the DESERT; × `wellsNear`: the tracked wells, full or drawn, whose column is within
+  `WELL_SHARE` **12** cells (hex distance, any height), itself included. So one well gives about six pots a game day
+  in the rains and two in the dry season, and two wells close together give what one gives.
+- **A barrel with room** gains a pot when `u < dt × rain / BARREL_FILL_MEAN_S` (**240** s), `rain` being what
+  REACHES it. It holds `BARREL_POTS` **3**. Nothing ever lowers it: the sun takes nothing.
+- The weather is asked only when `u` is below the chance at its best (the outcome is the same as asking first).
+- A cell with an event takes the block it becomes: a spring is forgotten, a full barrel too, a well stays (full).
+
+`homesteadSecondOn(dt, random, { world, refill, isLoadedCell, env })` → `{ springs, wells, barrels }`: each event is
+written lazily (`world.setBlock(q, y, r, to, true)`) when the cell still holds `from`. A spring welling up prunes its
+edit, as a regrown wild bush does.
+
+main: `const refill = new Refill()`; `onBlockChanged`, `loadSurvival` (`loadFromEdits`) and `clearSurvival` keep it;
+`stepSurvival` calls `homesteadSecond(1, Math.random)` once a second after `waterSecond`: Survival only, any
+generation. `homesteadEnv`: `dryness` is the water cycle's (`waterEnv.dryness`: the season's while the weather is on,
+else 1), `biome` the column's, `rain` is `rainOnCell` (`weather.rainReaching`: 0 under a roof, glass too; `LEAF_COVER`
+under leaves; 0 where it falls as snow). Debug handle: `refill`, and `homesteadStep(seconds, env?)` → `{ seconds,
+springs, wells, barrels }` (1 s steps, at most `WATER_STEP_MAX_S`; `env` such as `{ rain: 1, dryness: 0.3 }`, numbers
+or functions); `diagnostics.installDebugHandle` hands both to `window.__caelancraft`.
+
+### 85.5 Watering by hand (`farming.js`)
+
+`HAND_WATER_S` **720** (half a game day). `handWaterChance(id)` = `min(1, HAND_WATER_S / mean)`, the mean being
+`SPROUT_MEAN_S.watered` for a planted block (0.5) and `GROW_MEAN_S.watered` for a sprout (0.25): `Growth.step`'s roll
+for that long on watered ground. `handWater(getBlock, q, y, r, random)` → null when the cell holds no farm block; `{ ok:
+false, why: 'sky' | 'reed', event: null }` without open sky, or for a reed with no water within `REED_WATER_REACH`
+(no roll: water cannot give what it is not); else one `random()` below the chance is the crop's moment — a planted
+seed draws once more and takes with `SEED_TAKES.watered` (else `to` is AIR, `took` false), a sprout becomes its
+crop's `grown` block — `{ ok: true, event: GrowthEvent | null }`.
+
+`interactKind` step **7e**: a `WATERING_POTS` item selected and the block a planted seed or a sprout → `{ kind:
+'water_crop', q, y, r, key, id }`. Tainted and salt water give no action. main `waterCrop(act)`: `handWater`; not `ok`
+→ the crop's hint, nothing used; else the pot is used up and `clay_pot` comes back, a splash, and the event is written
+(a seed that did not take says `failLine`). The target hint is the crop's own with ` · R: water it` (not when it
+`needs` sky or water beside it).
+
+### 85.6 The dug cistern (§83.6: documented and tested, not changed)
+
+A pit under the open sky, every cell of it on CLAY and every side solid, takes shallow water in the rain and is a
+pool from then on. A player can build one from bare ground: CLAY is dug with the first shovel (6 `clay_lump`), pressed
+back into a block by hand (recipe `clay`) and set down as a block. homestead.test.js builds one of seven cells, fills
+it in the rain, waters a field from it, draws it dry in pots, fills it again and lets the dry season take it. A well
+or a rain barrel in its wall holds it (they are solid); a bed does not.
+
+### 85.7 Generation 5 (`worldgen.js`; `GEN_LATEST` 5)
+
+Generation 5 is generation 4 with two changes, both in the surface pass (`placeFlora`), so heights, biomes, ores,
+caves, ponds, streams and trees are generation 4's, and so is everything under the ground. Against generation 4 of
+the same seed a column differs only in its surface block and the cell on it.
+
+**Gravel in small beds.** A roll that lands in a gravel slice of the per-column roll (`FLORA_TABLE`'s `top` rows)
+places nothing, so every other row stays where it is. Surface gravel comes from `GRAVEL_PATCHES_GEN5`, two patch rows
+(§76.2's rule: the same centres, rolls and fill; salts `PATCH_SALT + GRAVEL_PATCH_SALT` (15) and + 16):
+
+| key | cell | radius | fill | chance: BEACH / PLAINS / FOREST / SNOWY / MOUNTAINS |
+|---|---|---|---|---|
+| gravel_bed | 10 | 1 | 0.9 | 0.84 / 0.085 / 0.115 / 0.115 / 0.34 |
+| gravel_spread | 24 | 2 | 0.85 | 0.5 / 0.07 / 0.1 / 0.1 / 0.3 |
+
+A column a bed covers, whose own biome has gravel and whose top is still its biome's surface under AIR, has GRAVEL
+for its surface block, and nothing grows on it (the beds are decided before the food patches and the roll). The
+gravel under the ground (the veins, the sea floor) is untouched. A bed is wild gravel: digging it gives a Flint with
+`GRAVEL_FLINT_P` (0.12) as before. Measured (worldgenHomestead.test.js; seed 4242, 441 chunks): 48 % of generation
+4's surface gravel (1 651 columns for 3 469), about half in every biome; 99.6 % of gravel columns have gravel beside
+them (37 % before; on the plains 7 %); 245 beds, nine in ten of 6 or 7 columns, the largest 35 (two that met).
+
+**Natural springs.** Constants: `NATURAL_SPRING_CELL` 64, `NATURAL_SPRING_SALT` 0x5b21, `NATURAL_SPRING_CHANCE` by
+biome (PLAINS, FOREST, MOUNTAINS 0.5; SNOWY 0.25; DESERT 0.15; OCEAN, BEACH, SNOWY_PEAKS 0),
+`NATURAL_SPRING_SEARCH` 6, `NATURAL_SPRING_MIN_HIGHER` 2, `NATURAL_SPRING_CLEAR` 4.
+
+1. Grid cell (kq, kr): `h = hash3(kq, kr, NATURAL_SPRING_SALT, seed)`; its roll is `(h >>> 16) / 65536` and its spot
+   `(kq·64 + ((h & 255)·64 >> 8), kr·64 + (((h >>> 8) & 255)·64 >> 8))`. It has a spring only when the roll is below
+   the chance of the spot's biome.
+2. The spring rises where the ground suits it: among the columns within `NATURAL_SPRING_SEARCH` of the spot, nearest
+   first (then dq, then dr rising), the one with the MOST of its six neighbours standing higher than it — the foot of
+   a slope; six of six is a hollow — and at least `NATURAL_SPRING_MIN_HIGHER`; in a biome whose chance is above 0;
+   with no neighbour more than one cell lower (not a ledge); and free: no tree trunk in it, not within 2 of an
+   accepted pond's centre, and no stream column within `NATURAL_SPRING_CLEAR` (a spring is not a stream's head). The
+   first column to reach a count keeps it. No such column: no spring.
+3. The surface pass writes SPRING at the column's generated height in place of whatever is there, before the flora.
+
+`worldGen.naturalSpringOf(kq, kr)` → `{ q, r, y }` or null (remembered; bounded cache) and `naturalSpringAt(q, r)` →
+boolean: pure, null / false below generation 5, and exact — the land holds a SPRING block in exactly those columns.
+Measured (seed 4242, 2 401 grid cells): 0.30 springs a cell, one in 13 600 columns; from a point on land the nearest
+is a median 52 cells away (a quarter under 33, a quarter over 76): `homestead.SPRING_NEAREST_CELLS` [40, 80], what
+the guide tells. 85 % stand on plains or in forest; none in the sea, on a beach or on the peaks; nine in ten have
+three of their six neighbours above them; a stream runs within 10 cells of about one in five. A warm chunk of
+generation 5 costs what one of generation 4 does (1.9 ms).
+
+### 85.8 The guide, the totals and the tests
+
+- **The guide**: a thirteenth chapter, `homestead` "A place to stay" (tab "Home", glyph `home`), after `making`:
+  "Why the land moves you on", "What a homestead needs", "Springs", "The well", "The rain barrel", "The cistern",
+  "Watering by hand". It teaches the real ideas in plain words: a spring is ground water coming up by itself,
+  filtered by the ground; a well is a hole dug down to it; a barrel and a cistern catch the rain for the dry months;
+  clay does not let water through. "Older worlds" says where springs and gravel beds are. The guide may now say
+  "Grass Bed" and "Bed", as the names of these two things only (handbook.test.js still forbids "bed" otherwise).
+- **Totals**: BLOCK_COUNT 173; TILE_IDS 193; 266 items; 123 recipes (48 at hand, 23 at the stump); PICKER_ORDER 119;
+  51 models; `TAGS` 7; 13 guide chapters; GEN_LATEST 5. PLANT_IDS, POP_OFF_IDS and FARM_IDS are unchanged.
+- **Imports** (leaf-ward, still acyclic): `homestead → config, blocks, hex, coords, weather`; `survivalControl → … +
+  homestead`; `handbook → … + homestead`; `main → … + homestead`. farming.js imports nothing new.
+- **Tests**: homestead.test.js (the blocks, tiles and models; the item and the recipes; the spring: safe, the
+  draught, the pot, the mean by simulation, unbreakable, never waters a crop; the well: its ground, its yields by
+  season by simulation, sharing; the barrel: only in rain under the open sky, in and out, never spoils, spills; the
+  tracker; watering by hand; a cistern built end to end; main's wiring read from the source), worldgenHomestead.test.js
+  (the digests of generations 1–4; generation 5 against generation 4 cell by cell; the gravel measured in both; the
+  springs: exact, the same from every chunk, where the ground suits, away from streams, their rarity), and additions
+  to handbook.test.js (every number of the chapter) and to the tests that pin totals.
 
 ## 87. Sleep — `src/sleep.js` (PURE), `src/phantomRenderer.js` (three), `src/vitals.js`, `src/survival.js`, `src/storage.js`, `src/survivalControl.js`, `src/hud.js`, `src/soundBank.js`, `src/soundTest.js`, `src/main.js`, `src/diagnostics.js`, `src/handbook.js`, `src/handbookUI.js`
 

@@ -68,9 +68,17 @@ import { normalizeSeed, hash2, hash3, rand3, mulberry32, clamp, createNoise } fr
  *   streamAt: (q: number, r: number) => boolean,
  *   streamLevelAt: (q: number, r: number) => number,
  *   pondTaintedAt: (q: number, r: number) => boolean,
+ *   naturalSpringAt: (q: number, r: number) => boolean,
+ *   naturalSpringOf: (kq: number, kr: number) => NaturalSpring|null,
  *   FLORA_TABLE: typeof FLORA_TABLE,
  *   PATCH_TABLE: typeof PATCH_TABLE,
  * }} SurvivalWorldGen
+ */
+
+/**
+ * A natural spring of generation 5 (CONTRACTS §85): the column it rises in and the y of its block, the column's
+ * generated height (the SPRING block takes the place of the surface block).
+ * @typedef {{ q: number, r: number, y: number }} NaturalSpring
  */
 
 /** Side of the jittered grid cell that holds at most one tree candidate. */
@@ -512,6 +520,68 @@ export const FLORA_TABLE_GEN4 = Object.freeze(Object.keys(BIOME).map((key) => {
 /** The cave troops of generation 4: as rare as the lean land's other food. */
 export const CAVE_TROOP_GEN4 = Object.freeze({ ...CAVE_TROOP, chance: CAVE_TROOP.chance * LEAN_PATCH_CHANCE, fill: CAVE_TROOP.fill * LEAN_PATCH_FILL });
 
+// ---- §85: a place to stay (generation 5) — natural springs, and gravel in small beds ---------------------------------
+
+/** Side of the grid cell that holds at most one natural spring. */
+export const NATURAL_SPRING_CELL = 64;
+/** Salt of the spring grid's hash: `hash3(kq, kr, NATURAL_SPRING_SALT, seed)` gives a cell's roll and its spot. */
+export const NATURAL_SPRING_SALT = 0x5b21;
+/**
+ * The chance that a grid cell holds a spring, by the BIOME of its spot (index = BIOME id): half the cells of plains,
+ * forest and mountains, a quarter in snowy land, few in the desert (an oasis spring), none on a beach, in the sea or
+ * on the snowy peaks.
+ */
+export const NATURAL_SPRING_CHANCE = Object.freeze([0, 0, 0.5, 0.5, 0.15, 0.25, 0.5, 0]);
+/** A spring rises in the best-suited column within this many cells of its cell's spot. */
+export const NATURAL_SPRING_SEARCH = 6;
+/** Ground suits a spring when at least this many of the column's six neighbours stand higher: a hillside's foot, a hollow. */
+export const NATURAL_SPRING_MIN_HIGHER = 2;
+/** No stream column lies within this many cells of a spring: a spring is not a stream's head. */
+export const NATURAL_SPRING_CLEAR = 4;
+const NATURAL_SPRING_MAX_CHANCE = Math.max(...NATURAL_SPRING_CHANCE);
+const NATURAL_SPRING_CACHE_MAX = 1024;
+
+/**
+ * The first salt index of the gravel rows of generation 5: one above the rows generation 4 added (PLANT_PATCH_SALT +
+ * 0…3), so a gravel bed shares no roll with any plant patch.
+ */
+export const GRAVEL_PATCH_SALT = PLANT_PATCH_SALT + PLANT_PATCHES_GEN4.length;
+
+/**
+ * Surface gravel in generation 5: small beds instead of single cells. The per-column roll's gravel slices (FLORA_TABLE's
+ * `top` rows) place nothing; these patch rows lay the gravel instead, in the same biomes, as the surface block itself:
+ * - `gravel_bed`: a centre and the six columns round it (radius 1), nine in ten of them gravel;
+ * - `gravel_spread`: now and then a bigger one (radius 2, 19 columns), a little more ragged.
+ * The chances are set so that a land holds about HALF the surface gravel generation 4 has (worldgenHomestead.test.js
+ * measures both): shingle on the beach and scree on the mountains stay common, a bed on plains or in the woods is a find.
+ * @type {readonly Readonly<PatchRow>[]}
+ */
+export const GRAVEL_PATCHES_GEN5 = Object.freeze([
+  patchRow('gravel_bed', BLOCK.GRAVEL, 10, { BEACH: 0.84, PLAINS: 0.085, FOREST: 0.115, SNOWY: 0.115, MOUNTAINS: 0.34 }, 1, 0.9, { salt: GRAVEL_PATCH_SALT }),
+  patchRow('gravel_spread', BLOCK.GRAVEL, 24, { BEACH: 0.5, PLAINS: 0.07, FOREST: 0.1, SNOWY: 0.1, MOUNTAINS: 0.3 }, 2, 0.85, { salt: GRAVEL_PATCH_SALT + 1 }),
+]);
+const GRAVEL_MAX_CHANCE = Object.freeze(GRAVEL_PATCHES_GEN5.map((row) => Math.max(...row.chance)));
+
+/** Hex offsets within NATURAL_SPRING_SEARCH of a spot, nearest first (then dq rising, then dr rising). */
+const SPRING_SEARCH_DISC = Object.freeze((() => {
+  const out = [];
+  const R = NATURAL_SPRING_SEARCH;
+  for (let dq = -R; dq <= R; dq++) {
+    for (let dr = -R; dr <= R; dr++) {
+      const d = hexLength(dq, dr);
+      if (d <= R) out.push(Object.freeze([dq, dr, d]));
+    }
+  }
+  return out.sort((a, b) => a[2] - b[2] || a[0] - b[0] || a[1] - b[1]);
+})());
+/** Hex offsets within NATURAL_SPRING_CLEAR of a column (the column itself among them). */
+const SPRING_CLEAR_DISC = Object.freeze((() => {
+  const out = [];
+  const R = NATURAL_SPRING_CLEAR;
+  for (let dq = -R; dq <= R; dq++) for (let dr = -R; dr <= R; dr++) if (hexLength(dq, dr) <= R) out.push(Object.freeze([dq, dr]));
+  return out;
+})());
+
 /** Hex offsets at distance 1..2 from a centre (the 18 columns a pond checks besides its centre). */
 const DISC2_RING = Object.freeze((() => {
   const out = [];
@@ -549,7 +619,7 @@ const CROWN_DIRS = Object.freeze([0, 2, 4]);
  * Create a deterministic world generator.
  * @param {string|number|null|undefined} seed  user-facing seed; normalised with `normalizeSeed`
  * @param {{ gen?: number }} [opts]  `gen` 1 (default: today's terrain, byte for byte), 2 (the survival resources), 3
- *   (v0.14: the harder land) or 4 (v0.15: the lean land)
+ *   (v0.14: the harder land), 4 (v0.15: the lean land) or 5 (§85: natural springs, gravel in beds)
  * @returns {SurvivalWorldGen}
  */
 export function createWorldGen(seed, opts = {}) {
@@ -560,6 +630,8 @@ export function createWorldGen(seed, opts = {}) {
   const gen3 = gen >= 3;
   /** v0.15 (CONTRACTS §79): the lean land — generation 3 with most of its food patches gone. New worlds only. */
   const gen4 = gen >= 4;
+  /** CONTRACTS §85: generation 4 with rare natural springs, and its surface gravel in small beds. New worlds only. */
+  const gen5 = gen >= 5;
   const patchTable = gen4 ? PATCH_TABLE_GEN4 : PATCH_TABLE;
   const patchMaxChance = gen4 ? PATCH_MAX_CHANCE_GEN4 : PATCH_MAX_CHANCE;
   const floraTable = gen4 ? FLORA_TABLE_GEN4 : FLORA_TABLE;
@@ -940,6 +1012,12 @@ export function createWorldGen(seed, opts = {}) {
     const or = cr * CHUNK_SIZE;
     // Generation 3 (§76 flora): the food plants stand in patches; the per-column roll below keeps only the other rows.
     if (gen3) markPatches(biomes, cq, cr);
+    // Generation 5 (§85): the springs first (a spring takes the place of its column's surface block, whatever that is,
+    // so no flora stands on it), then the gravel beds, which are ground too.
+    if (gen5) {
+      stampSprings(blocks, heights, cq, cr);
+      markGravel(biomes, cq, cr);
+    }
     for (let lq = 0; lq < CHUNK_SIZE; lq++) {
       for (let lr = 0; lr < CHUNK_SIZE; lr++) {
         const ci = lq * CHUNK_SIZE + lr;
@@ -950,6 +1028,11 @@ export function createWorldGen(seed, opts = {}) {
         if (blocks[top] !== table.surface || blocks[top + 1] !== BLOCK.AIR) continue;
         const q = oq + lq;
         const r = or + lr;
+        // Generation 5: a column of a gravel bed has gravel for its surface, and nothing grows on it.
+        if (gen5 && gravelBed[ci] === 1) {
+          blocks[top] = BLOCK.GRAVEL;
+          continue;
+        }
         // the patch that claims the column: a row of PATCH_TABLE has it outright; a row §81 adds waits its turn below
         const patch = gen3 ? patchRowOf[ci] : 0;
         if (patch !== 0 && patch <= PATCH_TABLE.length && floraFits(patchTable[patch - 1], q, r, height)) {
@@ -967,6 +1050,8 @@ export function createWorldGen(seed, opts = {}) {
           if (u >= acc) continue;
           // Generation 3: a food row's slice of the roll places nothing, so the other rows fall exactly where they did.
           if (gen3 && PATCH_FOOD[row.id] === 1) break;
+          // Generation 5: nor does a gravel row's (a `top` row): surface gravel lies in beds (GRAVEL_PATCHES_GEN5).
+          if (gen5 && row.top) break;
           if (floraFits(row, q, r, height)) blocks[row.top ? top : top + 1] = row.id;
           break;
         }
@@ -1100,6 +1185,151 @@ export function createWorldGen(seed, opts = {}) {
         return; // the highest cave only, whatever its floor is made of
       }
     });
+  }
+
+  // ---- generation 5 (§85): gravel beds and natural springs -----------------------------------------------------------
+
+  /** Scratch of markGravel, per column of the chunk being generated: 1 where a gravel bed lies. */
+  const gravelBed = new Uint8Array(gen5 ? CHUNK_AREA : 0);
+
+  /**
+   * Fill gravelBed for chunk (cq, cr): the columns the patches of GRAVEL_PATCHES_GEN5 cover (forEachPatchColumn: the
+   * same centres, rolls and fill as a plant patch, with salts of their own). A column takes gravel only where its own
+   * biome has it.
+   * @param {Uint8Array} biomes @param {number} cq @param {number} cr
+   */
+  function markGravel(biomes, cq, cr) {
+    gravelBed.fill(0);
+    for (let i = 0; i < GRAVEL_PATCHES_GEN5.length; i++) {
+      const row = GRAVEL_PATCHES_GEN5[i];
+      forEachPatchColumn(row, PATCH_SALT + /** @type {number} */ (row.salt), GRAVEL_MAX_CHANCE[i], (col) => row.chance[col.biome], cq, cr, (lq, lr) => {
+        const ci = lq * CHUNK_SIZE + lr;
+        if (row.chance[biomes[ci]] !== 0) gravelBed[ci] = 1;
+      });
+    }
+  }
+
+  /** @type {Map<string, NaturalSpring|null>} the spring of each grid cell asked about, by "kq,kr" */
+  const springCache = new Map();
+
+  /**
+   * Whether column (q, r) is free for a spring: no stream column within NATURAL_SPRING_CLEAR, not on a pond's ground
+   * (within 2 of an accepted pond's centre: its water and its rim) and no tree trunk in it.
+   * @param {number} q @param {number} r @returns {boolean}
+   */
+  function springSiteFree(q, r) {
+    const t = api.treeTrunkAt(floorDiv(q, TREE_CELL), floorDiv(r, TREE_CELL));
+    if (t !== null && t.tq === q && t.tr === r) return false;
+    if (pondNear(q, r) !== null) return false;
+    for (let i = 0; i < SPRING_CLEAR_DISC.length; i++) {
+      if (streamLevelAt(q + SPRING_CLEAR_DISC[i][0], r + SPRING_CLEAR_DISC[i][1]) >= 0) return false;
+    }
+    return true;
+  }
+
+  /**
+   * The natural spring of grid cell (kq, kr) of the NATURAL_SPRING_CELL grid, or null (generation 5; always null below
+   * it). Pure in (seed, kq, kr), and remembered.
+   * 1. `h = hash3(kq, kr, NATURAL_SPRING_SALT, seed)`; the cell's roll is `(h >>> 16) / 65536` and its spot
+   *    `(kq·64 + ((h & 255)·64 >> 8), kr·64 + (((h >>> 8) & 255)·64 >> 8))`. The cell has a spring only when the roll
+   *    is below NATURAL_SPRING_CHANCE of the spot's biome.
+   * 2. It rises where the ground suits it: among the columns within NATURAL_SPRING_SEARCH of the spot, nearest first,
+   *    the one with the most neighbours standing HIGHER than it (the foot of a slope; six of six is a hollow) — at
+   *    least NATURAL_SPRING_MIN_HIGHER, in a biome that has springs, with no neighbour more than one cell lower (not
+   *    a ledge), and free (`springSiteFree`). The first column to reach a count keeps it. No such column: no spring.
+   * @param {number} kq @param {number} kr @returns {NaturalSpring|null}
+   */
+  function naturalSpringOf(kq, kr) {
+    if (!gen5 || !Number.isInteger(kq) || !Number.isInteger(kr)) return null;
+    const key = `${kq},${kr}`;
+    const known = springCache.get(key);
+    if (known !== undefined) return known;
+    trimCache(springCache, NATURAL_SPRING_CACHE_MAX);
+    const spring = findSpring(kq, kr);
+    springCache.set(key, spring);
+    return spring;
+  }
+
+  /** naturalSpringOf, not remembered. */
+  function findSpring(kq, kr) {
+    const h = hash3(kq, kr, NATURAL_SPRING_SALT, s);
+    const roll = (h >>> 16) / 65536;
+    if (roll >= NATURAL_SPRING_MAX_CHANCE) return null; // cheapest first: half the cells are empty whatever their land
+    const sq = kq * NATURAL_SPRING_CELL + (((h & 0xff) * NATURAL_SPRING_CELL) >> 8);
+    const sr = kr * NATURAL_SPRING_CELL + ((((h >>> 8) & 0xff) * NATURAL_SPRING_CELL) >> 8);
+    if (roll >= NATURAL_SPRING_CHANCE[getColumn(sq, sr).biome]) return null;
+    // the columns round the spot, one getColumn each (a column is asked about as a candidate and as a neighbour)
+    /** @type {Map<number, ColumnInfo>} */
+    const seen = new Map();
+    const column = (dq, dr) => {
+      const k = (dq + 64) * 128 + dr + 64;
+      let col = seen.get(k);
+      if (col === undefined) {
+        col = getColumn(sq + dq, sr + dr);
+        seen.set(k, col);
+      }
+      return col;
+    };
+    /** @type {NaturalSpring|null} */
+    let best = null;
+    let most = NATURAL_SPRING_MIN_HIGHER - 1;
+    for (let i = 0; i < SPRING_SEARCH_DISC.length && most < 6; i++) {
+      const dq = SPRING_SEARCH_DISC[i][0];
+      const dr = SPRING_SEARCH_DISC[i][1];
+      const col = column(dq, dr);
+      if (NATURAL_SPRING_CHANCE[col.biome] === 0) continue;
+      let higher = 0;
+      let ledge = false;
+      for (let j = 0; j < 6; j++) {
+        const nh = column(dq + HEX_DIRS[j][0], dr + HEX_DIRS[j][1]).height;
+        if (nh > col.height) higher++;
+        else if (nh < col.height - 1) ledge = true;
+      }
+      if (ledge || higher <= most || !springSiteFree(sq + dq, sr + dr)) continue;
+      most = higher;
+      best = { q: sq + dq, r: sr + dr, y: col.height };
+    }
+    return best;
+  }
+
+  /**
+   * True for the column a natural spring rises in (generation 5; always false below it): its SPRING block is at the
+   * column's generated height. Pure.
+   * @param {number} q @param {number} r @returns {boolean}
+   */
+  function naturalSpringAt(q, r) {
+    if (!gen5 || !Number.isInteger(q) || !Number.isInteger(r)) return false;
+    const R = NATURAL_SPRING_SEARCH;
+    for (let kq = floorDiv(q - R, NATURAL_SPRING_CELL); kq <= floorDiv(q + R, NATURAL_SPRING_CELL); kq++) {
+      for (let kr = floorDiv(r - R, NATURAL_SPRING_CELL); kr <= floorDiv(r + R, NATURAL_SPRING_CELL); kr++) {
+        const sp = naturalSpringOf(kq, kr);
+        if (sp !== null && sp.q === q && sp.r === r) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Generation 5, at the head of the surface pass: write the SPRING block of every spring whose column lies in chunk
+   * (cq, cr), in place of its surface block. (A spring lies within NATURAL_SPRING_SEARCH of its cell's spot, so the
+   * cells looked at are those the chunk, widened by that much, touches.)
+   * @param {Uint8Array} blocks @param {Uint8Array} heights @param {number} cq @param {number} cr
+   */
+  function stampSprings(blocks, heights, cq, cr) {
+    const oq = cq * CHUNK_SIZE;
+    const or = cr * CHUNK_SIZE;
+    const R = NATURAL_SPRING_SEARCH;
+    for (let kq = floorDiv(oq - R, NATURAL_SPRING_CELL); kq <= floorDiv(oq + CHUNK_SIZE - 1 + R, NATURAL_SPRING_CELL); kq++) {
+      for (let kr = floorDiv(or - R, NATURAL_SPRING_CELL); kr <= floorDiv(or + CHUNK_SIZE - 1 + R, NATURAL_SPRING_CELL); kr++) {
+        const sp = naturalSpringOf(kq, kr);
+        if (sp === null) continue;
+        const lq = sp.q - oq;
+        const lr = sp.r - or;
+        if (lq < 0 || lq >= CHUNK_SIZE || lr < 0 || lr >= CHUNK_SIZE) continue;
+        const ci = lq * CHUNK_SIZE + lr;
+        blocks[ci * WORLD_HEIGHT + heights[ci]] = BLOCK.SPRING;
+      }
+    }
   }
 
   /** @returns {boolean} the row's height / shore condition holds at column (q, r) (a row without one always fits) */
@@ -1486,7 +1716,10 @@ export function createWorldGen(seed, opts = {}) {
 
   // Internal cross-calls (trees and ponds → treeTrunkAt) go through this object, so tests can spy on them.
   /** @type {SurvivalWorldGen} */
-  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, streamLevelAt, pondTaintedAt, FLORA_TABLE: floraTable, PATCH_TABLE: patchTable };
+  const api = {
+    seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, streamLevelAt, pondTaintedAt, naturalSpringAt, naturalSpringOf,
+    FLORA_TABLE: floraTable, PATCH_TABLE: patchTable,
+  };
   return api;
 }
 

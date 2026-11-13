@@ -9,8 +9,9 @@ import { BLOCK, getBlockDef, isPopOff, isReplaceable, isSolid, isWater } from '.
 import { getItem, hasTag, itemName, maxDurability } from './items.js';
 import { isPickable, tap, toolPower, DIG_TOOL_TYPES } from './harvest.js';
 import { HEX_DIRS, FACE_TOP } from './hex.js';
-import { plantAt } from './farming.js';
+import { plantAt, cropOfBlock } from './farming.js';
 import { spotOf, spotHint } from './sleep.js';
+import { homesteadAction, WELL_GROUND, WELL_GROUND_HINT, WATERING_POTS } from './homestead.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 /** @typedef {import('./types.js').ToolDef} ToolDef */
@@ -258,7 +259,10 @@ export function useActionOf(stack) {
  * @returns {string|null} the refusal hint, or null when the placement may go ahead (the usual §23 rules still apply)
  */
 export function placeRefusal(getBlock, id, q, y, r) {
-  return isPopOff(id) && !isSolid(getBlock(q, y - 1, r)) ? HINT.needsGround : null;
+  if (isPopOff(id) && !isSolid(getBlock(q, y - 1, r))) return HINT.needsGround;
+  // §85: a well is dug into the ground — earth, sand, gravel or clay, never rock (homestead.WELL_GROUND)
+  if (id === BLOCK.WELL && !WELL_GROUND.includes(getBlock(q, y - 1, r))) return WELL_GROUND_HINT;
+  return null;
 }
 
 /**
@@ -339,12 +343,13 @@ export function outOfReachHint(name, toolName, reach) {
  * @typedef {Object} InteractAction
  * @property {string} kind  fire_put | fire_feed | fire_take | fire_hint | pit_take | pit_relight | pit_hint | pick | tap |
  *   tap_hint | basket | belongings | hide | station | station_far | fill | drink | drink_here | read | circuit | fuse_hint |
- *   pocket (v0.10) | plant (§80)
+ *   pocket (v0.10) | plant (§80) | draw | homestead_hint | water_crop (§85; `draw` carries homestead.HomesteadAction's
+ *   fields: source, mode, gives, gulps, safe, to)
  * @property {number} [q] @property {number} [y] @property {number} [r]   the cell acted on (the water cell for fill/drink)
  * @property {string} [key]      fire_put / fire_feed / plant: the selected item
  * @property {'skewer'|'centre'} [spot]  fire_put
  * @property {number} [seconds]  fire_feed: fuel one item adds (FUEL_STICK_S or FUEL_LOG_S)
- * @property {number} [id]       pick: the block picked
+ * @property {number} [id]       pick: the block picked; water_crop: the planted block or sprout
  * @property {number} [block]    plant: the PLANTED_* block to write in the cell above (q, y, r), the soil
  * @property {number} [needS]    tap / pit_relight: seconds R must be held
  * @property {string} [station]  station: its id ('stump', 'kiln', 'bloomery', 'forge')
@@ -377,6 +382,11 @@ function anyFree(spots, from, to) {
  * 7c. §80: a plantable item is selected (farming.PLANTABLE) and the ray entered the TOP of a block that is soil for its
  *    crop, with AIR above → `plant` (hint `Grass Block · R: plant Carrot Seeds`; `getBlock` must be given). Soil is
  *    none of the blocks of cases 1–7b, so whatever R did before, it still does: a plant in the crosshair is picked;
+ * 7d. §85: a spring, a well or a rain barrel → `draw` (drink from it, fill the empty Clay Pot in hand, or pour a pot
+ *    of water into a barrel: homestead.homesteadAction), or `homestead_hint` when it can only say how it stands
+ *    (`Spring · drawn, it wells up again`). None of them is a block of cases 1–7c;
+ * 7e. §85: a Pot of Water, of Boiled Water or of Spring Water is selected and the block is a planted seed or a
+ *    sprout → `water_crop` (main pours it: farming.handWater);
  * 8. `waterHit` is water nearer than `hit` (or there is no hit) → `fill` with an empty clay pot selected, else `drink`;
  * 9. the head is under water → `drink_here`;
  * 10. the handbook is selected → `read` (§14.2: before the rune and the keg explanation);
@@ -444,6 +454,10 @@ export function interactKind(c) {
       const planting = plantAt(c.getBlock, sel, q, y, r);
       if (planting) return { kind: 'plant', q, y, r, key: sel, block: planting.block, hint: planting.hint };
     }
+    // §85: a spring, a well, a rain barrel; then a pot of water over a planted seed or a sprout
+    const home = homesteadAction(id, sel, q, y, r);
+    if (home) return home;
+    if (sel && WATERING_POTS.includes(sel) && cropOfBlock(id)) return { kind: 'water_crop', q, y, r, key: sel, id };
   }
   if (waterFirst) {
     const fill = sel === 'clay_pot';
