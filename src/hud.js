@@ -9,6 +9,10 @@
 // for a charge's FLASH, void for being swallowed), driven by the pure flashStep: at most one start per 0.5 s, never brighter
 // than 0.75, fading on a (1 − t/0.6)² curve (WCAG 2.3.1: fewer than three flashes a second).
 //
+// Sleep (CONTRACTS §87): the tiredness reading right of the right-hand vitals (`#tiredness`: the hours awake in words and
+// a thin bar with a mark at each stage; no hexagon, no icon), the tiredness chips, and `#sleep-overlay` — the dark of a
+// sleep and of a nod, with the sleeper's two quiet lines — plus the soft blur of tired eyes on the game canvas.
+//
 // DOM module. Nothing here touches `document` at module top level: everything is bound inside
 // createHUD(doc, atlasCanvas) so the module can be imported (and unit-tested) under Node.
 import {
@@ -56,6 +60,25 @@ export const PULSE_MS = 420;
 /** A pickup token: a 16 px pointy-top hex of the item (its 16 px icon on a honey hex). */
 export const TOKEN_W = 16;
 export const TOKEN_H = 18;
+/** §87: the blur of tired eyes is set in steps of this many CSS pixels, and the dark of sleep in 1/32 steps. */
+export const BLUR_STEP_PX = 0.2;
+/** The element the blur is put on (the game's canvas; without one in the page nothing blurs). */
+export const BLUR_TARGET_ID = 'game-canvas';
+
+/**
+ * What the tiredness reading shows, as one comparable key: its words, its bar in whole percent and its stage.
+ * setTiredness touches the DOM only when this changes (once a game hour).
+ * @param {TirednessView|null|undefined} v @returns {string} '' for nothing to show
+ */
+export function tirednessKey(v) {
+  if (!v) return '';
+  return `${v.text}|${Math.round(Math.max(0, Math.min(1, num(v.level))) * 100)}|${Math.round(num(v.stage))}`;
+}
+
+/** @param {number} px @returns {number} the blur as it is set: a multiple of BLUR_STEP_PX, never negative */
+export function blurStep(px) {
+  return Math.round(Math.max(0, num(px)) / BLUR_STEP_PX) * BLUR_STEP_PX;
+}
 
 /** @param {unknown} v @returns {number} a finite number (0 for anything else) */
 function num(v) {
@@ -137,6 +160,7 @@ export function chipKind(label) {
     case 'Drowning': case 'Smothering': return 'breath';
     case 'Poisoned': return 'sick';
     case 'Wet': return 'wet';
+    case 'Tired': case 'Exhausted': case 'Weak': case 'Seeing things': return 'tired'; // §87
     default: return 'other';
   }
 }
@@ -307,6 +331,22 @@ const PICKER_OPEN = 'picker-open';
  *   the season, and `Rain` while it rains); null hides it
  * @property {(key: string, n: number, from: {x: number, y: number}|null) => void} addPickup   a hex token of the item flies
  *   from `from` (screen px; null: the crosshair) to the hotbar slot holding it, else to the pack glyph, which then pulses
+ * @property {(view: TirednessView|null) => void} setTiredness        the tiredness reading (CONTRACTS §87): `Awake 14 h` and
+ *   its bar; null hides it
+ * @property {(view: SleepView|null) => void} setSleepView            the dark of a sleep or a nod with the sleeper's lines, and
+ *   the blur of tired eyes (CONTRACTS §87); null clears all of it
+ */
+
+/**
+ * The tiredness reading (sleep.tirednessView): `text` (`Awake 14 h`), `level` 0..1 (the bar) and `stage` 0..4; `marks`
+ * (0..1 each) are where the bar's marks stand, read once.
+ * @typedef {{ text: string, level: number, stage: number, marks?: ReadonlyArray<number> }} TirednessView
+ */
+
+/**
+ * What a sleep shows: `dark` 0..1 (the view closing), `blur` in CSS px (tired eyes), and while lying down or asleep the
+ * two quiet lines (`Sleeping · 3 h`, `press any key to wake`).
+ * @typedef {{ dark: number, blur?: number, line?: string|null, sub?: string|null }} SleepView
  */
 
 /**
@@ -812,6 +852,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     for (const node of [vitalsLeftEl, vitalsRightEl, chipsEl]) if (node) node.classList.toggle(HIDDEN, !next);
     if (jobChipEl) jobChipEl.classList.toggle(HIDDEN, !next || jobText === null);
     if (calendarEl) calendarEl.classList.toggle(HIDDEN, !next || calendarText === null);
+    if (tirednessEl) tirednessEl.classList.toggle(HIDDEN, !next || tiredKey === '');
     if (actionRingEl) actionRingEl.classList.toggle(HIDDEN, !next || ringPct === null);
   }
 
@@ -916,6 +957,113 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     if (!calendarEl) return;
     if (next !== null) calendarEl.textContent = next;
     calendarEl.classList.toggle(HIDDEN, next === null || !survivalVisible);
+  }
+
+  // ---- §87: the tiredness reading, the dark of sleep and the blur of tired eyes
+  const tirednessEl = container('tiredness', 'tiredness');
+  /** @type {{ text: Element, fill: HTMLElement }|null} */
+  let tiredParts = null;
+  let tiredKey = '';
+  let tiredStage = -1;
+
+  /**
+   * The tiredness reading: words and a thin bar, shown only while the survival HUD is. The DOM is touched only when the
+   * shown hour, the bar's whole percent or the stage changes.
+   * @param {TirednessView|null} view
+   */
+  function setTiredness(view) {
+    const key = tirednessKey(view);
+    if (key === tiredKey) return;
+    tiredKey = key;
+    if (!tirednessEl) return;
+    if (view && !tiredParts) {
+      while (tirednessEl.firstChild) tirednessEl.removeChild(tirednessEl.firstChild);
+      const text = doc.createElement('span');
+      text.className = 'tired-text';
+      const bar = doc.createElement('span');
+      bar.className = 'tired-bar';
+      const fill = doc.createElement('span');
+      fill.className = 'tired-fill';
+      bar.appendChild(fill);
+      for (const m of view.marks ?? []) {
+        const mark = doc.createElement('span');
+        mark.className = 'tired-mark';
+        mark.style.left = `${Math.round(Math.max(0, Math.min(1, num(m))) * 1000) / 10}%`;
+        bar.appendChild(mark);
+      }
+      tirednessEl.appendChild(text);
+      tirednessEl.appendChild(bar);
+      tiredParts = { text, fill };
+    }
+    if (view && tiredParts) {
+      tiredParts.text.textContent = view.text;
+      tiredParts.fill.style.width = `${Math.round(Math.max(0, Math.min(1, num(view.level))) * 100)}%`;
+      const stage = Math.round(num(view.stage));
+      if (stage !== tiredStage) {
+        if (tiredStage >= 0) tirednessEl.classList.remove(`stage-${tiredStage}`);
+        tirednessEl.classList.add(`stage-${stage}`);
+        tiredStage = stage;
+      }
+      tirednessEl.setAttribute('aria-label', `Tiredness: ${view.text.toLowerCase()}`);
+    }
+    tirednessEl.classList.toggle(HIDDEN, !view || !survivalVisible);
+  }
+
+  /** #sleep-overlay: created here, as the last thing in the HUD, when index.html has none (as #hurt-overlay is). */
+  let sleepEl = doc.getElementById('sleep-overlay');
+  if (!sleepEl && typeof doc.createElement === 'function') {
+    sleepEl = doc.createElement('div');
+    sleepEl.id = 'sleep-overlay';
+    sleepEl.className = HIDDEN;
+    hudEl.appendChild(sleepEl);
+  }
+  /** @type {Element|null} */
+  let sleepLineEl = null;
+  /** @type {Element|null} */
+  let sleepSubEl = null;
+  let sleepLevel = -1;
+  let sleepLine = '';
+  let sleepSub = '';
+  let blurShown = 0;
+  /** @type {HTMLElement|null|undefined} the game canvas (looked up at the first blur) */
+  let blurEl;
+
+  /**
+   * The dark of a sleep or a nod (0..1, in 1/32 steps), the sleeper's two lines, and the blur of tired eyes on the game
+   * canvas (in BLUR_STEP_PX steps). Called every frame; the DOM is touched only when a step or a line changes.
+   * @param {SleepView|null} view
+   */
+  function setSleepView(view) {
+    const q = view ? Math.round(Math.max(0, Math.min(1, num(view.dark))) * 32) / 32 : 0;
+    const line = view && view.line ? String(view.line) : '';
+    const sub = view && view.sub ? String(view.sub) : '';
+    if (sleepEl) {
+      if (line !== sleepLine || sub !== sleepSub) {
+        sleepLine = line;
+        sleepSub = sub;
+        if (!sleepLineEl && (line || sub)) {
+          sleepLineEl = doc.createElement('div');
+          sleepLineEl.className = 'sleep-line';
+          sleepSubEl = doc.createElement('div');
+          sleepSubEl.className = 'sleep-sub';
+          sleepEl.appendChild(sleepLineEl);
+          sleepEl.appendChild(sleepSubEl);
+        }
+        if (sleepLineEl) sleepLineEl.textContent = line;
+        if (sleepSubEl) sleepSubEl.textContent = sub;
+      }
+      if (q !== sleepLevel) {
+        sleepLevel = q;
+        sleepEl.classList.toggle(HIDDEN, q === 0);
+        sleepEl.style.opacity = String(q);
+      }
+    }
+    const blur = view ? blurStep(view.blur ?? 0) : 0;
+    if (blur !== blurShown) {
+      blurShown = blur;
+      if (blurEl === undefined) blurEl = doc.getElementById(BLUR_TARGET_ID);
+      if (blurEl && blurEl.style) blurEl.style.filter = blur > 0 ? `blur(${+blur.toFixed(1)}px)` : '';
+    }
   }
 
   // ---- the survival hotbar (§9.8): hex slots with a count and a wear outline
@@ -1109,6 +1257,8 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     setJobChip,
     setCalendar,
     addPickup,
+    setTiredness,
+    setSleepView,
     onSlotClick: () => {},
     dispose,
   };

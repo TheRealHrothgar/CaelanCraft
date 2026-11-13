@@ -77,8 +77,9 @@ button (a honey outline traces the cell as you dig); some need a tool of a high 
 you carry and which workplaces are near — your hands, a Work Stump, a Kiln, a Bloomery, a Forge — each with its own lane, so
 they all work at once. The tools go from stone and knapped flint through copper and bronze to iron and steel. Right mouse uses
 the item in hand (place, eat, drink, bandage, wear); `R` drinks water (fresh from ponds, salty from the sea), picks berries and
-loose stones, tends a campfire's six skewers and its pot in the embers, taps birch sap, opens baskets, sets a Sleeping Hide to
-wake at, and takes back **Your Belongings** after a death. Survival-placed campfires need feeding and burn out to a cold pit.
+loose stones, tends a campfire's six skewers and its pot in the embers, taps birch sap, opens baskets, sleeps on a Sleeping
+Hide (which is then where you wake after a death), and takes back **Your Belongings** after a death. You grow tired as the
+hours awake add up: sleep takes them off and heals you, and a place walled against the night is the only safe one to sleep in. Survival-placed campfires need feeding and burn out to a cold pit.
 Every new Survival game starts with a **Survival Handbook** in the last hotbar slot (hold it and press `R`); the same text is
 the **Guide** on the title screen and in the pause menu.
 

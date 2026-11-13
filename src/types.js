@@ -232,7 +232,8 @@
  * @property {number} sick        seconds of sickness left, 0..600
  * @property {number} heal        pending bandage healing, 0..50 HP
  * @property {number} healRate    its payout rate, 0..5 HP/s
- * @property {[number, number, number]|null} spawn   the Sleeping Hide cell [q, y, r] to wake at, or null
+ * @property {number} fatigue     tiredness, game hours awake, 0..72 (CONTRACTS §87; a save from before it has none: 0)
+ * @property {[number, number, number]|null} spawn   the cell [q, y, r] of the sleep spot to wake at (the Sleeping Hide, a bed), or null
  * @property {number} deaths      an integer ≥ 0
  * @property {string} [dead]      the cause of death while the death screen is up (§2.4 cause keys); absent = alive
  * @property {(ItemStack|null)[]} pack   PACK_SLOTS (27) entries
@@ -463,6 +464,16 @@
  *   the body of water that the water in a cell is taken from
  * @property {(seconds: number, env?: { rain?: number|((q: number, r: number) => number), dryness?: number|(() => number) }) => ({ seconds: number, dried: number, filled: number, beds: number, basins: number }|null)} [waterStep]
  *   run the water cycle as if `seconds` had passed, in another weather when `env` is given
+ * @property {import('./sleep.js').Sleep} [sleep]   (CONTRACTS §87) the sleep: phase, hours, spot
+ * @property {import('./sleep.js').TiredFx} [tiredFx]  (CONTRACTS §87) yawns, the figure, the nods and their timers
+ * @property {(hours: number) => (number|null)} [setFatigue]  set the hours awake (0..72): 20 Tired, 32 Exhausted, 40 Weak,
+ *   48 Seeing things; null without a survival state
+ * @property {() => (boolean|string)} [sleepHere]  lie down on the sleep spot under the crosshair, else the nearest one;
+ *   true, or why not
+ * @property {(q: number, y: number, r: number) => (import('./sleep.js').SecureResult|null)} [secureAt]  is the place round
+ *   a sleep spot in that cell secure
+ * @property {(hours: number) => ({ hours: number, woke: string|null }|null)} [sleepStep]  sleep that many game hours at
+ *   once (lying down or asleep); null when nobody sleeps
  */
 
 export {};

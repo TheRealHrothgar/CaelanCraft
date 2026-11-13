@@ -608,9 +608,9 @@ describe('export / import (§9.6)', () => {
     s.deaths = 2;
     const json = s.export();
     expect(Object.keys(json)).toEqual(['health', 'satiation', 'hydration', 'temp', 'breath', 'wet', 'sick', 'heal', 'healRate',
-      'spawn', 'deaths']);
+      'fatigue', 'spawn', 'deaths']); // fatigue: CONTRACTS §87
     expect(json).toEqual({ health: 87.123, satiation: 64, hydration: 52, temp: 36.912, breath: 20, wet: 0.333, sick: 0, heal: 0,
-      healRate: 0, spawn: [12, 64, -40], deaths: 2 });
+      healRate: 0, fatigue: 0, spawn: [12, 64, -40], deaths: 2 });
     expect(json.spawn).not.toBe(s.spawn);
     s.damage(500, 'fall');
     const dead = s.export();

@@ -1,4 +1,4 @@
-// Caelancraft — the Survival Handbook's content: eleven chapters of hand-written prose, and every table that restates game
+// Caelancraft — the Survival Handbook's content: thirteen chapters of hand-written prose, and every table that restates game
 // data GENERATED from the game's own tables (recipes, tool tiers, block rules, food values, climate, damage, the animals,
 // the zombie kinds, throws), so the book can never disagree with the game. The numbers the prose quotes about the game
 // are read from its constants and recipes too (a few real-world figures and rough distances aside). Pure: no DOM. See
@@ -19,8 +19,8 @@
 // are plain text.
 //
 // Imports are read-only data and pure functions: config, blocks, items, crafting, harvest, climate, daynight, vitals,
-// cooking, and the constants of zombies, animals, looseItems, survivalControl, farming, spread, weather, campfires and
-// light (LIGHT_EMISSION).
+// cooking, and the constants of zombies, animals, looseItems, survivalControl, farming, spread, weather, campfires,
+// light (LIGHT_EMISSION) and sleep.
 import {
   DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, HOTBAR_SIZE, PACK_SLOTS,
   STATION_RANGE, STATION_WORK_RANGE, MAX_CRAFT_JOBS,
@@ -75,6 +75,12 @@ import {
 import { RAIN_WATERS_S } from './farming.js';
 import { RAIN_DOUSE_MEAN_S } from './campfires.js';
 import { RAIN_WET_S } from './climate.js';
+// §87: sleep
+import { TIRED_AT, EXHAUSTED_AT, WEAK_AT, DELIRIOUS_AT, WEAK_MOVE, WEAK_DIG, WEAK_STRIKE, FATIGUE_STAGES } from './vitals.js';
+import {
+  SPOTS, SLEEP_MIN_FATIGUE, SLEEP_RATE, SLEEP_FULL_H, SLEEP_MAX_H, SLEEP_ZOMBIE_NEAR, NIGHT_ATTACK_P, LIGHT_GUARD_FULL, ATTACK_MIN,
+  ATTACK_MAX, SECURE_RADIUS, SECURE_RISE, SECURE_MAX_CELLS, SECURE_REASONS, SLEEP_LINES, nightAttackChance,
+} from './sleep.js';
 // §83: water that runs out
 import { BODY_MAX_CELLS, SPILL_STEP_S } from './fluids.js';
 import { CELL_GULPS, POT_GULPS, DRY_MEAN_S, STREAM_DRY_MEAN_S, ROOF_DRY_FACTOR, FILL_MEAN_S } from './waterBodies.js';
@@ -929,6 +935,25 @@ function statusTable() {
     keys: rows.map((r) => r[0]), source: 'vitals' });
 }
 
+/** §87: the stages of tiredness, from the body's constants (vitals.js). */
+function tiredTable() {
+  const rows = [
+    [FATIGUE_STAGES[1], `${TIRED_AT} hours`, 'nothing yet: this is your warning'],
+    [FATIGUE_STAGES[2], `${EXHAUSTED_AT} hours`, 'your sight blurs; wounds stop healing by themselves'],
+    [FATIGUE_STAGES[3], `${WEAK_AT} hours`, `also: ${fmtPct(1 - WEAK_MOVE)} slower on foot, digging ${fmtPct(1 - WEAK_DIG)} slower, strikes ${fmtPct(1 - WEAK_STRIKE)} softer`],
+    [FATIGUE_STAGES[4], `${DELIRIOUS_AT} hours`, 'also: you hear and see things that are not there; your eyes fall shut for a moment'],
+  ];
+  return table({ id: 'tired', caption: 'How tired you are', head: ['Tag', 'Awake for', 'What it does'], rows,
+    keys: rows.map((r) => r[0]), source: 'vitals' });
+}
+
+/** §87: where you can sleep and what an hour of sleep there gives, from sleep.SPOTS (only the spots this build has). */
+function sleepSpotsTable() {
+  const rows = SPOTS.map((s) => [s.name, `${s.recover} hours awake`, `${s.heal} HP`]);
+  return table({ id: 'sleep-spots', caption: 'Where you can sleep', head: ['Sleep on', 'An hour takes off', 'An hour heals'], rows,
+    keys: SPOTS.map((s) => s.key), source: 'sleep' });
+}
+
 /** §84: the lands of the rain table, in the order it lists them, with the name it gives each. */
 export const RAIN_LANDS = Object.freeze([
   Object.freeze({ biome: BIOME.FOREST, name: 'Forest' }),
@@ -1535,6 +1560,50 @@ function makeChapters() {
     ],
   ]);
 
+  // ---- Sleep (CONTRACTS §87): after Warm and cool, with the body's other needs
+  const bestSpot = SPOTS.reduce((a, b) => (b.recover > a.recover ? b : a), SPOTS[0]);
+  const spotNames = listJoin(SPOTS.map((s) => `a ${s.name}`), 'or');
+  chapter('sleep', 'Sleep', 'Sleep', 'moon', [
+    [
+      h('Why you sleep'),
+      p('Every hour you are awake makes you one hour more tired. The reading beside your vitals counts them: *Awake 14 h*. Sleep takes the hours off again.'),
+      ...tiredTable(),
+      p('Each tag keeps what the ones before it do. A yawn now and then tells you that you are Tired.'),
+      tip('What you see and hear when you have been awake too long cannot hurt you. Sleep, and it is gone.'),
+    ],
+    [
+      h('Where to sleep'),
+      p(`You sleep on ${spotNames}, never on bare ground. Look at it and press [R]. You can lie down once you have been awake ${SLEEP_MIN_FATIGUE} hours. It also becomes the place where you wake after dying.`),
+      ...sleepSpotsTable(),
+      p(`On a ${bestSpot.name}, ${TIRED_AT} hours awake are slept off in ${fmtNum(TIRED_AT / bestSpot.recover, 1)} hours, and about ${halves(24 / (1 + bestSpot.recover))} hours of sleep a day keep you from ever being Tired.`),
+    ],
+    [
+      h('A night\'s sleep'),
+      p(`Asleep, time runs fast: ${SLEEP_FULL_H} game hours pass in about ${Math.round((SLEEP_FULL_H * hour) / SLEEP_RATE)} seconds. The world goes on meanwhile. Fires burn down, food cooks and spoils, plants grow, pools dry and fill. Animals and zombies stand still until you wake. Nothing is made: your making lanes wait for you.`),
+      p('You grow hungry and thirsty half as fast as when you rest awake. Sleep heals you for as long as it lasts, hungry or not, but not while you are Poisoned.'),
+      p(`You wake by yourself once you are rested and have slept ${SLEEP_FULL_H} hours, or at sunrise if you are rested by then, and never later than after ${SLEEP_MAX_H} hours. So ${SLEEP_FULL_H} hours is the best night: it heals the most.`),
+      p(`Any key or a click wakes you. So does anything that hurts you, and Nourishment or Hydration falling under ${R.STARVING}.`),
+      warn(`You cannot lie down in water, on your horse, while a zombie within ${SLEEP_ZOMBIE_NEAR} cells is after you, while poison is still hurting you, or with Nourishment or Hydration under ${R.STARVING}.`),
+    ],
+    [
+      h('The night comes for you'),
+      p(`Asleep at night in a place that zombies can reach, every hour has a ${fmtPct(NIGHT_ATTACK_P)} chance that one or two come up out of the ground ${ATTACK_MIN} to ${ATTACK_MAX} cells away. You wake at once and read *${SLEEP_LINES.attack}* By day nothing comes.`),
+      p(`Light helps. With light of ${LIGHT_GUARD_FULL} or more where you lie, a Torch or a burning campfire right beside you, the chance falls to ${fmtPct(nightAttackChance(LIGHT_GUARD_FULL))} an hour. Dimmer light helps less.`),
+      p('They come up only where zombies ever do: on dark, untouched ground. Light the land round your camp, or build over it, and fewer places are left for them.'),
+      warn('Light alone never makes you safe, and a campfire that burns out in the night stops helping. In the rain an open fire does not last.'),
+    ],
+    [
+      h('A safe place to sleep'),
+      p(`Only a *secure* place is safe: there, nothing ever comes. Look at your sleep spot. Its hint ends *${SLEEP_LINES.secure}*, or it tells you what is wrong:`),
+      bullets([
+        `*${SECURE_REASONS.open}*: there is a way out, so there is a way in. Close every gap within ${SECURE_RADIUS} cells. A wall must stand ${SECURE_RISE} cells high from the floor you sleep on, or reach a roof: the alpha leaps ${CLIMB.alpha.night}. Block the doorway behind you.`,
+        `*${SECURE_REASONS.ground}*: bare, untouched ground inside your walls. Lay a floor over it, or keep it lit to ${ZOMBIE_SPAWN_LIGHT_MAX} or more.`,
+        `*${SECURE_REASONS.big}*: more than ${SECURE_MAX_CELLS} open cells. Wall off a smaller room.`,
+      ]),
+      tip('A small hut with a floor, four walls and a roof is secure. So is a walled-off corner of a cave with a floor laid in it.'),
+    ],
+  ]);
+
   // ---- 5. Tools and the ages
   chapter('ages', 'Tools and the ages', 'Ages', 'pick', [
     [
@@ -1734,7 +1803,7 @@ function makeChapters() {
   chapter('dangers', 'Dangers', 'Dangers', 'hazard', [
     [
       h('Your body\'s warnings'),
-      p('Small tags above your vitals warn you before you come to harm. Each pair shows only the worse one.'),
+      p('Small tags above your vitals warn you before you come to harm. Each pair shows only the worse one. Tiredness has four tags of its own: the chapter *Sleep* lists them.'),
       ...statusTable(),
     ],
     [
@@ -1818,7 +1887,7 @@ function makeChapters() {
     [
       h('The Sleeping Hide'),
       p(`A Sleeping Hide is a hide pegged out at six stakes. Make it at a Work Stump from ${recipeInputsProse(hide)}, with a ${plain(toolNeedLabel('knife', 2))}. Place it, then press [R] on it: from then on you wake there.`),
-      p('It does not skip the night (the world\'s clock is shared), but it keeps your camp, your fire and your stores close when things go wrong.'),
+      p('It is a place to sleep as well (the chapter *Sleep* tells how), and it keeps your camp, your fire and your stores close when things go wrong.'),
       tip(`Keep spare food, a pot and tools in a Wicker Basket (${recipeInputsProse(basket)}; ${BASKET_SLOTS} slots) beside your hide.`),
     ],
   ]);
@@ -1863,7 +1932,7 @@ function makeChapters() {
         'A ripe bush, a prickly pear, loose stones or branches: pick.',
         'A birch log, with an empty pot in hand: tap its sap.',
         'A basket: open it. Your Belongings: take them back.',
-        'A Sleeping Hide: wake here from now on.',
+        'A Sleeping Hide: sleep, and wake here from now on.',
         'A workplace: open Making on its tab.',
         'Water: drink, or fill the empty pot in your hand.',
         'With the handbook in hand: read it.',
@@ -1993,7 +2062,7 @@ export function ensureHandbook(pack, preferSlot = HOTBAR_SIZE - 1) {
 
 /** Everything a generated table may name as its `source`. */
 export const TABLE_SOURCES = Object.freeze(['recipes', 'items', 'harvest', 'fire', 'climate', 'vitals', 'animals', 'zombies', 'loose',
-  'weather']);
+  'weather', 'sleep']);
 
 /** For tests: every block id the book's generated tables read (so a renamed block fails loudly). */
 export const BOOK_BLOCKS = Object.freeze([...GATHER, ...BREAK_EXAMPLES, ...Object.values(STATION_BLOCKS)]);

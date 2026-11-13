@@ -103,7 +103,7 @@ describe('survival body interfaces (DESIGN-survival §9.3, §9.4)', () => {
     for (const [fn, n] of [['createVitals', 0], ['statusOf', 2], ['stepVitals', 4], ['softLandingFactor', 1],
       ['fallDamage', 2], ['knockDamage', 1], ['eatFood', 3], ['queueHeal', 3]]) arity(v[fn], n, fn);
     expect(Object.keys(v.createVitals())).toEqual(['health', 'satiation', 'hydration', 'temp', 'breath', 'wet', 'sick', 'heal',
-      'healRate', 'stillFor']);
+      'healRate', 'fatigue', 'stillFor']); // fatigue: CONTRACTS §87
     expect(Object.keys(v.statusOf(v.createVitals()))).toEqual(['canSprint', 'moveFactor', 'regen', 'labels']);
     const res = v.stepVitals(v.createVitals(), 0.1, { activity: 1, felt: 20 }, () => 0.5);
     expect(Object.keys(res)).toEqual(['damage', 'total']);

@@ -34,6 +34,7 @@ describe('createVitals / wakeVitals (§2.1)', () => {
   it('a new state: health 100, Nourishment 80, Hydration 80, 37.0 °C, breath 20 s, dry, well, nothing pending', () => {
     expect(createVitals()).toEqual({
       health: 100, satiation: 80, hydration: 80, temp: 37, breath: BREATH_MAX_S, wet: 0, sick: 0, heal: 0, healRate: 0,
+      fatigue: 0, // CONTRACTS §87: rested
       stillFor: 0,
     });
     expect(createVitals()).not.toBe(createVitals());
@@ -44,7 +45,7 @@ describe('createVitals / wakeVitals (§2.1)', () => {
       healRate: 2.5, stillFor: 9 });
     wakeVitals(v);
     expect(v).toEqual({ health: 60, satiation: 50, hydration: 77, temp: 37, breath: 20, wet: 0, sick: 0, heal: 0,
-      healRate: 0, stillFor: 0 });
+      healRate: 0, fatigue: 0, stillFor: 0 }); // (§87: tiredness is tested in sleep.test.js)
     const full = vitals({ satiation: 95, hydration: 3 });
     wakeVitals(full);
     expect([full.satiation, full.hydration]).toEqual([95, 50]);
