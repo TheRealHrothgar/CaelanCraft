@@ -242,7 +242,14 @@ for (const crop of CROPS) {
   set([crop.planted], 0.3, null, 0, [always(drop(crop.back, 1, { p: SEED_BACK_P }))]);
   set([crop.sprout], 0.3, null, 0, []);
 }
-// BEDROCK, AIR and the water family keep the null rule: unbreakable.
+// §85: a place to stay. A well comes apart like the kiln and a barrel like a basket, each as its item whatever its
+// state (items.SAME_ITEM): a drawn well is the Well, and a barrel's water spills and is gone. The beds lift at once.
+set([B.WELL, B.WELL_DRAWN], 3.0, 'pick', 0, SELF_DROPS);
+set([B.RAIN_BARREL, B.RAIN_BARREL_1, B.RAIN_BARREL_2, B.RAIN_BARREL_3], 1.5, 'axe', 0, SELF_DROPS);
+set([B.GRASS_BED], 0.4, null, 0, SELF_DROPS);
+set([B.BED], 1.5, 'axe', 0, SELF_DROPS);
+// BEDROCK, AIR and the water family keep the null rule: unbreakable. So do SPRING and SPRING_DRAWN (§85): a spring is
+// the land's, and the rock it rises through runs deep (homestead.deepHint says so).
 
 /** @template T @param {T} o @returns {T} */
 function deepFreeze(o) {

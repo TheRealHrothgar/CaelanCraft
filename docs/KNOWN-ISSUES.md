@@ -558,3 +558,41 @@ From the build of CONTRACTS §86 (no spawning on lit ground, dread, shy idlers, 
 - **A strike is rounded by itself now** (`strikeDamage`: whole HP, never below 1) and the strikes of one frame are
   summed, where the sum used to be rounded. With two strikes on the same frame the total can differ by 1 HP from the
   old rule; in the dark the figures are whole and nothing changes.
+
+## A place to stay — open items
+
+From the build of CONTRACTS §85 (springs, wells, rain barrels, watering by hand, the two beds, gravel in beds,
+generation 5). None blocks play.
+
+- **None of it has been seen in the game.** It was built without a browser. The pictures and the models were looked at
+  as software renderings (a flat-lit orthographic view), never in the game's light, fog and scale. Least sure of: the
+  Grass Bed, which reads as a heap of hay more than as a bed; the spring, which is a flat picture on the ground (a
+  bright pool in a ring of stones) and may be hard to spot from far off in tall plants; and whether the well's posts
+  (0.9 m) look right beside a player.
+- **A model is turned at random per cell**, like a plant (§78). A bed cannot be aimed; a well's beam points wherever
+  its cell says. If beds must be aimed, the mesher needs a way to turn a furniture model by a stored facing.
+- **The well and the barrel are solid whole cells.** The player stands a full cell up on one, a little above what is
+  drawn (the barrel's rim is at 0.81 m, the well's stones at 0.44 m with the beam at 0.9 m).
+- **The beds are walked through, not stood on.** They are low and not solid (a snare, a seedbed). The Sleeping Hide is
+  a full solid cell; the sleep rules should not assume a sleep spot is solid.
+- **A spring, a well and a barrel stand still while their chunk is unloaded** (as a picked bush does): a spring drawn
+  and then left for days is still drawn when the player comes back, and wells up about 5 minutes later. A barrel far
+  from the player catches no rain. Fixing it would need a time stamp per cell in the save.
+- **A barrel never fills where it snows**, because snow reaches nothing (§84.7). In snowy land a well is the water to
+  build; melting snow in a pot still works.
+- **Nothing checks a well's ground after it is set.** Dig the earth out from under a well and it stays and still
+  fills. Creative sets one anywhere.
+- **A spring cannot be moved, covered or used up for good**, but a block can be set ON it: it then cannot be reached
+  with R from above, only from the side (it is a solid cell). A blast or a black hole can destroy one; nothing brings
+  it back.
+- **Drinking at a well or a spring is one press, not a hold.** Holding R does nothing more; the next draw waits for
+  the refill.
+- **The well's recipe needs a shovel in the pack and the Work Stump**, not the Workbench (the late electrical bench);
+  the Bed takes any wool. Three cord and three sticks stand where four were first meant: no recipe that makes a block
+  takes 4 of one input.
+- **Generation 5 only.** Existing worlds keep their land: no springs, gravel as single cells. A generation-1 world
+  switched to Survival is brought to generation 5, as it was brought to 4 before.
+- **Springs are not marked on anything.** There is no map; the player finds one by walking (the nearest is a median
+  52 cells away) and remembers it. Animals do not come to drink there.
+- **The guide's danger and first-day pages do not mention the homestead**; only the new chapter and one line of
+  "Older worlds" do.

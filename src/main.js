@@ -98,8 +98,9 @@ import {
 } from './survivalControl.js';
 import { WaterCycle, waterAt, drawWater, applyWaterWrites, POT_GULPS, WATER_STEP_MAX_S } from './waterBodies.js';
 import {
-  Growth, cropOfBlock, cropState, farmHint, plantAt, wrongGroundHint, failLine, FAIL_NOTICE_CELLS, RAIN_WATERS_S,
+  Growth, cropOfBlock, cropState, farmHint, plantAt, wrongGroundHint, failLine, handWater, FAIL_NOTICE_CELLS, RAIN_WATERS_S,
 } from './farming.js';
+import { Refill, homesteadAction, homesteadSecondOn, deepHint, EMPTY_POT, WATERING_POTS } from './homestead.js';
 import { Spread } from './spread.js';
 import { CraftQueue, findStations, listRecipes } from './crafting.js';
 import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
@@ -1927,6 +1928,8 @@ export function boot(win, doc) {
   const spread = new Spread();
   /** §83: the water cycle — pools dry in the sun and fill in the rain (its counts are for the debug handle) */
   const waterCycle = new WaterCycle();
+  /** §85: the drawn springs, the wells and the rain barrels with room: what brings their water back */
+  const refill = new Refill();
   /**
    * §83: the weather the water cycle reads. A STAND-IN until the weather is wired in: it never rains and the air is as
    * dry as in the dry season, so pools only dry and are used up. The real weather goes HERE: `rain(q, r)` is how hard it
@@ -2201,6 +2204,7 @@ export function boot(win, doc) {
     const releasedSpots = fireSlots.onBlockChange(q, y, r, prev, next);
     regrowth.onBlockChange(q, y, r, prev, next);
     growth.onBlockChange(q, y, r, prev, next); // §80: a planted seed or a sprout is tracked, anything else forgotten
+    refill.onBlockChange(q, y, r, prev, next); // §85: a drawn spring, a well, a rain barrel with room
     if (releaseToPack && (releasedItems.length > 0 || releasedSpots.length > 0)) {
       flyFromCell([...releasedItems, ...releasedSpots], q, y, r);
     }
@@ -3664,6 +3668,7 @@ export function boot(win, doc) {
     // v0.14 (§76 fauna)
     if (hit && hit.blockId === BLOCK.GROUND_NEST_EMPTY) return 'Empty Nest · a hen left in peace lays in it again';
     if (digPackFull && digState.active) return HINT.packFull;
+    if (digState.active && hit && deepHint(hit.blockId)) return deepHint(hit.blockId); // §85: a spring cannot be dug out
     const act = interactAction();
     if (act) {
       switch (act.kind) {
@@ -3685,6 +3690,8 @@ export function boot(win, doc) {
           return 'Handbook · R: read';
         case 'drink_here':
           return waterHint(qualityHere(), false, depthHere());
+        case 'water_crop':
+          return waterCropHint(act); // §85: `… · R: water it`
         default:
           if (act.hint) return act.hint;
       }
@@ -4008,6 +4015,12 @@ export function boot(win, doc) {
       case 'plant':
         plantSeed(q, y, r);
         return;
+      case 'draw':
+        homesteadDraw(/** @type {*} */ (act)); // §85: a spring, a well, a rain barrel
+        return;
+      case 'water_crop':
+        waterCrop(act); // §85: a pot of water poured on a planted seed or a sprout
+        return;
       default:
         if (act.hint) showHint(act.hint); // fire_hint, pit_hint, tap_hint, fuse_hint
     }
@@ -4027,6 +4040,96 @@ export function boot(win, doc) {
     }
     if (!placeBlockAt(planting.block, planting.cell)) return;
     pack.consume(selected, 1);
+  }
+
+  // ---- §85: a place to stay — springs, wells, rain barrels, watering by hand (homestead.js, farming.handWater) ----
+
+  /** The weather the wells and the barrels live in: the season's dryness (the water cycle's own), a column's biome, the rain reaching a cell. */
+  const homesteadEnv = {
+    dryness: () => waterEnv.dryness(),
+    biome: (q, r) => /** @type {World} */ (world).getBiome(q, r),
+    rain: (q, y, r) => rainOnCell(q, y, r),
+  };
+
+  /**
+   * §85, once a second in Survival (and from the debug handle's homesteadStep): drawn springs well up, drawn wells
+   * fill, barrels under the open sky catch the rain. @returns {{ springs: number, wells: number, barrels: number }}
+   */
+  function homesteadSecond(dt, random, env = homesteadEnv) {
+    return homesteadSecondOn(dt, random, { world: /** @type {World} */ (world), refill, isLoadedCell: isLoadedCellFn, env });
+  }
+
+  /**
+   * R on a spring, a well or a rain barrel (interactKind's `draw`). Every condition is checked again against the block
+   * as it stands and what is in the hand. A drink is SPRING_DRAUGHT gulps at a spring (never a poisoning) or WELL_GULPS
+   * at a well (fresh raw water, the usual risk a gulp); a fill or a pour changes the pot in the hand. The block is
+   * written as its drawn twin, or the barrel as holding one pot fewer or more.
+   * @param {import('./homestead.js').HomesteadAction} act
+   */
+  function homesteadDraw(act) {
+    const { q, y, r } = act;
+    const now = homesteadAction(world.getBlock(q, y, r), selectedKey(), q, y, r);
+    if (!now || now.kind !== 'draw' || now.mode !== act.mode) return;
+    const to = /** @type {number} */ (now.to);
+    if (now.mode === 'drink') {
+      if (fxTime - gulpAt < GULP_GAP_S || !playerSetBlock(q, y, r, to)) return;
+      gulpAt = fxTime;
+      let sick = false;
+      for (let i = 0; i < (now.gulps ?? 0); i++) {
+        if (survival.drink('fresh', now.safe ? () => 1 : Math.random) === SICK_MESSAGE) sick = true;
+      }
+      audio.playDrink();
+      if (sick) {
+        logLine(SICK_MESSAGE);
+        boilTip();
+      }
+    } else {
+      if (!playerSetBlock(q, y, r, to)) return;
+      pack.consume(selected, 1);
+      giveToHand(/** @type {string} */ (now.gives));
+      if (now.mode === 'pour') {
+        const [x, z] = hexToWorld(q, r);
+        playPhysicsSound('splash', x, y + 0.8, z, 0.5);
+      } else {
+        audio.playPick();
+      }
+    }
+    updateHit();
+  }
+
+  /** The planted cell's own hint, and `· R: water it` when water is what it lacks or likes (not open sky, not a pond for a reed). */
+  function waterCropHint(act) {
+    const crop = cropOfBlock(/** @type {number} */ (act.id));
+    if (!crop) return null;
+    const text = cropHintText(/** @type {RaycastHit} */ ({ q: act.q, y: act.y, r: act.r, blockId: act.id }), crop);
+    return text && !/ needs /.test(text) ? `${text} · R: water it` : text;
+  }
+
+  /**
+   * §85 watering by hand: the pot of water in hand is poured on the planted seed or sprout at (q, y, r)
+   * (farming.handWater: half a game day of watered growth at once). The empty pot comes back. A crop without open
+   * sky, or a reed without water to stand in, is not watered: the hint says what it needs and the pot stays full.
+   */
+  function waterCrop(act) {
+    const { q, y, r } = /** @type {{q: number, y: number, r: number}} */ (act);
+    const key = selectedKey();
+    if (!key || !WATERING_POTS.includes(key)) return;
+    const res = handWater(world.getBlock, q, y, r, Math.random);
+    if (!res) return;
+    if (!res.ok) {
+      const text = waterCropHint(act);
+      if (text) showHint(text);
+      return;
+    }
+    pack.consume(selected, 1);
+    giveToHand(EMPTY_POT);
+    const [x, z] = hexToWorld(q, r);
+    playPhysicsSound('splash', x, y + 0.3, z, 0.4);
+    particles.emit('dust', x, y + 0.2, z, 5, { color: [0.35, 0.6, 0.9], spread: 0.25 });
+    const ev = res.event;
+    if (ev && world.getBlock(ev.q, ev.y, ev.r) === ev.from && world.setBlock(ev.q, ev.y, ev.r, ev.to) && !ev.took) logLine(failLine(ev.crop));
+    cropHintKey = '';
+    updateHit();
   }
 
   /** The end of a held R (§4.2 tapping birch sap, §4.4 relighting a fire pit); every condition is checked again. */
@@ -4425,6 +4528,7 @@ export function boot(win, doc) {
       farmSecond(1, Math.random); // §80: seeds sprout, sprouts grow up, the wild plants spread
       rainSecond(1, Math.random); // §84: the rain puts out the fires it reaches
       waterSecond(1, Math.random); // §83: pools dry in the sun and fill in the rain
+      homesteadSecond(1, Math.random); // §85: springs well up, wells fill, barrels catch the rain
       const bad = pack.spoil(1, Math.random);
       if (bad.length > 0 && fxTime - spoilLineAt >= 2) {
         spoilLineAt = fxTime;
@@ -5034,6 +5138,7 @@ export function boot(win, doc) {
     loose.load(survival.hasState && restoring && restoring.survival ? restoring.survival.loose : null, looseBlockOf);
     regrowth.loadFromEdits(world.edits);
     growth.loadFromEdits(world.edits); // §80: the planted cells are edits, like the picked bushes
+    refill.loadFromEdits(world.edits); // §85: so are a drawn spring, a well and a rain barrel
     spread.clear();
     waterCycle.clear();
     tapped.clear();
@@ -5456,6 +5561,7 @@ export function boot(win, doc) {
     growth.clear();
     spread.clear();
     waterCycle.clear();
+    refill.clear();
     tapped.clear();
     craftQueue.clear();
     resetSurvivalInput();
@@ -5877,6 +5983,28 @@ export function boot(win, doc) {
         else if (ev.kind === 'fill') total.filled++;
         else if (ev.kind === 'bed') total.beds++;
         else total.basins++;
+      }
+      return total;
+    },
+    // ---- §85 a place to stay: the tracker that brings springs, wells and barrels back, and time for it alone ----
+    refill,
+    /**
+     * Run the refill step as if `seconds` had passed (1 s steps, at most WATER_STEP_MAX_S of them), with Math.random
+     * and, when given, another weather: `{ rain: 1, dryness: 0.3 }` (numbers, or functions: `rain(q, y, r)` is the rain
+     * REACHING a cell). Nothing else ages. Drawn springs and wells and barrels in unloaded chunks stay as they are.
+     * @returns {{ seconds: number, springs: number, wells: number, barrels: number }|null}
+     */
+    homesteadStep(seconds, env) {
+      if (!world || !player || !Number.isFinite(seconds)) return null;
+      const fn = (v, fallback) => (typeof v === 'function' ? v : Number.isFinite(v) ? () => v : fallback);
+      const weather = env ? { rain: fn(env.rain, homesteadEnv.rain), dryness: fn(env.dryness, homesteadEnv.dryness), biome: homesteadEnv.biome } : homesteadEnv;
+      const n = Math.max(0, Math.min(WATER_STEP_MAX_S, Math.floor(seconds)));
+      const total = { seconds: n, springs: 0, wells: 0, barrels: 0 };
+      for (let i = 0; i < n; i++) {
+        const done = homesteadSecond(1, Math.random, weather);
+        total.springs += done.springs;
+        total.wells += done.wells;
+        total.barrels += done.barrels;
       }
       return total;
     },

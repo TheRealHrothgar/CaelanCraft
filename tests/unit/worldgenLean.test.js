@@ -35,10 +35,10 @@ for (let cq = -4; cq <= 4; cq++) for (let cr = -4; cr <= 4; cr++) CHUNKS.push([c
 const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
 
 describe('generation 4: the lean land (worldgen.js, CONTRACTS §79)', () => {
-  it('is the newest generation, and its table begins with PATCH_TABLE thinned row for row', () => {
-    expect(GEN_LATEST).toBe(4);
+  it('was the newest generation until §85 added the fifth, and its table begins with PATCH_TABLE thinned row for row', () => {
+    expect(GEN_LATEST).toBe(5); // §85: generation 5 is generation 4 with natural springs, and its gravel in beds
     expect(gen4.gen).toBe(4);
-    expect(createWorldGen(SEED, { gen: 9 }).gen).toBe(4); // a number above the newest is the newest
+    expect(createWorldGen(SEED, { gen: 9 }).gen).toBe(GEN_LATEST); // a number above the newest is the newest
     expect([LEAN_PATCH_CHANCE, LEAN_PATCH_FILL]).toEqual([0.45, 0.8]);
     // §81: four rows of plants that are not food follow PATCH_TABLE's ten (tested below)
     expect(PATCH_TABLE_GEN4).toHaveLength(PATCH_TABLE.length + 4);

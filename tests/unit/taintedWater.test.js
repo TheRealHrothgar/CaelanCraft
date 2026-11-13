@@ -567,7 +567,7 @@ describe('drinking it (§66, §76)', () => {
     expect(tainted.food.hydration).toBe(water.food.hydration);
     expect(tainted.food.useS).toBe(water.food.useS);
     expect(tainted.food.spoilS).toBeUndefined();
-    expect(ITEM_KEYS.filter((k) => ITEMS[k].kind === 'food').at(-1)).toBe('pot_tainted'); // the last food
+    expect(ITEM_KEYS.filter((k) => ITEMS[k].kind === 'food').slice(-2)).toEqual(['pot_tainted', 'pot_spring']); // the last food, until §85's Pot of Spring Water
     expect(resolveItem('Pot of Tainted Water')).toEqual({ key: 'pot_tainted' });
     expect(hasItemArt('pot_tainted')).toBe(true);
     expect(ITEM_ART_KEYS.indexOf('pot_tainted')).toBeGreaterThan(ITEM_ART_KEYS.indexOf('pot_milk')); // after the other pots (and the wild food)

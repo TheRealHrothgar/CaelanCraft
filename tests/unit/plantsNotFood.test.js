@@ -113,8 +113,8 @@ const facesWith = (id, pred, least = 1) => quadsOf(id).filter((q) => texelsOf(id
 
 describe('the eight blocks 151–158 (blocks.js)', () => {
   it('ids, names, flags and tiles: wild plants like the others — 3D models with the PLANT flags and a flat icon', () => {
-    expect(BLOCK_COUNT).toBe(163); // (§83: the low and shallow water follow at 159–162)
-    expect(BLOCKS).toHaveLength(163);
+    expect(BLOCK_COUNT).toBe(173); // (§83: the low and shallow water follow at 159–162; §85: the homestead blocks at 163–172)
+    expect(BLOCKS).toHaveLength(173);
     expect(BLOCKS[158].id).toBe(158); // appended in id order: no earlier block moved
     expect(BLOCKS[150].name).toBe('cattails_sprout');
     for (const [key, id, name, displayName, sound, tile, placeable] of PLANTS) {
@@ -151,12 +151,13 @@ describe('the eight blocks 151–158 (blocks.js)', () => {
   it('seven tiles 218–224, one each in id order (the picked Nightshade has none of its own)', () => {
     expect(NEW_TILES).toEqual([218, 219, 220, 221, 222, 223, 224]);
     expect(NEW_TILES.map((t) => TILE_NAMES[t])).toEqual(['fern', 'meadow_daisies', 'thistle', 'hemlock', 'nightshade_bush', 'flax', 'aloe']);
-    expect(TILE_IDS).toHaveLength(183);
+    expect(TILE_IDS).toHaveLength(193); // + the ten tiles of §85
     for (const t of NEW_TILES) expect(TILE_IDS, TILE_NAMES[t]).toContain(t);
     // every one is the face of exactly one block
     for (const t of NEW_TILES) expect(BLOCKS.filter((d) => d.tiles.includes(t)).map((d) => d.name), TILE_NAMES[t]).toEqual([TILE_NAMES[t]]);
-    expect(Object.values(T).filter((t) => t >= 225 && t <= 227)).toEqual([]); // 225–227 stay free (and 207)
-    expect(Object.values(T)).not.toContain(207);
+    // 225–227 and 207 stayed free here; §85 (a place to stay) has taken them since: the spring's faces and the well's picture
+    expect(Object.values(T).filter((t) => t >= 225 && t <= 227).map((t) => TILE_NAMES[t])).toEqual(['spring_top', 'spring_drawn_top', 'well']);
+    expect(TILE_NAMES[207]).toBe('spring_side');
   });
 
   it('the Creative picker lists the seven placeable ones among the Wild Plants; each is a block item', () => {
@@ -540,8 +541,8 @@ describe('the three items (items.js) and their icons (itemArt.js)', () => {
     const foods = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'food');
     const i = foods.indexOf('pot_healwort_tea');
     expect(foods.slice(i + 1, i + 4)).toEqual(['hemlock_root', 'nightshade_berries', 'raw_venison']);
-    expect(foods.at(-1)).toBe('pot_tainted');
-    expect(foods).toHaveLength(54);
+    expect(foods.slice(-2)).toEqual(['pot_tainted', 'pot_spring']); // §85: the Pot of Spring Water follows the Pot of Tainted Water
+    expect(foods).toHaveLength(55);
     expect(ITEM_KEYS.filter((k) => ITEMS[k].kind === 'heal')).toEqual(['fibre_bandage', 'rag_bandage', 'aloe_leaf']);
     expect(getItem('hemlock_root')).toEqual({ key: 'hemlock_root', name: 'Hemlock Root', kind: 'food', stack: 16, food: { satiation: 3, hydration: 1, sick: 1, useS: 1.0 } });
     expect(getItem('nightshade_berries')).toEqual({ key: 'nightshade_berries', name: 'Nightshade Berries', kind: 'food', stack: 32,
@@ -549,7 +550,7 @@ describe('the three items (items.js) and their icons (itemArt.js)', () => {
     expect(getItem('aloe_leaf')).toEqual({ key: 'aloe_leaf', name: 'Aloe Leaf', kind: 'heal', stack: 16, heal: { hp: 6, rate: 1.5, useS: 1.0 } });
     expect(itemName('nightshade_berries', 1)).toBe('Nightshade Berry');
     expect(itemName('nightshade_berries', 2)).toBe('Nightshade Berries');
-    expect(ITEM_KEYS).toHaveLength(261);
+    expect(ITEM_KEYS).toHaveLength(266); // + §85: the Pot of Spring Water and four block items
   });
 
   it('each look-alike\'s food is its twin\'s in every number but one: it always poisons', () => {

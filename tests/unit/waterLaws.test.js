@@ -62,10 +62,11 @@ const pondIds = (world, y, q0 = 0, r0 = 0) => pondCells(q0, r0).map(([q, r]) => 
 const all = (id) => Array(7).fill(id);
 
 describe('standing water has three depths: blocks 159–162', () => {
-  it('four blocks after the plants: low and shallow, fresh and tainted; BLOCK_COUNT 163', () => {
+  it('four blocks after the plants: low and shallow, fresh and tainted; BLOCK_COUNT 163 then (173 since §85)', () => {
     expect([B.WATER_LOW, B.WATER_SHALLOW, B.TAINTED_WATER_LOW, B.TAINTED_WATER_SHALLOW]).toEqual([159, 160, 161, 162]);
-    expect(BLOCK_COUNT).toBe(163);
-    expect(BLOCKS).toHaveLength(163);
+    expect(BLOCK_COUNT).toBe(173); // §85 appended the ten homestead blocks after them
+    expect(B.TAINTED_WATER_SHALLOW).toBe(162);
+    expect(BLOCKS).toHaveLength(173);
     expect(LOWER.map((id) => BLOCKS[id].name)).toEqual(['water_low', 'water_shallow', 'tainted_water_low', 'tainted_water_shallow']);
     expect(LOWER.map((id) => BLOCKS[id].displayName)).toEqual(['Low Water', 'Shallow Water', 'Low Tainted Water', 'Shallow Tainted Water']);
   });

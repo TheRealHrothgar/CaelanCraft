@@ -257,6 +257,45 @@ export function failLine(crop) {
   return `A planted ${crop.key === 'cattails' ? 'Cattail' : crop.name} did not take.`;
 }
 
+// ---- Watering by hand (CONTRACTS §85) ---------------------------------------------------------------------------------------
+
+/** A pot of water poured on a planted seed or a sprout is worth this many seconds of watered growth: half a game day. */
+export const HAND_WATER_S = 720;
+
+/**
+ * The chance that one pot poured on block `id` brings its moment at once: the growth roll of `Growth.step` for
+ * HAND_WATER_S seconds of watered ground, `min(1, HAND_WATER_S / mean)` — a planted seed's SPROUT_MEAN_S.watered, a
+ * sprout's GROW_MEAN_S.watered. 0 for anything that is not a farm block.
+ * @param {number} id @returns {number}
+ */
+export function handWaterChance(id) {
+  if (!cropOfBlock(id)) return 0;
+  return Math.min(1, HAND_WATER_S / (isPlanted(id) ? SPROUT_MEAN_S : GROW_MEAN_S).watered);
+}
+
+/**
+ * Water poured by hand on the planted seed or sprout in cell (q, y, r): one growth roll as if HAND_WATER_S seconds had
+ * passed with the cell watered (`Growth.step`'s roll: one `random()` below `handWaterChance`; a seed whose moment
+ * comes draws once more and takes with SEED_TAKES.watered). The crop still needs what water cannot give: open sky,
+ * and for a reed water to stand in — then nothing is poured (`ok` false, `why` says which, no roll).
+ * @param {(q: number, y: number, r: number) => number} getBlock
+ * @param {number} q @param {number} y @param {number} r
+ * @param {() => number} random
+ * @returns {{ ok: boolean, why?: 'sky'|'reed', event: GrowthEvent|null }|null} null when the cell holds no farm block;
+ *   `event` the cell to write when its moment came (main writes it as it writes a Growth event), else null
+ */
+export function handWater(getBlock, q, y, r, random) {
+  const id = getBlock(q, y, r);
+  const crop = cropOfBlock(id);
+  if (!crop) return null;
+  if (!hasSky(getBlock, q, y, r)) return { ok: false, why: 'sky', event: null };
+  if (crop.reed && !waterNear(getBlock, q, y, r, REED_WATER_REACH)) return { ok: false, why: 'reed', event: null };
+  if (!(random() < handWaterChance(id))) return { ok: true, event: null };
+  const seed = isPlanted(id);
+  const took = !seed || random() < SEED_TAKES.watered;
+  return { ok: true, event: { q, y, r, from: id, to: !took ? B.AIR : seed ? crop.sprout : crop.grown, crop, took } };
+}
+
 // ---- Growth ----------------------------------------------------------------------------------------------------------------
 
 /**

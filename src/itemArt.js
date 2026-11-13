@@ -1394,6 +1394,15 @@ const FOOD_PAINTERS = {
     ic.line(4, 6, 4, 8, 0x7f8f3c);
     ic.line(11, 6, 11, 7, 0x7f8f3c);
   },
+  // §85: the pot of spring water — the spring's own clear, bright water (the pond's is a duller blue, boiled water
+  // steams) with a white heart where it catches the light, and a four-point sparkle over the rim: clean as it comes
+  pot_spring(ic, rng) {
+    paintPot(ic, rng, 0xb8613a, 0x45a8e6, 0xa8e4fa);
+    ic.set(8, 4, 0xffffff);
+    ic.set(7, 4, 0xffffff);
+    for (const [x, y] of [[12, 0], [11, 1], [12, 1], [13, 1], [12, 2]]) ic.set(x, y, 0xffffff);
+    ic.set(12, 1, 0xa8e4fa);
+  },
 };
 
 /** A small leg on its bone (rabbit): the meat low on the left, the bone running up to the right with a knuckle. */

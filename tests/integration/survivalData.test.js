@@ -14,6 +14,7 @@ import { FIRE_TRANSFORMS, fuelSeconds } from '../../src/cooking.js';
 import { FLORA_TABLE } from '../../src/worldgen.js';
 import { DART_KEYS } from '../../src/looseItems.js';
 import { PLANTABLE } from '../../src/farming.js';
+import { homesteadAction } from '../../src/homestead.js';
 
 const B = BLOCK;
 /** Items the game gives rather than the world (§14.2: the Handbook is in the pack when a survival state begins). */
@@ -56,6 +57,7 @@ describe('every item has a source and a use (§10 I-1)', () => {
   sources.add('pot_milk'); // R on a cow with an empty clay pot (§72)
   sources.add('pot_seawater'); // … on salt water
   sources.add('pot_tainted'); // … on tainted water (§76 water)
+  sources.add(homesteadAction(B.SPRING, 'clay_pot', 0, 0, 0).gives); // … at a natural spring (§85): pot_spring
   for (const rec of RECIPES) for (const o of rec.outputs) sources.add(o.k);
   for (const tr of Object.values(FIRE_TRANSFORMS)) sources.add(tr.to);
 
@@ -120,6 +122,7 @@ function reach() {
       have.add('pot_milk'); // a cow, lured or snared (§72)
       have.add('pot_seawater');
       have.add('pot_tainted'); // tainted water (§76 water)
+      have.add(homesteadAction(B.SPRING, 'clay_pot', 0, 0, 0).gives); // a natural spring (§85): the Pot of Spring Water
       if (hasTool('knife', 2)) have.add('pot_sap');
     }
     if (have.has('campfire')) for (const [k, tr] of Object.entries(FIRE_TRANSFORMS)) if (have.has(k)) have.add(tr.to);
