@@ -1239,7 +1239,7 @@ function makeChapters() {
     ],
     [
       h('Food in bunches'),
-      p('Wild food grows in bunches. You may walk a long way and find nothing, then a whole patch: remember where it was.'),
+      p('Wild food grows in bunches, and there is not much of it. You may walk a long way and find nothing, then a whole patch: remember where it was, and do not strip it bare.'),
       p('*Honeycaps* grow in rings under forest trees and on cave floors: [R] picks them, and they roast well. Look before you eat. The *Frecklecap* grows among them and looks much the same: its cap is flatter and dotted with pale freckles, its stem thin, with a ring. It always poisons you, and roasting does not help.'),
       p('*Wild onions* and *wild carrots* grow in patches on the plains and at the forest\'s edge: small raw, better roasted, and a shovel digs up more. *Hazel thickets* give nuts that never go bad. *Crab apples* are sour and wet, and bake well. Thicket and bush regrow after picking.'),
       p('*Healwort* is rare: silver leaves under violet flower spikes. A leaf ends a poisoning at once; steeped in a Pot of Boiled Water it makes *Healwort Tea*, which cures and quenches. Pick it with [R] and it grows back. Pull it up and it is gone.'),
@@ -1725,7 +1725,7 @@ function makeChapters() {
       h('Older worlds'),
       p('Worlds made before Survival have no wild plants, ponds, copper or tin. The first time you switch one to Survival you are asked to bring them in: they appear wherever the land is untouched, near your builds too. This cannot be undone.'),
       p('New worlds have them unless you untick *Survival resources* when you create the world.'),
-      p('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only. A world made before them keeps its land: every pond in it is fresh. The rules for things you carry and hunt are the same everywhere.'),
+      p('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only. A world made before them keeps its land: every pond in it is fresh. The newest worlds are leaner still: about one food patch in three is left. The rules for things you carry, plant and hunt are the same everywhere.'),
     ],
     [
       h('Good to know'),

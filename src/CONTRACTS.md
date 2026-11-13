@@ -4584,6 +4584,46 @@ at most 0.54 m from the middle and is at least 0.3 m across both ways; every fac
 or flower spikes away. The picked Honeyberry's own tile is too sparse to wrap a box, so its lumps are cut from a
 berry-free corner of the bush's tile (`tile: TILE.HONEYBERRY_BUSH`).
 
+## 79. The lean Survival: generation 4, sparser animals, riskier raw water — `src/worldgen.js`, `src/animals.js`, `src/config.js`, `src/vitals.js`, `src/items.js`
+
+Amends §76 (the harder Survival) and §66 (raw water). With §80 (plants that spread, farming) and §81 (plants that are not
+food) it is the answer to "food is too plentiful": less to find, more to look after.
+
+**Generation 4** (`GEN_LATEST` 4, new worlds only; generations 1–3 are byte for byte what they were). It is generation 3
+with most of its food taken away:
+
+- `PATCH_TABLE_GEN4` is `PATCH_TABLE` row for row with the same salts, each `chance` × `LEAN_PATCH_CHANCE` (0.45) and
+  each `fill` × `LEAN_PATCH_FILL` (0.8). The Healwort (no food, already rare) keeps its chances and only gets the thinner
+  fill. `CAVE_TROOP_GEN4` is the cave troop with both factors.
+- Because the rolls are the same, a patch of generation 4 is always a patch of generation 3 of the same seed, and each
+  of its plants stands where it stood there. Where a patch plant is gone, the per-column flora roll decides the cell as
+  it would have without the patch (nothing, tussock, stones, a branch, a gravel patch).
+- Streams, ponds, tainted ponds, trees, ores and every other rule are generation 3's.
+- Measured on the test seed over 162 chunks: 310 patch plants in generation 3, 106 in generation 4 (about one in 390
+  columns). `worldGen.PATCH_TABLE` is the table of the world's own generation.
+
+**Sparser animals** (every Survival world):
+
+| | was | is |
+|---|---|---|
+| `HERD_CHANCE` / `HERD_TARGET` | 0.35 / 5 | 0.2 / 3 |
+| `SMALL_CHANCE` / `SMALL_TARGET` | 0.4 / 4 | 0.25 / 3 |
+| `FISH_CHANCE` / `FISH_TARGET` | 0.6 / 5 | 0.4 / 3 |
+| group sizes: cow, sheep | 2–4 | 1–3 |
+| horse, wolf | 2–3 | 1–2 |
+| deer | 3–5 | 2–3 |
+| rabbit | 1–3 | 1–2 |
+| pheasant, turkey, fish | 2–4 | 1–3 |
+| `PIG_NATURAL_COUNT` | 3 | 2 |
+| `PIG_REPOP_CHECK_S` / `PIG_REPOP_TARGET` | 240 / 2 | 420 / 1 |
+| pigs a repopulation brings (`PIG_REPOP_COUNT`) | 2 | 1 |
+
+The bear stays alone (1). `ANIMAL_MAX`, the distances and the weights by biome are unchanged.
+
+**Raw water.** `RATES.GULP_FRESH_SICK` 0.2 (it was 0.06): one raw gulp of fresh water in five poisons. A raw Pot of Water
+poisons 0.4 of the time (it was 0.2). Tainted water is unchanged (0.4 a gulp, 0.6 a pot) and stays the worse choice;
+boiled water stays safe. The guide quotes all four numbers from the tables.
+
 ## 80. Plants that spread; farming; slower regrowth — `src/farming.js` (PURE), `src/spread.js` (PURE), `src/harvest.js`, `src/blocks.js`, `src/tiles.js`, `src/plantModels.js`, `src/items.js`, `src/itemArt.js`, `src/survivalControl.js`, `src/main.js`, `src/handbook.js`
 
 Amends §44 (harvest: picking, regrowth), §47 (blocks, tiles), §49 (main), §73 (the guide), §76.2 (flora) and §78 (plant

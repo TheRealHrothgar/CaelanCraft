@@ -1,6 +1,7 @@
 // Unit tests for src/handbook.js — the Survival Handbook's content (docs/DESIGN-survival.md §14): the chapters, and every
 // generated table walked against the game table it restates, so the book can never disagree with the game.
 import { describe, it, expect } from 'vitest';
+import { LEAN_PATCH_CHANCE, LEAN_PATCH_FILL } from '../../src/worldgen.js';
 import {
   HANDBOOK_KEY, HANDBOOK_CHAT_LINE, TABLE_ROWS_PER_PAGE, TABLE_SOURCES, CLIMATE_EXAMPLES, FALL_EXAMPLES, DANGER_NAMES,
   buildChapters, chapterIds, ensureHandbook, inlineParts, plainText, fmtNum, fmtSigned, fmtPct, fmtTemp, fmtDuration,
@@ -913,7 +914,9 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).not.toMatch(/Ponds inland are fresh/);
     expect(rowOf(tableById('drinks'), 'pot_tainted')[3]).toBe('poisons 60 %');
     // food in bunches: the look-alike is described by its look, and the herb by what it does
-    expect(text).toContain('Wild food grows in bunches.');
+    expect(text).toContain('Wild food grows in bunches, and there is not much of it.'); // v0.15 (§79): the lean land
+    expect(text).toContain('The newest worlds are leaner still: about one food patch in three is left.');
+    expect(LEAN_PATCH_CHANCE * LEAN_PATCH_FILL).toBeCloseTo(0.36, 6);
     expect(text).toContain('The Frecklecap grows among them and looks much the same: its cap is flatter and dotted with pale freckles, its stem thin, with a ring. It always poisons you, and roasting does not help.');
     expect([ITEMS.frecklecap.food.sick, ITEMS.roasted_frecklecap.food.sick, ITEMS.honeycap.food.sick]).toEqual([1, 1, 0]);
     expect(ITEMS.hazelnuts.food.spoilS).toBeUndefined(); // "nuts that never go bad"
