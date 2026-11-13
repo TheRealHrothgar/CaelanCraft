@@ -19,7 +19,8 @@
 // are plain text.
 //
 // Imports are read-only data and pure functions: config, blocks, items, crafting, harvest, climate, daynight, vitals,
-// cooking, and the constants of zombies, animals, looseItems, survivalControl, farming, spread and light (LIGHT_EMISSION).
+// cooking, and the constants of zombies, animals, looseItems, survivalControl, farming, spread, weather, campfires and
+// light (LIGHT_EMISSION).
 import {
   DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, HOTBAR_SIZE, PACK_SLOTS,
   STATION_RANGE, STATION_WORK_RANGE, MAX_CRAFT_JOBS,
@@ -66,6 +67,17 @@ import {
   CROPS, FARM_WATER_REACH, REED_WATER_REACH, SPROUT_MEAN_S, GROW_MEAN_S, SEED_TAKES, SEED_BACK_P, SOIL_EARTH, cropOf, soilWords,
 } from './farming.js';
 import { SPREAD_KINDS, SPREAD_MEAN_S, SPREAD_STEP, SPREAD_RADIUS, SPREAD_RANGE, SPONTANEOUS_MEAN_S } from './spread.js';
+// §84: the seasons and the rain
+import {
+  YEAR_DAYS, RAINS_DAYS, DRY_DAYS, FAIR_START_DAYS, RAIN_SHARE, SHOWER_MIN_S, SHOWER_MAX_S, SLOTS_PER_DAY, RAINS_MAX_DRY_DAYS, LEAF_COVER,
+  SEASON_LINES, calendarLine, showerChance,
+} from './weather.js';
+import { RAIN_WATERS_S } from './farming.js';
+import { RAIN_DOUSE_MEAN_S } from './campfires.js';
+import { RAIN_WET_S } from './climate.js';
+// §83: water that runs out
+import { BODY_MAX_CELLS, SPILL_STEP_S } from './fluids.js';
+import { CELL_GULPS, POT_GULPS, DRY_MEAN_S, STREAM_DRY_MEAN_S, ROOF_DRY_FACTOR, FILL_MEAN_S } from './waterBodies.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 
@@ -909,12 +921,29 @@ function statusTable() {
     ['Parched', `Hydration below ${R.PARCHED}`, `no sprinting, ${fmtPct(1 - R.SLOW_PARCHED)} slower; at 0, ${fmtNum(R.THIRST_DPS)} HP/s`],
     ['Wounded', `Health below ${R.WOUNDED}`, `${fmtPct(1 - R.SLOW_WOUNDED)} slower`],
     ['Poisoned', 'after bad food or raw water', `${fmtNum(R.SICK_DPS)} HP/s (never below ${R.SICK_FLOOR}), no healing, hunger and thirst ×${fmtNum(R.SICK_FACTOR)}`],
-    ['Wet', 'out of the water', `feels ${WET_CHILL} °C colder until you dry`],
+    ['Wet', 'out of the water, or rained on', `feels ${WET_CHILL} °C colder until you dry`],
     ['Drowning', 'no breath, head under water', `${fmtNum(R.DROWN_DPS)} HP/s`],
     ['Smothering', 'no breath, buried', `${fmtNum(R.BURIED_DPS)} HP/s`],
   ];
   return table({ id: 'status', caption: 'The warning tags above your vitals', head: ['Tag', 'When', 'What it does'], rows,
     keys: rows.map((r) => r[0]), source: 'vitals' });
+}
+
+/** §84: the lands of the rain table, in the order it lists them, with the name it gives each. */
+export const RAIN_LANDS = Object.freeze([
+  Object.freeze({ biome: BIOME.FOREST, name: 'Forest' }),
+  Object.freeze({ biome: BIOME.MOUNTAINS, name: 'Mountains' }),
+  Object.freeze({ biome: BIOME.PLAINS, name: 'Plains, beach and sea' }),
+  Object.freeze({ biome: BIOME.SNOWY, name: 'Snowy land (as snow)' }),
+  Object.freeze({ biome: BIOME.DESERT, name: 'Desert' }),
+]);
+
+/** §84: how much of the time it rains, by land and season (weather.RAIN_SHARE). */
+function rainTable() {
+  const share = (/** @type {number} */ v) => (v > 0 ? fmtPct(v) : 'never');
+  const rows = RAIN_LANDS.map((l) => [l.name, share(RAIN_SHARE[l.biome].rains), share(RAIN_SHARE[l.biome].dry)]);
+  return table({ id: 'rain', caption: 'How much of the time it rains', head: ['Land', 'In the rains', 'In the dry season'], rows,
+    keys: RAIN_LANDS.map((l) => BIOME_NAMES[l.biome]), source: 'weather' });
 }
 
 /** The "Made from" cell of a healing item that has no recipe (§81: the Aloe Leaf). */
@@ -1121,6 +1150,8 @@ function makeChapters() {
     if (d < 1.5) return 'a little over a game day';
     return `about ${halves(d)} game days`;
   };
+  /** How often something happens on average, in game days: "about every 3 game days" (§83). */
+  const everyGameDays = (seconds) => `about every ${halves(seconds / DAY_LENGTH_SECONDS)} game days`;
   // §80: the foods that are planted as they are (every `from` item of a crop that is not a seed), in CROPS order
   const plantedFoods = CROPS.flatMap((c) => c.from).filter((k) => !/_seeds$/.test(k)).map((k) => itemName(k));
   const dropCount = (/** @type {number|number[]} */ n) => (Array.isArray(n) ? `${n[0]}–${n[1]}` : String(n));
@@ -1247,6 +1278,8 @@ function makeChapters() {
       p(`A fire built in Survival burns for ${fmtDurationLong(CAMPFIRE_FUEL_START_S)}, then goes cold. Feed it with [R]: a stick adds ${FUEL_STICK_S} seconds, a log ${fmtDurationLong(FUEL_LOG_S)}, up to ${fmtDurationLong(CAMPFIRE_FUEL_MAX_S)} in all. ${cap(numWord(nightLogs))} log${nightLogs === 1 ? ' carries' : 's carry'} a fire through the whole night.`),
       p('Plains nights are cool, not dangerous. In snowy land the night can kill: wear what you have and keep close to the fire.'),
       warn(`Morning does not burn the zombies away. A walker dozing in the light wakes if you come within ${WALKER_WAKE_RANGE} cells: look around before you leave the fire.`),
+      // §84: a new world begins in the rains, but its first days are fair (weather.FAIR_START_DAYS)
+      tip(`A new world begins in the rains, but the first ${numWord(FAIR_START_DAYS)} days stay fair. After that, rain puts out a fire under the open sky: set a block or two over your campfire as a roof. See *Seasons and rain*.`),
     ],
   ]);
 
@@ -1255,10 +1288,10 @@ function makeChapters() {
     [
       h('Fresh, tainted and salt'),
       p(`Water is your most urgent need. Hydration falls from full to nothing in ${fmtDurationLong(Math.round(hydrationRest / 60) * 60)} even at rest: faster when you work, faster still in the heat.`),
-      p('The sea and every beach are salt. Inland, look before you drink: clear blue water is fresh, murky green-brown water is *tainted*. Most ponds are tainted: small hex-shaped pools ringed with cattails and loose stones, with clay at the bottom. In snowy land they freeze over.'),
+      p(`The sea is salt, and so is any lake too big to be a pool: water whose surface is more than ${BODY_MAX_CELLS} cells is sea. Inland, look before you drink: clear blue water is fresh, murky green-brown water is *tainted*. Most ponds are tainted: small hex-shaped pools ringed with cattails and loose stones, with clay at the bottom. In snowy land they freeze over.`),
       p('*Streams* always run fresh: narrow channels from a spring on higher ground down to the sea, a pond or a small pool.'),
       p(`Salt water makes thirst worse: your body spends more water getting rid of the salt than the sip gave you. A gulp of the sea costs ${-R.GULP_SALT} Hydration.`),
-      tip('The hint under your crosshair names it: *Fresh water*, *Tainted water* or *Sea water (salty)*.'),
+      tip('The hint under your crosshair names it, and says how much is left of a pool: *Fresh water · low*, *Tainted water · shallow*, *Sea water (salty)*.'),
     ],
     [
       h('Drinking'),
@@ -1288,10 +1321,60 @@ function makeChapters() {
       tip('A stream stays fresh all the way across a beach. The sea is still salt.'),
     ],
     [
+      h('Water runs out'),
+      p('A pool is not endless. It stands at one of three depths: *full*, *low* or *shallow*. After shallow it is dry. Shallow water is ankle-deep: you walk through it.'),
+      p(`Every gulp and every pot comes out of the pool you take it from. Each cell of a pool holds ${CELL_GULPS} gulps for each depth, and filling a pot takes ${POT_GULPS} gulps. A pond of seven cells gives about ${7 * CELL_GULPS} gulps before it drops a depth and about ${3 * 7 * CELL_GULPS} in all; a single cell gives about ${3 * CELL_GULPS}.`),
+      p(`The sun dries a pool too. In dry weather it loses a depth ${everyGameDays(DRY_MEAN_S)}; under a roof or in a cave that takes ${numWord(ROOF_DRY_FACTOR)} times as long. Rain fills it again: a depth for about every ${fmtDurationLong(FILL_MEAN_S)} of hard rain, up to full. A dry pond takes water again in the rain, but it never grows larger than it was.`),
+      p(`*Streams* dwindle the same way: full after rain, a trickle in dry weather, dry in a drought, all but the head. Without rain a stream loses a depth ${everyGameDays(STREAM_DRY_MEAN_S)}. Drinking does not lower a stream. The sea never runs out, and it is always salt.`),
+      tip('A gulp of the water that flows out of a pool is taken from that pool.'),
+    ],
+    [
+      h('Holding water'),
+      p(`Water stays only where something holds it. Every side of every cell of a pool must be a solid block or more standing water. Dig away one block of a pond's bank, or the clay under it, and the pond runs out: it drops a depth every ${SPILL_STEP_S} seconds and is dry in ${3 * SPILL_STEP_S}. A plant or a torch in the gap does not hold it. A pool two cells deep drains from the top, down to the hole.`),
+      p('Water with nothing under it falls until it lands. Water that flows away is lost: flowing water never becomes a pool again.'),
+      p(`*Clay holds rain.* Dig a pit, floor it with Clay and leave it open to the sky. In the rain it takes its first water, shallow; then it fills like any pool. A basin can be many cells, up to ${BODY_MAX_CELLS}, if every cell lies on clay and every wall is whole.`),
+      warn('Do not dig beside your water. Close a breach at once with any solid block: what ran out is gone, the rest holds.'),
+    ],
+    [
       h('Water from plants'),
       p(`Birch carries a sweet, watery sap. With an empty Clay Pot in hand and a knife in your pack, hold [R] on a birch log for ${TAP_HOLD_S} s to fill a *Pot of Birch Sap*: ${fmtSigned(food('pot_sap').hydration)} Hydration and a little Nourishment. Each log can be tapped once a day.`),
       p(`In the desert the prickly pear's fruit is water: ${fmtSigned(food('cactus_fruit').hydration)} Hydration each. Its fine spines must come off first: peel it with a knife in your pack, or singe it on a skewer for ${FIRE_TRANSFORMS.unpeeled_cactus_fruit.seconds} s.`),
       p(`Eating snow gives only ${fmtSigned(food('snow').hydration)} Hydration and chills you ${fmtNum(-(food('snow').temp ?? 0))} °C: melting it costs body heat. Melt it in a pot instead.`),
+    ],
+  ]);
+
+  // ---- Seasons and rain (CONTRACTS §84), between Water and Food and fire
+  const dryShowers = DRY_DAYS * SLOTS_PER_DAY * showerChance(BIOME.PLAINS, 'dry');
+  chapter('seasons', 'Seasons and rain', 'Seasons', 'rain', [
+    [
+      h('The year'),
+      p('In many parts of the world the year is not summer and winter but a *wet season* and a *dry season*. People, animals and plants there plan their whole year around water: they grow and gather while it rains, and store, travel or wait when it does not. This land is like that.'),
+      p(`A year here is ${YEAR_DAYS} game days. *The rains* are its first ${RAINS_DAYS} days: showers come nearly every day. *The dry season* is the other ${DRY_DAYS}: rain is rare, and the land dries out. A new world begins on the first day of the rains, with ${numWord(FAIR_START_DAYS)} fair days before the first shower.`),
+      p(`The line at the top of the screen tells you where in the year you are: *${calendarLine(RAINS_DAYS + 2)}*. While rain is falling it ends with the word *Rain*.`),
+      tip(`On the last day of the rains the log warns you: "${SEASON_LINES.ending}"`),
+    ],
+    [
+      ...rainTable(),
+      p(`Rain comes in showers of ${numWord(SHOWER_MIN_S / hour)} to ${numWord(SHOWER_MAX_S / hour)} game hours. They start gently and end gently, and the sky turns grey while they last.`),
+      p(`In the rains, outside the desert, ${numWord(RAINS_MAX_DRY_DAYS)} days never pass without a shower. In the dry season the plains get only ${numWord(Math.floor(dryShowers))} or ${numWord(Math.ceil(dryShowers))} showers in all, long ones, with many dry days between them.`),
+    ],
+    [
+      h('What rain does'),
+      p(`Rain falls on everything under the open sky. A *roof* stops it: any solid block overhead, glass too. Leaves are no roof: about a third of the rain (${fmtPct(LEAF_COVER)}) comes through a tree.`),
+      bullets([
+        `*It waters your crops.* A planted seed or a sprout that rain has fallen on counts as watered for ${gameDays(RAIN_WATERS_S).replace(/^about /, '')} afterwards, with no pond near. Its hint reads *watered by rain*.`,
+        `*It puts out open fires.* A campfire under the open sky goes out in a downpour after about ${RAIN_DOUSE_MEAN_S} seconds, in a light rain later. It hisses, steams and leaves a cold fire pit to light again. A fire under a roof is safe.`,
+        `*It makes you wet and cold.* In a downpour you are *Wet* through in ${RAIN_WET_S} seconds. Wet skin feels ${WET_CHILL} °C colder, and wet clothes keep only ${fmtPct(1 - WET_INSULATION_LOSS)} of their warmth. Under a roof you dry in ${fmtDurationLong(WET_DRY_S)}, beside a fire much faster.`,
+      ]),
+      tip('In snowy land it falls as snow. Snow wets nothing, waters nothing and puts out no fire.'),
+    ],
+    [
+      h('Living with the seasons'),
+      p('*Build a roof.* A few blocks over your campfire keep it burning through a wet night, and a roof over your own head keeps you dry and warm. Leave your field open to the sky: the rain waters it for you.'),
+      p(`*Use the rains.* They are the time to plant. A seed on watered ground sprouts in ${gameDays(SPROUT_MEAN_S.watered)} and ${numWord(Math.round(SEED_TAKES.watered * 5))} in five take; on dry ground it is slow, and most fail.`),
+      p(`*Get ready for the dry season.* When the log says the rains are ending, you have one day. Fill your pots and boil them: boiled water keeps. A field more than ${FARM_WATER_REACH} cells from fresh water will be dry ground until a shower passes.`),
+      p('*Or move on.* People who live in such lands often travel with the water: to the river in the dry months, and home again with the rains. You can do the same.'),
+      warn('Rain in the dry season is a gift, not a plan. Many days can pass between two showers.'),
     ],
   ]);
 
@@ -1909,7 +1992,8 @@ export function ensureHandbook(pack, preferSlot = HOTBAR_SIZE - 1) {
 }
 
 /** Everything a generated table may name as its `source`. */
-export const TABLE_SOURCES = Object.freeze(['recipes', 'items', 'harvest', 'fire', 'climate', 'vitals', 'animals', 'zombies', 'loose']);
+export const TABLE_SOURCES = Object.freeze(['recipes', 'items', 'harvest', 'fire', 'climate', 'vitals', 'animals', 'zombies', 'loose',
+  'weather']);
 
 /** For tests: every block id the book's generated tables read (so a renamed block fails loudly). */
 export const BOOK_BLOCKS = Object.freeze([...GATHER, ...BREAK_EXAMPLES, ...Object.values(STATION_BLOCKS)]);

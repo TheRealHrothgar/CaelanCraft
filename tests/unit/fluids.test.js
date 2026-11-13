@@ -2,6 +2,12 @@
 // fed levels, falling, the ≥ 3 infinite-source rule, downward), its floor trigger and reseeder (streaming / reloads),
 // campfires, drain, currents and the save rule. Map-backed fake worlds from the fixtures unless a real World matters
 // (chunk corners while streaming, the seed-42 sea).
+//
+// Since §83 (the laws of water) a source that nothing feeds does not last: on open ground it spills dry in 12 s, in
+// mid-air it falls. So wherever these tests want a source that KEEPS feeding its flow — what they are about — the
+// source stands in a SPRING cell (`setup({ springs })`: a cell a stream was generated in, which is running water: fed,
+// it neither falls nor spills). What an unfed source does is tests/unit/waterLaws.test.js's subject; the cases here that
+// place one say so.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -17,14 +23,26 @@ import * as fluidsModule from '../../src/fluids.js';
 import { executeCommand, parseLine } from '../../src/commands.js';
 import { createPlayer } from '../../src/physics.js';
 import { makeFakeWorld, attachPhysics, flatWorldGen } from '../helpers/fixtures.js';
+import { withSprings, rest } from '../helpers/water.js';
 
 const B = BLOCK;
 const { WATER_RULE_IDS, isFlowingWater, isWaterFloor, flowId } = fluidsModule;
 const flow = (k) => B.WATER_FLOW_1 + k - 1;
 
-/** A fake world (stone for y ≤ groundY) with physics attached; `fx` records sounds and particles. */
+/** A generator like `gen` whose streams run (also) through `springs`, [q, y, r] cells: a source there is fed. */
+function genWithSprings(gen, springs) {
+  const levels = new Map(springs.map(([q, y, r]) => [`${q},${r}`, y]));
+  const own = typeof gen.streamLevelAt === 'function' ? (q, r) => gen.streamLevelAt(q, r) : () => -1;
+  return { ...gen, streamLevelAt: (q, r) => levels.get(`${q},${r}`) ?? own(q, r) };
+}
+
+/**
+ * A fake world (stone for y ≤ groundY) with physics attached; `fx` records sounds and particles. `springs`: [q, y, r]
+ * cells in which a source is running water (§83: fed — it keeps feeding its flow).
+ */
 function setup(opts = {}) {
   const world = makeFakeWorld({ groundY: opts.groundY ?? 0 });
+  if (opts.springs) withSprings(world, opts.springs);
   const fx = { sounds: [], particles: [], said: [] };
   const physics = attachPhysics(world, BlockPhysics, {
     sound: (name, x, y, z, v) => fx.sounds.push({ name, x, y, z, v }),
@@ -93,7 +111,8 @@ function landWater(world, top = 6) {
 
 describe('predicates and registration', () => {
   it('rule ids, floors, flow ids, surface heights', () => {
-    expect([...WATER_RULE_IDS]).toEqual([B.AIR, B.CAMPFIRE, B.WATER, 68, 69, 70, 71, 72, 73, B.WATER_FALL, B.TAINTED_WATER]); // + the second source (§76 water)
+    expect([...WATER_RULE_IDS]).toEqual([B.AIR, B.CAMPFIRE, B.WATER, 68, 69, 70, 71, 72, 73, B.WATER_FALL, B.TAINTED_WATER,
+      B.WATER_LOW, B.WATER_SHALLOW, B.TAINTED_WATER_LOW, B.TAINTED_WATER_SHALLOW]); // + the second source (§76 water) and the lower depths (§83)
     expect(isFlowingWater(flow(1)) && isFlowingWater(flow(6))).toBe(true);
     expect(isFlowingWater(B.WATER) || isFlowingWater(B.WATER_FALL)).toBe(false);
     expect(isWaterFloor(B.STONE) && isWaterFloor(B.GLASS) && isWaterFloor(B.WATER)).toBe(true);
@@ -129,7 +148,7 @@ describe('predicates and registration', () => {
 
 describe('the water rule', () => {
   it('one source on flat ground: exactly 126 flowing cells (a reach-6 hex disc), level 7 − distance', () => {
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[0, 1, 0]] });
     world.setBlock(0, 1, 0, B.WATER);
     settle(physics);
     const c = census(world, 12, 0, 4);
@@ -147,10 +166,20 @@ describe('the water rule', () => {
     settle(physics);
     expect(census(world, 12, 0, 4).water).toBe(0);
     expect(world.editCount).toBe(0);
+    // §83: the same source with no spring behind it wets the same disc at first — and then runs out by itself: a source
+    // on open ground stands open, so it drops a level every 4 s (its flow shrinking with it) until nothing is left.
+    const plain = setup();
+    plain.world.setBlock(0, 1, 0, B.WATER);
+    settle(plain.physics);
+    expect(census(plain.world, 12, 0, 4).flow).toBe(126);
+    expect(plain.physics.fluids.pendingSpills).toBe(1);
+    rest(plain.physics);
+    expect(census(plain.world, 12, 0, 4).water).toBe(0);
+    expect(plain.world.editCount).toBe(0);
   });
 
   it('one source on a 10-high plateau stays bounded (hundreds of cells, not thousands) and fully drains', () => {
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[0, 11, 0]] });
     plateau(world, 3, 10);
     world.setBlock(0, 11, 0, B.WATER);
     settle(physics);
@@ -172,9 +201,9 @@ describe('the water rule', () => {
     expect(world.editCount).toBe(0);
   });
 
-  it('two adjacent sources do NOT spread into a lake (≥ 3 rule); three around a hole make a closed 7-source pool', () => {
+  it('two adjacent sources do NOT spread into a lake; nor do three around a hole (the ≥ 3 rule is the sea\'s alone since §83)', () => {
     expect(WATER_SOURCE_NEIGHBOURS).toBe(3);
-    const a = setup();
+    const a = setup({ springs: [[0, 1, 0], [1, 1, 0]] });
     a.world.setBlock(0, 1, 0, B.WATER);
     a.world.setBlock(1, 1, 0, B.WATER);
     settle(a.physics);
@@ -185,13 +214,28 @@ describe('the water rule', () => {
     expect(a.world.getBlock(0, 1, 1)).toBe(flow(6));
     expect(a.world.getBlock(1, 1, -1)).toBe(flow(6));
 
-    const b = setup();
-    for (const j of [0, 2, 4]) b.world.setBlock(HEX_DIRS[j][0], 1, HEX_DIRS[j][1], B.WATER);
+    // Three sources around a hole: until §83 the hole and its three other neighbours became sources (a closed pool of 7,
+    // four of them from nothing). Water never comes from nothing now: the hole holds flowing water and the three stay three.
+    const springs = [0, 2, 4].map((j) => [HEX_DIRS[j][0], 1, HEX_DIRS[j][1]]);
+    const b = setup({ springs });
+    for (const [q, y, r] of springs) b.world.setBlock(q, y, r, B.WATER);
     settle(b.physics);
     const cb = census(b.world, 30, 0, 4);
-    expect(cb.sources).toBe(7); // the hole and its three other neighbours become sources, then it stops
+    expect(cb.sources).toBe(3);
     expect(cb.maxR).toBe(7);
-    expect(b.world.getBlock(0, 1, 0)).toBe(B.WATER);
+    expect(b.world.getBlock(0, 1, 0)).toBe(flow(6));
+    for (const j of [1, 3, 5]) expect(b.world.getBlock(HEX_DIRS[j][0], 1, HEX_DIRS[j][1])).toBe(flow(6));
+    // … and with no spring behind them the three are gone in 12 s, never having been more than three.
+    const c = setup();
+    for (const [q, y, r] of springs) c.world.setBlock(q, y, r, B.WATER);
+    let most = 0;
+    for (let i = 0; i < 300; i++) {
+      c.physics.tick();
+      if (i % 5 === 0) most = Math.max(most, census(c.world, 4, 0, 3).sources);
+    }
+    rest(c.physics);
+    expect(most).toBe(3);
+    expect(census(c.world, 30, 0, 4).water).toBe(0);
   });
 
   it('a hole next to a straight sea edge fills (flowing over falling water) without flooding the land', () => {
@@ -255,7 +299,7 @@ describe('the water rule', () => {
   });
 
   it('a waterfall advances one cell per tick and spreads only where it lands', () => {
-    const { world, physics } = setup({ groundY: 0 });
+    const { world, physics } = setup({ groundY: 0, springs: [[0, 21, 0]] });
     world.put(0, 20, 0, B.STONE);
     world.setBlock(0, 21, 0, B.WATER); // a source on a one-cell pillar top far above the ground
     for (let i = 0; i < 6; i++) physics.tick(); // the side flow appears after WATER_TICKS
@@ -270,8 +314,9 @@ describe('the water rule', () => {
     expect(c.cells.filter(([, y]) => y === 1).length).toBeGreaterThan(6);
   });
 
-  it('a source poured over a drop lands at full strength: a waterfall and a reach-6 pool where it lands', () => {
-    const { world, physics } = setup();
+  it('a fed source poured over a drop lands at full strength: a waterfall and a reach-6 pool where it lands', () => {
+    // (a spring: with nothing behind it a source in mid-air does not pour, it FALLS — §83 law 1, waterLaws.test.js)
+    const { world, physics } = setup({ springs: [[0, 11, 0]] });
     world.setBlock(0, 11, 0, B.WATER); // in mid-air, ten cells above the ground
     settle(physics);
     const c = census(world, 12, 0, 12);
@@ -287,7 +332,7 @@ describe('the water rule', () => {
   it('down a staircase a stream keeps losing level: it stops within reach 6 of its source (review water-3)', () => {
     // 1-high steps every 3 cells, 15 steps down toward +q, 91 cells wide. When a landing fall counted 7 again, every step
     // restarted a reach-6 disc and the sheet widened by ~9 cells a step (24,409 cells on the reviewer's 40-step stairs).
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[2, 21, 0]] });
     const h = (q) => (q < 0 ? 20 : Math.max(5, 20 - Math.floor(q / 3)));
     for (let q = -8; q <= 50; q++) for (let r = -45; r <= 45; r++) for (let y = 1; y <= h(q); y++) world.put(q, y, r, B.STONE);
     world.setBlock(2, 21, 0, B.WATER); // on the top step, two cells from its edge
@@ -305,7 +350,7 @@ describe('the water rule', () => {
 
   it('a stream over a ledge feeds the level it had, and follows that level when it changes (the fall trigger)', () => {
     // A one-wide channel at y = 6 (floor y ≤ 5) ends at q = 3 over a 4-deep pit (q = 3, 4; floor y = 1).
-    const { world, physics } = setup({ groundY: 5 });
+    const { world, physics } = setup({ groundY: 5, springs: [[0, 6, 0], [2, 6, 0]] });
     for (let q = -2; q <= 8; q++) for (let r = -2; r <= 2; r++) if (r !== 0 || q < 0) world.put(q, 6, r, B.STONE);
     for (const q of [3, 4]) for (let y = 2; y <= 5; y++) world.setBlock(q, y, 0, B.AIR);
     world.setBlock(0, 6, 0, B.WATER);
@@ -331,7 +376,8 @@ describe('the water rule', () => {
     // y = 10 along r (q = 2, floor y = 9) from a source at (2, 10, 6) whose FLOW_1 tip at (2, 10, 0) drips through a
     // 3-high shaft (2, 7..9, 0) onto (2, 6, 0).
     const scene = (order) => {
-      const { world, physics } = setup({ groundY: 5 });
+      // (every source of this test is a spring: both channels' own, the one set on the trickle's tip, the two of the end)
+      const { world, physics } = setup({ groundY: 5, springs: [[0, 6, 0], [2, 10, 6], [2, 10, 0], [4, 6, 0], [3, 10, 0]] });
       for (let q = -3; q <= 12; q++) {
         for (let r = -3; r <= 9; r++) {
           if (!(r === 0 && q >= 0)) world.put(q, 6, r, B.STONE);
@@ -397,7 +443,7 @@ describe('the water rule', () => {
 
   it('removing the floor under flowing water re-evaluates what it fed (the water-floor trigger)', () => {
     // A one-wide channel along +q at y = 6 on a y ≤ 5 floor: levels 6, 5, 4, 3, 2, 1.
-    const { world, physics } = setup({ groundY: 5 });
+    const { world, physics } = setup({ groundY: 5, springs: [[0, 6, 0]] });
     for (let q = -2; q <= 10; q++) for (let r = -2; r <= 2; r++) if (r !== 0 || q < 0 || q > 7) world.put(q, 6, r, B.STONE);
     world.setBlock(0, 6, 0, B.WATER);
     settle(physics);
@@ -413,15 +459,16 @@ describe('the water rule', () => {
   });
 
   it('water entering a campfire puts it out with a hiss and steam (sideways and from above)', () => {
-    const { world, physics, fx } = setup();
+    const { world, physics, fx } = setup({ springs: [[0, 1, 0]] });
     world.setBlock(2, 1, 0, B.CAMPFIRE);
     world.put(5, 3, 0, B.STONE);
     world.setBlock(5, 1, 0, B.CAMPFIRE);
-    world.setBlock(5, 2, 0, B.WATER); // over the campfire, on nothing: it falls into it
+    world.setBlock(5, 2, 0, B.WATER); // over the campfire, on nothing: it falls into it (the source itself, since §83)
     world.setBlock(0, 1, 0, B.WATER);
     settle(physics);
     expect(world.getBlock(2, 1, 0)).toBe(flow(5));
     expect(isWater(world.getBlock(5, 1, 0))).toBe(true);
+    expect(world.getBlock(5, 2, 0)).toBe(B.AIR); // it moved down: it is no longer where it was put
     expect(fx.sounds.filter((s) => s.name === 'hiss').length).toBe(2);
     expect(fx.particles.filter((p) => p.kind === 'steam').length).toBe(2);
     expect(fx.sounds.some((s) => s.name === 'splash')).toBe(true);
@@ -438,7 +485,7 @@ describe('the water rule', () => {
   });
 
   it('the water switch: off drops the updates; on again never floods after the fact', () => {
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[0, 1, 0]] });
     physics.setSwitch('water', false);
     world.setBlock(0, 1, 0, B.WATER);
     for (let i = 0; i < 40; i++) physics.tick();
@@ -479,9 +526,9 @@ describe('the water rule', () => {
       return { cells, hisses: fx.sounds.filter((s) => s.name === 'hiss').length };
     };
     const on = run('water on');
-    // Put out, each with a hiss: the sea closes over the first (natural water refills as natural water), the shore hole
-    // floods again, the poured source falls into the pit.
-    expect(on.cells).toEqual([B.WATER, flow(6), B.WATER_FALL]);
+    // Put out, each with a hiss: the sea closes over the first (the sea refills as the sea), the shore hole floods
+    // again, the poured source falls into the pit — the source itself (§83 law 1), which then rests there.
+    expect(on.cells).toEqual([B.WATER, flow(6), B.WATER]);
     expect(on.hisses).toBe(3);
     for (const mode of ['water off', 'paused']) {
       const off = run(mode);
@@ -495,7 +542,7 @@ describe('the water rule', () => {
   });
 
   it('stops spreading at the edit cap ("capped") without throwing', () => {
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[0, 1, 0]] });
     world.editCount = 299990; // just below MAX_TOTAL_EDITS: a few writes, then 'capped'
     world.setBlock(0, 1, 0, B.WATER);
     settle(physics);
@@ -508,7 +555,7 @@ describe('the water rule', () => {
 
 describe('chunk borders, corners and streaming', () => {
   it('a source on a chunk-corner cell flows into all the chunks around it', () => {
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[15, 1, 15]] });
     world.setBlock(15, 1, 15, B.WATER); // chunk (0, 0); its neighbours reach chunks (1, 0), (0, 1) and (1, 1)
     settle(physics);
     const c = census(world, 8, 0, 3, 15, 15);
@@ -518,7 +565,7 @@ describe('chunk borders, corners and streaming', () => {
   });
 
   it('flow toward unloaded chunks waits (parks) and finishes when they load', () => {
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[15, 1, 15]] });
     world.unload(1, 0);
     world.unload(0, 1);
     world.unload(1, 1);
@@ -535,7 +582,7 @@ describe('chunk borders, corners and streaming', () => {
   });
 
   it('flow into a chunk that loads later resumes even when the cell beside it does not change', () => {
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[14, 1, 5]] });
     world.unload(1, 0);
     world.setBlock(14, 1, 5, B.WATER); // two cells from chunk (1, 0)
     settle(physics);
@@ -547,7 +594,7 @@ describe('chunk borders, corners and streaming', () => {
   });
 
   it('a chunk corner on a real World (flat terrain, streaming hooks forwarded like main)', () => {
-    const world = new World({ seed: 1, renderDistance: 2, worldGen: flatWorldGen(10), now: () => 0 });
+    const world = new World({ seed: 1, renderDistance: 2, worldGen: genWithSprings(flatWorldGen(10), [[-1, 11, -1]]), now: () => 0 });
     const physics = attachPhysics(world, BlockPhysics);
     for (let i = 0; i < 500; i++) {
       const s = world.update(0, 0, Infinity);
@@ -580,16 +627,16 @@ describe('saving and reloading', () => {
   });
 
   it('on reload, edited AIR beside natural water and edited sources wake up and flow again', () => {
-    const { world, physics } = setup({ groundY: 3 });
+    const { world, physics } = setup({ groundY: 3, springs: [[8, 5, 6]] });
     seaWorld(world);
     world.setBlock(0, 4, 0, B.AIR);
     world.setBlock(0, 3, 0, B.AIR);
-    world.setBlock(8, 5, 6, B.WATER); // a placed source up on the land
+    world.setBlock(8, 5, 6, B.WATER); // a placed source up on the land (in a spring cell: it keeps running)
     settle(physics);
     const saved = physics.exportEdits();
 
     // A fresh world with the same terrain and the saved edits, then the chunks "generate".
-    const w2 = makeFakeWorld({ groundY: 3 });
+    const w2 = withSprings(makeFakeWorld({ groundY: 3 }), [[8, 5, 6]]);
     seaWorld(w2);
     for (const [key, arr] of Object.entries(saved)) {
       const [cq, cr] = key.split(',').map(Number);
@@ -608,6 +655,7 @@ describe('saving and reloading', () => {
     expect(w2.getBlock(0, 4, 0)).toBe(flow(6));
     expect(w2.getBlock(0, 3, 0)).toBe(B.WATER_FALL);
     expect(census(w2, 8, 5, 5, 8, 6).water).toBe(census(world, 8, 5, 5, 8, 6).water);
+    expect(census(w2, 8, 5, 5, 8, 6).water).toBe(127);
   });
 
   /**
@@ -657,7 +705,7 @@ describe('saving and reloading', () => {
     // Review water-3 regression: a fall lowered the stream it landed in, so a reload's reflow (both sources at once)
     // briefly ran the stream past the cut before the trickle arrived — a campfire on the dry channel floor there burned
     // on live but was put out on reload ('W 6 F . . C . . .' vs 'W 6 F . . . . . .').
-    const gen = flatWorldGen(5);
+    const gen = genWithSprings(flatWorldGen(5), [[4, 6, 4], [6, 10, 10]]); // (both sources are springs: they keep running)
     const live = loadWorld(gen);
     const w = live.world;
     // The trickle scene of the rule test above, at (4, 4): main channel (q ≥ 4, 6, 4), shaft (6, 7..9, 4), upper
@@ -691,7 +739,20 @@ describe('saving and reloading', () => {
     // live state — nothing it wets on the way ends dry, no campfire goes out that live play keeps lit.
     const height = (seed, q, r) => 5 + ((((Math.floor(q / 3) * 92837111) ^ (Math.floor(r / 3) * 689287499) ^ (seed * 283923481)) >>> 0) % 5);
     for (const seed of [1, 2, 3, 4]) {
-      const gen = {
+      // The seven sources, drawn first: each stands in a spring cell (running water: it pours over the steps for good;
+      // two in one column share the later one's spring — the other is then an unfed source, which falls and spills).
+      let s = seed * 7919;
+      const rnd = (n) => {
+        s = (Math.imul(s, 1103515245) + 12345) >>> 0;
+        return (s >>> 8) % n;
+      };
+      const sources = [];
+      for (let i = 0; i < 7; i++) {
+        const q = 3 + rnd(10);
+        const r = 3 + rnd(10);
+        sources.push([q, height(seed, q, r) + 1 + (rnd(3) === 0 ? 3 + rnd(4) : 0), r]); // a third of them poured from mid-air
+      }
+      const gen = genWithSprings({
         seed,
         getColumn: (q, r) => ({ height: height(seed, q, r), biome: 0, temperature: 0, humidity: 0 }),
         generateChunk: (cq, cr) => {
@@ -705,25 +766,15 @@ describe('saving and reloading', () => {
           }
           return d;
         },
-      };
+      }, sources);
       const live = loadWorld(gen);
       const w = live.world;
-      let s = seed * 7919;
-      const rnd = (n) => {
-        s = (Math.imul(s, 1103515245) + 12345) >>> 0;
-        return (s >>> 8) % n;
-      };
-      const sources = [];
-      for (let i = 0; i < 7; i++) {
-        const q = 3 + rnd(10);
-        const r = 3 + rnd(10);
-        const y = height(seed, q, r) + 1 + (rnd(3) === 0 ? 3 + rnd(4) : 0); // a third of them poured from mid-air
+      for (const [q, y, r] of sources) {
         w.setBlock(q, y, r, B.WATER);
-        sources.push([q, y, r]);
-        settle(live.physics);
+        rest(live.physics);
       }
       w.setBlock(...sources[0], B.AIR);
-      settle(live.physics);
+      rest(live.physics);
       let lit = 0;
       for (let q = -4; q <= 19; q++) {
         for (let r = -4; r <= 19; r++) {
@@ -733,7 +784,7 @@ describe('saving and reloading', () => {
           lit++;
         }
       }
-      settle(live.physics);
+      rest(live.physics);
       expect(lit, `seed ${seed}`).toBeGreaterThan(10);
       const res = reloadAndCompare(live, gen, -8, 23, 5, 20);
       expect(res.differ, `seed ${seed}`).toEqual([]);
@@ -743,7 +794,7 @@ describe('saving and reloading', () => {
   });
 
   it('a source whose open neighbour lies in a chunk loaded later still wakes it', () => {
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[15, 1, 3]] });
     world.unload(1, 0);
     physics.setSwitch('water', false);
     world.setBlock(15, 1, 3, B.WATER); // edited source on the border of chunk (1, 0)
@@ -759,7 +810,7 @@ describe('saving and reloading', () => {
 
 describe('drain', () => {
   it('removes every water cell within the radius (hex distance and |dy|) and the flow it fed drains', () => {
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[0, 1, 0], [0, 1, 9]] });
     world.setBlock(0, 1, 0, B.WATER);
     world.setBlock(0, 1, 9, B.WATER); // outside radius 6
     settle(physics);
@@ -789,7 +840,7 @@ describe('drain', () => {
 
 describe('currents', () => {
   it('push away from the source in flowing water, down in falling water, nothing in a source or with water off', () => {
-    const { world, physics } = setup();
+    const { world, physics } = setup({ springs: [[0, 1, 0]] });
     world.setBlock(0, 1, 0, B.WATER);
     settle(physics);
     const out = [9, 9, 9];
@@ -856,9 +907,9 @@ describe('real worldgen (seed 42)', () => {
 });
 
 describe('real worldgen: drained sea and hillside streams (review water-1, water-3)', () => {
-  /** A real World of `seed` loaded at render distance 3 around cell (q, r), physics forwarded like main. */
-  function realWorld(seed, q, r) {
-    const world = new World({ seed, renderDistance: 3, worldGen: createWorldGen(seed), now: () => 0 });
+  /** A real World of `seed` loaded at render distance 3 around cell (q, r), physics forwarded like main; `springs` as in `setup`. */
+  function realWorld(seed, q, r, springs = []) {
+    const world = new World({ seed, renderDistance: 3, worldGen: genWithSprings(createWorldGen(seed), springs), now: () => 0 });
     const physics = attachPhysics(world, BlockPhysics);
     const [x, z] = hexToWorld(q, r);
     for (let i = 0; i < 2000; i++) {
@@ -885,7 +936,7 @@ describe('real worldgen: drained sea and hillside streams (review water-1, water
   });
 
   it('seed 7: one source on the highest hilltop near spawn wets one reach-6 stream (~150 cells), not 10,000', () => {
-    const { world, physics } = realWorld(7, 39, -29);
+    const { world, physics } = realWorld(7, 39, -29, [[39, 89, -29]]); // (a spring on the hilltop: it keeps running)
     expect(world.terrainHeightAt(39, -29)).toBe(88);
     expect(world.getBlock(39, 89, -29)).toBe(B.AIR);
     world.setBlock(39, 89, -29, B.WATER);

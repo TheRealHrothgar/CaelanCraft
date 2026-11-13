@@ -61,6 +61,8 @@ export const CHILL_GROUND_IDS = Object.freeze([BLOCK.SNOW_BLOCK, BLOCK.SNOWY_GRA
 /** Wet skin: −WET_CHILL·wet °C, and the insulation counts × (1 − WET_INSULATION_LOSS·wet). */
 export const WET_CHILL = 6;
 export const WET_INSULATION_LOSS = 0.5;
+/** §84: the same number under the name the seasons-and-rain rules use (wet from the rain is the same wet). */
+export const WET_CHILL_C = WET_CHILL;
 
 // ---- In water (§3.2) ----
 
@@ -89,6 +91,11 @@ export const HOT_SLOPE = 0.2;
 export const WET_DRY_S = 90;
 export const WET_DRY_HEAT_DIV = 5;
 export const WET_DRY_SUN_MULT = 2;
+/**
+ * §84: rain at full strength under the open sky wets you through in this many seconds (wet rises by rain / RAIN_WET_S a
+ * second, `rain` being the rain's strength × how much of it reaches you). While rain reaches you, only a fire dries you.
+ */
+export const RAIN_WET_S = 20;
 
 // ---- Heat sources (§3.2) ----
 
@@ -259,6 +266,22 @@ export function activityHeat(a) {
 export function dryingRate(heat, openSky, time) {
   const sun = openSky && isDaytime(time) ? WET_DRY_SUN_MULT : 1;
   return ((1 + Math.max(0, num(heat)) / WET_DRY_HEAT_DIV) * sun) / WET_DRY_S;
+}
+
+/**
+ * How wet skin changes out of water (§3.2, §84), per second. With no rain reaching you it dries (−dryingRate). While
+ * rain reaches you it wets you by rain / RAIN_WET_S, and neither the air nor the sun dries anything: only the heat of a
+ * fire or a workplace does, by (heat / WET_DRY_HEAT_DIV) / WET_DRY_S.
+ * @param {number} rain  the rain reaching you, 0..1: its strength × your cover (1 open sky, less under leaves, 0 under a roof)
+ * @param {number} heat  the felt heat of sources, °C
+ * @param {boolean} openSky
+ * @param {number} time
+ * @returns {number} the change of wet per second (positive: wetter)
+ */
+export function wetRate(rain, heat, openSky, time) {
+  const r = clamp(num(rain), 0, 1);
+  if (!(r > 0)) return -dryingRate(heat, openSky, time);
+  return r / RAIN_WET_S - Math.max(0, num(heat)) / WET_DRY_HEAT_DIV / WET_DRY_S;
 }
 
 /**

@@ -65,8 +65,12 @@ export const BLOCK = Object.freeze({
   // (Flax for fibre, Aloe for its leaf). Only generation-4 worlds generate them.
   FERN: 151, MEADOW_DAISIES: 152, THISTLE: 153, HEMLOCK: 154, NIGHTSHADE_BUSH: 155, NIGHTSHADE_BUSH_BARE: 156,
   FLAX: 157, ALOE: 158,
+  // §83 (the laws of water): standing water has three depths. WATER and TAINTED_WATER are FULL; these are the same two
+  // SOURCES with less in the cell: low (about two thirds) and shallow (ankle-deep). Never placed by hand, no item: a
+  // pool gets there by being drunk from, drying in the sun, spilling through a breach or filling in the rain.
+  WATER_LOW: 159, WATER_SHALLOW: 160, TAINTED_WATER_LOW: 161, TAINTED_WATER_SHALLOW: 162,
 });
-export const BLOCK_COUNT = 159;
+export const BLOCK_COUNT = 163;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -455,6 +459,12 @@ export const BLOCKS = [
   def({ id: B.NIGHTSHADE_BUSH_BARE, name: 'nightshade_bush_bare', displayName: 'Picked Nightshade Bush', tiles: tiles(T.HONEYBERRY_BUSH_BARE), ...SPRITE, placeable: false }),
   def({ id: B.FLAX, name: 'flax', displayName: 'Flax', tiles: tiles(T.FLAX), ...SPRITE, soundGroup: 'grass' }),
   def({ id: B.ALOE, name: 'aloe', displayName: 'Aloe', tiles: tiles(T.ALOE), ...SPRITE, soundGroup: 'grass' }),
+  // ---- §83: the two lower depths of standing water, fresh and tainted. SOURCES like WATER and TAINTED_WATER (their
+  // flags and their tiles); only how much is in the cell differs (waterDepth, waterLevel, waterSurfaceHeight).
+  def({ id: B.WATER_LOW, name: 'water_low', displayName: 'Low Water', tiles: tiles(T.WATER), ...WATER_FAMILY }),
+  def({ id: B.WATER_SHALLOW, name: 'water_shallow', displayName: 'Shallow Water', tiles: tiles(T.WATER), ...WATER_FAMILY }),
+  def({ id: B.TAINTED_WATER_LOW, name: 'tainted_water_low', displayName: 'Low Tainted Water', tiles: tiles(T.TAINTED_WATER), ...WATER_FAMILY }),
+  def({ id: B.TAINTED_WATER_SHALLOW, name: 'tainted_water_shallow', displayName: 'Shallow Tainted Water', tiles: tiles(T.TAINTED_WATER), ...WATER_FAMILY }),
 ];
 
 /**
@@ -621,18 +631,71 @@ export function isStation(id) {
 export function isContainerBlock(id) {
   return id === B.WICKER_BASKET || id === B.REMAINS;
 }
-/** WATER, WATER_FLOW_1..6, WATER_FALL or TAINTED_WATER (v0.14, §76: the second source). */
+/**
+ * The water family: the six SOURCES — WATER and TAINTED_WATER (full) and their LOW and SHALLOW depths (§83) — and the
+ * flowing levels WATER_FLOW_1..6 and WATER_FALL that sources feed.
+ */
 export function isWater(id) {
-  return id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL) || id === B.TAINTED_WATER;
+  return id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL) || id === B.TAINTED_WATER || (id >= B.WATER_LOW && id <= B.TAINTED_WATER_SHALLOW);
 }
-/** WATER and TAINTED_WATER are the sources (they never change by themselves; FLOW/FALL are derived from sources). */
+/**
+ * A water SOURCE: standing water of any depth, fresh or tainted (WATER, TAINTED_WATER and, since §83, WATER_LOW,
+ * WATER_SHALLOW, TAINTED_WATER_LOW, TAINTED_WATER_SHALLOW). FLOW / FALL are derived from sources and are not sources.
+ */
 export function isWaterSource(id) {
-  return id === B.WATER || id === B.TAINTED_WATER;
+  return id === B.WATER || id === B.TAINTED_WATER || (id >= B.WATER_LOW && id <= B.TAINTED_WATER_SHALLOW);
 }
-/** Water level: a source (WATER, TAINTED_WATER) and WATER_FALL → 7, WATER_FLOW_k → k, anything else → 0. */
+/** A tainted source of any depth: TAINTED_WATER, TAINTED_WATER_LOW or TAINTED_WATER_SHALLOW. */
+export function isTaintedWater(id) {
+  return id === B.TAINTED_WATER || id === B.TAINTED_WATER_LOW || id === B.TAINTED_WATER_SHALLOW;
+}
+/** The depths of standing water (§83): how much a source cell holds. */
+export const WATER_DEPTH_FULL = 3;
+export const WATER_DEPTH_LOW = 2;
+export const WATER_DEPTH_SHALLOW = 1;
+/** The words for the depths, by depth (index 0: no water). */
+export const WATER_DEPTH_WORDS = Object.freeze(['dry', 'shallow', 'low', 'full']);
+/** Height of the surface of a low and of a shallow source above the cell's bottom (a full one: WATER_SURFACE_HEIGHT). */
+export const WATER_LOW_SURFACE = 0.55;
+export const WATER_SHALLOW_SURFACE = 0.22;
+/** The strength E of a low and of a shallow source in the water rule (a full one: 7): what flows out of it starts at E − 1. */
+export const WATER_LOW_LEVEL = 5;
+export const WATER_SHALLOW_LEVEL = 3;
+/**
+ * The depth of a source (§83): 3 full (WATER, TAINTED_WATER), 2 low, 1 shallow; 0 for anything that is not a source
+ * (flowing and falling water too).
+ * @param {number} id @returns {number} 0..3
+ */
+export function waterDepth(id) {
+  if (id === B.WATER || id === B.TAINTED_WATER) return 3;
+  if (id === B.WATER_LOW || id === B.TAINTED_WATER_LOW) return 2;
+  if (id === B.WATER_SHALLOW || id === B.TAINTED_WATER_SHALLOW) return 1;
+  return 0;
+}
+/** Source ids by [tainted 0 | 1][depth 0..3]; depth 0 is AIR. */
+const SOURCE_AT_DEPTH = Object.freeze([
+  Object.freeze([B.AIR, B.WATER_SHALLOW, B.WATER_LOW, B.WATER]),
+  Object.freeze([B.AIR, B.TAINTED_WATER_SHALLOW, B.TAINTED_WATER_LOW, B.TAINTED_WATER]),
+]);
+/**
+ * The source block of a quality at a depth (§83): depth 3 or more the full block, 2 low, 1 shallow, below 1 AIR.
+ * @param {'fresh'|'tainted'|boolean} quality  'tainted' (or true) for tainted water, anything else fresh
+ * @param {number} depth
+ * @returns {number} block id
+ */
+export function waterAtDepth(quality, depth) {
+  const d = depth >= 3 ? 3 : depth >= 1 ? Math.floor(depth) : 0;
+  return SOURCE_AT_DEPTH[quality === 'tainted' || quality === true ? 1 : 0][d];
+}
+/**
+ * Water level, the strength E of the water rule (§35.1, §83): a full source and WATER_FALL → 7, a low source → 5, a
+ * shallow source → 3, WATER_FLOW_k → k, anything else → 0.
+ */
 export function waterLevel(id) {
   if (id === B.WATER || id === B.WATER_FALL || id === B.TAINTED_WATER) return 7;
   if (id >= B.WATER_FLOW_1 && id <= B.WATER_FLOW_6) return id - B.WATER_FLOW_1 + 1;
+  if (id === B.WATER_LOW || id === B.TAINTED_WATER_LOW) return WATER_LOW_LEVEL;
+  if (id === B.WATER_SHALLOW || id === B.TAINTED_WATER_SHALLOW) return WATER_SHALLOW_LEVEL;
   return 0;
 }
 /**
@@ -640,21 +703,24 @@ export function waterLevel(id) {
  * sand sinks to the bottom of a lake, CONTRACTS §35.6) or a CAMPFIRE. NOT the UNLOADED sentinel.
  */
 export function isFallThrough(id) {
-  return id === B.AIR || id === B.CAMPFIRE || id === B.WATER || (id >= B.WATER_FLOW_1 && id <= B.WATER_FALL) || id === B.TAINTED_WATER;
+  return id === B.AIR || id === B.CAMPFIRE || isWater(id);
 }
 /**
- * Height of the water surface inside a water cell, above the cell's bottom (CONTRACTS §35.4): 1 when water is above it
- * (the surface is further up), else WATER_SURFACE_HEIGHT for a source or falling water and k/7 of it for WATER_FLOW_k;
- * 0 for anything that is not water. The mesher draws these surfaces and physics.js wades / swims by them.
+ * Height of the water surface inside a water cell, above the cell's bottom (CONTRACTS §35.4, §83): 1 when water is above
+ * it (the surface is further up), else WATER_SURFACE_HEIGHT for a full source or falling water, WATER_LOW_SURFACE for a
+ * low source, WATER_SHALLOW_SURFACE for a shallow one and k/7 of WATER_SURFACE_HEIGHT for WATER_FLOW_k; 0 for anything
+ * that is not water. The mesher draws these surfaces and physics.js wades / swims by them.
  * @param {number} id
  * @param {number} aboveId  the block above the cell
  * @returns {number}
  */
 export function waterSurfaceHeight(id, aboveId) {
-  const level = waterLevel(id);
-  if (level === 0) return 0;
+  if (!isWater(id)) return 0;
   if (isWater(aboveId)) return 1;
-  return level === 7 ? WATER_SURFACE_HEIGHT : (level * WATER_SURFACE_HEIGHT) / 7;
+  if (id >= B.WATER_FLOW_1 && id <= B.WATER_FLOW_6) return ((id - B.WATER_FLOW_1 + 1) * WATER_SURFACE_HEIGHT) / 7;
+  if (id === B.WATER_LOW || id === B.TAINTED_WATER_LOW) return WATER_LOW_SURFACE;
+  if (id === B.WATER_SHALLOW || id === B.TAINTED_WATER_SHALLOW) return WATER_SHALLOW_SURFACE;
+  return WATER_SURFACE_HEIGHT;
 }
 export function getRenderLayer(id) {
   return getBlockDef(id).layer;

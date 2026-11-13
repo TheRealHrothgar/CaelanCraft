@@ -98,6 +98,24 @@ export function scorchPlayer(player, getBlock, awayDir) {
   return true;
 }
 
+/** §84: rain at full strength puts an unsheltered fire out after this many seconds on average (÷ the rain's strength). */
+export const RAIN_DOUSE_MEAN_S = 30;
+/** §84: what a lit fire's target hint ends with while rain reaches it, and the log line when the rain has put one out. */
+export const RAIN_DOUSE_HINT = 'the rain will put it out';
+export const RAIN_DOUSE_LINE = 'The rain put the campfire out.';
+
+/**
+ * The chance that rain puts a fire out within `dt` seconds (§84): 1 − e^(−dt · rain / RAIN_DOUSE_MEAN_S), so a fire in
+ * steady rain lasts RAIN_DOUSE_MEAN_S / rain seconds on average, whatever the step.
+ * @param {number} dt    seconds
+ * @param {number} rain  the rain reaching the fire, 0..1: its strength × the fire's cover (weather.rainExposure)
+ * @returns {number} 0..1
+ */
+export function rainDouseChance(dt, rain) {
+  if (!(dt > 0) || !(rain > 0)) return 0;
+  return 1 - Math.exp((-dt * Math.min(1, rain)) / RAIN_DOUSE_MEAN_S);
+}
+
 /** Read-only view of a Campfires' known fires that are not tracked (`Campfires.refused`). */
 class RefusedView {
   /** @param {Campfires} owner */
@@ -421,6 +439,30 @@ export class Campfires {
     this._pass = null;
     this._heapF.fill(null, 0, this._heapN); // do not keep removed fires alive
     this._heapN = 0;
+  }
+
+  /**
+   * §84: which tracked fires the rain puts out in these `dt` seconds. Every tracked fire draws one `random()`, in
+   * tracking order; `rainOn(fire)` — the rain reaching it, 0..1 (0 under a roof, where it is not raining, in an unloaded
+   * chunk) — is asked only when the roll is below the chance at full rain, so fires cost nothing while it is dry and
+   * little while it rains; the outcome is the same as asking first. Nothing is changed here: main writes the cold
+   * FIRE_PIT, with the hiss and the steam of a fire that water reached.
+   * @param {number} dt seconds
+   * @param {() => number} random
+   * @param {(fire: Campfire) => number} rainOn
+   * @returns {Campfire[]} the fires to put out
+   */
+  rainStep(dt, random, rainOn) {
+    /** @type {Campfire[]} */
+    const out = [];
+    const worst = rainDouseChance(dt, 1);
+    if (!(worst > 0)) return out;
+    for (const fire of this.fires.values()) {
+      const u = random();
+      if (!(u < worst)) continue;
+      if (u < rainDouseChance(dt, rainOn(fire))) out.push(fire);
+    }
+    return out;
   }
 
   /**

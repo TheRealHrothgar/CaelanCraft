@@ -419,6 +419,8 @@ function refreshHandleRefs(handle, game) {
   handle.loose = game ? game.loose ?? null : null; // v0.10 (CONTRACTS §60)
   handle.growth = game ? game.growth ?? null : null; // §80: the planted cells and sprouts (farming.js Growth)
   handle.spread = game ? game.spread ?? null : null; // §80: the wild plants' spreading and its counts (spread.js Spread)
+  handle.weather = game ? game.weather ?? null : null; // §84: the live world's weather (weather.js createWeather)
+  handle.waterCycle = game ? game.waterCycle ?? null : null; // §83: the water cycle and its counts (waterBodies.js WaterCycle)
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;
@@ -497,6 +499,15 @@ export function installDebugHandle(win, game) {
   handle.useSelected = (dt) => (game && typeof game.useSelected === 'function' ? game.useSelected(dt) : null);
   // §80: run the growth and spread steps as if `seconds` had passed (the in-game check of farming)
   handle.farmStep = (seconds) => (game && typeof game.farmStep === 'function' ? game.farmStep(seconds) : null);
+  // §84: today's season, forcing the weather ('rain', 'dry', null for the real one) and setting the day counter
+  handle.season = () => (game && typeof game.season === 'function' ? game.season() : null);
+  handle.weatherEnv = () => (game && typeof game.weatherEnv === 'function' ? game.weatherEnv() : null);
+  handle.setWeather = (mode) => (game && typeof game.setWeather === 'function' ? game.setWeather(mode) : null);
+  handle.setDay = (n) => (game && typeof game.setDay === 'function' ? game.setDay(n) : null);
+  // §83: the pool the water in a cell is taken from, and the water cycle run as if `seconds` had passed, in the weather of
+  // `env` when given (`{ rain: 1, dryness: 1 }`): the in-game check of pools that run out
+  handle.waterBodyAt = (q, y, r) => (game && typeof game.waterBodyAt === 'function' ? game.waterBodyAt(q, y, r) : null);
+  handle.waterStep = (seconds, env) => (game && typeof game.waterStep === 'function' ? game.waterStep(seconds, env) : null);
   handle.interact = () => {
     if (game && typeof game.interact === 'function') game.interact();
   };
@@ -693,6 +704,7 @@ export function buildDebugText(game, stats) {
     `Time: ${formatClock(time)}  day ${day}  (t=${fmt3(time)})\n` +
     `Mode: ${mode}` +
     survivalDebugLine(g.survival ?? null) +
+    weatherDebugLine(g) +
     physicsLine +
     circuitLines
   );
@@ -753,6 +765,21 @@ export function survivalDebugLine(sv) {
   return `\nSurvival: HP ${fmtInt(v.health)} · Nourishment ${fmtInt(v.satiation)} · Hydration ${fmtInt(v.hydration)}` +
     ` · Breath ${fmtInt(v.breath)} · body ${fmt1(v.temp)} °C · felt ${fmt1(sv.felt)} °C (air ${fmt1(sv.air)})` +
     (labels.length ? ` · ${labels.join(' · ')}` : '');
+}
+
+/**
+ * The F3 line of the season and the weather (CONTRACTS §84): `Season: The rains, day 3 of 10 · dryness 0.30 · rain 0.62`
+ * (`forced` after the rain when the debug handle forces it). '' for a game without a calendar, or without a world.
+ * @param {{ season?: Function, rainNow?: Function, weather?: { forced?: string|null }|null }|null|undefined} g
+ * @returns {string}
+ */
+export function weatherDebugLine(g) {
+  if (!g || typeof g.season !== 'function' || !g.weather) return '';
+  const s = g.season();
+  if (!s) return '';
+  const rain = typeof g.rainNow === 'function' ? Number(g.rainNow()) : NaN;
+  return `\nSeason: ${s.name}, day ${s.dayOfSeason} of ${s.days} · dryness ${Number(s.dryness).toFixed(2)}` +
+    (Number.isFinite(rain) ? ` · rain ${rain.toFixed(2)}` : '') + (g.weather.forced ? ` (forced ${g.weather.forced})` : '');
 }
 
 // ---------------------------------------------------------------------------------------------

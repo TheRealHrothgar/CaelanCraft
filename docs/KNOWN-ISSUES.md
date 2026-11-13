@@ -412,6 +412,102 @@ From the build of CONTRACTS §82 (materials, footsteps, voices, ambience, the So
   end with a click, because the wobble was added to the envelope and did not die away with it. The wobble is a gain
   stage of its own now (§82.1).
 
+## The laws of water; pools that run out — open items
+
+CONTRACTS §83. Built and tested without a browser: nothing below was seen in the running game.
+
+- **It never rains yet.** The water cycle reads the weather through `waterEnv` in `main.js`, and that is a stand-in:
+  rain 0, dryness 1. So until the weather is wired in (one object to replace), water only dries and is used up, and
+  nothing brings it back. A pond the player stays within 48 cells of loses a depth about every three game days and is
+  dry after about nine; a stream after about six. Do not ship this without the rain.
+- **Not seen:** how low and shallow water look (a surface at 0.55 and 0.22 of a cell, with the tile of full water), the
+  strip between a full pool and a lower one beside it, a pool dropping a depth all at once every 4 s, a source falling
+  as a block of water a cell a tick.
+- **Not felt:** swimming and wading. Shallow water is waded (walking speed × 0.85). Low water is 0.55 deep and counts
+  as deep enough to swim, by the rule that was already there for flowing water of that height (`WADE_DEPTH` 0.4). In
+  a pool one cell deep that means half speed and bobbing when you hold jump; it may feel wrong for knee-deep water.
+- **A pool is easy to lose.** Any cell beside it that is not a solid block or standing water is a breach, and a breach
+  empties the whole pool in 12 s, wherever the hole leads. Three cases a player may not expect: a block put INTO a
+  pond and taken out again (the hole fills with flowing water, never with a source); the clay dug from under a pond
+  (the water over that cell falls one down and stays there as a well, the rest runs out); a single block of the bank
+  dug where the ground beyond is solid (the water has nowhere to go, and still runs out). This is the rule as asked
+  for; a kinder one would let water settle into a closed pocket.
+- **Creative builds with water change.** A source can no longer hang: fountains and waterfalls made of sources in the
+  air fall and spill dry when their chunk loads (an edited source wakes on load). A lasting waterfall now needs the
+  sea, a stream, or a reservoir whose surface is more than 128 cells.
+- **The sea is a surface of more than 128 cells**, not a place. A large inland lake is therefore salt and endless; a
+  natural lake of 128 cells or fewer is a pool: fresh, and it dries. A player-made reservoir of 129 cells is "sea".
+- **A pool can stand at two depths at once.** Depth is one of three steps, so pools that join are level only to within
+  one of them: a shallow cell joined to a full pond of seven leaves six cells full and two low, a visible step in the
+  surface. It lasts until the pool next loses or gains a level: it loses one from its deeper cells and gains one in
+  its shallower, and comes out even. This happens in Creative and with commands (water put beside water); in Survival
+  pools that meet are almost always a breach instead.
+- **Only water near the player changes.** The cycle looks at 48 columns a second within 48 cells of the player, in
+  loaded chunks. A pond you never visit stays as it was. A body that reaches into a chunk that is not loaded waits
+  (it does not dry, fill, spill or get used up) until the rest loads.
+- **A stream can stand at different depths along its length** when its parts were loaded at different times: running
+  water does not level. A stream of more than 128 cells is treated in parts.
+- **Fish leave a stream that has run shallow** (0.22 is under their 0.3 minimum) and do not come back by themselves
+  when it fills; whether they are restocked is the animals' business (§76.4), not checked here.
+- **`undo` takes every pool's moves with it.** While an explosion, collapse or fallen tree can be undone (60 s), all
+  falling, spilling and levelling of standing water anywhere is recorded with it, so that undo puts a breached pond
+  back. A pool that ran out for another reason in that minute is put back too.
+- **With the Water switch off nothing falls or spills**, and switching it on again does not wake what was put there
+  meanwhile (as before, for flowing water): a change beside it does.
+- **The largest pool, 128 cells, takes about 1 ms to drop a depth** (128 block writes in one tick). A pond takes
+  0.1–0.3 ms, a second of the cycle 0.05–0.15 ms.
+- **The Guide's farming page** (§80, not changed here) still says a crop can be watered by "a channel you dig". From a
+  stream that works. From a pond it does not any more: the channel is a breach.
+- **Older documents describe the old water:** `docs/DESIGN-physics.md` §4 and CONTRACTS §35.2's list of consequences
+  speak of permanent sources. §83 is the rule; §35 carries a note.
+
+## Seasons and rain — open items
+
+From the build of CONTRACTS §84 (the calendar, rain in showers, how it looks and sounds, what it does). None blocks play.
+
+- **Nobody has seen or heard the rain.** It was built without a browser. The streaks, the splashes, the snow, the grey
+  sky and the pale sun are geometry and numbers that were tested as such (no drop under a roof, the share that comes
+  through leaves, the budget, the colours' direction), never looked at. Expect to retune: the streaks' width (0.028 m),
+  length and opacity (0.55); how many there are (480 at the most, within 10 m); the splash, a flat square that may
+  read as a tile rather than a ripple; the flakes, which are plain squares; how dark and how grey the sky goes
+  (`OVERCAST_*` in weather.js). To look: `__caelancraft.setWeather('rain')` in Survival or Creative, at noon and at
+  night, in the open, under a tree, under a roof and in snowy land; `setWeather(null)` gives the real weather back.
+- **The rain's sound is unheard**, like every sound (see Sounds above): a loop of filtered noise set as loud as the
+  stream, a patter of noise ticks for the leaves, a low roll for far thunder. The Sound Test has a Rain scene and
+  buttons for the two one-shots. Least sure of: whether the hiss sounds like rain or like a tap running, and whether
+  the thunder is audible at all on small speakers (it lives below 500 Hz).
+- **The HUD line has not been seen on a page.** `#calendar-line` sits at the top centre, 11 px bold on a dark strip.
+  With F3 open the debug overlay (top left) may run under it on a narrow window.
+- **The rain is drawn round the player only** (10 m). There is no curtain of rain in the distance and nothing on the
+  far hills: the grey sky and the fog stand in for it. Looking out from deep inside a large hall, the nearest rain may
+  be beyond the cylinder and none is seen, though it is heard.
+- **A drop knows its own column and nothing else.** It falls straight down, so there is no wind and no slant; a roof's
+  edge is a sharp line. A column is looked at again every 2 s, so a roof just built keeps a few drops for that long.
+- **Rain makes nothing wet but the player.** No puddles, no darker ground, no water rising: the water itself is
+  another piece of work (the `env` of §84.2 is ready for it). Until that lands, the guide's "the land dries out" is
+  about the rain only: ponds and streams do not change with the season yet.
+- **Creative has no weather.** By design (§42), but it means a world looks different after a switch of mode, and a
+  fire or a crop in Creative never feels the rain. One line decides it (`weatherOn` in main.js).
+- **Only the nearest fires are rained on** (the tracked ones, 1024 at the most), in loaded chunks. A fire far from the
+  player burns through any weather, as it burns through anything else while its chunk is unloaded.
+- **A rained-out fire keeps its food and loses its fuel.** It becomes a cold fire pit, like a fire that burnt out:
+  relighting costs the fire drill's use, tinder and three sticks. In a long wet spell an open fire cannot be kept at
+  all, which is the point, but there is no warning beyond the hint on the fire and the line in the log.
+- **Leaves are a third of a roof for everything**: drops, fires, crops and the player. A crop under a tree is still
+  "watered by rain"; a player under a tree gets wet three times more slowly. Nothing was play-tested.
+- **"Watered by rain" looks at the roofs as they stand now**, not as they stood when it rained: roof a field after a
+  shower and it stops counting at once; unroof one and yesterday's rain counts.
+- **Wet from rain uses the old drying rule** (§45): 90 s under a roof or at night, half that in the sun, faster beside
+  any heat source by 1 + heat / 5 (3.3 times a cell and a half from a campfire). The brief asked for "four times as
+  fast by a fire"; the rule that was already there was kept instead of adding a second one.
+- **Snow is only a look.** It does not settle, chill, wet or put anything out, and it is silent. Snowy peaks snow as
+  snowy land does, at the same share.
+- **The weather stops at a biome's edge.** A shower that falls on the plains and not on the desert ends in one step
+  across the border; the drops and the sound fade over a few seconds as you cross.
+- **Console `time set` moves the weather with the clock**, and `?time=` freezes it. `setDay(n)` on the debug handle
+  jumps the calendar; the once-a-day rules that key on the day (tapping birch, the Watcher's night) jump with it.
+- **Thunder has no lightning.** A roll now and then in a heavy shower, nothing to see.
+
 ## Zombies and light — open items
 
 From the build of CONTRACTS §86 (no spawning on lit ground, dread, shy idlers, weaker in the light). None blocks play.

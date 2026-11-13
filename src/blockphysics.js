@@ -28,7 +28,7 @@ import { HEX_DIRS } from './hex.js';
 import { chunkKey, localIndex, packCell, unpackCell } from './coords.js';
 import { mulberry32 } from './noise.js';
 import { FallingBlocks } from './fallingblocks.js';
-import { Fluids } from './fluids.js';
+import { Fluids, editIsNaturalSea, isOpenToWater, makeSpringLookup } from './fluids.js';
 import { SupportSolver, isLoadBearing, peekNeighbours } from './support.js';
 import { Trees } from './trees.js';
 import { Explosions } from './explosions.js';
@@ -96,6 +96,9 @@ export const CAUSE_AREA = Object.freeze({ kind: 'area' });
  * @property {(q: number, y: number, r: number) => number} peek    World.peekBlock; remembers the last UNLOADED cell for park()
  * @property {(q: number, y: number, r: number, id: number) => 'ok'|'failed'|'capped'} write       lazy, seeds support on removals
  * @property {(q: number, y: number, r: number, id: number) => 'ok'|'failed'|'capped'} writeQuiet  lazy, never seeds support
+ * @property {(q: number, y: number, r: number, id: number) => 'ok'|'failed'|'capped'} writeForced  like `write`, but never
+ *   refused by the edit cap (never 'capped'): the second half of a move whose first half `write` has just done (a source
+ *   going down a cell, CONTRACTS §83), so that a move can neither lose what it moves nor make two of it
  * @property {(ring: string, q: number, y: number, r: number, delay?: number) => boolean} schedule
  * @property {(q?: number, r?: number) => void} park  park the CURRENT update on the chunk of column (q, r) (default: the last UNLOADED peek)
  * @property {() => number} random                   seeded uniform [0, 1)
@@ -376,10 +379,15 @@ export class SeedQueue {
  * in-flight entities (fallers, logs, lit barrels) into it.
  */
 export class SaveOverlay {
-  /** @param {*} world @param {{ keepFlow?: boolean }} [opts] keepFlow: save FLOW/FALL edits as they are (water switched off) */
+  /**
+   * @param {*} world
+   * @param {{ keepFlow?: boolean, springLevelAt?: (q: number, r: number) => number }} [opts] keepFlow: save FLOW/FALL edits as
+   *   they are (water switched off); springLevelAt: where the world's streams run (fluids.makeSpringLookup; made here when absent)
+   */
   constructor(world, opts = {}) {
     this.world = world;
     this.keepFlow = !!opts.keepFlow;
+    this.springLevelAt = typeof opts.springLevelAt === 'function' ? opts.springLevelAt : makeSpringLookup(() => (world ? world.worldGen : null));
     /** @type {Map<number, number>} packed cell → id */
     this.cells = new Map();
     /** @type {Map<string, Map<number, number>>} chunk key → localIndex → id, overriding world.edits */
@@ -413,8 +421,9 @@ export class SaveOverlay {
 
   /**
    * The edits to save: world.edits overridden by the overlay, with flowing / falling water left out (CONTRACTS
-   * §33.9, §35.6): a FLOW/FALL edit whose origin is AIR or WATER is dropped (the cell reloads as generated — a refilled
-   * hole in a lake is lake again, not an air pocket), any other becomes AIR — sources re-flow on load.
+   * §33.9, §35.6, §83): a FLOW/FALL edit whose origin is AIR, or a source of the SEA, is dropped (the cell reloads as
+   * generated — a refilled hole in the sea is sea again, not an air pocket); any other becomes AIR — sources re-flow on
+   * load, and flowing water in the dry bed of a pool or a stream must not bring the pool back (§83 law 3).
    * @returns {EditsJSON} fresh arrays
    */
   toJSON() {
@@ -428,7 +437,8 @@ export class SaveOverlay {
         let id = rawId;
         if (!this.keepFlow && isWater(id) && !isWaterSource(id)) {
           const origin = chunkOrigins ? chunkOrigins.get(li) : undefined;
-          if (origin === BLOCK.AIR || isWaterSource(origin)) continue; // (a source: WATER, or TAINTED_WATER since §76)
+          if (origin === BLOCK.AIR) continue;
+          if (isWaterSource(origin) && editIsNaturalSea(this.world, key, li, this.springLevelAt)) continue;
           id = BLOCK.AIR;
         }
         arr.push(li, id);
@@ -1159,6 +1169,8 @@ export class BlockPhysics {
     const deadline = b.start + PHYSICS_TICK_BUDGET_MS;
     this.ctx.deadline = deadline;
     if (this._areaRemoved.length > 0 && !this.hooks.areaJobsActive()) this.flushAreaSeeds();
+    // §83 law 2: the pools that stood open SPILL_STEP_S ago drop a level (a few bodies a tick at most).
+    if (this.switches.water) this.fluids.tick(this.ctx);
 
     const support = this.switches.collapse && (this.seeds.size > 0 || this.support.busy);
     const water = this._isDue(WATER);
@@ -1311,7 +1323,7 @@ export class BlockPhysics {
   exportEdits() {
     // While Water is off the flow is frozen and nothing re-flows it on load (the water reseeder is off too), so the save
     // keeps it as it stands: a reload then matches the live world (§33.9, §35.6).
-    const overlay = new SaveOverlay(this.world, { keepFlow: this.switches.water !== true });
+    const overlay = new SaveOverlay(this.world, { keepFlow: this.switches.water !== true, springLevelAt: this.fluids.springLevelAt });
     this.fallers.settleInto(overlay);
     this.support.settleInto(overlay);
     this.trees.settleInto(overlay);
@@ -1442,6 +1454,7 @@ export class BlockPhysics {
       },
       write: (q, y, r, id) => physics._write(q, y, r, id, WRITE_PHYSICS),
       writeQuiet: (q, y, r, id) => physics._write(q, y, r, id, WRITE_QUIET),
+      writeForced: (q, y, r, id) => physics._write(q, y, r, id, WRITE_PHYSICS, true),
       schedule: (ring, q, y, r, delay) => physics.schedule(ring, q, y, r, delay),
       park: (q, r) => {
         const pq = q === undefined ? ctx.unloadedQ : q;
@@ -1514,7 +1527,8 @@ export class BlockPhysics {
       }
     });
     const waterIds = [BLOCK.WATER, BLOCK.WATER_FLOW_1, BLOCK.WATER_FLOW_2, BLOCK.WATER_FLOW_3, BLOCK.WATER_FLOW_4,
-      BLOCK.WATER_FLOW_5, BLOCK.WATER_FLOW_6, BLOCK.WATER_FALL, BLOCK.TAINTED_WATER];
+      BLOCK.WATER_FLOW_5, BLOCK.WATER_FLOW_6, BLOCK.WATER_FALL, BLOCK.TAINTED_WATER,
+      BLOCK.WATER_LOW, BLOCK.WATER_SHALLOW, BLOCK.TAINTED_WATER_LOW, BLOCK.TAINTED_WATER_SHALLOW];
     this.addReseeder('water', 'water', waterIds, (ctx, q, y, r, id) => {
       // Sources only wake their open neighbours (flow edits are not saved: this is how a lake re-flows on load).
       if (isWaterSource(id)) this._scheduleOpenNeighbours(q, y, r);
@@ -1537,8 +1551,9 @@ export class BlockPhysics {
   }
 
   /**
-   * Queue cell (q, y, r) and its water / air / campfire neighbours for the water rule: falling water (and an open cell
-   * under water) in the `fall` ring, everything else in the `water` ring.
+   * Queue cell (q, y, r) and its water / air / campfire neighbours for the water rule: falling water, an open cell
+   * under water and a source with nothing under it (it falls: §83 law 1) in the `fall` ring, everything else in the
+   * `water` ring.
    */
   scheduleWaterAround(q, y, r) {
     this._scheduleWaterCell(q, y, r);
@@ -1549,7 +1564,8 @@ export class BlockPhysics {
     if (!(y >= 0 && y < WORLD_HEIGHT)) return;
     const id = this.world.peekBlock(q, y, r);
     if (!(isWater(id) || id === BLOCK.AIR || id === BLOCK.CAMPFIRE)) return;
-    const intoFall = id === BLOCK.WATER_FALL || (!isWaterSource(id) && isWater(this.world.peekBlock(q, y + 1, r)));
+    const intoFall = id === BLOCK.WATER_FALL
+      || (isWaterSource(id) ? y > 0 && isOpenToWater(this.world.peekBlock(q, y - 1, r)) : isWater(this.world.peekBlock(q, y + 1, r)));
     this.schedule(intoFall ? 'fall' : 'water', q, y, r);
   }
 

@@ -303,7 +303,7 @@ describe('blocks', () => {
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
     // v0.8 appended 68..75 (see the block-physics test below), v0.9 survival 76..94, powder and circuits 95..114, v0.11 the Workbench 115
-    expect(BLOCK_COUNT).toBe(159); // … the three snares 116–118 and Flinty Gravel 119 (§75); v0.14 (§76): Tainted Water 120, the Ground Nest 121, the flora 122–131, the Empty Nest 132; §80: the planted blocks 133–141 and the sprouts 142–150; §81: the plants that are not food 151–158
+    expect(BLOCK_COUNT).toBe(163); // … the three snares 116–118 and Flinty Gravel 119 (§75); v0.14 (§76): Tainted Water 120, the Ground Nest 121, the flora 122–131, the Empty Nest 132; §80: the planted blocks 133–141 and the sprouts 142–150; §81: the plants that are not food 151–158; §83: low and shallow water 159–162
     // + 6 zombie part tiles 240–245 (§39), + 3 Watcher tiles 250–252 (§40: stone, crack glow, smoke), not block faces;
     // v0.9 survival + 28 (77–104); powder and circuits + 35 (160–194)
     expect(TILE_IDS).toHaveLength(183); // v0.11: + the Workbench 195, 196; v0.13: + 201–203 (§75; 204 withdrawn in §76); v0.14: + tainted water 204, the flora 208–217, the nest's 228–231; §80: + the seedbed 205 and the sprout 206; §81: + 218–224
@@ -384,7 +384,7 @@ describe('blocks', () => {
     expect(isGravityBlock(BLOCK.SAND)).toBe(true);
     expect(isGravityBlock(BLOCK.SANDSTONE)).toBe(false);
     const through = BLOCKS.filter((d) => isFallThrough(d.id)).map((d) => d.id);
-    expect(through).toEqual([BLOCK.AIR, BLOCK.WATER, BLOCK.CAMPFIRE, 68, 69, 70, 71, 72, 73, 74, BLOCK.TAINTED_WATER]); // + the second source (§76 water)
+    expect(through).toEqual([BLOCK.AIR, BLOCK.WATER, BLOCK.CAMPFIRE, 68, 69, 70, 71, 72, 73, 74, BLOCK.TAINTED_WATER, 159, 160, 161, 162]); // + the second source (§76 water) and the low and shallow sources (§83)
     expect(isFallThrough(BLOCK.WATER)).toBe(true); // v0.8 water (CONTRACTS §35.6): sand sinks through sources too
     expect(UNLOADED).toBe(255);
     expect(BLOCKS[UNLOADED]).toBeUndefined();
@@ -393,8 +393,8 @@ describe('blocks', () => {
     expect(isLeaves(BLOCK.OAK_LOG) || isLog(BLOCK.OAK_PLANKS)).toBe(false);
   });
   it('v0.9 survival: blocks 76..94 exactly as DESIGN-survival §8.1, tiles 77..104 (powder and circuits follow at 95)', () => {
-    expect(BLOCK_COUNT).toBe(159); // 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119; v0.14 (§76) 120–132; §80 the farm blocks 133–150; §81 the plants that are not food 151–158
-    expect(BLOCKS).toHaveLength(159);
+    expect(BLOCK_COUNT).toBe(163); // 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119; v0.14 (§76) 120–132; §80 the farm blocks 133–150; §81 the plants that are not food 151–158
+    expect(BLOCKS).toHaveLength(163);
     const P = 'plant'; // the PLANT flags: walk-through, see-through cutout, never culled against itself
     const S = 'solid'; // a plain full block (def defaults)
     // [key, id, name, displayName, flags, soundGroup, [side, top, bottom] TILE keys, placeable]
@@ -561,7 +561,7 @@ describe('blocks', () => {
 
   it('powder and circuits: blocks 95..114 exactly as DESIGN-circuits §1.2 (THIN and MODEL), BLOCK_COUNT 115', () => {
     expect(CIRCUIT_BLOCKS.map((row) => row[1])).toEqual(Array.from({ length: 20 }, (_, i) => 95 + i));
-    expect(BLOCK_COUNT).toBe(159); // + v0.11's Workbench at 115, the snares 116–118, v0.13's Flinty Gravel 119, v0.14's 120–132 (§76), the farm blocks 133–150 (§80) and the plants that are not food 151–158 (§81)
+    expect(BLOCK_COUNT).toBe(163); // + v0.11's Workbench at 115, the snares 116–118, v0.13's Flinty Gravel 119, v0.14's 120–132 (§76), the farm blocks 133–150 (§80) and the plants that are not food 151–158 (§81) and the low and shallow water 159–162 (§83)
     for (const [key, id, name, displayName, shape, sound, [side, top]] of CIRCUIT_BLOCKS) {
       expect(BLOCK[key], key).toBe(id);
       const d = BLOCKS[id];

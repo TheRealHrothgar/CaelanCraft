@@ -125,11 +125,12 @@ describe('the Guide (§14.1: title screen and pause menu)', () => {
     press(doc, 'Home');
     expect(ui.position()).toMatchObject({ chapter: 'first-day', page: 0 });
     // clicking a chapter and the Next button
-    fire(chapters[4], 'click');
+    const ages = CHAPTERS.findIndex((c) => c.id === 'ages'); // (by id: §84 put Seasons and rain before it)
+    fire(chapters[ages], 'click');
     expect(ui.position()).toMatchObject({ chapter: 'ages', page: 0 });
     fire(guide.querySelector('.guide-next'), 'click');
     expect(ui.position()).toMatchObject({ chapter: 'ages', page: 1 });
-    expect(guide.querySelector('.guide-crumb').textContent).toBe(`Tools and the ages · page 2 of ${CHAPTERS[4].pages.length}`);
+    expect(guide.querySelector('.guide-crumb').textContent).toBe(`Tools and the ages · page 2 of ${CHAPTERS[ages].pages.length}`);
     const esc = press(doc, 'Escape');
     expect(esc.defaultPrevented).toBe(true);
     expect(ui.isOpen()).toBe(null);
@@ -255,9 +256,10 @@ describe('the field book (§14.1: the handbook item)', () => {
     ui.openRustic();
     const tabs = book.querySelectorAll('.hb-tab');
     expect(tabs.map((t) => t.textContent)).toEqual(CHAPTERS.map((c) => c.short));
-    fire(tabs[3], 'click');
+    const warmth = CHAPTERS.findIndex((c) => c.id === 'warmth'); // (by id: §84 put Seasons and rain before it)
+    fire(tabs[warmth], 'click');
     expect(ui.position()).toMatchObject({ spread: start.warmth, chapter: 'warmth' });
-    expect(tabs[3].classList.contains('active')).toBe(true);
+    expect(tabs[warmth].classList.contains('active')).toBe(true);
     expect(book.querySelector('.hb-left .hb-running').textContent).toBe('Warm and cool');
     press(doc, 'ArrowDown');
     expect(ui.position()).toMatchObject({ spread: start.ages, chapter: 'ages' });

@@ -76,8 +76,8 @@ const green = ([r, g, b, a]) => a === 255 && g > r + 30 && g > b + 30;
 
 describe('the farm blocks 133–150 (blocks.js)', () => {
   it('nine planted blocks then nine sprouts, in the kind order, named after the plant each grows into', () => {
-    expect(BLOCK_COUNT).toBe(159); // §81: the eight plants that are not food follow at 151–158
-    expect(BLOCKS).toHaveLength(159);
+    expect(BLOCK_COUNT).toBe(163); // §81: the eight plants that are not food follow at 151–158; §83: the low and shallow water at 159–162
+    expect(BLOCKS).toHaveLength(163);
     expect(CROP_ROWS.map((row) => row[1])).toEqual(TABLE.map((row) => row[0]));
     expect([...FARM_IDS]).toEqual(Array.from({ length: 18 }, (_, i) => 133 + i));
     TABLE.forEach(([key, label, , grown], i) => {
@@ -868,7 +868,8 @@ describe('the wiring (main.js, diagnostics.js): read from the source, since main
     expect((main.match(/farmSecond\(1, Math\.random\)/g) ?? []).length).toBe(2); // there, and in the debug handle's farmStep
     const farm = body('farmSecond');
     expect(farm).toContain('worldToHex(player.x, player.z)');
-    expect(farm).toContain('farmSecondOn(dt, random, { world, growth, spread, isLoadedCell: isLoadedCellFn, waterQuality: waterQualityOf, q, r, say: logLine })');
+    // §84: `rained` hands farming the rain (a cell rained on within RAIN_WATERS_S is watered)
+    expect(farm).toContain('farmSecondOn(dt, random, { world, growth, spread, isLoadedCell: isLoadedCellFn, waterQuality: waterQualityOf, q, r, say: logLine, rained: rainedOn })');
   });
 
   it('R plants through the path a placed block takes, and uses one item only when the block went in', () => {
@@ -894,7 +895,7 @@ describe('the wiring (main.js, diagnostics.js): read from the source, since main
     expect(at('if (crop) return cropHintText(h, crop);')).toBeLessThan(at('harvestHint(h.blockId)'));
     expect(at('wrongGroundHint(world.getBlock, selectedKey(), h.q, h.y, h.r)')).toBeGreaterThan(at('handGatherHint(h.blockId)'));
     expect(at('if (h.face === FACE_TOP) {')).toBeLessThan(at('wrongGroundHint('));
-    expect(body('cropHintText')).toContain('farmHint(h.blockId, cropState(world.getBlock, waterQualityOf, h.q, h.y, h.r, crop))');
+    expect(body('cropHintText')).toContain('farmHint(h.blockId, cropState(world.getBlock, waterQualityOf, h.q, h.y, h.r, crop, rainedOn))'); // §84: + the rain
   });
 
   it('the debug handle carries growth, spread and farmStep(seconds)', () => {

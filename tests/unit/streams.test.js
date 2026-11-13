@@ -17,6 +17,7 @@ import { World } from '../../src/world.js';
 import { BlockPhysics } from '../../src/blockphysics.js';
 import { waterQualityAt } from '../../src/fluids.js';
 import { attachPhysics, makeFakeWorld } from '../helpers/fixtures.js';
+import { withSprings } from '../helpers/water.js';
 
 const B = BLOCK;
 const SEED = 'caelancraft-test';
@@ -493,8 +494,13 @@ describe('stampStreams: the stamp alone, on made-up land (rule 3)', () => {
       const before = c.blocks.slice();
       stampStreams(c.blocks, c.heights, map);
       for (let i = 0; i < before.length; i++) if (before[i] === B.AIR && c.blocks[i] === B.STONE) fills++;
-      // the chunk as a world: its cells are the generated ("natural") terrain of a fake world
+      // the chunk as a world: its cells are the generated ("natural") terrain of a fake world, whose generator says where
+      // the streams run as the real one does (streamLevelAt: §83 — a stream's source is running water, held by its spring;
+      // over the shaft of a lip it pours, it does not fall)
       const world = makeFakeWorld({ groundY: -1 });
+      const springs = [];
+      for (let lq = 0; lq < CHUNK_SIZE; lq++) for (let lr = 0; lr < CHUNK_SIZE; lr++) if (map[idx(lq, lr)] >= 0) springs.push([lq, map[idx(lq, lr)], lr]);
+      withSprings(world, springs);
       const physics = attachPhysics(world, BlockPhysics);
       const water = [];
       for (let lq = 0; lq < CHUNK_SIZE; lq++) {
@@ -520,6 +526,8 @@ describe('stampStreams: the stamp alone, on made-up land (rule 3)', () => {
         throw new Error(`trial ${trial}: the water moved — ${w.q},${w.y},${w.r} became ${getBlockDef(w.id).name} (${world.writes.length} writes)`);
       }
       expect(physics.fluids.stats.updates).toBeGreaterThan(water.length);
+      expect(physics.fluids.pendingSpills).toBe(0); // (§83: nothing of it stands open waiting to spill, either)
+      expect(physics.fluids.stats.moved).toBe(0);
     }
     expect(lips).toBeGreaterThan(200); // the trials really had steps …
     expect(fills).toBeGreaterThan(200); // … and banks and beds to fill
@@ -795,10 +803,16 @@ describe('streams are at rest: the real fluid rule changes nothing', () => {
       expect(physics.fluids.stats.writes).toBe(0);
       expect(changes(world, snap)).toEqual([]);
       expect(world.editCount).toBe(0);
+      // §83: nor is any of it about to spill or fall. Cells that stand open (the sea beside a cave, a stream's lip) are
+      // looked at one spill step later, found to be the sea or running water, and left alone.
+      for (let i = 0; i < 100; i++) physics.tick();
+      expect(physics.fluids.pendingSpills).toBe(0);
+      expect([physics.fluids.stats.writes, physics.fluids.stats.spilled, physics.fluids.stats.moved]).toEqual([0, 0, 0]);
+      expect(changes(world, snap)).toEqual([]);
     });
   }
 
-  it('it is live water all the same: a dug bank lets it out, a scooped-out source comes back, and nothing lingers', () => {
+  it('it is live water all the same: a dug bank lets it out for good, a scooped-out source does not come back by itself, and nothing lingers', () => {
     const { columns, levelAt } = scan();
     // a column on a flat reach — its bed right under the source — with a stream neighbour at its level either side, and a bank
     const flat = columns.find(([q, r, level]) => Math.abs(q) < HALF - 80 && Math.abs(r) < HALF - 80 && bottomOf(levelAt, q, r) === level
@@ -818,16 +832,33 @@ describe('streams are at rest: the real fluid rule changes nothing', () => {
     expect(isWater(world.getBlock(bq, level, br))).toBe(true);
     expect(waterQualityAt(world.getBlock, bq, level, br)).toBe('fresh');
     expect(changes(world, snap).length).toBeGreaterThan(0);
+    // §83: it is RUNNING water — a spring is behind it. Five spill steps later it still stands full and still runs out
+    // through the gap: it neither spills dry nor falls (a pond with its bank dug away would be gone in three steps).
+    for (let i = 0; i < 400; i++) physics.tick();
+    expect(world.getBlock(q, level, r)).toBe(B.WATER);
+    expect(isWater(world.getBlock(bq, level, br))).toBe(true);
+    expect(physics.fluids.pendingSpills).toBe(0);
+    expect(physics.fluids.stats.spilled).toBe(0);
     // … and putting the bank back drains whatever got out, leaving the world as generated
     world.setBlock(bq, level, br, snap.get(world.getChunk(floorDiv(bq, CHUNK_SIZE), floorDiv(br, CHUNK_SIZE)).key)[localIndex(bq - floorDiv(bq, CHUNK_SIZE) * CHUNK_SIZE, level, br - floorDiv(br, CHUNK_SIZE) * CHUNK_SIZE)]);
     settle(physics);
     expect(changes(world, snap)).toEqual([]);
     expect(world.editCount).toBe(0);
 
-    // 2. take the source itself away: its neighbours flow in, and natural water becomes a source again
+    // 2. take the source itself away: its neighbours flow in — and that is all. Until §83 water generated here became a
+    // source again by itself; now water never comes from nothing (law 3: only the sea heals, and the rain brings a dry
+    // bed back — waterBodies.js). The gap holds flowing water, the stream either side of it runs on.
     world.setBlock(q, level, r, B.AIR);
     settle(physics);
-    expect(world.getBlock(q, level, r)).toBe(B.WATER);
+    expect(world.getBlock(q, level, r)).toBe(B.WATER_FLOW_6);
+    for (let i = 0; i < 400; i++) physics.tick();
+    expect(world.getBlock(q, level, r)).toBe(B.WATER_FLOW_6);
+    for (const [dq, dr] of HEX_DIRS) if (levelAt(q + dq, r + dr) === level) expect(world.getBlock(q + dq, level, r + dr)).toBe(B.WATER);
+    expect(world.editCount).toBe(1);
+    expect(physics.exportEdits()).not.toEqual({}); // the gap is saved (as AIR): a reload does not put the water back either
+    // put back by hand it is the stream again, and nothing lingers
+    world.setBlock(q, level, r, B.WATER);
+    settle(physics);
     expect(changes(world, snap)).toEqual([]);
     expect(world.editCount).toBe(0);
   });

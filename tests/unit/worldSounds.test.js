@@ -7,7 +7,8 @@ import {
   MoveSounds, Ambience, ambienceTargets, sampleSurroundings, ANIMAL_VOICES, ambientCall, loadAmbiencePref, saveAmbiencePref,
   STRIDE_M, SNEAK_STRIDE_M, SWIM_STROKE_M, STEP_VOLUME, LAND_THUD_FROM, SPLASH_GAP_S, OUT_AFTER_S, STREAM_RANGE, FIRE_RANGE,
   AMBIENCE_MAX_VOICES, AMBIENCE_OFF, AMBIENCE_PREF_KEY, WIND_UNDERGROUND, WIND_UNDER_ROOF, HOWL_CHANCE, HOWL_BELOW_DAYLIGHT,
-  UNDERWATER_AMBIENCE,
+  UNDERWATER_AMBIENCE, RAIN_UNDER_ROOF, RAIN_UNDERGROUND, RAIN_ROOF_RATE, RAIN_HUSH, RAIN_PATTER_PER_S, THUNDER_FROM,
+  THUNDER_EVERY_S, THUNDER_FIRST_S, THUNDER_VOLUME, AMBIENCE_TAU,
 } from '../../src/worldSounds.js';
 import { SOUND_BANK, BIRD_SONGS, VOICE_RECIPES, voicesOf } from '../../src/soundBank.js';
 import { SOUNDS as ANIMAL_BASE_SOUNDS, SPECIES } from '../../src/animals.js';
@@ -285,7 +286,7 @@ describe('ambienceTargets: the ambience follows the world (§82)', () => {
     expect(wet.birds).toBe(0);
     expect(wet.stream).toBeCloseTo(UNDERWATER_AMBIENCE, 6);
     expect(wet.wind).toBeCloseTo(at({}).wind * UNDERWATER_AMBIENCE, 6);
-    expect(ambienceTargets(null)).toEqual({ wind: 0, stream: 0, fire: 0, birds: 0, crickets: 0 });
+    expect(ambienceTargets(null)).toEqual({ wind: 0, stream: 0, fire: 0, birds: 0, crickets: 0, rain: 0 }); // rain: §84
     for (const v of Object.values(at({ streamDist: 0, fireDist: 0, biome: BIOME.SNOWY_PEAKS, y: 127 }))) {
       expect(v).toBeGreaterThanOrEqual(0);
       expect(v).toBeLessThanOrEqual(1);
@@ -309,7 +310,7 @@ describe('Ambience: the engine (§82)', () => {
 
   it('three loops whose levels follow the place smoothly: no jump at the start, none when the place changes', () => {
     const { audio, amb } = make();
-    expect(Object.keys(audio.loops).sort()).toEqual(['ambFire', 'ambStream', 'ambWind']);
+    expect(Object.keys(audio.loops).sort()).toEqual(['ambFire', 'ambRain', 'ambStream', 'ambWind']); // + the rain's (§84)
     amb.update(DT, { ...DAY, biome: BIOME.SNOWY_PEAKS, trees: 0, streamDist: 0, fireDist: 0 });
     for (const k of ['wind', 'stream', 'fire']) expect(amb.level[k], k).toBeLessThan(0.03);
     let jump = 0;
@@ -519,6 +520,232 @@ describe('Ambience: the engine (§82)', () => {
         ctx.render(0.05);
       }
       expect(measure(ctx.render(0.5)).peak).toBeLessThan(0.002); // faded out; only a last chirp may linger
+    } finally {
+      Math.random = real;
+    }
+  });
+});
+
+describe('rain in the ambience (CONTRACTS §84)', () => {
+  const HERE = { daylight: 1, biome: BIOME.PLAINS, openSky: true, underground: false, trees: 0, grass: 1, streamDist: Infinity, fireDist: Infinity, y: 66, headInWater: false };
+  const at = (over) => ambienceTargets({ ...HERE, ...over });
+  const run = (amb, seconds, sample, each) => {
+    for (let t = 0; t < seconds; t += DT) {
+      amb.update(DT, sample);
+      if (each) each();
+    }
+  };
+  const make = (seed = 1) => {
+    const audio = recorder();
+    return { audio, amb: new Ambience(audio, { random: seededRandom(seed) }) };
+  };
+
+  it('the rain\'s level follows its strength and the cover: full under the open sky, quieter under a roof, almost gone underground', () => {
+    expect(at({}).rain).toBe(0);
+    expect(at({ rain: 0 }).rain).toBe(0);
+    expect(at({ rain: 1 }).rain).toBe(1);
+    expect(at({ rain: 0.25 }).rain).toBeCloseTo(0.5, 9); // a light rain is already heard
+    expect(at({ rain: 1, openSky: false }).rain).toBeCloseTo(RAIN_UNDER_ROOF, 9);
+    expect(at({ rain: 1, openSky: false, underground: true }).rain).toBeCloseTo(RAIN_UNDERGROUND, 9);
+    expect(RAIN_UNDER_ROOF).toBeLessThan(0.6);
+    expect(RAIN_UNDERGROUND).toBeLessThan(0.1);
+    expect(at({ rain: 1, headInWater: true }).rain).toBeCloseTo(UNDERWATER_AMBIENCE, 9);
+    let last = -1;
+    for (let r = 0; r <= 1.0001; r += 0.05) {
+      const v = at({ rain: r }).rain;
+      expect(v).toBeGreaterThan(last);
+      expect(v).toBeLessThanOrEqual(1);
+      last = v;
+    }
+    expect(at({ rain: 7 }).rain).toBe(1);
+    expect(at({ rain: NaN }).rain).toBe(0);
+  });
+
+  it('birds fall silent in the rain, and the crickets with them; the wind and the stream do not care', () => {
+    expect(at({}).birds).toBeGreaterThan(0.5);
+    expect(at({ rain: RAIN_HUSH }).birds).toBe(0);
+    expect(at({ rain: 1, biome: BIOME.FOREST, trees: 1 }).birds).toBe(0);
+    expect(at({ rain: RAIN_HUSH / 2 }).birds).toBeCloseTo(at({}).birds / 2, 9); // going quiet as it comes on
+    expect(at({ rain: 0.02 }).birds).toBeGreaterThan(at({}).birds * 0.9);
+    expect(at({ daylight: 0 }).crickets).toBe(1);
+    expect(at({ daylight: 0, rain: 0.5 }).crickets).toBe(0);
+    expect(at({ rain: 1 }).wind).toBe(at({}).wind);
+    expect(at({ rain: 1, streamDist: 2 }).stream).toBe(at({ streamDist: 2 }).stream);
+    expect(at({ rain: 1, fireDist: 2 }).fire).toBe(at({ fireDist: 2 }).fire);
+  });
+
+  it('the engine: the rain\'s loop rises and falls smoothly with the rain, and frees its voice when it is over', () => {
+    const { audio, amb } = make();
+    amb.update(DT, { ...HERE, rain: 1 });
+    expect(amb.level.rain).toBeLessThan(0.03); // no jump at the start
+    let jump = 0;
+    let before = amb.level.rain;
+    run(amb, 12, { ...HERE, rain: 1 }, () => {
+      jump = Math.max(jump, Math.abs(amb.level.rain - before));
+      before = amb.level.rain;
+    });
+    expect(jump).toBeLessThan(0.03);
+    expect(amb.level.rain).toBeGreaterThan(0.99);
+    expect(audio.loops.ambRain.volume).toBeCloseTo(amb.level.rain, 9);
+    expect(audio.loops.ambRain.rate).toBe(1); // under the open sky: its own sound
+    expect(AMBIENCE_TAU.rain).toBeGreaterThan(0.5);
+    run(amb, 15, { ...HERE, rain: 0 });
+    expect(audio.loops.ambRain.volume).toBe(0);
+    expect(amb.level.rain).toBe(0);
+    // and it stops with everything else when the world stops
+    run(amb, 8, { ...HERE, rain: 1 });
+    run(amb, 1.5, null);
+    expect(audio.loops.ambRain.volume).toBe(0);
+    run(amb, 8, { ...HERE, rain: 1 });
+    amb.stop();
+    expect(audio.loops.ambRain.volume).toBe(0);
+    expect(amb.voices()).toBe(0);
+  });
+
+  it('stepping under a roof: quieter and duller, both smoothly; stepping out again: back', () => {
+    const { audio, amb } = make(2);
+    run(amb, 10, { ...HERE, rain: 1 });
+    let step = 0;
+    let rateStep = 0;
+    let lastV = audio.loops.ambRain.volume;
+    let lastR = audio.loops.ambRain.rate;
+    run(amb, 12, { ...HERE, rain: 1, openSky: false }, () => {
+      step = Math.max(step, Math.abs(audio.loops.ambRain.volume - lastV));
+      rateStep = Math.max(rateStep, Math.abs(audio.loops.ambRain.rate - lastR));
+      lastV = audio.loops.ambRain.volume;
+      lastR = audio.loops.ambRain.rate;
+    });
+    expect(step).toBeLessThan(0.02);
+    expect(rateStep).toBeLessThan(0.01);
+    expect(audio.loops.ambRain.volume).toBeCloseTo(RAIN_UNDER_ROOF, 2);
+    expect(audio.loops.ambRain.rate).toBeCloseTo(RAIN_ROOF_RATE, 2);
+    expect(RAIN_ROOF_RATE).toBeLessThan(0.85);
+    run(amb, 12, { ...HERE, rain: 1 });
+    expect(audio.loops.ambRain.volume).toBeGreaterThan(0.99);
+    expect(audio.loops.ambRain.rate).toBeCloseTo(1, 2);
+  });
+
+  it('no bird sings in the rain; among trees the drops tap on the leaves, a few a second; in the open they do not', () => {
+    const woods = make(3);
+    run(woods.amb, 120, { ...HERE, biome: BIOME.FOREST, trees: 1, rain: 0.5 });
+    expect(woods.audio.plays.filter((p) => p[0].startsWith('bird'))).toEqual([]);
+    const taps = woods.audio.plays.filter((p) => p[0] === 'rainPatter');
+    const level = Math.sqrt(0.5);
+    expect(taps.length / 120).toBeGreaterThan(RAIN_PATTER_PER_S * level * 0.6);
+    expect(taps.length / 120).toBeLessThan(RAIN_PATTER_PER_S * level * 1.1);
+    for (const [, v] of taps) {
+      expect(v).toBeGreaterThan(0.02); // (the first ones, while the rain comes on, are faint)
+      expect(v).toBeLessThanOrEqual(1);
+    }
+    // once the rain is on, each tap is at half to all of the rain's level
+    for (const [, v] of taps.slice(40)) {
+      expect(v).toBeGreaterThanOrEqual(level * 0.5 - 0.01);
+      expect(v).toBeLessThanOrEqual(level + 1e-9);
+    }
+    expect(woods.audio.plays.every((p) => p[0] === 'rainPatter')).toBe(true); // 0.5 is no thunder weather
+    const open = make(3);
+    run(open.amb, 60, { ...HERE, trees: 0, rain: 0.5 });
+    expect(open.audio.plays).toEqual([]);
+    const cave = make(3);
+    run(cave.amb, 60, { ...HERE, trees: 1, rain: 1, openSky: false, underground: true });
+    expect(cave.audio.plays).toEqual([]); // nothing taps, nothing rolls, down there
+  });
+
+  it('far thunder: only in a heavy shower, a first roll after a little while, then one every 35–90 s, never loud', () => {
+    expect(THUNDER_FROM).toBeGreaterThanOrEqual(0.7);
+    expect(THUNDER_EVERY_S[0]).toBeGreaterThanOrEqual(30); // now and then
+    const heavy = make(4);
+    const times = [];
+    let t = 0;
+    run(heavy.amb, 900, { ...HERE, rain: 0.9 }, () => {
+      t += DT;
+      while (times.length < heavy.audio.plays.length) times.push(t);
+    });
+    const rolls = heavy.audio.plays.filter((p) => p[0] === 'thunderRoll');
+    expect(rolls.length).toBe(heavy.audio.plays.length); // in the open, nothing else
+    expect(rolls.length).toBeGreaterThanOrEqual(900 / THUNDER_EVERY_S[1] - 1);
+    expect(rolls.length).toBeLessThanOrEqual(900 / THUNDER_EVERY_S[0] + 1);
+    expect(times[0]).toBeGreaterThanOrEqual(THUNDER_FIRST_S[0]);
+    expect(times[0]).toBeLessThanOrEqual(THUNDER_FIRST_S[1] + 1);
+    for (let i = 1; i < times.length; i++) {
+      expect(times[i] - times[i - 1]).toBeGreaterThanOrEqual(THUNDER_EVERY_S[0] - 0.1);
+      expect(times[i] - times[i - 1]).toBeLessThanOrEqual(THUNDER_EVERY_S[1] + 0.1);
+    }
+    const level = Math.sqrt(0.9);
+    for (const [, v] of rolls) {
+      expect(v).toBeGreaterThanOrEqual(THUNDER_VOLUME[0] * level * 0.98);
+      expect(v).toBeLessThanOrEqual(THUNDER_VOLUME[1]);
+    }
+    const light = make(4);
+    run(light.amb, 600, { ...HERE, rain: THUNDER_FROM - 0.05 });
+    expect(light.audio.plays).toEqual([]);
+  });
+
+  it('the budget holds in the rain: by a stream and a fire, in the woods, in a downpour, never more than AMBIENCE_MAX_VOICES', () => {
+    for (const sample of [
+      { ...HERE, biome: BIOME.FOREST, trees: 1, rain: 1, streamDist: 0, fireDist: 0 },
+      { ...HERE, daylight: 0, trees: 0.5, rain: 0.2, streamDist: 1, fireDist: 1 },
+      { ...HERE, trees: 1, rain: 0.9 },
+    ]) {
+      const { audio, amb } = make(11);
+      let sounding = [];
+      let t = 0;
+      let seen = 0;
+      let worst = 0;
+      run(amb, 240, sample, () => {
+        t += DT;
+        sounding = sounding.filter((end) => end > t + 1e-9);
+        for (; seen < audio.plays.length; seen++) {
+          const recipe = SOUND_BANK[audio.plays[seen][0]];
+          for (let i = 0; i < voicesOf(recipe); i++) sounding.push(t + recipe.dur);
+        }
+        const loops = Object.values(audio.loops).filter((h) => h.volume > 0).length;
+        worst = Math.max(worst, loops + sounding.length);
+        expect(amb.voices()).toBeLessThanOrEqual(AMBIENCE_MAX_VOICES);
+      });
+      expect(worst).toBeLessThanOrEqual(AMBIENCE_MAX_VOICES);
+      expect(worst).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('without rain nothing changed: no roll is drawn for it, so a dry day sounds exactly as it did', () => {
+    const DAY = { daylight: 1, biome: BIOME.FOREST, openSky: true, underground: false, trees: 1, grass: 1, streamDist: 3, fireDist: Infinity, y: 66 };
+    const a = make(5);
+    const b = make(5);
+    run(a.amb, 120, DAY);
+    run(b.amb, 120, { ...DAY, rain: 0 });
+    expect(b.audio.plays).toEqual(a.audio.plays);
+    expect(a.audio.plays.length).toBeGreaterThan(20);
+    expect(a.audio.loops.ambRain.volume).toBe(0);
+  });
+
+  it('on the real audio code: a minute of heavy rain in the woods is quiet, never clips, and fades out', () => {
+    const real = Math.random;
+    Math.random = seededRandom(22);
+    try {
+      const audio = createAudio({ AudioContextClass: OfflineContext });
+      audio.resume();
+      const ctx = /** @type {any} */ (OfflineContext.last);
+      const amb = new Ambience(audio);
+      const chunks = [];
+      for (let i = 0; i < 20 * 40; i++) {
+        amb.update(0.05, { ...HERE, biome: BIOME.FOREST, trees: 1, rain: 0.9 });
+        chunks.push(ctx.render(0.05));
+      }
+      const x = Float32Array.from(chunks.flatMap((c) => [...c]));
+      const m = measure(x.slice(44100 * 8));
+      expect(m.peak).toBeGreaterThan(0.005);
+      expect(m.peak).toBeLessThan(0.25);
+      expect(m.level).toBeLessThan(-32); // under a break (about −27 dB), over the day's birdsong
+      expect(m.level).toBeGreaterThan(-50);
+      let click = 0;
+      for (let i = 1; i < x.length; i++) click = Math.max(click, Math.abs(x[i] - x[i - 1]));
+      expect(click).toBeLessThan(0.08);
+      for (let i = 0; i < 80; i++) {
+        amb.update(0.05, null);
+        ctx.render(0.05);
+      }
+      expect(measure(ctx.render(0.5)).peak).toBeLessThan(0.004); // faded out; only a last roll of thunder may linger
     } finally {
       Math.random = real;
     }
