@@ -57,7 +57,7 @@ import {
 import {
   throwOf, STONE_KEYS, DART_KEYS, dartBreakP, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
 } from './looseItems.js';
-import { RELIGHT_STICKS } from './survivalControl.js';
+import { RELIGHT_STICKS, STRIKE_REACH, STRIKE_REACH_MAX } from './survivalControl.js';
 // §80: planting, and the plants that spread; §81: the plants that are not food
 import { SEED_DROPS, FERN_FIBRE_P } from './harvest.js';
 import {
@@ -1125,11 +1125,17 @@ function makeChapters() {
   const herdSizes = [...bySize].map(([size, names]) => `${size} ${listJoin(names, 'or')}`).join(', ');
   const voices = listJoin(PROSE_KINDS.map((k) => `a ${SPECIES[k].voice}`), 'or');
   // v0.14 (§76 fauna): every kind that runs from you (not the bear), so the deer is named too
-  const outOfReach = ANIMAL_KINDS.filter((k) => !(/** @type {*} */ (SPECIES[k]).predator) && SPECIES[k].notice * SNEAK_NOTICE > REACH)
+  // v0.16: a strike reaches as far as what is in the hand (survivalControl.STRIKE_REACH); the longest is the spear's
+  const SR = STRIKE_REACH;
+  const outOfReach = ANIMAL_KINDS.filter((k) => !(/** @type {*} */ (SPECIES[k]).predator) && SPECIES[k].notice * SNEAK_NOTICE > STRIKE_REACH_MAX)
     .map((k) => `the ${SPECIES[k].name.toLowerCase()}`);
-  const reachTip = outOfReach.length
-    ? `Your arm reaches ${REACH} cells. Sneaking brings you inside that with every animal but ${listJoin(outOfReach)}.`
-    : `Your arm reaches ${REACH} cells, and sneaking brings you inside that with every animal.`;
+  const reachTip = `A strike reaches only as far as what you hold: bare hands ${SR.hand} cells, a knife or a hammer ${SR.knife}, an axe, a pick or a shovel ${SR.axe}, a sword ${SR.sword}, a spear ${SR.spear}. Digging, placing and picking reach ${REACH} cells whatever you hold.`
+    + (outOfReach.length
+      ? ` Sneaking brings you within a spear's reach of every animal but ${listJoin(outOfReach)}.`
+      : ' Sneaking brings you within a spear\'s reach of every animal.');
+  const deerBehind = SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE;
+  const deerTools = ['axe', 'sword', 'spear'].filter((k) => /** @type {Record<string, number>} */ (SR)[k] > deerBehind);
+  const stalkTip = `A deer stalked from behind lets you come to ${fmtNum(deerBehind, 1)} cells: too far for bare hands (${SR.hand}) or a knife (${SR.knife}). It takes ${listJoin(deerTools.map((k) => (k === 'axe' ? 'an axe' : `a ${k}`)), 'or')}.`;
   /** @type {Map<string, string[]>} what they come to → who comes */
   const byLure = new Map();
   for (const k of PROSE_KINDS) {
@@ -1517,7 +1523,12 @@ function makeChapters() {
       p(`How near you may come depends on how you move. *Sneak* with [Shift] and an animal notices you at only ${fmtPct(SNEAK_NOTICE)} of its usual distance. *Sprint* and it spots you from ${fmtPct(SPRINT_NOTICE - 1)} farther off.`),
       p(`An animal sees ahead and to both sides, but not behind: the ${blindShare()} of the circle at its back is blind. Sneak up from there and it notices you at ${fmtPct(BEHIND_NOTICE)} of the sneaking distance. Watch its head: when it turns, it sees you.`),
       ...waryTable(),
+    ],
+    // v0.16: each tool has its own reach
+    [
+      h('How far you reach'),
       p(reachTip),
+      p(stalkTip),
     ],
     [
       h('A treat in your hand'),

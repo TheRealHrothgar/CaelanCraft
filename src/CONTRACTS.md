@@ -4028,7 +4028,16 @@ Amends §8 (day/night), §39, §40, §45 (climate) and §65. **One real minute i
 > that arc (`animals.blindTo(a, player)`) is noticed at `WARY_BEHIND_FACTOR` (0.5) of the sneaking distance:
 > `noticeRange = notice × SNEAK_NOTICE × BEHIND_NOTICE`. Walking or sprinting from behind changes nothing (it hears you),
 > and an animal that turns its head sees you at once. Pigs follow the same rule. So a deer (16 walking, 6.4 sneaking)
-> can be reached from behind (3.2 < REACH 5). The guide's "How near you can come" table has a "From behind" column.
+> can be reached from behind (3.2 cells). The guide's "How near you can come" table has a "From behind" column.
+>
+> **v0.16 amendment (reach by tool):** in Survival a STRIKE reaches as far as what is in the hand
+> (`survivalControl.STRIKE_REACH`, cells from the eye to the body): bare hands (and anything that is not one of these
+> tools) 2, knife 3, hammer 3, axe 4, pick 4, shovel 4, sword 5, spear 6. `strikeReach(tool)`; `STRIKE_REACH_MAX` 6. The
+> crosshair looks for a mob up to `max(REACH, STRIKE_REACH_MAX)` away, so a far mob still takes the crosshair and its
+> hint, but LMB strikes it only within the hand's reach; beyond it the hint reads `Deer · out of reach: your Flint Knife
+> reaches 3 cells` and nothing is hit or worn. Digging, placing, picking and R (feeding, shearing, riding) keep
+> `REACH` 5; Creative strikes within `REACH`. So a deer stalked from behind (3.2) takes an axe's reach or more, and in
+> front of it (6.4 sneaking) only a thrown weapon.
 
 Cattle, sheep, horses and wolves: bodies through stepPlayer like the pigs (§30), in `Animals` (`list`, `spawn(kind, x, y,
 z, yaw)`, `remove`, `update(dt, world) → events`, `wound`, `feed`, `shear`, `mount` / `dismount` / `ride`, `raycast`,

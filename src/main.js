@@ -93,6 +93,7 @@ import {
 } from './harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
+  strikeReach, outOfReachHint, STRIKE_REACH_MAX,
   wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterKind, waterHint, WATER_POTS,
 } from './survivalControl.js';
 import { waterQualityAt } from './fluids.js';
@@ -1380,6 +1381,8 @@ export function boot(win, doc) {
   /** @type {import('./types.js').PlayerState[]} scratch list for resolveBodies */
   const bodies = [];
   /** @type {{ pig: import('./pigs.js').Pig, distance: number }|null} pig under the crosshair, closer than `hit` */
+  /** v0.16: how far the crosshair looks for a mob: the longest strike reach, and never less than REACH. */
+  const MOB_SIGHT = Math.max(REACH, STRIKE_REACH_MAX);
   let pigTarget = null;
   /** @type {[number, number, number]} scratch for water currents (fluids.currentAt) */
   const current = [0, 0, 0];
@@ -1860,17 +1863,18 @@ export function boot(win, doc) {
       if (w && isWater(w.blockId)) waterHit = w;
     }
     // A pig in front of the targeted block takes the crosshair (and hides the block highlight).
-    pigTarget = pigs.size > 0 ? pigs.raycast(player.x, eyeY, player.z, dx, dy, dz, hit ? hit.distance : REACH) : null;
+    // v0.16: a mob is looked for as far as the longest weapon reaches; whether THIS hand reaches it is strikeInReach's business
+    pigTarget = pigs.size > 0 ? pigs.raycast(player.x, eyeY, player.z, dx, dy, dz, hit ? hit.distance : MOB_SIGHT) : null;
     if (pigTarget) hit = null;
     // §69: so does an animal (the nearer of the two wins).
     animalTarget = animals.size > 0
-      ? animals.raycast(player.x, eyeY, player.z, dx, dy, dz, pigTarget ? pigTarget.distance : hit ? hit.distance : REACH) : null;
+      ? animals.raycast(player.x, eyeY, player.z, dx, dy, dz, pigTarget ? pigTarget.distance : hit ? hit.distance : MOB_SIGHT) : null;
     if (animalTarget) {
       hit = null;
       pigTarget = null;
     }
     // A zombie in front of them takes the crosshair from them (§39).
-    const mobReach = animalTarget ? animalTarget.distance : pigTarget ? pigTarget.distance : hit ? hit.distance : REACH;
+    const mobReach = animalTarget ? animalTarget.distance : pigTarget ? pigTarget.distance : hit ? hit.distance : MOB_SIGHT;
     zombieTarget = zombies.size > 0 ? zombies.raycast(player.x, eyeY, player.z, dx, dy, dz, mobReach) : null;
     if (zombieTarget) {
       hit = null;
@@ -2301,7 +2305,7 @@ export function boot(win, doc) {
     }
     if (survival.inSurvival) return survivalHintText();
     if (litTarget) return 'lit keg · left-click: put it out';
-    if (zombieTarget) return 'Zombie · click: hit it';
+    if (zombieTarget) return strikeInReach(zombieTarget) ? 'Zombie · click: hit it' : tooFarHint('Zombie');
     // §5.5: Creative breaking is instant, so a cell holding survival items is protected (and says why).
     if (hit && isProtectedCell(hit)) return HINT.protectedCell;
     return blockHintText();
@@ -2350,6 +2354,8 @@ export function boot(win, doc) {
       updateHit();
       return snuffed;
     }
+    // v0.16: a mob farther than the hand reaches takes the crosshair but not the blow
+    if ((zombieTarget && !strikeInReach(zombieTarget)) || (pigTarget && !strikeInReach(pigTarget)) || (animalTarget && !strikeInReach(animalTarget))) return false;
     if (zombieTarget) {
       hitZombie(zombieTarget.zombie);
       updateHit();
@@ -2490,6 +2496,24 @@ export function boot(win, doc) {
     return pack.toolAt(selected);
   }
 
+  /** v0.16: how far a strike reaches now (cells): by the tool in hand in Survival, REACH in Creative. */
+  function reachNow() {
+    return survival.inSurvival ? strikeReach(selectedTool()) : REACH;
+  }
+
+  /** Whether the mob target (a pig, animal or zombie ray hit) is near enough to strike with what is in hand. */
+  function strikeInReach(target) {
+    return !!target && target.distance <= reachNow() + 1e-9;
+  }
+
+  /** The hint for a mob that is under the crosshair but too far for this hand. @param {string} name */
+  function tooFarHint(name) {
+    const stack = pack.slots ? pack.slots[selected] : null;
+    const tool = selectedTool();
+    const item = tool && stack ? getItem(stack.k) : null;
+    return outOfReachHint(name, item ? item.name : null, reachNow());
+  }
+
   /** Window pixels of a cell's centre (the pickup tokens fly from there), or null. */
   function screenPointOfCell(q, y, r) {
     if (!player) return null;
@@ -2610,7 +2634,10 @@ export function boot(win, doc) {
       if (a.kind === 'horse') return 'Your Horse · R: ride';
       return `Your Wolf · R: ${a.sitting ? 'follow me' : 'sit'} · feed it meat to heal it`;
     }
-    const hunt = selectedTool() ? 'click: hunt it' : 'hunting needs a tool';
+    // v0.16: beyond the hand's reach the hint says so in place of the hunting words (R actions keep their own reach)
+    const near = !animalTarget || animalTarget.animal !== a || strikeInReach(animalTarget);
+    const hunt = !near ? `out of reach: ${selectedTool() ? 'this tool reaches' : 'bare hands reach'} ${reachNow()} cells`
+      : selectedTool() ? 'click: hunt it' : 'hunting needs a tool';
     // v0.14 (§76 fauna)
     if (a.kind === 'fish') return selectedTool()?.type === 'spear' ? 'Fish · click: spear it · G: throw the spear' : 'Fish · it takes a spear to catch one';
     if (a.kind === 'bear') {
@@ -3389,7 +3416,8 @@ export function boot(win, doc) {
   /** @returns {string|null} the Survival target hint */
   function survivalHintText() {
     if (litTarget) return 'lit keg · left-click: put it out';
-    if (zombieTarget) return 'Zombie · click: hit it';
+    if (zombieTarget) return strikeInReach(zombieTarget) ? 'Zombie · click: hit it' : tooFarHint('Zombie');
+    if (pigTarget && !strikeInReach(pigTarget)) return tooFarHint('Pig');
     if (pigTarget) return selectedTool() ? 'Pig · click: hunt it' : 'Pig · click: shove it (hunting needs a tool)';
     if (animalTarget) return animalHint(animalTarget.animal);
     if (hit && hit.blockId === BLOCK.SNARE) return 'Snare · R with food in hand: bait it';
@@ -3835,6 +3863,14 @@ export function boot(win, doc) {
   /** LMB on a mob (§4.3, §6.1): zombies take the tool's power; pigs are wounded only by a tool, shoved by a hand. */
   function strike() {
     const tool = selectedTool();
+    // v0.16: each tool has its own reach (survivalControl.STRIKE_REACH); a mob beyond it is not struck
+    const far = zombieTarget && !strikeInReach(zombieTarget) ? 'Zombie'
+      : !zombieTarget && animalTarget && !strikeInReach(animalTarget) ? SPECIES[animalTarget.animal.kind].name
+        : !zombieTarget && !animalTarget && pigTarget && !strikeInReach(pigTarget) ? 'Pig' : null;
+    if (far) {
+      showHint(tooFarHint(far));
+      return;
+    }
     if (zombieTarget) {
       const zb = zombieTarget.zombie;
       const res = zombies.hit(zb, player.x, player.z, strikeKind('zombie', tool).power);

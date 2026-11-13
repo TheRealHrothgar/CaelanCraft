@@ -273,6 +273,35 @@ export function strikeKind(mob, tool) {
   return { call: 'hit', power: toolPower(t) };
 }
 
+/**
+ * v0.16: how far a strike reaches (cells from the eye to the body), by the kind of tool in the hand. Bare hands (and
+ * anything that is not one of these tools) reach `hand`. Digging, placing, picking and R keep config.REACH.
+ */
+export const STRIKE_REACH = Object.freeze({ hand: 2, knife: 3, hammer: 3, axe: 4, pick: 4, shovel: 4, sword: 5, spear: 6 });
+/** The longest reach of all (the spear's): how far the crosshair looks for a mob. */
+export const STRIKE_REACH_MAX = Math.max(...Object.values(STRIKE_REACH));
+
+/**
+ * How far a strike with `tool` reaches.
+ * @param {ToolDef|string|null|undefined} tool the selected item's ToolDef (or its item key); null for the hand
+ * @returns {number} cells
+ */
+export function strikeReach(tool) {
+  const t = typeof tool === 'string' ? (getItem(tool)?.tool ?? null) : (tool ?? null);
+  const reach = t ? /** @type {Record<string, number>} */ (STRIKE_REACH)[t.type] : undefined;
+  return reach ?? STRIKE_REACH.hand;
+}
+
+/**
+ * The hint for a mob under the crosshair that the hand's reach does not cover: `Deer · out of reach: a Flint Knife
+ * reaches 3 cells`.
+ * @param {string} name the mob's name @param {string|null} toolName the held tool's name, or null for bare hands
+ * @param {number} reach
+ */
+export function outOfReachHint(name, toolName, reach) {
+  return `${name} · out of reach: ${toolName ? `your ${toolName} reaches` : 'bare hands reach'} ${reach} cells`;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // R (§9.4)
 

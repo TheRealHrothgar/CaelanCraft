@@ -1,6 +1,7 @@
 // Unit tests for src/handbook.js — the Survival Handbook's content (docs/DESIGN-survival.md §14): the chapters, and every
 // generated table walked against the game table it restates, so the book can never disagree with the game.
 import { describe, it, expect } from 'vitest';
+import { STRIKE_REACH, STRIKE_REACH_MAX } from '../../src/survivalControl.js';
 import { LEAN_PATCH_CHANCE, LEAN_PATCH_FILL, PATCH_TABLE_GEN4, HEMLOCK_SHARES, NIGHTSHADE_SHARES } from '../../src/worldgen.js';
 import {
   HANDBOOK_KEY, HANDBOOK_CHAT_LINE, TABLE_ROWS_PER_PAGE, TABLE_SOURCES, CLIMATE_EXAMPLES, FALL_EXAMPLES, DANGER_NAMES,
@@ -776,7 +777,13 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     // the horse outruns a sprinter
     expect(runners.filter((k) => SPECIES[k].notice * SNEAK_NOTICE > REACH)).toEqual(['horse', 'deer']);
     expect(PIG_NOTICE * SNEAK_NOTICE).toBeLessThan(REACH);
-    expect(text).toContain(`Your arm reaches ${REACH} cells. Sneaking brings you inside that with every animal but the horse and the deer.`);
+    // v0.16: reach depends on what is in the hand; nothing but a thrown weapon reaches a deer from the front
+    expect(STRIKE_REACH).toEqual({ hand: 2, knife: 3, hammer: 3, axe: 4, pick: 4, shovel: 4, sword: 5, spear: 6 });
+    expect(text).toContain(`A strike reaches only as far as what you hold: bare hands 2 cells, a knife or a hammer 3, an axe, a pick or a shovel 4, a sword 5, a spear 6. Digging, placing and picking reach ${REACH} cells whatever you hold. Sneaking brings you within a spear's reach of every animal but the deer.`);
+    expect(text).toContain('A deer stalked from behind lets you come to 3.2 cells: too far for bare hands (2) or a knife (3). It takes an axe, a sword or a spear.');
+    expect(SPECIES.deer.notice * SNEAK_NOTICE).toBeGreaterThan(STRIKE_REACH_MAX);
+    expect(SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE).toBeGreaterThan(STRIKE_REACH.knife);
+    expect(SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE).toBeLessThan(STRIKE_REACH.axe);
     expect(Math.max(...runners.map((k) => SPECIES[k].notice))).toBe(SPECIES.deer.notice);
     expect(Math.max(...PROSE_KINDS.map((k) => SPECIES[k].notice))).toBe(SPECIES.horse.notice);
     expect(fleeSpeed('horse')).toBeGreaterThan(SPRINT_SPEED);

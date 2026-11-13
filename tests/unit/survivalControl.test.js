@@ -1,14 +1,16 @@
 // Unit tests for src/survivalControl.js — hold-to-dig and hold-to-use, the R priority, RMB use, striking mobs, where the
 // belongings go and the pack screen's view (docs/DESIGN-survival.md §9.4, §6.1, §4.2–§4.4, §5.3–§5.4, §2.5, §9.8).
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   DIG_TICK_S, USE_REPEAT_GAP_S, TAP_HOLD_S, RELIGHT_HOLD_S, FUEL_STICK_S, FUEL_LOG_S, WORLD_HEIGHT, STATION_RANGE,
 } from '../../src/config.js';
 import { BLOCK } from '../../src/blocks.js';
-import { getItem } from '../../src/items.js';
+import { getItem, ITEM_KEYS } from '../../src/items.js';
 import { Pack } from '../../src/inventory.js';
 import { breakSeconds } from '../../src/harvest.js';
 import {
+  strikeReach, outOfReachHint, STRIKE_REACH, STRIKE_REACH_MAX,
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, strikeKind, useActionOf, placeRefusal, handKeyOf,
   stationIdOf, waterHint, HINT, KNIFE_TIER, DIG_BLOCKED_TICK_S, STATION_TABS, STATION_OF_BLOCK, BELONGINGS_SCAN_DOWN,
   HANDBOOK_ITEM, relightMissing, wearsFromDigging, wearsFromStriking, KIT_TOOL_TYPES,
@@ -279,6 +281,52 @@ describe('placeRefusal (§5.3)', () => {
     expect(placeRefusal(ground, B.STONE, 5, 60, 5)).toBe(null);
     expect(placeRefusal(ground, B.WICKER_BASKET, 5, 60, 5)).toBe(null);
     expect(placeRefusal(ground, B.SAND, 5, 60, 5)).toBe(null);
+  });
+});
+
+describe('strike reach by tool (v0.16)', () => {
+  it('bare hands 2, knife and hammer 3, axe, pick and shovel 4, sword 5, spear 6', () => {
+    expect(STRIKE_REACH).toEqual({ hand: 2, knife: 3, hammer: 3, axe: 4, pick: 4, shovel: 4, sword: 5, spear: 6 });
+    expect(STRIKE_REACH_MAX).toBe(6);
+    expect(strikeReach(null)).toBe(2);
+    expect(strikeReach(undefined)).toBe(2);
+    expect(strikeReach('rock')).toBe(2); // a thing that is not a tool is a bare hand
+    expect(strikeReach('no_such_item')).toBe(2);
+    for (const [key, reach] of [['flint_knife', 3], ['stone_hammer', 3], ['stone_axe', 4], ['flint_pick', 4], ['wooden_shovel', 4],
+      ['bronze_sword', 5], ['flint_spear', 6], ['fire_drill', 2]]) {
+      expect(strikeReach(key), key).toBe(reach);
+      expect(strikeReach(getItem(key).tool), key).toBe(reach);
+    }
+    // every tool of a kind reaches alike, whatever it is made of
+    for (const k of ITEM_KEYS) {
+      const t = getItem(k).tool;
+      if (t) expect(strikeReach(k), k).toBe(STRIKE_REACH[t.type] ?? STRIKE_REACH.hand);
+    }
+    // the order the user asked for: each longer weapon out-reaches the shorter
+    expect(STRIKE_REACH.hand).toBeLessThan(STRIKE_REACH.knife);
+    expect(STRIKE_REACH.knife).toBeLessThan(STRIKE_REACH.axe);
+    expect(STRIKE_REACH.axe).toBeLessThan(STRIKE_REACH.sword);
+    expect(STRIKE_REACH.sword).toBeLessThan(STRIKE_REACH.spear);
+  });
+
+  it('the out-of-reach hint names what is in the hand and how far it reaches', () => {
+    expect(outOfReachHint('Deer', 'Flint Knife', 3)).toBe('Deer · out of reach: your Flint Knife reaches 3 cells');
+    expect(outOfReachHint('Zombie', null, 2)).toBe('Zombie · out of reach: bare hands reach 2 cells');
+  });
+
+  it('main.js looks for mobs as far as the longest weapon reaches, and strikes only within the hand\'s reach', () => {
+    const src = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+    expect(src).toContain('const MOB_SIGHT = Math.max(REACH, STRIKE_REACH_MAX);');
+    expect(src.match(/: MOB_SIGHT\)? ?[:;)]/g) ?? []).not.toHaveLength(0);
+    expect(src).not.toMatch(/pigs\.raycast\([^\n]*: REACH\)/);
+    expect(src).not.toMatch(/animals\.raycast\([^\n]*: REACH\)/);
+    expect(src).toContain('return survival.inSurvival ? strikeReach(selectedTool()) : REACH;');
+    // Survival's strike refuses a far mob before anything is hit or worn
+    const strike = src.slice(src.indexOf('  function strike() {'), src.indexOf('  // ---- Survival: right mouse'));
+    expect(strike.indexOf('showHint(tooFarHint(far));')).toBeGreaterThan(0);
+    expect(strike.indexOf('showHint(tooFarHint(far));')).toBeLessThan(strike.indexOf('zombies.hit('));
+    expect(strike.indexOf('showHint(tooFarHint(far));')).toBeLessThan(strike.indexOf('animals.wound('));
+    expect(strike.indexOf('showHint(tooFarHint(far));')).toBeLessThan(strike.indexOf('pigs.wound('));
   });
 });
 
