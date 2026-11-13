@@ -45,6 +45,14 @@ import {
   farmHint,
 } from '../../src/farming.js';
 import { SPREAD_KINDS, SPREAD_MEAN_S, SPREAD_STEP, SPREAD_RADIUS, SPREAD_RANGE, SPONTANEOUS_MEAN_S } from '../../src/spread.js';
+import { RAIN_LANDS } from '../../src/handbook.js';
+import {
+  YEAR_DAYS, RAINS_DAYS, DRY_DAYS, RAIN_SHARE, SHOWER_MIN_S, SHOWER_MAX_S, RAINS_MAX_DRY_DAYS, LEAF_COVER, SEASON_LINES,
+  calendarLine, createWeather, fallsAsSnow,
+} from '../../src/weather.js';
+import { RAIN_WATERS_S } from '../../src/farming.js';
+import { RAIN_DOUSE_MEAN_S } from '../../src/campfires.js';
+import { RAIN_WET_S, WET_CHILL, WET_DRY_S, WET_INSULATION_LOSS } from '../../src/climate.js';
 
 const CHAPTERS = buildChapters();
 const KINDS = ['h', 'p', 'tip', 'warn', 'list', 'table', 'figure'];
@@ -101,9 +109,9 @@ function pageSize(page) {
 }
 
 describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
-  it('eleven chapters: the ten of §14.1 in their order, and Animals (§73) after the workplaces; every one with pages, every page with blocks', () => {
-    expect(chapterIds()).toEqual(['first-day', 'water', 'food', 'warmth', 'ages', 'making', 'animals', 'dangers', 'death', 'controls', 'modes']);
-    expect(CHAPTERS.map((c) => c.title)).toEqual(['Your first day', 'Water', 'Food and fire', 'Warm and cool', 'Tools and the ages',
+  it('twelve chapters: the ten of §14.1 in their order, Animals (§73) after the workplaces, and Seasons and rain (§84) after Water; every one with pages, every page with blocks', () => {
+    expect(chapterIds()).toEqual(['first-day', 'water', 'seasons', 'food', 'warmth', 'ages', 'making', 'animals', 'dangers', 'death', 'controls', 'modes']);
+    expect(CHAPTERS.map((c) => c.title)).toEqual(['Your first day', 'Water', 'Seasons and rain', 'Food and fire', 'Warm and cool', 'Tools and the ages',
       'Workplaces and making', 'Animals', 'Dangers', 'Death and waking', 'Controls', 'Creative and Survival']);
     for (const c of CHAPTERS) {
       expect(c.pages.length, c.id).toBeGreaterThan(0);
@@ -1163,6 +1171,133 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain(`The simple parts are made at the Work Stump: the ${listJoin(ELEMENTARY_PARTS.map((k) => itemName(k)))}.`);
     expect(text).toContain(`The Workbench builds the clever devices on top of them: the ${listJoin(atBench.map((r) => itemName(r.outputs[0].k)))}.`);
     expect(text).toContain('the Forge, the Workbench) has its own lane');
+  });
+});
+
+describe('handbook: Seasons and rain (CONTRACTS §84)', () => {
+  const chapter = CHAPTERS.find((c) => c.id === 'seasons');
+  const text = chapter.pages.flat().flatMap((b) => ('text' in b ? [plainText(b.text)] : b.kind === 'list' ? b.items.map(plainText) : [])).join('\n');
+
+  it('its own chapter after Water, four pages: The year, the rain table, What rain does, Living with the seasons', () => {
+    expect(chapter).toMatchObject({ title: 'Seasons and rain', short: 'Seasons', icon: 'rain' });
+    expect(CHAPTERS.indexOf(chapter)).toBe(CHAPTERS.findIndex((c) => c.id === 'water') + 1);
+    expect(chapter.pages).toHaveLength(4);
+    expect(chapter.pages.map((page) => page.find((b) => b.kind === 'h')?.text)).toEqual(['The year', undefined, 'What rain does', 'Living with the seasons']);
+    expect(chapter.pages[1][0].kind).toBe('table');
+    // the water pages are another's to write: this chapter adds none to the Water chapter
+    expect(CHAPTERS.find((c) => c.id === 'water').pages.flat().filter((b) => b.kind === 'h').map((b) => b.text)).not.toContain('The year');
+  });
+
+  it('the year: 28 days, the rains for 10 and the dry season for 18, a new world on the first day of the rains', () => {
+    expect(text).toContain(`A year here is ${YEAR_DAYS} game days.`);
+    expect(text).toContain(`The rains are its first ${RAINS_DAYS} days`);
+    expect(text).toContain(`The dry season is the other ${DRY_DAYS}`);
+    expect([YEAR_DAYS, RAINS_DAYS, DRY_DAYS]).toEqual([28, 10, 18]);
+    expect(text).toContain('A new world begins on the first day of the rains.');
+    // how to read the season: the HUD line as the game writes it, the word Rain, and the log's warning
+    expect(text).toContain(calendarLine(12));
+    expect(text).toContain('Day 12 · The dry season, day 2 of 18');
+    expect(text).toContain('it ends with the word Rain');
+    expect(text).toContain(`"${SEASON_LINES.ending}"`);
+    expect(text).toContain('On the last day of the rains the log warns you');
+  });
+
+  it('it teaches the real idea, in plain words: a wet and a dry season, and a year planned around water', () => {
+    expect(text).toMatch(/In many parts of the world the year is not summer and winter but a wet season and a dry season\./);
+    expect(text).toMatch(/plan their whole year around water/);
+    expect(text).toMatch(/travel with the water/);
+    expect(text).toMatch(/Fill your pots and boil them: boiled water keeps\./);
+    expect(text).toMatch(/Or move on\./);
+    expect(text).toMatch(/Build a roof\./);
+  });
+
+  it('the rain table is weather.RAIN_SHARE, land by land; the desert\'s dry season says never', () => {
+    const t = tableById('rain');
+    expect(t.source).toBe('weather');
+    expect(TABLE_SOURCES).toContain('weather');
+    expect(t.head).toEqual(['Land', 'In the rains', 'In the dry season']);
+    expect(t.keys).toEqual(['forest', 'mountains', 'plains', 'snowy', 'desert']);
+    expect(t.rows).toEqual(RAIN_LANDS.map((l) => [l.name, fmtPct(RAIN_SHARE[l.biome].rains), RAIN_SHARE[l.biome].dry > 0 ? fmtPct(RAIN_SHARE[l.biome].dry) : 'never']));
+    expect(t.rows).toEqual([
+      ['Forest', '45 %', '5 %'],
+      ['Mountains', '40 %', '5 %'],
+      ['Plains, beach and sea', '35 %', '3 %'],
+      ['Snowy land (as snow)', '30 %', '5 %'],
+      ['Desert', '8 %', 'never'],
+    ]);
+    // the lands the table folds together do share their numbers, and the snowy one is where it snows
+    for (const b of [BIOME.BEACH, BIOME.OCEAN]) expect(RAIN_SHARE[b]).toEqual(RAIN_SHARE[BIOME.PLAINS]);
+    expect(RAIN_SHARE[BIOME.SNOWY_PEAKS]).toEqual(RAIN_SHARE[BIOME.SNOWY]);
+    expect(RAIN_LANDS.filter((l) => fallsAsSnow(l.biome)).map((l) => l.name)).toEqual(['Snowy land (as snow)']);
+  });
+
+  it('showers: one to four game hours; never three days without one in the rains; three or four in a dry season on the plains', () => {
+    const hour = DAY_LENGTH_SECONDS / 24;
+    expect(text).toContain(`showers of ${numWord(SHOWER_MIN_S / hour)} to ${numWord(SHOWER_MAX_S / hour)} game hours`);
+    expect(text).toContain('showers of one to four game hours');
+    expect(text).toContain(`${numWord(RAINS_MAX_DRY_DAYS)} days never pass without a shower`);
+    expect(text).toContain('In the rains, outside the desert, three days never pass without a shower.');
+    expect(text).toContain('the plains get only three or four showers in all');
+    // and the weather does what the page says, over twenty years of a world
+    const w = createWeather(2026);
+    const DAY = DAY_LENGTH_SECONDS;
+    for (let y = 0; y < 20; y++) {
+      const from = y * YEAR_DAYS * DAY;
+      const dry = w.showers(from + RAINS_DAYS * DAY, from + YEAR_DAYS * DAY, BIOME.PLAINS);
+      expect([3, 4]).toContain(dry.length);
+      let last = from;
+      for (const s of w.showers(from, from + RAINS_DAYS * DAY, BIOME.MOUNTAINS)) {
+        expect(s.start - last).toBeLessThan(RAINS_MAX_DRY_DAYS * DAY);
+        last = s.end;
+      }
+    }
+  });
+
+  it('what rain does, with the game\'s numbers: crops for a day, fires in 30 s, wet in 20 s, 6 °C, dry in 1½ minutes', () => {
+    expect(text).toContain(`about a third of the rain (${fmtPct(LEAF_COVER)}) comes through a tree`);
+    expect(Math.abs(LEAF_COVER - 1 / 3)).toBeLessThan(0.03);
+    expect(text).toContain('A roof stops it: any solid block overhead, glass too.');
+    expect(RAIN_WATERS_S).toBe(DAY_LENGTH_SECONDS);
+    expect(text).toContain('counts as watered for a game day afterwards, with no pond near');
+    expect(text).toContain('Its hint reads watered by rain.');
+    expect(farmHint(BLOCK.PLANTED_CARROT, { sky: true, watered: true, reed: true, rain: true })).toMatch(/ · watered by rain$/);
+    expect(text).toContain(`goes out in a downpour after about ${RAIN_DOUSE_MEAN_S} seconds`);
+    expect(text).toContain('goes out in a downpour after about 30 seconds');
+    expect(text).toContain('leaves a cold fire pit to light again');
+    expect(text).toContain('A fire under a roof is safe.');
+    expect(text).toContain(`you are Wet through in ${RAIN_WET_S} seconds`);
+    expect(text).toContain('you are Wet through in 20 seconds');
+    expect(text).toContain(`Wet skin feels ${WET_CHILL} °C colder, and wet clothes keep only ${fmtPct(1 - WET_INSULATION_LOSS)} of their warmth.`);
+    expect(text).toContain(`Under a roof you dry in ${fmtDurationLong(WET_DRY_S)}, beside a fire much faster.`);
+    expect(text).toContain('Under a roof you dry in 1½ minutes');
+    expect(text).toContain('Snow wets nothing, waters nothing and puts out no fire.');
+  });
+
+  it('living with the seasons: the rains are for planting; the dry season for stored water, a field near water, or moving on', () => {
+    expect(text).toContain(`A seed on watered ground sprouts in about a game day and ${numWord(Math.round(SEED_TAKES.watered * 5))} in five take`);
+    expect(SPROUT_MEAN_S.watered).toBe(DAY_LENGTH_SECONDS);
+    expect(SEED_TAKES.watered * 5).toBe(4);
+    expect(text).toContain(`A field more than ${FARM_WATER_REACH} cells from fresh water will be dry ground until a shower passes.`);
+    expect(text).toContain('When the log says the rains are ending, you have one day.');
+    expect(text).toContain('Leave your field open to the sky: the rain waters it for you.');
+  });
+
+  it('the first night is warned: a new world begins in the rains, and an open fire needs a roof', () => {
+    const night = CHAPTERS[0].pages.find((page) => page.some((b) => b.kind === 'h' && b.text === 'Your first night'));
+    expect(night.filter((b) => b.kind === 'tip').map((b) => plainText(b.text))).toEqual([
+      'A new world begins in the rains. Rain puts out a fire under the open sky: set a block or two over your campfire as a roof. See Seasons and rain.',
+    ]);
+    // it is no idle warning: on most worlds it rains during the first night (19:30 to 04:30) on the plains
+    const DAY = DAY_LENGTH_SECONDS;
+    let rainy = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      if (createWeather(seed * 7919).showers(SUNSET_TIME * DAY, (1 + SUNRISE_TIME) * DAY, BIOME.PLAINS).length > 0) rainy++;
+    }
+    expect(rainy / 200).toBeGreaterThan(0.8);
+  });
+
+  it('the Wet tag says both ways of getting wet', () => {
+    expect(rowOf(tableById('status'), 'Wet')).toEqual(['Wet', 'out of the water, or rained on', `feels ${WET_CHILL} °C colder until you dry`]);
   });
 });
 

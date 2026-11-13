@@ -166,7 +166,8 @@ describe('the sound bank as data (§82)', () => {
     expect(MATERIAL_ACTIONS).toEqual(['break', 'dig', 'place', 'step']);
     expect(materialSound('break', 'stone')).toBe('breakStone');
     for (const name of ['jump', 'landThud', 'swim', 'swimUnder', 'splashIn', 'splashOut', 'pigOink', 'pigSqueal', 'zombieGroan',
-      'zombieHurt', 'zombieDown', 'wolfHowl', 'streamBlip', 'fireCrackle', 'cricketChirp', ...BIRD_SONGS, ...AMBIENCE_LOOPS]) {
+      'zombieHurt', 'zombieDown', 'wolfHowl', 'streamBlip', 'fireCrackle', 'cricketChirp', ...BIRD_SONGS, ...AMBIENCE_LOOPS,
+      'rainPatter', 'thunderRoll']) { // the last two, and the loop `ambRain`: CONTRACTS §84
       expect(SOUND_BANK[name], name).toBeTruthy();
     }
     expect(Object.values(BANK_FAMILIES).flat().sort()).toEqual([...BANK_NAMES].sort()); // each name under one heading
@@ -202,7 +203,7 @@ describe('the sound bank as data (§82)', () => {
       expect(step.spare, g).toBe(STEP_SPARE);
     }
     for (const name of ['jump', 'swim', 'swimUnder', 'splashOut']) expect(SOUND_BANK[name].spare, name).toBe(STEP_SPARE);
-    for (const name of [...BIRD_SONGS, 'cricketChirp', 'streamBlip']) {
+    for (const name of [...BIRD_SONGS, 'cricketChirp', 'streamBlip', 'rainPatter', 'thunderRoll']) {
       expect(voicesOf(SOUND_BANK[name]), name).toBeLessThanOrEqual(2);
       expect(SOUND_BANK[name].spare, name).toBe(AMBIENT_SPARE);
     }
@@ -336,7 +337,7 @@ describe('levels: nothing far louder than its neighbours (§82)', () => {
 
   it('ambience sits clearly below the effects: birds, crickets and bubbles at least 6 dB under the quietest break', () => {
     const [quietestBreak, loudestBreak] = loudRange(SOUND_GROUPS.map((g) => materialSound('break', g)));
-    for (const l of [...BIRD_SONGS.flatMap(labelsOf), ...labelsOf('cricketChirp'), 'streamBlip']) {
+    for (const l of [...BIRD_SONGS.flatMap(labelsOf), ...labelsOf('cricketChirp'), 'streamBlip', 'rainPatter', 'thunderRoll']) {
       expect(loud(l), l).toBeLessThan(quietestBreak - 6);
       expect(loud(l), l).toBeLessThan(loudestBreak - 12);
       expect(loud(l), l).toBeGreaterThan(-48);
@@ -709,5 +710,80 @@ describe('ambience sounds (§82)', () => {
     expect(centroid('fireCrackle#0')).toBeGreaterThan(2500);
     expect(centroid('fireCrackle#1')).toBeLessThan(centroid('fireCrackle#0')); // the pop with a knock
     for (const seed of SEEDS) expect(take('streamBlip', seed).m.duration).toBeLessThan(0.2);
+  });
+
+  // ---- CONTRACTS §84: the rain ------------------------------------------------------------------------------------
+
+  it('four loops: three of the place, and the rain', () => {
+    expect(AMBIENCE_LOOPS).toEqual(['ambWind', 'ambStream', 'ambFire', 'ambRain']);
+    const rain = SOUND_BANK.ambRain;
+    expect(rain.layers).toHaveLength(3);
+    for (const l of rain.layers) {
+      expect(l.type).toBe('noise'); // rain is noise, shaped: nothing in it has a pitch
+      expect(l.lfoHz).toBeLessThan(0.5); // it swells slowly; it does not flutter like the fire or bubble like the stream
+      expect(l.lfoDepth).toBeLessThanOrEqual(0.4);
+    }
+    expect(new Set(rain.layers.map((l) => l.lfoHz)).size).toBe(3); // each band at its own rate
+    for (const name of AMBIENCE_LOOPS) expect(BANK_FAMILIES.ambience, name).toContain(name);
+  });
+
+  it('the rain\'s loop: a broad, even hiss, brighter than the wind and the stream, with no bass', () => {
+    const rain = measure(loop('ambRain'));
+    const wind = measure(loop('ambWind'));
+    const stream = measure(loop('ambStream'));
+    expect(rain.centroid).toBeGreaterThan(2500);
+    expect(rain.centroid).toBeLessThan(6000);
+    expect(rain.centroid).toBeGreaterThan(wind.centroid * 3);
+    expect(rain.centroid).toBeGreaterThan(stream.centroid);
+    expect(rain.lowShare).toBeLessThan(0.05);
+    expect(bandShare(rain, 1000, 8000)).toBeGreaterThan(0.75); // broad: most of it between 1 and 8 kHz
+    expect(bandShare(rain, 2000, 12000)).toBeGreaterThan(0.4);
+    expect(bandShare(rain, 300, 2000)).toBeGreaterThan(0.15); // with a body under the hiss
+    // even: it does not bubble like the stream
+    expect(tremoloOf(loop('ambRain', 1, 1, 3), 2, 12).depth).toBeLessThan(tremoloOf(loop('ambStream', 1, 1, 3), 2, 12).depth);
+    // as loud as the stream at full level, within 3 dB: a downpour is the loudest thing the weather does
+    expect(Math.abs(rain.level - stream.level)).toBeLessThan(3);
+  });
+
+  it('under a roof the rain is duller: the rate worldSounds gives it there lowers every band', () => {
+    const open = measure(loop('ambRain', 1, 1));
+    const roof = measure(loop('ambRain', 1, 0.7));
+    expect(roof.centroid).toBeLessThan(open.centroid * 0.8);
+    expect(bandShare(roof, 4000, 12000)).toBeLessThan(bandShare(open, 4000, 12000));
+  });
+
+  it('rain on leaves: three to six separate taps in a third of a second, dull ticks between 1.5 and 5 kHz', () => {
+    for (const seed of SEEDS) {
+      const { x, m } = take('rainPatter', seed);
+      const taps = burstsOf(x, 0.25, 0.004);
+      expect(taps.length, `seed ${seed}`).toBeGreaterThanOrEqual(2); // (two taps may fall together)
+      expect(taps.length, `seed ${seed}`).toBeLessThanOrEqual(6);
+      expect(m.centroid, `seed ${seed}`).toBeGreaterThan(1500);
+      expect(m.centroid, `seed ${seed}`).toBeLessThan(5000);
+      expect(m.duration, `seed ${seed}`).toBeLessThan(0.4);
+    }
+    expect(SOUND_BANK.rainPatter.layers[0].grains.count).toEqual([3, 6]);
+    expect(loud('rainPatter')).toBeLessThan(loud('birdTit#0') + 1); // no louder than a bird
+  });
+
+  it('far thunder: a low roll of some seconds that comes in slowly: nothing in it startles', () => {
+    for (const seed of SEEDS) {
+      const { x, m } = take('thunderRoll', seed);
+      expect(m.centroid, `seed ${seed}`).toBeLessThan(700);
+      expect(bandShare(m, 0, 500), `seed ${seed}`).toBeGreaterThan(0.7); // low
+      expect(m.duration, `seed ${seed}`).toBeGreaterThan(2);
+      // a soft start: the first tenth of a second stays under a fifth of the peak, and the peak comes after 0.3 s
+      let early = 0;
+      for (let i = 0; i < 4410; i++) early = Math.max(early, Math.abs(x[i]));
+      expect(early, `seed ${seed}`).toBeLessThan(m.peak * 0.2);
+      let at = 0;
+      for (let i = 0; i < x.length; i++) if (Math.abs(x[i]) > Math.abs(x[at])) at = i;
+      expect(at / 44100, `seed ${seed}`).toBeGreaterThan(0.3);
+      expect(m.peak, `seed ${seed}`).toBeLessThan(0.1);
+    }
+    for (const l of SOUND_BANK.thunderRoll.layers) expect(l.attack).toBeGreaterThanOrEqual(0.3); // no crack
+    // far off: under every animal's voice
+    const quietestVoice = Math.min(...BANK_FAMILIES.voices.flatMap(labelsOf).map(loud));
+    expect(loud('thunderRoll')).toBeLessThan(quietestVoice + 1);
   });
 });

@@ -79,7 +79,7 @@ import { createCircuitRenderer } from './circuitRenderer.js';
 import { createDevicePanel } from './devicePanel.js';
 import { Pigs } from './pigs.js';
 import { resolveBodies, detachBody } from './bodies.js';
-import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
+import { Campfires, scorchPlayer, wouldDouseCampfire, RAIN_DOUSE_HINT, RAIN_DOUSE_LINE } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
 import { Animals, SPECIES, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE } from './animals.js';
@@ -96,7 +96,9 @@ import {
   wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterKind, waterHint, WATER_POTS,
 } from './survivalControl.js';
 import { waterQualityAt } from './fluids.js';
-import { Growth, cropOfBlock, cropState, farmHint, plantAt, wrongGroundHint, failLine, FAIL_NOTICE_CELLS } from './farming.js';
+import {
+  Growth, cropOfBlock, cropState, farmHint, plantAt, wrongGroundHint, failLine, FAIL_NOTICE_CELLS, RAIN_WATERS_S,
+} from './farming.js';
 import { Spread } from './spread.js';
 import { CraftQueue, findStations, listRecipes } from './crafting.js';
 import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
@@ -116,6 +118,11 @@ import { createWatcherRenderer } from './watcherRenderer.js';
 import { BlockPhysics } from './blockphysics.js';
 import { createFallingRenderer } from './fallingRenderer.js';
 import { createParticles } from './particles.js';
+import {
+  createWeather, seasonOf, seasonNews, hudLine, weatherWord, worldSeconds, fallsAsSnow, rainExposure, rainReaching, rainedOnCell,
+  rainSky, approach, weatherEnv, OVERCAST_TAU_S,
+} from './weather.js';
+import { createRainRenderer } from './rainRenderer.js';
 import { createConsole } from './console.js';
 import { createRuneEditor } from './runeEditor.js';
 import { HANDBOOK_KEY, HANDBOOK_CHAT_LINE, buildChapters, ensureHandbook } from './handbook.js';
@@ -407,19 +414,19 @@ export function leftBehindText(stacks) {
  * did not take (told through `say` when the player's column (q, r) is within FAIL_NOTICE_CELLS of it). Then at most one
  * new wild plant comes up (Spread), only ever in a cell that is AIR. Every write is a lazy `world.setBlock`, like
  * regrowth's, and comes back through World.onBlockChange (which is how a sprout is tracked again and a grown bush,
- * being picked, reaches Regrowth).
+ * being picked, reaches Regrowth). §84: `rained` (rain fell on the cell within RAIN_WATERS_S) makes a cell watered.
  * @param {number} dt seconds
  * @param {() => number} random
  * @param {{ world: { getBlock: (q: number, y: number, r: number) => number, setBlock: (q: number, y: number, r: number, id: number, lazy?: boolean) => boolean },
  *   growth: Growth, spread: Spread, isLoadedCell: (q: number, r: number) => boolean,
  *   waterQuality: ((q: number, y: number, r: number) => import('./survivalControl.js').WaterQuality)|null,
- *   q: number, r: number, say?: (text: string) => void }} f
+ *   q: number, r: number, say?: (text: string) => void, rained?: import('./farming.js').RainedFn|null }} f
  * @returns {{ sprouted: number, grown: number, failed: number, births: number }} what was written
  */
 export function farmSecondOn(dt, random, f) {
   const { world } = f;
   const done = { sprouted: 0, grown: 0, failed: 0, births: 0 };
-  for (const ev of f.growth.step(dt, random, f.isLoadedCell, world.getBlock, f.waterQuality)) {
+  for (const ev of f.growth.step(dt, random, f.isLoadedCell, world.getBlock, f.waterQuality, f.rained ?? null)) {
     if (world.getBlock(ev.q, ev.y, ev.r) !== ev.from || !world.setBlock(ev.q, ev.y, ev.r, ev.to, true)) continue;
     if (!ev.took) {
       done.failed++;
@@ -432,6 +439,39 @@ export function farmSecondOn(dt, random, f) {
     done.births++;
   }
   return done;
+}
+
+/** §84: a fire the rain put out is told in the log within this many metres of the player. */
+export const RAIN_DOUSE_NOTICE_M = 24;
+
+/**
+ * §84, the rain's once-a-second work on the fires: every tracked campfire the rain puts out (Campfires.rainStep, with the
+ * rain reaching it: 0 in an unloaded chunk) becomes a cold FIRE_PIT — a plain write, as a fire that burnt out, so what
+ * was on its skewers stays — with the hiss and the twelve puffs of steam of a fire that water reached, and
+ * RAIN_DOUSE_LINE in the log when one of them was within RAIN_DOUSE_NOTICE_M of the player.
+ * @param {number} dt seconds
+ * @param {() => number} random
+ * @param {{ world: { getBlock: (q: number, y: number, r: number) => number, setBlock: (q: number, y: number, r: number, id: number) => boolean },
+ *   campfires: Campfires, isLoadedCell: (q: number, r: number) => boolean, rainOn: (q: number, y: number, r: number) => number,
+ *   sound?: (name: string, x: number, y: number, z: number, volume: number) => void,
+ *   particles?: (kind: string, x: number, y: number, z: number, count: number, opts?: object) => void,
+ *   say?: (text: string) => void, x: number, y: number, z: number }} f  (x, y, z): the player
+ * @returns {number} fires put out
+ */
+export function rainSecondOn(dt, random, f) {
+  const { world } = f;
+  let out = 0;
+  let near = false;
+  const doused = f.campfires.rainStep(dt, random, (fire) => (f.isLoadedCell(fire.q, fire.r) ? f.rainOn(fire.q, fire.y, fire.r) : 0));
+  for (const fire of doused) {
+    if (world.getBlock(fire.q, fire.y, fire.r) !== BLOCK.CAMPFIRE || !world.setBlock(fire.q, fire.y, fire.r, BLOCK.FIRE_PIT)) continue;
+    out++;
+    if (f.sound) f.sound('hiss', fire.x, fire.y + 0.5, fire.z, 1);
+    if (f.particles) f.particles('steam', fire.x, fire.y + 0.6, fire.z, 12, { spread: 0.3, speed: 1.2 });
+    if (Math.hypot(fire.x - f.x, fire.y - f.y, fire.z - f.z) <= RAIN_DOUSE_NOTICE_M) near = true;
+  }
+  if (near && f.say) f.say(RAIN_DOUSE_LINE);
+  return out;
 }
 
 /**
@@ -1057,6 +1097,8 @@ export function boot(win, doc) {
   let looseRenderer;
   /** @type {import('./particles.js').Particles} */
   let particles;
+  /** @type {import('./rainRenderer.js').RainRenderer} the rain and the snow (CONTRACTS §84) */
+  let rainRenderer;
   /** @type {import('./pigRenderer.js').PigRenderer} */
   let pigRenderer;
   /** @type {import('./animalRenderer.js').AnimalRenderer} */
@@ -1103,6 +1145,7 @@ export function boot(win, doc) {
     fallingRenderer = createFallingRenderer(renderer.three.scene, atlasTexture);
     looseRenderer = createLooseItemRenderer(renderer.three.scene, createItemIcons(doc, atlasCanvas));
     particles = createParticles(renderer.three.scene);
+    rainRenderer = createRainRenderer(renderer.three.scene); // §84: one mesh, no light
     // v0.10: the vortices and the circuit wiring (neither adds a light).
     vortexRenderer = createVortexRenderer(renderer.three.scene);
     circuitRenderer = createCircuitRenderer(renderer.three.scene);
@@ -1118,6 +1161,7 @@ export function boot(win, doc) {
     animalRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     fallingRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     particles.prewarm(renderer.three.renderer, renderer.three.camera);
+    rainRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     vortexRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     circuitRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     // The Watcher's figure too (§40.4) — only now: the scene's lights are part of every program's key, so compiling it
@@ -1290,6 +1334,181 @@ export function boot(win, doc) {
     ambience.stop();
     moveSounds.reset();
     surroundingsIn = 0;
+  }
+
+  // ---- Seasons and rain (CONTRACTS §84) -----------------------------------------------------------------------------
+  // Everything here is this section's own. The rest of main calls stepWeather (renderFrame: the look, the sound, the HUD
+  // line, the season's log lines), rainSecond (stepSurvival's once-a-second work: the fires), rainedOn (farming's
+  // "watered by rain") and rainFireHint (a lit fire's hint), and reads weatherFx.onPlayer (the body: wet). The weather
+  // itself is weather.js: a function of the world's seed and the world's clock (the saved `day` and `time`), so nothing
+  // here is saved. The real weather is part of Survival (Creative keeps its clear sky, §42); weather forced through the
+  // debug handle shows in either mode.
+
+  /** The player's surroundings are looked at this often for the rain (s): the biome, and the cover overhead. */
+  const WEATHER_SAMPLE_S = 0.5;
+  /** The rain as it is drawn follows the weather with this time constant (s). */
+  const RAIN_SHOWN_TAU_S = 2.5;
+  /** The HUD says `Rain` (or `Snow`) from this strength up. */
+  const RAIN_WORD_MIN = 0.03;
+  /** The calendar's log lines stay this long (ms). */
+  const SEASON_LINE_MS = 12000;
+  /** RAIN_DOUSE_LINE is said at most once per this many seconds. */
+  const RAIN_DOUSE_LINE_GAP_S = 5;
+  /** A lit fire's "the rain will put it out" is looked up this often (s). */
+  const RAIN_HINT_S = 0.5;
+
+  /** @type {import('./weather.js').Weather|null} the live world's weather (theWeather makes it) */
+  let weather = null;
+  /** @type {World|null} the world `weather` belongs to */
+  let weatherWorld = null;
+  /** The sky as it is shown under an overcast (the plain `sky` stays as computeSky made it). */
+  const overcastSky = createSkyState();
+  const weatherFx = {
+    /** how hard it rains or snows on the player's biome now, 0..1 (0 while the weather is off) */
+    falling: 0,
+    /** the same, smoothed: what is drawn */
+    shown: 0,
+    /** the same, smoothed more slowly: how grey the sky is */
+    overcast: 0,
+    /** the rain reaching the player, 0..1: its strength × the cover overhead (0 where it falls as snow) */
+    onPlayer: 0,
+    /** the player's column: its biome, whether it falls as snow there, and how much rain gets through what is overhead */
+    biome: /** @type {number} */ (BIOME.PLAINS),
+    snow: false,
+    cover: 1,
+    sampleIn: 0,
+    /** @type {number|null} the day of the last frame (the calendar's log lines are told when it moves on) */
+    lastDay: null,
+    /** the HUD line and what it was made from */
+    line: '',
+    lineDay: -1,
+    lineWord: '',
+    /** the fire whose rain hint was last looked up, when, and the answer */
+    hintKey: '',
+    hintAt: -Infinity,
+    hint: false,
+    douseLineAt: -Infinity,
+  };
+
+  /** The live world's weather: one per world, made from its seed the first time it is asked for. */
+  function theWeather() {
+    if (weather === null || weatherWorld !== world) {
+      weatherWorld = world;
+      weather = createWeather(world ? world.seed : 0);
+      weatherFx.falling = 0;
+      weatherFx.shown = 0;
+      weatherFx.overcast = 0;
+      weatherFx.onPlayer = 0;
+      weatherFx.sampleIn = 0;
+      weatherFx.lastDay = null;
+      weatherFx.hintKey = '';
+      rainRenderer.clear();
+    }
+    return weather;
+  }
+
+  /** The world's clock (weather.worldSeconds of the saved day and time). */
+  const weatherNow = () => worldSeconds(day, time);
+  /** The real weather is Survival's; forced weather (the debug handle) shows in either mode. */
+  const weatherOn = () => survival.inSurvival || (weather !== null && weather.forced !== null);
+
+  /**
+   * The water system's env for the live world (weather.weatherEnv, §84.2): `rain(q, r)`, what falls on a column now
+   * (snow too, and the forced weather), and `dryness()`, the season's. Nothing in main uses it yet: it is here, and on
+   * the debug handle, for the water system to be handed. It is the plain weather, whatever the mode (see weatherOn).
+   */
+  function weatherEnvNow() {
+    return weatherEnv(theWeather(), weatherNow, () => day + time, (q, r) => /** @type {World} */ (world).getBiome(q, r));
+  }
+
+  /** farming's `rained`: rain fell on cell (q, y, r) within RAIN_WATERS_S and nothing roofs it. */
+  function rainedOn(q, y, r) {
+    return weatherOn() && rainedOnCell(theWeather(), weatherNow(), /** @type {World} */ (world), q, y, r, RAIN_WATERS_S);
+  }
+
+  /** The rain reaching cell (q, y, r) now, 0..1 (a fire's cell, the player's head). */
+  function rainOnCell(q, y, r) {
+    return weatherOn() ? rainReaching(theWeather(), weatherNow(), /** @type {World} */ (world), q, y, r) : 0;
+  }
+
+  /**
+   * Once a frame (renderFrame, after computeSky): the calendar's log lines when the day moved on, what falls on the
+   * player's biome and how much of it reaches them, the drops, the rain for the ambience, the HUD's calendar line.
+   * @param {number} dt @param {boolean} live  the simulation stepped this frame @param {number} eyeY
+   * @returns {import('./types.js').SkyState} the sky to show: `sky`, greyed while it rains
+   */
+  function stepWeather(dt, live, eyeY) {
+    const w = theWeather();
+    const fx = weatherFx;
+    const SV = survival.inSurvival;
+    if (fx.lastDay !== null && day !== fx.lastDay && SV) for (const line of seasonNews(fx.lastDay, day)) logLine(line, false, SEASON_LINE_MS);
+    fx.lastDay = day;
+    fx.sampleIn -= dt;
+    if (fx.sampleIn <= 0) {
+      fx.sampleIn = WEATHER_SAMPLE_S;
+      const [q, r] = worldToHex(player.x, player.z);
+      fx.biome = world.getBiome(q, r);
+      fx.snow = fallsAsSnow(fx.biome);
+      fx.cover = rainExposure(world.getBlock, q, Math.floor(eyeY), r);
+    }
+    fx.falling = weatherOn() ? w.rainAt(weatherNow(), fx.biome) : 0;
+    fx.onPlayer = fx.snow ? 0 : fx.falling * fx.cover;
+    fx.shown = approach(fx.shown, fx.falling, dt, RAIN_SHOWN_TAU_S);
+    fx.overcast = approach(fx.overcast, fx.falling, dt, OVERCAST_TAU_S);
+    ambienceSample.rain = fx.snow ? 0 : fx.falling; // snow is silent; the ambience smooths the level itself
+    rainRenderer.update(live ? dt : 0, {
+      x: player.x, y: eyeY, z: player.z, intensity: fx.shown, snow: fx.snow, getBlock: world.getBlock, daylight: sky.daylight,
+    });
+    if (SV) {
+      const word = fx.falling >= RAIN_WORD_MIN ? weatherWord(fx.falling, fx.biome) : '';
+      if (day !== fx.lineDay || word !== fx.lineWord) {
+        fx.lineDay = day;
+        fx.lineWord = word;
+        fx.line = hudLine(day, word);
+      }
+      hud.setCalendar(fx.line);
+    } else {
+      hud.setCalendar(null);
+    }
+    return fx.overcast > 0 ? rainSky(sky, fx.overcast, overcastSky) : sky;
+  }
+
+  /** §84, once a second while Survival is active: the rain puts out the fires it reaches (rainSecondOn). */
+  function rainSecond(dt, random) {
+    if (campfires.size === 0 || !weatherOn()) return 0;
+    return rainSecondOn(dt, random, {
+      world: /** @type {World} */ (world),
+      campfires,
+      isLoadedCell: isLoadedCellFn,
+      rainOn: rainOnCell,
+      sound: playPhysicsSound,
+      particles: (kind, x, y, z, count, opts) => particles.emit(kind, x, y, z, count, opts),
+      say: (text) => {
+        if (fxTime - weatherFx.douseLineAt < RAIN_DOUSE_LINE_GAP_S) return;
+        weatherFx.douseLineAt = fxTime;
+        logLine(text);
+      },
+      x: player.x,
+      y: player.y,
+      z: player.z,
+    });
+  }
+
+  /**
+   * A lit fire's hint while rain reaches it: `… · the rain will put it out` (kept RAIN_HINT_S per fire).
+   * @param {string} text  the fire's hint @param {{ q?: number, y?: number, r?: number }} act
+   * @returns {string}
+   */
+  function rainFireHint(text, act) {
+    const { q, y, r } = act;
+    if (!survival.active || q === undefined || y === undefined || r === undefined) return text;
+    const key = `${q},${y},${r}`;
+    if (key !== weatherFx.hintKey || !(fxTime - weatherFx.hintAt < RAIN_HINT_S)) {
+      weatherFx.hintKey = key;
+      weatherFx.hintAt = fxTime;
+      weatherFx.hint = world.getBlock(q, y, r) === BLOCK.CAMPFIRE && rainOnCell(q, y, r) > 0;
+    }
+    return weatherFx.hint ? `${text} · ${RAIN_DOUSE_HINT}` : text;
   }
 
   // ---- game state -----------------------------------------------------------------------------------
@@ -1819,6 +2038,7 @@ export function boot(win, doc) {
     nearFire: false,
     insulation: 0,
     sunShade: 0,
+    rain: 0,
     time: 0,
     random: Math.random,
   };
@@ -3405,7 +3625,7 @@ export function boot(win, doc) {
         case 'fire_feed':
         case 'fire_take':
         case 'fire_hint':
-          return campfireHintText(act);
+          return rainFireHint(campfireHintText(act), act); // §84: `… · the rain will put it out`
         case 'pit_take':
         case 'pit_relight':
         case 'pit_hint':
@@ -3457,7 +3677,7 @@ export function boot(win, doc) {
     if (key !== cropHintKey || !(fxTime - cropHintAt < FARM_HINT_S)) {
       cropHintKey = key;
       cropHintAt = fxTime;
-      cropHint = farmHint(h.blockId, cropState(world.getBlock, waterQualityOf, h.q, h.y, h.r, crop));
+      cropHint = farmHint(h.blockId, cropState(world.getBlock, waterQualityOf, h.q, h.y, h.r, crop, rainedOn));
     }
     return cropHint;
   }
@@ -4024,6 +4244,7 @@ export function boot(win, doc) {
     env.nearFire = sample.nearFire;
     env.insulation = pack.insulation();
     env.sunShade = pack.sunShade();
+    env.rain = weatherFx.onPlayer; // §84: the rain reaching the player wets them
     env.time = time;
     const ev = survival.step(dt, /** @type {*} */ (env));
     if (ev.died) pendingDeath ??= ev.died;
@@ -4067,6 +4288,7 @@ export function boot(win, doc) {
         if (ripeOf(world.getBlock(c.q, c.y, c.r)) === c.id) world.setBlock(c.q, c.y, c.r, c.id, true);
       }
       farmSecond(1, Math.random); // §80: seeds sprout, sprouts grow up, the wild plants spread
+      rainSecond(1, Math.random); // §84: the rain puts out the fires it reaches
       const bad = pack.spoil(1, Math.random);
       if (bad.length > 0 && fxTime - spoilLineAt >= 2) {
         spoilLineAt = fxTime;
@@ -4088,7 +4310,7 @@ export function boot(win, doc) {
   /** §80, once a second in Survival (and from the debug handle's farmStep): `farmSecondOn` with the live objects. */
   function farmSecond(dt, random) {
     const [q, r] = worldToHex(player.x, player.z);
-    return farmSecondOn(dt, random, { world, growth, spread, isLoadedCell: isLoadedCellFn, waterQuality: waterQualityOf, q, r, say: logLine });
+    return farmSecondOn(dt, random, { world, growth, spread, isLoadedCell: isLoadedCellFn, waterQuality: waterQualityOf, q, r, say: logLine, rained: rainedOn });
   }
 
   /** Sample the climate, the heat sources and the workplaces near the player (every CLIMATE_SAMPLE_S, §3.1, §7.1). */
@@ -5458,6 +5680,32 @@ export function boot(win, doc) {
       }
       return total;
     },
+    // ---- §84 seasons and rain: the weather, today's season, forcing the weather, setting the day ----
+    get weather() {
+      return world ? theWeather() : null;
+    },
+    /** seasonOf of this moment (the dryness moves through the day). */
+    season: () => seasonOf(day + time),
+    /** How hard it rains or snows on the player's biome now, 0..1 (0 while the weather is off: Creative). */
+    rainNow: () => weatherFx.falling,
+    /** The water system's env for the live world: `{ rain(q, r), dryness() }` (null without a world). */
+    weatherEnv: () => (world ? weatherEnvNow() : null),
+    /**
+     * Force the weather for screenshots: 'rain' (full strength everywhere), 'dry' (none), or null for the real weather.
+     * It drives the look, the sound and every effect; it is not saved.
+     * @returns {'rain'|'dry'|null} what is forced now
+     */
+    setWeather(mode) {
+      if (!world) return null;
+      const w = theWeather();
+      w.force(mode);
+      return w.forced;
+    },
+    /** Set the day counter (a whole number from 1): the season follows. @returns {number} the day */
+    setDay(n) {
+      if (Number.isFinite(n)) day = Math.max(1, Math.floor(n));
+      return day;
+    },
     /** Queue a mode switch (applied at the top of the next frame). */
     setMode(mode) {
       requestMode(mode);
@@ -6201,8 +6449,9 @@ export function boot(win, doc) {
       campfireRenderer.sync(near, fxTime, dt, spotsViewFn);
     }
     computeSky(time, sky);
+    const shownSky = stepWeather(dt, live, eyeY); // §84: the rain, the calendar; the sky greyed while it rains
     stepWorldSounds(dt, live); // v0.16 (§82): footsteps, movement and the ambience
-    renderer.setSky(sky);
+    renderer.setSky(shownSky);
     renderer.setUnderwater(player.headInWater);
     hud.setUnderwater(player.headInWater);
     // §9.8: the survival HUD — hex hotbar from the pack (no per-frame copy), vitals bookends, the action ring, the job chip.
@@ -6408,6 +6657,7 @@ export function boot(win, doc) {
     player = null;
     fallingRenderer.dispose();
     particles.dispose();
+    rainRenderer.dispose();
     vortexRenderer.dispose();
     circuitRenderer.dispose();
     zombieRenderer.dispose();

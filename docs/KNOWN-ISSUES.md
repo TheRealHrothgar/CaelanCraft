@@ -411,3 +411,50 @@ From the build of CONTRACTS §82 (materials, footsteps, voices, ambience, the So
 - **Found on the way, fixed:** every animal call with a wobble (baa, neigh, bleat, gobble, growl, roar, wings) used to
   end with a click, because the wobble was added to the envelope and did not die away with it. The wobble is a gain
   stage of its own now (§82.1).
+
+## Seasons and rain — open items
+
+From the build of CONTRACTS §84 (the calendar, rain in showers, how it looks and sounds, what it does). None blocks play.
+
+- **Nobody has seen or heard the rain.** It was built without a browser. The streaks, the splashes, the snow, the grey
+  sky and the pale sun are geometry and numbers that were tested as such (no drop under a roof, the share that comes
+  through leaves, the budget, the colours' direction), never looked at. Expect to retune: the streaks' width (0.028 m),
+  length and opacity (0.55); how many there are (480 at the most, within 10 m); the splash, a flat square that may
+  read as a tile rather than a ripple; the flakes, which are plain squares; how dark and how grey the sky goes
+  (`OVERCAST_*` in weather.js). To look: `__caelancraft.setWeather('rain')` in Survival or Creative, at noon and at
+  night, in the open, under a tree, under a roof and in snowy land; `setWeather(null)` gives the real weather back.
+- **The rain's sound is unheard**, like every sound (see Sounds above): a loop of filtered noise set as loud as the
+  stream, a patter of noise ticks for the leaves, a low roll for far thunder. The Sound Test has a Rain scene and
+  buttons for the two one-shots. Least sure of: whether the hiss sounds like rain or like a tap running, and whether
+  the thunder is audible at all on small speakers (it lives below 500 Hz).
+- **The HUD line has not been seen on a page.** `#calendar-line` sits at the top centre, 11 px bold on a dark strip.
+  With F3 open the debug overlay (top left) may run under it on a narrow window.
+- **The rain is drawn round the player only** (10 m). There is no curtain of rain in the distance and nothing on the
+  far hills: the grey sky and the fog stand in for it. Looking out from deep inside a large hall, the nearest rain may
+  be beyond the cylinder and none is seen, though it is heard.
+- **A drop knows its own column and nothing else.** It falls straight down, so there is no wind and no slant; a roof's
+  edge is a sharp line. A column is looked at again every 2 s, so a roof just built keeps a few drops for that long.
+- **Rain makes nothing wet but the player.** No puddles, no darker ground, no water rising: the water itself is
+  another piece of work (the `env` of §84.2 is ready for it). Until that lands, the guide's "the land dries out" is
+  about the rain only: ponds and streams do not change with the season yet.
+- **Creative has no weather.** By design (§42), but it means a world looks different after a switch of mode, and a
+  fire or a crop in Creative never feels the rain. One line decides it (`weatherOn` in main.js).
+- **Only the nearest fires are rained on** (the tracked ones, 1024 at the most), in loaded chunks. A fire far from the
+  player burns through any weather, as it burns through anything else while its chunk is unloaded.
+- **A rained-out fire keeps its food and loses its fuel.** It becomes a cold fire pit, like a fire that burnt out:
+  relighting costs the fire drill's use, tinder and three sticks. In a long wet spell an open fire cannot be kept at
+  all, which is the point, but there is no warning beyond the hint on the fire and the line in the log.
+- **Leaves are a third of a roof for everything**: drops, fires, crops and the player. A crop under a tree is still
+  "watered by rain"; a player under a tree gets wet three times more slowly. Nothing was play-tested.
+- **"Watered by rain" looks at the roofs as they stand now**, not as they stood when it rained: roof a field after a
+  shower and it stops counting at once; unroof one and yesterday's rain counts.
+- **Wet from rain uses the old drying rule** (§45): 90 s under a roof or at night, half that in the sun, faster beside
+  any heat source by 1 + heat / 5 (3.3 times a cell and a half from a campfire). The brief asked for "four times as
+  fast by a fire"; the rule that was already there was kept instead of adding a second one.
+- **Snow is only a look.** It does not settle, chill, wet or put anything out, and it is silent. Snowy peaks snow as
+  snowy land does, at the same share.
+- **The weather stops at a biome's edge.** A shower that falls on the plains and not on the desert ends in one step
+  across the border; the drops and the sound fade over a few seconds as you cross.
+- **Console `time set` moves the weather with the clock**, and `?time=` freezes it. `setDay(n)` on the debug handle
+  jumps the calendar; the once-a-day rules that key on the day (tapping birch, the Watcher's night) jump with it.
+- **Thunder has no lightning.** A roll now and then in a heavy shower, nothing to see.

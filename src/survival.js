@@ -15,7 +15,7 @@ import {
   createVitals, wakeVitals, statusOf, stepVitals, activityFactor, fallDamage, eatFood, gulpWater, queueHeal,
   DAMAGE_CAUSES, RATES,
 } from './vitals.js';
-import { feltTemperature, activityHeat, dryingRate } from './climate.js';
+import { feltTemperature, activityHeat, wetRate } from './climate.js';
 
 /** @typedef {import('./vitals.js').Vitals} Vitals */
 /** @typedef {import('./vitals.js').VitalsStatus} VitalsStatus */
@@ -37,6 +37,7 @@ import { feltTemperature, activityHeat, dryingRate } from './climate.js';
  * @property {boolean} [nearFire]   a burning campfire within 4 cells
  * @property {number} [insulation]  Pack.insulation()
  * @property {number} [sunShade]    Pack.sunShade()
+ * @property {number} [rain]        the rain reaching the player, 0..1 (CONTRACTS §84: its strength × the cover overhead)
  * @property {number} time          day fraction
  * @property {() => number} [random]
  */
@@ -263,8 +264,9 @@ export class Survival {
     const breaking = !!env.breaking;
     const c = env.climate ?? /** @type {SurvivalEnv['climate']} */ ({});
     const heat = finite(env.heat) ? env.heat : 0;
+    // Wet (§3.2, §84): swimming soaks at once; rain that reaches you wets you; otherwise you dry.
     if (inWater) v.wet = 1;
-    else v.wet = Math.max(0, v.wet - dryingRate(heat, !!c.openSky, env.time) * dt);
+    else v.wet = clamp((finite(v.wet) ? v.wet : 0) + wetRate(finite(env.rain) ? env.rain : 0, heat, !!c.openSky, env.time) * dt, 0, 1);
     const t = feltTemperature({
       biome: c.biome,
       climateT: c.climateT,

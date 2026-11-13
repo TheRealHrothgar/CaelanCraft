@@ -1,6 +1,7 @@
 // Caelancraft — farming (CONTRACTS §80): what can be planted and on which ground, what makes a planted cell watered and
 // open to the sky, the hints a crop shows, and Growth, the tracker that rolls for every planted seed and sprout.
-// Pure: the world is read through `getBlock`, the water's quality through a callback, every roll takes `random` ([0, 1)).
+// Pure: the world is read through `getBlock`, the water's quality and the rain through callbacks, every roll takes
+// `random` ([0, 1)).
 //
 // A crop has two blocks, PLANTED_<KIND> and <KIND>_SPROUT (blocks.js, ids 133–150). The block id is the whole state of a
 // planted cell and every step is a memoryless chance per second, so a save needs no field for farming: Growth finds the
@@ -16,6 +17,8 @@ const B = BLOCK;
 export const FARM_WATER_REACH = 4;
 /** A reed (the cattail) does nothing at all without water this near. */
 export const REED_WATER_REACH = 1;
+/** §84: a planted cell is watered, too, when rain fell on it within this many seconds (one game day). */
+export const RAIN_WATERS_S = 1440;
 /** Mean seconds before a planted seed's sprouting moment comes: one game day watered, three dry. */
 export const SPROUT_MEAN_S = Object.freeze({ watered: 1440, dry: 4320 });
 /** The chance that a seed takes at that moment (it becomes a sprout); otherwise it fails and the cell is AIR again. */
@@ -155,27 +158,37 @@ export function waterNear(getBlock, q, y, r, reach, isFresh = null) {
 
 /**
  * @typedef {'fresh'|'salt'|'tainted'} WaterQuality  what survivalControl.waterKind calls a water cell
- * @typedef {{ sky: boolean, watered: boolean, reed: boolean }} CropState
- *   `sky` open sky above; `watered` fresh water within FARM_WATER_REACH; `reed` false only for a cattail with no water
- *   within REED_WATER_REACH
+ * @typedef {{ sky: boolean, watered: boolean, reed: boolean, rain?: boolean }} CropState
+ *   `sky` open sky above; `watered` fresh water within FARM_WATER_REACH, or (§84) rain on the cell within RAIN_WATERS_S;
+ *   `rain` (present, and true, only then) the rain alone waters it: no fresh water in reach; `reed` false only for a
+ *   cattail with no water within REED_WATER_REACH
+ * @typedef {(q: number, y: number, r: number) => boolean} RainedFn  rain fell on cell (q, y, r) within RAIN_WATERS_S
+ *   (main: the rain reaches the cell, weather.rainExposure, and it rained there, weather.rainedWithin; snow is not rain)
  */
 
 /**
- * What the plant in cell (q, y, r) has: sky, fresh water, and (a reed) water beside it. Fresh water is water that is
- * neither tainted nor salt, judged as the drinking code judges it (`waterQuality`: main's waterQualityOf); without the
- * callback every water counts as fresh. A reed takes any water to stand in.
+ * What the plant in cell (q, y, r) has: sky, water, and (a reed) water beside it. Fresh water is water that is neither
+ * tainted nor salt, judged as the drinking code judges it (`waterQuality`: main's waterQualityOf); without the callback
+ * every water counts as fresh. With no fresh water in reach, rain that fell on the cell (`rained`, §84) waters it as
+ * well. A reed takes any water to stand in, but rain is not water to stand in.
  * @param {(q: number, y: number, r: number) => number} getBlock
  * @param {((q: number, y: number, r: number) => WaterQuality)|null|undefined} waterQuality
  * @param {number} q @param {number} y @param {number} r @param {CropDef} crop
+ * @param {RainedFn|null} [rained]
  * @returns {CropState}
  */
-export function cropState(getBlock, waterQuality, q, y, r, crop) {
+export function cropState(getBlock, waterQuality, q, y, r, crop, rained = null) {
   const isFresh = waterQuality ? (wq, wy, wr) => waterQuality(wq, wy, wr) === 'fresh' : null;
-  return {
+  const near = waterNear(getBlock, q, y, r, FARM_WATER_REACH, isFresh);
+  const rain = !near && !!rained && rained(q, y, r);
+  /** @type {CropState} */
+  const state = {
     sky: hasSky(getBlock, q, y, r),
-    watered: waterNear(getBlock, q, y, r, FARM_WATER_REACH, isFresh),
+    watered: near || rain,
     reed: !crop.reed || waterNear(getBlock, q, y, r, REED_WATER_REACH),
   };
+  if (rain) state.rain = true;
+  return state;
 }
 
 // ---- Planting ------------------------------------------------------------------------------------------------------------
@@ -222,9 +235,9 @@ export function wrongGroundHint(getBlock, key, q, y, r) {
 }
 
 /**
- * The target hint of a planted cell or a sprout: `Planted Wild Carrot · watered`, `… · dry: slow, and it may not take`
- * (a sprout has taken already: `… · dry: slow`), `… · needs open sky`, and for a cattail away from water
- * `… · needs water beside it`.
+ * The target hint of a planted cell or a sprout: `Planted Wild Carrot · watered` (§84: `… · watered by rain` when only
+ * the rain waters it), `… · dry: slow, and it may not take` (a sprout has taken already: `… · dry: slow`),
+ * `… · needs open sky`, and for a cattail away from water `… · needs water beside it`.
  * @param {number} id a PLANTED_* or *_SPROUT block
  * @param {CropState} state
  * @returns {string|null} null for any other block
@@ -235,7 +248,7 @@ export function farmHint(id, state) {
   const name = getBlockDef(id).displayName;
   if (!state.sky) return `${name} · needs open sky`;
   if (!state.reed) return `${name} · needs water beside it`;
-  if (state.watered) return `${name} · watered`;
+  if (state.watered) return `${name} · ${state.rain ? 'watered by rain' : 'watered'}`;
   return `${name} · ${isPlanted(id) ? 'dry: slow, and it may not take' : 'dry: slow'}`;
 }
 
@@ -257,7 +270,7 @@ export function failLine(crop) {
 
 /**
  * Tracks the planted cells and sprouts (at most MAX_GROWTH_TRACKED). Main feeds it World.onBlockChange and
- * `loadFromEdits`, and while Survival is active calls `step(1, random, isLoadedCell, getBlock, waterQuality)` once a
+ * `loadFromEdits`, and while Survival is active calls `step(1, random, isLoadedCell, getBlock, waterQuality, rained)` once a
  * second, writing each returned event with `world.setBlock` (the write comes back through onBlockChange: a sprout is
  * tracked again, a grown plant or a failed seed is not).
  */
@@ -319,9 +332,10 @@ export class Growth {
    * @param {(q: number, r: number) => boolean} isLoadedCell
    * @param {(q: number, y: number, r: number) => number} getBlock
    * @param {((q: number, y: number, r: number) => WaterQuality)|null} [waterQuality]
+   * @param {RainedFn|null} [rained]  rain fell on the cell within RAIN_WATERS_S: it then counts as watered (§84)
    * @returns {GrowthEvent[]} the cells to write
    */
-  step(dt, random, isLoadedCell, getBlock, waterQuality = null) {
+  step(dt, random, isLoadedCell, getBlock, waterQuality = null, rained = null) {
     /** @type {GrowthEvent[]} */
     const out = [];
     if (!(dt > 0)) return out;
@@ -332,7 +346,7 @@ export class Growth {
       const mean = seed ? SPROUT_MEAN_S : GROW_MEAN_S;
       const u = random();
       if (!(u < Math.min(1, dt / mean.watered))) continue;
-      const state = cropState(getBlock, waterQuality, c.q, c.y, c.r, crop);
+      const state = cropState(getBlock, waterQuality, c.q, c.y, c.r, crop, rained);
       if (!state.sky || !state.reed) continue;
       if (!state.watered && !(u < Math.min(1, dt / mean.dry))) continue;
       const took = !seed || random() < (state.watered ? SEED_TAKES.watered : SEED_TAKES.dry);

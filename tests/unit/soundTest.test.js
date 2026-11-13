@@ -11,7 +11,7 @@ import {
 import { SOUND_BANK, BANK_NAMES, AMBIENCE_LOOPS, BIRD_SONGS, materialSound } from '../../src/soundBank.js';
 import { SOUND_RECIPES, SOUND_NAMES } from '../../src/circuitSounds.js';
 import { SOUND_GROUPS } from '../../src/blocks.js';
-import { ambienceTargets } from '../../src/worldSounds.js';
+import { ambienceTargets, THUNDER_FROM } from '../../src/worldSounds.js';
 import { createAudio } from '../../src/audio.js';
 import { parseParams } from '../../src/diagnostics.js';
 import { documentFromHTML, fire } from '../helpers/fakeDom.js';
@@ -120,7 +120,7 @@ describe('the catalogue: every sound has a button (§82)', () => {
     }
   });
 
-  it('every bank sound can be heard from the screen: by a button, or (the three loops) in a scene', () => {
+  it('every bank sound can be heard from the screen: by a button, or (the loops: three of the place, and §84 the rain) in a scene', () => {
     const byMethod = {
       playOink: 'pigOink', playSqueal: 'pigSqueal', playGroan: 'zombieGroan', playZombieHurt: 'zombieHurt', playZombieDown: 'zombieDown',
       playCrackle: 'fireCrackle',
@@ -137,7 +137,8 @@ describe('the catalogue: every sound has a button (§82)', () => {
         if (name) heard.add(name);
       }
     }
-    const loops = { ambWind: 'wind', ambStream: 'stream', ambFire: 'fire' };
+    const loops = { ambWind: 'wind', ambStream: 'stream', ambFire: 'fire', ambRain: 'rain' };
+    expect(Object.keys(loops)).toEqual([...AMBIENCE_LOOPS]);
     for (const name of AMBIENCE_LOOPS) {
       if (AMBIENCE_SCENES.some((s) => ambienceTargets(s.sample)[loops[name]] > 0.3)) heard.add(name);
     }
@@ -173,6 +174,22 @@ describe('the catalogue: every sound has a button (§82)', () => {
     expect(WALK_STEPS).toBeGreaterThanOrEqual(3);
     expect(WALK_STEP_MS).toBeGreaterThan(400); // two steps a second
     expect(WALK_STEP_MS).toBeLessThan(600);
+  });
+
+  it('the Rain scene (CONTRACTS §84): a heavy shower at the edge of the woods: the rain\'s loop, no birds, leaves and thunder', () => {
+    const scene = AMBIENCE_SCENES.find((s) => s.id === 'rain');
+    expect(scene.label).toBe('Rain');
+    expect(AMBIENCE_SCENES[AMBIENCE_SCENES.length - 1]).toBe(scene); // after the scenes that were there
+    const t = ambienceTargets(scene.sample);
+    expect(t.rain).toBeGreaterThan(0.9);
+    expect(t.birds).toBe(0);
+    expect(scene.sample.rain).toBeGreaterThanOrEqual(THUNDER_FROM); // heavy enough for far thunder now and then
+    expect(scene.sample.trees).toBeGreaterThan(0); // and for the drops on the leaves
+    // every other scene is dry, as it was
+    for (const s of AMBIENCE_SCENES) if (s !== scene) expect(ambienceTargets(s.sample).rain, s.id).toBe(0);
+    const small = SOUND_SECTIONS.find((s) => s.id === 'ambience').rows.find((r) => r.label === 'Small sounds').items;
+    expect(small.map((i) => i.label).slice(-2)).toEqual(['Rain on leaves', 'Far thunder']);
+    expect(small.map((i) => i.recipe).slice(-2)).toEqual(['rainPatter', 'thunderRoll']);
   });
 });
 

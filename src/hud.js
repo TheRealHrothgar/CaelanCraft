@@ -303,6 +303,8 @@ const PICKER_OPEN = 'picker-open';
  *   hotbar (the ids last given to setHotbar)
  * @property {(p: number|null) => void} setActionProgress             the hex ring round the crosshair (0..1; null hides it)
  * @property {(text: string|null) => void} setJobChip                 the soonest job (jobChipText), null hides it
+ * @property {(text: string|null) => void} setCalendar                the calendar line at the top (CONTRACTS §84: the day,
+ *   the season, and `Rain` while it rains); null hides it
  * @property {(key: string, n: number, from: {x: number, y: number}|null) => void} addPickup   a hex token of the item flies
  *   from `from` (screen px; null: the crosshair) to the hotbar slot holding it, else to the pack glyph, which then pulses
  */
@@ -704,6 +706,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
   const vitalsRightEl = container('vitals-right', 'vitals');
   const chipsEl = container('status-chips', 'status-chips');
   const jobChipEl = container('job-chip', 'job-chip');
+  const calendarEl = container('calendar-line', 'calendar-line');
   const actionRingEl = container('action-ring', 'action-ring');
   const pickupLayerEl = container('pickup-layer', 'pickup-layer');
   /** The pack glyph at the strip's right end (pickups that land in the rosette fly here). */
@@ -792,6 +795,8 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
 
   /** @type {string|null} the job chip's text */
   let jobText = null;
+  /** @type {string|null} the calendar line's text (§84) */
+  let calendarText = null;
   /** @type {number|null} the action ring's progress in whole percent */
   let ringPct = null;
   /** @type {Element|null} */
@@ -806,6 +811,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     hudEl.classList.toggle('survival', next);
     for (const node of [vitalsLeftEl, vitalsRightEl, chipsEl]) if (node) node.classList.toggle(HIDDEN, !next);
     if (jobChipEl) jobChipEl.classList.toggle(HIDDEN, !next || jobText === null);
+    if (calendarEl) calendarEl.classList.toggle(HIDDEN, !next || calendarText === null);
     if (actionRingEl) actionRingEl.classList.toggle(HIDDEN, !next || ringPct === null);
   }
 
@@ -896,6 +902,20 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     if (!jobChipEl) return;
     if (next !== null) jobChipEl.textContent = next;
     jobChipEl.classList.toggle(HIDDEN, next === null || !survivalVisible);
+  }
+
+  /**
+   * The calendar line (§84): words only, at the top of the screen, in Survival. The DOM is touched only when the text
+   * changes.
+   * @param {string|null} text
+   */
+  function setCalendar(text) {
+    const next = text === null || text === undefined || text === '' ? null : String(text);
+    if (next === calendarText) return;
+    calendarText = next;
+    if (!calendarEl) return;
+    if (next !== null) calendarEl.textContent = next;
+    calendarEl.classList.toggle(HIDDEN, next === null || !survivalVisible);
   }
 
   // ---- the survival hotbar (§9.8): hex slots with a count and a wear outline
@@ -1087,6 +1107,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     setHotbarStacks,
     setActionProgress,
     setJobChip,
+    setCalendar,
     addPickup,
     onSlotClick: () => {},
     dispose,

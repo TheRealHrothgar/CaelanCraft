@@ -141,6 +141,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/pickerModel.js` | PURE, the picker's sections, families, search, layout, navigation (§56) | v0.10 D | `tests/unit/pickerModel.test.js` |
 | `src/pickerUI.js` | DOM, the honeycomb picker (§56) | v0.10 D | `tests/unit/pickerUI.test.js` |
 | `src/devicePanel.js` | DOM (+ pure field helpers), the device panel (§57) | v0.10 D | `tests/unit/devicePanel.test.js` |
+| `src/weather.js` | PURE, the calendar (wet and dry season), rain in showers, what rain reaches, the sky under rain (§84) | seasons and rain | `tests/unit/weather.test.js`, `tests/unit/rainEffects.test.js` |
+| `src/rainRenderer.js` | three (+ the pure `RainField`), rain and snow as one mesh of quads (§84) | seasons and rain | `tests/unit/rainRenderer.test.js` |
 | — | circuits integration, the worked examples (§58) | v0.10 I | `tests/integration/circuits.test.js`, `tests/integration/harness.test.js` |
 | `tests/helpers/fixtures.js` | test helpers | Wave 0 (done) | — |
 | `tests/helpers/circuitWorld.js` | a fake world wired to a Circuits like main's hooks (v0.10 B) | v0.10 B | — |
@@ -3066,7 +3068,8 @@ BREATH_REFILL_PER_S 5, BODY_TEMP_NORMAL 37, BODY_TEMP_MIN 25 / MAX 45, SICK_MAX_
   mean); `feltTemperature(ClimateInput) → {air, felt}` adds sun (open sky, by day, × (1 − sunShade)), shelter +3 (no open sky and air
   < 10), heat sources (Σ heat·(1 − d/radius)², ≤ 30, from the chest = feet + CHEST_HEIGHT; campfire 20/6 measured to fire.y + 0.3,
   kiln 12/4, bloomery 16/4, forge 22/5 while their lane runs a job), insulation I·(1 − 0.6w)·(1 − 0.5·wet), exertion (+1/+2/+2/+4),
-  ground −2 on snow or ice, −6·wet; in water `waterTemp + 0.25·I + 2`. `bodyTarget(felt, inWater)`; body temp moves with τ 120 s away
+  ground −2 on snow or ice, −6·wet (wet: 1 in water, drying out of it; §84.7 adds the rain as a second source); in water
+  `waterTemp + 0.25·I + 2`. `bodyTarget(felt, inWater)`; body temp moves with τ 120 s away
   from 37, 40 s back, × 0.3 in water. `isSaltyBiome(biome)`: OCEAN or BEACH water is salt, all other water fresh.
 - **`Survival`** (`survival.js`): `mode, hasState, switchVersion, vitals, spawn ([q,y,r] Sleeping Hide | null), deaths, dead (cause |
   null), fallGrace, felt, air`; getters `inSurvival, active, status`; `setMode(mode) → changed` (only main's switch calls it; begins a
@@ -4145,8 +4148,8 @@ retries `placeSelected()` for up to `SMOKE_HIT_RETRY_FRAMES` frames (a wary pig 
 Amends §43 (the Handbook), §48 and §1 (imports); DESIGN-survival §14.1's chapter list gains one. The prose now tells the game of
 §59–§72; the readers (handbookUI) are unchanged.
 
-- **Eleven chapters** (`chapterIds()`): first-day, water, food, warmth, ages, making, **animals** ("Animals", icon `hex`, after the
-  workplaces), dangers, death, controls, modes. Hunting moved from *Food and fire* (which keeps "Meat and milk") to *Animals*.
+- **Eleven chapters** (`chapterIds()`; twelve since §84, which puts `seasons` "Seasons and rain" after water): first-day, water,
+  food, warmth, ages, making, **animals** ("Animals", icon `hex`, after the workplaces), dangers, death, controls, modes. Hunting moved from *Food and fire* (which keeps "Meat and milk") to *Animals*.
 - **Animals**: shy herds by land, the notice distances (walking / sneaking / sprinting), luring and feeding, hunting (only a tool
   wounds), milk and wool, taming and riding a horse, the wolf (follow, guard, sit), snares, and that a black hole swallows animals.
 - **Dangers**: zombies come out only at night; the three kinds; daylight does not burn them (dormant walkers that wake within
@@ -5121,7 +5124,8 @@ fast amplitude wobble, a bleat or a gobble a slow deep one.
 `zombieGroan`, `zombieHurt`, `zombieDown` and `fireCrackle`. The zombie stays "spooky, not frightening" (§71, §74): its
 sounds are quieter than a wolf's bark and a bear's growl.
 
-**Ambience.** Loops: `ambWind` (noise in bands at 420 and 950 Hz and below 180 Hz, each swelling at its own slow rate),
+**Ambience.** (§84.6 adds a fourth loop, `ambRain`, and the one-shots `rainPatter` and `thunderRoll`.) Loops: `ambWind` (noise
+in bands at 420 and 950 Hz and below 180 Hz, each swelling at its own slow rate),
 `ambStream` (four bands, each wobbling at its own rate between 2 and 9 Hz), `ambFire` (a fluttering roar under 240 Hz,
 a flicker, a thin hiss). One-shots: `streamBlip`, `fireCrackle` (four takes: snaps, a pop with a knock, a flurry of
 ticks, a crack with a hiss), `birdTit`, `birdWarbler`, `birdFinch`, `birdBlackbird`, `birdSparrow`, `birdDove` (a sine
@@ -5160,7 +5164,8 @@ birds −40, crickets −44, bubbles −42, and the loops at full level −36 to
   is a `grass` block); `streamDist` (metres to the nearest column within `STREAM_RANGE` 9 cells that is a generated
   stream, `world.streamAt`, or holds flowing or falling water within 3 cells below and 1 above the feet; still water is
   silent). main calls it every 0.5 s.
-- **`ambienceTargets(sample)`** → `{ wind, stream, fire, birds, crickets }`, 0..1 each:
+- **`ambienceTargets(sample)`** → `{ wind, stream, fire, birds, crickets }`, 0..1 each (and `rain`, §84.6, which also
+  silences the birds and the crickets):
   - wind: `WIND_BY_BIOME` (peaks 1, mountains 0.85, ocean, beach and snow 0.6, desert 0.55, plains 0.5, forest 0.22)
     + 0.01 a cell above 20 over the sea (at most 0.3), × (1 − 0.5·trees), × 1 under open sky, `WIND_UNDER_ROOF` 0.5
     under cover, `WIND_UNDERGROUND` 0.06 underground;
@@ -5234,6 +5239,266 @@ at 75–110 Hz, muffled, slow to come in; birds in separate notes between 2 and 
 soundEngine.test.js checks each new field on the graph and by ear's proxy; worldSounds.test.js the steps, the targets,
 the engine's smoothness and its budget; soundTest.test.js the catalogue and the screen; offlineAudio.test.js the
 renderer against signals whose numbers are known.
+
+## 84. Seasons and rain — `src/weather.js` (PURE), `src/rainRenderer.js` (three), `src/farming.js`, `src/campfires.js`, `src/climate.js`, `src/survival.js`, `src/soundBank.js`, `src/worldSounds.js`, `src/soundTest.js`, `src/hud.js`, `src/renderer.js`, `src/main.js`, `src/diagnostics.js`, `src/handbook.js`, `src/handbookUI.js`
+
+Amends §13 (the sky), §19 and §48 (the HUD), §23 and §49 (main), §32 (campfires), §45 (the body: wet), §73 (the guide),
+§80.6–§80.7 (farming: watered) and §82 (the ambience). A calendar with a wet and a dry season, rain in showers, how it
+looks and sounds, and what it does: it waters crops, puts out unsheltered fires, and makes the player wet and cold.
+
+**No block, tile, item or save field is added.** The weather is a function of the world's seed and the world's clock;
+the clock is the day counter and the time of day, which every save already holds (`SaveData.day`, from 1, and
+`SaveData.time`), so the season survives a reload. The water blocks, the fluid rule and drinking are not touched: this
+section hands the water system an `env` (84.2) and wires nothing into it.
+
+**The real weather is part of Survival** (`survival.inSurvival`): in Creative the sky stays clear, nothing is drawn or
+heard and the HUD shows no calendar (§42: Creative keeps working as before). Weather forced through the debug handle
+(84.8) shows in either mode. The effects of 84.7 run only while Survival is active, like every other survival step.
+The rule holds in every Survival world, whatever its generation.
+
+**Nobody who built this could see or hear it.** The look of rain and its sound are untested by eye and ear
+(docs/KNOWN-ISSUES.md); what is tested is everything that can be measured.
+
+### 84.1 The clock and the calendar (`weather.js`)
+
+- `worldSeconds(day, time)` = `(day − 1 + time) × DAY_LENGTH_SECONDS`: 0 at midnight before day 1. main's `weatherNow()`.
+- `YEAR_DAYS` **28**. **The rains** are the first `RAINS_DAYS` **10** days of the year, **the dry season** the other
+  `DRY_DAYS` 18. A new world (day 1) starts on the first day of the rains. `yearDay(day)` = `(day − 1) mod 28`, in
+  days since the rains began; `day` may carry the time of day as its fraction everywhere.
+- `seasonOf(day)` → `{ key: 'rains' | 'dry', name: 'The rains' | 'The dry season' (SEASON_NAMES), dayOfSeason (from 1),
+  days (10 or 18), daysLeft (days − dayOfSeason: 0 on the season's last day), dryness, year (from 1), dayOfYear }`.
+- `drynessAt(yearDay)`: `DRYNESS_RAINS` **0.3** in the rains, `DRYNESS_DRY` **1** in the dry season, moving by a
+  smoothstep over the `SEASON_TURN_DAYS` **2** days around each turn, one before it and one after: it is 0.65 at the
+  midnight that starts day 11 and at the one that starts day 1 (and 29, 57, …). It is smooth only when the day carries
+  its fraction; with a whole day it steps at midnight (1 → 0.65 → 0.3).
+
+### 84.2 Rain (`weather.js`)
+
+`createWeather(seed)` → `{ seed, rainAt(worldSeconds, biome) → 0..1, rainedWithin(worldSeconds, biome, seconds) →
+boolean, nextChange(worldSeconds, biome) → { at, rain } | null, showers(from, to, biome) → Shower[], force(mode),
+forced }`. Every answer depends only on the seed and the arguments (and on `force`): no clock, no `Math.random`.
+
+**The share of the time it rains** (`RAIN_SHARE[biome][season]`, `rainShare(biome, season)`; an unknown biome is PLAINS):
+
+| biome | in the rains | in the dry season |
+|---|---|---|
+| FOREST | 45 % | 5 % |
+| MOUNTAINS | 40 % | 5 % |
+| PLAINS, BEACH, OCEAN | 35 % | 3 % |
+| SNOWY, SNOWY_PEAKS (`fallsAsSnow`: the look only, none of 84.7) | 30 % | 5 % |
+| DESERT | 8 % | 0 % |
+
+The share changes at the midnight between day 10 and day 11 (and at the year's end); only the dryness blends.
+
+**Showers.** Time is cut into slots of `SHOWER_SLOT_S` **240** s (four game hours; `SLOTS_PER_DAY` 6), aligned to
+midnight. Every slot has one possible shower, the same for every biome, from seeded hashes of the slot's number:
+
+- its length: `SHOWER_MIN_S` 60 + (`SHOWER_MAX_S` 240 − 60) · v^skew for a v in 0..1, `SHOWER_SKEW` 1 in the rains
+  (evenly one to four game hours; mean `SHOWER_MEAN_S.rains` 150 s) and 0.25 in the dry season (mostly long; mean 204 s);
+- its start: anywhere that keeps it inside its slot, so no shower crosses a slot's edge, a midnight or a turn of the
+  season;
+- its `peak`: `SHOWER_PEAK_MIN` 0.35 to 1;
+- its **rank**, 0..1. The shower falls on a biome when its rank is below `showerChance(biome, season)` = share ×
+  SHOWER_SLOT_S / SHOWER_MEAN_S[season] (at most 1). So the share of the time it rains is the table's, exactly in the
+  mean; a shower that reaches the desert reaches every land; and the forest, whose chance is the highest in both
+  seasons, has every shower there is.
+
+**The ranks are dealt, not rolled.** A deal is a seeded shuffle of 0..n − 1 over n slots; a slot's rank is (its card +
+a seeded jitter in 0..1) / n. Every `RAINS_DEAL_DAYS` **2** days of the rains are one deal (12 slots; five deals a
+season) and the whole dry season is one deal (108 slots). So a deal holds ⌊chance × n⌋ or ⌈chance × n⌉ showers, never
+fewer and never more:
+
+- in the rains, wherever the chance is 5 in 12 or more (every land but the desert), each two days hold five showers at
+  least, so the rains never go `RAINS_MAX_DRY_DAYS` **3** days without rain (measured: never two on the plains, in the
+  forest or on the mountains; 1.6 days at the worst in snowy land);
+- in the dry season the plains get exactly three or four showers, long ones, and a stretch of six days or more without
+  rain in most dry seasons (measured: 85 % of them). The desert gets none.
+
+**Strength.** While a shower falls on the biome, `rainAt` = peak × smoothstep(min(t − start, end − t) /
+`SHOWER_RAMP_S` **20**) × (`SHOWER_SWELL_MIN` 0.8 + 0.2 × a smooth seeded wave over `SHOWER_SWELL_S` 37 s): it is 0 at
+both ends, comes on and dies away over 20 s each, and never moves by more than 0.08 in a second. Else 0. It rains
+exactly while `rainAt` > 0.
+
+- `rainedWithin(t, biome, seconds)`: some shower on the biome overlaps (t − seconds, t).
+- `nextChange(t, biome)`: `{ at: its start, rain: true }` for the next shower when it is dry, `{ at: its end, rain:
+  false }` while it rains; null when nothing changes within `NEXT_CHANGE_HORIZON_S` (two years).
+- `showers(from, to, biome)`: every shower `{ start, end, peak }` overlapping [from, to), in order.
+- `force('rain' | 'dry' | null)` (debug, not saved): `'rain'` makes `rainAt` 1 for every biome and moment,
+  `rainedWithin` true, `nextChange` null and `showers` empty; `'dry'` makes them 0, false, null, empty; null (or
+  anything else) gives the real weather back. `forced` says which.
+
+**The water system's env.** `weatherEnv(weather, getNow, getDay, biomeAt)` → `{ rain: (q, r) =>
+weather.rainAt(getNow(), biomeAt(q, r)), dryness: () => seasonOf(getDay()).dryness }`. `rain` is what falls on the
+column, snow included; `fallsAsSnow(biome)` tells them apart. main builds one for the live world on request
+(`weatherEnvNow()` = `weatherEnv(theWeather(), weatherNow, () => day + time, (q, r) => world.getBiome(q, r))`) and uses
+it for nothing: it is for the water system's owner. It is the plain weather whatever the mode.
+
+### 84.3 What the rain reaches (`weather.js`)
+
+One rule for the drops and for every effect, so what is seen is what happens:
+
+- `rainExposure(getBlock, q, y, r, top?)`: how much of the rain reaches cell (q, y, r) from above. Looking up its
+  column from y + 1: any solid block that is not leaves, or any liquid, makes it **0** (a roof: planks, stone, **glass
+  too**; a cave; water overhead); else leaves anywhere above make it `LEAF_COVER` **0.35**; else **1**. What is not
+  solid (plants, a torch, a fire) is no cover. *(Not farming's `hasSky`, which asks about light: glass lets light
+  through and stops rain.)*
+- `rainColumn(getBlock, q, r, top?)` → `{ floor, canopy }`, looking down the column: `floor` is the top of the highest
+  solid block that is not leaves (y + 1), or the water's surface (y + 1 − `WATER_SURFACE_DROP` 0.1), or 0; `canopy` is
+  the top of the highest leaves above it, or −1.
+- `rainReaching(weather, now, world, q, y, r)` = `rainAt` at the column's biome × `rainExposure`, and 0 where it falls
+  as snow. `rainedOnCell(weather, now, world, q, y, r, seconds)`: it rained (not snowed) on the column within
+  `seconds`, and the cell's exposure is above 0 as the roofs stand now. `world` is `{ getBlock, getBiome }`.
+
+### 84.4 The HUD line and the log
+
+- `calendarLine(day)` → `Day 12 · The dry season, day 2 of 18`. `weatherWord(intensity, biome)` → `'Rain'`, `'Snow'`
+  where it falls as snow, `''` when nothing falls. `hudLine(day, word)` → the calendar line, plus ` · Rain`.
+- `hud.setCalendar(text | null)`: `#calendar-line` (`.calendar-line`; made in `#hud` when the page has none), words
+  only, top centre of the screen (top 6 px), shown only while the survival HUD is (`setSurvivalVisible`); the DOM is
+  touched only when the text changes. main shows `hudLine(day, word)`, the word from `RAIN_WORD_MIN` 0.03 up.
+- `SEASON_LINES`: `rains` "The rains have come.", `dry` "The dry season has begun.", `ending` "The rains are ending.
+  Water will be scarce." `seasonNews(prevDay, day)` → the lines of a day that moved forward: the new season's line when
+  the season turned (days 11, 29, 39, 57, …), and `ending` on the last day of the rains (days 10, 38, …: one day
+  before the dry season). Nothing for a null `prevDay` (a load), the same day or an earlier one. main says them in
+  Survival, each for `SEASON_LINE_MS` 12 s.
+
+### 84.5 Seeing it (`rainRenderer.js`, `weather.rainSky`, `renderer.setSky`)
+
+**The drops.** `RainField` (no three: typed arrays) and `createRainRenderer(scene, opts?)` → `{ field, mesh,
+update(dt, view), count(), prewarm(webgl, camera), clear(), dispose() }`. `view` = `{ x, y, z (the eye), intensity,
+snow, getBlock, daylight? }`.
+
+- **The budget.** `RAIN_MAX_DROPS` **480** drops and `RAIN_MAX_SPLASHES` **48** splashes, made once and reused; ONE
+  mesh of (480 + 48) quads in one geometry with one unlit, fogged, transparent `MeshBasicMaterial` (vertex colours
+  with alpha, no depth write, render order 3): one draw call whatever the weather, hidden while nothing falls. An
+  update bears at most `RAIN_BIRTHS` 48 drops and looks at `RAIN_COLUMN_SCANS` **8** columns at the most (a
+  `rainColumn` each, kept `RAIN_COLUMN_TTL_S` 2 s, `RAIN_COLUMNS_KEPT` 1024 at the most). Measured on the offline
+  test: 0.025 ms and 160–240 block reads a frame in the heaviest rain.
+- **Where.** A drop is born at the top of a cylinder round the eye (`RAIN_RADIUS` 10 m, `RAIN_TOP` 9 m above it), in a
+  column whose `rainColumn` is known, falls **straight down** (`RAIN_SPEED` 13–17 m/s) and dies at the column's
+  `floor`. So no drop is ever under a roof. Under leaves `LEAF_COVER` of the drops go on to the floor; the rest stop on
+  the canopy. A column whose floor is above the cylinder bears no drops. A drop that falls `RAIN_BELOW` 14 m under the
+  eye, or is left behind, is dropped.
+- **How many.** The pool × intensity^`RAIN_DENSITY_POWER` 0.7 (a shower at the lightest peak, 0.35, already shows
+  half the pool). The number rises by at most RAIN_BIRTHS a frame, and when the rain stops the drops in the air finish
+  their fall.
+- **The look.** A raindrop is a streak: an upright quad `RAIN_WIDTH` 0.028 m wide and `RAIN_LENGTH` 0.45–0.8 m long,
+  turned toward the eye, opaque at its head and clear at its tail, `RAIN_COLOR` at `RAIN_ALPHA` 0.55. Near the eye it
+  is narrower and fainter: never wider than `RAIN_NEAR_ANGLE` 0.005 × its distance (a flake than `SNOW_NEAR_ANGLE`
+  0.02 ×), and within `RAIN_NEAR_M` 3 m fading toward `RAIN_NEAR_ALPHA` 0.3 of its opacity. One landing in
+  `SPLASH_EVERY` 3 within `SPLASH_RANGE` 7 m makes a splash: a square lying on what the drop hit, growing 0.08 → 0.3 m
+  and fading over `SPLASH_S` 0.22 s. **Snow** (`view.snow`): flakes, squares of `SNOW_SIZE` 0.05–0.09 m falling at
+  `SNOW_SPEED` 1.1–1.9 m/s with a sway of `SNOW_SWAY` 0.1 m, `SNOW_DENSITY` 0.75 of the pool at the most, white at
+  0.9, no splashes. By night everything keeps `RAIN_NIGHT_LIGHT` 0.3 of its brightness (it is unlit: it must not glow).
+- With `dt` 0 (a menu) nothing moves and the world is not read.
+
+**The sky.** `rainSky(sky, overcast, out)` fills `out` and never touches `sky`: the zenith, the horizon and the fog go
+`OVERCAST_GREY` 0.85 × overcast of the way to a blue-grey of `OVERCAST_DARKEN` 0.72 of their own luminance; the sun's
+(or moon's) light loses `OVERCAST_SUN_LOSS` 0.55 × overcast, the sky's `OVERCAST_SKY_LOSS` 0.2 × overcast; the stars
+fade out; `daylight`, `isDay` and the sun's direction are kept; `out.overcast` is set. `SkyState.overcast` (optional)
+is read by `renderer.setSky`: the dome's sun glow × (1 − overcast), the sun and moon sprites tinted toward the mean
+of the zenith and the horizon by it, and hidden from `renderer.OVERCAST_HIDES_SUN` 0.75 up (their material is
+alpha-tested, not blended, so they cannot fade). Without the field the renderer is as it was. `approach(level, target, dt, tau)`
+moves a level toward its target.
+
+main keeps two smoothed levels of what falls on the player's biome: `shown` (τ `RAIN_SHOWN_TAU_S` 2.5 s) for the drops
+and `overcast` (τ `OVERCAST_TAU_S` 6 s) for the sky, and hands `renderer.setSky` the greyed copy; `sky` itself stays as
+`computeSky` made it, so the zombies, the animals and the birds keep the real daylight.
+
+### 84.6 Hearing it (`soundBank.js`, `worldSounds.js`, `soundTest.js`; amends §82)
+
+- **The bank.** `AMBIENCE_LOOPS` is `['ambWind', 'ambStream', 'ambFire', 'ambRain']`. `ambRain`: three bands of noise
+  (a hiss above 1.8 kHz, a body round 1.3 kHz, a wash below 420 Hz), each swelling at its own slow rate; at full level
+  as loud as the stream (−39 dB), centroid near 3.9 kHz, almost nothing under 150 Hz. One-shots, both with `spare`
+  AMBIENT_SPARE: `rainPatter` (three to six dull ticks near 2.6 kHz in a third of a second; one voice) and
+  `thunderRoll` (two layers of low noise that come in over 0.3–0.5 s, waver and die away over three seconds; its peak
+  comes after 0.3 s and it is quieter than every animal's voice).
+- **`AmbienceSample.rain`** (0..1: how hard it rains where the player is; main gives 0 where it falls as snow).
+  `ambienceTargets` returns `rain` too: √rain × (1 under the open sky, `RAIN_UNDER_ROOF` 0.4 under cover,
+  `RAIN_UNDERGROUND` 0.05 underground), × UNDERWATER_AMBIENCE with the head under water. **Birds fall silent in the
+  rain**, and the crickets: both × (1 − smoothstep(0, `RAIN_HUSH` 0.25, rain)).
+- **`Ambience`.** A fourth loop, `ambRain`, at `level.rain` (τ `AMBIENCE_TAU.rain` 1.5 s), its rate sliding from 1
+  under the open sky to `RAIN_ROOF_RATE` 0.7 under cover (every band lower: a duller sound). Among trees (and not
+  underground) `rainPatter` plays about `RAIN_PATTER_PER_S` 4 × level × trees times a second at half to all of the
+  level. While `sample.rain` ≥ `THUNDER_FROM` 0.75 (not underground, not under water): a first `thunderRoll` after
+  `THUNDER_FIRST_S` 6–30 s, then one every `THUNDER_EVERY_S` 35–90 s, at `THUNDER_VOLUME` 0.5–1 of the level. The
+  budget stands: never more than AMBIENCE_MAX_VOICES (5), the four loops counted. Without rain no roll is drawn for
+  it, so a dry day sounds exactly as before.
+- **The Sound Test.** A seventh scene, `rain` "Rain" (a heavy shower at the edge of the woods), and two buttons under
+  Small sounds: "Rain on leaves" and "Far thunder".
+
+### 84.7 What rain does
+
+Everything here uses `rainReaching` / `rainedOnCell` (84.3): under a roof nothing happens, under leaves 35 % of it,
+and where it falls as snow nothing.
+
+- **It waters the crops** (`farming.js`). `RAIN_WATERS_S` **1440** (one game day). `cropState(getBlock, waterQuality,
+  q, y, r, crop, rained?)` and `Growth.step(dt, random, isLoadedCell, getBlock, waterQuality?, rained?)` take
+  `rained(q, y, r) → boolean` (main: `rainedOnCell(…, RAIN_WATERS_S)`); farming.js does not import weather.js. With no
+  fresh water in reach a cell that `rained` accepts is `watered`, and its state has `rain: true` (the key is absent
+  otherwise; the rain is not asked when water is in reach, nor before the roll could matter). `farmHint`: `… ·
+  watered by rain` for such a cell. Rain is not water for a reed to stand in. `farmSecondOn`'s `f.rained` is handed on.
+- **It puts out open fires** (`campfires.js`). `RAIN_DOUSE_MEAN_S` **30**. `rainDouseChance(dt, rain)` = 1 −
+  e^(−dt · min(1, rain) / 30): a fire in steady rain lasts 30 s ÷ (strength × exposure) on average, whatever the step.
+  `Campfires.rainStep(dt, random, rainOn)` → the tracked fires to put out: one `random()` each, in tracking order;
+  `rainOn(fire)` is asked only when the roll is below the chance at full rain. `main.rainSecondOn(dt, random, { world,
+  campfires, isLoadedCell, rainOn, sound?, particles?, say?, x, y, z })` → the number put out: each fire that is still
+  a CAMPFIRE becomes a **FIRE_PIT** by a plain write (as a fire that burnt out: what was on its skewers stays, its
+  fuel entry goes, it must be lit again), with `sound('hiss', centre, y + 0.5, 1)` and 12 `'steam'` particles at
+  y + 0.6 (`{ spread: 0.3, speed: 1.2 }`), exactly a fire that water reached (§35); `say(RAIN_DOUSE_LINE)` ("The rain
+  put the campfire out.") once when one of them was within `RAIN_DOUSE_NOTICE_M` 24 m of the player. A fire in an
+  unloaded chunk is left alone. Only the tracked fires are looked at (the CAMPFIRE_MAX_TRACKED nearest). A lit fire's
+  target hint ends ` · the rain will put it out` (`RAIN_DOUSE_HINT`) while rain reaches it.
+- **It makes you wet and cold** (`climate.js`, `survival.js`). The wet of §45 (0..1, the `Wet` label above 0.2, saved
+  and validated with the vitals as before) has a second source. `RAIN_WET_S` **20**; `wetRate(rain, heat, openSky,
+  time)`: with no rain reaching the player, −`dryingRate` (unchanged: 1 / `WET_DRY_S` **90** a second under a roof or
+  by night, twice that in the sun, × (1 + heat / 5) beside a heat source); while rain reaches them, +rain / 20 −
+  (heat / 5) / 90 (neither the air nor the sun dries anything in the rain; a fire's heat still does).
+  `SurvivalEnv.rain` (0..1, default 0) is the rain reaching the player's head; `step` adds `wetRate × dt`, clamped to
+  0..1; swimming still sets 1. Wet skin feels `WET_CHILL` **6** °C colder (`WET_CHILL_C` is the same number) and wet
+  clothes keep half their warmth, as before.
+- Animals, zombies and pigs: nothing changes.
+
+### 84.8 main.js and the debug handle
+
+One section owns `weather` (made from `world.seed` the first time it is asked for in a world: `theWeather()`),
+`rainRenderer`, `weatherFx` and these functions; the rest of main reaches them from seven lines.
+
+- `weatherNow()` = `worldSeconds(day, time)`. `weatherOn()` = in Survival, or the weather is forced.
+- `stepWeather(dt, live, eyeY)` (renderFrame, after `computeSky`, before `stepWorldSounds`) → the SkyState for
+  `renderer.setSky`: says `seasonNews` when the day moved on (Survival); every `WEATHER_SAMPLE_S` 0.5 s takes the
+  player's biome and the `rainExposure` over their head; sets `weatherFx.falling` (`rainAt` there, 0 while the weather
+  is off) and `weatherFx.onPlayer` (falling × cover, 0 in snow); smooths `shown` and `overcast`; sets
+  `ambienceSample.rain` (0 in snow); updates the rain renderer (`dt` 0 unless the world stepped); sets the HUD line.
+- `stepSurvival`: `env.rain = weatherFx.onPlayer`; once a second, after `farmSecond`, `rainSecond(1, Math.random)`
+  (`rainSecondOn` with `rainOnCell` and `playPhysicsSound`; RAIN_DOUSE_LINE at most once per 5 s).
+- `farmSecond` passes `rained: rainedOn`; `cropHintText` passes `rainedOn` to `cropState`; `survivalHintText` wraps
+  the campfire's hint in `rainFireHint` (looked up at most every 0.5 s per fire).
+- **Debug handle** (`window.__caelancraft`, GameContext): `weather` (the object; null without a world), `season()`
+  (`seasonOf(day + time)`), `weatherEnv()` (`weatherEnvNow()`; null without a world), `setWeather('rain' | 'dry' | null)` → what is forced (`weather.force`: the look, the
+  sound and every effect follow, and so does an `env` built from the same object), `setDay(n)` → the day (a whole
+  number from 1; the season, the HUD line and the log follow).
+- **F3** (`diagnostics.weatherDebugLine(game)`, after the Survival line): `Season: The rains, day 3 of 10 · dryness
+  0.30 · rain 0.62`, with ` (forced rain)` while the weather is forced; `game.rainNow()` is `weatherFx.falling`.
+
+### 84.9 The guide, the totals and the tests
+
+- **The guide**: a twelfth chapter, `seasons` "Seasons and rain" (tab "Seasons", glyph `rain`), after `water`: "The
+  year", the table `rain` (source `'weather'`, `handbook.RAIN_LANDS`), "What rain does", "Living with the seasons".
+  The `status` table's Wet row reads "out of the water, or rained on", and "Your first night" (first-day) gains a tip:
+  a new world begins in the rains, so roof the campfire (measured over 2,000 seeds: it rains during the first night on
+  the plains in 91 % of worlds, and an open fire lit at sunset is out by morning in 77 %). The water pages are not
+  touched.
+- **Totals**: blocks, tiles, items and recipes unchanged. Four ambience loops (three before), 12 guide chapters (11),
+  7 Sound Test scenes (6), two more bank one-shots.
+- **Imports** (leaf-ward, still acyclic): `weather → config, blocks, noise`; `rainRenderer → three, config, hex,
+  weather`; `handbook → … + weather, campfires`; `main → … + weather, rainRenderer`. farming, campfires, climate,
+  survival and worldSounds import nothing new.
+- **Tests**: weather.test.js (the calendar, the words, the shares by simulation over 8 seeds × 30 years, determinism,
+  the ramps, rainedWithin, nextChange, forcing, the env, exposure, the sky), rainRenderer.test.js (the budget, no drop
+  under a roof, the share under leaves, the quads, the cost), rainEffects.test.js (crops, fires, wet, the HUD line,
+  main's wiring read from the source, the debug handle), and additions to soundBank, worldSounds, soundTest and
+  handbook tests.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
