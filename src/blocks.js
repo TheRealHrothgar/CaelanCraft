@@ -60,8 +60,13 @@ export const BLOCK = Object.freeze({
   PLANTED_CRAB_APPLE: 138, PLANTED_HEALWORT: 139, PLANTED_PRICKLY_PEAR: 140, PLANTED_CATTAILS: 141,
   CARROT_SPROUT: 142, ONION_SPROUT: 143, TUBER_SPROUT: 144, HONEYBERRY_SPROUT: 145, HAZEL_SPROUT: 146,
   CRAB_APPLE_SPROUT: 147, HEALWORT_SPROUT: 148, PRICKLY_PEAR_SPROUT: 149, CATTAILS_SPROUT: 150,
+  // §81: plants that are not food. Greenery (a fern, daisies, a thistle), the two look-alikes that poison (the Hemlock
+  // beside the Wild Carrot, the Nightshade beside the Honeyberry, with its picked variant) and two plants worth having
+  // (Flax for fibre, Aloe for its leaf). Only generation-4 worlds generate them.
+  FERN: 151, MEADOW_DAISIES: 152, THISTLE: 153, HEMLOCK: 154, NIGHTSHADE_BUSH: 155, NIGHTSHADE_BUSH_BARE: 156,
+  FLAX: 157, ALOE: 158,
 });
-export const BLOCK_COUNT = 151;
+export const BLOCK_COUNT = 159;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -112,9 +117,12 @@ export const TILE = Object.freeze({
   // §80 farming: a mound of tilled earth with a marker twig, and the same mound with a two-leaf seedling. Every
   // planted block shares the first and every sprout the second (207 is unused).
   SEEDBED: 205, SPROUT: 206,
-  // v0.14 (§76 flora): the new wild plants, one sprite each (218–227 of the flora range are unused)
+  // v0.14 (§76 flora): the new wild plants, one sprite each
   HONEYCAP_MUSHROOM: 208, FRECKLECAP_MUSHROOM: 209, ONION_PLANT: 210, CARROT_PLANT: 211, HAZEL_THICKET: 212,
   HAZEL_THICKET_BARE: 213, CRAB_APPLE_BUSH: 214, CRAB_APPLE_BUSH_BARE: 215, HEALWORT_PLANT: 216, HEALWORT_PLANT_BARE: 217,
+  // §81: the plants that are not food, one sprite each (the picked Nightshade shows the picked Honeyberry's; 225–227 of
+  // the flora range are unused)
+  FERN: 218, MEADOW_DAISIES: 219, THISTLE: 220, HEMLOCK: 221, NIGHTSHADE_BUSH: 222, FLAX: 223, ALOE: 224,
   // v0.14 (§76 fauna): the ground nest's pictures (its icon, and what its crumbs are coloured from) and the skins its 3D
   // pieces are cut from (woven dry grass, a speckled eggshell)
   GROUND_NEST: 228, GROUND_NEST_EMPTY: 229, LITTER_NEST: 230, LITTER_EGG: 231,
@@ -436,6 +444,17 @@ export const BLOCKS = [
   ...CROP_ROWS.map(([key, name, label]) => def({
     id: B[`${key}_SPROUT`], name: `${name}_sprout`, displayName: `${label} Sprout`, tiles: tiles(T.SPROUT), ...SPRITE, soundGroup: 'grass', placeable: false,
   })),
+  // ---- §81: plants that are not food, all small 3D models (SPRITE). The Hemlock is the Wild Carrot's look-alike and the
+  // Nightshade the Honeyberry's: both poison, and no name says so (their flowers, stems and berries do). A picked
+  // Nightshade is its *_BARE variant, drawn as the picked Honeyberry: it regrows and is never placed by hand.
+  def({ id: B.FERN, name: 'fern', displayName: 'Fern', tiles: tiles(T.FERN), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.MEADOW_DAISIES, name: 'meadow_daisies', displayName: 'Meadow Daisies', tiles: tiles(T.MEADOW_DAISIES), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.THISTLE, name: 'thistle', displayName: 'Thistle', tiles: tiles(T.THISTLE), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.HEMLOCK, name: 'hemlock', displayName: 'Hemlock', tiles: tiles(T.HEMLOCK), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.NIGHTSHADE_BUSH, name: 'nightshade_bush', displayName: 'Nightshade Bush', tiles: tiles(T.NIGHTSHADE_BUSH), ...SPRITE }),
+  def({ id: B.NIGHTSHADE_BUSH_BARE, name: 'nightshade_bush_bare', displayName: 'Picked Nightshade Bush', tiles: tiles(T.HONEYBERRY_BUSH_BARE), ...SPRITE, placeable: false }),
+  def({ id: B.FLAX, name: 'flax', displayName: 'Flax', tiles: tiles(T.FLAX), ...SPRITE, soundGroup: 'grass' }),
+  def({ id: B.ALOE, name: 'aloe', displayName: 'Aloe', tiles: tiles(T.ALOE), ...SPRITE, soundGroup: 'grass' }),
 ];
 
 /**
@@ -451,7 +470,7 @@ export const DEFAULT_HOTBAR = Object.freeze([
 ]);
 
 /**
- * Order of the 99 placeable blocks, grouped by family; RUNE_BLOCK and WATER stay last. It is the flat list of every placeable
+ * Order of the 115 placeable blocks, grouped by family; RUNE_BLOCK and WATER stay last. It is the flat list of every placeable
  * block (survival's ITEM_KEYS and the `blocks` command use it); the picker's sections come from pickerModel.js. The Black
  * Hole is not placeable (DESIGN-circuits §1.5); the Powder Keg follows the campfire, then the 20 circuit blocks in §1.2 order.
  */
@@ -464,6 +483,8 @@ export const PICKER_ORDER = Object.freeze([
   B.HAY_BALE, B.PUMPKIN, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.HONEYBERRY_BUSH, B.PRICKLY_PEAR,
   // v0.14 (§76 flora): the seven new wild plants, after the old five
   B.ONION_PLANT, B.CARROT_PLANT, B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT,
+  // §81: the seven plants that are not food, after them
+  B.FERN, B.MEADOW_DAISIES, B.THISTLE, B.HEMLOCK, B.NIGHTSHADE_BUSH, B.FLAX, B.ALOE,
   // wood
   B.OAK_LOG, B.OAK_PLANKS, B.OAK_LEAVES, B.SPRUCE_LOG, B.SPRUCE_PLANKS, B.SPRUCE_LEAVES, B.BIRCH_LOG, B.BIRCH_PLANKS,
   B.BIRCH_LEAVES, B.BOOKSHELF, B.GLASS, B.GLOWSTONE,
@@ -484,13 +505,14 @@ export const PICKER_ORDER = Object.freeze([
 ]);
 
 /**
- * The 17 wild-plant ids (§8.1 "PLANT"), ripe and picked, in id order: HONEYBERRY_BUSH … PRICKLY_PEAR_BARE (78–84) and,
- * since v0.14 (§76 flora), HONEYCAP_MUSHROOM … HEALWORT_PLANT_BARE (122–131).
+ * The 25 wild-plant ids (§8.1 "PLANT"), ripe and picked, in id order: HONEYBERRY_BUSH … PRICKLY_PEAR_BARE (78–84),
+ * since v0.14 (§76 flora) HONEYCAP_MUSHROOM … HEALWORT_PLANT_BARE (122–131) and, since §81, FERN … ALOE (151–158).
  */
 export const PLANT_IDS = Object.freeze([
   B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE,
   B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.HAZEL_THICKET_BARE,
   B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE,
+  B.FERN, B.MEADOW_DAISIES, B.THISTLE, B.HEMLOCK, B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE, B.FLAX, B.ALOE,
 ]);
 
 /**
@@ -500,8 +522,9 @@ export const PLANT_IDS = Object.freeze([
 export const FARM_IDS = Object.freeze(Array.from({ length: 2 * CROP_ROWS.length }, (_, i) => B.PLANTED_CARROT + i));
 
 /**
- * The 39 pop-off ids (§8.5), in id order: CAMPFIRE, the plants, the two kinds of litter, FIRE_PIT and, since §80, the 18
- * farm blocks. A pop-off block breaks (is written AIR and drops nothing) when the cell below it becomes fall-through.
+ * The 47 pop-off ids (§8.5), in id order: CAMPFIRE, the plants, the two kinds of litter, FIRE_PIT and, since §80, the 18
+ * farm blocks (the eight plants of §81 come after them). A pop-off block breaks (is written AIR and drops nothing) when
+ * the cell below it becomes fall-through.
  */
 export const POP_OFF_IDS = Object.freeze(
   [B.CAMPFIRE, ...PLANT_IDS, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT, ...FARM_IDS].sort((a, b) => a - b),
@@ -573,9 +596,10 @@ export function isLeaves(id) {
 export function isLog(id) {
   return id === B.OAK_LOG || id === B.SPRUCE_LOG || id === B.BIRCH_LOG;
 }
-/** One of the wild plants, ripe or picked (`PLANT_IDS`: 78–84 and, since v0.14, 122–131). */
+/** One of the wild plants, ripe or picked (`PLANT_IDS`: 78–84, since v0.14 122–131 and, since §81, 151–158). */
 export function isPlant(id) {
-  return (id >= B.HONEYBERRY_BUSH && id <= B.PRICKLY_PEAR_BARE) || (id >= B.HONEYCAP_MUSHROOM && id <= B.HEALWORT_PLANT_BARE);
+  return (id >= B.HONEYBERRY_BUSH && id <= B.PRICKLY_PEAR_BARE) || (id >= B.HONEYCAP_MUSHROOM && id <= B.HEALWORT_PLANT_BARE)
+    || (id >= B.FERN && id <= B.ALOE);
 }
 /** Ground litter: LOOSE_STONES or FALLEN_BRANCHES. */
 export function isLitter(id) {

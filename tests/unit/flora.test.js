@@ -74,8 +74,8 @@ const mask = (px) => pixels(px).map((p) => p[3] === 255);
 
 describe('the plant blocks 122–131 (blocks.js)', () => {
   it('ids, names, flags and tiles: 3D models (§78) with the PLANT flags, flat icons, ids 122–131', () => {
-    expect(BLOCK_COUNT).toBe(151); // §80: the 18 farm blocks follow at 133–150
-    expect(BLOCKS).toHaveLength(151);
+    expect(BLOCK_COUNT).toBe(159); // §80: the 18 farm blocks follow at 133–150; §81: the plants that are not food at 151–158
+    expect(BLOCKS).toHaveLength(159);
     for (const [key, id, name, displayName, sound, tile, placeable] of PLANTS) {
       expect(B[key], key).toBe(id);
       const d = BLOCKS[id];
@@ -94,8 +94,8 @@ describe('the plant blocks 122–131 (blocks.js)', () => {
       expect(popOffEffect(id), key).toMatchObject({ kind: 'leaves', count: 6, sound: 'break:leaves' });
       expect(popOffEffect(id).color, key).toHaveLength(3);
     }
-    expect(PLANT_IDS.slice(7)).toEqual(PLANT_BLOCK_IDS);
-    expect(POP_OFF_IDS.slice(-28, -18)).toEqual(PLANT_BLOCK_IDS); // the last 18 are the farm blocks (§80)
+    expect(PLANT_IDS.slice(7, 17)).toEqual(PLANT_BLOCK_IDS); // the eight of §81 follow (plantsNotFood.test.js)
+    expect(POP_OFF_IDS.slice(-36, -26)).toEqual(PLANT_BLOCK_IDS); // then the 18 farm blocks (§80) and the eight plants of §81
   });
 
 
@@ -103,6 +103,14 @@ describe('the plant blocks 122–131 (blocks.js)', () => {
     const words = /poison|toxic|deadly|venom|bad|fool|false|death|sick/i;
     for (const d of BLOCKS.slice(122)) expect(`${d.name} ${d.displayName}`).not.toMatch(words);
     for (const k of FOODS) expect(`${k} ${ITEMS[k].name}`).not.toMatch(words);
+    // §81: nor do the Hemlock, the Nightshade, what they give, or any other plant that is not food
+    expect(BLOCKS.slice(122).map((d) => d.name)).toEqual(expect.arrayContaining(['fern', 'meadow_daisies', 'thistle', 'hemlock',
+      'nightshade_bush', 'nightshade_bush_bare', 'flax', 'aloe']));
+    for (const k of ['hemlock_root', 'nightshade_berries', 'aloe_leaf', 'hemlock', 'nightshade_bush', 'fern', 'meadow_daisies', 'thistle', 'flax', 'aloe']) {
+      expect(`${k} ${ITEMS[k].name}`, k).not.toMatch(words);
+    }
+    // … and no food at all is named for what it does to you
+    for (const k of ITEM_KEYS.filter((key) => ITEMS[key].kind === 'food')) expect(`${k} ${ITEMS[k].name}`, k).not.toMatch(words);
     // … and the two mushrooms are named alike: one word and "Mushroom"
     expect(BLOCKS[B.HONEYCAP_MUSHROOM].displayName).toMatch(/^\w+cap Mushroom$/);
     expect(BLOCKS[B.FRECKLECAP_MUSHROOM].displayName).toMatch(/^\w+cap Mushroom$/);
@@ -112,8 +120,10 @@ describe('the plant blocks 122–131 (blocks.js)', () => {
     const model = buildPickerModel();
     const wild = /** @type {*} */ (model.families.get('wild-plants')).ids.map((id) => BLOCKS[id].name);
     expect(wild.slice(0, 5)).toEqual(['tussock', 'cattails', 'tuber_plant', 'honeyberry_bush', 'prickly_pear']);
-    expect(wild.slice(5)).toEqual(['onion_plant', 'carrot_plant', 'honeycap_mushroom', 'frecklecap_mushroom', 'hazel_thicket', 'crab_apple_bush', 'healwort_plant']);
-    expect(wild.map((n) => B[n.toUpperCase()])).toEqual(PICKER_ORDER.slice(PICKER_ORDER.indexOf(B.TUSSOCK), PICKER_ORDER.indexOf(B.TUSSOCK) + 12));
+    expect(wild.slice(5, 12)).toEqual(['onion_plant', 'carrot_plant', 'honeycap_mushroom', 'frecklecap_mushroom', 'hazel_thicket', 'crab_apple_bush', 'healwort_plant']);
+    // §81: the seven placeable plants that are not food follow them
+    expect(wild.slice(12)).toEqual(['fern', 'meadow_daisies', 'thistle', 'hemlock', 'nightshade_bush', 'flax', 'aloe']);
+    expect(wild.map((n) => B[n.toUpperCase()])).toEqual(PICKER_ORDER.slice(PICKER_ORDER.indexOf(B.TUSSOCK), PICKER_ORDER.indexOf(B.TUSSOCK) + 19));
   });
 });
 
@@ -232,8 +242,11 @@ describe('the plant sprites 208–217 (tiles.js)', () => {
   });
 
   it('no two plants of the game can be mistaken at a glance: every pair of sprites differs in at least 60 pixels, but the look-alikes', () => {
+    // §81: the fern, the daisies, the thistle, the flax and the aloe join the list (the Hemlock and the Nightshade are
+    // look-alikes: plantsNotFood.test.js measures how they differ from their twins)
     const all = [T.HONEYBERRY_BUSH, T.TUSSOCK, T.CATTAILS_SIDE, T.TUBER_PLANT, T.PRICKLY_PEAR,
-      T.HONEYCAP_MUSHROOM, T.ONION_PLANT, T.CARROT_PLANT, T.HAZEL_THICKET, T.CRAB_APPLE_BUSH, T.HEALWORT_PLANT];
+      T.HONEYCAP_MUSHROOM, T.ONION_PLANT, T.CARROT_PLANT, T.HAZEL_THICKET, T.CRAB_APPLE_BUSH, T.HEALWORT_PLANT,
+      T.FERN, T.MEADOW_DAISIES, T.THISTLE, T.FLAX, T.ALOE];
     for (let i = 0; i < all.length; i++) {
       for (let j = i + 1; j < all.length; j++) {
         const a = pixels(paintTile(all[i]));
@@ -417,7 +430,8 @@ describe('gathering (harvest.js)', () => {
     expect(ripeOf(B.HAZEL_THICKET_BARE)).toBe(B.HAZEL_THICKET);
     expect(ripeOf(B.CRAB_APPLE_BUSH_BARE)).toBe(B.CRAB_APPLE_BUSH);
     expect(ripeOf(B.HEALWORT_PLANT_BARE)).toBe(B.HEALWORT_PLANT);
-    expect(Object.keys(RIPE_OF).map(Number)).toEqual([B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR_BARE, B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT_BARE]);
+    expect(Object.keys(RIPE_OF).map(Number)).toEqual([B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR_BARE, B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT_BARE,
+      B.NIGHTSHADE_BUSH_BARE]); // §81: the picked Nightshade regrows like the Honeyberry
     for (const [ripe, bare] of Object.entries(RIPE_OF).map(([b, r]) => [r, Number(b)])) expect(PICKABLE[ripe].to).toBe(bare);
 
     const g = new Regrowth();

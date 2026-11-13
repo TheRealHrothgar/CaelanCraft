@@ -300,3 +300,57 @@ From the build of CONTRACTS §80, which was unit-tested only: no browser, no bui
 - **`setblock … carrot` is now ambiguous** (carrot_plant, carrot_sprout), as `onion` and `tuber` are: type the full
   name.
 - **The sprout BLOCK keys are `CARROT_SPROUT` …**, not `SPROUT_CARROT`: a key must be its block's name in capitals.
+
+
+## Plants that are not food — open items
+
+From the build of CONTRACTS §81 (ferns, daisies, thistles; Hemlock and Nightshade; flax and aloe), which was unit-tested
+only: no browser, no build. None blocks play.
+
+**Not checked in the running game**
+
+- **The look, above all.** The seven pictures were judged as enlarged pixels on flat green and sand, and the eight
+  models in an off-line software render of their quads (plain lighting, no world round them). Nobody has seen them in
+  the real renderer: in a meadow, under trees, at dusk, from eye height and from far off, in the Pack or in the hand.
+  The least certain: the **fern** (two tiers of arching fronds on one upright frond can read as a small conifer in the
+  picture; its model is a fountain of fronds and reads better), the **thistle's leaves** (thick slabs with pale ends),
+  and the **aloe** (blocky leaves that can read as a crystal).
+- **Whether the tells can be seen at play distance.** The white flower plates of the Hemlock are large and lie on top,
+  so they should show from far; its pale crown and purple-blotched stalk are small. The Nightshade's black berries stand
+  on a dark bush: they show by their pale glints and by the purple flowers, which may be too little in poor light.
+- **The hints** (`Hemlock · R: pick`, `Nightshade Bush · R: pick`) and the chat line when one is eaten, as the HUD
+  shows them; the Aloe Leaf put on with the use button (it goes the bandage's way in main.js, which no test drives).
+- **The two Guide pages** in both readers at real window sizes (their word counts are inside the tested page budget).
+
+**Balance: numbers chosen, not play-tested**
+
+- **How much greenery.** Ferns stand on about 5 % of forest columns and daisies on 4 % of plains columns, with a thistle
+  on 1 %. Together with the tussock that is one plains column in nine with something growing on it. Whether that is
+  "full of plants" or cluttered, and what it costs to walk through and to mesh, is unmeasured in the game. (The
+  chunk-mesh timing test still passes; a daisy clump is 30 quads, a fern 29 and a thistle 78, against the tussock's 9.)
+- **How often the look-alike.** About half of what looks like a wild carrot is Hemlock (measured 41–51 % by seed); in
+  the forest about four bushes in ten are Nightshade, elsewhere about one in six. A patch is never all look-alike.
+- **Flax and aloe are rarer than the plants they were sized against, counted as plants.** Their PATCHES are as common
+  as asked (flax: as many as the wild onion had in generation 3; aloe: half as many as the prickly pear), but the
+  patches are small, so there is one flax plant in about 2 600 plains columns (the onion: one in 800) and one aloe in
+  about 900 desert columns (the prickly pear: one in 220). One number each in `PLANT_PATCHES_GEN4` changes it.
+- **The Aloe Leaf** heals 6 HP in 4 s after 1 s of use; a plant gives 1–2 leaves and is gone. Whether that is worth a
+  walk into the desert is untested. It spreads (four within six cells), and a shovel moves it.
+- **Fibre is not scarce on the plains**, where tussock grows on 6 % of the columns: flax (3–4 fibre a plant) is a quick
+  bundle, not a need.
+
+**Known limits**
+
+- **Only the newest worlds (generation 4) grow them.** In an older world they appear only as plants from nothing, where
+  the spreading rule picks one (a Hemlock, a Nightshade or a flax on grass, an aloe on sand): rarely.
+- **A Hemlock Root and Nightshade Berries cannot be put on a skewer.** With one in hand, R on a campfire takes what is
+  done instead. That the fire refuses it is itself a hint that it is not food.
+- **Once picked, the item's name tells which plant it was** ("Hemlock Root"), as "Frecklecap" does. What has to be
+  learned is that the name means poison; the Guide says so and the plant's look shows it.
+- **A picked Nightshade and a picked Honeyberry look the same** (one picture, one model). The hint names them.
+- **A carrot gives seed, a Hemlock none**; a shovel digs more carrots but lifts a Hemlock whole. A careful player can
+  tell them by that as well.
+- **The thistle grows on bare mountain stone** (the surface block of that biome), not only on grass.
+- **`setblock … nightshade` is ambiguous** (nightshade_bush, nightshade_bush_bare): type the full name.
+- **None of the eight can be planted** from an item; a shovel moves a whole plant, and four of them spread by
+  themselves. The fern, the daisies and the thistle neither spread nor regrow: dug up, they are gone from that spot.

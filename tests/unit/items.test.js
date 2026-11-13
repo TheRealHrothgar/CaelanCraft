@@ -114,6 +114,9 @@ const FOODS = {
   baked_crab_apple: ['Baked Crab Apple', 16, 5, 2, 0, 1.0, {}],
   healwort: ['Healwort', 16, 0, -2, 0, 1.2, { cures: true }],
   pot_healwort_tea: ['Pot of Healwort Tea', 1, 0, 30, 0, 1.0, { returns: 'clay_pot', cures: true }],
+  // §81: what the two look-alikes give — the Wild Carrot's and the Honeyberries' numbers, but they always poison
+  hemlock_root: ['Hemlock Root', 16, 3, 1, 1, 1.0, {}],
+  nightshade_berries: ['Nightshade Berries', 32, 4, 2, 1, 0.8, { spoilS: 1800 }],
   // v0.14 (§76 fauna): game
   raw_venison: ['Raw Venison', 16, 6, 0, 0.3, 1.4, { spoilS: 1200 }],
   roast_venison: ['Roast Venison', 16, 32, -2, 0, 1.6, { spoilS: 2400 }],
@@ -134,6 +137,7 @@ const FOODS = {
 const HEALS = {
   fibre_bandage: ['Fibre Bandage', 8, 15, 1.5, 1.5],
   rag_bandage: ['Rag Bandage', 8, 25, 2.5, 1.5],
+  aloe_leaf: ['Aloe Leaf', 16, 6, 1.5, 1.0], // §81: a small, quick heal that needs no making
 };
 
 /** §5.1 clothes: key → [display name, slot, insulation, sunShade]. */
@@ -226,8 +230,9 @@ describe('items — the registry', () => {
     // v0.14 (§76): + 14 foods and the 7 placeable plants (flora), + the Pot of Tainted Water (water), + feather, fletched dart and
     // twelve game foods (fauna)
     // §80: + the three seeds (materials). The 18 farm blocks are not placeable, so they are no items.
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 52, 2, 5, 107]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(251); // + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds
+    // §81: + Hemlock Root and Nightshade Berries (foods), the Aloe Leaf (a heal) and the seven placeable plants.
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 54, 3, 5, 114]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(261); // + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -324,6 +329,7 @@ describe('items — the registry', () => {
     }
     expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton',
       'pot_water', 'honeycap', 'frecklecap', 'crab_apple', // v0.14 (§76): the Pot of Water turns tainted (water); raw mushrooms and crab apples go bad (flora)
+      'nightshade_berries', // §81: they go bad as the honeyberries they resemble do
       // v0.14 (§76 fauna): game and eggs go bad too
       'raw_venison', 'roast_venison', 'raw_rabbit', 'roast_rabbit', 'raw_fowl', 'roast_fowl', 'raw_fish', 'roast_fish', 'raw_bear', 'roast_bear',
       'raw_egg', 'roast_egg']);
@@ -372,6 +378,7 @@ describe('items — block items', () => {
       if (d.placeable || d.id === BLOCK.HONEYBERRY_BUSH_BARE || d.id === BLOCK.PRICKLY_PEAR_BARE) continue;
       // v0.14 (§76 flora): the picked thicket and bush and the cut Healwort give their ripe plant's item
       if (d.id === BLOCK.HAZEL_THICKET_BARE || d.id === BLOCK.CRAB_APPLE_BUSH_BARE || d.id === BLOCK.HEALWORT_PLANT_BARE) continue;
+      if (d.id === BLOCK.NIGHTSHADE_BUSH_BARE) continue; // §81: the picked Nightshade gives the Nightshade Bush
       if (d.id === BLOCK.SNARE_BAITED || d.id === BLOCK.SNARE_SPRUNG) continue; // states of the Snare: they give it back (§69)
       expect(itemForBlock(d.id), d.name).toBeNull();
       expect(isItemKey(d.name), d.name).toBe(false);

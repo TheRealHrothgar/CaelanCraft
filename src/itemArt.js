@@ -1308,6 +1308,26 @@ const FOOD_PAINTERS = {
     ic.set(8, 4, 0x9b4fd6);
     for (const [x, y] of [[6, 1], [7, 0], [10, 1], [9, 0]]) ic.set(x, y, 0xf0f4f8);
   },
+  // §81: what the two look-alikes give, each drawn as the food it imitates with its plant's own signs (tiles.js)
+  hemlock_root(ic) {
+    // the carrot's shape, but pale, under the stub of its purple-blotched stem (no feathery top)
+    paintCarrotRoot(ic, 0xe6dcb8, 0xb3a47c);
+    ic.rect(7, 1, 7, 3, 0x6aa84a);
+    ic.rect(8, 1, 8, 3, 0x4a8438);
+    ic.set(8, 1, 0x8a3f9c);
+    ic.set(7, 3, 0x8a3f9c);
+  },
+  nightshade_berries(ic) {
+    // round, shiny black berries, each under its green calyx, on the honeyberry's twig (its berries are long and pale blue)
+    ic.line(4, 2, 11, 3, 0x6b4a2a);
+    ic.set(12, 2, 0x4a7a3a);
+    ic.set(13, 2, 0x4a7a3a);
+    for (const [cx, cy] of [[4.5, 8], [10.5, 7.5], [7.5, 12]]) {
+      ic.ellipse(cx, cy, 2.6, 2.6, (x, y, u, v) => (u + v > 0.5 ? 0x150a24 : 0x2c1a44));
+      ic.set(Math.floor(cx) - 1, Math.floor(cy) - 1, 0xcfc0f0);
+      ic.rect(Math.floor(cx) - 1, Math.floor(cy) - 3, Math.floor(cx), Math.floor(cy) - 3, 0x4f9040);
+    }
+  },
   // v0.14 (§76 fauna): game. Each meat has its own shape, so it reads at a glance: venison a dark lean steak, rabbit a
   // small leg on its bone, fowl a whole plucked bird, fish a fish, bear a thick slab under a band of fat; and an egg.
   raw_venison(ic, rng) {
@@ -1433,6 +1453,14 @@ const OTHER_PAINTERS = {
   },
   rag_bandage(ic) {
     paintRoll(ic, 0xe8e4d8, 0xb8c8c0);
+  },
+  aloe_leaf(ic) {
+    // §81: one thick pointed leaf, cut at its base — sea green, lit on the left, with pale teeth down both edges and
+    // the clear gel showing at the cut
+    ic.poly([[4, 13], [12, 13], [11, 8], [9, 2], [8, 1], [7, 2], [5, 8]], (x) => (x <= 6 ? 0x9ee0ae : x >= 10 ? 0x2a6a50 : 0x5aa27a));
+    for (const [x, y] of [[6, 4], [5, 7], [4, 10], [10, 5], [11, 8], [11, 11]]) ic.set(x, y, 0xf4f8d4);
+    ic.rect(4, 13, 11, 13, 0xdcefc4);
+    ic.rect(5, 14, 10, 14, 0xb4d8a8);
   },
   straw_hat(ic) {
     // a wide-brimmed straw hat with a dark band

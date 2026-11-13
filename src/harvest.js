@@ -50,6 +50,8 @@ export const SEED_DROPS = deepFreeze({
   onion: drop('onion_seeds', [1, 2], { p: 0.5 }),
   healwort: drop('healwort_seeds', 1, { p: 0.35 }),
 });
+/** §81: the chance that a fern pulled up by hand gives a strand of Plant Fibre. */
+export const FERN_FIBRE_P = 0.3;
 /** Breaking with the head under water takes this many times longer (§6.1). */
 export const UNDERWATER_DIG_FACTOR = 2.5;
 /** No block breaks faster than this (s). */
@@ -162,6 +164,16 @@ set([B.CRAB_APPLE_BUSH], 0.6, 'shovel', 0, [[when('shovel', drop('crab_apple_bus
 set([B.CRAB_APPLE_BUSH_BARE], 0.6, 'shovel', 0, [[when('shovel', drop('crab_apple_bush'))], always(drop('stick', [1, 2]))]);
 set([B.HEALWORT_PLANT], 0.3, 'shovel', 0, [[when('shovel', drop('healwort_plant'))], always(drop('healwort', 1)), always(SEED_DROPS.healwort)]);
 set([B.HEALWORT_PLANT_BARE], 0.3, 'shovel', 0, [[when('shovel', drop('healwort_plant'))]]);
+// §81: the plants that are not food. A shovel lifts each of them whole. By hand, the greenery breaks at once and gives
+// nothing (a fern now and then a strand of fibre); the four that R picks (PICKABLE below) give what a pick gives.
+set([B.FERN], 0.2, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('plant_fibre', 1, { p: FERN_FIBRE_P }))]]);
+set([B.MEADOW_DAISIES, B.THISTLE], 0.2, 'shovel', 0, [[when('shovel', drop(SELF))]]);
+set([B.HEMLOCK], 0.4, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('hemlock_root', 1))]]);
+// the Nightshade is the Honeyberry's rule with its own berries (its item places the picked bush, which must regrow)
+set([B.NIGHTSHADE_BUSH], 0.5, 'shovel', 0, [[when('shovel', drop('nightshade_bush'))], always(drop('nightshade_berries', [2, 4])), always(drop('stick', [1, 2]))]);
+set([B.NIGHTSHADE_BUSH_BARE], 0.5, 'shovel', 0, [[when('shovel', drop('nightshade_bush'))], always(drop('stick', [1, 2]))]);
+set([B.FLAX], 0.3, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('plant_fibre', [3, 4]))]]);
+set([B.ALOE], 0.3, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('aloe_leaf', [1, 2]))]]);
 // Wood
 set([B.OAK_LOG, B.SPRUCE_LOG], 3.0, 'axe', 1, SELF_DROPS);
 set([B.BIRCH_LOG], 3.0, 'axe', 1, [always(drop(SELF)), always(drop('birch_bark', 1, { p: 0.5, ...natural }))]);
@@ -392,6 +404,12 @@ export const PICKABLE = deepFreeze({
   [B.HAZEL_THICKET]: { to: B.HAZEL_THICKET_BARE, drops: [always(drop('hazelnuts', [1, 3]))] },
   [B.CRAB_APPLE_BUSH]: { to: B.CRAB_APPLE_BUSH_BARE, drops: [always(drop('crab_apple', [2, 3]))] },
   [B.HEALWORT_PLANT]: { to: B.HEALWORT_PLANT_BARE, drops: [always(drop('healwort', 1)), always(SEED_DROPS.healwort)] },
+  // §81: the two look-alikes are picked exactly as the plants they imitate (a root comes away, a bush stays and
+  // regrows); flax is pulled for its fibre and an aloe for its leaves
+  [B.HEMLOCK]: { to: B.AIR, drops: [always(drop('hemlock_root', 1))] },
+  [B.NIGHTSHADE_BUSH]: { to: B.NIGHTSHADE_BUSH_BARE, drops: [always(drop('nightshade_berries', [2, 4]))] },
+  [B.FLAX]: { to: B.AIR, drops: [always(drop('plant_fibre', [3, 4]))] },
+  [B.ALOE]: { to: B.AIR, drops: [always(drop('aloe_leaf', [1, 2]))] },
   // v0.14 (§76 fauna): the eggs of a ground nest (and now and then a feather); the nest stays, empty
   [B.GROUND_NEST]: { to: B.GROUND_NEST_EMPTY, drops: [always(drop('raw_egg', [1, 3])), always(drop('feather', 1, { p: 0.5 }))] },
 });
@@ -458,6 +476,8 @@ export const RIPE_OF = Object.freeze({
   [B.HAZEL_THICKET_BARE]: B.HAZEL_THICKET,
   [B.CRAB_APPLE_BUSH_BARE]: B.CRAB_APPLE_BUSH,
   [B.HEALWORT_PLANT_BARE]: B.HEALWORT_PLANT,
+  // §81
+  [B.NIGHTSHADE_BUSH_BARE]: B.NIGHTSHADE_BUSH,
 });
 /** The picked ids Regrowth tracks (every key of RIPE_OF). */
 const BARE_IDS = Object.freeze(Object.keys(RIPE_OF).map(Number));

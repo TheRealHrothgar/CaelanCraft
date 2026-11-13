@@ -101,6 +101,11 @@ const TABLE = [
   [[B.HAZEL_THICKET, B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE], 0.6, 'shovel', 0],
   [[B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE], 0.3, 'shovel', 0],
   [[B.GROUND_NEST, B.GROUND_NEST_EMPTY], 0.3, null, 0], // v0.14 (§76 fauna)
+  // §81: the plants that are not food — the greenery breaks at once, the rest as the plants they resemble
+  [[B.FERN, B.MEADOW_DAISIES, B.THISTLE], 0.2, 'shovel', 0],
+  [[B.HEMLOCK], 0.4, 'shovel', 0],
+  [[B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE], 0.5, 'shovel', 0],
+  [[B.FLAX, B.ALOE], 0.3, 'shovel', 0],
   [[...FARM_IDS], 0.3, null, 0], // §80 farming: a planted seed or a sprout comes out by hand
 ];
 
@@ -484,9 +489,10 @@ describe('rollDrops (§6.3)', () => {
 });
 
 describe('picking with R (§6.4)', () => {
-  it('PICKABLE has exactly the four rows of v0.9, the Ground Nest (§76 fauna) and the seven plants of v0.14 (§76 flora)', () => {
+  it('PICKABLE has exactly the four rows of v0.9, the Ground Nest (§76 fauna), the seven plants of v0.14 (§76 flora) and four of §81', () => {
     expect(Object.keys(PICKABLE).map(Number).sort((a, b) => a - b)).toEqual([B.HONEYBERRY_BUSH, B.PRICKLY_PEAR, B.LOOSE_STONES, B.FALLEN_BRANCHES,
-      B.GROUND_NEST, B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT]);
+      B.GROUND_NEST, B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT,
+      B.HEMLOCK, B.NIGHTSHADE_BUSH, B.FLAX, B.ALOE]); // §81: the two look-alikes and the two useful plants; the greenery is not picked
     expect(isPickable(B.HONEYBERRY_BUSH)).toBe(true);
     for (const id of [B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR_BARE, B.TUSSOCK, B.STONE, B.AIR, -1, 'toString', undefined]) {
       expect(isPickable(id)).toBe(false);

@@ -112,7 +112,9 @@ describe('pop-off blocks (DESIGN-survival §8.5)', () => {
   const PLANTS = [B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE,
     // v0.14 (§76 flora): the plants of generation 3 scatter leaves like the others
     B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH,
-    B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE];
+    B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE,
+    // §81: so do the plants that are not food
+    B.FERN, B.MEADOW_DAISIES, B.THISTLE, B.HEMLOCK, B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE, B.FLAX, B.ALOE];
 
   it('a plant, litter or a fire pit pops when the dirt below it is removed; nothing drops, nothing falls', () => {
     for (const id of POP_OFF_IDS) {
