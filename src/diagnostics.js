@@ -33,6 +33,7 @@ import { runeKey } from './runes.js';
  *   after loading; 'circuits' builds the §4.14 worked examples ahead (readSceneParam, circuitSceneWrites)
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
  * @property {'creative'|'survival'|null} mode  v0.9 (§9.10): the first world's mode with ?autoplay / ?smoke; anything else → null
+ * @property {boolean} soundTest     v0.16 (CONTRACTS §82): `?ui=sounds` — main opens the Sound Test as soon as the page has loaded
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -66,7 +67,19 @@ export function parseParams(search = defaultSearch()) {
     slot: readSlotParam(params),
     mode: readModeParam(params),
     scene: readSceneParam(params),
+    soundTest: readSoundTestParam(params),
   };
+}
+
+/**
+ * `?ui=sounds` (case-insensitive): open the Sound Test at once, over the title screen (CONTRACTS §82). It is not one of
+ * the `ui` screenshot aids: it needs no ?autoplay and no world, so `Params.ui` stays null for it.
+ * @param {URLSearchParams} params
+ * @returns {boolean}
+ */
+function readSoundTestParam(params) {
+  const t = readString(params, 'ui');
+  return t !== null && t.toLowerCase() === 'sounds';
 }
 
 /**

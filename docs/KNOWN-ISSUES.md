@@ -366,3 +366,48 @@ only: no browser, no build. None blocks play.
 - **`setblock … nightshade` is ambiguous** (nightshade_bush, nightshade_bush_bare): type the full name.
 - **None of the eight can be planted** from an item; a shovel moves a whole plant, and four of them spread by
   themselves. The fern, the daisies and the thistle neither spread nor regrow: dug up, they are gone from that spot.
+
+## Sounds (v0.16) — open items
+
+From the build of CONTRACTS §82 (materials, footsteps, voices, ambience, the Sound Test). None blocks play.
+
+- **No sound has been heard by a person yet.** Nobody who built them could listen. Every sound follows a known
+  synthesis recipe and is measured on a rendering of the game's own audio code (length, level, brightness, pitch,
+  tremolo, bursts), which shows that a moo is low, long and steady — not that it sounds like a cow. Open the Sound Test
+  (Esc → Sound → Sound Test, or `?ui=sounds`) and judge by ear; expect to retune.
+- **The screen itself has not been seen in a browser** either: the Sound Test and the pause menu's Sound row were built
+  and tested on the fake DOM only. Their layout (a list of about 130 buttons in a 980 × 680 panel that scrolls) is
+  unverified.
+- **Least sure of, most likely to need retuning:**
+  - *The horse's whinny, the turkey's gobble, the pheasant's crow and the sheep's bleat.* A sawtooth through three or
+    four band-passes is a crude voice; these four are the most complex calls and the most likely to sound like a
+    synthesiser. The whinny falls from 1.5 kHz and may come across as a siren.
+  - *The wolf's howl.* A triangle wave with two partials and a slight vibrato: it may sound like a whistle or a
+    theremin rather than a throat.
+  - *The birds.* Each note is a bare sine. The tit and the warbler are simple and probably pass; the blackbird's
+    phrases are made-up melodies and the finch's buzz is a 30 Hz vibrato; any of them may sound like a telephone.
+  - *The zombie's groan.* Its level and pitch are set, but whether "uhh" through two formants is spooky, comic or
+    merely odd can only be heard.
+  - *The stream and the fire's bed.* Bands of noise wobbling at fixed rates may pump like a machine instead of
+    babbling or fluttering. The fire's bed is mostly below 400 Hz: small speakers may lose it.
+  - *Levels.* Everything is set by A-weighted loudness against the old sounds (a break near −27 dB, the ambience 10 dB
+    and more below). The balance was never heard: the ambience may be too faint to notice or too present, and steps
+    (two a second for as long as you walk) may tire. `STEP_VOLUME` and the loops' `gain` are the knobs.
+  - *Sand, leaves and glass* are bright by nature (2–6 kHz); on harsh speakers they may bite.
+  - *Soft thuds* (dirt, grass, cloth, a landing, the rabbit) were moved up out of the bass so that laptop speakers
+    play them; on headphones they may sound thin.
+- **Mono, no direction.** As before, every sound is mono and only its volume says how far away it is. An animal's call
+  does not come from its side; the stream is as loud behind a wall as in the open.
+- **What makes no sound still:** other creatures' footsteps, a ridden horse's hooves, the sea (no surf), rain (there
+  is none), caves (no echo). Still water is silent by design.
+- **The ambience samples the place twice a second** with about 1,500 block reads (`sampleSurroundings`); its cost in a
+  running game was not measured.
+- **The Ambience switch is on or off**, one for the browser (localStorage), not a volume and not per world. Under
+  `?nosave` it is not kept.
+- **The tests stand on an emulator of WebAudio** (`tests/helpers/offlineAudio.js`), checked against the specification's
+  formulas but not against a browser. A browser's oscillators and filters can differ in small ways.
+- **Older documents describe the old sounds:** `docs/SPEC-gameplay.md` §9 and `docs/DESIGN-survival.md` §9.9 still
+  speak of one filtered noise burst per break and a dig tick through `BREAK_CUTOFF_HZ`. CONTRACTS §82 is the rule.
+- **Found on the way, fixed:** every animal call with a wobble (baa, neigh, bleat, gobble, growl, roar, wings) used to
+  end with a click, because the wobble was added to the envelope and did not die away with it. The wobble is a gain
+  stage of its own now (§82.1).

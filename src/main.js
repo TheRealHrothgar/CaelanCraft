@@ -62,6 +62,11 @@ import { createControls } from './controls.js';
 import { createHUD, createFlashState, flashStep } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
+import {
+  MoveSounds, Ambience, ANIMAL_VOICES as ANIMAL_SOUNDS, ambientCall, sampleSurroundings, loadAmbiencePref, saveAmbiencePref,
+  FIRE_RANGE,
+} from './worldSounds.js';
+import { createSoundTest } from './soundTest.js';
 import { RuneStore, RuneRunner, runeKey, SOURCE } from './runes.js';
 import { BlackHoles, columnHasEdits, PHASE } from './blackholes.js';
 import { Infall } from './infall.js';
@@ -77,7 +82,7 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Animals, SPECIES, SOUNDS as ANIMAL_SOUNDS, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE } from './animals.js';
+import { Animals, SPECIES, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE } from './animals.js';
 import { createAnimalRenderer } from './animalRenderer.js';
 import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, damageOf, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST, SICK_MESSAGE, BOIL_TIP } from './survival.js';
@@ -1167,6 +1172,124 @@ export function boot(win, doc) {
   } catch (err) {
     reportError({ message: `Caelancraft failed to start: ${err && err.message ? err.message : err}` });
     throw err;
+  }
+
+  // ---- v0.16 world sounds (CONTRACTS §82): footsteps and movement, the ambience, the Sound Test ---------------------
+  // Everything here is this section's own; the rest of main calls stepWorldSounds (renderFrame), animalCall (stepAnimals)
+  // and quietWorldSounds (leaving a world, dispose).
+
+  const moveSounds = new MoveSounds(audio);
+  const ambience = new Ambience(audio);
+  /** localStorage, or null where there is none (or ?nosave: nothing is kept) */
+  const soundPrefs = (() => {
+    try {
+      return params.nosave ? null : win.localStorage ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  ambience.setEnabled(loadAmbiencePref(soundPrefs));
+  /** The Sound Test screen and the pause menu's Sound row (the Ambience switch, kept between visits). */
+  const soundTest = createSoundTest(doc, audio, {
+    win,
+    ambienceOn: ambience.enabled,
+    onAmbience: (on) => {
+      ambience.setEnabled(on);
+      saveAmbiencePref(soundPrefs, on);
+      audio.playClick();
+    },
+  });
+  /** The surroundings are looked at this often (s): a few hundred getBlock calls. */
+  const AMBIENCE_SAMPLE_S = 0.5;
+  /** States with a world in which the ambience stays quiet: the menus between the player and the world. */
+  const AMBIENCE_QUIET_STATES = new Set([STATE.PAUSED, STATE.DEAD, STATE.CLICK_TO_PLAY, STATE.LOADING, STATE.TITLE]);
+  /** @type {import('./worldSounds.js').MoveSample} */
+  const moveSample = {
+    x: 0, y: 0, z: 0, vy: 0, onGround: false, flying: false, sneaking: false, sprinting: false, inWater: false, wading: false,
+    headInWater: false, ground: null, riding: false,
+  };
+  /** @type {import('./worldSounds.js').AmbienceSample} */
+  const ambienceSample = {
+    daylight: 1, biome: BIOME.PLAINS, openSky: true, underground: false, trees: 0, grass: 0, streamDist: Infinity,
+    fireDist: Infinity, y: 0, headInWater: false,
+  };
+  const soundWorld = {
+    getBlock: (q, y, r) => world.getBlock(q, y, r),
+    columnAt: (q, r) => world.columnAt(q, r),
+    streamAt: (q, r) => {
+      const gen = /** @type {{ streamAt?: (q: number, r: number) => boolean }} */ (world.worldGen);
+      return typeof gen.streamAt === 'function' ? gen.streamAt(q, r) : false;
+    },
+  };
+  /** @type {number[][]} */
+  const soundCells = [];
+  let surroundingsIn = 0;
+
+  /**
+   * Once a frame (renderFrame): the player's footsteps, jumps, landings and water sounds while the world runs (`live`),
+   * and the ambience for where they stand — which fades out in the menus, on the death screen and without a world.
+   * @param {number} dt @param {boolean} live  the simulation stepped this frame
+   */
+  function stepWorldSounds(dt, live) {
+    if (!player || !world || survival.dead || AMBIENCE_QUIET_STATES.has(state)) {
+      ambience.update(dt, null);
+      surroundingsIn = 0;
+      return;
+    }
+    if (live) {
+      const [q, r] = worldToHex(player.x, player.z);
+      let groundId = world.getBlock(q, Math.floor(player.y - 1e-3), r);
+      if (!isSolid(groundId) && player.onGround) {
+        const cells = supportingCells(player, world.getBlock, soundCells);
+        if (cells.length > 0) groundId = world.getBlock(cells[0][0], cells[0][1], cells[0][2]);
+      }
+      const s = moveSample;
+      s.x = player.x;
+      s.y = player.y;
+      s.z = player.z;
+      s.vy = player.vy;
+      s.onGround = player.onGround;
+      s.flying = player.flying;
+      s.sneaking = player.sneaking;
+      s.sprinting = player.sprinting;
+      s.inWater = player.inWater;
+      s.wading = !player.inWater && isLiquid(world.getBlock(q, Math.floor(player.y + 0.1), r));
+      s.headInWater = player.headInWater;
+      s.ground = isSolid(groundId) ? getBlockDef(groundId).soundGroup : null;
+      s.riding = Boolean(riding);
+      moveSounds.update(dt, s);
+    }
+    const a = ambienceSample;
+    surroundingsIn -= dt;
+    if (surroundingsIn <= 0) {
+      surroundingsIn = AMBIENCE_SAMPLE_S;
+      const here = sampleSurroundings(soundWorld, player.x, player.y, player.z, player.y + getEyeHeight(player));
+      a.biome = here.biome;
+      a.openSky = here.openSky;
+      a.underground = here.underground;
+      a.trees = here.trees;
+      a.grass = here.grass;
+      a.streamDist = here.streamDist;
+      const fire = campfires.size > 0 ? campfires.nearest(player.x, player.y, player.z, FIRE_RANGE, 1) : [];
+      a.fireDist = fire.length > 0 ? fire[0].dist : Infinity;
+    }
+    a.daylight = sky.daylight;
+    a.y = player.y;
+    a.headInWater = player.headInWater;
+    ambience.update(dt, a);
+  }
+
+  /** An animal calls with nothing to prompt it (stepAnimals): its voice by distance — a wolf by night may howl. */
+  function animalCall(a) {
+    const v = zombieVolume(a) * 0.7;
+    if (v > 0) audio.playRecipe(ambientCall(a.kind, SPECIES[a.kind].voice, sky.daylight), v);
+  }
+
+  /** Leaving a world (or the page): the ambience stops at once and the steps forget where they were. */
+  function quietWorldSounds() {
+    ambience.stop();
+    moveSounds.reset();
+    surroundingsIn = 0;
   }
 
   // ---- game state -----------------------------------------------------------------------------------
@@ -2685,7 +2808,7 @@ export function boot(win, doc) {
     const ev = animals.update(dt, animalWorld);
     for (const a of ev.voices) {
       if (zombieVolume(a) > 0) {
-        animalVoice(a, 0.7);
+        animalCall(a); // v0.16 (§82): its voice at 0.7, or a wolf's howl by night
         break; // one call a frame at most
       }
     }
@@ -4923,6 +5046,7 @@ export function boot(win, doc) {
     watcher.clear();
     clearCircuits();
     clearSurvival();
+    quietWorldSounds(); // v0.16 (§82)
     player = null;
     hit = null;
     waterHit = null;
@@ -6077,6 +6201,7 @@ export function boot(win, doc) {
       campfireRenderer.sync(near, fxTime, dt, spotsViewFn);
     }
     computeSky(time, sky);
+    stepWorldSounds(dt, live); // v0.16 (§82): footsteps, movement and the ambience
     renderer.setSky(sky);
     renderer.setUnderwater(player.headInWater);
     hud.setUnderwater(player.headInWater);
@@ -6275,6 +6400,8 @@ export function boot(win, doc) {
     packUI.dispose();
     devicePanel.dispose();
     droneLoop.stop();
+    quietWorldSounds(); // v0.16 (§82)
+    soundTest.dispose();
     if (world) world.dispose();
     world = null;
     blockPhysics = null;
@@ -6346,6 +6473,7 @@ export function boot(win, doc) {
     params.mode = null; // ?mode works only with ?autoplay or ?smoke
     showTitle();
   }
+  if (params.soundTest) soundTest.open(); // v0.16 (§82): ?ui=sounds
 
   rafId = win.requestAnimationFrame(frame);
   console.log(`Caelancraft v${VERSION}`);
