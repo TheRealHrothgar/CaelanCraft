@@ -89,13 +89,14 @@ describe('helpers', () => {
     expect(blastRadius(8)).toBeCloseTo(7, 9);
     expect(blastRadius(29)).toBe(BLAST_MAX_RADIUS);
     expect(blastRadius(1000)).toBe(BLAST_MAX_RADIUS);
-    for (const id of [B.AIR, B.WATER, B.WATER_FLOW_3, B.WATER_FALL, B.BEDROCK, B.OBSIDIAN, B.RUNE_BLOCK, B.BLACK_HOLE, 255]) {
+    for (const id of [B.AIR, B.WATER, B.WATER_FLOW_3, B.WATER_FALL, B.BEDROCK, B.OBSIDIAN, B.RUNE_BLOCK, B.BLACK_HOLE, B.AQUIFER, 255]) {
       expect(isBlastProof(id), String(id)).toBe(true);
     }
     for (const id of [B.STONE, B.DIRT, B.OAK_LOG, B.OAK_LEAVES, B.GLASS, B.SAND, B.CAMPFIRE, B.BLAST_BARREL]) {
       expect(isBlastProof(id), String(id)).toBe(false);
     }
     expect(BLAST_PROOF_IDS).toContain(B.OBSIDIAN);
+    expect(BLAST_PROOF_IDS).toContain(B.AQUIFER); // §89: nothing breaks it
   });
 });
 
@@ -338,12 +339,12 @@ describe('the blast', () => {
     expect(physics.lastEvent.cause.kind).toBe('explosion');
   });
 
-  it('blast-proof cells survive: obsidian, bedrock, rune blocks, black holes, water', () => {
+  it('blast-proof cells survive: obsidian, bedrock, rune blocks, black holes, water, (§89) the aquifer', () => {
     const { world, physics, ex } = setup();
     // The water source sits in a one-cell pit (y 10, walled by stone), so it cannot flow to the lit barrel and put it
     // out during the fuse (fluids.js is live since the integration merge).
     const keep = [[1, 11, 0, B.OBSIDIAN], [0, 10, 1, B.BEDROCK], [-1, 11, 0, B.RUNE_BLOCK], [0, 12, -1, B.BLACK_HOLE],
-      [-1, 10, 2, B.WATER], [1, 9, -1, B.OBSIDIAN]];
+      [-1, 10, 2, B.WATER], [1, 9, -1, B.OBSIDIAN], [1, 10, -1, B.AQUIFER]];
     for (const [q, y, r, id] of keep) world.setBlock(q, y, r, id);
     world.setBlock(0, 11, 0, B.BLAST_BARREL);
     ex.lightAt(0, 11, 0);

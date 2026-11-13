@@ -345,6 +345,8 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 >
 > **Water amendment (§83):** ids 159–162 (`WATER_LOW`, `WATER_SHALLOW`, `TAINTED_WATER_LOW`, `TAINTED_WATER_SHALLOW`: sources at a lower depth, not placeable), `BLOCK_COUNT` 163; `isWater`, `isWaterSource`, `isFallThrough` include them; `waterLevel` 5 and 3, `waterSurfaceHeight` 0.55 and 0.22; new `isTaintedWater`, `waterDepth`, `waterAtDepth`.
 >
+> **Aquifer amendment (§89):** id 173 (`AQUIFER`: a solid opaque prism of wet rock, not breakable, not placeable), `BLOCK_COUNT` 174, tiles 238–239 (`TILE_IDS` 195); new `isDeepRock` (BEDROCK or AQUIFER: what nothing breaks).
+>
 > **Homestead amendment (§85):** ids 163–172 (`SPRING`, `SPRING_DRAWN`: solid opaque prisms, not placeable; `WELL`, `WELL_DRAWN`, `RAIN_BARREL`, `RAIN_BARREL_1`..`_3`: solid `'model'` blocks; `GRASS_BED`, `BED`: walk-over `'model'` blocks), `BLOCK_COUNT` 173, tiles 207, 225–227 and 232–237 (`TILE_IDS` 193), `PICKER_ORDER` 119; new `HOMESTEAD_IDS`, `FURNITURE_MODEL_IDS`, `isSpring`, `isWell`, `isRainBarrel`. `'model'` is no longer only the plants' shape.
 >
 > **Light amendment (§62):** GLOWSTONE now really glows: it, the CAMPFIRE and the TORCH emit block light (15, 14, 13); leaves, water and ice dim light (`light.js` LIGHT_EMISSION / LIGHT_OPACITY).
@@ -5315,6 +5317,14 @@ renderer against signals whose numbers are known.
 > The dry bed below it fills again in the rain as any dry bed does. This is the user's choice ("only the spring at a
 > stream's head keeps a little water all year") and what keeps a dry season survivable before wells and barrels.
 
+> **Amendment (§89, the aquifer):** Law 3 has ONE exception besides the rain: the AQUIFER, a block of wet rock under
+> every stream head, every natural spring and one fresh pond in three (generation 6). Through the water cycle
+> (`waterBodies.feedStep`, run in `waterSecond`), an aquifer feeds the fresh water standing on it — up to full in the
+> rains and low in the dry season, at `AQUIFER_FLOW` cell-levels a game hour — and fills a dry basin dug over it; the
+> sun dries a fed pool no lower than that target and drinking stops at shallow. The fluid rule itself is unchanged: to
+> it an aquifer is a solid block, and it still never makes water. In a world with aquifers the stream head kept in a
+> drought is the cell over the aquifer (`streamDryWrites`), not the three highest cells. See §89.
+
 Amends §5 (blocks), §33 (the scheduler: one more context write, the fall ring, saving, undo), §35 (the water rule),
 §44 (the water hint) and §76.3 (tainted water, streams). World generation is untouched: every generation is byte for
 byte what it was, and its water is at rest under these laws.
@@ -5898,6 +5908,10 @@ rules of §65 and §68 stand exactly as they are, and the two multiply. Light th
   `handbook.test.js` (the table and the prose).
 
 ## 85. A place to stay: springs, wells, rain barrels, watering by hand; gravel in patches — `src/homestead.js` (PURE), `src/worldgen.js`, `src/config.js`, `src/blocks.js`, `src/tiles.js`, `src/plantModels.js`, `src/items.js`, `src/itemArt.js`, `src/harvest.js`, `src/crafting.js`, `src/purpose.js`, `src/farming.js`, `src/survivalControl.js`, `src/pickerModel.js`, `src/main.js`, `src/diagnostics.js`, `src/handbook.js`, `src/handbookUI.js`
+
+> **Amendment (§89, the aquifer):** generation 6 lays an AQUIFER under every natural spring (the block under the
+> SPRING). A spring's draws are unchanged (§85.4): the aquifer is why it never runs dry, and it feeds nothing there (the
+> SPRING is solid). `deepHint` also answers for the aquifer (`AQUIFER_DEEP_HINT`). See §89.
 
 Amends §5 (blocks, tiles), §8 and §79 (world generation: generation 5), §43 (items), §44 (harvest, the R priority),
 §46 (recipes), §73 (the guide), §77 (purposes), §78 (the models), §80 (farming: watering by hand) and §83.6 (the dug
@@ -6546,6 +6560,179 @@ retired. (config.js still holds PIG_NATURAL_COUNT and the PIG_REPOP_* numbers, r
   S-curve by simulation, pairs, food and water, the young, the catch-up against live growth, wanderers, the surplus,
   livestock in a pen, names and models, the save and old saves, the debug handle, the costs), and the pins of animals,
   fauna, pigs, pigRenderer, commands, physicsInterfaces and handbook tests.
+
+## 89. The aquifer — `src/blocks.js`, `src/tiles.js`, `src/config.js`, `src/worldgen.js`, `src/waterBodies.js` (PURE), `src/fluids.js`, `src/harvest.js`, `src/explosions.js`, `src/blackholes.js`, `src/support.js`, `src/blockphysics.js`, `src/survivalControl.js`, `src/homestead.js`, `src/main.js`, `src/diagnostics.js`, `src/types.js`, `src/handbook.js`
+
+Amends §5 (a block, two tiles), §8, §76.3 and §85.7 (world generation 6), §29 and §54 (black holes), §36 (support),
+§37 (blast-proof cells), §44 and §85.2 (what cannot be dug), §45/§2.5 (the belongings heap), §73 (the guide) and §83
+(Law 3's one exception, drinking, the cycle). The user: "Pools of fresh water drain and must be replenished through
+underground springs or rain (to their local max)", and "for running water, we're going to have to think about an
+elegant unminable underground source block". Of three designs they chose **the aquifer under springs**: a wet-rock
+block that cannot be dug lies under every stream head, every natural spring and some ponds, and feeds the water above
+it — full in the rains, less in the dry season, never dry; dig down to one and build a basin over it for water all year.
+
+Until now water came only from the rain (§83.6: Law 3). The aquifer is the one other source of water, and it acts
+only through the water cycle: the fluid rule (§35, §83.3) treats it as any solid block and still never makes water.
+
+**Nobody who built this could see it.** The two tiles were looked at as software renderings, never in the game
+(docs/KNOWN-ISSUES.md).
+
+### 89.1 The block (`blocks.js`, `tiles.js`)
+
+`AQUIFER` **173** "Aquifer" (`BLOCK_COUNT` **174**): a solid, opaque hexagonal prism of wet rock, `LAYER_OPAQUE`, sound
+stone, `tiles(AQUIFER_SIDE, AQUIFER_TOP)` (the bottom is the top tile). `breakable: false`, `placeable: false`: no
+item, no picker entry, no harvest rule (`BLOCK_RULES[173]` is null). It is no water block (`isWater`,
+`isWaterSource` false; it waters no crop).
+
+**Tiles** in the two ids §85 left free (`TILE_IDS` **195**; tiles.js comments normative): `AQUIFER_SIDE` 238 — dark
+slate-blue rock (`0x3b4753`, cell noise 2 / 16, noise 6) with three black cracks and a thread of the spring's bright
+water running from each down to the bottom edge beside a dark wet streak, white glints on it; `AQUIFER_TOP` 239 — the
+same rock from above, a web of black cracks, the three biggest brimming with water. Both alpha 255.
+
+**Nothing breaks it, in either mode** — everywhere BEDROCK is spared, the aquifer is: `isDeepRock(id)` (blocks.js) is
+BEDROCK or AQUIFER.
+
+| what | how |
+|---|---|
+| Survival digging | no harvest rule; `homestead.deepHint(AQUIFER)` = `AQUIFER_DEEP_HINT` `Aquifer · water rises through this rock: it cannot be dug`, shown while the dig is held (main, as for a spring) |
+| Creative digging | `breakable: false` (main's Creative break returns at once, as on bedrock) |
+| a blast | `explosions.BLAST_PROOF_IDS` lists it |
+| a black hole (swallowing, the vortex's pull) | `blackholes.canSwallow` is false for `isDeepRock` |
+| collapses | `support.isAnchorCell` and `BlockPhysics._wasAnchor`: an anchor like bedrock, also one a command set |
+| the belongings heap | `survivalControl.chooseBelongingsCell` never replaces it |
+| commands | `setblock` and `fill` may set it and set over it (bedrock: neither) |
+
+### 89.2 Where it is: generation 6 (`worldgen.js`, `config.js`)
+
+`GEN_LATEST` **6**. Generation 6 is generation 5 with aquifers, stamped last in `generateChunk`, each in place of one
+block that every earlier pass left solid: against generation 5 of the same seed a chunk differs in exactly those
+cells. Generations 1–5 are byte for byte what they were (aquifer.test.js pins generation 5's digests at 68227cf;
+worldgenHomestead.test.js keeps 1–4's).
+
+```js
+export const POND_AQUIFER_SHARE = 1 / 3, POND_AQUIFER_SALT = 0xa91f
+worldGen.aquifersIn(cq, cr) → AquiferSite[]      // { q, y, r, kind: 'stream' | 'spring' | 'pond' }; [] below generation 6
+worldGen.streamHeadOf(kq, kr) → { q, r, level } | null   // the first column of the stream of spring-grid cell (kq, kr); null below 3
+```
+- **Under every stream head** (`streamHeadOf`: the stream's first column, where it rises): the FLOOR of the head
+  column — its bed, one cell under its lowest water cell (`streamBottom`): directly under the source, or, where the
+  head is a lip, under its falling water. The stream's water is not moved.
+- **Under every natural spring** (§85.7, `naturalSpringOf`): the block under the SPRING.
+- **Under the middle of one fresh pond in three**: the clay at H − 1 under the centre of an accepted pond that is not
+  tainted and not frozen (§76.3, §8.4) and whose roll `rand3(kq, POND_AQUIFER_SALT, kr, seed ^ POND_SALT)` is below
+  `POND_AQUIFER_SHARE`. Only fresh ponds are rolled for, so **a pond on an aquifer is always fresh** and every pond
+  keeps the water generation 5 gave it.
+- A cell two of them share (two streams rising in one column) is listed once. The list is pure in (seed, cq, cr).
+
+Measured (seed 4242; aquifer.test.js): the 169 chunks round the origin hold 10 (6 stream heads, one a lip; 3 springs;
+1 pond); the 441 round it 34. Of 174 fresh ponds over 6 400 pond-grid cells, 62 lie on an aquifer (36 %). Every stream
+head's bed and every spring's footing was dirt. A chunk's aquifers cost what its streams and springs already cost
+(both are remembered).
+
+### 89.3 What it does: feeding (`waterBodies.js`)
+
+```js
+export const AQUIFER_HOUR_S = 60, AQUIFER_FLOW = { rains: 12, dry: 3 }, AQUIFER_FULL_BELOW = 0.65, AQUIFER_FLOOR = 1,
+  AQUIFER_NEAR_MAX = 256
+export function aquiferFlow(dryness) → number             // cell-levels a game hour
+export function aquiferTarget(dryness) → 3 | 2
+export function aquiferUnder(peek, q, y, r) → boolean     // the first cell under (q, y, r) that is not WATER_FALL is an AQUIFER
+export function bodyFed(w, body) → boolean               // fresh, not the sea, a cell aquiferUnder
+export function aquiferBasinAt(w, q, y, r) → { cells, count, tainted: false } | null
+export function aquiferFeeds(w, q, y, r) → { kind: 'stream' | 'pool' | 'basin' | 'none', y, open }
+export function feedStep(dt, random, w, env, aquifers) → CycleEvent[]     // kinds 'feed' and 'seep'
+export function aquiferInfo(w, q, y, r, env) → AquiferInfo                // { q, y, r, feeds, cells, depth, target, fed }
+export class AquiferIndex { chunks; near(w, q, r, range) → number[]; changed(q, r); clear() }
+WaterCycle: + aquifers (AquiferIndex), fed, seeped; feed(dt, random, w, env) → CycleEvent[]; onBlockChange(q, y, r, prev, next)
+```
+`CycleWorld` gains `chunkBlocks(cq, cr) → Uint8Array | null` (a loaded chunk's blocks) and, for worlds that list
+their aquifers themselves (tests), `aquifers(q, r, range) → (q, y, r) triples`. `CycleEvent.kind` adds `'feed'` and
+`'seep'`.
+
+- **The flow.** An aquifer gives `aquiferFlow(dryness)` cell-levels of water a game hour (`AQUIFER_HOUR_S` 60 s):
+  `AQUIFER_FLOW.rains` **12** at the rains' dryness (`DRYNESS_RAINS` 0.3), `.dry` **3** at the dry season's (1), in a
+  straight line between and no further either way (not a number: the dry season's).
+- **The target.** A fed body rises to `aquiferTarget(dryness)`: **3 (full)** while the dryness is below
+  `AQUIFER_FULL_BELOW` (half way, the turn of the season: 0.65), **2 (low)** from it on.
+- **What an aquifer feeds** (`aquiferFeeds`): where a stream runs in its column above it (`springLevelAt(q, r) > y`),
+  the stream's own cell (`open` when that cell and everything between are AIR or falling water); else the cell on it:
+  a fresh source (`pool`), AIR (`basin`), anything else `none` (a tainted pool, a SPRING, earth).
+- **One step** (`feedStep`), in list order, each aquifer in a loaded chunk that feeds something (not `none`, not a
+  stream whose cell holds water) draws ONE `random()` `u`; with N the cells that would change, an event that adds N
+  cell-levels takes `u < min(1, dt × flow / (N × AQUIFER_HOUR_S))`, so it comes on average every N / flow game hours:
+  - **feed**: the body on it (`waterBodyAt`) — contained, not the sea, not running water, not under water, not cut by an
+    unloaded chunk — below its target gains a level in its shallowest cells (`depthWrites(+1)`; N those cells);
+  - **seep**: the dry basin on it (`aquiferBasinAt`: the connected AIR cells at that height, each on a solid block,
+    every outside side solid or a source, no stream's own cell, at most `BODY_MAX_CELLS`) takes its first water, every
+    cell `WATER_SHALLOW` at once (N its cells) — as a clay basin does in the rain, but in any weather and under a roof;
+  - **seep**: a stream's head that someone emptied takes `WATER_SHALLOW` again (N 1): running water, held by its spring.
+  The roll is drawn before any body is searched; a body is searched only when `u` is below the chance for one cell.
+  Two aquifers under one body each give their flow.
+- **Never below its target by the sun, never below shallow by use.** In `cycleStep` a dry event of a fed standing body
+  (`bodyFed`) whose depth is at or below the target does not happen (asked only once the roll has won). In `drawWater`
+  a fed body at `AQUIFER_FLOOR` (shallow) pays nothing: the gulp is drunk, the pool stays. Spilling (law 2) is not
+  stopped: a fed pool with a breach runs dry, and its basin, open, takes nothing (the laws hold).
+- **Streams.** A stream is not raised by the flow: it follows the rain as before (§83.6). Its head is fed: when a
+  stream that is all shallow dries (`streamDryWrites`), the cells kept are those `aquiferUnder` (the head, over the
+  aquifer at the floor of its column, through the falling water of a lip); a stream with none keeps the
+  `STREAM_HEAD_CELLS` (3) highest as before (generations 3–5, and a stream cut by the 128-cell search before its head).
+- **Fed water is fresh.** A tainted body on an aquifer is not fed (no flow, no floor, no target): it dries, is drunk
+  and spills like any; once it is gone its basin takes fresh water. Nothing purifies water.
+- **Natural springs** keep their draws (§85.4); the aquifer under one is why it never runs dry, and it feeds nothing
+  (the SPRING is solid).
+- **Where the aquifers are** (`AquiferIndex`): every AQUIFER cell of a loaded chunk, found by scanning its blocks
+  (`Uint8Array.indexOf`) the first time it is asked about and remembered while the chunk keeps the same blocks array
+  (a chunk loaded again or a new world is scanned again; at most 4 096 chunks remembered). `changed(q, r)` forgets the
+  chunk of a column: `WaterCycle.onBlockChange` calls it when a block becomes or stops being an AQUIFER (a command).
+  `WaterCycle.feed` asks `w.aquifers` when the world lists them, else `this.aquifers.near(w, w.q, w.r, CYCLE_RANGE)`.
+  `clear()` clears the index too. `events` counts `fed` and `seeped` as well.
+
+Nothing new is saved: the aquifers are generated blocks (a command-set one is an ordinary edit), and what they feed is
+the blocks of the pool (a pool fed back to full prunes its edits).
+
+### 89.4 Main and the debug handle
+
+- `waterSecond` (§83.7) calls `aquiferSecond(dt, random, q, r, env)` after the cycle's step: `waterCycle.feed` with
+  `aquiferWorld(q, r)` (`waterWorld` + `isLoadedCell`, the player's column and `chunkBlocks: world.getChunk(cq,
+  cr)?.blocks ?? null`), each event written with `applyWaterWrites` (lazy). So it runs once a second in Survival, near
+  the player, in the real weather's `env`, and in every `waterStep`.
+- `onBlockChanged`: `waterCycle.onBlockChange(q, y, r, prev, next)` (after the refill tracker's line).
+- **Debug handle** (`window.__caelancraft`, GameContext, `diagnostics.installDebugHandle`): `aquiferNear(radius)` → the
+  aquifers within `radius` cells of the player (CYCLE_RANGE when not given; 0..`AQUIFER_NEAR_MAX`), nearest first, each
+  `aquiferInfo` in the season now plus `distance`: `{ q, y, r, feeds, cells, depth, target, fed, distance }`; null
+  without a world. `waterStep(seconds, env)` runs the feeding (it runs `waterSecond`) and its result adds `fed` and
+  `seeped` (`{ seconds, dried, filled, beds, basins, fed, seeped }`).
+
+### 89.5 The guide
+
+The Water chapter gains a page after "Holding water": **"Where water comes from"** — rain soaks into the ground and is
+held in rock, an aquifer; it comes up at springs and at stream heads, and an aquifer lies under each and under the
+middle of some clear ponds; no tool and no blast can break it; a pool on one is full in the rains, low in the dry
+season and never dry (the sun takes it no lower, drinking stops at shallow); every game hour an aquifer gives enough to
+raise `AQUIFER_FLOW.rains` cells by a depth in the rains and `.dry` in the dry season, so a pond of seven cells gains a
+depth in about 35 seconds in the rains, 2½ minutes in the dry season; a tip: build a basin over one, every wall whole,
+for water all year — the best place for a homestead. handbook.test.js pins every sentence and number.
+
+### 89.6 Totals, imports, tests
+
+- **Totals**: `BLOCK_COUNT` 174; `TILE_IDS` 195; items, recipes, `PICKER_ORDER` unchanged; `GEN_LATEST` 6; the Water
+  chapter has nine pages.
+- **Imports** (leaf-ward, still acyclic): `waterBodies → … + config (CHUNK_SIZE, DAY_LENGTH_SECONDS), hex (hexLength),
+  weather (DRYNESS_RAINS, DRYNESS_DRY)`; blackholes, support, blockphysics and survivalControl import `isDeepRock`.
+- **Measured**: a second of the aquifers round the player a few microseconds (one `random()` an aquifer with
+  something to feed; a body search only when the roll could win); the first scan of the ~50 loaded chunks within
+  CYCLE_RANGE well under 10 ms, once.
+- **Tests**: `tests/unit/aquifer.test.js` (the block and its tiles; unbreakable: isDeepRock, the dig rule and hint,
+  Creative, blast, black hole, support, the belongings heap, commands; generation 6: generations 1–5 by digest, 6 = 5
+  but for the aquifers, every stream head (lips too), every natural spring, one fresh pond in three and only fresh
+  ones; the constants; what an aquifer feeds; the rolls; the flow by simulation — basins of 1, 7 and 19 cells fill in
+  15 / 105 / 285 s to full in the rains and 40 / 280 / 760 s to low in the dry season, within 15 %; the seasonal
+  target; the shallow floor; tainted water; basins; on the real rule a dug basin fills and holds, an open one does
+  not; streams in a drought; a real generation-6 world: the index, a pond drunk and fed back, saving and loading; the
+  cost; main's wiring read from the source; the debug handle), additions to `waterLaws.test.js` (60 random scenes with
+  aquifers in the ground and under ponds and the aquifers' step between the edits: the rule never makes water, the
+  laws hold at rest), `explosions.test.js` and `blackholes.test.js` (the aquifer survives a real blast and a real
+  black hole), `harvest.test.js`, `handbook.test.js`, and the pins of BLOCK_COUNT, TILE_IDS and GEN_LATEST.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

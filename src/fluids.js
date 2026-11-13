@@ -16,7 +16,9 @@
 //      different depth that come to touch level: their water is spread until no two cells differ by more than one
 //      depth, and not a level of it is lost or made.
 //   3. Water never comes from nothing. Flowing water never becomes a source, and a cell generated as water does not
-//      fill again by itself.
+//      fill again by itself. Besides the rain, one thing makes water, and not here: an AQUIFER (§89), a block of wet
+//      rock that the water cycle (waterBodies.js feedStep) lets feed the fresh water standing on it. To this rule an
+//      aquifer is any solid block.
 // Two kinds of water are FED and stand outside laws 1 and 2 (and outside law 3 where it says so):
 //   - THE SEA: a body of more than BODY_MAX_CELLS cells, and any body under one. It never falls (it pours), never
 //     spills dry, never changes depth, and it alone keeps the two old rules that make water: a flowing or falling cell

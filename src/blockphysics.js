@@ -22,7 +22,7 @@ import {
   UNDO_WINDOW_S, UNDO_MAX_CELLS, SUPPORT_STARVED_VISITS,
 } from './config.js';
 import {
-  BLOCK, UNLOADED, POP_OFF_IDS, isFallThrough, isGravityBlock, isPopOff, isSolid, isWater, isWaterSource,
+  BLOCK, UNLOADED, POP_OFF_IDS, isDeepRock, isFallThrough, isGravityBlock, isPopOff, isSolid, isWater, isWaterSource,
 } from './blocks.js';
 import { HEX_DIRS } from './hex.js';
 import { chunkKey, localIndex, packCell, unpackCell } from './coords.js';
@@ -1108,9 +1108,9 @@ export class BlockPhysics {
     return cells;
   }
 
-  /** Was the removed cell itself an anchor (untouched terrain, bedrock or y = 0) before it was removed? */
+  /** Was the removed cell itself an anchor (untouched terrain, bedrock or an aquifer — §89 — or y = 0) before it was removed? */
   _wasAnchor(q, y, r, prev) {
-    if (y === 0 || prev === BLOCK.BEDROCK) return true;
+    if (y === 0 || isDeepRock(prev)) return true;
     const w = this.world;
     if (!isSolid(prev)) return false;
     // The write already happened: the cell had no edit before it iff its recorded origin is the id it had.

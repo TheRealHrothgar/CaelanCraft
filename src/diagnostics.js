@@ -516,6 +516,8 @@ export function installDebugHandle(win, game) {
   // `env` when given (`{ rain: 1, dryness: 1 }`): the in-game check of pools that run out
   handle.waterBodyAt = (q, y, r) => (game && typeof game.waterBodyAt === 'function' ? game.waterBodyAt(q, y, r) : null);
   handle.waterStep = (seconds, env) => (game && typeof game.waterStep === 'function' ? game.waterStep(seconds, env) : null);
+  // §89: the aquifers near the player and what each feeds (waterStep runs their step too)
+  handle.aquiferNear = (radius) => (game && typeof game.aquiferNear === 'function' ? game.aquiferNear(radius) : null);
   // §87 sleep: the hours awake (20 Tired, 32 Exhausted, 40 Weak, 48 Seeing things), lying down on the targeted or nearest
   // sleep spot, whether the place round a spot is secure, and `hours` game hours of sleep at once
   handle.setFatigue = (hours) => (game && typeof game.setFatigue === 'function' ? game.setFatigue(hours) : null);

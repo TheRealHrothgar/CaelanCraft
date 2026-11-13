@@ -110,13 +110,13 @@ import { isAnchorCell, isLoadBearing } from './support.js';
 const CAUSE_HUNG = Object.freeze({ kind: 'physics' });
 
 /**
- * Cells a blast never breaks (besides UNLOADED): AIR, liquids, BEDROCK, OBSIDIAN, RUNE_BLOCK, BLACK_HOLE and the
- * COLLAPSAR_CHARGE (a blast sets a charge off through onCharge instead, DESIGN-circuits §3.4.6).
+ * Cells a blast never breaks (besides UNLOADED): AIR, liquids, BEDROCK, OBSIDIAN, RUNE_BLOCK, BLACK_HOLE, the
+ * COLLAPSAR_CHARGE (a blast sets a charge off through onCharge instead, DESIGN-circuits §3.4.6) and (§89) the AQUIFER.
  */
 export const BLAST_PROOF_IDS = Object.freeze([
   BLOCK.AIR, BLOCK.WATER, BLOCK.WATER_FLOW_1, BLOCK.WATER_FLOW_2, BLOCK.WATER_FLOW_3, BLOCK.WATER_FLOW_4,
   BLOCK.WATER_FLOW_5, BLOCK.WATER_FLOW_6, BLOCK.WATER_FALL, BLOCK.BEDROCK, BLOCK.OBSIDIAN, BLOCK.RUNE_BLOCK,
-  BLOCK.BLACK_HOLE, BLOCK.COLLAPSAR_CHARGE,
+  BLOCK.BLACK_HOLE, BLOCK.COLLAPSAR_CHARGE, BLOCK.AQUIFER,
 ]);
 const BLAST_PROOF = new Uint8Array(256);
 for (const id of BLAST_PROOF_IDS) BLAST_PROOF[id] = 1;

@@ -696,3 +696,34 @@ CONTRACTS §88. Built without a browser: the population logic is tested by simul
 - **Older saves**: their animals and pigs get a sex at random on load (a stag stays a male) and are all grown. A young
   animal follows the nearest grown female of its kind, not its own mother (there is no lasting id).
 - **The clock set back** (`time set`): zones' clocks follow it and nothing is undone; births resume when it runs on.
+
+## The aquifer — open items
+
+CONTRACTS §89 (the aquifer, generation 6). Built without a browser: the rules are tested, the look is not. None blocks play.
+
+- **Nobody has seen it in the game.** The two tiles (wet slate-blue rock, black cracks, threads of bright water) were
+  looked at as a software rendering only. Least sure of: whether the aquifer under a pond's middle can be told from the
+  pond floor through the water, and whether the side tile's straight water threads read as seeping water or as stripes.
+  To look: `__caelancraft.aquiferNear(64)` lists the aquifers round the player with their cells; `setblock` one where
+  you stand to see the tiles in daylight.
+- **The flow only runs near the player**, as the rest of the water cycle does: the aquifers within 48 cells
+  (`CYCLE_RANGE`), in loaded chunks, once a second in Survival. A fed pond far away stands as it was left and catches up
+  only while someone is near.
+- **A stream keeps one cell in a drought, not three.** In generation 6 the head kept wet is the cell over its aquifer
+  (the brief's rule); generations 3–5 keep the three highest cells as before. A stream longer than the 128-cell body
+  search, sampled far from its head, falls back to the three-cell rule for that drying.
+- **Only the layer over the aquifer is fed.** A pit two cells deep fills its bottom layer to the season's target and no
+  higher; the layer above takes only rain. A basin may stand on any solid floor (not only clay) once it is over an
+  aquifer: the aquifer's water is what fills it, and the game does not model water soaking away.
+- **The aquifer under a natural spring cannot be reached in Survival** (the SPRING over it cannot be broken), so the
+  aquifers a player can build round are the ones under stream heads and under ponds. Digging a pond on an aquifer wider
+  (its walls whole again) makes a bigger fed pool; it fills slowly.
+- **Ponds keep their water.** Only ponds that generation 5 already made fresh are rolled for an aquifer (one in three),
+  so generation 6 has as much tainted water as generation 5 and every pond on an aquifer is fresh. Frozen ponds (ice)
+  get none.
+- **Commands may set and replace an aquifer** (unlike bedrock, which they never touch), so a mistaken `setblock` can be
+  undone. Every other way of breaking a block spares it.
+- **Two aquifers under one body** each give their flow. When both win their roll in the same second they write the same
+  level, so the body gains one level, not two: a little less water than the sum, only in that rare second.
+- **Old worlds have no aquifers** and behave exactly as before: a saved world keeps the generation it was made with,
+  so a world made before generation 6 never gets any (only a new world, or one under `?nosave`, is made at generation 6).

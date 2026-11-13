@@ -991,7 +991,7 @@ describe('survival save fields (v0.9): presence, defaults and the version', () =
 
 describe('survival save fields: gen and mode', () => {
   it('gen > GEN_LATEST is unloadable (and serializeSave refuses to write it)', () => {
-    expect(GEN_LATEST).toBe(5); // §85: natural springs and gravel in beds (4 was v0.15's lean land, §79)
+    expect(GEN_LATEST).toBe(6); // §89: aquifers (5 was §85's natural springs and gravel in beds, 4 v0.15's lean land, §79)
     const raw = JSON.parse(serializeSave(makeSave()));
     const newer = JSON.stringify({ ...raw, version: 3, gen: GEN_LATEST + 1 });
     expect(deserializeSave(newer)).toBeNull();
