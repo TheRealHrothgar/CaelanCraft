@@ -419,6 +419,7 @@ function refreshHandleRefs(handle, game) {
   handle.loose = game ? game.loose ?? null : null; // v0.10 (CONTRACTS §60)
   handle.growth = game ? game.growth ?? null : null; // §80: the planted cells and sprouts (farming.js Growth)
   handle.spread = game ? game.spread ?? null : null; // §80: the wild plants' spreading and its counts (spread.js Spread)
+  handle.waterCycle = game ? game.waterCycle ?? null : null; // §83: the water cycle and its counts (waterBodies.js WaterCycle)
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;
@@ -497,6 +498,10 @@ export function installDebugHandle(win, game) {
   handle.useSelected = (dt) => (game && typeof game.useSelected === 'function' ? game.useSelected(dt) : null);
   // §80: run the growth and spread steps as if `seconds` had passed (the in-game check of farming)
   handle.farmStep = (seconds) => (game && typeof game.farmStep === 'function' ? game.farmStep(seconds) : null);
+  // §83: the pool the water in a cell is taken from, and the water cycle run as if `seconds` had passed, in the weather of
+  // `env` when given (`{ rain: 1, dryness: 1 }`): the in-game check of pools that run out
+  handle.waterBodyAt = (q, y, r) => (game && typeof game.waterBodyAt === 'function' ? game.waterBodyAt(q, y, r) : null);
+  handle.waterStep = (seconds, env) => (game && typeof game.waterStep === 'function' ? game.waterStep(seconds, env) : null);
   handle.interact = () => {
     if (game && typeof game.interact === 'function') game.interact();
   };

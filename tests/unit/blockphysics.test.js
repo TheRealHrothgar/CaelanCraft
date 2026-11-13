@@ -328,7 +328,7 @@ describe('parking and re-seeding', () => {
     expect(world.getBlock(8, 11, 8)).toBe(B.LOOSE_STONES);
   });
 
-  it('re-seeds edited water: sources wake their open neighbours, flowing water itself (reseeders follow the switches)', () => {
+  it('re-seeds edited water: sources wake themselves and their open neighbours, flowing water itself (reseeders follow the switches)', () => {
     const { physics, world } = setup();
     physics.setSwitch('water', false);
     world.setBlock(0, 11, 0, B.WATER);
@@ -339,7 +339,7 @@ describe('parking and re-seeding', () => {
     physics.setSwitch('water', true);
     world.load(0, 0);
     expect(physics.isQueued('water', 1, 11, 0)).toBe(true); // an air neighbour of the source
-    expect(physics.isQueued('water', 0, 11, 0)).toBe(false); // sources never change by themselves
+    expect(physics.isQueued('water', 0, 11, 0)).toBe(true); // §83: an edited source wakes too — it may hang (saved in mid-fall) or stand open
     expect(physics.isQueued('water', 5, 11, 5)).toBe(true);
   });
 });
@@ -395,10 +395,17 @@ describe('built-in triggers', () => {
   it('water: placing water queues it and its open neighbours; an open cell under water uses the fall ring', () => {
     const { physics, world } = setup();
     world.setBlock(0, 15, 0, B.WATER);
-    expect(physics.isQueued('water', 0, 15, 0)).toBe(true);
+    // §83 law 1: a source with nothing under it will FALL, one cell a tick — it is queued on the fall ring
+    expect(physics.isQueued('fall', 0, 15, 0)).toBe(true);
+    expect(physics.isQueued('water', 0, 15, 0)).toBe(false);
     expect(physics.isQueued('water', 1, 15, 0)).toBe(true);
-    expect(physics.isQueued('fall', 0, 14, 0)).toBe(true); // air below water: will become falling water
+    expect(physics.isQueued('fall', 0, 14, 0)).toBe(true); // air below water: what comes down goes into it
     expect(physics.isQueued('water', 0, 14, 0)).toBe(false);
+    // … and one that stands on something on the water ring, as before
+    const { physics: p1, world: w1 } = setup();
+    w1.setBlock(0, 11, 0, B.WATER);
+    expect(p1.isQueued('water', 0, 11, 0)).toBe(true);
+    expect(p1.isQueued('fall', 0, 11, 0)).toBe(false);
     // A change of fall-through-ness next to water queues it too; a change that is neither does not.
     const { physics: p2, world: w2 } = setup();
     w2.put(0, 11, 0, B.WATER);

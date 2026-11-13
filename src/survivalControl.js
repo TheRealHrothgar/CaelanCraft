@@ -294,7 +294,9 @@ export function strikeKind(mob, tool) {
  * @property {(q: number, y: number, r: number) => boolean} [tappedToday]  harvest.Tapped for today's game day
  * @property {(q: number, r: number) => boolean} [salty]  water at that column is salt (climate.isSaltyBiome of its biome)
  * @property {(q: number, y: number, r: number) => WaterQuality} [waterQuality]  v0.14 (§76 water): what the water in that
- *   cell is (main: `waterKind` of fluids.waterQualityAt and the column's biome); when given it is used instead of `salty`
+ *   cell is (main: waterBodies.waterAt — tainted, salt for the sea, else fresh); when given it is used instead of `salty`
+ * @property {(q: number, y: number, r: number) => number} [waterDepth]  (CONTRACTS §83) the depth of the pool the water in
+ *   that cell is taken from: 3 full, 2 low, 1 shallow, 0 when that is not told (the hint then names no depth)
  * @property {(station: string) => boolean} [stationNear]  the workplace of that station id is within STATION_RANGE of the
  *   feet (main: `!!stations[id]` from crafting.findStations); absent → every targeted workplace counts as near
  * @property {(id: number) => boolean} [partR]  v0.10 (DESIGN-circuits §4.9): the targeted block is a circuit part with an R
@@ -416,10 +418,11 @@ export function interactKind(c) {
     /** @type {InteractAction} */
     const act = { kind: fill ? 'fill' : 'drink', q: water.q, y: water.y, r: water.r };
     if (c.waterQuality) {
-      // §76: the hint names what the player is looking at — fresh, salt or tainted — and the action carries it
+      // §76: the hint names what the player is looking at — fresh, salt or tainted — and the action carries it;
+      // §83: and how much is left of the pool it is taken from (full, low, shallow)
       act.quality = c.waterQuality(water.q, water.y, water.r);
       act.salty = act.quality === 'salt';
-      act.hint = waterHint(act.quality, fill);
+      act.hint = waterHint(act.quality, fill, c.waterDepth ? c.waterDepth(water.q, water.y, water.r) : 0);
     } else if (c.salty) {
       act.salty = c.salty(water.q, water.r);
       act.hint = waterHint(act.salty, fill);
@@ -484,8 +487,9 @@ export const KIT_TOOL_TYPES = Object.freeze(new Set(['firestarter', 'crucible', 
 
 /**
  * The quality of a water cell from its facts: tainted wins (a Tainted Water source, or water traced back to one —
- * fluids.waterQualityAt); then a generated stream's column is fresh, also where the stream crosses a beach on its way to
- * the sea (worldGen.streamAt: running water is always fresh); then the biome's salt (climate.isSaltyBiome); else fresh.
+ * fluids.waterQualityAt); then running water is fresh, also where a stream crosses a beach on its way to the sea; then
+ * salt; else fresh. Since §83 `salty` is: the water is the SEA (a body of more than fluids.BODY_MAX_CELLS cells, whatever
+ * the biome of the column), or it was generated in a salt biome (climate.isSaltyBiome) — waterBodies.waterAt decides.
  * @param {boolean} tainted @param {boolean} salty @param {boolean} [stream] @returns {WaterQuality}
  */
 export function waterKind(tainted, salty, stream = false) {
@@ -504,16 +508,23 @@ function qualityOf(quality) {
 /** The first part of the water hint, per quality. */
 const WATER_LABELS = Object.freeze({ fresh: 'Fresh water', salt: 'Sea water (salty)', tainted: 'Tainted water' });
 
+/** The words for how much is left of a pool, by depth 1..3 (CONTRACTS §83; blocks.WATER_DEPTH_WORDS). */
+const DEPTH_WORDS = Object.freeze(['', 'shallow', 'low', 'full']);
+
 /**
  * The water target hint (§4.1, §76): `Fresh water · R: drink`, `Sea water (salty) · R: drink`, `Tainted water · R: drink
- * (risky)`, or `… · R: fill the pot` with an empty clay pot selected.
+ * (risky)`, or `… · R: fill the pot` with an empty clay pot selected. With a `depth` (§83) fresh and tainted water say
+ * how much is left of the pool: `Fresh water · full · R: drink`, `Tainted water · low · R: drink (risky)`, `Fresh water ·
+ * shallow · R: fill the pot`. Sea water names no depth: the sea does not run out.
  * @param {WaterQuality|boolean} quality  what the water is (a boolean is the old `salty` flag: true = salt)
  * @param {boolean} potSelected
+ * @param {number} [depth]  the depth of the pool it is taken from: 3 full, 2 low, 1 shallow; anything else: not said
  */
-export function waterHint(quality, potSelected) {
+export function waterHint(quality, potSelected, depth = 0) {
   const q = qualityOf(quality);
   const verb = potSelected ? 'fill the pot' : q === 'tainted' ? 'drink (risky)' : 'drink';
-  return `${WATER_LABELS[q]} · R: ${verb}`;
+  const left = q !== 'salt' && (depth === 1 || depth === 2 || depth === 3) ? ` · ${DEPTH_WORDS[depth]}` : '';
+  return `${WATER_LABELS[q]}${left} · R: ${verb}`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

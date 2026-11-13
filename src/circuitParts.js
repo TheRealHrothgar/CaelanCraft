@@ -224,6 +224,7 @@ const EARTH_NAMES = Object.freeze([
   'coal_block', 'iron_block', 'gold_block', 'copper_block',
   'water', 'water_flow_1', 'water_flow_2', 'water_flow_3', 'water_flow_4', 'water_flow_5', 'water_flow_6', 'water_fall',
   'tainted_water', // v0.14 (§76 water): the second water source conducts like the first
+  'water_low', 'water_shallow', 'tainted_water_low', 'tainted_water_shallow', // §83: so does standing water of any depth
 ]);
 
 /**

@@ -76,8 +76,8 @@ const green = ([r, g, b, a]) => a === 255 && g > r + 30 && g > b + 30;
 
 describe('the farm blocks 133–150 (blocks.js)', () => {
   it('nine planted blocks then nine sprouts, in the kind order, named after the plant each grows into', () => {
-    expect(BLOCK_COUNT).toBe(159); // §81: the eight plants that are not food follow at 151–158
-    expect(BLOCKS).toHaveLength(159);
+    expect(BLOCK_COUNT).toBe(163); // §81: the eight plants that are not food follow at 151–158; §83: the low and shallow water at 159–162
+    expect(BLOCKS).toHaveLength(163);
     expect(CROP_ROWS.map((row) => row[1])).toEqual(TABLE.map((row) => row[0]));
     expect([...FARM_IDS]).toEqual(Array.from({ length: 18 }, (_, i) => 133 + i));
     TABLE.forEach(([key, label, , grown], i) => {

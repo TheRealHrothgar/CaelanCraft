@@ -446,6 +446,12 @@
  * @property {import('./spread.js').Spread} [spread]   the wild plants' spreading, with its counts
  * @property {(seconds: number) => ({ seconds: number, sprouted: number, grown: number, failed: number, births: number }|null)} [farmStep]
  *   run the growth and spread steps as if `seconds` had passed
+ * Water that runs out (CONTRACTS §83): the cycle's counts, a pool looked at, and time for the cycle alone.
+ * @property {import('./waterBodies.js').WaterCycle} [waterCycle]  the water cycle, with its counts
+ * @property {(q: number, y: number, r: number) => ({ cells: number, depth: number, quality: string, sea: boolean, stream: boolean, contained: boolean, covered: boolean, list: number[] }|null)} [waterBodyAt]
+ *   the body of water that the water in a cell is taken from
+ * @property {(seconds: number, env?: { rain?: number|((q: number, r: number) => number), dryness?: number|(() => number) }) => ({ seconds: number, dried: number, filled: number, beds: number, basins: number }|null)} [waterStep]
+ *   run the water cycle as if `seconds` had passed, in another weather when `env` is given
  */
 
 export {};

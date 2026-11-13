@@ -64,6 +64,9 @@ import {
   CROPS, FARM_WATER_REACH, REED_WATER_REACH, SPROUT_MEAN_S, GROW_MEAN_S, SEED_TAKES, SEED_BACK_P, SOIL_EARTH, cropOf, soilWords,
 } from './farming.js';
 import { SPREAD_KINDS, SPREAD_MEAN_S, SPREAD_STEP, SPREAD_RADIUS, SPREAD_RANGE, SPONTANEOUS_MEAN_S } from './spread.js';
+// §83: water that runs out
+import { BODY_MAX_CELLS, SPILL_STEP_S } from './fluids.js';
+import { CELL_GULPS, POT_GULPS, DRY_MEAN_S, STREAM_DRY_MEAN_S, ROOF_DRY_FACTOR, FILL_MEAN_S } from './waterBodies.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 
@@ -1071,6 +1074,8 @@ function makeChapters() {
     if (d < 1.5) return 'a little over a game day';
     return `about ${halves(d)} game days`;
   };
+  /** How often something happens on average, in game days: "about every 3 game days" (§83). */
+  const everyGameDays = (seconds) => `about every ${halves(seconds / DAY_LENGTH_SECONDS)} game days`;
   // §80: the foods that are planted as they are (every `from` item of a crop that is not a seed), in CROPS order
   const plantedFoods = CROPS.flatMap((c) => c.from).filter((k) => !/_seeds$/.test(k)).map((k) => itemName(k));
   const dropCount = (/** @type {number|number[]} */ n) => (Array.isArray(n) ? `${n[0]}–${n[1]}` : String(n));
@@ -1192,10 +1197,10 @@ function makeChapters() {
     [
       h('Fresh, tainted and salt'),
       p(`Water is your most urgent need. Hydration falls from full to nothing in ${fmtDurationLong(Math.round(hydrationRest / 60) * 60)} even at rest: faster when you work, faster still in the heat.`),
-      p('The sea and every beach are salt. Inland, look before you drink: clear blue water is fresh, murky green-brown water is *tainted*. Most ponds are tainted: small hex-shaped pools ringed with cattails and loose stones, with clay at the bottom. In snowy land they freeze over.'),
+      p(`The sea is salt, and so is any lake too big to be a pool: water whose surface is more than ${BODY_MAX_CELLS} cells is sea. Inland, look before you drink: clear blue water is fresh, murky green-brown water is *tainted*. Most ponds are tainted: small hex-shaped pools ringed with cattails and loose stones, with clay at the bottom. In snowy land they freeze over.`),
       p('*Streams* always run fresh: narrow channels from a spring on higher ground down to the sea, a pond or a small pool.'),
       p(`Salt water makes thirst worse: your body spends more water getting rid of the salt than the sip gave you. A gulp of the sea costs ${-R.GULP_SALT} Hydration.`),
-      tip('The hint under your crosshair names it: *Fresh water*, *Tainted water* or *Sea water (salty)*.'),
+      tip('The hint under your crosshair names it, and says how much is left of a pool: *Fresh water · low*, *Tainted water · shallow*, *Sea water (salty)*.'),
     ],
     [
       h('Drinking'),
@@ -1223,6 +1228,21 @@ function makeChapters() {
       p(`Fresh water does not keep. A *Pot of Water* left standing in your pack or a basket turns into a Pot of Tainted Water, on average after ${gameDays(food('pot_water').spoilS ?? 0)}. Boiled water keeps for good, and boiling a tainted pot makes it safe.`),
       p('So carry your water boiled, and know where the nearest stream is. Follow one uphill and you come to its spring; follow it down and it ends at the sea, a pond or a pool.'),
       tip('A stream stays fresh all the way across a beach. The sea is still salt.'),
+    ],
+    [
+      h('Water runs out'),
+      p('A pool is not endless. It stands at one of three depths: *full*, *low* or *shallow*. After shallow it is dry. Shallow water is ankle-deep: you walk through it.'),
+      p(`Every gulp and every pot comes out of the pool you take it from. Each cell of a pool holds ${CELL_GULPS} gulps for each depth, and filling a pot takes ${POT_GULPS} gulps. A pond of seven cells gives about ${7 * CELL_GULPS} gulps before it drops a depth and about ${3 * 7 * CELL_GULPS} in all; a single cell gives about ${3 * CELL_GULPS}.`),
+      p(`The sun dries a pool too. In dry weather it loses a depth ${everyGameDays(DRY_MEAN_S)}; under a roof or in a cave that takes ${numWord(ROOF_DRY_FACTOR)} times as long. Rain fills it again: a depth for about every ${fmtDurationLong(FILL_MEAN_S)} of hard rain, up to full. A dry pond takes water again in the rain, but it never grows larger than it was.`),
+      p(`*Streams* dwindle the same way: full after rain, a trickle in dry weather, dry in a drought. Without rain a stream loses a depth ${everyGameDays(STREAM_DRY_MEAN_S)}. Drinking does not lower a stream. The sea never runs out, and it is always salt.`),
+      tip('A gulp of the water that flows out of a pool is taken from that pool.'),
+    ],
+    [
+      h('Holding water'),
+      p(`Water stays only where something holds it. Every side of every cell of a pool must be a solid block or more standing water. Dig away one block of a pond's bank, or the clay under it, and the pond runs out: it drops a depth every ${SPILL_STEP_S} seconds and is dry in ${3 * SPILL_STEP_S}. A plant or a torch in the gap does not hold it. A pool two cells deep drains from the top, down to the hole.`),
+      p('Water with nothing under it falls until it lands. Water that flows away is lost: flowing water never becomes a pool again.'),
+      p(`*Clay holds rain.* Dig a pit, floor it with Clay and leave it open to the sky. In the rain it takes its first water, shallow; then it fills like any pool. A basin can be many cells, up to ${BODY_MAX_CELLS}, if every cell lies on clay and every wall is whole.`),
+      warn('Do not dig beside your water. Close a breach at once with any solid block: what ran out is gone, the rest holds.'),
     ],
     [
       h('Water from plants'),

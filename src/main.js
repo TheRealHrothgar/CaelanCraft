@@ -93,9 +93,9 @@ import {
 } from './harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
-  wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterKind, waterHint, WATER_POTS,
+  wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterHint, WATER_POTS,
 } from './survivalControl.js';
-import { waterQualityAt } from './fluids.js';
+import { WaterCycle, waterAt, drawWater, applyWaterWrites, POT_GULPS, WATER_STEP_MAX_S } from './waterBodies.js';
 import { Growth, cropOfBlock, cropState, farmHint, plantAt, wrongGroundHint, failLine, FAIL_NOTICE_CELLS } from './farming.js';
 import { Spread } from './spread.js';
 import { CraftQueue, findStations, listRecipes } from './crafting.js';
@@ -1701,6 +1701,15 @@ export function boot(win, doc) {
   /** §80: the planted seeds and sprouts, and the spreading of the wild plants (its counts are for the debug handle) */
   const growth = new Growth();
   const spread = new Spread();
+  /** §83: the water cycle — pools dry in the sun and fill in the rain (its counts are for the debug handle) */
+  const waterCycle = new WaterCycle();
+  /**
+   * §83: the weather the water cycle reads. A STAND-IN until the weather is wired in: it never rains and the air is as
+   * dry as in the dry season, so pools only dry and are used up. The real weather goes HERE: `rain(q, r)` is how hard it
+   * rains over a column (0..1, 0 dry), `dryness()` a factor on drying (about 1 in the dry season, about 0.3 in the rains).
+   * @type {import('./waterBodies.js').WaterEnv}
+   */
+  const waterEnv = { rain: (_q, _r) => 0, dryness: () => 1 };
   const tapped = new Tapped();
   const craftQueue = new CraftQueue();
   /** hold LMB to dig (§6.1) */
@@ -1802,6 +1811,7 @@ export function boot(win, doc) {
     tappedToday: (q, y, r) => !tapped.canTap(`${q},${y},${r}`, day),
     salty: (q, r) => isSaltyBiome(world.getBiome(q, r)),
     waterQuality: (q, y, r) => waterQualityOf(q, y, r), // §76 water: fresh, salt or tainted
+    waterDepth: (q, y, r) => waterDepthOf(q, y, r), // §83: full, low or shallow
     stationNear: (station) => !!stations[station], // findStations within STATION_RANGE of the feet (§7.2)
     // v0.10 (DESIGN-circuits §4.9, §8.3): parts with an R action of their own join the hit steps, the pocket key the
     // selected-item steps.
@@ -3418,7 +3428,7 @@ export function boot(win, doc) {
         case 'read':
           return 'Handbook · R: read';
         case 'drink_here':
-          return waterHint(qualityHere(), false);
+          return waterHint(qualityHere(), false, depthHere());
         default:
           if (act.hint) return act.hint;
       }
@@ -3488,23 +3498,101 @@ export function boot(win, doc) {
     }
   }
 
+  // ---- §83: water that runs out (waterBodies.js reads the world through `waterWorld`; every write is a lazy setBlock) ----
+
+  /** How waterBodies.js reads this world: the blocks, where the streams run, what a cell was generated as, the salt biomes. */
+  const waterWorld = {
+    peek: peekBlockFn,
+    get springLevelAt() {
+      return blockPhysics ? blockPhysics.fluids.springLevelAt : null;
+    },
+    originAt: (q, y, r) => world.originAt(q, y, r),
+    saltyAt: (q, r) => isSaltyBiome(world.getBiome(q, r)),
+    /** The cells of a loaded column straight from its chunk (the cycle looks down 48 whole columns a second). */
+    column: (q, r, out) => {
+      const cq = Math.floor(q / CHUNK_SIZE);
+      const cr = Math.floor(r / CHUNK_SIZE);
+      const chunk = world.getChunk(cq, cr);
+      if (!chunk) return false;
+      out.blocks = chunk.blocks;
+      out.base = ((q - cq * CHUNK_SIZE) * CHUNK_SIZE + (r - cr * CHUNK_SIZE)) * WORLD_HEIGHT;
+      return true;
+    },
+  };
+  /** @type {Map<string, import('./waterBodies.js').WaterInfo|null>} `waterAt` answers of the world as it stands (editVersion) */
+  const waterInfoMemo = new Map();
+  let waterInfoVersion = -1;
+
   /**
-   * §76 water: what the water in cell (q, y, r) is to drink — 'tainted' for a Tainted Water source and for flowing or
-   * falling water traced back to one (fluids.waterQualityAt), else 'salt' in an OCEAN / BEACH column — but never in the
-   * column of a generated stream, which runs fresh across the beach to the sea — else 'fresh'.
+   * What the water in cell (q, y, r) is (waterBodies.waterAt): its quality, the depth of the pool it is taken from, whether
+   * that is the sea or running water. Remembered until the world changes (the hint asks every frame).
+   * @returns {import('./waterBodies.js').WaterInfo|null} null when the cell holds no water
+   */
+  function waterInfoAt(q, y, r) {
+    if (world.editVersion !== waterInfoVersion || waterInfoMemo.size > 4096) {
+      waterInfoMemo.clear();
+      waterInfoVersion = world.editVersion;
+    }
+    const key = `${q},${y},${r}`;
+    let info = waterInfoMemo.get(key);
+    if (info === undefined) {
+      info = waterAt(waterWorld, q, y, r);
+      waterInfoMemo.set(key, info);
+    }
+    return info;
+  }
+
+  /**
+   * §76, §83: what the water in cell (q, y, r) is to drink — 'tainted' for a tainted source and for flowing or falling
+   * water traced back to one, else 'salt' for the sea (whatever the biome of the column) and for water generated in an
+   * OCEAN / BEACH column — never running water, which crosses the beach fresh — else 'fresh'.
    * @returns {import('./survivalControl.js').WaterQuality}
    */
   function waterQualityOf(q, y, r) {
-    const salty = isSaltyBiome(world.getBiome(q, r));
-    const gen = /** @type {{ streamAt?: (q: number, r: number) => boolean }} */ (world.worldGen); // (a test's generator has none)
-    const stream = salty && typeof gen.streamAt === 'function' && gen.streamAt(q, r);
-    return waterKind(waterQualityAt(world.getBlock, q, y, r) === 'tainted', salty, stream);
+    const info = waterInfoAt(q, y, r);
+    return info ? info.quality : 'fresh';
   }
 
-  /** @returns {import('./survivalControl.js').WaterQuality} the water round the player's head (drinking with the head under water) */
-  function qualityHere() {
+  /** @returns {number} §83: the depth of the pool the water in cell (q, y, r) is taken from — 3 full, 2 low, 1 shallow, 0 none */
+  function waterDepthOf(q, y, r) {
+    const info = waterInfoAt(q, y, r);
+    return info ? info.depth : 0;
+  }
+
+  /** @returns {[number, number, number]} the cell round the player's head (drinking with the head under water) */
+  function headCell() {
     const [q, r] = worldToHex(player.x, player.z);
-    return waterQualityOf(q, Math.floor(player.y + getEyeHeight(player)), r);
+    return [q, Math.floor(player.y + getEyeHeight(player)), r];
+  }
+
+  /** @returns {import('./survivalControl.js').WaterQuality} the water round the player's head */
+  function qualityHere() {
+    return waterQualityOf(...headCell());
+  }
+
+  /** @returns {number} the depth of the pool the water round the player's head is taken from */
+  function depthHere() {
+    return waterDepthOf(...headCell());
+  }
+
+  /**
+   * §83: `gulps` gulps are taken from the water in cell (q, y, r) — 1 for a drink, POT_GULPS for a pot. The pool it comes
+   * from may drop a level (waterBodies.drawWater); the sea and running water never do.
+   */
+  function useWater(q, y, r, gulps) {
+    const draw = drawWater(waterWorld, q, y, r, gulps, Math.random);
+    if (draw && draw.dropped && applyWaterWrites(world, draw.writes) > 0) waterCycle.used();
+  }
+
+  /**
+   * §83, once a second in Survival (and from the debug handle's waterStep): one step of the water cycle round the player,
+   * with the weather of `env`. @returns {import('./waterBodies.js').CycleEvent|null} what happened, already written
+   */
+  function waterSecond(dt, random, env = waterEnv) {
+    const [q, r] = worldToHex(player.x, player.z);
+    const ev = waterCycle.step(dt, random, { ...waterWorld, isLoadedCell: isLoadedCellFn, q, r }, env);
+    if (ev) applyWaterWrites(world, ev.writes);
+    return ev;
   }
 
   // ---- Survival: R (§9.4 priorities) -----------------------------------------------------------------
@@ -3625,6 +3713,7 @@ export function boot(win, doc) {
         const quality = act.quality ?? waterQualityOf(q, y, r);
         pack.consume(selected, 1);
         giveToHand(WATER_POTS[quality]);
+        useWater(q, y, r, POT_GULPS); // §83: a pot takes POT_GULPS gulps out of the pool
         audio.playPick();
         return;
       }
@@ -3633,6 +3722,8 @@ export function boot(win, doc) {
         if (fxTime - gulpAt < GULP_GAP_S) return;
         gulpAt = fxTime;
         const quality = act.kind === 'drink' ? (act.quality ?? waterQualityOf(q, y, r)) : qualityHere();
+        if (act.kind === 'drink') useWater(q, y, r, 1); // §83: a gulp is taken out of the pool
+        else useWater(...headCell(), 1);
         const line = survival.drink(quality, Math.random);
         audio.playDrink();
         if (line) logLine(line);
@@ -4067,6 +4158,7 @@ export function boot(win, doc) {
         if (ripeOf(world.getBlock(c.q, c.y, c.r)) === c.id) world.setBlock(c.q, c.y, c.r, c.id, true);
       }
       farmSecond(1, Math.random); // §80: seeds sprout, sprouts grow up, the wild plants spread
+      waterSecond(1, Math.random); // §83: pools dry in the sun and fill in the rain
       const bad = pack.spoil(1, Math.random);
       if (bad.length > 0 && fxTime - spoilLineAt >= 2) {
         spoilLineAt = fxTime;
@@ -4677,6 +4769,7 @@ export function boot(win, doc) {
     regrowth.loadFromEdits(world.edits);
     growth.loadFromEdits(world.edits); // §80: the planted cells are edits, like the picked bushes
     spread.clear();
+    waterCycle.clear();
     tapped.clear();
     craftQueue.clear();
     resetSurvivalInput();
@@ -5096,6 +5189,7 @@ export function boot(win, doc) {
     regrowth.clear();
     growth.clear();
     spread.clear();
+    waterCycle.clear();
     tapped.clear();
     craftQueue.clear();
     resetSurvivalInput();
@@ -5455,6 +5549,42 @@ export function boot(win, doc) {
         total.grown += done.grown;
         total.failed += done.failed;
         total.births += done.births;
+      }
+      return total;
+    },
+    // ---- §83 water: the cycle's counts, a pool looked at, and time for the cycle alone ----
+    waterCycle,
+    /**
+     * The body of water that the water in cell (q, y, r) is taken from (flowing water: the pool that feeds it).
+     * @returns {{ cells: number, depth: number, quality: string, sea: boolean, stream: boolean, contained: boolean, covered: boolean, list: number[] }|null}
+     *   `cells` how many cells it has (the sea: the 128 looked at), `depth` 3 full / 2 low / 1 shallow, `quality` fresh,
+     *   salt or tainted, `list` its cells as (q, y, r) triples; null when the cell holds no water that a source feeds
+     */
+    waterBodyAt(q, y, r) {
+      if (!world || !Number.isFinite(q + y + r)) return null;
+      const info = waterAt(waterWorld, Math.floor(q), Math.floor(y), Math.floor(r));
+      if (!info || !info.body) return null;
+      const b = info.body;
+      return { cells: b.count, depth: b.depth, quality: info.quality, sea: b.sea, stream: b.stream, contained: b.contained, covered: b.covered, list: b.cells.slice() };
+    },
+    /**
+     * Run the water cycle as if `seconds` had passed (1 s steps, at most WATER_STEP_MAX_S of them), with Math.random and,
+     * when given, another weather: `{ rain: 1, dryness: 1 }` (numbers, or the functions of a WaterEnv). Nothing else ages.
+     * @returns {{ seconds: number, dried: number, filled: number, beds: number, basins: number }|null}
+     */
+    waterStep(seconds, env) {
+      if (!world || !player || !Number.isFinite(seconds)) return null;
+      const fn = (v, fallback) => (typeof v === 'function' ? v : Number.isFinite(v) ? () => v : fallback);
+      const weather = env ? { rain: fn(env.rain, waterEnv.rain), dryness: fn(env.dryness, waterEnv.dryness) } : waterEnv;
+      const n = Math.max(0, Math.min(WATER_STEP_MAX_S, Math.floor(seconds)));
+      const total = { seconds: n, dried: 0, filled: 0, beds: 0, basins: 0 };
+      for (let i = 0; i < n; i++) {
+        const ev = waterSecond(1, Math.random, weather);
+        if (!ev) continue;
+        if (ev.kind === 'dry') total.dried++;
+        else if (ev.kind === 'fill') total.filled++;
+        else if (ev.kind === 'bed') total.beds++;
+        else total.basins++;
       }
       return total;
     },
