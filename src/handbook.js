@@ -1166,7 +1166,7 @@ function makeChapters() {
     [
       h('Drinking'),
       p(`Look at water and press [R] to take a gulp, whatever you are holding: ${fmtSigned(R.GULP_FRESH)} Hydration, one gulp every ${GULP_GAP_S} s. With your head under water, [R] drinks where you are.`),
-      p(`Raw water is a gamble. A gulp of fresh water poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(potSick)}. Tainted water is far worse: ${fmtPct(R.GULP_TAINTED_SICK)} a gulp, ${fmtPct(food('pot_tainted').sick)} a pot. Water boiled in the embers of a campfire is always safe.`),
+      p(`Raw water is a gamble. A gulp of fresh water poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(potSick)}. Tainted water is worse still: ${fmtPct(R.GULP_TAINTED_SICK)} a gulp, ${fmtPct(food('pot_tainted').sick)} a pot. Water boiled in the embers of a campfire is always safe.`),
       p(`When you are *Poisoned* your stomach turns at once: ${fmtSigned(R.POISON_THIRST)} Hydration and ${fmtSigned(R.POISON_HUNGER)} Nourishment. For the next ${R.SICK_S} seconds you do not heal, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though never below ${R.SICK_FLOOR} HP. Every new dose adds its time on top.`),
       tip('Boil before you drink, and cook before you eat.'),
       warn('Water that flows out of a tainted pond is still tainted, though it looks clear.'),

@@ -16,6 +16,10 @@
 // healwort); mushroom troops also grow on cave floors (CAVE_TROOP). Gravel, loose stones, fallen branches and tussock keep
 // the generation-2 roll. Generations 1 and 2 are byte for byte what they were.
 //
+// Generation 4 (v0.15, CONTRACTS §79): the lean land. The same patches, but fewer of them and thinner
+// (PATCH_TABLE_GEN4: a generation-4 patch is always one of the generation-3 patches of the same seed); everything else
+// is generation 3. Generation 3 is byte for byte what it was.
+//
 // Cells are hexagonal prisms addressed by axial (q, r). Continuous noise is always sampled at the cell's
 // WORLD position (hex.hexToWorld) so terrain, climate and caves are isotropic rather than sheared along
 // the axial axes; discrete hashes (bedrock, dirt depth, ores, trees) use the integer cell coordinates.
@@ -409,6 +413,30 @@ export const CAVE_TROOP = Object.freeze({
   mixId: BLOCK.FRECKLECAP_MUSHROOM, mixShares: FRECKLECAP_SHARES,
 });
 
+// ---- v0.15 (§79): the lean land (generation 4) ------------------------------------------------------------------------
+
+/** Generation 4 keeps this share of the food patches (a patch's roll must be below its chance × this) … */
+export const LEAN_PATCH_CHANCE = 0.45;
+/** … and a patch that stays holds this share of the plants it had. Together: about a third of generation 3's food. */
+export const LEAN_PATCH_FILL = 0.8;
+/** The Healwort is no food and already rare: its patches are not thinned out (only made thinner). */
+const LEAN_KEEPS = Object.freeze(['healwort']);
+
+/**
+ * The food patches of generation 4: PATCH_TABLE row for row (the same salts, so the same centres and rolls), each chance
+ * × LEAN_PATCH_CHANCE and each fill × LEAN_PATCH_FILL. A patch of generation 4 is therefore a patch of generation 3,
+ * and a plant in it stands where it stood there: the lean land is the harder land with most of its food taken away.
+ * @type {readonly Readonly<PatchRow>[]}
+ */
+export const PATCH_TABLE_GEN4 = Object.freeze(PATCH_TABLE.map((row) => Object.freeze({
+  ...row,
+  chance: Object.freeze(row.chance.map((c) => c * (LEAN_KEEPS.includes(row.key) ? 1 : LEAN_PATCH_CHANCE))),
+  fill: row.fill * LEAN_PATCH_FILL,
+})));
+
+/** The cave troops of generation 4: as rare as the lean land's other food. */
+export const CAVE_TROOP_GEN4 = Object.freeze({ ...CAVE_TROOP, chance: CAVE_TROOP.chance * LEAN_PATCH_CHANCE, fill: CAVE_TROOP.fill * LEAN_PATCH_FILL });
+
 /** Hex offsets at distance 1..2 from a centre (the 18 columns a pond checks besides its centre). */
 const DISC2_RING = Object.freeze((() => {
   const out = [];
@@ -445,8 +473,8 @@ const CROWN_DIRS = Object.freeze([0, 2, 4]);
 /**
  * Create a deterministic world generator.
  * @param {string|number|null|undefined} seed  user-facing seed; normalised with `normalizeSeed`
- * @param {{ gen?: number }} [opts]  `gen` 1 (default: today's terrain, byte for byte), 2 (the survival resources) or 3
- *   (v0.14: the harder land)
+ * @param {{ gen?: number }} [opts]  `gen` 1 (default: today's terrain, byte for byte), 2 (the survival resources), 3
+ *   (v0.14: the harder land) or 4 (v0.15: the lean land)
  * @returns {SurvivalWorldGen}
  */
 export function createWorldGen(seed, opts = {}) {
@@ -455,6 +483,11 @@ export function createWorldGen(seed, opts = {}) {
   const gen2 = gen >= 2;
   /** v0.14 (CONTRACTS §76): the harder land — streams, tainted ponds, scarcer food in bunches, new plants. New worlds only. */
   const gen3 = gen >= 3;
+  /** v0.15 (CONTRACTS §79): the lean land — generation 3 with most of its food patches gone. New worlds only. */
+  const gen4 = gen >= 4;
+  const patchTable = gen4 ? PATCH_TABLE_GEN4 : PATCH_TABLE;
+  const patchMaxChance = gen4 ? PATCH_MAX_CHANCE_GEN4 : PATCH_MAX_CHANCE;
+  const caveTroop = gen4 ? CAVE_TROOP_GEN4 : CAVE_TROOP;
 
   // Derived noise seeds, salts 1..8 in contract order.
   const nCont = createNoise(hash3(s, 1, 0, 0));
@@ -841,7 +874,7 @@ export function createWorldGen(seed, opts = {}) {
         if (blocks[top] !== table.surface || blocks[top + 1] !== BLOCK.AIR) continue;
         const q = oq + lq;
         const r = or + lr;
-        if (gen3 && patchRowOf[ci] !== 0 && floraFits(PATCH_TABLE[patchRowOf[ci] - 1], q, r, height)) {
+        if (gen3 && patchRowOf[ci] !== 0 && floraFits(patchTable[patchRowOf[ci] - 1], q, r, height)) {
           blocks[top + 1] = patchPlant[ci];
           continue;
         }
@@ -934,12 +967,12 @@ export function createWorldGen(seed, opts = {}) {
    */
   function markPatches(biomes, cq, cr) {
     patchRowOf.fill(0);
-    for (let i = 0; i < PATCH_TABLE.length; i++) {
-      const row = PATCH_TABLE[i];
+    for (let i = 0; i < patchTable.length; i++) {
+      const row = patchTable[i];
       const chanceOf = (col) => (
         row.edgeBelow !== undefined && col.biome === BIOME.FOREST && col.humidity >= row.edgeBelow ? 0 : row.chance[col.biome]
       );
-      forEachPatchColumn(row, PATCH_SALT + i, PATCH_MAX_CHANCE[i], chanceOf, cq, cr, (lq, lr, plantId) => {
+      forEachPatchColumn(row, PATCH_SALT + i, patchMaxChance[i], chanceOf, cq, cr, (lq, lr, plantId) => {
         const ci = lq * CHUNK_SIZE + lr;
         if (patchRowOf[ci] !== 0 || row.chance[biomes[ci]] === 0) return;
         patchRowOf[ci] = i + 1;
@@ -958,8 +991,8 @@ export function createWorldGen(seed, opts = {}) {
    * @param {number} cr
    */
   function placeCaveTroops(blocks, heights, cq, cr) {
-    const chanceOf = () => CAVE_TROOP.chance;
-    forEachPatchColumn(CAVE_TROOP, PATCH_SALT + PATCH_TABLE.length, CAVE_TROOP.chance, chanceOf, cq, cr, (lq, lr, plantId) => {
+    const chanceOf = () => caveTroop.chance;
+    forEachPatchColumn(caveTroop, PATCH_SALT + PATCH_TABLE.length, caveTroop.chance, chanceOf, cq, cr, (lq, lr, plantId) => {
       const ci = lq * CHUNK_SIZE + lr;
       const base = ci * WORLD_HEIGHT;
       for (let y = heights[ci] - CAVE_TOP_MARGIN; y > CAVE_MIN_Y; y--) {
@@ -1355,7 +1388,7 @@ export function createWorldGen(seed, opts = {}) {
 
   // Internal cross-calls (trees and ponds → treeTrunkAt) go through this object, so tests can spy on them.
   /** @type {SurvivalWorldGen} */
-  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, streamLevelAt, pondTaintedAt, FLORA_TABLE, PATCH_TABLE };
+  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, streamLevelAt, pondTaintedAt, FLORA_TABLE, PATCH_TABLE: patchTable };
   return api;
 }
 
@@ -1390,6 +1423,7 @@ const GEN3_REPLACES = Object.freeze(ORE_TABLE_GEN3.map((o) => (o.replaces ? idMa
 const PATCH_FOOD = idMask(PATCH_TABLE.map((row) => row.id));
 /** The largest chance of each PATCH_TABLE row over the biomes: a grid cell whose roll is not below it holds no patch. */
 const PATCH_MAX_CHANCE = Object.freeze(PATCH_TABLE.map((row) => Math.max(...row.chance)));
+const PATCH_MAX_CHANCE_GEN4 = Object.freeze(PATCH_TABLE_GEN4.map((row) => Math.max(...row.chance)));
 /** [log, leaves] ids per species. */
 const SPECIES_IDS = Object.freeze({
   oak: Object.freeze([BLOCK.OAK_LOG, BLOCK.OAK_LEAVES]),

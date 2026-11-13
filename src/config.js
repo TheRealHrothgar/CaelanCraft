@@ -142,7 +142,7 @@ export const BLACK_HOLE_SWALLOW_LINE_S = 2;         // the "swallowed" chat line
 
 // Pigs (CONTRACTS §30)
 export const PIG_MAX = 32;                          // pigs in a world; summon refuses beyond this
-export const PIG_NATURAL_COUNT = 3;                 // pigs placed on grass near spawn in a world that has never had any (v0.11 §69: was 5)
+export const PIG_NATURAL_COUNT = 2;                 // pigs placed on grass near spawn in a world that has never had any (5 until v0.11 §69, 3 until v0.15 §79)
 export const PIG_RADIUS = 0.42;                     // body cylinder (collisions, pushing and ray targeting); ≤ MAX_BODY_RADIUS
 export const PIG_HEIGHT = 0.9;                      // fits under a one-cell overhang; too wide for one-cell tunnels
 export const PIG_MASS = 0.7;                        // relative to PLAYER_MASS: the player shoves pigs more than they shove back
@@ -297,7 +297,7 @@ export const STORAGE_QUOTA_ESTIMATE = 5 * 1024 * 1024; // characters a site may 
 export const HOTBAR_SIZE = 9;                       // also the survival pack's hotbar: pack slots 0..HOTBAR_SIZE-1
 
 // Survival (§42–§49; docs/DESIGN-survival.md §9.2). Rates are per real second; one game day is DAY_LENGTH_SECONDS.
-export const GEN_LATEST = 3;                        // newest world generator: 2 adds the survival resources (absent `gen` = 1, today's land); 3 (v0.14, CONTRACTS §76) the harder land: streams, tainted ponds, scarcer food in bunches
+export const GEN_LATEST = 4;                        // newest world generator: 2 adds the survival resources (absent `gen` = 1, today's land); 3 (v0.14, CONTRACTS §76) the harder land: streams, tainted ponds, scarcer food in bunches; 4 (v0.15, CONTRACTS §79) the lean land: far fewer edible plants
 // Pack and containers (§5)
 export const PACK_SLOTS = 27;                       // 0..8 the hotbar strip, 9..26 the rosette
 export const WEAR_SLOTS = 3;                        // head, body, feet
@@ -338,8 +338,9 @@ export const GULP_GAP_S = 0.5;                      // one hand gulp of water pe
 export const TAP_HOLD_S = 4;                        // hold R this long to tap a birch
 // Mobs in Survival (§4.3, §2.4)
 export const PIG_HEALTH = 5;
-export const PIG_REPOP_CHECK_S = 240;               // daylight repopulation check interval (v0.11 §69: was 150 — animals are harder to come by)
-export const PIG_REPOP_TARGET = 2;                  // pigs wanted within PIG_REPOP_RADIUS of the player (was 3)
+export const PIG_REPOP_CHECK_S = 420;               // daylight repopulation check interval (150 until v0.11 §69, 240 until v0.15 §79: animals are hard to come by)
+export const PIG_REPOP_TARGET = 1;                  // pigs wanted within PIG_REPOP_RADIUS of the player (3, then 2 until v0.15); one comes at a time (PIG_REPOP_COUNT)
+export const PIG_REPOP_COUNT = 1;                   // pigs a repopulation brings (2 until v0.15 §79)
 export const PIG_REPOP_RADIUS = 64;
 export const PIG_REPOP_MIN = 24;                    // repopulation spawns this far from the player, min …
 export const PIG_REPOP_MAX = 48;                    // … and max

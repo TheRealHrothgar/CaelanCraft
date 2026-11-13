@@ -363,7 +363,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     const drinks = tableById('drinks');
     expect(drinks.keys).toEqual(ITEM_KEYS.filter((k) => ITEMS[k].food?.returns));
     expect(rowOf(drinks, 'pot_seawater').slice(1)).toEqual(['−10', '0', 'salty']);
-    expect(rowOf(drinks, 'pot_water')[3]).toBe('poisons 20 %'); // v0.11 (§66); the status is called Poisoned
+    expect(rowOf(drinks, 'pot_water')[3]).toBe('poisons 40 %'); // 20 % from v0.11 (§66) until v0.15 (§79); the status is called Poisoned
     expect(rowOf(drinks, 'pot_water')[3]).toBe(`poisons ${fmtPct(ITEMS.pot_water.food.sick)}`);
     expect(rowOf(drinks, 'pot_boiled')[3]).toBe('safe');
     expect(rowOf(drinks, 'pot_milk')).toEqual(['Pot of Milk', '+20', '+12', 'safe']); // §72
@@ -779,7 +779,7 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
   });
 
   it('the animal pages quote the game: herds, hunting, meat and milk, wool, riding, the wolf, snares', () => {
-    expect(text).toContain('roam the land in small herds: 2–4 cattle or sheep, 2–3 horses or wolves.');
+    expect(text).toContain('roam the land in small herds: 1–3 cattle or sheep, 1–2 horses or wolves.'); // v0.15 (§79): sparser
     for (const k of PROSE_KINDS) expect(text).toContain(`${SPECIES[k].herd[0]}–${SPECIES[k].herd[1]} `);
     expect(text).toContain(`${HERD_MIN} to ${HERD_MAX} cells from where you stand`);
     expect(text).toContain('A moo, a baa, a neigh or a woof means a herd is near');
@@ -893,9 +893,11 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     // water: what it is, what it costs, that it spoils — every number from the rules
     expect(text).toContain('clear blue water is fresh, murky green-brown water is tainted. Most ponds are tainted');
     expect(text).toContain('Streams always run fresh');
-    expect(text).toContain(`Tainted water is far worse: ${fmtPct(R.GULP_TAINTED_SICK)} a gulp, ${fmtPct(ITEMS.pot_tainted.food.sick)} a pot.`);
-    expect(text).toContain('Tainted water is far worse: 40 % a gulp, 60 % a pot.');
-    expect(R.GULP_TAINTED_SICK).toBeGreaterThan(R.GULP_FRESH_SICK * 5);
+    expect(text).toContain(`Tainted water is worse still: ${fmtPct(R.GULP_TAINTED_SICK)} a gulp, ${fmtPct(ITEMS.pot_tainted.food.sick)} a pot.`);
+    expect(text).toContain('Tainted water is worse still: 40 % a gulp, 60 % a pot.');
+    // v0.15 (§79): raw fresh water is no longer nearly safe, but tainted water stays twice as bad a gulp
+    expect(R.GULP_TAINTED_SICK).toBeGreaterThanOrEqual(R.GULP_FRESH_SICK * 2);
+    expect(ITEMS.pot_tainted.food.sick).toBeGreaterThan(ITEMS.pot_water.food.sick);
     expect(text).toContain('Water that flows out of a tainted pond is still tainted, though it looks clear.');
     expect(ITEMS.pot_water.food).toMatchObject({ spoilS: 2 * DAY_LENGTH_SECONDS, spoilsTo: 'pot_tainted' });
     expect(text).toContain('A Pot of Water left standing in your pack or a basket turns into a Pot of Tainted Water, on average after about 2 game days.');
@@ -930,7 +932,7 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
   it('raw water poisons and boiling makes it safe (§66); Poisoned blocks healing, a bandage still works', () => {
     const R = RATES;
     expect(text).toContain(`A gulp of fresh water poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(ITEMS.pot_water.food.sick)}.`);
-    expect(text).toContain('poisons you 6 % of the time (ten gulps in a row: 46 %), a Pot of Water 20 %.');
+    expect(text).toContain('poisons you 20 % of the time (ten gulps in a row: 89 %), a Pot of Water 40 %.'); // v0.15 (§79)
     expect(text).toContain(`your stomach turns at once: ${fmtSigned(R.POISON_THIRST)} Hydration and ${fmtSigned(R.POISON_HUNGER)} Nourishment. For the next ${R.SICK_S} seconds you do not heal, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though never below ${R.SICK_FLOOR} HP.`);
     expect(ITEMS.pot_boiled.food.sick).toBe(0);
     expect(FIRE_TRANSFORMS.pot_water).toMatchObject({ to: 'pot_boiled', spot: 'centre' });

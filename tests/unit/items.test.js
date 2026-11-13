@@ -93,7 +93,7 @@ const FOODS = {
   raw_mutton: ['Raw Mutton', 16, 5, 0, 0.3, 1.4, { spoilS: 1200 }],
   roast_mutton: ['Roast Mutton', 16, 26, -2, 0, 1.6, { spoilS: 2400 }],
   snow: ['Snow', 32, 0, 3, 0, 0.6, { temp: -0.2 }],
-  pot_water: ['Pot of Water', 1, 0, 30, 0.2, 1.0, { returns: 'clay_pot', spoilS: 2880, spoilsTo: 'pot_tainted' }], // v0.11 (§66): 20 % poisoning; §76 water: it turns tainted
+  pot_water: ['Pot of Water', 1, 0, 30, 0.4, 1.0, { returns: 'clay_pot', spoilS: 2880, spoilsTo: 'pot_tainted' }], // 40 % poisoning (20 % from v0.11 §66 until v0.15 §79); §76 water: it turns tainted
   pot_boiled: ['Pot of Boiled Water', 1, 0, 30, 0, 1.0, { returns: 'clay_pot' }],
   pot_seawater: ['Pot of Seawater', 1, 0, -10, 0, 1.0, { returns: 'clay_pot' }],
   pot_sap: ['Pot of Birch Sap', 1, 2, 25, 0, 1.0, { returns: 'clay_pot' }],

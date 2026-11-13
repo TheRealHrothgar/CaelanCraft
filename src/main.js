@@ -33,7 +33,7 @@ import {
   BLACK_HOLE_MAX_TRACKED, BLACK_HOLE_SWALLOW_LINE_S,
   PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S,
   ZOMBIE_HEIGHT, GEN_LATEST, PIG_MAX, LAMP_LIGHT_MIN, LAMP_LIGHT_MAX, CAMPFIRE_FUEL_START_S, CAMPFIRE_FUEL_MAX_S, ATTACK_REPEAT_S, GULP_GAP_S,
-  PIG_REPOP_CHECK_S, PIG_REPOP_TARGET, PIG_REPOP_RADIUS, PIG_REPOP_MIN, PIG_REPOP_MAX, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE,
+  PIG_REPOP_CHECK_S, PIG_REPOP_TARGET, PIG_REPOP_COUNT, PIG_REPOP_RADIUS, PIG_REPOP_MIN, PIG_REPOP_MAX, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE,
   FALL_SAFE_SPEED, INTRO_LINE_MS, PACK_MESSAGE_S,
   ZOMBIE_MAX, MAX_INFALL_MOBS, VORTEX_MODEL_RANGE, VORTEX_MAX_MODELS, VORTEX_MAX_CORES, VORTEX_PARTICLES_PER_S,
   VORTEX_PARTICLE_HOLES, CIRCUIT_DRAW_RANGE, CIRCUIT_OVERLAY_RANGE, BLACK_HOLE_SCREEN_FLASH_RANGE, BLACK_HOLE_SCREEN_FLASH_MAX,
@@ -3911,7 +3911,7 @@ export function boot(win, doc) {
     return ['stump', 'kiln', 'bloomery', 'forge'].map((k) => (st[k] ? st[k].join(',') : '-')).join('|');
   }
 
-  /** §4.3: prune one far pig at the cap, then bring two more when fewer than PIG_REPOP_TARGET are within reach. */
+  /** §4.3: prune one far pig at the cap, then bring PIG_REPOP_COUNT more when fewer than PIG_REPOP_TARGET are within reach. */
   function repopulatePigs() {
     if (pigs.size >= PIG_MAX) pigs.pruneFar(player.x, player.z, isLoadedCellFn, 2 * PIG_REPOP_RADIUS);
     let near = 0;
@@ -3920,7 +3920,7 @@ export function boot(win, doc) {
     const [pq, pr] = worldToHex(player.x, player.z);
     pigRepopTries++;
     const seed = (world.seed ^ (day * 7919 + pigRepopTries)) >>> 0;
-    pigs.spawnNatural(Math.min(2, PIG_MAX - pigs.size), pq, pr, seed, world.getBlock, isLoadedCellFn, PIG_REPOP_MIN,
+    pigs.spawnNatural(Math.min(PIG_REPOP_COUNT, PIG_MAX - pigs.size), pq, pr, seed, world.getBlock, isLoadedCellFn, PIG_REPOP_MIN,
       PIG_REPOP_MAX, SURVIVAL_PIG_GROUND);
   }
 

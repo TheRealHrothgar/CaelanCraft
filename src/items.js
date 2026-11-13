@@ -151,7 +151,7 @@ const FOOD_ROWS = [
   ['snow', 'Snow', 32, { satiation: 0, hydration: 3, sick: 0, useS: 0.6, temp: -0.2 }],
   // v0.11 (CONTRACTS §66): unboiled water poisons you one time in five; boil it on a campfire (Pot of Boiled Water: safe)
   // v0.14 (§76 water): fresh water left standing spoils — after about two game days a Pot of Water turns tainted
-  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.2, useS: 1.0, returns: 'clay_pot', spoilS: POT_WATER_SPOIL_S, spoilsTo: 'pot_tainted' }],
+  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.4, useS: 1.0, returns: 'clay_pot', spoilS: POT_WATER_SPOIL_S, spoilsTo: 'pot_tainted' }],
   ['pot_boiled', 'Pot of Boiled Water', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_seawater', 'Pot of Seawater', 1, { satiation: 0, hydration: -10, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_sap', 'Pot of Birch Sap', 1, { satiation: 2, hydration: 25, sick: 0, useS: 1.0, returns: 'clay_pot' }],

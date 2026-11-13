@@ -340,7 +340,7 @@ describe('animals — herds are rare and far; the save', () => {
     const player = standing(0, 0, { flying: true });
     const world = view(flatWorld(), player, hooks(BIOME.PLAINS));
     let spawned = [];
-    // (twenty checks: with HERD_CHANCE 0.35 a herd is all but certain to have come by then)
+    // (twenty checks: with HERD_CHANCE 0.2 a herd is all but certain to have come by then: 0.8^20 is about 1 %)
     run(as, world, HERD_CHECK_S * 20, (ev) => {
       if (ev.spawned.length && spawned.length === 0) spawned = [...ev.spawned];
     });
@@ -354,7 +354,7 @@ describe('animals — herds are rare and far; the save', () => {
       expect(group.every((a) => a.kind === group[0].kind)).toBe(true);
     }
     const count = (pool) => as.list.filter((a) => poolOf(a.kind) === pool).length;
-    expect(count('herd')).toBeGreaterThanOrEqual(2);
+    expect(count('herd')).toBeGreaterThanOrEqual(1); // v0.15 (§79): a herd can be a single animal
     expect(count('herd')).toBeLessThanOrEqual(HERD_TARGET + 4);
     expect(count('small')).toBeLessThanOrEqual(SMALL_TARGET + 3);
     const as2 = new Animals(seededRng(19));

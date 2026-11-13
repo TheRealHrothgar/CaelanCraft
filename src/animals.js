@@ -60,17 +60,17 @@ export const NO_LURE = Object.freeze(/** @type {string[]} */ ([]));
  * `pad` extra reach (m) of its crosshair target; `despawn` its own DESPAWN_DIST; `alarm` its own HERD_ALARM.
  */
 export const SPECIES = Object.freeze({
-  cow: Object.freeze({ name: 'Cow', radius: 0.44, height: 1.3, mass: 2.4, health: 10, notice: 9, fleeScale: 1.0, fleeSprint: false, turn: 3.2, herd: Object.freeze([2, 4]), lure: PLANT_LURE, tame: 0, voice: 'moo' }),
-  sheep: Object.freeze({ name: 'Sheep', radius: 0.36, height: 0.95, mass: 0.9, health: 6, notice: 10, fleeScale: 1.1, fleeSprint: false, turn: 4, herd: Object.freeze([2, 4]), lure: PLANT_LURE, tame: 0, voice: 'baa' }),
-  horse: Object.freeze({ name: 'Horse', radius: 0.44, height: 1.55, mass: 2.6, health: 12, notice: 13, fleeScale: 1.45, fleeSprint: true, turn: 3.5, herd: Object.freeze([2, 3]), lure: PLANT_LURE, tame: 3, voice: 'neigh' }),
-  wolf: Object.freeze({ name: 'Wolf', radius: 0.3, height: 0.8, mass: 0.8, health: 8, notice: 11, fleeScale: 1.15, fleeSprint: true, turn: 5, herd: Object.freeze([2, 3]), lure: MEAT_LURE, tame: 3, voice: 'woof' }),
+  cow: Object.freeze({ name: 'Cow', radius: 0.44, height: 1.3, mass: 2.4, health: 10, notice: 9, fleeScale: 1.0, fleeSprint: false, turn: 3.2, herd: Object.freeze([1, 3]), lure: PLANT_LURE, tame: 0, voice: 'moo' }),
+  sheep: Object.freeze({ name: 'Sheep', radius: 0.36, height: 0.95, mass: 0.9, health: 6, notice: 10, fleeScale: 1.1, fleeSprint: false, turn: 4, herd: Object.freeze([1, 3]), lure: PLANT_LURE, tame: 0, voice: 'baa' }),
+  horse: Object.freeze({ name: 'Horse', radius: 0.44, height: 1.55, mass: 2.6, health: 12, notice: 13, fleeScale: 1.45, fleeSprint: true, turn: 3.5, herd: Object.freeze([1, 2]), lure: PLANT_LURE, tame: 3, voice: 'neigh' }),
+  wolf: Object.freeze({ name: 'Wolf', radius: 0.3, height: 0.8, mass: 0.8, health: 8, notice: 11, fleeScale: 1.15, fleeSprint: true, turn: 5, herd: Object.freeze([1, 2]), lure: MEAT_LURE, tame: 3, voice: 'woof' }),
   // v0.14 (§76 fauna)
-  deer: Object.freeze({ name: 'Deer', radius: 0.36, height: 1.25, mass: 1.4, health: 8, notice: 16, fleeScale: 1.3, fleeSprint: true, turn: 4.5, herd: Object.freeze([3, 5]), lure: NO_LURE, tame: 0, voice: 'bleat', calm: 2.5 }),
-  rabbit: Object.freeze({ name: 'Rabbit', radius: 0.18, height: 0.4, mass: 0.25, health: 2, notice: 8, fleeScale: 1.3, fleeSprint: true, turn: 9, herd: Object.freeze([1, 3]), lure: NO_LURE, tame: 0, voice: 'squeak', pool: 'small', zigzag: true }),
-  pheasant: Object.freeze({ name: 'Pheasant', radius: 0.2, height: 0.5, mass: 0.3, health: 2, notice: 7, fleeScale: 1, fleeSprint: true, turn: 7, herd: Object.freeze([2, 4]), lure: NO_LURE, tame: 0, voice: 'cackle', pool: 'small', flush: 'fly', cruise: 2.6, nests: true }),
-  turkey: Object.freeze({ name: 'Wild Turkey', radius: 0.28, height: 0.8, mass: 0.7, health: 4, notice: 9, fleeScale: 1.2, fleeSprint: true, turn: 6, herd: Object.freeze([2, 4]), lure: NO_LURE, tame: 0, voice: 'gobble', pool: 'small', flush: 'glide', cruise: 0.9, nests: true }),
+  deer: Object.freeze({ name: 'Deer', radius: 0.36, height: 1.25, mass: 1.4, health: 8, notice: 16, fleeScale: 1.3, fleeSprint: true, turn: 4.5, herd: Object.freeze([2, 3]), lure: NO_LURE, tame: 0, voice: 'bleat', calm: 2.5 }),
+  rabbit: Object.freeze({ name: 'Rabbit', radius: 0.18, height: 0.4, mass: 0.25, health: 2, notice: 8, fleeScale: 1.3, fleeSprint: true, turn: 9, herd: Object.freeze([1, 2]), lure: NO_LURE, tame: 0, voice: 'squeak', pool: 'small', zigzag: true }),
+  pheasant: Object.freeze({ name: 'Pheasant', radius: 0.2, height: 0.5, mass: 0.3, health: 2, notice: 7, fleeScale: 1, fleeSprint: true, turn: 7, herd: Object.freeze([1, 3]), lure: NO_LURE, tame: 0, voice: 'cackle', pool: 'small', flush: 'fly', cruise: 2.6, nests: true }),
+  turkey: Object.freeze({ name: 'Wild Turkey', radius: 0.28, height: 0.8, mass: 0.7, health: 4, notice: 9, fleeScale: 1.2, fleeSprint: true, turn: 6, herd: Object.freeze([1, 3]), lure: NO_LURE, tame: 0, voice: 'gobble', pool: 'small', flush: 'glide', cruise: 0.9, nests: true }),
   bear: Object.freeze({ name: 'Bear', radius: 0.48, height: 1.45, mass: 4, health: 30, notice: 9, fleeScale: 1.1, fleeSprint: true, turn: 3.6, herd: Object.freeze([1, 1]), lure: NO_LURE, tame: 0, voice: 'grunt', predator: true, snare: false }),
-  fish: Object.freeze({ name: 'Fish', radius: 0.16, height: 0.2, mass: 0.1, health: 2, notice: 4.5, fleeScale: 1, fleeSprint: false, turn: 10, herd: Object.freeze([2, 4]), lure: NO_LURE, tame: 0, voice: 'plop', pool: 'fish', water: true, snare: false, pad: 0.14, despawn: 70, alarm: 4 }),
+  fish: Object.freeze({ name: 'Fish', radius: 0.16, height: 0.2, mass: 0.1, health: 2, notice: 4.5, fleeScale: 1, fleeSprint: false, turn: 10, herd: Object.freeze([1, 3]), lure: NO_LURE, tame: 0, voice: 'plop', pool: 'fish', water: true, snare: false, pad: 0.14, despawn: 70, alarm: 4 }),
 });
 /** @typedef {'cow'|'sheep'|'horse'|'wolf'|'deer'|'rabbit'|'pheasant'|'turkey'|'bear'|'fish'} AnimalKind */
 export const ANIMAL_KINDS = Object.freeze(/** @type {AnimalKind[]} */ (Object.keys(SPECIES)));
@@ -128,8 +128,8 @@ export const RIDE_LEAP = 2.2;
 /** Natural herds: checked every HERD_CHECK_S; a herd appears with HERD_CHANCE while fewer than HERD_TARGET wild animals
  * are within HERD_RADIUS of the player — HERD_MIN..HERD_MAX away, on natural grass. Beyond DESPAWN_DIST a wild one goes. */
 export const HERD_CHECK_S = 60;
-export const HERD_CHANCE = 0.35; // 0.45 until v0.14: the harder land's herds are a little slower to come back
-export const HERD_TARGET = 5;
+export const HERD_CHANCE = 0.2; // 0.45 until v0.14, 0.35 until v0.15 (CONTRACTS §79): herds are few and slow to come back
+export const HERD_TARGET = 3; // 5 until v0.15
 export const HERD_RADIUS = 96;
 export const HERD_MIN = 34;
 export const HERD_MAX = 64;
@@ -156,8 +156,8 @@ export function poolOf(kind) {
  * Small game has its own count beside the herds: at every HERD_CHECK_S a group appears with SMALL_CHANCE while fewer
  * than SMALL_TARGET small animals are within HERD_RADIUS (same distances and ground as a herd).
  */
-export const SMALL_CHANCE = 0.4;
-export const SMALL_TARGET = 4;
+export const SMALL_CHANCE = 0.25; // 0.4 until v0.15 (§79)
+export const SMALL_TARGET = 3; // 4 until v0.15
 /** The bear is solitary: no second one appears while this many are within HERD_RADIUS. */
 export const BEAR_NEAR = 1;
 
@@ -236,8 +236,8 @@ export const FISH_DART = 5.5;
 export const FISH_DART_S = 1.1;
 export const FISH_REST_S = 1.5;
 export const FISH_CHECK_S = 20;
-export const FISH_CHANCE = 0.6;
-export const FISH_TARGET = 5;
+export const FISH_CHANCE = 0.4; // 0.6 until v0.15 (§79)
+export const FISH_TARGET = 3; // 5 until v0.15
 export const FISH_RADIUS = 40;
 export const FISH_MIN = 8;
 export const FISH_MAX = 30;
