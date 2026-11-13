@@ -16,6 +16,11 @@
 // wings drawn only in the air, beating with `walkPhase`; the legs are tucked back then), `rear` (the bear's rear-up:
 // the body pitches up about its hips by `animal.rear`, the forelegs rise with it and swing when it swipes) and `head`
 // (a head of its own, which stays level while the body rears: a rearing bear looks AT the player, not at the sky).
+//
+// §88 (populations.js). Sex is shown where real animals show it, one chunky feature each: a model's optional `male` body
+// is the grown male's — a bull heavier with a hump and wide horns, a ram with curled horns (`maleAlt`: shorn), a stag's
+// antlers, a cock pheasant's colours and long tail (the hen is drab brown), a tom turkey's fan (the hen is plain). Horses,
+// wolves, rabbits, the bear and fish look alike. A young animal (`size` below 1) is drawn at its size, on the female body.
 import * as THREE from 'three';
 import { boxesGeometry } from './zombieRenderer.js';
 import { ANIMAL_MAX, ANIMAL_KINDS, BEAR_SWIPE_S } from './animals.js';
@@ -47,9 +52,45 @@ const BEAR = 0x6a4628;
 const BEAR_DARK = 0x3a2618;
 const FISH = 0xf0a23c;
 const FIN = 0x7a2e16;
+// §88
+const BULL = 0x6e4630;
+const HORN = 0xefe6d2;
+const HEN = 0x9a7a52;
+const HEN_DARK = 0x7a5a3a;
+/** The ewe, fleeced and shorn (the ram is the same with horns: ramBody). */
+const SHEEP_BODY = [
+  [0.62, 0.56, 0.88, 0, 0.68, 0.02, SHEEP],
+  [0.5, 0.1, 0.7, 0, 0.99, 0.02, 0xfffdf6], // the fleece's top
+  [0.28, 0.3, 0.3, 0, 0.8, -0.56, 0x4a443e], // head
+  [0.3, 0.12, 0.22, 0, 0.98, -0.5, SHEEP], // woolly cap
+  [0.05, 0.05, 0.02, -0.08, 0.84, -0.715, WHITE], [0.05, 0.05, 0.02, 0.08, 0.84, -0.715, WHITE], // eyes
+  [0.1, 0.05, 0.08, -0.18, 0.84, -0.5, 0x4a443e], [0.1, 0.05, 0.08, 0.18, 0.84, -0.5, 0x4a443e], // ears
+  [0.12, 0.12, 0.1, 0, 0.72, 0.48, SHEEP], // tail
+];
+const SHEEP_SHORN = [
+  [0.4, 0.4, 0.78, 0, 0.62, 0.02, 0xdccbbd],
+  [0.28, 0.3, 0.3, 0, 0.8, -0.52, 0x4a443e],
+  [0.05, 0.05, 0.02, -0.08, 0.84, -0.675, WHITE], [0.05, 0.05, 0.02, 0.08, 0.84, -0.675, WHITE],
+  [0.1, 0.05, 0.08, -0.18, 0.84, -0.46, 0x4a443e], [0.1, 0.05, 0.08, 0.18, 0.84, -0.46, 0x4a443e],
+  [0.08, 0.08, 0.08, 0, 0.66, 0.43, 0xdccbbd],
+];
 export const MODELS = Object.freeze({
   cow: {
     legH: 0.55, legW: 0.15, legX: 0.2, legZ: [-0.4, 0.4], swing: 0.45, leg: [COW, DARK],
+    // §88: the bull — a bigger, darker trunk with a hump over the shoulders, a broad head, wide horns, no udder
+    male: [
+      [0.7, 0.66, 1.2, 0, 0.87, 0, BULL],
+      [0.6, 0.16, 0.5, 0, 1.24, -0.3, BULL], // the hump
+      [0.02, 0.34, 0.4, 0.355, 0.9, 0.12, WHITE], [0.34, 0.02, 0.4, 0.05, 1.205, 0.25, WHITE], // white patches
+      [0.44, 0.42, 0.44, 0, 1.0, -0.8, BULL], // head
+      [0.32, 0.2, 0.14, 0, 0.88, -1.06, 0xe0a898], // muzzle
+      [0.06, 0.05, 0.02, -0.08, 0.88, -1.135, DARK], [0.06, 0.05, 0.02, 0.08, 0.88, -1.135, DARK], // nostrils
+      [0.07, 0.07, 0.02, -0.13, 1.08, -1.025, DARK], [0.07, 0.07, 0.02, 0.13, 1.08, -1.025, DARK], // eyes
+      [0.24, 0.08, 0.08, -0.32, 1.2, -0.76, HORN], [0.24, 0.08, 0.08, 0.32, 1.2, -0.76, HORN], // wide horns
+      [0.07, 0.13, 0.07, -0.42, 1.28, -0.76, HORN], [0.07, 0.13, 0.07, 0.42, 1.28, -0.76, HORN], // their tips, up
+      [0.1, 0.06, 0.1, -0.26, 1.06, -0.72, BULL], [0.1, 0.06, 0.1, 0.26, 1.06, -0.72, BULL], // ears
+      [0.06, 0.42, 0.06, 0, 0.9, 0.62, BULL], [0.09, 0.1, 0.09, 0, 0.66, 0.62, DARK], // tail
+    ],
     body: [
       [0.62, 0.6, 1.15, 0, 0.85, 0, COW],
       [0.3, 0.3, 0.02, 0.17, 0.92, -0.585, WHITE], [0.02, 0.34, 0.4, 0.315, 0.9, 0.1, WHITE], [0.02, 0.3, 0.34, -0.315, 0.86, -0.2, WHITE],
@@ -66,22 +107,11 @@ export const MODELS = Object.freeze({
   },
   sheep: {
     legH: 0.42, legW: 0.11, legX: 0.17, legZ: [-0.27, 0.27], swing: 0.55, leg: [0x4a443e, DARK],
-    body: [
-      [0.62, 0.56, 0.88, 0, 0.68, 0.02, SHEEP],
-      [0.5, 0.1, 0.7, 0, 0.99, 0.02, 0xfffdf6], // the fleece's top
-      [0.28, 0.3, 0.3, 0, 0.8, -0.56, 0x4a443e], // head
-      [0.3, 0.12, 0.22, 0, 0.98, -0.5, SHEEP], // woolly cap
-      [0.05, 0.05, 0.02, -0.08, 0.84, -0.715, WHITE], [0.05, 0.05, 0.02, 0.08, 0.84, -0.715, WHITE], // eyes
-      [0.1, 0.05, 0.08, -0.18, 0.84, -0.5, 0x4a443e], [0.1, 0.05, 0.08, 0.18, 0.84, -0.5, 0x4a443e], // ears
-      [0.12, 0.12, 0.1, 0, 0.72, 0.48, SHEEP], // tail
-    ],
-    alt: [
-      [0.4, 0.4, 0.78, 0, 0.62, 0.02, 0xdccbbd],
-      [0.28, 0.3, 0.3, 0, 0.8, -0.52, 0x4a443e],
-      [0.05, 0.05, 0.02, -0.08, 0.84, -0.675, WHITE], [0.05, 0.05, 0.02, 0.08, 0.84, -0.675, WHITE],
-      [0.1, 0.05, 0.08, -0.18, 0.84, -0.46, 0x4a443e], [0.1, 0.05, 0.08, 0.18, 0.84, -0.46, 0x4a443e],
-      [0.08, 0.08, 0.08, 0, 0.66, 0.43, 0xdccbbd],
-    ],
+    body: SHEEP_BODY,
+    alt: SHEEP_SHORN,
+    // §88: the ram — the ewe with a pair of curled horns (and shorn: `maleAlt`)
+    male: ramBody(false),
+    maleAlt: ramBody(true),
   },
   horse: {
     legH: 0.9, legW: 0.14, legX: 0.17, legZ: [-0.48, 0.48], swing: 0.6, leg: [HORSE, DARK],
@@ -94,11 +124,12 @@ export const MODELS = Object.freeze({
     alt: wolfBody(true),
   },
   // ---- v0.14 (§76 fauna) ----
-  // Slim and long-legged, a long neck, big ears, a white rump; the stag (`alt`) carries antlers and a darker neck.
+  // Slim and long-legged, a long neck, big ears, a white rump; the stag (§88: `male`, a grown male deer) carries antlers
+  // and a darker neck.
   deer: {
     legH: 0.68, legW: 0.1, legX: 0.13, legZ: [-0.36, 0.36], swing: 0.7, leg: [DEER, 0x3a2a1c],
     body: deerBody(false),
-    alt: deerBody(true),
+    male: deerBody(true),
   },
   // Small and round, with ears as tall as its body and a white cotton tail; it bounds (`hop`).
   rabbit: {
@@ -115,11 +146,23 @@ export const MODELS = Object.freeze({
       [0.1, 0.1, 0.07, 0, 0.27, 0.25, WHITE], // cotton tail
     ],
   },
-  // Copper body, a dark green head over a white ring, red cheeks, and a barred tail longer than the bird.
+  // The cock (§88 `male`): copper body, a dark green head over a white ring, red cheeks, and a barred tail longer than
+  // the bird. The hen (`body`) is drab brown and mottled, with a shorter tail.
   pheasant: {
     legs: 2, legH: 0.16, legW: 0.035, legX: 0.06, legZ: [0.02], swing: 0.9, leg: [0x9a8a64, 0x6a5a3a],
     wing: { pivot: [0.09, 0.33, 0], len: 0.36, chord: 0.22, flap: 0.95, colour: 0x8a4a22, tip: 0xd9b27a },
     body: [
+      [0.18, 0.18, 0.32, 0, 0.26, 0.02, HEN],
+      [0.15, 0.15, 0.1, 0, 0.27, -0.16, HEN_DARK], // breast
+      [0.02, 0.12, 0.24, -0.095, 0.28, 0.04, HEN_DARK], [0.02, 0.12, 0.24, 0.095, 0.28, 0.04, HEN_DARK], // folded wings
+      [0.07, 0.12, 0.07, 0, 0.39, -0.19, HEN_DARK], // neck
+      [0.09, 0.09, 0.11, 0, 0.47, -0.21, HEN], // head
+      [0.012, 0.03, 0.03, -0.047, 0.48, -0.23, DARK], [0.012, 0.03, 0.03, 0.047, 0.48, -0.23, DARK], // eyes
+      [0.03, 0.03, 0.05, 0, 0.46, -0.29, 0xe6d9a8], // beak
+      [0.07, 0.04, 0.24, 0, 0.3, 0.3, 0xb8996a], // a shorter tail
+      [0.075, 0.045, 0.03, 0, 0.3, 0.26, 0x5a3a1c], [0.075, 0.045, 0.03, 0, 0.3, 0.37, 0x5a3a1c], // its bars
+    ],
+    male: [
       [0.18, 0.18, 0.34, 0, 0.26, 0.02, COPPER],
       [0.16, 0.16, 0.1, 0, 0.27, -0.17, 0x9a4a22], // breast
       [0.02, 0.12, 0.26, -0.095, 0.28, 0.04, 0x8a4a22], [0.02, 0.12, 0.26, 0.095, 0.28, 0.04, 0x8a4a22], // folded wings
@@ -133,11 +176,22 @@ export const MODELS = Object.freeze({
       [0.065, 0.045, 0.035, 0, 0.34, 0.54, 0x5a3a1c], [0.065, 0.045, 0.035, 0, 0.34, 0.68, 0x5a3a1c],
     ],
   },
-  // A big dark bird with a bare blue-grey head, a red wattle and a tail fanned upright behind it.
+  // The tom (§88 `male`): a big dark bird with a bare blue-grey head, a red wattle and a tail fanned upright behind it.
+  // The hen (`body`) is browner and plainer: a small head, no wattle to speak of, her tail held low.
   turkey: {
     legs: 2, legH: 0.3, legW: 0.05, legX: 0.09, legZ: [0.02], swing: 0.8, leg: [0xb08a6a, 0x8a6a4a],
     wing: { pivot: [0.17, 0.62, 0.02], len: 0.4, chord: 0.3, flap: 0.8, colour: 0x7a5a36, tip: 0xe8dcc4 },
     body: [
+      [0.32, 0.32, 0.4, 0, 0.48, 0.02, 0x5a4636],
+      [0.28, 0.28, 0.12, 0, 0.48, -0.21, 0x4a3a2c], // breast
+      [0.02, 0.18, 0.28, -0.17, 0.5, 0.04, 0x7a6248], [0.02, 0.18, 0.28, 0.17, 0.5, 0.04, 0x7a6248], // wings
+      [0.08, 0.2, 0.08, 0, 0.7, -0.23, 0x8a6a5a], // neck
+      [0.1, 0.1, 0.12, 0, 0.84, -0.25, 0x9fb0c0], // head
+      [0.04, 0.04, 0.06, 0, 0.83, -0.34, 0xe0c878], // beak
+      [0.02, 0.03, 0.03, -0.052, 0.86, -0.27, DARK], [0.02, 0.03, 0.03, 0.052, 0.86, -0.27, DARK], // eyes
+      [0.3, 0.08, 0.24, 0, 0.5, 0.3, 0x6e4e2e], [0.26, 0.04, 0.06, 0, 0.5, 0.43, 0xc9a56a], // a low tail, pale-edged
+    ],
+    male: [
       [0.34, 0.34, 0.42, 0, 0.5, 0.02, TURKEY],
       [0.3, 0.3, 0.14, 0, 0.5, -0.22, 0x3a2c22], // breast
       [0.02, 0.2, 0.3, -0.18, 0.52, 0.04, 0x7a5a36], [0.02, 0.2, 0.3, 0.18, 0.52, 0.04, 0x7a5a36], // bronze wings
@@ -235,6 +289,18 @@ function wolfBody(tame) {
   return boxes;
 }
 
+/** §88: a ram, the ewe's body with curled horns. @param {boolean} shorn the shorn body under them */
+function ramBody(shorn) {
+  const base = shorn ? SHEEP_SHORN : SHEEP_BODY;
+  const RAM_HORN = 0xd6c9a8;
+  const headZ = shorn ? -0.52 : -0.56;
+  return [
+    ...base,
+    [0.08, 0.18, 0.18, -0.19, 0.93, headZ + 0.04, RAM_HORN], [0.08, 0.18, 0.18, 0.19, 0.93, headZ + 0.04, RAM_HORN], // the curl
+    [0.08, 0.1, 0.1, -0.2, 0.8, headZ + 0.1, RAM_HORN], [0.08, 0.1, 0.1, 0.2, 0.8, headZ + 0.1, RAM_HORN], // its end, down
+  ];
+}
+
 /** v0.14 (§76 fauna). @param {boolean} stag antlers, and a darker, thicker neck */
 function deerBody(stag) {
   const PALE = 0xe6d3b0;
@@ -275,13 +341,16 @@ function deerBody(stag) {
  */
 
 /**
- * Which body an animal is drawn with: its species' `alt` for a shorn sheep, a tame horse, a tame wolf or (v0.14) a stag.
+ * Which body an animal is drawn with: its species' `alt` for a shorn sheep, a tame horse or a tame wolf; §88 `male` for a
+ * grown male of a kind that has one (bull, ram, stag, cock pheasant, tom turkey), `maleAlt` for a shorn ram. A young one
+ * (`size` below 1) is drawn on the female's body.
+ * @returns {'body'|'alt'|'male'|'maleAlt'}
  */
 export function bodyVariant(a) {
-  if (a.kind === 'sheep') return a.shorn > 0 ? 'alt' : 'body';
+  const male = a.sex === 'm' && !(a.size < 1) && !!(/** @type {*} */ (MODELS)[a.kind]?.male);
+  if (a.kind === 'sheep') return a.shorn > 0 ? (male ? 'maleAlt' : 'alt') : male ? 'male' : 'body';
   if (a.kind === 'horse' || a.kind === 'wolf') return a.tamed ? 'alt' : 'body';
-  if (a.kind === 'deer') return a.variant === 1 ? 'alt' : 'body';
-  return 'body';
+  return male ? 'male' : 'body';
 }
 
 /** How many legs a model walks on (4 when it does not say). @param {*} m */
@@ -320,6 +389,7 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
   };
   /**
    * @type {Record<string, Record<'base'|'hurt', { body: THREE.InstancedMesh, alt: THREE.InstancedMesh|null,
+   *   male: THREE.InstancedMesh|null, maleAlt: THREE.InstancedMesh|null,
    *   legs: THREE.InstancedMesh|null, wings: THREE.InstancedMesh|null, head: THREE.InstancedMesh|null }>>}
    */
   const sets = {};
@@ -342,6 +412,8 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
       sets[kind][state] = {
         body: instanced(m.body, mats[state], capacity, `${kind}-body${suffix}`),
         alt: m.alt ? instanced(m.alt, mats[state], capacity, `${kind}-alt${suffix}`) : null,
+        male: m.male ? instanced(m.male, mats[state], capacity, `${kind}-male${suffix}`) : null,
+        maleAlt: m.maleAlt ? instanced(m.maleAlt, mats[state], capacity, `${kind}-maleAlt${suffix}`) : null,
         legs: nLegs > 0 ? instanced(legBoxes, mats[state], capacity * nLegs, `${kind}-legs${suffix}`) : null,
         wings: wingBoxes ? instanced(wingBoxes, mats[state], capacity * 2, `${kind}-wings${suffix}`) : null,
         head: m.head ? instanced(m.head.boxes, mats[state], capacity, `${kind}-head${suffix}`) : null,
@@ -368,6 +440,8 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
         const s = sets[kind][state];
         s.body.count = 0;
         if (s.alt) s.alt.count = 0;
+        if (s.male) s.male.count = 0;
+        if (s.maleAlt) s.maleAlt.count = 0;
         if (s.legs) s.legs.count = 0;
         if (s.wings) s.wings.count = 0;
         if (s.head) s.head.count = 0;
@@ -379,7 +453,8 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
       if (!kindSets) continue;
       const set = kindSets[a.hurt > 0 ? 'hurt' : 'base'];
       const m = /** @type {*} */ (MODELS)[a.kind];
-      const which = bodyVariant(a) === 'alt' && set.alt ? set.alt : set.body;
+      const variant = bodyVariant(a);
+      const which = (variant !== 'body' && set[variant]) || set.body;
       if (which.count >= capacity) continue;
       const phase = a.walkPhase || 0;
       const sw = Math.sin(phase);
@@ -389,7 +464,9 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
       const bob = flying ? 0 : Math.abs(sw) * (m.hop ?? 0.025);
       // `renderScale` / `renderSpin` (infall.js): a black hole's shrinking, spinning ghost, as for pigs and zombies.
       const ghost = /** @type {{ renderScale?: number, renderSpin?: number }} */ (a);
-      const rs = typeof ghost.renderScale === 'number' && ghost.renderScale > 0 && Number.isFinite(ghost.renderScale) ? ghost.renderScale : 1;
+      // §88: a young one is drawn at its size (about the feet, like the ghost's scale)
+      const young = typeof a.size === 'number' && a.size > 0 && a.size < 1 ? a.size : 1;
+      const rs = (typeof ghost.renderScale === 'number' && ghost.renderScale > 0 && Number.isFinite(ghost.renderScale) ? ghost.renderScale : 1) * young;
       const spin = typeof ghost.renderSpin === 'number' && Number.isFinite(ghost.renderSpin) ? ghost.renderSpin : 0;
       scl.set(rs, rs, rs);
       const yaw = a.yaw + spin + (m.wiggle ? sw * m.wiggle : 0); // v0.14: a fish's body swings with its tail
@@ -449,7 +526,7 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
     for (const kind of ANIMAL_KINDS) {
       for (const state of /** @type {const} */ (['base', 'hurt'])) {
         const s = sets[kind][state];
-        for (const mesh of [s.body, s.alt, s.legs, s.wings, s.head]) {
+        for (const mesh of [s.body, s.alt, s.male, s.maleAlt, s.legs, s.wings, s.head]) {
           if (!mesh) continue;
           mesh.visible = mesh.count > 0;
           if (mesh.count > 0) mesh.instanceMatrix.needsUpdate = true;

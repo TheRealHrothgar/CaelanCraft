@@ -146,6 +146,7 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/rainRenderer.js` | three (+ the pure `RainField`), rain and snow as one mesh of quads (§84) | seasons and rain | `tests/unit/rainRenderer.test.js` |
 | `src/sleep.js` | PURE, sleep spots, lying down, a sleep and its reasons to wake, the secure place, the night attack, the effects of being awake too long (§87) | sleep | `tests/unit/sleep.test.js` |
 | `src/phantomRenderer.js` | three, the figure at the edge of sight: three dark boxes, drawing only (§87) | sleep | `tests/unit/sleep.test.js` |
+| `src/populations.js` | PURE, animals that live in the world: zones and their land, live and dormant animals, births on the logistic curve, wanderers, the `fauna` save field (§88) | populations | `tests/unit/populations.test.js` |
 | — | circuits integration, the worked examples (§58) | v0.10 I | `tests/integration/circuits.test.js`, `tests/integration/harness.test.js` |
 | `tests/helpers/fixtures.js` | test helpers | Wave 0 (done) | — |
 | `tests/helpers/circuitWorld.js` | a fake world wired to a Circuits like main's hooks (v0.10 B) | v0.10 B | — |
@@ -4045,6 +4046,13 @@ Amends §8 (day/night), §39, §40, §45 (climate) and §65. **One real minute i
 
 ## 69. Animals — `src/animals.js` (PURE), `src/animalRenderer.js` (three); snares; wary pigs
 
+> **§88 amendment (animals that live in the world):** no herd appears near the player and no animal despawns: every
+> animal lives in a 64 × 64-cell zone (populations.js), live near the player (at most LIVE_MAX 64, ANIMAL_MAX is 64) and
+> a dormant record far away; populations grow by births (a male and a female, food and water near, the logistic curve)
+> and wanderers. Cattle and sheep are tamed by three feeds (pigs too, `Pigs.feed`); every animal has a sex and an age.
+> HERD_CHECK_S, HERD_CHANCE, HERD_TARGET, HERD_RADIUS, HERD_MIN, HERD_MAX, DESPAWN_DIST and PIG_REPOP_* below are retired.
+> The save field `animals` is read but no longer written (`fauna`).
+
 > **v0.16 amendment (stalking from behind):** an animal sees `WARY_VIEW_HALF_ANGLE` (120°) to either side of where it
 > faces (`coords.isBehind(yaw, dx, dz, halfAngle)`); the third of the circle at its back is blind. A SNEAKING player in
 > that arc (`animals.blindTo(a, player)`) is noticed at `WARY_BEHIND_FACTOR` (0.5) of the sneaking distance:
@@ -4469,6 +4477,12 @@ forest start the nearest stream is a median 25–29 columns away, within 60 for 
 
 ### 76.4 Game animals — deer, rabbits, pheasants, wild turkeys, the bear, fish (`src/animals.js`, `src/animalRenderer.js`)
 
+> **§88 amendment:** the spawning below (`_spawnHerd` per pool, SMALL_CHANCE, SMALL_TARGET, BEAR_NEAR, the schools of
+> fish and FISH_CHECK_S … FISH_CAP, the fish's `despawn`) is retired: the game animals live in their zones and are born
+> like the others (birds too: the eggs of a Ground Nest never hatch). A stag is a grown male deer (`sex`; drawn on the
+> deer's `male` body; `variant` 1 is kept for the old field); every grown hen lays (NEST_HEN_P is retired); fish live in
+> the streams and the untainted ponds of their zone.
+
 Amends §69 and §72. Six kinds join `SPECIES` (`ANIMAL_KINDS`: cow, sheep, horse, wolf, deer, rabbit, pheasant, turkey, bear,
 fish). None is lured or tamed (`lure: NO_LURE`, `tame: 0`). Optional species fields: `pool` ('herd' when absent, 'small',
 'fish'; `poolOf(kind)`), `calm` (its own CALM_FACTOR), `zigzag`, `flush` ('fly' | 'glide') with `cruise` (m above the
@@ -4640,6 +4654,9 @@ or flower spikes away. The picked Honeyberry's own tile is too sparse to wrap a 
 berry-free corner of the bush's tile (`tile: TILE.HONEYBERRY_BUSH`).
 
 ## 79. The lean Survival: generation 4, sparser animals, riskier raw water — `src/worldgen.js`, `src/animals.js`, `src/config.js`, `src/vitals.js`, `src/items.js`
+
+> **§88 amendment:** the "sparser animals" table's chances, targets and pig repopulation are retired (populations.js:
+> each zone holds its carrying capacity, seeded at 0.6 of it). The group sizes remain as the guide's words for a herd.
 
 Amends §76 (the harder Survival) and §66 (raw water). With §80 (plants that spread, farming) and §81 (plants that are not
 food) it is the answer to "food is too plentiful": less to find, more to look after.
@@ -6377,6 +6394,158 @@ nothing changes; asleep, dead or below the stage everything is cleared and the t
   renderer; the HUD; the sounds; main's wiring read from the source; the debug handle; F3), and additions to
   `handbook.test.js` (the chapter, its tables and numbers) and to the pins of vitals, survival, storage,
   survivalControl, physicsInterfaces and handbookUI tests.
+
+## 88. Animals that live in the world — `src/populations.js` (PURE), `src/animals.js`, `src/pigs.js`, `src/animalRenderer.js`, `src/pigRenderer.js`, `src/storage.js`, `src/types.js`, `src/commands.js`, `src/main.js`, `src/diagnostics.js`, `src/handbook.js`
+
+Amends §30 (pigs), §69 (animals), §72, §76.4 (the game animals) and §79 (sparser animals). The user's words: "Persisting
+mobs in the world efficiently where the growth rate is log-logistic within a given biome or zone. When you get far away,
+the mobs stop moving and persist a stateful points on the grid and return to liveness when a player is in proximity.
+Breeding is related. Growth requires male and female counterparts, food and water nearby." With the guide's line for
+it: few animals have few young, a full place has no room for more, leave a pair and they come back.
+
+**No animal appears out of nowhere and none despawns**: only death removes one (a blow, a black hole, a fish whose water
+is gone, a fall below the world). The natural herds near the player (`_spawnHerd`, `_pickKind`, HERD_CHECK_S,
+HERD_CHANCE, HERD_TARGET, HERD_RADIUS, HERD_MIN, HERD_MAX, HERD_TRIES, DESPAWN_DIST, SMALL_CHANCE, SMALL_TARGET,
+BEAR_NEAR), the schools of fish (`_spawnFish`, FISH_CHECK_S, FISH_CHANCE, FISH_TARGET, FISH_RADIUS, FISH_MIN, FISH_MAX,
+FISH_TRIES, FISH_CAP, the fish's `despawn`), the laying-hen coin toss (NEST_HEN_P), the pigs' natural placement and
+Survival repopulation (`Pigs.spawnNatural`, `Pigs.pruneFar`, main's `repopulatePigs`, `SURVIVAL_PIG_GROUND`) are
+retired. (config.js still holds PIG_NATURAL_COUNT and the PIG_REPOP_* numbers, read by nothing but wave0.test.js.)
+`summon` stays.
+
+### 88.1 Live and dormant (`Fauna`)
+
+- `new Fauna({ animals, pigs, rng?, life? })` keeps `zones` (Map key `"zq,zr"` → Zone). `update(dt, env)` every frame:
+  a timer; every **SCAN_S 0.5** real seconds a `scan`; every **STEP_DAYS** (one game hour) of game time the zones in range
+  breed (§88.3). `env` is a FaunaWorld: `now()` (the world clock in game days: weather.worldSeconds / DAY_LENGTH_SECONDS),
+  `player`, `getBlock`, `isLoadedCell`, `groundHeight`, `isNaturalGround`, `getBiome`, `gen` (the world generator),
+  `seed`. Main's animal world view carries them; the store also sets `animals.now` and `pigs.now` (a feed is stamped).
+- **Live**: a body in `animals.list` or `pigs.list` (AI and physics as before) within **LIVE_RADIUS 72** m of the player
+  in a loaded chunk, at most **LIVE_MAX 64** of both lists together (ANIMAL_MAX is now 64, the Animals list's own cap;
+  PIG_MAX 32 the Pigs list's), the nearest first: when full, a sleeper nearer than the farthest live one by SWAP_MARGIN
+  8 m takes its place (four a scan). **Dormant** beyond **SLEEP_RADIUS 88** m (the hysteresis) or in an unloaded chunk.
+  The horse being ridden and a tame wolf that follows never sleep.
+- A dormant animal is a **record** in its zone's `list` (FaunaRecord: kind, sex, born, x y z, yaw, `placed`, health,
+  tamed, trust, home, shorn / milked / trapped seconds left, trapCell, sitting, restUntil, fedAt, habBits, `slept`,
+  `since`). It does not move and nothing reads it between scans; a scan reads only the zones in range. `sleep(body)`
+  takes a body out (`Animals.detach`: a snare that holds it stays sprung) after bringing its zone up to now; `wake(rec)`
+  spawns it where it was with its state, its seconds run down by the game time it slept (a snare that held it and whose
+  time ran out is let go: `events.freed`, escaped). A record whose `placed` is false (a column: seeded, a wanderer, the
+  young of such a mother) is put down when it wakes: the first column within six cells (in rings) of natural grass or
+  snowy grass with two open cells and room for its body, else any solid top it fits on; a fish in water within three
+  cells (`Animals.fishSpotAt`), else it stays asleep.
+- A scan: the zones within SLEEP_RADIUS (`zoneDistance`, exact for the zone's parallelogram) are made when missing and
+  **caught up** (§88.3) as they come into range, before anything wakes from them; live bodies too far sleep; dormant ones
+  in range wake; young ones grow; one missing zone within PRECREATE_RADIUS (SLEEP_RADIUS + 64) is made ahead; over
+  **ZONE_MAX 256** zones the farthest that holds no tame animal and is not in range is forgotten (it is seeded afresh if
+  ever needed again). Without a player nothing changes.
+
+- **Costs** (measured in Node on the development machine, `tests/unit/populations.test.js` pins the bounds): a frame
+  between scans is a timer (under 0.001 ms); a scan with 64 live and ~400 asleep in range about 0.15 ms (median), more on
+  the scan that makes a zone ahead (a zone's land: about 4 ms, at most one a scan); a zone waking after 120 days: median
+  0.33 ms, the slowest of 169 zones 2.6 ms (3.3 ms on a cold start); the live update of 64 animals and pigs about 1.6 ms a
+  frame (40: 1.1 ms; the cost of an animal is what it was).
+
+### 88.2 Zones, their land, their first animals
+
+- `zoneOf(q, r) = [floorDiv(q, 64), floorDiv(r, 64)]` (ZONE_SIZE 64). A zone's land (`zoneLand(gen, zq, zr)`) is worked
+  out once, when the zone is first needed, from the generator only (the same seed gives the same land; chunks are not
+  read): 16 × 16 columns sampled 4 apart give the biome mix and the grazing (grass 1, snowy grass ½, under the sea level
+  and every other surface 0); streams are read on every column of the zone and WATER_BESIDE 8 cells round it, untainted
+  ponds on every other column (each pond's seven columns hold one of that lattice), natural springs from their grid.
+- **K** per kind = round(BASE_K × biomeShare × foodFactor × waterFactor): BASE_K rabbit 12, deer 8, sheep 8, pheasant 6,
+  turkey 6, cow 6, pig 6, horse 4, wolf 3, bear 1. biomeShare is the mean over the samples of `suitability(kind,
+  biome)` = its HERD_WEIGHTS weight there over its best weight anywhere (pigs: PIG_LANDS forest 2, plains 1); a land
+  that never had the kind gives 0. foodFactor (grazers) is the grazing of the samples of a suitable land; for wolves
+  and the bear 1 in the cache, and their K in use is scaled by how full their prey is (`kOf`: wolf — deer, rabbit, sheep,
+  pheasant, turkey, pig; bear — deer, rabbit, sheep, pig, fish; N over K of those). waterFactor 1 with fresh water in or
+  beside the zone, else **DRY_WATER 0.35**. Fish: one per FISH_CELLS 8 fresh water columns of the zone, at most FISH_K_MAX
+  10 (a zone keeps up to six of its water columns, `ws`, for its fish).
+- **Seeding** (`seedZone`): round(K × **SEED_SHARE 0.6**) of each kind, about half of each sex (at least one of each from
+  two up, the sexes alternating so each group of two has both), in one to three groups (one per four) round columns of a
+  land that suits it and grazes (fish: round its water columns), within four cells of their centre, as columns; a quarter
+  of them young. A function of the seed, the zone and the game day it was made (`t0`).
+
+### 88.3 Births, the young, wanderers
+
+- Every animal has a **sex** ('f' / 'm') and a **born** day (game days); `size` = YOUNG_SCALE 0.55 at birth, growing
+  evenly to 1 at its kind's **YOUTH_DAYS** (rabbit 1, pheasant 2, turkey 2, fish 2, pig 2, sheep 3, deer 3, cow 4, wolf 4,
+  horse 5, bear 8); a young animal's body radius and height are scaled by it (a piglet keeps the pig's collider). A
+  spawned animal is a grown female unless told otherwise (`spawn(…, sex)`; ADULT_AGE 100 days old).
+- A female is **able** at t: grown, not resting (`restUntil`: **REST_DAYS** = YOUTH_DAYS after a birth), a grown male of
+  her kind within **MATE_RANGE 12** m (in her zone; a live one also any live male), and food and water within
+  **FEED_RANGE 12** cells. A live animal looks round itself (`scanHabitat`, at most once a game hour: food — grass, snowy
+  grass, any wild plant, a crop, a hay bale; water — fresh water (not tainted, not in an ocean or beach column), a welling
+  spring, a rain barrel with water). A feed by hand within **FED_DAYS 1** is food. Wolves and the bear: prey in the zone
+  is food. A dormant TAME animal keeps what it had round it when last seen (`habBits`); a dormant WILD one roams its
+  zone: food when the zone grazes, water when it has fresh water, else DRY_WATER of the time. Fish need nothing.
+- Births are a **thinned Poisson process** (`_advanceKind`): candidates at BIRTH_RATE × the females of the kind a game
+  day (rabbit 0.5, fish 0.4, pheasant 0.3, turkey 0.3, pig 0.2, sheep 0.15, cow 0.12, deer 0.12, horse 0.08, wolf 0.1,
+  bear 0.03), each a random female who gives birth when able and with probability (1 − N / K) — wild N (all of her kind
+  in her zone) against K; a **tame** mother's tame N against **TAME_CAP** (cow 8, sheep 10, pig 10, horse 6, wolf 4): the
+  keeper's food stands in for the land's. LITTER rabbit 2–4, pig 2–4, wolf 1–3, fish 2–4, others 1. The young are born
+  beside her, live when she is (and there is room), else records; tame when she is; she rests. Birds give birth like
+  the others: the Ground Nests' eggs do not hatch (they need tracking a block in a sleeping zone).
+- The same loop runs live (the zones in range, every game hour: so the hours slept in a bed are bred on waking) and for
+  a zone **catching up** when it comes into range: from its `t` to now, at most **CATCH_UP_DAYS 120**. Each zone
+  remembers `t` (saved). The clock set back: nothing happens, `t` follows it.
+- **Wanderers**: while a zone lacks a male or a female of a kind with K ≥ 1 and N < K, one comes in from each neighbour
+  (of the eight, in memory) with at least **WANDER_SOURCE_MIN 4** of that kind (one of them dormant) at one a
+  **WANDER_DAYS 6** game days: a dormant record moved as a column beside one of its kind already there, else at the edge
+  facing where it came from (a fish: into the zone's water). A lone one has no young: it takes a second.
+- **Too many** (N > K: animals brought in, a litter over the cap): no births; the surplus wanders out at (N − K) a
+  WANDER_DAYS to the neighbour with the most room (N < its K), in the same way. Nobody dies of it.
+
+### 88.4 Livestock, names, models
+
+- `SPECIES.cow.tame` and `sheep.tame` are **3**; pigs: `Pigs.feed(pig, key)` with **PLANT_LURE** (now in pigs.js, re-
+  exported by animals.js), **PIG_TAME 3** (PIG_FED_CALM_S 40). A wild pig comes to PLANT_LURE in the hand of a walking
+  player within PIG_LURE_RANGE 11 and waits PIG_LURE_STOP 2.2 away, and does not run then (nor within 40 s of a feed).
+- A tame horse, cow or sheep (`Animals._kept`) or pig never runs, follows the player who holds its food (to the lure's
+  stop; where it ends up is its new home) and otherwise stays within HOME_RANGE 4 (pigs: PIG_HOME_RANGE 4) of home. Tame
+  animals are not struck (a tame pig too: main). A pen is a wall two cells high: they hop one.
+- `feed` stamps `fedAt`; a tame cow, sheep or pig can always be fed (a horse or a wolf only when hurt, as before). Milk:
+  a grown cow only; shearing: a grown sheep, tame or wild; a foal is not ridden. A young animal gives half (rounded up)
+  of every stack (`youngDrops`). Hens: every grown female pheasant and turkey lays (a chick does not).
+- `NAMES` / `nameOf(kind, sex, young)` / `animalName(body)`: Cow / Bull / Calf, Ewe / Ram / Lamb, Sow / Boar / Piglet,
+  Mare / Stallion / Foal, Doe / Stag / Fawn, Hen Pheasant / Cock Pheasant / Chick, Hen Turkey / Tom Turkey / Poult, Wolf
+  (she-wolf) / Wolf / Pup, Rabbit (doe) / Rabbit (buck) / Kit, Bear / Bear / Cub, Fish / Fish / Fry. Main's hints use them
+  (`Bull · click: hunt it · feed it to tame (0/3)`, `Your Ewe · it follows the food in your hand · R with a knife:
+  shear`, `Sow · …`), with their old actions; R on a pig feeds it.
+- **Models**: a model's optional `male` (and the sheep's `maleAlt`, shorn) is the grown male's body: the bull (bigger,
+  darker, a hump, wide horns, no udder), the ram (curled horns), the stag (antlers: the deer's old `alt`), the cock
+  pheasant (the old body; the hen is drab brown with a short tail), the tom turkey (the old body with its fan; the hen
+  is plainer, her tail low). `bodyVariant` gives 'body' | 'alt' | 'male' | 'maleAlt'; a young animal is drawn at its
+  `size` on the female's body. Pigs: a grown boar's tusks (`pig-tusks`, one more draw call); a piglet drawn at its size.
+  Horses, wolves, rabbits, the bear and fish look alike. `variant` 1 still marks a stag (a male deer) for the old field.
+
+### 88.5 The save, the debug handle, the guide
+
+- Save field **`fauna`**: `{ v: 1, z: [zone…] }`, a zone `{ q, r, t, K?, g?, w?, c?, ws?, u?: 1, t0?, a?: [record…] }`.
+  `u: 1` a zone not seeded yet — or seeded and untouched since, which is the same thing: its animals are not written and
+  loading seeds it again as of `t0`. A record: placed `{ k, s, b, x, y, z, w? }` or a column `{ k, s, b, q, r }`, then
+  `h` (below full health), `t` / `hx` / `hz` / `tr`, `sh`, `mi`, `tp` / `tc`, `sit`, `rs` (resting until), `fd` (fed at),
+  `hb` (a tame one's habitat bits), `d` (when it went to sleep, only with a timer that runs down), `sn` (when it came into
+  the zone, when later than the zone's clock). The live bodies are written as records in their zones (they stay live).
+  `validateFaunaJSON`: a bad zone or record is dropped with a warning; at most ZONE_MAX 256 zones of ZONE_ANIMALS_MAX 200.
+  Measured: about 54 bytes an animal; a 1.5 km walk leaves ~210 zones in memory, ~110 KB; the worst case (256 zones,
+  every one touched and full) ~330 KB.
+- Main writes `fauna` and no longer `animals` or `pigs`; storage still reads (and validates) both, and `Fauna.load`
+  moves an older save's animals and pigs into their zones exactly as they stood (a stag a male, the others a sex at
+  random, all grown); they wake where they were. A save from before §88 therefore loads unchanged, and zones round it
+  are seeded as anywhere else.
+- Debug handle: `fauna` (the store), `zoneReport(q, r)` → `{ zone: [zq, zr], biomes, water, kinds: { kind: { N, K, f, m,
+  young, able } } }`, `faunaStep(days)` (every zone in memory as if `days` game days had passed, at most 365, with
+  Math.random; the clock does not move). `summon <kind> [q y r] [f|m]` (a stag is a male; without a sex, either). F3:
+  `Fauna: zone 0 -1 · rabbit 7/12 · deer 3/8 · live 21 · asleep 340`.
+- The guide's Animals chapter: "Animals come and go" (squares of ZONE_SIZE, the S-curve in words, WANDER_DAYS,
+  WANDER_SOURCE_MIN, hunters leave breeding animals), "Male and female, young" (the features, YOUTH_DAYS, MATE_RANGE,
+  FEED_RANGE), "Keeping animals" (taming livestock, a pen, food and water within FEED_RANGE, TAME_CAP); "Shy herds" no
+  longer says herds appear; cattle, sheep and pigs are tamed; the table's pig row (forest, plains; tamed in 3) and fish
+  (streams and ponds).
+- Tests: `tests/unit/populations.test.js` (zones and their land, seeding, persistence, the live cap and hysteresis, the
+  S-curve by simulation, pairs, food and water, the young, the catch-up against live growth, wanderers, the surplus,
+  livestock in a pen, names and models, the save and old saves, the debug handle, the costs), and the pins of animals,
+  fauna, pigs, pigRenderer, commands, physicsInterfaces and handbook tests.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

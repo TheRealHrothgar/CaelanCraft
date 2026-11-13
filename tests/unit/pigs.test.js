@@ -2,10 +2,14 @@
 import { describe, it, expect } from 'vitest';
 import { BLOCK } from '../../src/blocks.js';
 import {
-  PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_HURT_S, WORLD_HEIGHT, PIG_HEALTH, ATTACK_REPEAT_S, PIG_REPOP_RADIUS,
+  PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_HURT_S, WORLD_HEIGHT, PIG_HEALTH, ATTACK_REPEAT_S,
 } from '../../src/config.js';
 import { getItem } from '../../src/items.js';
-import { Pigs, seededRng, validatePigsJSON, SHORE_SEARCHES_PER_UPDATE, PIG_HEAD_BOX } from '../../src/pigs.js';
+import {
+  Pigs, seededRng, validatePigsJSON, SHORE_SEARCHES_PER_UPDATE, PIG_HEAD_BOX, PIG_TAME, PIG_LURE_STOP, PIG_HOME_RANGE,
+} from '../../src/pigs.js';
+import { Fauna, makeRecord } from '../../src/populations.js';
+import { createPlayer } from '../../src/physics.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { BlackHoles } from '../../src/blackholes.js';
 
@@ -499,27 +503,49 @@ describe('export / load / validatePigsJSON', () => {
   });
 });
 
-describe('Pigs.spawnNatural', () => {
-  it('places pigs only on grass, within range, deterministically from the seed', () => {
-    const sandEast = (q, y, r) => {
-      if (y < GROUND - 1) return B.STONE;
-      if (y === GROUND - 1) return hexToWorld(q, r)[0] > 0 ? B.SAND : B.GRASS_BLOCK;
-      return B.AIR;
-    };
-    const a = new Pigs();
-    expect(a.spawnNatural(5, 0, 0, 42, sandEast, () => true)).toBe(5);
-    for (const p of a.list) {
-      const [q, r] = worldToHex(p.x, p.z);
-      expect(sandEast(q, GROUND - 1, r)).toBe(B.GRASS_BLOCK);
-      expect(p.y).toBe(GROUND);
-      expect(Math.hypot(p.x, p.z)).toBeLessThanOrEqual(19);
+describe('pigs live in the world (§88): natural placement and repopulation are retired', () => {
+  it('Pigs has no spawnNatural or pruneFar: pigs come from their zones (tests/unit/populations.test.js seeds them)', () => {
+    expect('spawnNatural' in Pigs.prototype).toBe(false);
+    expect('pruneFar' in Pigs.prototype).toBe(false);
+    const pigs = new Pigs(seededRng(3));
+    pigs.now = 12;
+    const p = pigs.spawn(0, GROUND, 0);
+    expect(p).toMatchObject({ kind: 'pig', sex: 'f', born: 12 - 100, size: 1, tamed: false, trust: 0 });
+    expect(pigs.spawn(0, GROUND, 0, 0, 'm').sex).toBe('m');
+  });
+
+  it('a pig comes to the plants in your hand (it does not run), is fed, and is tamed by PIG_TAME feeds; a tame one keeps home', () => {
+    const pigs = new Pigs(seededRng(4));
+    const pig = pigs.spawn(0, GROUND, 0);
+    const getBlock = (_q, y) => (y < GROUND ? B.GRASS_BLOCK : B.AIR);
+    const player = Object.assign(createPlayer(-7, GROUND, 0), { onGround: true });
+    const world = { getBlock, isLoaded: () => true, player, heldKey: 'wild_tuber' };
+    for (let f = 0; f < 60 * 8; f++) pigs.update(1 / 60, world);
+    expect(pig.mode).not.toBe('flee');
+    expect(Math.hypot(pig.x - player.x, pig.z - player.z)).toBeLessThan(PIG_LURE_STOP + 0.8);
+    // with nothing in hand the same walk sends it off
+    const wild = new Pigs(seededRng(5));
+    const w = wild.spawn(0, GROUND, 0);
+    wild.update(1 / 60, { ...world, heldKey: null, player: Object.assign(createPlayer(-4, GROUND, 0), { onGround: true }) });
+    expect(w.mode).toBe('flee');
+    // feeding: the wrong food does nothing; three feeds tame it; the feed is stamped with the clock
+    pigs.now = 3.5;
+    expect(pigs.feed(pig, 'raw_pork')).toEqual({ ok: false });
+    expect(pigs.feed(pig, 'honeyberries')).toEqual({ ok: true, calmed: true });
+    expect(pig.fedAt).toBe(3.5);
+    for (let i = 1; i < PIG_TAME - 1; i++) pigs.feed(pig, 'wild_tuber');
+    expect(pigs.feed(pig, 'wild_tuber')).toEqual({ ok: true, tamed: true });
+    expect([pig.tamed, PIG_TAME]).toEqual([true, 3]);
+    // tame: it never runs, and left alone it stays within PIG_HOME_RANGE of where it was tamed
+    const home = [pig.homeX, pig.homeZ];
+    const near = Object.assign(createPlayer(pig.x + 1.5, GROUND, pig.z), { onGround: true, sprinting: true });
+    let far = 0;
+    for (let f = 0; f < 60 * 60; f++) {
+      pigs.update(1 / 60, { getBlock, isLoaded: () => true, player: near, heldKey: null });
+      expect(pig.mode).not.toBe('flee');
+      far = Math.max(far, Math.hypot(pig.x - home[0], pig.z - home[1]));
     }
-    const b = new Pigs();
-    b.spawnNatural(5, 0, 0, 42, sandEast, () => true);
-    expect(b.export()).toEqual(a.export());
-    // No grass anywhere → no pigs (and no endless loop).
-    const c = new Pigs();
-    expect(c.spawnNatural(5, 0, 0, 42, (_q, y) => (y < GROUND ? B.SAND : B.AIR), () => true)).toBe(0);
+    expect(far).toBeLessThan(PIG_HOME_RANGE + 1.5);
   });
 });
 
@@ -647,51 +673,15 @@ describe('Survival: health, wound, pruneFar, spawnNatural surfaces (DESIGN-survi
     expect(pig.health).toBe(PIG_HEALTH - 1);
   });
 
-  it('pruneFar removes the farthest pig in an unloaded chunk beyond minDist, one per call', () => {
-    const pigs = new Pigs(seededRng(12));
-    const near = pigs.spawn(10, GROUND, 0);
-    const mid = pigs.spawn(-150, GROUND, 0);
-    pigs.spawn(0, GROUND, 300);
-    const loadedFar = pigs.spawn(400, GROUND, 0);
-    const minDist = 2 * PIG_REPOP_RADIUS;
-    // Loaded: the cells east of x = 350 (and around the origin).
-    const isLoadedCell = (q, r) => {
-      const [x, z] = hexToWorld(q, r);
-      return x > 350 || Math.hypot(x, z) < 20;
-    };
-    expect(pigs.pruneFar(0, 0, isLoadedCell, minDist)).toBe(true);
-    expect(pigs.list).toEqual([near, mid, loadedFar]); // the pig 300 away went first
-    expect(pigs.pruneFar(0, 0, isLoadedCell, minDist)).toBe(true);
-    expect(pigs.list).toEqual([near, loadedFar]);
-    expect(pigs.pruneFar(0, 0, isLoadedCell, minDist)).toBe(false); // near is close, loadedFar is loaded
-    expect(pigs.size).toBe(2);
-    // Distance is measured from (x, z): from far away, `near` qualifies.
-    expect(pigs.pruneFar(1000, 1000, () => false, minDist)).toBe(true);
-    expect(pigs.size).toBe(1);
-    expect(new Pigs().pruneFar(0, 0, () => false, 0)).toBe(false);
-    // Exactly at minDist does not qualify.
-    const edge = new Pigs();
-    edge.spawn(minDist, GROUND, 0);
-    expect(edge.pruneFar(0, 0, () => false, minDist)).toBe(false);
-  });
-
-  it('spawnNatural takes the ground ids a pig may stand on; grass only by default', () => {
+  it('§88: a pig woken from its zone stands where the store puts it; on snowy grass as on grass (populations.js placement)', () => {
+    // (pruneFar and spawnNatural's ground list served Survival's repopulation, retired: a pig lives in its zone now)
     const snowy = (_q, y) => (y < GROUND - 1 ? B.STONE : y === GROUND - 1 ? B.SNOWY_GRASS : B.AIR);
-    const a = new Pigs();
-    expect(a.spawnNatural(3, 0, 0, 77, snowy, () => true, 24, 48)).toBe(0);
-    const b = new Pigs();
-    expect(b.spawnNatural(3, 0, 0, 77, snowy, () => true, 24, 48, [B.GRASS_BLOCK, B.SNOWY_GRASS])).toBe(3);
-    for (const p of b.list) {
-      const [q, r] = worldToHex(p.x, p.z);
-      expect(snowy(q, GROUND - 1, r)).toBe(B.SNOWY_GRASS);
-      const d = Math.hypot(p.x, p.z);
-      expect(d).toBeGreaterThan(23);
-      expect(d).toBeLessThan(49);
-      expect(p.health).toBe(PIG_HEALTH);
-    }
-    const c = new Pigs();
-    expect(c.spawnNatural(3, 0, 0, 77, flat, () => true, 24, 48, [B.SNOWY_GRASS])).toBe(0); // grass is not in the list
-    const d = new Pigs();
-    expect(d.spawnNatural(3, 0, 0, 77, flat, () => true, 24, 48, [B.GRASS_BLOCK, B.SNOWY_GRASS])).toBe(3);
+    const pigs = new Pigs(seededRng(77));
+    const fauna = new Fauna({ animals: null, pigs });
+    const env = { now: () => 0, getBlock: snowy, isLoadedCell: () => true, groundHeight: () => GROUND - 1, isNaturalGround: () => true };
+    const [x, z] = hexToWorld(30, 0);
+    const p = fauna.wake(makeRecord('pig', 'm', -50, x, 0, z, false, 0), env);
+    expect(p).not.toBeNull();
+    expect([p.y, p.sex, p.health]).toEqual([GROUND, 'm', PIG_HEALTH]);
   });
 });

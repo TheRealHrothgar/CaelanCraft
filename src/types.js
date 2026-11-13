@@ -260,7 +260,10 @@
  * @property {number} selected        0..8
  * @property {EditsJSON} edits
  * @property {RunesJSON} [runes]      optional; absent/empty when the world has no customised rune blocks
- * @property {Object[]} [pigs]        optional (v0.5); absent = the world never had pigs
+ * @property {Object[]} [pigs]        optional (v0.5); absent = the world never had pigs. Not written since §88 (`fauna`)
+ * @property {Object[]} [animals]     optional (§69) the live animals; not written since §88 (`fauna`)
+ * @property {{ v: number, z: Object[] }} [fauna]  optional (§88) every animal of the world, by zone (populations.js
+ *   validateFaunaJSON); absent = a world from before (its `animals` and `pigs` go into their zones on load)
  * @property {{falling:boolean, water:boolean, collapse:boolean, explosions:boolean}} [physics]
  *   optional (v0.8) block-physics switches; absent = saved before v0.8 (main starts it with collapse off)
  * @property {boolean} [zombies]       optional (§39) the world's zombies switch; absent = on
@@ -448,6 +451,12 @@
  * @property {import('./spread.js').Spread} [spread]   the wild plants' spreading, with its counts
  * @property {(seconds: number) => ({ seconds: number, sprouted: number, grown: number, failed: number, births: number }|null)} [farmStep]
  *   run the growth and spread steps as if `seconds` had passed
+ * Animals that live in the world (CONTRACTS §88): the zones, what one holds, and time for them alone.
+ * @property {import('./populations.js').Fauna} [fauna]  the zones and their animals, live and dormant
+ * @property {(q: number, r: number) => (ReturnType<import('./populations.js').Fauna['zoneReport']>)} [zoneReport]  what the
+ *   zone of cell (q, r) holds
+ * @property {(days: number) => (ReturnType<import('./populations.js').Fauna['step']>|null)} [faunaStep]  every zone in
+ *   memory advanced as if `days` game days had passed
  * Seasons and rain (CONTRACTS §84): the weather, today's season, and the two handles the in-game check needs.
  * @property {import('./weather.js').Weather|null} [weather]  the live world's weather (null without a world)
  * @property {() => import('./weather.js').Season} [season]   seasonOf of this moment

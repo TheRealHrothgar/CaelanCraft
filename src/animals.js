@@ -4,15 +4,17 @@
 // An animal is a body (physics.createBody) driven through the same stepPlayer physics as the player, the pigs and the
 // zombies, so it slides along honeycomb walls, hops one-cell ledges, swims and takes part in resolveBodies.
 //
-// They are hard to come by and wary: small herds appear rarely, far from the player, and a wild animal that notices
-// the player (within its species' `notice` distance — much less when the player sneaks, more when sprinting) runs until
-// it is `calm` distance away, and the herd runs with it. Getting one takes work:
+// They are wary: a wild animal that notices the player (within its species' `notice` distance — much less when the
+// player sneaks, more when sprinting) runs until it is `calm` distance away, and the herd runs with it. Since §88 they
+// live in the world: populations.js keeps them, wakes them near the player and puts them to sleep far away (this class
+// is the LIVE list only), and they are born — none appears out of nowhere and none despawns. Getting one takes work:
 //   - stalk it (sneak), or throw a spear or a dart (looseItems);
 //   - hold out food it likes (`lure`): it does not flee and comes up to you (unless you sprint);
 //   - set a Snare: an animal that steps into one is held for TRAP_HOLD_S; a baited snare draws animals from BAIT_RANGE.
-// Cattle and sheep give meat, hide and wool (a sheep can also be sheared, and its fleece grows back). Horses and wolves
-// are TAMED by feeding: a tame horse waits where it is left and can be ridden (`ride`), a tame wolf follows the player
-// and bites the zombies near it. Tame animals never flee, never despawn and are saved; so is every other animal.
+// Cattle and sheep give meat, hide and wool (a sheep can also be sheared, and its fleece grows back). Horses, wolves and
+// (§88) cattle and sheep are TAMED by feeding: a tame horse waits where it is left and can be ridden (`ride`), a tame wolf
+// follows the player and bites the zombies near it, tame cattle and sheep stay where they are left and follow the food
+// in your hand (into a pen). Tame animals never flee. Every animal has a sex and an age (`sex`, `born`, `size`, §88).
 //
 // v0.14 (§76 fauna). None of the new kinds is lured or tamed; each is its own kind of work:
 //   - deer: herds in forest and plains, the wariest animal on land — they notice from far and bolt fast and far;
@@ -32,15 +34,16 @@ import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater, shouldPaddle,
 import { hexToWorld, worldToHex } from './hex.js';
 import { yawToForward, isBehind } from './coords.js';
 import { BLOCK, BIOME, isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
-import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js';
+import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S, PLANT_LURE } from './pigs.js';
+
+export { PLANT_LURE };
 
 /** @typedef {import('./types.js').GetBlockFn} GetBlockFn */
 /** @typedef {import('./types.js').PlayerState} PlayerState */
 
 const TWO_PI = Math.PI * 2;
 
-/** What the grazers come to: plants. */
-export const PLANT_LURE = Object.freeze(['wild_tuber', 'honeyberries', 'tussock', 'cattail_root']);
+
 /** What a wolf comes to: meat, raw or roast. */
 export const MEAT_LURE = Object.freeze([
   'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton',
@@ -60,11 +63,13 @@ export const NO_LURE = Object.freeze(/** @type {string[]} */ ([]));
  * does ('fly': FLUSH_S in the air at `cruise` m above the ground; 'glide': a short one); `nests` it lays Ground Nests;
  * `predator` it does not run — it warns and charges (the bear; `notice` is then how near a walking player may come
  * before it rears); `snare: false` a snare neither holds nor draws it; `water` it lives in water and never leaves it;
- * `pad` extra reach (m) of its crosshair target; `despawn` its own DESPAWN_DIST; `alarm` its own HERD_ALARM.
+ * `pad` extra reach (m) of its crosshair target; `alarm` its own HERD_ALARM. (§88: `herd` is a group's size in the
+ * guide's words; `despawn` went with despawning.)
  */
 export const SPECIES = Object.freeze({
-  cow: Object.freeze({ name: 'Cow', radius: 0.44, height: 1.3, mass: 2.4, health: 10, notice: 9, fleeScale: 1.0, fleeSprint: false, turn: 3.2, herd: Object.freeze([1, 3]), lure: PLANT_LURE, tame: 0, voice: 'moo' }),
-  sheep: Object.freeze({ name: 'Sheep', radius: 0.36, height: 0.95, mass: 0.9, health: 6, notice: 10, fleeScale: 1.1, fleeSprint: false, turn: 4, herd: Object.freeze([1, 3]), lure: PLANT_LURE, tame: 0, voice: 'baa' }),
+  // §88: cattle and sheep are tamed by three feeds (livestock), as horses and wolves always were
+  cow: Object.freeze({ name: 'Cow', radius: 0.44, height: 1.3, mass: 2.4, health: 10, notice: 9, fleeScale: 1.0, fleeSprint: false, turn: 3.2, herd: Object.freeze([1, 3]), lure: PLANT_LURE, tame: 3, voice: 'moo' }),
+  sheep: Object.freeze({ name: 'Sheep', radius: 0.36, height: 0.95, mass: 0.9, health: 6, notice: 10, fleeScale: 1.1, fleeSprint: false, turn: 4, herd: Object.freeze([1, 3]), lure: PLANT_LURE, tame: 3, voice: 'baa' }),
   horse: Object.freeze({ name: 'Horse', radius: 0.44, height: 1.55, mass: 2.6, health: 12, notice: 13, fleeScale: 1.45, fleeSprint: true, turn: 3.5, herd: Object.freeze([1, 2]), lure: PLANT_LURE, tame: 3, voice: 'neigh' }),
   wolf: Object.freeze({ name: 'Wolf', radius: 0.3, height: 0.8, mass: 0.8, health: 8, notice: 11, fleeScale: 1.15, fleeSprint: true, turn: 5, herd: Object.freeze([1, 2]), lure: MEAT_LURE, tame: 3, voice: 'woof' }),
   // v0.14 (§76 fauna)
@@ -73,13 +78,18 @@ export const SPECIES = Object.freeze({
   pheasant: Object.freeze({ name: 'Pheasant', radius: 0.2, height: 0.5, mass: 0.3, health: 2, notice: 7, fleeScale: 1, fleeSprint: true, turn: 7, herd: Object.freeze([1, 3]), lure: NO_LURE, tame: 0, voice: 'cackle', pool: 'small', flush: 'fly', cruise: 2.6, nests: true }),
   turkey: Object.freeze({ name: 'Wild Turkey', radius: 0.28, height: 0.8, mass: 0.7, health: 4, notice: 9, fleeScale: 1.2, fleeSprint: true, turn: 6, herd: Object.freeze([1, 3]), lure: NO_LURE, tame: 0, voice: 'gobble', pool: 'small', flush: 'glide', cruise: 0.9, nests: true }),
   bear: Object.freeze({ name: 'Bear', radius: 0.48, height: 1.45, mass: 4, health: 30, notice: 9, fleeScale: 1.1, fleeSprint: true, turn: 3.6, herd: Object.freeze([1, 1]), lure: NO_LURE, tame: 0, voice: 'grunt', predator: true, snare: false }),
-  fish: Object.freeze({ name: 'Fish', radius: 0.16, height: 0.2, mass: 0.1, health: 2, notice: 4.5, fleeScale: 1, fleeSprint: false, turn: 10, herd: Object.freeze([1, 3]), lure: NO_LURE, tame: 0, voice: 'plop', pool: 'fish', water: true, snare: false, pad: 0.14, despawn: 70, alarm: 4 }),
+  fish: Object.freeze({ name: 'Fish', radius: 0.16, height: 0.2, mass: 0.1, health: 2, notice: 4.5, fleeScale: 1, fleeSprint: false, turn: 10, herd: Object.freeze([1, 3]), lure: NO_LURE, tame: 0, voice: 'plop', pool: 'fish', water: true, snare: false, pad: 0.14, alarm: 4 }),
 });
 /** @typedef {'cow'|'sheep'|'horse'|'wolf'|'deer'|'rabbit'|'pheasant'|'turkey'|'bear'|'fish'} AnimalKind */
 export const ANIMAL_KINDS = Object.freeze(/** @type {AnimalKind[]} */ (Object.keys(SPECIES)));
 
-/** At most this many animals in a world (24 until v0.14: the small game and the fish need room beside the herds). */
-export const ANIMAL_MAX = 40;
+/**
+ * At most this many LIVE animals (24 until v0.14, 40 until §88; populations.LIVE_MAX keeps the animals and the pigs
+ * together to it, the rest sleep in their zones).
+ */
+export const ANIMAL_MAX = 64;
+/** §88: an animal spawned with no age of its own (summon, an older save) is this many game days old: grown, every kind. */
+export const ADULT_AGE = 100;
 /** A sneaking player is noticed at this share of `notice`; a sprinting one from this much farther. */
 export const SNEAK_NOTICE = WARY_SNEAK_FACTOR;
 export const SPRINT_NOTICE = WARY_SPRINT_FACTOR;
@@ -124,8 +134,10 @@ export const WOLF_GUARD = 9;
 export const WOLF_BITE_REACH = 1.25;
 export const WOLF_BITE_S = 1;
 export const WOLF_BITE = 2;
-/** A tame horse left alone wanders at most this far (m) from where it was left. */
+/** A tame horse (§88: any kept animal) left alone wanders at most this far (m) from where it was left. */
 export const HOME_RANGE = 4;
+/** §88: a young animal heads back to its mother when it is more than this far (m) from her. */
+export const YOUNG_KEEP = 3;
 
 /** Riding: the saddle is this far above the horse's feet; ridden, the horse's body is this much taller (the rider). */
 export const SADDLE_Y = 1.15;
@@ -134,17 +146,11 @@ export const RIDER_HEIGHT = 1.25;
 export const RIDE_SCALE = 1.55;
 export const RIDE_LEAP = 2.2;
 
-/** Natural herds: checked every HERD_CHECK_S; a herd appears with HERD_CHANCE while fewer than HERD_TARGET wild animals
- * are within HERD_RADIUS of the player — HERD_MIN..HERD_MAX away, on natural grass. Beyond DESPAWN_DIST a wild one goes. */
-export const HERD_CHECK_S = 60;
-export const HERD_CHANCE = 0.2; // 0.45 until v0.14, 0.35 until v0.15 (CONTRACTS §79): herds are few and slow to come back
-export const HERD_TARGET = 3; // 5 until v0.15
-export const HERD_RADIUS = 96;
-export const HERD_MIN = 34;
-export const HERD_MAX = 64;
-export const HERD_TRIES = 10;
-export const DESPAWN_DIST = 150;
-/** Species weights by biome (index = BIOME id); a biome with no weights grows no herds. */
+/**
+ * Species weights by biome (index = BIOME id); a biome with no weights holds none of them. Until §88 a natural herd was
+ * picked by these near the player (HERD_CHANCE and friends, and despawning beyond DESPAWN_DIST: retired); now a zone's
+ * carrying capacity reads them (populations.suitability: a kind's weight over its best weight anywhere).
+ */
 export const HERD_WEIGHTS = Object.freeze({
   // v0.14 (§76 fauna): deer, the bear and the small game (rabbit, pheasant, turkey) joined each land's table. A kind is
   // weighed only against the others of its own pool (poolOf): herds and small game appear independently.
@@ -157,18 +163,13 @@ export const HERD_WEIGHTS = Object.freeze({
 // ---- v0.14 (§76 fauna): the game of the harder land -----------------------------------------------------------------
 
 /** @typedef {'herd'|'small'|'fish'} SpawnPool */
-/** The spawn pool a kind belongs to: 'herd' (the big animals), 'small' (rabbits and the birds) or 'fish'. @returns {SpawnPool} */
+/**
+ * The pool a kind belongs to: 'herd' (the big animals), 'small' (rabbits and the birds) or 'fish'. The guide weighs a
+ * kind's lands against the others of its own pool. @returns {SpawnPool}
+ */
 export function poolOf(kind) {
   return (isAnimalKind(kind) && /** @type {*} */ (SPECIES[kind]).pool) || 'herd';
 }
-/**
- * Small game has its own count beside the herds: at every HERD_CHECK_S a group appears with SMALL_CHANCE while fewer
- * than SMALL_TARGET small animals are within HERD_RADIUS (same distances and ground as a herd).
- */
-export const SMALL_CHANCE = 0.25; // 0.4 until v0.15 (§79)
-export const SMALL_TARGET = 3; // 4 until v0.15
-/** The bear is solitary: no second one appears while this many are within HERD_RADIUS. */
-export const BEAR_NEAR = 1;
 
 /** A running rabbit swerves ZIG_ANGLE (rad) to one side of straight away, and changes side every ZIG_S[0]..[1] seconds. */
 export const ZIG_ANGLE = 0.7;
@@ -189,12 +190,12 @@ export const FLUSH_OVER_WATER_S = 2.5;
 export const WING_BEAT = 26;
 
 /**
- * Ground nests: NEST_HEN_P of the wild pheasants and turkeys are laying hens. A hen left in peace lays a nest where she
- * stands — the first NEST_FIRST_S[0]..[1] after she appeared (a flock that is scared off at once leaves none), then
- * every NEST_EVERY_S[0]..[1] — unless the player is within NEST_PRIVACY (m) or a nest with eggs lies within NEST_SPACING
- * cells. An EMPTY nest that near is laid in again instead. A try that fails comes back in NEST_RETRY_S.
+ * Ground nests: every grown wild hen (§88: the female pheasants and turkeys; until then NEST_HEN_P 0.5 of the birds, by a
+ * coin toss). A hen left in peace lays a nest where she stands — the first NEST_FIRST_S[0]..[1] after she woke (a flock
+ * that is scared off at once leaves none), then every NEST_EVERY_S[0]..[1] — unless the player is within NEST_PRIVACY
+ * (m) or a nest with eggs lies within NEST_SPACING cells. An EMPTY nest that near is laid in again instead. A try that
+ * fails comes back in NEST_RETRY_S. The eggs do not hatch: birds are born like every other kind (populations.js).
  */
-export const NEST_HEN_P = 0.5;
 export const NEST_FIRST_S = Object.freeze([60, 180]);
 export const NEST_EVERY_S = Object.freeze([240, 420]);
 export const NEST_RETRY_S = 30;
@@ -234,9 +235,8 @@ export const BEAR_KNOCK = 0.35;
  * Fish. They swim only where the water is at least FISH_MIN_WATER deep, FISH_UNDER below its surface (fishDepth: their
  * body is just under it and the back fin cuts the surface, which is how a fish is spotted from the bank), at
  * FISH_CRUISE (m/s); a player within their notice makes the school dart at FISH_DART for FISH_DART_S, then hold still for
- * FISH_REST_S before it can dart again. Schools appear in STREAM water (world.streamAt): every FISH_CHECK_S with
- * FISH_CHANCE while fewer than FISH_TARGET fish are within FISH_RADIUS, FISH_MIN..FISH_MAX from the player (FISH_TRIES
- * tries a check); at most FISH_CAP fish in a world.
+ * FISH_REST_S before it can dart again. Since §88 fish belong to their stream or pond (a zone's fish, populations.js):
+ * the schools that appeared round the player (FISH_CHECK_S, FISH_CHANCE and the rest) are retired.
  */
 export const FISH_MIN_WATER = 0.3;
 export const FISH_UNDER = 0.24;
@@ -244,14 +244,6 @@ export const FISH_CRUISE = 0.9;
 export const FISH_DART = 5.5;
 export const FISH_DART_S = 1.1;
 export const FISH_REST_S = 1.5;
-export const FISH_CHECK_S = 20;
-export const FISH_CHANCE = 0.4; // 0.6 until v0.15 (§79)
-export const FISH_TARGET = 3; // 5 until v0.15
-export const FISH_RADIUS = 40;
-export const FISH_MIN = 8;
-export const FISH_MAX = 30;
-export const FISH_TRIES = 24;
-export const FISH_CAP = 10;
 
 /** The voices and the snare's snap (audio.playRecipe data). Gentle, short, never startling. */
 export const SOUNDS = Object.freeze({
@@ -286,7 +278,11 @@ export const SOUNDS = Object.freeze({
  *   baitIn: number, baitX: number, baitZ: number, biteIn: number, side: 1|-1, speedScale: number, wallSinceAim: boolean,
  *   variant: number, air: number, zigIn: number, nestIn: number,
  *   rear: number, warn: number, chase: number, rest: number, maulIn: number, swipe: number,
+ *   sex: 'f'|'m', born: number, size: number, restUntil: number, fedAt: number, habBits: number, habAt: number,
  * }} Animal
+ * §88 (populations.js): `sex`; `born` the game day it was born; `size` its size, YOUNG_SCALE..1 (below 1: young; its
+ * body's radius and height are scaled with it); `restUntil` the game day a mother may breed again; `fedAt` the game day
+ * it was last fed by hand; `habBits` / `habAt` what it found within FEED_RANGE (1 food, 2 water) and when.
  * v0.14 (§76 fauna): `variant` 1 = a stag (antlers; saved); `air` > 0 the seconds a flushed bird still flies, < 0 it
  * is coming down, 0 on the ground; `zigIn` until a rabbit's next swerve; `nestIn` until a hen's next nest (Infinity:
  * it never lays); the bear's
@@ -318,8 +314,7 @@ export const SOUNDS = Object.freeze({
  * @property {{ animal: Animal, cell: [number, number, number] }[]} caught   stepped into a snare (main springs the block)
  * @property {{ cell: [number, number, number], escaped: boolean }[]} freed  a snare let go (main resets the block)
  * @property {{ wolf: Animal, target: * }[]} bites   a tame wolf bit a threat (main applies it)
- * @property {Animal[]} spawned     placed by natural spawning
- * @property {number} despawned
+ * @property {number} despawned     fish whose water was gone (a death without a blow)
  * @property {Animal[]} flushed     v0.14 (§76 fauna): birds that took to the air this frame (main: the whirr of wings)
  * @property {Animal[]} warned      bears that reared up this frame (main: the growl)
  * @property {Animal[]} charged     bears that began a charge this frame (main: the roar)
@@ -453,11 +448,11 @@ export class Animals {
     this.list = [];
     this._rng = rng;
     this._nextId = 1;
-    this._spawnIn = HERD_CHECK_S / 3;
-    this._fishIn = FISH_CHECK_S / 2;
+    /** §88: the world clock in game days (populations.Fauna keeps it): a feed is stamped with it, a spawn is born before it */
+    this.now = 0;
     /** @type {AnimalEvents} */
     this.events = {
-      voices: [], startled: [], caught: [], freed: [], bites: [], spawned: [], despawned: 0,
+      voices: [], startled: [], caught: [], freed: [], bites: [], despawned: 0,
       flushed: [], warned: [], charged: [], mauls: [], laid: [],
     };
     /** how many entries of the carried event lists the last update reported (update drops those first) */
@@ -479,10 +474,10 @@ export class Animals {
   }
 
   /**
-   * Add an animal of `kind` standing at feet (x, y, z). @returns {Animal|null} null at ANIMAL_MAX, for an unknown kind or
-   * a non-finite position
+   * Add an animal of `kind` standing at feet (x, y, z), of `sex` (§88; a female unless told), grown (ADULT_AGE game days
+   * old). @returns {Animal|null} null at ANIMAL_MAX, for an unknown kind or a non-finite position
    */
-  spawn(kind, x, y, z, yaw = 0) {
+  spawn(kind, x, y, z, yaw = 0, sex = 'f') {
     if (!isAnimalKind(kind) || this.list.length >= ANIMAL_MAX || !Number.isFinite(x + y + z + yaw)) return null;
     const sp = SPECIES[kind];
     const a = /** @type {Animal} */ (Object.assign(createBody(x, y, z, { radius: sp.radius, height: sp.height, mass: sp.mass }), {
@@ -516,21 +511,40 @@ export class Animals {
       side: this._rng() < 0.5 ? 1 : -1,
       speedScale: 1,
       wallSinceAim: false,
-      // v0.14 (§76 fauna)
-      variant: 0,
+      // v0.14 (§76 fauna): 1 = a stag (§88: a male deer; kept for the old `animals` field and older code)
+      variant: kind === 'deer' && sex === 'm' ? 1 : 0,
       air: 0,
       zigIn: 0,
-      // a laying hen's time to her first nest; Infinity for a bird (or a kind) that never lays
-      nestIn: /** @type {*} */ (sp).nests && this._rng() < NEST_HEN_P ? NEST_FIRST_S[0] + this._rng() * (NEST_FIRST_S[1] - NEST_FIRST_S[0]) : Infinity,
+      // a hen's time to her first nest; Infinity for a cock (or a kind) that never lays (and for a chick: _layNest)
+      nestIn: /** @type {*} */ (sp).nests && sex !== 'm' ? NEST_FIRST_S[0] + this._rng() * (NEST_FIRST_S[1] - NEST_FIRST_S[0]) : Infinity,
       rear: 0,
       warn: 0,
       chase: 0,
       rest: 0,
       maulIn: 0,
       swipe: 0,
+      // §88
+      sex: sex === 'm' ? 'm' : 'f',
+      born: this.now - ADULT_AGE,
+      size: 1,
+      restUntil: -Infinity,
+      fedAt: -Infinity,
+      habBits: -1,
+      habAt: -Infinity,
     }));
     this.list.push(a);
     return a;
+  }
+
+  /**
+   * §88: take an animal out of the live list as it goes to sleep (populations.Fauna.sleep): unlike `remove`, a snare
+   * that holds it stays sprung (it is still held while it sleeps). @returns {boolean} it was in the list
+   */
+  detach(a) {
+    const i = this.list.indexOf(a);
+    if (i < 0) return false;
+    this.list.splice(i, 1);
+    return true;
   }
 
   /** @returns {boolean} true when it was in the list */
@@ -544,7 +558,7 @@ export class Animals {
   }
 
   /**
-   * Natural herds, then every animal: despawn, snares, AI, physics.
+   * Every live animal: snares, AI, physics (§88: none appears or goes here; populations.js wakes and puts them to sleep).
    * @param {number} dt
    * @param {AnimalWorld} world
    * @returns {AnimalEvents} this.events (reused; `freed` may already hold what remove() queued since the last update)
@@ -555,7 +569,6 @@ export class Animals {
     ev.startled.length = 0;
     ev.caught.length = 0;
     ev.bites.length = 0;
-    ev.spawned.length = 0;
     ev.despawned = 0;
     ev.warned.length = 0;
     ev.mauls.length = 0;
@@ -571,23 +584,6 @@ export class Animals {
     const getBlock = world.getBlock;
     this._fires = world.hasCampfires ? !!world.hasCampfires() : true;
 
-    if (player && world.groundHeight && world.getBiome) {
-      this._spawnIn -= dt;
-      if (this._spawnIn <= 0) {
-        this._spawnIn = HERD_CHECK_S;
-        this._spawnHerd(player, world);
-        this._spawnHerd(player, world, 'small'); // v0.14: the small game is counted by itself
-      }
-      // v0.14 (§76 fauna): schools of fish, where there is a stream
-      if (world.streamAt) {
-        this._fishIn -= dt;
-        if (this._fishIn <= 0) {
-          this._fishIn = FISH_CHECK_S;
-          this._spawnFish(player, world);
-        }
-      }
-    }
-
     const input = this._input;
     for (let i = this.list.length - 1; i >= 0; i--) {
       const a = this.list[i];
@@ -596,12 +592,7 @@ export class Animals {
         this.remove(a);
         continue;
       }
-      if (player && !a.tamed && !(a.trapped > 0) && Math.hypot(a.x - player.x, a.z - player.z) > (sp.despawn ?? DESPAWN_DIST)) {
-        this.list.splice(i, 1);
-        ev.despawned++;
-        continue;
-      }
-      if (!world.isLoaded(a.x, a.z)) continue; // frozen until its chunk is back
+      if (!world.isLoaded(a.x, a.z)) continue; // frozen until its chunk is back (§88: and soon asleep)
       if (a.hurt > 0) a.hurt = Math.max(0, a.hurt - dt);
       if (a.calm > 0) a.calm = Math.max(0, a.calm - dt);
       if (a.shorn > 0) a.shorn = Math.max(0, a.shorn - dt);
@@ -690,8 +681,8 @@ export class Animals {
       } else {
         this._stride(a, x0, z0, dt);
       }
-      // v0.14: a hen left in peace lays a nest now and then
-      if (sp.nests && !a.tamed) {
+      // v0.14: a hen left in peace lays a nest now and then (§88: a grown one)
+      if (sp.nests && !a.tamed && !(a.size < 1)) {
         a.nestIn -= dt;
         if (a.nestIn <= 0) {
           const laid = this._layNest(a, world, player, ev);
@@ -755,7 +746,7 @@ export class Animals {
     const getBlock = world.getBlock;
     a.timer -= dt;
     if (a.inWater) return this._swim(a, getBlock);
-    if (a.tamed) return a.kind === 'wolf' ? this._tameWolf(a, dt, world, player, ev) : this._tameHorse(a, getBlock);
+    if (a.tamed) return a.kind === 'wolf' ? this._tameWolf(a, dt, world, player, ev) : this._kept(a, world, player);
 
     // v0.14 (§76 fauna): in the air a bird holds the line it took when it flushed.
     if (a.air !== 0) return 'run';
@@ -821,8 +812,20 @@ export class Animals {
     return this._wander(a, getBlock);
   }
 
-  /** idle ↔ wander, like a pig; a walker stops at an edge, water, a wall or a fire. */
+  /**
+   * idle ↔ wander, like a pig; a walker stops at an edge, water, a wall or a fire. §88: a young one keeps by its mother
+   * (the nearest grown female of its kind): it heads for her whenever it is more than YOUNG_KEEP away.
+   * @returns {'stand'|'amble'}
+   */
   _wander(a, getBlock) {
+    if (a.size < 1 && !a.tamed) {
+      const mother = this._nearestKin(a, true);
+      if (mother && Math.hypot(mother.x - a.x, mother.z - a.z) > YOUNG_KEEP) {
+        a.mode = 'walk';
+        a.timer = Math.max(a.timer, 0.5);
+        a.targetYaw = yawToward(a.x, a.z, mother.x, mother.z);
+      }
+    }
     if (a.timer <= 0) {
       if (a.mode === 'idle') {
         a.mode = 'walk';
@@ -860,7 +863,37 @@ export class Animals {
     return 'walk';
   }
 
-  /** A tame horse left alone: it grazes within HOME_RANGE of where it was left. */
+  /**
+   * §88: a tame animal that is not a wolf (a horse, cattle, sheep): it follows the food it likes in the player's hand
+   * (the lure: up to LURE_STOP, and where it ends up is its new home — the way into a pen), else it grazes within
+   * HOME_RANGE of home (_tameHorse). It never runs.
+   * @param {Animal} a @param {AnimalWorld} world @param {PlayerState|null} player
+   * @returns {'stand'|'amble'|'trot'|'walk'|'run'}
+   */
+  _kept(a, world, player) {
+    const p = player && !player.flying ? player : null;
+    const sp = SPECIES[a.kind];
+    const lured = p !== null && !p.sprinting && typeof world.heldKey === 'string' && sp.lure.includes(world.heldKey)
+      && Math.hypot(p.x - a.x, p.z - a.z) <= LURE_RANGE;
+    if (lured) {
+      a.mode = 'lure';
+      a.targetYaw = yawToward(a.x, a.z, /** @type {PlayerState} */ (p).x, /** @type {PlayerState} */ (p).z);
+      a.homeX = a.x;
+      a.homeZ = a.z;
+      if (Math.hypot(/** @type {PlayerState} */ (p).x - a.x, /** @type {PlayerState} */ (p).z - a.z) <= LURE_STOP) return 'stand';
+      return a.onGround && !this._safeAhead(a, world.getBlock) ? 'stand' : 'trot';
+    }
+    if (a.mode === 'lure') {
+      a.mode = 'idle';
+      a.timer = 1;
+    }
+    return this._tameHorse(a, world.getBlock);
+  }
+
+  /**
+   * A tame horse (§88: any kept animal) left alone: it grazes within HOME_RANGE of where it was left.
+   * @returns {'stand'|'amble'}
+   */
   _tameHorse(a, getBlock) {
     const dh = Math.hypot(a.homeX - a.x, a.homeZ - a.z);
     if (dh > HOME_RANGE) {
@@ -872,7 +905,10 @@ export class Animals {
     return this._wander(a, getBlock);
   }
 
-  /** A tame wolf: sits where told; else goes for a zombie near it, or keeps by the player. */
+  /**
+   * A tame wolf: sits where told; else goes for a zombie near it, or keeps by the player.
+   * @returns {'stand'|'amble'|'trot'|'walk'|'run'}
+   */
   _tameWolf(a, dt, world, player, ev) {
     const getBlock = world.getBlock;
     if (a.sitting || !player) {
@@ -1202,48 +1238,10 @@ export class Animals {
   }
 
   /**
-   * Schools of fish: one try per check. A school of the fish's `herd` size appears in stream water (world.streamAt)
-   * FISH_MIN..FISH_MAX from the player while fewer than FISH_TARGET fish are within FISH_RADIUS (and FISH_CAP in all).
-   * @returns {number} fish placed
+   * Where a fish may be put in column (q, r): its swim height in the water lying on the generated ground, or NaN (§88:
+   * where a zone's fish wake, populations.js). @param {{ getBlock: GetBlockFn, groundHeight: (q: number, r: number) => number }} world
    */
-  _spawnFish(player, world) {
-    if (!world.streamAt || !world.isLoadedCell || !world.groundHeight) return 0;
-    let near = 0;
-    let total = 0;
-    for (const a of this.list) {
-      if (!(/** @type {*} */ (SPECIES[a.kind]).water)) continue;
-      total++;
-      if (Math.hypot(a.x - player.x, a.z - player.z) <= FISH_RADIUS) near++;
-    }
-    if (near >= FISH_TARGET || total >= FISH_CAP || this.list.length >= ANIMAL_MAX || this._rng() >= FISH_CHANCE) return 0;
-    const sp = SPECIES.fish;
-    for (let k = 0; k < FISH_TRIES; k++) {
-      const ang = this._rng() * TWO_PI;
-      const d = FISH_MIN + this._rng() * (FISH_MAX - FISH_MIN);
-      const [q, r] = worldToHex(player.x + Math.cos(ang) * d, player.z + Math.sin(ang) * d);
-      if (!world.isLoadedCell(q, r) || !world.streamAt(q, r) || Number.isNaN(this._fishSpot(world, q, r))) continue;
-      const n = sp.herd[0] + Math.floor(this._rng() * (sp.herd[1] - sp.herd[0] + 1));
-      let placed = 0;
-      for (let m = 0; m < n * 4 && placed < n && total + placed < FISH_CAP && this.list.length < ANIMAL_MAX; m++) {
-        const mq = m === 0 ? q : q + Math.round((this._rng() * 2 - 1) * 2);
-        const mr = m === 0 ? r : r + Math.round((this._rng() * 2 - 1) * 2);
-        if (!world.isLoadedCell(mq, mr)) continue;
-        const y = this._fishSpot(world, mq, mr);
-        if (Number.isNaN(y)) continue;
-        const [x, z] = hexToWorld(mq, mr);
-        // a little off the middle of the cell, so a school in one cell is not one fish
-        const a = this.spawn('fish', x + (this._rng() - 0.5) * 0.4, y, z + (this._rng() - 0.5) * 0.4, this._rng() * TWO_PI);
-        if (!a) break;
-        this.events.spawned.push(a);
-        placed++;
-      }
-      if (placed > 0) return placed;
-    }
-    return 0;
-  }
-
-  /** Where a fish may be put in column (q, r): its swim height in the water lying on the generated ground, or NaN. */
-  _fishSpot(world, q, r) {
+  fishSpotAt(world, q, r) {
     const h = world.groundHeight(q, r);
     if (!(h >= 0)) return NaN;
     const getBlock = world.getBlock;
@@ -1266,12 +1264,13 @@ export class Animals {
     }
   }
 
-  /** The nearest other animal of its kind, or null. */
-  _nearestKin(a) {
+  /** The nearest other animal of its kind (§88 `mother`: the nearest grown female), or null. */
+  _nearestKin(a, mother = false) {
     let best = null;
     let bd = Infinity;
     for (const o of this.list) {
       if (o === a || o.kind !== a.kind) continue;
+      if (mother && (o.sex !== 'f' || o.size < 1)) continue;
       const d = Math.hypot(o.x - a.x, o.z - a.z);
       if (d < bd) {
         bd = d;
@@ -1383,12 +1382,14 @@ export class Animals {
   }
 
   /**
-   * Feed it `key` (R with the food in hand, within reach). Cattle and sheep calm down for FED_CALM_S; a horse or a wolf
-   * gains trust and, at its species' `tame` feeds, is tamed. @returns {{ ok: boolean, tamed?: boolean, calmed?: boolean }}
+   * Feed it `key` (R with the food in hand, within reach). It calms down for FED_CALM_S and gains trust; at its species'
+   * `tame` feeds (horses, wolves and, §88, cattle and sheep) it is tamed. §88: a feed is stamped (`fedAt`, game days):
+   * food for breeding for populations.FED_DAYS. @returns {{ ok: boolean, tamed?: boolean, calmed?: boolean }}
    */
   feed(a, key) {
     const sp = SPECIES[a.kind];
     if (!sp.lure.includes(key) || !this.list.includes(a)) return { ok: false };
+    a.fedAt = this.now;
     if (a.tamed) {
       a.health = Math.min(sp.health, a.health + 3); // food heals a tame animal
       return { ok: true };
@@ -1414,21 +1415,22 @@ export class Animals {
    * anything that is not a cow, gives none).
    */
   milk(a) {
-    if (a.kind !== 'cow' || a.milked > 0 || !this.list.includes(a)) return false;
+    // §88: a grown cow, not a bull or a calf
+    if (a.kind !== 'cow' || a.sex === 'm' || a.size < 1 || a.milked > 0 || !this.list.includes(a)) return false;
     a.milked = MILK_REGROW_S;
     return true;
   }
 
   /** Shear a sheep that has its fleece: SHEAR_WOOL wool, and it grows back in SHEAR_REGROW_S. @returns {number} wool */
   shear(a) {
-    if (a.kind !== 'sheep' || a.shorn > 0 || !this.list.includes(a)) return 0;
+    if (a.kind !== 'sheep' || a.size < 1 || a.shorn > 0 || !this.list.includes(a)) return 0; // §88: not a lamb
     a.shorn = SHEAR_REGROW_S;
     return SHEAR_WOOL[0] + Math.floor(this._rng() * (SHEAR_WOOL[1] - SHEAR_WOOL[0] + 1));
   }
 
   /** Mount a tame horse: it is taller by RIDER_HEIGHT while ridden (it cannot pass where its rider could not). */
   mount(a) {
-    if (a.kind !== 'horse' || !a.tamed || a.ridden || !this.list.includes(a)) return false;
+    if (a.kind !== 'horse' || !a.tamed || a.ridden || a.size < 1 || !this.list.includes(a)) return false; // §88: not a foal
     a.ridden = true;
     a.height = SPECIES.horse.height + RIDER_HEIGHT;
     a.mode = 'idle';
@@ -1504,72 +1506,6 @@ export class Animals {
     return best ? { animal: best, distance: bestT } : null;
   }
 
-  /**
-   * Natural herds: one try per check. A herd of a kind the biome grows appears HERD_MIN..HERD_MAX from the player on
-   * natural ground with two open cells above, while fewer than HERD_TARGET wild animals are within HERD_RADIUS.
-   * v0.14 (§76 fauna): per `pool` — the herds count only the big animals (HERD_CHANCE, HERD_TARGET), the small game
-   * only itself (SMALL_CHANCE, SMALL_TARGET) — and no second bear comes while BEAR_NEAR are about.
-   * @param {PlayerState} player @param {AnimalWorld} world @param {SpawnPool} [pool]
-   * @returns {number} animals placed
-   */
-  _spawnHerd(player, world, pool = 'herd') {
-    let near = 0;
-    let bears = 0;
-    for (const a of this.list) {
-      if (a.tamed || poolOf(a.kind) !== pool || Math.hypot(a.x - player.x, a.z - player.z) > HERD_RADIUS) continue;
-      near++;
-      if (/** @type {*} */ (SPECIES[a.kind]).predator) bears++;
-    }
-    const target = pool === 'small' ? SMALL_TARGET : HERD_TARGET;
-    const chance = pool === 'small' ? SMALL_CHANCE : HERD_CHANCE;
-    if (near >= target || this.list.length >= ANIMAL_MAX || this._rng() >= chance) return 0;
-    for (let k = 0; k < HERD_TRIES; k++) {
-      const ang = this._rng() * TWO_PI;
-      const d = HERD_MIN + this._rng() * (HERD_MAX - HERD_MIN);
-      const [q, r] = worldToHex(player.x + Math.cos(ang) * d, player.z + Math.sin(ang) * d);
-      const weights = HERD_WEIGHTS[/** @type {number} */ (/** @type {*} */ (world).getBiome(q, r))];
-      if (!weights) continue;
-      const kind = this._pickKind(weights, pool);
-      if (!kind) continue;
-      const sp = SPECIES[kind];
-      if (/** @type {*} */ (sp).predator && bears >= BEAR_NEAR) continue;
-      const n = sp.herd[0] + Math.floor(this._rng() * (sp.herd[1] - sp.herd[0] + 1));
-      let placed = 0;
-      for (let m = 0; m < n * 3 && placed < n && this.list.length < ANIMAL_MAX; m++) {
-        const mq = q + Math.round((this._rng() * 2 - 1) * 3);
-        const mr = r + Math.round((this._rng() * 2 - 1) * 3);
-        const fy = this.spawnHeightAt(world, mq, mr, sp);
-        if (fy === null) continue;
-        const [x, z] = hexToWorld(mq, mr);
-        if (this.list.some((o) => Math.hypot(o.x - x, o.z - z) < 1)) continue;
-        const a = this.spawn(kind, x, fy, z, this._rng() * TWO_PI);
-        if (!a) break;
-        if (kind === 'deer' && placed === 0) a.variant = 1; // v0.14: every herd of deer has its stag
-        this.events.spawned.push(a);
-        placed++;
-      }
-      if (placed > 0) return placed;
-    }
-    return 0;
-  }
-
-  /**
-   * A kind by the biome's weights, among the kinds of `pool` only (v0.14).
-   * @param {Record<string, number>} weights @param {SpawnPool} [pool] @returns {AnimalKind|null} null: none of that pool here
-   */
-  _pickKind(weights, pool = 'herd') {
-    const kinds = Object.keys(weights).filter((k) => poolOf(k) === pool);
-    let total = 0;
-    for (const k of kinds) total += weights[k];
-    if (!(total > 0)) return null;
-    let roll = this._rng() * total;
-    for (const k of kinds) {
-      roll -= weights[k];
-      if (roll < 0) return /** @type {AnimalKind} */ (k);
-    }
-    return /** @type {AnimalKind} */ (kinds[0]);
-  }
-
   /** The feet y an animal may appear at in column (q, r): loaded, natural ground, two open cells above, room. Else null. */
   spawnHeightAt(world, q, r, sp) {
     if (!world.isLoadedCell || !world.groundHeight || !world.isNaturalGround) return null;
@@ -1597,7 +1533,7 @@ export class Animals {
         o.tp = Math.ceil(a.trapped);
         o.tc = [a.trapCell[0], a.trapCell[1], a.trapCell[2]];
       }
-      if (a.variant === 1) o.v = 1; // v0.14: a stag stays a stag
+      if (a.kind === 'deer' && a.sex === 'm') o.v = 1; // v0.14: a stag stays a stag (§88: a male deer)
       return o;
     });
   }
@@ -1611,7 +1547,7 @@ export class Animals {
     this._reported(this.events);
     const { animals } = validateAnimalsJSON(list);
     for (const o of animals) {
-      const a = this.spawn(/** @type {AnimalKind} */ (o.k), o.x, o.y, o.z, o.yaw);
+      const a = this.spawn(/** @type {AnimalKind} */ (o.k), o.x, o.y, o.z, o.yaw, o.v === 1 ? 'm' : 'f');
       if (!a) break;
       a.health = o.h;
       a.tamed = o.t === 1;
@@ -1624,7 +1560,6 @@ export class Animals {
         a.trapT = 1;
         a.trapCell = [o.tc[0], o.tc[1], o.tc[2]];
       }
-      a.variant = o.v === 1 ? 1 : 0;
     }
   }
 }
@@ -1638,7 +1573,9 @@ function round2(v) {
  * The `animals` save field in canonical form: `[{ k, x, y, z, yaw, h, t?, tr?, s?, sit?, tp?, tc?, v? }]`, at most
  * ANIMAL_MAX; bad entries are dropped with a warning. v0.14 (§76 fauna): the new kinds are entries like any other, `v: 1`
  * marks a stag, and a save from before (four kinds, at most 24) reads exactly as it did. What a bird, a bear or a fish
- * was doing (flying, charging, darting) is not saved: it starts calm.
+ * was doing (flying, charging, darting) is not saved: it starts calm. §88: no longer written (the `fauna` field holds
+ * every animal); an older save's list is read with these rules and its animals go into their zones. Cattle and sheep may
+ * be tame (`t: 1`) since §88.
  * @param {*} raw
  * @returns {{ animals: *[], warnings: string[] }}
  */

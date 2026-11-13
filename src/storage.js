@@ -21,6 +21,7 @@ import { BLOCK, DEFAULT_HOTBAR } from './blocks.js';
 import { normalizeRunesJSON, validateRunesJSON } from './runes.js';
 import { validatePigsJSON } from './pigs.js';
 import { validateAnimalsJSON } from './animals.js';
+import { validateFaunaJSON } from './populations.js';
 import { WEAR_SLOT_NAMES, canonicalItemKey, getItem, maxDurability, stackSize } from './items.js';
 import { normalizeFiresJSON, parseCellKey } from './cooking.js';
 import { normalizePartsJSON, validatePartsJSON } from './circuitStore.js';
@@ -638,6 +639,8 @@ export function serializeSave(data) {
     const animals = validateAnimalsJSON(data.animals).animals;
     if (animals.length > 0) /** @type {*} */ (out).animals = animals;
   }
+  // §88: every animal of the world, by zone (main writes this instead of `animals` and `pigs`), when given.
+  if (data.fauna != null) /** @type {*} */ (out).fauna = { v: 1, z: validateFaunaJSON(data.fauna).zones };
   // Block-physics switches (v0.8): written whenever given. An absent field on load means "saved before v0.8".
   if (data.physics != null) /** @type {*} */ (out).physics = normalizePhysicsSwitches(data.physics);
   // Zombies switch (§39): written whenever given (anything but `false` is on). Absent on load = on.
@@ -690,6 +693,8 @@ export function serializeSave(data) {
  * and non-array entries are dropped; `time` is wrapped into [0,1) and `pitch` clamped. An optional `runes`
  * field is validated with runes.validateRunesJSON (invalid or orphaned entries dropped) and only kept when non-empty.
  * An optional `pigs` array is validated with pigs.validatePigsJSON and kept (even when empty).
+ * An optional `fauna` object (§88: the zones and their animals) is validated with populations.validateFaunaJSON (bad zones
+ * and animals dropped with a warning each, at most ZONE_MAX zones of ZONE_ANIMALS_MAX animals) and kept as `{ v: 1, z }`.
  * An optional `physics` object (block-physics switches) is normalised with normalizePhysicsSwitches; a non-object is
  * dropped with a warning (the save then reads as one from before v0.8).
  * An optional boolean `zombies` (the world's zombies switch, §39) is kept; anything else is dropped with a warning
@@ -824,6 +829,11 @@ export function deserializeSave(text) {
     const v = validateAnimalsJSON(raw.animals);
     for (const w of v.warnings) warnings.push(w);
     if (v.animals.length > 0) /** @type {*} */ (save).animals = v.animals;
+  }
+  if (raw.fauna !== undefined) {
+    const v = validateFaunaJSON(raw.fauna);
+    for (const w of v.warnings) warnings.push(w);
+    if (v.warnings.length === 0 || v.zones.length > 0) /** @type {*} */ (save).fauna = { v: 1, z: v.zones };
   }
   if (raw.physics !== undefined) {
     if (!isPlainObject(raw.physics)) {

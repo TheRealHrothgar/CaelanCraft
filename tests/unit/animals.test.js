@@ -7,9 +7,10 @@ import { isBehind, yawToForward } from '../../src/coords.js';
 import {
   Animals, SPECIES, ANIMAL_KINDS, ANIMAL_MAX, noticeRange, blindTo, BEHIND_NOTICE, VIEW_HALF_ANGLE, fleeSpeed, validateAnimalsJSON, isAnimalKind,
   SNEAK_NOTICE, CALM_FACTOR, FED_CALM_S, LURE_STOP, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, SHEAR_REGROW_S, SHEAR_WOOL,
-  WOLF_BITE_S, FOLLOW_NEAR, SADDLE_Y, RIDER_HEIGHT, RIDE_SCALE, HERD_MIN, HERD_MAX, HERD_CHECK_S, HERD_TARGET, DESPAWN_DIST,
-  HIT_FLEE_S, ANIMAL_HURT_S, MILK_REGROW_S, HERD_WEIGHTS, SMALL_TARGET, poolOf,
+  WOLF_BITE_S, FOLLOW_NEAR, SADDLE_Y, RIDER_HEIGHT, RIDE_SCALE, ADULT_AGE,
+  HIT_FLEE_S, ANIMAL_HURT_S, MILK_REGROW_S,
 } from '../../src/animals.js';
+import { LIVE_MAX } from '../../src/populations.js';
 import { Pigs, seededRng } from '../../src/pigs.js';
 import { createPlayer, shouldPaddle, settleFloat, FLOAT_POINT } from '../../src/physics.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
@@ -37,20 +38,25 @@ describe('animals — the species', () => {
   it('the kinds, with bodies that fit the collider; spawn refuses junk and stops at ANIMAL_MAX', () => {
     // v0.14 (§76 fauna): + deer, rabbit, pheasant, turkey, bear and fish (tests/unit/fauna.test.js)
     expect(ANIMAL_KINDS).toEqual(['cow', 'sheep', 'horse', 'wolf', 'deer', 'rabbit', 'pheasant', 'turkey', 'bear', 'fish']);
-    expect(ANIMAL_MAX).toBe(40); // 24 until v0.14
+    expect(ANIMAL_MAX).toBe(64); // 24 until v0.14, 40 until §88: the live list holds up to LIVE_MAX
+    expect(ANIMAL_MAX).toBe(LIVE_MAX);
     const as = new Animals(seededRng(1));
+    as.now = 7;
     for (const k of ANIMAL_KINDS) {
       const a = as.spawn(k, 0, GROUND, 0);
       expect(a).toMatchObject({ kind: k, radius: SPECIES[k].radius, height: SPECIES[k].height, health: SPECIES[k].health, tamed: false });
       expect(a.radius).toBeLessThanOrEqual(0.5);
+      // §88: a spawn is a grown female unless told otherwise
+      expect(a).toMatchObject({ sex: 'f', born: 7 - ADULT_AGE, size: 1 });
     }
+    expect(as.spawn('cow', 0, GROUND, 0, 0, 'm').sex).toBe('m');
     expect(as.spawn('dragon', 0, GROUND, 0)).toBeNull();
     expect(as.spawn('cow', NaN, GROUND, 0)).toBeNull();
     expect(isAnimalKind('wolf') && !isAnimalKind('pig') && !isAnimalKind('__proto__')).toBe(true);
     while (as.size < ANIMAL_MAX) as.spawn('sheep', as.size, GROUND, 0);
     expect(as.spawn('sheep', 0, GROUND, 5)).toBeNull();
-    // only horses and wolves can be tamed; a horse outruns a sprinting player, cattle do not outrun a sprint
-    expect(ANIMAL_KINDS.filter((k) => SPECIES[k].tame > 0)).toEqual(['horse', 'wolf']);
+    // §88: horses, wolves and now cattle and sheep can be tamed; a horse outruns a sprinting player, cattle do not
+    expect(ANIMAL_KINDS.filter((k) => SPECIES[k].tame > 0)).toEqual(['cow', 'sheep', 'horse', 'wolf']);
     expect(fleeSpeed('horse')).toBeGreaterThan(SPRINT_SPEED);
     expect(fleeSpeed('cow')).toBeLessThan(SPRINT_SPEED);
     expect(fleeSpeed('cow')).toBeCloseTo(WALK_SPEED, 6);
@@ -329,58 +335,38 @@ describe('animals — snares', () => {
   });
 });
 
-describe('animals — herds are rare and far; the save', () => {
-  const hooks = (biome) => ({
-    getBiome: () => biome,
-    groundHeight: () => GROUND - 1,
-    isNaturalGround: () => true,
-    isLoadedCell: () => true,
-  });
-  it('a herd of a kind the biome grows appears HERD_MIN..HERD_MAX away, up to HERD_TARGET nearby; none in the desert', () => {
+describe('animals — none appears or goes by itself (§88: populations.js); the save', () => {
+  it('the live list neither spawns herds nor despawns the far ones: a wild animal 1000 m away stays (it is put to sleep by the store)', () => {
+    // (the herds that appeared near the player and the despawning beyond DESPAWN_DIST are retired: tests/unit/populations.test.js
+    // checks where animals now come from, and that walking away keeps every one)
     const as = new Animals(seededRng(18));
+    const wild = as.spawn('cow', 1000, GROUND, 0);
     const player = standing(0, 0, { flying: true });
-    const world = view(flatWorld(), player, hooks(BIOME.PLAINS));
-    let spawned = [];
-    // (twenty checks: with HERD_CHANCE 0.2 a herd is all but certain to have come by then: 0.8^20 is about 1 %)
-    run(as, world, HERD_CHECK_S * 20, (ev) => {
-      if (ev.spawned.length && spawned.length === 0) spawned = [...ev.spawned];
+    const world = view(flatWorld(), player, {
+      getBiome: () => BIOME.PLAINS, groundHeight: () => GROUND - 1, isNaturalGround: () => true, isLoadedCell: () => true,
     });
-    // v0.14 (§76 fauna): a check may place a herd and a group of small game; each group is of one kind the plains grow,
-    // and neither pool grows past its own target by more than its last group
-    expect(spawned.length).toBeGreaterThanOrEqual(1);
-    for (const pool of ['herd', 'small']) {
-      const group = spawned.filter((a) => poolOf(a.kind) === pool);
-      if (group.length === 0) continue;
-      expect(Object.keys(HERD_WEIGHTS[BIOME.PLAINS])).toContain(group[0].kind);
-      expect(group.every((a) => a.kind === group[0].kind)).toBe(true);
-    }
-    const count = (pool) => as.list.filter((a) => poolOf(a.kind) === pool).length;
-    expect(count('herd')).toBeGreaterThanOrEqual(1); // v0.15 (§79): a herd can be a single animal
-    expect(count('herd')).toBeLessThanOrEqual(HERD_TARGET + 4);
-    expect(count('small')).toBeLessThanOrEqual(SMALL_TARGET + 3);
-    const as2 = new Animals(seededRng(19));
-    let first = [];
-    run(as2, view(flatWorld(), standing(0, 0, { flying: true }), hooks(BIOME.PLAINS)), HERD_CHECK_S * 8, (ev) => {
-      if (ev.spawned.length && first.length === 0) first = ev.spawned.map((a) => Math.hypot(a.x, a.z));
+    let despawned = 0;
+    run(as, world, 600, (ev) => {
+      despawned += ev.despawned;
     });
-    for (const d of first) {
-      expect(d).toBeGreaterThan(HERD_MIN - 4);
-      expect(d).toBeLessThan(HERD_MAX + 4);
-    }
-    const desert = new Animals(seededRng(20));
-    run(desert, view(flatWorld(), standing(0, 0), hooks(BIOME.DESERT)), HERD_CHECK_S * 5);
-    expect(desert.size).toBe(0);
+    expect(despawned).toBe(0);
+    expect(as.list).toEqual([wild]);
+    expect('spawned' in as.events).toBe(false);
   });
 
-  it('a wild animal far from the player goes; a tame one and a snared one stay', () => {
+  it('detach takes one out of the list without letting its snare go (it sleeps held); remove lets it go', () => {
     const as = new Animals(seededRng(21));
-    const wild = as.spawn('cow', DESPAWN_DIST + 5, GROUND, 0);
-    const tame = as.spawn('horse', DESPAWN_DIST + 8, GROUND, 0);
-    for (let i = 0; i < 3; i++) as.feed(tame, 'wild_tuber');
-    const ev = as.update(DT, view(flatWorld(), standing(0, 0)));
-    expect(ev.despawned).toBe(1);
-    expect(as.list).toEqual([tame]);
-    expect(as.list.includes(wild)).toBe(false);
+    const a = as.spawn('cow', 0, GROUND, 0);
+    a.trapped = 30;
+    a.trapCell = [0, GROUND, 0];
+    expect(as.detach(a)).toBe(true);
+    expect(as.events.freed).toEqual([]);
+    expect(as.detach(a)).toBe(false);
+    const b = as.spawn('cow', 0, GROUND, 0);
+    b.trapped = 30;
+    b.trapCell = [1, GROUND, 1];
+    as.remove(b);
+    expect(as.events.freed).toEqual([{ cell: [1, GROUND, 1], escaped: false }]);
   });
 
   it('export / load keep every animal with its taming, trust, fleece and snare; bad entries are dropped', () => {
@@ -404,9 +390,10 @@ describe('animals — herds are rare and far; the save', () => {
     expect(back.list.map((a) => [a.kind, a.tamed, a.trust, a.shorn > 0, a.trapped > 0])).toEqual([
       ['horse', true, 0, false, false], ['wolf', false, 1, false, false], ['sheep', false, 0, true, false], ['cow', false, 0, false, true],
     ]);
-    const v = validateAnimalsJSON([{ k: 'cow', x: 0, y: 1, z: 2, t: 1 }, 'junk']);
-    expect(v.animals).toEqual([{ k: 'cow', x: 0, y: 1, z: 2, yaw: 0, h: SPECIES.cow.health }]); // a cow is never tame
-    expect(v.warnings).toEqual(['animals[1]: invalid, dropped']);
+    const v = validateAnimalsJSON([{ k: 'cow', x: 0, y: 1, z: 2, t: 1 }, { k: 'deer', x: 0, y: 1, z: 2, t: 1 }, 'junk']);
+    // §88: a cow may be tame now; a deer never is
+    expect(v.animals).toEqual([{ k: 'cow', x: 0, y: 1, z: 2, yaw: 0, h: SPECIES.cow.health, t: 1 }, { k: 'deer', x: 0, y: 1, z: 2, yaw: 0, h: SPECIES.deer.health }]);
+    expect(v.warnings).toEqual(['animals[2]: invalid, dropped']);
     expect(validateAnimalsJSON(undefined)).toEqual({ animals: [], warnings: [] });
   });
 });

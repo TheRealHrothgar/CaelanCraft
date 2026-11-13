@@ -33,11 +33,16 @@ import {
 import {
   ZOMBIE_SPAWN_LIGHT_MAX, ZOMBIE_DREAD_LIGHT, ALPHA_DREAD_LIGHT, ZOMBIE_SHY_LIGHT, GLARE_SLOW, GLARE_WEAK, GLARE_CLIMB, glareSpeed, strikeDamage,
 } from '../../src/zombies.js';
-import { zombieLights } from '../../src/handbook.js';
+import { zombieLights, pigBiomes } from '../../src/handbook.js';
+// §88: animals that live in the world
+import {
+  ZONE_SIZE, WANDER_DAYS, WANDER_SOURCE_MIN, YOUTH_DAYS, MATE_RANGE, FEED_RANGE, TAME_CAP, PIG_LANDS,
+} from '../../src/populations.js';
+import { PIG_TAME } from '../../src/pigs.js';
 import { LIGHT_EMISSION } from '../../src/light.js';
 import { LIGHT_MAX, LAMP_LIGHT_MIN, LAMP_LIGHT_MAX, ZOMBIE_SPAWN_FIRE_CLEAR } from '../../src/config.js';
 import {
-  SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, BEHIND_NOTICE, VIEW_HALF_ANGLE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
+  SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, BEHIND_NOTICE, VIEW_HALF_ANGLE, HERD_WEIGHTS, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, HOME_RANGE, RIDE_SCALE,
   RIDE_LEAP, fleeSpeed, poolOf, BEAR_DAMAGE, BEAR_WARN_S, BEAR_CHARGE_DIST, BEAR_CHASE_S, BEAR_GIVE_UP,
 } from '../../src/animals.js';
@@ -813,7 +818,10 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(t.source).toBe('animals');
     expect(t.head).toEqual(['Animal', 'Where', 'Gives', 'Press R']);
     expect(t.keys).toEqual(['pig', ...ANIMAL_KINDS]);
-    expect(rowOf(t, 'pig')).toEqual(['Pig', 'grass and snowy grass', describeDrops(MOB_DROPS.pig, true), '—']);
+    // §88: pigs live in the woods and on the plains (populations.PIG_LANDS), and are tamed like a horse
+    expect(rowOf(t, 'pig')).toEqual(['Pig', 'forest, plains', describeDrops(MOB_DROPS.pig, true), `with its food, ${PIG_TAME} times: tame`]);
+    expect(pigBiomes()).toEqual([BIOME.FOREST, BIOME.PLAINS]);
+    expect(PIG_LANDS[BIOME.FOREST]).toBeGreaterThan(PIG_LANDS[BIOME.PLAINS]);
     const WORDS = { [BIOME.PLAINS]: 'plains', [BIOME.FOREST]: 'forest', [BIOME.MOUNTAINS]: 'mountains', [BIOME.SNOWY]: 'snowy land' };
     const herdLands = Object.keys(HERD_WEIGHTS).map(Number);
     for (const b of herdLands) expect(typeof WORDS[b], `biome ${b}`).toBe('string'); // every land that grows herds has a word
@@ -824,8 +832,8 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
       const [name, where, gives, r] = rowOf(t, k);
       expect(name).toBe(SPECIES[k].name);
       if (SPECIES[k].water) {
-        // fish are not of a land: they appear in the streams, and no HERD_WEIGHTS row names them
-        expect([where, gives, r]).toEqual(['streams', describeDrops(MOB_DROPS[k], true), '—']);
+        // fish are not of a land: they live in the streams and ponds (§88), and no HERD_WEIGHTS row names them
+        expect([where, gives, r]).toEqual(['streams and ponds', describeDrops(MOB_DROPS[k], true), '—']);
         expect(herdLands.some((b) => Object.hasOwn(HERD_WEIGHTS[b], k))).toBe(false);
         continue;
       }
@@ -846,7 +854,8 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
       if (SPECIES[k].tame > 0) expect(r).toContain(`${SPECIES[k].tame} times`);
       expect(typeof HERD_WORDS[k], k).toBe('string');
     }
-    expect(rowOf(t, 'cow')).toEqual(['Cow', 'plains, forest', '3–5 Raw Beef and 1–2 Rawhide', 'with an empty Clay Pot in hand: milk']);
+    expect(rowOf(t, 'cow')).toEqual(['Cow', 'plains, forest', '3–5 Raw Beef and 1–2 Rawhide', 'with its food, 3 times: tame; a cow, with an empty Clay Pot: milk']);
+    expect(rowOf(t, 'sheep')[3]).toBe('with its food, 3 times: tame; with a knife: shear');
     expect(rowOf(t, 'sheep')[2]).toBe('1–2 Raw Mutton and 1–2 White Wool');
     expect(rowOf(t, 'horse')).toEqual(['Horse', 'plains', '1–2 Rawhide', 'with its food, 3 times: tame; then ride']);
     expect(rowOf(t, 'wolf')[1]).toBe('snowy land, forest, mountains');
@@ -856,7 +865,7 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(rowOf(t, 'pheasant')).toEqual(['Pheasant', 'plains, forest', 'Raw Fowl and 2–4 Feather', '—']);
     expect(rowOf(t, 'turkey')).toEqual(['Wild Turkey', 'forest, plains', '2–3 Raw Fowl and 2–4 Feather', '—']);
     expect(rowOf(t, 'bear')).toEqual(['Bear', 'snowy land, mountains, forest', '6–8 Raw Bear Meat and 2–3 Rawhide', '—']);
-    expect(rowOf(t, 'fish')).toEqual(['Fish', 'streams', 'Raw Fish', '—']);
+    expect(rowOf(t, 'fish')).toEqual(['Fish', 'streams and ponds', 'Raw Fish', '—']);
   });
 
   it('how near you can come: the notice distances walking, sneaking and sprinting; food brings an animal to you', () => {
@@ -914,15 +923,20 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain(`from ${LURE_RANGE} cells away it trots up and waits beside you`);
     expect(text).toContain(`Cattle and sheep stay calm for ${FED_CALM_S} seconds after a mouthful`);
     expect(SPECIES.wolf.tame).toBe(SPECIES.horse.tame);
-    expect(text).toContain(`A horse or a wolf is tamed by ${numWord(SPECIES.horse.tame)} feeds.`);
-    expect([SPECIES.cow.tame, SPECIES.sheep.tame]).toEqual([0, 0]); // "cannot be tamed"
-    expect(text).toContain('Cattle and sheep cannot be tamed');
+    // §88: cattle, sheep and pigs are tamed like a horse, by as many feeds
+    expect(text).toContain(`A horse, a wolf, a cow, a sheep or a pig is tamed by ${numWord(SPECIES.horse.tame)} feeds.`);
+    expect([SPECIES.cow.tame, SPECIES.sheep.tame, PIG_TAME]).toEqual([3, 3, 3]);
+    expect(text).toContain('Cattle and sheep give something again and again, wild or tame.');
+    expect(text).toContain('Pigs come to the same plants.');
   });
 
   it('the animal pages quote the game: herds, hunting, meat and milk, wool, riding, the wolf, snares', () => {
     expect(text).toContain('roam the land in small herds: 1–3 cattle or sheep, 1–2 horses or wolves.'); // v0.15 (§79): sparser
     for (const k of PROSE_KINDS) expect(text).toContain(`${SPECIES[k].herd[0]}–${SPECIES[k].herd[1]} `);
-    expect(text).toContain(`${HERD_MIN} to ${HERD_MAX} cells from where you stand`);
+    // §88: no herd "turns up" any more: every animal lives somewhere
+    const animalText = CHAPTERS.find((c) => c.id === 'animals').pages.flat().filter((b) => 'text' in b).map((b) => plainText(b.text)).join('\n');
+    expect(animalText).not.toMatch(/turns up|herds appear|appears? (now and then|near)/);
+    expect(text).toContain('Every animal lives somewhere. Walk away and it stays where it was; come back and it is still there.');
     expect(text).toContain('A moo, a baa, a neigh or a woof means a herd is near');
     for (const k of PROSE_KINDS) expect(text.toLowerCase()).toContain(`a ${SPECIES[k].voice}`);
     expect(text).toContain(`for at least ${HIT_FLEE_S} seconds`);
@@ -1813,5 +1827,55 @@ describe('handbook: A place to stay (CONTRACTS §85)', () => {
     // no page of the chapter is a wall of text
     for (const pg of chapter.pages) expect(pageText(pg).split(/\s+/).length).toBeLessThanOrEqual(225);
     expect(text).not.toMatch(/undefined|NaN/);
+  });
+});
+
+describe('handbook: animals that live in the world (CONTRACTS §88)', () => {
+  const chapter = CHAPTERS.find((c) => c.id === 'animals');
+  const pageText = (page) => page.flatMap((b) => ('text' in b ? [plainText(b.text)] : b.kind === 'list' ? b.items.map(plainText) : [])).join('\n');
+  const page = (title) => pageText(chapter.pages.find((pg) => pg.some((b) => b.kind === 'h' && b.text === title)));
+  const heads = () => chapter.pages.map((pg) => pg.find((b) => b.kind === 'h')?.text ?? null);
+
+  it('three new pages in the Animals chapter: after the table, "Animals come and go" and "Male and female, young"; after cattle and sheep, "Keeping animals"', () => {
+    const h = heads();
+    expect(h.indexOf('Animals come and go')).toBe(2);
+    expect(h.indexOf('Male and female, young')).toBe(3);
+    expect(h.indexOf('Keeping animals')).toBe(h.indexOf('Cattle and sheep') + 1);
+  });
+
+  it('animals come and go: the squares, the S-curve in plain words, wanderers, and why hunters leave breeding animals', () => {
+    const t = page('Animals come and go');
+    expect(t).toContain(`The land is shared out in squares ${ZONE_SIZE} cells a side.`);
+    expect(ZONE_SIZE).toBe(64);
+    expect(t).toContain('A few animals have a few young. A place half full grows fastest. A full place has no room for more.');
+    expect(t).toContain('Leave a male and a female, and in a few weeks there are many again.');
+    expect(t).toContain(`Hunt a place empty and it stays empty for weeks. Now and then an animal wanders in from a square next to it, about one every ${WANDER_DAYS} days from each square that has ${WANDER_SOURCE_MIN} or more of its kind.`);
+    expect([WANDER_DAYS, WANDER_SOURCE_MIN]).toEqual([6, 4]);
+    expect(t).toContain('One alone has no young: it takes two to start again.');
+    expect(t).toContain('Hunters leave the mothers and a few males, so that there is game again next year.');
+  });
+
+  it('male and female, young: how to tell them apart, how fast the young grow, what a mother needs — the constants\' numbers', () => {
+    const t = page('Male and female, young');
+    expect(t).toContain('A bull is bigger than a cow, with a hump and wide horns. A ram has curled horns, a stag has antlers, a boar has tusks.');
+    expect(t).toContain('Horses, wolves, rabbits, bears and fish look alike.');
+    expect(t).toContain(`a rabbit in ${numWord(YOUTH_DAYS.rabbit)} day, a lamb in ${numWord(YOUTH_DAYS.sheep)} days, a calf in ${numWord(YOUTH_DAYS.cow)} days, a bear cub in ${numWord(YOUTH_DAYS.bear)} days`);
+    expect(t).toContain('a rabbit in one day, a lamb in three days, a calf in four days, a bear cub in eight days');
+    expect(t).toContain('A young animal has no young, gives no milk or wool, and gives about half the meat.');
+    expect(t).toContain(`A mother needs a male of her kind within ${MATE_RANGE} cells, and food and fresh water within ${FEED_RANGE}`);
+    expect([MATE_RANGE, FEED_RANGE]).toEqual([12, 12]);
+  });
+
+  it('keeping animals: taming livestock, a pen two cells high, food and water within reach, a herd that grows to its cap', () => {
+    const t = page('Keeping animals');
+    expect(t).toContain(`Cattle, sheep and pigs can be tamed like a horse: feed one ${numWord(SPECIES.cow.tame)} times.`);
+    expect([SPECIES.cow.tame, SPECIES.sheep.tame, PIG_TAME]).toEqual([SPECIES.horse.tame, SPECIES.horse.tame, SPECIES.horse.tame]);
+    expect(t).toContain('A wall two cells high holds them: they hop only one.');
+    expect(t).toContain(`food and fresh water within ${FEED_RANGE} cells`);
+    expect(t).toContain('a pool, a trough of water or a rain barrel');
+    expect(t).toContain(`A pen of ${TAME_CAP.cow} cattle, ${TAME_CAP.sheep} sheep or ${TAME_CAP.pig} pigs is full`);
+    expect([TAME_CAP.cow, TAME_CAP.sheep, TAME_CAP.pig]).toEqual([8, 10, 10]);
+    expect(t).toContain('the calves are tame too');
+    for (const pg of chapter.pages) expect(pageText(pg)).not.toMatch(/undefined|NaN/);
   });
 });

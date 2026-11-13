@@ -416,6 +416,7 @@ function refreshHandleRefs(handle, game) {
   handle.blackHoles = game ? game.blackHoles ?? null : null;
   handle.infall = game ? game.infall ?? null : null;
   handle.animals = game ? game.animals ?? null : null; // v0.11 (CONTRACTS §69)
+  handle.fauna = game ? game.fauna ?? null : null; // §88: the zones and their animals (populations.js Fauna)
   handle.loose = game ? game.loose ?? null : null; // v0.10 (CONTRACTS §60)
   handle.growth = game ? game.growth ?? null : null; // §80: the planted cells and sprouts (farming.js Growth)
   handle.spread = game ? game.spread ?? null : null; // §80: the wild plants' spreading and its counts (spread.js Spread)
@@ -500,6 +501,10 @@ export function installDebugHandle(win, game) {
   handle.animalR = () => (game && typeof game.animalR === 'function' ? game.animalR() : false);
   handle.getRiding = () => (game && typeof game.getRiding === 'function' ? game.getRiding() : null);
   handle.useSelected = (dt) => (game && typeof game.useSelected === 'function' ? game.useSelected(dt) : null);
+  // §88: what the zone of cell (q, r) holds ({ zone, biomes, water, kinds: { kind: { N, K, f, m, young, able } } }), and
+  // every zone in memory advanced as if `days` game days had passed (births, young growing up, wanderers)
+  handle.zoneReport = (q, r) => (game && typeof game.zoneReport === 'function' ? game.zoneReport(q, r) : null);
+  handle.faunaStep = (days) => (game && typeof game.faunaStep === 'function' ? game.faunaStep(days) : null);
   // §80: run the growth and spread steps as if `seconds` had passed (the in-game check of farming)
   handle.farmStep = (seconds) => (game && typeof game.farmStep === 'function' ? game.farmStep(seconds) : null);
   // §84: today's season, forcing the weather ('rain', 'dry', null for the real one) and setting the day counter
@@ -718,9 +723,21 @@ export function buildDebugText(game, stats) {
     survivalDebugLine(g.survival ?? null) +
     sleepDebugLine(g) +
     weatherDebugLine(g) +
+    faunaDebugLine(g, px, pz) +
     physicsLine +
     circuitLines
   );
+}
+
+/**
+ * The F3 line of the zone you stand in (CONTRACTS §88), after the weather line: `Fauna: zone 0 -1 · rabbit 7/12 ·
+ * deer 3/8 · live 21 · asleep 340` — each kind there as N / K (live and dormant together). '' without a fauna store.
+ * @param {*} g @param {number} x @param {number} z @returns {string}
+ */
+export function faunaDebugLine(g, x, z) {
+  const f = g && g.fauna;
+  if (!f || typeof f.debugLine !== 'function') return '';
+  return `\n${f.debugLine(x, z)} · live ${f.liveCount} · asleep ${f.dormantCount}`;
 }
 
 /** "1.1k" for 1100, "214" for 214. */

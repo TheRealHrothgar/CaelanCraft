@@ -654,3 +654,45 @@ CONTRACTS §87. Built without a browser: the logic is tested, the look and the s
   pauses. There is no way to wake from a touch screen or a gamepad, as there is no way to play from one.
 - **The Guide's own-words check changed on purpose**: `bed` is still forbidden, but `Bed` and `Grass Bed`, written so,
   are the names of two sleep spots and are let through (handbook.test.js). The homestead package was told the same.
+
+## Animals that live in the world — open items
+
+CONTRACTS §88. Built without a browser: the population logic is tested by simulation; the look and the feel are not.
+
+- **Nobody has seen any of it.** The bull (hump, wide horns), the ram's curled horns, the drab hen pheasant, the plain
+  hen turkey, the boar's tusks, the young drawn at 0.55 of their size and growing, and the new hint names were set by
+  arithmetic. To look: stand still in plains and `__caelancraft.zoneReport(q, r)` (F3 shows the zone), or
+  `summon cow m`, `summon sheep m`, `summon pheasant f`, `summon turkey f`, `summon pig m`; then
+  `__caelancraft.faunaStep(30)` and walk 100 m away and back to see the young.
+- **Many more animals than v0.15.** The brief's carrying capacities (rabbit 12, deer 8, sheep 8 … in a zone of 64 × 64
+  cells) seeded at 0.6 put 20–30 animals in a green zone with water, against §79's "a herd now and then". Up to 64 are
+  live round the player. If the land feels full, lower `BASE_K` or `SEED_SHARE` (populations.js); the guide and the
+  tests quote the constants.
+- **Livestock cannot be butchered.** A tame animal is never struck (§69's rule, kept), so a herd of tame pigs gives
+  nothing but more pigs, and tame cattle and sheep only milk and wool. A deliberate way to slaughter (say, Shift + a
+  blow) is a decision for the lead.
+- **Eggs never hatch.** Birds are born like the other kinds; a hatching nest would need the block tracked in a sleeping
+  zone.
+- **A zone's land is the generator's.** K does not change when a field is dug bare or in a drought. A LIVE female does
+  look at her real surroundings (grass, plants, water within 12 cells), so a herd on bare ground does not breed while you
+  watch; asleep, a wild herd "roams its zone" and breeds on the zone's grazing and water (in a dry zone DRY_WATER of the
+  time). So a wild herd with no water within 12 cells breeds while you are away but not while you watch: animals never
+  walk to water.
+- **Pairs across a zone's edge**: a dormant female finds only males of her own zone (a live one any live male). Wanderers
+  join one of their kind already in the zone, so a pair that came in from two sides meets.
+- **Forgotten zones**: over 256 zones in memory the farthest without a tame animal is forgotten; going back there seeds
+  it afresh (at 0.6 of K): a valley hunted empty long ago and far away comes back full.
+- **Making a zone ahead costs about 4 ms** (sampling the generator, streams and ponds), at most one a scan (every half
+  second) while you walk into new land, and up to ~9 at once on the first scan after loading. It could be spread over
+  frames if it shows.
+- **Snares**: an animal held by a snare keeps being held while it sleeps (its time runs down); a snared PIG that goes to
+  sleep pulls free at once (main's `snaredPigs` lets go of a pig that is no longer live).
+- **config.js** (not this package's) still exports PIG_NATURAL_COUNT and the PIG_REPOP_* numbers; only wave0.test.js
+  reads them. **animals.js** keeps `herd` sizes, `poolOf` and HERD_WEIGHTS for the guide and the zones' land.
+- **The pig renderer is sized PIG_MAX + the infall ghosts (40)**, and `Pigs.spawn` refuses beyond PIG_MAX 32: more pigs
+  than that in range stay asleep (the live cap of 64 counts animals and pigs together).
+- **The save**: about 54 bytes an animal; a 1.5 km walk leaves ~110 KB in the `fauna` field (210 zones, 138 of them
+  written without animals); the worst case, 256 zones all touched and full, ~330 KB.
+- **Older saves**: their animals and pigs get a sex at random on load (a stag stays a male) and are all grown. A young
+  animal follows the nearest grown female of its kind, not its own mother (there is no lasting id).
+- **The clock set back** (`time set`): zones' clocks follow it and nothing is undone; births resume when it runs on.
