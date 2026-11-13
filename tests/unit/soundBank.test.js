@@ -342,10 +342,11 @@ describe('levels: nothing far louder than its neighbours (§82)', () => {
       expect(loud(l), l).toBeGreaterThan(-48);
     }
     for (const l of labelsOf('cricketChirp')) expect(loud(l), l).toBeLessThan(loud('birdTit#0') - 2);
-    // the campfire's crackle is an effect of its own, as loud as it was
+    // the campfire's crackle is soft (v0.16: 5 to 8 dB under what it was, well under any break), yet heard
     const [lo, hi] = loudRange(['fireCrackle']);
-    expect(lo).toBeGreaterThan(-38);
-    expect(hi).toBeLessThan(-30);
+    expect(lo).toBeGreaterThan(-46);
+    expect(hi).toBeLessThan(-37);
+    expect(hi).toBeLessThan(quietestBreak - 7);
   });
 });
 
@@ -655,19 +656,27 @@ describe('ambience sounds (§82)', () => {
     }
   });
 
-  it('wind is a low rush, the stream a bright babble, the fire a low flutter with a hiss; the rate moves the wind\'s bands', () => {
+  it('wind is a low rush, the stream a soft wash, the fire a low glow; none of them pumps; the rate moves the wind\'s bands', () => {
     const wind = measure(loop('ambWind'));
     const stream = measure(loop('ambStream'));
     const fire = measure(loop('ambFire'));
     expect(wind.centroid).toBeLessThan(1000);
-    expect(stream.centroid).toBeGreaterThan(1500);
-    expect(stream.centroid).toBeLessThan(4000);
-    expect(stream.centroid).toBeGreaterThan(wind.centroid * 2);
-    expect(bandShare(fire, 0, 400)).toBeGreaterThan(0.3);
-    expect(bandShare(fire, 2500, 8000)).toBeGreaterThan(0.01);
+    // v0.16 (the user found the stream and the fire abrasive): the stream is still brighter than the wind, but most of
+    // it lies under 2.5 kHz (a third of it was above); the fire is mostly low, with only a trace of hiss
+    expect(stream.centroid).toBeGreaterThan(1200);
+    expect(stream.centroid).toBeLessThan(2300);
+    expect(stream.centroid).toBeGreaterThan(wind.centroid * 1.5);
+    expect(bandShare(stream, 2500, 8000)).toBeLessThan(0.22);
+    expect(bandShare(fire, 0, 400)).toBeGreaterThan(0.5);
+    expect(bandShare(fire, 2500, 8000)).toBeGreaterThan(0.005);
+    expect(bandShare(fire, 2500, 8000)).toBeLessThan(0.08);
+    // both sit under the wind in loudness: a bed, not a feature
+    expect(stream.loud).toBeLessThan(wind.loud - 2);
+    expect(fire.loud).toBeLessThan(wind.loud - 4);
     expect(measure(loop('ambWind', 1, 1.3)).centroid).toBeGreaterThan(measure(loop('ambWind', 1, 0.85)).centroid * 1.25);
-    // the stream bubbles: its level swings several times a second; the wind's does not
-    expect(tremoloOf(loop('ambStream', 1, 1, 3), 2, 12).depth).toBeGreaterThan(tremoloOf(loop('ambWind', 1, 1, 3), 2, 12).depth);
+    // no loop pumps: the level never swings several times a second (the stream's did at 3.8 Hz, the fire's at 7.3 Hz:
+    // depths 0.13 and 0.23); the bubbles and the pops are the one-shots
+    for (const name of AMBIENCE_LOOPS) expect(tremoloOf(loop(name, 1, 1, 3), 2, 12).depth, name).toBeLessThan(0.07);
   });
 
   it('birds sing between 2 and 6 kHz in separate notes (the dove coos far lower); each kind has its own phrase', () => {
@@ -703,10 +712,13 @@ describe('ambience sounds (§82)', () => {
     }
   });
 
-  it('the fire crackles four ways, all short and bright; a stream bubble is a short rising blip', () => {
+  it('the fire crackles four ways, all short and rounded (no sharp clicks); a stream bubble is a short rising blip', () => {
     expect(labelsOf('fireCrackle')).toHaveLength(4);
     for (const l of labelsOf('fireCrackle')) expect(take(l, 1, true).m.duration, l).toBeLessThan(0.2);
-    expect(centroid('fireCrackle#0')).toBeGreaterThan(2500);
+    // v0.16: the snaps sat at 3.9 to 6.3 kHz; now none is brighter than 2.8 kHz and every one swells in over 2 ms or more
+    for (const l of labelsOf('fireCrackle')) expect(centroid(l), l).toBeLessThan(2800);
+    expect(centroid('fireCrackle#0')).toBeGreaterThan(1200);
+    for (const v of SOUND_BANK.fireCrackle.variants) for (const layer of v.layers) expect(layer.attack).toBeGreaterThanOrEqual(0.002);
     expect(centroid('fireCrackle#1')).toBeLessThan(centroid('fireCrackle#0')); // the pop with a knock
     for (const seed of SEEDS) expect(take('streamBlip', seed).m.duration).toBeLessThan(0.2);
   });

@@ -12,10 +12,10 @@
 // two-high pen on each other's backs.
 import {
   PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_MASS, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
-  WADE_DEPTH, PIG_HEALTH, PIG_NOTICE, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR,
+  WADE_DEPTH, PIG_HEALTH, PIG_NOTICE, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR, WARY_VIEW_HALF_ANGLE, WARY_BEHIND_FACTOR,
 } from './config.js';
 import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
-import { yawToForward } from './coords.js';
+import { yawToForward, isBehind } from './coords.js';
 import {
   HEX_DIRS, HEX_INRADIUS, HEX_ROW_SPACING, FACE_NORMALS, hexToWorld, worldToHex, hexLength, hexCircleContact,
 } from './hex.js';
@@ -464,9 +464,11 @@ export class Pigs {
       // §69: pigs are wary — one that notices the player (nearer when sneaking, farther when sprinting) runs.
       const pl = world.player;
       if (pl && !pl.flying && pig.mode !== 'flee') {
-        const notice = PIG_NOTICE * (pl.sneaking ? WARY_SNEAK_FACTOR : pl.sprinting ? WARY_SPRINT_FACTOR : 1);
         const dx = pig.x - pl.x;
         const dz = pig.z - pl.z;
+        // v0.16: a pig does not see behind itself — a sneaker at its back comes twice as near (as animals.noticeRange)
+        const behind = pl.sneaking && isBehind(pig.yaw, -dx, -dz, WARY_VIEW_HALF_ANGLE);
+        const notice = PIG_NOTICE * (pl.sneaking ? WARY_SNEAK_FACTOR * (behind ? WARY_BEHIND_FACTOR : 1) : pl.sprinting ? WARY_SPRINT_FACTOR : 1);
         if (Math.hypot(dx, pig.y - pl.y, dz) < notice) {
           pig.mode = 'flee';
           pig.timer = PIG_FLEE_S;

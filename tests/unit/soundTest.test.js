@@ -309,7 +309,10 @@ describe('the screen (§82)', () => {
     fire(button('By a campfire at night', 'Scene'), 'click');
     vi.advanceTimersByTime(6000);
     expect(audio.loops.ambFire.volume).toBeGreaterThan(0.6);
-    expect(audio.calls.filter((c) => c[0] === 'playCrackle').length).toBeGreaterThan(10);
+    // v0.16: a fire pops now and then (CAMPFIRE_CRACKLES_PER_S 1.5, it was 5): about nine in six seconds
+    const pops = audio.calls.filter((c) => c[0] === 'playCrackle').length;
+    expect(pops).toBeGreaterThan(3);
+    expect(pops).toBeLessThan(20);
     // Off: silence at once, the ticking stops
     fire(button('Off', 'Scene'), 'click');
     expect(pressed()).toEqual(['Off']);

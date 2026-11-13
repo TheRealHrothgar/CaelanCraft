@@ -122,6 +122,18 @@ export function yawToForward(yaw) {
   return [-Math.sin(yaw), -Math.cos(yaw)];
 }
 
+/**
+ * Whether the point at horizontal offset (dx, dz) from a body facing `yaw` is out of its sight: more than `halfAngle`
+ * (radians) away from straight ahead. A point at no distance is never behind.
+ * @param {number} yaw @param {number} dx @param {number} dz @param {number} halfAngle
+ * @returns {boolean}
+ */
+export function isBehind(yaw, dx, dz, halfAngle) {
+  const len = Math.hypot(dx, dz);
+  if (!(len > 1e-9) || !Number.isFinite(yaw)) return false;
+  return (-Math.sin(yaw) * dx - Math.cos(yaw) * dz) / len < Math.cos(halfAngle);
+}
+
 /** @returns {[number, number]} [rx, rz] horizontal right unit vector */
 export function yawToRight(yaw) {
   return [Math.cos(yaw), -Math.sin(yaw)];

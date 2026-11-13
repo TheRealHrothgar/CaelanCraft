@@ -29,7 +29,7 @@ import {
   WALKER_WAKE_RANGE, PROVOKE_S, DAWN_BURROW_MIN_S, DAWN_BURROW_RAND_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE, gaitOf, damageOf, maxClimb,
 } from '../../src/zombies.js';
 import {
-  SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
+  SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, BEHIND_NOTICE, VIEW_HALF_ANGLE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, HOME_RANGE, RIDE_SCALE,
   RIDE_LEAP, fleeSpeed, poolOf, BEAR_DAMAGE, BEAR_WARN_S, BEAR_CHARGE_DIST, BEAR_CHASE_S, BEAR_GIVE_UP,
 } from '../../src/animals.js';
@@ -755,13 +755,21 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(runners).toEqual(ANIMAL_KINDS.filter((k) => k !== 'bear'));
     expect(t.keys).toEqual(['pig', ...runners]);
     const cells = (n) => `${fmtNum(n, 1)} cells`;
-    expect(rowOf(t, 'pig')).toEqual(['Pig', cells(PIG_NOTICE), cells(PIG_NOTICE * SNEAK_NOTICE), cells(PIG_NOTICE * SPRINT_NOTICE)]);
+    // v0.16: a fourth distance — sneaking up from behind, where it cannot see
+    expect(t.head).toEqual(['Animal', 'Walking', 'Sneaking', 'From behind', 'Sprinting']);
+    expect(rowOf(t, 'pig')).toEqual(['Pig', cells(PIG_NOTICE), cells(PIG_NOTICE * SNEAK_NOTICE), cells(PIG_NOTICE * SNEAK_NOTICE * BEHIND_NOTICE),
+      cells(PIG_NOTICE * SPRINT_NOTICE)]);
     for (const k of runners) {
       const n = SPECIES[k].notice;
-      expect(rowOf(t, k)).toEqual([SPECIES[k].name, cells(n), cells(n * SNEAK_NOTICE), cells(n * SPRINT_NOTICE)]);
+      expect(rowOf(t, k)).toEqual([SPECIES[k].name, cells(n), cells(n * SNEAK_NOTICE), cells(n * SNEAK_NOTICE * BEHIND_NOTICE), cells(n * SPRINT_NOTICE)]);
     }
-    expect(rowOf(t, 'deer')).toEqual(['Deer', '16 cells', '6.4 cells', '21.6 cells']); // v0.14: the wariest of all
-    expect(rowOf(t, 'horse')).toEqual(['Horse', '13 cells', '5.2 cells', '17.6 cells']);
+    expect(rowOf(t, 'deer')).toEqual(['Deer', '16 cells', '6.4 cells', '3.2 cells', '21.6 cells']); // v0.14: the wariest of all
+    expect(rowOf(t, 'horse')).toEqual(['Horse', '13 cells', '5.2 cells', '2.6 cells', '17.6 cells']);
+    expect(text).toContain(`An animal sees ahead and to both sides, but not behind: the third of the circle at its back is blind. Sneak up from there and it notices you at ${fmtPct(BEHIND_NOTICE)} of the sneaking distance.`);
+    expect([VIEW_HALF_ANGLE, BEHIND_NOTICE]).toEqual([(2 * Math.PI) / 3, 0.5]);
+    // from behind, every animal that runs comes within arm's reach: the deer too
+    for (const k of runners) expect(SPECIES[k].notice * SNEAK_NOTICE * BEHIND_NOTICE, k).toBeLessThan(REACH);
+    expect(text).toContain('sneaking brings you within reach only from straight behind, so stalk one, throw a spear or a dart, or set a snare');
     expect(text).toContain(`an animal notices you at only ${fmtPct(SNEAK_NOTICE)} of its usual distance`);
     expect(text).toContain(`it spots you from ${fmtPct(SPRINT_NOTICE - 1)} farther off`);
     // sneaking brings every animal but the horse and (v0.14, §76 fauna) the deer within reach; the deer is the wariest;
