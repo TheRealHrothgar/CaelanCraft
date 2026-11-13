@@ -67,16 +67,18 @@ export const LITTER = Object.freeze({
 });
 /** Carrying capacity of a zone wholly of the kind's best land, with fresh water (fish: FISH_CELLS). */
 export const BASE_K = Object.freeze({
-  rabbit: 12, deer: 8, sheep: 8, pheasant: 6, turkey: 6, cow: 6, pig: 6, horse: 4, wolf: 3, bear: 1,
+  // (halved by the lead before release: at 12 / 8 / 6 a grassy zone with water held 20–30 animals, ten times the old
+  // herds near the player; the user wants limited game)
+  rabbit: 6, deer: 4, sheep: 4, pheasant: 3, turkey: 3, cow: 3, pig: 3, horse: 2, wolf: 2, bear: 1,
 });
 /** Fish: one for every FISH_CELLS fresh water columns of the zone, at most FISH_K_MAX. */
-export const FISH_CELLS = 8;
-export const FISH_K_MAX = 10;
+export const FISH_CELLS = 12;
+export const FISH_K_MAX = 6;
 /** A zone without fresh water in or beside it (within WATER_BESIDE cells of its edge) holds DRY_WATER of its K. */
 export const DRY_WATER = 0.35;
 export const WATER_BESIDE = 8;
 /** A new zone starts with SEED_SHARE of K. */
-export const SEED_SHARE = 0.6;
+export const SEED_SHARE = 0.35; // 0.6 in the first build: a new zone starts sparse and fills toward K over weeks
 /** One wanderer a WANDER_DAYS per neighbour with at least WANDER_SOURCE_MIN of the kind; the surplus leaves as slowly. */
 export const WANDER_DAYS = 6;
 export const WANDER_SOURCE_MIN = 4;

@@ -3193,6 +3193,9 @@ export function boot(win, doc) {
   /**
    * The target hint for an animal (§88: by its name as a field guide gives it — Cow, Bull, Calf; Ewe, Ram, Lamb …).
    */
+  /** §88: the tame kinds a keeper may butcher with a tool (pigs too, in pigs.js); a horse and a wolf are companions. */
+  const LIVESTOCK = Object.freeze(['cow', 'sheep']);
+
   function animalHint(a) {
     const sp = SPECIES[a.kind];
     const name = animalName(a);
@@ -3203,7 +3206,7 @@ export function boot(win, doc) {
       if (a.kind === 'wolf') return `Your ${name} · R: ${a.sitting ? 'follow me' : 'sit'} · feed it meat to heal it`;
       // §88: cattle and sheep you keep
       const gives = a.kind === 'cow' && a.sex === 'f' && !young ? ' · R with a Clay Pot: milk her' : a.kind === 'sheep' && !young ? ' · R with a knife: shear' : '';
-      return `Your ${name} · it follows the food in your hand${gives}`;
+      return `Your ${name} · it follows the food in your hand${gives}${LIVESTOCK.includes(a.kind) && selectedTool() ? ' · click: butcher' : ''}`;
     }
     // v0.16: beyond the hand's reach the hint says so in place of the hunting words (R actions keep their own reach)
     const near = !animalTarget || animalTarget.animal !== a || strikeInReach(animalTarget);
@@ -3228,7 +3231,7 @@ export function boot(win, doc) {
   /** §88: the target hint for a pig (Sow, Boar, Piglet). */
   function pigHint(pig) {
     const name = animalName(pig);
-    if (pig.tamed) return `Your ${name} · it follows the food in your hand`;
+    if (pig.tamed) return `Your ${name} · it follows the food in your hand${selectedTool() ? ' · click: butcher' : ''}`;
     const hunt = selectedTool() ? 'click: hunt it' : 'click: shove it (hunting needs a tool)';
     return `${name} · ${hunt} · feed it to tame (${pig.trust}/${PIG_TAME})`;
   }
@@ -4726,7 +4729,8 @@ export function boot(win, doc) {
     }
     if (animalTarget) {
       const a = animalTarget.animal;
-      if (a.tamed) {
+      // §88 (by the lead): cattle and sheep you keep are livestock: a tool butchers one. A tame horse or wolf is never struck.
+      if (a.tamed && !(LIVESTOCK.includes(a.kind) && tool)) {
         showHint(`Your ${animalName(a).toLowerCase()} trusts you.`);
         return;
       }
@@ -4744,8 +4748,8 @@ export function boot(win, doc) {
     }
     if (!pigTarget) return;
     const pig = pigTarget.pig;
-    if (pig.tamed) {
-      showHint(`Your ${animalName(pig).toLowerCase()} trusts you.`); // §88: a pig you keep, like a tame animal
+    if (pig.tamed && !tool) {
+      showHint(`Your ${animalName(pig).toLowerCase()} trusts you.`); // §88: a pig you keep: a tool butchers it, a hand does not
       return;
     }
     const k = strikeKind('pig', tool);

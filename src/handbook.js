@@ -1876,7 +1876,7 @@ function makeChapters() {
       p(`Cattle, sheep and pigs can be tamed like a horse: feed one ${numWord(SPECIES.cow.tame)} times. A tame animal never runs, follows you while you hold its food, and stays where you leave it.`),
       p(`Lead them into a pen. A wall two cells high holds them: they hop only one. Inside, they need food and fresh water within ${FEED_RANGE} cells: grass or plants, or a feed from your hand each day, and a pool, a trough of water or a rain barrel.`),
       p(`Then a tame cow and bull have calves, and the calves are tame too. A pen of ${TAME_CAP.cow} cattle, ${TAME_CAP.sheep} sheep or ${TAME_CAP.pig} pigs is full: the herd stops growing there.`),
-      tip('A cow gives milk and a sheep wool again and again: a herd at home feeds you without hunting.'),
+      tip('A cow gives milk and a sheep wool again and again, and when the herd is big you can butcher one with a tool for its meat and hide. Keep a breeding pair: a herd at home feeds you without hunting.'),
     ],
     [
       h('Horses'),

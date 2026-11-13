@@ -6411,6 +6411,13 @@ nothing changes; asleep, dead or below the stage everything is cleared and the t
 
 ## 88. Animals that live in the world — `src/populations.js` (PURE), `src/animals.js`, `src/pigs.js`, `src/animalRenderer.js`, `src/pigRenderer.js`, `src/storage.js`, `src/types.js`, `src/commands.js`, `src/main.js`, `src/diagnostics.js`, `src/handbook.js`
 
+> **Amendment (by the lead, before release):** (1) density: `BASE_K` halved (rabbit 6, deer 4, sheep 4, pheasant 3,
+> turkey 3, cow 3, pig 3, horse 2, wolf 2, bear 1), fish one per `FISH_CELLS` 12 fresh water columns up to `FISH_K_MAX` 6,
+> and `SEED_SHARE` 0.35: a new zone starts with about four to six animals and fills toward K over weeks (at the first
+> numbers a grassy zone with water held 20–30, ten times the old herds near the player). (2) Livestock can be
+> BUTCHERED: a strike with a tool wounds a tame cow, sheep or pig as it would a wild one (the hint adds
+> `click: butcher`); bare hands and thrown things never hurt a tame animal, and a tame horse or wolf is never struck.
+
 Amends §30 (pigs), §69 (animals), §72, §76.4 (the game animals) and §79 (sparser animals). The user's words: "Persisting
 mobs in the world efficiently where the growth rate is log-logistic within a given biome or zone. When you get far away,
 the mobs stop moving and persist a stateful points on the grid and return to liveness when a player is in proximity.

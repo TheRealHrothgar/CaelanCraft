@@ -69,12 +69,13 @@ describe('populations — zones and their land', () => {
   });
 
   it('K = base × biome share × food × water: a plains valley with a stream holds its base; dry land a third of it; the desert nothing', () => {
-    expect(BASE_K).toEqual({ rabbit: 12, deer: 8, sheep: 8, pheasant: 6, turkey: 6, cow: 6, pig: 6, horse: 4, wolf: 3, bear: 1 });
+    // (halved by the lead before release, with SEED_SHARE 0.35: limited game)
+    expect(BASE_K).toEqual({ rabbit: 6, deer: 4, sheep: 4, pheasant: 3, turkey: 3, cow: 3, pig: 3, horse: 2, wolf: 2, bear: 1 });
     expect(DRY_WATER).toBe(0.35);
     // a stream down one column of q in the zone: fresh water in it
     const wet = zoneLand(fakeGen({ stream: (q) => q === 20 }), 0, 0);
     // the plains are the best land for cattle, sheep, horses, rabbits and pheasants (HERD_WEIGHTS), half as good for deer
-    expect(wet.K).toEqual({ cow: 6, sheep: 8, horse: 4, deer: 4, rabbit: 12, pheasant: 6, turkey: 2, pig: 3, fish: 8 });
+    expect(wet.K).toEqual({ cow: 3, sheep: 4, horse: 2, deer: 2, rabbit: 6, pheasant: 3, turkey: 1, pig: 2, fish: 5 });
     expect([wet.w, wet.g, wet.c]).toEqual([1, 1, 64]);
     expect(wet.mix).toEqual({ plains: 1 });
     // fish: one per FISH_CELLS fresh water columns of the zone, at most FISH_K_MAX
@@ -83,21 +84,21 @@ describe('populations — zones and their land', () => {
     // no fresh water in it or beside it: DRY_WATER of each
     const dry = zoneLand(fakeGen(), 0, 0);
     expect(dry.w).toBe(DRY_WATER);
-    expect(dry.K).toEqual({ cow: 2, sheep: 3, horse: 1, deer: 1, rabbit: 4, pheasant: 2, turkey: 1, pig: 1 });
+    expect(dry.K).toEqual({ cow: 1, sheep: 1, horse: 1, deer: 1, rabbit: 2, pheasant: 1, pig: 1 }); // turkey: 0.35 rounds to none
     // water just beside the zone (within WATER_BESIDE cells) counts; water far off does not
     expect(zoneLand(fakeGen({ stream: (q) => q === -3 }), 0, 0).w).toBe(1);
     expect(zoneLand(fakeGen({ stream: (q) => q === -30 }), 0, 0).w).toBe(DRY_WATER);
     // the forest: deer, turkeys, wolves and a bear
     const forest = zoneLand(fakeGen({ biome: () => BIOME.FOREST, stream: (q) => q === 20 }), 0, 0);
-    expect(forest.K).toMatchObject({ deer: 8, turkey: 6, wolf: 3, bear: 1, pig: 6 });
+    expect(forest.K).toMatchObject({ deer: 4, turkey: 3, wolf: 2, bear: 1, pig: 3 });
     // the desert, the beach and the sea hold nothing that walks; a plain under the sea level grazes nothing
     for (const b of [BIOME.DESERT, BIOME.BEACH, BIOME.OCEAN, BIOME.SNOWY_PEAKS]) {
-      expect(zoneLand(fakeGen({ biome: () => b, stream: (q) => q === 20 }), 0, 0).K, `biome ${b}`).toEqual({ fish: 8 });
+      expect(zoneLand(fakeGen({ biome: () => b, stream: (q) => q === 20 }), 0, 0).K, `biome ${b}`).toEqual({ fish: 5 });
     }
     expect(zoneLand(fakeGen({ height: SEA_LEVEL - 4 }), 0, 0).K).toEqual({});
     // half plains, half desert: about half the plains' share (a kind the biome never had keeps K 0)
     const half = zoneLand(fakeGen({ biome: (q) => (q < 32 ? BIOME.PLAINS : BIOME.DESERT), stream: (q) => q === 20 }), 0, 0);
-    expect(half.K.rabbit).toBe(6);
+    expect(half.K.rabbit).toBe(3);
     expect(half.K.wolf).toBeUndefined();
     expect(half.mix).toEqual({ plains: 0.5, desert: 0.5 });
     expect(suitability('wolf', BIOME.PLAINS)).toBe(0);
@@ -127,7 +128,7 @@ describe('populations — zones and their land', () => {
 
 describe('populations — seeding', () => {
   it('a new zone gets round(K × SEED_SHARE) of each kind, about half of each sex, in one to three groups, as columns; the same seed, the same animals', () => {
-    expect(SEED_SHARE).toBe(0.6);
+    expect(SEED_SHARE).toBe(0.35);
     const gen = fakeGen({ stream: (q) => q === 20 });
     const make = (seed) => {
       const fauna = new Fauna();
@@ -149,7 +150,7 @@ describe('populations — seeding', () => {
         expect(zoneOf(...worldToHex(r.x, r.z))).toEqual([0, 0]);
       }
     }
-    expect(z.list.length).toBeGreaterThan(20);
+    expect(z.list.length).toBeGreaterThanOrEqual(8); // a plains valley with a stream: sparse at first (K × 0.35)
     // the same seed and zone give the same animals; another seed others
     const strip = (list) => list.map((r) => [r.kind, r.sex, r.born, r.x, r.z]);
     expect(strip(make(9).list)).toEqual(strip(z.list));
@@ -983,5 +984,21 @@ describe('populations — what it costs', () => {
     const per = (performance.now() - t0) / 2000;
     expect(per).toBeLessThan(0.05);
     expect(STEP_DAYS).toBeCloseTo(1 / 24, 12);
+  });
+});
+
+describe('populations — livestock can be butchered (§88 amendment)', () => {
+  it('a tool strikes a tame cow, sheep or pig; a bare hand, a horse and a wolf never', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../../src/main.js', import.meta.url), 'utf8');
+    expect(src).toContain("const LIVESTOCK = Object.freeze(['cow', 'sheep']);");
+    expect(src).toContain('if (a.tamed && !(LIVESTOCK.includes(a.kind) && tool)) {');
+    expect(src).toContain('if (pig.tamed && !tool) {');
+    // the hints say so, and only with a tool in hand
+    expect(src).toContain("${LIVESTOCK.includes(a.kind) && selectedTool() ? ' · click: butcher' : ''}");
+    expect(src).toContain("if (pig.tamed) return `Your ${name} · it follows the food in your hand${selectedTool() ? ' · click: butcher' : ''}`;");
+    // a thrown thing never hurts a tame animal
+    expect(src).toMatch(/real && !a\.tamed && counts/);
+    expect(src).toMatch(/real && !pig\.tamed/);
   });
 });
