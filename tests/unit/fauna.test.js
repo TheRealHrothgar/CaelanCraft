@@ -109,7 +109,10 @@ describe('fauna — the kinds (§76)', () => {
     const runners = ANIMAL_KINDS.filter((k) => !SPECIES[k].predator);
     expect(Math.max(...runners.map((k) => SPECIES[k].notice))).toBe(SPECIES.deer.notice);
     expect(SPECIES.deer.notice * SNEAK_NOTICE).toBeGreaterThan(REACH); // sneaking does not bring a deer within arm's reach …
-    expect(SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE).toBeLessThan(REACH); // … unless it is from behind (v0.16)
+    expect(SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE).toBeLessThan(REACH); // … unless it is from behind (v0.16),
+    // and then only with an axe's reach or more (survivalControl.STRIKE_REACH: axe 4, knife 3)
+    expect(SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE).toBeGreaterThan(3);
+    expect(SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE).toBeLessThan(4);
     for (const k of ['rabbit', 'pheasant', 'turkey', 'fish']) expect(SPECIES[k].notice * SNEAK_NOTICE, k).toBeLessThan(REACH);
   });
 });
