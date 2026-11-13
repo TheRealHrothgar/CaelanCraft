@@ -1,6 +1,6 @@
 // Caelancraft — the Sound Test screen (v0.16, CONTRACTS §82): every sound of the game in one list, each with a button
 // that plays it, so a person can listen and judge. Five headings: Digging and placing, Footsteps and movement, Animals
-// and zombies, Ambience (scenes that run the real ambience engine for a made-up place: day, night, by a stream…) and
+// and zombies, Ambience (scenes that run the real ambience engine for a made-up place: day, night, by a stream, rain…) and
 // Other (the sounds the game had before the sound bank).
 //
 // Opened from the pause menu's Sound row (`#btn-sound-test`) or with `?ui=sounds` (main opens it at once, over the title
@@ -65,6 +65,8 @@ export const AMBIENCE_SCENES = Object.freeze([
   { id: 'fire', label: 'By a campfire at night', sample: { ...PLACE, daylight: 0, fireDist: 1.5 }, crackle: true },
   { id: 'mountain', label: 'On a mountain', sample: { ...PLACE, daylight: 1, biome: BIOME.SNOWY_PEAKS, trees: 0, grass: 0, y: 112 } },
   { id: 'cave', label: 'Underground', sample: { ...PLACE, daylight: 1, openSky: false, underground: true, trees: 0, grass: 0, y: 30 } },
+  // §84: a heavy shower at the edge of the woods: the rain's loop, drops on the leaves, far thunder now and then; no birds
+  { id: 'rain', label: 'Rain', sample: { ...PLACE, daylight: 0.8, biome: BIOME.FOREST, trees: 0.5, rain: 0.9 } },
 ]);
 
 /**
@@ -184,6 +186,8 @@ export const SOUND_SECTIONS = Object.freeze([
           { label: 'Cricket', recipe: 'cricketChirp', times: 5, everyMs: 620 },
           { label: 'Fire crackle', method: 'playCrackle', args: [1], times: 6, everyMs: 210 },
           { label: 'Stream bubbles', recipe: 'streamBlip', times: 5, everyMs: 330 },
+          { label: 'Rain on leaves', recipe: 'rainPatter', times: 6, everyMs: 280 },
+          one('Far thunder', 'thunderRoll'),
         ],
       },
     ],

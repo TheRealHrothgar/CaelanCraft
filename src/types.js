@@ -128,6 +128,7 @@
  * @property {Vec3} fogColor
  * @property {number} daylight      0..1
  * @property {number} stars         0..1 star opacity
+ * @property {number} [overcast]    0..1, set by weather.rainSky (CONTRACTS §84): the renderer pales the sun and the moon by it
  */
 
 /** @typedef {Record<ChunkKey, number[]>} EditsJSON  flat pairs [localIndex0, id0, localIndex1, id1, ...] */
@@ -446,6 +447,15 @@
  * @property {import('./spread.js').Spread} [spread]   the wild plants' spreading, with its counts
  * @property {(seconds: number) => ({ seconds: number, sprouted: number, grown: number, failed: number, births: number }|null)} [farmStep]
  *   run the growth and spread steps as if `seconds` had passed
+ * Seasons and rain (CONTRACTS §84): the weather, today's season, and the two handles the in-game check needs.
+ * @property {import('./weather.js').Weather|null} [weather]  the live world's weather (null without a world)
+ * @property {() => import('./weather.js').Season} [season]   seasonOf of this moment
+ * @property {() => number} [rainNow]               how hard it rains or snows on the player's biome now, 0..1
+ * @property {() => ({ rain: (q: number, r: number) => number, dryness: () => number }|null)} [weatherEnv]  the water
+ *   system's env for the live world (weather.weatherEnv)
+ * @property {(mode: 'rain'|'dry'|null) => ('rain'|'dry'|null)} [setWeather]  force rain at full strength, no rain, or
+ *   (null) the real weather again; drives the look, the sound and every effect; returns what is forced
+ * @property {(n: number) => number} [setDay]       set the day counter (a whole number from 1); returns the day
  */
 
 export {};

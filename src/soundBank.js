@@ -13,7 +13,8 @@
 //   - a VOICE is a buzzy source (a sawtooth) with a pitch `glide` and vibrato, through two or three `formants`, with
 //     breath noise beside it; roughness is a fast amplitude wobble, a bleat or a gobble a slow deep one;
 //   - a bird is a sine whose notes are `grains` at fixed times, each with its own pitch; a cricket is three pulses of a
-//     4.6 kHz sine; wind, the stream and the fire are loops of filtered noise, each band wobbling at its own rate.
+//     4.6 kHz sine; wind, the stream, the fire and (§84) the rain are loops of filtered noise, each band wobbling at its
+//     own rate.
 // Low sounds keep something above 100 Hz, as circuitSounds.js explains.
 
 /** @typedef {import('./circuitSounds.js').SoundRecipe} SoundRecipe */
@@ -607,7 +608,8 @@ export const VOICE_RECIPES = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// 4. Ambience: three loops (wind, the stream, the fire) and sparse one-shots (birds, crickets, bubbles, crackles)
+// 4. Ambience: four loops (wind, the stream, the fire, the rain) and sparse one-shots (birds, crickets, bubbles,
+//    crackles, rain on leaves, far thunder)
 // ---------------------------------------------------------------------------------------------------------------------
 
 const AMBIENT = Object.freeze({ spare: AMBIENT_SPARE });
@@ -642,8 +644,29 @@ const AMBIENCE = {
     noise({ bp: 600, q: 0.7, gain: 0.28, decay: 4, lfoHz: 0.71, lfoDepth: 0.4, lfoShape: 'tri' }),
     noise({ bp: 2600, q: 0.8, gain: 0.035, decay: 4, lfoHz: 0.29, lfoDepth: 0.4 }),
   ] },
+  /**
+   * Rain (§84): a broad, even hiss with a softer body under it and a low wash, each swelling a little at its own slow
+   * rate. worldSounds sets its level by the rain's strength and the cover overhead, and lowers its bands under a roof.
+   */
+  ambRain: { dur: 4.05, gain: 0.085, layers: [
+    noise({ hp: 1800, lp: 7500, gain: 0.3, decay: 4, lfoHz: 0.23, lfoDepth: 0.3 }),
+    noise({ bp: 1300, q: 0.7, gain: 0.65, decay: 4, lfoHz: 0.31, lfoDepth: 0.35 }),
+    noise({ lp: 420, gain: 0.4, decay: 4, lfoHz: 0.13, lfoDepth: 0.4 }),
+  ] },
 
   // ---- one-shots ---------------------------------------------------------------------------------------------------------
+  /** Rain on leaves (§84): a handful of drops tapping, each a short dull tick at its own pitch. */
+  rainPatter: sound(0.2, [
+    noise({ bp: 1900, q: 1.6, gain: 0.9, attack: 0.003, decay: 0.02, grains: { count: [3, 6], over: 0.3, gainVar: 0.6, pitchVar: 0.45 } }),
+  ], { vary: 0.2, ...AMBIENT }),
+  /**
+   * Thunder a long way off (§84): a low roll that comes in slowly, wavers and dies away over three seconds. Nothing
+   * sudden in it: no crack, a soft start.
+   */
+  thunderRoll: sound(0.24, [
+    noise({ lp: 240, gain: 0.9, attack: 0.5, hold: 0.5, decay: 2.2, lfoHz: 5.3, lfoDepth: 0.5 }),
+    noise({ bp: 330, q: 0.8, gain: 0.55, delay: 0.15, attack: 0.3, hold: 0.3, decay: 1.6, lfoHz: 3.1, lfoDepth: 0.6, lfoShape: 'tri' }),
+  ], { vary: 0.15, stretch: 0.15, ...AMBIENT }),
   /** A bubble or two in the stream: short, soft rising blips. */
   streamBlip: sound(0.06, [
     sine(520, { f1: 900, gain: 0.6, attack: 0.008, decay: 0.045, grains: { count: [1, 3], over: 0.12, gainVar: 0.5, pitchVar: 0.4 } }),
@@ -707,8 +730,8 @@ const AMBIENCE = {
 
 /** The birds the ambience picks from by day. */
 export const BIRD_SONGS = Object.freeze(['birdTit', 'birdWarbler', 'birdFinch', 'birdBlackbird', 'birdSparrow', 'birdDove']);
-/** The three ambience loops. */
-export const AMBIENCE_LOOPS = Object.freeze(['ambWind', 'ambStream', 'ambFire']);
+/** The ambience loops: three of the place (wind, running water, fire) and (§84) the rain. */
+export const AMBIENCE_LOOPS = Object.freeze(['ambWind', 'ambStream', 'ambFire', 'ambRain']);
 
 // ---------------------------------------------------------------------------------------------------------------------
 

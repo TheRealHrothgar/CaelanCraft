@@ -106,6 +106,8 @@ export const DIG_TRACE_SEGMENTS = 12;
 // clockwise. The trace follows what the player sees: clockwise on a north-up top view. Reverse this list (5, 4, 3, …)
 // if the integrator reads "clockwise" in CONTRACTS' wording instead.
 export const DIG_TRACE_CORNER_ORDER = Object.freeze([5, 0, 1, 2, 3, 4]);
+/** CONTRACTS §84: from this much overcast (SkyState.overcast) the sun and the moon are hidden; below it they only pale. */
+export const OVERCAST_HIDES_SUN = 0.75;
 /** Sun glow strength added by the sky dome shader at full daylight. */
 export const SKY_GLOW = 1.0;
 
@@ -505,6 +507,11 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   }
   const sunSprite = makeCelestialSprite(opts.sunCanvas, 0xfff3a0, 'sun');
   const moonSprite = makeCelestialSprite(opts.moonCanvas, 0xdde2f0, 'moon');
+  // CONTRACTS §84: under an overcast (SkyState.overcast, from weather.rainSky) the sun and the moon pale into the sky.
+  const sunTint = sunSprite.material.color.clone();
+  const moonTint = moonSprite.material.color.clone();
+  const cloudColor = new THREE.Color();
+  let lastOvercast = 0;
 
   // --- Stars ----------------------------------------------------------------------------------
   const starGeometry = new THREE.BufferGeometry();
@@ -612,8 +619,10 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
       p.y - trueSunDir.y * SUN_DISTANCE,
       p.z - trueSunDir.z * SUN_DISTANCE,
     );
-    sunSprite.visible = trueSunDir.y > HORIZON_HIDE_Y;
-    moonSprite.visible = -trueSunDir.y > HORIZON_HIDE_Y;
+    // §84: behind a heavy overcast neither is seen at all (a lighter one only pales them, setSky)
+    const clear = lastOvercast < OVERCAST_HIDES_SUN;
+    sunSprite.visible = clear && trueSunDir.y > HORIZON_HIDE_Y;
+    moonSprite.visible = clear && -trueSunDir.y > HORIZON_HIDE_Y;
   }
 
   /**
@@ -816,7 +825,16 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
       // Sky glow follows the sun and fades out with the daylight.
       skyMaterial.uniforms.uSunDir.value.copy(trueSunDir);
       skyMaterial.uniforms.uSunColor.value.setRGB(sunColor[0], sunColor[1], sunColor[2], THREE.SRGBColorSpace);
-      skyMaterial.uniforms.uGlow.value = SKY_GLOW * Math.min(1, Math.max(0, sky.daylight || 0));
+      // §84: an overcast (0 without one) takes the glow and pales the sun and the moon toward the colour of the sky
+      // behind them; with none the sprites keep their own colour, exactly as before.
+      const overcast = Math.min(1, Math.max(0, sky.overcast || 0));
+      skyMaterial.uniforms.uGlow.value = SKY_GLOW * Math.min(1, Math.max(0, sky.daylight || 0)) * (1 - overcast);
+      if (overcast > 0 || lastOvercast > 0) {
+        cloudColor.setRGB((zenith[0] + horizon[0]) / 2, (zenith[1] + horizon[1]) / 2, (zenith[2] + horizon[2]) / 2, THREE.SRGBColorSpace);
+        sunSprite.material.color.copy(sunTint).lerp(cloudColor, overcast);
+        moonSprite.material.color.copy(moonTint).lerp(cloudColor, overcast);
+        lastOvercast = overcast;
+      }
       const starOpacity = Math.min(1, Math.max(0, sky.stars || 0));
       starMaterial.opacity = starOpacity;
       stars.visible = starOpacity > 0.001;

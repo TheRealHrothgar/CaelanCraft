@@ -360,8 +360,22 @@ export const CRICKETS_DAYLIGHT = Object.freeze([0.15, 0.4]);
 export const FIRE_RANGE = 10;
 /** With the head under water everything outside is this faint, and nothing sings. */
 export const UNDERWATER_AMBIENCE = 0.15;
+/**
+ * §84, rain: how much of it is heard under a roof and underground; how far its loop's bands sink under a roof; the rain
+ * (0..1) over which no bird sings and no cricket chirps; drops a second on the leaves at full rain among trees; and the
+ * far thunder: only in rain this hard, every so many seconds, each roll at a part of the rain's level.
+ */
+export const RAIN_UNDER_ROOF = 0.4;
+export const RAIN_UNDERGROUND = 0.05;
+export const RAIN_ROOF_RATE = 0.7;
+export const RAIN_HUSH = 0.25;
+export const RAIN_PATTER_PER_S = 4;
+export const THUNDER_FROM = 0.75;
+export const THUNDER_EVERY_S = Object.freeze([35, 90]);
+export const THUNDER_FIRST_S = Object.freeze([6, 30]);
+export const THUNDER_VOLUME = Object.freeze([0.5, 1]);
 /** Seconds for each part to follow its target (and for all of them to fall silent when the world stops). */
-export const AMBIENCE_TAU = Object.freeze({ wind: 2, stream: 0.8, fire: 0.6, birds: 3, crickets: 3 });
+export const AMBIENCE_TAU = Object.freeze({ wind: 2, stream: 0.8, fire: 0.6, birds: 3, crickets: 3, rain: 1.5 });
 export const AMBIENCE_FADE_TAU = 0.25;
 /** A part below this level is off (its loop frees its voice). */
 export const AMBIENCE_OFF = 0.004;
@@ -379,6 +393,7 @@ export const AMBIENCE_OFF = 0.004;
  * @property {number} fireDist      metres to the nearest campfire (Infinity: none)
  * @property {number} [y]           the feet's height (cells)
  * @property {boolean} [headInWater]
+ * @property {number} [rain]        how hard it rains where the player is, 0..1 (0 where it falls as snow: snow is silent; §84)
  */
 
 const smoothstep = (a, b, v) => {
@@ -389,10 +404,10 @@ const smoothstep = (a, b, v) => {
 /**
  * How loud each part of the ambience should be for a place and a time, 0..1 each. Pure.
  * @param {AmbienceSample} s
- * @returns {{ wind: number, stream: number, fire: number, birds: number, crickets: number }}
+ * @returns {{ wind: number, stream: number, fire: number, birds: number, crickets: number, rain: number }}
  */
 export function ambienceTargets(s) {
-  const out = { wind: 0, stream: 0, fire: 0, birds: 0, crickets: 0 };
+  const out = { wind: 0, stream: 0, fire: 0, birds: 0, crickets: 0, rain: 0 };
   if (!s) return out;
   const trees = clamp01(s.trees || 0);
   const outside = s.underground ? 0 : 1;
@@ -410,21 +425,35 @@ export function ambienceTargets(s) {
   // running water and fire: by distance
   out.stream = s.streamDist < STREAM_RANGE ? Math.pow(1 - s.streamDist / STREAM_RANGE, 1.5) : 0;
   out.fire = s.fireDist < FIRE_RANGE ? Math.pow(1 - s.fireDist / FIRE_RANGE, 1.5) : 0;
+  // rain (§84): by its strength (a light rain is already heard), fainter under a roof, almost gone underground; and in
+  // the rain the birds and the crickets fall silent
+  const rain = clamp01(s.rain || 0);
+  if (rain > 0) {
+    out.rain = Math.sqrt(rain) * (s.underground ? RAIN_UNDERGROUND : s.openSky ? 1 : RAIN_UNDER_ROOF);
+    const hush = 1 - smoothstep(0, RAIN_HUSH, rain);
+    out.birds *= hush;
+    out.crickets *= hush;
+  }
   if (s.headInWater) {
     out.wind *= UNDERWATER_AMBIENCE;
     out.stream *= UNDERWATER_AMBIENCE;
     out.fire *= UNDERWATER_AMBIENCE;
+    out.rain *= UNDERWATER_AMBIENCE;
     out.birds = 0;
     out.crickets = 0;
   }
   return out;
 }
 
+/** The parts of the ambience, and those that are loops (one voice each while audible). */
+const PARTS = /** @type {const} */ (['wind', 'stream', 'fire', 'birds', 'crickets', 'rain']);
+const LOOP_PARTS = /** @type {const} */ (['wind', 'stream', 'fire', 'rain']);
+
 /**
- * The ambience: three loops whose levels follow the place smoothly (wind, with gusts of its own; the stream; the fire's
- * bed) and sparse one-shots (a bird singing a phrase or three, two crickets, bubbles in the stream), never more than
- * AMBIENCE_MAX_VOICES voices in all. `update(dt, null)` fades everything out (the world stopped); `setEnabled(false)`
- * keeps it silent.
+ * The ambience: four loops whose levels follow the place smoothly (wind, with gusts of its own; the stream; the fire's
+ * bed; §84 the rain) and sparse one-shots (a bird singing a phrase or three, two crickets, bubbles in the stream, rain
+ * tapping on leaves, a roll of far thunder in a heavy shower), never more than AMBIENCE_MAX_VOICES voices in all.
+ * `update(dt, null)` fades everything out (the world stopped); `setEnabled(false)` keeps it silent.
  */
 export class Ambience {
   /**
@@ -435,9 +464,16 @@ export class Ambience {
     this.audio = audio;
     this.random = typeof opts.random === 'function' ? opts.random : Math.random;
     this.enabled = true;
-    this.loops = { wind: audio.startLoop('ambWind'), stream: audio.startLoop('ambStream'), fire: audio.startLoop('ambFire') };
+    this.loops = {
+      wind: audio.startLoop('ambWind'), stream: audio.startLoop('ambStream'), fire: audio.startLoop('ambFire'),
+      rain: audio.startLoop('ambRain'),
+    };
     /** the smoothed level of each part, 0..1 */
-    this.level = { wind: 0, stream: 0, fire: 0, birds: 0, crickets: 0 };
+    this.level = { wind: 0, stream: 0, fire: 0, birds: 0, crickets: 0, rain: 0 };
+    /** how much of the rain's loop is the duller sound under a roof, 0..1 (smoothed) */
+    this.roofed = 0;
+    /** seconds to the next roll of thunder; negative: not drawn yet (no heavy rain so far) */
+    this.thunderIn = -1;
     /** the engine's own clock (s) and the end times of the one-shots still sounding */
     this.t = 0;
     /** @type {number[]} */
@@ -465,7 +501,7 @@ export class Ambience {
   /** Voices the ambience holds now: a loop each that is audible, and the one-shots that have not ended. */
   voices() {
     let n = 0;
-    for (const k of /** @type {const} */ (['wind', 'stream', 'fire'])) if (this.level[k] >= AMBIENCE_OFF) n++;
+    for (const k of LOOP_PARTS) if (this.level[k] >= AMBIENCE_OFF) n++;
     return n + this.shots.length;
   }
 
@@ -502,7 +538,7 @@ export class Ambience {
     const on = this.enabled && sample;
     const target = ambienceTargets(on ? sample : null);
     const level = this.level;
-    for (const k of /** @type {const} */ (['wind', 'stream', 'fire', 'birds', 'crickets'])) {
+    for (const k of PARTS) {
       const tau = on ? AMBIENCE_TAU[k] : AMBIENCE_FADE_TAU;
       level[k] += (target[k] - level[k]) * (1 - Math.exp(-step / tau));
       if (level[k] < AMBIENCE_OFF && target[k] === 0) level[k] = 0;
@@ -513,6 +549,9 @@ export class Ambience {
     this.loops.wind.set(level.wind >= AMBIENCE_OFF ? level.wind * gust : 0, howl);
     this.loops.stream.set(level.stream >= AMBIENCE_OFF ? level.stream : 0, 1);
     this.loops.fire.set(level.fire >= AMBIENCE_OFF ? level.fire : 0, 1);
+    // the rain: under a roof its bands sink (a duller sound), smoothly as you step in and out
+    if (on && sample && level.rain > 0) this.roofed += ((sample.openSky ? 0 : 1) - this.roofed) * (1 - Math.exp(-step / AMBIENCE_TAU.rain));
+    this.loops.rain.set(level.rain >= AMBIENCE_OFF ? level.rain : 0, 1 + (RAIN_ROOF_RATE - 1) * this.roofed);
     if (!on) return;
 
     // birds: one sings a phrase, perhaps two or three with a breath between, then another takes over after a pause
@@ -554,14 +593,30 @@ export class Ambience {
     if (level.stream > 0.05 && this.random() < 3 * level.stream * step) {
       this._shot('streamBlip', level.stream * (0.4 + 0.6 * this.random()));
     }
+    // rain (§84): among trees it taps on the leaves; in a heavy shower thunder rolls a long way off, now and then
+    if (level.rain > 0.05 && sample) {
+      const trees = clamp01(sample.trees || 0);
+      if (trees > 0 && !sample.underground && this.random() < RAIN_PATTER_PER_S * level.rain * trees * step) {
+        this._shot('rainPatter', level.rain * (0.5 + 0.5 * this.random()));
+      }
+      if ((sample.rain || 0) >= THUNDER_FROM && !sample.underground && !sample.headInWater) {
+        if (this.thunderIn < 0) this.thunderIn = THUNDER_FIRST_S[0] + (THUNDER_FIRST_S[1] - THUNDER_FIRST_S[0]) * this.random();
+        this.thunderIn -= step;
+        if (this.thunderIn <= 0) {
+          this._shot('thunderRoll', level.rain * (THUNDER_VOLUME[0] + (THUNDER_VOLUME[1] - THUNDER_VOLUME[0]) * this.random()));
+          this.thunderIn = THUNDER_EVERY_S[0] + (THUNDER_EVERY_S[1] - THUNDER_EVERY_S[0]) * this.random();
+        }
+      }
+    }
   }
 
   /** Silence at once (leaving the world): the loops stop, the levels are forgotten. */
   stop() {
-    for (const k of /** @type {const} */ (['wind', 'stream', 'fire', 'birds', 'crickets'])) this.level[k] = 0;
+    for (const k of PARTS) this.level[k] = 0;
     this.loops.wind.set(0, 1);
     this.loops.stream.set(0, 1);
     this.loops.fire.set(0, 1);
+    this.loops.rain.set(0, 1);
     this.shots.length = 0;
   }
 }
