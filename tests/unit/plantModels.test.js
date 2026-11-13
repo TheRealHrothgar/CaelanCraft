@@ -1,6 +1,6 @@
 // Tests for src/plantModels.js — the wild plants as small 3D models (CONTRACTS §78).
 import { describe, it, expect } from 'vitest';
-import { BLOCK, BLOCKS, TILE, getBlockShape, getFaceTile } from '../../src/blocks.js';
+import { BLOCK, BLOCKS, TILE, PLANT_IDS, FARM_IDS, getBlockShape, getFaceTile } from '../../src/blocks.js';
 import { FACE_TOP } from '../../src/hex.js';
 import { paintTile } from '../../src/tiles.js';
 import {
@@ -44,15 +44,17 @@ function opaqueShare(tile, uv) {
 }
 
 describe('the plant models (plantModels.js, CONTRACTS §78)', () => {
-  it("every 'model' block has a model and every model is a plant block's: the seventeen wild plants", () => {
+  it("every 'model' block has a model and every model is a plant block's: the seventeen wild plants and the 18 farm blocks (§80)", () => {
     const shaped = BLOCKS.filter((d) => d.shape === 'model').map((d) => d.id);
     expect(shaped).toEqual(IDS);
-    expect(IDS).toHaveLength(17);
+    expect(IDS).toHaveLength(35);
     expect(IDS).toEqual([
       B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE,
       B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.HAZEL_THICKET_BARE,
       B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE,
+      ...FARM_IDS, // the nine planted blocks, then the nine sprouts
     ]);
+    expect([...PLANT_IDS, ...FARM_IDS].sort((a, b) => a - b)).toEqual(IDS);
     for (const id of IDS) {
       expect(getBlockShape(id), name(id)).toBe('model');
       expect(BLOCKS[id].icon, name(id)).toBe('flat'); // the Pack keeps the picture the model is cut from

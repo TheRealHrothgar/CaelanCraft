@@ -250,3 +250,53 @@ From the build of CONTRACTS §78. None blocks play.
   contact.
 - **Seen in headless screenshots only**; nobody has walked through a meadow of them yet. The chunk-mesh timing test still
   passes (a tussock is 9 quads, it was 3).
+
+
+## Plants that spread; farming; slower regrowth — open items
+
+From the build of CONTRACTS §80, which was unit-tested only: no browser, no build. None blocks play.
+
+**Not checked in the running game**
+
+- **Planting with R.** The R priority (`interactKind`) and the once-a-second work (`farmSecondOn`) are tested; the glue
+  in main.js is not: `plantSeed`, the order of the target hints, the half-second hint cache, `farmStep` on the debug
+  handle.
+- **The look.** The seedbed and the sprout were seen only in a rough off-line render of their quads, the three seed
+  pictures only as enlarged pixels. Nobody has seen them in a meadow, in the Pack or in the hand.
+- **The hints and the log line** as the HUD shows them; the puff and the sound when the soil under a crop is dug away.
+- **The pace.** A watered seed takes about three game days to a plant and a dry one about eight; a picked bush takes
+  two days to fruit again. Whether that feels slow, fair or dull is untested by a person. So are the seed chances
+  (50 % and 35 %) and the 80 % and 35 % of seeds that take.
+- **Measured off-line on one real generation-3 world** (seed 12345, six game days at the spawn): a farm second costs
+  0.07 ms; nine plants were born (five mushrooms on cave stone, two crab apples, a tuber and a carrot on grass); a
+  watered Carrot Seed became a plant and a dry one did not take.
+
+**Known limits**
+
+- **A farm grows only while its chunk is loaded**, and wild plants spread only within 48 cells of the player. Walk away
+  and both stand still, like a picked bush.
+- **A seedbed and a sprout look the same for every crop.** Only the hint tells a planted carrot from a planted hazel.
+- **R plants the food in your hand** when you aim at the top of bare soil that suits it: a tuber, a berry, a nut. The
+  hint says so first (`Grass Block · R: plant Wild Tuber`), but a careless R costs one. Dug out again, it comes back
+  half the time (a Wild Onion as Onion Seeds, a Cactus Fruit unpeeled).
+- **With a seed in hand, the wrong-ground hint gives way to the older hints**: on stone it still says
+  `Stone · needs a flint pick or better`, on gravel `Gravel · hold LMB: dig`. It shows on sand, snowy grass and the like.
+- **Old Survival worlds (generation 2) slowly gain the newer plants**: a plant from nothing can be a carrot, an onion,
+  a hazel, a crab apple, a Healwort or, under trees, a mushroom, whatever the land was made with.
+- **Water must be level with the soil, or one cell up or down.** A field on a bank two cells above a stream is dry.
+  Water that flows out of a tainted pond is tainted here too, and the sea is salt.
+- **A crop on soil that is dug away is lost**, seed and all (it pops off like any plant).
+- **Animals do not eat crops and nothing tramples them.** There is no hoe, no watering can and no harvest but the
+  plant's own.
+- **A plant from nothing takes any kind the ground can carry**, whatever the biome: a prickly pear can come up on a
+  beach, a healwort is as likely as a carrot. It is rare (one moment in ten game days in the whole range).
+- **A small patch fills to its soft maximum and then stands still**: births land within three cells, so every plant of
+  the patch still counts all the others. In a forty-day run three onions became eight in five days and stayed eight.
+  A patch hardly creeps across the land; new patches start from nothing (seven patches of four plants were 158 plants
+  after 300 game days, 2 % of the columns in range).
+- **Mushrooms spread in caves as well as under trees**, eight Honeycaps or six Frecklecaps to a patch. Roots and
+  mushrooms still do not regrow where they were picked (the older note above); they come back by spreading instead.
+- **Every new wild plant is an edit in the save.** At a handful of births a game day this stays small.
+- **`setblock … carrot` is now ambiguous** (carrot_plant, carrot_sprout), as `onion` and `tuber` are: type the full
+  name.
+- **The sprout BLOCK keys are `CARROT_SPROUT` …**, not `SPROUT_CARROT`: a key must be its block's name in capitals.

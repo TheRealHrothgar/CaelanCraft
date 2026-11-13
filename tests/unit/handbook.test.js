@@ -7,16 +7,17 @@ import {
   fmtDurationLong, fmtClock, listJoin, numWord, describeDrops, recipeInputs, recipeInputsProse, recipeOutputs, recipeTools,
   toolNeedLabel, firstDayKit, fallSpeedForCells, climateExample, exampleBreakSeconds, temperatureBands,
   FLINT_SEEN, ANIMAL_R, HERD_WORDS, PROSE_KINDS, ELEMENTARY_PARTS, toolPowers, huntTargets, zombieTargets, herdBiomes, lureText, zombieStrike,
+  SPREAD_WORDS, patchCaps,
 } from '../../src/handbook.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, itemName, isItemKey } from '../../src/items.js';
 import { RECIPES, STATION_IDS, STATION_NAMES, inputLabel } from '../../src/crafting.js';
-import { BLOCK_RULES, MOB_DROPS, PICKABLE, DEEP_BELOW_SEA, GRAVEL_FLINT_P, breakSeconds, ruleFor, toolPower } from '../../src/harvest.js';
+import { BLOCK_RULES, MOB_DROPS, PICKABLE, DEEP_BELOW_SEA, GRAVEL_FLINT_P, SEED_DROPS, breakSeconds, ruleFor, toolPower } from '../../src/harvest.js';
 import { HEAT_SOURCES, DIURNAL_PEAK_T } from '../../src/climate.js';
 import { RATES, DAMAGE_CAUSES, SOFT_LANDING, fallDamage } from '../../src/vitals.js';
 import { FIRE_TRANSFORMS } from '../../src/cooking.js';
 import { BLOCK, BIOME, FLINT_SHARE, getBlockDef } from '../../src/blocks.js';
 import {
-  HOTBAR_SIZE, PACK_SLOTS, DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, FUEL_LOG_S,
+  HOTBAR_SIZE, PACK_SLOTS, DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, FUEL_LOG_S, REGROW_MEAN_S,
   PIG_HEALTH, PIG_NOTICE, REACH, WALK_SPEED, SPRINT_SPEED, ZOMBIE_DAMAGE, ZOMBIE_HITS, ZOMBIE_SIGHT, ZOMBIE_SPAWN_MIN, ZOMBIE_MAX_DROP,
   ZOMBIE_CHASE_MAX_RISE, ZOMBIE_FIRE_FEAR, GLOWSTONE_LIGHT, CAMPFIRE_LIGHT, TORCH_LIGHT,
 } from '../../src/config.js';
@@ -36,6 +37,11 @@ import {
 import { Pack, KEEP_ON_DEATH, slotClick } from '../../src/inventory.js';
 import { Survival } from '../../src/survival.js';
 import { RELIGHT_STICKS } from '../../src/survivalControl.js';
+import {
+  CROPS, PLANTABLE, FARM_WATER_REACH, REED_WATER_REACH, SPROUT_MEAN_S, GROW_MEAN_S, SEED_TAKES, SEED_BACK_P, SOIL_EARTH, cropOf, soilWords,
+  farmHint,
+} from '../../src/farming.js';
+import { SPREAD_KINDS, SPREAD_MEAN_S, SPREAD_STEP, SPREAD_RADIUS, SPREAD_RANGE, SPONTANEOUS_MEAN_S } from '../../src/spread.js';
 
 const CHAPTERS = buildChapters();
 const KINDS = ['h', 'p', 'tip', 'warn', 'list', 'table', 'figure'];
@@ -927,6 +933,69 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain('Smelting and casting copper and bronze burn coal itself: charcoal will not do.');
     expect(text).toContain('A copper pick mines tin, a bronze pick iron, an iron pick gold and a steel pick gems.');
     expect(text).toContain('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only.');
+  });
+
+  it('farming and the plants that spread (§80): seeds, ground, water and sky, how long it takes; the soft maxima; regrowth takes two days', () => {
+    // slower regrowth: the sentence, and the constant it reads
+    expect(REGROW_MEAN_S).toBe(2 * DAY_LENGTH_SECONDS);
+    expect(text).toContain('A picked bush fruits again slowly: on average after about 2 game days.');
+    expect(text).not.toMatch(/regrows in about/);
+    // the two pages follow "Food in bunches" in Food and fire
+    const heads = CHAPTERS.find((c) => c.id === 'food').pages.map((page) => page.find((b) => b.kind === 'h')?.text ?? null);
+    const i = heads.indexOf('Food in bunches');
+    expect(heads.slice(i, i + 3)).toEqual(['Food in bunches', 'Leave some to seed', 'Planting']);
+
+    // Leave some to seed: plants spread from the ones left standing; picked clean, a place stays bare
+    expect(text).toContain(`A plant left standing puts up a new one within ${numWord(SPREAD_STEP)} cells of itself.`);
+    expect(text).toContain('One that stands alone on open ground does it on average once in about 3 game days.');
+    expect(SPREAD_MEAN_S / DAY_LENGTH_SECONDS).toBe(3);
+    expect(text).toContain(`A patch is full, and seeds no more, when this many stand within ${numWord(SPREAD_RADIUS)} cells of each other:`);
+    expect([numWord(SPREAD_STEP), numWord(SPREAD_RADIUS)]).toEqual(['three', 'six']);
+    expect(patchCaps()).toEqual(['Ten: cattails', 'Eight: wild carrots, wild onions or honeycaps', 'Six: wild tubers or frecklecaps',
+      'Five: honeyberry bushes or prickly pears', 'Four: hazel thickets or crab apple bushes', 'Three: healworts']);
+    for (const line of patchCaps()) expect(text).toContain(line);
+    // every spreading kind is on exactly one line, the one of its own cap
+    for (const k of SPREAD_KINDS) {
+      const lines = patchCaps().filter((line) => line.split(': ')[1].split(/, | or /).includes(SPREAD_WORDS[k.key]));
+      expect(lines.map((line) => line.split(':')[0].toLowerCase()), k.key).toEqual([numWord(k.cap)]);
+    }
+    expect(text).toContain(`A plant does come up from nothing, but only once in about 10 game days somewhere within ${SPREAD_RANGE} cells of you.`);
+    expect(SPONTANEOUS_MEAN_S / DAY_LENGTH_SECONDS).toBe(10);
+    expect(text).toContain('Anything you harvest to the last one does not come back.');
+    expect(text).toContain('Mushrooms spread in the shade: on grass or dirt under a tree, and on the stone floor of a cave. Every other plant needs open sky.');
+    expect(SPREAD_KINDS.filter((k) => k.shade).map((k) => k.key)).toEqual(['honeycap', 'frecklecap']);
+    expect(text).toContain('Take most of a patch and leave a few plants standing.');
+
+    // Planting: what, where, why water and light, how long, that some seeds do not take
+    expect(text).toContain(`A picked Wild Carrot or Wild Onion gives 1–2 seeds ${fmtPct(SEED_DROPS.carrot.p)} of the time, a cut Healwort one seed ${fmtPct(SEED_DROPS.healwort.p)} of the time.`);
+    expect([SEED_DROPS.carrot.n, SEED_DROPS.onion.n, SEED_DROPS.onion.p, SEED_DROPS.healwort.n]).toEqual([[1, 2], [1, 2], SEED_DROPS.carrot.p, 1]);
+    expect(dropItems(PICKABLE[BLOCK.CARROT_PLANT].drops)).toContainEqual(SEED_DROPS.carrot);
+    expect(dropItems(PICKABLE[BLOCK.ONION_PLANT].drops)).toContainEqual(SEED_DROPS.onion);
+    expect(dropItems(PICKABLE[BLOCK.HEALWORT_PLANT].drops)).toContainEqual(SEED_DROPS.healwort);
+    expect(text).toContain('These are planted as they are: Wild Onion, Wild Tuber, Honeyberries, Hazelnuts, Crab Apple, Cactus Fruit, Unpeeled Cactus Fruit and Cattail Root. Mushrooms cannot be planted.');
+    // every plantable item is named on the page: a seed of one of the three plants, or one of that list
+    const planted = sentences().find((s) => s.startsWith('Wild Onion, Wild Tuber'));
+    for (const k of Object.keys(PLANTABLE)) {
+      if (/_seeds$/.test(k)) expect(itemName(k), k).toMatch(/^(Carrot|Onion|Healwort) Seeds$/);
+      else expect(planted.replace(/\.$/, '').split(/, | and /), k).toContain(itemName(k));
+    }
+    expect(text).toContain(`Most crops grow in ${soilWords(SOIL_EARTH)}. Cactus Fruit grows in ${soilWords(cropOf('prickly_pear').soil)}, and Cattail Root only with water within ${numWord(REED_WATER_REACH)} cell of it.`);
+    expect(text).toContain('Most crops grow in grass or dirt. Cactus Fruit grows in sand or red sand, and Cattail Root only with water within one cell of it.');
+    expect(CROPS.filter((c) => c.soil === SOIL_EARTH)).toHaveLength(7);
+    expect(text).toContain('A seed needs water and light.');
+    expect(text).toContain(`Fresh water within ${numWord(FARM_WATER_REACH)} cells waters it, level with the soil or one step up or down: a stream, a clear pond, a channel you dig.`);
+    expect(text).toContain('Tainted water and the sea do not count. It must also see the sky: only leaves or glass may be above it.');
+    expect(text).toContain('Watered, a seed sprouts after about a game day on average and is grown about 2 game days later. Dry, that is about 3 game days and about 5 game days.');
+    expect([SPROUT_MEAN_S.watered, GROW_MEAN_S.watered, SPROUT_MEAN_S.dry, GROW_MEAN_S.dry].map((s) => s / DAY_LENGTH_SECONDS)).toEqual([1, 2, 3, 5]);
+    expect(text).toContain(`Not every seed takes: ${fmtPct(SEED_TAKES.watered)} of the watered ones, ${fmtPct(SEED_TAKES.dry)} of the dry ones.`);
+    expect(text).toContain('Not every seed takes: 80 % of the watered ones, 35 % of the dry ones.');
+    expect(text).toContain(`A seed dug out by hand comes back ${fmtPct(SEED_BACK_P)} of the time.`);
+    // the hint words the page quotes are the hints' own
+    expect(text).toContain('Look at what you planted: the hint says watered, dry or needs open sky.');
+    const tails = [{ sky: true, watered: true, reed: true }, { sky: true, watered: false, reed: true }, { sky: false, watered: true, reed: true }]
+      .map((state) => farmHint(BLOCK.PLANTED_CARROT, state).split(' · ')[1]);
+    expect(tails).toEqual(['watered', 'dry: slow, and it may not take', 'needs open sky']);
+    expect(text).toContain('A new bush, wild or planted, comes up bare and fruits later.');
   });
 
   it('raw water poisons and boiling makes it safe (§66); Poisoned blocks healing, a bandage still works', () => {

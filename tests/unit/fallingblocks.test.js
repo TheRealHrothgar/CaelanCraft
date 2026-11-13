@@ -2,7 +2,7 @@
 // bury a body), saving into a copy, undo hooks (CONTRACTS §34). Fake world from the fixtures unless a real World matters.
 import { describe, it, expect } from 'vitest';
 import { MAX_FALLING, MAX_TUMBLING, TERMINAL_VELOCITY, PIG_RADIUS, PIG_HEIGHT, MAX_TOTAL_EDITS } from '../../src/config.js';
-import { BLOCK, POP_OFF_IDS } from '../../src/blocks.js';
+import { BLOCK, POP_OFF_IDS, FARM_IDS, isFarmBlock } from '../../src/blocks.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { createPlayer, createBody } from '../../src/physics.js';
 import { World } from '../../src/world.js';
@@ -139,8 +139,10 @@ describe('pop-off blocks (DESIGN-survival §8.5)', () => {
       if (id === B.PRICKLY_PEAR || id === B.PRICKLY_PEAR_BARE) return { kind: 'dust', count: 4, sound: 'break:leaves' };
       if (PLANTS.includes(id)) return { kind: 'leaves', count: 6, sound: 'break:leaves' };
       if (id === B.FALLEN_BRANCHES) return { kind: 'dust', count: 4, sound: 'break:wood' };
+      if (isFarmBlock(id)) return { kind: 'dust', count: 4, sound: 'break:grass' }; // §80: a seedbed or a sprout is a puff of earth
       return { kind: 'dust', count: 4, sound: 'break:stone' }; // LOOSE_STONES, FIRE_PIT
     };
+    expect(FARM_IDS.every((id) => POP_OFF_IDS.includes(id))).toBe(true);
     for (const id of POP_OFF_IDS) {
       const { world, physics, fx } = setup();
       world.setBlock(-3, 20, 5, id); // floating: queued at once
