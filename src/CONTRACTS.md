@@ -330,6 +330,8 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 >
 > **v0.10 amendment (§59):** `BlockDef.shape` (`'prism'` default | `'cross'` | `'decal'`) and `getBlockShape(id)`; the wild plants are crossed sprites and the ground litter floor decals.
 >
+> **v0.15 amendment (§78):** the wild plants are `'model'` (small 3D models, `plantModels.js`); `'cross'` is withdrawn. The shapes are `'prism'` | `'model'` | `'decal'` | `'litter'`.
+>
 > **Light amendment (§62):** GLOWSTONE now really glows: it, the CAMPFIRE and the TORCH emit block light (15, 14, 13); leaves, water and ice dim light (`light.js` LIGHT_EMISSION / LIGHT_OPACITY).
 
 Block ids (`BLOCK.*`): `AIR 0, STONE 1, GRASS_BLOCK 2, DIRT 3, COBBLESTONE 4, OAK_PLANKS 5, BEDROCK 6, WATER 7,
@@ -622,6 +624,7 @@ export function buildChunkMesh(cq, cr, getChunkData)   // → ChunkMeshData { op
                                                         //   apply shouldRenderFace against them (non-opaque → their faces render)
                                                         //   v0.10 (§59): a 'cross' / 'decal' cell emits its crossed sprite / floor
                                                         //   decal into its layer instead of a prism (no AO, no culling either way)
+                                                        //   v0.15 (§78): a 'model' cell emits its plant model (the crossed sprite is gone)
 export function vertexAO(side1, side2, corner)          // (side1 && side2) ? 0 : 3 - (side1 + side2 + corner); args 0|1  (side faces)
 export function hexCornerAO(sideA, sideB)               // 3 - (sideA + sideB)                                            (hex caps)
 export function isTintedFace(id, face)                  // OAK_LEAVES: every face; GRASS_BLOCK: FACE_TOP only
@@ -4518,6 +4521,66 @@ as `.card-purpose` under the name, with the whole line as its tooltip. Tests che
 keep their rng streams): COAL_ORE, 8 attempts a chunk, y SEA_LEVEL − 4 … SEA_LEVEL + 18, 12–20 cells, replacing STONE
 and DIRT. About 30 cells a chunk, of which about one is open to the air: seams show in cliff sides, stream banks and on
 bare rock.
+
+## 78. Wild plants in 3D — `src/plantModels.js` (PURE), `src/mesher.js`, `src/blocks.js`
+
+Amends §59 (the plants' shape), §75 (it follows the litter's style) and §76.2. No block, tile, item or recipe is added.
+
+**The shape.** The seventeen wild plant blocks (ids 78–84 and 122–131, picked ones included) have `BlockDef.shape`
+`'model'`. `'cross'` — three crossed pictures — is withdrawn: no block uses it, and the mesher's `emitCross` and its
+`CROSS_*` constants are gone. A plant keeps `icon: 'flat'`: its 16 × 16 tile is still its picture in the Pack, and it is
+the skin every face of its model is cut from, so the two are plainly the same plant.
+
+**A model** (`plantModels.js`, pure data) is a list of parts, sized in TEXELS (`PLANT_TEXELS` 16 to the metre; x and z
+from the middle of the cell, y up from its floor):
+
+- `box` — `at` (the middle of its base), `size [w, h, d]`, `side` (a tile rect `[u, v, w, h]`, v down, shown on its four
+  sides), optional `end` (the two faces across its x axis), `top` (default `side`; `null` when something sits on it) and
+  `under` (only a part that overhangs has an underside). Five faces by default.
+- `card` — one upright picture across the part's z axis (`size [w, h]`, `side` its rect), for a leaf, a blade or a frond;
+  `taper` narrows its top (a pointed leaf). The cutout material shows both its sides.
+- `group` — members in a frame of their own (a pad of the prickly pear, a flower spike).
+- Any part: `yaw` (about +y; its +x turns to (cos yaw, −sin yaw)), `lean` (its top tips toward its +x, about its base),
+  `shade` (a multiplier), `fruit` (left off a picked plant).
+
+`compilePlantModel(parts, bare)` → a Float32Array of `PLANT_QUAD_STRIDE` (24) floats per quad: four corners (x, y, z in
+metres, then u, v in texels of the tile; corner 0 bottom-left, 1 bottom-right, 2 top-right, 3 top-left, counter-clockwise
+seen from the normal's side), the unit normal, the shade. A box face has its true normal. A card's normal is its upper
+face's with the tilt × `CARD_NORMAL_LIFT` (0.5), so the underside of a leaning leaf is dim, not black.
+`plantModel(id)` → the compiled model of a block, or null; `plantModelTile(id)` → the tile to cut from when it is not the
+block's own TOP tile, else null; `PLANT_MODELS` → `{ parts, bare?, tile? }` by block id.
+
+**The mesher** (`emitModel`, cutout layer). Per world cell the model is turned by `cellHash(q, r) · 2π`, moved off the
+middle by up to `MODEL_JITTER` (0.04 m; salts 1 and 2) and sized between `MODEL_SCALE_MIN` (0.9) and `MODEL_SCALE_MAX`
+(1.05; salt 5). Every vertex is lit by the plant's own cell (§62) and coloured grey by the litter's rule (§75): a shade
+from where the face looks (top brightest) × the quad's shade, × `LITTER_GROUND_SHADE` on vertices within 3 cm of the
+floor. No biome tint. A plant never culls a neighbour and has no ambient occlusion.
+
+**Limits** (plantModels.test.js): before sizing, a model stands on the floor (lowest y = 0), is 0.3–0.95 m tall, reaches
+at most 0.54 m from the middle and is at least 0.3 m across both ways; every face is cut from whole texels, more than
+30 % of them opaque; at most 80 quads, and the tussock (it grows everywhere) at most 12.
+
+**The plants.**
+
+| Plant | Model |
+|---|---|
+| Honeycap | a cream foot and stem, a golden cap in three steps (10, 8, 5 wide) with pale gills under it; a small one beside it |
+| Frecklecap | a thin white stem with a ring, a wide flat freckled cap (11) with a low peak, gills under it; a small one beside it |
+| Wild Onion | three bulbs in a ring, each with two leaf cards; a white flower ball on a tall stalk |
+| Wild Carrot | the orange crown of the root; six feathery frond cards leaning out |
+| Hazel Thicket | four stems, three of them leaning; a crown of one big lump, a top and three side lumps; five nuts standing out of it |
+| Crab Apple | a trunk on a foot; a round dark crown in lumps; five red apples standing out of it |
+| Healwort | a pale core and seven pointed leaves lying out in a rosette; three violet flower spikes (the fruit) |
+| Honeyberry | a short trunk, a low wide crown with a top and two side lumps; five berry clusters |
+| Tussock | three crossed cards of the tuft and six tapering, golden-tipped blades splaying out |
+| Cattails | three stalks of different heights, each with a brown head and a tip; five long blades at their feet |
+| Wild Tuber | ten broad veined leaves in two tiers, lying low; the tuber just showing |
+| Prickly Pear | a pad built of four slabs, two more pads leaning out of its top, five red fruit on their rims |
+
+**Picked plants.** A picked plant is its own block with its own tile; its model is the fruiting one compiled with
+`bare` (the same quads in the same places, less the fruit), so picking visibly takes the nuts, apples, berries, fruit
+or flower spikes away. The picked Honeyberry's own tile is too sparse to wrap a box, so its lumps are cut from a
+berry-free corner of the bush's tile (`tile: TILE.HONEYBERRY_BUSH`).
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

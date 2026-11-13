@@ -8,7 +8,9 @@ import {
 import { BLOCK, TILE, BIOME, getFaceTile, tileToUV, isOpaque, flintAt } from '../../src/blocks.js';
 import {
   buildChunkMesh, vertexAO, hexCornerAO, createMeshBuilder, BIOME_TINT, isTintedFace, LITTER_ROCKS, LITTER_STICKS, LITTER_GROUND_SHADE,
+  MODEL_JITTER, MODEL_SCALE_MIN, MODEL_SCALE_MAX,
 } from '../../src/mesher.js';
+import { PLANT_MODELS, PLANT_QUAD_STRIDE, plantModel, plantModelTile } from '../../src/plantModels.js';
 import { createWorldGen } from '../../src/worldgen.js';
 import { makeChunkData, makeChunkDataGetter, setWorldBlock, countFaces } from '../helpers/fixtures.js';
 
@@ -705,41 +707,69 @@ describe('buildChunkMesh — flowing water surfaces (v0.8, CONTRACTS §35.4)', (
   });
 });
 
-describe('buildChunkMesh — plant shapes (crossed sprites and floor decals)', () => {
+describe('buildChunkMesh — plant shapes (3D models, floor decals and litter)', () => {
   const STONE_UNDER = [A[0], A[1] - 1, A[2], B.STONE];
-  it("a 'cross' plant is three upright quads (12 verts) in the cutout layer, drawn from its top tile, not a hex prism", () => {
-    for (const id of [B.TUSSOCK, B.HONEYBERRY_BUSH, B.CATTAILS, B.PRICKLY_PEAR, B.TUBER_PLANT]) {
+  const MODEL_IDS = Object.keys(PLANT_MODELS).map(Number);
+  it("a 'model' plant (CONTRACTS §78) is its model's quads in the cutout layer, cut from its tile, not a hex prism", () => {
+    for (const id of MODEL_IDS) {
+      const model = /** @type {Float32Array} */ (plantModel(id));
+      const quads = model.length / PLANT_QUAD_STRIDE;
       const m = mesh(world([STONE_UNDER, [...A, id]]));
-      expect(m.cutout.faceCount, `${id}`).toBe(3);
-      expect(m.cutout.vertexCount).toBe(12);
-      expect(m.cutout.indexCount).toBe(18);
-      const ys = [];
-      for (let v = 0; v < 12; v++) ys.push(m.cutout.positions[v * 3 + 1]);
-      expect(Math.min(...ys)).toBeCloseTo(A[1], 5);
-      expect(Math.max(...ys)).toBeCloseTo(A[1] + 1, 5);
-      const [u0, v0, u1, v1] = tileToUV(getFaceTile(id, FACE_TOP));
-      for (let v = 0; v < 12; v++) {
-        const u = m.cutout.uvs[v * 2];
-        const w = m.cutout.uvs[v * 2 + 1];
-        expect(Math.abs(u - u0) < 1e-6 || Math.abs(u - u1) < 1e-6).toBe(true);
-        expect(Math.abs(w - v0) < 1e-6 || Math.abs(w - v1) < 1e-6).toBe(true);
+      expect(m.cutout.faceCount, `${id}`).toBe(quads);
+      expect(m.cutout.vertexCount).toBe(quads * 4);
+      expect(m.cutout.indexCount).toBe(quads * 6);
+      const [u0, v0, u1, v1] = tileToUV(plantModelTile(id) ?? getFaceTile(id, FACE_TOP));
+      const cx = A[0] + A[2] * 0.5;
+      const cz = A[2] * HEX_ROW_SPACING;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let v = 0; v < m.cutout.vertexCount; v++) {
+        const [x, y, z] = [0, 1, 2].map((k) => m.cutout.positions[v * 3 + k]);
+        lo = Math.min(lo, y);
+        hi = Math.max(hi, y);
+        expect(Math.hypot(x - cx, z - cz), `${id}`).toBeLessThan(0.63); // in its own cell (a corner is 0.577 out)
+        expect(m.cutout.uvs[v * 2] >= u0 - 1e-6 && m.cutout.uvs[v * 2] <= u1 + 1e-6, `${id}`).toBe(true);
+        expect(m.cutout.uvs[v * 2 + 1] >= v0 - 1e-6 && m.cutout.uvs[v * 2 + 1] <= v1 + 1e-6, `${id}`).toBe(true);
+        expect(Math.hypot(m.cutout.normals[v * 3], m.cutout.normals[v * 3 + 1], m.cutout.normals[v * 3 + 2])).toBeCloseTo(1, 5);
+        expect(m.cutout.colors[v * 3]).toBe(m.cutout.colors[v * 3 + 1]); // no biome tint
       }
+      expect(lo, `${id}`).toBeCloseTo(A[1], 5); // rooted on the cell's floor
+      expect(hi, `${id}`).toBeGreaterThan(A[1] + 0.25);
+      expect(hi, `${id}`).toBeLessThanOrEqual(A[1] + 1); // never through the cell's roof
       // the stone below keeps its top face: a plant never culls its neighbours
       expect(m.opaque.faceCount).toBe(8);
     }
   });
-  it('the three planes are 60° apart, centred near the cell, and turned per cell', () => {
-    const angle = (m, k) => {
-      const p = m.cutout.positions;
-      const b = k * 4 * 3;
-      return Math.atan2(p[b + 3 + 2] - p[b + 2], p[b + 3] - p[b]);
+  it('a model is turned, nudged and sized per world cell, and shaded like the litter', () => {
+    const at = (q, r) => mesh(world([[q, A[1] - 1, r, B.STONE], [q, A[1], r, B.HONEYCAP_MUSHROOM]]));
+    const a = at(A[0], A[2]);
+    const b = at(6, 7);
+    const cap = (m) => {
+      let hi = -Infinity;
+      for (let v = 0; v < m.cutout.vertexCount; v++) hi = Math.max(hi, m.cutout.positions[v * 3 + 1]);
+      return hi - A[1];
     };
-    const m = mesh(world([STONE_UNDER, [...A, B.TUSSOCK]]));
-    const d = (a, b) => (((a - b) % Math.PI) + Math.PI) % Math.PI;
-    expect(d(angle(m, 1), angle(m, 0))).toBeCloseTo(Math.PI / 3, 4);
-    expect(d(angle(m, 2), angle(m, 0))).toBeCloseTo((2 * Math.PI) / 3, 4);
-    const other = mesh(world([[6, 9, 7, B.STONE], [6, 10, 7, B.TUSSOCK]]));
-    expect(Math.abs(angle(other, 0) - angle(m, 0))).toBeGreaterThan(1e-3);
+    // the same drawing at another size: between MODEL_SCALE_MIN and MODEL_SCALE_MAX of its 11 texels
+    for (const m of [a, b]) {
+      expect(cap(m)).toBeGreaterThanOrEqual((11 / 16) * MODEL_SCALE_MIN - 1e-6);
+      expect(cap(m)).toBeLessThanOrEqual((11 / 16) * MODEL_SCALE_MAX + 1e-6);
+    }
+    expect(Math.abs(cap(a) - cap(b))).toBeGreaterThan(1e-4);
+    expect(Math.abs(a.cutout.normals[0] - b.cutout.normals[0])).toBeGreaterThan(1e-3); // and turned another way
+    expect(MODEL_JITTER).toBeLessThanOrEqual(0.05);
+    // tops are brightest; a vertex on the ground is darker than the same face higher up
+    const { positions: p, normals: n, colors: c } = a.cutout;
+    let top = 0;
+    let grounded = 0;
+    for (let v = 0; v < a.cutout.vertexCount; v += 4) {
+      if (n[v * 3 + 1] > 0.99) top = Math.max(top, c[v * 3]);
+      else if (Math.abs(n[v * 3 + 1]) < 0.01 && p[v * 3 + 1] - A[1] < 0.01) {
+        expect(c[v * 3]).toBeCloseTo(c[(v + 2) * 3] * LITTER_GROUND_SHADE, 5); // corner 0 on the floor, corner 2 above it
+        grounded++;
+      }
+    }
+    expect(top).toBeGreaterThan(0.9);
+    expect(grounded).toBeGreaterThan(0);
   });
   it("a 'decal' (the snares) is one flat hex lying just above the cell's floor", () => {
     for (const id of [B.SNARE, B.SNARE_BAITED, B.SNARE_SPRUNG]) {

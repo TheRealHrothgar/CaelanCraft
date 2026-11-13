@@ -153,12 +153,12 @@ export const SOUND_GROUPS = Object.freeze([
  *                                  prism; 'flat' the TOP tile alone as an unskewed 2D picture (the circuit parts but the keg:
  *                                  thin parts and device models, which are not prisms; DESIGN-circuits §1.5; and the plants
  *                                  and ground litter, which are sprites and decals)
- * @property {'prism'|'cross'|'decal'|'litter'} shape  how the chunk mesher draws it: 'prism' (default) the hexagonal prism;
- *                                  'cross' three crossed vertical pictures through the cell's middle (the wild plants: they
- *                                  look like plants, not like a hex ring of panels); 'decal' one flat picture lying on the
- *                                  cell's floor (the snares), both of the block's TOP tile; 'litter' a few small 3D pieces
- *                                  lying on the floor (loose stones, fallen branches: CONTRACTS §75). The terrain stays
- *                                  hexagonal prisms.
+ * @property {'prism'|'model'|'decal'|'litter'} shape  how the chunk mesher draws it: 'prism' (default) the hexagonal prism;
+ *                                  'model' a small 3D model of boxes and leaf cards cut from the block's TOP tile (the wild
+ *                                  plants: plantModels.js, CONTRACTS §78; they were three crossed pictures until v0.15);
+ *                                  'decal' one flat picture of the TOP tile lying on the cell's floor (the snares); 'litter'
+ *                                  a few small 3D pieces lying on the floor (loose stones, fallen branches: CONTRACTS §75).
+ *                                  The terrain stays hexagonal prisms.
  */
 
 /** tiles helper: six sides, then top, then bottom */
@@ -210,8 +210,8 @@ const PLANT = Object.freeze({
   solid: false, opaque: false, layer: LAYER_CUTOUT, cullSame: false, soundGroup: 'leaves',
 });
 
-/** The wild plants: PLANT flags drawn as crossed sprites of their picture (every face is that one tile), with a flat icon. */
-const SPRITE = Object.freeze({ ...PLANT, shape: /** @type {'cross'} */ ('cross'), icon: /** @type {'flat'} */ ('flat') });
+/** The wild plants: PLANT flags drawn as small 3D models cut from their picture (plantModels.js, §78), with that picture as a flat icon. */
+const SPRITE = Object.freeze({ ...PLANT, shape: /** @type {'model'} */ ('model'), icon: /** @type {'flat'} */ ('flat') });
 
 /** The ground litter: PLANT flags drawn as small 3D rocks or sticks on the cell's floor (§75); its icon is its flat picture. */
 const LITTER = Object.freeze({ ...PLANT, shape: /** @type {'litter'} */ ('litter'), icon: /** @type {'flat'} */ ('flat') });
@@ -330,7 +330,7 @@ export const BLOCKS = [
   def({ id: B.COPPER_ORE, name: 'copper_ore', displayName: 'Copper Ore', tiles: tiles(T.COPPER_ORE), soundGroup: 'stone' }),
   def({ id: B.TIN_ORE, name: 'tin_ore', displayName: 'Tin Ore', tiles: tiles(T.TIN_ORE), soundGroup: 'stone' }),
   // Wild plants (PLANT). A picked bush or pear becomes its *_BARE variant, which regrows and is never placed by hand.
-  // Each is a sprite (SPRITE): its picture on three crossed planes, never a hexagonal prism.
+  // Each is a SPRITE block: a small 3D model cut from its picture (§78), never a hexagonal prism.
   def({ id: B.HONEYBERRY_BUSH, name: 'honeyberry_bush', displayName: 'Honeyberry Bush', tiles: tiles(T.HONEYBERRY_BUSH), ...SPRITE }),
   def({ id: B.HONEYBERRY_BUSH_BARE, name: 'honeyberry_bush_bare', displayName: 'Picked Honeyberry Bush', tiles: tiles(T.HONEYBERRY_BUSH_BARE), ...SPRITE, placeable: false }),
   def({ id: B.TUSSOCK, name: 'tussock', displayName: 'Tussock Grass', tiles: tiles(T.TUSSOCK), ...SPRITE, soundGroup: 'grass' }),
@@ -389,7 +389,7 @@ export const BLOCKS = [
   def({ id: B.TAINTED_WATER, name: 'tainted_water', displayName: 'Tainted Water', tiles: tiles(T.TAINTED_WATER), solid: false, opaque: false, liquid: true, breakable: false, placeable: false, layer: LAYER_TRANSLUCENT, soundGroup: 'water' }),
   // v0.14 (§76 fauna): the ground nest lies on the ground like litter (small 3D pieces); it is never placed by hand
   def({ id: B.GROUND_NEST, name: 'ground_nest', displayName: 'Ground Nest', tiles: tiles(T.GROUND_NEST), ...LITTER, soundGroup: 'grass', placeable: false }),
-  // ---- v0.14 (§76 flora): the wild plants of generation 3, all crossed sprites (SPRITE) picked with R. The two mushrooms
+  // ---- v0.14 (§76 flora): the wild plants of generation 3, all small 3D models (SPRITE) picked with R. The two mushrooms
   // look alike on purpose: the Honeycap feeds, the Frecklecap poisons, and only their caps and stems tell them apart. A
   // picked thicket or bush, and a cut Healwort, is its *_BARE variant: it regrows and is never placed by hand.
   def({ id: B.HONEYCAP_MUSHROOM, name: 'honeycap_mushroom', displayName: 'Honeycap Mushroom', tiles: tiles(T.HONEYCAP_MUSHROOM), ...SPRITE, soundGroup: 'grass' }),
@@ -497,7 +497,7 @@ export function isTargetable(id) {
   return id !== B.AIR && !getBlockDef(id).liquid;
 }
 /** false for blocks drawn by their own model instead of the chunk mesher (campfire, black hole, the circuit parts but the keg). */
-/** How the chunk mesher draws `id` (BlockDef.shape): 'prism', 'cross' (the wild plants), 'decal' (the snares) or 'litter'. */
+/** How the chunk mesher draws `id` (BlockDef.shape): 'prism', 'model' (the wild plants), 'decal' (the snares) or 'litter'. */
 /**
  * The share of natural loose stones that hold flint (made visible: CONTRACTS §70). 0.06 since v0.13 (it was 0.5): flint is
  * rare and comes mostly from digging gravel (harvest.GRAVEL_FLINT_P, §76).
