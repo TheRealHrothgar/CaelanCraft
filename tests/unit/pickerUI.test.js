@@ -243,7 +243,7 @@ describe('families open in a drawer band below their row (§5.3)', () => {
     expect(grid.querySelectorAll('.picker-family')).toHaveLength(0);
     expect(grid.querySelectorAll('.picker-drawer')).toHaveLength(0);
     expect(cell(BLOCK.WOOL_RED)).not.toBeNull();
-    expect(grid.querySelectorAll('.picker-cell')).toHaveLength(108); // + the Workbench (§67) and the Snare (§69); + the seven plants of §76 flora
+    expect(grid.querySelectorAll('.picker-cell')).toHaveLength(115); // + the Workbench (§67) and the Snare (§69); + the seven plants of §76 flora; + the seven of §81
     menus.hidePicker();
     menus.showPicker([...DEFAULT_HOTBAR], 0);
     expect($('picker-showall').checked).toBe(true);

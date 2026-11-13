@@ -76,10 +76,11 @@ describe('the constants and the derivation of the birth chance', () => {
 });
 
 describe('the kinds that spread (SPREAD_KINDS)', () => {
-  it('eleven rows: the nine crops in their order, then the two mushrooms; each with its soft maximum', () => {
+  it('fifteen rows: the nine crops in their order, the two mushrooms, then the four plants of §81; each with its soft maximum', () => {
     expect(SPREAD_KINDS.map((k) => [k.key, k.cap])).toEqual([
       ['carrot', 8], ['onion', 8], ['tuber', 6], ['honeyberry', 5], ['hazel', 4], ['crab_apple', 4], ['healwort', 3], ['prickly_pear', 5],
       ['cattails', 10], ['honeycap', 8], ['frecklecap', 6],
+      ['hemlock', 6], ['nightshade', 4], ['flax', 8], ['aloe', 4], // §81: the look-alikes and the useful plants
     ]);
     expect(SPREAD_KINDS.slice(0, 9).map((k) => k.key)).toEqual(CROPS.map((c) => c.key));
     SPREAD_KINDS.forEach((k, i) => expect(k.index).toBe(i));
@@ -100,7 +101,18 @@ describe('the kinds that spread (SPREAD_KINDS)', () => {
       cattails: [[B.CATTAILS], B.CATTAILS],
       honeycap: [[B.HONEYCAP_MUSHROOM], B.HONEYCAP_MUSHROOM],
       frecklecap: [[B.FRECKLECAP_MUSHROOM], B.FRECKLECAP_MUSHROOM],
+      // §81: a Nightshade comes up picked, as the Honeyberry it imitates does; the others come up as they are
+      hemlock: [[B.HEMLOCK], B.HEMLOCK],
+      nightshade: [[B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE], B.NIGHTSHADE_BUSH_BARE],
+      flax: [[B.FLAX], B.FLAX],
+      aloe: [[B.ALOE], B.ALOE],
     });
+    // none of the four is a crop: nothing plants them (farming.js PLANTABLE is as it was)
+    for (const key of ['hemlock', 'nightshade', 'flax', 'aloe']) expect(cropOf(key), key).toBeNull();
+    expect(SPREAD_KINDS.slice(11).map((k) => [k.key, [...k.soil], k.shade, k.reed])).toEqual([
+      ['hemlock', [B.GRASS_BLOCK, B.DIRT], false, false], ['nightshade', [B.GRASS_BLOCK, B.DIRT], false, false],
+      ['flax', [B.GRASS_BLOCK, B.DIRT], false, false], ['aloe', [B.SAND, B.RED_SAND], false, false],
+    ]);
     for (const k of SPREAD_KINDS) {
       expect(k.blocks, k.key).toContain(k.born);
       for (const id of k.blocks) {
@@ -120,13 +132,14 @@ describe('the kinds that spread (SPREAD_KINDS)', () => {
     expect(SPREAD_KINDS.filter((k) => !k.shade).every((k) => k.cave.length === 0)).toBe(true);
   });
 
-  it('nothing else spreads: not the tussock, not a planted seed or a sprout, not the ground', () => {
-    for (const id of [B.TUSSOCK, ...FARM_IDS, B.AIR, B.GRASS_BLOCK, B.OAK_LEAVES, B.LOOSE_STONES, B.GROUND_NEST, 255, 256, -1, 1.5, NaN, null, undefined, '125']) {
+  it('nothing else spreads: not the tussock, not the greenery of §81, not a planted seed or a sprout, not the ground', () => {
+    for (const id of [B.TUSSOCK, B.FERN, B.MEADOW_DAISIES, B.THISTLE, ...FARM_IDS, B.AIR, B.GRASS_BLOCK, B.OAK_LEAVES, B.LOOSE_STONES, B.GROUND_NEST,
+      255, 256, -1, 1.5, NaN, null, undefined, '125']) {
       expect(spreadKindOf(/** @type {*} */ (id)), String(id)).toBeNull();
     }
     const spreading = SPREAD_KINDS.flatMap((k) => k.blocks);
     expect(new Set(spreading).size).toBe(spreading.length);
-    expect(spreading).toHaveLength(16);
+    expect(spreading).toHaveLength(21); // 16, and §81's Hemlock, the two Nightshade blocks, Flax and Aloe
   });
 });
 
@@ -511,8 +524,9 @@ describe('a plant from nothing: near zero', () => {
     const no = fromNothing(p, 0, 0);
     expect(spreadStep(1, no, view(w))).toBeNull();
     expect(no.calls).toBe(SPREAD_SAMPLES + 1);
-    // open grass carries the seven kinds of the grassland: not the reed, the cactus or the mushrooms
-    const able = ['carrot', 'onion', 'tuber', 'honeyberry', 'hazel', 'crab_apple', 'healwort'];
+    // open grass carries the seven kinds of the grassland and three of §81: not the reed, the cactus, the aloe or the
+    // mushrooms
+    const able = ['carrot', 'onion', 'tuber', 'honeyberry', 'hazel', 'crab_apple', 'healwort', 'hemlock', 'nightshade', 'flax'];
     able.forEach((key, i) => {
       const random = fromNothing(p - 1e-12, column(7, -3), (i + 0.5) / able.length);
       expect(spreadStep(1, random, view(w)), key).toEqual({ q: 7, y: Y, r: -3, id: kindOf(key).born, kind: kindOf(key), seeded: false, parent: null });
@@ -524,17 +538,19 @@ describe('a plant from nothing: near zero', () => {
 
   it('the kind is one the land there can carry: sand a cactus, a bank its reeds, a forest floor its mushrooms too', () => {
     const born = (w, pick = 0) => spreadStep(1, fromNothing(0, column(0, 0), pick), view(w))?.kind.key ?? null;
-    expect(born(flat(B.SAND))).toBe('prickly_pear');
-    expect(born(flat(B.RED_SAND), 0.99)).toBe('prickly_pear');
+    // sand carries the cactus and (§81) the aloe, and nothing else
+    expect([born(flat(B.SAND)), born(flat(B.SAND), 0.99)]).toEqual(['prickly_pear', 'aloe']);
+    expect([born(flat(B.RED_SAND), 0.49), born(flat(B.RED_SAND), 0.51)]).toEqual(['prickly_pear', 'aloe']);
     for (const ground of [B.STONE, B.GRAVEL, B.SNOWY_GRASS, B.SNOW_BLOCK, B.CLAY]) expect(born(flat(ground)), BLOCKS[ground].name).toBeNull();
     const bank = flat(B.SAND);
     bank.put(1, G, 0, B.WATER);
-    expect([born(bank, 0), born(bank, 0.99)]).toEqual(['prickly_pear', 'cattails']);
+    expect([born(bank, 0), born(bank, 0.5), born(bank, 0.99)]).toEqual(['prickly_pear', 'cattails', 'aloe']);
     const forest = flat();
     forest.put(0, Y + 5, 0, B.OAK_LEAVES);
     const here = new Set();
-    for (let i = 0; i < 9; i++) here.add(born(forest, (i + 0.5) / 9));
-    expect([...here]).toEqual(['carrot', 'onion', 'tuber', 'honeyberry', 'hazel', 'crab_apple', 'healwort', 'honeycap', 'frecklecap']);
+    for (let i = 0; i < 12; i++) here.add(born(forest, (i + 0.5) / 12));
+    expect([...here]).toEqual(['carrot', 'onion', 'tuber', 'honeyberry', 'hazel', 'crab_apple', 'healwort', 'honeycap', 'frecklecap',
+      'hemlock', 'nightshade', 'flax']); // §81: the look-alikes and flax come up on grass like the rest
     // water, a trunk, a roofed floor of stone under planks... carry nothing or only what fits
     const pond = flat();
     pond.put(0, G, 0, B.WATER);
@@ -613,7 +629,12 @@ describe('by simulation', () => {
     const random = mulberry32(42);
     const onion = kindOf('onion');
     const DAYS = 40;
-    /** onions at the end of each day (whatever came up from nothing elsewhere in range is not the patch) */
+    /**
+     * The patch's onions at the end of each day: the ones within two radii of where it began. Whatever came up from
+     * nothing elsewhere in range is not the patch (since §81 there are more kinds to come up, and with some seeds one of
+     * them is an onion that grows a patch of its own far away).
+     */
+    const inPatch = (key) => hexLength(...(/** @type {[number, number]} */ (key.split(',').map(Number)))) <= 2 * SPREAD_RADIUS;
     const onions = [];
     for (let s = 1; s <= DAYS * DAY_LENGTH_SECONDS; s++) {
       const b = spreadStep(1, random, world);
@@ -621,7 +642,7 @@ describe('by simulation', () => {
         expect(cells.has(`${b.q},${b.r}`)).toBe(false); // never onto another plant
         cells.set(`${b.q},${b.r}`, b.id);
       }
-      if (s % DAY_LENGTH_SECONDS === 0) onions.push([...cells.values()].filter((id) => id === B.ONION_PLANT).length);
+      if (s % DAY_LENGTH_SECONDS === 0) onions.push([...cells].filter(([key, id]) => id === B.ONION_PLANT && inPatch(key)).length);
     }
     // more appear over the first days (this seed: 4 5 5 6 8, then eight for good) …
     expect(onions[1]).toBeGreaterThan(3);

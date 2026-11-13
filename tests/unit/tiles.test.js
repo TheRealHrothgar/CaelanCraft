@@ -50,10 +50,14 @@ const SURVIVAL_CUTOUT = [
   TILE.PRICKLY_PEAR, TILE.PRICKLY_PEAR_BARE, TILE.REMAINS_SIDE, TILE.REMAINS_TOP, TILE.LOOSE_STONES, TILE.FALLEN_BRANCHES,
   TILE.FIRE_PIT_SIDE,
 ];
-/** v0.14 (§76 flora): the ten plant sprites 208–217, cut out like the plants above (flora.test.js covers their art). */
+/**
+ * v0.14 (§76 flora): the ten plant sprites 208–217, cut out like the plants above (flora.test.js covers their art); and
+ * the seven of §81 (218–224: plantsNotFood.test.js covers theirs).
+ */
 const FLORA_CUTOUT = [
   TILE.HONEYCAP_MUSHROOM, TILE.FRECKLECAP_MUSHROOM, TILE.ONION_PLANT, TILE.CARROT_PLANT, TILE.HAZEL_THICKET, TILE.HAZEL_THICKET_BARE,
   TILE.CRAB_APPLE_BUSH, TILE.CRAB_APPLE_BUSH_BARE, TILE.HEALWORT_PLANT, TILE.HEALWORT_PLANT_BARE,
+  TILE.FERN, TILE.MEADOW_DAISIES, TILE.THISTLE, TILE.HEMLOCK, TILE.NIGHTSHADE_BUSH, TILE.FLAX, TILE.ALOE,
 ];
 
 /** Assert every pixel satisfies `pred(r, g, b, a, x, y)`. */
@@ -76,7 +80,7 @@ describe('TILE_NAMES', () => {
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
     // v0.8: + barrel_side 75, barrel_top 76; zombies (§39): + 240–245; the Watcher (§40): + 250–252 (stone, crack glow, smoke);
     // v0.9 survival: + 77–104 (DESIGN-survival §8.1); powder and circuits: + 160–194 (DESIGN-circuits §1.4)
-    expect(keys.length).toBe(176); // + seedbed 205 and sprout 206 (§80 farming); // + tainted_water 204, the flora 208–217 and the ground nest's 228–231 (§76); // + the litter skins 201–203 (§75; flint_gravel 204 withdrawn in §76); // + the snares 197–199 and loose_stones_flint 200 (§69, §70); // v0.11: + workbench_side 195, workbench_top 196 (§67)
+    expect(keys.length).toBe(183); // + the seven plants that are not food, 218–224 (§81); // + seedbed 205 and sprout 206 (§80 farming); // + tainted_water 204, the flora 208–217 and the ground nest's 228–231 (§76); // + the litter skins 201–203 (§75; flint_gravel 204 withdrawn in §76); // + the snares 197–199 and loose_stones_flint 200 (§69, §70); // v0.11: + workbench_side 195, workbench_top 196 (§67)
     expect(TILE_NAMES[TILE.COPPER_ORE]).toBe('copper_ore');
     expect(TILE_NAMES[TILE.PLANT_TOP_CLEAR]).toBe('plant_top_clear');
     expect(TILE_NAMES[TILE.FIRE_PIT_SIDE]).toBe('fire_pit_side');

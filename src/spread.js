@@ -6,7 +6,7 @@
 import { WORLD_HEIGHT } from './config.js';
 import { BLOCK, isLeaves, isOpaque } from './blocks.js';
 import { hexDiscCount } from './hex.js';
-import { REED_WATER_REACH, SOIL_EARTH, cropOf, hasSky, waterNear } from './farming.js';
+import { REED_WATER_REACH, SOIL_EARTH, SOIL_SAND, cropOf, hasSky, waterNear } from './farming.js';
 
 const B = BLOCK;
 
@@ -64,8 +64,9 @@ const crop = (key, blocks, cap) => {
 
 /**
  * Every kind of plant that spreads, one row each: the nine crops first (in farming.js CROPS order), then the two
- * mushrooms, which cannot be planted and only spread. Roots and mushrooms come up ripe; a bush, a thicket, a Healwort
- * and a prickly pear come up PICKED and fruit when Regrowth says so. To add a kind, add its row.
+ * mushrooms, which cannot be planted and only spread, then the four plants of §81 that are not food. Roots and
+ * mushrooms come up ripe; a bush, a thicket, a Healwort and a prickly pear come up PICKED and fruit when Regrowth says
+ * so. To add a kind, add its row.
  * @type {ReadonlyArray<SpreadKind>}
  */
 export const SPREAD_KINDS = Object.freeze([
@@ -80,6 +81,12 @@ export const SPREAD_KINDS = Object.freeze([
   crop('cattails', [B.CATTAILS], 10),
   kind('honeycap', [B.HONEYCAP_MUSHROOM], B.HONEYCAP_MUSHROOM, SOIL_EARTH, 8, { shade: true, cave: CAVE_FLOOR }),
   kind('frecklecap', [B.FRECKLECAP_MUSHROOM], B.FRECKLECAP_MUSHROOM, SOIL_EARTH, 6, { shade: true, cave: CAVE_FLOOR }),
+  // §81: the look-alikes and the useful plants spread as well (the fern, the daisies and the thistle do not). None of
+  // them can be planted. A Nightshade comes up picked, like the Honeyberry it imitates.
+  kind('hemlock', [B.HEMLOCK], B.HEMLOCK, SOIL_EARTH, 6),
+  kind('nightshade', [B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE], B.NIGHTSHADE_BUSH_BARE, SOIL_EARTH, 4),
+  kind('flax', [B.FLAX], B.FLAX, SOIL_EARTH, 8),
+  kind('aloe', [B.ALOE], B.ALOE, SOIL_SAND, 4),
 ].map((k, index) => Object.freeze({ ...k, index })));
 
 /** Block id → the index of its kind in SPREAD_KINDS, or −1. */

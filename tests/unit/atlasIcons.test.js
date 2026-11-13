@@ -18,7 +18,8 @@ const FLAT = [...THIN, ...DEVICES];
 const SPRITES = [78, 79, 80, 81, 82, 83, 84, 92, 93, 116, 117, 118, // + the three snares (§69)
   121, 132, // + the two ground nests (§76 fauna)
   122, 123, 124, 125, 126, 127, 128, 129, 130, 131, // + the ten plants of v0.14 (§76 flora)
-  ...Array.from({ length: 18 }, (_, i) => 133 + i)]; // + the nine planted blocks and the nine sprouts (§80 farming)
+  ...Array.from({ length: 18 }, (_, i) => 133 + i), // + the nine planted blocks and the nine sprouts (§80 farming)
+  151, 152, 153, 154, 155, 156, 157, 158]; // + the eight plants that are not food (§81)
 const atlas = { width: 256, height: 256, kind: 'atlas' };
 
 /** A 2D context stand-in: every method call as [name, ...args], and the state each drawImage saw. */

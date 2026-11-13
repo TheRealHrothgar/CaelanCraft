@@ -99,6 +99,15 @@ const POP_LEAF = Object.freeze({
   [BLOCK.CRAB_APPLE_BUSH_BARE]: Object.freeze([0.19, 0.42, 0.18]),
   [BLOCK.HEALWORT_PLANT]: Object.freeze([0.62, 0.76, 0.62]),
   [BLOCK.HEALWORT_PLANT_BARE]: Object.freeze([0.62, 0.76, 0.62]),
+  // §81: each its leaf colour (the Nightshade the Honeyberry's: the same bush)
+  [BLOCK.FERN]: Object.freeze([0.18, 0.48, 0.23]),
+  [BLOCK.MEADOW_DAISIES]: Object.freeze([0.29, 0.58, 0.25]),
+  [BLOCK.THISTLE]: Object.freeze([0.37, 0.58, 0.31]),
+  [BLOCK.HEMLOCK]: Object.freeze([0.38, 0.66, 0.26]),
+  [BLOCK.NIGHTSHADE_BUSH]: Object.freeze([0.2, 0.42, 0.31]),
+  [BLOCK.NIGHTSHADE_BUSH_BARE]: Object.freeze([0.2, 0.42, 0.31]),
+  [BLOCK.FLAX]: Object.freeze([0.23, 0.48, 0.29]),
+  [BLOCK.ALOE]: Object.freeze([0.35, 0.64, 0.48]),
 });
 
 /**

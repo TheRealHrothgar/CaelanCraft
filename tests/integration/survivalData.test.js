@@ -26,6 +26,8 @@ const NATURAL_BLOCKS = [
   B.TUSSOCK, B.TUBER_PLANT, B.HONEYBERRY_BUSH, B.PRICKLY_PEAR, B.CATTAILS, B.LOOSE_STONES, B.FALLEN_BRANCHES,
   // v0.14 (§76 flora): what a generation-3 world grows besides
   B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT,
+  // §81: and a generation-4 world, the plants that are not food
+  B.FERN, B.MEADOW_DAISIES, B.THISTLE, B.HEMLOCK, B.NIGHTSHADE_BUSH, B.FLAX, B.ALOE,
   // Not terrain, but left in the world by the Hollow Watcher's pillar traces (CONTRACTS §40.3): the only obsidian.
   B.OBSIDIAN,
 ];

@@ -1,21 +1,23 @@
 // Unit tests for src/handbook.js — the Survival Handbook's content (docs/DESIGN-survival.md §14): the chapters, and every
 // generated table walked against the game table it restates, so the book can never disagree with the game.
 import { describe, it, expect } from 'vitest';
-import { LEAN_PATCH_CHANCE, LEAN_PATCH_FILL } from '../../src/worldgen.js';
+import { LEAN_PATCH_CHANCE, LEAN_PATCH_FILL, PATCH_TABLE_GEN4, HEMLOCK_SHARES, NIGHTSHADE_SHARES } from '../../src/worldgen.js';
 import {
   HANDBOOK_KEY, HANDBOOK_CHAT_LINE, TABLE_ROWS_PER_PAGE, TABLE_SOURCES, CLIMATE_EXAMPLES, FALL_EXAMPLES, DANGER_NAMES,
   buildChapters, chapterIds, ensureHandbook, inlineParts, plainText, fmtNum, fmtSigned, fmtPct, fmtTemp, fmtDuration,
   fmtDurationLong, fmtClock, listJoin, numWord, describeDrops, recipeInputs, recipeInputsProse, recipeOutputs, recipeTools,
   toolNeedLabel, firstDayKit, fallSpeedForCells, climateExample, exampleBreakSeconds, temperatureBands,
   FLINT_SEEN, ANIMAL_R, HERD_WORDS, PROSE_KINDS, ELEMENTARY_PARTS, toolPowers, huntTargets, zombieTargets, herdBiomes, lureText, zombieStrike,
-  SPREAD_WORDS, patchCaps,
+  SPREAD_WORDS, patchCaps, PICKED_WORDS,
 } from '../../src/handbook.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, itemName, isItemKey } from '../../src/items.js';
 import { RECIPES, STATION_IDS, STATION_NAMES, inputLabel } from '../../src/crafting.js';
-import { BLOCK_RULES, MOB_DROPS, PICKABLE, DEEP_BELOW_SEA, GRAVEL_FLINT_P, SEED_DROPS, breakSeconds, ruleFor, toolPower } from '../../src/harvest.js';
+import {
+  BLOCK_RULES, MOB_DROPS, PICKABLE, DEEP_BELOW_SEA, GRAVEL_FLINT_P, SEED_DROPS, FERN_FIBRE_P, breakSeconds, ruleFor, toolPower, pick, rollDrops,
+} from '../../src/harvest.js';
 import { HEAT_SOURCES, DIURNAL_PEAK_T } from '../../src/climate.js';
 import { RATES, DAMAGE_CAUSES, SOFT_LANDING, fallDamage } from '../../src/vitals.js';
-import { FIRE_TRANSFORMS } from '../../src/cooking.js';
+import { FIRE_TRANSFORMS, isSkewerFood } from '../../src/cooking.js';
 import { BLOCK, BIOME, FLINT_SHARE, getBlockDef } from '../../src/blocks.js';
 import {
   HOTBAR_SIZE, PACK_SLOTS, DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, FUEL_LOG_S, REGROW_MEAN_S,
@@ -402,10 +404,17 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     }
 
     const bandages = tableById('bandages');
+    expect(bandages.keys).toEqual(ITEM_KEYS.filter((k) => ITEMS[k].kind === 'heal'));
+    expect(bandages.keys).toEqual(['fibre_bandage', 'rag_bandage', 'aloe_leaf']); // §81: the Aloe Leaf heals too
     for (const k of bandages.keys) {
       const hl = ITEMS[k].heal;
       expect(rowOf(bandages, k).slice(1, 3)).toEqual([`${hl.hp} HP`, `${fmtNum(hl.rate)} HP/s`]);
+      // a bandage names what it is made from; the leaf has no recipe, and its row says so
+      const rec = RECIPES.find((r) => r.outputs[0].k === k);
+      expect(rowOf(bandages, k)[3], k).toBe(rec ? recipeInputs(rec) : PICKED_WORDS);
     }
+    expect(rowOf(bandages, 'aloe_leaf')).toEqual(['Aloe Leaf', '6 HP', '1.5 HP/s', 'picked, not made']);
+    expect(bandages.parts[0].caption).toBe('Bandages and the Aloe Leaf');
   });
 
   it('the workplaces table: what builds each workplace, and its heat while working', () => {
@@ -943,10 +952,10 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(REGROW_MEAN_S).toBe(2 * DAY_LENGTH_SECONDS);
     expect(text).toContain('A picked bush fruits again slowly: on average after about 2 game days.');
     expect(text).not.toMatch(/regrows in about/);
-    // the two pages follow "Food in bunches" in Food and fire
+    // the two pages follow "Food in bunches" in Food and fire (after §81's two pages on the plants that are not food)
     const heads = CHAPTERS.find((c) => c.id === 'food').pages.map((page) => page.find((b) => b.kind === 'h')?.text ?? null);
     const i = heads.indexOf('Food in bunches');
-    expect(heads.slice(i, i + 3)).toEqual(['Food in bunches', 'Leave some to seed', 'Planting']);
+    expect(heads.slice(i, i + 5)).toEqual(['Food in bunches', 'Know your plants', 'Plants worth knowing', 'Leave some to seed', 'Planting']);
 
     // Leave some to seed: plants spread from the ones left standing; picked clean, a place stays bare
     expect(text).toContain(`A plant left standing puts up a new one within ${numWord(SPREAD_STEP)} cells of itself.`);
@@ -954,8 +963,10 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(SPREAD_MEAN_S / DAY_LENGTH_SECONDS).toBe(3);
     expect(text).toContain(`A patch is full, and seeds no more, when this many stand within ${numWord(SPREAD_RADIUS)} cells of each other:`);
     expect([numWord(SPREAD_STEP), numWord(SPREAD_RADIUS)]).toEqual(['three', 'six']);
-    expect(patchCaps()).toEqual(['Ten: cattails', 'Eight: wild carrots, wild onions or honeycaps', 'Six: wild tubers or frecklecaps',
-      'Five: honeyberry bushes or prickly pears', 'Four: hazel thickets or crab apple bushes', 'Three: healworts']);
+    // §81: flax, the hemlocks, the nightshade bushes and the aloes have a maximum of their own and join the lines
+    expect(patchCaps()).toEqual(['Ten: cattails', 'Eight: wild carrots, wild onions, honeycaps or flax', 'Six: wild tubers, frecklecaps or hemlocks',
+      'Five: honeyberry bushes or prickly pears', 'Four: hazel thickets, crab apple bushes, nightshade bushes or aloes', 'Three: healworts']);
+    expect(Object.keys(SPREAD_WORDS)).toEqual(SPREAD_KINDS.map((k) => k.key)); // every kind has its word
     for (const line of patchCaps()) expect(text).toContain(line);
     // every spreading kind is on exactly one line, the one of its own cap
     for (const k of SPREAD_KINDS) {
@@ -999,6 +1010,105 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
       .map((state) => farmHint(BLOCK.PLANTED_CARROT, state).split(' · ')[1]);
     expect(tails).toEqual(['watered', 'dry: slow, and it may not take', 'needs open sky']);
     expect(text).toContain('A new bush, wild or planted, comes up bare and fruits later.');
+  });
+
+  it('the plants that are not food (§81): the two pairs and their tells, what eating one does, the useful plants and their numbers', () => {
+    const R = RATES;
+    const food = CHAPTERS.find((c) => c.id === 'food');
+    const page = (title) => food.pages.find((p) => p.some((b) => b.kind === 'h' && b.text === title));
+    const words = (p) => p.flatMap((b) => ('text' in b ? [plainText(b.text)] : [])).join('\n');
+
+    // ---- Know your plants: most plants are not food; the pairs, in words a child can use in the field
+    const know = words(page('Know your plants'));
+    expect(know).toContain('Most plants are not food.');
+    expect(know).toContain('Hemlock looks like the Wild Carrot: the same feathery leaves. A carrot has an orange crown at the soil and no flowers. Hemlock has flat white flower heads, purple blotches on its stem and a pale root.');
+    expect(know).toContain('Nightshade looks like the Honeyberry Bush: the same low, dark bush. Honeyberries are long and pale blue. Nightshade berries are round, shiny and black, with small purple flowers among them.');
+    // the names the page uses are the blocks' and the items' own
+    expect([BLOCK.HEMLOCK, BLOCK.NIGHTSHADE_BUSH, BLOCK.CARROT_PLANT, BLOCK.HONEYBERRY_BUSH].map((id) => getBlockDef(id).displayName))
+      .toEqual(['Hemlock', 'Nightshade Bush', 'Wild Carrot Plant', 'Honeyberry Bush']);
+    expect([itemName('hemlock_root'), itemName('nightshade_berries'), itemName('healwort')]).toEqual(['Hemlock Root', 'Nightshade Berries', 'Healwort']);
+    // what eating one does: always, for SICK_S seconds, not to be roasted away, and Healwort ends it
+    expect(know).toContain(`A Hemlock Root or Nightshade Berries poison you every time, like the Frecklecap: you are Poisoned for ${R.SICK_S} seconds. Neither can be roasted. A leaf of Healwort ends the poisoning at once.`);
+    expect(know).toContain('you are Poisoned for 45 seconds.');
+    expect([ITEMS.hemlock_root.food.sick, ITEMS.nightshade_berries.food.sick, ITEMS.frecklecap.food.sick]).toEqual([1, 1, 1]);
+    for (const k of ['hemlock_root', 'nightshade_berries']) {
+      expect(FIRE_TRANSFORMS[k], k).toBeUndefined();
+      expect(isSkewerFood(k), k).toBe(false);
+      expect(RECIPES.some((r) => r.inputs.some((inp) => 'k' in inp && inp.k === k)), k).toBe(false); // nothing is made of it either
+    }
+    expect(ITEMS.healwort.food.cures).toBe(true);
+    // "about half of what looks like a wild carrot is Hemlock": from the generation-4 table — a carrot patch holds the mean
+    // share of look-alikes, and there are as many small hemlock patches as carrot patches (worldgenLean.test.js measures
+    // it in generated land)
+    const row = (key) => PATCH_TABLE_GEN4.find((r) => r.key === key);
+    const perPatch = (r) => (r.radius === 1 ? 7 : 19) * r.fill; // the columns of a patch × its fill
+    const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
+    expect(row('hemlock').chance).toEqual(row('carrot').chance);
+    expect(row('hemlock').cell).toBe(row('carrot').cell);
+    const mixed = mean(HEMLOCK_SHARES) * perPatch(row('carrot'));
+    const hemlockShare = (mixed + perPatch(row('hemlock'))) / (perPatch(row('carrot')) + perPatch(row('hemlock')));
+    expect(hemlockShare).toBeGreaterThan(0.45);
+    expect(hemlockShare).toBeLessThan(0.6);
+    expect(know).toContain('In the newest worlds about half of what looks like a wild carrot is Hemlock, and Nightshade stands among the honeyberries, most of all in the forest.');
+    // "most of all in the forest": its own patches grow in the forest only; elsewhere it is only mixed in
+    expect(row('nightshade').chance.map((c, b) => (c > 0 ? b : -1)).filter((b) => b >= 0)).toEqual([BIOME.FOREST]);
+    expect(row('nightshade').chance[BIOME.FOREST]).toBe(row('honeyberry').chance[BIOME.FOREST]);
+    expect(mean(NIGHTSHADE_SHARES)).toBeLessThan(mean(HEMLOCK_SHARES));
+    // the hint names the plant and nothing more (main's hint is "<display name> · R: pick")
+    expect(know).toContain('The hint under your crosshair names the plant you are looking at. Read it before you pick.');
+    // one sentence of real-world sense, as a warning
+    const warning = page('Know your plants').find((b) => b.kind === 'warn');
+    expect(plainText(warning.text)).toBe('Outdoors, never eat a wild plant unless a grown-up who knows plants says it is safe.');
+
+    // ---- Plants worth knowing: flax for fibre, aloe for a quick heal, and the greenery that is simply there
+    const worth = words(page('Plants worth knowing'));
+    expect(worth).toContain('Flax stands on the plains in small clumps: slender stems with sky-blue flowers. R pulls one up for 3–4 Plant Fibre; a tussock pulled by hand gives 1–2.');
+    expect(pick(BLOCK.FLAX, {}, () => 0)).toEqual({ to: BLOCK.AIR, drops: [{ k: 'plant_fibre', n: 3 }] });
+    expect(pick(BLOCK.FLAX, {}, () => 0.999).drops).toEqual([{ k: 'plant_fibre', n: 4 }]);
+    expect([rollDrops(BLOCK.TUSSOCK, null, {}, () => 0), rollDrops(BLOCK.TUSSOCK, null, {}, () => 0.999)]).toEqual([[{ k: 'plant_fibre', n: 1 }], [{ k: 'plant_fibre', n: 2 }]]);
+    expect(row('flax').chance.map((c, b) => (c > 0 ? b : -1)).filter((b) => b >= 0)).toEqual([BIOME.PLAINS]);
+    // what fibre is for: two strands make a Cord, and every flint tool, the Fire Drill and the Snare take cord
+    const cord = RECIPES.find((r) => r.id === 'cord');
+    expect(cord.inputs).toEqual([{ k: 'plant_fibre', n: 2 }]);
+    expect(worth).toContain('Two strands twist into a Cord, and cord binds every flint tool, the Fire Drill and the Snare.');
+    const takesCord = (r) => r.inputs.some((inp) => 'k' in inp && inp.k === 'cord');
+    const flintTools = ITEM_KEYS.filter((k) => ITEMS[k].tool && TIER_NAMES[ITEMS[k].tool.tier] === 'flint');
+    expect(flintTools).toHaveLength(5);
+    for (const k of [...flintTools, 'fire_drill', 'snare']) expect(takesCord(RECIPES.find((r) => r.outputs[0].k === k)), k).toBe(true);
+    // the aloe: where it grows, what a pick gives, and the heal's three numbers beside the bandage's
+    const aloe = ITEMS.aloe_leaf.heal;
+    const fibre = ITEMS.fibre_bandage.heal;
+    expect(worth).toContain('Aloe grows in the desert: a rosette of thick, pointed leaves with pale teeth. R takes its 1–2 leaves and the plant with them.');
+    expect([pick(BLOCK.ALOE, {}, () => 0), pick(BLOCK.ALOE, {}, () => 0.999)]).toEqual([
+      { to: BLOCK.AIR, drops: [{ k: 'aloe_leaf', n: 1 }] }, { to: BLOCK.AIR, drops: [{ k: 'aloe_leaf', n: 2 }] }]);
+    expect(row('aloe').chance.map((c, b) => (c > 0 ? b : -1)).filter((b) => b >= 0)).toEqual([BIOME.DESERT]);
+    expect(worth).toContain(`Hold RMB with an Aloe Leaf in hand: it heals ${aloe.hp} HP at ${fmtNum(aloe.rate)} HP a second and takes ${fmtNum(aloe.useS)} s to put on. A Fibre Bandage heals ${fibre.hp} HP, but it takes ${fmtNum(fibre.useS)} s and has to be made first.`);
+    expect(worth).toContain('it heals 6 HP at 1.5 HP a second and takes 1 s to put on. A Fibre Bandage heals 15 HP, but it takes 1.5 s and has to be made first.');
+    expect(aloe.hp).toBeLessThan(fibre.hp);
+    expect(aloe.useS).toBeLessThan(fibre.useS);
+    expect(RECIPES.some((r) => r.outputs.some((o) => o.k === 'aloe_leaf'))).toBe(false); // "has to be made" is the bandage's burden alone
+    // both spread, each on its own ground; a shovel lifts either whole
+    const kind = (key) => SPREAD_KINDS.find((k) => k.key === key);
+    expect(worth).toContain('Both seed themselves like the food plants, flax on grass or dirt and aloe on sand, so leave some standing. A shovel lifts either whole.');
+    expect(soilWords(kind('flax').soil)).toBe('grass or dirt');
+    expect([...kind('aloe').soil]).toEqual([BLOCK.SAND, BLOCK.RED_SAND]);
+    const shovel = { type: 'shovel', tier: 1, durability: 40, power: 1 };
+    expect([rollDrops(BLOCK.FLAX, shovel, {}, () => 0), rollDrops(BLOCK.ALOE, shovel, {}, () => 0)]).toEqual([[{ k: 'flax', n: 1 }], [{ k: 'aloe', n: 1 }]]);
+    // the greenery: nothing to eat; a fern gives a strand of fibre three times in ten
+    expect(worth).toContain(`Ferns under the trees, and meadow daisies and thistles in the open, are simply part of the land: nothing on them is food. A fern pulled up by hand gives a strand of fibre ${fmtPct(FERN_FIBRE_P)} of the time.`);
+    expect(worth).toContain('A fern pulled up by hand gives a strand of fibre 30 % of the time.');
+    for (const id of [BLOCK.FERN, BLOCK.MEADOW_DAISIES, BLOCK.THISTLE]) {
+      const gives = ruleFor(id).drops.flat().flatMap((br) => br.items).map((it) => it.k).filter((k) => ITEMS[k].kind === 'food');
+      expect(gives, getBlockDef(id).name).toEqual([]);
+      expect(PICKABLE[id], getBlockDef(id).name).toBeUndefined();
+    }
+    // the look-alikes spread too
+    expect(worth).toContain('Hemlock and Nightshade seed themselves too. Near your camp, dig them out before they spread.');
+    expect([kind('hemlock').cap, kind('nightshade').cap]).toEqual([6, 4]);
+    // … and only the newest worlds grow any of them
+    expect(text).toContain('Only their land has Hemlock, Nightshade, flax, aloe, ferns, daisies and thistles from the start.');
+    // the healing page names the leaf beside the bandages
+    expect(text).toContain('An Aloe Leaf, picked in the desert, works the same way.');
   });
 
   it('raw water poisons and boiling makes it safe (§66); Poisoned blocks healing, a bandage still works', () => {

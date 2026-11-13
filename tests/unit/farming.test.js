@@ -76,8 +76,8 @@ const green = ([r, g, b, a]) => a === 255 && g > r + 30 && g > b + 30;
 
 describe('the farm blocks 133–150 (blocks.js)', () => {
   it('nine planted blocks then nine sprouts, in the kind order, named after the plant each grows into', () => {
-    expect(BLOCK_COUNT).toBe(151);
-    expect(BLOCKS).toHaveLength(151);
+    expect(BLOCK_COUNT).toBe(159); // §81: the eight plants that are not food follow at 151–158
+    expect(BLOCKS).toHaveLength(159);
     expect(CROP_ROWS.map((row) => row[1])).toEqual(TABLE.map((row) => row[0]));
     expect([...FARM_IDS]).toEqual(Array.from({ length: 18 }, (_, i) => 133 + i));
     TABLE.forEach(([key, label, , grown], i) => {
@@ -98,7 +98,7 @@ describe('the farm blocks 133–150 (blocks.js)', () => {
 
   it('PLANT flags, a 3D model, a flat icon, never placed by hand, the sound of grass; one tile for all nine of each', () => {
     expect([T.SEEDBED, T.SPROUT]).toEqual([205, 206]);
-    expect(TILE_IDS).toHaveLength(176);
+    expect(TILE_IDS).toHaveLength(183); // + the seven tiles of §81 (218–224)
     expect([TILE_NAMES[205], TILE_NAMES[206]]).toEqual(['seedbed', 'sprout']);
     for (const id of FARM_IDS) {
       const d = BLOCKS[id];

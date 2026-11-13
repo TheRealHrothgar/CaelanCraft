@@ -58,8 +58,8 @@ import {
   throwOf, STONE_KEYS, DART_KEYS, dartBreakP, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
 } from './looseItems.js';
 import { RELIGHT_STICKS } from './survivalControl.js';
-// §80: planting, and the plants that spread
-import { SEED_DROPS } from './harvest.js';
+// §80: planting, and the plants that spread; §81: the plants that are not food
+import { SEED_DROPS, FERN_FIBRE_P } from './harvest.js';
 import {
   CROPS, FARM_WATER_REACH, REED_WATER_REACH, SPROUT_MEAN_S, GROW_MEAN_S, SEED_TAKES, SEED_BACK_P, SOIL_EARTH, cropOf, soilWords,
 } from './farming.js';
@@ -345,6 +345,7 @@ export const SPREAD_WORDS = Object.freeze({
   carrot: 'wild carrots', onion: 'wild onions', tuber: 'wild tubers', honeyberry: 'honeyberry bushes', hazel: 'hazel thickets',
   crab_apple: 'crab apple bushes', healwort: 'healworts', prickly_pear: 'prickly pears', cattails: 'cattails',
   honeycap: 'honeycaps', frecklecap: 'frecklecaps',
+  hemlock: 'hemlocks', nightshade: 'nightshade bushes', flax: 'flax', aloe: 'aloes', // §81
 });
 
 /** The soft maximum of every spreading kind, most first: "Ten: cattails", "Eight: wild carrots, wild onions or honeycaps". */
@@ -866,15 +867,18 @@ function statusTable() {
     keys: rows.map((r) => r[0]), source: 'vitals' });
 }
 
-/** Bandages, from ITEMS (heal) and their recipes. */
+/** The "Made from" cell of a healing item that has no recipe (§81: the Aloe Leaf). */
+export const PICKED_WORDS = 'picked, not made';
+
+/** Bandages and the Aloe Leaf (§81), from ITEMS (heal) and their recipes; a leaf has no recipe: it is picked. */
 function bandageTable() {
   const keys = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'heal');
   const rows = keys.map((k) => {
     const hl = /** @type {{hp: number, rate: number}} */ (ITEMS[k].heal);
     const rec = recipeMaking(k);
-    return [itemName(k), `${hl.hp} HP`, `${fmtNum(hl.rate)} HP/s`, rec ? recipeInputs(rec) : '—'];
+    return [itemName(k), `${hl.hp} HP`, `${fmtNum(hl.rate)} HP/s`, rec ? recipeInputs(rec) : PICKED_WORDS];
   });
-  return table({ id: 'bandages', caption: 'Bandages', head: ['Bandage', 'Heals', 'Rate', 'Made from'], rows, keys, source: 'items' });
+  return table({ id: 'bandages', caption: 'Bandages and the Aloe Leaf', head: ['Dressing', 'Heals', 'Rate', 'Made from'], rows, keys, source: 'items' });
 }
 
 /** What hurts, how much and how to avoid it: every DAMAGE_CAUSES key but 'command' (the console). */
@@ -1070,6 +1074,12 @@ function makeChapters() {
   // §80: the foods that are planted as they are (every `from` item of a crop that is not a seed), in CROPS order
   const plantedFoods = CROPS.flatMap((c) => c.from).filter((k) => !/_seeds$/.test(k)).map((k) => itemName(k));
   const dropCount = (/** @type {number|number[]} */ n) => (Array.isArray(n) ? `${n[0]}–${n[1]}` : String(n));
+  // §81: what a pick of a block gives of item `k`, and what breaking it by hand gives
+  const pickCount = (/** @type {number} */ id, /** @type {string} */ k) => dropCount(PICKABLE[id].drops.flat().flatMap((br) => br.items).find((it) => it.k === k)?.n ?? 0);
+  const handCount = (/** @type {number} */ id, /** @type {string} */ k) => dropCount((ruleFor(id)?.drops ?? []).flat().filter((br) => br.if === null)
+    .flatMap((br) => br.items).find((it) => it.k === k)?.n ?? 0);
+  const aloeHeal = /** @type {{hp: number, rate: number, useS: number}} */ (getItem('aloe_leaf')?.heal);
+  const fibreHeal = /** @type {{hp: number, rate: number, useS: number}} */ (getItem('fibre_bandage')?.heal);
   const greenware = rec('greenware_pot');
   const bronze = rec('bronze_ingot');
   const copperIn = bronze.inputs.find((i) => 'k' in i && i.k === 'copper_ingot')?.n ?? 0;
@@ -1244,6 +1254,25 @@ function makeChapters() {
       p('*Wild onions* and *wild carrots* grow in patches on the plains and at the forest\'s edge: small raw, better roasted, and a shovel digs up more. *Hazel thickets* give nuts that never go bad. *Crab apples* are sour and wet, and bake well. Thicket and bush regrow after picking.'),
       p('*Healwort* is rare: silver leaves under violet flower spikes. A leaf ends a poisoning at once; steeped in a Pot of Boiled Water it makes *Healwort Tea*, which cures and quenches. Pick it with [R] and it grows back. Pull it up and it is gone.'),
       tip('A shovel lifts a thicket, a bush or a Healwort whole: plant it by your camp.'),
+    ],
+    // §81: most plants are not food — two of them are poisonous look-alikes, two are worth having for something else
+    [
+      h('Know your plants'),
+      p('Most plants are not food. Ferns, daisies and thistles feed nobody, and two plants that look like food poison you. Learn the pairs.'),
+      p('*Hemlock* looks like the *Wild Carrot*: the same feathery leaves. A carrot has an orange crown at the soil and no flowers. Hemlock has flat white flower heads, purple blotches on its stem and a pale root.'),
+      p('*Nightshade* looks like the *Honeyberry Bush*: the same low, dark bush. Honeyberries are long and pale blue. Nightshade berries are round, shiny and black, with small purple flowers among them.'),
+      p(`A Hemlock Root or Nightshade Berries poison you every time, like the Frecklecap: you are Poisoned for ${R.SICK_S} seconds. Neither can be roasted. A leaf of *Healwort* ends the poisoning at once.`),
+      p('In the newest worlds about half of what looks like a wild carrot is Hemlock, and Nightshade stands among the honeyberries, most of all in the forest.'),
+      tip('The hint under your crosshair names the plant you are looking at. Read it before you pick.'),
+      warn('Outdoors, never eat a wild plant unless a grown-up who knows plants says it is safe.'),
+    ],
+    [
+      h('Plants worth knowing'),
+      p(`*Flax* stands on the plains in small clumps: slender stems with sky-blue flowers. [R] pulls one up for ${pickCount(BLOCK.FLAX, 'plant_fibre')} Plant Fibre; a tussock pulled by hand gives ${handCount(BLOCK.TUSSOCK, 'plant_fibre')}. ${cap(numWord(takes('cord', 'plant_fibre')))} strands twist into a Cord, and cord binds every flint tool, the Fire Drill and the Snare.`),
+      p(`*Aloe* grows in the desert: a rosette of thick, pointed leaves with pale teeth. [R] takes its ${pickCount(BLOCK.ALOE, 'aloe_leaf')} leaves and the plant with them. Hold [RMB] with an *Aloe Leaf* in hand: it heals ${aloeHeal.hp} HP at ${fmtNum(aloeHeal.rate)} HP a second and takes ${fmtNum(aloeHeal.useS)} s to put on. A Fibre Bandage heals ${fibreHeal.hp} HP, but it takes ${fmtNum(fibreHeal.useS)} s and has to be made first.`),
+      p('Both seed themselves like the food plants, flax on grass or dirt and aloe on sand, so leave some standing. A shovel lifts either whole.'),
+      p(`*Ferns* under the trees, and *meadow daisies* and *thistles* in the open, are simply part of the land: nothing on them is food. A fern pulled up by hand gives a strand of fibre ${fmtPct(FERN_FIBRE_P)} of the time.`),
+      tip('Hemlock and Nightshade seed themselves too. Near your camp, dig them out before they spread.'),
     ],
     // §80: the plants spread from the ones left standing, and what you carry home can be planted
     [
@@ -1560,7 +1589,7 @@ function makeChapters() {
       h('Healing'),
       p(`You heal ${fmtNum(R.REGEN)} HP a second while Nourishment and Hydration are at least ${R.REGEN_MIN_SATIATION}, your body is between ${R.REGEN_TEMP_MIN} and ${R.REGEN_TEMP_MAX} °C, you are not Poisoned and you have breath. Each point healed costs ${fmtNum(R.REGEN_COST)} Nourishment. Stand still beside a burning campfire for ${R.REGEN_STILL_S} s and you heal twice as fast.`),
       ...bandageTable(),
-      p('A bandage heals whatever your state, even while you are Poisoned. A rag from a zombie is not clean enough to bind a wound until it has been boiled: the Rag Bandage takes a Pot of Boiled Water.'),
+      p('A bandage heals whatever your state, even while you are Poisoned. A rag from a zombie is not clean enough to bind a wound until it has been boiled: the Rag Bandage takes a Pot of Boiled Water. An Aloe Leaf, picked in the desert, works the same way.'),
     ],
     ...dangerTable().map((t) => [t]),
     [
@@ -1725,7 +1754,7 @@ function makeChapters() {
       h('Older worlds'),
       p('Worlds made before Survival have no wild plants, ponds, copper or tin. The first time you switch one to Survival you are asked to bring them in: they appear wherever the land is untouched, near your builds too. This cannot be undone.'),
       p('New worlds have them unless you untick *Survival resources* when you create the world.'),
-      p('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only. A world made before them keeps its land: every pond in it is fresh. The newest worlds are leaner still: about one food patch in three is left. The rules for things you carry, plant and hunt are the same everywhere.'),
+      p('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only. A world made before them keeps its land: every pond in it is fresh. The newest worlds are leaner still: about one food patch in three is left. Only their land has Hemlock, Nightshade, flax, aloe, ferns, daisies and thistles from the start. The rules for things you carry, plant and hunt are the same everywhere.'),
     ],
     [
       h('Good to know'),
