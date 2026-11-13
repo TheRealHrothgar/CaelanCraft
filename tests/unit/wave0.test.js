@@ -14,7 +14,7 @@ import {
   isReplaceable, isTargetable, isPlaceable, isBreakable, shouldRenderFace, tileToUV, LAYER_CUTOUT, LAYER_TRANSLUCENT, LAYER_OPAQUE,
   SOUND_GROUPS,
   FACE_TOP, FACE_BOTTOM,
-  PLANT_IDS, POP_OFF_IDS, isPlant, isLitter, isPopOff, isStation, isContainerBlock,
+  PLANT_IDS, POP_OFF_IDS, FARM_IDS, isPlant, isLitter, isPopOff, isFarmBlock, isStation, isContainerBlock,
   BLOCK_ALIASES, getBlockDef, isMeshed,
 } from '../../src/blocks.js';
 import { Chunk } from '../../src/chunk.js';
@@ -71,7 +71,7 @@ describe('config', () => {
       ZOMBIE_DAMAGE: C.ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE: C.FIRE_BURN_DAMAGE,
       REGROW_MEAN_S: C.REGROW_MEAN_S, MAX_REGROW_TRACKED: C.MAX_REGROW_TRACKED,
     }).toEqual({
-      GEN_LATEST: 3,
+      GEN_LATEST: 4,
       PACK_SLOTS: 27, WEAR_SLOTS: 3, BASKET_SLOTS: 18, REMAINS_SLOTS: 30, MAX_CONTAINERS: 1024,
       FIRE_SPOTS: 7, MAX_FIRE_SLOTS: 256,
       CAMPFIRE_FUEL_START_S: 300, CAMPFIRE_FUEL_MAX_S: 1200, FUEL_STICK_S: 40, FUEL_LOG_S: 300, RELIGHT_HOLD_S: 3,
@@ -80,9 +80,9 @@ describe('config', () => {
       BODY_TEMP_NORMAL: 37, BODY_TEMP_MIN: 25, BODY_TEMP_MAX: 45, SICK_MAX_S: 600, HEAL_MAX: 50,
       FALL_SAFE_SPEED: 14, FALL_DAMAGE_K: 0.1, CRUSH_DAMAGE_PER_CELL: 6,
       ATTACK_REPEAT_S: 0.55, DIG_TICK_S: 0.25, USE_REPEAT_GAP_S: 0.25, GULP_GAP_S: 0.5, TAP_HOLD_S: 4,
-      PIG_HEALTH: 5, PIG_REPOP_CHECK_S: 240, PIG_REPOP_TARGET: 2, PIG_REPOP_RADIUS: 64, PIG_REPOP_MIN: 24, PIG_REPOP_MAX: 48,
+      PIG_HEALTH: 5, PIG_REPOP_CHECK_S: 420, PIG_REPOP_TARGET: 1, PIG_REPOP_RADIUS: 64, PIG_REPOP_MIN: 24, PIG_REPOP_MAX: 48,
       ZOMBIE_DAMAGE: 8, FIRE_BURN_DAMAGE: 4,
-      REGROW_MEAN_S: 600, MAX_REGROW_TRACKED: 4096,
+      REGROW_MEAN_S: 2880, MAX_REGROW_TRACKED: 4096, // §80: two game days (it was 600)
     });
     expect(C.HOTBAR_SIZE).toBe(9);
     expect(C.HOTBAR_SIZE).toBeLessThan(C.PACK_SLOTS);
@@ -303,10 +303,10 @@ describe('blocks', () => {
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
     // v0.8 appended 68..75 (see the block-physics test below), v0.9 survival 76..94, powder and circuits 95..114, v0.11 the Workbench 115
-    expect(BLOCK_COUNT).toBe(133); // … the three snares 116–118 and Flinty Gravel 119 (§75); v0.14 (§76): Tainted Water 120, the Ground Nest 121, the flora 122–131, the Empty Nest 132
+    expect(BLOCK_COUNT).toBe(151); // … the three snares 116–118 and Flinty Gravel 119 (§75); v0.14 (§76): Tainted Water 120, the Ground Nest 121, the flora 122–131, the Empty Nest 132; §80: the planted blocks 133–141 and the sprouts 142–150
     // + 6 zombie part tiles 240–245 (§39), + 3 Watcher tiles 250–252 (§40: stone, crack glow, smoke), not block faces;
     // v0.9 survival + 28 (77–104); powder and circuits + 35 (160–194)
-    expect(TILE_IDS).toHaveLength(174); // v0.11: + the Workbench 195, 196; v0.13: + 201–203 (§75; 204 withdrawn in §76); v0.14: + tainted water 204, the flora 208–217, the nest's 228–231
+    expect(TILE_IDS).toHaveLength(176); // v0.11: + the Workbench 195, 196; v0.13: + 201–203 (§75; 204 withdrawn in §76); v0.14: + tainted water 204, the flora 208–217, the nest's 228–231; §80: + the seedbed 205 and the sprout 206
     expect(BLOCK.BLACK_HOLE).toBe(66);
     expect(TILE.BLACK_HOLE).toBe(72);
     expect(BLOCK.STONE).toBe(1);
@@ -393,8 +393,8 @@ describe('blocks', () => {
     expect(isLeaves(BLOCK.OAK_LOG) || isLog(BLOCK.OAK_PLANKS)).toBe(false);
   });
   it('v0.9 survival: blocks 76..94 exactly as DESIGN-survival §8.1, tiles 77..104 (powder and circuits follow at 95)', () => {
-    expect(BLOCK_COUNT).toBe(133); // 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119; v0.14 (§76) 120–132
-    expect(BLOCKS).toHaveLength(133);
+    expect(BLOCK_COUNT).toBe(151); // 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119; v0.14 (§76) 120–132; §80 the farm blocks 133–150
+    expect(BLOCKS).toHaveLength(151);
     const P = 'plant'; // the PLANT flags: walk-through, see-through cutout, never culled against itself
     const S = 'solid'; // a plain full block (def defaults)
     // [key, id, name, displayName, flags, soundGroup, [side, top, bottom] TILE keys, placeable]
@@ -451,7 +451,7 @@ describe('blocks', () => {
       'PLANT_TOP_CLEAR', 'LOOSE_STONES', 'FALLEN_BRANCHES', 'FIRE_PIT_SIDE',
     ];
     TILES.forEach((key, i) => expect(TILE[key], key).toBe(77 + i));
-    expect(TILE_IDS).toHaveLength(174); // 115 after survival; + the 35 circuit tiles 160..194; + the Workbench 195, 196; + 201–203 (§75); + tainted water 204, the flora 208–217 and the nest's 228–231 (§76)
+    expect(TILE_IDS).toHaveLength(176); // 115 after survival; + the 35 circuit tiles 160..194; + the Workbench 195, 196; + 201–203 (§75); + tainted water 204, the flora 208–217 and the nest's 228–231 (§76); + the seedbed 205 and the sprout 206 (§80)
     expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
     // Every survival tile is used by a block face — except CATTAILS_TOP: the cattails became a crossed sprite drawn from
     // CATTAILS_SIDE, and tile ids are fixed, so 83 stays painted but no face names it.
@@ -488,25 +488,30 @@ describe('blocks', () => {
     const B = BLOCK;
     // v0.14 (§76 flora): the ten new plant ids 122–131 join the seven of v0.9; both lists stay in id order
     const FLORA_V14 = [122, 123, 124, 125, 126, 127, 128, 129, 130, 131];
-    expect(PLANT_IDS).toEqual([78, 79, 80, 81, 82, 83, 84, ...FLORA_V14]);
-    expect(POP_OFF_IDS).toEqual([B.CAMPFIRE, 78, 79, 80, 81, 82, 83, 84, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT, ...FLORA_V14]);
-    expect(POP_OFF_IDS).toHaveLength(21);
-    expect(Object.isFrozen(PLANT_IDS) && Object.isFrozen(POP_OFF_IDS)).toBe(true);
     // Each predicate over every byte value (and the UNLOADED sentinel) is exactly its list.
     const all = Array.from({ length: 256 }, (_, i) => i);
+    expect(PLANT_IDS).toEqual([78, 79, 80, 81, 82, 83, 84, ...FLORA_V14]);
+    // §80: the 18 farm blocks (a planted seed 133–141, a sprout 142–150) pop off like a plant, but are not wild plants
+    const FARM = Array.from({ length: 18 }, (_, i) => 133 + i);
+    expect([...FARM_IDS]).toEqual(FARM);
+    expect(all.filter(isFarmBlock)).toEqual(FARM);
+    expect(FARM.some(isPlant)).toBe(false);
+    expect(POP_OFF_IDS).toEqual([B.CAMPFIRE, 78, 79, 80, 81, 82, 83, 84, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT, ...FLORA_V14, ...FARM]);
+    expect(POP_OFF_IDS).toHaveLength(39);
+    expect(Object.isFrozen(PLANT_IDS) && Object.isFrozen(POP_OFF_IDS) && Object.isFrozen(FARM_IDS)).toBe(true);
     expect(all.filter(isPlant)).toEqual([...PLANT_IDS]);
     expect(all.filter(isLitter)).toEqual([B.LOOSE_STONES, B.FALLEN_BRANCHES]);
     expect(all.filter(isPopOff)).toEqual([...POP_OFF_IDS]);
     expect(all.filter(isStation)).toEqual([B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WORKBENCH]);
     expect(all.filter(isContainerBlock)).toEqual([B.WICKER_BASKET, B.REMAINS]);
-    for (const f of [isPlant, isLitter, isPopOff, isStation, isContainerBlock]) {
+    for (const f of [isPlant, isLitter, isPopOff, isStation, isContainerBlock, isFarmBlock]) {
       expect(f(UNLOADED) || f(-1) || f(NaN) || f(undefined), f.name).toBe(false);
     }
     // The plants carry the PLANT flags; the PLANT-flagged non-plants are belongings, litter and the fire pit. (The thin
     // circuit parts share those flags but are unmeshed: DESIGN-circuits §1.2 "THIN", tested below.)
     const plantFlagged = BLOCKS.filter((d) => d.layer === LAYER_CUTOUT && !d.solid && !d.cullSame && d.meshed).map((d) => d.id);
     expect(plantFlagged).toEqual([78, 79, 80, 81, 82, 83, 84, B.REMAINS, B.LOOSE_STONES, B.FALLEN_BRANCHES, B.FIRE_PIT, B.SNARE, B.SNARE_BAITED, B.SNARE_SPRUNG,
-      B.GROUND_NEST, ...FLORA_V14, B.GROUND_NEST_EMPTY]); // v0.14 (§76): the ground nests lie on the ground like litter (fauna); the ten plants (flora)
+      B.GROUND_NEST, ...FLORA_V14, B.GROUND_NEST_EMPTY, ...FARM]); // v0.14 (§76): the ground nests lie on the ground like litter (fauna); the ten plants (flora); §80: the farm blocks
     // FIRE_PIT is a meshed cutout block. Only CAMPFIRE, the Black Hole and the circuit parts but the keg (the thin parts and
     // the 14 device models) have their own models, and only CAMPFIRE is fall-through.
     expect(BLOCKS.filter((d) => !d.meshed).map((d) => d.id)).toEqual([
@@ -551,7 +556,7 @@ describe('blocks', () => {
 
   it('powder and circuits: blocks 95..114 exactly as DESIGN-circuits §1.2 (THIN and MODEL), BLOCK_COUNT 115', () => {
     expect(CIRCUIT_BLOCKS.map((row) => row[1])).toEqual(Array.from({ length: 20 }, (_, i) => 95 + i));
-    expect(BLOCK_COUNT).toBe(133); // + v0.11's Workbench at 115, the snares 116–118, v0.13's Flinty Gravel 119 and v0.14's 120–132 (§76)
+    expect(BLOCK_COUNT).toBe(151); // + v0.11's Workbench at 115, the snares 116–118, v0.13's Flinty Gravel 119, v0.14's 120–132 (§76) and the farm blocks 133–150 (§80)
     for (const [key, id, name, displayName, shape, sound, [side, top]] of CIRCUIT_BLOCKS) {
       expect(BLOCK[key], key).toBe(id);
       const d = BLOCKS[id];
@@ -586,7 +591,7 @@ describe('blocks', () => {
 
   it('powder and circuits: tiles 160..194 (§1.4), each used by a block face; TILE_IDS 150', () => {
     CIRCUIT_TILES.forEach((key, i) => expect(TILE[key], key).toBe(160 + i));
-    expect(TILE_IDS).toHaveLength(174); // + the Workbench's 195, 196 (§67), 201–203 (§75), tainted water 204, the flora's 208–217 and the nest's 228–231 (§76)
+    expect(TILE_IDS).toHaveLength(176); // + the Workbench's 195, 196 (§67), 201–203 (§75), tainted water 204, the flora's 208–217 and the nest's 228–231 (§76), the seedbed 205 and the sprout 206 (§80)
     expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
     const used = new Set(BLOCKS.flatMap((d) => d.tiles));
     for (const key of CIRCUIT_TILES) expect(used.has(TILE[key]), key).toBe(true);
@@ -600,7 +605,7 @@ describe('blocks', () => {
     const flat = BLOCKS.filter((d) => d.icon === 'flat').map((d) => d.id);
     expect(flat).toEqual([78, 79, 80, 81, 82, 83, 84, BLOCK.LOOSE_STONES, BLOCK.FALLEN_BRANCHES, ...Array.from({ length: 20 }, (_, i) => BLOCK.COLLAPSAR_CHARGE + i),
       BLOCK.SNARE, BLOCK.SNARE_BAITED, BLOCK.SNARE_SPRUNG, BLOCK.GROUND_NEST, ...PLANT_IDS.filter((id) => id >= BLOCK.HONEYCAP_MUSHROOM),
-      BLOCK.GROUND_NEST_EMPTY]); // + the ground nests (§76 fauna) and the ten plants of v0.14 (§76 flora)
+      BLOCK.GROUND_NEST_EMPTY, ...FARM_IDS]); // + the ground nests (§76 fauna), the ten plants of v0.14 (§76 flora) and the 18 farm blocks (§80)
     expect(BLOCKS[BLOCK.POWDER_KEG].icon).toBe('prism');
     for (const d of BLOCKS) expect(['prism', 'flat'], d.name).toContain(d.icon);
     expect(getBlockDef(200).icon).toBe('prism'); // unknown ids read as AIR

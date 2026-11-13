@@ -404,6 +404,8 @@ function refreshHandleRefs(handle, game) {
   handle.infall = game ? game.infall ?? null : null;
   handle.animals = game ? game.animals ?? null : null; // v0.11 (CONTRACTS §69)
   handle.loose = game ? game.loose ?? null : null; // v0.10 (CONTRACTS §60)
+  handle.growth = game ? game.growth ?? null : null; // §80: the planted cells and sprouts (farming.js Growth)
+  handle.spread = game ? game.spread ?? null : null; // §80: the wild plants' spreading and its counts (spread.js Spread)
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;
@@ -480,6 +482,8 @@ export function installDebugHandle(win, game) {
   handle.animalR = () => (game && typeof game.animalR === 'function' ? game.animalR() : false);
   handle.getRiding = () => (game && typeof game.getRiding === 'function' ? game.getRiding() : null);
   handle.useSelected = (dt) => (game && typeof game.useSelected === 'function' ? game.useSelected(dt) : null);
+  // §80: run the growth and spread steps as if `seconds` had passed (the in-game check of farming)
+  handle.farmStep = (seconds) => (game && typeof game.farmStep === 'function' ? game.farmStep(seconds) : null);
   handle.interact = () => {
     if (game && typeof game.interact === 'function') game.interact();
   };

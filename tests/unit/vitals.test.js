@@ -524,12 +524,12 @@ describe('eating and drinking (§4.2, §4.5)', () => {
     expect(cold.temp).toBe(25);
   });
 
-  it('hand gulps: fresh +8 with a 6 % chance of poisoning (which costs 8 Hydration and 4 Nourishment at once), salt −4', () => {
+  it('hand gulps: fresh +8 with a 20 % chance of poisoning (which costs 8 Hydration and 4 Nourishment at once), salt −4', () => {
     const v = vitals({ hydration: 50, satiation: 50 });
     expect(gulpWater(v, false, () => 0.5)).toEqual({ sick: false });
-    expect(gulpWater(v, false, () => 0.061)).toEqual({ sick: false });
+    expect(gulpWater(v, false, () => 0.201)).toEqual({ sick: false });
     expect(v.hydration).toBe(66);
-    expect(gulpWater(v, false, () => 0.059)).toEqual({ sick: true });
+    expect(gulpWater(v, false, () => 0.199)).toEqual({ sick: true });
     expect(v.sick).toBe(45);
     expect(v.hydration).toBe(66); // +8 − 8
     expect(v.satiation).toBe(46);

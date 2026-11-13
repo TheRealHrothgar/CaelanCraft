@@ -108,7 +108,7 @@ describe('generations 1 and 2 are untouched', () => {
   });
 
   it('streams and tainted ponds exist only in generation 3: below it streamAt is false everywhere and no chunk holds either', () => {
-    expect(GEN_LATEST).toBe(3);
+    expect(GEN_LATEST).toBeGreaterThanOrEqual(3); // streams came with generation 3 and every later one keeps them
     expect(gen3.gen).toBe(3);
     const { columns } = scan();
     expect(columns.length).toBeGreaterThan(500);

@@ -19,7 +19,7 @@
 // are plain text.
 //
 // Imports are read-only data and pure functions: config, blocks, items, crafting, harvest, climate, daynight, vitals,
-// cooking, and the constants of zombies, animals, looseItems and survivalControl.
+// cooking, and the constants of zombies, animals, looseItems, survivalControl, farming and spread.
 import {
   DAY_LENGTH_SECONDS, SUNRISE_TIME, SUNSET_TIME, DAYTIME_SECONDS, NIGHT_SECONDS, START_TIME, HOTBAR_SIZE, PACK_SLOTS,
   STATION_RANGE, STATION_WORK_RANGE, MAX_CRAFT_JOBS,
@@ -58,6 +58,12 @@ import {
   throwOf, STONE_KEYS, DART_KEYS, dartBreakP, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
 } from './looseItems.js';
 import { RELIGHT_STICKS } from './survivalControl.js';
+// §80: planting, and the plants that spread
+import { SEED_DROPS } from './harvest.js';
+import {
+  CROPS, FARM_WATER_REACH, REED_WATER_REACH, SPROUT_MEAN_S, GROW_MEAN_S, SEED_TAKES, SEED_BACK_P, SOIL_EARTH, cropOf, soilWords,
+} from './farming.js';
+import { SPREAD_KINDS, SPREAD_MEAN_S, SPREAD_STEP, SPREAD_RADIUS, SPREAD_RANGE, SPONTANEOUS_MEAN_S } from './spread.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 
@@ -332,6 +338,21 @@ function dropChance(blockId, k) {
     for (const br of group) for (const it of br.items) if (it.k === k) return it.p ?? 1;
   }
   return 0;
+}
+
+/** What the Guide calls many of each spreading kind (spread.js SPREAD_KINDS); a kind without a word is its key and an s. */
+export const SPREAD_WORDS = Object.freeze({
+  carrot: 'wild carrots', onion: 'wild onions', tuber: 'wild tubers', honeyberry: 'honeyberry bushes', hazel: 'hazel thickets',
+  crab_apple: 'crab apple bushes', healwort: 'healworts', prickly_pear: 'prickly pears', cattails: 'cattails',
+  honeycap: 'honeycaps', frecklecap: 'frecklecaps',
+});
+
+/** The soft maximum of every spreading kind, most first: "Ten: cattails", "Eight: wild carrots, wild onions or honeycaps". */
+export function patchCaps() {
+  /** @type {Map<number, string[]>} */
+  const byCap = new Map();
+  for (const k of SPREAD_KINDS) byCap.set(k.cap, [...(byCap.get(k.cap) ?? []), SPREAD_WORDS[k.key] ?? `${k.key.replace(/_/g, ' ')}s`]);
+  return [...byCap].sort((a, b) => b[0] - a[0]).map(([n, names]) => `${cap(numWord(n))}: ${listJoin(names, 'or')}`);
 }
 
 /** The first recipe that outputs `k`. */
@@ -1046,6 +1067,9 @@ function makeChapters() {
     if (d < 1.5) return 'a little over a game day';
     return `about ${halves(d)} game days`;
   };
+  // §80: the foods that are planted as they are (every `from` item of a crop that is not a seed), in CROPS order
+  const plantedFoods = CROPS.flatMap((c) => c.from).filter((k) => !/_seeds$/.test(k)).map((k) => itemName(k));
+  const dropCount = (/** @type {number|number[]} */ n) => (Array.isArray(n) ? `${n[0]}–${n[1]}` : String(n));
   const greenware = rec('greenware_pot');
   const bronze = rec('bronze_ingot');
   const copperIn = bronze.inputs.find((i) => 'k' in i && i.k === 'copper_ingot')?.n ?? 0;
@@ -1166,7 +1190,7 @@ function makeChapters() {
     [
       h('Drinking'),
       p(`Look at water and press [R] to take a gulp, whatever you are holding: ${fmtSigned(R.GULP_FRESH)} Hydration, one gulp every ${GULP_GAP_S} s. With your head under water, [R] drinks where you are.`),
-      p(`Raw water is a gamble. A gulp of fresh water poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(potSick)}. Tainted water is far worse: ${fmtPct(R.GULP_TAINTED_SICK)} a gulp, ${fmtPct(food('pot_tainted').sick)} a pot. Water boiled in the embers of a campfire is always safe.`),
+      p(`Raw water is a gamble. A gulp of fresh water poisons you ${fmtPct(R.GULP_FRESH_SICK)} of the time (ten gulps in a row: ${fmtPct(1 - (1 - R.GULP_FRESH_SICK) ** 10)}), a Pot of Water ${fmtPct(potSick)}. Tainted water is worse still: ${fmtPct(R.GULP_TAINTED_SICK)} a gulp, ${fmtPct(food('pot_tainted').sick)} a pot. Water boiled in the embers of a campfire is always safe.`),
       p(`When you are *Poisoned* your stomach turns at once: ${fmtSigned(R.POISON_THIRST)} Hydration and ${fmtSigned(R.POISON_HUNGER)} Nourishment. For the next ${R.SICK_S} seconds you do not heal, hunger and thirst come ${fmtNum(R.SICK_FACTOR)} times as fast, and you lose ${fmtNum(R.SICK_DPS)} HP a second, though never below ${R.SICK_FLOOR} HP. Every new dose adds its time on top.`),
       tip('Boil before you drink, and cook before you eat.'),
       warn('Water that flows out of a tainted pond is still tainted, though it looks clear.'),
@@ -1208,18 +1232,37 @@ function makeChapters() {
     ],
     [
       h('Foraging'),
-      p(`*Honeyberries* hang on low blue-green bushes: [R] picks a handful. A picked bush regrows in about ${REGROW_MEAN_S === DAY_LENGTH_SECONDS ? 'a game day' : fmtDurationLong(REGROW_MEAN_S)}.`),
+      p(`*Honeyberries* hang on low blue-green bushes: [R] picks a handful. A picked bush fruits again slowly: on average after ${gameDays(REGROW_MEAN_S)}.`),
       p(`*Wild tubers* grow as low leafy rosettes: a shovel digs up more of them. *Cattails* stand at pond edges: their roots are food, their leaves fibre. Oak leaves sometimes drop *acorns* (${fmtPct(dropChance(BLOCK.OAK_LEAVES, 'acorns'))}), spruce leaves *pine nuts* (${fmtPct(dropChance(BLOCK.SPRUCE_LEAVES, 'pine_nuts'))}).`),
       p(`Raw acorns are bitter with tannins and cost you water. Soak ${takes('leached_acorns', 'acorns')} in a Pot of Water to leach them, then roast them on a skewer.`),
       tip('A dug-up bush has to take root again: it is replanted bare and fruits only after it regrows.'),
     ],
     [
       h('Food in bunches'),
-      p('Wild food grows in bunches. You may walk a long way and find nothing, then a whole patch: remember where it was.'),
+      p('Wild food grows in bunches, and there is not much of it. You may walk a long way and find nothing, then a whole patch: remember where it was, and do not strip it bare.'),
       p('*Honeycaps* grow in rings under forest trees and on cave floors: [R] picks them, and they roast well. Look before you eat. The *Frecklecap* grows among them and looks much the same: its cap is flatter and dotted with pale freckles, its stem thin, with a ring. It always poisons you, and roasting does not help.'),
       p('*Wild onions* and *wild carrots* grow in patches on the plains and at the forest\'s edge: small raw, better roasted, and a shovel digs up more. *Hazel thickets* give nuts that never go bad. *Crab apples* are sour and wet, and bake well. Thicket and bush regrow after picking.'),
       p('*Healwort* is rare: silver leaves under violet flower spikes. A leaf ends a poisoning at once; steeped in a Pot of Boiled Water it makes *Healwort Tea*, which cures and quenches. Pick it with [R] and it grows back. Pull it up and it is gone.'),
       tip('A shovel lifts a thicket, a bush or a Healwort whole: plant it by your camp.'),
+    ],
+    // §80: the plants spread from the ones left standing, and what you carry home can be planted
+    [
+      h('Leave some to seed'),
+      p(`Wild plants seed their own kind. A plant left standing puts up a new one within ${numWord(SPREAD_STEP)} cells of itself. One that stands alone on open ground does it on average once in ${gameDays(SPREAD_MEAN_S)}.`),
+      p(`The more of a kind stand together, the less room each finds. A patch is full, and seeds no more, when this many stand within ${numWord(SPREAD_RADIUS)} cells of each other:`),
+      bullets(patchCaps()),
+      p(`Pick a place clean and nothing is left to seed it. A plant does come up from nothing, but only once in ${gameDays(SPONTANEOUS_MEAN_S)} somewhere within ${SPREAD_RANGE} cells of you. Anything you harvest to the last one does not come back.`),
+      p('Mushrooms spread in the shade: on grass or dirt under a tree, and on the stone floor of a cave. Every other plant needs open sky. A new bush, wild or planted, comes up bare and fruits later.'),
+      tip('Take most of a patch and leave a few plants standing. They bring the rest back over the next days.'),
+    ],
+    [
+      h('Planting'),
+      p(`Press [R] with a seed in hand on the top of bare ground. A picked Wild Carrot or Wild Onion gives ${dropCount(SEED_DROPS.carrot.n)} seeds ${fmtPct(SEED_DROPS.carrot.p ?? 1)} of the time, a cut Healwort one seed ${fmtPct(SEED_DROPS.healwort.p ?? 1)} of the time. These are planted as they are: ${listJoin(plantedFoods)}. Mushrooms cannot be planted.`),
+      p(`Most crops grow in ${soilWords(SOIL_EARTH)}. ${itemName('cactus_fruit')} grows in ${soilWords(cropOf('prickly_pear')?.soil ?? [])}, and ${itemName('cattail_root')} only with water within ${numWord(REED_WATER_REACH)} cell of it.`),
+      p(`A seed needs water and light. Fresh water within ${numWord(FARM_WATER_REACH)} cells waters it, level with the soil or one step up or down: a stream, a clear pond, a channel you dig. Tainted water and the sea do not count. It must also see the sky: only leaves or glass may be above it.`),
+      p(`Watered, a seed sprouts after ${gameDays(SPROUT_MEAN_S.watered)} on average and is grown ${gameDays(GROW_MEAN_S.watered)} later. Dry, that is ${gameDays(SPROUT_MEAN_S.dry)} and ${gameDays(GROW_MEAN_S.dry)}. Not every seed takes: ${fmtPct(SEED_TAKES.watered)} of the watered ones, ${fmtPct(SEED_TAKES.dry)} of the dry ones.`),
+      tip('Look at what you planted: the hint says *watered*, *dry* or *needs open sky*.'),
+      tip(`A seed dug out by hand comes back ${fmtPct(SEED_BACK_P)} of the time.`),
     ],
     [
       h('Meat and milk'),
@@ -1682,7 +1725,7 @@ function makeChapters() {
       h('Older worlds'),
       p('Worlds made before Survival have no wild plants, ponds, copper or tin. The first time you switch one to Survival you are asked to bring them in: they appear wherever the land is untouched, near your builds too. This cannot be undone.'),
       p('New worlds have them unless you untick *Survival resources* when you create the world.'),
-      p('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only. A world made before them keeps its land: every pond in it is fresh. The rules for things you carry and hunt are the same everywhere.'),
+      p('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only. A world made before them keeps its land: every pond in it is fresh. The newest worlds are leaner still: about one food patch in three is left. The rules for things you carry, plant and hunt are the same everywhere.'),
     ],
     [
       h('Good to know'),

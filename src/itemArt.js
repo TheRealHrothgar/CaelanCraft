@@ -571,6 +571,15 @@ function paintBrick(ic, rng, base) {
   ic.set(7, 6, tone(base, -0.2));
 }
 
+/**
+ * A handful of seeds (§80): at each [cx, cy] an oval `rx` × `ry`, lit from the upper left and shaded at the lower right.
+ * @param {Icon} ic @param {number[][]} spots @param {number} rx @param {number} ry
+ * @param {{ base: number, light: number, dark: number }} pal
+ */
+function paintSeedHeap(ic, spots, rx, ry, pal) {
+  for (const [cx, cy] of spots) ic.ellipse(cx, cy, rx, ry, (x, y, u, v) => (u + v < -0.45 ? pal.light : u + v > 0.55 ? pal.dark : pal.base));
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Materials
 // ---------------------------------------------------------------------------------------------------------------
@@ -976,6 +985,27 @@ const MATERIAL_PAINTERS = {
     for (const [x, y] of [[4, 13], [5, 12], [5, 13], [5, 14], [6, 13], [6, 14]]) ic.set(x, y, (x + y) & 1 ? 0xc98a4a : 0x8a4e22); // lower vane
     for (const [x, y] of [[1, 9], [2, 8], [6, 15], [7, 14]]) ic.set(x, y, 0xf3e6c8);
     ic.set(3, 12, CORD.dark); // the flight's binding
+  },
+  // §80 farming: three handfuls of seed, told apart by shape as well as colour
+  carrot_seeds(ic) {
+    // fat tan ovals, each with the dark rib a carrot seed has down its middle
+    const spots = [[4.5, 4.5], [11.5, 4], [8, 9], [12.5, 12], [4, 12.5]];
+    paintSeedHeap(ic, spots, 2.2, 2.8, { base: 0xc9a05c, light: 0xf0d9a0, dark: 0x8a6430 });
+    for (const [cx, cy] of spots) ic.line(Math.floor(cx), Math.floor(cy) - 1, Math.floor(cx), Math.floor(cy) + 1, 0x6e4e24);
+  },
+  onion_seeds(ic) {
+    // black and angular, like chips of coal: each a small wedge with one lit edge and a glint
+    for (const [x, y] of [[2, 2], [9, 1], [5, 7], [11, 8], [2, 11]]) {
+      ic.poly([[x + 0.2, y + 2], [x + 2.6, y + 0.2], [x + 4.8, y + 2.4], [x + 2.2, y + 4.8]], (px, py) => (px + py < x + y + 4 ? 0x6c6a7c : px + py > x + y + 5 ? 0x141318 : 0x2e2c34));
+      ic.set(x + 2, y + 1, 0xd8d6e6);
+    }
+  },
+  healwort_seeds(ic) {
+    // small round beads the lilac of the flower they came from, a silver-green bract still on one
+    paintSeedHeap(ic, [[4, 4], [9.5, 3.5], [13, 8], [7, 8.5], [3, 11.5], [10, 12.5]], 2, 2, { base: 0xa98fd0, light: 0xe6dcf8, dark: 0x6a4f9a });
+    ic.set(7, 6, 0x9fc0a0);
+    ic.set(8, 6, 0x7fa888);
+    ic.set(8, 5, 0x9fc0a0);
   },
 };
 
