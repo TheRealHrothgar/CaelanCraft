@@ -1053,6 +1053,12 @@ making`, R `Use: rune, barrel, fire, water, plants, basket`, Space Space `Double
 ## 21. `src/audio.js` (WebAudio, optional feel)
 
 > **v0.10 amendment (§53):** `playRecipe(recipeOrName, volume)` and `startLoop(recipe)`.
+>
+> **v0.16 amendment (§82):** `playBreak`, `playDig`, `playPlace`, `playOink`, `playSqueal`, `playCrackle`, `playGroan`,
+> `playZombieHurt` and `playZombieDown` play sound-bank recipes (soundBank.js); what is written below about those nine
+> sounds is history. `BREAK_CUTOFF_HZ`, `breakCutoffFor` and the constants of the old break, place, pig and zombie sounds are
+> gone; `normalizeSoundGroup(group)` → one of `SOUND_GROUPS` (anything else: `DEFAULT_SOUND_GROUP` 'stone'). The recipe
+> format grew (§82.1); `MAX_GRAINS` 16, `MIN_GRAIN_S` 0.004. Import edge audio → soundBank.
 
 ```js
 export function createAudio()   // → Audio; everything is a no-op when AudioContext is unavailable
@@ -1078,6 +1084,8 @@ playSizzle(v), playPick(v?)`.
 ## 22. `src/diagnostics.js` (DOM)
 
 > **v0.10 amendment (§58):** `?ui=device`, `?scene=vortex|circuits` (`readSceneParam`, `circuitSceneWrites`), the smoke scenes, the F3 circuits and black-hole lines, and the debug handle's `circuits, circuitStore, blackHoles, infall`.
+>
+> **v0.16 amendment (§82.4):** `Params.soundTest` (boolean): `?ui=sounds` opens the Sound Test at once; `Params.ui` stays null for it.
 
 ```js
 export function parseParams(search = location.search)   // → Params { seed: string|null, rd: number|null (1..16), smoke, autoplay, nosave, debug, fly: boolean, time: number|null,
@@ -4581,6 +4589,220 @@ at most 0.54 m from the middle and is at least 0.3 m across both ways; every fac
 `bare` (the same quads in the same places, less the fruit), so picking visibly takes the nuts, apples, berries, fruit
 or flower spikes away. The picked Honeyberry's own tile is too sparse to wrap a box, so its lumps are cut from a
 berry-free corner of the bush's tile (`tile: TILE.HONEYBERRY_BUSH`).
+
+## 82. Sounds: materials, footsteps, voices, ambience — `src/soundBank.js` (PURE), `src/worldSounds.js` (PURE), `src/soundTest.js` (DOM), `src/audio.js`, `src/circuitSounds.js`, `tests/helpers/offlineAudio.js`
+
+Amends §21 (audio.js), §22 (`Params.soundTest`), §23 (main's hook), §53 (the recipe format), §69 and §76 (the animals'
+voices) and §71 (the zombie's voice: the constants are gone, its intent stands). Every sound is still synthesised: there
+is no audio file. No block, item, save field or game rule is added.
+
+**Nobody who built this could listen.** So each sound follows a known synthesis recipe, and the game's own audio code is
+rendered without WebAudio and measured (below). The Sound Test screen is there for a person to judge by ear.
+
+### 82.1 The recipe format (circuitSounds.js's header is the reference)
+
+A recipe is still `{ dur, gain, layers, repeat? }`, one voice per layer. New, all optional (an old recipe plays as it did):
+
+| On a layer | |
+|---|---|
+| `hold` | seconds at `gain` between the attack and the decay. A layer's length is attack + hold + decay. |
+| `glide` | a pitch contour replacing `f1`: `[[part, Hz], …]`, the frequency reaching each Hz at that part (0..1, rising) of the layer, by exponential ramps. |
+| `vibHz`, `vibDepth`, `vibShape?` | vibrato: the pitch swings ± `vibDepth` of itself (an LFO on the oscillators' `detune`, in cents). |
+| `lfoShape?` | the amplitude wobble's wave: `'sine'` (default), `'tri'`, `'square'`, `'saw'` (`LFO_SHAPES`). `lfoDepth` may reach 2. |
+| `partials` | `[[ratio, gain, fade?], …]`: more sines at ratio × the layer's frequency (following sweep, glide and vibrato); with `fade` < 1 one dies away over that part of the layer. |
+| `formants` | `[[Hz or [from, to], q, gain], …]`: band-passes side by side, each with its gain, summed; after `hp` and `bp`, before `lp`. |
+| `grains` | the layer struck several times inside its ONE voice: `{ count (n or [min, max]), over, jitter? (1), gainVar?, pitchVar? }` scattered at random, or a list `[[at, pitch, gain], …]` at fixed times. |
+| `type: 'tri'` | a triangle oscillator (`LAYER_TYPES`). |
+
+| On a recipe | |
+|---|---|
+| `variants` | `[recipe, …]` in place of `layers`: each play picks one at random, never the one played last. The parent's `gain` multiplies; its `vary`, `stretch` and `spare` hold for a variant without its own. |
+| `vary` | each play is pitched by a random factor in [1 − vary, 1 + vary], oscillators and filters alike (at most 0.5). |
+| `stretch` | each play's times are scaled by a random factor in [1 − stretch, 1 + stretch]; `dur` covers the longest. |
+| `spare` | the recipe is not played at all unless `voices + its voices + spare ≤ MAX_VOICES`. |
+
+Engine rules (audio.js):
+- **The amplitude wobble is a gain stage of its own** in front of the envelope (base 1, the LFO adding ± lfoDepth/2), so
+  it scales with the envelope and ends with it. (Before, the LFO was added to the envelope's own gain and did not decay:
+  every wobbling one-shot ended with a click.) A loop keeps the LFO on its layer gain, which is the same thing there.
+- **Grains**: at most `MAX_GRAINS` (16) strikes; two closer than `MIN_GRAIN_S` (0.004 s) are one; a strike is cut short
+  where the next begins, its attack, hold and decay squeezed in proportion; each strike sets the oscillator's and the
+  filters' frequencies × its pitch and runs their sweeps again; a random grain's gain is 1 − gainVar·random (at least
+  0.05). The layer ends by delay + `over` (or the last `at`) + one strike's length.
+- **The floor**: a strike's envelope starts from and decays to `min(DECAY_FLOOR 0.001, 0.01 × its peak)`, so a faint
+  sound still dies away by 40 dB.
+- **Loops** (`startLoop`): `vary`, `stretch`, `grains`, `hold`, `glide`, the vibrato and the fades of `partials` do
+  nothing; the rate given to `set(volume, rate)` now moves the loop's filters with its oscillators and its noise.
+  `startLoop` of a recipe of variants, or of an unknown name, returns a handle that does nothing.
+- `playRecipe` and `startLoop` take the names of `SOUND_RECIPES` (circuitSounds) and of `SOUND_BANK`.
+- Random choices use `Math.random`. Nothing throws into the game loop (§21).
+
+### 82.2 The sound bank — `src/soundBank.js` (pure data, no imports)
+
+`SOUND_BANK` (frozen; `BANK_NAMES`; `BANK_FAMILIES { materials, movement, voices, ambience }`), `materialSound(action,
+group)` → `'breakStone'` (`MATERIAL_ACTIONS` break, dig, place, step × blocks.SOUND_GROUPS: 44 recipes),
+`VOICE_RECIPES` (animals.js voice name → bank name), `BIRD_SONGS`, `AMBIENCE_LOOPS`, `voicesOf(recipe)` (the most voices
+a play can take), `layerEnd(layer)`, `STEP_SPARE` 12, `AMBIENT_SPARE` 14. Each recipe's `dur` is worked out from its
+layers. Every one-shot has `vary`; a recipe has at most four layers.
+
+**Materials.** An impact is a short broadband crack, a few damped sine modes (`partials` fading at their own rates) and
+a tail of debris (noise `grains`); soft ground is shaped noise with a small thud kept above 85 Hz.
+
+| Group | Its character |
+|---|---|
+| stone | a bright crack, inharmonic modes from 1.15 kHz up (× 1.63, 2.41, 3.3) gone in 0.1 s, four to six bits of rubble |
+| wood | a knock with modes at 230 Hz (× 1.78, 2.9, 3.9), quick decay; a break adds two to four splinter cracks |
+| glass | modes at 2.15 kHz (× 1.57, 2.31, 2.93) ringing 0.3 s, six to nine shard tinkles at random pitches, a scatter of noise |
+| dirt | a dull band of noise near 400 Hz and three to five crumbling grains, all under 1.5 kHz |
+| grass | the dirt's thud, lighter, under three to five dry blades near 3.6 kHz |
+| sand | a hiss sweeping 4.2 → 1.9 kHz that dies away over 0.26 s |
+| gravel | seven to ten tiny clicks near 2.3 kHz scattered over 0.17 s, over a low crunch |
+| snow | three or four crunching grains sweeping 1.5 → 0.8 kHz, a thin squeak near 2.6 kHz, a soft thud |
+| leaves | five to seven rustling grains between 2 and 6 kHz, a twig snap |
+| cloth | a soft puff near 400 Hz; a break tears a little (noise wobbling at 55 Hz) |
+| water | a rising bloop and a wash when taken, a falling plop when poured; its step is the wade |
+
+`playBreak(group, v)`, `playDig(group, v)` and `playPlace(group)` play `break…`, `dig…`, `place…` (an unknown group is
+stone). A dig is a lighter, shorter break; a place is the material set down (lower, with a thud).
+
+**Movement.** `step<Group>` (2–3 voices, `spare` STEP_SPARE), `jump`, `landThud`, `swim`, `swimUnder`, `splashIn`,
+`splashOut`. `stepWater` is the wading step.
+
+**Voices.** A voice is a sawtooth with a pitch glide and vibrato through formants, beside breath noise; roughness is a
+fast amplitude wobble, a bleat or a gobble a slow deep one.
+
+| Recipe (animals.js voice) | What it is |
+|---|---|
+| `pigOink`, `pigSqueal` | two grunts, three quick ones or one long snuffle: nasal (a formant near 1 kHz), roughened at 33 Hz; hit: a cry rising 620 → 1100 Hz and falling |
+| `cowMoo` (moo) | 90–130 Hz, 1–1.4 s, opening from "mm" to "oo" (formants 270 → 430 and 750 → 980 Hz); three takes |
+| `sheepBaa` (baa) | 250–370 Hz with a 8–11 Hz tremolo of depth 1.3 and vibrato in step; three takes (ewe, lamb, old ewe) |
+| `horseNeigh` (neigh) | a whinny falling 1.5 kHz → 440 Hz with 12 Hz vibrato and tremolo; or a snort (noise fluttering at 27 Hz); or a low nicker |
+| `wolfBark` (woof), `wolfWhine` (whine), `wolfHowl` | a bark falling 360 → 175 Hz, single or double; a rising whine; the howl: a triangle rising to about 500 Hz, held with a slight vibrato and falling, 2.1–2.8 s |
+| `deerBark` (bleat) | a short hoarse bark 470 → 300 Hz, or a fawn's mew |
+| `rabbitThump` (squeak) | two soft thumps of the hind foot, or one and a sniff |
+| `pheasantCrow` (cackle) | two harsh notes 0.2 s apart, the second higher, then a short drum of wings |
+| `turkeyGobble` (gobble) | a 13 Hz wobble on a pitch falling 690 → 380 Hz, or a few clucks |
+| `bearGrunt`, `bearGrowl`, `bearRoar` (grunt, growl, roar) | 65–85 Hz, rough at 23 Hz; the growl 1.4 s; the roar higher (165 → 86 Hz), brighter and the loudest voice |
+| `fishPlop` (plop), `wingFlush` (flush) | a falling plop and a ripple; noise beating 19 times a second and fading |
+| `zombieGroan`, `zombieHurt`, `zombieDown` | a low (78–104 Hz), muffled (low-passed at 1.1–1.3 kHz), breathy "uhh" that comes in over 0.15–0.3 s, wobbles slowly and sags; an "mmm-uh"; a sigh. Hit: a short soft "oof". Down: a falling "ohh" and a puff |
+
+`playOink`, `playSqueal`, `playGroan`, `playZombieHurt`, `playZombieDown` and `playCrackle` play `pigOink`, `pigSqueal`,
+`zombieGroan`, `zombieHurt`, `zombieDown` and `fireCrackle`. The zombie stays "spooky, not frightening" (§71, §74): its
+sounds are quieter than a wolf's bark and a bear's growl.
+
+**Ambience.** Loops: `ambWind` (noise in bands at 420 and 950 Hz and below 180 Hz, each swelling at its own slow rate),
+`ambStream` (four bands, each wobbling at its own rate between 2 and 9 Hz), `ambFire` (a fluttering roar under 240 Hz,
+a flicker, a thin hiss). One-shots: `streamBlip`, `fireCrackle` (four takes: snaps, a pop with a knock, a flurry of
+ticks, a crack with a hiss), `birdTit`, `birdWarbler`, `birdFinch`, `birdBlackbird`, `birdSparrow`, `birdDove` (a sine
+whose notes are grains at fixed times), `cricketChirp` (three or four pulses of 4.6 kHz, 30 a second).
+
+**Levels** (the loudest 46 ms, A-weighted, at the output; a full-scale 1 kHz sine is 0 dB). Effects are where they
+were: a break −24 (glass) to −32 dB (cloth); a dig and a place about 3 dB under their break; a step 9–11 dB under it;
+voices −36 (the rabbit) to −24 dB (the bear's roar), most near −27; the zombie −30 to −33. Ambience is clearly below:
+birds −40, crickets −44, bubbles −42, and the loops at full level −36 to −39. No rendered sound peaks above 0.5.
+
+### 82.3 The world's sounds — `src/worldSounds.js` (pure; plays through the audio handed in)
+
+- `ANIMAL_VOICES`: every key of animals.js `SOUNDS`, with the bank's recipe where `VOICE_RECIPES` has one (animals.js's
+  own for `snare` and `tame`). main imports it as `ANIMAL_SOUNDS`, so every call it already made plays the new voice.
+  `ambientCall(kind, voice, daylight, random?)`: the species' voice, but for a wolf when daylight < `HOWL_BELOW_DAYLIGHT`
+  (0.3) a howl `HOWL_CHANCE` (0.65) of the time.
+- **`MoveSounds(audio).update(dt, MoveSample)`**, once a frame while the world steps; `reset()`. The sample: x, y, z, vy,
+  onGround, flying, sneaking, sprinting, inWater (swimming), wading, headInWater, ground (a sound group or null), riding.
+  - Steps only on the ground while moving, by distance: one every `STRIDE_M` (2.15 m; sneaking `SNEAK_STRIDE_M` 1.0), so
+    walking makes two a second and sprinting 2.6. Volume `STEP_VOLUME` walk 0.8, sprint 1, sneak 0.35. The sound is the
+    ground's `step…` (unknown: stone); wading, `stepWater`. None below `STEP_MIN_SPEED` (0.5 m/s), none above
+    `STEP_MAX_SPEED` (30 m/s: a teleport), none flying or riding. After `STILL_S` (0.25 s) of standing the next step
+    comes after 0.4 of a stride.
+  - A jump: leaving the ground with vy > `JUMP_MIN_VY` (4) plays `jump` at 0.7.
+  - A landing (after `LAND_MIN_AIR_S` 0.12 s in the air, or at `LAND_MIN_SPEED` 4 m/s): the ground's step at
+    0.45 + 0.55·h and, when h ≥ `LAND_THUD_FROM` (0.3), `landThud` at h, with h = (speed − 4) / 12 clamped to 0..1.
+    A one-block drop (7.5 m/s) is a step only; a jump's landing (8.5) thumps softly.
+  - Water: entering deep water after `SPLASH_GAP_S` (0.6 s) out of it plays `splashIn` at 0.3 + fall speed / 16;
+    a stroke (`swim`, or `swimUnder` with the head under) every `SWIM_STROKE_M` (1.9 m) swum; `splashOut` once,
+    `OUT_AFTER_S` (0.3 s) after leaving water swum in for `OUT_MIN_SWIM_S` (0.8 s).
+  - The first update after a reset only looks.
+- **`sampleSurroundings(world, x, y, z, eyeY)`** → `{ biome, openSky, underground, trees, grass, streamDist }`: the feet
+  column's biome; open sky (no solid cell above the eye: leaves are cover); underground (no open sky and the land's
+  surface ≥ 4 cells above the eye); trees (columns with leaves among the player's and two rings of six at 3 and 6 cells,
+  up to 10 cells above the feet; `TREES_FULL` 4 = 1); grass (the part of the feet column and six at 2 cells whose ground
+  is a `grass` block); `streamDist` (metres to the nearest column within `STREAM_RANGE` 9 cells that is a generated
+  stream, `world.streamAt`, or holds flowing or falling water within 3 cells below and 1 above the feet; still water is
+  silent). main calls it every 0.5 s.
+- **`ambienceTargets(sample)`** → `{ wind, stream, fire, birds, crickets }`, 0..1 each:
+  - wind: `WIND_BY_BIOME` (peaks 1, mountains 0.85, ocean, beach and snow 0.6, desert 0.55, plains 0.5, forest 0.22)
+    + 0.01 a cell above 20 over the sea (at most 0.3), × (1 − 0.5·trees), × 1 under open sky, `WIND_UNDER_ROOF` 0.5
+    under cover, `WIND_UNDERGROUND` 0.06 underground;
+  - birds: by day (daylight 0.3 → 0.6), never underground: max(`BIRDS_BY_BIOME`, trees) (forest 1, plains 0.7, the
+    rest 0.05–0.3), halved under a roof without trees;
+  - crickets: by night (daylight 0.4 → 0.15), on grass (1.5 × grass, at most 1), not in snow, never underground;
+  - stream: (1 − streamDist / 9)^1.5; fire: (1 − fireDist / `FIRE_RANGE` 10)^1.5;
+  - head under water: wind, stream and fire × `UNDERWATER_AMBIENCE` 0.15; no birds, no crickets.
+- **`Ambience(audio, { random? })`**: `update(dt, sample | null)`, `setEnabled(on)`, `stop()`, `voices()`, `level`.
+  Each level follows its target with a time constant (`AMBIENCE_TAU`: wind 2 s, stream 0.8, fire 0.6, birds and
+  crickets 3); with a null sample or switched off everything falls with `AMBIENCE_FADE_TAU` 0.25 s. The loops are set
+  every update (`ambWind` at level × a gust drifting in 0.55..1, at a rate drifting in 0.85..1.3; `ambStream` and
+  `ambFire` at their level) and switched off below `AMBIENCE_OFF` 0.004. One-shots: a bird sings one to three phrases
+  (0.8–2.4 s between them) at level × its nearness (0.45..1), then another kind takes over after 2.5–8.5 s / level;
+  two crickets chirp every 0.5–0.8 s at 0.9 and 0.55 of the level for 6–19 chirps, then rest 1.5–6.5 s; beside a
+  stream about 3 × level bubbles a second. **Budget:** the audible loops plus the one-shots still sounding never
+  exceed `AMBIENCE_MAX_VOICES` (5); a one-shot that would is not played.
+- `loadAmbiencePref(storage)` / `saveAmbiencePref(storage, on)`: the Ambience switch under `AMBIENCE_PREF_KEY`
+  `'caelancraft:v2:ambience'` (`'off'`, or absent for on); never throws.
+
+### 82.4 The Sound Test — `src/soundTest.js` (DOM), `#sound-test`, the pause menu's Sound row
+
+`createSoundTest(doc, audio, { ambienceOn?, onAmbience?, win?, random? })` → `{ open, close, isOpen, setAmbience,
+handleKey, scene, dispose }`. `SOUND_SECTIONS` lists every sound under five headings — Digging and placing, Footsteps
+and movement, Animals and zombies, Ambience, Other (the sounds that were not changed) — as rows of items `{ label,
+method?, args?, recipe?, volume?, also?, times?, everyMs? }`; every bank recipe, every `play*` method and every circuit
+recipe has a button. A walk is `WALK_STEPS` (4) steps `WALK_STEP_MS` apart. `AMBIENCE_SCENES` (Day, Night, By a stream,
+By a campfire at night, On a mountain, Underground) each run the screen's own `Ambience` for a made-up sample, ticked
+every `SCENE_TICK_MS` (50 ms), until Off, another scene or Close.
+
+- The pause menu's `#pause-sound` row (after the physics Undo, before Creatures): `#btn-ambience` (`.hex-button`,
+  "Ambience: On" / "Off", aria-pressed) and `#btn-sound-test`. The module shows the switch's state and reports clicks
+  through `onAmbience`; main applies and stores it.
+- `?ui=sounds` (`Params.soundTest`; `Params.ui` stays null) opens the screen as soon as the page has loaded, over the
+  title screen; no world is needed.
+- The screen is built on first opening: a dialog (z 32, over the title screen 55) with a text button per sound
+  (`.snd-btn`; no icons, no `.mc-button`), a hint under each heading, a muted notice with "Turn sound on". Every click
+  calls `audio.resume()`. Esc, Close or a click on the backdrop shut it, stop a running scene and cancel repeats still
+  to come, and give the focus back; while it is open the title screen and the pause menu are `inert` and it takes
+  keydowns in the capture phase.
+- A press while `audio.running` is false (the first after `?ui=sounds`: a browser starts audio only on a gesture) plays
+  `WAKE_MS` (150 ms) later, so the first sound asked for is heard. `Audio.running` (§21): the context exists and runs.
+
+### 82.5 main.js
+
+One section owns `moveSounds`, `ambience`, `soundTest` and three functions; the rest of main calls them from five
+lines. `stepWorldSounds(dt, live)` (renderFrame, after `computeSky`): in a menu state (paused, dead, click-to-play,
+loading, title), dead, or without a world, `ambience.update(dt, null)`; otherwise `moveSounds.update` when the world
+stepped this frame, the surroundings every 0.5 s (with the nearest campfire within FIRE_RANGE), and
+`ambience.update(dt, sample)` — so the ambience carries on under the picker, the console, the pack and the book.
+`animalCall(a)` (stepAnimals' unprompted calls) plays `ambientCall` at 0.7 of the distance volume. `quietWorldSounds()`
+on leaving a world and on dispose. The Ambience switch is read from and written to localStorage (not under `?nosave`).
+
+### 82.6 The offline renderer and the tests
+
+`tests/helpers/offlineAudio.js`: `OfflineContext`, a pure-JS stand-in for the part of WebAudio audio.js uses, which
+renders — oscillators (sawtooth and square band-limited), looping buffer sources, biquads by the specification's formulas
+(Q in dB for lowpass and highpass), gains, automation (set, linear, exponential, setTarget), nodes connected to
+parameters, `detune`, 128-frame quanta, `onended`. `createAudio({ AudioContextClass: OfflineContext })` therefore runs
+the game's own graph. `measure(samples)` → peak, rms, dc, `loud` (the loudest 46 ms, A-weighted), `level`, centroid,
+lowShare, duration (within 40 dB of the peak), head, tail, silentAfter; `tremoloOf`, `pitchOf`, `burstsOf`, `bandShare`,
+`strongestHz`, `renderSound(play, { createAudio, seconds, seed })` (Math.random seeded for the rendering).
+
+What the tests hold every bank sound to (soundBank.test.js, three seeds each): audible; peak ≤ 0.5; over by `dur` with
+every voice ended; the last 2 ms under 5 % of the peak (no click); no DC offset; less than 80 % of its energy below
+150 Hz; two plays never identical and within 6 dB of each other. And each family to its character: glass brighter than
+stone brighter than wood, stone well above dirt, leaves between 2 and 6 kHz, gravel in four or more clicks; a step at
+least 8 dB under its break; a cow at 85–135 Hz for a second or more and lower than a sheep; a bleat's tremolo at
+7.5–12.5 Hz; a howl over 1.8 s, rising and falling, five times a bark's length; a growl at 60–95 Hz and rough; a groan
+at 75–110 Hz, muffled, slow to come in; birds in separate notes between 2 and 6 kHz; a cricket's three or four pulses.
+soundEngine.test.js checks each new field on the graph and by ear's proxy; worldSounds.test.js the steps, the targets,
+the engine's smoothness and its budget; soundTest.test.js the catalogue and the screen; offlineAudio.test.js the
+renderer against signals whose numbers are known.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

@@ -105,6 +105,10 @@ say Tower built"></textarea>
   <div id="handbook" class="layer hidden" role="dialog" aria-label="Survival Handbook"></div>
   <div id="guide" class="layer hidden" role="dialog" aria-label="Survival Guide"></div>
 
+  <!-- The Sound Test (CONTRACTS §82; z 32 like the Guide, over the title screen z 55): every sound with a button that plays
+       it. soundTest.js builds it; the pause menu's Sound row or ?ui=sounds opens it. -->
+  <div id="sound-test" class="layer hidden" role="dialog" aria-label="Sound Test"></div>
+
   <div id="pause-menu" class="layer hidden">
     <div class="menu-panel">
       <h2 class="menu-title">Game Paused</h2>
@@ -120,6 +124,11 @@ say Tower built"></textarea>
         <button id="btn-phys-explosions" class="mc-button toggle" aria-pressed="true">Explosions: ON</button>
       </div>
       <button id="btn-undo-physics" class="mc-button" disabled>Undo (nothing to undo)</button>
+      <div id="pause-sound" class="physics-row">
+        <span class="physics-label">Sound</span>
+        <button id="btn-ambience" type="button" class="hex-button sound-button" aria-pressed="true" title="Wind, birdsong, crickets, running water and the fire's murmur">Ambience: On</button>
+        <button id="btn-sound-test" type="button" class="hex-button sound-button" title="Listen to every sound of the game">Sound Test</button>
+      </div>
       <div id="pause-creatures" class="physics-row">
         <span class="physics-label">Creatures</span>
         <button id="btn-zombies" class="mc-button toggle" aria-pressed="true">Zombies: ON</button>

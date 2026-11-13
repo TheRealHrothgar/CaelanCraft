@@ -5,7 +5,7 @@
 //   dur     the sound's length in seconds (every layer ends by then: delay + attack + decay ≤ dur);
 //   gain    the whole sound's gain (× the caller's volume);
 //   layers  one voice each, all starting together unless delayed:
-//     type        'noise' | 'sine' | 'saw' | 'square';
+//     type        'noise' | 'sine' | 'saw' | 'square' | 'tri';
 //     f0, f1?     an oscillator's frequency at the start and (exponentially swept) at the end of the layer, in Hz; a noise
 //                 layer has f0 0 (white noise, coloured only by its filters);
 //     lp?, hp?, bp?  a lowpass, highpass and/or bandpass filter (in series, in that order: hp → bp → lp): a frequency in Hz,
@@ -22,10 +22,51 @@
 //
 // Every low sound carries a partial above 100 Hz: laptop and phone speakers roll off below about 100–150 Hz, and the
 // missing fundamental keeps the pitch where it was meant to be (§2.11).
+//
+// v0.16 (CONTRACTS §82): what lifelike sounds need. Every field is optional, so the recipes below play as they always
+// did. The sound bank (soundBank.js: materials, footsteps, voices, ambience) is written in this format.
+//   On a layer:
+//     hold        seconds the layer stays at `gain` between its attack and its decay (a held note; default 0). A layer's
+//                 length is attack + hold + decay;
+//     glide       a pitch contour for an oscillator, replacing f1: [[part, Hz], …] — the frequency is f0 at the start and
+//                 reaches each Hz at that part (0..1, rising) of the layer's length, by exponential ramps;
+//     vibHz, vibDepth, vibShape?   vibrato: the pitch swings by ±vibDepth of itself (0.03 = 3 %) at vibHz; the shape is
+//                 'sine' (default), 'tri', 'square' or 'saw';
+//     lfoShape?   the amplitude wobble's shape (the same four); lfoDepth may reach 2 (the gain then swings from 0 to 2×);
+//     partials    more sines on an oscillator layer: [[ratio, gain, fade?], …] — one at ratio × the layer's frequency
+//                 (following its sweep, glide and vibrato) and at `gain` of the layer's level; with `fade` below 1 it dies
+//                 away over that part of the layer's length (the high modes of a struck stone go first);
+//     formants    the resonances of a voice: [[Hz or [from, to], q, gain], …] — band-pass filters side by side (not in
+//                 series), each with its own gain, added together; they sit after hp and bp and before lp;
+//     grains      the layer is struck several times inside its one voice, each strike with its whole attack, hold, decay
+//                 and sweeps. Either `{ count, over, jitter?, gainVar?, pitchVar? }` — `count` strikes (a number, or
+//                 [min, max] picked at random) spread over `over` seconds, each up to `jitter` (0..1, default 1) of its
+//                 share of that time late, at 1 − gainVar·random of the gain and (1 ± pitchVar) of every frequency — or a
+//                 list [[at, pitch?, gain?], …] of strikes at fixed times (seconds after the layer's delay). A strike is cut
+//                 short where the next one begins; the layer ends by delay + over (or the last `at`) + its length.
+//   On a recipe:
+//     variants    [recipe, …] in place of layers: each play picks one at random, never the one played last;
+//     vary        each play is pitched by a random factor in [1 − vary, 1 + vary] (oscillators and filters alike);
+//     stretch     each play's times are scaled by a random factor in [1 − stretch, 1 + stretch]; `dur` covers the longest;
+//     spare       a sound of little weight (a footstep, a chirp): it is not played at all unless this many voices would
+//                 still be free afterwards, so it can never crowd out the sounds that matter.
+// In a loop, `vary`, `stretch`, `grains`, `hold`, `glide`, the vibrato and the fades of `partials` do nothing; the rate
+// handed to the loop's `set` moves its filters with its oscillators.
+
+/** @typedef {'sine'|'tri'|'square'|'saw'} LfoShape */
+
+/**
+ * @typedef {Object} SoundGrains
+ * @property {number|number[]} count
+ * @property {number} over
+ * @property {number} [jitter]
+ * @property {number} [gainVar]
+ * @property {number} [pitchVar]
+ */
 
 /**
  * @typedef {Object} SoundLayer
- * @property {'noise'|'sine'|'saw'|'square'} type
+ * @property {'noise'|'sine'|'saw'|'square'|'tri'} type
  * @property {number} f0
  * @property {number} [f1]
  * @property {number|number[]} [lp]
@@ -38,14 +79,27 @@
  * @property {number} decay
  * @property {number} [lfoHz]
  * @property {number} [lfoDepth]
+ * @property {LfoShape} [lfoShape]
+ * @property {number} [hold]
+ * @property {number[][]} [glide]
+ * @property {number} [vibHz]
+ * @property {number} [vibDepth]
+ * @property {LfoShape} [vibShape]
+ * @property {number[][]} [partials]
+ * @property {Array<Array<number|number[]>>} [formants]
+ * @property {SoundGrains|number[][]} [grains]
  */
 
 /**
  * @typedef {Object} SoundRecipe
  * @property {number} dur
  * @property {number} gain
- * @property {SoundLayer[]} layers
+ * @property {SoundLayer[]} [layers]
  * @property {{ every: number, count: number }} [repeat]
+ * @property {SoundRecipe[]} [variants]
+ * @property {number} [vary]
+ * @property {number} [stretch]
+ * @property {number} [spare]
  */
 
 /** Deep-freeze a recipe table. */
@@ -196,5 +250,8 @@ export const SOUND_RECIPES = freeze({
 /** Every recipe name, in table order. */
 export const SOUND_NAMES = Object.freeze(Object.keys(SOUND_RECIPES));
 
-/** The layer types a recipe may use. */
-export const LAYER_TYPES = Object.freeze(['noise', 'sine', 'saw', 'square']);
+/** The layer types a recipe may use ('tri' since v0.16, CONTRACTS §82). */
+export const LAYER_TYPES = Object.freeze(['noise', 'sine', 'saw', 'square', 'tri']);
+
+/** The shapes of an amplitude wobble (`lfoShape`) or a vibrato (`vibShape`). */
+export const LFO_SHAPES = Object.freeze(['sine', 'tri', 'square', 'saw']);

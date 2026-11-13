@@ -153,6 +153,7 @@ panel (**Shift+R** on it) says where it comes from.
 | `?ui=console` / `?ui=editor` | With `?autoplay=1`: open the console, or place a sample Rune Block ahead and open its editor (screenshots; use with `?nosave=1` — the editor variant writes to the world) |
 | `?ui=picker` / `?ui=pack` | With `?autoplay=1`: open the block picker, or (in Survival) the Pack & Making screen — with `?nosave=1` an empty pack is stocked with a demo kit |
 | `?ui=device` | With `?autoplay=1`: place a Clockwork Timer ahead and open its settings panel (use with `?nosave=1`) |
+| `?ui=sounds` | Open the Sound Test at once (no world needed): every sound of the game with a button that plays it, and ambience scenes. Also under `Esc` → Sound → Sound Test |
 | `?scene=vortex` / `?scene=circuits` | With `?autoplay=1`: set off a Collapsar Charge 8 cells ahead 2 s after loading, or build the worked circuit examples (a doorbell, a timed keg, a switch and igniter, a dusk lamp) 10 cells ahead (use with `?nosave=1`); with `?smoke=1` the self-test checks them |
 | `?mode=survival` / `?mode=creative` | With `?autoplay=1` or `?smoke=1`: the first world's mode. A saved world older than Survival is not upgraded from a URL (use `Esc` → Mode) unless `?nosave=1` |
 | `?autoplay=1` | Skip the title screen |

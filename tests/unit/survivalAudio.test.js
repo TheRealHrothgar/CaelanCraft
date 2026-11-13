@@ -1,14 +1,18 @@
 // The Survival sounds in src/audio.js (docs/DESIGN-survival.md §9.9): playHurt, playDeath, playEat, playDrink, playDig,
 // playCraft, playToolBreak, playSizzle and playPick. Each one exists, builds its voices on a running context and never
 // throws — with a stub AudioContext that records every node, connection, start/stop time and parameter automation.
+// v0.16 (CONTRACTS §82): playDig plays the dug material's own bank recipe (soundBank `dig…`), so its checks follow the
+// recipe; how it sounds (quieter than a break, each material itself) is measured in soundBank.test.js.
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
-  createAudio, MAX_VOICES, BREAK_CUTOFF_HZ, BREAK_GAIN, PITCH_VARIATION, CRACKLE_CUTOFF_HZ,
-  DIG_GAIN, DIG_TICK_DURATION_S, EAT_TICKS, EAT_TICK_GAP_S, DRINK_GULPS, DRINK_GULP_GAP_S, DRINK_GULP_START_HZ,
+  createAudio, MAX_VOICES, PITCH_VARIATION, CRACKLE_CUTOFF_HZ,
+  EAT_TICKS, EAT_TICK_GAP_S, DRINK_GULPS, DRINK_GULP_GAP_S, DRINK_GULP_START_HZ,
   DRINK_GULP_END_HZ, DEATH_TONE_START_HZ, DEATH_TONE_END_HZ, DEATH_THUD_AT_S, HURT_THUMP_START_HZ, HURT_THUMP_END_HZ,
   TOOL_BREAK_HZ, SIZZLE_HIGHPASS_HZ, PICK_SWISHES, PICK_RUSTLE_HZ, CRAFT_CHIME_HZ, CRAFT_CHIME_AT_S, CRAFT_KNOCK_HZ,
 } from '../../src/audio.js';
 import { SOUND_GROUPS } from '../../src/blocks.js';
+import { SOUND_BANK, materialSound } from '../../src/soundBank.js';
+import { seededRandom } from '../helpers/offlineAudio.js';
 
 /** Every Survival sound and how main calls it (§2.4, §4.2, §4.4, §4.5, §6.1, §6.4, §7.2, §5.3). */
 const SOUNDS = Object.freeze({
@@ -139,15 +143,23 @@ function rig(opts) {
     fn();
     const nodes = log.slice(from);
     for (const s of sources(nodes)) if (typeof s.onended === 'function') s.onended();
+    MASTER_OF.set(nodes, master);
     return nodes;
   };
   return { log, audio, master, during };
 }
 
 const gains = (nodes) => nodes.filter((n) => n.kind === 'gain');
-const peakOf = (nodes) => Math.max(...gains(nodes).map((g) => g.gain.peak));
+/** The envelopes: the gains that feed the master (a recipe voice has other gain stages inside it). */
+const envelopes = (nodes, master) => gains(nodes).filter((g) => g.outputs.includes(master));
+/** The master gain the nodes of a rig().during(...) feed. */
+const MASTER_OF = new WeakMap();
+/** The largest envelope peak among nodes. */
+const peakOf = (nodes, master = MASTER_OF.get(nodes)) => Math.max(...envelopes(nodes, master).map((g) => g.gain.peak));
 /** The filter a noise source feeds. */
 const filterOf = (src) => src.outputs.find((o) => o.kind === 'filter');
+/** Whether a node's signal reaches another through the graph. */
+const reaches = (from, to) => from === to || (from.outputs || []).some((o) => o.kind && reaches(o, to));
 /** First and last frequency an oscillator was set or ramped to. */
 const sweep = (osc) => [osc.frequency.events[0][1], osc.frequency.events[osc.frequency.events.length - 1][1]];
 
@@ -179,18 +191,23 @@ describe('Survival sounds: every method exists and behaves like the others (§9.
         if (s.kind === 'noise') expect(s.offset).toBeGreaterThanOrEqual(0);
       }
       // Every envelope feeds the master gain and decays to (almost) nothing by the time its voice stops.
-      for (const g of gains(nodes)) {
-        expect(g.outputs).toContain(master);
+      expect(envelopes(nodes, master).length).toBeGreaterThan(0);
+      for (const g of envelopes(nodes, master)) {
         const last = g.gain.events[g.gain.events.length - 1];
         expect(last[0]).toBe('exp');
         expect(last[1]).toBeLessThan(0.01);
       }
-      expect(peakOf(nodes)).toBeGreaterThan(0);
-      expect(peakOf(nodes)).toBeLessThanOrEqual(1);
+      expect(peakOf(nodes, master)).toBeGreaterThan(0);
+      expect(peakOf(nodes, master)).toBeLessThanOrEqual(1);
     });
 
     it(`${name} scales with its volume (default 1) and is silent at 0, below 0, NaN or when muted`, () => {
-      const { audio, during } = rig();
+      const { audio, during: play } = rig();
+      // the same random choices for every play (a recipe's grains each have a random gain)
+      const during = (fn) => {
+        vi.spyOn(Math, 'random').mockImplementation(seededRandom(11));
+        return play(fn);
+      };
       const loud = peakOf(during(() => SOUNDS[name](audio, 1)));
       const byDefault = peakOf(during(() => (name === 'playDig' ? audio.playDig('stone') : audio[name]())));
       expect(byDefault).toBeCloseTo(loud, 9);
@@ -241,8 +258,8 @@ describe('Survival sounds: every method exists and behaves like the others (§9.
       return log.length - from;
     };
     let plays = 0;
-    while (added(() => audio.playDig('stone', 1)) > 0 && plays < 1000) plays++;
-    expect(plays).toBe(MAX_VOICES); // one voice per dig tick, none ended yet
+    while (added(() => audio.playHiss(1)) > 0 && plays < 1000) plays++;
+    expect(plays).toBe(MAX_VOICES); // one voice per hiss, none ended yet
     for (const name of NAMES) expect(added(() => SOUNDS[name](audio, 1)), name).toBe(0);
     // The voices finish: each source's onended disconnects its whole chain.
     for (const s of sources(log)) s.onended();
@@ -332,28 +349,36 @@ describe('Survival sounds: what each one is made of', () => {
     expect(gulps[1].startAt - gulps[0].startAt).toBeCloseTo(DRINK_GULP_GAP_S, 9);
   });
 
-  it('playDig: one short tick through the block\'s break lowpass (BREAK_CUTOFF_HZ), quieter than a break', () => {
-    const { audio, during } = rig();
+  it('playDig: the dug material\'s own dig recipe, one voice per layer, scaled by the volume', () => {
+    const { audio, during, master } = rig();
     for (const group of [...SOUND_GROUPS, null, undefined, 'no-such-group']) {
+      const known = typeof group === 'string' && SOUND_GROUPS.includes(group) ? group : 'stone';
+      const recipe = SOUND_BANK[materialSound('dig', known)];
+      vi.spyOn(Math, 'random').mockImplementation(seededRandom(3));
       const nodes = during(() => audio.playDig(group, 1));
-      const src = sources(nodes);
-      expect(src).toHaveLength(1);
-      expect(src[0].kind).toBe('noise');
-      expect(src[0].stopAt - src[0].startAt).toBeCloseTo(DIG_TICK_DURATION_S, 9);
-      const lp = filterOf(src[0]);
-      expect(lp.type).toBe('lowpass');
-      const cutoff = BREAK_CUTOFF_HZ[typeof group === 'string' && Object.hasOwn(BREAK_CUTOFF_HZ, group) ? group : 'stone'];
-      const pitch = src[0].playbackRate.value;
-      expect(Math.abs(pitch - 1)).toBeLessThanOrEqual(PITCH_VARIATION + 1e-9);
-      expect(lp.frequency.value).toBeCloseTo(Math.min(cutoff * pitch, 4000), 6); // 4000 = the fake's Nyquist
-      expect(peakOf(nodes)).toBeCloseTo(DIG_GAIN, 9);
+      const envs = envelopes(nodes, master);
+      expect(envs, String(group)).toHaveLength(recipe.layers.length);
+      // each layer's envelope peaks at the recipe's gain × the layer's (× a grain's own gain, at most 1)
+      const top = Math.max(...recipe.layers.map((l) => l.gain)) * recipe.gain;
+      expect(peakOf(envs, master), String(group)).toBeLessThanOrEqual(top + 1e-9);
+      expect(peakOf(envs, master), String(group)).toBeGreaterThan(top * 0.3);
+      // the layers' kinds are the recipe's: noise for the dull and hissing parts, an oscillator for a mode or a thud
+      const tracked = sources(nodes).filter((s) => envs.some((e) => reaches(s, e)));
+      expect(tracked.filter((s) => s.kind === 'noise').length, String(group)).toBe(recipe.layers.filter((l) => l.type === 'noise').length);
+      for (const s of sources(nodes)) expect(s.stopAt - 2, String(group)).toBeLessThanOrEqual(recipe.dur + 1e-9); // a tick: over by dur
+      expect(recipe.dur, String(group)).toBeLessThan(0.2);
     }
-    // At the volumes main uses (0.35 while digging, 0.15 for "cannot"), it is well below a break.
-    expect(DIG_GAIN * 0.35).toBeLessThan(BREAK_GAIN / 2);
-    expect(peakOf(during(() => audio.playDig('wood', 0.35)))).toBeCloseTo(DIG_GAIN * 0.35, 9);
-    expect(peakOf(during(() => audio.playDig('wood', 0.15)))).toBeCloseTo(DIG_GAIN * 0.15, 9);
-    // Glass gets no ping on a dig tick (only playBreak rings).
-    expect(sources(during(() => audio.playDig('glass', 1)))).toHaveLength(1);
+    // At the volumes main uses (0.35 while digging, 0.15 for "cannot"): the same sound, scaled.
+    const at = (v) => {
+      vi.spyOn(Math, 'random').mockImplementation(seededRandom(3));
+      return peakOf(during(() => audio.playDig('wood', v)));
+    };
+    expect(at(0.35)).toBeCloseTo(at(1) * 0.35, 9);
+    expect(at(0.15)).toBeCloseTo(at(1) * 0.15, 9);
+    // every material has a dig of its own
+    const names = new Set(SOUND_GROUPS.map((g) => materialSound('dig', g)));
+    expect(names.size).toBe(SOUND_GROUPS.length);
+    for (const n of names) expect(SOUND_BANK[n], n).toBeTruthy();
   });
 
   it('playCraft: a wooden knock and a soft chime', () => {
@@ -434,6 +459,7 @@ describe('Survival sounds: what each one is made of', () => {
     for (let i = 0; i < 30; i++) {
       for (const name of NAMES) {
         for (const n of during(() => SOUNDS[name](audio, 1)).filter((x) => x.kind === 'noise')) {
+          if (n.loop) continue; // a recipe's noise loops round the buffer: any offset has room
           const dur = n.stopAt - n.startAt;
           expect(n.offset + dur * n.playbackRate.value).toBeLessThanOrEqual(1 + 1e-9);
           bursts++;
