@@ -578,6 +578,7 @@ describe('styles.css survival screens', () => {
 
   it('the contents page fits a short window: below 600 px the chapter list is compact (play-test round 2: 800×600 scrolled)', () => {
     // At 800×600 (a 502 px viewport) the page's columns are 285 px tall; ten entries of 16px/1.5 + 3px padding were 306 px.
+    // (Fourteen chapters since §85 and §87: 13px/1.3 + 1px padding fits them in 271 px.)
     const m = /@media \(max-height:600px\)\{\.hb-toc-entry\{([^{}]*)\}\}/.exec(css);
     expect(m, 'a max-height media rule for .hb-toc-entry').toBeTruthy();
     const compact = new Map(m[1].split(';').filter(Boolean).map((d) => d.split(':').map((x) => x.trim())));
