@@ -456,6 +456,13 @@
  * @property {(mode: 'rain'|'dry'|null) => ('rain'|'dry'|null)} [setWeather]  force rain at full strength, no rain, or
  *   (null) the real weather again; drives the look, the sound and every effect; returns what is forced
  * @property {(n: number) => number} [setDay]       set the day counter (a whole number from 1); returns the day
+ *
+ * Water that runs out (CONTRACTS §83): the cycle's counts, a pool looked at, and time for the cycle alone.
+ * @property {import('./waterBodies.js').WaterCycle} [waterCycle]  the water cycle, with its counts
+ * @property {(q: number, y: number, r: number) => ({ cells: number, depth: number, quality: string, sea: boolean, stream: boolean, contained: boolean, covered: boolean, list: number[] }|null)} [waterBodyAt]
+ *   the body of water that the water in a cell is taken from
+ * @property {(seconds: number, env?: { rain?: number|((q: number, r: number) => number), dryness?: number|(() => number) }) => ({ seconds: number, dried: number, filled: number, beds: number, basins: number }|null)} [waterStep]
+ *   run the water cycle as if `seconds` had passed, in another weather when `env` is given
  */
 
 export {};

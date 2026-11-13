@@ -32,14 +32,20 @@ import { interactKind, useActionOf, waterHint, waterKind, WATER_POTS } from '../
 import { serializeSave, deserializeSave, SAVE_VERSION } from '../../src/storage.js';
 import { spoiledText } from '../../src/main.js';
 import { makeFakeWorld, attachPhysics } from '../helpers/fixtures.js';
+import { withSprings, rest } from '../helpers/water.js';
 
 const B = BLOCK;
 const T = B.TAINTED_WATER;
 const flow = (k) => B.WATER_FLOW_1 + k - 1;
 
-/** A fake world (stone for y ≤ groundY) with block physics attached. */
-function setup(groundY = 0) {
+/**
+ * A fake world (stone for y ≤ groundY) with block physics attached. `springs`: [q, y, r] cells in which a FRESH source is
+ * running water (§83: fed, it keeps feeding its flow). A tainted source is never fed: on open ground it spills dry in
+ * 12 s, so the cases below that look at what flows out of one look within its first 4 s (`settle` ends long before).
+ */
+function setup(groundY = 0, springs = null) {
   const world = makeFakeWorld({ groundY });
+  if (springs) withSprings(world, springs);
   const physics = attachPhysics(world, BlockPhysics);
   return { world, physics };
 }
@@ -197,21 +203,29 @@ describe('the water rule with two kinds of source (§35.2, §76)', () => {
     settle(physics);
     expect(waterCells(world, 12, 0, 4)).toEqual([]);
     expect(world.editCount).toBe(0);
+    // §83: and left alone on open ground it runs out by itself, a level every 4 s
+    world.setBlock(0, 1, 0, T);
+    settle(physics);
+    expect(waterCells(world, 12, 0, 4)).toHaveLength(127);
+    rest(physics);
+    expect(waterCells(world, 12, 0, 4)).toEqual([]);
   });
 
-  it('falls like water: off a ledge it lands at full strength and spreads where it lands', () => {
+  it('falls like water (§83 law 1): in mid-air it comes down as itself, lands at full strength and spreads where it lands', () => {
     const { world, physics } = setup();
     world.setBlock(0, 6, 0, T); // in mid-air, five cells above the floor
+    for (let i = 0; i < 5; i++) physics.tick();
+    expect(world.getBlock(0, 1, 0)).toBe(T); // one cell a tick: the source itself, not a column of falling water
     settle(physics);
-    for (let y = 2; y <= 5; y++) expect(world.getBlock(0, y, 0), `y ${y}`).toBe(B.WATER_FALL);
-    expect(world.getBlock(0, 1, 0)).toBe(B.WATER_FALL);
+    for (let y = 2; y <= 6; y++) expect(world.getBlock(0, y, 0), `y ${y}`).toBe(B.AIR);
+    expect(world.getBlock(0, 1, 0)).toBe(T);
     expect(world.getBlock(1, 1, 0)).toBe(flow(6));
-    expect(waterCells(world, 12, 1, 1).filter(([, , , id]) => id !== B.WATER_FALL)).toHaveLength(126);
+    expect(waterCells(world, 12, 1, 1).filter(([, , , id]) => id !== T)).toHaveLength(126);
   });
 
   /**
    * A hole at (0, 4, 0) in a natural stone slab, with sources `kinds` (three ids) in three of its six side cells: the hole
-   * fills (FLOW_6), and with three sources beside it over a floor it becomes a source itself (the infinite-source rule).
+   * fills (FLOW_6). Until §83 it then became a source itself (the infinite-source rule); now only the sea makes water.
    */
   function holeAmong(kinds) {
     const { world, physics } = setup(3);
@@ -223,14 +237,41 @@ describe('the water rule with two kinds of source (§35.2, §76)', () => {
     return world.getBlock(0, 4, 0);
   }
 
-  it('a new source among three sources is tainted when ANY of them is: taint never dilutes', () => {
-    expect(holeAmong([B.WATER, B.WATER, B.WATER])).toBe(B.WATER);
-    expect(holeAmong([T, T, T])).toBe(T);
-    expect(holeAmong([B.WATER, B.WATER, T])).toBe(T);
-    expect(holeAmong([T, B.WATER, B.WATER])).toBe(T);
+  /**
+   * The same hole on the line where two SEAS meet: `left` fills the cells with q < 0 and `right` those with q ≥ 0 (each far
+   * more than 128 cells), on a floor. The hole at (0, 4, 0) has two cells of `left` and four of `right` beside it.
+   */
+  function holeBetweenSeas(left, right) {
+    const { world, physics } = setup(3);
+    for (let q = -16; q <= 16; q++) for (let r = -16; r <= 16; r++) world.put(q, 4, r, q < 0 ? left : right);
+    world.put(0, 4, 0, B.AIR); // (generated as air: not a cell of either sea)
+    physics.scheduleWaterAround(0, 4, 0);
+    settle(physics);
+    return world.getBlock(0, 4, 0);
+  }
+
+  it('a new source among three sources of the SEA is tainted when ANY of them is: taint never dilutes; a pool makes no source', () => {
+    expect(holeBetweenSeas(B.WATER, B.WATER)).toBe(B.WATER);
+    expect(holeBetweenSeas(T, T)).toBe(T);
+    expect(holeBetweenSeas(B.WATER, T)).toBe(T);
+    expect(holeBetweenSeas(T, B.WATER)).toBe(T);
+    // §83 law 3: among the sources of a pool, of whatever kind, the hole holds flowing water and never becomes a source
+    for (const kinds of [[B.WATER, B.WATER, B.WATER], [T, T, T], [B.WATER, B.WATER, T], [T, B.WATER, B.WATER]]) expect(holeAmong(kinds)).toBe(flow(6));
   });
 
-  it('natural tainted water refills as tainted water, leaving no edit; natural fresh water as fresh', () => {
+  it('a natural tainted SEA refills as tainted water, leaving no edit, a fresh one as fresh; a natural pond does not refill (§83)', () => {
+    for (const id of [T, B.WATER]) {
+      const { world, physics } = setup(3);
+      for (let q = -16; q <= 16; q++) for (let r = -16; r <= 16; r++) world.put(q, 4, r, id); // a natural sea of it
+      world.setBlock(0, 4, 0, B.AIR);
+      settle(physics);
+      expect(world.getBlock(0, 4, 0)).toBe(id);
+      world.setBlock(1, 4, 0, B.AIR);
+      world.setBlock(2, 4, 0, B.AIR);
+      settle(physics);
+      expect([world.getBlock(1, 4, 0), world.getBlock(2, 4, 0)]).toEqual([id, id]);
+      expect(world.editCount).toBe(0);
+    }
     for (const id of [T, B.WATER]) {
       const { world, physics } = setup(3);
       slab(world, 4, 4);
@@ -239,21 +280,19 @@ describe('the water rule with two kinds of source (§35.2, §76)', () => {
       for (const [dq, dr] of HEX_DIRS) world.put(dq, 4, dr, id);
       world.setBlock(0, 4, 0, B.AIR); // the middle cell taken away (six sources round it)
       settle(physics);
-      expect(world.getBlock(0, 4, 0)).toBe(id);
-      world.setBlock(1, 4, 0, B.AIR); // an edge cell: three sources beside it (the middle and two of the ring)
-      settle(physics);
-      expect(world.getBlock(1, 4, 0)).toBe(id);
-      expect(world.editCount).toBe(0);
+      expect(world.getBlock(0, 4, 0)).toBe(flow(6)); // flowing water: it was generated as water, and still it is no source again
+      rest(physics);
+      expect(waterCells(world, 6, 4, 4)).toEqual([]); // the hole is a breach in the middle of the pond: it ran out through it
+      expect(world.editCount).toBe(7);
     }
-    // … whatever is beside it: a natural tainted cell with only FRESH water around comes back tainted
+    // a tainted cell generated in the middle of the fresh sea is no sea of its own: taken away, the SEA closes over it — fresh
     const { world, physics } = setup(3);
-    slab(world, 4, 4);
+    for (let q = -16; q <= 16; q++) for (let r = -16; r <= 16; r++) world.put(q, 4, r, B.WATER);
     world.put(0, 4, 0, T);
-    for (const [dq, dr] of HEX_DIRS) world.put(dq, 4, dr, B.WATER);
     world.setBlock(0, 4, 0, B.AIR);
     settle(physics);
-    expect(world.getBlock(0, 4, 0)).toBe(T);
-    expect(world.editCount).toBe(0);
+    expect(world.getBlock(0, 4, 0)).toBe(B.WATER);
+    expect(world.editCount).toBe(1);
   });
 
   it('sand sinks through it and `drain` removes it, counting it as natural water', () => {
@@ -364,7 +403,7 @@ describe('waterQualityAt: flowing water is as good as its sources (§76)', () =>
    * @returns {{ world: *, physics: * }}
    */
   function trench(len) {
-    const { world, physics } = setup();
+    const { world, physics } = setup(0, [[0, 1, 0]]); // (the fresh source at its head is a spring: it keeps running)
     // the cells (q, 0) for q = 0..len are the trench; the rows either side of it and the two cells past its ends are wall
     for (let q = -3; q <= len + 3; q++) for (const r of [-1, 1]) world.put(q, 1, r, B.STONE);
     world.put(-1, 1, 0, B.STONE);
@@ -392,18 +431,30 @@ describe('waterQualityAt: flowing water is as good as its sources (§76)', () =>
     world.setBlock(0, 1, 0, B.WATER);
     settle(physics);
     expect(world.getBlock(3, 1, 0)).toBe(flow(4));
-    // falling water lands on channel cell q = 3: a tainted source five cells above it
-    world.setBlock(3, 6, 0, T);
+    // Falling water lands on channel cell q = 3. A source in mid-air would fall itself (§83 law 1), so the tainted source
+    // stands on a ledge beside the shaft over that cell — (3, 6, 1) on stone, walled in but for the side toward (3, 6, 0),
+    // which has no floor: its water runs into that cell (level 6) and pours down from there.
+    world.put(3, 5, 1, B.STONE);
+    for (const [dq, dr] of HEX_DIRS) if (!(dq === 0 && dr === -1)) world.put(3 + dq, 6, 1 + dr, B.STONE);
+    world.setBlock(3, 6, 1, T);
     settle(physics);
-    expect(world.getBlock(3, 1, 0)).toBe(B.WATER_FALL); // the fall (7) feeds it better than the channel (4)
+    expect(physics.fluids.pendingSpills).toBe(1); // (the tainted source stands open: all of this is its first 4 s)
+    expect(world.getBlock(3, 6, 0)).toBe(flow(6));
+    for (let y = 2; y <= 5; y++) expect(world.getBlock(3, y, 0), `y ${y}`).toBe(B.WATER_FALL);
+    expect(world.getBlock(3, 1, 0)).toBe(B.WATER_FALL); // the fall (6) feeds it better than the channel (4)
     expect(waterQualityAt(world.getBlock, 3, 1, 0)).toBe('tainted');
     expect(waterQualityAt(world.getBlock, 3, 4, 0)).toBe('tainted');
     for (const q of [4, 5, 6, 7, 8]) expect(waterQualityAt(world.getBlock, q, 1, 0), `q ${q}`).toBe('tainted');
     // upstream: q = 1 is still fed by the fresh source alone; q = 2 now takes its level from the landing as well
     expect(world.getBlock(1, 1, 0)).toBe(flow(6));
     expect(waterQualityAt(world.getBlock, 1, 1, 0)).toBe('fresh');
-    expect(world.getBlock(2, 1, 0)).toBe(flow(6));
+    expect(world.getBlock(2, 1, 0)).toBe(flow(5));
     expect(waterQualityAt(world.getBlock, 2, 1, 0)).toBe('tainted');
+    // 12 s later the tainted source has run out, and the channel is the fresh stream's alone again
+    rest(physics);
+    expect(world.getBlock(3, 6, 1)).toBe(B.AIR);
+    expect([1, 2, 3, 4, 5, 6].map((q) => world.getBlock(q, 1, 0))).toEqual([6, 5, 4, 3, 2, 1].map(flow));
+    for (const q of [1, 2, 3, 4, 5, 6]) expect(waterQualityAt(world.getBlock, q, 1, 0), `q ${q}`).toBe('fresh');
   });
 
   it('stale water with no source in reach reads fresh, UNLOADED cells are skipped, and the search is bounded', () => {

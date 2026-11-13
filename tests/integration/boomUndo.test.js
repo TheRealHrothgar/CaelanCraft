@@ -86,9 +86,13 @@ function differ(world, snap) {
 }
 
 describe('a chain is one undo (EXP-1, EXP-3)', () => {
-  it('hung barrels that fizzle in a pond join the blast: no separate collapse event, one undo restores the whole crater', () => {
+  it('hung barrels that fizzle in the water beside them join the blast: no separate collapse event, one undo restores the whole crater', () => {
     const { world, physics, ex, events } = scene();
-    for (const [q, r] of disc(5, 0, 2)) for (const y of [9, 10]) world.put(q, y, r, B.WATER);
+    // A lake two cells deep whose near shore is the pond's this test once used (the cells of disc(5, 0, 2) nearest the
+    // kegs), but 169 cells to a level: the SEA (CONTRACTS §83). The sea is fed: with its bed blown out it pours into the
+    // crater and stays where it is, beside the hung kegs. A pond no longer does — its water FALLS into the crater (law 1)
+    // and leaves them dry, so they go off instead; that case is the next test.
+    for (const [q, r] of disc(10, 0, 7)) for (const y of [9, 10]) world.put(q, y, r, B.WATER);
     settle(physics);
     for (let q = 1; q <= 2; q++) for (let r = -1; r <= 1; r++) for (const y of [10, 11]) world.setBlock(q, y, r, B.BLAST_BARREL);
     world.setBlock(0, 11, 0, B.BLAST_BARREL);
@@ -111,6 +115,37 @@ describe('a chain is one undo (EXP-1, EXP-3)', () => {
     settle(physics);
     expect(differ(world, snap)).toEqual([]);
     expect(physics.undo().ok).toBe(false);
+  });
+
+  it('a POND beside the blast falls into the crater and runs out (§83) — and one undo puts crater, kegs and pond back as they were', () => {
+    const { world, physics, ex, events } = scene();
+    const pond = [];
+    for (const [q, r] of disc(5, 0, 2)) for (const y of [9, 10]) pond.push([q, y, r]);
+    for (const [q, y, r] of pond) world.put(q, y, r, B.WATER);
+    settle(physics);
+    for (let q = 1; q <= 2; q++) for (let r = -1; r <= 1; r++) for (const y of [10, 11]) world.setBlock(q, y, r, B.BLAST_BARREL);
+    world.setBlock(0, 11, 0, B.BLAST_BARREL);
+    settle(physics);
+    const snap = snapshot(world, -8, 8, 0, 14, -8, 8);
+    physics.asPlayer(() => ex.lightAt(0, 11, 0));
+    steps(physics, 40); // the chain, the collapse, and the pond running out through the crater, level after level (4 s each)
+    settle(physics);
+    expect(events).toEqual(['explosion']);
+    // the pond is not what it was: its bed was blown out, so its water fell (law 1), and what stood open spilled (law 2)
+    const left = pond.filter(([q, y, r]) => world.getBlock(q, y, r) === B.WATER).length;
+    expect(left).toBeLessThan(pond.length / 2);
+    expect(physics.fluids.stats.moved).toBeGreaterThan(0);
+    expect(physics.fluids.stats.spilled).toBeGreaterThan(3);
+    // within the undo window the water's own moves were recorded with the blast: undo restores all of it — also while
+    // what is left in the crater is still running out
+    const res = physics.undo();
+    expect(res.message).toContain('undid the explosion');
+    expect(res.message).not.toContain('changed since');
+    settle(physics);
+    steps(physics, 10);
+    expect(differ(world, snap)).toEqual([]);
+    for (const [q, y, r] of pond) expect(world.getBlock(q, y, r)).toBe(B.WATER);
+    expect(physics.fluids.pendingSpills).toBe(0);
   });
 
   it('switching explosions off while hung barrels burn keeps their fall in the blast event', () => {

@@ -412,6 +412,55 @@ From the build of CONTRACTS §82 (materials, footsteps, voices, ambience, the So
   end with a click, because the wobble was added to the envelope and did not die away with it. The wobble is a gain
   stage of its own now (§82.1).
 
+## The laws of water; pools that run out — open items
+
+CONTRACTS §83. Built and tested without a browser: nothing below was seen in the running game.
+
+- **It never rains yet.** The water cycle reads the weather through `waterEnv` in `main.js`, and that is a stand-in:
+  rain 0, dryness 1. So until the weather is wired in (one object to replace), water only dries and is used up, and
+  nothing brings it back. A pond the player stays within 48 cells of loses a depth about every three game days and is
+  dry after about nine; a stream after about six. Do not ship this without the rain.
+- **Not seen:** how low and shallow water look (a surface at 0.55 and 0.22 of a cell, with the tile of full water), the
+  strip between a full pool and a lower one beside it, a pool dropping a depth all at once every 4 s, a source falling
+  as a block of water a cell a tick.
+- **Not felt:** swimming and wading. Shallow water is waded (walking speed × 0.85). Low water is 0.55 deep and counts
+  as deep enough to swim, by the rule that was already there for flowing water of that height (`WADE_DEPTH` 0.4). In
+  a pool one cell deep that means half speed and bobbing when you hold jump; it may feel wrong for knee-deep water.
+- **A pool is easy to lose.** Any cell beside it that is not a solid block or standing water is a breach, and a breach
+  empties the whole pool in 12 s, wherever the hole leads. Three cases a player may not expect: a block put INTO a
+  pond and taken out again (the hole fills with flowing water, never with a source); the clay dug from under a pond
+  (the water over that cell falls one down and stays there as a well, the rest runs out); a single block of the bank
+  dug where the ground beyond is solid (the water has nowhere to go, and still runs out). This is the rule as asked
+  for; a kinder one would let water settle into a closed pocket.
+- **Creative builds with water change.** A source can no longer hang: fountains and waterfalls made of sources in the
+  air fall and spill dry when their chunk loads (an edited source wakes on load). A lasting waterfall now needs the
+  sea, a stream, or a reservoir whose surface is more than 128 cells.
+- **The sea is a surface of more than 128 cells**, not a place. A large inland lake is therefore salt and endless; a
+  natural lake of 128 cells or fewer is a pool: fresh, and it dries. A player-made reservoir of 129 cells is "sea".
+- **A pool can stand at two depths at once.** Depth is one of three steps, so pools that join are level only to within
+  one of them: a shallow cell joined to a full pond of seven leaves six cells full and two low, a visible step in the
+  surface. It lasts until the pool next loses or gains a level: it loses one from its deeper cells and gains one in
+  its shallower, and comes out even. This happens in Creative and with commands (water put beside water); in Survival
+  pools that meet are almost always a breach instead.
+- **Only water near the player changes.** The cycle looks at 48 columns a second within 48 cells of the player, in
+  loaded chunks. A pond you never visit stays as it was. A body that reaches into a chunk that is not loaded waits
+  (it does not dry, fill, spill or get used up) until the rest loads.
+- **A stream can stand at different depths along its length** when its parts were loaded at different times: running
+  water does not level. A stream of more than 128 cells is treated in parts.
+- **Fish leave a stream that has run shallow** (0.22 is under their 0.3 minimum) and do not come back by themselves
+  when it fills; whether they are restocked is the animals' business (§76.4), not checked here.
+- **`undo` takes every pool's moves with it.** While an explosion, collapse or fallen tree can be undone (60 s), all
+  falling, spilling and levelling of standing water anywhere is recorded with it, so that undo puts a breached pond
+  back. A pool that ran out for another reason in that minute is put back too.
+- **With the Water switch off nothing falls or spills**, and switching it on again does not wake what was put there
+  meanwhile (as before, for flowing water): a change beside it does.
+- **The largest pool, 128 cells, takes about 1 ms to drop a depth** (128 block writes in one tick). A pond takes
+  0.1–0.3 ms, a second of the cycle 0.05–0.15 ms.
+- **The Guide's farming page** (§80, not changed here) still says a crop can be watered by "a channel you dig". From a
+  stream that works. From a pond it does not any more: the channel is a breach.
+- **Older documents describe the old water:** `docs/DESIGN-physics.md` §4 and CONTRACTS §35.2's list of consequences
+  speak of permanent sources. §83 is the rule; §35 carries a note.
+
 ## Seasons and rain — open items
 
 From the build of CONTRACTS §84 (the calendar, rain in showers, how it looks and sounds, what it does). None blocks play.

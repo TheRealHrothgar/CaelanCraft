@@ -39,8 +39,10 @@ import {
   THROW_CHUCK, THROW_FLETCHED, FLETCHED_BREAK_P, dartBreakP,
 } from '../../src/looseItems.js';
 import { Pack, KEEP_ON_DEATH, slotClick } from '../../src/inventory.js';
+import { BODY_MAX_CELLS, SPILL_STEP_S } from '../../src/fluids.js';
+import { CELL_GULPS, POT_GULPS, DRY_MEAN_S, STREAM_DRY_MEAN_S, ROOF_DRY_FACTOR, FILL_MEAN_S } from '../../src/waterBodies.js';
 import { Survival } from '../../src/survival.js';
-import { RELIGHT_STICKS } from '../../src/survivalControl.js';
+import { RELIGHT_STICKS, waterHint } from '../../src/survivalControl.js';
 import {
   CROPS, PLANTABLE, FARM_WATER_REACH, REED_WATER_REACH, SPROUT_MEAN_S, GROW_MEAN_S, SEED_TAKES, SEED_BACK_P, SOIL_EARTH, cropOf, soilWords,
   farmHint,
@@ -968,6 +970,43 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain('Smelting and casting copper and bronze burn coal itself: charcoal will not do.');
     expect(text).toContain('A copper pick mines tin, a bronze pick iron, an iron pick gold and a steel pick gems.');
     expect(text).toContain('Streams, tainted ponds, food in bunches and coal seams are part of the land of new worlds only.');
+  });
+
+  it('water that runs out (§83): the three depths, what a gulp and a pot cost a pool, sun and rain, breaches, clay, the sea, streams', () => {
+    // two pages in the Water chapter, after "Water that stands"
+    const water = CHAPTERS.find((c) => c.id === 'water');
+    const heads = water.pages.map((page) => page.find((b) => b.kind === 'h')?.text ?? '');
+    expect(heads).toEqual(['Fresh, tainted and salt', 'Drinking', 'Pots', 'Boiling', 'Water that stands', 'Water runs out', 'Holding water', 'Water from plants']);
+    // the depths, and the hint that names them
+    expect(text).toContain('It stands at one of three depths: full, low or shallow. After shallow it is dry. Shallow water is ankle-deep: you walk through it.');
+    expect(text).toContain('The hint under your crosshair names it, and says how much is left of a pool: Fresh water · low, Tainted water · shallow, Sea water (salty).');
+    expect([waterHint('fresh', false, 2), waterHint('tainted', false, 1), waterHint('salt', false, 3)].map((s) => s.split(' · R:')[0])).toEqual(['Fresh water · low', 'Tainted water · shallow', 'Sea water (salty)']);
+    // gulps
+    expect(text).toContain(`Each cell of a pool holds ${CELL_GULPS} gulps for each depth, and filling a pot takes ${POT_GULPS} gulps.`);
+    expect(text).toContain('Each cell of a pool holds 6 gulps for each depth, and filling a pot takes 4 gulps.');
+    expect(text).toContain(`A pond of seven cells gives about ${7 * CELL_GULPS} gulps before it drops a depth and about ${3 * 7 * CELL_GULPS} in all; a single cell gives about ${3 * CELL_GULPS}.`);
+    expect(text).toContain('A pond of seven cells gives about 42 gulps before it drops a depth and about 126 in all; a single cell gives about 18.');
+    expect(text).toContain('A gulp of the water that flows out of a pool is taken from that pool.');
+    // sun and rain
+    expect([DRY_MEAN_S, STREAM_DRY_MEAN_S]).toEqual([3 * DAY_LENGTH_SECONDS, 2 * DAY_LENGTH_SECONDS]);
+    expect(text).toContain(`In dry weather it loses a depth about every 3 game days; under a roof or in a cave that takes ${numWord(ROOF_DRY_FACTOR)} times as long.`);
+    expect(text).toContain('under a roof or in a cave that takes ten times as long.');
+    expect(text).toContain(`Rain fills it again: a depth for about every ${fmtDurationLong(FILL_MEAN_S)} of hard rain, up to full.`);
+    expect(text).toContain('a depth for about every 6 minutes of hard rain');
+    expect(text).toContain('A dry pond takes water again in the rain, but it never grows larger than it was.');
+    expect(text).toContain('Streams dwindle the same way: full after rain, a trickle in dry weather, dry in a drought. Without rain a stream loses a depth about every 2 game days. Drinking does not lower a stream.');
+    expect(text).toContain('The sea never runs out, and it is always salt.');
+    expect(text).toContain(`The sea is salt, and so is any lake too big to be a pool: water whose surface is more than ${BODY_MAX_CELLS} cells is sea.`);
+    expect(BODY_MAX_CELLS).toBe(128);
+    // holding water
+    expect(text).toContain('Every side of every cell of a pool must be a solid block or more standing water.');
+    expect(text).toContain(`Dig away one block of a pond's bank, or the clay under it, and the pond runs out: it drops a depth every ${SPILL_STEP_S} seconds and is dry in ${3 * SPILL_STEP_S}.`);
+    expect(text).toContain('it drops a depth every 4 seconds and is dry in 12.');
+    expect(text).toContain('A plant or a torch in the gap does not hold it. A pool two cells deep drains from the top, down to the hole.');
+    expect(text).toContain('Water with nothing under it falls until it lands. Water that flows away is lost: flowing water never becomes a pool again.');
+    expect(text).toContain(`Clay holds rain. Dig a pit, floor it with Clay and leave it open to the sky. In the rain it takes its first water, shallow; then it fills like any pool. A basin can be many cells, up to ${BODY_MAX_CELLS}, if every cell lies on clay and every wall is whole.`);
+    expect(text).toContain('Close a breach at once with any solid block: what ran out is gone, the rest holds.');
+    expect(text).not.toMatch(/The sea and every beach are salt/); // (a pool the rain filled on a beach is fresh)
   });
 
   it('farming and the plants that spread (§80): seeds, ground, water and sky, how long it takes; the soft maxima; regrowth takes two days', () => {

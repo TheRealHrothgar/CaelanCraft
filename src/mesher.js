@@ -104,11 +104,15 @@ const TINTED = new Uint8Array(256 * FACE_COUNT);
  */
 const FREE_SURFACE = new Uint8Array(256);
 /**
- * WET[id] = 1 for the water family (WATER, WATER_FLOW_1..6, WATER_FALL, and TAINTED_WATER since §76): culled against each
- * other by surface height — so fresh and tainted water side by side show no wall between them.
+ * WET[id] = 1 for the water family (WATER, WATER_FLOW_1..6, WATER_FALL, TAINTED_WATER since §76, and the low and shallow
+ * sources since §83): culled against each other by surface height — so fresh and tainted water side by side show no wall
+ * between them, and a low pool beside a full one shows only the strip of the full one's surface above its own.
  */
 const WET = new Uint8Array(256);
-/** FULL_WATER[id] = 1 for a full water cell: a source (WATER, TAINTED_WATER) or falling water (level 7). */
+/**
+ * FULL_WATER[id] = 1 for a full water cell: a FULL source (WATER, TAINTED_WATER) or falling water (level 7). A low or a
+ * shallow source (§83: level 5, 3) is not: like a flowing level it keeps its own lowered surface wherever it is.
+ */
 const FULL_WATER = new Uint8Array(256);
 /** SURFACE[id] = waterSurfaceHeight(id, AIR): the free surface of a water cell with no water above it (§10.2 step 1). */
 const SURFACE = new Float64Array(256);
