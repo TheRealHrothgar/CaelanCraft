@@ -235,6 +235,8 @@ export const RAINS_MAX_DRY_DAYS = 3;
  * calendar; they simply have not broken yet. Only the very beginning of a world: later years are not spared.
  */
 export const FAIR_START_DAYS = 2;
+/** The fair start in shower slots: the two days and the second night whole, to 08:00 on the third morning. */
+export const FAIR_START_SLOTS = FAIR_START_DAYS * (DAY_LENGTH_SECONDS / 240) + 2;
 /** `nextChange` looks at most this far ahead (two years). */
 export const NEXT_CHANGE_HORIZON_S = 2 * YEAR_DAYS * DAY_LENGTH_SECONDS;
 
@@ -351,7 +353,7 @@ export function createWeather(seed) {
   }
 
   /** The slot's shower falls on the biome. @param {number} s @param {number} biome */
-  const falls = (s, biome) => !(s >= 0 && s < FAIR_START_DAYS * SLOTS_PER_DAY) && rankOf(s) < showerChance(biome, seasonOfSlot(s));
+  const falls = (s, biome) => !(s >= 0 && s < FAIR_START_SLOTS) && rankOf(s) < showerChance(biome, seasonOfSlot(s));
 
   /** A smooth seeded wave in 0..1 over time, for the swell within a shower. @param {number} t */
   function swell(t) {
