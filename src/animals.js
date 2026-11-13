@@ -24,10 +24,13 @@
 //     come closer, or hurt it, and it CHARGES and mauls. It gives up after a chase;
 //   - fish: in stream water, never out of it (they do not use stepPlayer at all). They dart away from a player who
 //     comes near; only a spear, thrust or thrown, catches one.
-import { GRAVITY, WALK_SPEED, SPRINT_SPEED, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR, GROUND_ACCEL, FLY_SPEED, PLAYER_HEIGHT } from './config.js';
+import {
+  GRAVITY, WALK_SPEED, SPRINT_SPEED, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR, WARY_VIEW_HALF_ANGLE, WARY_BEHIND_FACTOR, GROUND_ACCEL,
+  FLY_SPEED, PLAYER_HEIGHT,
+} from './config.js';
 import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
 import { hexToWorld, worldToHex } from './hex.js';
-import { yawToForward } from './coords.js';
+import { yawToForward, isBehind } from './coords.js';
 import { BLOCK, BIOME, isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
 import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S } from './pigs.js';
 
@@ -80,6 +83,12 @@ export const ANIMAL_MAX = 40;
 /** A sneaking player is noticed at this share of `notice`; a sprinting one from this much farther. */
 export const SNEAK_NOTICE = WARY_SNEAK_FACTOR;
 export const SPRINT_NOTICE = WARY_SPRINT_FACTOR;
+/**
+ * Stalking (v0.16): an animal sees VIEW_HALF_ANGLE to either side of where it faces. A sneaking player in the blind arc
+ * at its back is noticed at BEHIND_NOTICE of the sneaking distance — until the animal turns its head.
+ */
+export const VIEW_HALF_ANGLE = WARY_VIEW_HALF_ANGLE;
+export const BEHIND_NOTICE = WARY_BEHIND_FACTOR;
 /** It runs until the player is this many times `notice` away. */
 export const CALM_FACTOR = 2.2;
 /** A hit makes it (and its herd within HERD_ALARM) run for at least this long (s). */
@@ -358,10 +367,25 @@ export function isAnimalKind(kind) {
   return typeof kind === 'string' && Object.hasOwn(SPECIES, kind);
 }
 
-/** How near the player may come before `a` runs (m): its species' `notice`, less for a sneaker, more for a sprinter. */
+/**
+ * Whether the player stands where `a` cannot see: in the arc at its back, beyond VIEW_HALF_ANGLE from where it faces.
+ * False when either position (or the animal's heading) is not known.
+ * @param {{ x?: number, z?: number, yaw?: number }} a @param {{ x?: number, z?: number }} player
+ * @returns {boolean}
+ */
+export function blindTo(a, player) {
+  if (!Number.isFinite(a.x) || !Number.isFinite(a.z) || !Number.isFinite(player.x) || !Number.isFinite(player.z)) return false;
+  return isBehind(/** @type {number} */ (a.yaw), /** @type {number} */ (player.x) - /** @type {number} */ (a.x),
+    /** @type {number} */ (player.z) - /** @type {number} */ (a.z), VIEW_HALF_ANGLE);
+}
+
+/**
+ * How near the player may come before `a` runs (m): its species' `notice`, less for a sneaker — half of that again for
+ * one who sneaks up from behind (blindTo) — and more for a sprinter.
+ */
 export function noticeRange(a, player) {
   const n = SPECIES[a.kind].notice;
-  if (player.sneaking) return n * SNEAK_NOTICE;
+  if (player.sneaking) return n * SNEAK_NOTICE * (blindTo(a, player) ? BEHIND_NOTICE : 1);
   if (player.sprinting) return n * SPRINT_NOTICE;
   return n;
 }

@@ -49,7 +49,7 @@ import {
   WALKER_WAKE_RANGE, PROVOKE_S, DAWN_BURROW_MIN_S, DAWN_BURROW_RAND_S, DAY_ALPHA_FACTOR, DAY_ALPHA_DAMAGE,
 } from './zombies.js';
 import {
-  SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
+  SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, BEHIND_NOTICE, VIEW_HALF_ANGLE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, WOLF_BITE_S,
   HOME_RANGE, RIDE_SCALE, RIDE_LEAP,
   BEAR_DAMAGE, BEAR_WARN_S, BEAR_CHARGE_DIST, BEAR_CHASE_S, BEAR_GIVE_UP, poolOf,
@@ -626,14 +626,23 @@ function animalsTable() {
     keys: ['pig', ...ANIMAL_KINDS], source: 'animals' });
 }
 
-/** How near a walking, sneaking or sprinting player may come before it runs (SPECIES.notice, PIG_NOTICE × the factors). */
+/** The blind arc at an animal's back as a share of the circle, in words (VIEW_HALF_ANGLE 120° leaves a third). */
+function blindShare() {
+  const share = 1 - VIEW_HALF_ANGLE / Math.PI;
+  return Math.abs(share - 1 / 3) < 1e-9 ? 'third' : Math.abs(share - 1 / 4) < 1e-9 ? 'quarter' : Math.abs(share - 1 / 2) < 1e-9 ? 'half' : fmtPct(share);
+}
+
+/**
+ * How near a walking, sneaking or sprinting player may come before it runs (SPECIES.notice, PIG_NOTICE × the factors),
+ * and how near one who sneaks up from behind (v0.16: × BEHIND_NOTICE again).
+ */
 function waryTable() {
   const cells = (/** @type {number} */ n) => `${fmtNum(n, 1)} cells`;
   const row = (/** @type {string} */ name, /** @type {number} */ notice) => [name, cells(notice), cells(notice * SNEAK_NOTICE),
-    cells(notice * SPRINT_NOTICE)];
+    cells(notice * SNEAK_NOTICE * BEHIND_NOTICE), cells(notice * SPRINT_NOTICE)];
   const kinds = ANIMAL_KINDS.filter((k) => !(/** @type {*} */ (SPECIES[k]).predator)); // v0.14: a bear does not run
   const rows = [row('Pig', PIG_NOTICE), ...kinds.map((k) => row(SPECIES[k].name, SPECIES[k].notice))];
-  return table({ id: 'wary', caption: 'How near you can come before it runs', head: ['Animal', 'Walking', 'Sneaking', 'Sprinting'],
+  return table({ id: 'wary', caption: 'How near you can come before it runs', head: ['Animal', 'Walking', 'Sneaking', 'From behind', 'Sprinting'],
     rows, keys: ['pig', ...kinds], source: 'animals' });
 }
 
@@ -1506,6 +1515,7 @@ function makeChapters() {
     [
       h('Getting close'),
       p(`How near you may come depends on how you move. *Sneak* with [Shift] and an animal notices you at only ${fmtPct(SNEAK_NOTICE)} of its usual distance. *Sprint* and it spots you from ${fmtPct(SPRINT_NOTICE - 1)} farther off.`),
+      p(`An animal sees ahead and to both sides, but not behind: the ${blindShare()} of the circle at its back is blind. Sneak up from there and it notices you at ${fmtPct(BEHIND_NOTICE)} of the sneaking distance. Watch its head: when it turns, it sees you.`),
       ...waryTable(),
       p(reachTip),
     ],
@@ -1555,7 +1565,7 @@ function makeChapters() {
     ],
     [
       h('Deer and small game'),
-      p(`*Deer* keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}. They are the wariest animal there is: sneaking will not bring you within reach, so throw a spear or a dart, or set a snare. Every herd has one stag: you know it by its antlers.`),
+      p(`*Deer* keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}. They are the wariest animal there is: sneaking brings you within reach only from straight behind, so stalk one, throw a spear or a dart, or set a snare. Every herd has one stag: you know it by its antlers.`),
       p('*Rabbits* are small and quick and swerve as they run. A baited Snare is the easy way to catch one.'),
       p('*Pheasants* and *wild turkeys* feed on the ground. Come too close and a pheasant bursts into the air and flies off; a turkey glides a little way and runs.'),
       p('Birds give meat and *Feathers*. Feathers fletch a better dart: a *Fletched Dart* flies faster, hits harder and breaks less often than a Flint Dart.'),

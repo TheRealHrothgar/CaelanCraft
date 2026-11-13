@@ -122,7 +122,7 @@ export const CAMPFIRE_LIGHT_HYSTERESIS = 0.5;       // a lit fire keeps its ligh
 export const CAMPFIRE_LIGHT_INTENSITY = 6;          // PointLight intensity before flicker
 export const CAMPFIRE_LIGHT_RANGE = 14;             // PointLight distance (light reaches zero there)
 export const CAMPFIRE_CRACKLE_RANGE = 10;           // crackles are audible within this distance, fading linearly
-export const CAMPFIRE_CRACKLES_PER_S = 5;           // average crackle rate at the fire
+export const CAMPFIRE_CRACKLES_PER_S = 1.5;         // average crackle rate at the fire (5 until v0.16: a fire pops now and then, it does not rattle)
 
 // Black holes (CONTRACTS §29)
 export const BLACK_HOLE_PULL_RADIUS = 10;           // world units from the hole's centre where the pull acts
@@ -158,6 +158,10 @@ export const LAMP_LIGHT_MAX = 14;
 export const PIG_NOTICE = 6;
 export const WARY_SNEAK_FACTOR = 0.4;
 export const WARY_SPRINT_FACTOR = 1.35;
+// v0.16 (CONTRACTS §69 amendment): an animal sees WARY_VIEW_HALF_ANGLE to either side of where it faces; the rest of the
+// circle, at its back, is blind. A SNEAKING player in that blind arc is noticed at WARY_BEHIND_FACTOR of the sneaking distance.
+export const WARY_VIEW_HALF_ANGLE = (2 * Math.PI) / 3; // 120°: it sees two thirds of the circle, the third at its back is blind
+export const WARY_BEHIND_FACTOR = 0.5;
 
 // Zombies (CONTRACTS §39): night mobs, never saved; the per-world on/off switch is.
 export const ZOMBIE_MAX = 16;                       // alive at once; natural spawning and summon stop there

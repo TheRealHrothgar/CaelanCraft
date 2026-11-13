@@ -8,7 +8,7 @@ import {
   WALK_SPEED, SPRINT_SPEED, FLY_SPEED, REACH, ZOMBIE_DAMAGE, ZOMBIE_HIT_PUSH, ZOMBIE_HIT_LIFT, CHUNK_SIZE,
 } from '../../src/config.js';
 import {
-  Animals, SPECIES, ANIMAL_KINDS, ANIMAL_MAX, SOUNDS, MEAT_LURE, HERD_WEIGHTS, noticeRange, bearRange, fishDepth, fleeSpeed, poolOf,
+  Animals, SPECIES, ANIMAL_KINDS, ANIMAL_MAX, SOUNDS, MEAT_LURE, HERD_WEIGHTS, BEHIND_NOTICE, noticeRange, bearRange, fishDepth, fleeSpeed, poolOf,
   validateAnimalsJSON, SNEAK_NOTICE, SPRINT_NOTICE, CALM_FACTOR, HERD_CHECK_S, HERD_TARGET, HERD_RADIUS, HERD_CHANCE, SMALL_TARGET, SMALL_CHANCE,
   BEAR_NEAR, ZIG_ANGLE, FLUSH_S, FLUSH_SPEED, TURKEY_GLIDE_S, NEST_HEN_P, NEST_FIRST_S, NEST_EVERY_S, NEST_RETRY_S, NEST_PRIVACY, NEST_SPACING,
   BEAR_WARN_S,
@@ -108,7 +108,8 @@ describe('fauna — the kinds (§76)', () => {
     expect(FLUSH_SPEED).toBeGreaterThan(1.8 * SPRINT_SPEED);
     const runners = ANIMAL_KINDS.filter((k) => !SPECIES[k].predator);
     expect(Math.max(...runners.map((k) => SPECIES[k].notice))).toBe(SPECIES.deer.notice);
-    expect(SPECIES.deer.notice * SNEAK_NOTICE).toBeGreaterThan(REACH); // sneaking does not bring a deer within arm's reach
+    expect(SPECIES.deer.notice * SNEAK_NOTICE).toBeGreaterThan(REACH); // sneaking does not bring a deer within arm's reach …
+    expect(SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE).toBeLessThan(REACH); // … unless it is from behind (v0.16)
     for (const k of ['rabbit', 'pheasant', 'turkey', 'fish']) expect(SPECIES[k].notice * SNEAK_NOTICE, k).toBeLessThan(REACH);
   });
 });

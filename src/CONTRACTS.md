@@ -4023,6 +4023,13 @@ Amends §8 (day/night), §39, §40, §45 (climate) and §65. **One real minute i
 
 ## 69. Animals — `src/animals.js` (PURE), `src/animalRenderer.js` (three); snares; wary pigs
 
+> **v0.16 amendment (stalking from behind):** an animal sees `WARY_VIEW_HALF_ANGLE` (120°) to either side of where it
+> faces (`coords.isBehind(yaw, dx, dz, halfAngle)`); the third of the circle at its back is blind. A SNEAKING player in
+> that arc (`animals.blindTo(a, player)`) is noticed at `WARY_BEHIND_FACTOR` (0.5) of the sneaking distance:
+> `noticeRange = notice × SNEAK_NOTICE × BEHIND_NOTICE`. Walking or sprinting from behind changes nothing (it hears you),
+> and an animal that turns its head sees you at once. Pigs follow the same rule. So a deer (16 walking, 6.4 sneaking)
+> can be reached from behind (3.2 < REACH 5). The guide's "How near you can come" table has a "From behind" column.
+
 Cattle, sheep, horses and wolves: bodies through stepPlayer like the pigs (§30), in `Animals` (`list`, `spawn(kind, x, y,
 z, yaw)`, `remove`, `update(dt, world) → events`, `wound`, `feed`, `shear`, `mount` / `dismount` / `ride`, `raycast`,
 `export` / `load`, `validateAnimalsJSON`). At most ANIMAL_MAX 24.
@@ -5022,6 +5029,12 @@ Totals: BLOCK_COUNT 159; TILE_IDS 183; 261 items (34 tools, 51 materials, 54 foo
 PICKER_ORDER 115; PLANT_IDS 25; POP_OFF_IDS 47; 43 plant models; 15 spreading kinds; recipes unchanged.
 
 ## 82. Sounds: materials, footsteps, voices, ambience — `src/soundBank.js` (PURE), `src/worldSounds.js` (PURE), `src/soundTest.js` (DOM), `src/audio.js`, `src/circuitSounds.js`, `tests/helpers/offlineAudio.js`
+
+> **v0.16 amendment (a calmer bed):** the user found the running water and the campfire's hum abrasive. `ambStream` is
+> now a soft wash (four bands swelling at 0.2–0.8 Hz, little above 2.5 kHz, 6 dB quieter; its 3.8 Hz bubbling pumped),
+> `ambFire` a slow low glow (no 7 Hz flutter, 6 dB quieter), and `fireCrackle` four rounded pops (attack ≥ 2 ms, nothing
+> brighter than 2.8 kHz, 5–8 dB softer) at `CAMPFIRE_CRACKLES_PER_S` 1.5 (it was 5). soundBank.test.js pins that no loop's
+> level swings more than 0.07 between 2 and 12 Hz.
 
 Amends §21 (audio.js), §22 (`Params.soundTest`), §23 (main's hook), §53 (the recipe format), §69 and §76 (the animals'
 voices) and §71 (the zombie's voice: the constants are gone, its intent stands). Every sound is still synthesised: there

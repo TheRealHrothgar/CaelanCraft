@@ -2,9 +2,10 @@
 // herds and the save (CONTRACTS §69).
 import { describe, it, expect } from 'vitest';
 import { BLOCK, BIOME } from '../../src/blocks.js';
-import { WALK_SPEED, SPRINT_SPEED, PIG_NOTICE, WARY_SNEAK_FACTOR } from '../../src/config.js';
+import { WALK_SPEED, SPRINT_SPEED, PIG_NOTICE, WARY_SNEAK_FACTOR, WARY_VIEW_HALF_ANGLE, WARY_BEHIND_FACTOR } from '../../src/config.js';
+import { isBehind, yawToForward } from '../../src/coords.js';
 import {
-  Animals, SPECIES, ANIMAL_KINDS, ANIMAL_MAX, noticeRange, fleeSpeed, validateAnimalsJSON, isAnimalKind,
+  Animals, SPECIES, ANIMAL_KINDS, ANIMAL_MAX, noticeRange, blindTo, BEHIND_NOTICE, VIEW_HALF_ANGLE, fleeSpeed, validateAnimalsJSON, isAnimalKind,
   SNEAK_NOTICE, CALM_FACTOR, FED_CALM_S, LURE_STOP, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, SHEAR_REGROW_S, SHEAR_WOOL,
   WOLF_BITE_S, FOLLOW_NEAR, SADDLE_Y, RIDER_HEIGHT, RIDE_SCALE, HERD_MIN, HERD_MAX, HERD_CHECK_S, HERD_TARGET, DESPAWN_DIST,
   HIT_FLEE_S, ANIMAL_HURT_S, MILK_REGROW_S, HERD_WEIGHTS, SMALL_TARGET, poolOf,
@@ -407,6 +408,91 @@ describe('animals — herds are rare and far; the save', () => {
     expect(v.animals).toEqual([{ k: 'cow', x: 0, y: 1, z: 2, yaw: 0, h: SPECIES.cow.health }]); // a cow is never tame
     expect(v.warnings).toEqual(['animals[1]: invalid, dropped']);
     expect(validateAnimalsJSON(undefined)).toEqual({ animals: [], warnings: [] });
+  });
+});
+
+describe('stalking from behind (v0.16, CONTRACTS §69 amendment)', () => {
+  it('isBehind: a point is out of sight when it is more than the half angle from straight ahead', () => {
+    // yaw 0 faces −z (yawToForward = (−sin, −cos))
+    expect(yawToForward(0).map((v) => v + 0)).toEqual([0, -1]);
+    expect(isBehind(0, 0, -5, WARY_VIEW_HALF_ANGLE)).toBe(false); // straight ahead
+    expect(isBehind(0, 5, 0, WARY_VIEW_HALF_ANGLE)).toBe(false); // beside it
+    expect(isBehind(0, -5, 0, WARY_VIEW_HALF_ANGLE)).toBe(false);
+    expect(isBehind(0, 0, 5, WARY_VIEW_HALF_ANGLE)).toBe(true); // straight behind
+    // the edge of the blind arc is 120° from ahead: 119° is seen, 121° is not
+    const at = (deg) => [Math.sin((deg * Math.PI) / 180) * 4, -Math.cos((deg * Math.PI) / 180) * 4];
+    for (const side of [1, -1]) {
+      expect(isBehind(0, ...at(side * 119), WARY_VIEW_HALF_ANGLE)).toBe(false);
+      expect(isBehind(0, ...at(side * 121), WARY_VIEW_HALF_ANGLE)).toBe(true);
+    }
+    expect(isBehind(Math.PI / 2, 5, 0, WARY_VIEW_HALF_ANGLE)).toBe(true); // facing −x: +x is behind
+    expect(isBehind(0, 0, 0, WARY_VIEW_HALF_ANGLE)).toBe(false);
+    expect(isBehind(NaN, 0, 5, WARY_VIEW_HALF_ANGLE)).toBe(false);
+    expect([VIEW_HALF_ANGLE, BEHIND_NOTICE]).toEqual([WARY_VIEW_HALF_ANGLE, WARY_BEHIND_FACTOR]);
+  });
+
+  it('noticeRange: sneaking from behind halves the sneaking distance; walking or sprinting from behind changes nothing', () => {
+    const deer = { kind: 'deer', x: 0, z: 0, yaw: 0 }; // facing −z
+    const n = SPECIES.deer.notice;
+    const behind = { x: 0, z: 4 };
+    const ahead = { x: 0, z: -4 };
+    expect(blindTo(deer, behind)).toBe(true);
+    expect(blindTo(deer, ahead)).toBe(false);
+    expect(noticeRange(deer, { ...behind, sneaking: true })).toBeCloseTo(n * SNEAK_NOTICE * BEHIND_NOTICE, 9);
+    expect(noticeRange(deer, { ...ahead, sneaking: true })).toBeCloseTo(n * SNEAK_NOTICE, 9);
+    expect(noticeRange(deer, { ...behind })).toBe(n); // it hears a walker
+    expect(noticeRange(deer, { ...behind, sprinting: true })).toBeGreaterThan(n);
+    // without positions (or a heading) there is no blind side
+    expect(noticeRange({ kind: 'deer' }, { sneaking: true })).toBeCloseTo(n * SNEAK_NOTICE, 9);
+    expect(blindTo({ kind: 'deer', x: 0, z: 0 }, behind)).toBe(false);
+  });
+
+  it('a sneaker at a deer\'s back comes within reach; the same distance in front of it sends it running; so does its turning round', () => {
+    const near = SPECIES.deer.notice * SNEAK_NOTICE * 0.7; // 4.5 m: inside the sneaking distance, outside half of it
+    const still = (yaw) => {
+      const as = new Animals(seededRng(5));
+      const a = as.spawn('deer', 0, GROUND, 0, yaw);
+      a.targetYaw = yaw;
+      return [as, a];
+    };
+    // the deer faces −z; the player sneaks at +z (behind it)
+    const [as, a] = still(0);
+    as.update(DT, view(flatWorld(), standing(0, near, { sneaking: true })));
+    expect(a.mode).not.toBe('flee');
+    // the same player in front of it
+    const [bs, b] = still(0);
+    bs.update(DT, view(flatWorld(), standing(0, -near, { sneaking: true })));
+    expect(b.mode).toBe('flee');
+    // walking up behind it is heard
+    const [cs, c] = still(0);
+    cs.update(DT, view(flatWorld(), standing(0, near)));
+    expect(c.mode).toBe('flee');
+    // it turns its head toward the sneaker: now it sees
+    const [ds, d] = still(0);
+    const player = standing(0, near, { sneaking: true });
+    ds.update(DT, view(flatWorld(), player));
+    expect(d.mode).not.toBe('flee');
+    d.yaw = Math.PI; // facing +z
+    d.targetYaw = Math.PI;
+    ds.update(DT, view(flatWorld(), player));
+    expect(d.mode).toBe('flee');
+    // and even from behind there is a limit
+    const [es, e] = still(0);
+    es.update(DT, view(flatWorld(), standing(0, SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE - 0.3, { sneaking: true })));
+    expect(e.mode).toBe('flee');
+  });
+
+  it('a pig has the same blind side', () => {
+    const pigWorld = (player) => ({ getBlock: flatWorld(), isLoaded: () => true, player });
+    const near = PIG_NOTICE * WARY_SNEAK_FACTOR * 0.75; // 1.8 m
+    const ps = new Pigs(seededRng(31));
+    const pig = ps.spawn(0, GROUND, 0, 0); // facing −z
+    ps.update(DT, pigWorld(standing(0, near, { sneaking: true })));
+    expect(pig.mode).not.toBe('flee');
+    const qs = new Pigs(seededRng(31));
+    const front = qs.spawn(0, GROUND, 0, 0);
+    qs.update(DT, pigWorld(standing(0, -near, { sneaking: true })));
+    expect(front.mode).toBe('flee');
   });
 });
 

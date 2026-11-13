@@ -623,40 +623,49 @@ const AMBIENCE = {
     noise({ bp: 950, q: 2.2, gain: 0.25, decay: 4, lfoHz: 0.17, lfoDepth: 0.9 }),
     noise({ lp: 180, gain: 0.5, decay: 4, lfoHz: 0.07, lfoDepth: 0.5 }),
   ] },
-  /** Running water: four bands of noise, each bubbling at its own rate (the blips below are the single bubbles). */
-  ambStream: { dur: 4.05, gain: 0.13, layers: [
-    noise({ bp: 900, q: 0.9, gain: 0.5, decay: 4, lfoHz: 3.7, lfoDepth: 0.7 }),
-    noise({ bp: 1900, q: 1.2, gain: 0.4, decay: 4, lfoHz: 6.3, lfoDepth: 0.8, lfoShape: 'tri' }),
-    noise({ bp: 3600, q: 1.5, gain: 0.22, decay: 4, lfoHz: 9.1, lfoDepth: 0.9 }),
-    noise({ lp: 350, gain: 0.35, decay: 4, lfoHz: 2.3, lfoDepth: 0.6, lfoShape: 'tri' }),
+  /**
+   * Running water: a soft wash. Four bands of noise that swell slowly, each at its own rate, with little above 2.5 kHz
+   * (v0.16: the fast bubbling of every band pumped and hissed; the single bubbles are the blips below).
+   */
+  ambStream: { dur: 4.05, gain: 0.085, layers: [
+    noise({ bp: 650, q: 0.7, gain: 0.55, decay: 4, lfoHz: 0.31, lfoDepth: 0.3 }),
+    noise({ bp: 1100, q: 0.9, gain: 0.38, decay: 4, lfoHz: 0.53, lfoDepth: 0.35, lfoShape: 'tri' }),
+    noise({ bp: 2200, q: 1.1, gain: 0.05, decay: 4, lfoHz: 0.83, lfoDepth: 0.4 }),
+    noise({ lp: 300, gain: 0.3, decay: 4, lfoHz: 0.19, lfoDepth: 0.25, lfoShape: 'tri' }),
   ] },
-  /** A fire's bed: a low fluttering roar, a mid flicker and a thin hiss (the crackles below are its pops). */
-  ambFire: { dur: 4.05, gain: 0.22, layers: [
-    noise({ lp: 240, gain: 0.9, decay: 4, lfoHz: 7.3, lfoDepth: 0.8 }),
-    noise({ bp: 700, q: 0.8, gain: 0.3, decay: 4, lfoHz: 11.7, lfoDepth: 0.9, lfoShape: 'tri' }),
-    noise({ bp: 4200, q: 1, gain: 0.07, decay: 4, lfoHz: 5.1, lfoDepth: 1 }),
+  /**
+   * A fire's bed: a low, slowly breathing glow with a soft mid and a trace of hiss (v0.16: no flutter — a 7 Hz wobble
+   * on the low band was a hum; the crackles below are its pops).
+   */
+  ambFire: { dur: 4.05, gain: 0.14, layers: [
+    noise({ lp: 260, gain: 0.8, decay: 4, lfoHz: 0.43, lfoDepth: 0.35 }),
+    noise({ bp: 600, q: 0.7, gain: 0.28, decay: 4, lfoHz: 0.71, lfoDepth: 0.4, lfoShape: 'tri' }),
+    noise({ bp: 2600, q: 0.8, gain: 0.035, decay: 4, lfoHz: 0.29, lfoDepth: 0.4 }),
   ] },
 
   // ---- one-shots ---------------------------------------------------------------------------------------------------------
-  /** A bubble or two in the stream: short rising blips. */
-  streamBlip: sound(0.084, [
-    sine(520, { f1: 900, gain: 0.6, attack: 0.004, decay: 0.04, grains: { count: [1, 3], over: 0.12, gainVar: 0.5, pitchVar: 0.4 } }),
+  /** A bubble or two in the stream: short, soft rising blips. */
+  streamBlip: sound(0.06, [
+    sine(520, { f1: 900, gain: 0.6, attack: 0.008, decay: 0.045, grains: { count: [1, 3], over: 0.12, gainVar: 0.5, pitchVar: 0.4 } }),
   ], { vary: 0.25, ...AMBIENT }),
-  /** A campfire pops: a few snaps, a pop with a low knock, a flurry of tiny ticks, or one sharp crack with a hiss. */
+  /**
+   * A campfire pops, softly (v0.16: lower, rounder and quieter than the sharp clicks it had): a snap or two, a pop with
+   * a low knock, a few small ticks, or one crack with a breath of hiss.
+   */
   fireCrackle: oneOf([
-    sound(0.53, [
-      noise({ bp: 3200, q: 1.2, gain: 0.9, attack: 0.001, decay: 0.012, grains: { count: [2, 3], over: 0.08, gainVar: 0.6, pitchVar: 0.4 } }),
+    sound(0.13, [
+      noise({ hp: 600, lp: 2400, gain: 0.9, attack: 0.004, decay: 0.025, grains: { count: [1, 2], over: 0.1, gainVar: 0.6, pitchVar: 0.4 } }),
     ]),
-    sound(0.62, [
-      noise({ bp: 1400, q: 1, gain: 0.9, attack: 0.001, decay: 0.02 }),
-      sine(240, { f1: 120, gain: 0.5, attack: 0.001, decay: 0.03 }),
+    sound(0.2, [
+      noise({ hp: 300, lp: 1400, gain: 0.9, attack: 0.003, decay: 0.03 }),
+      sine(200, { f1: 110, gain: 0.5, attack: 0.003, decay: 0.04 }),
     ]),
-    sound(0.52, [
-      noise({ hp: 4000, lp: 9000, gain: 0.6, attack: 0.001, decay: 0.006, grains: { count: [4, 7], over: 0.16, gainVar: 0.7, pitchVar: 0.3 } }),
+    sound(0.17, [
+      noise({ hp: 1200, lp: 3200, gain: 0.6, attack: 0.003, decay: 0.014, grains: { count: [2, 4], over: 0.2, gainVar: 0.7, pitchVar: 0.3 } }),
     ]),
-    sound(0.43, [
-      noise({ bp: 2600, q: 2, gain: 0.9, attack: 0.001, decay: 0.015 }),
-      noise({ hp: 5000, lp: 9500, gain: 0.3, attack: 0.004, decay: 0.05 }),
+    sound(0.14, [
+      noise({ hp: 600, lp: 2200, gain: 0.9, attack: 0.004, decay: 0.028 }),
+      noise({ hp: 1500, lp: 3800, gain: 0.2, attack: 0.01, decay: 0.08 }),
     ]),
   ], { vary: 0.15 }),
 
