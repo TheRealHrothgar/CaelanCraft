@@ -25,6 +25,11 @@
 // the wild-carrot and the honeyberry patches (Hemlock, Nightshade), and four patch rows of their own (hemlock,
 // nightshade, flax, aloe), which only ever take a cell that every older rule left empty.
 //
+// Generation 5 (CONTRACTS §85) adds rare natural springs and lays its surface gravel in small beds. Generation 6
+// (CONTRACTS §89) is generation 5 with AQUIFERS, stamped last of all (`aquifersIn`): the floor of every stream's head
+// column, the block under every natural spring and the clay under the centre of one fresh pond in three. Nothing else
+// moves: against generation 5 of the same seed a chunk differs in exactly those cells.
+//
 // Cells are hexagonal prisms addressed by axial (q, r). Continuous noise is always sampled at the cell's
 // WORLD position (hex.hexToWorld) so terrain, climate and caves are isotropic rather than sheared along
 // the axial axes; discrete hashes (bedrock, dirt depth, ores, trees) use the integer cell coordinates.
@@ -70,6 +75,8 @@ import { normalizeSeed, hash2, hash3, rand3, mulberry32, clamp, createNoise } fr
  *   pondTaintedAt: (q: number, r: number) => boolean,
  *   naturalSpringAt: (q: number, r: number) => boolean,
  *   naturalSpringOf: (kq: number, kr: number) => NaturalSpring|null,
+ *   streamHeadOf: (kq: number, kr: number) => StreamHead|null,
+ *   aquifersIn: (cq: number, cr: number) => AquiferSite[],
  *   FLORA_TABLE: typeof FLORA_TABLE,
  *   PATCH_TABLE: typeof PATCH_TABLE,
  * }} SurvivalWorldGen
@@ -79,6 +86,19 @@ import { normalizeSeed, hash2, hash3, rand3, mulberry32, clamp, createNoise } fr
  * A natural spring of generation 5 (CONTRACTS §85): the column it rises in and the y of its block, the column's
  * generated height (the SPRING block takes the place of the surface block).
  * @typedef {{ q: number, r: number, y: number }} NaturalSpring
+ */
+
+/**
+ * The head of a traced stream (§76 water, §89): its first column, the spring it rises from, and the y of its water
+ * source there (`level`).
+ * @typedef {{ q: number, r: number, level: number }} StreamHead
+ */
+
+/**
+ * A generated aquifer of generation 6 (CONTRACTS §89): its cell, and what it lies under — a stream's head ('stream': the
+ * floor of the head column, under its water and any falling water), a natural spring ('spring': the block under the
+ * SPRING) or a fresh pond ('pond': the clay under its centre).
+ * @typedef {{ q: number, y: number, r: number, kind: 'stream'|'spring'|'pond' }} AquiferSite
  */
 
 /** Side of the jittered grid cell that holds at most one tree candidate. */
@@ -134,6 +154,16 @@ export const ORE_TABLE_GEN3 = Object.freeze([
     replaces: Object.freeze([BLOCK.STONE, BLOCK.DIRT]),
   }),
 ]);
+
+// ---- §89: the aquifer (generation 6) --------------------------------------------------------------------------------
+/**
+ * The share of FRESH ponds (not tainted, not frozen) that lie on an aquifer in generation 6: one in three, decided per
+ * pond by `rand3(kq, POND_AQUIFER_SALT, kr, seed ^ POND_SALT)` below it. Only a fresh pond is rolled for, so a pond on
+ * an aquifer is always fresh and every pond keeps the water generation 5 gave it.
+ */
+export const POND_AQUIFER_SHARE = 1 / 3;
+/** The `y` of the pond aquifer roll (see POND_AQUIFER_SHARE). */
+export const POND_AQUIFER_SALT = 0xa91f;
 
 /** Pond grid (§8.4): one candidate per POND_CELL × POND_CELL cell of (q, r) index space, jittered by 0–7. */
 export const POND_CELL = 20;
@@ -619,7 +649,7 @@ const CROWN_DIRS = Object.freeze([0, 2, 4]);
  * Create a deterministic world generator.
  * @param {string|number|null|undefined} seed  user-facing seed; normalised with `normalizeSeed`
  * @param {{ gen?: number }} [opts]  `gen` 1 (default: today's terrain, byte for byte), 2 (the survival resources), 3
- *   (v0.14: the harder land), 4 (v0.15: the lean land) or 5 (§85: natural springs, gravel in beds)
+ *   (v0.14: the harder land), 4 (v0.15: the lean land), 5 (§85: natural springs, gravel in beds) or 6 (§89: aquifers)
  * @returns {SurvivalWorldGen}
  */
 export function createWorldGen(seed, opts = {}) {
@@ -632,6 +662,8 @@ export function createWorldGen(seed, opts = {}) {
   const gen4 = gen >= 4;
   /** CONTRACTS §85: generation 4 with rare natural springs, and its surface gravel in small beds. New worlds only. */
   const gen5 = gen >= 5;
+  /** CONTRACTS §89: generation 5 with aquifers under the stream heads, the natural springs and some fresh ponds. New worlds only. */
+  const gen6 = gen >= 6;
   const patchTable = gen4 ? PATCH_TABLE_GEN4 : PATCH_TABLE;
   const patchMaxChance = gen4 ? PATCH_MAX_CHANCE_GEN4 : PATCH_MAX_CHANCE;
   const floraTable = gen4 ? FLORA_TABLE_GEN4 : FLORA_TABLE;
@@ -1710,15 +1742,93 @@ export function createWorldGen(seed, opts = {}) {
     placeTrees(blocks, cq, cr, streamMap);
     if (gen2) placeFlora(blocks, heights, biomes, cq, cr);
     if (gen3) placeCaveTroops(blocks, heights, cq, cr);
+    // §89 (generation 6), last: the aquifers, each in place of one block that every pass above left solid
+    if (gen6) for (const a of aquifersIn(cq, cr)) blocks[((a.q - oq) * CHUNK_SIZE + (a.r - or)) * WORLD_HEIGHT + a.y] = BLOCK.AQUIFER;
 
     return { blocks, biomes, heights };
+  }
+
+  // ---- generation 6 (§89): the aquifers ----------------------------------------------------------------------------
+
+  /** @returns {boolean} the accepted pond of grid cell (kq, kr) lies on an aquifer: generation 6, fresh water, the roll */
+  function pondOnAquifer(kq, kr, /** @type {Pond} */ pond) {
+    return gen6 && pond.biome !== BIOME.SNOWY && !pondTainted(kq, kr) && rand3(kq, POND_AQUIFER_SALT, kr, pondSeed) < POND_AQUIFER_SHARE;
+  }
+
+  /**
+   * The head of the stream of spring-grid cell (kq, kr) — its first column, where it rises — or null when that cell has no
+   * stream (always null below generation 3). Pure.
+   * @param {number} kq @param {number} kr @returns {StreamHead|null}
+   */
+  function streamHeadOf(kq, kr) {
+    if (!gen3 || !Number.isInteger(kq) || !Number.isInteger(kr)) return null;
+    const stream = streamOf(kq, kr);
+    return stream === null ? null : { q: stream.cells[0], r: stream.cells[1], level: stream.cells[2] };
+  }
+
+  /**
+   * The aquifers of chunk (cq, cr) (generation 6; none below it), each the cell of one block that generation 5 has solid
+   * there. Pure in (seed, cq, cr), and the same from every chunk.
+   * - Under every stream's head (`streamHeadOf`): the floor of the head column — its bed, one cell under its lowest
+   *   water cell (`streamBottom`: under the source, or under the falling water of a lip). The stream's water is fed.
+   * - Under every natural spring (`naturalSpringOf`): the block under the SPRING.
+   * - Under the centre of a fresh pond that wins the roll (POND_AQUIFER_SHARE): the clay at H − 1.
+   * A cell two of them share (two streams that rise in one column) is listed once.
+   * @param {number} cq @param {number} cr @returns {AquiferSite[]}
+   */
+  function aquifersIn(cq, cr) {
+    /** @type {AquiferSite[]} */
+    const out = [];
+    if (!gen6 || !Number.isInteger(cq) || !Number.isInteger(cr)) return out;
+    const oq = cq * CHUNK_SIZE;
+    const or = cr * CHUNK_SIZE;
+    const inside = (q, r) => q >= oq && q < oq + CHUNK_SIZE && r >= or && r < or + CHUNK_SIZE;
+    const seen = new Set();
+    const add = (q, y, r, /** @type {AquiferSite['kind']} */ kind) => {
+      const key = `${q},${y},${r}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ q, y, r, kind });
+    };
+    // stream heads: a head lies within STREAM_ASCENT columns of its grid cell
+    const map = streamLevels(cq, cr);
+    if (map !== null) {
+      for (let kq = floorDiv(oq - STREAM_ASCENT, STREAM_CELL); kq <= floorDiv(oq + CHUNK_SIZE - 1 + STREAM_ASCENT, STREAM_CELL); kq++) {
+        for (let kr = floorDiv(or - STREAM_ASCENT, STREAM_CELL); kr <= floorDiv(or + CHUNK_SIZE - 1 + STREAM_ASCENT, STREAM_CELL); kr++) {
+          const head = streamHeadOf(kq, kr);
+          if (head === null || !inside(head.q, head.r)) continue;
+          const bottom = streamBottom(map, (head.q - oq + STREAM_MARGIN) * STREAM_MAP_SIDE + head.r - or + STREAM_MARGIN);
+          add(head.q, bottom - 1, head.r, 'stream');
+        }
+      }
+    }
+    // natural springs (as stampSprings finds them)
+    const R = NATURAL_SPRING_SEARCH;
+    for (let kq = floorDiv(oq - R, NATURAL_SPRING_CELL); kq <= floorDiv(oq + CHUNK_SIZE - 1 + R, NATURAL_SPRING_CELL); kq++) {
+      for (let kr = floorDiv(or - R, NATURAL_SPRING_CELL); kr <= floorDiv(or + CHUNK_SIZE - 1 + R, NATURAL_SPRING_CELL); kr++) {
+        const sp = naturalSpringOf(kq, kr);
+        if (sp !== null && inside(sp.q, sp.r)) add(sp.q, sp.y - 1, sp.r, 'spring');
+      }
+    }
+    // fresh ponds (centres at k·20 + 2..9, as placePonds finds them)
+    for (let kq = floorDiv(oq - 9, POND_CELL); kq <= floorDiv(oq + CHUNK_SIZE - 1, POND_CELL); kq++) {
+      for (let kr = floorDiv(or - 9, POND_CELL); kr <= floorDiv(or + CHUNK_SIZE - 1, POND_CELL); kr++) {
+        const h = hash2(kq, kr, pondSeed);
+        const pq = kq * POND_CELL + 2 + (h & 7);
+        const pr = kr * POND_CELL + 2 + ((h >>> 3) & 7);
+        if (!inside(pq, pr)) continue;
+        const pond = pondOf(kq, kr);
+        if (pond !== null && pondOnAquifer(kq, kr, pond)) add(pq, pond.H - 1, pr, 'pond');
+      }
+    }
+    return out;
   }
 
   // Internal cross-calls (trees and ponds → treeTrunkAt) go through this object, so tests can spy on them.
   /** @type {SurvivalWorldGen} */
   const api = {
     seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, streamLevelAt, pondTaintedAt, naturalSpringAt, naturalSpringOf,
-    FLORA_TABLE: floraTable, PATCH_TABLE: patchTable,
+    streamHeadOf, aquifersIn, FLORA_TABLE: floraTable, PATCH_TABLE: patchTable,
   };
   return api;
 }

@@ -113,10 +113,10 @@ describe('generations 1–4 are byte for byte what they were before §85', () =>
 });
 
 describe('generation 5 is generation 4 but for its surface (worldgen.js, CONTRACTS §85)', () => {
-  it('is the newest generation; its heights, biomes, trees, streams, ponds and everything under the ground are generation 4\'s', () => {
-    expect(GEN_LATEST).toBe(5);
+  it('was the newest generation until §89 added the sixth; its heights, biomes, trees, streams, ponds and everything under the ground are generation 4\'s', () => {
+    expect(GEN_LATEST).toBe(6); // §89: generation 6 is generation 5 with aquifers
     expect(gen5.gen).toBe(5);
-    expect(createWorldGen(SEED, { gen: 9 }).gen).toBe(5);
+    expect(createWorldGen(SEED, { gen: 9 }).gen).toBe(GEN_LATEST); // a number above the newest is the newest
     expect(createWorldGen(SEED).gen).toBe(1);
     expect(gen5.PATCH_TABLE).toBe(gen4.PATCH_TABLE);
     expect(gen5.FLORA_TABLE).toBe(gen4.FLORA_TABLE);

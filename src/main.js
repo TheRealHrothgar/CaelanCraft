@@ -96,7 +96,7 @@ import {
   strikeReach, outOfReachHint, STRIKE_REACH_MAX,
   wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterHint, WATER_POTS,
 } from './survivalControl.js';
-import { WaterCycle, waterAt, drawWater, applyWaterWrites, POT_GULPS, WATER_STEP_MAX_S } from './waterBodies.js';
+import { WaterCycle, waterAt, drawWater, applyWaterWrites, aquiferInfo, POT_GULPS, WATER_STEP_MAX_S, CYCLE_RANGE, AQUIFER_NEAR_MAX } from './waterBodies.js';
 import {
   Growth, cropOfBlock, cropState, farmHint, plantAt, wrongGroundHint, failLine, handWater, FAIL_NOTICE_CELLS, RAIN_WATERS_S,
 } from './farming.js';
@@ -2520,6 +2520,7 @@ export function boot(win, doc) {
     growth.onBlockChange(q, y, r, prev, next); // §80: a planted seed or a sprout is tracked, anything else forgotten
     sleepBlockChanged(q, y, r); // §87: whether a watched sleep spot is secure is worked out again
     refill.onBlockChange(q, y, r, prev, next); // §85: a drawn spring, a well, a rain barrel with room
+    waterCycle.onBlockChange(q, y, r, prev, next); // §89: an aquifer set or taken away by a command
     if (releaseToPack && (releasedItems.length > 0 || releasedSpots.length > 0)) {
       flyFromCell([...releasedItems, ...releasedSpots], q, y, r);
     }
@@ -4173,7 +4174,36 @@ export function boot(win, doc) {
     const [q, r] = worldToHex(player.x, player.z);
     const ev = waterCycle.step(dt, random, { ...waterWorld, isLoadedCell: isLoadedCellFn, q, r }, env);
     if (ev) applyWaterWrites(world, ev.writes);
+    aquiferSecond(dt, random, q, r, env); // §89: the aquifers round the player feed the water on them
     return ev;
+  }
+
+  // ---- §89: the aquifer (waterBodies.js feedStep; the cycle finds the aquifers in the loaded chunks' blocks) ----
+
+  /** How the aquifers' step reads this world round column (q, r): waterWorld, and the blocks of a loaded chunk. */
+  function aquiferWorld(q, r) {
+    return { ...waterWorld, isLoadedCell: isLoadedCellFn, q, r, chunkBlocks: (cq, cr) => world.getChunk(cq, cr)?.blocks ?? null };
+  }
+
+  /** §89, from waterSecond: one step of the aquifers within CYCLE_RANGE of column (q, r); their writes are lazy block changes. */
+  function aquiferSecond(dt, random, q, r, env) {
+    for (const ev of waterCycle.feed(dt, random, aquiferWorld(q, r), env)) applyWaterWrites(world, ev.writes);
+  }
+
+  /**
+   * §89, the debug handle's `aquiferNear(radius)`: the aquifers within `radius` cells of the player (CYCLE_RANGE when not
+   * given; at most AQUIFER_NEAR_MAX), nearest first, each with what it feeds (waterBodies.aquiferInfo, in the season now).
+   * @returns {(import('./waterBodies.js').AquiferInfo & { distance: number })[]|null} null without a world
+   */
+  function aquiferNear(radius) {
+    if (!world || !player) return null;
+    const R = radius === undefined ? CYCLE_RANGE : Math.max(0, Math.min(AQUIFER_NEAR_MAX, Math.floor(Number(radius)) || 0));
+    const [q, r] = worldToHex(player.x, player.z);
+    const w = aquiferWorld(q, r);
+    const cells = waterCycle.aquifers.near(w, q, r, R);
+    const out = [];
+    for (let i = 0; i < cells.length; i += 3) out.push({ ...aquiferInfo(w, cells[i], cells[i + 1], cells[i + 2], waterEnv), distance: hexLength(cells[i] - q, cells[i + 2] - r) });
+    return out.sort((a, b) => a.distance - b.distance);
   }
 
   // ---- Survival: R (§9.4 priorities) -----------------------------------------------------------------
@@ -6288,14 +6318,16 @@ export function boot(win, doc) {
     /**
      * Run the water cycle as if `seconds` had passed (1 s steps, at most WATER_STEP_MAX_S of them), with Math.random and,
      * when given, another weather: `{ rain: 1, dryness: 1 }` (numbers, or the functions of a WaterEnv). Nothing else ages.
-     * @returns {{ seconds: number, dried: number, filled: number, beds: number, basins: number }|null}
+     * §89: the aquifers' step runs too, and `fed` / `seeped` count what it did.
+     * @returns {{ seconds: number, dried: number, filled: number, beds: number, basins: number, fed: number, seeped: number }|null}
      */
     waterStep(seconds, env) {
       if (!world || !player || !Number.isFinite(seconds)) return null;
       const fn = (v, fallback) => (typeof v === 'function' ? v : Number.isFinite(v) ? () => v : fallback);
       const weather = env ? { rain: fn(env.rain, waterEnv.rain), dryness: fn(env.dryness, waterEnv.dryness) } : waterEnv;
       const n = Math.max(0, Math.min(WATER_STEP_MAX_S, Math.floor(seconds)));
-      const total = { seconds: n, dried: 0, filled: 0, beds: 0, basins: 0 };
+      const total = { seconds: n, dried: 0, filled: 0, beds: 0, basins: 0, fed: 0, seeped: 0 };
+      const [fed0, seeped0] = [waterCycle.fed, waterCycle.seeped]; // §89: the aquifers' step runs in waterSecond
       for (let i = 0; i < n; i++) {
         const ev = waterSecond(1, Math.random, weather);
         if (!ev) continue;
@@ -6304,8 +6336,12 @@ export function boot(win, doc) {
         else if (ev.kind === 'bed') total.beds++;
         else total.basins++;
       }
+      total.fed = waterCycle.fed - fed0;
+      total.seeped = waterCycle.seeped - seeped0;
       return total;
     },
+    /** §89: the aquifers within `radius` cells of the player, nearest first, with what each feeds. */
+    aquiferNear: (radius) => aquiferNear(radius),
     // ---- §87 sleep: the sleep itself, the effects of tiredness, and ways to see every stage quickly ----
     sleep,
     tiredFx,

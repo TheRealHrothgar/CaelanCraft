@@ -89,7 +89,7 @@ import {
 import { HAND_WATER_S, handWaterChance } from './farming.js';
 // §83: water that runs out
 import { BODY_MAX_CELLS, SPILL_STEP_S } from './fluids.js';
-import { CELL_GULPS, POT_GULPS, DRY_MEAN_S, STREAM_DRY_MEAN_S, ROOF_DRY_FACTOR, FILL_MEAN_S } from './waterBodies.js';
+import { CELL_GULPS, POT_GULPS, DRY_MEAN_S, STREAM_DRY_MEAN_S, ROOF_DRY_FACTOR, FILL_MEAN_S, AQUIFER_FLOW, AQUIFER_HOUR_S } from './waterBodies.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 
@@ -1365,6 +1365,14 @@ function makeChapters() {
       p('Water with nothing under it falls until it lands. Water that flows away is lost: flowing water never becomes a pool again.'),
       p(`*Clay holds rain.* Dig a pit, floor it with Clay and leave it open to the sky. In the rain it takes its first water, shallow; then it fills like any pool. A basin can be many cells, up to ${BODY_MAX_CELLS}, if every cell lies on clay and every wall is whole.`),
       warn('Do not dig beside your water. Close a breach at once with any solid block: what ran out is gone, the rest holds.'),
+    ],
+    [
+      // §89: the aquifer
+      h('Where water comes from'),
+      p('Rain does not all run away. Much of it soaks into the ground and sinks until it reaches rock, and fills every crack in it, as water fills a sponge. Rock full of water is an *aquifer*.'),
+      p('Where the ground lets it, that water comes up again: at a *spring* and at the head of every *stream*. An aquifer lies under each of them, and under the middle of some clear ponds: dark wet rock with water in its cracks. No tool and no blast can break it.'),
+      p(`A pool on an aquifer is fed from below. It is *full* in the rains and *low* in the dry season, and never dry: the sun takes it no lower, and drinking stops at shallow. Every game hour an aquifer gives enough water to raise ${numWord(AQUIFER_FLOW.rains)} cells by a depth in the rains and ${numWord(AQUIFER_FLOW.dry)} in the dry season. So a small basin fills fast and a big one slowly: a pond of seven cells gains a depth in about ${fmtDurationLong((7 * AQUIFER_HOUR_S) / AQUIFER_FLOW.rains)} in the rains, ${fmtDurationLong((7 * AQUIFER_HOUR_S) / AQUIFER_FLOW.dry)} in the dry season.`),
+      tip('You cannot dig an aquifer, but you can build around one: a basin over it, every wall whole, fills by itself all year. That is the best place for a homestead.'),
     ],
     [
       h('Water from plants'),

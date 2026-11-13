@@ -78,8 +78,8 @@ describe('black_hole block', () => {
 });
 
 describe('canSwallow', () => {
-  it('protects air, liquids, bedrock, rune blocks and other black holes', () => {
-    for (const id of [B.AIR, B.WATER, B.BEDROCK, B.RUNE_BLOCK, B.BLACK_HOLE]) expect(canSwallow(id)).toBe(false);
+  it('protects air, liquids, bedrock, (§89) the aquifer, rune blocks and other black holes', () => {
+    for (const id of [B.AIR, B.WATER, B.BEDROCK, B.AQUIFER, B.RUNE_BLOCK, B.BLACK_HOLE]) expect(canSwallow(id)).toBe(false);
     for (const id of [B.STONE, B.GRASS_BLOCK, B.GLASS, B.OAK_LEAVES, B.ICE, B.GOLD_BLOCK]) expect(canSwallow(id)).toBe(true);
   });
 });
@@ -256,11 +256,12 @@ describe('BlackHoles.update (swallowing)', () => {
     const [pq, py, pr] = EAT_OFFSETS[3];
     cells.set(holeKey(pq, 10 + py, pr), B.BEDROCK);
     cells.set(holeKey(EAT_OFFSETS[4][0], 10 + EAT_OFFSETS[4][1], EAT_OFFSETS[4][2]), B.WATER);
+    cells.set(holeKey(EAT_OFFSETS[5][0], 10 + EAT_OFFSETS[5][1], EAT_OFFSETS[5][2]), B.AQUIFER); // §89: never pulled
     let total = 0;
     for (let i = 0; i < EAT_OFFSETS.length + 10; i++) total += holes.update(BLACK_HOLE_EAT_INTERVAL_S, world).length;
-    expect(total).toBe(EAT_OFFSETS.length - 2);
+    expect(total).toBe(EAT_OFFSETS.length - 3);
     expect(world.getBlock(pq, 10 + py, pr)).toBe(B.BEDROCK);
-    expect([...cells.values()].sort()).toEqual([B.WATER, B.BEDROCK, B.BLACK_HOLE].sort());
+    expect([...cells.values()].sort()).toEqual([B.WATER, B.BEDROCK, B.AQUIFER, B.BLACK_HOLE].sort());
     // Idle until new food appears inside the ball.
     expect(holes.update(10, world)).toEqual([]);
     world.setBlock(0, 11, 0, B.SAND);

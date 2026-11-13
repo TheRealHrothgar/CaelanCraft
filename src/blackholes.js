@@ -22,7 +22,7 @@ import {
   BLACK_HOLE_FLASH_INTENSITY, BLACK_HOLE_FLASH_COLOR, BLACK_HOLE_PINCH_DEG, BLACK_HOLE_PINCH_RANGE,
   BLACK_HOLE_STRETCH_DEG,
 } from './config.js';
-import { BLOCK, isLiquid, isSolid } from './blocks.js';
+import { BLOCK, isDeepRock, isLiquid, isSolid } from './blocks.js';
 import { chunkKey, forEachEditedCell, localIndex } from './coords.js';
 import { HEX_DIRS, hexToWorld, hexDistance, worldToHex } from './hex.js';
 import { playerIntersectsBlock } from './physics.js';
@@ -188,12 +188,12 @@ export function holeKey(q, y, r) {
 }
 
 /**
- * Cells a black hole may swallow: anything except air, liquids (no draining oceans), bedrock (the world floor),
- * Rune Blocks (they carry scripts) and other black holes.
+ * Cells a black hole may swallow: anything except air, liquids (no draining oceans), bedrock (the world floor) and
+ * the aquifer (§89: isDeepRock), Rune Blocks (they carry scripts) and other black holes.
  * @param {number} id
  */
 export function canSwallow(id) {
-  return id !== BLOCK.AIR && id !== BLOCK.BEDROCK && id !== BLOCK.RUNE_BLOCK && id !== BLOCK.BLACK_HOLE && !isLiquid(id);
+  return id !== BLOCK.AIR && !isDeepRock(id) && id !== BLOCK.RUNE_BLOCK && id !== BLOCK.BLACK_HOLE && !isLiquid(id);
 }
 
 /**

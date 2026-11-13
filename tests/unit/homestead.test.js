@@ -80,7 +80,7 @@ const isBlue = ([r, g, b]) => b > 150 && b > r + 40 && b >= g;
 
 describe('the ten blocks 163–172 (blocks.js)', () => {
   it('ids, names and display names, appended after the water of §83', () => {
-    expect(BLOCK_COUNT).toBe(173);
+    expect(BLOCK_COUNT).toBe(174); // (§89 appended the aquifer, 173)
     expect([...HOMESTEAD_IDS]).toEqual([163, 164, 165, 166, 167, 168, 169, 170, 171, 172]);
     expect(HOMESTEAD_IDS.map((id) => [id, BLOCKS[id].name, BLOCKS[id].displayName])).toEqual([
       [B.SPRING, 'spring', 'Spring'], [B.SPRING_DRAWN, 'spring_drawn', 'Spring (drawn)'],
@@ -141,7 +141,7 @@ describe('the tiles 207, 225–227 and 232–237 (tiles.js)', () => {
   it('ten tiles in the ids the flora range left free, each named after its key and used by a block or a model', () => {
     expect([TILE.SPRING_SIDE, TILE.SPRING_TOP, TILE.SPRING_DRAWN_TOP, TILE.WELL, TILE.WELL_SKIN, TILE.RAIN_BARREL, TILE.RAIN_BARREL_SKIN,
       TILE.GRASS_BED, TILE.BED, TILE.BED_SKIN]).toEqual([207, 225, 226, 227, 232, 233, 234, 235, 236, 237]);
-    expect(TILE_IDS).toHaveLength(193);
+    expect(TILE_IDS).toHaveLength(195); // (§89: + the aquifer's two)
     for (const t of [...PICTURES, ...OPAQUE]) {
       expect(TILE_IDS, TILE_NAMES[t]).toContain(t);
       const key = Object.keys(TILE).find((k) => TILE[k] === t);
@@ -149,7 +149,7 @@ describe('the tiles 207, 225–227 and 232–237 (tiles.js)', () => {
       const used = BLOCKS.some((d) => d.tiles.includes(t)) || Object.values(PLANT_MODELS).some((m) => m.tile === t);
       expect(used, TILE_NAMES[t]).toBe(true);
     }
-    expect([TILE_NAMES[238], TILE_NAMES[239]]).toEqual([undefined, undefined]); // still free
+    expect([TILE_NAMES[238], TILE_NAMES[239]]).toEqual(['aquifer_side', 'aquifer_top']); // free until §89's aquifer took them
   });
 
   it('the four pictures are cut-outs for the Pack (alpha 0 or 255, clear pixels black, clear corners); the faces and skins are opaque', () => {

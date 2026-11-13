@@ -113,8 +113,8 @@ const facesWith = (id, pred, least = 1) => quadsOf(id).filter((q) => texelsOf(id
 
 describe('the eight blocks 151–158 (blocks.js)', () => {
   it('ids, names, flags and tiles: wild plants like the others — 3D models with the PLANT flags and a flat icon', () => {
-    expect(BLOCK_COUNT).toBe(173); // (§83: the low and shallow water follow at 159–162; §85: the homestead blocks at 163–172)
-    expect(BLOCKS).toHaveLength(173);
+    expect(BLOCK_COUNT).toBe(174); // (§83: the low and shallow water follow at 159–162; §85: the homestead blocks at 163–172; §89: the aquifer at 173)
+    expect(BLOCKS).toHaveLength(174);
     expect(BLOCKS[158].id).toBe(158); // appended in id order: no earlier block moved
     expect(BLOCKS[150].name).toBe('cattails_sprout');
     for (const [key, id, name, displayName, sound, tile, placeable] of PLANTS) {
@@ -151,7 +151,7 @@ describe('the eight blocks 151–158 (blocks.js)', () => {
   it('seven tiles 218–224, one each in id order (the picked Nightshade has none of its own)', () => {
     expect(NEW_TILES).toEqual([218, 219, 220, 221, 222, 223, 224]);
     expect(NEW_TILES.map((t) => TILE_NAMES[t])).toEqual(['fern', 'meadow_daisies', 'thistle', 'hemlock', 'nightshade_bush', 'flax', 'aloe']);
-    expect(TILE_IDS).toHaveLength(193); // + the ten tiles of §85
+    expect(TILE_IDS).toHaveLength(195); // + the ten tiles of §85; + the aquifer's two (§89)
     for (const t of NEW_TILES) expect(TILE_IDS, TILE_NAMES[t]).toContain(t);
     // every one is the face of exactly one block
     for (const t of NEW_TILES) expect(BLOCKS.filter((d) => d.tiles.includes(t)).map((d) => d.name), TILE_NAMES[t]).toEqual([TILE_NAMES[t]]);

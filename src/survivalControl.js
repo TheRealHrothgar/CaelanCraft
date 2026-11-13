@@ -5,7 +5,7 @@
 import {
   DIG_TICK_S, USE_REPEAT_GAP_S, TAP_HOLD_S, RELIGHT_HOLD_S, FUEL_STICK_S, FUEL_LOG_S, WORLD_HEIGHT, STATION_RANGE,
 } from './config.js';
-import { BLOCK, getBlockDef, isPopOff, isReplaceable, isSolid, isWater } from './blocks.js';
+import { BLOCK, getBlockDef, isDeepRock, isPopOff, isReplaceable, isSolid, isWater } from './blocks.js';
 import { getItem, hasTag, itemName, maxDurability } from './items.js';
 import { isPickable, tap, toolPower, DIG_TOOL_TYPES } from './harvest.js';
 import { HEX_DIRS, FACE_TOP } from './hex.js';
@@ -586,11 +586,11 @@ export const BELONGINGS_TRY_UP = 3;
  * one (at most 8 cells; none → the feet cell), so a death in mid-air leaves them on the ground. Try that cell, then up to 3
  * cells above it, then its 6 side neighbours; the first that `isReplaceable` (AIR or a liquid) is the place. When none is
  * (a death buried in solid ground: a cave-in, a block written onto the player), the same candidates are tried again for
- * the first solid cell that is not BEDROCK — the heap replaces the block that killed the player and is dug out like any
- * other, so a burial never costs the pack (§2.5).
+ * the first solid cell that is not BEDROCK or an AQUIFER (§89: isDeepRock) — the heap replaces the block that killed the
+ * player and is dug out like any other, so a burial never costs the pack (§2.5).
  * @param {(q: number, y: number, r: number) => number} getBlock
  * @param {number} q @param {number} y @param {number} r the feet cell
- * @returns {[number, number, number]|null} null when every candidate is bedrock or unloaded (the items are lost)
+ * @returns {[number, number, number]|null} null when every candidate is bedrock, an aquifer or unloaded (the items are lost)
  */
 export function chooseBelongingsCell(getBlock, q, y, r) {
   if (!Number.isFinite(q + y + r) || y < 0) return null;
@@ -617,7 +617,7 @@ export function chooseBelongingsCell(getBlock, q, y, r) {
     const cy = cell[1];
     if (cy < 0 || cy >= WORLD_HEIGHT) continue;
     const id = getBlock(cell[0], cy, cell[2]);
-    if (isSolid(id) && id !== BLOCK.BEDROCK) return cell;
+    if (isSolid(id) && !isDeepRock(id)) return cell;
   }
   return null;
 }
