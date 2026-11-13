@@ -5261,6 +5261,12 @@ renderer against signals whose numbers are known.
 
 ## 86. Zombies and light — `src/zombies.js`, `src/zombieRenderer.js`, `src/main.js`, `src/handbook.js`
 
+> **Amendment (sanctuary, by the lead):** a walker or a runner does not CHASE a player who stands in block light ≥
+> `ZOMBIE_DREAD_LIGHT` (`_canChase` reads the light of the player's own cell once an update), unless it was struck within
+> `PROVOKE_S`. Without this a crowd waited at the edge of the glow, and a waiting crowd with a runner in it raises an
+> alpha, the one kind light does not stop: light attracted the worst zombie. The alpha is not put off and comes on,
+> weakened, as below. A player in light 9 or less is chased as before, and the zombies' own dread rules are unchanged.
+
 Amends §39, §61, §65 and §73. **Light is a defence.** Block light — a Torch (13), a burning Campfire (14), a lit
 Filament Lamp (7–14), Glowstone (15); §62, §72 — is a weaker kind of day: no zombie comes up on lit ground, walkers and
 runners will not step into strong light, idle zombies keep off lit ground and drift away from it, and a zombie standing

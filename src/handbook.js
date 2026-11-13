@@ -1696,7 +1696,7 @@ function makeChapters() {
     ],
     [
       h('Light keeps them off'),
-      p('Zombies hate the light of a flame or a lamp. None comes up out of well-lit ground, and no walker or runner steps into strong light: it stops at the edge and looks for a way round.'),
+      p('Zombies hate the light of a flame or a lamp. None comes up out of well-lit ground, and no walker or runner steps into strong light. Stand in that light yourself and they leave you alone: they do not even wait at its edge, unless you strike one.'),
       ...lightsTable(),
       p(`Light loses 1 of its strength with every cell. Walkers and runners will not step where it is ${ZOMBIE_DREAD_LIGHT} or more. None comes up where it is ${ZOMBIE_SPAWN_LIGHT_MAX} or more, and fewer the brighter the ground below that.`),
     ],

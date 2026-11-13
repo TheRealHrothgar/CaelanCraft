@@ -401,6 +401,8 @@ export class Zombies {
     this._fires = true;
     /** @type {((q: number, y: number, r: number) => number)|null} this update's world.blockLight (§86); null: no light rules */
     this._light = null;
+    /** The block light the player stands in at this update (0 without a light accessor or a player). */
+    this._playerLight = 0;
     /**
      * The world view of the last update (null before the first): for the console, e.g. `zombies.spawnReport(q, r)`.
      * @type {ZombieWorld|null}
@@ -519,6 +521,12 @@ export class Zombies {
     const isDay = !!world.isDay;
     this._fires = world.hasCampfires ? !!world.hasCampfires() : true;
     this._light = world.blockLight ?? null;
+    // §86 (sanctuary): the block light the player stands in, read once an update
+    this._playerLight = 0;
+    if (this._light && player) {
+      const [plq, plr] = worldToHex(player.x, player.z);
+      this._playerLight = standLight(this._light, plq, Math.floor(player.y + 0.01), plr);
+    }
     this.world = world;
     this._shoreBudget = ZOMBIE_SHORE_SEARCHES;
 
@@ -685,6 +693,10 @@ export class Zombies {
     const d = Math.hypot(player.x - zb.x, dy, player.z - zb.z);
     // A dormant walker (in open daylight, not provoked, no alpha near) wakes only for a player within WALKER_WAKE_RANGE.
     if (isDormant(zb)) return d <= WALKER_WAKE_RANGE;
+    // §86 (sanctuary): a walker or a runner leaves alone a player who stands in light it dreads — it does not wait at
+    // the edge of the glow, where a waiting crowd would raise an alpha — unless it was struck a moment ago (PROVOKE_S).
+    // The alpha is not put off: it comes on, weakened.
+    if (kindOf(zb) !== 'alpha' && this._playerLight >= ZOMBIE_DREAD_LIGHT && !(zb.provoked > 0)) return false;
     return d <= ZOMBIE_SIGHT;
   }
 

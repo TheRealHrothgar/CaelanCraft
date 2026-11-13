@@ -301,7 +301,7 @@ describe('zombies and light — none comes up on lit ground', () => {
 describe('zombies and light — dread: walkers and runners keep out of strong light', () => {
   const torch = pointLight(TORCH_LIGHT);
 
-  it('a walker after a player who stands at a torch stops at the edge of its light and never strikes', () => {
+  it('a player who stands at a torch is left alone by a walker in plain sight: it does not come, wait at the edge or strike', () => {
     for (let seed = 1; seed <= 6; seed++) {
       const zs = new Zombies(seededRng(seed));
       const a = seed * 1.1;
@@ -318,9 +318,10 @@ describe('zombies and light — dread: walkers and runners keep out of strong li
         brightest = Math.max(brightest, lightAt(torch, zb));
         nearest = Math.min(nearest, Math.hypot(zb.x, zb.z));
       });
-      expect(zb.mode, `seed ${seed}`).toBe('chase'); // it still wants you
-      expect(brightest, `seed ${seed}`).toBe(ZOMBIE_DREAD_LIGHT - 1); // it came up to the edge …
-      expect(nearest, `seed ${seed}`).toBeGreaterThan(TORCH_LIGHT - ZOMBIE_DREAD_LIGHT); // … and stayed more than 3 cells off
+      // (sanctuary: a waiting crowd at the edge of the glow would raise an alpha, so nobody waits there)
+      expect(zb.mode, `seed ${seed}`).not.toBe('chase');
+      expect(brightest, `seed ${seed}`).toBeLessThan(ZOMBIE_SHY_LIGHT); // it never even wandered onto lit ground
+      expect(nearest, `seed ${seed}`).toBeGreaterThan(TORCH_LIGHT - ZOMBIE_SHY_LIGHT); // more than 7 cells off, always
       expect(attacks, `seed ${seed}`).toBe(0);
     }
   });
@@ -590,6 +591,62 @@ describe('zombies and light — dread: walkers and runners keep out of strong li
     expect(zs._lightBars(zb, 1, GROUND, 0, true)).toBe(true);
     zs._light = null;
     expect(zs._lightBars(zb, 1, GROUND, 0, true)).toBe(false);
+  });
+});
+
+describe('zombies and light — sanctuary: nobody waits at the edge of the glow', () => {
+  const torch = pointLight(TORCH_LIGHT);
+  const still = (player, x, z) => Object.assign(player, { x, z, vx: 0, vy: 0, vz: 0 });
+
+  it('walkers and runners chase a player in light 9, not one in light 10 or more; a struck one does, for PROVOKE_S; the alpha always', () => {
+    const chasing = (kind, playerLight, provoked = 0) => {
+      const zs = new Zombies(seededRng(4));
+      const zb = zs.spawn(...[14, GROUND, 0], Math.PI / 2, kind);
+      zb.provoked = provoked;
+      const [px, pz] = hexToWorld(TORCH_LIGHT - playerLight, 0);
+      const player = standing(px, pz);
+      expect(lightAt(torch, player)).toBe(playerLight);
+      run(zs, view(flat, player, { blockLight: torch }), 1, () => { still(player, px, pz); });
+      return zb.mode === 'chase';
+    };
+    for (const kind of ['walker', 'runner']) {
+      expect(chasing(kind, ZOMBIE_DREAD_LIGHT - 1), kind).toBe(true);
+      expect(chasing(kind, ZOMBIE_DREAD_LIGHT), kind).toBe(false);
+      expect(chasing(kind, TORCH_LIGHT), kind).toBe(false);
+      expect(chasing(kind, TORCH_LIGHT, 10), `${kind} struck`).toBe(true);
+    }
+    expect(chasing('alpha', ZOMBIE_DREAD_LIGHT)).toBe(true);
+    expect(chasing('alpha', TORCH_LIGHT)).toBe(true);
+  });
+
+  it('a crowd round a lit player does not gather: after a minute none is chasing and none stands within 7 cells', () => {
+    const zs = new Zombies(seededRng(9));
+    for (let i = 0; i < 10; i++) {
+      const a = (i * Math.PI * 2) / 10;
+      zs.spawn(Math.cos(a) * 11, GROUND, Math.sin(a) * 11, 0, i === 0 ? 'runner' : 'walker');
+    }
+    const player = standing(0.3, 0.2);
+    let attacks = 0;
+    let alphas = 0;
+    run(zs, view(flat, player, { blockLight: torch }), 60, (ev) => {
+      attacks += ev.attacks.length;
+      alphas += ev.alphas.length;
+      still(player, 0.3, 0.2);
+    });
+    expect(attacks).toBe(0);
+    expect(zs.list.filter((zb) => zb.mode === 'chase')).toHaveLength(0);
+    for (const zb of zs.list) expect(lightAt(torch, zb)).toBeLessThan(ZOMBIE_SHY_LIGHT);
+    // and the same crowd round a player in the DARK closes in at once (the rule is about light, not about crowds)
+    const dark = new Zombies(seededRng(9));
+    for (let i = 0; i < 10; i++) {
+      const a = (i * Math.PI * 2) / 10;
+      dark.spawn(Math.cos(a) * 11, GROUND, Math.sin(a) * 11, 0, 'walker');
+    }
+    const prey = standing(0.3, 0.2);
+    let struck = 0;
+    run(dark, view(flat, prey, { blockLight: uniform(0) }), 20, (ev) => { struck += ev.attacks.length; still(prey, 0.3, 0.2); });
+    expect(struck).toBeGreaterThan(0);
+    expect(alphas).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -979,8 +1036,8 @@ describe('zombies and light — light behind a wall does not count (a real World
         brightest = Math.max(brightest, lightAt(v.blockLight, zb));
       });
       expect(attacks).toBe(0);
-      expect(brightest).toBe(ZOMBIE_DREAD_LIGHT - 1);
-      expect(zb.glare).toBeGreaterThan(0);
+      expect(brightest).toBeLessThan(ZOMBIE_DREAD_LIGHT); // the player stands in light 11: it is left alone
+      expect(zb.mode).not.toBe('chase');
     }
   });
 
@@ -1166,8 +1223,9 @@ describe('zombies and light — what the checks cost', () => {
     }
     const looks = Math.ceil((FRAMES * DT) / GLARE_CHECK_S) + 1;
     expect(reads).toBeGreaterThan(0);
-    expect(reads).toBeLessThanOrEqual(ZOMBIE_MAX * (FRAMES * 2 + looks * 2));
-    expect(reads / FRAMES / ZOMBIE_MAX).toBeLessThanOrEqual(2 + (2 * looks) / FRAMES); // ≈ 2.07 reads a zombie a frame
+    // (+ 2 reads an update for the light the PLAYER stands in: the sanctuary rule)
+    expect(reads).toBeLessThanOrEqual(ZOMBIE_MAX * (FRAMES * 2 + looks * 2) + FRAMES * 2);
+    expect((reads - FRAMES * 2) / FRAMES / ZOMBIE_MAX).toBeLessThanOrEqual(2 + (2 * looks) / FRAMES); // ≈ 2.07 reads a zombie a frame
   });
 
   it('timed against a real LightEngine: the same crowd costs no measurable extra', () => {

@@ -713,7 +713,7 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(ZOMBIE_SPAWN_FIRE_CLEAR).toBeGreaterThan(CAMPFIRE_LIGHT - ZOMBIE_SPAWN_LIGHT_MAX);
 
     // ---- the prose
-    expect(text).toContain('None comes up out of well-lit ground, and no walker or runner steps into strong light: it stops at the edge and looks for a way round.');
+    expect(text).toContain('None comes up out of well-lit ground, and no walker or runner steps into strong light. Stand in that light yourself and they leave you alone: they do not even wait at its edge, unless you strike one.');
     expect(text).toContain(`Light loses 1 of its strength with every cell. Walkers and runners will not step where it is ${ZOMBIE_DREAD_LIGHT} or more. None comes up where it is ${ZOMBIE_SPAWN_LIGHT_MAX} or more, and fewer the brighter the ground below that.`);
     // weaker in proportion: a walker in the brightest light it will stand in (one below its dread) …
     const edge = { glare: (ZOMBIE_DREAD_LIGHT - 1) / LIGHT_MAX };
