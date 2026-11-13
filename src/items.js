@@ -32,6 +32,11 @@ export const TAGS = Object.freeze({
   tinder: Object.freeze(['birch_bark', 'plant_fibre']),
   knapstone: Object.freeze(['flint', 'obsidian_shard']),
   sand: Object.freeze(['sand', 'red_sand']),
+  // §85: wool of any colour (white first: it is what a sheep gives), for the Bed's mattress and blanket
+  wool: Object.freeze([
+    'wool_white', 'wool_light_gray', 'wool_gray', 'wool_black', 'wool_brown', 'wool_red', 'wool_orange', 'wool_yellow',
+    'wool_lime', 'wool_green', 'wool_cyan', 'wool_light_blue', 'wool_blue', 'wool_purple', 'wool_magenta', 'wool_pink',
+  ]),
 });
 
 /** Stack size of every block item. */
@@ -201,6 +206,8 @@ const FOOD_ROWS = [
   // v0.14 (§76 water): filled from Tainted Water (or a Pot of Water that stood too long) — it poisons three times in five;
   // boiling makes it a Pot of Boiled Water like any other. It keeps: it cannot get worse.
   ['pot_tainted', 'Pot of Tainted Water', 1, { satiation: 0, hydration: 30, sick: 0.6, useS: 1.0, returns: 'clay_pot' }],
+  // §85: filled at a natural Spring — ground water, clean as it comes: safe to drink like boiled water, and it keeps
+  ['pot_spring', 'Pot of Spring Water', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot' }],
 ];
 
 /**
@@ -240,7 +247,12 @@ const PLACES_AS = new Map([
 /** Picked variant → the ripe block whose item it belongs to. @type {Map<number, number>} */
 const ITEM_BLOCK_OF = new Map([...PLACES_AS].map(([ripe, bare]) => [bare, ripe]));
 /** v0.11 (CONTRACTS §69): states of a block that give its item back (a baited or sprung snare is still the Snare). */
-const SAME_ITEM = new Map([[BLOCK.SNARE_BAITED, BLOCK.SNARE], [BLOCK.SNARE_SPRUNG, BLOCK.SNARE]]);
+const SAME_ITEM = new Map([
+  [BLOCK.SNARE_BAITED, BLOCK.SNARE], [BLOCK.SNARE_SPRUNG, BLOCK.SNARE],
+  // §85: a drawn well is still the Well, and a barrel that holds water gives the empty Rain Barrel (the water spills)
+  [BLOCK.WELL_DRAWN, BLOCK.WELL],
+  [BLOCK.RAIN_BARREL_1, BLOCK.RAIN_BARREL], [BLOCK.RAIN_BARREL_2, BLOCK.RAIN_BARREL], [BLOCK.RAIN_BARREL_3, BLOCK.RAIN_BARREL],
+]);
 
 /** @returns {ItemDef[]} every item in ITEM_KEYS order, not yet frozen and without tags */
 function buildDefs() {

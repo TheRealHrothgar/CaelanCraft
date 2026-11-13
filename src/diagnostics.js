@@ -421,6 +421,7 @@ function refreshHandleRefs(handle, game) {
   handle.spread = game ? game.spread ?? null : null; // §80: the wild plants' spreading and its counts (spread.js Spread)
   handle.weather = game ? game.weather ?? null : null; // §84: the live world's weather (weather.js createWeather)
   handle.waterCycle = game ? game.waterCycle ?? null : null; // §83: the water cycle and its counts (waterBodies.js WaterCycle)
+  handle.refill = game ? game.refill ?? null : null; // §85: the drawn springs, the wells and the rain barrels with room (homestead.js Refill)
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
   handle.seed = world && world.seed != null ? world.seed : handle.seed ?? null;
@@ -508,6 +509,9 @@ export function installDebugHandle(win, game) {
   // `env` when given (`{ rain: 1, dryness: 1 }`): the in-game check of pools that run out
   handle.waterBodyAt = (q, y, r) => (game && typeof game.waterBodyAt === 'function' ? game.waterBodyAt(q, y, r) : null);
   handle.waterStep = (seconds, env) => (game && typeof game.waterStep === 'function' ? game.waterStep(seconds, env) : null);
+  // §85: run the refill of springs, wells and rain barrels as if `seconds` had passed, in the weather of `env` when given
+  // (`{ rain: 1, dryness: 0.3 }`): the in-game check of a place to stay
+  handle.homesteadStep = (seconds, env) => (game && typeof game.homesteadStep === 'function' ? game.homesteadStep(seconds, env) : null);
   handle.interact = () => {
     if (game && typeof game.interact === 'function') game.interact();
   };

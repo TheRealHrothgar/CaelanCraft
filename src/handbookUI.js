@@ -280,6 +280,8 @@ export const GLYPHS = Object.freeze({
   keys: 'M3.5 6.5h17v11h-17Z M7 10h.01 M10.5 10h.01 M14 10h.01 M17 10h.01 M7.5 14h9',
   switch: 'M3 12l4-6h4.5v12H7Z M12.5 6H17l4 6-4 6h-4.5',
   hex: 'M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5Z',
+  // §85 A place to stay: a small house — a roof, two walls and a door
+  home: 'M2.5 11.5L12 3.5l9.5 8 M5 9.8v10.7h14V9.8 M10 20.5v-6h4v6',
   // §84 Seasons and rain: a cloud over three falling drops
   rain: 'M7 14.5a4 4 0 0 1 .6-7.95A5.5 5.5 0 0 1 18.2 8a3.3 3.3 0 0 1-.7 6.5Z M8.5 17.5l-1 3 M12.5 17.5l-1 3 M16.5 17.5l-1 3',
 });

@@ -463,6 +463,11 @@
  *   the body of water that the water in a cell is taken from
  * @property {(seconds: number, env?: { rain?: number|((q: number, r: number) => number), dryness?: number|(() => number) }) => ({ seconds: number, dried: number, filled: number, beds: number, basins: number }|null)} [waterStep]
  *   run the water cycle as if `seconds` had passed, in another weather when `env` is given
+ *
+ * A place to stay (CONTRACTS §85): the tracker of drawn springs, wells and rain barrels, and time for it alone.
+ * @property {import('./homestead.js').Refill} [refill]  what brings their water back
+ * @property {(seconds: number, env?: { rain?: number|((q: number, y: number, r: number) => number), dryness?: number|(() => number) }) => ({ seconds: number, springs: number, wells: number, barrels: number }|null)} [homesteadStep]
+ *   run the refill step as if `seconds` had passed, in another weather when `env` is given
  */
 
 export {};

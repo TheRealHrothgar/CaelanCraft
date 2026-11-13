@@ -1,4 +1,5 @@
 // Caelancraft — the wild plants as small 3D models (pure data, no three). See src/CONTRACTS.md §78.
+// (§85: the well, the rain barrel and the two beds are built of the same parts and drawn by the same mesher path.)
 //
 // A plant in the world is a handful of BOXES (a mushroom's stem and cap, a bush's crown, a cactus pad) and CARDS (a
 // leaf, a blade of grass, a frond: one upright picture that may lean and taper), every face cut from the plant's own
@@ -492,6 +493,88 @@ const ALOE = [
   ...[0, 1, 2, 3].map((i) => aloeLeaf(0.5 + (i * Math.PI) / 2, 1.05, 4)),
 ];
 
+// ---------------------------------------------------------------------------------------------------------------------
+// §85: a place to stay — the well, the rain barrel, the two beds. Furniture, not plants, but built of the same boxes.
+// Rects name texels of the skins (tiles.js: well_skin, rain_barrel_skin, bed_skin) and of the grass bed's own picture.
+// A hexagonal ring of six wall boxes makes the well's stones and the barrel's staves; neighbouring walls differ in
+// height, so the tops of two boxes that overlap at a corner never lie in one plane.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * The Well: a hexagonal ring of six big stones (alternately 7 and 6 texels high), two posts standing on opposite
+ * stones with a beam across them, a cord wound on the beam and hanging down the shaft. Full (`fruit`): water near
+ * the rim and the clay pot hanging over it. Drawn (compiled `bare`): the dark of the shaft, the cord running down
+ * into it — the pot is below, filling.
+ */
+const WELL_WATER = /** @type {Rect} */ ([0, 7, 8, 8]);
+const WELL_DARK = /** @type {Rect} */ ([14, 7, 2, 3]);
+const WELL_POST = /** @type {Rect} */ ([11, 7, 2, 8]);
+const WELL_CORD = /** @type {Rect} */ ([13, 7, 1, 8]);
+const WELL_BEAM = /** @type {Rect} */ ([0, 15, 14, 1]);
+const WELL = [
+  ...ring(6, 5.25, 0, (i) => [
+    box([0, 0, 0], [3, i % 2 ? 6 : 7, 7], i % 2 ? [8, 1, 3, 6] : [2, 0, 3, 7], { end: i % 2 ? [5, 1, 7, 6] : [0, 0, 7, 7], top: [8, 7, 3, 7] }),
+  ]),
+  box([0, 0, 0], [7.6, 1.5, 8.8], WELL_DARK, { top: WELL_DARK }),
+  box([0, 0, 0], [7.6, 5, 8.8], WELL_WATER, { top: WELL_WATER, fruit: true }),
+  box([5.25, 6, 0], [1.5, 7.5, 1.5], WELL_POST, { top: null }),
+  box([-5.25, 6, 0], [1.5, 7.5, 1.5], WELL_POST, { top: null }),
+  box([0, 13, 0], [13.5, 1.5, 1.5], WELL_BEAM, { end: [12, 15, 2, 1], under: WELL_BEAM }),
+  box([0, 12.5, 0], [3, 2.5, 2.5], [13, 7, 1, 3], { under: [13, 7, 1, 3] }),
+  box([0, 1.5, 0], [0.75, 11, 0.75], WELL_CORD, { top: null }),
+  box([0, 6, 0], [3.5, 3, 3.5], [14, 11, 2, 3], { top: [14, 7, 2, 2], under: [14, 13, 2, 2], fruit: true }),
+  box([0, 9, 0], [4.5, 1, 4.5], [14, 10, 2, 1], { top: [14, 7, 2, 2], under: [14, 10, 2, 1], fruit: true }),
+];
+
+/**
+ * The Rain Barrel holding `pots` pots (0..3): six upright stave walls in a hexagonal ring (alternately 13 and 12.5
+ * texels high, 2 thick) bound by two cord hoops painted across them, open at the top. Inside, the dark boards of its
+ * bottom — or the water, a third of the way up for each pot, so how much it holds is seen from above. (The plate
+ * inside is 7.1 × 8.2: it covers the hexagon the staves leave open and its corners stay inside them.)
+ * @param {number} pots
+ * @returns {PlantPart[]}
+ */
+const BARREL_WATER = /** @type {Rect} */ ([8, 0, 8, 8]);
+const BARREL_DARK = /** @type {Rect} */ ([8, 8, 8, 5]);
+const rainBarrel = (pots) => [
+  ...ring(6, 4.5, 0, (i) => [
+    box([0, 0, 0], [2, i % 2 ? 12.5 : 13, 6.2], [0, 0, 2, 13], { end: [i % 2 ? 1 : 0, 0, 6, 13], top: [0, 13, 2, 3] }),
+  ]),
+  pots > 0
+    ? box([0, 0, 0], [7.1, 1 + 3.5 * pots, 8.2], BARREL_WATER, { top: BARREL_WATER })
+    : box([0, 0, 0], [7.1, 1, 8.2], BARREL_DARK, { top: BARREL_DARK }),
+];
+
+/**
+ * The Grass Bed: three sticks laid side by side, a wide heap of dry grass on them, a smaller heap on that and a
+ * bolster of grass at the head. Everything is cut from the bed's own picture.
+ */
+const STRAW = /** @type {Rect} */ ([2, 5, 12, 8]);
+const BED_STICK = /** @type {Rect} */ ([0, 14, 14, 1]);
+const GRASS_BED = [
+  ...[-3.25, 0, 3.25].map((z) => box([0, 0, z], [14.5, 1.5, 1.5], BED_STICK, { end: [0, 13, 2, 2] })),
+  box([0, 1.5, 0], [13, 3, 9], [2, 7, 12, 3], { end: [3, 9, 9, 3], top: STRAW }),
+  box([0.5, 4.5, 0], [10, 2, 7], [3, 5, 10, 2], { end: [4, 6, 7, 2], top: [3, 6, 10, 7] }),
+  box([-3.5, 6.5, 0], [4, 1.5, 6], [5, 5, 4, 2], { end: [5, 5, 6, 2], top: [3, 5, 4, 6] }),
+];
+
+/**
+ * The Bed: a wooden frame on four legs with a tall headboard and a low footboard, a pale stuffed mattress, a white
+ * pillow at the head and a red woollen blanket with two yellow stripes over the rest.
+ */
+const BED_WOOD = /** @type {Rect} */ ([0, 0, 9, 8]);
+const BED_LEG = /** @type {Rect} */ ([0, 12, 2, 3]);
+const BED_BLANKET = /** @type {Rect} */ ([9, 0, 7, 8]);
+const BED = [
+  ...[[-5.25, -3.5], [-5.25, 3.5], [5.25, -3.5], [5.25, 3.5]].map(([x, z]) => box([x, 0, z], [2, 3, 2], BED_LEG, { top: null })),
+  box([0, 3, 0], [13, 2, 9], [0, 3, 9, 2], { end: [0, 3, 9, 2], top: [0, 0, 9, 8], under: [0, 6, 9, 2] }),
+  box([-6, 3, 0], [1.5, 8, 9.5], [0, 0, 2, 8], { end: BED_WOOD, top: [0, 0, 2, 8] }),
+  box([6, 3, 0], [1.5, 4, 9.5], [0, 3, 2, 4], { end: [0, 3, 9, 4], top: [0, 3, 2, 5] }),
+  box([0, 5, 0], [10.5, 2, 8], [0, 8, 10, 2], { end: [0, 8, 8, 2], top: [0, 8, 10, 4] }),
+  box([-3.25, 7, 0], [3, 1.5, 6], [12, 8, 3, 2], { end: [12, 8, 4, 2], top: [12, 8, 3, 6] }),
+  box([1.75, 7, 0], [7, 1, 8.5], [4, 12, 7, 1], { end: [4, 12, 8, 2], top: BED_BLANKET }),
+];
+
 /**
  * @typedef {Object} PlantModelDef
  * @property {PlantPart[]} parts
@@ -532,6 +615,15 @@ export const PLANT_MODELS = Object.freeze({
   [BLOCK.NIGHTSHADE_BUSH_BARE]: { parts: nightshade([1, 9, 5, 4]), bare: true, tile: TILE.HONEYBERRY_BUSH },
   [BLOCK.FLAX]: { parts: FLAX },
   [BLOCK.ALOE]: { parts: ALOE },
+  // §85: the well (drawn: `bare`, less its water and its pot), the rain barrel by what it holds, the two beds
+  [BLOCK.WELL]: { parts: WELL, tile: TILE.WELL_SKIN },
+  [BLOCK.WELL_DRAWN]: { parts: WELL, bare: true, tile: TILE.WELL_SKIN },
+  [BLOCK.RAIN_BARREL]: { parts: rainBarrel(0), tile: TILE.RAIN_BARREL_SKIN },
+  [BLOCK.RAIN_BARREL_1]: { parts: rainBarrel(1), tile: TILE.RAIN_BARREL_SKIN },
+  [BLOCK.RAIN_BARREL_2]: { parts: rainBarrel(2), tile: TILE.RAIN_BARREL_SKIN },
+  [BLOCK.RAIN_BARREL_3]: { parts: rainBarrel(3), tile: TILE.RAIN_BARREL_SKIN },
+  [BLOCK.GRASS_BED]: { parts: GRASS_BED },
+  [BLOCK.BED]: { parts: BED, tile: TILE.BED_SKIN },
 });
 
 /**

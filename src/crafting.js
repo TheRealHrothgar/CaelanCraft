@@ -205,6 +205,8 @@ const RECIPE_ROWS = [
   ['workbench', 'hand', '5 #planks + 2 steel_bar + 2 glass + 12 copper_wire + 2 tin_ingot', 'workbench', 'hammer 5', 20],
   // v0.14 (§76 fauna): what feathers are for — the Flint Dart with a feathered flight (faster, harder, tougher)
   ['fletched_dart', 'hand', 'flint + stick + 2 feather + plant_fibre', '4 fletched_dart', 'hammer 1', 3],
+  // §85: the first night's bed — a heap of dry grass on a few sticks
+  ['grass_bed', 'hand', '8 plant_fibre + 3 stick', 'grass_bed', '', 4],
   // ---- Work Stump (12); riving a log into sticks is real work: there is no planks-to-sticks shortcut
   ['oak_planks', 'stump', 'oak_log', '3 oak_planks', 'axe 2', 3],
   ['spruce_planks', 'stump', 'spruce_log', '3 spruce_planks', 'axe 2', 3],
@@ -227,6 +229,11 @@ const RECIPE_ROWS = [
   ['voltaic_battery', 'stump', '6 copper_ingot + 6 tin_ingot + 6 plant_fibre + pot_seawater', 'voltaic_battery + clay_pot', 'hammer 3', 12],
   ['knife_switch', 'stump', '3 rock + copper_ingot + 2 copper_wire', 'knife_switch', 'hammer 3', 6], // a slate base
   ['push_button', 'stump', 'rock + bronze_ingot + 2 copper_wire', 'push_button', 'hammer 3', 5],
+  // §85: what a homestead is built from. The well is dug (a shovel), ringed with stone and given a pot on a cord; the
+  // rain barrel is staves bound with cord; the bed is a frame, a wool-stuffed mattress and a blanket on leather straps
+  ['well', 'stump', '12 cobblestone + 3 cord + 2 #planks + clay_pot', 'well', 'shovel 1', 12],
+  ['rain_barrel', 'stump', '6 #planks + 2 cord', 'rain_barrel', 'axe 1', 8],
+  ['bed', 'stump', '6 #planks + 3 cord + 3 #wool + leather', 'bed', 'knife 2', 12],
   // ---- Kiln (21; every recipe burns fuel — in the charcoal job the logs themselves smoulder)
   ['charcoal', 'kiln', '6 #log', '8 charcoal', '', 40],
   ['clay_pot', 'kiln', 'greenware_pot + #fuel', 'clay_pot', '', 15],
@@ -332,6 +339,7 @@ export const TAG_LABELS = Object.freeze({
   tinder: 'Tinder',
   knapstone: 'Knapping Stone',
   sand: 'Any Sand',
+  wool: 'Any Wool',
 });
 
 /** Tier-0 kit is named by its item, not "a hand crucible". */

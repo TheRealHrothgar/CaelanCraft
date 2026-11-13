@@ -107,15 +107,22 @@ const TABLE = [
   [[B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE], 0.5, 'shovel', 0],
   [[B.FLAX, B.ALOE], 0.3, 'shovel', 0],
   [[...FARM_IDS], 0.3, null, 0], // §80 farming: a planted seed or a sprout comes out by hand
+  // §85: a place to stay — the well like the kiln, the barrel with an axe, the beds at once
+  [[B.WELL, B.WELL_DRAWN], 3.0, 'pick', 0],
+  [[B.RAIN_BARREL, B.RAIN_BARREL_1, B.RAIN_BARREL_2, B.RAIN_BARREL_3], 1.5, 'axe', 0],
+  [[B.GRASS_BED], 0.4, null, 0],
+  [[B.BED], 1.5, 'axe', 0],
 ];
 
 describe('BLOCK_RULES (§6.3)', () => {
-  it('has one entry per block id; only AIR, BEDROCK and the water family are null', () => {
+  it('has one entry per block id; only AIR, BEDROCK, the water family and (§85) the two springs are null', () => {
     expect(BLOCK_RULES.length).toBe(BLOCK_COUNT);
     const nulls = BLOCK_RULES.map((r, id) => (r ? null : id)).filter((x) => x !== null);
     // The 20 powder-and-circuits blocks (DESIGN-circuits §1.2) have their §8.3 rows: every part comes away whole.
     // (v0.14: harmless now — the ids once held by `reserved_*` placeholders are all real blocks.)
-    expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id) || b.name.startsWith('reserved_')).map((b) => b.id));
+    // §85: a natural spring cannot be broken in Survival (the rock runs deep): SPRING and SPRING_DRAWN have no rule
+    expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id) || b.name.startsWith('reserved_')
+      || b.id === B.SPRING || b.id === B.SPRING_DRAWN).map((b) => b.id));
     for (let id = B.COLLAPSAR_CHARGE; id <= B.COHERER_RECEIVER; id++) {
       expect(rollDrops(id, null, {}, () => 0.5), BLOCKS[id].name).toEqual([{ k: BLOCKS[id].name, n: 1 }]);
     }

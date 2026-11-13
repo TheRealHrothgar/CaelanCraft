@@ -131,6 +131,7 @@ const FOODS = {
   raw_egg: ['Raw Egg', 16, 5, 2, 0.25, 0.8, { spoilS: 3600 }],
   roast_egg: ['Roast Egg', 16, 14, 0, 0, 1.0, { spoilS: 2400 }],
   pot_tainted: ['Pot of Tainted Water', 1, 0, 30, 0.6, 1.0, { returns: 'clay_pot' }], // v0.14 (CONTRACTS §76 water)
+  pot_spring: ['Pot of Spring Water', 1, 0, 30, 0, 1.0, { returns: 'clay_pot' }], // §85: safe as it comes, and it keeps
 };
 
 /** §5.1 bandages: key → [display name, stack, hp, rate, useS]. */
@@ -231,8 +232,8 @@ describe('items — the registry', () => {
     // twelve game foods (fauna)
     // §80: + the three seeds (materials). The 18 farm blocks are not placeable, so they are no items.
     // §81: + Hemlock Root and Nightshade Berries (foods), the Aloe Leaf (a heal) and the seven placeable plants.
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 54, 3, 5, 114]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(261); // + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 55, 3, 5, 118]); // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(266); // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -380,6 +381,8 @@ describe('items — block items', () => {
       if (d.id === BLOCK.HAZEL_THICKET_BARE || d.id === BLOCK.CRAB_APPLE_BUSH_BARE || d.id === BLOCK.HEALWORT_PLANT_BARE) continue;
       if (d.id === BLOCK.NIGHTSHADE_BUSH_BARE) continue; // §81: the picked Nightshade gives the Nightshade Bush
       if (d.id === BLOCK.SNARE_BAITED || d.id === BLOCK.SNARE_SPRUNG) continue; // states of the Snare: they give it back (§69)
+      // §85: a drawn well is still the Well, and a rain barrel that holds water gives the (empty) Rain Barrel
+      if (d.id === BLOCK.WELL_DRAWN || (d.id >= BLOCK.RAIN_BARREL_1 && d.id <= BLOCK.RAIN_BARREL_3)) continue;
       expect(itemForBlock(d.id), d.name).toBeNull();
       expect(isItemKey(d.name), d.name).toBe(false);
     }
@@ -419,6 +422,9 @@ describe('items — tags', () => {
       tinder: ['birch_bark', 'plant_fibre'],
       knapstone: ['flint', 'obsidian_shard'],
       sand: ['sand', 'red_sand'],
+      // §85: any wool, white first (what a sheep gives): the Bed
+      wool: ['wool_white', 'wool_light_gray', 'wool_gray', 'wool_black', 'wool_brown', 'wool_red', 'wool_orange', 'wool_yellow',
+        'wool_lime', 'wool_green', 'wool_cyan', 'wool_light_blue', 'wool_blue', 'wool_purple', 'wool_magenta', 'wool_pink'],
     });
     for (const [tag, keys] of Object.entries(TAGS)) {
       expect(tag).toMatch(LOWER_SNAKE);

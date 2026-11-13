@@ -158,11 +158,23 @@ export const TILE_NAMES = Object.freeze({
   222: 'nightshade_bush',
   223: 'flax',
   224: 'aloe',
+  // §85 (a place to stay): the spring's side and its two tops, the well's picture
+  207: 'spring_side',
+  225: 'spring_top',
+  226: 'spring_drawn_top',
+  227: 'well',
   // v0.14 (§76 fauna): the ground nest
   228: 'ground_nest',
   229: 'ground_nest_empty',
   230: 'litter_nest',
   231: 'litter_egg',
+  // §85: the well's skin, the rain barrel's picture and skin, the grass bed, the bed's picture and skin
+  232: 'well_skin',
+  233: 'rain_barrel',
+  234: 'rain_barrel_skin',
+  235: 'grass_bed',
+  236: 'bed',
+  237: 'bed_skin',
   // powder and circuits: 160–194 (DESIGN-circuits §1.4), painted by circuitTiles.js
   ...CIRCUIT_TILE_NAMES,
   240: 'zombie_face',
@@ -3322,6 +3334,309 @@ function paintAloe(px) {
   paintPicture(px, ALOE_ART, { A: 0x5aa27a, a: 0x2a6a50, L: 0x9ee0ae, T: 0xf4f8d4 });
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// §85 tiles: a place to stay (original designs; these comments are normative). Bold shapes and few colours, lit from
+// the upper left, like the plants of §81. The spring is a prism and has ordinary opaque faces. The well, the rain
+// barrel and the beds are small 3D models: each has a PICTURE (a cut-out on alpha 0 with RGB 0, alpha 0 or 255 only:
+// the Pack's icon) and — but the grass bed, whose picture is solid enough to wrap its boxes — a SKIN of opaque
+// swatches that plantModels.js cuts its faces from.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The rim stones of a spring's top: [centre x, centre y, radius x, radius y, tone], round the pool, clockwise from the top. */
+const SPRING_STONES = Object.freeze([
+  [8, 1.6, 2.9, 2.0, 0], [12.6, 3.6, 2.3, 2.3, 1], [14.0, 8.2, 2.0, 2.8, 2], [12.2, 12.8, 2.6, 2.1, 0],
+  [7.6, 14.5, 2.8, 1.9, 1], [3.2, 12.6, 2.4, 2.2, 2], [1.9, 7.8, 2.0, 2.8, 0], [3.6, 3.4, 2.4, 2.2, 1],
+]);
+/** Their greys: [base, lit, shaded]. Cooler and darker than the loose stones: wet rock. */
+const SPRING_TONES = Object.freeze([[0x8f959b, 0xc6ccd2, 0x5c6268], [0x9a9a92, 0xd0d0c6, 0x66665e], [0x7f878f, 0xb4bcc4, 0x525a62]]);
+/** The pool: a disc of this radius round (8, 8). */
+const SPRING_POOL_R = 4.6;
+
+/** The wet dark ground between the stones (0x2c3238, noise 5), then the eight rim stones of SPRING_STONES as bold pebbles. */
+function paintSpringRim(px, rng) {
+  fill(px, 0x2c3238);
+  noise(px, rng, 5);
+  for (const [cx, cy, rx, ry, t] of SPRING_STONES) {
+    const [base, light, dark] = SPRING_TONES[t];
+    paintPebble(px, rng, cx, cy, rx, ry, base, light, dark);
+  }
+  // moss in four of the gaps
+  for (const [x, y] of [[10, 2], [14, 11], [5, 14], [1, 5]]) set(px, x, y, 0x5d8a4a);
+}
+
+/**
+ * 225 spring_top — a spring, welling: the rim (paintSpringRim, seed "spring_rim": both tops share it stone for stone)
+ * round a pool of clear water, a disc of radius SPRING_POOL_R at (8, 8): deep blue 0x2a78c2 at its edge (d > 3.6),
+ * bright 0x45a8e6 inside, and where the water wells up a pale ring 0xa8e4fa (1.2 < d ≤ 2.2) round a 2 × 2 white heart;
+ * two white glints at (5, 7) and (10, 5). Far brighter and clearer than pond water: it is seen from a distance.
+ */
+function paintSpringTop(px) {
+  paintSpringRim(px, makeRng('spring_rim'));
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x + 0.5 - 8, y + 0.5 - 8);
+      if (d > SPRING_POOL_R) continue;
+      set(px, x, y, d > 3.6 ? 0x2a78c2 : d > 2.2 ? 0x45a8e6 : d > 1.2 ? 0xa8e4fa : 0xffffff);
+    }
+  }
+  set(px, 5, 7, 0xffffff);
+  set(px, 10, 5, 0xffffff);
+  set(px, 10, 10, 0x8fd2f4);
+}
+
+/**
+ * 226 spring_drawn_top — the same spring just drawn from: the same rim, and in place of the pool its wet bed — dark
+ * stone 0x3d444b with a darker edge 0x2a3036 (d > 3.6) and three pale pebbles of the bed — with a trickle in the
+ * middle: a 2 × 2 of water 0x45a8e6 with one white pixel, and a thread of it running to the lower right.
+ */
+function paintSpringDrawnTop(px) {
+  const rng = makeRng('spring_rim');
+  paintSpringRim(px, rng);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x + 0.5 - 8, y + 0.5 - 8);
+      if (d > SPRING_POOL_R) continue;
+      set(px, x, y, d > 3.6 ? 0x2a3036 : 0x3d444b, delta(rng, 4));
+    }
+  }
+  for (const [x, y] of [[5, 6], [10, 6], [6, 10]]) set(px, x, y, 0x6a727a);
+  for (const [x, y] of [[7, 7], [8, 7], [7, 8], [8, 8], [9, 9], [10, 10]]) set(px, x, y, 0x45a8e6);
+  set(px, 7, 7, 0xffffff);
+}
+
+/**
+ * 207 spring_side — the rock a spring is set in, seen where the hill falls away below it: stone (seed "stone") a shade
+ * darker, a rim of pale stones along the top two rows, and water running down the middle: a wet streak 0x39424c two
+ * pixels wide from row 2 to row 13 with a thread of water 0x45a8e6 in it and three white glints; moss 0x5d8a4a beside it.
+ */
+function paintSpringSide(px, rng) {
+  paintStone(px, makeRng('stone'));
+  for (let i = 0; i < BYTES; i += 4) {
+    px[i] -= 14;
+    px[i + 1] -= 12;
+    px[i + 2] -= 8;
+  }
+  for (let x = 0; x < W; x++) {
+    const gap = x % 5 === 4;
+    set(px, x, 0, gap ? 0x4a4f55 : 0xc0c6cc, delta(rng, 5));
+    set(px, x, 1, gap ? 0x4a4f55 : 0x8f959b, delta(rng, 5));
+  }
+  for (let y = 2; y <= 13; y++) {
+    set(px, 7, y, 0x39424c);
+    set(px, 8, y, y % 3 === 0 ? 0x39424c : 0x45a8e6);
+  }
+  for (const y of [4, 7, 11]) set(px, 8, y, 0xffffff);
+  for (const [x, y] of [[6, 4], [9, 6], [6, 9], [9, 12], [6, 13], [10, 13]]) set(px, x, y, 0x5d8a4a);
+}
+
+/** The colours of the well's stones (lit L, plain S, shaded s, the gaps K), wood (B, b, post P, p), cord C and pot (O, o, rim R). */
+const WELL_PALETTE = Object.freeze({
+  L: 0xc2c6ca, S: 0x92979c, s: 0x6a6f74, K: 0x34383c, B: 0xa0703a, b: 0x6e4a22, P: 0x8a5a2c, p: 0x5c3a1a, C: 0xd8c08a,
+  O: 0xb8613a, o: 0x8a4526, R: 0xd98a5c, W: 0x45a8e6, H: 0xffffff, w: 0x2a78c2, D: 0x14181c, d: 0x232a30,
+});
+
+/**
+ * 227 well — the Well's picture: a ring of big stones in two courses (rows 9–15), two posts and a beam over it, a cord
+ * wound on the beam and a clay pot hanging from it over the water.
+ */
+const WELL_ART = Object.freeze([
+  '                ',
+  '  PP        PP  ',
+  ' BBBBBBCCBBBBBB ',
+  ' bbbbbbCCbbbbbb ',
+  '  Pp   C    Pp  ',
+  '  Pp   C    Pp  ',
+  '  Pp  RRRR  Pp  ',
+  '  Pp  OOOo  Pp  ',
+  '  Pp  OOoo  Pp  ',
+  ' LLLSKwWWHwLLSs ',
+  ' LSSsKLLLSKLSSs ',
+  ' SSssKLSSsKSSss ',
+  ' KKKKKKKKKKKKKK ',
+  ' LSKLLSSKLLSKLs ',
+  ' SsKLSSsKLSsKSs ',
+  ' ssKSSssKSssKss ',
+]);
+function paintWell(px) {
+  clearTile(px);
+  paintPicture(px, WELL_ART, WELL_PALETTE);
+}
+
+/**
+ * 232 well_skin — what the Well's model is cut from. Rows 0–6: masonry, two courses of big stones (3 rows each) with a
+ * dark joint between them. Below it, left to right: water [0, 7, 8, 8]; a stone's top [8, 7, 3, 8]; a post [11, 7, 2, 8];
+ * the cord [13, 7, 1, 8]; the dark of the shaft [14, 7, 2, 3] over the pot's clay [14, 10, 2, 5]; row 15: the beam.
+ */
+const WELL_SKIN_ART = Object.freeze([
+  'LLLSsKLLSSsKLLSs',
+  'LSSSsKLSSSsKLSSs',
+  'SSSssKSSSssKSSss',
+  'KKKKKKKKKKKKKKKK',
+  'SsKLLSSsKLLSSsKL',
+  'SsKLSSSsKLSSSsKL',
+  'ssKSSSssKSSSssKS',
+  'wwWWWWwwLLSPpCDD',
+  'wWWHWWWwLSSPpCDd',
+  'WWWWWWWWLSsPpCdD',
+  'WWWWWHWWSSsPpCRR',
+  'WHWWWWWWLLSPpCOo',
+  'WWWWWWWWLSSPpCOo',
+  'wWWWWWWwSSsPpCOo',
+  'wwWWWWwwSssPpCoo',
+  'BBBBBbBBBBBBbBBB',
+]);
+function paintWellSkin(px) {
+  paintPicture(px, WELL_SKIN_ART, WELL_PALETTE);
+}
+
+/** The Rain Barrel's colours: staves (lit L, plain B, the joints b, shaded d), the cord hoops C (c shaded), the dark inside D, water. */
+const BARREL_PALETTE = Object.freeze({
+  L: 0xc89858, B: 0xa87840, b: 0x7a5228, d: 0x5c3c1c, C: 0xe0c890, c: 0xa89058, D: 0x2a1c10, W: 0x45a8e6, w: 0x2a78c2,
+  H: 0xffffff, E: 0xd8b070,
+});
+
+/**
+ * 233 rain_barrel — the Rain Barrel's picture: an open barrel of upright staves bound by two cord hoops, wider at its
+ * belly, seen a little from above so its open top shows the water in it; a raindrop falling into it.
+ */
+const RAIN_BARREL_ART = Object.freeze([
+  '       W        ',
+  '      WHW       ',
+  '   EEEEEEEEEE   ',
+  '  EdWWWHWWWWdE  ',
+  '  EEdwWWWWwdEE  ',
+  '  LEEEEEEEEEEd  ',
+  '  LBbBBbBBbBBd  ',
+  ' CCCCCCCCCCCCcc ',
+  ' LBBbBBbBBbBBdd ',
+  ' LBBbBBbBBbBBdd ',
+  ' LBBbBBbBBbBBdd ',
+  ' CCCCCCCCCCCCcc ',
+  '  LBbBBbBBbBBd  ',
+  '  LBbBBbBBbBBd  ',
+  '  dBbBBbBBbBdd  ',
+  '   dddddddddd   ',
+]);
+function paintRainBarrel(px) {
+  clearTile(px);
+  paintPicture(px, RAIN_BARREL_ART, BARREL_PALETTE);
+}
+
+/**
+ * 234 rain_barrel_skin — what the Rain Barrel's model is cut from. Left half, rows 0–12: staves [0, 0, 8, 13], upright
+ * boards two pixels wide with a dark joint between them and the two cord hoops across them on rows 3 and 9. Right half:
+ * water [8, 0, 8, 8] over the dark boards of the bottom [8, 8, 8, 5]. Rows 13–15: the pale cut tops of the staves.
+ */
+const RAIN_BARREL_SKIN_ART = Object.freeze([
+  'LBbBBbBdwwWWWWww',
+  'LBbBBbBdwWWHWWWw',
+  'LBbBBbBdWWWWWWWW',
+  'CCCCCCccWWWWWHWW',
+  'LBbBBbBdWHWWWWWW',
+  'LBbBBbBdWWWWWWWW',
+  'LBbBBbBdwWWWWWWw',
+  'LBbBBbBdwwWWWWww',
+  'LBbBBbBdDDdDDdDD',
+  'CCCCCCccDDdDDdDD',
+  'LBbBBbBddddddddd',
+  'LBbBBbBdDDdDDdDD',
+  'LBbBBbBdDDdDDdDD',
+  'EEEEEEEEEEEEEEEE',
+  'EEEBEEEEEBEEEEBE',
+  'EBEEEEBEEEEEBEEE',
+]);
+function paintRainBarrelSkin(px) {
+  paintPicture(px, RAIN_BARREL_SKIN_ART, BARREL_PALETTE);
+}
+
+/**
+ * 235 grass_bed — the Grass Bed, picture and skin in one: a low heap of dry grass (Y, its shaded stalks y, lit ones L,
+ * the dark under it d) lying on sticks whose ends (T, shaded t) show at its foot. Rows 6–12 are solid straw from x 2 to
+ * x 13: the model's heap is cut from there, its sticks from the bottom corners.
+ */
+const GRASS_BED_ART = Object.freeze([
+  '                ',
+  '                ',
+  '                ',
+  '      y   L     ',
+  '    yLYy yYYy   ',
+  '  yYYYLYYYYLYy  ',
+  ' yYLYYyYYLYYYYy ',
+  ' YYYyYYLYYYyYLY ',
+  'yYLYYYyYYYLYYYYy',
+  'YYYYyYYYLYYYyYLY',
+  'YyYLYYYyYYYLYYYY',
+  'YYYYYLYYYyYYYYyY',
+  'dYyYYYYyYYYLYYYd',
+  'TTTdYyYYYYyYdTTT',
+  'tTTTddddddddTTTt',
+  ' tt          tt ',
+]);
+function paintGrassBed(px) {
+  clearTile(px);
+  paintPicture(px, GRASS_BED_ART, { Y: 0xd9b85a, y: 0xb08c3a, L: 0xf2e09a, d: 0x7a5e28, T: 0x8a6238, t: 0x5c4020 });
+}
+
+/** The Bed's colours: frame (lit H, plain F, shaded f), mattress M (m shaded), pillow P (p shaded), blanket R (stripe S, shaded r). */
+const BED_PALETTE = Object.freeze({
+  H: 0xb07a40, F: 0x8a5a2c, f: 0x5c3a1a, M: 0xe8dcc0, m: 0xb8a888, P: 0xfaf6ea, p: 0xcfc8b4, R: 0xb8483a, S: 0xe8c860,
+  r: 0x80302a,
+});
+
+/**
+ * 236 bed — the Bed's picture, seen from the side: a wooden frame on four legs with a tall headboard on the left and a
+ * low footboard, a pale stuffed mattress, a white pillow, and a red woollen blanket with two yellow stripes.
+ */
+const BED_ART = Object.freeze([
+  '                ',
+  '                ',
+  ' HF             ',
+  ' HFf            ',
+  ' HFf            ',
+  ' HFfPPPp        ',
+  ' HFfPPPpRRRRRR  ',
+  ' HFfpppRRSRRSRHf',
+  ' HFfRRRRRSRRSRFf',
+  ' HFfRRRRRSRRSrFf',
+  ' HFfMMMMMMMMMmFf',
+  ' HFFFFFFFFFFFFFf',
+  ' HFfffffffffffFf',
+  ' HFf         HFf',
+  ' HFf         HFf',
+  ' fff         fff',
+]);
+function paintBed(px) {
+  clearTile(px);
+  paintPicture(px, BED_ART, BED_PALETTE);
+}
+
+/**
+ * 237 bed_skin — what the Bed's model is cut from. Rows 0–7: boards [0, 0, 9, 8] (three planks with dark joints) and
+ * the blanket [9, 0, 7, 8], red with two yellow stripes. Rows 8–11: the mattress's ticking [0, 8, 12, 4] and, right of
+ * it down to row 13, the pillow [12, 8, 4, 6]. Rows 12–15: dark leg wood [0, 12, 4, 4] and the blanket's edge [4, 12, 8, 2].
+ */
+const BED_SKIN_ART = Object.freeze([
+  'HHHHHHHHHRRSRRSR',
+  'FFFFFFFFFRRSRRSR',
+  'fffffffffRRSRRSR',
+  'HHHHHHHHHRRSRRSR',
+  'FFFFFFFFFRRSRRSR',
+  'fffffffffRRSRRSR',
+  'HHHHHHHHHRRSRRSR',
+  'FFFFFFFFFrrSrrSr',
+  'MMMMMMMMMMMMPPPP',
+  'MMmMMMmMMMmMPPPP',
+  'MMMMMMMMMMMMPPPP',
+  'mmmmmmmmmmmmPPPp',
+  'FFFfRRSRRSRRPPPp',
+  'FFFfrrSrrSrrpppp',
+  'FFFfFFFFFFFFFFFF',
+  'ffffffffffffffff',
+]);
+function paintBedSkin(px) {
+  paintPicture(px, BED_SKIN_ART, BED_PALETTE);
+}
+
 /** @type {Readonly<Record<string, (px: Uint8ClampedArray, rng: Rng) => void>>} */
 const RECIPES = Object.freeze({
   stone: paintStone,
@@ -3439,6 +3754,16 @@ const RECIPES = Object.freeze({
   nightshade_bush: paintNightshadeBush,
   flax: paintFlax,
   aloe: paintAloe,
+  spring_side: paintSpringSide, // §85: a place to stay
+  spring_top: paintSpringTop,
+  spring_drawn_top: paintSpringDrawnTop,
+  well: paintWell,
+  well_skin: paintWellSkin,
+  rain_barrel: paintRainBarrel,
+  rain_barrel_skin: paintRainBarrelSkin,
+  grass_bed: paintGrassBed,
+  bed: paintBed,
+  bed_skin: paintBedSkin,
   tainted_water: paintTaintedWater, // v0.14 (§76 water)
   seedbed: paintSeedbed, // §80 farming
   sprout: paintSprout,

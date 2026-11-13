@@ -67,6 +67,11 @@ export const PURPOSE = Object.freeze({
   torch: 'Light you can carry and set down.',
   sleeping_hide: 'Where you wake after dying.',
   wicker_basket: 'Storage you can set down.',
+  // ---- a place to stay (§85)
+  well: 'Water all year, a few pots a day. Dig it into earth.',
+  rain_barrel: 'Catches rain. Stores 3 pots of water that never spoil.',
+  grass_bed: 'A poor place to sleep. Better than none.',
+  bed: 'The best sleep: you heal most and need the fewest hours.',
 });
 
 /**
