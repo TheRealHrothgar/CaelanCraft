@@ -14,8 +14,9 @@
 // Each kind has its own five InstancedMeshes (legs, upper arms, forearms, torso, head) over ONE texture and material, so
 // a crowd of one kind costs 5 draw calls. Their twins with a red emissive (`hurt > 0`) or an ember glow (smouldering)
 // only draw while one flashes or burns. The legs swing from the hip with `walkPhase`, the torso leans into a chase and
-// lurches after an attack (`swing`, the arms swiping up), and the head lolls by its own `tilt`. A zombie's optional
-// `renderScale` (default 1) and `renderSpin` (default 0, extra yaw) draw a black hole's shrinking, spinning ghost.
+// lurches after an attack (`swing`, the arms swiping up), and the head lolls by its own `tilt`. In block light (a torch, a
+// lamp, a fire: CONTRACTS §86) it brings one arm up across its face and turns its head away, by its `shield`. A zombie's
+// optional `renderScale` (default 1) and `renderSpin` (default 0, extra yaw) draw a black hole's shrinking, spinning ghost.
 import * as THREE from 'three';
 import { ZOMBIE_MAX } from './config.js';
 import { SWING_S, kindOf, isDormant, ALPHA_SCALE, ZOMBIE_KINDS } from './zombies.js';
@@ -99,6 +100,24 @@ export const ARMS = Object.freeze({
 /** A walker with nobody to chase lets its head hang this far; a runner's is cocked this far to its own side. */
 export const WALKER_DROOP = 0.14;
 export const RUNNER_COCK = 0.16;
+/**
+ * Light hurts its eyes (CONTRACTS §86): by its `shield` (0..1, zombies.js — nothing up to ZOMBIE_SHY_LIGHT, all the way
+ * at the light it dreads) a zombie brings the arm on its own `side` from its kind's bearing to SHIELD_ARM — the upper
+ * arm out in front of its shoulder, a little above level (`reach`, `spread` 0), the forearm bent up (`bend`) and turned
+ * in about the upper arm by `twist`, so that it slants up across that half of its face with the hand before the eye —
+ * and its head from its own lolling to a nod of SHIELD_NOD (held up) and a roll of SHIELD_ROLL away from that arm. The
+ * strike's swipe and the runner's twitch leave that arm as it rises. A dormant walker, asleep on its feet, does none
+ * of it.
+ */
+export const SHIELD_ARM = Object.freeze({ reach: 1.75, bend: 1.4, spread: 0, twist: 0.8 });
+export const SHIELD_NOD = 0.05;
+export const SHIELD_ROLL = 0.12;
+
+/** @param {*} zb @returns {number} how far its arm is up across its face, 0..1 (`Zombie.shield`; 0 for anything else) */
+export function shieldOf(zb) {
+  const s = zb ? zb.shield : 0;
+  return s > 0 ? Math.min(1, s) : 0;
+}
 
 /**
  * @typedef {Object} ZombieRenderer
@@ -364,15 +383,24 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
       // Arms from the shoulders, bent at the elbow. A walker's HANG until it is after someone, then come up in front; a
       // runner's pump with the elbows bent; the alpha's are spread wide with the forearms up. A strike swipes them up.
       const pose = run ? ARMS.runner : alpha ? ARMS.alpha : dormant ? ARMS.dormant : chase ? ARMS.chase : ARMS.hang;
+      // §86: in block light the arm on its own side comes up and its forearm slants across its face (SHIELD_ARM), by
+      // its `shield`.
+      const shield = dormant ? 0 : shieldOf(zb);
+      const shieldSide = zb.side === -1 ? -1 : 1;
       for (let k = 0; k < 2; k++) {
         const side = k === 0 ? -1 : 1;
+        const up = side === shieldSide ? shield : 0;
+        const free = 1 - up; // how much of the swipe and the twitch that arm still follows
         const bob = run ? side * sw * 0.9 : dormant ? 0 : 0.06 * Math.sin(phase + side * 1.4);
+        const reach = pose.reach + bob - lean * 0.6;
         partM.multiplyMatrices(torsoM, tmp.makeTranslation(side * SHOULDER_X, SHOULDER_Y, 0))
-          .multiply(rot.makeRotationX(pose.reach + bob - lean * 0.6 + 0.55 * attack))
-          .multiply(tmp.makeRotationZ(side * pose.spread + twitch * 0.3));
+          .multiply(rot.makeRotationX(reach + (SHIELD_ARM.reach - reach) * up + 0.55 * attack * free))
+          .multiply(tmp.makeRotationZ(side * (pose.spread + (SHIELD_ARM.spread - pose.spread) * up) + twitch * 0.3 * free));
         set.upperArms.setMatrixAt(slot * 2 + k, partM);
         set.upperArms.setColorAt(slot * 2 + k, shirt);
-        foreM.multiplyMatrices(partM, tmp.makeTranslation(0, -UPPER_L, 0)).multiply(rot.makeRotationX(pose.bend + 0.25 * attack));
+        foreM.multiplyMatrices(partM, tmp.makeTranslation(0, -UPPER_L, 0));
+        if (up > 0) foreM.multiply(rot.makeRotationY(side * SHIELD_ARM.twist * up)); // the forearm turns in toward the face
+        foreM.multiply(rot.makeRotationX(pose.bend + (SHIELD_ARM.bend - pose.bend) * up + 0.25 * attack * free));
         set.foreArms.setMatrixAt(slot * 2 + k, foreM);
         set.foreArms.setColorAt(slot * 2 + k, shirt);
       }
@@ -386,9 +414,10 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
       const nod = alpha
         ? Math.cos(phase) * 0.03 - lean * 0.25
         : Math.cos(phase) * 0.06 - lean * (run ? 0.8 : 0.5) - (dormant ? 0.45 : run || chase ? 0 : WALKER_DROOP);
+      // … and in block light it holds its head up behind the raised arm, leaning it away from that arm (§86).
       headM.multiplyMatrices(torsoM, tmp.makeTranslation(0, TORSO_H, 0))
-        .multiply(rot.makeRotationZ(roll))
-        .multiply(tmp.makeRotationX(nod));
+        .multiply(rot.makeRotationZ(roll + (shieldSide * SHIELD_ROLL - roll) * shield))
+        .multiply(tmp.makeRotationX(nod + (SHIELD_NOD - nod) * shield));
       set.head.setMatrixAt(slot, headM);
     }
     const setCount = (mesh, count) => {

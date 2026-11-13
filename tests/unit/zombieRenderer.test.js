@@ -4,9 +4,9 @@ import * as THREE from 'three';
 import {
   createZombieRenderer, zombieGeometries, skinBox, boxesGeometry, LEG_H, LEG_X, TORSO_W, TORSO_H, HEAD_W, HEAD_H, MODEL_HEIGHT,
   UPPER_L, FORE_L, ARM_L, SHOULDER_X, SHOULDER_Y, ALPHA_SCALE, RUNNER_WIDTH, SHIRT_TINTS, ARMS, GLOW_DAY,
-  twitchOf, TWITCH_HZ, TWITCH_PART, TWITCH_ANGLE,
+  twitchOf, TWITCH_HZ, TWITCH_PART, TWITCH_ANGLE, HEAD_D, HAIR_PUFF, shieldOf, SHIELD_ARM, SHIELD_NOD, SHIELD_ROLL,
 } from '../../src/zombieRenderer.js';
-import { PARTS, faceRect, SKIN_H, SKIN_KINDS, ATLAS_W, ATLAS_H, SKIN_TEXEL } from '../../src/zombieSkin.js';
+import { PARTS, faceRect, SKIN_H, SKIN_KINDS, ATLAS_W, ATLAS_H, SKIN_TEXEL, EYE_ROW } from '../../src/zombieSkin.js';
 import { ZOMBIE_MAX, ZOMBIE_HEIGHT, MAX_INFALL_MOBS } from '../../src/config.js';
 
 /** A minimal zombie as the renderer reads it. */
@@ -33,6 +33,8 @@ const boxUnder = (geo, m) => {
   return geo.boundingBox.clone().applyMatrix4(m);
 };
 const FIVE = (kind, suffix = '') => ['forearms', 'head', 'legs', 'torso', 'upper-arms'].map((p) => `zombie-${p}-${kind}${suffix}`);
+/** The forearm's width (m), from the skin's box. */
+const FORE_W = PARTS.foreArm.w * SKIN_TEXEL;
 
 describe('zombie model: a few boxes wrapped in pixel art (no hexagons)', () => {
   it('stands under ZOMBIE_HEIGHT with a grown body: a small head on wide shoulders, long legs, arms to mid thigh', () => {
@@ -386,6 +388,162 @@ describe('how each kind carries itself (CONTRACTS §74)', () => {
     expect(Math.abs(roll('runner') - at0.runner)).toBeGreaterThan(TWITCH_ANGLE * 0.8);
     r.sync(zs); // no clock: as at 0
     expect(roll('runner')).toBeCloseTo(at0.runner, 6);
+    r.dispose();
+  });
+});
+
+describe('light hurts its eyes: one arm up across the face, the head turned away (CONTRACTS §86)', () => {
+  function snapshot(r) {
+    const out = {};
+    for (const m of r.group.children) out[m.name] = Array.from(m.instanceMatrix.array.slice(0, m.count * 16));
+    return out;
+  }
+  const point = (r, name, i, x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(matrixOf(byName(r, name), i));
+
+  it('shieldOf reads Zombie.shield as 0..1; without it (or at 0) the pose is exactly as before', () => {
+    expect(shieldOf({ shield: 0.4 })).toBe(0.4);
+    expect(shieldOf({ shield: 7 })).toBe(1);
+    for (const bad of [undefined, null, {}, { shield: NaN }, { shield: -2 }]) expect(shieldOf(bad)).toBe(0);
+    const scene = new THREE.Scene();
+    const r = createZombieRenderer(scene, null);
+    const base = [
+      zombie(1, 10, 2, { yaw: 0.7, walkPhase: 1.1, tilt: 0.1, mode: 'chase', side: -1 }),
+      zombie(-3, 11, 4, { yaw: -2, walkPhase: 0.3, swing: 0.1, kind: 'runner', side: 1 }),
+      zombie(5, 11, 4, { kind: 'alpha' }),
+    ];
+    r.sync(base, 0.3);
+    const plain = snapshot(r);
+    r.sync(base.map((z) => ({ ...z, shield: 0 })), 0.3);
+    expect(snapshot(r)).toEqual(plain);
+    r.sync(base.map((z) => ({ ...z, shield: NaN })), 0.3);
+    expect(snapshot(r)).toEqual(plain);
+    r.sync(base.map((z) => ({ ...z, shield: 0.5 })), 0.3);
+    expect(snapshot(r)).not.toEqual(plain);
+    r.dispose();
+  });
+
+  /** A point of instance `i` of mesh `name` (its local x, y, z) in the HEAD's own frame: x across, y up from the neck, −z the face. */
+  const inHead = (r, kind, name, i, x, y, z) => point(r, name, i, x, y, z).applyMatrix4(matrixOf(byName(r, `zombie-head-${kind}`), 0).invert());
+  /**
+   * How deep (m) the arm on instance `k` cuts into the head and its hair: the deepest of a grid of points through the
+   * upper arm's and the forearm's boxes, measured inside the head's box.
+   */
+  function cutsIntoHead(r, kind, k) {
+    const hx = HEAD_W / 2 + HAIR_PUFF;
+    const hz = HEAD_D / 2 + HAIR_PUFF;
+    let worst = 0;
+    for (const [name, part, len] of [[`zombie-upper-arms-${kind}`, PARTS.upperArm, UPPER_L], [`zombie-forearms-${kind}`, PARTS.foreArm, FORE_L]]) {
+      const w = part.w * SKIN_TEXEL;
+      const d = part.d * SKIN_TEXEL;
+      for (let a = 0; a <= 4; a++) {
+        for (let b = 0; b <= 10; b++) {
+          for (let c = 0; c <= 4; c++) {
+            const p = inHead(r, kind, name, k, (a / 4 - 0.5) * w, -(b / 10) * len, (c / 4 - 0.5) * d);
+            worst = Math.max(worst, Math.min(hx - Math.abs(p.x), p.y + HAIR_PUFF, HEAD_H + HAIR_PUFF - p.y, hz - Math.abs(p.z)));
+          }
+        }
+      }
+    }
+    return worst;
+  }
+
+  it('at full shield its hand is before the eye on its own side, clear of the face; the other arm does not move', () => {
+    expect(SHIELD_ARM.reach).toBeGreaterThan(Math.PI / 2); // above level: higher than the arms of a chase
+    expect(SHIELD_ARM.reach).toBeGreaterThan(ARMS.chase.reach + 0.5);
+    expect(SHIELD_ARM.bend).toBeGreaterThan(1); // the forearm bent up …
+    expect(SHIELD_ARM.twist).toBeGreaterThan(0.5); // … and turned in across the face
+    const eyeY = HEAD_H * (1 - (EYE_ROW + 0.5) / PARTS.head.h); // the eye slits' height above the neck
+    for (const kind of ['walker', 'runner', 'alpha']) {
+      for (const side of [1, -1]) {
+        for (const extra of [{ mode: 'idle' }, { mode: 'chase' }, { mode: 'chase', walkPhase: 1.6, tilt: 0.28, swing: 0.17 }]) {
+          const at = `${kind}, side ${side}, ${JSON.stringify(extra)}`;
+          const scene = new THREE.Scene();
+          const r = createZombieRenderer(scene, null);
+          r.sync([zombie(0, 10, 0, { kind, side, ...extra })], 0.05);
+          const before = snapshot(r);
+          r.sync([zombie(0, 10, 0, { kind, side, ...extra, shield: 1 })], 0.05);
+          const after = snapshot(r);
+          const mine = side > 0 ? 1 : 0; // the instance of the arm on its side (0: −x, 1: +x)
+          const other = 1 - mine;
+          for (const part of ['upper-arms', 'forearms']) {
+            const name = `zombie-${part}-${kind}`;
+            expect(after[name].slice(other * 16, other * 16 + 16), `${at}: other ${part}`).toEqual(before[name].slice(other * 16, other * 16 + 16));
+            expect(after[name].slice(mine * 16, mine * 16 + 16), `${at}: its ${part}`).not.toEqual(before[name].slice(mine * 16, mine * 16 + 16));
+          }
+          expect(after[`zombie-legs-${kind}`], at).toEqual(before[`zombie-legs-${kind}`]);
+          expect(after[`zombie-torso-${kind}`], at).toEqual(before[`zombie-torso-${kind}`]);
+          // The hand (the far end of the forearm), seen from the head: on the arm's side of the face, at the height of
+          // the eyes, and a little way in front of them. The same for every kind and whatever else the body is doing.
+          const hand = inHead(r, kind, `zombie-forearms-${kind}`, mine, 0, -FORE_L + 2 * SKIN_TEXEL, 0);
+          expect(hand.x * side, `${at}: on its side`).toBeGreaterThan(0.02);
+          expect(hand.x * side, `${at}: over the face`).toBeLessThan(HEAD_W / 2);
+          expect(Math.abs(hand.y - eyeY), `${at}: at the eyes`).toBeLessThan(0.08);
+          expect(-hand.z - HEAD_D / 2 - FORE_W / 2, `${at}: in front`).toBeGreaterThan(0.03);
+          expect(-hand.z - HEAD_D / 2 - FORE_W / 2, `${at}: close`).toBeLessThan(0.15);
+          // the elbow is out in front of the shoulder, lower and farther out than the hand: the forearm slants up and in
+          const elbow = inHead(r, kind, `zombie-forearms-${kind}`, mine, 0, 0, 0);
+          expect(elbow.x * side, at).toBeGreaterThan(hand.x * side + 0.15);
+          expect(elbow.y, at).toBeLessThan(hand.y - 0.15);
+          expect(cutsIntoHead(r, kind, mine), `${at}: clear of the head`).toBe(0);
+          r.dispose();
+        }
+      }
+    }
+  });
+
+  it('on the way up the arm never cuts into its head', () => {
+    for (const kind of ['walker', 'runner', 'alpha']) {
+      for (const mode of ['idle', 'chase']) {
+        const scene = new THREE.Scene();
+        const r = createZombieRenderer(scene, null);
+        for (let s = 1; s <= 20; s++) {
+          r.sync([zombie(0, 10, 0, { kind, mode, side: 1, shield: s / 20 })]);
+          expect(cutsIntoHead(r, kind, 1), `${kind}, ${mode}, shield ${s / 20}`).toBe(0);
+        }
+        r.dispose();
+      }
+    }
+  });
+
+  it('its head comes up and leans away from the raised arm; half a shield is half the way; a dormant walker does nothing', () => {
+    const scene = new THREE.Scene();
+    const r = createZombieRenderer(scene, null);
+    /** The head's own turn on the torso: Rz(roll) · Rx(nod), read back as Euler ZXY. */
+    const head = (kind, extra) => {
+      r.sync([zombie(0, 10, 0, { kind, ...extra })], 0.05);
+      const rel = matrixOf(byName(r, `zombie-torso-${kind}`), 0).invert().multiply(matrixOf(byName(r, `zombie-head-${kind}`), 0));
+      return new THREE.Euler().setFromRotationMatrix(rel, 'ZXY');
+    };
+    const hand = (extra) => {
+      r.sync([zombie(0, 10, 0, extra)]);
+      return point(r, 'zombie-forearms-walker', 1, 0, -FORE_L, 0);
+    };
+    for (const kind of ['walker', 'runner', 'alpha']) {
+      for (const extra of [{}, { mode: 'chase', walkPhase: 2.2, tilt: -0.2 }]) {
+        const full = head(kind, { ...extra, side: 1, shield: 1 });
+        expect(full.x, kind).toBeCloseTo(SHIELD_NOD, 5); // held up (a little back), whatever its own nod was
+        expect(full.z, kind).toBeCloseTo(SHIELD_ROLL, 5); // its crown toward −x, away from the arm on +x
+        expect(head(kind, { ...extra, side: -1, shield: 1 }).z, kind).toBeCloseTo(-SHIELD_ROLL, 5);
+        const none = head(kind, { ...extra, side: 1 });
+        const half = head(kind, { ...extra, side: 1, shield: 0.5 });
+        expect(half.x, kind).toBeCloseTo((none.x + SHIELD_NOD) / 2, 5);
+        expect(half.z, kind).toBeCloseTo((none.z + SHIELD_ROLL) / 2, 5);
+      }
+    }
+    expect(SHIELD_NOD).toBeGreaterThanOrEqual(0); // never bowed into its own arm
+    // the hand rises with the shield
+    const y0 = hand({ side: 1 }).y;
+    const y5 = hand({ side: 1, shield: 0.5 }).y;
+    const y1 = hand({ side: 1, shield: 1 }).y;
+    expect(y5).toBeGreaterThan(y0 + 0.2);
+    expect(y1).toBeGreaterThan(y5 + 0.2);
+    expect(y1).toBeGreaterThan(10 + LEG_H + TORSO_H); // above the shoulders: up by the face
+    // asleep on its feet by day, a walker does not lift a hand
+    const dormant = { daylit: true, side: 1 };
+    r.sync([zombie(0, 10, 0, dormant)]);
+    const asleep = snapshot(r);
+    r.sync([zombie(0, 10, 0, { ...dormant, shield: 1 })]);
+    expect(snapshot(r)).toEqual(asleep);
     r.dispose();
   });
 });

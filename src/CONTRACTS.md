@@ -3978,6 +3978,8 @@ Amends §39 and §61. **Daylight no longer burns zombies**: `burn` stays 0, `smo
   two open cells on top and, for a leap of 2 or more, open cells over its own column up to fy + h + 1; else 0. `_safeAhead`
   accepts a climbable wall; in `update` a wall of 1 is the normal hop (`input.jump`), one of h ≥ 2 sets
   `vy = sqrt(2 × −GRAVITY × (h + LEAP_MARGIN 0.35))` from the ground.
+- **Block light** (§86) is a weaker kind of day: it multiplies `gaitOf().factor` and `damageOf()`, and gives the day
+  climb from light 8 up; `daylit`, dormancy and the burrow are the sun's alone.
 
 ## 66. Raw water poisons; boiling makes it safe — `src/vitals.js`, `src/items.js`, `src/survival.js`
 
@@ -5763,6 +5765,106 @@ One section owns `weather` (made from `world.seed` the first time it is asked fo
   under a roof, the share under leaves, the quads, the cost), rainEffects.test.js (crops, fires, wet, the HUD line,
   main's wiring read from the source, the debug handle), and additions to soundBank, worldSounds, soundTest and
   handbook tests.
+
+## 86. Zombies and light — `src/zombies.js`, `src/zombieRenderer.js`, `src/main.js`, `src/handbook.js`
+
+> **Amendment (sanctuary, by the lead):** a walker or a runner does not CHASE a player who stands in block light ≥
+> `ZOMBIE_DREAD_LIGHT` (`_canChase` reads the light of the player's own cell once an update), unless it was struck within
+> `PROVOKE_S`. Without this a crowd waited at the edge of the glow, and a waiting crowd with a runner in it raises an
+> alpha, the one kind light does not stop: light attracted the worst zombie. The alpha is not put off and comes on,
+> weakened, as below. A player in light 9 or less is chased as before, and the zombies' own dread rules are unchanged.
+
+Amends §39, §61, §65 and §73. **Light is a defence.** Block light — a Torch (13), a burning Campfire (14), a lit
+Filament Lamp (7–14), Glowstone (15); §62, §72 — is a weaker kind of day: no zombie comes up on lit ground, walkers and
+runners will not step into strong light, idle zombies keep off lit ground and drift away from it, and a zombie standing
+in light is slower, hits softer and climbs lower in proportion to it. SKY light and daylight are not this light: the day
+rules of §65 and §68 stand exactly as they are, and the two multiply. Light that an opaque block stops does not count
+(the light model's own rule), so a torch protects the side it shines on.
+
+- **The world view.** `ZombieWorld.blockLight?(q, y, r)` → the BLOCK light 0..LIGHT_MAX of a cell. main gives
+  `world.light.blockAt` (the levels the chunks hold; nothing is recomputed; it does not flush, so an edit shows from the
+  next `World.update`). zombies.js stays pure and imports no light. Without the accessor every cell counts as dark and
+  nothing below applies — every earlier test is such a world. `standLight(blockLight, q, y, r)` is the light a zombie
+  with its feet in cell (q, y, r) stands in: the brighter of that cell and the one above it (its head).
+- **Constants** (zombies.js): `GLARE_CHECK_S` 0.5, `ZOMBIE_SPAWN_LIGHT_MAX` 7, `ZOMBIE_DREAD_LIGHT` 10,
+  `ALPHA_DREAD_LIGHT` 13, `ZOMBIE_SHY_LIGHT` 6, `GLARE_SLOW` 0.5, `GLARE_WEAK` 0.7, `GLARE_CLIMB` 0.5, `DRIFT_SPREAD` 0.5,
+  `SHIELD_RATE` 5. Light falls by 1 a cell, so on open, level ground: walkers and runners keep 3 cells off a torch and 4
+  off a campfire (CAMPFIRE_LIGHT − ZOMBIE_DREAD_LIGHT = ZOMBIE_FIRE_FEAR), nothing comes up within 6 cells of a torch,
+  and the alpha keeps off the torch's own cell only.
+- **Glare.** `Zombie.light` (0..LIGHT_MAX) and `Zombie.glare` = light / LIGHT_MAX are read from its own cell
+  (`standLight` at feet level floor(y + 0.01)) every GLARE_CHECK_S (`glareIn`; the first look is immediate, at its first
+  update). `glareOf(zb)` → 0..1 (0 for anything that has none).
+- **1. No spawning in the light.** `spawnHeightAt` refuses a column whose `standLight` at h + 1 is ≥
+  ZOMBIE_SPAWN_LIGHT_MAX (tested after `columnEdited`, before the campfire and the room). `_spawnNear` then accepts a
+  column of light l > 0 with probability `spawnChance(l)` = 1 − l / ZOMBIE_SPAWN_LIGHT_MAX: ONE `rng` roll, drawn only
+  when l > 0 (the dark draws nothing: spawning in a dark world is draw for draw what it was). `spawnChanceAt(world, q, r)`
+  → 0 where `spawnHeightAt` refuses, else `spawnChance`. `spawnReport(q, r, world = zombies.world)` → `{ y, why, light,
+  chance }` for the console: `why` is '' or one of `SPAWN_REFUSALS` ('no spawning hooks', 'not loaded', 'no ground',
+  'ground not natural', 'not open air above', 'column built in', 'lit', 'campfire near', 'no room'); `zombies.world` is
+  the world view of the last `update` (null before).
+- **2. Dread.** `dreadLight(zb)` is ALPHA_DREAD_LIGHT for an alpha, else ZOMBIE_DREAD_LIGHT. `_safeAhead` (§39.1 step 4)
+  is now: not swim water (wanderers), no fire ahead, then `_standLevel(zb, getBlock, q, fy, r, canHop, chasing)` — the
+  feet level it would stand at in the cell ahead: fy + h on a wall it can climb, fy − d + 1 down a drop of at most
+  ZOMBIE_MAX_DROP cells (water to land in for a chaser), else null (the terrain rules of §39 and §65, unchanged) — and
+  not `_lightBars(zb, q, sy, r, chasing)`. **`_lightBars`**: with `ahead` = `standLight` where it would stand and `own`
+  = `standLight` where it stands (read only when `ahead` ≥ ZOMBIE_SHY_LIGHT; the cell it is already in never bars it):
+  `ahead ≥ dreadLight(zb)` bars the step unless `ahead < own` (a step into darker light is its way out; in mode `avoid`
+  — already backing out — unless `ahead ≤ own`: it may step along light as bright as its own while it turns, never into
+  brighter). A barred step is an unsafe way ahead like a drop or a wall: a chaser detours, a wanderer stops and turns,
+  one walking away from a fire stops. **Out of the light:** when a look (above) finds `light ≥ dreadLight(zb)` and the
+  zombie is not a walker dormant by day, `_turnFromLight(zb, getBlock, canHop, back = false)` turns it to `_darkerYaw` —
+  the yaw toward the centre of the darkest of the six columns beside it that it can go into (`_standLevel` as a wanderer
+  with no swim water there; for a zombie that is in the water, swim water counts, at its own level) and that is darker
+  than its own; among equally dark ones the least turn; NaN when none is darker — in mode `avoid` for AVOID_S, like
+  turning from a campfire (so it does not strike while it backs out, §39.1 step 7); with nowhere darker beside it, it
+  stays as it is (with `back`: it turns straight round instead). **Off its feet:** a chaser in the water (the swim
+  branch of §39.1 step 4, which tests nothing ahead) or on land but not on the ground (bobbing at the surface, mid-hop,
+  knocked back), within MOVE_CONE of its heading, tests `_litAhead` — `_lightBars` as a chaser for the cell 0.8 ahead,
+  read at its own level or on top of a bank up to two cells above that — and when that bars it, `_turnFromLight(…,
+  true)` and it is not chasing for that update: water is no way round a light. None of this draws from `rng`, and
+  none of it does anything where the light ahead is below ZOMBIE_SHY_LIGHT.
+- **3. Shy.** In `_lightBars`, for one that is not chasing (`chasing` false: wandering, or walking away from a fire):
+  `ahead ≥ ZOMBIE_SHY_LIGHT` bars the step when `ahead > own` — it does not step from darker ground into such light;
+  along it or down it, it may. **Drift:** an idle zombie that starts a walk (§39.1 step 4) while its `light` > 0 heads
+  for `_darkerYaw` ± DRIFT_SPREAD × (the same draw that would have chosen its heading) instead of a random heading, so
+  with nobody to chase it walks off lit ground altogether. The draws are the same in number and order as before.
+- **4. Weaker in the light.** With g = `glareOf(zb)`: `glareSpeed(zb)` = 1 − GLARE_SLOW × g multiplies `gaitOf(zb).factor`
+  (on top of the kind, the day and the rally) and is the `speedFactor` of a wanderer too; `damageOf(zb)` is × (1 −
+  GLARE_WEAK × g); `maxClimb(zb)` is the day height from g ≥ GLARE_CLIMB (light 8) up. `strikeDamage(zb, base =
+  ZOMBIE_DAMAGE)` = max(1, round(base × damageOf(zb))) is what one strike costs: **main** sums `strikeDamage` over
+  `events.attacks` (it used to round the sum of ZOMBIE_DAMAGE × damageOf). In full light (15) a zombie moves at half
+  its pace and strikes for three tenths; a walker in the brightest light it will stand in (9) at 70 % for 5 HP, an alpha
+  beside a torch (12) at 60 % for 6.
+- **5. The campfire's rules stand** (§39): the safe zone ZOMBIE_FIRE_FEAR keeps every kind out (the alpha too, which
+  the fire's light alone would keep only 1 cell off), nobody inside it is struck, and none comes up within
+  ZOMBIE_SPAWN_FIRE_CLEAR (8; its light alone reaches 7). A FIRE_PIT gives no light and no protection.
+- **The arm across the face** (zombieRenderer; a cue that the light is working). `shieldTarget(zb)` = clamp01((light −
+  ZOMBIE_SHY_LIGHT) / (dreadLight(zb) − ZOMBIE_SHY_LIGHT)); `Zombie.shield` follows it every update at SHIELD_RATE (0
+  without the accessor). By `shieldOf(zb)` the renderer brings the arm on the zombie's own `side` from its bearing to
+  `SHIELD_ARM` (`reach` 1.75, `bend` 1.4, `spread` 0, and `twist` 0.8: the forearm turned in about the upper arm, a
+  rotation about Y at the elbow applied only while shield > 0), so that the forearm slants up across that half of the
+  face with the hand before the eye, and the head from its own nod and roll to `SHIELD_NOD` 0.05 and `SHIELD_ROLL` 0.12
+  away from that arm; the strike's swipe and the runner's twitch fade out of that arm as it rises. A dormant walker does
+  none of it. At shield 0 every matrix is exactly what it was.
+- **Main** (§23): `zombieWorld.blockLight`, and the strike's damage (above). Nothing else.
+- **Guide** (§73, the Dangers chapter): two pages after "Zombies by day" — "Light keeps them off" with the table
+  `lights` (source `zombies`; head Light, Strength, Walkers and runners keep, None comes up within; one row per block
+  with `LIGHT_EMISSION` > 0 and one for the lit Filament Lamp, weakest first; `zombieLights()` → `{ key, name, min, max,
+  keep, clear }`, keep = max − ZOMBIE_DREAD_LIGHT and clear = max − ZOMBIE_SPAWN_LIGHT_MAX, the campfire's not less than
+  its own ZOMBIE_FIRE_FEAR and ZOMBIE_SPAWN_FIRE_CLEAR), and "Weaker in the light" (the walker at the edge of a glow,
+  the day leap from light 8, the alpha beside a torch, the shy idlers, the paragraph "Making a home safe at night": a
+  floor, walls by kind, a torch every 2 × (TORCH_LIGHT − ZOMBIE_DREAD_LIGHT) + 1 = 7 cells, a campfire; and that light
+  behind a wall does not count). Every number is read from a constant.
+- **Imports** (§1): handbook → … + light (LIGHT_EMISSION); zombieRenderer and zombies as before.
+- **Cost**: in the dark two light reads a zombie a frame for the way ahead, walking, swimming or in the air (one more
+  pair where the way ahead is lit) and two every GLARE_CHECK_S; `_darkerYaw` (six columns) only when it turns from
+  light and at the start of an idle walk in light. `blockAt` is one Map look-up and one array read (≈ 36 ns): ≈ 38
+  reads an update for ZOMBIE_MAX zombies, under 2 µs.
+- **Tests**: `tests/unit/zombieLight.test.js` (the numbers; spawning around a real torch and by simulation; dread, the
+  walk round, the alpha, a home ringed with torches, a swimmer; leaving bright light; shy and drift; speed, damage and
+  climb at several levels, by night and by day; a wall in the way, a lamp, a burned-out fire on a real World and
+  LightEngine; the campfire's rules; the cost, counted and timed), `zombieRenderer.test.js` (the shield pose),
+  `handbook.test.js` (the table and the prose).
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 
