@@ -462,8 +462,10 @@
  * @property {import('./waterBodies.js').WaterCycle} [waterCycle]  the water cycle, with its counts
  * @property {(q: number, y: number, r: number) => ({ cells: number, depth: number, quality: string, sea: boolean, stream: boolean, contained: boolean, covered: boolean, list: number[] }|null)} [waterBodyAt]
  *   the body of water that the water in a cell is taken from
- * @property {(seconds: number, env?: { rain?: number|((q: number, r: number) => number), dryness?: number|(() => number) }) => ({ seconds: number, dried: number, filled: number, beds: number, basins: number }|null)} [waterStep]
- *   run the water cycle as if `seconds` had passed, in another weather when `env` is given
+ * @property {(seconds: number, env?: { rain?: number|((q: number, r: number) => number), dryness?: number|(() => number) }) => ({ seconds: number, dried: number, filled: number, beds: number, basins: number, fed: number, seeped: number }|null)} [waterStep]
+ *   run the water cycle as if `seconds` had passed, in another weather when `env` is given (the aquifers' step too)
+ * @property {(radius?: number) => ((import('./waterBodies.js').AquiferInfo & { distance: number })[]|null)} [aquiferNear]
+ *   (CONTRACTS §89) the aquifers within `radius` cells of the player, nearest first, with what each feeds
  * @property {import('./sleep.js').Sleep} [sleep]   (CONTRACTS §87) the sleep: phase, hours, spot
  * @property {import('./sleep.js').TiredFx} [tiredFx]  (CONTRACTS §87) yawns, the figure, the nods and their timers
  * @property {(hours: number) => (number|null)} [setFatigue]  set the hours awake (0..72): 20 Tired, 32 Exhausted, 40 Weak,

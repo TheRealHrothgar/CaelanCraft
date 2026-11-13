@@ -74,8 +74,8 @@ const mask = (px) => pixels(px).map((p) => p[3] === 255);
 
 describe('the plant blocks 122–131 (blocks.js)', () => {
   it('ids, names, flags and tiles: 3D models (§78) with the PLANT flags, flat icons, ids 122–131', () => {
-    expect(BLOCK_COUNT).toBe(173); // §85: the homestead blocks at 163–172; §80: the 18 farm blocks follow at 133–150; §81: the plants that are not food at 151–158; §83: the low and shallow water at 159–162
-    expect(BLOCKS).toHaveLength(173);
+    expect(BLOCK_COUNT).toBe(174); // §89: the aquifer at 173; §85: the homestead blocks at 163–172; §80: the 18 farm blocks follow at 133–150; §81: the plants that are not food at 151–158; §83: the low and shallow water at 159–162
+    expect(BLOCKS).toHaveLength(174);
     for (const [key, id, name, displayName, sound, tile, placeable] of PLANTS) {
       expect(B[key], key).toBe(id);
       const d = BLOCKS[id];

@@ -75,8 +75,12 @@ export const BLOCK = Object.freeze({
   // field for it. Two places to sleep: a GRASS_BED and a BED (furniture: the sleep rules read these keys).
   SPRING: 163, SPRING_DRAWN: 164, WELL: 165, WELL_DRAWN: 166,
   RAIN_BARREL: 167, RAIN_BARREL_1: 168, RAIN_BARREL_2: 169, RAIN_BARREL_3: 170, GRASS_BED: 171, BED: 172,
+  // §89 (the aquifer): wet rock that holds the ground's water, under every stream head, every natural spring and one
+  // fresh pond in three (only generation-6 worlds generate it). Nothing can break it, like BEDROCK; it feeds the water
+  // standing on it (waterBodies.js): the one thing besides rain that makes water.
+  AQUIFER: 173,
 });
-export const BLOCK_COUNT = 173;
+export const BLOCK_COUNT = 174;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -139,6 +143,8 @@ export const TILE = Object.freeze({
   // to wrap a box, a SKIN of plain swatches its faces are cut from (plantModels.js `tile`).
   SPRING_SIDE: 207, SPRING_TOP: 225, SPRING_DRAWN_TOP: 226, WELL: 227,
   WELL_SKIN: 232, RAIN_BARREL: 233, RAIN_BARREL_SKIN: 234, GRASS_BED: 235, BED: 236, BED_SKIN: 237,
+  // §89 (the aquifer), in the two ids §85 left free: wet dark rock with water seeping from its cracks, side and top
+  AQUIFER_SIDE: 238, AQUIFER_TOP: 239,
   // v0.14 (§76 fauna): the ground nest's pictures (its icon, and what its crumbs are coloured from) and the skins its 3D
   // pieces are cut from (woven dry grass, a speckled eggshell)
   GROUND_NEST: 228, GROUND_NEST_EMPTY: 229, LITTER_NEST: 230, LITTER_EGG: 231,
@@ -502,6 +508,10 @@ export const BLOCKS = [
   // The two beds: low 3D models you walk over (the PLANT flags, like a snare or a seedbed), one cell each.
   def({ id: B.GRASS_BED, name: 'grass_bed', displayName: 'Grass Bed', tiles: tiles(T.GRASS_BED), ...SPRITE, soundGroup: 'grass' }),
   def({ id: B.BED, name: 'bed', displayName: 'Bed', tiles: tiles(T.BED), ...SPRITE, soundGroup: 'wood' }),
+  // ---- §89: the aquifer. Ground, like the spring: a solid, opaque prism of wet rock. It cannot be broken, blasted or
+  // pulled by anything in either mode (isDeepRock: everything that spares BEDROCK spares it); commands may still set it.
+  // Never placed by hand, no item. It is no water block: the water cycle reads it (waterBodies.js) and feeds what stands on it.
+  def({ id: B.AQUIFER, name: 'aquifer', displayName: 'Aquifer', tiles: tiles(T.AQUIFER_SIDE, T.AQUIFER_TOP), breakable: false, placeable: false, soundGroup: 'stone' }),
 ];
 
 /**
@@ -676,6 +686,14 @@ export function isPopOff(id) {
 /** A workplace (§7.1): WORK_STUMP, KILN, BLOOMERY or FORGE. */
 export function isStation(id) {
   return id === B.WORK_STUMP || id === B.KILN || id === B.BLOOMERY || id === B.FORGE || id === B.WORKBENCH;
+}
+/**
+ * The rock nothing breaks (§89): BEDROCK and the AQUIFER. No dig, no blast, no black hole and no belongings heap takes
+ * it, and a support search ends on it as on bedrock. (Commands set and replace the aquifer, never bedrock.)
+ * @param {number} id @returns {boolean}
+ */
+export function isDeepRock(id) {
+  return id === B.BEDROCK || id === B.AQUIFER;
 }
 /** A natural spring, welling or drawn (§85): SPRING or SPRING_DRAWN. */
 export function isSpring(id) {

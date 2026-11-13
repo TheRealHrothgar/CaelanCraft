@@ -58,6 +58,8 @@ export const EMPTY_POT = 'clay_pot';
 export const MAX_REFILL_TRACKED = 1024;
 /** The target hint of a spring while someone is trying to dig it out in Survival: it cannot be broken there. */
 export const SPRING_DEEP_HINT = 'Spring · the rock runs deep: it cannot be broken';
+/** §89: the target hint of an aquifer while someone is trying to dig it: nothing can. */
+export const AQUIFER_DEEP_HINT = 'Aquifer · water rises through this rock: it cannot be dug';
 
 /**
  * How far away the nearest spring usually is, in cells: what worldgen's rule aims at (NATURAL_SPRING_CELL and
@@ -76,10 +78,12 @@ export const HOMESTEAD_HINT = Object.freeze({
 });
 
 /**
- * The hint of a block that Survival cannot break and that says why (§85: a spring). Null for every other block.
+ * The hint of a block that Survival cannot break and that says why (§85: a spring; §89: an aquifer). Null for every
+ * other block.
  * @param {number} id @returns {string|null}
  */
 export function deepHint(id) {
+  if (id === B.AQUIFER) return AQUIFER_DEEP_HINT;
   return id === B.SPRING || id === B.SPRING_DRAWN ? SPRING_DEEP_HINT : null;
 }
 

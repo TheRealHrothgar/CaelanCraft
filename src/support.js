@@ -26,7 +26,7 @@
 // that chunk and re-seeded when it is back (§36.3.5); blocks that land on or are placed against what still hangs are
 // re-searched once it is down (§36.3.6).
 import { CHUNK_SIZE, MAX_FALLING, MAX_PARKED_UPDATES, SUPPORT_LIMIT, TREE_MAX_CELLS, WORLD_HEIGHT } from './config.js';
-import { BLOCK, UNLOADED, isFallThrough, isLeaves, isLog, isSolid } from './blocks.js';
+import { BLOCK, UNLOADED, isDeepRock, isFallThrough, isLeaves, isLog, isSolid } from './blocks.js';
 import { HEX_DIRS } from './hex.js';
 import { chunkKey, localIndex, packCell, unpackCell } from './coords.js';
 
@@ -188,13 +188,14 @@ export function isSelfAnchored(id) {
 }
 
 /**
- * A support search ends (supported) on an anchor: y = 0, bedrock, or untouched terrain (world.isNaturalGround).
+ * A support search ends (supported) on an anchor: y = 0, bedrock or an aquifer (§89: isDeepRock, also one a command
+ * set), or untouched terrain (world.isNaturalGround).
  * @param {*} world
  * @returns {boolean}
  */
 export function isAnchorCell(world, q, y, r) {
   if (y === 0) return true;
-  if (world.peekBlock(q, y, r) === BLOCK.BEDROCK) return true;
+  if (isDeepRock(world.peekBlock(q, y, r))) return true;
   return world.isNaturalGround(q, y, r);
 }
 

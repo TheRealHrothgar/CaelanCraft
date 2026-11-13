@@ -71,7 +71,7 @@ describe('config', () => {
       ZOMBIE_DAMAGE: C.ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE: C.FIRE_BURN_DAMAGE,
       REGROW_MEAN_S: C.REGROW_MEAN_S, MAX_REGROW_TRACKED: C.MAX_REGROW_TRACKED,
     }).toEqual({
-      GEN_LATEST: 5, // §85: natural springs, gravel in beds
+      GEN_LATEST: 6, // §89: aquifers (5: §85's natural springs, gravel in beds)
       PACK_SLOTS: 27, WEAR_SLOTS: 3, BASKET_SLOTS: 18, REMAINS_SLOTS: 30, MAX_CONTAINERS: 1024,
       FIRE_SPOTS: 7, MAX_FIRE_SLOTS: 256,
       CAMPFIRE_FUEL_START_S: 300, CAMPFIRE_FUEL_MAX_S: 1200, FUEL_STICK_S: 40, FUEL_LOG_S: 300, RELIGHT_HOLD_S: 3,
@@ -303,10 +303,10 @@ describe('blocks', () => {
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
     // v0.8 appended 68..75 (see the block-physics test below), v0.9 survival 76..94, powder and circuits 95..114, v0.11 the Workbench 115
-    expect(BLOCK_COUNT).toBe(173); // §85: the ten homestead blocks 163–172 (spring, well, rain barrel, the two beds); … the three snares 116–118 and Flinty Gravel 119 (§75); v0.14 (§76): Tainted Water 120, the Ground Nest 121, the flora 122–131, the Empty Nest 132; §80: the planted blocks 133–141 and the sprouts 142–150; §81: the plants that are not food 151–158; §83: low and shallow water 159–162
+    expect(BLOCK_COUNT).toBe(174); // §89: the aquifer 173; §85: the ten homestead blocks 163–172 (spring, well, rain barrel, the two beds); … the three snares 116–118 and Flinty Gravel 119 (§75); v0.14 (§76): Tainted Water 120, the Ground Nest 121, the flora 122–131, the Empty Nest 132; §80: the planted blocks 133–141 and the sprouts 142–150; §81: the plants that are not food 151–158; §83: low and shallow water 159–162
     // + 6 zombie part tiles 240–245 (§39), + 3 Watcher tiles 250–252 (§40: stone, crack glow, smoke), not block faces;
     // v0.9 survival + 28 (77–104); powder and circuits + 35 (160–194)
-    expect(TILE_IDS).toHaveLength(193); // §85: + 207, 225–227 and 232–237; v0.11: + the Workbench 195, 196; v0.13: + 201–203 (§75; 204 withdrawn in §76); v0.14: + tainted water 204, the flora 208–217, the nest's 228–231; §80: + the seedbed 205 and the sprout 206; §81: + 218–224
+    expect(TILE_IDS).toHaveLength(195); // §89: + the aquifer's 238, 239; §85: + 207, 225–227 and 232–237; v0.11: + the Workbench 195, 196; v0.13: + 201–203 (§75; 204 withdrawn in §76); v0.14: + tainted water 204, the flora 208–217, the nest's 228–231; §80: + the seedbed 205 and the sprout 206; §81: + 218–224
     expect(BLOCK.BLACK_HOLE).toBe(66);
     expect(TILE.BLACK_HOLE).toBe(72);
     expect(BLOCK.STONE).toBe(1);
@@ -393,8 +393,8 @@ describe('blocks', () => {
     expect(isLeaves(BLOCK.OAK_LOG) || isLog(BLOCK.OAK_PLANKS)).toBe(false);
   });
   it('v0.9 survival: blocks 76..94 exactly as DESIGN-survival §8.1, tiles 77..104 (powder and circuits follow at 95)', () => {
-    expect(BLOCK_COUNT).toBe(173); // §85: + 163–172; 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119; v0.14 (§76) 120–132; §80 the farm blocks 133–150; §81 the plants that are not food 151–158
-    expect(BLOCKS).toHaveLength(173);
+    expect(BLOCK_COUNT).toBe(174); // §89: + 173; §85: + 163–172; 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119; v0.14 (§76) 120–132; §80 the farm blocks 133–150; §81 the plants that are not food 151–158
+    expect(BLOCKS).toHaveLength(174);
     const P = 'plant'; // the PLANT flags: walk-through, see-through cutout, never culled against itself
     const S = 'solid'; // a plain full block (def defaults)
     // [key, id, name, displayName, flags, soundGroup, [side, top, bottom] TILE keys, placeable]
@@ -451,7 +451,7 @@ describe('blocks', () => {
       'PLANT_TOP_CLEAR', 'LOOSE_STONES', 'FALLEN_BRANCHES', 'FIRE_PIT_SIDE',
     ];
     TILES.forEach((key, i) => expect(TILE[key], key).toBe(77 + i));
-    expect(TILE_IDS).toHaveLength(193); // §85: + ten; 115 after survival; + the 35 circuit tiles 160..194; + the Workbench 195, 196; + 201–203 (§75); + tainted water 204, the flora 208–217 and the nest's 228–231 (§76); + the seedbed 205 and the sprout 206 (§80); + 218–224 (§81)
+    expect(TILE_IDS).toHaveLength(195); // §89: + two; §85: + ten; 115 after survival; + the 35 circuit tiles 160..194; + the Workbench 195, 196; + 201–203 (§75); + tainted water 204, the flora 208–217 and the nest's 228–231 (§76); + the seedbed 205 and the sprout 206 (§80); + 218–224 (§81)
     expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
     // Every survival tile is used by a block face — except CATTAILS_TOP: the cattails became a crossed sprite drawn from
     // CATTAILS_SIDE, and tile ids are fixed, so 83 stays painted but no face names it.
@@ -563,7 +563,7 @@ describe('blocks', () => {
 
   it('powder and circuits: blocks 95..114 exactly as DESIGN-circuits §1.2 (THIN and MODEL), BLOCK_COUNT 115', () => {
     expect(CIRCUIT_BLOCKS.map((row) => row[1])).toEqual(Array.from({ length: 20 }, (_, i) => 95 + i));
-    expect(BLOCK_COUNT).toBe(173); // §85: + the ten homestead blocks 163–172; + v0.11's Workbench at 115, the snares 116–118, v0.13's Flinty Gravel 119, v0.14's 120–132 (§76), the farm blocks 133–150 (§80) and the plants that are not food 151–158 (§81) and the low and shallow water 159–162 (§83)
+    expect(BLOCK_COUNT).toBe(174); // §89: + the aquifer 173; §85: + the ten homestead blocks 163–172; + v0.11's Workbench at 115, the snares 116–118, v0.13's Flinty Gravel 119, v0.14's 120–132 (§76), the farm blocks 133–150 (§80) and the plants that are not food 151–158 (§81) and the low and shallow water 159–162 (§83)
     for (const [key, id, name, displayName, shape, sound, [side, top]] of CIRCUIT_BLOCKS) {
       expect(BLOCK[key], key).toBe(id);
       const d = BLOCKS[id];
@@ -598,7 +598,7 @@ describe('blocks', () => {
 
   it('powder and circuits: tiles 160..194 (§1.4), each used by a block face; TILE_IDS 150', () => {
     CIRCUIT_TILES.forEach((key, i) => expect(TILE[key], key).toBe(160 + i));
-    expect(TILE_IDS).toHaveLength(193); // §85: + ten; + the Workbench's 195, 196 (§67), 201–203 (§75), tainted water 204, the flora's 208–217 and the nest's 228–231 (§76), the seedbed 205 and the sprout 206 (§80), 218–224 (§81)
+    expect(TILE_IDS).toHaveLength(195); // §89: + two; §85: + ten; + the Workbench's 195, 196 (§67), 201–203 (§75), tainted water 204, the flora's 208–217 and the nest's 228–231 (§76), the seedbed 205 and the sprout 206 (§80), 218–224 (§81)
     expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
     const used = new Set(BLOCKS.flatMap((d) => d.tiles));
     for (const key of CIRCUIT_TILES) expect(used.has(TILE[key]), key).toBe(true);

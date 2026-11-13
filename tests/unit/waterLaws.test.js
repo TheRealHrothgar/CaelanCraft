@@ -29,6 +29,7 @@ import { ruleFor } from '../../src/harvest.js';
 import { buildPickerModel } from '../../src/pickerModel.js';
 import { farmSecondOn } from '../../src/main.js';
 import { mulberry32 } from '../../src/noise.js';
+import { feedStep } from '../../src/waterBodies.js';
 import { makeFakeWorld, attachPhysics } from '../helpers/fixtures.js';
 import { withSprings, settle, rest, ticks, waterCensus, pondCells, putPond } from '../helpers/water.js';
 
@@ -62,11 +63,11 @@ const pondIds = (world, y, q0 = 0, r0 = 0) => pondCells(q0, r0).map(([q, r]) => 
 const all = (id) => Array(7).fill(id);
 
 describe('standing water has three depths: blocks 159–162', () => {
-  it('four blocks after the plants: low and shallow, fresh and tainted; BLOCK_COUNT 163 then (173 since §85)', () => {
+  it('four blocks after the plants: low and shallow, fresh and tainted; BLOCK_COUNT 163 then (173 since §85, 174 since §89)', () => {
     expect([B.WATER_LOW, B.WATER_SHALLOW, B.TAINTED_WATER_LOW, B.TAINTED_WATER_SHALLOW]).toEqual([159, 160, 161, 162]);
-    expect(BLOCK_COUNT).toBe(173); // §85 appended the ten homestead blocks after them
+    expect(BLOCK_COUNT).toBe(174); // §85 appended the ten homestead blocks after them, §89 the aquifer
     expect(B.TAINTED_WATER_SHALLOW).toBe(162);
-    expect(BLOCKS).toHaveLength(173);
+    expect(BLOCKS).toHaveLength(174);
     expect(LOWER.map((id) => BLOCKS[id].name)).toEqual(['water_low', 'water_shallow', 'tainted_water_low', 'tainted_water_shallow']);
     expect(LOWER.map((id) => BLOCKS[id].displayName)).toEqual(['Low Water', 'Shallow Water', 'Low Tainted Water', 'Shallow Tainted Water']);
   });
@@ -815,7 +816,10 @@ describe('the laws as invariants: random scenes on the real rule', () => {
    * One random scene: blocky random ground (4..7 high), then random edits — sources of every kind dropped anywhere
    * (in mid-air too), stone put and dug, plants and torches, wells and ponds carved and filled, banks and floors taken
    * away — with random pauses between them. `sea`: a sea along one side. `springs`: a few cells of running water.
-   * @returns {{ world: *, physics: *, m: ReturnType<typeof monitor>, springs: number[][], edits: number }}
+   * `aquifers` (§89): a few AQUIFER blocks in the ground and one under the middle of every pond carved, and before every
+   * pause one step of the aquifers (waterBodies.feedStep, in the rains), its writes made as the cycle's (edits). No edit
+   * of the scene takes an aquifer away.
+   * @returns {{ world: *, physics: *, m: ReturnType<typeof monitor>, springs: number[][], edits: number, fed: number }}
    */
   function scene(seed, kind) {
     const rnd = mulberry32(seed * 7919 + 13);
@@ -855,13 +859,26 @@ describe('the laws as invariants: random scenes on the real rule', () => {
       }
       withSprings(world, springs);
     }
+    /** @type {number[]} (q, y, r) of the aquifers */
+    const aquifers = [];
+    if (kind === 'aquifers') {
+      for (let i = 0; i < 4; i++) {
+        const [q, r] = cell();
+        world.put(q, 4, r, B.AQUIFER);
+        aquifers.push(q, 4, r);
+      }
+    }
     const physics = attachPhysics(world, BlockPhysics);
     const m = monitor(world);
     const edit = (q, y, r, id) => {
+      if (world.getBlock(q, y, r) === B.AQUIFER) return; // (the scene never digs one away)
       m.editing = true;
       world.setBlock(q, y, r, id);
       m.editing = false;
     };
+    const RAINS = { rain: () => 1, dryness: () => 0.3 };
+    const aquiferWorld = { peek: world.peekBlock, isLoadedCell: () => true, springLevelAt: physics.fluids.springLevelAt, q: 0, r: 0, top: TOP + 2 };
+    let fed = 0;
     const n = 18 + int(18);
     for (let i = 0; i < n; i++) {
       const [q, r] = cell();
@@ -892,12 +909,23 @@ describe('the laws as invariants: random scenes on the real rule', () => {
         for (let dq = -2; dq <= 2; dq++) {
           for (let dr = -2; dr <= 2; dr++) if (hexLength(dq, dr) === 2 && !isSolid(world.getBlock(q + dq, 5, r + dr))) edit(q + dq, 5, r + dr, B.STONE);
         }
+        if (kind === 'aquifers' && world.getBlock(q, 4, r) !== B.AQUIFER) {
+          edit(q, 4, r, B.AQUIFER); // the pond's middle on an aquifer
+          aquifers.push(q, 4, r);
+        }
         const id = pickOf(rnd, SOURCES);
         for (const [pq, pr] of pondCells(q, r)) edit(pq, 5, pr, id);
       }
+      if (aquifers.length > 0) {
+        // one step of the aquifers, in the rains, a whole game hour long: its writes are the cycle's, not the rule's
+        for (const ev of feedStep(60, rnd, aquiferWorld, RAINS, aquifers)) {
+          fed++;
+          for (let k = 0; k < ev.writes.length; k += 4) edit(ev.writes[k], ev.writes[k + 1], ev.writes[k + 2], ev.writes[k + 3]);
+        }
+      }
       ticks(physics, pickOf(rnd, [0, 0, 1, 3, 7, 20, 45, 90, 170]));
     }
-    return { world, physics, m, springs, edits: n };
+    return { world, physics, m, springs, edits: n, fed };
   }
 
   function pickOf(rnd, list) {
@@ -959,6 +987,24 @@ describe('the laws as invariants: random scenes on the real rule', () => {
     expect(bad).toEqual([]);
     expect(kept).toBeGreaterThan(150); // (the scenes do end with pools standing: wells and ponds that were not breached)
     expect(writes).toBeGreaterThan(20000); // … after a great deal of falling, spilling and levelling
+  });
+
+  it('§89: 60 scenes with aquifers in the ground and under ponds: the rule still never makes water (only the aquifers\' step does), and at rest the laws hold', () => {
+    const bad = [];
+    let fed = 0;
+    let kept = 0;
+    for (let seed = 401; seed <= 460; seed++) {
+      const s = scene(seed, 'aquifers');
+      rest(s.physics, 8000);
+      if (s.m.worstSources > 0) bad.push(`seed ${seed}: ${s.m.worstSources} more sources than the edits and the aquifers made, at some moment`);
+      if (s.m.worstUnits > 0) bad.push(`seed ${seed}: ${s.m.worstUnits} more levels of water than the edits and the aquifers made, at some moment`);
+      for (const v of violations(s)) bad.push(`seed ${seed}: ${v}`);
+      fed += s.fed;
+      kept += waterCensus(s.world, R + 9, 0, TOP + 1).sources;
+    }
+    expect(bad).toEqual([]);
+    expect(fed).toBeGreaterThan(100); // (the aquifers did feed: basins took water and pools rose)
+    expect(kept).toBeGreaterThan(150);
   });
 
   it('…and through all of it the rule never made water: the count of sources and the sum of their depths never rose', () => {

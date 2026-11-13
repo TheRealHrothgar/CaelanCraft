@@ -36,7 +36,7 @@ const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
 
 describe('generation 4: the lean land (worldgen.js, CONTRACTS §79)', () => {
   it('was the newest generation until §85 added the fifth, and its table begins with PATCH_TABLE thinned row for row', () => {
-    expect(GEN_LATEST).toBe(5); // §85: generation 5 is generation 4 with natural springs, and its gravel in beds
+    expect(GEN_LATEST).toBe(6); // §85: generation 5 is generation 4 with natural springs, and its gravel in beds; §89: 6 adds aquifers
     expect(gen4.gen).toBe(4);
     expect(createWorldGen(SEED, { gen: 9 }).gen).toBe(GEN_LATEST); // a number above the newest is the newest
     expect([LEAN_PATCH_CHANCE, LEAN_PATCH_FILL]).toEqual([0.45, 0.8]);

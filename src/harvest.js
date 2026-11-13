@@ -249,7 +249,8 @@ set([B.RAIN_BARREL, B.RAIN_BARREL_1, B.RAIN_BARREL_2, B.RAIN_BARREL_3], 1.5, 'ax
 set([B.GRASS_BED], 0.4, null, 0, SELF_DROPS);
 set([B.BED], 1.5, 'axe', 0, SELF_DROPS);
 // BEDROCK, AIR and the water family keep the null rule: unbreakable. So do SPRING and SPRING_DRAWN (§85): a spring is
-// the land's, and the rock it rises through runs deep (homestead.deepHint says so).
+// the land's, and the rock it rises through runs deep (homestead.deepHint says so). And so does the AQUIFER (§89): the
+// rock the ground's water rises through cannot be dug (homestead.deepHint says that too).
 
 /** @template T @param {T} o @returns {T} */
 function deepFreeze(o) {

@@ -175,6 +175,9 @@ export const TILE_NAMES = Object.freeze({
   235: 'grass_bed',
   236: 'bed',
   237: 'bed_skin',
+  // §89 (the aquifer): wet dark rock with water seeping from its cracks
+  238: 'aquifer_side',
+  239: 'aquifer_top',
   // powder and circuits: 160–194 (DESIGN-circuits §1.4), painted by circuitTiles.js
   ...CIRCUIT_TILE_NAMES,
   240: 'zombie_face',
@@ -3637,6 +3640,83 @@ function paintBedSkin(px) {
   paintPicture(px, BED_SKIN_ART, BED_PALETTE);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// §89 tiles: the aquifer (original designs; these comments are normative). Wet rock that holds the ground's water,
+// drawn bold like the spring of §85: dark slate-blue rock, black cracks, and bright water coming out of them. Both
+// faces are opaque.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The aquifer's colours: the rock R (0x3b4753, the base the pictures are laid on: cell noise 2 / 16 and noise 6), its
+ * wet sheen L, the dark streak a seep leaves on it S, the cracks K, water W (the spring's bright blue), deep water w and
+ * white glints H.
+ */
+const AQUIFER_PALETTE = Object.freeze({
+  R: 0x3b4753, L: 0x71879a, S: 0x26303a, K: 0x10161c, W: 0x45a8e6, w: 0x2a78c2, H: 0xffffff,
+});
+
+/** The wet rock both faces are laid on: AQUIFER_PALETTE.R with cell noise (2, 16) and noise 6. */
+function paintAquiferRock(px, rng) {
+  fill(px, AQUIFER_PALETTE.R);
+  cellNoise(px, rng, 2, 16);
+  noise(px, rng, 6);
+}
+
+/**
+ * 238 aquifer_side — the wet rock in a cliff or a pit wall: on the rock (paintAquiferRock; '.' keeps it) three black
+ * cracks K, and out of each a thread of water W running straight down to the bottom edge beside a dark wet streak S,
+ * with white glints H on it and a darker bead w at its foot; a little wet sheen L on the rock between them.
+ */
+const AQUIFER_SIDE_ART = Object.freeze([
+  '.LL..K.....LL...',
+  '....KK.......K..',
+  '...KK.......KK..',
+  '..KKW......KK...',
+  '..K.WS....KK.W..',
+  '.KK.WS.LL.K..WS.',
+  'KK..HS....K..WS.',
+  'K...WS...KK..HS.',
+  '....WS..KK...WS.',
+  '..LLwS..K....wS.',
+  '....WS.KK....WS.',
+  '....WS.K.LL..WS.',
+  '....HS.KW....HS.',
+  '....WS.KWS...WS.',
+  '..L.wS..WS...wS.',
+  '....WS..wS...WS.',
+]);
+function paintAquiferSide(px, rng) {
+  paintAquiferRock(px, rng);
+  paintPicture(px, AQUIFER_SIDE_ART, AQUIFER_PALETTE);
+}
+
+/**
+ * 239 aquifer_top — the same rock seen from above, where the water comes up: on the rock a web of black cracks K, the
+ * three biggest brimming with water W (deep water w where they meet) with white glints H, and two patches of wet sheen L.
+ */
+const AQUIFER_TOP_ART = Object.freeze([
+  '...K.......K....',
+  '...KW.....KW....',
+  '....KW...KW.....',
+  '.LL..KWWWK...LL.',
+  '.....KHwWK......',
+  '....KW..WK......',
+  'KKKKW....KWKK...',
+  'WWWW.......WWKKK',
+  '..LL..L.....KWWH',
+  '...........K....',
+  '....KKK...KW..L.',
+  '...KWwHK.KW.....',
+  '..KW...KKW......',
+  '.KW.....W.......',
+  'KW..LL..K.......',
+  'K.......K.......',
+]);
+function paintAquiferTop(px, rng) {
+  paintAquiferRock(px, rng);
+  paintPicture(px, AQUIFER_TOP_ART, AQUIFER_PALETTE);
+}
+
 /** @type {Readonly<Record<string, (px: Uint8ClampedArray, rng: Rng) => void>>} */
 const RECIPES = Object.freeze({
   stone: paintStone,
@@ -3764,6 +3844,8 @@ const RECIPES = Object.freeze({
   grass_bed: paintGrassBed,
   bed: paintBed,
   bed_skin: paintBedSkin,
+  aquifer_side: paintAquiferSide, // §89: the aquifer
+  aquifer_top: paintAquiferTop,
   tainted_water: paintTaintedWater, // v0.14 (§76 water)
   seedbed: paintSeedbed, // §80 farming
   sprout: paintSprout,

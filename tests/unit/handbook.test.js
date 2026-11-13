@@ -47,7 +47,10 @@ import {
 } from '../../src/looseItems.js';
 import { Pack, KEEP_ON_DEATH, slotClick } from '../../src/inventory.js';
 import { BODY_MAX_CELLS, SPILL_STEP_S } from '../../src/fluids.js';
-import { CELL_GULPS, POT_GULPS, DRY_MEAN_S, STREAM_DRY_MEAN_S, ROOF_DRY_FACTOR, FILL_MEAN_S } from '../../src/waterBodies.js';
+import {
+  CELL_GULPS, POT_GULPS, DRY_MEAN_S, STREAM_DRY_MEAN_S, ROOF_DRY_FACTOR, FILL_MEAN_S, AQUIFER_FLOW, AQUIFER_HOUR_S, AQUIFER_FLOOR,
+  aquiferTarget, aquiferFlow,
+} from '../../src/waterBodies.js';
 import { Survival } from '../../src/survival.js';
 import { RELIGHT_STICKS, waterHint } from '../../src/survivalControl.js';
 import {
@@ -58,13 +61,13 @@ import { SPREAD_KINDS, SPREAD_MEAN_S, SPREAD_STEP, SPREAD_RADIUS, SPREAD_RANGE, 
 import { RAIN_LANDS } from '../../src/handbook.js';
 import {
   YEAR_DAYS, FAIR_START_DAYS, RAINS_DAYS, DRY_DAYS, RAIN_SHARE, SHOWER_MIN_S, SHOWER_MAX_S, RAINS_MAX_DRY_DAYS, LEAF_COVER, SEASON_LINES,
-  calendarLine, createWeather, fallsAsSnow,
+  calendarLine, createWeather, fallsAsSnow, DRYNESS_RAINS, DRYNESS_DRY,
 } from '../../src/weather.js';
 import { RAIN_WATERS_S } from '../../src/farming.js';
 // §85: a place to stay
 import {
   SPRING_DRAUGHT, SPRING_MEAN_S, SPRING_NEAREST_CELLS, WELL_GULPS, WELL_MEAN_S, WELL_DESERT_FACTOR, WELL_SHARE, WELL_GROUND, BARREL_POTS,
-  BARREL_FILL_MEAN_S, WATERING_POTS, HOMESTEAD_HINT, wellMeanS,
+  BARREL_FILL_MEAN_S, WATERING_POTS, HOMESTEAD_HINT, wellMeanS, deepHint,
 } from '../../src/homestead.js';
 import { HAND_WATER_S, handWaterChance } from '../../src/farming.js';
 import { RAIN_DOUSE_MEAN_S } from '../../src/campfires.js';
@@ -1076,7 +1079,8 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     // two pages in the Water chapter, after "Water that stands"
     const water = CHAPTERS.find((c) => c.id === 'water');
     const heads = water.pages.map((page) => page.find((b) => b.kind === 'h')?.text ?? '');
-    expect(heads).toEqual(['Fresh, tainted and salt', 'Drinking', 'Pots', 'Boiling', 'Water that stands', 'Water runs out', 'Holding water', 'Water from plants']);
+    // (§89 added "Where water comes from" after "Holding water")
+    expect(heads).toEqual(['Fresh, tainted and salt', 'Drinking', 'Pots', 'Boiling', 'Water that stands', 'Water runs out', 'Holding water', 'Where water comes from', 'Water from plants']);
     // the depths, and the hint that names them
     expect(text).toContain('It stands at one of three depths: full, low or shallow. After shallow it is dry. Shallow water is ankle-deep: you walk through it.');
     expect(text).toContain('The hint under your crosshair names it, and says how much is left of a pool: Fresh water · low, Tainted water · shallow, Sea water (salty).');
@@ -1107,6 +1111,29 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain(`Clay holds rain. Dig a pit, floor it with Clay and leave it open to the sky. In the rain it takes its first water, shallow; then it fills like any pool. A basin can be many cells, up to ${BODY_MAX_CELLS}, if every cell lies on clay and every wall is whole.`);
     expect(text).toContain('Close a breach at once with any solid block: what ran out is gone, the rest holds.');
     expect(text).not.toMatch(/The sea and every beach are salt/); // (a pool the rain filled on a beach is fresh)
+  });
+
+  it('where water comes from (§89): rain held in rock, springs and stream heads, the aquifer that cannot be dug, a fed pool by season, small basins fast', () => {
+    const water = CHAPTERS.find((c) => c.id === 'water');
+    const page = water.pages.find((pg) => pg.some((b) => b.kind === 'h' && b.text === 'Where water comes from'));
+    expect(page).toBeTruthy();
+    const words = page.flatMap((b) => ('text' in b ? [plainText(b.text)] : [])).join('\n');
+    // the real idea, in a child's words
+    expect(words).toContain('Rain does not all run away. Much of it soaks into the ground and sinks until it reaches rock, and fills every crack in it, as water fills a sponge. Rock full of water is an aquifer.');
+    expect(words).toContain('that water comes up again: at a spring and at the head of every stream. An aquifer lies under each of them, and under the middle of some clear ponds: dark wet rock with water in its cracks.');
+    expect(words).toContain('No tool and no blast can break it.');
+    expect(deepHint(BLOCK.AQUIFER)).toBe('Aquifer · water rises through this rock: it cannot be dug');
+    // the seasons and the floor: the rules the page states
+    expect(words).toContain('A pool on an aquifer is fed from below. It is full in the rains and low in the dry season, and never dry: the sun takes it no lower, and drinking stops at shallow.');
+    expect([aquiferTarget(DRYNESS_RAINS), aquiferTarget(DRYNESS_DRY), AQUIFER_FLOOR]).toEqual([3, 2, 1]);
+    // the flow, every number from the constants
+    expect([AQUIFER_FLOW.rains, AQUIFER_FLOW.dry, AQUIFER_HOUR_S]).toEqual([12, 3, 60]);
+    expect([aquiferFlow(DRYNESS_RAINS), aquiferFlow(DRYNESS_DRY)]).toEqual([AQUIFER_FLOW.rains, AQUIFER_FLOW.dry]);
+    expect(words).toContain(`Every game hour an aquifer gives enough water to raise ${numWord(AQUIFER_FLOW.rains)} cells by a depth in the rains and ${numWord(AQUIFER_FLOW.dry)} in the dry season.`);
+    expect(words).toContain('enough water to raise twelve cells by a depth in the rains and three in the dry season.');
+    expect(words).toContain(`a pond of seven cells gains a depth in about ${fmtDurationLong((7 * AQUIFER_HOUR_S) / AQUIFER_FLOW.rains)} in the rains, ${fmtDurationLong((7 * AQUIFER_HOUR_S) / AQUIFER_FLOW.dry)} in the dry season.`);
+    expect(words).toContain('So a small basin fills fast and a big one slowly: a pond of seven cells gains a depth in about 35 seconds in the rains, 2½ minutes in the dry season.');
+    expect(words).toContain('You cannot dig an aquifer, but you can build around one: a basin over it, every wall whole, fills by itself all year. That is the best place for a homestead.');
   });
 
   it('farming and the plants that spread (§80): seeds, ground, water and sky, how long it takes; the soft maxima; regrowth takes two days', () => {
