@@ -13,6 +13,8 @@
 //   features  snout + nostrils + eyes + pupils merged, coloured per vertex
 //   legs      one instance per leg (4 per pig), pivoting at the hip so the swing is a rotation about x
 //   skinHurt / legsHurt  the same geometry with the red emissive flash: a pig with `hurt > 0` is drawn there
+//   tusks     §88: a grown boar's two tusks, curving up beside the snout (one more draw call while a boar is in view)
+// §88: a piglet (`size` below 1) is drawn at its size, about its feet.
 import * as THREE from 'three';
 import { PIG_MAX } from './config.js';
 import { compileHidden } from './prewarm.js';
@@ -23,6 +25,7 @@ const PINK = 0xf2a7b5;
 const SNOUT = 0xe0808f;
 const DARK = 0x3a1f26;
 const WHITE = 0xffffff;
+const TUSK = 0xf4ecd8;
 const HURT = 0xff2a2a;
 const HURT_INTENSITY = 0.6;
 
@@ -102,6 +105,12 @@ export function renderScaleOf(body) {
   return typeof s === 'number' && s > 0 && Number.isFinite(s) ? s : 1;
 }
 
+/** §88: a pig's size (a piglet's below 1): its `size` when a number in (0, 1), else 1. */
+export function pigSizeOf(pig) {
+  const s = pig.size;
+  return typeof s === 'number' && s > 0 && s < 1 ? s : 1;
+}
+
 /** A body's extra yaw: its `renderSpin` when a finite number, else 0. */
 export function renderSpinOf(body) {
   const s = body.renderSpin;
@@ -129,6 +138,8 @@ export function createPigRenderer(scene, capacity = PIG_MAX) {
     pupil: box(0.035, 0.05, 0.02),
     ear: box(0.12, 0.12, 0.04),
     tail: box(0.06, 0.06, 0.14),
+    tusk: box(0.04, 0.1, 0.04),
+    tuskTip: box(0.035, 0.05, 0.035),
   };
   const headZ = -BODY_LEN / 2 - 0.1;
   const headY = BODY_Y + 0.12;
@@ -150,8 +161,15 @@ export function createPigRenderer(scene, capacity = PIG_MAX) {
     featureParts.push({ geo: geos.pupil, x: s * 0.135, y: headY + 0.065, z: front - 0.015, color: DARK });
     skinParts.push({ geo: geos.ear, x: s * 0.15, y: headY + 0.24, z: headZ + 0.05, rz: s * 0.35 });
   }
+  /** @type {Part[]} §88: the boar's tusks */
+  const tuskParts = [];
+  for (const s of [-1, 1]) {
+    tuskParts.push({ geo: geos.tusk, x: s * 0.13, y: headY - 0.04, z: front - 0.02, rz: -s * 0.25, color: TUSK });
+    tuskParts.push({ geo: geos.tuskTip, x: s * 0.15, y: headY + 0.03, z: front - 0.02, rz: -s * 0.6, color: TUSK });
+  }
   const skinGeo = mergeParts(skinParts);
   const featureGeo = mergeParts(featureParts);
+  const tuskGeo = mergeParts(tuskParts);
   bodyGeo.dispose();
   for (const g of Object.values(geos)) g.dispose();
   // Leg geometry pivots at its top so a rotation about x swings it like a hip.
@@ -181,6 +199,7 @@ export function createPigRenderer(scene, capacity = PIG_MAX) {
     features: instanced(featureGeo, mats.features, capacity, 'pig-features'),
     legs: instanced(legGeo, mats.skin, capacity * 4, 'pig-legs'),
     legsHurt: instanced(legGeo, mats.hurt, capacity * 4, 'pig-legs-hurt'),
+    tusks: instanced(tuskGeo, mats.features, capacity, 'pig-tusks'),
   };
   scene.add(group);
 
@@ -199,11 +218,14 @@ export function createPigRenderer(scene, capacity = PIG_MAX) {
     const n = Math.min(pigs.length, capacity);
     let skins = 0;
     let hurts = 0;
+    let tusks = 0;
     for (let i = 0; i < n; i++) {
       const pig = pigs[i];
-      const s = renderScaleOf(pig);
+      const young = pigSizeOf(pig);
+      const s = renderScaleOf(pig) * young;
       pigM.compose(at.set(pig.x, pig.y, pig.z), yawQ.setFromAxisAngle(UP, pig.yaw + renderSpinOf(pig)), scl.set(s, s, s));
       meshes.features.setMatrixAt(i, pigM);
+      if (/** @type {*} */ (pig).sex === 'm' && young >= 1) meshes.tusks.setMatrixAt(tusks++, pigM);
       const hurt = pig.hurt > 0;
       const body = hurt ? meshes.skinHurt : meshes.skin;
       const legs = hurt ? meshes.legsHurt : meshes.legs;
@@ -226,6 +248,7 @@ export function createPigRenderer(scene, capacity = PIG_MAX) {
     setCount(meshes.skinHurt, hurts);
     setCount(meshes.legs, skins * 4);
     setCount(meshes.legsHurt, hurts * 4);
+    setCount(meshes.tusks, tusks);
     drawn = n;
   }
 
@@ -234,6 +257,7 @@ export function createPigRenderer(scene, capacity = PIG_MAX) {
     for (const mesh of Object.values(meshes)) mesh.dispose();
     skinGeo.dispose();
     featureGeo.dispose();
+    tuskGeo.dispose();
     legGeo.dispose();
     for (const mat of Object.values(mats)) mat.dispose();
     drawn = 0;

@@ -781,11 +781,15 @@ describe('executeCommand — summon / pigs', () => {
     const { ctx, player } = makeCtx();
     ctx.pigs = new Pigs();
     const [aq, ar] = worldToHex(player.x, player.z - 2); // yaw 0 faces −Z
-    expect(exec(ctx, 'summon pig')).toEqual({ ok: true, message: `summoned a pig at ${aq} ${FEET} ${ar}` });
+    // §88: a pig is a sow or a boar (either, unless the sex is given last), named so
+    expect(exec(ctx, 'summon pig').message).toMatch(new RegExp(`^summoned a (sow|boar) at ${aq} ${FEET} ${ar}$`));
     expect(ctx.pigs.size).toBe(1);
     const [x, z] = hexToWorld(aq, ar);
     expect(ctx.pigs.list[0]).toMatchObject({ x, y: FEET, z });
-    expect(exec(ctx, 'summon pig 4 9 -2')).toEqual({ ok: true, message: `summoned a pig at 4 ${FEET} -2` });
+    expect(exec(ctx, 'summon pig 4 9 -2 m')).toEqual({ ok: true, message: `summoned a boar at 4 ${FEET} -2` });
+    expect(ctx.pigs.list[1].sex).toBe('m');
+    expect(exec(ctx, 'summon pig f')).toMatchObject({ ok: true, message: expect.stringContaining('summoned a sow at ') });
+    ctx.pigs.list.pop();
     expect(exec(ctx, 'summon pig ~1 ~ ~')).toMatchObject({ ok: true });
     expect(exec(ctx, 'pigs')).toEqual({ ok: true, message: `3 pigs (max ${PIG_MAX})` });
     expect(exec(ctx, 'pigs clear')).toEqual({ ok: true, message: 'removed 3 pigs' });
@@ -795,7 +799,9 @@ describe('executeCommand — summon / pigs', () => {
     const { ctx } = makeCtx();
     expect(exec(ctx, 'summon pig')).toMatchObject({ ok: false, message: expect.stringContaining('pigs are not available') });
     ctx.pigs = new Pigs();
-    expect(parseLine('summon dragon')).toEqual({ line: 1, message: 'summon: expected one of pig, cow, sheep, horse, wolf, deer, stag, rabbit, pheasant, turkey, bear, fish, zombie, runner, alpha, watcher, got "dragon" — usage: summon pig|cow|sheep|horse|wolf|deer|stag|rabbit|pheasant|turkey|bear|fish|zombie|runner|alpha|watcher [q y r]' });
+    expect(parseLine('summon dragon')).toEqual({ line: 1, message: 'summon: expected one of pig, cow, sheep, horse, wolf, deer, stag, rabbit, pheasant, turkey, bear, fish, zombie, runner, alpha, watcher, got "dragon" — usage: summon pig|cow|sheep|horse|wolf|deer|stag|rabbit|pheasant|turkey|bear|fish|zombie|runner|alpha|watcher [q y r] [f|m]' });
+    expect(parseLine('summon pig 1 2 3 x').message).toContain('expected one of f, m, got "x"'); // the fifth word is f or m
+    expect(exec(ctx, 'summon pig q')).toMatchObject({ ok: false, message: expect.stringContaining('the sex is f or m') });
     expect(exec(ctx, 'summon pig 1 2')).toMatchObject({ ok: false, message: expect.stringContaining('expected 1 or 4 args') });
     expect(exec(ctx, 'summon pig 900 20 900')).toMatchObject({ ok: false, message: expect.stringContaining('not loaded') });
     for (let i = 0; i < PIG_MAX; i++) ctx.pigs.spawn(0, FEET, 0);

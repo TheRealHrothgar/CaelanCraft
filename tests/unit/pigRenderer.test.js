@@ -31,11 +31,29 @@ describe('createPigRenderer — instanced pig models', () => {
     expect(meshes.map((m) => m.name).sort()).toEqual(['pig-features', 'pig-legs', 'pig-skin']);
     let objects = 0;
     scene.traverse((o) => { if (o.isMesh) objects++; });
-    expect(objects).toBe(5); // skin, features, legs and their two hurt twins — whatever the number of pigs
+    expect(objects).toBe(6); // skin, features, legs, their two hurt twins and (§88) the boars' tusks — whatever the number of pigs
     expect(byName(r, 'pig-skin').count).toBe(PIG_MAX);
     expect(byName(r, 'pig-legs').count).toBe(PIG_MAX * 4);
     r.dispose();
     expect(scene.children).toHaveLength(0);
+  });
+
+  it('§88: a grown boar has tusks (one more draw call), a sow and a piglet none; a piglet is drawn at its size', () => {
+    const scene = new THREE.Scene();
+    const r = createPigRenderer(scene);
+    r.sync([pig(0, 10, 0, { sex: 'f' }), pig(2, 10, 0, { sex: 'm' }), pig(4, 10, 0, { sex: 'm', size: 0.6 })]);
+    expect(byName(r, 'pig-tusks').count).toBe(1);
+    expect(drawn(scene).map((m) => m.name).sort()).toEqual(['pig-features', 'pig-legs', 'pig-skin', 'pig-tusks']);
+    const m = new THREE.Matrix4();
+    byName(r, 'pig-tusks').getMatrixAt(0, m);
+    expect(translation(m).x).toBe(2); // the boar's
+    byName(r, 'pig-skin').getMatrixAt(2, m);
+    expect(new THREE.Vector3().setFromMatrixScale(m).x).toBeCloseTo(0.6, 6);
+    byName(r, 'pig-skin').getMatrixAt(0, m);
+    expect(new THREE.Vector3().setFromMatrixScale(m).x).toBeCloseTo(1, 6);
+    r.sync([pig(0, 10, 0, { sex: 'f' })]);
+    expect(byName(r, 'pig-tusks').visible).toBe(false);
+    r.dispose();
   });
 
   it('places each pig at its feet, turned by its yaw (facing −Z at yaw 0)', () => {

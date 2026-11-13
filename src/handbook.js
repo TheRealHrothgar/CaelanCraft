@@ -52,11 +52,14 @@ import {
 } from './zombies.js';
 import { LIGHT_EMISSION } from './light.js'; // §86: the lights that keep zombies off
 import {
-  SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, BEHIND_NOTICE, VIEW_HALF_ANGLE, HERD_WEIGHTS, HERD_MIN, HERD_MAX, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
+  SPECIES, ANIMAL_KINDS, SNEAK_NOTICE, SPRINT_NOTICE, BEHIND_NOTICE, VIEW_HALF_ANGLE, HERD_WEIGHTS, HIT_FLEE_S, FED_CALM_S, LURE_RANGE,
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, WOLF_BITE_S,
   HOME_RANGE, RIDE_SCALE, RIDE_LEAP,
   BEAR_DAMAGE, BEAR_WARN_S, BEAR_CHARGE_DIST, BEAR_CHASE_S, BEAR_GIVE_UP, poolOf,
 } from './animals.js';
+// §88: animals that live in the world
+import { ZONE_SIZE, WANDER_DAYS, WANDER_SOURCE_MIN, YOUTH_DAYS, MATE_RANGE, FEED_RANGE, TAME_CAP, PIG_LANDS } from './populations.js';
+import { PIG_TAME } from './pigs.js';
 import {
   throwOf, STONE_KEYS, DART_KEYS, dartBreakP, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
 } from './looseItems.js';
@@ -630,22 +633,30 @@ export function lureText(lure) {
 
 /** What R does to each animal (hand-written; a test checks every species has a line). `{tame}` is its feeds to tame. */
 export const ANIMAL_R = Object.freeze({
-  pig: '—',
-  cow: 'with an empty Clay Pot in hand: milk',
-  sheep: 'with a knife in your pack: shear',
+  // §88: cattle, sheep and pigs are tamed like a horse
+  pig: 'with its food, {tame} times: tame',
+  cow: 'with its food, {tame} times: tame; a cow, with an empty Clay Pot: milk',
+  sheep: 'with its food, {tame} times: tame; with a knife: shear',
   horse: 'with its food, {tame} times: tame; then ride',
   wolf: 'with its food, {tame} times: tame; then sit or follow',
   // v0.14 (§76 fauna): nothing — the game animals are only hunted
   deer: '—', rabbit: '—', pheasant: '—', turkey: '—', bear: '—', fish: '—',
 });
 
-/** The animals: where their herds appear (HERD_WEIGHTS), what a hunt gives (MOB_DROPS) and what R does. */
+/**
+ * §88: where pigs live — the lands of populations.PIG_LANDS, the likeliest first. @returns {number[]} BIOME ids
+ */
+export function pigBiomes() {
+  return Object.keys(PIG_LANDS).map(Number).sort((x, y) => PIG_LANDS[y] - PIG_LANDS[x] || x - y);
+}
+
+/** The animals: where they live (HERD_WEIGHTS; §88 PIG_LANDS), what a hunt gives (MOB_DROPS) and what R does. */
 function animalsTable() {
-  const rows = [['Pig', 'grass and snowy grass', describeDrops(MOB_DROPS.pig, true), ANIMAL_R.pig]];
+  const rows = [['Pig', pigBiomes().map(biomeWord).join(', '), describeDrops(MOB_DROPS.pig, true), ANIMAL_R.pig.replace('{tame}', String(PIG_TAME))]];
   for (const k of ANIMAL_KINDS) {
     const sp = SPECIES[k];
-    // v0.14 (§76 fauna): fish are not of a land — they live in the streams
-    rows.push([sp.name, /** @type {*} */ (sp).water ? 'streams' : herdBiomes(k).map(biomeWord).join(', '), describeDrops(MOB_DROPS[k], true),
+    // v0.14 (§76 fauna): fish are not of a land — they live in the water (§88: streams and ponds)
+    rows.push([sp.name, /** @type {*} */ (sp).water ? 'streams and ponds' : herdBiomes(k).map(biomeWord).join(', '), describeDrops(MOB_DROPS[k], true),
       (ANIMAL_R[k] ?? '—').replace('{tame}', String(sp.tame))]);
   }
   return table({ id: 'animals', caption: 'The animals', head: ['Animal', 'Where', 'Gives', 'Press R'], rows,
@@ -1246,9 +1257,12 @@ function makeChapters() {
     byLure.set(what, [...(byLure.get(what) ?? []), HERD_WORDS[k] ?? SPECIES[k].name.toLowerCase()]);
   }
   const lureLine = [...byLure].map(([what, who]) => `${listJoin(who)} come to ${what}`).join('; ');
-  const tameLine = SPECIES.horse.tame === SPECIES.wolf.tame
-    ? `A horse or a wolf is *tamed* by ${numWord(SPECIES.horse.tame)} feeds`
-    : `A horse is *tamed* by ${numWord(SPECIES.horse.tame)} feeds, a wolf by ${numWord(SPECIES.wolf.tame)}`;
+  // §88: cattle, sheep and pigs are tamed too, all by the same number of feeds
+  const tameAll = [SPECIES.horse.tame, SPECIES.wolf.tame, SPECIES.cow.tame, SPECIES.sheep.tame, PIG_TAME];
+  const tameLine = tameAll.every((n) => n === SPECIES.horse.tame)
+    ? `A horse, a wolf, a cow, a sheep or a pig is *tamed* by ${numWord(SPECIES.horse.tame)} feeds`
+    : `A horse is *tamed* by ${numWord(SPECIES.horse.tame)} feeds, a wolf by ${numWord(SPECIES.wolf.tame)}, a cow by ${numWord(SPECIES.cow.tame)}, a sheep by ${numWord(SPECIES.sheep.tame)} and a pig by ${numWord(PIG_TAME)}`;
+  const youngDays = (/** @type {string} */ k) => `${numWord(/** @type {Record<string, number>} */ (YOUTH_DAYS)[k])} day${/** @type {Record<string, number>} */ (YOUTH_DAYS)[k] === 1 ? '' : 's'}`;
   const wolfLands = listJoin(herdBiomes('wolf').map(biomeWord));
   const spearKey = TOOL_KEYS.find((k) => ITEMS[k].tool?.type === 'spear') ?? 'flint_spear';
   const rockThrow = throwOf(STONE_KEYS[0]);
@@ -1798,14 +1812,28 @@ function makeChapters() {
   chapter('animals', 'Animals', 'Animals', 'hex', [
     [
       h('Shy herds'),
-      p(`Pigs root about on the grass, and ${herdNames} roam the land in small herds: ${herdSizes}. They are few, and they are shy. An animal that notices you runs, and the rest of its herd runs with it.`),
-      p(`A herd turns up now and then on wild grass, ${HERD_MIN} to ${HERD_MAX} cells from where you stand, and only while few animals are about. The land decides which kind it is: the table shows where to look.`),
+      p(`Pigs root about on the grass, and ${herdNames} roam the land in small herds: ${herdSizes}. They are shy. An animal that notices you runs, and the rest of its herd runs with it.`),
+      p('Every animal lives somewhere. Walk away and it stays where it was; come back and it is still there. The land decides which kinds live where: the table shows where to look.'),
       p(`Listen as you walk. ${cap(voices)} means a herd is near, often before you can see it.`),
       tip('An animal you have tamed never runs away, cannot be hurt by your own blows, and is saved with your world.'),
     ],
     [
       ...animalsTable(),
-      p('*Where* lists the lands its herds appear in, the likeliest first. *Gives* is what a hunt brings.'),
+      p('*Where* lists the lands it lives in, the likeliest first. *Gives* is what a hunt brings.'),
+    ],
+    // §88: populations, sexes and young, livestock
+    [
+      h('Animals come and go'),
+      p(`The land is shared out in squares ${ZONE_SIZE} cells a side. Each square feeds only so many of each kind: a green valley with water feeds many, dry or stony land few, the sea none.`),
+      p('New animals are born where animals live. A few animals have a few young. A place half full grows fastest. A full place has no room for more. Leave a male and a female, and in a few weeks there are many again.'),
+      p(`Hunt a place empty and it stays empty for weeks. Now and then an animal wanders in from a square next to it, about one every ${WANDER_DAYS} days from each square that has ${WANDER_SOURCE_MIN} or more of its kind. One alone has no young: it takes two to start again.`),
+      tip('Hunters leave the mothers and a few males, so that there is game again next year.'),
+    ],
+    [
+      h('Male and female, young'),
+      p('You can tell them apart. A bull is bigger than a cow, with a hump and wide horns. A ram has curled horns, a stag has antlers, a boar has tusks. A cock pheasant is copper and green with a long tail, the hen plain brown. A tom turkey fans his tail; the hen does not. Horses, wolves, rabbits, bears and fish look alike.'),
+      p(`Young are born small and keep by their mother. They grow up in a few days: a rabbit in ${youngDays('rabbit')}, a lamb in ${youngDays('sheep')}, a calf in ${youngDays('cow')}, a bear cub in ${youngDays('bear')}. A young animal has no young, gives no milk or wool, and gives about half the meat.`),
+      p(`A mother needs a male of her kind within ${MATE_RANGE} cells, and food and fresh water within ${FEED_RANGE}: grass or plants (wolves and bears need prey). After her young are born she rests about as long as they take to grow.`),
     ],
     [
       h('Getting close'),
@@ -1822,7 +1850,7 @@ function makeChapters() {
     [
       h('A treat in your hand'),
       p(`Better than stalking: hold out a food the animal likes. It will not run from you, and from ${LURE_RANGE} cells away it trots up and waits beside you. Just do not sprint.`),
-      p(`${cap(lureLine)}. A pig comes to nothing: that one you stalk.`),
+      p(`${cap(lureLine)}. Pigs come to the same plants.`),
       p(`Then feed it with [R]. Cattle and sheep stay calm for ${FED_CALM_S} seconds after a mouthful, however close you stand. ${tameLine}.`),
     ],
     [
@@ -1838,10 +1866,17 @@ function makeChapters() {
     ],
     [
       h('Cattle and sheep'),
-      p('Cattle and sheep cannot be tamed, but each gives something again and again.'),
-      p(`*Milk.* Press [R] on a cow with an empty Clay Pot in hand for a Pot of Milk: ${fmtSigned(milk.satiation)} Nourishment and ${fmtSigned(milk.hydration)} Hydration. She has more after ${fmtDurationLong(MILK_REGROW_S)}.`),
-      p(`*Wool.* Press [R] on a sheep with a knife in your pack. Shearing gives ${SHEAR_WOOL[0]}–${SHEAR_WOOL[1]} ${itemName('wool_white')} and costs the knife one use; the fleece is back in ${fmtDurationLong(SHEAR_REGROW_S)}. Wool is a soft block to build with and to land on.`),
+      p('Cattle and sheep give something again and again, wild or tame.'),
+      p(`*Milk.* Press [R] on a cow with an empty Clay Pot in hand for a Pot of Milk: ${fmtSigned(milk.satiation)} Nourishment and ${fmtSigned(milk.hydration)} Hydration. She has more after ${fmtDurationLong(MILK_REGROW_S)}. A bull and a calf give none.`),
+      p(`*Wool.* Press [R] on a sheep with a knife in your pack. Shearing gives ${SHEAR_WOOL[0]}–${SHEAR_WOOL[1]} ${itemName('wool_white')} and costs the knife one use; the fleece is back in ${fmtDurationLong(SHEAR_REGROW_S)}. A lamb has none yet. Wool is a soft block to build with and to land on.`),
       tip('Hunt them only when you need meat or hide.'),
+    ],
+    [
+      h('Keeping animals'),
+      p(`Cattle, sheep and pigs can be tamed like a horse: feed one ${numWord(SPECIES.cow.tame)} times. A tame animal never runs, follows you while you hold its food, and stays where you leave it.`),
+      p(`Lead them into a pen. A wall two cells high holds them: they hop only one. Inside, they need food and fresh water within ${FEED_RANGE} cells: grass or plants, or a feed from your hand each day, and a pool, a trough of water or a rain barrel.`),
+      p(`Then a tame cow and bull have calves, and the calves are tame too. A pen of ${TAME_CAP.cow} cattle, ${TAME_CAP.sheep} sheep or ${TAME_CAP.pig} pigs is full: the herd stops growing there.`),
+      tip('A cow gives milk and a sheep wool again and again, and when the herd is big you can butcher one with a tool for its meat and hide. Keep a breeding pair: a herd at home feeds you without hunting.'),
     ],
     [
       h('Horses'),
@@ -1865,15 +1900,15 @@ function makeChapters() {
     ],
     [
       h('Deer and small game'),
-      p(`*Deer* keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}. They are the wariest animal there is: sneaking brings you within reach only from straight behind, so stalk one, throw a spear or a dart, or set a snare. Every herd has one stag: you know it by its antlers.`),
+      p(`*Deer* keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}. They are the wariest animal there is: sneaking brings you within reach only from straight behind, so stalk one, throw a spear or a dart, or set a snare. The males, the stags, carry antlers.`),
       p('*Rabbits* are small and quick and swerve as they run. A baited Snare is the easy way to catch one.'),
       p('*Pheasants* and *wild turkeys* feed on the ground. Come too close and a pheasant bursts into the air and flies off; a turkey glides a little way and runs.'),
       p('Birds give meat and *Feathers*. Feathers fletch a better dart: a *Fletched Dart* flies faster, hits harder and breaks less often than a Flint Dart.'),
-      p('Leave the birds in peace and some of them lay a *Ground Nest*. Press [R] on it for the eggs, and a hen lays in the empty nest again. A raw egg can poison you: roast it.'),
+      p('Leave the birds in peace and the hens lay a *Ground Nest*. Press [R] on it for the eggs, and a hen lays in the empty nest again. The eggs never hatch. A raw egg can poison you: roast it.'),
     ],
     [
       h('Fish'),
-      p('*Fish* live in the streams and never leave the water. Look for a fin cutting the surface. They dart away when you come near: sneak.'),
+      p('*Fish* live in streams and ponds and never leave the water. Look for a fin cutting the surface. They dart away when you come near: sneak.'),
       p('Only a spear catches one: thrust with it, or throw it with [G]. A thrown spear stays where it fell, so you wade in for it.'),
       tip('Fish goes bad faster than any other meat. Roast it soon.'),
     ],

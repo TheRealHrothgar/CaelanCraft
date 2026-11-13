@@ -29,11 +29,11 @@
 import {
   CHUNK_SIZE, RENDER_DISTANCE, LOADING_BUDGET_MS, REACH, BREAK_REPEAT_S, PLACE_REPEAT_S, MAX_FRAME_DT, FOV,
   SPRINT_FOV, START_TIME, AUTOSAVE_INTERVAL_S, HOTBAR_SIZE, VERSION, GAME_SECONDS_PER_DAY, PLAYER_HEIGHT,
-  PIG_NATURAL_COUNT, CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
+  CAMPFIRE_MODEL_RANGE, CAMPFIRE_MAX_MODELS, CAMPFIRE_CRACKLE_RANGE, CAMPFIRE_CRACKLES_PER_S,
   BLACK_HOLE_MAX_TRACKED, BLACK_HOLE_SWALLOW_LINE_S,
   PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S,
   ZOMBIE_HEIGHT, GEN_LATEST, PIG_MAX, LAMP_LIGHT_MIN, LAMP_LIGHT_MAX, CAMPFIRE_FUEL_START_S, CAMPFIRE_FUEL_MAX_S, ATTACK_REPEAT_S, GULP_GAP_S,
-  PIG_REPOP_CHECK_S, PIG_REPOP_TARGET, PIG_REPOP_COUNT, PIG_REPOP_RADIUS, PIG_REPOP_MIN, PIG_REPOP_MAX, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE,
+  ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE, DAY_LENGTH_SECONDS,
   FALL_SAFE_SPEED, INTRO_LINE_MS, PACK_MESSAGE_S,
   ZOMBIE_MAX, MAX_INFALL_MOBS, VORTEX_MODEL_RANGE, VORTEX_MAX_MODELS, VORTEX_MAX_CORES, VORTEX_PARTICLES_PER_S,
   VORTEX_PARTICLE_HOLES, CIRCUIT_DRAW_RANGE, CIRCUIT_OVERLAY_RANGE, BLACK_HOLE_SCREEN_FLASH_RANGE, BLACK_HOLE_SCREEN_FLASH_MAX,
@@ -77,13 +77,14 @@ import { isControl, isIgnitable, isPart, partOf, partTip, inputFaceFromYaw, wave
 import { wireSegments } from './circuitGeometry.js';
 import { createCircuitRenderer } from './circuitRenderer.js';
 import { createDevicePanel } from './devicePanel.js';
-import { Pigs } from './pigs.js';
+import { Pigs, PLANT_LURE, PIG_TAME } from './pigs.js';
 import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire, RAIN_DOUSE_HINT, RAIN_DOUSE_LINE } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
 import { Animals, SPECIES, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE } from './animals.js';
 import { createAnimalRenderer } from './animalRenderer.js';
+import { Fauna, animalName, youngDrops } from './populations.js';
 import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, strikeDamage, standLight, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST, SICK_MESSAGE, BOIL_TIP } from './survival.js';
 import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory.js';
@@ -222,8 +223,6 @@ export const R_REPEAT_S = 0.25;
 export const NEAR_FIRE_CELLS = 4;
 /** Biomes where a new survival state also points the way to green land (§1.2). */
 export const HARSH_BIOMES = Object.freeze([BIOME.DESERT, BIOME.SNOWY, BIOME.MOUNTAINS, BIOME.SNOWY_PEAKS]);
-/** Ground a repopulating pig may spawn on in Survival (§4.3). */
-export const SURVIVAL_PIG_GROUND = Object.freeze([BLOCK.GRASS_BLOCK, BLOCK.SNOWY_GRASS]);
 /** The §1.2 chat line for a new survival state, and the Handbook's addition (§14.2). */
 export const SURVIVAL_INTRO = 'Survival: you carry nothing. Loose stones give rock and flint, fallen branches give sticks, '
   + 'tussock gives fibre. Drink fresh water with R.';
@@ -1604,10 +1603,8 @@ export function boot(win, doc) {
   let lastHotLineAt = -Infinity;
   /** throttle for the "water would put the campfire out" chat line */
   let lastDouseLineAt = -Infinity;
-  // Pigs (CONTRACTS §30): replaced from the save on every load; natural ones are placed once per world.
+  // Pigs (CONTRACTS §30): the live ones; since §88 they live in the world's zones like the other animals (`fauna`).
   const pigs = new Pigs();
-  /** true when the loading world has never had pigs (no `pigs` field in its save) */
-  let placeNaturalPigs = false;
   /** @type {import('./types.js').PlayerState[]} scratch list for resolveBodies */
   const bodies = [];
   /** @type {{ pig: import('./pigs.js').Pig, distance: number }|null} pig under the crosshair, closer than `hit` */
@@ -1669,11 +1666,21 @@ export function boot(win, doc) {
   let rideShift = false;
   /** pigs held by a snare → the snare's cell (pigs.js only counts `trapped` down) */
   const snaredPigs = new Map();
+  // §88: every animal lives in the world — the zones round the player are live, the rest sleep (populations.js).
+  const fauna = new Fauna({ animals, pigs });
   const animalWorld = {
     getBlock: pigWorld.getBlock,
     isLoaded: pigWorld.isLoaded,
     pullAt: pigWorld.pullAt,
     hasCampfires: pigWorld.hasCampfires,
+    // §88 (FaunaWorld): the world clock in game days, the generator and the seed (a zone's K and its first animals)
+    now: () => weatherNow() / DAY_LENGTH_SECONDS,
+    get gen() {
+      return world ? world.worldGen : null;
+    },
+    get seed() {
+      return world ? world.seed : 0;
+    },
     /** @type {PlayerState|null} */
     player: null,
     /** @type {string|null} */
@@ -2002,8 +2009,6 @@ export function boot(win, doc) {
   let cropHintKey = '';
   let cropHintAt = -Infinity;
   let cropHint = /** @type {string|null} */ (null);
-  let pigRepopAccum = 0;
-  let pigRepopTries = 0;
   /** blast or log damage was dealt this frame (no crush damage on top, §2.4) */
   let knockHurtThisFrame = false;
   /** a game.teleport happened since the last unstick check (no crush damage, §2.4) */
@@ -3179,35 +3184,83 @@ export function boot(win, doc) {
   function animalDied(a, real) {
     particles.emit('dust', a.x, a.y + a.height * 0.5, a.z, 24, { color: [0.72, 0.62, 0.55], spread: 0.5 });
     animalVoice(a, 1);
-    if (real && survival.inSurvival) flyStacks(rollMobDrops(a.kind, Math.random), a.x, a.y + a.height * 0.5, a.z);
+    // §88: a young one gives about half
+    if (real && survival.inSurvival) flyStacks(youngDrops(a, rollMobDrops(a.kind, Math.random)), a.x, a.y + a.height * 0.5, a.z);
     if (riding === a) riding = null;
     if (animalTarget && animalTarget.animal === a) animalTarget = null;
   }
 
-  /** The target hint for an animal. */
+  /**
+   * The target hint for an animal (§88: by its name as a field guide gives it — Cow, Bull, Calf; Ewe, Ram, Lamb …).
+   */
+  /** §88: the tame kinds a keeper may butcher with a tool (pigs too, in pigs.js); a horse and a wolf are companions. */
+  const LIVESTOCK = Object.freeze(['cow', 'sheep']);
+
   function animalHint(a) {
     const sp = SPECIES[a.kind];
+    const name = animalName(a);
+    const young = a.size < 1;
     const snared = a.trapped > 0 ? ' (snared)' : '';
     if (a.tamed) {
-      if (a.kind === 'horse') return 'Your Horse · R: ride';
-      return `Your Wolf · R: ${a.sitting ? 'follow me' : 'sit'} · feed it meat to heal it`;
+      if (a.kind === 'horse') return young ? `Your ${name} · too young to ride yet` : `Your ${name} · R: ride`;
+      if (a.kind === 'wolf') return `Your ${name} · R: ${a.sitting ? 'follow me' : 'sit'} · feed it meat to heal it`;
+      // §88: cattle and sheep you keep
+      const gives = a.kind === 'cow' && a.sex === 'f' && !young ? ' · R with a Clay Pot: milk her' : a.kind === 'sheep' && !young ? ' · R with a knife: shear' : '';
+      return `Your ${name} · it follows the food in your hand${gives}${LIVESTOCK.includes(a.kind) && selectedTool() ? ' · click: butcher' : ''}`;
     }
     // v0.16: beyond the hand's reach the hint says so in place of the hunting words (R actions keep their own reach)
     const near = !animalTarget || animalTarget.animal !== a || strikeInReach(animalTarget);
     const hunt = !near ? `out of reach: ${selectedTool() ? 'this tool reaches' : 'bare hands reach'} ${reachNow()} cells`
       : selectedTool() ? 'click: hunt it' : 'hunting needs a tool';
     // v0.14 (§76 fauna)
-    if (a.kind === 'fish') return selectedTool()?.type === 'spear' ? 'Fish · click: spear it · G: throw the spear' : 'Fish · it takes a spear to catch one';
+    if (a.kind === 'fish') return selectedTool()?.type === 'spear' ? `${name} · click: spear it · G: throw the spear` : `${name} · it takes a spear to catch one`;
     if (a.kind === 'bear') {
-      if (a.mode === 'charge') return 'Bear · it is charging: run, or fight';
-      if (a.mode === 'warn') return 'Bear · it is warning you: back away';
-      return `Bear · keep your distance · ${hunt}`;
+      if (a.mode === 'charge') return `${name} · it is charging: run, or fight`;
+      if (a.mode === 'warn') return `${name} · it is warning you: back away`;
+      return `${name} · keep your distance · ${hunt}`;
     }
-    if (a.kind === 'deer') return `${a.variant === 1 ? 'Stag' : 'Deer'}${snared} · ${hunt}`;
-    if (a.kind === 'horse') return `Horse${snared} · R with a Wild Tuber or Honeyberries: feed it (${a.trust}/${sp.tame} to tame)`;
-    if (a.kind === 'wolf') return `Wolf${snared} · R with meat: feed it (${a.trust}/${sp.tame} to tame)`;
-    if (a.kind === 'sheep') return `Sheep${snared} · ${hunt} · R with a knife: shear`;
-    return `${sp.name}${snared} · ${hunt}${a.kind === 'cow' ? ' · R with a Clay Pot: milk it' : ''}`;
+    if (a.kind === 'horse') return `${name}${snared} · R with a Wild Tuber or Honeyberries: feed it (${a.trust}/${sp.tame} to tame)`;
+    if (a.kind === 'wolf') return `${name}${snared} · R with meat: feed it (${a.trust}/${sp.tame} to tame)`;
+    // §88: cattle and sheep are tamed like a horse
+    const tame = sp.tame > 0 ? ` · feed it to tame (${a.trust}/${sp.tame})` : '';
+    if (a.kind === 'sheep') return `${name}${snared} · ${hunt}${young ? '' : ' · R with a knife: shear'}${tame}`;
+    if (a.kind === 'cow') return `${name}${snared} · ${hunt}${a.sex === 'f' && !young ? ' · R with a Clay Pot: milk her' : ''}${tame}`;
+    return `${name}${snared} · ${hunt}`;
+  }
+
+  /** §88: the target hint for a pig (Sow, Boar, Piglet). */
+  function pigHint(pig) {
+    const name = animalName(pig);
+    if (pig.tamed) return `Your ${name} · it follows the food in your hand${selectedTool() ? ' · click: butcher' : ''}`;
+    const hunt = selectedTool() ? 'click: hunt it' : 'click: shove it (hunting needs a tool)';
+    return `${name} · ${hunt} · feed it to tame (${pig.trust}/${PIG_TAME})`;
+  }
+
+  /** §88: R on a pig — feed it what it likes (PIG_TAME feeds tame it; Creative tames at once). @returns {boolean} handled */
+  function pigR(pig) {
+    const SV = survival.inSurvival;
+    const key = heldItemKey();
+    if (key && PLANT_LURE.includes(key)) {
+      const res = pigs.feed(pig, key);
+      if (res.ok) {
+        if (SV) pack.consume(selected, 1);
+        audio.playEat();
+        animalHearts(pig, res.tamed ? 14 : 5);
+        if (res.tamed) animalTamed(pig);
+        else if (!pig.tamed) showHint(`${animalName(pig)}: fed ${pig.trust} of ${PIG_TAME}`);
+        return true;
+      }
+    }
+    if (!SV && !pig.tamed) {
+      /** @type {{ ok: boolean, tamed?: boolean }} */
+      let res = { ok: true, tamed: false };
+      for (let i = 0; i < PIG_TAME && res.ok && !res.tamed; i++) res = pigs.feed(pig, PLANT_LURE[0]);
+      if (res.tamed) {
+        animalHearts(pig, 14);
+        animalTamed(pig);
+      }
+    }
+    return true; // R on a pig never falls through to the block behind it
   }
 
   /** Little hearts over an animal. */
@@ -3221,13 +3274,18 @@ export function boot(win, doc) {
    * Creative R tames at once. @returns {boolean} handled
    */
   function animalR() {
-    if (riding || !animalTarget) return false;
+    if (riding) return false;
+    if (!animalTarget && pigTarget) return pigR(pigTarget.pig); // §88: pigs are fed and tamed too
+    if (!animalTarget) return false;
     const a = animalTarget.animal;
     if (!isBodyAnimal(a)) return false; // v0.14: R on a fish is R on the water (drink, fill a pot)
     const sp = SPECIES[a.kind];
     const SV = survival.inSurvival;
     const key = heldItemKey();
-    if (key && sp.lure.includes(key) && !(a.tamed && a.health >= sp.health)) {
+    // a tame horse or wolf takes food only when hurt (else R rides it / tells it to sit); §88: kept cattle and sheep always
+    // eat (a feed by hand is food for breeding for a day)
+    const keeps = a.tamed && a.health >= sp.health && (a.kind === 'horse' || a.kind === 'wolf');
+    if (key && sp.lure.includes(key) && !keeps) {
       const res = animals.feed(a, key);
       if (res.ok) {
         if (SV) pack.consume(selected, 1);
@@ -3240,8 +3298,9 @@ export function boot(win, doc) {
       }
     }
     if (a.kind === 'cow' && key === 'clay_pot') {
-      // §72: an empty clay pot under a cow fills with milk (a milked cow needs a few minutes).
-      if (a.milked > 0) showHint('This cow has no more milk for now.');
+      // §72: an empty clay pot under a cow fills with milk (a milked cow needs a few minutes). §88: a grown cow only.
+      if (a.sex === 'm' || a.size < 1) showHint(`A ${animalName(a).toLowerCase()} gives no milk: only a grown cow does.`);
+      else if (a.milked > 0) showHint('This cow has no more milk for now.');
       else if (animals.milk(a)) {
         if (SV) {
           pack.consume(selected, 1);
@@ -3253,8 +3312,9 @@ export function boot(win, doc) {
       }
       return true;
     }
-    if (a.kind === 'sheep' && !a.tamed) {
-      if (SV && !pack.hasTool('knife', KNIFE_TIER)) showHint('Shearing needs a knife.');
+    if (a.kind === 'sheep') {
+      if (a.size < 1) showHint('A lamb has no fleece to shear yet.');
+      else if (SV && !pack.hasTool('knife', KNIFE_TIER)) showHint('Shearing needs a knife.');
       else if (a.shorn > 0) showHint('Its fleece is growing back.');
       else {
         const n = animals.shear(a);
@@ -3291,12 +3351,27 @@ export function boot(win, doc) {
     return true; // R on an animal never falls through to the block behind it
   }
 
-  /** A horse or a wolf has just been tamed. */
+  /** A horse, a wolf or (§88) a cow, a sheep or a pig has just been tamed. */
   function animalTamed(a) {
     audio.playRecipe(ANIMAL_SOUNDS.tame, 0.8);
-    logLine(a.kind === 'horse'
+    const kind = a.kind ?? 'pig';
+    logLine(kind === 'horse'
       ? 'The horse trusts you. Press R to ride it; Shift gets off, Space jumps. It waits where you leave it.'
-      : 'The wolf trusts you. It follows you and bites zombies that come near. R tells it to sit or follow.');
+      : kind === 'wolf' ? 'The wolf trusts you. It follows you and bites zombies that come near. R tells it to sit or follow.'
+        : `The ${animalName(a).toLowerCase()} trusts you. It follows the food in your hand and stays where you leave it. A pair with food and water near has young.`);
+  }
+
+  /** §88: the live and the dormant animals round the player, births and wanderers (populations.js). */
+  function stepFauna(dt) {
+    animalWorld.player = player && !survival.dead ? player : null;
+    fauna.update(dt, animalWorld);
+  }
+
+  /** §88: a world's animals from its save — the `fauna` field, or an older save's `animals` and `pigs` (into their zones). */
+  function loadFauna(restoring) {
+    fauna.load(restoring ? restoring.fauna : null, {
+      animals: restoring ? restoring.animals : null, pigs: restoring ? restoring.pigs : null, seed: world.seed, now: animalWorld.now(),
+    });
   }
 
   /** R on a Snare with food in hand baits it (Creative: R toggles the bait). @returns {boolean} handled */
@@ -3545,12 +3620,12 @@ export function boot(win, doc) {
       else if (res === 'hit') animalVoice(a, 1);
     } else {
       const pig = target.mob;
-      if (real) {
+      if (real && !pig.tamed) { // §88: a pig you keep is not hurt by your own throw
         const res = pigs.wound(pig, it.power, fromX, fromZ);
         if (res === 'dead') {
           particles.emit('dust', pig.x, pig.y + 0.45, pig.z, 22, { color: [0.66, 0.57, 0.57], spread: 0.45 });
           audio.playSqueal(1);
-          flyStacks(rollMobDrops('pig', Math.random), pig.x, pig.y + 0.45, pig.z);
+          flyStacks(youngDrops(pig, rollMobDrops('pig', Math.random)), pig.x, pig.y + 0.45, pig.z);
         } else if (res === 'hit') {
           audio.playSqueal(1);
         }
@@ -3976,8 +4051,8 @@ export function boot(win, doc) {
   function survivalHintText() {
     if (litTarget) return 'lit keg · left-click: put it out';
     if (zombieTarget) return strikeInReach(zombieTarget) ? 'Zombie · click: hit it' : tooFarHint('Zombie');
-    if (pigTarget && !strikeInReach(pigTarget)) return tooFarHint('Pig');
-    if (pigTarget) return selectedTool() ? 'Pig · click: hunt it' : 'Pig · click: shove it (hunting needs a tool)';
+    if (pigTarget && !strikeInReach(pigTarget)) return tooFarHint(animalName(pigTarget.pig));
+    if (pigTarget) return pigHint(pigTarget.pig);
     if (animalTarget) return animalHint(animalTarget.animal);
     if (hit && hit.blockId === BLOCK.SNARE) return 'Snare · R with food in hand: bait it';
     if (hit && hit.blockId === BLOCK.SNARE_BAITED) return 'Baited Snare · animals nearby will come to it';
@@ -4654,8 +4729,9 @@ export function boot(win, doc) {
     }
     if (animalTarget) {
       const a = animalTarget.animal;
-      if (a.tamed) {
-        showHint(`Your ${SPECIES[a.kind].name.toLowerCase()} trusts you.`);
+      // §88 (by the lead): cattle and sheep you keep are livestock: a tool butchers one. A tame horse or wolf is never struck.
+      if (a.tamed && !(LIVESTOCK.includes(a.kind) && tool)) {
+        showHint(`Your ${animalName(a).toLowerCase()} trusts you.`);
         return;
       }
       const ka = strikeKind('pig', tool); // like a pig: only a tool wounds, a bare hand shoves
@@ -4672,13 +4748,17 @@ export function boot(win, doc) {
     }
     if (!pigTarget) return;
     const pig = pigTarget.pig;
+    if (pig.tamed && !tool) {
+      showHint(`Your ${animalName(pig).toLowerCase()} trusts you.`); // §88: a pig you keep: a tool butchers it, a hand does not
+      return;
+    }
     const k = strikeKind('pig', tool);
     if (k.call === 'wound') {
       const res = pigs.wound(pig, k.power * strikeFactorNow(), player.x, player.z);
       if (res === 'dead') {
         particles.emit('dust', pig.x, pig.y + 0.45, pig.z, 22, { color: [0.66, 0.57, 0.57], spread: 0.45 });
         audio.playSqueal(1);
-        flyStacks(rollMobDrops('pig', Math.random), pig.x, pig.y + 0.45, pig.z);
+        flyStacks(youngDrops(pig, rollMobDrops('pig', Math.random)), pig.x, pig.y + 0.45, pig.z);
       } else if (res === 'hit') {
         audio.playSqueal(1);
       }
@@ -4885,13 +4965,6 @@ export function boot(win, doc) {
       containers.spoil(1, Math.random, isLoadedCellFn);
     }
 
-    // Pigs repopulate in daylight (§4.3).
-    pigRepopAccum += dt;
-    if (pigRepopAccum >= PIG_REPOP_CHECK_S) {
-      pigRepopAccum = 0;
-      if (isDayTime(time)) repopulatePigs();
-    }
-
     if (player.y < VOID_Y) pendingDeath ??= 'void';
   }
 
@@ -4940,18 +5013,6 @@ export function boot(win, doc) {
     return ['stump', 'kiln', 'bloomery', 'forge'].map((k) => (st[k] ? st[k].join(',') : '-')).join('|');
   }
 
-  /** §4.3: prune one far pig at the cap, then bring PIG_REPOP_COUNT more when fewer than PIG_REPOP_TARGET are within reach. */
-  function repopulatePigs() {
-    if (pigs.size >= PIG_MAX) pigs.pruneFar(player.x, player.z, isLoadedCellFn, 2 * PIG_REPOP_RADIUS);
-    let near = 0;
-    for (const p of pigs.list) if (Math.hypot(p.x - player.x, p.z - player.z) <= PIG_REPOP_RADIUS) near++;
-    if (near >= PIG_REPOP_TARGET || pigs.size >= PIG_MAX) return;
-    const [pq, pr] = worldToHex(player.x, player.z);
-    pigRepopTries++;
-    const seed = (world.seed ^ (day * 7919 + pigRepopTries)) >>> 0;
-    pigs.spawnNatural(Math.min(PIG_REPOP_COUNT, PIG_MAX - pigs.size), pq, pr, seed, world.getBlock, isLoadedCellFn, PIG_REPOP_MIN,
-      PIG_REPOP_MAX, SURVIVAL_PIG_GROUND);
-  }
 
   /** Smoke over meat, steam over pots and a soft sizzle within 6 cells (§4.4), for the fires near the player. */
   function fireEffects(dt, cooking) {
@@ -5157,8 +5218,7 @@ export function boot(win, doc) {
       // out and lit barrels are saved as barrels (BlockPhysics.exportEdits).
       edits: blockPhysics ? blockPhysics.exportEdits() : world.exportEdits(),
       runes: runeStore.export(),
-      pigs: pigs.export(),
-      animals: animals.size > 0 ? animals.export() : undefined, // §69: written only when there are any
+      fauna: fauna.export(), // §88: every animal, live and asleep, by zone (no more `pigs` and `animals` fields)
       physics: blockPhysics ? blockPhysics.exportSwitches() : undefined,
       zombies: zombies.enabled, // the switch only: zombies themselves are never saved (§39)
       watcher: watcher.enabled, // the switch: the Watcher itself is a sighting, never saved (§40) …
@@ -5398,13 +5458,10 @@ export function boot(win, doc) {
     circuits.loadFromEdits(world.edits); // after the holes, settling (§4.7)
     resetCircuitSession();
     campfires.loadFromEdits(world.edits);
-    pigs.load(restoring && Array.isArray(restoring.pigs) ? restoring.pigs : []);
-    animals.load(restoring ? restoring.animals : null);
     lampLights.clear(); // §72: the new world's light engine starts without extra emitters
     riding = null;
     animalTarget = null;
     snaredPigs.clear();
-    placeNaturalPigs = !(restoring && Array.isArray(restoring.pigs));
     pigTarget = null;
     // Zombies are never saved; their switch is (absent — a new world or an older save — means on).
     zombies.clear();
@@ -5445,6 +5502,7 @@ export function boot(win, doc) {
     time = restoring ? wrapTime(restoring.time) : START_TIME;
     if (params.time != null) time = params.time;
     day = restoring && Number.isFinite(restoring.day) ? Math.max(1, Math.floor(restoring.day)) : 1;
+    loadFauna(restoring); // §88: after the clock (the zones' times are game days)
     hotbar = hotbarFrom(restoring ? restoring.hotbar : null);
     selected = slotFrom(restoring ? restoring.selected : 0);
     hud.setHotbar(hotbar, selected);
@@ -5503,8 +5561,6 @@ export function boot(win, doc) {
     stationsVersion++;
     survivalSecond = 0;
     resetSleep(); // §87
-    pigRepopAccum = 0;
-    pigRepopTries = 0;
     flashHint = null;
     packTab = 'all';
     markSurvivalSaved();
@@ -5575,11 +5631,6 @@ export function boot(win, doc) {
       survival.fallGrace = true;
     }
 
-    if (placeNaturalPigs) {
-      placeNaturalPigs = false;
-      const [pq, pr] = worldToHex(sx, sz);
-      pigs.spawnNatural(PIG_NATURAL_COUNT, pq, pr, world.seed, world.getBlock, (q, r) => world.hasChunkAtCell(q, r));
-    }
 
     ctx = buildCommandContext();
     runner = new RuneRunner(runeStore, ctx);
@@ -6248,6 +6299,17 @@ export function boot(win, doc) {
     pack,
     // ---- v0.10 loose items (§60): the list, and Q / G ----
     animals,
+    // ---- §88: the zones and their animals; what a zone holds; time for them alone ----
+    fauna,
+    zoneReport: (q, r) => fauna.zoneReport(q, r, animalWorld),
+    /**
+     * Advance every zone in memory as if `days` game days had passed (with Math.random): births, the young growing up,
+     * wanderers. The clock does not move. @returns {ReturnType<Fauna['step']>|null}
+     */
+    faunaStep(days) {
+      if (!world || !Number.isFinite(days)) return null;
+      return fauna.step(Math.max(0, Math.min(365, days)), animalWorld);
+    },
     /** §69: R on the animal under the crosshair (feed, shear, ride, sit), and the horse being ridden. */
     animalR: () => animalR(),
     getRiding: () => riding,
@@ -6587,6 +6649,7 @@ export function boot(win, doc) {
   function stepPigs(dt) {
     if (pigs.size === 0) return;
     pigWorld.player = player && !survival.dead ? player : null;
+    pigWorld.heldKey = heldItemKey(); // §88: food a pig likes draws it
     const oinks = pigs.update(dt, pigWorld);
     for (const pig of pigs.scorched) {
       const d = Math.hypot(pig.x - player.x, pig.y - player.y, pig.z - player.z);
@@ -6988,6 +7051,7 @@ export function boot(win, doc) {
     if (!riding && world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt);
     stepBlackHoles(dt);
     if (checkDeath()) return; // §2.5 checkpoint
+    stepFauna(dt); // §88: the live and the dormant animals, births, wanderers
     stepPigs(dt);
     stepAnimals(dt);
     stepZombies(dt);

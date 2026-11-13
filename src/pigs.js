@@ -5,16 +5,19 @@
 // holes exactly like the player does. Its cylinder is used for terrain collisions, for body-to-body pushing
 // (bodies.js) and as the ray target. A pig fits under a one-cell overhang but is too wide for a one-cell tunnel.
 // A hit makes a pig squeal, hop back and run away for PIG_FLEE_S. Pigs never die in Creative (main only calls `hit`);
-// in Survival (v0.9, DESIGN-survival §4.3, §9.3) a tool `wound`s them: PIG_HEALTH, not saved, so pigs heal on reload.
-// `pruneFar` and `spawnNatural`'s ground list serve Survival's repopulation. A pig in water swims for the
+// in Survival (v0.9, DESIGN-survival §4.3, §9.3) a tool `wound`s them. A pig in water swims for the
 // nearest bank it can reach and climb (a search over the water surface), or straight on when there is none in reach.
+// §88: pigs live in the world like the other animals (populations.js keeps them: this class is the LIVE list; natural
+// placement and Survival's repopulation are retired). A pig has a sex and an age, comes to PLANT_LURE in the player's
+// hand (it does not run then) and is TAMED by PIG_TAME feeds: a tame pig never runs, follows the food in your hand and
+// otherwise stays within HOME_RANGE of where it was left. A piglet keeps by its mother.
 // It hops only one-cell ledges, and never while standing on or carrying another body, so pigs cannot climb out of a
 // two-high pen on each other's backs.
 import {
   PIG_MAX, PIG_RADIUS, PIG_HEIGHT, PIG_MASS, PIG_KNOCKBACK, PIG_HURT_S, PIG_FLEE_S, PIG_TURN_RATE, WORLD_HEIGHT,
   WADE_DEPTH, PIG_HEALTH, PIG_NOTICE, WARY_SNEAK_FACTOR, WARY_SPRINT_FACTOR, WARY_VIEW_HALF_ANGLE, WARY_BEHIND_FACTOR,
 } from './config.js';
-import { createBody, stepPlayer, findStandingY, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
+import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
 import { yawToForward, isBehind } from './coords.js';
 import {
   HEX_DIRS, HEX_INRADIUS, HEX_ROW_SPACING, FACE_NORMALS, hexToWorld, worldToHex, hexLength, hexCircleContact,
@@ -26,13 +29,16 @@ import { BLOCK, isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
 
 /**
  * @typedef {PlayerState & {
- *   id: number, yaw: number, targetYaw: number, mode: 'idle'|'walk'|'flee', timer: number,
+ *   id: number, yaw: number, targetYaw: number, mode: 'idle'|'walk'|'flee'|'lure', timer: number,
  *   hurt: number, walkPhase: number, oinkIn: number, health: number, wallSinceAim?: boolean, trapped?: number,
- *   snareImmune?: number,
+ *   snareImmune?: number, kind: 'pig', sex: 'f'|'m', born: number, size: number, tamed: boolean, trust: number,
+ *   calm: number, homeX: number, homeZ: number, restUntil: number, fedAt: number, habBits: number, habAt: number,
  * }} Pig
  * `walkPhase` advances with distance walked (the renderer swings the legs with it) and settles to a multiple of π
  * while the pig stands (legs straight); `oinkIn` counts down to the next ambient oink. `health` (v0.9) starts at
- * PIG_HEALTH and only `wound` lowers it (Survival); it is not saved.
+ * PIG_HEALTH and only `wound` lowers it (Survival). §88: `kind` 'pig' and the life fields of an animal (animals.js
+ * Animal: `sex`, `born`, `size`, `restUntil`, `fedAt`, `habBits`, `habAt`), `tamed` / `trust`, `calm` (seconds a feed keeps
+ * it from running) and `homeX` / `homeZ` (where a tame one was left).
  */
 
 /** @typedef {{ x: number, y: number, z: number, yaw: number }} PigJSON */
@@ -44,11 +50,24 @@ import { BLOCK, isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
  * @property {(x: number, y: number, z: number, out: [number, number, number]) => [number, number, number]} [pullAt]
  * @property {() => boolean} [hasCampfires]  false while the world has no CAMPFIRE cell at all (tracked or refused):
  *   walking pigs then skip the look-ahead for fire. Absent: always look.
+ * @property {PlayerState|null} [player]  whom they run from (§69)
+ * @property {string|null} [heldKey]      the item in the player's hand (§88: PLANT_LURE brings a pig)
  */
 
+/** §88: what the grazers and pigs come to and are fed: plants (animals.js re-exports it). */
+export const PLANT_LURE = Object.freeze(['wild_tuber', 'honeyberries', 'tussock', 'cattail_root']);
+/** §88: feeds that tame a pig; a lured pig comes from PIG_LURE_RANGE (m) and stops PIG_LURE_STOP from the player. */
+export const PIG_TAME = 3;
+export const PIG_LURE_RANGE = 11;
+export const PIG_LURE_STOP = 2.2;
+/** §88: a feed keeps a wild pig calm (it does not run) this long (s); a tame pig stays within PIG_HOME_RANGE (m) of home. */
+export const PIG_FED_CALM_S = 40;
+export const PIG_HOME_RANGE = 4;
+/** §88: a piglet heads back to its mother beyond this (m); a spawned pig is this many game days old (grown). */
+export const PIG_YOUNG_KEEP = 3;
+const GROWN_AGE = 100;
+
 const TWO_PI = Math.PI * 2;
-/** The ground `spawnNatural` places pigs on unless told otherwise (Creative: grass only). */
-const DEFAULT_PIG_GROUND = Object.freeze([BLOCK.GRASS_BLOCK]);
 /**
  * Hex steps a swimming pig's bank search spreads over the water surface from its own column (so it visits at most
  * 3·20·21 + 1 = 1261 water columns).
@@ -374,6 +393,8 @@ export class Pigs {
     this.list = [];
     this._rng = rng;
     this._nextId = 1;
+    /** §88: the world clock in game days (populations.Fauna keeps it) */
+    this.now = 0;
     /** @type {[number, number, number]} */
     this._pull = [0, 0, 0];
     /** @type {Pig[]} pigs that stepped into a campfire during the last update (they yelp and jump out) */
@@ -398,10 +419,10 @@ export class Pigs {
   }
 
   /**
-   * Add a pig standing at feet (x, y, z) facing `yaw`. @returns {Pig|null} null when PIG_MAX pigs exist or the
-   * position is not finite
+   * Add a pig standing at feet (x, y, z) facing `yaw`, of `sex` (§88; a sow unless told), grown. @returns {Pig|null}
+   * null when PIG_MAX pigs exist or the position is not finite
    */
-  spawn(x, y, z, yaw = 0) {
+  spawn(x, y, z, yaw = 0, sex = 'f') {
     if (this.list.length >= PIG_MAX || !Number.isFinite(x + y + z + yaw)) return null;
     const pig = /** @type {Pig} */ (Object.assign(createBody(x, y, z, { radius: PIG_RADIUS, height: PIG_HEIGHT, mass: PIG_MASS }), {
       id: this._nextId++,
@@ -413,6 +434,20 @@ export class Pigs {
       walkPhase: 0,
       oinkIn: 4 + this._rng() * 10,
       health: PIG_HEALTH,
+      // §88
+      kind: 'pig',
+      sex: sex === 'm' ? 'm' : 'f',
+      born: this.now - GROWN_AGE,
+      size: 1,
+      tamed: false,
+      trust: 0,
+      calm: 0,
+      homeX: x,
+      homeZ: z,
+      restUntil: -Infinity,
+      fedAt: -Infinity,
+      habBits: -1,
+      habAt: -Infinity,
     }));
     this.list.push(pig);
     return pig;
@@ -461,9 +496,12 @@ export class Pigs {
         if (pig.hurt > 0) pig.hurt = Math.max(0, pig.hurt - dt);
         continue;
       }
-      // §69: pigs are wary — one that notices the player (nearer when sneaking, farther when sprinting) runs.
+      // §69: pigs are wary — one that notices the player (nearer when sneaking, farther when sprinting) runs. §88: not a
+      // tame one, nor one that was fed a moment ago, nor one the food in the player's hand draws.
       const pl = world.player;
-      if (pl && !pl.flying && pig.mode !== 'flee') {
+      if (pig.calm > 0) pig.calm = Math.max(0, pig.calm - dt);
+      const lured = this._lured(pig, world);
+      if (pl && !pl.flying && pig.mode !== 'flee' && !pig.tamed && !lured && !(pig.calm > 0)) {
         const dx = pig.x - pl.x;
         const dz = pig.z - pl.z;
         // v0.16: a pig does not see behind itself — a sneaker at its back comes twice as near (as animals.noticeRange)
@@ -477,7 +515,7 @@ export class Pigs {
       }
       // A pig standing on another body, or carrying a pig, never hops: stacked pigs would climb any wall.
       const canHop = !pig.carrier && !carriers.has(pig);
-      this._think(pig, dt, world.getBlock, canHop);
+      if (!this._lure(pig, world, lured)) this._think(pig, dt, world.getBlock, canHop);
 
       // Turn toward the target heading at PIG_TURN_RATE.
       const dYaw = wrapAngle(pig.targetYaw - pig.yaw);
@@ -536,9 +574,41 @@ export class Pigs {
     return oinks;
   }
 
+  /** §88: the player holds what a pig likes, near enough, not sprinting, on foot. */
+  _lured(pig, world) {
+    const pl = world.player;
+    if (!pl || pl.flying || pl.sprinting || typeof world.heldKey !== 'string' || !PLANT_LURE.includes(world.heldKey)) return false;
+    return Math.hypot(pl.x - pig.x, pl.z - pig.z) <= PIG_LURE_RANGE;
+  }
+
+  /**
+   * §88: a lured pig (not running, not swimming) walks up to the player and waits PIG_LURE_STOP away, facing them; a tame
+   * one that is lured takes where it ends up as its home. @returns {boolean} it is lured (the AI is done for this frame)
+   */
+  _lure(pig, world, lured) {
+    if (!lured || pig.mode === 'flee' || pig.inWater) {
+      if (pig.mode === 'lure') {
+        pig.mode = 'idle';
+        pig.timer = 1;
+      }
+      return false;
+    }
+    const pl = /** @type {PlayerState} */ (world.player);
+    pig.targetYaw = Math.atan2(-(pl.x - pig.x), -(pl.z - pig.z));
+    const near = Math.hypot(pl.x - pig.x, pl.z - pig.z) <= PIG_LURE_STOP;
+    pig.mode = near || (pig.onGround && !this._safeAhead(pig, world.getBlock, true)) ? 'idle' : 'lure';
+    pig.timer = 0.5;
+    if (pig.tamed) {
+      pig.homeX = pig.x;
+      pig.homeZ = pig.z;
+    }
+    return true;
+  }
+
   /**
    * AI: idle ↔ wander, flee after a hit; never walk off a drop of more than one cell, into water, into a wall it
-   * cannot hop or toward a campfire; and swim for the shore when in water.
+   * cannot hop or toward a campfire; and swim for the shore when in water. §88: a tame pig keeps within PIG_HOME_RANGE
+   * of home, a piglet by its mother.
    * @param {boolean} canHop  false while the pig stands on, or carries, another body
    */
   _think(pig, dt, getBlock, canHop) {
@@ -560,6 +630,18 @@ export class Pigs {
       }
       return;
     }
+    // §88: home for a tame one, the mother for a piglet
+    let goal = null;
+    if (pig.tamed && Math.hypot(pig.homeX - pig.x, pig.homeZ - pig.z) > PIG_HOME_RANGE) goal = [pig.homeX, pig.homeZ];
+    else if (pig.size < 1 && !pig.tamed) {
+      const mother = this._mother(pig);
+      if (mother && Math.hypot(mother.x - pig.x, mother.z - pig.z) > PIG_YOUNG_KEEP) goal = [mother.x, mother.z];
+    }
+    if (goal && pig.mode !== 'flee') {
+      pig.mode = 'walk';
+      pig.timer = Math.max(pig.timer, 0.5);
+      pig.targetYaw = Math.atan2(-(goal[0] - pig.x), -(goal[1] - pig.z));
+    }
     if (pig.timer <= 0) {
       if (pig.mode === 'idle') {
         pig.mode = 'walk';
@@ -576,6 +658,47 @@ export class Pigs {
       pig.timer = 0.5 + this._rng();
       pig.targetYaw = wrapAngle(pig.yaw + Math.PI * (0.5 + this._rng()));
     }
+  }
+
+  /** §88: the nearest grown sow, or null. */
+  _mother(pig) {
+    let best = null;
+    let bd = Infinity;
+    for (const o of this.list) {
+      if (o === pig || o.sex !== 'f' || o.size < 1) continue;
+      const d = Math.hypot(o.x - pig.x, o.z - pig.z);
+      if (d < bd) {
+        bd = d;
+        best = o;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * §88: feed a pig `key` (R with the food in hand). Only PLANT_LURE: it calms (PIG_FED_CALM_S), gains trust, and at
+   * PIG_TAME feeds is tamed (its home where it stands); a tame one is healed 2. The feed is stamped (`fedAt`).
+   * @returns {{ ok: boolean, tamed?: boolean, calmed?: boolean }}
+   */
+  feed(pig, key) {
+    if (!PLANT_LURE.includes(key) || !this.list.includes(pig)) return { ok: false };
+    pig.fedAt = this.now;
+    if (pig.tamed) {
+      pig.health = Math.min(PIG_HEALTH, pig.health + 2);
+      return { ok: true };
+    }
+    pig.calm = PIG_FED_CALM_S;
+    if (pig.mode === 'flee') {
+      pig.mode = 'idle';
+      pig.timer = 1;
+    }
+    pig.trust += 1;
+    if (pig.trust < PIG_TAME) return { ok: true, calmed: true };
+    pig.tamed = true;
+    pig.calm = 0;
+    pig.homeX = pig.x;
+    pig.homeZ = pig.z;
+    return { ok: true, tamed: true };
   }
 
   /** @returns {[number, number, number]} the cell (q, r) 0.8 ahead along the yaw, and the feet level fy */
@@ -671,29 +794,6 @@ export class Pigs {
   }
 
   /**
-   * Remove the one pig farthest from world (x, z) whose cell is not loaded and whose horizontal distance is more than
-   * `minDist` (Survival repopulation, DESIGN-survival §4.3: pigs left behind would otherwise fill PIG_MAX for good).
-   * @param {(q: number, r: number) => boolean} isLoadedCell
-   * @returns {boolean} false when no pig qualifies
-   */
-  pruneFar(x, z, isLoadedCell, minDist) {
-    let best = -1;
-    let bestD = minDist;
-    for (let i = 0; i < this.list.length; i++) {
-      const pig = this.list[i];
-      const d = Math.hypot(pig.x - x, pig.z - z);
-      if (!(d > bestD)) continue;
-      const [q, r] = worldToHex(pig.x, pig.z);
-      if (isLoadedCell(q, r)) continue;
-      best = i;
-      bestD = d;
-    }
-    if (best < 0) return false;
-    this.list.splice(best, 1);
-    return true;
-  }
-
-  /**
    * Nearest pig whose body cylinder the ray (origin o, unit direction d) enters within maxDist.
    * @returns {{ pig: Pig, distance: number }|null}
    */
@@ -760,31 +860,6 @@ export class Pigs {
   load(list) {
     this.clear();
     for (const p of list) this.spawn(p.x, p.y, p.z, p.yaw);
-  }
-
-  /**
-   * Place up to `count` pigs on grass cells around (q0, r0) at hex distance minDist..maxDist, deterministically from
-   * `seed`. Columns whose chunk is not loaded or whose surface is not one of `surfaces` (GRASS_BLOCK by default; Survival
-   * repopulation passes [GRASS_BLOCK, SNOWY_GRASS], v0.9) are skipped.
-   * @param {(q: number, r: number) => boolean} isLoadedCell
-   * @param {ReadonlyArray<number>} [surfaces]  block ids a pig may stand on
-   * @returns {number} pigs placed
-   */
-  spawnNatural(count, q0, r0, seed, getBlock, isLoadedCell, minDist = 4, maxDist = 18, surfaces = DEFAULT_PIG_GROUND) {
-    const rng = seededRng(seed ^ 0x9e3779b9);
-    let placed = 0;
-    for (let attempt = 0; attempt < count * 40 && placed < count; attempt++) {
-      const ang = rng() * TWO_PI;
-      const dist = minDist + rng() * (maxDist - minDist);
-      const [cx, cz] = hexToWorld(q0, r0);
-      const [q, r] = worldToHex(cx + Math.cos(ang) * dist, cz + Math.sin(ang) * dist);
-      if (!isLoadedCell(q, r)) continue;
-      const [x, z] = hexToWorld(q, r);
-      const fy = findStandingY(getBlock, x, z, WORLD_HEIGHT - 2);
-      if (fy === null || !surfaces.includes(getBlock(q, fy - 1, r))) continue;
-      if (this.spawn(x, fy, z, rng() * TWO_PI - Math.PI)) placed++;
-    }
-    return placed;
   }
 }
 

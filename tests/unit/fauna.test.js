@@ -9,16 +9,16 @@ import {
 } from '../../src/config.js';
 import {
   Animals, SPECIES, ANIMAL_KINDS, ANIMAL_MAX, SOUNDS, MEAT_LURE, HERD_WEIGHTS, BEHIND_NOTICE, noticeRange, bearRange, fishDepth, fleeSpeed, poolOf,
-  validateAnimalsJSON, SNEAK_NOTICE, SPRINT_NOTICE, CALM_FACTOR, HERD_CHECK_S, HERD_TARGET, HERD_RADIUS, HERD_CHANCE, SMALL_TARGET, SMALL_CHANCE,
-  BEAR_NEAR, ZIG_ANGLE, FLUSH_S, FLUSH_SPEED, TURKEY_GLIDE_S, NEST_HEN_P, NEST_FIRST_S, NEST_EVERY_S, NEST_RETRY_S, NEST_PRIVACY, NEST_SPACING,
+  validateAnimalsJSON, SNEAK_NOTICE, SPRINT_NOTICE, CALM_FACTOR,
+  ZIG_ANGLE, FLUSH_S, FLUSH_SPEED, TURKEY_GLIDE_S, NEST_FIRST_S, NEST_EVERY_S, NEST_RETRY_S, NEST_PRIVACY, NEST_SPACING,
   BEAR_WARN_S,
   BEAR_BACK_OFF, BEAR_CHARGE_DIST, BEAR_CHASE_S, BEAR_GIVE_UP, BEAR_REST_S, BEAR_REACH, BEAR_MAUL_S, BEAR_RECOVER_S, BEAR_DAMAGE, BEAR_PUSH,
   BEAR_LIFT,
-  FISH_MIN_WATER, FISH_UNDER, FISH_DART, FISH_DART_S, FISH_CHECK_S, FISH_TARGET, FISH_RADIUS, FISH_MIN, FISH_MAX, FISH_CAP,
+  FISH_MIN_WATER, FISH_UNDER, FISH_DART, FISH_DART_S,
   TRAP_HOLD_S, TRAP_IMMUNE_S, ANIMAL_HURT_S, ANIMAL_KNOCKBACK,
 } from '../../src/animals.js';
 import { createAnimalRenderer, bodyVariant, legCount, MODELS } from '../../src/animalRenderer.js';
-import { seededRng } from '../../src/pigs.js';
+import { Pigs, seededRng } from '../../src/pigs.js';
 import { createPlayer, stepPlayer } from '../../src/physics.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { MOB_DROPS, PICKABLE, BLOCK_RULES, rollMobDrops, pick, rollDrops, isPickable } from '../../src/harvest.js';
@@ -36,6 +36,7 @@ import { buildChunkMesh, NEST_WALL, NEST_EGGS } from '../../src/mesher.js';
 import { World } from '../../src/world.js';
 import { parseLine, executeCommand } from '../../src/commands.js';
 import { flatWorldGen, makeChunkData, makeChunkDataGetter, setWorldBlock } from '../helpers/fixtures.js';
+import { Fauna, makeRecord, nameOf } from '../../src/populations.js';
 
 const B = BLOCK;
 const GROUND = 10;
@@ -98,7 +99,7 @@ describe('fauna — the kinds (§76)', () => {
     // a wolf comes to the game meats too (not to fish or eggs)
     for (const m of ['venison', 'rabbit', 'fowl', 'bear']) expect(MEAT_LURE).toEqual(expect.arrayContaining([`raw_${m}`, `roast_${m}`]));
     for (const k of MEAT_LURE) expect(isItemKey(k), k).toBe(true);
-    expect(ANIMAL_MAX).toBe(40);
+    expect(ANIMAL_MAX).toBe(64); // 40 until §88 (the live list: populations.LIVE_MAX)
   });
 
   it('who outruns whom: deer, rabbits, turkeys and the bear beat a sprint; the deer is the wariest thing on land', () => {
@@ -153,21 +154,13 @@ describe('fauna — deer: very skittish herds', () => {
     for (const k of ['cow', 'sheep', 'horse', 'wolf']) expect(SPECIES.deer.notice * SPECIES.deer.calm).toBeGreaterThan(SPECIES[k].notice * CALM_FACTOR);
   });
 
-  it('every natural herd of deer has one stag, and a stag stays a stag through the save', () => {
+  it('§88: a stag is a grown male deer (its antlers); a fawn has none; a stag stays a stag through the old save', () => {
     const as = new Animals(seededRng(4));
-    const hooks = { getBiome: () => BIOME.FOREST, groundHeight: () => GROUND - 1, isNaturalGround: () => true, isLoadedCell: () => true };
-    const world = view(flatWorld(), standing(0, 0, { flying: true }), hooks);
-    let deer = [];
-    for (let k = 0; k < 400 && deer.length === 0; k++) {
-      as.clear();
-      as._spawnHerd(world.player, world, 'herd');
-      deer = as.list.filter((a) => a.kind === 'deer');
-    }
-    expect(deer.length).toBeGreaterThanOrEqual(SPECIES.deer.herd[0]);
-    expect(deer.length).toBeLessThanOrEqual(SPECIES.deer.herd[1]);
-    expect(deer.filter((a) => a.variant === 1)).toHaveLength(1);
-    expect(bodyVariant(deer.find((a) => a.variant === 1))).toBe('alt');
-    expect(bodyVariant(deer.find((a) => a.variant === 0))).toBe('body');
+    const deer = [as.spawn('deer', 0, GROUND, 0, 0, 'm'), as.spawn('deer', 3, GROUND, 0, 0, 'f'), as.spawn('deer', 6, GROUND, 0, 0, 'm')];
+    deer[2].size = 0.7; // a young male
+    expect(deer.map((a) => a.variant)).toEqual([1, 0, 1]);
+    expect(deer.map(bodyVariant)).toEqual(['male', 'body', 'body']);
+    expect(deer.map((a) => nameOf(a.kind, a.sex, a.size < 1))).toEqual(['Stag', 'Doe', 'Fawn']);
     const back = new Animals(seededRng(5));
     back.load(JSON.parse(JSON.stringify(as.export())));
     expect(back.list.map((a) => a.variant)).toEqual(as.list.map((a) => a.variant));
@@ -418,16 +411,25 @@ describe('fauna — ground nests', () => {
     expect(lay('pheasant', new Map([[`${q0},${GROUND},${r0}`, B.TUSSOCK]]), null).laid).toEqual([]);
     for (const kind of ['deer', 'rabbit', 'cow']) expect(lay(kind, new Map(), null).laid, kind).toEqual([]);
     expect(SPECIES.pheasant.nests && SPECIES.turkey.nests).toBe(true);
-    // about half the birds are laying hens, and a hen's first nest comes a minute or more after she appears; the rest
-    // of the birds, and every other kind, never lay
+    // §88: the hens lay (every female bird; until then a coin toss made half the birds layers), and a hen's first nest
+    // comes a minute or more after she wakes; the cocks, and every other kind, never lay
     const flock = new Animals(seededRng(150));
-    const birds = Array.from({ length: 36 }, (_, i) => flock.spawn(i % 2 ? 'pheasant' : 'turkey', i * 3, GROUND, 0));
+    const birds = Array.from({ length: 36 }, (_, i) => flock.spawn(i % 2 ? 'pheasant' : 'turkey', i * 3, GROUND, 0, 0, i % 3 ? 'f' : 'm'));
     const hens = birds.filter((a) => Number.isFinite(a.nestIn));
-    expect(hens.length).toBeGreaterThan(36 * NEST_HEN_P - 9);
-    expect(hens.length).toBeLessThan(36 * NEST_HEN_P + 9);
+    expect(hens).toEqual(birds.filter((a) => a.sex === 'f'));
+    expect(hens.length).toBe(24);
     for (const a of hens) expect(a.nestIn >= NEST_FIRST_S[0] && a.nestIn <= NEST_FIRST_S[1]).toBe(true);
     expect(NEST_FIRST_S[0]).toBeGreaterThanOrEqual(60);
     expect(flock.spawn('deer', 200, GROUND, 0).nestIn).toBe(Infinity);
+    // a chick is too young to lay, however long it is left in peace
+    const young = lay('pheasant', new Map(), null);
+    expect(young.laid).toHaveLength(1);
+    const chicks = new Animals(seededRng(15));
+    const chick = chicks.spawn('pheasant', 0, GROUND, 0);
+    chick.size = 0.6;
+    chick.nestIn = 0.01;
+    chick.onGround = true;
+    expect(chicks.update(DT, view(flatWorld(), null)).laid).toEqual([]);
     // … so a bird that is no hen walks about for ten minutes and lays nothing
     const cock = new Animals(seededRng(151));
     const c = cock.spawn('pheasant', 0, GROUND, 0);
@@ -809,103 +811,28 @@ describe('fauna — fish keep to the water', () => {
     expect(ev.despawned).toBe(1);
   });
 
-  it('schools appear only in stream water, away from the player, a few at a time', () => {
-    // a stream along r = 0..1; the same water elsewhere (a pond, r = 6..7) is not a stream
+  it('§88: a zone\'s fish wake only in water — in the stream or the pond their column is in — and a fish whose water is gone stays asleep', () => {
+    // a stream along r = 0..1 and a pond at r = 6..7; the schools that appeared near the player are retired (populations.js)
     const cells = new Map();
     for (let q = -40; q <= 40; q++) for (const r of [0, 1, 6, 7]) cells.set(`${q},${GROUND - 1},${r}`, B.WATER);
     const gb = flatWorld(cells);
-    const hooks = {
-      getBiome: () => BIOME.DESERT, // no herds, so only fish appear
-      groundHeight: () => GROUND - 1,
-      isNaturalGround: () => true,
-      isLoadedCell: () => true,
-      streamAt: (q, r) => r === 0 || r === 1,
+    const env = {
+      now: () => 0, getBlock: gb, isLoadedCell: () => true, groundHeight: () => GROUND - 1, isNaturalGround: () => true,
+      player: standing(0, -6, { flying: true }),
     };
     const as = new Animals(seededRng(29));
-    const player = standing(0, -6, { flying: true });
-    const world = view(gb, player, hooks);
-    const born = [];
-    run(as, world, FISH_CHECK_S * 30, (ev) => {
-      for (const a of ev.spawned) born.push({ kind: a.kind, d: dist(a, player), cell: worldToHex(a.x, a.z), y: a.y });
-    });
-    expect(born.length).toBeGreaterThanOrEqual(SPECIES.fish.herd[0]);
-    for (const b of born) {
-      expect(b.kind).toBe('fish');
-      expect(b.cell[1] === 0 || b.cell[1] === 1, `row ${b.cell[1]}`).toBe(true); // in the stream, not the pond
-      expect(b.d).toBeGreaterThan(FISH_MIN - 3);
-      expect(b.d).toBeLessThan(FISH_MAX + 3);
-      expect(b.y).toBeCloseTo(GROUND - 1 + 0.875 - FISH_UNDER, 5);
+    const fauna = new Fauna({ animals: as, pigs: new Pigs() });
+    for (const r of [0, 6]) {
+      const [x, z] = hexToWorld(3, r);
+      const fish = fauna.wake(makeRecord('fish', 'f', -10, x, 0, z, false, 0), env);
+      expect(fish, `row ${r}`).not.toBeNull();
+      expect(worldToHex(fish.x, fish.z)[1] === r || worldToHex(fish.x, fish.z)[1] === r + 1).toBe(true);
+      expect(fish.y).toBeCloseTo(GROUND - 1 + 0.875 - FISH_UNDER, 5);
     }
-    // few: never more than a school over the target near the player, never more than FISH_CAP in all
-    const near = as.list.filter((a) => dist(a, player) <= FISH_RADIUS).length;
-    expect(near).toBeLessThanOrEqual(FISH_TARGET + SPECIES.fish.herd[1] - 1);
-    expect(as.size).toBeLessThanOrEqual(FISH_CAP);
-    // no stream, no fish: with the foundation's streamAt (always false), and with no streamAt at all
-    for (const streamAt of [() => false, undefined]) {
-      const none = new Animals(seededRng(30));
-      run(none, view(gb, standing(0, -6, { flying: true }), { ...hooks, streamAt }), FISH_CHECK_S * 10);
-      expect(none.size).toBe(0);
-    }
-    // a fish left far behind goes sooner than a land animal (its own despawn distance)
-    const far = new Animals(seededRng(31));
-    far.spawn('fish', SPECIES.fish.despawn + 5, fishDepth(gb, 0, 0, GROUND - 0.5), 0);
-    expect(far.update(DT, view(gb, standing(0, 0))).despawned).toBe(1);
-  });
-});
-
-describe('fauna — rarity: herds and small game appear independently', () => {
-  const hooks = (biome) => ({ getBiome: () => biome, groundHeight: () => GROUND - 1, isNaturalGround: () => true, isLoadedCell: () => true });
-  it('each pool keeps to its own target; the forest grows deer, bears and birds; never a second bear', () => {
-    const as = new Animals(seededRng(32));
-    const player = standing(0, 0, { flying: true });
-    const world = view(flatWorld(), player, hooks(BIOME.FOREST));
-    const seen = new Set();
-    let maxBears = 0;
-    let maxHerd = 0;
-    let maxSmall = 0;
-    // an hour of checks; whatever appears is cleared away now and then, so many groups are drawn
-    for (let k = 0; k < 400; k++) {
-      as._spawnHerd(player, world, 'herd');
-      as._spawnHerd(player, world, 'small');
-      for (const a of as.list) seen.add(a.kind);
-      const near = as.list.filter((a) => dist(a, player) <= HERD_RADIUS);
-      maxBears = Math.max(maxBears, near.filter((a) => a.kind === 'bear').length);
-      maxHerd = Math.max(maxHerd, near.filter((a) => poolOf(a.kind) === 'herd').length);
-      maxSmall = Math.max(maxSmall, near.filter((a) => poolOf(a.kind) === 'small').length);
-      if (k % 4 === 3) {
-        // the herds move on — but a bear that has come stays, so a second one is refused again and again
-        as.list = as.list.filter((a) => a.kind === 'bear');
-      }
-    }
-    expect([...seen].sort()).toEqual(Object.keys(HERD_WEIGHTS[BIOME.FOREST]).sort());
-    expect(maxBears).toBe(BEAR_NEAR);
-    expect(maxHerd).toBeLessThanOrEqual(HERD_TARGET + SPECIES.deer.herd[1] - 1);
-    expect(maxSmall).toBeLessThanOrEqual(SMALL_TARGET + 3);
-    expect(maxSmall).toBeGreaterThan(0);
-    // rarer than before: the chances
-    expect([HERD_CHANCE, SMALL_CHANCE]).toEqual([0.2, 0.25]); // v0.15 (§79): 0.35 and 0.4 before
-    expect([HERD_TARGET, SMALL_TARGET]).toEqual([3, 3]); // 5 and 4 before
-    expect(HERD_CHECK_S).toBe(60);
-  });
-
-  it('a full count of herd animals does not keep the small game away, nor the other way round', () => {
-    const player = standing(0, 0, { flying: true });
-    const world = view(flatWorld(), player, hooks(BIOME.PLAINS));
-    const as = new Animals(() => 0.1); // every chance roll passes
-    for (let i = 0; i < HERD_TARGET; i++) as.spawn('cow', 20 + i * 2, GROUND, 0);
-    expect(as._spawnHerd(player, world, 'herd')).toBe(0);
-    expect(as._spawnHerd(player, world, 'small')).toBeGreaterThan(0);
-    const bs = new Animals(() => 0.1);
-    for (let i = 0; i < SMALL_TARGET; i++) bs.spawn('rabbit', 20 + i * 2, GROUND, 0);
-    expect(bs._spawnHerd(player, world, 'small')).toBe(0);
-    expect(bs._spawnHerd(player, world, 'herd')).toBeGreaterThan(0);
-    // the mountains have no birds: a small group there is rabbits
-    const cs = new Animals(() => 0.1);
-    cs._spawnHerd(player, view(flatWorld(), player, hooks(BIOME.MOUNTAINS)), 'small');
-    expect(cs.list.length).toBeGreaterThan(0);
-    expect(cs.list.every((a) => a.kind === 'rabbit')).toBe(true);
-    // the desert grows nothing
-    expect(cs._pickKind({}, 'small')).toBeNull();
+    // a column with no water within three cells: it does not wake (it has nowhere to swim)
+    const [dx, dz] = hexToWorld(3, -10);
+    expect(fauna.wake(makeRecord('fish', 'f', -10, dx, 0, dz, false, 0), env)).toBeNull();
+    expect(as.size).toBe(2);
   });
 });
 
@@ -983,8 +910,7 @@ describe('fauna — what a hunt gives', () => {
 describe('fauna — the save', () => {
   it('every new kind round-trips; what it was doing is not saved; a save from before v0.14 reads exactly as it did', () => {
     const as = new Animals(seededRng(33));
-    const made = NEW_KINDS.map((k, i) => as.spawn(k, i * 3 + 0.126, GROUND, -i, 0.5));
-    made[0].variant = 1; // a stag
+    const made = NEW_KINDS.map((k, i) => as.spawn(k, i * 3 + 0.126, GROUND, -i, 0.5, i === 0 ? 'm' : 'f')); // §88: a stag is a male deer
     made[1].health = 1; // a hurt rabbit
     made[2].air = 2; // a pheasant in the air
     made[4].mode = 'charge'; // a charging bear
@@ -1038,7 +964,7 @@ describe('fauna — the save', () => {
 });
 
 describe('fauna — the models', () => {
-  const mk = (kind, more = {}) => ({ kind, x: 0, y: 10, z: 0, yaw: 0, walkPhase: 0, hurt: 0, shorn: 0, tamed: false, variant: 0, air: 0, rear: 0, swipe: 0, ...more });
+  const mk = (kind, more = {}) => ({ kind, x: 0, y: 10, z: 0, yaw: 0, walkPhase: 0, hurt: 0, shorn: 0, tamed: false, variant: 0, air: 0, rear: 0, swipe: 0, sex: 'f', size: 1, ...more });
   const by = (r, name) => r.group.children.find((m) => m.name === name);
   const mat = (mesh, i = 0) => {
     const out = new THREE.Matrix4();
@@ -1052,9 +978,9 @@ describe('fauna — the models', () => {
   it('one body each, legs by kind (four, a bird\'s two, a fish\'s none), a stag on the antlered body; hurt on the red twins', () => {
     const scene = new THREE.Scene();
     const r = createAnimalRenderer(scene);
-    r.sync([mk('deer'), mk('deer', { variant: 1 }), mk('rabbit'), mk('pheasant'), mk('turkey', { hurt: 0.3 }), mk('bear'), mk('fish'), mk('fish')]);
+    r.sync([mk('deer'), mk('deer', { sex: 'm' }), mk('rabbit'), mk('pheasant'), mk('turkey', { hurt: 0.3 }), mk('bear'), mk('fish'), mk('fish')]);
     expect(r.count()).toBe(8);
-    expect([by(r, 'deer-body').count, by(r, 'deer-alt').count, by(r, 'deer-legs').count]).toEqual([1, 1, 8]);
+    expect([by(r, 'deer-body').count, by(r, 'deer-male').count, by(r, 'deer-legs').count]).toEqual([1, 1, 8]);
     expect([by(r, 'rabbit-body').count, by(r, 'rabbit-legs').count]).toEqual([1, 4]);
     expect([by(r, 'pheasant-body').count, by(r, 'pheasant-legs').count, by(r, 'pheasant-wings').count]).toEqual([1, 2, 0]); // wings only in the air
     expect([by(r, 'turkey-body-hurt').count, by(r, 'turkey-legs-hurt').count, by(r, 'turkey-body').count]).toEqual([1, 2, 0]);
@@ -1069,17 +995,21 @@ describe('fauna — the models', () => {
 
   it('each is told from the others by one bold feature: antlers, ears, a long tail, a fan, bulk', () => {
     const doe = reach(MODELS.deer.body);
-    const stag = reach(MODELS.deer.alt);
+    const stag = reach(MODELS.deer.male); // §88: the grown male's body
     expect(stag.top).toBeGreaterThan(doe.top + 0.3); // antlers stand well above a doe's ears …
     expect(stag.wide).toBeGreaterThan(doe.wide + 0.15); // … and spread wider than its body
     const rabbit = reach(MODELS.rabbit.body);
     const rabbitBack = Math.max(...MODELS.rabbit.body.filter((b) => b[0] >= 0.16).map((b) => b[4] + b[1] / 2));
     expect(rabbit.top).toBeGreaterThan(rabbitBack + 0.2); // ears stand a hand above its head and back
-    const pheasant = reach(MODELS.pheasant.body);
+    // §88: the cock pheasant's long tail and the tom turkey's fan (the hens have neither)
+    const pheasant = reach(MODELS.pheasant.male);
     expect(pheasant.back).toBeGreaterThan(-pheasant.front * 2); // the tail is longer than the rest of the bird
-    const turkey = reach(MODELS.turkey.body);
+    const turkey = reach(MODELS.turkey.male);
     expect(turkey.wide).toBeGreaterThan(0.9); // the fan, far wider than the body in front of it
-    expect(turkey.wide).toBeGreaterThan(2.5 * MODELS.turkey.body[0][0]);
+    expect(turkey.wide).toBeGreaterThan(2.5 * MODELS.turkey.male[0][0]);
+    const hen = reach(MODELS.pheasant.body);
+    expect(hen.back).toBeLessThan(pheasant.back - 0.25);
+    expect(reach(MODELS.turkey.body).wide).toBeLessThan(turkey.wide / 2);
     expect(turkey.wide).toBeGreaterThan(pheasant.wide * 2.5);
     expect(turkey.top).toBeGreaterThan(pheasant.top * 1.7);
     const bear = reach(MODELS.bear.body);
@@ -1186,20 +1116,33 @@ describe('fauna — summon (the debug command)', () => {
   }
   const exec = (ctx, line) => executeCommand(parseLine(line), ctx);
 
-  it('puts every new kind in front of the player; a stag is a deer with antlers', () => {
+  it('puts every new kind in front of the player, of the sex asked (§88: named by it); a stag is a male deer', () => {
     const ctx = makeCtx();
     for (const kind of ['deer', 'rabbit', 'pheasant', 'turkey', 'bear']) {
-      const res = exec(ctx, `summon ${kind}`);
-      expect(res, kind).toMatchObject({ ok: true });
-      expect(res.message).toContain(`summoned a ${SPECIES[kind].name.toLowerCase()} at `);
-      const a = ctx.animals.list[ctx.animals.list.length - 1];
-      expect([a.kind, a.y]).toEqual([kind, GROUND + 1]);
+      for (const sex of ['f', 'm']) {
+        const res = exec(ctx, `summon ${kind} ${sex}`);
+        expect(res, kind).toMatchObject({ ok: true });
+        expect(res.message).toContain(`summoned a ${nameOf(kind, sex, false).toLowerCase()} at `);
+        const a = ctx.animals.list[ctx.animals.list.length - 1];
+        expect([a.kind, a.sex, a.y, a.size]).toEqual([kind, sex, GROUND + 1, 1]);
+      }
     }
+    ctx.animals.clear();
     expect(exec(ctx, 'summon stag')).toMatchObject({ ok: true, message: expect.stringContaining('summoned a stag at ') });
     const stag = ctx.animals.list[ctx.animals.list.length - 1];
-    expect([stag.kind, stag.variant]).toEqual(['deer', 1]);
-    expect(exec(ctx, 'summon deer 2 11 2')).toMatchObject({ ok: true });
+    expect([stag.kind, stag.sex, stag.variant]).toEqual(['deer', 'm', 1]);
+    expect(exec(ctx, 'summon deer 2 11 2 f')).toMatchObject({ ok: true, message: 'summoned a doe at 2 11 2' });
     expect(ctx.animals.list[ctx.animals.list.length - 1].variant).toBe(0);
+    expect(exec(ctx, 'summon cow m')).toMatchObject({ ok: true, message: expect.stringContaining('summoned a bull at ') });
+    expect(exec(ctx, 'summon stag f')).toMatchObject({ ok: false, message: expect.stringContaining('a stag is a male') });
+    expect(exec(ctx, 'summon cow x')).toMatchObject({ ok: false, message: expect.stringContaining('the sex is f or m') });
+    // without a sex it is either: over many, both come
+    const sexes = new Set();
+    for (let i = 0; i < 30; i++) {
+      exec(ctx, 'summon sheep 2 11 2');
+      sexes.add(ctx.animals.list[ctx.animals.list.length - 1].sex);
+    }
+    expect([...sexes].sort()).toEqual(['f', 'm']);
     expect(parseLine('summon dragon').message).toContain('deer, stag, rabbit, pheasant, turkey, bear, fish');
     expect(CHUNK_SIZE).toBeGreaterThan(4);
   });

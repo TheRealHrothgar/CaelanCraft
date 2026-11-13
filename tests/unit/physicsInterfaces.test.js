@@ -82,8 +82,8 @@ describe('survival body interfaces (DESIGN-survival §9.3, §9.4)', () => {
     const { Pigs } = await import('../../src/pigs.js');
     const { Zombies } = await import('../../src/zombies.js');
     arity(Pigs.prototype.wound, 4, 'Pigs.wound');
-    arity(Pigs.prototype.pruneFar, 4, 'Pigs.pruneFar');
-    arity(Pigs.prototype.spawnNatural, 9, 'Pigs.spawnNatural');
+    arity(Pigs.prototype.spawn, 5, 'Pigs.spawn'); // §88: x, y, z, yaw, sex (natural placement went with pruneFar)
+    arity(Pigs.prototype.feed, 2, 'Pigs.feed');
     arity(Pigs.prototype.hit, 4, 'Pigs.hit');
     arity(Zombies.prototype.hit, 4, 'Zombies.hit');
   });

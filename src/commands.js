@@ -22,6 +22,7 @@
 // chunk-major order, so a 32k-cell fill never stalls a frame. They skip rune blocks, bedrock and cells the player
 // occupies, and report what they skipped.
 import { SPECIES, ANIMAL_MAX, isAnimalKind, fishDepth } from './animals.js';
+import { nameOf } from './populations.js';
 import {
   WORLD_HEIGHT, HOTBAR_SIZE, PITCH_LIMIT, MAX_FILL_CELLS, MAX_TOTAL_EDITS, WAIT_MIN_S, WAIT_MAX_S,
   GAME_SECONDS_PER_DAY, AREA_MAX_RADIUS, AREA_MAX_HEIGHT, MAX_RUNE_SCRIPT_LINES, MAX_AREA_CHUNKS_PER_FRAME, PIG_MAX,
@@ -82,7 +83,7 @@ export const COMMANDS = Object.freeze([
   { name: 'resume', usage: 'resume', summary: 'let rune triggers fire again after stopall', args: [], min: 0 },
   { name: 'runes', usage: 'runes', summary: 'list the rune blocks with scripts or settings', args: [], min: 0 },
   { name: 'rune', usage: 'rune q y r on|off', summary: 'enable or disable every trigger of one rune block', args: ['cell', 'cell', 'cell', 'choice:on|off'], min: 4 },
-  { name: 'summon', usage: 'summon pig|cow|sheep|horse|wolf|deer|stag|rabbit|pheasant|turkey|bear|fish|zombie|runner|alpha|watcher [q y r]', summary: 'put an animal or a zombie (a runner, an alpha) two cells in front of you, or in a cell (a fish: in the water there; watcher: far away in view)', args: ['choice:pig|cow|sheep|horse|wolf|deer|stag|rabbit|pheasant|turkey|bear|fish|zombie|runner|alpha|watcher', 'cell', 'cell', 'cell'], min: 1 },
+  { name: 'summon', usage: 'summon pig|cow|sheep|horse|wolf|deer|stag|rabbit|pheasant|turkey|bear|fish|zombie|runner|alpha|watcher [q y r] [f|m]', summary: 'put an animal or a zombie (a runner, an alpha) two cells in front of you, or in a cell (a fish: in the water there; watcher: far away in view); an animal is grown, of the sex given last (f or m; else either)', args: ['choice:pig|cow|sheep|horse|wolf|deer|stag|rabbit|pheasant|turkey|bear|fish|zombie|runner|alpha|watcher', 'word', 'cell', 'cell', 'choice:f|m'], min: 1 },
   { name: 'pigs', usage: 'pigs [clear]', summary: 'count the pigs, or remove them all', args: ['choice:clear'], min: 0 },
   { name: 'zombies', usage: 'zombies [clear|on|off]', summary: 'count the zombies, remove them all, or switch zombies on / off for this world (saved)', args: ['choice:clear|on|off'], min: 0 },
   { name: 'watcher', usage: 'watcher [on|off]', summary: 'is the Hollow Watcher about? or switch it on / off for this world (saved)', args: ['choice:on|off'], min: 0 },
@@ -703,15 +704,32 @@ function summonZombie(spec, args, ctx) {
 }
 
 /**
+ * §88: the sex at the end of a summon (`summon cow m`, `summon cow 4 9 -2 f`): `args` without it, and the sex ('f' or 'm';
+ * either, at random, when none is given). @returns {{ args: string[], sex: 'f'|'m' }|{ error: string }}
+ */
+function summonSex(args) {
+  if (args.length !== 2 && args.length !== 5) return { args, sex: Math.random() < 0.5 ? 'f' : 'm' };
+  const s = args[args.length - 1].toLowerCase();
+  if (s !== 'f' && s !== 'm') return { error: `the sex is f or m, got "${args[args.length - 1]}"` };
+  return { args: args.slice(0, -1), sex: s };
+}
+
+/**
  * `summon cow|sheep|horse|wolf [q y r]` (CONTRACTS §69). v0.14 (§76 fauna): also deer, stag (a deer with antlers), rabbit,
- * pheasant, turkey, bear and fish — a fish only into water (the cell's, or the water just under where you look).
+ * pheasant, turkey, bear and fish — a fish only into water (the cell's, or the water just under where you look). §88: an
+ * optional sex last (`f` or `m`; a stag is a male); the animal is grown, and named as a field guide would (a bull, a ewe).
  * @returns {CommandResult}
  */
-function summonAnimal(spec, args, ctx) {
+function summonAnimal(spec, rawArgs, ctx) {
   const as = ctx.animals;
   if (!as) return fail(spec, 'animals are not available here');
-  if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
+  const sx = summonSex(rawArgs);
+  if ('error' in sx) return fail(spec, sx.error);
+  const args = sx.args;
+  if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${rawArgs.length})`);
   const stag = args[0] === 'stag';
+  if (stag && rawArgs.length !== args.length && sx.sex === 'f') return fail(spec, 'a stag is a male (a female deer is a doe: summon deer f)');
+  const sex = stag ? 'm' : sx.sex;
   const kind = stag ? 'deer' : args[0];
   const sp = SPECIES[kind];
   const world = ctx.world;
@@ -736,16 +754,15 @@ function summonAnimal(spec, args, ctx) {
     let wy = NaN;
     for (let dy = 1; dy >= -4 && Number.isNaN(wy); dy--) wy = fishDepth(world.getBlock, q, r, y + dy + 0.5);
     if (Number.isNaN(wy)) return fail(spec, 'a fish needs water (none there, or it is too shallow)');
-    const f = as.spawn(kind, x, wy, z, Math.atan2(-(p.x - x), -(p.z - z)));
+    const f = as.spawn(kind, x, wy, z, Math.atan2(-(p.x - x), -(p.z - z)), sex);
     if (!f) return fail(spec, `too many animals (max ${ANIMAL_MAX})`);
     return ok(`summoned a fish at ${q} ${Math.floor(wy)} ${r}`);
   }
   const fy = findFreeY(world.getBlock, x, z, y, 2, sp.radius, sp.height);
   if (fy === null) return fail(spec, args.length === 4 ? 'target is inside a block' : 'no room in front of you');
-  const a = as.spawn(kind, x, fy, z, Math.atan2(-(p.x - x), -(p.z - z)));
+  const a = as.spawn(kind, x, fy, z, Math.atan2(-(p.x - x), -(p.z - z)), sex);
   if (!a) return fail(spec, `too many animals (max ${ANIMAL_MAX})`);
-  if (stag) a.variant = 1;
-  return ok(`summoned a ${stag ? 'stag' : sp.name.toLowerCase()} at ${q} ${fy} ${r}`);
+  return ok(`summoned a ${nameOf(kind, sex, false).toLowerCase()} at ${q} ${fy} ${r}`);
 }
 
 /** @returns {CommandResult} */
@@ -1036,7 +1053,11 @@ function run(spec, args, ctx) {
       if (args[0] === 'watcher') return summonWatcher(spec, args, ctx);
       if (isAnimalKind(args[0]) || args[0] === 'stag') return summonAnimal(spec, args, ctx);
       if (!ctx.pigs) return fail(spec, 'pigs are not available here');
-      if (args.length !== 1 && args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
+      const sx = summonSex(args); // §88: a sow or a boar
+      if ('error' in sx) return fail(spec, sx.error);
+      const pigSex = sx.sex;
+      if (sx.args.length !== 1 && sx.args.length !== 4) return fail(spec, `expected 1 or 4 args (got ${args.length})`);
+      args = sx.args;
       let x;
       let z;
       let fy;
@@ -1057,10 +1078,10 @@ function run(spec, args, ctx) {
         fy = findFreeY(world.getBlock, x, z, Math.max(0, Math.floor(p.y)), 2, PIG_RADIUS, PIG_HEIGHT);
         if (fy === null) return fail(spec, 'no room in front of you');
       }
-      const pig = ctx.pigs.spawn(x, fy, z, Math.random() * 2 * Math.PI - Math.PI);
+      const pig = ctx.pigs.spawn(x, fy, z, Math.random() * 2 * Math.PI - Math.PI, pigSex);
       if (!pig) return fail(spec, `too many pigs (max ${PIG_MAX})`);
       const [pq, pr] = worldToHex(x, z);
-      return ok(`summoned a pig at ${pq} ${fy} ${pr}`);
+      return ok(`summoned a ${nameOf('pig', pigSex, false).toLowerCase()} at ${pq} ${fy} ${pr}`);
     }
     case 'pigs': {
       if (!ctx.pigs) return fail(spec, 'pigs are not available here');
