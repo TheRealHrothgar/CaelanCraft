@@ -441,6 +441,11 @@
  * @property {(name: string, delay?: number) => { ok: boolean, message: string, named?: Record<string, number[]> }} [buildScene]
  * @property {Record<string, number[]>|null} [sceneCells]  the named cells of the last scene built
  * @property {() => number} [circuitSegments]       wire segments drawn (the F3 circuits line)
+ * Farming (CONTRACTS §80): the two trackers, and time for them alone (the in-game check of planting and spreading).
+ * @property {import('./farming.js').Growth} [growth]  the planted cells and sprouts (one per session)
+ * @property {import('./spread.js').Spread} [spread]   the wild plants' spreading, with its counts
+ * @property {(seconds: number) => ({ seconds: number, sprouted: number, grown: number, failed: number, births: number }|null)} [farmStep]
+ *   run the growth and spread steps as if `seconds` had passed
  */
 
 export {};

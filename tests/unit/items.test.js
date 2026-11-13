@@ -69,6 +69,7 @@ const MATERIALS = {
   flint_dart: ['Flint Dart', 16], // v0.10 throwing (CONTRACTS §60)
   handbook: ['Survival Handbook', 1], // §14: added by package H
   feather: ['Feather', 32], fletched_dart: ['Fletched Dart', 16], // v0.14 (§76 fauna)
+  carrot_seeds: ['Carrot Seeds', 32], onion_seeds: ['Onion Seeds', 32], healwort_seeds: ['Healwort Seeds', 32], // §80 farming
 };
 
 /** §5.1 / §4.5 food: key → [display name, stack, satiation, hydration, sick, useS, extra]. */
@@ -93,7 +94,7 @@ const FOODS = {
   raw_mutton: ['Raw Mutton', 16, 5, 0, 0.3, 1.4, { spoilS: 1200 }],
   roast_mutton: ['Roast Mutton', 16, 26, -2, 0, 1.6, { spoilS: 2400 }],
   snow: ['Snow', 32, 0, 3, 0, 0.6, { temp: -0.2 }],
-  pot_water: ['Pot of Water', 1, 0, 30, 0.2, 1.0, { returns: 'clay_pot', spoilS: 2880, spoilsTo: 'pot_tainted' }], // v0.11 (§66): 20 % poisoning; §76 water: it turns tainted
+  pot_water: ['Pot of Water', 1, 0, 30, 0.4, 1.0, { returns: 'clay_pot', spoilS: 2880, spoilsTo: 'pot_tainted' }], // 40 % poisoning (20 % from v0.11 §66 until v0.15 §79); §76 water: it turns tainted
   pot_boiled: ['Pot of Boiled Water', 1, 0, 30, 0, 1.0, { returns: 'clay_pot' }],
   pot_seawater: ['Pot of Seawater', 1, 0, -10, 0, 1.0, { returns: 'clay_pot' }],
   pot_sap: ['Pot of Birch Sap', 1, 2, 25, 0, 1.0, { returns: 'clay_pot' }],
@@ -113,6 +114,9 @@ const FOODS = {
   baked_crab_apple: ['Baked Crab Apple', 16, 5, 2, 0, 1.0, {}],
   healwort: ['Healwort', 16, 0, -2, 0, 1.2, { cures: true }],
   pot_healwort_tea: ['Pot of Healwort Tea', 1, 0, 30, 0, 1.0, { returns: 'clay_pot', cures: true }],
+  // §81: what the two look-alikes give — the Wild Carrot's and the Honeyberries' numbers, but they always poison
+  hemlock_root: ['Hemlock Root', 16, 3, 1, 1, 1.0, {}],
+  nightshade_berries: ['Nightshade Berries', 32, 4, 2, 1, 0.8, { spoilS: 1800 }],
   // v0.14 (§76 fauna): game
   raw_venison: ['Raw Venison', 16, 6, 0, 0.3, 1.4, { spoilS: 1200 }],
   roast_venison: ['Roast Venison', 16, 32, -2, 0, 1.6, { spoilS: 2400 }],
@@ -133,6 +137,7 @@ const FOODS = {
 const HEALS = {
   fibre_bandage: ['Fibre Bandage', 8, 15, 1.5, 1.5],
   rag_bandage: ['Rag Bandage', 8, 25, 2.5, 1.5],
+  aloe_leaf: ['Aloe Leaf', 16, 6, 1.5, 1.0], // §81: a small, quick heal that needs no making
 };
 
 /** §5.1 clothes: key → [display name, slot, insulation, sunShade]. */
@@ -224,8 +229,10 @@ describe('items — the registry', () => {
     const count = (kind) => ITEM_KEYS.filter((k) => ITEMS[k].kind === kind).length;
     // v0.14 (§76): + 14 foods and the 7 placeable plants (flora), + the Pot of Tainted Water (water), + feather, fletched dart and
     // twelve game foods (fauna)
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 48, 52, 2, 5, 107]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(248); // + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna)
+    // §80: + the three seeds (materials). The 18 farm blocks are not placeable, so they are no items.
+    // §81: + Hemlock Root and Nightshade Berries (foods), the Aloe Leaf (a heal) and the seven placeable plants.
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 54, 3, 5, 114]); // + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(261); // + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -322,6 +329,7 @@ describe('items — the registry', () => {
     }
     expect(Object.values(ITEMS).filter((d) => d.food?.spoilS).map((d) => d.key)).toEqual(['honeyberries', 'raw_pork', 'roast_pork', 'raw_beef', 'roast_beef', 'raw_mutton', 'roast_mutton',
       'pot_water', 'honeycap', 'frecklecap', 'crab_apple', // v0.14 (§76): the Pot of Water turns tainted (water); raw mushrooms and crab apples go bad (flora)
+      'nightshade_berries', // §81: they go bad as the honeyberries they resemble do
       // v0.14 (§76 fauna): game and eggs go bad too
       'raw_venison', 'roast_venison', 'raw_rabbit', 'roast_rabbit', 'raw_fowl', 'roast_fowl', 'raw_fish', 'roast_fish', 'raw_bear', 'roast_bear',
       'raw_egg', 'roast_egg']);
@@ -338,7 +346,7 @@ describe('items — the registry', () => {
     expect(resolveItem('Survival Handbook')).toEqual({ key: 'handbook' });
     // the last material of the first releases; v0.14's feather and Fletched Dart follow it (§76 fauna)
     const materials = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'material');
-    expect(materials.slice(materials.indexOf('handbook'))).toEqual(['handbook', 'feather', 'fletched_dart']);
+    expect(materials.slice(materials.indexOf('handbook'))).toEqual(['handbook', 'feather', 'fletched_dart', 'carrot_seeds', 'onion_seeds', 'healwort_seeds']); // + the seeds (§80)
   });
   it('every key the rest of the design names exists (drops, picks, fire spots, recipes, workplaces)', () => {
     for (const key of REFERENCED) expect(isItemKey(key), key).toBe(true);
@@ -370,6 +378,7 @@ describe('items — block items', () => {
       if (d.placeable || d.id === BLOCK.HONEYBERRY_BUSH_BARE || d.id === BLOCK.PRICKLY_PEAR_BARE) continue;
       // v0.14 (§76 flora): the picked thicket and bush and the cut Healwort give their ripe plant's item
       if (d.id === BLOCK.HAZEL_THICKET_BARE || d.id === BLOCK.CRAB_APPLE_BUSH_BARE || d.id === BLOCK.HEALWORT_PLANT_BARE) continue;
+      if (d.id === BLOCK.NIGHTSHADE_BUSH_BARE) continue; // §81: the picked Nightshade gives the Nightshade Bush
       if (d.id === BLOCK.SNARE_BAITED || d.id === BLOCK.SNARE_SPRUNG) continue; // states of the Snare: they give it back (§69)
       expect(itemForBlock(d.id), d.name).toBeNull();
       expect(isItemKey(d.name), d.name).toBe(false);

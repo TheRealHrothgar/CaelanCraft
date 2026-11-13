@@ -1,8 +1,8 @@
 // Unit tests for src/harvest.js — BLOCK_RULES, break times, drops, picking, tapping, regrowth and mob drops
 // (docs/DESIGN-survival.md §6, §4.2–§4.3).
 import { describe, it, expect } from 'vitest';
-import { REGROW_MEAN_S, MAX_REGROW_TRACKED, SEA_LEVEL } from '../../src/config.js';
-import { BLOCK, BLOCKS, BLOCK_COUNT, isWater, FLINT_SHARE } from '../../src/blocks.js';
+import { REGROW_MEAN_S, MAX_REGROW_TRACKED, SEA_LEVEL, DAY_LENGTH_SECONDS } from '../../src/config.js';
+import { BLOCK, BLOCKS, BLOCK_COUNT, FARM_IDS, isWater, FLINT_SHARE } from '../../src/blocks.js';
 import { ITEMS, TOOL_TYPES, TIER_SPEED, isItemKey, itemForBlock, blockForItem, getItem } from '../../src/items.js';
 import {
   BLOCK_RULES, ruleFor, canHarvest, breakSeconds, harvestHint, rollDrops, rollGroups, PICKABLE, isPickable, pick, tap,
@@ -101,6 +101,12 @@ const TABLE = [
   [[B.HAZEL_THICKET, B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE], 0.6, 'shovel', 0],
   [[B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE], 0.3, 'shovel', 0],
   [[B.GROUND_NEST, B.GROUND_NEST_EMPTY], 0.3, null, 0], // v0.14 (§76 fauna)
+  // §81: the plants that are not food — the greenery breaks at once, the rest as the plants they resemble
+  [[B.FERN, B.MEADOW_DAISIES, B.THISTLE], 0.2, 'shovel', 0],
+  [[B.HEMLOCK], 0.4, 'shovel', 0],
+  [[B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE], 0.5, 'shovel', 0],
+  [[B.FLAX, B.ALOE], 0.3, 'shovel', 0],
+  [[...FARM_IDS], 0.3, null, 0], // §80 farming: a planted seed or a sprout comes out by hand
 ];
 
 describe('BLOCK_RULES (§6.3)', () => {
@@ -483,9 +489,10 @@ describe('rollDrops (§6.3)', () => {
 });
 
 describe('picking with R (§6.4)', () => {
-  it('PICKABLE has exactly the four rows of v0.9, the Ground Nest (§76 fauna) and the seven plants of v0.14 (§76 flora)', () => {
+  it('PICKABLE has exactly the four rows of v0.9, the Ground Nest (§76 fauna), the seven plants of v0.14 (§76 flora) and four of §81', () => {
     expect(Object.keys(PICKABLE).map(Number).sort((a, b) => a - b)).toEqual([B.HONEYBERRY_BUSH, B.PRICKLY_PEAR, B.LOOSE_STONES, B.FALLEN_BRANCHES,
-      B.GROUND_NEST, B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT]);
+      B.GROUND_NEST, B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT,
+      B.HEMLOCK, B.NIGHTSHADE_BUSH, B.FLAX, B.ALOE]); // §81: the two look-alikes and the two useful plants; the greenery is not picked
     expect(isPickable(B.HONEYBERRY_BUSH)).toBe(true);
     for (const id of [B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR_BARE, B.TUSSOCK, B.STONE, B.AIR, -1, 'toString', undefined]) {
       expect(isPickable(id)).toBe(false);
@@ -615,23 +622,25 @@ describe('Regrowth (§6.5)', () => {
     expect(g.size).toBe(0);
   });
 
-  it('a cell regrows with probability 1/REGROW_MEAN_S per 1 s step: one game day on average', () => {
-    expect(REGROW_MEAN_S).toBe(600);
+  it('a cell regrows with probability 1/REGROW_MEAN_S per 1 s step: two game days on average (§80; it was 600 s)', () => {
+    expect(REGROW_MEAN_S).toBe(2880);
+    expect(REGROW_MEAN_S).toBe(2 * DAY_LENGTH_SECONDS);
     const g = new Regrowth();
     const random = mulberry32(99);
     const N = 400;
     for (let i = 0; i < N; i++) g.track(i, 60, 0, B.HONEYBERRY_BUSH_BARE);
     let regrown = 0;
     let sumT = 0;
-    for (let s = 1; s <= 3000 && g.size > 0; s++) {
+    for (let s = 1; s <= 5 * REGROW_MEAN_S && g.size > 0; s++) {
       const out = g.step(1, random, loaded);
       regrown += out.length;
       sumT += out.length * s;
     }
+    // after five means 1 − e⁻⁵ = 99.3 % are back, and those average 0.966 of the mean (the slowest few are cut off)
     expect(regrown).toBeGreaterThan(N * 0.95);
     const mean = sumT / regrown;
-    expect(mean).toBeGreaterThan(520);
-    expect(mean).toBeLessThan(680);
+    expect(mean).toBeGreaterThan(0.966 * REGROW_MEAN_S * 0.87);
+    expect(mean).toBeLessThan(0.966 * REGROW_MEAN_S * 1.13);
   });
 
   it('step returns { q, y, r, id: ripe } and stops tracking the cell', () => {
@@ -670,8 +679,8 @@ describe('Regrowth (§6.5)', () => {
     g.track(0, 60, 0, B.HONEYBERRY_BUSH_BARE);
     expect(g.step(0, () => 0, loaded)).toEqual([]);
     expect(g.step(-1, () => 0, loaded)).toEqual([]);
-    expect(g.step(60, seq(60 / 600 + 0.001), loaded)).toEqual([]);
-    expect(g.step(60, seq(60 / 600 - 0.001), loaded).length).toBe(1);
+    expect(g.step(60, seq(60 / REGROW_MEAN_S + 0.001), loaded)).toEqual([]);
+    expect(g.step(60, seq(60 / REGROW_MEAN_S - 0.001), loaded).length).toBe(1);
     g.track(0, 60, 0, B.HONEYBERRY_BUSH_BARE);
     expect(g.step(1e6, () => 0.99999, loaded).length).toBe(1);
   });

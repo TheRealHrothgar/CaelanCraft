@@ -136,6 +136,9 @@ export const TILE_NAMES = Object.freeze({
   203: 'litter_stick',
   // v0.14 (§76 water)
   204: 'tainted_water',
+  // §80 farming: a planted seed and its sprout
+  205: 'seedbed',
+  206: 'sprout',
   // v0.14 (§76 flora): the wild plants of generation 3
   208: 'honeycap_mushroom',
   209: 'frecklecap_mushroom',
@@ -147,6 +150,14 @@ export const TILE_NAMES = Object.freeze({
   215: 'crab_apple_bush_bare',
   216: 'healwort_plant',
   217: 'healwort_plant_bare',
+  // §81: the plants that are not food
+  218: 'fern',
+  219: 'meadow_daisies',
+  220: 'thistle',
+  221: 'hemlock',
+  222: 'nightshade_bush',
+  223: 'flax',
+  224: 'aloe',
   // v0.14 (§76 fauna): the ground nest
   228: 'ground_nest',
   229: 'ground_nest_empty',
@@ -2776,19 +2787,18 @@ function paintOnionPlant(px, rng) {
   set(px, 8, 3, 0xcbbfe0);
 }
 
+/** The Wild Carrot's five fronds: the tip of each, from the crown at (7 or 8, 11). The Hemlock grows the very same. */
+const CARROT_FRONDS = Object.freeze([[1, 7], [3, 2], [7, 0], [12, 2], [14, 7]]);
+
 /**
- * 211 carrot_plant — wild carrot: the orange shoulder of its root stands out of the soil (x 7–8 on row 12, x 6–9 on rows
- * 13–15: 0xe8842c, its first column 0xf6a44e, its last 0xbf6418, a darker 0xc86a1c growth ring across x 7–8 on row 14)
- * under a spray of five feathery fronds: ribs 0x2f7d2c ±5 from the crown (7 or 8, 11) to tips at (1, 7), (3, 2), (7, 0),
- * (12, 2) and (14, 7), and at every second rib pixel from the third a pair of leaflets 0x7fca4e ±6, one either side (left
+ * The feathery fronds of the Wild Carrot (and of its look-alike): ribs 0x2f7d2c ±5 from the crown (7 or 8, 11) to the
+ * tips CARROT_FRONDS, and at every second rib pixel from the third a pair of leaflets 0x7fca4e ±6, one either side (left
  * and right of a steep rib, above and below a shallow one) — a fern's ladder, not a blade of grass.
  */
-function paintCarrotPlant(px, rng) {
-  clearTile(px);
-  const fronds = [[1, 7], [3, 2], [7, 0], [12, 2], [14, 7]];
+function paintCarrotFronds(px, rng) {
   // every leaflet first, then every rib, so no leaflet lies over a rib
   for (let pass = 0; pass < 2; pass++) {
-    for (const [tx, ty] of fronds) {
+    for (const [tx, ty] of CARROT_FRONDS) {
       const x0 = tx < 8 ? 7 : 8;
       const steps = Math.max(Math.abs(tx - x0), 11 - ty);
       const steep = 11 - ty >= Math.abs(tx - x0);
@@ -2802,13 +2812,31 @@ function paintCarrotPlant(px, rng) {
       }
     }
   }
-  span(px, 12, 7, 8, 0xe8842c);
-  set(px, 7, 12, 0xf6a44e);
+}
+
+/**
+ * The shoulder of a root standing out of the soil under the fronds (x 7–8 on row 12, x 6–9 on rows 13–15): `skin`, its
+ * first column `light`, its last `dark`, and a growth `ring` across x 7–8 on row 14.
+ */
+function paintRootCrown(px, skin, light, dark, ring) {
+  span(px, 12, 7, 8, skin);
+  set(px, 7, 12, light);
   for (let y = 13; y < H; y++) {
-    set(px, 6, y, 0xf6a44e);
-    span(px, y, 7, 8, y === 14 ? 0xc86a1c : 0xe8842c);
-    set(px, 9, y, 0xbf6418);
+    set(px, 6, y, light);
+    span(px, y, 7, 8, y === 14 ? ring : skin);
+    set(px, 9, y, dark);
   }
+}
+
+/**
+ * 211 carrot_plant — wild carrot: the orange shoulder of its root stands out of the soil (paintRootCrown: 0xe8842c, its
+ * first column 0xf6a44e, its last 0xbf6418, a darker 0xc86a1c growth ring) under a spray of five feathery fronds
+ * (paintCarrotFronds). It has no flowers.
+ */
+function paintCarrotPlant(px, rng) {
+  clearTile(px);
+  paintCarrotFronds(px, rng);
+  paintRootCrown(px, 0xe8842c, 0xf6a44e, 0xbf6418, 0xc86a1c);
 }
 
 /** The hazel thicket's crown: [cx, cy, r] discs. */
@@ -2991,6 +3019,309 @@ function paintHealwortPlantBare(px) {
   for (const [x, , foot] of HEALWORT_STALKS) set(px, x, foot - 2, 0xdfeacc);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// §80 farming, tiles 205–206: a planted seed and its sprout (original designs; these comments are normative). Both are
+// cut-outs on alpha 0 (RGB 0, alpha 0 or 255 only) and both stand on the same mound, so a sprout is plainly the seedbed
+// it came from. plantModels.js cuts the faces of their 3D models from these pictures: the rectangles it names are solid.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The mound's rows, [y, x0, x1]: a low heap of earth six rows high, widest on the bottom three. */
+const SEED_MOUND = Object.freeze([[10, 5, 10], [11, 3, 12], [12, 2, 13], [13, 1, 14], [14, 1, 14], [15, 1, 14]]);
+
+/**
+ * Shared mound of the two farm tiles (always painted with the "seedbed" seed, so the sprout stands on the very same
+ * earth): on alpha 0, the rows SEED_MOUND in dark tilled earth 0x5b3d26 ±5. It is 16 lighter on the crest row and on
+ * the first two pixels of the next two rows (lit from the upper left), 18 darker along row 13 (the furrow a tilled bed
+ * shows), 8 darker on the bottom row and 14 darker on the last pixel of every row. Then four pale crumbs 0x80603f at
+ * (4, 12), (9, 11), (6, 14) and (11, 14).
+ */
+function paintSeedMound(px) {
+  clearTile(px);
+  const rng = makeRng('seedbed');
+  for (const [y, x0, x1] of SEED_MOUND) {
+    for (let x = x0; x <= x1; x++) {
+      let d = delta(rng, 5);
+      if (y === 10 || (y <= 12 && x < x0 + 2)) d += 16;
+      if (y === 13) d -= 18;
+      if (y === 15) d -= 8;
+      if (x === x1) d -= 14;
+      set(px, x, y, 0x5b3d26, d);
+    }
+  }
+  for (const [x, y] of [[4, 12], [9, 11], [6, 14], [11, 14]]) set(px, x, y, 0x80603f);
+}
+
+/**
+ * 205 seedbed — a planted seed: the mound, and a short marker twig standing in it at x 7–8 from row 3 down to row 9
+ * (0xa98252 on its left pixel, 0x74552f on its right, its top row 12 lighter), with a pale rag tied to it as a flag on
+ * rows 4–5 at x 9–11 (0xe2cf9a, the lower row 0xbfa66a). Nothing green: the seed has not come up.
+ */
+function paintSeedbed(px) {
+  paintSeedMound(px);
+  for (let y = 3; y <= 9; y++) {
+    set(px, 7, y, 0xa98252, y === 3 ? 12 : 0);
+    set(px, 8, y, 0x74552f, y === 3 ? 12 : 0);
+  }
+  span(px, 4, 9, 11, 0xe2cf9a);
+  span(px, 5, 9, 11, 0xbfa66a);
+}
+
+/**
+ * 206 sprout — the seed has come up: the same mound, a green stem at x 7–8 from row 5 down to row 9 (0x5fa83c on its
+ * left pixel, 0x3f7f2c on its right) and two seed leaves spread like a Y. The left leaf lies on rows 3–5 (x 2–5, 1–6,
+ * 2–6), the right one a row higher on rows 2–4 (x 10–13, 9–14, 9–13): bright 0x7fca4e, 18 lighter on a leaf's top row,
+ * 20 darker on its bottom row, with a midrib 0x4f9a3a along its middle row but for the two end pixels.
+ */
+function paintSprout(px) {
+  paintSeedMound(px);
+  for (let y = 5; y <= 9; y++) {
+    set(px, 7, y, 0x5fa83c);
+    set(px, 8, y, 0x3f7f2c);
+  }
+  for (const rows of [[[3, 2, 5], [4, 1, 6], [5, 2, 6]], [[2, 10, 13], [3, 9, 14], [4, 9, 13]]]) {
+    rows.forEach(([y, x0, x1], k) => {
+      for (let x = x0; x <= x1; x++) {
+        if (k === 1 && x > x0 && x < x1) set(px, x, y, 0x4f9a3a);
+        else set(px, x, y, 0x7fca4e, k === 0 ? 18 : k === 2 ? -20 : 0);
+      }
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// §81 tiles 218–224: the plants that are not food (original designs; these comments are normative). Each is a cut-out
+// on alpha 0 with RGB 0 (alpha 0 or 255 only) standing on the bottom row, in bold shapes and few colours, lit from the
+// upper left. Five are written out as pictures, pixel for pixel. The two look-alikes are painted FROM the plant each
+// imitates, so that what differs is exactly what the comments say and nothing else:
+// - the Hemlock is the Wild Carrot's leaves with three flat white flower heads, a purple-blotched stem and a pale root;
+// - the Nightshade is the Honeyberry's bush with shiny black berries and purple star flowers.
+// plantModels.js cuts the faces of their 3D models from these pictures.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Paint a sprite written out as a picture: 16 rows of 16 characters. '.' leaves the pixel as it is, ' ' clears it, any
+ * other character sets the colour `palette` gives it.
+ * @param {Uint8ClampedArray} px @param {readonly string[]} rows @param {Readonly<Record<string, number>>} palette
+ */
+function paintPicture(px, rows, palette) {
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const ch = rows[y][x];
+      if (ch === '.') continue;
+      if (ch === ' ') px.fill(0, idx(x, y), idx(x, y) + 4);
+      else set(px, x, y, palette[ch]);
+    }
+  }
+}
+
+/**
+ * 218 fern — forest-floor greenery: a feathery upright frond with two tiers of fronds arching out of it either side,
+ * their tips drooping. Deep green G with a dark rib D, toothed light edges L above and a darker underside l: much
+ * darker than the grass it stands on, and nothing on it but green (no flower, no root, no fruit).
+ */
+const FERN_ART = Object.freeze([
+  '.......LG.......',
+  '......LGGl......',
+  '..L.L..Gl..L.L..',
+  '.LGLGLLGGlLGLGl.',
+  'LGDGDG.Gl.GDGDGl',
+  'G.l.lDLGGlDl.l.G',
+  'l....lDGGDl....l',
+  '..L.L.LGGl.L.L..',
+  '.LGLGL.Gl.LGLGl.',
+  'LGDGDGLGGlGDGDGl',
+  'G.l.lDGGGDDl.l.G',
+  'l....lDGGDl....l',
+  '......LGGl......',
+  '.......Gl.......',
+  '......lGGl......',
+  '.......ll.......',
+]);
+function paintFern(px) {
+  clearTile(px);
+  paintPicture(px, FERN_ART, { L: 0x9bdc5e, G: 0x2f7a3a, D: 0x163f26, l: 0x215a2e });
+}
+
+/**
+ * 219 meadow_daisies — a clump of daisies: three flowers on thin stems S over a tuft of leaves (G, lit L, shaded g) and
+ * a bud. A flower is 3 × 3: white petals W (its corners the shaded w) round a yellow heart Y.
+ */
+const DAISY_ART = Object.freeze([
+  '................',
+  '..........wWw...',
+  '..wWw.....WYW...',
+  '..WYW.....wWw...',
+  '..wWw..wWw.S....',
+  '...S...WYW.S....',
+  '...S...wWw.S....',
+  '...S....S..S....',
+  '....S...S.S..w..',
+  '.L..S...S.S.wYw.',
+  'LGg..S..SS...S..',
+  'LGGg.S.SS.LGgS..',
+  '.LGGgSgS.LGGg...',
+  '..LGGgGgLGGg....',
+  '...LGGGGGGg.....',
+  '....gGGGGg......',
+]);
+function paintMeadowDaisies(px) {
+  clearTile(px);
+  paintPicture(px, DAISY_ART, { W: 0xffffff, w: 0xcfd6e6, Y: 0xf6c428, S: 0x3f7f34, G: 0x4a9440, g: 0x2f6a30, L: 0x8ccc5c });
+}
+
+/**
+ * 220 thistle — a stout stalk (S, shaded s) with three pairs of jagged leaves (G, g) ending in pale spines T, under a
+ * scaly green bulb (B, its scales k, shaded b) that carries a purple tuft (P, lit Q, shaded p): the only purple flower
+ * head that sits on a single stalk. Its greens are grey and dark, to stand off the grass.
+ */
+const THISTLE_ART = Object.freeze([
+  '......QPPp......',
+  '.....QPPPPp.....',
+  '.....PPPPPp.....',
+  '.....kBkBkb.....',
+  '.....BkBkBb.....',
+  '......BBBb......',
+  '.......Ss.......',
+  '.T.....Ss....T..',
+  '..Gg...Ss...Gg..',
+  '.TGGg..Ss..GGgT.',
+  '...GGg.Ss.GGg...',
+  '..T.GGgSsGGg.T..',
+  '.....GGSsGg.....',
+  '..TGg..Ss..GgT..',
+  '...GGGgSsGGGg...',
+  '.....GGSsGg.....',
+]);
+function paintThistle(px) {
+  clearTile(px);
+  paintPicture(px, THISTLE_ART, {
+    P: 0xb44fd0, p: 0x7c2f9c, Q: 0xdc96f0, B: 0x4f7f58, b: 0x2e5038, k: 0x93c48e, S: 0x467850, s: 0x2c563a, T: 0xf2f4c4,
+    G: 0x3f7054, g: 0x2a5240,
+  });
+}
+
+/**
+ * 221 hemlock — the Wild Carrot's look-alike, and it poisons. It is painted as the carrot is (paintCarrotFronds with
+ * the "carrot_plant" seed: the same leaves, pixel for pixel) and differs in three places:
+ * - FLOWERS: three flat white flower heads, each a plate two rows deep (white W 0xfbfbf2 over its shaded underside w
+ *   0xc0ccb0) — one 6 wide on top of the middle (rows 0–1, x 5–10) and one 4 wide either side (rows 2–3, x 1–4 and
+ *   x 10–13). The carrot has no flowers.
+ * - the STEM: a stalk 2 px wide at x 7–8 from row 2 down to row 11, green (S 0x6aa84a, shaded s 0x4a8438) with purple
+ *   blotches p 0x8a3f9c at (7, 3), (8, 5), (7, 7), (8, 9) and (7, 11).
+ * - the ROOT: the same shoulder, but pale (paintRootCrown: 0xe6dcb8, lit 0xf6f0da, shaded 0xb3a47c, ring 0xcabd94).
+ *   The carrot's is orange.
+ */
+const HEMLOCK_ART = Object.freeze([
+  '     WWWWWW     ',
+  '     wwwwww     ',
+  ' WWWW  Ss WWWW  ',
+  ' wwww .pS wwww  ',
+  '.......Ss.......',
+  '.......Sp.......',
+  '.......Ss.......',
+  '.......pS.......',
+  '.......Ss.......',
+  '.......Sp.......',
+  '.......Ss.......',
+  '.......ps.......',
+  '................',
+  '................',
+  '................',
+  '................',
+]);
+function paintHemlock(px) {
+  clearTile(px);
+  paintCarrotFronds(px, makeRng('carrot_plant'));
+  paintPicture(px, HEMLOCK_ART, { W: 0xfbfbf2, w: 0xc0ccb0, S: 0x6aa84a, s: 0x4a8438, p: 0x8a3f9c });
+  paintRootCrown(px, 0xe6dcb8, 0xf6f0da, 0xb3a47c, 0xcabd94);
+}
+
+/** Where the Nightshade's berries sit: the top-left pixel of each 2 × 2 berry. */
+const NIGHTSHADE_BERRIES = Object.freeze([[4, 4], [10, 5], [1, 9], [7, 8], [13, 8], [9, 10], [5, 11]]);
+/** Where its flowers open: the middle of each five-pixel star. */
+const NIGHTSHADE_FLOWERS = Object.freeze([[7, 5], [3, 7], [12, 11]]);
+
+/**
+ * 222 nightshade_bush — the Honeyberry's look-alike, and it poisons. It is the Honeyberry Bush's own bush (the berry
+ * foliage and silhouette painted with the "honeyberry_bush" seed, so every leaf matches; its holes cleared to RGB 0) and
+ * differs in what hangs on it:
+ * - BERRIES: seven round, shiny black-purple berries at NIGHTSHADE_BERRIES, each 2 × 2: a pale glint 0xcfc0f0 on its
+ *   top-left pixel, then 0x2c1a44, 0x221236 and 0x150a24. The honeyberry's are long and pale blue.
+ * - FLOWERS: three small purple stars at NIGHTSHADE_FLOWERS, each a yellow heart 0xf4d03c with a petal 0xa868e0 above,
+ *   below, left and right of it. The honeyberry has none.
+ */
+function paintNightshadeBush(px) {
+  const seed = makeRng('honeyberry_bush');
+  paintBerryFoliage(px, seed, 0.08);
+  maskBush(px, seed);
+  for (let i = 0; i < BYTES; i += 4) if (px[i + 3] === 0) px.fill(0, i, i + 4);
+  for (const [x, y] of NIGHTSHADE_BERRIES) {
+    set(px, x, y, 0xcfc0f0);
+    set(px, x + 1, y, 0x2c1a44);
+    set(px, x, y + 1, 0x221236);
+    set(px, x + 1, y + 1, 0x150a24);
+  }
+  for (const [x, y] of NIGHTSHADE_FLOWERS) {
+    for (const [dx, dy] of [[0, -1], [-1, 0], [1, 0], [0, 1]]) set(px, x + dx, y + dy, 0xa868e0);
+    set(px, x, y, 0xf4d03c);
+  }
+}
+
+/**
+ * 223 flax — the fibre plant: a sheaf of slender dark stems (S, shaded s) with small leaves l, carrying five sky-blue
+ * flowers. A flower is 3 × 3: petals C (the top-left one lit H, the bottom-right one shaded c) round a pale heart Y.
+ * No other plant is sky blue.
+ */
+const FLAX_ART = Object.freeze([
+  '.......HCC......',
+  '.HCC...CYC..HCC.',
+  '.CYC...CCc..CYC.',
+  '.CCc.HCCS...CCc.',
+  '..S..CYCS....S..',
+  '..S..CCcSHCC.S..',
+  '..Sl..S.SCYC.S..',
+  '..S...S.SCCc.S..',
+  '.lS...SlS..S.Sl.',
+  '..S...S.S..S.S..',
+  '..Sl..S.Sl.SS...',
+  '...S..SlS.lS....',
+  '...S..S.S.S.....',
+  '....S.SsS.S.....',
+  '.....SSsSS......',
+  '......SsS.......',
+]);
+function paintFlax(px) {
+  clearTile(px);
+  paintPicture(px, FLAX_ART, { C: 0x62b4f4, c: 0x3478cc, H: 0xc4e8ff, Y: 0xfff2a8, S: 0x2f6a44, s: 0x234f36, l: 0x74b456 });
+}
+
+/**
+ * 224 aloe — a desert rosette of thick, pointed leaves: one upright in the middle and two leaning out either side, each
+ * sea green A with a lit left edge L and a dark right edge a, and pale teeth T along the outer edges.
+ */
+const ALOE_ART = Object.freeze([
+  '................',
+  '.......LAa......',
+  '.......LAa......',
+  '.L....TLAa....a.',
+  '.LA...LAAaT..Aa.',
+  '.TLA..LAAaa.LAaT',
+  '..LAa.LAAa.LAa..',
+  'L..LAaLAAaLAa..a',
+  'LAT.LAaAAaAa.TAa',
+  '.LAA.LAAAAa.AAa.',
+  '..LAAaLAAaLAAa..',
+  '.T.LAAaAAaAAa.T.',
+  '....LAAAAAAa....',
+  '.....LAAAAa.....',
+  '......aAAa......',
+  '......aaaa......',
+]);
+function paintAloe(px) {
+  clearTile(px);
+  paintPicture(px, ALOE_ART, { A: 0x5aa27a, a: 0x2a6a50, L: 0x9ee0ae, T: 0xf4f8d4 });
+}
+
 /** @type {Readonly<Record<string, (px: Uint8ClampedArray, rng: Rng) => void>>} */
 const RECIPES = Object.freeze({
   stone: paintStone,
@@ -3101,7 +3432,16 @@ const RECIPES = Object.freeze({
   crab_apple_bush_bare: paintCrabAppleBushBare,
   healwort_plant: paintHealwortPlant,
   healwort_plant_bare: paintHealwortPlantBare,
+  fern: paintFern, // §81: the plants that are not food
+  meadow_daisies: paintMeadowDaisies,
+  thistle: paintThistle,
+  hemlock: paintHemlock,
+  nightshade_bush: paintNightshadeBush,
+  flax: paintFlax,
+  aloe: paintAloe,
   tainted_water: paintTaintedWater, // v0.14 (§76 water)
+  seedbed: paintSeedbed, // §80 farming
+  sprout: paintSprout,
   ground_nest: paintGroundNest,
   ground_nest_empty: paintGroundNestEmpty,
   litter_nest: paintLitterNest,

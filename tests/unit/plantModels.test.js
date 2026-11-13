@@ -1,6 +1,6 @@
 // Tests for src/plantModels.js — the wild plants as small 3D models (CONTRACTS §78).
 import { describe, it, expect } from 'vitest';
-import { BLOCK, BLOCKS, TILE, getBlockShape, getFaceTile } from '../../src/blocks.js';
+import { BLOCK, BLOCKS, TILE, PLANT_IDS, FARM_IDS, getBlockShape, getFaceTile } from '../../src/blocks.js';
 import { FACE_TOP } from '../../src/hex.js';
 import { paintTile } from '../../src/tiles.js';
 import {
@@ -44,15 +44,18 @@ function opaqueShare(tile, uv) {
 }
 
 describe('the plant models (plantModels.js, CONTRACTS §78)', () => {
-  it("every 'model' block has a model and every model is a plant block's: the seventeen wild plants", () => {
+  it("every 'model' block has a model and every model is a plant block's: the 25 wild plants (§81: eight more) and the 18 farm blocks (§80)", () => {
     const shaped = BLOCKS.filter((d) => d.shape === 'model').map((d) => d.id);
     expect(shaped).toEqual(IDS);
-    expect(IDS).toHaveLength(17);
+    expect(IDS).toHaveLength(43);
     expect(IDS).toEqual([
       B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE,
       B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.HAZEL_THICKET_BARE,
       B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE,
+      ...FARM_IDS, // the nine planted blocks, then the nine sprouts
+      B.FERN, B.MEADOW_DAISIES, B.THISTLE, B.HEMLOCK, B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE, B.FLAX, B.ALOE, // §81
     ]);
+    expect([...PLANT_IDS, ...FARM_IDS].sort((a, b) => a - b)).toEqual(IDS);
     for (const id of IDS) {
       expect(getBlockShape(id), name(id)).toBe('model');
       expect(BLOCKS[id].icon, name(id)).toBe('flat'); // the Pack keeps the picture the model is cut from
@@ -129,6 +132,7 @@ describe('the plant models (plantModels.js, CONTRACTS §78)', () => {
     for (const [full, bare] of [
       [B.HAZEL_THICKET, B.HAZEL_THICKET_BARE], [B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE], [B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE],
       [B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE], [B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE],
+      [B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE], // §81
     ]) {
       const f = quadsOf(plantModel(full));
       const b = quadsOf(plantModel(bare));
@@ -142,11 +146,15 @@ describe('the plant models (plantModels.js, CONTRACTS §78)', () => {
       expect(PLANT_MODELS[full].bare).toBeUndefined();
     }
     // the picked honeyberry is cut from the berry-free corner of the BUSH's picture (its own is too sparse to wrap a box)
+    // §81: so is the picked Nightshade — it is the picked Honeyberry, quad for quad (the two bushes are the same leaves)
     expect(plantModelTile(B.HONEYBERRY_BUSH_BARE)).toBe(TILE.HONEYBERRY_BUSH);
-    for (const id of IDS) if (id !== B.HONEYBERRY_BUSH_BARE) expect(plantModelTile(id), name(id)).toBeNull();
+    expect(plantModelTile(B.NIGHTSHADE_BUSH_BARE)).toBe(TILE.HONEYBERRY_BUSH);
+    expect([...plantModel(B.NIGHTSHADE_BUSH_BARE)]).toEqual([...plantModel(B.HONEYBERRY_BUSH_BARE)]);
+    const BARE_BUSHES = [B.HONEYBERRY_BUSH_BARE, B.NIGHTSHADE_BUSH_BARE];
+    for (const id of IDS) if (!BARE_BUSHES.includes(id)) expect(plantModelTile(id), name(id)).toBeNull();
     const violet = (r, g, b) => r > g + 40 && b > g + 70;
     const bush = paintTile(TILE.HONEYBERRY_BUSH);
-    for (const q of quadsOf(plantModel(B.HONEYBERRY_BUSH_BARE))) {
+    for (const q of BARE_BUSHES.flatMap((id) => quadsOf(plantModel(id)))) {
       const us = q.uv.map((t) => t[0]);
       const vs = q.uv.map((t) => t[1]);
       for (let y = Math.min(...vs); y < Math.max(...vs); y++) {

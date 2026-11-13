@@ -16,7 +16,9 @@ const SURVIVAL_NAMES = new Set(['copper_ore', 'tin_ore', 'honeyberry_bush', 'hon
   'sleeping_hide', 'remains', 'loose_stones', 'fallen_branches', 'fire_pit', 'workbench', 'snare', 'snare_baited', 'snare_sprung', // + v0.11's Workbench (a workplace)
   // v0.14 (§76 flora): the wild plants of generation 3
   'honeycap_mushroom', 'frecklecap_mushroom', 'onion_plant', 'carrot_plant', 'hazel_thicket', 'hazel_thicket_bare', 'crab_apple_bush',
-  'crab_apple_bush_bare', 'healwort_plant', 'healwort_plant_bare']);
+  'crab_apple_bush_bare', 'healwort_plant', 'healwort_plant_bare',
+  // §81: the plants that are not food
+  'fern', 'meadow_daisies', 'thistle', 'hemlock', 'nightshade_bush', 'nightshade_bush_bare', 'flax', 'aloe']);
 const NO_SURVIVAL = BLOCKS.filter((b) => !SURVIVAL_NAMES.has(b.name));
 
 /** @param {ReturnType<typeof buildPickerModel>} model @returns {number[]} every id across sections (families expanded) */

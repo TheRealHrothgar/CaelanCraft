@@ -2,7 +2,7 @@
 // bury a body), saving into a copy, undo hooks (CONTRACTS §34). Fake world from the fixtures unless a real World matters.
 import { describe, it, expect } from 'vitest';
 import { MAX_FALLING, MAX_TUMBLING, TERMINAL_VELOCITY, PIG_RADIUS, PIG_HEIGHT, MAX_TOTAL_EDITS } from '../../src/config.js';
-import { BLOCK, POP_OFF_IDS } from '../../src/blocks.js';
+import { BLOCK, POP_OFF_IDS, FARM_IDS, isFarmBlock } from '../../src/blocks.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { createPlayer, createBody } from '../../src/physics.js';
 import { World } from '../../src/world.js';
@@ -112,7 +112,9 @@ describe('pop-off blocks (DESIGN-survival §8.5)', () => {
   const PLANTS = [B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.TUSSOCK, B.CATTAILS, B.TUBER_PLANT, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE,
     // v0.14 (§76 flora): the plants of generation 3 scatter leaves like the others
     B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH,
-    B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE];
+    B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE,
+    // §81: so do the plants that are not food
+    B.FERN, B.MEADOW_DAISIES, B.THISTLE, B.HEMLOCK, B.NIGHTSHADE_BUSH, B.NIGHTSHADE_BUSH_BARE, B.FLAX, B.ALOE];
 
   it('a plant, litter or a fire pit pops when the dirt below it is removed; nothing drops, nothing falls', () => {
     for (const id of POP_OFF_IDS) {
@@ -139,8 +141,10 @@ describe('pop-off blocks (DESIGN-survival §8.5)', () => {
       if (id === B.PRICKLY_PEAR || id === B.PRICKLY_PEAR_BARE) return { kind: 'dust', count: 4, sound: 'break:leaves' };
       if (PLANTS.includes(id)) return { kind: 'leaves', count: 6, sound: 'break:leaves' };
       if (id === B.FALLEN_BRANCHES) return { kind: 'dust', count: 4, sound: 'break:wood' };
+      if (isFarmBlock(id)) return { kind: 'dust', count: 4, sound: 'break:grass' }; // §80: a seedbed or a sprout is a puff of earth
       return { kind: 'dust', count: 4, sound: 'break:stone' }; // LOOSE_STONES, FIRE_PIT
     };
+    expect(FARM_IDS.every((id) => POP_OFF_IDS.includes(id))).toBe(true);
     for (const id of POP_OFF_IDS) {
       const { world, physics, fx } = setup();
       world.setBlock(-3, 20, 5, id); // floating: queued at once

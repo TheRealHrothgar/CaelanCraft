@@ -10,7 +10,7 @@ import { paintTile, averageColor, TILE_NAMES } from '../../src/tiles.js';
 import { ITEMS, ITEM_KEYS, getItem, itemForBlock, blockForItem, itemName } from '../../src/items.js';
 import { paintItem, hasItemArt } from '../../src/itemArt.js';
 import {
-  PICKABLE, RIPE_OF, Regrowth, isPickable, pick, rollDrops, ripeOf, breakSeconds, handGatherHint,
+  PICKABLE, RIPE_OF, Regrowth, isPickable, pick, rollDrops, ripeOf, breakSeconds, handGatherHint, SEED_DROPS,
 } from '../../src/harvest.js';
 import { FIRE_TRANSFORMS, SKEWER_FOODS, FireSlots, isSkewerFood } from '../../src/cooking.js';
 import { RECIPES } from '../../src/crafting.js';
@@ -74,8 +74,8 @@ const mask = (px) => pixels(px).map((p) => p[3] === 255);
 
 describe('the plant blocks 122–131 (blocks.js)', () => {
   it('ids, names, flags and tiles: 3D models (§78) with the PLANT flags, flat icons, ids 122–131', () => {
-    expect(BLOCK_COUNT).toBe(133);
-    expect(BLOCKS).toHaveLength(133);
+    expect(BLOCK_COUNT).toBe(159); // §80: the 18 farm blocks follow at 133–150; §81: the plants that are not food at 151–158
+    expect(BLOCKS).toHaveLength(159);
     for (const [key, id, name, displayName, sound, tile, placeable] of PLANTS) {
       expect(B[key], key).toBe(id);
       const d = BLOCKS[id];
@@ -94,8 +94,8 @@ describe('the plant blocks 122–131 (blocks.js)', () => {
       expect(popOffEffect(id), key).toMatchObject({ kind: 'leaves', count: 6, sound: 'break:leaves' });
       expect(popOffEffect(id).color, key).toHaveLength(3);
     }
-    expect(PLANT_IDS.slice(7)).toEqual(PLANT_BLOCK_IDS);
-    expect(POP_OFF_IDS.slice(-10)).toEqual(PLANT_BLOCK_IDS);
+    expect(PLANT_IDS.slice(7, 17)).toEqual(PLANT_BLOCK_IDS); // the eight of §81 follow (plantsNotFood.test.js)
+    expect(POP_OFF_IDS.slice(-36, -26)).toEqual(PLANT_BLOCK_IDS); // then the 18 farm blocks (§80) and the eight plants of §81
   });
 
 
@@ -103,6 +103,14 @@ describe('the plant blocks 122–131 (blocks.js)', () => {
     const words = /poison|toxic|deadly|venom|bad|fool|false|death|sick/i;
     for (const d of BLOCKS.slice(122)) expect(`${d.name} ${d.displayName}`).not.toMatch(words);
     for (const k of FOODS) expect(`${k} ${ITEMS[k].name}`).not.toMatch(words);
+    // §81: nor do the Hemlock, the Nightshade, what they give, or any other plant that is not food
+    expect(BLOCKS.slice(122).map((d) => d.name)).toEqual(expect.arrayContaining(['fern', 'meadow_daisies', 'thistle', 'hemlock',
+      'nightshade_bush', 'nightshade_bush_bare', 'flax', 'aloe']));
+    for (const k of ['hemlock_root', 'nightshade_berries', 'aloe_leaf', 'hemlock', 'nightshade_bush', 'fern', 'meadow_daisies', 'thistle', 'flax', 'aloe']) {
+      expect(`${k} ${ITEMS[k].name}`, k).not.toMatch(words);
+    }
+    // … and no food at all is named for what it does to you
+    for (const k of ITEM_KEYS.filter((key) => ITEMS[key].kind === 'food')) expect(`${k} ${ITEMS[k].name}`, k).not.toMatch(words);
     // … and the two mushrooms are named alike: one word and "Mushroom"
     expect(BLOCKS[B.HONEYCAP_MUSHROOM].displayName).toMatch(/^\w+cap Mushroom$/);
     expect(BLOCKS[B.FRECKLECAP_MUSHROOM].displayName).toMatch(/^\w+cap Mushroom$/);
@@ -112,8 +120,10 @@ describe('the plant blocks 122–131 (blocks.js)', () => {
     const model = buildPickerModel();
     const wild = /** @type {*} */ (model.families.get('wild-plants')).ids.map((id) => BLOCKS[id].name);
     expect(wild.slice(0, 5)).toEqual(['tussock', 'cattails', 'tuber_plant', 'honeyberry_bush', 'prickly_pear']);
-    expect(wild.slice(5)).toEqual(['onion_plant', 'carrot_plant', 'honeycap_mushroom', 'frecklecap_mushroom', 'hazel_thicket', 'crab_apple_bush', 'healwort_plant']);
-    expect(wild.map((n) => B[n.toUpperCase()])).toEqual(PICKER_ORDER.slice(PICKER_ORDER.indexOf(B.TUSSOCK), PICKER_ORDER.indexOf(B.TUSSOCK) + 12));
+    expect(wild.slice(5, 12)).toEqual(['onion_plant', 'carrot_plant', 'honeycap_mushroom', 'frecklecap_mushroom', 'hazel_thicket', 'crab_apple_bush', 'healwort_plant']);
+    // §81: the seven placeable plants that are not food follow them
+    expect(wild.slice(12)).toEqual(['fern', 'meadow_daisies', 'thistle', 'hemlock', 'nightshade_bush', 'flax', 'aloe']);
+    expect(wild.map((n) => B[n.toUpperCase()])).toEqual(PICKER_ORDER.slice(PICKER_ORDER.indexOf(B.TUSSOCK), PICKER_ORDER.indexOf(B.TUSSOCK) + 19));
   });
 });
 
@@ -232,8 +242,11 @@ describe('the plant sprites 208–217 (tiles.js)', () => {
   });
 
   it('no two plants of the game can be mistaken at a glance: every pair of sprites differs in at least 60 pixels, but the look-alikes', () => {
+    // §81: the fern, the daisies, the thistle, the flax and the aloe join the list (the Hemlock and the Nightshade are
+    // look-alikes: plantsNotFood.test.js measures how they differ from their twins)
     const all = [T.HONEYBERRY_BUSH, T.TUSSOCK, T.CATTAILS_SIDE, T.TUBER_PLANT, T.PRICKLY_PEAR,
-      T.HONEYCAP_MUSHROOM, T.ONION_PLANT, T.CARROT_PLANT, T.HAZEL_THICKET, T.CRAB_APPLE_BUSH, T.HEALWORT_PLANT];
+      T.HONEYCAP_MUSHROOM, T.ONION_PLANT, T.CARROT_PLANT, T.HAZEL_THICKET, T.CRAB_APPLE_BUSH, T.HEALWORT_PLANT,
+      T.FERN, T.MEADOW_DAISIES, T.THISTLE, T.FLAX, T.ALOE];
     for (let i = 0; i < all.length; i++) {
       for (let j = i + 1; j < all.length; j++) {
         const a = pixels(paintTile(all[i]));
@@ -353,12 +366,22 @@ describe('gathering (harvest.js)', () => {
       [B.HAZEL_THICKET, B.HAZEL_THICKET_BARE, 'hazelnuts', [1, 3]], [B.CRAB_APPLE_BUSH, B.CRAB_APPLE_BUSH_BARE, 'crab_apple', [2, 3]],
       [B.HEALWORT_PLANT, B.HEALWORT_PLANT_BARE, 'healwort', [1, 1]],
     ];
+    // §80: a ripe onion, carrot or Healwort also gives its seed, on a roll of its own after the crop's
+    const SEED = { [B.ONION_PLANT]: ['onion_seeds', 2], [B.CARROT_PLANT]: ['carrot_seeds', 2], [B.HEALWORT_PLANT]: ['healwort_seeds', 1] };
     for (const [id, to, key, [lo, hi]] of rows) {
       expect(isPickable(id), key).toBe(true);
-      expect(pick(id, {}, seq(0)), key).toEqual({ to, drops: [{ k: key, n: lo }] });
+      const seed = SEED[id];
+      // every roll 0: the fewest of the crop, and the seed's chance comes up (with the fewest seeds)
+      expect(pick(id, {}, seq(0)), key).toEqual({ to, drops: seed ? [{ k: key, n: lo }, { k: seed[0], n: 1 }] : [{ k: key, n: lo }] });
+      // every roll 0.999: the most of the crop, and no seed
       expect(pick(id, {}, seq(0.999)), key).toEqual({ to, drops: [{ k: key, n: hi }] });
+      // the seed's chance comes up and its count rolls high: 1–2 seeds of a root, one of the Healwort
+      if (seed) expect(asMap(pick(id, {}, seq(...(lo === hi ? [] : [0.999]), 0, 0.999)).drops), key).toEqual({ [key]: hi, [seed[0]]: seed[1] });
       expect(handGatherHint(id), key).toBeNull(); // R picks it: the hint is main's "… · R: pick"
     }
+    expect([SEED_DROPS.carrot, SEED_DROPS.onion, SEED_DROPS.healwort]).toEqual([
+      { k: 'carrot_seeds', n: [1, 2], p: 0.5 }, { k: 'onion_seeds', n: [1, 2], p: 0.5 }, { k: 'healwort_seeds', n: 1, p: 0.35 },
+    ]);
     // the picked variants give nothing more until they regrow
     for (const id of [B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT_BARE]) {
       expect(isPickable(id)).toBe(false);
@@ -369,8 +392,10 @@ describe('gathering (harvest.js)', () => {
   });
 
   it('breaking by hand gives what a pick gives and destroys the plant; a shovel digs more roots and lifts the plants whole', () => {
-    const hand = (id, r = 0) => asMap(rollDrops(id, null, {}, seq(r)));
-    const dug = (id, r = 0) => asMap(rollDrops(id, SHOVEL, {}, seq(r)));
+    // (the seeds of §80 are left out here: their roll is tested below)
+    const crop = (stacks) => asMap(stacks.filter((s) => !/_seeds$/.test(s.k)));
+    const hand = (id, r = 0) => crop(rollDrops(id, null, {}, seq(r)));
+    const dug = (id, r = 0) => crop(rollDrops(id, SHOVEL, {}, seq(r)));
     expect(hand(B.HONEYCAP_MUSHROOM)).toEqual({ honeycap: 1 });
     expect(dug(B.FRECKLECAP_MUSHROOM, 0.999)).toEqual({ frecklecap: 2 }); // a mushroom is not transplanted
     expect([hand(B.ONION_PLANT), hand(B.ONION_PLANT, 0.999)]).toEqual([{ wild_onion: 1 }, { wild_onion: 2 }]);
@@ -387,6 +412,13 @@ describe('gathering (harvest.js)', () => {
     expect(hand(B.HEALWORT_PLANT_BARE)).toEqual({});
     expect(dug(B.HEALWORT_PLANT)).toEqual({ healwort_plant: 1, healwort: 1 });
     expect(dug(B.HEALWORT_PLANT_BARE)).toEqual({ healwort_plant: 1 });
+    // §80: broken ripe, by hand or with a shovel, the three seed plants give their seed as a pick does
+    const all = (id, tool) => asMap(rollDrops(id, tool, {}, seq(0)));
+    expect(all(B.ONION_PLANT, null)).toEqual({ wild_onion: 1, onion_seeds: 1 });
+    expect(all(B.CARROT_PLANT, SHOVEL)).toEqual({ wild_carrot: 1, carrot_seeds: 1 });
+    expect(all(B.HEALWORT_PLANT, null)).toEqual({ healwort: 1, healwort_seeds: 1 });
+    expect(all(B.HEALWORT_PLANT, SHOVEL)).toEqual({ healwort_plant: 1, healwort: 1, healwort_seeds: 1 });
+    expect(all(B.HEALWORT_PLANT_BARE, SHOVEL)).toEqual({ healwort_plant: 1 }); // a cut one has no seed left
     // quick to break, a shovel quicker
     for (const id of PLANT_BLOCK_IDS) {
       expect(breakSeconds(id, null), BLOCKS[id].name).toBeLessThanOrEqual(0.6);
@@ -398,7 +430,8 @@ describe('gathering (harvest.js)', () => {
     expect(ripeOf(B.HAZEL_THICKET_BARE)).toBe(B.HAZEL_THICKET);
     expect(ripeOf(B.CRAB_APPLE_BUSH_BARE)).toBe(B.CRAB_APPLE_BUSH);
     expect(ripeOf(B.HEALWORT_PLANT_BARE)).toBe(B.HEALWORT_PLANT);
-    expect(Object.keys(RIPE_OF).map(Number)).toEqual([B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR_BARE, B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT_BARE]);
+    expect(Object.keys(RIPE_OF).map(Number)).toEqual([B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR_BARE, B.HAZEL_THICKET_BARE, B.CRAB_APPLE_BUSH_BARE, B.HEALWORT_PLANT_BARE,
+      B.NIGHTSHADE_BUSH_BARE]); // §81: the picked Nightshade regrows like the Honeyberry
     for (const [ripe, bare] of Object.entries(RIPE_OF).map(([b, r]) => [r, Number(b)])) expect(PICKABLE[ripe].to).toBe(bare);
 
     const g = new Regrowth();

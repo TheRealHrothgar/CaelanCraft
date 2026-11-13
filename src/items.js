@@ -3,7 +3,8 @@
 //
 // Items are addressed by a unique lower_snake KEY; saves store keys, never numbers. Block items are generated from
 // blocks.js: every placeable block except WATER, keyed by the block's `name`, stack 64. The honeyberry_bush and
-// prickly_pear items place their picked (*_BARE) variant, so a transplanted bush must regrow before it gives fruit.
+// prickly_pear items (and the later bushes: PLACES_AS) place their picked (*_BARE) variant, so a transplanted bush must
+// regrow before it gives fruit.
 import { BLOCK, BLOCKS, PICKER_ORDER } from './blocks.js';
 
 /** @typedef {import('./types.js').ItemDef} ItemDef */
@@ -113,6 +114,9 @@ const MATERIAL_ROWS = [
   // v0.14 (§76 fauna): feathers come off pheasants and wild turkeys (and out of their nests); a dart fletched with them
   // flies faster and straighter than the plain Flint Dart, hits harder and breaks less often (looseItems THROW_FLETCHED)
   ['feather', 'Feather', 32], ['fletched_dart', 'Fletched Dart', 16],
+  // §80 farming: seed shaken out of a picked Wild Carrot, a Wild Onion or a cut Healwort. R plants one on grass or dirt
+  // (farming.js PLANTABLE); the other crops are planted from the food itself (a tuber, a berry, a nut, a fruit, a root).
+  ['carrot_seeds', 'Carrot Seeds', 32], ['onion_seeds', 'Onion Seeds', 32], ['healwort_seeds', 'Healwort Seeds', 32],
 ];
 
 /**
@@ -151,7 +155,7 @@ const FOOD_ROWS = [
   ['snow', 'Snow', 32, { satiation: 0, hydration: 3, sick: 0, useS: 0.6, temp: -0.2 }],
   // v0.11 (CONTRACTS §66): unboiled water poisons you one time in five; boil it on a campfire (Pot of Boiled Water: safe)
   // v0.14 (§76 water): fresh water left standing spoils — after about two game days a Pot of Water turns tainted
-  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.2, useS: 1.0, returns: 'clay_pot', spoilS: POT_WATER_SPOIL_S, spoilsTo: 'pot_tainted' }],
+  ['pot_water', 'Pot of Water', 1, { satiation: 0, hydration: 30, sick: 0.4, useS: 1.0, returns: 'clay_pot', spoilS: POT_WATER_SPOIL_S, spoilsTo: 'pot_tainted' }],
   ['pot_boiled', 'Pot of Boiled Water', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_seawater', 'Pot of Seawater', 1, { satiation: 0, hydration: -10, sick: 0, useS: 1.0, returns: 'clay_pot' }],
   ['pot_sap', 'Pot of Birch Sap', 1, { satiation: 2, hydration: 25, sick: 0, useS: 1.0, returns: 'clay_pot' }],
@@ -175,6 +179,11 @@ const FOOD_ROWS = [
   // in a Pot of Boiled Water it is a safe drink that cures as well.
   ['healwort', 'Healwort', 16, { satiation: 0, hydration: -2, sick: 0, useS: 1.2, cures: true }],
   ['pot_healwort_tea', 'Pot of Healwort Tea', 1, { satiation: 0, hydration: 30, sick: 0, useS: 1.0, returns: 'clay_pot', cures: true }],
+  // §81: what the two look-alikes give. Each is the food it imitates in every number but one — the Hemlock Root a Wild
+  // Carrot, the Nightshade Berries Honeyberries — and ALWAYS poisons, like the Frecklecap. Neither goes on a fire, and
+  // neither name says what it does: the plant's flowers, stem and berries do.
+  ['hemlock_root', 'Hemlock Root', 16, { satiation: 3, hydration: 1, sick: 1, useS: 1.0 }],
+  ['nightshade_berries', 'Nightshade Berries', 32, { satiation: 4, hydration: 2, sick: 1, useS: 0.8, spoilS: 1800 }],
   // v0.14 (§76 fauna): game. Venison is the big hunt's meat, a rabbit or a bird is a small meal, a fish goes bad fast,
   // a bear is a feast. An egg keeps for a long time; raw it is a risk, roasted at the fire it is good food.
   ['raw_venison', 'Raw Venison', 16, { satiation: 6, hydration: 0, sick: 0.3, useS: 1.4, spoilS: 1200 }],
@@ -196,11 +205,13 @@ const FOOD_ROWS = [
 
 /**
  * Bandages (§2.3): [key, display name, stack, heal]. `hp` is queued into the pending healing, paid out at `rate` HP/s.
+ * §81: the Aloe Leaf is used the same way. It heals less than a bandage, but it is quicker to put on and needs no making.
  * @type {ReadonlyArray<[string, string, number, {hp: number, rate: number, useS: number}]>}
  */
 const HEAL_ROWS = [
   ['fibre_bandage', 'Fibre Bandage', 8, { hp: 15, rate: 1.5, useS: 1.5 }],
   ['rag_bandage', 'Rag Bandage', 8, { hp: 25, rate: 2.5, useS: 1.5 }],
+  ['aloe_leaf', 'Aloe Leaf', 16, { hp: 6, rate: 1.5, useS: 1.0 }],
 ];
 
 /**
@@ -223,6 +234,8 @@ const PLACES_AS = new Map([
   [BLOCK.HAZEL_THICKET, BLOCK.HAZEL_THICKET_BARE],
   [BLOCK.CRAB_APPLE_BUSH, BLOCK.CRAB_APPLE_BUSH_BARE],
   [BLOCK.HEALWORT_PLANT, BLOCK.HEALWORT_PLANT_BARE],
+  // §81: the Nightshade is transplanted like the Honeyberry it imitates
+  [BLOCK.NIGHTSHADE_BUSH, BLOCK.NIGHTSHADE_BUSH_BARE],
 ]);
 /** Picked variant → the ripe block whose item it belongs to. @type {Map<number, number>} */
 const ITEM_BLOCK_OF = new Map([...PLACES_AS].map(([ripe, bare]) => [bare, ripe]));
@@ -363,6 +376,8 @@ export const SINGULAR_NAMES = Object.freeze({
   honeyberries: 'Honeyberry', acorns: 'Acorn', leached_acorns: 'Leached Acorn', roasted_acorns: 'Roasted Acorn',
   pine_nuts: 'Pine Nut', glass_shards: 'Glass Shard', iron_filings: 'Iron Filing',
   hazelnuts: 'Hazelnut', roasted_hazelnuts: 'Roasted Hazelnut', // v0.14 (§76 flora)
+  carrot_seeds: 'Carrot Seed', onion_seeds: 'Onion Seed', healwort_seeds: 'Healwort Seed', // §80 farming
+  nightshade_berries: 'Nightshade Berry', // §81
 });
 
 /**

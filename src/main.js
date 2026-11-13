@@ -33,14 +33,14 @@ import {
   BLACK_HOLE_MAX_TRACKED, BLACK_HOLE_SWALLOW_LINE_S,
   PHYSICS_SOUND_RANGE, BOOM_SOUND_RANGE, SPLASH_MIN_INTERVAL_S, HISS_MIN_INTERVAL_S, FIZZLE_MIN_INTERVAL_S,
   ZOMBIE_HEIGHT, GEN_LATEST, PIG_MAX, LAMP_LIGHT_MIN, LAMP_LIGHT_MAX, CAMPFIRE_FUEL_START_S, CAMPFIRE_FUEL_MAX_S, ATTACK_REPEAT_S, GULP_GAP_S,
-  PIG_REPOP_CHECK_S, PIG_REPOP_TARGET, PIG_REPOP_RADIUS, PIG_REPOP_MIN, PIG_REPOP_MAX, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE,
+  PIG_REPOP_CHECK_S, PIG_REPOP_TARGET, PIG_REPOP_COUNT, PIG_REPOP_RADIUS, PIG_REPOP_MIN, PIG_REPOP_MAX, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE,
   FALL_SAFE_SPEED, INTRO_LINE_MS, PACK_MESSAGE_S,
   ZOMBIE_MAX, MAX_INFALL_MOBS, VORTEX_MODEL_RANGE, VORTEX_MAX_MODELS, VORTEX_MAX_CORES, VORTEX_PARTICLES_PER_S,
   VORTEX_PARTICLE_HOLES, CIRCUIT_DRAW_RANGE, CIRCUIT_OVERLAY_RANGE, BLACK_HOLE_SCREEN_FLASH_RANGE, BLACK_HOLE_SCREEN_FLASH_MAX,
   WORLD_HEIGHT,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
-import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex } from './hex.js';
+import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex, FACE_TOP } from './hex.js';
 import {
   BLOCK, BIOME, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid, isTargetable,
   isWaterSource, isWater, isMeshed, isLiquid, flintAt,
@@ -96,6 +96,8 @@ import {
   wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterKind, waterHint, WATER_POTS,
 } from './survivalControl.js';
 import { waterQualityAt } from './fluids.js';
+import { Growth, cropOfBlock, cropState, farmHint, plantAt, wrongGroundHint, failLine, FAIL_NOTICE_CELLS } from './farming.js';
+import { Spread } from './spread.js';
 import { CraftQueue, findStations, listRecipes } from './crafting.js';
 import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
 import { heatSource, heatAt, groundChillOf, isSaltyBiome, bodyTarget, CHEST_HEIGHT, HEAT_SOURCES } from './climate.js';
@@ -181,6 +183,10 @@ const PHYSICS_SOUND_GAP_S = Object.freeze({ splash: SPLASH_MIN_INTERVAL_S, hiss:
 export const OLD_WORLD_PHYSICS_NOTE = 'New: block physics! Collapse is off for this older world — turn it on in Esc → Physics';
 /** The red screen-edge flash after a zombie's strike fades out over this long (s, §39). */
 const HURT_FLASH_S = 0.45;
+/** The debug handle's farmStep runs at most this many one-second steps in a call: ten game days (§80). */
+export const FARM_STEP_MAX_S = 14400;
+/** A crop's target hint (watered, dry, needs open sky) is worked out again this often while it stays in the crosshair. */
+const FARM_HINT_S = 0.5;
 /** WATER selected: the crosshair also stops on water sources (left-click removes one). */
 const hitTargetOrWaterSource = (id) => isTargetable(id) || isWaterSource(id);
 
@@ -394,6 +400,38 @@ export function stacksText(stacks) {
 /** "Pack full: 2 Rock left behind" (§5.3). */
 export function leftBehindText(stacks) {
   return `Pack full: ${stacksText(stacks)} left behind`;
+}
+
+/**
+ * §80, the once-a-second farm work. Growth's events are written first: a sprout, a grown plant, or AIR for a seed that
+ * did not take (told through `say` when the player's column (q, r) is within FAIL_NOTICE_CELLS of it). Then at most one
+ * new wild plant comes up (Spread), only ever in a cell that is AIR. Every write is a lazy `world.setBlock`, like
+ * regrowth's, and comes back through World.onBlockChange (which is how a sprout is tracked again and a grown bush,
+ * being picked, reaches Regrowth).
+ * @param {number} dt seconds
+ * @param {() => number} random
+ * @param {{ world: { getBlock: (q: number, y: number, r: number) => number, setBlock: (q: number, y: number, r: number, id: number, lazy?: boolean) => boolean },
+ *   growth: Growth, spread: Spread, isLoadedCell: (q: number, r: number) => boolean,
+ *   waterQuality: ((q: number, y: number, r: number) => import('./survivalControl.js').WaterQuality)|null,
+ *   q: number, r: number, say?: (text: string) => void }} f
+ * @returns {{ sprouted: number, grown: number, failed: number, births: number }} what was written
+ */
+export function farmSecondOn(dt, random, f) {
+  const { world } = f;
+  const done = { sprouted: 0, grown: 0, failed: 0, births: 0 };
+  for (const ev of f.growth.step(dt, random, f.isLoadedCell, world.getBlock, f.waterQuality)) {
+    if (world.getBlock(ev.q, ev.y, ev.r) !== ev.from || !world.setBlock(ev.q, ev.y, ev.r, ev.to, true)) continue;
+    if (!ev.took) {
+      done.failed++;
+      if (f.say && hexLength(ev.q - f.q, ev.r - f.r) <= FAIL_NOTICE_CELLS) f.say(failLine(ev.crop));
+    } else if (ev.to === ev.crop.sprout) done.sprouted++;
+    else done.grown++;
+  }
+  const birth = f.spread.step(dt, random, { getBlock: world.getBlock, isLoadedCell: f.isLoadedCell, q: f.q, r: f.r });
+  if (birth && world.getBlock(birth.q, birth.y, birth.r) === BLOCK.AIR && world.setBlock(birth.q, birth.y, birth.r, birth.id, true)) {
+    done.births++;
+  }
+  return done;
 }
 
 /**
@@ -1660,6 +1698,9 @@ export function boot(win, doc) {
   const loose = new LooseItems();
   const fireSlots = new FireSlots();
   const regrowth = new Regrowth();
+  /** §80: the planted seeds and sprouts, and the spreading of the wild plants (its counts are for the debug handle) */
+  const growth = new Growth();
+  const spread = new Spread();
   const tapped = new Tapped();
   const craftQueue = new CraftQueue();
   /** hold LMB to dig (§6.1) */
@@ -1705,6 +1746,10 @@ export function boot(win, doc) {
   let sizzleAt = -Infinity;
   /** seconds toward the next once-a-second survival work (regrowth, spoilage) */
   let survivalSecond = 0;
+  /** §80: the crop hint last worked out (cropHintText): its cell and block, when (fxTime), and the text */
+  let cropHintKey = '';
+  let cropHintAt = -Infinity;
+  let cropHint = /** @type {string|null} */ (null);
   let pigRepopAccum = 0;
   let pigRepopTries = 0;
   /** blast or log damage was dealt this frame (no crush damage on top, §2.4) */
@@ -1761,6 +1806,7 @@ export function boot(win, doc) {
     // v0.10 (DESIGN-circuits §4.9, §8.3): parts with an R action of their own join the hit steps, the pocket key the
     // selected-item steps.
     partR: (id) => !!circuits && circuits.enabled && hasRAction(id),
+    getBlock: (q, y, r) => world.getBlock(q, y, r), // §80: the planting step looks at the soil and the cell above it
   };
   /** the reused SurvivalEnv (§9.4) */
   const survivalEnv = {
@@ -1912,6 +1958,7 @@ export function boot(win, doc) {
     const releasedItems = containers.onBlockChange(q, y, r, prev, next);
     const releasedSpots = fireSlots.onBlockChange(q, y, r, prev, next);
     regrowth.onBlockChange(q, y, r, prev, next);
+    growth.onBlockChange(q, y, r, prev, next); // §80: a planted seed or a sprout is tracked, anything else forgotten
     if (releaseToPack && (releasedItems.length > 0 || releasedSpots.length > 0)) {
       flyFromCell([...releasedItems, ...releasedSpots], q, y, r);
     }
@@ -3380,6 +3427,9 @@ export function boot(win, doc) {
     if (h) {
       const burning = burningKegHint(h, blockPhysics ? blockPhysics.explosions : null);
       if (burning) return burning; // before the tool requirement: a left press puts it out with any tool or none
+      // §80: a planted seed or a sprout says what it has: `Planted Wild Carrot · watered`, `… · needs open sky`
+      const crop = cropOfBlock(h.blockId);
+      if (crop) return cropHintText(h, crop);
       const tool = selectedTool();
       if (!canHarvest(h.blockId, tool)) {
         const need = harvestHint(h.blockId);
@@ -3388,8 +3438,28 @@ export function boot(win, doc) {
       // §6.2: the Handbook's bare-hand targets that R does not pick say how they are taken (`Tussock Grass · hold LMB: pull`)
       const gather = handGatherHint(h.blockId);
       if (gather) return gather;
+      // §80: seed in hand over ground it will not grow in (`Carrot Seeds grow in grass or dirt`)
+      if (h.face === FACE_TOP) {
+        const wrong = wrongGroundHint(world.getBlock, selectedKey(), h.q, h.y, h.r);
+        if (wrong) return wrong;
+      }
     }
     return blockHintText();
+  }
+
+  /**
+   * §80: the hint of the planted cell or sprout under the crosshair. Looking for water round it is a few hundred cell
+   * reads, so the answer is kept for FARM_HINT_S while the crosshair stays on the same block.
+   * @param {RaycastHit} h @param {import('./farming.js').CropDef} crop @returns {string|null}
+   */
+  function cropHintText(h, crop) {
+    const key = `${h.q},${h.y},${h.r},${h.blockId}`;
+    if (key !== cropHintKey || !(fxTime - cropHintAt < FARM_HINT_S)) {
+      cropHintKey = key;
+      cropHintAt = fxTime;
+      cropHint = farmHint(h.blockId, cropState(world.getBlock, waterQualityOf, h.q, h.y, h.r, crop));
+    }
+    return cropHint;
   }
 
   /** What a cold pit still holds (`fireHint` of its spots), for `pitHintText`. @param {import('./survivalControl.js').InteractAction} act */
@@ -3588,9 +3658,28 @@ export function boot(win, doc) {
       case 'pocket':
         pocketSend();
         return;
+      case 'plant':
+        plantSeed(q, y, r);
+        return;
       default:
         if (act.hint) showHint(act.hint); // fire_hint, pit_hint, tap_hint, fuse_hint
     }
+  }
+
+  /**
+   * §80 planting with R: the item in hand goes into the soil at (q, y, r). Every condition is checked again; the planted
+   * block is written in the cell above the way a player's block is placed (placeBlockAt), and one item is used up.
+   */
+  function plantSeed(q, y, r) {
+    const planting = plantAt(world.getBlock, selectedKey(), q, y, r);
+    if (!planting) return;
+    const refusal = placeRefusal(world.getBlock, planting.block, planting.cell[0], planting.cell[1], planting.cell[2]);
+    if (refusal) {
+      showHint(refusal);
+      return;
+    }
+    if (!placeBlockAt(planting.block, planting.cell)) return;
+    pack.consume(selected, 1);
   }
 
   /** The end of a held R (§4.2 tapping birch sap, §4.4 relighting a fire pit); every condition is checked again. */
@@ -3977,6 +4066,7 @@ export function boot(win, doc) {
       for (const c of regrowth.step(1, Math.random, isLoadedCellFn)) {
         if (ripeOf(world.getBlock(c.q, c.y, c.r)) === c.id) world.setBlock(c.q, c.y, c.r, c.id, true);
       }
+      farmSecond(1, Math.random); // §80: seeds sprout, sprouts grow up, the wild plants spread
       const bad = pack.spoil(1, Math.random);
       if (bad.length > 0 && fxTime - spoilLineAt >= 2) {
         spoilLineAt = fxTime;
@@ -3993,6 +4083,12 @@ export function boot(win, doc) {
     }
 
     if (player.y < VOID_Y) pendingDeath ??= 'void';
+  }
+
+  /** §80, once a second in Survival (and from the debug handle's farmStep): `farmSecondOn` with the live objects. */
+  function farmSecond(dt, random) {
+    const [q, r] = worldToHex(player.x, player.z);
+    return farmSecondOn(dt, random, { world, growth, spread, isLoadedCell: isLoadedCellFn, waterQuality: waterQualityOf, q, r, say: logLine });
   }
 
   /** Sample the climate, the heat sources and the workplaces near the player (every CLIMATE_SAMPLE_S, §3.1, §7.1). */
@@ -4034,7 +4130,7 @@ export function boot(win, doc) {
     return ['stump', 'kiln', 'bloomery', 'forge'].map((k) => (st[k] ? st[k].join(',') : '-')).join('|');
   }
 
-  /** §4.3: prune one far pig at the cap, then bring two more when fewer than PIG_REPOP_TARGET are within reach. */
+  /** §4.3: prune one far pig at the cap, then bring PIG_REPOP_COUNT more when fewer than PIG_REPOP_TARGET are within reach. */
   function repopulatePigs() {
     if (pigs.size >= PIG_MAX) pigs.pruneFar(player.x, player.z, isLoadedCellFn, 2 * PIG_REPOP_RADIUS);
     let near = 0;
@@ -4043,7 +4139,7 @@ export function boot(win, doc) {
     const [pq, pr] = worldToHex(player.x, player.z);
     pigRepopTries++;
     const seed = (world.seed ^ (day * 7919 + pigRepopTries)) >>> 0;
-    pigs.spawnNatural(Math.min(2, PIG_MAX - pigs.size), pq, pr, seed, world.getBlock, isLoadedCellFn, PIG_REPOP_MIN,
+    pigs.spawnNatural(Math.min(PIG_REPOP_COUNT, PIG_MAX - pigs.size), pq, pr, seed, world.getBlock, isLoadedCellFn, PIG_REPOP_MIN,
       PIG_REPOP_MAX, SURVIVAL_PIG_GROUND);
   }
 
@@ -4579,6 +4675,8 @@ export function boot(win, doc) {
     for (const w of containerWarnings) console.warn('Caelancraft containers:', w);
     loose.load(survival.hasState && restoring && restoring.survival ? restoring.survival.loose : null, looseBlockOf);
     regrowth.loadFromEdits(world.edits);
+    growth.loadFromEdits(world.edits); // §80: the planted cells are edits, like the picked bushes
+    spread.clear();
     tapped.clear();
     craftQueue.clear();
     resetSurvivalInput();
@@ -4996,6 +5094,8 @@ export function boot(win, doc) {
     containers.clear();
     fireSlots.clear();
     regrowth.clear();
+    growth.clear();
+    spread.clear();
     tapped.clear();
     craftQueue.clear();
     resetSurvivalInput();
@@ -5337,6 +5437,27 @@ export function boot(win, doc) {
     getRiding: () => riding,
     loose,
     handAction: (kind, n = 1) => handAction(kind, n),
+    // ---- §80 farming: the two trackers, and time for them alone ----
+    growth,
+    spread,
+    /**
+     * Run the growth and spread steps as if `seconds` had passed (1 s steps, at most FARM_STEP_MAX_S of them), with
+     * Math.random. Nothing else ages: not the clock, not the body, not regrowth.
+     * @returns {{ seconds: number, sprouted: number, grown: number, failed: number, births: number }|null}
+     */
+    farmStep(seconds) {
+      if (!world || !player || !Number.isFinite(seconds)) return null;
+      const n = Math.max(0, Math.min(FARM_STEP_MAX_S, Math.floor(seconds)));
+      const total = { seconds: n, sprouted: 0, grown: 0, failed: 0, births: 0 };
+      for (let i = 0; i < n; i++) {
+        const done = farmSecond(1, Math.random);
+        total.sprouted += done.sprouted;
+        total.grown += done.grown;
+        total.failed += done.failed;
+        total.births += done.births;
+      }
+      return total;
+    },
     /** Queue a mode switch (applied at the top of the next frame). */
     setMode(mode) {
       requestMode(mode);

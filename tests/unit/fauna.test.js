@@ -879,23 +879,24 @@ describe('fauna — rarity: herds and small game appear independently', () => {
     expect(maxSmall).toBeLessThanOrEqual(SMALL_TARGET + 3);
     expect(maxSmall).toBeGreaterThan(0);
     // rarer than before: the chances
-    expect([HERD_CHANCE, SMALL_CHANCE]).toEqual([0.35, 0.4]);
+    expect([HERD_CHANCE, SMALL_CHANCE]).toEqual([0.2, 0.25]); // v0.15 (§79): 0.35 and 0.4 before
+    expect([HERD_TARGET, SMALL_TARGET]).toEqual([3, 3]); // 5 and 4 before
     expect(HERD_CHECK_S).toBe(60);
   });
 
   it('a full count of herd animals does not keep the small game away, nor the other way round', () => {
     const player = standing(0, 0, { flying: true });
     const world = view(flatWorld(), player, hooks(BIOME.PLAINS));
-    const as = new Animals(() => 0.2); // every chance roll passes
+    const as = new Animals(() => 0.1); // every chance roll passes
     for (let i = 0; i < HERD_TARGET; i++) as.spawn('cow', 20 + i * 2, GROUND, 0);
     expect(as._spawnHerd(player, world, 'herd')).toBe(0);
     expect(as._spawnHerd(player, world, 'small')).toBeGreaterThan(0);
-    const bs = new Animals(() => 0.2);
+    const bs = new Animals(() => 0.1);
     for (let i = 0; i < SMALL_TARGET; i++) bs.spawn('rabbit', 20 + i * 2, GROUND, 0);
     expect(bs._spawnHerd(player, world, 'small')).toBe(0);
     expect(bs._spawnHerd(player, world, 'herd')).toBeGreaterThan(0);
     // the mountains have no birds: a small group there is rabbits
-    const cs = new Animals(() => 0.2);
+    const cs = new Animals(() => 0.1);
     cs._spawnHerd(player, view(flatWorld(), player, hooks(BIOME.MOUNTAINS)), 'small');
     expect(cs.list.length).toBeGreaterThan(0);
     expect(cs.list.every((a) => a.kind === 'rabbit')).toBe(true);

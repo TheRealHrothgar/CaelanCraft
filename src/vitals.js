@@ -147,7 +147,7 @@ export const RATES = Object.freeze({
   FIRE: FIRE_BURN_DAMAGE,
   // §4.2 hand gulps
   GULP_FRESH: 8,
-  GULP_FRESH_SICK: 0.06,      // v0.11 (CONTRACTS §66): raw water from a source poisons you now and then
+  GULP_FRESH_SICK: 0.2,       // raw water from a source poisons one gulp in five (0.06 from v0.11 §66 until v0.15 §79): boil it
   GULP_TAINTED_SICK: 0.4,     // v0.14 (CONTRACTS §76 water): a gulp of tainted water poisons two times in five
   GULP_SALT: -4,
 });

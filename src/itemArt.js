@@ -571,6 +571,15 @@ function paintBrick(ic, rng, base) {
   ic.set(7, 6, tone(base, -0.2));
 }
 
+/**
+ * A handful of seeds (§80): at each [cx, cy] an oval `rx` × `ry`, lit from the upper left and shaded at the lower right.
+ * @param {Icon} ic @param {number[][]} spots @param {number} rx @param {number} ry
+ * @param {{ base: number, light: number, dark: number }} pal
+ */
+function paintSeedHeap(ic, spots, rx, ry, pal) {
+  for (const [cx, cy] of spots) ic.ellipse(cx, cy, rx, ry, (x, y, u, v) => (u + v < -0.45 ? pal.light : u + v > 0.55 ? pal.dark : pal.base));
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Materials
 // ---------------------------------------------------------------------------------------------------------------
@@ -977,6 +986,27 @@ const MATERIAL_PAINTERS = {
     for (const [x, y] of [[1, 9], [2, 8], [6, 15], [7, 14]]) ic.set(x, y, 0xf3e6c8);
     ic.set(3, 12, CORD.dark); // the flight's binding
   },
+  // §80 farming: three handfuls of seed, told apart by shape as well as colour
+  carrot_seeds(ic) {
+    // fat tan ovals, each with the dark rib a carrot seed has down its middle
+    const spots = [[4.5, 4.5], [11.5, 4], [8, 9], [12.5, 12], [4, 12.5]];
+    paintSeedHeap(ic, spots, 2.2, 2.8, { base: 0xc9a05c, light: 0xf0d9a0, dark: 0x8a6430 });
+    for (const [cx, cy] of spots) ic.line(Math.floor(cx), Math.floor(cy) - 1, Math.floor(cx), Math.floor(cy) + 1, 0x6e4e24);
+  },
+  onion_seeds(ic) {
+    // black and angular, like chips of coal: each a small wedge with one lit edge and a glint
+    for (const [x, y] of [[2, 2], [9, 1], [5, 7], [11, 8], [2, 11]]) {
+      ic.poly([[x + 0.2, y + 2], [x + 2.6, y + 0.2], [x + 4.8, y + 2.4], [x + 2.2, y + 4.8]], (px, py) => (px + py < x + y + 4 ? 0x6c6a7c : px + py > x + y + 5 ? 0x141318 : 0x2e2c34));
+      ic.set(x + 2, y + 1, 0xd8d6e6);
+    }
+  },
+  healwort_seeds(ic) {
+    // small round beads the lilac of the flower they came from, a silver-green bract still on one
+    paintSeedHeap(ic, [[4, 4], [9.5, 3.5], [13, 8], [7, 8.5], [3, 11.5], [10, 12.5]], 2, 2, { base: 0xa98fd0, light: 0xe6dcf8, dark: 0x6a4f9a });
+    ic.set(7, 6, 0x9fc0a0);
+    ic.set(8, 6, 0x7fa888);
+    ic.set(8, 5, 0x9fc0a0);
+  },
 };
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1278,6 +1308,26 @@ const FOOD_PAINTERS = {
     ic.set(8, 4, 0x9b4fd6);
     for (const [x, y] of [[6, 1], [7, 0], [10, 1], [9, 0]]) ic.set(x, y, 0xf0f4f8);
   },
+  // §81: what the two look-alikes give, each drawn as the food it imitates with its plant's own signs (tiles.js)
+  hemlock_root(ic) {
+    // the carrot's shape, but pale, under the stub of its purple-blotched stem (no feathery top)
+    paintCarrotRoot(ic, 0xe6dcb8, 0xb3a47c);
+    ic.rect(7, 1, 7, 3, 0x6aa84a);
+    ic.rect(8, 1, 8, 3, 0x4a8438);
+    ic.set(8, 1, 0x8a3f9c);
+    ic.set(7, 3, 0x8a3f9c);
+  },
+  nightshade_berries(ic) {
+    // round, shiny black berries, each under its green calyx, on the honeyberry's twig (its berries are long and pale blue)
+    ic.line(4, 2, 11, 3, 0x6b4a2a);
+    ic.set(12, 2, 0x4a7a3a);
+    ic.set(13, 2, 0x4a7a3a);
+    for (const [cx, cy] of [[4.5, 8], [10.5, 7.5], [7.5, 12]]) {
+      ic.ellipse(cx, cy, 2.6, 2.6, (x, y, u, v) => (u + v > 0.5 ? 0x150a24 : 0x2c1a44));
+      ic.set(Math.floor(cx) - 1, Math.floor(cy) - 1, 0xcfc0f0);
+      ic.rect(Math.floor(cx) - 1, Math.floor(cy) - 3, Math.floor(cx), Math.floor(cy) - 3, 0x4f9040);
+    }
+  },
   // v0.14 (§76 fauna): game. Each meat has its own shape, so it reads at a glance: venison a dark lean steak, rabbit a
   // small leg on its bone, fowl a whole plucked bird, fish a fish, bear a thick slab under a band of fat; and an egg.
   raw_venison(ic, rng) {
@@ -1403,6 +1453,14 @@ const OTHER_PAINTERS = {
   },
   rag_bandage(ic) {
     paintRoll(ic, 0xe8e4d8, 0xb8c8c0);
+  },
+  aloe_leaf(ic) {
+    // §81: one thick pointed leaf, cut at its base — sea green, lit on the left, with pale teeth down both edges and
+    // the clear gel showing at the cut
+    ic.poly([[4, 13], [12, 13], [11, 8], [9, 2], [8, 1], [7, 2], [5, 8]], (x) => (x <= 6 ? 0x9ee0ae : x >= 10 ? 0x2a6a50 : 0x5aa27a));
+    for (const [x, y] of [[6, 4], [5, 7], [4, 10], [10, 5], [11, 8], [11, 11]]) ic.set(x, y, 0xf4f8d4);
+    ic.rect(4, 13, 11, 13, 0xdcefc4);
+    ic.rect(5, 14, 10, 14, 0xb4d8a8);
   },
   straw_hat(ic) {
     // a wide-brimmed straw hat with a dark band

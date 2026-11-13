@@ -5,7 +5,7 @@
 // 16 × 16 tile — the picture the Pack shows — so the model and its icon are plainly the same plant. All sizes are in
 // TEXELS (16 to the metre, the terrain's own density); x and z are measured from the middle of the cell, y from its
 // floor. compilePlantModel turns a part list into flat quads the chunk mesher copies out, turned and sized per cell.
-import { BLOCK, TILE } from './blocks.js';
+import { BLOCK, TILE, FARM_IDS } from './blocks.js';
 
 /** Texels per metre. */
 export const PLANT_TEXELS = 16;
@@ -326,6 +326,173 @@ const PRICKLY_PEAR = [
 ];
 
 /**
+ * The farm blocks (CONTRACTS §80). A planted seed is a low mound of tilled earth in two steps with a short marker twig
+ * standing in it, a pale rag tied to the twig; a sprout is the same mound with a two-leaf seedling. Every planted
+ * block shares the first model and every sprout the second: what was planted is told by the block's name.
+ */
+const SEED_MOUND = [
+  box([0, 0, 0], [10, 1.5, 10], [2, 14, 10, 2], { top: [2, 12, 10, 4] }),
+  box([0, 1.5, 0], [7, 1.5, 7], [4, 12, 7, 2], { top: [4, 11, 7, 3] }),
+];
+const SEEDBED = [
+  ...SEED_MOUND,
+  group([1, 3, -0.5], { lean: 0.1 }, [
+    box([0, 0, 0], [1.5, 6, 1.5], [7, 3, 2, 6], { top: [7, 3, 2, 1] }),
+    box([0, 3.5, -2.25], [0.75, 2, 3], [9, 4, 1, 2], { end: [9, 4, 3, 2], top: [9, 4, 3, 1], under: [9, 5, 3, 1] }),
+  ]),
+];
+/** @param {number} yaw @param {Rect} top @param {Rect} edge @returns {PlantPart} one seed leaf, lifting away from the stem */
+const seedLeaf = (yaw, top, edge) => group([0, 6.5, 0], { yaw, lean: -0.5 }, [
+  box([3, 0, 0], [5, 1, 3.5], edge, { top, under: edge }),
+]);
+const SPROUT = [
+  ...SEED_MOUND,
+  box([0, 3, 0], [1.5, 4, 1.5], [7, 6, 2, 4], { top: [7, 5, 2, 1] }),
+  seedLeaf(0.3, [2, 3, 4, 3], [2, 5, 4, 1]),
+  seedLeaf(0.3 + Math.PI, [10, 2, 4, 3], [10, 4, 4, 1]),
+];
+
+// ---------------------------------------------------------------------------------------------------------------------
+// §81: the plants that are not food. Rects name texels of tiles 218–224 (tiles.js).
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * Fern: a low crown, three young fronds standing in it, and eight fronds arching out in two tiers — each a feather
+ * rising out of the crown with a second, narrower one drooping from its end.
+ */
+const FERN_FEATHER = /** @type {Rect} */ ([6, 3, 4, 7]);
+const FERN_TIP = /** @type {Rect} */ ([6, 0, 4, 5]);
+/** @param {number} len @param {number} lean @param {number} tip the drooping end's length @returns {PlantPart[]} */
+const fernFrond = (len, lean, tip) => [
+  card([0, 1, 0], [5, len], FERN_FEATHER, { lean }),
+  card([len * Math.sin(lean), 1 + len * Math.cos(lean), 0], [5, tip], FERN_TIP, { lean: lean + 1.2, taper: 0.5 }),
+];
+const FERN = [
+  box([0, 0, 0], [4, 2, 4], [6, 10, 4, 2], {}),
+  box([0, 2, 0], [2, 2, 2], [7, 12, 2, 2], {}),
+  ...ring(3, 0.5, 1.2, () => [card([0, 2, 0], [4, 9], [6, 0, 4, 9], { lean: 0.2 })]),
+  ...ring(4, 1, 0.3, () => fernFrond(7, 0.5, 4)),
+  ...ring(4, 1, 0.3 + Math.PI / 4, () => fernFrond(6, 0.8, 3.5)),
+];
+
+/**
+ * Meadow daisies: a tuft of leaves lying out, and three daisies on thin stems — each a flat white flower with a yellow
+ * heart, tipped a little toward the outside so it shows from the side as well as from above. They grow on one plains
+ * column in twenty-five, so the model is kept light: a stem is two crossed cards, a flower one box.
+ */
+const DAISY_FLOWER = /** @type {Rect} */ ([2, 2, 3, 3]);
+const DAISY_PETALS = /** @type {Rect} */ ([2, 4, 3, 1]);
+const DAISY_STEM = /** @type {Rect} */ ([3, 5, 1, 3]);
+/** @param {number[]} at @param {number} h @param {number} yaw @returns {PlantPart} */
+const daisy = (at, h, yaw) => group(at, { yaw }, [
+  card([0, 0, 0], [1, h], DAISY_STEM, {}),
+  card([0, 0, 0], [1, h], DAISY_STEM, { yaw: QUARTER }),
+  group([0, h, 0], { lean: 0.5 }, [box([0, 0, 0], [4, 1, 4], DAISY_PETALS, { top: DAISY_FLOWER })]),
+]);
+const MEADOW_DAISIES = [
+  box([0, 0, 0], [5, 2, 5], [4, 13, 5, 2], {}),
+  ...ring(4, 2, 0.2, (i) => [card([0, 0.5, 0], [3.5, 5], [4, 13, 3, 2], { lean: 0.9 + 0.2 * (i % 2), taper: 0.35 })]),
+  daisy([-3, 0, -2], 9, 2.8),
+  daisy([3.5, 0, -2], 6, 0.5),
+  daisy([0, 0, 3.5], 8, -1.6),
+];
+
+/**
+ * Thistle: a stout stalk, a scaly green bulb on it and a purple tuft on the bulb; six pointed leaves in two tiers,
+ * each ending in a pale spine.
+ */
+const THISTLE_GREEN = /** @type {Rect} */ ([11, 9, 2, 2]);
+const THISTLE_SPINE = /** @type {Rect} */ ([13, 7, 1, 1]);
+/** @param {number} y @param {number} len @param {number} lean @returns {PlantPart[]} one leaf: two slabs, the outer one narrower and pale at its end */
+const thistleLeaf = (y, len, lean) => [group([0, y, 0], { lean }, [
+  box([0, 0, 0], [1, len * 0.6, 4], THISTLE_GREEN, { top: null }),
+  box([0, len * 0.6, 0], [1, len * 0.4, 2], THISTLE_GREEN, { top: THISTLE_SPINE }),
+])];
+const THISTLE = [
+  box([0, 0, 0], [2, 8, 2], [7, 6, 2, 9], { top: null }),
+  box([0, 8, 0], [4, 1, 4], [6, 5, 4, 1], { top: null, under: [6, 5, 4, 1] }),
+  box([0, 9, 0], [6, 2, 6], [5, 3, 6, 2], { top: [5, 4, 6, 1], under: [5, 4, 6, 1] }),
+  box([0, 11, 0], [5, 2, 5], [5, 1, 6, 2], { top: null }),
+  box([0, 13, 0], [3, 1, 3], [6, 0, 4, 1], {}),
+  ...ring(3, 1, 0.3, () => thistleLeaf(1, 6.5, 1.0)),
+  ...ring(3, 1, 1.35, () => thistleLeaf(4, 5.5, 0.75)),
+];
+
+/**
+ * Hemlock: the Wild Carrot's shape — a root crown and feathery fronds leaning out — with what tells it apart standing
+ * above them: a purple-blotched stalk carrying a flat white flower plate, two more plates on leaning stems, and a crown
+ * that is pale, not orange.
+ */
+/** @param {number} yaw @param {number} lean @param {number} h @param {number} w @returns {PlantPart} a leaning stem with its plate, `w` across */
+const hemlockHead = (yaw, lean, h, w) => group([0, 3, 0], { yaw, lean }, [
+  box([0, 0, 0], [1, h, 1], [8, 4, 1, 7], { top: null }),
+  box([0, h, 0], [w, 1, w], [1, 3, 4, 1], { top: [1, 2, 4, 1], under: [1, 3, 4, 1] }),
+]);
+const HEMLOCK = [
+  box([0, 0, 0], [3, 2, 3], [6, 13, 3, 2], { top: [6, 13, 3, 1] }),
+  box([0, 2, 0], [2, 1, 2], [7, 12, 2, 1], {}),
+  ...ring(5, 1, 0.3, (i) => [card([0, 2.5, 0], [7, 8], [4, 4, 7, 8], { lean: i % 2 ? 0.7 : 0.45 })]),
+  box([0, 2.5, 0], [1.5, 10, 1.5], [7, 2, 2, 10], { top: null }),
+  box([0, 12.5, 0], [6, 1, 6], [5, 1, 6, 1], { top: [5, 0, 6, 1], under: [5, 1, 6, 1] }),
+  hemlockHead(0.9, 0.5, 7, 4.5),
+  hemlockHead(3.4, 0.62, 6, 4),
+];
+
+const NIGHTSHADE_STAR = /** @type {Rect} */ ([6, 4, 3, 3]);
+/** @param {number[]} at @param {number} yaw @param {number} lean @returns {PlantPart} one star flower: a flat box, its top the five-pixel star */
+const nightshadeStar = (at, yaw, lean) => group(at, { yaw, lean, fruit: true }, [
+  box([0, 0, 0], [3, 1, 3], [6, 5, 3, 1], { top: NIGHTSHADE_STAR }),
+]);
+/**
+ * Nightshade: the Honeyberry's bush part for part (its picture has the same leaves, and a berry in the same corner),
+ * so its berries stand where the honeyberry's do — but black. Three purple star flowers open on it besides: one on
+ * top, two on its sides (they go with the berries when it is picked). Picked, it is the picked Honeyberry.
+ * @param {Rect|null} leaf
+ * @returns {PlantPart[]}
+ */
+const nightshade = (leaf) => [
+  ...honeyberry(leaf),
+  nightshadeStar([-2, 11.5, -1], 0.4, 0),
+  nightshadeStar([5, 6, -2.5], 0, QUARTER),
+  nightshadeStar([-3, 6.5, 5], -QUARTER - 0.3, QUARTER),
+];
+
+/** Flax: five slender stems standing out of one foot, each with a small leaf and a sky-blue flower tipped outward. */
+const FLAX_FLOWER = /** @type {Rect} */ ([1, 1, 3, 3]);
+const FLAX_PETALS = /** @type {Rect} */ ([1, 3, 3, 1]);
+/** @param {number[]} at @param {number} h @param {number} yaw @param {number} lean @returns {PlantPart} one stem, its leaf and its flower */
+const flaxStem = (at, h, yaw, lean) => group(at, { yaw, lean }, [
+  box([0, 0, 0], [1, h, 1], [8, 3, 1, 10], { top: null }),
+  card([0, h * 0.45, 0], [2, 3], [3, 6, 1, 1], { lean: 0.9, taper: 0.3 }),
+  group([0, h, 0], { lean: 0.45 }, [box([0, 0, 0], [3.5, 1, 3.5], FLAX_PETALS, { top: FLAX_FLOWER, under: FLAX_PETALS })]),
+]);
+const FLAX = [
+  box([0, 0, 0], [3, 1, 3], [6, 15, 3, 1], {}),
+  flaxStem([0, 0.5, 0], 12, 0, 0),
+  flaxStem([1.5, 0.5, 0.5], 9, 0.5, 0.3),
+  flaxStem([-1, 0.5, 1.5], 10, 2.2, 0.26),
+  flaxStem([-1.5, 0.5, -1], 8, 3.6, 0.36),
+  flaxStem([1, 0.5, -1.5], 11, 5.2, 0.2),
+];
+
+/**
+ * Aloe: a rosette of thick leaves, each two slabs (the upper one narrower): one standing upright, three leaning out of
+ * the middle and four lying out low round them; pale teeth along their edges.
+ */
+const ALOE_EDGE = /** @type {Rect} */ ([9, 4, 2, 2]);
+/** @param {number} yaw @param {number} lean @param {number} len its lower slab's length @returns {PlantPart} one leaf */
+const aloeLeaf = (yaw, lean, len) => group([0, 1, 0], { yaw, lean }, [
+  box([0, 0, 0], [1.5, len, 4], ALOE_EDGE, { end: [6, 4, 4, 4], top: null }),
+  box([0, len, 0], [1.5, len - 1, 2.5], ALOE_EDGE, { end: [7, 1, 3, 3], top: [7, 1, 2, 1] }),
+]);
+const ALOE = [
+  box([0, 0, 0], [4, 1.5, 4], [6, 12, 4, 2], {}),
+  aloeLeaf(0.2, 0, 5.5),
+  ...[0, 1, 2].map((i) => aloeLeaf(1.3 + (i * Math.PI * 2) / 3, 0.5, 4.5)),
+  ...[0, 1, 2, 3].map((i) => aloeLeaf(0.5 + (i * Math.PI) / 2, 1.05, 4)),
+];
+
+/**
  * @typedef {Object} PlantModelDef
  * @property {PlantPart[]} parts
  * @property {boolean} [bare]  a picked plant: the same parts less the fruit, cut from the picked block's own tile
@@ -354,6 +521,17 @@ export const PLANT_MODELS = Object.freeze({
   [BLOCK.TUBER_PLANT]: { parts: TUBER },
   [BLOCK.PRICKLY_PEAR]: { parts: PRICKLY_PEAR },
   [BLOCK.PRICKLY_PEAR_BARE]: { parts: PRICKLY_PEAR, bare: true },
+  // §80: the nine planted blocks are one seedbed, the nine sprouts one seedling (FARM_IDS: planted first, then sprouts)
+  ...Object.fromEntries(FARM_IDS.map((id) => [id, { parts: id < BLOCK.CARROT_SPROUT ? SEEDBED : SPROUT }])),
+  // §81: the plants that are not food. The picked Nightshade is the picked Honeyberry, quad for quad.
+  [BLOCK.FERN]: { parts: FERN },
+  [BLOCK.MEADOW_DAISIES]: { parts: MEADOW_DAISIES },
+  [BLOCK.THISTLE]: { parts: THISTLE },
+  [BLOCK.HEMLOCK]: { parts: HEMLOCK },
+  [BLOCK.NIGHTSHADE_BUSH]: { parts: nightshade(null) },
+  [BLOCK.NIGHTSHADE_BUSH_BARE]: { parts: nightshade([1, 9, 5, 4]), bare: true, tile: TILE.HONEYBERRY_BUSH },
+  [BLOCK.FLAX]: { parts: FLAX },
+  [BLOCK.ALOE]: { parts: ALOE },
 });
 
 /**

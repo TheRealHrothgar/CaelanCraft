@@ -19,7 +19,7 @@ import {
   GRAVITY, TERMINAL_VELOCITY, WORLD_HEIGHT, MAX_FALLING, MAX_TUMBLING, MAX_COLUMN_FALL, FALLER_RADIUS, FALLER_HEIGHT,
   TUMBLE_SUBSTEP, TUMBLE_AIR_DRAG, TUMBLE_GROUND_FRICTION, LANDING_DUST_PER_FRAME,
 } from './config.js';
-import { BLOCK, UNLOADED, POP_OFF_IDS, isFallThrough, isGravityBlock, isPlant, isPopOff, isSolid } from './blocks.js';
+import { BLOCK, UNLOADED, POP_OFF_IDS, isFallThrough, isFarmBlock, isGravityBlock, isPlant, isPopOff, isSolid } from './blocks.js';
 import { HEX_ROW_SPACING, worldToHex } from './hex.js';
 import { bodyHeight, bodyRadius, createBody, displaceBody, isFreeAt, playerIntersectsBlock } from './physics.js';
 
@@ -79,6 +79,8 @@ export const GRAVITY_RULE_IDS = Object.freeze([BLOCK.SAND, BLOCK.RED_SAND, BLOCK
 const POP_GREY = Object.freeze([0.56, 0.55, 0.52]);
 const POP_PAD_GREEN = Object.freeze([0.36, 0.56, 0.23]);
 const POP_BARK = Object.freeze([0.42, 0.3, 0.19]);
+/** Tilled earth: a planted seed or a sprout whose soil is dug away (§80). */
+const POP_EARTH = Object.freeze([0.36, 0.24, 0.15]);
 /** Leaf colours of the plants' particles (their tiles' foliage; the short plants' top tile is clear, so not by `id`). */
 const POP_LEAF = Object.freeze({
   [BLOCK.HONEYBERRY_BUSH]: Object.freeze([0.2, 0.42, 0.31]),
@@ -97,12 +99,22 @@ const POP_LEAF = Object.freeze({
   [BLOCK.CRAB_APPLE_BUSH_BARE]: Object.freeze([0.19, 0.42, 0.18]),
   [BLOCK.HEALWORT_PLANT]: Object.freeze([0.62, 0.76, 0.62]),
   [BLOCK.HEALWORT_PLANT_BARE]: Object.freeze([0.62, 0.76, 0.62]),
+  // §81: each its leaf colour (the Nightshade the Honeyberry's: the same bush)
+  [BLOCK.FERN]: Object.freeze([0.18, 0.48, 0.23]),
+  [BLOCK.MEADOW_DAISIES]: Object.freeze([0.29, 0.58, 0.25]),
+  [BLOCK.THISTLE]: Object.freeze([0.37, 0.58, 0.31]),
+  [BLOCK.HEMLOCK]: Object.freeze([0.38, 0.66, 0.26]),
+  [BLOCK.NIGHTSHADE_BUSH]: Object.freeze([0.2, 0.42, 0.31]),
+  [BLOCK.NIGHTSHADE_BUSH_BARE]: Object.freeze([0.2, 0.42, 0.31]),
+  [BLOCK.FLAX]: Object.freeze([0.23, 0.48, 0.29]),
+  [BLOCK.ALOE]: Object.freeze([0.35, 0.64, 0.48]),
 });
 
 /**
  * The puff of a pop-off block (DESIGN-survival §8.5): a campfire keeps its smoke and wood crack; a plant scatters 6
  * leaves (a prickly pear 4 green dust) with 'break:leaves'; loose stones and a fire pit 4 grey dust with 'break:stone';
- * fallen branches 4 bark-brown dust with 'break:wood'.
+ * fallen branches 4 bark-brown dust with 'break:wood'; a planted seed or a sprout (§80) 4 earth-brown dust with
+ * 'break:grass'.
  * @param {number} id  a pop-off id
  * @returns {{ kind: 'smoke'|'leaves'|'dust', count: number, dy: number, color: readonly number[]|null, sound: string }}
  */
@@ -113,6 +125,7 @@ export function popOffEffect(id) {
   }
   if (isPlant(id)) return { kind: 'leaves', count: 6, dy: 0.4, color: POP_LEAF[id], sound: 'break:leaves' };
   if (id === BLOCK.FALLEN_BRANCHES) return { kind: 'dust', count: 4, dy: 0.15, color: POP_BARK, sound: 'break:wood' };
+  if (isFarmBlock(id)) return { kind: 'dust', count: 4, dy: 0.2, color: POP_EARTH, sound: 'break:grass' };
   return { kind: 'dust', count: 4, dy: 0.2, color: POP_GREY, sound: 'break:stone' }; // LOOSE_STONES, FIRE_PIT
 }
 

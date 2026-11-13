@@ -251,6 +251,122 @@ From the build of CONTRACTS §78. None blocks play.
 - **Seen in headless screenshots only**; nobody has walked through a meadow of them yet. The chunk-mesh timing test still
   passes (a tussock is 9 quads, it was 3).
 
+
+## Plants that spread; farming; slower regrowth — open items
+
+From the build of CONTRACTS §80, which was unit-tested only: no browser, no build. None blocks play.
+
+**Not checked in the running game**
+
+- **Planting with R.** The R priority (`interactKind`) and the once-a-second work (`farmSecondOn`) are tested; the glue
+  in main.js is not: `plantSeed`, the order of the target hints, the half-second hint cache, `farmStep` on the debug
+  handle.
+- **The look.** The seedbed and the sprout were seen only in a rough off-line render of their quads, the three seed
+  pictures only as enlarged pixels. Nobody has seen them in a meadow, in the Pack or in the hand.
+- **The hints and the log line** as the HUD shows them; the puff and the sound when the soil under a crop is dug away.
+- **The pace.** A watered seed takes about three game days to a plant and a dry one about eight; a picked bush takes
+  two days to fruit again. Whether that feels slow, fair or dull is untested by a person. So are the seed chances
+  (50 % and 35 %) and the 80 % and 35 % of seeds that take.
+- **Measured off-line on one real generation-3 world** (seed 12345, six game days at the spawn): a farm second costs
+  0.07 ms; nine plants were born (five mushrooms on cave stone, two crab apples, a tuber and a carrot on grass); a
+  watered Carrot Seed became a plant and a dry one did not take.
+
+**Known limits**
+
+- **A farm grows only while its chunk is loaded**, and wild plants spread only within 48 cells of the player. Walk away
+  and both stand still, like a picked bush.
+- **A seedbed and a sprout look the same for every crop.** Only the hint tells a planted carrot from a planted hazel.
+- **R plants the food in your hand** when you aim at the top of bare soil that suits it: a tuber, a berry, a nut. The
+  hint says so first (`Grass Block · R: plant Wild Tuber`), but a careless R costs one. Dug out again, it comes back
+  half the time (a Wild Onion as Onion Seeds, a Cactus Fruit unpeeled).
+- **With a seed in hand, the wrong-ground hint gives way to the older hints**: on stone it still says
+  `Stone · needs a flint pick or better`, on gravel `Gravel · hold LMB: dig`. It shows on sand, snowy grass and the like.
+- **Old Survival worlds (generation 2) slowly gain the newer plants**: a plant from nothing can be a carrot, an onion,
+  a hazel, a crab apple, a Healwort or, under trees, a mushroom, whatever the land was made with.
+- **Water must be level with the soil, or one cell up or down.** A field on a bank two cells above a stream is dry.
+  Water that flows out of a tainted pond is tainted here too, and the sea is salt.
+- **A crop on soil that is dug away is lost**, seed and all (it pops off like any plant).
+- **Animals do not eat crops and nothing tramples them.** There is no hoe, no watering can and no harvest but the
+  plant's own.
+- **A plant from nothing takes any kind the ground can carry**, whatever the biome: a prickly pear can come up on a
+  beach, a healwort is as likely as a carrot. It is rare (one moment in ten game days in the whole range).
+- **A small patch fills to its soft maximum and then stands still**: births land within three cells, so every plant of
+  the patch still counts all the others. In a forty-day run three onions became eight in five days and stayed eight.
+  A patch hardly creeps across the land; new patches start from nothing (seven patches of four plants were 158 plants
+  after 300 game days, 2 % of the columns in range).
+- **Mushrooms spread in caves as well as under trees**, eight Honeycaps or six Frecklecaps to a patch. Roots and
+  mushrooms still do not regrow where they were picked (the older note above); they come back by spreading instead.
+- **Every new wild plant is an edit in the save.** At a handful of births a game day this stays small.
+- **`setblock … carrot` is now ambiguous** (carrot_plant, carrot_sprout), as `onion` and `tuber` are: type the full
+  name.
+- **The sprout BLOCK keys are `CARROT_SPROUT` …**, not `SPROUT_CARROT`: a key must be its block's name in capitals.
+
+## The lean Survival (v0.15) — open items
+
+From the build of CONTRACTS §79. None blocks play.
+
+- **Balance is untested by a person**: one food patch in three, herds of 1–3 kept to three near you, a raw gulp
+  poisoning one time in five. Each is one constant to change.
+- **Worlds made before this keep their land** (generation 3 or older), so they have about three times the wild food of a
+  new world. The sparser animals, the riskier raw water, spreading and farming apply to every Survival world.
+- **Seen in the running game** (headless): a new world is generation 4 with about half the food plants near spawn that
+  the same seed had; R plants a Carrot Seed and the hint reads `Planted Wild Carrot · dry: slow, and it may not take`; of
+  twelve carrots planted beside a stream ten grew in eight game days, of twelve on dry ground three did. Not seen: a
+  whole season of play, a cattail bed, a bush planted and fruiting.
+
+## Plants that are not food — open items
+
+From the build of CONTRACTS §81 (ferns, daisies, thistles; Hemlock and Nightshade; flax and aloe), which was unit-tested
+only: no browser, no build. None blocks play.
+
+**Not checked in the running game**
+
+- **The look, above all.** The seven pictures were judged as enlarged pixels on flat green and sand, and the eight
+  models in an off-line software render of their quads (plain lighting, no world round them). Nobody has seen them in
+  the real renderer: in a meadow, under trees, at dusk, from eye height and from far off, in the Pack or in the hand.
+  The least certain: the **fern** (two tiers of arching fronds on one upright frond can read as a small conifer in the
+  picture; its model is a fountain of fronds and reads better), the **thistle's leaves** (thick slabs with pale ends),
+  and the **aloe** (blocky leaves that can read as a crystal).
+- **Whether the tells can be seen at play distance.** The white flower plates of the Hemlock are large and lie on top,
+  so they should show from far; its pale crown and purple-blotched stalk are small. The Nightshade's black berries stand
+  on a dark bush: they show by their pale glints and by the purple flowers, which may be too little in poor light.
+- **The hints** (`Hemlock · R: pick`, `Nightshade Bush · R: pick`) and the chat line when one is eaten, as the HUD
+  shows them; the Aloe Leaf put on with the use button (it goes the bandage's way in main.js, which no test drives).
+- **The two Guide pages** in both readers at real window sizes (their word counts are inside the tested page budget).
+
+**Balance: numbers chosen, not play-tested**
+
+- **How much greenery.** Ferns stand on about 5 % of forest columns and daisies on 4 % of plains columns, with a thistle
+  on 1 %. Together with the tussock that is one plains column in nine with something growing on it. Whether that is
+  "full of plants" or cluttered, and what it costs to walk through and to mesh, is unmeasured in the game. (The
+  chunk-mesh timing test still passes; a daisy clump is 30 quads, a fern 29 and a thistle 78, against the tussock's 9.)
+- **How often the look-alike.** About half of what looks like a wild carrot is Hemlock (measured 41–51 % by seed); in
+  the forest about four bushes in ten are Nightshade, elsewhere about one in six. A patch is never all look-alike.
+- **Flax and aloe are rarer than the plants they were sized against, counted as plants.** Their PATCHES are as common
+  as asked (flax: as many as the wild onion had in generation 3; aloe: half as many as the prickly pear), but the
+  patches are small, so there is one flax plant in about 2 600 plains columns (the onion: one in 800) and one aloe in
+  about 900 desert columns (the prickly pear: one in 220). One number each in `PLANT_PATCHES_GEN4` changes it.
+- **The Aloe Leaf** heals 6 HP in 4 s after 1 s of use; a plant gives 1–2 leaves and is gone. Whether that is worth a
+  walk into the desert is untested. It spreads (four within six cells), and a shovel moves it.
+- **Fibre is not scarce on the plains**, where tussock grows on 6 % of the columns: flax (3–4 fibre a plant) is a quick
+  bundle, not a need.
+
+**Known limits**
+
+- **Only the newest worlds (generation 4) grow them.** In an older world they appear only as plants from nothing, where
+  the spreading rule picks one (a Hemlock, a Nightshade or a flax on grass, an aloe on sand): rarely.
+- **A Hemlock Root and Nightshade Berries cannot be put on a skewer.** With one in hand, R on a campfire takes what is
+  done instead. That the fire refuses it is itself a hint that it is not food.
+- **Once picked, the item's name tells which plant it was** ("Hemlock Root"), as "Frecklecap" does. What has to be
+  learned is that the name means poison; the Guide says so and the plant's look shows it.
+- **A picked Nightshade and a picked Honeyberry look the same** (one picture, one model). The hint names them.
+- **A carrot gives seed, a Hemlock none**; a shovel digs more carrots but lifts a Hemlock whole. A careful player can
+  tell them by that as well.
+- **The thistle grows on bare mountain stone** (the surface block of that biome), not only on grass.
+- **`setblock … nightshade` is ambiguous** (nightshade_bush, nightshade_bush_bare): type the full name.
+- **None of the eight can be planted** from an item; a shovel moves a whole plant, and four of them spread by
+  themselves. The fern, the daisies and the thistle neither spread nor regrow: dug up, they are gone from that spot.
+
 ## Sounds (v0.16) — open items
 
 From the build of CONTRACTS §82 (materials, footsteps, voices, ambience, the Sound Test). None blocks play.

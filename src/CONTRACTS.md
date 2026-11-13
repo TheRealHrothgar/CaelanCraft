@@ -332,6 +332,10 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 >
 > **v0.15 amendment (§78):** the wild plants are `'model'` (small 3D models, `plantModels.js`); `'cross'` is withdrawn. The shapes are `'prism'` | `'model'` | `'decal'` | `'litter'`.
 >
+> **Farming amendment (§80):** ids 133–150 (nine planted blocks, nine sprouts: `'model'`, not placeable), `BLOCK_COUNT` 151, tiles 205–206, `CROP_ROWS`, `FARM_IDS`, `isFarmBlock`; `isPopOff` and `POP_OFF_IDS` (39 ids) include them, `isPlant` and `PLANT_IDS` do not.
+>
+> **Plants amendment (§81):** ids 151–158 (FERN … ALOE: eight more wild plants, `'model'`; the picked Nightshade not placeable), `BLOCK_COUNT` 159, tiles 218–224 (`TILE_IDS` 183), `PICKER_ORDER` 115; `isPlant` / `PLANT_IDS` (25 ids) and `isPopOff` / `POP_OFF_IDS` (47 ids) include them.
+>
 > **Light amendment (§62):** GLOWSTONE now really glows: it, the CAMPFIRE and the TORCH emit block light (15, 14, 13); leaves, water and ice dim light (`light.js` LIGHT_EMISSION / LIGHT_OPACITY).
 
 Block ids (`BLOCK.*`): `AIR 0, STONE 1, GRASS_BLOCK 2, DIRT 3, COBBLESTONE 4, OAK_PLANKS 5, BEDROCK 6, WATER 7,
@@ -4534,8 +4538,8 @@ bare rock.
 
 Amends §59 (the plants' shape), §75 (it follows the litter's style) and §76.2. No block, tile, item or recipe is added.
 
-**The shape.** The seventeen wild plant blocks (ids 78–84 and 122–131, picked ones included) have `BlockDef.shape`
-`'model'`. `'cross'` — three crossed pictures — is withdrawn: no block uses it, and the mesher's `emitCross` and its
+**The shape.** The seventeen wild plant blocks (ids 78–84 and 122–131, picked ones included; §81 adds eight, 151–158)
+have `BlockDef.shape` `'model'`. `'cross'` — three crossed pictures — is withdrawn: no block uses it, and the mesher's `emitCross` and its
 `CROSS_*` constants are gone. A plant keeps `icon: 'flat'`: its 16 × 16 tile is still its picture in the Pack, and it is
 the skin every face of its model is cut from, so the two are plainly the same plant.
 
@@ -4589,6 +4593,433 @@ at most 0.54 m from the middle and is at least 0.3 m across both ways; every fac
 `bare` (the same quads in the same places, less the fruit), so picking visibly takes the nuts, apples, berries, fruit
 or flower spikes away. The picked Honeyberry's own tile is too sparse to wrap a box, so its lumps are cut from a
 berry-free corner of the bush's tile (`tile: TILE.HONEYBERRY_BUSH`).
+
+## 79. The lean Survival: generation 4, sparser animals, riskier raw water — `src/worldgen.js`, `src/animals.js`, `src/config.js`, `src/vitals.js`, `src/items.js`
+
+Amends §76 (the harder Survival) and §66 (raw water). With §80 (plants that spread, farming) and §81 (plants that are not
+food) it is the answer to "food is too plentiful": less to find, more to look after.
+
+**Generation 4** (`GEN_LATEST` 4, new worlds only; generations 1–3 are byte for byte what they were). It is generation 3
+with most of its food taken away:
+
+- `PATCH_TABLE_GEN4` begins with `PATCH_TABLE` row for row with the same salts, each `chance` × `LEAN_PATCH_CHANCE`
+  (0.45) and each `fill` × `LEAN_PATCH_FILL` (0.8). The Healwort (no food, already rare) keeps its chances and only gets
+  the thinner fill. `CAVE_TROOP_GEN4` is the cave troop with both factors. (§81: two of those rows gain a look-alike,
+  and four rows of plants that are not food follow them.)
+- Because the rolls are the same, a patch of generation 4 is always a patch of generation 3 of the same seed, and each
+  of its plants stands where it stood there. Where a patch plant is gone, the per-column flora roll decides the cell as
+  it would have without the patch (nothing, tussock, stones, a branch, a gravel patch).
+- Streams, ponds, tainted ponds, trees, ores and every other rule are generation 3's.
+- Measured on the test seed over 162 chunks: 310 patch plants in generation 3, 106 in generation 4 (about one in 390
+  columns; 103 since §81, which turned three of them into a look-alike). `worldGen.PATCH_TABLE` is the table of the
+  world's own generation.
+
+**Sparser animals** (every Survival world):
+
+| | was | is |
+|---|---|---|
+| `HERD_CHANCE` / `HERD_TARGET` | 0.35 / 5 | 0.2 / 3 |
+| `SMALL_CHANCE` / `SMALL_TARGET` | 0.4 / 4 | 0.25 / 3 |
+| `FISH_CHANCE` / `FISH_TARGET` | 0.6 / 5 | 0.4 / 3 |
+| group sizes: cow, sheep | 2–4 | 1–3 |
+| horse, wolf | 2–3 | 1–2 |
+| deer | 3–5 | 2–3 |
+| rabbit | 1–3 | 1–2 |
+| pheasant, turkey, fish | 2–4 | 1–3 |
+| `PIG_NATURAL_COUNT` | 3 | 2 |
+| `PIG_REPOP_CHECK_S` / `PIG_REPOP_TARGET` | 240 / 2 | 420 / 1 |
+| pigs a repopulation brings (`PIG_REPOP_COUNT`) | 2 | 1 |
+
+The bear stays alone (1). `ANIMAL_MAX`, the distances and the weights by biome are unchanged.
+
+**Raw water.** `RATES.GULP_FRESH_SICK` 0.2 (it was 0.06): one raw gulp of fresh water in five poisons. A raw Pot of Water
+poisons 0.4 of the time (it was 0.2). Tainted water is unchanged (0.4 a gulp, 0.6 a pot) and stays the worse choice;
+boiled water stays safe. The guide quotes all four numbers from the tables.
+
+## 80. Plants that spread; farming; slower regrowth — `src/farming.js` (PURE), `src/spread.js` (PURE), `src/harvest.js`, `src/blocks.js`, `src/tiles.js`, `src/plantModels.js`, `src/items.js`, `src/itemArt.js`, `src/survivalControl.js`, `src/main.js`, `src/handbook.js`
+
+Amends §44 (harvest: picking, regrowth), §47 (blocks, tiles), §49 (main), §73 (the guide), §76.2 (flora) and §78 (plant
+models). Everything here is a rule of the game, not of how the land is made: it holds in every Survival world, whatever
+its generation. Nothing new is saved: a planted cell is its block id, a new wild plant is an ordinary edit, and every
+step is a memoryless chance per second.
+
+### 80.1 Slower regrowth
+
+`config.REGROW_MEAN_S` is **2880** (two game days; it was 600). `Regrowth` is otherwise unchanged.
+
+### 80.2 Seeds
+
+Three materials, stack 32, after `fletched_dart`, each with a picture in itemArt.js: `carrot_seeds` "Carrot Seeds",
+`onion_seeds` "Onion Seeds", `healwort_seeds` "Healwort Seeds" (`SINGULAR_NAMES`: Carrot Seed, Onion Seed, Healwort
+Seed). `harvest.SEED_DROPS`: `carrot` = 1–2 carrot_seeds with p 0.5, `onion` = 1–2 onion_seeds with p 0.5, `healwort` =
+1 healwort_seeds with p 0.35. Each is one more drop group, after the plant's own, of BOTH the `PICKABLE` row and the
+`BLOCK_RULES` row of CARROT_PLANT, ONION_PLANT and HEALWORT_PLANT (the ripe one), so breaking still gives what a pick
+gives. Its chance roll comes after the crop's rolls, then its count roll.
+
+### 80.3 The crops (`farming.js`)
+
+`CROPS` (nine `CropDef`s in block-id order; the order, the kind keys and the names come from `blocks.CROP_ROWS`) and
+`PLANTABLE` (item key → kind key):
+
+| kind | name | planted from (`from`) | `back` | `grown` | `soil` |
+|---|---|---|---|---|---|
+| carrot | Wild Carrot | carrot_seeds | carrot_seeds | CARROT_PLANT | GRASS_BLOCK, DIRT |
+| onion | Wild Onion | onion_seeds, wild_onion | onion_seeds | ONION_PLANT | GRASS_BLOCK, DIRT |
+| tuber | Wild Tuber | wild_tuber | wild_tuber | TUBER_PLANT | GRASS_BLOCK, DIRT |
+| honeyberry | Honeyberry Bush | honeyberries | honeyberries | HONEYBERRY_BUSH_BARE | GRASS_BLOCK, DIRT |
+| hazel | Hazel Thicket | hazelnuts | hazelnuts | HAZEL_THICKET_BARE | GRASS_BLOCK, DIRT |
+| crab_apple | Crab Apple Bush | crab_apple | crab_apple | CRAB_APPLE_BUSH_BARE | GRASS_BLOCK, DIRT |
+| healwort | Healwort | healwort_seeds | healwort_seeds | HEALWORT_PLANT_BARE | GRASS_BLOCK, DIRT |
+| prickly_pear | Prickly Pear | cactus_fruit, unpeeled_cactus_fruit | unpeeled_cactus_fruit | PRICKLY_PEAR_BARE | SAND, RED_SAND |
+| cattails | Cattails | cattail_root | cattail_root | CATTAILS | GRASS_BLOCK, DIRT, SAND |
+
+A `CropDef` is `{ key, index, name, from, back, planted, sprout, grown, soil, reed }`; `reed` is true for cattails only.
+A crop's name is the display name of its ripe plant less a closing " Plant". A bush, a thicket, a Healwort and a
+prickly pear grow up PICKED (`*_BARE`): `Regrowth` tracks the write and brings the first fruit. Mushrooms cannot be
+planted. Exports: `SOIL_EARTH`, `SOIL_SAND`, `SOIL_SHORE`, `SOIL_WORDS`, `cropOf(kind)`, `cropOfItem(key)`,
+`cropOfBlock(id)`, `isPlanted(id)`, `isSprout(id)`, `soilWords(soil)` ("grass or dirt", "grass, dirt or sand").
+
+### 80.4 Farm blocks, tiles and models
+
+**Blocks.** `PLANTED_<KIND>` 133–141 (`planted_carrot`, "Planted Wild Carrot", …) and `<KIND>_SPROUT` 142–150
+(`carrot_sprout`, "Wild Carrot Sprout", …), in CROP_ROWS order. (The sprout keys are `CARROT_SPROUT` …, not
+`SPROUT_CARROT`: a BLOCK key is its block's name in capitals, wave0.) Flags: `SPRITE` (the PLANT flags, shape `'model'`,
+flat icon), `placeable: false`, soundGroup `'grass'`. They have no picker entry and no item. `FARM_IDS` (18 ids, in id
+order), `isFarmBlock(id)`. They are pop-off blocks (`isPopOff`, `POP_OFF_IDS` 39 ids; `popOffEffect`: 4 earth-brown
+dust, `'break:grass'`) but not wild plants (`isPlant` false: nothing generates them and R does not pick them).
+BLOCK_COUNT 151.
+
+**Break rules.** A planted block: 0.3 s by hand, no tool, tier 0, one group: its crop's `back` item with p
+`SEED_BACK_P` (0.5). A sprout: 0.3 s, no drops.
+
+**Tiles** (tiles.js comments normative): `SEEDBED` 205 and `SPROUT` 206; every face of every planted block is the
+first, of every sprout the second. Both are cut-outs (alpha 0 or 255) on one shared mound of dark tilled earth (rows
+10–15, painted with the "seedbed" seed, so the two are the same earth pixel for pixel). The seedbed adds a marker twig
+with a pale rag and nothing green; the sprout a green stem and two seed leaves. TILE_IDS 176 (207 is free).
+
+**Models** (plantModels.js, §78's parts; one model for all nine planted blocks, one for all nine sprouts). The mound:
+two steps, 10 × 1.5 × 10 and 7 × 1.5 × 7 texels. The seedbed (21 quads, 0.57 m): the mound, a twig 1.5 × 6 × 1.5
+leaning a little, a rag 0.75 × 2 × 3 tied to it. The sprout (27 quads, 0.63 m): the mound, a stem 1.5 × 4 × 1.5, two
+leaf boxes 5 × 1 × 3.5 lifting away from the stem. Every face is cut from solid texels. Both meet §78's limits
+unrelaxed.
+
+### 80.5 Planting
+
+`farming.plantAt(getBlock, key, q, y, r)` → `{ crop, block, cell: [q, y + 1, r], hint }` when `key` is plantable, the
+block at (q, y, r) is in its crop's `soil` and the cell above is AIR; else null. Hint: `Grass Block · R: plant Carrot
+Seeds`. `wrongGroundHint(getBlock, key, q, y, r)` → `Carrot Seeds grow in grass or dirt` (`grows` for a name that does
+not end in s) when the item is plantable, the cell above is AIR and the block is not its soil; else null.
+
+`survivalControl.interactKind` step **7c** (after the circuit parts, before water): with `ctx.getBlock`, a plantable
+`selectedKey` and `hit.face === FACE_TOP`, `plantAt` on the hit cell gives `{ kind: 'plant', q, y, r, key, block,
+hint }`. Soil is none of the blocks of steps 1–7b, so no earlier R changes: a pickable plant under the crosshair is
+still picked, water nearer than the soil is still drunk. Food is eaten with the use button (RMB), never R. R does not
+repeat planting while held.
+
+main `plantSeed(q, y, r)`: `plantAt` again, `placeRefusal`, then `placeBlockAt(block, cell)` (the path a player's block
+placement takes: `playerSetBlock`, the place sound, `updateHit`), then one item is used up. The target hint shows the
+action's hint; on the wrong ground, after the tool and hand-gather hints, `wrongGroundHint` (top face only).
+
+### 80.6 Water and sky
+
+- `hasSky(getBlock, q, y, r, top?)`: no opaque block anywhere above the cell in its column. Leaves, glass and water let
+  the light through.
+- `waterNear(getBlock, q, y, r, reach, isFresh?)`: a water cell (`isWater`) within `reach` cells (hex distance) of the
+  plant's cell at y (one above the soil), y − 1 (the soil's level) or y − 2 (one below); with `isFresh`, only a cell it
+  accepts.
+- `cropState(getBlock, waterQuality, q, y, r, crop)` → `{ sky, watered, reed }`. `watered`: water within
+  `FARM_WATER_REACH` (**4**) whose `waterQuality(q, y, r)` is `'fresh'` (main passes `waterQualityOf`, the drinking
+  code's judgement: neither tainted nor salt; without the callback every water counts). `reed`: true unless the crop is
+  a reed with no water of any kind within `REED_WATER_REACH` (**1**).
+- `farmHint(id, state)`: `<block name> · needs open sky` (no sky), else `· needs water beside it` (a reed without it),
+  else `· watered`, else `· dry: slow, and it may not take` (planted) or `· dry: slow` (a sprout). main shows it for a
+  farm block in the crosshair and keeps the answer for 0.5 s per block.
+
+### 80.7 Growth
+
+`farming.Growth` is modelled on `Regrowth`: `cells` ("q,y,r" → `{ q, y, r, id }`), `size`, `has`, `track(q, y, r, id)`
+(farm ids only; at most `MAX_GROWTH_TRACKED` 4096; a known cell takes the new id), `untrack`, `onBlockChange(q, y, r,
+prev, next)`, `loadFromEdits(edits)` (every FARM_IDS cell of World.edits), `clear`, and
+
+`step(dt, random, isLoadedCell, getBlock, waterQuality?)` → `GrowthEvent[]` `{ q, y, r, from, to, crop, took }`:
+
+- Cells in unloaded chunks are frozen: no roll.
+- Every other tracked cell draws one `random()` `u`, in tracking order. Its moment comes when `u < min(1, dt / mean)`:
+  `SPROUT_MEAN_S` for a planted block (**1440** watered, **4320** dry), `GROW_MEAN_S` for a sprout (**2880** watered,
+  **7200** dry).
+- Nothing happens without open sky, nor to a reed without water within 1 cell.
+- The world is looked at only when `u` is below the watered chance (the outcome is the same as looking first; a big
+  field costs nothing).
+- At its moment a planted block draws once more: it takes with probability `SEED_TAKES` (**0.8** watered, **0.35**
+  dry) and `to` is its sprout; else `to` is AIR and `took` is false. A sprout's `to` is its crop's `grown` block.
+- A cell with an event stops being tracked; main's write tracks a sprout again through onBlockChange.
+
+`failLine(crop)`: `A planted Wild Carrot did not take.` (`A planted Cattail did not take.`).
+
+### 80.8 Plants that spread (`spread.js`)
+
+**Kinds** (`SPREAD_KINDS`, one frozen row each: `{ key, index, blocks, born, soil, cap, shade, cave, reed }`). The nine
+crops in CROPS order, each born as its crop's `grown` block on its crop's soil, then the two mushrooms, born ripe:
+
+| kind | blocks (ripe and picked count alike) | cap |
+|---|---|---|
+| carrot | CARROT_PLANT | 8 |
+| onion | ONION_PLANT | 8 |
+| tuber | TUBER_PLANT | 6 |
+| honeyberry | HONEYBERRY_BUSH, HONEYBERRY_BUSH_BARE | 5 |
+| hazel | HAZEL_THICKET, HAZEL_THICKET_BARE | 4 |
+| crab_apple | CRAB_APPLE_BUSH, CRAB_APPLE_BUSH_BARE | 4 |
+| healwort | HEALWORT_PLANT, HEALWORT_PLANT_BARE | 3 |
+| prickly_pear | PRICKLY_PEAR, PRICKLY_PEAR_BARE | 5 |
+| cattails | CATTAILS (`reed`) | 10 |
+| honeycap | HONEYCAP_MUSHROOM (`shade`; soil GRASS_BLOCK, DIRT; `cave` STONE) | 8 |
+| frecklecap | FRECKLECAP_MUSHROOM (`shade`; the same) | 6 |
+
+The tussock, the farm blocks and everything else do not spread. A new kind is one more row (§81.5 adds four: hemlock,
+nightshade, flax and aloe, which are no crops).
+
+**Constants.** `SPREAD_SAMPLES` 48, `SPREAD_RANGE` 48, `SPREAD_RADIUS` 6, `SPREAD_STEP` 3, `SPREAD_RISE` 4,
+`SPREAD_MEAN_S` 4320, `SPREAD_COLUMNS` = hexDiscCount(SPREAD_RANGE) = 7057, `SPREAD_BIRTH` = SPREAD_COLUMNS /
+(SPREAD_SAMPLES × SPREAD_MEAN_S) ≈ 0.034, `SPONTANEOUS_MEAN_S` 14400, `SPONTANEOUS_CLEAR` 3.
+
+**The chance.** `crowding(n, cap)` = `(cap − n) / (cap − 1)` clamped to 0..1: 1 for a plant alone, 0 at the cap, a
+straight line between. `birthChance(n, cap, dt = 1)` = `min(1, SPREAD_BIRTH × crowding × dt)`. A given column is
+sampled SPREAD_SAMPLES / SPREAD_COLUMNS times a second, so a plant alone on open ground gives a new plant every
+SPREAD_MEAN_S on average (three game days), whatever its kind's cap. (The factor is not `1 − n / cap`: with n counting
+the plant itself that would make a lone plant's mean SPREAD_MEAN_S ÷ (1 − 1 / cap), 3.3 to 4.5 days by kind.)
+
+**Looking at the world.**
+
+- `discCells(radius)`: the cells within `radius` of (0, 0) as (dq, dr) pairs, dq rising then dr rising; the middle
+  entry is (0, 0). A roll `x` picks entry `min(n − 1, floor(x × n))`.
+- `spreaderAt(getBlock, q, r, top?)` → `{ y, kind }` or null: the highest spreading plant of the column that can seed,
+  looking down from `top`. A kind that needs the sky does not seed from under an opaque block (leaves are no roof); a
+  `shade` kind seeds from anywhere. The look goes on down past the ground and past a roofed plant, so a mushroom in a
+  cave is found.
+- `countKind(getBlock, kind, q, y, r)`: the columns within SPREAD_RADIUS that hold a block of the kind within
+  SPREAD_RISE cells above or below y (the plant's own column included).
+- `canGrowAt(getBlock, kind, q, y, r, top?)`: the cell is AIR and y ≥ 1; a sky kind needs its soil below, `hasSky`,
+  and (a reed) water within REED_WATER_REACH; a shade kind needs its soil below under leaves or an opaque block, or its
+  `cave` ground below under an opaque block.
+- `siteNear(getBlock, kind, q, r, y, top?)`: the highest cell of the column within SPREAD_RISE of y where `canGrowAt`
+  holds, or −1.
+- `surfaceCell(getBlock, q, r, top?)`: the cell above the first block that is neither AIR nor leaves, looking down
+  from `top`, when that cell is AIR; else −1.
+- `plantNear(getBlock, q, y, r, reach)`: any spreading plant within `reach` columns, SPREAD_RISE up or down.
+
+**One step.** `spreadStep(dt, random, world)` with `world = { getBlock, isLoadedCell, q, r, top? }` (the player's
+column) returns one `Birth` `{ q, y, r, id, kind, seeded, parent }` or null:
+
+1. SPREAD_SAMPLES times: one `random()` picks a column of `discCells(SPREAD_RANGE)` round the player. An unloaded
+   column is skipped. In a column whose `spreaderAt` is a plant with `birthChance(countKind, cap, dt)` above 0, one
+   more `random()` below that chance makes it seed (no roll at or above the cap); a third picks one of the 36 other
+   columns within SPREAD_STEP. When that column is loaded and has a `siteNear` the parent's height, the birth is
+   `{ id: kind.born, seeded: true, parent: [q, y, r] }` and the step ends. A seed with no site is lost.
+2. With no birth so far, one `random()` below `min(1, dt / SPONTANEOUS_MEAN_S)` is the moment for a plant from
+   nothing: one more picks a column in range; when it is loaded, has a `surfaceCell`, and no spreading plant stands
+   within SPONTANEOUS_CLEAR cells (`plantNear`), one more picks among the kinds for which `canGrowAt` holds there, if
+   any (`seeded: false`, `parent: null`).
+
+So there is at most one birth a second, a birth is only ever into AIR, and nothing is written here. `Spread` is the
+session's object: `step(dt, random, world)` is `spreadStep` and counts `seeded`, `spontaneous`, `births` and `last`;
+`clear()`.
+
+Measured (spread.test.js, seeded): 37 lone plants over 40 000 s give births 0.97–0.98 of SPREAD_MEAN_S apart; a patch
+of three onions left alone is eight onions after five days and is still eight after forty (births land within three
+cells, so a small patch stays inside its own radius and stops at its cap); bare land gets 2 plants from nothing in
+forty days.
+
+### 80.9 main.js
+
+- State: `growth` (Growth) and `spread` (Spread), one per session. `onBlockChanged` calls `growth.onBlockChange` after
+  `regrowth.onBlockChange`; `loadSurvival` calls `growth.loadFromEdits(world.edits)` and `spread.clear()`;
+  `clearSurvival` clears both.
+- `farmSecondOn(dt, random, { world, growth, spread, isLoadedCell, waterQuality, q, r, say? })` (exported) →
+  `{ sprouted, grown, failed, births }`: every Growth event is written with `world.setBlock(q, y, r, to, true)` when
+  the cell still holds `from`; a seed that did not take is told through `say(failLine(crop))` when the player's column
+  is within `FAIL_NOTICE_CELLS` (24) of it; then `spread.step`, and its birth is written (lazily) only into a cell that
+  is AIR. `stepSurvival` calls it once a second, right after regrowth, with Math.random: Survival only, any generation.
+- Debug handle (`window.__caelancraft`, GameContext): `growth`, `spread`, and `farmStep(seconds)`: `farmSecondOn` in
+  1 s steps, at most `FARM_STEP_MAX_S` (14400), returning the summed counts and `seconds`. Nothing else ages.
+
+### 80.10 Totals and the guide
+
+BLOCK_COUNT 151; TILE_IDS 176; 251 items (34 tools, 51 materials, 52 foods, 2 heals, 5 wear, 107 blocks); recipes
+unchanged. (§81.6 has the totals after the plants that are not food: 159, 183, 261.) The Survival Guide's Food and fire
+chapter gains two pages after "Food in bunches" (§81 puts two more between them): "Leave some to seed"
+(`handbook.patchCaps()`, `SPREAD_WORDS`) and "Planting"; "Foraging" says a picked bush fruits again on average after
+about 2 game days. handbook.test.js pins every number of the three to the constants above.
+
+## 81. Plants that are not food — greenery, poisonous look-alikes, useful plants — `src/blocks.js`, `src/tiles.js`, `src/plantModels.js`, `src/items.js`, `src/itemArt.js`, `src/harvest.js`, `src/worldgen.js`, `src/spread.js`, `src/fallingblocks.js`, `src/pickerModel.js`, `src/handbook.js`
+
+Amends §44 (harvest), §43 (items), §47 (blocks, tiles), §76.2 (flora), §78 (plant models), §79 (generation 4), §80.8
+(plants that spread) and §73 (the guide). The land of the lean Survival stays full of plants; only some of them are food.
+Three kinds are added: greenery that is simply there, two poisonous look-alikes that have to be told from the food they
+imitate, and two plants worth gathering for something other than eating. The rules about blocks, items, drops and
+spreading hold in every world; only generation 4 GROWS the plants (generations 1–3 are byte for byte what they were).
+
+### 81.1 Blocks, tiles and items
+
+**Blocks** 151–158, appended in id order, all `SPRITE` (the PLANT flags, shape `'model'`, a flat icon):
+
+| id | key | display name | sound | what it is |
+|---|---|---|---|---|
+| 151 | FERN | Fern | grass | forest-floor greenery |
+| 152 | MEADOW_DAISIES | Meadow Daisies | grass | greenery of the plains |
+| 153 | THISTLE | Thistle | grass | greenery of plains and mountains |
+| 154 | HEMLOCK | Hemlock | grass | the Wild Carrot's look-alike; it poisons |
+| 155 | NIGHTSHADE_BUSH | Nightshade Bush | leaves | the Honeyberry Bush's look-alike; it poisons |
+| 156 | NIGHTSHADE_BUSH_BARE | Picked Nightshade Bush | leaves | picked; it regrows. Not placeable |
+| 157 | FLAX | Flax | grass | the fibre plant |
+| 158 | ALOE | Aloe | grass | its leaf heals |
+
+BLOCK_COUNT 159. `isPlant` and `PLANT_IDS` (25 ids, in id order) include all eight; so do `isPopOff` and `POP_OFF_IDS`
+(47 ids: the eight follow the farm blocks). `popOffEffect`: six leaves, `'break:leaves'`, each its leaf colour (the
+Nightshade the Honeyberry's). The seven placeable ones follow HEALWORT_PLANT in PICKER_ORDER (115 entries) and in the
+picker's Wild Plants family, and are block items; the `nightshade_bush` item places NIGHTSHADE_BUSH_BARE (it must
+regrow, like the Honeyberry) and both Nightshade blocks give it. No block or item name says which plants poison: the
+words poison, toxic, deadly, venom, bad, fool, false, death and sick appear in none (flora.test.js).
+
+**Tiles** 218–224 in the same order (the picked Nightshade shows HONEYBERRY_BUSH_BARE, tile 80); TILE_IDS 183; 207 and
+225–227 stay free. Each is a cut-out on alpha 0 with RGB 0, alpha 0 or 255 only, 99–136 opaque pixels, standing on the
+bottom row, with clear corners; tiles.js comments are normative. Five are written out pixel for pixel (`paintPicture`:
+16 rows of 16 characters and a palette):
+
+- **fern**: a feathery upright frond and two tiers of fronds arching out either side with drooping tips; deep green
+  with a dark rib and light toothed edges, and nothing on it but green.
+- **meadow_daisies**: three flowers on thin stems over a tuft of leaves, and a bud. A flower is 3 × 3: four white
+  petals, shaded corners, a yellow heart.
+- **thistle**: a stout stalk with three pairs of jagged leaves ending in pale spines, a scaly green bulb, a purple tuft.
+- **flax**: a sheaf of slender dark stems carrying five sky-blue flowers (3 × 3, a pale heart). No other plant is sky
+  blue.
+- **aloe**: a rosette of thick pointed leaves, sea green with a lit left edge and a dark right edge, eight pale teeth.
+
+The two look-alikes are painted FROM the plant each imitates, so what differs is exactly this and nothing else:
+
+| | the food | its look-alike |
+|---|---|---|
+| leaves | Wild Carrot: five feathery fronds (`paintCarrotFronds`) | Hemlock: the same fronds, pixel for pixel (the "carrot_plant" seed) |
+| flowers | none | three flat white heads, each a white row over a shaded row: 6 wide on rows 0–1, 4 wide either side on rows 2–3 |
+| stem | a thin green rib | a stalk 2 px wide from row 2 to row 11 with five purple blotches |
+| root | an orange crown (`paintRootCrown`) | the same crown, pale |
+| bush | Honeyberry: the berry foliage in the bush's silhouette | Nightshade: the same foliage and silhouette (the "honeyberry_bush" seed) |
+| berries | long, pale blue, in clusters | seven round 2 × 2 berries, black-purple, a pale glint on the upper left of each |
+| flowers | none | three purple stars: a yellow heart with a petal above, below, left and right |
+
+`paintCarrotPlant` is `paintCarrotFronds` then `paintRootCrown` (its picture is unchanged, byte for byte).
+
+**Items** (261 in all: 34 tools, 51 materials, 54 foods, 3 heals, 5 wear, 114 blocks), each with a picture in itemArt.js:
+
+- `hemlock_root` "Hemlock Root" and `nightshade_berries` "Nightshade Berries" (singular "Nightshade Berry"), foods, after
+  `pot_healwort_tea`. Each is the food it imitates in every number but one: `hemlock_root` is `wild_carrot`
+  (3 / +1, useS 1.0, stack 16) and `nightshade_berries` is `honeyberries` (4 / +2, useS 0.8, spoilS 1800, stack 32),
+  both with `sick: 1` — they always poison, as the Frecklecap does. Neither is in FIRE_TRANSFORMS or any recipe: there is
+  no roasting the poison away. Healwort cures it.
+- `aloe_leaf` "Aloe Leaf", a heal, after `rag_bandage`: `{ hp: 6, rate: 1.5, useS: 1.0 }`, stack 16. It is put on with
+  the use button like a bandage (`useActionOf` → `'bandage'`), heals less than the Fibre Bandage (15 HP, 1.5 s) and
+  needs no making.
+- Icons: the root is the carrot's shape, pale, under the stub of a purple-blotched stem; the berries are round and
+  black on the honeyberry's twig; the leaf is one thick sea-green leaf with pale teeth, cut at its base.
+
+### 81.2 Models (plantModels.js; §78's parts and limits, unrelaxed)
+
+| Plant | Model | quads |
+|---|---|---|
+| Fern | a low crown; three young fronds standing in it; eight fronds arching out in two tiers, each a feather card with a narrower one drooping from its end | 29 |
+| Meadow Daisies | a tuft of four leaves lying out; three stems of different heights (two crossed cards each), each with a flat 4 × 1 × 4 flower tipped outward, its top the whole 3 × 3 flower | 30 |
+| Thistle | a stalk, a scaly bulb, a purple tuft in two steps; six leaves in two tiers, each two slabs with a pale end | 78 |
+| Hemlock | the carrot's crown (pale) and five leaning frond cards; a purple-blotched stalk with a 6 × 1 × 6 white plate on top, and two more plates on leaning stems | 45 |
+| Nightshade Bush | the Honeyberry's model part for part (its picture has a berry in the same corner, so the five berries stand where the honeyberry's do, black); three purple star flowers, one on top and two on the sides | 67 |
+| Picked Nightshade Bush | the picked Honeyberry, quad for quad (`bare`, `tile: TILE.HONEYBERRY_BUSH`) | 27 |
+| Flax | a foot; five thin stems leaning apart, each with a small leaf and a flat sky-blue flower tipped outward | 60 |
+| Aloe | a foot; one upright leaf, three leaning out of the middle and four lying out low round them, each two slabs (the upper narrower), their edges cut from a pale-toothed strip | 77 |
+
+The fern and the daisies grow on about every twentieth column of their biome, so their models are kept light (at most
+32 quads; the tussock's limit of 12 stays its own). The tells show in 3D, not only in the picture: the Hemlock has three upward faces of pure white in its upper half and
+the carrot none; the Hemlock's crown is pale and the carrot's orange; the Nightshade's five berry boxes are black and the
+Honeyberry's blue, in the very same places; the Nightshade's flowers are `fruit` and go with the berries when it is
+picked. plantsNotFood.test.js measures each of these in the texels the quads are cut from.
+
+### 81.3 Harvest
+
+- **R picks** (`PICKABLE`): HEMLOCK → AIR, 1 `hemlock_root`; NIGHTSHADE_BUSH → NIGHTSHADE_BUSH_BARE, 2–4
+  `nightshade_berries`; FLAX → AIR, 3–4 `plant_fibre`; ALOE → AIR, 1–2 `aloe_leaf`. No seed drops. `RIPE_OF` maps
+  NIGHTSHADE_BUSH_BARE back, so `Regrowth` tracks it. The fern, the daisies and the thistle are not picked.
+- **Breaking** (`BLOCK_RULES`; tool `shovel`, tier 0): a shovel lifts each of the eight whole (its block item; the
+  Nightshade, ripe or picked, as `nightshade_bush`, with its berries and 1–2 sticks as the Honeyberry). By hand: fern
+  0.2 s, 1 `plant_fibre` with p `FERN_FIBRE_P` (0.3); daisies and thistle 0.2 s, nothing; hemlock 0.4 s, 1 hemlock_root;
+  nightshade 0.5 s, 2–4 berries and 1–2 sticks (picked: the sticks); flax 0.3 s, 3–4 plant_fibre; aloe 0.3 s, 1–2
+  aloe_leaf. So breaking gives what a pick gives.
+- **Hints.** The target hint of a pickable one is its display name and `R: pick` (`Hemlock · R: pick`): no rule adds a
+  warning (`handGatherHint` and `harvestHint` are null for all eight).
+
+### 81.4 Where they grow — generation 4 only (`worldgen.js`)
+
+- **Greenery, by the per-column roll.** `FLORA_TABLE_GEN4` is `FLORA_TABLE` with `GREENERY_GEN4`'s rows after each
+  biome's own: PLAINS MEADOW_DAISIES 0.04 and THISTLE 0.01, FOREST FERN 0.05, MOUNTAINS THISTLE 0.01. Every older row
+  keeps its slice of the roll, so nothing that grows in generation 3 moves; the new rows take slices that were empty.
+  `worldGen.FLORA_TABLE` is the table of the world's own generation.
+- **Look-alikes in the food patches.** In `PATCH_TABLE_GEN4` the carrot row has `mixId: HEMLOCK` with `mixShares`
+  `HEMLOCK_SHARES` [0, 0.25, 0.5, 0.5] and the honeyberry row `mixId: NIGHTSHADE_BUSH` with `NIGHTSHADE_SHARES`
+  [0, 0, 0.25, 0.5]. The look-alike roll of §76.2 decides which plant a column holds; where it stands does not change,
+  so a look-alike stands where generation 3 has the plant it imitates.
+- **Four patch rows of their own**, `PLANT_PATCHES_GEN4`, after PATCH_TABLE's ten in `PATCH_TABLE_GEN4`. A row's salt
+  is `PATCH_SALT +` its index, or `+` its own `salt` when it has one: the new rows have `PLANT_PATCH_SALT`
+  (PATCH_TABLE.length + 1 = 11) + 0…3, clear of the old rows (0–9) and of the cave troops (10).
+
+  | key | plant | cell | chance | radius | fill | |
+  |---|---|---|---|---|---|---|
+  | hemlock | HEMLOCK | 40 | PLAINS and FOREST: the carrot row's generation-4 chance (0.1395) | 1 | 0.35 | `edgeBelow` FOREST_EDGE_HUMIDITY |
+  | nightshade | NIGHTSHADE_BUSH | 32 | FOREST: the honeyberry row's generation-4 chance (0.279) | 1 | 0.35 | |
+  | flax | FLAX | 40 | PLAINS 0.2 (the onion row's generation-3 chance) | 1 | 0.65 | |
+  | aloe | ALOE | 28 | DESERT 0.225 (half the prickly pear row's generation-3 chance) | 1 | 0.43 | |
+
+- **Order in the surface pass**, for a column whose top is still its biome's surface with AIR above:
+  1. a patch of one of PATCH_TABLE's ten rows that claims the column and fits places its plant (as in generation 3);
+  2. else the roll runs over the rows generation 3 has, exactly as there;
+  3. generation 4 only, and only when the surface is still the biome's own with AIR above: a patch of a new row that
+     claims the column places its plant;
+  4. else, when the roll fell in no slice of step 2, it runs on into the greenery rows.
+
+  So a plant that is not food only ever takes a cell that everything older left empty, on ground that did not change.
+  Against generation 3 of the same seed: a food plant stands where generation 3 has the same plant; a look-alike where
+  it has the plant it imitates; every new plant on a cell that is AIR there or a patch plant; nothing else differs but
+  what §79 already allows.
+- **Measured** (worldgenLean.test.js; seed 4242, 1 089 chunks: 126 000 columns of plains, 50 000 of forest, 32 000 of
+  desert): ferns on 4.9 % of forest columns; daisies on 4.1 % and thistles on 1.0 % of plains columns, thistles on 1.0 %
+  of mountain columns. 27 Hemlock to 39 Wild Carrots (41 %; 47 % over three seeds). In the forest 47 Nightshade to 55
+  Honeyberry bushes; elsewhere 12 to 61. Flax: 48 plants in patches of 3–6, one in 2 600 plains columns (the wild onion
+  of generation 3: one in 800, in bigger patches). Aloe: 36 plants in patches of 2–4, one in 880 desert columns (the
+  prickly pear: one in 220 in generation 3, one in 810 in generation 4).
+
+### 81.5 Spreading (`spread.js`, §80.8)
+
+Four more rows of `SPREAD_KINDS` (15 in all), after the mushrooms. None is a crop: `farming.PLANTABLE` is unchanged and
+none of the eight can be planted.
+
+| kind | blocks | born | soil | cap |
+|---|---|---|---|---|
+| hemlock | HEMLOCK | HEMLOCK | GRASS_BLOCK, DIRT | 6 |
+| nightshade | NIGHTSHADE_BUSH, NIGHTSHADE_BUSH_BARE | NIGHTSHADE_BUSH_BARE | GRASS_BLOCK, DIRT | 4 |
+| flax | FLAX | FLAX | GRASS_BLOCK, DIRT | 8 |
+| aloe | ALOE | ALOE | SAND, RED_SAND | 4 |
+
+They need open sky like every kind but the mushrooms, and take their turn among the kinds a plant from nothing can be.
+The fern, the daisies and the thistle do not spread.
+
+### 81.6 The guide and the totals
+
+The Food and fire chapter gains two pages after "Food in bunches": **"Know your plants"** (most plants are not food; the
+two pairs and their tells; a Hemlock Root or Nightshade Berries poison every time for `RATES.SICK_S` seconds and cannot
+be roasted; Healwort cures; about half of what looks like a wild carrot is Hemlock; the hint names the plant; and, as a
+warning, "Outdoors, never eat a wild plant unless a grown-up who knows plants says it is safe.") and **"Plants worth
+knowing"** (flax for fibre and what fibre is for; the Aloe Leaf with its three numbers beside the Fibre Bandage's; both
+spread; the greenery is simply part of the land). "Leave some to seed" lists the four new kinds with their maxima
+(`SPREAD_WORDS`); the bandage table is "Bandages and the Aloe Leaf" (`PICKED_WORDS` "picked, not made" where there is no
+recipe); the older-worlds line says only the newest worlds grow them. handbook.test.js pins every number.
+
+Totals: BLOCK_COUNT 159; TILE_IDS 183; 261 items (34 tools, 51 materials, 54 foods, 3 heals, 5 wear, 114 blocks);
+PICKER_ORDER 115; PLANT_IDS 25; POP_OFF_IDS 47; 43 plant models; 15 spreading kinds; recipes unchanged.
 
 ## 82. Sounds: materials, footsteps, voices, ambience — `src/soundBank.js` (PURE), `src/worldSounds.js` (PURE), `src/soundTest.js` (DOM), `src/audio.js`, `src/circuitSounds.js`, `tests/helpers/offlineAudio.js`
 

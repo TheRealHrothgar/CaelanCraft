@@ -428,9 +428,9 @@ describe('waterQualityAt: flowing water is as good as its sources (§76)', () =>
 });
 
 describe('drinking it (§66, §76)', () => {
-  it('RATES: a tainted gulp poisons 40 % of the time, a fresh one 6 %; both give +8', () => {
+  it('RATES: a tainted gulp poisons 40 % of the time, a fresh one 20 % (6 % until v0.15, §79); both give +8', () => {
     expect(RATES.GULP_TAINTED_SICK).toBe(0.4);
-    expect(RATES.GULP_FRESH_SICK).toBe(0.06);
+    expect(RATES.GULP_FRESH_SICK).toBe(0.2);
     const v = createVitals();
     v.hydration = 40;
     expect(gulpWater(v, 'tainted', () => 0.41)).toEqual({ sick: false });
@@ -469,7 +469,7 @@ describe('drinking it (§66, §76)', () => {
     expect(calls).toBe(2);
   });
 
-  it('over 20 000 seeded gulps the poisoning rates are 40 % (tainted) and 6 % (fresh)', () => {
+  it('over 20 000 seeded gulps the poisoning rates are 40 % (tainted) and 20 % (fresh)', () => {
     const random = mulberry32(76);
     const rate = (quality) => {
       let sick = 0;
@@ -480,8 +480,8 @@ describe('drinking it (§66, §76)', () => {
     const fresh = rate('fresh');
     expect(tainted).toBeGreaterThan(0.38);
     expect(tainted).toBeLessThan(0.42);
-    expect(fresh).toBeGreaterThan(0.05);
-    expect(fresh).toBeLessThan(0.07);
+    expect(fresh).toBeGreaterThan(0.18);
+    expect(fresh).toBeLessThan(0.22);
     expect(rate('salt')).toBe(0);
   });
 
@@ -539,8 +539,8 @@ describe('drinking it (§66, §76)', () => {
     const rw = rate('pot_water');
     expect(rt).toBeGreaterThan(0.58);
     expect(rt).toBeLessThan(0.62);
-    expect(rw).toBeGreaterThan(0.18);
-    expect(rw).toBeLessThan(0.22);
+    expect(rw).toBeGreaterThan(0.38); // v0.15 (§79): a raw Pot of Water poisons 40 % of the time (it was 20 %)
+    expect(rw).toBeLessThan(0.42);
     expect(rate('pot_boiled')).toBe(0);
   });
 });

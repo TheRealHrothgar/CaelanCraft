@@ -58,7 +58,9 @@ export const PICKER_SECTIONS = Object.freeze([
     fam('snow-ice', 'Snow & Ice', ['snow_block', 'ice', 'packed_ice']),
     fam('wild-plants', 'Wild Plants', ['tussock', 'cattails', 'tuber_plant', 'honeyberry_bush', 'prickly_pear',
       // v0.14 (§76 flora)
-      'onion_plant', 'carrot_plant', 'honeycap_mushroom', 'frecklecap_mushroom', 'hazel_thicket', 'crab_apple_bush', 'healwort_plant'], 'plants'),
+      'onion_plant', 'carrot_plant', 'honeycap_mushroom', 'frecklecap_mushroom', 'hazel_thicket', 'crab_apple_bush', 'healwort_plant',
+      // §81: the plants that are not food
+      'fern', 'meadow_daisies', 'thistle', 'hemlock', 'nightshade_bush', 'flax', 'aloe'], 'plants'),
     'hay_bale', 'pumpkin',
   ]),
   sec('wood', 'Wood', 'oak_log', [

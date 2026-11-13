@@ -13,6 +13,7 @@ import { RECIPES, STATION_BLOCKS } from '../../src/crafting.js';
 import { FIRE_TRANSFORMS, fuelSeconds } from '../../src/cooking.js';
 import { FLORA_TABLE } from '../../src/worldgen.js';
 import { DART_KEYS } from '../../src/looseItems.js';
+import { PLANTABLE } from '../../src/farming.js';
 
 const B = BLOCK;
 /** Items the game gives rather than the world (§14.2: the Handbook is in the pack when a survival state begins). */
@@ -25,6 +26,8 @@ const NATURAL_BLOCKS = [
   B.TUSSOCK, B.TUBER_PLANT, B.HONEYBERRY_BUSH, B.PRICKLY_PEAR, B.CATTAILS, B.LOOSE_STONES, B.FALLEN_BRANCHES,
   // v0.14 (§76 flora): what a generation-3 world grows besides
   B.HONEYCAP_MUSHROOM, B.FRECKLECAP_MUSHROOM, B.ONION_PLANT, B.CARROT_PLANT, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.HEALWORT_PLANT,
+  // §81: and a generation-4 world, the plants that are not food
+  B.FERN, B.MEADOW_DAISIES, B.THISTLE, B.HEMLOCK, B.NIGHTSHADE_BUSH, B.FLAX, B.ALOE,
   // Not terrain, but left in the world by the Hollow Watcher's pillar traces (CONTRACTS §40.3): the only obsidian.
   B.OBSIDIAN,
 ];
@@ -61,6 +64,7 @@ describe('every item has a source and a use (§10 I-1)', () => {
   for (const k of Object.keys(FIRE_TRANSFORMS)) uses.add(k);
   uses.add('clay_pot'); // filled at water and tapped into (§4.2)
   for (const k of DART_KEYS) uses.add(k); // thrown (CONTRACTS §60)
+  for (const k of Object.keys(PLANTABLE)) uses.add(k); // planted with R (§80 farming): what the three seeds are for
 
   it.each(nonBlockKeys)('%s comes from somewhere', (key) => {
     expect(sources.has(key) || GIVEN.has(key)).toBe(true);

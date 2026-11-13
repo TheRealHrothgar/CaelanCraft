@@ -16,6 +16,15 @@
 // healwort); mushroom troops also grow on cave floors (CAVE_TROOP). Gravel, loose stones, fallen branches and tussock keep
 // the generation-2 roll. Generations 1 and 2 are byte for byte what they were.
 //
+// Generation 4 (v0.15, CONTRACTS §79): the lean land. The same patches, but fewer of them and thinner
+// (PATCH_TABLE_GEN4: a generation-4 patch is always one of the generation-3 patches of the same seed); everything else
+// is generation 3. Generation 3 is byte for byte what it was.
+//
+// Generation 4 also grows the plants that are not food (CONTRACTS §81): greenery from the per-column roll (FLORA_TABLE_GEN4:
+// a fern, daisies, a thistle, in slices of the roll that generation 3 leaves empty), a poisonous look-alike mixed into
+// the wild-carrot and the honeyberry patches (Hemlock, Nightshade), and four patch rows of their own (hemlock,
+// nightshade, flax, aloe), which only ever take a cell that every older rule left empty.
+//
 // Cells are hexagonal prisms addressed by axial (q, r). Continuous noise is always sampled at the cell's
 // WORLD position (hex.hexToWorld) so terrain, climate and caves are isotropic rather than sheared along
 // the axial axes; discrete hashes (bedrock, dirt depth, ores, trees) use the integer cell coordinates.
@@ -353,6 +362,7 @@ export const PATCH_MIX_STEP = 64;
  * @property {number} [minHeight]
  * @property {number} [maxHeight]
  * @property {number} [besideBelow]
+ * @property {number} [salt]                 its salt index when that is not its index in the table (the rows §81 adds)
  */
 
 /** @returns {Readonly<PatchRow>} `chances` is { BIOME key: chance }; every other biome gets 0 */
@@ -409,6 +419,99 @@ export const CAVE_TROOP = Object.freeze({
   mixId: BLOCK.FRECKLECAP_MUSHROOM, mixShares: FRECKLECAP_SHARES,
 });
 
+// ---- v0.15 (§79): the lean land (generation 4) ------------------------------------------------------------------------
+
+/** Generation 4 keeps this share of the food patches (a patch's roll must be below its chance × this) … */
+export const LEAN_PATCH_CHANCE = 0.45;
+/** … and a patch that stays holds this share of the plants it had. Together: about a third of generation 3's food. */
+export const LEAN_PATCH_FILL = 0.8;
+/** The Healwort is no food and already rare: its patches are not thinned out (only made thinner). */
+const LEAN_KEEPS = Object.freeze(['healwort']);
+
+// ---- §81: plants that are not food (generation 4) ---------------------------------------------------------------------
+
+/**
+ * The share of Hemlock among the plants of a wild-carrot patch of generation 4, picked per patch: one patch in four is
+ * all carrots, and in half of them every second plant is the look-alike.
+ */
+export const HEMLOCK_SHARES = Object.freeze([0, 0.25, 0.5, 0.5]);
+/** The share of Nightshade among the bushes of a honeyberry patch of generation 4: half the patches hold none. */
+export const NIGHTSHADE_SHARES = Object.freeze([0, 0, 0.25, 0.5]);
+/** Generation 4 mixes a look-alike into these rows of PATCH_TABLE: row key → [the look-alike, its shares]. */
+const LEAN_MIX = Object.freeze({
+  carrot: Object.freeze([BLOCK.HEMLOCK, HEMLOCK_SHARES]),
+  honeyberry: Object.freeze([BLOCK.NIGHTSHADE_BUSH, NIGHTSHADE_SHARES]),
+});
+
+/**
+ * The first salt index of the patch rows generation 4 adds. PATCH_TABLE's rows use their index (0–9) and the cave
+ * troops PATCH_TABLE.length (10), so the new rows start one above that and never share a roll with either.
+ */
+export const PLANT_PATCH_SALT = PATCH_TABLE.length + 1;
+
+/** PATCH_TABLE's rows as generation 4 has them: fewer patches, thinner, and a look-alike in two of them. */
+const LEAN_ROWS = PATCH_TABLE.map((row) => Object.freeze({
+  ...row,
+  chance: Object.freeze(row.chance.map((c) => c * (LEAN_KEEPS.includes(row.key) ? 1 : LEAN_PATCH_CHANCE))),
+  fill: row.fill * LEAN_PATCH_FILL,
+  ...(Object.hasOwn(LEAN_MIX, row.key) ? { mixId: LEAN_MIX[row.key][0], mixShares: LEAN_MIX[row.key][1] } : {}),
+}));
+/** @param {string} key @param {string} biome a BIOME key @returns {number} the chance of a generation-4 row in a biome */
+const leanChance = (key, biome) => /** @type {Readonly<PatchRow>} */ (LEAN_ROWS.find((row) => row.key === key)).chance[BIOME[biome]];
+
+/**
+ * The patch rows generation 4 adds (§81), after PATCH_TABLE's: small patches of the two look-alikes on their own, and
+ * the two useful plants. Each has a salt index of its own (PLANT_PATCH_SALT + 0…3).
+ * - hemlock: as many patches as the wild carrot has in generation 4 (its cell and chances, the forest's edge too), each
+ *   small (radius 1);
+ * - nightshade: as many as the honeyberry has in generation-4 FOREST, each small;
+ * - flax: as many patches as the wild onion had on generation-3 PLAINS, each a tight clump of 3–6;
+ * - aloe: half as many patches as the prickly pear had in generation-3 DESERT, each of 2–4.
+ * @type {readonly Readonly<PatchRow>[]}
+ */
+export const PLANT_PATCHES_GEN4 = Object.freeze([
+  patchRow('hemlock', BLOCK.HEMLOCK, 40, { PLAINS: leanChance('carrot', 'PLAINS'), FOREST: leanChance('carrot', 'FOREST') }, 1, 0.35, {
+    edgeBelow: FOREST_EDGE_HUMIDITY, salt: PLANT_PATCH_SALT,
+  }),
+  patchRow('nightshade', BLOCK.NIGHTSHADE_BUSH, 32, { FOREST: leanChance('honeyberry', 'FOREST') }, 1, 0.35, { salt: PLANT_PATCH_SALT + 1 }),
+  patchRow('flax', BLOCK.FLAX, 40, { PLAINS: 0.2 }, 1, 0.65, { salt: PLANT_PATCH_SALT + 2 }),
+  patchRow('aloe', BLOCK.ALOE, 28, { DESERT: 0.225 }, 1, 0.43, { salt: PLANT_PATCH_SALT + 3 }),
+]);
+
+/**
+ * The patches of generation 4. First PATCH_TABLE row for row (the same salts, so the same centres and rolls), each
+ * chance × LEAN_PATCH_CHANCE and each fill × LEAN_PATCH_FILL: a food patch of generation 4 is therefore a patch of
+ * generation 3, and a plant in it stands where it stood there — the lean land is the harder land with most of its food
+ * taken away. §81: in the carrot row some of those plants are Hemlock and in the honeyberry row Nightshade (LEAN_MIX:
+ * the look-alike roll decides, the place does not change). Then PLANT_PATCHES_GEN4, which give way to everything older.
+ * @type {readonly Readonly<PatchRow>[]}
+ */
+export const PATCH_TABLE_GEN4 = Object.freeze([...LEAN_ROWS, ...PLANT_PATCHES_GEN4]);
+
+/**
+ * The greenery of generation 4 (§81), by BIOME key: rows added to the surface pass AFTER FLORA_TABLE's, so each takes a
+ * slice of the one roll that generation 3 leaves empty and nothing that grows there moves. Ferns on the forest floor,
+ * daisies on the plains, a thistle here and there on plains and mountains.
+ */
+export const GREENERY_GEN4 = Object.freeze({
+  PLAINS: Object.freeze([floraRow(BLOCK.MEADOW_DAISIES, 0.04), floraRow(BLOCK.THISTLE, 0.01)]),
+  FOREST: Object.freeze([floraRow(BLOCK.FERN, 0.05)]),
+  MOUNTAINS: Object.freeze([floraRow(BLOCK.THISTLE, 0.01)]),
+});
+
+/**
+ * The surface pass of generation 4: FLORA_TABLE with GREENERY_GEN4's rows after each biome's own.
+ * @type {readonly (Readonly<FloraBiome>|null)[]}
+ */
+export const FLORA_TABLE_GEN4 = Object.freeze(Object.keys(BIOME).map((key) => {
+  const table = FLORA_TABLE[BIOME[key]];
+  if (!table || !Object.hasOwn(GREENERY_GEN4, key)) return table;
+  return Object.freeze({ surface: table.surface, rows: Object.freeze([...table.rows, ...GREENERY_GEN4[key]]) });
+}));
+
+/** The cave troops of generation 4: as rare as the lean land's other food. */
+export const CAVE_TROOP_GEN4 = Object.freeze({ ...CAVE_TROOP, chance: CAVE_TROOP.chance * LEAN_PATCH_CHANCE, fill: CAVE_TROOP.fill * LEAN_PATCH_FILL });
+
 /** Hex offsets at distance 1..2 from a centre (the 18 columns a pond checks besides its centre). */
 const DISC2_RING = Object.freeze((() => {
   const out = [];
@@ -445,8 +548,8 @@ const CROWN_DIRS = Object.freeze([0, 2, 4]);
 /**
  * Create a deterministic world generator.
  * @param {string|number|null|undefined} seed  user-facing seed; normalised with `normalizeSeed`
- * @param {{ gen?: number }} [opts]  `gen` 1 (default: today's terrain, byte for byte), 2 (the survival resources) or 3
- *   (v0.14: the harder land)
+ * @param {{ gen?: number }} [opts]  `gen` 1 (default: today's terrain, byte for byte), 2 (the survival resources), 3
+ *   (v0.14: the harder land) or 4 (v0.15: the lean land)
  * @returns {SurvivalWorldGen}
  */
 export function createWorldGen(seed, opts = {}) {
@@ -455,6 +558,12 @@ export function createWorldGen(seed, opts = {}) {
   const gen2 = gen >= 2;
   /** v0.14 (CONTRACTS §76): the harder land — streams, tainted ponds, scarcer food in bunches, new plants. New worlds only. */
   const gen3 = gen >= 3;
+  /** v0.15 (CONTRACTS §79): the lean land — generation 3 with most of its food patches gone. New worlds only. */
+  const gen4 = gen >= 4;
+  const patchTable = gen4 ? PATCH_TABLE_GEN4 : PATCH_TABLE;
+  const patchMaxChance = gen4 ? PATCH_MAX_CHANCE_GEN4 : PATCH_MAX_CHANCE;
+  const floraTable = gen4 ? FLORA_TABLE_GEN4 : FLORA_TABLE;
+  const caveTroop = gen4 ? CAVE_TROOP_GEN4 : CAVE_TROOP;
 
   // Derived noise seeds, salts 1..8 in contract order.
   const nCont = createNoise(hash3(s, 1, 0, 0));
@@ -834,26 +943,47 @@ export function createWorldGen(seed, opts = {}) {
     for (let lq = 0; lq < CHUNK_SIZE; lq++) {
       for (let lr = 0; lr < CHUNK_SIZE; lr++) {
         const ci = lq * CHUNK_SIZE + lr;
-        const table = FLORA_TABLE[biomes[ci]];
+        const table = floraTable[biomes[ci]];
         if (!table) continue;
         const height = heights[ci];
         const top = ci * WORLD_HEIGHT + height;
         if (blocks[top] !== table.surface || blocks[top + 1] !== BLOCK.AIR) continue;
         const q = oq + lq;
         const r = or + lr;
-        if (gen3 && patchRowOf[ci] !== 0 && floraFits(PATCH_TABLE[patchRowOf[ci] - 1], q, r, height)) {
+        // the patch that claims the column: a row of PATCH_TABLE has it outright; a row §81 adds waits its turn below
+        const patch = gen3 ? patchRowOf[ci] : 0;
+        if (patch !== 0 && patch <= PATCH_TABLE.length && floraFits(patchTable[patch - 1], q, r, height)) {
           blocks[top + 1] = patchPlant[ci];
           continue;
         }
         const u = rand3(q, r, FLORA_SALT, s);
+        // the rows generations 2 and 3 have (below generation 4: all of them)
+        const kept = /** @type {FloraBiome} */ (FLORA_TABLE[biomes[ci]]).rows.length;
         let acc = 0;
-        for (let i = 0; i < table.rows.length; i++) {
+        let i = 0;
+        for (; i < kept; i++) {
           const row = table.rows[i];
           acc += row.chance;
           if (u >= acc) continue;
           // Generation 3: a food row's slice of the roll places nothing, so the other rows fall exactly where they did.
           if (gen3 && PATCH_FOOD[row.id] === 1) break;
           if (floraFits(row, q, r, height)) blocks[row.top ? top : top + 1] = row.id;
+          break;
+        }
+        if (!gen4) continue;
+        // Generation 4 (§81): the plants that are not food only ever take a cell that everything above left empty — the
+        // surface still the biome's own, with air on it. A patch plant of the new rows first; else the roll runs on into
+        // the greenery rows (never when it fell in a slice of generation 3's, whatever that slice placed).
+        if (blocks[top] !== table.surface || blocks[top + 1] !== BLOCK.AIR) continue;
+        if (patch > PATCH_TABLE.length) {
+          blocks[top + 1] = patchPlant[ci];
+          continue;
+        }
+        if (i < kept) continue;
+        for (; i < table.rows.length; i++) {
+          acc += table.rows[i].chance;
+          if (u >= acc) continue;
+          blocks[top + 1] = table.rows[i].id;
           break;
         }
       }
@@ -926,20 +1056,21 @@ export function createWorldGen(seed, opts = {}) {
   }
 
   /**
-   * Fill patchRowOf / patchPlant for chunk (cq, cr): the first PATCH_TABLE row (then the first patch in grid order) that
-   * covers a column and passes its fill roll has it. A column takes a kind only where its own biome grows it.
+   * Fill patchRowOf / patchPlant for chunk (cq, cr): the first row of the generation's patch table (then the first patch
+   * in grid order) that covers a column and passes its fill roll has it. A column takes a kind only where its own biome
+   * grows it. A row's salt is PATCH_SALT + its index, or + its own `salt` (the rows §81 adds).
    * @param {Uint8Array} biomes
    * @param {number} cq
    * @param {number} cr
    */
   function markPatches(biomes, cq, cr) {
     patchRowOf.fill(0);
-    for (let i = 0; i < PATCH_TABLE.length; i++) {
-      const row = PATCH_TABLE[i];
+    for (let i = 0; i < patchTable.length; i++) {
+      const row = patchTable[i];
       const chanceOf = (col) => (
         row.edgeBelow !== undefined && col.biome === BIOME.FOREST && col.humidity >= row.edgeBelow ? 0 : row.chance[col.biome]
       );
-      forEachPatchColumn(row, PATCH_SALT + i, PATCH_MAX_CHANCE[i], chanceOf, cq, cr, (lq, lr, plantId) => {
+      forEachPatchColumn(row, PATCH_SALT + (row.salt ?? i), patchMaxChance[i], chanceOf, cq, cr, (lq, lr, plantId) => {
         const ci = lq * CHUNK_SIZE + lr;
         if (patchRowOf[ci] !== 0 || row.chance[biomes[ci]] === 0) return;
         patchRowOf[ci] = i + 1;
@@ -958,8 +1089,8 @@ export function createWorldGen(seed, opts = {}) {
    * @param {number} cr
    */
   function placeCaveTroops(blocks, heights, cq, cr) {
-    const chanceOf = () => CAVE_TROOP.chance;
-    forEachPatchColumn(CAVE_TROOP, PATCH_SALT + PATCH_TABLE.length, CAVE_TROOP.chance, chanceOf, cq, cr, (lq, lr, plantId) => {
+    const chanceOf = () => caveTroop.chance;
+    forEachPatchColumn(caveTroop, PATCH_SALT + PATCH_TABLE.length, caveTroop.chance, chanceOf, cq, cr, (lq, lr, plantId) => {
       const ci = lq * CHUNK_SIZE + lr;
       const base = ci * WORLD_HEIGHT;
       for (let y = heights[ci] - CAVE_TOP_MARGIN; y > CAVE_MIN_Y; y--) {
@@ -1355,7 +1486,7 @@ export function createWorldGen(seed, opts = {}) {
 
   // Internal cross-calls (trees and ponds → treeTrunkAt) go through this object, so tests can spy on them.
   /** @type {SurvivalWorldGen} */
-  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, streamLevelAt, pondTaintedAt, FLORA_TABLE, PATCH_TABLE };
+  const api = { seed: s, gen, getColumn, generateChunk, pondAt, treeTrunkAt, streamAt, streamLevelAt, pondTaintedAt, FLORA_TABLE: floraTable, PATCH_TABLE: patchTable };
   return api;
 }
 
@@ -1390,6 +1521,7 @@ const GEN3_REPLACES = Object.freeze(ORE_TABLE_GEN3.map((o) => (o.replaces ? idMa
 const PATCH_FOOD = idMask(PATCH_TABLE.map((row) => row.id));
 /** The largest chance of each PATCH_TABLE row over the biomes: a grid cell whose roll is not below it holds no patch. */
 const PATCH_MAX_CHANCE = Object.freeze(PATCH_TABLE.map((row) => Math.max(...row.chance)));
+const PATCH_MAX_CHANCE_GEN4 = Object.freeze(PATCH_TABLE_GEN4.map((row) => Math.max(...row.chance)));
 /** [log, leaves] ids per species. */
 const SPECIES_IDS = Object.freeze({
   oak: Object.freeze([BLOCK.OAK_LOG, BLOCK.OAK_LEAVES]),
