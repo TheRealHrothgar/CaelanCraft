@@ -421,6 +421,8 @@ function refreshHandleRefs(handle, game) {
   handle.spread = game ? game.spread ?? null : null; // §80: the wild plants' spreading and its counts (spread.js Spread)
   handle.weather = game ? game.weather ?? null : null; // §84: the live world's weather (weather.js createWeather)
   handle.waterCycle = game ? game.waterCycle ?? null : null; // §83: the water cycle and its counts (waterBodies.js WaterCycle)
+  handle.sleep = game ? game.sleep ?? null : null; // §87: the sleep (sleep.js Sleep: phase, hours, spot)
+  handle.tiredFx = game ? game.tiredFx ?? null : null; // §87: yawns, the figure, the nods and their timers (sleep.js TiredFx)
   handle.refill = game ? game.refill ?? null : null; // §85: the drawn springs, the wells and the rain barrels with room (homestead.js Refill)
   handle.camera = three ? three.camera ?? null : null;
   handle.scene = three ? three.scene ?? null : null;
@@ -509,6 +511,12 @@ export function installDebugHandle(win, game) {
   // `env` when given (`{ rain: 1, dryness: 1 }`): the in-game check of pools that run out
   handle.waterBodyAt = (q, y, r) => (game && typeof game.waterBodyAt === 'function' ? game.waterBodyAt(q, y, r) : null);
   handle.waterStep = (seconds, env) => (game && typeof game.waterStep === 'function' ? game.waterStep(seconds, env) : null);
+  // §87 sleep: the hours awake (20 Tired, 32 Exhausted, 40 Weak, 48 Seeing things), lying down on the targeted or nearest
+  // sleep spot, whether the place round a spot is secure, and `hours` game hours of sleep at once
+  handle.setFatigue = (hours) => (game && typeof game.setFatigue === 'function' ? game.setFatigue(hours) : null);
+  handle.sleepHere = () => (game && typeof game.sleepHere === 'function' ? game.sleepHere() : false);
+  handle.secureAt = (q, y, r) => (game && typeof game.secureAt === 'function' ? game.secureAt(q, y, r) : null);
+  handle.sleepStep = (hours) => (game && typeof game.sleepStep === 'function' ? game.sleepStep(hours) : null);
   // §85: run the refill of springs, wells and rain barrels as if `seconds` had passed, in the weather of `env` when given
   // (`{ rain: 1, dryness: 0.3 }`): the in-game check of a place to stay
   handle.homesteadStep = (seconds, env) => (game && typeof game.homesteadStep === 'function' ? game.homesteadStep(seconds, env) : null);
@@ -708,6 +716,7 @@ export function buildDebugText(game, stats) {
     `Time: ${formatClock(time)}  day ${day}  (t=${fmt3(time)})\n` +
     `Mode: ${mode}` +
     survivalDebugLine(g.survival ?? null) +
+    sleepDebugLine(g) +
     weatherDebugLine(g) +
     physicsLine +
     circuitLines
@@ -769,6 +778,20 @@ export function survivalDebugLine(sv) {
   return `\nSurvival: HP ${fmtInt(v.health)} · Nourishment ${fmtInt(v.satiation)} · Hydration ${fmtInt(v.hydration)}` +
     ` · Breath ${fmtInt(v.breath)} · body ${fmt1(v.temp)} °C · felt ${fmt1(sv.felt)} °C (air ${fmt1(sv.air)})` +
     (labels.length ? ` · ${labels.join(' · ')}` : '');
+}
+
+/**
+ * The F3 line of tiredness and sleep (CONTRACTS §87), after the Survival line, only while Survival is active:
+ * `Sleep: awake 21.4 h` and, lying down or asleep, ` · asleep 3.2 h on a Sleeping Hide`.
+ * @param {{ survival?: any, sleep?: { active?: boolean, hours?: number, spot?: { name: string }|null }|null }|null|undefined} g
+ * @returns {string} '' for a game without sleep, or while Survival is not active
+ */
+export function sleepDebugLine(g) {
+  const sv = g ? g.survival : null;
+  if (!g || !g.sleep || !sv || !sv.active || !sv.vitals || !Number.isFinite(sv.vitals.fatigue)) return '';
+  const sl = g.sleep;
+  return `\nSleep: awake ${fmt1(sv.vitals.fatigue)} h` +
+    (sl.active ? ` · asleep ${fmt1(Number(sl.hours) || 0)} h on a ${sl.spot ? sl.spot.name : 'sleep spot'}` : '');
 }
 
 /**

@@ -121,6 +121,11 @@ export const SOUND_SECTIONS = Object.freeze([
           one('Climb out', 'splashOut', 0.8),
         ],
       },
+      {
+        // CONTRACTS §87: a yawn when you are tired (main plays it at sleep.YAWN_VOLUME), and the soft sound of waking
+        label: 'Sleep',
+        items: [one('Yawn', 'yawn', 0.7), one('Wake', 'wakeSoft', 0.8)],
+      },
     ],
   },
   {

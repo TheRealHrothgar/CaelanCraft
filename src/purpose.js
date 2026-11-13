@@ -65,7 +65,7 @@ export const PURPOSE = Object.freeze({
   clay_pot: 'Carries water. Boil it on a fire to make it safe.',
   charcoal: 'Fuel for clay, and the only fuel for iron and steel.',
   torch: 'Light you can carry and set down.',
-  sleeping_hide: 'Where you wake after dying.',
+  sleeping_hide: 'A bedroll: sleep on it, and wake here after dying.',
   wicker_basket: 'Storage you can set down.',
   // ---- a place to stay (§85)
   well: 'Water all year, a few pots a day. Dig it into earth.',

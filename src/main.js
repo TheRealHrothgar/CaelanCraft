@@ -84,7 +84,7 @@ import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
 import { Animals, SPECIES, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE } from './animals.js';
 import { createAnimalRenderer } from './animalRenderer.js';
-import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, strikeDamage, SOUND_ROAR } from './zombies.js';
+import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, strikeDamage, standLight, SOUND_ROAR } from './zombies.js';
 import { Survival, deathTitle, BELONGINGS_KEPT, BELONGINGS_LOST, SICK_MESSAGE, BOIL_TIP } from './survival.js';
 import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory.js';
 import { Containers } from './containers.js';
@@ -105,7 +105,7 @@ import { Spread } from './spread.js';
 import { CraftQueue, findStations, listRecipes } from './crafting.js';
 import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
 import { heatSource, heatAt, groundChillOf, isSaltyBiome, bodyTarget, CHEST_HEIGHT, HEAT_SOURCES } from './climate.js';
-import { softLandingFactor, knockDamage, crushDamage } from './vitals.js';
+import { softLandingFactor, knockDamage, crushDamage, fatigueStage, digFactorOf, strikeFactorOf } from './vitals.js';
 import { getItem, itemName, itemForBlock, maxDurability } from './items.js';
 import { createPackUI, demoPackView } from './packUI.js';
 import { createItemIcons, iconBlockFor } from './itemIcons.js';
@@ -125,6 +125,12 @@ import {
   rainSky, approach, weatherEnv, OVERCAST_TAU_S,
 } from './weather.js';
 import { createRainRenderer } from './rainRenderer.js';
+// CONTRACTS §87: sleep
+import {
+  Sleep, SecureWatch, TiredFx, spotOf, sleepRefusal, secureAt, secureWords, rollNightAttack, placeNightAttack, stageNews, wakeLine,
+  sleepingLine, sleepDark, blurPx, phantomStandAt, tirednessView, SLEEP_LINES, TIRED_BAR_MARKS,
+} from './sleep.js';
+import { createPhantomRenderer } from './phantomRenderer.js';
 import { createConsole } from './console.js';
 import { createRuneEditor } from './runeEditor.js';
 import { HANDBOOK_KEY, HANDBOOK_CHAT_LINE, buildChapters, ensureHandbook } from './handbook.js';
@@ -1109,6 +1115,8 @@ export function boot(win, doc) {
   let zombieRenderer;
   /** @type {import('./watcherRenderer.js').WatcherRenderer} */
   let watcherRenderer;
+  /** @type {ReturnType<typeof createPhantomRenderer>} §87: the figure at the edge of sight (drawing only) */
+  let phantomRenderer;
   /** @type {import('./campfireRenderer.js').CampfireRenderer} */
   let campfireRenderer;
   /** @type {ReturnType<typeof createVortexRenderer>} the black holes' vortices (§2.4) */
@@ -1148,6 +1156,7 @@ export function boot(win, doc) {
     looseRenderer = createLooseItemRenderer(renderer.three.scene, createItemIcons(doc, atlasCanvas));
     particles = createParticles(renderer.three.scene);
     rainRenderer = createRainRenderer(renderer.three.scene); // §84: one mesh, no light
+    phantomRenderer = createPhantomRenderer(renderer.three.scene); // §87: three boxes, no light
     // v0.10: the vortices and the circuit wiring (neither adds a light).
     vortexRenderer = createVortexRenderer(renderer.three.scene);
     circuitRenderer = createCircuitRenderer(renderer.three.scene);
@@ -1169,6 +1178,7 @@ export function boot(win, doc) {
     // The Watcher's figure too (§40.4) — only now: the scene's lights are part of every program's key, so compiling it
     // before the campfire and explosion PointLights existed built programs the first sighting could not use.
     watcherRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    phantomRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();
@@ -2063,11 +2073,315 @@ export function boot(win, doc) {
     insulation: 0,
     sunShade: 0,
     rain: 0,
+    /** @type {import('./sleep.js').SleepSpot|null} §87 */
+    sleep: null,
     time: 0,
     random: Math.random,
   };
   /** the reused HUD vitals view (§9.8) */
   const vitalsView = { health: 0, satiation: 0, hydration: 0, temp: 0, felt: 0, breath: 0, labels: /** @type {string[]} */ ([]), target: 37 };
+
+  // ---- Sleep (CONTRACTS §87) ----------------------------------------------------------------------------------------
+  // Everything here is this section's own. The rest of main calls: stepSleep (the top of stepPlaying: lying down or
+  // asleep, the world's own step is off and game time runs in one-second ticks through stepSurvival), sleepFrame
+  // (renderFrame: the stage lines, yawns, the figure, the nods, the HUD), sleepOn (R on a sleep spot), sleepSpotHint (its
+  // target hint), sleepBlockChanged (onBlockChanged), sleepNote (stepSurvival: the body's events), digFactorNow and
+  // strikeFactorNow (Weak), resetSleep and disposeSleep. Tiredness is the body's (`survival.vitals.fatigue`, saved with
+  // the other vitals); nothing else here is saved: a sleep ends when the world is left.
+
+  /** The debug handle's sleepHere looks this many cells round the player for a sleep spot. */
+  const SLEEP_HERE_CELLS = 4;
+  /** A sleep spot's `secure here` / `not secure` is worked out again this often while it stays under the crosshair (s). */
+  const SECURE_HINT_S = 1;
+  /** The stage lines stay this long (ms). */
+  const STAGE_LINE_MS = 12000;
+  /** The waking sound's volume. */
+  const WAKE_VOLUME = 0.8;
+
+  const sleep = new Sleep();
+  const tiredFx = new TiredFx();
+  /** The secure answer of the spot being slept on, and of the one under the crosshair. */
+  const sleepWatch = new SecureWatch();
+  const hintWatch = new SecureWatch();
+  const sleepFx = {
+    /** a key or a click asked the sleeper to wake */
+    wakeAsked: false,
+    /** health fell during the game second being ticked */
+    hurt: false,
+    /** @type {number|null} the stage of tiredness last told (null: not known: a load, Creative, dead) */
+    stage: /** @type {number|null} */ (null),
+    /** how dark the view is from sleep, 0..1 */
+    dark: 0,
+    hintAt: -Infinity,
+    /** the whole hours awake the HUD shows, and the view made from them */
+    hours: -1,
+    view: /** @type {import('./hud.js').TirednessView|null} */ (null),
+  };
+  /** How sleep.js's secureAt reads this world: the blocks, and where the zombies module lets a zombie come up. */
+  const secureEnv = {
+    getBlock: (q, y, r) => world.getBlock(q, y, r),
+    spawnY: (q, r) => zombies.spawnHeightAt(zombieWorld, q, r),
+    groundHeight: (q, r) => world.terrainHeightAt(q, r),
+  };
+  /** @type {import('./sleep.js').TiredView} */
+  const tiredView = {
+    stage: 0, awake: false, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, spooky: true,
+    standAt: (q, r) => phantomStandAt(world.getBlock, q, r, player.y),
+  };
+  /** @type {import('./sleep.js').SleepHooks} */
+  const sleepHooks = { second: sleepSecond, hour: sleepHour, now };
+
+  /** The game is being played: no menu, no screen over it (the pause menu's clicks and keys wake nobody). */
+  const playingNow = () => /** @type {string} */ (state) === STATE.PLAYING;
+  /** A key (not Esc, which pauses as usual; not a key held down) or a click wakes the sleeper. */
+  const onSleepKey = (/** @type {KeyboardEvent} */ e) => {
+    if (sleep.active && playingNow() && !e.repeat && e.code !== 'Escape') sleepFx.wakeAsked = true;
+  };
+  const onSleepClick = () => {
+    if (sleep.active && playingNow()) sleepFx.wakeAsked = true;
+  };
+  doc.addEventListener('keydown', onSleepKey, true);
+  doc.addEventListener('mousedown', onSleepClick, true);
+
+  /** Weak (§87): digging at vitals.WEAK_DIG of its speed, strikes at vitals.WEAK_STRIKE of their power; 1 otherwise. */
+  const digFactorNow = () => (survival.active ? digFactorOf(survival.vitals) : 1);
+  const strikeFactorNow = () => (survival.active ? strikeFactorOf(survival.vitals) : 1);
+
+  /** stepSurvival's report of the body's step: any damage wakes a sleeper. @param {{ damage: number }} ev */
+  function sleepNote(ev) {
+    if (ev.damage > 0) sleepFx.hurt = true;
+  }
+
+  /** onBlockChanged: a block near a watched sleep spot may have opened or closed the place. */
+  function sleepBlockChanged(q, y, r) {
+    sleepWatch.blockChanged(q, y, r);
+    hintWatch.blockChanged(q, y, r);
+  }
+
+  /**
+   * R on the sleep spot in cell (q, y, r) (and the debug handle's sleepHere). It becomes the waking place, as a Sleeping
+   * Hide always did; then, unless sleep.sleepRefusal says why not, the player is put on it and lies down.
+   * @returns {boolean|string} true when lying down now, else the reason (false: no sleep spot there, or not in Survival)
+   */
+  function sleepOn(q, y, r) {
+    const spot = world && player && survival.active && !sleep.active ? spotOf(world.getBlock(q, y, r)) : null;
+    if (!spot) return false;
+    const sp = survival.spawn;
+    if (!sp || sp[0] !== q || sp[1] !== y || sp[2] !== r) {
+      survival.spawn = [q, y, r];
+      logLine(`You will wake at this ${spot.name}.`);
+    }
+    const no = sleepRefusal({
+      vitals: survival.vitals, inWater: Boolean(player.inWater), riding: Boolean(riding), x: player.x, y: player.y, z: player.z,
+      zombies: zombies.list,
+    });
+    if (no) {
+      showHint(no, 2.5);
+      audio.playClick();
+      return no;
+    }
+    // Onto the spot (on top of a solid one), when there is room for a body there.
+    const [hx, hz] = hexToWorld(q, r);
+    const fy = findFreeY(world.getBlock, hx, hz, isSolid(world.getBlock(q, y, r)) ? y + 1 : y, 1);
+    if (fy !== null) game.teleport(hx, fy, hz);
+    resetSurvivalInput();
+    sleepWatch.watch(q, y, r);
+    sleepWatch.touch();
+    sleepWatch.get(secureEnv); // worked out once now; again when a block changes near it, and before each hour's roll
+    sleep.lie(spot, [q, y, r]);
+    sleepFx.wakeAsked = false;
+    controls.setEnabled(false);
+    return true;
+  }
+
+  /** The debug handle: lie down on the sleep spot under the crosshair, else on the nearest within SLEEP_HERE_CELLS. */
+  function sleepHere() {
+    if (!world || !player) return false;
+    if (hit && spotOf(hit.blockId)) return sleepOn(hit.q, hit.y, hit.r);
+    const [pq, pr] = worldToHex(player.x, player.z);
+    const py = Math.floor(player.y + 1e-3);
+    /** @type {[number, number, number]|null} */
+    let best = null;
+    let bestD = Infinity;
+    for (let dq = -SLEEP_HERE_CELLS; dq <= SLEEP_HERE_CELLS; dq++) {
+      for (let dr = -SLEEP_HERE_CELLS; dr <= SLEEP_HERE_CELLS; dr++) {
+        for (let dy = -2; dy <= 2; dy++) {
+          const d = hexLength(dq, dr) + Math.abs(dy);
+          if (d < bestD && d <= SLEEP_HERE_CELLS && spotOf(world.getBlock(pq + dq, py + dy, pr + dr))) {
+            best = [pq + dq, py + dy, pr + dr];
+            bestD = d;
+          }
+        }
+      }
+    }
+    return best ? sleepOn(best[0], best[1], best[2]) : 'no sleep spot within reach';
+  }
+
+  /** `Sleeping Hide · R: sleep · secure here` / `… · not secure: open to the outside` (nothing more where no zombie comes). */
+  function sleepSpotHint(act) {
+    const { q, y, r } = act;
+    if (!survival.active || !zombies.enabled || q === undefined || y === undefined || r === undefined) return act.hint ?? null;
+    hintWatch.watch(q, y, r);
+    if (!(fxTime - sleepFx.hintAt < SECURE_HINT_S)) {
+      sleepFx.hintAt = fxTime;
+      hintWatch.touch(); // a light may have gone out with no block changing
+    }
+    return `${act.hint} · ${secureWords(hintWatch.get(secureEnv))}`;
+  }
+
+  /**
+   * One game second of sleep (sleep.js's `second` hook): the clock and the day counter, then stepSurvival(1): the body on
+   * the sleep spot's numbers (`env.sleep`) and every once-a-second system of Survival, with the fires' fuel. The player's
+   * physics, the animals, the zombies, block physics and the circuits are not stepped: they stand still while you sleep.
+   * @returns {import('./sleep.js').SleepSecond}
+   */
+  function sleepSecond() {
+    if (params.time == null) {
+      const nt = advanceTime(time, 1);
+      if (nt < time) day++;
+      time = nt;
+    }
+    sleepFx.hurt = false;
+    stepSurvival(1, false);
+    const v = survival.vitals;
+    return {
+      hurt: sleepFx.hurt, died: pendingDeath !== null || !survival.active, satiation: v.satiation, hydration: v.hydration,
+      fatigue: v.fatigue, isDay: isDayTime(time),
+    };
+  }
+
+  /**
+   * A whole game hour was slept (sleep.js's `hour` hook): the night may come. Whether the place is secure is worked out
+   * again first (a fire may have burnt out); the light is the block light where the sleeper lies.
+   * @returns {boolean} zombies came up: the sleeper wakes
+   */
+  function sleepHour() {
+    zombieWorld.player = player;
+    zombieWorld.isDay = isDayTime(time);
+    sleepWatch.touch();
+    const res = sleepWatch.get(secureEnv);
+    const [q, r] = worldToHex(player.x, player.z);
+    const light = standLight(zombieWorld.blockLight, q, Math.floor(player.y + 0.01), r);
+    if (!rollNightAttack({ isDay: zombieWorld.isDay, secure: !!res && res.secure, zombiesOn: zombies.enabled, light }, Math.random)) return false;
+    return placeNightAttack(zombies, zombieWorld, player.x, player.z, Math.random).length > 0;
+  }
+
+  /** The sleep is over (sleep.js has already let go of it, or does now): the controls come back, and the waking line. */
+  function endSleep(reason) {
+    if (sleep.active) sleep.wake(reason);
+    sleepWatch.clear();
+    sleepFx.wakeAsked = false;
+    if (playingNow() && !survival.dead) controls.setEnabled(true);
+    if (reason === 'died' || reason === 'stopped' || !survival.active) return;
+    sleepFx.stage = fatigueStage(survival.vitals); // the waking line says the state: no stage line on top of it
+    if (reason === 'attack') logLine(SLEEP_LINES.attack);
+    logLine(wakeLine(sleep.lastHours, survival.vitals, reason));
+    audio.playRecipe('wakeSoft', WAKE_VOLUME);
+  }
+
+  /**
+   * The top of stepPlaying. Lying down or asleep, nothing of the world's own step runs: sleep.step fades the view, then
+   * ticks game seconds (sleepSecond) inside its frame budget; then the death checkpoint, streaming and the autosave.
+   * @returns {boolean} this frame was the sleep's (stepPlaying does nothing more)
+   */
+  function stepSleep(dt) {
+    if (!sleep.active) return false;
+    if (!survival.active) {
+      endSleep('stopped'); // a mode switch, a death from outside
+      return false;
+    }
+    if (controls.enabled) controls.setEnabled(false); // (a resume from the pause menu switched them back on)
+    if (sleepFx.wakeAsked) {
+      endSleep('asked');
+      return true;
+    }
+    const res = sleep.step(dt, sleepHooks);
+    if (res.woke) endSleep(res.woke);
+    if (checkDeath()) return true; // §2.5 checkpoint
+    world.update(player.x, player.z);
+    updateHit();
+    autosaveTick(dt);
+    return true;
+  }
+
+  /** The debug handle's sleepStep: `hours` game hours of sleep at once. */
+  function sleepStepHours(hours) {
+    if (!world || !player || !sleep.active || !survival.active || !Number.isFinite(hours)) return null;
+    const res = sleep.advance(Math.max(0, hours) * 60, sleepHooks);
+    if (res.woke) endSleep(res.woke);
+    return { hours: res.ticks / 60, woke: res.woke };
+  }
+
+  /**
+   * Once a frame (renderFrame): the log line of a stage of tiredness entered (or cleared) while awake; yawns, sounds
+   * with nothing there, the figure and the nods (TiredFx); the HUD's tiredness reading; the dark of sleep and the
+   * sleeper's lines; the blur of tired eyes.
+   * @param {number} dt @param {boolean} live  the simulation stepped this frame @param {number} eyeY
+   */
+  function sleepFrame(dt, live, eyeY) {
+    const SV = survival.inSurvival;
+    const alive = survival.active;
+    const v = survival.vitals;
+    const stage = alive ? fatigueStage(v) : 0;
+    if (!alive) {
+      sleepFx.stage = null;
+    } else if (!sleep.active && live) {
+      const line = stageNews(sleepFx.stage, stage);
+      if (line) logLine(line, false, STAGE_LINE_MS);
+      sleepFx.stage = stage;
+    }
+    const tv = tiredView;
+    tv.stage = stage;
+    tv.awake = alive && !sleep.active;
+    tv.x = player.x;
+    tv.y = eyeY;
+    tv.z = player.z;
+    tv.yaw = controls.yaw;
+    tv.pitch = controls.pitch;
+    tv.spooky = zombies.enabled; // a world with its zombies switched off hears no groan and sees no figure
+    const fx = tiredFx.step(live ? dt : 0, tv, Math.random);
+    for (const [name, volume] of fx.sounds) audio.playRecipe(name, volume);
+    phantomRenderer.sync(tv.awake ? tiredFx.figure : null);
+    if (SV) {
+      const hours = Math.floor(v.fatigue + 1e-6);
+      if (hours !== sleepFx.hours || !sleepFx.view) {
+        sleepFx.hours = hours;
+        sleepFx.view = { ...tirednessView(v.fatigue), marks: TIRED_BAR_MARKS };
+      }
+      hud.setTiredness(sleepFx.view);
+    } else {
+      hud.setTiredness(null);
+    }
+    sleepFx.dark = alive ? sleepDark(sleepFx.dark, sleep.active, dt) : 0;
+    hud.setSleepView({
+      dark: Math.max(sleepFx.dark, tv.awake ? tiredFx.dark : 0),
+      blur: tv.awake ? blurPx(stage, fxTime) : 0,
+      line: sleep.active ? sleepingLine(sleep.hours) : null,
+      sub: sleep.active ? SLEEP_LINES.wakeKey : null,
+    });
+  }
+
+  /** A world is left or loaded: nobody sleeps, nothing is seen, the stage is not known. */
+  function resetSleep() {
+    sleep.reset();
+    tiredFx.reset();
+    sleepWatch.clear();
+    hintWatch.clear();
+    sleepFx.wakeAsked = false;
+    sleepFx.hurt = false;
+    sleepFx.stage = null;
+    sleepFx.dark = 0;
+    sleepFx.hintAt = -Infinity;
+    if (phantomRenderer) phantomRenderer.sync(null);
+    if (hud) hud.setSleepView(null);
+  }
+
+  /** dispose(): the listeners and the figure's meshes go. */
+  function disposeSleep() {
+    doc.removeEventListener('keydown', onSleepKey, true);
+    doc.removeEventListener('mousedown', onSleepClick, true);
+    phantomRenderer.dispose();
+  }
 
   // ---- helpers --------------------------------------------------------------------------------------
 
@@ -2204,6 +2518,7 @@ export function boot(win, doc) {
     const releasedSpots = fireSlots.onBlockChange(q, y, r, prev, next);
     regrowth.onBlockChange(q, y, r, prev, next);
     growth.onBlockChange(q, y, r, prev, next); // §80: a planted seed or a sprout is tracked, anything else forgotten
+    sleepBlockChanged(q, y, r); // §87: whether a watched sleep spot is secure is worked out again
     refill.onBlockChange(q, y, r, prev, next); // §85: a drawn spring, a well, a rain barrel with room
     if (releaseToPack && (releasedItems.length > 0 || releasedSpots.length > 0)) {
       flyFromCell([...releasedItems, ...releasedSpots], q, y, r);
@@ -3535,12 +3850,13 @@ export function boot(win, doc) {
       while (!world.hasChunkAtCell(sp[0], sp[2]) && now() - start < 200) world.update(hx, hz);
       if (!world.hasChunkAtCell(sp[0], sp[2])) {
         pos = [hx, sp[1] + 1, hz]; // still loading: trust the hide
-      } else if (world.getBlock(sp[0], sp[1], sp[2]) === BLOCK.SLEEPING_HIDE) {
-        const fy = findFreeY(world.getBlock, hx, hz, sp[1] + 1, 3);
+      } else if (spotOf(world.getBlock(sp[0], sp[1], sp[2]))) { // §87: the Sleeping Hide, or a bed
+        // on top of a solid spot (the hide, a metre high); in the cell of one you walk over (a bed)
+        const fy = findFreeY(world.getBlock, hx, hz, isSolid(world.getBlock(sp[0], sp[1], sp[2])) ? sp[1] + 1 : sp[1], 3);
         if (fy !== null) pos = [hx, fy, hz];
       } else {
         survival.spawn = null;
-        logLine('Your Sleeping Hide is gone.');
+        logLine(SLEEP_LINES.gone);
       }
     }
     if (!pos) pos = blackHoles.respawnPoint(world.findSurvivalSpawn(), blackHoleWorld);
@@ -3690,6 +4006,8 @@ export function boot(win, doc) {
           return 'Handbook · R: read';
         case 'drink_here':
           return waterHint(qualityHere(), false, depthHere());
+        case 'hide':
+          return sleepSpotHint(act); // §87: `Sleeping Hide · R: sleep · secure here` / `… · not secure: …`
         case 'water_crop':
           return waterCropHint(act); // §85: `… · R: water it`
         default:
@@ -3961,9 +4279,7 @@ export function boot(win, doc) {
         return;
       }
       case 'hide':
-        survival.spawn = [q, y, r];
-        logLine('You will wake at this Sleeping Hide.');
-        audio.playClick();
+        sleepOn(q, y, r); // §87: the waking place as before, and now a place to sleep
         return;
       case 'station':
         openPack({ tab: act.station });
@@ -4232,7 +4548,7 @@ export function boot(win, doc) {
     const h = hit;
     const stack = selectedStack();
     const tool = selectedTool();
-    const need = h ? breakSeconds(h.blockId, tool, Boolean(player.headInWater)) : Infinity;
+    const need = h ? breakSeconds(h.blockId, tool, Boolean(player.headInWater)) / digFactorNow() : Infinity; // §87: Weak digs slower
     const res = digState.step(dt, h, held, need, handKeyOf(selected, stack));
     if (!digState.active) digPackFull = false;
     digHit = digState.active ? h : null;
@@ -4295,7 +4611,7 @@ export function boot(win, doc) {
     }
     if (zombieTarget) {
       const zb = zombieTarget.zombie;
-      const res = zombies.hit(zb, player.x, player.z, strikeKind('zombie', tool).power);
+      const res = zombies.hit(zb, player.x, player.z, strikeKind('zombie', tool).power * strikeFactorNow()); // §87: Weak strikes softer
       if (res === 'ko') {
         zombieGone(zb, 'ko');
         flyStacks(zombieDrops(zb), zb.x, zb.y + ZOMBIE_HEIGHT / 2, zb.z);
@@ -4317,7 +4633,7 @@ export function boot(win, doc) {
       const spearOnly = !isBodyAnimal(a) && tool?.type !== 'spear';
       if (spearOnly) showHint('A fish is caught with a spear: thrust with it, or throw it (G).');
       const wounds = ka.call === 'wound' && !spearOnly;
-      const res = animals.wound(a, wounds ? ka.power : 0, player.x, player.z);
+      const res = animals.wound(a, wounds ? ka.power * strikeFactorNow() : 0, player.x, player.z);
       if (res === 'dead') animalDied(a, true);
       else if (res === 'hit') animalVoice(a, 1);
       if (res && wounds) wearSelectedTool('strike');
@@ -4328,7 +4644,7 @@ export function boot(win, doc) {
     const pig = pigTarget.pig;
     const k = strikeKind('pig', tool);
     if (k.call === 'wound') {
-      const res = pigs.wound(pig, k.power, player.x, player.z);
+      const res = pigs.wound(pig, k.power * strikeFactorNow(), player.x, player.z);
       if (res === 'dead') {
         particles.emit('dust', pig.x, pig.y + 0.45, pig.z, 22, { color: [0.66, 0.57, 0.57], spread: 0.45 });
         audio.playSqueal(1);
@@ -4483,8 +4799,10 @@ export function boot(win, doc) {
     env.insulation = pack.insulation();
     env.sunShade = pack.sunShade();
     env.rain = weatherFx.onPlayer; // §84: the rain reaching the player wets them
+    env.sleep = sleep.asleep ? sleep.spot : null; // §87: asleep, the body runs on the sleep spot's numbers
     env.time = time;
     const ev = survival.step(dt, /** @type {*} */ (env));
+    sleepNote(ev); // §87: a sleeper whose health falls wakes
     if (ev.died) pendingDeath ??= ev.died;
     else if (ev.fall > 0) hurtFeedback(ev.fall);
     if (ev.pulse && !ev.died) {
@@ -4498,7 +4816,7 @@ export function boot(win, doc) {
     feetCell[0] = fq;
     feetCell[1] = Math.floor(player.y + 1e-3);
     feetCell[2] = fr;
-    if (craftQueue.size > 0) {
+    if (craftQueue.size > 0 && !sleep.asleep) { // §87: nothing is made while you sleep (the lanes wait)
       const cev = craftQueue.step(dt, pack, peekBlockFn, feetCell);
       for (const line of cev.messages) logLine(line, true);
       for (const key of cev.broke) toolBroke(key);
@@ -4515,7 +4833,7 @@ export function boot(win, doc) {
         const [x, z] = hexToWorld(q, r);
         particles.emit('smoke', x, y + 0.4, z, 10, { spread: 0.3 });
       }
-      fireEffects(dt, fev.cooking);
+      if (!sleep.asleep) fireEffects(dt, fev.cooking); // §87: a sleeper sees and hears none of it
     }
 
     // Once a second: regrowth (lazy writes of the ripe id), spoilage in the pack and in loaded containers (§4.5, §6.5).
@@ -5154,6 +5472,7 @@ export function boot(win, doc) {
     stations = { hand: true };
     stationsVersion++;
     survivalSecond = 0;
+    resetSleep(); // §87
     pigRepopAccum = 0;
     pigRepopTries = 0;
     flashHint = null;
@@ -5573,6 +5892,7 @@ export function boot(win, doc) {
     packSession.container = null;
     packContainer = null;
     climateSample = null;
+    resetSleep(); // §87
     packUI.close();
     menus.hideDeath();
     if (handbookUI.isOpen()) handbookUI.close();
@@ -5986,6 +6306,17 @@ export function boot(win, doc) {
       }
       return total;
     },
+    // ---- §87 sleep: the sleep itself, the effects of tiredness, and ways to see every stage quickly ----
+    sleep,
+    tiredFx,
+    /** Set the hours awake (0..72): 20 Tired, 32 Exhausted, 40 Weak, 48 Seeing things. @returns {number|null} */
+    setFatigue: (hours) => (survival.setVital('fatigue', hours) ? survival.vitals.fatigue : null),
+    /** Lie down on the sleep spot under the crosshair, else the nearest one within SLEEP_HERE_CELLS. @returns {boolean|string} true, or why not */
+    sleepHere: () => sleepHere(),
+    /** Is the place round a sleep spot in cell (q, y, r) secure? @returns {import('./sleep.js').SecureResult|null} */
+    secureAt: (q, y, r) => (world && Number.isFinite(q + y + r) ? secureAt(secureEnv, Math.floor(q), Math.floor(y), Math.floor(r)) : null),
+    /** Sleep `hours` game hours at once (lying down or asleep), with every reason to wake. @returns {{ hours: number, woke: string|null }|null} */
+    sleepStep: (hours) => sleepStepHours(hours),
     // ---- §85 a place to stay: the tracker that brings springs, wells and barrels back, and time for it alone ----
     refill,
     /**
@@ -6518,6 +6849,7 @@ export function boot(win, doc) {
    * the field book too, with the controls disabled so the player stands still while the world runs.
    */
   function stepPlaying(dt) {
+    if (stepSleep(dt)) return; // §87: lying down or asleep, only the sleeping world runs
     const SV = survival.inSurvival;
     const st0 = state;
     const input = controls.getInput();
@@ -6741,6 +7073,7 @@ export function boot(win, doc) {
     watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime);
     hurtFlash = Math.max(0, hurtFlash - dt / HURT_FLASH_S);
     hud.setHurtFlash(hurtFlash);
+    sleepFrame(dt, live, eyeY); // §87: the stage lines, what tired eyes see, the tiredness reading, the dark of sleep
     fxTime += dt;
     // Past CAMPFIRE_MAX_TRACKED, keep the tracked fires the ones nearest the player (a no-op otherwise).
     campfires.retrack(player.x, eyeY, player.z);
@@ -6967,6 +7300,7 @@ export function boot(win, doc) {
     zombies.clear();
     watcherRenderer.dispose();
     watcher.clear();
+    disposeSleep(); // §87
     controls.dispose();
     hud.dispose();
     menus.dispose();

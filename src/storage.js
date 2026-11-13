@@ -226,6 +226,8 @@ export const DEATH_CAUSES = Object.freeze([
 
 /** Largest bandage payout rate saved (`healRate`, HP/s). */
 const HEAL_RATE_MAX = 5;
+/** Largest tiredness saved (`fatigue`, game hours awake: vitals.FATIGUE_MAX; a test holds the two together). */
+const FATIGUE_MAX_H = 72;
 
 /** @returns {readonly [string, number, number, number]} a frozen stat row */
 function statRow(name, lo, hi, fresh) {
@@ -243,7 +245,11 @@ export const SURVIVAL_STATS = Object.freeze([
   statRow('sick', 0, SICK_MAX_S, 0),
   statRow('heal', 0, HEAL_MAX, 0),
   statRow('healRate', 0, HEAL_RATE_MAX, 0),
+  statRow('fatigue', 0, FATIGUE_MAX_H, 0), // CONTRACTS §87: tiredness, game hours awake
 ]);
+
+/** Stats a save may lack without a warning: they came later (`fatigue`, §87), and a save from before has the fresh value. */
+export const SURVIVAL_STATS_OPTIONAL = Object.freeze(['fatigue']);
 
 /** Three decimal places, never −0 (NaN stays NaN). */
 function round3(v) {
@@ -341,7 +347,8 @@ function editIdAt(edits, cache, q, y, r) {
 /**
  * The `survival` save field in canonical form (§9.6): the stats rounded to 3 decimal places in key order, `spawn`, `deaths`,
  * `dead` (only when set), `pack` (PACK_SLOTS), `wear` (WEAR_SLOTS) and `fires`. Never fails: a bad stat is reset to its
- * fresh value (`survival.<stat>: invalid, reset`), a bad stack is dropped (`survival.pack[i]: <reason>, dropped`), a pack or
+ * fresh value (`survival.<stat>: invalid, reset`; a save from before §87 simply has no `fatigue`: 0, no warning), a bad
+ * stack is dropped (`survival.pack[i]: <reason>, dropped`), a pack or
  * wear list of the wrong length is padded or cut, and the fires are canonicalised by cooking.normalizeFiresJSON — checked
  * against `opts.edits` when given (an entry whose cell is not CAMPFIRE or FIRE_PIT there is dropped).
  * @param {unknown} raw
@@ -354,6 +361,10 @@ export function normalizeSurvivalJSON(raw, warnings = [], opts = {}) {
   /** @type {Record<string, any>} */
   const out = {};
   for (const [name, lo, hi, fresh] of SURVIVAL_STATS) {
+    if (src[name] === undefined && SURVIVAL_STATS_OPTIONAL.includes(name)) {
+      out[name] = fresh; // an older save: no warning
+      continue;
+    }
     const v = isFiniteNumber(src[name]) ? round3(src[name]) : NaN;
     if (v >= lo && v <= hi) out[name] = v;
     else {

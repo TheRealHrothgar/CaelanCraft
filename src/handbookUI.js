@@ -284,6 +284,8 @@ export const GLYPHS = Object.freeze({
   home: 'M2.5 11.5L12 3.5l9.5 8 M5 9.8v10.7h14V9.8 M10 20.5v-6h4v6',
   // §84 Seasons and rain: a cloud over three falling drops
   rain: 'M7 14.5a4 4 0 0 1 .6-7.95A5.5 5.5 0 0 1 18.2 8a3.3 3.3 0 0 1-.7 6.5Z M8.5 17.5l-1 3 M12.5 17.5l-1 3 M16.5 17.5l-1 3',
+  // §87 Sleep: a crescent moon and two small stars
+  moon: 'M19.5 14.6A8 8 0 1 1 9.4 4.5a6.3 6.3 0 0 0 10.1 10.1Z M16 4v3 M14.5 5.5h3 M20 8.2v2 M19 9.2h2',
 });
 
 // ---------------------------------------------------------------------------------------------------------------------

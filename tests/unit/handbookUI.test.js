@@ -262,7 +262,9 @@ describe('the field book (§14.1: the handbook item)', () => {
     expect(tabs[warmth].classList.contains('active')).toBe(true);
     expect(book.querySelector('.hb-left .hb-running').textContent).toBe('Warm and cool');
     press(doc, 'ArrowDown');
-    expect(ui.position()).toMatchObject({ spread: start.ages, chapter: 'ages' });
+    const next = CHAPTERS[warmth + 1].id; // (the chapter after it: 'ages' until CONTRACTS §87 put Sleep there)
+    expect(next).toBe('sleep');
+    expect(ui.position()).toMatchObject({ spread: start[next], chapter: next });
     press(doc, 'ArrowUp');
     expect(ui.position().chapter).toBe('warmth');
     press(doc, 'Home');

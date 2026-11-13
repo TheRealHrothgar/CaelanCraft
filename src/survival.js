@@ -13,7 +13,7 @@ import { STAT_MAX, BREATH_MAX_S, BODY_TEMP_NORMAL, BODY_TEMP_MIN, BODY_TEMP_MAX,
 import { getItem } from './items.js';
 import {
   createVitals, wakeVitals, statusOf, stepVitals, activityFactor, fallDamage, eatFood, gulpWater, queueHeal,
-  DAMAGE_CAUSES, RATES,
+  DAMAGE_CAUSES, RATES, FATIGUE_MAX,
 } from './vitals.js';
 import { feltTemperature, activityHeat, wetRate } from './climate.js';
 
@@ -38,6 +38,8 @@ import { feltTemperature, activityHeat, wetRate } from './climate.js';
  * @property {number} [insulation]  Pack.insulation()
  * @property {number} [sunShade]    Pack.sunShade()
  * @property {number} [rain]        the rain reaching the player, 0..1 (CONTRACTS §84: its strength × the cover overhead)
+ * @property {{ recover: number, heal: number }|null} [sleep]  asleep on a sleep spot (CONTRACTS §87: sleep.js's spot): the
+ *   body lies still, tiredness falls and health rises by the spot's numbers, hunger and thirst run at half their resting rate
  * @property {number} time          day fraction
  * @property {() => number} [random]
  */
@@ -106,12 +108,14 @@ const VITAL_RANGES = Object.freeze({
   hydration: ['hydration', 0, STAT_MAX],
   temp: ['temp', BODY_TEMP_MIN, BODY_TEMP_MAX],
   breath: ['breath', 0, BREATH_MAX_S],
+  fatigue: ['fatigue', 0, FATIGUE_MAX], // §87: game hours awake
 });
 
 /** Saved number fields of SurvivalJSON (§9.6) with their ranges. @type {ReadonlyArray<[string, number, number]>} */
 const SAVED_STATS = Object.freeze([
   ['health', 0, STAT_MAX], ['satiation', 0, STAT_MAX], ['hydration', 0, STAT_MAX], ['temp', BODY_TEMP_MIN, BODY_TEMP_MAX],
   ['breath', 0, BREATH_MAX_S], ['wet', 0, 1], ['sick', 0, SICK_MAX_S], ['heal', 0, HEAL_MAX], ['healRate', 0, 5],
+  ['fatigue', 0, FATIGUE_MAX], // §87 (a save from before it has none: 0)
 ]);
 
 /** @param {*} v @returns {boolean} */
@@ -139,7 +143,7 @@ export class Survival {
     this.switchVersion = 0;
     /** @type {Vitals} */
     this.vitals = createVitals();
-    /** @type {[number, number, number]|null} the Sleeping Hide cell to wake at */
+    /** @type {[number, number, number]|null} the cell of the sleep spot to wake at (the Sleeping Hide, a bed: §87) */
     this.spawn = null;
     this.deaths = 0;
     /** @type {string|null} the cause of death while the death screen is up */
@@ -213,8 +217,8 @@ export class Survival {
 
   /**
    * One frame of the body (§9.4), in order: the fall (landSpeed consumed; no damage under fallGrace, which any landing
-   * clears), breath, wet, felt then body temperature, drains, regeneration and bandages, damage over time, death. A no-op
-   * unless active.
+   * clears), breath, wet, felt then body temperature, drains, tiredness, regeneration and bandages, damage over time,
+   * death. A no-op unless active. With `env.sleep` (§87) the body lies still whatever the player's velocity says.
    * @param {number} dt
    * @param {SurvivalEnv} env
    * @returns {SurvivalEvents}
@@ -259,9 +263,10 @@ export class Survival {
     const buried = !!env.buried;
     this._flags.headInWater = headInWater;
     this._flags.buried = buried;
-    const moving = env.moving ?? (p ? Math.hypot(p.vx, p.vz) > RATES.WALK_MIN_SPEED : false);
+    const sleep = env.sleep ?? null; // §87
+    const moving = !sleep && (env.moving ?? (p ? Math.hypot(p.vx, p.vz) > RATES.WALK_MIN_SPEED : false));
     const sprinting = !!p?.sprinting && moving;
-    const breaking = !!env.breaking;
+    const breaking = !sleep && !!env.breaking;
     const c = env.climate ?? /** @type {SurvivalEnv['climate']} */ ({});
     const heat = finite(env.heat) ? env.heat : 0;
     // Wet (§3.2, §84): swimming soaks at once; rain that reaches you wets you; otherwise you dry.
@@ -296,6 +301,7 @@ export class Survival {
       buried,
       nearFire: !!env.nearFire,
       still: env.still ?? !moving,
+      sleep,
     }, env.random);
     let worst = null;
     for (const cause of Object.keys(res.damage)) {
@@ -393,7 +399,8 @@ export class Survival {
 
   /**
    * Set one vital (console `vitals <name> <value>`, §9.7), clamped to its range. Names: health, nourishment (or
-   * satiation), hydration, temp, breath. Health 0 does not kill here: main's CommandContext sets pendingDeath ('command').
+   * satiation), hydration, temp, breath, and (§87) fatigue. Health 0 does not kill here: main's CommandContext sets
+   * pendingDeath ('command').
    * @param {string} name
    * @param {number} value
    * @returns {boolean} false for an unknown name, a non-finite value or no survival state
@@ -405,7 +412,7 @@ export class Survival {
     return true;
   }
 
-  /** Console `vitals full`: every stat full, body 37, dry, well, nothing pending. @returns {boolean} false without state */
+  /** Console `vitals full`: every stat full, body 37, dry, well, rested, nothing pending. @returns {boolean} false without state */
   restoreVitals() {
     if (!this.hasState) return false;
     const v = this.vitals;
@@ -418,6 +425,7 @@ export class Survival {
     v.sick = 0;
     v.heal = 0;
     v.healRate = 0;
+    v.fatigue = 0;
     return true;
   }
 
@@ -425,7 +433,8 @@ export class Survival {
    * The vitals part of SurvivalJSON (§9.6), canonical key order, numbers rounded to 3 decimal places; main adds the pack,
    * the worn items and the fire spots. `dead` is present only while dead.
    * @returns {{ health: number, satiation: number, hydration: number, temp: number, breath: number, wet: number,
-   *   sick: number, heal: number, healRate: number, spawn: [number, number, number]|null, deaths: number, dead?: string }}
+   *   sick: number, heal: number, healRate: number, fatigue: number, spawn: [number, number, number]|null, deaths: number,
+   *   dead?: string }}
    */
   export() {
     const v = this.vitals;

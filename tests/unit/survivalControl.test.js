@@ -478,7 +478,9 @@ describe('interactKind: the R priority (§9.4)', () => {
   it('5–7. basket, belongings, Sleeping Hide and workplaces', () => {
     expect(interactKind(ctx({ hit: hit(B.WICKER_BASKET) }))).toEqual({ kind: 'basket', q: 1, y: 60, r: 2, hint: HINT.basket });
     expect(interactKind(ctx({ hit: hit(B.REMAINS) }))).toEqual({ kind: 'belongings', q: 1, y: 60, r: 2, hint: 'Your Belongings · R: take back' });
-    expect(interactKind(ctx({ hit: hit(B.SLEEPING_HIDE) }))).toEqual({ kind: 'hide', q: 1, y: 60, r: 2, hint: 'Sleeping Hide · R: wake here' });
+    // CONTRACTS §87: the hide is a place to sleep now (and still the waking place); it read `Sleeping Hide · R: wake here`
+    expect(interactKind(ctx({ hit: hit(B.SLEEPING_HIDE) }))).toEqual({ kind: 'hide', q: 1, y: 60, r: 2, hint: 'Sleeping Hide · R: sleep' });
+    expect(HINT.hide).toBe('Sleeping Hide · R: sleep');
     expect(interactKind(ctx({ hit: hit(B.KILN) }))).toEqual({ kind: 'station', q: 1, y: 60, r: 2, station: 'kiln', hint: 'Kiln · R: open Making' });
     expect(interactKind(ctx({ hit: hit(B.WORK_STUMP) })).station).toBe('stump');
     expect(interactKind(ctx({ hit: hit(B.BLOOMERY) })).station).toBe('bloomery');

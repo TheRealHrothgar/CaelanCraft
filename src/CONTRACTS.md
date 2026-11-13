@@ -144,6 +144,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/weather.js` | PURE, the calendar (wet and dry season), rain in showers, what rain reaches, the sky under rain (§84) | seasons and rain | `tests/unit/weather.test.js`, `tests/unit/rainEffects.test.js` |
 | `src/homestead.js` | PURE, springs, wells and rain barrels: what R does, what brings their water back (§85) | a place to stay | `tests/unit/homestead.test.js`, `tests/unit/worldgenHomestead.test.js` |
 | `src/rainRenderer.js` | three (+ the pure `RainField`), rain and snow as one mesh of quads (§84) | seasons and rain | `tests/unit/rainRenderer.test.js` |
+| `src/sleep.js` | PURE, sleep spots, lying down, a sleep and its reasons to wake, the secure place, the night attack, the effects of being awake too long (§87) | sleep | `tests/unit/sleep.test.js` |
+| `src/phantomRenderer.js` | three, the figure at the edge of sight: three dark boxes, drawing only (§87) | sleep | `tests/unit/sleep.test.js` |
 | — | circuits integration, the worked examples (§58) | v0.10 I | `tests/integration/circuits.test.js`, `tests/integration/harness.test.js` |
 | `tests/helpers/fixtures.js` | test helpers | Wave 0 (done) | — |
 | `tests/helpers/circuitWorld.js` | a fake world wired to a Circuits like main's hooks (v0.10 B) | v0.10 B | — |
@@ -6141,6 +6143,240 @@ generation 5 costs what one of generation 4 does (1.9 ms).
   (the digests of generations 1–4; generation 5 against generation 4 cell by cell; the gravel measured in both; the
   springs: exact, the same from every chunk, where the ground suits, away from streams, their rarity), and additions
   to handbook.test.js (every number of the chapter) and to the tests that pin totals.
+
+## 87. Sleep — `src/sleep.js` (PURE), `src/phantomRenderer.js` (three), `src/vitals.js`, `src/survival.js`, `src/storage.js`, `src/survivalControl.js`, `src/hud.js`, `src/soundBank.js`, `src/soundTest.js`, `src/main.js`, `src/diagnostics.js`, `src/handbook.js`, `src/handbookUI.js`
+
+Amends §19 and §48 (the HUD), §23 and §49 (main), §43 and §73 (the guide), §44 (the R priority: the hide), §45 (the body,
+the save field), §82 (the bank). A new part of the body, **tiredness**, grows while you are awake and has four
+worsening stages; **sleeping** on a sleep spot takes it off again while game time runs fast, and heals; asleep at night
+in a place that is not **secure** the night may come for you, less often by light, never in a secure place.
+
+**No block, tile, item or recipe is added.** A sleep spot is looked up by its block KEY, so the two beds that another
+package registers (`GRASS_BED`, `BED`) become sleep spots the moment their blocks exist; today the only one is the
+Sleeping Hide. One number is added to the save (`survival.fatigue`, optional: an older save has none).
+
+**It is played by a child.** Every effect is announced a stage ahead (Tired is only a warning), nothing appears close
+or moves toward the player, no sound is loud, the blur moves in one slow wave and the screen never flashes. **Nobody
+who built this could see or hear it** (docs/KNOWN-ISSUES.md): what is tested is everything that can be measured.
+
+### 87.1 Tiredness (`vitals.js`, `survival.js`, `storage.js`)
+
+- `Vitals.fatigue`: game hours awake, 0..`FATIGUE_MAX` **72**. `GAME_HOUR_S` = DAY_LENGTH_SECONDS / 24 = 60.
+  `createVitals()` starts at 0. `stepVitals` adds `dt / GAME_HOUR_S` (whatever the activity), capped; with
+  `VitalsInput.sleep` (`{ recover, heal }`, a sleep spot) it takes off `recover × dt / GAME_HOUR_S` instead, never below
+  0. A value that is not a number counts as 0.
+- **Stages.** `TIRED_AT` **20**, `EXHAUSTED_AT` **32** (twelve hours in deficit), `WEAK_AT` **40**, `DELIRIOUS_AT` **48**.
+  `fatigueStage(v)` → 0..4 for a body or for its hours; `FATIGUE_STAGES` = `['', 'Tired', 'Exhausted', 'Weak', 'Seeing
+  things']`, `FATIGUE_FROM` their thresholds. Each stage keeps the effects of the ones before it:
+
+  | stage | from | effect |
+  |---|---|---|
+  | Tired | 20 h | a label, a yawn now and then (87.5). No penalty: the warning. |
+  | Exhausted | 32 h | sight blurs softly (87.5); `statusOf(v).regen` is false (no natural healing; a bandage still pays out). |
+  | Weak | 40 h | `statusOf(v).moveFactor` × `WEAK_MOVE` **0.85**; `digFactorOf(v)` `WEAK_DIG` **0.7** (main divides the dig's seconds by it); `strikeFactorOf(v)` `WEAK_STRIKE` **0.75** (main multiplies a strike's power: zombies, animals, pigs; throws are not strikes). |
+  | Seeing things | 48 h | sounds with nothing there, a figure at the edge of sight, nods (87.5). |
+
+  `statusOf` adds the stage's name as the LAST label (after Wet); the shape of `VitalsStatus` is unchanged.
+  `hud.chipKind` → `'tired'` for the four names.
+- **Balance.** A day of 20 hours awake and 4 hours in a Bed (recover 5) comes back to where it started: "4 hours is
+  minimum per day". On a Sleeping Hide the same day needs 4.8 hours, on a Grass Bed 6.
+- **Death.** `wakeVitals` leaves at most `WAKE_MAX_FATIGUE` (= TIRED_AT): dying is no rest, and you never wake with a
+  penalty. `restoreVitals` (`vitals full`) sets 0; `Survival.setVital('fatigue', h)` clamps to 0..72.
+- **`SurvivalEnv.sleep`** (`{ recover, heal } | null`): `Survival.step` hands it to `stepVitals` and, with it, takes the
+  body as lying still (no moving, sprinting or breaking, whatever the player's velocity says).
+- **Asleep, the body** (`stepVitals` with `sleep`): hunger and thirst at `SLEEP_DRAIN` **0.5** of their RESTING rate (the
+  cold, heat and poison factors still apply); body temperature, wet, breath, poison and bandages exactly as awake (a
+  sleeper in the rain with no roof chills: there is no special rule); NO natural regeneration; instead `heal × dt /
+  GAME_HOUR_S` HP whatever the other conditions (hungry, cold, exhausted) and at no cost in Nourishment — unless
+  Poisoned at the start of the step.
+- **Saved.** `Survival.export()` writes `fatigue` (3 decimals, clamped) after `healRate`; `import` takes a number in
+  0..72, else 0. `storage.SURVIVAL_STATS` gains the row `['fatigue', 0, 72, 0]`; `SURVIVAL_STATS_OPTIONAL` =
+  `['fatigue']`: a save without the field loads as 0 with NO warning (an older save); a bad value is reset with
+  `survival.fatigue: invalid, reset`. `SurvivalJSON.fatigue` (types.js).
+- **The log** (`sleep.STAGE_LINES`, `stageNews(prev, next)`): entering a stage says its line (`You are tired. Find a
+  place to sleep.` …; two crossed at once: the worse one), falling back under Tired while awake says `You are no longer
+  tired.`, nothing on a load (`prev` null), nothing while asleep (the waking line says the state).
+
+### 87.2 Sleep spots and lying down (`sleep.js`, `survivalControl.js`)
+
+- `SPOT_ROWS`: `['GRASS_BED', { name: 'Grass Bed', recover: 3, heal: 2 }]`, `['SLEEPING_HIDE', { name: 'Sleeping Hide',
+  recover: 4, heal: 4 }]`, `['BED', { name: 'Bed', recover: 5, heal: 6 }]` — hours of tiredness taken off, and HP, per
+  game hour of sleep. `sleepSpots(blocks = BLOCK)` → the rows whose key the block table has, as `{ key, id, name,
+  recover, heal }`; `SPOTS` = `sleepSpots()`; `spotOf(id, spots?)`, `isSleepSpot(id)`, `spotHint(spot)` →
+  `Sleeping Hide · R: sleep`. There is no sleeping on bare ground.
+- **R** (`interactKind` case 6): any sleep spot → `{ kind: 'hide', q, y, r, hint: spotHint(spot) }` (`HINT.hide` is
+  `Sleeping Hide · R: sleep`; it read `… · R: wake here`). main's `sleepOn(q, y, r)`: the spot becomes the waking place
+  (`survival.spawn`, as before; `You will wake at this Sleeping Hide.` only when it changed); then
+  `sleepRefusal(...)`, shown as a 2.5 s target hint; else the player is put on the spot (`findFreeY` from on top of a
+  solid spot, `game.teleport`; left where they stand when there is no room), `SecureWatch` looks at the place once,
+  `sleep.lie(spot, cell)`, and the controls are switched off. Waking after a death (§49) accepts any sleep spot; when it
+  is gone: `Your sleeping place is gone.` A spot is not assumed to be solid: the Sleeping Hide is a solid prism a metre
+  high (you lie and wake on top of it), the beds are low models you walk over (§85: you lie and wake in their own cell;
+  `isSolid(id) ? y + 1 : y` in both places).
+- **`sleepRefusal({ vitals, inWater, riding, x, y, z, zombies })`** → the first that holds, or null: `fatigue <
+  SLEEP_MIN_FATIGUE` **6** → `You are not tired.`; riding → `Get off your horse to sleep.`; in water → `You cannot
+  sleep in water.`; a zombie in mode `chase` within `SLEEP_ZOMBIE_NEAR` **12** → `You cannot sleep now: a zombie is
+  after you.`; Poisoned with health above RATES.SICK_FLOOR (the poison is still taking health) → `You cannot sleep
+  while the poison is hurting you.`; Nourishment < RATES.STARVING or Hydration < RATES.PARCHED (the levels that would
+  wake a sleeper at once) → `You are too hungry to sleep. Eat first.` / `You are too thirsty to sleep. Drink first.`
+- **The target hint** of a sleep spot (main `sleepSpotHint`): `<hint> · secure here` or `<hint> · not secure: <reason>`
+  (87.3; worked out again at most once a second while it stays under the crosshair, and when a block changes); in a
+  world whose zombies are switched off, the bare hint.
+
+### 87.3 A sleep (`sleep.js` `Sleep`; main `stepSleep`)
+
+`Sleep`: `phase` `'awake' | 'falling' | 'asleep'`, `spot`, `cell`, `seconds` (game seconds slept), `hours`, `active`
+(not awake), `asleep`, `wokeBy`, `lastHours`; `lie(spot, cell)`, `wake(reason)`, `step(dt, hooks)`, `advance(seconds,
+hooks)`, `reset()`.
+
+- **Lying down**: `'falling'` for `SLEEP_FADE_S` **1.5** real seconds (the view goes dark: `sleepDark(level, down, dt)`,
+  back over `WAKE_FADE_S` 0.8 on waking), then `'asleep'`.
+- **Asleep**, game time runs at `SLEEP_RATE` **30** game seconds per real second (8 hours in 16 s), in ticks of ONE game
+  second: `hooks.second()` → `{ hurt, died, satiation, hydration, fatigue, isDay }`. At most `SLEEP_TICKS_PER_FRAME`
+  **4** a frame, never more than that owed, and none after the frame's ticks have taken `SLEEP_FRAME_BUDGET_MS` **4**
+  (by `hooks.now`): what a frame cannot tick is dropped, so a slow machine only sleeps slower. main's frame of 0.1 s
+  at the longest owes 3.
+- **main's game second** (`sleepSecond`): the clock and the day counter (`advanceTime(time, 1)`), then
+  `stepSurvival(1, false)` with `env.sleep = sleep.spot`: the body (87.1) and every once-a-second system of Survival —
+  regrowth, farming and spreading, the rain on the fires, the water cycle (§83 `waterSecond`), spoilage in the pack and
+  in the containers — and the fires' fuel and what cooks on them (`fireSlots.step`). The making lanes wait
+  (`craftQueue.step` is skipped while asleep) and a fire's smoke and sizzle are not played. **Nothing else is stepped
+  while lying down or asleep**: not the player's physics, not the animals, pigs, zombies or the Watcher (they stand
+  where they are), not block physics, the circuits or the runes. `stepPlaying` begins `if (stepSleep(dt)) return;`;
+  `stepSleep` still runs the death checkpoint, `world.update`, `updateHit` and the autosave.
+- **Waking** (`wakeReason(second, hours)`, the first that holds after a tick; then the hourly roll of 87.4):
+  `died`; `hurt` (any damage that second: the cold, poison, starving); `hunger` / `thirst` (under RATES.STARVING /
+  RATES.PARCHED = 10); `max` (`SLEEP_MAX_H` **10** hours); `rested` (tiredness 0 AND (`SLEEP_FULL_H` **8** hours slept
+  OR the sun is up)). Also `asked` — any key but Esc (which pauses as usual; a held key's repeats do not count) or a
+  click, while playing — and `attack` (87.4), and `stopped` (a mode switch). Healing goes on as long as the sleep
+  lasts and tiredness is gone in 4 to 7 hours, so eight hours is the best night.
+- **On waking** main says `Something is near.` after an attack, then ONE line, `wakeLine(hours, vitals, reason)`:
+  `You slept 7 hours.` (whole hours; under one: `You hardly slept.`), then `Pain woke you.` / `Hunger woke you.` /
+  `Thirst woke you.` when that was why, then the state: `You are rested.` (tiredness 0), `You feel better.` (under
+  Tired), or `You are still tired.` / `exhausted.` / `weak.` / `seeing things.`; and plays `wakeSoft`.
+- **The screen** (hud `setSleepView`): `#sleep-overlay` at the sleep's darkness, with `Sleeping · 3 h`
+  (`sleepingLine`) and `press any key to wake`; it covers the whole HUD. Pausing works as usual: the sleep stands
+  still under the menu and goes on after it.
+- Nothing of a sleep is saved: a world left asleep is loaded awake, at the time it had reached.
+
+### 87.4 A secure place; the night attack (`sleep.js`)
+
+- **`secureAt(env, q, y, r)`** → `{ secure, reason, cells }` for the sleep spot in cell (q, y, r); `env` = `{ getBlock,
+  spawnY?(q, r), groundHeight?(q, r) }`. The OPEN cells (not solid; a bed, walked over, is open) are flood-filled from
+  where the sleeper lies — the spot's own cell (a bed), or the one above a solid spot (the Sleeping Hide), or the open
+  cells beside a spot with a block on it — through the six side neighbours and up and down, the cell farthest from the spot first. The fill never enters a
+  cell above the first `SECURE_RISE` **5** layers (y … y + 4: no zombie climbs more than 4, so a wall five high, or a
+  roof, closes a place and the open sky above such a wall is not a way in). It ends as NOT secure with
+  `SECURE_REASONS.open` `open to the outside` when it would step into an open cell farther than `SECURE_RADIUS` **12**
+  cells from the spot (hex distance), or more than 12 below it; with `.big` `too big a place to keep watch over` when
+  it has gone through more than `SECURE_MAX_CELLS` **800** cells. A fill that ended by itself is still not secure,
+  `.ground` `zombies can come up from the ground inside`, when one of its cells is where `env.spawnY` (main:
+  `zombies.spawnHeightAt(zombieWorld, q, r)`) says a zombie may come up: untouched natural ground with two cells of air
+  above, not in a column that was built in, not lit to ZOMBIE_SPAWN_LIGHT_MAX, not near a burning campfire (§39, §86:
+  the zombies' own rule, so a floor laid over the ground, or light, mends it; and a fire that burns out unmends it).
+  Otherwise the place is secure. `secureWords(result)` → `secure here` / `not secure: <reason>`.
+- **`SecureWatch`**: `watch(q, y, r)`, `get(env)` (worked out when first asked, then kept), `blockChanged(q, y, r)` (a
+  block within `SECURE_WATCH` = SECURE_RADIUS + 8 cells makes it stale: the fill's reach plus a light's), `touch()`,
+  `clear()`, `computed`. main keeps one for the sleeper (looked at when lying down, when a block changes, and again
+  before each hour's roll) and one for the target hint; `onBlockChanged` calls `sleepBlockChanged`.
+- **The roll.** Each time a whole game hour of sleep has built up (`hooks.hour`; `Sleep.sinceRoll` carries over from one
+  sleep to the next, so short naps dodge nothing): `rollNightAttack({ isDay, secure, zombiesOn, light }, random)` — false with NO draw by day, in a secure place, or with the world's zombies switched off; else one draw
+  against `nightAttackChance(light)` = `NIGHT_ATTACK_P` **0.2** × (1 − `LIGHT_GUARD` **0.75** × min(1, light /
+  `LIGHT_GUARD_FULL` **12**)). `light` is the BLOCK light where the sleeper lies (`zombies.standLight`): a Torch or a
+  burning campfire in the next cell gives the full guard, a quarter of the risk; nothing but a secure place makes it
+  nothing. Over a night of eight hours: attacked 83 % of the time in the dark, 34 % beside a fire.
+- **The attack** (`placeNightAttack(zombies, zworld, x, z, random)` → the zombies placed): the columns between
+  `ATTACK_MIN` **10** and `ATTACK_MAX` **18** cells from the sleeper are looked at in a random order until one is a
+  place `zombies.spawnHeightAt` allows (all of them when none is); there `zombies.spawnChanceAt` below 1 (dim light)
+  may refuse it with one more draw; one zombie comes up (a runner with `ATTACK_RUNNER_P` = RUNNER_P, facing the
+  sleeper), and with `ATTACK_PAIR_P` **0.35** a second within `ATTACK_PAIR` 3.5 of it, found the same way. They are
+  ordinary zombies in `zombies.list` from then on. With no valid ground in the ring, the draw refused, the list full or
+  the zombies off, nothing is placed and the sleep goes on: lit ground is never a place they come from.
+
+### 87.5 Awake too long (`sleep.js` `TiredFx`, `phantomRenderer.js`, hud)
+
+`TiredFx.step(dt, view, random)` → `{ sounds: [name, volume][] }`; `view` = `{ stage, awake, x, y, z (the eye), yaw,
+pitch, standAt(q, r) }`. Every timer runs only while its stage holds and the player is awake; with `dt` 0 (a menu)
+nothing changes; asleep, dead or below the stage everything is cleared and the timers start afresh.
+
+- **Yawns** (stage ≥ Tired): `['yawn', YAWN_VOLUME 0.7]` every `YAWN_EVERY_S` 50–110 s.
+- **Blur** (stage ≥ Exhausted; `blurPx(stage, t)`): at most `BLUR_PX` [0, 0, 1.4, 1.9, 2.4] CSS px by stage, as
+  `BLUR_FLOOR` 0.2 + 0.8 × a raised cosine of period `BLUR_WAVE_S` **9** s. hud puts it on `#game-canvas` as a CSS
+  `filter` in steps of `BLUR_STEP_PX` 0.2.
+- **Seeing things** only:
+  - a sound with nothing there every `PHANTOM_SOUND_EVERY_S` 25–55 s: one of `PHANTOM_SOUNDS` — `zombieGroan` at 0.2,
+    `stepGrass` at 0.6, `digWood` at 0.18 (a far groan, a footstep, a twig): existing recipes at the level of the
+    birds;
+  - a **nod** every `NOD_EVERY_S` 20–40 s: `TiredFx.dark` = `nodDark(left)`: the screen closes for `NOD_S` **0.4** s,
+    going dark and coming back over `NOD_EDGE_S` 0.1 each;
+  - **the figure** (`TiredFx.figure`: `{ x, y, z, yaw, age, alpha, d0 }` or null): at most one, the next no sooner than
+    `FIGURE_EVERY_S` 20–40 s after the last appeared; `FIGURE_MIN` **12** to `FIGURE_MAX` **20** cells away, `FIGURE_SIDE`
+    0.52–0.73 rad (30°–42°) to the left or right of where the player looks, in the middle of a cell where
+    `view.standAt` finds a place to stand (main: `phantomStandAt(getBlock, q, r, player.y)`; none: no figure, and
+    another try `FIGURE_RETRY_S` 4 later). Its opacity `figureAlpha(age)` rises over `FIGURE_IN_S` 0.4 to `FIGURE_ALPHA`
+    **0.5** and fades to nothing by `FIGURE_S` **2** s. It is gone AT ONCE when the middle of the view comes within
+    `FIGURE_LOOK` **0.44** rad (25°) of it (`angleFromView`, pitch counted), when the player comes `FIGURE_NEARER` 0.25
+    nearer than it appeared at, or nearer than FIGURE_MIN. It never moves. **It is drawing only**: a place and an
+    opacity; it is in no list, has no body, cannot be targeted or struck, and sleep.js makes no zombie for it.
+  - **In a world whose zombies are switched off** (`view.spooky` false; main: `zombies.enabled`) there is no groan
+    (`PHANTOM_SOUNDS_CALM`: the footstep and the twig) and no figure; the nods and the blur stay.
+- **`phantomRenderer.js`**: `createPhantomRenderer(scene)` → `{ group, material, sync(figure | null), prewarm(webgl,
+  camera), dispose() }`: three plain boxes (`PHANTOM_PARTS`: legs, body, head; together `FIGURE_HEIGHT` 1.8) sharing
+  one unlit, transparent `MeshBasicMaterial` (`PHANTOM_COLOR` near black, no depth write), no face, no eyes, no arms;
+  hidden without a figure.
+
+### 87.6 The HUD and the sounds
+
+- **`hud.setTiredness(view | null)`**: `#tiredness` (made in `#hud` when the page has none): `Awake 14 h`
+  (`sleep.tirednessView(fatigue)` → `{ hours, text, level, stage }`) over a thin bar that is full at `TIRED_BAR_FULL`
+  = DELIRIOUS_AT hours, with a mark at each of `TIRED_BAR_MARKS` (Tired, Exhausted, Weak); right of the right-hand
+  vitals (`left: calc(50% + 285px)`, bottom 8 px); words and a bar, no hexagon, no icon; shown only while the survival
+  HUD is; the DOM is touched only when `tirednessKey` changes (once a game hour).
+- **`hud.setSleepView({ dark, blur, line, sub } | null)`**: `#sleep-overlay` (made as the last thing in `#hud`; z 8
+  inside it: over the hotbar's own layers, under every menu) at opacity `dark` in 1/32 steps, with `.sleep-line` and
+  `.sleep-sub`; the blur on `#game-canvas` (`BLUR_TARGET_ID`). The DOM is touched only when a step or a line changes.
+- **The bank** (§82): `yawn` (a slow breath in and a soft falling "aah", attack ≥ 0.25 s, `spare` STEP_SPARE) and
+  `wakeSoft` (two soft sine notes a fifth apart, attack 0.08 s), both in the movement family; the Sound Test has a
+  `Sleep` row (Yawn, Wake) under Footsteps and movement.
+
+### 87.7 main.js, the debug handle, the guide
+
+- One section owns `sleep`, `tiredFx`, the two `SecureWatch`es, `sleepFx`, `secureEnv`, the wake listeners (`keydown`
+  and `mousedown` on the document) and its functions. The rest of main reaches them from: `stepPlaying` (`stepSleep`),
+  `renderFrame` (`sleepFrame(dt, live, eyeY)`: the stage lines, `tiredFx.step(live ? dt : 0, …)`, the sounds,
+  `phantomRenderer.sync`, `hud.setTiredness`, `hud.setSleepView`), `stepSurvival` (`env.sleep`, `sleepNote(ev)`, the
+  two `!sleep.asleep` guards), `doInteract` (`sleepOn`), `survivalHintText` (`sleepSpotHint`), `wake` (`spotOf`),
+  `onBlockChanged` (`sleepBlockChanged`), `digStep` (`/ digFactorNow()`), `strike` (`× strikeFactorNow()`, three
+  times), `clearSurvival` and the loading reset (`resetSleep`), `dispose` (`disposeSleep`).
+- **Debug handle** (`window.__caelancraft`, GameContext): `sleep` (the `Sleep`), `tiredFx`, `setFatigue(hours)` → the
+  hours (null without a survival state), `sleepHere()` → true or why not (the spot under the crosshair, else the
+  nearest within 4 cells), `secureAt(q, y, r)` → `{ secure, reason, cells }`, `sleepStep(hours)` → `{ hours, woke }`
+  (`Sleep.advance`: that many game hours at once, with every reason to wake; null when nobody sleeps). To see a stage:
+  `setFatigue(20 | 32 | 40 | 48)`; to see an effect now: `tiredFx.yawnIn = 0`, `.figureIn = 0`, `.nodIn = 0`,
+  `.soundIn = 0`.
+- **F3** (`diagnostics.sleepDebugLine(game)`, after the Survival line): `Sleep: awake 21.4 h`, and ` · asleep 3.2 h on a
+  Sleeping Hide` while there is a sleep.
+- **The guide**: a thirteenth chapter, `sleep` "Sleep" (tab "Sleep", glyph `moon`), after `warmth`: "Why you sleep"
+  (the table `tired`, source `vitals`), "Where to sleep" (the table `sleep-spots`, source `'sleep'`: one row per spot
+  of `SPOTS`), "A night's sleep", "The night comes for you", "A safe place to sleep". The Sleeping Hide's page (Death
+  and waking) and the R list (Controls) say it is a place to sleep; the warnings page of Dangers points to the chapter.
+  **The guide's own-words check** (handbook.test.js) still forbids `bed`, but `Bed` and `Grass Bed` written so are the
+  names of two sleep spots and may be named.
+- **Totals**: blocks, tiles, items and recipes unchanged. 13 guide chapters (12), two more bank one-shots, one more
+  Sound Test row, one more save field.
+- **Imports** (leaf-ward, still acyclic): `sleep → blocks, hex, vitals`; `vitals → config (DAY_LENGTH_SECONDS), blocks,
+  climate` as before; `survivalControl → … + sleep`; `phantomRenderer → three, prewarm, sleep`; `handbook → … + sleep`;
+  `main → … + sleep, phantomRenderer`. hud imports nothing new (main hands it the view).
+- **Cost**: a sleeping frame is at most 4 game seconds of `stepSurvival(1)` — what an ordinary frame pays once a second
+  — inside a 4 ms budget; `secureAt` is under a millisecond for a camp (it stops at 800 cells) and a dozen cells in the
+  open; `placeNightAttack` looks at about 800 columns only when no ground is valid.
+- **Tests**: `tests/unit/sleep.test.js` (tiredness: rates, the balance, the stages and what they do, death, the save
+  and old saves; the spots and an injected block table; lying down; a sleep: the rate, the caps, the body, healing,
+  every reason to wake, the lines; secure: a sealed room, a doorway, low walls, a yard, bare ground, light, caves, the
+  reach, the cap, the watch; the night attack: the chance, by simulation, the placing; TiredFx and the figure; the
+  renderer; the HUD; the sounds; main's wiring read from the source; the debug handle; F3), and additions to
+  `handbook.test.js` (the chapter, its tables and numbers) and to the pins of vitals, survival, storage,
+  survivalControl, physicsInterfaces and handbookUI tests.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

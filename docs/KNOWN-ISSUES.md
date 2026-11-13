@@ -596,3 +596,61 @@ generation 5). None blocks play.
   52 cells away) and remembers it. Animals do not come to drink there.
 - **The guide's danger and first-day pages do not mention the homestead**; only the new chapter and one line of
   "Older worlds" do.
+
+## Sleep — open items
+
+CONTRACTS §87. Built without a browser: the logic is tested, the look and the sound are not.
+
+- **Nobody has seen or heard any of it.** The blur of tired eyes (a CSS `filter: blur()` on the game canvas, 0.3 to
+  2.4 px in a nine-second wave), the nods (the screen dark for 0.4 s), the figure at the edge of sight (three dark boxes
+  at half opacity, 12 to 20 cells off, for two seconds at the most), the dark of sleep with its two lines, the
+  tiredness reading right of the vitals, the yawn, the waking chime and the three quiet sounds with nothing there were
+  all set by arithmetic. What is measured: how dark, how blurred, how loud, how often, how far, how long. Whether the
+  blur is "soft" or a nuisance, whether the figure reads as a shadow or as a glitch, and whether any of it unsettles a
+  young child, is for play to say. To look: `__caelancraft.setFatigue(20 | 32 | 40 | 48)`, then
+  `__caelancraft.tiredFx.figureIn = 0` (or `.nodIn`, `.soundIn`, `.yawnIn`) to have the next one now.
+- **A world with its zombies switched off** (the pause menu's Creatures row) hears no groan and sees no figure when
+  Seeing things, on the thought that whoever switched them off wants nothing of the kind; the footstep, the twig, the
+  nods and the blur stay. Nobody asked for this rule: it is this package's own.
+- **The blur costs a full-screen filter.** It is on only from Exhausted on and never above 2.4 px, but on a weak GPU a
+  canvas filter can cost frames. If it does, set `BLUR_PX` (sleep.js) to zeros: nothing else depends on it.
+- **In this build there is one place to sleep, and it is not a first-day thing.** The Sleeping Hide needs two Leather, a
+  flint knife and a Work Stump. A new player is Tired at about 04:00 of the second day, Exhausted at 16:00, Weak at
+  midnight and Seeing things on the third morning. The Grass Bed and the Bed are another package's blocks: `sleep.js`
+  finds them by block key (`GRASS_BED`, `BED`) the moment they are registered, with the numbers of `SPOT_ROWS`. Until
+  then the first two days are harder than they are meant to be.
+- **The item's one-line purpose still says** "Where you wake after dying." for the Sleeping Hide (`purpose.js` was not
+  this package's to edit). The Guide's first-day chapter and the dangers table do not mention sleep either: sleep has
+  its own chapter, and the warnings page and the hide's page point to it.
+- **While you sleep, everything but your body and the once-a-second systems stands still**: animals, pigs, zombies, the
+  Watcher, falling blocks and flowing water, circuits and their timers, rune scripts, loose items (they do not age),
+  shorn wool and milk (they do not come back faster), and the making lanes (nothing is made). Fires burn down, food
+  cooks, burns and spoils, plants grow and spread, pools dry and fill, the rain puts fires out. A zombie that was
+  wandering near when you lay down is exactly there when you wake.
+- **Secure is a flood fill, not a pathfinder.** It asks whether the open space round the spot is closed within 12
+  cells and 5 layers and has no ground a zombie can come up from. So: a gap one cell high, or a window, counts as a way
+  in although no zombie fits through; a pit with sides 5 high counts as closed although something could be shoved in;
+  ground higher than your wall just outside it is not seen. And secure only means that no night attack is rolled:
+  zombies that were about already are not sent away by it.
+- **Secure follows the zombies' own spawn rule**, so bare ground inside the walls stops counting against you when it is
+  lit to 7 or more, or within 8 cells of a burning campfire. When that fire burns out the place is not secure again;
+  this is noticed when the block changes and before each hour's roll. A Filament Lamp that goes dark changes no block:
+  it is noticed at the next hour's look, and the hint under the crosshair looks again once a second.
+- **Where an attack comes up.** One or two zombies come up 10 to 18 cells from the sleeper on ground where the zombies
+  module allows it, which is the generated surface: a sleeper deep in an unsecured cave is woken by zombies that came
+  up overhead and may never find a way down. With a strong light where you lie (10 or more), walkers and runners that
+  come up do not chase you while you stay in it (§86): you are woken, and nothing may arrive.
+- **Short naps dodge no roll, but they do reset the fade.** The hour that brings a roll is counted over sleeps
+  (`Sleep.sinceRoll`), so lying down again and again gains nothing; each lying down costs its 1.5 s of fade.
+- **Lying down moves you onto the spot** when there is room for a body on it (two open cells); under a roof one cell
+  above a Sleeping Hide you sleep where you stand, while the place is judged from the spot.
+- **Rain.** A sleeper under the open sky gets wet and cold like anyone else and is woken when the cold starts to
+  hurt. Nothing warns of it before lying down; the Guide says to roof the fire, not the sleeper.
+- **Dying caps tiredness at 20** (you wake Tired at the worst). It is a choice: dying must not be a way to rest, and
+  must not leave a penalty on top of the loss.
+- **The console's `vitals` command does not list tiredness.** `Survival.setVital('fatigue', h)` exists and
+  `__caelancraft.setFatigue(h)` uses it; the command's word list and help were left alone.
+- **A held key does not wake you** (its repeats are ignored, so the R that put you to sleep cannot wake you); Esc
+  pauses. There is no way to wake from a touch screen or a gamepad, as there is no way to play from one.
+- **The Guide's own-words check changed on purpose**: `bed` is still forbidden, but `Bed` and `Grass Bed`, written so,
+  are the names of two sleep spots and are let through (handbook.test.js). The homestead package was told the same.

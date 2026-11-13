@@ -10,6 +10,7 @@ import { getItem, hasTag, itemName, maxDurability } from './items.js';
 import { isPickable, tap, toolPower, DIG_TOOL_TYPES } from './harvest.js';
 import { HEX_DIRS, FACE_TOP } from './hex.js';
 import { plantAt, cropOfBlock } from './farming.js';
+import { spotOf, spotHint } from './sleep.js';
 import { homesteadAction, WELL_GROUND, WELL_GROUND_HINT, WATERING_POTS } from './homestead.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
@@ -32,7 +33,7 @@ export const HINT = Object.freeze({
   basket: 'Wicker Basket · R: open',
   basketFull: 'Basket · too many containers in this world',
   belongings: 'Your Belongings · R: take back',
-  hide: 'Sleeping Hide · R: wake here',
+  hide: 'Sleeping Hide · R: sleep', // §87: every sleep spot says `<its name> · R: sleep` (sleep.spotHint)
   packFull: 'Pack full',
   needsGround: 'needs solid ground',
   protectedCell: 'Holds survival items · switch to Survival to empty it',
@@ -372,7 +373,8 @@ function anyFree(spots, from, to) {
  * 3. a ripe honeyberry bush or prickly pear, loose stones, fallen branches → `pick`;
  * 4. BIRCH_LOG → `tap` (an empty clay pot selected, a knife ≥ 2 in the pack, not tapped today), else `tap_hint`;
  * 5. WICKER_BASKET → `basket`; REMAINS → `belongings`;
- * 6. SLEEPING_HIDE → `hide`;
+ * 6. a sleep spot (§87, sleep.SPOTS: the SLEEPING_HIDE, and the beds where their blocks exist) → `hide` (hint
+ *    `Sleeping Hide · R: sleep`; main lies down on it and makes it the waking place);
  * 7. a workplace → `station`, or `station_far` (hint `Kiln · step within 3 cells to work here`) when `stationNear` says
  *    Making does not count it as near;
  * 7b. v0.10 (DESIGN-circuits §4.9, §8.3): a circuit part with an R action of its own (`partR`) → `circuit` (main runs
@@ -434,7 +436,8 @@ export function interactKind(c) {
     }
     if (id === BLOCK.WICKER_BASKET) return { kind: 'basket', q, y, r, hint: HINT.basket };
     if (id === BLOCK.REMAINS) return { kind: 'belongings', q, y, r, hint: HINT.belongings };
-    if (id === BLOCK.SLEEPING_HIDE) return { kind: 'hide', q, y, r, hint: HINT.hide };
+    const bed = spotOf(id); // §87
+    if (bed) return { kind: 'hide', q, y, r, hint: spotHint(bed) };
     const station = stationIdOf(id);
     if (station) {
       const name = getBlockDef(id).displayName;

@@ -890,6 +890,7 @@ const nulls = (n) => new Array(n).fill(null);
 function survivalState(over = {}) {
   return {
     health: 87.25, satiation: 64, hydration: 51, temp: 36.9, breath: 20, wet: 0, sick: 0, heal: 0, healRate: 0,
+    fatigue: 0, // CONTRACTS §87 (a save from before it has none: sleep.test.js)
     spawn: [10, 64, -3], deaths: 2,
     pack: [{ k: 'rock', n: 12 }, { k: 'flint_pick', n: 1, d: 40 }, ...nulls(PACK_SLOTS - 2)],
     wear: [{ k: 'straw_hat', n: 1 }, null, { k: 'hide_shoes', n: 1 }],
@@ -1054,7 +1055,8 @@ describe('survival save fields: the survival state', () => {
   it('canonical form: key order, numbers rounded to 3 places (never −0), `dead` only when set', () => {
     const n = normalizeSurvivalJSON(survivalState({ health: 50.123456, wet: -0.0001, temp: 37.00049 }));
     expect(Object.keys(n)).toEqual([...SURVIVAL_STATS.map((s) => s[0]), 'spawn', 'deaths', 'pack', 'wear', 'fires']);
-    expect(SURVIVAL_STATS.map((s) => s[0])).toEqual(['health', 'satiation', 'hydration', 'temp', 'breath', 'wet', 'sick', 'heal', 'healRate']);
+    expect(SURVIVAL_STATS.map((s) => s[0])).toEqual(['health', 'satiation', 'hydration', 'temp', 'breath', 'wet', 'sick', 'heal', 'healRate',
+      'fatigue']); // fatigue: CONTRACTS §87
     expect(n.health).toBe(50.123);
     expect(Object.is(n.wet, 0)).toBe(true);
     expect(n.temp).toBe(37);

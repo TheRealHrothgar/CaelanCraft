@@ -69,6 +69,15 @@ import {
 import { HAND_WATER_S, handWaterChance } from '../../src/farming.js';
 import { RAIN_DOUSE_MEAN_S } from '../../src/campfires.js';
 import { RAIN_WET_S, WET_CHILL, WET_DRY_S, WET_INSULATION_LOSS } from '../../src/climate.js';
+// §87: sleep
+import {
+  TIRED_AT, EXHAUSTED_AT, WEAK_AT, DELIRIOUS_AT, WEAK_MOVE, WEAK_DIG, WEAK_STRIKE, FATIGUE_STAGES, SLEEP_DRAIN,
+} from '../../src/vitals.js';
+import {
+  SPOTS, SPOT_ROWS, sleepSpots, SLEEP_MIN_FATIGUE, SLEEP_RATE, SLEEP_FULL_H, SLEEP_MAX_H, SLEEP_ZOMBIE_NEAR, NIGHT_ATTACK_P,
+  LIGHT_GUARD_FULL, ATTACK_MIN, ATTACK_MAX, SECURE_RADIUS, SECURE_RISE, SECURE_MAX_CELLS, SECURE_REASONS, SLEEP_LINES, nightAttackChance,
+  tirednessView,
+} from '../../src/sleep.js';
 
 const CHAPTERS = buildChapters();
 const KINDS = ['h', 'p', 'tip', 'warn', 'list', 'table', 'figure'];
@@ -125,9 +134,9 @@ function pageSize(page) {
 }
 
 describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
-  it('thirteen chapters: the ten of §14.1 in their order, Animals (§73) after the workplaces, Seasons and rain (§84) after Water, and A place to stay (§85) after the workplaces; every one with pages, every page with blocks', () => {
-    expect(chapterIds()).toEqual(['first-day', 'water', 'seasons', 'food', 'warmth', 'ages', 'making', 'homestead', 'animals', 'dangers', 'death', 'controls', 'modes']);
-    expect(CHAPTERS.map((c) => c.title)).toEqual(['Your first day', 'Water', 'Seasons and rain', 'Food and fire', 'Warm and cool', 'Tools and the ages',
+  it('fourteen chapters: the ten of §14.1 in their order, Animals (§73) after the workplaces, Seasons and rain (§84) after Water, Sleep (§87) after Warm and cool, and A place to stay (§85) after the workplaces; every one with pages, every page with a heading', () => {
+    expect(chapterIds()).toEqual(['first-day', 'water', 'seasons', 'food', 'warmth', 'sleep', 'ages', 'making', 'homestead', 'animals', 'dangers', 'death', 'controls', 'modes']);
+    expect(CHAPTERS.map((c) => c.title)).toEqual(['Your first day', 'Water', 'Seasons and rain', 'Food and fire', 'Warm and cool', 'Sleep', 'Tools and the ages',
       'Workplaces and making', 'A place to stay', 'Animals', 'Dangers', 'Death and waking', 'Controls', 'Creative and Survival']);
     for (const c of CHAPTERS) {
       expect(c.pages.length, c.id).toBeGreaterThan(0);
@@ -226,10 +235,14 @@ describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
       /never leaves you/, /There is no stone pick/]) {
       expect(text).toMatch(idea);
     }
-    // our own words: Nourishment, never "satiation"; no "crafting table", "furnace", "chest" or "bed" — except (§85, on
-    // purpose) as the NAMES of the two things the game now has: a "Grass Bed" and a "Bed", written with their capitals
+    // our own words: Nourishment, never "satiation"; no "crafting table", "furnace", "chest" or "bed" — except (§85, §87, on
+    // purpose) as the NAMES of the two beds: a "Grass Bed" and a "Bed", written with their capitals (sleep.SPOT_ROWS); any
+    // other "bed" (a river bed, "go to bed", "bedroll") stays out
     expect(text).toMatch(/\bGrass Bed\b/);
     expect(text.replace(/\b(Grass )?Bed\b/g, '')).not.toMatch(/satiation|crafting table|furnace|\bchest\b|\bbed\b/i);
+    expect('Sleep on a Grass Bed or a Bed.'.replace(/\b(Grass )?Bed\b/g, '')).not.toMatch(/\bbed\b/i);
+    expect('Go to bed.'.replace(/\b(Grass )?Bed\b/g, '')).toMatch(/\bbed\b/i);
+    expect(SPOT_ROWS.map(([, s]) => s.name).filter((n) => /bed/i.test(n))).toEqual(['Grass Bed', 'Bed']);
     expect(text).toMatch(/Nourishment/);
   });
 
@@ -1312,6 +1325,115 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain(`The simple parts are made at the Work Stump: the ${listJoin(ELEMENTARY_PARTS.map((k) => itemName(k)))}.`);
     expect(text).toContain(`The Workbench builds the clever devices on top of them: the ${listJoin(atBench.map((r) => itemName(r.outputs[0].k)))}.`);
     expect(text).toContain('the Forge, the Workbench) has its own lane');
+  });
+});
+
+describe('handbook: Sleep (CONTRACTS §87)', () => {
+  const chapter = CHAPTERS.find((c) => c.id === 'sleep');
+  const text = chapter.pages.flat().flatMap((b) => ('text' in b ? [plainText(b.text)] : b.kind === 'list' ? b.items.map(plainText) : [])).join('\n');
+
+  it('its own chapter after Warm and cool, five pages: why, where, how long, the night, a safe place', () => {
+    expect(chapter).toMatchObject({ title: 'Sleep', short: 'Sleep', icon: 'moon' });
+    expect(CHAPTERS.indexOf(chapter)).toBe(CHAPTERS.findIndex((c) => c.id === 'warmth') + 1);
+    expect(chapter.pages.map((page) => page.find((b) => b.kind === 'h')?.text)).toEqual(['Why you sleep', 'Where to sleep', 'A night\'s sleep',
+      'The night comes for you', 'A safe place to sleep']);
+  });
+
+  it('why: the table of the four tags is the body\'s own (vitals.js), each with what it does', () => {
+    const t = tableById('tired');
+    expect(t.source).toBe('vitals');
+    expect(t.head).toEqual(['Tag', 'Awake for', 'What it does']);
+    expect(t.keys).toEqual(FATIGUE_STAGES.slice(1));
+    expect(t.keys).toEqual(['Tired', 'Exhausted', 'Weak', 'Seeing things']);
+    expect(t.rows.map((r) => r[1])).toEqual([TIRED_AT, EXHAUSTED_AT, WEAK_AT, DELIRIOUS_AT].map((h) => `${h} hours`));
+    expect(t.rows.map((r) => r[1])).toEqual(['20 hours', '32 hours', '40 hours', '48 hours']);
+    expect(rowOf(t, 'Tired')[2]).toBe('nothing yet: this is your warning');
+    expect(rowOf(t, 'Exhausted')[2]).toBe('your sight blurs; wounds stop healing by themselves');
+    expect(rowOf(t, 'Weak')[2]).toBe(`also: ${fmtPct(1 - WEAK_MOVE)} slower on foot, digging ${fmtPct(1 - WEAK_DIG)} slower, strikes ${fmtPct(1 - WEAK_STRIKE)} softer`);
+    expect(rowOf(t, 'Weak')[2]).toBe('also: 15 % slower on foot, digging 30 % slower, strikes 25 % softer');
+    expect(rowOf(t, 'Seeing things')[2]).toBe('also: you hear and see things that are not there; your eyes fall shut for a moment');
+    expect(text).toContain('Every hour you are awake makes you one hour more tired.');
+    expect(text).toContain(`The reading beside your vitals counts them: ${tirednessView(14).text}.`);
+    expect(text).toContain('Each tag keeps what the ones before it do.');
+    // a child reads this: what is seen cannot hurt
+    expect(text).toContain('What you see and hear when you have been awake too long cannot hurt you. Sleep, and it is gone.');
+    // and the warnings page of Dangers points here
+    expect(allProse()).toContain('Tiredness has four tags of its own: the chapter Sleep lists them.');
+  });
+
+  it('where: the table is sleep.SPOTS, only the spots this build has, with what an hour of sleep gives', () => {
+    const t = tableById('sleep-spots');
+    expect(t.source).toBe('sleep');
+    expect(TABLE_SOURCES).toContain('sleep');
+    expect(t.head).toEqual(['Sleep on', 'An hour takes off', 'An hour heals']);
+    expect(t.keys).toEqual(SPOTS.map((s) => s.key));
+    expect(t.rows).toEqual(SPOTS.map((s) => [s.name, `${s.recover} hours awake`, `${s.heal} HP`]));
+    expect(rowOf(t, 'SLEEPING_HIDE')).toEqual(['Sleeping Hide', '4 hours awake', '4 HP']);
+    // every row is a block that exists
+    for (const s of SPOTS) expect(BLOCK[s.key], s.key).toBe(s.id);
+    expect(text).toContain(`You sleep on ${listJoin(SPOTS.map((s) => `a ${s.name}`), 'or')}, never on bare ground.`);
+    expect(text).toContain(`You can lie down once you have been awake ${SLEEP_MIN_FATIGUE} hours.`);
+    expect(SLEEP_MIN_FATIGUE).toBe(6);
+    expect(text).toContain('It also becomes the place where you wake after dying.');
+    const best = SPOTS.reduce((a, b) => (b.recover > a.recover ? b : a));
+    expect(text).toContain(`On a ${best.name}, ${TIRED_AT} hours awake are slept off in ${fmtNum(TIRED_AT / best.recover, 1)} hours`);
+    // the hide's page and the R list say it is a place to sleep, and the old "does not skip the night" is gone
+    expect(allProse()).toContain('It is a place to sleep as well (the chapter Sleep tells how)');
+    expect(allProse()).toContain('A Sleeping Hide: sleep, and wake here from now on.');
+    expect(allProse()).not.toMatch(/does not skip the night/);
+  });
+
+  it('how long: the rate, the half hunger, healing, the two ends of a sleep and what wakes you, from the constants', () => {
+    const hour = DAY_LENGTH_SECONDS / 24;
+    expect(text).toContain(`Asleep, time runs fast: ${SLEEP_FULL_H} game hours pass in about ${(SLEEP_FULL_H * hour) / SLEEP_RATE} seconds.`);
+    expect([SLEEP_FULL_H, SLEEP_RATE, (SLEEP_FULL_H * hour) / SLEEP_RATE]).toEqual([8, 30, 16]);
+    expect(text).toContain('Animals and zombies stand still until you wake.');
+    expect(text).toContain('Nothing is made: your making lanes wait for you.');
+    expect(text).toContain('You grow hungry and thirsty half as fast as when you rest awake.');
+    expect(SLEEP_DRAIN).toBe(0.5);
+    expect(text).toContain('Sleep heals you for as long as it lasts, hungry or not, but not while you are Poisoned.');
+    expect(text).toContain(`You wake by yourself once you are rested and have slept ${SLEEP_FULL_H} hours, or at sunrise if you are rested by then, and never later than after ${SLEEP_MAX_H} hours.`);
+    expect(SLEEP_MAX_H).toBe(10);
+    expect(text).toContain(`So ${SLEEP_FULL_H} hours is the best night: it heals the most.`);
+    expect(text).toContain(`Any key or a click wakes you. So does anything that hurts you, and Nourishment or Hydration falling under ${RATES.STARVING}.`);
+    expect(RATES.STARVING).toBe(RATES.PARCHED);
+    expect(text).toContain(`You cannot lie down in water, on your horse, while a zombie within ${SLEEP_ZOMBIE_NEAR} cells is after you, while poison is still hurting you`);
+    expect(SLEEP_ZOMBIE_NEAR).toBe(12);
+  });
+
+  it('the night: the chance an hour, where they come up, what light does and what it does not', () => {
+    expect(text).toContain(`every hour has a ${fmtPct(NIGHT_ATTACK_P)} chance that one or two come up out of the ground ${ATTACK_MIN} to ${ATTACK_MAX} cells away`);
+    expect([fmtPct(NIGHT_ATTACK_P), ATTACK_MIN, ATTACK_MAX]).toEqual(['20 %', 10, 18]);
+    expect(text).toContain(`You wake at once and read ${SLEEP_LINES.attack} By day nothing comes.`);
+    expect(SLEEP_LINES.attack).toBe('Something is near.');
+    expect(text).toContain(`With light of ${LIGHT_GUARD_FULL} or more where you lie, a Torch or a burning campfire right beside you, the chance falls to ${fmtPct(nightAttackChance(LIGHT_GUARD_FULL))} an hour.`);
+    expect(fmtPct(nightAttackChance(LIGHT_GUARD_FULL))).toBe('5 %');
+    // a Torch or a campfire in the next cell does give that much light
+    expect(TORCH_LIGHT - 1).toBeGreaterThanOrEqual(LIGHT_GUARD_FULL);
+    expect(CAMPFIRE_LIGHT - 1).toBeGreaterThanOrEqual(LIGHT_GUARD_FULL);
+    expect(text).toContain('Dimmer light helps less.');
+    expect(text).toContain('Light alone never makes you safe, and a campfire that burns out in the night stops helping.');
+    expect(text).toContain('They come up only where zombies ever do: on dark, untouched ground.');
+  });
+
+  it('a safe place: what secure means, the three things the hint can say and how to mend each', () => {
+    expect(text).toContain(`Its hint ends ${SLEEP_LINES.secure}, or it tells you what is wrong:`);
+    expect(SLEEP_LINES.secure).toBe('secure here');
+    const list = chapter.pages.flat().find((b) => b.kind === 'list').items.map(plainText);
+    expect(list).toHaveLength(Object.keys(SECURE_REASONS).length);
+    expect(list[0]).toBe(`${SECURE_REASONS.open}: there is a way out, so there is a way in. Close every gap within ${SECURE_RADIUS} cells. A wall must stand ${SECURE_RISE} cells high from the floor you sleep on, or reach a roof: the alpha leaps ${CLIMB.alpha.night}. Block the doorway behind you.`);
+    expect(list[1]).toBe(`${SECURE_REASONS.ground}: bare, untouched ground inside your walls. Lay a floor over it, or keep it lit to ${ZOMBIE_SPAWN_LIGHT_MAX} or more.`);
+    expect(list[2]).toBe(`${SECURE_REASONS.big}: more than ${SECURE_MAX_CELLS} open cells. Wall off a smaller room.`);
+    expect([SECURE_RADIUS, SECURE_RISE, SECURE_MAX_CELLS]).toEqual([12, 5, 800]);
+    // a wall of SECURE_RISE is one more than the highest leap there is
+    expect(SECURE_RISE).toBe(Math.max(...Object.values(CLIMB).map((c) => c.night)) + 1);
+    expect(text).toContain('A small hut with a floor, four walls and a roof is secure.');
+  });
+
+  it('with the two beds registered the table and the prose would name them (an injected block table)', () => {
+    const all = sleepSpots({ GRASS_BED: 250, SLEEPING_HIDE: BLOCK.SLEEPING_HIDE, BED: 251 });
+    expect(all.map((s) => [s.name, s.recover, s.heal])).toEqual([['Grass Bed', 3, 2], ['Sleeping Hide', 4, 4], ['Bed', 5, 6]]);
+    expect(listJoin(all.map((s) => `a ${s.name}`), 'or')).toBe('a Grass Bed, a Sleeping Hide or a Bed');
   });
 });
 

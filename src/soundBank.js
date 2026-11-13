@@ -331,7 +331,7 @@ export function materialSound(action, group) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// 2. Footsteps and movement (the steps are above, one per sound group)
+// 2. Footsteps and movement (the steps are above, one per sound group), and the player's own body: a yawn, waking (§87)
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** @type {Record<string, SoundRecipe>} */
@@ -369,6 +369,20 @@ const MOVEMENT = {
     noise({ bp: [1800, 900], q: 0.8, gain: 0.7, attack: 0.02, decay: 0.25 }),
     sine(900, { f1: 1400, gain: 0.2, delay: 0.08, attack: 0.003, decay: 0.03, grains: { count: [2, 4], over: 0.3, gainVar: 0.5, pitchVar: 0.3 } }),
   ], { vary: 0.1, spare: STEP_SPARE }),
+
+  // ---- the player's own body (CONTRACTS §87: sleep) ---------------------------------------------------------------
+  /**
+   * A yawn, now and then, when you are tired: a slow breath in and a soft falling "aah", more breath than voice. It
+   * comes in over a third of a second and dies away: nothing in it is sudden. It gives way to anything else.
+   */
+  yawn: sound(0.1, [
+    saw(180, { glide: [[0.35, 228], [1, 148]], vibHz: 4.5, vibDepth: 0.015, formants: [[320, 1, 0.6], [[520, 760], 4, 1.8], [[1000, 1250], 5, 0.7]], lp: 1800, gain: 0.5, attack: 0.3, hold: 0.35, decay: 0.7 }),
+    noise({ bp: [1400, 700], q: 0.7, gain: 0.4, attack: 0.25, hold: 0.3, decay: 0.75 }),
+  ], { vary: 0.08, stretch: 0.12, spare: STEP_SPARE }),
+  /** Waking from a sleep: two soft round notes, the second a fifth higher. A gentle chime with a slow start, no click. */
+  wakeSoft: sound(0.07, [
+    sine(392, { partials: [[2, 0.2], [3, 0.06]], gain: 0.7, attack: 0.08, hold: 0.04, decay: 0.55, grains: [[0, 1, 0.8], [0.3, 1.5, 1]] }),
+  ], { vary: 0.03 }),
 };
 
 // ---------------------------------------------------------------------------------------------------------------------

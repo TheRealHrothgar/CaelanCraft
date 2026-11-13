@@ -15,7 +15,7 @@
 // forbids it too (statusOf).
 import {
   STAT_MAX, BREATH_MAX_S, BREATH_REFILL_PER_S, BODY_TEMP_NORMAL, BODY_TEMP_MIN, BODY_TEMP_MAX, SICK_MAX_S, HEAL_MAX,
-  FALL_SAFE_SPEED, FALL_DAMAGE_K, CRUSH_DAMAGE_PER_CELL, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE,
+  FALL_SAFE_SPEED, FALL_DAMAGE_K, CRUSH_DAMAGE_PER_CELL, ZOMBIE_DAMAGE, FIRE_BURN_DAMAGE, DAY_LENGTH_SECONDS,
 } from './config.js';
 import { BLOCK } from './blocks.js';
 import { bodyTarget } from './climate.js';
@@ -32,6 +32,7 @@ import { bodyTarget } from './climate.js';
  * @property {number} sick       seconds of sickness left, 0..600
  * @property {number} heal       pending bandage healing, 0..50 HP
  * @property {number} healRate   its payout rate (HP/s); 0 when nothing is pending
+ * @property {number} fatigue    tiredness: game hours awake, 0..72 (CONTRACTS §87); sleep takes it back down
  * @property {number} stillFor   seconds the player has stood still
  */
 
@@ -44,6 +45,9 @@ import { bodyTarget } from './climate.js';
  * @property {boolean} [buried]     the eye is inside a solid cell with no room within 3 above: breath drains (smother at 0)
  * @property {boolean} [nearFire]   a burning campfire within 4 cells
  * @property {boolean} [still]      the player stood still this step
+ * @property {{ recover: number, heal: number }|null} [sleep]  asleep on a sleep spot (CONTRACTS §87): tiredness falls by
+ *   `recover` and health rises by `heal` per game hour, hunger and thirst run at SLEEP_DRAIN of their resting rate, and
+ *   there is no natural healing
  */
 
 /**
@@ -152,6 +156,56 @@ export const RATES = Object.freeze({
   GULP_SALT: -4,
 });
 
+// ---- tiredness (CONTRACTS §87) ----------------------------------------------------------------------------------------
+
+/** One game hour, in the seconds every rate here is given in (60). */
+export const GAME_HOUR_S = DAY_LENGTH_SECONDS / 24;
+/** Tiredness is `Vitals.fatigue`: game hours awake. From this many on you are Tired (the warning: no penalty yet) … */
+export const TIRED_AT = 20;
+/** … Exhausted (12 hours in deficit: blurry vision, no natural healing) … */
+export const EXHAUSTED_AT = 32;
+/** … Weak (slower on foot, slower digging, softer strikes) … */
+export const WEAK_AT = 40;
+/** … and Seeing things (gentle hallucinations, brief nods). */
+export const DELIRIOUS_AT = 48;
+/** Tiredness never rises above this. */
+export const FATIGUE_MAX = 72;
+/** The stages of tiredness by number (`fatigueStage`); each keeps the effects of the ones before it. */
+export const FATIGUE_STAGES = Object.freeze(['', 'Tired', 'Exhausted', 'Weak', 'Seeing things']);
+/** Where each stage begins, by the same number. */
+export const FATIGUE_FROM = Object.freeze([0, TIRED_AT, EXHAUSTED_AT, WEAK_AT, DELIRIOUS_AT]);
+/** Weak: walking and sprinting at this factor, digging at this speed, strikes at this power. */
+export const WEAK_MOVE = 0.85;
+export const WEAK_DIG = 0.7;
+export const WEAK_STRIKE = 0.75;
+/** Asleep, hunger and thirst run at this share of their resting rate. */
+export const SLEEP_DRAIN = 0.5;
+/** Waking after a death leaves at most this much tiredness (you wake Tired at the worst, never with a penalty). */
+export const WAKE_MAX_FATIGUE = TIRED_AT;
+
+/**
+ * The stage of tiredness (§87): 0 none, 1 Tired, 2 Exhausted, 3 Weak, 4 Seeing things (FATIGUE_STAGES).
+ * @param {Vitals|{fatigue?: number}|number|null|undefined} v  a body, or its hours awake
+ * @returns {0|1|2|3|4}
+ */
+export function fatigueStage(v) {
+  const h = typeof v === 'number' ? v : v ? v.fatigue : 0;
+  if (!finite(h) || h < TIRED_AT) return 0;
+  if (h < EXHAUSTED_AT) return 1;
+  if (h < WEAK_AT) return 2;
+  return h < DELIRIOUS_AT ? 3 : 4;
+}
+
+/** @param {Vitals|number|null|undefined} v @returns {number} how fast a Weak body digs: WEAK_DIG, else 1 */
+export function digFactorOf(v) {
+  return fatigueStage(v) >= 3 ? WEAK_DIG : 1;
+}
+
+/** @param {Vitals|number|null|undefined} v @returns {number} what a Weak body's strike keeps of its power: WEAK_STRIKE, else 1 */
+export function strikeFactorOf(v) {
+  return fatigueStage(v) >= 3 ? WEAK_STRIKE : 1;
+}
+
 /** Every damage cause key of §2.4 (DamageCause). 'sick' never kills. */
 export const DAMAGE_CAUSES = Object.freeze([
   'fall', 'drown', 'buried', 'crush', 'fire', 'zombie', 'blast', 'log', 'blackhole', 'starve', 'thirst', 'cold', 'heat',
@@ -189,13 +243,14 @@ export function createVitals() {
     sick: 0,
     heal: 0,
     healRate: 0,
+    fatigue: 0,
     stillFor: 0,
   };
 }
 
 /**
  * Apply the waking values (§2.1): health 60, satiation and hydration at least 50, body 37, full breath, dry, well, no
- * pending healing.
+ * pending healing; tiredness at most WAKE_MAX_FATIGUE (§87).
  * @param {Vitals} v
  */
 export function wakeVitals(v) {
@@ -208,6 +263,7 @@ export function wakeVitals(v) {
   v.sick = 0;
   v.heal = 0;
   v.healRate = 0;
+  v.fatigue = Math.min(finite(v.fatigue) && v.fatigue > 0 ? v.fatigue : 0, WAKE_MAX_FATIGUE);
   v.stillFor = 0;
 }
 
@@ -274,8 +330,10 @@ export function tempBand(temp) {
 
 /**
  * Status (§2.3): whether you can sprint, how slow you are, whether health regenerates, and the labels in the table's
- * order (Hungry or Starving, Thirsty or Parched, Wounded, the temperature band, Drowning, Smothering, Sick, Wet). Of each
- * pair only the worse label shows (Starving replaces Hungry, Parched replaces Thirsty). Drowning and Smothering need `inp`.
+ * order (Hungry or Starving, Thirsty or Parched, Wounded, the temperature band, Drowning, Smothering, Sick, Wet, then
+ * §87's tiredness: Tired, Exhausted, Weak or Seeing things). Of each pair only the worse label shows (Starving replaces
+ * Hungry, Parched replaces Thirsty), and of tiredness only its stage. Drowning and Smothering need `inp`. Tiredness:
+ * from Exhausted there is no regeneration, from Weak the move factor is × WEAK_MOVE.
  * @param {Vitals} v
  * @param {{ headInWater?: boolean, buried?: boolean }} [inp]
  * @returns {VitalsStatus}
@@ -318,8 +376,11 @@ export function statusOf(v, inp) {
   else if (noBreath && inp?.buried) labels.push('Smothering');
   if (v.sick > 0) labels.push('Poisoned');
   if (v.wet > RATES.WET_LABEL) labels.push('Wet');
+  const tired = fatigueStage(v);
+  if (tired > 0) labels.push(FATIGUE_STAGES[tired]);
+  if (tired >= 3) move *= WEAK_MOVE;
   const regen = v.satiation >= RATES.REGEN_MIN_SATIATION && v.hydration >= RATES.REGEN_MIN_HYDRATION
-    && v.temp >= RATES.REGEN_TEMP_MIN && v.temp <= RATES.REGEN_TEMP_MAX && !(v.sick > 0) && !noBreath;
+    && v.temp >= RATES.REGEN_TEMP_MIN && v.temp <= RATES.REGEN_TEMP_MAX && !(v.sick > 0) && !noBreath && tired < 2;
   return { canSprint, moveFactor: Math.max(RATES.MOVE_FACTOR_MIN, move), regen, labels };
 }
 
@@ -357,8 +418,9 @@ export function stepBodyTemp(v, dt, target, inWater) {
 
 /**
  * One step of the body (§2.2–§2.4, §3.3), in this order: breath; body temperature toward climate.bodyTarget(felt);
- * satiation and hydration drains; regeneration (and its satiation cost); bandage payout; then damage over time, which
- * is subtracted from health here and reported by cause. Sickness counts down. Mutates `v`.
+ * satiation and hydration drains; tiredness (§87: + 1 per game hour awake; asleep − `sleep.recover` per game hour);
+ * regeneration (and its satiation cost; asleep, `sleep.heal` HP per game hour instead, unless Poisoned); bandage payout;
+ * then damage over time, which is subtracted from health here and reported by cause. Sickness counts down. Mutates `v`.
  * @param {Vitals} v
  * @param {number} dt  seconds
  * @param {VitalsInput} inp
@@ -377,15 +439,24 @@ export function stepVitals(v, dt, inp, _random) {
   // Body temperature drifts toward the felt temperature's target.
   stepBodyTemp(v, dt, bodyTarget(inp.felt, !!inp.inWater), !!inp.inWater);
 
-  // Drains.
-  const drain = drainRates(inp.activity, inp.felt, sickBefore);
+  // Drains: asleep (§87), half the resting rate.
+  const sleep = inp.sleep ?? null;
+  const drain = drainRates(sleep ? RATES.ACTIVITY_STILL * SLEEP_DRAIN : inp.activity, inp.felt, sickBefore);
   v.satiation = clamp(v.satiation - drain.satiation * dt, 0, STAT_MAX);
   v.hydration = clamp(v.hydration - drain.hydration * dt, 0, STAT_MAX);
   if (sickBefore) v.sick = Math.max(0, v.sick - dt);
 
-  // Regeneration: doubled while standing still beside a burning campfire; each HP costs satiation.
+  // Tiredness (§87): an hour awake adds one; an hour asleep takes off what the sleep spot gives back.
+  const hours = dt / GAME_HOUR_S;
+  const tired = finite(v.fatigue) && v.fatigue > 0 ? v.fatigue : 0;
+  v.fatigue = sleep ? Math.max(0, tired - Math.max(0, sleep.recover) * hours) : Math.min(FATIGUE_MAX, tired + hours);
+
+  // Regeneration: doubled while standing still beside a burning campfire; each HP costs satiation. Asleep there is only
+  // the sleep spot's healing, whatever the other conditions, unless Poisoned.
   v.stillFor = inp.still ? (finite(v.stillFor) ? v.stillFor : 0) + dt : 0;
-  if (statusOf(v).regen && !sickBefore && v.health < STAT_MAX) {
+  if (sleep) {
+    if (!sickBefore && v.health < STAT_MAX) v.health = Math.min(STAT_MAX, v.health + Math.max(0, sleep.heal) * hours);
+  } else if (statusOf(v).regen && !sickBefore && v.health < STAT_MAX) {
     const fire = inp.nearFire && v.stillFor >= RATES.REGEN_STILL_S ? RATES.REGEN_FIRE_MULT : 1;
     const healed = Math.min(RATES.REGEN * fire * dt, STAT_MAX - v.health);
     v.health += healed;
