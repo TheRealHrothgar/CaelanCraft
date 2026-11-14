@@ -435,7 +435,7 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
    dialog (60). The field book (#handbook, the `handbook` item): parchment from CSS gradients and a procedural grain canvas, a
    serif system font stack (nothing downloaded), z 21: over the HUD and the pack screen, under the console, the pause menu and
    the death screen. Like the pack screen it ends above the HUD's hotbar and vitals (bottom 84px), so they stay in sight. */
-.title-side{display:flex;flex-direction:column;align-items:flex-start}
+.title-side{position:relative;display:flex;flex-direction:column;align-items:flex-start}
 .guide-button{margin-top:10px;padding:7px 22px;font-size:14px}
 #pause-menu .guide-button{margin-top:0}
 /* the pack screen's "Read the handbook" action, inside the Pack heading's line */
@@ -706,3 +706,26 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 .snd-btn:active{background:#e8b04a;color:#1c1a24}
 .snd-btn.snd-scene[aria-pressed="true"]{background:#e8b04a;border-color:#e8b04a;color:#1c1a24;font-weight:bold}
 @media (max-width:620px){.snd-row{flex-direction:column;gap:3px}.snd-label{flex:0 0 auto;padding-top:0}.snd-body{padding:4px 10px 12px}}
+
+/* ---- Avatars (CONTRACTS §91). The title screen's Avatar button sits at the right end of the Survival Guide button's line
+   (out of the flow, so the title column is no taller); the pause menu's "You" row holds Avatar and View. The chooser is a
+   panel in the survival palette, z 32 like the Guide (over the title screen 55), with one card per avatar on a plain
+   ROUNDED SQUARE (never a hexagon), the chosen one lit in honey. Portraits are pixel art drawn one texel a pixel and
+   scaled up crisply. */
+.avatar-button{position:absolute;right:0;bottom:0}
+#avatar-chooser{z-index:32;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;background:rgba(10,8,14,.72)}
+#avatar-chooser.over-title{z-index:55}
+.av-panel{display:flex;flex-direction:column;align-items:center;gap:14px;width:min(640px,100%);max-height:100%;overflow-y:auto;box-sizing:border-box;padding:16px 18px 14px;background:#1c1a24;border:2px solid #e8b04a;box-shadow:0 0 0 2px #000,0 10px 32px rgba(0,0,0,.6);color:#f1e6cf;font:14px/1.45 system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+.av-title{margin:0;color:#e8b04a;font:bold 18px monospace;letter-spacing:.06em}
+.av-cards{display:flex;flex-wrap:wrap;justify-content:center;gap:14px}
+.av-card{display:flex;flex-direction:column;align-items:center;gap:3px;width:168px;padding:12px 10px 10px;border:3px solid #4a4458;border-radius:14px;background:#2a2633;color:#f1e6cf;font:inherit;cursor:pointer}
+.av-card:hover{border-color:#a8884a;background:#332e3e}
+.av-card:focus-visible{outline:2px solid #fff2c8;outline-offset:2px}
+.av-card.chosen{border-color:#e8b04a;background:#3b3347;box-shadow:0 0 0 2px rgba(232,176,74,.35),0 0 18px rgba(232,176,74,.45)}
+.av-portrait{width:120px;height:120px;margin-bottom:4px;border-radius:10px;background:linear-gradient(#8ec3ee,#d3ebf8);image-rendering:pixelated}
+.av-name{color:#fff;font:bold 16px monospace}
+.av-card.chosen .av-name{color:#e8b04a}
+.av-blurb{color:#a89c88;font-size:12.5px}
+.av-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;width:100%}
+.av-hint{color:#a89c88;font-size:12px}
+.av-done{padding:6px 26px;font-size:14px}

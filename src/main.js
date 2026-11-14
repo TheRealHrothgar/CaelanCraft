@@ -37,7 +37,7 @@ import {
   FALL_SAFE_SPEED, INTRO_LINE_MS, PACK_MESSAGE_S,
   ZOMBIE_MAX, MAX_INFALL_MOBS, VORTEX_MODEL_RANGE, VORTEX_MAX_MODELS, VORTEX_MAX_CORES, VORTEX_PARTICLES_PER_S,
   VORTEX_PARTICLE_HOLES, CIRCUIT_DRAW_RANGE, CIRCUIT_OVERLAY_RANGE, BLACK_HOLE_SCREEN_FLASH_RANGE, BLACK_HOLE_SCREEN_FLASH_MAX,
-  WORLD_HEIGHT,
+  WORLD_HEIGHT, VIEW_BOOM_HIDE,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex, FACE_TOP } from './hex.js';
@@ -49,7 +49,7 @@ import { normalizeSeed } from './noise.js';
 import { World } from './world.js';
 import { raycastHex } from './raycast.js';
 import {
-  createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock, isFreeAt, findFreeY, supportingCells,
+  createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock, isFreeAt, findFreeY, supportingCells, isUnderSurface,
 } from './physics.js';
 import { advanceTime, computeSky, createSkyState, isDayTime, sunDirection } from './daynight.js';
 import {
@@ -132,6 +132,14 @@ import {
   sleepingLine, sleepDark, blurPx, phantomStandAt, tirednessView, SLEEP_LINES, TIRED_BAR_MARKS,
 } from './sleep.js';
 import { createPhantomRenderer } from './phantomRenderer.js';
+// CONTRACTS §91: avatars and the third-person view
+import { loadAvatarPref, saveAvatarPref, avatarById } from './avatars.js';
+import { AvatarMotion } from './avatarMotion.js';
+import { createAvatarRenderer } from './avatarRenderer.js';
+import { createAvatarMenu } from './avatarMenu.js';
+import {
+  VIEW_LABELS, nextViewMode, isThirdPerson, loadViewPref, saveViewPref, boomLength, easeBoom, cameraPose, normalizeViewMode,
+} from './viewCamera.js';
 import { createConsole } from './console.js';
 import { createRuneEditor } from './runeEditor.js';
 import { HANDBOOK_KEY, HANDBOOK_CHAT_LINE, buildChapters, ensureHandbook } from './handbook.js';
@@ -1116,6 +1124,8 @@ export function boot(win, doc) {
   let watcherRenderer;
   /** @type {ReturnType<typeof createPhantomRenderer>} §87: the figure at the edge of sight (drawing only) */
   let phantomRenderer;
+  /** @type {import('./avatarRenderer.js').AvatarRenderer} §91: the player's avatar (third person) and arm (first person) */
+  let avatarRenderer;
   /** @type {import('./campfireRenderer.js').CampfireRenderer} */
   let campfireRenderer;
   /** @type {ReturnType<typeof createVortexRenderer>} the black holes' vortices (§2.4) */
@@ -1156,6 +1166,7 @@ export function boot(win, doc) {
     particles = createParticles(renderer.three.scene);
     rainRenderer = createRainRenderer(renderer.three.scene); // §84: one mesh, no light
     phantomRenderer = createPhantomRenderer(renderer.three.scene); // §87: three boxes, no light
+    avatarRenderer = createAvatarRenderer(renderer.three.scene); // §91: the player's model and first-person arm, no light
     // v0.10: the vortices and the circuit wiring (neither adds a light).
     vortexRenderer = createVortexRenderer(renderer.three.scene);
     circuitRenderer = createCircuitRenderer(renderer.three.scene);
@@ -1178,6 +1189,7 @@ export function boot(win, doc) {
     // before the campfire and explosion PointLights existed built programs the first sighting could not use.
     watcherRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     phantomRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    avatarRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
     audio = createAudio();
@@ -1254,6 +1266,125 @@ export function boot(win, doc) {
       audio.playClick();
     },
   });
+  // ---- Avatars and the view (CONTRACTS §91) -------------------------------------------------------------------------
+  // Everything here is this section's own. The rest of main calls: cycleView (V while playing; the pause menu's View
+  // button), avatarSwing (a break, a place, a strike, a dig tick, a throw), viewCamera and drawAvatar (renderFrame: where
+  // the camera stands, the model or the arm), and avatarMotion.reset (a world loads). The avatar and the view mode are
+  // per-player preferences kept like the Ambience switch (soundPrefs: nothing under ?nosave); ?avatar= and ?view= set them
+  // for this visit only. Physics, aiming, digging, placing and striking are untouched: they all go from the eye.
+
+  /** The chosen avatar. */
+  let avatarId = params.avatar ?? loadAvatarPref(soundPrefs);
+  /** @type {import('./viewCamera.js').ViewMode} V's view: first person, third person behind, or in front */
+  let viewMode = params.view ?? loadViewPref(soundPrefs);
+  /** The third-person boom's length now: in at once when something is in the way, eased back out (viewCamera.easeBoom). */
+  let boom = 0;
+  /** the crosshair is shown (only touched on a change: hidden in the front view) */
+  let crosshairShown = true;
+  const avatarMotion = new AvatarMotion();
+  const camPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+  /** @type {import('./avatarMotion.js').MotionInput} */
+  const motionInput = {
+    yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true, sneaking: false, swimming: false, flying: false, riding: false, sleeping: false,
+  };
+  /** @type {import('./avatarRenderer.js').AvatarFrame} */
+  const avatarView = {
+    x: 0, y: 0, z: 0, pose: avatarMotion.pose, showModel: false, showArm: false, camera: renderer.three.camera, eyeX: 0, eyeY: 0,
+    eyeZ: 0,
+  };
+  avatarRenderer.setAvatar(avatarId);
+  /** "First person", "Third person", "Front" (the pause menu's View button). @param {string} m */
+  const viewWords = (m) => VIEW_LABELS[/** @type {import('./viewCamera.js').ViewMode} */ (m)].replace(/ view$/, '');
+  /** The Avatar chooser (title screen and pause menu) and the pause menu's View button. */
+  const avatarMenu = createAvatarMenu(doc, {
+    current: avatarId,
+    viewLabel: viewWords(viewMode),
+    onChoose: (id) => {
+      avatarId = avatarById(id).id;
+      saveAvatarPref(soundPrefs, avatarId);
+      avatarRenderer.setAvatar(avatarId); // the model swaps at once, under the pause menu too
+      audio.playClick();
+    },
+    onView: () => {
+      cycleView();
+      audio.playClick();
+    },
+  });
+
+  /** V: first person → behind → in front → first person; kept, and named in a toast. */
+  function cycleView() {
+    viewMode = nextViewMode(viewMode);
+    saveViewPref(soundPrefs, viewMode);
+    if (viewMode === 'behind') boom = 0; // from the eye, easing out to its length
+    hud.showSaveToast(VIEW_LABELS[viewMode]);
+    avatarMenu.setView(viewWords(viewMode));
+  }
+
+  /** The right arm swings: a break, a place, a strike, a dig tick, a throw. */
+  function avatarSwing() {
+    avatarMotion.swing();
+  }
+
+  /**
+   * Where the camera stands this frame (renderFrame): at the eye in first person; else on the boom from the eye, as long as
+   * the cells round it allow (viewCamera.boomLength), shortened at once and eased back out.
+   * @param {number} dt @param {number} eyeY
+   */
+  function viewCamera(dt, eyeY) {
+    if (!isThirdPerson(viewMode) || !world) {
+      boom = 0;
+      return cameraPose(player.x, eyeY, player.z, controls.yaw, controls.pitch, 'first', 0, camPose);
+    }
+    const target = boomLength(world.getBlock, player.x, eyeY, player.z, controls.yaw, controls.pitch, viewMode);
+    boom = easeBoom(boom, target, dt);
+    return cameraPose(player.x, eyeY, player.z, controls.yaw, controls.pitch, viewMode, boom, camPose);
+  }
+
+  /** @param {{ x: number, y: number, z: number }} cam @returns {boolean} the camera is under water (the fog and the tint) */
+  function cameraUnderwater(cam) {
+    if (!isThirdPerson(viewMode) || boom <= 0 || !world) return Boolean(player.headInWater);
+    const [q, r] = worldToHex(cam.x, cam.z);
+    return isUnderSurface(world.getBlock, q, cam.y, r);
+  }
+
+  /**
+   * The avatar this frame (renderFrame, after the camera is placed): its motion (frozen while the world is), the model in
+   * the third-person views (not while the camera is in its head), the arm in first person; the crosshair in all but the
+   * front view.
+   * @param {number} dt @param {boolean} live @param {number} eyeY
+   */
+  function drawAvatar(dt, live, eyeY) {
+    const third = isThirdPerson(viewMode);
+    const down = /** @type {string} */ (state) === STATE.DEAD || Boolean(survival.dead);
+    const mi = motionInput;
+    mi.yaw = controls.yaw;
+    mi.pitch = controls.pitch;
+    mi.vx = player.vx;
+    mi.vz = player.vz;
+    mi.onGround = Boolean(player.onGround);
+    mi.sneaking = Boolean(player.sneaking);
+    mi.flying = Boolean(player.flying);
+    mi.swimming = Boolean(player.inWater) && !player.onGround;
+    mi.riding = Boolean(riding);
+    mi.sleeping = sleep.active;
+    avatarMotion.step(live ? dt : 0, mi);
+    const v = avatarView;
+    v.x = player.x;
+    v.y = player.y;
+    v.z = player.z;
+    v.showModel = third && boom >= VIEW_BOOM_HIDE && !down;
+    v.showArm = !third && !down && !sleep.active;
+    v.eyeX = player.x;
+    v.eyeY = eyeY;
+    v.eyeZ = player.z;
+    avatarRenderer.sync(v);
+    const cross = viewMode !== 'front';
+    if (cross !== crosshairShown) {
+      crosshairShown = cross;
+      hud.setCrosshairVisible(cross);
+    }
+  }
+
   /** The surroundings are looked at this often (s): a few hundred getBlock calls. */
   const AMBIENCE_SAMPLE_S = 0.5;
   /** States with a world in which the ambience stays quiet: the menus between the player and the world. */
@@ -1830,12 +1961,16 @@ export function boot(win, doc) {
   const leftEnv = {
     snuffs: () => isBurningKeg(hit),
     act: () => {
+      avatarSwing(); // §91: every press and repeat swings the arm, as a hand does
       breakTargeted();
     },
   };
   const latchEnv = {
     isControl: (id) => !!circuits && isControl(id),
-    operate: (h) => operateControl(h),
+    operate: (h) => {
+      avatarSwing(); // §91
+      operateControl(h);
+    },
     hold: (h) => {
       if (circuits) circuits.hold(h.q, h.y, h.r);
     },
@@ -3020,6 +3155,7 @@ export function boot(win, doc) {
     }
     if (!playerSetBlock(tq, ty, tr, id)) return false;
     audio.playPlace(getBlockDef(id).soundGroup);
+    avatarSwing(); // §91
     updateHit();
     return true;
   }
@@ -4662,6 +4798,7 @@ export function boot(win, doc) {
     const finite = Number.isFinite(need);
     if (finite && !res.done && dt > 0) digAdvanced = true;
     if (res.tick) {
+      avatarSwing(); // §91: the arm works at the cell with every dig tick
       audio.playDig(getBlockDef(h.blockId).soundGroup, finite ? 0.35 : 0.15);
       if (finite) {
         const [x, z] = hexToWorld(h.q, h.r);
@@ -4714,6 +4851,7 @@ export function boot(win, doc) {
       showHint(tooFarHint(far));
       return;
     }
+    avatarSwing(); // §91
     if (zombieTarget) {
       const zb = zombieTarget.zombie;
       const res = zombies.hit(zb, player.x, player.z, strikeKind('zombie', tool).power * strikeFactorNow()); // §87: Weak strikes softer
@@ -5616,6 +5754,7 @@ export function boot(win, doc) {
     // Debug/screenshot aids: ?yaw= and ?pitch= (degrees) override the initial look direction.
     if (params.yaw != null) controls.yaw = (params.yaw * Math.PI) / 180;
     if (params.pitch != null) controls.pitch = (params.pitch * Math.PI) / 180;
+    avatarMotion.reset(controls.yaw); // §91: the body faces the look
     if (params.fly) player.flying = true;
     // §1.1 ?mode: the first world only (the autoplay boot already decided whether it may apply), then it is used up.
     const urlModeNow = consumeModeParam(params);
@@ -5678,6 +5817,11 @@ export function boot(win, doc) {
     if (autoplay) {
       enterPlaying();
       showDebugUi();
+      if (params.avatarMenu && !params.smoke) {
+        // §91 ?ui=avatars with ?autoplay: the chooser over the pause menu (screenshots)
+        pause();
+        avatarMenu.open();
+      }
       // §6.7: ?scene= for screenshots (the smoke test builds its scene itself, after its own steps).
       if (params.scene && !params.smoke) buildScene(params.scene, 2);
     } else {
@@ -6313,6 +6457,24 @@ export function boot(win, doc) {
     /** §69: R on the animal under the crosshair (feed, shear, ride, sit), and the horse being ridden. */
     animalR: () => animalR(),
     getRiding: () => riding,
+    // §91: the view and the avatar (probes and screenshots); nothing is stored
+    getView: () => viewMode,
+    setView(mode) {
+      const m = normalizeViewMode(mode);
+      if (!m) return false;
+      viewMode = m;
+      avatarMenu.setView(viewWords(m));
+      return true;
+    },
+    getBoom: () => boom,
+    getAvatar: () => avatarId,
+    setAvatar(id) {
+      avatarId = avatarById(id).id;
+      avatarRenderer.setAvatar(avatarId);
+      avatarMenu.setCurrent(avatarId);
+      return avatarId;
+    },
+    avatarSwing: () => avatarSwing(),
     loose,
     handAction: (kind, n = 1) => handAction(kind, n),
     // ---- §80 farming: the two trackers, and time for them alone ----
@@ -6978,6 +7140,7 @@ export function boot(win, doc) {
     }
     if (controls.consumePressed('F3')) hud.toggleDebug();
     if (controls.consumePressed('KeyM')) hud.showSaveToast(audio.toggleMuted() ? 'Sound muted' : 'Sound on');
+    if (controls.consumePressed('KeyV')) cycleView(); // §91: first person → behind → in front
     // §60: Q drops the item in hand (Shift: the whole stack), G throws one.
     if (controls.consumePressed('KeyQ')) {
       const res = handAction('drop', controls.isDown('ShiftLeft') || controls.isDown('ShiftRight') ? 'all' : 1);
@@ -6985,7 +7148,8 @@ export function boot(win, doc) {
     }
     if (controls.consumePressed('KeyG')) {
       const res = handAction('throw', 1);
-      if (!res.ok && res.loud) logLine(res.message);
+      if (res.ok) avatarSwing(); // §91
+      else if (res.loud) logLine(res.message);
     }
 
     const mouse = controls.consumeMouse();
@@ -7143,9 +7307,12 @@ export function boot(win, doc) {
     else fallingRenderer.setFlash(flash.x, flash.y, flash.z, flash.intensity);
     blackHoles.cameraFx(player.x, eyeY, player.z, camFx);
     particles.update(state === STATE.PLAYING && !(blockPhysics && blockPhysics.paused) ? dt : 0);
-    renderer.setCamera(player.x + shake[0] + camFx.sx, eyeY + shake[1] + camFx.sy, player.z + shake[2] + camFx.sz, controls.yaw, controls.pitch);
+    // §91: the camera at the eye, or on the third-person boom from it; then the avatar's model or its arm
+    const cam = viewCamera(dt, eyeY);
+    renderer.setCamera(cam.x + shake[0] + camFx.sx, cam.y + shake[1] + camFx.sy, cam.z + shake[2] + camFx.sz, cam.yaw, cam.pitch);
     fov = easeFov(fov, player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV, dt);
     renderer.setFov(fov + camFx.fov);
+    drawAvatar(dt, live, eyeY);
     renderCircuitsAndVortices(dt, eyeY, live);
     renderer.setHighlight(hit);
     const SV = survival.inSurvival;
@@ -7188,8 +7355,9 @@ export function boot(win, doc) {
     const shownSky = stepWeather(dt, live, eyeY); // §84: the rain, the calendar; the sky greyed while it rains
     stepWorldSounds(dt, live); // v0.16 (§82): footsteps, movement and the ambience
     renderer.setSky(shownSky);
-    renderer.setUnderwater(player.headInWater);
-    hud.setUnderwater(player.headInWater);
+    const camUnder = cameraUnderwater(cam); // §91: where the camera is (the eye in first person)
+    renderer.setUnderwater(camUnder);
+    hud.setUnderwater(camUnder);
     // §9.8: the survival HUD — hex hotbar from the pack (no per-frame copy), vitals bookends, the action ring, the job chip.
     hud.setSurvivalVisible(SV);
     hud.setHotbarStacks(SV ? pack.slots : null, selected, pack.version);
@@ -7401,6 +7569,8 @@ export function boot(win, doc) {
     watcherRenderer.dispose();
     watcher.clear();
     disposeSleep(); // §87
+    avatarRenderer.dispose(); // §91
+    avatarMenu.dispose();
     controls.dispose();
     hud.dispose();
     menus.dispose();
@@ -7461,6 +7631,7 @@ export function boot(win, doc) {
     showTitle();
   }
   if (params.soundTest) soundTest.open(); // v0.16 (§82): ?ui=sounds
+  if (params.avatarMenu && !autoplay) avatarMenu.open(); // §91: ?ui=avatars, over the title screen
 
   rafId = win.requestAnimationFrame(frame);
   console.log(`Caelancraft v${VERSION}`);

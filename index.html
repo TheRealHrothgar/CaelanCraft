@@ -112,11 +112,21 @@ say Tower built"></textarea>
        it. soundTest.js builds it; the pause menu's Sound row or ?ui=sounds opens it. -->
   <div id="sound-test" class="layer hidden" role="dialog" aria-label="Sound Test"></div>
 
+  <!-- The Avatar chooser (CONTRACTS §91; z 32 like the Guide, over the title screen z 55): a card per avatar on a rounded
+       square. avatarMenu.js builds it; the title screen's and the pause menu's Avatar buttons open it. -->
+  <div id="avatar-chooser" class="layer hidden" role="dialog" aria-label="Choose your avatar"></div>
+
   <div id="pause-menu" class="layer hidden">
     <div class="menu-panel">
       <h2 class="menu-title">Game Paused</h2>
       <div id="pause-world" class="menu-subtitle hidden"></div>
       <button id="btn-resume" class="mc-button">Back to Game</button>
+      <!-- Avatars and the view (CONTRACTS §91): who you are, and V's view. avatarMenu.js keeps both labels. -->
+      <div id="pause-you" class="physics-row">
+        <span class="physics-label">You</span>
+        <button id="btn-avatar-pause" type="button" class="hex-button sound-button" title="Choose who you play as">Avatar: Caelan</button>
+        <button id="btn-view" type="button" class="hex-button sound-button" title="See through your own eyes, from behind or from in front (V key)">View: First person</button>
+      </div>
       <button id="btn-save" class="mc-button">Save World</button>
       <button id="btn-stop-runes" class="mc-button">Stop All Rune Scripts</button>
       <div id="pause-physics" class="physics-row">
@@ -198,6 +208,7 @@ say Tower built"></textarea>
       <div class="title-side">
         <div id="title-controls" class="controls-sheet"></div>
         <button id="btn-guide-title" type="button" class="hex-button guide-button" title="The Survival Guide: how to stay alive">Survival Guide</button>
+        <button id="btn-avatar-title" type="button" class="hex-button guide-button avatar-button" title="Choose who you play as">Avatar: Caelan</button>
       </div>
     </div>
     <div id="title-footer">Caelancraft v0.10 · a honeycomb world · Three.js · no assets were downloaded</div>

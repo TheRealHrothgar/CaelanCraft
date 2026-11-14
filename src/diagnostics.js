@@ -10,6 +10,8 @@ import { BLOCK, BIOME_NAMES, getBlockDef, isBreakable, isSolid } from './blocks.
 import { worldToChunk, worldToLocal, lookDirection, yawToForward } from './coords.js';
 import { FACE_NAMES, faceNeighbor, hexLength, hexToWorld, worldToHex } from './hex.js';
 import { runeKey } from './runes.js';
+import { normalizeAvatarId } from './avatars.js';
+import { normalizeViewMode } from './viewCamera.js';
 
 /** @typedef {import('./types.js').GameContext} GameContext */
 /** @typedef {import('./types.js').SmokeResult} SmokeResult */
@@ -34,6 +36,11 @@ import { runeKey } from './runes.js';
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
  * @property {'creative'|'survival'|null} mode  v0.9 (§9.10): the first world's mode with ?autoplay / ?smoke; anything else → null
  * @property {boolean} soundTest     v0.16 (CONTRACTS §82): `?ui=sounds` — main opens the Sound Test as soon as the page has loaded
+ * @property {'first'|'behind'|'front'|null} view  §91 screenshot aid: `?view=first|third|front` ('third' is behind) for this
+ *   visit (not stored); anything else → null
+ * @property {string|null} avatar    §91 screenshot aid: `?avatar=caelan|brayden|annabelle` for this visit (not stored)
+ * @property {boolean} avatarMenu    §91: `?ui=avatars` — the Avatar chooser opens over the title screen, or (with ?autoplay)
+ *   over the pause menu once the world has loaded
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -68,6 +75,9 @@ export function parseParams(search = defaultSearch()) {
     mode: readModeParam(params),
     scene: readSceneParam(params),
     soundTest: readSoundTestParam(params),
+    view: normalizeViewMode(readString(params, 'view')),
+    avatar: normalizeAvatarId(readString(params, 'avatar')),
+    avatarMenu: (readString(params, 'ui') ?? '').toLowerCase() === 'avatars',
   };
 }
 
@@ -484,6 +494,16 @@ export function installDebugHandle(win, game) {
     if (game && typeof game.setLook === 'function') game.setLook(yaw, pitch);
   };
   handle.getState = () => (game && typeof game.getState === 'function' ? game.getState() : 'unknown');
+  // §91: the view mode and the avatar, for probes (not stored)
+  const av = /** @type {*} */ (game);
+  handle.getView = () => (av && typeof av.getView === 'function' ? av.getView() : null);
+  handle.setView = (mode) => (av && typeof av.setView === 'function' ? av.setView(mode) : false);
+  handle.getBoom = () => (av && typeof av.getBoom === 'function' ? av.getBoom() : 0);
+  handle.getAvatar = () => (av && typeof av.getAvatar === 'function' ? av.getAvatar() : null);
+  handle.setAvatar = (id) => (av && typeof av.setAvatar === 'function' ? av.setAvatar(id) : null);
+  handle.avatarSwing = () => {
+    if (av && typeof av.avatarSwing === 'function') av.avatarSwing();
+  };
   // v0.9 Survival (§9.10): the mode (switches are queued), and one frame of the real dig / use / R paths for drivers.
   handle.getMode = () => (game && typeof game.getMode === 'function' ? game.getMode() : 'creative');
   handle.setMode = (mode) => {
