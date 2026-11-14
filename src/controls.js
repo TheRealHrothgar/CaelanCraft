@@ -55,6 +55,7 @@ export const GAME_KEYS = new Set([
   'ShiftLeft', 'ShiftRight',
   'KeyE', 'KeyF', 'KeyM', 'KeyT', 'KeyR', 'Slash',
   'KeyQ', 'KeyG', // v0.10 drop and throw (CONTRACTS §60)
+  'KeyV', // the view: first person, third person behind, in front (CONTRACTS §91)
 ]);
 
 /** Upper bound on queued keydown edges per code; protects against unbounded growth for keys nobody consumes. */

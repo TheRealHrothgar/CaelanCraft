@@ -2030,6 +2030,7 @@ function makeChapters() {
         ['T', 'the command console'],
         ['F3', 'the debug overlay'],
         ['M', 'sound on or off'],
+        ['V', 'see yourself: through your own eyes, from behind, or from in front (the pause menu chooses who you are)'],
       ] }),
     ],
     [
