@@ -1,5 +1,5 @@
 // Tests for src/mesher.js (hexagonal-prism cells) — see src/CONTRACTS.md §10.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
 import { CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, WATER_SURFACE_HEIGHT, AO_CURVE, TOP_UV_SCALE } from '../../src/config.js';
 import { chunkKey, columnIndex, localIndex } from '../../src/coords.js';
 import {
@@ -8,13 +8,20 @@ import {
 import { BLOCK, TILE, BIOME, getFaceTile, tileToUV, isOpaque, flintAt } from '../../src/blocks.js';
 import {
   buildChunkMesh, vertexAO, hexCornerAO, createMeshBuilder, BIOME_TINT, isTintedFace, LITTER_ROCKS, LITTER_STICKS, LITTER_GROUND_SHADE,
-  MODEL_JITTER, MODEL_SCALE_MIN, MODEL_SCALE_MAX,
+  MODEL_JITTER, MODEL_SCALE_MIN, MODEL_SCALE_MAX, setCellVariation,
 } from '../../src/mesher.js';
 import { PLANT_MODELS, PLANT_QUAD_STRIDE, plantModel, plantModelTile } from '../../src/plantModels.js';
 import { createWorldGen } from '../../src/worldgen.js';
 import { makeChunkData, makeChunkDataGetter, setWorldBlock, countFaces } from '../helpers/fixtures.js';
 
 const B = BLOCK;
+
+// These tests pin culling, AO, light and the UV windows of the tiles' first pictures: per-cell variation (§90, its own
+// tests in mesherVariation.test.js) is switched off for them — at load, since several describe blocks mesh their scene
+// while the file is collected (a file runs in its own worker, so this reaches no other file).
+setCellVariation(false);
+afterAll(() => setCellVariation(true));
+
 const TOP_ORDER = [0, 5, 4, 3, 2, 1];
 const BOTTOM_ORDER = [0, 1, 2, 3, 4, 5];
 

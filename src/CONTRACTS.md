@@ -88,6 +88,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/daynight.js` | PURE | A-daynight | `tests/unit/daynight.test.js` |
 | `src/storage.js` | PURE (storage injected); save slots (§41) | A-storage | `tests/unit/storage.test.js`, `tests/unit/saveSlots.test.js` |
 | `src/tiles.js` | PURE (pixel painters) | A-tiles | `tests/unit/tiles.test.js` |
+| `src/tileVariants.js` | PURE: which tiles have several pictures, their atlas slots, how a face may turn, the per-block brightness roll (§90) | §90 | `tests/unit/tilesHD.test.js` |
+| `src/tilesHD.js` | PURE: the 32-px painters of the world's blocks, several pictures each (§90) | §90 | `tests/unit/tilesHD.test.js` |
 | `src/commands.js` | PURE, command language | v0.3 | `tests/unit/commands.test.js` |
 | `src/runes.js` | PURE, rune store + runner | v0.3 | `tests/unit/runes.test.js` |
 | `src/blockphysics.js` | PURE, physics scheduler + rule registry (§33); the features together (§38) | v0.8 | `tests/unit/blockphysics.test.js`, `tests/integration/physics.test.js` |
@@ -171,11 +173,11 @@ fallingblocks                      → config, blocks, hex, physics
 blockphysics                       → config, blocks, hex, coords, noise (mulberry32), fallingblocks, fluids, support, trees, explosions
 fallingRenderer                    → blocks (BLOCK), mesher (buildCellMesh), three
 particles                          → config, blocks, tiles (averageColor, paintTile), mesher (BIOME_TINT, isTintedFace), three
-mesher                             → config, coords, hex, blocks
+mesher                             → config, coords, hex, blocks, tileVariants (§90)
 worldgen                           → config, coords, hex, blocks, noise
 world                              → config, coords, hex, blocks, chunk, noise (normalizeSeed), worldgen, mesher
 storage                            → config, blocks (DEFAULT_HOTBAR), runes (normalizeRunesJSON, validateRunesJSON)
-atlas                              → config, blocks, hex, tiles, three
+atlas                              → config, blocks, hex, tiles, tilesHD, tileVariants (§90), three
 renderer                           → config, hex, three
 controls                           → config
 hud                                → config, blocks, atlas
@@ -882,6 +884,8 @@ Validation on load: each edits entry must be an even-length array of integers wi
 
 ## 15. `src/tiles.js` (pure pixel painters)
 
+> **§90 amendment:** the atlas holds every tile at 32 px; the world's blocks are painted by `tilesHD.js` (several pictures each), the other tiles by these 16-px painters, doubled.
+
 ```js
 export const TILE_NAMES = { 0:'stone', 1:'dirt', ..., 26:'wool_red', 27:'rune', 255:'missing' };   // matches TILE in blocks.js
 export function paintTile(tile)          // → Uint8ClampedArray(16*16*4), RGBA, idx = (y*16 + x)*4. Deterministic. Unknown tile → 'missing' checker.
@@ -906,6 +910,7 @@ alpha 0 with opaque frame; leaves ~22% alpha-0 holes; everything else alpha 255)
 ## 16. `src/atlas.js` (DOM + three)
 
 > **v0.10 amendment (§53):** `icon: 'flat'` blocks draw as one nearest-neighbour copy of their top tile; the keg's tiles are painted in `circuitTiles.js`.
+> **§90 amendment:** the atlas is 1024 × 1024 px of 32-px slots (tile t in slot t, extra pictures from slot 256), built by `createAtlasPixels`, and the texture is a mipmapped `DataTexture` (`buildAtlasMips`); see §90.1.
 
 ```js
 export function createAtlasCanvas()                        // 256×256 canvas; every id in TILE_IDS painted via paintTile at its tile origin
@@ -6740,6 +6745,80 @@ for water all year — the best place for a homestead. handbook.test.js pins eve
   aquifers in the ground and under ponds and the aquifers' step between the edits: the rule never makes water, the
   laws hold at rest), `explosions.test.js` and `blackholes.test.js` (the aquifer survives a real blast and a real
   black hole), `harvest.test.js`, `handbook.test.js`, and the pins of BLOCK_COUNT, TILE_IDS and GEN_LATEST.
+
+## 90. Better blocks: 32-px pictures, several of each, varied cell by cell — `src/tilesHD.js` (PURE), `src/tileVariants.js` (PURE), `src/atlas.js`, `src/mesher.js`, `src/config.js`
+
+The user's kid asked for "better textures for all the blocks. Minor natural variations between blocks of the same type",
+then "higher res too". Three changes, each on its own: a finer atlas, new pictures for the world's blocks, and the mesher
+varying every cell.
+
+### 90.1 The atlas (`config.js`, `atlas.js`, `blocks.js`)
+- `ATLAS_SLOT_PX` = 32: every slot of the atlas is 32 × 32 px; `ATLAS_TILES_PER_ROW` = 32, so the atlas is
+  `ATLAS_SIZE_PX` = 1024 px square with 1024 slots and `TILE_UV` = 1/32. `UV_INSET` = 1/8192 (an eighth of a texel).
+  `ATLAS_TILE_PX` stays 16: the grid tiles.js, the item art and the model cutters (plant models, litter boxes, the
+  Watcher's windows) draw on — they work in fractions of a tile and are unchanged.
+- Slot t is tile t for t < 256 (`tileToUV(t)`, `atlas.tileOrigin(t)` take a slot). The extra pictures of the varied tiles
+  take the slots from `FIRST_EXTRA_SLOT` = 256 up, packed in the order of tileVariants' table.
+- `atlas.paintSlot(tile, k)` is tilesHD's picture k when it has a painter, else the 16-px tile doubled pixel for pixel
+  (`tilesHD.upscale16`): every tile without a new painter looks exactly as before. `createAtlasPixels()` (PURE) paints
+  every tile id in `TILE_IDS` and every extra picture; `createAtlasCanvas()` puts them on the canvas the 2D users read
+  (block icons, backgrounds, the logo — all now draw a 32-px slot).
+- `createAtlasTexture(canvas)` is a `DataTexture` with its OWN mip chain, `buildAtlasMips(pixels)` (PURE): `ATLAS_MIP_LEVELS`
+  = 6 levels, 1024 → 32 px, the last one texel per slot. Each texel of a level is its 2 × 2 children: colour the
+  alpha-weighted mean (cut-out edges keep their colour), alpha the MOST opaque child (a leaf canopy, a glass frame or a
+  plant's thin parts stay solid far away instead of fading through the alpha test). Slots are powers of two, so a level
+  never mixes two slots. `magFilter` Nearest (crisp up close), `minFilter` NearestMipmapLinear (no shimmer far away),
+  anisotropy 1 (a wider footprint could reach the next slot). three uploads the levels with `texStorage2D(levels)`, so the
+  chain ends at 32 px and is complete.
+
+### 90.2 The pictures (`tilesHD.js`)
+- `paintTileHD(tile, k)` → `Uint8ClampedArray(32·32·4)` or null (no painter). PURE and deterministic: a private
+  mulberry32 seeded with `fnv1a("hd:<tile id>#<k>")`; never the world seed. The house style: a height field (soft value
+  noise, Voronoi cells, boards, courses of bricks) lit from the top-left by an emboss of itself, quantised onto a short
+  palette (5–7 shades) with a light 4 × 4 ordered dither — chunky pixel art with depth, not photo noise. Its comments
+  are normative for the recipes.
+- It paints exactly the tiles in tileVariants' table (`HD_TILES`): stone and its kin (granite, diorite, andesite, slate,
+  obsidian, bedrock, clay, the aquifer), the ores, dirt, grass (top and side), snow and the snowy side, sand and red
+  sand, gravel, sandstone, the three woods' planks, bark and log ends, the three leaves, cobblestone and mossy
+  cobblestone, bricks, stone bricks and mossy stone bricks, the bookshelf, the 16 wools, the five storage blocks, glass,
+  glowstone, honeycomb, hay, pumpkin, ice and packed ice, water and tainted water.
+- Two facts of the honeycomb shape the art: a SIDE shows the middle `HEX_SIZE` (58 %) of the tile's width, so what must
+  be seen (ore nuggets, rivets, glints) sits in the band x ≈ 7..25 and a block's frame is its top and bottom rows; a CAP
+  shows the pointy-top hexagon inscribed in the tile, so log rings and the pumpkin's ribs follow that hexagon.
+- §15's alpha rules hold: water and tainted water 178 everywhere, ice 200 everywhere, glass a clear (alpha 0) interior in
+  an opaque frame, leaves 12–32 % holes (alpha 0), everything else 255. Each material keeps close to its 16-px average
+  colour (tilesHD.test.js), the grass cap stays the untinted greens the biome tint multiplies, and the grass side's
+  overhang is those greens under the plains tint.
+
+### 90.3 Variants (`tileVariants.js`)
+- The table `[tile, pictures (1..MAX_VARIANTS = 4), VARY_* bits]`; append only (its order fixes the extra slots).
+  `tileVariants(tile)` → `{ count, mode, slots }` or null; `variantCount`, `variantSlot(tile, k)` (k wraps),
+  `variantMode`, `extraSlots()`.
+- `VARY_CAP`: a cap may be mirrored left-right and top-bottom (the inscribed hexagon maps onto itself). `VARY_MIRROR`: a
+  side may be mirrored left-right. `VARY_SHIFT`: a side's window may slide up to `floor((0.5 − HEX_SIZE/2) · 32)` = 6
+  whole pixels either way and stay inside its picture. Sides are never flipped top to bottom. Water, tainted water,
+  glass, the storage blocks and the pumpkin's cap never vary; nor does any tile not in the table (devices, plants,
+  furniture, mobs).
+- `BLOCK_JITTER[id]`: the ± brightness of block `id` (0.015–0.06; 0 for water, glass, metal and every device). The three
+  leaves (`LEAFY`) also drift their red channel by ± `LEAF_HUE_SHIFT` (0.05) × a second roll: yellower or bluer-green.
+- `variantHash(q, y, r, salt)`: a well-mixed uint32 of a world cell.
+
+### 90.4 The mesher
+- For every prism cell whose block varies (`VARIES[id]`: a face with several pictures or a VARY bit, or a brightness
+  roll), `buildChunkMesh` rolls per face f (side 0..5, cap 6..7) `h = variantHash(q, y, r, f + 1)` on the WORLD cell:
+  picture `h % count`; mirror bit 8; a cap's flip bit 9; a side's slide `((h >>> 10) % 13) − 6` px (when its tile has
+  the bit). The cell's brightness roll is `variantHash(q, y, r, 0)`: `1 + amp · ((h & 0xffff) / 32767.5 − 1)` on r, g
+  and b, and for leaves the red channel also × `1 + LEAF_HUE_SHIFT · (((h >>> 16) & 0xffff) / 32767.5 − 1)`. Vertex
+  colours are clamped to ≤ 1 (they stay in (0, 1]). Plants, litter and decals never vary.
+- So a block keeps its look through every re-mesh, reload and neighbour change, and two cells of one block differ.
+  Moving blocks (`buildCellMesh`: falling sand, toppling trees) show the roll of the scratch cell they are meshed at.
+- `setCellVariation(on)` / `cellVariationEnabled()`: on by default. Off, every face shows its tile's first picture,
+  unturned, at its exact colour (the mesher tests of AO, light and UV windows run with it off; chunks meshed before the
+  call keep their look until re-meshed).
+
+### 90.5 Cost
+Painting the whole atlas is about 100 ms (Node, warm) at boot, the mip chain about 35 ms; the atlas texture is 1024² RGBA
+(4 MB, 5.3 MB with mips). Meshing gains one hash per exposed face of a varied cell.
 
 ## 24. Test fixtures (`tests/helpers/fixtures.js`, already written)
 

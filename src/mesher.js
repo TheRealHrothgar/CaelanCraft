@@ -17,7 +17,7 @@
 // opaque; the diagonal only when it is not cut off by both sides), so light falls off across a face instead of stepping
 // cell by cell. A face whose front cell is opaque (a lowered water surface under a block) and the plant shapes use their
 // own cell's light; an emitter's faces carry at least its own block level (glowstone is fully lit).
-import { CHUNK_SIZE, WORLD_HEIGHT, AO_CURVE, TOP_UV_SCALE } from './config.js';
+import { CHUNK_SIZE, WORLD_HEIGHT, AO_CURVE, TOP_UV_SCALE, ATLAS_SLOT_PX } from './config.js';
 import { floorDiv, mod, localIndex } from './coords.js';
 import {
   HEX_DIRS, HEX_CORNERS, HEX_SIZE, HEX_ROW_SPACING, FACE_NORMALS, FACE_SHADE, FACE_TOP, FACE_BOTTOM, FACE_COUNT,
@@ -29,6 +29,9 @@ import {
 } from './blocks.js';
 import { FULL_SKY, LIGHT_EMISSION } from './light.js';
 import { plantModel, plantModelTile, PLANT_QUAD_STRIDE } from './plantModels.js';
+import {
+  tileVariants, VARY_CAP, VARY_MIRROR, VARY_SHIFT, MAX_VARIANTS, BLOCK_JITTER, LEAFY, LEAF_HUE_SHIFT, variantHash,
+} from './tileVariants.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
@@ -97,6 +100,15 @@ const FACE_UV = new Float32Array(256 * FACE_COUNT * 4);
 /** TINTED[id * 8 + f] = 1 iff isTintedFace(id, f). */
 const TINTED = new Uint8Array(256 * FACE_COUNT);
 /**
+ * §90 per-cell variation. VAR_COUNT[id * 8 + f] = how many pictures face f's tile has, VAR_MODE[…] its VARY_* bits and
+ * VAR_UV[((id * 8 + f) * MAX_VARIANTS + k) * 4 …] picture k's rect; VARIES[id] = 1 when any face of `id` varies or the
+ * block's brightness rolls (BLOCK_JITTER).
+ */
+const VAR_COUNT = new Uint8Array(256 * FACE_COUNT);
+const VAR_MODE = new Uint8Array(256 * FACE_COUNT);
+const VAR_UV = new Float32Array(256 * FACE_COUNT * MAX_VARIANTS * 4);
+const VARIES = new Uint8Array(256);
+/**
  * FREE_SURFACE[id] = 1 iff water under a cell of `id` has a free, lowered surface (§10.2 step 1): AIR, or a block drawn
  * by its own model (campfire, a black hole, the thin circuit parts: v0.10). Under water or any block meshed as a full prism
  * (stone, glass, ice, leaves) a FULL water cell (source or falling) stays full height, so a submerged see-through block shows
@@ -147,7 +159,14 @@ for (let id = 0; id < 256; id++) {
     FACE_UV[o + 2] = uv[2];
     FACE_UV[o + 3] = uv[3];
     TINTED[id * FACE_COUNT + f] = isTintedFace(id, f) ? 1 : 0;
+    const tv = tileVariants(getFaceTile(id, f));
+    const vi = id * FACE_COUNT + f;
+    VAR_COUNT[vi] = tv ? tv.count : 1;
+    VAR_MODE[vi] = tv ? tv.mode : 0;
+    for (let k = 0; k < MAX_VARIANTS; k++) VAR_UV.set(tileToUV(tv ? tv.slots[k % tv.count] : getFaceTile(id, f)), (vi * MAX_VARIANTS + k) * 4);
+    if (VAR_COUNT[vi] > 1 || VAR_MODE[vi] !== 0) VARIES[id] = 1;
   }
+  if (BLOCK_JITTER[id] > 0) VARIES[id] = 1;
 }
 for (let a = 0; a < 256; a++) {
   for (let b = 0; b < 256; b++) RENDER[(a << 8) | b] = shouldRenderFace(a, b) ? 1 : 0;
@@ -211,6 +230,76 @@ for (let f = 0; f < FACE_COUNT; f++) {
 
 /** Half the width of the side-face texture window, as a fraction of the tile: one edge length (texel density = 1 tile / unit). */
 const SIDE_HALF_U = HEX_SIZE / 2;
+/** §90: how far (whole pixels of a 32-px slot, either way) a side's window may slide and stay inside its tile. */
+const SIDE_SHIFT_PX = Math.floor((0.5 - SIDE_HALF_U) * ATLAS_SLOT_PX);
+
+// §90: the cell being meshed. buildChunkMesh sets the world column per column and `varyOn` per cell (VARIES[a] for a
+// prism, 0 for a plant, litter or decal); emitSide and emitHex then pick the face's picture, its mirror and slide, and
+// the cell's brightness from variantHash of the cell, so a block keeps its look through every re-mesh and reload.
+let varyQ = 0;
+let varyR = 0;
+let varyOn = 0;
+let variationEnabled = true;
+
+/**
+ * §90: switch per-cell variation on or off (on by default). Off, every face shows its tile's first picture, unturned, at
+ * its exact colour — the look before §90 at the new resolution (tests of AO and UV windows, side-by-side screenshots).
+ * Chunks meshed before the call keep their look until re-meshed.
+ * @param {boolean} on
+ */
+export function setCellVariation(on) {
+  variationEnabled = !!on;
+}
+
+/** @returns {boolean} whether buildChunkMesh varies cells (§90) */
+export function cellVariationEnabled() {
+  return variationEnabled;
+}
+/** The face's roll, set by faceVariant: [rect u0, v0, u1, v1] in varUV, and the mirror / flip / slide it chose. */
+const varUV = new Float32Array(4);
+let varMirror = 0;
+let varFlipV = 0;
+let varShift = 0;
+
+/**
+ * §90: choose face `f` of block `a` at (varyQ, ly, varyR): its picture's rect into varUV, and varMirror / varFlipV /
+ * varShift by the tile's VARY_* bits. Returns false (nothing chosen: use FACE_UV) when the face does not vary.
+ */
+function faceVariant(a, f, ly) {
+  const vi = a * FACE_COUNT + f;
+  const count = VAR_COUNT[vi];
+  const mode = VAR_MODE[vi];
+  if (count === 1 && mode === 0) return false;
+  const h = variantHash(varyQ, ly, varyR, f + 1);
+  const k = count > 1 ? h % count : 0;
+  const o = (vi * MAX_VARIANTS + k) * 4;
+  varUV[0] = VAR_UV[o];
+  varUV[1] = VAR_UV[o + 1];
+  varUV[2] = VAR_UV[o + 2];
+  varUV[3] = VAR_UV[o + 3];
+  const isCap = f >= SIDE_FACE_COUNT;
+  varMirror = (isCap ? mode & VARY_CAP : mode & VARY_MIRROR) && (h >>> 8) & 1 ? 1 : 0;
+  varFlipV = isCap && mode & VARY_CAP && (h >>> 9) & 1 ? 1 : 0;
+  varShift = !isCap && mode & VARY_SHIFT ? ((h >>> 10) % (2 * SIDE_SHIFT_PX + 1)) - SIDE_SHIFT_PX : 0;
+  return true;
+}
+
+/**
+ * §90: the cell's brightness roll (1 ± BLOCK_JITTER[a]), and for leaves a drift of the red channel toward yellow or
+ * blue-green; written into jit[0..2] (multipliers of r, g, b).
+ */
+const jit = new Float64Array(3);
+function cellJitter(a, ly) {
+  const amp = BLOCK_JITTER[a];
+  if (amp === 0) {
+    jit[0] = 1; jit[1] = 1; jit[2] = 1;
+    return;
+  }
+  const h = variantHash(varyQ, ly, varyR, 0);
+  const s = 1 + amp * ((h & 0xffff) / 32767.5 - 1);
+  jit[0] = s; jit[1] = s; jit[2] = s;
+  if (LEAFY[a] === 1) jit[0] *= 1 + LEAF_HUE_SHIFT * (((h >>> 16) & 0xffff) / 32767.5 - 1);
+}
 
 // ---------------------------------------------------------------------------------------------------
 // Public helpers
@@ -447,12 +536,20 @@ function emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, tr, tg, tb) {
   const nx = NORMAL_X[f];
   const nz = NORMAL_Z[f];
   const uo = (a * FACE_COUNT + f) * 4;
-  const u0 = FACE_UV[uo];
-  const v0 = FACE_UV[uo + 1];
-  const u1 = FACE_UV[uo + 2];
-  const v1 = FACE_UV[uo + 3];
-  const uMid = (u0 + u1) * 0.5;
-  const uHalf = (u1 - u0) * SIDE_HALF_U;
+  const varied = varyOn === 1 && faceVariant(a, f, ly);
+  const uvs4 = varied ? varUV : FACE_UV;
+  const ub = varied ? 0 : uo;
+  const u0 = uvs4[ub];
+  const v0 = uvs4[ub + 1];
+  const u1 = uvs4[ub + 2];
+  const v1 = uvs4[ub + 3];
+  const uMid = (u0 + u1) * 0.5 + (varied ? ((u1 - u0) * varShift) / ATLAS_SLOT_PX : 0);
+  // §90: a mirrored side reads its window right to left.
+  const uHalf = (u1 - u0) * SIDE_HALF_U * (varied && varMirror ? -1 : 1);
+  if (varyOn === 1) {
+    cellJitter(a, ly);
+    tr *= jit[0]; tg *= jit[1]; tb *= jit[2];
+  }
   const vTop = topY === 1 ? v0 : v1 - (v1 - v0) * topY;
   const vBottom = bottomY === 0 ? v1 : v1 - (v1 - v0) * bottomY;
   const qq = pq + DIR_DQ[f];
@@ -512,9 +609,10 @@ function emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, tr, tg, tb) {
     uvs[p2] = (v === 1 || v === 2) ? uMid + uHalf : uMid - uHalf;
     uvs[p2 + 1] = top ? vTop : vBottom;
     const col = shade * AO_CURVE[ao];
-    colors[p3] = col * tr;
-    colors[p3 + 1] = col * tg;
-    colors[p3 + 2] = col * tb;
+    // §90: a cell's brightness roll may lift a colour past 1; colours stay in (0, 1].
+    colors[p3] = Math.min(1, col * tr);
+    colors[p3 + 1] = Math.min(1, col * tg);
+    colors[p3 + 2] = Math.min(1, col * tb);
   }
 
   // Diagonal joins the brighter pair; both orders are CCW.
@@ -554,15 +652,23 @@ function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb, own = -1) {
   const ny = isTop ? 1 : -1;
   const yPos = isTop ? ly + topY : ly;
   const shade = FACE_SHADE[f];
-  const uvs4 = decalUV ?? FACE_UV;
-  const ub = decalUV ? 0 : (a * FACE_COUNT + f) * 4;
+  const varied = decalUV === null && varyOn === 1 && faceVariant(a, f, ly);
+  const uvs4 = decalUV ?? (varied ? varUV : FACE_UV);
+  const ub = decalUV || varied ? 0 : (a * FACE_COUNT + f) * 4;
   const u0 = uvs4[ub];
   const v0 = uvs4[ub + 1];
   const u1 = uvs4[ub + 2];
   const v1 = uvs4[ub + 3];
   const du = u1 - u0;
   const dv = v1 - v0;
-  const uSign = isTop ? TOP_UV_SCALE : -TOP_UV_SCALE; // the bottom face is seen mirrored
+  // The bottom face is seen mirrored; §90: a varied cap may also be mirrored left-right and top-bottom (the inscribed
+  // hexagon maps onto itself either way).
+  const uSign = (isTop ? TOP_UV_SCALE : -TOP_UV_SCALE) * (varied && varMirror ? -1 : 1);
+  const vSign = TOP_UV_SCALE * (varied && varFlipV ? -1 : 1);
+  if (varyOn === 1) {
+    cellJitter(a, ly);
+    tr *= jit[0]; tg *= jit[1]; tb *= jit[2];
+  }
   const light = bld.light;
   // §62: the cell in front of the cap (its own cell when that is opaque, or for a decal: `own`), then per corner the two
   // see-through side cells that share it.
@@ -610,10 +716,10 @@ function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb, own = -1) {
     normals[p3 + 2] = 0;
     const p2 = vi * 2;
     uvs[p2] = u0 + du * (0.5 + uSign * CORNER_X[k]);
-    uvs[p2 + 1] = v0 + dv * (0.5 + TOP_UV_SCALE * CORNER_Z[k]);
-    colors[p3] = col * tr;
-    colors[p3 + 1] = col * tg;
-    colors[p3 + 2] = col * tb;
+    uvs[p2 + 1] = v0 + dv * (0.5 + vSign * CORNER_Z[k]);
+    colors[p3] = Math.min(1, col * tr);
+    colors[p3 + 1] = Math.min(1, col * tg);
+    colors[p3 + 2] = Math.min(1, col * tb);
   }
   // Centre vertex.
   const c3 = b * 3;
@@ -626,9 +732,9 @@ function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb, own = -1) {
   uvs[b * 2] = u0 + du * 0.5;
   uvs[b * 2 + 1] = v0 + dv * 0.5;
   const cc = sum / 6;
-  colors[c3] = cc * tr;
-  colors[c3 + 1] = cc * tg;
-  colors[c3 + 2] = cc * tb;
+  colors[c3] = Math.min(1, cc * tr);
+  colors[c3 + 1] = Math.min(1, cc * tg);
+  colors[c3 + 2] = Math.min(1, cc * tb);
   light[b * 2] = Math.round((skySum / 6) * 17);
   light[b * 2 + 1] = Math.round((blockSum / 6) * 17);
 
@@ -974,6 +1080,8 @@ export function buildChunkMesh(cq, cr, getChunkData) {
       const cx = lq + lr * 0.5;
       const cz = lr * HEX_ROW_SPACING;
       const tint = BIOME_TINT[biomes ? biomes[lq * CHUNK_SIZE + lr] : BIOME.PLAINS] ?? BIOME_TINT[BIOME.PLAINS];
+      varyQ = cq * CHUNK_SIZE + lq;
+      varyR = cr * CHUNK_SIZE + lr;
 
       for (let ly = 0; ly < WORLD_HEIGHT; ly++) {
         const a = padded[colBase + ly];
@@ -993,6 +1101,7 @@ export function buildChunkMesh(cq, cr, getChunkData) {
 
         // A plant is a small 3D model, litter a few 3D pieces, a snare a picture on the floor: never a hexagonal prism (no faces, no culling).
         const shape = SHAPE[a];
+        varyOn = shape === 0 && variationEnabled ? VARIES[a] : 0;
         if (shape !== 0) {
           const t = TINTED[tintRow + FACE_TOP];
           const tr = t ? tint[0] : 1;
@@ -1047,6 +1156,7 @@ export function buildChunkMesh(cq, cr, getChunkData) {
     }
   }
 
+  varyOn = 0;
   return {
     opaque: opaqueB.build(),
     cutout: cutoutB.build(),
