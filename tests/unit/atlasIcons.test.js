@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { drawBlockIcon, iconTopCorner, tileOrigin, ICON_BASE_SIZE } from '../../src/atlas.js';
 import { BLOCK, BLOCKS, TILE, getFaceTile, FACE_TOP } from '../../src/blocks.js';
-import { ATLAS_TILE_PX } from '../../src/config.js';
+import { ATLAS_SLOT_PX, ATLAS_SIZE_PX } from '../../src/config.js';
 
 const THIN = [BLOCK.POWDER_FUSE, BLOCK.TORCH, BLOCK.COPPER_WIRE, BLOCK.BROWN_WIRE, BLOCK.WHITE_WIRE, BLOCK.EARTH_WIRE];
 const DEVICES = [
@@ -21,7 +21,7 @@ const SPRITES = [78, 79, 80, 81, 82, 83, 84, 92, 93, 116, 117, 118, // + the thr
   ...Array.from({ length: 18 }, (_, i) => 133 + i), // + the nine planted blocks and the nine sprouts (§80 farming)
   151, 152, 153, 154, 155, 156, 157, 158, // + the eight plants that are not food (§81)
   165, 166, 167, 168, 169, 170, 171, 172]; // + the two wells, the four rain barrels and the two beds (§85: 3D models)
-const atlas = { width: 256, height: 256, kind: 'atlas' };
+const atlas = { width: ATLAS_SIZE_PX, height: ATLAS_SIZE_PX, kind: 'atlas' };
 
 /** A 2D context stand-in: every method call as [name, ...args], and the state each drawImage saw. */
 function fakeContext() {
@@ -84,7 +84,7 @@ describe('flat block icons (§1.5)', () => {
         const draws = named(ctx.calls, 'drawImage');
         expect(draws, BLOCKS[id].name).toHaveLength(1);
         const [sx, sy] = tileOrigin(getFaceTile(id, FACE_TOP));
-        expect(draws[0].slice(1, 10)).toEqual([atlas, sx, sy, ATLAS_TILE_PX, ATLAS_TILE_PX, 0, 0, size, size]);
+        expect(draws[0].slice(1, 10)).toEqual([atlas, sx, sy, ATLAS_SLOT_PX, ATLAS_SLOT_PX, 0, 0, size, size]);
         expect(draws[0][10].smoothing).toBe(false);
         // No prism: no clip to the hexagon, no shading of side faces, no skewing transform.
         for (const m of ['clip', 'beginPath', 'fillRect']) expect(named(ctx.calls, m), m).toHaveLength(0);
@@ -117,11 +117,12 @@ describe('flat block icons (§1.5)', () => {
 });
 
 describe('prism block icons are unchanged', () => {
-  /** The prism's two side quads, exactly as atlas.js has always mapped them (CONTRACTS §16). */
+  /** The prism's two side quads, exactly as atlas.js has always mapped them (CONTRACTS §16), from a 32-px slot since §90. */
   function sideMatrix(kLeft, kRight, s) {
     const [lx, ly] = iconTopCorner(kLeft);
     const [rx, ry] = iconTopCorner(kRight);
-    return [(rx - lx) / 16, (ry - ly) / 16, 0, 14 / 16, lx, ly].map((v) => v * s);
+    const P = ATLAS_SLOT_PX;
+    return [(rx - lx) / P, (ry - ly) / P, 0, 14 / P, lx, ly].map((v) => v * s);
   }
 
   for (const size of [32, 64]) {
@@ -136,13 +137,14 @@ describe('prism block icons are unchanged', () => {
         expect(draws[0].slice(2, 4)).toEqual(tileOrigin(getFaceTile(def.id, 2)));
         expect(draws[1].slice(2, 4)).toEqual(tileOrigin(getFaceTile(def.id, 1)));
         expect(draws[2].slice(2, 4)).toEqual(tileOrigin(getFaceTile(def.id, FACE_TOP)));
-        for (const d of draws) expect(d.slice(4, 10)).toEqual([16, 16, 0, 0, 16, 16]);
+        const P = ATLAS_SLOT_PX;
+        for (const d of draws) expect(d.slice(4, 10)).toEqual([P, P, 0, 0, P, P]);
         const transforms = named(ctx.calls, 'setTransform').map((c) => c.slice(1));
         expect(transforms[0]).toEqual([1, 0, 0, 1, 0, 0]);
         expect(transforms[1]).toEqual(sideMatrix(3, 2, s));
         expect(transforms[2]).toEqual(sideMatrix(2, 1, s));
         expect(transforms[3]).toEqual([s, 0, 0, s, 0, 0]);
-        expect(transforms[4]).toEqual([(26 / 16) * s, 0, 0, s, 3 * s, s]);
+        expect(transforms[4]).toEqual([(26 / P) * s, 0, 0, (16 / P) * s, 3 * s, s]);
         expect(named(ctx.calls, 'set fillStyle').map((c) => c[1])).toEqual(['rgba(0,0,0,0.2)', 'rgba(0,0,0,0.4)']);
         expect(named(ctx.calls, 'clip')).toHaveLength(1);
         expect(named(ctx.calls, 'lineTo')).toHaveLength(5);

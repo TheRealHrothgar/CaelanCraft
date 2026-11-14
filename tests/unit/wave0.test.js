@@ -720,11 +720,16 @@ describe('blocks', () => {
     expect(b0).toBe(v0);
     expect(a1).toBeLessThanOrEqual(1);
     expect(b1).toBeLessThanOrEqual(1);
-    const [m0, n0, m1, n1] = tileToUV(TILE.MISSING); // tile 255: bottom-right
+    const [m0, n0, m1, n1] = tileToUV(TILE.MISSING); // tile 255: the last slot of row 7 (§90: 32 slots a row)
     expect(m1).toBeLessThanOrEqual(1);
     expect(n1).toBeLessThanOrEqual(1);
-    expect(m0).toBeGreaterThan(0.9);
-    expect(n0).toBeGreaterThan(0.9);
+    expect(m0).toBeGreaterThan(0.95);
+    expect(n0).toBeCloseTo(7 * C.TILE_UV + C.UV_INSET, 10);
+    const [z0, w0, z1, w1] = tileToUV(C.ATLAS_TILES_PER_ROW ** 2 - 1); // the last slot of the atlas: bottom-right
+    expect(z1).toBeLessThanOrEqual(1);
+    expect(w1).toBeLessThanOrEqual(1);
+    expect(z0).toBeGreaterThan(0.95);
+    expect(w0).toBeGreaterThan(0.95);
   });
 });
 

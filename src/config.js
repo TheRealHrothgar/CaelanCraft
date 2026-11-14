@@ -26,11 +26,18 @@ export const BREAK_REPEAT_S = 0.25;                 // hold-to-repeat interval f
 export const PLACE_REPEAT_S = 0.2;                  // hold-to-repeat interval for placing
 
 // Atlas / UV contract
+// §90: the atlas holds every tile at 32 px (ATLAS_SLOT_PX) in a 32 × 32 grid of slots: tile t in slot t, and the extra
+// pictures of the varied tiles (tileVariants.js) in slots 256 and up. ATLAS_TILE_PX stays the 16-px grid that tiles.js,
+// the item art and the model cutters (plants, litter, the Watcher's windows) are drawn on; the atlas doubles those tiles.
 export const ATLAS_TILE_PX = 16;
-export const ATLAS_TILES_PER_ROW = 16;
-export const ATLAS_SIZE_PX = ATLAS_TILE_PX * ATLAS_TILES_PER_ROW; // 256
-export const TILE_UV = 1 / ATLAS_TILES_PER_ROW;     // 0.0625
-export const UV_INSET = 1 / 4096;                   // 1/16 texel; kills boundary bleed
+export const ATLAS_TILE_SCALE = 2;
+export const ATLAS_SLOT_PX = ATLAS_TILE_PX * ATLAS_TILE_SCALE; // 32
+export const ATLAS_TILES_PER_ROW = 32;
+export const ATLAS_SIZE_PX = ATLAS_SLOT_PX * ATLAS_TILES_PER_ROW; // 1024
+export const TILE_UV = 1 / ATLAS_TILES_PER_ROW;     // 0.03125
+export const UV_INSET = 1 / 8192;                   // 1/8 texel; kills boundary bleed
+/** §90: mip levels of the atlas texture, 1024 px down to 32 px (one texel per slot): a slot never bleeds into the next. */
+export const ATLAS_MIP_LEVELS = 6;
 
 // Mesher
 export const WATER_SURFACE_HEIGHT = 0.875;          // top of a water block with non-water above

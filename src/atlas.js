@@ -4,11 +4,13 @@
 //
 // DOM + three. Every DOM access happens inside a function so the module can be imported in Node.
 // Imports: config, blocks, hex, tiles, three (per the CONTRACTS.md import graph).
-import { CanvasTexture, NearestFilter, SRGBColorSpace, ClampToEdgeWrapping } from 'three';
-import { ATLAS_TILE_PX, ATLAS_TILES_PER_ROW, ATLAS_SIZE_PX } from './config.js';
+import { DataTexture, NearestFilter, NearestMipmapLinearFilter, SRGBColorSpace, ClampToEdgeWrapping, RGBAFormat, UnsignedByteType } from 'three';
+import { ATLAS_SLOT_PX, ATLAS_TILES_PER_ROW, ATLAS_SIZE_PX, ATLAS_MIP_LEVELS } from './config.js';
 import { BLOCK, TILE, TILE_IDS, getBlockDef, getFaceTile, FACE_TOP } from './blocks.js';
 import { HEX_CORNERS, HEX_SIZE } from './hex.js';
 import { paintTile } from './tiles.js';
+import { paintTileHD, upscale16 } from './tilesHD.js';
+import { extraSlots } from './tileVariants.js';
 
 /** Icon geometry is specified on a 32×32 canvas; other sizes scale uniformly from it. */
 export const ICON_BASE_SIZE = 32;
@@ -42,14 +44,14 @@ export function iconTopCorner(k) {
 }
 
 /**
- * `setTransform(a, b, c, d, e, f)` mapping the 16×16 tile onto the side quad whose top edge runs from
+ * `setTransform(a, b, c, d, e, f)` mapping the 32×32 slot onto the side quad whose top edge runs from
  * corner `kLeft` to corner `kRight` (left → right on screen) and whose bottom edge is ICON_SIDE_H lower.
  * @returns {number[]}
  */
 function sideTransform(kLeft, kRight) {
   const [lx, ly] = iconTopCorner(kLeft);
   const [rx, ry] = iconTopCorner(kRight);
-  return [(rx - lx) / ATLAS_TILE_PX, (ry - ly) / ATLAS_TILE_PX, 0, ICON_SIDE_H / ATLAS_TILE_PX, lx, ly];
+  return [(rx - lx) / ATLAS_SLOT_PX, (ry - ly) / ATLAS_SLOT_PX, 0, ICON_SIDE_H / ATLAS_SLOT_PX, lx, ly];
 }
 
 /** The two visible side faces, in paint order (left, right). */
@@ -59,7 +61,7 @@ const ICON_SIDES = Object.freeze([
 ]);
 /** Transform mapping the tile onto the bounding box of the top hexagon (x 3..29, y 1..17); clipped to the hexagon. */
 const ICON_TOP_TRANSFORM = Object.freeze([
-  ICON_SCALE_X / ATLAS_TILE_PX, 0, 0, (2 * ICON_TOP_HALF_H) / ATLAS_TILE_PX,
+  ICON_SCALE_X / ATLAS_SLOT_PX, 0, 0, (2 * ICON_TOP_HALF_H) / ATLAS_SLOT_PX,
   ICON_CENTRE_X - ICON_SCALE_X / 2, ICON_TOP_CY - ICON_TOP_HALF_H,
 ]);
 
@@ -67,16 +69,94 @@ const TILES_PER_ATLAS = ATLAS_TILES_PER_ROW * ATLAS_TILES_PER_ROW;
 const LOGO_TEXT = 'Caelancraft';
 
 /**
- * Pixel origin of a tile inside the atlas: `((t % 16) * 16, floor(t / 16) * 16)` (CONTRACTS §0).
- * Anything that is not a valid tile id (negative, fractional, >= 256, NaN) maps to TILE.MISSING so a
- * bad id shows the magenta/black checker instead of throwing or sampling garbage.
+ * Pixel origin of a slot inside the atlas: `((t % 32) * 32, floor(t / 32) * 32)` (CONTRACTS §0, §90). Slot t is tile t
+ * for t < 256; the extra pictures of the varied tiles sit above (tileVariants.variantSlot). Anything that is not a valid
+ * slot (negative, fractional, >= 1024, NaN) maps to TILE.MISSING so a bad id shows the magenta/black checker instead of
+ * throwing or sampling garbage.
  * @param {number} tile
  * @returns {[number, number]} [sx, sy]
  */
 export function tileOrigin(tile) {
   const t = Number.isInteger(tile) && tile >= 0 && tile < TILES_PER_ATLAS ? tile : TILE.MISSING;
-  return [(t % ATLAS_TILES_PER_ROW) * ATLAS_TILE_PX, Math.floor(t / ATLAS_TILES_PER_ROW) * ATLAS_TILE_PX];
+  return [(t % ATLAS_TILES_PER_ROW) * ATLAS_SLOT_PX, Math.floor(t / ATLAS_TILES_PER_ROW) * ATLAS_SLOT_PX];
 }
+
+/**
+ * The 32×32 picture of slot content (tile, picture): tilesHD's painter when it has one, else the 16-px tile doubled.
+ * @param {number} tile @param {number} picture
+ * @returns {Uint8ClampedArray}
+ */
+export function paintSlot(tile, picture = 0) {
+  return paintTileHD(tile, picture) ?? upscale16(paintTile(tile));
+}
+
+/** Copy a 32×32 picture into the atlas pixels at slot `slot`. */
+function blit(atlas, slot, pic) {
+  const [sx, sy] = tileOrigin(slot);
+  const row = ATLAS_SLOT_PX * 4;
+  for (let y = 0; y < ATLAS_SLOT_PX; y++) {
+    atlas.set(pic.subarray(y * row, (y + 1) * row), ((sy + y) * ATLAS_SIZE_PX + sx) * 4);
+  }
+}
+
+/**
+ * The atlas as RGBA pixels (ATLAS_SIZE_PX square, idx = (y * ATLAS_SIZE_PX + x) * 4), PURE: every id in TILE_IDS in its
+ * own slot, then every extra picture of the varied tiles (§90) in its slot. Slots nothing uses stay transparent black.
+ * @returns {Uint8ClampedArray}
+ */
+export function createAtlasPixels() {
+  const atlas = new Uint8ClampedArray(ATLAS_SIZE_PX * ATLAS_SIZE_PX * 4);
+  for (const tile of TILE_IDS) blit(atlas, tile, paintSlot(tile, 0));
+  for (const [slot, tile, picture] of extraSlots()) blit(atlas, slot, paintSlot(tile, picture));
+  return atlas;
+}
+
+/**
+ * The mip chain of the atlas, PURE: level 0 is `pixels`, each next level halves it, down to one texel per slot
+ * (ATLAS_MIP_LEVELS levels). Slots are powers of two in size, so a 2×2 block never straddles two slots: no picture ever
+ * bleeds into its neighbour, however far away a face is. Colour is the mean of the opaque children (so leaves' and plants'
+ * cut-out edges keep their own colour), alpha the MOST opaque child's (so a leaf canopy, a glass frame or a plant's thin
+ * parts stay solid far away instead of fading through the alpha test).
+ * @param {Uint8ClampedArray} pixels
+ * @param {number} [size=ATLAS_SIZE_PX]
+ * @returns {Array<{ data: Uint8Array, width: number, height: number }>}
+ */
+export function buildAtlasMips(pixels, size = ATLAS_SIZE_PX) {
+  const levels = [{ data: new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.length), width: size, height: size }];
+  for (let l = 1; l < ATLAS_MIP_LEVELS; l++) {
+    const src = levels[l - 1];
+    const w = src.width >> 1;
+    const out = new Uint8Array(w * w * 4);
+    const sw = src.width;
+    const d = src.data;
+    for (let y = 0; y < w; y++) {
+      for (let x = 0; x < w; x++) {
+        let r = 0, g = 0, b = 0, aw = 0, amax = 0, rr = 0, gg = 0, bb = 0;
+        for (let j = 0; j < 2; j++) {
+          for (let i = 0; i < 2; i++) {
+            const k = ((y * 2 + j) * sw + x * 2 + i) * 4;
+            const a = d[k + 3];
+            r += d[k] * a; g += d[k + 1] * a; b += d[k + 2] * a; aw += a;
+            rr += d[k]; gg += d[k + 1]; bb += d[k + 2];
+            if (a > amax) amax = a;
+          }
+        }
+        const o = (y * w + x) * 4;
+        if (aw > 0) {
+          out[o] = Math.round(r / aw); out[o + 1] = Math.round(g / aw); out[o + 2] = Math.round(b / aw);
+        } else {
+          out[o] = rr >> 2; out[o + 1] = gg >> 2; out[o + 2] = bb >> 2;
+        }
+        out[o + 3] = amax;
+      }
+    }
+    levels.push({ data: out, width: w, height: w });
+  }
+  return levels;
+}
+
+/** createAtlasCanvas → the pixels it was painted from, so createAtlasTexture never reads them back off the canvas. */
+const ATLAS_PIXELS = new WeakMap();
 
 /**
  * @param {number} width
@@ -101,39 +181,39 @@ function get2D(canvas) {
 }
 
 /**
- * Build the 256×256 texture atlas. Every id in TILE_IDS is painted with `paintTile` (pure RGBA pixels)
- * and blitted with `putImageData` at its tile origin, so alpha is written verbatim (water 178, glass
- * interior 0, leaf holes 0) rather than composited. Ids that are not tiles (105–239, 246–249, 253–254 as of v0.9: see
- * TILE_IDS) stay transparent black.
+ * Build the 1024×1024 texture atlas (§90): createAtlasPixels written with one `putImageData`, so alpha is written verbatim
+ * (water 178, glass interior 0, leaf holes 0) rather than composited. 2D users (block icons, backgrounds, the logo) draw
+ * from this canvas.
  * @returns {HTMLCanvasElement}
  */
 export function createAtlasCanvas() {
+  const pixels = createAtlasPixels();
   const canvas = createCanvas(ATLAS_SIZE_PX, ATLAS_SIZE_PX);
   const ctx = get2D(canvas);
-  const img = ctx.createImageData(ATLAS_TILE_PX, ATLAS_TILE_PX);
-  for (const tile of TILE_IDS) {
-    const pixels = paintTile(tile);
-    if (pixels.length !== img.data.length) {
-      throw new Error(`atlas: paintTile(${tile}) returned ${pixels.length} bytes, expected ${img.data.length}`);
-    }
-    img.data.set(pixels);
-    const [sx, sy] = tileOrigin(tile);
-    ctx.putImageData(img, sx, sy);
-  }
+  const img = ctx.createImageData(ATLAS_SIZE_PX, ATLAS_SIZE_PX);
+  img.data.set(pixels);
+  ctx.putImageData(img, 0, 0);
+  ATLAS_PIXELS.set(canvas, pixels);
   return canvas;
 }
 
 /**
- * Wrap the atlas canvas in a Three.js texture configured for pixel-art voxel sampling: nearest filtering
- * both ways, no mipmaps, `flipY = false` (so UV v grows down the image, matching `tileToUV`), sRGB colour
- * space (r186 textures default to NoColorSpace, which washes colours out), clamp wrapping.
+ * The chunk atlas as a Three.js texture for pixel-art voxel sampling: crisp up close (nearest magnification), and, since
+ * §90, mipmapped far away from buildAtlasMips's own chain (nearest texel within a level, blended between levels), so
+ * 32-px pictures do not shimmer in the distance and no slot ever bleeds into its neighbour. `flipY = false` (UV v grows
+ * down the image, matching `tileToUV`), sRGB colour space (r186 textures default to NoColorSpace, which washes colours
+ * out), clamp wrapping. The pixels come from createAtlasCanvas (or are read back from a canvas made elsewhere).
  * @param {HTMLCanvasElement} canvas
- * @returns {CanvasTexture}
+ * @returns {DataTexture}
  */
 export function createAtlasTexture(canvas) {
-  const texture = new CanvasTexture(canvas);
+  let pixels = ATLAS_PIXELS.get(canvas);
+  if (!pixels) pixels = get2D(canvas).getImageData(0, 0, canvas.width, canvas.height).data;
+  const mips = buildAtlasMips(pixels, canvas.width);
+  const texture = new DataTexture(mips[0].data, mips[0].width, mips[0].height, RGBAFormat, UnsignedByteType);
+  texture.mipmaps = mips;
   texture.magFilter = NearestFilter;
-  texture.minFilter = NearestFilter;
+  texture.minFilter = NearestMipmapLinearFilter;
   texture.generateMipmaps = false;
   texture.flipY = false;
   texture.colorSpace = SRGBColorSpace;
@@ -169,7 +249,7 @@ export function drawBlockIcon(ctx, atlasCanvas, blockId, size = ICON_BASE_SIZE) 
   if (def.id !== BLOCK.AIR && def.icon === 'flat') {
     ctx.imageSmoothingEnabled = false;
     const [sx, sy] = tileOrigin(getFaceTile(def.id, FACE_TOP));
-    ctx.drawImage(atlasCanvas, sx, sy, ATLAS_TILE_PX, ATLAS_TILE_PX, 0, 0, size, size);
+    ctx.drawImage(atlasCanvas, sx, sy, ATLAS_SLOT_PX, ATLAS_SLOT_PX, 0, 0, size, size);
   } else if (def.id !== BLOCK.AIR) {
     ctx.imageSmoothingEnabled = false;
 
@@ -180,11 +260,11 @@ export function drawBlockIcon(ctx, atlasCanvas, blockId, size = ICON_BASE_SIZE) 
       // Overall transform = Scale(s) ∘ FaceTransform: every coefficient scales by s.
       ctx.setTransform(m[0] * s, m[1] * s, m[2] * s, m[3] * s, m[4] * s, m[5] * s);
       ctx.globalCompositeOperation = 'source-over';
-      ctx.drawImage(atlasCanvas, sx, sy, ATLAS_TILE_PX, ATLAS_TILE_PX, 0, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
+      ctx.drawImage(atlasCanvas, sx, sy, ATLAS_SLOT_PX, ATLAS_SLOT_PX, 0, 0, ATLAS_SLOT_PX, ATLAS_SLOT_PX);
       if (shade > 0) {
         ctx.globalCompositeOperation = 'source-atop';
         ctx.fillStyle = `rgba(0,0,0,${shade})`;
-        ctx.fillRect(0, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
+        ctx.fillRect(0, 0, ATLAS_SLOT_PX, ATLAS_SLOT_PX);
       }
     }
 
@@ -203,7 +283,7 @@ export function drawBlockIcon(ctx, atlasCanvas, blockId, size = ICON_BASE_SIZE) 
     const m = ICON_TOP_TRANSFORM;
     const [sx, sy] = tileOrigin(getFaceTile(def.id, FACE_TOP));
     ctx.setTransform(m[0] * s, m[1] * s, m[2] * s, m[3] * s, m[4] * s, m[5] * s);
-    ctx.drawImage(atlasCanvas, sx, sy, ATLAS_TILE_PX, ATLAS_TILE_PX, 0, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
+    ctx.drawImage(atlasCanvas, sx, sy, ATLAS_SLOT_PX, ATLAS_SLOT_PX, 0, 0, ATLAS_SLOT_PX, ATLAS_SLOT_PX);
     ctx.restore();
   }
   ctx.restore();
@@ -223,7 +303,7 @@ export function makeBlockIconCanvas(atlasCanvas, blockId, size = ICON_BASE_SIZE)
 }
 
 /**
- * PNG data URL of `tile` repeated `repeats`×`repeats` times (16·repeats px square), for CSS backgrounds
+ * PNG data URL of `tile` repeated `repeats`×`repeats` times (32·repeats px square since §90), for CSS backgrounds
  * (`background-size: 64px 64px` with the default 4 repeats). `repeats` is floored and clamped to >= 1.
  * @param {HTMLCanvasElement} atlasCanvas
  * @param {number} tile  atlas tile id (e.g. TILE.DIRT)
@@ -232,7 +312,7 @@ export function makeBlockIconCanvas(atlasCanvas, blockId, size = ICON_BASE_SIZE)
  */
 export function makeTiledBackgroundDataURL(atlasCanvas, tile, repeats = 4) {
   const n = Number.isFinite(repeats) ? Math.max(1, Math.floor(repeats)) : 4;
-  const px = ATLAS_TILE_PX;
+  const px = ATLAS_SLOT_PX;
   const canvas = createCanvas(px * n, px * n);
   const ctx = get2D(canvas);
   ctx.imageSmoothingEnabled = false;
@@ -262,12 +342,12 @@ export function drawTitleLogo(logoCanvas, atlasCanvas) {
   const cy = h / 2;
   const shadowOffset = 2 * k;
 
-  // 16×16 stone swatch to use as the fill pattern.
-  const swatch = createCanvas(ATLAS_TILE_PX, ATLAS_TILE_PX);
+  // The stone slot (32×32 since §90) as the fill pattern.
+  const swatch = createCanvas(ATLAS_SLOT_PX, ATLAS_SLOT_PX);
   const sctx = get2D(swatch);
   sctx.imageSmoothingEnabled = false;
   const [sx, sy] = tileOrigin(TILE.STONE);
-  sctx.drawImage(atlasCanvas, sx, sy, ATLAS_TILE_PX, ATLAS_TILE_PX, 0, 0, ATLAS_TILE_PX, ATLAS_TILE_PX);
+  sctx.drawImage(atlasCanvas, sx, sy, ATLAS_SLOT_PX, ATLAS_SLOT_PX, 0, 0, ATLAS_SLOT_PX, ATLAS_SLOT_PX);
 
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);

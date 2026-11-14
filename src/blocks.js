@@ -88,7 +88,8 @@ export const BLOCK_COUNT = 174;
  */
 export const UNLOADED = 255;
 
-/** Atlas tile ids. Tile t is drawn at pixel ((t % 16) * 16, floor(t / 16) * 16). */
+/** Atlas tile ids. Tile t is drawn in atlas slot t, at pixel ((t % 32) * 32, floor(t / 32) * 32) (§90: 32-px slots; the
+ * extra pictures of the varied tiles take slots 256 and up, tileVariants.js). */
 export const TILE = Object.freeze({
   STONE: 0, DIRT: 1, GRASS_TOP: 2, GRASS_SIDE: 3, COBBLESTONE: 4, OAK_PLANKS: 5, BEDROCK: 6, WATER: 7,
   SAND: 8, GRAVEL: 9, OAK_LOG_SIDE: 10, OAK_LOG_END: 11, OAK_LEAVES: 12, GLASS: 13, COAL_ORE: 14,
