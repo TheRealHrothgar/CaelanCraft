@@ -27,9 +27,12 @@
 // the write's lazy flag; chunks dirtied only by the light it moved are re-meshed lazily (nearest first).
 //
 // Bricks (CONTRACTS §93): `world.bricks` is the BrickGrid of every brick; setBrick stores one and re-derives the SHADOW of
-// the hex cells it touches (BRICK_SHADOW / BRICK_FILL written straight into the chunk, never recorded as edits), so every
-// system that reads the hex world sees brickwork as solid. A generated chunk gets its shadows from the bricks; setBlock and
-// importEdits never write over a shadow. update() meshes the brick chunks whose centre lies in a meshed hex chunk
+// the hex cells it touches (BRICK_SHADOW / BRICK_FILL / BRICK_GAP written straight into the chunk, never recorded as edits),
+// so every system that reads the hex world sees brickwork as solid. A generated chunk gets its shadows from the bricks;
+// setBlock and importEdits never write over BRICK_SHADOW or BRICK_FILL. A BRICK_GAP (§93.9) is brickwork with ONE open
+// space left in the cell: water may be written into it (the cell then holds the water, the bricks stay in its cover bits),
+// and AIR written into such a cell stores the gap again. onCoverChange(q, y, r) says a cell's brick pieces changed (main
+// wakes the water round it: a face it crosses may have opened or closed). update() meshes the brick chunks whose centre lies in a meshed hex chunk
 // (onBrickMesh / onBrickUnload), and every hex re-mesh dirties the brick chunks round it so bricks follow the light.
 import {
   CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE, DATA_RADIUS_EXTRA,
@@ -37,10 +40,10 @@ import {
 } from './config.js';
 import { chunkKey, parseChunkKey, localIndex, indexToLocal } from './coords.js';
 import { HEX_DIRS, hexLength, hexNormSq, hexToWorld, worldToHex } from './hex.js';
-import { BLOCK, BIOME, UNLOADED, isSolid, isOpaque, isBrickShadow, isLiquid as isLiquidId } from './blocks.js';
+import { BLOCK, BIOME, UNLOADED, isSolid, isOpaque, isBrickShadow, isWater, isLiquid as isLiquidId } from './blocks.js';
 import {
   BrickGrid, BRICK_CHUNK_I, BRICK_CHUNK_N, BRICK_DEPTH, hexesOfBrick, bricksOfHex, fullPieceMask, brickChunksOfHexChunk,
-  brickIndexToLocal, worldToBrick,
+  brickIndexToLocal, worldToBrick, holdsWater,
 } from './bricks.js';
 import { buildBrickMesh } from './brickmesher.js';
 import { Chunk } from './chunk.js';
@@ -65,6 +68,7 @@ import { normalizeSeed } from './noise.js';
  * @property {number} [gen]              generator version (§8.3): 1 (default, today's land) .. GEN_LATEST; anything else is 1.
  *                                       With an injected worldGen it defaults to that generator's own `gen` (or 1).
  * @property {() => number} [now]        millisecond clock; default performance.now / Date.now
+ * @property {Object<string, number[]>} [bricks]  saved bricks (BrickGrid.export, §93.8), loaded before any chunk is generated
  */
 
 /**
@@ -257,6 +261,8 @@ export class World {
     this.onBrickMesh = (_key, _ci, _cn, _meshData) => {};
     /** @type {(key: string) => void} */
     this.onBrickUnload = (_key) => {};
+    /** §93.9: the brick pieces over hex cell (q, y, r) changed (fired after the cell's own onBlockChange, if any). */
+    this.onCoverChange = (_q, _y, _r) => {};
     /** The brick mesher's view of the world (built once). */
     this._brickCtx = {
       getBrick: this.bricks.getBlock,
@@ -332,10 +338,39 @@ export class World {
   }
 
   /**
-   * Re-derive the shadow of hex (q, y, r) from the bricks over it. A cell with no brick piece left that holds a shadow
-   * becomes AIR; a covered cell becomes BRICK_FILL when every piece is under an opaque brick, else BRICK_SHADOW. A liquid
-   * or other non-solid id a brick displaces is recorded as an edit to AIR first, so a reload agrees. A solid hex is never
-   * overwritten (bricks are only placed where brickBlocker allows, so that is a damaged save at worst).
+   * §93.9: what a hex cell of row `r` under bricks holds, from its pieces under a brick (`cover`) and under an opaque one
+   * (`opaque`) and what it holds now (`cur`: AIR, a liquid or a shadow): BRICK_FILL when every piece is under an opaque
+   * brick; where the rest of it is one open space (bricks.holdsWater) the water it holds, or else BRICK_GAP; BRICK_SHADOW
+   * otherwise.
+   * @returns {number}
+   */
+  _shadowFor(cover, opaque, r, cur) {
+    if (cover === fullPieceMask(r) && opaque === cover) return BLOCK.BRICK_FILL;
+    if (holdsWater(cover, r)) return isWater(cur) ? cur : BLOCK.BRICK_GAP;
+    return BLOCK.BRICK_SHADOW;
+  }
+
+  /**
+   * §93.9: what writing `id` stores in cell `li` of `chunk` (row `r`) that holds `prev` and lies under bricks (or holds a
+   * shadow, or is written one): −1 when it may not be written. BRICK_SHADOW and BRICK_FILL take nothing. A gap, or the water
+   * standing in one, takes water — and AIR (or the gap itself), which stores the gap again. A solid hex under bricks (only a
+   * damaged save) may be taken away and leaves the bricks' shadow. No uncovered cell is written a shadow.
+   * @returns {number}
+   */
+  _underBricks(chunk, li, r, prev, id) {
+    const bits = chunk.cover !== null ? chunk.cover[li] : 0;
+    if ((bits & 15) === 0 || prev === BLOCK.BRICK_SHADOW || prev === BLOCK.BRICK_FILL) return -1;
+    const empty = id === BLOCK.AIR || id === BLOCK.BRICK_GAP;
+    if (prev === BLOCK.BRICK_GAP || isWater(prev)) return empty ? BLOCK.BRICK_GAP : isWater(id) ? id : -1;
+    return empty ? this._shadowFor(bits & 15, bits >> 4, r, BLOCK.AIR) : -1;
+  }
+
+  /**
+   * Re-derive the shadow of hex (q, y, r) from the bricks over it (§93.3, §93.9). A cell with no brick piece left that holds
+   * a shadow becomes AIR (water standing in it stays); a covered cell holds what `_shadowFor` says. A liquid a brick
+   * displaces is recorded as an edit to AIR first, so a reload agrees. A solid hex is never overwritten (bricks are only
+   * placed where brickBlocker allows, so that is a damaged save at worst). A change of the cell's pieces alone (the id
+   * staying) re-meshes round it; any change of them fires onCoverChange.
    */
   _refreshShadow(q, y, r) {
     const cq = Math.floor(q / CHUNK_SIZE);
@@ -351,19 +386,27 @@ export class World {
       if (isOpaque(m)) opaque |= bit;
     }
     const li = localIndex(q - cq * CHUNK_SIZE, y, r - cr * CHUNK_SIZE);
-    if (cover !== 0 && chunk.cover === null) chunk.cover = new Uint8Array(CHUNK_VOLUME);
-    if (chunk.cover !== null) chunk.cover[li] = cover | (opaque << 4);
+    const bits = cover | (opaque << 4);
+    const was = chunk.cover !== null ? chunk.cover[li] : 0;
+    if (bits !== was) {
+      if (chunk.cover === null) chunk.cover = new Uint8Array(CHUNK_VOLUME);
+      chunk.cover[li] = bits;
+    }
     const cur = chunk.blocks[li];
     let next;
     if (cover === 0) next = isBrickShadow(cur) ? BLOCK.AIR : cur;
     else if (isSolid(cur) && !isBrickShadow(cur)) next = cur;
-    else next = cover === fullPieceMask(r) && opaque === cover ? BLOCK.BRICK_FILL : BLOCK.BRICK_SHADOW;
-    if (next === cur) return;
-    if (cur !== BLOCK.AIR && !isBrickShadow(cur)) this._recordEdit(chunk.key, li, cur, BLOCK.AIR);
-    chunk.blocks[li] = next;
-    this._markDirtyAround(q, r, false);
-    this._noteLight(chunk, li, false);
-    this.onBlockChange(q, y, r, cur, next);
+    else next = this._shadowFor(cover, opaque, r, cur);
+    if (next !== cur) {
+      if (cur !== BLOCK.AIR && !isBrickShadow(cur)) this._recordEdit(chunk.key, li, cur, BLOCK.AIR);
+      chunk.blocks[li] = next;
+      this._markDirtyAround(q, r, false);
+      this._noteLight(chunk, li, false);
+      this.onBlockChange(q, y, r, cur, next);
+    } else if (bits !== was) {
+      this._markDirtyAround(q, r, false); // (water standing in it is drawn round the bricks)
+    }
+    if ((bits & 15) !== (was & 15)) this.onCoverChange(q, y, r);
   }
 
   /** Write the shadows of every brick over freshly generated `chunk` (before it is lit or registered). */
@@ -396,8 +439,7 @@ export class World {
       const cur = chunk.blocks[li];
       if (isSolid(cur) && !isBrickShadow(cur)) continue;
       const [, , lr] = indexToLocal(li);
-      const cover = v & 15;
-      chunk.blocks[li] = cover === fullPieceMask(r0 + lr) && v >> 4 === cover ? BLOCK.BRICK_FILL : BLOCK.BRICK_SHADOW;
+      chunk.blocks[li] = this._shadowFor(v & 15, v >> 4, r0 + lr, cur);
     }
   }
 
@@ -638,13 +680,17 @@ export class World {
     const lr = r - cr * CHUNK_SIZE;
     const li = localIndex(lq, y, lr);
     const prev = chunk.blocks[li];
-    // §93: brickwork's shadow belongs to the bricks; only setBrick changes it (and no block is written as one).
-    if (isBrickShadow(prev) || isBrickShadow(id)) return false;
+    // §93: brickwork's shadow belongs to the bricks; only setBrick changes it (and no block is written as one). §93.9: a
+    // gap takes water, and AIR written where water stood in one stores the gap; the edit says AIR (the gap is derived).
+    if ((chunk.cover !== null && (chunk.cover[li] & 15) !== 0) || isBrickShadow(prev) || isBrickShadow(id)) {
+      id = this._underBricks(chunk, li, r, prev, id);
+      if (id < 0) return false;
+    }
     const wasDirty = chunk.dirty;
     if (!chunk.set(lq, y, lr, id)) return false;
     chunk.dirty = wasDirty; // _markDirtyAround decides (lazy or not) for this chunk like for its neighbours
 
-    this._recordEdit(chunk.key, li, prev, id);
+    this._recordEdit(chunk.key, li, isBrickShadow(prev) ? BLOCK.AIR : prev, isBrickShadow(id) ? BLOCK.AIR : id);
     this.editVersion++;
     this._markDirtyAround(q, r, lazy);
     this._noteLight(chunk, li, lazy);
@@ -723,10 +769,15 @@ export class World {
         if (chunk !== undefined) {
           // Loaded: the same bookkeeping as setBlock (origin on first edit, pruning back to it), applied now, no hook.
           const current = chunk.blocks[li];
-          if (current === id || isBrickShadow(current) || isBrickShadow(id)) continue;
-          this._recordEdit(key, li, current, id);
-          chunk.blocks[li] = id;
           const [lq, , lr] = indexToLocal(li);
+          let put = id;
+          if ((chunk.cover !== null && (chunk.cover[li] & 15) !== 0) || isBrickShadow(current) || isBrickShadow(id)) {
+            put = this._underBricks(chunk, li, cr * CHUNK_SIZE + lr, current, id); // §93.9, as setBlock
+            if (put < 0) continue;
+          }
+          if (current === put) continue;
+          this._recordEdit(key, li, isBrickShadow(current) ? BLOCK.AIR : current, isBrickShadow(put) ? BLOCK.AIR : put);
+          chunk.blocks[li] = put;
           this._markDirtyAround(cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr);
           this._noteLight(chunk, li, false);
         } else {

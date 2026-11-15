@@ -32,18 +32,19 @@ describe('bricks in the world: shadows (§93.3)', () => {
     }
     // the three bricks of column 0 cover all of hex (0, 1): its top point, its middle and its bottom point
     expect(w.getBlock(0, y, 1)).toBe(BLOCK.BRICK_FILL);
-    expect(w.getBlock(0, y, 0)).toBe(BLOCK.BRICK_SHADOW); // only its south-east quarter
+    expect(w.getBlock(0, y, 0)).toBe(BLOCK.BRICK_GAP); // only its south-east quarter: the rest is one open space (§93.9)
     expect(w.editCount).toBe(0); // shadows are never edits
   });
 
   it('the shadow is solid, not targetable, not replaceable, and see-through; FILL also opaque', () => {
-    for (const id of [BLOCK.BRICK_SHADOW, BLOCK.BRICK_FILL]) {
+    for (const id of [BLOCK.BRICK_SHADOW, BLOCK.BRICK_FILL, BLOCK.BRICK_GAP]) {
       expect(isSolid(id)).toBe(true);
       expect(isTargetable(id)).toBe(false);
       expect(isReplaceable(id)).toBe(false);
       expect(isBrickShadow(id)).toBe(true);
     }
     expect(isOpaque(BLOCK.BRICK_SHADOW)).toBe(false);
+    expect(isOpaque(BLOCK.BRICK_GAP)).toBe(false);
     expect(isOpaque(BLOCK.BRICK_FILL)).toBe(true);
   });
 
@@ -58,7 +59,14 @@ describe('bricks in the world: shadows (§93.3)', () => {
     w.setBrick(i0, y, n0, BLOCK.GLASS); // a glass middle: the cell is no longer all opaque
     expect(w.getBlock(q, y, r)).toBe(BLOCK.BRICK_SHADOW);
     w.setBrick(i0, y, n0, BLOCK.AIR);
-    expect(w.getBlock(q, y, r)).toBe(BLOCK.BRICK_SHADOW); // the two points are still brick
+    expect(w.getBlock(q, y, r)).toBe(BLOCK.BRICK_GAP); // the two points are still brick: the middle is a gap (§93.9)
+    w.setBrick(i0, y, n0, BLOCK.STONE_BRICKS);
+    const [[iT, nT], , [iB, nB]] = bricksOfHex(q, r);
+    w.setBrick(iT, y, nT, BLOCK.AIR);
+    w.setBrick(iB, y, nB, BLOCK.AIR);
+    expect(w.getBlock(q, y, r)).toBe(BLOCK.BRICK_SHADOW); // the middle alone: two open points that meet nowhere, no gap
+    w.setBrick(iT, y, nT, BLOCK.STONE_BRICKS);
+    w.setBrick(iB, y, nB, BLOCK.STONE_BRICKS);
     for (const [i, n] of bricksOfHex(q, r)) w.setBrick(i, y, n, BLOCK.AIR);
     expect(w.getBlock(q, y, r)).toBe(BLOCK.AIR);
     expect(w.coverAt(q, y, r)).toBe(0);
@@ -102,9 +110,11 @@ describe('bricks in the world: shadows (§93.3)', () => {
     const y = GROUND + 2;
     w.setBrick(3, y, 5, BLOCK.BRICKS);
     const touched = hexesOfBrick(3, 5);
+    const before = touched.map(([q, r]) => w.getBlock(q, y, r));
     w.dispose();
     for (let k = 0; k < 40; k++) w.update(0, 0, Infinity);
-    for (const [q, r] of touched) expect(w.getBlock(q, y, r)).toBe(BLOCK.BRICK_SHADOW);
+    expect(touched.map(([q, r]) => w.getBlock(q, y, r))).toEqual(before);
+    for (const [q, r] of touched) expect(isBrickShadow(w.getBlock(q, y, r))).toBe(true);
     expect(w.bricks.getBlock(3, y, 5)).toBe(BLOCK.BRICKS);
   });
 

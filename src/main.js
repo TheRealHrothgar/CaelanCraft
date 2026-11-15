@@ -3273,7 +3273,11 @@ export function boot(win, doc) {
     return true;
   }
 
-  /** The dig target of a brick hit: DigState compares q, y, r and id, so the column is keyed apart from every hex. */
+  /**
+   * The dig target of a brick hit: DigState compares q, y, r and id, so the column is keyed apart from every hex. It stands
+   * in for a hex hit where digging takes one (`brick` tells them apart).
+   * @returns {*}
+   */
   function brickDigTarget(b) {
     return { q: `brick:${b.i}`, y: b.y, r: b.n, blockId: b.blockId, brick: b };
   }
@@ -4420,6 +4424,10 @@ export function boot(win, doc) {
     get springLevelAt() {
       return blockPhysics ? blockPhysics.fluids.springLevelAt : null;
     },
+    /** §93.9: the brick pieces over a cell (water stands in gaps and crosses only the faces brickwork leaves open) */
+    get cover() {
+      return blockPhysics ? blockPhysics.fluids._cover() : null;
+    },
     originAt: (q, y, r) => world.originAt(q, y, r),
     saltyAt: (q, r) => isSaltyBiome(world.getBiome(q, r)),
     /** The cells of a loaded column straight from its chunk (the cycle looks down 48 whole columns a second). */
@@ -4971,7 +4979,7 @@ export function boot(win, doc) {
   /** §93: finishing a brick dig — the brick's own drops (its material's rule), room for them, the break, sound, wear. */
   function finishBrickDig(b, tool) {
     const id = b.blockId;
-    const drops = rollDrops(id, tool, { natural: false, knifeInPack: pack.hasTool('knife', KNIFE_TIER), deep: isDeep(b.y), decided: false }, Math.random);
+    const drops = rollDrops(id, tool, { natural: false, knifeInPack: pack.hasTool('knife', KNIFE_TIER), deep: isDeep(b.y) }, Math.random);
     if (!pack.canGive([...loose.inFlight(), ...drops])) {
       digPackFull = true;
       return;
@@ -5759,6 +5767,7 @@ export function boot(win, doc) {
       if (circuits) circuits.onChunkLoaded(cq, cr); // a loaded chunk's cells are solved settling: loading fires nothing
     };
     world.onBlockChange = onBlockChanged;
+    world.onCoverChange = (q, y, r) => blockPhysics.onCoverChange(q, y, r); // §93.9: a face water crosses opened or closed
     litTarget = null;
     particles.clear();
     fallingRenderer.sync([], 0);
@@ -7504,7 +7513,7 @@ export function boot(win, doc) {
     renderer.setBrickHighlight(brickHit); // §93
     const SV = survival.inSurvival;
     // §9.9: the dig trace follows the cell's hex outline in honey as it is dug (hidden when not digging; a brick has none).
-    renderer.setDigProgress(SV && digHit && !digHit.brick && digProgress > 0 ? digHit : null, digProgress);
+    renderer.setDigProgress(SV && digHit && !(/** @type {*} */ (digHit).brick) && digProgress > 0 ? digHit : null, digProgress);
     // The live mobs plus the swallowed ones still spiralling in (§2.7).
     if (infall.mobs > 0) {
       pigDraw.length = 0;

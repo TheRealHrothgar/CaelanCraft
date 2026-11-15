@@ -32,6 +32,7 @@ import { CROPS, SEED_BACK_P } from './farming.js';
  * @property {string|null} tool    the preferred tool type ('shovel', 'axe', 'pick', 'knife'), null when none is faster
  * @property {number} tier         the minimum tier of that tool; 0 = bare hands allowed
  * @property {DropGroup[]} drops
+ * @property {{ h: number, tool: string, tier: number, drops: DropGroup[] }} [alt]  a second tool that breaks it, with its own drops (§93)
  */
 /**
  * @typedef {{ natural?: boolean, knifeInPack?: boolean, deep?: boolean, decided?: Record<string, boolean> }} DropContext
@@ -106,6 +107,19 @@ function set(ids, h, tool, tier, drops) {
       })),
     );
     rules[id] = { h, tool, tier, drops: resolved };
+  }
+}
+
+/**
+ * §93: a second way to break blocks `ids`, with another tool and its own time and drops (stone cut into bricks by a metal
+ * hammer, where a pick breaks it into rocks). Set after the block's main rule.
+ * @param {number[]} ids @param {number} h @param {string} tool @param {number} tier @param {ReadonlyArray<DropGroup>} drops
+ */
+function setAlt(ids, h, tool, tier, drops) {
+  for (const id of ids) {
+    const rule = rules[id];
+    if (!rule) throw new Error(`harvest: block ${id} has no rule to add a second way to`);
+    rules[id] = { ...rule, alt: { h, tool, tier, drops: drops.map((g) => g.map((br) => ({ if: br.if, items: br.items.map((it) => ({ ...it })) }))) } };
   }
 }
 
@@ -207,6 +221,8 @@ set([B.STONE], 3.0, 'pick', 2, [
   always(drop('rock', 2)),
   always(drop('saltpetre', 1, { p: 0.06, deep: true, ...natural })), // v0.10 (DESIGN-circuits §8.1): cave saltpetre
 ]);
+// §93: a copper (or better) hammer dresses stone straight into building bricks: one or two per cell (a cell is 1.5 bricks).
+setAlt([B.STONE], 4.0, 'hammer', 3, [always(drop('stone_bricks', [1, 2]))]);
 set([B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.BRICKS], 3.0, 'pick', 2, SELF_DROPS);
 set([B.GRANITE, B.DIORITE, B.ANDESITE, B.SLATE], 3.5, 'pick', 2, SELF_DROPS);
 set([B.SANDSTONE], 2.0, 'pick', 2, SELF_DROPS);
@@ -274,9 +290,22 @@ export function ruleFor(id) {
  * @param {number} id @param {ToolDef|null} tool
  */
 export function canHarvest(id, tool) {
+  return ruleWith(id, tool) !== null;
+}
+
+/**
+ * The rule that `tool` breaks block `id` by: the block's own when it allows the tool, else its second way (§93: `alt`)
+ * when that allows it, else null.
+ * @param {number} id @param {ToolDef|null} tool
+ * @returns {{ h: number, tool: string|null, tier: number, drops: ReadonlyArray<DropGroup> }|null}
+ */
+function ruleWith(id, tool) {
   const rule = ruleFor(id);
-  if (!rule) return false;
-  return rule.tier === 0 || (!!tool && tool.type === rule.tool && tool.tier >= rule.tier);
+  if (!rule) return null;
+  if (rule.tier === 0 || (!!tool && tool.type === rule.tool && tool.tier >= rule.tier)) return rule;
+  const alt = /** @type {*} */ (rule).alt;
+  if (alt && !!tool && tool.type === alt.tool && tool.tier >= alt.tier) return alt;
+  return null;
 }
 
 /**
@@ -285,8 +314,8 @@ export function canHarvest(id, tool) {
  * @param {number} id @param {ToolDef|null} tool @param {boolean} [underwater] player.headInWater
  */
 export function breakSeconds(id, tool, underwater = false) {
-  if (!canHarvest(id, tool)) return Infinity;
-  const rule = /** @type {BlockRule} */ (ruleFor(id));
+  const rule = ruleWith(id, tool);
+  if (rule === null) return Infinity;
   const speed = tool && tool.type === rule.tool ? TIER_SPEED[tool.tier] : 1;
   return Math.max(MIN_BREAK_S, rule.h / speed) * (underwater ? UNDERWATER_DIG_FACTOR : 1);
 }
@@ -386,8 +415,9 @@ export function rollGroups(groups, tool, ctx, random) {
  * @returns {ItemStack[]} by key; empty when the block cannot be harvested with that tool
  */
 export function rollDrops(id, tool, ctx, random) {
-  if (!canHarvest(id, tool)) return [];
-  return rollGroups(/** @type {BlockRule} */ (ruleFor(id)).drops, tool, ctx ?? {}, random);
+  const rule = ruleWith(id, tool);
+  if (rule === null) return [];
+  return rollGroups(rule.drops, tool, ctx ?? {}, random);
 }
 
 // ---- Picking with R (§6.4) ----

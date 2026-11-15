@@ -303,7 +303,7 @@ describe('blocks', () => {
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
     // v0.8 appended 68..75 (see the block-physics test below), v0.9 survival 76..94, powder and circuits 95..114, v0.11 the Workbench 115
-    expect(BLOCK_COUNT).toBe(176); // §93: + the bricks' shadows 174, 175; // §89: the aquifer 173; §85: the ten homestead blocks 163–172 (spring, well, rain barrel, the two beds); … the three snares 116–118 and Flinty Gravel 119 (§75); v0.14 (§76): Tainted Water 120, the Ground Nest 121, the flora 122–131, the Empty Nest 132; §80: the planted blocks 133–141 and the sprouts 142–150; §81: the plants that are not food 151–158; §83: low and shallow water 159–162
+    expect(BLOCK_COUNT).toBe(177); // §93: + the bricks' shadows 174–176; // §89: the aquifer 173; §85: the ten homestead blocks 163–172 (spring, well, rain barrel, the two beds); … the three snares 116–118 and Flinty Gravel 119 (§75); v0.14 (§76): Tainted Water 120, the Ground Nest 121, the flora 122–131, the Empty Nest 132; §80: the planted blocks 133–141 and the sprouts 142–150; §81: the plants that are not food 151–158; §83: low and shallow water 159–162
     // + 6 zombie part tiles 240–245 (§39), + 3 Watcher tiles 250–252 (§40: stone, crack glow, smoke), not block faces;
     // v0.9 survival + 28 (77–104); powder and circuits + 35 (160–194)
     expect(TILE_IDS).toHaveLength(195); // §89: + the aquifer's 238, 239; §85: + 207, 225–227 and 232–237; v0.11: + the Workbench 195, 196; v0.13: + 201–203 (§75; 204 withdrawn in §76); v0.14: + tainted water 204, the flora 208–217, the nest's 228–231; §80: + the seedbed 205 and the sprout 206; §81: + 218–224
@@ -393,8 +393,8 @@ describe('blocks', () => {
     expect(isLeaves(BLOCK.OAK_LOG) || isLog(BLOCK.OAK_PLANKS)).toBe(false);
   });
   it('v0.9 survival: blocks 76..94 exactly as DESIGN-survival §8.1, tiles 77..104 (powder and circuits follow at 95)', () => {
-    expect(BLOCK_COUNT).toBe(176); // §93: + the bricks' shadows 174, 175; // §89: + 173; §85: + 163–172; 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119; v0.14 (§76) 120–132; §80 the farm blocks 133–150; §81 the plants that are not food 151–158
-    expect(BLOCKS).toHaveLength(176);
+    expect(BLOCK_COUNT).toBe(177); // §93: + the bricks' shadows 174–176; // §89: + 173; §85: + 163–172; 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119; v0.14 (§76) 120–132; §80 the farm blocks 133–150; §81 the plants that are not food 151–158
+    expect(BLOCKS).toHaveLength(177);
     const P = 'plant'; // the PLANT flags: walk-through, see-through cutout, never culled against itself
     const S = 'solid'; // a plain full block (def defaults)
     // [key, id, name, displayName, flags, soundGroup, [side, top, bottom] TILE keys, placeable]
@@ -522,7 +522,7 @@ describe('blocks', () => {
     // FIRE_PIT is a meshed cutout block. Only CAMPFIRE, the Black Hole and the circuit parts but the keg (the thin parts and
     // the 14 device models) have their own models, and only CAMPFIRE is fall-through.
     expect(BLOCKS.filter((d) => !d.meshed).map((d) => d.id)).toEqual([
-      B.BLACK_HOLE, B.CAMPFIRE, ...Array.from({ length: 20 }, (_, i) => B.COLLAPSAR_CHARGE + i), B.BRICK_SHADOW, B.BRICK_FILL, // §93: never drawn
+      B.BLACK_HOLE, B.CAMPFIRE, ...Array.from({ length: 20 }, (_, i) => B.COLLAPSAR_CHARGE + i), B.BRICK_SHADOW, B.BRICK_FILL, B.BRICK_GAP, // §93: never drawn
     ]);
     expect(isFallThrough(B.FIRE_PIT) || isFallThrough(B.TUSSOCK) || isFallThrough(B.REMAINS)).toBe(false);
   });
@@ -563,7 +563,7 @@ describe('blocks', () => {
 
   it('powder and circuits: blocks 95..114 exactly as DESIGN-circuits §1.2 (THIN and MODEL), BLOCK_COUNT 115', () => {
     expect(CIRCUIT_BLOCKS.map((row) => row[1])).toEqual(Array.from({ length: 20 }, (_, i) => 95 + i));
-    expect(BLOCK_COUNT).toBe(176); // §93: + the bricks' shadows 174, 175; // §89: + the aquifer 173; §85: + the ten homestead blocks 163–172; + v0.11's Workbench at 115, the snares 116–118, v0.13's Flinty Gravel 119, v0.14's 120–132 (§76), the farm blocks 133–150 (§80) and the plants that are not food 151–158 (§81) and the low and shallow water 159–162 (§83)
+    expect(BLOCK_COUNT).toBe(177); // §93: + the bricks' shadows 174–176; // §89: + the aquifer 173; §85: + the ten homestead blocks 163–172; + v0.11's Workbench at 115, the snares 116–118, v0.13's Flinty Gravel 119, v0.14's 120–132 (§76), the farm blocks 133–150 (§80) and the plants that are not food 151–158 (§81) and the low and shallow water 159–162 (§83)
     for (const [key, id, name, displayName, shape, sound, [side, top]] of CIRCUIT_BLOCKS) {
       expect(BLOCK[key], key).toBe(id);
       const d = BLOCKS[id];

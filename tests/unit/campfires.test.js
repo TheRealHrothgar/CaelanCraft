@@ -33,7 +33,7 @@ describe('campfire block', () => {
       'black_hole', 'campfire', 'collapsar_charge', 'powder_fuse', 'torch', 'copper_wire', 'brown_wire', 'white_wire',
       'earth_wire', 'terminal_board', 'voltaic_battery', 'blasting_machine', 'selenium_panel', 'knife_switch', 'push_button',
       'clockwork_timer', 'relay', 'igniter', 'filament_lamp', 'electric_bell', 'spark_transmitter', 'coherer_receiver',
-      'brick_shadow', 'brick_fill', // §93: the bricks' shadows are never drawn (the brick mesher draws the bricks)
+      'brick_shadow', 'brick_fill', 'brick_gap', // §93: the bricks' shadows are never drawn (the brick mesher draws the bricks)
     ]);
   });
   it('the mesher skips the campfire cell but still draws the ground under it', () => {

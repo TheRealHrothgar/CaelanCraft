@@ -7074,3 +7074,145 @@ model and one arm are shown at most.
   the view preference, the boom with blocks behind, beside and inside, easing, the camera pose; the motion), and
   `tests/unit/avatarRenderer.test.js` (the models, the skirt, lying down, the UVs, the arm's placement and its shader patch,
   the chooser on a fake DOM from index.html).
+
+## 93. Bricks: a rectangular lattice over the honeycomb — `src/bricks.js` (PURE), `src/brickmesher.js` (PURE), `src/world.js`, `src/chunk.js`, `src/blocks.js`, `src/fluids.js`, `src/waterBodies.js`, `src/blockphysics.js`, `src/mesher.js`, `src/physics.js`, `src/renderer.js`, `src/harvest.js`, `src/storage.js`, `src/main.js`, `src/controls.js`, `src/config.js`, `src/diagnostics.js`
+
+The world stays a honeycomb: terrain and raw resources are hexagonal prisms. BUILDING MATERIALS are laid as **bricks** on a
+second, rectangular lattice fixed to the hexes, so walls run straight along X and along Z and meet at right angles. A brick
+is 1 wide, `BRICK_DEPTH` = `HEX_SIZE` = 1/√3 deep (half a hex's point-to-point height) and 1 tall, on the hexes' layers.
+
+**Unchanged (normative).** Hex storage, generation, the hex mesher's prisms, the hex raycast, mobs, support, falling blocks
+and every system that reads `world.getBlock` keep their code: they meet brickwork through its SHADOW in the hex cells
+(§93.3). Only rendering, aiming and the player read the bricks exactly; water reads the shadows piece by piece (§93.9). A
+world with no bricks behaves, meshes and saves exactly as before.
+
+### 93.1 Geometry (`bricks.js`)
+
+- Brick (i, y, n) fills x ∈ [i, i + 1), z ∈ [n·s, (n + 1)·s), y ∈ [y, y + 1) (s = BRICK_DEPTH). `worldToBrick(x, z)`,
+  `brickOrigin(i, n)`.
+- **The shifted layout.** Horizontal seams run through an even row's top point, centre and bottom point, and along an odd
+  row's vertical faces; vertical seams run through even rows' centres and along odd rows' E and W faces. The pattern repeats
+  every 3 brick rows = 2 hex rows; 24 brick rows are 16 hex rows exactly.
+- **Pieces.** A brick covers exactly ONE piece of each hex it touches. An even row's hex is cut through its centre both ways
+  into quarters `PIECE_NW` 1, `PIECE_NE` 2, `PIECE_SW` 4, `PIECE_SE` 8; an odd row's into `PIECE_TOP` 1 (the top point),
+  `PIECE_MID` 2 (between the vertical faces) and `PIECE_BOT` 4. `fullPieceMask(r)` 15 / 7; `facePieces(r, j)` the pieces
+  side face j meets (an even row's E face: NE | SE; an odd row's E face: MID; its NE and NW faces: TOP …).
+- `hexesOfBrick(i, n)`, with m = ⌊n / 3⌋, t = n − 3m: t = 1 → MID of (i − m, 2m + 1) alone; t = 0 → SE of (i − m, 2m), SW
+  of (i + 1 − m, 2m), TOP of (i − m, 2m + 1); t = 2 → NE of (i − m − 1, 2m + 2), NW of (i − m, 2m + 2), BOT of
+  (i − m, 2m + 1). Each entry is [q, r, piece]. `bricksOfHex(q, r)` is the inverse: four bricks over an even row's hex, three
+  over an odd row's.
+- Faces in cube order: `BRICK_FACE_NORMALS` / `_DIRS` / `_OPPOSITE` (0 +X, 1 −X, 2 +Y, 3 −Y, 4 +Z, 5 −Z),
+  `BRICK_FACE_TOP` 2, `BRICK_FACE_BOTTOM` 3; `BRICK_FACE_SHADE` is the hex FACE_SHADE rule applied to those normals.
+
+### 93.2 Storage (`BrickGrid`)
+
+`world.bricks`: chunks of `BRICK_CHUNK_I` 16 × `BRICK_CHUNK_N` 24 bricks × WORLD_HEIGHT, key `"ci,cn"`,
+`brickLocalIndex(li, y, ln)` = (li·24 + ln)·128 + y. `getBlock(i, y, n)` (AIR where none; an arrow property with a
+one-chunk cache, safe to hand around), `setBlock` (dirties the chunk and the neighbours it borders), `pruneEmpty()`,
+`list()` (sorted by key), `export()` → `{ "ci,cn": [localIndex, id, …] }`, `load(json)`. `brickChunksOfHexChunk(cq, cr)`:
+the brick chunks that can touch hex chunk (cq, cr).
+
+### 93.3 Shadows in the hex world
+
+- `chunk.cover` (null until a brick touches the chunk): per hex cell, its pieces under a brick (the low 4 bits) and under an
+  OPAQUE brick (the high 4). `world.coverAt(q, y, r)`.
+- A hex cell a brick touches holds a DERIVED id — never an edit, never saved, placed, broken, targeted or drawn by the hex
+  mesher (`isBrickShadow` is true of all three): **BRICK_FILL** 175 when every piece is under an opaque brick (solid,
+  opaque); **BRICK_GAP** 176 when the rest of it is ONE open space (`holdsWater`: not two pieces that meet at a point only —
+  an even row's NW + SE or NE + SW, an odd row's TOP + BOT); **BRICK_SHADOW** 174 otherwise. All three are solid and the
+  last two see-through. A gap may hold water instead (§93.9). `BLOCK_COUNT` **177**.
+- `world.setBrick(i, y, n, id)` (AIR removes) stores it and re-derives each hex it touches: a cell left with no piece covered
+  that holds a shadow becomes AIR; a liquid displaced is first recorded as an edit to AIR (so a reload agrees); a solid hex is
+  never overwritten. A change of a cell's pieces re-meshes round it and fires `world.onCoverChange(q, y, r)`. A generated
+  chunk gets its shadows from the bricks after its edits and before it is lit.
+- `setBlock` and loaded `importEdits` never write over BRICK_SHADOW or BRICK_FILL and never write a shadow id where no
+  brick is. Into a gap, or a gap holding water, they write water only — or AIR, which stores the gap again; the edit they
+  record says AIR wherever the cell holds a gap.
+
+### 93.4 The brick mesher (`brickmesher.js`)
+
+`buildBrickMesh(chunk, { getBrick, getHex, lightAt })` → `{ opaque, cutout, translucent }` in the hex mesher's MeshData
+(positions local to (16·ci, 0, 24·cn·s); 2 light bytes a vertex). A face is culled against a neighbour brick by
+`shouldRenderFace`; with no brick there, when every hex the neighbouring brick cell touches is opaque natural ground; and
+below y 0. Faces 0.577 wide crop their tile's middle as hex side faces do. AO samples opaque bricks (with no brick, opaque
+ground at the cell's centre); light comes from the hex light field just off the face. `world.update()` meshes the dirty brick
+chunks whose centre lies in a meshed hex chunk (`onBrickMesh` / `onBrickUnload`, the renderer's `setBrickMesh` /
+`removeBrickMesh`); every hex re-mesh dirties the brick chunks round it, so bricks follow the light.
+
+### 93.5 Aiming, placing, digging
+
+- `raycastBricks(getBrick, ox, oy, oz, dx, dy, dz, maxDistance, isHit)` (Amanatides–Woo on 1 × 1 × s cells) → `{ layer: 'brick', i, y,
+  n, face, nx, ny, nz, distance, px, py, pz, blockId }`. The nearer of the brick and the hex hit is the target; a mob or a lit
+  keg nearer than both wins as before. The renderer outlines a brick with a box 1 × 1 × s.
+- `world.brickBlocker(i, y, n)` → `'height'` | `'brick'` (one is there) | `'unloaded'` | `'blocked'` (a hex it touches holds
+  anything but AIR, a liquid or brickwork) | null.
+- A brick is laid across the targeted brick face, or just outside the targeted hex face; against a hex SIDE a blocked brick
+  is raised one layer when that one is free (a brick laid against a slope sits on the higher ground); else "Bricks need
+  clear ground: dig it out first". Never inside the player or a mob.
+- Building materials (`BRICK_MATERIAL_IDS`: the planks, cobblestone, the bricks, glass, the bookshelf, every wool, the metal
+  and gem blocks, honeycomb, hay) are laid as bricks: always in Survival; in Creative until **B** switches building to hexes
+  (toast "Building: hexes (B: bricks)" / "Building: bricks (B: hexes)"). A hex may be placed against a brick face.
+- A brick is dug in Survival by its block's harvest rule (time, tool, drops, which fly from the hit point); Creative breaks
+  it at once; pick takes its block.
+
+### 93.6 The player
+
+`stepPlayer(p, input, getBlock, dt, getBrick)` and `displaceBody(…, getBrick)`: given `getBrick` (main: `world.bricks.getBlock`;
+a body pushed by bodies.js uses its own `p.brickLookup`) the body collides with bricks exactly — a circle against
+rectangles sideways, tops and bottoms vertically — and passes through the shadows. Without it (every mob) the shadows are
+solid hexes: mobs stop up to half a cell short of a brick wall.
+
+### 93.7 Materials and terraforming (Survival)
+
+- Raw natural blocks (`RAW_HEX_IDS`: the stone kinds, grass, logs, leaves, ores, sandstone, ice, glowstone, pumpkins) are
+  never placed in Survival: "‹Name› is raw: work it into building materials first". Stone breaks into rocks with a flint pick
+  or better, and into 1–2 STONE BRICKS with a copper (tier 3) or better HAMMER, 4.0 s base (`harvest` `alt`: a second tool
+  with its own time and drops; `canHarvest`, `breakSeconds` and `rollDrops` take whichever rule the tool satisfies).
+- Loose ground (`TERRAFORM_IDS`: dirt, sand, gravel, snow block, clay, red sand) is placed as hexes, at most
+  `TERRAFORM_MAX_RISE` **3** layers above the column's generated surface ("Loose ‹name› will not heap any higher here"):
+  berms and ditch spoil, never mountains. Digging has no such limit.
+- Everything else (stations, containers, fire, furniture, snares, circuit parts, plants) is placed as hexes in both modes.
+
+### 93.8 Saves
+
+An optional `bricks` field right after `edits`: `BrickGrid.export()`, written only when there is a brick (a world without
+bricks serialises exactly as before). `normalizeBricksJSON(raw)` → `{ bricks, warnings }` drops bad keys, indices and ids
+(deserializeSave adds its warnings). The bricks load before the first chunk is generated.
+
+### 93.9 Water in brickwork
+
+Water sees brickwork piece by piece, so it stands against a brick wall where the wall is, runs along a channel one brick
+wide, and leaks through a hole one brick wide.
+
+- **Where water may stand.** In a BRICK_GAP (§93.3), never in a BRICK_SHADOW or BRICK_FILL. To the water rule a gap is AIR
+  (`WATER_RULE_IDS` includes it): water flows, falls and stands in it, and the cell then holds the water's own id while its
+  pieces stay in `chunk.cover`; AIR written there stores the gap again. A brick set in water keeps it when the rest of the
+  cell is one space, else displaces it (an edit to AIR).
+- **Where water crosses.** Between two side neighbours only where an open piece meets the shared face on BOTH sides
+  (`waterCrossesFace(a, rA, j, b, rB)`: a brick that spans a face covers both sides of it at once, so the sides disagree
+  only on an odd row's E and W faces, the seams between middle bricks); between two layers of a column only where their open
+  pieces overlap (`waterCrossesLayer`). Every read of a neighbour by fluids.js goes through `waterSide` / `waterBelow` /
+  `waterAbove` (`waterPieces` gives a cell's own pieces): they return **BRICK_FILL** — a wall — across a closed face, AIR for
+  a gap. `waterBodyAt(peek, q, y, r, springAt, cover)` and `waterSourceOf(getBlock, q, y, r, first, cover)` take `cover`
+  (`world.coverAt`; null: no bricks) and join cells, count a pool as contained and trace water only across open faces;
+  waterBodies.js passes its world's `cover`. Fluids reads `world.coverAt` only while the world has a brick.
+- **A pool reaches into the gaps beside it** (`_intoGaps`, on a source's update, after law 1 and joined vessels): a cell
+  under bricks across an open face, dry or holding flowing water, over a floor, is taken into the body — the body's water is
+  spread over its cells and those (`_distribute`: not a level lost or made; the sea fills them). So a pool against a brick
+  wall stays contained (§83 law 2), at a depth that pays for the gaps (a small pool may stand a level lower, or at two depths
+  a level apart). A gap that also opens on to anything else leaves the body standing open: it spills, and a hole in
+  brickwork drains a pool like a dug channel. Running water (a spring's) does not reach in: flowing water fills the gaps
+  beside it by the flow rule.
+- **Waking.** `world.onCoverChange` → `BlockPhysics.onCoverChange(q, y, r)` (main wires it) queues the water round the cell
+  (a face may have opened or closed without the id changing); the scheduler queues gaps like AIR.
+- **Drawing** (`mesher.js`, a third padded volume of the chunks' `cover`): water in a cell under bricks draws its cap and
+  floor over its open pieces only (a fan per piece, the cap texture laid as on the whole hexagon) — and no cap where a
+  brick's floor lies on the surface, no floor on a brick's top; a side only across an open face, cut to its half when only
+  one of an even row's two quarters meets it; none toward a BRICK_SHADOW. In a BRICK_SHADOW each open piece that meets water
+  beyond an open face is drawn full of that water, to the highest such surface (`waterTopY`), unless water goes on above it
+  or a brick lies on it: the points brickwork splits off still meet the surface at the wall.
+
+### 93.10 Debug handle
+
+`getBrick(x, y, z)` / `setBrick(x, y, z, id)` at WORLD positions (the brick containing the point; setBrick checks
+`brickBlocker`, AIR removes).

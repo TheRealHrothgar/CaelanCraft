@@ -334,7 +334,7 @@ export function supportingCells(p, getBlock, out = []) {
  * @param {PlayerInput} input
  * @param {GetBlockFn} getBlock
  * @param {number} dt seconds
- * @param {((i: number, y: number, n: number) => number)|null} [getBrick]  §93: collide with the bricks exactly
+ * @param {((i: number, y: number, n: number) => number)|null} [getBrick]  collide with the bricks exactly (§93)
  */
 export function stepPlayer(p, input, getBlock, dt, getBrick = null) {
   if (!(dt > 0)) return; // also rejects NaN (the state is left exactly as it was)

@@ -32,6 +32,7 @@ export const POT_GULPS = 4;
  * @property {(q: number, y: number, r: number) => number} peek  world.peekBlock (UNLOADED for a chunk that is not loaded;
  *   world.getBlock works too: a body at the edge of the loaded world is then not known to be cut)
  * @property {((q: number, r: number) => number)|null} [springLevelAt]  where streams run (fluids.makeSpringLookup); absent: nowhere
+ * @property {((q: number, y: number, r: number) => number)|null} [cover]  world.coverAt (§93.9; null or absent: no bricks)
  * @property {((q: number, y: number, r: number) => number)|null} [originAt]  world.originAt: what a cell was generated as
  * @property {((q: number, r: number) => boolean)|null} [saltyAt]  the column's biome is salt (climate.isSaltyBiome of it)
  */
@@ -61,9 +62,9 @@ export const POT_GULPS = 4;
 export function waterAt(w, q, y, r) {
   const id = w.peek(q, y, r);
   if (!isWater(id)) return null;
-  const src = waterSourceOf(w.peek, q, y, r);
+  const src = waterSourceOf(w.peek, q, y, r, false, w.cover ?? null);
   if (src === null) return { quality: 'fresh', depth: 0, sea: false, stream: false, flowing: true, source: null, body: null };
-  const body = /** @type {WaterBody} */ (waterBodyAt(w.peek, src.q, src.y, src.r, w.springLevelAt ?? null));
+  const body = /** @type {WaterBody} */ (waterBodyAt(w.peek, src.q, src.y, src.r, w.springLevelAt ?? null, w.cover ?? null));
   let salt = body.sea;
   if (!salt && !body.stream && w.saltyAt && w.originAt && w.saltyAt(src.q, src.r)) salt = isWaterSource(w.originAt(src.q, src.y, src.r));
   return {
@@ -86,7 +87,7 @@ export function waterAt(w, q, y, r) {
 export function topBody(w, body) {
   let top = body;
   for (let guard = 0; top.cover !== null && guard < 32; guard++) {
-    const over = waterBodyAt(w.peek, top.cover[0], top.cover[1], top.cover[2], w.springLevelAt ?? null);
+    const over = waterBodyAt(w.peek, top.cover[0], top.cover[1], top.cover[2], w.springLevelAt ?? null, w.cover ?? null);
     if (over === null) break;
     if (over.truncated && !over.sea) return null;
     top = over;
@@ -192,6 +193,7 @@ export const WATER_STEP_MAX_S = 14400;
  * @property {number} q   the player's column
  * @property {number} r
  * @property {((q: number, r: number) => number)|null} [springLevelAt]
+ * @property {((q: number, y: number, r: number) => number)|null} [cover]  world.coverAt (§93.9)
  * @property {((q: number, y: number, r: number) => number)|null} [originAt]
  * @property {number} [top]  the highest cell worth looking at (default: the world's top)
  * @property {(q: number, r: number, out: { blocks: Uint8Array|null, base: number }) => boolean} [column]  the cells of a loaded
@@ -472,7 +474,7 @@ export function cycleStep(dt, random, w, env) {
     if (rain > 0 && waterDepth(id) === 3) continue;
     // and a cell with standing water of its kind and depth all round it, two cells out, is one of 19 such cells at least.
     if (!running && !(u < p1 / BIG_BODY_CELLS) && isDeepInBody(w, q, found.y, r, id)) continue;
-    const body = waterBodyAt(w.peek, q, found.y, r, w.springLevelAt ?? null);
+    const body = waterBodyAt(w.peek, q, found.y, r, w.springLevelAt ?? null, w.cover ?? null);
     if (body === null || body.covered || isBeyondUse(body)) continue;
     // A body gains a level in its shallowest cells and loses one from its deepest (`depthWrites`): it is found through
     // those N cells, all of a level body.
@@ -697,7 +699,7 @@ export function feedStep(dt, random, w, env, aquifers) {
       out.push({ kind: 'seep', q, y: feeds.y, r, count: basin.count, stream: false, quality: 'fresh', writes });
       continue;
     }
-    const body = waterBodyAt(w.peek, q, feeds.y, r, w.springLevelAt ?? null);
+    const body = waterBodyAt(w.peek, q, feeds.y, r, w.springLevelAt ?? null, w.cover ?? null);
     if (body === null || body.stream || body.sea || body.truncated || body.covered || !body.contained) continue;
     if (body.minDepth >= target || !(u < chance(body.levels[body.minDepth]))) continue;
     out.push({ kind: 'feed', q, y: feeds.y, r, count: body.count, stream: false, quality: 'fresh', writes: depthWrites(w, body, 1) });
@@ -731,7 +733,7 @@ export function aquiferInfo(w, q, y, r, env) {
     return { ...info, cells: basin ? basin.count : 0, target, fed: basin !== null };
   }
   if (feeds.kind === 'none') return info;
-  const body = feeds.open ? null : waterBodyAt(w.peek, q, feeds.y, r, w.springLevelAt ?? null);
+  const body = feeds.open ? null : waterBodyAt(w.peek, q, feeds.y, r, w.springLevelAt ?? null, w.cover ?? null);
   if (feeds.kind === 'stream') return { ...info, cells: body ? body.count : 0, depth: body ? body.depth : 0, target: AQUIFER_FLOOR, fed: true };
   if (body === null) return info;
   return {

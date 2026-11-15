@@ -80,7 +80,7 @@ const isBlue = ([r, g, b]) => b > 150 && b > r + 40 && b >= g;
 
 describe('the ten blocks 163–172 (blocks.js)', () => {
   it('ids, names and display names, appended after the water of §83', () => {
-    expect(BLOCK_COUNT).toBe(176); // §93: + the bricks' shadows 174, 175; // (§89 appended the aquifer, 173)
+    expect(BLOCK_COUNT).toBe(177); // §93: + the bricks' shadows 174–176; // (§89 appended the aquifer, 173)
     expect([...HOMESTEAD_IDS]).toEqual([163, 164, 165, 166, 167, 168, 169, 170, 171, 172]);
     expect(HOMESTEAD_IDS.map((id) => [id, BLOCKS[id].name, BLOCKS[id].displayName])).toEqual([
       [B.SPRING, 'spring', 'Spring'], [B.SPRING_DRAWN, 'spring_drawn', 'Spring (drawn)'],

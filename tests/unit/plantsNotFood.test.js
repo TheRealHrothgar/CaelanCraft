@@ -113,8 +113,8 @@ const facesWith = (id, pred, least = 1) => quadsOf(id).filter((q) => texelsOf(id
 
 describe('the eight blocks 151–158 (blocks.js)', () => {
   it('ids, names, flags and tiles: wild plants like the others — 3D models with the PLANT flags and a flat icon', () => {
-    expect(BLOCK_COUNT).toBe(176); // §93: + the bricks' shadows 174, 175; // (§83: the low and shallow water follow at 159–162; §85: the homestead blocks at 163–172; §89: the aquifer at 173)
-    expect(BLOCKS).toHaveLength(176);
+    expect(BLOCK_COUNT).toBe(177); // §93: + the bricks' shadows 174–176; // (§83: the low and shallow water follow at 159–162; §85: the homestead blocks at 163–172; §89: the aquifer at 173)
+    expect(BLOCKS).toHaveLength(177);
     expect(BLOCKS[158].id).toBe(158); // appended in id order: no earlier block moved
     expect(BLOCKS[150].name).toBe('cattails_sprout');
     for (const [key, id, name, displayName, sound, tile, placeable] of PLANTS) {

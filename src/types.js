@@ -95,6 +95,8 @@
  * @property {string} [group]       resolveBodies never pairs two bodies of the same group (v0.8 lit barrels)
  * @property {number} [landSpeed]   (v0.9 survival, DESIGN-survival §9.3) the fastest downward speed (m/s, ≥ 0) at which the body
  *                                  landed during the last stepPlayer (0 without a landing); survival.step reads it, then sets it to 0
+ * @property {((i: number, y: number, n: number) => number)|null} [brickLookup]  (§93.6) the bricks this body collides with
+ *                                  exactly when something else moves it (bodies.js); absent = the bricks' shadows are solid
  */
 
 /**
@@ -260,6 +262,7 @@
  * @property {number} selected        0..8
  * @property {EditsJSON} edits
  * @property {RunesJSON} [runes]      optional; absent/empty when the world has no customised rune blocks
+ * @property {Object<string, number[]>} [bricks]  optional (§93.8) every brick (BrickGrid.export); absent = none
  * @property {Object[]} [pigs]        optional (v0.5); absent = the world never had pigs. Not written since §88 (`fauna`)
  * @property {Object[]} [animals]     optional (§69) the live animals; not written since §88 (`fauna`)
  * @property {{ v: number, z: Object[] }} [fauna]  optional (§88) every animal of the world, by zone (populations.js

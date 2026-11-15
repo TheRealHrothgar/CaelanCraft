@@ -62,6 +62,36 @@ export function facePieces(r, j) {
 const EVEN_FACE_PIECES = Object.freeze([PIECE_NE | PIECE_SE, PIECE_SE, PIECE_SW, PIECE_NW | PIECE_SW, PIECE_NW, PIECE_NE]);
 const ODD_FACE_PIECES = Object.freeze([PIECE_MID, PIECE_BOT, PIECE_BOT, PIECE_MID, PIECE_TOP, PIECE_TOP]);
 
+// ---- §93.9 water in brickwork -----------------------------------------------------------------------------------------
+
+/**
+ * @param {number} cover  the pieces of hex row `r` under a brick (the low 4 bits of World.coverAt)
+ * @param {number} r
+ * @returns {boolean} the rest of the hex is ONE open space: not nothing, and not two pieces that touch at a point only (an
+ *   even row's NW + SE or NE + SW quarters, an odd row's top and bottom points). Water may stand in it (BRICK_GAP).
+ */
+export function holdsWater(cover, r) {
+  const open = fullPieceMask(r) & ~cover;
+  if (open === 0) return false;
+  if (isEvenRow(r)) return open !== (PIECE_NW | PIECE_SE) && open !== (PIECE_NE | PIECE_SW);
+  return open !== (PIECE_TOP | PIECE_BOT);
+}
+
+/**
+ * Water crosses side face `j` of hex A (row `rA`, cover `a`) into its neighbour B (row `rB`, cover `b`) when an open piece
+ * meets the face on both sides. A brick that spans a face covers the pieces on both sides of it at once, so the two sides
+ * agree everywhere but on an odd row's E and W faces, along which the seam between two middle bricks runs.
+ * @returns {boolean}
+ */
+export function waterCrossesFace(a, rA, j, b, rB) {
+  return (facePieces(rA, j) & ~a) !== 0 && (facePieces(rB, (j + 3) % 6) & ~b) !== 0;
+}
+
+/** @returns {boolean} water crosses between two layers of a hex column of row `r` (covers `a`, `b`): their open pieces overlap */
+export function waterCrossesLayer(a, b, r) {
+  return (fullPieceMask(r) & ~a & ~b) !== 0;
+}
+
 /** @returns {[number, number]} the brick column [i, n] containing world point (x, z) */
 export function worldToBrick(x, z) {
   return [Math.floor(x), Math.floor(z / BRICK_DEPTH)];
@@ -210,7 +240,7 @@ export class BrickGrid {
   }
 
   /**
-   * Put material `id` (0 = remove) at brick (i, y, n). The caller checks occupancy (§93.4); this only stores.
+   * Put material `id` (0 = remove) at brick (i, y, n). The caller checks occupancy (§93.5); this only stores.
    * @returns {boolean} false when y is out of range, id is not an integer 0..254, or nothing changed
    */
   setBlock(i, y, n, id) {

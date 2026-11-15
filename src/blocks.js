@@ -79,13 +79,15 @@ export const BLOCK = Object.freeze({
   // fresh pond in three (only generation-6 worlds generate it). Nothing can break it, like BEDROCK; it feeds the water
   // standing on it (waterBodies.js): the one thing besides rain that makes water.
   AQUIFER: 173,
-  // §93 (the brick lattice): the hex cells a brick touches are written with one of these two, derived from the bricks and
+  // §93 (the brick lattice): the hex cells a brick touches are written with one of these three, derived from the bricks and
   // never saved, placed, broken or drawn. BRICK_SHADOW: some of the cell is brick — solid to everything that reads the hex
   // world (mobs, water, support, falling blocks, placement), see-through to light and the mesher. BRICK_FILL: all of it is
-  // opaque brick — also opaque (it hides the faces against it and stops light).
-  BRICK_SHADOW: 174, BRICK_FILL: 175,
+  // opaque brick — also opaque (it hides the faces against it and stops light). BRICK_GAP (§93.9): some of it is brick and
+  // the rest is ONE open space — a BRICK_SHADOW to everything but water, which may stand in that space (the cell then holds
+  // the water's own id, the bricks staying in the chunk's cover bits).
+  BRICK_SHADOW: 174, BRICK_FILL: 175, BRICK_GAP: 176,
 });
-export const BLOCK_COUNT = 176;
+export const BLOCK_COUNT = 177;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -521,6 +523,7 @@ export const BLOCKS = [
   // ---- §93: the bricks' shadows in the hex world (see BLOCK). Never meshed, targeted, broken or placed.
   def({ id: B.BRICK_SHADOW, name: 'brick_shadow', displayName: 'Brickwork', tiles: tiles(T.BRICKS), opaque: false, layer: LAYER_CUTOUT, breakable: false, placeable: false, meshed: false, cullSame: false }),
   def({ id: B.BRICK_FILL, name: 'brick_fill', displayName: 'Brickwork', tiles: tiles(T.BRICKS), breakable: false, placeable: false, meshed: false }),
+  def({ id: B.BRICK_GAP, name: 'brick_gap', displayName: 'Brickwork', tiles: tiles(T.BRICKS), opaque: false, layer: LAYER_CUTOUT, breakable: false, placeable: false, meshed: false, cullSame: false }),
 ];
 
 /**
@@ -634,7 +637,7 @@ export function isReplaceable(id) {
 }
 /** The raycast stops on targetable blocks: anything that is not AIR, not a liquid and not a brick's shadow (§93). */
 export function isTargetable(id) {
-  return id !== B.AIR && !getBlockDef(id).liquid && id !== B.BRICK_SHADOW && id !== B.BRICK_FILL;
+  return id !== B.AIR && !getBlockDef(id).liquid && !isBrickShadow(id);
 }
 
 // ---- §93: which lattice a block is built on ----------------------------------------------------------
@@ -680,9 +683,9 @@ export function isTerraform(id) {
 export function isRawHex(id) {
   return RAW_HEX[id] === 1;
 }
-/** @returns {boolean} BRICK_SHADOW or BRICK_FILL: a hex cell that a brick touches (§93.3) */
+/** @returns {boolean} BRICK_SHADOW, BRICK_FILL or BRICK_GAP: a dry hex cell that a brick touches (§93.3) */
 export function isBrickShadow(id) {
-  return id === B.BRICK_SHADOW || id === B.BRICK_FILL;
+  return id === B.BRICK_SHADOW || id === B.BRICK_FILL || id === B.BRICK_GAP;
 }
 /** false for blocks drawn by their own model instead of the chunk mesher (campfire, black hole, the circuit parts but the keg). */
 /** How the chunk mesher draws `id` (BlockDef.shape): 'prism', 'model' (the wild plants), 'decal' (the snares) or 'litter'. */

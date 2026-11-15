@@ -124,7 +124,7 @@ describe('BLOCK_RULES (§6.3)', () => {
     // §89: nor can the aquifer, in either mode
     expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id) || b.name.startsWith('reserved_')
       || b.id === B.SPRING || b.id === B.SPRING_DRAWN || b.id === B.AQUIFER
-      || b.id === B.BRICK_SHADOW || b.id === B.BRICK_FILL).map((b) => b.id)); // §93: a brick's shadow is dug as the brick
+      || b.id === B.BRICK_SHADOW || b.id === B.BRICK_FILL || b.id === B.BRICK_GAP).map((b) => b.id)); // §93: a brick's shadow is dug as the brick
     for (let id = B.COLLAPSAR_CHARGE; id <= B.COHERER_RECEIVER; id++) {
       expect(rollDrops(id, null, {}, () => 0.5), BLOCKS[id].name).toEqual([{ k: BLOCKS[id].name, n: 1 }]);
     }
@@ -224,6 +224,18 @@ describe('breakSeconds and canHarvest (§6.1)', () => {
     const picks = ['flint_pick', 'copper_pick', 'bronze_pick', 'iron_pick', 'steel_pick'];
     for (const k of picks) expect(breakSeconds(B.STONE, tool(k))).toBeCloseTo(3 / TIER_SPEED[tool(k).tier], 9);
     expect(breakSeconds(B.DIRT, tool('wooden_shovel'))).toBeCloseTo(0.9 / 1.5, 9);
+  });
+
+  it('§93.7: stone breaks into rocks with a pick, or is dressed into stone bricks with a copper hammer or better', () => {
+    expect(rollDrops(B.STONE, tool('flint_pick'), {}, () => 0.99).filter((s) => s.k === 'rock')).toEqual([{ k: 'rock', n: 2 }]);
+    expect(breakSeconds(B.STONE, tool('stone_hammer'))).toBe(Infinity); // tier 1: the dressed way wants metal
+    expect(canHarvest(B.STONE, tool('copper_hammer'))).toBe(true);
+    expect(breakSeconds(B.STONE, tool('copper_hammer'))).toBeCloseTo(4 / TIER_SPEED[tool('copper_hammer').tier], 9);
+    const bricks = rollDrops(B.STONE, tool('copper_hammer'), {}, () => 0.5);
+    expect(bricks.map((s) => s.k)).toEqual(['stone_bricks']);
+    expect(bricks[0].n).toBeGreaterThanOrEqual(1);
+    expect(bricks[0].n).toBeLessThanOrEqual(2);
+    expect(ruleFor(B.STONE).alt).toMatchObject({ tool: 'hammer', tier: 3, h: 4 });
   });
 
   it('cannot: below the tier, the wrong type, or the hand where a tier is needed → Infinity', () => {
