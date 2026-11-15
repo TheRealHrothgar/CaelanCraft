@@ -123,6 +123,8 @@ export const TILE_NAMES = Object.freeze({
   102: 'loose_stones',
   103: 'fallen_branches',
   104: 'fire_pit_side',
+  105: 'lab_side', // §94
+  106: 'lab_top',
   // v0.11 (CONTRACTS §67)
   195: 'workbench_side',
   196: 'workbench_top',
@@ -2133,6 +2135,62 @@ function paintWorkbenchTop(px, rng) {
 }
 
 /**
+ * 105 lab_side (§94) — the Lab's bench seen from the front: a pale scrubbed top (rows 0–2, 0xd8c8a8 ±5, a lit 0xece0c4 row 0
+ * and a 0x8a7656 lip on row 2), above it nothing (the top is the bench); below, a dark-stained cabinet (rows 3–13, 0x5a4a3c
+ * ±5) with a row of three glass-fronted doors (rows 4–11 at x 1–4, 6–9 and 11–14: 0x3c3430 frames round a 0x9cc8c8 pane
+ * with a 0xd0eef0 glint at its top left), behind the panes jars of 0x58b878 green, 0xc8a040 amber and 0x5888c8 blue on rows
+ * 8–11, two black 0x24201c feet at x 1–2 and 13–14 on rows 14–15 before a 0x1c1612 recess (opaque everywhere).
+ */
+function paintLabSide(px, rng) {
+  fill(px, 0x1c1612);
+  for (let y = 0; y <= 13; y++) {
+    for (let x = 0; x < W; x++) {
+      if (y <= 2) set(px, x, y, y === 0 ? 0xece0c4 : y === 2 ? 0x8a7656 : 0xd8c8a8, delta(rng, 5));
+      else set(px, x, y, 0x5a4a3c, delta(rng, 5));
+    }
+  }
+  const jars = [0x58b878, 0xc8a040, 0x5888c8];
+  [1, 6, 11].forEach((x0, k) => {
+    for (let y = 4; y <= 11; y++) {
+      for (let x = x0; x <= x0 + 3; x++) {
+        const frame = y === 4 || y === 11 || x === x0 || x === x0 + 3;
+        if (frame) set(px, x, y, 0x3c3430, delta(rng, 3));
+        else if (y >= 8) set(px, x, y, jars[k], delta(rng, 6));
+        else set(px, x, y, 0x9cc8c8, delta(rng, 4));
+      }
+    }
+    set(px, x0 + 1, 5, 0xd0eef0);
+  });
+  for (let y = 14; y <= 15; y++) for (const x of [1, 2, 13, 14]) set(px, x, y, 0x24201c, delta(rng, 3));
+}
+
+/**
+ * 106 lab_top (§94) — the Lab's bench from above: a pale scrubbed board (0xd8c8a8 ±5 with faint 0xc4b290 grain every 4th
+ * row) holding, inside the inscribed hexagon, a round-bottomed flask (a 0xd8eef0 ring of radius 2.6 round (5, 6) holding
+ * 0x58b878 liquid, a 0xffffff glint), a stand of three test tubes (x 9–13, rows 3–8: 0xd8eef0 glass with 0xc84040,
+ * 0xc8a040 and 0x5888c8 tops of liquid), a battery jar (a 0x2c3038 square, x 4–7, rows 10–12, with a 0xd07a38 terminal)
+ * and a coil of copper wire (rings of radius 1.4 and 2.4 round (11, 11), 0xd07a38 / 0xa85a24).
+ */
+function paintLabTop(px, rng) {
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) set(px, x, y, y % 4 === 1 ? 0xc4b290 : 0xd8c8a8, delta(rng, 5));
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const d = Math.hypot(x - 5, y - 6);
+      if (d <= 2.6) set(px, x, y, d >= 1.9 ? 0xd8eef0 : 0x58b878, delta(rng, 4));
+      const c = Math.hypot(x - 11, y - 11);
+      if ((c >= 1 && c <= 1.7) || (c >= 2.1 && c <= 2.8)) set(px, x, y, (x + y) % 2 ? 0xd07a38 : 0xa85a24, delta(rng, 5));
+    }
+  }
+  set(px, 4, 5, 0xffffff);
+  [[9, 0xc84040], [11, 0xc8a040], [13, 0x5888c8]].forEach(([x, top]) => {
+    for (let y = 3; y <= 8; y++) set(px, x, y, y <= 4 ? top : 0xd8eef0, delta(rng, 3));
+  });
+  for (let x = 8; x <= 14; x++) set(px, x, 8, 0x6e4622, delta(rng, 3)); // the rack
+  for (let y = 10; y <= 12; y++) for (let x = 4; x <= 7; x++) set(px, x, y, 0x2c3038, delta(rng, 3));
+  set(px, 7, 10, 0xd07a38);
+}
+
+/**
  * 95 basket_side — a diagonal straw weave: strands run along both diagonals in 3-px bands, and the strand on top at a
  * pixel alternates with the band parity ((floor((x + y) / 3) + floor((x − y + 16) / 3)) & 1): straw 0xc8a45a or the
  * shaded 0xa8843e, ±8; where the band along the visible strand changes (its first pixel) a dark 0x6a5228 gap; the rim
@@ -3809,6 +3867,8 @@ const RECIPES = Object.freeze({
   fallen_branches: paintFallenBranches,
   fire_pit_side: paintFirePitSide,
   workbench_side: paintWorkbenchSide,
+  lab_side: paintLabSide,
+  lab_top: paintLabTop,
   workbench_top: paintWorkbenchTop,
   snare: paintSnare,
   snare_baited: paintSnareBaited,

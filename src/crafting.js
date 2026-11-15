@@ -1,7 +1,8 @@
 // Caelancraft — Making: the recipe table, the workplaces near the player, the recipe list and the craft lanes. Pure.
 // See docs/DESIGN-survival.md §7 (CONTRACTS §46 once merged).
 //
-// Making has no grid. A recipe is made at a workplace ("station"): your hands, a Work Stump, a Kiln, a Bloomery or the Forge.
+// Making has no grid. A recipe is made at a workplace ("station"): your hands, a Work Stump, a Kiln, a Bloomery, the Forge,
+// the Workbench or the Lab (§94).
 // Each station has its own LANE of jobs; the head job of every lane runs at the same time as the others, and a waiting job
 // only blocks the jobs behind it in its own lane. Inputs are taken (and tools worn) only when a job completes, so the lanes
 // never need saving or refunding: they are not saved, and a reload or a death simply drops them.
@@ -39,7 +40,7 @@ import { purposeOf } from './purpose.js';
 /**
  * @typedef {Object} Recipe
  * @property {string} id                    unique; a metal tool's recipe id is its item key
- * @property {'hand'|'stump'|'kiln'|'bloomery'|'forge'} station
+ * @property {'hand'|'stump'|'kiln'|'bloomery'|'forge'|'workbench'|'lab'} station
  * @property {(KeyInput|TagInput)[]} inputs  consumed when the job completes
  * @property {{k: string, n: number}[]} outputs   outputs[0] names the job
  * @property {ToolNeed[]} tools             each takes 1 wear per completed job ([] when none)
@@ -51,7 +52,7 @@ import { purposeOf } from './purpose.js';
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** Every station id, in lane order (the order of the Making panel's tabs after `All`). */
-export const STATION_IDS = Object.freeze(['hand', 'stump', 'kiln', 'bloomery', 'forge', 'workbench']);
+export const STATION_IDS = Object.freeze(['hand', 'stump', 'kiln', 'bloomery', 'forge', 'workbench', 'lab']);
 
 /** Station id → the block that is that workplace (`hand` has none: it is always there). */
 export const STATION_BLOCKS = Object.freeze({
@@ -60,6 +61,7 @@ export const STATION_BLOCKS = Object.freeze({
   bloomery: BLOCK.BLOOMERY,
   forge: BLOCK.FORGE,
   workbench: BLOCK.WORKBENCH, // v0.11 (CONTRACTS §67)
+  lab: BLOCK.LAB, // §94
 });
 
 /** Station id → its name in chips, hints and messages ("Kiln too far", "build a Work Stump nearby"). */
@@ -70,6 +72,7 @@ export const STATION_NAMES = Object.freeze({
   bloomery: 'Bloomery',
   forge: 'Forge',
   workbench: 'Workbench',
+  lab: 'Lab',
 });
 
 /** @type {Map<number, string>} workplace block id → station id */
@@ -89,7 +92,8 @@ export function stationOfBlock(blockId) {
  * @param {number} y
  * @param {number} r
  * @returns {{ hand: true, stump?: [number, number, number], kiln?: [number, number, number],
- *   bloomery?: [number, number, number], forge?: [number, number, number] }}
+ *   bloomery?: [number, number, number], forge?: [number, number, number], workbench?: [number, number, number],
+ *   lab?: [number, number, number] }}
  */
 export function findStations(getBlock, q, y, r) {
   /** @type {*} */
@@ -119,7 +123,8 @@ export function findStations(getBlock, q, y, r) {
 // ---------------------------------------------------------------------------------------------------------------------
 // The recipe table (§7.3): 37 at hand, 12 at the stump, 21 at the kiln, 4 at the bloomery and 15 at the forge; then the
 // v0.10 circuit parts and their materials (DESIGN-circuits §8.2): 6 more at hand, 11 at the stump, 4 at the kiln, 1 at the
-// bloomery and 3 at the forge (114 in all).
+// bloomery and 3 at the forge (114 in all). §94 moved the flint tools to the Work Stump, the simple circuit parts to the
+// Workbench and the devices to the Lab; the elementary consumables (fuse, powder, wire, filings, the keg) stay early.
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** "2 #knapstone + stick + 2 cord" → [{tag:'knapstone',n:2}, {k:'stick',n:1}, {k:'cord',n:2}]. */
@@ -158,11 +163,6 @@ const RECIPE_ROWS = [
   ['stone_hammer', 'hand', 'rock', 'stone_hammer', '', 1],
   ['stone_axe', 'hand', '2 rock', 'stone_axe', 'hammer 1', 3],
   ['wooden_shovel', 'hand', 'stick', 'wooden_shovel', 'axe 1', 2],
-  ['flint_knife', 'hand', '#knapstone + stick + cord', 'flint_knife', 'hammer 1', 3],
-  ['flint_axe', 'hand', '#knapstone + stick + cord', 'flint_axe', 'hammer 1', 4],
-  ['flint_pick', 'hand', '2 #knapstone + stick + 2 cord', 'flint_pick', 'hammer 1', 5],
-  ['flint_shovel', 'hand', '#knapstone + stick + cord', 'flint_shovel', 'hammer 1', 4],
-  ['flint_spear', 'hand', '#knapstone + 2 stick + cord', 'flint_spear', 'hammer 1', 3],
   ['flint_dart', 'hand', 'flint + stick + plant_fibre', '4 flint_dart', 'hammer 1', 2],
   ['fire_drill', 'hand', '2 stick + cord', 'fire_drill', '', 2],
   ['snare', 'hand', '2 cord + 3 stick', 'snare', '', 3], // v0.11 (CONTRACTS §69): a noose on a bent stick
@@ -208,6 +208,12 @@ const RECIPE_ROWS = [
   // §85: the first night's bed — a heap of dry grass on a few sticks
   ['grass_bed', 'hand', '8 plant_fibre + 3 stick', 'grass_bed', '', 4],
   // ---- Work Stump (12); riving a log into sticks is real work: there is no planks-to-sticks shortcut
+  // §94: flint is knapped on the stump's flat top (the stone hammer as before): the stump comes before the flint tools
+  ['flint_knife', 'stump', '#knapstone + stick + cord', 'flint_knife', 'hammer 1', 3],
+  ['flint_axe', 'stump', '#knapstone + stick + cord', 'flint_axe', 'hammer 1', 4],
+  ['flint_pick', 'stump', '2 #knapstone + stick + 2 cord', 'flint_pick', 'hammer 1', 5],
+  ['flint_shovel', 'stump', '#knapstone + stick + cord', 'flint_shovel', 'hammer 1', 4],
+  ['flint_spear', 'stump', '#knapstone + 2 stick + cord', 'flint_spear', 'hammer 1', 3],
   ['oak_planks', 'stump', 'oak_log', '3 oak_planks', 'axe 2', 3],
   ['spruce_planks', 'stump', 'spruce_log', '3 spruce_planks', 'axe 2', 3],
   ['birch_planks', 'stump', 'birch_log', '3 birch_planks', 'axe 2', 3],
@@ -225,10 +231,6 @@ const RECIPE_ROWS = [
   ['iron_filings', 'stump', 'wrought_iron', '6 iron_filings', 'hammer 4', 6],
   ['copper_wire', 'stump', 'copper_ingot', '3 copper_wire', 'hammer 3', 6], // hammered and drawn
   ['powder_keg', 'stump', '6 black_powder + 3 #planks + copper_ingot', 'powder_keg', 'axe 1, hammer 3', 8], // copper hoops
-  ['terminal_board', 'stump', '#planks + 3 copper_wire + copper_ingot', 'terminal_board', 'knife 2', 6],
-  ['voltaic_battery', 'stump', '6 copper_ingot + 6 tin_ingot + 6 plant_fibre + pot_seawater', 'voltaic_battery + clay_pot', 'hammer 3', 12],
-  ['knife_switch', 'stump', '3 rock + copper_ingot + 2 copper_wire', 'knife_switch', 'hammer 3', 6], // a slate base
-  ['push_button', 'stump', 'rock + bronze_ingot + 2 copper_wire', 'push_button', 'hammer 3', 5],
   // §85: what a homestead is built from. The well is dug (a shovel), ringed with stone and given a pot on a cord; the
   // rain barrel is staves bound with cord; the bed is a frame, a wool-stuffed mattress and a blanket on leather straps
   ['well', 'stump', '12 cobblestone + 3 cord + 2 #planks + clay_pot', 'well', 'shovel 1', 12],
@@ -269,15 +271,22 @@ const RECIPE_ROWS = [
   ['diamond_block', 'forge', '7 rough_gem', 'diamond_block', 'hammer 6', 20],
   // v0.10 circuits (§8.2): the magneto, the clock spring and the bell's gong are steel. The Collapsar Charge has no recipe:
   // nothing real makes one
-  // ---- Workbench (v0.11, CONTRACTS §67): the advanced devices, each built on the elementary parts made at the stump
-  ['relay', 'workbench', 'knife_switch + wrought_iron + 6 copper_wire', 'relay', 'hammer 4', 10],
-  ['selenium_panel', 'workbench', 'terminal_board + selenium + glass + 3 copper_wire', 'selenium_panel', '', 8],
-  ['igniter', 'workbench', 'terminal_board + carbon_filament + 2 copper_wire + fired_brick', 'igniter', '', 15], // a bridgewire
-  ['clockwork_timer', 'workbench', 'terminal_board + steel_bar + 3 bronze_ingot + glass', 'clockwork_timer', 'hammer 5', 30],
-  ['electric_bell', 'workbench', 'push_button + relay + steel_bar', 'electric_bell', 'hammer 4', 15],
-  ['blasting_machine', 'workbench', 'push_button + terminal_board + 2 steel_bar + 12 copper_wire', 'blasting_machine', 'hammer 5', 30],
-  ['spark_transmitter', 'workbench', 'push_button + relay + voltaic_battery + 12 copper_wire + 2 bronze_ingot', 'spark_transmitter', 'hammer 3', 15],
-  ['coherer_receiver', 'workbench', 'relay + terminal_board + glass + 6 iron_filings', 'coherer_receiver', 'hammer 3', 12],
+  // ---- Workbench (v0.11, CONTRACTS §67; §94): the simple circuit parts
+  ['terminal_board', 'workbench', '#planks + 3 copper_wire + copper_ingot', 'terminal_board', 'knife 2', 6],
+  ['voltaic_battery', 'workbench', '6 copper_ingot + 6 tin_ingot + 6 plant_fibre + pot_seawater', 'voltaic_battery + clay_pot', 'hammer 3', 12],
+  ['knife_switch', 'workbench', '3 rock + copper_ingot + 2 copper_wire', 'knife_switch', 'hammer 3', 6], // a slate base
+  ['push_button', 'workbench', 'rock + bronze_ingot + 2 copper_wire', 'push_button', 'hammer 3', 5],
+  // §94: the Lab — glassware, a steel frame and a battery on a bench: it needs the parts the Workbench makes
+  ['lab', 'workbench', '3 glass + 2 steel_bar + 3 bronze_ingot + 6 copper_wire + voltaic_battery + 5 #planks', 'lab', 'hammer 5', 30],
+  // ---- Lab (§94): the advanced devices, each built on the simple parts made at the Workbench
+  ['relay', 'lab', 'knife_switch + wrought_iron + 6 copper_wire', 'relay', 'hammer 4', 10],
+  ['selenium_panel', 'lab', 'terminal_board + selenium + glass + 3 copper_wire', 'selenium_panel', '', 8],
+  ['igniter', 'lab', 'terminal_board + carbon_filament + 2 copper_wire + fired_brick', 'igniter', '', 15], // a bridgewire
+  ['clockwork_timer', 'lab', 'terminal_board + steel_bar + 3 bronze_ingot + glass', 'clockwork_timer', 'hammer 5', 30],
+  ['electric_bell', 'lab', 'push_button + relay + steel_bar', 'electric_bell', 'hammer 4', 15],
+  ['blasting_machine', 'lab', 'push_button + terminal_board + 2 steel_bar + 12 copper_wire', 'blasting_machine', 'hammer 5', 30],
+  ['spark_transmitter', 'lab', 'push_button + relay + voltaic_battery + 12 copper_wire + 2 bronze_ingot', 'spark_transmitter', 'hammer 3', 15],
+  ['coherer_receiver', 'lab', 'relay + terminal_board + glass + 6 iron_filings', 'coherer_receiver', 'hammer 3', 12],
 ];
 
 /** @returns {Recipe} a checked, frozen recipe (throws on a typo, so a bad table fails at import) */
@@ -301,7 +310,7 @@ function makeRecipe([id, station, inputs, outputs, tools, seconds]) {
   return Object.freeze(rec);
 }
 
-/** Every recipe, in table order (hand, stump, kiln, bloomery, forge). @type {readonly Recipe[]} */
+/** Every recipe, in table order (hand, stump, kiln, bloomery, forge, workbench, lab). @type {readonly Recipe[]} */
 export const RECIPES = Object.freeze(RECIPE_ROWS.map(makeRecipe));
 
 /** @type {Map<string, Recipe>} */

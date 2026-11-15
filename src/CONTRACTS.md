@@ -7216,3 +7216,97 @@ wide, and leaks through a hole one brick wide.
 
 `getBrick(x, y, z)` / `setBrick(x, y, z, id)` at WORLD positions (the brick containing the point; setBrick checks
 `brickBlocker`, AIR removes).
+
+## 94. The Lab, the Work Stump's flint, the Making search and the build tree — `src/crafting.js`, `src/buildTree.js` (PURE), `src/packUI.js`, `src/blocks.js`, `src/tiles.js`, `src/survivalControl.js`, `src/pickerModel.js`, `src/harvest.js`, `src/purpose.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `src/styles.css`
+
+Amends §47, §50, §67 and DESIGN-circuits §8.2. The workplaces now read as a road: hands, Work Stump, Kiln, Bloomery, Forge,
+Workbench and a new **Lab**, and the Making panel shows the road itself.
+
+### 94.1 Recipes move
+
+- **The flint tools are knapped at the Work Stump**: flint_knife, flint_axe, flint_pick, flint_shovel and flint_spear are
+  `stump` recipes (inputs, tools and times unchanged). The stump needs no flint (a log and a stone axe), so it now comes
+  before them. The darts (flint_dart, fletched_dart) stay at hand.
+- **The simple circuit parts move to the Workbench**: terminal_board, voltaic_battery, knife_switch, push_button
+  (unchanged otherwise). The consumables stay early: powder_fuse, torch and the three braided wires at hand; copper_wire,
+  black_powder, iron_filings and the powder_keg at the stump; the filament_lamp at the bloomery.
+- **The devices move to the Lab**: relay, selenium_panel, igniter, clockwork_timer, electric_bell, blasting_machine,
+  spark_transmitter, coherer_receiver (unchanged otherwise).
+- **The Lab** is made at the Workbench: 3 glass + 2 steel_bar + 3 bronze_ingot + 6 copper_wire + voltaic_battery + 5
+  #planks, hammer 5, 30 s.
+- 124 recipes: hand 43, stump 24, kiln 24, bloomery 5, forge 15, workbench 5, lab 8. `STATION_IDS` (… 'workbench',
+  **'lab'**), `STATION_BLOCKS.lab` LAB, `STATION_NAMES.lab` "Lab".
+- The handbook follows: the first-day kit (§7.5) now includes the Work Stump (9 rock, 4 flint, 11 fibre, 8 sticks and a log,
+  32 s of making), its bullets shape the stump before knapping, the workplaces chapter has a Lab section and table, and
+  `ELEMENTARY_PARTS` are the Workbench's.
+
+### 94.2 The Lab block
+
+**LAB 177** (`lab`, "Lab", appended; **BLOCK_COUNT 178**): a solid wood-sounding prism, tiles **105 `lab_side`** (a pale
+scrubbed bench top over a dark cabinet with three glass-fronted doors, jars of green, amber and blue behind them) and
+**106 `lab_top`** (a scrubbed board with a round-bottomed flask, a rack of three test tubes, a battery jar and a coil of
+copper wire), bottom OAK_PLANKS (TILE_IDS 197). A station everywhere the others are: `isStation`, the crafting tables,
+survivalControl `STATION_OF_BLOCK` / `STATION_TABS` and packUI `STATION_TABS` (tab "Lab"), the picker's Workplaces family
+and PICKER_ORDER (after the Workbench; 120 entries), harvest (axe tier 1, 3.0 s, drops itself), purpose ("Workplace: the
+advanced electrical devices."; the Workbench's line now names its parts and the Lab).
+
+### 94.3 The Making search
+
+A search box in the Making heading (`.making-search`). The list shows the recipes of the tab whose search text holds every
+word typed, in any order and case: `recipeSearchText(r)` — the output's name and key, every input's label and name (a
+tag's members too), the tools' labels, the workplace's name and the purpose line; `searchRecipes(recipes, query)` (an empty
+query keeps all). Typing into an empty box sends the tab back to All (`onTab('all')`); a tab clicked while searching
+narrows the result. Keys typed into the box never reach the screen (E is a letter there); Esc empties a non-empty box,
+and on an empty one closes the pack as ever. With nothing found: "Nothing here matches “…”". The search text lives in the
+screen, not the view; `setQuery(text)` sets it.
+
+### 94.4 The build tree (`buildTree.js`, PURE)
+
+`buildTreeModel()` → `{ nodes, byId, edges }`: one COLUMN per workplace in `TREE_STATIONS` order (stump, kiln, bloomery,
+forge, workbench, lab), headed by the workplace (lane 'place', id `@station`), and two LANES under it (`TREE_LANES`):
+**gather** (raw materials) and **build** (what is made on the way). Starting from each workplace's own recipe, every input
+and tool is followed down (a tool need becomes `toolItemFor(type, tier)`: the lowest tool of that type good enough), and
+each item is placed in the column of the FIRST workplace that needs it, so a column is exactly what it takes to set up its
+workplace; an item is never placed twice (later uses are edges back). **A workplace is never an edge or a level**: where a
+thing is made is its `station` (shown as colour, §94.5), and a workplace's own recipe is its `needs` (`[{ id, n }]`, n 0
+for a tool) — no edge touches an `@station` node.
+
+- A **raw** item has no recipe (`makerOf(k)`: the first recipe making it), or lies about to be picked up with R (sticks,
+  rocks: gathered though the stump can split sticks). `gatherOf(k)` says how: "picked up" (PICKABLE), "by hand" or "with
+  a ‹tool›" (the easiest block that breaks into it, never a made block giving itself back), "from animals" (MOB_DROPS),
+  "fill a Clay Pot at the sea" (the pot of seawater; the pot is its tool); the gathering tool is a node with an edge to it
+  (a log wants an axe, coal a flint pick, tin ore a copper pick, iron ore a bronze pick).
+- A member of a raw tag stands for the tag (Oak Log → "Any Log"; the log, sand and wool tags); a tag whose members are all
+  made (Any Planks) is built by its first member's recipe. What a campfire makes (the salt crust boiled out of seawater,
+  cooking.FIRE_TRANSFORMS) is built "on a campfire", from its pot and a campfire.
+- A node: `{ id, lane, column, label, icon, recipe, station, how, tool, depth, unlocks, needs }`; a workplace's `unlocks`
+  are the outputs of its recipes that are not in the tree.
+- `treeStates(model, facts)` → per node 'have' (carried; a tool of that type at that tier or better; a tag's member; a
+  workplace near or carried), 'ready' (its recipe could start now), 'gather' (raw, not carried) or 'locked'.
+  `columnProgress` → per column the nodes had, of how many, and whether its workplace is there.
+- `layoutTree(model)` → node centres, columns (side by side, at most `TREE_MAX_ROWS` 3 rows a lane and 2–5 nodes across)
+  and lanes (bands across the whole tree under the column heads, `TREE_HEAD_H` 150 tall, each lane as tall as its fullest
+  column); a workplace sits at its column's centre, `TREE_PLACE_Y` 40 down its head. The height stays within 640 px.
+
+### 94.5 The build tree on screen (`packUI.js`)
+
+"Build tree" in the Making heading opens it over the pack screen (`.build-tree`, built the first time): a heading, a
+legend, and a scrolling canvas with the lanes named on the left.
+
+- **Colour is the workplace.** Each workplace has a colour (`ws-<station>`: Work Stump wood brown, Kiln clay orange,
+  Bloomery ember red, Forge steel blue, Workbench patina teal, Lab violet; by hand a stone tan; gathered things a
+  neutral grey). A node's hex is FILLED with the colour of where it is made; a link takes the colour of what it leads
+  into; each column is tinted with its own workplace's colour, its head (a banner) more strongly. The legend names the
+  colours.
+- **The ring is the state**: the outer hex round the fill is green with a ✓ after the name (have it), gold and pulsing
+  (can make now), blue (to gather), or dark with the node dimmed (not yet).
+- **A column's head** is its workplace: its hex in its own colour, its name, "built by hand" / "built at the Workbench",
+  a strip of what it is built from (icons, "×n", a tool unnumbered) and "unlocks" with up to 6 icons and "+N"; in its
+  corner "done / total" of the column's nodes, "set up ✓" once the workplace is there.
+- Links inside a column are always drawn, a link between columns only while one of its ends is under the mouse. A link
+  from something had to something not yet had is bold (the next steps); between two things had, faint. The mouse over a
+  node lights its links and their other ends. A click on a node closes the tree and searches the list for it
+(a workplace by its name, anything else by its item's name). Esc goes back from the tree to Making; E closes the pack.
+The states come from the view: `treeFactsFromView(view)` (counts over the pack, the worn and the cursor; tools by type and
+tier; `view.ready` — survivalControl.buildPackView's ids of every recipe, whatever the tab, that could start now; the near
+workplaces). `?ui=tree` (with `?autoplay` in Survival) opens the pack with the tree over it, for screenshots.

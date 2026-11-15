@@ -66,7 +66,7 @@ describe('the first day (§7.5)', () => {
   let gatherSeconds = 0;
 
   // The start: 20 loose stones, a bank of GRAVEL_TOPS wild gravel tops (§76: digging gravel is where flint comes from) and
-  // 12 tussocks around (0, 0), and an oak canopy of 8 leaves overhead.
+  // 12 tussocks around (0, 0), and an oak canopy of 8 leaves overhead on a trunk (§94: its log makes the Work Stump).
   const GRAVEL_TOPS = 60;
   let gravelDug = 0;
   beforeAll(() => {
@@ -74,6 +74,7 @@ describe('the first day (§7.5)', () => {
     for (let i = 0; i < GRAVEL_TOPS; i++) world.put(i, GROUND, -4, B.GRAVEL);
     for (let i = 0; i < 12; i++) world.put(i - 6, GROUND + 1, 7, B.TUSSOCK);
     for (let i = 0; i < 8; i++) world.put(i - 4, GROUND + 5, -7, B.OAK_LEAVES);
+    world.put(0, GROUND + 1, -7, B.OAK_LOG);
     survival.setMode('survival');
   });
 
@@ -110,9 +111,12 @@ describe('the first day (§7.5)', () => {
     throw new Error('the dig never finished');
   }
 
-  /** Queue `times` of a hand recipe and run the hand lane for exactly its time. @returns {string[]} the jobs done, in order */
+  /** §94: the workplaces near (the Work Stump once it is set down). */
+  const near = /** @type {*} */ ({ hand: true });
+
+  /** Queue `times` of a recipe and run its lane for exactly its time. @returns {string[]} the jobs done, in order */
   function make(id, times = 1) {
-    const res = queue.enqueue(id, times, pack, { hand: true });
+    const res = queue.enqueue(id, times, pack, near);
     expect(res.ok, res.message).toBe(true);
     expect(res.queued).toBe(times);
     const ev = queue.step(getRecipe(id).seconds * times, pack, null, [0, GROUND + 1, 0]);
@@ -158,22 +162,31 @@ describe('the first day (§7.5)', () => {
     expect(pack.count('oak_leaves')).toBe(8);
     pack.take('oak_leaves', 8);
     pack.take('acorns', pack.count('acorns'));
+    // §94: the trunk gives the log the Work Stump is shaped from
+    digAt(0, GROUND + 1, -7, chopper);
+    expect(pack.count('oak_log')).toBe(1);
   });
 
-  it('9 rock, 4 knapstone, 11 fibre and 8 sticks make the whole kit in 28 s of hand jobs, with nothing left over', () => {
+  it('9 rock, 4 knapstone, 11 fibre, 8 sticks and a log make the whole kit in 32 s, the flint at the Work Stump, with nothing left over', () => {
     made.push(...make('cord', 5));
+    expect(queue.enqueue('flint_knife', 1, pack, near).ok).toBe(false); // §94: flint is knapped at the stump
+    made.push(...make('work_stump'));
+    // set it down beside the player
+    pack.take('work_stump', 1);
+    world.put(1, GROUND + 1, 0, B.WORK_STUMP);
+    near.stump = [1, GROUND + 1, 0];
     made.push(...make('flint_knife'));
     made.push(...make('flint_axe'));
     made.push(...make('flint_pick'));
     made.push(...make('fire_drill'));
     made.push(...make('campfire'));
     expect(made).toEqual([
-      'stone_hammer', 'stone_axe', 'cord', 'cord', 'cord', 'cord', 'cord', 'flint_knife', 'flint_axe', 'flint_pick',
+      'stone_hammer', 'stone_axe', 'cord', 'cord', 'cord', 'cord', 'cord', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick',
       'fire_drill', 'campfire',
     ]);
-    const handSeconds = made.reduce((s, id) => s + getRecipe(id).seconds, 0);
-    expect(handSeconds).toBe(28);
-    for (const k of ['rock', 'flint', 'obsidian_shard', 'plant_fibre', 'cord', 'stick', 'birch_bark']) expect(pack.count(k), k).toBe(0);
+    const makeSeconds = made.reduce((s, id) => s + getRecipe(id).seconds, 0);
+    expect(makeSeconds).toBe(32);
+    for (const k of ['rock', 'flint', 'obsidian_shard', 'plant_fibre', 'cord', 'stick', 'birch_bark', 'oak_log']) expect(pack.count(k), k).toBe(0);
     const kit = pack.slots.filter(Boolean).map((s) => s.k).sort();
     expect(kit).toEqual(['campfire', 'fire_drill', 'flint_axe', 'flint_knife', 'flint_pick', 'stone_hammer', 'stone_axe'].sort());
     // The tools that were needed took their wear: the stone hammer struck 4 times (stone axe, knife, axe, pick).

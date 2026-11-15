@@ -195,6 +195,7 @@ set([B.OAK_PLANKS, B.SPRUCE_PLANKS, B.BIRCH_PLANKS], 2.0, 'axe', 1, SELF_DROPS);
 set([B.BOOKSHELF], 1.5, 'axe', 1, SELF_DROPS);
 set([B.WORK_STUMP], 2.5, 'axe', 1, SELF_DROPS);
 set([B.WORKBENCH], 3.0, 'axe', 1, SELF_DROPS); // v0.11 (CONTRACTS §67)
+set([B.LAB], 3.0, 'axe', 1, SELF_DROPS); // §94
 set([B.SNARE, B.SNARE_BAITED, B.SNARE_SPRUNG], 0.3, null, 0, SELF_DROPS); // §69: any state gives the Snare back
 set([B.WICKER_BASKET], 0.8, 'axe', 0, SELF_DROPS); // + its contents (containers.js)
 set([B.POWDER_KEG], 2.0, 'axe', 1, SELF_DROPS); // the BLAST_BARREL row, under its new name

@@ -122,17 +122,19 @@ const isBlockItem = (k) => ITEMS[k].kind === 'block';
 // ---------------------------------------------------------------------------------------------
 
 describe('the recipe table (§7.3)', () => {
-  it('has 123 recipes with unique ids: 48 at hand, 23 at the stump, 24 at the kiln, 5 at the bloomery, 15 at the forge and 8 at the workbench', () => {
+  it('has 124 recipes with unique ids: 43 at hand, 24 at the stump, 24 at the kiln, 5 at the bloomery, 15 at the forge, 5 at the workbench and 8 at the lab', () => {
     // §7.3's 89, plus DESIGN-circuits §8.2's 25 (6 at hand, 11 at the stump, 4 at the kiln, 1 at the bloomery, 3 at the forge)
     // + the flint dart (CONTRACTS §60) and the Workbench (§67), whose 8 advanced devices moved off the stump (3), the kiln
     // (1), the forge (3) and the hands (1)
     // + §85: the Grass Bed (hand), the Well, the Rain Barrel and the Bed (stump)
-    expect(RECIPES).toHaveLength(123); // + the Snare (§69); + Healwort tea (§76 flora); + the Fletched Dart (§76 fauna)
+    // §94: the five flint tools moved to the stump, the four simple circuit parts to the Workbench, its 8 devices to the
+    // Lab, and the Lab itself is made at the Workbench
+    expect(RECIPES).toHaveLength(124); // + the Snare (§69); + Healwort tea (§76 flora); + the Fletched Dart (§76 fauna); + the Lab (§94)
     const ids = RECIPES.map((r) => r.id);
-    expect(new Set(ids).size).toBe(123);
+    expect(new Set(ids).size).toBe(124);
     const by = {};
     for (const r of RECIPES) by[r.station] = (by[r.station] ?? 0) + 1;
-    expect(by).toEqual({ hand: 48, stump: 23, kiln: 24, bloomery: 5, forge: 15, workbench: 8 });
+    expect(by).toEqual({ hand: 43, stump: 24, kiln: 24, bloomery: 5, forge: 15, workbench: 5, lab: 8 });
     // listed station by station, in lane order
     const order = RECIPES.map((r) => STATION_IDS.indexOf(r.station));
     expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -168,7 +170,7 @@ describe('the recipe table (§7.3)', () => {
     expect(blockRecipes.map((r) => r.id).sort()).toEqual([
       'bloomery', 'bricks', 'campfire', 'clay', 'coal_block', 'cobblestone', 'copper_block', 'diamond_block', 'forge',
       'glass', 'remelt_glass', 'gold_block', 'hay_bale', 'ice', 'iron_block', 'kiln', 'birch_planks', 'oak_planks', 'sleeping_hide', 'snow_block',
-      'spruce_planks', 'stone_bricks', 'wicker_basket', 'work_stump', 'workbench', 'snare',
+      'spruce_planks', 'stone_bricks', 'wicker_basket', 'work_stump', 'workbench', 'lab', 'snare',
       // DESIGN-circuits §8.2: every circuit part but the Collapsar Charge (Creative only), and the keg
       'powder_fuse', 'torch', 'white_wire', 'brown_wire', 'earth_wire', 'selenium_panel', 'copper_wire', 'powder_keg',
       'terminal_board', 'voltaic_battery', 'knife_switch', 'push_button', 'relay', 'spark_transmitter', 'coherer_receiver', 'igniter',
@@ -190,7 +192,7 @@ describe('the recipe table (§7.3)', () => {
     };
     expect(row('cord')).toEqual({ station: 'hand', inputs: [{ k: 'plant_fibre', n: 2 }], outputs: [{ k: 'cord', n: 1 }], tools: [], seconds: 1 });
     expect(row('flint_pick')).toEqual({
-      station: 'hand', inputs: [{ tag: 'knapstone', n: 2 }, { k: 'stick', n: 1 }, { k: 'cord', n: 2 }],
+      station: 'stump', inputs: [{ tag: 'knapstone', n: 2 }, { k: 'stick', n: 1 }, { k: 'cord', n: 2 }],
       outputs: [{ k: 'flint_pick', n: 1 }], tools: [{ type: 'hammer', tier: 1 }], seconds: 5,
     });
     expect(row('campfire')).toEqual({
@@ -252,9 +254,10 @@ describe('the recipe table (§7.3)', () => {
     for (const bad of ['nope', '', '__proto__', 'constructor', 'toString', null, undefined, 42]) expect(getRecipe(/** @type {any} */ (bad))).toBeNull();
     expect(recipeName(getRecipe('copper_ingot'))).toBe('Copper Ingot');
     expect(recipeName(getRecipe('pot_snow_ice'))).toBe('Pot of Snow');
-    expect(STATION_IDS).toEqual(['hand', 'stump', 'kiln', 'bloomery', 'forge', 'workbench']);
-    expect(STATION_BLOCKS).toEqual({ stump: BLOCK.WORK_STUMP, kiln: BLOCK.KILN, bloomery: BLOCK.BLOOMERY, forge: BLOCK.FORGE, workbench: BLOCK.WORKBENCH });
-    expect(STATION_NAMES).toEqual({ hand: 'Hands', stump: 'Work Stump', kiln: 'Kiln', bloomery: 'Bloomery', forge: 'Forge', workbench: 'Workbench' });
+    expect(STATION_IDS).toEqual(['hand', 'stump', 'kiln', 'bloomery', 'forge', 'workbench', 'lab']);
+    expect(STATION_BLOCKS).toEqual({ stump: BLOCK.WORK_STUMP, kiln: BLOCK.KILN, bloomery: BLOCK.BLOOMERY, forge: BLOCK.FORGE, workbench: BLOCK.WORKBENCH, lab: BLOCK.LAB });
+    expect(STATION_NAMES).toEqual({ hand: 'Hands', stump: 'Work Stump', kiln: 'Kiln', bloomery: 'Bloomery', forge: 'Forge', workbench: 'Workbench', lab: 'Lab' });
+    expect(stationOfBlock(BLOCK.LAB)).toBe('lab');
     expect(stationOfBlock(BLOCK.KILN)).toBe('kiln');
     expect(stationOfBlock(BLOCK.WORK_STUMP)).toBe('stump');
     expect(stationOfBlock(BLOCK.STONE)).toBeNull();
@@ -276,14 +279,23 @@ describe('the recipe table (§7.3)', () => {
 });
 
 describe('the first day (§7.5): the starting kit', () => {
-  it('9 rock, 4 knapstone, 11 plant fibre and 8 sticks make the whole kit in 28 s of hand jobs, with nothing left over', () => {
-    const pack = new FakePack({ rock: 9, flint: 4, plant_fibre: 11, stick: 8 });
+  it('9 rock, 4 knapstone, 11 plant fibre, 8 sticks and a log make the whole kit in 32 s, the flint tools at the Work Stump', () => {
+    const pack = new FakePack({ rock: 9, flint: 4, plant_fibre: 11, stick: 8, oak_log: 1 });
     const q = new CraftQueue();
-    const order = ['stone_hammer', 'stone_axe', 'cord', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire'];
+    const order = ['stone_hammer', 'stone_axe', 'cord', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire'];
     let seconds = 0;
+    /** @type {*} the stump is set down once it is made (§94: the flint tools are knapped on it) */
+    const near = { hand: true };
+    // without the stump, no flint tool
+    expect(q.enqueue('flint_knife', 1, new FakePack({ flint: 1, stick: 1, cord: 1 }, ['stone_hammer']), near).ok).toBe(false);
     for (const id of order) {
       const times = id === 'cord' ? 5 : 1;
-      const res = q.enqueue(id, times, pack, { hand: true });
+      if (id === 'flint_knife') {
+        expect(pack.snapshot().work_stump).toBe(1);
+        pack.take('work_stump', 1);
+        near.stump = STUMP_AT;
+      }
+      const res = q.enqueue(id, times, pack, near);
       expect(res.ok, `${id}: ${res.message}`).toBe(true);
       expect(res.queued).toBe(times);
       seconds += getRecipe(id).seconds * times;
@@ -292,10 +304,10 @@ describe('the first day (§7.5): the starting kit', () => {
       expect(ev.failed).toEqual([]);
       expect(q.size).toBe(0);
     }
-    expect(seconds).toBe(28);
+    expect(seconds).toBe(32);
     expect(pack.snapshot()).toEqual({ campfire: 1 });
     expect(pack.tools.map((t) => t.k).sort()).toEqual(['fire_drill', 'flint_axe', 'flint_knife', 'flint_pick', 'stone_axe', 'stone_hammer']);
-    // the stone hammer knapped 4 things (stone axe, knife, axe, pick); the drill lit one fire
+    // the stone hammer knapped 4 things (stone axe, knife, axe, pick); the stone axe shaped the stump; the drill lit one fire
     expect(pack.tools.find((t) => t.k === 'stone_hammer').d).toBe(60 - 4);
     expect(pack.tools.find((t) => t.k === 'fire_drill').d).toBe(8 - 1);
   });
@@ -335,7 +347,7 @@ describe('listRecipes', () => {
   it('sorts craftable first, then by missing input units, then in recipe order', () => {
     const pack = new FakePack({ plant_fibre: 2, rock: 1 });
     const list = listRecipes(pack, { hand: true });
-    expect(list).toHaveLength(123);
+    expect(list).toHaveLength(124);
     expect(list.slice(0, 2).map((r) => r.id)).toEqual(['cord', 'stone_hammer']);
     expect(list.filter((r) => r.craftable).map((r) => r.id)).toEqual(['cord', 'stone_hammer']);
     for (let i = 1; i < list.length; i++) {
@@ -383,7 +395,7 @@ describe('listRecipes', () => {
   it('filters by station, and counts what queued jobs reserve as gone', () => {
     const pack = new FakePack({ plant_fibre: 4 });
     expect(listRecipes(pack, { hand: true }, { station: 'kiln' }).map((r) => r.station)).toEqual(new Array(24).fill('kiln'));
-    expect(listRecipes(pack, { hand: true }, { station: 'all' })).toHaveLength(123);
+    expect(listRecipes(pack, { hand: true }, { station: 'all' })).toHaveLength(124);
     const q = new CraftQueue();
     expect(q.enqueue('fibre_bandage', 1, pack, { hand: true }).ok).toBe(true); // reserves 3 of the 4 fibre
     const cord = listRecipes(pack, { hand: true }, { queue: q }).find((r) => r.id === 'cord');
@@ -772,21 +784,39 @@ describe('play-test fixes (progression lens)', () => {
   });
 });
 
-describe('v0.11 the Workbench: advanced circuits come later (CONTRACTS §67)', () => {
+describe('the Workbench and the Lab: circuits come later (CONTRACTS §67, §94)', () => {
   const ADVANCED = ['relay', 'selenium_panel', 'igniter', 'clockwork_timer', 'electric_bell', 'blasting_machine', 'spark_transmitter', 'coherer_receiver'];
   const ELEMENTARY = ['knife_switch', 'push_button', 'terminal_board', 'voltaic_battery'];
-  const CONSUMABLES = { powder_fuse: 'hand', torch: 'hand', white_wire: 'hand', copper_wire: 'stump', black_powder: 'stump', powder_keg: 'stump' };
-  it('every advanced device is made only at the Workbench, and from at least one elementary part', () => {
+  const CONSUMABLES = {
+    powder_fuse: 'hand', torch: 'hand', white_wire: 'hand', brown_wire: 'hand', earth_wire: 'hand', copper_wire: 'stump',
+    black_powder: 'stump', iron_filings: 'stump', powder_keg: 'stump',
+  };
+  it('every advanced device is made only at the Lab, and from at least one elementary part', () => {
     for (const id of ADVANCED) {
       const rec = getRecipe(id);
-      expect(rec.station, id).toBe('workbench');
+      expect(rec.station, id).toBe('lab');
       expect(rec.inputs.some((i) => 'k' in i && [...ELEMENTARY, 'relay'].includes(i.k)), id).toBe(true);
     }
-    expect(RECIPES.filter((r) => r.station === 'workbench').map((r) => r.id).sort()).toEqual([...ADVANCED].sort());
+    expect(RECIPES.filter((r) => r.station === 'lab').map((r) => r.id).sort()).toEqual([...ADVANCED].sort());
   });
-  it('the elementary parts and the consumables stay where they were', () => {
-    for (const id of ELEMENTARY) expect(getRecipe(id).station, id).toBe('stump');
+  it('the elementary parts are made at the Workbench, with the Lab; the consumables stay at hand and at the stump', () => {
+    for (const id of ELEMENTARY) expect(getRecipe(id).station, id).toBe('workbench');
+    expect(RECIPES.filter((r) => r.station === 'workbench').map((r) => r.id).sort()).toEqual([...ELEMENTARY, 'lab'].sort());
     for (const [id, station] of Object.entries(CONSUMABLES)) expect(getRecipe(id).station, id).toBe(station);
+  });
+  it('the flint tools are knapped at the Work Stump (§94); the darts stay at hand', () => {
+    for (const id of ['flint_knife', 'flint_axe', 'flint_pick', 'flint_shovel', 'flint_spear']) expect(getRecipe(id).station, id).toBe('stump');
+    for (const id of ['flint_dart', 'fletched_dart']) expect(getRecipe(id).station, id).toBe('hand');
+    // the stump needs no flint: a log and the stone axe
+    expect(getRecipe('work_stump')).toMatchObject({ station: 'hand', inputs: [{ tag: 'log', n: 1 }], tools: [{ type: 'axe', tier: 1 }] });
+  });
+  it('the Lab is built at the Workbench on a battery the Workbench makes, with an iron hammer', () => {
+    const rec = getRecipe('lab');
+    expect(rec.station).toBe('workbench');
+    const keys = rec.inputs.filter((i) => 'k' in i).map((i) => i.k);
+    for (const k of ['glass', 'steel_bar', 'bronze_ingot', 'copper_wire', 'voltaic_battery']) expect(keys).toContain(k);
+    expect(rec.tools).toEqual([{ type: 'hammer', tier: 5 }]);
+    expect(STATION_BLOCKS.lab).toBe(BLOCK.LAB);
   });
   it('the Workbench itself takes hard-won parts: steel, glass, drawn copper wire and tin, and an iron hammer', () => {
     const rec = getRecipe('workbench');

@@ -65,9 +65,9 @@ const all = (id) => Array(7).fill(id);
 describe('standing water has three depths: blocks 159–162', () => {
   it('four blocks after the plants: low and shallow, fresh and tainted; BLOCK_COUNT 163 then (173 since §85, 174 since §89)', () => {
     expect([B.WATER_LOW, B.WATER_SHALLOW, B.TAINTED_WATER_LOW, B.TAINTED_WATER_SHALLOW]).toEqual([159, 160, 161, 162]);
-    expect(BLOCK_COUNT).toBe(177); // §93: + the bricks' shadows 174–176; // §85 appended the ten homestead blocks after them, §89 the aquifer
+    expect(BLOCK_COUNT).toBe(178); // §94: + the Lab 177; §93: + the bricks' shadows 174–176; // §85 appended the ten homestead blocks after them, §89 the aquifer
     expect(B.TAINTED_WATER_SHALLOW).toBe(162);
-    expect(BLOCKS).toHaveLength(177);
+    expect(BLOCKS).toHaveLength(178);
     expect(LOWER.map((id) => BLOCKS[id].name)).toEqual(['water_low', 'water_shallow', 'tainted_water_low', 'tainted_water_shallow']);
     expect(LOWER.map((id) => BLOCKS[id].displayName)).toEqual(['Low Water', 'Shallow Water', 'Low Tainted Water', 'Shallow Tainted Water']);
   });

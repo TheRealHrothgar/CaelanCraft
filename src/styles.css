@@ -366,6 +366,80 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 .making-tab.active{background:#e8b04a;color:#1c1a24}
 .making-tab.far{opacity:.5}
 .recipe-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:6px;max-height:290px;overflow-y:auto;padding-right:4px}
+/* §94: the Making search box and the build tree's button, in the Making heading's line */
+.making-head{gap:8px;padding-right:44px}
+.making-search{flex:1 1 120px;min-width:90px;padding:2px 8px;border:1px solid #3a3446;background:#24212e;color:#f1e6cf;font:12px/16px monospace;letter-spacing:0;text-transform:none}
+.making-search:focus{outline:none;border-color:#e8b04a}
+.making-search::placeholder{color:#8a8298}
+/* §94: the build tree, over the pack screen: a column per workplace (tinted in its colour, headed by a banner with the
+   workplace, what it is built from and what it unlocks), gather and build lanes, hex nodes filled with the colour of where
+   they are made and ringed with their state, links in the colour of what they lead into */
+.build-tree{position:fixed;inset:3vh 2vw;z-index:5;display:flex;flex-direction:column;gap:6px;padding:10px 14px;background:rgba(22,20,30,.985);border:2px solid #e8b04a;box-shadow:0 0 0 2px #000,0 8px 24px rgba(0,0,0,.5);box-sizing:border-box;color:#f1e6cf}
+.tree-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px}
+.tree-head .pack-heading{margin:0}
+.tree-sub{flex:1 1 300px;color:#b8aec8;font:12px/15px monospace}
+.tree-close{margin-left:auto}
+.tree-legend{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.tree-legend-gap{width:14px}
+.tree-key{padding:1px 8px;font:bold 11px/15px monospace;color:#1c1a24;background:var(--ws)}
+.tree-ring{padding:0 8px;font:bold 11px/13px monospace;color:#f1e6cf;border:2px solid #4a4458}
+.tree-ring.tree-have{border-color:#7cc062}
+.tree-ring.tree-ready{border-color:#ffd884;box-shadow:0 0 6px #ffd884}
+.tree-ring.tree-gather{border-color:#6ab0c8}
+.tree-ring.tree-locked{opacity:.5}
+/* the workplaces' colours (and the raw things', and by hand) */
+.ws-gather{--ws:#8a8170}
+.ws-hand{--ws:#a2967f}
+.ws-stump{--ws:#b07a40}
+.ws-kiln{--ws:#e07a3a}
+.ws-bloomery{--ws:#d0504c}
+.ws-forge{--ws:#6c94c8}
+.ws-workbench{--ws:#3eb0a0}
+.ws-lab{--ws:#a77ce0}
+.tree-scroll{flex:1 1 auto;min-height:0;overflow:auto;border:1px solid #3a3446;background:#1a1822}
+.tree-canvas{position:relative}
+.tree-col{position:absolute;top:0;bottom:0;background:color-mix(in srgb,var(--ws) 7%,transparent);border-left:1px solid color-mix(in srgb,var(--ws) 35%,transparent)}
+.tree-banner{background:color-mix(in srgb,var(--ws) 20%,transparent);border-bottom:2px solid color-mix(in srgb,var(--ws) 70%,transparent)}
+.tree-col-head{position:absolute;top:6px;width:60px;text-align:right}
+.tree-col-count{color:#b8aec8;font:bold 11px monospace}
+.tree-col-head.built .tree-col-count{color:#7cc062}
+.tree-lane{position:absolute;left:0;right:0;border-top:1px dashed #3a3446}
+.tree-lane-name{position:absolute;left:8px;top:8px;width:76px;color:#e8b04a;font:bold 12px/15px monospace;letter-spacing:.06em;text-transform:uppercase}
+.tree-lane-name small{display:block;color:#8a8298;font:10px/12px monospace;letter-spacing:0;text-transform:none}
+.tree-edges{position:absolute;left:0;top:0;pointer-events:none}
+.tree-edge{fill:none;stroke:var(--ws);stroke-width:1.5;opacity:.35}
+.tree-edge.done{opacity:.2}
+.tree-edge.live{stroke-width:2.5;opacity:.95}
+.tree-edge.far{opacity:0}
+.tree-edge.hot{stroke-width:3;opacity:1}
+.tree-node{position:absolute;width:104px;transform:translate(-50%,-27px);display:flex;flex-direction:column;align-items:center;cursor:pointer;text-align:center}
+.tree-node-place{width:200px;transform:translate(-50%,-25px)}
+.tree-hex{position:relative;width:46px;height:40px;background:#4a4458;clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%);transition:transform .12s}
+.tree-fill{position:absolute;inset:4px 4px;display:flex;align-items:center;justify-content:center;background:var(--ws);clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)}
+.tree-fill canvas{display:block;width:24px;height:24px;image-rendering:pixelated}
+.tree-node-place .tree-hex{width:58px;height:50px}
+.tree-node-place .tree-fill canvas{width:32px;height:32px}
+.tree-label{margin-top:2px;color:#f1e6cf;font:bold 11px/13px monospace;text-shadow:1px 1px 0 #000}
+.tree-node-place .tree-label{font-size:13px;line-height:15px}
+.tree-how{color:#8a8298;font:10px/12px monospace}
+.tree-node:hover .tree-hex,.tree-node.near .tree-hex{transform:scale(1.12)}
+.tree-node[data-state="have"] .tree-hex{background:#7cc062}
+.tree-node[data-state="have"] .tree-label::after{content:" ✓";color:#7cc062}
+.tree-node[data-state="ready"] .tree-hex{background:#ffd884;animation:tree-pulse 1.4s ease-in-out infinite}
+.tree-node[data-state="ready"] .tree-how{color:#ffd884}
+.tree-node[data-state="gather"] .tree-hex{background:#6ab0c8}
+.tree-node[data-state="gather"] .tree-how{color:#6ab0c8}
+.tree-node[data-state="locked"]{opacity:.45}
+.tree-node[data-state="locked"]:hover,.tree-node[data-state="locked"].near{opacity:.9}
+@keyframes tree-pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.3)}}
+.tree-needs,.tree-unlocks{display:flex;flex-wrap:nowrap;justify-content:center;align-items:center;gap:2px;max-width:200px;margin-top:3px}
+.tree-mini{position:relative;display:inline-flex;align-items:center;gap:1px;padding:1px 2px;background:color-mix(in srgb,var(--ws) 55%,#1a1822)}
+.tree-mini canvas{width:16px;height:16px;image-rendering:pixelated}
+.tree-mini b{color:#fff;font:bold 9px/10px monospace;text-shadow:1px 1px 0 #000}
+.tree-unlocks .tree-mini{background:#24212e}
+.tree-unlock-word{color:#8a8298;font:10px/16px monospace;margin-right:2px}
+.tree-more{color:#8a8298;font:10px/16px monospace}
+
 .recipe-empty{color:#8a8298;font:12px monospace}
 .recipe-card{display:flex;align-items:center;gap:8px;padding:3px 6px;background:#24212e;border:1px solid #3a3446}
 .recipe-card.craftable{border-color:#e8b04a}

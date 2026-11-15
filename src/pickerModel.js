@@ -82,7 +82,7 @@ export const PICKER_SECTIONS = Object.freeze([
   sec('glass', 'Glass & Light', 'glass', ['glass', 'glowstone']),
   sec('camp', 'Camp & Crafts', 'campfire', [
     'campfire',
-    fam('workplaces', 'Workplaces', ['work_stump', 'kiln', 'bloomery', 'forge', 'workbench'], 'workplaces'),
+    fam('workplaces', 'Workplaces', ['work_stump', 'kiln', 'bloomery', 'forge', 'workbench', 'lab'], 'workplaces'),
     'wicker_basket', 'sleeping_hide', 'snare',
     // §85: a place to stay — the two beds, the well, the rain barrel
     'grass_bed', 'bed', 'well', 'rain_barrel',

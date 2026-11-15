@@ -61,6 +61,7 @@ const TABLE = [
   [[B.BOOKSHELF], 1.5, 'axe', 1],
   [[B.WORK_STUMP], 2.5, 'axe', 1],
   [[B.WORKBENCH], 3.0, 'axe', 1], // v0.11 (CONTRACTS §67)
+  [[B.LAB], 3.0, 'axe', 1], // §94
   [[B.SNARE, B.SNARE_BAITED, B.SNARE_SPRUNG], 0.3, null, 0], // §69
   [[B.WICKER_BASKET], 0.8, 'axe', 0],
   [[B.POWDER_KEG], 2.0, 'axe', 1],

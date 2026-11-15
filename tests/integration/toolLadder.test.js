@@ -116,6 +116,17 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     make(q, pack, stationsNow(), 'cord', 5);
     make(q, pack, stationsNow(), 'stone_axe');
     runLane(q, pack, world, feet);
+    // §94: flint is knapped on a Work Stump — a log (only an axe fells it) and the stump come first
+    expect(q.enqueue('flint_pick', 1, pack, stationsNow()).message).toContain('build a Work Stump nearby');
+    expect(canHarvest(BLOCK.OAK_LOG, null)).toBe(false);
+    expect(canHarvest(BLOCK.OAK_LOG, tool('stone_axe'))).toBe(true);
+    pack.add({ k: 'oak_log', n: 20 });
+    make(q, pack, stationsNow(), 'work_stump');
+    runLane(q, pack, world, feet);
+    expect(pack.count('work_stump')).toBe(1);
+    put(2, 64, 0, BLOCK.WORK_STUMP);
+    pack.take('work_stump', 1);
+    expect(stationsNow().stump).toEqual([2, 64, 0]);
     expect(q.enqueue('flint_pick', 1, pack, stationsNow()).ok).toBe(true);
     make(q, pack, stationsNow(), 'flint_axe');
     make(q, pack, stationsNow(), 'flint_knife');
@@ -125,18 +136,8 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     expect(pack.count('flint')).toBe(0);
     expect(pack.count('rock')).toBe(6); // 1 stone hammer + 2 chopper
 
-    // 3. Wood: a log needs axe ≥ 1; the stump is a hand recipe
-    expect(canHarvest(BLOCK.OAK_LOG, null)).toBe(false);
-    expect(canHarvest(BLOCK.OAK_LOG, tool('stone_axe'))).toBe(true);
-    pack.add({ k: 'oak_log', n: 20 });
-    expect(q.enqueue('split_sticks', 1, pack, stationsNow()).message).toContain('build a Work Stump nearby');
-    make(q, pack, stationsNow(), 'work_stump');
-    runLane(q, pack, world, feet);
-    expect(pack.count('work_stump')).toBe(1);
-    put(2, 64, 0, BLOCK.WORK_STUMP);
-    pack.take('work_stump', 1);
-    expect(stationsNow().stump).toEqual([2, 64, 0]);
-    expect(q.enqueue('oak_planks', 1, pack, stationsNow()).ok).toBe(true); // flint axe (tier 2)
+    // 3. Wood: planks and split sticks at the stump
+    expect(q.enqueue('oak_planks', 1, pack, stationsNow()).ok).toBe(true); // flint axe (tier 2), at the stump set down above
     make(q, pack, stationsNow(), 'split_sticks', 2);
     runLane(q, pack, world, feet);
     expect(pack.count('oak_planks')).toBe(3);

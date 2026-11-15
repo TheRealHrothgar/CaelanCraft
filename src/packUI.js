@@ -1,5 +1,6 @@
 // Caelancraft — the Pack & Making screen (E in Survival): the pack's rosette, the zig-zag hotbar strip, the wear chain, the
-// discard hex, a basket's rosette, and the Making panel (station tabs, recipe cards as mini rosettes, the lanes).
+// discard hex, a basket's rosette, and the Making panel (station tabs, a search box, recipe cards as mini rosettes, the
+// lanes) with its BUILD TREE (§94: buildTree.js, drawn over the screen: what to gather and build to reach each workplace).
 // See docs/DESIGN-survival.md §5.4 and §9.8 ("packUI.js"); CONTRACTS §48 once merged.
 //
 // DOM module (+ pure geometry and label helpers, tested). Imports: config, items, itemIcons (the §9.1 import graph).
@@ -11,6 +12,7 @@
 import { PACK_SLOTS, HOTBAR_SIZE, WEAR_SLOTS } from './config.js';
 import { ITEMS, ITEM_KEYS, TAGS, itemName, maxDurability, WEAR_SLOT_NAMES } from './items.js';
 import { purposeOf } from './purpose.js';
+import { buildTreeModel, layoutTree, treeStates, columnProgress, TREE_STATIONS } from './buildTree.js';
 
 /** The Survival Handbook's item key (§14; handbook.js HANDBOOK_KEY): right-click on it, or "Read", fires onRead. */
 const HANDBOOK_ITEM = 'handbook';
@@ -22,7 +24,7 @@ const HANDBOOK_ITEM = 'handbook';
  * One recipe as crafting.listRecipes describes it (§9.8).
  * @typedef {Object} RecipeView
  * @property {string} id
- * @property {string} station  'hand' | 'stump' | 'kiln' | 'bloomery' | 'forge' | 'workbench'
+ * @property {string} station  'hand' | 'stump' | 'kiln' | 'bloomery' | 'forge' | 'workbench' | 'lab'
  * @property {{k: string, n: number}} out
  * @property {Array<{k?: string, tag?: string, label: string, need: number, have: number}>} inputs
  * @property {Array<{type: string, tier: number, label: string, ok: boolean}>} tools
@@ -47,6 +49,7 @@ const HANDBOOK_ITEM = 'handbook';
  * @property {Array<{station: string, jobs: Array<{name: string, progress: number, waiting: boolean|string}>}>} lanes
  * @property {{text: string, error?: boolean}|null} [message]  the screen's own feedback line (.pack-message under the
  *   hotbar strip): the Handbook's refusal, a Make result — the HUD's target hint is not drawn while the pack is open
+ * @property {string[]} [ready]  the ids of every recipe (whatever the tab) that could be started now (§94: the build tree)
  */
 
 /**
@@ -123,10 +126,10 @@ export function stripCells(n, s) {
 export const STATION_TABS = Object.freeze([
   Object.freeze(['all', 'All']), Object.freeze(['hand', 'Hands']), Object.freeze(['stump', 'Stump']),
   Object.freeze(['kiln', 'Kiln']), Object.freeze(['bloomery', 'Bloomery']), Object.freeze(['forge', 'Forge']),
-  Object.freeze(['workbench', 'Bench']),
+  Object.freeze(['workbench', 'Bench']), Object.freeze(['lab', 'Lab']),
 ]);
 /** Full names of the workplaces (§7.1), for hints and lane rows. */
-export const STATION_NAMES = Object.freeze({ hand: 'Hands', stump: 'Work Stump', kiln: 'Kiln', bloomery: 'Bloomery', forge: 'Forge', workbench: 'Workbench' });
+export const STATION_NAMES = Object.freeze({ hand: 'Hands', stump: 'Work Stump', kiln: 'Kiln', bloomery: 'Bloomery', forge: 'Forge', workbench: 'Workbench', lab: 'Lab' });
 
 /** @param {string} id @returns {string} the tab label ('All', 'Hands', 'Stump', …); unknown ids as given */
 export function tabLabel(id) {
@@ -248,6 +251,57 @@ export function toolIconKey(type, tier) {
   return best;
 }
 
+/**
+ * §94: what a recipe is found by in the Making search — its output's name, every input (and a tag's members), its tools,
+ * its workplace and what it is for — lower case. @param {RecipeView} r @returns {string}
+ */
+export function recipeSearchText(r) {
+  const words = [itemName(r.out.k), r.out.k.replace(/_/g, ' '), stationName(r.station), r.purpose || ''];
+  for (const inp of r.inputs || []) {
+    if (inp.label) words.push(inp.label);
+    if (inp.k) words.push(itemName(inp.k));
+    if (inp.tag && Object.hasOwn(TAGS, inp.tag)) for (const k of TAGS[inp.tag]) words.push(itemName(k));
+  }
+  for (const tl of r.tools || []) words.push(toolLabel(tl));
+  return words.join(' | ').toLowerCase();
+}
+
+/**
+ * §94: the recipes whose search text holds every word of `query` (any order, any case; an empty query keeps them all).
+ * @param {RecipeView[]} recipes @param {string} query @returns {RecipeView[]}
+ */
+export function searchRecipes(recipes, query) {
+  const list = Array.isArray(recipes) ? recipes : [];
+  const words = String(query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return list.slice();
+  return list.filter((r) => {
+    const text = recipeSearchText(r);
+    return words.every((w) => text.includes(w));
+  });
+}
+
+/**
+ * §94: what the build tree needs to know, from the screen's view: what is carried (pack, worn, on the mouse), which
+ * recipes could start now (`view.ready`) and which workplaces are near. @param {PackView} view
+ * @returns {import('./buildTree.js').TreeFacts}
+ */
+export function treeFactsFromView(view) {
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const s of [...(view.slots || []), ...(view.wear || []), view.cursor]) if (s && s.k) counts.set(s.k, (counts.get(s.k) ?? 0) + (s.n || 1));
+  const ready = new Set(view.ready || []);
+  const near = new Set((view.stations || []).filter((s) => s.near).map((s) => s.id));
+  return {
+    count: (k) => counts.get(k) ?? 0,
+    hasTool: (type, tier) => [...counts.keys()].some((k) => {
+      const tool = ITEMS[k] && ITEMS[k].tool;
+      return !!tool && tool.type === type && tool.tier >= tier;
+    }),
+    canMake: (id) => ready.has(id),
+    near: (s) => near.has(s),
+  };
+}
+
 /** The recipes a tab lists: all of them, or those of one station (order kept). @param {RecipeView[]} recipes @param {string} tab */
 export function filterRecipes(recipes, tab) {
   const list = Array.isArray(recipes) ? recipes : [];
@@ -310,7 +364,7 @@ export function demoPackView(opts = {}) {
   };
   const recipes = [
     recipe('cord', 'hand', { k: 'cord', n: 1 }, [['plant_fibre', 2, 31]], [], 1),
-    recipe('flint_spear', 'hand', { k: 'flint_spear', n: 1 }, [[null, 1, 3, 'knapstone'], ['stick', 2, 14], ['cord', 1, 4]], [['hammer', 1, false]], 3),
+    recipe('flint_spear', 'stump', { k: 'flint_spear', n: 1 }, [[null, 1, 3, 'knapstone'], ['stick', 2, 14], ['cord', 1, 4]], [['hammer', 1, false]], 3),
     recipe('campfire', 'hand', { k: 'campfire', n: 1 }, [['rock', 6, 23], ['stick', 3, 14], [null, 1, 37, 'tinder']], [['firestarter', 0, false]], 5),
     recipe('greenware_pot', 'hand', { k: 'greenware_pot', n: 1 }, [['clay_lump', 3, 12]], [], 4),
     recipe('leather', 'stump', { k: 'leather', n: 1 }, [['rawhide', 1, 1], ['pig_fat', 1, 1]], [['knife', 2, true]], 8),
@@ -335,9 +389,11 @@ export function demoPackView(opts = {}) {
       { id: 'hand', label: 'Hands', near: true }, { id: 'stump', label: 'Stump', near: true }, { id: 'kiln', label: 'Kiln', near: false },
       { id: 'bloomery', label: 'Bloomery', near: false }, { id: 'forge', label: 'Forge', near: false },
       { id: 'workbench', label: 'Bench', near: false },
+      { id: 'lab', label: 'Lab', near: false },
     ],
     tab: opts.tab || 'all',
     recipes,
+    ready: recipes.filter((r) => r.craftable && r.stationOk).map((r) => r.id),
     lanes: [
       { station: 'hand', jobs: [{ name: 'Cord', progress: 0.4, waiting: false }, { name: 'Greenware Pot', progress: 0, waiting: false }] },
       { station: 'kiln', jobs: [{ name: 'Clay Pot', progress: 0.65, waiting: 'Kiln too far' }] },
@@ -373,6 +429,10 @@ function flatHexPoints(w, h, inset) {
  * @property {() => void} close
  * @property {() => boolean} isOpen
  * @property {() => void} dispose
+ * @property {() => void} openTree     (§94) show the build tree over the screen (built the first time)
+ * @property {() => void} closeTree    back to Making
+ * @property {() => boolean} isTreeOpen
+ * @property {(text: string) => void} setQuery   put text in the Making search box
  */
 
 /**
@@ -437,6 +497,10 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     /** the mouse's last client position (off screen until it is known) */
     mouseX: -1000,
     mouseY: -1000,
+    /** §94: the Making search box's text */
+    query: '',
+    /** §94: the build tree is shown over the screen */
+    treeOpen: false,
   };
 
   /** @typedef {{ el: HTMLElement, canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D|null, count: HTMLElement,
@@ -446,6 +510,8 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
 
   /** @type {Record<string, HTMLElement>} */
   const parts = {};
+  /** §94: the Making search box @type {HTMLInputElement|null} */
+  let searchBox = null;
 
   /**
    * One hex cell.
@@ -629,7 +695,37 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     panel.appendChild(right);
     const making = make('div', 'making');
     right.appendChild(making);
-    making.appendChild(make('div', 'pack-heading', 'Making'));
+    // §94: the heading carries the search box and the build tree's button
+    const mhead = make('div', 'pack-heading pack-heading-row making-head');
+    mhead.appendChild(make('span', '', 'Making'));
+    const search = /** @type {HTMLInputElement} */ (make('input', 'making-search'));
+    search.type = 'search';
+    search.placeholder = 'Search: name, input, workplace';
+    search.setAttribute('aria-label', 'Search the recipes');
+    search.spellcheck = false;
+    search.autocomplete = 'off';
+    mhead.appendChild(search);
+    searchBox = search;
+    const treeBtn = /** @type {HTMLButtonElement} */ (make('button', 'hex-button pack-read tree-open', 'Build tree'));
+    treeBtn.type = 'button';
+    treeBtn.title = 'What to gather and build to reach each workplace';
+    mhead.appendChild(treeBtn);
+    making.appendChild(mhead);
+    on(search, 'input', () => setQuery(search.value, true));
+    on(search, 'keydown', (e) => {
+      const ke = /** @type {KeyboardEvent} */ (e);
+      // typing never reaches the screen's own keys (E closes the pack); Esc clears the box first, then closes as usual
+      if (ke.key === 'Escape' || ke.code === 'Escape') {
+        if (search.value !== '') {
+          ke.preventDefault();
+          ke.stopPropagation();
+          setQuery('', false);
+        }
+        return;
+      }
+      ke.stopPropagation();
+    });
+    on(treeBtn, 'click', () => openTree());
     parts.making = /** @type {HTMLElement} */ (making);
     parts.tabs = /** @type {HTMLElement} */ (make('div', 'making-tabs'));
     parts.tabs.setAttribute('role', 'tablist');
@@ -638,6 +734,12 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     making.appendChild(parts.list);
     parts.lanes = /** @type {HTMLElement} */ (make('div', 'lanes'));
     making.appendChild(parts.lanes);
+    // §94: the build tree, over the whole panel (built the first time it is opened)
+    const tree = make('div', `build-tree ${HIDDEN}`);
+    tree.setAttribute('role', 'region');
+    tree.setAttribute('aria-label', 'Build tree');
+    root.appendChild(tree);
+    parts.tree = /** @type {HTMLElement} */ (tree);
     const box = make('div', `container-panel ${HIDDEN}`);
     right.appendChild(box);
     parts.box = /** @type {HTMLElement} */ (box);
@@ -946,7 +1048,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
   function renderRecipes() {
     const v = /** @type {PackView} */ (state.view);
     if (v.container) return;
-    const list = filterRecipes(v.recipes, v.tab);
+    const list = searchRecipes(filterRecipes(v.recipes, v.tab), state.query);
     /** @type {HTMLElement[]} */
     const order = [];
     for (const r of list) {
@@ -985,12 +1087,257 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     }
     // put the cards in order, touching the list only when it differs
     const current = Array.from(parts.list.children);
-    const same = current.length === order.length && current.every((c, i) => c === order[i]);
+    const empty = state.query.trim() ? `Nothing here matches “${state.query.trim()}”` : 'Nothing to make here yet';
+    const same = order.length
+      ? current.length === order.length && current.every((c, i) => c === order[i])
+      : current.length === 1 && current[0].textContent === empty;
     if (!same) {
       clear(parts.list);
       for (const c of order) parts.list.appendChild(c);
-      if (!order.length) parts.list.appendChild(make('div', 'recipe-empty', 'Nothing to make here yet'));
+      if (!order.length) parts.list.appendChild(make('div', 'recipe-empty', empty));
     }
+  }
+
+  /**
+   * §94: the search box's text. Typing into an empty box shows every workplace's recipes (the tab goes back to All; a tab
+   * clicked while searching narrows it). @param {string} text @param {boolean} typed
+   */
+  function setQuery(text, typed) {
+    const was = state.query;
+    state.query = String(text ?? '');
+    if (searchBox && searchBox.value !== state.query) searchBox.value = state.query;
+    if (typed && !was.trim() && state.query.trim() && state.view && state.view.tab && state.view.tab !== 'all') fire('onTab', 'all');
+    if (state.view && !state.view.container) renderRecipes();
+  }
+
+  // ---- §94: the build tree ------------------------------------------------------------------------------------------
+
+  /** @type {{ model: import('./buildTree.js').TreeModel, layout: ReturnType<typeof layoutTree>, nodes: Map<string, HTMLElement>,
+   *   edges: Array<{ el: Element, from: string, to: string }>, heads: HTMLElement[] }|null} */
+  let treeParts = null;
+  /** Room on the left for the lane names. */
+  const TREE_LEFT = 92;
+  const LANE_NAMES = Object.freeze({ gather: ['Gather', 'raw materials'], build: ['Build', 'tools and parts'] });
+  /** The colour key of a node: the workplace that makes it ('hand' by hand or on a fire), 'gather' for raw things. */
+  const wsOf = (node) => (node.lane === 'place' ? node.id.slice(1) : node.lane === 'gather' ? 'gather' : node.station || 'hand');
+
+  /** A hex with a state ring (the outer hex) round a fill in the colour of where it is made, holding its icon. */
+  function treeHex(icon, ws, px) {
+    const hex = make('div', 'tree-hex');
+    const fill = make('div', `tree-fill ws-${ws}`);
+    try {
+      fill.appendChild(itemIcons.canvas(icon, px));
+    } catch {
+      // no icon: the label still names it
+    }
+    hex.appendChild(fill);
+    return hex;
+  }
+
+  /** A strip of small icons with counts ("×3"; a tool needed is marked "tool"). */
+  function iconStrip(cls, entries) {
+    const strip = make('div', cls);
+    for (const { icon, label, n, ws } of entries) {
+      const cell = make('span', `tree-mini ws-${ws}`);
+      try {
+        cell.appendChild(itemIcons.canvas(icon, 16));
+      } catch {
+        // no icon
+      }
+      if (n > 1) cell.appendChild(make('b', '', `×${n}`));
+      cell.title = n > 0 ? `${n} ${label}` : `${label} (a tool)`;
+      strip.appendChild(cell);
+    }
+    return strip;
+  }
+
+  function buildTreeView() {
+    const model = buildTreeModel();
+    const layout = layoutTree(model);
+    const box = parts.tree;
+    clear(box);
+    const head = make('div', 'tree-head');
+    head.appendChild(make('div', 'pack-heading', 'Build tree'));
+    head.appendChild(make('div', 'tree-sub', 'Gather the raw materials and build the parts in a column to set up the workplace at its head. A colour is where a thing is made. Click anything to find its recipes.'));
+    const back = /** @type {HTMLButtonElement} */ (make('button', 'hex-button pack-read tree-close', '✕ Making'));
+    back.type = 'button';
+    back.setAttribute('aria-label', 'Back to Making (Esc)');
+    on(back, 'click', () => closeTree());
+    head.appendChild(back);
+    // the keys: the workplaces' colours, then the states' rings
+    const legend = make('div', 'tree-legend');
+    legend.appendChild(make('span', 'tree-key ws-gather', 'Gathered'));
+    for (const s of ['hand', ...TREE_STATIONS]) legend.appendChild(make('span', `tree-key ws-${s}`, s === 'hand' ? 'By hand' : stationName(s)));
+    legend.appendChild(make('span', 'tree-legend-gap', ''));
+    for (const [st, label] of [['have', 'have it'], ['ready', 'can make now'], ['gather', 'to gather'], ['locked', 'not yet']]) {
+      legend.appendChild(make('span', `tree-ring tree-${st}`, label));
+    }
+    head.appendChild(legend);
+    box.appendChild(head);
+    const scroll = make('div', 'tree-scroll');
+    box.appendChild(scroll);
+    const canvas = /** @type {HTMLElement} */ (make('div', 'tree-canvas'));
+    canvas.style.width = `${layout.width + TREE_LEFT}px`;
+    canvas.style.height = `${layout.height}px`;
+    scroll.appendChild(canvas);
+    // the columns: one per workplace, tinted with its colour, its head (a banner) more strongly
+    /** @type {HTMLElement[]} */
+    const heads = [];
+    layout.columns.forEach((col, c) => {
+      const s = TREE_STATIONS[c];
+      const stripe = /** @type {HTMLElement} */ (make('div', `tree-col ws-${s}`));
+      stripe.style.left = `${TREE_LEFT + col.x - 10}px`;
+      stripe.style.width = `${col.w + 20}px`;
+      const banner = /** @type {HTMLElement} */ (make('div', `tree-banner ws-${s}`));
+      banner.style.height = `${layout.lanes[0].y - 8}px`;
+      stripe.appendChild(banner);
+      canvas.appendChild(stripe);
+      const h = /** @type {HTMLElement} */ (make('div', 'tree-col-head', ''));
+      h.style.left = `${TREE_LEFT + col.x + col.w - 64}px`;
+      h.appendChild(make('span', 'tree-col-count', ''));
+      canvas.appendChild(h);
+      heads.push(h);
+    });
+    // the lanes under the heads, named on the left (the heads' own name: Workplace)
+    const workplaceName = make('div', 'tree-lane-name tree-head-name', 'Workplace');
+    workplaceName.appendChild(make('small', '', 'built from · unlocks'));
+    canvas.appendChild(workplaceName);
+    for (const lane of layout.lanes) {
+      const band = /** @type {HTMLElement} */ (make('div', `tree-lane tree-lane-${lane.lane}`));
+      band.style.top = `${lane.y - 8}px`;
+      band.style.height = `${lane.h + 16}px`;
+      const [name, sub] = LANE_NAMES[lane.lane];
+      const label = make('div', 'tree-lane-name', name);
+      label.appendChild(make('small', '', sub));
+      band.appendChild(label);
+      canvas.appendChild(band);
+    }
+    // the edges, under the nodes, in the colour of where the thing they lead into is made
+    const svg = doc.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'tree-edges');
+    svg.setAttribute('width', String(layout.width + TREE_LEFT));
+    svg.setAttribute('height', String(layout.height));
+    canvas.appendChild(svg);
+    /** @type {Array<{ el: Element, from: string, to: string }>} */
+    const edges = [];
+    for (const [from, to] of model.edges) {
+      const a = layout.pos.get(from);
+      const b = layout.pos.get(to);
+      const target = model.byId.get(to);
+      if (!a || !b || !target) continue;
+      const [x1, y1] = [a[0] + TREE_LEFT, a[1]];
+      const [x2, y2] = [b[0] + TREE_LEFT, b[1]];
+      const dy = Math.max(30, Math.abs(y2 - y1) * 0.5);
+      const down = y2 >= y1 ? 1 : -1;
+      const path = doc.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', `M${x1} ${y1} C${x1} ${y1 + down * dy} ${x2} ${y2 - down * dy} ${x2} ${y2}`);
+      // a link between columns is drawn only while one of its ends is under the mouse (else the tree is a tangle)
+      const far = model.byId.get(from)?.column !== target.column;
+      path.setAttribute('class', `tree-edge ws-${wsOf(target)}${far ? ' far' : ''}`);
+      svg.appendChild(path);
+      edges.push({ el: path, from, to });
+    }
+    // the nodes; a workplace heads its column with its recipe and what it unlocks
+    /** @type {Map<string, HTMLElement>} */
+    const nodes = new Map();
+    const strip = (ids) => ids.map(({ id, n }) => {
+      const nd = model.byId.get(id);
+      return { icon: nd ? nd.icon : id, label: nd ? nd.label : itemName(id), n, ws: nd ? wsOf(nd) : 'hand' };
+    });
+    for (const node of model.nodes) {
+      const at = layout.pos.get(node.id);
+      if (!at) continue;
+      const place = node.lane === 'place';
+      const el = /** @type {HTMLElement} */ (make('div', `tree-node tree-node-${node.lane}`));
+      el.style.left = `${at[0] + TREE_LEFT}px`;
+      el.style.top = `${at[1]}px`;
+      el.setAttribute('data-node', node.id);
+      el.appendChild(treeHex(node.icon, wsOf(node), place ? 32 : 24));
+      el.appendChild(make('div', 'tree-label', node.label));
+      el.appendChild(make('div', 'tree-how', place ? `built ${node.how}` : node.how));
+      el.title = place
+        ? `${node.label}: built ${node.how} from ${node.needs.map(({ id, n }) => `${n > 0 ? `${n} ` : ''}${model.byId.get(id)?.label ?? id}`).join(', ')}. Unlocks ${node.unlocks.length} more recipes.`
+        : `${node.label}: ${node.how}`;
+      if (place) {
+        el.appendChild(iconStrip('tree-needs', strip(node.needs)));
+        const more = node.unlocks.length > 6 ? node.unlocks.length - 6 : 0;
+        const unlocks = iconStrip('tree-unlocks', node.unlocks.slice(0, 6).map((k) => ({ icon: k, label: itemName(k), n: 1, ws: wsOf(node) })));
+        unlocks.insertBefore(make('span', 'tree-unlock-word', 'unlocks'), unlocks.firstChild);
+        if (more) unlocks.appendChild(make('span', 'tree-more', `+${more}`));
+        el.appendChild(unlocks);
+      }
+      canvas.appendChild(el);
+      nodes.set(node.id, el);
+    }
+    on(canvas, 'mouseover', (e) => hotNode(closestWith(e.target, 'data-node')));
+    on(canvas, 'mouseleave', () => hotNode(null));
+    on(canvas, 'click', (e) => {
+      const el = closestWith(e.target, 'data-node');
+      if (!el || !treeParts) return;
+      const node = treeParts.model.byId.get(/** @type {string} */ (el.getAttribute('data-node')));
+      if (!node) return;
+      // its recipes in the list: what makes it and what it goes into (a workplace: its own recipes too)
+      closeTree();
+      setQuery(node.lane === 'place' ? node.label : itemName(node.icon), false);
+      if (state.view && state.view.tab !== 'all') fire('onTab', 'all');
+    });
+    treeParts = { model, layout, nodes, edges, heads };
+  }
+
+  /** Light up the edges of the node under the mouse (and the nodes at their other ends). @param {HTMLElement|null} el */
+  function hotNode(el) {
+    if (!treeParts) return;
+    const id = el ? el.getAttribute('data-node') : null;
+    const near = new Set();
+    for (const e of treeParts.edges) {
+      const hot = id !== null && (e.from === id || e.to === id);
+      e.el.classList.toggle('hot', hot);
+      if (hot) near.add(e.from === id ? e.to : e.from);
+    }
+    for (const [nid, n] of treeParts.nodes) n.classList.toggle('near', near.has(nid));
+  }
+
+  /** The tree's states from the current view: every node, every edge (lit when what it carries is had), the columns. */
+  function renderTree() {
+    if (!state.treeOpen || !treeParts || !state.view) return;
+    const states = treeStates(treeParts.model, treeFactsFromView(state.view));
+    for (const [id, el] of treeParts.nodes) {
+      const s = states.get(id) || 'locked';
+      if (el.getAttribute('data-state') !== s) el.setAttribute('data-state', s);
+    }
+    // lit: what you have, leading on to what you do not have yet (the next steps); both ends had: done, quiet
+    for (const e of treeParts.edges) {
+      const fromHave = states.get(e.from) === 'have';
+      const toHave = states.get(e.to) === 'have';
+      e.el.classList.toggle('live', fromHave && !toHave);
+      e.el.classList.toggle('done', fromHave && toHave);
+    }
+    columnProgress(treeParts.model, states).forEach((p, c) => {
+      const head = treeParts.heads[c];
+      head.classList.toggle('built', p.built);
+      const count = /** @type {HTMLElement} */ (head.lastChild);
+      const text = p.built ? 'set up ✓' : `${p.done} / ${p.total}`;
+      if (count.textContent !== text) count.textContent = text;
+    });
+  }
+
+  function openTree() {
+    if (!parts.tree) return;
+    if (!treeParts) buildTreeView();
+    state.treeOpen = true;
+    parts.tree.classList.remove(HIDDEN);
+    renderTree();
+  }
+
+  function closeTree() {
+    state.treeOpen = false;
+    if (parts.tree) parts.tree.classList.add(HIDDEN);
+    hotNode(null);
+  }
+
+  /** @returns {boolean} the build tree is shown */
+  function isTreeOpen() {
+    return state.treeOpen;
   }
 
   function renderLanes() {
@@ -1035,12 +1382,18 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     renderInfo();
     renderMessage();
     renderCursor();
+    renderTree();
   }
 
   /** @param {KeyboardEvent} e */
   function onKeyDown(e) {
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
     const code = e.code || (e.key === 'Escape' || e.key === 'Esc' ? 'Escape' : e.key === 'e' || e.key === 'E' ? 'KeyE' : '');
+    if (code === 'Escape' && state.treeOpen) {
+      e.preventDefault();
+      closeTree(); // §94: Esc goes back from the build tree to Making first
+      return;
+    }
     if (code === 'Escape' || code === 'KeyE') {
       e.preventDefault();
       fire('onClose');
@@ -1073,6 +1426,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
   function close() {
     state.open = false;
     state.hover = null;
+    closeTree();
     root.classList.add(HIDDEN);
     if (parts.cursor) parts.cursor.classList.add(HIDDEN);
     state.cursorSig = '\u0000';
@@ -1093,9 +1447,10 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     for (const [target, type, fn] of listeners) target.removeEventListener(type, fn);
     listeners.length = 0;
     cards.clear();
+    treeParts = null;
     clear(root);
     state.built = false;
   }
 
-  return { open, refresh, close, isOpen, dispose };
+  return { open, refresh, close, isOpen, dispose, openTree, closeTree, isTreeOpen, setQuery: (text) => setQuery(text, false) };
 }

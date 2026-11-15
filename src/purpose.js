@@ -52,11 +52,12 @@ export const PURPOSE = Object.freeze({
   crucible: 'Holds molten metal: needed to alloy bronze and to cast.',
   casting_mold: 'Shapes molten copper and bronze into tools.',
   // ---- workplaces
-  work_stump: 'Workplace: planks, sticks, leather and simple parts.',
+  work_stump: 'Workplace: flint tools, planks, leather, powder, wire.',
   kiln: 'Workplace: fires clay, burns charcoal, smelts copper and bronze.',
   bloomery: 'Workplace: smelts iron and melts glass.',
   forge: 'Workplace: iron and steel tools.',
-  workbench: 'Workplace: the advanced electrical devices.',
+  workbench: 'Workplace: switches, buttons, boards, batteries, and the Lab.',
+  lab: 'Workplace: the advanced electrical devices.',
   // ---- key parts
   cord: 'Binds every hafted tool.',
   campfire: 'Warmth, cooked food, boiled water, safety at night.',
