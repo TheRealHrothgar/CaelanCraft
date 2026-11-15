@@ -40,6 +40,12 @@ export class Chunk {
     this.lightTop = null;
     /** light.js bookkeeping: the engine slot naming this chunk in its flood queues (−1: not lit) */
     this.lightSlot = -1;
+    /**
+     * §93: per cell, the hex pieces bricks cover (low 4 bits) and which of those are covered by OPAQUE bricks (high 4 bits);
+     * null until a brick touches the chunk. Derived from the bricks, never saved.
+     * @type {Uint8Array|null}
+     */
+    this.cover = null;
   }
 
   /** @returns {number} block id, or AIR (0) when out of range */

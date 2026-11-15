@@ -19,6 +19,7 @@ import {
 } from './config.js';
 import { BLOCK, DEFAULT_HOTBAR } from './blocks.js';
 import { normalizeRunesJSON, validateRunesJSON } from './runes.js';
+import { normalizeBricksJSON } from './bricks.js';
 import { validatePigsJSON } from './pigs.js';
 import { validateAnimalsJSON } from './animals.js';
 import { validateFaunaJSON } from './populations.js';
@@ -585,6 +586,9 @@ export function serializeSave(data) {
   if (data.runes != null && (!isPlainObject(data.runes) || data.runes instanceof Map)) {
     throw new TypeError('serializeSave: runes must be a RunesJSON object (use runes.export())');
   }
+  if (data.bricks != null && (!isPlainObject(data.bricks) || data.bricks instanceof Map)) {
+    throw new TypeError('serializeSave: bricks must be a BricksJSON object (use world.bricks.export())');
+  }
   if (data.meta != null && !isPlainObject(data.meta)) throw new TypeError('serializeSave: meta must be an object');
   if (data.survival != null && (!isPlainObject(data.survival) || data.survival instanceof Map)) {
     throw new TypeError('serializeSave: survival must be a SurvivalJSON object');
@@ -626,6 +630,12 @@ export function serializeSave(data) {
     selected: isValidSelected(data.selected) ? data.selected : DEFAULT_SELECTED,
     edits: outEdits,
   };
+  // §93: the bricks, by brick chunk, right after the hex edits; omitted when there are none (a world without bricks
+  // serialises exactly as before).
+  if (data.bricks != null) {
+    const bricks = normalizeBricksJSON(data.bricks).bricks;
+    if (Object.keys(bricks).length > 0) /** @type {*} */ (out).bricks = bricks;
+  }
   // Runes are optional and omitted when empty, so worlds without customised rune blocks serialise exactly as before.
   if (data.runes != null) {
     const runes = normalizeRunesJSON(data.runes).runes;
@@ -811,6 +821,12 @@ export function deserializeSave(text) {
     selected,
     edits,
   };
+  if (raw.bricks !== undefined) {
+    // §93: the bricks (bad keys and pairs dropped with a warning each; kept only when some are left).
+    const v = normalizeBricksJSON(raw.bricks);
+    for (const w of v.warnings) warnings.push(w);
+    if (Object.keys(v.bricks).length > 0) /** @type {*} */ (save).bricks = v.bricks;
+  }
   if (raw.runes !== undefined) {
     if (!isPlainObject(raw.runes)) {
       warnings.push('runes: not an object, ignored');

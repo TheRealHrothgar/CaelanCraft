@@ -115,7 +115,7 @@ const TABLE = [
 ];
 
 describe('BLOCK_RULES (§6.3)', () => {
-  it('has one entry per block id; only AIR, BEDROCK, the water family, (§85) the two springs and (§89) the aquifer are null', () => {
+  it('has one entry per block id; only AIR, BEDROCK, the water family, (§85) the two springs, (§89) the aquifer and (§93) the bricks\' shadows are null', () => {
     expect(BLOCK_RULES.length).toBe(BLOCK_COUNT);
     const nulls = BLOCK_RULES.map((r, id) => (r ? null : id)).filter((x) => x !== null);
     // The 20 powder-and-circuits blocks (DESIGN-circuits §1.2) have their §8.3 rows: every part comes away whole.
@@ -123,7 +123,8 @@ describe('BLOCK_RULES (§6.3)', () => {
     // §85: a natural spring cannot be broken in Survival (the rock runs deep): SPRING and SPRING_DRAWN have no rule
     // §89: nor can the aquifer, in either mode
     expect(nulls).toEqual(BLOCKS.filter((b) => b.id === B.AIR || b.id === B.BEDROCK || isWater(b.id) || b.name.startsWith('reserved_')
-      || b.id === B.SPRING || b.id === B.SPRING_DRAWN || b.id === B.AQUIFER).map((b) => b.id));
+      || b.id === B.SPRING || b.id === B.SPRING_DRAWN || b.id === B.AQUIFER
+      || b.id === B.BRICK_SHADOW || b.id === B.BRICK_FILL).map((b) => b.id)); // §93: a brick's shadow is dug as the brick
     for (let id = B.COLLAPSAR_CHARGE; id <= B.COHERER_RECEIVER; id++) {
       expect(rollDrops(id, null, {}, () => 0.5), BLOCKS[id].name).toEqual([{ k: BLOCKS[id].name, n: 1 }]);
     }

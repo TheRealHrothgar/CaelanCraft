@@ -38,6 +38,7 @@ import {
   LIGHT_VOLUME_MIN_S,
 } from './config.js';
 import { CHUNK_RING_INRADIUS, HEX_CORNERS, HEX_SIZE, chunkOrigin, hexToWorld, hexLength, worldToHex } from './hex.js';
+import { BRICK_DEPTH, BRICK_CHUNK_I, BRICK_CHUNK_N } from './bricks.js';
 import { LIGHT_ATTRIBUTE, applyChunkLight, installObjectLighting, lightVolume } from './lightShader.js';
 import { compileHidden } from './prewarm.js';
 
@@ -55,6 +56,9 @@ import { compileHidden } from './prewarm.js';
  * @property {{ renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera }} three
  * @property {(key: string, cq: number, cr: number, meshData: ChunkMeshData|null|undefined) => void} setChunkMesh
  * @property {(key: string) => void} removeChunkMesh
+ * @property {(key: string, ci: number, cn: number, meshData: ChunkMeshData|null|undefined) => void} setBrickMesh  §93
+ * @property {(key: string) => void} removeBrickMesh  §93
+ * @property {(hit: import('./bricks.js').BrickHit|null|undefined) => void} setBrickHighlight  §93: the box round a brick
  * @property {(x: number, y: number, z: number, yaw: number, pitch: number) => void} setCamera
  * @property {(fov: number) => void} setFov
  * @property {() => Promise<void>} prewarm   compile the highlight, dig trace and chunk programs now (§72)
@@ -551,6 +555,15 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   highlight.visible = false;
   highlight.name = 'highlight';
   scene.add(highlight);
+  // §93: the brick highlight, the 12 edges of a brick box (1 × 1 × BRICK_DEPTH), slightly larger, same material.
+  const brickHighlightBox = new THREE.BoxGeometry(HIGHLIGHT_SIZE, HIGHLIGHT_SIZE, BRICK_DEPTH * HIGHLIGHT_SIZE);
+  const brickHighlightGeometry = new THREE.EdgesGeometry(brickHighlightBox);
+  brickHighlightBox.dispose();
+  const brickHighlight = new THREE.LineSegments(brickHighlightGeometry, highlightMaterial);
+  brickHighlight.renderOrder = 2;
+  brickHighlight.visible = false;
+  brickHighlight.name = 'brickHighlight';
+  scene.add(brickHighlight);
 
   // --- Dig trace (Survival): the highlight prism's outline traced in honey as a cell is dug -----------
   // Transparent like the highlight so both sit in the transparent pass, where renderOrder 3 draws the trace after
@@ -695,6 +708,45 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   /** @type {Renderer} */
   const api = {
     three: { renderer, scene, camera },
+
+    setBrickMesh(key, ci, cn, meshData) {
+      // §93: a brick chunk's three layers, placed at its north-west corner, stored beside the hex chunks under 'brick:'.
+      const store = `brick:${key}`;
+      removeMeshesForKey(store);
+      if (!meshData) return;
+      /** @type {THREE.Mesh[]|null} */
+      let meshes = null;
+      for (let layer = 0; layer < 3; layer++) {
+        const data = meshData[layerNames[layer]];
+        if (!isDrawableLayer(data)) continue;
+        const mesh = new THREE.Mesh(buildLayerGeometry(data), layerMaterials[layer]);
+        mesh.position.set(ci * BRICK_CHUNK_I, 0, cn * BRICK_CHUNK_N * BRICK_DEPTH);
+        mesh.matrixAutoUpdate = false;
+        mesh.updateMatrix();
+        mesh.renderOrder = layerRenderOrder[layer];
+        mesh.name = `bricks:${key}:${layerNames[layer]}`;
+        scene.add(mesh);
+        (meshes || (meshes = [])).push(mesh);
+      }
+      if (meshes) {
+        chunkMeshes.set(store, meshes);
+        chunkMeshCount += meshes.length;
+      }
+    },
+
+    removeBrickMesh(key) {
+      removeMeshesForKey(`brick:${key}`);
+    },
+
+    setBrickHighlight(hit) {
+      if (!hit) {
+        brickHighlight.visible = false;
+        return;
+      }
+      brickHighlight.position.set(hit.i + 0.5, hit.y + 0.5, (hit.n + 0.5) * BRICK_DEPTH);
+      brickHighlight.updateMatrixWorld();
+      brickHighlight.visible = true;
+    },
 
     setChunkMesh(key, cq, cr, meshData) {
       removeMeshesForKey(key);
@@ -900,7 +952,7 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
       disposed = true;
       if (contextCanvas) contextCanvas.removeEventListener('webglcontextrestored', onContextRestored, false);
       for (const key of Array.from(chunkMeshes.keys())) removeMeshesForKey(key);
-      scene.remove(skyDome, stars, sunSprite, moonSprite, highlight, digTrace, dirLight, dirLight.target, hemiLight);
+      scene.remove(skyDome, stars, sunSprite, moonSprite, highlight, brickHighlight, digTrace, dirLight, dirLight.target, hemiLight);
       skyGeometry.dispose();
       skyMaterial.dispose();
       starGeometry.dispose();
@@ -910,6 +962,7 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
       for (const tex of ownedTextures) tex.dispose();
       ownedTextures.length = 0;
       highlightGeometry.dispose();
+      brickHighlightGeometry.dispose();
       highlightMaterial.dispose();
       digTrace.geometry.dispose();
       digTraceMaterial.dispose();

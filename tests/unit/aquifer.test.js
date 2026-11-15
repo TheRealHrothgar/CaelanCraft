@@ -126,8 +126,8 @@ const MIDDLE = ((hexDiscCount(CYCLE_RANGE) - 1) / 2 + 0.5) / CYCLE_COLUMNS;
 describe('the block (blocks.js, tiles.js)', () => {
   it('AQUIFER 173 "Aquifer", appended after the beds; BLOCK_COUNT 174; wet rock: solid, opaque, unbreakable, never placed, sound stone', () => {
     expect(B.AQUIFER).toBe(173);
-    expect(BLOCK_COUNT).toBe(174);
-    expect(BLOCKS).toHaveLength(174);
+    expect(BLOCK_COUNT).toBe(176); // §93: + the bricks' shadows 174, 175;
+    expect(BLOCKS).toHaveLength(176);
     const d = BLOCKS[B.AQUIFER];
     expect([d.id, d.name, d.displayName, d.soundGroup]).toEqual([173, 'aquifer', 'Aquifer', 'stone']);
     expect([d.solid, d.opaque, d.liquid, d.breakable, d.placeable, d.layer, d.shape, d.icon, d.gravity, d.meshed])
