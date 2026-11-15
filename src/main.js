@@ -6033,7 +6033,7 @@ export function boot(win, doc) {
       openDevicePanel(q, y, r);
       return;
     }
-    if (params.ui === 'pack') {
+    if (params.ui === 'pack' || params.ui === 'tree') {
       // The Pack & Making screen (§9.10): Survival only. Under ?nosave an empty pack is stocked with the screen's demo kit
       // (nothing is saved), so the screenshot shows a lived-in pack.
       if (!survival.inSurvival) return;
@@ -6043,6 +6043,7 @@ export function boot(win, doc) {
         demo.wear.forEach((s, i) => { if (s) pack.setWear(i, s); });
       }
       openPack();
+      if (params.ui === 'tree' && packUI) packUI.openTree(); // §94: the build tree over it
       return;
     }
     if (params.ui === 'console') {

@@ -48,10 +48,10 @@ const BLOCK_ITEM_STACK = 64;
  */
 const TOOL_ROWS = [
   // tier 1, stone
-  ['stone_hammer', 'Stone Hammer', 'hammer', 1, 60, 1],
+  ['hammerstone', 'Hammerstone', 'hammer', 1, 60, 1], // §94: a plain round stone, the knapper's hammer
   ['stone_axe', 'Stone Axe', 'axe', 1, 40, 2],
   ['wooden_shovel', 'Wooden Shovel', 'shovel', 1, 40, 1],
-  // tier 2, flint (knapped with the stone hammer)
+  // tier 2, flint (knapped with the hammerstone)
   ['flint_knife', 'Flint Knife', 'knife', 2, 70, 1],
   ['flint_axe', 'Flint Axe', 'axe', 2, 90, 2],
   ['flint_pick', 'Flint Pick', 'pick', 2, 90, 1],
@@ -315,15 +315,17 @@ export const ITEM_KEYS = Object.freeze([...BY_KEY.keys()]);
 /**
  * Old item keys still found in saves (DESIGN-circuits §8.3): `black_hole` is no longer placeable, so it is no longer an
  * item — a stack of it is the Collapsar Charge; `blast_barrel` is the Powder Keg's old name; v0.11 renamed the tools to
- * their everyday names (hammerstone → stone_hammer, stone_chopper → stone_axe, digging_stick → wooden_shovel, *_spade →
- * *_shovel; CONTRACTS §64). Saved pack, wear, basket and
+ * their everyday names (stone_chopper → stone_axe, digging_stick → wooden_shovel, *_spade → *_shovel; CONTRACTS §64); §94
+ * went back to the Hammerstone (a plain stone strikes flint): the Stone Hammer of saves since §64 is one. Saved pack, wear, basket and
  * remains stacks (storage.js, inventory.js, containers.js) and typed item names (resolveItem) read through it.
  */
 export const ITEM_ALIASES = Object.freeze({
   black_hole: 'collapsar_charge', blast_barrel: 'powder_keg',
   // v0.11 normative tool names (CONTRACTS §64)
-  hammerstone: 'stone_hammer', stone_chopper: 'stone_axe', digging_stick: 'wooden_shovel', flint_spade: 'flint_shovel',
+  stone_chopper: 'stone_axe', digging_stick: 'wooden_shovel', flint_spade: 'flint_shovel',
   copper_spade: 'copper_shovel', bronze_spade: 'bronze_shovel', iron_spade: 'iron_shovel', steel_spade: 'steel_shovel',
+  // §94: the tier-1 hammer is the Hammerstone again
+  stone_hammer: 'hammerstone',
 });
 
 /** @param {*} key @returns {*} the current key of a possibly old one (anything else unchanged) */

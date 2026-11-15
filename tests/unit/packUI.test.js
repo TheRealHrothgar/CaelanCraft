@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url';
 import {
   rosetteCells, ringsFor, hexToPixel, stripCells, cardLayout, formatSeconds, haveNeedText, haveNeedLevel, countLabel,
   durabilityText, stackTitle, recipeTitle, stationHint, stationName, tabLabel, jobStatusText, toolLabel, toolIconKey,
-  filterRecipes, demoPackView, createPackUI, STATION_TABS, CELL_S,
+  filterRecipes, demoPackView, createPackUI, STATION_TABS, CELL_S, searchRecipes, recipeSearchText, treeFactsFromView,
 } from '../../src/packUI.js';
+import { buildTreeModel } from '../../src/buildTree.js';
 import { PACK_SLOTS, HOTBAR_SIZE, BASKET_SLOTS, REMAINS_SLOTS } from '../../src/config.js';
 import { isItemKey } from '../../src/items.js';
 import { documentFromHTML, fire } from '../helpers/fakeDom.js';
@@ -136,7 +137,7 @@ describe('label formatters', () => {
   });
 
   it('stations, tabs, hints, jobs, tools', () => {
-    expect(STATION_TABS.map(([, l]) => l)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge', 'Bench']);
+    expect(STATION_TABS.map(([, l]) => l)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge', 'Bench', 'Lab']);
     expect(tabLabel('kiln')).toBe('Kiln');
     expect(tabLabel('all')).toBe('All');
     expect(stationName('stump')).toBe('Work Stump');
@@ -153,7 +154,7 @@ describe('label formatters', () => {
   it('a required tool shows the cheapest tool that qualifies', () => {
     expect(toolIconKey('axe', 1)).toBe('stone_axe');
     expect(toolIconKey('axe', 2)).toBe('flint_axe');
-    expect(toolIconKey('hammer', 1)).toBe('stone_hammer');
+    expect(toolIconKey('hammer', 1)).toBe('hammerstone');
     expect(toolIconKey('hammer', 4)).toBe('bronze_hammer');
     expect(toolIconKey('knife', 2)).toBe('flint_knife');
     expect(toolIconKey('firestarter', 0)).toBe('fire_drill');
@@ -181,6 +182,36 @@ describe('label formatters', () => {
     }
     expect(v.container).toBeNull();
     expect(demoPackView({ basket: true }).container?.slots).toHaveLength(BASKET_SLOTS);
+  });
+});
+
+describe('§94: search and the build tree facts (pure)', () => {
+  const recipes = demoPackView().recipes;
+  it('search text: output, inputs (and a tag\'s members), tools, workplace, purpose', () => {
+    const spear = recipes.find((r) => r.id === 'flint_spear');
+    const text = recipeSearchText(spear);
+    for (const w of ['flint spear', 'stick', 'cord', 'flint', 'obsidian', 'work stump', 'hammer']) expect(text, w).toContain(w);
+  });
+  it('every word must match, in any order and case; an empty query keeps all', () => {
+    expect(searchRecipes(recipes, '').length).toBe(recipes.length);
+    expect(searchRecipes(recipes, '   ').length).toBe(recipes.length);
+    expect(searchRecipes(recipes, 'LEATHER').map((r) => r.id)).toEqual(['leather']);
+    expect(searchRecipes(recipes, 'stick stump').map((r) => r.id)).toEqual(['flint_spear', 'split_sticks']);
+    expect(searchRecipes(recipes, 'stump stick').map((r) => r.id)).toEqual(['flint_spear', 'split_sticks']);
+    expect(searchRecipes(recipes, 'zzz')).toEqual([]);
+    expect(searchRecipes(/** @type {any} */ (null), 'x')).toEqual([]);
+  });
+  it('tree facts: counts across the pack, a tool or better, ready recipes, near workplaces', () => {
+    const v = demoPackView();
+    const f = treeFactsFromView(v);
+    expect(f.count('rock')).toBe(23);
+    expect(f.count('straw_hat')).toBe(1); // worn counts
+    expect(f.hasTool('pick', 2)).toBe(true);
+    expect(f.hasTool('pick', 3)).toBe(false);
+    expect(f.canMake('cord')).toBe(true);
+    expect(f.canMake('charcoal')).toBe(false);
+    expect(f.near('stump')).toBe(true);
+    expect(f.near('kiln')).toBe(false);
   });
 });
 
@@ -332,7 +363,7 @@ describe('the pack screen on a page', () => {
     const v = demoPackView();
     ui.open(v);
     const tabs = root.querySelectorAll('.making-tab');
-    expect(tabs.map((t) => t.textContent)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge', 'Bench']);
+    expect(tabs.map((t) => t.textContent)).toEqual(['All', 'Hands', 'Stump', 'Kiln', 'Bloomery', 'Forge', 'Bench', 'Lab']);
     expect(tabs[0].classList.contains('active')).toBe(true);
     expect(tabs[3].classList.contains('far')).toBe(true);
     expect(tabs[3].title).toBe('build a Kiln nearby');
@@ -376,7 +407,7 @@ describe('the pack screen on a page', () => {
     ui.open(v);
     const cord = root.querySelector('.recipe-card[data-recipe="cord"]');
     ui.refresh({ ...v, tab: 'stump' });
-    expect(root.querySelectorAll('.recipe-card').map((c) => c.dataset.recipe)).toEqual(['leather', 'split_sticks']);
+    expect(root.querySelectorAll('.recipe-card').map((c) => c.dataset.recipe)).toEqual(['flint_spear', 'leather', 'split_sticks']); // §94: the flint spear is made at the stump
     ui.refresh(v);
     expect(root.querySelector('.recipe-card[data-recipe="cord"]')).toBe(cord);
   });
@@ -454,6 +485,82 @@ describe('the pack screen on a page', () => {
     ui.refresh({ ...view, message: null });
     expect(line.textContent).toBe('');
     expect(line.getAttribute('role')).toBe('status');
+  });
+
+  it('§94: the search box narrows the list by name, input or workplace; typing never closes the pack; Esc clears it first', () => {
+    const onClose = vi.fn();
+    const onTab = vi.fn();
+    const { ui, root } = setup({ onClose, onTab });
+    ui.open({ ...demoPackView(), tab: 'stump' });
+    const search = root.querySelector('.making-search');
+    expect(search).toBeTruthy();
+    const ids = () => root.querySelectorAll('.recipe-card').map((c) => c.dataset.recipe);
+    search.value = 'leather';
+    fire(search, 'input');
+    expect(onTab).toHaveBeenCalledWith('all'); // a search looks at every workplace
+    ui.refresh({ ...demoPackView(), tab: 'all' });
+    expect(ids()).toEqual(['leather']);
+    search.value = 'kiln';
+    fire(search, 'input');
+    expect(ids()).toEqual(['kiln', 'charcoal', 'copper_pick']); // the Kiln itself and what is made at it
+    search.value = 'nothing like this';
+    fire(search, 'input');
+    expect(ids()).toEqual([]);
+    expect(root.querySelector('.recipe-empty').textContent).toBe('Nothing here matches “nothing like this”');
+    // an E typed into the box is a letter, not "close"
+    fire(search, 'keydown', { key: 'e', code: 'KeyE' });
+    expect(onClose).not.toHaveBeenCalled();
+    // Esc empties the box first, then closes as ever
+    fire(search, 'keydown', { key: 'Escape', code: 'Escape' });
+    expect(search.value).toBe('');
+    expect(ids().length).toBe(demoPackView().recipes.length);
+    expect(onClose).not.toHaveBeenCalled();
+    fire(search, 'keydown', { key: 'Escape', code: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('§94: the build tree opens over the screen with every node, shows their states, and a click searches for it', () => {
+    const onTab = vi.fn();
+    const { ui, root, doc } = setup({ onTab });
+    const view = { ...demoPackView(), tab: 'hand' };
+    ui.open(view);
+    const tree = root.querySelector('.build-tree');
+    expect(tree.classList.contains('hidden')).toBe(true);
+    root.querySelector('.tree-open').click();
+    expect(ui.isTreeOpen()).toBe(true);
+    expect(tree.classList.contains('hidden')).toBe(false);
+    const model = buildTreeModel();
+    expect(root.querySelectorAll('.tree-node')).toHaveLength(model.nodes.length);
+    expect(root.querySelectorAll('.tree-col-head')).toHaveLength(6);
+    expect(root.querySelectorAll('.tree-edge')).toHaveLength(model.edges.length);
+    const at = (id) => root.querySelector(`.tree-node[data-node="${id}"]`);
+    expect(at('rock').getAttribute('data-state')).toBe('have'); // the demo pack holds 23 rock
+    expect(at('flint_pick').getAttribute('data-state')).toBe('have');
+    expect(at('@kiln').getAttribute('data-state')).toBe('ready'); // the demo can make a Kiln now
+    expect(at('@lab').getAttribute('data-state')).toBe('locked');
+    expect(at('cassiterite').getAttribute('data-state')).toBe('gather');
+    // a workplace is a colour, not a level: what is made at the Kiln is filled with the Kiln's, so are the links into it;
+    // each column is tinted with its own workplace's; the workplace heads its column with its recipe and what it unlocks
+    expect(at('fired_brick').querySelector('.tree-fill').classList.contains('ws-kiln')).toBe(true);
+    expect(at('rock').querySelector('.tree-fill').classList.contains('ws-gather')).toBe(true);
+    expect(at('stone_axe').querySelector('.tree-fill').classList.contains('ws-hand')).toBe(true);
+    expect(root.querySelectorAll('.tree-col').map((c) => c.className)).toEqual(
+      ['stump', 'kiln', 'bloomery', 'forge', 'workbench', 'lab'].map((s) => `tree-col ws-${s}`));
+    expect(at('@lab').querySelectorAll('.tree-needs .tree-mini')).toHaveLength(model.byId.get('@lab').needs.length);
+    expect(at('@lab').querySelectorAll('.tree-unlocks .tree-mini')).toHaveLength(6);
+    expect(root.querySelectorAll('.tree-edge.ws-kiln').length).toBeGreaterThan(0);
+    // Esc goes back to Making, not out of the pack
+    fire(doc.body, 'keydown', { key: 'Escape', code: 'Escape' });
+    expect(ui.isTreeOpen()).toBe(false);
+    expect(ui.isOpen()).toBe(true);
+    // a click on a node closes the tree and searches the list for it
+    root.querySelector('.tree-open').click();
+    at('leather').querySelector('.tree-label').click();
+    expect(ui.isTreeOpen()).toBe(false);
+    expect(root.querySelector('.making-search').value).toBe('Leather');
+    expect(onTab).toHaveBeenCalledWith('all');
+    ui.close();
+    expect(ui.isTreeOpen()).toBe(false);
   });
 
   it('works without #pack-screen in the page (creates it)', () => {

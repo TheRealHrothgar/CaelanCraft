@@ -55,6 +55,7 @@ export const STATION_OF_BLOCK = Object.freeze({
   [BLOCK.BLOOMERY]: 'bloomery',
   [BLOCK.FORGE]: 'forge',
   [BLOCK.WORKBENCH]: 'workbench',
+  [BLOCK.LAB]: 'lab', // §94
 });
 
 /** The Making tabs after `All`, in order: station id and label. */
@@ -65,6 +66,7 @@ export const STATION_TABS = Object.freeze([
   Object.freeze({ id: 'bloomery', label: 'Bloomery' }),
   Object.freeze({ id: 'forge', label: 'Forge' }),
   Object.freeze({ id: 'workbench', label: 'Bench' }),
+  Object.freeze({ id: 'lab', label: 'Lab' }),
 ]);
 
 /** @param {number} blockId @returns {string|null} the station id of a workplace block */
@@ -664,6 +666,7 @@ export function chooseBelongingsCell(getBlock, q, y, r) {
  * @property {any[]} recipes   the RecipeViews of the tab
  * @property {{station: string, label: string, jobs: {name: string, progress: number, waiting: any}[]}[]} lanes  busy lanes only
  * @property {{text: string, error: boolean}|null} message  the screen's own feedback line (refusals, Make results)
+ * @property {string[]} ready  the ids of every recipe, whatever the tab, that could be started now (§94: the build tree)
  */
 
 /** @param {ItemStack|null|undefined} s @returns {ItemStack|null} */
@@ -695,7 +698,8 @@ const TAB_LABEL = Object.fromEntries(STATION_TABS.map((t) => [t.id, t.label]));
  * - `tab`: an unknown tab becomes 'all'; `recipes`: the given RecipeViews of that tab, in the given order;
  * - `hover`: the hovered slot's item, else the cursor's, else null;
  * - `lanes`: one row per busy station;
- * - `message`: the screen's feedback line, or null.
+ * - `message`: the screen's feedback line, or null;
+ * - `ready` (§94): the ids of every recipe, whatever the tab, that could be started now (the build tree's states).
  * @param {PackViewInput} input
  * @returns {PackView}
  */
@@ -741,6 +745,7 @@ export function buildPackView(input) {
     tab,
     message: input.message && input.message.text ? { text: String(input.message.text), error: !!input.message.error } : null,
     recipes: [...recipes],
+    ready: (input.recipes ?? []).filter((rv) => /** @type {*} */ (rv).craftable && /** @type {*} */ (rv).stationOk).map((rv) => /** @type {*} */ (rv).id),
     lanes,
   };
 }

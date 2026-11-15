@@ -14,7 +14,7 @@ const LOWER_SNAKE = /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
 
 /** §5.1 tools: key → [display name, type, tier, durability, power]. */
 const TOOLS = {
-  stone_hammer: ['Stone Hammer', 'hammer', 1, 60, 1],
+  hammerstone: ['Hammerstone', 'hammer', 1, 60, 1],
   stone_axe: ['Stone Axe', 'axe', 1, 40, 2],
   wooden_shovel: ['Wooden Shovel', 'shovel', 1, 40, 1],
   flint_knife: ['Flint Knife', 'knife', 2, 70, 1],
@@ -165,7 +165,7 @@ const REFERENCED = [
   'roast_pork', 'charred_meat', 'baked_tuber', 'roasted_cattail_root', 'leached_acorns', 'roasted_acorns', 'pot_water',
   'pot_boiled', 'pot_seawater', 'salt_pot', 'pot_snow', 'greenware_pot',
   // recipes: hand, stump, kiln, bloomery, forge
-  'cord', 'stone_hammer', 'stone_axe', 'wooden_shovel', 'flint_knife', 'flint_axe', 'flint_pick', 'flint_shovel',
+  'cord', 'hammerstone', 'stone_axe', 'wooden_shovel', 'flint_knife', 'flint_axe', 'flint_pick', 'flint_shovel',
   'flint_spear', 'fire_drill', 'green_brick', 'greenware_crucible', 'greenware_mold', 'straw_hat', 'grass_cape',
   'fibre_bandage', 'rag_bandage', 'salt', 'salted_pork', 'fired_brick', 'bellows', 'wrought_iron', 'leather',
   'leather_hood', 'leather_coat', 'hide_shoes', 'crucible', 'casting_mold', 'copper_ingot', 'tin_ingot', 'bronze_ingot',
@@ -232,8 +232,8 @@ describe('items — the registry', () => {
     // twelve game foods (fauna)
     // §80: + the three seeds (materials). The 18 farm blocks are not placeable, so they are no items.
     // §81: + Hemlock Root and Nightshade Berries (foods), the Aloe Leaf (a heal) and the seven placeable plants.
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 55, 3, 5, 118]); // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(266); // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 55, 3, 5, 119]); // §94: + the Lab; // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(267); // §94: + the Lab; // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -531,16 +531,19 @@ describe('itemName with a count: the singular of a plural display name', () => {
 });
 
 describe('v0.11 normative tool names (CONTRACTS §64)', () => {
-  it('the tools are called what they are: stone hammer, stone axe, wooden shovel, shovels; old keys read through ITEM_ALIASES', () => {
-    expect(ITEMS.stone_hammer.name).toBe('Stone Hammer');
+  it('the tools are called what they are: hammerstone (§94), stone axe, wooden shovel, shovels; old keys read through ITEM_ALIASES', () => {
+    expect(ITEMS.hammerstone.name).toBe('Hammerstone');
+    expect(ITEMS.hammerstone.tool).toMatchObject({ type: 'hammer', tier: 1 });
     expect(ITEMS.stone_axe.name).toBe('Stone Axe');
     expect(ITEMS.wooden_shovel.name).toBe('Wooden Shovel');
     expect(ITEMS.flint_shovel.tool.type).toBe('shovel');
+    expect(ITEMS.stone_hammer).toBeUndefined();
     for (const k of ITEM_KEYS) {
-      expect(k).not.toMatch(/spade|hammerstone|chopper|digging_stick/);
-      expect(ITEMS[k].name).not.toMatch(/Spade|Hammerstone|Chopper|Digging Stick/);
+      expect(k).not.toMatch(/spade|stone_hammer|chopper|digging_stick/);
+      expect(ITEMS[k].name).not.toMatch(/Spade|Stone Hammer|Chopper|Digging Stick/);
     }
-    const old = { hammerstone: 'stone_hammer', stone_chopper: 'stone_axe', digging_stick: 'wooden_shovel', flint_spade: 'flint_shovel', steel_spade: 'steel_shovel' };
+    const old = { stone_hammer: 'hammerstone', stone_chopper: 'stone_axe', digging_stick: 'wooden_shovel', flint_spade: 'flint_shovel', steel_spade: 'steel_shovel' };
     for (const [from, to] of Object.entries(old)) expect(canonicalItemKey(from)).toBe(to);
+    expect(canonicalItemKey('hammerstone')).toBe('hammerstone');
   });
 });

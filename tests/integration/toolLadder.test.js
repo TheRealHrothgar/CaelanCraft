@@ -106,16 +106,28 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     expect(rollDrops(BLOCK.GRAVEL, null, {}, rnd)).toEqual([{ k: 'rock', n: 2 }]);
     pack.add({ k: 'rock', n: 9 });
     pack.add({ k: 'flint', n: 4 });
-    pack.add({ k: 'plant_fibre', n: 11 });
-    pack.add({ k: 'stick', n: 8 });
+    pack.add({ k: 'plant_fibre', n: 13 });
+    pack.add({ k: 'stick', n: 9 });
 
-    // 2. Stone, flint
-    expect(q.enqueue('stone_axe', 1, pack, stationsNow()).ok).toBe(false); // needs a hammer first
-    make(q, pack, stationsNow(), 'stone_hammer');
+    // 2. Stone, flint: a stone strikes stone (§94: the Hammerstone is one rock); the axe's head is lashed to a stick with cord
+    make(q, pack, stationsNow(), 'cord', 6);
     runLane(q, pack, world, feet);
-    make(q, pack, stationsNow(), 'cord', 5);
+    expect(q.enqueue('stone_axe', 1, pack, stationsNow()).ok).toBe(false); // needs a hammer first
+    make(q, pack, stationsNow(), 'hammerstone');
+    runLane(q, pack, world, feet);
     make(q, pack, stationsNow(), 'stone_axe');
     runLane(q, pack, world, feet);
+    // §94: flint is knapped on a Work Stump — a log (only an axe fells it) and the stump come first
+    expect(q.enqueue('flint_pick', 1, pack, stationsNow()).message).toContain('build a Work Stump nearby');
+    expect(canHarvest(BLOCK.OAK_LOG, null)).toBe(false);
+    expect(canHarvest(BLOCK.OAK_LOG, tool('stone_axe'))).toBe(true);
+    pack.add({ k: 'oak_log', n: 20 });
+    make(q, pack, stationsNow(), 'work_stump');
+    runLane(q, pack, world, feet);
+    expect(pack.count('work_stump')).toBe(1);
+    put(2, 64, 0, BLOCK.WORK_STUMP);
+    pack.take('work_stump', 1);
+    expect(stationsNow().stump).toEqual([2, 64, 0]);
     expect(q.enqueue('flint_pick', 1, pack, stationsNow()).ok).toBe(true);
     make(q, pack, stationsNow(), 'flint_axe');
     make(q, pack, stationsNow(), 'flint_knife');
@@ -123,20 +135,10 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     expect(pack.hasTool('pick', 2)).toBe(true);
     expect(pack.hasTool('axe', 2)).toBe(true);
     expect(pack.count('flint')).toBe(0);
-    expect(pack.count('rock')).toBe(6); // 1 stone hammer + 2 chopper
+    expect(pack.count('rock')).toBe(6); // 1 hammerstone + 2 chopper
 
-    // 3. Wood: a log needs axe ≥ 1; the stump is a hand recipe
-    expect(canHarvest(BLOCK.OAK_LOG, null)).toBe(false);
-    expect(canHarvest(BLOCK.OAK_LOG, tool('stone_axe'))).toBe(true);
-    pack.add({ k: 'oak_log', n: 20 });
-    expect(q.enqueue('split_sticks', 1, pack, stationsNow()).message).toContain('build a Work Stump nearby');
-    make(q, pack, stationsNow(), 'work_stump');
-    runLane(q, pack, world, feet);
-    expect(pack.count('work_stump')).toBe(1);
-    put(2, 64, 0, BLOCK.WORK_STUMP);
-    pack.take('work_stump', 1);
-    expect(stationsNow().stump).toEqual([2, 64, 0]);
-    expect(q.enqueue('oak_planks', 1, pack, stationsNow()).ok).toBe(true); // flint axe (tier 2)
+    // 3. Wood: planks and split sticks at the stump
+    expect(q.enqueue('oak_planks', 1, pack, stationsNow()).ok).toBe(true); // flint axe (tier 2), at the stump set down above
     make(q, pack, stationsNow(), 'split_sticks', 2);
     runLane(q, pack, world, feet);
     expect(pack.count('oak_planks')).toBe(3);
@@ -319,7 +321,7 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     const pack = new Pack();
     pack.add({ k: 'rock', n: 2 });
     const views = listRecipes(pack, { hand: true }, {});
-    expect(views[0].id).toBe('stone_hammer');
+    expect(views[0].id).toBe('hammerstone');
     expect(views[0].craftable).toBe(true);
     const forge = views.find((v) => v.id === 'steel_bar');
     expect(forge.stationOk).toBe(false);
@@ -347,7 +349,7 @@ describe('what the play-test found and the fixes (progression lens)', () => {
 
   it('a recipe that frees its own slot (scrape_salt) completes in a full pack instead of waiting "Pack full" for ever', () => {
     const pack = new Pack();
-    for (let i = 0; i < PACK_SLOTS; i++) pack.setSlot(i, { k: i === 0 ? 'salt_pot' : i === 1 ? 'salt' : 'stone_hammer', n: 1 });
+    for (let i = 0; i < PACK_SLOTS; i++) pack.setSlot(i, { k: i === 0 ? 'salt_pot' : i === 1 ? 'salt' : 'hammerstone', n: 1 });
     const q = new CraftQueue();
     expect(q.enqueue('scrape_salt', 1, pack, { hand: true }).ok).toBe(true);
     const e = q.step(60, pack, null, [0, 64, 0]);
@@ -362,15 +364,17 @@ describe('what the play-test found and the fixes (progression lens)', () => {
     pack.add({ k: 'clay_lump', n: 9 });
     pack.add({ k: 'plant_fibre', n: 20 });
     pack.add({ k: 'rock', n: 10 });
-    pack.setSlot(5, { k: 'stone_hammer', n: 1, d: 1 }); // one use left
+    pack.add({ k: 'stick', n: 5 });
+    pack.add({ k: 'cord', n: 5 });
+    pack.setSlot(5, { k: 'hammerstone', n: 1, d: 1 }); // one use left
     const q = new CraftQueue();
     const res = q.enqueue('stone_axe', 5, pack, { hand: true });
     expect(res.queued).toBe(5);
     const e = q.step(100, pack, null, [0, 64, 0]);
     expect(e.done.length).toBe(1);
-    expect(e.broke).toEqual(['stone_hammer']);
+    expect(e.broke).toEqual(['hammerstone']);
     expect(e.failed.length).toBe(4);
-    expect(e.messages[0]).toBe("Couldn't make Stone Axe: missing a stone hammer or better.");
+    expect(e.messages[0]).toBe("Couldn't make Stone Axe: missing a hammerstone or better.");
     expect(pack.count('rock')).toBe(8); // only the finished job took its inputs
   });
 
@@ -394,11 +398,11 @@ describe('what the play-test found and the fixes (progression lens)', () => {
     expect(breakSeconds(BLOCK.KILN, tool('flint_pick'))).toBe(1.5);
   });
 
-  it('useTool picks the lowest qualifying tier, so a copper hammer in the pack is spared when a stone hammer will do', () => {
+  it('useTool picks the lowest qualifying tier, so a copper hammer in the pack is spared when a hammerstone will do', () => {
     const pack = new Pack();
     pack.add({ k: 'copper_hammer', n: 1 });
-    pack.add({ k: 'stone_hammer', n: 1 });
-    expect(pack.useTool('hammer', 1)).toEqual({ key: 'stone_hammer', broke: false });
+    pack.add({ k: 'hammerstone', n: 1 });
+    expect(pack.useTool('hammer', 1)).toEqual({ key: 'hammerstone', broke: false });
     expect(pack.useTool('hammer', 3)).toEqual({ key: 'copper_hammer', broke: false });
   });
 

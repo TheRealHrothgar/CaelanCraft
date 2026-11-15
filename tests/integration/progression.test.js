@@ -99,8 +99,11 @@ describe('the build tree: logical and blocking (§77)', () => {
    * beyond the gate for the gate to block (the test would fail if it did not).
    */
   const GATES = [
-    ['any hammer (the Stone Hammer first)', atLeast('hammer', 1), ['stone_axe', 'flint_knife', 'flint_pick', 'work_stump', 'kiln', 'copper_ingot'], ['cord', 'fire_drill', 'campfire', 'rock']],
-    ['any axe (the Stone Axe first)', atLeast('axe', 1), ['work_stump', 'wooden_shovel', 'oak_log', 'oak_planks', 'charcoal', 'bellows'], ['stone_hammer', 'cord', 'flint_pick', 'coal', 'flint_shovel', 'kiln']],
+    ['any hammer (the Hammerstone first)', atLeast('hammer', 1), ['stone_axe', 'flint_knife', 'flint_pick', 'work_stump', 'kiln', 'copper_ingot'], ['cord', 'fire_drill', 'campfire', 'rock']],
+    // §94: no axe, no log, no Work Stump — and so no flint tool, no shovel, no clay, no coal
+    ['any axe (the Stone Axe first)', atLeast('axe', 1), ['work_stump', 'wooden_shovel', 'oak_log', 'oak_planks', 'charcoal', 'bellows', 'flint_pick', 'flint_shovel', 'coal', 'kiln'], ['hammerstone', 'cord', 'fire_drill', 'campfire']],
+    // §94: the flint tools are knapped at the Work Stump
+    ['the Work Stump', ['work_stump'], ['flint_knife', 'flint_axe', 'flint_pick', 'flint_shovel', 'oak_planks', 'coal', 'leather'], ['stone_axe', 'wooden_shovel', 'clay_lump', 'kiln', 'fire_drill', 'campfire']],
     ['an axe of flint or better (planks)', atLeast('axe', 2), ['oak_planks', 'bellows', 'bloomery', 'wrought_iron'], ['work_stump', 'kiln', 'copper_ingot', 'bronze_ingot']],
     // the first shovel is what digs clay: with no shovel there is no kiln, no pot, no metal
     ['any shovel (the Wooden Shovel first)', atLeast('shovel', 1), ['clay_lump', 'kiln', 'clay_pot', 'crucible', 'copper_ingot'], ['flint_pick', 'coal', 'work_stump', 'malachite']],
@@ -124,7 +127,9 @@ describe('the build tree: logical and blocking (§77)', () => {
     ['the Bellows', ['bellows'], ['bloomery', 'forge', 'wrought_iron', 'glass'], ['bronze_ingot', 'leather']],
     ['the Bloomery', ['bloomery'], ['wrought_iron', 'glass', 'forge', 'steel_bar'], ['bronze_pick', 'hematite', 'fired_brick']],
     ['the Forge', ['forge'], ['iron_pick', 'steel_bar', 'workbench'], ['wrought_iron', 'bronze_hammer']],
-    ['the Workbench', ['workbench'], ['relay'], ['steel_bar', 'knife_switch']],
+    // §94: the Workbench makes the simple circuit parts and the Lab; the Lab makes the devices
+    ['the Workbench', ['workbench'], ['knife_switch', 'push_button', 'terminal_board', 'voltaic_battery', 'lab', 'relay'], ['steel_bar', 'copper_wire', 'black_powder', 'powder_fuse']],
+    ['the Lab', ['lab'], ['relay', 'electric_bell', 'clockwork_timer', 'spark_transmitter', 'coherer_receiver'], ['knife_switch', 'voltaic_battery', 'workbench']],
   ];
 
   it.each(GATES)('without %s the next step is closed', (_name, barred, lost, kept) => {

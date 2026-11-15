@@ -80,7 +80,7 @@ describe('TILE_NAMES', () => {
     expect(keys).toEqual([...TILE_IDS].sort((a, b) => a - b));
     // v0.8: + barrel_side 75, barrel_top 76; zombies (§39): + 240–245; the Watcher (§40): + 250–252 (stone, crack glow, smoke);
     // v0.9 survival: + 77–104 (DESIGN-survival §8.1); powder and circuits: + 160–194 (DESIGN-circuits §1.4)
-    expect(keys.length).toBe(195); // + the aquifer's 238, 239 (§89); // + the ten of §85: spring_side 207, 225–227 and 232–237; // + the seven plants that are not food, 218–224 (§81); // + seedbed 205 and sprout 206 (§80 farming); // + tainted_water 204, the flora 208–217 and the ground nest's 228–231 (§76); // + the litter skins 201–203 (§75; flint_gravel 204 withdrawn in §76); // + the snares 197–199 and loose_stones_flint 200 (§69, §70); // v0.11: + workbench_side 195, workbench_top 196 (§67)
+    expect(keys.length).toBe(197); // + the Lab's 105, 106 (§94); + the aquifer's 238, 239 (§89); // + the ten of §85: spring_side 207, 225–227 and 232–237; // + the seven plants that are not food, 218–224 (§81); // + seedbed 205 and sprout 206 (§80 farming); // + tainted_water 204, the flora 208–217 and the ground nest's 228–231 (§76); // + the litter skins 201–203 (§75; flint_gravel 204 withdrawn in §76); // + the snares 197–199 and loose_stones_flint 200 (§69, §70); // v0.11: + workbench_side 195, workbench_top 196 (§67)
     expect(TILE_NAMES[TILE.COPPER_ORE]).toBe('copper_ore');
     expect(TILE_NAMES[TILE.PLANT_TOP_CLEAR]).toBe('plant_top_clear');
     expect(TILE_NAMES[TILE.FIRE_PIT_SIDE]).toBe('fire_pit_side');
@@ -224,7 +224,7 @@ describe('paintTile — recipe details', () => {
   });
   it('unknown tile ids paint the missing checker', () => {
     const missing = paintTile(TILE.MISSING);
-    for (const bad of [105, 159, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) { // 77–104 are tiles since v0.9
+    for (const bad of [107, 159, 254, -1, 1000, 0.5, NaN, undefined, null, '0', 'stone']) { // 77–104 are tiles since v0.9
       // @ts-ignore — deliberately passing garbage
       expect(sameBytes(paintTile(bad), missing), `tile ${String(bad)}`).toBe(true);
     }

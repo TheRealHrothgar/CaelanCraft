@@ -224,7 +224,7 @@ export function plainText(text) {
 const TOOL_KEYS = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool');
 
 /**
- * The cheapest tool item that satisfies a requirement, written "Stone Hammer+" when better ones of its kind exist ("+" =
+ * The cheapest tool item that satisfies a requirement, written "Hammerstone+" when better ones of its kind exist ("+" =
  * that tool or any better one), plain for tier-0 kit and for the best of its kind.
  * @param {string} type @param {number} tier
  */
@@ -284,7 +284,7 @@ export function recipeOutputs(rec) {
   return nameTimes(first.k, first.n) + (extra ? ` (+ ${extra} back)` : '');
 }
 
-/** A recipe's tools: "Stone Hammer+", "Crucible, Casting Mold", "" for none. @param {import('./crafting.js').Recipe} rec */
+/** A recipe's tools: "Hammerstone+", "Crucible, Casting Mold", "" for none. @param {import('./crafting.js').Recipe} rec */
 export function recipeTools(rec) {
   return rec.tools.map((t) => toolNeedLabel(t.type, t.tier)).join(', ');
 }
@@ -460,12 +460,13 @@ function table({ id, caption, head, rows, keys, source = null }) {
 // The generated tables
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** The first-day kit (§7.5), in making order; cord's count is whatever the rest of the kit needs. */
-const KIT = ['stone_hammer', 'stone_axe', 'cord', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire'];
+/** The first-day kit (§7.5), in making order; cord's count is whatever the rest of the kit needs. §94: the flint tools are
+ * knapped at the Work Stump, so the stump is part of the kit. */
+const KIT = ['cord', 'hammerstone', 'stone_axe', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire'];
 
 /**
  * The first-day kit as rows and its totals: raw materials after cord is expanded into fibre (tinder counted as fibre), and
- * the seconds of hand jobs.
+ * the seconds of making (at hand and at the Work Stump).
  */
 export function firstDayKit() {
   const recs = KIT.map((id) => /** @type {import('./crafting.js').Recipe} */ (getRecipe(id)));
@@ -511,7 +512,7 @@ function gatherTable() {
 
 function kitTable() {
   const kit = firstDayKit();
-  return table({ id: 'kit', caption: 'The first-day kit, made at hand', head: ['Make', 'From', 'Tool', 'Time'], rows: kit.rows,
+  return table({ id: 'kit', caption: 'The first-day kit (the flint tools at the Work Stump)', head: ['Make', 'From', 'Tool', 'Time'], rows: kit.rows,
     keys: kit.keys, source: 'recipes' });
 }
 
@@ -921,7 +922,7 @@ function workplacesTable() {
     const heat = HEAT_SOURCES[s] ? `+${HEAT_SOURCES[s].heat} °C, ${HEAT_SOURCES[s].radius} cells` : '—';
     return [STATION_NAMES[s], `${recipeInputs(rec)}${tools ? ` (${tools})` : ''}`, heat];
   });
-  return table({ id: 'workplaces', caption: 'Workplaces (made at hand)', head: ['Workplace', 'Built from', 'Heat while working'],
+  return table({ id: 'workplaces', caption: 'Workplaces', head: ['Workplace', 'Built from', 'Heat while working'],
     rows, keys: ids, source: 'recipes' });
 }
 
@@ -1146,7 +1147,7 @@ function fireFigure() {
 // The chapters
 // ---------------------------------------------------------------------------------------------------------------------
 
-/** The simple circuit parts the Workbench's devices are built on (CONTRACTS §67); a test checks each against RECIPES. */
+/** The simple circuit parts the Lab's devices are built on, made at the Workbench (§67, §94); a test checks each against RECIPES. */
 export const ELEMENTARY_PARTS = Object.freeze(['knife_switch', 'push_button', 'terminal_board', 'voltaic_battery']);
 
 /** The species as a crowd, for prose ("cattle, sheep, horses and wolves"); a test checks every species has a word. */
@@ -1215,6 +1216,7 @@ function makeChapters() {
   const stump = rec('work_stump');
   const splitSticks = rec('split_sticks');
   const workbench = rec('workbench');
+  const lab = rec('lab');
   const torch = rec('torch');
   const snare = rec('snare');
   const dartRec = rec('flint_dart');
@@ -1278,8 +1280,8 @@ function makeChapters() {
   const byTorch = { glare: (TORCH_LIGHT - 1) / LIGHT_MAX };
   const climbLight = Math.ceil(GLARE_CLIMB * LIGHT_MAX);
   const torchEvery = 2 * (TORCH_LIGHT - ZOMBIE_DREAD_LIGHT) + 1;
-  // the Workbench
-  const devices = RECIPES.filter((r) => /** @type {string} */ (r.station) === 'workbench').map((r) => itemName(r.outputs[0].k));
+  // the Lab (§94)
+  const devices = RECIPES.filter((r) => /** @type {string} */ (r.station) === 'lab').map((r) => itemName(r.outputs[0].k));
 
   /** @type {Chapter[]} */
   const chapters = [];
@@ -1298,11 +1300,11 @@ function makeChapters() {
     [
       h('Before dusk, step by step'),
       steps([
-        'Pull *tussock grass* with your bare hands for Plant Fibre: hold the left mouse button on it until it breaks. Eight tussocks give about a dozen.',
+        'Pull *tussock grass* with your bare hands for Plant Fibre: hold the left mouse button on it until it breaks. Ten tussocks give about fifteen, enough for the first day.',
         'Look down. *Loose Stones* give Rock and *Fallen Branches* give Sticks: press [R] on them. For Flint, dig *gravel*: now and then a cell turns one up.',
-        'Press [E] and make a *Stone Hammer*, then a *Stone Axe* and some *Cord*. Hand jobs carry on while you walk.',
-        'With the Stone Axe in hand, lop leaves for Sticks and fell a tree: logs need an axe.',
-        'Knap your flint with the Stone Hammer: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
+        'Press [E] and pick a round rock for a *Hammerstone*: stone strikes stone. Twist *Cord*, then knap a *Stone Axe* head and lash it to a stick. Hand jobs carry on while you walk.',
+        'With the Stone Axe in hand, lop leaves for more Sticks and fell a tree: logs need an axe.',
+        'Shape a log into a *Work Stump* with the Stone Axe and set it down. On its flat top, knap your flint with the Hammerstone: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
         'Make a *Fire Drill*, then build a *Campfire* beside fresh water. Raw water can poison: boil it once you have a pot.',
         `Eat honeyberries as you go. Pigs are shy: sneak up with [Shift], strike ${numWord(stoneAxeBlows)} times with the Stone Axe, and roast the pork.`,
         `Before sunset at ${sunset}, feed the fire a log and stay within ${ZOMBIE_FIRE_FEAR} cells of it.`,
@@ -1310,7 +1312,7 @@ function makeChapters() {
     ],
     [
       ...kitTable(),
-      p(`In all: ${kit.rock} Rock, ${kit.knapstone} Flint, ${kit.fibre} Plant Fibre and ${kit.sticks} Sticks, and ${kit.seconds} seconds of hand jobs.`),
+      p(`In all: ${kit.rock} Rock, ${kit.knapstone} Flint, ${kit.fibre} Plant Fibre, ${kit.sticks} Sticks and a log for the stump, and ${kit.seconds} seconds of making.`),
       tip('A + after a tool means that tool or any better one of its kind. The flint shovel and spear can wait for day two.'),
     ],
     [
@@ -1654,7 +1656,7 @@ function makeChapters() {
     ],
     [
       h('Stone and flint'),
-      p('The *Stone Hammer* is a fist-sized cobble, the knapper\'s hammer: every flint tool is struck with it. The *Stone Axe* is a sharp-edged cobble, your first axe: it fells trees and lops leaves for sticks.'),
+      p('The *Hammerstone* is a fist-sized cobble, the knapper\'s hammer: every flint tool is struck with it. The *Stone Axe* is a sharp-edged cobble lashed to a stick, your first axe: it fells trees and lops leaves for sticks.'),
       p(`*Flint* hides in *gravel*. Dig wild gravel, by hand or with a shovel, and about one cell in ${Math.round(1 / GRAVEL_FLINT_P)} (${fmtPct(GRAVEL_FLINT_P)}) turns up a Flint. Gravel you have put down yourself gives none. A few *Loose Stones* (${fmtPct(FLINT_SHARE)}) show a dark nodule and give one too.`),
       p('Flint, or obsidian (volcanic glass), knaps into a knife, an axe, a shovel, a spear and a pick. Each needs a stick and cord to haft it.'),
       p(`The Flint Pick breaks stone, ${flintOres.map((n) => n.toLowerCase()).join(', ')} and obsidian.`),
@@ -1701,13 +1703,14 @@ function makeChapters() {
     [
       h('Making things'),
       p('Press [E] to open your pack and *Making*. There is no crafting grid: the list shows what you can make from what you carry at the workplaces near you, the things you can make right now first. Recipes for workplaces you have not built are greyed out, so the list doubles as your road map.'),
+      p('Search finds a recipe by its name, an input or a workplace. *Build tree* shows what to gather and build to set up each workplace, Work Stump to Lab. Everything made at a workplace wears its colour; a green ring is something you have, a gold one something you can make now. Click anything to find its recipes.'),
       p(`A workplace counts as near within ${STATION_RANGE} cells (and 2 up or down). Click *Make*, or *×5* for five.`),
-      p(`Each workplace (your hands, a Work Stump, a Kiln, a Bloomery, the Forge, the Workbench) has its own *lane*, and all the lanes work at once. A job takes its inputs only when it finishes, so cancelling costs nothing. Up to ${MAX_CRAFT_JOBS} jobs wait in all.`),
+      p(`Each workplace (your hands, a Work Stump, a Kiln, a Bloomery, the Forge, the Workbench, the Lab) has its own *lane*, and all the lanes work at once. A job takes its inputs only when it finishes, so cancelling costs nothing. Up to ${MAX_CRAFT_JOBS} jobs wait in all.`),
       p(`Once started, a job keeps going while you stay within ${STATION_WORK_RANGE} cells of its workplace: tend the fire, fetch water or dig clay while the Kiln works.`),
     ],
     [
       ...workplacesTable(),
-      p(`The Work Stump comes first: ${recipeInputsProse(stump)} and an axe. It splits a log into ${splitSticks.outputs[0].n} sticks, cuts planks and works leather. A Kiln, a Bloomery or the Forge at work is a warm place to stand.`),
+      p(`The Work Stump comes first: ${recipeInputsProse(stump)} and an axe. Flint is knapped into tools on it; it splits a log into ${splitSticks.outputs[0].n} sticks, cuts planks and works leather. A Kiln, a Bloomery or the Forge at work is a warm place to stand.`),
     ],
     ...recipeTable('hand').map((t) => [t]),
     ...recipeTable('stump').map((t) => [t]),
@@ -1719,11 +1722,17 @@ function makeChapters() {
     ...recipeTable('forge').map((t) => [t]),
     [
       h('The Workbench'),
-      p(`The *Workbench* comes last of all. It is built at hand from ${recipeInputsProse(workbench)}, with an ${plain(recipeTools(workbench))}: steel from the Forge, glass from the Bloomery, copper wire drawn at the Work Stump and tin smelted in the Kiln.`),
-      p(`It is where circuits grow up. The simple parts are made at the Work Stump: the ${listJoin(ELEMENTARY_PARTS.map((k) => itemName(k)))}. The Workbench builds the clever devices on top of them: the ${listJoin(devices)}.`),
-      tip('Every device at the Workbench is built on a simple part, so make those first.'),
+      p(`The *Workbench* comes after the Forge. It is built at hand from ${recipeInputsProse(workbench)}, with an ${plain(recipeTools(workbench))}: steel from the Forge, glass from the Bloomery, copper wire drawn at the Work Stump and tin smelted in the Kiln.`),
+      p(`It is where circuits begin: the simple parts are made there, the ${listJoin(ELEMENTARY_PARTS.map((k) => itemName(k)))}. What a circuit burns up (fuse, powder, wire) is still made by hand and at the Work Stump.`),
     ],
     ...recipeTable('workbench').map((t) => [t]),
+    [
+      h('The Lab'),
+      p(`The *Lab* comes last of all. It is built at the Workbench from ${recipeInputsProse(lab)}, with an ${plain(recipeTools(lab))}: glassware, a steel frame and a battery of its own.`),
+      p(`It builds the clever devices on top of the simple parts: the ${listJoin(devices)}.`),
+      tip('Every device at the Lab is built on a simple part from the Workbench, so make those first.'),
+    ],
+    ...recipeTable('lab').map((t) => [t]),
     [
       h('Why these steps'),
       p(`*Charcoal* is wood baked without air: it burns hotter and cleaner than wood, which is why iron needs it. The Kiln bakes ${recipeInputsProse(charcoal)} into ${charcoal.outputs[0].n} Charcoal.`),

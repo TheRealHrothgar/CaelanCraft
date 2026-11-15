@@ -10,8 +10,8 @@ import { FakeDocument } from '../helpers/fakeDom.js';
 const N = ITEM_ART_SIZE;
 const NON_BLOCK = ITEM_KEYS.filter((k) => ITEMS[k].kind !== 'block');
 const TOOLS = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool');
-/** Tools with a haft (everything but the stone hammer and the tier-0 kit: drill, crucible, mold). */
-const HAFTED = TOOLS.filter((k) => k !== 'stone_hammer' && ITEMS[k].tool.tier > 0);
+/** Tools with a haft (everything but the hammerstone and the tier-0 kit: drill, crucible, mold). */
+const HAFTED = TOOLS.filter((k) => k !== 'hammerstone' && ITEMS[k].tool.tier > 0);
 
 /** @param {Uint8ClampedArray} px @returns {Array<[number, number]>} opaque pixels */
 function opaque(px) {

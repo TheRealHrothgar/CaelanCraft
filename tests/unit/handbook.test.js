@@ -234,7 +234,7 @@ describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
       expect(list, id).toEqual(list.map((_, i) => i + 1));
     }
     // even splits: Hands (44 recipes with DESIGN-circuits §8.2's six and the dart) in five pages of 9, 9, 9, 9, 8
-    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([10, 10, 10, 9, 9]); // 45 with the Snare (§69); 47 with Healwort tea and the Fletched Dart (§76); 48 with the Grass Bed (§85)
+    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([9, 9, 9, 8, 8]); // §94: 43, the flint tools at the stump; // 45 with the Snare (§69); 47 with Healwort tea and the Fletched Dart (§76); 48 with the Grass Bed (§85)
   });
 
   it('teaches the real survival ideas the design asks for', () => {
@@ -265,10 +265,10 @@ describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
 
   it('names things as the game does: the everyday tool names (§64), "Poisoned" (§66), and never an item key', () => {
     const everything = `${allProse()}\n${allCells()}`;
-    expect(everything).not.toMatch(/hammerstone|chopper|digging stick|\bspades?\b/i);
+    expect(everything).not.toMatch(/stone hammer|chopper|digging stick|\bspades?\b/i); // §94: the Hammerstone
     expect(everything).not.toMatch(/\bsick(ness)?\b/i); // the status is Poisoned
-    expect(everything).not.toMatch(/[a-z]_[a-z]/); // "stone_hammer" once leaked into a first-day step
-    for (const name of ['Stone Hammer', 'Stone Axe', 'Wooden Shovel', 'Flint Shovel']) expect(everything).toContain(name);
+    expect(everything).not.toMatch(/[a-z]_[a-z]/); // "hammerstone" as a key once leaked into a first-day step
+    for (const name of ['Hammerstone', 'Stone Axe', 'Wooden Shovel', 'Flint Shovel']) expect(everything).toContain(name);
     expect(allProse()).toContain('When you are Poisoned');
   });
 });
@@ -298,11 +298,11 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([48, 23, 24, 5, 15, 8]); // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([43, 24, 24, 5, 15, 5, 8]); // §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
-    expect(toolNeedLabel('hammer', 1)).toBe('Stone Hammer+');
+    expect(toolNeedLabel('hammer', 1)).toBe('Hammerstone+');
     expect(toolNeedLabel('axe', 1)).toBe('Stone Axe+');
     expect(toolNeedLabel('knife', 2)).toBe('Flint Knife+');
     expect(toolNeedLabel('hammer', 4)).toBe('Bronze Hammer+');
@@ -466,7 +466,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
 
   it('the workplaces table: what builds each workplace, and its heat while working', () => {
     const t = tableById('workplaces');
-    expect(t.keys).toEqual(['stump', 'kiln', 'bloomery', 'forge', 'workbench']);
+    expect(t.keys).toEqual(['stump', 'kiln', 'bloomery', 'forge', 'workbench', 'lab']);
     expect(rowOf(t, 'workbench')[1]).toContain('2 Steel Bar');
     expect(rowOf(t, 'kiln')).toEqual(['Kiln', '8 Clay Lump + 6 Rock', '+12 °C, 4 cells']);
     expect(rowOf(t, 'stump')[1]).toBe('Any Log (Stone Axe+)');
@@ -574,13 +574,13 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     expect(rowOf(w, 'Nourishment')[2]).toBe(`at least ${RATES.WAKE_MIN_STAT}`);
   });
 
-  it('the first-day kit is §7.5: 9 rock, 4 flint, 11 fibre, 8 sticks, 28 s of hand jobs', () => {
+  it('the first-day kit is §7.5 with the Work Stump (§94): 9 rock, 4 flint, 13 fibre, 9 sticks, a log, 34 s of making', () => {
     const kit = firstDayKit();
-    expect([kit.rock, kit.knapstone, kit.fibre, kit.sticks, kit.seconds, kit.cords]).toEqual([9, 4, 11, 8, 28, 5]);
+    expect([kit.rock, kit.knapstone, kit.fibre, kit.sticks, kit.seconds, kit.cords]).toEqual([9, 4, 13, 9, 34, 6]); // §94: the hammerstone is a rock; the stone axe takes a stick and cord
     const t = tableById('kit');
-    expect(t.keys).toEqual(['stone_hammer', 'stone_axe', 'cord', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire']);
-    expect(rowOf(t, 'cord')).toEqual(['Cord ×5', '10 Plant Fibre', '—', '5 s']);
-    expect(allProse()).toContain('In all: 9 Rock, 4 Flint, 11 Plant Fibre and 8 Sticks, and 28 seconds of hand jobs.');
+    expect(t.keys).toEqual(['cord', 'hammerstone', 'stone_axe', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire']);
+    expect(rowOf(t, 'cord')).toEqual(['Cord ×6', '12 Plant Fibre', '—', '6 s']);
+    expect(allProse()).toContain('In all: 9 Rock, 4 Flint, 13 Plant Fibre, 9 Sticks and a log for the stump, and 34 seconds of making.');
   });
 
   it('gathering rows describe PICKABLE (for what R picks) and BLOCK_RULES drops, and say how: R, or hold LMB', () => {
@@ -1006,8 +1006,8 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain('It pops out, flies to you, and is yours when it reaches you.');
     // the dart's recipe, in words
     const dart = RECIPES.find((r) => r.id === 'flint_dart');
-    expect(dart.inputs.map((i) => [i.k, i.n])).toEqual([['flint', 1], ['stick', 1], ['plant_fibre', 1]]);
-    expect(text).toContain(`One Flint, one Stick and one Plant Fibre make ${numWord(dart.outputs[0].n)} Flint Darts at hand, with a Stone Hammer.`);
+    expect(dart.inputs.map((i) => [i.k, i.n])).toEqual([['flint', 1], ['stick', 1], ['cord', 1]]); // §94: bound with cord
+    expect(text).toContain(`One Flint, one Stick and one Cord make ${numWord(dart.outputs[0].n)} Flint Darts at hand, with a Hammerstone.`);
   });
 
   it('the controls chapter has Q and G, the riding keys, and R on animals and snares before everything else', () => {
@@ -1346,7 +1346,7 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain(`${fmtPct(salt.p)} of the stone you mine ${DEEP_BELOW_SEA} cells or more below sea level gives some.`);
   });
 
-  it('the Workbench (§67): built last from steel, glass, copper wire and tin; its devices stand on the simple parts', () => {
+  it('the Workbench (§67, §94): after the Forge, from steel, glass, copper wire and tin; it makes the simple parts and the Lab', () => {
     const made = (k) => RECIPES.find((r) => r.outputs[0].k === k);
     const bench = RECIPES.find((r) => r.id === 'workbench');
     expect(bench.station).toBe('hand');
@@ -1355,17 +1355,20 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     // … and each of those comes from where the sentence says
     expect(bench.inputs.filter((i) => 'k' in i).map((i) => [i.k, made(i.k).station]))
       .toEqual([['steel_bar', 'forge'], ['glass', 'bloomery'], ['copper_wire', 'stump'], ['tin_ingot', 'kiln']]);
-    const atBench = RECIPES.filter((r) => r.station === 'workbench');
-    const benchMade = new Set(atBench.map((r) => r.outputs[0].k));
+    const atLab = RECIPES.filter((r) => r.station === 'lab');
+    const labMade = new Set(atLab.map((r) => r.outputs[0].k));
     for (const k of ELEMENTARY_PARTS) {
-      expect(made(k).station, k).toBe('stump');
-      expect(atBench.some((r) => r.inputs.some((i) => i.k === k)), k).toBe(true);
+      expect(made(k).station, k).toBe('workbench');
+      expect(atLab.some((r) => r.inputs.some((i) => i.k === k)), k).toBe(true);
     }
     // every device starts from a simple part, or from a device that does
-    for (const r of atBench) expect(ELEMENTARY_PARTS.includes(r.inputs[0].k) || benchMade.has(r.inputs[0].k), r.id).toBe(true);
-    expect(text).toContain(`The simple parts are made at the Work Stump: the ${listJoin(ELEMENTARY_PARTS.map((k) => itemName(k)))}.`);
-    expect(text).toContain(`The Workbench builds the clever devices on top of them: the ${listJoin(atBench.map((r) => itemName(r.outputs[0].k)))}.`);
-    expect(text).toContain('the Forge, the Workbench) has its own lane');
+    for (const r of atLab) expect(ELEMENTARY_PARTS.includes(r.inputs[0].k) || labMade.has(r.inputs[0].k), r.id).toBe(true);
+    expect(text).toContain(`the simple parts are made there, the ${listJoin(ELEMENTARY_PARTS.map((k) => itemName(k)))}.`);
+    const lab = RECIPES.find((r) => r.id === 'lab');
+    expect(lab.station).toBe('workbench');
+    expect(text).toContain(`It is built at the Workbench from ${recipeInputsProse(lab)}, with an Iron Hammer`);
+    expect(text).toContain(`It builds the clever devices on top of the simple parts: the ${listJoin(atLab.map((r) => itemName(r.outputs[0].k)))}.`);
+    expect(text).toContain('the Forge, the Workbench, the Lab) has its own lane');
   });
 });
 

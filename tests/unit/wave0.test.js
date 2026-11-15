@@ -303,10 +303,10 @@ describe('blocks', () => {
   });
   it('v0.4 batch: 40 blocks appended after RUNE_BLOCK (v2 save ids unchanged), every placeable block in the picker once', () => {
     // v0.8 appended 68..75 (see the block-physics test below), v0.9 survival 76..94, powder and circuits 95..114, v0.11 the Workbench 115
-    expect(BLOCK_COUNT).toBe(177); // §93: + the bricks' shadows 174–176; // §89: the aquifer 173; §85: the ten homestead blocks 163–172 (spring, well, rain barrel, the two beds); … the three snares 116–118 and Flinty Gravel 119 (§75); v0.14 (§76): Tainted Water 120, the Ground Nest 121, the flora 122–131, the Empty Nest 132; §80: the planted blocks 133–141 and the sprouts 142–150; §81: the plants that are not food 151–158; §83: low and shallow water 159–162
+    expect(BLOCK_COUNT).toBe(178); // §94: + the Lab 177; §93: + the bricks' shadows 174–176; // §89: the aquifer 173; §85: the ten homestead blocks 163–172 (spring, well, rain barrel, the two beds); … the three snares 116–118 and Flinty Gravel 119 (§75); v0.14 (§76): Tainted Water 120, the Ground Nest 121, the flora 122–131, the Empty Nest 132; §80: the planted blocks 133–141 and the sprouts 142–150; §81: the plants that are not food 151–158; §83: low and shallow water 159–162
     // + 6 zombie part tiles 240–245 (§39), + 3 Watcher tiles 250–252 (§40: stone, crack glow, smoke), not block faces;
     // v0.9 survival + 28 (77–104); powder and circuits + 35 (160–194)
-    expect(TILE_IDS).toHaveLength(195); // §89: + the aquifer's 238, 239; §85: + 207, 225–227 and 232–237; v0.11: + the Workbench 195, 196; v0.13: + 201–203 (§75; 204 withdrawn in §76); v0.14: + tainted water 204, the flora 208–217, the nest's 228–231; §80: + the seedbed 205 and the sprout 206; §81: + 218–224
+    expect(TILE_IDS).toHaveLength(197); // §94: + the Lab's 105, 106; // §89: + the aquifer's 238, 239; §85: + 207, 225–227 and 232–237; v0.11: + the Workbench 195, 196; v0.13: + 201–203 (§75; 204 withdrawn in §76); v0.14: + tainted water 204, the flora 208–217, the nest's 228–231; §80: + the seedbed 205 and the sprout 206; §81: + 218–224
     expect(BLOCK.BLACK_HOLE).toBe(66);
     expect(TILE.BLACK_HOLE).toBe(72);
     expect(BLOCK.STONE).toBe(1);
@@ -316,7 +316,7 @@ describe('blocks', () => {
     expect(TILE.SPRUCE_LOG_SIDE).toBe(28);
     expect(TILE.WOOL_LIGHT_GRAY).toBe(71);
     const placeable = BLOCKS.filter((b) => b.placeable).map((b) => b.id).sort((a, b) => a - b);
-    expect(PICKER_ORDER).toHaveLength(119); // §85: + the two beds, the well and the rain barrel; 67 before the v0.9 survival blocks, 80 before powder and circuits, 99 before the Workbench, 101 before v0.14's seven plants, 108 before the seven of §81
+    expect(PICKER_ORDER).toHaveLength(120); // §94: + the Lab; // §85: + the two beds, the well and the rain barrel; 67 before the v0.9 survival blocks, 80 before powder and circuits, 99 before the Workbench, 101 before v0.14's seven plants, 108 before the seven of §81
     expect(new Set(PICKER_ORDER).size).toBe(PICKER_ORDER.length);
     expect([...PICKER_ORDER].sort((a, b) => a - b)).toEqual(placeable);
     // Logs and hay bales: distinct end tiles on top and bottom.
@@ -393,8 +393,8 @@ describe('blocks', () => {
     expect(isLeaves(BLOCK.OAK_LOG) || isLog(BLOCK.OAK_PLANKS)).toBe(false);
   });
   it('v0.9 survival: blocks 76..94 exactly as DESIGN-survival §8.1, tiles 77..104 (powder and circuits follow at 95)', () => {
-    expect(BLOCK_COUNT).toBe(177); // §93: + the bricks' shadows 174–176; // §89: + 173; §85: + 163–172; 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119; v0.14 (§76) 120–132; §80 the farm blocks 133–150; §81 the plants that are not food 151–158
-    expect(BLOCKS).toHaveLength(177);
+    expect(BLOCK_COUNT).toBe(178); // §94: + the Lab 177; §93: + the bricks' shadows 174–176; // §89: + 173; §85: + 163–172; 95 after survival; DESIGN-circuits §1.3 appends 95..114; v0.11 the Workbench 115, the snares 116–118; v0.13 Flinty Gravel 119; v0.14 (§76) 120–132; §80 the farm blocks 133–150; §81 the plants that are not food 151–158
+    expect(BLOCKS).toHaveLength(178);
     const P = 'plant'; // the PLANT flags: walk-through, see-through cutout, never culled against itself
     const S = 'solid'; // a plain full block (def defaults)
     // [key, id, name, displayName, flags, soundGroup, [side, top, bottom] TILE keys, placeable]
@@ -451,7 +451,7 @@ describe('blocks', () => {
       'PLANT_TOP_CLEAR', 'LOOSE_STONES', 'FALLEN_BRANCHES', 'FIRE_PIT_SIDE',
     ];
     TILES.forEach((key, i) => expect(TILE[key], key).toBe(77 + i));
-    expect(TILE_IDS).toHaveLength(195); // §89: + two; §85: + ten; 115 after survival; + the 35 circuit tiles 160..194; + the Workbench 195, 196; + 201–203 (§75); + tainted water 204, the flora 208–217 and the nest's 228–231 (§76); + the seedbed 205 and the sprout 206 (§80); + 218–224 (§81)
+    expect(TILE_IDS).toHaveLength(197); // §94: + the Lab's 105, 106; // §89: + two; §85: + ten; 115 after survival; + the 35 circuit tiles 160..194; + the Workbench 195, 196; + 201–203 (§75); + tainted water 204, the flora 208–217 and the nest's 228–231 (§76); + the seedbed 205 and the sprout 206 (§80); + 218–224 (§81)
     expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
     // Every survival tile is used by a block face — except CATTAILS_TOP: the cattails became a crossed sprite drawn from
     // CATTAILS_SIDE, and tile ids are fixed, so 83 stays painted but no face names it.
@@ -460,7 +460,7 @@ describe('blocks', () => {
   });
 
   it('v0.9 survival: PICKER_ORDER inserts the 13 placeable blocks into their groups; WATER last, RUNE_BLOCK before it', () => {
-    expect(PICKER_ORDER).toHaveLength(119); // §85: + four; 80 after survival; DESIGN-circuits §1.5: − BLACK_HOLE + the 20 circuit blocks; + the Workbench; + v0.14's seven plants; + the seven of §81
+    expect(PICKER_ORDER).toHaveLength(120); // §94: + the Lab; // §85: + four; 80 after survival; DESIGN-circuits §1.5: − BLACK_HOLE + the 20 circuit blocks; + the Workbench; + v0.14's seven plants; + the seven of §81
     expect(PICKER_ORDER[PICKER_ORDER.length - 1]).toBe(BLOCK.WATER);
     expect(PICKER_ORDER[PICKER_ORDER.length - 2]).toBe(BLOCK.RUNE_BLOCK);
     const after = (id, ids) => {
@@ -478,7 +478,7 @@ describe('blocks', () => {
       BLOCK.OAK_LOG]);
     // The keg follows the campfire; the circuit blocks (tested below) follow it; the Black Hole is gone (DESIGN-circuits §1.5).
     after(BLOCK.WOOL_PINK, [
-      BLOCK.WORK_STUMP, BLOCK.KILN, BLOCK.BLOOMERY, BLOCK.FORGE, BLOCK.WORKBENCH, BLOCK.WICKER_BASKET, BLOCK.SLEEPING_HIDE, BLOCK.SNARE,
+      BLOCK.WORK_STUMP, BLOCK.KILN, BLOCK.BLOOMERY, BLOCK.FORGE, BLOCK.WORKBENCH, BLOCK.LAB, BLOCK.WICKER_BASKET, BLOCK.SLEEPING_HIDE, BLOCK.SNARE,
       BLOCK.GRASS_BED, BLOCK.BED, BLOCK.WELL, BLOCK.RAIN_BARREL, // §85: a place to stay
       BLOCK.CAMPFIRE,
       BLOCK.POWDER_KEG, BLOCK.COLLAPSAR_CHARGE,
@@ -509,7 +509,7 @@ describe('blocks', () => {
     expect(all.filter(isPlant)).toEqual([...PLANT_IDS]);
     expect(all.filter(isLitter)).toEqual([B.LOOSE_STONES, B.FALLEN_BRANCHES]);
     expect(all.filter(isPopOff)).toEqual([...POP_OFF_IDS]);
-    expect(all.filter(isStation)).toEqual([B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WORKBENCH]);
+    expect(all.filter(isStation)).toEqual([B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WORKBENCH, B.LAB]); // §94: + the Lab
     expect(all.filter(isContainerBlock)).toEqual([B.WICKER_BASKET, B.REMAINS]);
     for (const f of [isPlant, isLitter, isPopOff, isStation, isContainerBlock, isFarmBlock]) {
       expect(f(UNLOADED) || f(-1) || f(NaN) || f(undefined), f.name).toBe(false);
@@ -563,7 +563,7 @@ describe('blocks', () => {
 
   it('powder and circuits: blocks 95..114 exactly as DESIGN-circuits §1.2 (THIN and MODEL), BLOCK_COUNT 115', () => {
     expect(CIRCUIT_BLOCKS.map((row) => row[1])).toEqual(Array.from({ length: 20 }, (_, i) => 95 + i));
-    expect(BLOCK_COUNT).toBe(177); // §93: + the bricks' shadows 174–176; // §89: + the aquifer 173; §85: + the ten homestead blocks 163–172; + v0.11's Workbench at 115, the snares 116–118, v0.13's Flinty Gravel 119, v0.14's 120–132 (§76), the farm blocks 133–150 (§80) and the plants that are not food 151–158 (§81) and the low and shallow water 159–162 (§83)
+    expect(BLOCK_COUNT).toBe(178); // §94: + the Lab 177; §93: + the bricks' shadows 174–176; // §89: + the aquifer 173; §85: + the ten homestead blocks 163–172; + v0.11's Workbench at 115, the snares 116–118, v0.13's Flinty Gravel 119, v0.14's 120–132 (§76), the farm blocks 133–150 (§80) and the plants that are not food 151–158 (§81) and the low and shallow water 159–162 (§83)
     for (const [key, id, name, displayName, shape, sound, [side, top]] of CIRCUIT_BLOCKS) {
       expect(BLOCK[key], key).toBe(id);
       const d = BLOCKS[id];
@@ -598,7 +598,7 @@ describe('blocks', () => {
 
   it('powder and circuits: tiles 160..194 (§1.4), each used by a block face; TILE_IDS 150', () => {
     CIRCUIT_TILES.forEach((key, i) => expect(TILE[key], key).toBe(160 + i));
-    expect(TILE_IDS).toHaveLength(195); // §89: + two; §85: + ten; + the Workbench's 195, 196 (§67), 201–203 (§75), tainted water 204, the flora's 208–217 and the nest's 228–231 (§76), the seedbed 205 and the sprout 206 (§80), 218–224 (§81)
+    expect(TILE_IDS).toHaveLength(197); // §94: + the Lab's 105, 106; // §89: + two; §85: + ten; + the Workbench's 195, 196 (§67), 201–203 (§75), tainted water 204, the flora's 208–217 and the nest's 228–231 (§76), the seedbed 205 and the sprout 206 (§80), 218–224 (§81)
     expect(new Set(TILE_IDS).size).toBe(TILE_IDS.length);
     const used = new Set(BLOCKS.flatMap((d) => d.tiles));
     for (const key of CIRCUIT_TILES) expect(used.has(TILE[key]), key).toBe(true);
@@ -649,7 +649,7 @@ describe('blocks', () => {
   });
 
   it('PICKER_ORDER (§1.5): 100 placeable ids; the keg after the campfire, then the 20 new ids in table order, RUNE_BLOCK, WATER', () => {
-    expect(PICKER_ORDER).toHaveLength(119); // §85: + the two beds, the well, the rain barrel; v0.11: + the Workbench among the workplaces; v0.14: + seven wild plants; §81: + seven more
+    expect(PICKER_ORDER).toHaveLength(120); // §94: + the Lab; // §85: + the two beds, the well, the rain barrel; v0.11: + the Workbench among the workplaces; v0.14: + seven wild plants; §81: + seven more
     const iKeg = PICKER_ORDER.indexOf(BLOCK.POWDER_KEG);
     expect(iKeg).toBe(PICKER_ORDER.indexOf(BLOCK.CAMPFIRE) + 1);
     expect(PICKER_ORDER.slice(iKeg + 1)).toEqual([...CIRCUIT_BLOCKS.map(([key]) => BLOCK[key]), BLOCK.RUNE_BLOCK, BLOCK.WATER]);
