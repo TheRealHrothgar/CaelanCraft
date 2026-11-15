@@ -71,8 +71,8 @@ depths a level apart; that is the existing levelling rule (§83) showing.
 Raw materials stay hexes and are worked into building materials when mined: stone gives rocks to a pick, or stone bricks to
 a metal hammer; dirt gives loose dirt; wood gives logs, and logs planks. Survival never places raw blocks. Loose ground
 (dirt, sand, gravel, snow, clay, red sand) is the one thing Survival still places as hexes, for berms and ditches, and only
-up to three layers above the land's generated height: earthworks, never mountains. Creative places anything, and **B**
-switches its building materials between bricks and hexes.
+up to three layers above the land's generated height: earthworks, never mountains. Creative places anything, but no block
+type is both: a building material is always laid as a brick, everything else as a hex.
 
 ## 7. Not done yet
 

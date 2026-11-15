@@ -7150,8 +7150,9 @@ chunks whose centre lies in a meshed hex chunk (`onBrickMesh` / `onBrickUnload`,
   is raised one layer when that one is free (a brick laid against a slope sits on the higher ground); else "Bricks need
   clear ground: dig it out first". Never inside the player or a mob.
 - Building materials (`BRICK_MATERIAL_IDS`: the planks, cobblestone, the bricks, glass, the bookshelf, every wool, the metal
-  and gem blocks, honeycomb, hay) are laid as bricks: always in Survival; in Creative until **B** switches building to hexes
-  (toast "Building: hexes (B: bricks)" / "Building: bricks (B: hexes)"). A hex may be placed against a brick face.
+  and gem blocks, honeycomb, hay) are only ever bricks: the player lays them as bricks in both modes, and no block type is
+  laid both as a hex and as a brick (there is no switch). A hex may be placed against a brick face. (A building-material hex
+  that a command, a rune or an older save put in the world stays as it is until it is broken.)
 - A brick is dug in Survival by its block's harvest rule (time, tool, drops, which fly from the hit point); Creative breaks
   it at once; pick takes its block.
 
