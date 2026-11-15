@@ -483,7 +483,7 @@ describe('RuneRunner.update — execution', () => {
     expect(small).toBeLessThan(MAX_CELLS_PER_FRAME);
     expect(big).toBeGreaterThan(MAX_CELLS_PER_FRAME);
     expect(big).toBeLessThan(2 * MAX_CELLS_PER_FRAME);
-    placeRune(20, FEET, 0, { script: 'hexfill 0 20 0 10 3 glass' });
+    placeRune(20, FEET, 0, { script: 'hexfill 0 20 0 10 3 sandstone' });
     runner.trigger('20,11,0', SOURCE.INTERACT);
     tick(1);
     // 993 cells fit one frame's cell budget, but the disc straddles 4 chunk columns and a job writes at most
@@ -491,12 +491,12 @@ describe('RuneRunner.update — execution', () => {
     expect(runner.isRunning('20,11,0')).toBe(true);
     tick(Math.ceil(4 / MAX_AREA_CHUNKS_PER_FRAME) - 1);
     expect(runner.isRunning('20,11,0')).toBe(false);
-    expect(logs.at(-1)).toEqual({ line: `[20,11,0] hexfill: ${small} cells set to glass`, isError: false });
-    expect(world.getBlock(0, 20, 0)).toBe(BLOCK.GLASS);
-    expect(world.getBlock(10, 22, -5)).toBe(BLOCK.GLASS);
+    expect(logs.at(-1)).toEqual({ line: `[20,11,0] hexfill: ${small} cells set to sandstone`, isError: false });
+    expect(world.getBlock(0, 20, 0)).toBe(BLOCK.SANDSTONE);
+    expect(world.getBlock(10, 22, -5)).toBe(BLOCK.SANDSTONE);
     expect(world.getBlock(11, 22, 0)).toBe(BLOCK.AIR);
 
-    placeRune(21, FEET, 0, { script: 'hexfill 0 40 0 15 11 bricks\nsay filled' });
+    placeRune(21, FEET, 0, { script: 'hexfill 0 40 0 15 11 andesite\nsay filled' });
     runner.trigger('21,11,0', SOURCE.INTERACT);
     tick(1);
     expect(runner.isRunning('21,11,0')).toBe(true); // still filling: more than one frame's cells
@@ -507,8 +507,8 @@ describe('RuneRunner.update — execution', () => {
     }
     expect(runner.isRunning('21,11,0')).toBe(false);
     expect(frames).toBeLessThanOrEqual(Math.ceil(big / MAX_CELLS_PER_FRAME) + Math.ceil(4 / MAX_AREA_CHUNKS_PER_FRAME));
-    expect(logs.some((l) => l.line === `[21,11,0] hexfill: ${big} cells set to bricks`)).toBe(true);
-    expect(world.getBlock(-15, 50, 0)).toBe(BLOCK.BRICKS);
+    expect(logs.some((l) => l.line === `[21,11,0] hexfill: ${big} cells set to andesite`)).toBe(true);
+    expect(world.getBlock(-15, 50, 0)).toBe(BLOCK.ANDESITE);
   });
   it('a failing command logs "[q,y,r:LINE] message" and the script continues', () => {
     const { runner, placeRune, logs, said, tick } = makeRig();
@@ -798,14 +798,14 @@ describe('RuneRunner.runConsoleLine', () => {
   it('hasActiveJobs is true exactly while an area job is still writing (block physics batches its support seeds)', () => {
     const { runner, tick } = makeRig();
     expect(runner.hasActiveJobs()).toBe(false);
-    runner.runConsoleLine('hexfill 0 30 0 15 11 glass');
+    runner.runConsoleLine('hexfill 0 30 0 15 11 sandstone');
     expect(runner.hasActiveJobs()).toBe(true);
     for (let i = 0; i < 20 && runner.hasActiveJobs(); i++) tick(1);
     expect(runner.hasActiveJobs()).toBe(false);
   });
   it('queues an area job as console#N, which update() completes and summarises; `run` from the console is a root activation', () => {
     const { world, runner, placeRune, logs, tick, said } = makeRig();
-    const res = runner.runConsoleLine('hexfill 0 30 0 15 11 glass');
+    const res = runner.runConsoleLine('hexfill 0 30 0 15 11 sandstone');
     const total = hexDiscCount(15) * 11;
     expect(res).toEqual({ ok: true, message: `hexfill: ${total} cells queued (runs while you play)` });
     expect(runner.isRunning('console#1')).toBe(true);
@@ -819,8 +819,8 @@ describe('RuneRunner.runConsoleLine', () => {
     }
     expect(runner.isRunning('console#1')).toBe(false);
     expect(frames).toBeLessThanOrEqual(Math.ceil(total / MAX_CELLS_PER_FRAME) + Math.ceil(4 / MAX_AREA_CHUNKS_PER_FRAME));
-    expect(logs.at(-1)).toEqual({ line: `hexfill: ${total} cells set to glass`, isError: false });
-    expect(world.getBlock(0, 30, 0)).toBe(BLOCK.GLASS);
+    expect(logs.at(-1)).toEqual({ line: `hexfill: ${total} cells set to sandstone`, isError: false });
+    expect(world.getBlock(0, 30, 0)).toBe(BLOCK.SANDSTONE);
 
     placeRune(2, FEET, 2, { script: 'say A' });
     const run = runner.runConsoleLine('run 2 11 2');
