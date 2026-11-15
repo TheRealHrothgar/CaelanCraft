@@ -37,19 +37,21 @@ import {
   FALL_SAFE_SPEED, INTRO_LINE_MS, PACK_MESSAGE_S,
   ZOMBIE_MAX, MAX_INFALL_MOBS, VORTEX_MODEL_RANGE, VORTEX_MAX_MODELS, VORTEX_MAX_CORES, VORTEX_PARTICLES_PER_S,
   VORTEX_PARTICLE_HOLES, CIRCUIT_DRAW_RANGE, CIRCUIT_OVERLAY_RANGE, BLACK_HOLE_SCREEN_FLASH_RANGE, BLACK_HOLE_SCREEN_FLASH_MAX,
-  WORLD_HEIGHT, VIEW_BOOM_HIDE,
+  WORLD_HEIGHT, VIEW_BOOM_HIDE, TERRAFORM_MAX_RISE,
 } from './config.js';
 import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex, FACE_TOP } from './hex.js';
 import {
   BLOCK, BIOME, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid, isTargetable,
-  isWaterSource, isWater, isMeshed, isLiquid, flintAt,
+  isWaterSource, isWater, isMeshed, isLiquid, flintAt, isBrickMaterial, isRawHex, isTerraform,
 } from './blocks.js';
+import { raycastBricks, cylinderIntersectsBrick, worldToBrick, BRICK_FACE_DIRS } from './bricks.js';
 import { normalizeSeed } from './noise.js';
 import { World } from './world.js';
 import { raycastHex } from './raycast.js';
 import {
   createPlayer, stepPlayer, getEyeHeight, playerIntersectsBlock, isFreeAt, findFreeY, supportingCells, isUnderSurface,
+  bodyRadius, bodyHeight,
 } from './physics.js';
 import { advanceTime, computeSky, createSkyState, isDayTime, sunDirection } from './daynight.js';
 import {
@@ -1661,6 +1663,13 @@ export function boot(win, doc) {
   let player = null;
   /** @type {RaycastHit|null} */
   let hit = null;
+  /**
+   * §93: the brick under the crosshair when it is nearer than every hex (then `hit` is null), else null.
+   * @type {import('./bricks.js').BrickHit|null}
+   */
+  let brickHit = null;
+  /** §93: the last aim ray (eye and unit direction), so a hex hit's point can be recovered for brick placement. */
+  const aimRay = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0 };
   // Save slots (§41): the old single save moves into slot 1 first (never under ?nosave, which writes nothing).
   if (!params.nosave) {
     const moved = migrateLegacySave();
@@ -2529,6 +2538,7 @@ export function boot(win, doc) {
   function updateHit() {
     if (!world || !player) {
       hit = null;
+      brickHit = null;
       waterHit = null;
       pigTarget = null;
       animalTarget = null;
@@ -2550,29 +2560,46 @@ export function boot(win, doc) {
     // (Creative only: in Survival the hotbar holds pack stacks and water is never a block to take.)
     const isHit = !SV && hotbar[selected] === BLOCK.WATER && !eyeWet ? hitTargetOrWaterSource : undefined;
     hit = raycastHex(world.getBlock, player.x, eyeY, player.z, dx, dy, dz, REACH, isHit);
+    aimRay.x = player.x;
+    aimRay.y = eyeY;
+    aimRay.z = player.z;
+    aimRay.dx = dx;
+    aimRay.dy = dy;
+    aimRay.dz = dz;
+    // §93: a brick nearer than the hex takes the crosshair.
+    brickHit = world.bricks.chunks.size > 0 ? raycastBricks(world.bricks.getBlock, player.x, eyeY, player.z, dx, dy, dz, REACH) : null;
+    if (brickHit && hit && hit.distance <= brickHit.distance) brickHit = null;
+    if (brickHit) hit = null;
     // Survival (§4.2): a second ray that stops at water, for R (drink, fill) and the water hint; LMB / RMB keep using `hit`,
     // so water is never dug or placed against and the highlight never outlines it. Only a water cell is kept.
     waterHit = null;
     if (SV && !eyeWet) {
       const w = raycastHex(world.getBlock, player.x, eyeY, player.z, dx, dy, dz, REACH, hitTargetOrWater);
       if (w && isWater(w.blockId)) waterHit = w;
+      if (waterHit && brickHit && brickHit.distance < waterHit.distance) waterHit = null; // §93: a brick wall hides the water
     }
     // A pig in front of the targeted block takes the crosshair (and hides the block highlight).
     // v0.16: a mob is looked for as far as the longest weapon reaches; whether THIS hand reaches it is strikeInReach's business
-    pigTarget = pigs.size > 0 ? pigs.raycast(player.x, eyeY, player.z, dx, dy, dz, hit ? hit.distance : MOB_SIGHT) : null;
-    if (pigTarget) hit = null;
+    const aimDist = hit ? hit.distance : brickHit ? brickHit.distance : MOB_SIGHT; // §93: a brick hides what is behind it
+    pigTarget = pigs.size > 0 ? pigs.raycast(player.x, eyeY, player.z, dx, dy, dz, aimDist) : null;
+    if (pigTarget) {
+      hit = null;
+      brickHit = null;
+    }
     // §69: so does an animal (the nearer of the two wins).
     animalTarget = animals.size > 0
-      ? animals.raycast(player.x, eyeY, player.z, dx, dy, dz, pigTarget ? pigTarget.distance : hit ? hit.distance : MOB_SIGHT) : null;
+      ? animals.raycast(player.x, eyeY, player.z, dx, dy, dz, pigTarget ? pigTarget.distance : aimDist) : null;
     if (animalTarget) {
       hit = null;
+      brickHit = null;
       pigTarget = null;
     }
     // A zombie in front of them takes the crosshair from them (§39).
-    const mobReach = animalTarget ? animalTarget.distance : pigTarget ? pigTarget.distance : hit ? hit.distance : MOB_SIGHT;
+    const mobReach = animalTarget ? animalTarget.distance : pigTarget ? pigTarget.distance : aimDist;
     zombieTarget = zombies.size > 0 ? zombies.raycast(player.x, eyeY, player.z, dx, dy, dz, mobReach) : null;
     if (zombieTarget) {
       hit = null;
+      brickHit = null;
       pigTarget = null;
       animalTarget = null;
     }
@@ -2581,6 +2608,7 @@ export function boot(win, doc) {
     litTarget = blockPhysics ? blockPhysics.explosions.raycast(player.x, eyeY, player.z, dx, dy, dz, reach) : null;
     if (litTarget) {
       hit = null;
+      brickHit = null;
       pigTarget = null;
       animalTarget = null;
       zombieTarget = null;
@@ -3068,6 +3096,7 @@ export function boot(win, doc) {
       if (animals.wound(animalTarget.animal, 0, player.x, player.z)) animalVoice(animalTarget.animal, 1);
       return true;
     }
+    if (brickHit) return breakBrick(brickHit); // §93
     const h = hit;
     // A water source is not breakable, but with WATER selected left-click takes it away (the flow drains by itself).
     const takeWater = h && isWaterSource(h.blockId) && hotbar[selected] === BLOCK.WATER; // (a tainted source too: §76)
@@ -3097,6 +3126,11 @@ export function boot(win, doc) {
     if (!world || !player) return false;
     const id = hotbar[selected];
     if (!isPlaceable(id)) return false;
+    // §93: a building material is only ever a brick (both modes): it goes on the brick lattice.
+    if (isBrickMaterial(id)) {
+      const target = brickTarget();
+      return target !== null && placeBrickAt(id, target);
+    }
     const cell = placeTarget();
     if (!cell || !placeBlockAt(id, cell)) return false;
     // A freshly placed rune block opens its editor right away (the onBlockChange hook created its entry).
@@ -3126,6 +3160,14 @@ export function boot(win, doc) {
   /** The cell a placement would fill: across the targeted face, in height range and replaceable; else null. */
   function placeTarget() {
     const h = hit;
+    if (!h && brickHit && brickHit.face >= 0) {
+      // §93: a hex placed against a brick face fills the hex just outside it (refused if that hex is brickwork).
+      const b = brickHit;
+      const [tq, tr] = worldToHex(b.px + b.nx * 0.01, b.pz + b.nz * 0.01);
+      const ty = Math.floor(b.py + b.ny * 0.01);
+      if (!inHeightRange(ty) || !isReplaceable(world.getBlock(tq, ty, tr))) return null;
+      return [tq, ty, tr];
+    }
     if (!h || h.face < 0) return null;
     const [tq, ty, tr] = faceNeighbor(h.q, h.y, h.r, h.face);
     if (!inHeightRange(ty)) return null;
@@ -3160,9 +3202,87 @@ export function boot(win, doc) {
     return true;
   }
 
+  // ---- §93 bricks -------------------------------------------------------------------------------------
+
+  /**
+   * The brick a building placement would fill, or null: across the targeted brick face, or the brick just outside the
+   * targeted hex face. A brick that would cut into terrain is raised one layer when the hex face was a side (a brick laid
+   * against a slope sits on the higher ground), else refused (§93.5). Shows why when it refuses.
+   * @returns {[number, number, number]|null}
+   */
+  function brickTarget() {
+    let i;
+    let y;
+    let n;
+    let side = false;
+    if (brickHit) {
+      if (brickHit.face < 0) return null;
+      const d = BRICK_FACE_DIRS[brickHit.face];
+      i = brickHit.i + d[0];
+      y = brickHit.y + d[1];
+      n = brickHit.n + d[2];
+    } else if (hit && hit.face >= 0) {
+      const t = hit.distance;
+      const px = aimRay.x + aimRay.dx * t + hit.nx * 0.01;
+      const py = aimRay.y + aimRay.dy * t + hit.ny * 0.01;
+      const pz = aimRay.z + aimRay.dz * t + hit.nz * 0.01;
+      [i, n] = worldToBrick(px, pz);
+      y = Math.floor(py);
+      side = hit.ny === 0;
+    } else {
+      return null;
+    }
+    let why = world.brickBlocker(i, y, n);
+    if (why === 'blocked' && side && world.brickBlocker(i, y + 1, n) === null) {
+      y += 1;
+      why = null;
+    }
+    if (why !== null) {
+      if (why === 'blocked') showHint('Bricks need clear ground: dig it out first');
+      return null;
+    }
+    return [i, y, n];
+  }
+
+  /**
+   * Lay brick `id` at `cell` (from brickTarget): never inside the player or a mob. Plays the place sound. @returns {boolean}
+   */
+  function placeBrickAt(id, cell) {
+    const [i, y, n] = cell;
+    const inside = (b) => cylinderIntersectsBrick(b.x, b.y, b.z, bodyRadius(b), bodyHeight(b), i, y, n);
+    if (isSolid(id)) {
+      if (inside(player)) return false;
+      if (pigs.list.some(inside) || animals.list.some(inside) || zombies.list.some(inside)) return false;
+    }
+    const ok = blockPhysics ? blockPhysics.asPlayer(() => world.setBrick(i, y, n, id)) : world.setBrick(i, y, n, id);
+    if (!ok) return false;
+    audio.playPlace(getBlockDef(id).soundGroup);
+    avatarSwing(); // §91
+    updateHit();
+    return true;
+  }
+
+  /** Creative: take a brick away at once. @returns {boolean} */
+  function breakBrick(b) {
+    const ok = blockPhysics ? blockPhysics.asPlayer(() => world.setBrick(b.i, b.y, b.n, BLOCK.AIR)) : world.setBrick(b.i, b.y, b.n, BLOCK.AIR);
+    if (!ok) return false;
+    audio.playBreak(getBlockDef(b.blockId).soundGroup);
+    updateHit();
+    return true;
+  }
+
+  /**
+   * The dig target of a brick hit: DigState compares q, y, r and id, so the column is keyed apart from every hex. It stands
+   * in for a hex hit where digging takes one (`brick` tells them apart).
+   * @returns {*}
+   */
+  function brickDigTarget(b) {
+    return { q: `brick:${b.i}`, y: b.y, r: b.n, blockId: b.blockId, brick: b };
+  }
+
   /** Pick rule (middle mouse): select the slot holding the block, else assign it to the selected slot. */
   function pickTargeted() {
-    const h = hit;
+    const h = hit ?? brickHit; // §93: a brick picks its material
     if (!h || !isPlaceable(h.blockId)) return false;
     const i = hotbar.indexOf(h.blockId);
     if (i >= 0) selectSlot(i);
@@ -4246,6 +4366,9 @@ export function boot(win, doc) {
         const wrong = wrongGroundHint(world.getBlock, selectedKey(), h.q, h.y, h.r);
         if (wrong) return wrong;
       }
+    } else if (brickHit && !canHarvest(brickHit.blockId, selectedTool())) {
+      const need = harvestHint(brickHit.blockId); // §93: a brick says what digs it, like its hex
+      if (need) return need;
     }
     return blockHintText();
   }
@@ -4298,6 +4421,10 @@ export function boot(win, doc) {
     peek: peekBlockFn,
     get springLevelAt() {
       return blockPhysics ? blockPhysics.fluids.springLevelAt : null;
+    },
+    /** §93.9: the brick pieces over a cell (water stands in gaps and crosses only the faces brickwork leaves open) */
+    get cover() {
+      return blockPhysics ? blockPhysics.fluids._cover() : null;
     },
     originAt: (q, y, r) => world.originAt(q, y, r),
     saltyAt: (q, r) => isSaltyBiome(world.getBiome(q, r)),
@@ -4786,7 +4913,7 @@ export function boot(win, doc) {
    * @returns {{progress: number, done: boolean, tick: boolean}}
    */
   function digStep(dt, held) {
-    const h = hit;
+    const h = hit ?? (brickHit ? brickDigTarget(brickHit) : null); // §93: bricks are dug like hexes
     const stack = selectedStack();
     const tool = selectedTool();
     const need = h ? breakSeconds(h.blockId, tool, Boolean(player.headInWater)) / digFactorNow() : Infinity; // §87: Weak digs slower
@@ -4800,7 +4927,10 @@ export function boot(win, doc) {
     if (res.tick) {
       avatarSwing(); // §91: the arm works at the cell with every dig tick
       audio.playDig(getBlockDef(h.blockId).soundGroup, finite ? 0.35 : 0.15);
-      if (finite) {
+      if (finite && h.brick) {
+        const b = h.brick;
+        particles.emit('dust', b.px + b.nx * 0.02, b.py + b.ny * 0.02, b.pz + b.nz * 0.02, 3, { id: h.blockId, spread: 0.2 });
+      } else if (finite) {
         const [x, z] = hexToWorld(h.q, h.r);
         particles.emit('dust', x + h.nx * 0.52, h.y + 0.5 + h.ny * 0.52, z + h.nz * 0.52, 3, { id: h.blockId, spread: 0.2 });
       }
@@ -4811,6 +4941,10 @@ export function boot(win, doc) {
 
   /** §6.1 finishing a dig, in order: natural (before the break), drops, room, the break as the player, sound, drops, wear. */
   function finishDig(h, tool) {
+    if (h.brick) {
+      finishBrickDig(h.brick, tool);
+      return;
+    }
     const id = h.blockId;
     const natural = !world.hasEdit(h.q, h.y, h.r);
     const drops = rollDrops(id, tool, { natural, knifeInPack: pack.hasTool('knife', KNIFE_TIER), deep: isDeep(h.y), decided: flintDecided(id, h.q, h.r) }, Math.random);
@@ -4836,6 +4970,26 @@ export function boot(win, doc) {
     if (!ok) return;
     audio.playBreak(getBlockDef(id).soundGroup);
     flyFromCell(drops, h.q, h.y, h.r);
+    wearSelectedTool('dig');
+    updateHit();
+  }
+
+  /** §93: finishing a brick dig — the brick's own drops (its material's rule), room for them, the break, sound, wear. */
+  function finishBrickDig(b, tool) {
+    const id = b.blockId;
+    const drops = rollDrops(id, tool, { natural: false, knifeInPack: pack.hasTool('knife', KNIFE_TIER), deep: isDeep(b.y) }, Math.random);
+    if (!pack.canGive([...loose.inFlight(), ...drops])) {
+      digPackFull = true;
+      return;
+    }
+    const ok = blockPhysics ? blockPhysics.asPlayer(() => world.setBrick(b.i, b.y, b.n, BLOCK.AIR)) : world.setBrick(b.i, b.y, b.n, BLOCK.AIR);
+    digState.reset();
+    digHit = null;
+    digProgress = 0;
+    digPackFull = false;
+    if (!ok) return;
+    audio.playBreak(getBlockDef(id).soundGroup);
+    flyStacks(drops, b.px, b.py, b.pz);
     wearSelectedTool('dig');
     updateHit();
   }
@@ -4986,8 +5140,24 @@ export function boot(win, doc) {
     const def = getItem(selectedKey() ?? '');
     if (!def || def.block === undefined) return false;
     const id = def.block;
+    // §93: in Survival a building material always goes on the brick lattice; raw stone, logs and ores are never built with.
+    if (isBrickMaterial(id)) {
+      const target = brickTarget();
+      if (target === null || !placeBrickAt(id, target)) return false;
+      pack.consume(selected, 1);
+      return true;
+    }
+    if (isRawHex(id)) {
+      showHint(`${def.name} is raw: work it into building materials first`);
+      return false;
+    }
     const cell = placeTarget();
     if (!cell) return false;
+    // §93.7: loose ground heaps into berms, never mountains — at most TERRAFORM_MAX_RISE layers over the land's own height.
+    if (isTerraform(id) && cell[1] > world.getSurfaceHeight(cell[0], cell[2]) + TERRAFORM_MAX_RISE) {
+      showHint(`Loose ${def.name.toLowerCase()} will not heap any higher here`);
+      return false;
+    }
     const refusal = placeRefusal(world.getBlock, id, cell[0], cell[1], cell[2]);
     if (refusal) {
       showHint(refusal);
@@ -5355,6 +5525,7 @@ export function boot(win, doc) {
       // Never mutates the live world: in-flight fallers are settled into a COPY of the edits, flowing water is left
       // out and lit barrels are saved as barrels (BlockPhysics.exportEdits).
       edits: blockPhysics ? blockPhysics.exportEdits() : world.exportEdits(),
+      bricks: world.bricks.export(), // §93: every brick (omitted by storage when there are none)
       runes: runeStore.export(),
       fauna: fauna.export(), // §88: every animal, live and asleep, by zone (no more `pigs` and `animals` fields)
       physics: blockPhysics ? blockPhysics.exportSwitches() : undefined,
@@ -5557,9 +5728,16 @@ export function boot(win, doc) {
     // §1.3: a save keeps its generator version (absent: 1, today's land); a new world gets GEN_LATEST unless the box was
     // cleared. Only an explicit upgrade (or ?mode under §1.1's rules) ever raises it.
     const gen = loadingGen(restoring, opts);
-    world = new World({ seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: restoring ? restoring.edits : undefined, gen });
+    world = new World({
+      seed, renderDistance: params.rd ?? RENDER_DISTANCE, edits: restoring ? restoring.edits : undefined, gen,
+      bricks: restoring ? restoring.bricks : undefined, // §93
+    });
+    for (const w of world.brickWarnings) console.warn('Caelancraft bricks:', w);
+    brickHit = null;
     world.onChunkMesh = (key, cq, cr, meshData) => renderer.setChunkMesh(key, cq, cr, meshData);
     world.onChunkUnload = (key) => renderer.removeChunkMesh(key);
+    world.onBrickMesh = (key, ci, cn, meshData) => renderer.setBrickMesh(key, ci, cn, meshData);
+    world.onBrickUnload = (key) => renderer.removeBrickMesh(key);
     renderer.setLightField(world.light); // §62: mobs, items and falling blocks are lit from the world's light
     // Block physics before the first chunk is generated: onChunkGenerated re-seeds edited cells as chunks stream in.
     blockPhysics = new BlockPhysics(world, physicsHooks);
@@ -5587,6 +5765,7 @@ export function boot(win, doc) {
       if (circuits) circuits.onChunkLoaded(cq, cr); // a loaded chunk's cells are solved settling: loading fires nothing
     };
     world.onBlockChange = onBlockChanged;
+    world.onCoverChange = (q, y, r) => blockPhysics.onCoverChange(q, y, r); // §93.9: a face water crosses opened or closed
     litTarget = null;
     particles.clear();
     fallingRenderer.sync([], 0);
@@ -5633,6 +5812,10 @@ export function boot(win, doc) {
           c.dirty = true;
           c.meshed = false;
         }
+      }
+      for (const bc of world.bricks.chunks.values()) { // §93: the bricks' meshes went with them
+        bc.dirty = true;
+        bc.meshed = false;
       }
     };
     renderer.setRenderDistance(world.renderDistance);
@@ -5871,7 +6054,7 @@ export function boot(win, doc) {
     const [q, r] = worldToHex(player.x + fx * 3, player.z + fz * 3);
     const y = Math.max(0, Math.floor(player.y) - 1);
     runner.runConsoleLine(`setblock ${q} ${y} ${r} rune_block`);
-    const rune = runeStore.set(q, y, r, { label: 'lift', script: '# runs on R\nsay Going up\nhexring @ @1 @ 2 3 stone_bricks\nwait 1\ntp @ @4 @', stepOn: true, chain: true });
+    const rune = runeStore.set(q, y, r, { label: 'lift', script: '# runs on R\nsay Going up\nhexring @ @1 @ 2 3 sandstone\nwait 1\ntp @ @4 @', stepOn: true, chain: true });
     if (rune) openEditor(rune);
   }
 
@@ -7212,7 +7395,9 @@ export function boot(win, doc) {
     input.pullY = pull[1] + (blockPhysics ? current[1] : 0);
     input.pullZ = pull[2] + (blockPhysics ? current[2] : 0);
     stepRide(input, dt);
-    if (!riding && world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt);
+    // §93: the player collides with the bricks exactly (and also when bodies push it: the lookup rides on the state).
+    player.brickLookup = world.bricks.getBlock;
+    if (!riding && world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt, world.bricks.getBlock);
     stepBlackHoles(dt);
     if (checkDeath()) return; // §2.5 checkpoint
     stepFauna(dt); // §88: the live and the dormant animals, births, wanderers
@@ -7315,9 +7500,10 @@ export function boot(win, doc) {
     drawAvatar(dt, live, eyeY);
     renderCircuitsAndVortices(dt, eyeY, live);
     renderer.setHighlight(hit);
+    renderer.setBrickHighlight(brickHit); // §93
     const SV = survival.inSurvival;
-    // §9.9: the dig trace follows the cell's hex outline in honey as it is dug (hidden when not digging).
-    renderer.setDigProgress(SV && digHit && digProgress > 0 ? digHit : null, digProgress);
+    // §9.9: the dig trace follows the cell's hex outline in honey as it is dug (hidden when not digging; a brick has none).
+    renderer.setDigProgress(SV && digHit && !(/** @type {*} */ (digHit).brick) && digProgress > 0 ? digHit : null, digProgress);
     // The live mobs plus the swallowed ones still spiralling in (§2.7).
     if (infall.mobs > 0) {
       pigDraw.length = 0;

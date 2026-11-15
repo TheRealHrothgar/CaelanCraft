@@ -352,10 +352,10 @@ describe('yawToDegrees / hexAreaCells', () => {
 describe('executeCommand — coordinates', () => {
   it('~ is relative to the player cell / floor(y); plain numbers are absolute', () => {
     const { ctx, world } = makeCtx();
-    const res = exec(ctx, 'setblock ~ ~-1 ~ glass');
-    expect(res).toEqual({ ok: true, message: 'set glass at (0, 10, 0)' });
-    expect(world.getBlock(0, 10, 0)).toBe(B.GLASS);
-    expect(exec(ctx, 'setblock ~2 ~1 ~-1 glass')).toEqual({ ok: true, message: 'set glass at (2, 12, -1)' });
+    const res = exec(ctx, 'setblock ~ ~-1 ~ sandstone');
+    expect(res).toEqual({ ok: true, message: 'set sandstone at (0, 10, 0)' });
+    expect(world.getBlock(0, 10, 0)).toBe(B.SANDSTONE);
+    expect(exec(ctx, 'setblock ~2 ~1 ~-1 sandstone')).toEqual({ ok: true, message: 'set sandstone at (2, 12, -1)' });
   });
 
   it('~ uses the cell containing the player, not floor(x)/floor(z)', () => {
@@ -364,8 +364,8 @@ describe('executeCommand — coordinates', () => {
     ctx.player.x = 0.3;
     ctx.player.z = 0.5;
     expect(worldToHex(0.3, 0.5)).toEqual([0, 1]);
-    expect(exec(ctx, 'setblock ~ ~-1 ~ glass').message).toBe('set glass at (0, 10, 1)');
-    expect(world.getBlock(0, 10, 1)).toBe(B.GLASS);
+    expect(exec(ctx, 'setblock ~ ~-1 ~ sandstone').message).toBe('set sandstone at (0, 10, 1)');
+    expect(world.getBlock(0, 10, 1)).toBe(B.SANDSTONE);
   });
 
   it('@ is relative to the executing rune and an error in the console', () => {
@@ -471,12 +471,31 @@ describe('executeCommand — tp / tpw / look', () => {
 });
 
 describe('executeCommand — setblock', () => {
+  it('§93.5: no command sets a building material in a hex (they are only ever bricks); give still hands one out', () => {
+    const { ctx, world } = makeCtx();
+    const refused = 'Stone Bricks is a building material: it is only ever laid as bricks, never set in a hex';
+    for (const line of ['setblock 1 12 1 stone_bricks', 'fill 0 20 0 2 20 2 stone_bricks', 'hexfill 0 20 0 2 1 stone_bricks', 'hexring 0 20 0 2 1 stone_bricks']) {
+      const res = exec(ctx, line);
+      expect(res.ok, line).toBe(false);
+      expect(res.message, line).toContain(refused);
+    }
+    expect(exec(ctx, 'setblock 1 12 1 glass').message).toContain('Glass is a building material');
+    expect(exec(ctx, `setblock 1 12 1 ${B.OAK_PLANKS}`).message).toContain('Oak Planks is a building material'); // by id too
+    expect(world.getBlock(1, 12, 1)).not.toBe(B.STONE_BRICKS);
+    expect(world.editCount).toBe(0);
+    expect(exec(ctx, 'give stone_bricks 3').ok).toBe(true); // it is laid as a brick from the hotbar
+    // the blocks list says which ones are bricks only
+    const lines = exec(ctx, 'blocks').message.split('\n');
+    expect(lines).toContain(`${B.STONE_BRICKS} stone_bricks (Stone Bricks · bricks only)`);
+    expect(lines).toContain(`${String(B.STONE).padStart(2)} stone (Stone)`);
+  });
+
   it('sets a block and reports it; the same block is "already"', () => {
     const { ctx, world } = makeCtx();
-    expect(exec(ctx, 'setblock 1 12 1 bricks')).toEqual({ ok: true, message: 'set bricks at (1, 12, 1)' });
-    expect(world.getBlock(1, 12, 1)).toBe(B.BRICKS);
+    expect(exec(ctx, 'setblock 1 12 1 andesite')).toEqual({ ok: true, message: 'set andesite at (1, 12, 1)' });
+    expect(world.getBlock(1, 12, 1)).toBe(B.ANDESITE);
     const v = world.editVersion;
-    expect(exec(ctx, 'setblock 1 12 1 bricks')).toEqual({ ok: true, message: 'cell (1, 12, 1) is already bricks' });
+    expect(exec(ctx, 'setblock 1 12 1 andesite')).toEqual({ ok: true, message: 'cell (1, 12, 1) is already andesite' });
     expect(world.editVersion).toBe(v);
   });
 
@@ -506,7 +525,7 @@ describe('executeCommand — setblock', () => {
 describe('executeCommand — area commands', () => {
   it('fill addresses the inclusive box in any corner order and returns a resumable job', () => {
     const { ctx, world } = makeCtx();
-    const res = exec(ctx, 'fill 3 20 3 0 20 0 glass');
+    const res = exec(ctx, 'fill 3 20 3 0 20 0 sandstone');
     expect(res.ok).toBe(true);
     expect(res.message).toBe('');
     expect(res.job).toBeDefined();
@@ -520,21 +539,21 @@ describe('executeCommand — area commands', () => {
     expect(job.step(100)).toBe(11);
     expect(job.done).toBe(true);
     expect(job.written).toBe(16);
-    expect(job.summary()).toBe('fill: 16 cells set to glass');
-    for (let q = 0; q <= 3; q++) for (let r = 0; r <= 3; r++) expect(world.getBlock(q, 20, r)).toBe(B.GLASS);
+    expect(job.summary()).toBe('fill: 16 cells set to sandstone');
+    for (let q = 0; q <= 3; q++) for (let r = 0; r <= 3; r++) expect(world.getBlock(q, 20, r)).toBe(B.SANDSTONE);
     expect(job.step(10)).toBe(0);
   });
 
   it('writes in chunk-major order so a budgeted step stays inside one chunk', () => {
     const { ctx, world } = makeCtx();
-    const job = exec(ctx, 'fill 14 20 0 17 20 0 glass').job;
+    const job = exec(ctx, 'fill 14 20 0 17 20 0 sandstone').job;
     expect(job.step(2)).toBe(2);
-    expect(world.getBlock(14, 20, 0)).toBe(B.GLASS);
-    expect(world.getBlock(15, 20, 0)).toBe(B.GLASS);
+    expect(world.getBlock(14, 20, 0)).toBe(B.SANDSTONE);
+    expect(world.getBlock(15, 20, 0)).toBe(B.SANDSTONE);
     expect(world.getBlock(16, 20, 0)).toBe(B.AIR);
     expect(world.getBlock(17, 20, 0)).toBe(B.AIR);
     job.step(10);
-    expect(world.getBlock(17, 20, 0)).toBe(B.GLASS);
+    expect(world.getBlock(17, 20, 0)).toBe(B.SANDSTONE);
   });
 
   it('skips rune blocks, bedrock and cells the player occupies, and counts unchanged cells', () => {
@@ -568,8 +587,8 @@ describe('executeCommand — area commands', () => {
     expect(res).toEqual({ ok: false, message: `fill: too large: 35301 cells (max ${MAX_FILL_CELLS}) — lower the size — usage: fill q1 y1 r1 q2 y2 r2 <block>` });
     expect(world.editVersion).toBe(v);
     // Exactly the cap is fine: 32 × 32 × 32 = 32768.
-    expect(exec(ctx, 'fill 0 20 0 31 51 31 glass').ok).toBe(true);
-    expect(exec(ctx, 'fill 0 20 0 31 52 31 glass').message).toContain(`too large: ${33 * 32 * 32} cells`);
+    expect(exec(ctx, 'fill 0 20 0 31 51 31 sandstone').ok).toBe(true);
+    expect(exec(ctx, 'fill 0 20 0 31 52 31 sandstone').message).toContain(`too large: ${33 * 32 * 32} cells`);
   });
 
   it('hexfill / hexring count cells from radius × height and enforce the shared cap and parse bounds', () => {
@@ -585,9 +604,9 @@ describe('executeCommand — area commands', () => {
     expect(disc.job.summary()).toBe('hexfill: 14 cells set to stone');
     expect(world.getBlock(0, 21, 0)).toBe(B.STONE);
     expect(world.getBlock(2, 20, 0)).toBe(B.AIR);
-    const ring = exec(ctx, 'hexring 0 30 0 2 1 glass');
+    const ring = exec(ctx, 'hexring 0 30 0 2 1 sandstone');
     expect(ring.job.total).toBe(12);
-    const point = exec(ctx, 'hexring 0 30 0 0 3 glass');
+    const point = exec(ctx, 'hexring 0 30 0 0 3 sandstone');
     expect(point.job.total).toBe(3);
     expect(exec(ctx, 'hexfill 0 20 0 64 10 stone').message).toBe(`hexfill: too large: ${hexDiscCount(64) * 10} cells (max ${MAX_FILL_CELLS}) — lower radius or height — usage: hexfill q y r radius height <block>`);
     expect(exec(ctx, `hexring 0 20 0 ${AREA_MAX_RADIUS + 1} 1 stone`).message).toContain(`radius must be 0..${AREA_MAX_RADIUS}`);
@@ -980,9 +999,9 @@ describe('executeCommand — robustness', () => {
 
   it('cell commands accept negative coordinates everywhere', () => {
     const { ctx, world } = makeCtx();
-    expect(exec(ctx, 'setblock -3 12 -5 glass').message).toBe('set glass at (-3, 12, -5)');
-    expect(world.getBlock(-3, 12, -5)).toBe(B.GLASS);
-    const job = exec(ctx, 'fill -2 20 -2 -1 20 -1 glass').job;
+    expect(exec(ctx, 'setblock -3 12 -5 sandstone').message).toBe('set sandstone at (-3, 12, -5)');
+    expect(world.getBlock(-3, 12, -5)).toBe(B.SANDSTONE);
+    const job = exec(ctx, 'fill -2 20 -2 -1 20 -1 sandstone').job;
     job.step(10);
     expect(job.written).toBe(4);
     expect(exec(ctx, 'tp -4 11 -4').message).toBe('teleported to cell -4 11 -4');

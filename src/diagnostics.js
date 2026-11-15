@@ -9,6 +9,7 @@ import { VERSION, WORLD_HEIGHT, FLY_VERTICAL_SPEED, SAVE_SLOTS } from './config.
 import { BLOCK, BIOME_NAMES, getBlockDef, isBreakable, isSolid } from './blocks.js';
 import { worldToChunk, worldToLocal, lookDirection, yawToForward } from './coords.js';
 import { FACE_NAMES, faceNeighbor, hexLength, hexToWorld, worldToHex } from './hex.js';
+import { BRICK_DEPTH } from './bricks.js';
 import { runeKey } from './runes.js';
 import { normalizeAvatarId } from './avatars.js';
 import { normalizeViewMode } from './viewCamera.js';
@@ -479,6 +480,20 @@ export function installDebugHandle(win, game) {
     return w.setBlock(q, Math.floor(y), r, id);
   };
   handle.getCell = (x, z) => (Number.isFinite(x + z) ? worldToHex(x, z) : null);
+  // §93: bricks at WORLD positions (the brick containing the point), for probes and screenshots.
+  handle.getBrick = (x, y, z) => {
+    const w = worldOf();
+    return w ? w.getBrickAt(x, y, z) : BLOCK.AIR;
+  };
+  handle.setBrick = (x, y, z, id) => {
+    const w = worldOf();
+    if (!w || !Number.isFinite(x + y + z)) return false;
+    const i = Math.floor(x);
+    const n = Math.floor(z / BRICK_DEPTH);
+    const yy = Math.floor(y);
+    if (id !== BLOCK.AIR && w.brickBlocker(i, yy, n) !== null) return false;
+    return w.setBrick(i, yy, n, id);
+  };
   /** Run one console command line (the same executor as the T console and rune scripts). */
   handle.runCommand = (line) => (game && typeof game.runCommand === 'function' ? game.runCommand(String(line)) : null);
   handle.teleport = (x, y, z) => {

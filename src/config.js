@@ -477,3 +477,6 @@ export const AVATAR_HEAD_YAW_MAX = 0.9;             // … the head turning at m
 export const AVATAR_HEAD_PITCH_MAX = 0.7;           // … and nodding at most this far up or down
 export const AVATAR_SWING_S = 0.3;                  // one swing of the arm (break, place, strike)
 export const AVATAR_STRIDE_M = 0.9;                 // metres walked for one leg to swing forward (half a walk cycle)
+
+// Bricks (CONTRACTS §93)
+export const TERRAFORM_MAX_RISE = 3;                // Survival: loose ground heaps at most this many layers over the generated surface

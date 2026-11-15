@@ -59,6 +59,13 @@
 //
 // `waterQualityAt` says whether the water in a cell is tainted, tracing flowing and falling water back to the sources
 // that feed it; `waterSourceOf` gives the first of those sources (what a gulp is taken from).
+//
+// WATER IN BRICKWORK (§93.9). A hex cell partly under bricks (World.coverAt: its pieces under a brick) holds BRICK_GAP
+// when the rest of it is one open space. To water a gap is AIR — it flows, falls and stands in it, and the cell then holds
+// the water's own id — but water crosses a side face or the floor between two cells only where open pieces meet on both
+// sides (bricks.waterCrossesFace / waterCrossesLayer): every read of a neighbour goes through `waterSide` / `waterBelow` /
+// `waterAbove`, which give BRICK_FILL (a wall) across a face that brickwork closes. A world without bricks (`cover` null)
+// reads exactly as before.
 import {
   CHUNK_SIZE, WORLD_HEIGHT, WATER_CURRENT, DRAIN_MAX_RADIUS, WATER_SOURCE_NEIGHBOURS, PHYSICS_TICK_S,
 } from './config.js';
@@ -67,6 +74,7 @@ import {
 } from './blocks.js';
 import { HEX_DIRS, FACE_NORMALS, hexToWorld, worldToHex } from './hex.js';
 import { packCell, unpackCell, parseChunkKey } from './coords.js';
+import { waterCrossesFace, waterCrossesLayer } from './bricks.js';
 
 /** @typedef {import('./blockphysics.js').BlockPhysics} BlockPhysics */
 /** @typedef {import('./blockphysics.js').RuleContext} RuleContext */
@@ -86,19 +94,82 @@ export const MAX_SPILLS_PER_TICK = 4;
 /** A body under this many levels of water is not looked at any further up (the search for the sea over it stops). */
 const MAX_COVER_STEPS = 32;
 
-/** Block ids the water rule reacts to (CONTRACTS §35.1; the tainted source since §76, the lower depths since §83). */
+/** Block ids the water rule reacts to (CONTRACTS §35.1; the tainted source since §76, the lower depths since §83, a gap in brickwork since §93.9). */
 export const WATER_RULE_IDS = Object.freeze([
   B.AIR, B.CAMPFIRE, B.WATER, B.WATER_FLOW_1, B.WATER_FLOW_2, B.WATER_FLOW_3, B.WATER_FLOW_4, B.WATER_FLOW_5,
   B.WATER_FLOW_6, B.WATER_FALL, B.TAINTED_WATER, B.WATER_LOW, B.WATER_SHALLOW, B.TAINTED_WATER_LOW, B.TAINTED_WATER_SHALLOW,
+  B.BRICK_GAP,
 ]);
 /** Edited ids the 'water' reseeder looks at when a chunk is generated: the water family and AIR. */
-const RESEED_IDS = Object.freeze([B.AIR, ...WATER_RULE_IDS.slice(2)]);
+const RESEED_IDS = Object.freeze([B.AIR, ...WATER_RULE_IDS.slice(2, -1)]);
 
 /** Side-neighbour offsets and the unit world direction toward each (FACE_NORMALS of the side faces). */
 const DQ = HEX_DIRS.map((d) => d[0]);
 const DR = HEX_DIRS.map((d) => d[1]);
 const NX = HEX_DIRS.map((_, j) => FACE_NORMALS[j][0]);
 const NZ = HEX_DIRS.map((_, j) => FACE_NORMALS[j][2]);
+
+// ---------------------------------------------------------------------------------------------------------------------
+// water in brickwork (§93.9)
+
+/**
+ * @typedef {((q: number, y: number, r: number) => number)|null} CoverLookup  World.coverAt (the low 4 bits: a cell's
+ *   pieces under a brick), or null in a world without bricks
+ */
+
+/** @returns {boolean} a cell holding `id` may lie under bricks and let water in: a gap in brickwork, or water */
+function porous(id) {
+  return id === B.BRICK_GAP || isWater(id);
+}
+
+/**
+ * @param {CoverLookup} cover
+ * @returns {number} the pieces under a brick of cell (q, y, r) holding `id` (0: none, or a cell water never enters)
+ */
+export function waterPieces(cover, id, q, y, r) {
+  return cover === null || !porous(id) ? 0 : cover(q, y, r) & 15;
+}
+
+/**
+ * Side neighbour `j` of cell (q, y, r), whose pieces under a brick are `own` (waterPieces), as water sees it from that cell:
+ * BRICK_FILL across a face brickwork closes, AIR for a gap, else what `peek` says.
+ * @param {(q: number, y: number, r: number) => number} peek
+ * @param {CoverLookup} cover
+ * @returns {number}
+ */
+export function waterSide(peek, cover, q, y, r, j, own) {
+  const nq = q + DQ[j];
+  const nr = r + DR[j];
+  const n = peek(nq, y, nr);
+  if (cover === null) return n;
+  if (!porous(n)) {
+    // (AIR, a campfire or a plant is never under a brick: only this cell's own pieces can close the face)
+    if (own === 0 || n === UNLOADED || isSolid(n)) return n;
+    return waterCrossesFace(own, r, j, 0, nr) ? n : B.BRICK_FILL;
+  }
+  const theirs = cover(nq, y, nr) & 15;
+  if ((own | theirs) !== 0 && !waterCrossesFace(own, r, j, theirs, nr)) return B.BRICK_FILL;
+  return n === B.BRICK_GAP ? B.AIR : n;
+}
+
+/** The cell above (dy = 1) or below (dy = −1) cell (q, y, r) as water sees it (see waterSide). */
+function waterVertical(peek, cover, q, y, r, own, dy) {
+  const n = peek(q, y + dy, r);
+  if (cover === null || !porous(n)) return n; // (an uncovered cell always meets an open piece of this one)
+  const theirs = cover(q, y + dy, r) & 15;
+  if ((own | theirs) !== 0 && !waterCrossesLayer(own, theirs, r)) return B.BRICK_FILL;
+  return n === B.BRICK_GAP ? B.AIR : n;
+}
+
+/** @returns {number} the cell below cell (q, y, r) (pieces `own`) as water sees it: BRICK_FILL where no open pieces meet */
+export function waterBelow(peek, cover, q, y, r, own) {
+  return waterVertical(peek, cover, q, y, r, own, -1);
+}
+
+/** @returns {number} the cell above cell (q, y, r) (pieces `own`) as water sees it */
+export function waterAbove(peek, cover, q, y, r, own) {
+  return waterVertical(peek, cover, q, y, r, own, 1);
+}
 
 /** @returns {boolean} WATER_FLOW_1..6 */
 export function isFlowingWater(id) {
@@ -140,9 +211,9 @@ export function fallLevel(ctx, q, y, r) {
   return isWaterSource(top) || isFlowingWater(top) ? waterLevel(top) : 0;
 }
 
-/** @returns {boolean} the scheduler may need to (re)run the water rule here: open, flowing or falling, or not loaded yet */
+/** @returns {boolean} the scheduler may need to (re)run the water rule here: open (a gap too), flowing or falling, or not loaded yet */
 function isWakeable(id) {
-  return id === B.AIR || id === B.CAMPFIRE || id === B.WATER_FALL || isFlowingWater(id) || id === UNLOADED;
+  return id === B.AIR || id === B.CAMPFIRE || id === B.WATER_FALL || isFlowingWater(id) || id === UNLOADED || id === B.BRICK_GAP;
 }
 
 /** Most cells one `waterQualityAt` trace visits: a reach-6 cone of FLOW cells plus the fall columns that feed it. */
@@ -158,11 +229,12 @@ export const QUALITY_TRACE_MAX = 256;
  * @param {(q: number, y: number, r: number) => number} getBlock  world.getBlock or world.peekBlock
  * @param {number} q @param {number} y @param {number} r
  * @param {boolean} [first]  true: stop at the first source reached (`tainted` is then that source's own)
+ * @param {CoverLookup} [cover]  world.coverAt: water is traced only across faces brickwork leaves open (§93.9)
  * @returns {{ q: number, y: number, r: number, id: number, tainted: boolean }|null} the first source reached — what a gulp
  *   from this cell is taken from — with `tainted` true when ANY source reached is tainted; null when the cell is not water
  *   or no source is found (stale water that is about to drain)
  */
-export function waterSourceOf(getBlock, q, y, r, first = false) {
+export function waterSourceOf(getBlock, q, y, r, first = false, cover = null) {
   const id0 = getBlock(q, y, r);
   if (isWaterSource(id0)) return { q, y, r, id: id0, tainted: isTaintedWater(id0) };
   if (!isWater(id0)) return null;
@@ -194,16 +266,17 @@ export function waterSourceOf(getBlock, q, y, r, first = false) {
       continue;
     }
     if (!isWater(id)) continue;
+    const own = waterPieces(cover, id, cq, cy, cr);
     // FLOW or FALL: the water above it feeds it …
-    if (isWater(getBlock(cq, cy + 1, cr))) push(cq, cy + 1, cr);
+    if (isWater(waterAbove(getBlock, cover, cq, cy, cr, own))) push(cq, cy + 1, cr);
     if (id === B.WATER_FALL) continue;
     // … and a FLOW_k also takes its level from the spreading side neighbours one level up.
     const level = waterLevel(id);
     for (let j = 0; j < 6; j++) {
       const nq = cq + DQ[j];
       const nr = cr + DR[j];
-      const n = getBlock(nq, cy, nr);
-      if (!isWater(n) || !isWaterFloor(getBlock(nq, cy - 1, nr))) continue;
+      const n = waterSide(getBlock, cover, cq, cy, cr, j, own);
+      if (!isWater(n) || !isWaterFloor(waterBelow(getBlock, cover, nq, cy, nr, waterPieces(cover, n, nq, cy, nr)))) continue;
       const e = n === B.WATER_FALL ? fallLevel(peekCtx, nq, cy, nr) : waterLevel(n);
       if (e === level + 1) push(nq, cy, nr);
     }
@@ -325,10 +398,11 @@ const KEY_SPAN = 2 * KEY_OFF + 1;
  *   world.getBlock works too: a body at the edge of the loaded world is then not known to be cut)
  * @param {number} q @param {number} y @param {number} r
  * @param {((q: number, r: number) => number)|null} [springAt]  `makeSpringLookup`'s; null: no running water
+ * @param {CoverLookup} [cover]  world.coverAt: cells join, and a pool is held, across faces as brickwork leaves them (§93.9)
  * @param {number} [steps]  how many bodies under this one the search has come up through (internal)
  * @returns {WaterBody|null}
  */
-export function waterBodyAt(peek, q, y, r, springAt = null, steps = 0) {
+export function waterBodyAt(peek, q, y, r, springAt = null, cover = null, steps = 0) {
   const id0 = peek(q, y, r);
   if (!isWaterSource(id0)) return null;
   const tainted = isTaintedWater(id0);
@@ -343,24 +417,26 @@ export function waterBodyAt(peek, q, y, r, springAt = null, steps = 0) {
   let contained = true;
   let truncated = false;
   let big = false;
-  /** @type {number[]|null} */
-  let cover = null;
+  /** @type {number[]|null} the cell of a source over the body */
+  let top = null;
   /** @type {number[]|null} */
   let unloaded = null;
   for (let i = 0; i < cells.length; i += 3) {
     const cq = cells[i];
     const cy = cells[i + 1];
     const cr = cells[i + 2];
-    const d = waterDepth(i === 0 ? id0 : peek(cq, cy, cr));
+    const cid = i === 0 ? id0 : peek(cq, cy, cr);
+    const d = waterDepth(cid);
     units += d;
     levels[d]++;
     if (d < minDepth) minDepth = d;
     if (d > depth) depth = d;
-    if (cover === null && isWaterSource(peek(cq, cy + 1, cr))) cover = [cq, cy + 1, cr];
+    const own = waterPieces(cover, cid, cq, cy, cr);
+    if (top === null && isWaterSource(waterAbove(peek, cover, cq, cy, cr, own))) top = [cq, cy + 1, cr];
     for (let j = 0; j < 6; j++) {
       const nq = cq + DQ[j];
       const nr = cr + DR[j];
-      const n = peek(nq, cy, nr);
+      const n = waterSide(peek, cover, cq, cy, cr, j, own);
       if (n === UNLOADED) {
         truncated = true;
         if (unloaded === null) unloaded = [nq, nr];
@@ -371,7 +447,7 @@ export function waterBodyAt(peek, q, y, r, springAt = null, steps = 0) {
         if (!isWaterSource(n) && !isSolid(n)) contained = false;
         const level = springAt(nq, nr);
         if (level < 0) continue;
-        const m = level === cy ? n : peek(nq, level, nr);
+        const m = level === cy ? n : peek(nq, level, nr); // (a stream crosses no brickwork: it was generated)
         if (!isWaterSource(m) || isTaintedWater(m)) continue;
         ny = level;
       } else {
@@ -394,8 +470,8 @@ export function waterBodyAt(peek, q, y, r, springAt = null, steps = 0) {
     if (big && !stream) break; // the sea: nothing more to learn
   }
   let sea = big && !stream;
-  if (!sea && !stream && cover !== null && steps < MAX_COVER_STEPS) {
-    const over = waterBodyAt(peek, cover[0], cover[1], cover[2], springAt, steps + 1);
+  if (!sea && !stream && top !== null && steps < MAX_COVER_STEPS) {
+    const over = waterBodyAt(peek, top[0], top[1], top[2], springAt, cover, steps + 1);
     if (over !== null) {
       if (over.sea) sea = true;
       else if (over.truncated && !over.stream && !truncated) {
@@ -406,7 +482,7 @@ export function waterBodyAt(peek, q, y, r, springAt = null, steps = 0) {
   }
   return {
     cells, count: cells.length / 3, quality: tainted ? 'tainted' : 'fresh', tainted, depth, minDepth, levels, units,
-    sea, stream, contained, covered: cover !== null, cover, truncated, unloaded,
+    sea, stream, contained, covered: top !== null, cover: top, truncated, unloaded,
   };
 }
 
@@ -456,6 +532,8 @@ export class Fluids {
     /** @type {Map<number, boolean>} packed cell → it was generated as sea */
     this._seaCache = new Map();
     this._cell = [0, 0, 0];
+    /** @type {((q: number, y: number, r: number) => number)|null} (built by _cover) */
+    this._coverFn = null;
     physics.registerRule('water', {
       rings: ['water', 'fall'],
       feature: 'water',
@@ -465,6 +543,16 @@ export class Fluids {
     physics.addTrigger('water-floor', 'water', (q, y, r, prev, next) => this._onFloorChange(q, y, r, prev, next));
     // Replaces the scheduler's built-in 'water' reseeder (same name, CONTRACTS §33.4).
     physics.addReseeder('water', 'water', RESEED_IDS, (ctx, q, y, r, id) => this._reseed(q, y, r, id));
+  }
+
+  /**
+   * §93.9: the world's brick pieces (World.coverAt), or null while it has no bricks (water then reads exactly as before).
+   * @returns {CoverLookup}
+   */
+  _cover() {
+    const world = this.physics.world;
+    if (!world || !world.bricks || world.bricks.chunks.size === 0 || typeof world.coverAt !== 'function') return null;
+    return (this._coverFn ??= (q, y, r) => this.physics.world.coverAt(q, y, r));
   }
 
   /** @returns {number} sources seen standing open whose bodies are still to be looked at (spilling, §83 law 2) */
@@ -489,13 +577,15 @@ export class Fluids {
     // (no source here any more: an appointment made for one that stood open in this cell is void — a source put here
     // later starts its own 4 s)
     if (this._spills.size > 0) this._spills.delete(packCell(q, y, r));
+    const cover = this._cover();
+    const own = waterPieces(cover, id, q, y, r);
     let target;
     let fed = 0;
     let sources = 0;
     for (let j = 0; j < 6; j++) {
       const nq = q + DQ[j];
       const nr = r + DR[j];
-      const n = ctx.peek(nq, y, nr);
+      const n = waterSide(ctx.peek, cover, q, y, r, j, own);
       if (n === UNLOADED) {
         // Wait for that chunk; water here may have to flow into it, so its cell is queued too (it parks itself).
         if (isWater(id)) ctx.schedule('water', nq, y, nr);
@@ -504,18 +594,18 @@ export class Fluids {
       }
       if (!isWater(n)) continue;
       if (isWaterSource(n)) sources++;
-      if (isWaterFloor(ctx.peek(nq, y - 1, nr))) {
+      if (isWaterFloor(waterBelow(ctx.peek, cover, nq, y, nr, waterPieces(cover, n, nq, y, nr)))) {
         const l = (n === B.WATER_FALL ? fallLevel(ctx, nq, y, nr) : waterLevel(n)) - 1;
         if (l > fed) fed = l;
       }
     }
-    const above = ctx.peek(q, y + 1, r);
-    const wet = id !== B.AIR && id !== B.CAMPFIRE;
+    const above = waterAbove(ctx.peek, cover, q, y, r, own);
+    const wet = id !== B.AIR && id !== B.CAMPFIRE && id !== B.BRICK_GAP;
     // §83 law 3: only the sea makes water. Flowing or falling water in a cell generated as sea is the sea coming back …
     const natural = wet ? this._naturalSea(ctx, q, y, r) : 0;
     if (natural < 0) return; // its generated body runs into a chunk that is not loaded: parked until it is
     let seaSource = 0;
-    if (natural === 0 && wet && sources >= WATER_SOURCE_NEIGHBOURS && isWaterFloor(ctx.peek(q, y - 1, r))) {
+    if (natural === 0 && wet && sources >= WATER_SOURCE_NEIGHBOURS && isWaterFloor(waterBelow(ctx.peek, cover, q, y, r, own))) {
       seaSource = this._seaAround(ctx, q, y, r); // … and so is a hole in it with sea on three sides (a pocket of the shore)
     }
     if (natural > 0) {
@@ -535,7 +625,7 @@ export class Fluids {
       // the stream's level, so more water above never lowers a cell below; review water-3 regression)
       target = FLOW_ID0 + fed;
     } else {
-      target = id === B.CAMPFIRE ? B.CAMPFIRE : B.AIR;
+      target = id === B.CAMPFIRE || id === B.BRICK_GAP ? id : B.AIR; // (AIR written where water stood in a gap stores the gap)
     }
 
     if (target !== id) {
@@ -557,7 +647,8 @@ export class Fluids {
 
   /** A flowing cell or a fed source over AIR, a campfire or flowing water no higher than itself: falling water below it. */
   _pour(ctx, q, y, r, id) {
-    const below = ctx.peek(q, y - 1, r);
+    const cover = this._cover();
+    const below = waterBelow(ctx.peek, cover, q, y, r, waterPieces(cover, id, q, y, r));
     if (below === B.AIR || below === B.CAMPFIRE || (isFlowingWater(below) && waterLevel(below) <= waterLevel(id))) {
       if (ctx.write(q, y - 1, r, B.WATER_FALL) === 'ok') {
         this.stats.writes++;
@@ -574,12 +665,14 @@ export class Fluids {
   _updateSource(ctx, q, y, r, id) {
     const tainted = isTaintedWater(id);
     const spring = !tainted && this.springLevelAt(q, r) === y;
-    const below = y > 0 ? ctx.peek(q, y - 1, r) : B.BEDROCK;
+    const cover = this._cover();
+    const own = waterPieces(cover, id, q, y, r);
+    const below = y > 0 ? waterBelow(ctx.peek, cover, q, y, r, own) : B.BEDROCK;
     if (isOpenToWater(below)) {
       // Law 1: nothing under it. Fed water (running water, the sea) does not fall: it pours, as it always did.
       let fed = spring;
       if (!fed) {
-        const body = waterBodyAt(ctx.peek, q, y, r, this.springLevelAt);
+        const body = waterBodyAt(ctx.peek, q, y, r, this.springLevelAt, cover);
         if (body !== null && body.sea) fed = true;
         else if (body !== null && body.truncated) {
           this._parkOn(ctx, body); // it may be the sea: wait until the rest of it is loaded
@@ -597,6 +690,7 @@ export class Fluids {
     if (isWaterSource(below) && waterDepth(below) < 3 && isTaintedWater(below) === tainted && !(!tainted && this.springLevelAt(q, r) === y - 1)) {
       if (this._drainInto(ctx, q, y, r)) return; // written: its cells run again
     }
+    if (cover !== null && this._intoGaps(ctx, q, y, r, cover, own)) return; // §93.9 (written: its cells run again)
     // Law 2: is it contained, and level with the pool it stands in?
     const depth = waterDepth(id);
     let contained = true;
@@ -604,7 +698,7 @@ export class Fluids {
     for (let j = 0; j < 6; j++) {
       const nq = q + DQ[j];
       const nr = r + DR[j];
-      const n = ctx.peek(nq, y, nr);
+      const n = waterSide(ctx.peek, cover, q, y, r, j, own);
       if (n === UNLOADED) continue; // (a wall for now: the cell runs again when that chunk's water wakes)
       if (isWaterSource(n)) {
         if (waterDepth(n) !== depth && isTaintedWater(n) === tainted && !(!tainted && this.springLevelAt(nq, nr) === y)) uneven = true;
@@ -614,6 +708,46 @@ export class Fluids {
     }
     if (uneven && this._level(ctx, q, y, r)) return; // written: its cells run again
     if (!contained) this._markSpill(q, y, r);
+  }
+
+  /**
+   * §93.9: brickwork beside the source in (q, y, r) — a cell under bricks across a face they leave open, dry (a gap) or
+   * holding flowing water, over a floor. The pool reaches into it: the body's water is spread over its cells and those
+   * (`_distribute`: not a level lost or made; the sea fills them), so a pool stands against a brick wall where the wall
+   * really is and is contained there. A gap that opens on to anything else makes the body stand open, and it spills (§83
+   * law 2): brickwork with a hole in it leaks.
+   * @param {RuleContext} ctx @param {CoverLookup} cover @param {number} own  the source's own pieces under a brick
+   * @returns {boolean} a cell was written (or the update was parked on an unloaded chunk)
+   */
+  _intoGaps(ctx, q, y, r, cover, own) {
+    /** @type {number[]|null} */
+    let gaps = null;
+    for (let j = 0; j < 6; j++) {
+      const nq = q + DQ[j];
+      const nr = r + DR[j];
+      const raw = ctx.peek(nq, y, nr);
+      if (raw !== B.BRICK_GAP && !isFlowingWater(raw)) continue;
+      const theirs = cover(nq, y, nr) & 15;
+      if (theirs === 0 || !waterCrossesFace(own, r, j, theirs, nr)) continue; // (flowing water in the open: §83 as ever)
+      if (!isWaterFloor(waterBelow(ctx.peek, cover, nq, y, nr, theirs))) continue;
+      (gaps ??= []).push(nq, y, nr);
+    }
+    if (gaps === null) return false;
+    const body = waterBodyAt(ctx.peek, q, y, r, this.springLevelAt, cover);
+    if (body === null || body.stream) return false;
+    if (body.truncated && !body.sea) {
+      this._parkOn(ctx, body);
+      return true;
+    }
+    const cells = body.cells.concat(gaps);
+    const count = cells.length / 3;
+    const wider = /** @type {WaterBody} */ ({ ...body, cells, count });
+    const wrote = this._distribute(ctx, wider, body.sea ? 3 * count : body.units).wrote;
+    if (wrote > 0) {
+      this.stats.writes += wrote;
+      this.stats.levelled++;
+    }
+    return wrote > 0;
   }
 
   /**
@@ -681,8 +815,9 @@ export class Fluids {
    */
   _drainInto(ctx, q, y, r) {
     const springAt = this.springLevelAt;
-    const upper = waterBodyAt(ctx.peek, q, y, r, springAt);
-    const lower = waterBodyAt(ctx.peek, q, y - 1, r, springAt);
+    const cover = this._cover();
+    const upper = waterBodyAt(ctx.peek, q, y, r, springAt, cover);
+    const lower = waterBodyAt(ctx.peek, q, y - 1, r, springAt, cover);
     if (upper === null || lower === null || upper.stream || lower.stream) return false;
     for (const body of [upper, lower]) {
       if (body.truncated && !body.sea) {
@@ -715,7 +850,7 @@ export class Fluids {
    * @returns {boolean} a cell was written (or the update was parked on an unloaded chunk)
    */
   _level(ctx, q, y, r) {
-    const body = waterBodyAt(ctx.peek, q, y, r, this.springLevelAt);
+    const body = waterBodyAt(ctx.peek, q, y, r, this.springLevelAt, this._cover());
     if (body === null || body.stream) return false;
     if (body.truncated && !body.sea) {
       this._parkOn(ctx, body);
@@ -817,9 +952,11 @@ export class Fluids {
     if (!isWaterSource(id)) return 0;
     const springAt = this.springLevelAt;
     if (!isTaintedWater(id) && springAt(q, r) === y) return 0;
+    const cover = this._cover();
+    const pieces = waterPieces(cover, id, q, y, r);
     let open = false;
     for (let j = 0; j < 6 && !open; j++) {
-      const n = ctx.peek(q + DQ[j], y, r + DR[j]);
+      const n = waterSide(ctx.peek, cover, q, y, r, j, pieces);
       open = n !== UNLOADED && !isWaterSource(n) && !isSolid(n);
     }
     if (!open) return 0; // closed again: the pool holds
@@ -827,14 +964,14 @@ export class Fluids {
     const own = this._spillStamp.get(key);
     if (own !== undefined && now - own < SPILL_TICKS) return own + SPILL_TICKS;
     this._spillLooks++;
-    const body = waterBodyAt(ctx.peek, q, y, r, springAt);
+    const body = waterBodyAt(ctx.peek, q, y, r, springAt, cover);
     if (body === null || body.sea) return 0; // the sea never spills dry
     if (body.truncated) return now + SPILL_TICKS; // part of it is not loaded: it may be the sea
     let top = body;
     /** @type {WaterBody[]} the bodies under the one that drops */
     const under = [];
     for (let guard = 0; top.cover !== null && guard < MAX_COVER_STEPS; guard++) {
-      const over = waterBodyAt(ctx.peek, top.cover[0], top.cover[1], top.cover[2], springAt);
+      const over = waterBodyAt(ctx.peek, top.cover[0], top.cover[1], top.cover[2], springAt, cover);
       if (over === null || over.stream) break; // (running water over it is fed: this level goes instead)
       if (over.sea) return 0;
       if (over.truncated) return now + SPILL_TICKS;
@@ -892,12 +1029,14 @@ export class Fluids {
   _seaAround(ctx, q, y, r) {
     let n = 0;
     let tainted = false;
+    const cover = this._cover();
+    const own = waterPieces(cover, ctx.peek(q, y, r), q, y, r);
     for (let j = 0; j < 6; j++) {
       const nq = q + DQ[j];
       const nr = r + DR[j];
-      const id = ctx.peek(nq, y, nr);
+      const id = waterSide(ctx.peek, cover, q, y, r, j, own);
       if (!isWaterSource(id)) continue;
-      const body = waterBodyAt(ctx.peek, nq, y, nr, this.springLevelAt);
+      const body = waterBodyAt(ctx.peek, nq, y, nr, this.springLevelAt, cover);
       if (body === null || !body.sea) continue;
       n++;
       if (isTaintedWater(id)) tainted = true;
@@ -915,7 +1054,8 @@ export class Fluids {
 
   /** Water that just appeared in an empty cell splashes when it lands on something (or starts from a full source). */
   _splashIfLanding(ctx, q, y, r, target) {
-    const landing = target === B.WATER_FALL ? isWaterFloor(ctx.peek(q, y - 1, r)) : target === flowId(6);
+    const cover = this._cover();
+    const landing = target === B.WATER_FALL ? isWaterFloor(waterBelow(ctx.peek, cover, q, y, r, waterPieces(cover, target, q, y, r))) : target === flowId(6);
     if (!landing) return;
     const [x, z] = hexToWorld(q, r);
     ctx.sound('splash', x, y + 0.5, z, target === B.WATER_FALL ? 0.8 : 0.4);
@@ -1107,11 +1247,14 @@ export class Fluids {
     }
     if (!isFlowingWater(id)) return out;
     const own = waterLevel(id);
+    const cover = this._cover();
+    const pieces = waterPieces(cover, id, q, cy, r);
+    const peek = (a, b, c) => world.peekBlock(a, b, c);
     let min = own;
     let sx = 0;
     let sz = 0;
     for (let j = 0; j < 6; j++) {
-      const n = world.peekBlock(q + DQ[j], cy, r + DR[j]);
+      const n = waterSide(peek, cover, q, cy, r, j, pieces);
       if (n === UNLOADED || isSolid(n)) continue;
       const l = waterLevel(n);
       if (l < min) {

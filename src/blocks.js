@@ -79,8 +79,15 @@ export const BLOCK = Object.freeze({
   // fresh pond in three (only generation-6 worlds generate it). Nothing can break it, like BEDROCK; it feeds the water
   // standing on it (waterBodies.js): the one thing besides rain that makes water.
   AQUIFER: 173,
+  // §93 (the brick lattice): the hex cells a brick touches are written with one of these three, derived from the bricks and
+  // never saved, placed, broken or drawn. BRICK_SHADOW: some of the cell is brick — solid to everything that reads the hex
+  // world (mobs, water, support, falling blocks, placement), see-through to light and the mesher. BRICK_FILL: all of it is
+  // opaque brick — also opaque (it hides the faces against it and stops light). BRICK_GAP (§93.9): some of it is brick and
+  // the rest is ONE open space — a BRICK_SHADOW to everything but water, which may stand in that space (the cell then holds
+  // the water's own id, the bricks staying in the chunk's cover bits).
+  BRICK_SHADOW: 174, BRICK_FILL: 175, BRICK_GAP: 176,
 });
-export const BLOCK_COUNT = 174;
+export const BLOCK_COUNT = 177;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -513,6 +520,10 @@ export const BLOCKS = [
   // pulled by anything in either mode (isDeepRock: everything that spares BEDROCK spares it); commands may still set it.
   // Never placed by hand, no item. It is no water block: the water cycle reads it (waterBodies.js) and feeds what stands on it.
   def({ id: B.AQUIFER, name: 'aquifer', displayName: 'Aquifer', tiles: tiles(T.AQUIFER_SIDE, T.AQUIFER_TOP), breakable: false, placeable: false, soundGroup: 'stone' }),
+  // ---- §93: the bricks' shadows in the hex world (see BLOCK). Never meshed, targeted, broken or placed.
+  def({ id: B.BRICK_SHADOW, name: 'brick_shadow', displayName: 'Brickwork', tiles: tiles(T.BRICKS), opaque: false, layer: LAYER_CUTOUT, breakable: false, placeable: false, meshed: false, cullSame: false }),
+  def({ id: B.BRICK_FILL, name: 'brick_fill', displayName: 'Brickwork', tiles: tiles(T.BRICKS), breakable: false, placeable: false, meshed: false }),
+  def({ id: B.BRICK_GAP, name: 'brick_gap', displayName: 'Brickwork', tiles: tiles(T.BRICKS), opaque: false, layer: LAYER_CUTOUT, breakable: false, placeable: false, meshed: false, cullSame: false }),
 ];
 
 /**
@@ -624,9 +635,57 @@ export function isPlaceable(id) {
 export function isReplaceable(id) {
   return id === B.AIR || getBlockDef(id).liquid;
 }
-/** The raycast stops on targetable blocks: anything that is not AIR and not a liquid. */
+/** The raycast stops on targetable blocks: anything that is not AIR, not a liquid and not a brick's shadow (§93). */
 export function isTargetable(id) {
-  return id !== B.AIR && !getBlockDef(id).liquid;
+  return id !== B.AIR && !getBlockDef(id).liquid && !isBrickShadow(id);
+}
+
+// ---- §93: which lattice a block is built on ----------------------------------------------------------
+
+/**
+ * Building materials: placed as BRICKS (bricks.js) in Survival always and in Creative unless the builder switched to hexes.
+ * Planks, cobblestone, the bricks, glass, the bookshelf, every wool, the metal and gem blocks, honeycomb and hay.
+ */
+export const BRICK_MATERIAL_IDS = Object.freeze([
+  B.COBBLESTONE, B.OAK_PLANKS, B.GLASS, B.BRICKS, B.BOOKSHELF, B.STONE_BRICKS, B.WOOL_WHITE, B.WOOL_RED, B.SPRUCE_PLANKS,
+  B.BIRCH_PLANKS, B.MOSSY_COBBLESTONE, B.MOSSY_STONE_BRICKS, B.COAL_BLOCK, B.IRON_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK,
+  B.COPPER_BLOCK, B.HONEYCOMB_BLOCK, B.HAY_BALE,
+  ...WOOL_COLORS.map(([k]) => B[`WOOL_${k}`]),
+]);
+/** Loose ground a survivor may heap or spread as hexes (berms, ditch spoil, levelled sites): §93.7. */
+export const TERRAFORM_IDS = Object.freeze([B.DIRT, B.SAND, B.GRAVEL, B.SNOW_BLOCK, B.CLAY, B.RED_SAND]);
+/**
+ * Raw natural blocks: mined, never built with, in Survival (stone kinds, logs, leaves, ores, ice, glowstone, pumpkins).
+ * Creative still places them. Everything not here, not a brick material and not terraform (stations, containers, fire,
+ * furniture, snares, circuit parts, plants) is placed as a hex in both modes, as before.
+ */
+export const RAW_HEX_IDS = Object.freeze([
+  B.STONE, B.GRASS_BLOCK, B.OAK_LOG, B.OAK_LEAVES, B.COAL_ORE, B.IRON_ORE, B.GOLD_ORE, B.DIAMOND_ORE, B.SANDSTONE,
+  B.SNOWY_GRASS, B.SPRUCE_LOG, B.SPRUCE_LEAVES, B.BIRCH_LOG, B.BIRCH_LEAVES, B.GRANITE, B.DIORITE, B.ANDESITE, B.SLATE,
+  B.OBSIDIAN, B.ICE, B.PACKED_ICE, B.GLOWSTONE, B.PUMPKIN, B.COPPER_ORE, B.TIN_ORE,
+]);
+const BRICK_MATERIAL = new Uint8Array(256);
+for (const id of BRICK_MATERIAL_IDS) BRICK_MATERIAL[id] = 1;
+const TERRAFORM = new Uint8Array(256);
+for (const id of TERRAFORM_IDS) TERRAFORM[id] = 1;
+const RAW_HEX = new Uint8Array(256);
+for (const id of RAW_HEX_IDS) RAW_HEX[id] = 1;
+
+/** @returns {boolean} a building material: placed on the brick lattice (§93) */
+export function isBrickMaterial(id) {
+  return BRICK_MATERIAL[id] === 1;
+}
+/** @returns {boolean} loose ground placed as hexes by terraforming in Survival (§93.7) */
+export function isTerraform(id) {
+  return TERRAFORM[id] === 1;
+}
+/** @returns {boolean} a raw natural block Survival never builds with (§93.7) */
+export function isRawHex(id) {
+  return RAW_HEX[id] === 1;
+}
+/** @returns {boolean} BRICK_SHADOW, BRICK_FILL or BRICK_GAP: a dry hex cell that a brick touches (§93.3) */
+export function isBrickShadow(id) {
+  return id === B.BRICK_SHADOW || id === B.BRICK_FILL || id === B.BRICK_GAP;
 }
 /** false for blocks drawn by their own model instead of the chunk mesher (campfire, black hole, the circuit parts but the keg). */
 /** How the chunk mesher draws `id` (BlockDef.shape): 'prism', 'model' (the wild plants), 'decal' (the snares) or 'litter'. */

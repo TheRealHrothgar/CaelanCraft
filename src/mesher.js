@@ -17,6 +17,12 @@
 // opaque; the diagonal only when it is not cut off by both sides), so light falls off across a face instead of stepping
 // cell by cell. A face whose front cell is opaque (a lowered water surface under a block) and the plant shapes use their
 // own cell's light; an emitter's faces carry at least its own block level (glowstone is fully lit).
+//
+// Water in brickwork (CONTRACTS §93.9): a third padded volume holds the chunks' brick pieces (`cover`). Water in a cell
+// under bricks is drawn over its open pieces only (cap and floor per piece; a side only where an open piece meets it, cut
+// to that piece), never toward a face brickwork closes (the brick mesher draws the brick there), and never toward a
+// BRICK_SHADOW. In a BRICK_SHADOW (brickwork that left two points, or glass all round) each open piece beside water is
+// drawn full of that water to its height, so a surface meets a brick wall wherever the wall is.
 import { CHUNK_SIZE, WORLD_HEIGHT, AO_CURVE, TOP_UV_SCALE, ATLAS_SLOT_PX } from './config.js';
 import { floorDiv, mod, localIndex } from './coords.js';
 import {
@@ -28,6 +34,7 @@ import {
   flintAt,
 } from './blocks.js';
 import { FULL_SKY, LIGHT_EMISSION } from './light.js';
+import { facePieces, waterCrossesFace } from './bricks.js';
 import { plantModel, plantModelTile, PLANT_QUAD_STRIDE } from './plantModels.js';
 import {
   tileVariants, VARY_CAP, VARY_MIRROR, VARY_SHIFT, MAX_VARIANTS, BLOCK_JITTER, LEAFY, LEAF_HUE_SHIFT, variantHash,
@@ -55,6 +62,14 @@ const neighbourLight = new Array(9).fill(null);
 
 /** Scratch 3×3 array of neighbour chunk block arrays (index = (dcq+1)*3 + (dcr+1)); cleared after each build. */
 const neighbourData = new Array(9).fill(null);
+/** §93.9: the same cells' brick pieces (a chunk's `cover`: the low 4 bits under a brick); 0 where a chunk has none. */
+const paddedCover = new Uint8Array(PAD * PAD * WORLD_HEIGHT);
+/** Scratch 3×3 array of neighbour chunk cover arrays (same index as neighbourData). */
+const neighbourCover = new Array(9).fill(null);
+/** Some chunk of this build has brick pieces (else paddedCover is all 0 and never read). */
+let coverOn = false;
+/** paddedCover holds pieces from an earlier build (cleared before the next one). */
+let coverDirty = false;
 
 /** @returns {number} index into `padded` */
 function pIndex(pq, py, pr) {
@@ -446,13 +461,19 @@ let centreBiomes = null;
 function fillPadded(cq, cr, getChunkData) {
   padded.fill(0);
   paddedLight.fill(FULL_SKY);
+  if (coverDirty) {
+    paddedCover.fill(0);
+    coverDirty = false;
+  }
   centreBiomes = null;
   let hasCentre = false;
+  let anyCover = false;
   for (let dcq = -1; dcq <= 1; dcq++) {
     for (let dcr = -1; dcr <= 1; dcr++) {
       if (dcq === dcr && dcq !== 0) {
         neighbourData[(dcq + 1) * 3 + (dcr + 1)] = null;
         neighbourLight[(dcq + 1) * 3 + (dcr + 1)] = null;
+        neighbourCover[(dcq + 1) * 3 + (dcr + 1)] = null;
         continue;
       }
       const data = getChunkData(cq + dcq, cr + dcr);
@@ -461,6 +482,10 @@ function fillPadded(cq, cr, getChunkData) {
       neighbourData[(dcq + 1) * 3 + (dcr + 1)] = ok ? blocks : null;
       const light = ok ? /** @type {{ light?: Uint8Array|null }} */ (data).light : null;
       neighbourLight[(dcq + 1) * 3 + (dcr + 1)] = light instanceof Uint8Array && light.length >= blocks.length ? light : null;
+      const cover = ok ? /** @type {{ cover?: Uint8Array|null }} */ (data).cover : null;
+      const hasCover = cover instanceof Uint8Array && cover.length >= blocks.length;
+      neighbourCover[(dcq + 1) * 3 + (dcr + 1)] = hasCover ? cover : null;
+      if (hasCover) anyCover = true;
       if (dcq === 0 && dcr === 0 && ok) {
         hasCentre = true;
         const biomes = data.biomes;
@@ -480,10 +505,15 @@ function fillPadded(cq, cr, getChunkData) {
       padded.set(blocks.subarray(base, base + WORLD_HEIGHT), pIndex(pq, 0, pr));
       const light = neighbourLight[(dcq + 1) * 3 + (dcr + 1)];
       if (light) paddedLight.set(light.subarray(base, base + WORLD_HEIGHT), pIndex(pq, 0, pr));
+      const cover = anyCover ? neighbourCover[(dcq + 1) * 3 + (dcr + 1)] : null;
+      if (cover) paddedCover.set(cover.subarray(base, base + WORLD_HEIGHT), pIndex(pq, 0, pr));
     }
   }
+  coverOn = anyCover;
+  if (anyCover) coverDirty = true;
   neighbourData.fill(null); // do not retain references to chunk arrays between calls
   neighbourLight.fill(null);
+  neighbourCover.fill(null);
   return hasCentre;
 }
 
@@ -519,10 +549,18 @@ function writeLight(out, o, packed) {
 // ---------------------------------------------------------------------------------------------------
 
 /**
+ * §93.9: while `clipOn`, emitSide draws only the part of the face from `clipA` to `clipB` of the way from its corner j to
+ * its corner j + 1 (water in brickwork meeting the face with one of its two quarters).
+ */
+let clipOn = false;
+let clipA = 0;
+let clipB = 1;
+
+/**
  * Emit side face `f` (0..5) of the cell at padded column (pq, pr), height ly, whose centre is at local
  * (cx, cz). The quad spans `bottomY .. topY` above the cell's floor: 0 .. 1 for a full face; a water surface lowers
  * `topY`, and between two water cells only the part of the higher surface above the lower one is drawn (`bottomY`).
- * The texture window is cut to the same span (v1 at height 0, v0 at height 1).
+ * The texture window is cut to the same span (v1 at height 0, v0 at height 1), and to clipA .. clipB while clipOn.
  */
 function emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, tr, tg, tb) {
   bld.ensure(4, 6);
@@ -598,15 +636,23 @@ function emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, tr, tg, tb) {
 
     const vi = b + v;
     const p3 = vi * 3;
-    positions[p3] = cx + CORNER_X[k];
+    const p2 = vi * 2;
+    if (clipOn) {
+      const tt = k === f ? clipA : clipB;
+      const k1 = f === 5 ? 0 : f + 1;
+      positions[p3] = cx + CORNER_X[f] + (CORNER_X[k1] - CORNER_X[f]) * tt;
+      positions[p3 + 2] = cz + CORNER_Z[f] + (CORNER_Z[k1] - CORNER_Z[f]) * tt;
+      uvs[p2] = uMid + uHalf - 2 * uHalf * tt;
+    } else {
+      positions[p3] = cx + CORNER_X[k];
+      positions[p3 + 2] = cz + CORNER_Z[k];
+      // Vertices 0 and 3 are the left edge of the face seen from outside, 1 and 2 the right edge.
+      uvs[p2] = (v === 1 || v === 2) ? uMid + uHalf : uMid - uHalf;
+    }
     positions[p3 + 1] = ly + (top ? topY : bottomY);
-    positions[p3 + 2] = cz + CORNER_Z[k];
     normals[p3] = nx;
     normals[p3 + 1] = 0;
     normals[p3 + 2] = nz;
-    const p2 = vi * 2;
-    // Vertices 0 and 3 are the left edge of the face seen from outside, 1 and 2 the right edge.
-    uvs[p2] = (v === 1 || v === 2) ? uMid + uHalf : uMid - uHalf;
     uvs[p2 + 1] = top ? vTop : vBottom;
     const col = shade * AO_CURVE[ao];
     // §90: a cell's brightness roll may lift a colour past 1; colours stay in (0, 1].
@@ -748,6 +794,100 @@ function emitHex(bld, f, pq, pr, ly, cx, cz, topY, a, tr, tg, tb, own = -1) {
   bld.vertexCount = b + 7;
   bld.indexCount = ib + 18;
   bld.faceCount += 1;
+}
+
+// §93.9: the pieces of a hex a brick can cover (bricks.js PIECE_*: bit k is entry k), as polygons [x0, z0, x1, z1, …]
+// round the cell centre, in the turn of HEX_CORNERS (a cap is drawn the other way round). An even row's four quarters
+// (NW, NE, SW, SE: cut through the centre both ways), an odd row's top point, middle and bottom point.
+const HS = HEX_SIZE;
+const EVEN_PIECES = Object.freeze([
+  Float64Array.of(-0.5, 0, -0.5, -HS / 2, 0, -HS, 0, 0),
+  Float64Array.of(0, -HS, 0.5, -HS / 2, 0.5, 0, 0, 0),
+  Float64Array.of(0, 0, 0, HS, -0.5, HS / 2, -0.5, 0),
+  Float64Array.of(0, 0, 0.5, 0, 0.5, HS / 2, 0, HS),
+]);
+const ODD_PIECES = Object.freeze([
+  Float64Array.of(-0.5, -HS / 2, 0, -HS, 0.5, -HS / 2),
+  Float64Array.of(0.5, -HS / 2, 0.5, HS / 2, -0.5, HS / 2, -0.5, -HS / 2),
+  Float64Array.of(0.5, HS / 2, 0, HS, -0.5, HS / 2),
+]);
+
+/**
+ * §93.9: the top (f = FACE_TOP, at height `topY`) or bottom face of the pieces `mask` of the cell (padded column (pq, pr),
+ * height ly, centre (cx, cz); `even`: its row is even) — each piece a fan of its own, with the block's cap texture laid as
+ * on the whole hexagon, no AO, and the light of the cell in front of it.
+ */
+function emitPieces(bld, f, pq, pr, ly, cx, cz, topY, a, mask, even, tr, tg, tb) {
+  const polys = even ? EVEN_PIECES : ODD_PIECES;
+  const isTop = f === FACE_TOP;
+  const dy = isTop ? 1 : -1;
+  const yPos = isTop ? ly + topY : ly;
+  const uo = (a * FACE_COUNT + f) * 4;
+  const u0 = FACE_UV[uo];
+  const v0 = FACE_UV[uo + 1];
+  const du = FACE_UV[uo + 2] - u0;
+  const dv = FACE_UV[uo + 3] - v0;
+  const uSign = isTop ? TOP_UV_SCALE : -TOP_UV_SCALE;
+  const front = opaqueAt(pq, ly + dy, pr) ? lightAt(pq, ly, pr) : lightAt(pq, ly + dy, pr);
+  const emit = LIGHT_EMISSION[a];
+  const sky = (front >> 4) * 17;
+  const blk = Math.max(front & 15, emit) * 17;
+  const col = FACE_SHADE[f] * AO_CURVE[3];
+  const r = Math.min(1, col * tr);
+  const g = Math.min(1, col * tg);
+  const bl = Math.min(1, col * tb);
+  for (let k = 0; k < polys.length; k++) {
+    if ((mask & (1 << k)) === 0) continue;
+    const poly = polys[k];
+    const nv = poly.length / 2;
+    bld.ensure(nv, (nv - 2) * 3);
+    const positions = bld.positions;
+    const normals = bld.normals;
+    const uvs = bld.uvs;
+    const colors = bld.colors;
+    const light = bld.light;
+    const indices = bld.indices;
+    const b = bld.vertexCount;
+    for (let m = 0; m < nv; m++) {
+      const src = isTop ? nv - 1 - m : m;
+      const x = poly[src * 2];
+      const z = poly[src * 2 + 1];
+      const vi = b + m;
+      const p3 = vi * 3;
+      positions[p3] = cx + x;
+      positions[p3 + 1] = yPos;
+      positions[p3 + 2] = cz + z;
+      normals[p3] = 0;
+      normals[p3 + 1] = dy;
+      normals[p3 + 2] = 0;
+      uvs[vi * 2] = u0 + du * (0.5 + uSign * x);
+      uvs[vi * 2 + 1] = v0 + dv * (0.5 + TOP_UV_SCALE * z);
+      colors[p3] = r;
+      colors[p3 + 1] = g;
+      colors[p3 + 2] = bl;
+      light[vi * 2] = sky;
+      light[vi * 2 + 1] = blk;
+    }
+    const ib = bld.indexCount;
+    for (let m = 1; m < nv - 1; m++) {
+      const o = ib + (m - 1) * 3;
+      indices[o] = b;
+      indices[o + 1] = b + m;
+      indices[o + 2] = b + m + 1;
+    }
+    bld.vertexCount = b + nv;
+    bld.indexCount = ib + (nv - 2) * 3;
+    bld.faceCount += 1;
+  }
+}
+
+/** §93.9: the half of side face `f` of an even row's cell that its one open quarter `open` meets, as clipA .. clipB. */
+function clipToQuarter(f, open) {
+  // E (0) runs from the NE corner (0) to the SE corner (1); W (3) from the SW corner (3) to the NW corner (4).
+  const first = f === 0 ? open === 2 : open === 4; // NE on the east face, SW on the west face: the first half
+  clipA = first ? 0 : 0.5;
+  clipB = first ? 0.5 : 1;
+  clipOn = true;
 }
 
 /** A decal lies this far above the cell's floor (clear of the ground's top face, no z-fighting). */
@@ -1057,6 +1197,45 @@ function emitModel(bld, wq, wr, ly, cx, cz, a, own) {
  * @param {GetChunkDataFn} getChunkData  called for the centre chunk and its six hex neighbours; null → AIR
  * @returns {ChunkMeshData}
  */
+const BRICK_SHADOW = BLOCK.BRICK_SHADOW;
+
+/**
+ * §93.9: a BRICK_SHADOW cell (padded column (pq, pr), row lr, height ly): every open piece of it that meets a face with
+ * water beyond it (an open piece on that side too) is drawn full of that water, to the highest such water's surface
+ * (waterTopY), as that water's cap — none where the water goes on above it or a brick's floor lies on it. Water to the
+ * sides of such a point draws no side toward it (buildChunkMesh), so a surface runs on into the corner of the brick.
+ */
+function drawThrough(pq, pr, lr, ly, cx, cz, colBase, even, tint) {
+  const cover = paddedCover[colBase + ly] & 15;
+  const open = (even ? 15 : 7) & ~cover;
+  if (open === 0) return;
+  const above = ly + 1 < WORLD_HEIGHT ? padded[colBase + ly + 1] : 0;
+  const coverAbove = ly + 1 < WORLD_HEIGHT ? paddedCover[colBase + ly + 1] & 15 : 0;
+  for (let p = 1; p <= open; p <<= 1) {
+    if ((open & p) === 0) continue;
+    let level = -1;
+    let water = 0;
+    for (let f = 0; f < SIDE_FACE_COUNT; f++) {
+      if ((facePieces(lr, f) & p) === 0) continue;
+      const nBase = ((pq + DIR_DQ[f]) * PAD + (pr + DIR_DR[f])) * WORLD_HEIGHT;
+      const n = padded[nBase + ly];
+      if (WET[n] === 0) continue;
+      const nr = lr + DIR_DR[f];
+      if ((facePieces(nr, (f + 3) % 6) & ~(paddedCover[nBase + ly] & 15)) === 0) continue;
+      const top = waterTopY(n, ly + 1 < WORLD_HEIGHT ? padded[nBase + ly + 1] : 0);
+      if (top > level) {
+        level = top;
+        water = n;
+      }
+    }
+    if (level < 0) continue;
+    if (level >= 1 && ((WET[above] === 1 && (coverAbove & p) === 0) || (coverAbove & p) !== 0)) continue;
+    const bld = builders[LAYER[water]];
+    const t = TINTED[water * FACE_COUNT + FACE_TOP];
+    emitPieces(bld, FACE_TOP, pq, pr, ly, cx, cz, level, water, p, even, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
+  }
+}
+
 export function buildChunkMesh(cq, cr, getChunkData) {
   const opaqueB = builders[0];
   const cutoutB = builders[1];
@@ -1083,9 +1262,14 @@ export function buildChunkMesh(cq, cr, getChunkData) {
       varyQ = cq * CHUNK_SIZE + lq;
       varyR = cr * CHUNK_SIZE + lr;
 
+      const even = (lr & 1) === 0; // (a chunk is an even number of rows deep: the row's parity is lr's)
       for (let ly = 0; ly < WORLD_HEIGHT; ly++) {
         const a = padded[colBase + ly];
-        if (a === 0 || UNMESHED[a] === 1) continue; // air, or a block drawn by its own model (campfire)
+        if (a === 0 || UNMESHED[a] === 1) {
+          // air, or a block drawn by its own model (campfire); §93.9: brickwork's leftover points beside water hold it
+          if (a === BRICK_SHADOW && coverOn) drawThrough(pq, pr, lr, ly, cx, cz, colBase, even, tint);
+          continue;
+        }
 
         // §10.2 step 1: a water cell's surface height (waterSurfaceHeight: lower for flowing levels; 1 under more water)
         // applies to every top vertex of this cell. A full cell (source or falling water) under a block meshed as a
@@ -1093,6 +1277,8 @@ export function buildChunkMesh(cq, cr, getChunkData) {
         const wet = WET[a];
         const above = ly + 1 < WORLD_HEIGHT ? padded[colBase + ly + 1] : 0;
         const topY = wet ? waterTopY(a, above) : 1;
+        // §93.9: the pieces of a water cell under bricks (0: none, or no bricks round this chunk)
+        const own = wet && coverOn ? paddedCover[colBase + ly] & 15 : 0;
 
         const renderRow = a << 8;
         const layer = LAYER[a];
@@ -1123,17 +1309,35 @@ export function buildChunkMesh(cq, cr, getChunkData) {
           const nBase = ((pq + DIR_DQ[f]) * PAD + (pr + DIR_DR[f])) * WORLD_HEIGHT;
           const q = padded[nBase + ly];
           let bottomY = 0;
+          if (wet && coverOn) {
+            // §93.9: never toward brickwork's shadow (a brick face there, or a point drawn full of this water), never
+            // across a face brickwork closes; where only one of an even row's two quarters meets the face, half of it.
+            if (q === BRICK_SHADOW) continue;
+            const theirs = paddedCover[nBase + ly] & 15;
+            if ((own | theirs) !== 0) {
+              if (!waterCrossesFace(own, lr, f, theirs, lr + DIR_DR[f])) continue;
+              if (own !== 0 && even && (f === 0 || f === 3)) {
+                const open = facePieces(lr, f) & ~own;
+                if (open !== facePieces(lr, f)) clipToQuarter(f, open);
+              }
+            }
+          }
           if (wet && WET[q]) {
             // Two water cells: only the part of this surface above the neighbour's (§10.2 step 2a), the neighbour's
             // top by the same step-1 rule as this cell's (a covered full neighbour stands at 1 too).
             const nTop = waterTopY(q, ly + 1 < WORLD_HEIGHT ? padded[nBase + ly + 1] : 0);
-            if (nTop >= topY) continue;
+            if (nTop >= topY) {
+              clipOn = false;
+              continue;
+            }
             bottomY = nTop;
           } else if (RENDER[renderRow | q] === 0) {
+            clipOn = false;
             continue;
           }
           const t = TINTED[tintRow + f];
           emitSide(bld, f, pq, pr, ly, cx, cz, topY, bottomY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
+          clipOn = false;
         }
         {
           // A lowered water surface is always drawn (even under a solid: a low cave keeps its surface); never between
@@ -1142,14 +1346,27 @@ export function buildChunkMesh(cq, cr, getChunkData) {
           const q = above;
           if (wet ? !WET[q] && (topY < 1 || RENDER[renderRow | q] !== 0) : RENDER[renderRow | q] !== 0) {
             const t = TINTED[tintRow + FACE_TOP];
-            emitHex(bld, FACE_TOP, pq, pr, ly, cx, cz, topY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
+            // §93.9: water under bricks or among them: its open pieces, but where a brick's floor lies on the surface
+            const capOver = wet && coverOn && topY >= 1 && ly + 1 < WORLD_HEIGHT ? paddedCover[colBase + ly + 1] & 15 : 0;
+            if (own === 0 && capOver === 0) {
+              emitHex(bld, FACE_TOP, pq, pr, ly, cx, cz, topY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
+            } else {
+              const mask = (even ? 15 : 7) & ~own & ~capOver;
+              if (mask !== 0) emitPieces(bld, FACE_TOP, pq, pr, ly, cx, cz, topY, a, mask, even, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
+            }
           }
         }
         {
           const q = ly - 1 < 0 ? BEDROCK : padded[colBase + ly - 1];
           if (wet ? !WET[q] && RENDER[renderRow | q] !== 0 : RENDER[renderRow | q] !== 0) {
             const t = TINTED[tintRow + FACE_BOTTOM];
-            emitHex(bld, FACE_BOTTOM, pq, pr, ly, cx, cz, topY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
+            const under = wet && coverOn && ly > 0 ? paddedCover[colBase + ly - 1] & 15 : 0;
+            if (own === 0 && under === 0) {
+              emitHex(bld, FACE_BOTTOM, pq, pr, ly, cx, cz, topY, a, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
+            } else {
+              const mask = (even ? 15 : 7) & ~own & ~under; // (§93.9: not on a brick's top)
+              if (mask !== 0) emitPieces(bld, FACE_BOTTOM, pq, pr, ly, cx, cz, topY, a, mask, even, t ? tint[0] : 1, t ? tint[1] : 1, t ? tint[2] : 1);
+            }
           }
         }
       }

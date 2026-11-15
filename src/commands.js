@@ -31,7 +31,7 @@ import {
 } from './config.js';
 import { inHeightRange, worldToChunk, yawToForward } from './coords.js';
 import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
-import { BLOCK, BLOCKS, BLOCK_ALIASES, BLOCK_COUNT, getBlockDef, isPlaceable, isSolid } from './blocks.js';
+import { BLOCK, BLOCKS, BLOCK_ALIASES, BLOCK_COUNT, getBlockDef, isPlaceable, isSolid, isBrickMaterial } from './blocks.js';
 import { parseChannel } from './circuitParts.js';
 import { findFreeY, findStandingY, playerIntersectsBlock } from './physics.js';
 import { formatTime } from './daynight.js';
@@ -61,7 +61,7 @@ import { ITEM_KEYS, itemName, resolveItem } from './items.js';
 /** @type {readonly CommandSpec[]} */
 export const COMMANDS = Object.freeze([
   { name: 'help', usage: 'help [command]', summary: 'list commands, or show one command\'s usage', args: ['word'], min: 0 },
-  { name: 'blocks', usage: 'blocks', summary: 'list every block you can place (id, name, display name)', args: [], min: 0 },
+  { name: 'blocks', usage: 'blocks', summary: 'list every block you can place (id, name, display name); building materials are "bricks only": no command sets them in a hex', args: [], min: 0 },
   { name: 'pos', usage: 'pos', summary: 'print your cell, world position and look angles', args: [], min: 0 },
   { name: 'seed', usage: 'seed', summary: 'print the world seed', args: [], min: 0 },
   { name: 'edits', usage: 'edits', summary: 'print how many cells have been edited and the save size estimate', args: [], min: 0 },
@@ -272,6 +272,18 @@ export function resolveBlock(token) {
   if (sub.length === 1) return { id: sub[0].id };
   if (sub.length > 1) return { error: `ambiguous block "${token}": ${sub.map((d) => d.name).join(', ')}` };
   return { error: `unknown block "${token}" (type blocks to list them)` };
+}
+
+/**
+ * §93.5: the block a command writes into hex cells (setblock, fill, hexfill, hexring) — `resolveBlock`'s, but never a
+ * building material: those are only ever bricks, so no command or rune sets one in a hex.
+ * @param {string} token
+ * @returns {{ id: number }|{ error: string }}
+ */
+export function resolveHexBlock(token) {
+  const rb = resolveBlock(token);
+  if ('error' in rb || !isBrickMaterial(rb.id)) return rb;
+  return { error: `${getBlockDef(rb.id).displayName} is a building material: it is only ever laid as bricks, never set in a hex` };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -854,7 +866,8 @@ function run(spec, args, ctx) {
       return ok(lines.concat(HELP_FOOTER).join('\n'));
     }
     case 'blocks': {
-      const lines = BLOCKS.filter((d) => d.id === BLOCK.AIR || isPlaceable(d.id)).map((d) => `${String(d.id).padStart(2)} ${d.name} (${d.displayName})`);
+      const lines = BLOCKS.filter((d) => d.id === BLOCK.AIR || isPlaceable(d.id))
+        .map((d) => `${String(d.id).padStart(2)} ${d.name} (${d.displayName}${isBrickMaterial(d.id) ? ' · bricks only' : ''})`);
       return ok(lines.join('\n'));
     }
     case 'pos': {
@@ -930,7 +943,7 @@ function run(spec, args, ctx) {
       const rc = resolveCellTriple(args, 0, ctx);
       if ('error' in rc) return fail(spec, rc.error);
       const [q, y, r] = rc.cell;
-      const rb = resolveBlock(args[3]);
+      const rb = resolveHexBlock(args[3]);
       if ('error' in rb) return fail(spec, rb.error);
       if (rb.id === BLOCK.BEDROCK) return fail(spec, 'bedrock cannot be placed');
       if (!inHeightRange(y)) return fail(spec, `y must be 0..${WORLD_HEIGHT - 1}`);
@@ -947,7 +960,7 @@ function run(spec, args, ctx) {
       if ('error' in a) return fail(spec, a.error);
       const b = resolveCellTriple(args, 3, ctx, ['q2', 'y2', 'r2']);
       if ('error' in b) return fail(spec, b.error);
-      const rb = resolveBlock(args[6]);
+      const rb = resolveHexBlock(args[6]);
       if ('error' in rb) return fail(spec, rb.error);
       const q0 = Math.min(a.cell[0], b.cell[0]);
       const q1 = Math.max(a.cell[0], b.cell[0]);
@@ -970,7 +983,7 @@ function run(spec, args, ctx) {
       const height = Number(args[4]);
       if (radius < 0 || radius > AREA_MAX_RADIUS) return fail(spec, `radius must be 0..${AREA_MAX_RADIUS}`);
       if (height < 1 || height > AREA_MAX_HEIGHT) return fail(spec, `height must be 1..${AREA_MAX_HEIGHT}`);
-      const rb = resolveBlock(args[5]);
+      const rb = resolveHexBlock(args[5]);
       if ('error' in rb) return fail(spec, rb.error);
       const ring = spec.name === 'hexring';
       const total = (ring ? (radius === 0 ? 1 : 6 * radius) : hexDiscCount(radius)) * height;

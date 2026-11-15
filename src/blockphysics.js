@@ -910,6 +910,14 @@ export class BlockPhysics {
   // block changes (main forwards World.onBlockChange) and streaming (World.onChunkGenerated)
 
   /**
+   * §93.9 (main forwards World.onCoverChange): the brick pieces over cell (q, y, r) changed, so a face water crosses there
+   * may have opened or closed: the water rule runs on it and round it (the cell's id may not have changed at all).
+   */
+  onCoverChange(q, y, r) {
+    if (this.switches.water) this.scheduleWaterAround(q, y, r);
+  }
+
+  /**
    * Every block change from any source: run the triggers of the switched-on features, then seed a support check when
    * a load-bearing cell was removed (unless the write was quiet; while area jobs run, external removals are collected
    * and searched once the jobs end).
@@ -1563,7 +1571,7 @@ export class BlockPhysics {
   _scheduleWaterCell(q, y, r) {
     if (!(y >= 0 && y < WORLD_HEIGHT)) return;
     const id = this.world.peekBlock(q, y, r);
-    if (!(isWater(id) || id === BLOCK.AIR || id === BLOCK.CAMPFIRE)) return;
+    if (!(isWater(id) || id === BLOCK.AIR || id === BLOCK.CAMPFIRE || id === BLOCK.BRICK_GAP)) return; // (§93.9: a gap is open to water)
     const intoFall = id === BLOCK.WATER_FALL
       || (isWaterSource(id) ? y > 0 && isOpenToWater(this.world.peekBlock(q, y - 1, r)) : isWater(this.world.peekBlock(q, y + 1, r)));
     this.schedule(intoFall ? 'fall' : 'water', q, y, r);
@@ -1572,7 +1580,7 @@ export class BlockPhysics {
   _scheduleOpenNeighbours(q, y, r) {
     for (const [dq, dy, dr] of NEIGHBOURS) {
       const id = this.world.peekBlock(q + dq, y + dy, r + dr);
-      if (id === BLOCK.AIR || id === BLOCK.CAMPFIRE || (isWater(id) && !isWaterSource(id))) this._scheduleWaterCell(q + dq, y + dy, r + dr);
+      if (id === BLOCK.AIR || id === BLOCK.CAMPFIRE || id === BLOCK.BRICK_GAP || (isWater(id) && !isWaterSource(id))) this._scheduleWaterCell(q + dq, y + dy, r + dr);
     }
   }
 

@@ -8,6 +8,10 @@
 // movement is resolved by pushing the footprint circle out of overlapping solid hexagons along the minimum
 // translation vector, which gives natural sliding along honeycomb walls. Because the footprint radius is
 // smaller than a cell's inradius, the circle can only ever overlap the cell it is in plus its six neighbours.
+//
+// Bricks (CONTRACTS §93.6): stepPlayer and displaceBody take an optional `getBrick`. Given one, the body collides with the
+// bricks EXACTLY (circle against each brick's rectangle, beside the hex passes, deepest contact first) and the bricks'
+// shadows in the hex world (BRICK_SHADOW / BRICK_FILL) are passed through; without one (mobs) the shadows are solid hexes.
 import {
   PLAYER_WIDTH, PLAYER_HEIGHT, EYE_HEIGHT, SNEAK_EYE_HEIGHT, GRAVITY, JUMP_VELOCITY, TERMINAL_VELOCITY,
   WALK_SPEED, SPRINT_SPEED, SNEAK_SPEED, FLY_SPEED, FLY_SPRINT_SPEED, FLY_VERTICAL_SPEED, GROUND_ACCEL,
@@ -16,7 +20,8 @@ import {
 } from './config.js';
 import { yawToForward, yawToRight } from './coords.js';
 import { HEX_DIRS, HEX_SIZE, hexToWorld, worldToHex, hexCircleContact } from './hex.js';
-import { isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
+import { BLOCK, isSolid, isLiquid, waterSurfaceHeight, isBrickShadow } from './blocks.js';
+import { BRICK_DEPTH, brickCircleContact } from './bricks.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
 /** @typedef {import('./types.js').PlayerInput} PlayerInput */
@@ -329,9 +334,11 @@ export function supportingCells(p, getBlock, out = []) {
  * @param {PlayerInput} input
  * @param {GetBlockFn} getBlock
  * @param {number} dt seconds
+ * @param {((i: number, y: number, n: number) => number)|null} [getBrick]  collide with the bricks exactly (§93)
  */
-export function stepPlayer(p, input, getBlock, dt) {
+export function stepPlayer(p, input, getBlock, dt, getBrick = null) {
   if (!(dt > 0)) return; // also rejects NaN (the state is left exactly as it was)
+  if (getBrick === null) getBrick = brickLookupOf(p);
   // v0.9 (DESIGN-survival §9.3): the fastest landing of THIS step; survival.step consumes it (reads, then zeroes it).
   p.landSpeed = 0;
   if (dt > MAX_FRAME_DT) dt = MAX_FRAME_DT;
@@ -355,7 +362,7 @@ export function stepPlayer(p, input, getBlock, dt) {
   }
 
   for (let i = 0; i < n; i++) {
-    substep(p, input, getBlock, h, wx, wz);
+    substep(p, input, getBlock, h, wx, wz, getBrick);
   }
 }
 
@@ -368,7 +375,7 @@ export function stepPlayer(p, input, getBlock, dt) {
  * @param {number} wx normalised wish direction x
  * @param {number} wz normalised wish direction z
  */
-function substep(p, input, getBlock, h, wx, wz) {
+function substep(p, input, getBlock, h, wx, wz, getBrick = null) {
   const jump = !!input.jump;
   const sneak = !!input.sneak;
 
@@ -434,7 +441,7 @@ function substep(p, input, getBlock, h, wx, wz) {
   p.hitWall = false;
 
   const dy = p.vy * h;
-  if (moveVertical(p, dy, getBlock)) {
+  if (moveVertical(p, dy, getBlock, getBrick)) {
     if (dy < 0) {
       p.onGround = true;
       if (flying) p.flying = false; // landing ends flight
@@ -445,7 +452,7 @@ function substep(p, input, getBlock, h, wx, wz) {
     }
     p.vy = 0;
   }
-  if (moveHorizontal(p, p.vx * h, p.vz * h, getBlock)) {
+  if (moveHorizontal(p, p.vx * h, p.vz * h, getBlock, getBrick)) {
     p.hitWall = true;
   }
 
@@ -465,13 +472,27 @@ export function speedFactorOf(input) {
 }
 
 /**
+ * §93.6: a body's own brick lookup (`p.brickLookup`, set by main on the player), so bodies.js pushing the player keeps it
+ * against the exact bricks too. Mobs have none.
+ * @returns {((i: number, y: number, n: number) => number)|null}
+ */
+function brickLookupOf(p) {
+  return typeof p.brickLookup === 'function' ? p.brickLookup : null;
+}
+
+/** A hex cell is solid for this body: with exact bricks (§93.6) the bricks' shadows are not, they are collided as bricks. */
+function solidHex(id, getBrick) {
+  return isSolid(id) && !(getBrick !== null && isBrickShadow(id));
+}
+
+/**
  * Translate the player vertically and push it back out of any solid cell its footprint overlaps.
  * @param {PlayerState} p
  * @param {number} delta
  * @param {GetBlockFn} getBlock
  * @returns {boolean} true when a collision was resolved
  */
-function moveVertical(p, delta, getBlock) {
+function moveVertical(p, delta, getBlock, getBrick = null) {
   if (delta === 0) return false;
   p.y += delta;
 
@@ -489,10 +510,29 @@ function moveVertical(p, delta, getBlock) {
     const q = colQ[c];
     const r = colR[c];
     for (let y = y0; y <= y1; y++) {
-      if (!isSolid(getBlock(q, y, r))) continue;
+      if (!solidHex(getBlock(q, y, r), getBrick)) continue;
       hit = true;
       if (y < nearestMin) nearestMin = y;
       if (y + 1 > nearestMax) nearestMax = y + 1;
+    }
+  }
+  if (getBrick !== null) {
+    // §93.6: the bricks under / over the footprint, exactly.
+    const i0 = Math.floor(p.x - rad);
+    const i1 = Math.floor(p.x + rad);
+    const n0 = Math.floor((p.z - rad) / BRICK_DEPTH);
+    const n1 = Math.floor((p.z + rad) / BRICK_DEPTH);
+    for (let i = i0; i <= i1; i++) {
+      for (let n = n0; n <= n1; n++) {
+        if (!brickCircleContact(i, n, p.x, p.z, rad, contact)) continue;
+        for (let y = y0; y <= y1; y++) {
+          const m = getBrick(i, y, n);
+          if (m === BLOCK.AIR || !isSolid(m)) continue;
+          hit = true;
+          if (y < nearestMin) nearestMin = y;
+          if (y + 1 > nearestMax) nearestMax = y + 1;
+        }
+      }
     }
   }
   if (!hit) return false;
@@ -514,7 +554,7 @@ function moveVertical(p, delta, getBlock) {
  * @param {GetBlockFn} getBlock
  * @returns {boolean} true when at least one collision was resolved (or the move was refused)
  */
-function moveHorizontal(p, dx, dz, getBlock) {
+function moveHorizontal(p, dx, dz, getBlock, getBrick = null) {
   if (dx === 0 && dz === 0) return false;
   const x0 = p.x;
   const z0 = p.z;
@@ -539,7 +579,7 @@ function moveHorizontal(p, dx, dz, getBlock) {
       const r = colR[c];
       let solid = false;
       for (let y = y0; y <= y1; y++) {
-        if (isSolid(getBlock(q, y, r))) {
+        if (solidHex(getBlock(q, y, r), getBrick)) {
           solid = true;
           break;
         }
@@ -548,6 +588,31 @@ function moveHorizontal(p, dx, dz, getBlock) {
       bestDepth = contact.depth;
       bnx = contact.nx;
       bnz = contact.nz;
+    }
+    if (getBrick !== null) {
+      // §93.6: the bricks round the footprint compete for the deepest push with the hexes.
+      const i0 = Math.floor(p.x - rad);
+      const i1 = Math.floor(p.x + rad);
+      const n0 = Math.floor((p.z - rad) / BRICK_DEPTH);
+      const n1 = Math.floor((p.z + rad) / BRICK_DEPTH);
+      for (let i = i0; i <= i1; i++) {
+        for (let n = n0; n <= n1; n++) {
+          if (!brickCircleContact(i, n, p.x, p.z, rad, contact)) continue;
+          if (contact.depth <= bestDepth) continue;
+          let solid = false;
+          for (let y = y0; y <= y1; y++) {
+            const m = getBrick(i, y, n);
+            if (m !== BLOCK.AIR && isSolid(m)) {
+              solid = true;
+              break;
+            }
+          }
+          if (!solid) continue;
+          bestDepth = contact.depth;
+          bnx = contact.nx;
+          bnz = contact.nz;
+        }
+      }
     }
     if (bestDepth <= 0) return collided; // overlap-free: done
     if (pass === MAX_PUSH_PASSES) {
@@ -582,10 +647,11 @@ function moveHorizontal(p, dx, dz, getBlock) {
  * @param {GetBlockFn} getBlock
  * @returns {{ hitWall: boolean, hitFloorOrCeiling: boolean }}
  */
-export function displaceBody(p, dx, dy, dz, getBlock) {
+export function displaceBody(p, dx, dy, dz, getBlock, getBrick = null) {
   sanitize(p);
-  const hitWall = Number.isFinite(dx + dz) ? moveHorizontal(p, dx, dz, getBlock) : false;
-  const hitFloorOrCeiling = Number.isFinite(dy) ? moveVertical(p, dy, getBlock) : false;
+  if (getBrick === null) getBrick = brickLookupOf(p);
+  const hitWall = Number.isFinite(dx + dz) ? moveHorizontal(p, dx, dz, getBlock, getBrick) : false;
+  const hitFloorOrCeiling = Number.isFinite(dy) ? moveVertical(p, dy, getBlock, getBrick) : false;
   if (hitFloorOrCeiling) {
     if (dy < 0) p.onGround = true;
     if ((dy < 0 && p.vy < 0) || (dy > 0 && p.vy > 0)) p.vy = 0;

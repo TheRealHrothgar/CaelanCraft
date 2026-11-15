@@ -112,7 +112,7 @@ function landWater(world, top = 6) {
 describe('predicates and registration', () => {
   it('rule ids, floors, flow ids, surface heights', () => {
     expect([...WATER_RULE_IDS]).toEqual([B.AIR, B.CAMPFIRE, B.WATER, 68, 69, 70, 71, 72, 73, B.WATER_FALL, B.TAINTED_WATER,
-      B.WATER_LOW, B.WATER_SHALLOW, B.TAINTED_WATER_LOW, B.TAINTED_WATER_SHALLOW]); // + the second source (§76 water) and the lower depths (§83)
+      B.WATER_LOW, B.WATER_SHALLOW, B.TAINTED_WATER_LOW, B.TAINTED_WATER_SHALLOW, B.BRICK_GAP]); // + the second source (§76 water), the lower depths (§83) and a gap in brickwork (§93.9)
     expect(isFlowingWater(flow(1)) && isFlowingWater(flow(6))).toBe(true);
     expect(isFlowingWater(B.WATER) || isFlowingWater(B.WATER_FALL)).toBe(false);
     expect(isWaterFloor(B.STONE) && isWaterFloor(B.GLASS) && isWaterFloor(B.WATER)).toBe(true);
