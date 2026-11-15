@@ -27,9 +27,12 @@ describe('the build tree model (§94)', () => {
     expect(node('@stump').how).toBe('by hand');
   });
 
-  it('the first column is the way to the Work Stump: a log (an axe fells it), rocks, the stone hammer and axe', () => {
+  it('the first column is the way to the Work Stump: a log (an axe fells it), rocks, a stick, cord, the hammerstone and axe', () => {
     const first = model.nodes.filter((n) => n.column === 0).map((n) => n.id).sort();
-    expect(first).toEqual(['#log', '@stump', 'rock', 'stone_axe', 'stone_hammer'].sort());
+    expect(first).toEqual(['#log', '@stump', 'cord', 'hammerstone', 'plant_fibre', 'rock', 'stick', 'stone_axe'].sort());
+    // §94: a stone tool is a rock head lashed to a stick with cord, knapped with a hammerstone
+    for (const dep of ['rock', 'stick', 'cord', 'hammerstone']) expect(model.edges).toContainEqual([dep, 'stone_axe']);
+    expect(node('hammerstone')).toMatchObject({ lane: 'build', station: 'hand' });
     expect(node('#log')).toMatchObject({ lane: 'gather', label: 'Any Log', tool: 'stone_axe', how: 'with a Stone Axe' });
     expect(node('rock')).toMatchObject({ lane: 'gather', how: 'picked up', tool: null });
     expect(node('stone_axe')).toMatchObject({ lane: 'build', station: 'hand', how: 'by hand' });
@@ -90,7 +93,7 @@ describe('the build tree model (§94)', () => {
   });
 
   it('a tool need is met by the lowest tool of its kind that is good enough', () => {
-    expect(toolItemFor('hammer', 1)).toBe('stone_hammer');
+    expect(toolItemFor('hammer', 1)).toBe('hammerstone');
     expect(toolItemFor('hammer', 3)).toBe('copper_hammer');
     expect(toolItemFor('hammer', 5)).toBe('iron_hammer');
     expect(toolItemFor('knife', 2)).toBe('flint_knife');
@@ -108,10 +111,10 @@ describe('the build tree state (§94)', () => {
   });
 
   it('have, ready, gather, locked', () => {
-    const states = treeStates(model, facts({ rock: 3, flint_pick: 1, oak_log: 2 }, ['stone_hammer'], []));
+    const states = treeStates(model, facts({ rock: 3, flint_pick: 1, oak_log: 2 }, ['hammerstone'], []));
     expect(states.get('rock')).toBe('have');
     expect(states.get('#log')).toBe('have'); // any member of the tag
-    expect(states.get('stone_hammer')).toBe('ready');
+    expect(states.get('hammerstone')).toBe('ready');
     expect(states.get('stone_axe')).toBe('locked');
     expect(states.get('plant_fibre')).toBe('gather');
     expect(states.get('flint_knife')).toBe('locked');
@@ -125,10 +128,10 @@ describe('the build tree state (§94)', () => {
   });
 
   it('columns count what is had, and know when their workplace is there', () => {
-    const states = treeStates(model, facts({ rock: 1, oak_log: 1, stone_hammer: 1, stone_axe: 1 }, [], ['stump']));
+    const states = treeStates(model, facts({ rock: 1, oak_log: 1, hammerstone: 1, stone_axe: 1, stick: 1, cord: 1, plant_fibre: 1 }, [], ['stump']));
     const p = columnProgress(model, states);
     expect(p.map((c) => c.station)).toEqual(TREE_STATIONS);
-    expect(p[0]).toEqual({ station: 'stump', done: 5, total: 5, built: true });
+    expect(p[0]).toEqual({ station: 'stump', done: 8, total: 8, built: true });
     expect(p[5].built).toBe(false);
   });
 });

@@ -269,7 +269,7 @@ describe('the recipe table (§7.3)', () => {
     for (const tag of Object.keys(TAGS)) expect(typeof TAG_LABELS[tag]).toBe('string');
     expect(inputLabel({ tag: 'fuel', n: 1 })).toBe('Fuel');
     expect(inputLabel({ tag: 'knapstone', n: 1 })).toBe('Knapping Stone');
-    expect(toolLabel('hammer', 1)).toBe('stone hammer or better');
+    expect(toolLabel('hammer', 1)).toBe('hammerstone or better');
     expect(toolLabel('knife', 2)).toBe('flint knife or better');
     expect(toolLabel('hammer', 6)).toBe('steel hammer');
     expect(toolLabel('firestarter', 0)).toBe('fire drill');
@@ -279,17 +279,18 @@ describe('the recipe table (§7.3)', () => {
 });
 
 describe('the first day (§7.5): the starting kit', () => {
-  it('9 rock, 4 knapstone, 11 plant fibre, 8 sticks and a log make the whole kit in 32 s, the flint tools at the Work Stump', () => {
-    const pack = new FakePack({ rock: 9, flint: 4, plant_fibre: 11, stick: 8, oak_log: 1 });
+  it('9 rock, 4 knapstone, 13 plant fibre, 9 sticks and a log make the whole kit in 34 s, the flint tools at the Work Stump', () => {
+    // §94: a stone strikes flint (the Hammerstone is one rock); every hafted tool, the Stone Axe too, takes a stick and cord
+    const pack = new FakePack({ rock: 9, flint: 4, plant_fibre: 13, stick: 9, oak_log: 1 });
     const q = new CraftQueue();
-    const order = ['stone_hammer', 'stone_axe', 'cord', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire'];
+    const order = ['cord', 'hammerstone', 'stone_axe', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire'];
     let seconds = 0;
     /** @type {*} the stump is set down once it is made (§94: the flint tools are knapped on it) */
     const near = { hand: true };
     // without the stump, no flint tool
-    expect(q.enqueue('flint_knife', 1, new FakePack({ flint: 1, stick: 1, cord: 1 }, ['stone_hammer']), near).ok).toBe(false);
+    expect(q.enqueue('flint_knife', 1, new FakePack({ flint: 1, stick: 1, cord: 1 }, ['hammerstone']), near).ok).toBe(false);
     for (const id of order) {
-      const times = id === 'cord' ? 5 : 1;
+      const times = id === 'cord' ? 6 : 1;
       if (id === 'flint_knife') {
         expect(pack.snapshot().work_stump).toBe(1);
         pack.take('work_stump', 1);
@@ -304,11 +305,11 @@ describe('the first day (§7.5): the starting kit', () => {
       expect(ev.failed).toEqual([]);
       expect(q.size).toBe(0);
     }
-    expect(seconds).toBe(32);
+    expect(seconds).toBe(34);
     expect(pack.snapshot()).toEqual({ campfire: 1 });
-    expect(pack.tools.map((t) => t.k).sort()).toEqual(['fire_drill', 'flint_axe', 'flint_knife', 'flint_pick', 'stone_axe', 'stone_hammer']);
-    // the stone hammer knapped 4 things (stone axe, knife, axe, pick); the stone axe shaped the stump; the drill lit one fire
-    expect(pack.tools.find((t) => t.k === 'stone_hammer').d).toBe(60 - 4);
+    expect(pack.tools.map((t) => t.k).sort()).toEqual(['fire_drill', 'flint_axe', 'flint_knife', 'flint_pick', 'hammerstone', 'stone_axe']);
+    // the hammerstone knapped 4 things (stone axe, knife, axe, pick); the stone axe shaped the stump; the drill lit one fire
+    expect(pack.tools.find((t) => t.k === 'hammerstone').d).toBe(60 - 4);
     expect(pack.tools.find((t) => t.k === 'fire_drill').d).toBe(8 - 1);
   });
 });
@@ -348,8 +349,8 @@ describe('listRecipes', () => {
     const pack = new FakePack({ plant_fibre: 2, rock: 1 });
     const list = listRecipes(pack, { hand: true });
     expect(list).toHaveLength(124);
-    expect(list.slice(0, 2).map((r) => r.id)).toEqual(['cord', 'stone_hammer']);
-    expect(list.filter((r) => r.craftable).map((r) => r.id)).toEqual(['cord', 'stone_hammer']);
+    expect(list.slice(0, 2).map((r) => r.id)).toEqual(['cord', 'hammerstone']);
+    expect(list.filter((r) => r.craftable).map((r) => r.id)).toEqual(['cord', 'hammerstone']);
     for (let i = 1; i < list.length; i++) {
       const a = list[i - 1];
       const b = list[i];
@@ -357,12 +358,12 @@ describe('listRecipes', () => {
       else if (a.missing !== b.missing) expect(a.missing).toBeLessThan(b.missing);
       else expect(RECIPES.findIndex((r) => r.id === a.id)).toBeLessThan(RECIPES.findIndex((r) => r.id === b.id));
     }
-    // one rock short of a chopper (and no hammer yet), one fibre short of a bandage: the "1 missing" group in table order
+    // a stick short of a wooden shovel, a log short of the stump, one fibre short of a bandage: the "1 missing" group in
+    // table order; the chopper (a rock, a stick and a cord short: §94 a stone tool is hafted with cord) is further down
     const ones = list.filter((r) => !r.craftable && r.missing === 1).map((r) => r.id);
-    expect(ones.slice(0, 3)).toEqual(['stone_axe', 'wooden_shovel', 'work_stump']);
-    expect(ones).toContain('stone_axe');
+    expect(ones.slice(0, 2)).toEqual(['wooden_shovel', 'work_stump']);
     expect(ones).toContain('fibre_bandage');
-    expect(ones.indexOf('stone_axe')).toBeLessThan(ones.indexOf('fibre_bandage'));
+    expect(list.find((r) => r.id === 'stone_axe').missing).toBe(3);
   });
 
   it('describes inputs (have / need, tags summed over members), tools and the station', () => {
@@ -375,7 +376,10 @@ describe('listRecipes', () => {
       tools: [{ type: 'axe', tier: 1, label: 'stone axe or better', ok: true }],
     });
     const chopper = list.find((r) => r.id === 'stone_axe');
-    expect(chopper).toMatchObject({ craftable: false, missing: 0, inputs: [{ k: 'rock', label: 'Rock', need: 2, have: 2 }], tools: [{ type: 'hammer', ok: false }] });
+    expect(chopper).toMatchObject({
+      craftable: false, missing: 2, tools: [{ type: 'hammer', ok: false }],
+      inputs: [{ k: 'rock', label: 'Rock', need: 2, have: 2 }, { k: 'stick', need: 1, have: 0 }, { k: 'cord', need: 1, have: 0 }],
+    });
     const charcoal = list.find((r) => r.id === 'charcoal');
     expect(charcoal).toMatchObject({ stationOk: false, craftable: false, hint: 'build a Kiln nearby', missing: 1 });
     const planks = list.find((r) => r.id === 'birch_planks');
@@ -406,29 +410,29 @@ describe('listRecipes', () => {
 
 describe('CraftQueue: queueing', () => {
   it('queues a hand job; it completes atomically: inputs taken, tools worn and outputs given only at the end', () => {
-    const pack = new FakePack({ rock: 3 }, ['stone_hammer']);
+    const pack = new FakePack({ rock: 3, stick: 1, cord: 1 }, ['hammerstone']);
     const q = new CraftQueue();
     const v0 = q.version;
     expect(q.enqueue('stone_axe', 1, pack, { hand: true })).toEqual({ ok: true, message: 'Making Stone Axe', queued: 1 });
     expect(q.version).toBeGreaterThan(v0);
     expect(q.size).toBe(1);
-    let ev = q.step(2.9, pack, null, PLAYER);
+    let ev = q.step(3.9, pack, null, PLAYER);
     expect(ev.done).toEqual([]);
     expect(pack.count('rock')).toBe(3); // nothing taken while it works
     ev = q.step(0.2, pack, null, PLAYER);
     expect(ev.done).toEqual([{ station: 'hand', id: 'stone_axe', outputs: [{ k: 'stone_axe', n: 1 }] }]);
     expect(pack.count('rock')).toBe(1);
     expect(pack.count('stone_axe')).toBe(1);
-    expect(pack.tools.find((t) => t.k === 'stone_hammer').d).toBe(59);
-    expect(pack.log).toEqual([['take', 'rock', 2], ['wear', 'stone_hammer'], ['give', 'stone_axe', 1]]);
+    expect(pack.tools.find((t) => t.k === 'hammerstone').d).toBe(59);
+    expect(pack.log).toEqual([['take', 'rock', 2], ['take', 'stick', 1], ['take', 'cord', 1], ['wear', 'hammerstone'], ['give', 'stone_axe', 1]]);
     expect(q.size).toBe(0);
   });
 
   it('refuses unknown recipes, missing tools, missing inputs and a station that is not near (range 3)', () => {
-    const pack = new FakePack({ rock: 2, greenware_pot: 1, coal: 1 });
+    const pack = new FakePack({ rock: 2, stick: 1, cord: 1, greenware_pot: 1, coal: 1 });
     const q = new CraftQueue();
     expect(q.enqueue('nope', 1, pack, { hand: true })).toEqual({ ok: false, message: 'unknown recipe "nope"', queued: 0 });
-    expect(q.enqueue('stone_axe', 1, pack, { hand: true })).toEqual({ ok: false, message: "Can't make Stone Axe: needs a stone hammer or better", queued: 0 });
+    expect(q.enqueue('stone_axe', 1, pack, { hand: true })).toEqual({ ok: false, message: "Can't make Stone Axe: needs a hammerstone or better", queued: 0 });
     expect(q.enqueue('kiln', 1, pack, { hand: true })).toEqual({ ok: false, message: "Can't make Kiln: missing Clay Lump, Rock", queued: 0 });
     expect(q.enqueue('clay_pot', 1, pack, { hand: true })).toEqual({ ok: false, message: "Can't make Clay Pot: build a Kiln nearby", queued: 0 });
     // the station must be in the findStations result, i.e. within STATION_RANGE of the feet
@@ -601,21 +605,21 @@ describe('CraftQueue: the lanes run side by side', () => {
   });
 
   it('fails a job whose inputs or tools went missing, taking nothing, and goes on with the next', () => {
-    const pack = new FakePack({ plant_fibre: 4, rock: 2 }, ['stone_hammer']);
+    const pack = new FakePack({ plant_fibre: 4, rock: 2, stick: 1, cord: 1 }, ['hammerstone']);
     const q = new CraftQueue();
     q.enqueue('cord', 1, pack, { hand: true });
     q.enqueue('stone_axe', 1, pack, { hand: true });
     q.enqueue('cord', 1, pack, { hand: true });
     pack.take('plant_fibre', 3); // dropped on the floor
-    pack.tools.length = 0; // and the stone hammer with it
+    pack.tools.length = 0; // and the hammerstone with it
     const ev = run(q, pack, 6);
     expect(ev.messages).toEqual([
       "Couldn't make Cord: missing Plant Fibre.",
-      "Couldn't make Stone Axe: missing a stone hammer or better.",
+      "Couldn't make Stone Axe: missing a hammerstone or better.",
       "Couldn't make Cord: missing Plant Fibre.",
     ]);
     expect(ev.failed.map((f) => f.id)).toEqual(['cord', 'stone_axe', 'cord']);
-    expect(pack.snapshot()).toEqual({ plant_fibre: 1, rock: 2 });
+    expect(pack.snapshot()).toEqual({ plant_fibre: 1, rock: 2, stick: 1, cord: 1 });
     expect(q.size).toBe(0);
   });
 
@@ -730,7 +734,7 @@ describe('play-test fixes (progression lens)', () => {
     pack.add({ k: 'wrought_iron', n: 8 });
     pack.add({ k: 'charcoal', n: 8 });
     const q = new CraftQueue();
-    expect(q.enqueue('stone_axe', 1, pack, { hand: true }).message).toBe("Can't make Stone Axe: needs a stone hammer or better");
+    expect(q.enqueue('stone_axe', 1, pack, { hand: true }).message).toBe("Can't make Stone Axe: needs a hammerstone or better");
     pack.add({ k: 'bronze_hammer', n: 1 });
     const res = q.enqueue('steel_bar', 1, pack, { hand: true, forge: [0, 64, 2] });
     expect(res.ok).toBe(false);
@@ -745,13 +749,13 @@ describe('play-test fixes (progression lens)', () => {
     pack.setSlot(20, null);
     pack.take('bronze_hammer', 1); // no hammer of any kind is left
     const ev = q.step(100, pack, null, [0, 64, 0]);
-    expect(ev.messages).toEqual(["Couldn't make Stone Axe: missing a stone hammer or better."]);
+    expect(ev.messages).toEqual(["Couldn't make Stone Axe: missing a hammerstone or better."]);
   });
 
   it('"Pack full" is judged after the inputs are taken: a recipe that frees its own slot completes in a full pack', () => {
     // play-test: scrape_salt (Salt-crusted Pot → Salt + Clay Pot) sat at 100 % with "Pack full" for ever
     const pack = new Pack();
-    for (let i = 0; i < PACK_SLOTS; i++) pack.setSlot(i, { k: i === 0 ? 'salt_pot' : i === 1 ? 'salt' : 'stone_hammer', n: 1 });
+    for (let i = 0; i < PACK_SLOTS; i++) pack.setSlot(i, { k: i === 0 ? 'salt_pot' : i === 1 ? 'salt' : 'hammerstone', n: 1 });
     const q = new CraftQueue();
     expect(q.enqueue('scrape_salt', 1, pack, { hand: true }).ok).toBe(true);
     const e = q.step(60, pack, null, [0, 64, 0]);
@@ -760,11 +764,11 @@ describe('play-test fixes (progression lens)', () => {
     expect(pack.count('salt_pot')).toBe(0);
     expect(pack.count('salt')).toBe(2);
     expect(pack.count('clay_pot')).toBe(1);
-    // a pack with truly no room still waits: the rock stack keeps its slot after one rock is taken, the stone hammer needs its own
+    // a pack with truly no room still waits: the rock stack keeps its slot after one rock is taken, the hammerstone needs its own
     const full = new Pack();
-    for (let i = 0; i < PACK_SLOTS; i++) full.setSlot(i, { k: i === 0 ? 'rock' : 'stone_hammer', n: i === 0 ? 3 : 1 });
+    for (let i = 0; i < PACK_SLOTS; i++) full.setSlot(i, { k: i === 0 ? 'rock' : 'hammerstone', n: i === 0 ? 3 : 1 });
     const q2 = new CraftQueue();
-    expect(q2.enqueue('stone_hammer', 1, full, { hand: true }).ok).toBe(true);
+    expect(q2.enqueue('hammerstone', 1, full, { hand: true }).ok).toBe(true);
     q2.step(60, full, null, [0, 64, 0]);
     expect(q2.lanes()[0].jobs[0]).toMatchObject({ waiting: true, reason: 'Pack full' });
     expect(full.count('rock')).toBe(3);
@@ -772,7 +776,7 @@ describe('play-test fixes (progression lens)', () => {
     full.setSlot(0, { k: 'rock', n: 1 });
     q2.step(1, full, null, [0, 64, 0]);
     expect(q2.size).toBe(0);
-    expect(full.count('stone_hammer')).toBe(PACK_SLOTS);
+    expect(full.count('hammerstone')).toBe(PACK_SLOTS);
     // a PackOps without canExchange (a Map-backed fake) still works through canGive
     const plain = {
       count: () => 9, countTag: () => 9, take: () => 0, takeTag: () => 0, canGive: () => false, give: () => 0, hasTool: () => true, useTool: () => null,

@@ -72,7 +72,8 @@ describe('the first day (§7.5)', () => {
   beforeAll(() => {
     for (let i = 0; i < 20; i++) world.put(i - 10, GROUND + 1, 4, B.LOOSE_STONES);
     for (let i = 0; i < GRAVEL_TOPS; i++) world.put(i, GROUND, -4, B.GRAVEL);
-    for (let i = 0; i < 12; i++) world.put(i - 6, GROUND + 1, 7, B.TUSSOCK);
+    for (let i = 0; i < 16; i++) world.put(i - 8, GROUND + 1, 7, B.TUSSOCK);
+    world.put(-8, GROUND + 1, 9, B.FALLEN_BRANCHES); // §94: the stick the stone axe is hafted on, before there is an axe
     for (let i = 0; i < 8; i++) world.put(i - 4, GROUND + 5, -7, B.OAK_LEAVES);
     world.put(0, GROUND + 1, -7, B.OAK_LOG);
     survival.setMode('survival');
@@ -127,32 +128,38 @@ describe('the first day (§7.5)', () => {
 
   const made = [];
 
-  it('hands gather rock, flint and fibre from loose stones, gravel tops and tussock', () => {
+  it('hands gather rock, flint, fibre and a stick from loose stones, gravel tops, tussock and fallen branches', () => {
     for (let i = 0; i < 20; i++) pickAt(i - 10, GROUND + 1, 4);
+    pickAt(-8, GROUND + 1, 9);
+    expect(pack.count('stick')).toBeGreaterThanOrEqual(1);
     // dig gravel until the kit's four knapping stones are in the pack: about one cell in eight gives a flint
     while (pack.countTag('knapstone') < 4 && gravelDug < GRAVEL_TOPS) gatherSeconds += digAt(gravelDug++, GROUND, -4, HOTBAR_SIZE - 1);
     expect(gravelDug).toBeGreaterThan(4); // it takes real digging now
     expect(gravelDug).toBeLessThan(GRAVEL_TOPS);
-    for (let i = 0; i < 12; i++) gatherSeconds += digAt(i - 6, GROUND + 1, 7, HOTBAR_SIZE - 1);
+    for (let i = 0; i < 16; i++) gatherSeconds += digAt(i - 8, GROUND + 1, 7, HOTBAR_SIZE - 1);
     expect(pack.count('rock')).toBeGreaterThanOrEqual(9);
     expect(pack.countTag('knapstone')).toBeGreaterThanOrEqual(4);
-    expect(pack.count('plant_fibre')).toBeGreaterThanOrEqual(11);
+    expect(pack.count('plant_fibre')).toBeGreaterThanOrEqual(13);
     // Gravel by hand is 1.2 s a cell, tussock 0.2 s (§6.3), give or take a frame a cell.
-    expect(gatherSeconds).toBeGreaterThanOrEqual(gravelDug * 1.2 + 12 * 0.2 - 1e-9);
-    expect(gatherSeconds).toBeLessThan(gravelDug * 1.2 + 12 * 0.2 + (gravelDug + 12) * FRAME + 1e-9);
-    // Everything beyond the kit's 9 rock, 4 knapstone and 11 fibre is set aside, so "nothing left over" can be checked.
+    expect(gatherSeconds).toBeGreaterThanOrEqual(gravelDug * 1.2 + 16 * 0.2 - 1e-9);
+    expect(gatherSeconds).toBeLessThan(gravelDug * 1.2 + 16 * 0.2 + (gravelDug + 16) * FRAME + 1e-9);
+    // Everything beyond the kit's 9 rock, 4 knapstone, 13 fibre and the one stick the axe is hafted on is set aside, so
+    // "nothing left over" can be checked.
     store.ensureBasket(0, GROUND + 1, -1);
-    const aside = [['rock', pack.count('rock') - 9], ['flint', pack.count('flint') - 4], ['plant_fibre', pack.count('plant_fibre') - 11]];
+    const aside = [['rock', pack.count('rock') - 9], ['flint', pack.count('flint') - 4], ['plant_fibre', pack.count('plant_fibre') - 13],
+      ['stick', pack.count('stick') - 1]];
     for (const [k, n] of aside) {
       pack.take(k, n);
       store.get(0, GROUND + 1, -1).slots.push({ k, n });
     }
-    expect([pack.count('rock'), pack.count('flint'), pack.count('plant_fibre'), pack.count('stick')]).toEqual([9, 4, 11, 0]);
+    expect([pack.count('rock'), pack.count('flint'), pack.count('plant_fibre'), pack.count('stick')]).toEqual([9, 4, 13, 1]);
   });
 
-  it('a stone hammer, then a stone axe that lops 8 leaves for 8 sticks', () => {
-    made.push(...make('stone_hammer'));
+  it('a hammerstone, a cord, then a stone axe (two rocks lashed to a stick) that lops 8 leaves for 8 sticks', () => {
+    made.push(...make('hammerstone'));
+    made.push(...make('cord'));
     made.push(...make('stone_axe'));
+    expect(pack.count('stick')).toBe(0);
     const chopper = slotOf(pack, 'stone_axe');
     let lop = 0;
     for (let i = 0; i < 8; i++) lop += digAt(i - 4, GROUND + 5, -7, chopper);
@@ -167,7 +174,7 @@ describe('the first day (§7.5)', () => {
     expect(pack.count('oak_log')).toBe(1);
   });
 
-  it('9 rock, 4 knapstone, 11 fibre, 8 sticks and a log make the whole kit in 32 s, the flint at the Work Stump, with nothing left over', () => {
+  it('9 rock, 4 knapstone, 13 fibre, 9 sticks and a log make the whole kit in 34 s, the flint at the Work Stump, with nothing left over', () => {
     made.push(...make('cord', 5));
     expect(queue.enqueue('flint_knife', 1, pack, near).ok).toBe(false); // §94: flint is knapped at the stump
     made.push(...make('work_stump'));
@@ -181,16 +188,16 @@ describe('the first day (§7.5)', () => {
     made.push(...make('fire_drill'));
     made.push(...make('campfire'));
     expect(made).toEqual([
-      'stone_hammer', 'stone_axe', 'cord', 'cord', 'cord', 'cord', 'cord', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick',
-      'fire_drill', 'campfire',
+      'hammerstone', 'cord', 'stone_axe', 'cord', 'cord', 'cord', 'cord', 'cord', 'work_stump', 'flint_knife', 'flint_axe',
+      'flint_pick', 'fire_drill', 'campfire',
     ]);
     const makeSeconds = made.reduce((s, id) => s + getRecipe(id).seconds, 0);
-    expect(makeSeconds).toBe(32);
+    expect(makeSeconds).toBe(34);
     for (const k of ['rock', 'flint', 'obsidian_shard', 'plant_fibre', 'cord', 'stick', 'birch_bark', 'oak_log']) expect(pack.count(k), k).toBe(0);
     const kit = pack.slots.filter(Boolean).map((s) => s.k).sort();
-    expect(kit).toEqual(['campfire', 'fire_drill', 'flint_axe', 'flint_knife', 'flint_pick', 'stone_hammer', 'stone_axe'].sort());
-    // The tools that were needed took their wear: the stone hammer struck 4 times (stone axe, knife, axe, pick).
-    expect(pack.slots[slotOf(pack, 'stone_hammer')].d).toBe(getItem('stone_hammer').tool.durability - 4);
+    expect(kit).toEqual(['campfire', 'fire_drill', 'flint_axe', 'flint_knife', 'flint_pick', 'hammerstone', 'stone_axe'].sort());
+    // The tools that were needed took their wear: the hammerstone struck 4 times (stone axe, knife, axe, pick).
+    expect(pack.slots[slotOf(pack, 'hammerstone')].d).toBe(getItem('hammerstone').tool.durability - 4);
   });
 
   it('the flint pick cuts a STONE cell in 1.5 s (§6.3)', () => {

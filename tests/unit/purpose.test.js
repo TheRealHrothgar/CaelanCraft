@@ -56,8 +56,8 @@ describe('PURPOSE: a line for everything in the build tree', () => {
     expect(canHarvest(BLOCK.CLAY, null)).toBe(false);
     expect(canHarvest(BLOCK.CLAY, tool('wooden_shovel'))).toBe(true);
     expect(getRecipe('kiln').inputs.some((i) => i.k === 'clay_lump')).toBe(true);
-    // the stone hammer knaps every flint tool
-    expect(PURPOSE.stone_hammer).toMatch(/flint/);
+    // the hammerstone knaps every flint tool
+    expect(PURPOSE.hammerstone).toMatch(/flint/);
     for (const id of ['flint_knife', 'flint_axe', 'flint_pick', 'flint_shovel', 'flint_spear']) expect(needs(id, 'hammer', 1), id).toBe(true);
     // the stone axe: logs and the Work Stump
     expect(PURPOSE.stone_axe).toMatch(/Work Stump/);
@@ -114,7 +114,7 @@ describe('PURPOSE: a line for everything in the build tree', () => {
   it('the Making panel gets the line with each recipe', () => {
     const views = listRecipes(new Pack(), {}, {});
     const by = new Map(views.map((v) => [v.id, v]));
-    expect(by.get('stone_hammer').purpose).toBe(PURPOSE.stone_hammer);
+    expect(by.get('hammerstone').purpose).toBe(PURPOSE.hammerstone);
     expect(by.get('copper_pick').purpose).toBe(PURPOSE.copper_pick);
     expect(by.get('kiln').purpose).toBe(PURPOSE.kiln);
     expect(by.get('cobblestone').purpose).toBe('');

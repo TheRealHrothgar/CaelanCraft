@@ -293,7 +293,7 @@ describe('strike reach by tool (v0.16)', () => {
     expect(strikeReach(undefined)).toBe(2);
     expect(strikeReach('rock')).toBe(2); // a thing that is not a tool is a bare hand
     expect(strikeReach('no_such_item')).toBe(2);
-    for (const [key, reach] of [['flint_knife', 3], ['stone_hammer', 3], ['stone_axe', 4], ['flint_pick', 4], ['wooden_shovel', 4],
+    for (const [key, reach] of [['flint_knife', 3], ['hammerstone', 3], ['stone_axe', 4], ['flint_pick', 4], ['wooden_shovel', 4],
       ['bronze_sword', 5], ['flint_spear', 6], ['fire_drill', 2]]) {
       expect(strikeReach(key), key).toBe(reach);
       expect(strikeReach(getItem(key).tool), key).toBe(reach);
@@ -735,7 +735,7 @@ describe('buildPackView (§9.8)', () => {
 describe('wear on a dig or a blow (§6.1 step 6)', () => {
   const tool = (k) => getItem(k).tool;
   it('a dig wears only digging tools: axe, shovel, pick, knife, hammer', () => {
-    for (const k of ['stone_axe', 'flint_shovel', 'flint_pick', 'flint_knife', 'stone_hammer', 'steel_axe', 'iron_hammer']) {
+    for (const k of ['stone_axe', 'flint_shovel', 'flint_pick', 'flint_knife', 'hammerstone', 'steel_axe', 'iron_hammer']) {
       expect(wearsFromDigging(tool(k)), k).toBe(true);
     }
     // play-test: a Crucible (20), Casting Mold (12) or Fire Drill (8) in the hand was used up by digging dirt

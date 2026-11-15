@@ -10,7 +10,7 @@
 // - Tools are UPRIGHT (never the 45° diagonal of other games): the haft is columns 7–8 (6–9 with its dark rim), the
 //   working end at the top (axe, pick, hammer, knife, spear, sword) or at the bottom (shovel). The tier shows in the head
 //   colour AND in the binding: a cord wrap (stone, flint), a cast socket ring (copper, bronze), a forged eye with a rivet
-//   pixel (iron, steel). The stone hammer is a plain cobble with a pale strike scar.
+//   pixel (iron, steel). The hammerstone is a plain cobble with a pale strike scar (§94: no haft — a stone strikes flint).
 // - Ingots and bars are hexagonal bars; ores are mineral lumps in their mineral's colours; pots have a hexagonal rim and
 //   show their fill (water, sea-green, sap amber, snow).
 // - Everything else is a small original pictogram (honeyberries are elongated dusky-blue berries with a pale bloom).
@@ -418,7 +418,7 @@ function paintSword(ic, tier) {
   ic.set(8, 15, pal.base);
 }
 
-function paintStoneHammer(ic, rng) {
+function paintHammerstone(ic, rng) {
   ic.ellipse(7.8, 8.6, 5.6, 4.6, (x, y, u, v) => (u + v < -0.9 ? 0xb4b0a8 : u + v > 0.9 ? 0x6a6660 : 0x8f8b84));
   ic.jitter(rng, 0.08);
   // the pale strike scar where it has knocked flint, with a dark fracture line
@@ -467,7 +467,7 @@ function paintMold(ic, rng, clay) {
 
 /** The tools of §5.1 by type (and the tier from the ToolDef). */
 function paintTool(ic, rng, key, type, tier) {
-  if (key === 'stone_hammer') return paintStoneHammer(ic, rng);
+  if (key === 'hammerstone') return paintHammerstone(ic, rng);
   if (key === 'stone_axe') return paintAxe(ic, tier, true);
   if (key === 'wooden_shovel') return paintShovel(ic, tier, true);
   switch (type) {
@@ -1522,7 +1522,7 @@ const OTHER_PAINTERS = {
  * @type {Readonly<Record<string, readonly [string, number]>>}
  */
 const TOOL_ART = Object.freeze({
-  stone_hammer: ['hammer', 1], stone_axe: ['axe', 1], wooden_shovel: ['shovel', 1],
+  hammerstone: ['hammer', 1], stone_axe: ['axe', 1], wooden_shovel: ['shovel', 1],
   flint_knife: ['knife', 2], flint_axe: ['axe', 2], flint_pick: ['pick', 2], flint_shovel: ['shovel', 2], flint_spear: ['spear', 2],
   copper_knife: ['knife', 3], copper_axe: ['axe', 3], copper_pick: ['pick', 3], copper_shovel: ['shovel', 3], copper_hammer: ['hammer', 3],
   bronze_knife: ['knife', 4], bronze_axe: ['axe', 4], bronze_pick: ['pick', 4], bronze_shovel: ['shovel', 4], bronze_hammer: ['hammer', 4],

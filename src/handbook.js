@@ -224,7 +224,7 @@ export function plainText(text) {
 const TOOL_KEYS = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool');
 
 /**
- * The cheapest tool item that satisfies a requirement, written "Stone Hammer+" when better ones of its kind exist ("+" =
+ * The cheapest tool item that satisfies a requirement, written "Hammerstone+" when better ones of its kind exist ("+" =
  * that tool or any better one), plain for tier-0 kit and for the best of its kind.
  * @param {string} type @param {number} tier
  */
@@ -284,7 +284,7 @@ export function recipeOutputs(rec) {
   return nameTimes(first.k, first.n) + (extra ? ` (+ ${extra} back)` : '');
 }
 
-/** A recipe's tools: "Stone Hammer+", "Crucible, Casting Mold", "" for none. @param {import('./crafting.js').Recipe} rec */
+/** A recipe's tools: "Hammerstone+", "Crucible, Casting Mold", "" for none. @param {import('./crafting.js').Recipe} rec */
 export function recipeTools(rec) {
   return rec.tools.map((t) => toolNeedLabel(t.type, t.tier)).join(', ');
 }
@@ -462,7 +462,7 @@ function table({ id, caption, head, rows, keys, source = null }) {
 
 /** The first-day kit (§7.5), in making order; cord's count is whatever the rest of the kit needs. §94: the flint tools are
  * knapped at the Work Stump, so the stump is part of the kit. */
-const KIT = ['stone_hammer', 'stone_axe', 'cord', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire'];
+const KIT = ['cord', 'hammerstone', 'stone_axe', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire'];
 
 /**
  * The first-day kit as rows and its totals: raw materials after cord is expanded into fibre (tinder counted as fibre), and
@@ -1300,11 +1300,11 @@ function makeChapters() {
     [
       h('Before dusk, step by step'),
       steps([
-        'Pull *tussock grass* with your bare hands for Plant Fibre: hold the left mouse button on it until it breaks. Eight tussocks give about a dozen.',
+        'Pull *tussock grass* with your bare hands for Plant Fibre: hold the left mouse button on it until it breaks. Ten tussocks give about fifteen, enough for the first day.',
         'Look down. *Loose Stones* give Rock and *Fallen Branches* give Sticks: press [R] on them. For Flint, dig *gravel*: now and then a cell turns one up.',
-        'Press [E] and make a *Stone Hammer*, then a *Stone Axe* and some *Cord*. Hand jobs carry on while you walk.',
-        'With the Stone Axe in hand, lop leaves for Sticks and fell a tree: logs need an axe.',
-        'Shape a log into a *Work Stump* with the Stone Axe and set it down. On its flat top, knap your flint with the Stone Hammer: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
+        'Press [E] and pick a round rock for a *Hammerstone*: stone strikes stone. Twist *Cord*, then knap a *Stone Axe* head and lash it to a stick. Hand jobs carry on while you walk.',
+        'With the Stone Axe in hand, lop leaves for more Sticks and fell a tree: logs need an axe.',
+        'Shape a log into a *Work Stump* with the Stone Axe and set it down. On its flat top, knap your flint with the Hammerstone: a *Flint Knife*, a *Flint Axe* and a *Flint Pick*, your first way into stone.',
         'Make a *Fire Drill*, then build a *Campfire* beside fresh water. Raw water can poison: boil it once you have a pot.',
         `Eat honeyberries as you go. Pigs are shy: sneak up with [Shift], strike ${numWord(stoneAxeBlows)} times with the Stone Axe, and roast the pork.`,
         `Before sunset at ${sunset}, feed the fire a log and stay within ${ZOMBIE_FIRE_FEAR} cells of it.`,
@@ -1656,7 +1656,7 @@ function makeChapters() {
     ],
     [
       h('Stone and flint'),
-      p('The *Stone Hammer* is a fist-sized cobble, the knapper\'s hammer: every flint tool is struck with it. The *Stone Axe* is a sharp-edged cobble, your first axe: it fells trees and lops leaves for sticks.'),
+      p('The *Hammerstone* is a fist-sized cobble, the knapper\'s hammer: every flint tool is struck with it. The *Stone Axe* is a sharp-edged cobble lashed to a stick, your first axe: it fells trees and lops leaves for sticks.'),
       p(`*Flint* hides in *gravel*. Dig wild gravel, by hand or with a shovel, and about one cell in ${Math.round(1 / GRAVEL_FLINT_P)} (${fmtPct(GRAVEL_FLINT_P)}) turns up a Flint. Gravel you have put down yourself gives none. A few *Loose Stones* (${fmtPct(FLINT_SHARE)}) show a dark nodule and give one too.`),
       p('Flint, or obsidian (volcanic glass), knaps into a knife, an axe, a shovel, a spear and a pick. Each needs a stick and cord to haft it.'),
       p(`The Flint Pick breaks stone, ${flintOres.map((n) => n.toLowerCase()).join(', ')} and obsidian.`),

@@ -7236,9 +7236,17 @@ Workbench and a new **Lab**, and the Making panel shows the road itself.
   #planks, hammer 5, 30 s.
 - 124 recipes: hand 43, stump 24, kiln 24, bloomery 5, forge 15, workbench 5, lab 8. `STATION_IDS` (… 'workbench',
   **'lab'**), `STATION_BLOCKS.lab` LAB, `STATION_NAMES.lab` "Lab".
-- The handbook follows: the first-day kit (§7.5) now includes the Work Stump (9 rock, 4 flint, 11 fibre, 8 sticks and a log,
-  32 s of making), its bullets shape the stump before knapping, the workplaces chapter has a Lab section and table, and
-  `ELEMENTARY_PARTS` are the Workbench's.
+- **A stone strikes flint; a hafted tool takes cord.** The tier-1 hammer is the **Hammerstone** (`hammerstone`, "Hammerstone",
+  hammer tier 1, durability 60, power 1): one rock, by hand, 1 s, no tool — a plain cobble with a pale strike scar. It is
+  what every `hammer 1` need names ("hammerstone or better", "Hammerstone+"). There is no Stone Hammer any more:
+  `ITEM_ALIASES` reads the §64 key `stone_hammer` as `hammerstone` (the §64 alias the other way is withdrawn). The **Stone
+  Axe** is 2 rock + stick + cord, hammer 1, 4 s. Every hafted stone and flint tool takes a stick and cord (the flint
+  tools as before; the fire drill too), and so do the darts: flint_dart is flint + stick + cord, fletched_dart flint +
+  stick + 2 feather + cord.
+- The handbook follows: the first-day kit (§7.5) is cord ×6, the Hammerstone, the Stone Axe, the Work Stump, the three flint
+  tools, the fire drill and a campfire — 9 rock, 4 flint, 13 fibre, 9 sticks and a log, 34 s of making; its bullets pick
+  the hammerstone, twist cord and haft the axe, then shape the stump before knapping; the workplaces chapter has a Lab
+  section and table, and `ELEMENTARY_PARTS` are the Workbench's.
 
 ### 94.2 The Lab block
 
@@ -7250,7 +7258,12 @@ survivalControl `STATION_OF_BLOCK` / `STATION_TABS` and packUI `STATION_TABS` (t
 and PICKER_ORDER (after the Workbench; 120 entries), harvest (axe tier 1, 3.0 s, drops itself), purpose ("Workplace: the
 advanced electrical devices."; the Workbench's line now names its parts and the Lab).
 
-### 94.3 The Making search
+### 94.3 The Making search (and two columns)
+
+The recipe list is always two columns of cards (`repeat(2, minmax(0, 1fr))`): Making keeps room for two (`.pack-right` at
+least 436 px; on a narrower screen it wraps under the pack instead of narrowing to one column), and the pack's key hint
+wraps under the hotbar strip so the two sides fit side by side from a 1024 px window up.
+
 
 A search box in the Making heading (`.making-search`). The list shows the recipes of the tab whose search text holds every
 word typed, in any order and case: `recipeSearchText(r)` — the output's name and key, every input's label and name (a

@@ -229,7 +229,7 @@ describe('breakSeconds and canHarvest (§6.1)', () => {
 
   it('§93.7: stone breaks into rocks with a pick, or is dressed into stone bricks with a copper hammer or better', () => {
     expect(rollDrops(B.STONE, tool('flint_pick'), {}, () => 0.99).filter((s) => s.k === 'rock')).toEqual([{ k: 'rock', n: 2 }]);
-    expect(breakSeconds(B.STONE, tool('stone_hammer'))).toBe(Infinity); // tier 1: the dressed way wants metal
+    expect(breakSeconds(B.STONE, tool('hammerstone'))).toBe(Infinity); // tier 1: the dressed way wants metal
     expect(canHarvest(B.STONE, tool('copper_hammer'))).toBe(true);
     expect(breakSeconds(B.STONE, tool('copper_hammer'))).toBeCloseTo(4 / TIER_SPEED[tool('copper_hammer').tier], 9);
     const bricks = rollDrops(B.STONE, tool('copper_hammer'), {}, () => 0.5);
@@ -242,7 +242,7 @@ describe('breakSeconds and canHarvest (§6.1)', () => {
   it('cannot: below the tier, the wrong type, or the hand where a tier is needed → Infinity', () => {
     expect(breakSeconds(B.STONE, HAND)).toBe(Infinity);
     expect(breakSeconds(B.STONE, tool('stone_axe'))).toBe(Infinity);
-    expect(breakSeconds(B.STONE, tool('stone_hammer'))).toBe(Infinity); // no stone pick exists: flint is the first way in
+    expect(breakSeconds(B.STONE, tool('hammerstone'))).toBe(Infinity); // no stone pick exists: flint is the first way in
     expect(breakSeconds(B.OAK_LOG, HAND)).toBe(Infinity);
     expect(breakSeconds(B.OAK_LOG, tool('flint_knife'))).toBe(Infinity);
     expect(breakSeconds(B.PACKED_ICE, HAND)).toBe(Infinity);

@@ -160,10 +160,12 @@ function metalToolRows(station, metal, ingot, tools, extra, toolsText, seconds) 
 const RECIPE_ROWS = [
   // ---- Hand (37)
   ['cord', 'hand', '2 plant_fibre', 'cord', '', 1],
-  ['stone_hammer', 'hand', 'rock', 'stone_hammer', '', 1],
-  ['stone_axe', 'hand', '2 rock', 'stone_axe', 'hammer 1', 3],
+  // §94: a stone strikes flint — the Hammerstone is a round rock picked and shaped by hand; a stone TOOL is hafted: the
+  // axe's head is knapped with the hammerstone and lashed to a stick with cord
+  ['hammerstone', 'hand', 'rock', 'hammerstone', '', 1],
+  ['stone_axe', 'hand', '2 rock + stick + cord', 'stone_axe', 'hammer 1', 4],
   ['wooden_shovel', 'hand', 'stick', 'wooden_shovel', 'axe 1', 2],
-  ['flint_dart', 'hand', 'flint + stick + plant_fibre', '4 flint_dart', 'hammer 1', 2],
+  ['flint_dart', 'hand', 'flint + stick + cord', '4 flint_dart', 'hammer 1', 2], // §94: bound with cord like every flint tool
   ['fire_drill', 'hand', '2 stick + cord', 'fire_drill', '', 2],
   ['snare', 'hand', '2 cord + 3 stick', 'snare', '', 3], // v0.11 (CONTRACTS §69): a noose on a bent stick
   ['campfire', 'hand', '6 rock + 3 stick + #tinder', 'campfire', 'firestarter 0', 5],
@@ -204,11 +206,11 @@ const RECIPE_ROWS = [
   // v0.11 (CONTRACTS §67): the Workbench itself — steel, glass, drawn copper and tin: it comes after the Forge
   ['workbench', 'hand', '5 #planks + 2 steel_bar + 2 glass + 12 copper_wire + 2 tin_ingot', 'workbench', 'hammer 5', 20],
   // v0.14 (§76 fauna): what feathers are for — the Flint Dart with a feathered flight (faster, harder, tougher)
-  ['fletched_dart', 'hand', 'flint + stick + 2 feather + plant_fibre', '4 fletched_dart', 'hammer 1', 3],
+  ['fletched_dart', 'hand', 'flint + stick + 2 feather + cord', '4 fletched_dart', 'hammer 1', 3],
   // §85: the first night's bed — a heap of dry grass on a few sticks
   ['grass_bed', 'hand', '8 plant_fibre + 3 stick', 'grass_bed', '', 4],
   // ---- Work Stump (12); riving a log into sticks is real work: there is no planks-to-sticks shortcut
-  // §94: flint is knapped on the stump's flat top (the stone hammer as before): the stump comes before the flint tools
+  // §94: flint is knapped on the stump's flat top with the hammerstone: the stump comes before the flint tools
   ['flint_knife', 'stump', '#knapstone + stick + cord', 'flint_knife', 'hammer 1', 3],
   ['flint_axe', 'stump', '#knapstone + stick + cord', 'flint_axe', 'hammer 1', 4],
   ['flint_pick', 'stump', '2 #knapstone + stick + 2 cord', 'flint_pick', 'hammer 1', 5],
@@ -359,17 +361,19 @@ export function inputLabel(inp) {
   return 'tag' in inp ? TAG_LABELS[inp.tag] ?? `#${inp.tag}` : itemName(inp.k);
 }
 
-/** "a stone hammer or better", "an iron hammer or better". @param {string} label a toolLabel */
+/** "a hammerstone or better", "an iron hammer or better". @param {string} label a toolLabel */
 export function withArticle(label) {
   return `${/^[aeiou]/i.test(label) ? 'an' : 'a'} ${label}`;
 }
 
 /**
  * @param {string} type @param {number} tier
- * @returns {string} "flint knife or better", "steel hammer" (nothing is better), "fire drill" (tier-0 kit)
+ * @returns {string} "flint knife or better", "steel hammer" (nothing is better), "fire drill" (tier-0 kit), "hammerstone
+ *   or better" (§94: the stone age's hammer is a plain stone)
  */
 export function toolLabel(type, tier) {
   if (Object.hasOwn(KIT_LABELS, type) && tier <= 0) return KIT_LABELS[type];
+  if (type === 'hammer' && tier <= 1) return 'hammerstone or better';
   const t = Math.max(0, Math.min(TIER_NAMES.length - 1, tier));
   return `${TIER_NAMES[t]} ${type}${t < TIER_NAMES.length - 1 ? ' or better' : ''}`;
 }

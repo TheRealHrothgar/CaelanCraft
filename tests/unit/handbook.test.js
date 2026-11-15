@@ -265,10 +265,10 @@ describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
 
   it('names things as the game does: the everyday tool names (§64), "Poisoned" (§66), and never an item key', () => {
     const everything = `${allProse()}\n${allCells()}`;
-    expect(everything).not.toMatch(/hammerstone|chopper|digging stick|\bspades?\b/i);
+    expect(everything).not.toMatch(/stone hammer|chopper|digging stick|\bspades?\b/i); // §94: the Hammerstone
     expect(everything).not.toMatch(/\bsick(ness)?\b/i); // the status is Poisoned
-    expect(everything).not.toMatch(/[a-z]_[a-z]/); // "stone_hammer" once leaked into a first-day step
-    for (const name of ['Stone Hammer', 'Stone Axe', 'Wooden Shovel', 'Flint Shovel']) expect(everything).toContain(name);
+    expect(everything).not.toMatch(/[a-z]_[a-z]/); // "hammerstone" as a key once leaked into a first-day step
+    for (const name of ['Hammerstone', 'Stone Axe', 'Wooden Shovel', 'Flint Shovel']) expect(everything).toContain(name);
     expect(allProse()).toContain('When you are Poisoned');
   });
 });
@@ -302,7 +302,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
-    expect(toolNeedLabel('hammer', 1)).toBe('Stone Hammer+');
+    expect(toolNeedLabel('hammer', 1)).toBe('Hammerstone+');
     expect(toolNeedLabel('axe', 1)).toBe('Stone Axe+');
     expect(toolNeedLabel('knife', 2)).toBe('Flint Knife+');
     expect(toolNeedLabel('hammer', 4)).toBe('Bronze Hammer+');
@@ -574,13 +574,13 @@ describe('handbook: generated tables match the game (§14.1)', () => {
     expect(rowOf(w, 'Nourishment')[2]).toBe(`at least ${RATES.WAKE_MIN_STAT}`);
   });
 
-  it('the first-day kit is §7.5 with the Work Stump (§94): 9 rock, 4 flint, 11 fibre, 8 sticks, a log, 32 s of making', () => {
+  it('the first-day kit is §7.5 with the Work Stump (§94): 9 rock, 4 flint, 13 fibre, 9 sticks, a log, 34 s of making', () => {
     const kit = firstDayKit();
-    expect([kit.rock, kit.knapstone, kit.fibre, kit.sticks, kit.seconds, kit.cords]).toEqual([9, 4, 11, 8, 32, 5]);
+    expect([kit.rock, kit.knapstone, kit.fibre, kit.sticks, kit.seconds, kit.cords]).toEqual([9, 4, 13, 9, 34, 6]); // §94: the hammerstone is a rock; the stone axe takes a stick and cord
     const t = tableById('kit');
-    expect(t.keys).toEqual(['stone_hammer', 'stone_axe', 'cord', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire']);
-    expect(rowOf(t, 'cord')).toEqual(['Cord ×5', '10 Plant Fibre', '—', '5 s']);
-    expect(allProse()).toContain('In all: 9 Rock, 4 Flint, 11 Plant Fibre, 8 Sticks and a log for the stump, and 32 seconds of making.');
+    expect(t.keys).toEqual(['cord', 'hammerstone', 'stone_axe', 'work_stump', 'flint_knife', 'flint_axe', 'flint_pick', 'fire_drill', 'campfire']);
+    expect(rowOf(t, 'cord')).toEqual(['Cord ×6', '12 Plant Fibre', '—', '6 s']);
+    expect(allProse()).toContain('In all: 9 Rock, 4 Flint, 13 Plant Fibre, 9 Sticks and a log for the stump, and 34 seconds of making.');
   });
 
   it('gathering rows describe PICKABLE (for what R picks) and BLOCK_RULES drops, and say how: R, or hold LMB', () => {
@@ -1006,8 +1006,8 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain('It pops out, flies to you, and is yours when it reaches you.');
     // the dart's recipe, in words
     const dart = RECIPES.find((r) => r.id === 'flint_dart');
-    expect(dart.inputs.map((i) => [i.k, i.n])).toEqual([['flint', 1], ['stick', 1], ['plant_fibre', 1]]);
-    expect(text).toContain(`One Flint, one Stick and one Plant Fibre make ${numWord(dart.outputs[0].n)} Flint Darts at hand, with a Stone Hammer.`);
+    expect(dart.inputs.map((i) => [i.k, i.n])).toEqual([['flint', 1], ['stick', 1], ['cord', 1]]); // §94: bound with cord
+    expect(text).toContain(`One Flint, one Stick and one Cord make ${numWord(dart.outputs[0].n)} Flint Darts at hand, with a Hammerstone.`);
   });
 
   it('the controls chapter has Q and G, the riding keys, and R on animals and snares before everything else', () => {

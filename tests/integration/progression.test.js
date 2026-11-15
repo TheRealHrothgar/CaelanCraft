@@ -99,9 +99,9 @@ describe('the build tree: logical and blocking (§77)', () => {
    * beyond the gate for the gate to block (the test would fail if it did not).
    */
   const GATES = [
-    ['any hammer (the Stone Hammer first)', atLeast('hammer', 1), ['stone_axe', 'flint_knife', 'flint_pick', 'work_stump', 'kiln', 'copper_ingot'], ['cord', 'fire_drill', 'campfire', 'rock']],
+    ['any hammer (the Hammerstone first)', atLeast('hammer', 1), ['stone_axe', 'flint_knife', 'flint_pick', 'work_stump', 'kiln', 'copper_ingot'], ['cord', 'fire_drill', 'campfire', 'rock']],
     // §94: no axe, no log, no Work Stump — and so no flint tool, no shovel, no clay, no coal
-    ['any axe (the Stone Axe first)', atLeast('axe', 1), ['work_stump', 'wooden_shovel', 'oak_log', 'oak_planks', 'charcoal', 'bellows', 'flint_pick', 'flint_shovel', 'coal', 'kiln'], ['stone_hammer', 'cord', 'fire_drill', 'campfire']],
+    ['any axe (the Stone Axe first)', atLeast('axe', 1), ['work_stump', 'wooden_shovel', 'oak_log', 'oak_planks', 'charcoal', 'bellows', 'flint_pick', 'flint_shovel', 'coal', 'kiln'], ['hammerstone', 'cord', 'fire_drill', 'campfire']],
     // §94: the flint tools are knapped at the Work Stump
     ['the Work Stump', ['work_stump'], ['flint_knife', 'flint_axe', 'flint_pick', 'flint_shovel', 'oak_planks', 'coal', 'leather'], ['stone_axe', 'wooden_shovel', 'clay_lump', 'kiln', 'fire_drill', 'campfire']],
     ['an axe of flint or better (planks)', atLeast('axe', 2), ['oak_planks', 'bellows', 'bloomery', 'wrought_iron'], ['work_stump', 'kiln', 'copper_ingot', 'bronze_ingot']],

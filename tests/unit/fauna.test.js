@@ -887,7 +887,7 @@ describe('fauna — what a hunt gives', () => {
     expect(getItem('fletched_dart')).toMatchObject({ kind: 'material', stack: 16 });
     const rec = getRecipe('fletched_dart');
     expect(rec.station).toBe('hand');
-    expect(rec.inputs).toEqual([{ k: 'flint', n: 1 }, { k: 'stick', n: 1 }, { k: 'feather', n: 2 }, { k: 'plant_fibre', n: 1 }]);
+    expect(rec.inputs).toEqual([{ k: 'flint', n: 1 }, { k: 'stick', n: 1 }, { k: 'feather', n: 2 }, { k: 'cord', n: 1 }]); // §94: bound with cord like every flint tool
     expect(rec.outputs).toEqual([{ k: 'fletched_dart', n: 4 }]);
     expect(rec.tools).toEqual([{ type: 'hammer', tier: 1 }]);
     const plain = getRecipe('flint_dart');

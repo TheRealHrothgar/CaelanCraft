@@ -10,7 +10,7 @@ export const PURPOSE_MAX = 64;
 /** Item key → its one-line purpose. Every tool has one (a test checks). */
 export const PURPOSE = Object.freeze({
   // ---- stone and wood
-  stone_hammer: 'Knaps flint: every flint tool is struck with it.',
+  hammerstone: 'Knaps flint: every flint tool is struck with it.',
   stone_axe: 'Fells trees and lops leaves. Needed for the Work Stump.',
   wooden_shovel: 'Digs clay, which builds the Kiln. Digs earth faster.',
   // ---- flint
