@@ -1670,8 +1670,6 @@ export function boot(win, doc) {
   let brickHit = null;
   /** §93: the last aim ray (eye and unit direction), so a hex hit's point can be recovered for brick placement. */
   const aimRay = { x: 0, y: 0, z: 0, dx: 0, dy: 0, dz: 0 };
-  /** §93 (Creative): building materials go on the brick lattice; B switches them to hexes and back. Survival: always bricks. */
-  let brickBuild = true;
   // Save slots (§41): the old single save moves into slot 1 first (never under ?nosave, which writes nothing).
   if (!params.nosave) {
     const moved = migrateLegacySave();
@@ -3128,8 +3126,8 @@ export function boot(win, doc) {
     if (!world || !player) return false;
     const id = hotbar[selected];
     if (!isPlaceable(id)) return false;
-    // §93: a building material goes on the brick lattice (unless B switched Creative to hexes).
-    if (isBrickMaterial(id) && brickBuild) {
+    // §93: a building material is only ever a brick (both modes): it goes on the brick lattice.
+    if (isBrickMaterial(id)) {
       const target = brickTarget();
       return target !== null && placeBrickAt(id, target);
     }
@@ -7327,14 +7325,6 @@ export function boot(win, doc) {
     if (controls.consumePressed('F3')) hud.toggleDebug();
     if (controls.consumePressed('KeyM')) hud.showSaveToast(audio.toggleMuted() ? 'Sound muted' : 'Sound on');
     if (controls.consumePressed('KeyV')) cycleView(); // §91: first person → behind → in front
-    // §93: B switches what building materials are laid as in Creative (bricks / hexes); Survival always lays bricks.
-    if (controls.consumePressed('KeyB')) {
-      if (SV) hud.showBlockToast('Building materials are laid as bricks');
-      else {
-        brickBuild = !brickBuild;
-        hud.showBlockToast(brickBuild ? 'Building: bricks (B: hexes)' : 'Building: hexes (B: bricks)');
-      }
-    }
     // §60: Q drops the item in hand (Shift: the whole stack), G throws one.
     if (controls.consumePressed('KeyQ')) {
       const res = handAction('drop', controls.isDown('ShiftLeft') || controls.isDown('ShiftRight') ? 'all' : 1);
