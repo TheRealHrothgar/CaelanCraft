@@ -6054,7 +6054,7 @@ export function boot(win, doc) {
     const [q, r] = worldToHex(player.x + fx * 3, player.z + fz * 3);
     const y = Math.max(0, Math.floor(player.y) - 1);
     runner.runConsoleLine(`setblock ${q} ${y} ${r} rune_block`);
-    const rune = runeStore.set(q, y, r, { label: 'lift', script: '# runs on R\nsay Going up\nhexring @ @1 @ 2 3 stone_bricks\nwait 1\ntp @ @4 @', stepOn: true, chain: true });
+    const rune = runeStore.set(q, y, r, { label: 'lift', script: '# runs on R\nsay Going up\nhexring @ @1 @ 2 3 sandstone\nwait 1\ntp @ @4 @', stepOn: true, chain: true });
     if (rune) openEditor(rune);
   }
 
