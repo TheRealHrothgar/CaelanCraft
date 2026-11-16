@@ -159,6 +159,7 @@ panel (**Shift+R** on it) says where it comes from.
 | `?server=host:port` / `?join=Name` | Offer that game server on the title screen (default: the server that served the page), or join it at once under that name — with `?autoplay=1` straight into play (`server/README.md`, CONTRACTS §96) |
 | `?ui=sounds` | Open the Sound Test at once (no world needed): every sound of the game with a button that plays it, and ambience scenes. Also under `Esc` → Sound → Sound Test |
 | `?scene=vortex` / `?scene=circuits` | With `?autoplay=1`: set off a Collapsar Charge 8 cells ahead 2 s after loading, or build the worked circuit examples (a doorbell, a timed keg, a switch and igniter, a dusk lamp) 10 cells ahead (use with `?nosave=1`); with `?smoke=1` the self-test checks them |
+| `?scene=wind` / `?scene=wind-rain` | With `?autoplay=1`: set a lit campfire and a Pennant a few cells ahead and a second Pennant farther off, to see the wind in the flags and the smoke (CONTRACTS §101; use with `?nosave=1`); `wind-rain` also forces the rain, which leans in the wind. `?time=` picks the moment, and so the wind |
 | `?mode=survival` / `?mode=creative` | With `?autoplay=1` or `?smoke=1`: the first world's mode. A saved world older than Survival is not upgraded from a URL (use `Esc` → Mode) unless `?nosave=1` |
 | `?autoplay=1` | Skip the title screen |
 | `?slot=3` | With `?autoplay=1`: play save slot 1–6 (default 1; with `?nosave=1` nothing is written) |

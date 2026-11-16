@@ -131,6 +131,9 @@ import {
 } from './weather.js';
 import { windAt } from './wind.js';
 import { createRainRenderer } from './rainRenderer.js';
+import { vaneView, windAir } from './windDrawn.js'; // §101: the wind drawn
+import { Pennants, PENNANT_MAX_MODELS, PENNANT_MODEL_RANGE, poleHeight } from './pennants.js';
+import { createPennantRenderer } from './pennantRenderer.js';
 // CONTRACTS §87: sleep
 import {
   Sleep, SecureWatch, TiredFx, spotOf, sleepRefusal, secureAt, secureWords, rollNightAttack, placeNightAttack, stageNews, wakeLine,
@@ -160,7 +163,7 @@ import { HANDBOOK_KEY, HANDBOOK_CHAT_LINE, buildChapters, ensureHandbook } from 
 import { createHandbookUI } from './handbookUI.js';
 import {
   parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest, circuitSceneWrites,
-  CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP,
+  CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP, WIND_SCENE,
 } from './diagnostics.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -1134,6 +1137,8 @@ export function boot(win, doc) {
   let particles;
   /** @type {import('./rainRenderer.js').RainRenderer} the rain and the snow (CONTRACTS §84) */
   let rainRenderer;
+  /** @type {import('./pennantRenderer.js').PennantRenderer} §101: the pennants' poles and flags */
+  let pennantRenderer;
   /** @type {import('./pigRenderer.js').PigRenderer} */
   let pigRenderer;
   /** @type {import('./animalRenderer.js').AnimalRenderer} */
@@ -1187,6 +1192,7 @@ export function boot(win, doc) {
     looseRenderer = createLooseItemRenderer(renderer.three.scene, createItemIcons(doc, atlasCanvas));
     particles = createParticles(renderer.three.scene);
     rainRenderer = createRainRenderer(renderer.three.scene); // §84: one mesh, no light
+    pennantRenderer = createPennantRenderer(renderer.three.scene); // §101: four draw calls, no light
     phantomRenderer = createPhantomRenderer(renderer.three.scene); // §87: three boxes, no light
     avatarRenderer = createAvatarRenderer(renderer.three.scene); // §91: the player's model and first-person arm, no light
     remoteRenderer = createRemotePlayerRenderer(renderer.three.scene, doc); // nothing in the scene until someone joins
@@ -1206,6 +1212,7 @@ export function boot(win, doc) {
     fallingRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     particles.prewarm(renderer.three.renderer, renderer.three.camera);
     rainRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    pennantRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     vortexRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     circuitRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     // The Watcher's figure too (§40.4) — only now: the scene's lights are part of every program's key, so compiling it
@@ -1839,8 +1846,11 @@ export function boot(win, doc) {
   /** The world's clock (weather.worldSeconds of the saved day and time). */
   const weatherNow = () => worldSeconds(day, time);
 
-  /** @type {{ at: number, seed: unknown, wind: import('./wind.js').Wind|null }} the wind, worked out once per clock tick */
-  const windCache = { at: NaN, seed: null, wind: null };
+  /**
+   * @type {{ at: number, seed: unknown, shower: number, wind: import('./wind.js').Wind|null }} the wind, worked out once per
+   * clock tick (and again when the shower changes: with the clock frozen by ?time a shower must still raise it, §101)
+   */
+  const windCache = { at: NaN, seed: null, shower: NaN, wind: null };
   /**
    * The wind here and now (docs/DESIGN-hunting.md §3): from the world's seed and clock, stronger in the shower falling on
    * the player's biome; the same for every player on a server. Stalking, the rain, the smoke and the pennant read it.
@@ -1849,9 +1859,10 @@ export function boot(win, doc) {
   function windNow() {
     const t = weatherNow();
     const seed = world ? world.seed : 0;
-    if (windCache.wind === null || windCache.at !== t || windCache.seed !== seed) {
+    if (windCache.wind === null || windCache.at !== t || windCache.seed !== seed || windCache.shower !== weatherFx.falling) {
       windCache.at = t;
       windCache.seed = seed;
+      windCache.shower = weatherFx.falling;
       windCache.wind = windAt(seed, t, weatherFx.falling);
     }
     return windCache.wind;
@@ -1903,8 +1914,14 @@ export function boot(win, doc) {
     fx.shown = approach(fx.shown, fx.falling, dt, RAIN_SHOWN_TAU_S);
     fx.overcast = approach(fx.overcast, fx.falling, dt, OVERCAST_TAU_S);
     ambienceSample.rain = fx.snow ? 0 : fx.falling; // snow is silent; the ambience smooths the level itself
+    // §101: the wind drawn — the rain leans in it, the smoke drifts in it, the HUD's vane shows it
+    const wind = windNow();
+    windAir(wind, windAirNow);
+    particles.setWind(windAirNow[0], windAirNow[1]);
+    campfireRenderer.setWind(wind);
+    hud.setWind(vaneView(wind, controls.yaw, vaneNow));
     rainRenderer.update(live ? dt : 0, {
-      x: player.x, y: eyeY, z: player.z, intensity: fx.shown, snow: fx.snow, getBlock: world.getBlock, daylight: sky.daylight,
+      x: player.x, y: eyeY, z: player.z, intensity: fx.shown, snow: fx.snow, getBlock: world.getBlock, daylight: sky.daylight, wind,
     });
     if (SV) {
       const word = fx.falling >= RAIN_WORD_MIN ? weatherWord(fx.falling, fx.biome) : '';
@@ -2041,6 +2058,13 @@ export function boot(win, doc) {
   let inertHolesWarned = false;
   // Campfires (CONTRACTS §32): re-seeded from the world's edits on every load, like black holes.
   const campfires = new Campfires();
+  // §101: the pennants, likewise
+  const pennants = new Pennants();
+  /** §101: a pennant's pole is short under a block @param {import('./pennants.js').Pennant} p */
+  const pennantHeight = (p) => poleHeight(/** @type {World} */ (world).getBlock(p.q, p.y + 1, p.r));
+  /** §101: the drawn wind's scratch (the air the smoke drifts in, the vane) */
+  const windAirNow = [0, 0];
+  const vaneNow = { angle: 0, level: 0, gust: false, words: '' };
   /** seconds of animation time for flames and smoke (advances in every state that renders) */
   let fxTime = 0;
   /** throttle for the "too hot" chat line */
@@ -2972,6 +2996,7 @@ export function boot(win, doc) {
   function onBlockChanged(q, y, r, prev, next) {
     blackHoles.onBlockChange(q, y, r, prev, next);
     campfires.onBlockChange(q, y, r, prev, next);
+    pennants.onBlockChange(q, y, r, prev, next); // §101
     if (next === BLOCK.RUNE_BLOCK && prev !== BLOCK.RUNE_BLOCK) {
       runeStore.ensure(q, y, r);
     } else if (prev === BLOCK.RUNE_BLOCK && next !== BLOCK.RUNE_BLOCK) {
@@ -6116,6 +6141,7 @@ export function boot(win, doc) {
     circuits.loadFromEdits(world.edits); // after the holes, settling (§4.7)
     resetCircuitSession();
     campfires.loadFromEdits(world.edits);
+    pennants.loadFromEdits(world.edits); // §101
     lampLights.clear(); // §72: the new world's light engine starts without extra emitters
     riding = null;
     animalTarget = null;
@@ -6406,7 +6432,8 @@ export function boot(win, doc) {
 
   /**
    * `?scene=` (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar Charge 8 cells ahead (`delay` seconds later), 'circuits'
-   * flattens the ground 10 cells ahead and builds the §4.14 worked examples there (diagnostics.circuitSceneWrites).
+   * flattens the ground 10 cells ahead and builds the §4.14 worked examples there (diagnostics.circuitSceneWrites); §101
+   * 'wind' sets a lit campfire and two pennants ahead (diagnostics.WIND_SCENE), 'wind-rain' the same and forces the rain.
    * @param {string} name
    * @param {number} [delay]
    * @returns {{ ok: boolean, message: string, named?: Record<string, [number, number, number]> }}
@@ -6428,6 +6455,7 @@ export function boot(win, doc) {
       const res = blackHoles.activate(q, y, r, blackHoleWorld);
       return { ok: res.ok, message: res.message, named: sceneNamed };
     }
+    if (name === 'wind' || name === 'wind-rain') return buildWindScene(fx, fz, feet, name === 'wind-rain');
     if (name !== 'circuits') return { ok: false, message: `unknown scene "${name}"` };
     const [qa, ra] = worldToHex(player.x + fx * 10, player.z + fz * 10);
     const q0 = qa - 5;
@@ -6449,6 +6477,45 @@ export function boot(win, doc) {
     for (const [q, y, r, partial] of scene.settings) circuits.applySettings(q, y, r, partial);
     sceneNamed = scene.named;
     return { ok: true, message: `built the circuit examples at (${q0}, ${feet}, ${r0})`, named: scene.named };
+  }
+
+  /**
+   * §101 `?scene=wind`: each piece of WIND_SCENE on the ground ahead (the column cleared above the player's feet level
+   * and filled with stone under it), and with `rain` the rain forced on, at its full strength at once, its drops already
+   * falling.
+   * @param {number} fx @param {number} fz  the way the player looks @param {number} feet @param {boolean} rain
+   * @returns {{ ok: boolean, message: string, named: Record<string, [number, number, number]> }}
+   */
+  function buildWindScene(fx, fz, feet, rain) {
+    const w = /** @type {World} */ (world);
+    /** @type {Record<string, [number, number, number]>} */
+    const named = {};
+    for (const [piece, ahead, right] of WIND_SCENE) {
+      // the player's right is the forward vector turned a quarter: (−fz, fx)
+      const [q, r] = worldToHex(player.x + fx * ahead - fz * right, player.z + fz * ahead + fx * right);
+      for (let y = feet; y <= feet + 3 && y < WORLD_HEIGHT; y++) if (w.getBlock(q, y, r) !== BLOCK.AIR) w.setBlock(q, y, r, BLOCK.AIR);
+      for (let y = feet - 1; y >= Math.max(1, feet - 8); y--) {
+        if (isSolid(w.getBlock(q, y, r))) break;
+        w.setBlock(q, y, r, BLOCK.STONE);
+      }
+      w.setBlock(q, feet, r, piece === 'campfire' ? BLOCK.CAMPFIRE : BLOCK.PENNANT);
+      named[piece] = [q, feet, r];
+    }
+    if (rain) {
+      theWeather().force('rain');
+      // a screenshot aid: the shower at its full strength at once, the sky grey and the drops already falling (a headless
+      // browser may draw a frame only every few seconds, too few for the rain to build up by itself)
+      weatherFx.falling = 1;
+      weatherFx.shown = 1;
+      weatherFx.overcast = 1;
+      const view = {
+        x: player.x, y: player.y + getEyeHeight(player), z: player.z, intensity: 1, snow: weatherFx.snow, getBlock: w.getBlock,
+        daylight: sky.daylight, wind: windNow(),
+      };
+      for (let i = 0; i < 150; i++) rainRenderer.update(1 / 60, view);
+    }
+    sceneNamed = named;
+    return { ok: true, message: `the wind scene: a campfire and two pennants ahead${rain ? ', in the rain' : ''}`, named };
   }
 
   function enterPlaying() {
@@ -7926,6 +7993,12 @@ export function boot(win, doc) {
         .slice(0, CAMPFIRE_MAX_MODELS);
       // §9.9: the skewers, the food on them and the pot in the embers (fire spots, Survival only hold anything).
       campfireRenderer.sync(near, fxTime, dt, spotsViewFn);
+    }
+    // §101: the pennants, their flags in the wind
+    if (pennants.size > 0 || pennantRenderer.count() > 0) {
+      const nearP = pennants.nearest(player.x, eyeY, player.z, PENNANT_MODEL_RANGE, PENNANT_MAX_MODELS)
+        .filter((n) => world.hasChunkAtCell(n.pennant.q, n.pennant.r));
+      pennantRenderer.sync(nearP, windNow(), fxTime, pennantHeight);
     }
     computeSky(time, sky);
     const shownSky = stepWeather(dt, live, eyeY); // §84: the rain, the calendar; the sky greyed while it rains

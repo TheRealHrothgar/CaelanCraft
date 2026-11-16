@@ -298,6 +298,28 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 /* The calendar line (CONTRACTS §84): the day, the season and `Rain` while it rains, in words, at the top of the screen
    where nothing else sits (the debug overlay is top left, the save toast top right). Survival only. */
 .calendar-line{position:absolute;top:6px;left:50%;transform:translateX(-50%);padding:1px 8px;border:1px solid rgba(232,176,74,.45);background:rgba(28,26,36,.6);color:#f0e6cc;font:bold 11px/14px monospace;white-space:nowrap}
+/* The wind (CONTRACTS §101): a small glass capsule at the top centre — in Survival just under the calendar line — with a
+   vane that points where the wind blows as seen from where you look (up: at your back; down: in your face), grows with
+   its strength and sways with the gusts, and the words. Calm: a dot, no arrow. Both modes. */
+.wind-indicator{position:absolute;top:6px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:5px;height:24px;box-sizing:border-box;padding:0 10px 0 2px;border:1px solid var(--glass-rim-soft);border-radius:999px;background:var(--glass-control);box-shadow:var(--glass-shine);color:var(--glass-text-dim);font:600 11px/1 var(--ui-font);text-shadow:0 1px 2px rgba(0,0,0,.5);white-space:nowrap;
+  -webkit-backdrop-filter:blur(12px) saturate(1.6);backdrop-filter:blur(12px) saturate(1.6)}
+#hud.survival .wind-indicator{top:28px}
+.wind-vane{display:block;flex:none;overflow:visible}
+.wind-ring{fill:rgba(255,255,255,.08);stroke:rgba(255,255,255,.35);stroke-width:1}
+.wind-dot{fill:#fff;opacity:0}
+.wind-arrow .wind-shaft,.wind-arrow .wind-tail{fill:none;stroke:#fff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.wind-arrow .wind-head{fill:var(--honey);stroke:#fff;stroke-width:.8;stroke-linejoin:round}
+.wind-sway{transform-origin:0 0}
+.wind-calm .wind-arrow{display:none}
+.wind-calm .wind-dot{opacity:.85}
+.wind-light .wind-sway{animation:wind-sway 2.6s ease-in-out infinite alternate}
+.wind-breeze .wind-sway{animation:wind-sway 1.4s ease-in-out infinite alternate}
+.wind-strong .wind-sway{animation:wind-sway-hard .8s ease-in-out infinite alternate}
+.wind-indicator.wind-gust .wind-sway{animation:wind-sway-hard .4s ease-in-out infinite alternate}
+.wind-strong .wind-words,.wind-gust .wind-words{color:#fff}
+@keyframes wind-sway{from{transform:rotate(-5deg)}to{transform:rotate(5deg)}}
+@keyframes wind-sway-hard{from{transform:rotate(-9deg)}to{transform:rotate(9deg)}}
+@media (prefers-reduced-motion:reduce){.wind-sway,.wind-indicator.wind-gust .wind-sway{animation:none}}
 /* Sleep (CONTRACTS §87). The tiredness reading: the hours awake in words over a thin bar with a mark at each stage, right
    of the right-hand vitals on the hotbar's own line (bottom 8px; no hexagon, no icon). Its chip joins the other warnings.
    #sleep-overlay is the dark of a sleep or a nod: it lies over the whole HUD (z 8, above the hotbar's own layers) and
@@ -828,6 +850,8 @@ html.touch .status-chips,html.touch .job-chip{bottom:calc(54px + env(safe-area-i
 html.touch #block-toast{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
 html.touch #chat-log{left:calc(8px + env(safe-area-inset-left,0px));bottom:calc(72px + env(safe-area-inset-bottom,0px))}
 html.touch .calendar-line{top:calc(6px + env(safe-area-inset-top,0px))}
+html.touch .wind-indicator{top:calc(6px + env(safe-area-inset-top,0px))}
+html.touch #hud.survival .wind-indicator{top:calc(28px + env(safe-area-inset-top,0px))}
 html.touch #save-toast{top:calc(12px + env(safe-area-inset-top,0px));right:calc(12px + env(safe-area-inset-right,0px))}
 #touch-ui{z-index:9;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;overflow:hidden}
 .touch-btn{position:absolute;box-sizing:border-box;display:flex;align-items:center;justify-content:center;width:66px;height:66px;
@@ -861,6 +885,8 @@ html.touch #save-toast{top:calc(12px + env(safe-area-inset-top,0px));right:calc(
 .touch-stick.sprint .touch-knob{background:#ffd884}
 @media (orientation:portrait){.touch-pad{bottom:calc(104px + env(safe-area-inset-bottom,0px))}}
 @media (max-width:900px){html.touch .calendar-line{top:calc(88px + env(safe-area-inset-top,0px))}}
+/* §101: on a narrow tablet the wind keeps clear of the top bar too: under it, and under the calendar line in Survival */
+@media (max-width:900px){html.touch .wind-indicator{top:calc(88px + env(safe-area-inset-top,0px))}html.touch #hud.survival .wind-indicator{top:calc(110px + env(safe-area-inset-top,0px))}}
 
 /* ==== §97 Glass: the menus and the tablet controls (src/CONTRACTS.md §97) ===========================================
    After Apple's Liquid Glass: translucent layers that blur and brighten the world behind them, a bright rim along the top
@@ -1019,9 +1045,9 @@ kbd{border:1px solid var(--glass-rim-soft);border-bottom-width:2px;border-radius
 /* ---- no glass where it cannot be drawn, or is not wanted ---- */
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
   #pause-menu .menu-panel,.worlds-panel,.server-panel,.dialog-panel,.console-panel,.picker-panel{background:rgba(26,28,38,.94)}
-  .touch-btn,.touch-top,#hotbar:not(.survival){background:rgba(26,28,38,.7)}
+  .touch-btn,.touch-top,#hotbar:not(.survival),.wind-indicator{background:rgba(26,28,38,.7)}
 }
 @media (prefers-reduced-transparency:reduce){
   #pause-menu .menu-panel,.worlds-panel,.server-panel,.dialog-panel,.console-panel,.picker-panel{background:rgba(26,28,38,.96);-webkit-backdrop-filter:none;backdrop-filter:none}
-  .touch-btn,.touch-top,#hotbar:not(.survival),#chat-log div{background:rgba(26,28,38,.82);-webkit-backdrop-filter:none;backdrop-filter:none}
+  .touch-btn,.touch-top,#hotbar:not(.survival),#chat-log div,.wind-indicator{background:rgba(26,28,38,.82);-webkit-backdrop-filter:none;backdrop-filter:none}
 }

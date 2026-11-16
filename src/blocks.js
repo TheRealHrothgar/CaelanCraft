@@ -88,8 +88,10 @@ export const BLOCK = Object.freeze({
   BRICK_SHADOW: 174, BRICK_FILL: 175, BRICK_GAP: 176,
   // §94: the Lab, the workplace of the advanced electrical devices (after the Workbench, which now makes the simple parts)
   LAB: 177,
+  // §101 (the wind drawn): the Pennant, a pole with a cloth flag that streams downwind (pennantRenderer.js draws it)
+  PENNANT: 178,
 });
-export const BLOCK_COUNT = 178;
+export const BLOCK_COUNT = 179;
 
 /**
  * Sentinel returned by `World.peekBlock` for a cell in an unloaded chunk (CONTRACTS §9). 255 is never a block id, so
@@ -122,6 +124,8 @@ export const TILE = Object.freeze({
   FIRE_PIT_SIDE: 104,
   // §94: the Lab (a bench of glassware, a coil and battery jars), in the free run after the survival tiles
   LAB_SIDE: 105, LAB_TOP: 106,
+  // §101: the Pennant's picture (its icon; the pole and the flag are drawn by pennantRenderer.js)
+  PENNANT: 107,
   // Powder and circuits (DESIGN-circuits §1.4; painted by circuitTiles.js). CIRCUIT_CLEAR is all alpha 0: the sides and bottom
   // of the thin parts. POWDER_FUSE, TORCH, the four wires and every device's *_TOP are flat pictures on an alpha-0 background,
   // drawn only as icons; a device's *_SIDE is a swatch of its model's main colour that nothing draws.
@@ -530,6 +534,10 @@ export const BLOCKS = [
   def({ id: B.BRICK_GAP, name: 'brick_gap', displayName: 'Brickwork', tiles: tiles(T.BRICKS), opaque: false, layer: LAYER_CUTOUT, breakable: false, placeable: false, meshed: false, cullSame: false }),
   // ---- §94: the Lab (a workplace; appended so ids stay positional)
   def({ id: B.LAB, name: 'lab', displayName: 'Lab', tiles: tiles(T.LAB_SIDE, T.LAB_TOP, T.OAK_PLANKS), soundGroup: 'wood' }),
+  // ---- §101: the Pennant (appended so ids stay positional). Walk-through like the torch and not meshed: pennantRenderer.js
+  // draws its hexagonal pole and its cloth flag, which streams out downwind, flutters in the gusts and hangs limp in a
+  // calm. Its picture is the icon.
+  def({ id: B.PENNANT, name: 'pennant', displayName: 'Pennant', tiles: tiles(T.PENNANT), solid: false, opaque: false, layer: LAYER_CUTOUT, cullSame: false, meshed: false, icon: /** @type {'flat'} */ ('flat'), soundGroup: 'cloth' }),
 ];
 
 /**
@@ -545,7 +553,7 @@ export const DEFAULT_HOTBAR = Object.freeze([
 ]);
 
 /**
- * Order of the 119 placeable blocks, grouped by family; RUNE_BLOCK and WATER stay last. It is the flat list of every placeable
+ * Order of the 121 placeable blocks, grouped by family; RUNE_BLOCK and WATER stay last. It is the flat list of every placeable
  * block (survival's ITEM_KEYS and the `blocks` command use it); the picker's sections come from pickerModel.js. The Black
  * Hole is not placeable (DESIGN-circuits §1.5); the Powder Keg follows the campfire, then the 20 circuit blocks in §1.2 order.
  */
@@ -573,6 +581,8 @@ export const PICKER_ORDER = Object.freeze([
   B.WORK_STUMP, B.KILN, B.BLOOMERY, B.FORGE, B.WORKBENCH, B.LAB, B.WICKER_BASKET, B.SLEEPING_HIDE, B.SNARE,
   // §85: the two beds, the well and the rain barrel, after the snare
   B.GRASS_BED, B.BED, B.WELL, B.RAIN_BARREL,
+  // §101: the pennant, after the rain barrel
+  B.PENNANT,
   B.CAMPFIRE, B.POWDER_KEG,
   // powder and circuits (DESIGN-circuits §1.2 table order)
   B.COLLAPSAR_CHARGE, B.POWDER_FUSE, B.TORCH, B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE, B.TERMINAL_BOARD,

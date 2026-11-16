@@ -66,10 +66,11 @@ describe('buildPickerModel: sections and families (§5.2)', () => {
     const placeable = NO_SURVIVAL.filter((b) => b.placeable).map((b) => b.id).sort((a, b) => a - b);
     expect([...ids].sort((a, b) => a - b)).toEqual(placeable);
     // the Workplaces family and the Wild Plants family vanish, Ores loses two members, Camp & Crafts keeps the campfire
+    // (and §101's Pennant, which is no survival block: it is placed in both modes)
     expect(model.families.has('workplaces')).toBe(false);
     expect(model.families.has('wild-plants')).toBe(false);
     expect(model.families.get('ores')?.ids).toHaveLength(4);
-    expect(model.sections.find((s) => s.id === 'camp')?.entries).toEqual([{ type: 'block', id: BLOCK.CAMPFIRE }]);
+    expect(model.sections.find((s) => s.id === 'camp')?.entries).toEqual([{ type: 'block', id: BLOCK.CAMPFIRE }, { type: 'block', id: BLOCK.PENNANT }]);
     expect(model.sections.some((s) => s.id === OTHER_SECTION_ID)).toBe(false);
   });
 

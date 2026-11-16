@@ -37,6 +37,8 @@ export const TAGS = Object.freeze({
     'wool_white', 'wool_light_gray', 'wool_gray', 'wool_black', 'wool_brown', 'wool_red', 'wool_orange', 'wool_yellow',
     'wool_lime', 'wool_green', 'wool_cyan', 'wool_light_blue', 'wool_blue', 'wool_purple', 'wool_magenta', 'wool_pink',
   ]),
+  // §101: a piece of cloth for the Pennant's flag — a rag, a rawhide or leather (the cheapest first)
+  cloth: Object.freeze(['grave_rag', 'rawhide', 'leather']),
 });
 
 /** Stack size of every block item. */

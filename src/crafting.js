@@ -209,6 +209,8 @@ const RECIPE_ROWS = [
   ['fletched_dart', 'hand', 'flint + stick + 2 feather + cord', '4 fletched_dart', 'hammer 1', 3],
   // §85: the first night's bed — a heap of dry grass on a few sticks
   ['grass_bed', 'hand', '8 plant_fibre + 3 stick', 'grass_bed', '', 4],
+  // §101: the Pennant — a rag or a hide lashed to a stick with cord: it shows which way the wind blows, and how hard
+  ['pennant', 'hand', 'stick + cord + #cloth', 'pennant', '', 3],
   // ---- Work Stump (12); riving a log into sticks is real work: there is no planks-to-sticks shortcut
   // §94: flint is knapped on the stump's flat top with the hammerstone: the stump comes before the flint tools
   ['flint_knife', 'stump', '#knapstone + stick + cord', 'flint_knife', 'hammer 1', 3],
@@ -351,6 +353,7 @@ export const TAG_LABELS = Object.freeze({
   knapstone: 'Knapping Stone',
   sand: 'Any Sand',
   wool: 'Any Wool',
+  cloth: 'Rag or Hide', // §101
 });
 
 /** Tier-0 kit is named by its item, not "a hand crucible". */

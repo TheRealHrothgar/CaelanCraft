@@ -234,7 +234,7 @@ describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
       expect(list, id).toEqual(list.map((_, i) => i + 1));
     }
     // even splits: Hands (44 recipes with DESIGN-circuits §8.2's six and the dart) in five pages of 9, 9, 9, 9, 8
-    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([9, 9, 9, 8, 8]); // §94: 43, the flint tools at the stump; // 45 with the Snare (§69); 47 with Healwort tea and the Fletched Dart (§76); 48 with the Grass Bed (§85)
+    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([9, 9, 9, 9, 8]); // §101: 44 with the Pennant; §94: 43, the flint tools at the stump; // 45 with the Snare (§69); 47 with Healwort tea and the Fletched Dart (§76); 48 with the Grass Bed (§85)
   });
 
   it('teaches the real survival ideas the design asks for', () => {
@@ -298,7 +298,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([43, 24, 24, 5, 15, 5, 8]); // §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 24, 24, 5, 15, 5, 8]); // §101: + the Pennant at hand; §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
@@ -1485,11 +1485,11 @@ describe('handbook: Seasons and rain (CONTRACTS §84)', () => {
   const chapter = CHAPTERS.find((c) => c.id === 'seasons');
   const text = chapter.pages.flat().flatMap((b) => ('text' in b ? [plainText(b.text)] : b.kind === 'list' ? b.items.map(plainText) : [])).join('\n');
 
-  it('its own chapter after Water, four pages: The year, the rain table, What rain does, Living with the seasons', () => {
+  it('its own chapter after Water, five pages: The year, the rain table, What rain does, Living with the seasons, The wind', () => {
     expect(chapter).toMatchObject({ title: 'Seasons and rain', short: 'Seasons', icon: 'rain' });
     expect(CHAPTERS.indexOf(chapter)).toBe(CHAPTERS.findIndex((c) => c.id === 'water') + 1);
-    expect(chapter.pages).toHaveLength(4);
-    expect(chapter.pages.map((page) => page.find((b) => b.kind === 'h')?.text)).toEqual(['The year', undefined, 'What rain does', 'Living with the seasons']);
+    expect(chapter.pages).toHaveLength(5); // §101: + The wind
+    expect(chapter.pages.map((page) => page.find((b) => b.kind === 'h')?.text)).toEqual(['The year', undefined, 'What rain does', 'Living with the seasons', 'The wind']);
     expect(chapter.pages[1][0].kind).toBe('table');
     // the water pages are another's to write: this chapter adds none to the Water chapter
     expect(CHAPTERS.find((c) => c.id === 'water').pages.flat().filter((b) => b.kind === 'h').map((b) => b.text)).not.toContain('The year');

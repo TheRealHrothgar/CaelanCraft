@@ -126,8 +126,8 @@ const MIDDLE = ((hexDiscCount(CYCLE_RANGE) - 1) / 2 + 0.5) / CYCLE_COLUMNS;
 describe('the block (blocks.js, tiles.js)', () => {
   it('AQUIFER 173 "Aquifer", appended after the beds; BLOCK_COUNT 174; wet rock: solid, opaque, unbreakable, never placed, sound stone', () => {
     expect(B.AQUIFER).toBe(173);
-    expect(BLOCK_COUNT).toBe(178); // §94: + the Lab 177; §93: + the bricks' shadows 174–176;
-    expect(BLOCKS).toHaveLength(178);
+    expect(BLOCK_COUNT).toBe(179); // §101: + the Pennant 178; §94: + the Lab 177; §93: + the bricks' shadows 174–176;
+    expect(BLOCKS).toHaveLength(179);
     const d = BLOCKS[B.AQUIFER];
     expect([d.id, d.name, d.displayName, d.soundGroup]).toEqual([173, 'aquifer', 'Aquifer', 'stone']);
     expect([d.solid, d.opaque, d.liquid, d.breakable, d.placeable, d.layer, d.shape, d.icon, d.gravity, d.meshed])
@@ -145,7 +145,7 @@ describe('the block (blocks.js, tiles.js)', () => {
   it('two tiles in the ids §85 left free: 238 aquifer_side and 239 aquifer_top (TILE_IDS 195), opaque, its own, wet dark rock with bright water', () => {
     expect([TILE.AQUIFER_SIDE, TILE.AQUIFER_TOP]).toEqual([238, 239]);
     expect([TILE_NAMES[238], TILE_NAMES[239]]).toEqual(['aquifer_side', 'aquifer_top']);
-    expect(TILE_IDS).toHaveLength(197); // §94: + the Lab's 105, 106;
+    expect(TILE_IDS).toHaveLength(198); // §101: + the Pennant's 107; §94: + the Lab's 105, 106;
     for (let f = 0; f < 6; f++) expect(getFaceTile(B.AQUIFER, f)).toBe(TILE.AQUIFER_SIDE);
     expect([getFaceTile(B.AQUIFER, FACE_TOP), getFaceTile(B.AQUIFER, FACE_BOTTOM)]).toEqual([TILE.AQUIFER_TOP, TILE.AQUIFER_TOP]);
     for (const t of [TILE.AQUIFER_SIDE, TILE.AQUIFER_TOP]) {

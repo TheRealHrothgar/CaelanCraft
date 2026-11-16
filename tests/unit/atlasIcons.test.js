@@ -20,7 +20,8 @@ const SPRITES = [78, 79, 80, 81, 82, 83, 84, 92, 93, 116, 117, 118, // + the thr
   122, 123, 124, 125, 126, 127, 128, 129, 130, 131, // + the ten plants of v0.14 (§76 flora)
   ...Array.from({ length: 18 }, (_, i) => 133 + i), // + the nine planted blocks and the nine sprouts (§80 farming)
   151, 152, 153, 154, 155, 156, 157, 158, // + the eight plants that are not food (§81)
-  165, 166, 167, 168, 169, 170, 171, 172]; // + the two wells, the four rain barrels and the two beds (§85: 3D models)
+  165, 166, 167, 168, 169, 170, 171, 172, // + the two wells, the four rain barrels and the two beds (§85: 3D models)
+  178]; // + the Pennant (§101: its picture)
 const atlas = { width: ATLAS_SIZE_PX, height: ATLAS_SIZE_PX, kind: 'atlas' };
 
 /** A 2D context stand-in: every method call as [name, ...args], and the state each drawImage saw. */
