@@ -11,16 +11,20 @@
 // Every avatar's model and arm are built at once (a few boxes each) over ONE texture; setAvatar shows one of them.
 // Both materials are lit Lambert materials, so the light volume (lightShader.js, CONTRACTS §62) darkens the avatar in a
 // cave and a torch lights it.
+// The item in hand (setHeld) is a chunky slab extruded from its pixel art (heldItem.js), one mesh in the model's right
+// hand and one in the first-person arm's, hung from the forearms so every swing carries it.
 import * as THREE from 'three';
 import { AVATAR_TEXEL } from './config.js';
 import { AVATARS, avatarById } from './avatars.js';
 import { paintAvatarSheet, avatarRig, faceRect, SHEET_W, PAGE_H } from './avatarSkin.js';
 import { LIGHT_VOLUME_VERTEX_MAIN, patchObjectShader } from './lightShader.js';
 import { compileHidden } from './prewarm.js';
+import { heldItemGeometry, heldItemShown } from './heldItem.js';
 
 /** @typedef {import('./avatars.js').AvatarDef} AvatarDef */
 /** @typedef {import('./avatarMotion.js').AvatarPose} AvatarPose */
 /** @typedef {import('./avatarSkin.js').PartRect} PartRect */
+/** @typedef {import('./heldItem.js').HeldStyle} HeldStyle */
 
 const T = AVATAR_TEXEL;
 
@@ -33,6 +37,24 @@ export const FP_RENDER_ORDER = 10;
  * `at`, turned `reach` forward (π/2 points straight ahead), `inward` toward the middle of the view, the elbow bent `bend`.
  */
 export const FP_ARM = Object.freeze({ at: Object.freeze([0.45, -0.25, -0.32]), reach: 1.6, inward: -0.22, roll: 0, bend: 0.06 });
+/**
+ * How the item in hand is held, in the forearm's frame (at rest it hangs along −y; ahead is −z), for a hafted 'tool' and
+ * for a 'lump' (heldItem.js): the slab is turned so its flat face looks in toward the body, spun `spin` about its own
+ * length, tipped so its length (the slab's +y) points ahead and `tip` radians up from level, and last turned `lean`
+ * about the forearm's length; its grip sits in the middle of the hand, moved `ahead` metres along −z (a lump rests in
+ * front of the fist, not inside it). The model holds a tool ahead and a little up and a lump upright. The first-person
+ * arm is held out ahead (there −z is up in the view and the forearm's +y points back at the eye), so its tool is tipped
+ * down in the hand — up and away in the view — spun to show its face to the eye and leaned in toward the middle.
+ */
+export const HELD_POSE = Object.freeze({
+  tool: Object.freeze({ tip: 0.3, spin: 0, lean: 0, ahead: 0 }),
+  lump: Object.freeze({ tip: Math.PI / 2, spin: 0, lean: 0, ahead: 0.1 }),
+});
+export const FP_HELD_POSE = Object.freeze({
+  tool: Object.freeze({ tip: -0.5, spin: 1.0, lean: 0.6, ahead: 0 }),
+  lump: Object.freeze({ tip: 0, spin: 0.8, lean: 0.3, ahead: 0.13 }),
+});
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
 /** How far a dress lets the legs swing (its skirt would open otherwise). */
 export const SKIRT_LEG_SWING = 0.42;
 /** Lying down, the body rests this far over the ground; on a horse, the hips are this high over the saddle (m). */
@@ -135,13 +157,14 @@ function sheetTexture(sheet) {
 }
 
 /**
- * The first-person arm's material: lit like the objects (lightShader's patch), but from the light volume at the eye
- * (`caelArmEye`), with its depth squeezed to the front of the range.
- * @param {THREE.Texture} map
+ * A first-person material (the arm's, the held item's): lit like the objects (lightShader's patch), but from the light
+ * volume at the eye (`caelArmEye`), with its depth squeezed to the front of the range.
+ * @param {THREE.MeshLambertMaterialParameters} params  the arm: its skin (`map`, `alphaTest`); the item: `vertexColors`
  * @param {{ value: THREE.Vector3 }} eye
+ * @param {string} programKey  its own program cache key
  */
-function armMaterial(map, eye) {
-  const m = new THREE.MeshLambertMaterial({ map, alphaTest: 0.5 });
+function armMaterial(params, eye, programKey) {
+  const m = new THREE.MeshLambertMaterial(params);
   m.onBeforeCompile = (shader) => {
     patchObjectShader(/** @type {*} */ (shader));
     shader.uniforms.caelArmEye = eye;
@@ -151,8 +174,22 @@ function armMaterial(map, eye) {
 vCaelLight = caelVolumeLevels( caelArmEye );
 gl_Position.z = mix( - gl_Position.w, gl_Position.z, ${FP_DEPTH.toFixed(4)} );`);
   };
-  m.customProgramCacheKey = () => 'caelancraft-avatar-arm';
+  m.customProgramCacheKey = () => programKey;
   return m;
+}
+
+/** The program keys of the first-person materials. */
+export const FP_ARM_PROGRAM = 'caelancraft-avatar-arm';
+export const FP_HELD_PROGRAM = 'caelancraft-avatar-held';
+
+/** A held item's slab as a geometry (position, normal, colour). @param {import('./heldItem.js').ItemSlab} slab */
+function heldGeometry(slab) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(slab.positions, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(slab.normals, 3));
+  g.setAttribute('color', new THREE.BufferAttribute(slab.colors, 3));
+  g.computeBoundingSphere();
+  return g;
 }
 
 /**
@@ -173,6 +210,8 @@ gl_Position.z = mix( - gl_Position.w, gl_Position.z, ${FP_DEPTH.toFixed(4)} );`)
  * @typedef {Object} AvatarRenderer
  * @property {(id: string) => void} setAvatar   show this avatar (an unknown id shows the default one)
  * @property {() => string} avatarId
+ * @property {(key: string|null) => void} setHeld  show this item in hand (a block item, an unknown key or null: nothing)
+ * @property {() => string|null} heldKey  the item shown in hand (null: none)
  * @property {(frame: AvatarFrame) => void} sync
  * @property {THREE.Group} group      the models
  * @property {THREE.Group} armGroup   the first-person arms (placed in camera space)
@@ -189,7 +228,15 @@ export function createAvatarRenderer(scene) {
   const map = sheetTexture(sheet);
   const material = new THREE.MeshLambertMaterial({ map, alphaTest: 0.5 });
   const eye = { value: new THREE.Vector3() };
-  const fpMaterial = armMaterial(map, eye);
+  const fpMaterial = armMaterial({ map, alphaTest: 0.5 }, eye, FP_ARM_PROGRAM);
+  // the item in hand: the model's lit like the model (the prototype hook), the first-person one like the arm
+  const heldMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const fpHeldMaterial = armMaterial({ vertexColors: true }, eye, FP_HELD_PROGRAM);
+  /** @type {Map<string, { geometry: THREE.BufferGeometry, style: HeldStyle }>} one geometry per item, made when first held */
+  const heldCache = new Map();
+  // before anything is held: an empty slab with the same attributes, so prewarm compiles the held item's own programs
+  const empty = new Float32Array(0);
+  const noHeld = heldGeometry({ positions: empty, normals: empty, colors: empty });
   const group = new THREE.Group();
   group.name = 'avatars';
   const armGroup = new THREE.Group();
@@ -206,6 +253,8 @@ export function createAvatarRenderer(scene) {
 
   /** The elbow, under the shoulder's pivot (which is half an arm's width under the top of the upper arm). */
   const elbowY = (def) => (def.body.upperArm.w / 2 - def.body.upperArm.h) * T;
+  /** The grip: the middle of the hand (the forearm's last `hand` rows), under the elbow. */
+  const handY = (def) => -(def.body.foreArm.h - def.body.hand / 2) * T;
 
   /** One avatar's model and arm. */
   function build(def) {
@@ -276,12 +325,60 @@ export function createAvatarRenderer(scene) {
   scene.add(armGroup);
   let current = /** @type {ReturnType<typeof build>} */ (models.get(avatarById('').id));
 
+  // ---- the item in hand: one mesh in the current model's right hand (arms[1], the +x side), one in its arm's
+  const held = mesh(noHeld, heldMaterial, 'avatar-held');
+  const fpHeld = mesh(noHeld, fpHeldMaterial, 'avatar-fp-held');
+  fpHeld.frustumCulled = false;
+  fpHeld.renderOrder = FP_RENDER_ORDER;
+  held.visible = false;
+  fpHeld.visible = false;
+  /** @type {string|null} */
+  let heldKey = null;
+  /** @type {HeldStyle} */
+  let heldStyle = 'tool';
+
+  const leanQ = new THREE.Quaternion();
+  /** Hang the item meshes in the current avatar's hands, held as their style says. */
+  function placeHeld() {
+    const y = handY(current.def);
+    current.arms[1].elbow.add(held);
+    current.fpElbow.add(fpHeld);
+    for (const [m, pose] of /** @type {const} */ ([[held, HELD_POSE[heldStyle]], [fpHeld, FP_HELD_POSE[heldStyle]]])) {
+      m.position.set(0, y, -pose.ahead);
+      m.rotation.set(pose.tip - Math.PI / 2, pose.spin - Math.PI / 2, 0);
+      m.quaternion.premultiply(leanQ.setFromAxisAngle(Y_AXIS, pose.lean));
+    }
+  }
+  placeHeld();
+
+  /** @param {string|null} key */
+  function setHeld(key) {
+    const k = heldItemShown(key) ? /** @type {string} */ (key) : null;
+    if (k === heldKey) return;
+    heldKey = k;
+    if (k) {
+      let e = heldCache.get(k);
+      if (!e) {
+        const slab = /** @type {NonNullable<ReturnType<typeof heldItemGeometry>>} */ (heldItemGeometry(k));
+        e = { geometry: heldGeometry(slab), style: slab.style };
+        heldCache.set(k, e);
+      }
+      held.geometry = e.geometry;
+      fpHeld.geometry = e.geometry;
+      heldStyle = e.style;
+      placeHeld();
+    }
+    held.visible = !!k;
+    fpHeld.visible = !!k;
+  }
+
   function setAvatar(id) {
     const next = models.get(avatarById(id).id);
     if (!next || next === current) return;
     current.root.visible = false;
     current.fp.visible = false;
     current = next;
+    placeHeld();
   }
 
   const camM = new THREE.Matrix4();
@@ -344,13 +441,20 @@ export function createAvatarRenderer(scene) {
     scene.remove(group);
     scene.remove(armGroup);
     for (const g of geometries) g.dispose();
+    for (const e of heldCache.values()) e.geometry.dispose();
+    heldCache.clear();
+    noHeld.dispose();
     material.dispose();
     fpMaterial.dispose();
+    heldMaterial.dispose();
+    fpHeldMaterial.dispose();
     map.dispose();
   }
 
-  /** Compile the model's and the arm's programs while the game loads (prewarm.compileHidden). */
+  /** Compile the model's, the arm's and the held item's programs while the game loads (prewarm.compileHidden). */
   const prewarm = (webgl, camera) => compileHidden([group, armGroup], webgl, camera, scene);
 
-  return { setAvatar, avatarId: () => current.def.id, sync, group, armGroup, prewarm, dispose };
+  return {
+    setAvatar, avatarId: () => current.def.id, setHeld, heldKey: () => heldKey, sync, group, armGroup, prewarm, dispose,
+  };
 }
