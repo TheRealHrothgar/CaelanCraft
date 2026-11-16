@@ -446,9 +446,14 @@ describe('stalking from behind (v0.16, CONTRACTS §69 amendment)', () => {
     const [as, a] = still(0);
     as.update(DT, view(flatWorld(), standing(0, near, { sneaking: true })));
     expect(a.mode).not.toBe('flee');
-    // the same player in front of it
+    // the same player in front of it: §100 it sees a still, crouching shape and stares, but does not bolt …
     const [bs, b] = still(0);
-    bs.update(DT, view(flatWorld(), standing(0, -near, { sneaking: true })));
+    const front = standing(0, -near, { sneaking: true });
+    bs.update(DT, view(flatWorld(), front));
+    expect(b.mode).toBe('watch');
+    // … until the player moves while it stares at them
+    front.vz = 1;
+    bs.update(DT, view(flatWorld(), front));
     expect(b.mode).toBe('flee');
     // walking up behind it is heard
     const [cs, c] = still(0);
@@ -462,10 +467,11 @@ describe('stalking from behind (v0.16, CONTRACTS §69 amendment)', () => {
     d.yaw = Math.PI; // facing +z
     d.targetYaw = Math.PI;
     ds.update(DT, view(flatWorld(), player));
-    expect(d.mode).toBe('flee');
-    // and even from behind there is a limit
+    expect(d.mode).toBe('watch'); // §100: it stares at the still shape instead of bolting at once
+    // and even from behind there is a limit: a sneaker who keeps moving that near is heard; it turns, sees them, bolts
     const [es, e] = still(0);
-    es.update(DT, view(flatWorld(), standing(0, SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE - 0.3, { sneaking: true })));
+    const creeper = standing(0, SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE - 0.3, { sneaking: true, vz: -0.8 });
+    for (let i = 0; i < 90 && e.mode !== 'flee'; i++) es.update(DT, view(flatWorld(), creeper));
     expect(e.mode).toBe('flee');
   });
 

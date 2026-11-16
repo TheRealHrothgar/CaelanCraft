@@ -23,7 +23,7 @@ export const TIER_NAMES = Object.freeze(['hand', 'stone', 'flint', 'copper', 'br
 export const TIER_SPEED = Object.freeze([1, 2.2, 4.4, 6.4, 9, 12.5, 17]);
 /** Every `ToolDef.type`, in the order the tool table first uses them. */
 export const TOOL_TYPES = Object.freeze([
-  'hammer', 'axe', 'shovel', 'knife', 'pick', 'spear', 'sword', 'firestarter', 'crucible', 'mold',
+  'hammer', 'axe', 'shovel', 'knife', 'pick', 'spear', 'bow', 'sword', 'firestarter', 'crucible', 'mold',
 ]);
 /** The three wear slots, index = wear slot (`Pack.wear[i]`). */
 export const WEAR_SLOT_NAMES = Object.freeze(['head', 'body', 'feet']);
@@ -62,6 +62,9 @@ const TOOL_ROWS = [
   ['flint_pick', 'Flint Pick', 'pick', 2, 90, 1],
   ['flint_shovel', 'Flint Shovel', 'shovel', 2, 90, 1],
   ['flint_spear', 'Flint Spear', 'spear', 2, 60, 3],
+  // §100 the bow: a shaved stave strung with cord at the Work Stump. It shoots Arrows from the pack and wears 1 a shot
+  // (looseItems THROW_ARROW, drawOf); swung, it is only a stick (power 1)
+  ['bow', 'Bow', 'bow', 2, 100, 1],
   // tier 3, copper
   ['copper_knife', 'Copper Knife', 'knife', 3, 140, 2],
   ['copper_axe', 'Copper Axe', 'axe', 3, 160, 2],
@@ -127,6 +130,9 @@ const MATERIAL_ROWS = [
   // §80 farming: seed shaken out of a picked Wild Carrot, a Wild Onion or a cut Healwort. R plants one on grass or dirt
   // (farming.js PLANTABLE); the other crops are planted from the food itself (a tuber, a berry, a nut, a fruit, a root).
   ['carrot_seeds', 'Carrot Seeds', 32], ['onion_seeds', 'Onion Seeds', 32], ['healwort_seeds', 'Healwort Seeds', 32],
+  // §100 the bow: the Bow Stave is a long stick shaved with a knife, strung into a Bow; an Arrow is a stick with a knapped
+  // flint point and a feather flight, made four at a time and shot from the bow (looseItems ARROW_KEYS)
+  ['bow_stave', 'Bow Stave', 4], ['arrow', 'Arrow', 16],
 ];
 
 /**

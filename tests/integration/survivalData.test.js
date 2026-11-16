@@ -12,7 +12,7 @@ import { BLOCK_RULES, PICKABLE, MOB_DROPS, GRAVEL_FLINT_P, canHarvest, tap } fro
 import { RECIPES, STATION_BLOCKS } from '../../src/crafting.js';
 import { FIRE_TRANSFORMS, fuelSeconds } from '../../src/cooking.js';
 import { FLORA_TABLE } from '../../src/worldgen.js';
-import { DART_KEYS } from '../../src/looseItems.js';
+import { DART_KEYS, ARROW_KEYS } from '../../src/looseItems.js';
 import { PLANTABLE } from '../../src/farming.js';
 import { homesteadAction } from '../../src/homestead.js';
 
@@ -66,6 +66,7 @@ describe('every item has a source and a use (§10 I-1)', () => {
   for (const k of Object.keys(FIRE_TRANSFORMS)) uses.add(k);
   uses.add('clay_pot'); // filled at water and tapped into (§4.2)
   for (const k of DART_KEYS) uses.add(k); // thrown (CONTRACTS §60)
+  for (const k of ARROW_KEYS) uses.add(k); // shot from a bow (§100)
   for (const k of Object.keys(PLANTABLE)) uses.add(k); // planted with R (§80 farming): what the three seeds are for
 
   it.each(nonBlockKeys)('%s comes from somewhere', (key) => {

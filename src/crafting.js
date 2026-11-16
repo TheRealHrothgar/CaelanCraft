@@ -125,6 +125,9 @@ export function findStations(getBlock, q, y, r) {
 // v0.10 circuit parts and their materials (DESIGN-circuits §8.2): 6 more at hand, 11 at the stump, 4 at the kiln, 1 at the
 // bloomery and 3 at the forge (114 in all). §94 moved the flint tools to the Work Stump, the simple circuit parts to the
 // Workbench and the devices to the Lab; the elementary consumables (fuse, powder, wire, filings, the keg) stay early.
+// Today, with the later additions (the snare, the darts, the homestead, the Lab; §100 the bow stave, the bow and arrows):
+// 44 at hand, 26 at the stump, 24 at the kiln, 5 at the bloomery, 15 at the forge, 5 at the workbench and 8 at the lab
+// (127 in all).
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** "2 #knapstone + stick + 2 cord" → [{tag:'knapstone',n:2}, {k:'stick',n:1}, {k:'cord',n:2}]. */
@@ -158,7 +161,7 @@ function metalToolRows(station, metal, ingot, tools, extra, toolsText, seconds) 
 
 /** [id, station, inputs, outputs, tools, seconds], in the order of §7.3. */
 const RECIPE_ROWS = [
-  // ---- Hand (37)
+  // ---- Hand (44)
   ['cord', 'hand', '2 plant_fibre', 'cord', '', 1],
   // §94: a stone strikes flint — the Hammerstone is a round rock picked and shaped by hand; a stone TOOL is hafted: the
   // axe's head is knapped with the hammerstone and lashed to a stick with cord
@@ -207,17 +210,22 @@ const RECIPE_ROWS = [
   ['workbench', 'hand', '5 #planks + 2 steel_bar + 2 glass + 12 copper_wire + 2 tin_ingot', 'workbench', 'hammer 5', 20],
   // v0.14 (§76 fauna): what feathers are for — the Flint Dart with a feathered flight (faster, harder, tougher)
   ['fletched_dart', 'hand', 'flint + stick + 2 feather + cord', '4 fletched_dart', 'hammer 1', 3],
+  // §100: arrows for the bow — a knapped flint point and a feather flight on a stick, four at a time, anywhere
+  ['arrow', 'hand', 'stick + flint + feather', '4 arrow', 'hammer 1', 3],
   // §85: the first night's bed — a heap of dry grass on a few sticks
   ['grass_bed', 'hand', '8 plant_fibre + 3 stick', 'grass_bed', '', 4],
   // §101: the Pennant — a rag or a hide lashed to a stick with cord: it shows which way the wind blows, and how hard
   ['pennant', 'hand', 'stick + cord + #cloth', 'pennant', '', 3],
-  // ---- Work Stump (12); riving a log into sticks is real work: there is no planks-to-sticks shortcut
+  // ---- Work Stump (26); riving a log into sticks is real work: there is no planks-to-sticks shortcut
   // §94: flint is knapped on the stump's flat top with the hammerstone: the stump comes before the flint tools
   ['flint_knife', 'stump', '#knapstone + stick + cord', 'flint_knife', 'hammer 1', 3],
   ['flint_axe', 'stump', '#knapstone + stick + cord', 'flint_axe', 'hammer 1', 4],
   ['flint_pick', 'stump', '2 #knapstone + stick + 2 cord', 'flint_pick', 'hammer 1', 5],
   ['flint_shovel', 'stump', '#knapstone + stick + cord', 'flint_shovel', 'hammer 1', 4],
   ['flint_spear', 'stump', '#knapstone + 2 stick + cord', 'flint_spear', 'hammer 1', 3],
+  // §100 the bow: a long stick shaved down into a stave with the knife, then strung with cord
+  ['bow_stave', 'stump', '2 stick', 'bow_stave', 'knife 2', 4],
+  ['bow', 'stump', 'bow_stave + 2 cord', 'bow', 'knife 2', 5],
   ['oak_planks', 'stump', 'oak_log', '3 oak_planks', 'axe 2', 3],
   ['spruce_planks', 'stump', 'spruce_log', '3 spruce_planks', 'axe 2', 3],
   ['birch_planks', 'stump', 'birch_log', '3 birch_planks', 'axe 2', 3],
@@ -240,7 +248,7 @@ const RECIPE_ROWS = [
   ['well', 'stump', '12 cobblestone + 3 cord + 2 #planks + clay_pot', 'well', 'shovel 1', 12],
   ['rain_barrel', 'stump', '6 #planks + 2 cord', 'rain_barrel', 'axe 1', 8],
   ['bed', 'stump', '6 #planks + 3 cord + 3 #wool + leather', 'bed', 'knife 2', 12],
-  // ---- Kiln (21; every recipe burns fuel — in the charcoal job the logs themselves smoulder)
+  // ---- Kiln (24; every recipe burns fuel — in the charcoal job the logs themselves smoulder)
   ['charcoal', 'kiln', '6 #log', '8 charcoal', '', 40],
   ['clay_pot', 'kiln', 'greenware_pot + #fuel', 'clay_pot', '', 15],
   ['fired_brick', 'kiln', '6 green_brick + #fuel', '6 fired_brick', '', 30],
@@ -260,7 +268,7 @@ const RECIPE_ROWS = [
   ['sulfur', 'kiln', '3 pyrite + #fuel', '2 sulfur', '', 25],
   ['selenium', 'kiln', '6 pyrite + 2 #fuel', '3 sulfur + selenium', '', 40],
   ['carbon_filament', 'kiln', '3 plant_fibre + #fuel', '3 carbon_filament', '', 15], // Swan's carbonised thread
-  // ---- Bloomery (4); salt is the flux that lets sand melt
+  // ---- Bloomery (5); salt is the flux that lets sand melt
   ['iron_bloom', 'bloomery', '3 hematite + 4 charcoal', 'iron_bloom', '', 40],
   ['wrought_iron', 'bloomery', 'iron_bloom + charcoal', 'wrought_iron', 'hammer 4', 25],
   ['glass', 'bloomery', '2 #sand + salt + charcoal', 'glass', '', 25],

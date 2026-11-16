@@ -7938,6 +7938,142 @@ tiredness per hour, the held label), `packUI.test.js` (`makesMany` over every re
 `tests/integration/toolLadder.test.js` and `survival.test.js` (the first day: gravel 4 s a cell by hand, the log 10.9 s
 with the stone axe and 8 uses of its wear).
 
+## 100. Hunting: fish in their water, the throw, the bow, stalking by sight and wind — `src/populations.js`, `src/animals.js`, `src/looseItems.js`, `src/avatarMotion.js`, `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`
+
+Amends §60 (throwing), §69 and v0.16 (stalking), §76.4 and §88 (fish), §98.2 (Creative's Place), §43 / §94.1 / §98.5
+(counts, TOOL_TYPES, the picker). Design: `docs/DESIGN-hunting.md` §2; the wind is §3 (`wind.js`, `main.windNow()`). The
+user's words: "Fish seem to appear and disappear spontaneously in small pond or stream." "Need a bow and arrow in the
+progression." "Unclear how throwing a spear is supposed to work." "When you sneak up behind and the animal turns to face
+you, it should be less likely to spook if the player stays still." "Stalking works better when there's no line of
+sight." "Hunting upwind should confer a sneak penalty."
+
+### 100.1 Fish belong to their water
+
+*Why they came and went:* a fish was woken (made live) as soon as its record was within LIVE_RADIUS 72 in a loaded chunk —
+in plain sight from the bank — and slept (removed) by the LIVE_MAX swap while seen; a live mother's fry were spawned live
+beside her; a wanderer was put straight into the water by the player; a fish whose column went too shallow (drunk from,
+dried in the sun, §83: shallow 0.22 < FISH_MIN_WATER 0.3) or dry was removed at once; and the swim step checked only the
+point a body length ahead, so on the hex grid a dart could cut the corner of a dry column (or a long frame overshoot) and
+the fish was removed the next frame. All of a zone's fish were also seeded round a random one of its water spots, so a
+seven-column pond could take a whole zone's school.
+
+- **Seen** (`AnimalWorld.inView` / `FaunaWorld.inView(x, y, z)`, optional; absent: nothing is seen): main passes
+  `pointInView(camera, x, y, z)` — in front of the camera, within `VIEW_SEEN_DIST` 56 m and on screen with
+  `VIEW_SEEN_MARGIN` 0.25 of clip space to spare (occlusion is not tested).
+- **Never made in sight**: `Fauna._fishSpot(rec, env)` is the water nearest the record's column (its own, then rings to
+  3, `fishSpotAt`); a fish wakes there (placed or not) only when that point is not seen, or when its water is at least
+  `FISH_DEEP` 1.5 deep below where it swims: then it wakes at the bed and rises at `FISH_RISE` 0.5 m/s. A full live list
+  never puts a seen fish to sleep for a swap, and a swap is tried only when the sleeper can wake. Young born where they
+  would be seen are records beside the mother (they wake unseen).
+- **Never removed in sight**: `_sleepFar` keeps a seen fish in a loaded chunk live past SLEEP_RADIUS until it is not seen.
+  `Animals._fishAground`: a fish whose column is too shallow swims to the nearest neighbouring column deep enough
+  (`fishDepth`); with none it holds still on the bed while any water is left (`fishWater` → `{ bed, surface, swim }`); with
+  no water it is `stranded` (lies on the bed) while seen, and only unseen is it gone (`events.despawned`). The swim step is
+  at most radius + 0.2 m and is taken only when the point it ends in has water deep enough.
+- **By the size of the water**: `zoneLand` marks the zone's fresh water columns (streams on every column; a pond found on
+  the every-other-column lattice is followed column by column) and joins them side by side into bodies; each holds
+  `fishCapOf(columns)` = min(FISH_K_MAX 6, round(columns / FISH_CELLS 12)): a seven-column pond one, five columns none.
+  `ws` is a column of each body that holds fish (the one nearest its middle), biggest first, at most `FISH_BODIES_MAX` 6,
+  and `wk` what each holds; `K.fish` = min(FISH_K_MAX, Σ wk); `c` is now exact. Seeding gives the fish two by two (a pair)
+  to the body with the most room, never past its `wk`. A fish belongs to the body whose `ws` column is nearest
+  (`Fauna._bodyAt`); births need room in the mother's body as well as in the zone (`room = min(1 − N/K, (wk − n)/wk)`,
+  the litter cut to the room left); a wanderer comes in only while some body has room, into the body with the most.
+- **Save**: a zone's land gains `wk` (written beside `ws`; `validateFaunaJSON` keeps it only with exactly as many entries
+  as `ws`, integers 0..FISH_K_MAX). A land saved without it (`wk` null) has its waters worked out again from the generator
+  the next time the zone is filled; the rest of its land is kept.
+- Tests: `tests/unit/fishWater.test.js` (caps, bodies, seeding, breeding to the cap, the old land, waking unseen and from
+  the deep, sleeping unseen, young in sight, the crooked stream with long frames, stranded, shallow); fauna's drained-fish
+  test now swims to the next column.
+
+### 100.2 The draw: hold Place to throw (`looseItems.js`, `main.js`, `avatarMotion.js`)
+
+- `drawOf(key)` → `{ shoots, base, bow }` or null: a spear (ToolDef.type 'spear') or a dart (DART_KEYS) draws itself
+  (`base` = throwOf); a bow (type 'bow') draws an `arrow` (`base` THROW_ARROW). `drawFraction(heldS)` = min(1, heldS /
+  `DRAW_FULL_S` 1). `drawnThrow(base, f)`: speed × (DRAW_SPEED_MIN 0.4 + (DRAW_SPEED_FULL 1.15 − 0.4) f), power × (DRAW_POWER_MIN
+  0.4 + (DRAW_POWER_FULL 1 − 0.4) f) (to 0.1). So a tap lobs it; a full draw is 15 % faster than G and as hard: spear 19.55
+  m/s power 4, dart 24.15 / 2, fletched dart 29.9 / 3, arrow 36.8 / 3.
+- **Main** (`drawStep(mouse, dt)`, both modes, before Survival's use / place and instead of Creative's `rightMouseStep`
+  when what is in hand draws): a Place press starts a draw (a press on a circuit control without Shift is left to the
+  control; a bow in Survival with no Arrow in the pack says "No arrows: make them by hand from a stick, flint and a
+  feather" and does not draw); held, it counts up; let go, `drawRelease` throws one of the spear or dart in hand (or
+  shoots an Arrow taken from the pack — Creative takes nothing and throws a ghost, §60) along the look from just before the
+  eye, at `drawnThrow`'s speed plus the player's velocity, lifted +1.5 m/s (an arrow +0.5), with its power; a bow wears 1
+  (Survival; `toolBroke` at 0). A changed hand cancels the draw; a draw whose last frame is older than `DRAW_STALE_MS` 250
+  (a menu came between) is let go without a throw. **G** still throws at once (§60, unchanged). §98.2 is amended: in
+  Creative a spear, a dart or a bow is drawn and released the same way; a rock still throws on the press.
+- **Seen**: the action ring at the crosshair shows the draw (`drawRing()`: at least 0.02, both modes; Survival's
+  `actionProgress` puts it first); the view closes in by `DRAW_ZOOM` 0.1 × the draw (eased like the sprint's FOV); the
+  avatar's right arm draws back (`MotionInput.draw` 0..1: `reachR` − `DRAW_BACK` 1.1 × draw, `twist` − 0.25 × draw, the
+  first-person arm sinks `FP_DRAW_DROP` 0.05) and swings through on the release; the throw sound grows with the draw.
+- **Hints** (RMB reads "Place" on a tablet, §97.2): with nothing else to say, `Flint Spear · Hold RMB to throw · G: throw
+  at once`, `Bow · Hold RMB to draw, let go to shoot` (`Bow · no arrows in your pack`); while drawing `Drawing · let go to
+  throw` / `Full draw · let go to shoot`; on a wild animal or pig `click: hunt it · Hold RMB to throw` (`… to shoot`; out of
+  reach only the throw words); a fish `Fish · click: spear it · Hold RMB to throw the spear`; the fish tip "thrust with it,
+  or hold RMB to throw it".
+
+### 100.3 The bow (`items.js`, `crafting.js`, `itemArt.js`, `purpose.js`, `pickerModel.js`, `looseItems.js`)
+
+- **Items**: `bow` "Bow" (tool, new ToolDef type **'bow'** in TOOL_TYPES after 'spear'; tier 2, durability 100, power 1;
+  after the Flint Spear in TOOL_ROWS), `bow_stave` "Bow Stave" (material, stack 4) and `arrow` "Arrow" (material, stack
+  16). 270 items: 35 tools, 53 materials, 55 foods, 3 heals, 5 wear, 119 blocks.
+- **Recipes**: `bow_stave` at the Work Stump, 2 stick → 1, knife 2, 4 s; `bow` at the Work Stump, bow_stave + 2 cord, knife
+  2, 5 s; `arrow` at hand (so anywhere), stick + flint + feather → 4, hammer 1, 3 s. 127 recipes: hand 44, stump 26, kiln
+  24, bloomery 5, forge 15, workbench 5, lab 8 (amends §94.1's tally).
+- **Flight**: `THROW_ARROW` { speed 32, power 3 } (drawn: 36.8 m/s at full); while a projectile it falls by `ARROW_GRAVITY`
+  0.55 of ITEM_GRAVITY (`launch(…, { gravity })`, `LooseItem.grav`; after its power is spent it falls as anything does);
+  `ARROW_KEYS` ['arrow']; a hit breaks it with `ARROW_BREAK_P` 0.25 (`dartBreakP`); a miss lies loose and is collected
+  like any item. Thrown with G an arrow is only chucked (THROW_CHUCK). Only a spear catches a fish (§76.4, unchanged).
+- **Art and the hand**: three 16×16 pictures; the Bow lies on its back with the grip low in the middle (`heldGrip`:
+  'tool', grip [8, 11], turn 0); the arrow is held as a lump (heldWielded is unchanged).
+- **Picker** (amends §98.5): Weapons = Swords; the spear; Darts; **Bows & Arrows** (bow, arrow); the rock. The stave is in
+  Wood & Fibre after the stick. `PICKER_TOOL_WORDS.bow`: archery, weapon, shoot, longbow, hunting; aliases for the arrow
+  and the stave; "arrow" no longer finds the darts. The build tree shows the stave and the bow among the Work Stump's
+  unlocks (buildTree.js unchanged).
+
+### 100.4 Stalking: stillness, sight and cover, the wind (`animals.js`, `main.js`)
+
+- **Senses** (`Animals._sense`, every frame for a wild animal that is not a fish, with a player on foot): `a.scent` =
+  `scentOf(world.wind, player, a)` = `wind.scentToward(wind, player, animal) × wind.strength` (−1..1; main's animal world
+  gives `wind` = `windNow()`); within `SIGHT_RANGE` 40 m, every `SIGHT_CHECK_S` 0.25 (staggered), `a.hidden` = not
+  `canSee(getBlock, a, player)`: no clear line from its eye (0.85 of its height) to the player's head (1.62, crouching
+  1.27) or chest (0.95 / 0.7). `lineOfSight` samples every `SIGHT_STEP` 0.3 m past the first 0.5 m: blocked by
+  `blocksSight` (anything solid but glass: trunks, leaves, earth, stone) and by a `SIGHT_PLANTS` plant (bushes, thickets,
+  cattails, tussock, fern, flax, prickly pear, nightshade, planted cattails) in the cell or up to `TALL_PLANT_COVER` 0.35
+  above it — not the plant the animal stands in.
+- **The distance**: `noticeRange(a, player, sense?)` = notice × gait (sneak 0.4, sprint 1.35) × unseen × scent, where
+  unseen is BEHIND_NOTICE 0.5 for a sneaker in the blind arc and `COVER_NOTICE` 0.45 when `sense.hidden` (the smaller of
+  the two), and scent is `scentFactor(s)` = 1 + `SCENT_UPWIND` 0.8 s upwind (×1.8 at full strength), 1 + `SCENT_DOWNWIND`
+  0.15 s downwind (×0.85). Scent counts behind cover too. Without `sense` the old distances stand (the guide's table, the
+  pigs, the fish). The bear's `bearRange` takes the same senses.
+- **Stillness** (`Animals._stalked`, a wild animal that is not lured, fed or running): a walking or sprinting player inside
+  the distance is run from at once, as before. A crouching one makes it suspicious (`a.suspicion` 0..1): while they move
+  (horizontal speed over `STILL_SPEED` 0.25 m/s) inside it, + `SUSPECT_RISE` 0.5 × (2 − d / distance) a second; when it
+  sees a still crouching shape it has not accepted, at least `SUSPECT_WATCH` 0.3. From SUSPECT_WATCH it **stares**
+  (`mode` 'watch': it stands and turns to face the player). Any movement it sees while it stares and faces them (within
+  `WATCH_FACING` 0.6 rad), or suspicion reaching 1, makes it bolt (`_startle`, the herd with it). Otherwise suspicion falls
+  `SUSPECT_SETTLE` 0.1 a second; at `SUSPECT_CALM` 0.1 it settles (idle again, head down) and accepts the still shape
+  (`a.accepted`) until the player moves. A player it cannot see who keeps moving near is heard until suspicion reaches 1.
+  So a deer that turns round on a frozen hunter stares about two seconds and goes back to grazing; creep while its head
+  is down. Amends v0.16's "an animal that turns its head sees you at once".
+- **Cues** (main): the animal hint `Doe is watching you — keep still` while it stares (any staring animal within
+  `WATCHED_HINT_RANGE` 30 m when the crosshair is elsewhere: `The Doe is watching you — keep still`); stalking (crouched)
+  the wild animal's hint carries the wind's word: ` · downwind of it` (scent < −`STALK_WIND_WORD` 0.15) or ` · it can
+  smell you` (> 0.15).
+- **Not changed**: pigs (pigs.js keeps v0.16's blind side, no cover, wind or suspicion), fish, tame animals, the bear's
+  warn and charge.
+- Tests: `tests/unit/stalking.test.js` (the distances, scentOf, sight blockers, canSee, the look's interval and range,
+  cover, the stare and settling, movement while watched, suspicion rising and freezing, the heard creeper, the wind both
+  ways); `animals.test.js` and `fauna.test.js` now expect a still sneaker in front to be stared at (and run from when they
+  move).
+
+### 100.5 The guide
+
+The Animals chapter gains "Keep still" (the stare, about two seconds to settle, the hint), "Cover and the wind"
+(COVER_NOTICE, SCENT_UPWIND, SCENT_DOWNWIND, the wind's words), "Hold [RMB] to throw", "The bow" and "Arrows and wear"
+(the recipes, DRAW_FULL_S, the draw's shares, 36.8 m/s and power 3, ARROW_BREAK_P, the bow's 100 shots); the Fish page
+says a pond holds one fish for about every FISH_CELLS cells of water and to hold RMB to throw the spear; the controls
+table's Hold RMB row adds the draw. handbook.test.js pins each number to its constant.
+
 ## 101. The wind drawn: the indicator, the rain, the smoke and the pennant — `src/windDrawn.js` (PURE), `src/pennants.js` (PURE), `src/pennantRenderer.js` (three), `src/rainRenderer.js`, `src/campfireRenderer.js`, `src/particles.js`, `src/hud.js`, `src/blocks.js`, `src/tiles.js`, `src/items.js`, `src/crafting.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `index.html`, `src/styles.css`
 
 The user (docs/DESIGN-hunting.md): "introduce wind direction and strength as a visual indicator … It should also affect

@@ -112,10 +112,65 @@ export const DART_BREAK_P = 0.3;
 export const THROW_FLETCHED = Object.freeze({ speed: 26, power: 3 });
 export const FLETCHED_BREAK_P = 0.15;
 
-/** The chance that dart `key` breaks on a mob it hits; 0 for anything that is not a dart. @param {string} key */
+/** The chance that dart (§100: or arrow) `key` breaks on a mob it hits; 0 for anything else. @param {string} key */
 export function dartBreakP(key) {
   if (key === 'fletched_dart') return FLETCHED_BREAK_P;
+  if (ARROW_KEYS.includes(key)) return ARROW_BREAK_P;
   return DART_KEYS.includes(key) ? DART_BREAK_P : 0;
+}
+
+/**
+ * §100 the bow: an Arrow loosed at full draw flies at THROW_ARROW.speed × DRAW_SPEED_FULL and hits with its power —
+ * between the dart's and the spear's — on a flatter arc (ARROW_GRAVITY of ITEM_GRAVITY while it is a projectile). An
+ * arrow that hits a mob breaks with ARROW_BREAK_P; one that misses lies where it fell, to be picked up again. Thrown by
+ * hand (G) an arrow is only chucked.
+ */
+export const THROW_ARROW = Object.freeze({ speed: 32, power: 3 });
+export const ARROW_GRAVITY = 0.55;
+export const ARROW_KEYS = Object.freeze(['arrow']);
+export const ARROW_BREAK_P = 0.25;
+/**
+ * §100 the draw: Place held with a spear, a dart or a bow in hand draws back; released, it throws (or shoots) with the
+ * speed and power of the draw: DRAW_FULL_S to full. A tap gives DRAW_SPEED_MIN of the speed and DRAW_POWER_MIN of the
+ * power; a full draw DRAW_SPEED_FULL and DRAW_POWER_FULL (G throws at once at throwOf's own, 1 and 1).
+ */
+export const DRAW_FULL_S = 1;
+export const DRAW_SPEED_MIN = 0.4;
+export const DRAW_SPEED_FULL = 1.15;
+export const DRAW_POWER_MIN = 0.4;
+export const DRAW_POWER_FULL = 1;
+/** §100: how far the view closes in at full draw (a share of the field of view: the steadying of the aim). */
+export const DRAW_ZOOM = 0.1;
+
+/** The draw after `heldS` seconds of Place: 0..1. @param {number} heldS */
+export function drawFraction(heldS) {
+  return Number.isFinite(heldS) && heldS > 0 ? Math.min(1, heldS / DRAW_FULL_S) : 0;
+}
+
+/**
+ * The throw of a draw: `base` (throwOf, THROW_ARROW) scaled by the draw `f` (0..1).
+ * @param {{ speed: number, power: number }} base @param {number} f @returns {{ speed: number, power: number }}
+ */
+export function drawnThrow(base, f) {
+  const u = Number.isFinite(f) ? Math.max(0, Math.min(1, f)) : 0;
+  const speed = base.speed * (DRAW_SPEED_MIN + (DRAW_SPEED_FULL - DRAW_SPEED_MIN) * u);
+  const power = base.power > 0 ? Math.round(base.power * (DRAW_POWER_MIN + (DRAW_POWER_FULL - DRAW_POWER_MIN) * u) * 10) / 10 : 0;
+  return { speed: Math.round(speed * 100) / 100, power };
+}
+
+/**
+ * §100: what a Place held with `key` in hand draws, or null: a spear or a dart draws itself back to throw it (`shoots`
+ * its own key); a bow (ToolDef.type 'bow') draws an Arrow (`shoots` 'arrow', `bow` true). @param {string|null} key
+ * @returns {{ shoots: string, base: { speed: number, power: number }, bow: boolean }|null}
+ */
+export function drawOf(key) {
+  if (!key) return null;
+  if (DART_KEYS.includes(key)) return { shoots: key, base: throwOf(key), bow: false };
+  const def = getItem(key);
+  const type = def && def.tool ? def.tool.type : null;
+  if (type === 'spear') return { shoots: key, base: THROW_SPEAR, bow: false };
+  if (type === 'bow') return { shoots: 'arrow', base: THROW_ARROW, bow: true };
+  return null;
 }
 
 /**
@@ -145,6 +200,7 @@ export function throwOf(key) {
  * @property {number} t             seconds in this mode
  * @property {number} hold          seconds before it may be collected again
  * @property {number} power         a projectile's power (0: it hurts nothing); spent on its first hit
+ * @property {number} [grav]        the share (§100) of ITEM_GRAVITY it falls by while a projectile (1; an arrow less)
  * @property {boolean} ghost        Creative: the animation only
  * @property {number} spin          a turn (radians) for the drawing
  * @property {boolean} away        the player has been away from it since it was thrown or dropped (only then is it
@@ -208,6 +264,7 @@ export class LooseItems {
       hold: opts && opts.hold > 0 ? opts.hold : 0, power: opts && opts.power > 0 ? opts.power : 0, ghost,
       spin: this._random() * Math.PI * 2, away: !(opts && opts.away === false),
       age: opts && opts.age > 0 ? opts.age : 0,
+      grav: opts && opts.gravity > 0 ? opts.gravity : 1,
     });
     if (this._pending) this._pending.push(it);
     else this.list.push(it);
@@ -231,7 +288,8 @@ export class LooseItems {
    * Throw or drop: a stack leaving (x, y, z) at velocity v. `power` > 0 makes it a projectile.
    * @param {ItemStack} s
    * It is collected only after `hold` (THROW_HOLD_S) and once the player has stepped away from it (`away` false).
-   * @param {{ block?: number, ghost?: boolean, power?: number, hold?: number, away?: boolean }} [opts]
+   * @param {{ block?: number, ghost?: boolean, power?: number, hold?: number, away?: boolean, gravity?: number }} [opts]
+   *   `gravity` (§100): the share of ITEM_GRAVITY it falls by while it is a projectile (an arrow: ARROW_GRAVITY)
    * @returns {LooseItem|null}
    */
   launch(s, x, y, z, vx, vy, vz, opts = {}) {
@@ -401,7 +459,7 @@ export class LooseItems {
   /** @returns {boolean} */
   _fly(it, dt, env) {
     const wet = env.liquid ? env.liquid(it.x, it.y, it.z) : false;
-    it.vy += ITEM_GRAVITY * dt;
+    it.vy += ITEM_GRAVITY * (it.power > 0 ? it.grav ?? 1 : 1) * dt; // §100: an arrow in flight drops less
     if (wet) {
       it.vx *= Math.max(0, 1 - 4 * dt);
       it.vz *= Math.max(0, 1 - 4 * dt);

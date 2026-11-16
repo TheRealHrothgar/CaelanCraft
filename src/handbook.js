@@ -56,12 +56,16 @@ import {
   SHEAR_REGROW_S, SHEAR_WOOL, MILK_REGROW_S, TRAP_HOLD_S, TRAP_IMMUNE_S, BAIT_RANGE, WOLF_GUARD, WOLF_BITE, WOLF_BITE_S,
   HOME_RANGE, RIDE_SCALE, RIDE_LEAP,
   BEAR_DAMAGE, BEAR_WARN_S, BEAR_CHARGE_DIST, BEAR_CHASE_S, BEAR_GIVE_UP, poolOf,
+  COVER_NOTICE, SCENT_UPWIND, SCENT_DOWNWIND, SUSPECT_WATCH, SUSPECT_CALM, SUSPECT_SETTLE,
 } from './animals.js';
 // §88: animals that live in the world
-import { ZONE_SIZE, WANDER_DAYS, WANDER_SOURCE_MIN, YOUTH_DAYS, MATE_RANGE, FEED_RANGE, TAME_CAP, PIG_LANDS } from './populations.js';
+import { ZONE_SIZE, WANDER_DAYS, WANDER_SOURCE_MIN, YOUTH_DAYS, MATE_RANGE, FEED_RANGE, TAME_CAP, PIG_LANDS, FISH_CELLS } from './populations.js';
 import { PIG_TAME } from './pigs.js';
 import {
   throwOf, STONE_KEYS, DART_KEYS, dartBreakP, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
+  // §100: the draw (hold Place to throw) and the bow
+  THROW_ARROW, ARROW_GRAVITY, ARROW_BREAK_P, DRAW_FULL_S, DRAW_SPEED_MIN, DRAW_SPEED_FULL, DRAW_POWER_MIN, DRAW_POWER_FULL,
+  drawnThrow,
 } from './looseItems.js';
 import { RELIGHT_STICKS, STRIKE_REACH, STRIKE_REACH_MAX } from './survivalControl.js';
 // §80: planting, and the plants that spread; §81: the plants that are not food
@@ -1303,6 +1307,16 @@ function makeChapters() {
   const rockThrow = throwOf(STONE_KEYS[0]);
   const dartThrow = throwOf(DART_KEYS[0]);
   const spearThrow = throwOf(spearKey);
+  // §100: the draw (hold Place) and the bow
+  const drawTime = DRAW_FULL_S === 1 ? 'about a second' : `about ${fmtNum(DRAW_FULL_S)} seconds`;
+  const fullPower = DRAW_POWER_FULL === 1 ? 'all its power' : `${fmtPct(DRAW_POWER_FULL)} of its power`;
+  const staveRec = rec('bow_stave');
+  const bowRec = rec('bow');
+  const arrowRec = rec('arrow');
+  const fullArrow = drawnThrow(THROW_ARROW, 1);
+  const bowShots = getItem('bow')?.tool?.durability ?? 0;
+  /** "one Stick, one Flint and one Feather" (the dart line's way of reading a recipe). @param {import('./crafting.js').Recipe} r */
+  const eachInput = (r) => listJoin(r.inputs.map((i) => `${numWord(i.n)} ${inputLabel(/** @type {any} */ (i))}`));
   // zombies
   const alphaStrike = zombieStrike('alpha');
   const everySeconds = (/** @type {number} */ n) => (n === 1 ? 'every second' : `every ${n} seconds`);
@@ -1760,7 +1774,7 @@ function makeChapters() {
     ],
     [
       ...workplacesTable(),
-      p(`The Work Stump comes first: ${recipeInputsProse(stump)} and an axe. Flint is knapped into tools on it; it splits a log into ${splitSticks.outputs[0].n} sticks, cuts planks and works leather. A Kiln, a Bloomery or the Forge at work is a warm place to stand.`),
+      p(`The Work Stump comes first: ${recipeInputsProse(stump)} and an axe. Flint is knapped into tools on it; it splits a log into ${splitSticks.outputs[0].n} sticks, cuts planks, works leather and makes the bow. A Kiln, a Bloomery or the Forge at work is a warm place to stand.`),
     ],
     ...recipeTable('hand').map((t) => [t]),
     ...recipeTable('stump').map((t) => [t]),
@@ -1900,6 +1914,19 @@ function makeChapters() {
       p(`An animal sees ahead and to both sides, but not behind: the ${blindShare()} of the circle at its back is blind. Sneak up from there and it notices you at ${fmtPct(BEHIND_NOTICE)} of the sneaking distance. Watch its head: when it turns, it sees you.`),
       ...waryTable(),
     ],
+    // §100: stillness, cover and the wind
+    [
+      h('Keep still'),
+      p('When an animal turns and sees you crouching, it does not bolt at once. It lifts its head and stares at you. Freeze.'),
+      p(`Keep still and it settles in about ${numWord(Math.round((SUSPECT_WATCH - SUSPECT_CALM) / SUSPECT_SETTLE))} seconds, then lowers its head again. Move while it stares and it is gone. The hint says so: *The Doe is watching you — keep still*.`),
+      p('Every step it hears makes it warier, the more so the nearer you are. Creep while its head is down; stop when it looks up.'),
+    ],
+    [
+      h('Cover and the wind'),
+      p(`An animal that cannot see you, behind a hill, a trunk, leaves or tall plants (bushes, cattails, tall grass), only hears and smells you, at ${fmtPct(COVER_NOTICE)} of the distance. Crouch behind a bush and you are hidden.`),
+      p(`Your scent goes where the wind blows. Upwind of an animal, with the wind blowing from you to it, it smells you from up to ${fmtPct(SCENT_UPWIND)} farther off in a strong wind. Downwind it notices you up to ${fmtPct(SCENT_DOWNWIND)} nearer. Its scent works behind cover too.`),
+      p('Stalking, the hint tells you the wind: *downwind of it* is good, *it can smell you* is not. Circle round until the wind is in your face.'),
+    ],
     // v0.16: each tool has its own reach
     [
       h('How far you reach'),
@@ -1922,6 +1949,26 @@ function makeChapters() {
       ...blowsTable('blows-animals', 'Blows to bring an animal down', ['Animal', 'Health'], huntTargets(), 'animals'),
       p(`You can throw as well, with [G]: a rock counts ${rockThrow.power}, a ${itemName(DART_KEYS[0])} ${dartThrow.power} and a ${itemName(spearKey)} ${spearThrow.power}. ${cap(listJoin(dartRec.inputs.map((i) => `${numWord(i.n)} ${inputLabel(/** @type {any} */ (i))}`)))} make ${numWord(dartRec.outputs[0].n)} ${itemName(dartRec.outputs[0].k)}s at hand, with a ${plain(recipeTools(dartRec))}.`),
       p('What an animal gives flies to you, like anything you dig. Rawhide becomes leather at the Work Stump: clothes, bellows and your Sleeping Hide.'),
+    ],
+    // §100: throwing harder by holding Place, and the bow
+    [
+      h('Hold [RMB] to throw'),
+      p(`With a spear or a dart in hand, hold [RMB] (the Place button on a tablet) to draw it back, and let go to throw. The longer you hold, the harder it flies, up to a full draw in ${drawTime}.`),
+      p(`A quick tap only lobs it, at ${fmtPct(DRAW_SPEED_MIN)} of the speed and ${fmtPct(DRAW_POWER_MIN)} of the power. A full draw gives it ${fullPower} and throws it ${fmtPct(DRAW_SPEED_FULL - 1)} faster than [G] does.`),
+      p('[G] still throws at once, with no draw: use it when an animal bolts and there is no time.'),
+    ],
+    [
+      h('The bow'),
+      p(`A *Bow* shoots arrows farther and faster than anything you can throw. Make it at the Work Stump with a ${plain(recipeTools(staveRec))}: shave ${proseInput(staveRec.inputs[0])} into a *Bow Stave*, then string it with ${listJoin(bowRec.inputs.filter((i) => !('k' in i) || i.k !== 'bow_stave').map(proseInput))}.`),
+      p(`*Arrows* are made at hand, so anywhere: ${eachInput(arrowRec)} make ${numWord(arrowRec.outputs[0].n)} ${itemName(arrowRec.outputs[0].k)}s, with a ${plain(recipeTools(arrowRec))} to knap the points.`),
+      p(`With the bow in hand, hold [RMB] to draw and let go to shoot. Each shot takes an Arrow from your pack: without one the bow will not draw. The draw is full in ${drawTime}, and a full draw sends the arrow at ${fmtNum(fullArrow.speed)} m/s. ${ARROW_GRAVITY < 1 ? 'It drops less on the way than a thrown thing does and strikes' : 'It strikes'} with a power of ${fullArrow.power}, between a ${itemName(DART_KEYS[0])}'s and a ${itemName(spearKey)}'s.`),
+    ],
+    [
+      h('Arrows and wear'),
+      p('An arrow that misses lies where it fell. Walk over to it and it comes back to your pack, ready to shoot again.'),
+      p(`One that hits breaks one time in ${numWord(Math.round(1 / ARROW_BREAK_P))} (${fmtPct(ARROW_BREAK_P)}). Carry a few spare.`),
+      p(`Every shot costs the bow one use: a new Bow is good for ${bowShots} shots. The hex outline round its slot drains as it wears.`),
+      tip('Thrown with [G], an arrow is only tossed: it does no harm without the bow.'),
     ],
     [
       h('Cattle and sheep'),
@@ -1968,7 +2015,8 @@ function makeChapters() {
     [
       h('Fish'),
       p('*Fish* live in streams and ponds and never leave the water. Look for a fin cutting the surface. They dart away when you come near: sneak.'),
-      p('Only a spear catches one: thrust with it, or throw it with [G]. A thrown spear stays where it fell, so you wade in for it.'),
+      p(`A pond holds as many fish as its size allows: one for about every ${FISH_CELLS} cells of water, so a small pond has one at most. A pond fished out stays empty until a fish finds its way back.`),
+      p('Only a spear catches one: thrust with it, or hold [RMB] to throw it. A thrown spear stays where it fell, so you wade in for it.'),
       tip('Fish goes bad faster than any other meat. Roast it soon.'),
     ],
     [
@@ -2097,7 +2145,7 @@ function makeChapters() {
         ['Hold LMB', 'dig: a honey outline traces the cell'],
         ['LMB on a mob', 'strike (hold to keep striking)'],
         ['RMB', 'place the block in hand'],
-        ['Hold RMB', 'eat, drink a pot, bandage; wear clothes'],
+        ['Hold RMB', 'eat, drink a pot, bandage; wear clothes; draw a bow, a spear or a dart'],
         ['MMB', 'pick the hotbar slot holding that block'],
         ['R', 'use whatever you look at (next page)'],
         ['Q', 'drop one of what you hold (with Shift: the whole stack)'],
@@ -2139,6 +2187,7 @@ function makeChapters() {
       p('[Q] drops one of the thing in your hand a step ahead of you; hold [Shift] as well and the whole stack goes. [G] throws one where the crosshair points.'),
       ...throwsTable(),
       p('Aim a little high: a throw sinks as it flies. This book can be neither dropped nor thrown.'),
+      p('Hold [RMB] with a spear or a dart to draw it back and throw it harder; a bow shoots its arrows the same way (see *Animals*).'),
     ],
     [
       h('Things on the ground'),

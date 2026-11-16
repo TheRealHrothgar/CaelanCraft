@@ -47,6 +47,20 @@ describe('the build tree model (§94)', () => {
     expect(node('@lab').unlocks.sort()).toEqual(RECIPES.filter((r) => r.station === 'lab').map((r) => r.outputs[0].k).sort());
   });
 
+  it('§100 the bow: no workplace needs it, so the Work Stump shows the stave and the bow among the first six things it unlocks', () => {
+    // the head of a column draws its first 6 unlocks as icons (packUI), so the bow is seen as soon as the stump is
+    const unlocks = node('@stump').unlocks;
+    expect(unlocks.slice(0, 6)).toEqual(expect.arrayContaining(['bow_stave', 'bow']));
+    expect(unlocks.indexOf('bow')).toBe(unlocks.indexOf('bow_stave') + 1);
+    // what it takes is in the tree already: sticks and cord on the way to the stump, the flint knife on the way on
+    for (const k of ['stick', 'cord', 'flint_knife']) expect(model.byId.has(k), k).toBe(true);
+    expect(toolItemFor('knife', 2)).toBe('flint_knife');
+    expect(toolItemFor('bow', 2)).toBe('bow');
+    // neither is a node: the tree is the road to the workplaces; the arrows are made by hand, so no column lists them
+    for (const k of ['bow', 'bow_stave', 'arrow']) expect(model.byId.has(k), k).toBe(false);
+    for (const s of TREE_STATIONS) expect(node(placeId(s)).unlocks, s).not.toContain('arrow');
+  });
+
   it('every node lands in the column of the first workplace that needs it, and every edge runs from an earlier or equal column', () => {
     for (const [from, to] of model.edges) {
       expect(model.byId.has(from), from).toBe(true);
