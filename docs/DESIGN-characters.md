@@ -25,6 +25,12 @@ cube silhouette and the chunky pixels are what read as "Minecraft".
   today's density (bodies 96 px/m, faces 160 px/m), with soft top-down shading, baked shadow toward joints, cloth weave,
   denim, knit, fur and wool strokes, bark, leaf veins, seams, hems and stitching; faces with irises, catchlights, brows and
   a soft mouth. Linear filtering with mipmaps (not nearest).
+- **Pilot passes 2–3** (`gallery.html?row=hair|head|plant`): heads are faceted lofts with a front face plane; hair is
+  silhouette-first — Caelan a poofy faceted MASS (never locks: "his actual hair is poofy"), the others a scalp cap plus a
+  few big clumps that flow one way. The user's picks: **Caelan C2 tousled** (a taller mop, higher at the front), **Brayden
+  B1 side sweep**, **Annabelle A1 long waves**. Caelan's skin is a mild olive (light #ead0b0, mid #dab894), not tan;
+  shaded facets stay warm (a small warm fill), never grey. Plants are branches carrying tiers of hexagonal leaf cards with
+  gaps and a lower skirt; past ~16 m a cheap leafy version (~236 tris), never a ball.
 - **Kept:** fun, readable and cheerful; zombies spooky without being frightening (people-like, narrow eye slits in
   sunken hollows, no gore, nothing red); the joints and animations of today's rigs; the gameplay sizes (colliders,
   eyes, reach) — only the look changes.
@@ -54,7 +60,7 @@ and plants get a level of detail.
 
 ## 5. Phases
 
-0. **Pilot pass 2** (heads, hair, plants), reviewed by the user.
+0. **Pilot passes 2–3** (heads, hair, plants), reviewed and picked by the user. Done.
 1. **Avatars and the first-person hand.** The three avatars' data grows hair, head and hand parts (`avatars.js`); the
    renderer builds them from the kit over a painted atlas; the chooser's portraits come from it; the held item (§98.4)
    sits in the new fist; remote players get the same models.
