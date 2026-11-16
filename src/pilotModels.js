@@ -12,14 +12,17 @@
 // look; a migration would keep today's joints and hang these parts from them.
 import {
   loft, prism, pyramid, chamferBox, wedge, transform, merge, atlasUV, compose, alongSegment, mul, translation, rotation, scaling, identity,
-  triangleCount, wrapU,
+  triangleCount, wrapU, ringLoft, sweep, basePolygon,
 } from './modelKit.js';
 import { Atlas, Painter, paintFace, mix, shade, fbm, hash2, makeRng } from './paintKit.js';
 import { avatarById, AVATAR_IDS } from './avatars.js';
 
 /** @typedef {import('./modelKit.js').Geo} Geo */
 /** @typedef {import('./paintKit.js').Rect} Rect */
-/** @typedef {{ geo: Geo, image: import('./paintKit.js').Img, tris: number, texels: number, atlas: [number, number], tool?: Float64Array }} PilotModel */
+/**
+ * @typedef {{ geo: Geo, image: import('./paintKit.js').Img, tris: number, texels: number, atlas: [number, number],
+ *   tool?: Float64Array, hairTris?: number, hair?: string }} PilotModel
+ */
 
 /**
  * @typedef {Object} Style  the shape language
@@ -300,110 +303,377 @@ const onHead = (H, deg, t, out = 0) => {
   return [Math.sin(a) * (H.rx + out), t * H.h, Math.cos(a) * (H.rz + out)];
 };
 
-/** Caelan: poofy dirty-blonde — a shell, fat tufts that stick out over the crown, a layered fringe swept to his right. */
-function hairPoofy(add, head, H) {
-  hairShell(add, head, H, 'hair', { grow: 0.024, base: 0.66, tilt: 0.42 });
-  const top = H.h;
-  // the nape: fat locks hanging from under the shell
-  addLocks(add, head, 'hair', [-0.1, -0.035, 0.035, 0.1].map((x, i) => [[x, 0.62 * top, 0.15], [x * 1.25, 0.32 * top, 0.2], 0.12, 0.075, 0.04, 0, 0.02 * (i % 2 ? 1 : -1)]), { sides: 6 });
-  // tufts: blunt, fat hex curls springing out round the crown and curling over (two rings of them, and one on top)
-  const tufts = [];
-  for (let k = 0; k < 7; k++) tufts.push([k * (360 / 7) + 15, 0.93, 0.085, 0.42]);
-  for (let k = 0; k < 4; k++) tufts.push([k * 90 + 50, 1.0, 0.08, 0.75]);
-  tufts.push([180, 1.04, 0.085, 1.4]);
-  tufts.forEach(([deg, t, w, rise], i) => {
-    const root = onHead(H, deg, t, -0.035);
-    const a = deg * DEG;
-    const out = [root[0] + Math.sin(a), root[1] + rise, root[2] + Math.cos(a)];
-    addLocks(add, head, 'hair', [[root, out, 0.06 + 0.01 * (i % 3), w, w * 0.8, 0.012 * Math.sin(i * 2.1), -0.03]], { sides: 6, n: 3, keep: 0.55, point: false, face: [0, 1, 0] });
+// ---- hair, pass 3: SILHOUETTE FIRST. Caelan's is one poofy faceted MASS (no locks: locks read as dreadlocks);
+// Brayden's and Annabelle's are a scalp cap that hugs the head plus a few big CLUMPS (swept lofts) flowing one way.
+
+/** The head's cross-section at height share t: [width, depth, forward shift] (its rings, interpolated). */
+function headRingAt(shape, t) {
+  if (t <= shape[0][0]) return shape[0].slice(1);
+  for (let k = 1; k < shape.length; k++) {
+    if (t <= shape[k][0]) {
+      const a = shape[k - 1];
+      const b = shape[k];
+      const f = (t - a[0]) / (b[0] - a[0] || 1);
+      return [1, 2, 3].map((i) => a[i] + (b[i] - a[i]) * f);
+    }
+  }
+  return shape[shape.length - 1].slice(1);
+}
+
+/** Where hair is measured from: a point in the middle of the cranium (the head's frame, the chin at the origin). */
+const hairCentre = (H) => [0, 0.55 * H.h, 0.012];
+
+/** A unit direction from the cranium: `yaw` degrees round from the back (+z) toward +x (180: straight ahead), `pitch` up. */
+function hairDir(yaw, pitch) {
+  const y = yaw * DEG;
+  const p = pitch * DEG;
+  return [Math.sin(y) * Math.cos(p), Math.sin(p), Math.cos(y) * Math.cos(p)];
+}
+
+/**
+ * The head's surface seen from the cranium's middle: how far it is along a direction (found by halving, against the
+ * head loft itself — so hair laid off it never lets the skull show).
+ */
+function headRadius(H, shape, dir) {
+  const poly = basePolygon({ corners: [...HEAD_CORNERS], rx: H.rx, rz: H.rz }).pts;
+  const c = hairCentre(H);
+  const inside = (r) => {
+    const x = c[0] + dir[0] * r;
+    const y = c[1] + dir[1] * r;
+    const z = c[2] + dir[2] * r;
+    const t = y / H.h;
+    if (t < 0 || t > 1) return false;
+    const [sx, sz, dz] = headRingAt(shape, t);
+    let sign = 0;
+    for (let j = 0; j < poly.length; j++) {
+      const a = poly[j];
+      const b = poly[(j + 1) % poly.length];
+      const cr = (b.x * sx - a.x * sx) * (z - dz - a.z * sz) - (b.z * sz - a.z * sz) * (x - a.x * sx);
+      if (Math.abs(cr) < 1e-12) continue;
+      if (sign === 0) sign = Math.sign(cr);
+      else if (Math.sign(cr) !== sign) return false;
+    }
+    return true;
+  };
+  let lo = 0;
+  let hi = 0.6;
+  for (let i = 0; i < 24; i++) {
+    const m = (lo + hi) / 2;
+    if (inside(m)) lo = m;
+    else hi = m;
+  }
+  return lo;
+}
+
+/** A point `out` metres off the head's surface along hairDir(yaw, pitch). */
+function onSkull(H, shape, yaw, pitch, out) {
+  const d = hairDir(yaw, pitch);
+  const r = headRadius(H, shape, d) + out;
+  const c = hairCentre(H);
+  return [c[0] + d[0] * r, c[1] + d[1] * r, c[2] + d[2] * r];
+}
+
+/**
+ * A hair MASS or a scalp cap: rings round the cranium from a hairline (`rim(yaw, j)`: its pitch at each of the
+ * `around` points — high over the brow, above the ears, low at the nape) up to the crown, each point `off(yaw, pitch,
+ * s)` metres off the head (s 0 at the hairline .. 1 at the crown). Flat facets; closed. `yaws` places the points round
+ * (a thin cap puts them over the head's own corners, so no ridge of the head pokes through between them).
+ * @param {HeadDims} H @param {ReadonlyArray<ReadonlyArray<number>>} shape
+ * @param {{ around?: number, rim: (yaw: number, j: number) => number, off: (yaw: number, pitch: number, s: number, j: number) => number,
+ *   rings?: ReadonlyArray<number>, yaws?: number[] }} o
+ */
+function hairMass(H, shape, { around = 20, rim, off, rings = [0, 0.12, 0.3, 0.5, 0.7, 0.86, 1], yaws: given }) {
+  const yaws = given ?? [...Array(around).keys()].map((j) => (j * 360) / around);
+  let last = [0];
+  return ringLoft({
+    rings: rings.map((s) => {
+      // the crown: one point, as high as the ring under it stands on average (never a peak or a dent)
+      if (s >= 1) return yaws.map(() => onSkull(H, shape, 0, 90, last.reduce((a, b) => a + b, 0) / last.length + 0.004));
+      const offs = yaws.map((yaw, j) => off(yaw, rim(yaw, j) + (90 - rim(yaw, j)) * s ** 0.85, s, j));
+      last = offs;
+      return yaws.map((yaw, j) => {
+        const r0 = rim(yaw, j);
+        return onSkull(H, shape, yaw, r0 + (90 - r0) * s ** 0.85, offs[j]);
+      });
+    }),
   });
-  // the fringe: overlapping locks from the hairline lying on the forehead, swept to his right (the model's +x),
-  // lengths uneven so their tips never make a row of teeth
-  const fringe = [[-0.12, 0.06, 0.03], [-0.07, 0.095, 0.045], [-0.02, 0.075, 0.05], [0.03, 0.1, 0.05], [0.08, 0.07, 0.04], [0.12, 0.05, 0.03]]
-    .map(([x, l, sw], k) => [[x, (0.87 + 0.02 * (k % 2)) * top, -H.rz * 0.84], [x + sw, (0.87 - l / top) * top, -H.rz * 0.97], l + 0.02, 0.07, 0.018, 0.02, -0.012]);
-  addLocks(add, head, 'hair', fringe, { keep: 0.45 });
-  // over the ears, short locks swept back
-  for (const side of [-1, 1]) {
-    addLocks(add, head, 'hair', [0, 1].map((k) => [onHead(H, 180 - side * (72 + k * 22), 0.8, -0.004), onHead(H, 180 - side * (80 + k * 24), 0.55, 0.03), 0.075, 0.06, 0.02, 0, 0.012]), { face: [side, 0, 0] });
-  }
 }
 
-/** Brayden: silky auburn, swept to one side from a parting — long layered locks over the forehead, smooth sides. */
-function hairSilky(add, head, H) {
-  hairShell(add, head, H, 'hair', { grow: 0.017, base: 0.66, tilt: 0.4 });
-  const top = H.h;
-  // the sweep: long locks from a parting on his right (−x) across the brow to his left, in three layers
-  const sweep = [];
-  for (let k = 0; k < 7; k++) {
-    const z = -H.rz * (0.15 + 0.11 * k);
-    const root = [-0.06 + 0.004 * k, (1.0 - 0.01 * k) * top, z];
-    const toward = [0.16, (0.74 - 0.008 * k) * top, -H.rz * 1.02];
-    sweep.push([root, toward, 0.2 - 0.008 * k, 0.07, 0.02, -0.01, -0.02]);
-  }
-  addLocks(add, head, 'hair', sweep, { face: [0, 1, 0.4], n: 5, keep: 0.35 });
-  // the short side, combed back above the parting
-  addLocks(add, head, 'hair', [0, 1, 2].map((k) => [[-0.08 - 0.02 * k, 0.98 * top, -0.06 + 0.08 * k], onHead(H, 180 + 70, 0.72, 0.03), 0.13, 0.07, 0.018, 0, 0.01]), { face: [-1, 0.4, 0] });
-  // smooth sides falling over the tops of the ears, and the nape
-  for (const side of [-1, 1]) {
-    addLocks(add, head, 'hair', [0, 1, 2].map((k) => [onHead(H, 180 - side * (78 + 22 * k), 0.84, -0.005), onHead(H, 180 - side * (84 + 24 * k), 0.5, 0.02), 0.11, 0.07, 0.018, 0, 0.008]), { face: [side, 0, 0] });
-  }
-  addLocks(add, head, 'hair', [-0.09, -0.03, 0.03, 0.09].map((x) => [[x, 0.66 * top, H.rz * 0.92], [x, 0.36 * top, H.rz + 0.03], 0.11, 0.08, 0.02, 0, 0.01]));
-}
-
-/** Annabelle: golden, long and wavy — a side-swept fringe, locks framing her face to her shoulders, waves down her back. */
-function hairLongWavy(add, head, H) {
-  hairShell(add, head, H, 'hair', { grow: 0.026, base: 0.66, tilt: 0.36 });
-  const top = H.h;
-  // the fringe, swept to one side
-  addLocks(add, head, 'hair', [0, 1, 2].map((k) => [[0.07 - 0.035 * k, (0.95 - 0.02 * k) * top, -H.rz * (0.72 + 0.06 * k)], [-0.15 + 0.03 * k, (0.7 + 0.03 * k) * top, -H.rz * 1.0], 0.15 - 0.015 * k, 0.095, 0.02, 0.012, -0.018]), { n: 5, keep: 0.5 });
-  // framing her face: from the temples, past the cheeks, waving down to the shoulders
-  for (const side of [-1, 1]) {
-    addLocks(add, head, 'hair', [0, 1].map((k) => [onHead(H, 180 - side * (112 + 14 * k), 0.82, -0.01), onHead(H, 180 - side * (104 + 16 * k), -0.4, 0.04), 0.32 + 0.03 * k, 0.07, 0.026, 0, 0.03, 0.012]), { face: [side, 0, 0.3], n: 6, keep: 0.4 });
-  }
-  // down her back: a fan of long waving locks in two layers, following her back outward
-  const back = [];
-  for (let k = 0; k < 7; k++) {
-    const a = 180 - (-150 + k * 50);
-    const root = onHead(H, a, 0.78, -0.012);
-    const tip = [root[0] * 1.6, -0.75 * top - 0.03 * (k % 2), H.rz + 0.08];
-    back.push([root, tip, 0.5 + 0.03 * (k % 3), 0.085, 0.032, 0, 0.05, 0.016 * (k % 2 ? 1 : -1)]);
-  }
-  for (let k = 0; k < 4; k++) {
-    const x = -0.09 + k * 0.06;
-    back.push([[x, 0.6 * top, H.rz * 1.02], [x * 1.4, -0.85 * top, H.rz + 0.12], 0.5, 0.08, 0.03, 0, 0.06, 0.014 * (k % 2 ? -1 : 1)]);
-  }
-  addLocks(add, head, 'hair', back, { n: 6, keep: 0.45 });
-}
-
-const HAIRS = { poofy: hairPoofy, silky: hairSilky, longWavy: hairLongWavy };
-
-/** The hair's picture: strands running along a lock (darker at the root), each style its own way. */
-function paintHair(s, style, ramp) {
-  s.plain('hair', 64, 64, (p) => {
-    if (style === 'longWavy') {
-      p.fill(ramp[2]);
-      for (let x = -4; x < 70; x += 2.2) {
-        const pts = [];
-        for (let y = -2; y <= 66; y += 4) pts.push([x + 2.2 * Math.sin(y / 9 + x * 0.3), y]);
-        p.polyline(pts, 0.8, hash2(Math.round(x * 10), 1, 4) < 0.5 ? ramp[1] : ramp[3], 0.75);
-      }
-      p.glow(32, 22, 40, ramp[0], 0.45, 7);
-    } else if (style === 'silky') {
-      p.hair(ramp, { dir: [0, 1], sheen: 0.32, strand: 3.5 });
-      for (let x = 2; x < 64; x += 4) p.line(x, 0, x + 1, 64, 0.45, ramp[3], 0.5);
-    } else {
-      p.hair(ramp, { dir: [0.15, 1], sheen: 0.32, strand: 2.6 });
-      const rnd = makeRng(41);
-      for (let i = 0; i < 40; i++) {
-        const x = rnd() * 64;
-        const y = rnd() * 64;
-        p.arc(x, y, 2.2 + rnd() * 1.5, Math.PI * 1.1, Math.PI * 1.9, 0.5, ramp[0], 0.5);
-        p.arc(x, y + 0.8, 2.2 + rnd() * 1.5, Math.PI * 0.15, Math.PI * 0.85, 0.5, ramp[3], 0.45);
+/** A smooth hairline round the head: [yaw, pitch] knots on the right side (mirrored), eased between. */
+function hairline(knots) {
+  return (yaw) => {
+    const y = yaw > 180 ? 360 - yaw : yaw;
+    for (let k = 1; k < knots.length; k++) {
+      if (y <= knots[k][0]) {
+        const [y0, p0] = knots[k - 1];
+        const [y1, p1] = knots[k];
+        const f = (y - y0) / (y1 - y0);
+        return p0 + (p1 - p0) * (f * f * (3 - 2 * f));
       }
     }
-    p.ao({ bottom: 0.45, width: 0.35 });
-    p.shadeV(1.12, 1.0);
+    return knots[knots.length - 1][1];
+  };
+}
+
+/** A cap's points round: over each of the head's corners and halfway between them, from the back (the seam). */
+const CAP_YAWS = (() => {
+  const c = HEAD_CORNERS.map((a) => (a * 180) / Math.PI).sort((a, b) => a - b);
+  const out = [0];
+  c.forEach((d, i) => {
+    out.push(d);
+    const next = i + 1 < c.length ? c[i + 1] : 360;
+    if (next < 360) out.push((d + next) / 2);
   });
+  return out;
+})();
+
+/** A cap's rings, hairline to crown: close enough together that no edge of the head shows between them (hairGaps). */
+const CAP_RINGS = Object.freeze([0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.88, 1]);
+
+/** Gentle lumps over a mass: −1..1, smooth round the head and up it. */
+const lumps = (yaw, s, seed = 0) => {
+  const y = yaw * DEG;
+  return 0.55 * Math.sin(3 * y + 0.7 + seed + 2 * s) + 0.3 * Math.sin(5 * y + 2.1 - 3 * s + seed * 2) + 0.15 * Math.sin(7 * y - 1 + 5 * s);
+};
+/** 1 straight ahead, 0 at the sides and behind. */
+const frontness = (yaw) => Math.max(0, -Math.cos(yaw * DEG));
+
+/**
+ * A scalp cap's shape: its hairline (pitch by yaw) and how far it stands off the head (s 0 at the hairline .. 1 at
+ * the crown). capOff gives that distance at any point, so clumps can lie ON the cap.
+ * @typedef {{ rim: (yaw: number, j?: number) => number, off: (yaw: number, pitch: number, s: number, j?: number) => number }} Cap
+ */
+/** @param {Cap} cap */
+const capOff = (cap, yaw, pitch) => {
+  const r0 = cap.rim(yaw, 0);
+  const s = Math.min(1, Math.max(0, (pitch - r0) / (90 - r0))) ** (1 / 0.85);
+  return cap.off(yaw, pitch, s, 0);
+};
+
+/**
+ * A CLUMP of hair lying on a cap: a flattened hex section swept along a curve through `ctrl` — [yaw, pitch, lift]
+ * points (`lift` metres over the cap; the first, the root, just under the cap's surface, its end dark), or
+ * ['p', x, y, z] points in the head's frame (below the head) — its thickness facing out from the head (or `up`), its
+ * width `w`, narrowing along `profile` to its tip.
+ * @param {HeadDims} H @param {ReadonlyArray<ReadonlyArray<number>>} shape @param {Cap} cap @param {Array<Array<*>>} ctrl
+ * @param {{ w: number, t?: number, profile: number[], segments?: number, up?: number[]|((c: number[]) => number[]) }} o
+ */
+function clump(H, shape, cap, ctrl, { w, t = 0.022, profile, segments, up }) {
+  const pts = ctrl.map((c, i) => (c[0] === 'p'
+    ? [c[1], c[2], c[3]]
+    : onSkull(H, shape, c[0], c[1], capOff(cap, c[0], c[1]) + (i === 0 ? -0.004 : c[2] + t / 2))));
+  const cc = hairCentre(H);
+  // flat to the head all along it: its thickness faces out from the cranium at every station (or `up`)
+  const u = up ?? ((c) => [c[0] - cc[0], c[1] - cc[1], c[2] - cc[2]]);
+  const S = segments ?? profile.length - 1;
+  return sweep({ points: pts, sides: 6, rx: w / 2, rz: t / 2, up: u, profile, segments: S });
+}
+
+/** The hair options: two for each kid (the gallery's ?row=hair shows all six). */
+export const HAIR_OPTIONS = Object.freeze({ caelan: ['C1', 'C2'], brayden: ['B1', 'B2'], annabelle: ['A1', 'A2'] });
+export const HAIR_LABELS = Object.freeze({
+  C1: 'C1 cloud — a round, full poofy mop', C2: 'C2 tousled — a taller mop, higher at the front',
+  B1: 'B1 side sweep — smooth panels across the brow', B2: 'B2 curtain — a longer sweep over one ear',
+  A1: 'A1 long waves — fringe, framing locks, a back curtain', A2: 'A2 low ponytail — fringe, framing locks, one wavy tail',
+});
+/** The option each kid wears by default (the pilot's picks). */
+export const HAIR_PICKS = Object.freeze({ caelan: 'C1', brayden: 'B1', annabelle: 'A1' });
+
+/**
+ * Caelan: a POOFY mop — one big faceted mass over the crown and sides, clearly bigger than his head, its outline soft
+ * and uneven (shallow lumps all over), the fringe a ragged line of small notches just above the brows, the rim notched
+ * round the sides and the nape, a soft wisp at the crown and one over each ear, all of a piece: no locks (locks read
+ * as dreadlocks). `tall`: the tousled option, taller and higher at the front.
+ */
+function hairCaelan(add, head, H, shape, tall) {
+  const line = hairline([[0, -27], [40, -17], [78, 5], [100, 6], [128, 15], [155, 21], [180, 22]]);
+  const around = 24;
+  const tip = (j) => 0.5 + 0.5 * Math.sin(j * 2.39 + 0.6); // uneven tips
+  const isEar = (yaw) => Math.abs(Math.abs(yaw - 180) - 90) < 8;
+  const rim = (yaw, j) => {
+    const f = frontness(yaw);
+    // the rim notched all round, deepest over the brow; a wisp dipping over each ear
+    const notch = (j % 2 ? 4.5 + 2 * tip(j) : -1.5) * (0.45 + 0.55 * f);
+    return line(yaw) + notch + (isEar(yaw) ? -10 : 0) + (tall ? 3 * f : 0);
+  };
+  const off = (yaw, pitch, s, j) => {
+    const f = frontness(yaw);
+    // C2 rises at the front through its middle rings (never to a peak at the crown)
+    const swell = tall
+      ? 0.058 * Math.sin(Math.min(1, s * 1.3) * Math.PI / 2) + 0.05 * f * Math.sin(Math.PI * Math.min(1, s * 1.15))
+      : 0.066 * Math.sin(Math.min(1, s * 1.4) * Math.PI / 2);
+    // shallow lumps over the mass, strongest round its middle; the crown a little irregular too
+    const bump = (tall ? 0.026 : 0.022) * lumps(yaw, s, tall ? 1.3 : 0) * Math.sin(Math.PI * Math.min(1, 0.15 + s));
+    // the notched rim: its tips stand a little proud, so the edge has depth
+    const edge = s === 0 ? (j % 2 ? 0.008 : 0.002) + 0.008 * f : 0;
+    // a soft wisp at the crown (two neighbouring points) and over the ears
+    const crown = !tall && s > 0.8 && s < 0.97 && (j === 13 || j === 14) ? 0.01 : 0;
+    const ear = s < 0.2 && isEar(yaw) ? 0.008 : 0;
+    return 0.017 + swell + bump + edge + crown + ear;
+  };
+  add(hairMass(H, shape, { around, rim, off, rings: [0, 0.1, 0.24, 0.4, 0.56, 0.71, 0.84, 0.94, 1] }), 'hairMass', head);
+}
+
+/** Brayden: a sleek cap, smooth panels from a parting on his right sweeping across the brow, short sides and nape. */
+function hairBrayden(add, head, H, shape, curtain) {
+  /** @type {Cap} */
+  const cap = { rim: hairline([[0, -26], [45, -14], [80, 8], [100, 9], [130, 20], [160, 25], [180, 26]]), off: (yaw, pitch, s) => 0.014 + 0.018 * s };
+  add(hairMass(H, shape, { yaws: CAP_YAWS, rim: cap.rim, off: cap.off, rings: CAP_RINGS }), 'hairCap', head);
+  const L = curtain ? 1 : 0;
+  const panel = [0.55, 1, 1, 0.9, 0.6, 0];
+  for (let k = 0; k < 4; k++) {
+    const ctrl = curtain
+      ? [[120 + 4 * k, 84 - 6 * k], [158, 72 - 8 * k, 0.006], [210, 52 - 8 * k, 0.01], [250, 22 - 5 * k, 0.012], [265, -6 - 5 * k, 0.01]]
+      : [[118 + 4 * k, 83 - 6 * k], [150, 72 - 9 * k, 0.006], [195, 55 - 9 * k, 0.01], [226, 35 - 4 * k, 0.008], [238, 24 - 2 * k, 0.004]];
+    add(clump(H, shape, cap, ctrl, { w: 0.13 + 0.01 * L, profile: panel }), 'hairLock', head);
+  }
+  // the short side by the parting, combed back and down; the far side under the panels; the nape
+  const short = [0.55, 1, 0.65, 0];
+  add(clump(H, shape, cap, [[120, 74], [102, 46, 0.004], [94, 14 - 12 * L, 0.002]], { w: 0.12, profile: short }), 'hairLock', head);
+  add(clump(H, shape, cap, [[244, 66], [262, 36, 0.004], [268, 10 - 10 * L, 0.002]], { w: 0.12, profile: short }), 'hairLock', head);
+  for (const side of [-1, 1]) {
+    add(clump(H, shape, cap, [[(360 + side * 24) % 360, 64], [(360 + side * 19) % 360, 20, 0.004], [(360 + side * 15) % 360, -18 - 10 * L, 0.002]], { w: 0.14, profile: short }), 'hairLock', head);
+  }
+}
+
+/** Annabelle: a cap, a fringe of three soft panels, a framing lock either side to the collarbone, and down her back
+ * a curtain of long waving ribbons (A1) or one thick waving ponytail gathered at the nape (A2). */
+function hairAnnabelle(add, head, H, shape, ponytail) {
+  /** @type {Cap} */
+  const cap = { rim: hairline([[0, -28], [45, -16], [80, -2], [100, -1], [130, 18], [160, 25], [180, 26]]), off: (yaw, pitch, s) => 0.016 + 0.024 * s };
+  add(hairMass(H, shape, { yaws: CAP_YAWS, rim: cap.rim, off: cap.off, rings: CAP_RINGS }), 'hairCap', head);
+  for (let k = -1; k <= 1; k++) {
+    add(clump(H, shape, cap, [[180 + 10 * k, 86], [180 + 13 * k, 60, 0.006], [180 + 17 * k, 38, 0.01], [180 + 19 * k, 25, 0.006]], { w: 0.12, profile: [0.55, 1, 0.9, 0] }), 'hairLock', head);
+  }
+  for (const side of [-1, 1]) {
+    add(clump(H, shape, cap, [[180 - side * 62, 50], [180 - side * 70, 12, 0.008], ['p', side * 0.196, 0.015, -0.03], ['p', side * 0.186, -0.07, -0.018], ['p', side * 0.172, -0.13, -0.022]],
+      { w: 0.08, t: 0.028, profile: [0.6, 1, 1, 0.9, 0.6, 0], up: [side, 0, -0.4] }), 'hairLock', head);
+  }
+  const back = H.rz * 1.04;
+  if (!ponytail) {
+    for (let k = 0; k < 6; k++) {
+      const yaw = (360 + (k - 2.5) * 23) % 360;
+      const x = Math.sin(yaw * DEG) * 0.17;
+      const wave = (k % 2 ? 0.03 : -0.03) * (0.8 + 0.2 * Math.sin(k * 1.7));
+      const end = -0.31 - 0.03 * ((k * 2) % 3);
+      add(clump(H, shape, cap, [[yaw, 60], [yaw, 16, 0.008], [yaw, -22, 0.016], ['p', x * 1.2, -0.13, back + 0.035 + wave], ['p', x * 1.32, -0.22, back + 0.035 - wave],
+        ['p', x * 1.45, end, back + 0.03 + wave]],
+      { w: 0.078, t: 0.026, profile: [0.6, 1, 1, 0.9, 0.6, 0], up: [0, 0.15, 1] }), 'hairLock', head);
+    }
+  } else {
+    const knot = ['p', 0, 0.075, back + 0.03];
+    for (const side of [-1, 1]) {
+      add(clump(H, shape, cap, [[(360 + side * 40) % 360, 64], [(360 + side * 30) % 360, 20, 0.006], knot], { w: 0.14, profile: [0.6, 1, 0.7, 0.3] }), 'hairLock', head);
+    }
+    add(transform(prism({ sides: 6, rx: 0.034, rz: 0.03, h: 0.035, phase: 0 }), mul(translation(0, 0.06, back + 0.03), rotation(0, -0.5))), 'hairLock', head);
+    add(clump(H, shape, cap, [['p', 0, 0.07, back + 0.035], ['p', 0.018, -0.07, back + 0.06], ['p', -0.016, -0.2, back + 0.055], ['p', 0.012, -0.33, back + 0.035]],
+      { w: 0.11, t: 0.075, profile: [0.65, 1, 0.95, 0.85, 0.6, 0.3, 0], segments: 6, up: [0, 0, 1] }), 'hairLock', head);
+  }
+}
+
+const HAIR_BUILDERS = {
+  caelan: (add, H, opt) => hairCaelan(add, identity(), H, KID_HEAD, opt === 'C2'),
+  brayden: (add, H, opt) => hairBrayden(add, identity(), H, KID_HEAD, opt === 'B2'),
+  annabelle: (add, H, opt) => hairAnnabelle(add, identity(), H, KID_HEAD, opt === 'A2'),
+};
+
+/**
+ * Whether the skull shows through a kid's hair: how many of the head's corners above the hairline lie outside the
+ * hair's mass or cap (looking out from the middle of the cranium). 0 for every option, or the hair has a gap.
+ * @param {string} id @param {string} option
+ * @returns {number}
+ */
+export function hairGaps(id, option) {
+  const H = KIDS[id].head;
+  /** @type {Geo[]} */
+  const shells = [];
+  HAIR_BUILDERS[id]((geo, key) => {
+    if (key === 'hairCap' || key === 'hairMass') shells.push(geo);
+  }, H, option);
+  const shell = merge(shells);
+  const head = headGeo(H, KID_HEAD);
+  const c = hairCentre(H);
+  const P = (g, i) => [g.positions[i * 3], g.positions[i * 3 + 1], g.positions[i * 3 + 2]];
+  /** the farthest crossing of the shell along a ray from the middle, and whether it is the shell's side (not its rim's cap) */
+  const outer = (d) => {
+    let best = -Infinity;
+    let side = false;
+    for (let t = 0; t < shell.index.length; t += 3) {
+      const [a, b, cc] = [P(shell, shell.index[t]), P(shell, shell.index[t + 1]), P(shell, shell.index[t + 2])];
+      const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const e2 = [cc[0] - a[0], cc[1] - a[1], cc[2] - a[2]];
+      const q = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]];
+      const det = e1[0] * q[0] + e1[1] * q[1] + e1[2] * q[2];
+      if (Math.abs(det) < 1e-12) continue;
+      const sv = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const u = (sv[0] * q[0] + sv[1] * q[1] + sv[2] * q[2]) / det;
+      if (u < 0 || u > 1) continue;
+      const r = [sv[1] * e1[2] - sv[2] * e1[1], sv[2] * e1[0] - sv[0] * e1[2], sv[0] * e1[1] - sv[1] * e1[0]];
+      const v = (d[0] * r[0] + d[1] * r[1] + d[2] * r[2]) / det;
+      if (v < 0 || u + v > 1) continue;
+      const dist = (e2[0] * r[0] + e2[1] * r[1] + e2[2] * r[2]) / det;
+      if (dist > best) {
+        best = dist;
+        side = shell.groups[shell.index[t]] === 0;
+      }
+    }
+    return { best, side };
+  };
+  let gaps = 0;
+  for (let i = 0; i < head.positions.length / 3; i++) {
+    const p = P(head, i);
+    const d = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+    const L = Math.hypot(d[0], d[1], d[2]);
+    const hit = outer([d[0] / L, d[1] / L, d[2] / L]);
+    if (hit.side && hit.best < L - 1e-4) gaps++;
+  }
+  return gaps;
+}
+
+/** The hair pictures. A mass: soft clumpy blond, darker toward its rim and lighter on top, short strands every which
+ * way (tousled). A cap: strands up from the hairline, a sheen (the halo) high on it. A clump: strands along it (v), its
+ * underside (the middle of the strip) and its root darker, a sheen near the root, its tip a touch lighter. */
+function paintHairSet(s, id, ramp) {
+  if (id === 'caelan') {
+    const base = ramp[1];
+    s.wrap('hairMass', 192, 56, (p) => {
+      p.fill((x, y) => {
+        const n = fbm(x / 10, y / 8, 5, 3);
+        return n > 0.52 ? mix(base, ramp[0], Math.min(1, (n - 0.52) * 2.2)) : mix(base, ramp[2], Math.min(1, (0.52 - n) * 1.6));
+      });
+      const rnd = makeRng(19);
+      for (let i = 0; i < 1300; i++) {
+        const x = rnd() * p.w;
+        const y = rnd() * p.h;
+        const a = rnd() * Math.PI * 2;
+        const l = 1.5 + rnd() * 2.5;
+        p.line(x, y, x + Math.cos(a) * l, y + Math.sin(a) * l, 0.35, rnd() < 0.55 ? mix(ramp[0], 0xfff4d0, 0.3) : ramp[2], 0.3 + 0.3 * rnd());
+      }
+      p.shadeV(1.16, 0.86).ao({ bottom: 0.22, width: 0.18 });
+    }, { top: (p) => p.fill(ramp[0]), bottom: (p) => p.fill(mix(ramp[2], ramp[3], 0.6)) });
+    return;
+  }
+  const base = mix(ramp[1], ramp[2], 0.5);
+  // the cap is the under-layer: what shows between the clumps reads as shadow, its sheen only faint
+  const ends = { top: (p) => p.fill(base), bottom: (p) => p.fill(mix(ramp[3], 0x000000, 0.25)) };
+  s.wrap('hairCap', 96, 32, (p) => {
+    p.fill(mix(base, ramp[3], 0.3)).mottle(0.06, 6);
+    for (let x = 0; x < p.w; x += 1.6) p.line(x, 0, x + 0.6 * Math.sin(x), p.h, 0.32, hash2(Math.round(x * 5), 3, 7) < 0.5 ? ramp[2] : ramp[3], 0.45);
+    for (let y = Math.floor(p.h * 0.18); y < p.h * 0.38; y++) for (let x = 0; x < p.w; x++) p.tone(x, y, 1 + 0.08 * Math.sin(((y - p.h * 0.18) / (p.h * 0.2)) * Math.PI));
+    p.ao({ bottom: 0.35, width: 0.3 });
+  }, ends);
+  s.wrap('hairLock', 40, 64, (p) => {
+    p.fill(base);
+    for (let x = 0; x < p.w; x += 1.4) p.line(x, 0, x, p.h, 0.3, hash2(Math.round(x * 7), 5, 9) < 0.5 ? ramp[1] : ramp[3], 0.5);
+    for (let y = 0; y < p.h; y++) {
+      for (let x = 0; x < p.w; x++) {
+        const under = Math.max(0, 1 - Math.abs(x / p.w - 0.5) * 3.2);
+        const sheen = Math.max(0, 1 - Math.abs(y / p.h - 0.7) * 7) * (0.75 + 0.25 * hash2(x, 2, 5));
+        p.tone(x, y, (1 - 0.32 * under) * (1 + 0.28 * sheen) * (1 + 0.08 * (1 - y / p.h)));
+      }
+    }
+    p.ao({ bottom: 0.4, width: 0.22 });
+  }, ends);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -462,6 +732,12 @@ const legRings = (L) => [{ y: 0, sx: 0.74 }, { y: 0.31 * L, sx: 0.87 }, { y: 0.4
 const torsoRings = (h) => [{ y: 0, sx: 0.97, sz: 0.98 }, { y: 0.27 * h, sx: 0.92, sz: 0.94 }, { y: 0.71 * h, sx: 1, sz: 1.03 }, { y: 0.9 * h, sx: 0.98, sz: 0.98 }, { y: h, sx: 0.74, sz: 0.78 }];
 const foreRings = (L) => [{ y: 0, sx: 0.66, sz: 0.66 }, { y: L * 0.55, sx: 0.8 }, { y: L, sx: 0.85 }];
 
+/**
+ * Caelan's skin in the pilot: a mild olive — light warm beige with a green-yellow undertone, its shadows a muted
+ * olive-brown (never orange or deep tan). avatars.js's palette takes it at the migration.
+ */
+export const CAELAN_SKIN = Object.freeze([0xead0b0, 0xdab894, 0xbea27d, 0x9a8764]);
+
 /** Paint a kid's atlas (shared by the model and, for Caelan, the first-person hand). @param {string} id */
 function paintKid(id) {
   const def = avatarById(id);
@@ -469,7 +745,7 @@ function paintKid(id) {
   const P = def.palette;
   const O = def.outfit;
   const D = DENSITY.body;
-  const skinR = P.skin;
+  const skinR = def.id === 'caelan' ? [...CAELAN_SKIN] : P.skin;
   const top = O.top;
   const s = new Skin(256, 256, 7 + AVATAR_IDS.indexOf(def.id) * 11);
   headSkin(s, 'head', K.head, (p) => p.skin(skinR).shadeV(1.02, 1.04), {
@@ -481,7 +757,7 @@ function paintKid(id) {
     p.skin(skinR).shadeV(1.02, 0.9);
     for (const y of [8, 15]) p.line(2, y, 22, y, 0.45, skinR[2], 0.45);
   });
-  paintHair(s, def.hair.style, P.hair);
+  paintHairSet(s, def.id, P.hair);
   // the top: a tee (a stripe or a pocket) or a dress's bodice (a round white collar), seams, a hem or a waist seam
   const T = K.torso;
   const tw = Math.round(perimeter(T.rx * 1.02, T.rz * 1.03) * D);
@@ -640,8 +916,8 @@ function paintKid(id) {
   return s;
 }
 
-/** A kid standing at ease. @param {Style} st @param {string} id @param {Skin} s */
-function buildKid(st, id, s) {
+/** A kid standing at ease, wearing hair option `hair` (HAIR_OPTIONS). @param {Style} st @param {string} id @param {Skin} s @param {string} [hair] */
+function buildKid(st, id, s, hair) {
   const S = shapes(st);
   const def = avatarById(id);
   const K = KIDS[def.id];
@@ -691,8 +967,15 @@ function buildKid(st, id, s) {
   }
   const head = translation(0, K.head.y, 0);
   addHead(add, head, K.head, KID_HEAD);
-  HAIRS[def.hair.style](add, head, K.head);
-  return s.model(parts);
+  const option = hair ?? HAIR_PICKS[def.id];
+  if (!HAIR_OPTIONS[def.id].includes(option)) throw new RangeError(`no hair ${option} for ${def.id}`);
+  let hairTris = 0;
+  const addHair = (geo, key, M) => {
+    hairTris += triangleCount(geo);
+    add(geo, key, M);
+  };
+  HAIR_BUILDERS[def.id]((geo, key) => addHair(geo, key, head), K.head, option);
+  return s.model(parts, { hairTris, hair: option });
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -830,15 +1113,16 @@ export const PILOT_MODELS = Object.freeze(['caelan', 'brayden', 'annabelle', 'zo
  * One pilot model.
  * @param {string} name  PILOT_MODELS
  * @param {'hex'} [style]
+ * @param {{ hair?: string }} [o]  a kid's hair option (HAIR_OPTIONS; default HAIR_PICKS)
  * @returns {PilotModel}
  */
-export function buildPilot(name, style = 'hex') {
+export function buildPilot(name, style = 'hex', { hair } = {}) {
   const st = STYLES[style];
   if (!st) throw new RangeError(`no style ${style}`);
   switch (name) {
     case 'caelan':
     case 'brayden':
-    case 'annabelle': return buildKid(st, name, paintKid(name));
+    case 'annabelle': return buildKid(st, name, paintKid(name), hair);
     case 'zombie': return buildZombie(st, paintZombie());
     case 'sheep': return buildSheep(st, paintSheep());
     case 'pig': return buildPig(st, paintPig());
@@ -1229,8 +1513,11 @@ const BUSH = Object.freeze({
   berry: [0xc6dcf6, 0x8eb0e2, 0x5a7cbc, 0x3c548c],
 });
 
-/** Leaf pictures: three tints of one leaf (a base darker than its tip, a midrib, paired side veins, darker edges). */
-function paintLeaves(s, ramp, prefix) {
+/**
+ * Leaf pictures: three tints of one leaf (a base darker than its tip, a midrib, paired side veins, darker edges);
+ * `berries` paints a cluster of honeyberries over the stalk end of the first two (the far bush carries its berries so).
+ */
+function paintLeaves(s, ramp, prefix, berries = null) {
   for (let k = 0; k < 3; k++) {
     s.plain(`${prefix}${k}`, 24, 40, (p) => {
       const base = mix(ramp[1], k === 0 ? ramp[0] : k === 1 ? ramp[2] : 0xb8c44c, k === 2 ? 0.25 : 0.4);
@@ -1242,6 +1529,11 @@ function paintLeaves(s, ramp, prefix) {
         p.line(12, y, 3, y - 6, 0.45, mix(ramp[0], 0xf0f6c8, 0.25), 0.6).line(12, y, 21, y - 6, 0.45, mix(ramp[0], 0xf0f6c8, 0.25), 0.6);
       }
       p.ao({ left: 0.35, right: 0.35, width: 0.3 }).ao({ bottom: 0.3, width: 0.25 });
+      if (berries && k < 2) {
+        for (const [x, y] of [[8, 31], [13, 34], [16, 29], [10, 26]]) {
+          p.ellipse(x, y, 2.6, 3.2, berries[2], 1).ellipse(x, y, 2.1, 2.7, berries[1], 1).ellipse(x - 0.8, y - 1, 0.8, 0.8, berries[0], 1);
+        }
+      }
     });
   }
 }
@@ -1253,16 +1545,7 @@ function paintBush() {
   paintLeaves(s, B.young, 'young');
   // the core: a tangle of dark leaves seen through the gaps
   s.plain('core', 64, 48, (p) => p.leaves(B.core, { size: 10, density: 1.3 }).shadeV(1.1, 0.75));
-  // the far bush: the same leaves with berries among them (the level of detail past ~16 m)
-  s.plain('far', 96, 64, (p) => {
-    p.leaves(B.leaves, { size: 12, density: 1.3 }).shadeV(1.15, 0.8);
-    const rnd = makeRng(77);
-    for (let i = 0; i < 14; i++) {
-      const x = 6 + rnd() * 84;
-      const y = 18 + rnd() * 40;
-      for (let k = 0; k < 3; k++) p.ellipse(x + k * 2.5 - 2.5, y + (k % 2) * 2, 1.5, 2, B.berry[1], 1).ellipse(x + k * 2.5 - 3, y + (k % 2) * 2 - 0.8, 0.6, 0.6, B.berry[0], 1);
-    }
-  });
+  paintLeaves(s, B.leaves, 'far', B.berry);
   s.wrap('bark', 32, 64, (p) => p.bark(B.bark).ao({ bottom: 0.4, width: 0.3 }), { top: (p) => p.bark(B.bark) });
   s.plain('berry', 16, 16, (p) => {
     p.fill(B.berry[1]);
@@ -1273,9 +1556,12 @@ function paintBush() {
   return s;
 }
 
-/** A leaf card: a flat hexagon `len` long and `wid` wide, pointed at both ends — only its two faces (8 triangles). */
-function leafCard(len, wid) {
-  const g = prism({ sides: 6, rx: wid / 2, rz: len / 2, h: 0.004, phase: 0 });
+/**
+ * A leaf card: a flat hexagon `len` long and `wid` wide, pointed at both ends — only its two faces (8 triangles); with
+ * `sides` 4 a diamond (4 triangles: the far bush's).
+ */
+function leafCard(len, wid, sides = 6) {
+  const g = prism({ sides, rx: wid / 2, rz: len / 2, h: 0.004, phase: 0 });
   const keep = [];
   for (let t = 0; t < g.index.length; t += 3) if (g.groups[g.index[t]] !== 0) keep.push(g.index[t], g.index[t + 1], g.index[t + 2]);
   // its length along +y from its stalk, its faces toward ±z
@@ -1286,8 +1572,8 @@ function leafCard(len, wid) {
  * A whorl: `n` leaves springing from `at` round the stem, tilted `tilt` up from level (negative: drooping), the first
  * at `yaw`; `keys` picks each leaf's picture in turn.
  */
-function whorl(add, at, n, len, wid, tilt, yaw, keys) {
-  const card = leafCard(len, wid);
+function whorl(add, at, n, len, wid, tilt, yaw, keys, sides = 6) {
+  const card = leafCard(len, wid, sides);
   for (let k = 0; k < n; k++) {
     const a = yaw + (k / n) * Math.PI * 2 + 0.25 * Math.sin(k * 3.7);
     const tl = tilt + 0.12 * Math.sin(k * 5.3);
@@ -1305,30 +1591,38 @@ function berry(S, r) {
 /** A twig of bark from a to b. */
 const twig = (S, add, a, b, r, taper = 0.6) => add(S.col(r, r, [{ y: 0 }, { y: len(a, b), sx: taper }], { caps: false }), 'bark', seg(a, b));
 
-/** The honeyberry bush: a short trunk, six branches each with two tiers of leaves, a dark core, berries. @param {Style} st @param {Skin} s */
-function buildHoneyberry(st, s) {
-  const S = shapes(st);
-  const parts = [];
-  const add = (geo, key, M) => parts.push(s.place(geo, key, M));
-  add(S.col(0.036, 0.034, [{ y: 0, sx: 1.15 }, { y: 0.13, sx: 0.85 }], { caps: { top: false, bottom: true } }), 'bark', identity());
-  // a small dark core: the shadowed inside of the bush, seen through the gaps between the leaves
-  add(loft({ sides: 6, rx: 0.12, rz: 0.11, rings: [{ y: 0, sx: 0.5 }, { y: 0.07, sx: 1 }, { y: 0.17, sx: 0.8 }, { y: 0.22, sx: 0.35 }] }), 'core', translation(0, 0.12, 0));
-  const leaves = ['leaf0', 'leaf1', 'leaf2'];
+/** The honeyberry bush's branch tips: five round it and one up the middle ([x, y, z, its angle round]). */
+function bushTips() {
   const tips = [];
   for (let k = 0; k < 5; k++) {
     const a = k * 1.257 + 0.3;
     tips.push([Math.cos(a) * 0.24, 0.25 + 0.05 * Math.sin(k * 2.1), Math.sin(a) * 0.24, a]);
   }
   tips.push([0.02, 0.44, -0.01, 0.8]);
+  return tips;
+}
+
+/** The honeyberry bush: a short trunk, a skirt of leaves, six branches with three tiers of leaves each, a dark core, berries. @param {Style} st @param {Skin} s */
+function buildHoneyberry(st, s) {
+  const S = shapes(st);
+  const parts = [];
+  const add = (geo, key, M) => parts.push(s.place(geo, key, M));
+  add(S.col(0.036, 0.034, [{ y: 0, sx: 1.15 }, { y: 0.13, sx: 0.85 }], { caps: { top: false, bottom: true } }), 'bark', identity());
+  // a small dark core: the shadowed inside of the bush, seen through the gaps between the leaves
+  add(loft({ sides: 6, rx: 0.16, rz: 0.15, rings: [{ y: 0, sx: 0.5 }, { y: 0.08, sx: 1 }, { y: 0.2, sx: 0.85 }, { y: 0.27, sx: 0.35 }] }), 'core', translation(0, 0.08, 0));
+  const leaves = ['leaf0', 'leaf1', 'leaf2'];
+  const tips = bushTips();
   const root = [0, 0.12, 0];
+  // a skirt of leaves round the foot, drooping to the ground: bushy at the bottom too
+  whorl(add, [0, 0.08, 0], 8, 0.19, 0.1, -0.22, 0.1, leaves);
   tips.forEach(([x, y, z, a], i) => {
     const tip = [x, y, z];
     twig(S, add, root, tip, 0.014);
     // three tiers up each branch: a drooping skirt low down, a level ring, an upturned crown at the tip
     const at = (f) => [x * f, root[1] + (y - root[1]) * f, z * f];
-    whorl(add, at(0.35), 4, 0.15, 0.08, -0.45, a + 0.8, leaves);
-    whorl(add, at(0.68), 5, 0.16, 0.085, -0.05, a + 0.4, leaves);
-    whorl(add, tip, 6, 0.17, 0.09, 0.32, a, leaves);
+    whorl(add, at(0.35), 4, 0.17, 0.09, -0.15, a + 0.8, leaves);
+    whorl(add, at(0.68), 5, 0.18, 0.095, 0.2, a + 0.4, leaves);
+    whorl(add, tip, 6, 0.19, 0.1, 0.5, a, leaves);
     add(leafCard(0.15, 0.08), leaves[i % 3], seg(tip, [tip[0] + Math.cos(a) * 0.3, tip[1] + 1, tip[2] + Math.sin(a) * 0.3], null, { back: [Math.cos(a), 0, Math.sin(a)] }));
     if (i < 5) {
       // berries hanging in threes under the tip's whorl
@@ -1342,14 +1636,25 @@ function buildHoneyberry(st, s) {
   return s.model(parts);
 }
 
-/** The honeyberry bush past ~16 m: the core grown to the bush's size, painted with leaves and berries, ringed by eight leaves. */
+/**
+ * The honeyberry bush past ~16 m: the same trunk and branches, a small core, and thirty big diamond leaves (three at
+ * each tip, two halfway along) — its berries painted on the leaves — under 250 triangles, still a leafy bush.
+ * @param {Style} st @param {Skin} s
+ */
 function buildHoneyberryFar(st, s) {
   const S = shapes(st);
   const parts = [];
   const add = (geo, key, M) => parts.push(s.place(geo, key, M));
-  add(loft({ sides: 6, rx: 0.27, rz: 0.25, rings: [{ y: 0, sx: 0.45 }, { y: 0.14, sx: 1 }, { y: 0.32, sx: 0.85 }, { y: 0.42, sx: 0.35 }] }), 'far', translation(0, 0.06, 0));
-  whorl(add, [0, 0.2, 0], 8, 0.15, 0.08, 0.15, 0.2, ['leaf0', 'leaf1', 'leaf2']);
-  void S;
+  add(S.col(0.036, 0.034, [{ y: 0, sx: 1.15 }, { y: 0.13, sx: 0.85 }], { caps: false, phase: 0 }), 'bark', identity());
+  add(loft({ sides: 6, rx: 0.18, rz: 0.16, phase: 0, rings: [{ y: 0, sx: 0.45 }, { y: 0.1, sx: 1 }, { y: 0.27, sx: 0.35 }] }), 'core', translation(0, 0.08, 0));
+  const keys = ['far0', 'far1', 'far2'];
+  const root = [0, 0.12, 0];
+  bushTips().forEach(([x, y, z, a]) => {
+    const tip = [x, y, z];
+    add(S.col(0.016, 0.016, [{ y: 0 }, { y: len(root, tip), sx: 0.6 }], { caps: false, phase: 0 }), 'bark', seg(root, tip));
+    whorl(add, [x * 0.55, root[1] + (y - root[1]) * 0.55, z * 0.55], 2, 0.24, 0.14, 0.15, a + 0.9, keys, 4);
+    whorl(add, tip, 3, 0.27, 0.16, 0.5, a, keys, 4);
+  });
   return s.model(parts);
 }
 

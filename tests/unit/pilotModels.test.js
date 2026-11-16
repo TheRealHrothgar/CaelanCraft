@@ -1,8 +1,10 @@
 // pilotModels.js (PURE): the art pilot's models (A: hex-faceted, pass 2) build, stay within budget, paint the same
 // atlas every time; the kids have faceted heads and their own hair; the first-person hand grips its tool.
 import { describe, it, expect } from 'vitest';
-import { buildPilot, buildHand, fpHandFrame, PILOT_MODELS, STYLES, FP_HAND, KIDS, HEAD_CORNERS } from '../../src/pilotModels.js';
-import { AVATAR_IDS } from '../../src/avatars.js';
+import {
+  buildPilot, buildHand, fpHandFrame, PILOT_MODELS, STYLES, FP_HAND, KIDS, HEAD_CORNERS, HAIR_OPTIONS, HAIR_PICKS, HAIR_LABELS, hairGaps, CAELAN_SKIN,
+} from '../../src/pilotModels.js';
+import { AVATAR_IDS, avatarById } from '../../src/avatars.js';
 import { PLAYER_HEIGHT } from '../../src/config.js';
 
 /** Most triangles any one pilot model may have (a guard against a runaway: the gallery reports the real counts). */
@@ -76,10 +78,46 @@ describe('the pilot models', () => {
     expect(lowestBehind('brayden')).toBeGreaterThan(KIDS.brayden.head.y - 0.15);
   });
 
-  it('keeps the plants affordable: the near bush, the sapling, the bush past ~16 m', () => {
-    expect(buildPilot('honeyberry').tris).toBeLessThan(1200);
+  it('keeps the plants affordable: the near bush, the sapling, the bush past ~16 m (under 250, still leafy)', () => {
+    expect(buildPilot('honeyberry').tris).toBeLessThan(1250);
     expect(buildPilot('sapling').tris).toBeLessThan(400);
-    expect(buildPilot('honeyberry_far').tris).toBeLessThan(150);
+    const far = buildPilot('honeyberry_far');
+    expect(far.tris).toBeLessThanOrEqual(250);
+    // leafy, not a ball: it reaches as wide as the near bush
+    const span = (g) => {
+      let r = 0;
+      for (let i = 0; i < g.positions.length; i += 3) r = Math.max(r, Math.hypot(g.positions[i], g.positions[i + 2]));
+      return r;
+    };
+    expect(span(far.geo)).toBeGreaterThan(0.8 * span(buildPilot('honeyberry').geo));
+  });
+
+  it('offers two hair options per kid, every one within 900 triangles of hair, none letting the skull show', () => {
+    for (const id of AVATAR_IDS) {
+      expect(HAIR_OPTIONS[id]).toHaveLength(2);
+      expect(HAIR_OPTIONS[id]).toContain(HAIR_PICKS[id]);
+      for (const hair of HAIR_OPTIONS[id]) {
+        const m = buildPilot(id, 'hex', { hair });
+        expect(m.hair).toBe(hair);
+        expect(m.hairTris).toBeGreaterThan(100);
+        expect(m.hairTris).toBeLessThanOrEqual(900);
+        expect(HAIR_LABELS[hair].startsWith(hair)).toBe(true);
+        expect(hairGaps(id, hair)).toBe(0);
+      }
+    }
+    expect(() => buildPilot('caelan', 'hex', { hair: 'B1' })).toThrow(RangeError);
+  });
+
+  it('gives Caelan a mild olive skin, lighter than today\'s, its shadows warm, not grey', () => {
+    const lum = (c) => 0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255);
+    const today = avatarById('caelan').palette.skin;
+    for (let k = 0; k < 4; k++) expect(lum(CAELAN_SKIN[k])).toBeGreaterThan(lum(today[k]));
+    for (const c of CAELAN_SKIN) {
+      const [r, g, b] = [(c >> 16) & 255, (c >> 8) & 255, c & 255];
+      expect(r).toBeGreaterThan(g); // warm
+      expect(g - b).toBeGreaterThan(20); // a yellow-green (olive) undertone, never grey
+      expect(r - g).toBeLessThan(45); // not orange
+    }
   });
 
   it('refuses an unknown model or style', () => {

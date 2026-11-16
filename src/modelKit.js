@@ -200,7 +200,7 @@ export function loft({ sides = 6, rx = 0.5, rz = rx, rings, smooth = false, phas
  * @param {{ sides?: number, rx?: number, rz?: number, phase?: number, corners?: number[] }} o
  * @returns {{ pts: { th: number, x: number, z: number }[], us: number[], perimeter: number }}
  */
-function basePolygon({ sides = 6, rx = 0.5, rz = rx, phase = Math.PI / sides, corners }) {
+export function basePolygon({ sides = 6, rx = 0.5, rz = rx, phase = Math.PI / sides, corners }) {
   const angles = corners ?? [];
   if (!corners) {
     if (!(sides >= 3)) throw new RangeError('loft: at least three sides');
@@ -263,6 +263,132 @@ export function wrapU(o, theta) {
     return { u: us[j] + (us[j + 1] - us[j]) * t, perimeter };
   }
   return { u: 0, perimeter };
+}
+
+/**
+ * A loft through rings of points given outright (each ring the same number of points, in order round it; a ring whose
+ * points all meet is an apex): flat facets between rings, a cap on each open end (fanned, so a ring need not be flat —
+ * a hairline that dips to the nape). Whichever way round the rings are listed, the result winds outward (checked by
+ * its signed volume). Groups as a loft's: 0 the strip (u round by the widest ring, v along by the rings' middles), 1
+ * the last ring's cap, 2 the first's.
+ * @param {{ rings: number[][][] }} o
+ * @returns {Geo}
+ */
+export function ringLoft({ rings }) {
+  if (!Array.isArray(rings) || rings.length < 2) throw new RangeError('ringLoft: at least two rings');
+  const m = rings[0].length;
+  if (m < 3 || rings.some((r) => r.length !== m)) throw new RangeError('ringLoft: rings of three or more points, all alike');
+  const P = rings.map((r) => r.map((p) => /** @type {Vec3} */ ([p[0], p[1], p[2]])));
+  const mid = P.map((r) => r.reduce((s, p) => [s[0] + p[0] / m, s[1] + p[1] / m, s[2] + p[2] / m], [0, 0, 0]));
+  const spanOf = (r) => r.reduce((s, p, j) => s + Math.hypot(...sub3(r[(j + 1) % m], p)), 0);
+  const apex = P.map((r) => spanOf(r) < 1e-9);
+  // u: the widest ring's share of the way round; v: the distance along the rings' middles
+  let wide = 0;
+  for (let k = 1; k < P.length; k++) if (spanOf(P[k]) > spanOf(P[wide])) wide = k;
+  const us = [0];
+  for (let j = 0; j < m; j++) us.push(us[j] + Math.hypot(...sub3(P[wide][(j + 1) % m], P[wide][j])));
+  for (let j = 0; j <= m; j++) us[j] /= us[m] || 1;
+  const vs = [0];
+  for (let k = 1; k < P.length; k++) vs.push(vs[k - 1] + Math.hypot(...sub3(mid[k], mid[k - 1])));
+  for (let k = 0; k < P.length; k++) vs[k] /= vs[P.length - 1] || 1;
+  const b = new Builder();
+  for (let k = 0; k + 1 < P.length; k++) {
+    for (let j = 0; j < m; j++) {
+      const j1 = (j + 1) % m;
+      const uM = (us[j] + us[j + 1]) / 2;
+      b.poly([P[k][j], P[k][j1], P[k + 1][j1], P[k + 1][j]], [
+        [apex[k] ? uM : us[j], vs[k]], [apex[k] ? uM : us[j + 1], vs[k]],
+        [apex[k + 1] ? uM : us[j + 1], vs[k + 1]], [apex[k + 1] ? uM : us[j], vs[k + 1]],
+      ], 0, null, apex[k] ? 2 : 0);
+    }
+  }
+  /** a cap's planar uvs: the ring about its middle, in its own plane */
+  const capUV = (r, c) => {
+    const e1 = unit(sub3(r[0], c));
+    const n = unit(newell(r));
+    const e2 = /** @type {Vec3} */ ([n[1] * e1[2] - n[2] * e1[1], n[2] * e1[0] - n[0] * e1[2], n[0] * e1[1] - n[1] * e1[0]]);
+    const R = Math.max(...r.map((p) => Math.hypot(...sub3(p, c)))) || 1;
+    return r.map((p) => {
+      const d = sub3(p, c);
+      return [Math.min(1, Math.max(0, 0.5 + (0.5 * (d[0] * e1[0] + d[1] * e1[1] + d[2] * e1[2])) / R)), Math.min(1, Math.max(0, 0.5 + (0.5 * (d[0] * e2[0] + d[1] * e2[1] + d[2] * e2[2])) / R))];
+    });
+  };
+  const last = P.length - 1;
+  if (!apex[last]) b.poly(P[last], capUV(P[last], mid[last]), 1, null, Math.floor(m / 2));
+  if (!apex[0]) {
+    const r = [...P[0]].reverse();
+    b.poly(r, capUV(r, mid[0]), 2, null, Math.floor(m / 2));
+  }
+  const g = b.done('wrap');
+  // wound outward: a closed solid's signed volume is positive
+  let vol = 0;
+  for (let t = 0; t < g.index.length; t += 3) {
+    const [i, j, k] = [g.index[t] * 3, g.index[t + 1] * 3, g.index[t + 2] * 3];
+    const p = g.positions;
+    vol += p[i] * (p[j + 1] * p[k + 2] - p[j + 2] * p[k + 1]) - p[i + 1] * (p[j] * p[k + 2] - p[j + 2] * p[k]) + p[i + 2] * (p[j] * p[k + 1] - p[j + 1] * p[k]);
+  }
+  if (vol < 0) {
+    for (let t = 0; t < g.index.length; t += 3) [g.index[t + 1], g.index[t + 2]] = [g.index[t + 2], g.index[t + 1]];
+    for (let i = 0; i < g.normals.length; i++) g.normals[i] = -g.normals[i];
+  }
+  return g;
+}
+
+/** @param {number[]} a @param {number[]} b @returns {Vec3} */
+function sub3(a, b) {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+/**
+ * A SWEEP: an n-gon cross-section carried along a smooth curve through `points` (Catmull-Rom; three or four are
+ * plenty), `rx` wide and `rz` thick, its thickness facing `up` (made square to the curve at each station), scaled by
+ * `profile` (one scale per station, or a function of the share along) — a lock of hair, a ribbon, a tail, a horn
+ * that bends. `segments` stations past the first; a profile ending in 0 ends in a point. `up` may be a function of a
+ * station's centre (a ribbon kept flat to a curved surface: up its normal there).
+ * @param {{ points: number[][], sides?: number, rx?: number, rz?: number, up?: number[]|((c: number[], t: number) => number[]),
+ *   profile?: number[]|((t: number) => number), segments?: number, phase?: number }} o
+ * @returns {Geo}
+ */
+export function sweep({ points, sides = 6, rx = 0.05, rz = rx, up = [0, 0, 1], profile, segments = 4, phase }) {
+  if (!Array.isArray(points) || points.length < 2) throw new RangeError('sweep: at least two points');
+  const n = points.length;
+  const at = (i) => points[Math.max(0, Math.min(n - 1, i))];
+  /** Catmull-Rom through the points (the ends mirrored), s from 0 to n − 1 */
+  const curve = (s) => {
+    const i = Math.min(n - 2, Math.floor(s));
+    const t = s - i;
+    const p1 = at(i);
+    const p2 = at(i + 1);
+    const p0 = i > 0 ? at(i - 1) : [2 * p1[0] - p2[0], 2 * p1[1] - p2[1], 2 * p1[2] - p2[2]];
+    const p3 = i + 2 < n ? at(i + 2) : [2 * p2[0] - p1[0], 2 * p2[1] - p1[1], 2 * p2[2] - p1[2]];
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return [0, 1, 2].map((a) => 0.5 * (2 * p1[a] + (-p0[a] + p2[a]) * t + (2 * p0[a] - 5 * p1[a] + 4 * p2[a] - p3[a]) * t2 + (-p0[a] + 3 * p1[a] - 3 * p2[a] + p3[a]) * t3));
+  };
+  const S = Math.max(1, Math.round(segments));
+  const centres = [];
+  for (let k = 0; k <= S; k++) centres.push(curve(((n - 1) * k) / S));
+  const scale = (k) => (typeof profile === 'function' ? profile(k / S) : profile ? profile[Math.min(profile.length - 1, k)] : 1 - (k / S) ** 1.5);
+  const { pts } = basePolygon({ sides, rx: 1, rz: 1, phase });
+  const upAt = (c, k) => (typeof up === 'function' ? up(c, k / S) : up);
+  const u0 = upAt(centres[0], 0);
+  let prevN = unit(/** @type {Vec3} */ ([u0[0], u0[1], u0[2]]));
+  const rings = centres.map((c, k) => {
+    const a = centres[Math.max(0, k - 1)];
+    const b2 = centres[Math.min(S, k + 1)];
+    const T = unit(sub3(b2, a));
+    const uk = upAt(c, k);
+    const d = uk[0] * T[0] + uk[1] * T[1] + uk[2] * T[2];
+    let N = /** @type {Vec3} */ ([uk[0] - d * T[0], uk[1] - d * T[1], uk[2] - d * T[2]]);
+    N = Math.hypot(...N) > 1e-6 ? unit(N) : prevN;
+    // never let the section turn over between stations (a twisted ribbon folds its faces inside out)
+    if (N[0] * prevN[0] + N[1] * prevN[1] + N[2] * prevN[2] < 0) N = /** @type {Vec3} */ ([-N[0], -N[1], -N[2]]);
+    prevN = N;
+    const X = [T[1] * N[2] - T[2] * N[1], T[2] * N[0] - T[0] * N[2], T[0] * N[1] - T[1] * N[0]];
+    const s = scale(k);
+    return pts.map((p) => [0, 1, 2].map((ax) => c[ax] + X[ax] * rx * s * p.x + N[ax] * rz * s * p.z));
+  });
+  return ringLoft({ rings });
 }
 
 /**

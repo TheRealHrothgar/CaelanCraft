@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   prism, loft, pyramid, chamferBox, wedge, transform, merge, atlasUV, compose, alongSegment, mul, rotation, translation,
-  scaling, identity, triangleCount, bounds, wrapU, BOX_FACES, WRAP_GROUPS,
+  scaling, identity, triangleCount, bounds, wrapU, ringLoft, sweep, BOX_FACES, WRAP_GROUPS,
 } from '../../src/modelKit.js';
 
 /** Weld vertices by position; every undirected edge must be used by exactly two triangles, once each way. */
@@ -206,6 +206,47 @@ describe('primitives', () => {
     expect(wrapU(o, (210 * Math.PI) / 180).u).toBeCloseTo(1 - wrapU(o, (150 * Math.PI) / 180).u, 9);
     expect(wrapU({ sides: 6, rx: 0.3 }, Math.PI / 2).u).toBeCloseTo(0.25, 9);
     expect(wrapU(o, 0).perimeter).toBeGreaterThan(0.9);
+  });
+
+  it('lofts rings given outright — a slanted, uneven rim too — closed and outward whichever way round they run', () => {
+    const ring = (y, r, tilt, n = 9) => [...Array(n).keys()].map((j) => {
+      const a = (j / n) * Math.PI * 2;
+      return [r * Math.sin(a), y + tilt * Math.cos(a) + (r > 0 ? 0.01 * (j % 2) : 0), r * Math.cos(a)];
+    });
+    const rings = [ring(0, 0.2, 0.08), ring(0.1, 0.22, 0.04), ring(0.2, 0.15, 0), ring(0.25, 0, 0)];
+    for (const rs of [rings, rings.map((r) => [...r].reverse())]) {
+      const g = ringLoft({ rings: rs });
+      expect(closedness(g)).toBe(0);
+      expect(volume(g)).toBeGreaterThan(0);
+      expect(unitNormals(g)).toBe(true);
+      expect(uvsInRange(g)).toBe(true);
+      expect(triangleCount(g)).toBe(2 * 9 * 2 + 9 + 7); // two bands of quads, an apex band, a fanned rim
+    }
+    expect(() => ringLoft({ rings: [ring(0, 0.2, 0)] })).toThrow(RangeError);
+    expect(() => ringLoft({ rings: [ring(0, 0.2, 0), ring(1, 0.2, 0, 8)] })).toThrow(RangeError);
+  });
+
+  it('sweeps a flattened section along a curve: closed, outward, thin across its up, ending in a point', () => {
+    const points = [[0, 0, 0], [0.05, 0.1, 0.02], [0.08, 0.2, 0.06], [0.06, 0.3, 0.12]];
+    for (const up of [[0, 0, 1], (c) => [c[0], 0, 1]]) {
+      const g = sweep({ points, sides: 6, rx: 0.04, rz: 0.01, up, profile: [0.6, 1, 1, 0.8, 0.4, 0], segments: 5 });
+      expect(closedness(g)).toBe(0);
+      expect(volume(g)).toBeGreaterThan(0);
+      expect(unitNormals(g)).toBe(true);
+      expect(uvsInRange(g)).toBe(true);
+      // the tip: the last point of the curve
+      let far = 0;
+      for (let v = 0; v < g.positions.length / 3; v++) far = Math.max(far, Math.hypot(...P(g, v)));
+      expect(far).toBeCloseTo(Math.hypot(0.06, 0.3, 0.12), 4);
+    }
+    // v runs along the sweep: 0 at the root, 1 at the tip
+    const g = sweep({ points, rx: 0.04, rz: 0.01, segments: 4 });
+    for (let v = 0; v < g.groups.length; v++) {
+      if (g.groups[v] !== 0) continue;
+      const y = g.positions[v * 3 + 1];
+      if (y < 0.001) expect(g.uvs[v * 2 + 1]).toBeLessThan(0.05);
+    }
+    expect(() => sweep({ points: [[0, 0, 0]] })).toThrow(RangeError);
   });
 
   it('refuses a loft of one ring or fewer than three sides', () => {

@@ -20,21 +20,27 @@ import { paintSlot } from './atlas.js';
 import { BLOCK, TILE, getFaceTile } from './blocks.js';
 import { heldItemGeometry } from './heldItem.js';
 import { HEX_SIZE, FACE_TOP } from './hex.js';
-import { buildPilot, buildHand, STYLES } from './pilotModels.js';
+import { buildPilot, buildHand, STYLES, KIDS, HAIR_OPTIONS, HAIR_LABELS } from './pilotModels.js';
 
 /** @typedef {import('./pilotModels.js').PilotModel} PilotModel */
 
 const params = new URLSearchParams(location.search);
 const ROW = (params.get('row') || 'all').toLowerCase();
 const COLUMNS = /** @type {const} */ (['today', 'hex']);
-const COLUMN_LABELS = { today: 'Today', hex: `${STYLES.hex.label} (pass 2)` };
+const COLUMN_LABELS = { today: 'Today', hex: `${STYLES.hex.label} (pass 3)` };
 /** The game-distance view: a crop of a view this many pixels tall at the game's field of view. */
 const GAME_VIEW_H = 900;
 
 const canvas = /** @type {HTMLCanvasElement} */ (document.getElementById('stage'));
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(1);
-renderer.setSize(window.innerWidth, window.innerHeight, false);
+// the page's size when it is laid out (or ?w=&h=); the canvas keeps it, so a later resize never stretches the panels
+// away from their labels
+const W = Number(params.get('w')) || window.innerWidth;
+const H = Number(params.get('h')) || window.innerHeight;
+renderer.setSize(W, H, false);
+canvas.style.width = `${W}px`;
+canvas.style.height = `${H}px`;
 renderer.setScissorTest(true);
 renderer.autoClear = false;
 
@@ -157,7 +163,10 @@ function pilotMesh(m) {
   g.setAttribute('uv', new THREE.BufferAttribute(m.geo.uvs, 2));
   g.setIndex(new THREE.BufferAttribute(m.geo.index, 1));
   g.computeBoundingSphere();
-  const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: atlasTexture(m.image), alphaTest: 0.5 }));
+  // a little of each texel's own colour comes back as a warm fill, so faces in shadow stay warm, not grey (the hemisphere
+  // light's ground is a cool grey); a proposal for the migration, not the game's lighting today
+  const map = atlasTexture(m.image);
+  const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, emissive: new THREE.Color(0.13, 0.1, 0.07), emissiveMap: map }));
   mesh.name = 'pilot';
   return mesh;
 }
@@ -211,12 +220,12 @@ const pilotStats = (m, extra = '') => `${fmt(m.tris)} tris${extra} · atlas ${m.
 
 /**
  * @type {Record<string, { title: string, note: string, target: number[], dist: number, far: number, today: () => Shown,
- *   pilot: (style: 'hex') => Shown, fp?: boolean, az?: number, elev?: number, second?: 'side'|'back' }>}
+ *   pilot: (style: 'hex') => Shown, fp?: boolean, az?: number, elev?: number, second?: 'side'|'back'|number }>}
  */
 const ROWS = {
   avatar: {
     title: 'Avatars — Caelan, Brayden, Annabelle',
-    note: 'faceted heads with a face plane; poofy tufts, a silky side sweep, long waves; hands, shoes, a neck, a nose',
+    note: 'faceted heads with a face plane; hair C1 (a poofy mop), B1 (a side sweep), A1 (long waves); ?row=hair for all six options',
     target: [0, 0.9, 0], dist: 5.0, far: 9, az: 0.42, second: 'back',
     today() {
       const scene = stage({ blocks: [[-2.2, 1.6]] });
@@ -291,9 +300,9 @@ const ROWS = {
     },
   },
   plant: {
-    title: 'Plants — the honeyberry bush (centre), a sapling (left; today a crab apple); right, the bush past ~16 m',
+    title: 'Plants — the honeyberry bush (centre) and its far version past ~16 m (right), at the same distance; a sapling (left; today a crab apple)',
     note: 'branches carrying tiers of hexagonal leaf cards with gaps, a dark core, berries hanging in threes',
-    target: [0.2, 0.36, 0.1], dist: 3.4, far: 5, az: 0.45, elev: 0.28,
+    target: [0.2, 0.36, 0.1], dist: 3.4, far: 5, az: 0.45, elev: 0.28, second: 16,
     today() {
       const scene = stage({ blocks: [] });
       const a = todayPlant(BLOCK.HONEYBERRY_BUSH, TILE.HONEYBERRY_BUSH);
@@ -447,8 +456,6 @@ function label(text, x, y, cls) {
 
 /** @type {{ scene: THREE.Scene, cam: THREE.Camera, rect: number[] }[]} */
 const panels = [];
-const W = window.innerWidth;
-const H = window.innerHeight;
 
 /** A camera at azimuth `az` (0: straight in front of a model facing −Z; positive toward its right, +x). */
 function orbit(target, dist, az, elev, aspect, fov = 30) {
@@ -515,8 +522,13 @@ function layoutRow(key, top, height, compact) {
       const sw = (colW - 6) / 2;
       const side = [x0 + 3, y0 + mainH, sw - 2, h - mainH - 2];
       const back = row.second === 'back';
-      panels.push({ scene: shown.scene, cam: orbit(row.target, row.dist * (back ? 1.0 : 1.1), back ? Math.PI + 0.4 : Math.PI / 2, 0.06, side[2] / side[3]), rect: side });
-      label(back ? 'from behind' : 'side', side[0] + 6, side[1] + 6, 'view');
+      if (typeof row.second === 'number') {
+        panels.push({ scene: shown.scene, cam: farCam(row.target, row.second, 1, side[2], side[3]), rect: side });
+        label(`at ${row.second} m, game scale`, side[0] + 6, side[1] + 6, 'view');
+      } else {
+        panels.push({ scene: shown.scene, cam: orbit(row.target, row.dist * (back ? 1.0 : 1.1), back ? Math.PI + 0.4 : Math.PI / 2, 0.06, side[2] / side[3]), rect: side });
+        label(back ? 'from behind' : 'side', side[0] + 6, side[1] + 6, 'view');
+      }
       const far = [x0 + 3 + sw, y0 + mainH, sw, h - mainH - 2];
       panels.push({ scene: shown.scene, cam: farCam(row.target, row.far, 1, far[2], far[3]), rect: far });
       label(`at ${row.far} m, game scale`, far[0] + 6, far[1] + 6, 'view');
@@ -527,11 +539,45 @@ function layoutRow(key, top, height, compact) {
 }
 
 const titleEl = /** @type {HTMLElement} */ (document.getElementById('title'));
+/**
+ * ?row=hair[&set=1|2]: each hair option on its kid, head and shoulders from the front, 3/4, the side and behind, and
+ * the whole kid at 9 m at game scale. set=1: C1, C2, B1; set=2: B2, A1, A2; neither: all six.
+ */
+function layoutHair(top) {
+  const set = params.get('set');
+  const all = Object.entries(HAIR_OPTIONS).flatMap(([id, opts]) => opts.map((o) => [id, o]));
+  const list = set === '1' ? all.slice(0, 3) : set === '2' ? all.slice(3) : all;
+  const rh = (H - top) / list.length;
+  const views = [['front', 0], ['3/4', 0.7], ['side', Math.PI / 2], ['behind', Math.PI]];
+  const pw = W / 5;
+  list.forEach(([id, opt], i) => {
+    const y0 = top + i * rh;
+    const scene = stage({ blocks: [] });
+    const m = buildPilot(id, 'hex', { hair: opt });
+    scene.add(pilotMesh(m), blobShadow(0.4));
+    const K = KIDS[id];
+    const target = [0, K.head.y + K.head.h * 0.55 - 0.05, 0];
+    views.forEach(([name, az], k) => {
+      const rect = [k * pw + 2, y0 + 26, pw - 4, rh - 30];
+      panels.push({ scene, cam: orbit(target, 1.35, az, 0.06, rect[2] / rect[3]), rect });
+      label(name, rect[0] + 6, rect[1] + 6, 'view');
+    });
+    const rect = [4 * pw + 2, y0 + 26, pw - 4, rh - 30];
+    panels.push({ scene, cam: farCam([0, 0.85, 0], 9, 1, rect[2], rect[3]), rect });
+    label('at 9 m, game scale', rect[0] + 6, rect[1] + 6, 'view');
+    label(HAIR_LABELS[opt], 8, y0 + 2, 'head');
+    label(`hair ${fmt(/** @type {number} */ (m.hairTris))} tris · the whole kid ${fmt(m.tris)} tris`, 470, y0 + 4, 'stat');
+  });
+}
+
 const keys = DEBUG_ROWS[ROW] ? [ROW] : ROW === 'all' || !ROWS[ROW] ? Object.keys(ROWS) : [ROW];
-titleEl.innerHTML = 'Caelancraft art-direction pilot, pass 2<span>Today · A: Hex-faceted, the chosen look — heads, hair and plants reworked</span>';
+titleEl.innerHTML = ROW === 'hair'
+  ? 'Caelancraft art pilot, pass 3 — hair options<span>silhouette first: Caelan a poofy mass; Brayden and Annabelle a cap and a few big clumps</span>'
+  : 'Caelancraft art-direction pilot, pass 3<span>Today · A: Hex-faceted, the chosen look — hair rethought, the far bush leafy</span>';
 const top0 = 34;
 const rowH = (H - top0) / keys.length;
-keys.forEach((k, i) => layoutRow(k, top0 + i * rowH, rowH, keys.length > 1));
+if (ROW === 'hair') layoutHair(top0);
+else keys.forEach((k, i) => layoutRow(k, top0 + i * rowH, rowH, keys.length > 1));
 
 function draw() {
   renderer.setScissor(0, 0, W, H);

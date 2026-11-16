@@ -722,15 +722,15 @@ export class Atlas {
   constructor(width, height, pad = 2) {
     this.img = createImage(width, height);
     this.pad = pad;
-    /** @type {{ y: number, h: number, x: number }[]} shelves: rows of rectangles, each as tall as its first */
-    this.shelves = [];
+    /** @type {{ x: number, y: number, w: number }[]} the skyline: the top of what is packed, left to right */
+    this.sky = [{ x: 0, y: 0, w: width }];
     /** @type {Rect[]} */
     this.rects = [];
   }
 
   /**
-   * A new w × h rectangle: on the first shelf it fits (tall enough, room left), else on a new shelf; a RangeError when
-   * it does not fit at all. Asked for tallest first, the shelves pack tightly.
+   * A new w × h rectangle, packed bottom-left on the skyline (as low as it fits, then as far left); a RangeError when
+   * it does not fit at all. Asked for tallest first, it packs tightly.
    * @returns {Rect}
    */
   alloc(w, h) {
@@ -739,17 +739,37 @@ export class Atlas {
     const p = this.pad;
     const W = w + 2 * p;
     const H = h + 2 * p;
-    let shelf = this.shelves.find((s) => s.h >= H && s.x + W <= this.img.width);
-    if (!shelf) {
-      const last = this.shelves[this.shelves.length - 1];
-      const y = last ? last.y + last.h : 0;
-      if (W > this.img.width || y + H > this.img.height) throw new RangeError(`atlas: no room for ${w} × ${h}`);
-      shelf = { y, h: H, x: 0 };
-      this.shelves.push(shelf);
+    const width = this.img.width;
+    let best = null;
+    for (let i = 0; i < this.sky.length; i++) {
+      const x = this.sky[i].x;
+      if (x + W > width) break;
+      let y = 0;
+      for (let j = i; j < this.sky.length && this.sky[j].x < x + W; j++) y = Math.max(y, this.sky[j].y);
+      if (y + H <= this.img.height && (!best || y < best.y)) best = { x, y };
     }
+    if (!best) throw new RangeError(`atlas: no room for ${w} × ${h}`);
+    // raise the skyline under the new rectangle
+    const { x, y } = best;
+    const next = [];
+    for (const seg of this.sky) {
+      const end = seg.x + seg.w;
+      if (end <= x || seg.x >= x + W) next.push(seg);
+      else {
+        if (seg.x < x) next.push({ x: seg.x, y: seg.y, w: x - seg.x });
+        if (end > x + W) next.push({ x: x + W, y: seg.y, w: end - x - W });
+      }
+    }
+    next.push({ x, y: y + H, w: W });
+    next.sort((a2, b2) => a2.x - b2.x);
+    this.sky = next.reduce((acc, seg) => {
+      const last = acc[acc.length - 1];
+      if (last && last.y === seg.y && last.x + last.w === seg.x) last.w += seg.w;
+      else acc.push({ ...seg });
+      return acc;
+    }, /** @type {{ x: number, y: number, w: number }[]} */ ([]));
     /** @type {Rect} */
-    const r = [shelf.x + p, shelf.y + p, w, h];
-    shelf.x += W;
+    const r = [x + p, y + p, w, h];
     this.rects.push(r);
     return r;
   }
