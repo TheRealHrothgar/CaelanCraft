@@ -189,7 +189,7 @@ describe('items — tiers, tool types, wear slots', () => {
   it('TIER, TIER_NAMES and TIER_SPEED follow §5.1', () => {
     expect(TIER).toEqual({ HAND: 0, STONE: 1, FLINT: 2, COPPER: 3, BRONZE: 4, IRON: 5, STEEL: 6 });
     expect(TIER_NAMES).toEqual(['hand', 'stone', 'flint', 'copper', 'bronze', 'iron', 'steel']);
-    expect(TIER_SPEED).toEqual([1, 1.5, 2, 2.6, 3.4, 4.5, 6]);
+    expect(TIER_SPEED).toEqual([1, 2.2, 4.4, 6.4, 9, 12.5, 17]); // §99: each age clearly faster (was §5.1's 1, 1.5, 2, 2.6, 3.4, 4.5, 6)
     for (const [name, t] of Object.entries(TIER)) expect(TIER_NAMES[t]).toBe(name.toLowerCase());
     for (let t = 1; t < TIER_SPEED.length; t++) expect(TIER_SPEED[t]).toBeGreaterThan(TIER_SPEED[t - 1]);
   });

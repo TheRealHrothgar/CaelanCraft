@@ -13,7 +13,7 @@ import { STAT_MAX, BREATH_MAX_S, BODY_TEMP_NORMAL, BODY_TEMP_MIN, BODY_TEMP_MAX,
 import { getItem } from './items.js';
 import {
   createVitals, wakeVitals, statusOf, stepVitals, activityFactor, fallDamage, eatFood, gulpWater, queueHeal,
-  DAMAGE_CAUSES, RATES, FATIGUE_MAX,
+  DAMAGE_CAUSES, RATES, FATIGUE_MAX, workActivity, HARD_WORK_AT,
 } from './vitals.js';
 import { feltTemperature, activityHeat, wetRate } from './climate.js';
 
@@ -29,6 +29,8 @@ import { feltTemperature, activityHeat, wetRate } from './climate.js';
  * @property {PlayerState} player
  * @property {number} [softFactor]  softLandingFactor of the cells under the feet (physics.supportingCells), default 1
  * @property {boolean} [breaking]   dig progress advanced this frame
+ * @property {number} [workTier]    the tier of the tool doing that work (CONTRACTS §99, harvest.workTier: 0 the bare hand
+ *   or a tool that is not the block's own, 1 stone … 6 steel); absent → the hand. It sets the work's activity (vitals.WORK_ACTIVITY)
  * @property {boolean} [moving]     horizontal speed > 0.5 m/s
  * @property {boolean} [still]      stood still this frame (regeneration beside a fire)
  * @property {boolean} [buried]     the eye is inside a solid cell with no room within 3 above (unstickPlayer)
@@ -71,6 +73,8 @@ export const CURED_MESSAGE = 'The bitter herb settles your stomach: you are no l
 export const SALT_MESSAGE_GAP_S = 5;
 /** Damage over time pulses the hurt flash once per this many HP lost (§2.4). */
 export const DOT_PULSE_HP = 3;
+/** §99: seconds the `Hard work` label stays after the last moment of hard work (between one block and the next). */
+export const WORK_LABEL_HOLD_S = 1.5;
 
 /** The death screen's title by cause (§2.5). */
 export const DEATH_TITLES = Object.freeze({
@@ -157,8 +161,10 @@ export class Survival {
     this.clock = 0;
     this._saltAt = -Infinity;
     this._dot = 0;
-    /** the last step's breath circumstances, for the Drowning / Smothering labels */
-    this._flags = { headInWater: false, buried: false };
+    /** the last step's breath circumstances, for the Drowning / Smothering labels; §99: the hard work, for `Hard work` */
+    this._flags = { headInWater: false, buried: false, work: 0 };
+    /** §99: seconds the `Hard work` label still shows after the hard work stops (it does not flicker between blocks) */
+    this._workHold = 0;
   }
 
   /** In Survival (SV): the mode is 'survival', dead or alive. */
@@ -213,6 +219,8 @@ export class Survival {
     this._dot = 0;
     this._flags.headInWater = false;
     this._flags.buried = false;
+    this._flags.work = 0;
+    this._workHold = 0;
   }
 
   /**
@@ -267,6 +275,15 @@ export class Survival {
     const moving = !sleep && (env.moving ?? (p ? Math.hypot(p.vx, p.vz) > RATES.WALK_MIN_SPEED : false));
     const sprinting = !!p?.sprinting && moving;
     const breaking = !sleep && !!env.breaking;
+    // §99: the work's activity by the tool doing it; hard work (a bare hand, a stone tool) shows for a moment after
+    const work = breaking ? workActivity(env.workTier) : 0;
+    if (work >= HARD_WORK_AT) {
+      this._flags.work = work;
+      this._workHold = WORK_LABEL_HOLD_S;
+    } else if ((this._workHold -= dt) <= 0) {
+      this._flags.work = work;
+      this._workHold = 0;
+    }
     const c = env.climate ?? /** @type {SurvivalEnv['climate']} */ ({});
     const heat = finite(env.heat) ? env.heat : 0;
     // Wet (§3.2, §84): swimming soaks at once; rain that reaches you wets you; otherwise you dry.
@@ -294,7 +311,8 @@ export class Survival {
 
     // 2, 4–6. Breath, body temperature, drains, regeneration, bandages and damage over time.
     const res = stepVitals(v, dt, {
-      activity: activityFactor({ moving, breaking, swimming: inWater, sprinting }),
+      activity: activityFactor({ moving, breaking, workTier: env.workTier, swimming: inWater, sprinting }),
+      work,
       felt: t.felt,
       inWater,
       headInWater,

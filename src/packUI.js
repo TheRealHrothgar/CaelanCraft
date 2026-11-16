@@ -10,7 +10,7 @@
 // Geometry: the pack screen uses FLAT-top hexes, so a hex chain runs straight down (the wear chain) and a row of cells
 // zig-zags half a cell up and down (the hotbar strip, §5.4). Axial (q, r) → pixel: x = 1.5·s·q, y = √3·s·(r + q/2).
 import { PACK_SLOTS, HOTBAR_SIZE, WEAR_SLOTS } from './config.js';
-import { ITEMS, ITEM_KEYS, TAGS, itemName, maxDurability, WEAR_SLOT_NAMES } from './items.js';
+import { ITEMS, ITEM_KEYS, TAGS, itemName, maxDurability, stackSize, WEAR_SLOT_NAMES } from './items.js';
 import { purposeOf } from './purpose.js';
 import { buildTreeModel, layoutTree, treeStates, columnProgress, TREE_STATIONS } from './buildTree.js';
 
@@ -209,6 +209,17 @@ export function stackTitle(stack) {
 export function recipeTitle(out) {
   if (!out) return '';
   return `${itemName(out.k)}${out.n > 1 ? ` ×${out.n}` : ''}`;
+}
+
+/** How many the second Make button queues (×5). */
+export const MAKE_MANY = 5;
+
+/**
+ * §99: whether a recipe card offers ×5 — only when what it makes stacks in the pack. A tool, the hammerstone, the bellows
+ * and anything else of stack 1 is made one at a time. @param {{k: string, n: number}} out
+ */
+export function makesMany(out) {
+  return !!out && stackSize(out.k) > 1;
 }
 
 /**
@@ -958,7 +969,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
   }
 
   /** @type {Map<string, {card: HTMLElement, sig: string, badges: HTMLElement[], tools: HTMLElement[], make: HTMLElement,
-   *   make5: HTMLElement, meta: HTMLElement}>} */
+   *   make5: HTMLElement|null, meta: HTMLElement}>} */
   const cards = new Map();
 
   /** A card's fixed parts (they never change for a recipe id). @param {RecipeView} r */
@@ -1040,8 +1051,9 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
       return b;
     };
     const makeBtn = btn('Make', 1);
-    const make5 = btn('×5', 5);
-    make5.setAttribute('aria-label', `Make 5 ${recipeTitle(r.out)}`);
+    // §99: ×5 only for what stacks; a tool is made one at a time
+    const make5 = makesMany(r.out) ? btn(`×${MAKE_MANY}`, MAKE_MANY) : null;
+    make5?.setAttribute('aria-label', `Make ${MAKE_MANY} ${recipeTitle(r.out)}`);
     return { card, sig: staticSig(r), badges, tools, make: makeBtn, make5, meta };
   }
 
@@ -1080,6 +1092,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
       entry.card.classList.toggle('far', !r.stationOk);
       const disabled = !r.craftable || !r.stationOk;
       for (const b of [entry.make, entry.make5]) {
+        if (!b) continue;
         if (disabled) b.setAttribute('disabled', '');
         else b.removeAttribute('disabled');
       }

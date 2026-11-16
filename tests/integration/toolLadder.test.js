@@ -63,17 +63,17 @@ describe('the ore gates and break times (§6.3, handbook §5)', () => {
     expect(canHarvest(BLOCK.IRON_ORE, tool('steel_hammer'))).toBe(false);
   });
 
-  it('break times match the handbook examples', () => {
-    expect(breakSeconds(BLOCK.STONE, tool('flint_pick'))).toBeCloseTo(1.5);
-    expect(breakSeconds(BLOCK.STONE, tool('bronze_pick'))).toBeCloseTo(3 / 3.4);
-    expect(breakSeconds(BLOCK.IRON_ORE, tool('bronze_pick'))).toBeCloseTo(5 / 3.4);
-    expect(breakSeconds(BLOCK.OBSIDIAN, tool('flint_pick'))).toBeCloseTo(1.25);
-    expect(breakSeconds(BLOCK.OAK_LOG, tool('steel_axe'))).toBeCloseTo(0.5);
-    expect(breakSeconds(BLOCK.OAK_LOG, tool('stone_axe'))).toBeCloseTo(2);
-    expect(breakSeconds(BLOCK.DIRT, tool('wooden_shovel'))).toBeCloseTo(0.6);
-    expect(breakSeconds(BLOCK.COPPER_ORE, tool('flint_pick'))).toBeCloseTo(2);
-    expect(breakSeconds(BLOCK.TIN_ORE, tool('copper_pick'))).toBeCloseTo(4 / 2.6);
-    expect(TIER_SPEED).toEqual([1, 1.5, 2, 2.6, 3.4, 4.5, 6]);
+  it('break times match the handbook examples (§99: each age clearly faster)', () => {
+    expect(breakSeconds(BLOCK.STONE, tool('flint_pick'))).toBeCloseTo(24 / 4.4);
+    expect(breakSeconds(BLOCK.STONE, tool('bronze_pick'))).toBeCloseTo(24 / 9);
+    expect(breakSeconds(BLOCK.IRON_ORE, tool('bronze_pick'))).toBeCloseTo(40 / 9);
+    expect(breakSeconds(BLOCK.OBSIDIAN, tool('flint_pick'))).toBeCloseTo(20 / 4.4);
+    expect(breakSeconds(BLOCK.OAK_LOG, tool('steel_axe'))).toBeCloseTo(24 / 17);
+    expect(breakSeconds(BLOCK.OAK_LOG, tool('stone_axe'))).toBeCloseTo(24 / 2.2);
+    expect(breakSeconds(BLOCK.DIRT, tool('wooden_shovel'))).toBeCloseTo(4.5 / 2.2);
+    expect(breakSeconds(BLOCK.COPPER_ORE, tool('flint_pick'))).toBeCloseTo(32 / 4.4);
+    expect(breakSeconds(BLOCK.TIN_ORE, tool('copper_pick'))).toBeCloseTo(32 / 6.4);
+    expect(TIER_SPEED).toEqual([1, 2.2, 4.4, 6.4, 9, 12.5, 17]);
   });
 
   it('ore drops: malachite 1–2, cassiterite 1 (+25 %), hematite 1–2; natural does not matter for ores', () => {
@@ -290,7 +290,7 @@ describe('the whole ladder, scripted with a real Pack and CraftQueue', () => {
     expect(pack.hasTool('pick', 6)).toBe(true);
     // the iron hammer, not the bronze one, is the one worn by the steel jobs (lowest qualifying tier)
     expect(pack.slots.find((s) => s && s.k === 'iron_hammer').d).toBe(597);
-    expect(breakSeconds(BLOCK.IRON_ORE, tool('steel_pick'))).toBeCloseTo(5 / 6);
+    expect(breakSeconds(BLOCK.IRON_ORE, tool('steel_pick'))).toBeCloseTo(40 / 17);
   });
 
   it('lanes: a kiln job waits past 16 cells and resumes; the hand lane never waits; a broken kiln fails its job and keeps the inputs', () => {
@@ -394,8 +394,8 @@ describe('what the play-test found and the fixes (progression lens)', () => {
     expect(canHarvest(BLOCK.BLOOMERY, null)).toBe(false);
     expect(canHarvest(BLOCK.BLOOMERY, tool('flint_pick'))).toBe(true);
     expect(rollDrops(BLOCK.FORGE, tool('flint_pick'), {}, rnd)).toEqual([{ k: 'forge', n: 1 }]);
-    expect(breakSeconds(BLOCK.KILN, null)).toBe(3);
-    expect(breakSeconds(BLOCK.KILN, tool('flint_pick'))).toBe(1.5);
+    expect(breakSeconds(BLOCK.KILN, null)).toBe(3); // §99: a workplace keeps its hardness (taken up whole, not quarried)
+    expect(breakSeconds(BLOCK.KILN, tool('flint_pick'))).toBeCloseTo(3 / 4.4, 12);
   });
 
   it('useTool picks the lowest qualifying tier, so a copper hammer in the pack is spared when a hammerstone will do', () => {

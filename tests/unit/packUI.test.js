@@ -7,10 +7,12 @@ import {
   rosetteCells, ringsFor, hexToPixel, stripCells, cardLayout, formatSeconds, haveNeedText, haveNeedLevel, countLabel,
   durabilityText, stackTitle, recipeTitle, stationHint, stationName, tabLabel, jobStatusText, toolLabel, toolIconKey,
   filterRecipes, demoPackView, createPackUI, STATION_TABS, CELL_S, searchRecipes, recipeSearchText, treeFactsFromView,
+  makesMany, MAKE_MANY,
 } from '../../src/packUI.js';
 import { buildTreeModel } from '../../src/buildTree.js';
 import { PACK_SLOTS, HOTBAR_SIZE, BASKET_SLOTS, REMAINS_SLOTS } from '../../src/config.js';
-import { isItemKey } from '../../src/items.js';
+import { isItemKey, ITEM_KEYS, stackSize } from '../../src/items.js';
+import { RECIPES } from '../../src/crafting.js';
 import { documentFromHTML, fire } from '../helpers/fakeDom.js';
 
 /** Hex distance of an axial cell from the centre. */
@@ -182,6 +184,23 @@ describe('label formatters', () => {
     }
     expect(v.container).toBeNull();
     expect(demoPackView({ basket: true }).container?.slots).toHaveLength(BASKET_SLOTS);
+  });
+});
+
+describe('§99: ×5 only for what stacks (pure)', () => {
+  it('makesMany: true for an output that stacks, false for a tool, the hammerstone or anything of stack 1', () => {
+    expect(MAKE_MANY).toBe(5);
+    expect(makesMany({ k: 'cord', n: 1 })).toBe(true);
+    expect(makesMany({ k: 'charcoal', n: 1 })).toBe(true);
+    expect(makesMany({ k: 'campfire', n: 1 })).toBe(true);
+    for (const k of ['hammerstone', 'stone_axe', 'wooden_shovel', 'flint_spear', 'steel_pick', 'fire_drill', 'bellows']) {
+      expect(makesMany({ k, n: 1 }), k).toBe(false);
+    }
+    expect(makesMany({ k: 'no_such_item', n: 1 })).toBe(false);
+    expect(makesMany(null)).toBe(false);
+    // every recipe: ×5 exactly when its output stacks
+    for (const r of RECIPES) expect(makesMany(r.outputs[0]), r.id).toBe(stackSize(r.outputs[0].k) > 1);
+    expect(ITEM_KEYS.filter((k) => stackSize(k) === 1).length).toBeGreaterThan(30);
   });
 });
 
@@ -377,12 +396,15 @@ describe('the pack screen on a page', () => {
     expect(spear.querySelector('.card-tool').classList.contains('short')).toBe(true);
     expect(spear.querySelectorAll('.card-badge').map((b) => b.textContent)).toEqual(['3/1', '14/2', '4/1']);
     expect(spear.querySelector('.card-make').hasAttribute('disabled')).toBe(true); // no hammer
+    // §99: a tool is made one at a time — its card has Make and no ×5
+    expect(spear.querySelectorAll('.card-make').map((b) => b.textContent)).toEqual(['Make']);
     // §77: what the thing is for, one line under its name, with the whole line as a tooltip
     expect(spear.querySelector('.card-purpose').textContent).toBe('The hunting weapon: thrust it or throw it.');
     expect(spear.querySelector('.card-purpose').title).toBe('The hunting weapon: thrust it or throw it.');
     expect(root.querySelector('.recipe-card[data-recipe="cord"] .card-purpose').textContent).toBe('Binds every hafted tool.');
     const cord = root.querySelector('.recipe-card[data-recipe="cord"]');
     expect(cord.classList.contains('craftable')).toBe(true);
+    expect(cord.querySelectorAll('.card-make').map((b) => b.textContent)).toEqual(['Make', '×5']);
     const [make1, make5] = cord.querySelectorAll('.card-make');
     make1.click();
     expect(onMake).toHaveBeenLastCalledWith('cord', 1);

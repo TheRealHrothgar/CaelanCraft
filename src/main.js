@@ -94,6 +94,7 @@ import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory
 import { Containers } from './containers.js';
 import {
   breakSeconds, rollDrops, harvestHint, handGatherHint, canHarvest, pick, Tapped, Regrowth, rollMobDrops, ripeOf, isDeep,
+  workTier, digWear, slowHint,
 } from './harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
@@ -2438,6 +2439,8 @@ export function boot(win, doc) {
   let digHit = /** @type {RaycastHit|null} */ (null);
   let digProgress = 0;
   let digAdvanced = false;
+  /** §99: the tier of the tool doing the dig's work (harvest.workTier: 0 the hand), for the body's drain */
+  let digWorkTier = 0;
   let digPackFull = false;
   /** @type {number|null} the action ring's RMB / R-hold progress */
   let useProgress = null;
@@ -2519,6 +2522,7 @@ export function boot(win, doc) {
     player: /** @type {PlayerState|null} */ (null),
     softFactor: 1,
     breaking: false,
+    workTier: 0, // §99
     buried: false,
     climate: /** @type {*} */ (null),
     heat: 0,
@@ -4388,18 +4392,18 @@ export function boot(win, doc) {
     audio.playToolBreak();
   }
 
-  /** The selected tool takes 1 wear (a block broken, a mob hit, §5.3); nothing for a bare hand or a non-tool item. */
   /**
-   * 1 wear on the selected tool (§6.1 step 6): on a dig only a digging tool wears (axe, shovel, pick, knife, hammer), on a
-   * blow everything but the kiln kit — a spear digs nothing and a crucible in the hand must not be used up by digging clay.
-   * @param {'dig'|'strike'} how
+   * `n` wear on the selected tool (§6.1 step 6; §99: a dig wears by harvest.digWear): on a dig only a digging tool wears
+   * (axe, shovel, pick, knife, hammer), on a blow everything but the kiln kit — a spear digs nothing and a crucible in the
+   * hand must not be used up by digging clay. Nothing for a bare hand or a non-tool item.
+   * @param {'dig'|'strike'} how @param {number} [n]
    */
-  function wearSelectedTool(how) {
+  function wearSelectedTool(how, n = 1) {
     const s = pack.slots[selected];
-    if (!s || maxDurability(s.k) === 0) return;
+    if (!s || maxDurability(s.k) === 0 || !(n > 0)) return;
     const tool = pack.toolAt(selected);
     if (how === 'dig' ? !wearsFromDigging(tool) : !wearsFromStriking(tool)) return;
-    const res = pack.damage(selected, 1);
+    const res = pack.damage(selected, n);
     if (res && res.broke) toolBroke(res.key);
   }
 
@@ -4702,8 +4706,12 @@ export function boot(win, doc) {
         const wrong = wrongGroundHint(world.getBlock, selectedKey(), h.q, h.y, h.r);
         if (wrong) return wrong;
       }
-    } else if (brickHit && !canHarvest(brickHit.blockId, selectedTool())) {
-      const need = harvestHint(brickHit.blockId); // §93: a brick says what digs it, like its hex
+      const slow = slowHint(h.blockId, tool); // §99: `Oak Log · slow with a stone axe`
+      if (slow) return slow;
+    } else if (brickHit) {
+      // §93: a brick says what digs it, like its hex (§99: and when that is slow)
+      const tool = selectedTool();
+      const need = canHarvest(brickHit.blockId, tool) ? slowHint(brickHit.blockId, tool) : harvestHint(brickHit.blockId);
       if (need) return need;
     }
     return blockHintText();
@@ -5260,6 +5268,7 @@ export function boot(win, doc) {
     if (!h || !held) return res;
     const finite = Number.isFinite(need);
     if (finite && !res.done && dt > 0) digAdvanced = true;
+    digWorkTier = workTier(h.blockId, tool); // §99: the cruder the tool, the more the work costs the body
     if (res.tick) {
       avatarSwing(); // §91: the arm works at the cell with every dig tick
       audio.playDig(getBlockDef(h.blockId).soundGroup, finite ? 0.35 : 0.15);
@@ -5306,7 +5315,7 @@ export function boot(win, doc) {
     if (!ok) return;
     audio.playBreak(getBlockDef(id).soundGroup);
     flyFromCell(drops, h.q, h.y, h.r);
-    wearSelectedTool('dig');
+    wearSelectedTool('dig', digWear(id, tool)); // §99: the harder the block for the tool, the more it wears
     updateHit();
   }
 
@@ -5326,7 +5335,7 @@ export function boot(win, doc) {
     if (!ok) return;
     audio.playBreak(getBlockDef(id).soundGroup);
     flyStacks(drops, b.px, b.py, b.pz);
-    wearSelectedTool('dig');
+    wearSelectedTool('dig', digWear(id, tool));
     updateHit();
   }
 
@@ -5546,6 +5555,7 @@ export function boot(win, doc) {
     env.player = player;
     env.softFactor = softFactor;
     env.breaking = digAdvanced;
+    env.workTier = digWorkTier; // §99
     env.buried = buried;
     env.climate = sample;
     env.heat = sample.heat;

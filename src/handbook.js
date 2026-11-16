@@ -35,7 +35,7 @@ import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, getItem, itemName } from './i
 import { RECIPES, STATION_IDS, STATION_NAMES, STATION_BLOCKS, getRecipe, inputLabel } from './crafting.js';
 import {
   BLOCK_RULES, PICKABLE, HAND_GATHER, MOB_DROPS, breakSeconds, ruleFor, toolPower, UNDERWATER_DIG_FACTOR, DEEP_BELOW_SEA,
-  GRAVEL_FLINT_P,
+  GRAVEL_FLINT_P, digWear,
 } from './harvest.js';
 import {
   HEAT_SOURCES, DIURNAL_AMPLITUDE, DIURNAL_PEAK_T, ALTITUDE_LAPSE, ALTITUDE_REF_Y, SUN_HEAT, SHELTER_HEAT, SHELTER_BELOW,
@@ -43,7 +43,7 @@ import {
   feltTemperature, bodyTarget, heatAt,
 } from './climate.js';
 import { realSecondsBetween } from './daynight.js';
-import { RATES, DAMAGE_CAUSES, SOFT_LANDING, fallDamage, tempBand } from './vitals.js';
+import { RATES, DAMAGE_CAUSES, SOFT_LANDING, fallDamage, tempBand, WORK_ACTIVITY, fatigueRate, HARD_WORK_LABEL } from './vitals.js';
 import { FIRE_TRANSFORMS, SKEWER_SPOTS } from './cooking.js';
 import {
   ZOMBIE_KINDS, KIND_STATS, RUNNER_P, HORDE_SIZE, HORDE_RADIUS, HORDE_CHECK_S, ALPHA_CONVERT_P, ALPHA_MAX, ALPHA_RALLY, CLIMB,
@@ -891,7 +891,8 @@ function needsTable() {
 }
 
 /** Blocks shown in the break-time table. */
-const BREAK_EXAMPLES = [BLOCK.DIRT, BLOCK.OAK_LOG, BLOCK.STONE, BLOCK.COAL_ORE, BLOCK.COPPER_ORE, BLOCK.TIN_ORE, BLOCK.IRON_ORE, BLOCK.OBSIDIAN];
+const BREAK_EXAMPLES = [BLOCK.DIRT, BLOCK.GRAVEL, BLOCK.CLAY, BLOCK.OAK_LOG, BLOCK.STONE, BLOCK.COAL_ORE, BLOCK.COPPER_ORE,
+  BLOCK.TIN_ORE, BLOCK.IRON_ORE, BLOCK.OBSIDIAN];
 
 /** The break time of block `id` with the right type of tool of `tier` (0 = the hand): seconds, Infinity, or null (no tool). */
 export function exampleBreakSeconds(id, tier) {
@@ -910,6 +911,37 @@ function breakTable() {
   })]);
   return table({ id: 'break', caption: 'Seconds to break, with the right kind of tool', head: ['Block', 'Hand', 'Stone', 'Flint',
     'Copper', 'Bronze', 'Iron', 'Steel'], rows, keys: BREAK_EXAMPLES, source: 'harvest' });
+}
+
+/**
+ * §99: how many blocks `id` a new tool of kind `type` and age `tier` breaks before it breaks itself (the last block
+ * breaks it); null when there is no such tool, Infinity when it cannot break the block.
+ * @param {number} id @param {string} type @param {number} tier @returns {number|null}
+ */
+export function blocksPerTool(id, type, tier) {
+  const key = toolOf(type, tier);
+  if (!key) return null;
+  const t = /** @type {import('./types.js').ToolDef} */ (ITEMS[key].tool);
+  const w = digWear(id, t);
+  return w > 0 && Number.isFinite(breakSeconds(id, t)) ? Math.ceil(t.durability / w) : Infinity;
+}
+
+/** §99 hours of steady work, from rested, before you are Tired, working with a tool of `tier` (0 the hand). */
+export function hoursToTired(tier) {
+  return TIRED_AT / fatigueRate(WORK_ACTIVITY[tier]);
+}
+
+/** §99: what work costs at each age — the drain, the tiredness and how long the tools last. */
+function workTable() {
+  const tiers = [0, 1, 2, 3, 4, 5, 6];
+  const lasts = (/** @type {number} */ id, /** @type {string} */ type, /** @type {number} */ t) => {
+    const n = blocksPerTool(id, type, t);
+    return n === null ? '—' : n === Infinity ? '✕' : String(n);
+  };
+  const rows = tiers.map((t) => [cap(TIER_NAMES[t]), `×${fmtNum(WORK_ACTIVITY[t])}`, `${fmtNum(hoursToTired(t), 0)} h`,
+    lasts(BLOCK.OAK_LOG, 'axe', t), lasts(BLOCK.STONE, 'pick', t), lasts(BLOCK.DIRT, 'shovel', t)]);
+  return table({ id: 'work', caption: 'Work, age by age', head: ['Age', 'Food and water', 'Tired after', 'Axe: logs',
+    'Pick: stone', 'Shovel: dirt'], rows, keys: tiers, source: 'harvest' });
 }
 
 /** The workplaces: what builds each, and the heat it gives off while it works. */
@@ -1690,9 +1722,14 @@ function makeChapters() {
       p('✕ means that tool cannot break it at all; — means there is no tool of that kind in that age.'),
     ],
     [
-      h('Wear'),
-      p('A digging tool (an axe, shovel, pick, knife or hammer) loses one use for every block it breaks, whatever the block, and every blow it lands; a spear or sword wears only on its blows. The hex outline round its slot drains as it wears; at nothing, it breaks.'),
-      p('So choose the right tool: a pick wears just as fast on dirt. The kiln kit (fire drill, crucible, casting mold) wears only in the jobs that need it, never by digging with it in hand.'),
+      ...workTable(),
+      p(`Work costs more with a cruder tool. *Food and water* is how much faster Nourishment and Hydration fall while you dig or chop (standing still is ×1). *Tired after* is the game hours of steady work, from rested, before you are Tired; a day without it takes ${TIRED_AT}. The last columns are the blocks a new tool breaks before it breaks itself.`),
+    ],
+    [
+      h('Wear and hard work'),
+      p(`A digging tool (an axe, shovel, pick, knife or hammer) wears with its work: the harder the block for the tool, the more uses it loses. A Stone Axe loses ${digWear(BLOCK.OAK_LOG, ITEMS.stone_axe.tool ?? null)} on a log, a Flint Axe ${digWear(BLOCK.OAK_LOG, ITEMS.flint_axe.tool ?? null)}; the Wooden Shovel ${digWear(BLOCK.DIRT, ITEMS.wooden_shovel.tool ?? null)} on dirt; leaves, plants and other quick work cost one. Every blow it lands costs one too, and a spear or sword wears only on its blows. The hex outline round its slot drains as it wears; at nothing, it breaks.`),
+      p('A tool on a block that is not its own (a pick on dirt) is no faster than your hand and still loses a use. The kiln kit (fire drill, crucible, casting mold) wears only in the jobs that need it.'),
+      p(`Digging by hand or with a stone tool is hard work: the status says *${HARD_WORK_LABEL}*, and you grow hungry, thirsty and tired fast. Each new age is a real relief.`),
       p('When a job needs a tool, the most worn one of the lowest good-enough age is used, so your best tools last.'),
       p(`Breaking a block with your head under water takes ${fmtNum(UNDERWATER_DIG_FACTOR)} times as long.`),
     ],
@@ -1704,7 +1741,7 @@ function makeChapters() {
       h('Making things'),
       p('Press [E] to open your pack and *Making*. There is no crafting grid: the list shows what you can make from what you carry at the workplaces near you, the things you can make right now first. Recipes for workplaces you have not built are greyed out, so the list doubles as your road map.'),
       p('Search finds a recipe by its name, an input or a workplace. *Build tree* shows what to gather and build to set up each workplace, Work Stump to Lab. Everything made at a workplace wears its colour; a green ring is something you have, a gold one something you can make now. Click anything to find its recipes.'),
-      p(`A workplace counts as near within ${STATION_RANGE} cells (and 2 up or down). Click *Make*, or *×5* for five.`),
+      p(`A workplace counts as near within ${STATION_RANGE} cells (and 2 up or down). Click *Make*, or *×5* for five of what stacks.`),
       p(`Each workplace (your hands, a Work Stump, a Kiln, a Bloomery, the Forge, the Workbench, the Lab) has its own *lane*, and all the lanes work at once. A job takes its inputs only when it finishes, so cancelling costs nothing. Up to ${MAX_CRAFT_JOBS} jobs wait in all.`),
       p(`Once started, a job keeps going while you stay within ${STATION_WORK_RANGE} cells of its workplace: tend the fire, fetch water or dig clay while the Kiln works.`),
     ],

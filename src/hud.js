@@ -162,6 +162,7 @@ export function chipKind(label) {
     case 'Poisoned': return 'sick';
     case 'Wet': return 'wet';
     case 'Tired': case 'Exhausted': case 'Weak': case 'Seeing things': return 'tired'; // §87
+    case 'Hard work': return 'work'; // §99: digging by hand or with a stone tool
     default: return 'other';
   }
 }

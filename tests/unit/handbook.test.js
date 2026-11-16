@@ -9,15 +9,16 @@ import {
   fmtDurationLong, fmtClock, listJoin, numWord, describeDrops, recipeInputs, recipeInputsProse, recipeOutputs, recipeTools,
   toolNeedLabel, firstDayKit, fallSpeedForCells, climateExample, exampleBreakSeconds, temperatureBands,
   FLINT_SEEN, ANIMAL_R, HERD_WORDS, PROSE_KINDS, ELEMENTARY_PARTS, toolPowers, huntTargets, zombieTargets, herdBiomes, lureText, zombieStrike,
-  SPREAD_WORDS, patchCaps, PICKED_WORDS,
+  SPREAD_WORDS, patchCaps, PICKED_WORDS, blocksPerTool, hoursToTired,
 } from '../../src/handbook.js';
 import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, itemName, isItemKey } from '../../src/items.js';
 import { RECIPES, STATION_IDS, STATION_NAMES, inputLabel } from '../../src/crafting.js';
 import {
   BLOCK_RULES, MOB_DROPS, PICKABLE, DEEP_BELOW_SEA, GRAVEL_FLINT_P, SEED_DROPS, FERN_FIBRE_P, breakSeconds, ruleFor, toolPower, pick, rollDrops,
+  digWear,
 } from '../../src/harvest.js';
 import { HEAT_SOURCES, DIURNAL_PEAK_T } from '../../src/climate.js';
-import { RATES, DAMAGE_CAUSES, SOFT_LANDING, fallDamage } from '../../src/vitals.js';
+import { RATES, DAMAGE_CAUSES, SOFT_LANDING, fallDamage, WORK_ACTIVITY, fatigueRate } from '../../src/vitals.js';
 import { FIRE_TRANSFORMS, isSkewerFood } from '../../src/cooking.js';
 import { BLOCK, BIOME, FLINT_SHARE, getBlockDef } from '../../src/blocks.js';
 import {
@@ -373,17 +374,49 @@ describe('handbook: generated tables match the game (§14.1)', () => {
         const cell = row[tier + 1];
         if (s === null) expect(cell).toBe('—');
         else if (s === Infinity) expect(cell).toBe('✕');
-        else expect(Number(cell)).toBeCloseTo(s, 2);
+        else expect(cell).toBe(fmtNum(s));
       }
     }
-    // the §6.3 example times
-    expect(rowOf(t, BLOCK.DIRT)[1]).toBe('0.9');
-    expect(rowOf(t, BLOCK.OAK_LOG)[2]).toBe('2');
-    expect(rowOf(t, BLOCK.STONE)[3]).toBe('1.5');
-    expect(rowOf(t, BLOCK.IRON_ORE)[5]).toBe('1.47');
-    expect(rowOf(t, BLOCK.OBSIDIAN)[3]).toBe('1.25');
+    // the §6.3 example times, §99's ages
+    expect(t.keys).toEqual([BLOCK.DIRT, BLOCK.GRAVEL, BLOCK.CLAY, BLOCK.OAK_LOG, BLOCK.STONE, BLOCK.COAL_ORE, BLOCK.COPPER_ORE,
+      BLOCK.TIN_ORE, BLOCK.IRON_ORE, BLOCK.OBSIDIAN]);
+    expect(rowOf(t, BLOCK.DIRT).slice(1)).toEqual(['4.5', '2.05', '1.02', '0.7', '0.5', '0.36', '0.26']);
+    expect(rowOf(t, BLOCK.OAK_LOG).slice(1)).toEqual(['✕', '10.91', '5.45', '3.75', '2.67', '1.92', '1.41']);
+    expect(rowOf(t, BLOCK.STONE)[3]).toBe('5.45');
+    expect(rowOf(t, BLOCK.IRON_ORE)[5]).toBe('4.44');
+    expect(rowOf(t, BLOCK.OBSIDIAN)[3]).toBe('4.55');
+    expect(rowOf(t, BLOCK.CLAY)[1]).toBe('✕'); // clay needs a shovel
     expect(rowOf(t, BLOCK.STONE)[2]).toBe('—'); // there is no stone pick
     expect(exampleBreakSeconds(BLOCK.STONE, 2)).toBe(breakSeconds(BLOCK.STONE, ITEMS.flint_pick.tool));
+  });
+
+  it('§99 work, age by age: the drain, hours to Tired, and the blocks a new tool lasts', () => {
+    const t = tableById('work');
+    expect(t.source).toBe('harvest');
+    expect(t.head).toEqual(['Age', 'Food and water', 'Tired after', 'Axe: logs', 'Pick: stone', 'Shovel: dirt']);
+    expect(t.keys).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    const cell = (n) => (n === null ? '—' : n === Infinity ? '✕' : String(n));
+    for (let tier = 0; tier <= 6; tier++) {
+      const [age, drain, tired, axe, pick, shovel] = rowOf(t, tier);
+      expect(age.toLowerCase()).toBe(TIER_NAMES[tier]);
+      expect(drain).toBe(`×${fmtNum(WORK_ACTIVITY[tier])}`);
+      expect(tired).toBe(`${fmtNum(TIRED_AT / fatigueRate(WORK_ACTIVITY[tier]), 0)} h`);
+      expect(axe).toBe(cell(blocksPerTool(BLOCK.OAK_LOG, 'axe', tier)));
+      expect(pick).toBe(cell(blocksPerTool(BLOCK.STONE, 'pick', tier)));
+      expect(shovel).toBe(cell(blocksPerTool(BLOCK.DIRT, 'shovel', tier)));
+    }
+    expect(t.rows.map((r) => r[3])).toEqual(['—', '5', '23', '54', '160', '600', '1200']);
+    expect(t.rows.map((r) => r[2])).toEqual(['10 h', '11 h', '13 h', '14 h', '15 h', '15 h', '16 h']);
+    expect(hoursToTired(0)).toBe(10);
+    expect(blocksPerTool(BLOCK.OAK_LOG, 'axe', 1)).toBe(Math.ceil(ITEMS.stone_axe.tool.durability / digWear(BLOCK.OAK_LOG, ITEMS.stone_axe.tool)));
+    expect(blocksPerTool(BLOCK.STONE, 'pick', 1)).toBe(null); // no stone pick
+    expect(blocksPerTool(BLOCK.STONE, 'axe', 2)).toBe(Infinity);
+    // the Wear page quotes the axes' wear on a log, the Making page offers ×5 only for what stacks
+    const text = [...blocks()].filter((x) => x.chapter.id === 'ages' && x.block.kind === 'p').map((x) => plainText(x.block.text)).join(' ');
+    expect(text).toContain(`A Stone Axe loses ${digWear(BLOCK.OAK_LOG, ITEMS.stone_axe.tool)} on a log, a Flint Axe ${digWear(BLOCK.OAK_LOG, ITEMS.flint_axe.tool)}`);
+    expect(text).toContain('Hard work');
+    const making = [...blocks()].filter((x) => x.chapter.id === 'making' && x.block.kind === 'p').map((x) => plainText(x.block.text)).join(' ');
+    expect(making).toContain('×5 for five of what stacks');
   });
 
   it('food values come from ITEMS: every food once, its numbers, sickness and spoiling', () => {

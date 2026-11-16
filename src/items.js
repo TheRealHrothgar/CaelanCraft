@@ -16,8 +16,11 @@ import { BLOCK, BLOCKS, PICKER_ORDER } from './blocks.js';
 export const TIER = Object.freeze({ HAND: 0, STONE: 1, FLINT: 2, COPPER: 3, BRONZE: 4, IRON: 5, STEEL: 6 });
 /** Index = tier. */
 export const TIER_NAMES = Object.freeze(['hand', 'stone', 'flint', 'copper', 'bronze', 'iron', 'steel']);
-/** Dig speed of a tool of the right type, index = tier (the bare hand is 1). */
-export const TIER_SPEED = Object.freeze([1, 1.5, 2, 2.6, 3.4, 4.5, 6]);
+/**
+ * Dig speed of a tool of the right type, index = tier (the bare hand is 1). §99: each age is clearly faster than the
+ * last — a stone tool more than doubles the hand, flint doubles stone, and every metal is about 1.4 times the one before.
+ */
+export const TIER_SPEED = Object.freeze([1, 2.2, 4.4, 6.4, 9, 12.5, 17]);
 /** Every `ToolDef.type`, in the order the tool table first uses them. */
 export const TOOL_TYPES = Object.freeze([
   'hammer', 'axe', 'shovel', 'knife', 'pick', 'spear', 'sword', 'firestarter', 'crucible', 'mold',

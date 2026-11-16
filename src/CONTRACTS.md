@@ -2981,7 +2981,7 @@ Design and rationale: `docs/DESIGN-survival.md` (its §13 Decisions and §14 Han
 
 ```js
 // items.js (imports blocks only; deep-frozen; Map lookups, so '__proto__' is just unknown; throws at import on a duplicate key or name)
-export const TIER /* {HAND 0, STONE 1, FLINT 2, COPPER 3, BRONZE 4, IRON 5, STEEL 6} */, TIER_NAMES, TIER_SPEED /* [1,1.5,2,2.6,3.4,4.5,6] */,
+export const TIER /* {HAND 0, STONE 1, FLINT 2, COPPER 3, BRONZE 4, IRON 5, STEEL 6} */, TIER_NAMES, TIER_SPEED /* §99: [1,2.2,4.4,6.4,9,12.5,17] */,
   TOOL_TYPES, WEAR_SLOT_NAMES /* ['head','body','feet'] */, TAGS /* log, planks, fuel (coal then charcoal), tinder, knapstone, sand */;
 export const ITEMS, ITEM_KEYS   // display order: tools, materials, food, heal, wear, then blocks in PICKER_ORDER order
 export function getItem(key), isItemKey(key), stackSize(key) /* 0 unknown */, maxDurability(key) /* 0 none */, itemForBlock(id),
@@ -3050,6 +3050,9 @@ export function tap(id, selectedKey, knifeInPack) → { gives: 'pot_sap', takes:
 export class Tapped { canTap(key, day), mark(key, day), clear() }          // once per birch cell per game day; not saved
 export class Regrowth { track, untrack, onBlockChange, loadFromEdits(edits), step(dt, random, isLoadedCell) → [{q,y,r,id}], clear, size }
 export const MOB_DROPS; export function rollMobDrops(kind, random), toolPower(tool) /* hand 1 */, ripeOf(id)
+// §99: work costs time, food, water and the tool
+export const WEAR_PER_WORK_S /* 0.75 */, SLOW_HINT_S /* 3 */, SLOW_TIER_MAX /* 1 */
+export function workTier(id, tool) /* 0 hand or no help */, digWear(id, tool) /* uses lost */, slowHint(id, tool) /* string|null */
 ```
 `breakSeconds = max(0.05, h / speed) × (underwater ? 2.5 : 1)`, `speed = TIER_SPEED[tier]` with the rule's tool type, else 1;
 a rule with `tier > 0` needs that tool type of at least that tier (else Infinity: hint `Iron Ore · needs a bronze pick or better`).
@@ -3099,7 +3102,8 @@ BREATH_REFILL_PER_S 5, BODY_TEMP_NORMAL 37, BODY_TEMP_MIN 25 / MAX 45, SICK_MAX_
   heal (pending bandage HP) 0–50. New: 100 / 80 / 80 / 37 / 20. **Waking**: health 60, satiation and hydration max(current, 50),
   37 °C, full breath, dry, well, nothing pending.
 - **Drain** satiation 0.0556 × activity × coldFactor × sickFactor, hydration 0.0833 × activity × heatFactor × sickFactor; activity is
-  the largest of still 1, walking 1.4, breaking 1.8, swimming 2.2, sprinting 2.5. heatFactor and coldFactor are the only temperature
+  the largest of still 1, walking 1.4, breaking (§99: `WORK_ACTIVITY[workTier]`, 3 by hand … 1.5 with steel; was 1.8),
+  swimming 2.2, sprinting 2.5. heatFactor and coldFactor are the only temperature
   terms. **Regeneration** 0.12 HP/s (× 2 still ≥ 3 s within 4 of a burning campfire) needs satiation ≥ 50, hydration ≥ 50, body
   35.5–38.5, not sick, breath > 0; each HP costs 0.25 satiation. Bandages pay out queued HP at 1.5 / 2.5 HP/s whatever else holds.
 - **`statusOf(v, {headInWater, buried}) → { canSprint, moveFactor (≥ 0.6), regen, labels }`** (§2.3 table). Of each pair only the
@@ -3124,7 +3128,7 @@ BREATH_REFILL_PER_S 5, BODY_TEMP_NORMAL 37, BODY_TEMP_MIN 25 / MAX 45, SICK_MAX_
   `eat(key, random) → { ok, message?, returns? }`, `drink(salty, random) → line` (fresh +8 with 1 % Sick; salt −4, "Salt water only
   makes you thirstier." at most once per 5 s), `bandage(key)`, `respawn()`, `setVital(name, v)`, `restoreVitals()`, `export()` (§14
   canonical order, 3 dp, `dead` only while dead) / `import(json)` (null → no state). `DEATH_TITLES` / `deathTitle(cause)`,
-  `BELONGINGS_KEPT`, `BELONGINGS_LOST`. SurvivalEnv = `{ player, softFactor, breaking, moving?, still?, buried, climate: {biome, climateT,
+  `BELONGINGS_KEPT`, `BELONGINGS_LOST`. SurvivalEnv = `{ player, softFactor, breaking, workTier? (§99), moving?, still?, buried, climate: {biome, climateT,
   openSky, underground, groundChill}, heat, nearFire, insulation, sunShade, time, random }`.
 - **Damage sources** (cause keys, `vitals.DAMAGE_CAUSES`): `fall` `0.1·(v² − 14²)` × the softest landing factor under the feet
   (SNOW_BLOCK 0.4, leaves and HAY_BALE 0.6, wool 0.7, SLEEPING_HIDE 0.9) — FALL_SAFE_SPEED 14 (v0.9 play-test; was 13.5): a 3-cell
@@ -3263,7 +3267,7 @@ CONTRACT-ISSUE):** a saved spot is kept when its item can be on that kind of spo
   (the picker's layer; never open together): flat-top hexes — an 18-slot rosette (slots 9–26, ring 1 then ring 2, clockwise from the
   top; pure `rosetteCells`) around a centre info hex, a 9-cell zig-zag hotbar strip, the head / body / feet wear chain and a red discard
   hex; a basket opens as a second rosette replacing the Making panel; Making = station tabs (far ones dimmed), mini-rosette recipe
-  cards (output in the middle, inputs with have/need, the tool chip, time, Make / ×5) and the busy lanes with ✕. **Adjudicated (E):**
+  cards (output in the middle, inputs with have/need, the tool chip, time, Make / ×5 — §99: ×5 only for what stacks) and the busy lanes with ✕. **Adjudicated (E):**
   the centre hex shows the icon with its wear outline; the name and "45/90" sit on the line under the rosette. All item logic stays in
   main, survivalControl and inventory.js; the view is `survivalControl.buildPackView({ pack, selected, cursor, hover, container,
   stations, tab, recipes: crafting.listRecipes(…, { queue }), lanes: craftQueue.lanes(), message? })`; `demoPackView()` is the `?ui=pack`
@@ -7677,3 +7681,189 @@ from its data (food: "+4 Nourishment, +2 Hydration." — never a sick chance, so
 imitates). An item cell is `.picker-cell.picker-item` with `data-item-key`, drawn with `itemIcons`; `onPickBlock(pick,
 slot)` passes the number or the string unchanged. On a window under 900 px tall the rail's buttons are 26 px (§56's 34 px
 above) so all 16 fit. The console's `give <block|item> [slot]` hands out an item too (Creative).
+
+## 99. Work costs time, food, water and the tool — `src/items.js`, `src/harvest.js`, `src/vitals.js`, `src/survival.js` (PURE), `src/packUI.js`, `src/hud.js`, `src/styles.css`, `src/main.js`, `src/handbook.js`
+
+Amends §43 (`TIER_SPEED`), §44 (the hardness of the land's blocks; wear on a dig), §45 (the breaking activity; tiredness),
+§48 (the Making cards), §73 (the guide) and DESIGN-survival §6.3's times. docs/DESIGN-hunting.md §1. The user: "Digging by
+hand should be a long, energy sapping process. Cutting a tree down with a stone axe should also be labor intensive and
+impact axe durability significantly. Flint is better, and so. The difference along each era should be noticeable and a
+strong motivator to level up." **No block, item or recipe is added; nothing new is saved.**
+
+### 99.1 Time: the tier speeds and the hardness
+
+- `breakSeconds` keeps its formula (`max(0.05, h / TIER_SPEED[tier]) × (underwater ? 2.5 : 1)`, the right type of tool,
+  else 1; main still divides by `digFactorOf` when Weak, §87).
+- **`items.TIER_SPEED`** `[1, 2.2, 4.4, 6.4, 9, 12.5, 17]` (was `[1, 1.5, 2, 2.6, 3.4, 4.5, 6]`). A stone tool more than
+  doubles the hand, flint doubles stone, and every metal is about 1.4 times the one before (each at least a quarter less
+  time, tested).
+- **Hardness** (`BlockRule.h`: seconds by bare hand; for a block that needs a tool, what the hand would take). The land's
+  own materials are real work; the made building blocks are harder too, less so. Everything not listed keeps its §44 /
+  §85 / §94 hardness: workplaces and furniture (taken up whole), plants, leaves, litter, the circuit parts, glowstone, the
+  rune block, the beds and barrels.
+
+  | block | was | now |
+  |---|---|---|
+  | Dirt | 0.9 | 4.5 |
+  | Grass Block, Snowy Grass | 1.0 | 5.0 |
+  | Sand, Red Sand | 0.8 | 3.5 |
+  | Gravel (and FLINT_GRAVEL) | 1.2 | 4.0 |
+  | Clay (shovel 1) | 1.4 | 7.0 |
+  | Snow Block | 0.5 | 2.0 |
+  | Ice | 1.0 | 4.0 |
+  | Packed Ice | 2.0 | 16 |
+  | Logs (oak, spruce, birch) | 3.0 | 24 |
+  | Planks (three woods) | 2.0 | 6.0 |
+  | Stone | 3.0 | 24 |
+  | Stone dressed into bricks, hammer 3 (§93 `alt`) | 4.0 | 32 |
+  | Cobblestone, Mossy Cobblestone, Stone Bricks, Mossy Stone Bricks, Bricks | 3.0 | 12 |
+  | Granite, Diorite, Andesite, Slate | 3.5 | 28 |
+  | Sandstone | 2.0 | 16 |
+  | Obsidian | 2.5 | 20 |
+  | Coal Ore | 3.5 | 28 |
+  | Copper Ore, Tin Ore | 4.0 | 32 |
+  | Iron Ore, Gold Ore | 5.0 | 40 |
+  | Diamond Ore | 4.0 | 32 |
+  | Block of Coal; Copper, Gold, Diamond Blocks; Block of Iron | 4; 5; 6 | 16; 20; 24 |
+
+  The tool and tier of every rule are unchanged, so the gates are as before (no stone pick; flint opens stone, coal and
+  copper ore; copper tin; bronze iron; iron gold; steel gems; clay wants the Wooden Shovel).
+- **Seconds to break, with the right kind of tool of each age** (✕ cannot; — no tool of that kind in that age):
+
+  | block | Hand | Stone | Flint | Copper | Bronze | Iron | Steel |
+  |---|---|---|---|---|---|---|---|
+  | Dirt | 4.5 | 2.05 | 1.02 | 0.7 | 0.5 | 0.36 | 0.26 |
+  | Grass Block | 5 | 2.27 | 1.14 | 0.78 | 0.56 | 0.4 | 0.29 |
+  | Sand | 3.5 | 1.59 | 0.8 | 0.55 | 0.39 | 0.28 | 0.21 |
+  | Gravel | 4 | 1.82 | 0.91 | 0.63 | 0.44 | 0.32 | 0.24 |
+  | Clay | ✕ | 3.18 | 1.59 | 1.09 | 0.78 | 0.56 | 0.41 |
+  | Snow Block | 2 | 0.91 | 0.45 | 0.31 | 0.22 | 0.16 | 0.12 |
+  | Ice | 4 | — | 0.91 | 0.63 | 0.44 | 0.32 | 0.24 |
+  | Packed Ice | ✕ | — | 3.64 | 2.5 | 1.78 | 1.28 | 0.94 |
+  | Log | ✕ | **10.91** | **5.45** | 3.75 | 2.67 | 1.92 | 1.41 |
+  | Planks | ✕ | 2.73 | 1.36 | 0.94 | 0.67 | 0.48 | 0.35 |
+  | Stone | ✕ | — | 5.45 | 3.75 | 2.67 | 1.92 | 1.41 |
+  | Cobblestone, bricks | ✕ | — | 2.73 | 1.88 | 1.33 | 0.96 | 0.71 |
+  | Granite (and kin), Coal Ore | ✕ | — | 6.36 | 4.38 | 3.11 | 2.24 | 1.65 |
+  | Sandstone | ✕ | — | 3.64 | 2.5 | 1.78 | 1.28 | 0.94 |
+  | Obsidian | ✕ | — | 4.55 | 3.13 | 2.22 | 1.6 | 1.18 |
+  | Copper Ore | ✕ | — | 7.27 | 5 | 3.56 | 2.56 | 1.88 |
+  | Tin Ore | ✕ | — | ✕ | 5 | 3.56 | 2.56 | 1.88 |
+  | Iron Ore | ✕ | — | ✕ | ✕ | 4.44 | 3.2 | 2.35 |
+  | Gold Ore | ✕ | — | ✕ | ✕ | ✕ | 3.2 | 2.35 |
+  | Diamond Ore | ✕ | — | ✕ | ✕ | ✕ | ✕ | 1.88 |
+  | Stone dressed into bricks (hammer) | ✕ | ✕ | — | 5 | 3.56 | 2.56 | 1.88 |
+
+  A tool of another type counts as the hand (a stone axe digs dirt in 4.5 s). Under water ×2.5, Weak ÷0.7, as before.
+
+### 99.2 Energy: the work's activity, and tiredness (`vitals.js`, `survival.js`)
+
+- **`vitals.WORK_ACTIVITY`** `[3, 2.6, 2.2, 1.9, 1.7, 1.6, 1.5]`, index = the **work tier**: the tier of the tool doing the
+  work (`harvest.workTier(id, tool)`: the tool's tier when it is the block's own tool — the rule's, or the §93 `alt`'s it
+  breaks by — else 0: a bare hand, or a tool that does not help, works like the hand; 0 too for a block it cannot
+  break). `workActivity(tier)`: a value that is not an integer → the hand; clamped to 0..6. It replaces §45's flat
+  breaking 1.8 (`RATES.ACTIVITY_BREAK` is gone): `activityFactor({ breaking, workTier, … })` takes `workActivity(workTier)`
+  for breaking (absent → the hand, 3); the largest factor still wins, so digging by hand (3) outweighs a sprint (2.5).
+  The exertion heat (`climate.activityHeat`, breaking +2) is unchanged.
+- **Tiredness.** `VitalsInput.work` (the work activity while breaking, else 0 or absent). Awake, `stepVitals` adds
+  `dt / GAME_HOUR_S × fatigueRate(work)`, `fatigueRate(w) = 1 + max(0, w − 1) × WORK_TIRES` with **`WORK_TIRES` 0.5** (1
+  when not working). Asleep it counts for nothing (§87 as before).
+- **The numbers** (comfortable weather; the cold, heat and poison factors multiply as ever):
+
+  | work tier | activity | Nourishment / min | Hydration / min | tiredness / hour | hours of steady work, from rested, to Tired (20) |
+  |---|---|---|---|---|---|
+  | none (standing) | 1 | 3.3 | 5.0 | 1 | 20 |
+  | 0 hand | 3.0 | 10.0 | 15.0 | 2.0 | 10 |
+  | 1 stone | 2.6 | 8.7 | 13.0 | 1.8 | 11.1 |
+  | 2 flint | 2.2 | 7.3 | 11.0 | 1.6 | 12.5 |
+  | 3 copper | 1.9 | 6.3 | 9.5 | 1.45 | 13.8 |
+  | 4 bronze | 1.7 | 5.7 | 8.5 | 1.35 | 14.8 |
+  | 5 iron | 1.6 | 5.3 | 8.0 | 1.3 | 15.4 |
+  | 6 steel | 1.5 | 5.0 | 7.5 | 1.25 | 16 |
+
+  Felt within minutes: three minutes of digging by hand cost 30 Nourishment and 45 Hydration (standing still, 10 and 15).
+  Per block: dirt by hand 1.1 Hydration, with the Wooden Shovel 0.44, with flint 0.19; a log with a stone axe 2.4, with
+  flint 1.0, with steel 0.18.
+- **`Hard work`** (`vitals.HARD_WORK_LABEL`): `statusOf(v, { …, work })` adds it after Wet and before the tiredness stage
+  (which stays last) while `work ≥ HARD_WORK_AT` **2.5** — a bare hand or a stone tool; flint is the relief. It changes
+  nothing else. `Survival` keeps `_flags.work` and holds the label **`WORK_LABEL_HOLD_S` 1.5** s after the hard work stops,
+  so it does not flicker between one block and the next; asleep there is no work. `hud.chipKind('Hard work')` → `'work'`;
+  `.chip-work` is an earthy brown (`#8a6e4b`, white text). No sound is added.
+- **`SurvivalEnv.workTier`** (0..6, absent → the hand): main sets it every frame from the dig (99.6).
+
+### 99.3 Wear (`harvest.digWear`)
+
+- A **digging tool** (`DIG_TOOL_TYPES`: axe, shovel, pick, knife, hammer) breaking a block loses:
+  - as the block's own tool (rule or `alt`): `max(1, round(WEAR_PER_WORK_S × h / TIER_SPEED[tier]))`, **`WEAR_PER_WORK_S`
+    0.75**: uses in proportion to the block's hardness over its speed (0.75 a second of its own work);
+  - as any other digging tool: **1** (it takes the knocks without speeding the work: §44's "a pick wears just as fast on
+    dirt" is kept);
+  - 0 for a hand, a tool that never digs (spear, sword, the kiln kit) or a block it cannot break.
+
+  Blows still cost 1 (`wearsFromStriking`, unchanged); crafting wear is unchanged.
+- **Uses lost per block / blocks a new tool breaks** (the last one breaks it: `ceil(durability / wear)`):
+
+  | tool | log (axe) | stone (pick) | dirt (shovel) |
+  |---|---|---|---|
+  | stone: Stone Axe 40, Wooden Shovel 40 | **8 / 5** | — | 2 / 20 |
+  | flint (90) | **4 / 23** | 4 / 23 | 1 / 90 |
+  | copper (160) | 3 / 54 | 3 / 54 | 1 / 160 |
+  | bronze (320) | 2 / 160 | 2 / 160 | 1 / 320 |
+  | iron (600) | 1 / 600 | 1 / 600 | 1 / 600 |
+  | steel (1200) | 1 / 1200 | 1 / 1200 | 1 / 1200 |
+
+  Also: copper ore with a flint pick 5 (18 a pick); clay and grass with the Wooden Shovel 2 (20 a shovel); gravel and
+  sand with it 1; leaves, plants, wool and every quick block 1; the §93 copper hammer dressing stone 4 (40 a hammer).
+
+### 99.4 Feedback: the target hint
+
+`harvest.slowHint(id, tool)` → string | null. Main's `survivalHintText` shows it after the tool-gate hint (`harvestHint`),
+the bare-hand gathering hint (`handGatherHint`: gravel still says `Gravel · hold LMB: dig`) and the wrong-ground seed hint,
+and before `blockHintText` (none of whose blocks is ever slow); a brick shows it like its hex. Only when
+`breakSeconds(id, tool)` > **`SLOW_HINT_S` 3** and the block's rule names a tool type:
+
+- by hand (or a non-tool in hand): `Dirt · slow by hand — a shovel digs much faster`;
+- with a tool that is not the block's own: `Dirt · slow — a shovel digs much faster`;
+- the verbs: shovel digs, axe chops, pick breaks, knife cuts, hammer breaks (`Ice · slow by hand — a pick breaks much
+  faster`);
+- with the block's own tool of tier ≤ **`SLOW_TIER_MAX` 1**: `Oak Log · slow with a stone axe`, `Clay · slow with a wooden
+  shovel` (`gateToolName`). Flint and better: nothing.
+
+Plain words only (§97.2's touch rewrite has no key names to change here). The dig ring already shows the time.
+
+### 99.5 Making ×5 only for what stacks (`packUI.js`)
+
+`packUI.makesMany(out)` = `stackSize(out.k) > 1`; `MAKE_MANY` 5. A recipe card draws the `×5` button (`data-times` 5) only
+when it makes many: a tool, the Hammerstone, the Bellows and anything else of stack 1 has `Make` alone (the card's entry
+holds `make5: null`). There is no keyboard shortcut for ×5. `CraftQueue.enqueue(id, times)` is unchanged: it still queues
+what it is asked (the console, the tests).
+
+### 99.6 main.js
+
+- `digStep`: `digWorkTier = harvest.workTier(h.blockId, tool)` while a dig is held; `stepSurvival`: `env.workTier =
+  digWorkTier` beside `env.breaking = digAdvanced` (the reused env starts with `workTier: 0`).
+- `wearSelectedTool(how, n = 1)`: `pack.damage(selected, n)`, nothing for n ≤ 0. `finishDig` and `finishBrickDig` pass
+  `digWear(id, tool)`; strikes pass 1 as before.
+- `survivalHintText`: `slowHint` as in 99.4.
+
+### 99.7 The guide (`handbook.js`)
+
+- *Tools and the ages*: the break-time table adds Gravel and Clay (10 rows: Dirt, Gravel, Clay, Oak Log, Stone, Coal,
+  Copper, Tin and Iron Ore, Obsidian). A new page, **Work, age by age** (table id `work`, source `harvest`, keys 0..6):
+  Age · Food and water (`×WORK_ACTIVITY`) · Tired after (`hoursToTired(tier)` rounded: "10 h") · Axe: logs · Pick: stone ·
+  Shovel: dirt (`blocksPerTool(id, type, tier)`: null → —, Infinity → ✕), with one paragraph. The Wear page becomes **Wear
+  and hard work**: wear with the work (the Stone and Flint Axe's uses on a log and the Wooden Shovel's on dirt, from
+  `digWear`), a wrong tool no faster and
+  still worn, and the `Hard work` status.
+- *Workplaces and making*: "Click *Make*, or *×5* for five of what stacks."
+- New exports: `blocksPerTool(id, type, tier)`, `hoursToTired(tier)`.
+
+### 99.8 Tests
+
+`tests/unit/harvest.test.js` (the hardness table; the worked times; the §99 time table and the age ladder; `workTier`;
+`digWear` with the logs-to-break counts; `slowHint`), `vitals.test.js` (the activity by tool, the drains per minute, three
+minutes by hand, the fatigue rate and the hours to Tired, the label), `survival.test.js` (the drain by work tier, the
+tiredness per hour, the held label), `packUI.test.js` (`makesMany` over every recipe; a tool's card has no ×5),
+`handbook.test.js` (the break and work tables against the data), `survivalHud.test.js` (the chip), `items.test.js`, and
+`tests/integration/toolLadder.test.js` and `survival.test.js` (the first day: gravel 4 s a cell by hand, the log 10.9 s
+with the stone axe and 8 uses of its wear).

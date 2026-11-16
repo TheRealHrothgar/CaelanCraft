@@ -7,11 +7,11 @@ import { hexToWorld } from '../../src/hex.js';
 import { createPlayer, stepPlayer, supportingCells } from '../../src/physics.js';
 import { resolveBodies } from '../../src/bodies.js';
 import { Pigs, seededRng } from '../../src/pigs.js';
-import { softLandingFactor, fallDamage, createVitals, RATES, DAMAGE_CAUSES } from '../../src/vitals.js';
+import { softLandingFactor, fallDamage, createVitals, RATES, DAMAGE_CAUSES, WORK_ACTIVITY, GAME_HOUR_S } from '../../src/vitals.js';
 import { groundChillOf, heatAt, heatSource, CHEST_HEIGHT } from '../../src/climate.js';
 import {
   Survival, MODES, DEATH_TITLES, deathTitle, SICK_MESSAGE, SALT_MESSAGE, SALT_MESSAGE_GAP_S, DOT_PULSE_HP,
-  BELONGINGS_KEPT, BELONGINGS_LOST,
+  BELONGINGS_KEPT, BELONGINGS_LOST, WORK_LABEL_HOLD_S,
 } from '../../src/survival.js';
 import { flatGetBlock } from '../helpers/fixtures.js';
 
@@ -348,11 +348,16 @@ describe('the step: climate and vitals together (§2, §3, §9.4)', () => {
     };
     const still = at({});
     const walk = at({ moving: true });
-    const brk = at({ breaking: true });
+    const brk = at({ breaking: true }); // §99: no tier said — the bare hand
+    const brkFlint = at({ breaking: true, workTier: 2 });
+    const brkSteel = at({ breaking: true, workTier: 6 });
     const sprint = at({ moving: true }, stander({ sprinting: true }));
     const sprintStill = at({ moving: false }, stander({ sprinting: true })); // pressing into a wall is not sprinting
     expect(walk.drain / still.drain).toBeCloseTo(1.4, 6);
-    expect(brk.drain / still.drain).toBeCloseTo(1.8, 6);
+    expect(brk.drain / still.drain).toBeCloseTo(3, 6);
+    expect(brkFlint.drain / still.drain).toBeCloseTo(2.2, 6);
+    expect(brkSteel.drain / still.drain).toBeCloseTo(1.5, 6);
+    expect(at({ workTier: 0 }).drain).toBeCloseTo(still.drain, 9); // a tier without breaking costs nothing
     expect(sprint.drain / still.drain).toBeCloseTo(2.5, 6);
     expect(sprintStill.drain).toBeCloseTo(still.drain, 9);
     expect(walk.felt - still.felt).toBeCloseTo(1, 9);
@@ -363,6 +368,39 @@ describe('the step: climate and vitals together (§2, §3, §9.4)', () => {
     expect(fast.drain / still.drain).toBeCloseTo(1.4, 6);
     const slow = at({ moving: undefined }, stander({ vx: 0.3 }));
     expect(slow.drain).toBeCloseTo(still.drain, 9);
+  });
+
+  it('§99: work by the tool — the drain, the tiredness and the Hard work label (held a moment between blocks)', () => {
+    const work = (tier, hours) => {
+      const s = started();
+      s.vitals.fatigue = 0;
+      s.step(hours * GAME_HOUR_S, envFor(stander(), flatGetBlock(GROUND), { time: H(14), breaking: true, workTier: tier }));
+      return s;
+    };
+    // an hour of digging by hand adds two hours of tiredness; with steel an hour and a quarter
+    expect(work(0, 1).vitals.fatigue).toBeCloseTo(2, 6);
+    expect(work(1, 1).vitals.fatigue).toBeCloseTo(1.8, 6);
+    expect(work(6, 1).vitals.fatigue).toBeCloseTo(1.25, 6);
+    expect(WORK_ACTIVITY[0]).toBe(3);
+    // the label: on while a bare hand or a stone tool works, held WORK_LABEL_HOLD_S after, never for flint
+    const s = started();
+    const env = envFor(stander(), flatGetBlock(GROUND), { time: H(14), breaking: true, workTier: 1 });
+    s.step(DT, env);
+    expect(s.status.labels).toContain('Hard work');
+    env.breaking = false;
+    s.step(WORK_LABEL_HOLD_S / 2, env);
+    expect(s.status.labels).toContain('Hard work');
+    s.step(WORK_LABEL_HOLD_S, env);
+    expect(s.status.labels).not.toContain('Hard work');
+    env.breaking = true;
+    env.workTier = 2;
+    s.step(DT, env);
+    expect(s.status.labels).not.toContain('Hard work');
+    // asleep there is no work
+    env.workTier = 0;
+    env.sleep = { recover: 4, heal: 0 };
+    s.step(DT, env);
+    expect(s.status.labels).not.toContain('Hard work');
   });
 
   it('regenerates by a campfire twice as fast while standing still for 3 s; walking resets it', () => {
