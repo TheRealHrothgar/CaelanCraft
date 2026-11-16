@@ -385,7 +385,7 @@ describe('the on-screen controls (DOM)', () => {
     ui.update({ playing: true, survival: true, flying: false });
     expect(btn(doc, 'pack').textContent).toBe('Pack');
     expect(btn(doc, 'fly').classList.contains('hidden')).toBe(true);
-    expect(btn(doc, 'sneak').textContent).toBe('Sneak');
+    expect(btn(doc, 'sneak').textContent).toBe('Crouch');
     ui.update({ playing: false, back: true });
     expect(doc.getElementById('touch-ui').classList.contains('hidden')).toBe(true);
     expect(doc.getElementById('touch-back').classList.contains('hidden')).toBe(false);

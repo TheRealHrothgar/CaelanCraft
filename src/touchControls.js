@@ -35,17 +35,42 @@ export const CLICK_SWALLOW_MS = 400;
  */
 export const TOUCH_BUTTONS = Object.freeze({
   jump: Object.freeze({ label: 'Jump', kind: 'jump' }),
-  dig: Object.freeze({ label: 'Dig', kind: 'mouse', button: 0 }), // hold: break, dig, strike (left mouse held)
+  dig: Object.freeze({ label: 'Mine', kind: 'mouse', button: 0 }), // hold: break, dig, strike (left mouse held)
   place: Object.freeze({ label: 'Place', kind: 'mouse', button: 2 }), // tap: place / use; hold: keep using (right mouse)
-  act: Object.freeze({ label: 'R', kind: 'key', code: 'KeyR' }), // the action key (drink, open, feed, …); hold repeats
-  sneak: Object.freeze({ label: 'Sneak', kind: 'sneak', code: 'ShiftLeft' }), // also the Shift of Shift+R, Shift+Q
+  act: Object.freeze({ label: 'Action', kind: 'key', code: 'KeyR' }), // the R key (drink, open, feed, …); hold repeats
+  sneak: Object.freeze({ label: 'Crouch', kind: 'sneak', code: 'ShiftLeft' }), // also the Shift of Shift+R, Shift+Q
   fly: Object.freeze({ label: 'Fly', kind: 'key', code: 'KeyF' }), // Creative only (main ignores it in Survival)
   drop: Object.freeze({ label: 'Drop', kind: 'key', code: 'KeyQ' }),
-  pause: Object.freeze({ label: 'Pause', kind: 'hook', hook: 'onPause' }),
+  pause: Object.freeze({ label: 'Menu', kind: 'hook', hook: 'onPause' }),
   pack: Object.freeze({ label: 'Pack', kind: 'key', code: 'KeyE' }), // Creative: the block picker ("Blocks")
-  view: Object.freeze({ label: 'View', kind: 'key', code: 'KeyV' }),
+  view: Object.freeze({ label: 'Camera', kind: 'key', code: 'KeyV' }),
   chat: Object.freeze({ label: 'Chat', kind: 'key', code: 'KeyT' }),
 });
+/**
+ * Key names in a hint written for the keyboard, and the touch buttons that do the same (§97.2): the R key is Action, Shift
+ * is Crouch, the left mouse button Mine, the right one Place. Applied in order (Shift+R before R).
+ * @type {ReadonlyArray<readonly [RegExp, string]>}
+ */
+const TOUCH_WORDS = Object.freeze([
+  [/\bShift\+R(?: key)?\b/g, 'Crouch + Action'],
+  [/\bShift\+right-click\b/gi, 'Crouch + Place'],
+  [/\bR key\b/g, 'Action button'],
+  [/\bR\b/g, 'Action'],
+  [/\bLMB\b/g, 'Mine'],
+  [/\bRMB\b/g, 'Place'],
+  [/\bright-click\b/gi, 'Place'],
+]);
+
+/**
+ * A hint in the touch buttons' words: "Birch Log · R: tap sap" → "Birch Log · Action: tap sap". PURE.
+ * @param {string} text @returns {string}
+ */
+export function touchWords(text) {
+  let s = String(text);
+  for (const [re, word] of TOUCH_WORDS) s = s.replace(re, word);
+  return s;
+}
+
 /** The right-hand cluster, and the bar at the top left, in DOM order. */
 export const PAD_BUTTONS = Object.freeze(['jump', 'dig', 'place', 'act', 'sneak', 'fly', 'drop']);
 export const TOP_BUTTONS = Object.freeze(['pause', 'pack', 'view', 'chat']);

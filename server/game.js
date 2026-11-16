@@ -14,7 +14,7 @@ import { advanceTime } from '../src/daynight.js';
 import { GEN_LATEST, START_TIME, REACH } from '../src/config.js';
 import { packCell } from '../src/coords.js';
 import {
-  PROTOCOL_VERSION, MAX_PLAYERS, TIME_SYNC_S, POSE_SWING, encode, cleanName, cleanChat, cleanPose, packPose, cleanCell,
+  PROTOCOL_VERSION, MAX_PLAYERS, TIME_SYNC_S, POSE_SWING, REPLACED_REASON, encode, cleanName, cleanChat, cleanPose, packPose, cleanCell,
   cleanBrick,
 } from '../src/protocol.js';
 import { AVATAR_IDS, normalizeAvatarId, DEFAULT_AVATAR } from '../src/avatars.js';
@@ -170,7 +170,7 @@ export class ServerGame {
     this.records.set(player.token, { name: player.name, avatar: player.avatar, pose: { ...player.pose } });
     this.dirty = true;
     this.broadcast({ t: 'leave', id: player.id });
-    if (why === 'replaced') player.socket.close(4001, 'joined again from elsewhere');
+    if (why === 'replaced') player.socket.close(4001, REPLACED_REASON);
     this.log(`${player.name} ${why} (${this.players.size} playing)`);
   }
 

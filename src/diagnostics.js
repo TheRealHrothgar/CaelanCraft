@@ -31,7 +31,7 @@ import { normalizeViewMode } from './viewCamera.js';
  * @property {number|null} time      frozen time of day, clamped to 0..1
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
- * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker, 'pack' the Pack & Making screen (Survival), 'tree' the same with its build tree open (§94), 'device' the device panel on a demo Clockwork Timer (v0.10)
+ * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker, 'pack' the Pack & Making screen (Survival), 'tree' the same with its build tree open (§94), 'device' the device panel on a demo Clockwork Timer (v0.10), 'pause' the pause menu
  * @property {'vortex'|'circuits'|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar Charge 8 cells ahead 2 s
  *   after loading; 'circuits' builds the §4.14 worked examples ahead (readSceneParam, circuitSceneWrites)
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
@@ -271,7 +271,7 @@ function readUiParam(params) {
   const t = readString(params, 'ui');
   if (t === null) return null;
   const v = t.toLowerCase();
-  return v === 'console' || v === 'editor' || v === 'picker' || v === 'pack' || v === 'tree' || v === 'device' ? v : null;
+  return v === 'console' || v === 'editor' || v === 'picker' || v === 'pack' || v === 'tree' || v === 'device' || v === 'pause' ? v : null;
 }
 
 function readClampedInt(params, name, lo, hi) {

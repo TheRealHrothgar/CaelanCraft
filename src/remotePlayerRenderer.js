@@ -15,8 +15,11 @@ const TAG_Y = PLAYER_HEIGHT + 0.45;
 const TAG_W = 1.6;
 const TAG_H = 0.4;
 
+/** The name tag's type: the menus' rounded face (§97). */
+const TAG_FONT = '600 32px ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif';
+
 /**
- * A name tag: white text on a dark rounded plate, always facing the camera, drawn over nothing nearer.
+ * A name tag: white words on a capsule of dark glass with a light rim (the menus' look, §97), always facing the camera.
  * @param {Document} doc @param {string} name
  */
 function makeTag(doc, name) {
@@ -25,18 +28,24 @@ function makeTag(doc, name) {
   canvas.height = 64;
   const g = canvas.getContext('2d');
   if (g) {
-    g.font = 'bold 34px system-ui, sans-serif';
-    const w = Math.min(248, g.measureText(name).width + 28);
-    g.fillStyle = 'rgba(20, 16, 12, 0.6)';
+    g.font = TAG_FONT;
+    const w = Math.min(250, g.measureText(name).width + 36);
     const x = (256 - w) / 2;
-    g.beginPath();
-    if (typeof g.roundRect === 'function') g.roundRect(x, 8, w, 48, 12);
-    else g.rect(x, 8, w, 48);
+    const capsule = () => {
+      g.beginPath();
+      if (typeof g.roundRect === 'function') g.roundRect(x, 9, w, 46, 23);
+      else g.rect(x, 9, w, 46);
+    };
+    capsule();
+    g.fillStyle = 'rgba(20, 22, 32, 0.55)';
     g.fill();
-    g.fillStyle = '#fff8e8';
+    g.lineWidth = 2;
+    g.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    g.stroke();
+    g.fillStyle = '#ffffff';
     g.textAlign = 'center';
     g.textBaseline = 'middle';
-    g.fillText(name, 128, 33, 236);
+    g.fillText(name, 128, 33, 230);
   }
   const map = new THREE.CanvasTexture(canvas);
   map.colorSpace = THREE.SRGBColorSpace;

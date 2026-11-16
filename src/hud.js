@@ -310,6 +310,7 @@ const PICKER_OPEN = 'picker-open';
  * @property {() => boolean} isPickerOpen
  * @property {(on: boolean) => void} setCrosshairVisible
  * @property {(text: string|null) => void} setTargetHint              persistent one-line hint under the crosshair (null hides it)
+ * @property {(fn: ((text: string) => string)|null) => void} setHintWords  rewrite every hint (touch: the buttons' words, §97.2)
  * @property {(level: number) => void} setHurtFlash                   red screen-edge vignette 0..1 (a zombie's strike, §39)
  * @property {(level: number, kind?: 'white'|'void') => void} setFlashOverlay   the black hole's screen flash (#flash-overlay,
  *   created before the crosshair when index.html has none): opacity = level 0..1 in 1/32 steps, hidden at 0, white or void;
@@ -603,10 +604,12 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
   // ---------------------------------------------------------------- target hint
   /** @type {string|null} */
   let lastHint = null;
+  /** @type {((text: string) => string)|null} rewrites every hint (touch mode: the buttons' words for the keys) */
+  let hintWords = null;
 
   /** Called every frame; only touches the DOM on change. @param {string|null} text */
   function setTargetHint(text) {
-    const s = text == null || text === '' ? null : String(text);
+    const s = text == null || text === '' ? null : hintWords ? hintWords(String(text)) : String(text);
     if (s === lastHint) return;
     lastHint = s;
     if (s === null) {
@@ -1247,6 +1250,11 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     isPickerOpen,
     setCrosshairVisible,
     setTargetHint,
+    /** @param {((text: string) => string)|null} fn  every hint from now on goes through it (null: as written) */
+    setHintWords: (fn) => {
+      hintWords = typeof fn === 'function' ? fn : null;
+      lastHint = undefined; // the next hint is drawn again
+    },
     setHurtFlash,
     setFlashOverlay,
     addChatLine,

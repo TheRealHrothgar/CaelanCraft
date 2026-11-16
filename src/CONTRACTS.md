@@ -7389,15 +7389,15 @@ and button presses and calls the sink (the Controls above). `createTouchUI(doc, 
 | Stick | the left half: it appears where the thumb lands (a faint rim rests bottom left) | analog forward / strafe. Nothing inside `STICK_DEAD` 0.12 of `STICK_RADIUS` 60 px, then linear to full at the rim; from `STICK_SPRINT` 0.9 of the radius, pointing within about 45° of straight ahead (`STICK_SPRINT_COS` 0.7), it sprints at full speed. The knob stays on the rim; lifting stops |
 | Look | a drag anywhere that is not a button (the right half; also the left half while the stick is held) | turns by `TOUCH_LOOK_SENSITIVITY` **0.005** rad per CSS px: dragging right turns right, dragging up looks up, as the mouse does. No inertia |
 | Jump | right cluster, the corner | held = Space: jumps, rises while flying, paddles up in water |
-| Dig | right cluster | held = the left mouse button held: breaks, digs, strikes |
+| Mine (§97: was Dig) | right cluster | held = the left mouse button held: breaks, digs, strikes |
 | Place | right cluster | the right mouse button: a tap places or uses, held keeps using |
-| R | right cluster | the R key (drink, open, feed, …); held repeats |
-| Sneak | right cluster | a TOGGLE on the ground, lit while on; while flying it is held to go down and reads "Down", and taking off clears the toggle. It is the Shift of Shift+R (a part's panel, a rune's editor), Shift+right (place against a control) and Shift+Q (drop the stack) |
+| Action (§97: was R) | right cluster | the R key (drink, open, feed, …); held repeats |
+| Crouch (§97: was Sneak) | right cluster | a TOGGLE on the ground, lit while on; while flying it is held to go down and reads "Down", and taking off clears the toggle. It is the Shift of Shift+R (a part's panel, a rune's editor), Shift+right (place against a control) and Shift+Q (drop the stack) |
 | Fly | right cluster, Creative only (hidden in Survival) | the F key: flight on or off (main ignores it in Survival); lit while flying |
 | Drop | right cluster | the Q key |
-| Pause | top bar | main's `pause()` (the pause menu) |
+| Menu (§97: was Pause) | top bar | main's `pause()` (the pause menu) |
 | Pack | top bar | the E key: the pack in Survival; reads "Blocks" and opens the block picker in Creative |
-| View | top bar | the V key: first person, behind, in front |
+| Camera (§97: was View) | top bar | the V key: first person, behind, in front |
 | Chat | top bar | the T key: the console (a tap on its field brings up the keyboard) |
 | Back | top left, only over the block picker and the console | closes them: an iPad has no Esc |
 | Hotbar | the hotbar itself | a tap on a slot is that slot's digit key (`hotbarCode`) |
@@ -7518,8 +7518,8 @@ SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16), `cleanCell` / `cleanBrick` (inte
   place, a door, a lever; never a shadow); `placeBrickAt` / `breakBrick` send `brick`. The server's `cells` are applied with
   `World.applyServerCell` (a loaded cell at once; else an edit kept for that chunk), its `bricks` with `setBrick`; under
   any menu the world is still updated so they show. `time` sets the clock (unless ?time). Saving does nothing ("The server
-  saves this world"); Quit leaves at once; the pause menu's physics, zombie, device and mode switches and Undo say "On a
-  server the host’s world decides that"; rune blocks neither run nor open their editor. T opens the chat: a line is said
+  saves this world"); Quit leaves at once; the pause menu's physics, zombie, device and mode switches and Undo are not
+  shown on a server (§97.3; their handlers still say "On a server the host’s world decides that"); rune blocks neither run nor open their editor. T opens the chat: a line is said
   to everyone (`<name> text` in the chat lines), a `/command` is refused. The pause menu's world line says "· on a server".
 - **The others** (`RemotePlayers`): each one's poses (12 kept) are drawn `REMOTE_DELAY_S` (0.12 s) in the past,
   interpolated (yaw the short way round); `remotePlayerRenderer` gives each one an avatar renderer of their avatar, an
@@ -7528,3 +7528,65 @@ SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16), `cleanCell` / `cleanBrick` (inte
   it does not).
 - **Leaving**: Quit to Title closes the connection; a lost or refused connection returns to the title with the reason
   ("Left the server: …" / "Could not join: …").
+
+## 97. Glass: the menus and the tablet controls — `src/styles.css`, `index.html`, `src/touchControls.js`, `src/hud.js`, `src/remotePlayerRenderer.js`, `src/net.js`, `src/protocol.js`, `server/game.js`, `src/main.js`, `src/diagnostics.js`
+
+The menus, the title screen and the tablet controls take one look, after Apple's Liquid Glass: translucent layers that blur
+and brighten the world behind them, a light rim along the top edge, soft depth below, rounded type, and honey as the one
+accent. The survival screens keep their honey hexagons (the pack, the handbook, the death screen, the Survival hotbar).
+
+Why not a UI framework: the leading game-UI kits are engine-native (Coherent Gameface, NoesisGUI, RmlUi, Unity UI
+Toolkit) and do not run in a browser page; the emergent web one for three.js, pmndrs/uikit (with an Apple Vision Pro–like
+"apfel" kit), draws its panels in WebGL, where nothing can blur the world behind a panel without an extra render pass, and
+its text fields do not bring up the iPad keyboard the way a DOM field does. Liquid Glass's defining trait — the blurred,
+brightened world behind the glass — is exactly CSS `backdrop-filter` over the canvas. So the menus stay DOM (with every
+test that drives them) and the look is a small set of tokens and rules in styles.css. SVG refraction (`backdrop-filter:
+url(#…)`) is Chromium-only, and Safari parses it and draws nothing, so it is not used.
+
+### 97.1 The tokens and the rules
+
+- `:root` (once): `--ui-font` (ui-rounded → SF Pro Rounded on Apple devices, then Nunito, Segoe UI, system-ui),
+  `--glass-dark`, `--glass-panel` (a dark tinted gradient: white words stay legible over sky and over dirt),
+  `--glass-button`, `--glass-button-hover`, `--glass-control` (a tablet button over the world), `--glass-rim`,
+  `--glass-rim-soft`, `--glass-shine` (inset top highlight), `--glass-depth` (soft drop shadow), `--glass-text-dim`,
+  `--glass-text-faint`, `--honey`, `--honey-tint`, `--honey-rim`, `--honey-solid` (the primary button's fill).
+- Every `backdrop-filter` is written twice, `-webkit-backdrop-filter` with the same LITERAL value (Safari reads only the
+  prefixed one, and a custom property does not resolve inside it); `tests/unit/glass.test.js` holds every rule to it.
+- No glass where it cannot be drawn (`@supports not (backdrop-filter…)`: a solid dark tint) or is not wanted
+  (`prefers-reduced-transparency: reduce`: solid, no blur).
+- `.mc-button` everywhere is a glass button (rounded 14 px, the rounded type; `.toggle` a pill, honey-tinted while on,
+  dark while `.off`; `.danger` red on hover). `.hex-button` stays a honey hexagon except inside `#pause-menu` and
+  `#title-screen`, where it is a glass capsule. Panels: the pause menu's `.menu-panel` (a 500 px sheet, radius 30), the
+  Worlds and Play together panels, `.dialog-panel`, `.console-panel`, `.picker-panel`; the Creative `#hotbar` is a glass
+  tray with a white-and-honey selected slot; the chat lines are small glass chips; "Click to play" a glass capsule.
+- The title screen lays a soft sky over its dirt (`#title-screen::before`, behind the panels). Play together is one
+  compact band (its name and the server's line on the left, the name box and a honey Join on the right; stacked under
+  620 px). On a tablet the Guide and Avatar buttons sit side by side.
+
+### 97.2 The tablet controls
+
+The buttons say what they do: **Jump, Mine, Place, Action, Crouch, Fly, Drop**, and along the top **Menu, Pack (Blocks in
+Creative), Camera, Chat** (`TOUCH_BUTTONS`; the ids are unchanged). Round buttons are dark glass with a sheen; pressed is
+honey, latched (Crouch on, flying) a honey ring. The top bar is one glass capsule of words, 44 px tall; Back is a glass
+capsule. The stick's hexagon is a light rim on dark glass with a white glass knob (honey while sprinting). In touch mode
+the hints use the same words: `hud.setHintWords(touchWords)` rewrites every hint — "R" → "Action" ("R key" → "Action
+button"), "Shift+R" → "Crouch + Action", "LMB" → "Mine", "RMB" and "right-click" → "Place" — whole words only, so a name
+with an R in it is untouched. The key sheets (title and pause menu) are not shown on a tablet, nor the picker's key hint.
+Remote players' name tags are white words on a dark glass capsule with a light rim.
+
+### 97.3 The pause menu on a server
+
+Under `html.on-server` (set when the welcome arrives, cleared on leaving) the pause menu shows **Playing here** (you, then
+the others by name; `#pause-players`, refreshed on pausing and on every join and leave), Back to Game (honey), You
+(Avatar, View), Sound, the Guide and **Leave Server** — and not Save World, Stop All Rune Scripts, Physics, Undo,
+Creatures, Mode, Devices or the seed: the host's world decides those. The console is the chat: "Say something to
+everyone…", "Enter: send · Esc: close", in the rounded type. `?ui=pause` (with ?autoplay or ?join) opens the pause menu
+for screenshots.
+
+### 97.4 Joining again
+
+A connection that drops while playing (Wi-Fi, an iPad that slept, the server restarting) is joined again by itself:
+back to the title, "Connection lost: joining again… (n of 3)", and the same name again after `REJOIN_GAP_S` (2 s), up to
+`REJOIN_TRIES` (3) — `net.shouldRejoin(reason, { refused, inWorld, tries })`. Never after a refusal (full, another
+version) or when this browser joined again elsewhere (`REPLACED_REASON`, "joined again from elsewhere", the server's 4001
+close: two tabs would take turns for ever); a first join that fails is not retried. Leaving by the menu never rejoins.

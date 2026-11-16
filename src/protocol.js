@@ -24,6 +24,9 @@ export const MAX_CLIENT_MESSAGE = 16 * 1024;
 /** Most players on one server (phase 1: a family; phase 4 makes it configurable). */
 export const MAX_PLAYERS = 8;
 
+/** Why the server closes a connection whose browser joined again (another tab, a reload): never rejoined by itself. */
+export const REPLACED_REASON = 'joined again from elsewhere';
+
 /** Pose flag bits. */
 export const POSE_FLYING = 1;
 export const POSE_SNEAKING = 2;

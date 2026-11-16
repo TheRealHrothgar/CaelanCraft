@@ -128,6 +128,8 @@ say Tower built"></textarea>
     <div class="menu-panel">
       <h2 class="menu-title">Game Paused</h2>
       <div id="pause-world" class="menu-subtitle hidden"></div>
+      <!-- §97.3: on a server, who is playing (main fills it; CSS shows it only under html.on-server) -->
+      <div id="pause-players" aria-live="polite"></div>
       <button id="btn-resume" class="mc-button">Back to Game</button>
       <!-- Avatars and the view (CONTRACTS §91): who you are, and V's view. avatarMenu.js keeps both labels. -->
       <div id="pause-you" class="physics-row">

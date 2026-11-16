@@ -6,7 +6,7 @@
 // the other players' recent poses and gives each one's pose a little in the past, interpolated, so they move smoothly
 // between the server's 15 updates a second.
 import {
-  PROTOCOL_VERSION, WS_PATH, INFO_PATH, POSE_SWING, encode, decode, cleanName, cleanChat, cleanPose,
+  PROTOCOL_VERSION, WS_PATH, INFO_PATH, POSE_SWING, REPLACED_REASON, encode, decode, cleanName, cleanChat, cleanPose,
 } from './protocol.js';
 
 /** Remote players are drawn this far in the past (s), between the two poses that surround that moment. */
@@ -15,6 +15,23 @@ export const REMOTE_DELAY_S = 0.12;
 const POSE_BUFFER = 12;
 /** The browser's key for this browser's player token (the server knows a returning player by it). */
 export const TOKEN_KEY = 'caelancraft:v2:mp-token';
+
+/** A dropped connection is joined again by itself this many times (§97.4), this far apart (s). */
+export const REJOIN_TRIES = 3;
+export const REJOIN_GAP_S = 2;
+
+/**
+ * Join again by itself after the connection closed (§97.4)? Yes for a connection that dropped while playing (Wi-Fi, an iPad
+ * that slept, the server restarting) and for the rejoins that follow it, up to REJOIN_TRIES; never after a refusal (full,
+ * another version) or when this browser joined again elsewhere (two tabs would take turns forever).
+ * @param {string} reason  why it closed
+ * @param {{ refused: boolean, inWorld: boolean, tries: number }} s  `tries`: rejoins already made since it dropped
+ * @returns {boolean}
+ */
+export function shouldRejoin(reason, s) {
+  if (s.refused || reason === REPLACED_REASON || s.tries >= REJOIN_TRIES) return false;
+  return s.inWorld || s.tries > 0;
+}
 
 /**
  * The WebSocket address of the server that served this page, or of `?server=host[:port]`.

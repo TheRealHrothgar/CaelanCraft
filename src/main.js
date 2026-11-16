@@ -61,7 +61,7 @@ import {
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer, fogRangeForRenderDistance } from './renderer.js';
 import { createControls } from './controls.js';
-import { createTouchUI, detectTouchMode, TOUCH_RENDER_DISTANCE } from './touchControls.js'; // touch (multiplayer §5, §95)
+import { createTouchUI, detectTouchMode, touchWords, TOUCH_RENDER_DISTANCE } from './touchControls.js'; // touch (§95, §97)
 import { createHUD, createFlashState, flashStep } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
@@ -139,7 +139,9 @@ import { createPhantomRenderer } from './phantomRenderer.js';
 import { loadAvatarPref, saveAvatarPref, avatarById } from './avatars.js';
 import { AvatarMotion } from './avatarMotion.js';
 import { createAvatarRenderer } from './avatarRenderer.js';
-import { NetClient, RemotePlayers, probeServer, serverWsUrl, playerToken } from './net.js';
+import {
+  NetClient, RemotePlayers, probeServer, serverWsUrl, playerToken, shouldRejoin, REJOIN_TRIES, REJOIN_GAP_S,
+} from './net.js';
 import {
   POSE_HZ, POSE_FLYING, POSE_SNEAKING, POSE_ON_GROUND, POSE_SWING, POSE_SWIMMING, unpackPose, unflatten4, cleanName,
   cleanChat,
@@ -1207,6 +1209,7 @@ export function boot(win, doc) {
     phantomRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     avatarRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     hud = createHUD(doc, atlasCanvas);
+    if (touchOn) hud.setHintWords(touchWords); // §97.2: "R: open" reads "Action: open" on a tablet
     controls = createControls(canvas, doc);
     if (touchOn) controls.setTouchMode(true); // touch (multiplayer §5, §95): no pointer lock; play holds a virtual one
     audio = createAudio();
@@ -1430,6 +1433,38 @@ export function boot(win, doc) {
   let netSwing = false;
   /** Server cells are being applied: onBlockChanged must not send them back. */
   let applyingServer = false;
+  /** The name the server gave us (the welcome's `you`). */
+  let netYouName = '';
+  /** The name we last joined under, and the rejoins tried since the connection dropped (§97.4). */
+  let netJoinName = '';
+  let netRejoins = 0;
+  /** The server refused us (a full server, another version): never rejoined by itself. */
+  let netRefused = false;
+  /** The console's own words, put back when the chat turns into the console again. */
+  const consoleWords = (() => {
+    const input = /** @type {HTMLInputElement|null} */ (doc.getElementById('console-input'));
+    const hint = doc.querySelector('#console .console-hint');
+    return { input, hint, placeholder: input ? input.placeholder : '', hintText: hint ? hint.textContent : '' };
+  })();
+
+  /** On a server or not: the pause menu's rows, the console as the chat (§96.3, §97.3). @param {boolean} on */
+  function setOnServer(on) {
+    doc.documentElement.classList.toggle('on-server', on);
+    if (consoleWords.input) consoleWords.input.placeholder = on ? 'Say something to everyone…' : consoleWords.placeholder;
+    if (consoleWords.hint) consoleWords.hint.textContent = on ? 'Enter: send · Esc: close' : consoleWords.hintText;
+  }
+
+  /** The pause menu's "Playing here" list: you first, then the others by name. */
+  function refreshPausePlayers() {
+    const el = doc.getElementById('pause-players');
+    if (!el) return;
+    el.textContent = '';
+    if (!net) return;
+    const head = doc.createElement('b');
+    head.textContent = 'Playing here';
+    const others = remotes.list().map((p) => p.name).sort((a, b) => a.localeCompare(b));
+    el.append(head, doc.createTextNode([`${netYouName || 'You'} (you)`, ...others].join(' · ')));
+  }
   /** The local clock for the remote poses (s). */
   const netNow = () => now() / 1000;
 
@@ -1451,6 +1486,8 @@ export function boot(win, doc) {
       return;
     }
     audio.resume();
+    netJoinName = name;
+    netRefused = false;
     net = new NetClient({
       url: serverWsUrl(win.location, params.server), WebSocketImpl, name: cleanName(name, ''),
       avatar: avatarId, token: playerToken(netStorage),
@@ -1482,12 +1519,24 @@ export function boot(win, doc) {
     remotes.clear();
     remoteRenderer.clear();
     serverPanel.setBusy(false);
-    if (world && state !== STATE.TITLE) {
-      quitToTitle(); // the reason is said in the Play together panel
-      serverPanel.setMessage(`Left the server: ${reason}`, true);
-    } else {
-      serverPanel.setMessage(`Could not join: ${reason}`, true);
+    const inWorld = world !== null && state !== STATE.TITLE;
+    // §97.4: a dropped connection (Wi-Fi, an iPad that slept) is joined again by itself, a few times; a refusal, or this
+    // browser joining from another tab, never is.
+    const rejoin = shouldRejoin(reason, { refused: netRefused, inWorld, tries: netRejoins });
+    if (inWorld) quitToTitle(); // the reason is said in the Play together panel
+    setOnServer(false);
+    if (rejoin) {
+      netRejoins++;
+      serverPanel.setMessage(`Connection lost: joining again… (${netRejoins} of ${REJOIN_TRIES})`);
+      serverPanel.setBusy(true);
+      win.setTimeout(() => {
+        serverPanel.setBusy(false);
+        if (!disposed && !net && state === STATE.TITLE) joinServer(netJoinName);
+      }, REJOIN_GAP_S * 1000);
+      return;
     }
+    netRejoins = 0;
+    serverPanel.setMessage(`${inWorld ? 'Left the server' : 'Could not join'}: ${reason}`, true);
   }
 
   /** @param {any} m one message from the server @param {number} t */
@@ -1497,6 +1546,9 @@ export function boot(win, doc) {
         if (state !== STATE.TITLE) return;
         const w = m.world && typeof m.world === 'object' ? m.world : {};
         worldName = cleanName(w.name, 'Server');
+        netYouName = m.you && typeof m.you.name === 'string' ? cleanName(m.you.name) : '';
+        netRejoins = 0;
+        setOnServer(true);
         remotes.clear();
         for (const p of Array.isArray(m.players) ? m.players : []) if (Number.isInteger(p.id)) remotes.join(p, t);
         serverPanel.setBusy(false);
@@ -1532,13 +1584,18 @@ export function boot(win, doc) {
         if (!Number.isInteger(m.id)) return;
         remotes.join(m, t);
         logLine(`${cleanName(m.name)} joined the game`);
+        refreshPausePlayers();
         return;
       case 'leave': {
         const rp = remotes.map.get(m.id);
         remotes.leave(m.id);
         if (rp) logLine(`${rp.name} left the game`);
+        refreshPausePlayers();
         return;
       }
+      case 'refused':
+        netRefused = true;
+        return;
       case 'time':
         if (Number.isFinite(m.time) && params.time == null) time = wrapTime(m.time);
         if (Number.isFinite(m.day)) day = Math.max(1, Math.floor(m.day));
@@ -6239,13 +6296,17 @@ export function boot(win, doc) {
   }
 
   /**
-   * `?ui=console|editor|picker|pack|device` with autoplay: open the console, place a rune block three cells ahead and open its
+   * `?ui=console|editor|picker|pack|device|pause` with autoplay (pause: the pause menu): open the console, place a rune block three cells ahead and open its
    * editor, open the block picker, the pack screen (Survival) or the device panel on a demo Clockwork Timer (screenshots).
    */
   function showDebugUi() {
     if (!params.ui || !runner || !player || params.smoke) return; // a modal would stall the smoke sequence
     if (params.ui === 'picker') {
       openPicker();
+      return;
+    }
+    if (params.ui === 'pause') {
+      pause();
       return;
     }
     if (params.ui === 'device') {
@@ -6355,6 +6416,11 @@ export function boot(win, doc) {
     menus.setZombiesState(zombies.enabled);
     menus.setModeState(survival.mode); // §1.1 the Mode switch
     menus.setDeviceSwitches(deviceSwitches()); // v0.10 the Devices row
+    if (net) { // §97.3: the server keeps the world; the menu says who is here
+      const quit = doc.getElementById('btn-quit');
+      if (quit) quit.textContent = 'Leave Server';
+      refreshPausePlayers();
+    }
     doSave(false);
   }
 
@@ -6449,7 +6515,9 @@ export function boot(win, doc) {
     if (net) {
       net.close();
       net = null;
+      netRejoins = 0;
     }
+    setOnServer(false);
     remotes.clear();
     remoteRenderer.clear();
     if (runner) runner.reset();
