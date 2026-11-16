@@ -53,6 +53,11 @@ describe('view modes (V)', () => {
     expect(parseParams('').avatarMenu).toBe(false);
     expect(parseParams('?ui=avatars').avatarMenu).toBe(true);
     expect(parseParams('?ui=avatars').ui).toBeNull(); // not one of the ?autoplay ui aids
+    // ?hold=<item>: an item that is not a block, any case; anything else null
+    expect(parseParams('?hold=iron_pick').hold).toBe('iron_pick');
+    expect(parseParams('?hold=Steel_Sword').hold).toBe('steel_sword');
+    for (const bad of ['', 'stone', 'grass', 'nonsense', '7']) expect(parseParams(`?hold=${bad}`).hold, bad).toBeNull();
+    expect(parseParams('').hold).toBeNull();
   });
 
   it('the mode is a stored preference: first person by default; first person removes the key', () => {

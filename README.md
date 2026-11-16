@@ -157,6 +157,8 @@ panel (**Shift+R** on it) says where it comes from.
 | `?ui=device` | With `?autoplay=1`: place a Clockwork Timer ahead and open its settings panel (use with `?nosave=1`) |
 | `?ui=pause` | With `?autoplay=1` (or `?join=`): open the pause menu (screenshots) |
 | `?server=host:port` / `?join=Name` | Offer that game server on the title screen (default: the server that served the page), or join it at once under that name — with `?autoplay=1` straight into play (`server/README.md`, CONTRACTS §96) |
+| `?view=front` / `?avatar=annabelle` | This visit's view (`first`, `third` — from behind — or `front`) and avatar (`caelan`, `brayden`, `annabelle`); nothing is stored. `?ui=avatars` opens the Avatar chooser (over the title screen, or with `?autoplay=1` over the pause menu) (CONTRACTS §91) |
+| `?hold=iron_pick` | In Creative, once the world has loaded: put that item (a tool, a weapon, food… by its key) in the selected hotbar slot, as the console's `give` does — to see it in the first-person hand and on the avatar (screenshots; use with `?nosave=1`) |
 | `?ui=sounds` | Open the Sound Test at once (no world needed): every sound of the game with a button that plays it, and ambience scenes. Also under `Esc` → Sound → Sound Test |
 | `?scene=vortex` / `?scene=circuits` | With `?autoplay=1`: set off a Collapsar Charge 8 cells ahead 2 s after loading, or build the worked circuit examples (a doorbell, a timed keg, a switch and igniter, a dusk lamp) 10 cells ahead (use with `?nosave=1`); with `?smoke=1` the self-test checks them |
 | `?mode=survival` / `?mode=creative` | With `?autoplay=1` or `?smoke=1`: the first world's mode. A saved world older than Survival is not upgraded from a URL (use `Esc` → Mode) unless `?nosave=1` |

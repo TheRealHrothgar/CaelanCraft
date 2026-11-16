@@ -20,7 +20,8 @@ import { paintSlot } from './atlas.js';
 import { BLOCK, TILE, getFaceTile } from './blocks.js';
 import { heldItemGeometry } from './heldItem.js';
 import { HEX_SIZE, FACE_TOP } from './hex.js';
-import { buildPilot, buildHand, STYLES, KIDS, HAIR_OPTIONS, HAIR_LABELS } from './pilotModels.js';
+import { buildPilot, buildHand, STYLES, HAIR_OPTIONS, HAIR_LABELS } from './pilotModels.js';
+import { avatarById } from './avatars.js';
 
 /** @typedef {import('./pilotModels.js').PilotModel} PilotModel */
 
@@ -225,7 +226,7 @@ const pilotStats = (m, extra = '') => `${fmt(m.tris)} tris${extra} · atlas ${m.
 const ROWS = {
   avatar: {
     title: 'Avatars — Caelan, Brayden, Annabelle',
-    note: 'faceted heads with a face plane; hair C1 (a poofy mop), B1 (a side sweep), A1 (long waves); ?row=hair for all six options',
+    note: 'faceted heads with a face plane; hair C2 (a tousled mop), B1 (a side sweep), A1 (long waves); ?row=hair for all six options',
     target: [0, 0.9, 0], dist: 5.0, far: 9, az: 0.42, second: 'back',
     today() {
       const scene = stage({ blocks: [[-2.2, 1.6]] });
@@ -240,7 +241,7 @@ const ROWS = {
         t += trianglesOf(av.group);
         scene.add(blobShadow(0.42, x));
       });
-      return { scene, stats: `${fmt(Math.round(t / 3))} tris each · a 128×128 sheet page each (16,384 px), nearest · ~9 draws` };
+      return { scene, stats: `${fmt(Math.round(t / 3))} tris each (the game's avatarRenderer) · a 256×256 atlas each · ~9 draws` };
     },
     pilot(style) {
       const scene = stage({ blocks: [[-2.2, 1.6]] });
@@ -555,8 +556,8 @@ function layoutHair(top) {
     const scene = stage({ blocks: [] });
     const m = buildPilot(id, 'hex', { hair: opt });
     scene.add(pilotMesh(m), blobShadow(0.4));
-    const K = KIDS[id];
-    const target = [0, K.head.y + K.head.h * 0.55 - 0.05, 0];
+    const def = avatarById(id);
+    const target = [0, (def.head.y + def.head.h * 0.55) * def.scale - 0.05, 0];
     views.forEach(([name, az], k) => {
       const rect = [k * pw + 2, y0 + 26, pw - 4, rh - 30];
       panels.push({ scene, cam: orbit(target, 1.35, az, 0.06, rect[2] / rect[3]), rect });

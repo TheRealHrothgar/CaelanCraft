@@ -63,7 +63,8 @@ and plants get a level of detail.
 0. **Pilot passes 2–3** (heads, hair, plants), reviewed and picked by the user. Done.
 1. **Avatars and the first-person hand.** The three avatars' data grows hair, head and hand parts (`avatars.js`); the
    renderer builds them from the kit over a painted atlas; the chooser's portraits come from it; the held item (§98.4)
-   sits in the new fist; remote players get the same models.
+   sits in the new fist; remote players get the same models. Done (CONTRACTS §91, §98.4): `avatarModel.js` and `figureKit.js`
+   build any avatar bone by bone; the first-person hand is `FP_HAND`; `avatarSkin.js` and the box models are gone.
 2. **Zombies, the Watcher, the phantom.** Repainted atlases with the night-glow layer in step; instanced per part.
 3. **Pigs and animals.** Every species, sex, shorn, tame and young variant from the kit, textured.
 4. **Plants.** Model plants in the chunk mesher with per-vertex atlas UVs and a plant atlas, with a level of detail.

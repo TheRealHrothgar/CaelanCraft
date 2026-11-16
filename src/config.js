@@ -466,7 +466,6 @@ export const LIGHT_VOLUME_RECENTRE = 8;             // … re-centred once the c
 export const LIGHT_VOLUME_MIN_S = 0.25;             // … and refilled at most this often when the light changes
 // ---- Avatars and the third-person view (§91). Physics is unchanged: every avatar has the one collider (PLAYER_HEIGHT,
 // PLAYER_WIDTH) and the eye at EYE_HEIGHT; only the drawn model differs.
-export const AVATAR_TEXEL = 1 / 32;                 // metres per texel of an avatar's skin (the zombies' scale; the terrain's is 1/16)
 export const VIEW_BOOM_LENGTH = 4;                  // third person: the camera stands this far from the eye along the look …
 export const VIEW_BOOM_MARGIN = 0.2;                // … this much short of the first solid or opaque cell in the way …
 export const VIEW_BOOM_SPREAD = 0.2;                // … found by a ray to the camera and four to a square this far round it

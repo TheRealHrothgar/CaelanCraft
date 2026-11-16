@@ -103,10 +103,13 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/zombies.js` | PURE, zombies: spawning, AI, daylight, hits (§39) | zombies | `tests/unit/zombies.test.js` |
 | `src/zombieRenderer.js` | three, instanced four-prism zombie models (§39.2) | zombies | `tests/unit/zombieRenderer.test.js` |
 | `src/avatars.js` | PURE, the avatars as data, the avatar preference (§91) | avatars | `tests/unit/avatars.test.js` |
-| `src/avatarSkin.js` | PURE, the avatars' pixel-art sheet, rig, front picture and portraits (§91) | avatars | `tests/unit/avatars.test.js` |
+| `src/modelKit.js` | PURE, the model kit: closed faceted solids, transforms, merges, atlas uvs (§91.2) | characters | `tests/unit/modelKit.test.js` |
+| `src/paintKit.js` | PURE, the paint kit: seeded RGBA painters and a padded atlas (§91.2) | characters | `tests/unit/paintKit.test.js` |
+| `src/figureKit.js` | PURE, what figures share: the Skin atlas, the hex shapes, faceted heads, hair (§91.2) | characters | `tests/unit/avatarModel.test.js` |
+| `src/avatarModel.js` | PURE, the avatars' hex-faceted models bone by bone, their atlases, the first-person hand (§91.2, §91.4) | characters | `tests/unit/avatarModel.test.js` |
 | `src/avatarMotion.js` | PURE, the avatar's walk, look, swing and stances (§91) | avatars | `tests/unit/viewCamera.test.js` |
 | `src/viewCamera.js` | PURE, the view modes, their preference, the third-person boom (§91) | avatars | `tests/unit/viewCamera.test.js` |
-| `src/avatarRenderer.js` | three, the avatar's model and the first-person arm (§91) | avatars | `tests/unit/avatarRenderer.test.js` |
+| `src/avatarRenderer.js` | three, the avatar's model, the first-person hand, the item in hand and the chooser's portraits (§91, §98.4) | avatars, characters | `tests/unit/avatarRenderer.test.js` |
 | `src/avatarMenu.js` | DOM, the Avatar chooser and the pause menu's View button (§91) | avatars | `tests/unit/avatarRenderer.test.js` |
 | `src/watcher.js` | PURE, the Hollow Watcher: sightings, placement, vanishing, traces (§40) | watcher | `tests/unit/watcher.test.js` |
 | `src/watcherRenderer.js` | three, the Watcher's figure — hollow hex rings, hex lantern with fog-free lights, smoke wisp — and its shader pre-warm (§40.4) | watcher | `tests/unit/watcherRenderer.test.js` |
@@ -241,13 +244,15 @@ storage                            → … + circuitStore
 audio                              → … + circuitSounds
 main                               → … + all of the above (vortexRenderer and circuitRenderer import three)
 # §91 avatars and the third-person view (all leaf-ward; still acyclic):
-avatars                            → config
-avatarSkin                         → avatars
+avatars                            → (nothing)
+modelKit, paintKit                 → (nothing)
+figureKit                          → modelKit, paintKit
+avatarModel                        → modelKit, paintKit, figureKit, avatars
 avatarMotion                       → config
 viewCamera                         → config, blocks, raycast
-avatarRenderer                     → three, config, avatars, avatarSkin, lightShader, prewarm
-avatarMenu                         → avatars, avatarSkin
-diagnostics                        → … + avatars, viewCamera (the ?avatar= and ?view= params)
+avatarRenderer                     → three, config, avatars, avatarModel, avatarMotion, lightShader, prewarm, heldItem
+avatarMenu                         → avatars
+diagnostics                        → … + avatars, viewCamera, creativePicks (the ?avatar=, ?view= and ?hold= params)
 main                               → … + avatars, avatarMotion, avatarRenderer, avatarMenu, viewCamera, physics (isUnderSurface)
 ```
 
@@ -6923,70 +6928,89 @@ and a fake clock; `put`, `ticks`) and `reload(env)` (a fresh Circuits over the s
     no 'ignite' reseeder, §33.4.3).
 38. (v0.10) On a hex, cells on neighbouring side faces touch. Any rule or test about "the two sides" of a device must name its faces.
 
-## 91. Avatars and the third-person view — `src/avatars.js`, `src/avatarSkin.js`, `src/avatarMotion.js`, `src/viewCamera.js` (PURE), `src/avatarRenderer.js` (three), `src/avatarMenu.js` (DOM), `src/main.js`, `src/controls.js`, `src/diagnostics.js`, `src/menus.js`, `src/handbook.js`, `src/config.js`, `index.html`, `src/styles.css`
+## 91. Avatars and the third-person view — `src/avatars.js`, `src/avatarModel.js`, `src/figureKit.js`, `src/modelKit.js`, `src/paintKit.js`, `src/avatarMotion.js`, `src/viewCamera.js` (PURE), `src/avatarRenderer.js` (three), `src/avatarMenu.js` (DOM), `src/main.js`, `src/controls.js`, `src/diagnostics.js`, `src/menus.js`, `src/handbook.js`, `src/config.js`, `index.html`, `src/styles.css`
 
-The player has an **avatar** they can see: their own arm in first person, and their whole self from behind or from in front
+The player has an **avatar** they can see: their own hand in first person, and their whole self from behind or from in front
 (the key **V**). Three avatars to start, chosen on the title screen or in the pause menu: **Caelan**, **Brayden** and
 **Annabelle**. Customisable skins and wardrobes come later: an avatar is DATA, so a new one (or a new look for one) is an
 entry in `AVATARS`, not new code. The game is played by a child: everything here is cheerful, and nothing is frightening.
+
+**The look** (docs/DESIGN-characters.md, phase 1; style A, HEX-FACETED, chosen by the user): limbs and torsos are tapered
+hexagonal columns with flat facets, the head a faceted loft with a flat face plane, hair a poofy mass or a scalp cap with big
+swept clumps, hands and shoes chamfered blocks — every part a closed solid over one painted 256² atlas (cloth weave, denim,
+knit, seams, stitching, a face with irises and catchlights), drawn with linear filtering and mipmaps. Not boxes in pixel art.
 
 **Unchanged (normative).** An avatar is only how the player LOOKS. Physics is the same for all of them: the one collider
 (`PLAYER_HEIGHT` 1.8, `PLAYER_WIDTH` 0.56), the eye at `EYE_HEIGHT` 1.62 (`SNEAK_EYE_HEIGHT` sneaking), speeds, reach. Aiming,
 the block highlight, digging, placing, striking, the R key, throws and every mob's view of the player go from the EYE along
 the look, in every view mode: only the camera moves. Nothing is added to the save: the avatar and the view are the player's
-own preferences, the same in every world.
+own preferences, the same in every world. The ids, names, order, heights, `normalizeAvatarId`, the preferences and the
+server's `avatar` field (§96) are the same as before the new look.
 
 ### 91.1 The avatars as data (`avatars.js`, PURE)
 
-`AVATARS` (frozen, chooser order): `{ id, displayName, blurb, height, body, hair, outfit, palette }`. `AVATAR_IDS`,
-`DEFAULT_AVATAR` `'caelan'`, `normalizeAvatarId(v)` (one of the ids, any case, trimmed; else null), `avatarById(id)` (the
-default for an unknown id), `avatarHeight(def)` (metres: `leg.h + waist.h + chest.h + max(head.h, hair.box.y + hair.box.h)`
-texels × `AVATAR_TEXEL` **1/32**; `height` equals it to within a texel).
+`AVATARS` (frozen, chooser order): `{ id, displayName, blurb, height, scale, body, head, hair, hands, outfit, palette }`.
+`AVATAR_IDS`, `DEFAULT_AVATAR` `'caelan'`, `normalizeAvatarId(v)` (one of the ids, any case, trimmed; else null),
+`avatarById(id)` (the default for an unknown id), `avatarHeight(def)` = (`head.y` + `head.h` + `hair.crown`) × `scale`
+(metres; `height` equals it to within 1/32 m).
 
-- `body`: boxes `{ w, h, d }` in whole texels (w across, h tall, d deep; the model faces −Z): `head`, `chest` (shoulder to
-  shoulder), `waist` (narrower for a tapered build), `leg`, `upperArm`, `foreArm` (its last `hand` rows are the hand), and
-  `legGap` (texels between the legs).
-- `hair`: `style` `'poofy' | 'silky' | 'longWavy'`; `box` — the hair layer round the head (its own texel size, its bottom
-  `y` texels up the head, centred on it); `tufts` (poofy: boxes placed from the bottom centre of the head, `x, y, z`, turned
-  `rx`, `rz`); `back` (long hair: a panel down the back, its top `top` texels above the shoulders, hanging from the torso).
-- `outfit`: `kind` `'tee' | 'dress'`; `top` (the tee's or the dress's cloth, [light, mid, dark]), `trim`, `detail`
-  (`'stripe' | 'pocket' | 'collar'`), `sleeve` (texels of the upper arm the sleeve covers), `bottom` (a tee's trousers),
-  `sash`, `skirt` (a flared box over the upper legs), `skirtUp`, `socks` (a dress), `shoes` ([upper, sole, accent?]).
-- `palette`: `skin` [light, mid, dark, deep], `hair` [highlight, light, mid, dark], `eyes` [iris, deep], `brows`, `mouth`,
-  `blush`, `lashes?`. Colours are 0xRRGGBB, sRGB.
+- `body` — the BUILD in metres (the model faces −Z, its feet at the origin, x to its right; it is drawn at `scale`, so the top
+  of its hair is `height`): `legX` (each leg's middle), `ankle` (the leg's lower end), `leg { rx, rz, len }` (ankle to the hip
+  joint), `hips { y0, y1, rx, rz }` (the seat), `torso { y0, h, rx, rz }`, `neck { y0, y1, r }`, the right `shoulder`, `elbow`
+  and `wrist` at rest ([x, y, z]; the left mirrors them), `upper { rx, rz }`, `fore { rx, rz }`.
+- `head` — `{ y (the chin), h, rx, rz, eyeAt, eyeX, eyeW, mouthAt, noseAt }`.
+- `hair` — `{ style: 'poofy'|'silky'|'longWavy', cut, crown }`: a cut of its style (avatarModel `HAIR_CUTS`: poofy **C1**
+  cloud | **C2** tousled; silky **B1** side sweep | **B2** curtain; longWavy **A1** long waves | **A2** low ponytail) and how far
+  it stands over the top of the head.
+- `hands` — `palm`, `fingers`, `thumb` ([w, h, d]), and `fpCuff`: in first person, where the sleeve's cuff sits (a share of
+  the forearm from the wrist).
+- `outfit` — `kind` `'tee'|'dress'`; `top` [light, mid, dark], `trim`, `detail` `'stripe'|'pocket'|'collar'`, `sleeve` (the share
+  of the upper arm it covers), `puff?` (a short sleeve standing out ×), `cuffAt?` (a long sleeve pushed up: its cuff, a share of
+  the forearm from the wrist); a tee's `bottom` [l, m, d], `fabric` `'denim'|'cloth'`, `belt`; a dress's `sash`, `skirt { y0,
+  y1, r0, r1 }` (pleated, waist to hem), `socks { color, up }`; `shoes { style: 'sneaker'|'laceup'|'strap', size, colors:
+  [upper, sole, flash?] }`.
+- `palette` — `skin` [light, mid, dark, deep], `hair` [highlight, light, mid, dark], `eyes` [iris, deep], `brows`, `mouth`,
+  `blush`, `lashes?`, `freckles?`. Colours are 0xRRGGBB, sRGB.
 
-| avatar | height | build (texels) | look |
+| avatar | height | scale | look |
 |---|---|---|---|
-| Caelan | 1.625 m | head 14, chest 18 × 10 × 9 over a 14-wide waist (tapered), legs 19 | a young boy: olive skin, dirty-blonde POOFY hair (a hair box bigger than the head and five tufts sticking out), green-blue-grey eyes; a green tee with a white stripe, jeans, white sneakers |
-| Brayden | 1.781 m | head 13, chest 15 × 10 × 7 (narrow shoulders), legs 25, arms 23 | a tall slender boy: fair skin, SILKY auburn hair with a fringe swept to one side, brown eyes; a blue tee with a pocket, khaki trousers, brown shoes |
-| Annabelle | 1.719 m | head 14, chest 18 × 11 × 10 over a 16 × 8 × 9 waist (solid), legs 21 | a taller sturdy girl: fair skin, golden-blonde LONG WAVY hair (the layer frames her face; a panel falls to mid-back), blue eyes with lashes; a rose dress with a round white collar, a sash with a bow at the back, a pleated flared skirt with a white hem, white socks, red shoes |
+| Caelan | 1.625 m | 0.955 | a young boy, tapered (shoulders over a narrower seat): a MILD OLIVE skin (light #ead0b0, mid #dab894; its shadows a muted olive-brown, never grey or orange), a few freckles, a dirty-blonde POOFY mop (C2: one faceted mass, never locks, taller at the front), green-blue-grey eyes; a green long-sleeved tee with a white stripe, its sleeves pushed up to a knit cuff, jeans with a belt, white sneakers with a red flash |
+| Brayden | 1.781 m | 0.972 | a tall slender boy (narrow shoulders, long legs and arms): fair skin, SILKY auburn hair in a side sweep (B1: smooth panels from a parting across the brow), brown eyes; a blue tee with a pocket and short sleeves, khaki trousers, brown leather lace-ups |
+| Annabelle | 1.719 m | 1.009 | a taller sturdy girl: fair skin, golden-blonde LONG WAVY hair (A1: a fringe, a framing lock each side, a curtain of six waving ribbons to mid-back), blue eyes with lashes; a rose dress with puffed sleeves, a round white collar, a sash with a bow at the back, a pleated skirt with a white hem, white socks, red strap shoes |
 
-Brayden and Annabelle are visibly taller than Caelan; every avatar is at most `PLAYER_HEIGHT` tall (tufts aside).
+Brayden and Annabelle are visibly taller than Caelan; every avatar is at most `PLAYER_HEIGHT` tall.
 
 **The preference.** `AVATAR_PREF_KEY` `'caelancraft:v2:avatar'` (localStorage; the id). `loadAvatarPref(storage)` → the
 stored id, else `DEFAULT_AVATAR` (no store, an unknown id, a store that throws); `saveAvatarPref(storage, id)` stores a known
 id, never throws, returns whether it did. Main passes the store the Ambience switch uses (§82): `null` under `?nosave`.
 
-### 91.2 The skins (`avatarSkin.js`, PURE)
+### 91.2 The models (`avatarModel.js`; the kit: `figureKit.js`, `modelKit.js`, `paintKit.js` — PURE)
 
-`paintAvatarSheet(avatars = AVATARS)` → `{ width: SHEET_W 128, height: PAGE_H 128 × avatars, data, pages: { [id]: { page,
-layout } } }`: one RGBA sheet (sRGB bytes, row 0 at the top), one page per avatar, the same bytes every call. `avatarParts(def)`
-names the boxes (head, hair, chest, waist, leg, upperArm, foreArm, tuft0…, back, skirt); `layoutParts(parts)` packs their
-unwraps on a page, tallest first, in rows (a `RangeError` when they do not fit); `faceRect(part, face)` is the zombies' unwrap
-(§74: top and bottom side by side over right, front, left, back; seen from outside x runs to the viewer's right).
-
-- Body parts are painted SOLID. The hair layer, the tufts and the long-hair panel have alpha 0 wherever there is no hair: the
-  layer's front is open under the fringe (the face shows through), its bottom is clear, a long panel's lower edge is wavy.
-- **Faces** (`faceLayout(head)`): eyes on row `round(h / 2)` — on each side a white column (`EYE_WHITE`) outside a 2 × 2 iris
-  in the avatar's eye colour with a sparkle at its top outer texel and the darker `eyes[1]` pupil at its bottom inner one;
-  the two eyes are mirror images about the middle; brows in `brows` two rows up; a nose shadow; a small smile (two rows: the
-  corners a row higher); rosy cheeks; ears on the sides. No detailed realism.
-- Hair textures: poofy — soft two-texel curls; silky — long light runs with a strand line every fourth column and a sheen;
-  long wavy — strands running down that sway side to side. Cloth: flat colour with a few soft folds, never grimy.
-- `avatarRig(def)` (texels): `legX`, `hipY`, `waistH`, `chestH`, `torsoH`, `neckY`, `shoulderX` = (chest.w + upperArm.w) / 2,
-  `shoulderY` = torsoH − upperArm.w / 2 (from the hips), `upperL`, `foreL`, `hairY`, `tufts`, `back` (centre from the hips),
-  `skirt`. `restBoxes(def)`: every box's centre at rest (model space, origin at the feet). `frontPicture(def, sheet, crop)`:
-  the figure from straight in front, one texel a pixel; `portrait(def, sheet)`: head and shoulders on a square (the chooser).
+- **The kit.** `modelKit.js` makes closed, outward-wound solids in typed arrays (n-gon lofts, prisms and pyramids — six sides,
+  flat facets — chamfered boxes, wedges, sweeps along a curve, transforms, merges, atlas uvs). `paintKit.js` paints RGBA
+  pictures from a seed (cloth, denim, knit, skin, hair strands, stone; seams, hems, stitches; faces) and packs them on an
+  atlas with gutters bled for the mipmaps. `figureKit.js` is what figures share: `Skin` (one model's atlas: rectangles asked
+  for by name — a strip round a column and its caps, a box's faces, a plain picture — packed tallest first, painted once),
+  `shapes(STYLES.hex)` (columns, chamfered blocks, nubs), the faceted head (`HEAD_CORNERS`, `KID_HEAD`, `headSkin` paints the
+  face on its front plane, `addHead` adds a nose wedge and hex ears) and the hair (`hairMass` a mass or cap laid off the head
+  so the skull never shows, `clump` a swept ribbon lying on it, `hairline`, `CAP_YAWS`, `CAP_RINGS`).
+- `paintAvatar(def)` → the `Skin`: the same bytes for the same entry; `AVATAR_ATLAS` **256**.
+- `buildAvatarModel(def, { cut?, parts? })` → `{ id, cut, bones, rig, fp, image, tris, hairTris, texels, atlas }`. `bones`: ONE
+  geometry per bone (`AVATAR_BONES`), each in its joint's frame and scaled: `hips` (the seat; a skirt), `torso` (with the
+  neck, a sash and a bow), `head` (the head, nose, ears and hair), `hairBack` (long hair's back curtain or ponytail; null for
+  short hair), `legL`/`legR` (the leg, a trouser cuff, the shoe — toes turned out a little), `upperL`/`upperR` (the upper arm,
+  a puffed sleeve), `foreL`/`foreR` (the forearm, a pushed-up sleeve's cuff, the hand: a palm block, a finger block curled
+  in, a thumb wedge). Every part is a closed solid wound outward. About 1.4k (Caelan) to 2.1k (Annabelle) triangles;
+  `hairTris` at most 900. `cut` builds another cut of the same style (a cut of another style is a `RangeError`); `parts`
+  keeps every part on its own (tests).
+- `rig` (metres, scaled; the right side, the left mirrors x): `hipY` (the hip joints: the hips' and the torso's origin),
+  `legX`, `shoulder` (from the hips), `elbow` (from the shoulder), `head` (the head's pivot, `HEAD_PIVOT` 0.12 of the head's
+  height over the chin, from the hips; the back hair's too), `grip` (where a haft passes through the right fist, from the
+  elbow), `lieY` (lying on its back, the hips this high: the back of the head and the shoulders on the ground, the hair
+  sinking in a little, a skirt and long back hair pressed flat), `height` (the top of the hair), `scale`.
+- `avatarModel(def)` builds once per definition and returns the same model after (the renderers share it);
+  `restPlacements(rig)` and `restGeometry(model)` put the bones at rest (the gallery, tests); `hairGaps(def, cut?)` counts
+  head corners showing through the hair (0 for every cut).
 
 ### 91.3 Motion (`avatarMotion.js`, PURE)
 
@@ -7002,32 +7026,64 @@ nothing (a paused world).
   eases after it at `AVATAR_BODY_TURN` **5**/s (×2 while moving faster than 0.5 m/s) and is pulled along so the head is
   never turned more than `AVATAR_HEAD_YAW_MAX` **0.9** from it (`headYaw` = look − body).
 - **Swing**: `AVATAR_SWING_S` **0.3** s; the right arm reaches forward by `SWING_REACH` 1.9 × sin(π s^0.7) and turns in; the
-  torso turns toward it. `fpSwing` is the swing's progress 0..1 (−1 between swings) for the first-person arm.
+  torso turns toward it. `fpSwing` is the swing's progress 0..1 (−1 between swings) for the first-person hand; `fpBobX`,
+  `fpBobY` its bob while walking.
 - **Stances**, each easing in: sneaking (on the ground) leans the torso 0.5 rad forward and lowers the hips 8 cm; swimming
   (in water, not standing) tips the body forward up to 1.2 rad with flutter kicks and a stroke; flying spreads the arms a
   little; riding sits (both legs 1.3 rad forward, spread); asleep (§87) the body lies on its back (`bodyPitch` π/2).
 
-### 91.4 The model and the first-person arm (`avatarRenderer.js`, three)
+### 91.4 The model and the first-person hand (`avatarRenderer.js`, three)
 
-`createAvatarRenderer(scene)` → `{ setAvatar(id), avatarId(), setHeld(key), heldKey() (§98.4), sync(frame), group, armGroup, prewarm(webgl, camera),
-dispose() }`. Every avatar's model and arm are built at once over ONE texture (the sheet: nearest, no mipmaps, sRGB); one
-model and one arm are shown at most.
+`createAvatarRenderer(scene)` → `{ setAvatar(id), avatarId(), setHeld(key), heldKey() (§98.4), sync(frame), group, armGroup,
+prewarm(webgl, camera), dispose() }`. One model and one hand are shown at most.
 
-- **The model**: plain skinned boxes (`avatarBox`, UVs inset 0.02 texel, the front is −Z) at `AVATAR_TEXEL` a texel, one
-  `MeshLambertMaterial` (`alphaTest` 0.5) — so the light volume (§62) lights it exactly like the animals: it darkens in a cave
-  and a torch or a fire lights it. Joints: the root at the feet turned by `bodyYaw`; the hips at `hipY` (lowered by `hipDrop`;
-  0.1 m over the feet on a horse; lying, half the head's — or the back's with long hair — depth over the ground), tipped by
-  `bodyPitch`; the legs from (±legX, 0); a skirt hangs from the hips (a dress caps the leg swing at `SKIRT_LEG_SWING` 0.42 so
-  the legs stay inside it); the torso (waist, chest, the long-hair panel) leans by `lean`; the arms from the shoulders, the
-  forearm from the elbow; the head (with the hair layer and the tufts) turned by `headYaw` and nodded by `headPitch`
-  (less the torso's lean). About 9 draw calls.
-- **The arm**: the avatar's right upper arm (sleeve) and forearm (hand) with their own skin, placed in CAMERA space each frame
-  at `FP_ARM` (shoulder (0.45, −0.25, −0.32) m, held forward and a little out), bobbing with the walk (`fpBobX`, `fpBobY`) and
-  swinging up and in on `fpSwing`. Its material is the model's with `patchObjectShader` (§62) plus: the light is read from the
-  light volume at the EYE (`caelArmEye`), and `gl_Position.z = mix(−w, z, FP_DEPTH 0.02)` squeezes its depth to the front of
-  the range — always in front of the world, still hiding its own far side. `renderOrder` `FP_RENDER_ORDER` 10, never
-  frustum-culled. Program key `'caelancraft-avatar-arm'`. It adds no light: it is prewarmed with the others (§72).
-- `sync({ x, y, z, pose, showModel, showArm, camera?, eyeX?, eyeY?, eyeZ? })`.
+- **Shared resources.** `avatarAssets(def)` builds an avatar's resources the first time it is shown, ONCE per definition for
+  the page: its bones' geometries, its first-person hand's (`arm`, `grip`, `relaxed`), its atlas texture (sRGB,
+  `LinearFilter` / `LinearMipmapLinearFilter` with mipmaps, anisotropy 4) and the model's material. Every renderer — the
+  player's and each other player's (§96) — makes only groups and meshes over them; `dispose()` frees the renderer's own
+  things (the first-person materials, the held items' geometries), never the shared ones (`disposeAvatarAssets()`, tests).
+- **The model**: `avatar-<id>` (built when first shown), one mesh per bone hung from today's joints — the root at the feet
+  turned by `bodyYaw`; `avatar-hips` at `hipY` (lowered by `hipDrop`; `RIDE_HIP_Y` 0.1 m over the feet on a horse; lying, `lieY`
+  + `LIE_LIFT` 0.01), tipped by `bodyPitch`, with the seat (and a skirt: a dress caps the leg swing at `SKIRT_LEG_SWING` 0.42 so
+  the legs stay inside it); `avatar-hip-l|r` from (±legX, 0); `avatar-torso` (lean, twist, `chestLift`); `avatar-shoulder-l|r`
+  at the rig's shoulders, `avatar-elbow-l|r` under them; `avatar-neck` at the head's pivot turned by `headYaw` and nodded by
+  `headPitch` (less the torso's lean); `avatar-hair-back` (long hair) at the same pivot, following the head's turn
+  `HAIR_BACK_FOLLOW.yaw` 0.4 of the way and its nod only downward (0.8 of it: looking up would swing it into the back),
+  pressed flat lying down. About 9 draw calls.
+- **Its light**: one `MeshLambertMaterial` per avatar (program key `AVATAR_PROGRAM` 'caelancraft-avatar') lit like every
+  object — `patchObjectShader` (§62), so it darkens in a cave and a torch or a fire lights it — plus a WARM FILL
+  (`patchAvatarShader`): after three's light accumulation, `AVATAR_FILL.strength` **0.14** × the luminance of the light
+  reaching the cell (the hemisphere light's mean of sky and ground, the sun's or moon's light, both × `caelSky`, and the block
+  light and floor of `caelExtra`) comes back in `AVATAR_FILL.color` (1, 0.82, 0.62) through the albedo, so a facet turned
+  from the sun stays warm, never grey. It is in proportion to the light — no emissive, no glow: at night and in a cave it
+  fades with everything else.
+- **The first-person hand** (`avatar-arm-<id>`, built the first time the hand is shown or prewarmed; never for another
+  player): in CAMERA space, `FP_HAND` (avatarModel.js) holds every tunable: the fist (`grip` (0.25, −0.19, −0.5) m, low at the
+  right of the view, clear of the hotbar), the forearm's way back toward the elbow (`arm`, out to the right more than at the
+  eye, so the wrist and the cuff show), the back of the hand (`back`), the wrist's tip of the fist forward (`deviate` −1.1 rad
+  holding something, `deviateEmpty` −0.6 with nothing), `handScale` 1, the held tool (`toolTurn` 0.85 about the haft toward
+  the eye, `toolScale` 0.55 — smaller than the model's), a held lump (`lumpAt`, `lumpScale` 0.45), the chop (`forearm` 0.25:
+  the elbow; `swingArm` −0.5, `swingIn` 0.3, `swingWrist` −0.5, `swingPush` 0.05) and `bob` 1. Two meshes over the avatar's
+  own atlas: `avatar-fp-arm-<id>` — the forearm, its skin to `hands.fpCuff` and the sleeve's cloth past it, the sleeve's cuff
+  ring there (a knit cuff on Caelan's pushed-up sleeve, a hem on a short sleeve) — and `avatar-fp-hand-<id>` in the wrist's
+  frame (`avatar-fp-wrist`): a palm, four fingers of three hex segments and a two-segment thumb, CURLED round the haft when
+  something is held (`fp.grip`), loosely open when nothing is (`fp.relaxed`). About 440 triangles.
+- **The chop**: `fpStroke(fpSwing)` = sin(π · fpSwing^0.6) (0 between swings: fast down, slower back); `fpHandFrame(stroke,
+  empty)` → `{ arm, hand, wrist }`: the forearm turns about the elbow by `swingArm` × stroke and pushes ahead a little, the wrist
+  bends by `deviate` + `swingWrist` × stroke — the wrist leads (the haft turns further than the forearm), the fist moves less than
+  10 cm: visible but quiet. The walk's bob (`fpBobX`, `fpBobY` × `FP_HAND.bob`) moves the whole hand in camera space.
+- **Its light and depth**: its material (program key `FP_ARM_PROGRAM` 'caelancraft-avatar-arm') is the model's (the light
+  volume, the warm fill) with the light read from the light volume at the EYE (`caelArmEye`) and `gl_Position.z = mix(−w, z,
+  FP_DEPTH 0.02)`: its depth squeezed to the front of the range — always in front of the world, never clipped by a block,
+  still hiding its own far side. `renderOrder` `FP_RENDER_ORDER` 10, never frustum-culled. It adds no light: it is prewarmed
+  with the others (§72).
+- `sync({ x, y, z, pose, showModel, showArm, camera?, eyeX?, eyeY?, eyeZ? })`; `prewarm` builds the current avatar's model and
+  hand (with the held item's meshes) and compiles their programs (`compileHidden`).
+- **Portraits**: `renderAvatarPortraits(webgl, { size = PORTRAIT.size 192, ids })` → `{ [id]: { width, height, data } }` (RGBA,
+  sRGB, not premultiplied, row 0 at the top): each avatar drawn once by the game's renderer — head and shoulders, turned
+  `PORTRAIT.turn` 0.38, lit by a warm sun from the front and a soft sky — into a render target twice the size above the world
+  (the light volume reads open sky there), on a clear background, averaged down 2 × 2 and made sRGB; the renderer's target and
+  clear colour are put back.
 
 ### 91.5 The view modes and the camera (`viewCamera.js`, PURE; main)
 
@@ -7047,8 +7103,8 @@ model and one arm are shown at most.
 - `cameraPose(eye, yaw, pitch, mode, boom)`: first person at the eye along the look; behind at eye − look × boom, looking
   along the look; in front at eye + look × boom, looking back (yaw + π, −pitch). Main adds the camera shake and the black
   holes' camera effects to it as before.
-- **What is drawn**: first person — the arm (not while dead or asleep), no model; third person — the model when the boom is
-  at least `VIEW_BOOM_HIDE` **0.7** (else the camera would be in its head), no arm; neither while dead. The crosshair shows
+- **What is drawn**: first person — the hand (not while dead or asleep), no model; third person — the model when the boom is
+  at least `VIEW_BOOM_HIDE` **0.7** (else the camera would be in its head), no hand; neither while dead. The crosshair shows
   in first person and behind, never in front. The underwater fog and tint follow the CAMERA: in third person they come
   from the camera's own cell (`physics.isUnderSurface`), in first person from the eye as before.
 
@@ -7060,29 +7116,38 @@ model and one arm are shown at most.
   "View: First person | Third person | Front".
 - `#avatar-chooser` (z 32 like the Guide; `.over-title` 55 over the title screen; the screens under it `inert`): "Who do you
   want to be?", one `.av-card` per avatar — a button (`role="radio"`, `aria-checked`) on a plain ROUNDED SQUARE (never a
-  hexagon), with the portrait drawn one texel a pixel and scaled up crisply, the name and the blurb; the chosen one lit in
-  honey. A click or Enter / Space chooses; ← → (↑ ↓) choose the next card; Done, Esc or a click on the backdrop closes it and
-  gives the focus back. `createAvatarMenu(doc, { current, onChoose, onView, viewLabel })` → `{ open, close, isOpen, current,
-  setCurrent, setView, handleKey, dispose }`; `onChoose(id)` only for a change: main stores it and swaps the model at once
-  (under the pause menu too).
+  hexagon), with its portrait (a `canvas.av-portrait` at `PORTRAIT_PX` 120 CSS px, smoothly scaled), the name and the blurb;
+  the chosen one lit in honey. A click or Enter / Space chooses; ← → (↑ ↓) choose the next card; Done, Esc or a click on the
+  backdrop closes it and gives the focus back. `createAvatarMenu(doc, { current, onChoose, onView, viewLabel, portrait })` →
+  `{ open, close, isOpen, current, setCurrent, setView, handleKey, dispose }`; `onChoose(id)` only for a change: main stores
+  it and swaps the model at once (under the pause menu too). `portrait(id)` → a picture (`{ width, height, data }`) or null,
+  asked for each card when the chooser is first built (main: `renderAvatarPortraits` with the game's renderer, once, at the
+  first opening); none, or one that throws, leaves the card's plain sky background.
 - The controls sheet's last row is `F3 · M · V` "Debug overlay · mute / unmute · first / third person view" (still 17 rows,
   still two that wrap); the Survival Guide's Controls chapter lists V.
 
 ### 91.7 Main's wiring and the screenshot aids
 
 - `renderFrame`: `viewCamera` (the pose from the boom) → `renderer.setCamera` → `setFov` → `drawAvatar` (the motion steps only
-  while the world runs, `live`). The arm swings (`avatarSwing`) on a Creative break press or repeat, a control operated, a
-  block placed (both modes), a strike (Survival), each dig tick, and a throw. `avatarMotion.reset(yaw)` when a world loads.
+  while the world runs, `live`). The hand chops and the model's arm swings (`avatarSwing`) on a Creative break press or
+  repeat, a control operated, a block placed (both modes), a strike (Survival), each dig tick, and a throw.
+  `avatarMotion.reset(yaw)` when a world loads.
 - URL (diagnostics `parseParams`): `?view=first|third|front` and `?avatar=caelan|brayden|annabelle` set the view and the
   avatar for this visit (not stored); `?ui=avatars` opens the chooser over the title screen, or with `?autoplay` over the
-  pause menu once the world is loaded.
+  pause menu once the world is loaded; `?hold=<item>` (`readHoldParam`: an item that is not a block, any case, an old key
+  under its new name; else null) puts that item in the selected hotbar slot once a world has loaded in Creative (as `give`
+  does, without its toast) — the first-person hand and the model hold it (screenshots).
 - The debug handle (`window.__caelancraft`): `getView()`, `setView(mode)`, `getBoom()`, `getAvatar()`, `setAvatar(id)`,
   `avatarSwing()` (nothing stored).
-- **Tests**: `tests/unit/avatars.test.js` (the data, the preference, the sheet's size and determinism, solid and see-through
-  parts, the eyes, the rig's height, the portraits), `tests/unit/viewCamera.test.js` (the modes and their key, the params,
-  the view preference, the boom with blocks behind, beside and inside, easing, the camera pose; the motion), and
-  `tests/unit/avatarRenderer.test.js` (the models, the skirt, lying down, the UVs, the arm's placement and its shader patch,
-  the chooser on a fake DOM from index.html).
+- **Tests**: `tests/unit/avatars.test.js` (the data, the picks, Caelan's mild olive, the heights, the builds, the preference),
+  `tests/unit/avatarModel.test.js` (every part closed and wound outward, one geometry per bone, budgets, heights, the rig,
+  the atlas's determinism, the shared build, the hair cuts and their gaps, long hair; the first-person hand: `FP_HAND`, the
+  cuff on screen, the chop, its parts, the tool and the lump at the fist), `tests/unit/viewCamera.test.js` (the modes and
+  their key, the params with `?hold`, the view preference, the boom, the camera pose; the motion), and
+  `tests/unit/avatarRenderer.test.js` (the bones and their joints, height and facing, the skirt, lying down, the back hair,
+  shared resources between renderers, the atlas's filtering and the warm fill, the hand's placement, chop, bob, grip and
+  shader, the held item at the grip in both, prewarm, the other players' models, the portraits on a fake renderer, the
+  chooser on a fake DOM from index.html). `tests/unit/pilotModels.test.js` keeps the art pilot's other models.
 
 ## 93. Bricks: a rectangular lattice over the honeycomb — `src/bricks.js` (PURE), `src/brickmesher.js` (PURE), `src/world.js`, `src/chunk.js`, `src/blocks.js`, `src/fluids.js`, `src/waterBodies.js`, `src/blockphysics.js`, `src/mesher.js`, `src/physics.js`, `src/renderer.js`, `src/harvest.js`, `src/storage.js`, `src/main.js`, `src/controls.js`, `src/config.js`, `src/diagnostics.js`
 
@@ -7652,15 +7717,20 @@ in hand come later).
   16-pixel pick is 0.4 m: a child's tool); **'lump'** — everything else (food, materials, pots, the hammerstone, the fire
   drill, the crucible, the mold), held at the middle of its solid pixels, unturned, `HELD_PIXEL × HELD_LUMP_SCALE` 0.7.
 - `heldItemShown(key)`, `heldItemGeometry(key)` → `{ style, grip, turn, pixel, positions, normals, colors }` or null.
-- `setHeld(key)` / `heldKey()`: one cached `BufferGeometry` per key (freed by `dispose()`); two meshes, `avatar-held` on the
-  current model's right forearm (`arms[1].elbow`) and `avatar-fp-held` on the first-person arm's (`fpElbow`), the grip at
-  the middle of the hand; `setAvatar` moves them; they follow the walk, every stance and the action swing. Poses
-  `HELD_POSE` (the model: a tool ahead and a little up, its face to the side; a lump upright in front of the fist) and
-  `FP_HELD_POSE` (first person: a tool up and away from the hand at the lower right, a lump on the hand). The model's item
-  is `MeshLambertMaterial({ vertexColors: true })`; the first-person one is drawn like the arm (the arm's material
-  generalised: the light volume at the eye, `FP_DEPTH`, `FP_RENDER_ORDER`, never culled), programs `FP_ARM_PROGRAM`
-  'caelancraft-avatar-arm' and `FP_HELD_PROGRAM` 'caelancraft-avatar-held', both compiled by `prewarm` (an empty slab
-  stands in before anything is held).
+- `setHeld(key)` / `heldKey()`: one cached `BufferGeometry` per key (freed by `dispose()`); two meshes:
+  - `avatar-held` on the current model's right forearm (`avatar-elbow-r`), its grip at the FIST's grip point (`rig.grip`,
+    §91.2: where a haft passes through the right hand) — moved `ahead` along −z for a lump — posed by `HELD_POSE` (a tool
+    ahead and a little up, its face to the side; a lump upright in front of the fist); it follows the walk, every stance and
+    the action swing. `MeshLambertMaterial({ vertexColors: true })` (the prototype hook lights it). The other players'
+    models hold theirs the same way (§96: their avatar renderers).
+  - `avatar-fp-held` in the first-person fist's frame (`avatar-fp-wrist`, §91.4), placed by the avatar model's
+    `fp.tool` — the slab's grip at the fist, its haft along the hand's +y (out of the fist between the thumb and the index
+    finger), its picture in the chop's plane turned `FP_HAND.toolTurn` toward the eye, scaled `FP_HAND.toolScale` — or
+    `fp.lump` (a lump standing on the fist, its picture upright and facing the eye, `FP_HAND.lumpScale`); the fingers curl
+    round it (`fp.grip`; open, `fp.relaxed`, when nothing is held). It chops and bobs with the hand. Drawn like the hand
+    (the light volume at the eye, `FP_DEPTH`, `FP_RENDER_ORDER`, never culled; no warm fill).
+  `setAvatar` moves both. Programs `FP_ARM_PROGRAM` 'caelancraft-avatar-arm' (the hand) and `FP_HELD_PROGRAM`
+  'caelancraft-avatar-held', both compiled by `prewarm` with the model's (an empty slab stands in before anything is held).
 - Tests: `tests/unit/heldItem.test.js`, `tests/unit/avatarRenderer.test.js`, `tests/unit/creativeItems.test.js`.
 
 ### 98.5 Every item in the picker (`pickerModel.js` PURE, `pickerUI.js`, `menus.js`)

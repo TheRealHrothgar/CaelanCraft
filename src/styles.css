@@ -807,7 +807,7 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 .av-card:hover{border-color:#a8884a;background:#332e3e}
 .av-card:focus-visible{outline:2px solid #fff2c8;outline-offset:2px}
 .av-card.chosen{border-color:#e8b04a;background:#3b3347;box-shadow:0 0 0 2px rgba(232,176,74,.35),0 0 18px rgba(232,176,74,.45)}
-.av-portrait{width:120px;height:120px;margin-bottom:4px;border-radius:10px;background:linear-gradient(#8ec3ee,#d3ebf8);image-rendering:pixelated}
+.av-portrait{width:120px;height:120px;margin-bottom:4px;border-radius:10px;background:linear-gradient(#8ec3ee,#d3ebf8)}
 .av-name{color:#fff;font:bold 16px monospace}
 .av-card.chosen .av-name{color:#e8b04a}
 .av-blurb{color:#a89c88;font-size:12.5px}
