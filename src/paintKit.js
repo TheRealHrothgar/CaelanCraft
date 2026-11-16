@@ -1,5 +1,5 @@
-// Caelancraft — the paint kit: procedural textures painted in code at runtime (PURE: RGBA typed arrays, no DOM). An
-// art-direction pilot (gallery.html); nothing in the game uses it yet.
+// Caelancraft — the paint kit: procedural textures painted in code at runtime (PURE: RGBA typed arrays, no DOM). See
+// src/CONTRACTS.md §91.2. The avatars' atlases are painted with it (avatarModel.js); the art pilot (gallery.html) too.
 //
 // The game downloads no pictures: every texture is painted here, deterministically (a seed, never Math.random) and
 // from a palette (avatars.js and friends), at about twice the texel density of today's skins. A Painter paints one

@@ -1,5 +1,5 @@
-// Caelancraft — the model kit: small AFFINE primitives built in code (PURE: no three, no DOM). An art-direction pilot
-// (gallery.html); nothing in the game uses it yet.
+// Caelancraft — the model kit: small AFFINE primitives built in code (PURE: no three, no DOM). See src/CONTRACTS.md §91.2.
+// The avatars are built from it (avatarModel.js, figureKit.js); the art pilot (gallery.html) shows what comes next.
 //
 // Every model in the honeycomb world is a handful of straight-edged solids: n-gon prisms and frusta (6 sides for the
 // hexagon, 8 for a softer column), chamfered boxes (never a hard cube), wedges and pyramids for noses, ears, beaks,

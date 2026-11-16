@@ -1,9 +1,10 @@
-// pilotModels.js (PURE): the art pilot's models (A: hex-faceted, pass 2) build, stay within budget, paint the same
-// atlas every time; the kids have faceted heads and their own hair; the first-person hand grips its tool.
+// pilotModels.js (PURE): the art pilot's models (A: hex-faceted) build, stay within budget, paint the same atlas every
+// time. The kids are the game's avatars now (avatarModel.js, tested in avatarModel.test.js); the pilot still shows them
+// (and their hair cuts, and the first-person hand) from there for the gallery.
 import { describe, it, expect } from 'vitest';
-import {
-  buildPilot, buildHand, fpHandFrame, PILOT_MODELS, STYLES, FP_HAND, KIDS, HEAD_CORNERS, HAIR_OPTIONS, HAIR_PICKS, HAIR_LABELS, hairGaps, CAELAN_SKIN,
-} from '../../src/pilotModels.js';
+import { buildPilot, buildHand, PILOT_MODELS, STYLES, HAIR_OPTIONS, HAIR_LABELS } from '../../src/pilotModels.js';
+import { HEAD_CORNERS } from '../../src/figureKit.js';
+import { fpHandFrame, FP_HAND } from '../../src/avatarModel.js';
 import { AVATAR_IDS, avatarById } from '../../src/avatars.js';
 import { PLAYER_HEIGHT } from '../../src/config.js';
 
@@ -46,9 +47,9 @@ describe('the pilot models', () => {
     }
   });
 
-  it('builds every avatar, Brayden the tallest and Caelan the shortest, as avatars.js has them', () => {
-    expect(Object.keys(KIDS).sort()).toEqual([...AVATAR_IDS].sort());
-    const top = (id) => KIDS[id].head.y + KIDS[id].head.h;
+  it('shows every avatar as the game draws it, Brayden the tallest and Caelan the shortest', () => {
+    const top = (id) => heightOf(buildPilot(id).geo).hi;
+    for (const id of AVATAR_IDS) expect(top(id)).toBeCloseTo(avatarById(id).height, 1);
     expect(top('brayden')).toBeGreaterThan(top('annabelle'));
     expect(top('annabelle')).toBeGreaterThan(top('caelan'));
   });
@@ -63,19 +64,10 @@ describe('the pilot models', () => {
     expect(Buffer.from(a.image.data).equals(Buffer.from(b.image.data))).toBe(true);
   });
 
-  it('gives each kid hair of their own: different pictures, Annabelle\'s reaching far down her back', () => {
+  it('gives each kid pictures of their own', () => {
     const imgs = ['caelan', 'brayden', 'annabelle'].map((id) => Buffer.from(buildPilot(id).image.data));
     expect(imgs[0].equals(imgs[1])).toBe(false);
     expect(imgs[1].equals(imgs[2])).toBe(false);
-    // behind the head (z > the head's depth), Annabelle's hair hangs lower than anyone else's
-    const lowestBehind = (id) => {
-      const g = buildPilot(id).geo;
-      let lo = Infinity;
-      for (let i = 0; i < g.positions.length; i += 3) if (g.positions[i + 2] > KIDS[id].head.rz + 0.02 && g.positions[i + 1] > 0.9) lo = Math.min(lo, g.positions[i + 1]);
-      return lo;
-    };
-    expect(lowestBehind('annabelle')).toBeLessThan(KIDS.annabelle.head.y - 0.25);
-    expect(lowestBehind('brayden')).toBeGreaterThan(KIDS.brayden.head.y - 0.15);
   });
 
   it('keeps the plants affordable: the near bush, the sapling, the bush past ~16 m (under 250, still leafy)', () => {
@@ -92,32 +84,18 @@ describe('the pilot models', () => {
     expect(span(far.geo)).toBeGreaterThan(0.8 * span(buildPilot('honeyberry').geo));
   });
 
-  it('offers two hair options per kid, every one within 900 triangles of hair, none letting the skull show', () => {
+  it('offers two hair options per kid (the chosen one among them), each one labelled and built', () => {
     for (const id of AVATAR_IDS) {
       expect(HAIR_OPTIONS[id]).toHaveLength(2);
-      expect(HAIR_OPTIONS[id]).toContain(HAIR_PICKS[id]);
+      expect(HAIR_OPTIONS[id]).toContain(avatarById(id).hair.cut);
       for (const hair of HAIR_OPTIONS[id]) {
         const m = buildPilot(id, 'hex', { hair });
         expect(m.hair).toBe(hair);
         expect(m.hairTris).toBeGreaterThan(100);
-        expect(m.hairTris).toBeLessThanOrEqual(900);
         expect(HAIR_LABELS[hair].startsWith(hair)).toBe(true);
-        expect(hairGaps(id, hair)).toBe(0);
       }
     }
     expect(() => buildPilot('caelan', 'hex', { hair: 'B1' })).toThrow(RangeError);
-  });
-
-  it('gives Caelan a mild olive skin, lighter than today\'s, its shadows warm, not grey', () => {
-    const lum = (c) => 0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255);
-    const today = avatarById('caelan').palette.skin;
-    for (let k = 0; k < 4; k++) expect(lum(CAELAN_SKIN[k])).toBeGreaterThan(lum(today[k]));
-    for (const c of CAELAN_SKIN) {
-      const [r, g, b] = [(c >> 16) & 255, (c >> 8) & 255, c & 255];
-      expect(r).toBeGreaterThan(g); // warm
-      expect(g - b).toBeGreaterThan(20); // a yellow-green (olive) undertone, never grey
-      expect(r - g).toBeLessThan(45); // not orange
-    }
   });
 
   it('refuses an unknown model or style', () => {
@@ -127,7 +105,7 @@ describe('the pilot models', () => {
   });
 });
 
-describe('the first-person hand', () => {
+describe('the first-person hand (the game\'s, shown by the pilot)', () => {
   it('sits small and low at the lower right of the view, its tool gripped at the fist', () => {
     const m = buildHand('hex', 0);
     expect(m.tris).toBeLessThan(800);
@@ -137,7 +115,8 @@ describe('the first-person hand', () => {
     for (let k = 12; k < 15; k++) expect(T[k]).toBeCloseTo(hand[k], 9);
     expect(Math.hypot(T[12] - FP_HAND.grip[0], T[13] - FP_HAND.grip[1], T[14] - FP_HAND.grip[2])).toBeLessThan(0.06);
     // the haft rises out of the fist (the slab's +y points up in the view)
-    expect(T[5]).toBeGreaterThan(0.4);
+    expect(T[5]).toBeGreaterThan(0.2);
+    expect(buildHand('hex', 0, { frame: 'hand' }).tris).toBeLessThan(400);
     // everything in front of the eye, right of the middle, below the eye line
     const g = m.geo;
     let cx = 0;

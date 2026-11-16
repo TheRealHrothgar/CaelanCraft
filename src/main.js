@@ -139,7 +139,7 @@ import { createPhantomRenderer } from './phantomRenderer.js';
 // CONTRACTS §91: avatars and the third-person view
 import { loadAvatarPref, saveAvatarPref, avatarById } from './avatars.js';
 import { AvatarMotion } from './avatarMotion.js';
-import { createAvatarRenderer } from './avatarRenderer.js';
+import { createAvatarRenderer, renderAvatarPortraits } from './avatarRenderer.js';
 import {
   NetClient, RemotePlayers, probeServer, serverWsUrl, playerToken, shouldRejoin, REJOIN_TRIES, REJOIN_GAP_S,
 } from './net.js';
@@ -1324,12 +1324,27 @@ export function boot(win, doc) {
     eyeZ: 0,
   };
   avatarRenderer.setAvatar(avatarId);
+  /** @type {Record<string, import('./avatarRenderer.js').Picture>|null} the chooser's portraits, drawn when first asked for */
+  let portraits = null;
+  /** An avatar's portrait: every avatar drawn once by the game's renderer, the first time the chooser opens. @param {string} id */
+  function avatarPortrait(id) {
+    if (!portraits) {
+      try {
+        portraits = renderAvatarPortraits(renderer.three.renderer);
+      } catch (err) {
+        console.warn('[avatars] portraits unavailable:', err);
+        portraits = {};
+      }
+    }
+    return portraits[id] ?? null;
+  }
   /** "First person", "Third person", "Front" (the pause menu's View button). @param {string} m */
   const viewWords = (m) => VIEW_LABELS[/** @type {import('./viewCamera.js').ViewMode} */ (m)].replace(/ view$/, '');
   /** The Avatar chooser (title screen and pause menu) and the pause menu's View button. */
   const avatarMenu = createAvatarMenu(doc, {
     current: avatarId,
     viewLabel: viewWords(viewMode),
+    portrait: avatarPortrait,
     onChoose: (id) => {
       avatarId = avatarById(id).id;
       saveAvatarPref(soundPrefs, avatarId);
@@ -6269,6 +6284,11 @@ export function boot(win, doc) {
       player.flying = false;
       player.landSpeed = 0;
       survival.fallGrace = true;
+    }
+    // §91 / §98.4 screenshot aid: ?hold=<item> puts that item in the selected slot (Creative; like `give`, no toast)
+    if (params.hold && !survival.inSurvival) {
+      hotbar[selected] = params.hold;
+      hud.setHotbar(hotbar, selected);
     }
 
 

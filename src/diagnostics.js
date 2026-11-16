@@ -13,6 +13,7 @@ import { BRICK_DEPTH } from './bricks.js';
 import { runeKey } from './runes.js';
 import { normalizeAvatarId } from './avatars.js';
 import { normalizeViewMode } from './viewCamera.js';
+import { isItemPick, normalizePick } from './creativePicks.js';
 
 /** @typedef {import('./types.js').GameContext} GameContext */
 /** @typedef {import('./types.js').SmokeResult} SmokeResult */
@@ -42,6 +43,9 @@ import { normalizeViewMode } from './viewCamera.js';
  * @property {string|null} avatar    §91 screenshot aid: `?avatar=caelan|brayden|annabelle` for this visit (not stored)
  * @property {boolean} avatarMenu    §91: `?ui=avatars` — the Avatar chooser opens over the title screen, or (with ?autoplay)
  *   over the pause menu once the world has loaded
+ * @property {string|null} hold      §91 / §98.4 screenshot aid: `?hold=<item>` — in Creative, once a world has loaded, that
+ *   item (a tool, a weapon, food… by key, case-insensitive; an old name under its new one) goes in the selected hotbar slot;
+ *   anything that is not an item (a block, nonsense) → null
  * @property {string|null} server    DESIGN-multiplayer §2: `?server=host[:port]` — the game server to offer (default: the one
  *   that served the page, if it is one)
  * @property {string|null} join      `?join=<name>`: join that server at once under this name (with ?autoplay: straight into
@@ -83,9 +87,22 @@ export function parseParams(search = defaultSearch()) {
     view: normalizeViewMode(readString(params, 'view')),
     avatar: normalizeAvatarId(readString(params, 'avatar')),
     avatarMenu: (readString(params, 'ui') ?? '').toLowerCase() === 'avatars',
+    hold: readHoldParam(params),
     server: readString(params, 'server'),
     join: readString(params, 'join'),
   };
+}
+
+/**
+ * `?hold=<item>`: the key of an item that is not a block (creativePicks.isItemPick), any case; else null.
+ * @param {URLSearchParams} params
+ * @returns {string|null}
+ */
+export function readHoldParam(params) {
+  const t = readString(params, 'hold');
+  if (t === null) return null;
+  const pick = normalizePick(t.toLowerCase());
+  return isItemPick(pick) ? pick : null;
 }
 
 /**
