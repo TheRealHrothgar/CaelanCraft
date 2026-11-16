@@ -4,7 +4,7 @@ import {
   VIEW_MODES, VIEW_LABELS, VIEW_PREF_KEY, normalizeViewMode, nextViewMode, isThirdPerson, loadViewPref, saveViewPref,
   blocksCamera, lookVector, boomDirection, boomLength, easeBoom, cameraPose,
 } from '../../src/viewCamera.js';
-import { AvatarMotion, wrapAngle, LEG_SWING, SWING_REACH } from '../../src/avatarMotion.js';
+import { AvatarMotion, wrapAngle, LEG_SWING, SWING_REACH, DRAW_BACK, FP_DRAW_DROP } from '../../src/avatarMotion.js';
 import { GAME_KEYS } from '../../src/controls.js';
 import { parseParams } from '../../src/diagnostics.js';
 import { BLOCK } from '../../src/blocks.js';
@@ -233,6 +233,18 @@ describe('the avatar\'s motion (avatarMotion.js)', () => {
     expect(m.swinging).toBe(false);
     expect(p.reachR).toBe(0);
     expect(p.fpSwing).toBe(-1);
+  });
+
+  it('§100: a draw pulls the right arm back (DRAW_BACK at full) and sinks the first-person arm; let go, it is back', () => {
+    const m = new AvatarMotion();
+    const rest = { ...m.step(1 / 60, still()) };
+    let p = m.step(1 / 60, still({ draw: 1 }));
+    expect(p.reachR).toBeCloseTo(-DRAW_BACK, 9);
+    expect(p.fpBobY).toBeCloseTo(rest.fpBobY - FP_DRAW_DROP, 2);
+    p = m.step(1 / 60, still({ draw: 0.5 }));
+    expect(p.reachR).toBeCloseTo(-DRAW_BACK / 2, 9);
+    p = m.step(1 / 60, still());
+    expect(p.reachR).toBe(0);
   });
 
   it('sneaking crouches (leaning forward, hips lower); riding sits with the legs forward; asleep it lies on its back', () => {

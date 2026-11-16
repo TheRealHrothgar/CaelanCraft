@@ -127,11 +127,13 @@ export const PICKER_ITEM_SECTIONS = Object.freeze([
     fam('knives', 'Knives', ['flint_knife', 'copper_knife', 'bronze_knife', 'iron_knife', 'steel_knife'], 'tools'),
     'fire_drill', 'crucible', 'casting_mold', 'handbook',
   ]),
-  // what hurts a creature: the swords and the spear, and what flies (looseItems.throwOf: darts, the spear, a thrown rock)
+  // what hurts a creature: the swords and the spear, and what flies (looseItems.throwOf: darts, the spear, a thrown rock;
+  // §100 the bow and the arrows it shoots)
   sec('weapons', 'Weapons', 'iron_sword', [
     fam('swords', 'Swords', ['bronze_sword', 'iron_sword', 'steel_sword']),
     'flint_spear',
     fam('darts', 'Darts', ['flint_dart', 'fletched_dart']),
+    fam('bows', 'Bows & Arrows', ['bow', 'arrow']),
     'rock',
   ]),
   sec('food', 'Food', 'roast_pork', [
@@ -151,7 +153,7 @@ export const PICKER_ITEM_SECTIONS = Object.freeze([
   ]),
   sec('materials', 'Materials', 'copper_ingot', [
     fam('knapping', 'Flint & Obsidian', ['flint', 'obsidian_shard']),
-    fam('wood-fibre', 'Wood & Fibre', ['stick', 'plant_fibre', 'cord', 'birch_bark']),
+    fam('wood-fibre', 'Wood & Fibre', ['stick', 'bow_stave', 'plant_fibre', 'cord', 'birch_bark']),
     fam('fuel', 'Fuel', ['coal', 'charcoal']),
     fam('minerals', 'Minerals', ['malachite', 'cassiterite', 'hematite', 'gold_nugget', 'rough_gem', 'pyrite']),
     fam('metals', 'Metals', ['copper_ingot', 'tin_ingot', 'bronze_ingot', 'iron_bloom', 'wrought_iron', 'steel_bar']),
@@ -211,8 +213,11 @@ export const PICKER_ITEM_ALIASES = Object.freeze({
   casting_mold: Object.freeze(['mould', 'cast']),
   handbook: Object.freeze(['book', 'guide', 'field book', 'manual']),
   flint_spear: Object.freeze(['javelin', 'throw', 'hunting']),
-  flint_dart: Object.freeze(['arrow', 'throw']),
-  fletched_dart: Object.freeze(['arrow', 'throw', 'feathered']),
+  flint_dart: Object.freeze(['throw']),
+  fletched_dart: Object.freeze(['throw', 'feathered']),
+  // §100: the bow's own words are PICKER_TOOL_WORDS.bow
+  arrow: Object.freeze(['archery', 'shoot', 'ammunition', 'fletched']),
+  bow_stave: Object.freeze(['archery', 'shaved']),
   rock: Object.freeze(['stone', 'pebble', 'throw']),
   coal: Object.freeze(['fuel']),
   charcoal: Object.freeze(['fuel']),
@@ -258,6 +263,7 @@ export const PICKER_TOOL_WORDS = Object.freeze({
   knife: Object.freeze(['blade', 'cutting']),
   sword: Object.freeze(['blade', 'weapon']),
   spear: Object.freeze(['weapon']),
+  bow: Object.freeze(['archery', 'weapon', 'shoot', 'longbow', 'hunting']), // §100
 });
 
 /** The pseudo-section of the Recent row (never in the rail). */

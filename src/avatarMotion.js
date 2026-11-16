@@ -26,6 +26,7 @@ import {
  * @property {boolean} [flying]
  * @property {boolean} [riding]
  * @property {boolean} [sleeping]  lying down (§87)
+ * @property {number} [draw]       how far (§100) a throw or a bow is drawn back (0..1; Place held with a spear, dart or bow)
  */
 
 /**
@@ -82,6 +83,9 @@ export const LEG_SWING_SPRINT = 0.8;
 export const ARM_SHARE = 0.75;
 /** How far the right arm swings forward at the top of an action swing. */
 export const SWING_REACH = 1.9;
+/** §100: how far the right arm draws back at a full draw (a throw or a bow), and how far the first-person arm sinks. */
+export const DRAW_BACK = 1.1;
+export const FP_DRAW_DROP = 0.05;
 
 /** The animation state of one avatar. */
 export class AvatarMotion {
@@ -198,10 +202,11 @@ export class AvatarMotion {
     p.armReach = 2.6 * stroke + 0.55 * this.ride - 0.25 * this.fly;
     p.armSpread = 0.05 + 0.03 * breath * still + 0.5 * stroke + 0.18 * this.fly;
     p.elbow = 0.12 + 0.1 * this.walk + 0.55 * this.ride + 0.3 * this.crouch;
-    p.reachR = SWING_REACH * lift;
+    const draw = clamp(Number.isFinite(s.draw) ? /** @type {number} */ (s.draw) : 0, 0, 1) * (1 - this.lie);
+    p.reachR = SWING_REACH * lift - DRAW_BACK * draw; // §100: drawn back, ready to throw
     p.twistR = 0.35 * lift;
     p.lean = -0.5 * this.crouch - 0.12 * this.fly - 0.05 * this.walk * sprint;
-    p.twist = 0.2 * lift;
+    p.twist = 0.2 * lift - 0.25 * draw;
     p.hipDrop = 0.08 * this.crouch;
     p.chestLift = 0.005 * breath * still;
     p.bodyPitch = -1.2 * this.swim * (1 - this.lie) + (Math.PI / 2) * this.lie;
@@ -210,7 +215,7 @@ export class AvatarMotion {
     p.breath = breath;
     p.fpSwing = sw;
     p.fpBobX = 0.014 * sinP * this.walk;
-    p.fpBobY = -0.02 * Math.abs(sinP) * this.walk + 0.004 * (breath - 0.5) * still;
+    p.fpBobY = -0.02 * Math.abs(sinP) * this.walk + 0.004 * (breath - 0.5) * still - FP_DRAW_DROP * draw;
     return p;
   }
 }

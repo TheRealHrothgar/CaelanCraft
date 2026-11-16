@@ -4,6 +4,8 @@ import {
   LooseItems, PICKUP_RADIUS, PICKUP_CHEST, POP_S, ITEM_RADIUS, THROW_HOLD_S, COLLECT_RADIUS, HOME_MAX_S, GHOST_MAX,
   throwOf, THROW_ROCK, THROW_DART, THROW_SPEAR, THROW_CHUCK,
   LOOSE_DESPAWN_S, LOOSE_BLINK_S, LOOSE_MAX, blinkHidden,
+  THROW_FLETCHED, THROW_ARROW, ARROW_GRAVITY, ARROW_KEYS, ARROW_BREAK_P, DRAW_FULL_S, DRAW_SPEED_MIN, DRAW_SPEED_FULL,
+  DRAW_POWER_MIN, DRAW_POWER_FULL, drawFraction, drawnThrow, drawOf, dartBreakP,
 } from '../../src/looseItems.js';
 import { normalizeLooseJSON, normalizeSurvivalJSON } from '../../src/storage.js';
 import { executeCommand, parseLine, COMMANDS } from '../../src/commands.js';
@@ -408,5 +410,65 @@ describe('looseItems — despawns (CONTRACTS §63)', () => {
     expect(calls).toEqual([[1, 11, 2, Infinity], [1, 11, 2, 8], [0, 5.5, 0, 3]]);
     expect(exec(ctx, 'despawn -1').ok).toBe(false);
     expect(exec({ player: ctx.player }, 'despawn').ok).toBe(false);
+  });
+});
+
+describe('§100 the draw and the bow — looseItems', () => {
+  it('drawFraction: 0 at a tap, full at DRAW_FULL_S (about a second), never more', () => {
+    expect(DRAW_FULL_S).toBe(1);
+    expect(drawFraction(0)).toBe(0);
+    expect(drawFraction(-1)).toBe(0);
+    expect(drawFraction(NaN)).toBe(0);
+    expect(drawFraction(DRAW_FULL_S / 2)).toBeCloseTo(0.5, 9);
+    expect(drawFraction(DRAW_FULL_S)).toBe(1);
+    expect(drawFraction(5)).toBe(1);
+  });
+
+  it('drawnThrow: speed and power grow with the draw; a full draw is a little faster than G and as hard', () => {
+    expect([DRAW_SPEED_MIN, DRAW_SPEED_FULL, DRAW_POWER_MIN, DRAW_POWER_FULL]).toEqual([0.4, 1.15, 0.4, 1]);
+    const tap = drawnThrow(THROW_SPEAR, 0);
+    const half = drawnThrow(THROW_SPEAR, 0.5);
+    const full = drawnThrow(THROW_SPEAR, 1);
+    expect(tap.speed).toBeCloseTo(THROW_SPEAR.speed * DRAW_SPEED_MIN, 6);
+    expect(full.speed).toBeCloseTo(THROW_SPEAR.speed * DRAW_SPEED_FULL, 6);
+    expect(full.power).toBe(THROW_SPEAR.power);
+    expect(tap.power).toBeCloseTo(THROW_SPEAR.power * DRAW_POWER_MIN, 6);
+    expect(tap.speed).toBeLessThan(half.speed);
+    expect(half.speed).toBeLessThan(full.speed);
+    expect(tap.power).toBeLessThan(half.power);
+    expect(half.power).toBeLessThan(full.power);
+    expect(drawnThrow(THROW_CHUCK, 1).power).toBe(0);
+    expect(drawnThrow(THROW_SPEAR, 7)).toEqual(full); // clamped
+  });
+
+  it('drawOf: a spear or a dart draws itself; the bow draws an arrow; anything else is not drawn', () => {
+    expect(drawOf('flint_spear')).toEqual({ shoots: 'flint_spear', base: THROW_SPEAR, bow: false });
+    expect(drawOf('flint_dart')).toEqual({ shoots: 'flint_dart', base: THROW_DART, bow: false });
+    expect(drawOf('fletched_dart').base).toBe(THROW_FLETCHED);
+    expect(drawOf('bow')).toEqual({ shoots: 'arrow', base: THROW_ARROW, bow: true });
+    for (const k of ['rock', 'arrow', 'stick', 'flint_axe', null, 'nope']) expect(drawOf(k), String(k)).toBe(null);
+  });
+
+  it('the arrow: between the dart and the spear in power, the fastest thing that flies, flatter, and it can break', () => {
+    const full = drawnThrow(THROW_ARROW, 1);
+    expect(full.speed).toBeCloseTo(36.8, 6);
+    expect(full.power).toBe(3);
+    expect(full.power).toBeGreaterThan(THROW_DART.power);
+    expect(full.power).toBeLessThan(THROW_SPEAR.power);
+    expect(full.speed).toBeGreaterThan(drawnThrow(THROW_FLETCHED, 1).speed);
+    expect(ARROW_KEYS).toEqual(['arrow']);
+    expect(dartBreakP('arrow')).toBe(ARROW_BREAK_P);
+    expect(ARROW_BREAK_P).toBe(0.25);
+    expect(throwOf('arrow')).toBe(THROW_CHUCK); // by hand an arrow is only chucked
+    // a flatter arc: a projectile launched with `gravity` falls by that share of ITEM_GRAVITY until it hits
+    expect(ARROW_GRAVITY).toBeLessThan(1);
+    const fall = (gravity) => {
+      const loose = new LooseItems(() => 0.5);
+      const { env } = makeEnv({ solid: floorAt(-100), player: null });
+      const it = loose.launch({ k: 'arrow', n: 1 }, 0, 20, 0, 30, 0, 0, { power: 3, gravity });
+      for (let t = 0; t < 0.5; t += DT) loose.step(DT, env);
+      return 20 - it.y;
+    };
+    expect(fall(ARROW_GRAVITY)).toBeCloseTo(fall(1) * ARROW_GRAVITY, 1);
   });
 });

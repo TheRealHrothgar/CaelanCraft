@@ -239,4 +239,28 @@ describe('the item in hand (every item)', () => {
     // the art is deterministic, so the slab is too
     expect(heldItemGeometry('iron_pick')?.positions).toEqual(heldItemGeometry('iron_pick')?.positions);
   });
+
+  it('§100 the bow is gripped at its wrapped handle, bottom middle, its limbs and string straight ahead; an arrow fits a grip too', () => {
+    expect(heldWielded('bow')).toBe(true);
+    const bow = /** @type {NonNullable<ReturnType<typeof heldItemGeometry>>} */ (heldItemGeometry('bow'));
+    expect(bow.style).toBe('tool');
+    expect(bow.pixel).toBe(HELD_PIXEL);
+    expect(bow.turn).toBe(0); // the picture is mirror-symmetric: its bulk lies straight above the grip
+    expect(bow.grip[0]).toBe(8);
+    // the hand closes on the cord-and-leather wrap (rows 9–11), not on the string or a limb
+    const px = paintItem('bow');
+    const [u, v] = bow.grip.map(Math.floor);
+    const i = (v * ITEM_ART_SIZE + u) * 4;
+    expect([[0xd8, 0xc3, 0x8c], [0x7a, 0x4a, 0x2a]]).toContainEqual([px[i], px[i + 1], px[i + 2]]);
+    expect(v).toBeGreaterThanOrEqual(9);
+    // the Arrow and the Bow Stave are materials: held in the fist today; the arrow's picture would suit a haft grip as
+    // well (its nock and fletching at the foot), pointing straight ahead
+    expect(heldWielded('arrow')).toBe(false);
+    expect(heldItemGeometry('arrow')?.style).toBe('lump');
+    expect(heldItemGeometry('bow_stave')?.style).toBe('lump');
+    const asTool = heldGrip(paintItem('arrow'), ITEM_ART_SIZE, { wielded: true });
+    expect(asTool.style).toBe('tool');
+    expect(Math.abs(asTool.turn)).toBeLessThan(0.1);
+    expect(Math.abs(asTool.grip[0] - 7.5)).toBeLessThan(0.6);
+  });
 });

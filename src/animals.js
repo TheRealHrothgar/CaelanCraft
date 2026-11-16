@@ -31,9 +31,10 @@ import {
   FLY_SPEED, PLAYER_HEIGHT,
 } from './config.js';
 import { createBody, stepPlayer, findFreeY, isFreeAt, isSwimWater, shouldPaddle, settleFloat } from './physics.js';
-import { hexToWorld, worldToHex } from './hex.js';
+import { HEX_DIRS, hexToWorld, worldToHex } from './hex.js';
 import { yawToForward, isBehind } from './coords.js';
 import { BLOCK, BIOME, isSolid, isLiquid, waterSurfaceHeight } from './blocks.js';
+import { scentToward } from './wind.js';
 import { fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S, PLANT_LURE } from './pigs.js';
 
 export { PLANT_LURE };
@@ -99,6 +100,40 @@ export const SPRINT_NOTICE = WARY_SPRINT_FACTOR;
  */
 export const VIEW_HALF_ANGLE = WARY_VIEW_HALF_ANGLE;
 export const BEHIND_NOTICE = WARY_BEHIND_FACTOR;
+/**
+ * §100 stalking by sight and wind.
+ * - Cover: an animal that cannot see the player (no clear line from its eye to the player's head or chest: solid blocks,
+ *   trunks, leaves, tall plants between) notices only by sound and scent, at COVER_NOTICE of the distance. It looks
+ *   again every SIGHT_CHECK_S while the player is within SIGHT_RANGE.
+ * - Wind: the player's scent goes downwind. With s = wind.scentToward(wind, player, animal) × wind.strength, upwind
+ *   (s > 0) the distance is × (1 + SCENT_UPWIND × s) — ×1.8 at full strength; downwind × (1 + SCENT_DOWNWIND × s).
+ * - Stillness: a crouching player inside the distance is not run from at once. Each second they move it grows
+ *   SUSPECT_RISE more suspicious (twice that at point blank); seeing a still, crouching shape it grows SUSPECT_WATCH
+ *   suspicious. From SUSPECT_WATCH it stares ('watch': it stands and faces the player). Any movement it sees while it
+ *   stares (turned within WATCH_FACING) spooks it, and so does suspicion reaching 1. Otherwise its suspicion falls at
+ *   SUSPECT_SETTLE a second, and at SUSPECT_CALM it settles: it lowers its head and accepts the still shape until it moves.
+ *   The player counts as still below STILL_SPEED (m/s). Walking or sprinting inside the distance spooks it at once.
+ */
+export const COVER_NOTICE = 0.45;
+export const SCENT_UPWIND = 0.8;
+export const SCENT_DOWNWIND = 0.15;
+export const SIGHT_RANGE = 40;
+export const SIGHT_CHECK_S = 0.25;
+/** Line of sight is sampled every SIGHT_STEP metres; a tall plant hides what is up to TALL_PLANT_COVER above its cell. */
+export const SIGHT_STEP = 0.3;
+export const TALL_PLANT_COVER = 0.35;
+export const STILL_SPEED = 0.25;
+export const SUSPECT_RISE = 0.5;
+export const SUSPECT_WATCH = 0.3;
+export const SUSPECT_SETTLE = 0.1;
+export const SUSPECT_CALM = 0.1;
+export const WATCH_FACING = 0.6;
+/** §100: the plants tall enough to hide a crouching hunter (bushes, thickets, cattails, tall grass, ferns, flax, cactus). */
+export const SIGHT_PLANTS = /** @type {ReadonlySet<number>} */ (new Set([
+  BLOCK.HONEYBERRY_BUSH, BLOCK.HONEYBERRY_BUSH_BARE, BLOCK.TUSSOCK, BLOCK.CATTAILS, BLOCK.PRICKLY_PEAR, BLOCK.PRICKLY_PEAR_BARE,
+  BLOCK.HAZEL_THICKET, BLOCK.HAZEL_THICKET_BARE, BLOCK.CRAB_APPLE_BUSH, BLOCK.CRAB_APPLE_BUSH_BARE, BLOCK.FERN,
+  BLOCK.NIGHTSHADE_BUSH, BLOCK.NIGHTSHADE_BUSH_BARE, BLOCK.FLAX, BLOCK.PLANTED_CATTAILS,
+]));
 /** It runs until the player is this many times `notice` away. */
 export const CALM_FACTOR = 2.2;
 /** A hit makes it (and its herd within HERD_ALARM) run for at least this long (s). */
@@ -244,6 +279,14 @@ export const FISH_CRUISE = 0.9;
 export const FISH_DART = 5.5;
 export const FISH_DART_S = 1.1;
 export const FISH_REST_S = 1.5;
+/**
+ * §100 fish belong to their water. A fish whose own column has run too shallow swims to a deeper neighbour; with none it
+ * holds still in the shallows; with no water at all it is stranded and lies on the bed while the player can see it
+ * (`world.inView`), and is gone only once nobody can. A fish woken FISH_DEEP or more below its swimming height (populations:
+ * deep water hides it) rises at FISH_RISE m/s instead of easing up at once.
+ */
+export const FISH_DEEP = 1.5;
+export const FISH_RISE = 0.5;
 
 /** The voices and the snare's snap (audio.playRecipe data). Gentle, short, never startling. */
 export const SOUNDS = Object.freeze({
@@ -271,7 +314,8 @@ export const SOUNDS = Object.freeze({
 /**
  * @typedef {PlayerState & {
  *   id: number, kind: AnimalKind, yaw: number, targetYaw: number,
- *   mode: 'idle'|'walk'|'flee'|'lure'|'bait'|'follow'|'hunt'|'warn'|'charge',
+ *   mode: 'idle'|'walk'|'flee'|'lure'|'bait'|'follow'|'hunt'|'warn'|'charge'|'watch',
+ *   suspicion: number, accepted: boolean, hidden: boolean, scent: number, senseIn: number, stranded: boolean,
  *   timer: number, hurt: number, health: number, walkPhase: number, voiceIn: number,
  *   tamed: boolean, trust: number, calm: number, shorn: number, milked: number, sitting: boolean, ridden: boolean,
  *   homeX: number, homeZ: number, trapped: number, trapT: number, trapCell: [number, number, number]|null, immune: number,
@@ -304,6 +348,9 @@ export const SOUNDS = Object.freeze({
  * @property {(q: number, y: number, r: number) => boolean} [isNaturalGround]
  * @property {(q: number, r: number) => boolean} [isLoadedCell]
  * @property {(q: number, r: number) => boolean} [streamAt]   v0.14: the column is on a generated stream (fish appear there)
+ * @property {import('./wind.js').Wind|null} [wind]  the wind here and now (§100; main.windNow): the player's scent goes downwind
+ * @property {(x: number, y: number, z: number) => boolean} [inView]  whether the player could see this point now (§100; main: the
+ *   camera's view, within a distance). A fish is never made or removed where it is true. Absent: nothing is in view.
  */
 
 /**
@@ -376,21 +423,90 @@ export function blindTo(a, player) {
 
 /**
  * How near the player may come before `a` runs (m): its species' `notice`, less for a sneaker — half of that again for
- * one who sneaks up from behind (blindTo) — and more for a sprinter.
+ * one who sneaks up from behind (blindTo) — and more for a sprinter. §100 `sense` (an animal's last look and smell):
+ * `hidden` (no line of sight) gives COVER_NOTICE of it (the blind arc's BEHIND_NOTICE when that is less), and `scent`
+ * (scentOf: + upwind, − downwind) scales it by scentFactor.
+ * @param {{ kind: string, x?: number, z?: number, yaw?: number }} a @param {*} player
+ * @param {{ hidden?: boolean, scent?: number }|null} [sense]
  */
-export function noticeRange(a, player) {
-  const n = SPECIES[a.kind].notice;
-  if (player.sneaking) return n * SNEAK_NOTICE * (blindTo(a, player) ? BEHIND_NOTICE : 1);
-  if (player.sprinting) return n * SPRINT_NOTICE;
-  return n;
+export function noticeRange(a, player, sense = null) {
+  const n = SPECIES[/** @type {AnimalKind} */ (a.kind)].notice;
+  const gait = player.sneaking ? SNEAK_NOTICE : player.sprinting ? SPRINT_NOTICE : 1;
+  let unseen = player.sneaking && blindTo(a, player) ? BEHIND_NOTICE : 1;
+  if (sense && sense.hidden) unseen = Math.min(unseen, COVER_NOTICE);
+  return n * gait * unseen * (sense ? scentFactor(sense.scent ?? 0) : 1);
+}
+
+/** §100: how the wind carries the player's scent to `a`: scentToward × strength (−1..1; 0 without a wind). */
+export function scentOf(wind, player, a) {
+  if (!wind || !(wind.strength > 0)) return 0;
+  return scentToward(wind, player.x, player.z, a.x, a.z) * wind.strength;
+}
+
+/** §100: the notice distance's factor for a scent `s` (scentOf): up to 1 + SCENT_UPWIND upwind, down to 1 − SCENT_DOWNWIND. */
+export function scentFactor(s) {
+  const v = Number.isFinite(s) ? Math.max(-1, Math.min(1, s)) : 0;
+  return v > 0 ? 1 + SCENT_UPWIND * v : 1 + SCENT_DOWNWIND * v;
+}
+
+/** §100: a block that hides what is behind it from an animal: anything solid but glass (trunks and leaves too). */
+export function blocksSight(id) {
+  return isSolid(id) && id !== BLOCK.GLASS;
+}
+
+/**
+ * §100: whether the straight line from (x0, y0, z0) to (x1, y1, z1) is clear: sampled every SIGHT_STEP, it meets no
+ * blocksSight cell and passes no SIGHT_PLANTS plant lower than TALL_PLANT_COVER above its cell. The first `skip` metres
+ * (the animal's own head and the cell it stands in) are not looked at.
+ * @param {GetBlockFn} getBlock @returns {boolean}
+ */
+export function lineOfSight(getBlock, x0, y0, z0, x1, y1, z1, skip = 0.5) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const dz = z1 - z0;
+  const len = Math.hypot(dx, dy, dz);
+  const n = Math.max(1, Math.ceil(len / SIGHT_STEP));
+  const [q0, r0] = worldToHex(x0, z0);
+  let lq = NaN;
+  let lr = NaN;
+  let ly = NaN;
+  for (let i = 1; i < n; i++) {
+    const t = i / n;
+    if (t * len < skip) continue;
+    const y = y0 + dy * t;
+    const [q, r] = worldToHex(x0 + dx * t, z0 + dz * t);
+    const cy = Math.floor(y);
+    if (q === lq && r === lr && cy === ly) continue;
+    lq = q;
+    lr = r;
+    ly = cy;
+    const id = getBlock(q, cy, r);
+    if (blocksSight(id)) return false;
+    if (q === q0 && r === r0) continue; // the plant it stands in does not blind it
+    if (SIGHT_PLANTS.has(id) || (y - cy < TALL_PLANT_COVER && SIGHT_PLANTS.has(getBlock(q, cy - 1, r)))) return false;
+  }
+  return true;
+}
+
+/**
+ * §100: whether `a` can see the player — a clear line from its eye (0.85 of its height) to the player's head or chest.
+ * Where it is looking is not asked here (blindTo is). @param {GetBlockFn} getBlock @returns {boolean}
+ */
+export function canSee(getBlock, a, player) {
+  const ex = a.x;
+  const ey = a.y + a.height * 0.85;
+  const ez = a.z;
+  const head = player.y + (player.sneaking ? 1.27 : 1.62);
+  const chest = player.y + (player.sneaking ? 0.7 : 0.95);
+  return lineOfSight(getBlock, ex, ey, ez, player.x, head, player.z) || lineOfSight(getBlock, ex, ey, ez, player.x, chest, player.z);
 }
 
 /**
  * v0.14 (§76 fauna): how near the player may come before a bear rears up (m): noticeRange, but never so near that the
  * warning would come inside the distance at which it charges at once (a sneaking player is warned too).
  */
-export function bearRange(a, player) {
-  return Math.max(noticeRange(a, player), BEAR_CHARGE_DIST + BEAR_SNEAK_MARGIN);
+export function bearRange(a, player, sense = null) {
+  return Math.max(noticeRange(a, player, sense), BEAR_CHARGE_DIST + BEAR_SNEAK_MARGIN);
 }
 
 /**
@@ -401,19 +517,29 @@ export function bearRange(a, player) {
  * @param {GetBlockFn} getBlock @param {number} q @param {number} r @param {number} y @returns {number}
  */
 export function fishDepth(getBlock, q, r, y) {
+  const w = fishWater(getBlock, q, r, y);
+  return w && w.surface - w.bed >= FISH_MIN_WATER ? w.swim : NaN;
+}
+
+/**
+ * §100: the water in column (q, r) near height y (one cell up or down counts), however shallow: its bed, its surface and
+ * the height a fish would swim at (FISH_UNDER below the surface, never below just above the bed), or null without water.
+ * @param {GetBlockFn} getBlock @param {number} q @param {number} r @param {number} y
+ * @returns {{ bed: number, surface: number, swim: number }|null}
+ */
+export function fishWater(getBlock, q, r, y) {
   let cy = Math.floor(y);
   if (!isLiquid(getBlock(q, cy, r))) {
     if (isLiquid(getBlock(q, cy + 1, r))) cy += 1;
     else if (isLiquid(getBlock(q, cy - 1, r))) cy -= 1;
-    else return NaN;
+    else return null;
   }
   let top = cy;
   while (top - cy < 8 && isLiquid(getBlock(q, top + 1, r))) top++;
   let bottom = cy;
   while (cy - bottom < 8 && isLiquid(getBlock(q, bottom - 1, r))) bottom--;
   const surface = top + waterSurfaceHeight(getBlock(q, top, r), getBlock(q, top + 1, r));
-  if (surface - bottom < FISH_MIN_WATER) return NaN;
-  return Math.max(bottom + 0.06, surface - FISH_UNDER);
+  return { bed: bottom, surface, swim: Math.max(bottom + 0.06, surface - FISH_UNDER) };
 }
 
 /** How fast the legs go: radians of walkPhase per metre walked (3.6 when a kind is not listed). Small legs go faster. */
@@ -517,6 +643,13 @@ export class Animals {
       zigIn: 0,
       // a hen's time to her first nest; Infinity for a cock (or a kind) that never lays (and for a chick: _layNest)
       nestIn: /** @type {*} */ (sp).nests && sex !== 'm' ? NEST_FIRST_S[0] + this._rng() * (NEST_FIRST_S[1] - NEST_FIRST_S[0]) : Infinity,
+      // §100 stalking: how suspicious it is (0..1), whether it has settled on a still shape, its last look and smell
+      suspicion: 0,
+      accepted: false,
+      hidden: false,
+      scent: 0,
+      senseIn: this._rng() * SIGHT_CHECK_S,
+      stranded: false,
       rear: 0,
       warn: 0,
       chase: 0,
@@ -614,6 +747,7 @@ export class Animals {
         }
         continue;
       }
+      this._sense(a, dt, world, player); // §100: its look (every SIGHT_CHECK_S) and its nose
       if (sp.predator) {
         if (a.rest > 0) a.rest = Math.max(0, a.rest - dt);
         if (a.maulIn > 0) a.maulIn = Math.max(0, a.maulIn - dt);
@@ -778,10 +912,15 @@ export class Animals {
         return 'run';
       }
     }
-    // The player comes too near: run (unless it is fed, lured, or the player holds its food).
-    if (p && a.calm <= 0 && !lured && d < noticeRange(a, p)) {
-      this._startle(a, p.x, p.z, ev);
-      return 'run';
+    // The player comes too near: run (unless it is fed, lured, or the player holds its food). §100: a crouching player
+    // makes it suspicious first — it stares, and settles if they keep still.
+    if (p && a.calm <= 0 && !lured) {
+      const how = this._stalked(a, p, d, dt, ev);
+      if (how) return how;
+    } else if (a.mode === 'watch') {
+      a.mode = 'idle';
+      a.timer = 1;
+      a.suspicion = 0;
     }
     // Lured: it comes up to the food in the player's hand.
     if (lured && d <= LURE_RANGE) {
@@ -810,6 +949,85 @@ export class Animals {
       a.timer = 1;
     }
     return this._wander(a, getBlock);
+  }
+
+  /**
+   * §100: an animal's senses this frame: within SIGHT_RANGE of the player it looks for them every SIGHT_CHECK_S (`hidden`:
+   * no line of sight to their head or chest, canSee); it smells them by the wind every frame (`scent`, scentOf). A tame
+   * animal and a fish do not stalk-watch. @param {Animal} a @param {number} dt @param {AnimalWorld} world @param {PlayerState|null} player
+   */
+  _sense(a, dt, world, player) {
+    if (!player || player.flying || a.tamed) {
+      a.hidden = false;
+      a.scent = 0;
+      return;
+    }
+    a.scent = scentOf(world.wind ?? null, player, a);
+    const d = Math.hypot(player.x - a.x, player.z - a.z);
+    if (d > SIGHT_RANGE) {
+      a.hidden = false;
+      return;
+    }
+    a.senseIn -= dt;
+    if (a.senseIn > 0) return;
+    a.senseIn = SIGHT_CHECK_S;
+    a.hidden = !canSee(world.getBlock, a, player);
+  }
+
+  /**
+   * §100: a wild animal and the player inside its notice distance (noticeRange with its senses). Walking or sprinting: it
+   * runs at once. Crouching: it grows suspicious as they move (more the nearer), stares from SUSPECT_WATCH, runs at any
+   * movement it sees while it stares or when its suspicion reaches 1, and settles as they keep still.
+   * @param {Animal} a @param {PlayerState} p @param {number} d @param {number} dt @param {AnimalEvents} ev
+   * @returns {'stand'|'run'|null} how it moves, or null: it goes on as it was
+   */
+  _stalked(a, p, d, dt, ev) {
+    const range = noticeRange(a, p, a);
+    const inRange = d < range;
+    if (inRange && !p.sneaking) {
+      this._startle(a, p.x, p.z, ev);
+      a.suspicion = 0;
+      return 'run';
+    }
+    const moving = Math.hypot(p.vx || 0, p.vz || 0) > STILL_SPEED;
+    const sees = !a.hidden && !blindTo(a, p);
+    let rose = false;
+    if (inRange) {
+      if (moving) {
+        a.accepted = false;
+        a.suspicion = Math.min(1, a.suspicion + SUSPECT_RISE * (2 - d / range) * dt);
+        rose = true;
+      } else if (sees && !a.accepted && a.mode !== 'watch' && a.suspicion < SUSPECT_WATCH) {
+        a.suspicion = SUSPECT_WATCH; // it has turned and seen a still, crouching shape: it stares
+        rose = true;
+      }
+    } else {
+      a.accepted = false;
+    }
+    const facing = Math.abs(wrapAngle(yawToward(a.x, a.z, p.x, p.z) - a.yaw)) < WATCH_FACING;
+    if (a.suspicion >= 1 || (a.mode === 'watch' && inRange && moving && sees && facing)) {
+      this._startle(a, p.x, p.z, ev);
+      a.suspicion = 0;
+      a.accepted = false;
+      return 'run';
+    }
+    if (!rose) a.suspicion = Math.max(0, a.suspicion - SUSPECT_SETTLE * dt);
+    if (a.mode === 'watch') {
+      if (a.suspicion <= SUSPECT_CALM) {
+        a.mode = 'idle'; // it settles: its head goes down again
+        a.timer = 1 + this._rng() * 2;
+        a.accepted = inRange;
+        return 'stand';
+      }
+      a.targetYaw = yawToward(a.x, a.z, p.x, p.z);
+      return 'stand';
+    }
+    if (inRange && a.suspicion >= SUSPECT_WATCH) {
+      a.mode = 'watch';
+      a.targetYaw = yawToward(a.x, a.z, p.x, p.z);
+      return 'stand';
+    }
+    return null;
   }
 
   /**
@@ -1088,7 +1306,7 @@ export class Animals {
       }
       return this._wander(a, getBlock);
     }
-    const range = bearRange(a, p);
+    const range = bearRange(a, p, a); // §100: a bear smells you too, and does not see through cover
     if (a.mode === 'warn') {
       a.warn += dt;
       a.targetYaw = yawToward(a.x, a.z, p.x, p.z);
@@ -1167,8 +1385,10 @@ export class Animals {
     const sp = SPECIES[a.kind];
     const [q, r] = worldToHex(a.x, a.z);
     const depth = fishDepth(getBlock, q, r, a.y + a.height / 2);
-    if (Number.isNaN(depth)) return false;
-    a.y += (depth - a.y) * (1 - Math.exp(-8 * dt)); // a stream steps down: it eases to the new level
+    if (Number.isNaN(depth)) return this._fishAground(a, dt, world, q, r);
+    a.stranded = false;
+    if (a.y < depth - FISH_DEEP / 2) a.y = Math.min(depth, a.y + FISH_RISE * dt); // §100: up out of the deep, slowly
+    else a.y += (depth - a.y) * (1 - Math.exp(-8 * dt)); // a stream steps down: it eases to the new level
     a.vy = 0;
     a.inWater = true;
     a.onGround = false;
@@ -1219,14 +1439,77 @@ export class Animals {
     let moved = 0;
     if (speed > 0 && Math.abs(wrapAngle(a.targetYaw - a.yaw)) < 1.2 && this._fishWay(a, a.yaw, getBlock)) {
       const [fx, fz] = yawToForward(a.yaw);
-      a.x += fx * speed * dt;
-      a.z += fz * speed * dt;
-      moved = speed;
+      // §100: the step itself must end in water too (on a hex grid the line to the point ahead can cut the corner of a
+      // dry column beside it; a long frame can carry it past that point): else it waits for the next frame
+      const step = Math.min(speed * dt, a.radius + 0.2);
+      const nx = a.x + fx * step;
+      const nz = a.z + fz * step;
+      const [nq, nr] = worldToHex(nx, nz);
+      if ((nq === q && nr === r) || !Number.isNaN(fishDepth(getBlock, nq, nr, a.y + a.height / 2))) {
+        a.x = nx;
+        a.z = nz;
+        moved = speed;
+      }
     }
     a.vx = 0;
     a.vz = 0;
     a.walkPhase = (a.walkPhase + dt * (3 + moved * 4)) % TWO_PI; // the tail beats, faster when it darts
     return true;
+  }
+
+  /**
+   * §100: a fish whose own column is too shallow or dry (the water was drunk, dried in the sun or let out). It swims to a
+   * neighbouring column deep enough for it; with none it holds still in what water there is; with none at all it lies
+   * stranded on the bed while the player can see it, and is gone (false) only when nobody can.
+   * @returns {boolean}
+   */
+  _fishAground(a, dt, world, q, r) {
+    const getBlock = world.getBlock;
+    const y = a.y + a.height / 2;
+    a.vx = 0;
+    a.vz = 0;
+    a.vy = 0;
+    // the nearest deeper neighbour: swim over to it
+    let best = null;
+    let bd = Infinity;
+    for (const [dq, dr] of HEX_DIRS) {
+      if (Number.isNaN(fishDepth(getBlock, q + dq, r + dr, y))) continue;
+      const [cx, cz] = hexToWorld(q + dq, r + dr);
+      const d = Math.hypot(cx - a.x, cz - a.z);
+      if (d < bd) {
+        bd = d;
+        best = [cx, cz];
+      }
+    }
+    if (best) {
+      a.stranded = false;
+      a.targetYaw = yawToward(a.x, a.z, best[0], best[1]);
+      a.yaw = a.targetYaw;
+      const step = Math.min(bd, FISH_CRUISE * dt);
+      a.x += ((best[0] - a.x) / bd) * step;
+      a.z += ((best[1] - a.z) / bd) * step;
+      a.inWater = true;
+      a.walkPhase = (a.walkPhase + dt * 7) % TWO_PI;
+      return true;
+    }
+    const w = fishWater(getBlock, q, r, y);
+    if (w) {
+      // a little water left: it holds still on the bed, alive
+      a.stranded = false;
+      a.y += (w.bed + 0.02 - a.y) * (1 - Math.exp(-6 * dt));
+      a.inWater = true;
+      a.walkPhase = (a.walkPhase + dt * 2) % TWO_PI;
+      return true;
+    }
+    if (world.inView && world.inView(a.x, a.y, a.z)) {
+      // stranded in plain sight: it lies on the ground, flapping now and then, until nobody can see it
+      a.stranded = true;
+      a.inWater = false;
+      a.y = Math.max(Math.floor(a.y + 0.5), a.y - 2 * dt);
+      a.walkPhase = (a.walkPhase + dt * 9) % TWO_PI;
+      return true;
+    }
+    return false;
   }
 
   /** There is water for a fish a body's length ahead of `a` along `yaw` (and so along the whole step it takes). */

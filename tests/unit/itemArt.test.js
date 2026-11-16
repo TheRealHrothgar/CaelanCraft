@@ -10,8 +10,11 @@ import { FakeDocument } from '../helpers/fakeDom.js';
 const N = ITEM_ART_SIZE;
 const NON_BLOCK = ITEM_KEYS.filter((k) => ITEMS[k].kind !== 'block');
 const TOOLS = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool');
-/** Tools with a haft (everything but the hammerstone and the tier-0 kit: drill, crucible, mold). */
-const HAFTED = TOOLS.filter((k) => k !== 'hammerstone' && ITEMS[k].tool.tier > 0);
+/**
+ * Tools with a haft (everything but the hammerstone, the bow and the tier-0 kit: drill, crucible, mold). §100: the bow has
+ * no haft; it lies on its back, gripped at the bottom middle (its own test below).
+ */
+const HAFTED = TOOLS.filter((k) => k !== 'hammerstone' && k !== 'bow' && ITEMS[k].tool.tier > 0);
 
 /** @param {Uint8ClampedArray} px @returns {Array<[number, number]>} opaque pixels */
 function opaque(px) {
@@ -43,7 +46,7 @@ function principalAngle(points) {
 
 describe('itemArt: coverage', () => {
   it('every non-block item in ITEMS has art, and only those (block items are drawn from the atlas)', () => {
-    expect(NON_BLOCK.length).toBe(148); // + §85: the Pot of Spring Water; // + §81: Hemlock Root, Nightshade Berries, Aloe Leaf; // + §80: the three seeds; // + §76: 14 wild foods (flora), the Pot of Tainted Water (water), feather, fletched dart and twelve game foods (fauna); // + the Pot of Milk (§72); // + beef and mutton, raw and roast (§69); // 98 + the Survival Handbook (§14) + the 7 circuit materials (DESIGN-circuits §8.1) + the dart (§60)
+    expect(NON_BLOCK.length).toBe(151); // + §100: the Bow, the Bow Stave, the Arrow; // + §85: the Pot of Spring Water; // + §81: Hemlock Root, Nightshade Berries, Aloe Leaf; // + §80: the three seeds; // + §76: 14 wild foods (flora), the Pot of Tainted Water (water), feather, fletched dart and twelve game foods (fauna); // + the Pot of Milk (§72); // + beef and mutton, raw and roast (§69); // 98 + the Survival Handbook (§14) + the 7 circuit materials (DESIGN-circuits §8.1) + the dart (§60)
     expect([...ITEM_ART_KEYS].sort()).toEqual([...NON_BLOCK].sort());
     expect(ITEM_ART_KEYS).toEqual(NON_BLOCK); // same order as ITEM_KEYS (tools, materials, food, bandages, clothes)
     for (const k of NON_BLOCK) expect(hasItemArt(k), k).toBe(true);
@@ -201,6 +204,62 @@ describe('itemArt: the art rules (§9.8, §11)', () => {
     expect(leather).toBeGreaterThan(80);
     const page = at(13, 5);
     expect(page && page[0] > 190 && page[1] > 170).toBe(true);
+  });
+});
+
+describe('itemArt: §100 the bow, its stave and the arrow', () => {
+  /** @param {string} k @returns {(x: number, y: number) => number[]|null} rgb of an opaque pixel, else null */
+  const reader = (k) => {
+    const px = paintItem(k);
+    return (x, y) => {
+      const i = (y * N + x) * 4;
+      return px[i + 3] ? [px[i], px[i + 1], px[i + 2]] : null;
+    };
+  };
+  const is = (c, hex) => !!c && c[0] === ((hex >> 16) & 255) && c[1] === ((hex >> 8) & 255) && c[2] === (hex & 255);
+
+  it('the bow lies on its back: a pale string straight across the top, the stave arched under it, the grip at the bottom middle', () => {
+    expect(toolArtOf('bow')).toEqual(['bow', 2]);
+    const at = reader('bow');
+    const pts = opaque(paintItem('bow'));
+    // mirror-symmetric, so a hand at the grip holds it at the middle
+    for (const [x, y] of pts) expect(at(15 - x, y), `mirror of ${x},${y}`).not.toBeNull();
+    // the string: one row of cord from nock to nock, the horn nocks at both ends
+    for (let x = 1; x <= 14; x++) expect(is(at(x, 2), 0xd8c38c), `string ${x}`).toBe(true);
+    expect(is(at(0, 2), 0x4a3426) && is(at(15, 2), 0x4a3426)).toBe(true);
+    // the stave is shaved yew, and under the middle of the string lies the gap a strung bow has
+    expect(pts.some(([x, y]) => is(at(x, y), 0xe8b878))).toBe(true);
+    for (let y = 4; y <= 5; y++) for (let x = 5; x <= 10; x++) expect(at(x, y), `gap ${x},${y}`).toBeNull();
+    // the grip: cord wrapped over leather under the middle; the bottom two rows of the picture (its heel, the wrap's foot)
+    // within columns 6–9, so heldItem finds a handle there (heldItem.test holds it)
+    const maxY = Math.max(...pts.map(([, y]) => y));
+    for (const [x, y] of pts) if (y > maxY - 2) expect(x >= 6 && x <= 9, `low pixel ${x},${y}`).toBe(true);
+    expect(is(at(7, 9), 0xd8c38c) && is(at(6, 9), 0x7a4a2a)).toBe(true);
+    // wider than tall, and the widest row is the string's: the bow's bulk is above its grip
+    const xs = pts.map(([x]) => x);
+    const ys = pts.map(([, y]) => y);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(Math.max(...ys) - Math.min(...ys));
+    expect(Math.abs(principalAngle(pts))).toBeLessThan(20);
+  });
+
+  it('the stave is a long pale stick standing upright, with shavings at its foot; the arrow stands point up', () => {
+    const stave = opaque(paintItem('bow_stave'));
+    expect(Math.abs(principalAngle(stave))).toBeGreaterThan(70); // upright
+    const staveAt = reader('bow_stave');
+    for (let y = 0; y < N; y++) expect([5, 6, 7, 8, 9].some((x) => staveAt(x, y)), `stave row ${y}`).toBe(true); // end to end
+    expect(stave.some(([x, y]) => is(staveAt(x, y), 0xe8b878))).toBe(true); // shaved yew, not the brown stick
+    expect(Buffer.from(paintItem('bow_stave')).equals(Buffer.from(paintItem('stick')))).toBe(false);
+    const arrow = opaque(paintItem('arrow'));
+    expect(Math.abs(principalAngle(arrow))).toBeGreaterThan(70);
+    const at = reader('arrow');
+    // a flint point at the top, a slim shaft (one pixel between its rims), two feather vanes at the foot
+    expect(is(at(7, 0), 0x6b7184)).toBe(true);
+    for (let y = 5; y <= 8; y++) expect(arrow.filter(([, py]) => py === y).length, `shaft row ${y}`).toBe(3);
+    const vane = arrow.filter(([x, y]) => is(at(x, y), 0xc98a4a));
+    expect(vane.some(([x]) => x < 7) && vane.some(([x]) => x > 7)).toBe(true);
+    expect(Math.min(...vane.map(([, y]) => y))).toBeGreaterThan(8);
+    // the arrow is no dart: those fly corner to corner
+    for (const k of ['flint_dart', 'fletched_dart']) expect(Math.abs(principalAngle(opaque(paintItem(k))))).toBeLessThan(70);
   });
 });
 

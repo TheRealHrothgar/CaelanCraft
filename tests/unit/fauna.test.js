@@ -128,7 +128,8 @@ describe('fauna — deer: very skittish herds', () => {
       const as = new Animals(seededRng(2));
       const a = as.spawn('deer', 0, GROUND, 0);
       as.update(DT, view(flatWorld(), standing(-d, 0, more)));
-      expect(a.mode === 'flee', `${JSON.stringify(more)} at ${d}`).toBe(flees);
+      // §100: a still, crouching player it notices is stared at (it bolts when they move); the others are run from
+      expect(a.mode === (more.sneaking ? 'watch' : 'flee'), `${JSON.stringify(more)} at ${d}`).toBe(flees);
     }
   });
 
@@ -326,7 +327,13 @@ describe('fauna — pheasants flush, turkeys dart off', () => {
     for (const [d, up] of [[3.2, false], [2.5, true]]) {
       const as = new Animals(seededRng(12));
       const a = as.spawn('pheasant', 0, GROUND, 0);
-      const ev = as.update(DT, view(flatWorld(), standing(-d, 0, { sneaking: true })));
+      const p = standing(-d, 0, { sneaking: true });
+      let ev = as.update(DT, view(flatWorld(), p));
+      // §100: a still sneaker it notices is stared at; it goes up when they move
+      expect([ev.flushed.length, a.mode === 'watch'], `still at ${d}`).toEqual([0, up]);
+      for (let i = 0; i < 10; i++) as.update(DT, view(flatWorld(), p)); // it turns to face them
+      p.vx = 1;
+      ev = as.update(DT, view(flatWorld(), p));
       expect([ev.flushed.length, a.air > 0], `sneaking at ${d}`).toEqual(up ? [1, true] : [0, false]);
     }
     expect(noticeRange({ kind: 'pheasant' }, { sneaking: true })).toBeCloseTo(2.8, 9);
@@ -803,10 +810,24 @@ describe('fauna — fish keep to the water', () => {
     const hit = as.raycast(a.x - 3, a.y + 0.1, a.z + 0.25, 1, 0, 0, 6);
     expect(hit && hit.animal).toBe(a);
     expect(SPECIES.fish.radius + 0.06).toBeLessThan(0.25);
-    // drain its cell: it is removed at the next update, quietly
+    // §100: drain its cell: it swims over to the water beside it
     const [q, r] = worldToHex(a.x, a.z);
     cells.delete(`${q},${GROUND - 1},${r}`);
-    const ev = as.update(DT, view(gb, null));
+    let ev = as.update(DT, view(gb, null));
+    expect(as.list.includes(a)).toBe(true);
+    expect(ev.despawned).toBe(0);
+    for (let i = 0; i < 40; i++) as.update(DT, view(gb, null));
+    expect(worldToHex(a.x, a.z)).not.toEqual([q, r]);
+    expect(Number.isNaN(fishDepth(gb, ...worldToHex(a.x, a.z), a.y + a.height / 2))).toBe(false);
+    // drain the whole stream: stranded where the player can see it, it lies there; once nobody can, it is gone, quietly
+    for (let k = -3; k <= 3; k++) cells.delete(`${k},${GROUND - 1},0`);
+    let seen = true;
+    const w = { ...view(gb, null), inView: () => seen };
+    expect(as.update(DT, w).despawned).toBe(0);
+    expect(as.list.includes(a)).toBe(true);
+    expect(a.stranded).toBe(true);
+    seen = false;
+    ev = as.update(DT, w);
     expect(as.list.includes(a)).toBe(false);
     expect(ev.despawned).toBe(1);
   });

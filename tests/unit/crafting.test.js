@@ -122,19 +122,20 @@ const isBlockItem = (k) => ITEMS[k].kind === 'block';
 // ---------------------------------------------------------------------------------------------
 
 describe('the recipe table (§7.3)', () => {
-  it('has 124 recipes with unique ids: 43 at hand, 24 at the stump, 24 at the kiln, 5 at the bloomery, 15 at the forge, 5 at the workbench and 8 at the lab', () => {
+  it('has 127 recipes with unique ids: 44 at hand, 26 at the stump, 24 at the kiln, 5 at the bloomery, 15 at the forge, 5 at the workbench and 8 at the lab', () => {
     // §7.3's 89, plus DESIGN-circuits §8.2's 25 (6 at hand, 11 at the stump, 4 at the kiln, 1 at the bloomery, 3 at the forge)
     // + the flint dart (CONTRACTS §60) and the Workbench (§67), whose 8 advanced devices moved off the stump (3), the kiln
     // (1), the forge (3) and the hands (1)
     // + §85: the Grass Bed (hand), the Well, the Rain Barrel and the Bed (stump)
     // §94: the five flint tools moved to the stump, the four simple circuit parts to the Workbench, its 8 devices to the
     // Lab, and the Lab itself is made at the Workbench
-    expect(RECIPES).toHaveLength(124); // + the Snare (§69); + Healwort tea (§76 flora); + the Fletched Dart (§76 fauna); + the Lab (§94)
+    // §100: + Arrows (hand), the Bow Stave and the Bow (stump)
+    expect(RECIPES).toHaveLength(127); // + the Snare (§69); + Healwort tea (§76 flora); + the Fletched Dart (§76 fauna); + the Lab (§94)
     const ids = RECIPES.map((r) => r.id);
-    expect(new Set(ids).size).toBe(124);
+    expect(new Set(ids).size).toBe(127);
     const by = {};
     for (const r of RECIPES) by[r.station] = (by[r.station] ?? 0) + 1;
-    expect(by).toEqual({ hand: 43, stump: 24, kiln: 24, bloomery: 5, forge: 15, workbench: 5, lab: 8 });
+    expect(by).toEqual({ hand: 44, stump: 26, kiln: 24, bloomery: 5, forge: 15, workbench: 5, lab: 8 });
     // listed station by station, in lane order
     const order = RECIPES.map((r) => STATION_IDS.indexOf(r.station));
     expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -314,6 +315,56 @@ describe('the first day (§7.5): the starting kit', () => {
   });
 });
 
+describe('§100 the bow: the stave and the bow at the Work Stump, arrows by hand', () => {
+  const row = (id) => {
+    const r = getRecipe(id);
+    return { station: r.station, inputs: r.inputs, outputs: r.outputs, tools: r.tools, seconds: r.seconds };
+  };
+
+  it('the three rows: a stave shaved from two sticks, strung with two cord; a stick, a flint and a feather make four arrows', () => {
+    expect(row('bow_stave')).toEqual({ station: 'stump', inputs: [{ k: 'stick', n: 2 }], outputs: [{ k: 'bow_stave', n: 1 }], tools: [{ type: 'knife', tier: 2 }], seconds: 4 });
+    expect(row('bow')).toEqual({ station: 'stump', inputs: [{ k: 'bow_stave', n: 1 }, { k: 'cord', n: 2 }], outputs: [{ k: 'bow', n: 1 }], tools: [{ type: 'knife', tier: 2 }], seconds: 5 });
+    expect(row('arrow')).toEqual({ station: 'hand', inputs: [{ k: 'stick', n: 1 }, { k: 'flint', n: 1 }, { k: 'feather', n: 1 }], outputs: [{ k: 'arrow', n: 4 }], tools: [{ type: 'hammer', tier: 1 }], seconds: 3 });
+    expect(toolLabel('knife', 2)).toBe('flint knife or better');
+    // the stave and the bow come right after the flint tools at the stump (the build tree's Work Stump lists them among
+    // its first unlocks); the arrows sit after the darts at hand
+    const at = (s) => RECIPES.filter((r) => r.station === s).map((r) => r.id);
+    const stump = at('stump');
+    expect(stump.slice(stump.indexOf('flint_spear'), stump.indexOf('flint_spear') + 3)).toEqual(['flint_spear', 'bow_stave', 'bow']);
+    const hand = at('hand');
+    expect(hand[hand.indexOf('fletched_dart') + 1]).toBe('arrow');
+    // only these make or take the three
+    expect(RECIPES.filter((r) => r.outputs.some((o) => ['bow', 'bow_stave', 'arrow'].includes(o.k))).map((r) => r.id)).toEqual(['arrow', 'bow_stave', 'bow']);
+    expect(RECIPES.filter((r) => r.inputs.some((i) => 'k' in i && ['bow', 'bow_stave', 'arrow'].includes(i.k))).map((r) => r.id)).toEqual(['bow']);
+  });
+
+  it('two sticks and two cord with a flint knife at the stump make a bow; arrows are made anywhere', () => {
+    const pack = new FakePack({ stick: 3, cord: 2, flint: 1, feather: 1 }, ['flint_knife', 'hammerstone']);
+    const q = new CraftQueue();
+    // no stump: no stave, but the arrows still
+    expect(q.enqueue('bow_stave', 1, pack, { hand: true }).ok).toBe(false);
+    expect(q.enqueue('arrow', 1, pack, { hand: true }).ok).toBe(true);
+    let ev = run(q, pack, getRecipe('arrow').seconds + 0.0001, { dt: 0.25 });
+    expect(ev.failed).toEqual([]);
+    expect(pack.snapshot()).toEqual({ arrow: 4, cord: 2, stick: 2 });
+    const near = { hand: true, stump: STUMP_AT };
+    for (const id of ['bow_stave', 'bow']) {
+      const res = q.enqueue(id, 1, pack, near);
+      expect(res.ok, `${id}: ${res.message}`).toBe(true);
+      ev = run(q, pack, getRecipe(id).seconds + 0.0001, { dt: 0.25 });
+      expect(ev.failed).toEqual([]);
+    }
+    expect(pack.snapshot()).toEqual({ arrow: 4 });
+    expect(pack.tools.map((t) => t.k).sort()).toEqual(['bow', 'flint_knife', 'hammerstone']);
+    // the knife shaved and strung (2 uses), the hammerstone knapped the points (1); the bow is new
+    expect(pack.tools.find((t) => t.k === 'flint_knife').d).toBe(maxDurability('flint_knife') - 2);
+    expect(pack.tools.find((t) => t.k === 'hammerstone').d).toBe(maxDurability('hammerstone') - 1);
+    expect(pack.tools.find((t) => t.k === 'bow').d).toBe(maxDurability('bow'));
+    // a stone-age kit cannot shave a stave: it wants a knife
+    expect(q.enqueue('bow_stave', 1, new FakePack({ stick: 2 }, ['stone_axe', 'hammerstone']), near).ok).toBe(false);
+  });
+});
+
 describe('findStations', () => {
   it('returns { hand: true } alone when no workplace is near', () => {
     expect(findStations(makeGetBlock({}), 0, 10, 0)).toEqual({ hand: true });
@@ -348,7 +399,7 @@ describe('listRecipes', () => {
   it('sorts craftable first, then by missing input units, then in recipe order', () => {
     const pack = new FakePack({ plant_fibre: 2, rock: 1 });
     const list = listRecipes(pack, { hand: true });
-    expect(list).toHaveLength(124);
+    expect(list).toHaveLength(127);
     expect(list.slice(0, 2).map((r) => r.id)).toEqual(['cord', 'hammerstone']);
     expect(list.filter((r) => r.craftable).map((r) => r.id)).toEqual(['cord', 'hammerstone']);
     for (let i = 1; i < list.length; i++) {
@@ -399,7 +450,7 @@ describe('listRecipes', () => {
   it('filters by station, and counts what queued jobs reserve as gone', () => {
     const pack = new FakePack({ plant_fibre: 4 });
     expect(listRecipes(pack, { hand: true }, { station: 'kiln' }).map((r) => r.station)).toEqual(new Array(24).fill('kiln'));
-    expect(listRecipes(pack, { hand: true }, { station: 'all' })).toHaveLength(124);
+    expect(listRecipes(pack, { hand: true }, { station: 'all' })).toHaveLength(127);
     const q = new CraftQueue();
     expect(q.enqueue('fibre_bandage', 1, pack, { hand: true }).ok).toBe(true); // reserves 3 of the 4 fibre
     const cord = listRecipes(pack, { hand: true }, { queue: q }).find((r) => r.id === 'cord');
