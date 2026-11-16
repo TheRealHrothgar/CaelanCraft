@@ -300,7 +300,7 @@ describe('styles.css block picker (DESIGN-circuits §5.4, §5.10)', () => {
       'picker-scroll', 'picker-blurb']) expect(doc.getElementById(id), id).toBeTruthy();
     const $ = (id) => /** @type {any} */ (doc.getElementById(id));
     expect($('picker-search').getAttribute('type')).toBe('search');
-    expect($('picker-search').getAttribute('placeholder')).toBe('Search blocks  ( / )');
+    expect($('picker-search').getAttribute('placeholder')).toBe('Search blocks and items  ( / )'); // every item too
     expect($('picker-showall').getAttribute('type')).toBe('checkbox');
     expect($('picker-scroll').contains($('picker-grid'))).toBe(true);
     expect($('block-picker').querySelector('.picker-hint').textContent)
