@@ -34,12 +34,11 @@ export const CLICK_SWALLOW_MS = 400;
  * @type {Readonly<Record<string, Readonly<{ label: string, kind: 'jump'|'mouse'|'key'|'sneak'|'hook', button?: number, code?: string, hook?: string }>>>}
  */
 export const TOUCH_BUTTONS = Object.freeze({
-  jump: Object.freeze({ label: 'Jump', kind: 'jump' }),
+  jump: Object.freeze({ label: 'Jump', kind: 'jump' }), // held; a double tap toggles flight in Creative, as Space (§97.5)
   dig: Object.freeze({ label: 'Mine', kind: 'mouse', button: 0 }), // hold: break, dig, strike (left mouse held)
   place: Object.freeze({ label: 'Place', kind: 'mouse', button: 2 }), // tap: place / use; hold: keep using (right mouse)
   act: Object.freeze({ label: 'Action', kind: 'key', code: 'KeyR' }), // the R key (drink, open, feed, …); hold repeats
   sneak: Object.freeze({ label: 'Crouch', kind: 'sneak', code: 'ShiftLeft' }), // also the Shift of Shift+R, Shift+Q
-  fly: Object.freeze({ label: 'Fly', kind: 'key', code: 'KeyF' }), // Creative only (main ignores it in Survival)
   drop: Object.freeze({ label: 'Drop', kind: 'key', code: 'KeyQ' }),
   pause: Object.freeze({ label: 'Menu', kind: 'hook', hook: 'onPause' }),
   pack: Object.freeze({ label: 'Pack', kind: 'key', code: 'KeyE' }), // Creative: the block picker ("Blocks")
@@ -72,7 +71,7 @@ export function touchWords(text) {
 }
 
 /** The right-hand cluster, and the bar at the top left, in DOM order. */
-export const PAD_BUTTONS = Object.freeze(['jump', 'dig', 'place', 'act', 'sneak', 'fly', 'drop']);
+export const PAD_BUTTONS = Object.freeze(['jump', 'dig', 'place', 'act', 'sneak', 'drop']);
 export const TOP_BUTTONS = Object.freeze(['pause', 'pack', 'view', 'chat']);
 
 // ---------------------------------------------------------------------------------------------
@@ -629,9 +628,8 @@ export function createTouchUI(doc, controls, hooks = {}) {
     const sneak = /** @type {HTMLElement} */ (buttons.get('sneak'));
     setFlag(sneak, 'sneak', 'on', pad.sneakOn);
     setText(sneak, pad.flying ? 'Down' : TOUCH_BUTTONS.sneak.label);
-    const fly = /** @type {HTMLElement} */ (buttons.get('fly'));
-    setFlag(fly, 'fly', 'on', !!lastView.flying);
-    setFlag(fly, 'fly', 'hidden', !!lastView.survival);
+    // flying shows on Jump (a double tap of it took off; another lands)
+    setFlag(/** @type {HTMLElement} */ (buttons.get('jump')), 'jump', 'on', !!lastView.flying);
     setText(/** @type {HTMLElement} */ (buttons.get('pack')), lastView.survival ? TOUCH_BUTTONS.pack.label : 'Blocks');
     drawStick();
   }

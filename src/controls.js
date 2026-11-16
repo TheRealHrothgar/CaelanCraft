@@ -44,7 +44,7 @@ import { MOUSE_SENSITIVITY, PITCH_LIMIT, DOUBLE_TAP_MS, DOUBLE_TAP_SPACE_MS } fr
  * @property {(code: string) => boolean} isDown             KeyboardEvent.code currently held
  * @property {(code: string) => boolean} consumePressed     true once per keydown edge (edges are queued)
  * @property {() => MouseState} consumeMouse                edges + wheel reset on return. The returned object is REUSED.
- * @property {() => boolean} consumeFlyToggle               one-shot: Space double-tapped or KeyF pressed
+ * @property {() => boolean} consumeFlyToggle               one-shot: Space (or the touch Jump) double-tapped, or KeyF pressed
  * @property {() => boolean} isSprinting                    W double-tapped within DOUBLE_TAP_MS and still held
  * @property {() => PlayerInput} getInput                   the returned object is REUSED between calls
  * @property {(locked: boolean) => void} onLockChange       assignable hook, fired when the lock state changes
@@ -229,15 +229,22 @@ export function createControls(canvas, doc = document) {
       if (t - lastWDown <= DOUBLE_TAP_MS) sprintArmed = true;
       lastWDown = t;
     } else if (code === 'Space') {
-      const t = eventTime(e);
-      if (t - lastSpaceDown <= DOUBLE_TAP_SPACE_MS) {
-        flyToggle = true;
-        lastSpaceDown = -Infinity; // each toggle consumes both taps
-      } else {
-        lastSpaceDown = t;
-      }
+      jumpTap(eventTime(e));
     } else if (code === 'KeyF') {
       flyToggle = true;
+    }
+  }
+
+  /**
+   * A jump pressed at `t` (ms): Space, or the touch Jump button going down (§97.5). Two within DOUBLE_TAP_SPACE_MS toggle
+   * flight (main ignores it in Survival); each toggle consumes both taps.
+   */
+  function jumpTap(t) {
+    if (t - lastSpaceDown <= DOUBLE_TAP_SPACE_MS) {
+      flyToggle = true;
+      lastSpaceDown = -Infinity;
+    } else {
+      lastSpaceDown = t;
     }
   }
 
@@ -419,9 +426,11 @@ export function createControls(canvas, doc = document) {
     vSprint = on && !!sprint && vForward > 0;
   }
 
-  /** The Jump button held (rises while flying, paddles up in water). */
+  /** The Jump button held (rises while flying, paddles up in water); pressed twice quickly it toggles flight, as Space. */
   function setVirtualJump(on) {
-    vJump = !!on && enabled && isLocked();
+    const next = !!on && enabled && isLocked();
+    if (next && !vJump) jumpTap(nowMs());
+    vJump = next;
   }
 
   function setEnabled(on) {

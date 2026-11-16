@@ -23,8 +23,8 @@ function rules() {
 }
 
 describe('the touch buttons say what they do', () => {
-  it('Mine, Place, Action, Crouch, Jump, Fly, Drop; Menu, Pack, Camera, Chat', () => {
-    expect(PAD_BUTTONS.map((id) => TOUCH_BUTTONS[id].label)).toEqual(['Jump', 'Mine', 'Place', 'Action', 'Crouch', 'Fly', 'Drop']);
+  it('Jump, Mine, Place, Action, Crouch, Drop; Menu, Pack, Camera, Chat (no Fly: a double tap of Jump)', () => {
+    expect(PAD_BUTTONS.map((id) => TOUCH_BUTTONS[id].label)).toEqual(['Jump', 'Mine', 'Place', 'Action', 'Crouch', 'Drop']);
     expect(TOP_BUTTONS.map((id) => TOUCH_BUTTONS[id].label)).toEqual(['Menu', 'Pack', 'Camera', 'Chat']);
   });
 

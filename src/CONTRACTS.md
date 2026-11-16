@@ -7388,12 +7388,12 @@ and button presses and calls the sink (the Controls above). `createTouchUI(doc, 
 |---|---|---|
 | Stick | the left half: it appears where the thumb lands (a faint rim rests bottom left) | analog forward / strafe. Nothing inside `STICK_DEAD` 0.12 of `STICK_RADIUS` 60 px, then linear to full at the rim; from `STICK_SPRINT` 0.9 of the radius, pointing within about 45° of straight ahead (`STICK_SPRINT_COS` 0.7), it sprints at full speed. The knob stays on the rim; lifting stops |
 | Look | a drag anywhere that is not a button (the right half; also the left half while the stick is held) | turns by `TOUCH_LOOK_SENSITIVITY` **0.005** rad per CSS px: dragging right turns right, dragging up looks up, as the mouse does. No inertia |
-| Jump | right cluster, the corner | held = Space: jumps, rises while flying, paddles up in water |
+| Jump | right cluster, the corner | held = Space: jumps, rises while flying, paddles up in water; two presses within DOUBLE_TAP_SPACE_MS toggle flight in Creative, as a double-tapped Space (§97.5); lit while flying |
 | Mine (§97: was Dig) | right cluster | held = the left mouse button held: breaks, digs, strikes |
 | Place | right cluster | the right mouse button: a tap places or uses, held keeps using |
 | Action (§97: was R) | right cluster | the R key (drink, open, feed, …); held repeats |
 | Crouch (§97: was Sneak) | right cluster | a TOGGLE on the ground, lit while on; while flying it is held to go down and reads "Down", and taking off clears the toggle. It is the Shift of Shift+R (a part's panel, a rune's editor), Shift+right (place against a control) and Shift+Q (drop the stack) |
-| Fly | right cluster, Creative only (hidden in Survival) | the F key: flight on or off (main ignores it in Survival); lit while flying |
+| ~~Fly~~ | removed (§97.5) | a double tap of Jump flies |
 | Drop | right cluster | the Q key |
 | Menu (§97: was Pause) | top bar | main's `pause()` (the pause menu) |
 | Pack | top bar | the E key: the pack in Survival; reads "Blocks" and opens the block picker in Creative |
@@ -7565,7 +7565,7 @@ url(#…)`) is Chromium-only, and Safari parses it and draws nothing, so it is n
 
 ### 97.2 The tablet controls
 
-The buttons say what they do: **Jump, Mine, Place, Action, Crouch, Fly, Drop**, and along the top **Menu, Pack (Blocks in
+The buttons say what they do: **Jump, Mine, Place, Action, Crouch, Drop**, and along the top **Menu, Pack (Blocks in
 Creative), Camera, Chat** (`TOUCH_BUTTONS`; the ids are unchanged). Round buttons are dark glass with a sheen; pressed is
 honey, latched (Crouch on, flying) a honey ring. The top bar is one glass capsule of words, 44 px tall; Back is a glass
 capsule. The stick's hexagon is a light rim on dark glass with a white glass knob (honey while sprinting). In touch mode
@@ -7590,3 +7590,9 @@ back to the title, "Connection lost: joining again… (n of 3)", and the same na
 `REJOIN_TRIES` (3) — `net.shouldRejoin(reason, { refused, inWorld, tries })`. Never after a refusal (full, another
 version) or when this browser joined again elsewhere (`REPLACED_REASON`, "joined again from elsewhere", the server's 4001
 close: two tabs would take turns for ever); a first join that fails is not retried. Leaving by the menu never rejoins.
+
+### 97.5 Flight is a double tap of Jump
+
+There is no Fly button: two presses of Jump within `DOUBLE_TAP_SPACE_MS` (300 ms) toggle flight in Creative, exactly as a
+double-tapped Space does (`controls.setVirtualJump`'s rising edge goes through the same `jumpTap` as Space's keydown; each
+toggle consumes both taps; main ignores the toggle in Survival). Jump glows (`.on`) while flying.

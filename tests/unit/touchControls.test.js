@@ -148,7 +148,7 @@ describe('the buttons', () => {
     expect(TOUCH_BUTTONS.place.button).toBe(2);
     expect(TOUCH_BUTTONS.act.code).toBe('KeyR');
     expect(TOUCH_BUTTONS.drop.code).toBe('KeyQ');
-    expect(TOUCH_BUTTONS.fly.code).toBe('KeyF');
+    expect(TOUCH_BUTTONS).not.toHaveProperty('fly'); // §97.5: a double tap of Jump flies
     expect(TOUCH_BUTTONS.pack.code).toBe('KeyE');
     expect(TOUCH_BUTTONS.pause.hook).toBe('onPause');
   });
@@ -218,7 +218,22 @@ describe('TouchPad drives the controls', () => {
     expect(controls.yaw).toBe(0);
   });
 
-  it('Jump is held; Dig and Place hold mouse buttons; R, Drop, Fly, Pack, View and Chat are key presses', async () => {
+  it('two quick presses of Jump toggle flight, as a double-tapped Space (§97.5)', async () => {
+    const controls = await lockedControls();
+    const pad = new TouchPad(controls, {});
+    const tap = () => {
+      pad.down(4, 1100, 700, ZONE, 'jump');
+      pad.up(4);
+    };
+    tap();
+    expect(controls.consumeFlyToggle()).toBe(false); // one jump is a jump
+    tap();
+    expect(controls.consumeFlyToggle()).toBe(true); // two in a row toggle flight
+    tap();
+    expect(controls.consumeFlyToggle()).toBe(false); // the toggle took both taps
+  });
+
+  it('Jump is held; Mine and Place hold mouse buttons; Action, Drop, Pack, Camera and Chat are key presses', async () => {
     const controls = await lockedControls();
     let paused = 0;
     const pad = new TouchPad(controls, { onPause: () => paused++ });
@@ -241,8 +256,6 @@ describe('TouchPad drives the controls', () => {
     expect(controls.isDown('KeyR')).toBe(false);
     tap('drop');
     expect(controls.consumePressed('KeyQ')).toBe(true);
-    tap('fly');
-    expect(controls.consumeFlyToggle()).toBe(true);
     tap('pack');
     expect(controls.consumePressed('KeyE')).toBe(true);
     tap('view');
@@ -373,18 +386,19 @@ describe('the on-screen controls (DOM)', () => {
     expect(doc.querySelector('.ctp-text').textContent).toBe('Tap to play');
   });
 
-  it('shows while playing; labels follow the mode; Fly only in Creative; Back on the picker and the console', async () => {
+  it('shows while playing; labels follow the mode; Jump glows while flying; Back on the picker and the console', async () => {
     const { doc, ui } = await build();
     ui.update({ playing: true, survival: false, flying: false });
     expect(doc.getElementById('touch-ui').classList.contains('hidden')).toBe(false);
     expect(btn(doc, 'pack').textContent).toBe('Blocks');
-    expect(btn(doc, 'fly').classList.contains('hidden')).toBe(false);
+    expect(doc.querySelector('[data-touch="fly"]')).toBe(null);
+    expect(btn(doc, 'jump').classList.contains('on')).toBe(false);
     ui.update({ playing: true, survival: false, flying: true });
-    expect(btn(doc, 'fly').classList.contains('on')).toBe(true);
+    expect(btn(doc, 'jump').classList.contains('on')).toBe(true);
     expect(btn(doc, 'sneak').textContent).toBe('Down');
     ui.update({ playing: true, survival: true, flying: false });
     expect(btn(doc, 'pack').textContent).toBe('Pack');
-    expect(btn(doc, 'fly').classList.contains('hidden')).toBe(true);
+    expect(btn(doc, 'jump').classList.contains('on')).toBe(false);
     expect(btn(doc, 'sneak').textContent).toBe('Crouch');
     ui.update({ playing: false, back: true });
     expect(doc.getElementById('touch-ui').classList.contains('hidden')).toBe(true);
