@@ -129,6 +129,7 @@ import {
   createWeather, seasonOf, seasonNews, hudLine, weatherWord, worldSeconds, fallsAsSnow, rainExposure, rainReaching, rainedOnCell,
   rainSky, approach, weatherEnv, OVERCAST_TAU_S,
 } from './weather.js';
+import { windAt } from './wind.js';
 import { createRainRenderer } from './rainRenderer.js';
 // CONTRACTS §87: sleep
 import {
@@ -1837,6 +1838,24 @@ export function boot(win, doc) {
 
   /** The world's clock (weather.worldSeconds of the saved day and time). */
   const weatherNow = () => worldSeconds(day, time);
+
+  /** @type {{ at: number, seed: unknown, wind: import('./wind.js').Wind|null }} the wind, worked out once per clock tick */
+  const windCache = { at: NaN, seed: null, wind: null };
+  /**
+   * The wind here and now (docs/DESIGN-hunting.md §3): from the world's seed and clock, stronger in the shower falling on
+   * the player's biome; the same for every player on a server. Stalking, the rain, the smoke and the pennant read it.
+   * @returns {import('./wind.js').Wind}
+   */
+  function windNow() {
+    const t = weatherNow();
+    const seed = world ? world.seed : 0;
+    if (windCache.wind === null || windCache.at !== t || windCache.seed !== seed) {
+      windCache.at = t;
+      windCache.seed = seed;
+      windCache.wind = windAt(seed, t, weatherFx.falling);
+    }
+    return windCache.wind;
+  }
   /** The real weather is Survival's; forced weather (the debug handle) shows in either mode. */
   const weatherOn = () => survival.inSurvival || (weather !== null && weather.forced !== null);
 
@@ -3057,6 +3076,10 @@ export function boot(win, doc) {
       },
       get timeFrozen() {
         return params.time != null;
+      },
+      /** The wind here and now (DESIGN-hunting §3; the debug handle, the stalking and the weather's drawing). */
+      get wind() {
+        return windNow();
       },
       get hotbar() {
         return hotbar;
