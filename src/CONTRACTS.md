@@ -7327,3 +7327,82 @@ legend, and a scrolling canvas with the lanes named on the left.
 The states come from the view: `treeFactsFromView(view)` (counts over the pack, the worn and the cursor; tools by type and
 tier; `view.ready` — survivalControl.buildPackView's ids of every recipe, whatever the tab, that could start now; the near
 workplaces). `?ui=tree` (with `?autoplay` in Survival) opens the pack with the tree over it, for screenshots.
+
+## 96. Multiplayer, phase 1: one server, a shared Creative world — `server/index.js`, `server/game.js` (Node), `src/protocol.js` (PURE), `src/net.js` (PURE), `src/remotePlayerRenderer.js` (three), `src/serverPanel.js` (DOM), `src/world.js`, `src/main.js`, `src/diagnostics.js`, `index.html`, `src/styles.css`
+
+The design is docs/DESIGN-multiplayer.md; this section is what phase 1 built. Single-player is unchanged: nothing here runs
+until the player joins a server.
+
+### 96.1 The server (`npm run server`)
+
+- `node server/index.js [--port 4180] [--host 0.0.0.0] [--world home] [--seed S] [--client dist] [--worlds server/worlds]`
+  (`parseArgs`: a port 1..65535, a world name of letters, digits, `_` and `-`). One port serves the built game (`dist/`:
+  the page `no-cache`, the rest a year; never a path outside the folder: 403), `GET /api/info` (`ServerGame.info()`:
+  `{ name, version, players, mode }`, `Access-Control-Allow-Origin: *`) and the WebSocket at `/ws` (a client message over
+  `MAX_CLIENT_MESSAGE` = 16 KiB is dropped).
+- `start(opts)` → `{ game, server, wss, stop, saveFile }`; `opts.log` replaces the console. The game ticks every `TICK_S`
+  (50 ms); the world is saved to `<worlds>/<world>/world.json` (written beside and renamed: never half a file) every 30 s
+  while `game.dirty`, on `stop()` (SIGINT / SIGTERM) and when a new world is made; every 30 min it is copied to
+  `backups/world-<ISO time>.json`, the newest 10 kept.
+- **`ServerGame`** (no networking: a socket is `{ send(text), close(code, reason) }`): a headless `World` (`mesh: false`,
+  renderDistance `SIM_RADIUS` 4) and its `BlockPhysics` with the save's switches. `mode` is `'creative'` in phase 1. The
+  save (`toJSON`) is `{ format: 'caelancraft-server-world', v: 1, name, seed, gen, mode, time, day, edits
+  (physics.exportEdits: in-flight motion settled), bricks, physics, players: { <token>: { name, avatar, pose } } }`.
+- **Joining** (`join(socket, hello)`): a first message that is not `hello` is refused ("expected hello"), another `v` is
+  refused (the version named), a full server (`MAX_PLAYERS` 8) is refused; each refusal is `{ t: 'refused', reason }` and a
+  close with 4000. A token already playing is replaced (that connection closed with 4001). The name is `cleanName(hello)`,
+  else the record's, else the avatar's name; the pose is the record's, else the spawn facing +Z. The welcome: `{ t:
+  'welcome', v, id, token, world: { name, seed, gen, mode, time, day }, edits (world.exportEdits: as the world stands,
+  flowing water included), bricks, spawn, you: { name, avatar, pose }, players: [{ id, name, avatar, pose }] }`; the others
+  get `join`. Leaving keeps the record and tells the others `leave`.
+- **Intents** (`onMessage`): `set` `{ q, y, r, id }` is applied (as the player's: `physics.asPlayer`) when its chunk is
+  loaded, the cell's centre is within `REACH + 3` of the player's eye (feet + 1.6), `id < BLOCK_COUNT`, not a building
+  material (§93.5), not a brick shadow, not bedrock, and the cell is not bedrock — Creative: any state of a block (a door
+  opened) may be written. `brick` `{ i, y, n, id }`: AIR takes a brick away, a building material is laid where
+  `brickBlocker` allows, within the same reach. A refused (or unchanged) intent is answered to that player alone with the
+  true value (`cells` / `bricks` of one entry), which puts their copy right. `pose` replaces the player's pose (a
+  `POSE_SWING` not yet broadcast survives a newer pose in the same tick). `chat` goes to everyone as `{ t: 'chat', from,
+  text }`; `ping` `{ at }` is answered `pong`. Anything malformed is ignored.
+- **The tick** (`tick(dt)`): with players, the world streams round every one of them (`World.updateCentres`, 12 ms of
+  generating), the physics steps and the clock runs; then `bricks` (flat `[i, y, n, id, …]`) before `cells` (flat `[q, y,
+  r, id, …]`, every hex cell changed since the last tick, a brick's derived shadow left out but `BRICK_GAP` kept), each
+  player the others' `poses` (`packPose` arrays) when someone moved (the swing bit sent once), and `time` every
+  `TIME_SYNC_S` (5 s).
+
+### 96.2 The wire (`protocol.js`)
+
+`PROTOCOL_VERSION` 1, `DEFAULT_PORT` 4180, `WS_PATH` '/ws', `INFO_PATH` '/api/info', `POSE_HZ` 15. A message is a JSON
+object with a string `t` (`decode` → it or null). The cleaners never trust a number: `cleanName` (no control characters or
+`<>`, trimmed, `MAX_NAME` 20), `cleanChat` (`MAX_CHAT` 200), `cleanPose` (finite x, y, z, yaw, pitch; |x|, |z| ≤ 1e7; y in
+[−64, WORLD_HEIGHT + 256]; yaw wrapped to [0, 2π), pitch clamped to ±π/2, vx / vz to ±100, flags to 5 bits: FLYING 1,
+SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16), `cleanCell` / `cleanBrick` (integers, y inside the world, id a byte),
+`unflatten4` (the sound quadruples of a flat list), `packPose` / `unpackPose` (`[id, x, y, z, yaw, pitch, flags, vx, vz]`,
+3 decimals).
+
+### 96.3 The client
+
+- **Finding a server**: at boot (not under ?autoplay / ?smoke) `probeServer` asks the page's own host (or `?server=host[:port]`)
+  for `/api/info`; when it answers, the title screen shows **Play together** (`#server-panel`: the server's name, mode and
+  players, a name box kept as `caelancraft:v2:mp-name`, Join, a status line). Another version says "reload the page".
+  `?join=<name>` joins at once (with ?autoplay straight into play).
+- **Joining** (`joinServer`): a `NetClient` to `serverWsUrl` (ws: or wss: by the page) with the name, the chosen avatar and
+  the browser's token (`caelancraft:v2:mp-token`, kept even under ?nosave). Its inbox is drained once a frame, in every
+  state, before the state's step (`netStep`). The welcome becomes a save (`restoringFromWelcome`: seed, gen, edits, bricks,
+  time, day, the pose; mode Creative; physics, zombies, the Watcher, circuits and black holes off; no runes) and loads with
+  `startLoading` — the terrain is generated here from the seed. The world's name is the server's.
+- **On a server** (`net` set): `stepPlaying` moves the player only — black holes, fauna, pigs, animals, zombies, the
+  Watcher, block physics, campfires, circuits and rune scripts do not step (the server's world, or phase 2). Every cell that
+  changes here and is not the server's own (`applyingServer`) is sent as a `set` (from `onBlockChanged`, so a break, a
+  place, a door, a lever; never a shadow); `placeBrickAt` / `breakBrick` send `brick`. The server's `cells` are applied with
+  `World.applyServerCell` (a loaded cell at once; else an edit kept for that chunk), its `bricks` with `setBrick`; under
+  any menu the world is still updated so they show. `time` sets the clock (unless ?time). Saving does nothing ("The server
+  saves this world"); Quit leaves at once; the pause menu's physics, zombie, device and mode switches and Undo say "On a
+  server the host’s world decides that"; rune blocks neither run nor open their editor. T opens the chat: a line is said
+  to everyone (`<name> text` in the chat lines), a `/command` is refused. The pause menu's world line says "· on a server".
+- **The others** (`RemotePlayers`): each one's poses (12 kept) are drawn `REMOTE_DELAY_S` (0.12 s) in the past,
+  interpolated (yaw the short way round); `remotePlayerRenderer` gives each one an avatar renderer of their avatar, an
+  `AvatarMotion` stepped from the pose's flags and speed (the arm swings when a SWING pose arrives) and a name tag over the
+  head, and drops them when they leave. The player's pose goes out 15 times a second while it changes (once a second when
+  it does not).
+- **Leaving**: Quit to Title closes the connection; a lost or refused connection returns to the title with the reason
+  ("Left the server: …" / "Could not join: …").

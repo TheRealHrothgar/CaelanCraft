@@ -43,7 +43,7 @@ import { inHeightRange, yawToForward } from './coords.js';
 import { faceNeighbor, hexDiscCount, hexLength, hexToWorld, worldToHex, FACE_TOP } from './hex.js';
 import {
   BLOCK, BIOME, DEFAULT_HOTBAR, getBlockDef, isBreakable, isPlaceable, isReplaceable, isSolid, isTargetable,
-  isWaterSource, isWater, isMeshed, isLiquid, flintAt, isBrickMaterial, isRawHex, isTerraform,
+  isWaterSource, isWater, isMeshed, isLiquid, flintAt, isBrickMaterial, isRawHex, isTerraform, isBrickShadow,
 } from './blocks.js';
 import { raycastBricks, cylinderIntersectsBrick, worldToBrick, BRICK_FACE_DIRS } from './bricks.js';
 import { normalizeSeed } from './noise.js';
@@ -138,6 +138,13 @@ import { createPhantomRenderer } from './phantomRenderer.js';
 import { loadAvatarPref, saveAvatarPref, avatarById } from './avatars.js';
 import { AvatarMotion } from './avatarMotion.js';
 import { createAvatarRenderer } from './avatarRenderer.js';
+import { NetClient, RemotePlayers, probeServer, serverWsUrl, playerToken } from './net.js';
+import {
+  POSE_HZ, POSE_FLYING, POSE_SNEAKING, POSE_ON_GROUND, POSE_SWING, POSE_SWIMMING, unpackPose, unflatten4, cleanName,
+  cleanChat,
+} from './protocol.js';
+import { createRemotePlayerRenderer } from './remotePlayerRenderer.js';
+import { createServerPanel } from './serverPanel.js';
 import { createAvatarMenu } from './avatarMenu.js';
 import {
   VIEW_LABELS, nextViewMode, isThirdPerson, loadViewPref, saveViewPref, boomLength, easeBoom, cameraPose, normalizeViewMode,
@@ -1128,6 +1135,8 @@ export function boot(win, doc) {
   let phantomRenderer;
   /** @type {import('./avatarRenderer.js').AvatarRenderer} §91: the player's avatar (third person) and arm (first person) */
   let avatarRenderer;
+  /** @type {ReturnType<typeof createRemotePlayerRenderer>} DESIGN-multiplayer: the other players on a server */
+  let remoteRenderer;
   /** @type {import('./campfireRenderer.js').CampfireRenderer} */
   let campfireRenderer;
   /** @type {ReturnType<typeof createVortexRenderer>} the black holes' vortices (§2.4) */
@@ -1169,6 +1178,7 @@ export function boot(win, doc) {
     rainRenderer = createRainRenderer(renderer.three.scene); // §84: one mesh, no light
     phantomRenderer = createPhantomRenderer(renderer.three.scene); // §87: three boxes, no light
     avatarRenderer = createAvatarRenderer(renderer.three.scene); // §91: the player's model and first-person arm, no light
+    remoteRenderer = createRemotePlayerRenderer(renderer.three.scene, doc); // nothing in the scene until someone joins
     // v0.10: the vortices and the circuit wiring (neither adds a light).
     vortexRenderer = createVortexRenderer(renderer.three.scene);
     circuitRenderer = createCircuitRenderer(renderer.three.scene);
@@ -1197,7 +1207,14 @@ export function boot(win, doc) {
     audio = createAudio();
     droneLoop = audio.startLoop('bhDrone');
     consoleUI = createConsole(doc, {
-      onLine: (line) => (runner ? runner.runConsoleLine(line) : { ok: false, message: 'no world is loaded' }),
+      onLine: (line) => {
+        if (net) { // DESIGN-multiplayer: on a server the line is said to everyone
+          if (line.startsWith('/')) return { ok: false, message: 'Commands are off on a server' };
+          net.sendChat(line);
+          return null;
+        }
+        return runner ? runner.runConsoleLine(line) : { ok: false, message: 'no world is loaded' };
+      },
       onClose: () => closeConsole(),
     });
     runeEditor = createRuneEditor(doc, {
@@ -1325,6 +1342,7 @@ export function boot(win, doc) {
   /** The right arm swings: a break, a place, a strike, a dig tick, a throw. */
   function avatarSwing() {
     avatarMotion.swing();
+    netSwing = true; // the others see it (DESIGN-multiplayer §3: the pose's swing flag)
   }
 
   /**
@@ -1385,6 +1403,194 @@ export function boot(win, doc) {
       crosshairShown = cross;
       hud.setCrosshairVisible(cross);
     }
+  }
+
+  // ---- Multiplayer (docs/DESIGN-multiplayer.md, phase 1) -------------------------------------------------------------
+  // A page served by a game server (or ?server=) offers "Play together" on the title screen. Joining loads the server's
+  // world like a save (its seed, generation, edits and bricks: the terrain is generated here), in Creative, with the
+  // world's own life off here: block physics, mobs, fires, circuits, black holes, runes and saving are the server's (or
+  // wait for phase 2). Every cell the player changes is sent as an intent (onBlockChanged, placeBrickAt, breakBrick); the
+  // server's cells and bricks are applied as they come (netStep, every frame in every state); the others are drawn as
+  // their avatars (renderFrame). T opens the chat (the console's line goes to everyone; commands are off).
+
+  /** @type {NetClient|null} the connection to a game server (null: single-player) */
+  let net = null;
+  /** The other players and their recent poses. */
+  const remotes = new RemotePlayers();
+  /** Seconds since the last pose was sent; the last pose sent (to send only changes, and once a second anyway). */
+  let netPoseClock = 0;
+  let netPoseIdle = 0;
+  let netPoseKey = '';
+  /** The arm swung since the last pose. */
+  let netSwing = false;
+  /** Server cells are being applied: onBlockChanged must not send them back. */
+  let applyingServer = false;
+  /** The local clock for the remote poses (s). */
+  const netNow = () => now() / 1000;
+
+  /** localStorage for the player's token and name (kept even under ?nosave: they are not the world). */
+  const netStorage = (() => {
+    try {
+      return win.localStorage ?? null;
+    } catch {
+      return null;
+    }
+  })();
+
+  /** Join the server under `name` (the Join button, ?join=). */
+  function joinServer(name) {
+    if (net || state !== STATE.TITLE) return;
+    const WebSocketImpl = /** @type {any} */ (win).WebSocket;
+    if (typeof WebSocketImpl !== 'function') {
+      serverPanel.setMessage('This browser cannot connect to a server.', true);
+      return;
+    }
+    audio.resume();
+    net = new NetClient({
+      url: serverWsUrl(win.location, params.server), WebSocketImpl, name: cleanName(name, ''),
+      avatar: avatarId, token: playerToken(netStorage),
+    });
+    serverPanel.setBusy(true);
+    serverPanel.setMessage('Joining…');
+    net.connect();
+  }
+
+  /** The server's welcome as a save: loaded like one by startLoading (nothing of it is ever written to a slot). */
+  function restoringFromWelcome(m) {
+    const w = m.world && typeof m.world === 'object' ? m.world : {};
+    const you = m.you && m.you.pose ? m.you.pose : null;
+    const sp = Array.isArray(m.spawn) ? m.spawn : null;
+    const pose = you ?? (sp ? { x: sp[0], y: sp[1], z: sp[2], yaw: Math.PI, pitch: 0 } : null);
+    return /** @type {SaveData} */ (/** @type {unknown} */ ({
+      seed: w.seed, gen: w.gen, mode: 'creative', time: w.time, day: w.day,
+      edits: m.edits, bricks: m.bricks,
+      physics: { falling: false, water: false, collapse: false, explosions: false },
+      zombies: false, watcher: false, circuits: false, blackholes: false,
+      player: pose ? { x: pose.x, y: pose.y, z: pose.z, yaw: pose.yaw, pitch: pose.pitch, flying: Boolean((pose.flags ?? 0) & POSE_FLYING) } : null,
+      hotbar: null, selected: 0, runes: null,
+    }));
+  }
+
+  /** The connection ended: back to the title (from a world) with the reason. @param {string} reason */
+  function netClosed(reason) {
+    net = null;
+    remotes.clear();
+    remoteRenderer.clear();
+    serverPanel.setBusy(false);
+    if (world && state !== STATE.TITLE) {
+      quitToTitle(); // the reason is said in the Play together panel
+      serverPanel.setMessage(`Left the server: ${reason}`, true);
+    } else {
+      serverPanel.setMessage(`Could not join: ${reason}`, true);
+    }
+  }
+
+  /** @param {any} m one message from the server @param {number} t */
+  function onServerMessage(m, t) {
+    switch (m.t) {
+      case 'welcome': {
+        if (state !== STATE.TITLE) return;
+        const w = m.world && typeof m.world === 'object' ? m.world : {};
+        worldName = cleanName(w.name, 'Server');
+        remotes.clear();
+        for (const p of Array.isArray(m.players) ? m.players : []) if (Number.isInteger(p.id)) remotes.join(p, t);
+        serverPanel.setBusy(false);
+        serverPanel.setMessage('');
+        startLoading(w.seed, restoringFromWelcome(m));
+        return;
+      }
+      case 'cells':
+        if (!world) return;
+        applyingServer = true;
+        try {
+          for (const [q, y, r, id] of unflatten4(m.c)) world.applyServerCell(q, y, r, id);
+        } finally {
+          applyingServer = false;
+        }
+        return;
+      case 'bricks':
+        if (!world) return;
+        applyingServer = true;
+        try {
+          for (const [i, y, n, id] of unflatten4(m.b)) world.setBrick(i, y, n, id);
+        } finally {
+          applyingServer = false;
+        }
+        return;
+      case 'poses':
+        for (const a of Array.isArray(m.p) ? m.p : []) {
+          const u = unpackPose(a);
+          if (u) remotes.push(u.id, u, t);
+        }
+        return;
+      case 'join':
+        if (!Number.isInteger(m.id)) return;
+        remotes.join(m, t);
+        logLine(`${cleanName(m.name)} joined the game`);
+        return;
+      case 'leave': {
+        const rp = remotes.map.get(m.id);
+        remotes.leave(m.id);
+        if (rp) logLine(`${rp.name} left the game`);
+        return;
+      }
+      case 'time':
+        if (Number.isFinite(m.time) && params.time == null) time = wrapTime(m.time);
+        if (Number.isFinite(m.day)) day = Math.max(1, Math.floor(m.day));
+        return;
+      case 'chat': {
+        const text = cleanChat(m.text);
+        if (text) logLine(`<${cleanName(m.from)}> ${text}`);
+        return;
+      }
+      case 'closed':
+        netClosed(typeof m.reason === 'string' && m.reason ? m.reason : 'the connection was lost');
+        return;
+      default:
+    }
+  }
+
+  /** Every frame: the server's messages, then (joined, with a body) the pose 15 times a second while it changes. */
+  function netStep(rawDt) {
+    const client = net;
+    if (!client) return;
+    const t = netNow();
+    client.drain((m) => {
+      if (net === client) onServerMessage(m, t);
+    });
+    if (net !== client || client.state !== 'joined' || !player) return;
+    // under a menu the world here is frozen but the server's is not: what it sent is meshed all the same
+    const st = /** @type {string} */ (state);
+    if (st !== STATE.PLAYING && st !== STATE.PACK && st !== STATE.BOOK && st !== STATE.LOADING) {
+      world.update(player.x, player.z);
+    }
+    netPoseClock += rawDt;
+    netPoseIdle += rawDt;
+    if (netPoseClock < 1 / POSE_HZ) return;
+    netPoseClock = 0;
+    let flags = 0;
+    if (player.flying) flags |= POSE_FLYING;
+    if (player.sneaking) flags |= POSE_SNEAKING;
+    if (player.onGround) flags |= POSE_ON_GROUND;
+    if (player.inWater && !player.onGround) flags |= POSE_SWIMMING;
+    if (netSwing) flags |= POSE_SWING;
+    const pose = { x: player.x, y: player.y, z: player.z, yaw: controls.yaw, pitch: controls.pitch, flags, vx: player.vx, vz: player.vz };
+    const key = `${pose.x.toFixed(2)},${pose.y.toFixed(2)},${pose.z.toFixed(2)},${pose.yaw.toFixed(2)},${pose.pitch.toFixed(2)},${flags}`;
+    if (key === netPoseKey && netPoseIdle < 1) return;
+    netPoseKey = key;
+    netPoseIdle = 0;
+    netSwing = false;
+    client.sendPose(pose);
+  }
+
+  /**
+   * On a server, a switch of the world (physics, mobs, devices, the mode) or saving is the server's: say so.
+   * @returns {boolean} the action was refused
+   */
+  function serverDecides() {
+    if (!net) return false;
+    hud.showSaveToast('On a server the host’s world decides that', true);
+    return true;
   }
 
   /** The surroundings are looked at this often (s): a few hundred getBlock calls. */
@@ -2694,6 +2900,9 @@ export function boot(win, doc) {
     }
     // Last, so physics triggers see the trackers already updated.
     if (blockPhysics) blockPhysics.onBlockChange(q, y, r, prev, next);
+    // On a server every change made here is the player's intent (the world's own life is off here); a brick's shadow is
+    // derived from the bricks on both ends.
+    if (net && !applyingServer && !isBrickShadow(next) && !isBrickShadow(prev)) net.sendSet(q, y, r, next);
   }
 
   /**
@@ -2908,6 +3117,10 @@ export function boot(win, doc) {
   /** R on a rune block: run it when it has the Interact trigger (as before v0.10). */
   function runRuneAt(h) {
     if (!runner) return;
+    if (net) {
+      logLine('Rune blocks do not run on a server yet');
+      return;
+    }
     const rune = runeStore.ensure(h.q, h.y, h.r);
     if (rune && !rune.enabled) {
       logLine('this rune block is disabled — Shift+R to edit it');
@@ -3256,6 +3469,7 @@ export function boot(win, doc) {
     }
     const ok = blockPhysics ? blockPhysics.asPlayer(() => world.setBrick(i, y, n, id)) : world.setBrick(i, y, n, id);
     if (!ok) return false;
+    if (net) net.sendBrick(i, y, n, id);
     audio.playPlace(getBlockDef(id).soundGroup);
     avatarSwing(); // §91
     updateHit();
@@ -3266,6 +3480,7 @@ export function boot(win, doc) {
   function breakBrick(b) {
     const ok = blockPhysics ? blockPhysics.asPlayer(() => world.setBrick(b.i, b.y, b.n, BLOCK.AIR)) : world.setBrick(b.i, b.y, b.n, BLOCK.AIR);
     if (!ok) return false;
+    if (net) net.sendBrick(b.i, b.y, b.n, BLOCK.AIR);
     audio.playBreak(getBlockDef(b.blockId).soundGroup);
     updateHit();
     return true;
@@ -5549,6 +5764,10 @@ export function boot(win, doc) {
    * @returns {boolean}
    */
   function doSave(announce) {
+    if (net) {
+      if (announce) hud.showSaveToast('The server saves this world');
+      return true;
+    }
     if (params.nosave) {
       if (announce) hud.showSaveToast(autoNoSave ? 'Saving is off for this world (its slot is protected)' : 'Saving disabled (?nosave=1)', true);
       return false;
@@ -5600,7 +5819,7 @@ export function boot(win, doc) {
   }
 
   function autosaveTick(dt) {
-    if (params.nosave) return;
+    if (params.nosave || net) return;
     autosaveAccum += dt;
     if (autosaveAccum < AUTOSAVE_INTERVAL_S) return;
     autosaveAccum = 0;
@@ -5704,6 +5923,7 @@ export function boot(win, doc) {
 
   /** The pause menu's world line: the name, plus a note when nothing is being saved (?nosave, or switched off by autoplay). */
   function pauseWorldLabel() {
+    if (net) return `${worldName} · on a server`;
     return params.nosave ? `${worldName} · not saving` : worldName;
   }
 
@@ -6196,6 +6416,10 @@ export function boot(win, doc) {
   /** @param {import('./types.js').Rune} rune */
   function openEditor(rune) {
     if (state !== STATE.PLAYING || !rune) return;
+    if (net) {
+      logLine('Rune blocks cannot be edited on a server yet');
+      return;
+    }
     editorKey = rune.key;
     setState(STATE.EDITOR);
     controls.setEnabled(false);
@@ -6217,6 +6441,12 @@ export function boot(win, doc) {
    * @param {string} [message]  red status line on the Worlds panel
    */
   function quitToTitle(message = '') {
+    if (net) {
+      net.close();
+      net = null;
+    }
+    remotes.clear();
+    remoteRenderer.clear();
     if (runner) runner.reset();
     runner = null;
     ctx = null;
@@ -6393,6 +6623,10 @@ export function boot(win, doc) {
     },
     onQuit() {
       if (state !== STATE.PAUSED) return;
+      if (net) {
+        quitToTitle(''); // the server keeps the world
+        return;
+      }
       const saved = params.nosave || doSave(false);
       if (!saved && !quitUnsavedArmed) {
         // The red toast says why; the world stays open and the button now reads "Quit Without Saving" (§41).
@@ -6403,7 +6637,7 @@ export function boot(win, doc) {
       quitToTitle(saved ? '' : quitUnsavedMessage(worldName, lastSaveFailReason, slotHasSave()));
     },
     onPhysicsToggle(name) {
-      if (state !== STATE.PAUSED || !blockPhysics) return;
+      if (state !== STATE.PAUSED || !blockPhysics || serverDecides()) return;
       const on = !blockPhysics.isEnabled(name);
       blockPhysics.setSwitch(name, on);
       menus.setPhysicsState(physicsMenuState());
@@ -6411,7 +6645,7 @@ export function boot(win, doc) {
       hud.showSaveToast(`${name[0].toUpperCase()}${name.slice(1)} ${on ? 'on' : 'off'}`);
     },
     onZombiesToggle() {
-      if (state !== STATE.PAUSED) return;
+      if (state !== STATE.PAUSED || serverDecides()) return;
       const on = !zombies.enabled;
       zombies.setEnabled(on); // off also removes every zombie
       menus.setZombiesState(on);
@@ -6420,21 +6654,21 @@ export function boot(win, doc) {
     },
     // ---- v0.10 the pause menu's Devices row (§6.2.17): only the inactive half fires ----
     onSetCircuits(on) {
-      if (state !== STATE.PAUSED || !circuits) return;
+      if (state !== STATE.PAUSED || !circuits || serverDecides()) return;
       circuits.setEnabled(Boolean(on)); // on again: everything is solved settling, nothing fires (pitfall 37)
       menus.setDeviceSwitches(deviceSwitches());
       audio.playClick();
       hud.showSaveToast(`Circuits ${on ? 'on' : 'off'}`);
     },
     onSetBlackHoles(on) {
-      if (state !== STATE.PAUSED) return;
+      if (state !== STATE.PAUSED || serverDecides()) return;
       blackHoles.setEnabled(Boolean(on));
       menus.setDeviceSwitches(deviceSwitches());
       audio.playClick();
       hud.showSaveToast(`Black holes ${on ? 'on' : 'off'}`);
     },
     onUndoPhysics() {
-      if (state !== STATE.PAUSED || !blockPhysics) return;
+      if (state !== STATE.PAUSED || !blockPhysics || serverDecides()) return;
       // §1.5: Undo restores every cell an event wrote, which in Survival would duplicate what was mined from the debris.
       if (survival.inSurvival) {
         hud.showSaveToast('Undo is off in Survival', true);
@@ -6468,7 +6702,7 @@ export function boot(win, doc) {
     /** §1.1: the inactive half of the Mode switch. A generation-1 world going to Survival asks first (§1.3). */
     async onModeSelect(mode) {
       if (state !== STATE.PAUSED || !world || (mode !== 'creative' && mode !== 'survival')) return;
-      if (mode === survival.mode) return;
+      if (mode === survival.mode || serverDecides()) return;
       if (mode === 'survival' && world.gen < 2) {
         const worldAtAsk = world;
         const yes = await menus.confirm({ ...UPGRADE_CONFIRM });
@@ -7399,16 +7633,19 @@ export function boot(win, doc) {
     // §93: the player collides with the bricks exactly (and also when bodies push it: the lookup rides on the state).
     player.brickLookup = world.bricks.getBlock;
     if (!riding && world.hasChunkAt(player.x, player.z)) stepPlayer(player, input, world.getBlock, dt, world.bricks.getBlock);
-    stepBlackHoles(dt);
-    if (checkDeath()) return; // §2.5 checkpoint
-    stepFauna(dt); // §88: the live and the dormant animals, births, wanderers
-    stepPigs(dt);
-    stepAnimals(dt);
-    stepZombies(dt);
-    stepWatcher(dt);
-    stepBlockPhysics(dt);
-    stepCampfires(dt);
-    stepCircuits(dt); // v0.10 (§6.6 step 10): the circuit tick and the infall
+    // On a server (DESIGN-multiplayer §4, phase 1) the world's own life is the server's: only the player moves here.
+    if (!net) {
+      stepBlackHoles(dt);
+      if (checkDeath()) return; // §2.5 checkpoint
+      stepFauna(dt); // §88: the live and the dormant animals, births, wanderers
+      stepPigs(dt);
+      stepAnimals(dt);
+      stepZombies(dt);
+      stepWatcher(dt);
+      stepBlockPhysics(dt);
+      stepCampfires(dt);
+      stepCircuits(dt); // v0.10 (§6.6 step 10): the circuit tick and the infall
+    }
     if (sceneCharge && fxTime >= sceneCharge.at) {
       const c = sceneCharge;
       sceneCharge = null;
@@ -7447,7 +7684,7 @@ export function boot(win, doc) {
 
     // Rune scripts run after physics (step-on sees where the player landed) and before world.update() so their
     // edits are re-meshed this frame. A modal opened by a script (none today) would stop the loop next frame.
-    if (runner && state === STATE.PLAYING) runner.update(dt);
+    if (runner && state === STATE.PLAYING && !net) runner.update(dt);
     if (checkDeath()) return; // §2.5 checkpoint (a script's damage)
 
     world.update(player.x, player.z);
@@ -7499,6 +7736,7 @@ export function boot(win, doc) {
     fov = easeFov(fov, player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV, dt);
     renderer.setFov(fov + camFx.fov);
     drawAvatar(dt, live, eyeY);
+    if (net || remoteRenderer.count() > 0) remoteRenderer.sync(remotes, netNow(), dt); // the other players, live under menus too
     renderCircuitsAndVortices(dt, eyeY, live);
     renderer.setHighlight(hit);
     renderer.setBrickHighlight(brickHit); // §93
@@ -7680,6 +7918,8 @@ export function boot(win, doc) {
       return;
     }
 
+    netStep(rawDt); // DESIGN-multiplayer: the server's messages, in every state (a welcome starts the loading)
+
     switch (state) {
       case STATE.LOADING:
         stepLoading();
@@ -7772,7 +8012,20 @@ export function boot(win, doc) {
   hud.setHotbar(hotbar, selected);
   if (params.debug) hud.setDebugVisible(true);
 
-  if (autoplay) {
+  // DESIGN-multiplayer: a page served by a game server (or ?server=) offers it on the title screen; ?join= joins at once.
+  const serverPanel = createServerPanel(doc, { onJoin: (name) => joinServer(name), storage: netStorage });
+  if (params.join != null || (!autoplay && typeof win.fetch === 'function')) {
+    probeServer((u) => win.fetch(u, { cache: 'no-store' }), win.location, params.server).then((info) => {
+      if (!info || disposed) return;
+      serverPanel.show(info);
+      if (params.join != null && !info.mismatch && state === STATE.TITLE) joinServer(params.join);
+    });
+  }
+
+  if (params.join != null) {
+    params.mode = null;
+    showTitle(); // the welcome starts the loading
+  } else if (autoplay) {
     // Skip the title and play slot ?slot (default 1): ?seed wins, then the slot's seed (whose edits we restore), then a
     // random seed. Under ?nosave nothing is loaded or written.
     const save = params.nosave ? null : loadSlot(currentSlot);

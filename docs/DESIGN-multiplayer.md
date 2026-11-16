@@ -69,7 +69,8 @@ Later phases add `ents` (entity snapshots: mobs, animals, loose items, falling b
 
 1. **A shared world (now).** The server (world authority, saves, block physics, the protocol); "Join this server" on the
    title screen; terrain from the seed, edits and bricks synced both ways; everyone sees everyone as their avatar, named;
-   the clock shared; touch controls for the iPad. Multiplayer worlds are **Creative** in phase 1 (mobs off).
+   the clock shared; touch controls for the iPad. Multiplayer worlds are **Creative** in phase 1 (mobs off). *Built: see
+   src/CONTRACTS.md §96 and server/README.md (hosting, the WSL2 port).*
 2. **The world's life on the server.** Fauna, animals, pigs, zombies and the Watcher; campfires, circuits, runes, loose
    items, weather — each aware of several players (the nearest one is chased; spawning and live zones round every
    player). Entity snapshots with interest management; clients interpolate them. Sounds and particles as `fx`.
@@ -95,7 +96,7 @@ Later phases add `ents` (entity snapshots: mobs, animals, loose items, falling b
 The PC runs the game under WSL2 in NAT mode: the server listens inside WSL, which the iPads cannot reach directly. Either
 forward the port on Windows (`netsh interface portproxy` + a firewall rule, as administrator) or switch WSL to mirrored
 networking (`.wslconfig: networkingMode=mirrored`). `server/README.md` gives both; the server prints the address the iPads
-open.
+open (under NAT that is WSL's own address: the iPads use the PC's Wi-Fi address instead).
 
 ## 7. Risks
 

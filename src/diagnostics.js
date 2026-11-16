@@ -42,6 +42,10 @@ import { normalizeViewMode } from './viewCamera.js';
  * @property {string|null} avatar    §91 screenshot aid: `?avatar=caelan|brayden|annabelle` for this visit (not stored)
  * @property {boolean} avatarMenu    §91: `?ui=avatars` — the Avatar chooser opens over the title screen, or (with ?autoplay)
  *   over the pause menu once the world has loaded
+ * @property {string|null} server    DESIGN-multiplayer §2: `?server=host[:port]` — the game server to offer (default: the one
+ *   that served the page, if it is one)
+ * @property {string|null} join      `?join=<name>`: join that server at once under this name (with ?autoplay: straight into
+ *   play, no click; screenshots and a home-screen bookmark)
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -79,6 +83,8 @@ export function parseParams(search = defaultSearch()) {
     view: normalizeViewMode(readString(params, 'view')),
     avatar: normalizeAvatarId(readString(params, 'avatar')),
     avatarMenu: (readString(params, 'ui') ?? '').toLowerCase() === 'avatars',
+    server: readString(params, 'server'),
+    join: readString(params, 'join'),
   };
 }
 
