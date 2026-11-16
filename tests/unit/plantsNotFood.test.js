@@ -113,8 +113,8 @@ const facesWith = (id, pred, least = 1) => quadsOf(id).filter((q) => texelsOf(id
 
 describe('the eight blocks 151–158 (blocks.js)', () => {
   it('ids, names, flags and tiles: wild plants like the others — 3D models with the PLANT flags and a flat icon', () => {
-    expect(BLOCK_COUNT).toBe(178); // §94: + the Lab 177; §93: + the bricks' shadows 174–176; // (§83: the low and shallow water follow at 159–162; §85: the homestead blocks at 163–172; §89: the aquifer at 173)
-    expect(BLOCKS).toHaveLength(178);
+    expect(BLOCK_COUNT).toBe(179); // §101: + the Pennant 178; §94: + the Lab 177; §93: + the bricks' shadows 174–176; // (§83: the low and shallow water follow at 159–162; §85: the homestead blocks at 163–172; §89: the aquifer at 173)
+    expect(BLOCKS).toHaveLength(179);
     expect(BLOCKS[158].id).toBe(158); // appended in id order: no earlier block moved
     expect(BLOCKS[150].name).toBe('cattails_sprout');
     for (const [key, id, name, displayName, sound, tile, placeable] of PLANTS) {
@@ -151,7 +151,7 @@ describe('the eight blocks 151–158 (blocks.js)', () => {
   it('seven tiles 218–224, one each in id order (the picked Nightshade has none of its own)', () => {
     expect(NEW_TILES).toEqual([218, 219, 220, 221, 222, 223, 224]);
     expect(NEW_TILES.map((t) => TILE_NAMES[t])).toEqual(['fern', 'meadow_daisies', 'thistle', 'hemlock', 'nightshade_bush', 'flax', 'aloe']);
-    expect(TILE_IDS).toHaveLength(197); // §94: + the Lab's 105, 106; // + the ten tiles of §85; + the aquifer's two (§89)
+    expect(TILE_IDS).toHaveLength(198); // §101: + the Pennant's 107; §94: + the Lab's 105, 106; // + the ten tiles of §85; + the aquifer's two (§89)
     for (const t of NEW_TILES) expect(TILE_IDS, TILE_NAMES[t]).toContain(t);
     // every one is the face of exactly one block
     for (const t of NEW_TILES) expect(BLOCKS.filter((d) => d.tiles.includes(t)).map((d) => d.name), TILE_NAMES[t]).toEqual([TILE_NAMES[t]]);
@@ -550,7 +550,7 @@ describe('the three items (items.js) and their icons (itemArt.js)', () => {
     expect(getItem('aloe_leaf')).toEqual({ key: 'aloe_leaf', name: 'Aloe Leaf', kind: 'heal', stack: 16, heal: { hp: 6, rate: 1.5, useS: 1.0 } });
     expect(itemName('nightshade_berries', 1)).toBe('Nightshade Berry');
     expect(itemName('nightshade_berries', 2)).toBe('Nightshade Berries');
-    expect(ITEM_KEYS).toHaveLength(267); // §94: + the Lab; // + §85: the Pot of Spring Water and four block items
+    expect(ITEM_KEYS).toHaveLength(268); // §101: + the Pennant; §94: + the Lab; // + §85: the Pot of Spring Water and four block items
   });
 
   it('each look-alike\'s food is its twin\'s in every number but one: it always poisons', () => {

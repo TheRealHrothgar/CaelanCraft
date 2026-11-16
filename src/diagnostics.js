@@ -33,8 +33,10 @@ import { isItemPick, normalizePick } from './creativePicks.js';
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
  * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker, 'pack' the Pack & Making screen (Survival), 'tree' the same with its build tree open (§94), 'device' the device panel on a demo Clockwork Timer (v0.10), 'pause' the pause menu
- * @property {'vortex'|'circuits'|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar Charge 8 cells ahead 2 s
- *   after loading; 'circuits' builds the §4.14 worked examples ahead (readSceneParam, circuitSceneWrites)
+ * @property {'vortex'|'circuits'|'wind'|'wind-rain'|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar
+ *   Charge 8 cells ahead 2 s after loading; 'circuits' builds the §4.14 worked examples ahead (readSceneParam,
+ *   circuitSceneWrites); §101: 'wind' sets two pennants and a lit campfire ahead (the flags and the smoke in the wind),
+ *   'wind-rain' the same in forced rain
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
  * @property {'creative'|'survival'|null} mode  v0.9 (§9.10): the first world's mode with ?autoplay / ?smoke; anything else → null
  * @property {boolean} soundTest     v0.16 (CONTRACTS §82): `?ui=sounds` — main opens the Sound Test as soon as the page has loaded
@@ -117,16 +119,27 @@ function readSoundTestParam(params) {
 }
 
 /**
- * `?scene=vortex|circuits` (case-insensitive), anything else null (DESIGN-circuits §6.7).
+ * `?scene=vortex|circuits|wind|wind-rain` (case-insensitive), anything else null (DESIGN-circuits §6.7; §101 the wind).
  * @param {URLSearchParams} params
- * @returns {'vortex'|'circuits'|null}
+ * @returns {'vortex'|'circuits'|'wind'|'wind-rain'|null}
  */
 export function readSceneParam(params) {
   const t = readString(params, 'scene');
   if (t === null) return null;
   const v = t.toLowerCase();
-  return v === 'vortex' || v === 'circuits' ? v : null;
+  return v === 'vortex' || v === 'circuits' || v === 'wind' || v === 'wind-rain' ? v : null;
 }
+
+/**
+ * §101 `?scene=wind`: where its pieces stand, as [name, cells ahead, cells to the right] from the player: a lit campfire
+ * and a pennant beside it a few cells ahead, and a second pennant farther off (the flags and the smoke in the wind).
+ * @type {ReadonlyArray<readonly ['campfire'|'pennant'|'far-pennant', number, number]>}
+ */
+export const WIND_SCENE = Object.freeze(/** @type {Array<readonly ['campfire'|'pennant'|'far-pennant', number, number]>} */ ([
+  Object.freeze(['campfire', 4.5, -1.2]),
+  Object.freeze(['pennant', 4, 1.3]),
+  Object.freeze(['far-pennant', 9, -3]),
+]));
 
 // ---------------------------------------------------------------------------------------------
 // v0.10 `?scene=circuits`: the named worked examples of DESIGN-circuits §4.14, as cells for main to write

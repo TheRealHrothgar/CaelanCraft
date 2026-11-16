@@ -76,8 +76,8 @@ const green = ([r, g, b, a]) => a === 255 && g > r + 30 && g > b + 30;
 
 describe('the farm blocks 133–150 (blocks.js)', () => {
   it('nine planted blocks then nine sprouts, in the kind order, named after the plant each grows into', () => {
-    expect(BLOCK_COUNT).toBe(178); // §94: + the Lab 177; §93: + the bricks' shadows 174–176; // §89: the aquifer at 173; §85: the homestead blocks at 163–172; §81: the eight plants that are not food follow at 151–158; §83: the low and shallow water at 159–162
-    expect(BLOCKS).toHaveLength(178);
+    expect(BLOCK_COUNT).toBe(179); // §101: + the Pennant 178; §94: + the Lab 177; §93: + the bricks' shadows 174–176; // §89: the aquifer at 173; §85: the homestead blocks at 163–172; §81: the eight plants that are not food follow at 151–158; §83: the low and shallow water at 159–162
+    expect(BLOCKS).toHaveLength(179);
     expect(CROP_ROWS.map((row) => row[1])).toEqual(TABLE.map((row) => row[0]));
     expect([...FARM_IDS]).toEqual(Array.from({ length: 18 }, (_, i) => 133 + i));
     TABLE.forEach(([key, label, , grown], i) => {
@@ -98,7 +98,7 @@ describe('the farm blocks 133–150 (blocks.js)', () => {
 
   it('PLANT flags, a 3D model, a flat icon, never placed by hand, the sound of grass; one tile for all nine of each', () => {
     expect([T.SEEDBED, T.SPROUT]).toEqual([205, 206]);
-    expect(TILE_IDS).toHaveLength(197); // §94: + the Lab's 105, 106; // + the seven tiles of §81 (218–224); + the ten of §85; + the aquifer's two (§89)
+    expect(TILE_IDS).toHaveLength(198); // §101: + the Pennant's 107; §94: + the Lab's 105, 106; // + the seven tiles of §81 (218–224); + the ten of §85; + the aquifer's two (§89)
     expect([TILE_NAMES[205], TILE_NAMES[206]]).toEqual(['seedbed', 'sprout']);
     for (const id of FARM_IDS) {
       const d = BLOCKS[id];

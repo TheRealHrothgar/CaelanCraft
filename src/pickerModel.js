@@ -98,6 +98,8 @@ export const PICKER_SECTIONS = Object.freeze([
     'wicker_basket', 'sleeping_hide', 'snare',
     // §85: a place to stay — the two beds, the well, the rain barrel
     'grass_bed', 'bed', 'well', 'rain_barrel',
+    // §101: the pennant shows the wind
+    'pennant',
   ]),
   sec('powder', 'Black Powder', 'powder_keg', ['powder_keg', 'powder_fuse', 'torch']),
   sec('circuits', 'Circuits', 'voltaic_battery', [
@@ -197,6 +199,7 @@ export const PICKER_ALIASES = Object.freeze({
   voltaic_battery: Object.freeze(['power', 'cell', 'power source', 'pile']),
   selenium_panel: Object.freeze(['selenium cell', 'solar', 'photocell', 'daylight']),
   filament_lamp: Object.freeze(['light', 'bulb']),
+  pennant: Object.freeze(['flag', 'banner', 'wind', 'windsock', 'weather vane']), // §101
 });
 
 /**

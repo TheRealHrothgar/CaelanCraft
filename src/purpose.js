@@ -73,6 +73,8 @@ export const PURPOSE = Object.freeze({
   rain_barrel: 'Catches rain. Stores 3 pots of water that never spoil.',
   grass_bed: 'A poor place to sleep. Better than none.',
   bed: 'The best sleep: you heal most and need the fewest hours.',
+  // ---- the wind (§101)
+  pennant: 'Shows the wind. Stalk game with the wind in your face.',
 });
 
 /**

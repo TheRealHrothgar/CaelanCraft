@@ -23,6 +23,10 @@
 // part of prewarm like the others; they draw nothing while no spot holds anything. While a pot sits in the embers the
 // fire's flames burn low and wide around its foot (POT_FLAME_SQUASH / POT_FLAME_WIDEN) — otherwise the outer flame
 // cone would swallow the pot whole.
+//
+// §101 the wind: setWind(wind) bends the smoke downwind. A puff leaves the fire upright and takes on the drawn air's speed
+// as it rises (windDrawn.smokeDrift), and rises a little slower in a strong wind (smokeRise): a calm column stands
+// straight, a breeze lays it over. The flames lean a little downwind too.
 import * as THREE from 'three';
 import {
   CAMPFIRE_LIGHTS, CAMPFIRE_LIGHT_INTENSITY, CAMPFIRE_LIGHT_RANGE, CAMPFIRE_LIGHT_FADE_S, CAMPFIRE_LIGHT_HYSTERESIS,
@@ -30,6 +34,7 @@ import {
 } from './config.js';
 import { HEX_SIZE } from './hex.js';
 import { flicker } from './campfires.js';
+import { drawnStrength, smokeDrift, smokeRise, windAir } from './windDrawn.js';
 
 /** @typedef {import('./campfires.js').Campfire} Campfire */
 
@@ -256,6 +261,7 @@ export function skewerPose(k, x, y, z) {
  *           models for exactly these fires (nearest first; `dist` from the camera), lights handed over smoothly;
  *           `spotsView(fire)` (Survival, optional) gives each modelled fire's spots: skewers, food chunks and the pot
  * @property {() => number} count       fires with a model
+ * @property {(wind: import('./wind.js').Wind|null) => void} setWind  §101: the wind the smoke drifts in (null: still air)
  * @property {() => boolean} idle       no model and every light dark (sync may stop being called)
  * @property {(webgl: *, camera: THREE.Camera) => Promise<void>} prewarm  compile every campfire program now
  * @property {() => void} dispose
@@ -431,6 +437,32 @@ export function createCampfireRenderer(scene, opts = {}) {
     mesh.setMatrixAt(index, dummy.matrix);
   }
 
+  const leanMatrix = new THREE.Matrix4();
+  const flameMatrix = new THREE.Matrix4();
+  /**
+   * §101: shear a flame tongue downwind about its base — its tip leans `k` metres per metre of height toward (leanX,
+   * leanZ). The base stays on the logs.
+   * @param {THREE.InstancedMesh} mesh @param {number} index @param {number} k
+   */
+  function leanFlame(mesh, index, k) {
+    mesh.getMatrixAt(index, flameMatrix);
+    const e = flameMatrix.elements;
+    const bx = e[12];
+    const by = e[13];
+    const bz = e[14];
+    // translate to the base, shear x and z by y, translate back
+    leanMatrix.set(
+      1, k * leanX, 0, -k * leanX * by,
+      0, 1, 0, 0,
+      0, k * leanZ, 1, -k * leanZ * by,
+      0, 0, 0, 1,
+    );
+    flameMatrix.premultiply(leanMatrix);
+    flameMatrix.elements[12] = bx;
+    flameMatrix.elements[14] = bz;
+    mesh.setMatrixAt(index, flameMatrix);
+  }
+
   /** Stones, logs and embers of the fire in `m.slot` (they only move when a fire takes a slot). */
   function writeStatic(m) {
     const { fire, slot } = m;
@@ -478,6 +510,22 @@ export function createCampfireRenderer(scene, opts = {}) {
     return !!s && typeof s.k === 'string';
   }
 
+  // §101: the drawn air the smoke drifts in, how much slower it rises, and how far the flames lean
+  const air = [0, 0];
+  const drift = [0, 0];
+  let rise = 1;
+  let lean = 0;
+  let leanX = 0;
+  let leanZ = 0;
+  /** @param {import('./wind.js').Wind|null} wind */
+  function setWind(wind) {
+    windAir(wind, air);
+    rise = smokeRise(wind);
+    lean = 0.22 * drawnStrength(wind);
+    leanX = wind && lean > 0 ? wind.x : 0;
+    leanZ = wind && lean > 0 ? wind.z : 0;
+  }
+
   /** Flames and smoke of the fire in `m.slot` at time t. */
   function animate(m, t, dt) {
     const { fire, slot, puffs } = m;
@@ -494,6 +542,7 @@ export function createCampfireRenderer(scene, opts = {}) {
         widen * (1 + 0.06 * Math.sin(t * 9 + ph)), squash * f * (1 + 0.18 * Math.sin(t * 11.3 + ph * 1.9)),
         widen * (1 + 0.06 * Math.cos(t * 8 + ph)),
       );
+      if (lean > 0) leanFlame(flames[i], slot, lean * (1 + 0.25 * Math.sin(t * 4.3 + ph)));
     }
     for (let i = 0; i < SMOKE_PER_FIRE; i++) {
       let age = puffs[i * 3] + dt;
@@ -508,7 +557,9 @@ export function createCampfireRenderer(scene, opts = {}) {
       const u = age / SMOKE_LIFE_S;
       const size = 0.25 + 0.75 * u;
       const index = slot * SMOKE_PER_FIRE + i;
-      put(smoke, index, fire.x + puffs[i * 3 + 1] * age, fire.y + 0.65 + SMOKE_RISE * age, fire.z + puffs[i * 3 + 2] * age, 0, 0, size, size, 1);
+      smokeDrift(age, air[0], air[1], drift); // §101: downwind, more the higher it has risen
+      put(smoke, index, fire.x + puffs[i * 3 + 1] * age + drift[0], fire.y + 0.65 + SMOKE_RISE * rise * age,
+        fire.z + puffs[i * 3 + 2] * age + drift[1], 0, 0, size, size, 1);
       smokeOpacity.array[index] = 0.32 * Math.min(1, u * 8) * (1 - u);
     }
   }
@@ -735,5 +786,5 @@ export function createCampfireRenderer(scene, opts = {}) {
     smokeTex.dispose();
   }
 
-  return { sync, count: () => models.size, idle, prewarm, dispose };
+  return { sync, count: () => models.size, setWind, idle, prewarm, dispose };
 }

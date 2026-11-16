@@ -253,6 +253,7 @@ const COUNTABLE = /(Stick|Lump|Ingot|Brick|Rag|Chunk|Nugget|Gem|Pot|Bar)$/;
 const TAG_PROSE = Object.freeze({
   log: ['a log', 'logs'], planks: ['a plank', 'planks'], fuel: ['fuel', 'fuel'], tinder: ['tinder', 'tinder'],
   knapstone: ['a knapping stone', 'knapping stones'], sand: ['sand', 'sand'], wool: ['wool', 'wool'],
+  cloth: ['a rag or a hide', 'rags or hides'], // §101
 });
 
 /** One recipe input in prose: "6 Sticks", "a log", "2 fuel". @param {{k?: string, tag?: string, n: number}} inp */
@@ -1462,6 +1463,18 @@ function makeChapters() {
       p(`*Get ready for the dry season.* When the log says the rains are ending, you have one day. Fill your pots and boil them: boiled water keeps. A field more than ${FARM_WATER_REACH} cells from fresh water will be dry ground until a shower passes.`),
       p('*Or move on.* People who live in such lands often travel with the water: to the river in the dry months, and home again with the rains. You can do the same.'),
       warn('Rain in the dry season is a gift, not a plan. Many days can pass between two showers.'),
+    ],
+    // §101: the wind drawn
+    [
+      h('The wind'),
+      p('The wind turns slowly over the hours, rises and falls over the minutes, and comes in gusts of a few seconds. A shower brings it up. Everyone in the world feels the same wind.'),
+      p('*The vane* at the top of the screen shows it. Its arrow points where the wind blows, as seen from where you look: pointing up, the wind is at your back; pointing down, it blows in your face. The stronger the wind, the bigger the arrow, and it shakes in a gust. In a calm it is only a dot. The words beside it say how strong it is and where it comes from.'),
+      bullets([
+        '*Rain leans with the wind,* and snow drifts far. Close behind a wall or a hill, on the side away from the wind, less rain falls.',
+        '*Smoke drifts downwind.* On a calm day it rises straight up.',
+        `*A Pennant* shows the wind where you set it. Make one by hand: ${rec('pennant').inputs.some((i) => 'tag' in i && i.tag === 'cloth') ? 'a rag or a hide' : 'a cloth'} lashed to a Stick with Cord. Its flag streams out in a breeze, flutters in the gusts and hangs limp in a calm.`,
+      ]),
+      tip('Animals smell you on the wind. Stalk them with the wind in your face.'),
     ],
   ]);
 

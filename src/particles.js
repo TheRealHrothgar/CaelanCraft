@@ -13,6 +13,10 @@
 // blocks (infall.js) follow the same spiral. Each one's life is set at emission so that it reaches the core, where it
 // dies (ρ < 0.45). `emit` clears a slot's orbit flag, so a smoke particle written into a recycled orbit slot flies
 // ballistically, never around a stale centre.
+//
+// §101 the wind: setWind(x, z) gives the drawn air's velocity (windDrawn.windAir). A particle's drag pulls its sideways
+// velocity toward the air's (× its kind's `wind`, how much the air carries it) instead of toward rest: smoke and steam
+// drift downwind, leaves a little, dust barely, sparks and orbit particles not at all. In still air nothing changes.
 import * as THREE from 'three';
 import { PARTICLE_CAPACITY, VORTEX_INFLOW, VORTEX_EVENT_R } from './config.js';
 import { BIOME, FACE_TOP, getBlockDef, getFaceTile } from './blocks.js';
@@ -24,14 +28,17 @@ import { BIOME_TINT, isTintedFace } from './mesher.js';
  * [min, max] m, growth (size × (1 + growth·age)), alpha, default sRGB colour and colour jitter.
  */
 const KINDS = Object.freeze({
-  dust: { life: [0.45, 0.9], speed: 1.6, up: [0.8, 2.2], gravity: -9, drag: 2.2, size: [0.09, 0.17], growth: 0.2, alpha: 0.95, color: [0.55, 0.5, 0.45], jitter: 0.12 },
-  leaves: { life: [1.1, 1.9], speed: 1.2, up: [0.4, 1.6], gravity: -2.6, drag: 1.6, size: [0.1, 0.16], growth: 0, alpha: 1, color: [0.33, 0.55, 0.2], jitter: 0.15 },
-  smoke: { life: [1.4, 2.4], speed: 0.45, up: [0.7, 1.4], gravity: 0.5, drag: 0.9, size: [0.28, 0.42], growth: 1.4, alpha: 0.5, color: [0.42, 0.42, 0.44], jitter: 0.08 },
-  sparks: { life: [0.3, 0.7], speed: 7, up: [2, 5], gravity: -9, drag: 1.2, size: [0.05, 0.09], growth: -0.5, alpha: 1, color: [1, 0.72, 0.25], jitter: 0.1 },
-  steam: { life: [0.7, 1.2], speed: 0.5, up: [1.4, 2.4], gravity: 1.2, drag: 1, size: [0.2, 0.32], growth: 1, alpha: 0.45, color: [0.92, 0.94, 0.96], jitter: 0.03 },
+  dust: { life: [0.45, 0.9], speed: 1.6, up: [0.8, 2.2], gravity: -9, drag: 2.2, size: [0.09, 0.17], growth: 0.2, alpha: 0.95, color: [0.55, 0.5, 0.45], jitter: 0.12, wind: 0.15 },
+  leaves: { life: [1.1, 1.9], speed: 1.2, up: [0.4, 1.6], gravity: -2.6, drag: 1.6, size: [0.1, 0.16], growth: 0, alpha: 1, color: [0.33, 0.55, 0.2], jitter: 0.15, wind: 0.6 },
+  smoke: { life: [1.4, 2.4], speed: 0.45, up: [0.7, 1.4], gravity: 0.5, drag: 0.9, size: [0.28, 0.42], growth: 1.4, alpha: 0.5, color: [0.42, 0.42, 0.44], jitter: 0.08, wind: 1 },
+  sparks: { life: [0.3, 0.7], speed: 7, up: [2, 5], gravity: -9, drag: 1.2, size: [0.05, 0.09], growth: -0.5, alpha: 1, color: [1, 0.72, 0.25], jitter: 0.1, wind: 0 },
+  steam: { life: [0.7, 1.2], speed: 0.5, up: [1.4, 2.4], gravity: 1.2, drag: 1, size: [0.2, 0.32], growth: 1, alpha: 0.45, color: [0.92, 0.94, 0.96], jitter: 0.03, wind: 1 },
   // Soot drawn into a vortex (emitOrbit), and the plain bursts where an eaten block vanishes or a vortex collapses.
-  infall: { life: [1.5, 3], speed: 0.6, up: [0, 0.4], gravity: 0, drag: 1.5, size: [0.06, 0.12], growth: -0.3, alpha: 0.9, color: [0.18, 0.15, 0.13], jitter: 0.08 },
+  infall: { life: [1.5, 3], speed: 0.6, up: [0, 0.4], gravity: 0, drag: 1.5, size: [0.06, 0.12], growth: -0.3, alpha: 0.9, color: [0.18, 0.15, 0.13], jitter: 0.08, wind: 0 },
 });
+
+/** §101: how much the air carries each kind of particle (0 not at all, 1 like smoke). */
+export const PARTICLE_WIND = Object.freeze(Object.fromEntries(Object.entries(KINDS).map(([k, v]) => [k, v.wind])));
 
 /** Orbit flags (the `orbit` array): an orbit particle, θ fixed (radial), height ∝ ρ (spherical: straight at the centre). */
 const ORBIT = 1;
@@ -114,6 +121,7 @@ void main() {
  * @property {(kind: string, x: number, y: number, z: number, count?: number, opts?: EmitOptions) => void} emit
  * @property {(kind: string, cx: number, cy: number, cz: number, count: number, opts: OrbitOptions) => void} emitOrbit
  * @property {(dt: number) => void} update   advance and upload; call once per frame (dt 0 = frozen)
+ * @property {(x: number, z: number) => void} setWind  §101: the drawn air's velocity (m/s; windDrawn.windAir), 0, 0 still
  * @property {() => number} count            live particles
  * @property {() => void} clear
  * @property {(webgl: *, camera: THREE.Camera) => Promise<void>} prewarm  compile the particle program now
@@ -174,6 +182,10 @@ export function createParticles(scene, opts = {}) {
   const baseSize = new Float32Array(cap);
   const growth = new Float32Array(cap);
   const baseAlpha = new Float32Array(cap);
+  /** §101: how much the air carries each particle (its kind's `wind`) */
+  const carried = new Float32Array(cap);
+  let airX = 0;
+  let airZ = 0;
   // Orbit particles (emitOrbit): flags, centre, radius, angle, height and their start values, spin and inflow, and the
   // two linear colours they move between.
   const orbit = new Uint8Array(cap);
@@ -281,6 +293,7 @@ export function createParticles(scene, opts = {}) {
       growth[i] = k.growth;
       baseAlpha[i] = k.alpha;
       alpha[i] = k.alpha;
+      carried[i] = k.wind;
       orbit[i] = 0; // a recycled orbit slot flies ballistically
     }
     aColor.needsUpdate = true;
@@ -423,9 +436,12 @@ export function createParticles(scene, opts = {}) {
           continue;
         }
         const f = Math.exp(-drag[i] * dt);
-        vel[i * 3] *= f;
+        // the drag pulls toward the air's velocity (§101), toward rest in still air
+        const ax = airX * carried[i];
+        const az = airZ * carried[i];
+        vel[i * 3] = ax + (vel[i * 3] - ax) * f;
         vel[i * 3 + 1] = vel[i * 3 + 1] * f + gravity[i] * dt;
-        vel[i * 3 + 2] *= f;
+        vel[i * 3 + 2] = az + (vel[i * 3 + 2] - az) * f;
         position[i * 3] += vel[i * 3] * dt;
         position[i * 3 + 1] += vel[i * 3 + 1] * dt;
         position[i * 3 + 2] += vel[i * 3 + 2] * dt;
@@ -474,6 +490,10 @@ export function createParticles(scene, opts = {}) {
     emit,
     emitOrbit,
     update,
+    setWind(x, z) {
+      airX = Number.isFinite(x) ? x : 0;
+      airZ = Number.isFinite(z) ? z : 0;
+    },
     count: () => live,
     clear() {
       life.fill(0);

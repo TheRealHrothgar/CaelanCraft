@@ -232,8 +232,8 @@ describe('items — the registry', () => {
     // twelve game foods (fauna)
     // §80: + the three seeds (materials). The 18 farm blocks are not placeable, so they are no items.
     // §81: + Hemlock Root and Nightshade Berries (foods), the Aloe Leaf (a heal) and the seven placeable plants.
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 55, 3, 5, 119]); // §94: + the Lab; // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(267); // §94: + the Lab; // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 55, 3, 5, 120]); // §101: + the Pennant; §94: + the Lab; // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(268); // §101: + the Pennant; §94: + the Lab; // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -425,6 +425,8 @@ describe('items — tags', () => {
       // §85: any wool, white first (what a sheep gives): the Bed
       wool: ['wool_white', 'wool_light_gray', 'wool_gray', 'wool_black', 'wool_brown', 'wool_red', 'wool_orange', 'wool_yellow',
         'wool_lime', 'wool_green', 'wool_cyan', 'wool_light_blue', 'wool_blue', 'wool_purple', 'wool_magenta', 'wool_pink'],
+      // §101: a rag or a hide for the Pennant's flag, the cheapest first
+      cloth: ['grave_rag', 'rawhide', 'leather'],
     });
     for (const [tag, keys] of Object.entries(TAGS)) {
       expect(tag).toMatch(LOWER_SNAKE);

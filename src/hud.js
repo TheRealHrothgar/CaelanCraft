@@ -13,6 +13,10 @@
 // a thin bar with a mark at each stage; no hexagon, no icon), the tiredness chips, and `#sleep-overlay` — the dark of a
 // sleep and of a nod, with the sleeper's two quiet lines — plus the soft blur of tired eyes on the game canvas.
 //
+// The wind (CONTRACTS §101): `#wind-indicator`, a small glass capsule at the top of the screen (under the calendar line in
+// Survival) with a vane that points where the wind blows relative to where the player looks, grows and sways with its
+// strength, and the words ("A light breeze from the west"). Both modes.
+//
 // DOM module. Nothing here touches `document` at module top level: everything is bound inside
 // createHUD(doc, atlasCanvas) so the module can be imported (and unit-tested) under Node.
 import {
@@ -24,6 +28,7 @@ import { drawBlockIcon } from './atlas.js';
 import { maxDurability } from './items.js';
 import { createItemIcons } from './itemIcons.js';
 import { isItemPick } from './creativePicks.js';
+import { VANE_CLASSES } from './windDrawn.js';
 
 /** Hotbar slot icons are drawn at this size (matches the 32×32 canvas.slot-icon in index.html). */
 export const ICON_SIZE = 32;
@@ -65,6 +70,8 @@ export const TOKEN_H = 18;
 export const BLUR_STEP_PX = 0.2;
 /** The element the blur is put on (the game's canvas; without one in the page nothing blurs). */
 export const BLUR_TARGET_ID = 'game-canvas';
+/** §101: the wind vane's arrow grows with the wind: its scale at each level (calm hides it behind the dot). */
+export const VANE_SCALE = Object.freeze([0.6, 0.72, 0.86, 1]);
 
 /**
  * What the tiredness reading shows, as one comparable key: its words, its bar in whole percent and its stage.
@@ -339,6 +346,9 @@ const PICKER_OPEN = 'picker-open';
  *   its bar; null hides it
  * @property {(view: SleepView|null) => void} setSleepView            the dark of a sleep or a nod with the sleeper's lines, and
  *   the blur of tired eyes (CONTRACTS §87); null clears all of it
+ * @property {(view: import('./windDrawn.js').VaneView|null) => void} setWind  the wind indicator (CONTRACTS §101): the vane
+ *   at `angle` degrees clockwise from the top (where the wind blows, seen from where the player looks), its `level` and
+ *   `gust`, and the `words`; null hides it. The DOM is touched only when one of them changes.
  */
 
 /**
@@ -1073,6 +1083,74 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     }
   }
 
+  // ---- §101: the wind indicator
+  const windEl = container('wind-indicator', 'wind-indicator');
+  /** @type {{ arrow: Element, words: Element, title: Element }|null} */
+  let windParts = null;
+  let windAngle = NaN;
+  let windLevel = -1;
+  let windGust = false;
+  let windWords = '';
+  let windShown = false;
+
+  /** Build the vane (once): a glass dial with an arrow (head, shaft, two tail feathers), a calm dot, and the words. */
+  function buildWind() {
+    if (windParts || !windEl || typeof doc.createElementNS !== 'function') return windParts;
+    const svg = svgEl('svg', { class: 'wind-vane', viewBox: '-12 -12 24 24', width: 22, height: 22, 'aria-hidden': 'true' });
+    const title = svgEl('title');
+    svg.appendChild(title);
+    svg.appendChild(svgEl('circle', { class: 'wind-ring', r: 10.5 }));
+    svg.appendChild(svgEl('circle', { class: 'wind-dot', r: 2.2 }));
+    const arrow = svgEl('g', { class: 'wind-arrow' });
+    const sway = svgEl('g', { class: 'wind-sway' });
+    sway.appendChild(svgEl('path', { class: 'wind-shaft', d: 'M0 7.5V-4' }));
+    sway.appendChild(svgEl('path', { class: 'wind-head', d: 'M0 -9L4 -3H-4Z' }));
+    sway.appendChild(svgEl('path', { class: 'wind-tail', d: 'M-3 9.5L0 6.5L3 9.5' }));
+    arrow.appendChild(sway);
+    svg.appendChild(arrow);
+    windEl.appendChild(svg);
+    const words = doc.createElement('span');
+    words.className = 'wind-words';
+    windEl.appendChild(words);
+    windParts = { arrow, words, title };
+    return windParts;
+  }
+
+  /** @param {import('./windDrawn.js').VaneView|null} view */
+  function setWind(view) {
+    const show = !!view;
+    if (show !== windShown && windEl) {
+      windShown = show;
+      windEl.classList.toggle(HIDDEN, !show);
+    }
+    if (!view) return;
+    const parts = buildWind();
+    if (!parts || !windEl) return;
+    const angle = Number.isFinite(view.angle) ? Math.round(view.angle) : 0;
+    const level = Number.isInteger(view.level) ? Math.max(0, Math.min(VANE_CLASSES.length - 1, view.level)) : 0;
+    const gust = !!view.gust && level > 0;
+    if (level !== windLevel) {
+      windLevel = level;
+      for (let k = 0; k < VANE_CLASSES.length; k++) windEl.classList.toggle(VANE_CLASSES[k], k === level);
+      windAngle = NaN; // the arrow's size goes with the level
+    }
+    if (gust !== windGust) {
+      windGust = gust;
+      windEl.classList.toggle('wind-gust', gust);
+    }
+    if (angle !== windAngle) {
+      windAngle = angle;
+      parts.arrow.setAttribute('transform', `rotate(${angle}) scale(${VANE_SCALE[level]})`);
+    }
+    const words = String(view.words ?? '');
+    if (words !== windWords) {
+      windWords = words;
+      parts.words.textContent = words;
+      parts.title.textContent = words;
+      windEl.setAttribute('aria-label', `Wind: ${words}`);
+    }
+  }
+
   // ---- the survival hotbar (§9.8): hex slots with a count and a wear outline
   /** @type {(import('./types.js').ItemStack|null)[]|null} the live pack slots (pack.slots, never copied) */
   let liveSlots = null;
@@ -1271,6 +1349,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     addPickup,
     setTiredness,
     setSleepView,
+    setWind,
     onSlotClick: () => {},
     dispose,
   };
