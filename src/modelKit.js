@@ -123,45 +123,16 @@ class Builder {
  * A stack of n-gon rings joined by flat facets (a prism, a frustum, a barrel, a gem): the general form of prism() and
  * pyramid(). The base polygon has `sides` corners on the ellipse (rx, rz), the first at `phase` radians round from the
  * back (+z) toward +x — the default π/sides puts a flat face at the back and (for an even count) the front. A ring
- * scaled to nothing is a point (an apex): its facets are triangles and it has no cap.
+ * scaled to nothing is a point (an apex): its facets are triangles and it has no cap. `corners` (radians round from
+ * the back toward +x, any order) puts the corners where it says instead — a head with a broad flat face plane in front.
  * @param {{ sides?: number, rx?: number, rz?: number, rings: Ring[], smooth?: boolean, phase?: number,
- *   caps?: boolean|{ top?: boolean, bottom?: boolean } }} o
+ *   corners?: number[], caps?: boolean|{ top?: boolean, bottom?: boolean } }} o
  * @returns {Geo}
  */
-export function loft({ sides = 6, rx = 0.5, rz = rx, rings, smooth = false, phase = Math.PI / sides, caps = true }) {
+export function loft({ sides = 6, rx = 0.5, rz = rx, rings, smooth = false, phase = Math.PI / sides, corners, caps = true }) {
   if (!Array.isArray(rings) || rings.length < 2) throw new RangeError('loft: at least two rings');
-  if (!(sides >= 3)) throw new RangeError('loft: at least three sides');
-  const n = Math.round(sides);
-  // the base polygon's corners, then the seam at the middle of the back (θ = 0) when no corner is there
-  const corner = (th) => [rx * Math.sin(th), rz * Math.cos(th)];
-  /** @type {{ th: number, x: number, z: number }[]} */
-  const pts = [];
-  for (let i = 0; i < n; i++) {
-    let th = (phase + (i * 2 * Math.PI) / n) % (2 * Math.PI);
-    if (th < 0) th += 2 * Math.PI;
-    const [x, z] = corner(th);
-    pts.push({ th, x, z });
-  }
-  pts.sort((a, b) => a.th - b.th);
-  if (pts[0].th > 1e-7 && 2 * Math.PI - pts[n - 1].th > 1e-7) {
-    // the back edge, from the last corner (before 2π) to the first: where it crosses x = 0 on the +z side
-    const a = pts[n - 1];
-    const b = pts[0];
-    const t = a.x / (a.x - b.x);
-    pts.unshift({ th: 0, x: 0, z: a.z + (b.z - a.z) * t });
-  } else if (2 * Math.PI - pts[n - 1].th <= 1e-7) {
-    const last = /** @type {{ th: number, x: number, z: number }} */ (pts.pop());
-    pts.unshift({ th: 0, x: last.x, z: last.z });
-  }
+  const { pts, us } = basePolygon({ sides, rx, rz, phase, corners });
   const m = pts.length; // ring points; the strip closes on a copy of the first (u = 1)
-  const lens = [0];
-  for (let j = 0; j < m; j++) {
-    const a = pts[j];
-    const b = pts[(j + 1) % m];
-    lens.push(lens[j] + Math.hypot(b.x - a.x, b.z - a.z));
-  }
-  const per = lens[m];
-  const us = lens.map((l) => l / per);
   const R = rings.map((r) => ({ y: r.y, sx: r.sx ?? 1, sz: r.sz ?? r.sx ?? 1, dx: r.dx ?? 0, dz: r.dz ?? 0 }));
   const apex = R.map((r) => Math.abs(r.sx * rx) < EPS && Math.abs(r.sz * rz) < EPS);
   /** @returns {Vec3} */
@@ -221,6 +192,77 @@ export function loft({ sides = 6, rx = 0.5, rz = rx, rings, smooth = false, phas
     b.poly(idx.map((j) => at(0, j)), idx.map((j) => capUV(j, -1)), 2, null, m - 1 - far);
   }
   return b.done('wrap');
+}
+
+/**
+ * A loft's base polygon: its corners on the ellipse (rx, rz) in order round from the back, the seam's point at the
+ * middle of the back (θ = 0) added when no corner is there, and each point's u (its share of the way round).
+ * @param {{ sides?: number, rx?: number, rz?: number, phase?: number, corners?: number[] }} o
+ * @returns {{ pts: { th: number, x: number, z: number }[], us: number[], perimeter: number }}
+ */
+function basePolygon({ sides = 6, rx = 0.5, rz = rx, phase = Math.PI / sides, corners }) {
+  const angles = corners ?? [];
+  if (!corners) {
+    if (!(sides >= 3)) throw new RangeError('loft: at least three sides');
+    for (let i = 0; i < Math.round(sides); i++) angles.push(phase + (i * 2 * Math.PI) / Math.round(sides));
+  }
+  if (angles.length < 3) throw new RangeError('loft: at least three sides');
+  /** @type {{ th: number, x: number, z: number }[]} */
+  const pts = angles.map((a) => {
+    let th = a % (2 * Math.PI);
+    if (th < 0) th += 2 * Math.PI;
+    return { th, x: rx * Math.sin(th), z: rz * Math.cos(th) };
+  });
+  pts.sort((a, b) => a.th - b.th);
+  const n = pts.length;
+  if (pts[0].th > 1e-7 && 2 * Math.PI - pts[n - 1].th > 1e-7) {
+    // the back edge, from the last corner (before 2π) to the first: where it crosses x = 0 on the +z side
+    const a = pts[n - 1];
+    const b = pts[0];
+    const t = a.x / (a.x - b.x);
+    pts.unshift({ th: 0, x: 0, z: a.z + (b.z - a.z) * t });
+  } else if (2 * Math.PI - pts[n - 1].th <= 1e-7) {
+    const last = /** @type {{ th: number, x: number, z: number }} */ (pts.pop());
+    pts.unshift({ th: 0, x: last.x, z: last.z });
+  }
+  const m = pts.length;
+  const lens = [0];
+  for (let j = 0; j < m; j++) {
+    const a = pts[j];
+    const b = pts[(j + 1) % m];
+    lens.push(lens[j] + Math.hypot(b.x - a.x, b.z - a.z));
+  }
+  const perimeter = lens[m];
+  return { pts, us: lens.map((l) => l / perimeter), perimeter };
+}
+
+/**
+ * Where a loft's strip is at angle θ round from the back (radians toward +x): its u (0..1), and the base polygon's
+ * perimeter (metres) — for painting a picture (a face) on the facets that face that way.
+ * @param {{ sides?: number, rx?: number, rz?: number, phase?: number, corners?: number[] }} o  the loft's own
+ * @param {number} theta
+ * @returns {{ u: number, perimeter: number }}
+ */
+export function wrapU(o, theta) {
+  const { pts, us, perimeter } = basePolygon(o);
+  let th = theta % (2 * Math.PI);
+  if (th < 0) th += 2 * Math.PI;
+  const m = pts.length;
+  for (let j = 0; j < m; j++) {
+    const a = pts[j];
+    const b = pts[(j + 1) % m];
+    const thB = j + 1 < m ? b.th : 2 * Math.PI;
+    if (th < a.th - 1e-12 || th > thB + 1e-12) continue;
+    // where the ray at θ crosses the edge a → b
+    const dx = Math.sin(th);
+    const dz = Math.cos(th);
+    const ex = b.x - a.x;
+    const ez = b.z - a.z;
+    const den = ex * dz - ez * dx;
+    const t = Math.abs(den) < 1e-12 ? 0 : Math.min(1, Math.max(0, (a.z * dx - a.x * dz) / den));
+    return { u: us[j] + (us[j + 1] - us[j]) * t, perimeter };
+  }
+  return { u: 0, perimeter };
 }
 
 /**

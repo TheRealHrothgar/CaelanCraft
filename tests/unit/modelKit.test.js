@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   prism, loft, pyramid, chamferBox, wedge, transform, merge, atlasUV, compose, alongSegment, mul, rotation, translation,
-  scaling, identity, triangleCount, bounds, BOX_FACES, WRAP_GROUPS,
+  scaling, identity, triangleCount, bounds, wrapU, BOX_FACES, WRAP_GROUPS,
 } from '../../src/modelKit.js';
 
 /** Weld vertices by position; every undirected edge must be used by exactly two triangles, once each way. */
@@ -183,6 +183,29 @@ describe('primitives', () => {
     const g = chamferBox({ w: 0.1, h: 0.1, d: 0.1, c: 1 });
     expect(closedness(g)).toBe(0);
     expect(volume(g)).toBeGreaterThan(0);
+  });
+
+  it('puts a loft\'s corners where it is told, and finds a strip\'s u by angle', () => {
+    const corners = [30, 84, 122, 150, 210, 238, 276, 330].map((d) => (d * Math.PI) / 180);
+    const g = loft({ corners, rx: 0.17, rz: 0.17, rings: [{ y: 0, sx: 0.4 }, { y: 0.2 }, { y: 0.37, sx: 0.5 }] });
+    expect(closedness(g)).toBe(0);
+    expect(volume(g)).toBeGreaterThan(0);
+    expect(allOutward(g)).toBe(true);
+    // the face plane: every side vertex between 150° and 210° lies on one flat facet (z the same at a ring)
+    const front = [];
+    for (let v = 0; v < g.groups.length; v++) {
+      const [x, y, z] = P(g, v);
+      if (g.groups[v] === 0 && Math.abs(y - 0.2) < 1e-6 && z < 0 && Math.abs(x) < 0.17 * Math.sin((30 * Math.PI) / 180) + 1e-6) front.push(z);
+    }
+    expect(front.length).toBeGreaterThan(1);
+    for (const z of front) expect(z).toBeCloseTo(front[0], 6);
+    const o = { corners, rx: 0.17, rz: 0.17 };
+    expect(wrapU(o, Math.PI).u).toBeCloseTo(0.5, 9);
+    expect(wrapU(o, 0).u).toBeCloseTo(0, 9);
+    expect(wrapU(o, (150 * Math.PI) / 180).u).toBeLessThan(0.5);
+    expect(wrapU(o, (210 * Math.PI) / 180).u).toBeCloseTo(1 - wrapU(o, (150 * Math.PI) / 180).u, 9);
+    expect(wrapU({ sides: 6, rx: 0.3 }, Math.PI / 2).u).toBeCloseTo(0.25, 9);
+    expect(wrapU(o, 0).perimeter).toBeGreaterThan(0.9);
   });
 
   it('refuses a loft of one ring or fewer than three sides', () => {

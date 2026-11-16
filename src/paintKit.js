@@ -722,30 +722,34 @@ export class Atlas {
   constructor(width, height, pad = 2) {
     this.img = createImage(width, height);
     this.pad = pad;
-    this.x = 0;
-    this.y = 0;
-    this.row = 0;
+    /** @type {{ y: number, h: number, x: number }[]} shelves: rows of rectangles, each as tall as its first */
+    this.shelves = [];
     /** @type {Rect[]} */
     this.rects = [];
   }
 
-  /** A new w × h rectangle (a RangeError when it does not fit). @returns {Rect} */
+  /**
+   * A new w × h rectangle: on the first shelf it fits (tall enough, room left), else on a new shelf; a RangeError when
+   * it does not fit at all. Asked for tallest first, the shelves pack tightly.
+   * @returns {Rect}
+   */
   alloc(w, h) {
     w = Math.max(1, Math.round(w));
     h = Math.max(1, Math.round(h));
     const p = this.pad;
-    if (this.x + w + 2 * p > this.img.width) {
-      this.x = 0;
-      this.y += this.row;
-      this.row = 0;
-    }
-    if (w + 2 * p > this.img.width || this.y + h + 2 * p > this.img.height) {
-      throw new RangeError(`atlas: no room for ${w} × ${h}`);
+    const W = w + 2 * p;
+    const H = h + 2 * p;
+    let shelf = this.shelves.find((s) => s.h >= H && s.x + W <= this.img.width);
+    if (!shelf) {
+      const last = this.shelves[this.shelves.length - 1];
+      const y = last ? last.y + last.h : 0;
+      if (W > this.img.width || y + H > this.img.height) throw new RangeError(`atlas: no room for ${w} × ${h}`);
+      shelf = { y, h: H, x: 0 };
+      this.shelves.push(shelf);
     }
     /** @type {Rect} */
-    const r = [this.x + p, this.y + p, w, h];
-    this.x += w + 2 * p;
-    this.row = Math.max(this.row, h + 2 * p);
+    const r = [shelf.x + p, shelf.y + p, w, h];
+    shelf.x += W;
     this.rects.push(r);
     return r;
   }

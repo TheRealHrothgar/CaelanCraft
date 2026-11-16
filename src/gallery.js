@@ -1,9 +1,9 @@
 // Caelancraft — the art-direction pilot's gallery (three, DOM). A dev page: `npx vite`, then /gallery.html; the game
 // never loads it (`npm run build` builds index.html only).
 //
-// Three columns side by side on a sky-and-grass stage lit the way the game lights its mobs (the sun and the sky's
-// hemisphere light of computeSky, Lambert materials): TODAY (the game's own renderers and skins), A: HEX-FACETED and
-// B: SOFT-CHAMFER (pilotModels.js). Each row is one family, seen from a 3/4 front view, from the side and at game
+// Two columns side by side on a sky-and-grass stage lit the way the game lights its mobs (the sun and the sky's
+// hemisphere light of computeSky, Lambert materials): TODAY (the game's own renderers and skins) and A: HEX-FACETED,
+// the chosen look (pilotModels.js, pass 2). Each row is one family, seen from a 3/4 front view, from the side and at game
 // distance (a crop of a 900-pixel-tall view at the game's field of view, one pixel a pixel); the hand row is the
 // first-person view at rest and mid-swing. `?row=avatar|zombie|animal|plant|hand` shows one row large, `?row=all` (the
 // default) every row small. Every panel is one viewport of one canvas.
@@ -26,8 +26,8 @@ import { buildPilot, buildHand, STYLES } from './pilotModels.js';
 
 const params = new URLSearchParams(location.search);
 const ROW = (params.get('row') || 'all').toLowerCase();
-const COLUMNS = /** @type {const} */ (['today', 'hex', 'soft']);
-const COLUMN_LABELS = { today: 'Today', hex: STYLES.hex.label, soft: STYLES.soft.label };
+const COLUMNS = /** @type {const} */ (['today', 'hex']);
+const COLUMN_LABELS = { today: 'Today', hex: `${STYLES.hex.label} (pass 2)` };
 /** The game-distance view: a crop of a view this many pixels tall at the game's field of view. */
 const GAME_VIEW_H = 900;
 
@@ -204,31 +204,45 @@ function trianglesOf(root) {
  */
 
 const fmt = (n) => n.toLocaleString('en-US');
+/** The kids in the avatar row, left to right, and where they stand. */
+const KID_IDS = /** @type {const} */ (['caelan', 'brayden', 'annabelle']);
+const AVATAR_X = [-0.9, 0, 0.9];
 const pilotStats = (m, extra = '') => `${fmt(m.tris)} tris${extra} · atlas ${m.atlas[0]}×${m.atlas[1]} (${fmt(m.texels)} px painted) · 1 draw`;
 
-/** @type {Record<string, { title: string, note: string, target: number[], dist: number, far: number, today: () => Shown, pilot: (style: 'hex'|'soft') => Shown, fp?: boolean, az?: number, elev?: number }>} */
+/**
+ * @type {Record<string, { title: string, note: string, target: number[], dist: number, far: number, today: () => Shown,
+ *   pilot: (style: 'hex') => Shown, fp?: boolean, az?: number, elev?: number, second?: 'side'|'back' }>}
+ */
 const ROWS = {
   avatar: {
-    title: 'Avatar — Caelan',
-    note: 'separate hands and shoes, a neck, a nose, real hair masses; sleeves pushed up to a cuff',
-    target: [0, 0.86, 0], dist: 3.3, far: 9,
+    title: 'Avatars — Caelan, Brayden, Annabelle',
+    note: 'faceted heads with a face plane; poofy tufts, a silky side sweep, long waves; hands, shoes, a neck, a nose',
+    target: [0, 0.9, 0], dist: 5.0, far: 9, az: 0.42, second: 'back',
     today() {
-      const scene = stage();
-      const av = createAvatarRenderer(scene);
-      av.setAvatar('caelan');
-      const motion = new AvatarMotion();
-      motion.reset(0);
-      const pose = motion.step(1 / 60, { yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true });
-      av.sync({ x: 0, y: 0, z: 0, pose, showModel: true, showArm: false });
-      scene.add(blobShadow(0.42));
-      return { scene, stats: `${fmt(trianglesOf(av.group))} tris · sheet page 128×128 (16,384 px), nearest · ~9 draws` };
+      const scene = stage({ blocks: [[-2.2, 1.6]] });
+      let t = 0;
+      AVATAR_X.forEach((x, i) => {
+        const av = createAvatarRenderer(scene);
+        av.setAvatar(KID_IDS[i]);
+        const motion = new AvatarMotion();
+        motion.reset(0);
+        const pose = motion.step(1 / 60, { yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true });
+        av.sync({ x, y: 0, z: 0, pose, showModel: true, showArm: false });
+        t += trianglesOf(av.group);
+        scene.add(blobShadow(0.42, x));
+      });
+      return { scene, stats: `${fmt(Math.round(t / 3))} tris each · a 128×128 sheet page each (16,384 px), nearest · ~9 draws` };
     },
     pilot(style) {
-      const scene = stage();
-      const m = buildPilot('caelan', style);
-      scene.add(pilotMesh(m));
-      scene.add(blobShadow(0.42));
-      return { scene, stats: pilotStats(m) };
+      const scene = stage({ blocks: [[-2.2, 1.6]] });
+      const ms = KID_IDS.map((id, i) => {
+        const m = buildPilot(id, style);
+        const mesh = pilotMesh(m);
+        mesh.position.x = AVATAR_X[i];
+        scene.add(mesh, blobShadow(0.42, AVATAR_X[i]));
+        return m;
+      });
+      return { scene, stats: `${ms.map((m) => fmt(m.tris)).join(' / ')} tris · a 256×256 atlas each (${ms.map((m) => fmt(m.texels)).join(' / ')} px painted) · 1 draw each` };
     },
   },
   zombie: {
@@ -277,9 +291,9 @@ const ROWS = {
     },
   },
   plant: {
-    title: 'Plants — the honeyberry bush (and, right, a crab apple bush today / a sapling in the pilot)',
-    note: 'leaf masses as faceted gems painted with layered leaves and veins; bark; elongated berries with a bloom',
-    target: [0.42, 0.36, 0.1], dist: 3.0, far: 5, az: 0.5, elev: 0.28,
+    title: 'Plants — the honeyberry bush (centre), a sapling (left; today a crab apple); right, the bush past ~16 m',
+    note: 'branches carrying tiers of hexagonal leaf cards with gaps, a dark core, berries hanging in threes',
+    target: [0.2, 0.36, 0.1], dist: 3.4, far: 5, az: 0.45, elev: 0.28,
     today() {
       const scene = stage({ blocks: [] });
       const a = todayPlant(BLOCK.HONEYBERRY_BUSH, TILE.HONEYBERRY_BUSH);
@@ -292,10 +306,13 @@ const ROWS = {
       const scene = stage({ blocks: [] });
       const bush = buildPilot('honeyberry', style);
       const sap = buildPilot('sapling', style);
+      const far = buildPilot('honeyberry_far', style);
       const b = pilotMesh(sap);
       b.position.set(0.85, 0, 0.2);
-      scene.add(pilotMesh(bush), b);
-      return { scene, stats: `bush ${fmt(bush.tris)} + sapling ${fmt(sap.tris)} tris · one ${bush.atlas[0]}×${bush.atlas[1]} atlas (${fmt(bush.texels)} px painted)` };
+      const f = pilotMesh(far);
+      f.position.set(-0.8, 0, 0.25);
+      scene.add(pilotMesh(bush), b, f);
+      return { scene, stats: `bush ${fmt(bush.tris)} · sapling ${fmt(sap.tris)} · far bush ${fmt(far.tris)} tris · one ${bush.atlas[0]}×${bush.atlas[1]} atlas (${fmt(bush.texels)} px painted)` };
     },
   },
   hand: {
@@ -307,11 +324,11 @@ const ROWS = {
   },
 };
 
-/** Close looks (not in the 'all' view): ?row=fist (the fist in its own frame), ?row=head (Caelan's head). */
+/** Close looks (not in the 'all' view): ?row=fist (the fist in its own frame), ?row=head (the four heads). */
 const DEBUG_ROWS = {};
 DEBUG_ROWS.head = {
-  title: 'Caelan, close up', note: 'the head and the hair at a portrait distance',
-  target: [0, 1.36, 0], dist: 1.25, far: 4, az: 0.5, elev: 0.08,
+  title: 'Heads, close up — Caelan, Brayden, Annabelle, the walker', note: 'the faceted head, its face plane, the hair',
+  target: [0, 1.4, 0], dist: 1.2, far: 4, grid: true,
   today: () => ROWS.avatar.today(),
   pilot: (style) => ROWS.avatar.pilot(style),
 };
@@ -453,7 +470,7 @@ function layoutRow(key, top, height, compact) {
   const row = /** @type {*} */ (DEBUG_ROWS[key] ?? ROWS[key]);
   const az = row.az ?? 0.62;
   const elev = row.elev ?? 0.1;
-  const colW = W / 3;
+  const colW = W / COLUMNS.length;
   label(`${row.title}${compact ? '' : ` — ${row.note}`}`, 10, top + 2, 'head');
   const head = 30;
   COLUMNS.forEach((col, ci) => {
@@ -461,7 +478,21 @@ function layoutRow(key, top, height, compact) {
     const shown = col === 'today' ? row.today() : row.pilot(col);
     const y0 = top + head;
     const h = height - head;
-    if (row.fp) {
+    if (row.grid) {
+      // four close-ups: the three kids (the avatar row's scene) and the walker (the zombie row's)
+      const zs = col === 'today' ? ROWS.zombie.today() : ROWS.zombie.pilot(col);
+      const heads = [
+        [shown.scene, [AVATAR_X[0], 1.43, 0], 'Caelan'], [shown.scene, [AVATAR_X[1], 1.62, 0], 'Brayden'],
+        [shown.scene, [AVATAR_X[2], 1.5, 0], 'Annabelle'], [zs.scene, [0.02, 1.58, -0.16], 'the walker'],
+      ];
+      const gw = (colW - 6) / 2;
+      const gh = (h - 26) / 2;
+      heads.forEach(([scene, target, name], k) => {
+        const rect = [x0 + 3 + (k % 2) * gw, y0 + 2 + Math.floor(k / 2) * gh, gw - 2, gh - 2];
+        panels.push({ scene, cam: orbit(target, 1.15, 0.45, 0.05, rect[2] / rect[3]), rect });
+        label(name, rect[0] + 6, rect[1] + 6, 'view');
+      });
+    } else if (row.fp) {
       const views = compact ? [0] : [0, 1];
       const vh = compact ? h : h / 2;
       views.forEach((v, vi) => {
@@ -483,20 +514,21 @@ function layoutRow(key, top, height, compact) {
       label('3/4 front', main[0] + 6, main[1] + 6, 'view');
       const sw = (colW - 6) / 2;
       const side = [x0 + 3, y0 + mainH, sw - 2, h - mainH - 2];
-      panels.push({ scene: shown.scene, cam: orbit(row.target, row.dist * 1.1, Math.PI / 2, 0.06, side[2] / side[3]), rect: side });
-      label('side', side[0] + 6, side[1] + 6, 'view');
+      const back = row.second === 'back';
+      panels.push({ scene: shown.scene, cam: orbit(row.target, row.dist * (back ? 1.0 : 1.1), back ? Math.PI + 0.4 : Math.PI / 2, 0.06, side[2] / side[3]), rect: side });
+      label(back ? 'from behind' : 'side', side[0] + 6, side[1] + 6, 'view');
       const far = [x0 + 3 + sw, y0 + mainH, sw, h - mainH - 2];
       panels.push({ scene: shown.scene, cam: farCam(row.target, row.far, 1, far[2], far[3]), rect: far });
       label(`at ${row.far} m, game scale`, far[0] + 6, far[1] + 6, 'view');
     }
     label(COLUMN_LABELS[col], x0 + 8, top + height - 22 - (compact ? 0 : 0), 'head');
-    label(shown.stats, x0 + 8 + (col === 'today' ? 70 : 150), top + height - 20, 'stat');
+    label(shown.stats, x0 + 8 + (col === 'today' ? 70 : 230), top + height - 20, 'stat');
   });
 }
 
 const titleEl = /** @type {HTMLElement} */ (document.getElementById('title'));
 const keys = DEBUG_ROWS[ROW] ? [ROW] : ROW === 'all' || !ROWS[ROW] ? Object.keys(ROWS) : [ROW];
-titleEl.innerHTML = 'Caelancraft art-direction pilot<span>Today · A: Hex-faceted · B: Soft-chamfer — same painted textures, two shape languages</span>';
+titleEl.innerHTML = 'Caelancraft art-direction pilot, pass 2<span>Today · A: Hex-faceted, the chosen look — heads, hair and plants reworked</span>';
 const top0 = 34;
 const rowH = (H - top0) / keys.length;
 keys.forEach((k, i) => layoutRow(k, top0 + i * rowH, rowH, keys.length > 1));
