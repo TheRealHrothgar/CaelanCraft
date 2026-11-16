@@ -301,6 +301,7 @@ export function resolveHexBlock(token) {
  * @property {(gameSeconds: number) => void} addTime        advances/rewinds the clock; main bumps `day` when it passes midnight forwards
  * @property {boolean} timeFrozen                           true under ?time=
  * @property {Array<number|string>} hotbar  block ids, or (§98) item keys
+ * @property {import('./wind.js').Wind} [wind]  the wind here and now (DESIGN-hunting §3; read-only)
  * @property {number} selected
  * @property {(slot: number, id: number|string) => void} setHotbarSlot  a block id or (§98) an item key
  * @property {(text: string) => void} say
