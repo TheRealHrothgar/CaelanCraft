@@ -26,6 +26,7 @@ import { validateFaunaJSON } from './populations.js';
 import { WEAR_SLOT_NAMES, canonicalItemKey, getItem, maxDurability, stackSize } from './items.js';
 import { normalizeFiresJSON, parseCellKey } from './cooking.js';
 import { normalizePartsJSON, validatePartsJSON } from './circuitStore.js';
+import { normalizePick } from './creativePicks.js';
 
 /** @typedef {import('./types.js').SaveData} SaveData */
 /** @typedef {import('./types.js').EditsJSON} EditsJSON */
@@ -169,12 +170,21 @@ function toPlainArray(v) {
   return null;
 }
 
-/** @returns {number[]|null} a fresh 9-element hotbar copy when `v` is valid, else null */
+/**
+ * A fresh 9-element hotbar copy when `v` is valid, else null. A slot is a block id, or (§98) the key of an item that is not
+ * a block — an old item key is read under its new name.
+ * @returns {Array<number|string>|null}
+ */
 function validHotbarCopy(v) {
   const arr = toPlainArray(v);
   if (!arr || arr.length !== HOTBAR_SIZE) return null;
-  for (let i = 0; i < HOTBAR_SIZE; i++) if (!isValidBlockId(arr[i])) return null;
-  return arr.slice();
+  const out = [];
+  for (let i = 0; i < HOTBAR_SIZE; i++) {
+    const p = typeof arr[i] === 'string' ? normalizePick(arr[i]) : isValidBlockId(arr[i]) ? arr[i] : null;
+    if (p === null) return null;
+    out.push(p);
+  }
+  return out;
 }
 
 /** Day fraction wrapped into [0,1) (identity for values already in range). */

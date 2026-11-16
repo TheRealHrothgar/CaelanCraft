@@ -6,7 +6,7 @@
 // the other players' recent poses and gives each one's pose a little in the past, interpolated, so they move smoothly
 // between the server's 15 updates a second.
 import {
-  PROTOCOL_VERSION, WS_PATH, INFO_PATH, POSE_SWING, REPLACED_REASON, encode, decode, cleanName, cleanChat, cleanPose,
+  PROTOCOL_VERSION, WS_PATH, INFO_PATH, POSE_SWING, REPLACED_REASON, encode, decode, cleanName, cleanChat, cleanPose, cleanHeld,
 } from './protocol.js';
 
 /** Remote players are drawn this far in the past (s), between the two poses that surround that moment. */
@@ -179,6 +179,11 @@ export class NetClient {
     if (this.state === 'joined') this._send({ t: 'brick', i, y, n, id });
   }
 
+  /** What is in the hand now (§98; null: empty). @param {string|null} item */
+  sendHeld(item) {
+    if (this.state === 'joined') this._send({ t: 'held', item: cleanHeld(item) });
+  }
+
   /** @param {string} text */
   sendChat(text) {
     const t = cleanChat(text);
@@ -208,6 +213,7 @@ export class NetClient {
  * @property {string} avatar
  * @property {Array<{ t: number, pose: import('./protocol.js').Pose }>} buffer  received poses, oldest first
  * @property {number} swings  how many poses with POSE_SWING arrived (the renderer swings the arm when it goes up)
+ * @property {string|null} held  the item in their hand (§98)
  */
 
 /** Shortest turn from angle a to b (radians), in (−π, π]. */
@@ -225,13 +231,22 @@ export class RemotePlayers {
     this.map = new Map();
   }
 
-  /** @param {{ id: number, name: string, avatar: string, pose: any }} p @param {number} t  local seconds */
+  /** @param {{ id: number, name: string, avatar: string, pose: any, held?: any }} p @param {number} t  local seconds */
   join(p, t) {
     const pose = cleanPose(p.pose);
     /** @type {RemotePlayer} */
-    const rp = { id: p.id, name: cleanName(p.name), avatar: typeof p.avatar === 'string' ? p.avatar : 'caelan', buffer: [], swings: 0 };
+    const rp = {
+      id: p.id, name: cleanName(p.name), avatar: typeof p.avatar === 'string' ? p.avatar : 'caelan', buffer: [], swings: 0,
+      held: cleanHeld(p.held),
+    };
     if (pose) rp.buffer.push({ t, pose });
     this.map.set(p.id, rp);
+  }
+
+  /** Player `id` now holds `item` (§98). @param {number} id @param {unknown} item */
+  setHeld(id, item) {
+    const rp = this.map.get(id);
+    if (rp) rp.held = cleanHeld(item);
   }
 
   /** @param {number} id */

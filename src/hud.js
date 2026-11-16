@@ -23,6 +23,7 @@ import { BLOCK } from './blocks.js';
 import { drawBlockIcon } from './atlas.js';
 import { maxDurability } from './items.js';
 import { createItemIcons } from './itemIcons.js';
+import { isItemPick } from './creativePicks.js';
 
 /** Hotbar slot icons are drawn at this size (matches the 32×32 canvas.slot-icon in index.html). */
 export const ICON_SIZE = 32;
@@ -295,7 +296,8 @@ const PICKER_OPEN = 'picker-open';
 
 /**
  * @typedef {Object} HUD
- * @property {(ids: number[], selected?: number) => void} setHotbar   redraw every slot icon (AIR → blank) and, when given, the selection
+ * @property {(ids: Array<number|string>, selected?: number) => void} setHotbar   redraw every slot icon (AIR → blank; §98 an item key
+ *   draws the item) and, when given, the selection
  * @property {(i: number) => void} setSelected                        highlight slot i (0..8); out-of-range values are ignored
  * @property {() => number} getSelected
  * @property {(text: string) => void} showBlockToast                  visible 1.5 s, then `.fade` 0.3 s, then `.hidden`; restarts on every call
@@ -389,7 +391,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
   const chatLogEl = req('chat-log');
 
   // ---------------------------------------------------------------- hotbar slots
-  /** @typedef {{ el: Element, canvas: HTMLCanvasElement|null, ctx: CanvasRenderingContext2D|null, drawnId: number }} Slot */
+  /** @typedef {{ el: Element, canvas: HTMLCanvasElement|null, ctx: CanvasRenderingContext2D|null, drawnId: number|string }} Slot */
   /** @type {Slot[]} */
   const slots = Array.from(hotbarEl.querySelectorAll('.hotbar-slot'))
     .slice(0, HOTBAR_SIZE)
@@ -413,7 +415,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
    * Draw one slot icon, skipping the work when the slot already shows this id.
    * A failing icon painter (e.g. bad atlas) must never take the game down: it is reported once
    * through the error banner and the slot is left blank.
-   * @param {Slot} slot @param {number} id
+   * @param {Slot} slot @param {number|string} id  a block id, or (§98) an item key
    */
   function drawSlot(slot, id) {
     if (slot.drawnId === id) return;
@@ -423,7 +425,8 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     ctx.clearRect(0, 0, canvas.width || ICON_SIZE, canvas.height || ICON_SIZE);
     if (id === BLOCK.AIR) return;
     try {
-      drawBlockIcon(ctx, atlasCanvas, id, ICON_SIZE);
+      if (typeof id === 'string') icons().draw(ctx, id, ICON_SIZE); // §98: a Creative slot can hold an item
+      else drawBlockIcon(ctx, atlasCanvas, id, ICON_SIZE);
     } catch (err) {
       if (!iconFailureReported) {
         iconFailureReported = true;
@@ -434,12 +437,12 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     }
   }
 
-  /** @type {number[]} the ids last given to setHotbar (Creative's hotbar comes back from these) */
+  /** @type {Array<number|string>} the picks last given to setHotbar (Creative's hotbar comes back from these) */
   let lastIds = [];
   /** true while the survival hotbar (pack stacks) is shown */
   let stacksShown = false;
 
-  /** @param {number[]} ids @param {number} [selected] */
+  /** @param {Array<number|string>} ids @param {number} [selected] */
   function setHotbar(ids, selected) {
     lastIds = Array.isArray(ids) ? ids.slice(0, HOTBAR_SIZE) : [];
     if (stacksShown) {
@@ -449,7 +452,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     }
     for (let i = 0; i < slots.length; i++) {
       const raw = ids ? ids[i] : BLOCK.AIR;
-      const id = Number.isInteger(raw) && raw > 0 && raw <= 255 ? raw : BLOCK.AIR;
+      const id = isItemPick(raw) || (Number.isInteger(raw) && raw > 0 && raw <= 255) ? raw : BLOCK.AIR;
       drawSlot(slots[i], id);
     }
     if (selected !== undefined) setSelected(selected);

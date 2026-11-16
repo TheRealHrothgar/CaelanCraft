@@ -299,7 +299,7 @@ export function resolveHexBlock(token) {
  * @property {(t: number) => void} setTime                  sets the day fraction (never touches the day counter)
  * @property {(gameSeconds: number) => void} addTime        advances/rewinds the clock; main bumps `day` when it passes midnight forwards
  * @property {boolean} timeFrozen                           true under ?time=
- * @property {number[]} hotbar
+ * @property {Array<number|string>} hotbar  block ids, or (§98) item keys
  * @property {number} selected
  * @property {(slot: number, id: number) => void} setHotbarSlot
  * @property {(text: string) => void} say

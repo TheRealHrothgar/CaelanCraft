@@ -15,7 +15,7 @@ import { GEN_LATEST, START_TIME, REACH } from '../src/config.js';
 import { packCell } from '../src/coords.js';
 import {
   PROTOCOL_VERSION, MAX_PLAYERS, TIME_SYNC_S, POSE_SWING, REPLACED_REASON, encode, cleanName, cleanChat, cleanPose, packPose, cleanCell,
-  cleanBrick,
+  cleanBrick, cleanHeld,
 } from '../src/protocol.js';
 import { AVATAR_IDS, normalizeAvatarId, DEFAULT_AVATAR } from '../src/avatars.js';
 
@@ -46,6 +46,7 @@ const GEN_BUDGET_MS = 12;
  * @property {Socket} socket
  * @property {import('../src/protocol.js').Pose} pose
  * @property {boolean} poseDirty
+ * @property {string|null} held  the item in the player's hand (§98: drawn in their avatar's hand for the others)
  */
 
 /** @param {unknown} t @returns {string|null} a token a browser keeps: 8–64 letters, digits, dashes */
@@ -143,7 +144,7 @@ export class ServerGame {
     const [sx, sy, sz] = this.spawn;
     const pose = record?.pose ?? { x: sx, y: sy, z: sz, yaw: Math.PI, pitch: 0, flags: 0, vx: 0, vz: 0 };
     /** @type {ServerPlayer} */
-    const player = { id: this._nextId++, token, name, avatar, socket, pose: { ...pose }, poseDirty: true };
+    const player = { id: this._nextId++, token, name, avatar, socket, pose: { ...pose }, poseDirty: true, held: null };
     this.players.set(player.id, player);
     this.records.set(token, { name, avatar, pose: { ...pose } });
     this.dirty = true;
@@ -157,7 +158,8 @@ export class ServerGame {
       bricks: this.world.bricks.export(),
       spawn: this.spawn,
       you: { name, avatar, pose: player.pose },
-      players: [...this.players.values()].filter((p) => p !== player).map((p) => ({ id: p.id, name: p.name, avatar: p.avatar, pose: p.pose })),
+      players: [...this.players.values()].filter((p) => p !== player)
+        .map((p) => ({ id: p.id, name: p.name, avatar: p.avatar, pose: p.pose, held: p.held })),
     }));
     this.broadcast({ t: 'join', id: player.id, name, avatar, pose: player.pose }, player);
     this.log(`${name} joined (${this.players.size} playing)`);
@@ -199,6 +201,14 @@ export class ServerGame {
       case 'brick': {
         const b = cleanBrick(msg);
         if (b) this._brickIntent(player, b);
+        return;
+      }
+      case 'held': { // §98: what is in the hand, for the others' view of this player
+        const held = cleanHeld(msg.item);
+        if (held !== player.held) {
+          player.held = held;
+          this.broadcast({ t: 'held', id: player.id, item: held }, player);
+        }
         return;
       }
       case 'chat': {

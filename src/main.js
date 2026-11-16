@@ -111,6 +111,7 @@ import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
 import { heatSource, heatAt, groundChillOf, isSaltyBiome, bodyTarget, CHEST_HEIGHT, HEAT_SOURCES } from './climate.js';
 import { softLandingFactor, knockDamage, crushDamage, fatigueStage, digFactorOf, strikeFactorOf } from './vitals.js';
 import { getItem, itemName, itemForBlock, maxDurability } from './items.js';
+import { isItemPick, normalizePick, pickItemKey, pickName } from './creativePicks.js';
 import { createPackUI, demoPackView } from './packUI.js';
 import { createItemIcons, iconBlockFor } from './itemIcons.js';
 import { createLooseItemRenderer } from './looseItemRenderer.js';
@@ -714,12 +715,15 @@ export function easeFov(fov, target, dt) {
 }
 
 /**
- * @returns {number[]} a valid 9-slot hotbar copy (falls back to DEFAULT_HOTBAR). v0.10 (DESIGN-circuits §2.10): a slot holding
- * BLACK_HOLE (66, no longer placeable) holds COLLAPSAR_CHARGE.
+ * @returns {Array<number|string>} a valid 9-slot hotbar copy (falls back to DEFAULT_HOTBAR); a slot is a block id or (§98)
+ * the key of an item that is not a block. v0.10 (DESIGN-circuits §2.10): a slot holding BLACK_HOLE (66, no longer
+ * placeable) holds COLLAPSAR_CHARGE.
  */
 export function hotbarFrom(list) {
-  if (Array.isArray(list) && list.length === HOTBAR_SIZE && list.every((v) => Number.isInteger(v) && v >= 0 && v <= 255)) {
-    return list.map((v) => (v === BLOCK.BLACK_HOLE ? BLOCK.COLLAPSAR_CHARGE : v));
+  // §98: a slot is a block id or the key of an item that is not a block (an old key under its new name)
+  const picks = Array.isArray(list) && list.length === HOTBAR_SIZE ? list.map(normalizePick) : null;
+  if (picks && picks.every((v) => v !== null)) {
+    return /** @type {Array<number|string>} */ (picks).map((v) => (v === BLOCK.BLACK_HOLE ? BLOCK.COLLAPSAR_CHARGE : v));
   }
   return DEFAULT_HOTBAR.slice();
 }
@@ -1396,6 +1400,7 @@ export function boot(win, doc) {
     mi.riding = Boolean(riding);
     mi.sleeping = sleep.active;
     avatarMotion.step(live ? dt : 0, mi);
+    avatarRenderer.setHeld(down ? null : heldItemKey()); // §98: the item in hand, in first person and on the model
     const v = avatarView;
     v.x = player.x;
     v.y = player.y;
@@ -1431,6 +1436,8 @@ export function boot(win, doc) {
   let netPoseKey = '';
   /** The arm swung since the last pose. */
   let netSwing = false;
+  /** The held item the server was last told of (§98; undefined: nothing sent yet). */
+  let netHeldSent = /** @type {string|null|undefined} */ (undefined);
   /** Server cells are being applied: onBlockChanged must not send them back. */
   let applyingServer = false;
   /** The name the server gave us (the welcome's `you`). */
@@ -1547,6 +1554,7 @@ export function boot(win, doc) {
         const w = m.world && typeof m.world === 'object' ? m.world : {};
         worldName = cleanName(w.name, 'Server');
         netYouName = m.you && typeof m.you.name === 'string' ? cleanName(m.you.name) : '';
+        netHeldSent = undefined; // §98: the server hears what is in the hand once we have one
         netRejoins = 0;
         setOnServer(true);
         remotes.clear();
@@ -1596,6 +1604,9 @@ export function boot(win, doc) {
       case 'refused':
         netRefused = true;
         return;
+      case 'held':
+        if (Number.isInteger(m.id)) remotes.setHeld(m.id, m.item); // §98
+        return;
       case 'time':
         if (Number.isFinite(m.time) && params.time == null) time = wrapTime(m.time);
         if (Number.isFinite(m.day)) day = Math.max(1, Math.floor(m.day));
@@ -1621,6 +1632,11 @@ export function boot(win, doc) {
       if (net === client) onServerMessage(m, t);
     });
     if (net !== client || client.state !== 'joined' || !player) return;
+    const held = heldItemKey(); // §98: the others draw it in our avatar's hand
+    if (held !== netHeldSent) {
+      netHeldSent = held;
+      client.sendHeld(held);
+    }
     // under a menu the world here is frozen but the server's is not: what it sent is meshed all the same
     const st = /** @type {string} */ (state);
     if (st !== STATE.PLAYING && st !== STATE.PACK && st !== STATE.BOOK && st !== STATE.LOADING) {
@@ -1967,6 +1983,7 @@ export function boot(win, doc) {
 
   let time = START_TIME;
   let day = 1;
+  /** @type {Array<number|string>} Creative's hotbar: block ids, or (§98) keys of items that are not blocks */
   let hotbar = DEFAULT_HOTBAR.slice();
   let selected = 0;
 
@@ -2906,7 +2923,7 @@ export function boot(win, doc) {
       return;
     }
     const id = hotbar[i];
-    if (id !== BLOCK.AIR) hud.showBlockToast(getBlockDef(id).displayName);
+    if (id !== BLOCK.AIR) hud.showBlockToast(pickName(id));
   }
 
   /** @returns {boolean} the selected slot holds a Spark Transmitter (the pocket key, §4.6) */
@@ -2919,7 +2936,7 @@ export function boot(win, doc) {
   function assignSlot(slot, id) {
     hotbar[slot] = id;
     hud.setHotbar(hotbar, selected);
-    hud.showBlockToast(getBlockDef(id).displayName);
+    hud.showBlockToast(pickName(id));
   }
 
   /** Console + HUD chat log line (command results, script errors, `say`). */
@@ -3358,7 +3375,7 @@ export function boot(win, doc) {
     // v0.16: a mob farther than the hand reaches takes the crosshair but not the blow
     if ((zombieTarget && !strikeInReach(zombieTarget)) || (pigTarget && !strikeInReach(pigTarget)) || (animalTarget && !strikeInReach(animalTarget))) return false;
     if (zombieTarget) {
-      hitZombie(zombieTarget.zombie);
+      hitZombie(zombieTarget.zombie, strikeKind('zombie', creativeTool()).power); // §98: by the weapon in hand
       updateHit();
       return true;
     }
@@ -3388,6 +3405,25 @@ export function boot(win, doc) {
     return true;
   }
 
+  /**
+   * §98: Place with an item in Creative's hand: a rock, a dart or a spear is thrown (as G throws it; Creative never runs
+   * out); anything else does nothing here (R still feeds, shears, … through heldItemKey).
+   * @param {string} key @returns {boolean} something happened
+   */
+  function useCreativeItem(key) {
+    if (throwOf(key).power <= 0) return false;
+    const res = handAction('throw', 1);
+    if (res.ok) avatarSwing(); // §91
+    return res.ok;
+  }
+
+  /** §98: the tool in Creative's hand (a sword strikes a zombie harder than a bare hand), or null. */
+  function creativeTool() {
+    const key = pickItemKey(hotbar[selected]);
+    const def = key ? getItem(key) : null;
+    return def && def.tool ? def.tool : null;
+  }
+
   /** §5.5: a WICKER_BASKET / REMAINS cell holding items, or a CAMPFIRE / FIRE_PIT whose spots hold anything. */
   function isProtectedCell(h) {
     const id = h.blockId;
@@ -3400,6 +3436,7 @@ export function boot(win, doc) {
   function placeSelected() {
     if (!world || !player) return false;
     const id = hotbar[selected];
+    if (typeof id === 'string') return useCreativeItem(id); // §98: an item in hand is used, not placed
     if (!isPlaceable(id)) return false;
     // §93: a building material is only ever a brick (both modes): it goes on the brick lattice.
     if (isBrickMaterial(id)) {
@@ -3703,8 +3740,7 @@ export function boot(win, doc) {
   /** The item in the player's hand as a key: the selected pack stack in Survival, the hotbar block's item in Creative. */
   function heldItemKey() {
     if (survival.inSurvival) return selectedKey();
-    const id = hotbar[selected];
-    return id ? itemForBlock(id) : null;
+    return pickItemKey(hotbar[selected]); // §98: a block's item, or the item itself
   }
 
   /** An animal's call (its species' voice), by distance. */
@@ -4252,10 +4288,10 @@ export function boot(win, doc) {
       block = looseBlockOf(s.k);
     } else {
       const id = hotbar[selected];
-      const key = id ? itemForBlock(id) : null;
+      const key = pickItemKey(id); // §98: an item pick is thrown as itself
       if (!key) return { ok: false, message: 'nothing in hand' };
       part = { k: key, n: 1 };
-      block = isMeshed(id) ? id : -1;
+      block = typeof id === 'number' && isMeshed(id) ? id : -1;
     }
     const yaw = controls.yaw;
     const pitch = controls.pitch;
@@ -6756,7 +6792,8 @@ export function boot(win, doc) {
       menus.setPhysicsState(physicsMenuState());
     },
     onPickBlock(blockId, slot) {
-      if (state !== STATE.PICKER || !isPlaceable(blockId)) return;
+      // §98: a block, or an item that is not one (a tool, a weapon, food, …)
+      if (state !== STATE.PICKER || !(isItemPick(blockId) || (typeof blockId === 'number' && isPlaceable(blockId)))) return;
       if (slot === null || slot === undefined) {
         assignSlot(selected, blockId);
         audio.playClick();
@@ -7392,9 +7429,12 @@ export function boot(win, doc) {
     if (zombieTarget && zombieTarget.zombie === zb) zombieTarget = null;
   }
 
-  /** The player's left-click on a zombie: knockback and a red flash, or a knock-out on the ZOMBIE_HITS-th hit. */
-  function hitZombie(zb) {
-    const res = zombies.hit(zb, player.x, player.z);
+  /**
+   * The player's left-click on a zombie in Creative: knockback and a red flash, or a knock-out once its hits add up;
+   * `power` is the tool in hand's (§98; a bare hand: 1).
+   */
+  function hitZombie(zb, power = 1) {
+    const res = zombies.hit(zb, player.x, player.z, power);
     if (res === 'ko') zombieGone(zb, 'ko');
     else if (res === 'hit') audio.playZombieHurt(1);
   }

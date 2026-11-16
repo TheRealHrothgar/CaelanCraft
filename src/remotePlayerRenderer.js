@@ -63,7 +63,7 @@ function makeTag(doc, name) {
 export function createRemotePlayerRenderer(scene, doc) {
   /**
    * @type {Map<number, { avatar: import('./avatarRenderer.js').AvatarRenderer, avatarId: string, motion: AvatarMotion,
-   *   tag: ReturnType<typeof makeTag>, name: string, swings: number }>}
+   *   tag: ReturnType<typeof makeTag>, name: string, swings: number, held: string|null }>}
    */
   const shown = new Map();
   /** @type {import('./avatarMotion.js').MotionInput} */
@@ -102,12 +102,16 @@ export function createRemotePlayerRenderer(scene, doc) {
         scene.add(tag.sprite);
         const motion = new AvatarMotion();
         motion.reset(pose.yaw);
-        e = { avatar, avatarId: rp.avatar, motion, tag, name: rp.name, swings: rp.swings };
+        e = { avatar, avatarId: rp.avatar, motion, tag, name: rp.name, swings: rp.swings, held: null };
         shown.set(rp.id, e);
       }
       if (e.avatarId !== rp.avatar) {
         e.avatar.setAvatar(rp.avatar);
         e.avatarId = rp.avatar;
+      }
+      if (rp.held !== e.held) { // §98: what they hold, in their avatar's hand
+        e.held = rp.held;
+        e.avatar.setHeld(rp.held);
       }
       if (rp.swings !== e.swings) {
         e.swings = rp.swings;

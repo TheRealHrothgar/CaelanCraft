@@ -7005,7 +7005,7 @@ nothing (a paused world).
 
 ### 91.4 The model and the first-person arm (`avatarRenderer.js`, three)
 
-`createAvatarRenderer(scene)` → `{ setAvatar(id), avatarId(), sync(frame), group, armGroup, prewarm(webgl, camera),
+`createAvatarRenderer(scene)` → `{ setAvatar(id), avatarId(), setHeld(key), heldKey() (§98.4), sync(frame), group, armGroup, prewarm(webgl, camera),
 dispose() }`. Every avatar's model and arm are built at once over ONE texture (the sheet: nearest, no mipmaps, sRGB); one
 model and one arm are shown at most.
 
@@ -7596,3 +7596,65 @@ close: two tabs would take turns for ever); a first join that fails is not retri
 There is no Fly button: two presses of Jump within `DOUBLE_TAP_SPACE_MS` (300 ms) toggle flight in Creative, exactly as a
 double-tapped Space does (`controls.setVirtualJump`'s rising edge goes through the same `jumpTap` as Space's keydown; each
 toggle consumes both taps; main ignores the toggle in Survival). Jump glows (`.on`) while flying.
+
+## 98. Every item in Creative, and the item in hand — `src/creativePicks.js` (PURE), `src/storage.js`, `src/hud.js`, `src/main.js`, `src/protocol.js`, `src/net.js`, `server/game.js`, `src/remotePlayerRenderer.js`, `src/types.js`, `src/commands.js`
+
+Creative offers every item of the game, not only blocks (the user: "there're no tools available in creative"; chosen:
+every item, shown in the hand and on the avatar).
+
+### 98.1 What a Creative hotbar slot holds
+
+A **pick** is a block id (a number, as before) or the KEY of an item whose kind is not `'block'` (a string: a tool, a
+weapon, food, a material, clothes, a bandage). A block's item is always its block id. `creativePicks.js`:
+`isItemPick(v)`, `isHotbarPick(v)` (a block id 0..255 or an item pick), `normalizePick(v)` (an old key under its new
+name, §64 aliases; null for anything else), `pickItemKey(v)` (the item in hand: a block's item, the item itself, null for
+AIR), `pickName(v)`. The Creative `hotbar` is `Array<number|string>`; saves keep it (`storage.validHotbarCopy`: every slot
+a block id or a normalised item pick, else the default hotbar as before; `SaveData.hotbar`), `main.hotbarFrom` likewise.
+The HUD draws an item pick with the item icon sheet (`itemIcons.draw`) and a block as before; the slot toast names it.
+
+### 98.2 Using items in Creative
+
+Blocks still break at once whatever is in hand. **Mine** on a zombie strikes with the tool's power (`strikeKind('zombie',
+tool).power`: a sword hits harder than a bare hand; animals are still only shoved in Creative). **Place** with a rock, a
+dart or a spear in hand throws it (`useCreativeItem`: `throwOf(key).power > 0`; Creative never runs out; G throws any item
+as before); with anything else it does nothing. **Action** (R) feeds, shears and baits through `heldItemKey()`, which is
+now the item pick itself. **Drop** drops it (a Creative drop is a ghost, §60).
+
+### 98.3 The item in hand, for everyone
+
+`main.drawAvatar` gives `avatarRenderer.setHeld(heldItemKey())` every frame (null on the death screen): the item shows in
+the first-person hand and on the avatar model, in both modes. On a server the client sends `{ t: 'held', item }` when it
+changes (`NetClient.sendHeld`; again after every welcome); the server keeps `player.held` (`protocol.cleanHeld`: an item
+key of the game, else null), tells the others `{ t: 'held', id, item }` when it changes, and puts `held` in the welcome's
+`players`. `RemotePlayers` keeps `held` (`join`, `setHeld`); `remotePlayerRenderer` gives it to that player's avatar
+renderer.
+
+### 98.4 The item in hand, drawn (`heldItem.js` PURE, `avatarRenderer.js`)
+
+Only a non-block item with its own picture is drawn; a block item, an unknown key or an empty hand shows nothing (blocks
+in hand come later).
+
+- `extrudeItemArt(rgba, size, { pixel = HELD_PIXEL, grip = [size/2, size/2], turn = 0 })` → `{ positions, normals,
+  colors }` (Float32Array, non-indexed triangles wound counter-clockwise seen from outside): every solid pixel (alpha >
+  127) has a front (+z) and a back (−z) square, and a side square only where the neighbour on that side is empty or off
+  the picture — a closed slab one pixel thick (z ±pixel/2) with no inner faces. Each face takes its pixel's colour made
+  linear (`srgbByteToLinear`). The picture stands upright (row 0 at the top); the grip point `[u, v]` (art pixels from the
+  top-left; pixel (x, y) covers [x, x+1] × [y, y+1]) sits at the origin; then the whole is turned `turn` radians about z.
+  An empty picture gives empty arrays.
+- `heldGrip(rgba, size, { wielded, handleTop })` → `{ style, grip, turn, pixel }`, from the pixels: **'tool'** — a wielded
+  picture (`heldWielded(key)`: a `tool` def, or a dart) with a haft at its handle end (one of the `HELD_HAFT_ROWS` 4 rows
+  there at most `HELD_HAFT_PX` 4 pixels across; the bottom, the top for a shovel), gripped `HELD_GRIP_IN` 3 pixels in from
+  that end, turned so the middle of its solid pixels lies straight ahead of the grip, `pixel` `HELD_PIXEL` 0.025 m (a
+  16-pixel pick is 0.4 m: a child's tool); **'lump'** — everything else (food, materials, pots, the hammerstone, the fire
+  drill, the crucible, the mold), held at the middle of its solid pixels, unturned, `HELD_PIXEL × HELD_LUMP_SCALE` 0.7.
+- `heldItemShown(key)`, `heldItemGeometry(key)` → `{ style, grip, turn, pixel, positions, normals, colors }` or null.
+- `setHeld(key)` / `heldKey()`: one cached `BufferGeometry` per key (freed by `dispose()`); two meshes, `avatar-held` on the
+  current model's right forearm (`arms[1].elbow`) and `avatar-fp-held` on the first-person arm's (`fpElbow`), the grip at
+  the middle of the hand; `setAvatar` moves them; they follow the walk, every stance and the action swing. Poses
+  `HELD_POSE` (the model: a tool ahead and a little up, its face to the side; a lump upright in front of the fist) and
+  `FP_HELD_POSE` (first person: a tool up and away from the hand at the lower right, a lump on the hand). The model's item
+  is `MeshLambertMaterial({ vertexColors: true })`; the first-person one is drawn like the arm (the arm's material
+  generalised: the light volume at the eye, `FP_DEPTH`, `FP_RENDER_ORDER`, never culled), programs `FP_ARM_PROGRAM`
+  'caelancraft-avatar-arm' and `FP_HELD_PROGRAM` 'caelancraft-avatar-held', both compiled by `prewarm` (an empty slab
+  stands in before anything is held).
+- Tests: `tests/unit/heldItem.test.js`, `tests/unit/avatarRenderer.test.js`, `tests/unit/creativeItems.test.js`.

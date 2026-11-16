@@ -3,6 +3,7 @@
 // and the cleaners that turn whatever arrives over the wire into well-formed values (or null), so neither end ever trusts
 // the other's numbers.
 import { WORLD_HEIGHT } from './config.js';
+import { getItem } from './items.js';
 
 /** Bumped whenever a message changes shape; a client and a server of different versions refuse each other. */
 export const PROTOCOL_VERSION = 1;
@@ -116,6 +117,14 @@ export function unpackPose(a) {
   if (!Array.isArray(a) || a.length < 9 || !int(a[0])) return null;
   const pose = cleanPose({ x: a[1], y: a[2], z: a[3], yaw: a[4], pitch: a[5], flags: a[6], vx: a[7], vz: a[8] });
   return pose ? { id: a[0], ...pose } : null;
+}
+
+/**
+ * What a player holds (§98): the key of an item of the game, or null (an empty hand, or anything else that arrives).
+ * @param {unknown} v @returns {string|null}
+ */
+export function cleanHeld(v) {
+  return typeof v === 'string' && v.length <= 40 && /^[a-z0-9_]+$/.test(v) && getItem(v) ? v : null;
 }
 
 /** A hex cell intent `{ q, y, r, id }` (integers; y inside the world; id 0..255), or null. @param {any} m */
