@@ -116,6 +116,7 @@ const TABLE = [
   [[B.RAIN_BARREL, B.RAIN_BARREL_1, B.RAIN_BARREL_2, B.RAIN_BARREL_3], 1.5, 'axe', 0],
   [[B.GRASS_BED], 0.4, null, 0],
   [[B.BED], 1.5, 'axe', 0],
+  [[B.PENNANT], 0.4, null, 0], // §101
 ];
 
 describe('BLOCK_RULES (§6.3)', () => {
