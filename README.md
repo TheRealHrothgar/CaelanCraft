@@ -52,7 +52,7 @@ Press **T** (or **/**) for the command console. Commands are one per line; `help
 | `fill q1 y1 r1 q2 y2 r2 <block>` | an axial box |
 | `hexfill q y r radius height <block>` · `hexring …` | a honeycomb disc or ring, `height` cells tall |
 | `time set noon|midnight|day|night|HH:MM` · `time add 1h` | the clock |
-| `fly on|off|toggle`, `give <block> [slot]`, `say <text>`, `pos`, `seed`, `edits` | utilities |
+| `fly on|off|toggle`, `give <block|item> [slot]`, `say <text>`, `pos`, `seed`, `edits` | utilities |
 | `run q y r`, `wait <s>`, `stop`, `stopall`, `resume`, `runes`, `rune q y r on|off` | rune scripting |
 | `mode [creative\|survival]` (console only), `vitals [full\|health …] [value]`, `pack [list\|add\|clear] [item] [count]`, `items [filter]` | Survival |
 

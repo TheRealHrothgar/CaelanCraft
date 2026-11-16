@@ -33,6 +33,7 @@ import { inHeightRange, worldToChunk, yawToForward } from './coords.js';
 import { hexToWorld, worldToHex, hexLength, hexDiscCount } from './hex.js';
 import { BLOCK, BLOCKS, BLOCK_ALIASES, BLOCK_COUNT, getBlockDef, isPlaceable, isSolid, isBrickMaterial } from './blocks.js';
 import { parseChannel } from './circuitParts.js';
+import { normalizePick, isItemPick, pickName } from './creativePicks.js';
 import { findFreeY, findStandingY, playerIntersectsBlock } from './physics.js';
 import { formatTime } from './daynight.js';
 import { WATCHER_HEIGHT } from './watcher.js';
@@ -74,7 +75,7 @@ export const COMMANDS = Object.freeze([
   { name: 'hexring', usage: 'hexring q y r radius height <block>', summary: 'fill the ring of cells at exactly hex distance `radius`, `height` tall', args: ['cell', 'cell', 'cell', 'int', 'int', 'block'], min: 6 },
   { name: 'time', usage: 'time set <noon|midnight|day|night|HH:MM|0-24|0.0-1.0> | time add <HH:MM|Nh|Nm|seconds>', summary: 'set or advance the clock (game time: 86400 s per day)', args: ['choice:set|add', 'word'], min: 2 },
   { name: 'fly', usage: 'fly on|off|toggle', summary: 'flight', args: ['choice:on|off|toggle'], min: 1 },
-  { name: 'give', usage: 'give <block> [slot 1-9]', summary: 'put a block in a hotbar slot (default: the selected one)', args: ['block', 'int'], min: 1 },
+  { name: 'give', usage: 'give <block|item> [slot 1-9]', summary: 'put a block or an item (a tool, a weapon, food…) in a hotbar slot (default: the selected one)', args: ['block', 'int'], min: 1 },
   { name: 'say', usage: 'say <text>', summary: 'show a message', args: ['rest'], min: 1 },
   { name: 'run', usage: 'run q y r', summary: 'trigger the rune block in that cell', args: ['cell', 'cell', 'cell'], min: 3 },
   { name: 'wait', usage: 'wait <seconds>', summary: 'pause this script (scripts only; 0.05–600 s)', args: ['num'], min: 1, scriptOnly: true },
@@ -301,7 +302,7 @@ export function resolveHexBlock(token) {
  * @property {boolean} timeFrozen                           true under ?time=
  * @property {Array<number|string>} hotbar  block ids, or (§98) item keys
  * @property {number} selected
- * @property {(slot: number, id: number) => void} setHotbarSlot
+ * @property {(slot: number, id: number|string) => void} setHotbarSlot  a block id or (§98) an item key
  * @property {(text: string) => void} say
  * @property {(x: number, y: number, z: number) => void} teleport   moves the player (feet), zeroes velocities and seeds the step-on state
  * @property {(on: boolean) => void} setFlying
@@ -1014,6 +1015,14 @@ function run(spec, args, ctx) {
     case 'give': {
       if (inSurvival(ctx)) return fail(spec, 'in Survival use: pack add <item> [count]');
       const rb = resolveBlock(args[0]);
+      // §98: an item that is not a block (a tool, a weapon, food, …) goes in the slot as itself
+      const item = 'error' in rb ? normalizePick(String(args[0]).toLowerCase()) : null;
+      if (typeof item === 'string' && isItemPick(item)) {
+        const slot = args.length === 2 ? Number(args[1]) - 1 : ctx.selected;
+        if (!(slot >= 0 && slot < HOTBAR_SIZE)) return fail(spec, `slot must be 1-${HOTBAR_SIZE}`);
+        ctx.setHotbarSlot(slot, item);
+        return ok(`gave ${pickName(item)} to slot ${slot + 1}`);
+      }
       if ('error' in rb) return fail(spec, rb.error);
       if (rb.id === BLOCK.BLACK_HOLE) return fail(spec, 'a black hole cannot be held — give collapsar_charge and set it off');
       if (!isPlaceable(rb.id)) return fail(spec, `"${getBlockDef(rb.id).name}" is not placeable`);

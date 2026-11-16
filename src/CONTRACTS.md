@@ -1314,7 +1314,7 @@ console executes with both `null`.
 | `time set <spec>` | noon 0.5, midnight 0, day 0.25, night 0.75, `HH:MM` (0..23:0..59), bare integer 0..24 = hours (24 → 0), a number with a decimal point in [0,1] = fraction; `time is frozen by ?time=` |
 | `time add <dur>` | GAME seconds (86400/day): `HH:MM`, `Nh`, `Nm`, `Ns`, a signed number with a decimal point ≤ 1 = fraction of a day, a signed integer = seconds; negatives allowed; `day` bumps only forwards |
 | `fly on|off|toggle` | `setFlying` |
-| `give <block> [slot]` | placeable blocks only; slot `1..9` integer literal (default: selected) |
+| `give <block|item> [slot]` | placeable blocks, or (§98) any item that is not a block (Creative); slot `1..9` integer literal (default: selected) |
 | `say <text>` | `ctx.say(text)`; the result message is empty |
 | `run q y r` | `runner.trigger(key, running ? 'run' : 'console', running ? { wave, hops + 1 } : undefined)`; failure reason is the message |
 | `wait <s>` | scripts only; `WAIT_MIN_S..WAIT_MAX_S` → `{ wait }` |
@@ -7658,3 +7658,22 @@ in hand come later).
   'caelancraft-avatar-arm' and `FP_HELD_PROGRAM` 'caelancraft-avatar-held', both compiled by `prewarm` (an empty slab
   stands in before anything is held).
 - Tests: `tests/unit/heldItem.test.js`, `tests/unit/avatarRenderer.test.js`, `tests/unit/creativeItems.test.js`.
+
+### 98.5 Every item in the picker (`pickerModel.js` PURE, `pickerUI.js`, `menus.js`)
+
+Amends §56. A picker pick is the §98.1 pick (`pickerModel.Pick`, `number|string`); an item key is never a number, so `===`
+tells them apart. `buildPickerModel(blocks = BLOCKS, items = ITEMS)` keeps its shape with picks (`order: Pick[]`,
+`info: Map<Pick, {name, displayName, section, family, text}>`, `Family.ids: Pick[]`, `PickerSection.iconId: Pick`), a new
+entry `{ type: 'item', key }`, and `entryOf(pick)`. After the 11 block sections (and the blocks' "Other") come
+`PICKER_ITEM_SECTIONS`: **Tools** (families Picks, Axes, Shovels, Hammers, Knives in tier order, unit "tools"; the fire
+drill, the crucible, the casting mold, the handbook), **Weapons** (Swords; the spear; Darts; the rock), **Food** (Meat, Fish
+& Eggs, Fruit & Nuts, Roots & Tubers, Mushrooms, Pots; snow), **Materials** (Flint & Obsidian, Wood & Fibre, Fuel,
+Minerals, Metals, Hide & Rag, Clay & Pottery, Powder & Parts, Seeds; singles) and **Clothes & Healing**; then "Other Items"
+(`OTHER_ITEMS_SECTION_ID` 'other-items': any item no table names; empty today). Each item section is at most 14 entries.
+Search finds an item by its name, key, family, section, singular, old keys, its tool type's words (`PICKER_TOOL_WORDS`:
+pick → pickaxe; shovel → spade; …) and `PICKER_ITEM_ALIASES`; the count reads "2 blocks · 10 items"; the placeholder is
+"Search blocks and items ( / )". `blurbFor(pick)` for an item: `purposeOf(key)`, else `PICKER_ITEM_LINES[key]`, else a line
+from its data (food: "+4 Nourishment, +2 Hydration." — never a sick chance, so a look-alike reads like the food it
+imitates). An item cell is `.picker-cell.picker-item` with `data-item-key`, drawn with `itemIcons`; `onPickBlock(pick,
+slot)` passes the number or the string unchanged. On a window under 900 px tall the rail's buttons are 26 px (§56's 34 px
+above) so all 16 fit. The console's `give <block|item> [slot]` hands out an item too (Creative).

@@ -983,6 +983,8 @@ html.on-server .console-hint{font:12px var(--ui-font)}
 #picker-blurb{font:13px/15px var(--ui-font)}
 .picker-hint{font:12px/15px var(--ui-font)}
 html.touch .picker-hint{visibility:hidden}
+/* §98: with the item sections the rail has 16 buttons: on a short window they shrink so all of them fit */
+@media (max-height:900px){#picker-rail{gap:2px}.picker-rail-btn{flex-basis:26px;width:26px;height:26px;border-radius:7px}.picker-rail-icon{width:18px;height:18px}}
 #block-picker .picker-section-head{font-family:var(--ui-font);font-weight:700;letter-spacing:0;background:rgba(24,26,36,.92)}
 .picker-showall{font:13px var(--ui-font)}
 /* the key sheet's keys: small glass caps */
