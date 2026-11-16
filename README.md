@@ -146,6 +146,7 @@ panel (**Shift+R** on it) says where it comes from.
 |---|---|
 | `?seed=123` | World seed (number or any text) |
 | `?rd=6` | Render distance in chunks (1–16, hex distance) |
+| `?touch=1` / `?touch=0` | Force the on-screen touch controls on (try them on a PC: the mouse drives them) or off. By default a touch-first device such as an iPad gets them, and a view distance of 4 unless `?rd=` is given (CONTRACTS §95) |
 | `?debug=1` | Start with the debug overlay visible |
 | `?nosave=1` | Never write saved worlds (the Worlds panel is read-only; `?autoplay=1` starts a fresh world instead of loading one) |
 | `?time=0.5` | Freeze the time of day (0 = midnight, 0.5 = noon) |

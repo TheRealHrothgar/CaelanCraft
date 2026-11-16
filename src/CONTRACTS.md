@@ -1012,6 +1012,11 @@ E, F, M, T, R, Slash). A keydown whose `key === '/'` but whose code is not `Slas
 `Slash` edge INSTEAD of its physical code, so typing `/` never also selects a hotbar slot.
 Digit keys 1–9 are read by main via `consumePressed('Digit1')`. Do not bind Ctrl.
 
+> **§95 amendment (touch):** `touchMode`, `setTouchMode(on)` (a virtual lock: `lock()` / `unlock()` set it at once and
+> `onLockChange` fires a microtask later; window blur or a hidden page lets go of it; no mouse look), and the virtual input
+> the on-screen controls feed — `virtualKey`, `virtualButton`, `virtualLook`, `setVirtualMove`, `setVirtualJump` — merged
+> into `getInput()`. A desktop not in touch mode is unchanged.
+
 ## 19. `src/hud.js` (DOM)
 
 > **v0.10 amendment (§58):** `setFlashOverlay(level, 'white'|'void')` (`#flash-overlay`, DOM touched on 1/32 steps), pure `flashStep(state, dt, trigger)` and `createFlashState()`.
@@ -7327,6 +7332,123 @@ legend, and a scrolling canvas with the lanes named on the left.
 The states come from the view: `treeFactsFromView(view)` (counts over the pack, the worn and the cursor; tools by type and
 tier; `view.ready` — survivalControl.buildPackView's ids of every recipe, whatever the tab, that could start now; the near
 workplaces). `?ui=tree` (with `?autoplay` in Survival) opens the pack with the tree over it, for screenshots.
+
+## 95. Touch controls (iPad) — `src/touchControls.js` (PURE + DOM), `src/controls.js`, `src/main.js`, `index.html`, `src/styles.css`, `public/manifest.webmanifest`, `public/apple-touch-icon.png`, `public/icons/`, `scripts/make-touch-icons.mjs`
+
+The game plays on an iPad by touch (docs/DESIGN-multiplayer.md §5), in Safari and as a home-screen web app. Touch is an
+INPUT layer only: the on-screen controls feed the same Controls API (§18) that the keyboard and the mouse feed, so main
+reads one input whatever the device, and nothing else in the game knows about touch. A desktop that is not in touch mode
+behaves exactly as before.
+
+### 95.1 Touch mode
+
+- **Detection** (once, at boot): `detectTouchMode(win)` → `touchModeFor({ param, coarse, fine, maxTouchPoints })`.
+  `?touch=` wins: `1`, `true`, `on`, `yes` or a bare `?touch` turn it on, `0`, `false`, `off`, `no` turn it off
+  (`readTouchParam`); anything else detects. Otherwise touch mode is on when the primary pointer is coarse
+  (`matchMedia('(pointer: coarse)')`), or when `navigator.maxTouchPoints > 1` and no pointer anywhere is fine
+  (`(any-pointer: fine)`): iPadOS Safari calls itself a Mac (`MacIntel`) but has touch points and no mouse. A PC with a
+  touch screen and a mouse or trackpad stays a desktop. Anything missing or throwing counts as absent.
+- **View distance**: `TOUCH_RENDER_DISTANCE` **4** chunks in touch mode; `?rd=` still wins.
+- **No pointer lock.** Main calls `controls.setTouchMode(true)`. The lock is then VIRTUAL: `lock()` and `unlock()` set it at
+  once (no `requestPointerLock`), `locked` reads it, and `onLockChange` fires a microtask later, as a real
+  `pointerlockchange` arrives after its request, with the held state cleared as for a real change. Main's state machine is
+  unchanged: entering play locks, every modal unlocks, and the relock check after a modal finds the lock held, so nothing
+  pauses for want of a pointer lock. The window's `blur` and the page becoming hidden (`visibilitychange`) let go of the
+  lock, so the game pauses when the iPad switches app, as a desktop pauses when it loses its lock. Mouse look is off (a
+  tap's compatibility `mousemove` never turns the view); a hardware keyboard plays as on a desktop.
+- **Starting**: "Click to play" reads "Tap to play"; a tap on it starts play (that tap is also the gesture that lets the
+  sound start). The title screen, the menus, the pack screen, the Handbook and the pickers are DOM and work by tapping.
+
+### 95.2 The virtual input (`controls.js`)
+
+Added to Controls: `touchMode` (read), `setTouchMode(on)` (any lock is released first), and:
+
+- `virtualKey(code, down)` — exactly a keydown or keyup of `code` with no auto-repeat: held, one queued edge (so `KeyF` is
+  the fly toggle, and `KeyR` is held for R's repeat).
+- `virtualButton(button, down)` — a mouse button on the canvas (0 left, 1 middle, 2 right): held and pressed edges.
+- `virtualLook(dYaw, dPitch)` — turns the look by radians (positive yaw turns left, positive pitch looks up; pitch clamped).
+- `setVirtualMove(forward, strafe, sprint)` — the stick: each clamped to −1..1 (non-finite 0); sprint only with forward > 0.
+- `setVirtualJump(on)` — a held jump.
+
+Each is honoured only while locked and enabled, like real input; releases always count; whatever clears the held keys
+clears these too. `getInput()`: `forward` / `strafe` are the keys' value wherever a key moves the player, else the stick's
+analog value (physics scales the wish direction by its length, clamped to 1, so a half push walks at half speed); `jump`
+= Space or the virtual jump; `sneak` = Shift (the Sneak button holds `ShiftLeft`); `sprint` (and `isSprinting()`) = W
+double-tapped or the stick's sprint.
+
+### 95.3 The controls (`touchControls.js`)
+
+`TouchPad(sink, hooks)` is the PURE half: it takes pointers (`down(id, x, y, zoneX, buttonId)`, `move`, `up`, `reset`)
+and button presses and calls the sink (the Controls above). `createTouchUI(doc, controls, hooks)` is the DOM half:
+`#touch-ui` and `#touch-back`, Pointer Events on them, the drawing. Main gives it `onPause` (its `pause()`), `onBack`
+(closes the block picker or the console) and `onTouch` (wakes a sleeper, as a click does), and calls
+`update({ playing, back, survival, flying })` once a frame, before the step reads the input.
+
+| control | where | what it does |
+|---|---|---|
+| Stick | the left half: it appears where the thumb lands (a faint rim rests bottom left) | analog forward / strafe. Nothing inside `STICK_DEAD` 0.12 of `STICK_RADIUS` 60 px, then linear to full at the rim; from `STICK_SPRINT` 0.9 of the radius, pointing within about 45° of straight ahead (`STICK_SPRINT_COS` 0.7), it sprints at full speed. The knob stays on the rim; lifting stops |
+| Look | a drag anywhere that is not a button (the right half; also the left half while the stick is held) | turns by `TOUCH_LOOK_SENSITIVITY` **0.005** rad per CSS px: dragging right turns right, dragging up looks up, as the mouse does. No inertia |
+| Jump | right cluster, the corner | held = Space: jumps, rises while flying, paddles up in water |
+| Dig | right cluster | held = the left mouse button held: breaks, digs, strikes |
+| Place | right cluster | the right mouse button: a tap places or uses, held keeps using |
+| R | right cluster | the R key (drink, open, feed, …); held repeats |
+| Sneak | right cluster | a TOGGLE on the ground, lit while on; while flying it is held to go down and reads "Down", and taking off clears the toggle. It is the Shift of Shift+R (a part's panel, a rune's editor), Shift+right (place against a control) and Shift+Q (drop the stack) |
+| Fly | right cluster, Creative only (hidden in Survival) | the F key: flight on or off (main ignores it in Survival); lit while flying |
+| Drop | right cluster | the Q key |
+| Pause | top bar | main's `pause()` (the pause menu) |
+| Pack | top bar | the E key: the pack in Survival; reads "Blocks" and opens the block picker in Creative |
+| View | top bar | the V key: first person, behind, in front |
+| Chat | top bar | the T key: the console (a tap on its field brings up the keyboard) |
+| Back | top left, only over the block picker and the console | closes them: an iPad has no Esc |
+| Hotbar | the hotbar itself | a tap on a slot is that slot's digit key (`hotbarCode`) |
+
+Sneak is a toggle because both thumbs are busy — one on the stick, the other looking, digging or placing — and a held
+Sneak would need a third; going down while flying is held, the mirror of Jump.
+
+- **Multi-touch.** Every pointer is followed by its `pointerId`, so moving, looking and holding Dig work at once. A pointer
+  landing in the open left of `STICK_ZONE` 0.5 of the width takes the stick if it is free, else the look if that is free;
+  elsewhere it takes the look if free; a pointer that finds both taken does nothing, and so does a second finger on a
+  button already held. The layer captures its pointers; `pointercancel` and a lost capture count as a lift.
+- **Shown only while playing** (main's PLAYING state). Otherwise the controls are hidden and everything held is let go;
+  the Sneak toggle is kept and held again when play resumes, and so are the stick and a held Jump after anything clears
+  the controls' state.
+- **One tap, one action.** A tap that began on a button never also clicks what lies under the finger when it lifts (the
+  pack, the field book, a menu it opened): the next click within `CLICK_SWALLOW_MS` 400 is swallowed unless it lands on
+  the controls or on Back.
+
+### 95.4 The page
+
+- `index.html`: `<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no,
+  viewport-fit=cover">`; `apple-mobile-web-app-capable` (and `mobile-web-app-capable`) `yes`,
+  `apple-mobile-web-app-status-bar-style` `black-translucent`, `apple-mobile-web-app-title`, `theme-color` `#1c1a24`;
+  `<link rel="manifest" href="/manifest.webmanifest">` and `<link rel="apple-touch-icon" href="/apple-touch-icon.png">`.
+- `public/manifest.webmanifest`: `display` `fullscreen`, `orientation` `landscape`, the dark panel colour, icons of 192
+  and 512 px. The icons and the 180-px apple-touch-icon are drawn by `scripts/make-touch-icons.mjs` (a grass-topped
+  hexagonal prism on the dark panel colour with a soft honey glow; plain Node, nothing downloaded). Safari opens a
+  home-screen app standalone (it ignores `fullscreen`) under a see-through status bar: hence the safe-area insets below.
+- **No scrolling, zooming or callouts on the game**: `#game-canvas` and `#touch-ui` have `touch-action: none` and no
+  long-press callout; in touch mode (`html.touch`) the page has no text selection, callouts or tap highlight,
+  `touch-action: manipulation` (no double-tap zoom; the menus still scroll) and `overscroll-behavior: none`, Safari's
+  `gesturestart` (pinch) is prevented, and text fields stay selectable.
+- **Safe areas**: the touch controls and, in touch mode, the HUD's bottom band (hotbar, vitals, tiredness, chips, block
+  toast, chat log) and its top items (calendar line, save toast) keep clear of `env(safe-area-inset-*)`. Under 900 px wide
+  the calendar line drops below the top bar.
+- **Look**: the game's own — honey `#e8b04a` rims on the dark panel colour `rgba(28,26,36,…)` at about half opacity,
+  bold monospace words, NO icons. Every button is at least 64 px (Jump and Dig 92, Place 78, the rest 66): round in the
+  right cluster, rounded squares in the top bar. Held = filled honey and a little smaller; toggled on = a honey glow. The
+  stick's rim is a plain hexagon (nothing drawn on it) with a round honey knob, brighter while sprinting. The right
+  cluster sits 92 px above the bottom (104 px in portrait), clear of the HUD's bottom band; the top bar is at the top left.
+- **Layers**: `#touch-ui` z 9 (over the canvas, under the HUD, which lets touches through; in touch mode the hotbar
+  takes its own taps); `#touch-back` z 26 (over the block picker and the console, under the pause menu).
+
+### 95.5 Not yet
+
+A switch for touch mode in the menus (the design's "a switch in the menu"; `?touch=` for now) and a view-distance control
+in the menus (`?rd=` for now). The controls sheets on the title screen and in the pause menu still list keys. The layout
+is for tablets; a phone's short landscape screen is cramped. Pick (middle click) and Throw (G) have no button.
+
+Tests: `tests/unit/touchControls.test.js` (detection, the stick and the look, the button table, TouchPad on a real
+Controls, the DOM layer on the fake DOM, the page) and `tests/unit/controlsTouch.test.js` (the virtual lock and input).
 
 ## 96. Multiplayer, phase 1: one server, a shared Creative world — `server/index.js`, `server/game.js` (Node), `src/protocol.js` (PURE), `src/net.js` (PURE), `src/remotePlayerRenderer.js` (three), `src/serverPanel.js` (DOM), `src/world.js`, `src/main.js`, `src/diagnostics.js`, `index.html`, `src/styles.css`
 
