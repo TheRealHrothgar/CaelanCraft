@@ -202,6 +202,15 @@ say Tower built"></textarea>
   <div id="title-screen" class="layer">
     <canvas id="title-logo" width="200" height="32"></canvas>
     <div id="splash-text"></div>
+    <section id="server-panel" class="server-panel" hidden aria-labelledby="server-title">
+      <h2 id="server-title" class="worlds-title">Play together</h2>
+      <div id="server-info" class="worlds-note"></div>
+      <div class="server-row">
+        <input id="server-name" class="server-name" type="text" maxlength="20" placeholder="Your name" autocomplete="off" autocapitalize="words" spellcheck="false" aria-label="Your name">
+        <button id="btn-join" type="button" class="hex-button server-join">Join</button>
+      </div>
+      <div id="server-message" class="worlds-message" role="status" aria-live="polite"></div>
+    </section>
     <div class="title-main">
       <section id="worlds-panel" class="worlds-panel" aria-labelledby="worlds-title">
         <div class="worlds-head"><h2 id="worlds-title" class="worlds-title">Worlds</h2><span id="worlds-count" class="worlds-note"></span></div>
@@ -214,15 +223,6 @@ say Tower built"></textarea>
         <div id="worlds-message" class="worlds-message" role="status" aria-live="polite"></div>
       </section>
       <div class="title-side">
-        <section id="server-panel" class="server-panel" hidden aria-labelledby="server-title">
-          <h2 id="server-title" class="worlds-title">Play together</h2>
-          <div id="server-info" class="worlds-note"></div>
-          <div class="server-row">
-            <input id="server-name" class="server-name" type="text" maxlength="20" placeholder="Your name" autocomplete="off" autocapitalize="words" spellcheck="false" aria-label="Your name">
-            <button id="btn-join" type="button" class="hex-button server-join">Join</button>
-          </div>
-          <div id="server-message" class="worlds-message" role="status" aria-live="polite"></div>
-        </section>
         <div id="title-controls" class="controls-sheet"></div>
         <button id="btn-guide-title" type="button" class="hex-button guide-button" title="The Survival Guide: how to stay alive">Survival Guide</button>
         <button id="btn-avatar-title" type="button" class="hex-button guide-button avatar-button" title="Choose who you play as">Avatar: Caelan</button>

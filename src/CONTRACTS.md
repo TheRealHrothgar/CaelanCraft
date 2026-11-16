@@ -7504,7 +7504,7 @@ SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16), `cleanCell` / `cleanBrick` (inte
 ### 96.3 The client
 
 - **Finding a server**: at boot (not under ?autoplay / ?smoke) `probeServer` asks the page's own host (or `?server=host[:port]`)
-  for `/api/info`; when it answers, the title screen shows **Play together** (`#server-panel`: the server's name, mode and
+  for `/api/info`; when it answers, the title screen shows **Play together** above the Worlds (`#server-panel`: the server's name, mode and
   players, a name box kept as `caelancraft:v2:mp-name`, Join, a status line). Another version says "reload the page".
   `?join=<name>` joins at once (with ?autoplay straight into play).
 - **Joining** (`joinServer`): a `NetClient` to `serverWsUrl` (ws: or wss: by the page) with the name, the chosen avatar and
