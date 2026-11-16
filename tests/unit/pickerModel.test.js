@@ -1,14 +1,18 @@
 // Unit tests for src/pickerModel.js, the creative inventory's pure model (DESIGN-circuits §5.2–§5.7, §5.10): sections and
 // families resolved by name (with and without survival's blocks), search with aliases, the grid of rounded square slots
-// with its drawer bands, keyboard navigation and the Recent list.
+// with its drawer bands, keyboard navigation and the Recent list; and every item that is not a block item (tools, weapons,
+// food, materials, clothes, bandages) in the item sections after the blocks, picked by its key.
 import { describe, it, expect } from 'vitest';
 import {
-  buildPickerModel, searchBlocks, layoutPicker, navigate, pushRecent, blurbFor, familyLine, normalizeQuery, pickerCols,
-  PICKER_SECTIONS, PICKER_ALIASES, STARTER_PARTS, OTHER_SECTION_ID, RECENT_SECTION_ID, PICKER_RECENT_MAX,
+  buildPickerModel, searchBlocks, layoutPicker, navigate, pushRecent, blurbFor, familyLine, normalizeQuery, pickerCols, entryOf,
+  PICKER_SECTIONS, PICKER_ITEM_SECTIONS, PICKER_ALIASES, PICKER_ITEM_ALIASES, PICKER_ITEM_LINES, PICKER_TOOL_WORDS, STARTER_PARTS,
+  OTHER_SECTION_ID, OTHER_ITEMS_SECTION_ID, RECENT_SECTION_ID, PICKER_RECENT_MAX,
   PICKER_SLOT_PX, PICKER_GAP_PX, PICKER_COL_W, PICKER_ROW_H,
 } from '../../src/pickerModel.js';
 import { BLOCKS, BLOCK, PICKER_ORDER, isPlaceable } from '../../src/blocks.js';
 import { partTip } from '../../src/circuitParts.js';
+import { ITEMS, ITEM_KEYS, TIER_NAMES, getItem } from '../../src/items.js';
+import { purposeOf, PURPOSE_MAX } from '../../src/purpose.js';
 
 /** Survival's blocks (DESIGN-survival §8.1): ids 76–94. A BLOCKS list without them is what main looked like before W0. */
 const SURVIVAL_NAMES = new Set(['copper_ore', 'tin_ore', 'honeyberry_bush', 'honeyberry_bush_bare', 'tussock', 'cattails',
@@ -23,14 +27,25 @@ const SURVIVAL_NAMES = new Set(['copper_ore', 'tin_ore', 'honeyberry_bush', 'hon
   'spring', 'spring_drawn', 'well', 'well_drawn', 'rain_barrel', 'rain_barrel_1', 'rain_barrel_2', 'rain_barrel_3', 'grass_bed', 'bed']);
 const NO_SURVIVAL = BLOCKS.filter((b) => !SURVIVAL_NAMES.has(b.name));
 
-/** @param {ReturnType<typeof buildPickerModel>} model @returns {number[]} every id across sections (families expanded) */
-function allIds(model) {
+/** @param {ReturnType<typeof buildPickerModel>} model @returns {Array<number|string>} every pick across sections (families expanded) */
+function allPicks(model) {
   const out = [];
-  for (const s of model.sections) for (const e of s.entries) out.push(...(e.type === 'block' ? [e.id] : e.ids));
+  for (const s of model.sections) {
+    for (const e of s.entries) out.push(...(e.type === 'block' ? [e.id] : e.type === 'item' ? [e.key] : e.ids));
+  }
   return out;
 }
+/** @param {ReturnType<typeof buildPickerModel>} model @returns {number[]} every block id across sections (families expanded) */
+const allIds = (model) => /** @type {number[]} */ (allPicks(model).filter((p) => typeof p === 'number'));
+/** @param {ReturnType<typeof buildPickerModel>} model @returns {string[]} every item key across sections (families expanded) */
+const allKeys = (model) => /** @type {string[]} */ (allPicks(model).filter((p) => typeof p === 'string'));
+/** Every item that is not a block item, in ITEM_KEYS order. */
+const NON_BLOCK_KEYS = ITEM_KEYS.filter((k) => ITEMS[k].kind !== 'block');
 const byName = (name) => /** @type {*} */ (BLOCKS.find((b) => b.name === name)).id;
 const names = (model, ids) => ids.map((id) => model.info.get(id).name);
+const BLOCK_TITLES = ['Stone', 'Earth', 'Wood', 'Ores & Metals', 'Colour', 'Glass & Light', 'Camp & Crafts', 'Black Powder',
+  'Circuits', 'Exotic', 'Liquids'];
+const ITEM_TITLES = ['Tools', 'Weapons', 'Food', 'Materials', 'Clothes & Healing'];
 
 describe('buildPickerModel: sections and families (§5.2)', () => {
   it('every placeable block appears exactly once across the sections (families and singles)', () => {
@@ -40,7 +55,8 @@ describe('buildPickerModel: sections and families (§5.2)', () => {
     expect([...ids].sort((a, b) => a - b)).toEqual([...PICKER_ORDER].sort((a, b) => a - b));
     expect(ids.every((id) => isPlaceable(id))).toBe(true);
     expect(ids).not.toContain(BLOCK.BLACK_HOLE); // the vortex is not placeable: the picker gives the charge
-    expect(model.order).toHaveLength(ids.length);
+    expect(model.order).toHaveLength(allPicks(model).length);
+    expect(model.order.filter((p) => typeof p === 'number')).toHaveLength(ids.length);
   });
 
   it('… and with a BLOCKS list without survival\'s blocks: their names are skipped, nothing is lost', () => {
@@ -59,9 +75,10 @@ describe('buildPickerModel: sections and families (§5.2)', () => {
 
   it('the sections, in order, with the rail icons the table names', () => {
     const model = buildPickerModel();
-    expect(model.sections.map((s) => s.title)).toEqual(['Stone', 'Earth', 'Wood', 'Ores & Metals', 'Colour', 'Glass & Light',
-      'Camp & Crafts', 'Black Powder', 'Circuits', 'Exotic', 'Liquids']);
-    expect(model.sections.map((s) => s.iconId)).toEqual(PICKER_SECTIONS.map((s) => byName(s.icon)));
+    expect(model.sections.map((s) => s.title)).toEqual([...BLOCK_TITLES, ...ITEM_TITLES]);
+    // block sections show a block (its id), item sections an item (its key)
+    expect(model.sections.map((s) => s.iconId)).toEqual([...PICKER_SECTIONS.map((s) => byName(s.icon)),
+      ...PICKER_ITEM_SECTIONS.map((s) => s.icon)]);
     expect(model.sections.find((s) => s.id === 'powder')?.entries.map((e) => e.type === 'block' && model.info.get(e.id).name))
       .toEqual(['powder_keg', 'powder_fuse', 'torch']);
     // the Wool family holds the 16 in today's light-to-dark order
@@ -76,7 +93,9 @@ describe('buildPickerModel: sections and families (§5.2)', () => {
       { id: 201, name: 'not_placeable', displayName: 'Ghost', placeable: false },
     ];
     const model = buildPickerModel(fake);
-    const other = model.sections[model.sections.length - 1];
+    const other = /** @type {*} */ (model.sections.find((s) => s.id === OTHER_SECTION_ID));
+    // the blocks' Other comes after the block sections and before the item sections
+    expect(model.sections.indexOf(other)).toBe(model.sections.findIndex((s) => s.id === 'tools') - 1);
     expect(other.id).toBe(OTHER_SECTION_ID);
     expect(other.title).toBe('Other');
     expect(other.entries).toEqual([{ type: 'block', id: 200 }]);
@@ -112,6 +131,148 @@ describe('buildPickerModel: sections and families (§5.2)', () => {
     expect(blurbFor(BLOCK.TORCH)).toBe(partTip(BLOCK.TORCH));
     expect(blurbFor(BLOCK.VOLTAIC_BATTERY)).toMatch(/^Volta's pile/);
     expect(blurbFor(BLOCK.STONE)).toBe('');
+  });
+});
+
+describe('buildPickerModel: every item (tools, weapons, food, materials, clothes and healing)', () => {
+  const model = buildPickerModel();
+  const section = (id) => /** @type {*} */ (model.sections.find((s) => s.id === id));
+  /** @param {string} id @returns {string[]} the keys of a section, families expanded */
+  const keysOf = (id) => section(id).entries.flatMap((e) => (e.type === 'item' ? [e.key] : e.type === 'family' ? e.ids : []));
+
+  it('every item that is not a block item appears exactly once, picked by its key; block items stay block ids', () => {
+    const keys = allKeys(model);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect([...keys].sort()).toEqual([...NON_BLOCK_KEYS].sort());
+    expect(NON_BLOCK_KEYS.length).toBeGreaterThan(140);
+    for (const k of keys) expect(getItem(k)?.kind, k).not.toBe('block');
+    // a block item (the Torch, the Campfire) is its block: a number, never its key
+    expect(model.info.has('torch')).toBe(false);
+    expect(model.info.has(BLOCK.TORCH)).toBe(true);
+    // the item sections follow the block sections; no item sits in a block section and no block in an item section
+    const firstItem = model.sections.findIndex((s) => s.id === 'tools');
+    model.sections.forEach((s, i) => {
+      const picks = s.entries.flatMap((e) => (e.type === 'block' ? [e.id] : e.type === 'item' ? [e.key] : e.ids));
+      for (const p of picks) expect(typeof p, `${s.id}: ${p}`).toBe(i < firstItem ? 'number' : 'string');
+    });
+    // nothing is left for "Other Items": the tables name every item
+    expect(model.sections.some((s) => s.id === OTHER_ITEMS_SECTION_ID)).toBe(false);
+  });
+
+  it('the item tables name only real items that are not block items; family keys are unique across both tables', () => {
+    const famKeys = [];
+    for (const s of PICKER_ITEM_SECTIONS) {
+      for (const it of s.items) {
+        for (const k of typeof it === 'string' ? [it] : it.members) {
+          expect(getItem(k), `${s.id}: ${k}`).not.toBeNull();
+          expect(getItem(k)?.kind, k).not.toBe('block');
+        }
+        if (typeof it !== 'string') famKeys.push(it.key);
+      }
+      expect(getItem(s.icon), s.icon).not.toBeNull();
+    }
+    for (const s of PICKER_SECTIONS) for (const it of s.items) if (typeof it !== 'string') famKeys.push(it.key);
+    expect(new Set(famKeys).size).toBe(famKeys.length);
+    expect(new Set([...PICKER_SECTIONS, ...PICKER_ITEM_SECTIONS].map((s) => s.id)).size).toBe(16);
+  });
+
+  it('the item sections, their rail icons and their entries', () => {
+    expect(PICKER_ITEM_SECTIONS.map((s) => [s.id, s.title, s.icon])).toEqual([
+      ['tools', 'Tools', 'iron_pick'], ['weapons', 'Weapons', 'iron_sword'], ['food', 'Food', 'roast_pork'],
+      ['materials', 'Materials', 'copper_ingot'], ['clothes', 'Clothes & Healing', 'straw_hat']]);
+    const kinds = (id) => section(id).entries.map((e) => (e.type === 'family' ? `[${e.key}]` : e.key));
+    expect(kinds('tools')).toEqual(['[picks]', '[axes]', '[shovels]', '[hammers]', '[knives]', 'fire_drill', 'crucible',
+      'casting_mold', 'handbook']);
+    expect(kinds('weapons')).toEqual(['[swords]', 'flint_spear', '[darts]', 'rock']);
+    expect(kinds('food')).toEqual(['[meat]', '[fish-eggs]', '[fruit-nuts]', '[roots]', '[mushrooms]', '[pots]', 'snow']);
+    expect(kinds('clothes')).toEqual(['straw_hat', 'leather_hood', 'grass_cape', 'leather_coat', 'hide_shoes', 'fibre_bandage',
+      'rag_bandage', 'aloe_leaf', 'healwort', 'pot_healwort_tea']);
+    // at 14 columns (1280 × 720) every item section is one row of tiles
+    for (const s of PICKER_ITEM_SECTIONS) expect(section(s.id).entries.length, s.id).toBeLessThanOrEqual(14);
+    expect(familyLine(/** @type {*} */ (model.families.get('picks')))).toBe('Picks · 5 tools — click to open');
+    expect(familyLine(/** @type {*} */ (model.families.get('meat')))).toBe('Meat · 17 kinds — click to open');
+  });
+
+  it('items keep their sections: tools by type in tier order, weapons, food, materials, clothes and healing', () => {
+    const tools = NON_BLOCK_KEYS.filter((k) => ITEMS[k].kind === 'tool');
+    for (const k of tools) {
+      const type = /** @type {*} */ (ITEMS[k]).tool.type;
+      expect(model.info.get(k)?.section, k).toBe(type === 'sword' || type === 'spear' ? 'weapons' : 'tools');
+    }
+    // each tool family holds every tool of its type, lowest tier first
+    for (const [fam, type] of [['picks', 'pick'], ['axes', 'axe'], ['shovels', 'shovel'], ['hammers', 'hammer'], ['knives', 'knife'],
+      ['swords', 'sword']]) {
+      const want = tools.filter((k) => /** @type {*} */ (ITEMS[k]).tool.type === type)
+        .sort((a, b) => /** @type {*} */ (ITEMS[a]).tool.tier - /** @type {*} */ (ITEMS[b]).tool.tier);
+      expect(model.families.get(fam)?.ids, fam).toEqual(want);
+    }
+    expect(model.families.get('picks')?.ids.map((k) => TIER_NAMES[/** @type {*} */ (ITEMS[k]).tool.tier]))
+      .toEqual(['flint', 'copper', 'bronze', 'iron', 'steel']);
+    // clothes and bandages: Clothes & Healing; food: Food, but the two cures sit with the bandages
+    for (const k of NON_BLOCK_KEYS.filter((x) => ITEMS[x].kind === 'wear' || ITEMS[x].kind === 'heal')) {
+      expect(model.info.get(k)?.section, k).toBe('clothes');
+    }
+    const cures = ['healwort', 'pot_healwort_tea'];
+    for (const k of NON_BLOCK_KEYS.filter((x) => ITEMS[x].kind === 'food')) {
+      expect(model.info.get(k)?.section, k).toBe(cures.includes(k) ? 'clothes' : 'food');
+    }
+    // materials: Materials, except what is thrown, the field book and what belongs with the food (the pots, the cactus fruit)
+    const elsewhere = { rock: 'weapons', flint_dart: 'weapons', fletched_dart: 'weapons', handbook: 'tools', clay_pot: 'food',
+      salt_pot: 'food', pot_snow: 'food', unpeeled_cactus_fruit: 'food' };
+    for (const k of NON_BLOCK_KEYS.filter((x) => ITEMS[x].kind === 'material')) {
+      expect(model.info.get(k)?.section, k).toBe(elsewhere[k] ?? 'materials');
+    }
+    expect(keysOf('weapons')).toEqual(['bronze_sword', 'iron_sword', 'steel_sword', 'flint_spear', 'flint_dart', 'fletched_dart',
+      'rock']);
+  });
+
+  it('an item no table names goes to a last "Other Items" section; block items and junk in the list are skipped', () => {
+    const fake = [
+      ...Object.values(ITEMS).filter((d) => d.key !== 'iron_sword' && d.key !== 'steel_sword'),
+      { key: 'mystery_widget', name: 'Mystery Widget', kind: 'material' },
+      { key: 'stone', name: 'Stone', kind: 'block' }, // a block item: never an item pick
+      null, { key: '', name: 'Nothing', kind: 'material' },
+    ];
+    const m = buildPickerModel(BLOCKS, /** @type {*} */ (fake));
+    const last = m.sections[m.sections.length - 1];
+    expect(last).toMatchObject({ id: OTHER_ITEMS_SECTION_ID, title: 'Other Items', iconId: 'mystery_widget',
+      entries: [{ type: 'item', key: 'mystery_widget' }] });
+    expect(m.info.has('stone')).toBe(false);
+    // Swords lost two of three: the Bronze Sword is a single where the family was
+    expect(m.families.has('swords')).toBe(false);
+    expect(m.sections.find((s) => s.id === 'weapons')?.entries[0]).toEqual({ type: 'item', key: 'bronze_sword' });
+    // the Weapons rail icon (the Iron Sword) is gone: the section's first entry stands in
+    expect(m.sections.find((s) => s.id === 'weapons')?.iconId).toBe('bronze_sword');
+    // no items at all: the block sections only, as before
+    const blocksOnly = buildPickerModel(BLOCKS, []);
+    expect(blocksOnly.sections.map((s) => s.title)).toEqual(BLOCK_TITLES);
+    expect(blocksOnly.order.every((p) => typeof p === 'number')).toBe(true);
+  });
+
+  it('blurbFor an item: its purpose, else its own line, else a line from its data; every item has one that fits', () => {
+    expect(blurbFor('iron_pick')).toBe(purposeOf('iron_pick'));
+    expect(blurbFor('fire_drill')).toBe('Lights a campfire or a torch.');
+    expect(blurbFor('handbook')).toBe(PICKER_ITEM_LINES.handbook);
+    expect(blurbFor('honeyberries')).toBe('+4 Nourishment, +2 Hydration.');
+    expect(blurbFor('salted_pork')).toBe('+18 Nourishment, −6 Hydration.');
+    expect(blurbFor('pot_boiled')).toBe('+30 Hydration. You keep the pot.');
+    expect(blurbFor('fibre_bandage')).toBe('Heals 15 Health.');
+    expect(blurbFor('straw_hat')).toBe('Worn on the head: shade from the sun.');
+    expect(blurbFor('leather_coat')).toBe('Worn on the body: +6 °C warmth.');
+    expect(blurbFor('flint')).toBe('A material for Making.');
+    for (const k of NON_BLOCK_KEYS) {
+      const line = blurbFor(k);
+      expect(line, k).not.toBe('');
+      expect(line.length, k).toBeLessThanOrEqual(PURPOSE_MAX);
+    }
+    // §81: a look-alike reads like the food it imitates, never as poison
+    expect(blurbFor('nightshade_berries')).toBe(blurbFor('honeyberries'));
+    expect(blurbFor('hemlock_root')).toBe(blurbFor('wild_carrot'));
+    for (const k of ['frecklecap', 'roasted_frecklecap', 'hemlock_root', 'nightshade_berries']) expect(blurbFor(k)).not.toMatch(/poison|sick|toxic/i);
+    // unknown keys and block-item keys have none; a block keeps its tip
+    expect(blurbFor('no_such_item')).toBe('');
+    expect(blurbFor('torch')).toBe('');
+    expect(blurbFor(BLOCK.TORCH)).toBe(partTip(BLOCK.TORCH));
   });
 });
 
@@ -162,6 +323,50 @@ describe('searchBlocks (§5.5)', () => {
       for (const a of aliases) expect(searchBlocks(model, a), `${name}: ${a}`).toContain(id);
     }
   });
+
+  it('items by name, key, family, section and alias: "sword", "pick" and "pickaxe", food, "spade", "throw"', () => {
+    expect(find('sword')).toEqual(['bronze_sword', 'iron_sword', 'steel_sword']);
+    expect(searchBlocks(model, 'sword').every((p) => typeof p === 'string')).toBe(true); // item keys
+    const picks = ['flint_pick', 'copper_pick', 'bronze_pick', 'iron_pick', 'steel_pick'];
+    expect(find('pick')).toEqual(picks);
+    expect(find('pickaxe')).toEqual(picks);
+    expect(find('Iron Pick')).toEqual(['iron_pick']);
+    expect(find('iron_pick')).toEqual(['iron_pick']);
+    // "food" is the section: every item in it
+    const food = /** @type {*} */ (model.sections.find((s) => s.id === 'food')).entries.flatMap((e) => (e.type === 'family' ? e.ids : [e.key]));
+    expect(find('food')).toEqual(food);
+    expect(find('food')).toContain('roast_pork');
+    expect(find('roast pork')).toEqual(['roast_pork']);
+    expect(find('roast')).toEqual(expect.arrayContaining(['roast_pork', 'roast_beef', 'roast_fish', 'roasted_acorns']));
+    expect(find('meat')).toEqual(expect.arrayContaining(['raw_pork', 'roast_bear', 'charred_meat'])); // the family name
+    // the singular of a plural name: "berry" finds the Honeyberries (and the bush block, by its own name)
+    expect(find('berry')).toEqual(['honeyberry_bush', 'honeyberries', 'nightshade_berries']);
+    // old names (items.ITEM_ALIASES) and the tool type's words
+    expect(find('spade')).toEqual(['wooden_shovel', 'flint_shovel', 'copper_shovel', 'bronze_shovel', 'iron_shovel', 'steel_shovel']);
+    expect(find('stone chopper')).toEqual(['stone_axe']);
+    expect(find('digging stick')).toEqual(['wooden_shovel']);
+    expect(find('throw')).toEqual(['flint_spear', 'flint_dart', 'fletched_dart', 'rock']);
+    expect(find('weapon')).toEqual(['bronze_sword', 'iron_sword', 'steel_sword', 'flint_spear', 'flint_dart', 'fletched_dart', 'rock']);
+    expect(find('tools')).toHaveLength(31);
+    expect(find('bandage')).toEqual(['fibre_bandage', 'rag_bandage']);
+    expect(find('hat')).toEqual(['straw_hat', 'leather_hood']);
+    // blocks and items together, blocks first (section order)
+    const iron = searchBlocks(model, 'iron');
+    expect(iron.filter((p) => typeof p === 'number').map((id) => model.info.get(id)?.name)).toEqual(['iron_ore', 'iron_block']);
+    expect(iron.indexOf('iron_pick')).toBeGreaterThan(iron.indexOf(BLOCK.IRON_BLOCK));
+  });
+
+  it('every item alias and tool word finds its items', () => {
+    for (const [key, aliases] of Object.entries(PICKER_ITEM_ALIASES)) {
+      expect(getItem(key)?.kind, key).not.toBe('block');
+      for (const a of aliases) expect(searchBlocks(model, a), `${key}: ${a}`).toContain(key);
+    }
+    for (const [type, words] of Object.entries(PICKER_TOOL_WORDS)) {
+      const keys = NON_BLOCK_KEYS.filter((k) => /** @type {*} */ (ITEMS[k]).tool?.type === type);
+      expect(keys.length, type).toBeGreaterThan(0);
+      for (const w of words) expect(searchBlocks(model, w), `${type}: ${w}`).toEqual(expect.arrayContaining(keys));
+    }
+  });
 });
 
 describe('layoutPicker: the grid of square slots (§5.3, §5.4)', () => {
@@ -205,8 +410,9 @@ describe('layoutPicker: the grid of square slots (§5.3, §5.4)', () => {
   it('with show-all every family is flattened into its section, members in place', () => {
     const rows = layoutPicker(model, { cols: 15, showAll: true, openFamily: 'wool' });
     const entries = cellRows(rows).flatMap((r) => r.cells);
-    expect(entries.every((e) => e.type === 'block')).toBe(true);
-    expect(entries).toHaveLength(PICKER_ORDER.length);
+    expect(entries.every((e) => e.type === 'block' || e.type === 'item')).toBe(true);
+    expect(entries.filter((e) => e.type === 'block')).toHaveLength(PICKER_ORDER.length);
+    expect(entries.filter((e) => e.type === 'item')).toHaveLength(NON_BLOCK_KEYS.length);
     expect(cellRows(rows).every((r) => r.drawerOf === null)).toBe(true); // no drawer while flattened
   });
 
@@ -264,6 +470,21 @@ describe('layoutPicker: the grid of square slots (§5.3, §5.4)', () => {
     expect(rows[1]).toMatchObject({ kind: 'cells', cells: [{ type: 'block', id: BLOCK.TORCH }, { type: 'block', id: BLOCK.STONE }] });
     expect(rows[2]).toMatchObject({ kind: 'header', section: { id: 'stone' } });
     expect(layoutPicker(model, { cols: 6, recent: [] })[0]).toMatchObject({ kind: 'header', section: { id: 'stone' } });
+  });
+
+  it('items: item entries in the sections, the drawers, a search and the Recent row', () => {
+    const rows = layoutPicker(model, { cols: 14, openFamily: 'picks', recent: ['iron_sword', BLOCK.STONE, 'no_such_item', 12.5] });
+    expect(rows[1]).toMatchObject({ kind: 'cells', cells: [{ type: 'item', key: 'iron_sword' }, { type: 'block', id: BLOCK.STONE }] });
+    expect(/** @type {*} */ (rows[0]).section.iconId).toBe('iron_sword');
+    const at = rows.findIndex((r) => r.kind === 'header' && r.section.id === 'tools');
+    expect(rows[at + 1].kind === 'cells' && rows[at + 1].cells[0]).toMatchObject({ type: 'family', key: 'picks' });
+    expect(rows[at + 2]).toMatchObject({ kind: 'cells', drawerOf: 'picks' });
+    expect(/** @type {*} */ (rows[at + 2]).cells.map((e) => e.key)).toEqual(model.families.get('picks')?.ids);
+    expect(/** @type {*} */ (rows[at + 1]).cells.find((e) => e.type === 'item')).toEqual({ type: 'item', key: 'fire_drill' });
+    const found = layoutPicker(model, { cols: 4, query: 'sword' });
+    expect(found).toEqual([{ kind: 'cells', drawerOf: null, cells: ['bronze_sword', 'iron_sword', 'steel_sword'].map(entryOf) }]);
+    expect(entryOf('iron_sword')).toEqual({ type: 'item', key: 'iron_sword' });
+    expect(entryOf(BLOCK.STONE)).toEqual({ type: 'block', id: BLOCK.STONE });
   });
 
   it('pickerCols: max(4, floor((width + 6) / 62)) — n slots need n · 62 − 6 px', () => {
@@ -358,5 +579,15 @@ describe('pushRecent (§5.6)', () => {
     expect(pushRecent(r, 5)).toEqual([5, 12, 11, 10, 9, 8, 7, 6, 4]);
     expect(pushRecent(/** @type {*} */ (null), 7)).toEqual([7]);
     expect(pushRecent([1, 2], 3, 2)).toEqual([3, 1]);
+  });
+
+  it('blocks and items mixed: an item key is distinct by ===, so the block 12 and the key "12" are two picks', () => {
+    let r = pushRecent([], BLOCK.STONE);
+    r = pushRecent(r, 'iron_pick');
+    r = pushRecent(r, 'roast_pork');
+    expect(r).toEqual(['roast_pork', 'iron_pick', BLOCK.STONE]);
+    expect(pushRecent(r, 'iron_pick')).toEqual(['iron_pick', 'roast_pork', BLOCK.STONE]);
+    expect(pushRecent(r, BLOCK.STONE)).toEqual([BLOCK.STONE, 'roast_pork', 'iron_pick']);
+    expect(pushRecent([12], '12')).toEqual(['12', 12]);
   });
 });

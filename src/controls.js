@@ -12,6 +12,12 @@
 // changes, the window blurs, or the controls are disabled, so no stale input
 // can fire when play resumes. Ctrl is never bound (Ctrl+W closes the tab) and
 // browser defaults are left alone while Ctrl/Meta/Alt is held.
+//
+// Touch mode (multiplayer §5, CONTRACTS §95): an iPad has no pointer lock. With setTouchMode(true) the lock is VIRTUAL:
+// lock() and unlock() set it at once and onLockChange fires a microtask later (as pointerlockchange fires after the
+// request), the window losing focus or the page being hidden releases it, and mouse look is off. The on-screen controls
+// (touchControls.js) feed the same state through the virtual* calls below, under the same rule as real input: honoured only
+// while locked and enabled, releases always.
 import { MOUSE_SENSITIVITY, PITCH_LIMIT, DOUBLE_TAP_MS, DOUBLE_TAP_SPACE_MS } from './config.js';
 
 /** @typedef {import('./types.js').PlayerInput} PlayerInput */
@@ -38,12 +44,19 @@ import { MOUSE_SENSITIVITY, PITCH_LIMIT, DOUBLE_TAP_MS, DOUBLE_TAP_SPACE_MS } fr
  * @property {(code: string) => boolean} isDown             KeyboardEvent.code currently held
  * @property {(code: string) => boolean} consumePressed     true once per keydown edge (edges are queued)
  * @property {() => MouseState} consumeMouse                edges + wheel reset on return. The returned object is REUSED.
- * @property {() => boolean} consumeFlyToggle               one-shot: Space double-tapped or KeyF pressed
+ * @property {() => boolean} consumeFlyToggle               one-shot: Space (or the touch Jump) double-tapped, or KeyF pressed
  * @property {() => boolean} isSprinting                    W double-tapped within DOUBLE_TAP_MS and still held
  * @property {() => PlayerInput} getInput                   the returned object is REUSED between calls
  * @property {(locked: boolean) => void} onLockChange       assignable hook, fired when the lock state changes
  * @property {(on: boolean) => void} setEnabled             false: ignore game input and clear state (menus open)
  * @property {() => void} dispose                           removes every listener and clears state
+ * @property {boolean} touchMode                            touch (§95): the lock is virtual, mouse look is off
+ * @property {(on: boolean) => void} setTouchMode           switch touch mode (the lock is released)
+ * @property {(code: string, down: boolean) => void} virtualKey          a key pressed / released (held, edges, KeyF = fly)
+ * @property {(button: number, down: boolean) => void} virtualButton     a mouse button (0 left, 1 middle, 2 right)
+ * @property {(dYaw: number, dPitch: number) => void} virtualLook        turn the look by radians (pitch clamped)
+ * @property {(forward: number, strafe: number, sprint: boolean) => void} setVirtualMove  analog -1..1, merged into getInput
+ * @property {(on: boolean) => void} setVirtualJump                      held jump, merged into getInput
  */
 
 /** Keys whose browser default is suppressed while the pointer is locked (no Ctrl/Meta/Alt). */
@@ -77,6 +90,12 @@ export function wrapYaw(v) {
   if (v > Math.PI) return v - TWO_PI * Math.ceil((v - Math.PI) / TWO_PI);
   if (v < -Math.PI) return v + TWO_PI * Math.ceil((-Math.PI - v) / TWO_PI);
   return v;
+}
+
+/** Clamp to -1..1; non-finite input becomes 0. */
+function clampUnit(v) {
+  if (!Number.isFinite(v)) return 0;
+  return v > 1 ? 1 : v < -1 ? -1 : v;
 }
 
 /** Millisecond clock used only when an event carries no usable timeStamp. */
@@ -131,15 +150,33 @@ export function createControls(canvas, doc = document) {
   let sprintArmed = false;
   let flyToggle = false;
 
+  // touch (multiplayer §5, §95): the virtual lock and the on-screen controls' analog state
+  let touchMode = false;
+  let virtualLocked = false;
+  let vForward = 0;
+  let vStrafe = 0;
+  let vSprint = false;
+  let vJump = false;
+
   /** @type {MouseState} reused result of consumeMouse() (hot path: no per-frame allocation) */
   const mouseOut = { left: false, right: false, middle: false, leftPressed: false, rightPressed: false, middlePressed: false, wheel: 0 };
   /** @type {PlayerInput} reused result of getInput() */
   const inputOut = { forward: 0, strafe: 0, jump: false, sneak: false, sprint: false, yaw: 0 };
 
   function isLocked() {
+    if (touchMode) return virtualLocked;
     return doc.pointerLockElement === canvas;
   }
   let wasLocked = isLocked();
+
+  /** touch (§95): set the virtual lock; the change is reported a microtask later, like a real pointerlockchange. */
+  function setVirtualLocked(on) {
+    if (virtualLocked === on) return;
+    virtualLocked = on;
+    Promise.resolve().then(() => {
+      if (!disposed) onPointerLockChange();
+    });
+  }
 
   /** Drop every piece of transient input state (keys, edges, buttons, wheel, tap timers). */
   function clearState() {
@@ -152,11 +189,13 @@ export function createControls(canvas, doc = document) {
     lastSpaceDown = -Infinity;
     sprintArmed = false;
     flyToggle = false;
+    vForward = vStrafe = 0;
+    vSprint = vJump = false;
   }
 
   // ---- handlers ----------------------------------------------------------
   function onMouseMove(e) {
-    if (!enabled || !isLocked()) return;
+    if (!enabled || !isLocked() || touchMode) return; // touch (§95): a tap's compatibility mousemove never turns the view
     const mx = e.movementX;
     const my = e.movementY;
     if (Number.isFinite(mx) && mx !== 0) yaw = wrapYaw(yaw - mx * MOUSE_SENSITIVITY);
@@ -190,15 +229,22 @@ export function createControls(canvas, doc = document) {
       if (t - lastWDown <= DOUBLE_TAP_MS) sprintArmed = true;
       lastWDown = t;
     } else if (code === 'Space') {
-      const t = eventTime(e);
-      if (t - lastSpaceDown <= DOUBLE_TAP_SPACE_MS) {
-        flyToggle = true;
-        lastSpaceDown = -Infinity; // each toggle consumes both taps
-      } else {
-        lastSpaceDown = t;
-      }
+      jumpTap(eventTime(e));
     } else if (code === 'KeyF') {
       flyToggle = true;
+    }
+  }
+
+  /**
+   * A jump pressed at `t` (ms): Space, or the touch Jump button going down (§97.5). Two within DOUBLE_TAP_SPACE_MS toggle
+   * flight (main ignores it in Survival); each toggle consumes both taps.
+   */
+  function jumpTap(t) {
+    if (t - lastSpaceDown <= DOUBLE_TAP_SPACE_MS) {
+      flyToggle = true;
+      lastSpaceDown = -Infinity;
+    } else {
+      lastSpaceDown = t;
     }
   }
 
@@ -220,6 +266,11 @@ export function createControls(canvas, doc = document) {
 
   function onBlur() {
     clearState();
+    if (touchMode) setVirtualLocked(false); // touch (§95): leaving the app pauses, as losing a real lock does
+  }
+
+  function onVisibility() {
+    if (touchMode && /** @type {any} */ (doc).visibilityState === 'hidden') onBlur();
   }
 
   function onMouseDown(e) {
@@ -259,6 +310,10 @@ export function createControls(canvas, doc = document) {
 
   // ---- public API --------------------------------------------------------
   function lock() {
+    if (touchMode) {
+      setVirtualLocked(true);
+      return;
+    }
     try {
       if (isLocked()) return;
       const p = typeof canvas.requestPointerLock === 'function' ? canvas.requestPointerLock() : undefined;
@@ -269,6 +324,10 @@ export function createControls(canvas, doc = document) {
   }
 
   function unlock() {
+    if (touchMode) {
+      setVirtualLocked(false);
+      return;
+    }
     try {
       if (isLocked() && typeof doc.exitPointerLock === 'function') doc.exitPointerLock();
     } catch {
@@ -308,19 +367,70 @@ export function createControls(canvas, doc = document) {
   }
 
   function isSprinting() {
-    return sprintArmed && held.has('KeyW');
+    return (sprintArmed && held.has('KeyW')) || vSprint;
   }
 
   function getInput() {
-    inputOut.forward =
-      (held.has('KeyW') || held.has('ArrowUp') ? 1 : 0) - (held.has('KeyS') || held.has('ArrowDown') ? 1 : 0);
-    inputOut.strafe =
-      (held.has('KeyD') || held.has('ArrowRight') ? 1 : 0) - (held.has('KeyA') || held.has('ArrowLeft') ? 1 : 0);
-    inputOut.jump = held.has('Space');
+    const kf = (held.has('KeyW') || held.has('ArrowUp') ? 1 : 0) - (held.has('KeyS') || held.has('ArrowDown') ? 1 : 0);
+    const ks = (held.has('KeyD') || held.has('ArrowRight') ? 1 : 0) - (held.has('KeyA') || held.has('ArrowLeft') ? 1 : 0);
+    // touch (§95): the stick's analog values where no key moves the player
+    inputOut.forward = kf !== 0 ? kf : vForward;
+    inputOut.strafe = ks !== 0 ? ks : vStrafe;
+    inputOut.jump = held.has('Space') || vJump;
     inputOut.sneak = held.has('ShiftLeft') || held.has('ShiftRight');
-    inputOut.sprint = sprintArmed && held.has('KeyW');
+    inputOut.sprint = (sprintArmed && held.has('KeyW')) || vSprint;
     inputOut.yaw = yaw;
     return inputOut;
+  }
+
+  // ---- touch (multiplayer §5, §95): the on-screen controls ------------------------------------------------
+
+  /** Switch touch mode; any lock (real or virtual) is released first. */
+  function setTouchMode(on) {
+    const want = !!on;
+    if (want === touchMode) return;
+    if (want) unlock(); // a real lock we hold (touchMode is still false here)
+    touchMode = want;
+    virtualLocked = false;
+    clearState();
+    Promise.resolve().then(() => {
+      if (!disposed) onPointerLockChange();
+    });
+  }
+
+  /** A key pressed or released by an on-screen button: exactly a keydown / keyup of `code` (no auto-repeat). */
+  function virtualKey(code, down) {
+    if (typeof code !== 'string' || code === '') return;
+    if (down) onKeyDown({ code, key: '', repeat: false, timeStamp: nowMs() });
+    else onKeyUp({ code });
+  }
+
+  /** A mouse button pressed or released by an on-screen button (0 left, 1 middle, 2 right). */
+  function virtualButton(button, down) {
+    if (down) onMouseDown({ button });
+    else onMouseUp({ button });
+  }
+
+  /** Turn the look by radians (a drag on the touch screen); positive dYaw turns left, positive dPitch looks up. */
+  function virtualLook(dYaw, dPitch) {
+    if (!enabled || !isLocked()) return;
+    if (Number.isFinite(dYaw) && dYaw !== 0) yaw = wrapYaw(yaw + dYaw);
+    if (Number.isFinite(dPitch) && dPitch !== 0) pitch = clampPitch(pitch + dPitch);
+  }
+
+  /** The stick: forward and strafe in -1..1 (clamped; non-finite = 0), sprint when pushed to the rim. */
+  function setVirtualMove(forward, strafe, sprint) {
+    const on = enabled && isLocked();
+    vForward = on ? clampUnit(forward) : 0;
+    vStrafe = on ? clampUnit(strafe) : 0;
+    vSprint = on && !!sprint && vForward > 0;
+  }
+
+  /** The Jump button held (rises while flying, paddles up in water); pressed twice quickly it toggles flight, as Space. */
+  function setVirtualJump(on) {
+    const next = !!on && enabled && isLocked();
+    if (next && !vJump) jumpTap(nowMs());
+    vJump = next;
   }
 
   function setEnabled(on) {
@@ -335,6 +445,7 @@ export function createControls(canvas, doc = document) {
     doc.removeEventListener('keydown', onKeyDown);
     doc.removeEventListener('keyup', onKeyUp);
     doc.removeEventListener('pointerlockchange', onPointerLockChange);
+    doc.removeEventListener('visibilitychange', onVisibility);
     canvas.removeEventListener('mousedown', onMouseDown);
     canvas.removeEventListener('mouseup', onMouseUp);
     canvas.removeEventListener('wheel', onWheel);
@@ -374,6 +485,15 @@ export function createControls(canvas, doc = document) {
     onLockChange: (_locked) => {},
     setEnabled,
     dispose,
+    get touchMode() {
+      return touchMode;
+    },
+    setTouchMode,
+    virtualKey,
+    virtualButton,
+    virtualLook,
+    setVirtualMove,
+    setVirtualJump,
   };
 
   // ---- wiring ------------------------------------------------------------
@@ -381,6 +501,7 @@ export function createControls(canvas, doc = document) {
   doc.addEventListener('keydown', onKeyDown);
   doc.addEventListener('keyup', onKeyUp);
   doc.addEventListener('pointerlockchange', onPointerLockChange);
+  doc.addEventListener('visibilitychange', onVisibility);
   canvas.addEventListener('mousedown', onMouseDown);
   canvas.addEventListener('mouseup', onMouseUp);
   canvas.addEventListener('wheel', onWheel, { passive: true });

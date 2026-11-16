@@ -174,6 +174,154 @@ describe('the first-person arm', () => {
   });
 });
 
+describe('the item in hand (setHeld)', () => {
+  const T = 1 / 32;
+  /** The model's held mesh and the first-person one. */
+  function heldMeshes(r) {
+    let held = null;
+    let fp = null;
+    r.group.traverse((o) => { if (o.name === 'avatar-held') held = o; });
+    r.armGroup.traverse((o) => { if (o.name === 'avatar-fp-held') fp = o; });
+    return { held, fp };
+  }
+  /** The name of the model or the arm (a child of the renderer's group or armGroup) the object hangs in. */
+  function rootName(o) {
+    let p = o;
+    while (p.parent && p.parent.name !== 'avatars' && p.parent.name !== 'avatar-arm') p = p.parent;
+    return p.name;
+  }
+  /** World box of one mesh. */
+  function boxOf(o) {
+    o.updateWorldMatrix(true, false);
+    o.geometry.computeBoundingBox();
+    return o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld);
+  }
+
+  it('shows the item in the model\'s right hand and the first-person hand; null, a block item or an unknown key hides both', () => {
+    const scene = new THREE.Scene();
+    const r = createAvatarRenderer(scene);
+    const { held, fp } = heldMeshes(r);
+    expect(held && fp).toBeTruthy();
+    expect(held.visible || fp.visible).toBe(false); // nothing held at first
+    expect(r.heldKey()).toBe(null);
+    r.setHeld('iron_pick');
+    expect(r.heldKey()).toBe('iron_pick');
+    expect(held.visible && fp.visible).toBe(true);
+    expect(held.geometry).toBe(fp.geometry);
+    expect(held.geometry.getAttribute('position').count).toBeGreaterThan(100);
+    expect(held.geometry.getAttribute('color').itemSize).toBe(3);
+    expect(rootName(held)).toBe('avatar-caelan');
+    expect(rootName(fp)).toBe('avatar-arm-caelan');
+    // in the right hand (+x; the model faces −z), the pick held ahead of it at hand height
+    r.sync({ x: 0, y: 0, z: 0, pose: pose(), showModel: true, showArm: false });
+    const b = boxOf(held);
+    expect(b.min.x).toBeGreaterThan(0.1);
+    expect((b.min.z + b.max.z) / 2).toBeLessThan(-0.1);
+    expect(b.max.y).toBeGreaterThan(0.6);
+    expect(b.min.y).toBeGreaterThan(0.3);
+    for (const k of [null, 'stone', 'nonsense', '']) {
+      r.setHeld('steel_sword');
+      expect(held.visible && fp.visible).toBe(true);
+      r.setHeld(k);
+      expect(held.visible || fp.visible, String(k)).toBe(false);
+      expect(r.heldKey()).toBe(null);
+    }
+    r.dispose();
+  });
+
+  it('follows setAvatar into the new model\'s hand; one geometry per item, reused, freed by dispose', () => {
+    const scene = new THREE.Scene();
+    const r = createAvatarRenderer(scene);
+    const { held, fp } = heldMeshes(r);
+    r.setHeld('steel_sword');
+    const sword = held.geometry;
+    r.setAvatar('annabelle');
+    expect(rootName(held)).toBe('avatar-annabelle');
+    expect(rootName(fp)).toBe('avatar-arm-annabelle');
+    expect(held.visible && fp.visible).toBe(true);
+    const ann = AVATARS.find((a) => a.id === 'annabelle');
+    expect(held.position.y).toBeCloseTo(-(ann.body.foreArm.h - ann.body.hand / 2) * T, 9);
+    expect(held.parent.parent.position.x).toBeGreaterThan(0); // the right shoulder
+    r.setAvatar('brayden');
+    r.setHeld('iron_pick');
+    r.setHeld('honeyberries'); // a lump: in front of the fist, upright
+    expect(held.position.z).toBeLessThan(0);
+    r.setHeld('steel_sword');
+    expect(held.geometry).toBe(sword); // cached
+    const freed = [];
+    for (const k of ['steel_sword', 'iron_pick', 'honeyberries']) {
+      r.setHeld(k);
+      held.geometry.addEventListener('dispose', () => freed.push(k));
+    }
+    r.dispose();
+    expect(freed.sort()).toEqual(['honeyberries', 'iron_pick', 'steel_sword']);
+  });
+
+  it('the swing carries it: hung from the forearm, it rises with the reach', () => {
+    const scene = new THREE.Scene();
+    const r = createAvatarRenderer(scene);
+    const { held } = heldMeshes(r);
+    r.setHeld('iron_pick');
+    r.sync({ x: 0, y: 0, z: 0, pose: pose(), showModel: true, showArm: false });
+    const rest = boxOf(held);
+    r.sync({ x: 0, y: 0, z: 0, pose: pose({ reachR: 1.9 }), showModel: true, showArm: false });
+    const up = boxOf(held);
+    expect(up.max.y).toBeGreaterThan(rest.max.y + 0.4);
+    r.dispose();
+  });
+
+  it('in first person it is drawn like the arm: in front of the camera, lit at the eye, depth squeezed, never culled', () => {
+    const scene = new THREE.Scene();
+    const r = createAvatarRenderer(scene);
+    const { fp } = heldMeshes(r);
+    r.setHeld('steel_sword');
+    const camera = new THREE.PerspectiveCamera(70, 16 / 9, 0.1, 1000);
+    camera.rotation.order = 'YXZ';
+    camera.position.set(5, 70, 5);
+    camera.rotation.set(-0.2, 1.1, 0);
+    r.sync({ x: 5, y: 68.38, z: 5, pose: pose(), showModel: false, showArm: true, camera });
+    scene.updateMatrixWorld(true);
+    const box = boxOf(fp).applyMatrix4(camera.matrixWorld.clone().invert());
+    expect(box.max.z).toBeLessThan(-0.1); // ahead of the near plane
+    expect(box.max.x).toBeGreaterThan(0); // at the right of the view …
+    expect(box.max.y).toBeGreaterThan(box.min.y + 0.15); // … standing up out of the hand
+    expect(fp.renderOrder).toBe(FP_RENDER_ORDER);
+    expect(fp.frustumCulled).toBe(false);
+    const mat = fp.material;
+    expect(mat.vertexColors).toBe(true);
+    expect(mat.map).toBe(null);
+    const lambert = THREE.ShaderLib.lambert;
+    const shader = { vertexShader: lambert.vertexShader, fragmentShader: lambert.fragmentShader, uniforms: {} };
+    mat.onBeforeCompile(shader, null);
+    expect(shader.vertexShader).toContain('vCaelLight = caelVolumeLevels( caelArmEye );');
+    expect(shader.vertexShader).toContain(`gl_Position.z = mix( - gl_Position.w, gl_Position.z, ${FP_DEPTH.toFixed(4)} );`);
+    expect(shader.uniforms.caelArmEye.value.x).toBeCloseTo(5, 9); // the arm's eye
+    expect(mat.customProgramCacheKey()).toBe('caelancraft-avatar-held');
+    // the model's is a plain lit material with vertex colours (the prototype hook lights it)
+    const { held } = heldMeshes(r);
+    expect(held.material.isMeshLambertMaterial && held.material.vertexColors).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(held.material, 'onBeforeCompile')).toBe(false);
+    r.dispose();
+  });
+
+  it('prewarm compiles the held item\'s programs too (with the attributes a real item has), and hides it again', async () => {
+    const scene = new THREE.Scene();
+    const r = createAvatarRenderer(scene);
+    const { held, fp } = heldMeshes(r);
+    for (const m of [held, fp]) expect(Object.keys(m.geometry.attributes).sort()).toEqual(['color', 'normal', 'position']);
+    const seen = [];
+    await r.prewarm({
+      compileAsync(obj) {
+        obj.traverse((o) => { if (o.isMesh && /held/.test(o.name)) seen.push([o.name, o.visible]); });
+        return Promise.resolve();
+      },
+    }, new THREE.PerspectiveCamera());
+    expect(seen).toEqual([['avatar-held', true], ['avatar-fp-held', true]]);
+    expect(held.visible || fp.visible).toBe(false);
+    r.dispose();
+  });
+});
+
 describe('the Avatar chooser (avatarMenu.js)', () => {
   function setup(opts = {}) {
     const doc = documentFromHTML(html);

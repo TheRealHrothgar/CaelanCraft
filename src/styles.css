@@ -56,7 +56,7 @@ canvas{image-rendering:pixelated}
 .rune-triggers input[type=checkbox]{margin:0 8px 0 0;vertical-align:middle}
 .rune-triggers input[type=number]{margin:0 4px;vertical-align:middle}
 .rune-buttons{display:flex;gap:8px}
-.mc-button.small{min-width:120px;padding:6px 12px;font-size:14px}
+.mc-button.small{min-width:120px;padding:7px 14px;font-size:14px;border-radius:12px}
 .rune-hint{color:#8fa3b8;font:11px monospace}
 .rune-panel code{color:#ffe08a}
 
@@ -141,18 +141,19 @@ canvas{image-rendering:pixelated}
 #pause-menu{z-index:30;background:rgba(0,0,0,.55);display:flex;align-items:safe center;justify-content:center;overflow-y:auto}
 .menu-panel{display:flex;flex-direction:column;align-items:center;gap:8px}
 .menu-title{color:#fff;font:bold 28px monospace;text-shadow:3px 3px 0 #3f3f3f;margin:0 0 12px}
-.mc-button{min-width:320px;padding:10px 16px;background:#6f6f6f;color:#e0e0e0;font:bold 18px monospace;text-shadow:2px 2px 0 #202020;border:2px solid;border-color:#aaa #555 #555 #aaa;box-shadow:0 0 0 2px #000;cursor:pointer}
-.mc-button:hover:not(:disabled){background:#7f8fbf;color:#ffffa0}
-.mc-button:disabled{background:#4a4a4a;color:#a0a0a0;cursor:default}
+.mc-button{min-width:320px;padding:11px 18px;border:1px solid var(--glass-rim-soft);border-radius:14px;background:var(--glass-button);color:#fff;font:600 17px var(--ui-font);text-shadow:none;box-shadow:var(--glass-shine);cursor:pointer;transition:background-color .12s,transform .08s}
+.mc-button:hover:not(:disabled){background:var(--glass-button-hover);color:#fff}
+.mc-button:active:not(:disabled){transform:scale(.98)}
+.mc-button:disabled{background:rgba(255,255,255,.05);color:var(--glass-text-faint);cursor:default}
 .menu-note{color:#c0c0c0;font:13px monospace}
 .physics-row{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;max-width:660px}
 .physics-label{color:#e0e0e0;font:bold 14px monospace;text-shadow:2px 2px 0 #202020;margin-right:4px}
-.mc-button.toggle{min-width:0;padding:6px 10px;font-size:14px}
-.mc-button.toggle.off{background:#4a4a4a;color:#a0a0a0}
+.mc-button.toggle{min-width:0;padding:8px 14px;font-size:14px;border-radius:999px;background:var(--honey-tint);border-color:var(--honey-rim)}
+.mc-button.toggle.off{background:rgba(0,0,0,.2);border-color:var(--glass-rim-soft);color:var(--glass-text-dim)}
 
 /* Click to play (z 35) */
 #click-to-play{z-index:35;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35);cursor:pointer}
-.ctp-text{color:#fff;font:bold 32px monospace;text-shadow:3px 3px 0 #3f3f3f}
+.ctp-text{padding:14px 34px;border:1px solid var(--glass-rim);border-radius:999px;background:var(--glass-dark);-webkit-backdrop-filter:blur(18px) saturate(1.6);backdrop-filter:blur(18px) saturate(1.6);box-shadow:var(--glass-shine),var(--glass-depth);color:#fff;font:600 26px var(--ui-font)}
 
 /* Loading (z 40) and title (z 50) share the dirt background set at runtime */
 #loading-screen,#title-screen{background-size:64px 64px;background-color:#3b2a1a}
@@ -189,10 +190,10 @@ canvas{image-rendering:pixelated}
 .world-slot.damaged .slot-name{color:#ff9a9a}
 .slot-detail{margin-top:2px;color:#c8c8c8;font:12px monospace;text-shadow:1px 1px 0 #000}
 .slot-actions{flex:0 1 auto;margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px}
-.mc-button.slot-btn{min-width:0;padding:4px 10px;font-size:13px;text-shadow:1px 1px 0 #202020}
-.mc-button.danger:hover:not(:disabled){background:#b85a5a;color:#fff}
+.mc-button.slot-btn{min-width:0;padding:5px 12px;font-size:13px;border-radius:10px}
+.mc-button.danger:hover:not(:disabled){background:rgba(214,72,72,.75);color:#fff}
 #btn-quit.danger{background:#8a4646}
-.mc-button:focus-visible{outline:2px solid #ffffa0;outline-offset:1px}
+.mc-button:focus-visible{outline:2px solid var(--honey);outline-offset:2px}
 .slot-form{flex:1 1 300px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
 .slot-field{display:flex;align-items:center;gap:6px}
 .slot-field label{color:#fff;font:bold 13px monospace;text-shadow:1px 1px 0 #000}
@@ -216,7 +217,7 @@ canvas{image-rendering:pixelated}
 .dialog-note{color:#c8c8c8;font:13px monospace}
 .dialog-buttons{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
 .dialog-buttons .mc-button.small{min-width:110px}
-.dialog-buttons .mc-button.danger{background:#8a4646}
+.dialog-buttons .mc-button.danger{background:rgba(196,64,64,.7);border-color:rgba(255,160,160,.5)}
 /* The cheat sheet: the key column, then the description, at most 58 characters wide (the RMB and R rows wrap onto a second
    line; DESIGN-circuits §4.9 / §7.1 merged texts). */
 .controls-sheet{margin-top:12px;display:grid;grid-template-columns:auto minmax(0,58ch);gap:2px 16px;color:#e0e0e0;font:13px monospace;text-shadow:1px 1px 0 #000}
@@ -512,6 +513,12 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
    serif system font stack (nothing downloaded), z 21: over the HUD and the pack screen, under the console, the pause menu and
    the death screen. Like the pack screen it ends above the HUD's hotbar and vitals (bottom 84px), so they stay in sight. */
 .title-side{position:relative;display:flex;flex-direction:column;align-items:flex-start}
+/* the title screen's "Play together" panel, above the Worlds (a page served by a game server: DESIGN-multiplayer §2) */
+.server-panel{box-sizing:border-box;width:640px;max-width:calc(100% - 32px);margin:12px 0 0;padding:8px 10px;background:rgba(20,40,20,.55);border:2px solid #9fd09f;box-shadow:0 0 0 2px #000}
+.server-panel[hidden]{display:none}
+.server-row{display:flex;gap:8px;align-items:center;margin-top:6px}
+.server-name{flex:1;min-width:0;background:#0b0b10;color:#fff;border:1px solid #556;font:16px/22px monospace;padding:5px 7px}
+.server-join{padding:6px 20px;font-size:15px}
 .guide-button{margin-top:10px;padding:7px 22px;font-size:14px}
 #pause-menu .guide-button{margin-top:0}
 /* the pack screen's "Read the handbook" action, inside the Pack heading's line */
@@ -805,3 +812,216 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 .av-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;width:100%}
 .av-hint{color:#a89c88;font-size:12px}
 .av-done{padding:6px 26px;font-size:14px}
+
+/* ---- Touch controls (CONTRACTS §95, docs/DESIGN-multiplayer.md §5). touchControls.js builds #touch-ui and #touch-back in
+   touch mode only and puts .touch on <html>; nothing here changes a desktop. #touch-ui lies under the HUD (z 9; the HUD
+   lets touches through, and in touch mode the hotbar takes its own taps) and over the canvas; #touch-back (z 26) sits over
+   the block picker and the console, under the pause menu. Buttons: honey rims on the dark panel colour, half see-through,
+   bold monospace words (no icons), at least 64 px; held = honey, latched = a honey glow. The stick's rim is a plain
+   hexagon with a round knob. Everything keeps clear of the safe-area insets and of the HUD's bottom band. */
+#game-canvas{touch-action:none;-webkit-touch-callout:none}
+html.touch body{-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;overscroll-behavior:none}
+html.touch input,html.touch textarea{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+html.touch #hotbar{pointer-events:auto;touch-action:none;bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+html.touch .vitals,html.touch .tiredness{bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+html.touch .status-chips,html.touch .job-chip{bottom:calc(54px + env(safe-area-inset-bottom,0px))}
+html.touch #block-toast{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+html.touch #chat-log{left:calc(8px + env(safe-area-inset-left,0px));bottom:calc(72px + env(safe-area-inset-bottom,0px))}
+html.touch .calendar-line{top:calc(6px + env(safe-area-inset-top,0px))}
+html.touch #save-toast{top:calc(12px + env(safe-area-inset-top,0px));right:calc(12px + env(safe-area-inset-right,0px))}
+#touch-ui{z-index:9;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;overflow:hidden}
+.touch-btn{position:absolute;box-sizing:border-box;display:flex;align-items:center;justify-content:center;width:66px;height:66px;
+  border:3px solid rgba(232,176,74,.85);background:rgba(28,26,36,.55);color:#f0e6cc;font:bold 15px/1 monospace;
+  text-shadow:1px 1px 0 #000;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;
+  transition:transform .06s,background-color .06s}
+.touch-btn.pressed{background:rgba(232,176,74,.92);color:#1c1a24;text-shadow:none;transform:scale(.93)}
+.touch-btn.on{background:rgba(232,176,74,.5);border-color:#ffd884;color:#fff;box-shadow:0 0 14px rgba(232,176,74,.6)}
+.touch-btn.on.pressed{background:rgba(232,176,74,.92);color:#1c1a24}
+.touch-round{border-radius:50%}
+.touch-square{position:relative;border-radius:14px}
+.touch-top{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));left:calc(12px + env(safe-area-inset-left,0px));display:flex;gap:10px}
+.touch-pad{position:absolute;right:calc(14px + env(safe-area-inset-right,0px));bottom:calc(92px + env(safe-area-inset-bottom,0px));width:280px;height:262px;pointer-events:none}
+.touch-pad .touch-btn{pointer-events:auto}
+.tb-jump{right:0;bottom:0;width:92px;height:92px;font-size:18px}
+.tb-dig{right:104px;bottom:10px;width:92px;height:92px;font-size:18px}
+.tb-place{right:84px;bottom:112px;width:78px;height:78px;font-size:16px}
+.tb-act{right:206px;bottom:112px;font-size:22px}
+.tb-sneak{right:0;bottom:112px}
+.tb-drop{right:210px;bottom:22px}
+#touch-back{position:fixed;z-index:26;top:calc(12px + env(safe-area-inset-top,0px));left:calc(12px + env(safe-area-inset-left,0px));cursor:pointer;
+  background:rgba(28,26,36,.9);padding:0}
+#touch-back:active{background:rgba(232,176,74,.92);color:#1c1a24}
+.touch-stick{position:absolute;width:140px;height:140px;margin:-70px 0 0 -70px;pointer-events:none;opacity:.92;transition:opacity .15s}
+.touch-stick.idle{left:calc(100px + env(safe-area-inset-left,0px));top:calc(100% - 178px - env(safe-area-inset-bottom,0px));opacity:.38}
+.touch-stick-rim{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.touch-stick-rim polygon{fill:rgba(28,26,36,.45);stroke:rgba(232,176,74,.85);stroke-width:3;stroke-linejoin:round}
+.touch-stick.sprint .touch-stick-rim polygon{stroke:#ffd884;stroke-width:5}
+.touch-knob{position:absolute;left:38px;top:38px;width:64px;height:64px;box-sizing:border-box;border-radius:50%;border:3px solid #ffd884;
+  background:rgba(232,176,74,.78);box-shadow:0 2px 8px rgba(0,0,0,.45)}
+.touch-stick.sprint .touch-knob{background:#ffd884}
+@media (orientation:portrait){.touch-pad{bottom:calc(104px + env(safe-area-inset-bottom,0px))}}
+@media (max-width:900px){html.touch .calendar-line{top:calc(88px + env(safe-area-inset-top,0px))}}
+
+/* ==== §97 Glass: the menus and the tablet controls (src/CONTRACTS.md §97) ===========================================
+   After Apple's Liquid Glass: translucent layers that blur and brighten the world behind them, a bright rim along the top
+   edge, soft depth under them, rounded type, and honey as the one accent. One set of tokens; every glass surface takes
+   them. Safari (the iPad) reads only -webkit-backdrop-filter, and a custom property does not resolve inside it, so both
+   are written out with literal values. Where backdrop-filter is missing, or "Reduce transparency" is on, glass is a solid
+   dark tint (the end of this section). The survival screens keep their honey hexagons (the pack, the handbook, the death
+   screen); the menus, the title screen and the tablet controls are glass. */
+:root{
+  --ui-font:ui-rounded,"SF Pro Rounded","Nunito","Segoe UI Variable Display","Segoe UI",system-ui,-apple-system,sans-serif;
+  --glass-dark:rgba(20,22,32,.42);          /* a panel's tint: white words stay legible over sky and over dirt */
+  --glass-panel:linear-gradient(180deg,rgba(40,42,56,.55),rgba(20,22,32,.5));
+  --glass-button:rgba(255,255,255,.12);
+  --glass-button-hover:rgba(255,255,255,.2);
+  --glass-control:rgba(22,24,34,.34);       /* a tablet button over the world */
+  --glass-rim:rgba(255,255,255,.4);
+  --glass-rim-soft:rgba(255,255,255,.2);
+  --glass-shine:inset 0 1px 0 rgba(255,255,255,.5),inset 0 -1px 0 rgba(255,255,255,.06);
+  --glass-depth:0 12px 32px rgba(0,0,0,.3),0 2px 8px rgba(0,0,0,.2);
+  --glass-text-dim:rgba(255,255,255,.72);
+  --glass-text-faint:rgba(255,255,255,.4);
+  --honey:#ffc457;
+  --honey-tint:rgba(255,186,72,.36);
+  --honey-rim:rgba(255,206,120,.75);
+  --honey-solid:linear-gradient(180deg,#ffd685,#f2a83a);
+}
+
+/* ---- the pause menu: one glass sheet over the dimmed world ---- */
+#pause-menu{background:radial-gradient(ellipse at 50% 30%,rgba(10,12,20,.2),rgba(6,8,14,.55))}
+#pause-menu .menu-panel{box-sizing:border-box;width:500px;max-width:calc(100% - 32px);margin:28px 0;padding:22px 20px 18px;align-items:stretch;gap:10px;
+  border:1px solid var(--glass-rim);border-radius:30px;background:var(--glass-panel);
+  -webkit-backdrop-filter:blur(26px) saturate(1.7);backdrop-filter:blur(26px) saturate(1.7);box-shadow:var(--glass-shine),var(--glass-depth)}
+#pause-menu .menu-title{margin:0;text-align:center;color:#fff;font:700 26px var(--ui-font);text-shadow:none}
+#pause-menu .menu-subtitle{margin:-6px 0 4px;text-align:center;color:var(--glass-text-dim);font:500 14px var(--ui-font);text-shadow:none;max-width:none}
+#pause-menu .mc-button{min-width:0;width:100%}
+#pause-menu #btn-resume{padding:14px 18px;border-color:rgba(255,236,190,.85);background:var(--honey-solid);color:#2b1c06;font-size:18px;font-weight:700}
+#pause-menu #btn-resume:hover{background:linear-gradient(180deg,#ffe2a3,#f6b552)}
+#pause-menu .physics-row{box-sizing:border-box;width:100%;max-width:none;justify-content:flex-start;gap:8px;padding:10px 12px 12px;
+  border:1px solid rgba(255,255,255,.12);border-radius:18px;background:rgba(255,255,255,.06)}
+#pause-menu .physics-label{flex-basis:100%;margin:0 0 0 2px;color:var(--glass-text-dim);font:700 12px var(--ui-font);letter-spacing:.07em;text-transform:uppercase;text-shadow:none}
+#pause-menu .physics-row .mc-button.toggle{width:auto;flex:1 1 auto}
+#pause-menu .hex-button,#title-screen .hex-button{clip-path:none;padding:9px 16px;border:1px solid var(--glass-rim-soft);border-radius:999px;background:var(--glass-button);color:#fff;font:600 14px var(--ui-font);box-shadow:var(--glass-shine)}
+#pause-menu .hex-button:hover:not(:disabled),#title-screen .hex-button:hover:not(:disabled){background:var(--glass-button-hover)}
+#pause-menu .sound-button[aria-pressed="false"]{background:rgba(0,0,0,.2);color:var(--glass-text-dim)}
+#pause-menu .physics-row .hex-button{flex:1 1 auto}
+#pause-menu .mode-switch{flex:1 1 auto;padding:3px;gap:3px;border-radius:999px;background:rgba(0,0,0,.24)}
+#pause-menu .mode-half{flex:1 1 0;min-width:0;padding:8px 12px;border:0;border-radius:999px;background:transparent;color:var(--glass-text-dim);box-shadow:none}
+#pause-menu .mode-half.active{background:#fff;color:#1c1a24}
+#pause-menu .mode-half:hover:not(.active){background:rgba(255,255,255,.12)}
+#pause-menu .guide-button{align-self:center}
+#pause-menu .menu-note{text-align:center;color:var(--glass-text-faint);font:500 12px var(--ui-font)}
+#pause-menu .controls-sheet{margin-top:4px;padding:12px 14px;border-radius:18px;background:rgba(0,0,0,.18);color:var(--glass-text-dim);text-shadow:none}
+/* who else is on the server (§96.3, §97.3) */
+#pause-players{display:none;padding:10px 12px;border-radius:18px;background:rgba(255,255,255,.06);color:#fff;font:500 14px/1.4 var(--ui-font)}
+#pause-players b{color:var(--glass-text-dim);font:700 12px var(--ui-font);letter-spacing:.07em;text-transform:uppercase;display:block;margin-bottom:2px}
+html.on-server #pause-players{display:block}
+/* on a server the host's world decides these (§96.3): they are not offered at all */
+html.on-server #btn-save,html.on-server #btn-stop-runes,html.on-server #pause-physics,html.on-server #btn-undo-physics,
+html.on-server #pause-creatures,html.on-server #pause-mode,html.on-server #pause-devices,html.on-server #pause-seed{display:none}
+/* a tablet has no keys: no key sheet */
+html.touch #pause-controls,html.touch #title-controls{display:none}
+
+/* ---- the title screen ---- */
+/* a soft sky over the dirt: the glass has colour to take in, and the dirt's grain is quieter */
+#title-screen::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:radial-gradient(ellipse at 18% 105%,rgba(255,186,80,.38),transparent 55%),radial-gradient(ellipse at 88% 100%,rgba(110,210,130,.3),transparent 50%),
+    linear-gradient(180deg,rgba(84,140,210,.62),rgba(44,70,108,.5) 48%,rgba(40,30,22,.42))}
+.worlds-panel,.server-panel{border:1px solid var(--glass-rim);border-radius:24px;background:var(--glass-panel);box-shadow:var(--glass-shine),var(--glass-depth);
+  -webkit-backdrop-filter:blur(22px) saturate(1.6);backdrop-filter:blur(22px) saturate(1.6)}
+.server-panel{border-color:rgba(180,255,190,.55);background:linear-gradient(180deg,rgba(40,70,48,.55),rgba(20,36,26,.5))}
+.worlds-title{font:700 20px var(--ui-font);text-shadow:none}
+.worlds-note,.worlds-message,.usage-row{font-family:var(--ui-font);text-shadow:none}
+#worlds-list .world-slot{border:1px solid rgba(255,255,255,.12);border-radius:14px;background:rgba(255,255,255,.07)}
+#worlds-list .world-slot.latest{border-color:var(--honey-rim)}
+#worlds-list .world-slot.empty{background:rgba(0,0,0,.14)}
+#worlds-list .world-slot.damaged{background:rgba(160,40,40,.3)}
+.slot-num,.slot-name,.slot-detail,.slot-field label,.slot-check{font-family:var(--ui-font);text-shadow:none}
+.slot-field input,.server-name{border:1px solid var(--glass-rim-soft);border-radius:10px;background:rgba(0,0,0,.28);color:#fff;font-family:var(--ui-font)}
+.slot-field input:focus,.server-name:focus{border-color:var(--honey);outline:none}
+.usage-bar{border:0;border-radius:999px;background:rgba(0,0,0,.35);overflow:hidden}
+.usage-fill{border-radius:999px}
+#title-screen .server-join.hex-button{padding:9px 26px;border-color:rgba(255,236,190,.85);background:var(--honey-solid);color:#2b1c06;font-weight:700}
+#title-screen .server-join.hex-button:hover:not(:disabled){background:linear-gradient(180deg,#ffe2a3,#f6b552)}
+#title-screen .server-join.hex-button:disabled{background:rgba(255,255,255,.1);color:var(--glass-text-faint)}
+/* the Play together panel is one compact band: its name and the server's on the left, the name box and Join on the right */
+.server-panel{display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"title row" "info row" "msg msg";column-gap:18px;align-items:center;padding:12px 16px}
+#server-title{grid-area:title}
+#server-info{grid-area:info}
+.server-panel .server-row{grid-area:row;margin-top:0}
+#server-message{grid-area:msg}
+#server-message:empty{display:none}
+@media (max-width:620px){.server-panel{grid-template-columns:minmax(0,1fr);grid-template-areas:"title" "info" "row" "msg"}.server-panel .server-row{margin-top:8px}}
+/* a tablet has no key sheet beside the Worlds: the Guide and the Avatar sit side by side under them */
+html.touch .title-side{flex-direction:row;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center}
+html.touch .title-side .guide-button{margin-top:10px}
+html.touch .avatar-button{position:static}
+#title-footer{font-family:var(--ui-font);text-shadow:none;color:var(--glass-text-faint)}
+
+/* ---- dialogs, the chat line and the console ---- */
+.dialog-panel{border:1px solid var(--glass-rim);border-radius:24px;background:var(--glass-panel);box-shadow:var(--glass-shine),var(--glass-depth);
+  -webkit-backdrop-filter:blur(24px) saturate(1.6);backdrop-filter:blur(24px) saturate(1.6)}
+.dialog-title{font:700 18px var(--ui-font);text-shadow:none}
+.dialog-note{font:14px var(--ui-font);color:var(--glass-text-dim)}
+#chat-log div{border-radius:10px;padding:3px 10px;background:rgba(16,18,26,.48);font-family:var(--ui-font);font-size:14px;text-shadow:none;
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.console-panel{border:1px solid var(--glass-rim);border-radius:18px;overflow:hidden;background:rgba(12,14,22,.66);box-shadow:var(--glass-shine),var(--glass-depth);
+  -webkit-backdrop-filter:blur(20px) saturate(1.5);backdrop-filter:blur(20px) saturate(1.5)}
+/* on a server the console is the chat (§96.3): plain words */
+html.on-server .console-panel{font-family:var(--ui-font)}
+html.on-server #console-input{font:16px var(--ui-font)}
+html.on-server .console-prompt{color:var(--honey)}
+html.on-server .console-hint{font:12px var(--ui-font)}
+
+/* ---- the block picker: a glass sheet (its cells keep their look) ---- */
+.picker-panel{border:1px solid var(--glass-rim);border-radius:26px;background:var(--glass-panel);box-shadow:var(--glass-shine),var(--glass-depth);
+  -webkit-backdrop-filter:blur(26px) saturate(1.6);backdrop-filter:blur(26px) saturate(1.6)}
+.picker-title{color:var(--honey);font:700 17px/20px var(--ui-font);letter-spacing:0}
+#picker-search{border-color:var(--glass-rim-soft);background:rgba(0,0,0,.28);font:14px var(--ui-font)}
+#picker-name{font:700 15px/18px var(--ui-font)}
+#picker-blurb{font:13px/15px var(--ui-font)}
+.picker-hint{font:12px/15px var(--ui-font)}
+html.touch .picker-hint{visibility:hidden}
+/* §98: with the item sections the rail has 16 buttons: on a short window they shrink so all of them fit */
+@media (max-height:900px){#picker-rail{gap:2px}.picker-rail-btn{flex-basis:26px;width:26px;height:26px;border-radius:7px}.picker-rail-icon{width:18px;height:18px}}
+#block-picker .picker-section-head{font-family:var(--ui-font);font-weight:700;letter-spacing:0;background:rgba(24,26,36,.92)}
+.picker-showall{font:13px var(--ui-font)}
+/* the key sheet's keys: small glass caps */
+kbd{border:1px solid var(--glass-rim-soft);border-bottom-width:2px;border-radius:6px;background:rgba(255,255,255,.1)}
+
+/* ---- the Creative hotbar: a glass tray (Survival keeps its honeycomb) ---- */
+#hotbar:not(.survival){padding:4px;gap:3px;border:1px solid var(--glass-rim);border-radius:16px;background:var(--glass-control);box-shadow:var(--glass-shine),var(--glass-depth);
+  -webkit-backdrop-filter:blur(16px) saturate(1.6);backdrop-filter:blur(16px) saturate(1.6)}
+#hotbar:not(.survival) .hotbar-slot{border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.08)}
+#hotbar:not(.survival) .hotbar-slot.selected{border:2px solid #fff;box-shadow:0 0 0 2px rgba(255,196,87,.7),0 0 12px rgba(255,196,87,.45)}
+
+/* ---- the tablet controls (§95): dark glass over the world, rounded words ---- */
+.touch-btn{border:1px solid var(--glass-rim);background:linear-gradient(180deg,rgba(255,255,255,.2),rgba(255,255,255,0) 58%),var(--glass-control);color:#fff;font:600 15px/1 var(--ui-font);text-shadow:0 1px 2px rgba(0,0,0,.45);
+  box-shadow:var(--glass-shine),0 6px 18px rgba(0,0,0,.22);-webkit-backdrop-filter:blur(14px) saturate(1.7);backdrop-filter:blur(14px) saturate(1.7)}
+.touch-btn.pressed{background:rgba(255,186,72,.7);border-color:var(--honey-rim);color:#2b1c06;text-shadow:none;transform:scale(.92)}
+.touch-btn.on{background:var(--honey-tint);border-color:var(--honey-rim);color:#fff;box-shadow:var(--glass-shine),0 0 0 2px rgba(255,196,87,.55),0 0 18px rgba(255,196,87,.4)}
+.touch-btn.on.pressed{background:rgba(255,186,72,.75);color:#2b1c06}
+.tb-jump,.tb-dig{font-size:18px}
+.tb-act{font-size:15px}
+/* the top bar: one glass capsule of words */
+.touch-top{gap:2px;padding:4px;border:1px solid var(--glass-rim);border-radius:999px;background:var(--glass-control);box-shadow:var(--glass-shine),0 6px 18px rgba(0,0,0,.22);
+  -webkit-backdrop-filter:blur(16px) saturate(1.7);backdrop-filter:blur(16px) saturate(1.7)}
+.touch-top .touch-btn{width:auto;height:44px;padding:0 16px;border:0;border-radius:999px;background:transparent;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+.touch-top .touch-btn.pressed{background:rgba(255,255,255,.24);color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.45)}
+#touch-back{width:auto;height:44px;padding:0 22px;border-radius:999px;background:var(--glass-control)}
+#touch-back:active{background:rgba(255,255,255,.3);color:#fff}
+.touch-stick-rim polygon{fill:rgba(22,24,34,.3);stroke:rgba(255,255,255,.55);stroke-width:2}
+.touch-stick.sprint .touch-stick-rim polygon{stroke:var(--honey);stroke-width:3}
+.touch-knob{border:1px solid rgba(255,255,255,.9);background:radial-gradient(circle at 36% 30%,#fff,rgba(255,255,255,.82) 42%,rgba(214,222,238,.7));box-shadow:0 4px 14px rgba(0,0,0,.35)}
+.touch-stick.sprint .touch-knob{background:radial-gradient(circle at 36% 30%,#fff3d6,#ffc457 55%,#e9a23a)}
+
+/* ---- no glass where it cannot be drawn, or is not wanted ---- */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  #pause-menu .menu-panel,.worlds-panel,.server-panel,.dialog-panel,.console-panel,.picker-panel{background:rgba(26,28,38,.94)}
+  .touch-btn,.touch-top,#hotbar:not(.survival){background:rgba(26,28,38,.7)}
+}
+@media (prefers-reduced-transparency:reduce){
+  #pause-menu .menu-panel,.worlds-panel,.server-panel,.dialog-panel,.console-panel,.picker-panel{background:rgba(26,28,38,.96);-webkit-backdrop-filter:none;backdrop-filter:none}
+  .touch-btn,.touch-top,#hotbar:not(.survival),#chat-log div{background:rgba(26,28,38,.82);-webkit-backdrop-filter:none;backdrop-filter:none}
+}

@@ -327,8 +327,9 @@ const IDS = Object.freeze({
  * @property {(from: 'title'|'pause') => void} [onGuide]  the Guide button on the title screen or in the pause menu (§14):
  *   main opens handbookUI.openGuide(); the screen underneath stays and comes back when the Guide closes
  * @property {() => void} [onClickToPlay]
- * @property {(blockId: number, slot: number|null) => void} [onPickBlock]  slot 0..8 for Digit1-9 or a drop on the hotbar
- *   (the picker stays open), null for a click / Enter (main closes it)
+ * @property {(pick: number|string, slot: number|null) => void} [onPickBlock]  a block id (a number) or the key of an item
+ *   that is not a block item (a string: a tool, food, a material, clothes; pickerModel Pick); slot 0..8 for Digit1-9 or a
+ *   drop on the hotbar (the picker stays open), null for a click / Enter (main closes it)
  * @property {() => void} [onPickerClose]
  * @property {(on: boolean) => void} [onSetCircuits]    pause-menu Devices row: the world's Circuits switch; fired only by the
  *   inactive half (DESIGN-circuits §6.2.17)
@@ -364,7 +365,7 @@ const IDS = Object.freeze({
  * @property {(on: boolean) => void} setZombiesState   refresh the Zombies toggle (§39)
  * @property {() => void} hidePause
  * @property {(on: boolean) => void} setQuitUnsaved   #btn-quit: "Save & Quit" / "Quit Without Saving" (after a failed save)
- * @property {(hotbar: number[], selected: number) => void} showPicker
+ * @property {(hotbar: Array<number|string>, selected: number) => void} showPicker  the hotbar's block ids and item keys
  * @property {() => void} hidePicker
  * @property {() => boolean} isPickerOpen
  * @property {() => string} getSeedInput   the open New World form's seed text ('' when no form is open)
@@ -1221,7 +1222,7 @@ export function createMenus(doc, atlasCanvas, callbacks = {}) {
     onClose: () => fire('onPickerClose'),
   });
 
-  /** @param {number[]} hotbar @param {number} selected */
+  /** @param {Array<number|string>} hotbar  block ids and item keys @param {number} selected */
   function showPicker(hotbar, selected) {
     if (state.disposed) return;
     picker.show(hotbar, selected);

@@ -1012,6 +1012,11 @@ E, F, M, T, R, Slash). A keydown whose `key === '/'` but whose code is not `Slas
 `Slash` edge INSTEAD of its physical code, so typing `/` never also selects a hotbar slot.
 Digit keys 1–9 are read by main via `consumePressed('Digit1')`. Do not bind Ctrl.
 
+> **§95 amendment (touch):** `touchMode`, `setTouchMode(on)` (a virtual lock: `lock()` / `unlock()` set it at once and
+> `onLockChange` fires a microtask later; window blur or a hidden page lets go of it; no mouse look), and the virtual input
+> the on-screen controls feed — `virtualKey`, `virtualButton`, `virtualLook`, `setVirtualMove`, `setVirtualJump` — merged
+> into `getInput()`. A desktop not in touch mode is unchanged.
+
 ## 19. `src/hud.js` (DOM)
 
 > **v0.10 amendment (§58):** `setFlashOverlay(level, 'white'|'void')` (`#flash-overlay`, DOM touched on 1/32 steps), pure `flashStep(state, dt, trigger)` and `createFlashState()`.
@@ -1309,7 +1314,7 @@ console executes with both `null`.
 | `time set <spec>` | noon 0.5, midnight 0, day 0.25, night 0.75, `HH:MM` (0..23:0..59), bare integer 0..24 = hours (24 → 0), a number with a decimal point in [0,1] = fraction; `time is frozen by ?time=` |
 | `time add <dur>` | GAME seconds (86400/day): `HH:MM`, `Nh`, `Nm`, `Ns`, a signed number with a decimal point ≤ 1 = fraction of a day, a signed integer = seconds; negatives allowed; `day` bumps only forwards |
 | `fly on|off|toggle` | `setFlying` |
-| `give <block> [slot]` | placeable blocks only; slot `1..9` integer literal (default: selected) |
+| `give <block|item> [slot]` | placeable blocks, or (§98) any item that is not a block (Creative); slot `1..9` integer literal (default: selected) |
 | `say <text>` | `ctx.say(text)`; the result message is empty |
 | `run q y r` | `runner.trigger(key, running ? 'run' : 'console', running ? { wave, hops + 1 } : undefined)`; failure reason is the message |
 | `wait <s>` | scripts only; `WAIT_MIN_S..WAIT_MAX_S` → `{ wait }` |
@@ -7000,7 +7005,7 @@ nothing (a paused world).
 
 ### 91.4 The model and the first-person arm (`avatarRenderer.js`, three)
 
-`createAvatarRenderer(scene)` → `{ setAvatar(id), avatarId(), sync(frame), group, armGroup, prewarm(webgl, camera),
+`createAvatarRenderer(scene)` → `{ setAvatar(id), avatarId(), setHeld(key), heldKey() (§98.4), sync(frame), group, armGroup, prewarm(webgl, camera),
 dispose() }`. Every avatar's model and arm are built at once over ONE texture (the sheet: nearest, no mipmaps, sRGB); one
 model and one arm are shown at most.
 
@@ -7327,3 +7332,348 @@ legend, and a scrolling canvas with the lanes named on the left.
 The states come from the view: `treeFactsFromView(view)` (counts over the pack, the worn and the cursor; tools by type and
 tier; `view.ready` — survivalControl.buildPackView's ids of every recipe, whatever the tab, that could start now; the near
 workplaces). `?ui=tree` (with `?autoplay` in Survival) opens the pack with the tree over it, for screenshots.
+
+## 95. Touch controls (iPad) — `src/touchControls.js` (PURE + DOM), `src/controls.js`, `src/main.js`, `index.html`, `src/styles.css`, `public/manifest.webmanifest`, `public/apple-touch-icon.png`, `public/icons/`, `scripts/make-touch-icons.mjs`
+
+The game plays on an iPad by touch (docs/DESIGN-multiplayer.md §5), in Safari and as a home-screen web app. Touch is an
+INPUT layer only: the on-screen controls feed the same Controls API (§18) that the keyboard and the mouse feed, so main
+reads one input whatever the device, and nothing else in the game knows about touch. A desktop that is not in touch mode
+behaves exactly as before.
+
+### 95.1 Touch mode
+
+- **Detection** (once, at boot): `detectTouchMode(win)` → `touchModeFor({ param, coarse, fine, maxTouchPoints })`.
+  `?touch=` wins: `1`, `true`, `on`, `yes` or a bare `?touch` turn it on, `0`, `false`, `off`, `no` turn it off
+  (`readTouchParam`); anything else detects. Otherwise touch mode is on when the primary pointer is coarse
+  (`matchMedia('(pointer: coarse)')`), or when `navigator.maxTouchPoints > 1` and no pointer anywhere is fine
+  (`(any-pointer: fine)`): iPadOS Safari calls itself a Mac (`MacIntel`) but has touch points and no mouse. A PC with a
+  touch screen and a mouse or trackpad stays a desktop. Anything missing or throwing counts as absent.
+- **View distance**: `TOUCH_RENDER_DISTANCE` **4** chunks in touch mode; `?rd=` still wins.
+- **No pointer lock.** Main calls `controls.setTouchMode(true)`. The lock is then VIRTUAL: `lock()` and `unlock()` set it at
+  once (no `requestPointerLock`), `locked` reads it, and `onLockChange` fires a microtask later, as a real
+  `pointerlockchange` arrives after its request, with the held state cleared as for a real change. Main's state machine is
+  unchanged: entering play locks, every modal unlocks, and the relock check after a modal finds the lock held, so nothing
+  pauses for want of a pointer lock. The window's `blur` and the page becoming hidden (`visibilitychange`) let go of the
+  lock, so the game pauses when the iPad switches app, as a desktop pauses when it loses its lock. Mouse look is off (a
+  tap's compatibility `mousemove` never turns the view); a hardware keyboard plays as on a desktop.
+- **Starting**: "Click to play" reads "Tap to play"; a tap on it starts play (that tap is also the gesture that lets the
+  sound start). The title screen, the menus, the pack screen, the Handbook and the pickers are DOM and work by tapping.
+
+### 95.2 The virtual input (`controls.js`)
+
+Added to Controls: `touchMode` (read), `setTouchMode(on)` (any lock is released first), and:
+
+- `virtualKey(code, down)` — exactly a keydown or keyup of `code` with no auto-repeat: held, one queued edge (so `KeyF` is
+  the fly toggle, and `KeyR` is held for R's repeat).
+- `virtualButton(button, down)` — a mouse button on the canvas (0 left, 1 middle, 2 right): held and pressed edges.
+- `virtualLook(dYaw, dPitch)` — turns the look by radians (positive yaw turns left, positive pitch looks up; pitch clamped).
+- `setVirtualMove(forward, strafe, sprint)` — the stick: each clamped to −1..1 (non-finite 0); sprint only with forward > 0.
+- `setVirtualJump(on)` — a held jump.
+
+Each is honoured only while locked and enabled, like real input; releases always count; whatever clears the held keys
+clears these too. `getInput()`: `forward` / `strafe` are the keys' value wherever a key moves the player, else the stick's
+analog value (physics scales the wish direction by its length, clamped to 1, so a half push walks at half speed); `jump`
+= Space or the virtual jump; `sneak` = Shift (the Sneak button holds `ShiftLeft`); `sprint` (and `isSprinting()`) = W
+double-tapped or the stick's sprint.
+
+### 95.3 The controls (`touchControls.js`)
+
+`TouchPad(sink, hooks)` is the PURE half: it takes pointers (`down(id, x, y, zoneX, buttonId)`, `move`, `up`, `reset`)
+and button presses and calls the sink (the Controls above). `createTouchUI(doc, controls, hooks)` is the DOM half:
+`#touch-ui` and `#touch-back`, Pointer Events on them, the drawing. Main gives it `onPause` (its `pause()`), `onBack`
+(closes the block picker or the console) and `onTouch` (wakes a sleeper, as a click does), and calls
+`update({ playing, back, survival, flying })` once a frame, before the step reads the input.
+
+| control | where | what it does |
+|---|---|---|
+| Stick | the left half: it appears where the thumb lands (a faint rim rests bottom left) | analog forward / strafe. Nothing inside `STICK_DEAD` 0.12 of `STICK_RADIUS` 60 px, then linear to full at the rim; from `STICK_SPRINT` 0.9 of the radius, pointing within about 45° of straight ahead (`STICK_SPRINT_COS` 0.7), it sprints at full speed. The knob stays on the rim; lifting stops |
+| Look | a drag anywhere that is not a button (the right half; also the left half while the stick is held) | turns by `TOUCH_LOOK_SENSITIVITY` **0.005** rad per CSS px: dragging right turns right, dragging up looks up, as the mouse does. No inertia |
+| Jump | right cluster, the corner | held = Space: jumps, rises while flying, paddles up in water; two presses within DOUBLE_TAP_SPACE_MS toggle flight in Creative, as a double-tapped Space (§97.5); lit while flying |
+| Mine (§97: was Dig) | right cluster | held = the left mouse button held: breaks, digs, strikes |
+| Place | right cluster | the right mouse button: a tap places or uses, held keeps using |
+| Action (§97: was R) | right cluster | the R key (drink, open, feed, …); held repeats |
+| Crouch (§97: was Sneak) | right cluster | a TOGGLE on the ground, lit while on; while flying it is held to go down and reads "Down", and taking off clears the toggle. It is the Shift of Shift+R (a part's panel, a rune's editor), Shift+right (place against a control) and Shift+Q (drop the stack) |
+| ~~Fly~~ | removed (§97.5) | a double tap of Jump flies |
+| Drop | right cluster | the Q key |
+| Menu (§97: was Pause) | top bar | main's `pause()` (the pause menu) |
+| Pack | top bar | the E key: the pack in Survival; reads "Blocks" and opens the block picker in Creative |
+| Camera (§97: was View) | top bar | the V key: first person, behind, in front |
+| Chat | top bar | the T key: the console (a tap on its field brings up the keyboard) |
+| Back | top left, only over the block picker and the console | closes them: an iPad has no Esc |
+| Hotbar | the hotbar itself | a tap on a slot is that slot's digit key (`hotbarCode`) |
+
+Sneak is a toggle because both thumbs are busy — one on the stick, the other looking, digging or placing — and a held
+Sneak would need a third; going down while flying is held, the mirror of Jump.
+
+- **Multi-touch.** Every pointer is followed by its `pointerId`, so moving, looking and holding Dig work at once. A pointer
+  landing in the open left of `STICK_ZONE` 0.5 of the width takes the stick if it is free, else the look if that is free;
+  elsewhere it takes the look if free; a pointer that finds both taken does nothing, and so does a second finger on a
+  button already held. The layer captures its pointers; `pointercancel` and a lost capture count as a lift.
+- **Shown only while playing** (main's PLAYING state). Otherwise the controls are hidden and everything held is let go;
+  the Sneak toggle is kept and held again when play resumes, and so are the stick and a held Jump after anything clears
+  the controls' state.
+- **One tap, one action.** A tap that began on a button never also clicks what lies under the finger when it lifts (the
+  pack, the field book, a menu it opened): the next click within `CLICK_SWALLOW_MS` 400 is swallowed unless it lands on
+  the controls or on Back.
+
+### 95.4 The page
+
+- `index.html`: `<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no,
+  viewport-fit=cover">`; `apple-mobile-web-app-capable` (and `mobile-web-app-capable`) `yes`,
+  `apple-mobile-web-app-status-bar-style` `black-translucent`, `apple-mobile-web-app-title`, `theme-color` `#1c1a24`;
+  `<link rel="manifest" href="/manifest.webmanifest">` and `<link rel="apple-touch-icon" href="/apple-touch-icon.png">`.
+- `public/manifest.webmanifest`: `display` `fullscreen`, `orientation` `landscape`, the dark panel colour, icons of 192
+  and 512 px. The icons and the 180-px apple-touch-icon are drawn by `scripts/make-touch-icons.mjs` (a grass-topped
+  hexagonal prism on the dark panel colour with a soft honey glow; plain Node, nothing downloaded). Safari opens a
+  home-screen app standalone (it ignores `fullscreen`) under a see-through status bar: hence the safe-area insets below.
+- **No scrolling, zooming or callouts on the game**: `#game-canvas` and `#touch-ui` have `touch-action: none` and no
+  long-press callout; in touch mode (`html.touch`) the page has no text selection, callouts or tap highlight,
+  `touch-action: manipulation` (no double-tap zoom; the menus still scroll) and `overscroll-behavior: none`, Safari's
+  `gesturestart` (pinch) is prevented, and text fields stay selectable.
+- **Safe areas**: the touch controls and, in touch mode, the HUD's bottom band (hotbar, vitals, tiredness, chips, block
+  toast, chat log) and its top items (calendar line, save toast) keep clear of `env(safe-area-inset-*)`. Under 900 px wide
+  the calendar line drops below the top bar.
+- **Look**: the game's own — honey `#e8b04a` rims on the dark panel colour `rgba(28,26,36,…)` at about half opacity,
+  bold monospace words, NO icons. Every button is at least 64 px (Jump and Dig 92, Place 78, the rest 66): round in the
+  right cluster, rounded squares in the top bar. Held = filled honey and a little smaller; toggled on = a honey glow. The
+  stick's rim is a plain hexagon (nothing drawn on it) with a round honey knob, brighter while sprinting. The right
+  cluster sits 92 px above the bottom (104 px in portrait), clear of the HUD's bottom band; the top bar is at the top left.
+- **Layers**: `#touch-ui` z 9 (over the canvas, under the HUD, which lets touches through; in touch mode the hotbar
+  takes its own taps); `#touch-back` z 26 (over the block picker and the console, under the pause menu).
+
+### 95.5 Not yet
+
+A switch for touch mode in the menus (the design's "a switch in the menu"; `?touch=` for now) and a view-distance control
+in the menus (`?rd=` for now). The controls sheets on the title screen and in the pause menu still list keys. The layout
+is for tablets; a phone's short landscape screen is cramped. Pick (middle click) and Throw (G) have no button.
+
+Tests: `tests/unit/touchControls.test.js` (detection, the stick and the look, the button table, TouchPad on a real
+Controls, the DOM layer on the fake DOM, the page) and `tests/unit/controlsTouch.test.js` (the virtual lock and input).
+
+## 96. Multiplayer, phase 1: one server, a shared Creative world — `server/index.js`, `server/game.js` (Node), `src/protocol.js` (PURE), `src/net.js` (PURE), `src/remotePlayerRenderer.js` (three), `src/serverPanel.js` (DOM), `src/world.js`, `src/main.js`, `src/diagnostics.js`, `index.html`, `src/styles.css`
+
+The design is docs/DESIGN-multiplayer.md; this section is what phase 1 built. Single-player is unchanged: nothing here runs
+until the player joins a server.
+
+### 96.1 The server (`npm run server`)
+
+- `node server/index.js [--port 4180] [--host 0.0.0.0] [--world home] [--seed S] [--client dist] [--worlds server/worlds]`
+  (`parseArgs`: a port 1..65535, a world name of letters, digits, `_` and `-`). One port serves the built game (`dist/`:
+  the page `no-cache`, the rest a year; never a path outside the folder: 403), `GET /api/info` (`ServerGame.info()`:
+  `{ name, version, players, mode }`, `Access-Control-Allow-Origin: *`) and the WebSocket at `/ws` (a client message over
+  `MAX_CLIENT_MESSAGE` = 16 KiB is dropped).
+- `start(opts)` → `{ game, server, wss, stop, saveFile }`; `opts.log` replaces the console. The game ticks every `TICK_S`
+  (50 ms); the world is saved to `<worlds>/<world>/world.json` (written beside and renamed: never half a file) every 30 s
+  while `game.dirty`, on `stop()` (SIGINT / SIGTERM) and when a new world is made; every 30 min it is copied to
+  `backups/world-<ISO time>.json`, the newest 10 kept.
+- **`ServerGame`** (no networking: a socket is `{ send(text), close(code, reason) }`): a headless `World` (`mesh: false`,
+  renderDistance `SIM_RADIUS` 4) and its `BlockPhysics` with the save's switches. `mode` is `'creative'` in phase 1. The
+  save (`toJSON`) is `{ format: 'caelancraft-server-world', v: 1, name, seed, gen, mode, time, day, edits
+  (physics.exportEdits: in-flight motion settled), bricks, physics, players: { <token>: { name, avatar, pose } } }`.
+- **Joining** (`join(socket, hello)`): a first message that is not `hello` is refused ("expected hello"), another `v` is
+  refused (the version named), a full server (`MAX_PLAYERS` 8) is refused; each refusal is `{ t: 'refused', reason }` and a
+  close with 4000. A token already playing is replaced (that connection closed with 4001). The name is `cleanName(hello)`,
+  else the record's, else the avatar's name; the pose is the record's, else the spawn facing +Z. The welcome: `{ t:
+  'welcome', v, id, token, world: { name, seed, gen, mode, time, day }, edits (world.exportEdits: as the world stands,
+  flowing water included), bricks, spawn, you: { name, avatar, pose }, players: [{ id, name, avatar, pose }] }`; the others
+  get `join`. Leaving keeps the record and tells the others `leave`.
+- **Intents** (`onMessage`): `set` `{ q, y, r, id }` is applied (as the player's: `physics.asPlayer`) when its chunk is
+  loaded, the cell's centre is within `REACH + 3` of the player's eye (feet + 1.6), `id < BLOCK_COUNT`, not a building
+  material (§93.5), not a brick shadow, not bedrock, and the cell is not bedrock — Creative: any state of a block (a door
+  opened) may be written. `brick` `{ i, y, n, id }`: AIR takes a brick away, a building material is laid where
+  `brickBlocker` allows, within the same reach. A refused (or unchanged) intent is answered to that player alone with the
+  true value (`cells` / `bricks` of one entry), which puts their copy right. `pose` replaces the player's pose (a
+  `POSE_SWING` not yet broadcast survives a newer pose in the same tick). `chat` goes to everyone as `{ t: 'chat', from,
+  text }`; `ping` `{ at }` is answered `pong`. Anything malformed is ignored.
+- **The tick** (`tick(dt)`): with players, the world streams round every one of them (`World.updateCentres`, 12 ms of
+  generating), the physics steps and the clock runs; then `bricks` (flat `[i, y, n, id, …]`) before `cells` (flat `[q, y,
+  r, id, …]`, every hex cell changed since the last tick, a brick's derived shadow left out but `BRICK_GAP` kept), each
+  player the others' `poses` (`packPose` arrays) when someone moved (the swing bit sent once), and `time` every
+  `TIME_SYNC_S` (5 s).
+
+### 96.2 The wire (`protocol.js`)
+
+`PROTOCOL_VERSION` 1, `DEFAULT_PORT` 4180, `WS_PATH` '/ws', `INFO_PATH` '/api/info', `POSE_HZ` 15. A message is a JSON
+object with a string `t` (`decode` → it or null). The cleaners never trust a number: `cleanName` (no control characters or
+`<>`, trimmed, `MAX_NAME` 20), `cleanChat` (`MAX_CHAT` 200), `cleanPose` (finite x, y, z, yaw, pitch; |x|, |z| ≤ 1e7; y in
+[−64, WORLD_HEIGHT + 256]; yaw wrapped to [0, 2π), pitch clamped to ±π/2, vx / vz to ±100, flags to 5 bits: FLYING 1,
+SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16), `cleanCell` / `cleanBrick` (integers, y inside the world, id a byte),
+`unflatten4` (the sound quadruples of a flat list), `packPose` / `unpackPose` (`[id, x, y, z, yaw, pitch, flags, vx, vz]`,
+3 decimals).
+
+### 96.3 The client
+
+- **Finding a server**: at boot (not under ?autoplay / ?smoke) `probeServer` asks the page's own host (or `?server=host[:port]`)
+  for `/api/info`; when it answers, the title screen shows **Play together** above the Worlds (`#server-panel`: the server's name, mode and
+  players, a name box kept as `caelancraft:v2:mp-name`, Join, a status line). Another version says "reload the page".
+  `?join=<name>` joins at once (with ?autoplay straight into play).
+- **Joining** (`joinServer`): a `NetClient` to `serverWsUrl` (ws: or wss: by the page) with the name, the chosen avatar and
+  the browser's token (`caelancraft:v2:mp-token`, kept even under ?nosave). Its inbox is drained once a frame, in every
+  state, before the state's step (`netStep`). The welcome becomes a save (`restoringFromWelcome`: seed, gen, edits, bricks,
+  time, day, the pose; mode Creative; physics, zombies, the Watcher, circuits and black holes off; no runes) and loads with
+  `startLoading` — the terrain is generated here from the seed. The world's name is the server's.
+- **On a server** (`net` set): `stepPlaying` moves the player only — black holes, fauna, pigs, animals, zombies, the
+  Watcher, block physics, campfires, circuits and rune scripts do not step (the server's world, or phase 2). Every cell that
+  changes here and is not the server's own (`applyingServer`) is sent as a `set` (from `onBlockChanged`, so a break, a
+  place, a door, a lever; never a shadow); `placeBrickAt` / `breakBrick` send `brick`. The server's `cells` are applied with
+  `World.applyServerCell` (a loaded cell at once; else an edit kept for that chunk), its `bricks` with `setBrick`; under
+  any menu the world is still updated so they show. `time` sets the clock (unless ?time). Saving does nothing ("The server
+  saves this world"); Quit leaves at once; the pause menu's physics, zombie, device and mode switches and Undo are not
+  shown on a server (§97.3; their handlers still say "On a server the host’s world decides that"); rune blocks neither run nor open their editor. T opens the chat: a line is said
+  to everyone (`<name> text` in the chat lines), a `/command` is refused. The pause menu's world line says "· on a server".
+- **The others** (`RemotePlayers`): each one's poses (12 kept) are drawn `REMOTE_DELAY_S` (0.12 s) in the past,
+  interpolated (yaw the short way round); `remotePlayerRenderer` gives each one an avatar renderer of their avatar, an
+  `AvatarMotion` stepped from the pose's flags and speed (the arm swings when a SWING pose arrives) and a name tag over the
+  head, and drops them when they leave. The player's pose goes out 15 times a second while it changes (once a second when
+  it does not).
+- **Leaving**: Quit to Title closes the connection; a lost or refused connection returns to the title with the reason
+  ("Left the server: …" / "Could not join: …").
+
+## 97. Glass: the menus and the tablet controls — `src/styles.css`, `index.html`, `src/touchControls.js`, `src/hud.js`, `src/remotePlayerRenderer.js`, `src/net.js`, `src/protocol.js`, `server/game.js`, `src/main.js`, `src/diagnostics.js`
+
+The menus, the title screen and the tablet controls take one look, after Apple's Liquid Glass: translucent layers that blur
+and brighten the world behind them, a light rim along the top edge, soft depth below, rounded type, and honey as the one
+accent. The survival screens keep their honey hexagons (the pack, the handbook, the death screen, the Survival hotbar).
+
+Why not a UI framework: the leading game-UI kits are engine-native (Coherent Gameface, NoesisGUI, RmlUi, Unity UI
+Toolkit) and do not run in a browser page; the emergent web one for three.js, pmndrs/uikit (with an Apple Vision Pro–like
+"apfel" kit), draws its panels in WebGL, where nothing can blur the world behind a panel without an extra render pass, and
+its text fields do not bring up the iPad keyboard the way a DOM field does. Liquid Glass's defining trait — the blurred,
+brightened world behind the glass — is exactly CSS `backdrop-filter` over the canvas. So the menus stay DOM (with every
+test that drives them) and the look is a small set of tokens and rules in styles.css. SVG refraction (`backdrop-filter:
+url(#…)`) is Chromium-only, and Safari parses it and draws nothing, so it is not used.
+
+### 97.1 The tokens and the rules
+
+- `:root` (once): `--ui-font` (ui-rounded → SF Pro Rounded on Apple devices, then Nunito, Segoe UI, system-ui),
+  `--glass-dark`, `--glass-panel` (a dark tinted gradient: white words stay legible over sky and over dirt),
+  `--glass-button`, `--glass-button-hover`, `--glass-control` (a tablet button over the world), `--glass-rim`,
+  `--glass-rim-soft`, `--glass-shine` (inset top highlight), `--glass-depth` (soft drop shadow), `--glass-text-dim`,
+  `--glass-text-faint`, `--honey`, `--honey-tint`, `--honey-rim`, `--honey-solid` (the primary button's fill).
+- Every `backdrop-filter` is written twice, `-webkit-backdrop-filter` with the same LITERAL value (Safari reads only the
+  prefixed one, and a custom property does not resolve inside it); `tests/unit/glass.test.js` holds every rule to it.
+- No glass where it cannot be drawn (`@supports not (backdrop-filter…)`: a solid dark tint) or is not wanted
+  (`prefers-reduced-transparency: reduce`: solid, no blur).
+- `.mc-button` everywhere is a glass button (rounded 14 px, the rounded type; `.toggle` a pill, honey-tinted while on,
+  dark while `.off`; `.danger` red on hover). `.hex-button` stays a honey hexagon except inside `#pause-menu` and
+  `#title-screen`, where it is a glass capsule. Panels: the pause menu's `.menu-panel` (a 500 px sheet, radius 30), the
+  Worlds and Play together panels, `.dialog-panel`, `.console-panel`, `.picker-panel`; the Creative `#hotbar` is a glass
+  tray with a white-and-honey selected slot; the chat lines are small glass chips; "Click to play" a glass capsule.
+- The title screen lays a soft sky over its dirt (`#title-screen::before`, behind the panels). Play together is one
+  compact band (its name and the server's line on the left, the name box and a honey Join on the right; stacked under
+  620 px). On a tablet the Guide and Avatar buttons sit side by side.
+
+### 97.2 The tablet controls
+
+The buttons say what they do: **Jump, Mine, Place, Action, Crouch, Drop**, and along the top **Menu, Pack (Blocks in
+Creative), Camera, Chat** (`TOUCH_BUTTONS`; the ids are unchanged). Round buttons are dark glass with a sheen; pressed is
+honey, latched (Crouch on, flying) a honey ring. The top bar is one glass capsule of words, 44 px tall; Back is a glass
+capsule. The stick's hexagon is a light rim on dark glass with a white glass knob (honey while sprinting). In touch mode
+the hints use the same words: `hud.setHintWords(touchWords)` rewrites every hint — "R" → "Action" ("R key" → "Action
+button"), "Shift+R" → "Crouch + Action", "LMB" → "Mine", "RMB" and "right-click" → "Place" — whole words only, so a name
+with an R in it is untouched. The key sheets (title and pause menu) are not shown on a tablet, nor the picker's key hint.
+Remote players' name tags are white words on a dark glass capsule with a light rim.
+
+### 97.3 The pause menu on a server
+
+Under `html.on-server` (set when the welcome arrives, cleared on leaving) the pause menu shows **Playing here** (you, then
+the others by name; `#pause-players`, refreshed on pausing and on every join and leave), Back to Game (honey), You
+(Avatar, View), Sound, the Guide and **Leave Server** — and not Save World, Stop All Rune Scripts, Physics, Undo,
+Creatures, Mode, Devices or the seed: the host's world decides those. The console is the chat: "Say something to
+everyone…", "Enter: send · Esc: close", in the rounded type. `?ui=pause` (with ?autoplay or ?join) opens the pause menu
+for screenshots.
+
+### 97.4 Joining again
+
+A connection that drops while playing (Wi-Fi, an iPad that slept, the server restarting) is joined again by itself:
+back to the title, "Connection lost: joining again… (n of 3)", and the same name again after `REJOIN_GAP_S` (2 s), up to
+`REJOIN_TRIES` (3) — `net.shouldRejoin(reason, { refused, inWorld, tries })`. Never after a refusal (full, another
+version) or when this browser joined again elsewhere (`REPLACED_REASON`, "joined again from elsewhere", the server's 4001
+close: two tabs would take turns for ever); a first join that fails is not retried. Leaving by the menu never rejoins.
+
+### 97.5 Flight is a double tap of Jump
+
+There is no Fly button: two presses of Jump within `DOUBLE_TAP_SPACE_MS` (300 ms) toggle flight in Creative, exactly as a
+double-tapped Space does (`controls.setVirtualJump`'s rising edge goes through the same `jumpTap` as Space's keydown; each
+toggle consumes both taps; main ignores the toggle in Survival). Jump glows (`.on`) while flying.
+
+## 98. Every item in Creative, and the item in hand — `src/creativePicks.js` (PURE), `src/storage.js`, `src/hud.js`, `src/main.js`, `src/protocol.js`, `src/net.js`, `server/game.js`, `src/remotePlayerRenderer.js`, `src/types.js`, `src/commands.js`
+
+Creative offers every item of the game, not only blocks (the user: "there're no tools available in creative"; chosen:
+every item, shown in the hand and on the avatar).
+
+### 98.1 What a Creative hotbar slot holds
+
+A **pick** is a block id (a number, as before) or the KEY of an item whose kind is not `'block'` (a string: a tool, a
+weapon, food, a material, clothes, a bandage). A block's item is always its block id. `creativePicks.js`:
+`isItemPick(v)`, `isHotbarPick(v)` (a block id 0..255 or an item pick), `normalizePick(v)` (an old key under its new
+name, §64 aliases; null for anything else), `pickItemKey(v)` (the item in hand: a block's item, the item itself, null for
+AIR), `pickName(v)`. The Creative `hotbar` is `Array<number|string>`; saves keep it (`storage.validHotbarCopy`: every slot
+a block id or a normalised item pick, else the default hotbar as before; `SaveData.hotbar`), `main.hotbarFrom` likewise.
+The HUD draws an item pick with the item icon sheet (`itemIcons.draw`) and a block as before; the slot toast names it.
+
+### 98.2 Using items in Creative
+
+Blocks still break at once whatever is in hand. **Mine** on a zombie strikes with the tool's power (`strikeKind('zombie',
+tool).power`: a sword hits harder than a bare hand; animals are still only shoved in Creative). **Place** with a rock, a
+dart or a spear in hand throws it (`useCreativeItem`: `throwOf(key).power > 0`; Creative never runs out; G throws any item
+as before); with anything else it does nothing. **Action** (R) feeds, shears and baits through `heldItemKey()`, which is
+now the item pick itself. **Drop** drops it (a Creative drop is a ghost, §60).
+
+### 98.3 The item in hand, for everyone
+
+`main.drawAvatar` gives `avatarRenderer.setHeld(heldItemKey())` every frame (null on the death screen): the item shows in
+the first-person hand and on the avatar model, in both modes. On a server the client sends `{ t: 'held', item }` when it
+changes (`NetClient.sendHeld`; again after every welcome); the server keeps `player.held` (`protocol.cleanHeld`: an item
+key of the game, else null), tells the others `{ t: 'held', id, item }` when it changes, and puts `held` in the welcome's
+`players`. `RemotePlayers` keeps `held` (`join`, `setHeld`); `remotePlayerRenderer` gives it to that player's avatar
+renderer.
+
+### 98.4 The item in hand, drawn (`heldItem.js` PURE, `avatarRenderer.js`)
+
+Only a non-block item with its own picture is drawn; a block item, an unknown key or an empty hand shows nothing (blocks
+in hand come later).
+
+- `extrudeItemArt(rgba, size, { pixel = HELD_PIXEL, grip = [size/2, size/2], turn = 0 })` → `{ positions, normals,
+  colors }` (Float32Array, non-indexed triangles wound counter-clockwise seen from outside): every solid pixel (alpha >
+  127) has a front (+z) and a back (−z) square, and a side square only where the neighbour on that side is empty or off
+  the picture — a closed slab one pixel thick (z ±pixel/2) with no inner faces. Each face takes its pixel's colour made
+  linear (`srgbByteToLinear`). The picture stands upright (row 0 at the top); the grip point `[u, v]` (art pixels from the
+  top-left; pixel (x, y) covers [x, x+1] × [y, y+1]) sits at the origin; then the whole is turned `turn` radians about z.
+  An empty picture gives empty arrays.
+- `heldGrip(rgba, size, { wielded, handleTop })` → `{ style, grip, turn, pixel }`, from the pixels: **'tool'** — a wielded
+  picture (`heldWielded(key)`: a `tool` def, or a dart) with a haft at its handle end (one of the `HELD_HAFT_ROWS` 4 rows
+  there at most `HELD_HAFT_PX` 4 pixels across; the bottom, the top for a shovel), gripped `HELD_GRIP_IN` 3 pixels in from
+  that end, turned so the middle of its solid pixels lies straight ahead of the grip, `pixel` `HELD_PIXEL` 0.025 m (a
+  16-pixel pick is 0.4 m: a child's tool); **'lump'** — everything else (food, materials, pots, the hammerstone, the fire
+  drill, the crucible, the mold), held at the middle of its solid pixels, unturned, `HELD_PIXEL × HELD_LUMP_SCALE` 0.7.
+- `heldItemShown(key)`, `heldItemGeometry(key)` → `{ style, grip, turn, pixel, positions, normals, colors }` or null.
+- `setHeld(key)` / `heldKey()`: one cached `BufferGeometry` per key (freed by `dispose()`); two meshes, `avatar-held` on the
+  current model's right forearm (`arms[1].elbow`) and `avatar-fp-held` on the first-person arm's (`fpElbow`), the grip at
+  the middle of the hand; `setAvatar` moves them; they follow the walk, every stance and the action swing. Poses
+  `HELD_POSE` (the model: a tool ahead and a little up, its face to the side; a lump upright in front of the fist) and
+  `FP_HELD_POSE` (first person: a tool up and away from the hand at the lower right, a lump on the hand). The model's item
+  is `MeshLambertMaterial({ vertexColors: true })`; the first-person one is drawn like the arm (the arm's material
+  generalised: the light volume at the eye, `FP_DEPTH`, `FP_RENDER_ORDER`, never culled), programs `FP_ARM_PROGRAM`
+  'caelancraft-avatar-arm' and `FP_HELD_PROGRAM` 'caelancraft-avatar-held', both compiled by `prewarm` (an empty slab
+  stands in before anything is held).
+- Tests: `tests/unit/heldItem.test.js`, `tests/unit/avatarRenderer.test.js`, `tests/unit/creativeItems.test.js`.
+
+### 98.5 Every item in the picker (`pickerModel.js` PURE, `pickerUI.js`, `menus.js`)
+
+Amends §56. A picker pick is the §98.1 pick (`pickerModel.Pick`, `number|string`); an item key is never a number, so `===`
+tells them apart. `buildPickerModel(blocks = BLOCKS, items = ITEMS)` keeps its shape with picks (`order: Pick[]`,
+`info: Map<Pick, {name, displayName, section, family, text}>`, `Family.ids: Pick[]`, `PickerSection.iconId: Pick`), a new
+entry `{ type: 'item', key }`, and `entryOf(pick)`. After the 11 block sections (and the blocks' "Other") come
+`PICKER_ITEM_SECTIONS`: **Tools** (families Picks, Axes, Shovels, Hammers, Knives in tier order, unit "tools"; the fire
+drill, the crucible, the casting mold, the handbook), **Weapons** (Swords; the spear; Darts; the rock), **Food** (Meat, Fish
+& Eggs, Fruit & Nuts, Roots & Tubers, Mushrooms, Pots; snow), **Materials** (Flint & Obsidian, Wood & Fibre, Fuel,
+Minerals, Metals, Hide & Rag, Clay & Pottery, Powder & Parts, Seeds; singles) and **Clothes & Healing**; then "Other Items"
+(`OTHER_ITEMS_SECTION_ID` 'other-items': any item no table names; empty today). Each item section is at most 14 entries.
+Search finds an item by its name, key, family, section, singular, old keys, its tool type's words (`PICKER_TOOL_WORDS`:
+pick → pickaxe; shovel → spade; …) and `PICKER_ITEM_ALIASES`; the count reads "2 blocks · 10 items"; the placeholder is
+"Search blocks and items ( / )". `blurbFor(pick)` for an item: `purposeOf(key)`, else `PICKER_ITEM_LINES[key]`, else a line
+from its data (food: "+4 Nourishment, +2 Hydration." — never a sick chance, so a look-alike reads like the food it
+imitates). An item cell is `.picker-cell.picker-item` with `data-item-key`, drawn with `itemIcons`; `onPickBlock(pick,
+slot)` passes the number or the string unchanged. On a window under 900 px tall the rail's buttons are 26 px (§56's 34 px
+above) so all 16 fit. The console's `give <block|item> [slot]` hands out an item too (Creative).

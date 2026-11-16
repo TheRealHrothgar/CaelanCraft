@@ -6,10 +6,15 @@
 // builds one of these and maps showPicker / hidePicker / isPickerOpen onto it, so main's picker API is unchanged.
 //
 // DOM module. Every DOM access goes through the `doc` and elements handed to createPickerUI and happens inside a function,
-// so the module can be imported (and unit-tested on a fake DOM) under Node. Imports: config, blocks, atlas, pickerModel.
+// so the module can be imported (and unit-tested on a fake DOM) under Node. Imports: config, blocks, atlas, itemIcons,
+// pickerModel.
+//
+// Every item too: a cell holds a PICK — a block id (`data-block-id`, its prism from the atlas) or the key of an item that is
+// not a block item (`data-item-key`, `.picker-item`, its icon from the item sheet, itemIcons.js); onPick passes it unchanged.
 import { HOTBAR_SIZE } from './config.js';
 import { getBlockDef } from './blocks.js';
 import { drawBlockIcon } from './atlas.js';
+import { createItemIcons } from './itemIcons.js';
 import {
   buildPickerModel, layoutPicker, navigate, pushRecent, blurbFor, familyLine, searchBlocks, pickerCols, normalizeQuery,
   PICKER_ROW_H, RECENT_SECTION_ID,
@@ -27,7 +32,18 @@ export const DRAG_START_PX = 6;
 /** `#picker-name` while nothing is hovered: a non-breaking space keeps the line's height. */
 const NAME_IDLE = ' ';
 /** The search's "nothing found" line. @param {string} q */
-export const noMatchText = (q) => `No blocks match "${q}"`;
+export const noMatchText = (q) => `No blocks or items match "${q}"`;
+/**
+ * The search's count line: `1 block`, `3 items`, `16 blocks · 2 items`.
+ * @param {ReadonlyArray<number|string>} found  the matching picks
+ */
+export function resultsText(found) {
+  const items = found.filter((p) => typeof p === 'string').length;
+  const blocks = found.length - items;
+  /** @param {number} n @param {string} word */
+  const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  return [blocks ? count(blocks, 'block') : '', items ? count(items, 'item') : ''].filter(Boolean).join(' · ');
+}
 
 /**
  * @typedef {Object} PickerElements  the picker's static elements in index.html (menus.js binds and checks them)
@@ -41,16 +57,19 @@ export const noMatchText = (q) => `No blocks match "${q}"`;
  * @property {HTMLElement} pickerScroll  #picker-scroll, the scroll region
  */
 
+/** @typedef {import('./pickerModel.js').Pick} Pick  a block id or an item key */
+
 /**
  * @typedef {Object} PickerCallbacks
- * @property {(id: number, slot: number|null) => void} [onPick]   a block for the selected slot (null: main closes the picker)
- *   or for slot 0..8 (the picker stays open)
+ * @property {(pick: Pick, slot: number|null) => void} [onPick]   a block id or an item key for the selected slot (null: main
+ *   closes the picker) or for slot 0..8 (the picker stays open)
  * @property {() => void} [onClose]                               E / Esc: main closes the picker
  */
 
 /**
  * @typedef {Object} PickerUI
- * @property {(hotbar: number[], selected: number) => void} show   open (or, when open, refresh the slot badges only)
+ * @property {(hotbar: Pick[], selected: number) => void} show   open (or, when open, refresh the slot badges only); the
+ *   hotbar holds block ids and item keys (an empty slot is anything no cell holds, e.g. 0 or null)
  * @property {() => void} hide
  * @property {() => boolean} isOpen
  * @property {() => void} dispose
@@ -83,6 +102,8 @@ const NAV_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Pa
  */
 export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
   const model = buildPickerModel();
+  /** the item icon sheet (painted lazily, cell by cell, the first time an item's icon is drawn) */
+  const itemIcons = createItemIcons(doc, atlasCanvas);
   const win = doc.defaultView || globalThis;
   /** Timers through the document's window (a test's window stand-in may have none: then the global ones). */
   const timers = typeof win.setTimeout === 'function' ? win : globalThis;
@@ -94,21 +115,21 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
   const state = {
     open: false,
     disposed: false,
-    /** @type {number[]} */
+    /** @type {Pick[]} */
     hotbar: [],
     selected: 0,
     query: '',
     /** @type {string|null} the open family (remembered for the session) */
     openFamily: null,
     showAll: false,
-    /** @type {number[]} newest first, applied on the next show() so the grid never jumps under the pointer */
+    /** @type {Pick[]} newest first, applied on the next show() so the grid never jumps under the pointer */
     recent: [],
-    /** @type {number[]} the Recent row as laid out */
+    /** @type {Pick[]} the Recent row as laid out */
     recentShown: [],
     cols: 0,
     /** the roving cell (one cell is tabbable) */
     focusIndex: 0,
-    /** @type {number|null} block id under the pointer or focus (1–9 put it in that slot) */
+    /** @type {Pick|null} the block or item under the pointer or focus (1–9 put it in that slot) */
     hoverId: null,
     /** @type {HTMLElement|null} */
     hoverCell: null,
@@ -130,7 +151,7 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
   const listeners = [];
   /** @type {Set<string>} */
   const warned = new Set();
-  /** @type {null|{ id: number, cell: HTMLElement, x0: number, y0: number, started: boolean, ghost: HTMLElement|null, slot: HTMLElement|null, pointerId: number }} */
+  /** @type {null|{ id: Pick, cell: HTMLElement, x0: number, y0: number, started: boolean, ghost: HTMLElement|null, slot: HTMLElement|null, pointerId: number }} */
   let drag = null;
   /** @type {null|{ y0: number, top0: number, moved: boolean, pointerId: number }} */
   let scrollDrag = null;
@@ -190,31 +211,51 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
   function reveal(node, behavior = 'smooth') {
     if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest', behavior });
   }
-  /** @param {number} id @param {number} px @returns {HTMLCanvasElement} */
+  /** A block's prism (atlas) or an item's icon (the item sheet). @param {Pick} id @param {number} px @returns {HTMLCanvasElement} */
   function iconCanvas(id, px) {
     const c = /** @type {HTMLCanvasElement} */ (make('canvas'));
     c.width = px;
     c.height = px;
+    if (typeof id === 'string') {
+      safe(() => {
+        const ctx = c.getContext('2d');
+        if (ctx) itemIcons.draw(ctx, id, px);
+      }, 'item icons');
+      return c;
+    }
     safe(() => {
       const ctx = c.getContext('2d');
       if (ctx) drawBlockIcon(ctx, atlasCanvas, id, px);
     }, 'block icons');
     return c;
   }
-  const nameOf = (id) => getBlockDef(id).displayName;
+  /** @param {Pick} id @returns {string} */
+  const nameOf = (id) => model.info.get(id)?.displayName ?? (typeof id === 'number' ? getBlockDef(id).displayName : String(id));
+  /** @param {HTMLElement} cell @returns {Pick|null} the block id or item key a (non-family) cell holds */
+  function pickOf(cell) {
+    const key = cell.dataset.itemKey;
+    if (key !== undefined) return key;
+    const id = cell.dataset.blockId;
+    return id !== undefined ? Number(id) : null;
+  }
 
   // ---- cells ------------------------------------------------------------------------------------------------------------
 
-  /** A block cell (cached per context: the Recent row and the main grid each have their own). @param {number} id @param {string} ctx */
+  /**
+   * A block or item cell (cached per context: the Recent row and the main grid each have their own). An item key is never
+   * a number, so `<ctx>:<pick>` never names two cells.
+   * @param {Pick} id @param {string} ctx
+   */
   function blockCell(id, ctx) {
     const cacheKey = `${ctx}:${id}`;
     let cell = cellCache.get(cacheKey);
     if (cell) return cell;
-    cell = make('button', 'picker-cell');
+    cell = make('button', typeof id === 'string' ? 'picker-cell picker-item' : 'picker-cell');
     cell.setAttribute('type', 'button');
     cell.setAttribute('role', 'gridcell');
     cell.setAttribute('tabindex', '-1');
-    cell.dataset.blockId = String(id);
+    if (typeof id === 'string') cell.dataset.itemKey = id;
+    else cell.dataset.blockId = String(id);
     cell.title = nameOf(id);
     cell.setAttribute('aria-label', nameOf(id));
     const icon = iconCanvas(id, PICKER_ICON_PX);
@@ -256,13 +297,14 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
 
   /**
    * Three member icons fanned like a hand of cards: the third and second tilted behind, the first in front.
-   * @param {HTMLCanvasElement} canvas @param {number[]} ids
+   * @param {HTMLCanvasElement} canvas @param {Pick[]} ids
    */
   function drawFan(canvas, ids) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const S = PICKER_ICON_PX;
     const s = 42;
+    /** @type {Array<[Pick, number, number, number]>} [pick, angle, centre x, centre y] */
     const picks = [
       [ids[2] ?? ids[1] ?? ids[0], 0.26, S - s / 2 - 1, s / 2 + 3],
       [ids[1] ?? ids[0], -0.26, s / 2 + 1, s / 2 + 3],
@@ -294,17 +336,22 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
 
   /** @param {import('./pickerModel.js').Entry} entry @param {string} ctx */
   function cellFor(entry, ctx) {
-    return entry.type === 'family' ? familyCell(entry) : blockCell(entry.id, ctx);
+    if (entry.type === 'family') return familyCell(entry);
+    return blockCell(entry.type === 'item' ? entry.key : entry.id, ctx);
   }
 
   // ---- slot badges --------------------------------------------------------------------------------------------------------
 
-  /** Round badges on the blocks already in the hotbar (their slot number) and a honey ring on the block in the selected slot. */
+  /**
+   * Round badges on the blocks and items already in the hotbar (their slot number; compared with ===, so the block id 12 and
+   * the key '12' never match) and a honey ring on the one in the selected slot.
+   */
   function markHotbar() {
     const bar = state.hotbar;
     for (const [cacheKey, cell] of cellCache) {
       if (cacheKey.startsWith('fam:')) continue;
-      const id = Number(cell.dataset.blockId);
+      const id = pickOf(cell);
+      if (id === null) continue;
       const slot = bar.indexOf(id);
       const badge = /** @type {HTMLElement|null} */ (cell.querySelector('.picker-badge'));
       if (slot >= 0) {
@@ -335,10 +382,10 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
       els.pickerBlurb.textContent = '';
       return;
     }
-    const id = Number(cell.dataset.blockId);
+    const id = pickOf(cell);
     state.hoverId = id;
-    els.pickerName.textContent = nameOf(id);
-    els.pickerBlurb.textContent = blurbFor(id);
+    els.pickerName.textContent = id === null ? NAME_IDLE : nameOf(id);
+    els.pickerBlurb.textContent = id === null ? '' : blurbFor(id);
   }
 
   /** Clear the line, but only if `cell` is still the hovered one (pointer and focus events interleave). @param {HTMLElement} [cell] */
@@ -369,9 +416,9 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
     grid.style.setProperty('--cols', String(state.cols));
     grid.classList.toggle('searching', Boolean(normalizeQuery(state.query)));
     if (normalizeQuery(state.query)) {
-      const n = searchBlocks(model, state.query).length;
-      grid.appendChild(make('div', 'picker-results', n === 0 ? noMatchText(String(search.value ?? state.query).trim())
-        : `${n} block${n === 1 ? '' : 's'}`));
+      const found = searchBlocks(model, state.query);
+      grid.appendChild(make('div', 'picker-results', found.length === 0 ? noMatchText(String(search.value ?? state.query).trim())
+        : resultsText(found)));
     }
     /** @type {HTMLElement} */
     let container = grid;
@@ -503,7 +550,7 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
 
   // ---- picking ------------------------------------------------------------------------------------------------------------
 
-  /** @param {number} id @param {number|null} slot */
+  /** @param {Pick} id @param {number|null} slot */
   function pick(id, slot) {
     state.recent = pushRecent(state.recent, id);
     if (slot !== null) {
@@ -566,14 +613,31 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
     setCurrent(current);
   }
 
-  /** @param {string|null} id */
+  /**
+   * Mark section `id`'s rail button `.current`. With the item sections the rail can be taller than the panel (16 buttons): a
+   * button that becomes current is scrolled into the rail's view (the rail only; nothing else moves).
+   * @param {string|null} id
+   */
   function setCurrent(id) {
     for (const [sid, b] of railButtons) {
       const cur = sid === id;
+      const was = b.classList.contains('current');
       b.classList.toggle('current', cur);
       if (cur) b.setAttribute('aria-current', 'true');
       else b.removeAttribute('aria-current');
+      if (cur && !was) keepInRail(b);
     }
+  }
+
+  /** Scroll the rail (not the page, not the grid) just enough to show button `b`. @param {HTMLElement} b */
+  function keepInRail(b) {
+    const rail = els.pickerRail;
+    if (typeof rail.getBoundingClientRect !== 'function' || typeof b.getBoundingClientRect !== 'function') return;
+    const r = rail.getBoundingClientRect();
+    const br = b.getBoundingClientRect();
+    if (!(r.height > 0)) return;
+    if (br.top < r.top) rail.scrollTop = (Number(rail.scrollTop) || 0) - (r.top - br.top);
+    else if (br.bottom > r.bottom) rail.scrollTop = (Number(rail.scrollTop) || 0) + (br.bottom - r.bottom);
   }
 
   // ---- search -------------------------------------------------------------------------------------------------------------
@@ -607,8 +671,9 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
     const i = flat.indexOf(cell);
     if (i >= 0) state.focusIndex = i;
     const fam = cell.dataset.family;
+    const id = pickOf(cell);
     if (fam !== undefined) toggleFamily(fam, { focus: doc.activeElement === cell });
-    else pick(Number(cell.dataset.blockId), null);
+    else if (id !== null) pick(id, null);
   });
   on(grid, 'mouseover', (e) => {
     const cell = cellOf(e);
@@ -641,9 +706,9 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
   function onPointerDown(e) {
     if (e.button !== undefined && e.button !== 0) return;
     const cell = cellOf(e);
-    if (cell && cell.dataset.blockId !== undefined) {
-      drag = { id: Number(cell.dataset.blockId), cell, x0: e.clientX, y0: e.clientY, started: false, ghost: null, slot: null,
-        pointerId: e.pointerId };
+    const id = cell ? pickOf(cell) : null;
+    if (cell && id !== null) {
+      drag = { id, cell, x0: e.clientX, y0: e.clientY, started: false, ghost: null, slot: null, pointerId: e.pointerId };
       try {
         cell.setPointerCapture(e.pointerId);
       } catch {}
@@ -852,8 +917,9 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
     if (key === 'Enter' || key === ' ' || key === 'Spacebar') {
       e.preventDefault();
       if (e.repeat) return;
+      const id = pickOf(cell);
       if (fam !== undefined) toggleFamily(fam, { focus: true });
-      else pick(Number(cell.dataset.blockId), null);
+      else if (id !== null) pick(id, null);
       return;
     }
     if (fam !== undefined && key === 'ArrowRight' && !state.showAll) {
@@ -906,7 +972,7 @@ export function createPickerUI(doc, els, atlasCanvas, callbacks = {}) {
 
   // ---- open / close -------------------------------------------------------------------------------------------------------
 
-  /** @param {number[]} hotbar @param {number} selected */
+  /** @param {Pick[]} hotbar @param {number} selected */
   function show(hotbar, selected) {
     if (state.disposed) return;
     state.hotbar = Array.isArray(hotbar) ? hotbar.slice(0, HOTBAR_SIZE) : [];

@@ -702,11 +702,21 @@ describe('executeCommand — time / fly / give / say', () => {
     expect(exec(ctx, `give red_wool ${HOTBAR_SIZE}`).message).toBe(`gave wool_red to slot ${HOTBAR_SIZE}`);
     expect(ctx.hotbar[HOTBAR_SIZE - 1]).toBe(B.WOOL_RED);
     expect(exec(ctx, 'give water 1').ok).toBe(true); // water is placeable
-    expect(exec(ctx, 'give stone 0')).toEqual({ ok: false, message: `give: slot must be 1-${HOTBAR_SIZE} — usage: give <block> [slot 1-9]` });
+    expect(exec(ctx, 'give stone 0')).toEqual({ ok: false, message: `give: slot must be 1-${HOTBAR_SIZE} — usage: give <block|item> [slot 1-9]` });
     expect(exec(ctx, `give stone ${HOTBAR_SIZE + 1}`).ok).toBe(false);
-    expect(exec(ctx, 'give bedrock')).toEqual({ ok: false, message: 'give: "bedrock" is not placeable — usage: give <block> [slot 1-9]' });
+    expect(exec(ctx, 'give bedrock')).toEqual({ ok: false, message: 'give: "bedrock" is not placeable — usage: give <block|item> [slot 1-9]' });
     expect(exec(ctx, 'give air').message).toContain('"air" is not placeable');
     expect(exec(ctx, 'give nope').message).toContain('unknown block "nope"');
+  });
+
+  it('§98: give hands out an item that is not a block, as itself', () => {
+    const { ctx } = makeCtx();
+    ctx.selected = 0;
+    expect(exec(ctx, 'give steel_sword')).toEqual({ ok: true, message: 'gave Steel Sword to slot 1' });
+    expect(ctx.hotbar[0]).toBe('steel_sword');
+    expect(exec(ctx, 'give stone_hammer 4').message).toBe('gave Hammerstone to slot 4'); // an old key, read anew
+    expect(ctx.hotbar[3]).toBe('hammerstone');
+    expect(exec(ctx, 'give iron_pick 0').ok).toBe(false);
   });
 
   it('say forwards the text and returns no message', () => {
@@ -1325,7 +1335,7 @@ describe('executeCommand — Creative-only commands in Survival', () => {
 
   it('give fails in Survival and points at pack add; it still works in Creative', () => {
     const { ctx } = makeCtx({ survival: fakeSurvival() });
-    expect(exec(ctx, 'give stone')).toEqual({ ok: false, message: 'give: in Survival use: pack add <item> [count] — usage: give <block> [slot 1-9]' });
+    expect(exec(ctx, 'give stone')).toEqual({ ok: false, message: 'give: in Survival use: pack add <item> [count] — usage: give <block|item> [slot 1-9]' });
     expect(ctx.setHotbarSlot).not.toHaveBeenCalled();
     ctx.survival.mode = 'creative';
     expect(exec(ctx, 'give stone').ok).toBe(true);
@@ -1518,7 +1528,7 @@ describe('executeCommand — circuits and black holes (DESIGN-circuits §6.5)', 
 
   it('give black_hole explains; the blast_barrel alias (and its display form) still names the powder keg', () => {
     const { ctx, world } = makeCtx();
-    expect(exec(ctx, 'give black_hole')).toEqual({ ok: false, message: 'give: a black hole cannot be held — give collapsar_charge and set it off — usage: give <block> [slot 1-9]' });
+    expect(exec(ctx, 'give black_hole')).toEqual({ ok: false, message: 'give: a black hole cannot be held — give collapsar_charge and set it off — usage: give <block|item> [slot 1-9]' });
     expect(exec(ctx, 'give collapsar_charge').message).toBe('gave collapsar_charge to slot 1');
     expect(resolveBlock('blast_barrel')).toEqual({ id: B.POWDER_KEG });
     expect(resolveBlock('BLAST_BARREL')).toEqual({ id: B.POWDER_KEG });

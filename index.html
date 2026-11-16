@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Caelancraft</title>
+  <!-- The iPad (CONTRACTS §95): a home-screen web app that opens full screen. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Caelancraft">
+  <meta name="theme-color" content="#1c1a24">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/src/styles.css">
 </head>
 <body>
@@ -81,7 +89,7 @@ say Tower built"></textarea>
     <div class="picker-panel" role="dialog" aria-label="Blocks">
       <div class="picker-head">
         <div class="picker-title">Blocks</div>
-        <input id="picker-search" type="search" placeholder="Search blocks  ( / )" autocomplete="off" spellcheck="false" aria-label="Search blocks">
+        <input id="picker-search" type="search" placeholder="Search blocks and items  ( / )" autocomplete="off" spellcheck="false" aria-label="Search blocks and items">
         <label class="picker-showall"><input id="picker-showall" type="checkbox"> Show all</label>
       </div>
       <div class="picker-body">
@@ -120,6 +128,8 @@ say Tower built"></textarea>
     <div class="menu-panel">
       <h2 class="menu-title">Game Paused</h2>
       <div id="pause-world" class="menu-subtitle hidden"></div>
+      <!-- §97.3: on a server, who is playing (main fills it; CSS shows it only under html.on-server) -->
+      <div id="pause-players" aria-live="polite"></div>
       <button id="btn-resume" class="mc-button">Back to Game</button>
       <!-- Avatars and the view (CONTRACTS §91): who you are, and V's view. avatarMenu.js keeps both labels. -->
       <div id="pause-you" class="physics-row">
@@ -194,6 +204,15 @@ say Tower built"></textarea>
   <div id="title-screen" class="layer">
     <canvas id="title-logo" width="200" height="32"></canvas>
     <div id="splash-text"></div>
+    <section id="server-panel" class="server-panel" hidden aria-labelledby="server-title">
+      <h2 id="server-title" class="worlds-title">Play together</h2>
+      <div id="server-info" class="worlds-note"></div>
+      <div class="server-row">
+        <input id="server-name" class="server-name" type="text" maxlength="20" placeholder="Your name" autocomplete="off" autocapitalize="words" spellcheck="false" aria-label="Your name">
+        <button id="btn-join" type="button" class="hex-button server-join">Join</button>
+      </div>
+      <div id="server-message" class="worlds-message" role="status" aria-live="polite"></div>
+    </section>
     <div class="title-main">
       <section id="worlds-panel" class="worlds-panel" aria-labelledby="worlds-title">
         <div class="worlds-head"><h2 id="worlds-title" class="worlds-title">Worlds</h2><span id="worlds-count" class="worlds-note"></span></div>

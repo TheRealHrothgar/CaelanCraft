@@ -258,7 +258,7 @@
  * @property {number} time            0..1 day fraction
  * @property {number} day
  * @property {{x:number, y:number, z:number, yaw:number, pitch:number, flying:boolean}} player
- * @property {number[]} hotbar        length 9, BlockIds
+ * @property {Array<number|string>} hotbar  length 9: BlockIds, or (§98) keys of items that are not blocks
  * @property {number} selected        0..8
  * @property {EditsJSON} edits
  * @property {RunesJSON} [runes]      optional; absent/empty when the world has no customised rune blocks

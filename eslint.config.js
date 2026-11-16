@@ -8,7 +8,7 @@ export default [
     languageOptions: { ecmaVersion: 2024, sourceType: 'module', globals: globals.browser },
   },
   {
-    files: ['tests/**/*.js', 'scripts/**/*.{js,mjs}', '*.config.js'],
+    files: ['tests/**/*.js', 'scripts/**/*.{js,mjs}', 'server/**/*.js', '*.config.js'],
     languageOptions: { ecmaVersion: 2024, sourceType: 'module', globals: { ...globals.node, ...globals.browser } },
   },
   {

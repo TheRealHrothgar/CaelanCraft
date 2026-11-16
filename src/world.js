@@ -69,6 +69,8 @@ import { normalizeSeed } from './noise.js';
  *                                       With an injected worldGen it defaults to that generator's own `gen` (or 1).
  * @property {() => number} [now]        millisecond clock; default performance.now / Date.now
  * @property {Object<string, number[]>} [bricks]  saved bricks (BrickGrid.export, §93.8), loaded before any chunk is generated
+ * @property {boolean} [mesh]  false: a headless world (the multiplayer server, DESIGN-multiplayer §2) that never builds a
+ *   mesh; it streams with updateCentres
  */
 
 /**
@@ -191,6 +193,8 @@ export class World {
 
     /** @type {() => number} */
     this._now = typeof opts.now === 'function' ? opts.now : defaultClock();
+    /** false: a headless world (the multiplayer server) — no meshes are ever built */
+    this.meshing = opts.mesh !== false;
 
     /** @type {Map<number, Chunk>} packId → Chunk; mirrors `chunks` for string-free lookups */
     this._byId = new Map();
@@ -308,6 +312,20 @@ export class World {
   }
 
   /** @returns {boolean} a liquid hex (a brick may displace it) */
+  /**
+   * A cell the multiplayer server says changed: in a loaded chunk set at once (setBlock: the hook fires, the chunk
+   * re-meshes); in one not generated here yet kept as an edit that chunk applies when it is (importEdits).
+   * @returns {boolean} a loaded cell changed
+   */
+  applyServerCell(q, y, r, id) {
+    if (this.setBlock(q, y, r, id)) return true;
+    const cq = Math.floor(q / CHUNK_SIZE);
+    const cr = Math.floor(r / CHUNK_SIZE);
+    if (this._byId.has(packId(cq, cr)) || !(y >= 0 && y < WORLD_HEIGHT)) return false;
+    this.importEdits({ [chunkKey(cq, cr)]: [localIndex(q - cq * CHUNK_SIZE, y, r - cr * CHUNK_SIZE), id] });
+    return false;
+  }
+
   isLiquidCell(id) {
     return id !== UNLOADED && !isSolid(id) && isLiquidId(id);
   }
@@ -1003,6 +1021,59 @@ export class World {
       return [x, col.height + 1, z];
     }
     return null;
+  }
+
+  /**
+   * The multiplayer server's streaming step (DESIGN-multiplayer §2): keep the world loaded round SEVERAL centres — every
+   * player's position, as world [x, z]. A chunk is unloaded only when it lies beyond the unload radius of every centre (its
+   * edits stay); the data disc round each centre is generated nearest-first ACROSS the centres (ring step k of every
+   * centre before step k + 1), so a player far from the others is served as soon as one near them, up to
+   * MAX_BUILDS_PER_UPDATE generations or `budgetMs`. Light is flushed first, as in update(). Builds no mesh (a headless
+   * world); with no centre it does nothing.
+   * @param {ReadonlyArray<readonly [number, number]>} centres
+   * @param {number} [budgetMs]
+   * @returns {{ generated: number, unloaded: number, pendingGen: number }}
+   */
+  updateCentres(centres, budgetMs = BUILD_BUDGET_MS) {
+    /** @type {Array<[number, number]>} */
+    const cs = [];
+    for (const c of centres) {
+      if (!c || !Number.isFinite(c[0] + c[1])) continue;
+      const [q, r] = worldToHex(c[0], c[1]);
+      cs.push([Math.floor(q / CHUNK_SIZE), Math.floor(r / CHUNK_SIZE)]);
+    }
+    if (cs.length === 0) return { generated: 0, unloaded: 0, pendingGen: 0 };
+    this.flushLight();
+    const now = this._now;
+    const start = now();
+    let generated = 0;
+    let unloaded = 0;
+    let pendingGen = 0;
+    const unloadRadius = this.renderDistance + UNLOAD_RADIUS_EXTRA;
+    for (const chunk of this.chunks.values()) {
+      if (cs.every(([cq, cr]) => hexLength(chunk.cq - cq, chunk.cr - cr) > unloadRadius)) {
+        this._removeChunk(chunk);
+        unloaded++;
+      }
+    }
+    const dqs = this._ringDq;
+    const drs = this._ringDr;
+    let stopped = false;
+    for (let i = 0; i < dqs.length; i++) {
+      for (const [pcq, pcr] of cs) {
+        const cq = pcq + dqs[i];
+        const cr = pcr + drs[i];
+        if (this._byId.has(packId(cq, cr))) continue;
+        if (stopped) {
+          pendingGen++;
+          continue;
+        }
+        this._generate(cq, cr);
+        generated++;
+        if (generated >= MAX_BUILDS_PER_UPDATE || now() - start >= budgetMs) stopped = true;
+      }
+    }
+    return { generated, unloaded, pendingGen };
   }
 
   /**

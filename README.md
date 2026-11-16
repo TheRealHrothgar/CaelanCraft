@@ -52,7 +52,7 @@ Press **T** (or **/**) for the command console. Commands are one per line; `help
 | `fill q1 y1 r1 q2 y2 r2 <block>` | an axial box |
 | `hexfill q y r radius height <block>` · `hexring …` | a honeycomb disc or ring, `height` cells tall |
 | `time set noon|midnight|day|night|HH:MM` · `time add 1h` | the clock |
-| `fly on|off|toggle`, `give <block> [slot]`, `say <text>`, `pos`, `seed`, `edits` | utilities |
+| `fly on|off|toggle`, `give <block|item> [slot]`, `say <text>`, `pos`, `seed`, `edits` | utilities |
 | `run q y r`, `wait <s>`, `stop`, `stopall`, `resume`, `runes`, `rune q y r on|off` | rune scripting |
 | `mode [creative\|survival]` (console only), `vitals [full\|health …] [value]`, `pack [list\|add\|clear] [item] [count]`, `items [filter]` | Survival |
 
@@ -146,6 +146,7 @@ panel (**Shift+R** on it) says where it comes from.
 |---|---|
 | `?seed=123` | World seed (number or any text) |
 | `?rd=6` | Render distance in chunks (1–16, hex distance) |
+| `?touch=1` / `?touch=0` | Force the on-screen touch controls on (try them on a PC: the mouse drives them) or off. By default a touch-first device such as an iPad gets them, and a view distance of 4 unless `?rd=` is given (CONTRACTS §95) |
 | `?debug=1` | Start with the debug overlay visible |
 | `?nosave=1` | Never write saved worlds (the Worlds panel is read-only; `?autoplay=1` starts a fresh world instead of loading one) |
 | `?time=0.5` | Freeze the time of day (0 = midnight, 0.5 = noon) |
@@ -154,6 +155,8 @@ panel (**Shift+R** on it) says where it comes from.
 | `?ui=console` / `?ui=editor` | With `?autoplay=1`: open the console, or place a sample Rune Block ahead and open its editor (screenshots; use with `?nosave=1` — the editor variant writes to the world) |
 | `?ui=picker` / `?ui=pack` | With `?autoplay=1`: open the block picker, or (in Survival) the Pack & Making screen — with `?nosave=1` an empty pack is stocked with a demo kit |
 | `?ui=device` | With `?autoplay=1`: place a Clockwork Timer ahead and open its settings panel (use with `?nosave=1`) |
+| `?ui=pause` | With `?autoplay=1` (or `?join=`): open the pause menu (screenshots) |
+| `?server=host:port` / `?join=Name` | Offer that game server on the title screen (default: the server that served the page), or join it at once under that name — with `?autoplay=1` straight into play (`server/README.md`, CONTRACTS §96) |
 | `?ui=sounds` | Open the Sound Test at once (no world needed): every sound of the game with a button that plays it, and ambience scenes. Also under `Esc` → Sound → Sound Test |
 | `?scene=vortex` / `?scene=circuits` | With `?autoplay=1`: set off a Collapsar Charge 8 cells ahead 2 s after loading, or build the worked circuit examples (a doorbell, a timed keg, a switch and igniter, a dusk lamp) 10 cells ahead (use with `?nosave=1`); with `?smoke=1` the self-test checks them |
 | `?mode=survival` / `?mode=creative` | With `?autoplay=1` or `?smoke=1`: the first world's mode. A saved world older than Survival is not upgraded from a URL (use `Esc` → Mode) unless `?nosave=1` |

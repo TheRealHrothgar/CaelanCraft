@@ -1,13 +1,17 @@
 // Unit tests for the creative inventory's DOM (src/pickerUI.js through src/menus.js; DESIGN-circuits §5.3–§5.9), on a fake
 // DOM built from index.html: the public picker API is unchanged (showPicker, hidePicker, isPickerOpen, onPickBlock(id, slot)
 // and onPickerClose), plain rounded square slots (no icons on hexagons), families open in a drawer band below their row,
-// the search, the keyboard, drag-to-hotbar, the slot badges, Show all, the rail and the Recent row.
+// the search, the keyboard, drag-to-hotbar, the slot badges, Show all, the rail and the Recent row; and the items (tools,
+// weapons, food, materials, clothes and healing), whose cells hold an item key and draw the item sheet's icon.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createMenus } from '../../src/menus.js';
 import { BLOCK, DEFAULT_HOTBAR, getBlockDef } from '../../src/blocks.js';
 import { partTip } from '../../src/circuitParts.js';
+import { ITEMS, ITEM_KEYS } from '../../src/items.js';
+import { purposeOf } from '../../src/purpose.js';
+import { resultsText, noMatchText } from '../../src/pickerUI.js';
 import { documentFromHTML, fire } from '../helpers/fakeDom.js';
 
 const html = readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8');
@@ -23,10 +27,11 @@ function setup(callbacks = {}, width = 0) {
   if (width) $('picker-scroll').clientWidth = width;
   const grid = $('picker-grid');
   const cell = (id) => grid.querySelector(`.picker-cell[data-block-id="${id}"]`);
+  const item = (key) => grid.querySelector(`.picker-cell[data-item-key="${key}"]`);
   const tile = (key) => grid.querySelector(`.picker-cell[data-family="${key}"]`);
   /** a keydown on `target` (bubbles to the document listener) */
   const key = (target, k, extra = {}) => fire(target, 'keydown', { key: k, code: extra.code ?? '', ...extra });
-  return { doc, menus, $, grid, cell, tile, key, onPickBlock, onPickerClose };
+  return { doc, menus, $, grid, cell, item, tile, key, onPickBlock, onPickerClose };
 }
 
 beforeEach(() => {
@@ -90,7 +95,7 @@ describe('the slots, the rail and the name line (§5.4, §5.8)', () => {
     menus.showPicker([...DEFAULT_HOTBAR], 0);
     const sections = grid.querySelectorAll('.picker-section');
     expect(sections.map((s) => s.dataset.section)).toEqual(['stone', 'earth', 'wood', 'ores', 'colour', 'glass', 'camp',
-      'powder', 'circuits', 'exotic', 'liquids']);
+      'powder', 'circuits', 'exotic', 'liquids', 'tools', 'weapons', 'food', 'materials', 'clothes']);
     for (const s of sections) {
       const head = s.children[0];
       expect(head.classList.contains('picker-section-head')).toBe(true);
@@ -98,12 +103,12 @@ describe('the slots, the rail and the name line (§5.4, §5.8)', () => {
       expect(head.children.map((c) => c.className)).toEqual(['picker-section-icon', 'picker-section-title']);
       expect(head.children[0].tagName).toBe('CANVAS');
     }
-    expect($('picker-rail').querySelectorAll('.picker-rail-btn')).toHaveLength(11);
+    expect($('picker-rail').querySelectorAll('.picker-rail-btn')).toHaveLength(16);
     // 900 px wide: (900 − 16 + 6) / 62 → 14 columns; every section fits one row of slots, none is indented
     const rows = grid.querySelectorAll('.picker-row');
     expect(Math.max(...rows.map((r) => r.children.length))).toBe(14);
     expect(rows.every((r) => r.className === 'picker-row')).toBe(true);
-    expect(grid.querySelectorAll('.picker-slots')).toHaveLength(11);
+    expect(grid.querySelectorAll('.picker-slots')).toHaveLength(16);
     expect(grid.querySelectorAll('.picker-slots').every((s) => s.children.length === 1)).toBe(true);
     // one roving tab stop among the cells
     expect(grid.querySelectorAll('.picker-cell[tabindex="0"]')).toHaveLength(1);
@@ -243,7 +248,9 @@ describe('families open in a drawer band below their row (§5.3)', () => {
     expect(grid.querySelectorAll('.picker-family')).toHaveLength(0);
     expect(grid.querySelectorAll('.picker-drawer')).toHaveLength(0);
     expect(cell(BLOCK.WOOL_RED)).not.toBeNull();
-    expect(grid.querySelectorAll('.picker-cell')).toHaveLength(120); // §94: + the Lab; // + §85: the two beds, the well and the rain barrel; + the Workbench (§67) and the Snare (§69); + the seven plants of §76 flora; + the seven of §81
+    // 120 blocks and every item that is not a block item
+    expect(grid.querySelectorAll('.picker-cell[data-item-key]')).toHaveLength(ITEM_KEYS.filter((k) => ITEMS[k].kind !== 'block').length);
+    expect(grid.querySelectorAll('.picker-cell[data-block-id]')).toHaveLength(120); // §94: + the Lab; // + §85: the two beds, the well and the rain barrel; + the Workbench (§67) and the Snare (§69); + the seven plants of §76 flora; + the seven of §81
     menus.hidePicker();
     menus.showPicker([...DEFAULT_HOTBAR], 0);
     expect($('picker-showall').checked).toBe(true);
@@ -252,7 +259,7 @@ describe('families open in a drawer band below their row (§5.3)', () => {
 });
 
 describe('search (§5.5)', () => {
-  it('typing filters: one flat grid of matches; "No blocks match" when nothing does', () => {
+  it('typing filters: one flat grid of matches; "No blocks or items match" when nothing does', () => {
     const { menus, grid, $ } = setup();
     menus.showPicker([...DEFAULT_HOTBAR], 0);
     const search = $('picker-search');
@@ -267,7 +274,8 @@ describe('search (§5.5)', () => {
     search.value = 'xyzzy';
     fire(search, 'input');
     expect(grid.querySelectorAll('.picker-cell')).toHaveLength(0);
-    expect(grid.querySelector('.picker-results').textContent).toBe('No blocks match "xyzzy"');
+    expect(grid.querySelector('.picker-results').textContent).toBe('No blocks or items match "xyzzy"');
+    expect(noMatchText('xyzzy')).toBe('No blocks or items match "xyzzy"');
   });
 
   it('in the field, E and digits type (no close, no pick); Enter picks the first match; ↓ goes to the first result', () => {
@@ -322,8 +330,11 @@ describe('keyboard in the grid (§5.7)', () => {
     expect(doc.activeElement === cell(BLOCK.OBSIDIAN)).toBe(true);
     expect(grid.querySelectorAll('.picker-cell[tabindex="0"]').length).toBe(1);
     expect(cell(BLOCK.OBSIDIAN).getAttribute('tabindex')).toBe('0');
-    key(doc.activeElement, 'End');
-    expect(doc.activeElement.dataset.blockId).toBe(String(BLOCK.WATER));
+    key(doc.activeElement, 'End'); // the last cell: the last of Clothes & Healing, an item
+    expect(doc.activeElement.dataset.itemKey).toBe('pot_healwort_tea');
+    key(doc.activeElement, '8', { code: 'Digit8' });
+    expect(onPickBlock).toHaveBeenLastCalledWith('pot_healwort_tea', 7);
+    cell(BLOCK.WATER).focus();
     key(doc.activeElement, 'ArrowUp'); // the Exotic row: the charge sits right above water
     expect(doc.activeElement.dataset.blockId).toBe(String(BLOCK.COLLAPSAR_CHARGE));
     key(doc.activeElement, '5', { code: 'Digit5' });
@@ -453,6 +464,157 @@ describe('the Recent row (§5.6)', () => {
     const recent = grid.querySelector('.picker-section[data-section="recent"]');
     expect(grid.children[0]).toBe(recent);
     expect(recent.querySelectorAll('.picker-cell').map((c) => Number(c.dataset.blockId))).toEqual([BLOCK.OBSIDIAN, BLOCK.BRICKS]);
+  });
+});
+
+describe('items: every item, not only blocks', () => {
+  /** @param {any} canvas @returns {any[]} the first drawImage call recorded on its fake 2D context */
+  const firstDraw = (canvas) => canvas.getContext('2d').calls.find((c) => c[0] === 'drawImage');
+
+  it('an item cell holds its key and the item sheet\'s icon (not the atlas); a click passes the key unchanged', () => {
+    const { menus, item, cell, onPickBlock } = setup({}, 900);
+    menus.showPicker([...DEFAULT_HOTBAR], 0);
+    const c = item('fire_drill');
+    expect(c).not.toBeNull();
+    expect(c.tagName).toBe('BUTTON');
+    expect(c.classList.contains('picker-item')).toBe(true);
+    expect(c.dataset.blockId).toBeUndefined();
+    expect(c.children.map((x) => x.className)).toEqual(['picker-icon', 'picker-badge']);
+    expect([c.children[0].width, c.children[0].height]).toEqual([64, 64]);
+    // drawn from the lazily painted item sheet (a canvas), scaled to the 64 px icon; a block cell draws from the atlas
+    const drawn = firstDraw(c.children[0]);
+    expect(drawn[1].tagName).toBe('CANVAS');
+    expect(drawn.slice(-4)).toEqual([0, 0, 64, 64]);
+    expect(firstDraw(cell(BLOCK.BRICKS).children[0])[1]).toBe(atlas);
+    expect(c.title).toBe('Fire Drill');
+    expect(c.getAttribute('aria-label')).toBe('Fire Drill');
+    fire(c, 'click');
+    expect(onPickBlock).toHaveBeenLastCalledWith('fire_drill', null);
+  });
+
+  it('item families open their drawer like any other; hovering an item shows its name and its purpose', () => {
+    const { menus, grid, item, tile, $, onPickBlock, doc } = setup({}, 900);
+    menus.showPicker([...DEFAULT_HOTBAR], 0);
+    expect(item('iron_pick')).toBeNull(); // inside the closed Picks family
+    expect(tile('picks').title).toBe('Picks · 5 tools — click to open');
+    fire(tile('picks'), 'click');
+    const drawer = grid.querySelector('.picker-drawer');
+    expect(drawer.dataset.family).toBe('picks');
+    expect(drawer.querySelectorAll('.picker-cell').map((x) => x.dataset.itemKey))
+      .toEqual(['flint_pick', 'copper_pick', 'bronze_pick', 'iron_pick', 'steel_pick']);
+    fire(item('iron_pick'), 'mouseover');
+    expect($('picker-name').textContent).toBe('Iron Pick');
+    expect($('picker-blurb').textContent).toBe(purposeOf('iron_pick'));
+    doc.dispatch({ type: 'keydown', key: '2', code: 'Digit2' });
+    expect(onPickBlock).toHaveBeenLastCalledWith('iron_pick', 1);
+    expect(item('iron_pick').querySelector('.picker-badge').textContent).toBe('2');
+    fire(item('fire_drill'), 'mouseover');
+    expect($('picker-blurb').textContent).toBe('Lights a campfire or a torch.');
+  });
+
+  it('the item sections have their headers and rail buttons, with item icons', () => {
+    const { menus, grid, $ } = setup({}, 900);
+    menus.showPicker([...DEFAULT_HOTBAR], 0);
+    const tools = grid.querySelector('.picker-section[data-section="tools"]');
+    expect(tools.querySelector('.picker-section-title').textContent).toBe('Tools');
+    expect(firstDraw(tools.querySelector('.picker-section-icon'))[1].tagName).toBe('CANVAS'); // the item sheet
+    const btn = $('picker-rail').querySelector('.picker-rail-btn[data-section="clothes"]');
+    expect(btn.title).toBe('Clothes & Healing');
+    expect(firstDraw(btn.querySelector('canvas'))[1].tagName).toBe('CANVAS');
+  });
+
+  it('the rail (16 buttons, taller than a small panel) scrolls itself to keep the current section\'s button in view', () => {
+    const { menus, grid, $ } = setup({}, 900);
+    menus.showPicker([...DEFAULT_HOTBAR], 0);
+    const rail = $('picker-rail');
+    const buttons = rail.querySelectorAll('.picker-rail-btn');
+    expect(buttons).toHaveLength(16);
+    // a rail 300 px tall at y 100 whose buttons sit 38 px apart (as laid out, scrolled by rail.scrollTop)
+    rail.scrollTop = 0;
+    rail._rect = { left: 0, top: 100, width: 40, height: 300 };
+    const place = () => buttons.forEach((b, i) => { b._rect = { left: 3, top: 100 + i * 38 - rail.scrollTop, width: 34, height: 34 }; });
+    place();
+    const scroll = $('picker-scroll');
+    grid.querySelectorAll('.picker-section').forEach((s, i) => { s.offsetTop = i * 100; });
+    scroll.scrollTop = 1450; // the 15th section (Materials) at the top of the view
+    fire(scroll, 'scroll');
+    expect(rail.querySelector('.current').dataset.section).toBe('materials');
+    // its button (top 100 + 14 · 38 = 632, bottom 666) is brought to the rail's bottom edge (400)
+    expect(rail.scrollTop).toBe(666 - 400);
+    place();
+    scroll.scrollTop = 0; // back to Stone: the rail scrolls back up
+    fire(scroll, 'scroll');
+    expect(rail.querySelector('.current').dataset.section).toBe('stone');
+    expect(rail.scrollTop).toBe(0);
+    // a section already current and in view moves nothing
+    place();
+    fire(scroll, 'scroll');
+    expect(rail.scrollTop).toBe(0);
+  });
+
+  it('a hotbar holding item keys badges those items; the selected one has the ring (=== : the key "12" is not block 12)', () => {
+    const { menus, item, cell } = setup();
+    const bar = [BLOCK.BRICKS, 'fire_drill', 0, 0, 'rock', 0, 0, 0, String(BLOCK.OBSIDIAN)];
+    menus.showPicker(bar, 1);
+    expect(item('fire_drill').querySelector('.picker-badge').textContent).toBe('2');
+    expect(item('fire_drill').classList.contains('selected')).toBe(true);
+    expect(item('fire_drill').title).toBe('Fire Drill — slot 2');
+    expect(item('rock').querySelector('.picker-badge').textContent).toBe('5');
+    expect(item('rock').classList.contains('selected')).toBe(false);
+    expect(cell(BLOCK.BRICKS).querySelector('.picker-badge').textContent).toBe('1');
+    expect(cell(BLOCK.OBSIDIAN).classList.contains('in-hotbar')).toBe(false);
+  });
+
+  it('search finds items: "sword" shows three item cells and "3 items"; Enter picks the first key', () => {
+    const { menus, grid, $, key, onPickBlock } = setup();
+    menus.showPicker([...DEFAULT_HOTBAR], 0);
+    const search = $('picker-search');
+    search.focus();
+    search.value = 'sword';
+    fire(search, 'input');
+    expect(grid.querySelectorAll('.picker-cell').map((c) => c.dataset.itemKey)).toEqual(['bronze_sword', 'iron_sword', 'steel_sword']);
+    expect(grid.querySelector('.picker-results').textContent).toBe('3 items');
+    key(search, 'Enter');
+    expect(onPickBlock).toHaveBeenLastCalledWith('bronze_sword', null);
+    search.value = 'iron';
+    fire(search, 'input');
+    expect(grid.querySelector('.picker-results').textContent).toMatch(/^2 blocks · \d+ items$/);
+    expect(resultsText([1])).toBe('1 block');
+    expect(resultsText(['a', 'b', 3])).toBe('1 block · 2 items');
+    expect(resultsText(['a'])).toBe('1 item');
+  });
+
+  it('dragging an item onto a hotbar slot picks its key into that slot', () => {
+    vi.useFakeTimers();
+    const { menus, item, doc, onPickBlock } = setup();
+    menus.showPicker([...DEFAULT_HOTBAR], 0);
+    const slot = doc.querySelectorAll('.hotbar-slot')[3];
+    doc.elementFromPoint = vi.fn((x) => (x > 500 ? slot : doc.body));
+    const c = item('crucible');
+    fire(c, 'pointerdown', { button: 0, clientX: 10, clientY: 10, pointerId: 9 });
+    doc.dispatch({ type: 'pointermove', clientX: 600, clientY: 650, pointerId: 9 });
+    const ghost = doc.body.querySelectorAll('.picker-ghost');
+    expect(ghost).toHaveLength(1);
+    expect(firstDraw(ghost[0].children[0])[1].tagName).toBe('CANVAS'); // the item's own icon
+    doc.dispatch({ type: 'pointerup', clientX: 600, clientY: 650, pointerId: 9 });
+    expect(onPickBlock).toHaveBeenLastCalledWith('crucible', 3);
+    expect(c.querySelector('.picker-badge').textContent).toBe('4');
+  });
+
+  it('the Recent row keeps items and blocks, newest first', () => {
+    const { menus, grid, item, cell } = setup();
+    menus.showPicker([...DEFAULT_HOTBAR], 0);
+    fire(cell(BLOCK.BRICKS), 'click');
+    fire(item('fire_drill'), 'click');
+    fire(item('rock'), 'click');
+    fire(item('fire_drill'), 'click');
+    menus.hidePicker();
+    menus.showPicker([...DEFAULT_HOTBAR], 0);
+    const recent = grid.querySelector('.picker-section[data-section="recent"]');
+    expect(recent.querySelectorAll('.picker-cell').map((c) => c.dataset.itemKey ?? Number(c.dataset.blockId)))
+      .toEqual(['fire_drill', 'rock', BLOCK.BRICKS]);
+    // the Recent row's header chip shows the newest pick: an item icon
+    expect(firstDraw(recent.querySelector('.picker-section-icon'))[1].tagName).toBe('CANVAS');
   });
 });
 
