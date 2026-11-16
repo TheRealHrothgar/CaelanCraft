@@ -805,3 +805,53 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 .av-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;width:100%}
 .av-hint{color:#a89c88;font-size:12px}
 .av-done{padding:6px 26px;font-size:14px}
+
+/* ---- Touch controls (CONTRACTS §95, docs/DESIGN-multiplayer.md §5). touchControls.js builds #touch-ui and #touch-back in
+   touch mode only and puts .touch on <html>; nothing here changes a desktop. #touch-ui lies under the HUD (z 9; the HUD
+   lets touches through, and in touch mode the hotbar takes its own taps) and over the canvas; #touch-back (z 26) sits over
+   the block picker and the console, under the pause menu. Buttons: honey rims on the dark panel colour, half see-through,
+   bold monospace words (no icons), at least 64 px; held = honey, latched = a honey glow. The stick's rim is a plain
+   hexagon with a round knob. Everything keeps clear of the safe-area insets and of the HUD's bottom band. */
+#game-canvas{touch-action:none;-webkit-touch-callout:none}
+html.touch body{-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation;overscroll-behavior:none}
+html.touch input,html.touch textarea{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+html.touch #hotbar{pointer-events:auto;touch-action:none;bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+html.touch .vitals,html.touch .tiredness{bottom:calc(8px + env(safe-area-inset-bottom,0px))}
+html.touch .status-chips,html.touch .job-chip{bottom:calc(54px + env(safe-area-inset-bottom,0px))}
+html.touch #block-toast{bottom:calc(64px + env(safe-area-inset-bottom,0px))}
+html.touch #chat-log{left:calc(8px + env(safe-area-inset-left,0px));bottom:calc(72px + env(safe-area-inset-bottom,0px))}
+html.touch .calendar-line{top:calc(6px + env(safe-area-inset-top,0px))}
+html.touch #save-toast{top:calc(12px + env(safe-area-inset-top,0px));right:calc(12px + env(safe-area-inset-right,0px))}
+#touch-ui{z-index:9;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;overflow:hidden}
+.touch-btn{position:absolute;box-sizing:border-box;display:flex;align-items:center;justify-content:center;width:66px;height:66px;
+  border:3px solid rgba(232,176,74,.85);background:rgba(28,26,36,.55);color:#f0e6cc;font:bold 15px/1 monospace;
+  text-shadow:1px 1px 0 #000;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;
+  transition:transform .06s,background-color .06s}
+.touch-btn.pressed{background:rgba(232,176,74,.92);color:#1c1a24;text-shadow:none;transform:scale(.93)}
+.touch-btn.on{background:rgba(232,176,74,.5);border-color:#ffd884;color:#fff;box-shadow:0 0 14px rgba(232,176,74,.6)}
+.touch-btn.on.pressed{background:rgba(232,176,74,.92);color:#1c1a24}
+.touch-round{border-radius:50%}
+.touch-square{position:relative;border-radius:14px}
+.touch-top{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));left:calc(12px + env(safe-area-inset-left,0px));display:flex;gap:10px}
+.touch-pad{position:absolute;right:calc(14px + env(safe-area-inset-right,0px));bottom:calc(92px + env(safe-area-inset-bottom,0px));width:280px;height:262px;pointer-events:none}
+.touch-pad .touch-btn{pointer-events:auto}
+.tb-jump{right:0;bottom:0;width:92px;height:92px;font-size:18px}
+.tb-dig{right:104px;bottom:10px;width:92px;height:92px;font-size:18px}
+.tb-place{right:84px;bottom:112px;width:78px;height:78px;font-size:16px}
+.tb-act{right:206px;bottom:112px;font-size:22px}
+.tb-sneak{right:0;bottom:112px}
+.tb-fly{right:0;bottom:194px}
+.tb-drop{right:210px;bottom:22px}
+#touch-back{position:fixed;z-index:26;top:calc(12px + env(safe-area-inset-top,0px));left:calc(12px + env(safe-area-inset-left,0px));cursor:pointer;
+  background:rgba(28,26,36,.9);padding:0}
+#touch-back:active{background:rgba(232,176,74,.92);color:#1c1a24}
+.touch-stick{position:absolute;width:140px;height:140px;margin:-70px 0 0 -70px;pointer-events:none;opacity:.92;transition:opacity .15s}
+.touch-stick.idle{left:calc(100px + env(safe-area-inset-left,0px));top:calc(100% - 178px - env(safe-area-inset-bottom,0px));opacity:.38}
+.touch-stick-rim{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.touch-stick-rim polygon{fill:rgba(28,26,36,.45);stroke:rgba(232,176,74,.85);stroke-width:3;stroke-linejoin:round}
+.touch-stick.sprint .touch-stick-rim polygon{stroke:#ffd884;stroke-width:5}
+.touch-knob{position:absolute;left:38px;top:38px;width:64px;height:64px;box-sizing:border-box;border-radius:50%;border:3px solid #ffd884;
+  background:rgba(232,176,74,.78);box-shadow:0 2px 8px rgba(0,0,0,.45)}
+.touch-stick.sprint .touch-knob{background:#ffd884}
+@media (orientation:portrait){.touch-pad{bottom:calc(104px + env(safe-area-inset-bottom,0px))}}
+@media (max-width:900px){html.touch .calendar-line{top:calc(88px + env(safe-area-inset-top,0px))}}

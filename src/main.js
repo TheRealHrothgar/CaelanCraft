@@ -61,6 +61,7 @@ import {
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer, fogRangeForRenderDistance } from './renderer.js';
 import { createControls } from './controls.js';
+import { createTouchUI, detectTouchMode, TOUCH_RENDER_DISTANCE } from './touchControls.js'; // touch (multiplayer §5, §95)
 import { createHUD, createFlashState, flashStep } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
@@ -1079,6 +1080,9 @@ export function physicsCircuitHooks(getCircuits) {
 export function boot(win, doc) {
   const params = parseParams(win.location ? win.location.search : '');
   const autoplay = params.autoplay || params.smoke;
+  // touch (multiplayer §5, CONTRACTS §95): a touch-first device (or ?touch=1) plays by touch and starts with a shorter view.
+  const touchOn = detectTouchMode(win);
+  if (touchOn && params.rd == null) params.rd = TOUCH_RENDER_DISTANCE;
 
   // Errors are captured before anything else exists; the reporter falls back to the raw banner element
   // until the HUD has been created.
@@ -1194,6 +1198,7 @@ export function boot(win, doc) {
     avatarRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     hud = createHUD(doc, atlasCanvas);
     controls = createControls(canvas, doc);
+    if (touchOn) controls.setTouchMode(true); // touch (multiplayer §5, §95): no pointer lock; play holds a virtual one
     audio = createAudio();
     droneLoop = audio.startLoop('bhDrone');
     consoleUI = createConsole(doc, {
@@ -6512,6 +6517,21 @@ export function boot(win, doc) {
     }
   };
 
+  // touch (multiplayer §5, CONTRACTS §95): the on-screen stick and buttons feed `controls`; null on a desktop. Back closes the
+  // block picker or the console (no Esc on an iPad); any touch on the controls wakes a sleeper, as a click does.
+  const touchUI = touchOn
+    ? createTouchUI(doc, controls, {
+      onPause: () => pause(),
+      onBack: () => {
+        closePicker();
+        closeConsole();
+      },
+      onTouch: () => onSleepClick(),
+    })
+    : null;
+  /** touch: what the controls are told each frame (reused) */
+  const touchView = { playing: false, back: false, survival: false, flying: false };
+
   // Clicking the canvas while playing without the lock (a failed/expired request) re-requests it.
   const onCanvasMouseDown = () => {
     if (state === STATE.PLAYING && !controls.locked) controls.lock();
@@ -7680,6 +7700,16 @@ export function boot(win, doc) {
       return;
     }
 
+    // touch (multiplayer §5, §95): the on-screen controls show while playing and feed `controls` before the step reads them.
+    if (touchUI) {
+      const st = /** @type {string} */ (state);
+      touchView.playing = st === STATE.PLAYING;
+      touchView.back = st === STATE.PICKER || st === STATE.CONSOLE;
+      touchView.survival = survival.inSurvival;
+      touchView.flying = Boolean(player && player.flying);
+      touchUI.update(touchView);
+    }
+
     switch (state) {
       case STATE.LOADING:
         stepLoading();
@@ -7758,6 +7788,7 @@ export function boot(win, doc) {
     disposeSleep(); // §87
     avatarRenderer.dispose(); // §91
     avatarMenu.dispose();
+    if (touchUI) touchUI.dispose(); // touch (multiplayer §5)
     controls.dispose();
     hud.dispose();
     menus.dispose();
