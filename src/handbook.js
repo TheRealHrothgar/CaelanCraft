@@ -1474,6 +1474,7 @@ function makeChapters() {
         '*Smoke drifts downwind.* On a calm day it rises straight up.',
         `*A Pennant* shows the wind where you set it. Make one by hand: ${rec('pennant').inputs.some((i) => 'tag' in i && i.tag === 'cloth') ? 'a rag or a hide' : 'a cloth'} lashed to a Stick with Cord. Its flag streams out in a breeze, flutters in the gusts and hangs limp in a calm.`,
       ]),
+      p('With a *Compass* in your pack, an N on the dial shows where north lies.'), // §102
       tip('Animals smell you on the wind. Stalk them with the wind in your face.'),
     ],
   ]);
@@ -1727,6 +1728,8 @@ function makeChapters() {
       p('Iron never melts in a kiln. A *Bloomery*, a tall brick stack blown with bellows, turns hematite and charcoal into an *iron bloom*: a spongy lump of iron and slag.'),
       p('Hammering the hot bloom drives the slag out: with a Bronze Hammer, the Bloomery makes *Wrought Iron*.'),
       p('The *Forge* works iron into tools with a Bronze Hammer. With an Iron Hammer it folds charcoal\'s carbon into wrought iron: *Steel*, the fastest and toughest of all.'),
+      // §102: the Compass
+      p(`The Forge also makes a *Compass*, an iron needle in a copper case under glass (${recipeInputsProse(rec('compass'))}). Carry it anywhere in your pack, and an N on the wind vane at the top of the screen shows where north lies.`),
       tip('Fuel means coal or charcoal, and coal is used first. Keep your charcoal: the Bloomery and the Forge burn nothing else.'),
     ],
     [...needsTable()],

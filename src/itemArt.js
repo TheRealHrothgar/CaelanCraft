@@ -1007,6 +1007,24 @@ const MATERIAL_PAINTERS = {
     ic.set(8, 6, 0x7fa888);
     ic.set(8, 5, 0x9fc0a0);
   },
+  compass(ic) {
+    // §102: a round copper case with a little bow on top, a pale glass face, and the needle across it — red to the north
+    // (up and right), white to the south — on a dark pivot
+    const COPPER = TIER_PALETTE[3];
+    ic.rect(7, 0, 8, 0, COPPER.light); // the bow
+    ic.set(6, 1, COPPER.base);
+    ic.set(9, 1, COPPER.dark);
+    ic.ellipse(8, 8.5, 6.6, 6.6, (x, y, u, v) => (u + v < -0.5 ? COPPER.light : u + v > 0.6 ? COPPER.dark : COPPER.base));
+    ic.ellipse(8, 8.5, 4.9, 4.9, (x, y, u, v) => (u + v < -0.9 ? 0x8cbccb : u + v > 0.7 ? 0x4f8396 : 0x6a9fb2));
+    // the needle along the diagonal, two pixels thick by the pivot and one at the tips: red north (up and right), white
+    // south (down and left)
+    for (const [x, y] of [[11, 5], [10, 6], [9, 6], [10, 7], [9, 7]]) ic.set(x, y, 0xe0392e);
+    ic.set(11, 5, 0xff6a50); // the bright north tip
+    for (const [x, y] of [[5, 11], [6, 10], [7, 10], [6, 9], [7, 9]]) ic.set(x, y, 0xf8f8f2);
+    ic.set(8, 8, 0x2a2420); // the pivot
+    ic.set(5, 6, 0xffffff); // a glint on the glass
+    ic.set(6, 5, 0xd8f0f4);
+  },
 };
 
 // ---------------------------------------------------------------------------------------------------------------

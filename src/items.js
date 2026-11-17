@@ -127,6 +127,9 @@ const MATERIAL_ROWS = [
   // §80 farming: seed shaken out of a picked Wild Carrot, a Wild Onion or a cut Healwort. R plants one on grass or dirt
   // (farming.js PLANTABLE); the other crops are planted from the food itself (a tuber, a berry, a nut, a fruit, a root).
   ['carrot_seeds', 'Carrot Seeds', 32], ['onion_seeds', 'Onion Seeds', 32], ['healwort_seeds', 'Healwort Seeds', 32],
+  // §102: carried anywhere in the pack, it puts north on the HUD's wind vane (compass.js). Made at the Forge; no tool, it
+  // never wears.
+  ['compass', 'Compass', 1],
 ];
 
 /**

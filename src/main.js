@@ -133,6 +133,7 @@ import {
 import { windAt } from './wind.js';
 import { createRainRenderer } from './rainRenderer.js';
 import { vaneView, windAir } from './windDrawn.js'; // §101: the wind drawn
+import { compassCarried, northView } from './compass.js'; // §102: the compass puts north on the vane
 import { Pennants, PENNANT_MAX_MODELS, PENNANT_MODEL_RANGE, poleHeight } from './pennants.js';
 import { createPennantRenderer } from './pennantRenderer.js';
 // CONTRACTS §87: sleep
@@ -1936,6 +1937,8 @@ export function boot(win, doc) {
     particles.setWind(windAirNow[0], windAirNow[1]);
     campfireRenderer.setWind(wind);
     hud.setWind(vaneView(wind, controls.yaw, vaneNow));
+    // §102: a compass carried (anywhere in the pack in Survival, on the hotbar in Creative) puts north on the vane
+    hud.setNorth(northView(compassCarried(SV, pack.slots, hotbar), controls.yaw));
     rainRenderer.update(live ? dt : 0, {
       x: player.x, y: eyeY, z: player.z, intensity: fx.shown, snow: fx.snow, getBlock: world.getBlock, daylight: sky.daylight, wind,
     });

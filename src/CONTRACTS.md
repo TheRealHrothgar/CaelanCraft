@@ -8068,3 +8068,80 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
   block / tile / item / recipe / picker / purpose / handbook entries, main's wiring); the pinned counts in wave0, tiles,
   items, crafting, pickerModel, pickerUI, atlasIcons, homestead, flora, plantsNotFood, farming, aquifer, waterLaws and
   handbook move by one.
+
+## 102. The compass — `src/compass.js` (PURE), `src/hud.js`, `src/styles.css`, `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`
+
+The user: "Let's add basic survival items to the crafting menu: compass: require iron. When in the inventory, a N
+indicator displays on the player's HUD." North is the world's −z everywhere in the game (wind.js `windFromWord`: yaw 0
+faces north, east is +x); the compass shows it on §101's wind vane.
+
+### 102.1 The item and its making
+
+- **Item** `compass` "Compass": a material (`kind: 'material'`), stack 1, appended to the materials after the seeds
+  (269 items: 34 tools, 52 materials, 55 foods, 3 heals, 5 clothes, 120 block items). It is no tool and has no
+  durability: it never wears, and does nothing in the hand. Its name ends in "s" but is one thing (items.test's plural
+  check lists it beside the Bellows; `itemName('compass', 1)` is "Compass").
+- **Recipe** `compass`, at the **Forge** (the iron age): `wrought_iron + copper_ingot + glass_shards` → `compass`, tool
+  `hammer 4` like the other forge work, 20 s — a magnetised iron needle in a copper case under a glass face. 126 recipes
+  (forge 16). Wrought iron comes only from the Bloomery's bloom, so the compass needs iron.
+- **Picture** (itemArt, a material painter after the seeds): a round copper case (the copper tier palette, lit top-left)
+  with a little bow on top, a blue-grey glass face with a glint, and the needle across it on the diagonal — red to the
+  north (up and right), white to the south — on a dark pivot. Held in the hand it is a lump (heldItem.js, no haft).
+- **Purpose** "Carry it, and the wind vane shows north." (also its picker line, `blurbFor`).
+- **Picker**: Creative's Tools section, after the Casting Mold and before the Survival Handbook
+  (`PICKER_ITEM_SECTIONS`); search also by "north", "direction", "navigation", "needle" (`PICKER_ITEM_ALIASES`).
+- **Build tree**: nothing to add — the Forge's column lists it among what the Forge unlocks, from the recipe.
+- **Handbook**: the *Iron and steel* page: "The Forge also makes a *Compass*, an iron needle in a copper case under glass
+  (Wrought Iron Bar, Copper Ingot and Glass Shards). Carry it anywhere in your pack, and an N on the wind vane at the
+  top of the screen shows where north lies." (the inputs from the recipe); *The wind* page: "With a *Compass* in your
+  pack, an N on the dial shows where north lies." The Forge's recipe table gains the row.
+- survivalData's "good for something": a compass is carried (`uses.add(COMPASS_KEY)`).
+
+### 102.2 Carried, and where north lies (`compass.js`, PURE, no imports)
+
+- `COMPASS_KEY` 'compass'.
+- `compassCarried(survival, packSlots, hotbar)`: in **Survival**, a stack of it in ANY pack slot (`Pack.slots`, all 27:
+  the hotbar row is slots 0–8, so it counts too; the worn slots are not pack slots); the Creative hotbar is not read.
+  In **Creative** — and on a **server**, which is Creative (§96) — a slot of the Creative hotbar holds the compass's item
+  pick (§98: a hotbar slot may hold an item key); the pack is not read. Null inputs: false.
+- `northAngle(yaw)`: where north lies on the HUD's dial, radians clockwise from the top (the way the player faces), in
+  (−π, π]. The player looks along (−sin yaw, −cos yaw); north (0, −1) is cos yaw of the way ahead and sin yaw of the
+  way to their right, so the bearing is yaw itself, wrapped — exactly windDrawn.vaneAngle of a wind blowing north.
+  Facing north (yaw 0): the top; facing east (+x, yaw −π/2): the left; facing west: the right; facing south: the
+  bottom. Turning right by d turns it by −d: it stays fixed to the world, like the wind's arrow.
+- `northDeg(yaw)`: that in whole degrees 0..359 (NaN yaw: 0). `northView(carried, yaw)`: `northDeg(yaw)` while
+  carried, else null — what main hands the HUD.
+
+### 102.3 The N on the vane (`hud.setNorth`, `styles.css`)
+
+- `hud.setNorth(deg|null)`: `deg` is north's bearing in degrees clockwise from the top of the dial (rounded, taken mod
+  360); null is no compass. The DOM is touched only when the whole degree, or whether there is a compass, changes. A
+  page without `#wind-indicator` gets one made (as `setWind` does); the N may be told before the wind (the capsule stays
+  hidden until `setWind` shows it).
+- With a compass the capsule gains the class `wind-compass` and the dial grows a rim: the svg's viewBox goes from
+  `VANE_BOX` ('-12 -12 24 24', 22 px) to `COMPASS_BOX` ('-19 -19 38 38', 36 px), so the ring (r 10.5), the calm dot and
+  the arrow keep their size on screen, and `.wind-indicator.wind-compass` is 38 px tall (the dial and the capsule's
+  1 px rim; `padding-left: 0`, `gap: 8px` before the words). Its round end is concentric with the dial.
+- `g.wind-north`, put in under the arrow (the arrow is never hidden by it): `path.wind-north-tick` — a red radial tick
+  from r `NORTH_TICK` 6.4 to 9.4 (inside the ring), `transform="rotate(deg)"` — and `text.wind-north-letter` "N",
+  `font-size` `NORTH_LETTER_SIZE` 10.5, text-anchor middle, UPRIGHT whatever the bearing: its x, y are
+  `northLetterAt(deg)` — the middle and the baseline that put the capital's centre `NORTH_LETTER_R` 13.4 out at that
+  bearing (baseline 0.35 em below the centre), to 0.01. The whole letter stays inside the capsule's round end at every
+  bearing. Style: white, 800 weight, `var(--ui-font)`, a dark 1.6 px outline drawn under the fill (`paint-order:
+  stroke`); the tick `#ff5a48`, 2.2 wide, round caps. Glass, the capsule's places (desktop, Survival under the calendar
+  line, `html.touch` and the narrow tablet), the sway and the reduced-motion and no-glass fallbacks are §101's,
+  unchanged.
+- Without a compass (null) the group is taken out of the svg, the class removed and the viewBox and size restored: the
+  vane is exactly §101's.
+
+### 102.4 main, and the screenshot aid
+
+- In `stepWeather`, right after `hud.setWind(...)`, every frame, both modes:
+  `hud.setNorth(northView(compassCarried(SV, pack.slots, hotbar), controls.yaw));` (a scan of 27 slots or 9 picks; the
+  HUD skips unchanged degrees).
+- `?hold=compass` (§91 / §98.4, with `?autoplay=1&mode=creative`) puts the compass in the Creative hotbar: the N shows.
+  `?yaw=` (degrees) turns the view.
+- Tests: `tests/unit/compass.test.js` (the item, recipe, art, purpose, picker, handbook lines and build tree; carried or
+  not in Survival and Creative; the bearing against yaw and against vaneAngle; the N appearing and going on the page,
+  its place, the DOM writes, the stylesheet; main's wiring); the pinned counts in items, crafting, itemArt,
+  pickerModel, handbook and homestead move by one.

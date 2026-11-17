@@ -299,7 +299,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 24, 24, 5, 15, 5, 8]); // §101: + the Pennant at hand; §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 24, 24, 5, 16, 5, 8]); // §102: + the Compass at the Forge; §101: + the Pennant at hand; §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {

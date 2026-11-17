@@ -267,12 +267,14 @@ const RECIPE_ROWS = [
   ['remelt_glass', 'bloomery', '3 glass_shards + charcoal', 'glass', '', 15],
   // v0.10 circuits (§8.2): the lamp's glass is sealed hot
   ['filament_lamp', 'bloomery', 'glass + 3 carbon_filament + copper_wire + #planks', 'filament_lamp', '', 20],
-  // ---- Forge (15; charcoal only: carbon matters for iron)
+  // ---- Forge (16 with §102's Compass; charcoal only: carbon matters for iron)
   ...metalToolRows('forge', 'iron', 'wrought_iron', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 4', 30),
   ['steel_bar', 'forge', 'wrought_iron + 2 charcoal', 'steel_bar', 'hammer 5', 45],
   ...metalToolRows('forge', 'steel', 'steel_bar', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 5', 40),
   ['iron_block', 'forge', '7 wrought_iron', 'iron_block', 'hammer 4', 20],
   ['diamond_block', 'forge', '7 rough_gem', 'diamond_block', 'hammer 6', 20],
+  // §102: the Compass — a magnetised iron needle (wrought iron) in a copper case under a glass face
+  ['compass', 'forge', 'wrought_iron + copper_ingot + glass_shards', 'compass', 'hammer 4', 20],
   // v0.10 circuits (§8.2): the magneto, the clock spring and the bell's gong are steel. The Collapsar Charge has no recipe:
   // nothing real makes one
   // ---- Workbench (v0.11, CONTRACTS §67; §94): the simple circuit parts
