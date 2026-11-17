@@ -887,6 +887,20 @@ export function burningKegHint(h, explosions) {
 }
 
 /**
+ * §99.4: the slow-work hint (`harvest.slowHint`: `Oak Log · slow with a stone axe`) for `target` while `dig` is held on that
+ * very cell, else null. Idle, the crosshair resting on the ground says nothing, so walking and looking about never nag and
+ * a weapon's draw hint (§100) is not hidden by the ground under it.
+ * @param {DigState} dig  main's dig (its cell, block id and `active`)
+ * @param {{ q: number|string, y: number, r: number, blockId: number }|null} target  the hit, or a brick's dig target (§93)
+ * @param {import('./types.js').ToolDef|null} tool  the selected tool, null for the hand
+ * @returns {string|null}
+ */
+export function digSlowHint(dig, target, tool) {
+  if (!dig.active || !target || dig.q !== target.q || dig.y !== target.y || dig.r !== target.r || dig.id !== target.blockId) return null;
+  return slowHint(target.blockId, tool);
+}
+
+/**
  * The device panel's part changed under it (a blast, a vortex, a setblock): main closes the panel (§4.10).
  * @param {string|null} deviceKey  the panel's "q,y,r"
  */
@@ -4934,6 +4948,9 @@ export function boot(win, doc) {
           return sleepSpotHint(act); // §87: `Sleeping Hide · R: sleep · secure here` / `… · not secure: …`
         case 'water_crop':
           return waterCropHint(act); // §85: `… · R: water it`
+        case 'tap_hint':
+          // §99.4: chopping a birch with a stone axe says so, as an oak does; otherwise how to tap its sap
+          return digSlowHint(digState, hit, selectedTool()) ?? /** @type {string} */ (act.hint);
         default:
           if (act.hint) return act.hint;
       }
@@ -4958,12 +4975,12 @@ export function boot(win, doc) {
         const wrong = wrongGroundHint(world.getBlock, selectedKey(), h.q, h.y, h.r);
         if (wrong) return wrong;
       }
-      const slow = slowHint(h.blockId, tool); // §99: `Oak Log · slow with a stone axe`
+      const slow = digSlowHint(digState, h, tool); // §99.4: while digging it, `Oak Log · slow with a stone axe`
       if (slow) return slow;
     } else if (brickHit) {
-      // §93: a brick says what digs it, like its hex (§99: and when that is slow)
+      // §93: a brick says what digs it, like its hex (§99.4: and, while dug, when that is slow)
       const tool = selectedTool();
-      const need = canHarvest(brickHit.blockId, tool) ? slowHint(brickHit.blockId, tool) : harvestHint(brickHit.blockId);
+      const need = canHarvest(brickHit.blockId, tool) ? digSlowHint(digState, brickDigTarget(brickHit), tool) : harvestHint(brickHit.blockId);
       if (need) return need;
     }
     return blockHintText() ?? drawHintText(); // §100: what is in hand is thrown by holding Place

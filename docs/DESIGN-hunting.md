@@ -36,8 +36,9 @@ The user (verbatim, 2026-11-16):
   the tool (a bare hand most). It is felt in the vitals within a few minutes of digging.
 - **Wear.** A tool loses durability per block in proportion to the block's hardness over the tool's tier: a stone axe
   fells only a few logs before it breaks; a flint axe several times as many.
-- **Feedback.** The player can tell: the target hint names the cost ("Oak Log · slow with a stone axe"), working hard
-  shows (breath, a status chip), and the handbook's tables say how much faster the next era is.
+- **Feedback.** The player can tell: while digging, the target hint names the cost ("Oak Log · slow with a stone axe"),
+  working hard shows (a status chip, *Hard work*, once it has gone on a moment), and the handbook's tables say how much
+  faster the next era is. (Built: the chip. A breath cue — a puff or panting — is left for later; CONTRACTS §99.2.)
 - **Making ×5** is offered only for outputs that stack; a tool, the hammerstone and anything with stack 1 makes one at
   a time.
 
