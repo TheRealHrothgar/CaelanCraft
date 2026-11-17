@@ -98,7 +98,7 @@ import {
 } from './harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
-  strikeReach, outOfReachHint, STRIKE_REACH_MAX, heldKeys,
+  strikeReach, outOfReachHint, STRIKE_REACH_MAX, heldKeys, nearWorkplaceKeys, placedWorkplaceKeys,
   wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterHint, WATER_POTS,
 } from './survivalControl.js';
 import { WaterCycle, waterAt, drawWater, applyWaterWrites, aquiferInfo, POT_GULPS, WATER_STEP_MAX_S, CYCLE_RANGE, AQUIFER_NEAR_MAX } from './waterBodies.js';
@@ -107,7 +107,7 @@ import {
 } from './farming.js';
 import { Refill, homesteadAction, homesteadSecondOn, deepHint, EMPTY_POT, WATERING_POTS } from './homestead.js';
 import { Spread } from './spread.js';
-import { CraftQueue, findStations, listRecipes } from './crafting.js';
+import { CraftQueue, findStations, listRecipes, STATION_IDS } from './crafting.js';
 import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
 import { heatSource, heatAt, groundChillOf, isSaltyBiome, bodyTarget, CHEST_HEIGHT, HEAT_SOURCES } from './climate.js';
 import { softLandingFactor, knockDamage, crushDamage, fatigueStage, digFactorOf, strikeFactorOf } from './vitals.js';
@@ -5922,9 +5922,9 @@ export function boot(win, doc) {
     }
   }
 
-  /** @returns {string} a comparable key of a findStations result */
+  /** @returns {string} a comparable key of a findStations result (every workplace: the Workbench and the Lab too) */
   function stationsKey(st) {
-    return ['stump', 'kiln', 'bloomery', 'forge'].map((k) => (st[k] ? st[k].join(',') : '-')).join('|');
+    return STATION_IDS.filter((k) => k !== 'hand').map((k) => (st[k] ? st[k].join(',') : '-')).join('|');
   }
 
 
@@ -6016,20 +6016,28 @@ export function boot(win, doc) {
     });
   }
 
-  /** §94.4: the pack version whose keys survival.had last took in (and that set: a fresh survival state has a new one) */
+  /**
+   * §94.4: the pack version and the stations (findStations result) whose keys survival.had last took in, and that set (a
+   * fresh survival state has a new one)
+   */
   let hadPackVersion = -1;
+  /** @type {Record<string, any>|null} */
+  let hadStations = null;
   /** @type {Set<string>|null} */
   let hadSeen = null;
   /**
-   * §94.4: every item that enters the pack (or the cursor) in Survival is had for good: note the pack's keys whenever it
-   * changed. @returns {Set<string>} survival.had
+   * §94.4: every item that enters the pack (or the cursor) in Survival is had for good, and so is every workplace stood
+   * at (whoever built it): note the pack's keys and the near workplaces' whenever either changed.
+   * @returns {Set<string>} survival.had
    */
   function noteHad() {
     if (survival.inSurvival) {
-      if (pack.version !== hadPackVersion || survival.had !== hadSeen) {
+      if (pack.version !== hadPackVersion || stations !== hadStations || survival.had !== hadSeen) {
         hadPackVersion = pack.version;
+        hadStations = stations;
         hadSeen = survival.had;
         survival.noteHad(heldKeys(pack));
+        survival.noteHad(nearWorkplaceKeys(stations));
       }
       if (packSession.cursor) survival.noteHad([packSession.cursor.k]);
     }
@@ -6501,9 +6509,14 @@ export function boot(win, doc) {
     const containerWarnings = containers.load(restoring ? restoring.containers : null);
     for (const w of containerWarnings) console.warn('Caelancraft containers:', w);
     loose.load(survival.hasState && restoring && restoring.survival ? restoring.survival.loose : null, looseBlockOf);
-    // §94.4: what the pack and the baskets hold has been had (an older save has no `had`: this is all of it)
-    if (survival.hasState) survival.noteHad(heldKeys(pack, containers.entries.values()));
+    // §94.4: what the pack and the baskets hold, and every workplace set down in the world, has been had (an older save
+    // has no `had`: this is all of it)
+    if (survival.hasState) {
+      survival.noteHad(heldKeys(pack, containers.entries.values()));
+      survival.noteHad(placedWorkplaceKeys(world.edits));
+    }
     hadPackVersion = -1;
+    hadStations = null;
     regrowth.loadFromEdits(world.edits);
     growth.loadFromEdits(world.edits); // §80: the planted cells are edits, like the picked bushes
     refill.loadFromEdits(world.edits); // §85: so are a drawn spring, a well and a rain barrel

@@ -13,7 +13,7 @@ import { buildTreeModel, treeStates, revealTree, revealedTree, isCircuitKey } fr
 import { PACK_SLOTS, HOTBAR_SIZE, BASKET_SLOTS, REMAINS_SLOTS } from '../../src/config.js';
 import { isItemKey, ITEM_KEYS, stackSize } from '../../src/items.js';
 import { RECIPES } from '../../src/crafting.js';
-import { documentFromHTML, fire } from '../helpers/fakeDom.js';
+import { documentFromHTML, fire, FakeElement } from '../helpers/fakeDom.js';
 
 /** Hex distance of an axial cell from the centre. */
 const ring = ([q, r]) => Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r));
@@ -553,7 +553,8 @@ describe('the pack screen on a page', () => {
     expect(tree.classList.contains('hidden')).toBe(false);
     // §94.4: what the demo pack has, can make, or is one step from (its view has no `had`: what it carries counts)
     const model = buildTreeModel();
-    const shown = revealedTree(model, revealTree(model, { states: treeStates(model, treeFactsFromView(view)) }));
+    const facts = treeFactsFromView(view);
+    const shown = revealedTree(model, revealTree(model, { states: treeStates(model, facts), canMake: facts.canMake }));
     expect(root.querySelectorAll('.tree-node')).toHaveLength(shown.nodes.length);
     expect(shown.nodes.length).toBeLessThan(model.nodes.length);
     expect(root.querySelectorAll('.tree-col-head')).toHaveLength(6);
@@ -570,14 +571,18 @@ describe('the pack screen on a page', () => {
     expect(at('copper_ingot').querySelector('.tree-fill').classList.contains('ws-kiln')).toBe(true);
     expect(at('rock').querySelector('.tree-fill').classList.contains('ws-gather')).toBe(true);
     expect(at('stone_axe').querySelector('.tree-fill').classList.contains('ws-hand')).toBe(true);
-    expect(root.querySelectorAll('.tree-col').map((c) => c.className.replace(' unreached', ''))).toEqual(
+    expect(root.querySelectorAll('.tree-col').map((c) => c.className.replace(' unreached', '').replace(' veiled', ''))).toEqual(
       ['stump', 'kiln', 'bloomery', 'forge', 'workbench', 'lab'].map((s) => `tree-col ws-${s}`));
     // a column not reached is a dim head: its name and what it needs, no unlocks; a workplace in sight shows its unlocks
-    expect(at('@lab').classList.contains('unreached')).toBe(true);
+    expect(at('@lab').classList.contains('veiled')).toBe(true);
     expect(root.querySelector('.tree-col.ws-lab').classList.contains('unreached')).toBe(true);
     expect(at('@lab').querySelectorAll('.tree-needs .tree-mini')).toHaveLength(model.byId.get('@lab').needs.length);
     expect(at('@lab').querySelector('.tree-unlocks')).toBeNull();
-    expect(at('@stump').querySelectorAll('.tree-unlocks .tree-mini')).toHaveLength(6);
+    // §94.4a: the strip shows only what is shown of what it unlocks (had, makeable now or a step away), at most 6 icons
+    const stumpUnlocks = shown.byId.get('@stump').unlocks;
+    expect(stumpUnlocks.length).toBeGreaterThan(0);
+    expect(stumpUnlocks.length).toBeLessThan(model.byId.get('@stump').unlocks.length);
+    expect(at('@stump').querySelectorAll('.tree-unlocks .tree-mini')).toHaveLength(Math.min(6, stumpUnlocks.length));
     // each column with hidden things says how many: a "?" in its build lane
     const more = root.querySelector('.tree-node[data-node="?lab"]');
     expect(more.classList.contains('tree-node-more')).toBe(true);
@@ -609,9 +614,10 @@ describe('the pack screen on a page', () => {
     ui.open(start);
     ui.openTree();
     const ids = () => root.querySelectorAll('.tree-node').map((n) => n.getAttribute('data-node')).filter((id) => !id.startsWith('@') && !id.startsWith('?')).sort();
-    // the start of a world: the first steps only
+    // the start of a world: the first steps only (the stump's column counts its 2 hidden nodes and its 18 unlocks)
     expect(ids()).toEqual(['cord', 'hammerstone', 'plant_fibre', 'rock', 'stick']);
-    expect(root.querySelector('.tree-node[data-node="?stump"] .tree-label').textContent).toBe('2 more');
+    expect(root.querySelector('.tree-node[data-node="?stump"] .tree-label').textContent).toBe(`${2 + buildTreeModel().byId.get('@stump').unlocks.length} more`);
+    expect(root.querySelector('.tree-node[data-node="@stump"] .tree-unlocks')).toBeNull();
     const canvas = root.querySelector('.tree-canvas');
     // a refresh that changes no reveal keeps the drawing
     ui.refresh({ ...start });
@@ -630,13 +636,73 @@ describe('the pack screen on a page', () => {
     expect(root.querySelector('.tree-node[data-node="@lab"]')).toBeNull();
     for (const id of ids()) expect(isCircuitKey(id), id).toBe(false);
     expect(root.querySelectorAll('.tree-node-more')).toHaveLength(0);
-    // the Workbench's recipe is still whole (its copper wire drawn in its strip), but it unlocks nothing to show
-    expect(root.querySelector('.tree-node[data-node="@workbench"] .tree-unlocks')).toBeNull();
+    // the Workbench's strip names no copper wire (no circuit shows at all), and it unlocks nothing to show
+    const bench = root.querySelector('.tree-node[data-node="@workbench"]');
+    expect(bench.querySelector('.tree-unlocks')).toBeNull();
+    expect(bench.querySelectorAll('.tree-needs .tree-mini')).toHaveLength(5);
+    expect(bench.querySelectorAll('.tree-needs .tree-mini').map((m) => m.title).join(' ')).not.toMatch(/wire/i);
+    expect(bench.title).not.toMatch(/wire/i);
     // on again: the Lab is back
     ui.refresh({ ...start, had: all, circuits: true });
     expect(root.querySelectorAll('.tree-col-head')).toHaveLength(6);
     expect(root.querySelector('.tree-node[data-node="relay"]')).toBeNull(); // devices are the Lab's unlocks, not nodes
     expect(root.querySelector('.tree-node[data-node="voltaic_battery"]')).not.toBeNull();
+  });
+
+  it('§94.4: a workplace not in sight is a dim head and banner, even when early things in its column show', () => {
+    const { ui, root } = setup();
+    const empty = demoPackView().slots.map((s) => (s && s.k === 'handbook' ? s : null));
+    // rock, sticks and plant fibre picked up: the fire drill (in the Workbench's column) shows, the Workbench does not come forward
+    ui.open({ ...demoPackView(), slots: empty, wear: [null, null, null], ready: ['cord', 'hammerstone'], had: ['handbook', 'rock', 'stick', 'plant_fibre'] });
+    ui.openTree();
+    const col = (s) => root.querySelector(`.tree-col.ws-${s}`);
+    const head = (s) => root.querySelector(`.tree-node[data-node="@${s}"]`);
+    expect(root.querySelector('.tree-node[data-node="fire_drill"]')).not.toBeNull();
+    expect(col('workbench').classList.contains('unreached')).toBe(false); // its column shows the fire drill …
+    expect(col('workbench').classList.contains('veiled')).toBe(true); // … under a dim banner
+    expect(head('workbench').classList.contains('veiled')).toBe(true);
+    expect(col('kiln').classList.contains('unreached')).toBe(true);
+    expect(head('kiln').classList.contains('veiled')).toBe(true);
+    // a stone axe had: the Work Stump is in sight, its head and banner lit
+    ui.refresh({ ...demoPackView(), slots: empty, wear: [null, null, null], ready: [], had: ['handbook', 'rock', 'stick', 'plant_fibre', 'cord', 'hammerstone', 'stone_axe'] });
+    expect(head('stump').classList.contains('veiled')).toBe(false);
+    expect(col('stump').classList.contains('veiled')).toBe(false);
+    expect(head('workbench').classList.contains('veiled')).toBe(true);
+  });
+
+  it('§94.4: drawing the tree again as it grows adds no listeners; its clicks and hovers still work, and dispose removes them', () => {
+    const { ui, root } = setup();
+    const start = { ...demoPackView(), slots: demoPackView().slots.map((s) => (s && s.k === 'handbook' ? s : null)), wear: [null, null, null],
+      ready: [], had: ['handbook'], circuits: true };
+    ui.open(start);
+    ui.openTree();
+    const tree = root.querySelector('.build-tree');
+    const add = vi.spyOn(FakeElement.prototype, 'addEventListener');
+    const grow = [['rock', 'stick', 'plant_fibre'], ['cord', 'hammerstone'], ['stone_axe'], ['flint_knife', 'oak_log'], ['work_stump', 'clay_lump']];
+    const had = ['handbook'];
+    const canvases = new Set([root.querySelector('.tree-canvas')]);
+    for (const step of grow) {
+      had.push(...step);
+      ui.refresh({ ...start, had: [...had] });
+      canvases.add(root.querySelector('.tree-canvas'));
+    }
+    expect(canvases.size).toBe(grow.length + 1); // drawn again each time …
+    expect(add).not.toHaveBeenCalled(); // … with no listener added
+    add.mockRestore();
+    // the delegated listeners on the tree: hover lights a node's links, the back button goes to Making, a node searches
+    const axe = root.querySelector('.tree-node[data-node="stone_axe"]');
+    fire(axe.querySelector('.tree-label'), 'mouseover');
+    expect(root.querySelectorAll('.tree-edge.hot').length).toBeGreaterThan(0);
+    fire(tree, 'mouseleave');
+    expect(root.querySelectorAll('.tree-edge.hot')).toHaveLength(0);
+    root.querySelector('.tree-close').click();
+    expect(ui.isTreeOpen()).toBe(false);
+    ui.openTree();
+    root.querySelector('.tree-node[data-node="stone_axe"] .tree-label').click();
+    expect(ui.isTreeOpen()).toBe(false);
+    expect(root.querySelector('.making-search').value).toBe('Stone Axe');
+    ui.dispose();
+    for (const type of ['click', 'mouseover', 'mouseleave']) expect(tree.listenerCount(type), type).toBe(0);
   });
 
   it('§94.4: the reveal signature changes with what is shown, the columns and the circuits', () => {

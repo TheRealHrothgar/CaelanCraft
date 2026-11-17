@@ -13,7 +13,8 @@ import {
   strikeReach, outOfReachHint, STRIKE_REACH, STRIKE_REACH_MAX,
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, strikeKind, useActionOf, placeRefusal, handKeyOf,
   stationIdOf, waterHint, HINT, KNIFE_TIER, DIG_BLOCKED_TICK_S, STATION_TABS, STATION_OF_BLOCK, BELONGINGS_SCAN_DOWN,
-  HANDBOOK_ITEM, relightMissing, wearsFromDigging, wearsFromStriking, KIT_TOOL_TYPES, heldKeys,
+  HANDBOOK_ITEM, relightMissing, wearsFromDigging, wearsFromStriking, KIT_TOOL_TYPES, heldKeys, nearWorkplaceKeys,
+  placedWorkplaceKeys,
 } from '../../src/survivalControl.js';
 import { makeGetBlock } from '../helpers/fixtures.js';
 
@@ -771,6 +772,21 @@ describe('heldKeys (§94.4: what survival.had takes in)', () => {
     expect(heldKeys(pack, [], [{ k: 'stick', n: 1 }, null])).toEqual(['cord', 'rock', 'stick', 'straw_hat']);
     expect(heldKeys(null, baskets.values())).toEqual(['cord', 'flint', 'oak_log']);
     expect(heldKeys(new Pack())).toEqual([]);
+  });
+
+  it('the workplaces near (a findStations result) and those set down in the world (world.edits): their item keys, sorted', () => {
+    expect(nearWorkplaceKeys({ hand: true, kiln: [0, 64, 0], workbench: [2, 64, 1], lab: [3, 64, 1] })).toEqual(['kiln', 'lab', 'workbench']);
+    expect(nearWorkplaceKeys({ hand: true })).toEqual([]);
+    expect(nearWorkplaceKeys(null)).toEqual([]);
+    // world.edits: chunk key → (local index → block id); a workplace's block anywhere is one built (an older save's)
+    const edits = new Map([
+      ['0,0', new Map([[10, BLOCK.FORGE], [11, BLOCK.AIR], [12, BLOCK.KILN]])],
+      ['1,-1', new Map([[5, BLOCK.WORK_STUMP], [6, BLOCK.KILN]])],
+      ['2,2', new Map([[7, BLOCK.STONE]])],
+    ]);
+    expect(placedWorkplaceKeys(edits)).toEqual(['forge', 'kiln', 'work_stump']);
+    expect(placedWorkplaceKeys(new Map())).toEqual([]);
+    expect(placedWorkplaceKeys(null)).toEqual([]);
   });
 });
 

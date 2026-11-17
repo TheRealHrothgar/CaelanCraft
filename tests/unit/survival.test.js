@@ -13,10 +13,12 @@ import {
   Survival, MODES, DEATH_TITLES, deathTitle, SICK_MESSAGE, SALT_MESSAGE, SALT_MESSAGE_GAP_S, DOT_PULSE_HP,
   BELONGINGS_KEPT, BELONGINGS_LOST, WORK_LABEL_HOLD_S,
 } from '../../src/survival.js';
-import { flatGetBlock } from '../helpers/fixtures.js';
+import { flatGetBlock, flatWorldGen } from '../helpers/fixtures.js';
 import { Pack } from '../../src/inventory.js';
 import { Containers } from '../../src/containers.js';
-import { heldKeys } from '../../src/survivalControl.js';
+import { heldKeys, placedWorkplaceKeys, nearWorkplaceKeys } from '../../src/survivalControl.js';
+import { World } from '../../src/world.js';
+import { buildTreeModel, treeStates, revealTree } from '../../src/buildTree.js';
 
 const DT = 1 / 60;
 const GROUND = 63;          // solid up to y 63: feet rest at 64 (altitude 0)
@@ -740,6 +742,30 @@ describe('export / import (§9.6)', () => {
     expect(s.noteHad(heldKeys(pack, containers.entries.values()))).toBe(true);
     expect([...s.had].sort()).toEqual(['cord', 'flint_knife', 'oak_log', 'straw_hat']);
     expect(s.export().had).toEqual(['cord', 'flint_knife', 'oak_log', 'straw_hat']);
+  });
+
+  it('§94.4 an older save\'s workplaces built in the world are had (from its edits), so the tree keeps them in sight away from base', () => {
+    const world = new World({ worldGen: flatWorldGen(10), renderDistance: 1 });
+    world.update(0, 0, 1e9);
+    expect(world.setBlock(0, 11, 0, BLOCK.KILN)).toBe(true);
+    expect(world.setBlock(2, 11, 0, BLOCK.FORGE)).toBe(true);
+    expect(world.setBlock(4, 11, 0, BLOCK.STONE)).toBe(true);
+    const s = new Survival();
+    s.import({ health: 80, spawn: null, deaths: 0 }); // no `had`
+    const pack = new Pack();
+    pack.load({ pack: [{ k: 'iron_pick', n: 1, d: 200 }], wear: [null, null, null] });
+    s.noteHad(heldKeys(pack));
+    const model = buildTreeModel();
+    const facts = { count: () => 0, hasTool: () => false, canMake: () => false, near: () => false }; // away from base
+    const away = () => revealTree(model, { states: treeStates(model, facts), had: s.had });
+    expect(away().open.has('@forge')).toBe(false); // the iron pick alone does not say a Forge was built
+    s.noteHad(placedWorkplaceKeys(world.edits));
+    expect([...s.had].sort()).toEqual(['forge', 'iron_pick', 'kiln']);
+    expect(away().open.has('@forge')).toBe(true);
+    expect(away().open.has('@kiln')).toBe(true);
+    // and in a new world: a workplace stood at is had, whoever built it
+    expect(s.noteHad(nearWorkplaceKeys({ hand: true, bloomery: [0, 11, 3] }))).toBe(true);
+    expect(s.had.has('bloomery')).toBe(true);
   });
 
   it('the stillFor timer and the last temperatures are not part of the save', () => {

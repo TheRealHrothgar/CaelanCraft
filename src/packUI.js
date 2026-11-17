@@ -13,7 +13,7 @@ import { PACK_SLOTS, HOTBAR_SIZE, WEAR_SLOTS } from './config.js';
 import { ITEMS, ITEM_KEYS, TAGS, itemName, maxDurability, stackSize, WEAR_SLOT_NAMES } from './items.js';
 import { purposeOf } from './purpose.js';
 import {
-  buildTreeModel, layoutTree, treeStates, columnProgress, revealTree, revealedTree, makerOf, placeId,
+  buildTreeModel, layoutTree, treeStates, columnProgress, revealTree, revealedTree, placeId,
 } from './buildTree.js';
 
 /** The Survival Handbook's item key (§14; handbook.js HANDBOOK_KEY): right-click on it, or "Read", fires onRead. */
@@ -320,12 +320,12 @@ export function treeFactsFromView(view) {
 
 /**
  * §94.4: what the build tree's drawing depends on — its columns, the nodes shown, the workplaces in sight, the columns
- * reached and the hidden counts. The screen draws the tree again only when this changes (pure).
+ * reached, the hidden counts and the unlocks shown. The screen draws the tree again only when this changes (pure).
  * @param {import('./buildTree.js').TreeModel} model @param {import('./buildTree.js').TreeReveal} reveal @returns {string}
  */
 export function revealSignature(model, reveal) {
   return [model.stations.join(','), [...reveal.shown].sort().join(','), [...reveal.open].sort().join(','),
-    reveal.reached.map((r) => (r ? 1 : 0)).join(''), reveal.hidden.join(',')].join('|');
+    reveal.reached.map((r) => (r ? 1 : 0)).join(''), reveal.hidden.join(','), reveal.unlocks.map((u) => u.join(',')).join(';')].join('|');
 }
 
 /** The recipes a tab lists: all of them, or those of one station (order kept). @param {RecipeView[]} recipes @param {string} tab */
@@ -766,6 +766,10 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     tree.setAttribute('aria-label', 'Build tree');
     root.appendChild(tree);
     parts.tree = /** @type {HTMLElement} */ (tree);
+    // one set of delegated listeners for the tree too: it is drawn again as it grows (§94.4), never adding any
+    on(tree, 'click', onTreeClick);
+    on(tree, 'mouseover', (e) => hotNode(closestWith(e.target, 'data-node')));
+    on(tree, 'mouseleave', () => hotNode(null));
     const box = make('div', `container-panel ${HIDDEN}`);
     right.appendChild(box);
     parts.box = /** @type {HTMLElement} */ (box);
@@ -1208,7 +1212,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     const back = /** @type {HTMLButtonElement} */ (make('button', 'hex-button pack-read tree-close', '✕ Making'));
     back.type = 'button';
     back.setAttribute('aria-label', 'Back to Making (Esc)');
-    on(back, 'click', () => closeTree());
+    back.setAttribute('data-tree-close', ''); // the tree's delegated click (onTreeClick)
     head.appendChild(back);
     // the keys: the workplaces' colours, then the states' rings
     const legend = make('div', 'tree-legend');
@@ -1232,8 +1236,11 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     const heads = [];
     layout.columns.forEach((col, c) => {
       const s = model.stations[c];
-      const reached = model.byId.get(placeId(s))?.reached !== false;
-      const stripe = /** @type {HTMLElement} */ (make('div', `tree-col ws-${s}${reached ? '' : ' unreached'}`));
+      const headNode = model.byId.get(placeId(s));
+      const reached = headNode?.reached !== false;
+      // a column whose workplace is not in sight yet has a dim banner, even when early things in it show (§94.4)
+      const veiled = headNode?.veiled === true;
+      const stripe = /** @type {HTMLElement} */ (make('div', `tree-col ws-${s}${reached ? '' : ' unreached'}${veiled ? ' veiled' : ''}`));
       stripe.style.left = `${TREE_LEFT + col.x - 10}px`;
       stripe.style.width = `${col.w + 20}px`;
       const banner = /** @type {HTMLElement} */ (make('div', `tree-banner ws-${s}`));
@@ -1288,18 +1295,18 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     // the nodes; a workplace heads its column with its recipe and what it unlocks
     /** @type {Map<string, HTMLElement>} */
     const nodes = new Map();
+    // a workplace's needs: shown or hidden, each is a node of the whole tree (with the circuits off it names none)
     const strip = (ids) => ids.map(({ id, n }) => {
       const nd = model.byId.get(id) ?? full.byId.get(id);
-      // a need with no node (copper wire while the circuits are off): coloured by where it is made
-      const ws = nd ? wsOf(nd) : (makerOf(id)?.station ?? 'gather');
-      return { icon: nd ? nd.icon : id, label: nd ? nd.label : itemName(id), n, ws };
+      return { icon: nd ? nd.icon : id, label: nd ? nd.label : itemName(id), n, ws: nd ? wsOf(nd) : 'hand' };
     });
     for (const node of model.nodes) {
       const at = layout.pos.get(node.id);
       if (!at) continue;
       const place = node.lane === 'place';
       const more = node.more !== undefined;
-      const el = /** @type {HTMLElement} */ (make('div', `tree-node tree-node-${more ? 'more' : node.lane}${place && node.reached === false ? ' unreached' : ''}`));
+      // a workplace not in sight yet is a dim head (§94.4): its name and what it needs
+      const el = /** @type {HTMLElement} */ (make('div', `tree-node tree-node-${more ? 'more' : node.lane}${place && node.veiled ? ' veiled' : ''}`));
       el.style.left = `${at[0] + TREE_LEFT}px`;
       el.style.top = `${at[1]}px`;
       el.setAttribute('data-node', node.id);
@@ -1318,13 +1325,14 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
       el.appendChild(treeHex(node.icon, wsOf(node), place ? 32 : 24));
       el.appendChild(make('div', 'tree-label', node.label));
       el.appendChild(make('div', 'tree-how', place ? `built ${node.how}` : node.how));
+      const nUnlocks = node.unlocks.length;
       el.title = place
-        ? `${node.label}: built ${node.how} from ${node.needs.map(({ id, n }) => `${n > 0 ? `${n} ` : ''}${full.byId.get(id)?.label ?? itemName(id)}`).join(', ')}.${node.veiled ? '' : ` Unlocks ${node.unlocks.length} more recipes.`}`
+        ? `${node.label}: built ${node.how} from ${node.needs.map(({ id, n }) => `${n > 0 ? `${n} ` : ''}${full.byId.get(id)?.label ?? itemName(id)}`).join(', ')}.${nUnlocks > 0 ? ` Unlocks ${nUnlocks} more recipe${nUnlocks === 1 ? '' : 's'}.` : ''}`
         : `${node.label}: ${node.how}`;
       if (place) {
         el.appendChild(iconStrip('tree-needs', strip(node.needs)));
-        // what it unlocks shows once the workplace is in sight (§94.4)
-        if (!node.veiled && node.unlocks.length > 0) {
+        // what it unlocks that is shown (§94.4a: had, makeable now or a step away; the rest is in the column's count)
+        if (nUnlocks > 0) {
           const extra = node.unlocks.length > 6 ? node.unlocks.length - 6 : 0;
           const unlocks = iconStrip('tree-unlocks', node.unlocks.slice(0, 6).map((k) => ({ icon: k, label: itemName(k), n: 1, ws: wsOf(node) })));
           unlocks.insertBefore(make('span', 'tree-unlock-word', 'unlocks'), unlocks.firstChild);
@@ -1335,23 +1343,30 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
       canvas.appendChild(el);
       nodes.set(node.id, el);
     }
-    on(canvas, 'mouseover', (e) => hotNode(closestWith(e.target, 'data-node')));
-    on(canvas, 'mouseleave', () => hotNode(null));
-    on(canvas, 'click', (e) => {
-      const el = closestWith(e.target, 'data-node');
-      if (!el || !treeParts) return;
-      const node = treeParts.model.byId.get(/** @type {string} */ (el.getAttribute('data-node')));
-      if (!node || node.more !== undefined) return;
-      // its recipes in the list: what makes it and what it goes into (a workplace: its own recipes too)
-      closeTree();
-      setQuery(node.lane === 'place' ? node.label : itemName(node.icon), false);
-      if (state.view && state.view.tab !== 'all') fire('onTab', 'all');
-    });
     if (scrollAt) {
       scroll.scrollLeft = scrollAt[0];
       scroll.scrollTop = scrollAt[1];
     }
     treeParts = { model, full, layout, nodes, edges, heads, sig };
+  }
+
+  /**
+   * A click in the tree (delegated, once): "✕ Making" goes back; a node closes the tree and searches the list for its
+   * recipes, what makes it and what it goes into (a workplace by its name: its own recipes too); a "more" marker does
+   * nothing. @param {Event} e
+   */
+  function onTreeClick(e) {
+    if (closestWith(e.target, 'data-tree-close')) {
+      closeTree();
+      return;
+    }
+    const el = closestWith(e.target, 'data-node');
+    if (!el || !treeParts) return;
+    const node = treeParts.model.byId.get(/** @type {string} */ (el.getAttribute('data-node')));
+    if (!node || node.more !== undefined) return;
+    closeTree();
+    setQuery(node.lane === 'place' ? node.label : itemName(node.icon), false);
+    if (state.view && state.view.tab !== 'all') fire('onTab', 'all');
   }
 
   /** Light up the edges of the node under the mouse (and the nodes at their other ends). @param {HTMLElement|null} el */
@@ -1375,8 +1390,9 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     if (!state.treeOpen || !state.view || !parts.tree) return;
     const view = state.view;
     const full = treeModelFor(view.circuits !== false);
-    const states = treeStates(full, treeFactsFromView(view));
-    const reveal = revealTree(full, { states, had: Array.isArray(view.had) ? view.had : [] });
+    const facts = treeFactsFromView(view);
+    const states = treeStates(full, facts);
+    const reveal = revealTree(full, { states, had: Array.isArray(view.had) ? view.had : [], canMake: facts.canMake });
     const sig = revealSignature(full, reveal);
     if (!treeParts || treeParts.sig !== sig) buildTreeView(full, revealedTree(full, reveal), sig);
     const tp = /** @type {NonNullable<typeof treeParts>} */ (treeParts);

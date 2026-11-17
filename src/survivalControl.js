@@ -6,7 +6,8 @@ import {
   DIG_TICK_S, USE_REPEAT_GAP_S, TAP_HOLD_S, RELIGHT_HOLD_S, FUEL_STICK_S, FUEL_LOG_S, WORLD_HEIGHT, STATION_RANGE,
 } from './config.js';
 import { BLOCK, getBlockDef, isDeepRock, isPopOff, isReplaceable, isSolid, isWater } from './blocks.js';
-import { getItem, hasTag, itemName, maxDurability } from './items.js';
+import { getItem, hasTag, itemName, maxDurability, itemForBlock } from './items.js';
+import { STATION_BLOCKS } from './crafting.js';
 import { isPickable, tap, toolPower, DIG_TOOL_TYPES } from './harvest.js';
 import { HEX_DIRS, FACE_TOP } from './hex.js';
 import { plantAt, cropOfBlock } from './farming.js';
@@ -693,6 +694,45 @@ export function heldKeys(pack, containers = [], extra = []) {
   }
   for (const c of containers) if (c && Array.isArray(c.slots)) take(c.slots);
   take(extra);
+  return [...keys].sort();
+}
+
+/** §94.4: workplace block id → its item key (the Work Stump's, the Kiln's, … the Lab's) @type {Map<number, string|null>} */
+const WORKPLACE_ITEM = new Map(Object.values(STATION_BLOCKS).map((id) => [id, itemForBlock(id)]));
+
+/**
+ * §94.4: the item keys of the workplaces near (a crafting.findStations result), sorted — for survival.noteHad: a
+ * workplace stood at has been had, whoever built it. @param {Record<string, unknown>|null|undefined} near
+ * @returns {string[]}
+ */
+export function nearWorkplaceKeys(near) {
+  const keys = new Set();
+  if (near) {
+    for (const [s, id] of Object.entries(STATION_BLOCKS)) {
+      const k = WORKPLACE_ITEM.get(id);
+      if (near[s] && k) keys.add(k);
+    }
+  }
+  return [...keys].sort();
+}
+
+/**
+ * §94.4: the item keys of every workplace set down in the world (a cell of world.edits holding a workplace's block),
+ * sorted — on loading, for survival.noteHad: an older save's built Kiln and Forge have been had.
+ * @param {Iterable<[unknown, Iterable<[number, number]>]>|null|undefined} edits   world.edits
+ * @returns {string[]}
+ */
+export function placedWorkplaceKeys(edits) {
+  const keys = new Set();
+  if (edits) {
+    for (const [, chunkEdits] of edits) {
+      for (const [, id] of chunkEdits) {
+        const k = WORKPLACE_ITEM.get(id);
+        if (k) keys.add(k);
+      }
+      if (keys.size === WORKPLACE_ITEM.size) break;
+    }
+  }
   return [...keys].sort();
 }
 
