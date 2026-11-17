@@ -110,6 +110,8 @@ export const ARROW_KEYS = Object.freeze(['stone_arrow', 'flint_arrow', 'copper_a
 export const ARROW_PREFERENCE = Object.freeze([...ARROW_KEYS].reverse());
 /** What a bow shoots in Creative when the hotbar holds no arrow (Creative needs none: it shoots a ghost). */
 export const DEFAULT_ARROW = 'flint_arrow';
+/** What a Place press with a bow says when there is no arrow to shoot (Survival: none of any age in the pack). */
+export const NO_ARROWS_HINT = 'No arrows: make them by hand from a stick, a rock or a flint, and a feather';
 /** A metal head survives a miss this often (stone and flint shatter on rock more often). */
 export const METAL_MISS_KEEP = 0.97;
 

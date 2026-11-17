@@ -4,27 +4,30 @@
 //   - the MODEL, seen in the third-person views and as the other players on a server: one geometry per bone, hung from
 //     today's joints — the legs from the hips, the seat (and a skirt) on the hips, a torso that leans, arms with elbows
 //     from the shoulders, a head with its hair that turns and nods, long back hair that follows the head part of the way.
-//     AvatarMotion (pure) gives the angles every frame. Origin at the feet; it faces −Z, turned by the body's yaw.
-//   - the first-person HAND: a forearm with the sleeve's cuff and a real hand — a palm, four curled fingers and a thumb
-//     round the haft of the held tool, loosely open when nothing is held — small and low at the lower right of the view
-//     (FP_HAND). It chops from the wrist on AvatarPose.fpSwing and bobs with the walk. It is placed in camera space every
-//     frame and drawn in the main pass with its depth squeezed into the nearest FP_DEPTH of the depth range, so it is
-//     always in front of the world (never clipped by a block) but still hides its own far side; it is lit from the light
-//     volume at the EYE.
+//     AvatarMotion (pure) gives the angles every frame. Origin at the feet; it faces −Z, turned by the body's yaw. §100 a
+//     draw (AvatarPose.draw) brings both arms into DRAW_POSE's pose for what is held — a spear or dart cocked by the ear, a
+//     bow raised upright with the other hand at the chin — each arm placed by a two-bone reach (reachArm).
+//   - the first-person HAND: a forearm dressed as the model's (a pushed-up sleeve's cuff, or bare) and a real hand — a palm,
+//     four curled fingers and a thumb round the haft of the held tool, loosely open when nothing is held — small and low at
+//     the lower right of the view (FP_HAND; on a tablet moved left, clear of the buttons). It chops from the wrist on
+//     AvatarPose.fpSwing, draws (fpHandFrame) and bobs with the walk. It is placed in camera space every frame and drawn in
+//     the main pass with its depth squeezed into the nearest FP_DEPTH of the depth range, so it is always in front of the
+//     world (never clipped by a block) but still hides its own far side; it is lit from the light volume at the EYE.
 // The geometries, the atlas textures (linear filtering, mipmaps) and the model's material are built once per avatar
-// definition, when first shown, and SHARED by every renderer (the player's and each other player's): an instance only
-// makes groups and meshes. The model's material is a Lambert material lit like every object (lightShader.js's patch,
+// definition (every one while the game loads, in prewarm) and SHARED by every renderer (the player's and each other
+// player's): an instance only makes groups and meshes. The model's material is a Lambert material lit like every object (lightShader.js's patch,
 // CONTRACTS §62: it darkens in a cave and a torch lights it) plus a small WARM FILL in proportion to the light that
 // reaches it (AVATAR_FILL), so faces turned from the sun stay warm, never grey — and still go dark at night and in caves.
 // The item in hand (setHeld) is a chunky slab extruded from its pixel art (heldItem.js), at the grip of the model's right
 // fist and in the first-person fist. renderAvatarPortraits draws the chooser's portraits with the game's renderer.
 import * as THREE from 'three';
 import { WORLD_HEIGHT } from './config.js';
-import { AVATAR_IDS, avatarById } from './avatars.js';
-import { avatarModel, AVATAR_BONES, FP_HAND, fpHandFrame, fpStroke, HAIR_BACK_FOLLOW } from './avatarModel.js';
+import { AVATARS, AVATAR_IDS, avatarById } from './avatars.js';
+import { avatarModel, AVATAR_BONES, FP_HAND, fpHandFrame, fpStroke, fpClearShift, HAIR_BACK_FOLLOW } from './avatarModel.js';
 import { LIGHT_VOLUME_VERTEX_MAIN, patchObjectShader } from './lightShader.js';
 import { compileHidden } from './prewarm.js';
 import { heldItemGeometry, heldItemShown } from './heldItem.js';
+import { drawOf } from './looseItems.js';
 import { AvatarMotion } from './avatarMotion.js';
 
 /** @typedef {import('./avatars.js').AvatarDef} AvatarDef */
@@ -50,6 +53,36 @@ export const HELD_POSE = Object.freeze({
 });
 /** How far a dress lets the legs swing (its skirt would open otherwise). */
 export const SKIRT_LEG_SWING = 0.42;
+/**
+ * Seated on a horse, a dress's skirt (with the seat under it: the 'hips' bone) tips forward about the waist by `tip`
+ * radians and is `length` of its length, so it lies over the thighs and they leave it through the hem.
+ */
+export const SKIRT_RIDE = Object.freeze({ tip: 0.85, length: 0.72 });
+/**
+ * §100 the model's draw (AvatarPose.draw, eased in by a smoothstep), by what is in hand (looseItems.drawOf: a bow, or a
+ * spear or a dart to throw). Each hand's grip goes to `hand` — from that arm's shoulder, in the body's frame (+x the
+ * model's right, +y up, −z ahead), in shares of the arm's length — with its elbow toward `elbow`; the torso turns `twist`
+ * (the head still looks along the look); the item lies along `dir` (its length from the grip: the slab's +y) with its
+ * face toward `face` (the slab's +z), turned `cant` about its length.
+ * A throw: the right fist cocked by the ear, the elbow out to the side, the left arm pointing ahead, the body turned
+ * away, the point level over the shoulder. A bow (in the right hand, as every item is held): the right arm straight
+ * ahead holding it upright, the string toward the archer; the left hand drawn back to the chin, its elbow up and out;
+ * the body turned side-on.
+ */
+export const DRAW_POSE = Object.freeze({
+  throw: Object.freeze({
+    twist: -0.35,
+    right: Object.freeze({ hand: Object.freeze([0.06, 0.36, 0.12]), elbow: Object.freeze([1, -0.2, 0.3]) }),
+    left: Object.freeze({ hand: Object.freeze([0.12, -0.06, -0.9]), elbow: Object.freeze([-0.3, -1, 0.2]) }),
+    item: Object.freeze({ dir: Object.freeze([0, 0.12, -1]), face: Object.freeze([1, 0, 0]), cant: 0 }),
+  }),
+  bow: Object.freeze({
+    twist: 0.7,
+    right: Object.freeze({ hand: Object.freeze([-0.12, 0.04, -0.95]), elbow: Object.freeze([0.6, -1, 0]) }),
+    left: Object.freeze({ hand: Object.freeze([0.22, 0.15, -0.3]), elbow: Object.freeze([-1, 0, 0.2]) }),
+    item: Object.freeze({ dir: Object.freeze([-0.2, 0.1, 1]), face: Object.freeze([1, 0, 0.2]), cant: 0.2 }),
+  }),
+});
 /** Lying down, the body rests this far over the ground; on a horse, the hips are this high over the saddle (m). */
 export const LIE_LIFT = 0.01;
 export const RIDE_HIP_Y = 0.1;
@@ -196,6 +229,76 @@ export function disposeAvatarAssets() {
   shared.clear();
 }
 
+/** How far an elbow bends at most (radians). */
+export const ELBOW_MAX = 2.5;
+
+const _h = new THREE.Vector3();
+const _a1 = new THREE.Vector3();
+const _a2 = new THREE.Vector3();
+const _a3 = new THREE.Vector3();
+const _m1 = new THREE.Matrix4();
+const _m2 = new THREE.Matrix4();
+
+/** A rotation's frame from a direction (its first axis) and a side (the second, made square to it). */
+function basisOf(dir, side, m) {
+  _a1.copy(dir).normalize();
+  _a2.copy(side).addScaledVector(_a1, -side.dot(_a1));
+  if (_a2.lengthSq() < 1e-12) {
+    _a2.set(_a1.y, -_a1.x, 0); // a side square to the direction, any
+    if (_a2.lengthSq() < 1e-12) _a2.set(0, _a1.z, -_a1.y);
+  }
+  _a2.normalize();
+  _a3.crossVectors(_a1, _a2);
+  return m.makeBasis(_a1, _a2, _a3);
+}
+
+/**
+ * §100 one arm's reach: the shoulder's turn (`out`, in the shoulder's parent's frame) and the elbow's bend (returned:
+ * radians about its x, 0 .. ELBOW_MAX) that put the fist's grip — `grip` in the elbow's frame, the elbow at `elbowAt` in
+ * the shoulder's — at `target` (from the shoulder, the parent's frame), the elbow out toward `pole`. Too far, the arm points
+ * at it as straight as it goes; too near, it bends as far as it can.
+ * @param {THREE.Vector3} elbowAt @param {THREE.Vector3} grip @param {THREE.Vector3} target @param {THREE.Vector3} pole
+ * @param {THREE.Quaternion} out
+ * @returns {number}
+ */
+export function reachArm(elbowAt, grip, target, pole, out) {
+  const handAt = (/** @type {number} */ e) => _h.set(grip.x, grip.y * Math.cos(e) - grip.z * Math.sin(e), grip.y * Math.sin(e) + grip.z * Math.cos(e)).add(elbowAt);
+  const d = target.length();
+  let lo = 0;
+  let hi = ELBOW_MAX;
+  // the fist comes nearer the shoulder as the elbow bends: halve the way to the bend that reaches d
+  if (handAt(0).length() <= d) hi = 0;
+  else if (handAt(ELBOW_MAX).length() >= d) lo = ELBOW_MAX;
+  else {
+    for (let i = 0; i < 30; i++) {
+      const mid = (lo + hi) / 2;
+      if (handAt(mid).length() > d) lo = mid;
+      else hi = mid;
+    }
+  }
+  const e = (lo + hi) / 2;
+  handAt(e);
+  // the turn that takes the way to the fist (and the elbow's side of it) to the way to the target (and the pole's side)
+  basisOf(_h, elbowAt, _m1);
+  basisOf(target, pole, _m2);
+  out.setFromRotationMatrix(_m2.multiply(_m1.transpose()));
+  return e;
+}
+
+/** §100 the item's turn at a full draw, in the body's frame, by kind (DRAW_POSE[kind].item). */
+const DRAW_ITEM_Q = (() => {
+  /** @type {Record<string, THREE.Quaternion>} */
+  const out = {};
+  for (const [kind, { item }] of Object.entries(DRAW_POSE)) {
+    const Y = new THREE.Vector3(...item.dir).normalize();
+    const face = new THREE.Vector3(...item.face);
+    const Z = face.addScaledVector(Y, -face.dot(Y)).normalize().applyAxisAngle(Y, item.cant);
+    const X = new THREE.Vector3().crossVectors(Y, Z);
+    out[kind] = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+  }
+  return out;
+})();
+
 /** A held item's slab as a geometry (position, normal, colour). @param {import('./heldItem.js').ItemSlab} slab */
 function heldGeometry(slab) {
   const g = new THREE.BufferGeometry();
@@ -218,6 +321,8 @@ function heldGeometry(slab) {
  * @property {number} [eyeX]       where the hand's light is read (default: the camera)
  * @property {number} [eyeY]
  * @property {number} [eyeZ]
+ * @property {{ left: number, top: number }|null} [fpClear]  on a tablet (§95): the right cluster of buttons' left and top
+ *   edges in NDC; the hand keeps left of it (fpClearShift)
  */
 
 /**
@@ -235,9 +340,10 @@ function heldGeometry(slab) {
 
 /**
  * @param {THREE.Scene} scene
+ * @param {{ avatar?: string }} [o]  the avatar shown first (default: the default one); only that one is built here
  * @returns {AvatarRenderer}
  */
-export function createAvatarRenderer(scene) {
+export function createAvatarRenderer(scene, { avatar = '' } = {}) {
   const eye = { value: new THREE.Vector3() };
   const group = new THREE.Group();
   group.name = 'avatars';
@@ -290,6 +396,9 @@ export function createAvatarRenderer(scene) {
     root.add(body);
     const seat = bone('hips', 'hips');
     if (seat) body.add(seat);
+    // a dress's skirt (on the seat) is placed by sync, tipped about the waist on a horse
+    const skirt = def.outfit.skirt && seat ? { mesh: seat, waistY: def.outfit.skirt.y0 * rig.scale - rig.hipY } : null;
+    if (skirt) seat.matrixAutoUpdate = false;
     const legs = [-1, 1].map((side) => {
       const hip = joint(side < 0 ? 'avatar-hip-l' : 'avatar-hip-r');
       hip.position.set(side * rig.legX, 0, 0);
@@ -333,7 +442,9 @@ export function createAvatarRenderer(scene) {
     }
     group.add(root);
     return {
-      def, rig, assets: A, root, body, legs, torso, arms, neck, hairBack,
+      def, rig, assets: A, root, body, legs, torso, arms, neck, hairBack, skirt,
+      /** the length of each arm: shoulder to elbow, elbow to the fist's grip */
+      armLength: Math.hypot(rig.elbow[0], rig.elbow[1], rig.elbow[2]) + Math.hypot(rig.grip[0], rig.grip[1], rig.grip[2]),
       /** @type {null|{ root: THREE.Group, hand: THREE.Group, fist: THREE.Mesh, arm: THREE.Mesh }} built when first needed */
       fp: null,
     };
@@ -384,7 +495,7 @@ export function createAvatarRenderer(scene) {
     return f.fp;
   }
 
-  let current = figure(avatarById('').id);
+  let current = figure(avatarById(avatar).id);
 
   // ---- the item in hand: one mesh at the grip of the current model's right fist (arms[1], the +x side), one in its
   // first-person fist
@@ -401,6 +512,10 @@ export function createAvatarRenderer(scene) {
   let heldStyle = 'tool';
 
   const leanQ = new THREE.Quaternion();
+  /** the model's held item's turn in the fist at rest (placeHeld); the draw turns it from there */
+  const heldRestQ = new THREE.Quaternion();
+  /** @type {'throw'|'bow'} §100 what the item in hand draws as (a throw for anything that is not a bow) */
+  let drawKind = 'throw';
   /** Hang the item meshes in the current avatar's fists, held as their style says; the fist grips or opens. */
   function placeHeld() {
     const grip = current.rig.grip;
@@ -409,6 +524,7 @@ export function createAvatarRenderer(scene) {
     held.position.set(grip[0], grip[1], grip[2] - pose.ahead);
     held.rotation.set(pose.tip - Math.PI / 2, pose.spin - Math.PI / 2, 0);
     held.quaternion.premultiply(leanQ.setFromAxisAngle(Y_AXIS, pose.lean));
+    heldRestQ.copy(held.quaternion);
     if (current.fp) {
       const fp = current.fp;
       fp.hand.add(fpHeld);
@@ -424,6 +540,7 @@ export function createAvatarRenderer(scene) {
     const k = heldItemShown(key) ? /** @type {string} */ (key) : null;
     if (k === heldKey) return;
     heldKey = k;
+    drawKind = drawOf(k)?.bow ? 'bow' : 'throw';
     if (k) {
       let e = heldCache.get(k);
       if (!e) {
@@ -458,23 +575,72 @@ export function createAvatarRenderer(scene) {
   /** the last stroke placed (rest frames are reused), and whether the hand was empty */
   let lastStroke = -1;
   let lastEmpty = false;
+  let lastDraw = 0;
+  /** @type {'throw'|'bow'} */
+  let lastKind = drawKind;
   /** @type {ReturnType<typeof fpHandFrame>} */
   let frame = fpHandFrame(0);
 
-  /** Place a figure's hand for a stroke and a bob (camera space). @param {Figure} f */
-  function placeFp(f, stroke, bobX, bobY) {
+  /**
+   * Place a figure's hand for a stroke, a draw (§100) and a bob, moved `shiftX` along x (§95: clear of a tablet's
+   * buttons) — camera space. @param {Figure} f
+   */
+  function placeFp(f, stroke, bobX, bobY, draw = 0, shiftX = 0) {
     if (!f.fp) return;
     const empty = heldKey === null;
-    if (stroke !== lastStroke || empty !== lastEmpty) {
-      frame = fpHandFrame(stroke, empty);
+    if (stroke !== lastStroke || empty !== lastEmpty || draw !== lastDraw || drawKind !== lastKind) {
+      frame = fpHandFrame(stroke, empty, draw, drawKind === 'bow');
       lastStroke = stroke;
       lastEmpty = empty;
+      lastDraw = draw;
+      lastKind = drawKind;
     }
-    bobM.makeTranslation(bobX * FP_HAND.bob, bobY * FP_HAND.bob, 0);
+    bobM.makeTranslation(bobX * FP_HAND.bob + shiftX, bobY * FP_HAND.bob, 0);
     f.fp.root.matrix.multiplyMatrices(bobM, tmpM.fromArray(/** @type {*} */ (frame.arm)));
     f.fp.root.matrixWorldNeedsUpdate = true;
     f.fp.hand.matrix.fromArray(/** @type {*} */ (frame.wrist));
     f.fp.hand.matrixWorldNeedsUpdate = true;
+  }
+
+  /** whether the model's held item is turned from its rest (the draw) */
+  let heldTurned = false;
+  const torsoQ = new THREE.Quaternion();
+  const fromTorso = new THREE.Quaternion();
+  const reachQ = new THREE.Quaternion();
+  const elbowQ = new THREE.Quaternion();
+  const drawnQ = new THREE.Quaternion();
+  const vTarget = new THREE.Vector3();
+  const vPole = new THREE.Vector3();
+  const vElbow = new THREE.Vector3();
+  const vGrip = new THREE.Vector3();
+
+  /**
+   * §100 the arms (and the item) toward the draw's pose by `w`: each arm's reach (reachArm) to DRAW_POSE's hand, from the
+   * body's frame into the twisted torso's; the right fist's item turned to lie as the pose says.
+   * @param {Figure} m @param {(typeof DRAW_POSE)[keyof typeof DRAW_POSE]} D @param {number} w
+   */
+  function drawArms(m, D, w) {
+    torsoQ.setFromEuler(m.torso.rotation);
+    fromTorso.copy(torsoQ).invert();
+    const L = m.armLength;
+    const [ex, ey, ez] = m.rig.elbow;
+    const [gx, gy, gz] = m.rig.grip;
+    for (const side of [-1, 1]) {
+      const spec = side < 0 ? D.left : D.right;
+      const arm = m.arms[side < 0 ? 0 : 1];
+      vTarget.set(spec.hand[0] * L, spec.hand[1] * L, spec.hand[2] * L).applyQuaternion(fromTorso);
+      vPole.set(spec.elbow[0], spec.elbow[1], spec.elbow[2]).applyQuaternion(fromTorso);
+      const e = reachArm(vElbow.set(side * ex, ey, ez), vGrip.set(side * gx, gy, gz), vTarget, vPole, reachQ);
+      arm.shoulder.quaternion.slerp(reachQ, w);
+      arm.elbow.rotation.x += (e - arm.elbow.rotation.x) * w;
+      if (side > 0) {
+        // the item's turn in the fist at a full draw: from the body's frame into the drawn forearm's
+        elbowQ.setFromAxisAngle(vElbow.set(1, 0, 0), e);
+        drawnQ.copy(reachQ).multiply(elbowQ).invert().multiply(fromTorso).multiply(DRAW_ITEM_Q[drawKind === 'bow' ? 'bow' : 'throw']);
+        held.quaternion.copy(heldRestQ).slerp(drawnQ, w);
+        heldTurned = true;
+      }
+    }
   }
 
   /** @param {AvatarFrame} f */
@@ -498,15 +664,34 @@ export function createAvatarRenderer(scene) {
       // a positive turn about x swings a hanging limb forward; about z, out to the model's right
       m.legs[0].rotation.set(p.legRaise - swing, 0, -p.legSpread);
       m.legs[1].rotation.set(p.legRaise + swing, 0, p.legSpread);
-      m.torso.rotation.set(p.lean, p.twist, 0);
+      if (m.skirt) {
+        // on a horse the skirt tips forward about the waist and is shorter, over the thighs
+        const k = p.ride;
+        const y0 = m.skirt.waistY;
+        const sm = m.skirt.mesh.matrix;
+        sm.makeTranslation(0, y0, 0).multiply(tmpM.makeRotationX(SKIRT_RIDE.tip * k));
+        sm.multiply(tmpM.makeScale(1, 1 - (1 - SKIRT_RIDE.length) * k, 1)).multiply(tmpM.makeTranslation(0, -y0, 0));
+        m.skirt.mesh.matrixWorldNeedsUpdate = true;
+      }
+      // §100 the draw's share of the pose (eased in and out), and what is drawn
+      const d = Math.max(0, Math.min(1, p.draw || 0));
+      const w = d * d * (3 - 2 * d);
+      const D = DRAW_POSE[drawKind];
+      const twist = p.twist + D.twist * w;
+      m.torso.rotation.set(p.lean, twist, 0);
       m.torso.position.y = p.chestLift;
       const [left, right] = m.arms;
       left.shoulder.rotation.set(-p.armSwing + p.armReach, 0, -p.armSpread);
       right.shoulder.rotation.set(p.armSwing + p.armReach + p.reachR, p.twistR, p.armSpread);
       left.elbow.rotation.x = p.elbow;
-      right.elbow.rotation.x = p.elbow + 0.15 * Math.min(1, p.reachR);
+      right.elbow.rotation.x = p.elbow + 0.15 * Math.max(0, Math.min(1, p.reachR)); // a little more bent reaching forward
+      if (w > 0) drawArms(m, D, w);
+      else if (heldTurned) {
+        held.quaternion.copy(heldRestQ);
+        heldTurned = false;
+      }
       const nod = p.headPitch - p.lean * 0.8;
-      const turn = p.headYaw - p.twist;
+      const turn = p.headYaw - twist;
       m.neck.rotation.set(nod, turn, 0);
       if (m.hairBack) {
         m.hairBack.rotation.set(Math.min(0, nod) * HAIR_BACK_FOLLOW.pitchDown, turn * HAIR_BACK_FOLLOW.yaw, 0);
@@ -523,7 +708,9 @@ export function createAvatarRenderer(scene) {
       cam.updateMatrixWorld();
       armGroup.matrix.copy(cam.matrixWorld);
       armGroup.matrixWorldNeedsUpdate = true;
-      placeFp(m, fpStroke(p.fpSwing), p.fpBobX, p.fpBobY);
+      const persp = /** @type {THREE.PerspectiveCamera} */ (cam);
+      const shiftX = f.fpClear ? fpClearShift(f.fpClear, persp.aspect, persp.fov) : 0;
+      placeFp(m, fpStroke(p.fpSwing), p.fpBobX, p.fpBobY, Math.max(0, Math.min(1, p.draw || 0)), shiftX);
       camPos.setFromMatrixPosition(cam.matrixWorld);
       eye.value.set(f.eyeX ?? camPos.x, f.eyeY ?? camPos.y, f.eyeZ ?? camPos.z);
     }
@@ -543,9 +730,11 @@ export function createAvatarRenderer(scene) {
 
   /**
    * Compile the model's, the hand's and the held item's programs while the game loads (prewarm.compileHidden): the
-   * current avatar's model and hand are built for it if they were not yet.
+   * current avatar's model and hand are built for it if they were not yet, and every avatar's shared resources
+   * (avatarAssets), so another player who joins later, or the chooser, never stalls a frame building one.
    */
   const prewarm = (webgl, camera) => {
+    for (const def of AVATARS) avatarAssets(def);
     fpOf(current);
     placeHeld();
     return compileHidden([group, armGroup], webgl, camera, scene);

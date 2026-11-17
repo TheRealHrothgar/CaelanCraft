@@ -14,9 +14,11 @@
 // shoulder, each forearm (with a cuff and the hand) from its elbow. Numbers are the avatar's BUILD (avatars.js) drawn at
 // its `scale`, so the model's top is its `height`.
 //
-// The first-person HAND (fpHand) is built over the same atlas: a forearm with the sleeve's cuff, and a fist — a palm,
-// four fingers of three segments and a thumb — curled round a haft (`grip`) or loosely open (`relaxed`). FP_HAND holds
-// every number of where it sits in the view and how it chops; fpHandFrame turns a stroke into its camera-space frames.
+// The first-person HAND (fpHand) is built over the same atlas: a forearm dressed as the model's (a pushed-up sleeve and its
+// cuff, or bare under a short sleeve), and a fist — a palm, four fingers of three segments and a thumb — curled round a
+// haft (`grip`) or loosely open (`relaxed`). FP_HAND holds every number of where it sits in the view, how it chops and
+// how it draws (§100); fpHandFrame turns a stroke and a draw into its camera-space frames; fpClearShift keeps it clear of
+// a tablet's buttons (§95).
 import {
   loft, prism, wedge, transform, merge, mul, translation, rotation, scaling, compose, triangleCount, bounds,
 } from './modelKit.js';
@@ -378,24 +380,22 @@ export function paintAvatar(def) {
     p.skin(skinR).shadeV(1.0, 0.93).ao({ top: 0.2, width: 0.5 });
     if (O.cuffAt) sleeveRows(p, Math.round(fh * (1 - O.cuffAt)));
   }, { top: (p) => p.cloth(top), bottom: (p) => p.skin(skinR) });
-  // the first-person forearm: skin from the wrist to the sleeve's cuff, cloth beyond it
+  // the first-person forearm, as the model's: skin from the wrist to a pushed-up sleeve's cuff and cloth beyond it; bare
+  // under a short sleeve (it ends on the upper arm, out of the view)
   const pw = Math.round(perimeter(K.fore.rx * 0.95 * 0.85, K.fore.rz * 0.95 * 0.85) * D);
   const ph = Math.round(FP_FOREARM * D);
   s.wrap('fpArm', pw, ph, (p) => {
     p.skin(skinR).shadeV(1.0, 0.94);
-    sleeveRows(p, Math.round(ph * (1 - def.hands.fpCuff)));
-  }, { top: (p) => p.cloth(top), bottom: (p) => p.skin(skinR) });
-  // the cuff: a knit cuff on a pushed-up long sleeve, else the hem of a short one
-  s.wrap('cuff', fw + 2, 6, (p) => {
-    if (O.cuffAt) {
+    if (O.cuffAt) sleeveRows(p, Math.round(ph * (1 - O.cuffAt)));
+  }, { top: (p) => (O.cuffAt ? p.cloth(top) : p.skin(skinR)), bottom: (p) => p.skin(skinR) });
+  // the knit cuff of a pushed-up long sleeve (a short sleeve's hem is the puffed sleeve's own)
+  if (O.cuffAt) {
+    s.wrap('cuff', fw + 2, 6, (p) => {
       p.knit([top[0], mix(top[0], top[1], 0.5), top[2]], { cell: 3 });
       p.line(-1, 1, fw + 3, 1, 0.6, O.trim, 0.9);
-    } else {
-      p.cloth(top, { fold: 0.6 });
-      p.line(-1, p.h - 1.5, fw + 3, p.h - 1.5, 1.2, O.kind === 'dress' ? O.trim : top[0], 1);
-    }
-    p.shadeV(1.08, 0.86);
-  }, { top: (p) => p.fill(top[1]), bottom: (p) => p.fill(top[2]) });
+      p.shadeV(1.08, 0.86);
+    }, { top: (p) => p.fill(top[1]), bottom: (p) => p.fill(top[2]) });
+  }
   // below: jeans (a belt, a fly, back pockets), khaki trousers, or a dress's skirt over bare legs and socks (under a skirt
   // the hips are never seen: a small patch of the dress's cloth)
   const dress = O.kind === 'dress';
@@ -779,6 +779,20 @@ export const FP_HAND = Object.freeze({
   swingArm: -0.5, swingIn: 0.3, swingWrist: -0.5, swingPush: 0.05,
   /** how much of the walk's bob (AvatarPose.fpBobX, fpBobY) the hand takes */
   bob: 1,
+  /**
+   * §100 the draw (fpHandFrame's `draw` and `bow`): at a full draw the fist is at `grip`, pulled up and back toward the eye.
+   * A throw (a spear, a dart) is cocked high at the right, its point toward `aim` (camera space: ahead and above the
+   * crosshair, so its length shows), its picture turned to the eye. A bow is held up before the eye, its limbs upright
+   * but for `cant` radians (the top leaning right, as it lies in the hand at rest), its string toward the eye: the picture
+   * turned `turn` radians from edge-on.
+   */
+  drawThrow: Object.freeze({ grip: Object.freeze([0.23, -0.09, -0.36]), aim: Object.freeze([-0.1, 0.45, -1.5]) }),
+  drawBow: Object.freeze({ grip: Object.freeze([0.15, -0.1, -0.4]), cant: 0.5, turn: 1.2 }),
+  /**
+   * On a tablet (§95) the fist keeps this far (NDC, across the view) left of the right cluster of buttons when it would sit
+   * among them (fpClearShift): the whole hand moves left by as much.
+   */
+  touchGap: 0.1,
 });
 
 /** The wrist bend's centre in the hand frame. */
@@ -799,12 +813,34 @@ export function fpStroke(fpSwing) {
  * The hand's frames in camera space: origin at the fist (the middle of the grip), +y along the haft, +z toward the
  * elbow, +x out of the back of the hand. `arm` carries the forearm; `hand` the fist and the held item, which the wrist
  * bends on through the stroke; `wrist` is the hand's frame in the arm's. `stroke` 0 at rest .. 1 at the bottom of it;
- * `empty`: nothing in the hand (the wrist straighter).
+ * `empty`: nothing in the hand (the wrist straighter); `draw` (§100, AvatarPose.draw) how far the hand is in the draw's
+ * place (fpDrawnArm: a throw's, or a bow's when `bow`), eased in by a smoothstep.
  * @param {number} [stroke]
  * @param {boolean} [empty]
+ * @param {number} [draw]
+ * @param {boolean} [bow]
  * @returns {{ arm: Float64Array, hand: Float64Array, wrist: Float64Array }}
  */
-export function fpHandFrame(stroke = 0, empty = false) {
+export function fpHandFrame(stroke = 0, empty = false, draw = 0, bow = false) {
+  const F = FP_HAND;
+  const g = F.grip;
+  let M = fpRestArm();
+  const z = [M[8], M[9], M[10]];
+  const s = Math.max(0, Math.min(1, stroke || 0));
+  if (s > 0) {
+    const elbow = [g[0] + z[0] * F.forearm, g[1] + z[1] * F.forearm, g[2] + z[2] * F.forearm];
+    M = mul(rotateAbout(elbow, [1, 0, F.swingIn], F.swingArm * s), M);
+    M = mul(translation(0, 0, -F.swingPush * s), M);
+  }
+  const d = empty ? 0 : Math.max(0, Math.min(1, draw || 0));
+  const w = d * d * (3 - 2 * d);
+  if (w > 0) M = blendFrames(M, fpDrawnArm(bow), w);
+  const wrist = rotateAbout(FP_WRIST, [1, 0, 0], (empty ? F.deviateEmpty : F.deviate) + F.swingWrist * s * (1 - w));
+  return { arm: M, hand: mul(M, wrist), wrist };
+}
+
+/** The forearm's frame at rest (camera space; see fpHandFrame). @returns {Float64Array} */
+function fpRestArm() {
   const F = FP_HAND;
   const z = norm(F.arm);
   const b = norm(F.back);
@@ -812,15 +848,136 @@ export function fpHandFrame(stroke = 0, empty = false) {
   const x = norm([b[0] - d * z[0], b[1] - d * z[1], b[2] - d * z[2]]);
   const y = cross(z, x);
   const g = F.grip;
-  let M = mul(new Float64Array([x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0, g[0], g[1], g[2], 1]), scaling(F.handScale));
-  const s = Math.max(0, Math.min(1, stroke || 0));
-  if (s > 0) {
-    const elbow = [g[0] + z[0] * F.forearm, g[1] + z[1] * F.forearm, g[2] + z[2] * F.forearm];
-    M = mul(rotateAbout(elbow, [1, 0, F.swingIn], F.swingArm * s), M);
-    M = mul(translation(0, 0, -F.swingPush * s), M);
+  return mul(new Float64Array([x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0, g[0], g[1], g[2], 1]), scaling(F.handScale));
+}
+
+/**
+ * §100 the held slab's frame at a full draw (camera space, unscaled; its +y the item's length from the grip, +x across its
+ * picture, +z out of its face): a throw's length toward FP_HAND.drawThrow.aim, its face to the eye; a bow upright, its
+ * string toward the eye.
+ * @param {boolean} bow @returns {Float64Array}
+ */
+export function fpDrawnItem(bow) {
+  const F = FP_HAND;
+  const g = bow ? F.drawBow.grip : F.drawThrow.grip;
+  const toEye = norm([-g[0], -g[1], -g[2]]);
+  let X;
+  let Y;
+  if (bow) {
+    // the limbs (across the picture) upright, the top leaning right as the bow lies in the hand at rest (so it turns up the
+    // short way and never shows its edge); the string (up the picture) toward the eye, turned from edge-on so the curve shows
+    const c = F.drawBow.cant;
+    X = [-Math.sin(c), -Math.cos(c), 0];
+    const flat = norm([toEye[0], 0, toEye[2]]);
+    const t = F.drawBow.turn;
+    const along = [flat[0] * Math.cos(t) - flat[2] * Math.sin(t), 0, flat[0] * Math.sin(t) + flat[2] * Math.cos(t)];
+    const k = along[0] * X[0] + along[1] * X[1] + along[2] * X[2];
+    Y = norm([along[0] - k * X[0], along[1] - k * X[1], along[2] - k * X[2]]);
+  } else {
+    const a = F.drawThrow.aim;
+    Y = norm([a[0] - g[0], a[1] - g[1], a[2] - g[2]]);
+    X = norm(cross(Y, toEye)); // across the picture: square to its length and to the way to the eye (its face to the eye)
   }
-  const wrist = rotateAbout(FP_WRIST, [1, 0, 0], (empty ? F.deviateEmpty : F.deviate) + F.swingWrist * s);
-  return { arm: M, hand: mul(M, wrist), wrist };
+  const Z = cross(X, Y);
+  return new Float64Array([X[0], X[1], X[2], 0, Y[0], Y[1], Y[2], 0, Z[0], Z[1], Z[2], 0, g[0], g[1], g[2], 1]);
+}
+
+/** @type {Map<boolean, Float64Array>} the forearm's frame at a full draw, by kind (bow or not) */
+const drawnArms = new Map();
+
+/**
+ * §100 the forearm's frame at a full draw (camera space): the wrist bent as at rest, the whole turned and moved so the
+ * held item lies where fpDrawnItem puts it (its grip at the fist, placed in the hand as `fp.tool` places a tool).
+ * @param {boolean} bow @returns {Float64Array}
+ */
+export function fpDrawnArm(bow) {
+  let A = drawnArms.get(bow);
+  if (A) return A;
+  const F = FP_HAND;
+  const tool = mul(rotation(1, F.toolTurn), SWING_PLANE); // the slab in the hand, unscaled: a rotation
+  const unwrist = invertAffine(rotateAbout(FP_WRIST, [1, 0, 0], F.deviate));
+  const armFor = (item) => mul(mul(mul(item, transpose3(tool)), scaling(F.handScale)), unwrist);
+  A = armFor(fpDrawnItem(bow));
+  drawnArms.set(bow, A);
+  return A;
+}
+
+/** A rotation's inverse (its 3 × 3 transposed; no translation). @param {Mat4} m @returns {Float64Array} */
+function transpose3(m) {
+  return new Float64Array([m[0], m[4], m[8], 0, m[1], m[5], m[9], 0, m[2], m[6], m[10], 0, 0, 0, 0, 1]);
+}
+
+/** A frame's rotation as a unit quaternion [x, y, z, w] (its axes may carry one uniform scale). @param {Mat4} m */
+function quatOf(m) {
+  const k = Math.hypot(m[0], m[1], m[2]) || 1;
+  const a = m[0] / k, b = m[4] / k, c = m[8] / k;
+  const d = m[1] / k, e = m[5] / k, f = m[9] / k;
+  const g = m[2] / k, h = m[6] / k, i = m[10] / k;
+  const tr = a + e + i;
+  if (tr > 0) {
+    const S = Math.sqrt(tr + 1) * 2;
+    return [(h - f) / S, (c - g) / S, (d - b) / S, S / 4];
+  }
+  if (a > e && a > i) {
+    const S = Math.sqrt(1 + a - e - i) * 2;
+    return [S / 4, (b + d) / S, (c + g) / S, (h - f) / S];
+  }
+  if (e > i) {
+    const S = Math.sqrt(1 + e - a - i) * 2;
+    return [(b + d) / S, S / 4, (f + h) / S, (c - g) / S];
+  }
+  const S = Math.sqrt(1 + i - a - e) * 2;
+  return [(c + g) / S, (f + h) / S, S / 4, (d - b) / S];
+}
+
+/**
+ * Two rigid frames of the same uniform scale blended: the rotation by slerp, the origin along a line (`w` 0 is `A`, 1 `B`).
+ * @param {Mat4} A @param {Mat4} B @param {number} w @returns {Float64Array}
+ */
+export function blendFrames(A, B, w) {
+  const qa = quatOf(A);
+  let qb = quatOf(B);
+  let dot = qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3];
+  if (dot < 0) {
+    qb = qb.map((v) => -v);
+    dot = -dot;
+  }
+  let ka = 1 - w;
+  let kb = w;
+  if (dot < 0.9995) {
+    const th = Math.acos(Math.min(1, dot));
+    ka = Math.sin((1 - w) * th) / Math.sin(th);
+    kb = Math.sin(w * th) / Math.sin(th);
+  }
+  const q = qa.map((v, n) => v * ka + qb[n] * kb);
+  const ql = Math.hypot(q[0], q[1], q[2], q[3]);
+  const [x, y, z, s] = q.map((v) => v / ql);
+  const k = Math.hypot(A[0], A[1], A[2]);
+  return new Float64Array([
+    (1 - 2 * (y * y + z * z)) * k, 2 * (x * y + z * s) * k, 2 * (x * z - y * s) * k, 0,
+    2 * (x * y - z * s) * k, (1 - 2 * (x * x + z * z)) * k, 2 * (y * z + x * s) * k, 0,
+    2 * (x * z + y * s) * k, 2 * (y * z - x * s) * k, (1 - 2 * (x * x + y * y)) * k, 0,
+    A[12] + (B[12] - A[12]) * w, A[13] + (B[13] - A[13]) * w, A[14] + (B[14] - A[14]) * w, 1,
+  ]);
+}
+
+/**
+ * On a tablet (§95): how far (camera-space metres along x) the whole first-person hand moves so the fist keeps clear of the
+ * right cluster of buttons. 0 when the fist at rest (FP_HAND.grip) is already left of the cluster's left edge less
+ * FP_HAND.touchGap, or above its top; else the move that puts it there. `clear`: the cluster's left and top edges in NDC
+ * (−1..1, y up); `aspect` and `fov` (vertical, degrees) the camera's.
+ * @param {{ left: number, top: number }|null|undefined} clear @param {number} aspect @param {number} fov
+ * @returns {number}
+ */
+export function fpClearShift(clear, aspect, fov) {
+  if (!clear || !(aspect > 0) || !(fov > 0)) return 0;
+  const g = FP_HAND.grip;
+  const t = Math.tan((fov * Math.PI) / 360);
+  const x = g[0] / -g[2] / (t * aspect);
+  const y = g[1] / -g[2] / t;
+  const want = clear.left - FP_HAND.touchGap;
+  if (x <= want || y >= clear.top) return 0;
+  return (want - x) * t * aspect * -g[2];
 }
 
 /** In the swing's plane a slab's picture is the hand's (y, z): its head ahead of the knuckles (−z), its face out of the
@@ -836,14 +993,15 @@ function buildFp(def, s, S) {
   const K = def.body;
   const k = def.hands.palm[0] / 0.042; // the fist is drawn for a child's 4.2 cm palm
   const place = (geo, key, m) => s.place(geo, key, m);
-  // the forearm from the wrist back to the elbow, the sleeve's cuff on it (the arm frame)
+  // the forearm from the wrist back to the elbow (the arm frame), with a pushed-up sleeve's cuff where the model has it
   const wrist = [0.004, 0, FP_WRIST_Z];
   const elbow = [0.004, 0, FP_WRIST_Z + FP_FOREARM];
   const fL = len(wrist, elbow);
+  const cuffAt = def.outfit.cuffAt;
   const arm = merge([
     place(S.col(K.fore.rx * 0.85, K.fore.rz * 0.85, foreRings(fL)), 'fpArm', seg(wrist, elbow, null, { back: [1, 0, 0] })),
-    place(S.col(K.fore.rx * 0.74, K.fore.rz * 0.79, [{ y: 0, sx: 1 }, { y: 0.034, sx: 1.02 }]), 'cuff',
-      seg(wrist, elbow, translation(0, fL * def.hands.fpCuff - 0.017, 0), { back: [1, 0, 0] })),
+    ...(cuffAt ? [place(S.col(K.fore.rx * 0.74, K.fore.rz * 0.79, [{ y: 0, sx: 1 }, { y: 0.034, sx: 1.02 }]), 'cuff',
+      seg(wrist, elbow, translation(0, fL * cuffAt - 0.017, 0), { back: [1, 0, 0] }))] : []),
   ]);
   /**
    * The hand: the palm and the back of the hand (a block beside the haft, the wrist behind it), four fingers (index at the

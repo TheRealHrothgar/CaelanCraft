@@ -126,8 +126,8 @@ export function findStations(getBlock, q, y, r) {
 // bloomery and 3 at the forge (114 in all). §94 moved the flint tools to the Work Stump, the simple circuit parts to the
 // Workbench and the devices to the Lab; the elementary consumables (fuse, powder, wire, filings, the keg) stay early.
 // Today, with the later additions (the snare, the homestead, the Lab, the Pennant; §100 the bows, the staves and the
-// arrows of every age, the darts retired; §103 the Spyglass): 44 at hand, 26 at the stump, 27 at the kiln, 5 at the
-// bloomery, 17 at the forge, 7 at the workbench and 8 at the lab (134 in all).
+// arrows of every age, the darts retired; §102 the Compass; §103 the Spyglass): 44 at hand, 26 at the stump, 27 at the
+// kiln, 5 at the bloomery, 18 at the forge, 7 at the workbench and 8 at the lab (135 in all).
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** "2 #knapstone + stick + 2 cord" → [{tag:'knapstone',n:2}, {k:'stick',n:1}, {k:'cord',n:2}]. */
@@ -280,12 +280,14 @@ const RECIPE_ROWS = [
   ['remelt_glass', 'bloomery', '3 glass_shards + charcoal', 'glass', '', 15],
   // v0.10 circuits (§8.2): the lamp's glass is sealed hot
   ['filament_lamp', 'bloomery', 'glass + 3 carbon_filament + copper_wire + #planks', 'filament_lamp', '', 20],
-  // ---- Forge (15; charcoal only: carbon matters for iron)
+  // ---- Forge (16 with §102's Compass; charcoal only: carbon matters for iron)
   ...metalToolRows('forge', 'iron', 'wrought_iron', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 4', 30),
   ['steel_bar', 'forge', 'wrought_iron + 2 charcoal', 'steel_bar', 'hammer 5', 45],
   ...metalToolRows('forge', 'steel', 'steel_bar', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 5', 40),
   ['iron_block', 'forge', '7 wrought_iron', 'iron_block', 'hammer 4', 20],
   ['diamond_block', 'forge', '7 rough_gem', 'diamond_block', 'hammer 6', 20],
+  // §102: the Compass — a magnetised iron needle (wrought iron) in a copper case under a glass face
+  ['compass', 'forge', 'wrought_iron + copper_ingot + glass_shards', 'compass', 'hammer 4', 20],
   // §100: arrowheads forged from a bar of iron or steel, eight at a time, as the forge's tools are
   ['iron_arrow', 'forge', '4 stick + 4 feather + wrought_iron + charcoal', '8 iron_arrow', 'hammer 4', 25],
   ['steel_arrow', 'forge', '4 stick + 4 feather + steel_bar + charcoal', '8 steel_arrow', 'hammer 5', 30],

@@ -14,10 +14,12 @@
 // cylinder's side, whichever it reaches first going back. Its path is walked (at most RAIN_PATH_STEPS looks, from the
 // remembered columns) and a drop whose path would pass through anything solid is not born: the lee of a wall or a hill is
 // a rain shadow. In flight a slanted drop that runs into a column's cover (a roof's corner between two looks) stops
-// there. Gusts swirl the drops to and fro as they are drawn. With no wind (or a calm) nothing changes.
+// there, as does one in a column that cannot be looked at this update. Gusts swirl the drops to and fro as they are
+// drawn. With no wind (or a calm) nothing changes. A full column cache forgets only the columns the player has left
+// behind (farther than RAIN_COLUMNS_NEAR), so walking never leaves the drops in the air with nothing remembered.
 import * as THREE from 'three';
 import { WORLD_HEIGHT } from './config.js';
-import { worldToHex } from './hex.js';
+import { hexToWorld, worldToHex } from './hex.js';
 import { LEAF_COVER, rainColumn } from './weather.js';
 import { dropDrift, dropSwirl, timeInCircle } from './windDrawn.js';
 
@@ -57,6 +59,12 @@ export const SPLASH_SIZE = Object.freeze([0.08, 0.3]);
 export const RAIN_COLUMN_SCANS = 8;
 export const RAIN_COLUMN_TTL_S = 2;
 export const RAIN_COLUMNS_KEPT = 1024;
+/**
+ * When RAIN_COLUMNS_KEPT columns are remembered, those whose centre is farther than this from the eye are forgotten
+ * (the ones the player has walked away from); the near ones — every column a drop in the air or a drop being born can
+ * be in (within RAIN_RADIUS + 2 of the eye, about 600 of them) — are kept, so walking never empties the cache at once.
+ */
+export const RAIN_COLUMNS_NEAR = RAIN_RADIUS + 3;
 /** Drops that may be born in one update: the rain thickens over a few frames instead of all at once. */
 export const RAIN_BIRTHS = 48;
 /** sRGB colours of a raindrop and of a snowflake, and how opaque each is. */
@@ -174,10 +182,28 @@ export class RainField {
     if (this.scans >= RAIN_COLUMN_SCANS) return known ?? null; // an old answer is better than none
     this.scans++;
     const c = rainColumn(view.getBlock, q, r, WORLD_HEIGHT - 1);
-    if (this.columns.size >= RAIN_COLUMNS_KEPT) this.columns.clear();
+    if (!known && this.columns.size >= RAIN_COLUMNS_KEPT) this._forgetFar(view);
     const entry = { floor: c.floor, canopy: c.canopy, at: this.t };
     this.columns.set(key, entry);
     return entry;
+  }
+
+  /**
+   * The cache is full: forget the columns farther than RAIN_COLUMNS_NEAR from the eye (left behind as the player
+   * walks), keeping every column a drop can be in. Should the near ones alone fill it, everything is forgotten.
+   * @param {RainView} view
+   */
+  _forgetFar(view) {
+    const far = RAIN_COLUMNS_NEAR * RAIN_COLUMNS_NEAR;
+    for (const key of this.columns.keys()) {
+      const q = Math.floor(key / COLUMN_KEY_SPAN) - COLUMN_KEY_OFFSET;
+      const r = (key % COLUMN_KEY_SPAN) - COLUMN_KEY_OFFSET;
+      const [cx, cz] = hexToWorld(q, r);
+      const dx = cx - view.x;
+      const dz = cz - view.z;
+      if (dx * dx + dz * dz > far) this.columns.delete(key);
+    }
+    if (this.columns.size >= RAIN_COLUMNS_KEPT) this.columns.clear();
   }
 
   /**
@@ -242,9 +268,10 @@ export class RainField {
           // between two looks) stops there
           if (y[i] > floor[i]) {
             // what is remembered, however old (a stale column is never looked at again for this); a column never seen
-            // is looked at while this update has looks left
+            // is looked at while this update has looks left, and with none left the drop stops (it cannot be told
+            // clear, as an unknown column blocks a birth)
             const col = this._known(x[i], z[i]) ?? this._column(view, x[i], z[i]);
-            if (col && y[i] < col.floor) {
+            if (!col || y[i] < col.floor) {
               alive[i] = 0;
               this.live--;
               continue;

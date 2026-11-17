@@ -10,10 +10,11 @@ import {
   VANE_GUST, VANE_CLASSES, drawnStrength, windAir, smokeDrift, smokeRise, dropDrift, dropSwirl, timeInCircle, vaneAngle,
   vaneLevel, vaneWords, vaneView,
 } from '../../src/windDrawn.js';
-import { windAt } from '../../src/wind.js';
+import { windAt, windWord, scentToward, WIND_CALM, WIND_MIN } from '../../src/wind.js';
+import { approach } from '../../src/weather.js';
 import {
   Pennants, pennantKey, pennantSeed, poleHeight, flagLift, flagWave, flagRibbon, FLAG_FLOATS, PENNANT_SEGMENTS,
-  PENNANT_POLE_TALL, PENNANT_POLE_SHORT, PENNANT_TIP, PENNANT_MAX_MODELS,
+  PENNANT_POLE_TALL, PENNANT_POLE_SHORT, PENNANT_TIP, PENNANT_MAX_MODELS, PENNANT_LIFT_FROM,
 } from '../../src/pennants.js';
 import { createPennantRenderer, PENNANT_COLORS, FLAG_TRIANGLES } from '../../src/pennantRenderer.js';
 import { RainField, RAIN_RADIUS, RAIN_TOP, RAIN_ENTRY_RADIUS, RAIN_PATH_STEPS } from '../../src/rainRenderer.js';
@@ -31,9 +32,12 @@ import { buildPickerModel, searchBlocks } from '../../src/pickerModel.js';
 import { buildChapters, plainText } from '../../src/handbook.js';
 import { createHUD } from '../../src/hud.js';
 import { readSceneParam, WIND_SCENE } from '../../src/diagnostics.js';
+import { cameraPose } from '../../src/viewCamera.js';
 import { worldToHex, hexToWorld } from '../../src/hex.js';
-import { WORLD_HEIGHT } from '../../src/config.js';
+import { WORLD_HEIGHT, CHUNK_SIZE } from '../../src/config.js';
 import { mulberry32 } from '../../src/noise.js';
+import { World } from '../../src/world.js';
+import { flatWorldGen } from '../helpers/fixtures.js';
 import { documentFromHTML } from '../helpers/fakeDom.js';
 
 const read = (path) => readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8');
@@ -133,6 +137,37 @@ describe('the HUD vane: where the wind blows, seen from where the player looks',
     }
   });
 
+  it('in every view the arrow agrees with the wind on the screen: in the front view the camera looks back (yaw + π)', () => {
+    // the camera as renderer.setCamera turns it (Euler YXZ: pitch, yaw), looking at a point ahead
+    const camera = new THREE.PerspectiveCamera(70, 16 / 9, 0.1, 100);
+    camera.rotation.order = 'YXZ';
+    const onScreen = (pose, x, y, z) => {
+      camera.position.set(pose.x, pose.y, pose.z);
+      camera.rotation.set(pose.pitch, pose.yaw, 0);
+      camera.updateMatrixWorld(true);
+      return new THREE.Vector3(x, y, z).project(camera);
+    };
+    for (const mode of ['first', 'third', 'front']) {
+      for (const yaw of [0, 0.7, -2.1]) {
+        for (const w of [EAST(0.6), wind(0.3, -1, 0.6), wind(-1, 0.4, 0.6)]) {
+          const pose = cameraPose(0, 70, 0, yaw, 0, mode, mode === 'first' ? 0 : 4);
+          // a point 6 m ahead of the camera, and the same point moved downwind: where the wind goes on the screen
+          const ax = pose.x - Math.sin(pose.yaw) * 6;
+          const az = pose.z - Math.cos(pose.yaw) * 6;
+          const a = onScreen(pose, ax, 70, az);
+          const b = onScreen(pose, ax + w.x * 0.5, 70, az + w.z * 0.5);
+          const screenRight = b.x - a.x;
+          // the arrow, rotated `angle` clockwise from the top of the dial, points right when sin(angle) > 0
+          const angle = (vaneView(w, pose.yaw).angle * Math.PI) / 180;
+          if (Math.abs(screenRight) > 1e-3) expect(Math.sign(Math.sin(angle)), `${mode} ${yaw} ${w.x},${w.z}`).toBe(Math.sign(screenRight));
+          // the avatar's own yaw would turn it the wrong way round in the front view
+          const avatarAngle = (vaneView(w, yaw).angle * Math.PI) / 180;
+          if (mode === 'front' && Math.abs(screenRight) > 1e-3) expect(Math.sign(Math.sin(avatarAngle))).toBe(-Math.sign(screenRight));
+        }
+      }
+    }
+  });
+
   it('levels and words follow wind.windWord; the view rounds to whole degrees', () => {
     expect(VANE_LEVELS).toEqual([0.18, 0.4, 0.7]);
     expect(VANE_CLASSES).toEqual(['wind-calm', 'wind-light', 'wind-breeze', 'wind-strong']);
@@ -149,6 +184,29 @@ describe('the HUD vane: where the wind blows, seen from where the player looks',
     const out = { angle: 0, level: 0, gust: false, words: '' };
     expect(vaneView(EAST(0.5), 0.0001, out)).toBe(out);
     expect(out.angle).toBe(90);
+  });
+
+  it('one calm everywhere: while the vane says "Calm" nothing drawn moves, the flag hangs and the hunt hint names no wind', () => {
+    expect(WIND_CALM).toBeGreaterThan(WIND_MIN);
+    expect(VANE_LEVELS[0]).toBe(WIND_CALM);
+    expect(DRAWN_CALM).toBe(WIND_CALM);
+    expect(PENNANT_LIFT_FROM).toBe(WIND_CALM);
+    expect(read('src/main.js')).toContain('export const STALK_WIND_WORD = WIND_CALM;');
+    const STALK_WIND_WORD = WIND_CALM;
+    /** @type {string[]} */
+    const bad = [];
+    for (let s = WIND_MIN; s <= 1; s += 0.0025) {
+      const w = EAST(s, 1);
+      const view = vaneView(w, 0);
+      // the strongest scent this wind can carry: the player straight upwind of the animal
+      const scent = scentToward(w, 0, 0, 10, 0) * w.strength;
+      const calm = view.level === 0;
+      if (calm !== (view.words === 'Calm') || calm !== (windWord(w) === 'calm')) bad.push(`${s}: words`);
+      if (calm && (drawnStrength(w) > 0 || flagLift(s) > 0 || scent > STALK_WIND_WORD || view.gust)) bad.push(`${s}: moves in a calm`);
+      if (!calm && s > WIND_CALM + 0.01 && !(drawnStrength(w) > 0 && flagLift(s) > 0 && scent > STALK_WIND_WORD)) bad.push(`${s}: still in a breeze`);
+    }
+    expect(bad).toEqual([]);
+    expect(flagLift(0.7)).toBe(1); // straight out in a strong breeze, as before
   });
 });
 
@@ -356,19 +414,57 @@ describe('the rain leans and the snow drifts (rainRenderer.js)', () => {
     for (let i = 0; i < 300; i++) f.update(DT, v); // established
     const pos = new Float32Array((f.max + f.maxSplashes) * 12);
     const alpha = new Float32Array((f.max + f.maxSplashes) * 4);
-    const FRAMES = 300;
+    // 20 s at 4.2 m/s: the column cache fills (RAIN_COLUMNS_KEPT) and is trimmed several times on the way
+    const FRAMES = 1200;
     const reads0 = reads;
+    let fewest = Infinity;
+    let trims = 0;
+    let kept = f.columns.size;
     const t0 = performance.now();
     for (let i = 0; i < FRAMES; i++) {
       v.x += 0.07;
       f.update(DT, v);
       f.fill(pos, alpha, v.x, v.z);
+      fewest = Math.min(fewest, f.live);
+      if (f.columns.size < kept) trims++;
+      kept = f.columns.size;
     }
     const ms = (performance.now() - t0) / FRAMES;
     // measured on the development machine: about 0.2 ms a frame; the bound is loose for a busy one
     expect(ms).toBeLessThan(1);
     expect((reads - reads0) / FRAMES).toBeLessThanOrEqual(8 * WORLD_HEIGHT); // never more than RAIN_COLUMN_SCANS looks
-    expect(f.live).toBeGreaterThan(f.max * 0.7);
+    expect(trims).toBeGreaterThanOrEqual(2);
+    // the rain stays thick all the way, through every trim of the cache (not only at the end)
+    expect(fewest).toBeGreaterThan(f.max * 0.85);
+  });
+
+  it('walking past walls in the wind, through many trims of the column cache: no drop or flake is ever inside a wall', () => {
+    // stone walls four cells high across the wind, every 6 m along x, endless along z; the player walks along them
+    const wall = (q, y, r) => y >= 64 && y <= 67 && Math.abs((((hexToWorld(q, r)[0] % 6) + 6) % 6) - 2.5) < 0.6;
+    const g = ground((q, y, r) => (wall(q, y, r) ? BLOCK.STONE : undefined));
+    for (const snow of [false, true]) {
+      const f = new RainField({ random: mulberry32(snow ? 48 : 47) });
+      const v = rainView(g, { wind: EAST(1), snow });
+      let inside = 0;
+      let fewest = Infinity;
+      let trims = 0;
+      let kept = 0;
+      for (let i = 0; i < 1500; i++) {
+        v.z += 4.3 * DT;
+        f.update(DT, v);
+        if (f.columns.size < kept) trims++;
+        kept = f.columns.size;
+        if (i >= 300) fewest = Math.min(fewest, f.live);
+        for (let k = 0; k < f.max; k++) {
+          if (!f.alive[k]) continue;
+          const [q, r] = worldToHex(f.x[k], f.z[k]);
+          if (wall(q, Math.floor(f.y[k]), r)) inside++;
+        }
+      }
+      expect(trims).toBeGreaterThanOrEqual(2);
+      expect(inside).toBe(0);
+      expect(fewest).toBeGreaterThan(f.target(1, snow) * 0.6); // (a wall's lee holds fewer: but never a sudden thinning)
+    }
   });
 
   it('snow drifts sideways far more than rain leans; gusts swirl the drawn drops to and fro', () => {
@@ -573,6 +669,50 @@ describe('the Pennants tracker (pennants.js)', () => {
     p.loadFromEdits(/** @type {*} */ (edits));
     expect(p.size).toBe(1);
   });
+
+  it('on a server: a pennant another player places or pulls up in a chunk not generated here comes in with that chunk', () => {
+    // wired as main wires it: loadFromEdits on load, onBlockChange, and onChunkLoaded from World.onChunkGenerated
+    const wire = () => {
+      const w = new World({ worldGen: flatWorldGen(10), renderDistance: 1 });
+      const p = new Pennants();
+      p.loadFromEdits(w.edits);
+      w.onBlockChange = (q, y, r, prev, next) => p.onBlockChange(q, y, r, prev, next);
+      w.onChunkGenerated = (cq, cr) => p.onChunkLoaded(cq, cr, w.edits, w.getBlock);
+      return { w, p };
+    };
+    const far = CHUNK_SIZE * 40 + 3;
+    const [fx, fz] = hexToWorld(far, 0);
+    // placed by someone else while its chunk is not generated here: kept as an edit (no onBlockChange) …
+    const a = wire();
+    a.w.updateCentres([[0, 0]], 1e9);
+    expect(a.w.hasChunkAtCell(far, 0)).toBe(false);
+    expect(a.w.applyServerCell(far, 11, 0, BLOCK.PENNANT)).toBe(false);
+    expect(a.p.size).toBe(0);
+    // … and drawn once the player walks there and the chunk is generated
+    a.w.updateCentres([[fx, fz]], 1e9);
+    expect(a.w.getBlock(far, 11, 0)).toBe(BLOCK.PENNANT);
+    expect(a.p.nearest(fx, 12, fz, 64).map((n) => n.pennant.key)).toEqual([pennantKey(far, 11, 0)]);
+    // pulled up by someone else while the player is away: no ghost when they come back
+    a.w.updateCentres([[0, 0]], 1e9);
+    expect(a.w.hasChunkAtCell(far, 0)).toBe(false);
+    a.w.applyServerCell(far, 11, 0, BLOCK.AIR);
+    a.w.updateCentres([[fx, fz]], 1e9);
+    expect(a.w.getBlock(far, 11, 0)).toBe(BLOCK.AIR);
+    expect(a.p.size).toBe(0);
+    // placed here while loaded, then pulled up by someone else while unloaded
+    const b = wire();
+    b.w.updateCentres([[fx, fz]], 1e9);
+    expect(b.w.setBlock(far, 11, 2, BLOCK.PENNANT)).toBe(true);
+    expect(b.p.has(far, 11, 2)).toBe(true);
+    b.w.updateCentres([[0, 0]], 1e9);
+    b.w.applyServerCell(far, 11, 2, BLOCK.AIR);
+    b.w.updateCentres([[fx, fz]], 1e9);
+    expect(b.p.has(far, 11, 2)).toBe(false);
+    // a chunk coming in leaves the pennants of other chunks alone
+    b.w.setBlock(far, 11, 4, BLOCK.PENNANT);
+    b.p.onChunkLoaded(0, 0, b.w.edits, () => BLOCK.AIR);
+    expect(b.p.has(far, 11, 4)).toBe(true);
+  });
 });
 
 describe('the Pennants drawn (pennantRenderer.js)', () => {
@@ -752,18 +892,69 @@ describe('the wiring (main.js, diagnostics.js): read from the source, since main
   it('stepWeather draws the wind here and now: the vane, the rain, the smoke and the particles all read windNow()', () => {
     const step = body('stepWeather');
     expect(step).toContain('const wind = windNow();');
-    expect(step).toContain('hud.setWind(vaneView(wind, controls.yaw, vaneNow));');
+    expect(step).toContain('hud.setWind(vaneView(wind, viewYaw, vaneNow));'); // §102: the view on screen's yaw (viewCamera)
+    expect(step).not.toContain('controls.yaw'); // §101 review: the screen's yaw, not the avatar's
     expect(step).toContain('campfireRenderer.setWind(wind);');
     expect(step).toContain('particles.setWind(windAirNow[0], windAirNow[1]);');
     expect(step).toMatch(/rainRenderer\.update\([^;]*wind,\s*\}\);/);
     // the wind is worked out after this frame's shower, which it rises with
     expect(step.indexOf('fx.falling =')).toBeLessThan(step.indexOf('const wind = windNow();'));
+    expect(step.indexOf('fx.shown = approach(')).toBeLessThan(step.indexOf('const wind = windNow();'));
     expect(main.match(/windAt\(/g)).toHaveLength(1); // only windNow works the wind out: it is not duplicated
+  });
+
+  it('the wind rises with the shower as it is shown: crossing into a biome it does not fall on eases it, never snaps it', () => {
+    // windNow feeds windAt the eased shower (weatherFx.shown), not the raw one of the biome underfoot (weatherFx.falling)
+    const now = body('windNow');
+    expect(now).toContain('const shower = weatherFx.shown;');
+    expect(now).toContain('windAt(seed, t, shower)');
+    expect(now).not.toContain('falling');
+    const tau = Number(/const RAIN_SHOWN_TAU_S = ([\d.]+);/.exec(main)?.[1]);
+    expect(tau).toBeGreaterThanOrEqual(1);
+    // a heavy shower on the forest, none on the sea beside it (seed 7, world second 6025): the player walks off the shore
+    // with the clock still; frame by frame, how far the top of the smoke and the flag move
+    const SEED = 7;
+    const T = 6025;
+    const top = (shower) => {
+      const w = windAt(SEED, T, shower);
+      return { smoke: smokeDrift(2.4, ...windAir(w)), lift: flagLift(w.strength) };
+    };
+    const wet = top(0.92);
+    const dry = top(0);
+    expect(Math.hypot(wet.smoke[0] - dry.smoke[0], wet.smoke[1] - dry.smoke[1])).toBeGreaterThan(2); // all at once: metres
+    expect(wet.lift - dry.lift).toBeGreaterThan(0.5);
+    let shown = 0.92;
+    let last = top(shown);
+    let smokeStep = 0;
+    let liftStep = 0;
+    for (let i = 0; i < 1800; i++) {
+      shown = approach(shown, 0, DT, tau); // as stepWeather eases weatherFx.shown
+      const cur = top(shown);
+      smokeStep = Math.max(smokeStep, Math.hypot(cur.smoke[0] - last.smoke[0], cur.smoke[1] - last.smoke[1]));
+      liftStep = Math.max(liftStep, Math.abs(cur.lift - last.lift));
+      last = cur;
+    }
+    expect(smokeStep).toBeLessThan(0.05); // a few centimetres a frame: it drifts back, it does not jump
+    expect(liftStep).toBeLessThan(0.02);
+    expect(last.lift).toBeCloseTo(dry.lift, 3);
+  });
+
+  it('§101.4 states the Pennant\'s harvest rule as it is in harvest.js, not as work still to do', () => {
+    const rule = 'set([B.PENNANT], 0.4, null, 0, SELF_DROPS)';
+    expect(read('src/harvest.js')).toContain(`${rule};`);
+    const contracts = read('src/CONTRACTS.md');
+    const pennant = contracts.slice(contracts.indexOf('### 101.4 The Pennant'), contracts.indexOf('### 101.5'));
+    const harvest = pennant.slice(pennant.indexOf('- **Harvest**'), pennant.indexOf('- **Tracker**'));
+    expect(harvest).toContain(rule);
+    expect(harvest).not.toMatch(/needs one rule|Until then|fails/);
   });
 
   it('the pennants are tracked like the campfires and drawn every frame; the renderer exists before every prewarm', () => {
     expect(main).toContain('pennants.onBlockChange(q, y, r, prev, next);');
     expect(main).toContain('pennants.loadFromEdits(world.edits);');
+    // a server's cells for a chunk not generated here fire no onBlockChange: the chunk brings them when it comes in
+    const generated = main.slice(main.indexOf('world.onChunkGenerated = (cq, cr) => {'));
+    expect(generated.slice(0, generated.indexOf('\n    };'))).toContain('pennants.onChunkLoaded(cq, cr, loadedWorld.edits, loadedWorld.getBlock);');
     expect(main).toContain('pennantRenderer.sync(nearP, windNow(), fxTime, pennantHeight);');
     const created = main.indexOf('pennantRenderer = createPennantRenderer(renderer.three.scene);');
     expect(created).toBeGreaterThan(0);

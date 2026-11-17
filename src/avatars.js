@@ -59,7 +59,6 @@
  * @property {number[]} palm     [w, h, d] the palm and the back of the hand (a chamfered block)
  * @property {number[]} fingers  [w, h, d] the fingers held together (a chamfered block, curled in)
  * @property {number[]} thumb    [w, h, d] the thumb (a wedge)
- * @property {number} fpCuff     first person: where the sleeve's cuff sits, a share of the forearm from the wrist
  */
 /**
  * @typedef {Object} AvatarShoes
@@ -75,7 +74,8 @@
  * @property {'stripe'|'pocket'|'collar'} detail  the one thing on the front: a stripe across the chest, a pocket, a round collar
  * @property {number} sleeve         the share of the upper arm the sleeve covers (1: all of it)
  * @property {number} [puff]         a short sleeve standing out this much (×)
- * @property {number} [cuffAt]       a long sleeve pushed up: its cuff, a share of the forearm from the wrist
+ * @property {number} [cuffAt]       a long sleeve pushed up: its cuff, a share of the forearm from the wrist (on the model
+ *   and on the first-person forearm; without it the forearm is bare in both)
  * @property {number[]} [bottom]     tee: the trousers: [light, mid, dark]
  * @property {'denim'|'cloth'} [fabric]  tee: the trousers' cloth
  * @property {number} [belt]         tee: the belt
@@ -134,7 +134,7 @@ export const AVATARS = freezeDeep([
     },
     head: { y: 1.215, h: 0.37, rx: 0.172, rz: 0.172, eyeAt: 0.52, eyeX: 0.058, eyeW: 0.054, mouthAt: 0.215, noseAt: 0.37 },
     hair: { style: 'poofy', cut: 'C2', crown: 0.117 },
-    hands: { ...KID_HANDS, fpCuff: 0.45 },
+    hands: KID_HANDS,
     outfit: {
       kind: 'tee',
       top: [0x5fbf63, 0x46a24e, 0x347f3c],
@@ -171,7 +171,7 @@ export const AVATARS = freezeDeep([
     },
     head: { y: 1.43, h: 0.345, rx: 0.158, rz: 0.162, eyeAt: 0.52, eyeX: 0.054, eyeW: 0.05, mouthAt: 0.22, noseAt: 0.37 },
     hair: { style: 'silky', cut: 'B1', crown: 0.058 },
-    hands: { ...KID_HANDS, fpCuff: 0.5 },
+    hands: KID_HANDS,
     outfit: {
       kind: 'tee',
       top: [0x4f7fcf, 0x3866b3, 0x284c8c],
@@ -207,7 +207,7 @@ export const AVATARS = freezeDeep([
     },
     head: { y: 1.29, h: 0.37, rx: 0.174, rz: 0.176, eyeAt: 0.52, eyeX: 0.059, eyeW: 0.056, mouthAt: 0.215, noseAt: 0.37 },
     hair: { style: 'longWavy', cut: 'A1', crown: 0.043 },
-    hands: { ...KID_HANDS, fpCuff: 0.5 },
+    hands: KID_HANDS,
     outfit: {
       kind: 'dress',
       top: [0xf38ca8, 0xe26c8d, 0xc14f71],

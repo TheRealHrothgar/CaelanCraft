@@ -127,7 +127,7 @@ export const PICKER_ITEM_SECTIONS = Object.freeze([
       'tools'),
     fam('hammers', 'Hammers', ['hammerstone', 'copper_hammer', 'bronze_hammer', 'iron_hammer', 'steel_hammer'], 'tools'),
     fam('knives', 'Knives', ['flint_knife', 'copper_knife', 'bronze_knife', 'iron_knife', 'steel_knife'], 'tools'),
-    'fire_drill', 'crucible', 'casting_mold', 'handbook',
+    'fire_drill', 'crucible', 'casting_mold', 'compass', 'handbook', // §102: the Compass
     'spyglass', // §103
   ]),
   // what hurts a creature: the swords and the spear, and what flies (looseItems.throwOf: the spear, a thrown rock; §100
@@ -216,6 +216,7 @@ export const PICKER_ITEM_ALIASES = Object.freeze({
   crucible: Object.freeze(['melting pot']),
   casting_mold: Object.freeze(['mould', 'cast']),
   handbook: Object.freeze(['book', 'guide', 'field book', 'manual']),
+  compass: Object.freeze(['north', 'direction', 'navigation', 'needle']), // §102
   flint_spear: Object.freeze(['javelin', 'throw', 'hunting']),
   // §100: the bows' own words are PICKER_TOOL_WORDS.bow; every arrow is found by "arrow" (its name), and by these
   ...Object.fromEntries(['stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow']

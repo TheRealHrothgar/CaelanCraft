@@ -122,23 +122,23 @@ const isBlockItem = (k) => ITEMS[k].kind === 'block';
 // ---------------------------------------------------------------------------------------------
 
 describe('the recipe table (§7.3)', () => {
-  it('has 134 recipes with unique ids: 44 at hand, 26 at the stump, 27 at the kiln, 5 at the bloomery, 17 at the forge, 7 at the workbench and 8 at the lab', () => {
+  it('has 135 recipes with unique ids: 44 at hand, 26 at the stump, 27 at the kiln, 5 at the bloomery, 18 at the forge, 7 at the workbench and 8 at the lab', () => {
     // §7.3's 89, plus DESIGN-circuits §8.2's 25 (6 at hand, 11 at the stump, 4 at the kiln, 1 at the bloomery, 3 at the forge)
     // + the flint dart (CONTRACTS §60) and the Workbench (§67), whose 8 advanced devices moved off the stump (3), the kiln
     // (1), the forge (3) and the hands (1)
     // + §85: the Grass Bed (hand), the Well, the Rain Barrel and the Bed (stump)
     // §94: the five flint tools moved to the stump, the four simple circuit parts to the Workbench, its 8 devices to the
     // Lab, and the Lab itself is made at the Workbench
-    // §100: + Arrows (hand), the Bow Stave and the Bow (stump); §101: + the Pennant (hand)
+    // §100: + Arrows (hand), the Bow Stave and the Bow (stump); §101: + the Pennant (hand); §102: + the Compass (forge)
     // §100 (the bows and the arrows): − the two darts and the Arrow, + the Stone and Flint Arrows (hand); − the Bow, + the
     // Crude Bow (stump; the Bow Stave is split from a log now); + the Treated Stave, the Copper and Bronze Arrows (kiln);
     // + the Iron and Steel Arrows (forge); + the Recurve Bow and (§103) the Spyglass (workbench)
-    expect(RECIPES).toHaveLength(134); // + the Snare (§69); + Healwort tea (§76 flora); + the Fletched Dart (§76 fauna); + the Lab (§94)
+    expect(RECIPES).toHaveLength(135); // + the Snare (§69); + Healwort tea (§76 flora); + the Fletched Dart (§76 fauna); + the Lab (§94)
     const ids = RECIPES.map((r) => r.id);
-    expect(new Set(ids).size).toBe(134);
+    expect(new Set(ids).size).toBe(135);
     const by = {};
     for (const r of RECIPES) by[r.station] = (by[r.station] ?? 0) + 1;
-    expect(by).toEqual({ hand: 44, stump: 26, kiln: 27, bloomery: 5, forge: 17, workbench: 7, lab: 8 });
+    expect(by).toEqual({ hand: 44, stump: 26, kiln: 27, bloomery: 5, forge: 18, workbench: 7, lab: 8 });
     // listed station by station, in lane order
     const order = RECIPES.map((r) => STATION_IDS.indexOf(r.station));
     expect(order).toEqual([...order].sort((a, b) => a - b));
@@ -433,7 +433,7 @@ describe('listRecipes', () => {
   it('sorts craftable first, then by missing input units, then in recipe order', () => {
     const pack = new FakePack({ plant_fibre: 2, rock: 1 });
     const list = listRecipes(pack, { hand: true });
-    expect(list).toHaveLength(134); // §100 + §101; §100 the bows and the arrows, §103 the Spyglass
+    expect(list).toHaveLength(135); // §100 + §101 + §102; §100 the bows and the arrows, §103 the Spyglass
     expect(list.slice(0, 2).map((r) => r.id)).toEqual(['cord', 'hammerstone']);
     expect(list.filter((r) => r.craftable).map((r) => r.id)).toEqual(['cord', 'hammerstone']);
     for (let i = 1; i < list.length; i++) {
@@ -484,7 +484,7 @@ describe('listRecipes', () => {
   it('filters by station, and counts what queued jobs reserve as gone', () => {
     const pack = new FakePack({ plant_fibre: 4 });
     expect(listRecipes(pack, { hand: true }, { station: 'kiln' }).map((r) => r.station)).toEqual(new Array(27).fill('kiln')); // §100: + 3
-    expect(listRecipes(pack, { hand: true }, { station: 'all' })).toHaveLength(134);
+    expect(listRecipes(pack, { hand: true }, { station: 'all' })).toHaveLength(135);
     const q = new CraftQueue();
     expect(q.enqueue('fibre_bandage', 1, pack, { hand: true }).ok).toBe(true); // reserves 3 of the 4 fibre
     const cord = listRecipes(pack, { hand: true }, { queue: q }).find((r) => r.id === 'cord');

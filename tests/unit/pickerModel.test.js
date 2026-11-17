@@ -183,7 +183,7 @@ describe('buildPickerModel: every item (tools, weapons, food, materials, clothes
       ['materials', 'Materials', 'copper_ingot'], ['clothes', 'Clothes & Healing', 'straw_hat']]);
     const kinds = (id) => section(id).entries.map((e) => (e.type === 'family' ? `[${e.key}]` : e.key));
     expect(kinds('tools')).toEqual(['[picks]', '[axes]', '[shovels]', '[hammers]', '[knives]', 'fire_drill', 'crucible',
-      'casting_mold', 'handbook', 'spyglass']); // §103: + the Spyglass
+      'casting_mold', 'compass', 'handbook', 'spyglass']); // §102: the Compass; §103: + the Spyglass
     expect(kinds('weapons')).toEqual(['[swords]', 'flint_spear', '[bows]', 'rock']); // §100: + Bows & Arrows, − the darts
     expect(kinds('food')).toEqual(['[meat]', '[fish-eggs]', '[fruit-nuts]', '[roots]', '[mushrooms]', '[pots]', 'snow']);
     expect(kinds('clothes')).toEqual(['straw_hat', 'leather_hood', 'grass_cape', 'leather_coat', 'hide_shoes', 'fibre_bandage',
@@ -218,7 +218,7 @@ describe('buildPickerModel: every item (tools, weapons, food, materials, clothes
       expect(model.info.get(k)?.section, k).toBe(cures.includes(k) ? 'clothes' : 'food');
     }
     // materials: Materials, except what is thrown, the field book and what belongs with the food (the pots, the cactus fruit)
-    const elsewhere = { rock: 'weapons', handbook: 'tools', spyglass: 'tools', clay_pot: 'food', salt_pot: 'food', pot_snow: 'food',
+    const elsewhere = { rock: 'weapons', handbook: 'tools', compass: 'tools', spyglass: 'tools', clay_pot: 'food', salt_pot: 'food', pot_snow: 'food',
       unpeeled_cactus_fruit: 'food',
       // §100: the arrows of every age, with the bows
       stone_arrow: 'weapons', flint_arrow: 'weapons', copper_arrow: 'weapons', bronze_arrow: 'weapons', iron_arrow: 'weapons', steel_arrow: 'weapons' };
@@ -351,7 +351,7 @@ describe('searchBlocks (§5.5)', () => {
     expect(find('throw')).toEqual(['flint_spear', 'rock']);
     expect(find('weapon')).toEqual(['bronze_sword', 'iron_sword', 'steel_sword', 'flint_spear', 'crude_bow', 'recurve_bow', 'stone_arrow',
       'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow', 'rock']);
-    expect(find('tools')).toHaveLength(32); // §103: + the Spyglass
+    expect(find('tools')).toHaveLength(33); // §102: + the Compass; §103: + the Spyglass
     expect(find('bandage')).toEqual(['fibre_bandage', 'rag_bandage']);
     expect(find('hat')).toEqual(['straw_hat', 'leather_hood']);
     // blocks and items together, blocks first (section order)

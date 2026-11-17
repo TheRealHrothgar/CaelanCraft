@@ -61,7 +61,7 @@ import {
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer, fogRangeForRenderDistance } from './renderer.js';
 import { createControls } from './controls.js';
-import { createTouchUI, detectTouchMode, touchWords, TOUCH_RENDER_DISTANCE } from './touchControls.js'; // touch (§95, §97)
+import { createTouchUI, detectTouchMode, touchWords, touchClusterRect, TOUCH_RENDER_DISTANCE } from './touchControls.js'; // touch (§95, §97)
 import { createHUD, createFlashState, flashStep } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
@@ -118,7 +118,8 @@ import { createItemIcons, iconBlockFor } from './itemIcons.js';
 import { createLooseItemRenderer } from './looseItemRenderer.js';
 import {
   LooseItems, throwOf, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
-  blinkHidden, drawOf, drawFraction, drawnThrow, DRAW_ZOOM, bowShot, spreadDir, pickArrow, DEFAULT_ARROW,
+  blinkHidden, drawOf, drawFraction, drawnThrow, DRAW_ZOOM, DRAW_FULL_S, bowShot, spreadDir, pickArrow, DEFAULT_ARROW,
+  NO_ARROWS_HINT,
 } from './looseItems.js';
 import { Spyglass, carriesSpyglass, SPYGLASS_KEY, ZOOM_KEY, SPYGLASS_NEEDED, zoomLabel } from './spyglass.js'; // §103
 import { createZombieRenderer } from './zombieRenderer.js';
@@ -131,9 +132,10 @@ import {
   createWeather, seasonOf, seasonNews, hudLine, weatherWord, worldSeconds, fallsAsSnow, rainExposure, rainReaching, rainedOnCell,
   rainSky, approach, weatherEnv, OVERCAST_TAU_S,
 } from './weather.js';
-import { windAt } from './wind.js';
+import { windAt, WIND_CALM } from './wind.js';
 import { createRainRenderer } from './rainRenderer.js';
 import { vaneView, windAir } from './windDrawn.js'; // §101: the wind drawn
+import { compassCarried, northView } from './compass.js'; // §102: the compass puts north on the vane
 import { Pennants, PENNANT_MAX_MODELS, PENNANT_MODEL_RANGE, poleHeight } from './pennants.js';
 import { createPennantRenderer } from './pennantRenderer.js';
 // CONTRACTS §87: sleep
@@ -150,7 +152,7 @@ import {
   NetClient, RemotePlayers, probeServer, serverWsUrl, playerToken, shouldRejoin, REJOIN_TRIES, REJOIN_GAP_S,
 } from './net.js';
 import {
-  POSE_HZ, POSE_FLYING, POSE_SNEAKING, POSE_ON_GROUND, POSE_SWING, POSE_SWIMMING, unpackPose, unflatten4, cleanName,
+  POSE_HZ, POSE_FLYING, POSE_SNEAKING, POSE_ON_GROUND, POSE_SWING, POSE_SWIMMING, POSE_DRAWING, unpackPose, unflatten4, cleanName,
   cleanChat,
 } from './protocol.js';
 import { createRemotePlayerRenderer } from './remotePlayerRenderer.js';
@@ -632,8 +634,11 @@ export function projectToScreen(camera, x, y, z, width, height) {
   return { x: ((cx / cw + 1) / 2) * width, y: ((1 - cy / cw) / 2) * height };
 }
 
-/** §100: the wind's word joins a stalked animal's hint from this much scent (scentOf: −1..1). */
-export const STALK_WIND_WORD = 0.15;
+/**
+ * §100: the wind's word joins a stalked animal's hint from this much scent (scentOf: −1..1). wind.WIND_CALM (§101): a
+ * scent that strong needs a wind the HUD's vane shows with its arrow, never in a "Calm".
+ */
+export const STALK_WIND_WORD = WIND_CALM;
 /** §100: an animal staring at the player within this many metres says so in the hint, wherever the crosshair is. */
 export const WATCHED_HINT_RANGE = 30;
 /** §100: how far off the player is taken to see a fish appear or go (m; a fish is a few pixels there, under water). */
@@ -888,6 +893,20 @@ export function burningKegHint(h, explosions) {
 }
 
 /**
+ * §99.4: the slow-work hint (`harvest.slowHint`: `Oak Log · slow with a stone axe`) for `target` while `dig` is held on that
+ * very cell, else null. Idle, the crosshair resting on the ground says nothing, so walking and looking about never nag and
+ * a weapon's draw hint (§100) is not hidden by the ground under it.
+ * @param {DigState} dig  main's dig (its cell, block id and `active`)
+ * @param {{ q: number|string, y: number, r: number, blockId: number }|null} target  the hit, or a brick's dig target (§93)
+ * @param {import('./types.js').ToolDef|null} tool  the selected tool, null for the hand
+ * @returns {string|null}
+ */
+export function digSlowHint(dig, target, tool) {
+  if (!dig.active || !target || dig.q !== target.q || dig.y !== target.y || dig.r !== target.r || dig.id !== target.blockId) return null;
+  return slowHint(target.blockId, tool);
+}
+
+/**
  * The device panel's part changed under it (a blast, a vortex, a setblock): main closes the panel (§4.10).
  * @param {string|null} deviceKey  the panel's "q,y,r"
  */
@@ -947,6 +966,101 @@ export class ControlLatch {
     if (!this.on) return false;
     if (hit && hit.q === this.q && hit.y === this.y && hit.r === this.r) env.hold(hit);
     return true;
+  }
+}
+
+/** §100: a draw whose last frame is older than this (ms: a frozen menu or a lost focus came between) goes, unthrown. */
+export const DRAW_STALE_MS = 250;
+
+/**
+ * What one frame of the draw is told (§100; main's drawStep fills one and reuses it): `key` what is in hand; `draws` it is
+ * a spear or a bow and the player is alive; `playing` no screen is up over the world (the pack, the field book and
+ * Survival's device panel keep the world running under them, so the frame still comes); on a press, `control` the
+ * crosshair is on a circuit control and Shift is up, `noArrows` it is a bow with no arrow of any age in the pack
+ * (Survival); `latched` the control latch holds a control that Place pressed (§4.9); `now` the clock (ms); `fullS` the
+ * seconds to a full draw of what is in hand (looseItems.drawOf: DRAW_FULL_S for a spear, the bow's own `drawS`).
+ * @typedef {{ key: string|null, draws: boolean, playing: boolean, control: boolean, noArrows: boolean, latched: boolean,
+ *   now: number, fullS?: number }} DrawEnv
+ */
+
+/**
+ * §100 the draw (PURE): Place held with a spear or a bow counts up `held`; let go, it is released (main throws or shoots
+ * at drawFraction(held, fullS), kept in `f`; `fullS` is the full draw the press was told: a Recurve Bow's 1.2 s). A press on a control without Shift is the control's, and so is the hold
+ * that follows while the latch holds it (a Push Button stays pressed). The draw is let go WITHOUT a throw when the hand
+ * changes, when a screen comes up over the running world (the release the cleared mouse would make there is no throw),
+ * or when its last frame is older than DRAW_STALE_MS (a menu that froze the world came between).
+ */
+export class DrawHold {
+  constructor() {
+    /** what is drawn, or null: no draw under way */
+    this.key = /** @type {string|null} */ (null);
+    /** seconds held */
+    this.held = 0;
+    /** the clock of its last frame (ms) */
+    this.at = 0;
+    /** the draw of the last release, 0..1 */
+    this.f = 0;
+    /** the seconds to the full draw of what is drawn (DrawEnv.fullS at the press) */
+    this.fullS = DRAW_FULL_S;
+  }
+
+  /** A draw is under way. */
+  get on() {
+    return this.key !== null;
+  }
+
+  /** How far the draw under way is drawn, 0..1 against its own full draw (0: none). */
+  get share() {
+    return this.on ? drawFraction(this.held, this.fullS) : 0;
+  }
+
+  /** Let the draw go without a throw. */
+  cancel() {
+    this.key = null;
+    this.held = 0;
+  }
+
+  /**
+   * One frame of Place.
+   * @param {{ rightPressed: boolean, right: boolean }} mouse
+   * @param {number} dt
+   * @param {DrawEnv} env
+   * @returns {'start'|'hold'|'release'|'stale'|'cancel'|'noArrows'|'idle'|null} what it did; null: Place is not the
+   *   draw's this frame (nothing in hand draws, a press on a control, or the latch holds one), so the caller goes on
+   */
+  step(mouse, dt, env) {
+    if (!env.draws || !env.key) {
+      this.cancel();
+      return null;
+    }
+    if (!env.playing) {
+      this.cancel();
+      return 'cancel';
+    }
+    if (mouse.rightPressed) {
+      this.cancel();
+      if (env.control) return null;
+      if (env.noArrows) return 'noArrows';
+      this.key = env.key;
+      this.held = 0;
+      this.at = env.now;
+      this.fullS = env.fullS ?? DRAW_FULL_S; // drawFraction falls back to DRAW_FULL_S for a bad one
+      return 'start';
+    }
+    if (!this.on) return env.latched ? null : 'idle';
+    if (this.key !== env.key) {
+      this.cancel(); // the hand changed: the draw is let go
+      return 'cancel';
+    }
+    if (mouse.right) {
+      this.held += dt;
+      this.at = env.now;
+      return 'hold';
+    }
+    const stale = env.now - this.at > DRAW_STALE_MS;
+    this.f = drawFraction(this.held, this.fullS);
+    this.cancel();
+    return stale ? 'stale' : 'release';
   }
 }
 
@@ -1355,14 +1469,16 @@ export function boot(win, doc) {
   const avatarMotion = new AvatarMotion();
   const camPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
   /**
-   * §100 the draw under way (Place held with a spear, a dart or a bow; drawStep): seconds held, `at` the clock of its last
-   * frame (ms), `fullS` the seconds to its full draw (a bow's own); null when nothing is drawn. Read by the avatar, the
-   * ring, the zoom and the hints.
-   * @type {{ key: string, held: number, at: number, fullS: number }|null}
+   * §100 the draw (Place held with a spear or a bow; drawStep): `on` while one is under way, `held` its seconds, `fullS`
+   * the seconds to its full draw (a bow's own, from DrawEnv.fullS). Read by the avatar, the ring, the zoom and the hints.
    */
-  let drawState = null;
-  /** §100: how far the draw under way is drawn, 0..1 (0: none). */
-  const drawShare = () => (drawState ? drawFraction(drawState.held, drawState.fullS) : 0);
+  const draw = new DrawHold();
+  /** @type {DrawEnv} drawStep's, reused */
+  const drawEnv = {
+    key: null, draws: false, playing: false, control: false, noArrows: false, latched: false, now: 0, fullS: DRAW_FULL_S,
+  };
+  /** §100: how far the draw under way is drawn, 0..1 (0: none), against its own full draw. */
+  const drawShare = () => draw.share;
   /**
    * §103 the Spyglass: looked through while Z is held, while Place is held with it in hand (`glassPlaceHeld`, set by the
    * frame's Place step), or while the zoom command (or the touch Zoom button) keeps it up; stepped every frame in
@@ -1379,8 +1495,11 @@ export function boot(win, doc) {
   /** @type {import('./avatarRenderer.js').AvatarFrame} */
   const avatarView = {
     x: 0, y: 0, z: 0, pose: avatarMotion.pose, showModel: false, showArm: false, camera: renderer.three.camera, eyeX: 0, eyeY: 0,
-    eyeZ: 0,
+    eyeZ: 0, fpClear: null,
   };
+  /** §95 on a tablet: the right cluster's left and top edges in NDC (the first-person hand keeps clear), and for what size */
+  const fpClear = { left: 1, top: -1 };
+  let fpClearFor = '';
   avatarRenderer.setAvatar(avatarId);
   /** @type {Record<string, import('./avatarRenderer.js').Picture>|null} the chooser's portraits, drawn when first asked for */
   let portraits = null;
@@ -1484,6 +1603,19 @@ export function boot(win, doc) {
     v.eyeX = player.x;
     v.eyeY = eyeY;
     v.eyeZ = player.z;
+    if (touchOn) {
+      // §95: the first-person hand keeps left of the buttons (avatarModel.fpClearShift)
+      const w = win.innerWidth || 1;
+      const h = win.innerHeight || 1;
+      const size = `${w}x${h}`;
+      if (size !== fpClearFor) {
+        fpClearFor = size;
+        const box = touchClusterRect(w, h);
+        fpClear.left = (2 * box.left) / w - 1;
+        fpClear.top = 1 - (2 * box.top) / h;
+      }
+      v.fpClear = fpClear;
+    }
     avatarRenderer.sync(v);
     const cross = shownView() !== 'front';
     if (cross !== crosshairShown) {
@@ -1726,6 +1858,7 @@ export function boot(win, doc) {
     if (player.onGround) flags |= POSE_ON_GROUND;
     if (player.inWater && !player.onGround) flags |= POSE_SWIMMING;
     if (netSwing) flags |= POSE_SWING;
+    if (draw.on) flags |= POSE_DRAWING; // §100: the others see the draw
     const pose = { x: player.x, y: player.y, z: player.z, yaw: controls.yaw, pitch: controls.pitch, flags, vx: player.vx, vz: player.vz };
     const key = `${pose.x.toFixed(2)},${pose.y.toFixed(2)},${pose.z.toFixed(2)},${pose.yaw.toFixed(2)},${pose.pitch.toFixed(2)},${flags}`;
     if (key === netPoseKey && netPoseIdle < 1) return;
@@ -1848,7 +1981,7 @@ export function boot(win, doc) {
 
   /** The player's surroundings are looked at this often for the rain (s): the biome, and the cover overhead. */
   const WEATHER_SAMPLE_S = 0.5;
-  /** The rain as it is drawn follows the weather with this time constant (s). */
+  /** The rain as it is drawn follows the weather with this time constant (s); so does the wind's shower (windNow). */
   const RAIN_SHOWN_TAU_S = 2.5;
   /** The HUD says `Rain` (or `Snow`) from this strength up. */
   const RAIN_WORD_MIN = 0.03;
@@ -1918,18 +2051,21 @@ export function boot(win, doc) {
    */
   const windCache = { at: NaN, seed: null, shower: NaN, wind: null };
   /**
-   * The wind here and now (docs/DESIGN-hunting.md §3): from the world's seed and clock, stronger in the shower falling on
-   * the player's biome; the same for every player on a server. Stalking, the rain, the smoke and the pennant read it.
+   * The wind here and now (docs/DESIGN-hunting.md §3): from the world's seed and clock, stronger in the shower on the
+   * player's biome as it is shown (weatherFx.shown, eased over RAIN_SHOWN_TAU_S: walking into a biome the shower does
+   * not fall on, the wind eases down with the rain instead of dropping at once, and every flag and smoke column with
+   * it); the same for every player on a server. Stalking, the rain, the smoke and the pennant read it.
    * @returns {import('./wind.js').Wind}
    */
   function windNow() {
     const t = weatherNow();
     const seed = world ? world.seed : 0;
-    if (windCache.wind === null || windCache.at !== t || windCache.seed !== seed || windCache.shower !== weatherFx.falling) {
+    const shower = weatherFx.shown;
+    if (windCache.wind === null || windCache.at !== t || windCache.seed !== seed || windCache.shower !== shower) {
       windCache.at = t;
       windCache.seed = seed;
-      windCache.shower = weatherFx.falling;
-      windCache.wind = windAt(seed, t, weatherFx.falling);
+      windCache.shower = shower;
+      windCache.wind = windAt(seed, t, shower);
     }
     return windCache.wind;
   }
@@ -1959,9 +2095,11 @@ export function boot(win, doc) {
    * Once a frame (renderFrame, after computeSky): the calendar's log lines when the day moved on, what falls on the
    * player's biome and how much of it reaches them, the drops, the rain for the ambience, the HUD's calendar line.
    * @param {number} dt @param {boolean} live  the simulation stepped this frame @param {number} eyeY
+   * @param {number} viewYaw  the yaw of the view on screen (viewCamera's: controls.yaw, or turned by π in the Front view):
+   *   the vane's arrow and the compass's N are drawn relative to it (§101.2, §102.4)
    * @returns {import('./types.js').SkyState} the sky to show: `sky`, greyed while it rains
    */
-  function stepWeather(dt, live, eyeY) {
+  function stepWeather(dt, live, eyeY, viewYaw) {
     const w = theWeather();
     const fx = weatherFx;
     const SV = survival.inSurvival;
@@ -1985,7 +2123,10 @@ export function boot(win, doc) {
     windAir(wind, windAirNow);
     particles.setWind(windAirNow[0], windAirNow[1]);
     campfireRenderer.setWind(wind);
-    hud.setWind(vaneView(wind, controls.yaw, vaneNow));
+    hud.setWind(vaneView(wind, viewYaw, vaneNow));
+    // §102: a compass carried (anywhere in the pack or on the pack screen's cursor in Survival, on the hotbar in
+    // Creative) puts north on the vane, in the vane's frame: the view on screen
+    hud.setNorth(northView(compassCarried(SV, pack.slots, hotbar, packSession.cursor), viewYaw));
     rainRenderer.update(live ? dt : 0, {
       x: player.x, y: eyeY, z: player.z, intensity: fx.shown, snow: fx.snow, getBlock: world.getBlock, daylight: sky.daylight, wind,
     });
@@ -4511,9 +4652,6 @@ export function boot(win, doc) {
 
   // ---- §100 the draw: Place held with a spear or a bow, released to throw or shoot -----------------------------
 
-  /** A draw whose last frame is older than this (ms: a menu or a lost focus came between) is let go without a throw. */
-  const DRAW_STALE_MS = 250;
-
   /**
    * §100: the arrow a bow in hand would shoot now. Survival: the best one in the pack (looseItems.pickArrow: steel, iron,
    * bronze, copper, flint, stone), null when there is none. Creative needs none: the best one on the hotbar, else a Flint
@@ -4525,46 +4663,34 @@ export function boot(win, doc) {
   }
 
   /**
-   * One frame of Place with what is in hand (both modes): with a spear or a bow it draws back while held and throws (or
-   * shoots an arrow) when let go, harder the longer it was held (looseItems.drawnThrow and bowShot, full at the bow's own
-   * draw time). A press on a circuit control without Shift is left to the control.
+   * One frame of Place with what is in hand (both modes; the machine is DrawHold): with a spear or a bow it draws back
+   * while held and throws (or shoots an arrow) when let go, harder the longer it was held (looseItems.drawnThrow and
+   * bowShot, full at the bow's own draw time, DrawEnv.fullS). A press on a circuit control without Shift, and the hold the
+   * control latch keeps on it, are left to the control; under a screen (the pack, the field book, a device panel) the
+   * draw is let go without a throw.
    * @returns {boolean} Place was this (nothing else uses it)
    */
   function drawStep(mouse, dt) {
     const key = heldItemKey();
     const d = drawOf(key);
-    if (!d || !key || survival.dead) {
-      drawState = null;
-      return false;
+    const e = drawEnv;
+    e.key = key;
+    e.draws = !!d && !survival.dead;
+    e.playing = /** @type {string} */ (state) === STATE.PLAYING; // not under the pack, the book or a device panel
+    e.control = false;
+    e.noArrows = false;
+    e.fullS = d ? d.fullS : DRAW_FULL_S;
+    if (mouse.rightPressed && d) {
+      const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
+      e.control = !!hit && !shift && latchEnv.isControl(hit.blockId);
+      e.noArrows = d.bow && bowArrow() === null; // Survival: none in the pack (Creative needs none)
     }
-    const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
-    if (mouse.rightPressed) {
-      if (hit && !shift && latchEnv.isControl(hit.blockId)) {
-        drawState = null;
-        return false;
-      }
-      if (d.bow && bowArrow() === null) {
-        drawState = null;
-        showHint('No arrows: make them by hand from a stick, a rock or a flint, and a feather');
-        return true;
-      }
-      drawState = { key, held: 0, at: now(), fullS: d.fullS };
-      return true;
-    }
-    if (!drawState) return true;
-    if (drawState.key !== key) {
-      drawState = null; // the hand changed: the draw is let go
-      return true;
-    }
-    if (mouse.right) {
-      drawState.held += dt;
-      drawState.at = now();
-      return true;
-    }
-    const done = drawState;
-    drawState = null;
-    if (now() - done.at > DRAW_STALE_MS) return true;
-    drawRelease(d, key, drawFraction(done.held, done.fullS));
+    e.latched = controlLatch.on;
+    e.now = now();
+    const did = draw.step(mouse, dt, e);
+    if (did === null) return false;
+    if (did === 'noArrows') showHint(NO_ARROWS_HINT);
+    else if (did === 'release' && d && key) drawRelease(d, key, draw.f);
     return true;
   }
 
@@ -4625,12 +4751,13 @@ export function boot(win, doc) {
       if (res && res.broke) toolBroke(res.key);
     }
     audio.playRecipe(SOUND_THROW, 0.45 + 0.4 * f);
-    avatarSwing(); // §91: the arm follows through
+    // §91: a throwing arm follows through from the draw; a bow is simply let down (AvatarMotion eases the draw out)
+    if (!d.bow) avatarSwing();
   }
 
   /** §100: the draw's ring at the crosshair (0..1), or null. */
   function drawRing() {
-    return drawState ? Math.max(0.02, drawShare()) : null;
+    return draw.on ? Math.max(0.02, drawShare()) : null;
   }
 
   /** §100: "Flint Arrows (12)" — the arrow a bow would shoot, and in Survival how many of it the pack holds. */
@@ -4649,7 +4776,7 @@ export function boot(win, doc) {
     const d = drawOf(key);
     if (!d || !key) return null;
     const verb = d.bow ? 'shoot' : 'throw';
-    if (drawState) return drawShare() >= 1 ? `Full draw · let go to ${verb}` : `Drawing · let go to ${verb}`;
+    if (draw.on) return drawShare() >= 1 ? `Full draw · let go to ${verb}` : `Drawing · let go to ${verb}`;
     const name = itemName(key);
     if (d.bow) {
       const arrow = bowArrow();
@@ -4684,7 +4811,7 @@ export function boot(win, doc) {
       glassPlaceHeld = false;
       return false;
     }
-    drawState = null; // a draw under way when the hand changed to the glass is let go
+    draw.cancel(); // a draw under way when the hand changed to the glass is let go
     const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
     if (mouse.rightPressed && hit && !shift && latchEnv.isControl(hit.blockId)) {
       glassPlaceHeld = false;
@@ -4883,11 +5010,12 @@ export function boot(win, doc) {
     doSave(false);
   }
 
-  /** Forget every in-progress dig, use and hold, and the action ring. */
+  /** Forget every in-progress dig, use, hold and draw (§100: let go without a throw), and the action ring. */
   function resetSurvivalInput() {
     digState.reset();
     useState.reset();
     holdState.reset();
+    draw.cancel();
     digHit = null;
     digProgress = 0;
     digAdvanced = false;
@@ -4996,7 +5124,7 @@ export function boot(win, doc) {
     if (animalTarget) return animalHint(animalTarget.animal);
     const staring = watchingAnimal(); // §100: one is staring at the hunter, though the crosshair is elsewhere
     if (staring) return `The ${animalName(staring)} is watching you — keep still`;
-    if (drawState) return drawHintText(); // §100: while drawing, how to let go
+    if (draw.on) return drawHintText(); // §100: while drawing, how to let go
     if (hit && hit.blockId === BLOCK.SNARE) return 'Snare · R with food in hand: bait it';
     if (hit && hit.blockId === BLOCK.SNARE_BAITED) return 'Baited Snare · animals nearby will come to it';
     if (hit && hit.blockId === BLOCK.SNARE_SPRUNG) return 'Sprung Snare · it holds what it caught for a while';
@@ -5029,6 +5157,9 @@ export function boot(win, doc) {
           return sleepSpotHint(act); // §87: `Sleeping Hide · R: sleep · secure here` / `… · not secure: …`
         case 'water_crop':
           return waterCropHint(act); // §85: `… · R: water it`
+        case 'tap_hint':
+          // §99.4: chopping a birch with a stone axe says so, as an oak does; otherwise how to tap its sap
+          return digSlowHint(digState, hit, selectedTool()) ?? /** @type {string} */ (act.hint);
         default:
           if (act.hint) return act.hint;
       }
@@ -5053,12 +5184,12 @@ export function boot(win, doc) {
         const wrong = wrongGroundHint(world.getBlock, selectedKey(), h.q, h.y, h.r);
         if (wrong) return wrong;
       }
-      const slow = slowHint(h.blockId, tool); // §99: `Oak Log · slow with a stone axe`
+      const slow = digSlowHint(digState, h, tool); // §99.4: while digging it, `Oak Log · slow with a stone axe`
       if (slow) return slow;
     } else if (brickHit) {
-      // §93: a brick says what digs it, like its hex (§99: and when that is slow)
+      // §93: a brick says what digs it, like its hex (§99.4: and, while dug, when that is slow)
       const tool = selectedTool();
-      const need = canHarvest(brickHit.blockId, tool) ? slowHint(brickHit.blockId, tool) : harvestHint(brickHit.blockId);
+      const need = canHarvest(brickHit.blockId, tool) ? digSlowHint(digState, brickDigTarget(brickHit), tool) : harvestHint(brickHit.blockId);
       if (need) return need;
     }
     return blockHintText() ?? drawHintText() ?? glassHintText(); // §100: thrown by holding Place; §103 the glass
@@ -5882,7 +6013,7 @@ export function boot(win, doc) {
 
   /** The action ring (§9.8): the dig, else a held use, else a held R. */
   function actionProgress() {
-    if (drawState) return drawRing(); // §100: the draw
+    if (draw.on) return drawRing(); // §100: the draw
     if (digProgress > 0) return digProgress;
     if (useProgress !== null) return useProgress;
     if (holdProgress !== null) return holdProgress;
@@ -6469,9 +6600,12 @@ export function boot(win, doc) {
     circuits = new Circuits(circuitStore, circuitHooks);
     circuits.setEnabled(!(restoring && restoring.circuits === false));
     blackHoles.setEnabled(!(restoring && restoring.blackholes === false));
+    const loadedWorld = world;
     world.onChunkGenerated = (cq, cr) => {
       blockPhysics.onChunkGenerated(cq, cr);
       if (circuits) circuits.onChunkLoaded(cq, cr); // a loaded chunk's cells are solved settling: loading fires nothing
+      // §101: a pennant another player placed or pulled up while this chunk was not generated here (applyServerCell)
+      pennants.onChunkLoaded(cq, cr, loadedWorld.edits, loadedWorld.getBlock);
     };
     world.onBlockChange = onBlockChanged;
     world.onCoverChange = (q, y, r) => blockPhysics.onCoverChange(q, y, r); // §93.9: a face water crosses opened or closed
@@ -8315,7 +8449,7 @@ export function boot(win, doc) {
     renderer.setCamera(cam.x + shake[0] + camFx.sx, cam.y + shake[1] + camFx.sy, cam.z + shake[2] + camFx.sz, cam.yaw, cam.pitch);
     const wantFov = player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV;
     // §100: a draw steadies the aim: the view closes in a little, DRAW_ZOOM of it at full draw
-    fov = easeFov(fov, drawState ? wantFov * (1 - DRAW_ZOOM * drawShare()) : wantFov, dt);
+    fov = easeFov(fov, draw.on ? wantFov * (1 - DRAW_ZOOM * drawShare()) : wantFov, dt);
     renderer.setFov(spyglass.fov(fov) + camFx.fov); // §103: narrowed by the glass's power
     drawAvatar(dt, live, eyeY);
     if (net || remoteRenderer.count() > 0) remoteRenderer.sync(remotes, netNow(), dt); // the other players, live under menus too
@@ -8365,7 +8499,7 @@ export function boot(win, doc) {
       pennantRenderer.sync(nearP, windNow(), fxTime, pennantHeight);
     }
     computeSky(time, sky);
-    const shownSky = stepWeather(dt, live, eyeY); // §84: the rain, the calendar; the sky greyed while it rains
+    const shownSky = stepWeather(dt, live, eyeY, cam.yaw); // §84: the rain, the calendar; the sky greyed while it rains
     stepWorldSounds(dt, live); // v0.16 (§82): footsteps, movement and the ambience
     renderer.setSky(shownSky);
     const camUnder = cameraUnderwater(cam); // §91: where the camera is (the eye in first person)

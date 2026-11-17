@@ -4,14 +4,16 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as THREE from 'three';
 import {
-  createAvatarRenderer, renderAvatarPortraits, avatarAssets, avatarAssetCount, patchAvatarShader, FP_DEPTH, FP_RENDER_ORDER,
-  SKIRT_LEG_SWING, AVATAR_FILL, AVATAR_PROGRAM, FP_ARM_PROGRAM, FP_HELD_PROGRAM, PORTRAIT,
+  createAvatarRenderer, renderAvatarPortraits, avatarAssets, avatarAssetCount, disposeAvatarAssets, patchAvatarShader, FP_DEPTH,
+  FP_RENDER_ORDER, SKIRT_LEG_SWING, AVATAR_FILL, AVATAR_PROGRAM, FP_ARM_PROGRAM, FP_HELD_PROGRAM, PORTRAIT, DRAW_POSE, ELBOW_MAX,
+  reachArm,
 } from '../../src/avatarRenderer.js';
 import { AvatarMotion } from '../../src/avatarMotion.js';
 import { AVATARS, avatarHeight } from '../../src/avatars.js';
-import { avatarModel, fpHandFrame } from '../../src/avatarModel.js';
+import { avatarModel, fpHandFrame, fpClearShift } from '../../src/avatarModel.js';
 import { createAvatarMenu, avatarButtonLabel, INERT_BENEATH } from '../../src/avatarMenu.js';
 import { createRemotePlayerRenderer } from '../../src/remotePlayerRenderer.js';
+import { POSE_ON_GROUND, POSE_DRAWING } from '../../src/protocol.js';
 import { documentFromHTML, fire } from '../helpers/fakeDom.js';
 
 const html = readFileSync(fileURLToPath(new URL('../../index.html', import.meta.url)), 'utf8');
@@ -140,6 +142,52 @@ describe('the avatar model (three)', () => {
     r.dispose();
   });
 
+  it('on a horse a dress\'s skirt lies over the thighs: they leave it through the hem, never through its front', () => {
+    const def = AVATARS.find((a) => a.outfit.skirt);
+    const sk = def.outfit.skirt;
+    const k = def.scale;
+    const rig = avatarModel(def).rig;
+    const r = createAvatarRenderer(new THREE.Scene(), { avatar: def.id });
+    /** How far out of the skirt the legs reach (the largest (x/rx)² + (z/rz)² of a leg's corner inside the skirt's height). */
+    const outOfSkirt = (p) => {
+      r.sync({ x: 0, y: 0, z: 0, pose: p, showModel: true, showArm: false });
+      const root = model(r, def.id);
+      root.updateMatrixWorld(true);
+      const seat = root.getObjectByName(`avatar-hips-${def.id}`);
+      const toSkirt = seat.matrixWorld.clone().invert(); // into the skirt's own (hanging) frame
+      const hem = sk.y1 * k - rig.hipY;
+      const waist = sk.y0 * k - rig.hipY;
+      // the skirt's rings (as avatarModel lofts it): the hem, 0.7 of the way up, the waist
+      const rings = [[0, sk.r1, sk.r1 * 0.85], [0.7, sk.r0 + (sk.r1 - sk.r0) * 0.25, sk.r0 + (sk.r1 - sk.r0) * 0.25], [1, sk.r0, sk.r0 * 0.66]];
+      const radii = (t) => {
+        const j = t < 0.7 ? 0 : 1;
+        const u = (t - rings[j][0]) / (rings[j + 1][0] - rings[j][0]);
+        return [1, 2].map((c) => (rings[j][c] + (rings[j + 1][c] - rings[j][c]) * u) * k);
+      };
+      let worst = 0;
+      const v = new THREE.Vector3();
+      root.traverse((o) => {
+        if (!o.isMesh || !o.name.startsWith('avatar-leg')) return;
+        const pos = o.geometry.getAttribute('position');
+        for (let i = 0; i < pos.count; i++) {
+          v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld).applyMatrix4(toSkirt);
+          const t = (v.y - hem) / (waist - hem);
+          if (t <= 0.02 || t >= 1) continue; // below the hem the legs are out in the open
+          const [rx, rz] = radii(t);
+          worst = Math.max(worst, (v.x / rx) ** 2 + (v.z / rz) ** 2);
+        }
+      });
+      return worst;
+    };
+    const riding = new AvatarMotion().step(1 / 60, { yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true, riding: true });
+    expect(riding.legRaise).toBeGreaterThan(1.2);
+    expect(outOfSkirt({ ...riding })).toBeLessThan(1); // seated: inside the skirt until the hem
+    expect(outOfSkirt(pose({ legSwing: 0.6 }))).toBeLessThan(1); // walking: the swing is capped
+    // standing the skirt hangs as built (the seat is not moved)
+    expect(model(r, def.id).getObjectByName(`avatar-hips-${def.id}`).matrix.equals(new THREE.Matrix4())).toBe(true);
+    r.dispose();
+  });
+
   it('builds each avatar\'s geometry and atlas once and shares them between renderers (the other players)', () => {
     const a = createAvatarRenderer(new THREE.Scene());
     const b = createAvatarRenderer(new THREE.Scene());
@@ -256,6 +304,28 @@ describe('the first-person hand', () => {
     r.sync({ x: 0, y: 0, z: 0, pose: pose({ fpBobX: 0.01, fpBobY: -0.02 }), showModel: false, showArm: true, camera });
     expect(root.matrix.elements[12]).toBeCloseTo(restArm.elements[12] + 0.01, 6);
     expect(root.matrix.elements[13]).toBeCloseTo(restArm.elements[13] - 0.02, 6);
+    r.dispose();
+  });
+
+  it('§100 draws as what it holds draws (a bow or a throw); §95 on a tablet it keeps left of the buttons', () => {
+    const r = createAvatarRenderer(new THREE.Scene());
+    const camera = new THREE.PerspectiveCamera(70, 4 / 3);
+    const root = () => r.armGroup.children[0];
+    const armAt = (frame) => Array.from(frame.arm).map((v) => expect.closeTo(v, 6));
+    for (const [held, bow] of [['crude_bow', true], ['recurve_bow', true], ['flint_spear', false], ['flint_arrow', false]]) { // §100.6: the bows; an arrow in hand draws nothing
+      r.setHeld(held);
+      r.sync({ x: 0, y: 0, z: 0, pose: pose({ draw: 1 }), showModel: false, showArm: true, camera });
+      expect(root().matrix.elements, held).toEqual(armAt(fpHandFrame(0, false, 1, bow)));
+      r.sync({ x: 0, y: 0, z: 0, pose: pose({ draw: 0.4 }), showModel: false, showArm: true, camera });
+      expect(root().matrix.elements, held).toEqual(armAt(fpHandFrame(0, false, 0.4, bow)));
+    }
+    r.sync({ x: 0, y: 0, z: 0, pose: pose(), showModel: false, showArm: true, camera });
+    const desk = root().matrix.elements[12];
+    // a 1024 × 768 tablet: the cluster's left edge at 734 px, its top at 486 px
+    r.sync({ x: 0, y: 0, z: 0, pose: pose(), showModel: false, showArm: true, camera, fpClear: { left: 734 / 512 - 1, top: 1 - 486 / 384 } });
+    const tablet = root().matrix.elements[12];
+    expect(tablet).toBeLessThan(desk - 0.02); // moved left …
+    expect(tablet - desk).toBeCloseTo(fpClearShift({ left: 734 / 512 - 1, top: 1 - 486 / 384 }, 4 / 3, 70), 9); // … by as much
     r.dispose();
   });
 
@@ -423,8 +493,10 @@ describe('the item in hand (setHeld)', () => {
   });
 
   it('prewarm compiles the model\'s, the hand\'s and the held item\'s programs (with the attributes a real item has), and hides them again', async () => {
+    disposeAvatarAssets(); // a fresh page: nothing built yet
     const scene = new THREE.Scene();
     const r = createAvatarRenderer(scene);
+    expect(avatarAssetCount()).toBe(1); // the one shown
     const seen = [];
     await r.prewarm({
       compileAsync(obj) {
@@ -439,7 +511,158 @@ describe('the item in hand (setHeld)', () => {
     expect(seen.filter((s) => /held/.test(s[0])).map((s) => s.slice(0, 2))).toEqual([['avatar-held', true], ['avatar-fp-held', true]]);
     expect(held.visible || fp.visible).toBe(false);
     expect(r.armGroup.children.every((c) => !c.visible)).toBe(true);
+    // every avatar's shared resources are built now, while the game loads: a player who joins later (or the chooser)
+    // costs only a few groups and meshes
+    expect(avatarAssetCount()).toBeGreaterThanOrEqual(AVATARS.length);
+    const t0 = performance.now();
+    for (const def of AVATARS) {
+      const other = createAvatarRenderer(new THREE.Scene(), { avatar: def.id });
+      expect(other.avatarId()).toBe(def.id);
+      expect(other.group.children.map((c) => c.name)).toEqual([`avatar-${def.id}`]); // only that figure
+      other.dispose();
+    }
+    expect(performance.now() - t0).toBeLessThan(500);
     r.dispose();
+  });
+});
+
+describe('§100 the draw, on the model', () => {
+  const still = (o = {}) => ({ yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true, ...o });
+  /** A renderer holding `held`, its motion stepped through a full draw (1 s at 60 fps, as main's drawFraction rises). */
+  function drawn(id, held) {
+    const r = createAvatarRenderer(new THREE.Scene(), { avatar: id });
+    r.setHeld(held);
+    const m = new AvatarMotion();
+    let p = m.pose;
+    for (let i = 0; i <= 70; i++) p = m.step(1 / 60, still({ draw: Math.min(1, i / 60) }));
+    r.sync({ x: 0, y: 0, z: 0, pose: p, showModel: true, showArm: false });
+    const root = model(r, id);
+    root.updateMatrixWorld(true);
+    const at = (name) => /** @type {THREE.Object3D} */ (root.getObjectByName(name)).getWorldPosition(new THREE.Vector3());
+    const heldMesh = /** @type {THREE.Object3D} */ (root.getObjectByName('avatar-held'));
+    const q = heldMesh.getWorldQuaternion(new THREE.Quaternion());
+    const axis = (x, y, z) => new THREE.Vector3(x, y, z).applyQuaternion(q);
+    /** where an arm's fist grips (its grip point, in the world) */
+    const grip = (side) => {
+      const g = avatarModel(AVATARS.find((a) => a.id === id)).rig.grip;
+      return root.getObjectByName(`avatar-elbow-${side}`).localToWorld(new THREE.Vector3(side === 'l' ? -g[0] : g[0], g[1], g[2]));
+    };
+    return { r, m, root, at, grip, axis, held: heldMesh };
+  }
+
+  it('a bow: held upright straight ahead in the right hand, the string toward the archer; the left hand drawn back to the chin, its elbow up and out', () => {
+    for (const def of AVATARS) {
+      const { r, at, grip, axis } = drawn(def.id, 'crude_bow');
+      const shR = at('avatar-shoulder-r');
+      const shL = at('avatar-shoulder-l');
+      const L = Math.hypot(...avatarModel(def).rig.elbow) + Math.hypot(...avatarModel(def).rig.grip);
+      // the bow arm reaches ahead (−z) nearly its full length, at shoulder height
+      expect(shR.z - grip('r').z, def.id).toBeGreaterThan(0.75 * L);
+      expect(Math.abs(grip('r').y - shR.y), def.id).toBeLessThan(0.15 * L);
+      // the bow stands upright (its limbs, the picture's x, near vertical), its string (the picture's +y) toward the archer
+      expect(Math.abs(axis(1, 0, 0).y), def.id).toBeGreaterThan(0.9);
+      expect(axis(0, 1, 0).z, def.id).toBeGreaterThan(0.8);
+      // the drawing hand is at the face: up by the chin, between the shoulders, well ahead of the left shoulder
+      const chinY = def.head.y * def.scale;
+      const hand = grip('l');
+      expect(Math.abs(hand.y - chinY), def.id).toBeLessThan(0.1);
+      expect(Math.abs(hand.x), def.id).toBeLessThan(0.1);
+      expect(hand.z, def.id).toBeLessThan(shL.z - 0.1);
+      // its elbow is raised about to the shoulder's height and out to the left
+      const el = at('avatar-elbow-l');
+      expect(el.y, def.id).toBeGreaterThan(shL.y - 0.08);
+      expect(el.x, def.id).toBeLessThan(shL.x - 0.08);
+      // the body is turned side-on, the head still looks ahead
+      expect(model(r, def.id).getObjectByName('avatar-torso').rotation.y).toBeCloseTo(DRAW_POSE.bow.twist, 6);
+      const face = new THREE.Vector3(0, 0, -1).applyQuaternion(model(r, def.id).getObjectByName('avatar-neck').getWorldQuaternion(new THREE.Quaternion()));
+      expect(face.z, def.id).toBeLessThan(-0.99);
+      r.dispose();
+    }
+  });
+
+  it('a spear: cocked overhand, the fist by the ear and the elbow out to the side, the point level and ahead; the other arm points', () => {
+    for (const [id, held] of [['brayden', 'flint_spear'], ['annabelle', 'flint_spear'], ['caelan', 'flint_spear']]) {
+      const def = /** @type {*} */ (AVATARS.find((a) => a.id === id));
+      const { r, at, grip, axis } = drawn(id, held);
+      const shR = at('avatar-shoulder-r');
+      const hand = grip('r');
+      const headHalf = def.head.rx * def.scale;
+      expect(hand.y, id).toBeGreaterThan(shR.y + 0.12); // raised over the shoulder …
+      expect(hand.x, id).toBeGreaterThan(headHalf); // … beside the head, not in front of the face
+      const el = at('avatar-elbow-r');
+      expect(el.x, id).toBeGreaterThan(shR.x + 0.1); // the elbow out to the side
+      expect(el.y, id).toBeGreaterThan(shR.y - 0.06); // at about the shoulder's height
+      // the item's length (the slab's +y, from the grip to the point) lies ahead and about level
+      const along = axis(0, 1, 0);
+      expect(along.z, id).toBeLessThan(-0.95);
+      expect(Math.abs(along.y), id).toBeLessThan(0.25);
+      // the left arm points ahead
+      expect(grip('l').z, id).toBeLessThan(at('avatar-shoulder-l').z - 0.3);
+      r.dispose();
+    }
+  });
+
+  it('let go, the throw swings through from the drawn arm (no jump between frames); the elbows never bend backwards', () => {
+    for (const held of ['flint_spear', 'crude_bow']) {
+      const { r, m, root } = drawn('brayden', held);
+      const shoulder = /** @type {THREE.Object3D} */ (root.getObjectByName('avatar-shoulder-r'));
+      const elbowR = /** @type {THREE.Object3D} */ (root.getObjectByName('avatar-elbow-r'));
+      const q = new THREE.Quaternion();
+      const prev = shoulder.getWorldQuaternion(new THREE.Quaternion());
+      let most = 0;
+      let reached = 0;
+      if (held !== 'crude_bow') m.swing(); // main: a throw swings the arm, a bow is let down
+      for (let i = 0; i < 40; i++) {
+        const p = m.step(1 / 60, still());
+        r.sync({ x: 0, y: 0, z: 0, pose: p, showModel: true, showArm: false });
+        root.updateMatrixWorld(true);
+        shoulder.getWorldQuaternion(q);
+        most = Math.max(most, 2 * Math.acos(Math.min(1, Math.abs(q.dot(prev)))));
+        prev.copy(q);
+        reached = Math.max(reached, p.reachR);
+        expect(elbowR.rotation.x, held).toBeGreaterThanOrEqual(0);
+        expect(root.getObjectByName('avatar-elbow-l').rotation.x, held).toBeGreaterThanOrEqual(0);
+      }
+      expect(most, held).toBeLessThan(0.5); // at 60 fps: under 30° a frame
+      if (held !== 'crude_bow') expect(reached).toBeGreaterThan(1.5); // and it does follow through
+      // the arms are back at rest, the item as it is held at rest
+      const rest = createAvatarRenderer(new THREE.Scene(), { avatar: 'brayden' });
+      rest.setHeld(held);
+      rest.sync({ x: 0, y: 0, z: 0, pose: pose(), showModel: true, showArm: false });
+      const restRoot = model(rest, 'brayden');
+      const near = (name) => restRoot.getObjectByName(name).quaternion.angleTo(root.getObjectByName(name).quaternion);
+      expect(near('avatar-shoulder-r')).toBeLessThan(0.02);
+      expect(near('avatar-shoulder-l')).toBeLessThan(0.02);
+      expect(near('avatar-held')).toBeLessThan(1e-6);
+      rest.dispose();
+      r.dispose();
+    }
+    // whatever the pose says, the right elbow's extra bend for a reach is never negative
+    const r = createAvatarRenderer(new THREE.Scene());
+    r.sync({ x: 0, y: 0, z: 0, pose: pose({ reachR: -1.1, elbow: 0.12 }), showModel: true, showArm: false });
+    expect(model(r, 'caelan').getObjectByName('avatar-elbow-r').rotation.x).toBeCloseTo(0.12, 9);
+    r.dispose();
+  });
+
+  it('reachArm puts a fist where it is asked, its elbow toward the pole, bent no further than ELBOW_MAX', () => {
+    const rig = avatarModel(AVATARS[0]).rig;
+    const elbowAt = new THREE.Vector3(...rig.elbow);
+    const grip = new THREE.Vector3(...rig.grip);
+    const out = new THREE.Quaternion();
+    for (const [t, pole] of [[[0.1, 0.25, 0.05], [1, 0, 0]], [[-0.05, 0.1, -0.4], [0, -1, 0]], [[0.2, -0.3, -0.1], [0, 0, 1]]]) {
+      const target = new THREE.Vector3(...t);
+      const e = reachArm(elbowAt, grip, target, new THREE.Vector3(...pole), out);
+      expect(e).toBeGreaterThanOrEqual(0);
+      expect(e).toBeLessThanOrEqual(ELBOW_MAX);
+      const hand = grip.clone().applyAxisAngle(new THREE.Vector3(1, 0, 0), e).add(elbowAt).applyQuaternion(out);
+      expect(hand.distanceTo(target)).toBeLessThan(1e-6);
+      const el = elbowAt.clone().applyQuaternion(out);
+      const side = el.clone().addScaledVector(target.clone().normalize(), -el.dot(target.clone().normalize()));
+      expect(side.dot(new THREE.Vector3(...pole))).toBeGreaterThan(0);
+    }
+    // out of reach: straight, pointing at it
+    const far = new THREE.Vector3(0, 0, -5);
+    expect(reachArm(elbowAt, grip, far, new THREE.Vector3(0, -1, 0), out)).toBe(0);
   });
 });
 
@@ -469,13 +692,44 @@ describe('the other players (remotePlayerRenderer)', () => {
     const held = /** @type {THREE.Mesh} */ (bo.getObjectByName('avatar-held'));
     expect(held.visible).toBe(true);
     expect(held.position.toArray()).toEqual(avatarModel(AVATARS[1]).rig.grip);
-    // no first-person hand is built for them
+    // no first-person hand is built for them, nor any figure but their own (no hidden default one)
     let hands = 0;
     scene.traverse((o) => { if (o.name.startsWith('avatar-arm-')) hands++; });
     expect(hands).toBe(0);
+    const figures = [];
+    scene.traverse((o) => { if (/^avatar-(caelan|brayden|annabelle)$/.test(o.name)) figures.push(o.name); });
+    expect(figures.sort()).toEqual(['avatar-annabelle', 'avatar-brayden']);
     remote.clear();
     expect(remote.count()).toBe(0);
     local.dispose();
+  });
+
+  it('§100: a pose that says they are drawing raises their arms into the draw at a draw\'s pace; let go, they come down', () => {
+    const scene = new THREE.Scene();
+    const doc = { createElement: () => ({ width: 0, height: 0, getContext: () => null }) };
+    const remote = createRemotePlayerRenderer(scene, /** @type {*} */ (doc));
+    const players = [{ id: 1, name: 'Bo', avatar: 'brayden', swings: 0, held: 'crude_bow' }];
+    let flags = POSE_ON_GROUND | POSE_DRAWING;
+    const remotes = { list: () => players, sample: () => ({ x: 0, y: 64, z: 0, yaw: 0, pitch: 0, vx: 0, vz: 0, flags }) };
+    const fist = () => {
+      const bo = /** @type {THREE.Object3D} */ (scene.getObjectByName('avatar-brayden'));
+      bo.updateMatrixWorld(true);
+      return /** @type {THREE.Object3D} */ (bo.getObjectByName('avatar-held')).getWorldPosition(new THREE.Vector3());
+    };
+    remote.sync(/** @type {*} */ (remotes), 0, 1 / 60);
+    const z0 = fist().z;
+    for (let i = 0; i < 30; i++) remote.sync(/** @type {*} */ (remotes), 0, 1 / 60);
+    const zHalf = fist().z;
+    for (let i = 0; i < 40; i++) remote.sync(/** @type {*} */ (remotes), 0, 1 / 60);
+    const zFull = fist().z;
+    // the bow comes up ahead of them (−z), half way after half a draw's time
+    expect(zFull).toBeLessThan(z0 - 0.25);
+    expect(zHalf).toBeLessThan(z0 - 0.05);
+    expect(zHalf).toBeGreaterThan(zFull + 0.05);
+    flags = POSE_ON_GROUND;
+    for (let i = 0; i < 30; i++) remote.sync(/** @type {*} */ (remotes), 0, 1 / 60);
+    expect(fist().z).toBeCloseTo(z0, 2);
+    remote.clear();
   });
 });
 

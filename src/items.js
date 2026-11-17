@@ -139,6 +139,9 @@ const MATERIAL_ROWS = [
   ['bronze_arrow', 'Bronze Arrow', 16], ['iron_arrow', 'Iron Arrow', 16], ['steel_arrow', 'Steel Arrow', 16],
   // §103 the Spyglass: bronze tubes and a glass lens. Carried, it lets the player look far (spyglass.js); it never wears
   ['spyglass', 'Spyglass', 1],
+  // §102: carried anywhere in the pack, it puts north on the HUD's wind vane (compass.js). Made at the Forge; no tool, it
+  // never wears. The last of the materials.
+  ['compass', 'Compass', 1],
 ];
 
 /**

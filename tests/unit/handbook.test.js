@@ -304,7 +304,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 26, 27, 5, 17, 7, 8]); // §100 + §103: the bows, the arrows of every age, the Spyglass; // §101: + the Pennant at hand; §100: + Arrows at hand, the Bow Stave and the Bow at the stump; // §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 26, 27, 5, 18, 7, 8]); // §102: + the Compass at the Forge; §100 + §103: the bows, the arrows of every age, the Spyglass; // §101: + the Pennant at hand; §100: + Arrows at hand, the Bow Stave and the Bow at the stump; // §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
@@ -1112,7 +1112,11 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     // §100: fish by the size of their water; stillness, cover and the wind
     expect(text).toContain(`one for about every ${FISH_CELLS} cells of water, so a small pond has one at most`);
     expect(fishCapOf(7)).toBe(1);
-    expect(text).toContain('it does not bolt at once. It lifts its head and stares at you. Freeze.');
+    // only what is drawn: it stands and turns to face you (animalRenderer has no head pose for it)
+    expect(text).toContain('it does not bolt at once. It stops, turns to face you and stares. Freeze.');
+    expect(text).toContain('seconds and goes back to grazing. Move while it stares and it is gone.');
+    expect(text).toContain('Creep while it looks away; freeze the moment it turns to face you.');
+    expect(text).not.toMatch(/head is down|lowers its head|lifts its head/);
     expect(text).toContain(`Keep still and it settles in about ${numWord(Math.round((SUSPECT_WATCH - SUSPECT_CALM) / SUSPECT_SETTLE))} seconds`);
     expect(text).toContain(`only hears and smells you, at ${fmtPct(COVER_NOTICE)} of the distance`);
     expect(text).toContain(`it smells you from up to ${fmtPct(SCENT_UPWIND)} farther off in a strong wind. Downwind it notices you up to ${fmtPct(SCENT_DOWNWIND)} nearer.`);
@@ -1439,7 +1443,7 @@ describe('handbook: holding Place to throw, the bows and the arrows (CONTRACTS �
     expect(drawnThrow(g, 0).speed).toBeCloseTo(g.speed * DRAW_SPEED_MIN, 2);
     expect(drawnThrow(g, 1).speed).toBeCloseTo(g.speed * DRAW_SPEED_FULL, 2);
     expect(drawnThrow(g, 1).power).toBe(g.power);
-    expect(text).toContain('G still throws at once, with no draw: use it when an animal bolts and there is no time.');
+    expect(text).toContain('On a keyboard G still throws at once, with no draw: use it when an animal bolts and there is no time.');
     // the controls say it too
     const hands = tableById('keys-hands');
     expect(hands.rows.find((r) => r[0] === 'Hold RMB')[1]).toBe('eat, drink a pot, bandage; wear clothes; draw a bow or a spear; look through a Spyglass');

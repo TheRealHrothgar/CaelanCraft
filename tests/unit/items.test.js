@@ -76,6 +76,7 @@ const MATERIALS = {
   stone_arrow: ['Stone Arrow', 16], flint_arrow: ['Flint Arrow', 16], copper_arrow: ['Copper Arrow', 16],
   bronze_arrow: ['Bronze Arrow', 16], iron_arrow: ['Iron Arrow', 16], steel_arrow: ['Steel Arrow', 16],
   spyglass: ['Spyglass', 1], // §103
+  compass: ['Compass', 1], // §102
 };
 
 /** §5.1 / §4.5 food: key → [display name, stack, satiation, hydration, sick, useS, extra]. */
@@ -238,8 +239,8 @@ describe('items — the registry', () => {
     // twelve game foods (fauna)
     // §80: + the three seeds (materials). The 18 farm blocks are not placeable, so they are no items.
     // §81: + Hemlock Root and Nightshade Berries (foods), the Aloe Leaf (a heal) and the seven placeable plants.
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([36, 59, 55, 3, 5, 120]); // §100 (the bows, the arrows): − the Bow, + the Crude Bow and the Recurve Bow (tools); − the two darts and the Arrow, + the Treated Stave, the Sapling, six arrows and (§103) the Spyglass (materials); // §101: + the Pennant (a block item); §100: + the Bow (a tool), the Bow Stave and the Arrow (materials); // §94: + the Lab; // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(278); // §100 + §103: + 7; // §101: + the Pennant; §100: + the Bow, the Bow Stave, the Arrow; // §94: + the Lab; // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([36, 60, 55, 3, 5, 120]); // §102: + the Compass (a material); §100 (the bows, the arrows): − the Bow, + the Crude Bow and the Recurve Bow (tools); − the two darts and the Arrow, + the Treated Stave, the Sapling, six arrows and (§103) the Spyglass (materials); // §101: + the Pennant (a block item); §100: + the Bow (a tool), the Bow Stave and the Arrow (materials); // §94: + the Lab; // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(279); // §102: + the Compass; §100 + §103: + 7; // §101: + the Pennant; §100: + the Bow, the Bow Stave, the Arrow; // §94: + the Lab; // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -355,7 +356,7 @@ describe('items — the registry', () => {
     const materials = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'material');
     expect(materials.slice(materials.indexOf('handbook'))).toEqual(['handbook', 'feather', 'carrot_seeds', 'onion_seeds', 'healwort_seeds',
       'bow_stave', 'treated_stave', 'sapling', 'stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow',
-      'spyglass']); // + the seeds (§80); + the bows' and the arrows (§100); + the Spyglass (§103)
+      'spyglass', 'compass']); // + the seeds (§80); + the bows' and the arrows (§100); + the Spyglass (§103); + the Compass (§102), last
   });
   it('§100 the bows: the Crude Bow of the flint age and the Recurve Bow of bronze, their own tool type; staves, the sapling and six arrows stack', () => {
     expect(getItem('crude_bow')).toEqual({ key: 'crude_bow', name: 'Crude Bow', kind: 'tool', stack: 1, tool: { type: 'bow', tier: TIER.FLINT, durability: 60, power: 1 } });
@@ -578,10 +579,10 @@ describe('itemName with a count: the singular of a plural display name', () => {
 
   it('every plural-named item (a display name ending in "s" that is not a mass noun) has a singular, and every singular names a real item', () => {
     for (const k of Object.keys(SINGULAR_NAMES)) expect(isItemKey(k), k).toBe(true);
-    // (food and materials: a pair of shoes or a hat is one thing already)
+    // (food and materials: a pair of shoes or a hat is one thing already; Bellows is both, and a Compass is one, §102)
     // (§103: a Spyglass is one glass)
     const plural = ITEM_KEYS.map((k) => getItem(k))
-      .filter((d) => /s$/.test(d.name) && !['bellows', 'spyglass'].includes(d.key) && (d.kind === 'food' || d.kind === 'material'));
+      .filter((d) => /s$/.test(d.name) && !['bellows', 'compass', 'spyglass'].includes(d.key) && (d.kind === 'food' || d.kind === 'material'));
     for (const d of plural) expect(Object.hasOwn(SINGULAR_NAMES, d.key), d.key).toBe(true);
   });
 });
