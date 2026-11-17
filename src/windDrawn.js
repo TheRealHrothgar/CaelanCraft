@@ -4,12 +4,15 @@
 // This module turns it into what is drawn: the HUD's vane (which way it blows relative to where the player looks, how hard,
 // in words), the slant of the rain and the drift of the snow, the drift of the smoke, and the air the light particles move
 // in. Below DRAWN_CALM the drawn wind is still: the smoke rises straight up and the rain falls straight down.
-import { windFromWord, windWord } from './wind.js';
+import { WIND_CALM, windFromWord, windWord } from './wind.js';
 
 /** @typedef {import('./wind.js').Wind} Wind */
 
-/** Strength (0..1) below which nothing drawn moves with the wind: a calm. Just above wind.WIND_MIN. */
-export const DRAWN_CALM = 0.12;
+/**
+ * Strength (0..1) up to which nothing drawn moves with the wind: a calm, wind.WIND_CALM — the vane's "Calm"
+ * (VANE_LEVELS[0]), so the smoke never drifts while the vane shows no arrow.
+ */
+export const DRAWN_CALM = WIND_CALM;
 /**
  * Metres a second of the drawn air at strength 1: what smoke, steam and leaves drift in. The real wind is WIND_MAX_MS
  * (12 m/s), which would tear the smoke of a campfire away out of sight in a second; this keeps the column readable.
@@ -27,7 +30,7 @@ export const SNOW_DRIFT_MS = 2.2;
 export const RAIN_SWIRL_M = 0.14;
 export const SNOW_SWIRL_M = 0.5;
 /** The HUD's vane: strengths at which its words change (wind.windWord's thresholds), and a gust worth showing. */
-export const VANE_LEVELS = Object.freeze([0.18, 0.4, 0.7]);
+export const VANE_LEVELS = Object.freeze([WIND_CALM, 0.4, 0.7]);
 export const VANE_GUST = 0.35;
 /** The CSS class of each vane level: calm, light, breeze, strong. */
 export const VANE_CLASSES = Object.freeze(['wind-calm', 'wind-light', 'wind-breeze', 'wind-strong']);

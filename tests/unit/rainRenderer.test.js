@@ -7,12 +7,12 @@ import {
   RainField, createRainRenderer, RAIN_MAX_DROPS, RAIN_MAX_SPLASHES, RAIN_RADIUS, RAIN_TOP, RAIN_SPEED, RAIN_LENGTH, RAIN_WIDTH,
   SNOW_SPEED, SNOW_SIZE, SNOW_SWAY, SNOW_DENSITY, SPLASH_RANGE, SPLASH_S, SPLASH_SIZE, RAIN_COLUMN_SCANS, RAIN_COLUMN_TTL_S,
   RAIN_COLUMNS_KEPT, RAIN_BIRTHS, RAIN_COLOR, SNOW_COLOR, RAIN_ALPHA, SNOW_ALPHA, RAIN_NIGHT_LIGHT, RAIN_NEAR_ANGLE,
-  SNOW_NEAR_ANGLE, RAIN_NEAR_M, RAIN_NEAR_ALPHA,
+  SNOW_NEAR_ANGLE, RAIN_NEAR_M, RAIN_NEAR_ALPHA, RAIN_COLUMNS_NEAR,
 } from '../../src/rainRenderer.js';
 import { LEAF_COVER } from '../../src/weather.js';
 import { BLOCK } from '../../src/blocks.js';
 import { PARTICLE_CAPACITY, WORLD_HEIGHT } from '../../src/config.js';
-import { worldToHex } from '../../src/hex.js';
+import { worldToHex, hexToWorld, HEX_AREA } from '../../src/hex.js';
 import { mulberry32 } from '../../src/noise.js';
 
 const B = BLOCK;
@@ -104,11 +104,25 @@ describe('the budget (§84.5)', () => {
     const f = new RainField({ random: mulberry32(4) });
     const g = ground();
     const v = view(g);
+    let trims = 0;
     for (let i = 0; i < 4000; i++) {
+      const before = new Set(f.columns.keys());
       v.x += 0.4; // 24 m/s: faster than anything in the game
       f.update(DT, v);
       expect(f.columns.size).toBeLessThanOrEqual(RAIN_COLUMNS_KEPT);
+      if (f.columns.size >= before.size) continue;
+      // §101: a full cache forgets only the columns left behind, never the near ones a drop in the air may be in
+      trims++;
+      const lost = [...before].filter((key) => !f.columns.has(key)).map((key) => {
+        const [x, z] = hexToWorld(Math.floor(key / 2 ** 21) - 2 ** 20, (key % 2 ** 21) - 2 ** 20);
+        return Math.hypot(x - v.x, z - v.z);
+      });
+      expect(Math.min(...lost)).toBeGreaterThan(RAIN_COLUMNS_NEAR);
     }
+    expect(trims).toBeGreaterThan(10);
+    expect(RAIN_COLUMNS_NEAR).toBeGreaterThan(RAIN_RADIUS + 2); // every column a drop can be in (killed beyond that)
+    // the columns within that reach fit in the cache many times over: it is never all near ones
+    expect((Math.PI * RAIN_COLUMNS_NEAR ** 2) / HEX_AREA).toBeLessThan(RAIN_COLUMNS_KEPT * 0.7);
     expect(RAIN_COLUMN_TTL_S).toBeGreaterThan(0.5);
     expect(RAIN_COLUMN_TTL_S).toBeLessThanOrEqual(3); // a new roof stops the rain under it within seconds
   });

@@ -1,9 +1,10 @@
-// Caelancraft — the wind (docs/DESIGN-hunting.md §4). PURE.
+// Caelancraft — the wind (docs/DESIGN-hunting.md §3). PURE.
 //
 // A function of the world's seed and its clock (weather.worldSeconds), like the weather, so every player on a server
 // feels the same wind without a word on the wire. A prevailing direction that wanders over the hours, a strength that
-// rises with the showers and falls calm at dawn, and gusts of a few seconds on top. It is read by the stalking (an animal
-// downwind of the player smells them), and drawn: rain slants with it, smoke drifts with it, a pennant streams in it.
+// swells and slackens over minutes (calm below WIND_CALM, whatever the hour) and rises with the showers, and gusts of a
+// few seconds on top. It is read by the stalking (an animal downwind of the player smells them), and drawn: rain slants
+// with it, smoke drifts with it, a pennant streams in it.
 //
 // Directions are world radians in the xz plane, measured like the player's yaw is not: `dir` is the direction the wind
 // blows TOWARD, as the unit vector (sin dir, cos dir) in (x, z). "A west wind" blows from the west toward the east.
@@ -23,6 +24,13 @@ export const GUST_SHARE = 0.35;
 export const GUST_SWING = 0.35;
 /** A shower at full intensity adds this much strength. */
 export const SHOWER_WIND = 0.35;
+/**
+ * Below this strength it is a calm (windWord 'calm'): the HUD's vane shows no arrow, nothing drawn moves (windDrawn
+ * DRAWN_CALM), the pennant hangs (pennants PENNANT_LIFT_FROM) and the stalking hint names no wind (main
+ * STALK_WIND_WORD). ONE threshold, so the vane never says "Calm" while the smoke drifts or the hint says the animal can
+ * smell you.
+ */
+export const WIND_CALM = 0.18;
 
 /** A deterministic hash of (seed, integer i, channel) → [0, 1). */
 function hash01(seed, i, channel) {
@@ -117,7 +125,7 @@ export function windFromWord(wind) {
 
 /** A plain description: "calm", "a light breeze", "a breeze", "a strong breeze". @param {Wind} wind */
 export function windWord(wind) {
-  if (wind.strength < 0.18) return 'calm';
+  if (wind.strength < WIND_CALM) return 'calm';
   if (wind.strength < 0.4) return 'a light breeze';
   if (wind.strength < 0.7) return 'a breeze';
   return 'a strong breeze';

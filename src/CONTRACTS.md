@@ -5713,7 +5713,8 @@ snow, getBlock, daylight? }`.
   mesh of (480 + 48) quads in one geometry with one unlit, fogged, transparent `MeshBasicMaterial` (vertex colours
   with alpha, no depth write, render order 3): one draw call whatever the weather, hidden while nothing falls. An
   update bears at most `RAIN_BIRTHS` 48 drops and looks at `RAIN_COLUMN_SCANS` **8** columns at the most (a
-  `rainColumn` each, kept `RAIN_COLUMN_TTL_S` 2 s, `RAIN_COLUMNS_KEPT` 1024 at the most). Measured on the offline
+  `rainColumn` each, kept `RAIN_COLUMN_TTL_S` 2 s, `RAIN_COLUMNS_KEPT` 1024 at the most; full, it forgets the columns
+  farther than `RAIN_COLUMNS_NEAR` 13 m from the eye, §101.3). Measured on the offline
   test: 0.025 ms and 160–240 block reads a frame in the heaviest rain.
 - **Where.** A drop is born at the top of a cylinder round the eye (`RAIN_RADIUS` 10 m, `RAIN_TOP` 9 m above it), in a
   column whose `rainColumn` is known, falls **straight down** (`RAIN_SPEED` 13–17 m/s) and dies at the column's
@@ -8056,9 +8057,10 @@ seven-column pond could take a whole zone's school.
   So a deer that turns round on a frozen hunter stares about two seconds and goes back to grazing; creep while its head
   is down. Amends v0.16's "an animal that turns its head sees you at once".
 - **Cues** (main): the animal hint `Doe is watching you — keep still` while it stares (any staring animal within
-  `WATCHED_HINT_RANGE` 30 m when the crosshair is elsewhere: `The Doe is watching you — keep still`); stalking (crouched)
-  the wild animal's hint carries the wind's word: ` · downwind of it` (scent < −`STALK_WIND_WORD` 0.15) or ` · it can
-  smell you` (> 0.15).
+  `WATCHED_HINT_RANGE` 30 m when the crosshair is elsewhere: `The Doe is watching you — keep still`); stalking
+  (crouched) the wild animal's hint carries the wind's word: ` · downwind of it` (scent < −`STALK_WIND_WORD`) or ` · it
+  can smell you` (> STALK_WIND_WORD), which is `wind.WIND_CALM` 0.18 (§101.1: a scent that strong needs a wind the vane
+  shows with its arrow, so the hint never names the wind while the vane says "Calm").
 - **Not changed**: pigs (pigs.js keeps v0.16's blind side, no cover, wind or suspicion), fish, tame animals, the bear's
   warn and charge.
 - Tests: `tests/unit/stalking.test.js` (the distances, scentOf, sight blockers, canSee, the look's interval and range,
@@ -8079,15 +8081,20 @@ table's Hold RMB row adds the draw. handbook.test.js pins each number to its con
 The user (docs/DESIGN-hunting.md): "introduce wind direction and strength as a visual indicator … It should also affect
 graphics (flag furling, rain direction, etc.) and can later affect sailing." The wind itself is `wind.js` (`windAt`, from
 the world's seed and clock, so every player on a server feels the same wind with nothing on the wire); main works it out
-once per clock tick in `windNow()` (stronger in the shower falling on the player's biome; worked out again when the
-shower changes too, so with the clock frozen by `?time=` a shower still raises it) and everything here draws THAT wind:
+once per clock tick in `windNow()` (stronger in the shower on the player's biome as it is shown — `weatherFx.shown`, the
+biome's rain eased over `RAIN_SHOWN_TAU_S` 2.5 s, so walking into a biome the shower does not fall on eases the wind
+down with the rain instead of dropping it at once, every flag and smoke column with it; worked out again when that
+changes too, so with the clock frozen by `?time=` a shower still raises it) and everything here draws THAT wind:
 nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vector the wind blows TOWARD.
 
 ### 101.1 What is drawn of it (`windDrawn.js`, PURE)
 
-- `drawnStrength(wind)` 0..1: 0 up to `DRAWN_CALM` 0.12 (just above `WIND_MIN`: the calmest wind draws nothing), then
-  rising evenly to 1 at full strength. A calm is still: the smoke rises straight up, the rain falls straight down, the
-  pennant hangs.
+- **One calm**: `wind.WIND_CALM` 0.18 (above `WIND_MIN` 0.08) — below it `windWord` says 'calm' and the vane "Calm"
+  with no arrow (`VANE_LEVELS[0]`), nothing drawn moves (`DRAWN_CALM`), the pennant hangs (`PENNANT_LIFT_FROM`) and the
+  stalking hint names no wind (main `STALK_WIND_WORD`, §100). All four are that one constant, so the vane never says
+  "Calm" while the smoke drifts, a flag lifts or the hint says the animal can smell you.
+- `drawnStrength(wind)` 0..1: 0 up to `DRAWN_CALM` (= WIND_CALM), then rising evenly to 1 at full strength. A calm is
+  still: the smoke rises straight up, the rain falls straight down, the pennant hangs.
 - `windAir(wind)` → `[x, z]` m/s: the drawn air smoke and light particles move in, downwind, `AIR_MS` 3.2 ×
   drawnStrength (the real 12 m/s would tear a campfire's smoke out of sight in a second).
 - `smokeDrift(age, airX, airZ)` → how far a puff `age` seconds old has drifted: it starts at rest and takes the air's
@@ -8099,11 +8106,11 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
   and fro by up to `RAIN_SWIRL_M` 0.14 m (a flake `SNOW_SWIRL_M` 0.5 m) × gust × drawnStrength.
 - `timeInCircle(x, z, vx, vz, cx, cz, R)`: how long a drop moving at (vx, vz) has been inside the circle when at (x, z).
 - The HUD's vane: `vaneAngle(wind, yaw)` radians clockwise from the top of the dial — where the wind blows as seen from
-  where the player looks (they look along (−sin yaw, −cos yaw)): 0 at their back, π in their face, π/2 from their left to
-  their right. It turns by −d when the player turns right by d: it stays fixed to the world. `vaneLevel` 0 calm, 1 a
-  light breeze, 2 a breeze, 3 a strong breeze (`VANE_LEVELS` 0.18 / 0.4 / 0.7, wind.windWord's words), `vaneWords`
-  "Calm" or "A light breeze from the west" (windWord + windFromWord), `vaneView(wind, yaw)` → `{ angle (whole degrees
-  0..359), level, gust (gust ≥ VANE_GUST 0.35, never in a calm), words }`.
+  where the player looks (they look along (−sin yaw, −cos yaw)): 0 at their back, π in their face, π/2 from their left
+  to their right. It turns by −d when the player turns right by d: it stays fixed to the world. `vaneLevel` 0 calm, 1 a
+  light breeze, 2 a breeze, 3 a strong breeze (`VANE_LEVELS` WIND_CALM 0.18 / 0.4 / 0.7, wind.windWord's words),
+  `vaneWords` "Calm" or "A light breeze from the west" (windWord + windFromWord), `vaneView(wind, yaw)` → `{ angle
+  (whole degrees 0..359), level, gust (gust ≥ VANE_GUST 0.35, never in a calm), words }`.
 
 ### 101.2 The indicator (`hud.setWind`, `#wind-indicator`)
 
@@ -8119,22 +8126,31 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
   degrees), the level, the gust or the words change. A page without the element gets one made in #hud.
 - It sways: `.wind-sway` rocks ±5° (light, 2.6 s; breeze 1.4 s), ±9° (strong 0.8 s, a gust 0.4 s); no motion under
   `prefers-reduced-motion`; a solid tint where glass cannot be drawn or is not wanted.
-- main, once a frame in `stepWeather` (after this frame's shower is known): `hud.setWind(vaneView(windNow(), controls.yaw))`.
+- main, once a frame in `stepWeather` (after this frame's shower is known, and after `viewCamera` has set this frame's
+  camera): `hud.setWind(vaneView(windNow(), camPose.yaw))` — the camera's yaw, not the avatar's. "Where the player
+  looks" is where the screen looks: in the front view (§91, the camera in front looking back, yaw + π) the vane turns
+  with it and agrees with the rain and the flags on the screen; behind and in first person the two are the same.
 
 ### 101.3 The rain leans, the snow drifts, the smoke drifts
 
 - **Rain** (`RainView.wind`, amends §84.5): a drop's sideways velocity is set at its birth (`RainField.vx`, `.vz`,
   dropDrift) and it moves with it. A slanted drop still lands where its column was looked at: it is born upwind of its
-  landing, at the top of the cylinder or where its path enters the cylinder's side (`RAIN_ENTRY_RADIUS` = RAIN_RADIUS + 1,
-  timeInCircle), whichever it reaches first going back. Its path is walked first (about every `RAIN_PATH_STEP` 0.5 m
-  sideways, at most `RAIN_PATH_STEPS` 12 looks, from the remembered columns): a drop whose path would pass under any
-  column's cover (its rain floor; leaves let it through) is not born — the lee of a wall or a hill is a rain shadow. In
-  flight a slanted drop that runs into a column's cover (a roof's corner between two looks) stops there: the column as
-  remembered, however old (`_known`; a stale column is never looked at again for this), or, never seen, looked at while
-  the update has looks left. So no drop is ever under a roof or inside a wall, in any wind. A streak's tail trails back up its path (upwind); a flake stays a
-  square. A gust swirls the drawn drops (`RainField.swirl`, `RAIN_SWIRL_RATE` 2.3 rad/s). Without `wind`, or in a calm,
-  the field does exactly what it did (the same rolls, the same drops). The column cache is keyed by (q, r) packed into
-  one number. A frame of heavy rain in a full gusting wind costs about 0.2 ms (still: about 0.08 ms).
+  landing, at the top of the cylinder or where its path enters the cylinder's side (`RAIN_ENTRY_RADIUS` =
+  RAIN_RADIUS + 1, timeInCircle), whichever it reaches first going back. Its path is walked first (about every
+  `RAIN_PATH_STEP` 0.5 m sideways, at most `RAIN_PATH_STEPS` 12 looks, from the remembered columns): a drop whose path
+  would pass under any column's cover (its rain floor; leaves let it through) is not born — the lee of a wall or a hill
+  is a rain shadow. In flight a slanted drop that runs into a column's cover (a roof's corner between two looks) stops
+  there: the column as remembered, however old (`_known`; a stale column is never looked at again for this), or, never
+  seen, looked at while the update has looks left; with none left it stops (it cannot be told clear, as an unknown
+  column blocks a birth). So no drop is ever under a roof or inside a wall, in any wind, standing or walking. A streak's
+  tail trails back up its path (upwind); a flake stays a square. A gust swirls the drawn drops (`RainField.swirl`,
+  `RAIN_SWIRL_RATE` 2.3 rad/s). Without `wind`, or in a calm, the field does exactly what it did (the same rolls, the
+  same drops). The column cache is keyed by (q, r) packed into one number. When it holds `RAIN_COLUMNS_KEPT` columns it
+  forgets those whose centre is farther than `RAIN_COLUMNS_NEAR` (RAIN_RADIUS + 3 = 13 m) from the eye — the ones walked
+  away from — and keeps the near ones (about 600: every column a drop in the air or a birth can be in; were they ever
+  all of it, it is emptied). Emptied all at once, the drops in the air would spend every look on columns already crossed
+  and none would be born for half a second, every few seconds of walking in a wind (the rain halving, and drops
+  unchecked against walls). A frame of heavy rain in a full gusting wind costs about 0.2 ms (still: about 0.08 ms).
 - **Campfire smoke** (`campfireRenderer.setWind(wind)`, amends §32): each puff is offset by smokeDrift(age, windAir) and
   rises at SMOKE_RISE × smokeRise; the flame tongues lean downwind about their base (a shear of 0.22 × drawnStrength
   metres per metre of height, flickering). Without setWind (or in a calm) the smoke is as before.
@@ -8155,24 +8171,28 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
   (`TILE_IDS` 198). **Item** `pennant` (a block item, stack 64; 268 items). **Recipe** `pennant`, by hand, 3 s: `stick +
   cord + #cloth`, the new tag `cloth` = grave_rag, rawhide, leather (the cheapest first; "Rag or Hide", "a rag or a
   hide"); 125 recipes, 44 at hand. **Purpose**: "Shows the wind. Stalk game with the wind in your face."
-- **Harvest**: harvest.js needs one rule (it was another agent's file while this was written): `set([B.PENNANT], 0.4,
-  null, 0, SELF_DROPS)` — it pulls up by hand and comes away whole. Until then Survival cannot take it down and
-  harvest.test.js's "only AIR, BEDROCK … are null" fails.
+- **Harvest**: `set([B.PENNANT], 0.4, null, 0, SELF_DROPS)` in harvest.js — it pulls up by hand in 0.4 s, no tool, and
+  comes away whole.
 - **Tracker** `Pennants`: like the campfires, main seeds it from `World.edits` on load (`loadFromEdits`) and keeps it in
-  step through `onBlockChange`; `nearest(x, y, z, maxDist, limit)` (to the middle of the pole, nearest first, ties by
-  key). Each pennant `{ key, q, y, r, x, z, seed }` (`pennantSeed`, a phase in [0, 2π)).
+  step through `onBlockChange`; and through `World.onChunkGenerated`: `onChunkLoaded(cq, cr, world.edits,
+  world.getBlock)` drops the chunk's tracked pennants that are gone and adds every PENNANT in its edits. On a server a
+  cell another player changes in a chunk not generated here is kept as an edit (`applyServerCell` → importEdits, no
+  onBlockChange): without this, their pennant would never be drawn and one they pulled up would stay as a ghost.
+  `nearest(x, y, z, maxDist, limit)` (to the middle of the pole, nearest first, ties by key). Each pennant
+  `{ key, q, y, r, x, z, seed }` (`pennantSeed`, a phase in [0, 2π)).
 - **The pole**: `poleHeight(blockAbove)`: `PENNANT_POLE_TALL` 1.75 m under open air, `PENNANT_POLE_SHORT` 0.95 under
   anything else (it never pokes into a block over it); radius `PENNANT_POLE_RADIUS` 0.04, six-sided.
 - **The flag** (`flagRibbon(strength, gust, t, seed, length, hoist)` → `FLAG_FLOATS` numbers: PENNANT_SEGMENTS 8 + 1
   vertical columns, each top then bottom vertex, in the pennant's frame: +x downwind, +y up, +z across): `length` =
-  `PENNANT_FLAG_LENGTH` 0.4 × the pole's height, the hoist `PENNANT_FLAG_HOIST` 0.22 × it, tapering to `PENNANT_TIP` 18 %
-  at the tip. Column 0 is the hoist on the pole, upright, its top at the origin. `flagLift(strength)`: 0 up to
-  `PENNANT_LIFT_FROM` 0.1, rising quickly (1 − (1 − x)²) to 1 at 0.7 — limp in a calm, lifting in a light breeze,
-  straight out in a breeze. The root points `PENNANT_LIMP` 1.38 rad × (1 − lift) below the level, the fly droops
-  `PENNANT_SAG` 0.35 × (1 − lift) more; a hanging flag's columns lean with the droop (`PENNANT_COLUMN_LEAN` 0.5, growing
-  over the first third) so the cloth never folds onto itself. A wave runs from the pole to the tip (1.2 waves along it):
-  `flagWave` ω = 2.5 + 9·strength + 6·gust rad/s, sideways reach at the tip `length × (0.06 + 0.14·lift + 0.12·gust)`
-  (a calm still sways a little), with a small up-and-down ripple while it stands out. Deterministic in its arguments.
+  `PENNANT_FLAG_LENGTH` 0.4 × the pole's height, the hoist `PENNANT_FLAG_HOIST` 0.22 × it, tapering to `PENNANT_TIP`
+  18 % at the tip. Column 0 is the hoist on the pole, upright, its top at the origin. `flagLift(strength)`: 0 up to
+  `PENNANT_LIFT_FROM` (= WIND_CALM 0.18), rising quickly (1 − (1 − x)²) over `PENNANT_LIFT_SPAN` 0.52 to 1 at 0.7 — limp
+  in a calm, lifting in a light breeze, straight out in a breeze. The root points `PENNANT_LIMP` 1.38 rad × (1 − lift)
+  below the level, the fly droops `PENNANT_SAG` 0.35 × (1 − lift) more; a hanging flag's columns lean with the droop
+  (`PENNANT_COLUMN_LEAN` 0.5, growing over the first third) so the cloth never folds onto itself. A wave runs from the
+  pole to the tip (1.2 waves along it): `flagWave` ω = 2.5 + 9·strength + 6·gust rad/s, sideways reach at the tip
+  `length × (0.06 + 0.14·lift + 0.12·gust)` (a calm still sways a little), with a small up-and-down ripple while it
+  stands out. Deterministic in its arguments.
 - **Drawn** (`createPennantRenderer(scene, { capacity = PENNANT_MAX_MODELS 24 })`): group 'pennants' — InstancedMeshes
   'pennant-feet' (a small stone hex foot), 'pennant-poles' (a unit hex prism scaled to the pole's height) and
   'pennant-knobs' (a honey hex knob on top), Lambert; and 'pennant-flags': ONE non-indexed geometry holding every flag
@@ -8199,8 +8219,11 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
   'wind' and 'wind-rain'.
 - Not done: leaves and tall plants swaying with the wind. It wants a vertex displacement in the chunk shader that knows
   which vertices are leaves or plant tips, and the mesher marks nothing of the kind; left for later.
-- Tests: `tests/unit/windDrawn.test.js` (the pure helpers, the vane on the page, the rain in the wind and its rain
-  shadow and cost, the smoke and the particles, the flag's pose against the strength, the tracker, the renderer, the
-  block / tile / item / recipe / picker / purpose / handbook entries, main's wiring); the pinned counts in wave0, tiles,
+- Tests: `tests/unit/windDrawn.test.js` (the pure helpers, the one calm, the vane on the page and on the screen in every
+  view, the rain in the wind and its rain shadow and cost, walking past walls through trims of the column cache, the
+  smoke and the particles, the flag's pose against the strength, the tracker (and a server's cells in a chunk not
+  generated here), the renderer, the block / tile / item / recipe / picker / purpose / handbook entries, main's wiring
+  and its eased shower); `tests/unit/rainRenderer.test.js` (a full cache forgets only the far columns);
+  `tests/unit/wind.test.js` (WIND_CALM, no dawn calm); the pinned counts in wave0, tiles,
   items, crafting, pickerModel, pickerUI, atlasIcons, homestead, flora, plantsNotFood, farming, aquifer, waterLaws and
   handbook move by one.

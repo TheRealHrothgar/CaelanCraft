@@ -130,7 +130,7 @@ import {
   createWeather, seasonOf, seasonNews, hudLine, weatherWord, worldSeconds, fallsAsSnow, rainExposure, rainReaching, rainedOnCell,
   rainSky, approach, weatherEnv, OVERCAST_TAU_S,
 } from './weather.js';
-import { windAt } from './wind.js';
+import { windAt, WIND_CALM } from './wind.js';
 import { createRainRenderer } from './rainRenderer.js';
 import { vaneView, windAir } from './windDrawn.js'; // §101: the wind drawn
 import { Pennants, PENNANT_MAX_MODELS, PENNANT_MODEL_RANGE, poleHeight } from './pennants.js';
@@ -631,8 +631,11 @@ export function projectToScreen(camera, x, y, z, width, height) {
   return { x: ((cx / cw + 1) / 2) * width, y: ((1 - cy / cw) / 2) * height };
 }
 
-/** §100: the wind's word joins a stalked animal's hint from this much scent (scentOf: −1..1). */
-export const STALK_WIND_WORD = 0.15;
+/**
+ * §100: the wind's word joins a stalked animal's hint from this much scent (scentOf: −1..1). wind.WIND_CALM (§101): a
+ * scent that strong needs a wind the HUD's vane shows with its arrow, never in a "Calm".
+ */
+export const STALK_WIND_WORD = WIND_CALM;
 /** §100: an animal staring at the player within this many metres says so in the hint, wherever the crosshair is. */
 export const WATCHED_HINT_RANGE = 30;
 /** §100: how far off the player is taken to see a fish appear or go (m; a fish is a few pixels there, under water). */
@@ -1835,7 +1838,7 @@ export function boot(win, doc) {
 
   /** The player's surroundings are looked at this often for the rain (s): the biome, and the cover overhead. */
   const WEATHER_SAMPLE_S = 0.5;
-  /** The rain as it is drawn follows the weather with this time constant (s). */
+  /** The rain as it is drawn follows the weather with this time constant (s); so does the wind's shower (windNow). */
   const RAIN_SHOWN_TAU_S = 2.5;
   /** The HUD says `Rain` (or `Snow`) from this strength up. */
   const RAIN_WORD_MIN = 0.03;
@@ -1905,18 +1908,21 @@ export function boot(win, doc) {
    */
   const windCache = { at: NaN, seed: null, shower: NaN, wind: null };
   /**
-   * The wind here and now (docs/DESIGN-hunting.md §3): from the world's seed and clock, stronger in the shower falling on
-   * the player's biome; the same for every player on a server. Stalking, the rain, the smoke and the pennant read it.
+   * The wind here and now (docs/DESIGN-hunting.md §3): from the world's seed and clock, stronger in the shower on the
+   * player's biome as it is shown (weatherFx.shown, eased over RAIN_SHOWN_TAU_S: walking into a biome the shower does
+   * not fall on, the wind eases down with the rain instead of dropping at once, and every flag and smoke column with
+   * it); the same for every player on a server. Stalking, the rain, the smoke and the pennant read it.
    * @returns {import('./wind.js').Wind}
    */
   function windNow() {
     const t = weatherNow();
     const seed = world ? world.seed : 0;
-    if (windCache.wind === null || windCache.at !== t || windCache.seed !== seed || windCache.shower !== weatherFx.falling) {
+    const shower = weatherFx.shown;
+    if (windCache.wind === null || windCache.at !== t || windCache.seed !== seed || windCache.shower !== shower) {
       windCache.at = t;
       windCache.seed = seed;
-      windCache.shower = weatherFx.falling;
-      windCache.wind = windAt(seed, t, weatherFx.falling);
+      windCache.shower = shower;
+      windCache.wind = windAt(seed, t, shower);
     }
     return windCache.wind;
   }
@@ -1972,7 +1978,9 @@ export function boot(win, doc) {
     windAir(wind, windAirNow);
     particles.setWind(windAirNow[0], windAirNow[1]);
     campfireRenderer.setWind(wind);
-    hud.setWind(vaneView(wind, controls.yaw, vaneNow));
+    // the vane turns with the view (camPose, set by viewCamera this frame): in the front view, which looks back at the
+    // avatar, it agrees with the rain and the flags on the screen
+    hud.setWind(vaneView(wind, camPose.yaw, vaneNow));
     rainRenderer.update(live ? dt : 0, {
       x: player.x, y: eyeY, z: player.z, intensity: fx.shown, snow: fx.snow, getBlock: world.getBlock, daylight: sky.daylight, wind,
     });
@@ -6371,9 +6379,12 @@ export function boot(win, doc) {
     circuits = new Circuits(circuitStore, circuitHooks);
     circuits.setEnabled(!(restoring && restoring.circuits === false));
     blackHoles.setEnabled(!(restoring && restoring.blackholes === false));
+    const loadedWorld = world;
     world.onChunkGenerated = (cq, cr) => {
       blockPhysics.onChunkGenerated(cq, cr);
       if (circuits) circuits.onChunkLoaded(cq, cr); // a loaded chunk's cells are solved settling: loading fires nothing
+      // §101: a pennant another player placed or pulled up while this chunk was not generated here (applyServerCell)
+      pennants.onChunkLoaded(cq, cr, loadedWorld.edits, loadedWorld.getBlock);
     };
     world.onBlockChange = onBlockChanged;
     world.onCoverChange = (q, y, r) => blockPhysics.onCoverChange(q, y, r); // §93.9: a face water crosses opened or closed
