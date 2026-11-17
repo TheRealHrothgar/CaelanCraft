@@ -3,9 +3,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildAvatarModel, avatarModel, restGeometry, restPlacements, hairGaps, paintAvatar, fpHandFrame, fpStroke, fpHandModel,
-  AVATAR_BONES, AVATAR_ATLAS, HAIR_CUTS, FP_HAND, HEAD_PIVOT,
+  fpDrawnItem, fpClearShift, AVATAR_BONES, AVATAR_ATLAS, HAIR_CUTS, FP_HAND, HEAD_PIVOT,
 } from '../../src/avatarModel.js';
-import { bounds, triangleCount } from '../../src/modelKit.js';
+import { bounds, triangleCount, mul } from '../../src/modelKit.js';
+import { touchClusterRect } from '../../src/touchControls.js';
 import { AVATARS, avatarById, avatarHeight } from '../../src/avatars.js';
 import { heldItemGeometry } from '../../src/heldItem.js';
 import { PLAYER_HEIGHT, FOV } from '../../src/config.js';
@@ -190,10 +191,10 @@ describe('the first-person hand', () => {
     for (const k of ['swingArm', 'swingWrist', 'deviate', 'deviateEmpty', 'bob', 'forearm']) expect(Number.isFinite(FP_HAND[k]), k).toBe(true);
   });
 
-  it('shows the fist, the wrist and the sleeve\'s cuff on screen', () => {
+  it('shows the fist, the wrist and a pushed-up sleeve\'s cuff on screen', () => {
     const f = fpHandFrame(0);
-    for (const def of AVATARS) {
-      const cuff = apply(f.arm, [0.004, 0, 0.045 + 0.235 * def.hands.fpCuff]);
+    for (const def of AVATARS.filter((a) => a.outfit.cuffAt)) {
+      const cuff = apply(f.arm, [0.004, 0, 0.045 + 0.235 * /** @type {number} */ (def.outfit.cuffAt)]);
       const [x, y] = ndc(cuff);
       expect(x, def.id).toBeLessThan(1);
       expect(y, def.id).toBeGreaterThan(-1);
@@ -201,6 +202,105 @@ describe('the first-person hand', () => {
     const [fx, fy] = ndc(apply(f.hand, [0, 0, 0]));
     expect(fx).toBeGreaterThan(0);
     expect(fy).toBeLessThan(-0.3);
+  });
+
+  it('its forearm is dressed as the model\'s: a pushed-up sleeve past its cuff, bare under a short sleeve', () => {
+    for (const def of AVATARS) {
+      const s = paintAvatar(def).pack();
+      const img = s.atlas.img;
+      /** the hue of a row of a skin's strip (its mean colour's share of each channel; row 0: the elbow's end) */
+      const row = (key, y) => {
+        const [rx, ry, rw] = /** @type {*} */ (s.entries.get(key)).jobs[0].rect;
+        const sum = [0, 0, 0];
+        for (let x = 0; x < rw; x++) for (let c = 0; c < 3; c++) sum[c] += img.data[((ry + y) * img.width + rx + x) * 4 + c];
+        return sum.map((v) => v / (sum[0] + sum[1] + sum[2]));
+      };
+      const rows = (key) => /** @type {*} */ (s.entries.get(key)).jobs[0].rect[3];
+      // cloth at the elbow's end: its hue is not the skin's at the wrist (shading at a joint keeps the hue)
+      const clothed = (key) => {
+        const elbow = row(key, 0);
+        const wrist = row(key, rows(key) - 1);
+        return Math.hypot(elbow[0] - wrist[0], elbow[1] - wrist[1], elbow[2] - wrist[2]) > 0.05;
+      };
+      expect(clothed('fpArm'), def.id).toBe(clothed('foreArm')); // the two drawings of the forearm agree …
+      expect(clothed('fpArm'), def.id).toBe(Boolean(def.outfit.cuffAt)); // … a sleeve only where it is pushed up
+      // a cuff ring only on a pushed-up sleeve
+      expect(s.entries.has('cuff'), def.id).toBe(Boolean(def.outfit.cuffAt));
+    }
+  });
+
+  it('§100 the draw: a bow comes up before the eye, upright, never edge-on on the way; a throw is cocked high, its point ahead', () => {
+    const m = avatarModel(AVATARS[0]);
+    const rest = fpHandFrame(0);
+    /** how squarely the item's picture faces the eye (1: face on, 0: edge on) */
+    const facing = (hand) => {
+      const it = mul(hand, m.fp.tool);
+      const z = [it[8], it[9], it[10]];
+      const p = [it[12], it[13], it[14]];
+      return Math.abs(z[0] * p[0] + z[1] * p[1] + z[2] * p[2]) / Math.hypot(...z) / Math.hypot(...p);
+    };
+    const fist = (f) => [f.hand[12], f.hand[13], f.hand[14]];
+    const dist = (p) => Math.hypot(p[0], p[1], p[2]);
+    for (const bow of [true, false]) {
+      const full = fpHandFrame(0, false, 1, bow);
+      // pulled up and back toward the eye, still at the right
+      expect(fist(full)[1], `bow ${bow}`).toBeGreaterThan(fist(rest)[1] + 0.05);
+      expect(dist(fist(full)), `bow ${bow}`).toBeLessThan(dist(fist(rest)) - 0.05);
+      expect(ndc(fist(full))[0], `bow ${bow}`).toBeGreaterThan(0.15);
+      // the forearm still leaves the view at the lower right (its way to the elbow: right and down)
+      expect(full.arm[8], `bow ${bow}`).toBeGreaterThan(0.25);
+      expect(full.arm[9], `bow ${bow}`).toBeLessThan(-0.1);
+      // the held item where fpDrawnItem puts it; between, the frames are blended (the fist on the line between)
+      const item = fpDrawnItem(bow);
+      const at = mul(full.hand, m.fp.tool);
+      for (const c of [0, 4, 8]) {
+        const n = Math.hypot(at[c], at[c + 1], at[c + 2]);
+        for (let k = 0; k < 3; k++) expect(at[c + k] / n, `bow ${bow} axis ${c}`).toBeCloseTo(item[c + k], 6);
+      }
+      const half = fist(fpHandFrame(0, false, 0.5, bow));
+      for (let k = 0; k < 3; k++) expect(half[k]).toBeCloseTo((fist(rest)[k] + fist(full)[k]) / 2, 1);
+      // an empty hand draws nothing
+      expect(Array.from(fpHandFrame(0, true, 1, bow).arm)).toEqual(Array.from(fpHandFrame(0, true).arm));
+    }
+    // the bow: at rest it leans away like a tool; drawn, its limbs (the picture's x) stand in the view's plane, canted no
+    // more than FP_HAND.drawBow.cant from upright, and it faces the eye squarely; never edge-on on the way up
+    const bowAt = (d) => mul(fpHandFrame(0, false, d, true).hand, m.fp.tool);
+    const limbs = (M) => [M[0], M[1], M[2]].map((v) => v / Math.hypot(M[0], M[1], M[2]));
+    expect(Math.abs(limbs(bowAt(0))[2])).toBeGreaterThan(0.2);
+    expect(Math.abs(limbs(bowAt(1))[2])).toBeLessThan(0.05);
+    expect(Math.atan2(Math.abs(limbs(bowAt(1))[0]), Math.abs(limbs(bowAt(1))[1]))).toBeLessThan(FP_HAND.drawBow.cant + 0.05);
+    expect(facing(fpHandFrame(0, false, 1, true).hand)).toBeGreaterThan(0.85);
+    for (let d = 0; d <= 1.0001; d += 0.05) expect(facing(fpHandFrame(0, false, d, true).hand), `draw ${d}`).toBeGreaterThan(0.5);
+    // the throw: its length (the picture's +y) ahead and up, its face turned to the eye at full draw
+    const spear = mul(fpHandFrame(0, false, 1, false).hand, m.fp.tool);
+    const len = Math.hypot(spear[4], spear[5], spear[6]);
+    expect(spear[6] / len).toBeLessThan(-0.6);
+    expect(spear[5] / len).toBeGreaterThan(0.15);
+    expect(facing(fpHandFrame(0, false, 1, false).hand)).toBeGreaterThan(0.6);
+  });
+
+  it('§95 on a tablet the fist keeps clear of the right cluster of buttons, landscape or portrait; a desktop is untouched', () => {
+    for (const [w, h] of [[1024, 768], [768, 1024], [1180, 820], [1366, 1024], [820, 1180]]) {
+      const box = touchClusterRect(w, h);
+      const clear = { left: (2 * box.left) / w - 1, top: 1 - (2 * box.top) / h };
+      const aspect = w / h;
+      const dx = fpClearShift(clear, aspect, FOV);
+      const g = FP_HAND.grip;
+      const t = Math.tan(((FOV / 2) * Math.PI) / 180);
+      // the fist's centre on the screen (CSS px), with the move
+      const sx = ((((g[0] + dx) / -g[2]) / (t * aspect) + 1) / 2) * w;
+      const sy = ((1 - (g[1] / -g[2]) / t) / 2) * h;
+      const inside = sx >= box.left && sx <= box.right && sy >= box.top && sy <= box.bottom;
+      expect(inside, `${w}x${h}`).toBe(false);
+      expect(sx, `${w}x${h}`).toBeLessThan(box.left); // left of it (never pushed off the bottom)
+      expect(sx, `${w}x${h}`).toBeGreaterThan(w / 2); // still right of the middle
+      expect(sy, `${w}x${h}`).toBeGreaterThan(h / 2); // still low
+      // without the move the fist would sit among the buttons (or the move is not needed)
+      const bare = ((g[0] / -g[2] / (t * aspect) + 1) / 2) * w;
+      if (dx < 0) expect(bare, `${w}x${h}`).toBeGreaterThan(box.left - ((FP_HAND.touchGap * w) / 2) - 1);
+    }
+    expect(fpClearShift(null, 1.6, FOV)).toBe(0); // a desktop
+    expect(fpClearShift({ left: 0.95, top: -0.2 }, 1.6, FOV)).toBe(0); // buttons far off at the edge: nothing to do
   });
 
   it('the chop: wrist-led, the fist coming down and ahead, back at rest after the swing', () => {

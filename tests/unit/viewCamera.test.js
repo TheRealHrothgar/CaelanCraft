@@ -4,7 +4,8 @@ import {
   VIEW_MODES, VIEW_LABELS, VIEW_PREF_KEY, normalizeViewMode, nextViewMode, isThirdPerson, loadViewPref, saveViewPref,
   blocksCamera, lookVector, boomDirection, boomLength, easeBoom, cameraPose,
 } from '../../src/viewCamera.js';
-import { AvatarMotion, wrapAngle, LEG_SWING, SWING_REACH, DRAW_BACK, FP_DRAW_DROP } from '../../src/avatarMotion.js';
+import { AvatarMotion, wrapAngle, LEG_SWING, SWING_REACH, DRAW_RISE_S, DRAW_FALL_S } from '../../src/avatarMotion.js';
+import { DRAW_FULL_S } from '../../src/looseItems.js';
 import { GAME_KEYS } from '../../src/controls.js';
 import { parseParams } from '../../src/diagnostics.js';
 import { BLOCK } from '../../src/blocks.js';
@@ -240,16 +241,36 @@ describe('the avatar\'s motion (avatarMotion.js)', () => {
     expect(p.fpSwing).toBe(-1);
   });
 
-  it('§100: a draw pulls the right arm back (DRAW_BACK at full) and sinks the first-person arm; let go, it is back', () => {
+  it('§100: the draw comes up at a draw\'s pace and goes down in DRAW_FALL_S, so the throw\'s swing starts from it', () => {
+    expect(DRAW_RISE_S).toBe(DRAW_FULL_S); // a remote player's "drawing" comes up as fast as the player's own draw
     const m = new AvatarMotion();
     const rest = { ...m.step(1 / 60, still()) };
-    let p = m.step(1 / 60, still({ draw: 1 }));
-    expect(p.reachR).toBeCloseTo(-DRAW_BACK, 9);
-    expect(p.fpBobY).toBeCloseTo(rest.fpBobY - FP_DRAW_DROP, 2);
-    p = m.step(1 / 60, still({ draw: 0.5 }));
-    expect(p.reachR).toBeCloseTo(-DRAW_BACK / 2, 9);
-    p = m.step(1 / 60, still());
-    expect(p.reachR).toBe(0);
+    expect(rest.draw).toBe(0);
+    // the player's own draw (main's drawFraction rises over DRAW_FULL_S): followed as it is
+    let p = m.pose;
+    for (let i = 1; i <= 30; i++) p = m.step(1 / 60, still({ draw: i / 60 }));
+    expect(p.draw).toBeCloseTo(0.5, 9);
+    // a remote player's: 1 at once, but the arms come up no faster than a draw
+    const r = new AvatarMotion();
+    expect(r.step(1 / 60, still({ draw: 1 })).draw).toBeCloseTo(1 / 60 / DRAW_RISE_S, 9);
+    // let go: down in DRAW_FALL_S, a frame at a time, never snapping; the swing (reachR) is the action's alone
+    for (let i = 31; i <= 70; i++) p = m.step(1 / 60, still({ draw: Math.min(1, i / 60) }));
+    expect(p.draw).toBe(1);
+    m.swing();
+    let prev = 1;
+    let frames = 0;
+    while (p.draw > 0) {
+      p = m.step(1 / 60, still());
+      expect(prev - p.draw).toBeLessThanOrEqual(1 / 60 / DRAW_FALL_S + 1e-9);
+      expect(p.reachR).toBeGreaterThanOrEqual(0);
+      prev = p.draw;
+      frames++;
+    }
+    expect(frames).toBe(Math.ceil(DRAW_FALL_S * 60 - 1e-9));
+    expect(p.fpBobY).toBeCloseTo(rest.fpBobY, 2); // the first-person hand's draw is its own (fpHandFrame), not a sink
+    // asleep, nothing is drawn
+    const s = new AvatarMotion();
+    expect(s.step(1 / 60, still({ draw: 1, sleeping: true })).draw).toBe(0);
   });
 
   it('sneaking crouches (leaning forward, hips lower); riding sits with the legs forward; asleep it lies on its back', () => {

@@ -52,7 +52,9 @@ describe('the avatars as data', () => {
       expect(a.palette.eyes).toHaveLength(2);
       expect(a.outfit.sleeve).toBeGreaterThan(0);
       expect(a.outfit.sleeve).toBeLessThanOrEqual(1);
-      expect(a.hands.fpCuff > 0 && a.hands.fpCuff < 1, a.id).toBe(true);
+      // a pushed-up sleeve's cuff (on the model and in first person) sits part way up the forearm; a short sleeve has none
+      if (a.outfit.cuffAt !== undefined) expect(a.outfit.cuffAt > 0 && a.outfit.cuffAt < 1, a.id).toBe(true);
+      expect(a.outfit.cuffAt === undefined || a.outfit.sleeve === 1, a.id).toBe(true);
       // the joints run down the arm and the body stacks up
       expect(b.shoulder[1]).toBeGreaterThan(b.elbow[1]);
       expect(b.elbow[1]).toBeGreaterThan(b.wrist[1]);
