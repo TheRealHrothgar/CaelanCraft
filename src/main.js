@@ -1834,7 +1834,7 @@ export function boot(win, doc) {
     if (player.onGround) flags |= POSE_ON_GROUND;
     if (player.inWater && !player.onGround) flags |= POSE_SWIMMING;
     if (netSwing) flags |= POSE_SWING;
-    if (drawState) flags |= POSE_DRAWING; // §100: the others see the draw
+    if (draw.on) flags |= POSE_DRAWING; // §100: the others see the draw
     const pose = { x: player.x, y: player.y, z: player.z, yaw: controls.yaw, pitch: controls.pitch, flags, vx: player.vx, vz: player.vz };
     const key = `${pose.x.toFixed(2)},${pose.y.toFixed(2)},${pose.z.toFixed(2)},${pose.yaw.toFixed(2)},${pose.pitch.toFixed(2)},${flags}`;
     if (key === netPoseKey && netPoseIdle < 1) return;
