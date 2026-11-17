@@ -1,6 +1,6 @@
 // Unit tests for the game of the harder land (v0.14, CONTRACTS §76 fauna): deer, rabbits, pheasants, wild turkeys, the bear
 // and the fish of the streams (src/animals.js), their models (src/animalRenderer.js), what a hunt gives (harvest, items,
-// cooking), the Fletched Dart (looseItems, crafting), the Ground Nest (blocks, harvest, mesher), `summon` and the save.
+// cooking), feathers for the arrows (§100: the Fletched Dart is retired), the Ground Nest (blocks, harvest, mesher), `summon` and the save.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { BLOCK, BIOME, TILE, getBlockDef, getBlockShape, isPlaceable, isSolid } from '../../src/blocks.js';
@@ -22,10 +22,10 @@ import { Pigs, seededRng } from '../../src/pigs.js';
 import { createPlayer, stepPlayer } from '../../src/physics.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { MOB_DROPS, PICKABLE, BLOCK_RULES, rollMobDrops, pick, rollDrops, isPickable } from '../../src/harvest.js';
-import { ITEMS, getItem, isItemKey } from '../../src/items.js';
+import { ITEMS, getItem, isItemKey, canonicalItemKey } from '../../src/items.js';
 import { FIRE_TRANSFORMS, isSkewerFood } from '../../src/cooking.js';
 import { getRecipe } from '../../src/crafting.js';
-import { throwOf, dartBreakP, DART_KEYS, THROW_DART, THROW_FLETCHED, DART_BREAK_P, FLETCHED_BREAK_P } from '../../src/looseItems.js';
+import { throwOf, ARROW_KEYS, ARROWS, THROW_CHUCK } from '../../src/looseItems.js';
 import { DAMAGE_CAUSES, fallDamage } from '../../src/vitals.js';
 import { Survival, deathTitle } from '../../src/survival.js';
 import { DEATH_CAUSES, serializeSave, deserializeSave } from '../../src/storage.js';
@@ -903,28 +903,23 @@ describe('fauna — what a hunt gives', () => {
     expect(ITEMS.raw_fish.food.spoilS).toBeLessThan(ITEMS.raw_pork.food.spoilS);
   });
 
-  it('feathers fletch a better dart: faster, harder, tougher — made at hand like the plain one', () => {
+  it('feathers fletch the arrows (§100): every arrow takes one a head; the Fletched Dart of v0.14 is a Flint Arrow now', () => {
     expect(getItem('feather')).toMatchObject({ kind: 'material', stack: 32 });
-    expect(getItem('fletched_dart')).toMatchObject({ kind: 'material', stack: 16 });
-    const rec = getRecipe('fletched_dart');
-    expect(rec.station).toBe('hand');
-    expect(rec.inputs).toEqual([{ k: 'flint', n: 1 }, { k: 'stick', n: 1 }, { k: 'feather', n: 2 }, { k: 'cord', n: 1 }]); // §94: bound with cord like every flint tool
-    expect(rec.outputs).toEqual([{ k: 'fletched_dart', n: 4 }]);
-    expect(rec.tools).toEqual([{ type: 'hammer', tier: 1 }]);
-    const plain = getRecipe('flint_dart');
-    expect(rec.outputs[0].n).toBe(plain.outputs[0].n);
-    expect(DART_KEYS).toEqual(['flint_dart', 'fletched_dart']);
-    expect(throwOf('fletched_dart')).toBe(THROW_FLETCHED);
-    expect(throwOf('flint_dart')).toBe(THROW_DART);
-    expect(THROW_FLETCHED.speed).toBeGreaterThan(THROW_DART.speed);
-    expect(THROW_FLETCHED.power).toBe(THROW_DART.power + 1);
-    expect([dartBreakP('fletched_dart'), dartBreakP('flint_dart'), dartBreakP('flint_spear')]).toEqual([FLETCHED_BREAK_P, DART_BREAK_P, 0]);
-    expect(FLETCHED_BREAK_P).toBeLessThan(DART_BREAK_P);
-    // one fletched dart brings down a pheasant or a rabbit, two a turkey; a deer takes three
-    const darts = (k) => Math.ceil(SPECIES[k].health / THROW_FLETCHED.power);
-    expect([darts('pheasant'), darts('rabbit'), darts('turkey'), darts('deer')]).toEqual([1, 1, 2, 3]);
-    expect(hasItemArt('feather') && hasItemArt('fletched_dart')).toBe(true);
-    expect(Array.from(paintItem('fletched_dart'))).not.toEqual(Array.from(paintItem('flint_dart')));
+    for (const k of ARROW_KEYS) {
+      const rec = getRecipe(k);
+      const feathers = rec.inputs.find((i) => i.k === 'feather')?.n ?? 0;
+      expect(feathers / rec.outputs[0].n, k).toBe(rec.station === 'hand' ? 1 / 4 : 1 / 2);
+    }
+    for (const old of ['fletched_dart', 'flint_dart']) {
+      expect(getItem(old), old).toBe(null);
+      expect(getRecipe(old), old).toBe(null);
+      expect(canonicalItemKey(old), old).toBe('flint_arrow');
+    }
+    expect(throwOf('flint_arrow')).toBe(THROW_CHUCK); // by hand an arrow is only chucked: it takes a bow
+    // a flint arrow at full draw brings down a pheasant or a rabbit, a turkey takes two, a deer three
+    const shots = (k) => Math.ceil(SPECIES[k].health / ARROWS.flint_arrow.power);
+    expect([shots('pheasant'), shots('rabbit'), shots('turkey'), shots('deer')]).toEqual([1, 1, 2, 3]);
+    expect(hasItemArt('feather')).toBe(true);
   });
 });
 

@@ -35,7 +35,7 @@ import { ITEMS, ITEM_KEYS, TIER_NAMES, TIER_SPEED, getItem, itemName } from './i
 import { RECIPES, STATION_IDS, STATION_NAMES, STATION_BLOCKS, getRecipe, inputLabel } from './crafting.js';
 import {
   BLOCK_RULES, PICKABLE, HAND_GATHER, MOB_DROPS, breakSeconds, ruleFor, toolPower, UNDERWATER_DIG_FACTOR, DEEP_BELOW_SEA,
-  GRAVEL_FLINT_P, digWear,
+  GRAVEL_FLINT_P, digWear, SAPLING_LEAF_P,
 } from './harvest.js';
 import {
   HEAT_SOURCES, DIURNAL_AMPLITUDE, DIURNAL_PEAK_T, ALTITUDE_LAPSE, ALTITUDE_REF_Y, SUN_HEAT, SHELTER_HEAT, SHELTER_BELOW,
@@ -62,11 +62,12 @@ import {
 import { ZONE_SIZE, WANDER_DAYS, WANDER_SOURCE_MIN, YOUTH_DAYS, MATE_RANGE, FEED_RANGE, TAME_CAP, PIG_LANDS, FISH_CELLS } from './populations.js';
 import { PIG_TAME } from './pigs.js';
 import {
-  throwOf, STONE_KEYS, DART_KEYS, dartBreakP, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
-  // §100: the draw (hold Place to throw) and the bow
-  THROW_ARROW, ARROW_GRAVITY, ARROW_BREAK_P, DRAW_FULL_S, DRAW_SPEED_MIN, DRAW_SPEED_FULL, DRAW_POWER_MIN, DRAW_POWER_FULL,
-  drawnThrow,
+  throwOf, STONE_KEYS, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS,
+  // §100: the draw (hold Place to throw), the bows and the arrows of every age
+  DRAW_FULL_S, DRAW_SPEED_MIN, DRAW_SPEED_FULL, DRAW_POWER_MIN, DRAW_POWER_FULL, ARROW_KEYS, ARROW_PREFERENCE, ARROWS, BOWS,
+  hitBreakP, missBreakP,
 } from './looseItems.js';
+import { ZOOM_LEVELS, ZOOM_DEFAULT, SPYGLASS_KEY, zoomLabel } from './spyglass.js'; // §103
 import { RELIGHT_STICKS, STRIKE_REACH, STRIKE_REACH_MAX } from './survivalControl.js';
 // §80: planting, and the plants that spread; §81: the plants that are not food
 import { SEED_DROPS, FERN_FIBRE_P } from './harvest.js';
@@ -749,13 +750,11 @@ function lightsTable() {
     rows, keys: lights.map((l) => l.key), source: 'zombies' });
 }
 
-/** What a throw does (looseItems.throwOf): stones, darts, spears, and everything else. */
+/** What a throw does (looseItems.throwOf): stones, spears, and everything else (§100: the darts are retired). */
 function throwsTable() {
   const spears = TOOL_KEYS.filter((k) => ITEMS[k].tool?.type === 'spear');
   const kinds = [
     { key: 'stone', what: STONE_KEYS.map((k) => itemName(k)).join(', '), sample: STONE_KEYS[0], after: 'pick it up and throw it again' },
-    // v0.14 (§76 fauna): a row for each dart — the Fletched Dart flies faster, hits harder and breaks less (key: its item key)
-    ...DART_KEYS.map((k, i) => ({ key: i === 0 ? 'dart' : k, what: itemName(k), sample: k, after: `breaks on ${fmtPct(dartBreakP(k))} of its hits` })),
     { key: 'spear', what: spears.map((k) => itemName(k)).join(', '), sample: spears[0], after: 'loses one use when it hits' },
     { key: 'chuck', what: 'Anything else', sample: 'stick', after: 'no harm done' },
   ].filter((t) => typeof t.sample === 'string');
@@ -765,6 +764,24 @@ function throwsTable() {
   });
   return table({ id: 'throws', caption: 'What a throw does', head: ['Thrown', 'Speed', 'Power', 'Afterwards'], rows,
     keys: kinds.map((t) => t.key), source: 'loose' });
+}
+
+/** §100: the bows (looseItems.BOWS, ITEMS): the full draw, the arrow's speed at it, the spread of the shots, the uses. */
+function bowsTable() {
+  const keys = TOOL_KEYS.filter((k) => ITEMS[k].tool?.type === 'bow');
+  const rows = keys.map((k) => {
+    const b = BOWS[k];
+    return [itemName(k), `${fmtNum(b.drawS, 1)} s`, `${b.speed} m/s`, `${fmtNum(b.spreadDeg, 1)}°`, String(ITEMS[k].tool?.durability ?? 0)];
+  });
+  return table({ id: 'bows', caption: 'The bows', head: ['Bow', 'Full draw', 'Arrow speed', 'Spread', 'Shots'], rows, keys,
+    source: 'loose' });
+}
+
+/** §100: the arrows (looseItems.ARROWS): the power of each head and how often it can be picked up again. */
+function arrowsTable() {
+  const rows = ARROW_KEYS.map((k) => [itemName(k), String(ARROWS[k].power), fmtPct(1 - hitBreakP(k)), fmtPct(1 - missBreakP(k))]);
+  return table({ id: 'arrows', caption: 'Arrows', head: ['Arrow', 'Power', 'Kept after a hit', 'Kept after a miss'], rows,
+    keys: [...ARROW_KEYS], source: 'loose' });
 }
 
 /** HEAT_SOURCES. */
@@ -1256,7 +1273,6 @@ function makeChapters() {
   const lab = rec('lab');
   const torch = rec('torch');
   const snare = rec('snare');
-  const dartRec = rec('flint_dart');
   /** How many of item `k` recipe `id` takes. */
   const takes = (id, k) => rec(id).inputs.find((i) => 'k' in i && i.k === k)?.n ?? 0;
   const flintOres = blocksNeeding('pick', 2).filter((n) => / Ore$/.test(n));
@@ -1305,18 +1321,28 @@ function makeChapters() {
   const wolfLands = listJoin(herdBiomes('wolf').map(biomeWord));
   const spearKey = TOOL_KEYS.find((k) => ITEMS[k].tool?.type === 'spear') ?? 'flint_spear';
   const rockThrow = throwOf(STONE_KEYS[0]);
-  const dartThrow = throwOf(DART_KEYS[0]);
   const spearThrow = throwOf(spearKey);
-  // §100: the draw (hold Place) and the bow
+  // §100: the draw (hold Place), the bows and the arrows
   const drawTime = DRAW_FULL_S === 1 ? 'about a second' : `about ${fmtNum(DRAW_FULL_S)} seconds`;
   const fullPower = DRAW_POWER_FULL === 1 ? 'all its power' : `${fmtPct(DRAW_POWER_FULL)} of its power`;
+  const crudeRec = rec('crude_bow');
   const staveRec = rec('bow_stave');
-  const bowRec = rec('bow');
-  const arrowRec = rec('arrow');
-  const fullArrow = drawnThrow(THROW_ARROW, 1);
-  const bowShots = getItem('bow')?.tool?.durability ?? 0;
-  /** "one Stick, one Flint and one Feather" (the dart line's way of reading a recipe). @param {import('./crafting.js').Recipe} r */
-  const eachInput = (r) => listJoin(r.inputs.map((i) => `${numWord(i.n)} ${inputLabel(/** @type {any} */ (i))}`));
+  const treatRec = rec('treated_stave');
+  const recurveRec = rec('recurve_bow');
+  const stoneArrowRec = rec('stone_arrow');
+  const flintArrowRec = rec('flint_arrow');
+  const castArrowRec = rec('copper_arrow');
+  const shots = (/** @type {string} */ k) => getItem(k)?.tool?.durability ?? 0;
+  /**
+   * The words for what goes with the main part of a recipe ("2 Cord", "2 Rawhide and Cord").
+   * @param {import('./crafting.js').Recipe} r @param {string} main
+   */
+  const besides = (r, main) => listJoin(r.inputs.filter((i) => !('k' in i) || i.k !== main).map(proseInput));
+  const bestFirst = listJoin(ARROW_PREFERENCE.map((k) => ARROWS[k].head));
+  /** §103: the Spyglass */
+  const glassRec = rec(SPYGLASS_KEY);
+  const zoomWords = listJoin(ZOOM_LEVELS.map(zoomLabel), 'or');
+  const zoomSteps = ZOOM_LEVELS.map(zoomLabel).join(', '); // the tablet's Zoom button, a tap a power
   // zombies
   const alphaStrike = zombieStrike('alpha');
   const everySeconds = (/** @type {number} */ n) => (n === 1 ? 'every second' : `every ${n} seconds`);
@@ -1777,7 +1803,7 @@ function makeChapters() {
     ],
     [
       ...workplacesTable(),
-      p(`The Work Stump comes first: ${recipeInputsProse(stump)} and an axe. Flint is knapped into tools on it; it splits a log into ${splitSticks.outputs[0].n} sticks, cuts planks, works leather and makes the bow. A Kiln, a Bloomery or the Forge at work is a warm place to stand.`),
+      p(`The Work Stump comes first: ${recipeInputsProse(stump)} and an axe. Flint is knapped into tools on it; it splits a log into ${splitSticks.outputs[0].n} sticks, cuts planks, works leather and makes both bows and the Spyglass. A Kiln, a Bloomery or the Forge at work is a warm place to stand.`),
     ],
     ...recipeTable('hand').map((t) => [t]),
     ...recipeTable('stump').map((t) => [t]),
@@ -1950,28 +1976,34 @@ function makeChapters() {
     ],
     [
       ...blowsTable('blows-animals', 'Blows to bring an animal down', ['Animal', 'Health'], huntTargets(), 'animals'),
-      p(`You can throw as well, with [G]: a rock counts ${rockThrow.power}, a ${itemName(DART_KEYS[0])} ${dartThrow.power} and a ${itemName(spearKey)} ${spearThrow.power}. ${cap(listJoin(dartRec.inputs.map((i) => `${numWord(i.n)} ${inputLabel(/** @type {any} */ (i))}`)))} make ${numWord(dartRec.outputs[0].n)} ${itemName(dartRec.outputs[0].k)}s at hand, with a ${plain(recipeTools(dartRec))}.`),
+      p(`You can throw as well, with [G]: a rock counts ${rockThrow.power} and a ${itemName(spearKey)} ${spearThrow.power}. Farther off, a bow is the weapon (next pages).`),
       p('What an animal gives flies to you, like anything you dig. Rawhide becomes leather at the Work Stump: clothes, bellows and your Sleeping Hide.'),
     ],
-    // §100: throwing harder by holding Place, and the bow
+    // §100: throwing harder by holding Place; the bows and the arrows of every age
     [
       h('Hold [RMB] to throw'),
-      p(`With a spear or a dart in hand, hold [RMB] (the Place button on a tablet) to draw it back, and let go to throw. The longer you hold, the harder it flies, up to a full draw in ${drawTime}.`),
+      p(`With a spear in hand, hold [RMB] (the Place button on a tablet) to draw it back, and let go to throw. The longer you hold, the harder it flies, up to a full draw in ${drawTime}.`),
       p(`A quick tap only lobs it, at ${fmtPct(DRAW_SPEED_MIN)} of the speed and ${fmtPct(DRAW_POWER_MIN)} of the power. A full draw gives it ${fullPower} and throws it ${fmtPct(DRAW_SPEED_FULL - 1)} faster than [G] does.`),
       p('On a keyboard [G] still throws at once, with no draw: use it when an animal bolts and there is no time.'),
     ],
     [
-      h('The bow'),
-      p(`A *Bow* shoots arrows farther and faster than anything you can throw. Make it at the Work Stump with a ${plain(recipeTools(staveRec))}: shave ${proseInput(staveRec.inputs[0])} into a *Bow Stave*, then string it with ${listJoin(bowRec.inputs.filter((i) => !('k' in i) || i.k !== 'bow_stave').map(proseInput))}.`),
-      p(`*Arrows* are made at hand, so anywhere: ${eachInput(arrowRec)} make ${numWord(arrowRec.outputs[0].n)} ${itemName(arrowRec.outputs[0].k)}s, with a ${plain(recipeTools(arrowRec))} to knap the points.`),
-      p(`With the bow in hand, hold [RMB] to draw and let go to shoot. Each shot takes an Arrow from your pack: without one the bow will not draw. The draw is full in ${drawTime}, and a full draw sends the arrow at ${fmtNum(fullArrow.speed)} m/s. ${ARROW_GRAVITY < 1 ? 'It drops less on the way than a thrown thing does and strikes' : 'It strikes'} with a power of ${fullArrow.power}, between a ${itemName(DART_KEYS[0])}'s and a ${itemName(spearKey)}'s.`),
+      h('The bows'),
+      p(`A bow shoots arrows farther and faster than anything you can throw. The *Crude Bow* is a *Sapling* strung with ${besides(crudeRec, 'sapling')} at the Work Stump, with a ${plain(recipeTools(crudeRec))}. Break leaves by hand for saplings: about one in ${numWord(Math.round(1 / SAPLING_LEAF_P))} gives one, and a hazel thicket picked with [R] now and then.`),
+      p(`The *Recurve Bow* is faster, flatter and truer. Split ${numWord(staveRec.outputs[0].n)} *Bow Staves* from a log at the Work Stump, harden one in the Kiln for ${treatRec.seconds} seconds into a *Treated Stave*, then back it with ${besides(recurveRec, 'treated_stave')} at the Work Stump again, with a ${plain(recipeTools(recurveRec))}.`),
+      ...bowsTable(),
+    ],
+    [
+      h('Arrows'),
+      p(`With a bow in hand, hold [RMB] to draw and let go to shoot. Every bow shoots every arrow, and takes the best in your pack: ${bestFirst}. Without one it will not draw.`),
+      p(`Stone and flint arrows are made at hand, ${numWord(flintArrowRec.outputs[0].n)} at a time: a Stick, a Feather and a ${proseInput(/** @type {*} */ (stoneArrowRec.inputs[1]))} or a ${proseInput(/** @type {*} */ (flintArrowRec.inputs[1]))}, with a ${plain(recipeTools(flintArrowRec))}. Metal heads come ${numWord(castArrowRec.outputs[0].n)} at a time: copper and bronze cast at the Kiln, iron and steel forged at the Forge.`),
+      ...arrowsTable(),
     ],
     [
       h('Arrows and wear'),
       p('An arrow that misses lies where it fell. Walk over to it and it comes back to your pack, ready to shoot again.'),
-      p(`One that hits breaks one time in ${numWord(Math.round(1 / ARROW_BREAK_P))} (${fmtPct(ARROW_BREAK_P)}). Carry a few spare.`),
-      p(`Every shot costs the bow one use: a new Bow is good for ${bowShots} shots. The hex outline round its slot drains as it wears.`),
-      tip('Thrown with [G], an arrow is only tossed: it does no harm without the bow.'),
+      p(`One that hits may break: a stone head ${fmtPct(hitBreakP(ARROW_KEYS[0]))} of the time, a steel one only ${fmtPct(hitBreakP(ARROW_KEYS[ARROW_KEYS.length - 1]))}. A miss can shatter a stone or flint head on rock; a metal one hardly ever. The better the head, the more you keep.`),
+      p(`Every shot costs the bow one use: a new Crude Bow is good for ${shots('crude_bow')} shots, a Recurve Bow for ${shots('recurve_bow')}. The hex outline round its slot drains as it wears.`),
+      tip('Thrown with [G], an arrow is only tossed: it does no harm without a bow.'),
     ],
     [
       h('Cattle and sheep'),
@@ -2009,10 +2041,10 @@ function makeChapters() {
     ],
     [
       h('Deer and small game'),
-      p(`*Deer* keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}. They are the wariest animal there is: sneaking brings you within reach only from straight behind, so stalk one, throw a spear or a dart, or set a snare. The males, the stags, carry antlers.`),
+      p(`*Deer* keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}. They are the wariest animal there is: sneaking brings you within reach only from straight behind, so stalk one, throw a spear, shoot it from afar with a bow, or set a snare. The males, the stags, carry antlers.`),
       p('*Rabbits* are small and quick and swerve as they run. A baited Snare is the easy way to catch one.'),
       p('*Pheasants* and *wild turkeys* feed on the ground. Come too close and a pheasant bursts into the air and flies off; a turkey glides a little way and runs.'),
-      p('Birds give meat and *Feathers*. Feathers fletch a better dart: a *Fletched Dart* flies faster, hits harder and breaks less often than a Flint Dart.'),
+      p('Birds give meat and *Feathers*. Every arrow takes a feather for its flight.'),
       p('Leave the birds in peace and the hens lay a *Ground Nest*. Press [R] on it for the eggs, and a hen lays in the empty nest again. The eggs never hatch. A raw egg can poison you: roast it.'),
     ],
     [
@@ -2098,7 +2130,7 @@ function makeChapters() {
       h('Fighting back'),
       p(`Every blow takes its power off a zombie, and bare hands count for ${toolPower(null)}. The powers of the tools are listed under *Animals*, in Hunting.`),
       ...blowsTable('blows-zombies', 'Blows to knock a zombie out', ['Zombie', 'Takes'], zombieTargets(), 'zombies'),
-      p(`A thrown rock, dart or spear counts as well, and a tame wolf bites for ${WOLF_BITE}. A zombie you knock out may leave a ${describeDrops(MOB_DROPS.zombie, true)}; an alpha has ${numWord(KIND_STATS.alpha.drops)} chances at one.`),
+      p(`A thrown rock or spear counts as well, and so does an arrow; a tame wolf bites for ${WOLF_BITE}. A zombie you knock out may leave a ${describeDrops(MOB_DROPS.zombie, true)}; an alpha has ${numWord(KIND_STATS.alpha.drops)} chances at one.`),
     ],
   ]);
 
@@ -2141,6 +2173,7 @@ function makeChapters() {
         ['F3', 'the debug overlay'],
         ['M', 'sound on or off'],
         ['V', 'see yourself: through your own eyes, from behind, or from in front (the pause menu chooses who you are)'],
+        ['Hold Z', 'look through a Spyglass you carry; the wheel brings it closer or farther'], // §103
       ] }),
     ],
     [
@@ -2148,7 +2181,7 @@ function makeChapters() {
         ['Hold LMB', 'dig: a honey outline traces the cell'],
         ['LMB on a mob', 'strike (hold to keep striking)'],
         ['RMB', 'place the block in hand'],
-        ['Hold RMB', 'eat, drink a pot, bandage; wear clothes; draw a bow, a spear or a dart'],
+        ['Hold RMB', 'eat, drink a pot, bandage; wear clothes; draw a bow or a spear; look through a Spyglass'],
         ['MMB', 'pick the hotbar slot holding that block'],
         ['R', 'use whatever you look at (next page)'],
         ['Q', 'drop one of what you hold (with Shift: the whole stack)'],
@@ -2190,7 +2223,15 @@ function makeChapters() {
       p('[Q] drops one of the thing in your hand a step ahead of you; hold [Shift] as well and the whole stack goes. [G] throws one where the crosshair points.'),
       ...throwsTable(),
       p('Aim a little high: a throw sinks as it flies. This book can be neither dropped nor thrown.'),
-      p('Hold [RMB] with a spear or a dart to draw it back and throw it harder; a bow shoots its arrows the same way (see *Animals*).'),
+      p('Hold [RMB] with a spear to draw it back and throw it harder; a bow shoots its arrows the same way (see *Animals*).'),
+    ],
+    // §103: the Spyglass
+    [
+      h('The Spyglass'),
+      p(`A *Spyglass* is two bronze tubes and a glass lens, made at the Work Stump from ${recipeInputsProse(glassRec)} as soon as you have them. It works from anywhere in your pack.`),
+      p(`Hold [Z] to look through it, or hold [RMB] with it in your hand. Everything looks ${numWord(ZOOM_DEFAULT)} times nearer and your look slows to match; scroll the wheel for ${zoomWords}. Let go to look up again.`),
+      p(`To keep looking, type *zoom 4* in the console ([T]), on a server too: *zoom off*, [Esc] or opening a menu puts it down. On a tablet each tap of the *Zoom* button looks closer (${zoomSteps}), and one more puts it down.`),
+      tip('Climb a hill and look out: a herd far off, ore in a distant cliff, the smoke of your own camp.'),
     ],
     [
       h('Things on the ground'),

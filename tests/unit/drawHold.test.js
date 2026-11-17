@@ -1,5 +1,5 @@
-// Unit tests for §100.2's draw (src/main.js DrawHold, PURE): Place held with a spear, a dart or a bow draws back and the
-// release throws; a screen over the running world (the pack, the field book, Survival's device panel) lets the draw go
+// Unit tests for §100.2's draw (src/main.js DrawHold, PURE): Place held with a spear or a bow draws back and the release
+// throws (at the bow's own full draw, §100.6); a screen over the running world (the pack, the field book, Survival's device panel) lets the draw go
 // without a throw; and while the control latch holds a control that Place pressed, the hold is the latch's (§4.9).
 // Then main's draw path (read from the source, since main needs a browser), and the seam with §99.4's target hint: a
 // spear, a dart or a bow in hand says how it is thrown before the tool's words for the block in reach.
@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { DrawHold, ControlLatch, rightMouseStep, throwHintFirst, digSlowHint } from '../../src/main.js';
-import { drawFraction, DART_KEYS } from '../../src/looseItems.js';
+import { drawFraction } from '../../src/looseItems.js';
 import { DigState } from '../../src/survivalControl.js';
 import { canHarvest, harvestHint, handGatherHint, breakSeconds } from '../../src/harvest.js';
 import { getItem } from '../../src/items.js';
@@ -71,6 +71,24 @@ describe('§100.2 DrawHold — hold Place to draw, let go to throw', () => {
     expect(d.step(UP, FRAME, env)).toBe('idle');
   });
 
+  it('§100.6: a bow draws to full at its own time (DrawEnv.fullS: the Recurve Bow\'s 1.2 s), not at DRAW_FULL_S', () => {
+    const d = new DrawHold();
+    const env = envOf({ key: 'recurve_bow', fullS: 1.2 });
+    const { did } = drawFor(d, 60, env); // one second of a 1.2-second draw
+    expect(did[0]).toBe('start');
+    expect(d.fullS).toBe(1.2);
+    expect(d.share).toBeCloseTo(drawFraction(60 * FRAME, 1.2), 9);
+    expect(d.share).toBeLessThan(0.9); // a spear would be fully drawn by now
+    expect(d.step(UP, FRAME, env)).toBe('release');
+    expect(d.f).toBeCloseTo(60 * FRAME / 1.2, 9);
+    expect(d.share).toBe(0); // nothing under way
+    // no fullS (a spear's env): DRAW_FULL_S, as before
+    const s = new DrawHold();
+    drawFor(s, 60);
+    expect(s.share).toBeCloseTo(drawFraction(60 * FRAME), 9);
+    expect(s.share).toBeCloseTo(1, 9);
+  });
+
   it('cancel() (main: a menu that freezes the world, a lost pointer lock; resetSurvivalInput) forgets it: no throw on return', () => {
     // the pause menu's frames do not step the world at all: drawStep never sees them, so setState cancels the draw
     const d = new DrawHold();
@@ -83,10 +101,10 @@ describe('§100.2 DrawHold — hold Place to draw, let go to throw', () => {
   it('a changed hand cancels; a bow with no arrows does not draw; nothing in hand that draws is not the draw\'s', () => {
     const d = new DrawHold();
     const { env } = drawFor(d, 10);
-    env.key = 'flint_dart';
+    env.key = 'crude_bow';
     expect(d.step(HELD, FRAME, env)).toBe('cancel');
     expect(d.on).toBe(false);
-    expect(d.step(PRESS, FRAME, envOf({ key: 'bow', noArrows: true }))).toBe('noArrows');
+    expect(d.step(PRESS, FRAME, envOf({ key: 'crude_bow', noArrows: true }))).toBe('noArrows');
     expect(d.on).toBe(false);
     expect(d.step(PRESS, FRAME, envOf({ key: 'stone_axe', draws: false }))).toBe(null);
     expect(d.step(PRESS, FRAME, envOf({ key: null, draws: true }))).toBe(null);
@@ -161,10 +179,11 @@ describe('§100.2 main\'s draw path', () => {
     // §91.3 / §96.2: the draw's pose for the avatar and, on a server, POSE_DRAWING in the pose flags (the old `drawState`
     // name, left behind by a merge, threw on every pose sent to a server)
     expect(main).not.toMatch(/\bdrawState\b/);
-    expect(main).toContain('mi.draw = draw.on ? drawFraction(draw.held) : 0;');
+    expect(main).toContain('mi.draw = drawShare();'); // §100.6: drawShare() is draw.share, against the bow's own full draw
+    expect(main).toContain('const drawShare = () => draw.share;');
     expect(main).toContain('if (draw.on) flags |= POSE_DRAWING;');
-    expect(body('  function drawRing() {')).toContain('return draw.on ? Math.max(0.02, drawFraction(draw.held)) : null;');
-    expect(main).toContain('fov = easeFov(fov, draw.on ? wantFov * (1 - DRAW_ZOOM * drawFraction(draw.held)) : wantFov, dt);');
+    expect(body('  function drawRing() {')).toContain('return draw.on ? Math.max(0.02, drawShare()) : null;');
+    expect(main).toContain('fov = easeFov(fov, draw.on ? wantFov * (1 - DRAW_ZOOM * drawShare()) : wantFov, dt);');
     expect(body('  function actionProgress() {')).toContain('if (draw.on) return drawRing();');
   });
 
@@ -172,13 +191,13 @@ describe('§100.2 main\'s draw path', () => {
     const right = body('  function survivalRight(mouse, dt) {');
     const latch = right.indexOf('controlLatch.press(hit, shift, latchEnv)');
     const book = right.indexOf('openBook()');
-    const drawn = right.indexOf('if (drawStep(mouse, dt)) {');
+    const drawn = right.indexOf('if (glassPlaceStep(mouse) || drawStep(mouse, dt)) {'); // §103: the glass looks first
     expect(latch).toBeGreaterThan(0);
     expect(book).toBeGreaterThan(latch);
     expect(drawn).toBeGreaterThan(book);
     expect(drawn).toBeLessThan(right.indexOf('const act = useActionOf(stack);'));
     // Creative's frame and the debug handle's rightClick: the draw first, else the control latch or the place
-    expect(main).toContain('if (!drawStep(mouse, dt)) rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);\n'
+    expect(main).toContain('if (!glassPlaceStep(mouse) && !drawStep(mouse, dt)) rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);\n'
       + '      else if (!mouse.right) controlLatch.release();');
     expect(main).toContain("if (drawStep(mouse, dt)) return 'draw'; // §100\n      return rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);");
   });
@@ -193,8 +212,8 @@ describe('§99.4 × §100.2: the throw\'s words come before the tool\'s for the 
 
   it('throwHintFirst: a spear, a dart or a bow in hand and no dig under way', () => {
     const idle = new DigState();
-    for (const k of ['flint_spear', ...DART_KEYS, 'bow']) expect(throwHintFirst(idle, k), k).toBe(true);
-    for (const k of ['stone_pick', 'stone_axe', 'arrow', 'stick', null]) expect(throwHintFirst(idle, k), String(k)).toBe(false);
+    for (const k of ['flint_spear', 'crude_bow', 'recurve_bow']) expect(throwHintFirst(idle, k), k).toBe(true); // §100.6: no darts
+    for (const k of ['stone_pick', 'stone_axe', 'flint_arrow', 'stick', null]) expect(throwHintFirst(idle, k), String(k)).toBe(false);
     const dig = new DigState();
     dig.step(FRAME, at(BLOCK.DIRT), true, breakSeconds(BLOCK.DIRT, tool('flint_spear')), 'flint_spear');
     expect(dig.active).toBe(true);
@@ -203,7 +222,7 @@ describe('§99.4 × §100.2: the throw\'s words come before the tool\'s for the 
 
   it('without it the hand\'s words would hide the throw on nearly all the ground in reach', () => {
     const spear = tool('flint_spear');
-    const bow = tool('bow');
+    const bow = tool('crude_bow');
     // the tool gate: a spear or a bow is no block's own tool
     for (const id of [BLOCK.STONE, BLOCK.OAK_LOG, BLOCK.BIRCH_LOG]) {
       for (const t of [spear, bow]) {
@@ -232,6 +251,6 @@ describe('§99.4 × §100.2: the throw\'s words come before the tool\'s for the 
     // a brick likewise; while drawing, how to let go comes before all of it
     expect(hint).toContain('} else if (brickHit && !throwFirst) {');
     expect(hint.indexOf('if (draw.on) return drawHintText();')).toBeLessThan(hint.indexOf('const act = interactAction();'));
-    expect(hint.trimEnd().endsWith('return blockHintText() ?? drawHintText(); // §100: what is in hand is thrown by holding Place')).toBe(true);
+    expect(hint.trimEnd().endsWith('return blockHintText() ?? drawHintText() ?? glassHintText(); // §100: thrown by holding Place; §103 the glass')).toBe(true);
   });
 });

@@ -1621,8 +1621,8 @@ describe('§99 work through main', () => {
     expect(digSlowHint(dig, birch, tool('stone_axe'))).toBe('Birch Log · slow with a stone axe');
     // dirt by hand, while dug; with a bow in hand and the ground in the crosshair, only the draw hint is left to say
     const dirt = at(BLOCK.DIRT);
-    expect(slowHint(BLOCK.DIRT, tool('bow'))).toBe('Dirt · slow — a shovel digs much faster');
-    expect(digSlowHint(new DigState(), dirt, tool('bow'))).toBeNull();
+    expect(slowHint(BLOCK.DIRT, tool('crude_bow'))).toBe('Dirt · slow — a shovel digs much faster');
+    expect(digSlowHint(new DigState(), dirt, tool('crude_bow'))).toBeNull();
     dig.step(TICK, dirt, true, breakSeconds(BLOCK.DIRT, null), null);
     expect(digSlowHint(dig, dirt, null)).toBe('Dirt · slow by hand — a shovel digs much faster');
     // §93: a brick's dig target (its column keyed apart from every hex) works the same

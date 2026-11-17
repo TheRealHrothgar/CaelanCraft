@@ -125,9 +125,9 @@ export function findStations(getBlock, q, y, r) {
 // v0.10 circuit parts and their materials (DESIGN-circuits §8.2): 6 more at hand, 11 at the stump, 4 at the kiln, 1 at the
 // bloomery and 3 at the forge (114 in all). §94 moved the flint tools to the Work Stump, the simple circuit parts to the
 // Workbench and the devices to the Lab; the elementary consumables (fuse, powder, wire, filings, the keg) stay early.
-// Today, with the later additions (the snare, the darts, the homestead, the Lab; §100 the bow stave, the bow and arrows):
-// 44 at hand, 26 at the stump, 24 at the kiln, 5 at the bloomery, 15 at the forge, 5 at the workbench and 8 at the lab
-// (127 in all).
+// Today, with the later additions (the snare, the homestead, the Lab, the Pennant; §100 the bows, the staves and the
+// arrows of every age, the darts retired; §102 the Compass; §103 the Spyglass): 44 at hand, 28 at the stump, 27 at the
+// kiln, 5 at the bloomery, 18 at the forge, 5 at the workbench and 8 at the lab (135 in all).
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** "2 #knapstone + stick + 2 cord" → [{tag:'knapstone',n:2}, {k:'stick',n:1}, {k:'cord',n:2}]. */
@@ -168,7 +168,6 @@ const RECIPE_ROWS = [
   ['hammerstone', 'hand', 'rock', 'hammerstone', '', 1],
   ['stone_axe', 'hand', '2 rock + stick + cord', 'stone_axe', 'hammer 1', 4],
   ['wooden_shovel', 'hand', 'stick', 'wooden_shovel', 'axe 1', 2],
-  ['flint_dart', 'hand', 'flint + stick + cord', '4 flint_dart', 'hammer 1', 2], // §94: bound with cord like every flint tool
   ['fire_drill', 'hand', '2 stick + cord', 'fire_drill', '', 2],
   ['snare', 'hand', '2 cord + 3 stick', 'snare', '', 3], // v0.11 (CONTRACTS §69): a noose on a bent stick
   ['campfire', 'hand', '6 rock + 3 stick + #tinder', 'campfire', 'firestarter 0', 5],
@@ -208,24 +207,31 @@ const RECIPE_ROWS = [
   ['earth_wire', 'hand', '6 copper_wire + 6 plant_fibre + malachite', '6 earth_wire', '', 6], // the green braid
   // v0.11 (CONTRACTS §67): the Workbench itself — steel, glass, drawn copper and tin: it comes after the Forge
   ['workbench', 'hand', '5 #planks + 2 steel_bar + 2 glass + 12 copper_wire + 2 tin_ingot', 'workbench', 'hammer 5', 20],
-  // v0.14 (§76 fauna): what feathers are for — the Flint Dart with a feathered flight (faster, harder, tougher)
-  ['fletched_dart', 'hand', 'flint + stick + 2 feather + cord', '4 fletched_dart', 'hammer 1', 3],
-  // §100: arrows for the bow — a knapped flint point and a feather flight on a stick, four at a time, anywhere
-  ['arrow', 'hand', 'stick + flint + feather', '4 arrow', 'hammer 1', 3],
+  // §100: arrows of the first ages — a knapped point (a chipped rock, or flint) and a feather flight on a stick, four at a
+  // time, anywhere (the darts of v0.10 and v0.14 are retired: their keys are Flint Arrows, items.ITEM_ALIASES)
+  ['stone_arrow', 'hand', 'stick + rock + feather', '4 stone_arrow', 'hammer 1', 3],
+  ['flint_arrow', 'hand', 'stick + flint + feather', '4 flint_arrow', 'hammer 1', 3],
   // §85: the first night's bed — a heap of dry grass on a few sticks
   ['grass_bed', 'hand', '8 plant_fibre + 3 stick', 'grass_bed', '', 4],
   // §101: the Pennant — a rag or a hide lashed to a stick with cord: it shows which way the wind blows, and how hard
   ['pennant', 'hand', 'stick + cord + #cloth', 'pennant', '', 3],
-  // ---- Work Stump (26); riving a log into sticks is real work: there is no planks-to-sticks shortcut
+  // ---- Work Stump (28); riving a log into sticks is real work: there is no planks-to-sticks shortcut
   // §94: flint is knapped on the stump's flat top with the hammerstone: the stump comes before the flint tools
   ['flint_knife', 'stump', '#knapstone + stick + cord', 'flint_knife', 'hammer 1', 3],
   ['flint_axe', 'stump', '#knapstone + stick + cord', 'flint_axe', 'hammer 1', 4],
   ['flint_pick', 'stump', '2 #knapstone + stick + 2 cord', 'flint_pick', 'hammer 1', 5],
   ['flint_shovel', 'stump', '#knapstone + stick + cord', 'flint_shovel', 'hammer 1', 4],
   ['flint_spear', 'stump', '#knapstone + 2 stick + cord', 'flint_spear', 'hammer 1', 3],
-  // §100 the bow: a long stick shaved down into a stave with the knife, then strung with cord
-  ['bow_stave', 'stump', '2 stick', 'bow_stave', 'knife 2', 4],
-  ['bow', 'stump', 'bow_stave + 2 cord', 'bow', 'knife 2', 5],
+  // §100 the bows: a springy Sapling strung with cord is the Crude Bow; a stave is split from a log with the axe and
+  // shaved with the knife (two from a log), for the Kiln to fire-harden into a Treated Stave (the Recurve Bow's)
+  ['crude_bow', 'stump', 'sapling + 2 cord', 'crude_bow', 'knife 2', 6],
+  ['bow_stave', 'stump', '#log', '2 bow_stave', 'axe 1, knife 2', 6],
+  // §100: the Recurve Bow — the treated stave's back glued with rawhide (the sinew), its tips bent back, strung with cord;
+  // a copper knife or better to fit it. §103: the Spyglass — two bronze tubes, one sliding in the other, and a glass lens.
+  // The user's "basic survival items": both are made at the stump as soon as their parts exist, not at the circuits'
+  // Workbench (steel, copper wire and a steel hammer)
+  ['recurve_bow', 'stump', 'treated_stave + 2 rawhide + cord', 'recurve_bow', 'knife 3', 20],
+  ['spyglass', 'stump', '2 bronze_ingot + glass', 'spyglass', '', 15],
   ['oak_planks', 'stump', 'oak_log', '3 oak_planks', 'axe 2', 3],
   ['spruce_planks', 'stump', 'spruce_log', '3 spruce_planks', 'axe 2', 3],
   ['birch_planks', 'stump', 'birch_log', '3 birch_planks', 'axe 2', 3],
@@ -248,7 +254,7 @@ const RECIPE_ROWS = [
   ['well', 'stump', '12 cobblestone + 3 cord + 2 #planks + clay_pot', 'well', 'shovel 1', 12],
   ['rain_barrel', 'stump', '6 #planks + 2 cord', 'rain_barrel', 'axe 1', 8],
   ['bed', 'stump', '6 #planks + 3 cord + 3 #wool + leather', 'bed', 'knife 2', 12],
-  // ---- Kiln (24; every recipe burns fuel — in the charcoal job the logs themselves smoulder)
+  // ---- Kiln (27; every recipe burns fuel — in the charcoal job the logs themselves smoulder)
   ['charcoal', 'kiln', '6 #log', '8 charcoal', '', 40],
   ['clay_pot', 'kiln', 'greenware_pot + #fuel', 'clay_pot', '', 15],
   ['fired_brick', 'kiln', '6 green_brick + #fuel', '6 fired_brick', '', 30],
@@ -268,6 +274,11 @@ const RECIPE_ROWS = [
   ['sulfur', 'kiln', '3 pyrite + #fuel', '2 sulfur', '', 25],
   ['selenium', 'kiln', '6 pyrite + 2 #fuel', '3 sulfur + selenium', '', 40],
   ['carbon_filament', 'kiln', '3 plant_fibre + #fuel', '3 carbon_filament', '', 15], // Swan's carbonised thread
+  // §100: a stave hardened slowly over the fire (it must not burn), and arrowheads cast in copper and bronze: eight at a
+  // time, a head from the mold for each stick and feather, remelted in the crucible like the cast tools
+  ['treated_stave', 'kiln', 'bow_stave + #fuel', 'treated_stave', '', 30],
+  ['copper_arrow', 'kiln', '4 stick + 4 feather + copper_ingot + coal', '8 copper_arrow', 'crucible 0, mold 0', 20],
+  ['bronze_arrow', 'kiln', '4 stick + 4 feather + bronze_ingot + coal', '8 bronze_arrow', 'crucible 0, mold 0', 25],
   // ---- Bloomery (5); salt is the flux that lets sand melt
   ['iron_bloom', 'bloomery', '3 hematite + 4 charcoal', 'iron_bloom', '', 40],
   ['wrought_iron', 'bloomery', 'iron_bloom + charcoal', 'wrought_iron', 'hammer 4', 25],
@@ -275,7 +286,7 @@ const RECIPE_ROWS = [
   ['remelt_glass', 'bloomery', '3 glass_shards + charcoal', 'glass', '', 15],
   // v0.10 circuits (§8.2): the lamp's glass is sealed hot
   ['filament_lamp', 'bloomery', 'glass + 3 carbon_filament + copper_wire + #planks', 'filament_lamp', '', 20],
-  // ---- Forge (16 with §102's Compass; charcoal only: carbon matters for iron)
+  // ---- Forge (18 with §102's Compass and §100's arrows; charcoal only: carbon matters for iron)
   ...metalToolRows('forge', 'iron', 'wrought_iron', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 4', 30),
   ['steel_bar', 'forge', 'wrought_iron + 2 charcoal', 'steel_bar', 'hammer 5', 45],
   ...metalToolRows('forge', 'steel', 'steel_bar', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 5', 40),
@@ -283,6 +294,9 @@ const RECIPE_ROWS = [
   ['diamond_block', 'forge', '7 rough_gem', 'diamond_block', 'hammer 6', 20],
   // §102: the Compass — a magnetised iron needle (wrought iron) in a copper case under a glass face
   ['compass', 'forge', 'wrought_iron + copper_ingot + glass_shards', 'compass', 'hammer 4', 20],
+  // §100: arrowheads forged from a bar of iron or steel, eight at a time, as the forge's tools are
+  ['iron_arrow', 'forge', '4 stick + 4 feather + wrought_iron + charcoal', '8 iron_arrow', 'hammer 4', 25],
+  ['steel_arrow', 'forge', '4 stick + 4 feather + steel_bar + charcoal', '8 steel_arrow', 'hammer 5', 30],
   // v0.10 circuits (§8.2): the magneto, the clock spring and the bell's gong are steel. The Collapsar Charge has no recipe:
   // nothing real makes one
   // ---- Workbench (v0.11, CONTRACTS §67; §94): the simple circuit parts

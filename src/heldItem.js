@@ -6,16 +6,16 @@
 // model's right hand and in the first-person arm's.
 //
 // How it is held comes from the pixels, never from a table of hand positions:
-//   - a hafted thing (a tool, a weapon, a dart) is gripped near the end of its haft — the bottom of the picture, the top
+//   - a hafted thing (a tool, a weapon, an arrow) is gripped near the end of its haft — the bottom of the picture, the top
 //     for a shovel (itemArt draws its blade at the bottom) — and turned in its own plane so its bulk lies straight ahead
-//     of the grip: a pick points along its haft, a diagonal dart along its shaft;
+//     of the grip: a pick points along its haft, an arrow along its shaft;
 //   - anything else (food, a lump of ore, a pot, the hammerstone, a tool without a haft) is held at the middle of its
 //     pixels, a little smaller.
 // The slab's frame: x = the picture's right, y = straight ahead of the grip (the picture's up for an upright tool),
 // z = out of the picture's front; the grip at the origin; metres.
 import { paintItem, hasItemArt, toolArtOf, ITEM_ART_SIZE } from './itemArt.js';
 import { getItem } from './items.js';
-import { DART_KEYS } from './looseItems.js';
+import { ARROW_KEYS } from './looseItems.js';
 
 /** Metres per art pixel of a held tool (a 16-pixel pick is 0.4 m: a child's tool). */
 export const HELD_PIXEL = 0.025;
@@ -65,13 +65,13 @@ export function heldItemShown(key) {
 }
 
 /**
- * Whether an item is wielded by a haft (a tool or a dart) rather than held in the fist — what its picture then says
- * decides (heldGrip: a "tool" without a haft is still held like a lump).
+ * Whether an item is wielded by a haft (a tool, or §100 an arrow by its nock) rather than held in the fist — what its
+ * picture then says decides (heldGrip: a "tool" without a haft is still held like a lump).
  * @param {string} key
  */
 export function heldWielded(key) {
   const def = getItem(key);
-  return !!def && (!!def.tool || DART_KEYS.includes(key));
+  return !!def && (!!def.tool || ARROW_KEYS.includes(key));
 }
 
 /**

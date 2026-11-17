@@ -389,16 +389,21 @@ describe('rollDrops (§6.3)', () => {
     expect(rollDrops(B.STONE, HAND, { natural: true }, seq(0))).toEqual([]); // cannot be harvested by hand
   });
 
-  it('leaves by hand give no stick (only the odd nut); an axe lops self and a natural stick', () => {
+  it('leaves by hand give no stick (only the odd nut, §100 and the odd sapling); an axe lops self and a natural stick', () => {
     const hand = sample((r) => rollDrops(B.OAK_LEAVES, HAND, { natural: true }, r), 2000, 3);
     expect(hand.stick).toBeUndefined();
     expect(hand.oak_leaves).toBeUndefined();
     expect(hand.acorns.length / 2000).toBeGreaterThan(0.06);
     expect(hand.acorns.length / 2000).toBeLessThan(0.1);
-    expect(rollDrops(B.BIRCH_LEAVES, HAND, { natural: true }, seq(0))).toEqual([]);
+    expect(hand.sapling.length / 2000).toBeGreaterThan(0.09); // §100: SAPLING_LEAF_P 0.12
+    expect(hand.sapling.length / 2000).toBeLessThan(0.15);
+    expect(rollDrops(B.BIRCH_LEAVES, HAND, { natural: true }, seq(0.5))).toEqual([]);
+    expect(rollDrops(B.BIRCH_LEAVES, HAND, { natural: true }, seq(0))).toEqual([{ k: 'sapling', n: 1 }]);
     expect(rollDrops(B.OAK_LEAVES, tool('stone_axe'), { natural: true }, seq(0.5))).toEqual([{ k: 'oak_leaves', n: 1 }, { k: 'stick', n: 1 }]);
     expect(rollDrops(B.OAK_LEAVES, tool('stone_axe'), { natural: false }, seq(0))).toEqual([{ k: 'oak_leaves', n: 1 }]);
-    expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: true }, seq(0.07))).toEqual([{ k: 'pine_nuts', n: 1 }]);
+    // the nut's roll comes first, then the sapling's
+    expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: true }, seq(0.07, 0.5))).toEqual([{ k: 'pine_nuts', n: 1 }]);
+    expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: true }, seq(0.5, 0.1))).toEqual([{ k: 'sapling', n: 1 }]);
     expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: false }, seq(0))).toEqual([]);
     expect(rollDrops(B.BIRCH_LEAVES, tool('flint_axe'), { natural: true }, seq(0))).toEqual([{ k: 'birch_leaves', n: 1 }, { k: 'stick', n: 1 }]);
   });
@@ -895,8 +900,8 @@ describe('§99: work costs time and the tool', () => {
   it('the seams: §100\'s weapons dig like a hand and never wear by it; §101\'s Pennant is a quick pull', () => {
     // a spear, a dart or a bow is no digging tool: on every block it works like the hand (tier 0, the hand's time) and
     // loses nothing by it (a bow wears by its shots alone, §100.2)
-    const weapons = ['flint_spear', 'bow'].map((k) => tool(k));
-    expect(weapons.map((t) => t.type)).toEqual(['spear', 'bow']);
+    const weapons = ['flint_spear', 'crude_bow', 'recurve_bow'].map((k) => tool(k));
+    expect(weapons.map((t) => t.type)).toEqual(['spear', 'bow', 'bow']);
     for (const t of weapons) {
       expect(DIG_TOOL_TYPES.has(t.type), t.type).toBe(false);
       expect(wearsFromDigging(t), t.type).toBe(false);
@@ -906,7 +911,7 @@ describe('§99: work costs time and the tool', () => {
         if (canHarvest(id, t)) expect(breakSeconds(id, t), BLOCKS[id].name).toBe(breakSeconds(id, null));
       }
     }
-    expect(getItem('flint_dart').tool ?? null).toBe(null); // a dart is no tool at all: a hand
+    expect(getItem('flint_arrow').tool ?? null).toBe(null); // an arrow is no tool at all: a hand (§100.6: the darts are gone)
     // the Pennant (§101.4) pulls up by hand, whatever is in hand: never slow, never worn for, never hard work
     for (const t of [null, ...weapons, tool('stone_axe'), tool('steel_pick')]) {
       const name = t ? t.type : 'hand';

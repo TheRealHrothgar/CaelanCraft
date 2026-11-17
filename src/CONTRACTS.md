@@ -8019,7 +8019,7 @@ the birch, the work tier and `digWear` wiring). The `?smoke=1&mode=survival` ste
 `diagnostics.SMOKE_DIG_FRAMES` (worked out from `breakSeconds(STONE, flint pick)`, + 30 frames) and checks the pick lost
 `digWear(STONE, flint pick)` = 4 uses.
 
-## 100. Hunting: fish in their water, the throw, the bow, stalking by sight and wind — `src/populations.js`, `src/animals.js`, `src/looseItems.js`, `src/avatarMotion.js`, `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/animalRenderer.js`, `src/touchControls.js`
+## 100. Hunting: fish in their water, the throw, the bows and arrows, stalking by sight and wind — `src/populations.js`, `src/animals.js`, `src/looseItems.js`, `src/avatarMotion.js`, `src/items.js`, `src/crafting.js`, `src/harvest.js`, `src/heldItem.js`, `src/storage.js`, `src/inventory.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/animalRenderer.js`, `src/touchControls.js`
 
 Amends §60 (throwing), §69 and v0.16 (stalking), §76.4 and §88 (fish), §91.3 / §91.4 / §98.4 (the draw's pose and the
 item's lie), §96.2 (`POSE_DRAWING`), §97.2 (the tablet's words: no G), §98.2 (Creative's Place), §99.4 (the target hint's
@@ -8078,7 +8078,7 @@ seven-column pond could take a whole zone's school.
   wanderer, the stranded fish on the bed of a drained pond and drawn on its side); fauna's drained-fish test now swims to
   the next column.
 
-### 100.2 The draw: hold Place to throw (`looseItems.js`, `main.js`, `avatarMotion.js`, `avatarRenderer.js`, `avatarModel.js`, `protocol.js`)
+### 100.2 The draw: hold Place to throw (`looseItems.js`, `main.js`, `avatarMotion.js`, `avatarRenderer.js`, `avatarModel.js`, `protocol.js`) — the darts and the bow's numbers as amended by 100.6
 
 - `drawOf(key)` → `{ shoots, base, bow }` or null: a spear (ToolDef.type 'spear') or a dart (DART_KEYS) draws itself
   (`base` = throwOf); a bow (type 'bow') draws an `arrow` (`base` THROW_ARROW). `drawFraction(heldS)` = min(1, heldS /
@@ -8127,7 +8127,7 @@ seven-column pond could take a whole zone's school.
   `tests/unit/avatarModel.test.js`, `tests/unit/avatarRenderer.test.js` and `tests/unit/viewCamera.test.js` (the
   poses).
 
-### 100.3 The bow (`items.js`, `crafting.js`, `itemArt.js`, `purpose.js`, `pickerModel.js`, `looseItems.js`)
+### 100.3 The bow (`items.js`, `crafting.js`, `itemArt.js`, `purpose.js`, `pickerModel.js`, `looseItems.js`) — superseded by 100.6
 
 - **Items**: `bow` "Bow" (tool, new ToolDef type **'bow'** in TOOL_TYPES after 'spear'; tier 2, durability 100, power 1;
   after the Flint Spear in TOOL_ROWS), `bow_stave` "Bow Stave" (material, stack 4) and `arrow` "Arrow" (material, stack
@@ -8195,7 +8195,103 @@ The Animals chapter gains "Keep still" (the stare, about two seconds to settle, 
 says a pond holds one fish for about every FISH_CELLS cells of water and to hold RMB to throw the spear; the controls
 table's Hold RMB row adds the draw. handbook.test.js pins each number to its constant.
 
-## 101. The wind drawn: the indicator, the rain, the smoke and the pennant — `src/windDrawn.js` (PURE), `src/pennants.js` (PURE), `src/pennantRenderer.js` (three), `src/rainRenderer.js`, `src/campfireRenderer.js`, `src/campfires.js`, `src/coords.js`, `src/particles.js`, `src/hud.js`, `src/blocks.js`, `src/tiles.js`, `src/items.js`, `src/crafting.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `index.html`, `src/styles.css`
+### 100.6 The bows and the arrows of every age; the darts retired (amends 100.2, 100.3, 100.5, §43, §46, §60, §69, §76, §80, §94, §98.5)
+
+The user (2026-11-16): "Crude bow (replaces darts): requires twine and sapling (new item). Recurve bow: requires treated
+staves + rawhide (sinew). Better velocity, distance, and accuracy. All bows can be used with arrows with arrowheads from
+all generations: stone, flint, copper, bronze, iron, and steel. Arrows have a chance of recoverability (greater chance of
+recovery with metal over stone + flint)." "Twine" is the game's Cord. Where 100.2, 100.3 and 100.5 say otherwise, this
+section wins; so it does over the darts as §60 (the Flint Dart), §69 (darts wound), §76 (the Fletched Dart, THROW_FLETCHED,
+FLETCHED_BREAK_P, dartBreakP and its recipe), §80 (the seeds "after `fletched_dart`") and §94 (the darts at hand) describe
+them: those items, recipes and constants are gone.
+
+- **Items** (`items.js`): the Bow becomes `crude_bow` "Crude Bow" (tool, type 'bow', tier 2, durability 60, power 1; after
+  the Flint Spear in TOOL_ROWS) and `recurve_bow` "Recurve Bow" (type 'bow', tier 4, durability 220, power 1; after the
+  Bronze Sword). Materials: `bow_stave` (stack 4, kept), `treated_stave` "Treated Stave" (4), `sapling` "Sapling" (16),
+  and six arrows of stack 16 — `stone_arrow`, `flint_arrow`, `copper_arrow`, `bronze_arrow`, `iron_arrow`, `steel_arrow`
+  ("Stone Arrow" …) — then §103's `spyglass` (and §102's `compass`, the last material). The `arrow`, `flint_dart` and
+  `fletched_dart` items are gone. 279 items with §102's Compass: 36 tools, 60 materials, 55 foods, 3 heals, 5 wear, 120
+  blocks.
+- **Old saves** (`ITEM_ALIASES`): `bow` → `crude_bow`; `arrow`, `flint_dart`, `fletched_dart` → `flint_arrow`. A stack
+  read under a new key keeps its wear, at most the new item's durability (`items.carriedWear`: a Bow of 80 uses is a
+  Crude Bow of 60): `storage.checkStack` (a note, not a drop), `inventory.withCurrentKey`, `LooseItems.load`; Creative
+  hotbar picks read through `normalizePick`, typed names through `resolveItem`.
+- **The Sapling**: untouched (`natural`) leaves — oak, spruce, birch — broken with anything but an axe (by hand, with a
+  knife) give one with `harvest.SAPLING_LEAF_P` 0.12 (a third drop group after the lop and the nut: `[when('axe'),
+  when(null, sapling)]`); an axe lops the shoot with the leaves. Picking a ripe Hazel Thicket with R gives one with
+  `SAPLING_HAZEL_P` 0.2 (a roll after the nuts).
+- **Recipes** (`crafting.js`; 135 in all with §102's Compass: 44 at hand, 28 at the stump, 27 at the kiln, 5 at the
+  bloomery, 18 at the forge, 5 at the workbench, 8 at the lab):
+  - hand: `stone_arrow` stick + rock + feather → 4, hammer 1, 3 s; `flint_arrow` stick + flint + feather → 4, hammer 1,
+    3 s (the darts' and the Arrow's recipes are gone);
+  - stump: `crude_bow` sapling + 2 cord, knife 2, 6 s (right after the flint tools); `bow_stave` #log → 2, axe 1 + knife 2,
+    6 s (a stave is split from a log, no longer shaved from two sticks); `recurve_bow` treated_stave + 2 rawhide + cord,
+    knife 3 (copper or better), 20 s; §103's `spyglass`. The user's "basic survival items": both are made at the stump
+    as soon as their parts exist, not at the circuits' Workbench (steel bars, copper wire, a steel hammer);
+  - kiln: `treated_stave` bow_stave + #fuel, 30 s; `copper_arrow` / `bronze_arrow` 4 stick + 4 feather + the ingot +
+    coal → 8, crucible 0 + mold 0 (as the cast tools), 20 / 25 s;
+  - forge: `iron_arrow` / `steel_arrow` 4 stick + 4 feather + wrought_iron / steel_bar + charcoal → 8, hammer 4 / 5 (as
+    the forged tools), 25 / 30 s.
+- **Arrows** (`looseItems.js`): `ARROW_KEYS` (stone … steel), `ARROWS[key]` = `{ head, power, hitKeep, missKeep }`:
+  power 2, 3, 3, 4, 5, 6; kept after a hit 0.35, 0.5, 0.7, 0.75, 0.85, 0.9; after a miss 0.85, 0.9 and `METAL_MISS_KEEP`
+  0.97 for every metal. `arrowOf`, `hitBreakP(key)` = 1 − hitKeep, `missBreakP(key)` = 1 − missKeep (0 for anything that
+  is not an arrow; replaces `dartBreakP`). **The rolls are LooseItems'** (its seeded `random`, real items only — a
+  Creative ghost never breaks): after `env.onHit` a real arrow breaks with hitBreakP (gone; `env.onBreak(it, 'hit')`); a
+  real arrow still a projectile (power > 0) that strikes the ground or a wall breaks with missBreakP (`_missBreaks`,
+  `onBreak(it, 'miss')`), once — a hit spends its power, so it never rolls again. main's onBreak puffs a few splinters.
+  By hand (G) an arrow is chucked (THROW_CHUCK: no power, never rolls). `pickArrow(count)`: the first of
+  `ARROW_PREFERENCE` (steel, iron, bronze, copper, flint, stone) the count has, else null.
+- **Bows**: `BOWS[key]` = `{ drawS, speed, spreadDeg, gravity }`: crude_bow 1.0 s, 28 m/s, 3°, 0.6; recurve_bow 1.2 s,
+  42 m/s, 0.8°, 0.5. `bowShot(bow, arrow, f)` → `{ speed, power, gravity, spread }`: `drawnThrow({ speed: bow.speed /
+  DRAW_SPEED_FULL, power: arrow.power }, f)` — so a full draw flies at the bow's speed exactly and hits with the arrow's
+  power, and a tap gets the same 40/115 of the speed and 40 % of the power as a throw — the bow's gravity share and its
+  spread in radians. `spreadDir(dx, dy, dz, spread, random)`: a direction uniform over the cap within `spread` of the aim.
+  `drawFraction(heldS, fullS = DRAW_FULL_S)`; `drawOf(key)` → `{ bow, shoots, base, fullS }`: a spear `{ false, key,
+  THROW_SPEAR, DRAW_FULL_S }`, a bow `{ true, null, null, its drawS }`, anything else (an arrow in hand too) null.
+  THROW_ARROW, ARROW_GRAVITY, ARROW_BREAK_P, DART_KEYS, THROW_DART, THROW_FLETCHED and their break chances are gone.
+- **Main**: the draw keeps its full time: drawStep tells `DrawHold` the full draw of what is in hand (`DrawEnv.fullS` =
+  `drawOf(key).fullS`), the press keeps it (`DrawHold.fullS`), the release's `f` is `drawFraction(held, fullS)` and
+  `draw.share` (main's `drawShare()`) is the same while drawing — used by the ring, the zoom, the arm and the hints, so a
+  Recurve Bow is fully drawn at 1.2 s. On the press `DrawEnv.noArrows` is `bow && bowArrow() === null` (no arrow of ANY
+  age: Creative never). `bowArrow()` is `looseItems.bowArrowFrom({ survival, count: pack.count, hotbar })`: Survival
+  `pickArrow(count)`; Creative the best arrow on the Creative hotbar, else `DEFAULT_ARROW` 'flint_arrow' (it takes none:
+  a ghost). A Place press with a bow and no arrow says `NO_ARROWS_HINT` "No arrows: make them by hand from a stick, a
+  rock or a flint, and a feather". The release takes that arrow from the pack (Survival), shoots it along `spreadDir` of
+  the look by the bow's spread, at bowShot's speed (plus the player's velocity, lifted 0.5 m/s) with its power and
+  gravity; the bow wears 1. The hint is `looseItems.bowHint(bow, arrow, survival, count)`: `Crude Bow · Flint Arrows (12)
+  · Hold RMB to draw` (Creative without the count; `Crude Bow · no arrows in your pack`); on a tablet "Hold Place to
+  draw" (§97.2).
+- **Art** (`itemArt.js`): the Crude Bow is the old Bow's shape in olive sapling with a leaf bud on each limb, cord knots
+  for nocks and a cord-wrapped grip; the Recurve Bow a dark treated stave with a pale rawhide back, tips curling away from
+  the string and a leather grip — both mirror-symmetric with the grip at the bottom middle (`heldGrip` 'tool', [8, 11],
+  turn 0). The Treated Stave is the stave darkened and scorched with a wisp of smoke; the Sapling a leafy shoot with a root
+  ball; each arrow stands point up (`paintArrow`): its head in its age's colours (a warm chert for stone, the tier
+  palette otherwise; steel's glint), cord-bound when knapped, socketed when metal; grey-brown vanes for stone, russet for
+  flint, copper and bronze, white for iron and steel. Arrows are wielded (`heldWielded`: a tool or an arrow), held by
+  the shaft near the nock.
+- **Picker** (amends §98.5): Weapons = Swords; the spear; **Bows & Arrows** (crude_bow, recurve_bow, the six arrows); the
+  rock (the Darts family is gone). Wood & Fibre = stick, sapling, bow_stave, treated_stave, plant fibre, cord, birch bark.
+  Tools gains the spyglass after the handbook. Each arrow is found by "archery", "shoot", "ammunition", "fletched";
+  "dart" finds the Flint Arrow (its old keys).
+- **Purpose lines**: the sapling, both staves (the Treated Stave "Backed with rawhide at the Work Stump: a Recurve Bow."),
+  both bows, each arrow; the Work Stump's is "Workplace: flint tools, bows, planks, leather, powder, wire."; the
+  Workbench's stays "Workplace: switches, buttons, boards, batteries, and the Lab."
+- **The guide**: after the hunting tables the Animals chapter has four pages — "Hold [RMB] to throw" (a spear),
+  "The bows" (the Crude Bow from a sapling and where saplings come from; the Recurve Bow's stave, kiln and stump; the
+  `bows` table: full draw, arrow speed, spread, shots), "Arrows" (every bow shoots every arrow, the best first; the
+  recipes; the `arrows` table: power, kept after a hit, kept after a miss) and "Arrows and wear". The throws table loses
+  its dart rows (stone, spear, anything else). The darts are gone from the guide (deer, birds, zombies, the controls).
+  handbook.test.js pins each number to its constant.
+- **Build tree**: unchanged code; the Work Stump's unlocks show the Crude Bow, the stave, the Recurve Bow and the
+  Spyglass, the Kiln's the Treated Stave and the cast arrows, the Forge's the forged ones — none of them behind the
+  Workbench, so none waits on the circuits.
+- Tests: `tests/unit/bows.test.js` (powers and the keep chances, seeded hits and misses, ghosts and chucks never rolling,
+  the bows' stats and shots, the spread cone, the recurve's reach, the arrow taken from the pack and chosen in Creative,
+  the bow's hint, main's wiring of the shot read from the source, the sapling's drops, old saves' Bow, Arrow and darts,
+  the grips); `tests/unit/drawHold.test.js` (the Recurve Bow's 1.2 s full draw); the pinned counts in items, crafting, homestead, plantsNotFood, itemArt,
+  pickerModel, handbook and survivalData move.
+
+## 101. The wind drawn: the indicator, the rain, the smoke and the pennant — `src/windDrawn.js` (PURE), `src/pennants.js` (PURE), `src/pennantRenderer.js` (three), `src/rainRenderer.js`, `src/campfireRenderer.js`, `src/particles.js`, `src/hud.js`, `src/blocks.js`, `src/tiles.js`, `src/items.js`, `src/crafting.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `index.html`, `src/styles.css`
 
 The user (docs/DESIGN-hunting.md): "introduce wind direction and strength as a visual indicator … It should also affect
 graphics (flag furling, rain direction, etc.) and can later affect sailing." The wind itself is `wind.js` (`windAt`, from
@@ -8441,3 +8537,107 @@ faces north, east is +x); the compass shows it on §101's wind vane.
   main's wiring, the view's yaw included); `tests/unit/windDrawn.test.js` (the vane drawn with `viewYaw`);
   `tests/integration/progression.test.js` (placed blocks break again; the Compass behind the Forge and behind Glass);
   the pinned counts in items, crafting, itemArt, pickerModel, handbook, homestead and plantsNotFood move by one.
+## 103. The spyglass — `src/spyglass.js` (PURE), `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/controls.js`, `src/commands.js`, `src/touchControls.js`, `src/hud.js`, `src/styles.css`, `src/diagnostics.js`, `src/main.js`, `src/handbook.js`
+
+The user (2026-11-16): "Let's add basic survival items to the crafting menu: … spyglass: requires bronze + glass. Unlocks
+spyglass zoom + zoom command when in the player's inventory". (§102 is the compass.)
+
+### 103.1 The item
+
+`spyglass` "Spyglass": a material of stack 1 that never wears (no durability; made one at a time, §99). Recipe at the
+**Work Stump**: 2 bronze_ingot + glass (the block item) → 1, no tool, 15 s — a basic survival item, made as soon as there
+are bronze and glass (not at the circuits' Workbench, which wants steel, copper wire and a steel hammer). Purpose: "Carry
+it, and look through it to see far." (no key: the line shows in the pack and the picker on a tablet too). Its picture lies corner to corner: a leather eyepiece at the lower left, a narrow bronze draw tube and the
+wide main tube with dark bands where they meet, the glass lens shining at the upper right; held as a lump. In the
+picker's Tools after the handbook (search: telescope, zoom, lens, scope, far).
+
+### 103.2 Carried, looked through (`spyglass.js`)
+
+- `carriesSpyglass({ survival, count, hotbar })`: Survival — the pack holds one anywhere (`count('spyglass') > 0`);
+  Creative — one of the Creative hotbar's picks is the item pick 'spyglass' (§98). Nothing else counts.
+- `ZOOM_LEVELS` [2, 4, 8], `ZOOM_DEFAULT` 4. `zoomedFov(fov, z)` = 2·atan(tan(fov/2) / z) (everything z times bigger);
+  `zoomLookScale(z)` = 1 / z; `wheelZoom(z, notches)` — scrolling up (negative) one level closer per notch, down farther,
+  stopping at 2× and 8×; `parseZoomArg` ('2', '4x', '8×' → `{ zoom }`, 'off' → `{ off }`, none → `{ zoom: null }`, else
+  null); `zoomLabel(4)` "4×"; `SPYGLASS_NEEDED` "You need a spyglass".
+- `Spyglass`: `zoom`, `held`, `locked`, `shown` (the power the view shows). `step(dt, { carried, held })`: not carried,
+  neither lasts (held and the lock end); then `shown` eases in log space toward `zoom` while `looking` (held or locked)
+  and toward 1 after, at `ZOOM_EASE` 12/s (settled in about 0.3 s; snapped within 0.2 %). `lock(z|null)` (the power it
+  has with null; a power not in ZOOM_LEVELS is ignored), `unlock()`, `toggle()`, `button()` (the tablet's Zoom button: not
+  locked → locked at 2×; locked → the next power; after 8× → down; returns the power, 0 when down), `wheel(notches)` (only
+  while looking: true when it used the wheel), `fov(base)`, `lookScale()`, `vignette()` = ln(shown)/ln 2 to at most 1,
+  `handHidden` (looking, or shown > `ZOOM_HAND_AT` 1.05), `reset()` (not held, not locked, shown 1, the power back to
+  ZOOM_DEFAULT).
+- `glassPlace({ inHand, rightPressed, right, control, latched })` → `{ mine, held }`: Place is the glass's only with it in
+  hand; a press on a circuit control without Shift (`control`) is the control's, and so is every frame while the control
+  latch holds one (`latched`, §4.9: a Push Button stays pressed and the glass stays down); else `mine`, `held` = right.
+- `glassHint({ looking, locked, zoom }, touch)`: not looking "Spyglass · Hold RMB or Z to look through it"; looking on a
+  keyboard "Spyglass 4× · scroll: closer or farther"; on a tablet "Spyglass 4× · tap Zoom: closer" while kept up below 8×,
+  "Spyglass 8× · tap Zoom to put it down" at 8×, and just "Spyglass 4×" while Place holds it (no wheel, no Z on a tablet).
+- `serverZoomLine(line)`: the line to run on a server for a zoom command, else null — `/zoom …` always (`zoom` plus its
+  words; mistakes get the usage), `zoom`, `zoom 4`, `zoom off` without the slash (a whole command: "zoom zoom!" is chat).
+
+### 103.3 The keys, the look and the view (main, controls)
+
+- **Z** (`ZOOM_KEY` 'KeyZ', in controls' GAME_KEYS) held while playing looks through it; so does Place held with the
+  Spyglass in hand (`glassPlaceStep`, both modes, before the draw, through `glassPlace` with `latched: controlLatch.on`:
+  a press on a circuit control without Shift, and the latch's hold after it, are left to the control — in Creative the
+  frame then reaches `rightMouseStep` and `circuits.hold`; it lets go of any draw). Main steps it every frame (`stepSpyglass`, in renderFrame before the camera):
+  `controls.setLookScale(spyglass.lookScale())`, `renderer.setFov(spyglass.fov(fov) + camFx.fov)` (after the eased
+  sprint/draw FOV), `hud.setSpyglass`.
+- **The wheel** while looking steps the power (`spyglass.wheel`); otherwise it picks the hotbar slot as before.
+- **controls.js**: `lookScale` (1) and `setLookScale(s)` (clamped 0.01..1, non-finite 1): mouse movement and the touch
+  `virtualLook` turn by it.
+- **The view**: while the glass is up (`handHidden`) the camera is first person whatever `viewMode` says (`shownView()`:
+  the third-person views would look at the back of the head), the first-person hand is put away (`showArm` false), and
+  the crosshair, the hints and the HUD stay.
+- **Hint** with the Spyglass in hand and nothing else to say: `glassHint(spyglass, touchOn)` — `Spyglass · Hold RMB or Z
+  to look through it` (touch: "Hold Place, or tap Zoom, to look through it", §97.2), while looking `Spyglass 4× · scroll:
+  closer or farther` (a tablet: the Zoom button's words, never the wheel).
+- **Leaving a world** (`quitToTitle`, also when a server connection drops): `resetSpyglass()` — `spyglass.reset()`, the
+  Place hold forgotten, `controls.setLookScale(1)`, `hud.setSpyglass(null)`: the next world opens with no eyepiece, the
+  look at full speed and the power at 4×.
+
+### 103.4 The zoom command (§26)
+
+`zoom [2|4|8|off]` (args `choice:2|4|8|off`, min 0, **consoleOnly**; in help): through `ctx.spyglass` (`{ carried(),
+lock(z), unlock() }`; absent: "there is nothing to look through here"). `off` → "zoom off" / "the zoom is already off"
+(with or without a Spyglass). Otherwise without a Spyglass it fails `zoom: You need a spyglass — usage: zoom
+[2|4|8|off]`; with one it keeps the glass up at that power (alone: the power it has) — "looking through the Spyglass at
+4×: zoom off, Esc or a menu ends it; the wheel changes it". It lasts until `zoom off`, Esc or a menu: `setState` unlocks
+it on every state but PLAYING and CONSOLE (the console is where it is typed), and losing the Spyglass ends it.
+**On a server** (§96, Creative: a Spyglass on the hotbar) the console's lines are chat and commands are off, but the zoom
+command changes only this player's view: main's `onLine` runs `serverZoomLine(line)` through the runner before the chat
+(`zoom 4` and `/zoom 4` look; "zoom zoom!" is still said).
+
+### 103.5 The tablet's Zoom button (§95, §97)
+
+`TOUCH_BUTTONS.zoom` { 'Zoom', kind 'hook', hook 'onZoom' }, last in `TOP_BUTTONS`. `topButtonShown(id, view)`: every top
+button, but Zoom only while `view.zoom`. `TouchView` gains `zoom` (a Spyglass is carried) and `zoomOn` (kept up: the
+button is lit, `.on`). Main: `touchView.zoom = spyglassCarried()`, `touchView.zoomOn = spyglass.locked`; `onZoom` calls
+`spyglass.button()` — a tap a power, 2×, 4×, 8×, then down (a tablet has no wheel) — and without a Spyglass says
+SPYGLASS_NEEDED. TOUCH_WORDS rewrites "RMB or Z" as "Place, or tap Zoom,". The button stays in sight while the glass is
+up: the eyepiece lies under #touch-ui (103.6).
+
+### 103.6 The eyepiece (`hud.setSpyglass`, styles)
+
+`#spyglass-overlay` (`aria-hidden`) is its own layer, made just before #hud in #hud's parent (first in #hud only when
+the HUD has no parent): `position: fixed`, `z-index` 8 — over the canvas, under `#touch-ui` (9) and `#hud` (10), so a
+tablet's top bar (Menu, Blocks, Camera, Chat, the Zoom button that puts the glass down), its stick and its buttons, and
+the crosshair, the hints and the hotbar all draw over the dark ring. It holds `span.spyglass-power`. `setSpyglass({ amount, zoom }|null)`: opacity = amount in 1/32 steps, hidden at 0 or null, the
+power ("4×") shown while visible; the DOM only on change. CSS: a `radial-gradient(circle closest-side …)` clear to 84 %, a
+faint bronze rim at 88 %, near-black from 93 % — a round eyepiece the height of a landscape screen — `pointer-events:
+none`; the power sits low inside it (36vmin under the middle, above the hotbar).
+
+### 103.7 The screenshot aid, the guide, the tests
+
+- `?zoom=2|4|8` (`diagnostics.readZoomParam`, `Params.zoom`): once the world has loaded, main locks the zoom at that power
+  when a Spyglass is carried (Creative: `?hold=spyglass&zoom=4`).
+- The guide: a page "The Spyglass" in Controls after "Dropping and throwing" (the recipe at the Work Stump, Z or RMB, four
+  times nearer, the wheel's 2×, 4×, 8×, `zoom 4` / `zoom off` "on a server too", the tablet's button a tap a power); the
+  keys-move table's `Hold Z` row; keys-hands' `Hold RMB` row "… draw a bow or a spear; look through a Spyglass". The
+  workplaces page: the Work Stump "makes both bows and the Spyglass".
+- Tests: `tests/unit/spyglass.test.js` (the gate in both modes, zoomedFov and the look's scale, the hold easing in and out,
+  the wheel, the lock, the button's ladder, reset, controls' lookScale, the zoom command with and without a Spyglass and
+  on a server, the touch button's visibility (lit and still shown while kept up), the hints per mode, the eyepiece's
+  layer under the touch controls, Place on a latched control in Creative, the screenshot aid, main's wiring read from the
+  source).

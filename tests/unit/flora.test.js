@@ -370,7 +370,8 @@ describe('gathering (harvest.js)', () => {
     const SEED = { [B.ONION_PLANT]: ['onion_seeds', 2], [B.CARROT_PLANT]: ['carrot_seeds', 2], [B.HEALWORT_PLANT]: ['healwort_seeds', 1] };
     for (const [id, to, key, [lo, hi]] of rows) {
       expect(isPickable(id), key).toBe(true);
-      const seed = SEED[id];
+      // §100: a hazel thicket now and then gives a Sapling too, on its own roll after the nuts (like a seed)
+      const seed = id === B.HAZEL_THICKET ? ['sapling', 1] : SEED[id];
       // every roll 0: the fewest of the crop, and the seed's chance comes up (with the fewest seeds)
       expect(pick(id, {}, seq(0)), key).toEqual({ to, drops: seed ? [{ k: key, n: lo }, { k: seed[0], n: 1 }] : [{ k: key, n: lo }] });
       // every roll 0.999: the most of the crop, and no seed

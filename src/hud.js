@@ -385,6 +385,15 @@ const PICKER_OPEN = 'picker-open';
  * @property {(deg: number|null) => void} setNorth  the compass on the vane (CONTRACTS §102): an N and a red tick on the
  *   dial's rim at north's bearing, `deg` whole degrees clockwise from the top (compass.northView); null: no compass, the
  *   plain vane. The DOM is touched only when the degree or the null changes.
+ * @property {(view: SpyglassView|null) => void} setSpyglass  §103: the Spyglass's round eyepiece (#spyglass-overlay, its
+ *   own layer made just before #hud, under the touch controls and the HUD, so a tablet's buttons, the crosshair, the
+ *   hints and the hotbar stay over it): its darkness `amount` 0..1 in 1/32 steps and the power under it ("4×"); hidden at
+ *   0 or null. The DOM is touched only when the step or the power changes.
+ */
+
+/**
+ * What the Spyglass's eyepiece shows (§103): how dark the round vignette is, 0..1, and the power looked through.
+ * @typedef {{ amount: number, zoom: number }} SpyglassView
  */
 
 /**
@@ -1187,6 +1196,45 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     }
   }
 
+  // ---- §103 the Spyglass's eyepiece: a round view in a dark ring. Its own layer, just before #hud: over the canvas but
+  // under the touch controls (#touch-ui) and the HUD (the stylesheet's z-index 8 < 9 < 10), so a tablet's buttons — the
+  // Zoom button that puts the glass down, the Menu — and the crosshair, the hints and the hotbar all stay in sight.
+  /** @type {HTMLElement|null} */
+  let glassEl = doc.getElementById('spyglass-overlay');
+  /** @type {HTMLElement|null} */
+  let glassPowerEl = null;
+  if (!glassEl && typeof doc.createElement === 'function') {
+    glassEl = doc.createElement('div');
+    glassEl.id = 'spyglass-overlay';
+    glassEl.className = HIDDEN;
+    glassEl.setAttribute('aria-hidden', 'true');
+    glassPowerEl = doc.createElement('span');
+    glassPowerEl.className = 'spyglass-power';
+    glassEl.appendChild(glassPowerEl);
+    if (hudEl.parentNode) hudEl.parentNode.insertBefore(glassEl, hudEl);
+    else hudEl.insertBefore(glassEl, hudEl.firstChild); // a detached HUD (no page round it): first in it
+  } else if (glassEl) {
+    glassPowerEl = glassEl.querySelector('.spyglass-power');
+  }
+  let glassLevel = -1;
+  let glassPower = '';
+
+  /** @param {SpyglassView|null} view */
+  function setSpyglass(view) {
+    if (!glassEl) return;
+    const q = view ? Math.round(Math.max(0, Math.min(1, Number(view.amount) || 0)) * 32) / 32 : 0;
+    if (q !== glassLevel) {
+      glassLevel = q;
+      glassEl.classList.toggle(HIDDEN, q === 0);
+      glassEl.style.opacity = String(q);
+    }
+    const power = view && q > 0 && Number.isFinite(view.zoom) ? `${view.zoom}×` : '';
+    if (power !== glassPower && glassPowerEl) {
+      glassPower = power;
+      glassPowerEl.textContent = power;
+    }
+  }
+
   // ---- §102: the compass's north on the vane
   /** @type {{ g: Element, tick: Element, letter: Element }|null} built the first time a compass is carried */
   let northParts = null;
@@ -1436,6 +1484,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     setTiredness,
     setSleepView,
     setWind,
+    setSpyglass,
     setNorth,
     onSlotClick: () => {},
     dispose,

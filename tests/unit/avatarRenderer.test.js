@@ -312,7 +312,7 @@ describe('the first-person hand', () => {
     const camera = new THREE.PerspectiveCamera(70, 4 / 3);
     const root = () => r.armGroup.children[0];
     const armAt = (frame) => Array.from(frame.arm).map((v) => expect.closeTo(v, 6));
-    for (const [held, bow] of [['bow', true], ['flint_spear', false], ['flint_dart', false]]) {
+    for (const [held, bow] of [['crude_bow', true], ['recurve_bow', true], ['flint_spear', false], ['flint_arrow', false]]) { // §100.6: the bows; an arrow in hand draws nothing
       r.setHeld(held);
       r.sync({ x: 0, y: 0, z: 0, pose: pose({ draw: 1 }), showModel: false, showArm: true, camera });
       expect(root().matrix.elements, held).toEqual(armAt(fpHandFrame(0, false, 1, bow)));
@@ -552,7 +552,7 @@ describe('§100 the draw, on the model', () => {
 
   it('a bow: held upright straight ahead in the right hand, the string toward the archer; the left hand drawn back to the chin, its elbow up and out', () => {
     for (const def of AVATARS) {
-      const { r, at, grip, axis } = drawn(def.id, 'bow');
+      const { r, at, grip, axis } = drawn(def.id, 'crude_bow');
       const shR = at('avatar-shoulder-r');
       const shL = at('avatar-shoulder-l');
       const L = Math.hypot(...avatarModel(def).rig.elbow) + Math.hypot(...avatarModel(def).rig.grip);
@@ -580,8 +580,8 @@ describe('§100 the draw, on the model', () => {
     }
   });
 
-  it('a spear or a dart: cocked overhand, the fist by the ear and the elbow out to the side, the point level and ahead; the other arm points', () => {
-    for (const [id, held] of [['brayden', 'flint_spear'], ['annabelle', 'flint_dart'], ['caelan', 'flint_spear']]) {
+  it('a spear: cocked overhand, the fist by the ear and the elbow out to the side, the point level and ahead; the other arm points', () => {
+    for (const [id, held] of [['brayden', 'flint_spear'], ['annabelle', 'flint_spear'], ['caelan', 'flint_spear']]) {
       const def = /** @type {*} */ (AVATARS.find((a) => a.id === id));
       const { r, at, grip, axis } = drawn(id, held);
       const shR = at('avatar-shoulder-r');
@@ -603,7 +603,7 @@ describe('§100 the draw, on the model', () => {
   });
 
   it('let go, the throw swings through from the drawn arm (no jump between frames); the elbows never bend backwards', () => {
-    for (const held of ['flint_spear', 'bow']) {
+    for (const held of ['flint_spear', 'crude_bow']) {
       const { r, m, root } = drawn('brayden', held);
       const shoulder = /** @type {THREE.Object3D} */ (root.getObjectByName('avatar-shoulder-r'));
       const elbowR = /** @type {THREE.Object3D} */ (root.getObjectByName('avatar-elbow-r'));
@@ -611,7 +611,7 @@ describe('§100 the draw, on the model', () => {
       const prev = shoulder.getWorldQuaternion(new THREE.Quaternion());
       let most = 0;
       let reached = 0;
-      if (held !== 'bow') m.swing(); // main: a throw swings the arm, a bow is let down
+      if (held !== 'crude_bow') m.swing(); // main: a throw swings the arm, a bow is let down
       for (let i = 0; i < 40; i++) {
         const p = m.step(1 / 60, still());
         r.sync({ x: 0, y: 0, z: 0, pose: p, showModel: true, showArm: false });
@@ -624,7 +624,7 @@ describe('§100 the draw, on the model', () => {
         expect(root.getObjectByName('avatar-elbow-l').rotation.x, held).toBeGreaterThanOrEqual(0);
       }
       expect(most, held).toBeLessThan(0.5); // at 60 fps: under 30° a frame
-      if (held !== 'bow') expect(reached).toBeGreaterThan(1.5); // and it does follow through
+      if (held !== 'crude_bow') expect(reached).toBeGreaterThan(1.5); // and it does follow through
       // the arms are back at rest, the item as it is held at rest
       const rest = createAvatarRenderer(new THREE.Scene(), { avatar: 'brayden' });
       rest.setHeld(held);
@@ -708,7 +708,7 @@ describe('the other players (remotePlayerRenderer)', () => {
     const scene = new THREE.Scene();
     const doc = { createElement: () => ({ width: 0, height: 0, getContext: () => null }) };
     const remote = createRemotePlayerRenderer(scene, /** @type {*} */ (doc));
-    const players = [{ id: 1, name: 'Bo', avatar: 'brayden', swings: 0, held: 'bow' }];
+    const players = [{ id: 1, name: 'Bo', avatar: 'brayden', swings: 0, held: 'crude_bow' }];
     let flags = POSE_ON_GROUND | POSE_DRAWING;
     const remotes = { list: () => players, sample: () => ({ x: 0, y: 64, z: 0, yaw: 0, pitch: 0, vx: 0, vz: 0, flags }) };
     const fist = () => {

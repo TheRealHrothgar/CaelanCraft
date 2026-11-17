@@ -57,6 +57,9 @@ import { MOUSE_SENSITIVITY, PITCH_LIMIT, DOUBLE_TAP_MS, DOUBLE_TAP_SPACE_MS } fr
  * @property {(dYaw: number, dPitch: number) => void} virtualLook        turn the look by radians (pitch clamped)
  * @property {(forward: number, strafe: number, sprint: boolean) => void} setVirtualMove  analog -1..1, merged into getInput
  * @property {(on: boolean) => void} setVirtualJump                      held jump, merged into getInput
+ * @property {number} lookScale                          the share (§103) of the look's sensitivity (1; the Spyglass slows it)
+ * @property {(scale: number) => void} setLookScale      set it (§103; clamped to 0.01..1, non-finite = 1): the mouse and the
+ *   touch look turn by it
  */
 
 /** Keys whose browser default is suppressed while the pointer is locked (no Ctrl/Meta/Alt). */
@@ -69,6 +72,7 @@ export const GAME_KEYS = new Set([
   'KeyE', 'KeyF', 'KeyM', 'KeyT', 'KeyR', 'Slash',
   'KeyQ', 'KeyG', // v0.10 drop and throw (CONTRACTS §60)
   'KeyV', // the view: first person, third person behind, in front (CONTRACTS §91)
+  'KeyZ', // §103: hold to look through the Spyglass
 ]);
 
 /** Upper bound on queued keydown edges per code; protects against unbounded growth for keys nobody consumes. */
@@ -130,6 +134,8 @@ export function createControls(canvas, doc = document) {
   let yaw = 0;
   let pitch = 0;
   let enabled = true;
+  /** §103: the look's sensitivity share (the Spyglass slows the look by its power) */
+  let lookScale = 1;
   let disposed = false;
 
   /** @type {Set<string>} held key codes */
@@ -198,8 +204,8 @@ export function createControls(canvas, doc = document) {
     if (!enabled || !isLocked() || touchMode) return; // touch (§95): a tap's compatibility mousemove never turns the view
     const mx = e.movementX;
     const my = e.movementY;
-    if (Number.isFinite(mx) && mx !== 0) yaw = wrapYaw(yaw - mx * MOUSE_SENSITIVITY);
-    if (Number.isFinite(my) && my !== 0) pitch = clampPitch(pitch - my * MOUSE_SENSITIVITY);
+    if (Number.isFinite(mx) && mx !== 0) yaw = wrapYaw(yaw - mx * MOUSE_SENSITIVITY * lookScale);
+    if (Number.isFinite(my) && my !== 0) pitch = clampPitch(pitch - my * MOUSE_SENSITIVITY * lookScale);
   }
 
   function onKeyDown(e) {
@@ -414,8 +420,13 @@ export function createControls(canvas, doc = document) {
   /** Turn the look by radians (a drag on the touch screen); positive dYaw turns left, positive dPitch looks up. */
   function virtualLook(dYaw, dPitch) {
     if (!enabled || !isLocked()) return;
-    if (Number.isFinite(dYaw) && dYaw !== 0) yaw = wrapYaw(yaw + dYaw);
-    if (Number.isFinite(dPitch) && dPitch !== 0) pitch = clampPitch(pitch + dPitch);
+    if (Number.isFinite(dYaw) && dYaw !== 0) yaw = wrapYaw(yaw + dYaw * lookScale);
+    if (Number.isFinite(dPitch) && dPitch !== 0) pitch = clampPitch(pitch + dPitch * lookScale);
+  }
+
+  /** §103: the look's sensitivity share, 0.01..1 (the Spyglass sets 1 / its power while it is looked through). */
+  function setLookScale(scale) {
+    lookScale = Number.isFinite(scale) ? Math.max(0.01, Math.min(1, scale)) : 1;
   }
 
   /** The stick: forward and strafe in -1..1 (clamped; non-finite = 0), sprint when pushed to the rim. */
@@ -494,6 +505,10 @@ export function createControls(canvas, doc = document) {
     virtualLook,
     setVirtualMove,
     setVirtualJump,
+    get lookScale() {
+      return lookScale;
+    },
+    setLookScale,
   };
 
   // ---- wiring ------------------------------------------------------------

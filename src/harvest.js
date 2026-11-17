@@ -53,6 +53,12 @@ export const SEED_DROPS = deepFreeze({
 });
 /** §81: the chance that a fern pulled up by hand gives a strand of Plant Fibre. */
 export const FERN_FIBRE_P = 0.3;
+/**
+ * §100: the chance that untouched leaves broken with anything but an axe (by hand, with a knife) give a Sapling — a young
+ * springy shoot, the Crude Bow's stave; and that picking a ripe hazel thicket with R gives one (its long straight rods).
+ */
+export const SAPLING_LEAF_P = 0.12;
+export const SAPLING_HAZEL_P = 0.2;
 /** Breaking with the head under water takes this many times longer (§6.1). */
 export const UNDERWATER_DIG_FACTOR = 2.5;
 /** No block breaks faster than this (s). */
@@ -143,11 +149,13 @@ set([B.ICE], 4.0, 'pick', 0, [[when('pick', drop('ice_chunk', 2)), when(null, dr
 set([B.PACKED_ICE], 16, 'pick', 2, [always(drop('ice_chunk', 3))]);
 set([B.LOOSE_STONES], 0.2, null, 0, [always(drop('rock', [1, 2])), always(drop('flint', 1, { p: FLINT_SHARE, ...natural }))]);
 set([B.FALLEN_BRANCHES], 0.2, null, 0, [always(drop('stick', [2, 3]))]);
-// Leaves: only an axe lops them (self, and a stick from untouched leaves); by hand they give nothing but the odd nut.
+// Leaves: only an axe lops them (self, and a stick from untouched leaves); by hand they give nothing but the odd nut,
+// and (§100) now and then a Sapling — the axe lops the shoot with the leaves, so it gives none.
 const LOP = [when('axe', drop(SELF), drop('stick', 1, natural))];
-set([B.OAK_LEAVES], 0.4, 'axe', 0, [LOP, always(drop('acorns', 1, { p: 0.08, ...natural }))]);
-set([B.SPRUCE_LEAVES], 0.4, 'axe', 0, [LOP, always(drop('pine_nuts', 1, { p: 0.08, ...natural }))]);
-set([B.BIRCH_LEAVES], 0.4, 'axe', 0, [LOP]);
+const SAPLING = [when('axe'), when(null, drop('sapling', 1, { p: SAPLING_LEAF_P, ...natural }))];
+set([B.OAK_LEAVES], 0.4, 'axe', 0, [LOP, always(drop('acorns', 1, { p: 0.08, ...natural })), SAPLING]);
+set([B.SPRUCE_LEAVES], 0.4, 'axe', 0, [LOP, always(drop('pine_nuts', 1, { p: 0.08, ...natural })), SAPLING]);
+set([B.BIRCH_LEAVES], 0.4, 'axe', 0, [LOP, SAPLING]);
 // Wild plants: a shovel digs the plant up (its item places the picked variant, which must regrow).
 set([B.HONEYBERRY_BUSH], 0.5, 'shovel', 0, [[when('shovel', drop('honeyberry_bush'))], always(drop('honeyberries', [2, 4])), always(drop('stick', [1, 2]))]);
 set([B.HONEYBERRY_BUSH_BARE], 0.5, 'shovel', 0, [[when('shovel', drop('honeyberry_bush'))], always(drop('stick', [1, 2]))]);
@@ -498,7 +506,8 @@ export const PICKABLE = deepFreeze({
   [B.FRECKLECAP_MUSHROOM]: { to: B.AIR, drops: [always(drop('frecklecap', [1, 2]))] },
   [B.ONION_PLANT]: { to: B.AIR, drops: [always(drop('wild_onion', [1, 2])), always(SEED_DROPS.onion)] },
   [B.CARROT_PLANT]: { to: B.AIR, drops: [always(drop('wild_carrot', 1)), always(SEED_DROPS.carrot)] },
-  [B.HAZEL_THICKET]: { to: B.HAZEL_THICKET_BARE, drops: [always(drop('hazelnuts', [1, 3]))] },
+  // §100: and now and then one of its straight springy shoots, a Sapling
+  [B.HAZEL_THICKET]: { to: B.HAZEL_THICKET_BARE, drops: [always(drop('hazelnuts', [1, 3])), always(drop('sapling', 1, { p: SAPLING_HAZEL_P }))] },
   [B.CRAB_APPLE_BUSH]: { to: B.CRAB_APPLE_BUSH_BARE, drops: [always(drop('crab_apple', [2, 3]))] },
   [B.HEALWORT_PLANT]: { to: B.HEALWORT_PLANT_BARE, drops: [always(drop('healwort', 1)), always(SEED_DROPS.healwort)] },
   // §81: the two look-alikes are picked exactly as the plants they imitate (a root comes away, a bush stays and

@@ -51,6 +51,8 @@ import { durabilityLeft } from './inventory.js';
  * @property {string|null} hold      §91 / §98.4 screenshot aid: `?hold=<item>` — in Creative, once a world has loaded, that
  *   item (a tool, a weapon, food… by key, case-insensitive; an old name under its new one) goes in the selected hotbar slot;
  *   anything that is not an item (a block, nonsense) → null
+ * @property {number|null} zoom      a screenshot aid (§103): `?zoom=2|4|8` — once a world has loaded, look through the Spyglass
+ *   at that power as the zoom command does (only while one is carried: in Creative with `?hold=spyglass`); else null
  * @property {string|null} server    DESIGN-multiplayer §2: `?server=host[:port]` — the game server to offer (default: the one
  *   that served the page, if it is one)
  * @property {string|null} join      `?join=<name>`: join that server at once under this name (with ?autoplay: straight into
@@ -93,6 +95,7 @@ export function parseParams(search = defaultSearch()) {
     avatar: normalizeAvatarId(readString(params, 'avatar')),
     avatarMenu: (readString(params, 'ui') ?? '').toLowerCase() === 'avatars',
     hold: readHoldParam(params),
+    zoom: readZoomParam(params),
     server: readString(params, 'server'),
     join: readString(params, 'join'),
   };
@@ -108,6 +111,18 @@ export function readHoldParam(params) {
   if (t === null) return null;
   const pick = normalizePick(t.toLowerCase());
   return isItemPick(pick) ? pick : null;
+}
+
+/**
+ * §103 `?zoom=2|4|8` (a trailing x or × allowed): the Spyglass's power for the screenshot aid; anything else null.
+ * @param {URLSearchParams} params
+ * @returns {number|null}
+ */
+export function readZoomParam(params) {
+  const t = readString(params, 'zoom');
+  if (t === null) return null;
+  const n = Number(t.trim().toLowerCase().replace(/[x×]$/, ''));
+  return n === 2 || n === 4 || n === 8 ? n : null;
 }
 
 /**

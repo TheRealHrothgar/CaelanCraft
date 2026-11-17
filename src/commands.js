@@ -38,6 +38,7 @@ import { findFreeY, findStandingY, playerIntersectsBlock } from './physics.js';
 import { formatTime } from './daynight.js';
 import { WATCHER_HEIGHT } from './watcher.js';
 import { ITEM_KEYS, itemName, resolveItem } from './items.js';
+import { parseZoomArg, zoomLabel, SPYGLASS_NEEDED } from './spyglass.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
 /** @typedef {import('./types.js').Rune} Rune */
@@ -106,7 +107,9 @@ export const COMMANDS = Object.freeze([
   // v0.10 hands (CONTRACTS §60): the Q and G keys as commands
   { name: 'drop', usage: 'drop [count|all]', summary: 'drop the item in hand in front of you (default 1; Q, Shift+Q for the stack)', args: ['word'], min: 0, consoleOnly: true },
   { name: 'despawn', usage: 'despawn [radius]', summary: 'remove the items lying loose within radius cells of you (a rune: of itself); no radius: all of them', args: ['num'], min: 0 },
-  { name: 'throw', usage: 'throw [count]', summary: 'throw the item in hand where you look (G): rocks sting, darts and spears hurt, the rest is chucked a short way', args: ['int'], min: 0, consoleOnly: true },
+  { name: 'throw', usage: 'throw [count]', summary: 'throw the item in hand where you look (G): rocks sting, spears hurt, the rest is chucked a short way', args: ['int'], min: 0, consoleOnly: true },
+  // §103 the Spyglass: the zoom that stays (Z held is the quick look)
+  { name: 'zoom', usage: 'zoom [2|4|8|off]', summary: 'look through your Spyglass (you must carry one) at 2×, 4× or 8× until zoom off, Esc or a menu; hold Z for a quick look', args: ['choice:2|4|8|off'], min: 0, consoleOnly: true },
 ]);
 
 /** Most items one `throw` sends. */
@@ -322,8 +325,18 @@ export function resolveHexBlock(token) {
  *                                            ignite falls back to physics.explosions)
  * @property {BlackHoleCommands} [blackHoles] absent without black holes (`blackholes` then fails)
  * @property {HandCommands} [hands]           absent where nothing can be held (drop / throw then fail)
+ * @property {SpyglassCommands} [spyglass]    absent where there is nothing to look through (zoom then fails; §103)
  * @property {import('./animals.js').Animals} [animals]  absent without animals (summon cow / sheep / horse / wolf then fail)
  * @property {{ despawnNear(x: number, y: number, z: number, radius: number): number }} [loose]  the loose items (despawn)
+ */
+
+/**
+ * What `zoom` may touch (main's Spyglass, CONTRACTS §103).
+ * @typedef {Object} SpyglassCommands
+ * @property {() => boolean} carried   a Spyglass is carried (Survival: in the pack; Creative: on the hotbar)
+ * @property {(zoom: number|null) => number} lock   look through it at that power (null: the power it has) until zoom off,
+ *   Esc or a menu; returns the power
+ * @property {() => boolean} unlock     stop looking through it; true when the zoom command (or the Zoom button) had it up
  */
 
 /**
@@ -1223,6 +1236,15 @@ function run(spec, args, ctx) {
       }
       const res = ctx.hands.act(/** @type {'drop'|'throw'} */ (spec.name), n);
       return res.ok ? ok(res.message) : fail(spec, res.message);
+    }
+    case 'zoom': {
+      const glass = ctx.spyglass;
+      if (!glass) return fail(spec, 'there is nothing to look through here');
+      const want = parseZoomArg(args[0]);
+      if (want && 'off' in want) return ok(glass.unlock() ? 'zoom off' : 'the zoom is already off');
+      if (!glass.carried()) return fail(spec, SPYGLASS_NEEDED);
+      const z = glass.lock(want && 'zoom' in want ? want.zoom : null);
+      return ok(`looking through the Spyglass at ${zoomLabel(z)}: zoom off, Esc or a menu ends it; the wheel changes it`);
     }
     case 'items': {
       const filter = args.length === 1 ? args[0].toLowerCase() : '';
