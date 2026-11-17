@@ -188,6 +188,15 @@ describe('animalRenderer — heads, the young, tags and snares (§69.1, §100)',
     expect(at.x).toBeCloseTo(-MODELS.deer.legX, 1); // the left hind leg
     expect(at.z).toBeGreaterThan(0.2);
     expect(at.y).toBeLessThan(10.15);
+    // every kind that can be snared shows its loop — the birds too (both their legs are "front" ones): on the left leg
+    for (const kind of ANIMAL_KINDS.filter((k) => SPECIES[k].snare !== false)) {
+      r.sync([mk(kind, { trapped: 30, trapCell: [0, 10, 0] })], 10);
+      expect(by(r, 'animal-snare').count, kind).toBe(1);
+      const p = new THREE.Vector3().setFromMatrixPosition(mat(by(r, 'animal-snare')));
+      expect(p.x, kind).toBeCloseTo(-MODELS[kind].legX, 2);
+      expect(p.y, kind).toBeLessThan(10 + 0.12);
+    }
+    for (const kind of ['pheasant', 'turkey']) expect(SPECIES[kind].snare, kind).not.toBe(false);
     r.dispose();
   });
 

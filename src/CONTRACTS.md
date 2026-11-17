@@ -4237,8 +4237,9 @@ colliders, heights, the pig's head box, the AI, the strides, the rear-up and the
   (0.3) × youth larger about the pivot and its trunk `YOUNG_ROUND` [1.08, 1.06, 0.94] (rounder, shorter) about its middle,
   easing out as it grows; a fawn on the spotted coat.
 - **Tame and snared**: a tame animal whose kind has a `tag` wears it on its head group (the saddled horse needs none). An
-  animal (or a pig) with `trapped > 0` gets the snare's loop on its left hind leg, at the ankle, scaled by `legW` (one
-  more draw call while one is held; the sprung snare is drawn by the mesher as before).
+  animal (or a pig) with `trapped > 0` gets the snare's loop on its left hind leg (a bird's left leg: both of a bird's
+  legs count as front ones), at the ankle, scaled by `legW` (one more draw call while one is held; the sprung snare is
+  drawn by the mesher as before).
 - **`pigRenderer.js`** keeps its API, `renderScaleOf`, `pigSizeOf`, `renderSpinOf`, LEG_H 0.3, the hips and the diagonal
   swing (±sin(walkPhase) · 0.6): meshes `pig-skin` (the trunk and the tail), `pig-head` (head, snout disc, ears; it roots
   while the pig stands idle — headPitch, eased), `pig-legs` (4 per pig), their twins `pig-skin-hurt`, `pig-head-hurt`,

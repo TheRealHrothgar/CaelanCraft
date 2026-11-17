@@ -365,8 +365,8 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
             .multiply(rot.makeRotationX(angle));
           if (front && rig.turn && nLegs === 4) partM.multiply(turn);
           legs.setMatrixAt(legs.count++, partM);
-          // a snared animal: the cord's loop round its left hind ankle
-          if (a.trapped > 0 && !front && sx < 0 && snare.count < capacity) {
+          // a snared animal: the cord's loop round its left hind ankle (a bird's left one: both its legs are front ones)
+          if (a.trapped > 0 && (nLegs === 2 || !front) && sx < 0 && snare.count < capacity) {
             snare.setMatrixAt(snare.count++, tmp.copy(partM).multiply(rot.makeTranslation(0, -rig.legH + 0.06, 0)).multiply(loopM.makeScale(rig.legW, rig.legW, rig.legW)));
           }
         }
