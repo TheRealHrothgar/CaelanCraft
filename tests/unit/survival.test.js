@@ -11,9 +11,11 @@ import { softLandingFactor, fallDamage, createVitals, RATES, DAMAGE_CAUSES, WORK
 import { groundChillOf, heatAt, heatSource, CHEST_HEIGHT } from '../../src/climate.js';
 import {
   Survival, MODES, DEATH_TITLES, deathTitle, SICK_MESSAGE, SALT_MESSAGE, SALT_MESSAGE_GAP_S, DOT_PULSE_HP,
-  BELONGINGS_KEPT, BELONGINGS_LOST, WORK_LABEL_HOLD_S,
+  BELONGINGS_KEPT, BELONGINGS_LOST, WORK_LABEL_HOLD_S, HARD_WORK_SHOW_S,
 } from '../../src/survival.js';
 import { flatGetBlock } from '../helpers/fixtures.js';
+import { workTier } from '../../src/harvest.js';
+import { ITEMS } from '../../src/items.js';
 
 const DT = 1 / 60;
 const GROUND = 63;          // solid up to y 63: feet rest at 64 (altitude 0)
@@ -382,10 +384,13 @@ describe('the step: climate and vitals together (§2, §3, §9.4)', () => {
     expect(work(1, 1).vitals.fatigue).toBeCloseTo(1.8, 6);
     expect(work(6, 1).vitals.fatigue).toBeCloseTo(1.25, 6);
     expect(WORK_ACTIVITY[0]).toBe(3);
-    // the label: on while a bare hand or a stone tool works, held WORK_LABEL_HOLD_S after, never for flint
+    // the label: on once a bare hand or a stone tool has worked HARD_WORK_SHOW_S, held WORK_LABEL_HOLD_S after, never for flint
+    expect(HARD_WORK_SHOW_S).toBe(1.5);
     const s = started();
     const env = envFor(stander(), flatGetBlock(GROUND), { time: H(14), breaking: true, workTier: 1 });
     s.step(DT, env);
+    expect(s.status.labels).not.toContain('Hard work'); // a moment of it is not hard work yet
+    s.step(HARD_WORK_SHOW_S, env);
     expect(s.status.labels).toContain('Hard work');
     env.breaking = false;
     s.step(WORK_LABEL_HOLD_S / 2, env);
@@ -401,6 +406,36 @@ describe('the step: climate and vitals together (§2, §3, §9.4)', () => {
     env.sleep = { recover: 4, heal: 0 };
     s.step(DT, env);
     expect(s.status.labels).not.toContain('Hard work');
+  });
+
+  it('§99: a quick pull is not hard work — a torch with a steel pick, a fern by hand — but a run of pulls is', () => {
+    // no tool speeds a torch, so the steel pick works it like the hand (tier 0) — for the 0.3 s it takes
+    const tier = workTier(BLOCK.TORCH, ITEMS.steel_pick.tool ?? null);
+    expect(tier).toBe(0);
+    const s = started();
+    const env = envFor(stander(), flatGetBlock(GROUND), { time: H(14), breaking: true, workTier: tier });
+    let seen = false;
+    for (let t = 0; t < 0.3; t += DT) {
+      s.step(DT, env);
+      if (s.status.labels.includes('Hard work')) seen = true;
+    }
+    env.breaking = false;
+    for (let t = 0; t < WORK_LABEL_HOLD_S * 2; t += DT) {
+      s.step(DT, env);
+      if (s.status.labels.includes('Hard work')) seen = true;
+    }
+    expect(seen).toBe(false);
+    // pull after pull by hand, a frame apart: the gaps do not end the work, and after HARD_WORK_SHOW_S it shows
+    const pulls = started();
+    const pull = envFor(stander(), flatGetBlock(GROUND), { time: H(14), breaking: true, workTier: 0 });
+    let shownAt = -1;
+    for (let t = 0; t < 3 && shownAt < 0; t += DT) {
+      pull.breaking = Math.round(t / DT) % 13 !== 12; // a fern every 0.2 s, one frame between
+      pulls.step(DT, pull);
+      if (pulls.status.labels.includes('Hard work')) shownAt = t;
+    }
+    expect(shownAt).toBeGreaterThan(HARD_WORK_SHOW_S);
+    expect(shownAt).toBeLessThan(HARD_WORK_SHOW_S * 1.2);
   });
 
   it('regenerates by a campfire twice as fast while standing still for 3 s; walking resets it', () => {

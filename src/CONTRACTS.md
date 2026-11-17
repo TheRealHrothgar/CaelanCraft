@@ -7244,7 +7244,7 @@ solid hexes: mobs stop up to half a cell short of a brick wall.
 
 - Raw natural blocks (`RAW_HEX_IDS`: the stone kinds, grass, logs, leaves, ores, sandstone, ice, glowstone, pumpkins) are
   never placed in Survival: "‹Name› is raw: work it into building materials first". Stone breaks into rocks with a flint pick
-  or better, and into 1–2 STONE BRICKS with a copper (tier 3) or better HAMMER, 4.0 s base (`harvest` `alt`: a second tool
+  or better, and into 1–2 STONE BRICKS with a copper (tier 3) or better HAMMER, hardness 32 (§99; 4.0 before it) (`harvest` `alt`: a second tool
   with its own time and drops; `canHarvest`, `breakSeconds` and `rollDrops` take whichever rule the tool satisfies).
 - Loose ground (`TERRAFORM_IDS`: dirt, sand, gravel, snow block, clay, red sand) is placed as hexes, at most
   `TERRAFORM_MAX_RISE` **3** layers above the column's generated surface ("Loose ‹name› will not heap any higher here"):
@@ -7755,7 +7755,7 @@ above) so all 16 fit. The console's `give <block|item> [slot]` hands out an item
 ## 99. Work costs time, food, water and the tool — `src/items.js`, `src/harvest.js`, `src/vitals.js`, `src/survival.js` (PURE), `src/packUI.js`, `src/hud.js`, `src/styles.css`, `src/main.js`, `src/handbook.js`
 
 Amends §43 (`TIER_SPEED`), §44 (the hardness of the land's blocks; wear on a dig), §45 (the breaking activity; tiredness),
-§48 (the Making cards), §73 (the guide) and DESIGN-survival §6.3's times. docs/DESIGN-hunting.md §1. The user: "Digging by
+§48 (the Making cards), §73 (the guide), §93.7 (the hammer's dressed stone) and DESIGN-survival §6.3's times. docs/DESIGN-hunting.md §1. The user: "Digging by
 hand should be a long, energy sapping process. Cutting a tree down with a stone axe should also be labor intensive and
 impact axe durability significantly. Flint is better, and so. The difference along each era should be noticeable and a
 strong motivator to level up." **No block, item or recipe is added; nothing new is saved.**
@@ -7856,9 +7856,13 @@ strong motivator to level up." **No block, item or recipe is added; nothing new 
   flint 1.0, with steel 0.18.
 - **`Hard work`** (`vitals.HARD_WORK_LABEL`): `statusOf(v, { …, work })` adds it after Wet and before the tiredness stage
   (which stays last) while `work ≥ HARD_WORK_AT` **2.5** — a bare hand or a stone tool; flint is the relief. It changes
-  nothing else. `Survival` keeps `_flags.work` and holds the label **`WORK_LABEL_HOLD_S` 1.5** s after the hard work stops,
-  so it does not flicker between one block and the next; asleep there is no work. `hud.chipKind('Hard work')` → `'work'`;
-  `.chip-work` is an earthy brown (`#8a6e4b`, white text). No sound is added.
+  nothing else. `Survival` keeps `_flags.work`: the label shows once the hard work has gone on **`HARD_WORK_SHOW_S` 1.5** s
+  (gaps shorter than the hold do not end it), and is held **`WORK_LABEL_HOLD_S` 1.5** s after the hard work stops, so it
+  does not flicker between one block and the next. A quick pull — a torch, a fern, loose stones, a snare (everything no
+  tool speeds takes at most 1 s on land, and works like the hand whatever is held) — never shows it (its drain, at the
+  hand's rate for that moment, is a few hundredths of a point). Asleep there is no work. `hud.chipKind('Hard work')` → `'work'`;
+  `.chip-work` is an earthy brown (`#8a6e4b`, white text). The chip is the cue: no sound and no breath effect are added
+  (DESIGN-hunting §1's breath cue is left for later).
 - **`SurvivalEnv.workTier`** (0..6, absent → the hand): main sets it every frame from the dig (99.6).
 
 ### 99.3 Wear (`harvest.digWear`)
@@ -7887,10 +7891,15 @@ strong motivator to level up." **No block, item or recipe is added; nothing new 
 
 ### 99.4 Feedback: the target hint
 
-`harvest.slowHint(id, tool)` → string | null. Main's `survivalHintText` shows it after the tool-gate hint (`harvestHint`),
-the bare-hand gathering hint (`handGatherHint`: gravel still says `Gravel · hold LMB: dig`) and the wrong-ground seed hint,
-and before `blockHintText` (none of whose blocks is ever slow); a brick shows it like its hex. Only when
-`breakSeconds(id, tool)` > **`SLOW_HINT_S` 3** and the block's rule names a tool type:
+`harvest.slowHint(id, tool)` → string | null. Main shows it **only while a dig is held on that cell**
+(`main.digSlowHint(digState, target, tool)`: the DigState is active on the same q, y, r and block id, else null): idle, the
+crosshair resting on the ground says nothing, so walking and looking about never nag and a weapon's draw hint (§100,
+"with nothing else to say") is not hidden by the ground under it. `survivalHintText` shows it after the tool-gate hint
+(`harvestHint`), the bare-hand gathering hint (`handGatherHint`: gravel still says `Gravel · hold LMB: dig`) and the
+wrong-ground seed hint, and before `blockHintText` (none of whose blocks is ever slow); a brick shows it like its hex
+(`brickDigTarget`); a Birch Log's `tap_hint` (R: how to tap its sap) gives way to it while the log is chopped, as an oak
+says `Oak Log · slow with a stone axe`. Only when `breakSeconds(id, tool)` > **`SLOW_HINT_S` 3** and the block's rule names
+a tool type:
 
 - by hand (or a non-tool in hand): `Dirt · slow by hand — a shovel digs much faster`;
 - with a tool that is not the block's own: `Dirt · slow — a shovel digs much faster`;
@@ -7914,7 +7923,7 @@ what it is asked (the console, the tests).
   digWorkTier` beside `env.breaking = digAdvanced` (the reused env starts with `workTier: 0`).
 - `wearSelectedTool(how, n = 1)`: `pack.damage(selected, n)`, nothing for n ≤ 0. `finishDig` and `finishBrickDig` pass
   `digWear(id, tool)`; strikes pass 1 as before.
-- `survivalHintText`: `slowHint` as in 99.4.
+- `survivalHintText`: `digSlowHint` (exported, PURE over its arguments) as in 99.4; never `slowHint` while idle.
 
 ### 99.7 The guide (`handbook.js`)
 
@@ -7936,7 +7945,11 @@ minutes by hand, the fatigue rate and the hours to Tired, the label), `survival.
 tiredness per hour, the held label), `packUI.test.js` (`makesMany` over every recipe; a tool's card has no ×5),
 `handbook.test.js` (the break and work tables against the data), `survivalHud.test.js` (the chip), `items.test.js`, and
 `tests/integration/toolLadder.test.js` and `survival.test.js` (the first day: gravel 4 s a cell by hand, the log 10.9 s
-with the stone axe and 8 uses of its wear).
+with the stone axe and 8 uses of its wear); `survival.test.js` also: a quick pull never shows `Hard work`, a run of them
+does; `tests/integration/harness.test.js` (§99 through main: the smoke's dig budget, `digSlowHint` only while digging and
+the birch, the work tier and `digWear` wiring). The `?smoke=1&mode=survival` step digs its stone for
+`diagnostics.SMOKE_DIG_FRAMES` (worked out from `breakSeconds(STONE, flint pick)`, + 30 frames) and checks the pick lost
+`digWear(STONE, flint pick)` = 4 uses.
 
 ## 100. Hunting: fish in their water, the throw, the bow, stalking by sight and wind — `src/populations.js`, `src/animals.js`, `src/looseItems.js`, `src/avatarMotion.js`, `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`
 
