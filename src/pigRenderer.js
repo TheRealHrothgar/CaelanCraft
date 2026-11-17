@@ -1,103 +1,51 @@
-// Caelancraft — pig models (three). See src/CONTRACTS.md §30.
+// Caelancraft — pig models (three). See src/CONTRACTS.md §30 and §69.1.
 //
 // A pig is built facing −Z with its origin at the feet, so a rotation of `pig.yaw` about +Y matches yawToForward
-// (the camera uses the same convention). The body is a hexagonal prism lying along the pig — the honeycomb motif of
-// the world — with a box head, snout, ears, eyes, a tail and four legs that swing with `pig.walkPhase`.
+// (the camera uses the same convention). It is HEX-FACETED (animalModels.js, over the animals' shared atlas): a round
+// hexagonal barrel of a body with fine pale bristles and a curly tail, a faceted head with a snout disc, floppy ears tipped
+// forward and rosy cheeks, four short legs with muddy trotters that swing with `pig.walkPhase`.
 //
 // A pig's optional `renderScale` (default 1) scales the whole model about its feet and its optional `renderSpin`
 // (default 0) adds to its yaw: a pig swallowed by a black hole is drawn as a shrinking, spinning ghost (infall.js,
 // DESIGN-circuits §2.7, §6.2.13). Without them the output is exactly as before.
 //
-// Every pig shares a handful of InstancedMeshes, so all pigs together cost 3 draw calls (5 while one flashes):
-//   skin      body + head + ears + tail merged into one geometry (pink)
-//   features  snout + nostrils + eyes + pupils merged, coloured per vertex
+// Every pig shares a handful of InstancedMeshes, so all pigs together cost 3 draw calls (6 while one flashes):
+//   skin      the body and its tail
+//   head      the head, snout and ears: it roots (head down) while the pig stands idle, and eases back up (HEAD_RATE)
 //   legs      one instance per leg (4 per pig), pivoting at the hip so the swing is a rotation about x
-//   skinHurt / legsHurt  the same geometry with the red emissive flash: a pig with `hurt > 0` is drawn there
+//   skin-hurt / head-hurt / legs-hurt  the same geometry with the red emissive flash: a pig with `hurt > 0` is drawn there
 //   tusks     §88: a grown boar's two tusks, curving up beside the snout (one more draw call while a boar is in view)
-// §88: a piglet (`size` below 1) is drawn at its size, about its feet.
+//   tag       §88: a tame pig's ribbon and bow (one more while a tame one is in view)
+//   snare     a snared pig's loop of cord round its left hind trotter (one more while one is held)
+// §88: a piglet (`size` below 1) is drawn at its size, about its feet, its head larger and its body rounder.
 import * as THREE from 'three';
 import { PIG_MAX } from './config.js';
 import { compileHidden } from './prewarm.js';
+import { ANIMAL_RIGS } from './animalModels.js';
+import { faunaAssets, faunaMaterial, headPitch, headEaser, youthOf, HEAD_RATE, YOUNG_HEAD, YOUNG_ROUND } from './animalRenderer.js';
 
 /** @typedef {import('./pigs.js').Pig} Pig */
 
-const PINK = 0xf2a7b5;
-const SNOUT = 0xe0808f;
-const DARK = 0x3a1f26;
-const WHITE = 0xffffff;
-const TUSK = 0xf4ecd8;
 const HURT = 0xff2a2a;
 const HURT_INTENSITY = 0.6;
 
-const LEG_H = 0.3;
-const BODY_R = 0.32;
-const BODY_LEN = 0.82;
-const BODY_Y = LEG_H + BODY_R * Math.cos(Math.PI / 6); // flat underside resting on the legs
-const LEG_SWING = 0.6;
+const RIG = ANIMAL_RIGS.pig;
+const LEG_H = RIG.legH;
+const LEG_SWING = RIG.swing;
 /** Hip positions (x, z) of the legs: front-left, front-right, back-left, back-right. */
-const LEG_HIPS = [[-0.16, -0.26], [0.16, -0.26], [-0.16, 0.32], [0.16, 0.32]];
+const LEG_HIPS = [[-RIG.legX, RIG.legZ[0]], [RIG.legX, RIG.legZ[0]], [-RIG.legX, RIG.legZ[1]], [RIG.legX, RIG.legZ[1]]];
 /** Diagonal pairs swing together: front-left with back-right. */
 const LEG_SIGN = [1, -1, -1, 1];
 
 /**
  * @typedef {Object} PigRenderer
- * @property {(pigs: Pig[]) => void} sync   draw the given pigs (position, yaw, leg swing, hurt flash; renderScale and
- *                                          renderSpin when set)
+ * @property {(pigs: Pig[], dt?: number) => void} sync   draw the given pigs (position, yaw, leg swing, hurt flash; renderScale
+ *                                          and renderSpin when set; `dt` eases the heads, measured when absent)
  * @property {() => number} count           pigs drawn by the last sync
  * @property {() => void} dispose
  * @property {(webgl: *, camera: THREE.Camera) => Promise<void>} prewarm  compile its programs now
  * @property {THREE.Group} group            the instanced meshes (for tests and diagnostics)
  */
-
-/**
- * @typedef {{ geo: THREE.BufferGeometry, x: number, y: number, z: number, rx?: number, rz?: number, color?: number }} Part
- */
-
-/**
- * Bake parts (each placed and rotated in the pig's frame) into one indexed geometry with positions and normals, plus
- * per-vertex colours when the parts have a `color`.
- * @param {Part[]} parts
- * @returns {THREE.BufferGeometry}
- */
-function mergeParts(parts) {
-  /** @type {number[]} */
-  const positions = [];
-  /** @type {number[]} */
-  const normals = [];
-  /** @type {number[]} */
-  const colors = [];
-  /** @type {number[]} */
-  const indices = [];
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const e = new THREE.Euler();
-  const at = new THREE.Vector3();
-  const one = new THREE.Vector3(1, 1, 1);
-  const c = new THREE.Color();
-  for (const p of parts) {
-    const g = p.geo.clone();
-    g.applyMatrix4(m.compose(at.set(p.x, p.y, p.z), q.setFromEuler(e.set(p.rx ?? 0, 0, p.rz ?? 0)), one));
-    const pos = g.getAttribute('position');
-    const nor = g.getAttribute('normal');
-    const base = positions.length / 3;
-    for (let i = 0; i < pos.count; i++) {
-      positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
-      normals.push(nor.getX(i), nor.getY(i), nor.getZ(i));
-    }
-    if (p.color !== undefined) {
-      c.setHex(p.color); // sRGB hex → linear working colour, exactly what a material `color` gets
-      for (let i = 0; i < pos.count; i++) colors.push(c.r, c.g, c.b);
-    }
-    for (const i of /** @type {THREE.BufferAttribute} */ (g.index).array) indices.push(base + i);
-    g.dispose();
-  }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  out.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-  if (colors.length) out.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  out.setIndex(indices);
-  return out;
-}
 
 /** A body's model scale: its `renderScale` when a positive number, else 1. */
 export function renderScaleOf(body) {
@@ -124,118 +72,113 @@ export function renderSpinOf(body) {
  * @returns {PigRenderer}
  */
 export function createPigRenderer(scene, capacity = PIG_MAX) {
-  // Hex prism lying along Z with a flat face down: CylinderGeometry's axis is Y; rotate it onto Z, then turn it
-  // about Z by 30° so a side (not an edge) faces the ground.
-  const bodyGeo = new THREE.CylinderGeometry(BODY_R, BODY_R, BODY_LEN, 6);
-  bodyGeo.rotateX(Math.PI / 2);
-  bodyGeo.rotateZ(Math.PI / 6);
-  const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-  const geos = {
-    head: box(0.42, 0.4, 0.36),
-    snout: box(0.22, 0.15, 0.08),
-    nostril: box(0.04, 0.05, 0.02),
-    eye: box(0.07, 0.07, 0.02),
-    pupil: box(0.035, 0.05, 0.02),
-    ear: box(0.12, 0.12, 0.04),
-    tail: box(0.06, 0.06, 0.14),
-    tusk: box(0.04, 0.1, 0.04),
-    tuskTip: box(0.035, 0.05, 0.035),
-  };
-  const headZ = -BODY_LEN / 2 - 0.1;
-  const headY = BODY_Y + 0.12;
-  const front = headZ - 0.18;
-  /** @type {Part[]} */
-  const skinParts = [
-    { geo: bodyGeo, x: 0, y: BODY_Y, z: 0.05 },
-    { geo: geos.head, x: 0, y: headY, z: headZ },
-    { geo: geos.tail, x: 0, y: BODY_Y + 0.12, z: BODY_LEN / 2 + 0.1, rx: -0.6 },
-  ];
-  /** @type {Part[]} */
-  const featureParts = [
-    { geo: geos.snout, x: 0, y: headY - 0.06, z: front - 0.04, color: SNOUT },
-    { geo: geos.nostril, x: -0.05, y: headY - 0.06, z: front - 0.085, color: DARK },
-    { geo: geos.nostril, x: 0.05, y: headY - 0.06, z: front - 0.085, color: DARK },
-  ];
-  for (const s of [-1, 1]) {
-    featureParts.push({ geo: geos.eye, x: s * 0.12, y: headY + 0.07, z: front - 0.005, color: WHITE });
-    featureParts.push({ geo: geos.pupil, x: s * 0.135, y: headY + 0.065, z: front - 0.015, color: DARK });
-    skinParts.push({ geo: geos.ear, x: s * 0.15, y: headY + 0.24, z: headZ + 0.05, rz: s * 0.35 });
-  }
-  /** @type {Part[]} §88: the boar's tusks */
-  const tuskParts = [];
-  for (const s of [-1, 1]) {
-    tuskParts.push({ geo: geos.tusk, x: s * 0.13, y: headY - 0.04, z: front - 0.02, rz: -s * 0.25, color: TUSK });
-    tuskParts.push({ geo: geos.tuskTip, x: s * 0.15, y: headY + 0.03, z: front - 0.02, rz: -s * 0.6, color: TUSK });
-  }
-  const skinGeo = mergeParts(skinParts);
-  const featureGeo = mergeParts(featureParts);
-  const tuskGeo = mergeParts(tuskParts);
-  bodyGeo.dispose();
-  for (const g of Object.values(geos)) g.dispose();
-  // Leg geometry pivots at its top so a rotation about x swings it like a hip.
-  const legGeo = box(0.13, LEG_H, 0.13);
-  legGeo.translate(0, -LEG_H / 2, 0);
-
+  const A = faunaAssets();
+  const K = A.models.kinds.pig;
   const mats = {
-    skin: new THREE.MeshLambertMaterial({ color: PINK, emissive: 0x000000 }),
-    hurt: new THREE.MeshLambertMaterial({ color: PINK, emissive: HURT, emissiveIntensity: HURT_INTENSITY }),
-    features: new THREE.MeshLambertMaterial({ color: WHITE, vertexColors: true }),
+    skin: faunaMaterial(A.texture, 0x000000),
+    hurt: faunaMaterial(A.texture, HURT, HURT_INTENSITY),
   };
   const group = new THREE.Group();
   group.name = 'pigs';
   const instanced = (geo, mat, n, name) => {
-    const mesh = new THREE.InstancedMesh(geo, mat, n);
+    const mesh = new THREE.InstancedMesh(A.buffer(geo), mat, n);
     mesh.name = name;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    mesh.frustumCulled = false; // instances move every frame; ~330 vertices a pig are cheaper than re-bounding
+    mesh.frustumCulled = false; // instances move every frame; cheaper than re-bounding
     mesh.count = 0;
     mesh.visible = false;
     group.add(mesh);
     return mesh;
   };
   const meshes = {
-    skin: instanced(skinGeo, mats.skin, capacity, 'pig-skin'),
-    skinHurt: instanced(skinGeo, mats.hurt, capacity, 'pig-skin-hurt'),
-    features: instanced(featureGeo, mats.features, capacity, 'pig-features'),
-    legs: instanced(legGeo, mats.skin, capacity * 4, 'pig-legs'),
-    legsHurt: instanced(legGeo, mats.hurt, capacity * 4, 'pig-legs-hurt'),
-    tusks: instanced(tuskGeo, mats.features, capacity, 'pig-tusks'),
+    skin: instanced(K.parts.body, mats.skin, capacity, 'pig-skin'),
+    head: instanced(K.parts.head, mats.skin, capacity, 'pig-head'),
+    legs: instanced(K.parts.legs, mats.skin, capacity * 4, 'pig-legs'),
+    skinHurt: instanced(K.parts.body, mats.hurt, capacity, 'pig-skin-hurt'),
+    headHurt: instanced(K.parts.head, mats.hurt, capacity, 'pig-head-hurt'),
+    legsHurt: instanced(K.parts.legs, mats.hurt, capacity * 4, 'pig-legs-hurt'),
+    tusks: instanced(K.parts.tusks, mats.skin, capacity, 'pig-tusks'),
+    tag: instanced(K.parts.tag, mats.skin, capacity, 'pig-tag'),
+    snare: instanced(A.models.snare, mats.skin, capacity, 'pig-snare'),
   };
   scene.add(group);
+  const pos = K.parts.body.positions;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 1; i < pos.length; i += 3) {
+    lo = Math.min(lo, pos[i]);
+    hi = Math.max(hi, pos[i]);
+  }
+  const trunkY = (lo + hi) / 2;
+  const H = /** @type {NonNullable<typeof RIG.head>} */ (RIG.head);
 
   const pigM = new THREE.Matrix4();
+  const partM = new THREE.Matrix4();
   const legM = new THREE.Matrix4();
   const hipM = new THREE.Matrix4();
   const rot = new THREE.Matrix4();
+  const tmp = new THREE.Matrix4();
+  const loopM = new THREE.Matrix4();
   const at = new THREE.Vector3();
   const scl = new THREE.Vector3(1, 1, 1);
   const yawQ = new THREE.Quaternion();
   const UP = new THREE.Vector3(0, 1, 0);
+  const ease = headEaser();
   let drawn = 0;
+  let lastT = -1;
 
-  /** @param {Pig[]} pigs */
-  function sync(pigs) {
+  /** @param {Pig[]} pigs @param {number} [dt] */
+  function sync(pigs, dt) {
+    let step = dt;
+    if (typeof step !== 'number' || !Number.isFinite(step)) {
+      const now = typeof performance !== 'undefined' ? performance.now() / 1000 : 0;
+      step = lastT < 0 ? 1 : Math.min(0.25, Math.max(0, now - lastT));
+      lastT = now;
+    }
+    const k = 1 - Math.exp(-HEAD_RATE * Math.max(0, step));
     const n = Math.min(pigs.length, capacity);
     let skins = 0;
     let hurts = 0;
     let tusks = 0;
+    let tags = 0;
+    let snares = 0;
     for (let i = 0; i < n; i++) {
       const pig = pigs[i];
       const young = pigSizeOf(pig);
+      const youth = youthOf(pig);
       const s = renderScaleOf(pig) * young;
       pigM.compose(at.set(pig.x, pig.y, pig.z), yawQ.setFromAxisAngle(UP, pig.yaw + renderSpinOf(pig)), scl.set(s, s, s));
-      meshes.features.setMatrixAt(i, pigM);
-      if (/** @type {*} */ (pig).sex === 'm' && young >= 1) meshes.tusks.setMatrixAt(tusks++, pigM);
       const hurt = pig.hurt > 0;
       const body = hurt ? meshes.skinHurt : meshes.skin;
+      const head = hurt ? meshes.headHurt : meshes.head;
       const legs = hurt ? meshes.legsHurt : meshes.legs;
       const slot = hurt ? hurts++ : skins++;
-      body.setMatrixAt(slot, pigM);
+      if (youth > 0) {
+        const [rx, ry, rz] = YOUNG_ROUND;
+        partM.copy(pigM).multiply(tmp.makeTranslation(0, trunkY, 0))
+          .multiply(rot.makeScale(1 + (rx - 1) * youth, 1 + (ry - 1) * youth, 1 + (rz - 1) * youth)).multiply(tmp.makeTranslation(0, -trunkY, 0));
+        body.setMatrixAt(slot, partM);
+      } else {
+        body.setMatrixAt(slot, pigM);
+      }
+      // the head roots while it stands, and is larger on a piglet
+      const pitch = ease(pig, headPitch(pig, RIG), k);
+      const hs = 1 + YOUNG_HEAD * youth;
+      partM.copy(pigM).multiply(tmp.makeTranslation(H.pivot[0], H.pivot[1], H.pivot[2])).multiply(rot.makeRotationX(pitch));
+      if (hs !== 1) partM.multiply(rot.makeScale(hs, hs, hs));
+      partM.multiply(tmp.makeTranslation(-H.pivot[0], -H.pivot[1], -H.pivot[2]));
+      head.setMatrixAt(slot, partM);
+      if (/** @type {*} */ (pig).sex === 'm' && young >= 1) meshes.tusks.setMatrixAt(tusks++, partM);
+      if (/** @type {*} */ (pig).tamed) meshes.tag.setMatrixAt(tags++, partM);
       const swing = Math.sin(pig.walkPhase) * LEG_SWING;
-      for (let k = 0; k < 4; k++) {
-        hipM.makeTranslation(LEG_HIPS[k][0], LEG_H, LEG_HIPS[k][1]);
-        legM.multiplyMatrices(pigM, hipM).multiply(rot.makeRotationX(LEG_SIGN[k] * swing));
-        legs.setMatrixAt(slot * 4 + k, legM);
+      for (let leg = 0; leg < 4; leg++) {
+        hipM.makeTranslation(LEG_HIPS[leg][0], LEG_H, LEG_HIPS[leg][1]);
+        legM.multiplyMatrices(pigM, hipM).multiply(rot.makeRotationX(LEG_SIGN[leg] * swing));
+        legs.setMatrixAt(slot * 4 + leg, legM);
+        // a snared pig: the cord's loop round its left hind trotter
+        if (leg === 2 && /** @type {*} */ (pig).trapped > 0) {
+          meshes.snare.setMatrixAt(snares++, tmp.copy(legM).multiply(rot.makeTranslation(0, -LEG_H + 0.05, 0)).multiply(loopM.makeScale(RIG.legW, RIG.legW, RIG.legW)));
+        }
       }
     }
     const setCount = (mesh, count) => {
@@ -243,23 +186,23 @@ export function createPigRenderer(scene, capacity = PIG_MAX) {
       mesh.visible = count > 0;
       if (count > 0) mesh.instanceMatrix.needsUpdate = true;
     };
-    setCount(meshes.features, n);
     setCount(meshes.skin, skins);
+    setCount(meshes.head, skins);
     setCount(meshes.skinHurt, hurts);
+    setCount(meshes.headHurt, hurts);
     setCount(meshes.legs, skins * 4);
     setCount(meshes.legsHurt, hurts * 4);
     setCount(meshes.tusks, tusks);
+    setCount(meshes.tag, tags);
+    setCount(meshes.snare, snares);
     drawn = n;
   }
 
   function dispose() {
     scene.remove(group);
     for (const mesh of Object.values(meshes)) mesh.dispose();
-    skinGeo.dispose();
-    featureGeo.dispose();
-    tuskGeo.dispose();
-    legGeo.dispose();
     for (const mat of Object.values(mats)) mat.dispose();
+    // the atlas and the geometries are shared with the animals (faunaAssets)
     drawn = 0;
   }
 

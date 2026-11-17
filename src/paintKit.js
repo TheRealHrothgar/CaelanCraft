@@ -599,6 +599,52 @@ export class Painter {
     return this;
   }
 
+  /**
+   * Feathers: staggered rows of rounded feather tips pointing down the rectangle (toward its last row), each with a dark
+   * shaft and a pale fringe at its tip, the rows nearer the top laid over the ones below (as feathers lie, tips toward the
+   * tail). @param {number[]} ramp [light, mid, dark] @param {{ size?: number, edge?: number, vary?: number }} [o]
+   */
+  feathers(ramp, { size = 6, edge = ramp[0], vary = 0.35 } = {}) {
+    this.fill(ramp[2]);
+    const rnd = makeRng(this.seed + 7);
+    const sx = size * 0.92;
+    const sy = size * 0.72;
+    const rows = Math.ceil(this.h / sy) + 2;
+    const cols = Math.ceil(this.w / sx) + 2;
+    // the tail end first, so each row toward the head lies over the base of the row behind it
+    for (let gy = rows; gy >= -1; gy--) {
+      for (let gx = -1; gx <= cols; gx++) {
+        const x = (gx + (gy & 1 ? 0.5 : 0)) * sx + (rnd() - 0.5) * size * 0.18;
+        const y = gy * sy + (rnd() - 0.5) * size * 0.12;
+        const c = mix(ramp[1], rnd() < 0.5 ? ramp[0] : ramp[2], rnd() * vary);
+        this.ellipse(x + 0.4, y + size * 0.18, size * 0.56, size * 0.64, shade(c, 0.72), 0.85);
+        this.ellipse(x, y, size * 0.5, size * 0.58, c, 1);
+        this.line(x, y - size * 0.55, x, y + size * 0.32, Math.max(0.3, size * 0.05), shade(c, 0.68), 0.55);
+        this.arc(x, y + size * 0.02, size * 0.44, 0.12 * Math.PI, 0.88 * Math.PI, Math.max(0.35, size * 0.07), edge, 0.7, size * 0.52);
+      }
+    }
+    return this;
+  }
+
+  /**
+   * Scales: small overlapping arcs in staggered rows (a fish), each lit along its rim with a darker crescent under it.
+   * @param {number[]} ramp [light, mid, dark] @param {{ size?: number }} [o]
+   */
+  scales(ramp, { size = 4 } = {}) {
+    const rnd = makeRng(this.seed + 13);
+    const sx = size;
+    const sy = size * 0.62;
+    for (let gy = Math.ceil(this.h / sy) + 1; gy >= -1; gy--) {
+      for (let gx = -1; gx <= Math.ceil(this.w / sx) + 1; gx++) {
+        const x = (gx + (gy & 1 ? 0.5 : 0)) * sx;
+        const y = gy * sy;
+        this.arc(x, y, size * 0.5, 0.1 * Math.PI, 0.9 * Math.PI, Math.max(0.3, size * 0.08), ramp[2], 0.45, size * 0.42);
+        this.arc(x, y - size * 0.1, size * 0.46, 0.15 * Math.PI, 0.85 * Math.PI, Math.max(0.3, size * 0.06), ramp[0], 0.35 + 0.25 * rnd(), size * 0.36);
+      }
+    }
+    return this;
+  }
+
   /** Grass seen from above: blades of the ramp's greens over a darker ground. @param {number[]} ramp [light, mid, dark] */
   grass(ramp) {
     this.fill(ramp[2]);

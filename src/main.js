@@ -85,7 +85,7 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire, RAIN_DOUSE_HINT, RAIN_DOUSE_LINE } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Animals, SPECIES, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE, scentOf } from './animals.js';
+import { Animals, SPECIES, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE, FISH_UNDER, scentOf } from './animals.js';
 import { createAnimalRenderer } from './animalRenderer.js';
 import { Fauna, animalName, youngDrops } from './populations.js';
 import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, strikeDamage, standLight, SOUND_ROAR } from './zombies.js';
@@ -164,7 +164,7 @@ import { HANDBOOK_KEY, HANDBOOK_CHAT_LINE, buildChapters, ensureHandbook } from 
 import { createHandbookUI } from './handbookUI.js';
 import {
   parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest, circuitSceneWrites,
-  CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP, WIND_SCENE,
+  CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP, WIND_SCENE, ANIMAL_SCENES,
 } from './diagnostics.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -2294,6 +2294,11 @@ export function boot(win, doc) {
   let sceneNamed = null;
   /** @type {{ q: number, y: number, r: number, at: number }|null} */
   let sceneCharge = null;
+  /**
+   * §69.1 ?scene=animals|animal-variants: the creatures held where they were put, every frame (a screenshot aid)
+   * @type {Array<{ body: *, x: number, y: number, z: number, yaw: number, fields: Record<string, *> }>|null}
+   */
+  let sceneHold = null;
   /** the screen flash (§2.4.6, hud.flashStep) and its colour */
   const flashState = createFlashState();
   /** @type {'white'|'void'} */
@@ -6706,6 +6711,7 @@ export function boot(win, doc) {
       return { ok: res.ok, message: res.message, named: sceneNamed };
     }
     if (name === 'wind' || name === 'wind-rain') return buildWindScene(fx, fz, feet, name === 'wind-rain');
+    if (name === 'animals' || name === 'animal-variants') return buildAnimalScene(fx, fz, feet, name);
     if (name !== 'circuits') return { ok: false, message: `unknown scene "${name}"` };
     const [qa, ra] = worldToHex(player.x + fx * 10, player.z + fz * 10);
     const q0 = qa - 5;
@@ -6766,6 +6772,70 @@ export function boot(win, doc) {
     }
     sceneNamed = named;
     return { ok: true, message: `the wind scene: a campfire and two pennants ahead${rain ? ', in the rain' : ''}`, named };
+  }
+
+  /**
+   * §69.1 `?scene=animals|animal-variants`: each creature of ANIMAL_SCENES on grass ahead (its column cleared above the
+   * player's feet level and filled under it; a fish in a dug cell of water, a snared one on a sprung snare), facing the
+   * player turned as given, and held there every frame (holdScene) — a screenshot aid for the models.
+   * @param {number} fx @param {number} fz  the way the player looks @param {number} feet
+   * @param {'animals'|'animal-variants'} name
+   * @returns {{ ok: boolean, message: string }}
+   */
+  function buildAnimalScene(fx, fz, feet, name) {
+    const w = /** @type {World} */ (world);
+    sceneHold = [];
+    const face = controls.yaw + Math.PI; // an animal with this yaw faces the player
+    // a flat meadow under the lineup and round the player: grass at the feet level, open air above it
+    const meadow = new Set();
+    for (let a = -2; a <= 13; a += 0.4) {
+      for (let b = -10; b <= 10; b += 0.4) {
+        const [q, r] = worldToHex(player.x + fx * a - fz * b, player.z + fz * a + fx * b);
+        const key = `${q},${r}`;
+        if (meadow.has(key)) continue;
+        meadow.add(key);
+        for (let y = feet; y <= feet + 8 && y < WORLD_HEIGHT; y++) if (w.getBlock(q, y, r) !== BLOCK.AIR) w.setBlock(q, y, r, BLOCK.AIR);
+        for (let y = feet - 2; y >= Math.max(1, feet - 10); y--) {
+          if (isSolid(w.getBlock(q, y, r))) break;
+          w.setBlock(q, y, r, BLOCK.DIRT);
+        }
+        w.setBlock(q, feet - 1, r, BLOCK.GRASS_BLOCK);
+      }
+    }
+    for (const [kind, ahead, right, turn, fields] of ANIMAL_SCENES[name]) {
+      const x = player.x + fx * ahead - fz * right;
+      const z = player.z + fz * ahead + fx * right;
+      const [q, r] = worldToHex(x, z);
+      if (kind === 'fish') {
+        w.setBlock(q, feet - 2, r, BLOCK.DIRT);
+        w.setBlock(q, feet - 1, r, BLOCK.WATER);
+      }
+      if (fields.trapped) w.setBlock(q, feet, r, BLOCK.SNARE_SPRUNG);
+      const yaw = face + turn;
+      const sex = fields.sex === 'm' ? 'm' : 'f';
+      const body = kind === 'pig' ? pigs.spawn(x, feet, z, yaw, sex) : animals.spawn(kind, x, kind === 'fish' ? feet - 1 + 0.875 - FISH_UNDER : feet, z, yaw, sex);
+      if (!body) continue;
+      sceneHold.push({ body, x: body.x, y: body.y, z: body.z, yaw, fields: { mode: 'walk', ...fields, ...(fields.trapped ? { trapCell: [q, feet, r], trapT: 0 } : {}) } });
+    }
+    return { ok: true, message: `the ${name === 'animals' ? 'animals' : 'animal variants'} scene: ${sceneHold.length} creatures ahead` };
+  }
+
+  /** §69.1: put the lineup back where it was put, turned as it was, its fields as given, its legs straight. */
+  function holdScene() {
+    for (const h of /** @type {NonNullable<typeof sceneHold>} */ (sceneHold)) {
+      const b = h.body;
+      b.x = h.x;
+      b.y = h.y;
+      b.z = h.z;
+      b.vx = 0;
+      b.vy = 0;
+      b.vz = 0;
+      b.yaw = h.yaw;
+      b.targetYaw = h.yaw;
+      b.timer = 99;
+      if (!h.fields.trapped) b.walkPhase = Math.PI;
+      Object.assign(b, h.fields);
+    }
   }
 
   function enterPlaying() {
@@ -8111,6 +8181,7 @@ export function boot(win, doc) {
       stepFauna(dt); // §88: the live and the dormant animals, births, wanderers
       stepPigs(dt);
       stepAnimals(dt);
+      if (sceneHold) holdScene(); // §69.1: the lineup stays put for its screenshot
       stepZombies(dt);
       stepWatcher(dt);
       stepBlockPhysics(dt);

@@ -18,6 +18,7 @@ import {
   TRAP_HOLD_S, TRAP_IMMUNE_S, ANIMAL_HURT_S, ANIMAL_KNOCKBACK,
 } from '../../src/animals.js';
 import { createAnimalRenderer, bodyVariant, legCount, MODELS } from '../../src/animalRenderer.js';
+import { animalModels, variantBounds } from '../../src/animalModels.js';
 import { Pigs, seededRng } from '../../src/pigs.js';
 import { createPlayer, stepPlayer } from '../../src/physics.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
@@ -992,16 +993,43 @@ describe('fauna — the models', () => {
     mesh.getMatrixAt(i, out);
     return out;
   };
-  /** the highest and the foremost (−z) point of a model's boxes */
-  const reach = (boxes) => ({ top: Math.max(...boxes.map((b) => b[4] + b[1] / 2)), front: Math.min(...boxes.map((b) => b[5] - b[2] / 2)),
-    back: Math.max(...boxes.map((b) => b[5] + b[2] / 2)), wide: Math.max(...boxes.map((b) => Math.abs(b[3]) + b[0] / 2)) * 2 });
+  const models = animalModels();
+  /** the highest, the foremost (−z), the hindmost and the widest reach of a kind's trunk and head (§69.1) */
+  const reach = (kind, variant = 'body') => {
+    const b = variantBounds(models, kind, variant);
+    return { top: b.max[1], low: b.min[1], front: b.min[2], back: b.max[2], wide: 2 * Math.max(-b.min[0], b.max[0]) };
+  };
+  /** a part's width (x), height (y) and length (z) */
+  const size = (kind, part) => {
+    const g = models.kinds[kind].parts[part];
+    const lo = [Infinity, Infinity, Infinity];
+    const hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < g.positions.length; i += 3) for (let a = 0; a < 3; a++) {
+      lo[a] = Math.min(lo[a], g.positions[i + a]);
+      hi[a] = Math.max(hi[a], g.positions[i + a]);
+    }
+    return [0, 1, 2].map((a) => hi[a] - lo[a]);
+  };
+  /** the mean colour (0..255 rgb) the atlas paints a part with, over its vertices' uvs */
+  const meanColour = (kind, part) => {
+    const g = models.kinds[kind].parts[part];
+    const { width: w, height: h, data } = models.image;
+    const sum = [0, 0, 0];
+    const n = g.uvs.length / 2;
+    for (let v = 0; v < n; v++) {
+      const x = Math.min(w - 1, Math.floor(g.uvs[v * 2] * w));
+      const y = Math.min(h - 1, Math.floor(g.uvs[v * 2 + 1] * h));
+      for (let c = 0; c < 3; c++) sum[c] += data[(y * w + x) * 4 + c] / n;
+    }
+    return sum;
+  };
 
-  it('one body each, legs by kind (four, a bird\'s two, a fish\'s none), a stag on the antlered body; hurt on the red twins', () => {
+  it('one trunk and one head each, legs by kind (four, a bird\'s two, a fish\'s none), a stag\'s head antlered; hurt on the red twins', () => {
     const scene = new THREE.Scene();
     const r = createAnimalRenderer(scene);
     r.sync([mk('deer'), mk('deer', { sex: 'm' }), mk('rabbit'), mk('pheasant'), mk('turkey', { hurt: 0.3 }), mk('bear'), mk('fish'), mk('fish')]);
     expect(r.count()).toBe(8);
-    expect([by(r, 'deer-body').count, by(r, 'deer-male').count, by(r, 'deer-legs').count]).toEqual([1, 1, 8]);
+    expect([by(r, 'deer-body').count, by(r, 'deer-head').count, by(r, 'deer-head-male').count, by(r, 'deer-legs').count]).toEqual([2, 1, 1, 8]);
     expect([by(r, 'rabbit-body').count, by(r, 'rabbit-legs').count]).toEqual([1, 4]);
     expect([by(r, 'pheasant-body').count, by(r, 'pheasant-legs').count, by(r, 'pheasant-wings').count]).toEqual([1, 2, 0]); // wings only in the air
     expect([by(r, 'turkey-body-hurt').count, by(r, 'turkey-legs-hurt').count, by(r, 'turkey-body').count]).toEqual([1, 2, 0]);
@@ -1015,42 +1043,47 @@ describe('fauna — the models', () => {
   });
 
   it('each is told from the others by one bold feature: antlers, ears, a long tail, a fan, bulk', () => {
-    const doe = reach(MODELS.deer.body);
-    const stag = reach(MODELS.deer.male); // §88: the grown male's body
+    const doe = reach('deer');
+    const stag = reach('deer', 'male'); // §88: the grown male's antlered head
     expect(stag.top).toBeGreaterThan(doe.top + 0.3); // antlers stand well above a doe's ears …
     expect(stag.wide).toBeGreaterThan(doe.wide + 0.15); // … and spread wider than its body
-    const rabbit = reach(MODELS.rabbit.body);
-    const rabbitBack = Math.max(...MODELS.rabbit.body.filter((b) => b[0] >= 0.16).map((b) => b[4] + b[1] / 2));
+    const rabbit = reach('rabbit');
+    const rabbitBack = variantBounds({ ...models, kinds: { rabbit: { ...models.kinds.rabbit, variants: { body: ['body', null] } } } }, 'rabbit').max[1];
     expect(rabbit.top).toBeGreaterThan(rabbitBack + 0.2); // ears stand a hand above its head and back
     // §88: the cock pheasant's long tail and the tom turkey's fan (the hens have neither)
-    const pheasant = reach(MODELS.pheasant.male);
+    const pheasant = reach('pheasant', 'male');
     expect(pheasant.back).toBeGreaterThan(-pheasant.front * 2); // the tail is longer than the rest of the bird
-    const turkey = reach(MODELS.turkey.male);
+    const turkey = reach('turkey', 'male');
     expect(turkey.wide).toBeGreaterThan(0.9); // the fan, far wider than the body in front of it
-    expect(turkey.wide).toBeGreaterThan(2.5 * MODELS.turkey.male[0][0]);
-    const hen = reach(MODELS.pheasant.body);
+    expect(turkey.wide).toBeGreaterThan(2.5 * size('turkey', 'body')[0]);
+    const hen = reach('pheasant');
     expect(hen.back).toBeLessThan(pheasant.back - 0.25);
-    expect(reach(MODELS.turkey.body).wide).toBeLessThan(turkey.wide / 2);
+    expect(reach('turkey').wide).toBeLessThan(turkey.wide / 2);
     expect(turkey.wide).toBeGreaterThan(pheasant.wide * 2.5);
     expect(turkey.top).toBeGreaterThan(pheasant.top * 1.7);
-    const bear = reach(MODELS.bear.body);
-    expect(MODELS.bear.body[0][0]).toBeGreaterThanOrEqual(2 * MODELS.deer.body[0][0]); // a trunk twice a deer's width
-    for (const k of [0, 1, 2]) expect(MODELS.bear.body[0][k], `box side ${k}`).toBeGreaterThan(MODELS.cow.body[0][k] * 1.2); // bigger than a cow all round
+    const bear = reach('bear');
+    expect(size('bear', 'body')[0]).toBeGreaterThanOrEqual(2 * size('deer', 'body')[0]); // a trunk twice a deer's width
+    for (const k of [0, 2]) expect(size('bear', 'body')[k], `side ${k}`).toBeGreaterThan(size('cow', 'body')[k] * 1.2); // wider and longer than a cow
+    expect(size('bear', 'body')[1]).toBeGreaterThan(size('cow', 'body')[1]); // and deeper
     expect(MODELS.bear.legW).toBeGreaterThan(2 * MODELS.deer.legW);
     expect(bear.top).toBeLessThan(doe.top); // low and heavy on all fours
     // a fish's body rides under the water's surface, but its back fin stands out of it: that is how one is spotted
-    const fishTop = reach(MODELS.fish.body).top;
+    const fishTop = reach('fish').top;
     expect(SPECIES.fish.height).toBeLessThan(FISH_UNDER);
     expect(fishTop).toBeGreaterThan(FISH_UNDER + 0.05);
-    // no two of the new kinds share a main colour
-    const main = NEW_KINDS.map((k) => MODELS[k].body[0][6]);
-    expect(new Set(main).size).toBe(NEW_KINDS.length);
+    // no two of the new kinds share a main colour: their coats as the atlas paints them stand apart
+    const main = NEW_KINDS.map((k) => meanColour(k, 'body'));
+    for (let i = 0; i < main.length; i++) {
+      for (let j = i + 1; j < main.length; j++) {
+        const d = Math.hypot(main[i][0] - main[j][0], main[i][1] - main[j][1], main[i][2] - main[j][2]);
+        expect(d, `${NEW_KINDS[i]} / ${NEW_KINDS[j]}`).toBeGreaterThan(12);
+      }
+    }
     // the new models stand on the ground and are about as tall as their bodies (as the old ones are)
     for (const kind of NEW_KINDS) {
-      const { top } = reach(MODELS[kind].body);
+      const { top, low } = reach(kind);
       expect(top, kind).toBeGreaterThan(SPECIES[kind].height - 0.1);
       expect(top, kind).toBeLessThan(SPECIES[kind].height + 0.6);
-      const low = Math.min(...MODELS[kind].body.map((b) => b[4] - b[1] / 2));
       expect(low, kind).toBeGreaterThanOrEqual(0);
     }
   });
@@ -1086,7 +1119,8 @@ describe('fauna — the models', () => {
     const body = by(r, 'bear-body');
     const headMesh = by(r, 'bear-head');
     const legs = by(r, 'bear-legs');
-    const head = new THREE.Vector3(0, 1.12, -0.92); // the head box's centre
+    const hb = variantBounds({ ...models, kinds: { bear: { ...models.kinds.bear, variants: { body: ['head', null] } } } }, 'bear');
+    const head = new THREE.Vector3(0, (hb.min[1] + hb.max[1]) / 2, (hb.min[2] + hb.max[2]) / 2); // the head group's middle
     const headAt = (rear) => {
       r.sync([mk('bear', { rear })]);
       return head.clone().applyMatrix4(mat(headMesh));
@@ -1095,7 +1129,7 @@ describe('fauna — the models', () => {
     const down = headAt(0);
     const half = headAt(0.5);
     const up = headAt(1);
-    expect(down.y).toBeCloseTo(11.12, 5);
+    expect(down.y).toBeCloseTo(10 + head.y, 5);
     expect(half.y).toBeGreaterThan(down.y + 0.3);
     expect(up.y).toBeGreaterThan(down.y + 0.7);
     expect(up.y).toBeGreaterThan(10 + 1.9); // it towers over the player
@@ -1103,8 +1137,9 @@ describe('fauna — the models', () => {
     expect(headMesh.count).toBe(1);
     expect(Math.abs(pitchOf(body))).toBeGreaterThan(1.1);
     expect(Math.abs(pitchOf(headMesh))).toBeLessThan(0.2);
-    expect(MODELS.bear.head.boxes.length).toBeGreaterThan(4);
-    expect(by(r, 'deer-head')).toBeUndefined(); // only the bear has one
+    expect(headMesh.geometry.index.count / 3).toBeGreaterThan(100); // a faceted head, ears and muzzle
+    expect(by(r, 'deer-head')).toBeDefined(); // every kind turns its head (§100) …
+    expect(by(r, 'fish-head')).toBeUndefined(); // … but a fish
     // hips: the two front ones go up with the shoulders, the hind ones stay where they were
     const hipY = (i) => new THREE.Vector3().setFromMatrixPosition(mat(legs, i)).y;
     r.sync([mk('bear', { rear: 0 })]);

@@ -33,10 +33,11 @@ import { isItemPick, normalizePick } from './creativePicks.js';
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
  * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker, 'pack' the Pack & Making screen (Survival), 'tree' the same with its build tree open (§94), 'device' the device panel on a demo Clockwork Timer (v0.10), 'pause' the pause menu
- * @property {'vortex'|'circuits'|'wind'|'wind-rain'|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar
- *   Charge 8 cells ahead 2 s after loading; 'circuits' builds the §4.14 worked examples ahead (readSceneParam,
- *   circuitSceneWrites); §101: 'wind' sets two pennants and a lit campfire ahead (the flags and the smoke in the wind),
- *   'wind-rain' the same in forced rain
+ * @property {'vortex'|'circuits'|'wind'|'wind-rain'|'animals'|'animal-variants'|null} scene  v0.10 (DESIGN-circuits §6.7):
+ *   'vortex' sets off a Collapsar Charge 8 cells ahead 2 s after loading; 'circuits' builds the §4.14 worked examples
+ *   ahead (readSceneParam, circuitSceneWrites); §101: 'wind' sets two pennants and a lit campfire ahead (the flags and
+ *   the smoke in the wind), 'wind-rain' the same in forced rain; §69.1: 'animals' every kind of animal ahead, held
+ *   where they stand, 'animal-variants' the young, the shorn, the tame, the snared and the poses (ANIMAL_SCENES)
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
  * @property {'creative'|'survival'|null} mode  v0.9 (§9.10): the first world's mode with ?autoplay / ?smoke; anything else → null
  * @property {boolean} soundTest     v0.16 (CONTRACTS §82): `?ui=sounds` — main opens the Sound Test as soon as the page has loaded
@@ -119,16 +120,42 @@ function readSoundTestParam(params) {
 }
 
 /**
- * `?scene=vortex|circuits|wind|wind-rain` (case-insensitive), anything else null (DESIGN-circuits §6.7; §101 the wind).
+ * `?scene=vortex|circuits|wind|wind-rain|animals|animal-variants` (case-insensitive), anything else null
+ * (DESIGN-circuits §6.7; §101 the wind; §69.1 the animals).
  * @param {URLSearchParams} params
- * @returns {'vortex'|'circuits'|'wind'|'wind-rain'|null}
+ * @returns {'vortex'|'circuits'|'wind'|'wind-rain'|'animals'|'animal-variants'|null}
  */
 export function readSceneParam(params) {
   const t = readString(params, 'scene');
   if (t === null) return null;
   const v = t.toLowerCase();
-  return v === 'vortex' || v === 'circuits' || v === 'wind' || v === 'wind-rain' ? v : null;
+  return v === 'vortex' || v === 'circuits' || v === 'wind' || v === 'wind-rain' || v === 'animals' || v === 'animal-variants' ? v : null;
 }
+
+/**
+ * §69.1 `?scene=animals` / `?scene=animal-variants` (screenshot aids for the models): each creature as [kind ('pig' for a
+ * pig), cells ahead, cells to the right, how it turns from facing the player (rad), its fields]. Main puts each on
+ * grass at the player's feet level and HOLDS it there every frame (its place, its turn, its mode, the fields, legs
+ * straight), so a headless screenshot catches the whole lineup. A `trapped` one stands on a sprung snare; a fish on a
+ * cell of water dug at its place.
+ * @type {Readonly<Record<'animals'|'animal-variants', ReadonlyArray<readonly [string, number, number, number, Readonly<Record<string, *>>]>>>}
+ */
+export const ANIMAL_SCENES = Object.freeze(/** @type {*} */ ({
+  animals: Object.freeze([
+    ['cow', 9, -6.6, 0.7, {}], ['cow', 9, -4.1, 0.7, { sex: 'm' }], ['horse', 10, -1.5, 0.7, {}], ['deer', 9, 1.0, 0.7, {}],
+    ['deer', 9.5, 3.2, 0.7, { sex: 'm' }], ['bear', 10, 6.2, 0.7, {}],
+    ['sheep', 6, -5.6, 0.6, {}], ['sheep', 6, -3.8, 0.6, { sex: 'm' }], ['wolf', 6, -2.0, 0.6, {}], ['pig', 6, -0.3, 0.6, {}],
+    ['pig', 6, 1.4, 0.6, { sex: 'm' }], ['turkey', 6, 3.1, 0.6, {}], ['turkey', 6.2, 4.7, 0.6, { sex: 'm' }],
+    ['rabbit', 3.6, -1.6, 0.6, {}], ['pheasant', 3.6, -0.4, 0.6, {}], ['pheasant', 3.8, 0.8, 0.6, { sex: 'm' }], ['fish', 3.4, 2.2, 0.9, {}],
+  ].map((e) => Object.freeze(e))),
+  'animal-variants': Object.freeze([
+    ['cow', 10.5, -6.4, 0.7, {}], ['cow', 9.6, -4.9, 0.3, { size: 0.55 }], ['deer', 10.5, -3.0, 0.7, {}], ['deer', 9.6, -1.8, 0.3, { size: 0.55 }],
+    ['horse', 11, 0.6, 0.7, { tamed: true }], ['bear', 11.5, 3.6, 0.0, { mode: 'warn', rear: 1 }], ['cow', 10.5, 6.4, 0.7, { tamed: true }],
+    ['sheep', 6.5, -6.0, 0.6, {}], ['sheep', 6.0, -4.9, 0.3, { size: 0.55 }], ['sheep', 6.5, -3.5, 0.6, { shorn: 300 }], ['sheep', 6.5, -1.9, 0.6, { shorn: 300, sex: 'm' }],
+    ['wolf', 6.5, -0.2, 0.6, { tamed: true }], ['sheep', 6.5, 1.4, 0.6, { tamed: true }], ['deer', 7, 3.3, 1.2, { mode: 'idle' }], ['deer', 7, 5.4, 0.0, { mode: 'watch', suspicion: 0.6 }],
+    ['pig', 4, -1.9, 0.6, { tamed: true }], ['pig', 3.8, -0.6, 0.4, { size: 0.55 }], ['pig', 4, 0.8, 0.6, { trapped: 60 }],
+  ].map((e) => Object.freeze(e))),
+}));
 
 /**
  * §101 `?scene=wind`: where its pieces stand, as [name, cells ahead, cells to the right] from the player: a lit campfire

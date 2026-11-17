@@ -12,7 +12,7 @@ function paintAll(seed) {
   const img = createImage(128, 96);
   const p = new Painter(img, [16, 16, 96, 64], seed);
   p.cloth(RAMP).denim(RAMP).knit(RAMP).plaid(RAMP).skin(RAMP).fur(RAMP, { dir: [0.3, 1] }).wool(RAMP).leaves(RAMP).bark(RAMP)
-    .hair(RAMP, { sheen: 0.3 }).stone(RAMP).grass(RAMP);
+    .hair(RAMP, { sheen: 0.3 }).stone(RAMP).grass(RAMP).feathers(RAMP, { size: 6 }).scales(RAMP, { size: 4 });
   p.shadeV(1.1, 0.8).ao({ top: 0.3, bottom: 0.4, left: 0.2, right: 0.2 }).mottle(0.1);
   p.ellipse(20, 20, 6, 4, 0xffffff, 1, 0.4).line(0, 0, 95, 63, 1.2, 0x000000).arc(50, 30, 10, 0, Math.PI, 0.8, 0x223344)
     .glow(70, 40, 12, 0xff8899, 0.6).stitches(5, 50, 90, 50, 0xeeeeee).seam(10, 0, 10, 63, RAMP).hem(56, 5, RAMP)
@@ -103,6 +103,27 @@ describe('the painter', () => {
     expect(at(1, 1)).toBe(0);
     const rim = [...Array(32).keys()].map((x) => at(x, 16)).filter((v) => v > 0 && v < 255);
     expect(rim.length).toBeGreaterThan(0);
+  });
+});
+
+describe('feathers and scales (§69.1)', () => {
+  it('feathers cover the rectangle in staggered tips, each with a pale fringe; scales draw rims over what is there', () => {
+    const img = createImage(48, 48);
+    const p = new Painter(img, [0, 0, 48, 48], 3);
+    p.feathers([0xf0e0c0, 0x9a7a52, 0x4a3a28], { size: 8, edge: 0xffffff });
+    let opaque = 0;
+    const tones = new Set();
+    for (let i = 0; i < img.data.length; i += 4) {
+      if (img.data[i + 3] === 255) opaque++;
+      tones.add(img.data[i] >> 4);
+    }
+    expect(opaque).toBe(48 * 48); // every pixel painted
+    expect(tones.size).toBeGreaterThan(5); // shafts, fringes, shadows: not a flat fill
+    const before = img.data.slice();
+    p.scales([0xffffff, 0x808080, 0x000000], { size: 4 });
+    let changed = 0;
+    for (let i = 0; i < img.data.length; i++) if (img.data[i] !== before[i]) changed++;
+    expect(changed).toBeGreaterThan(img.data.length * 0.1);
   });
 });
 

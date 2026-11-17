@@ -15,6 +15,7 @@ import { Pigs, seededRng } from '../../src/pigs.js';
 import { createPlayer, shouldPaddle, settleFloat, FLOAT_POINT } from '../../src/physics.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { createAnimalRenderer, bodyVariant, MODELS } from '../../src/animalRenderer.js';
+import { animalModels, variantBounds } from '../../src/animalModels.js';
 import * as THREE from 'three';
 
 const B = BLOCK;
@@ -512,8 +513,8 @@ describe('pigs are wary too, and can be snared (CONTRACTS §69)', () => {
   });
 });
 
-describe('animalRenderer — chunky box models', () => {
-  it('draws each animal as one body (or its variant) and four legs; a hurt one on the red twins', () => {
+describe('animalRenderer — hex-faceted models (§69.1)', () => {
+  it('draws each animal as one trunk (or its variant), a head and four legs; a hurt one on the red twins', () => {
     const scene = new THREE.Scene();
     const r = createAnimalRenderer(scene);
     const by = (name) => r.group.children.find((m) => m.name === name);
@@ -521,21 +522,26 @@ describe('animalRenderer — chunky box models', () => {
     r.sync([mk('cow'), mk('sheep'), mk('sheep', { shorn: 9 }), mk('horse', { tamed: true }), mk('wolf', { hurt: 0.2 }), mk('wolf', { tamed: true })]);
     expect(r.count()).toBe(6);
     expect(by('cow-body').count).toBe(1);
+    expect(by('cow-head').count).toBe(1);
     expect(by('cow-legs').count).toBe(4);
     expect(by('sheep-body').count).toBe(1);
     expect(by('sheep-alt').count).toBe(1); // shorn
+    expect(by('sheep-head-alt').count).toBe(1); // its neck shorn too
     expect(by('sheep-legs').count).toBe(8);
     expect(by('horse-alt').count).toBe(1); // saddled
+    expect(by('horse-head-alt').count).toBe(1); // bridled
     expect(by('horse-body').count).toBe(0);
     expect(by('wolf-body-hurt').count).toBe(1);
-    expect(by('wolf-alt').count).toBe(1); // collared
+    expect(by('wolf-body').count).toBe(1);
+    expect(by('wolf-tag').count).toBe(1); // collared
     expect(by('wolf-legs-hurt').count).toBe(4);
-    // the legs stand on the ground, and each model is about as tall as its body
+    // the trunk and head stand on the ground, and each model is about as tall as its body
+    const models = animalModels();
     for (const kind of ANIMAL_KINDS) {
-      const boxes = MODELS[kind].body;
-      const top = Math.max(...boxes.map((b) => b[4] + b[1] / 2));
-      expect(top, kind).toBeGreaterThan(SPECIES[kind].height - 0.1);
-      expect(top, kind).toBeLessThan(SPECIES[kind].height + 0.6);
+      const b = variantBounds(models, kind);
+      expect(b.max[1], kind).toBeGreaterThan(SPECIES[kind].height - 0.1);
+      expect(b.max[1], kind).toBeLessThan(SPECIES[kind].height + 0.6);
+      expect(b.min[1], kind).toBeGreaterThanOrEqual(0);
     }
     r.sync([]);
     expect(r.group.children.every((m) => m.count === 0 && !m.visible)).toBe(true);
