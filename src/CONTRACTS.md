@@ -6998,7 +6998,10 @@ id, never throws, returns whether it did. Main passes the store the Ambience swi
   atlas with gutters bled for the mipmaps. `figureKit.js` is what figures share: `Skin` (one model's atlas: rectangles asked
   for by name — a strip round a column and its caps, a box's faces, a plain picture — packed tallest first, painted once),
   `shapes(STYLES.hex)` (columns, chamfered blocks, nubs), the faceted head (`HEAD_CORNERS`, `KID_HEAD`, `headSkin` paints the
-  face on its front plane, `addHead` adds a nose wedge and hex ears) and the hair (`hairMass` a mass or cap laid off the head
+  face on its front plane, `addHead` adds a nose wedge and hex ears; each avatar may carry its own profile as
+  `head.shape` — `avatars.ROUND_HEAD` for Caelan, a broad face with a wide soft jaw; `avatars.OVAL_HEAD` for Brayden, a long
+  oval tapering to a narrower chin; Annabelle keeps `KID_HEAD` — and the head, the hair masses, caps and clumps are all
+  laid on that profile, so `hairGaps` stays 0) and the hair (`hairMass` a mass or cap laid off the head
   so the skull never shows, `clump` a swept ribbon lying on it, `hairline`, `CAP_YAWS`, `CAP_RINGS`).
 - `paintAvatar(def)` → the `Skin`: the same bytes for the same entry; `AVATAR_ATLAS` **256**.
 - `buildAvatarModel(def, { cut?, parts? })` → `{ id, cut, bones, rig, fp, image, tris, hairTris, texels, atlas }`. `bones`: ONE

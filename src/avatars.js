@@ -46,6 +46,7 @@
  * @property {number} eyeW   an eye's width
  * @property {number} mouthAt
  * @property {number} noseAt  the middle of the nose
+ * @property {ReadonlyArray<ReadonlyArray<number>>} [shape]  its profile (ROUND_HEAD, OVAL_HEAD; default figureKit.KID_HEAD)
  */
 /**
  * @typedef {Object} AvatarHair
@@ -119,6 +120,20 @@ const freezeDeep = (o) => {
 const KID_HANDS = { palm: [0.042, 0.08, 0.08], fingers: [0.036, 0.062, 0.074], thumb: [0.028, 0.055, 0.026] };
 
 /** The avatars, in the chooser's order. @type {ReadonlyArray<AvatarDef>} */
+/**
+ * Head profiles, chin to crown: [height share, width, depth, forward shift (m)] per ring (figureKit.KID_HEAD's form; an
+ * avatar without one has KID_HEAD). ROUND_HEAD: a wide chin and jaw, full cheeks, widest low — a round face. OVAL_HEAD: a
+ * narrow chin and a long jaw, widest high — a long oval face.
+ */
+export const ROUND_HEAD = Object.freeze([
+  [0, 0.66, 0.68, -0.032], [0.11, 0.9, 0.9, -0.018], [0.28, 1.01, 0.96, -0.006], [0.5, 1.04, 0.99, 0],
+  [0.71, 1.03, 1.01, 0.004], [0.86, 0.98, 1.03, 0.016], [0.955, 0.8, 0.86, 0.022], [1, 0.5, 0.54, 0.02],
+].map((r) => Object.freeze(r)));
+export const OVAL_HEAD = Object.freeze([
+  [0, 0.36, 0.46, -0.036], [0.15, 0.64, 0.74, -0.022], [0.36, 0.88, 0.9, -0.006], [0.58, 0.97, 0.96, 0],
+  [0.76, 0.98, 0.99, 0.004], [0.885, 0.93, 1.02, 0.016], [0.965, 0.74, 0.84, 0.02], [1, 0.4, 0.46, 0.02],
+].map((r) => Object.freeze(r)));
+
 export const AVATARS = freezeDeep([
   {
     id: 'caelan',
@@ -132,7 +147,11 @@ export const AVATARS = freezeDeep([
       shoulder: [0.222, 1.095, 0.005], elbow: [0.252, 0.845, 0.028], wrist: [0.268, 0.625, -0.03],
       upper: { rx: 0.067, rz: 0.064 }, fore: { rx: 0.066, rz: 0.06 },
     },
-    head: { y: 1.215, h: 0.37, rx: 0.172, rz: 0.172, eyeAt: 0.52, eyeX: 0.058, eyeW: 0.054, mouthAt: 0.215, noseAt: 0.37 },
+    // a round face: broad cheeks and a wide, soft jaw (the user: "Caelan is much more rounded")
+    head: {
+      y: 1.23, h: 0.355, rx: 0.182, rz: 0.177, eyeAt: 0.52, eyeX: 0.061, eyeW: 0.055, mouthAt: 0.215, noseAt: 0.37,
+      shape: ROUND_HEAD,
+    },
     hair: { style: 'poofy', cut: 'C2', crown: 0.117 },
     hands: KID_HANDS,
     outfit: {
@@ -169,7 +188,11 @@ export const AVATARS = freezeDeep([
       shoulder: [0.2, 1.32, 0.005], elbow: [0.224, 1.035, 0.03], wrist: [0.238, 0.775, -0.02],
       upper: { rx: 0.058, rz: 0.056 }, fore: { rx: 0.058, rz: 0.053 },
     },
-    head: { y: 1.43, h: 0.345, rx: 0.158, rz: 0.162, eyeAt: 0.52, eyeX: 0.054, eyeW: 0.05, mouthAt: 0.22, noseAt: 0.37 },
+    // a long oval face: narrow, tall, the jaw tapering to a narrower chin (the user: "an oval long shaped face")
+    head: {
+      y: 1.405, h: 0.37, rx: 0.147, rz: 0.158, eyeAt: 0.53, eyeX: 0.052, eyeW: 0.049, mouthAt: 0.215, noseAt: 0.38,
+      shape: OVAL_HEAD,
+    },
     hair: { style: 'silky', cut: 'B1', crown: 0.058 },
     hands: KID_HANDS,
     outfit: {

@@ -204,6 +204,7 @@ export const KID_HEAD = Object.freeze([
  * @property {number} eyeW   an eye's width
  * @property {number} mouthAt
  * @property {number} noseAt the middle of the nose
+ * @property {ReadonlyArray<ReadonlyArray<number>>} [shape]  its ring profile (avatars.js; default KID_HEAD)
  */
 
 /** The head loft. @param {HeadDims} H @param {ReadonlyArray<ReadonlyArray<number>>} shape */

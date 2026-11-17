@@ -27,6 +27,9 @@ import {
   STYLES, DENSITY, perimeter, Skin, shapes, seg, len, KID_HEAD, headGeo, addHead, headSkin, hairMass, hairline, frontness,
   lumps, clump, CAP_YAWS, CAP_RINGS, lockGeo, hairCentre, rotateAbout, norm, cross,
 } from './figureKit.js';
+
+/** The avatar's own head profile (avatars.js `head.shape`: Caelan round, Brayden a long oval), else the kid's. */
+const headShape = (H) => H.shape ?? KID_HEAD;
 import { AVATAR_IDS } from './avatars.js';
 
 /** @typedef {import('./modelKit.js').Geo} Geo */
@@ -101,7 +104,7 @@ function hairPoofy(add, H, tall) {
     const ear = s < 0.2 && isEar(yaw) ? 0.008 : 0;
     return 0.017 + swell + bump + edge + crown + ear;
   };
-  add(hairMass(H, KID_HEAD, { around, rim, off, rings: [0, 0.1, 0.24, 0.4, 0.56, 0.71, 0.84, 0.94, 1] }), 'hairMass');
+  add(hairMass(H, headShape(H), { around, rim, off, rings: [0, 0.1, 0.24, 0.4, 0.56, 0.71, 0.84, 0.94, 1] }), 'hairMass');
 }
 
 /**
@@ -112,21 +115,21 @@ function hairPoofy(add, H, tall) {
 function hairSilky(add, H, curtain) {
   /** @type {import('./figureKit.js').Cap} */
   const cap = { rim: hairline([[0, -26], [45, -14], [80, 8], [100, 9], [130, 20], [160, 25], [180, 26]]), off: (yaw, pitch, s) => 0.014 + 0.018 * s };
-  add(hairMass(H, KID_HEAD, { yaws: CAP_YAWS, rim: cap.rim, off: cap.off, rings: CAP_RINGS }), 'hairCap');
+  add(hairMass(H, headShape(H), { yaws: CAP_YAWS, rim: cap.rim, off: cap.off, rings: CAP_RINGS }), 'hairCap');
   const L = curtain ? 1 : 0;
   const panel = [0.55, 1, 1, 0.9, 0.6, 0];
   for (let k = 0; k < 4; k++) {
     const ctrl = curtain
       ? [[120 + 4 * k, 84 - 6 * k], [158, 72 - 8 * k, 0.006], [210, 52 - 8 * k, 0.01], [250, 22 - 5 * k, 0.012], [265, -6 - 5 * k, 0.01]]
       : [[118 + 4 * k, 83 - 6 * k], [150, 72 - 9 * k, 0.006], [195, 55 - 9 * k, 0.01], [226, 35 - 4 * k, 0.008], [238, 24 - 2 * k, 0.004]];
-    add(clump(H, KID_HEAD, cap, ctrl, { w: 0.13 + 0.01 * L, profile: panel }), 'hairLock');
+    add(clump(H, headShape(H), cap, ctrl, { w: 0.13 + 0.01 * L, profile: panel }), 'hairLock');
   }
   // the short side by the parting, combed back and down; the far side under the panels; the nape
   const short = [0.55, 1, 0.65, 0];
-  add(clump(H, KID_HEAD, cap, [[120, 74], [102, 46, 0.004], [94, 14 - 12 * L, 0.002]], { w: 0.12, profile: short }), 'hairLock');
-  add(clump(H, KID_HEAD, cap, [[244, 66], [262, 36, 0.004], [268, 10 - 10 * L, 0.002]], { w: 0.12, profile: short }), 'hairLock');
+  add(clump(H, headShape(H), cap, [[120, 74], [102, 46, 0.004], [94, 14 - 12 * L, 0.002]], { w: 0.12, profile: short }), 'hairLock');
+  add(clump(H, headShape(H), cap, [[244, 66], [262, 36, 0.004], [268, 10 - 10 * L, 0.002]], { w: 0.12, profile: short }), 'hairLock');
   for (const side of [-1, 1]) {
-    add(clump(H, KID_HEAD, cap, [[(360 + side * 24) % 360, 64], [(360 + side * 19) % 360, 20, 0.004], [(360 + side * 15) % 360, -18 - 10 * L, 0.002]],
+    add(clump(H, headShape(H), cap, [[(360 + side * 24) % 360, 64], [(360 + side * 19) % 360, 20, 0.004], [(360 + side * 15) % 360, -18 - 10 * L, 0.002]],
       { w: 0.14, profile: short }), 'hairLock');
   }
 }
@@ -139,13 +142,13 @@ function hairSilky(add, H, curtain) {
 function hairLongWavy(add, H, ponytail) {
   /** @type {import('./figureKit.js').Cap} */
   const cap = { rim: hairline([[0, -28], [45, -16], [80, -2], [100, -1], [130, 18], [160, 25], [180, 26]]), off: (yaw, pitch, s) => 0.016 + 0.024 * s };
-  add(hairMass(H, KID_HEAD, { yaws: CAP_YAWS, rim: cap.rim, off: cap.off, rings: CAP_RINGS }), 'hairCap');
+  add(hairMass(H, headShape(H), { yaws: CAP_YAWS, rim: cap.rim, off: cap.off, rings: CAP_RINGS }), 'hairCap');
   for (let k = -1; k <= 1; k++) {
-    add(clump(H, KID_HEAD, cap, [[180 + 10 * k, 86], [180 + 13 * k, 60, 0.006], [180 + 17 * k, 38, 0.01], [180 + 19 * k, 25, 0.006]],
+    add(clump(H, headShape(H), cap, [[180 + 10 * k, 86], [180 + 13 * k, 60, 0.006], [180 + 17 * k, 38, 0.01], [180 + 19 * k, 25, 0.006]],
       { w: 0.12, profile: [0.55, 1, 0.9, 0] }), 'hairLock');
   }
   for (const side of [-1, 1]) {
-    add(clump(H, KID_HEAD, cap, [[180 - side * 62, 50], [180 - side * 70, 12, 0.008], ['p', side * 0.196, 0.015, -0.03], ['p', side * 0.186, -0.07, -0.018],
+    add(clump(H, headShape(H), cap, [[180 - side * 62, 50], [180 - side * 70, 12, 0.008], ['p', side * 0.196, 0.015, -0.03], ['p', side * 0.186, -0.07, -0.018],
       ['p', side * 0.172, -0.13, -0.022]], { w: 0.08, t: 0.028, profile: [0.6, 1, 1, 0.9, 0.6, 0], up: [side, 0, -0.4] }), 'hairLock');
   }
   const back = H.rz * 1.04;
@@ -155,17 +158,17 @@ function hairLongWavy(add, H, ponytail) {
       const x = Math.sin((yaw * Math.PI) / 180) * 0.17;
       const wave = (k % 2 ? 0.03 : -0.03) * (0.8 + 0.2 * Math.sin(k * 1.7));
       const end = -0.31 - 0.03 * ((k * 2) % 3);
-      add(clump(H, KID_HEAD, cap, [[yaw, 60], [yaw, 16, 0.008], [yaw, -22, 0.016], ['p', x * 1.2, -0.13, back + 0.035 + wave],
+      add(clump(H, headShape(H), cap, [[yaw, 60], [yaw, 16, 0.008], [yaw, -22, 0.016], ['p', x * 1.2, -0.13, back + 0.035 + wave],
         ['p', x * 1.32, -0.22, back + 0.035 - wave], ['p', x * 1.45, end, back + 0.03 + wave]],
       { w: 0.078, t: 0.026, profile: [0.6, 1, 1, 0.9, 0.6, 0], up: [0, 0.15, 1] }), 'hairLock', 'hairBack');
     }
   } else {
     const knot = ['p', 0, 0.075, back + 0.03];
     for (const side of [-1, 1]) {
-      add(clump(H, KID_HEAD, cap, [[(360 + side * 40) % 360, 64], [(360 + side * 30) % 360, 20, 0.006], knot], { w: 0.14, profile: [0.6, 1, 0.7, 0.3] }), 'hairLock');
+      add(clump(H, headShape(H), cap, [[(360 + side * 40) % 360, 64], [(360 + side * 30) % 360, 20, 0.006], knot], { w: 0.14, profile: [0.6, 1, 0.7, 0.3] }), 'hairLock');
     }
     add(transform(prism({ sides: 6, rx: 0.034, rz: 0.03, h: 0.035, phase: 0 }), mul(translation(0, 0.06, back + 0.03), rotation(0, -0.5))), 'hairLock');
-    add(clump(H, KID_HEAD, cap, [['p', 0, 0.07, back + 0.035], ['p', 0.018, -0.07, back + 0.06], ['p', -0.016, -0.2, back + 0.055], ['p', 0.012, -0.33, back + 0.035]],
+    add(clump(H, headShape(H), cap, [['p', 0, 0.07, back + 0.035], ['p', 0.018, -0.07, back + 0.06], ['p', -0.016, -0.2, back + 0.055], ['p', 0.012, -0.33, back + 0.035]],
       { w: 0.11, t: 0.075, profile: [0.65, 1, 0.95, 0.85, 0.6, 0.3, 0], segments: 6, up: [0, 0, 1] }), 'hairLock', 'hairBack');
   }
 }
@@ -203,7 +206,7 @@ export function hairGaps(def, cut) {
     if (key === 'hairCap' || key === 'hairMass') shells.push(geo);
   }, H, cutOf(def, cut));
   const shell = merge(shells);
-  const head = headGeo(H, KID_HEAD);
+  const head = headGeo(H, headShape(H));
   const c = hairCentre(H);
   const P = (g, i) => [g.positions[i * 3], g.positions[i * 3 + 1], g.positions[i * 3 + 2]];
   /** the farthest crossing of the shell along a ray from the middle, and whether it is the shell's side (not its rim's cap) */
@@ -623,7 +626,7 @@ export function buildAvatarModel(def, { cut, parts: keepParts = false } = {}) {
   }
   // ---- the head and its hair
   const headM = translation(0, H.y, 0);
-  addHead(on('head'), headM, H, KID_HEAD);
+  addHead(on('head'), headM, H, headShape(H));
   let hairTris = 0;
   HAIR_STYLES[def.hair.style]((geo, key, bone = 'head') => {
     hairTris += triangleCount(geo);
