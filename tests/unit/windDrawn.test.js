@@ -954,7 +954,10 @@ describe('the wiring (main.js, diagnostics.js): read from the source, since main
     expect(main).toContain('pennants.loadFromEdits(world.edits);');
     // a server's cells for a chunk not generated here fire no onBlockChange: the chunk brings them when it comes in
     const generated = main.slice(main.indexOf('world.onChunkGenerated = (cq, cr) => {'));
-    expect(generated.slice(0, generated.indexOf('\n    };'))).toContain('pennants.onChunkLoaded(cq, cr, loadedWorld.edits, loadedWorld.getBlock);');
+    const onGenerated = generated.slice(0, generated.indexOf('\n    };'));
+    expect(onGenerated).toContain('pennants.onChunkLoaded(cq, cr, loadedWorld.edits, loadedWorld.getBlock);');
+    // and the campfires the same way (neither is meshed: a fire lit there would never be drawn)
+    expect(onGenerated).toContain('campfires.onChunkLoaded(cq, cr, loadedWorld.edits, loadedWorld.getBlock);');
     expect(main).toContain('pennantRenderer.sync(nearP, windNow(), fxTime, pennantHeight);');
     const created = main.indexOf('pennantRenderer = createPennantRenderer(renderer.three.scene);');
     expect(created).toBeGreaterThan(0);

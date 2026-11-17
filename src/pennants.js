@@ -10,7 +10,7 @@
 // wave runs along it from the pole to the tip: slow and small in a calm, quick and wide in a gust.
 import { BLOCK } from './blocks.js';
 import { CHUNK_SIZE } from './config.js';
-import { chunkKey, forEachEditedCell, indexToLocal } from './coords.js';
+import { forEachEditedCell, forEachEditedCellIn } from './coords.js';
 import { hexToWorld } from './hex.js';
 import { WIND_CALM } from './wind.js';
 
@@ -126,13 +126,7 @@ export class Pennants {
       if (Math.floor(p.q / CHUNK_SIZE) !== cq || Math.floor(p.r / CHUNK_SIZE) !== cr) continue;
       if (getBlock(p.q, p.y, p.r) !== BLOCK.PENNANT) this.list.delete(p.key); // deleting while iterating a Map is safe
     }
-    const chunkEdits = edits.get(chunkKey(cq, cr));
-    if (chunkEdits === undefined) return;
-    for (const [li, id] of chunkEdits) {
-      if (id !== BLOCK.PENNANT) continue;
-      const [lq, ly, lr] = indexToLocal(li);
-      this.add(cq * CHUNK_SIZE + lq, ly, cr * CHUNK_SIZE + lr);
-    }
+    forEachEditedCellIn(edits, cq, cr, BLOCK.PENNANT, (q, y, r) => this.add(q, y, r));
   }
 
   /**

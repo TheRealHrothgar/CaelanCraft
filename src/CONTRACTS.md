@@ -320,7 +320,9 @@ useSelected?`, §49). (worldgen.js types its generator locally as `SurvivalWorld
 `indexToLocal(index)`, `columnIndex(lq,lr)`, `inHeightRange(y)`,
 `yawToForward(yaw) → [fx,fz] = [-sin, -cos]`, `yawToRight(yaw) → [cos, -sin]`,
 `lookDirection(yaw,pitch) → [-sin(yaw)cos(pitch), sin(pitch), -cos(yaw)cos(pitch)]`,
-`forEachEditedCell(edits, id, fn(q, y, r))` (v0.7: every World.edits entry with that id; malformed chunk keys skipped).
+`forEachEditedCell(edits, id, fn(q, y, r))` (v0.7: every World.edits entry with that id; malformed chunk keys skipped);
+`forEachEditedCellIn(edits, cq, cr, id, fn(q, y, r))` (the same for one chunk's edits: the pennants' and campfires'
+`onChunkLoaded`, §101.4).
 v0.8: `packCell(q, y, r)` → `((q + 2^20)·2^21 + (r + 2^20))·128 + y`, one exact double below 2^49 (the physics queues'
 numeric cell key); `unpackCell(key, out = [0,0,0])` → `out = [q, y, r]`.
 The cube face tables (`FACE_*`, `FACE_VERTS`) are gone; face geometry is in `hex.js`.
@@ -1662,6 +1664,10 @@ export class Campfires {
   remove(q, y, r) → known?                  // forgets the cell, tracked or not
   onBlockChange(q, y, r, prev, next)        // CAMPFIRE appears → add; disappears → remove
   loadFromEdits(world.edits)                // clear, then forEachEditedCell(edits, CAMPFIRE, add)
+  onChunkLoaded(cq, cr, world.edits, getBlock) // World.onChunkGenerated (main, §101.4 as the pennants): remove a known
+                                            // fire in the chunk whose cell is no CAMPFIRE now, then
+                                            // forEachEditedCellIn(edits, cq, cr, CAMPFIRE, add) — a server's cells for a
+                                            // chunk not generated here fire no onBlockChange (World.applyServerCell, §96)
   retrack(x, y, z) → finished?              // advances or finishes a re-pick; see "Tracking cap"
   nearest(x, y, z, maxDist, limit = ∞)      // [{ fire, dist }] over TRACKED fires, by distance to (x, y + 0.3, z) of the fire, nearest first (ties by key)
 }
@@ -7950,13 +7956,14 @@ strong motivator to level up." **No block, item or recipe is added; nothing new 
 
 `harvest.slowHint(id, tool)` → string | null. Main shows it **only while a dig is held on that cell**
 (`main.digSlowHint(digState, target, tool)`: the DigState is active on the same q, y, r and block id, else null): idle, the
-crosshair resting on the ground says nothing, so walking and looking about never nag and a weapon's draw hint (§100,
-"with nothing else to say") is not hidden by the ground under it. `survivalHintText` shows it after the tool-gate hint
-(`harvestHint`), the bare-hand gathering hint (`handGatherHint`: gravel still says `Gravel · hold LMB: dig`) and the
-wrong-ground seed hint, and before `blockHintText` (none of whose blocks is ever slow); a brick shows it like its hex
-(`brickDigTarget`); a Birch Log's `tap_hint` (R: how to tap its sap) gives way to it while the log is chopped, as an oak
-says `Oak Log · slow with a stone axe`. Only when `breakSeconds(id, tool)` > **`SLOW_HINT_S` 3** and the block's rule names
-a tool type:
+crosshair resting on the ground says nothing, so walking and looking about never nag. `survivalHintText` shows it after
+the tool-gate hint (`harvestHint`), the bare-hand gathering hint (`handGatherHint`: gravel still says `Gravel · hold LMB:
+dig`) and the wrong-ground seed hint, and before `blockHintText` (none of whose blocks is ever slow); a brick shows it like
+its hex (`brickDigTarget`); a Birch Log's `tap_hint` (R: how to tap its sap) gives way to it while the log is chopped, as an
+oak says `Oak Log · slow with a stone axe`. With a spear, a dart or a bow in hand and no dig under way
+(`main.throwHintFirst`), §100.2's throw words come before all four, on a hex and a brick alike: a spear is not the
+block's own tool, so the gate would otherwise hide the throw on stone and every log (§100.2 amends this order). Only when
+`breakSeconds(id, tool)` > **`SLOW_HINT_S` 3** and the block's rule names a tool type:
 
 - by hand (or a non-tool in hand): `Dirt · slow by hand — a shovel digs much faster`;
 - with a tool that is not the block's own: `Dirt · slow — a shovel digs much faster`;
@@ -7980,7 +7987,9 @@ what it is asked (the console, the tests).
   digWorkTier` beside `env.breaking = digAdvanced` (the reused env starts with `workTier: 0`).
 - `wearSelectedTool(how, n = 1)`: `pack.damage(selected, n)`, nothing for n ≤ 0. `finishDig` and `finishBrickDig` pass
   `digWear(id, tool)`; strikes pass 1 as before.
-- `survivalHintText`: `digSlowHint` (exported, PURE over its arguments) as in 99.4; never `slowHint` while idle.
+- `survivalHintText`: `digSlowHint` (exported, PURE over its arguments) as in 99.4; never `slowHint` while idle;
+  `throwHintFirst(dig, heldKey)` (exported, PURE: `!dig.active && drawOf(heldKey) !== null`) puts §100.2's throw words
+  before the hand's words for the block.
 
 ### 99.7 The guide (`handbook.js`)
 
@@ -7997,8 +8006,10 @@ what it is asked (the console, the tests).
 ### 99.8 Tests
 
 `tests/unit/harvest.test.js` (the hardness table; the worked times; the §99 time table and the age ladder; `workTier`;
-`digWear` with the logs-to-break counts; `slowHint`), `vitals.test.js` (the activity by tool, the drains per minute, three
-minutes by hand, the fatigue rate and the hours to Tired, the label), `survival.test.js` (the drain by work tier, the
+`digWear` with the logs-to-break counts; `slowHint`; the seams: §100's spear, dart and bow dig like a hand and never wear
+by it, §101's Pennant is a quick pull), `drawHold.test.js` (§100.2's throw words before this section's, unless digging),
+`vitals.test.js` (the activity by tool, the drains per minute, three minutes by hand, the fatigue rate and the hours to
+Tired, the label), `survival.test.js` (the drain by work tier, the
 tiredness per hour, the held label), `packUI.test.js` (`makesMany` over every recipe; a tool's card has no ×5),
 `handbook.test.js` (the break and work tables against the data), `survivalHud.test.js` (the chip), `items.test.js`, and
 `tests/integration/toolLadder.test.js` and `survival.test.js` (the first day: gravel 4 s a cell by hand, the log 10.9 s
@@ -8010,12 +8021,13 @@ the birch, the work tier and `digWear` wiring). The `?smoke=1&mode=survival` ste
 
 ## 100. Hunting: fish in their water, the throw, the bow, stalking by sight and wind — `src/populations.js`, `src/animals.js`, `src/looseItems.js`, `src/avatarMotion.js`, `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/animalRenderer.js`, `src/touchControls.js`
 
-Amends §60 (throwing), §69 and v0.16 (stalking), §76.4 and §88 (fish), §98.2 (Creative's Place), §43 / §94.1 / §98.5
-(counts, TOOL_TYPES, the picker). Design: `docs/DESIGN-hunting.md` §2; the wind is §3 (`wind.js`, `main.windNow()`). The
-user's words: "Fish seem to appear and disappear spontaneously in small pond or stream." "Need a bow and arrow in the
-progression." "Unclear how throwing a spear is supposed to work." "When you sneak up behind and the animal turns to face
-you, it should be less likely to spook if the player stays still." "Stalking works better when there's no line of
-sight." "Hunting upwind should confer a sneak penalty."
+Amends §60 (throwing), §69 and v0.16 (stalking), §76.4 and §88 (fish), §91.3 / §91.4 / §98.4 (the draw's pose and the
+item's lie), §96.2 (`POSE_DRAWING`), §97.2 (the tablet's words: no G), §98.2 (Creative's Place), §99.4 (the target hint's
+order: the throw's words first), §43 / §94.1 / §98.5 (counts, TOOL_TYPES, the picker). Design: `docs/DESIGN-hunting.md`
+§2; the wind is §3 (`wind.js`, `main.windNow()`). The user's words: "Fish seem to appear and disappear spontaneously in
+small pond or stream." "Need a bow and arrow in the progression." "Unclear how throwing a spear is supposed to work."
+"When you sneak up behind and the animal turns to face you, it should be less likely to spook if the player stays
+still." "Stalking works better when there's no line of sight." "Hunting upwind should confer a sneak penalty."
 
 ### 100.1 Fish belong to their water
 
@@ -8080,14 +8092,16 @@ seven-column pond could take a whole zone's school.
   shoots an Arrow taken from the pack — Creative takes nothing and throws a ghost, §60) along the look from just before the
   eye, at `drawnThrow`'s speed plus the player's velocity, lifted +1.5 m/s (an arrow +0.5), with its power; a bow wears 1
   (Survival; `toolBroke` at 0). The machine is `DrawHold` (main.js, PURE, exported; `step(mouse, dt, DrawEnv)` →
-  'start' | 'hold' | 'release' | 'stale' | 'cancel' | 'noArrows' | 'idle', or null when Place is not the draw's). A
-  changed hand cancels the draw. A screen over the running world (the pack, the field book, Survival's device panel: the
-  world steps under them, `state` is not PLAYING) lets it go without a throw — the cleared mouse there is no release —
-  and `resetSurvivalInput` forgets it; a draw whose last frame is older than `DRAW_STALE_MS` 250 (a menu that froze the
-  world came between) is let go without a throw too. While the control latch holds a control that Place pressed (§4.9),
-  the hold is the latch's: with a spear, a dart or a bow in hand a Push Button stays pressed (Creative; Survival's latch
-  comes first anyway). **G** still throws at once (§60, unchanged). §98.2 is amended: in Creative a spear, a dart or a
-  bow is drawn and released the same way; a rock still throws on the press. Tests: `tests/unit/drawHold.test.js`.
+  'start' | 'hold' | 'release' | 'cancel' | 'noArrows' | 'idle', or null when Place is not the draw's; `cancel()`). It
+  counts the frames' dt and reads no clock, so a slow frame never swallows a throw. A changed hand cancels the draw, and
+  so does death (`draws` false). Only frames of play draw or throw: a screen over the running world (the pack, the field
+  book, Survival's device panel: the world steps under them, `state` is not PLAYING) lets it go without a throw — the
+  cleared mouse there is no release; `setState` cancels it whenever play leaves STATE.PLAYING (also a menu that freezes
+  the world: the pause menu or a lost pointer lock, the picker, the console, death), and `resetSurvivalInput` forgets it
+  (sleep, death, a mode switch, a load). While the control latch holds a control that Place pressed (§4.9), the hold is
+  the latch's: with a spear, a dart or a bow in hand a Push Button stays pressed (Creative's frame and the debug handle's
+  `rightClick`; Survival's latch comes first anyway). **G** still throws at once (§60, unchanged). §98.2 is amended: in
+  Creative a spear, a dart or a bow is drawn and released the same way; a rock still throws on the press.
 - **Seen**: the action ring at the crosshair shows the draw (`drawRing()`: at least 0.02, both modes; Survival's
   `actionProgress` puts it first); the view closes in by `DRAW_ZOOM` 0.1 × the draw (eased like the sprint's FOV); the
   avatar takes the pose of what is drawn (`MotionInput.draw` 0..1 → `pose.draw`, §91.3; the model §91.4 "The draw", the hand
@@ -8097,19 +8111,32 @@ seven-column pond could take a whole zone's school.
   server see it too (`POSE_DRAWING`, §96.2). The throw sound grows with the draw.
 - **Hints** (RMB reads "Place" on a tablet, and the G clause is left out there: no button throws at once, §97.2): with
   nothing else to say, `Flint Spear · Hold RMB to throw · G: throw at once` (a tablet: `Flint Spear · Hold Place to
-  throw`), `Bow · Hold RMB to draw, let go to shoot` (`Bow · no arrows in your pack`); while drawing `Drawing · let go to
-  throw` / `Full draw · let go to shoot`; on a wild animal or pig `click: hunt it · Hold RMB to throw` (`… to shoot`; out of
-  reach only the throw words); a fish `Fish · click: spear it · Hold RMB to throw the spear`; the fish tip "thrust with it,
-  or hold RMB to throw it". The guide says G is a keyboard's ("On a keyboard [G] still throws at once").
+  throw`), `Bow · Hold RMB to draw, let go to shoot` (`Bow · no arrows in your pack`) — in Survival also on a block in
+  reach, before §99.4's words for it (the tool gate, the bare-hand words, the wrong ground, the slow word) while no dig is
+  under way (`main.throwHintFirst(digState, heldKey)`, PURE: a spear is no block's own tool, so the gate would hide the
+  throw on stone and every log; holding LMB on the block brings its words back), though a burning keg, a crop, and a keg,
+  a control or a rune block (`blockHintText`) still say their own; while drawing `Drawing · let go to throw` / `Full draw
+  · let go to shoot`; on a wild animal or pig `click: hunt it · Hold RMB to throw` (`… to shoot`; out of reach only the
+  throw words); a fish `Fish · click: spear it · Hold RMB to throw the spear`; the fish tip "thrust with it, or hold RMB
+  to throw it". The guide says G is a keyboard's ("On a keyboard [G] still throws at once").
+- Tests: `tests/unit/drawHold.test.js` (DrawHold: press, hold and release, a slow frame, a screen mid-draw, cancel, a
+  changed hand and death, no arrows, a Push Button held in Creative; main's draw path from the source: setState and
+  resetSurvivalInput cancel, no clock, every Place through drawStep; throwHintFirst and where survivalHintText asks it),
+  `tests/unit/harvest.test.js` (the seams with §99: a spear, a dart or a bow digs like a hand and never wears by it),
+  `tests/unit/looseItems.test.js` (drawOf, drawFraction, drawnThrow), `tests/unit/glass.test.js` (the tablet's words),
+  `tests/unit/avatarModel.test.js`, `tests/unit/avatarRenderer.test.js` and `tests/unit/viewCamera.test.js` (the
+  poses).
 
 ### 100.3 The bow (`items.js`, `crafting.js`, `itemArt.js`, `purpose.js`, `pickerModel.js`, `looseItems.js`)
 
 - **Items**: `bow` "Bow" (tool, new ToolDef type **'bow'** in TOOL_TYPES after 'spear'; tier 2, durability 100, power 1;
   after the Flint Spear in TOOL_ROWS), `bow_stave` "Bow Stave" (material, stack 4) and `arrow` "Arrow" (material, stack
-  16). 270 items: 35 tools, 53 materials, 55 foods, 3 heals, 5 wear, 119 blocks.
+  16). With §101's Pennant and §102's Compass: **272 items: 35 tools, 54 materials, 55 foods, 3 heals, 5 wear, 120
+  blocks** (the tally §101.4 and §102.1 refer to).
 - **Recipes**: `bow_stave` at the Work Stump, 2 stick → 1, knife 2, 4 s; `bow` at the Work Stump, bow_stave + 2 cord, knife
-  2, 5 s; `arrow` at hand (so anywhere), stick + flint + feather → 4, hammer 1, 3 s. 127 recipes: hand 44, stump 26, kiln
-  24, bloomery 5, forge 15, workbench 5, lab 8 (amends §94.1's tally).
+  2, 5 s; `arrow` at hand (so anywhere), stick + flint + feather → 4, hammer 1, 3 s. With §101's Pennant (at hand) and
+  §102's Compass (at the Forge): **129 recipes: hand 45, stump 26, kiln 24, bloomery 5, forge 16, workbench 5, lab 8**
+  (amends §94.1's tally).
 - **Flight**: `THROW_ARROW` { speed 32, power 3 } (drawn: 36.8 m/s at full); while a projectile it falls by `ARROW_GRAVITY`
   0.55 of ITEM_GRAVITY (`launch(…, { gravity })`, `LooseItem.grav`; after its power is spent it falls as anything does);
   `ARROW_KEYS` ['arrow']; a hit breaks it with `ARROW_BREAK_P` 0.25 (`dartBreakP`); a miss lies loose and is collected
@@ -8168,7 +8195,7 @@ The Animals chapter gains "Keep still" (the stare, about two seconds to settle, 
 says a pond holds one fish for about every FISH_CELLS cells of water and to hold RMB to throw the spear; the controls
 table's Hold RMB row adds the draw. handbook.test.js pins each number to its constant.
 
-## 101. The wind drawn: the indicator, the rain, the smoke and the pennant — `src/windDrawn.js` (PURE), `src/pennants.js` (PURE), `src/pennantRenderer.js` (three), `src/rainRenderer.js`, `src/campfireRenderer.js`, `src/particles.js`, `src/hud.js`, `src/blocks.js`, `src/tiles.js`, `src/items.js`, `src/crafting.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `index.html`, `src/styles.css`
+## 101. The wind drawn: the indicator, the rain, the smoke and the pennant — `src/windDrawn.js` (PURE), `src/pennants.js` (PURE), `src/pennantRenderer.js` (three), `src/rainRenderer.js`, `src/campfireRenderer.js`, `src/campfires.js`, `src/coords.js`, `src/particles.js`, `src/hud.js`, `src/blocks.js`, `src/tiles.js`, `src/items.js`, `src/crafting.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `index.html`, `src/styles.css`
 
 The user (docs/DESIGN-hunting.md): "introduce wind direction and strength as a visual indicator … It should also affect
 graphics (flag furling, rain direction, etc.) and can later affect sailing." The wind itself is `wind.js` (`windAt`, from
@@ -8260,18 +8287,21 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
   modes, in PICKER_ORDER after the Rain Barrel (121 placeable blocks) and in the picker's Camp & Crafts section after the
   Rain Barrel (search also by "flag", "banner", "wind", "windsock", "weather vane"). **Tile** `PENNANT` 107 `pennant`: its
   picture on clear — a two-pixel wooden pole on a small stone foot, a honey knob, a honey pennant with a teal band
-  (`TILE_IDS` 198). **Item** `pennant` (a block item, stack 64; 268 items). **Recipe** `pennant`, by hand, 3 s: `stick +
-  cord + #cloth`, the new tag `cloth` = grave_rag, rawhide, leather (the cheapest first; "Rag or Hide", "a rag or a
-  hide"); 125 recipes, 44 at hand. **Purpose**: "Shows the wind. Stalk game with the wind in your face."
+  (`TILE_IDS` 198). **Item** `pennant` (a block item, stack 64; with §100's three and §102's Compass, 272 items and 120
+  block items: §100.3). **Recipe** `pennant`, by hand, 3 s: `stick + cord + #cloth`, the new tag `cloth` = grave_rag,
+  rawhide, leather (the cheapest first; "Rag or Hide", "a rag or a hide"); with §100's three and §102's, 129 recipes, 45
+  at hand (§100.3). **Purpose**: "Shows the wind. Stalk game with the wind in your face."
 - **Harvest**: `set([B.PENNANT], 0.4, null, 0, SELF_DROPS)` in harvest.js — it pulls up by hand in 0.4 s, no tool, and
   comes away whole.
 - **Tracker** `Pennants`: like the campfires, main seeds it from `World.edits` on load (`loadFromEdits`) and keeps it in
   step through `onBlockChange`; and through `World.onChunkGenerated`: `onChunkLoaded(cq, cr, world.edits,
   world.getBlock)` drops the chunk's tracked pennants that are gone and adds every PENNANT in its edits. On a server a
   cell another player changes in a chunk not generated here is kept as an edit (`applyServerCell` → importEdits, no
-  onBlockChange): without this, their pennant would never be drawn and one they pulled up would stay as a ghost.
-  `nearest(x, y, z, maxDist, limit)` (to the middle of the pole, nearest first, ties by key). Each pennant
-  `{ key, q, y, r, x, z, seed }` (`pennantSeed`, a phase in [0, 2π)).
+  onBlockChange): without this, their pennant would never be drawn and one they pulled up would stay as a ghost. The
+  campfires (§32, not meshed either) are kept in step the same way: main calls `campfires.onChunkLoaded` beside it, so
+  a fire lit there is drawn and one put out there leaves no flame over the ash (both read the chunk's edits with
+  `coords.forEachEditedCellIn`). `nearest(x, y, z, maxDist, limit)` (to the middle of the pole, nearest first, ties by
+  key). Each pennant `{ key, q, y, r, x, z, seed }` (`pennantSeed`, a phase in [0, 2π)).
 - **The pole**: `poleHeight(blockAbove)`: `PENNANT_POLE_TALL` 1.75 m under open air, `PENNANT_POLE_SHORT` 0.95 under
   anything else (it never pokes into a block over it); radius `PENNANT_POLE_RADIUS` 0.04, six-sided.
 - **The flag** (`flagRibbon(strength, gust, t, seed, length, hoist)` → `FLAG_FLOATS` numbers: PENNANT_SEGMENTS 8 + 1
@@ -8316,7 +8346,9 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
   smoke and the particles, the flag's pose against the strength, the tracker (and a server's cells in a chunk not
   generated here), the renderer, the block / tile / item / recipe / picker / purpose / handbook entries, main's wiring
   and its eased shower); `tests/unit/rainRenderer.test.js` (a full cache forgets only the far columns);
-  `tests/unit/wind.test.js` (WIND_CALM, no dawn calm); the pinned counts in wave0, tiles,
+  `tests/unit/wind.test.js` (WIND_CALM, no dawn calm); `tests/unit/campfires.test.js` (a fire lit or put out in a chunk
+  not generated here, against a real World; the Pennant among the blocks not meshed); `tests/unit/harvest.test.js` (the
+  Pennant under §99: a quick pull by hand, never slow, never hard work); the pinned counts in wave0, tiles,
   items, crafting, pickerModel, pickerUI, atlasIcons, homestead, flora, plantsNotFood, farming, aquifer, waterLaws and
   handbook move by one.
 
@@ -8329,15 +8361,15 @@ faces north, east is +x); the compass shows it on §101's wind vane.
 ### 102.1 The item and its making
 
 - **Item** `compass` "Compass": a material (`kind: 'material'`), stack 1, appended to the materials after the seeds
-  (269 items: 34 tools, 52 materials, 55 foods, 3 heals, 5 clothes, 120 block items). It is no tool and has no
-  durability: it never wears, and does nothing in the hand. Its name ends in "s" but is one thing (items.test's plural
-  check lists it beside the Bellows; `itemName('compass', 1)` is "Compass").
+  (with §100's Bow, Bow Stave and Arrow, 272 items: 35 tools, 54 materials, 55 foods, 3 heals, 5 clothes, 120 block
+  items — §100.3). It is no tool and has no durability: it never wears, and does nothing in the hand. Its name ends in
+  "s" but is one thing (items.test's plural check lists it beside the Bellows; `itemName('compass', 1)` is "Compass").
 - **Recipe** `compass`, at the **Forge** (the iron age): `wrought_iron + copper_ingot + glass_shards` → `compass`, tool
-  `hammer 4` like the other forge work, 20 s — a magnetised iron needle in a copper case under a glass face. 126 recipes
-  (forge 16). Wrought iron comes only from the Bloomery's bloom, so the compass needs iron. Glass Shards come only
-  from breaking a placed Glass block (harvest.js; Glass is made at the Bloomery and never generated), so the build
-  tree's reachability (progression.test, §77) models it: whatever is placed can be broken again, its drops those of
-  an edited cell (no `natural` ones).
+  `hammer 4` like the other forge work, 20 s — a magnetised iron needle in a copper case under a glass face. With §100's
+  three, 129 recipes (forge 16; §100.3). Wrought iron comes only from the Bloomery's bloom, so the compass needs iron.
+  Glass Shards come only from breaking a placed Glass block (harvest.js; Glass is made at the Bloomery and never
+  generated), so the build tree's reachability (progression.test, §77) models it: whatever is placed can be broken
+  again, its drops those of an edited cell (no `natural` ones).
 - **Picture** (itemArt, a material painter after the seeds): a round copper case (the copper tier palette, lit top-left)
   with a little bow on top, a blue-grey glass face with a glint, and the needle across it on the diagonal — red to the
   north (up and right), white to the south — on a dark pivot. Held in the hand it is a lump (heldItem.js, no haft).
