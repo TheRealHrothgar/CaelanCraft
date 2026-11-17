@@ -1152,6 +1152,18 @@ describe('integration harness: Survival (v0.9)', () => {
     expect(packListText(pack)).toBe('1: Flint Pick (90/90)\n2: 3 Rock');
   });
 
+  it('§94.4 screenshot aids: ?kit= stocks the pack with exactly a kit (none: the start of a world), ?circuits=off', () => {
+    expect(parseParams('?ui=tree').kit).toBeNull();
+    expect(parseParams('?ui=tree&kit=none').kit).toEqual([]);
+    expect(parseParams('?kit=Flint_Knife,cord:3,zzz,stone_hammer,rock:0,stick:5000').kit).toEqual([
+      { k: 'flint_knife', n: 1 }, { k: 'cord', n: 3 }, { k: 'hammerstone', n: 1 }, { k: 'stick', n: 999 },
+    ]);
+    expect(parseParams('?circuits=off').circuits).toBe(false);
+    expect(parseParams('?circuits=ON').circuits).toBe(true);
+    expect(parseParams('?circuits=maybe').circuits).toBeNull();
+    expect(parseParams('').circuits).toBeNull();
+  });
+
   it('diagnostics: ?ui=pack, and the F3 survival line only while Survival is active (§9.10)', () => {
     expect(parseParams('?autoplay=1&ui=pack').ui).toBe('pack');
     const s = new Survival();

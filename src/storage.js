@@ -364,7 +364,9 @@ function editIdAt(edits, cache, q, y, r) {
  * fresh value (`survival.<stat>: invalid, reset`; a save from before §87 simply has no `fatigue`: 0, no warning), a bad
  * stack is dropped (`survival.pack[i]: <reason>, dropped`), a pack or
  * wear list of the wrong length is padded or cut, and the fires are canonicalised by cooking.normalizeFiresJSON — checked
- * against `opts.edits` when given (an entry whose cell is not CAMPFIRE or FIRE_PIT there is dropped).
+ * against `opts.edits` when given (an entry whose cell is not CAMPFIRE or FIRE_PIT there is dropped). Then `loose` and
+ * (§94.4) `had`, each only when non-empty: `had` sorted, unique, old names under their new ones, unknown keys dropped
+ * (`survival.had: N unknown items, dropped`).
  * @param {unknown} raw
  * @param {string[]} [warnings]   repairs are pushed here
  * @param {{ edits?: Record<string, number[]> }} [opts]
@@ -421,6 +423,22 @@ export function normalizeSurvivalJSON(raw, warnings = [], opts = {}) {
   if (src.loose !== undefined) {
     const loose = normalizeLooseJSON(src.loose, warnings);
     if (loose.length > 0) out.loose = loose;
+  }
+  // §94.4: every item key that has ever entered the pack (the build tree's reveal), written only when there are any. An
+  // older save has none (no warning): main derives it from the pack and the containers.
+  if (src.had !== undefined && src.had !== null) {
+    if (!Array.isArray(src.had)) warnings.push('survival.had: not a list, ignored');
+    else {
+      const keys = new Set();
+      let unknown = 0;
+      for (const raw of src.had) {
+        const k = typeof raw === 'string' ? canonicalItemKey(raw) : null;
+        if (k !== null && getItem(k)) keys.add(k);
+        else unknown++;
+      }
+      if (unknown > 0) warnings.push(`survival.had: ${unknown} unknown item${unknown === 1 ? '' : 's'}, dropped`);
+      if (keys.size > 0) out.had = [...keys].sort();
+    }
   }
   return /** @type {import('./types.js').SurvivalJSON} */ (out);
 }

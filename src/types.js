@@ -243,6 +243,8 @@
  * @property {FireSlotsJSON} fires
  * @property {{ k: string, n: number, d?: number, a?: number, x: number, y: number, z: number }[]} [loose]  v0.10 (CONTRACTS §60, §63) the items lying
  *   loose in the world; absent = none
+ * @property {string[]} [had]     (§94.4) every item key that has ever entered the pack (the build tree's reveal), sorted, known
+ *   keys only; absent = none yet, or a save from before it (then derived from the pack and the containers on loading)
  */
 
 /**

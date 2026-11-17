@@ -12,7 +12,9 @@
 import { PACK_SLOTS, HOTBAR_SIZE, WEAR_SLOTS } from './config.js';
 import { ITEMS, ITEM_KEYS, TAGS, itemName, maxDurability, stackSize, WEAR_SLOT_NAMES } from './items.js';
 import { purposeOf } from './purpose.js';
-import { buildTreeModel, layoutTree, treeStates, columnProgress, TREE_STATIONS } from './buildTree.js';
+import {
+  buildTreeModel, layoutTree, treeStates, columnProgress, revealTree, revealedTree, placeId,
+} from './buildTree.js';
 
 /** The Survival Handbook's item key (§14; handbook.js HANDBOOK_KEY): right-click on it, or "Read", fires onRead. */
 const HANDBOOK_ITEM = 'handbook';
@@ -50,6 +52,9 @@ const HANDBOOK_ITEM = 'handbook';
  * @property {{text: string, error?: boolean}|null} [message]  the screen's own feedback line (.pack-message under the
  *   hotbar strip): the Handbook's refusal, a Make result — the HUD's target hint is not drawn while the pack is open
  * @property {string[]} [ready]  the ids of every recipe (whatever the tab) that could be started now (§94: the build tree)
+ * @property {string[]} [had]    (§94.4) every item key that has ever entered the pack in this world (survival.had): the build
+ *   tree shows what has been had, what could be made now and what is one step on (absent: only what is carried counts)
+ * @property {boolean} [circuits]  (§94.4) the world's circuits switch (absent: on); off, the tree has no circuits and no Lab
  */
 
 /**
@@ -311,6 +316,16 @@ export function treeFactsFromView(view) {
     canMake: (id) => ready.has(id),
     near: (s) => near.has(s),
   };
+}
+
+/**
+ * §94.4: what the build tree's drawing depends on — its columns, the nodes shown, the workplaces in sight, the columns
+ * reached, the hidden counts and the unlocks shown. The screen draws the tree again only when this changes (pure).
+ * @param {import('./buildTree.js').TreeModel} model @param {import('./buildTree.js').TreeReveal} reveal @returns {string}
+ */
+export function revealSignature(model, reveal) {
+  return [model.stations.join(','), [...reveal.shown].sort().join(','), [...reveal.open].sort().join(','),
+    reveal.reached.map((r) => (r ? 1 : 0)).join(''), reveal.hidden.join(','), reveal.unlocks.map((u) => u.join(',')).join(';')].join('|');
 }
 
 /** The recipes a tab lists: all of them, or those of one station (order kept). @param {RecipeView[]} recipes @param {string} tab */
@@ -751,6 +766,10 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     tree.setAttribute('aria-label', 'Build tree');
     root.appendChild(tree);
     parts.tree = /** @type {HTMLElement} */ (tree);
+    // one set of delegated listeners for the tree too: it is drawn again as it grows (§94.4), never adding any
+    on(tree, 'click', onTreeClick);
+    on(tree, 'mouseover', (e) => hotNode(closestWith(e.target, 'data-node')));
+    on(tree, 'mouseleave', () => hotNode(null));
     const box = make('div', `container-panel ${HIDDEN}`);
     right.appendChild(box);
     parts.box = /** @type {HTMLElement} */ (box);
@@ -1125,9 +1144,22 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
 
   // ---- §94: the build tree ------------------------------------------------------------------------------------------
 
-  /** @type {{ model: import('./buildTree.js').TreeModel, layout: ReturnType<typeof layoutTree>, nodes: Map<string, HTMLElement>,
-   *   edges: Array<{ el: Element, from: string, to: string }>, heads: HTMLElement[] }|null} */
+  /** @type {{ model: import('./buildTree.js').TreeModel, full: import('./buildTree.js').TreeModel,
+   *   layout: ReturnType<typeof layoutTree>, nodes: Map<string, HTMLElement>,
+   *   edges: Array<{ el: Element, from: string, to: string }>, heads: HTMLElement[], sig: string }|null} */
   let treeParts = null;
+  /** §94.4: the whole tree with the circuits on and with them off, each built the first time it is wanted */
+  /** @type {Map<boolean, import('./buildTree.js').TreeModel>} */
+  const treeModels = new Map();
+  /** @param {boolean} circuits */
+  function treeModelFor(circuits) {
+    let m = treeModels.get(circuits);
+    if (!m) {
+      m = buildTreeModel({ circuits });
+      treeModels.set(circuits, m);
+    }
+    return m;
+  }
   /** Room on the left for the lane names. */
   const TREE_LEFT = 92;
   const LANE_NAMES = Object.freeze({ gather: ['Gather', 'raw materials'], build: ['Build', 'tools and parts'] });
@@ -1164,25 +1196,30 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     return strip;
   }
 
-  function buildTreeView() {
-    const model = buildTreeModel();
+  /**
+   * Draw the tree the player sees (§94.4: `model` is revealedTree of `full`), keeping the scroll where it was.
+   * @param {import('./buildTree.js').TreeModel} full @param {import('./buildTree.js').TreeModel} model @param {string} sig
+   */
+  function buildTreeView(full, model, sig) {
     const layout = layoutTree(model);
     const box = parts.tree;
+    const oldScroll = box.querySelector('.tree-scroll');
+    const scrollAt = oldScroll ? [oldScroll.scrollLeft, oldScroll.scrollTop] : null;
     clear(box);
     const head = make('div', 'tree-head');
     head.appendChild(make('div', 'pack-heading', 'Build tree'));
-    head.appendChild(make('div', 'tree-sub', 'Gather the raw materials and build the parts in a column to set up the workplace at its head. A colour is where a thing is made. Click anything to find its recipes.'));
+    head.appendChild(make('div', 'tree-sub', 'Gather the raw materials and build the parts in a column to set up the workplace at its head. The next steps show as you go. A colour is where a thing is made. Click anything to find its recipes.'));
     const back = /** @type {HTMLButtonElement} */ (make('button', 'hex-button pack-read tree-close', '✕ Making'));
     back.type = 'button';
     back.setAttribute('aria-label', 'Back to Making (Esc)');
-    on(back, 'click', () => closeTree());
+    back.setAttribute('data-tree-close', ''); // the tree's delegated click (onTreeClick)
     head.appendChild(back);
     // the keys: the workplaces' colours, then the states' rings
     const legend = make('div', 'tree-legend');
     legend.appendChild(make('span', 'tree-key ws-gather', 'Gathered'));
-    for (const s of ['hand', ...TREE_STATIONS]) legend.appendChild(make('span', `tree-key ws-${s}`, s === 'hand' ? 'By hand' : stationName(s)));
+    for (const s of ['hand', ...model.stations]) legend.appendChild(make('span', `tree-key ws-${s}`, s === 'hand' ? 'By hand' : stationName(s)));
     legend.appendChild(make('span', 'tree-legend-gap', ''));
-    for (const [st, label] of [['have', 'have it'], ['ready', 'can make now'], ['gather', 'to gather'], ['locked', 'not yet']]) {
+    for (const [st, label] of [['have', 'have it'], ['ready', 'can make now'], ['gather', 'to gather'], ['locked', 'not yet'], ['more', 'still to discover']]) {
       legend.appendChild(make('span', `tree-ring tree-${st}`, label));
     }
     head.appendChild(legend);
@@ -1193,12 +1230,17 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     canvas.style.width = `${layout.width + TREE_LEFT}px`;
     canvas.style.height = `${layout.height}px`;
     scroll.appendChild(canvas);
-    // the columns: one per workplace, tinted with its colour, its head (a banner) more strongly
+    // the columns: one per workplace, tinted with its colour, its head (a banner) more strongly; a column not reached yet
+    // (§94.4) is dim
     /** @type {HTMLElement[]} */
     const heads = [];
     layout.columns.forEach((col, c) => {
-      const s = TREE_STATIONS[c];
-      const stripe = /** @type {HTMLElement} */ (make('div', `tree-col ws-${s}`));
+      const s = model.stations[c];
+      const headNode = model.byId.get(placeId(s));
+      const reached = headNode?.reached !== false;
+      // a column whose workplace is not in sight yet has a dim banner, even when early things in it show (§94.4)
+      const veiled = headNode?.veiled === true;
+      const stripe = /** @type {HTMLElement} */ (make('div', `tree-col ws-${s}${reached ? '' : ' unreached'}${veiled ? ' veiled' : ''}`));
       stripe.style.left = `${TREE_LEFT + col.x - 10}px`;
       stripe.style.width = `${col.w + 20}px`;
       const banner = /** @type {HTMLElement} */ (make('div', `tree-banner ws-${s}`));
@@ -1225,7 +1267,7 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
       band.appendChild(label);
       canvas.appendChild(band);
     }
-    // the edges, under the nodes, in the colour of where the thing they lead into is made
+    // the edges, under the nodes, in the colour of where the thing they lead into is made (only between shown nodes)
     const svg = doc.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('class', 'tree-edges');
     svg.setAttribute('width', String(layout.width + TREE_LEFT));
@@ -1253,48 +1295,78 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     // the nodes; a workplace heads its column with its recipe and what it unlocks
     /** @type {Map<string, HTMLElement>} */
     const nodes = new Map();
+    // a workplace's needs: shown or hidden, each is a node of the whole tree (with the circuits off it names none)
     const strip = (ids) => ids.map(({ id, n }) => {
-      const nd = model.byId.get(id);
+      const nd = model.byId.get(id) ?? full.byId.get(id);
       return { icon: nd ? nd.icon : id, label: nd ? nd.label : itemName(id), n, ws: nd ? wsOf(nd) : 'hand' };
     });
     for (const node of model.nodes) {
       const at = layout.pos.get(node.id);
       if (!at) continue;
       const place = node.lane === 'place';
-      const el = /** @type {HTMLElement} */ (make('div', `tree-node tree-node-${node.lane}`));
+      const more = node.more !== undefined;
+      // a workplace not in sight yet is a dim head (§94.4): its name and what it needs
+      const el = /** @type {HTMLElement} */ (make('div', `tree-node tree-node-${more ? 'more' : node.lane}${place && node.veiled ? ' veiled' : ''}`));
       el.style.left = `${at[0] + TREE_LEFT}px`;
       el.style.top = `${at[1]}px`;
       el.setAttribute('data-node', node.id);
+      if (more) {
+        // §94.4: what is still hidden in this column, counted
+        const hex = make('div', 'tree-hex');
+        hex.appendChild(make('div', `tree-fill tree-fill-more ws-${model.stations[node.column]}`, '?'));
+        el.appendChild(hex);
+        el.appendChild(make('div', 'tree-label', `${node.more} more`));
+        el.appendChild(make('div', 'tree-how', 'to discover'));
+        el.title = `${node.label}: they show once you are a step away`;
+        canvas.appendChild(el);
+        nodes.set(node.id, el);
+        continue;
+      }
       el.appendChild(treeHex(node.icon, wsOf(node), place ? 32 : 24));
       el.appendChild(make('div', 'tree-label', node.label));
       el.appendChild(make('div', 'tree-how', place ? `built ${node.how}` : node.how));
+      const nUnlocks = node.unlocks.length;
       el.title = place
-        ? `${node.label}: built ${node.how} from ${node.needs.map(({ id, n }) => `${n > 0 ? `${n} ` : ''}${model.byId.get(id)?.label ?? id}`).join(', ')}. Unlocks ${node.unlocks.length} more recipes.`
+        ? `${node.label}: built ${node.how} from ${node.needs.map(({ id, n }) => `${n > 0 ? `${n} ` : ''}${full.byId.get(id)?.label ?? itemName(id)}`).join(', ')}.${nUnlocks > 0 ? ` Unlocks ${nUnlocks} more recipe${nUnlocks === 1 ? '' : 's'}.` : ''}`
         : `${node.label}: ${node.how}`;
       if (place) {
         el.appendChild(iconStrip('tree-needs', strip(node.needs)));
-        const more = node.unlocks.length > 6 ? node.unlocks.length - 6 : 0;
-        const unlocks = iconStrip('tree-unlocks', node.unlocks.slice(0, 6).map((k) => ({ icon: k, label: itemName(k), n: 1, ws: wsOf(node) })));
-        unlocks.insertBefore(make('span', 'tree-unlock-word', 'unlocks'), unlocks.firstChild);
-        if (more) unlocks.appendChild(make('span', 'tree-more', `+${more}`));
-        el.appendChild(unlocks);
+        // what it unlocks that is shown (§94.4a: had, makeable now or a step away; the rest is in the column's count)
+        if (nUnlocks > 0) {
+          const extra = node.unlocks.length > 6 ? node.unlocks.length - 6 : 0;
+          const unlocks = iconStrip('tree-unlocks', node.unlocks.slice(0, 6).map((k) => ({ icon: k, label: itemName(k), n: 1, ws: wsOf(node) })));
+          unlocks.insertBefore(make('span', 'tree-unlock-word', 'unlocks'), unlocks.firstChild);
+          if (extra) unlocks.appendChild(make('span', 'tree-more', `+${extra}`));
+          el.appendChild(unlocks);
+        }
       }
       canvas.appendChild(el);
       nodes.set(node.id, el);
     }
-    on(canvas, 'mouseover', (e) => hotNode(closestWith(e.target, 'data-node')));
-    on(canvas, 'mouseleave', () => hotNode(null));
-    on(canvas, 'click', (e) => {
-      const el = closestWith(e.target, 'data-node');
-      if (!el || !treeParts) return;
-      const node = treeParts.model.byId.get(/** @type {string} */ (el.getAttribute('data-node')));
-      if (!node) return;
-      // its recipes in the list: what makes it and what it goes into (a workplace: its own recipes too)
+    if (scrollAt) {
+      scroll.scrollLeft = scrollAt[0];
+      scroll.scrollTop = scrollAt[1];
+    }
+    treeParts = { model, full, layout, nodes, edges, heads, sig };
+  }
+
+  /**
+   * A click in the tree (delegated, once): "✕ Making" goes back; a node closes the tree and searches the list for its
+   * recipes, what makes it and what it goes into (a workplace by its name: its own recipes too); a "more" marker does
+   * nothing. @param {Event} e
+   */
+  function onTreeClick(e) {
+    if (closestWith(e.target, 'data-tree-close')) {
       closeTree();
-      setQuery(node.lane === 'place' ? node.label : itemName(node.icon), false);
-      if (state.view && state.view.tab !== 'all') fire('onTab', 'all');
-    });
-    treeParts = { model, layout, nodes, edges, heads };
+      return;
+    }
+    const el = closestWith(e.target, 'data-node');
+    if (!el || !treeParts) return;
+    const node = treeParts.model.byId.get(/** @type {string} */ (el.getAttribute('data-node')));
+    if (!node || node.more !== undefined) return;
+    closeTree();
+    setQuery(node.lane === 'place' ? node.label : itemName(node.icon), false);
+    if (state.view && state.view.tab !== 'all') fire('onTab', 'all');
   }
 
   /** Light up the edges of the node under the mouse (and the nodes at their other ends). @param {HTMLElement|null} el */
@@ -1310,23 +1382,34 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
     for (const [nid, n] of treeParts.nodes) n.classList.toggle('near', near.has(nid));
   }
 
-  /** The tree's states from the current view: every node, every edge (lit when what it carries is had), the columns. */
+  /**
+   * The tree from the current view: what is revealed (§94.4: `view.had`, the circuits switch `view.circuits`; drawn again
+   * only when that changes), then every node's state, every edge (lit when what it carries is had), the columns.
+   */
   function renderTree() {
-    if (!state.treeOpen || !treeParts || !state.view) return;
-    const states = treeStates(treeParts.model, treeFactsFromView(state.view));
-    for (const [id, el] of treeParts.nodes) {
-      const s = states.get(id) || 'locked';
+    if (!state.treeOpen || !state.view || !parts.tree) return;
+    const view = state.view;
+    const full = treeModelFor(view.circuits !== false);
+    const facts = treeFactsFromView(view);
+    const states = treeStates(full, facts);
+    const reveal = revealTree(full, { states, had: Array.isArray(view.had) ? view.had : [], canMake: facts.canMake });
+    const sig = revealSignature(full, reveal);
+    if (!treeParts || treeParts.sig !== sig) buildTreeView(full, revealedTree(full, reveal), sig);
+    const tp = /** @type {NonNullable<typeof treeParts>} */ (treeParts);
+    for (const [id, el] of tp.nodes) {
+      const s = id.startsWith('?') ? 'more' : states.get(id) || 'locked';
       if (el.getAttribute('data-state') !== s) el.setAttribute('data-state', s);
     }
     // lit: what you have, leading on to what you do not have yet (the next steps); both ends had: done, quiet
-    for (const e of treeParts.edges) {
+    for (const e of tp.edges) {
       const fromHave = states.get(e.from) === 'have';
       const toHave = states.get(e.to) === 'have';
       e.el.classList.toggle('live', fromHave && !toHave);
       e.el.classList.toggle('done', fromHave && toHave);
     }
-    columnProgress(treeParts.model, states).forEach((p, c) => {
-      const head = treeParts.heads[c];
+    columnProgress(full, states).forEach((p, c) => {
+      const head = tp.heads[c];
+      if (!head) return;
       head.classList.toggle('built', p.built);
       const count = /** @type {HTMLElement} */ (head.lastChild);
       const text = p.built ? 'set up ✓' : `${p.done} / ${p.total}`;
@@ -1336,7 +1419,6 @@ export function createPackUI(doc, itemIcons, callbacks = {}) {
 
   function openTree() {
     if (!parts.tree) return;
-    if (!treeParts) buildTreeView();
     state.treeOpen = true;
     parts.tree.classList.remove(HIDDEN);
     renderTree();

@@ -854,7 +854,7 @@ export function clearSave(storage = globalThis.localStorage)        // void
 **v0.9 Survival (§42).** `serializeSave` writes, after `watcherNight` and before `meta`, in this order: `gen` (an integer ≥ 2 only),
 `mode` (`'creative' | 'survival'`), `survival` (an object, canonicalised by `normalizeSurvivalJSON`: `{ health, satiation, hydration,
 temp, breath, wet, sick, heal, healRate, spawn: [q,y,r]|null, deaths, dead?, pack: (ItemStack|null)[27], wear: (ItemStack|null)[3],
-fires: { "q,y,r": { s: ({k, t}|null)[7], f? } } }`, numbers to 3 dp) and `containers` (only when non-empty after
+fires: { "q,y,r": { s: ({k, t}|null)[7], f? } }, had?: string[] }`, numbers to 3 dp; `had`: §94.4a) and `containers` (only when non-empty after
 `normalizeContainersJSON`: `{ "q,y,r": { kind: 'basket'|'remains', slots } }`). **`version: 3` exactly when `gen ≥ 2` or `survival`
 is present, else 2**; `deserializeSave` reads 2 and 3; `gen > GEN_LATEST` is unloadable (`unloadableReason`: "gen 3: made by a newer
 version of Caelancraft"). `serializeSave` throws a TypeError for `gen > GEN_LATEST` or a non-object `survival` / `containers` (never
@@ -7349,7 +7349,7 @@ wide, and leaks through a hole one brick wide.
 `getBrick(x, y, z)` / `setBrick(x, y, z, id)` at WORLD positions (the brick containing the point; setBrick checks
 `brickBlocker`, AIR removes).
 
-## 94. The Lab, the Work Stump's flint, the Making search and the build tree — `src/crafting.js`, `src/buildTree.js` (PURE), `src/packUI.js`, `src/blocks.js`, `src/tiles.js`, `src/survivalControl.js`, `src/pickerModel.js`, `src/harvest.js`, `src/purpose.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `src/styles.css`
+## 94. The Lab, the Work Stump's flint, the Making search and the build tree — `src/crafting.js`, `src/buildTree.js` (PURE), `src/packUI.js`, `src/blocks.js`, `src/tiles.js`, `src/survivalControl.js`, `src/pickerModel.js`, `src/harvest.js`, `src/purpose.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `src/styles.css`; §94.4a–b, §94.5a: `src/survival.js`, `src/storage.js`, `src/types.js`
 
 Amends §47, §50, §67 and DESIGN-circuits §8.2. The workplaces now read as a road: hands, Work Stump, Kiln, Bloomery, Forge,
 Workbench and a new **Lab**, and the Making panel shows the road itself.
@@ -7432,6 +7432,75 @@ for a tool) — no edge touches an `@station` node.
 - `layoutTree(model)` → node centres, columns (side by side, at most `TREE_MAX_ROWS` 3 rows a lane and 2–5 nodes across)
   and lanes (bands across the whole tree under the column heads, `TREE_HEAD_H` 150 tall, each lane as tall as its fullest
   column); a workplace sits at its column's centre, `TREE_PLACE_Y` 40 down its head. The height stays within 640 px.
+- A model carries its columns' workplaces, `stations` (a node's `column` indexes it); `layoutTree` and `columnProgress`
+  follow them.
+
+**§94.4a The tree reveals itself** (the user: "Don't show advanced items in the build tree automatically"). The pack
+screen no longer draws every recipe of the game: `revealTree(model, { states, had, canMake? })` → `{ shown, open, reached,
+unlocks, hidden }` (pure), from `treeStates`, the world's has-had set and (`canMake`, the TreeFacts') the recipes that could
+start now.
+- **Had**: the node's key is in `had`, or it is 'have' now; a tag by any member, a tool by any tool of its type at that tier
+  or better (a copper axe had is a stone axe had), a workplace by its block item (made, or carried) or by being near.
+- **Got now**: had, or 'ready' (makeable now), or raw with its gathering tool had (rock and sticks lie about: always). An
+  item with no node (what an unlocked recipe takes) is got now when had, when a recipe making it could start now
+  (`canMake`), or when it is raw and its gathering tool is had; a tag when any member is.
+- **One step away**: every input and tool of its recipe (its in-edges) is had or got now, and its workplace is had or got
+  now or could be built (every need had or got now, and where it is built had: by hand, or the Workbench for the Lab); a
+  raw thing whose gathering tool could be got now. A workplace is in sight (`open`) when it is had, got now or one step
+  away. A workplace built (its block item had, or stood at) is had by itself, whatever its own needs.
+- **What a workplace unlocks** (its `unlocks`, not nodes) follows the same rule (`unlocks[c]`, in its order): an output is
+  shown when it is had (a tool by any of its type at its tier or better), when one of that workplace's recipes for it could
+  start now, or when one of them takes only what is had or got now (inputs and tools) and the workplace is had or could
+  be built; and its column is reached. So an in-sight Work Stump shows the flint shovel and spear, not the bow (it wants a
+  flint knife, then a stave); a Kiln a step away shows none of its copper or bronze (they want ingots), a Forge a step
+  away no steel.
+- A column is **reached** when anything in it (or anything its workplace unlocks) has been had, or a build node in it or
+  its workplace is had, got now or one step away (a raw thing alone does not reach a column: flint, rawhide and sand wait
+  for theirs). A column can be reached while its workplace is not in sight: the fire drill, tinder and sand sit in the
+  Workbench's column (glass needs them), so they show early under the Workbench's dim head.
+- A gather or build node is **shown** when it is had, got now or one step away and its column is reached; everything else
+  is hidden. `hidden[c]` counts each column's hidden nodes and its workplace's hidden unlocks.
+- `revealedTree(model, reveal)` → the TreeModel drawn: every column's head (a copy marked `reached`, `veiled` while its
+  workplace is not in sight, its `unlocks` only those shown), the shown nodes in model order, then (when any are hidden)
+  a marker node `moreId(station)` = `?station` in the build lane: `{ lane: 'build', label: 'N more to discover', more: N,
+  icon: '' }` (treeStates gives it 'more'; columnProgress leaves it out). Only edges between two drawn nodes are kept, so
+  a shown node whose only uses are hidden has no edge (no dangling link), and no edge reaches a marker.
+- At the start of a world (the handbook alone) the Work Stump column shows rock, stick, plant fibre, cord and the
+  hammerstone ("20 more to discover": the stone axe, a log and the stump's 18 recipes); every other column is a dim head.
+  Twisting cord and shaping a hammerstone bring the stone axe, and the fire drill with tinder and sand (the Workbench's
+  column, its head still dim). A stone axe made (or makeable now) brings the log, the Work Stump into sight (its head lit,
+  unlocking the flint shovel and spear), the flint tools, flint, rawhide and pig fat (the Bloomery's column) and the
+  wooden shovel (the Kiln's); a flint knife had adds the bow stave to the stump's unlocks and leather, and a stave had the
+  bow.
+
+**The has-had set** (`survival.had`, a `Set<string>`): every item key that has ever entered the pack in this world's
+Survival, and every workplace stood at. `Survival.noteHad(keys)` adds known keys (an old name under its new one; @returns
+whether it grew); main notes the pack's keys (`survivalControl.heldKeys(pack, containers?, extra?)`: the slots, the worn,
+the containers' slots and loose stacks, sorted, once each) and the near workplaces' block items
+(`survivalControl.nearWorkplaceKeys(stations)`, of the findStations result: one built by another player counts) whenever
+`pack.version` or the stations change in Survival, and the cursor's while the pack is open; `begin()` (a new survival
+state) empties it; dying keeps it. Saved as `survival.had` (sorted; written only when non-empty, after
+`loose`): `normalizeSurvivalJSON` keeps it sorted and unique, aliases read under their new keys, unknown keys dropped with
+`survival.had: N unknown items, dropped`, a non-list ignored with `survival.had: not a list, ignored`. **An older save** has
+no `had` (no warning): on loading main adds `heldKeys(pack, containers)`, everything the pack and the baskets hold, and
+`placedWorkplaceKeys(world.edits)`, the block item of every workplace set down in the world (its Kiln and Forge built long
+ago stay in sight away from base). It does so for every save: what they hold, and what was built, has been had. Main's
+stations key (what makes `stations` and `stationsVersion` change) covers every workplace, the Workbench and the Lab too.
+`SurvivalJSON.had?` (types.js).
+
+**§94.4b The circuits switch.** `buildTreeModel({ circuits: false })` — the world's circuits off (the pause menu's Devices
+row, `circuits.setEnabled`) — leaves out every circuit key and the Lab's column: `stations` is `stump … workbench`;
+nothing is followed through a circuit (no node, no edge: the copper wire, the copper hammer that only draws it, the
+battery), no workplace unlocks one (the Workbench then unlocks nothing; the stump keeps black powder and the keg), and no
+workplace's `needs` name one: the Workbench's strip and tooltip have no copper wire (the tree shows no circuit at all; the
+Making list still shows its whole recipe), and the reveal judges it on its planks, steel bars, glass, tin and iron hammer.
+The copper hammer is a metal tool like the others: with the circuits off it is one of the Kiln's unlocks. **The circuit keys** (`CIRCUIT_KEYS`, sorted; `isCircuitKey(k)`; `CIRCUIT_STATIONS` `['lab']`):
+the item of every `circuitParts.PARTS` entry whose role carries electricity (`wire`, `junction`, `source`, `contact`,
+`load`): `copper_wire`, `brown_wire`, `white_wire`, `earth_wire`, `terminal_board`, `voltaic_battery`, `blasting_machine`,
+`selenium_panel`, `knife_switch`, `push_button`, `clockwork_timer`, `relay`, `igniter`, `filament_lamp`, `electric_bell`,
+`spark_transmitter`, `coherer_receiver`; the materials only they are made of, `carbon_filament`, `selenium` and
+`iron_filings`; and `lab`. Black powder, the Powder Fuse, the Torch, the Powder Keg (role `fuse`, `flame`, `ignitable`),
+sulfur and saltpetre are not circuits: they burn, and stay. `buildTreeModel()` (circuits on) is the whole tree, as before.
 
 ### 94.5 The build tree on screen (`packUI.js`)
 
@@ -7446,8 +7515,8 @@ legend, and a scrolling canvas with the lanes named on the left.
 - **The ring is the state**: the outer hex round the fill is green with a ✓ after the name (have it), gold and pulsing
   (can make now), blue (to gather), or dark with the node dimmed (not yet).
 - **A column's head** is its workplace: its hex in its own colour, its name, "built by hand" / "built at the Workbench",
-  a strip of what it is built from (icons, "×n", a tool unnumbered) and "unlocks" with up to 6 icons and "+N"; in its
-  corner "done / total" of the column's nodes, "set up ✓" once the workplace is there.
+  a strip of what it is built from (icons, "×n", a tool unnumbered) and "unlocks" with up to 6 icons and "+N" (of those
+  shown, §94.4a); in its corner "done / total" of the column's nodes, "set up ✓" once the workplace is there.
 - Links inside a column are always drawn, a link between columns only while one of its ends is under the mouse. A link
   from something had to something not yet had is bold (the next steps); between two things had, faint. The mouse over a
   node lights its links and their other ends. A click on a node closes the tree and searches the list for it
@@ -7455,6 +7524,30 @@ legend, and a scrolling canvas with the lanes named on the left.
 The states come from the view: `treeFactsFromView(view)` (counts over the pack, the worn and the cursor; tools by type and
 tier; `view.ready` — survivalControl.buildPackView's ids of every recipe, whatever the tab, that could start now; the near
 workplaces). `?ui=tree` (with `?autoplay` in Survival) opens the pack with the tree over it, for screenshots.
+
+**§94.5a What is drawn (§94.4a, §94.4b).** The PackView carries `had` (survival.had, sorted; absent: only what is carried
+counts) and `circuits` (the world's switch; absent: on). Each time the tree is shown or the view changes, the screen takes
+the whole tree for that switch (built once each), its states and `revealTree`, and draws `revealedTree` — again only when
+`revealSignature(model, reveal)` (packUI, pure: the columns, the shown nodes, the workplaces in sight, the columns reached,
+the hidden counts and the unlocks shown) changes, keeping the scroll; the states, edges and counts are set every time.
+`revealTree` is given the view's `canMake` (treeFactsFromView).
+- The columns, lanes, colours and state rings are as before. A column not reached (`.tree-col.unreached`) is barely
+  tinted. A workplace not in sight (`veiled`: `.tree-col.veiled` dims its banner, `.tree-node.veiled` its head) is a dim
+  head: its workplace, "built by hand", and what it needs; a column can be reached under a dim head (the fire drill under
+  the Workbench's). The "unlocks" strip draws only the unlocks shown (none: no strip); the head's tooltip counts them.
+  Every need is a node of the whole tree (shown or not), coloured by where it is made.
+- The tree's listeners are delegated, once, on `.build-tree` (a click on "✕ Making", `data-tree-close`, goes back; on a
+  node, it searches; mouseover lights a node's links, mouseleave clears them): drawing it again as it grows adds none, and
+  `dispose` removes them with the rest.
+- The marker `?station` is a "?" hex in its column's colour (`.tree-node-more`, state 'more'), "N more" / "to discover";
+  a click on it does nothing. The legend adds a dashed "still to discover" ring and lists only the columns drawn (no Lab
+  while the circuits are off). The heading's line: "… The next steps show as you go. …". The corner count stays "done /
+  total" of the whole column.
+- Creative has no build tree (it is the Survival pack's): the picker and its lists are unchanged.
+- Screenshot aids (diagnostics.parseParams): `?kit=none` or `?kit=<key>[:n],…` (with `?ui=pack|tree` and `?nosave`) stocks
+  the pack with exactly that kit instead of the screen's demo kit (none: the handbook alone, the start of a world); old
+  names read as new, unknown keys skipped, n 1..999. `?circuits=off|on` sets the first world's circuits switch after the save's.
+- The handbook's Making page says the tree "grows as you go, showing the next steps".
 
 ## 95. Touch controls (iPad) — `src/touchControls.js` (PURE + DOM), `src/controls.js`, `src/main.js`, `index.html`, `src/styles.css`, `public/manifest.webmanifest`, `public/apple-touch-icon.png`, `public/icons/`, `scripts/make-touch-icons.mjs`
 

@@ -15,7 +15,7 @@ import { normalizeAvatarId } from './avatars.js';
 import { normalizeViewMode } from './viewCamera.js';
 import { isItemPick, normalizePick } from './creativePicks.js';
 import { breakSeconds, digWear } from './harvest.js';
-import { ITEMS } from './items.js';
+import { ITEMS, canonicalItemKey, isItemKey } from './items.js';
 import { durabilityLeft } from './inventory.js';
 
 /** @typedef {import('./types.js').GameContext} GameContext */
@@ -57,6 +57,11 @@ import { durabilityLeft } from './inventory.js';
  *   that served the page, if it is one)
  * @property {string|null} join      `?join=<name>`: join that server at once under this name (with ?autoplay: straight into
  *   play, no click; screenshots and a home-screen bookmark)
+ * @property {Array<{ k: string, n: number }>|null} kit  §94.4 screenshot aid with `?ui=pack|tree` and ?nosave: the pack is
+ *   stocked with exactly these instead of the screen's demo kit — `?kit=none` (nothing but the handbook: the start of a
+ *   world) or `?kit=flint_knife,cord:3,stone_axe` (`key` or `key:n`; old names under new ones; unknown keys skipped)
+ * @property {boolean|null} circuits  §94.4 screenshot aid: `?circuits=off` starts the world with its circuits switched off
+ *   (as the pause menu's Devices row does; `on` → true); anything else → null (the save decides)
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -98,7 +103,43 @@ export function parseParams(search = defaultSearch()) {
     zoom: readZoomParam(params),
     server: readString(params, 'server'),
     join: readString(params, 'join'),
+    kit: readKitParam(params),
+    circuits: readOnOffParam(params, 'circuits'),
   };
+}
+
+/**
+ * §94.4 `?kit=none` → [] or `?kit=a,b:3` → [{ k: 'a', n: 1 }, { k: 'b', n: 3 }]: items only (by key, any case, an old name
+ * under its new one), n 1..999; anything unknown is skipped; absent → null.
+ * @param {URLSearchParams} params
+ * @returns {Array<{ k: string, n: number }>|null}
+ */
+export function readKitParam(params) {
+  const t = readString(params, 'kit');
+  if (t === null) return null;
+  if (t.toLowerCase() === 'none') return [];
+  const out = [];
+  for (const part of t.split(',')) {
+    const [name, count] = part.trim().toLowerCase().split(':');
+    const k = canonicalItemKey(name ?? '');
+    if (!isItemKey(k)) continue;
+    const n = count === undefined ? 1 : Math.floor(Number(count));
+    if (Number.isFinite(n) && n >= 1) out.push({ k, n: Math.min(999, n) });
+  }
+  return out;
+}
+
+/**
+ * `?<name>=on|off` (also 1/0, true/false; any case) → true / false; anything else or absent → null.
+ * @param {URLSearchParams} params @param {string} name @returns {boolean|null}
+ */
+function readOnOffParam(params, name) {
+  const t = readString(params, name);
+  if (t === null) return null;
+  const v = t.toLowerCase();
+  if (v === 'on' || v === '1' || v === 'true') return true;
+  if (v === 'off' || v === '0' || v === 'false') return false;
+  return null;
 }
 
 /**

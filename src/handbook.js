@@ -1796,7 +1796,7 @@ function makeChapters() {
     [
       h('Making things'),
       p('Press [E] to open your pack and *Making*. There is no crafting grid: the list shows what you can make from what you carry at the workplaces near you, the things you can make right now first. Recipes for workplaces you have not built are greyed out, so the list doubles as your road map.'),
-      p('Search finds a recipe by its name, an input or a workplace. *Build tree* shows what to gather and build to set up each workplace, Work Stump to Lab. Everything made at a workplace wears its colour; a green ring is something you have, a gold one something you can make now. Click anything to find its recipes.'),
+      p('Search finds a recipe by its name, an input or a workplace. *Build tree* shows what to gather and build for each workplace, Work Stump to Lab; it grows as you go, showing the next steps. Colour is the workplace; a green ring is something you have, a gold one something you can make now. Click anything to find its recipes.'),
       p(`A workplace counts as near within ${STATION_RANGE} cells (and 2 up or down). Click *Make*, or *×5* for five of what stacks.`),
       p(`Each workplace (your hands, a Work Stump, a Kiln, a Bloomery, the Forge, the Workbench, the Lab) has its own *lane*, and all the lanes work at once. A job takes its inputs only when it finishes, so cancelling costs nothing. Up to ${MAX_CRAFT_JOBS} jobs wait in all.`),
       p(`Once started, a job keeps going while you stay within ${STATION_WORK_RANGE} cells of its workplace: tend the fire, fetch water or dig clay while the Kiln works.`),

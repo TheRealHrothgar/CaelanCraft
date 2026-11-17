@@ -13,7 +13,8 @@ import {
   strikeReach, outOfReachHint, STRIKE_REACH, STRIKE_REACH_MAX,
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, strikeKind, useActionOf, placeRefusal, handKeyOf,
   stationIdOf, waterHint, HINT, KNIFE_TIER, DIG_BLOCKED_TICK_S, STATION_TABS, STATION_OF_BLOCK, BELONGINGS_SCAN_DOWN,
-  HANDBOOK_ITEM, relightMissing, wearsFromDigging, wearsFromStriking, KIT_TOOL_TYPES,
+  HANDBOOK_ITEM, relightMissing, wearsFromDigging, wearsFromStriking, KIT_TOOL_TYPES, heldKeys, nearWorkplaceKeys,
+  placedWorkplaceKeys,
 } from '../../src/survivalControl.js';
 import { makeGetBlock } from '../helpers/fixtures.js';
 
@@ -650,8 +651,14 @@ describe('buildPackView (§9.8)', () => {
   it('has the view shape, with copied stacks', () => {
     const pack = packWith({ 0: { k: 'rock', n: 3 } }, { 1: { k: 'grass_cape', n: 1 } });
     const view = buildPackView({ pack, selected: 4, cursor: null });
-    expect(Object.keys(view).sort()).toEqual(['container', 'cursor', 'hover', 'lanes', 'message', 'ready', 'recipes', 'selected', 'slots', 'stations', 'tab', 'wear'].sort());
+    expect(Object.keys(view).sort()).toEqual(['circuits', 'container', 'cursor', 'had', 'hover', 'lanes', 'message', 'ready', 'recipes', 'selected', 'slots', 'stations', 'tab', 'wear'].sort());
     expect(view.message).toBe(null);
+    // §94.4: none had given → none; the circuits on unless switched off
+    expect(view.had).toEqual([]);
+    expect(view.circuits).toBe(true);
+    const later = buildPackView({ pack, selected: 0, had: new Set(['stick', 'cord']), circuits: false });
+    expect(later.had).toEqual(['cord', 'stick']);
+    expect(later.circuits).toBe(false);
     expect(view.slots.length).toBe(27);
     expect(view.slots[0]).toEqual({ k: 'rock', n: 3 });
     expect(view.slots[0]).not.toBe(pack.slots[0]);
@@ -749,6 +756,37 @@ describe('wear on a dig or a blow (§6.1 step 6)', () => {
     for (const k of ['crucible', 'casting_mold', 'fire_drill']) expect(wearsFromStriking(tool(k)), k).toBe(false);
     expect([...KIT_TOOL_TYPES].sort()).toEqual(['crucible', 'firestarter', 'mold']);
     expect(wearsFromStriking(null)).toBe(false);
+  });
+});
+
+describe('heldKeys (§94.4: what survival.had takes in)', () => {
+  it('the keys in the pack, what is worn, the containers and the cursor: sorted, once each, empty slots skipped', () => {
+    const pack = new Pack();
+    pack.slots[0] = { k: 'rock', n: 3 };
+    pack.slots[5] = { k: 'cord', n: 1 };
+    pack.slots[6] = { k: 'rock', n: 1 };
+    pack.wear[0] = { k: 'straw_hat', n: 1 };
+    const baskets = [{ slots: [null, { k: 'flint', n: 2 }] }, { slots: [{ k: 'oak_log', n: 4 }, { k: 'cord', n: 2 }] }];
+    expect(heldKeys(pack)).toEqual(['cord', 'rock', 'straw_hat']);
+    expect(heldKeys(pack, baskets)).toEqual(['cord', 'flint', 'oak_log', 'rock', 'straw_hat']);
+    expect(heldKeys(pack, [], [{ k: 'stick', n: 1 }, null])).toEqual(['cord', 'rock', 'stick', 'straw_hat']);
+    expect(heldKeys(null, baskets.values())).toEqual(['cord', 'flint', 'oak_log']);
+    expect(heldKeys(new Pack())).toEqual([]);
+  });
+
+  it('the workplaces near (a findStations result) and those set down in the world (world.edits): their item keys, sorted', () => {
+    expect(nearWorkplaceKeys({ hand: true, kiln: [0, 64, 0], workbench: [2, 64, 1], lab: [3, 64, 1] })).toEqual(['kiln', 'lab', 'workbench']);
+    expect(nearWorkplaceKeys({ hand: true })).toEqual([]);
+    expect(nearWorkplaceKeys(null)).toEqual([]);
+    // world.edits: chunk key → (local index → block id); a workplace's block anywhere is one built (an older save's)
+    const edits = new Map([
+      ['0,0', new Map([[10, BLOCK.FORGE], [11, BLOCK.AIR], [12, BLOCK.KILN]])],
+      ['1,-1', new Map([[5, BLOCK.WORK_STUMP], [6, BLOCK.KILN]])],
+      ['2,2', new Map([[7, BLOCK.STONE]])],
+    ]);
+    expect(placedWorkplaceKeys(edits)).toEqual(['forge', 'kiln', 'work_stump']);
+    expect(placedWorkplaceKeys(new Map())).toEqual([]);
+    expect(placedWorkplaceKeys(null)).toEqual([]);
   });
 });
 
