@@ -445,7 +445,7 @@
  * @property {() => void} [editTarget]               the Shift+R key on the target: the device panel or the rune editor
  * @property {(q: number, y: number, r: number) => void} [openDevicePanel]
  * @property {() => void} [closeDevicePanel]
- * @property {'vortex'|'circuits'|'wind'|'wind-rain'|null} [urlScene]  `?scene=` as the page was opened with
+ * @property {import('./diagnostics.js').SceneName|null} [urlScene]  `?scene=` as the page was opened with
  * @property {(name: string, delay?: number) => { ok: boolean, message: string, named?: Record<string, number[]> }} [buildScene]
  * @property {Record<string, number[]>|null} [sceneCells]  the named cells of the last scene built
  * @property {() => number} [circuitSegments]       wire segments drawn (the F3 circuits line)

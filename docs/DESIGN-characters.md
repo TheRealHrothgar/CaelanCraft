@@ -50,7 +50,8 @@ cube silhouette and the chunky pixels are what read as "Minecraft".
 | model | today | hex-faceted (pilot) |
 |---|---|---|
 | an avatar | 180 tris, ~9 draws | ~1,600 tris, 1 draw per bone group, 256² atlas |
-| a zombie | 108 tris | ~930 tris (instanced per part) |
+| a zombie | 108 tris | walker ~1,150, runner ~1,190, alpha ~1,280 tris (phase 2, done): instanced per part, 5 draws a kind; a 256² atlas + glow each |
+| the Watcher | ~500 tris, block-atlas tiles | ~830 tris, its own 256² stone atlas + glow (phase 2, done) |
 | an animal | ~200 tris, colours per vertex | ~320–470 tris, 256² atlas |
 | a bush in the chunk mesh | ~100 tris | ~1,100 tris near, today's model past ~16 m |
 | the first-person hand | 608 tris | ~430 tris + the held slab |
@@ -65,7 +66,14 @@ and plants get a level of detail.
    renderer builds them from the kit over a painted atlas; the chooser's portraits come from it; the held item (§98.4)
    sits in the new fist; remote players get the same models. Done (CONTRACTS §91, §98.4): `avatarModel.js` and `figureKit.js`
    build any avatar bone by bone; the first-person hand is `FP_HAND`; `avatarSkin.js` and the box models are gone.
-2. **Zombies, the Watcher, the phantom.** Repainted atlases with the night-glow layer in step; instanced per part.
+2. **Zombies, the Watcher, the phantom.** Repainted atlases with the night-glow layer in step; instanced per part. Done
+   (CONTRACTS §102): `zombieModel.js` builds the walker, the runner (leaner) and the alpha (bigger, heavier, a long coat)
+   part by part from the kit — gaunt faceted heads with a heavy brow wedge over narrow slits, ragged painted clothes with
+   see-through torn hems, a shirt tint marked in the atlas, a glow image that is the atlas dimmed (clothes still read at
+   night) with faint eyes that are never red; `zombieRenderer.js` keeps its API, its instancing (one mesh per part and
+   kind: a crowd of 24 is 15 draws, ~28k tris, 0.035 ms of CPU a frame) and every pose. The Watcher (`watcherModel.js`) is
+   chamfered hollow hex bands, a lantern round a faceted crystal and painted stone with glowing cracks; the figure at the
+   edge of sight is a dark person-shaped shadow from the kit. Screenshot aids: `?scene=zombies|crowd|watcher|phantom`.
 3. **Pigs and animals.** Every species, sex, shorn, tame and young variant from the kit, textured.
 4. **Plants.** Model plants in the chunk mesher with per-vertex atlas UVs and a plant atlas, with a level of detail.
 5. **Everything else that is a creature or a figure** (loose items, the campfire's cook pots if they read blocky,

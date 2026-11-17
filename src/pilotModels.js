@@ -3,18 +3,20 @@
 //
 // The chosen look, A: HEX-FACETED. The kit for every figure is figureKit.js (faceted heads, hair, the Skin atlas, the
 // style's shapes); the avatars left the pilot in phase 1 — they are avatarModel.js, the game's own models, and the pilot
-// shows them from there (buildPilot('caelan'), buildHand). What is still a pilot here: the zombie walker, the sheep and
-// the pig, the honeyberry bush (near and far) and a sapling — later phases of the rollout.
+// shows them from there (buildPilot('caelan'), buildHand); the zombies left in phase 2 (zombieModel.js: buildPilot('zombie')
+// is the game's walker). What is still a pilot here: the sheep and the pig, the honeyberry bush (near and far) and a
+// sapling — later phases of the rollout.
 // A model is { geo, image, tris, texels, atlas: [w, h] }: one merged geometry in its own frame (metres; a figure stands on
 // its feet at the origin and faces −Z; the first-person hand is in CAMERA space), one RGBA atlas (sRGB bytes, row 0 at
 // the top, a DataTexture with flipY off) and its budgets. Static poses only: the pilot is about the look.
 import { loft, prism, transform, compose, mul, translation, rotation, scaling, identity, triangleCount } from './modelKit.js';
 import { mix, shade, fbm, hash2, makeRng } from './paintKit.js';
 import {
-  STYLES, DENSITY, perimeter, Skin, shapes, seg, len, headSkin, addHead, hairShell, addLocks, onHead, rotateAbout,
+  STYLES, DENSITY, perimeter, Skin, shapes, seg, len,
 } from './figureKit.js';
 import { buildAvatarModel, restGeometry, fpHandModel, HAIR_CUTS } from './avatarModel.js';
 import { AVATARS, avatarById } from './avatars.js';
+import { zombieModel, zombieRestGeometry } from './zombieModel.js';
 
 /** @typedef {import('./modelKit.js').Geo} Geo */
 /** @typedef {import('./paintKit.js').Rect} Rect */
@@ -23,12 +25,6 @@ import { AVATARS, avatarById } from './avatars.js';
 /** @typedef {import('./figureKit.js').HeadDims} HeadDims */
 
 export { STYLES };
-
-/** The walker's head: a narrow jaw, sunken cheeks, a heavy brow standing out over the eyes, a long skull. */
-const ZOMBIE_HEAD = Object.freeze([
-  [0, 0.44, 0.5, -0.03], [0.13, 0.64, 0.74, -0.018], [0.32, 0.8, 0.88, -0.004], [0.5, 0.97, 0.95, 0],
-  [0.6, 1.0, 1.03, -0.016], [0.72, 0.98, 0.99, 0], [0.87, 0.95, 1.03, 0.012], [0.96, 0.72, 0.78, 0.016], [1, 0.42, 0.46, 0.014],
-]);
 
 // ---------------------------------------------------------------------------------------------------
 // The kids: the game's own avatars (avatarModel.js), at rest, and their hair cuts
@@ -61,6 +57,16 @@ export function buildHand(style = 'hex', swing = 0, { frame = 'camera' } = {}) {
   return fpHandModel(def, swing);
 }
 
+/**
+ * The walker as the game draws it (zombieModel.js, phase 2), standing with its arms a little out.
+ * @returns {PilotModel}
+ */
+function buildWalker() {
+  const m = zombieModel('walker');
+  const geo = zombieRestGeometry('walker');
+  return { geo, image: m.image, tris: triangleCount(geo), texels: m.texels, atlas: m.atlas };
+}
+
 // ---------------------------------------------------------------------------------------------------
 // The catalogue
 // ---------------------------------------------------------------------------------------------------
@@ -82,7 +88,7 @@ export function buildPilot(name, style = 'hex', { hair } = {}) {
     case 'caelan':
     case 'brayden':
     case 'annabelle': return buildKid(name, hair);
-    case 'zombie': return buildZombie(st, paintZombie());
+    case 'zombie': return buildWalker();
     case 'sheep': return buildSheep(st, paintSheep());
     case 'pig': return buildPig(st, paintPig());
     case 'honeyberry': return buildHoneyberry(st, paintBush());
@@ -90,176 +96,6 @@ export function buildPilot(name, style = 'hex', { hair } = {}) {
     case 'sapling': return buildSapling(st, paintBush());
     default: throw new RangeError(`no pilot model ${name}`);
   }
-}
-
-// ---------------------------------------------------------------------------------------------------
-// The zombie walker (zombieSkin.js's walker palette): a dead person under moonlight — gaunt, stooped, arms out ahead,
-// grey-green skin, sunken hollows round narrow slits, a slack mouth; a faded flannel shirt torn at the hem and the
-// sleeves, patched trousers, worn shoes. Spooky, never frightening: no blood, no wounds, no bones, nothing red.
-// ---------------------------------------------------------------------------------------------------
-
-const WALKER = Object.freeze({
-  skin: [0xb0bfa8, 0xa5b59d, 0x97a890, 0x4d5b4a], dark: 0x748570,
-  hair: [0x5a4c40, 0x40352c, 0x372d25, 0x2c231d],
-  shirt: [0x9aa6b2, 0x86929e, 0x6c7783], plaidLine: 0xc9c2ae,
-  trousers: [0x52566a, 0x474b56, 0x383b44], patch: [0x8a7a5e, 0x7a6a50, 0x5e5240],
-  shoe: [0x4a3b30, 0x2f2721, 0x201a16], belt: 0x3a2e24, buckle: 0x8f8869, thread: 0xd8cfb4,
-});
-
-const ZOMBIE = Object.freeze({
-  legX: 0.095, ankleY: 0.085, hip: 0.86,
-  leg: { rx: 0.084, rz: 0.086, rings: [{ y: 0, sx: 0.78 }, { y: 0.23, sx: 0.86 }, { y: 0.34, sx: 0.8 }, { y: 0.57, sx: 0.98 }, { y: 0.73, sx: 1 }] },
-  hips: { y0: 0.76, y1: 0.95, rx: 0.168, rz: 0.106 },
-  torso: { y0: 0.82, rx: 0.192, rz: 0.11, rings: [{ y: 0, sx: 1.04, sz: 1.05 }, { y: 0.12, sx: 0.95 }, { y: 0.4, sx: 1, sz: 1.04 }, { y: 0.56, sx: 0.97 }, { y: 0.615, sx: 0.7, sz: 0.76 }] },
-  neck: { y0: 1.38, y1: 1.5, r: 0.046 },
-  /** @type {HeadDims} */
-  head: { y: 1.465, h: 0.34, rx: 0.148, rz: 0.155, eyeAt: 0.5, eyeX: 0.052, eyeW: 0.06, mouthAt: 0.2, noseAt: 0.36 },
-  shoulder: [0.215, 1.38, 0.0],
-  upper: { rx: 0.058, rz: 0.055 },
-  lean: 0.2,
-});
-
-function paintZombie() {
-  const W = WALKER;
-  const D = DENSITY.body;
-  const DH = DENSITY.head;
-  const Z = ZOMBIE;
-  const s = new Skin(256, 256, 13);
-  const skinR = W.skin;
-  const mottled = (p) => {
-    p.skin(skinR).mottle(0.1, 5);
-    const rnd = makeRng(5);
-    for (let i = 0; i < (p.w * p.h) / 140; i++) p.glow(rnd() * p.w, rnd() * p.h, 2 + rnd() * 4, W.dark, 0.18);
-  };
-  headSkin(s, 'head', Z.head, mottled, { kind: 'zombie', skin: skinR, brows: W.hair[3] });
-  s.plain('skin', 32, 32, (p) => mottled(p));
-  s.wrap('neck', Math.round(perimeter(Z.neck.r, Z.neck.r) * D), Math.round((Z.neck.y1 - Z.neck.y0) * D), (p) => {
-    mottled(p);
-    p.ao({ top: 0.5, width: 0.6 });
-  });
-  s.plain('hair', 48, 48, (p) => p.hair(W.hair, { dir: [0.2, 1], sheen: -1, strand: 2 }));
-  // the shirt: faded flannel, buttoned down the front (one button gone), a sewn patch, a tear, its hem torn away
-  const tw = Math.round(perimeter(Z.torso.rx * 1.02, Z.torso.rz * 1.04) * D);
-  const th = Math.round(Z.torso.rings[4].y * D);
-  s.wrap('shirt', tw, th, (p) => {
-    p.plaid(W.shirt, { cell: 11, band: 4, line: W.plaidLine });
-    p.line(tw / 2 + 2.5, 3, tw / 2 + 2.5, th, 0.5, W.shirt[2], 0.9);
-    [0.2, 0.38, 0.56, 0.74].forEach((t, i) => {
-      if (i === 2) p.line(tw / 2 - 1, th * t, tw / 2 + 1, th * t + 1, 0.4, W.thread, 0.9);
-      else p.ellipse(tw / 2, th * t, 1.6, 1.6, 0xd2c9ad, 1).ellipse(tw / 2, th * t, 0.5, 0.5, 0x6b6450, 1);
-    });
-    p.patch(tw * 0.62, th * 0.42, 9, 8, W.patch, W.thread);
-    p.tear(tw * 0.36, th * 0.62, 3.2, W.shirt);
-    p.tear(tw * 0.9, th * 0.3, 2.6, W.shirt);
-    for (const u of [0.25, 0.75]) p.seam(tw * u, 0, tw * u, th, W.shirt, { stitch: false });
-    p.shadeV(1.04, 0.86);
-    p.ragged({ edge: 'bottom', depth: 7, period: 3.5 });
-  }, {
-    cap: [36, 22],
-    top: (p) => {
-      p.plaid(W.shirt, { cell: 11, band: 4, line: W.plaidLine });
-      p.ellipse(18, 11, 7, 6, W.shirt[2], 1).ellipse(18, 11, 5.4, 4.6, 0x2a2e2a, 1);
-    },
-  });
-  const uL = 0.27;
-  const uw = Math.round(perimeter(Z.upper.rx * 1.25, Z.upper.rz * 1.25) * D);
-  s.wrap('sleeve', uw, Math.round(0.17 * D), (p) => {
-    p.plaid(W.shirt, { cell: 11, band: 4, line: W.plaidLine });
-    p.shadeV(1.06, 0.88);
-    p.ragged({ edge: 'bottom', depth: 5, period: 2.5 });
-  });
-  s.wrap('arm', Math.round(perimeter(Z.upper.rx, Z.upper.rz) * D), Math.round(uL * D), (p) => {
-    mottled(p);
-    p.ao({ top: 0.3, width: 0.3 });
-  }, { top: mottled, bottom: mottled });
-  s.plain('hand', 24, 24, (p) => {
-    mottled(p);
-    p.shadeV(1.0, 0.82);
-  });
-  // trousers: a belt, a patched knee on one leg, worn paler at the other
-  const jw = Math.round(perimeter(Z.hips.rx, Z.hips.rz) * D);
-  const jh = Math.round((Z.hips.y1 - Z.hips.y0) * D);
-  s.wrap('hips', jw, jh, (p) => {
-    p.cloth(W.trousers, { fold: 1 });
-    p.fill((x, y) => (y > jh - 7 ? shade(W.belt, 0.9 + 0.15 * hash2(x, y, 3)) : p.get(x, y)));
-    p.ellipse(jw / 2, jh - 3.5, 3, 2.3, W.buckle, 1).ellipse(jw / 2, jh - 3.5, 1.6, 1.0, W.belt, 1);
-    for (const u of [0.25, 0.75]) p.seam(jw * u, 0, jw * u, jh - 7, W.trousers);
-  });
-  const lw = Math.round(perimeter(Z.leg.rx, Z.leg.rz) * D);
-  const lh = Math.round(Z.leg.rings[4].y * D);
-  for (const side of ['L', 'R']) {
-    s.wrap(`leg${side}`, lw, lh, (p) => {
-      p.cloth(W.trousers, { fold: 1.2 });
-      for (const u of [0.25, 0.75]) p.seam(lw * u, 0, lw * u, lh, W.trousers, { stitch: false });
-      if (side === 'L') p.patch(lw * 0.36, lh * 0.5, 11, 10, W.patch, W.thread);
-      else p.glow(lw * 0.5, lh * 0.55, 7, W.trousers[0], 0.5, 9).tear(lw * 0.55, lh * 0.82, 2.4, W.trousers);
-      p.shadeV(0.86, 1.0);
-      p.ragged({ edge: 'bottom', depth: 3, period: 2 });
-    });
-  }
-  const [sl, sm, sd] = W.shoe;
-  s.box('shoe', Math.round(0.12 * DH), Math.round(0.09 * DH), Math.round(0.25 * DH), {
-    all: (p) => {
-      p.cloth([sl, sm, sd], { fold: 1.2 }).mottle(0.12, 3);
-      p.fill((x, y) => (y > p.h - 4 ? shade(sd, 0.9 + 0.2 * hash2(x, y, 9)) : p.get(x, y)));
-      p.stitches(0, p.h - 6, p.w, p.h - 6, shade(sl, 1.2), { a: 0.5 });
-    },
-    top: (p) => {
-      p.cloth([sl, sm, sd], { fold: 1.2 }).mottle(0.12, 3);
-      for (let k = 0; k < 3; k++) p.line(p.w * 0.3, p.h * (0.45 + 0.1 * k), p.w * 0.7, p.h * (0.47 + 0.1 * k), 0.6, 0x1a1512, 0.9);
-    },
-  });
-  return s;
-}
-
-/** The walker after someone: stooped, arms out ahead (one higher), head lolling. @param {Style} st @param {Skin} s */
-function buildZombie(st, s) {
-  const S = shapes(st);
-  const Z = ZOMBIE;
-  const parts = [];
-  const add = (geo, key, M) => parts.push(s.place(geo, key, M));
-  // legs: the left a short step ahead (it limps)
-  for (const side of [-1, 1]) {
-    const x = side * Z.legX;
-    const stride = side < 0 ? -0.07 : 0.05;
-    const legM = rotateAbout([x, Z.hip, 0], [1, 0, 0], side < 0 ? 0.1 : -0.06);
-    add(S.block(0.12, 0.09, 0.25, { top: { sx: 0.9, sz: 0.82, dz: 0.02 } }), 'shoe', compose({ t: [x, 0.045, stride - 0.04], r: [0, side * -0.12, 0] }));
-    add(S.col(Z.leg.rx, Z.leg.rz, Z.leg.rings), `leg${side < 0 ? 'L' : 'R'}`, mul(legM, translation(x, Z.ankleY, 0)));
-  }
-  add(S.col(Z.hips.rx, Z.hips.rz, [{ y: 0, sx: 0.97 }, { y: Z.hips.y1 - Z.hips.y0 }]), 'hips', translation(0, Z.hips.y0, 0));
-  // everything above the hips stoops forward about them
-  const U = rotateAbout([0, Z.hip, 0], [1, 0, 0], -Z.lean);
-  const up = (M) => mul(U, M);
-  add(S.col(Z.torso.rx, Z.torso.rz, Z.torso.rings), 'shirt', up(translation(0, Z.torso.y0, 0)));
-  // the head lolls: forward and to one side, on a thin neck
-  const neckBase = [0, Z.neck.y0, 0];
-  const loll = mul(rotateAbout(neckBase, [0, 0, 1], 0.16), rotateAbout(neckBase, [1, 0, 0], -0.22));
-  add(S.col(Z.neck.r, Z.neck.r, [{ y: 0 }, { y: Z.neck.y1 - Z.neck.y0, sx: 0.92 }], { caps: false }), 'neck', up(mul(loll, translation(0, Z.neck.y0, 0))));
-  const H = Z.head;
-  const head = up(mul(loll, translation(0, H.y, 0)));
-  addHead(add, head, H, ZOMBIE_HEAD, { nose: [0.05, 0.034, 0.07] });
-  // thin, lank hair: a receding shell, a few strands over the brow, straggles at the sides and the back
-  hairShell(add, head, H, 'hair', { grow: 0.01, base: 0.74, tilt: 0.48 });
-  addLocks(add, head, 'hair', [[-0.08, 0.06, 0.03], [-0.02, 0.09, 0.025], [0.06, 0.07, 0.03]].map(([x, l, w]) =>
-    [[x, 0.93 * H.h, -H.rz * 0.8], [x + 0.02, (0.93 - l / H.h) * H.h, -H.rz * 1.02], l + 0.02, w, 0.01, 0.01, -0.006]));
-  addLocks(add, head, 'hair', [[100, 0.12], [125, 0.1], [-105, 0.13], [-130, 0.11], [165, 0.14], [-160, 0.12], [180, 0.13]].map(([deg, l]) =>
-    [onHead(H, 180 - deg, 0.78, -0.004), onHead(H, 180 - deg * 1.02, 0.78 - l / H.h, 0.02), l, 0.04, 0.012, 0, 0.01]), { face: [0, 0, 1] });
-  // arms out ahead, the left higher; ragged short sleeves; hands hanging limp from the wrists
-  for (const side of [-1, 1]) {
-    const sh = [side * Z.shoulder[0], Z.shoulder[1], Z.shoulder[2]];
-    const el = side < 0 ? [-0.225, 1.3, -0.23] : [0.235, 1.22, -0.21];
-    const wr = side < 0 ? [-0.205, 1.37, -0.49] : [0.215, 1.25, -0.47];
-    const uL = len(sh, el);
-    add(S.col(Z.upper.rx, Z.upper.rz, [{ y: 0, sx: 0.6 }, { y: 0.035, sx: 1 }, { y: uL, sx: 0.85 }]), 'arm', up(seg([sh[0], sh[1] + 0.035, sh[2]], el)));
-    add(S.col(Z.upper.rx * 1.25, Z.upper.rz * 1.25, [{ y: 0, sx: 1.08 }, { y: 0.13, sx: 1 }, { y: 0.17, sx: 0.62 }], { caps: { top: true, bottom: false } }), 'sleeve',
-      up(seg([sh[0], sh[1] + 0.04, sh[2]], el, mul(translation(0, 0.17, 0), scaling(1, -1, 1)))));
-    const fL = len(el, wr);
-    add(S.col(Z.upper.rx * 0.9, Z.upper.rz * 0.9, [{ y: 0 }, { y: fL, sx: 0.78 }]), 'arm', up(seg(el, wr)));
-    const hand = up(mul(seg(el, wr, translation(0, fL, 0), { back: [0, -1, 0] }), rotation(0, 1.0)));
-    add(S.block(0.075, 0.075, 0.035, { top: { sx: 1.08 } }), 'hand', mul(hand, translation(0, 0.035, 0.005)));
-    add(S.block(0.066, 0.06, 0.03), 'hand', mul(hand, compose({ t: [0, 0.095, 0.018], r: [0.55, 0, 0] })));
-  }
-  return s.model(parts);
 }
 
 // ---------------------------------------------------------------------------------------------------

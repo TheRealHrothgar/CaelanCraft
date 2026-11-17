@@ -33,10 +33,12 @@ import { isItemPick, normalizePick } from './creativePicks.js';
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
  * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker, 'pack' the Pack & Making screen (Survival), 'tree' the same with its build tree open (§94), 'device' the device panel on a demo Clockwork Timer (v0.10), 'pause' the pause menu
- * @property {'vortex'|'circuits'|'wind'|'wind-rain'|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar
+ * @property {SceneName|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar
  *   Charge 8 cells ahead 2 s after loading; 'circuits' builds the §4.14 worked examples ahead (readSceneParam,
  *   circuitSceneWrites); §101: 'wind' sets two pennants and a lit campfire ahead (the flags and the smoke in the wind),
- *   'wind-rain' the same in forced rain
+ *   'wind-rain' the same in forced rain; §102: 'zombies' stands a walker, a runner and an alpha ahead (ZOMBIE_SCENE),
+ *   'crowd' a crowd of CROWD_SIZE (crowdScene), 'watcher' the Watcher (WATCHER_SCENE), 'phantom' the figure at the edge of
+ *   sight (PHANTOM_SCENE) — drawn only, never in a list of mobs
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
  * @property {'creative'|'survival'|null} mode  v0.9 (§9.10): the first world's mode with ?autoplay / ?smoke; anything else → null
  * @property {boolean} soundTest     v0.16 (CONTRACTS §82): `?ui=sounds` — main opens the Sound Test as soon as the page has loaded
@@ -118,17 +120,66 @@ function readSoundTestParam(params) {
   return t !== null && t.toLowerCase() === 'sounds';
 }
 
+/** @typedef {'vortex'|'circuits'|'wind'|'wind-rain'|'zombies'|'crowd'|'watcher'|'phantom'} SceneName */
+/** Every `?scene=` (DESIGN-circuits §6.7, §101, §102). */
+export const SCENE_NAMES = Object.freeze(/** @type {SceneName[]} */ (['vortex', 'circuits', 'wind', 'wind-rain', 'zombies', 'crowd', 'watcher', 'phantom']));
+
 /**
- * `?scene=vortex|circuits|wind|wind-rain` (case-insensitive), anything else null (DESIGN-circuits §6.7; §101 the wind).
+ * `?scene=vortex|circuits|wind|wind-rain|zombies|crowd|watcher|phantom` (case-insensitive), anything else null
+ * (DESIGN-circuits §6.7; §101 the wind; §102 the zombies, the Watcher and the figure, staged for screenshots).
  * @param {URLSearchParams} params
- * @returns {'vortex'|'circuits'|'wind'|'wind-rain'|null}
+ * @returns {SceneName|null}
  */
 export function readSceneParam(params) {
   const t = readString(params, 'scene');
   if (t === null) return null;
-  const v = t.toLowerCase();
-  return v === 'vortex' || v === 'circuits' || v === 'wind' || v === 'wind-rain' ? v : null;
+  const v = /** @type {SceneName} */ (t.toLowerCase());
+  return SCENE_NAMES.includes(v) ? v : null;
 }
+
+/**
+ * §102 `?scene=zombies`: a walker, a runner and an alpha standing ahead of the player, facing it, as [kind, metres ahead,
+ * metres to the right, mode, walkPhase, id] — drawn only (main hands them to the zombie renderer; they are in no list of
+ * mobs, never move and do nothing). `?time=` picks day or night.
+ * @type {ReadonlyArray<readonly ['walker'|'runner'|'alpha', number, number, 'idle'|'chase', number, number]>}
+ */
+export const ZOMBIE_SCENE = Object.freeze(/** @type {Array<readonly ['walker'|'runner'|'alpha', number, number, 'idle'|'chase', number, number]>} */ ([
+  Object.freeze(['walker', 3.6, -1.25, 'chase', 0.7, 3]),
+  Object.freeze(['runner', 3.3, 0.05, 'chase', 1.3, 5]),
+  Object.freeze(['alpha', 4.3, 1.45, 'chase', 0.4, 8]),
+]));
+/** §102 `?scene=crowd`: how many zombies stand in the crowd (the cost of a crowd on screen). */
+export const CROWD_SIZE = 24;
+
+/**
+ * §102 `?scene=crowd`: CROWD_SIZE zombies in a loose crowd 6–17 m ahead, mostly walkers with a few runners and one alpha,
+ * every one at its own place, stride and lean (a fixed layout: the same every time).
+ * @param {number} [n]
+ * @returns {Array<{ kind: 'walker'|'runner'|'alpha', ahead: number, right: number, mode: 'idle'|'chase', walkPhase: number, id: number, turn: number }>}
+ */
+export function crowdScene(n = CROWD_SIZE) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const row = Math.floor(i / 6);
+    const col = i % 6;
+    const jitter = (k) => Math.sin(i * 12.9898 + k * 78.233) * 0.5;
+    out.push({
+      kind: i === 9 ? 'alpha' : i % 5 === 2 ? 'runner' : 'walker',
+      ahead: 6 + row * 2.8 + jitter(1) * 1.2,
+      right: (col - 2.5) * 1.5 + jitter(2) * 0.8 + (row % 2) * 0.6,
+      mode: i % 3 === 0 ? 'idle' : 'chase',
+      walkPhase: (i * 1.7) % (Math.PI * 2),
+      id: i,
+      turn: jitter(3) * 0.6,
+    });
+  }
+  return out;
+}
+
+/** §102 `?scene=watcher`: the Watcher this many metres ahead, a little to the right, facing the player. */
+export const WATCHER_SCENE = Object.freeze({ ahead: 4.6, right: 0.5 });
+/** §102 `?scene=phantom`: the figure at the edge of sight, ahead and to the right, at its full opacity (sleep.FIGURE_ALPHA). */
+export const PHANTOM_SCENE = Object.freeze({ ahead: 6.5, right: 2.2 });
 
 /**
  * §101 `?scene=wind`: where its pieces stand, as [name, cells ahead, cells to the right] from the player: a lit campfire
@@ -740,6 +791,8 @@ export function buildDebugText(game, stats) {
   const pitch = controls && Number.isFinite(controls.pitch) ? controls.pitch : 0;
   const dir = lookDirection(yaw, pitch);
 
+  /** what the renderer drew last frame (§102: the cost of a crowd) */
+  const draw = /** @type {{ drawCalls?: number, triangles?: number }} */ (s);
   let biome = 'unknown';
   if (world && typeof world.getBiome === 'function') biome = BIOME_NAMES[world.getBiome(bq, br)] ?? 'unknown';
   const seed = world && world.seed != null ? world.seed : '?';
@@ -784,7 +837,7 @@ export function buildDebugText(game, stats) {
 
   return (
     `Caelancraft v${VERSION}  (F3 to hide)\n` +
-    `FPS: ${fmtInt(s.fps)}  frame ${fmt1(s.frameMs)} ms\n` +
+    `FPS: ${fmtInt(s.fps)}  frame ${fmt1(s.frameMs)} ms  draws ${fmtInt(draw.drawCalls)}  tris ${fmtInt(draw.triangles)}\n` +
     `XYZ: ${fmt3(px)} / ${fmt3(py)} / ${fmt3(pz)}\n` +
     `Cell (q y r): ${bq} ${by} ${br}   Chunk: ${cq} ${cr}  (local ${lq} ${lr})\n` +
     `Facing: ${facingName(dir[0], dir[2])}  yaw ${fmt1(yawDegrees(yaw))}  pitch ${fmt1(pitch * RAD_TO_DEG)}\n` +

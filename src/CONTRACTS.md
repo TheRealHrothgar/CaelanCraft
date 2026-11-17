@@ -101,7 +101,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/fallingRenderer.js` | three, moving cells + explosion light (§34.4) | v0.8 | `tests/unit/physicsRender.test.js` |
 | `src/particles.js` | three, one particle system (§34.5) | v0.8 | `tests/unit/physicsRender.test.js` |
 | `src/zombies.js` | PURE, zombies: spawning, AI, daylight, hits (§39) | zombies | `tests/unit/zombies.test.js` |
-| `src/zombieRenderer.js` | three, instanced four-prism zombie models (§39.2) | zombies | `tests/unit/zombieRenderer.test.js` |
+| `src/zombieRenderer.js` | three, the zombies drawn instanced, one mesh per part and kind, their poses and glow (§39.2, §74, §86, §102) | zombies, characters | `tests/unit/zombieRenderer.test.js` |
+| `src/zombieModel.js` | PURE, the three zombies' hex-faceted models part by part, their painted atlases and glow images (§102) | characters | `tests/unit/zombieModel.test.js` |
 | `src/avatars.js` | PURE, the avatars as data, the avatar preference (§91) | avatars | `tests/unit/avatars.test.js` |
 | `src/modelKit.js` | PURE, the model kit: closed faceted solids, transforms, merges, atlas uvs (§91.2) | characters | `tests/unit/modelKit.test.js` |
 | `src/paintKit.js` | PURE, the paint kit: seeded RGBA painters and a padded atlas (§91.2) | characters | `tests/unit/paintKit.test.js` |
@@ -112,7 +113,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/avatarRenderer.js` | three, the avatar's model, the first-person hand, the item in hand and the chooser's portraits (§91, §98.4) | avatars, characters | `tests/unit/avatarRenderer.test.js` |
 | `src/avatarMenu.js` | DOM, the Avatar chooser and the pause menu's View button (§91) | avatars | `tests/unit/avatarRenderer.test.js` |
 | `src/watcher.js` | PURE, the Hollow Watcher: sightings, placement, vanishing, traces (§40) | watcher | `tests/unit/watcher.test.js` |
-| `src/watcherRenderer.js` | three, the Watcher's figure — hollow hex rings, hex lantern with fog-free lights, smoke wisp — and its shader pre-warm (§40.4) | watcher | `tests/unit/watcherRenderer.test.js` |
+| `src/watcherRenderer.js` | three, the Watcher's figure — hollow hex rings, hex lantern with fog-free lights, smoke wisp — and its shader pre-warm (§40.4, §102) | watcher | `tests/unit/watcherRenderer.test.js` |
+| `src/watcherModel.js` | PURE, the Watcher's figure from the kit (chamfered hex bands, the lantern, the crystal, the wisp) and its painted stone (§102) | characters | `tests/unit/watcherRenderer.test.js` |
 | `src/atlas.js` | DOM + three | A-atlas | — |
 | `src/renderer.js` | three | A-renderer | `tests/unit/renderer.test.js` |
 | `src/controls.js` | DOM | A-controls | — |
@@ -156,7 +158,7 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/homestead.js` | PURE, springs, wells and rain barrels: what R does, what brings their water back (§85) | a place to stay | `tests/unit/homestead.test.js`, `tests/unit/worldgenHomestead.test.js` |
 | `src/rainRenderer.js` | three (+ the pure `RainField`), rain and snow as one mesh of quads (§84) | seasons and rain | `tests/unit/rainRenderer.test.js` |
 | `src/sleep.js` | PURE, sleep spots, lying down, a sleep and its reasons to wake, the secure place, the night attack, the effects of being awake too long (§87) | sleep | `tests/unit/sleep.test.js` |
-| `src/phantomRenderer.js` | three, the figure at the edge of sight: three dark boxes, drawing only (§87) | sleep | `tests/unit/sleep.test.js` |
+| `src/phantomRenderer.js` | three, the figure at the edge of sight: a dark person-shaped shadow from the kit, drawing only (§87, §102) | sleep, characters | `tests/unit/sleep.test.js` |
 | `src/populations.js` | PURE, animals that live in the world: zones and their land, live and dormant animals, births on the logistic curve, wanderers, the `fauna` save field (§88) | populations | `tests/unit/populations.test.js` |
 | — | circuits integration, the worked examples (§58) | v0.10 I | `tests/integration/circuits.test.js`, `tests/integration/harness.test.js` |
 | `tests/helpers/fixtures.js` | test helpers | Wave 0 (done) | — |
@@ -196,9 +198,9 @@ diagnostics                        → config, blocks, coords, hex, runes (runeK
 console                            → config
 runeEditor                         → config, commands (parseScript)
 zombies                            → config, physics, hex, blocks, pigs (fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S)
-zombieRenderer                     → config, blocks (TILE), zombies (SWING_S), three
+zombieRenderer                     → config, zombies (SWING_S…), prewarm, lightShader, zombieModel, three (§102)
 watcher                            → config, hex, blocks, raycast, physics (playerIntersectsBlock), daynight (isDayTime), support (isLoadBearing)
-watcherRenderer                    → config (ATLAS_TILE_PX, TILE_UV), blocks (TILE, tileToUV), watcher (WATCHER_EYE_Y), three
+watcherRenderer                    → watcher (WATCHER_EYE_Y), watcherModel, three (§102)
 main                               → everything except three (renderer, atlas, pigRenderer, campfireRenderer,
                                      fallingRenderer, particles, zombieRenderer and watcherRenderer are the three-importing
                                      modules)
@@ -251,6 +253,11 @@ avatarModel                        → modelKit, paintKit, figureKit, avatars
 avatarMotion                       → config
 viewCamera                         → config, blocks, raycast
 avatarRenderer                     → three, config, avatars, avatarModel, avatarMotion, lightShader, prewarm, heldItem
+# §102 the zombies, the Watcher and the figure (all leaf-ward; still acyclic):
+zombieModel                        → modelKit, paintKit, figureKit
+watcherModel                       → modelKit, paintKit, figureKit
+phantomRenderer                    → three, prewarm, sleep, modelKit, figureKit
+pilotModels                        → modelKit, paintKit, figureKit, avatarModel, avatars, zombieModel (the pilot's walker is the game's)
 avatarMenu                         → avatars
 diagnostics                        → … + avatars, viewCamera, creativePicks (the ?avatar=, ?view= and ?hold= params)
 main                               → … + avatars, avatarMotion, avatarRenderer, avatarMenu, viewCamera, physics (isUnderSurface)
@@ -2608,6 +2615,7 @@ ZOMBIE_KNOCKBACK (6.5) away from the hitter, `vy ≥ ZOMBIE_KNOCK_LIFT` (4.5), `
 BLAST_IMPULSE·(1 − d/2R) reaches that within about the blast radius R (its BLAST_MIN_UP floor adds a little); weaker knocks add the
 velocity and count as a hit (unless flashing), which can also be the knock-out.
 ### 39.2 Rendering
+*Replaced by §61, §74 and §102 (the hex-faceted zombies); the API below stands.*
 `createZombieRenderer(scene, atlasTexture, capacity = ZOMBIE_MAX)` → `{ sync(zombies), count(), dispose(), group }`. The model
 faces −Z with its origin at the feet (matrix translate(x, y, z) · rotateY(yaw), like pigs) and is four hexagonal prisms from
 `hexPrismGeometry(R, h, y0, { front, sides, top, bottom })` (corners at 60°·k from +X toward +Z, so side face 4 — normal −Z — is the
@@ -2784,6 +2792,8 @@ within 16 of spawn) and none has a liquid among its 8 neighbours. Each kind is l
   where the tree stood. `at` = [q, h, r].
   Logs and the root are removed together in one frame, so the support search finds nothing floating (§36.2) and no tree topples.
 ### 40.4 Rendering and integration
+*Amended by §102: the figure is built from the kit and paints its own stone (watcherModel.js); the tiles 250–252 stay
+painted, unused, and `atlasTexture` is ignored. Its parts, names, sizes, motion, lights and pre-warm below stand.*
 `createWatcherRenderer(scene, atlasTexture)` → `{ sync(figure|null, camX, camY, camZ, time), visible(), prewarm(webgl, camera),
 warmPending(), dispose(), group, head, rings, lantern, core, smoke, eyes, glows }`: ONE group `watcher` of 12 parts (10 meshes, 2
 sprites — it is one figure, so a handful of draw calls), hidden when `figure` is null; origin at the feet (the cell floor),
@@ -3858,6 +3868,9 @@ it flies out of the cell to the player and enters the pack **only when it crosse
 
 ## 61. Zombie kinds and the cartoon zombie — `src/zombies.js`, `src/zombieRenderer.js`
 
+*The model described here was replaced by §74 and then by §102 (the hex-faceted zombies); the kinds, spawning, hordes and the
+animation's angles stand.*
+
 Amends §39 (and §26's `summon`). The zombie is no longer four hexagonal-prism blocks with atlas tiles (tiles 240–245 stay
 painted, unused).
 
@@ -4254,6 +4267,10 @@ Amends §43 (the Handbook), §48 and §1 (imports); DESIGN-survival §14.1's cha
   rising "one or two at a time", the pig's "grass and snowy grass", and "within half a minute" for a snowy swim.
 
 ## 74. Zombies: pixel-art dead people, spooky not frightening — `src/zombieSkin.js` (PURE), `src/zombieRenderer.js`
+
+*The skin and the box model described here were replaced by §102 (characters, phase 2): `zombieSkin.js` is gone. What stands:
+the look's rules (a dead person under moonlight, narrow slits in sunken hollows, nothing gory, nothing red), the kinds'
+characters, SHIRT_TINTS by id, the bearing (`ARMS`, `WALKER_DROOP`, `RUNNER_COCK`, `twitchOf`) and `sync(zombies, t, dark)`.*
 
 Replaces §71's model and face (its sounds stand) and amends §61. A zombie is a dead PERSON under moonlight — not a green
 child, not a golem, and not another game's zombie: a few plain boxes wrapped in pixel art in the terrain's style. Nothing
@@ -6385,10 +6402,11 @@ nothing changes; asleep, dead or below the stage everything is cleared and the t
     opacity; it is in no list, has no body, cannot be targeted or struck, and sleep.js makes no zombie for it.
   - **In a world whose zombies are switched off** (`view.spooky` false; main: `zombies.enabled`) there is no groan
     (`PHANTOM_SOUNDS_CALM`: the footstep and the twig) and no figure; the nods and the blur stay.
-- **`phantomRenderer.js`**: `createPhantomRenderer(scene)` → `{ group, material, sync(figure | null), prewarm(webgl,
-  camera), dispose() }`: three plain boxes (`PHANTOM_PARTS`: legs, body, head; together `FIGURE_HEIGHT` 1.8) sharing
-  one unlit, transparent `MeshBasicMaterial` (`PHANTOM_COLOR` near black, no depth write), no face, no eyes, no arms;
-  hidden without a figure.
+- **`phantomRenderer.js`**: `createPhantomRenderer(scene)` → `{ group, material, tris, sync(figure | null),
+  prewarm(webgl, camera), dispose() }`: since §102 a dark person-shaped shadow from the kit (`phantomGeometry()`;
+  `PHANTOM_PARTS` [name, from, to]: legs, body, head, its crown at `FIGURE_HEIGHT` 1.8) — no face, no eyes, its arms
+  hanging, never held out — drawn twice: depth only, then one unlit, transparent `MeshBasicMaterial` (`PHANTOM_COLOR`
+  near black, no depth write) where it is the nearest surface; hidden without a figure.
 
 ### 87.6 The HUD and the sounds
 
@@ -8204,3 +8222,134 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
   block / tile / item / recipe / picker / purpose / handbook entries, main's wiring); the pinned counts in wave0, tiles,
   items, crafting, pickerModel, pickerUI, atlasIcons, homestead, flora, plantsNotFood, farming, aquifer, waterLaws and
   handbook move by one.
+
+## 102. Characters, phase 2: the zombies, the Watcher and the figure, hex-faceted — `src/zombieModel.js`, `src/watcherModel.js` (PURE), `src/zombieRenderer.js`, `src/watcherRenderer.js`, `src/phantomRenderer.js` (three), `src/lightShader.js`, `src/avatarRenderer.js`, `src/pilotModels.js`, `src/gallery.js`, `src/diagnostics.js`, `src/types.js`, `src/main.js`, `README.md`
+
+Amends §39.2, §40.4, §61, §74 and §87.5; follows §91 (docs/DESIGN-characters.md, phase 2). Only the look changes: the zombies'
+colliders, heights, ray targets, behaviour, kinds and animation (`ARMS`, the lean, the limp, the lurch, the twitch, the shield,
+dormancy, the ghosts' `renderScale` / `renderSpin`, the hurt and burn twins) are as before; the Watcher's parts, sizes, motion
+and lights too.
+
+### 102.1 The zombies' models (`zombieModel.js`, PURE)
+
+- **Look.** Style A, hex-faceted, from the figure kit (figureKit.js), like the avatars: tapered hexagonal columns (legs,
+  torso, neck, arms), a faceted head loft — gaunt: `ZOMBIE_HEAD` (a narrow jaw, hollow cheeks, a long skull; the alpha's
+  `ALPHA_HEAD` a heavy square jaw) — with a heavy BROW (a wedge on the face plane, its ridge an overhang over the slits;
+  the alpha's two in a V, a scowl), a nose wedge and hex ears; flattened hex hands (a palm and the fingers curled, flexed
+  forward from the wrist, so a held-out arm's hand hangs limp); chamfered shoes; hair as a receding shell with lank strands
+  (walker), a shell with flat straw tufts swept up and back (runner) or long dark clumps to the shoulders (alpha). People,
+  spooky not frightening: no blood, wounds, bones or fangs, and no red texel anywhere.
+- **Kinds** (`ZOMBIE_MODEL_KINDS` walker | runner | alpha; anything else is a walker): the walker average (a faded flannel
+  shirt torn at the hem, the sleeves and in two places, a sewn patch, a button gone; patched trousers frayed above a bare
+  ankle; old shoes); the runner leaner (thinner limbs and torso; a thin tee with a faded band and rips, track trousers
+  ripped at the knee, worn sneakers); the alpha bigger and heavier (its own rig: broad shoulders, thick limbs, a short thick
+  neck; a long ragged coat open down the front, its tails below the hips, long sleeves with ragged cuffs, a turned-up
+  collar, buttons; heavy boots). Faces (`paintZombieFace`): sunken hollows round narrow slits, bags, lit cheekbones over
+  hollow cheeks, the nose's shadow; the walker's slits level with a dull glint (open but empty) and a slack mouth; the
+  runner's uneven, a pale pinprick in each, one brow hitched, a tight grimace with a few pale teeth; the alpha's slanted
+  down to the nose under a scowl, a hard mouth turned down. Earth and dust smudges on the cloth (`grime`, never red).
+- **Parts and rig.** `zombieModel(kind)` (built once, shared; `buildZombieModel` builds afresh) → `{ kind, parts, rig,
+  image, glow, tris, texels, atlas, dims }`. `parts` are `ZOMBIE_PARTS` — `leg` (from its hip: the shoe, the ankle, the
+  trouser leg up past the joint), `upperArm` (from its shoulder: the arm and its sleeve, rounded over the shoulder),
+  `foreArm` (from its elbow: the forearm, the alpha's cuff, the hand), `torso` (from the hips: the trousers' seat and belt,
+  the shirt, the collar; the alpha's coat), `head` (from the head's pivot at the top of the torso: the neck, the head, its
+  features and hair) — each at rest hanging straight, a closed solid wound outward, its uvs on the kind's atlas. `rig` =
+  `zombieRig(kind)` = `{ legX, legH, torsoH, shoulderX, shoulderY, upperL, foreL, wristL }` (metres before the kind's draw
+  scale): walker 0.1, 0.84, 0.58, 0.205, 0.515, 0.3, 0.34, 0.245; the runner the same but legX 0.095 and shoulderX 0.19;
+  the alpha 0.112, 0.84, 0.565, 0.245, 0.5, 0.3, 0.35, 0.25. `dims` = `{ headW, headD, headH (pivot to crown), eyeY (the
+  slits over the pivot), foreW, height (feet to crown at rest) }`; the height is under ZOMBIE_HEIGHT (and over it − 0.15),
+  at least 4.3 heads. `zombieRestGeometry(kind)` is the whole figure standing (the gallery, the pilot).
+- **Budgets.** One zombie (the leg and the arms counted twice): walker ≈ 1,150, runner ≈ 1,190, alpha ≈ 1,280 triangles
+  (tested: 900 < tris ≤ 1,320). One 256² atlas (`ZOMBIE_ATLAS`) and one 256² glow image per kind: 1.5 MB of textures for
+  the three (2.1 MB with mipmaps). Built in ≈ 80 ms for the three (Node), once a page.
+- **The atlas** (paintKit, sRGB bytes, row 0 at the top): bodies at `DENSITY.body` (96 px/m; the alpha's hidden shirt and
+  seat at half), the head at `DENSITY.head`, shoes at 128; alpha 0 where cloth is torn away (`ragged` hems, the coat's
+  open front), so the renderer's alphaTest cuts them see-through. The cloth a shirt tint colours — the walker's and the
+  runner's `shirt`, `sleeve` and `collar` — has alpha `TINT_ALPHA` (191) instead of 255; nothing else does, never on the
+  alpha. Painted the same every time.
+- **The glow image**, in step with the atlas: wherever the atlas is opaque, its own colour × `NIGHT_SELF_LIGHT` (0.22)
+  cooled by `NIGHT_TINT` (0xd8ffe4) — a faint self-light that keeps a zombie's clothes readable on a moonlit night (a flat
+  glow turned it into a glowing statue) — and over that the slits in `EYE_GLOW` (walker 0x4f8a58 a faint marsh green,
+  runner 0xc4cb92 on its pinpricks only, alpha 0xbaa65a a pale gold; never red, never warmer than gold); black where the
+  atlas is cut away.
+
+### 102.2 The zombies drawn (`zombieRenderer.js`)
+
+- **API unchanged**: `createZombieRenderer(scene, _atlasTexture, capacity)` → `{ sync(zombies, t = 0, dark = 1), count(),
+  dispose(), group, prewarm(webgl, camera) }`; main's calls are as they were. Still exported: `ALPHA_SCALE`, `RUNNER_WIDTH`
+  0.9, `SHIRT_TINTS`, `ARMS`, `WALKER_DROOP`, `RUNNER_COCK`, `TWITCH_*`, `twitchOf`, `SHIELD_*`, `shieldOf`, `GLOW_DAY`,
+  `boxesGeometry` (the animals'), `zombieGeometries(kind)` (now the model's parts as BufferGeometries); the walker's joints
+  as `LEG_H`, `LEG_X`, `TORSO_H`, `UPPER_L`, `FORE_L`, `ARM_L`, `SHOULDER_X`, `SHOULDER_Y`, and every kind's as `RIGS`.
+  Gone: `skinBox`, `HEAD_W/H/D`, `TORSO_W/D`, `HAIR_PUFF`, `COAT_PUFF`, `MODEL_HEIGHT` (the model's `dims`).
+- **Instanced per part.** Per kind and state the same five InstancedMeshes as §74 (`zombie-legs-<kind>`,
+  `-upper-arms-`, `-forearms-`, `-torso-`, `-head-`, + `-hurt`, `-burn`): a crowd of one kind is 5 draw calls whatever
+  its size, 15 for all three, bounded by parts, never by zombies. Each part hangs from its kind's rig (`RIGS[kind]`) with
+  the matrices of §61/§74/§86, unchanged.
+- **Materials.** Per kind one painted map and one glow map (DataTextures: sRGB, LinearFilter, LinearMipmapLinear, mipmaps,
+  anisotropy 4) and three MeshLambertMaterials (`alphaTest` 0.5): base (`emissive` white × the glow image,
+  `emissiveIntensity` GLOW_DAY + (1 − GLOW_DAY) × dark, GLOW_DAY now 0.02: by day the slits are dark), hurt (emissive
+  0xff2a2a × 0.85: the game's hit flash) and burn (colour 0x8a7c72, emissive 0xff6a1a × 0.55). All share one program key
+  (`ZOMBIE_PROGRAM`) and `patchZombieShader`: lit like every object (the light volume, §62) plus a fill
+  (`lightShader.patchFillShader` with `ZOMBIE_FILL` [0.92, 1, 0.9] × 0.12: the facets turned from the light keep their
+  colour and still go dark at night) and the shirt tint (`TINT_FRAGMENT` in place of three's color_fragment: the instance
+  colour multiplies a texel by how far its alpha is below 1 toward TINT_ALPHA — the shirt alone; skin, hair and trousers
+  stay as painted).
+- **Shirts.** `SHIRT_TINTS` [0xffffff, 0xa9bedd, 0xd9c29c, 0xbccf96, 0xe6d08e, 0xc6b4d8, 0xa2cdbf]: faded and pale, none
+  red; walkers and runners by id as before, the alpha as painted.
+- **The shield** (§86) keeps its rule; for the new rig `SHIELD_ARM` is `{ reach 1.75, bend 1.4, spread 0, twist 0.65 }`:
+  the hand comes before the eye on its own side, a few centimetres in front of the face, and no part of the arm enters
+  the head's box on the way up (tested with the parts' own vertices).
+- **Cost of a crowd** (`?scene=crowd`, 24 zombies: 18 walkers, 5 runners, an alpha): 15 draw calls, 27,921 triangles
+  (≈ 1,160 a zombie; the box zombies were 108 each), one `sync` ≈ 0.035 ms of CPU (Node, 2,000 syncs).
+
+### 102.3 The Watcher (`watcherModel.js` PURE, `watcherRenderer.js`)
+
+- The same figure, numbers and motion (§40.4: the constants live in watcherModel.js and are re-exported), built from the
+  kit: each ring is `hexBand` — a hollow pointy-top hex band whose outer top and bottom edges are chamfered `RING_CHAMFER`
+  (0.012), six mitred facets swept round its section (a ringLoft round the corners, so every face is flat and the band is
+  one closed solid), ≤ 80 triangles; the lantern two heavier chamfered bands and six slim tapered hex posts; the core a hex
+  BIPYRAMID crystal (`CORE_R` widest a little below its middle); the wisp three open tapered hex tubes with a per-vertex
+  alpha (`smokeAlpha`). ≈ 830 triangles in all.
+- **Paint** (`WATCHER_ATLAS` 256², `WATCHER_DENSITY` 128 px/m): weathered ash grey (`WATCHER_ASH`), mottled and pitted;
+  one strip serves every ring (each starts it at its own corner, so the cracks fall differently) and one the rims; a band's
+  strip is shaded across its section (`bandZones`, `BAND_SHADE`: outer wall 1, chamfers 0.94, top 0.9, underside 0.72,
+  inner wall 0.5 — the hollow reads; the vertex shades are gone); thin cracks wander round the outer walls as dark teal
+  grooves (`CRACK_GROOVE`). The glow image in step: the stone × `WATCHER_SELF_LIGHT` (0.4) and the cracks `CRACK_LIGHT`
+  cyan. The stone material is `map` = the atlas, `emissiveMap` = the glow image (both its own DataTextures, linear with
+  mipmaps), pulsing as before; the smoke shares the atlas. `dispose` frees the three textures it owns.
+
+### 102.4 The figure at the edge of sight (`phantomRenderer.js`)
+
+A dark person-shaped shadow from the kit (`phantomGeometry()`, ≈ 400 triangles, no uvs): two tapered hex legs, a body
+narrowing to the shoulders, arms hanging a little out from it, a thin neck, a faceted head (KID_HEAD's loft) with its crown
+at FIGURE_HEIGHT — no face, no eyes, no arms out. Drawn twice from one geometry: `phantom-depth` (colour writes off, depth
+on, renderOrder 2) then `phantom-shape` (the unlit, transparent `material`, depthFunc LessEqual, renderOrder 3), so it is
+one even shadow where its parts overlap. Everything else of §87.5 stands.
+
+### 102.5 Shared light, the pilot and the gallery
+
+- `lightShader.fillFragment(color, strength)` / `patchFillShader(shader, fill)`: the fill GLSL that avatarRenderer used
+  alone (patchAvatarShader now calls it with AVATAR_FILL; its output is unchanged).
+- `pilotModels.buildPilot('zombie')` is the game's walker (`zombieRestGeometry`); the pilot's own walker is gone. The
+  gallery's `?row=zombie` shows the three kinds through the game's renderer (after someone; idle, the runner shielding its
+  eyes); `?row=zhead` their heads close up; `?row=watcher` the Watcher and the figure.
+
+### 102.6 The screenshot aid (`diagnostics.js`, main; README's URL table)
+
+`?scene=zombies|crowd|watcher|phantom` (with `?autoplay=1`; `SCENE_NAMES`, `readSceneParam`): main's `buildFigureScene`
+levels a hex patch ahead with the player's feet (cleared above, filled below with what the player stands on, like
+`?scene=wind`) and stages, facing the player: `ZOMBIE_SCENE` (a walker, a runner and an alpha 3–4.5 m off, after
+someone), `crowdScene()` (`CROWD_SIZE` 24 in a fixed loose crowd 6–17 m off, one alpha, a few runners), the Watcher at
+`WATCHER_SCENE` (4.6 m) or the figure at `PHANTOM_SCENE` (6.5 m, at FIGURE_ALPHA). They are DRAWN ONLY — `sceneZombies`
+join the zombie renderer's list each frame, `sceneWatcher` replaces `watcher.figure` for its renderer, `scenePhantom` is
+synced after the tired eyes' figure — and are in no list of mobs: they never move, strike, vanish or save; quitting to the
+title clears them. `?time=` picks day or night. The debug panel's first line gains `draws` and `tris` (renderer.getStats).
+
+### 102.7 Tests
+
+`tests/unit/zombieModel.test.js` (kinds and parts, budgets, closed outward geometry, the joints, each kind's build, the
+atlas and glow image, nothing red, the ragged cut-outs, the tint mark, the night self-light), `zombieRenderer.test.js`
+(the kit parts per kind, the materials and the shader patch, every §61/§74/§86 pose test on the new rig, the shield
+against the head's own geometry, the scene aid), `watcherRenderer.test.js` (the chamfered bands, the painted stone and
+its glow, three owned textures), `sleep.test.js` (the figure: kit geometry, the depth pre-pass), `prewarm.test.js` and
+`pilotModels.test.js` unchanged and passing.

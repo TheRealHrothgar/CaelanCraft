@@ -22,7 +22,7 @@ import * as THREE from 'three';
 import { WORLD_HEIGHT } from './config.js';
 import { AVATAR_IDS, avatarById } from './avatars.js';
 import { avatarModel, AVATAR_BONES, FP_HAND, fpHandFrame, fpStroke, HAIR_BACK_FOLLOW } from './avatarModel.js';
-import { LIGHT_VOLUME_VERTEX_MAIN, patchObjectShader } from './lightShader.js';
+import { LIGHT_VOLUME_VERTEX_MAIN, patchObjectShader, patchFillShader } from './lightShader.js';
 import { compileHidden } from './prewarm.js';
 import { heldItemGeometry, heldItemShown } from './heldItem.js';
 import { AvatarMotion } from './avatarMotion.js';
@@ -66,26 +66,12 @@ export const FP_HELD_PROGRAM = 'caelancraft-avatar-held';
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
-/** The fill, added after three's light accumulation (the object patch's caelSky and caelExtra are in scope). */
-const FILL_FRAGMENT = /* glsl */ `
-{
-	vec3 caelFill = caelExtra;
-	#if NUM_HEMI_LIGHTS > 0
-	for ( int i = 0; i < NUM_HEMI_LIGHTS; i ++ ) caelFill += caelSky * 0.5 * ( hemisphereLights[ i ].skyColor + hemisphereLights[ i ].groundColor );
-	#endif
-	#if NUM_DIR_LIGHTS > 0
-	for ( int i = 0; i < NUM_DIR_LIGHTS; i ++ ) caelFill += caelSky * directionalLights[ i ].color;
-	#endif
-	reflectedLight.indirectDiffuse += dot( caelFill, vec3( 0.2126, 0.7152, 0.0722 ) ) * vec3( ${AVATAR_FILL.color.map((c) => (c * AVATAR_FILL.strength).toFixed(4)).join(', ')} ) * BRDF_Lambert( material.diffuseColor );
-}`;
-
 /**
  * Light a model's shader like every object (the light volume) and add the warm fill.
  * @param {{ vertexShader: string, fragmentShader: string, uniforms: Record<string, *> }} shader
  */
 export function patchAvatarShader(shader) {
-  patchObjectShader(shader);
-  shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${FILL_FRAGMENT}`);
+  patchFillShader(shader, AVATAR_FILL);
 }
 
 /** The model's material over one atlas. @param {THREE.Texture} map */

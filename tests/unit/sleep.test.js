@@ -25,7 +25,7 @@ import {
   FIGURE_S, FIGURE_IN_S, FIGURE_ALPHA, FIGURE_HEIGHT, NOD_EVERY_S, NOD_S, NOD_EDGE_S, blurPx, nodDark, figureAlpha, angleFromView, TiredFx,
   phantomStandAt, tirednessView, TIRED_BAR_FULL, TIRED_BAR_MARKS,
 } from '../../src/sleep.js';
-import { createPhantomRenderer, PHANTOM_PARTS, PHANTOM_COLOR, PHANTOM_HEIGHT } from '../../src/phantomRenderer.js';
+import { createPhantomRenderer, phantomGeometry, PHANTOM_PARTS, PHANTOM_COLOR, PHANTOM_HEIGHT } from '../../src/phantomRenderer.js';
 import { Zombies, CLIMB, RUNNER_P, ZOMBIE_SPAWN_LIGHT_MAX, spawnChance } from '../../src/zombies.js';
 import { columnHasEdits } from '../../src/blackholes.js';
 import { interactKind, HINT } from '../../src/survivalControl.js';
@@ -1716,23 +1716,38 @@ describe('awake too long: yawns, sounds with nothing there, the figure, the nods
 });
 
 describe('the figure as it is drawn (phantomRenderer.js)', () => {
-  it('three plain dark boxes, see-through, unlit: hidden until there is a figure, then where it stands and as faint as it is', () => {
+  it('a dark, see-through, unlit person-shaped shadow: hidden until there is a figure, then where it stands and as faint as it is', () => {
     const scene = new THREE.Scene();
     const r = createPhantomRenderer(scene);
     expect(scene.children).toContain(r.group);
     expect(r.group.visible).toBe(false);
-    expect(r.group.children).toHaveLength(3);
     expect(PHANTOM_PARTS.map((p) => p[0])).toEqual(['legs', 'body', 'head']); // no arms held out, no face, no eyes
-    expect(PHANTOM_PARTS.reduce((sum, p) => sum + p[2], 0)).toBeCloseTo(FIGURE_HEIGHT, 9);
+    expect(PHANTOM_PARTS[PHANTOM_PARTS.length - 1][2]).toBeCloseTo(FIGURE_HEIGHT, 9);
     expect(PHANTOM_HEIGHT).toBe(FIGURE_HEIGHT);
+    // one geometry, drawn twice: depth only, then the colour where it is the nearest surface (one even shadow)
+    expect(r.group.children.map((m) => m.name)).toEqual(['phantom-depth', 'phantom-shape']);
+    const [depth, shape] = r.group.children;
+    expect(depth.geometry).toBe(shape.geometry);
+    expect(depth.material.colorWrite).toBe(false);
+    expect(depth.material.depthWrite).toBe(true);
+    expect(depth.renderOrder).toBeLessThan(shape.renderOrder);
     const mat = r.material;
+    expect(shape.material).toBe(mat);
     expect(mat.isMeshBasicMaterial).toBe(true); // unlit: no light makes it shine
     expect([mat.transparent, mat.depthWrite, mat.opacity]).toEqual([true, false, 0]);
+    expect(mat.depthFunc).toBe(THREE.LessEqualDepth);
     expect(mat.color.getHex()).toBe(PHANTOM_COLOR);
     expect(mat.color.r + mat.color.g + mat.color.b).toBeLessThan(0.05); // dark
-    for (const mesh of r.group.children) expect(mesh.material).toBe(mat);
-    // the boxes stand on each other from the feet up
-    expect(r.group.children.map((m) => +m.position.y.toFixed(2))).toEqual([0.4, 1.13, 1.63]);
+    // a person's shape from the kit: on its feet, its crown at FIGURE_HEIGHT, as wide as shoulders and hanging arms
+    const g = phantomGeometry();
+    const box = new THREE.Box3().setFromBufferAttribute(shape.geometry.getAttribute('position'));
+    expect(box.min.y).toBeCloseTo(0, 6);
+    expect(box.max.y).toBeCloseTo(FIGURE_HEIGHT, 6);
+    expect(box.max.x - box.min.x).toBeGreaterThan(0.45);
+    expect(box.max.x - box.min.x).toBeLessThan(0.65);
+    expect(g.index.length / 3).toBe(r.tris);
+    expect(r.tris).toBeLessThan(600);
+    expect(shape.geometry.getAttribute('uv')).toBeUndefined(); // no texture: no face, no eyes
     r.sync({ x: 14.5, y: 10, z: -3, yaw: 1.2, age: 0.4, alpha: 0.5, d0: 15 });
     expect(r.group.visible).toBe(true);
     expect(r.group.position.toArray()).toEqual([14.5, 10, -3]);

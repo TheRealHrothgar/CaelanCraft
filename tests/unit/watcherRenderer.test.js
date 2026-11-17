@@ -1,5 +1,6 @@
-// watcherRenderer.js, the watcher_* tiles and playWatcherVanish (CONTRACTS §40) — Node only (three core objects work
-// without WebGL; a fake AudioContext records the voices).
+// watcherRenderer.js and watcherModel.js (its hex-faceted figure and painted stone), the watcher_* tiles (still painted,
+// unused since §102) and playWatcherVanish (CONTRACTS §40, §102) — Node only (three core objects work without WebGL; a
+// fake AudioContext records the voices).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -11,8 +12,13 @@ import {
 } from '../../src/watcherRenderer.js';
 import { createFallingRenderer } from '../../src/fallingRenderer.js';
 import { WATCHER_HEIGHT, WATCHER_EYE_Y, WATCHER_CENTRE_Y } from '../../src/watcher.js';
-import { ATLAS_TILES_PER_ROW, TILE_UV } from '../../src/config.js';
-import { TILE, tileToUV } from '../../src/blocks.js';
+import { ATLAS_TILES_PER_ROW } from '../../src/config.js';
+import { TILE } from '../../src/blocks.js';
+import {
+  watcherModel, buildWatcherModel, bandZones, hexBand, BAND_SHADE, WATCHER_ATLAS, WATCHER_SELF_LIGHT, CRACK_LIGHT, RING_CHAMFER,
+} from '../../src/watcherModel.js';
+import { triangleCount } from '../../src/modelKit.js';
+import { rgbOf } from '../../src/paintKit.js';
 import { paintTile, averageColor, TILE_NAMES } from '../../src/tiles.js';
 import { createAudio } from '../../src/audio.js';
 
@@ -97,13 +103,17 @@ describe('the Hollow Watcher model', () => {
       const nor = ring.geometry.getAttribute('normal');
       const outer = new Set();
       for (let k = 0; k < nor.count; k++) {
-        if (nor.getY(k) !== 0) continue;
+        if (Math.abs(nor.getY(k)) > 1e-6) continue; // the tops, undersides and chamfers
         const px = pos.getX(k);
         const pz = pos.getZ(k);
         if (nor.getX(k) * px + nor.getZ(k) * pz <= 0) continue; // inner wall
         outer.add(Math.round((Math.atan2(nor.getZ(k), nor.getX(k)) * 180) / Math.PI + 360) % 360);
       }
       expect([...outer].sort((a, b) => a - b)).toEqual([0, 60, 120, 180, 240, 300]);
+      // its outer edges are chamfered: facets that slope between the wall and the top or the underside
+      let slopes = 0;
+      for (let k = 0; k < nor.count; k++) if (Math.abs(nor.getY(k)) > 0.3 && Math.abs(nor.getY(k)) < 0.95) slopes++;
+      expect(slopes).toBeGreaterThan(0);
     });
     // You can see through it: straight down the axis, and across the gap between two rings.
     r.sync(figure(0, 0, 0), 0, 1.6, -30, 0);
@@ -260,40 +270,31 @@ describe('the Hollow Watcher model', () => {
     r.dispose();
   });
 
-  it('weathered ash-grey stone whose cracks glow cyan and pulse slowly: the emissive map is the tile one to the right', () => {
+  it('weathered ash-grey stone painted on its own atlas, its cracks glowing cyan in step, pulsing slowly', () => {
     const scene = new THREE.Scene();
     const atlas = new THREE.Texture();
     const r = createWatcherRenderer(scene, atlas);
     const mat = r.rings[0].material;
     expect(mat).toBeInstanceOf(THREE.MeshLambertMaterial);
     for (const p of [...r.rings, r.lantern]) expect(p.material).toBe(mat); // one stone material
-    expect(mat.map).toBe(atlas);
-    expect(mat.emissive.getHex()).toBe(0xffffff); // the mask carries the colours
-    // The emissive map is the atlas itself (same Source: one GPU texture), read one tile to the right …
-    expect(mat.emissiveMap).not.toBe(atlas);
-    expect(mat.emissiveMap.source).toBe(atlas.source);
-    expect(mat.emissiveMap.offset.toArray()).toEqual([TILE_UV, 0]);
-    expect(TILE.WATCHER_CRACKS).toBe(TILE.WATCHER_STONE + 1);
-    // … and every stone face samples watcher_stone (so its glow comes from watcher_cracks), the smoke watcher_smoke.
-    const inside = (mesh, tile) => {
-      const [u0, v0, u1, v1] = tileToUV(tile);
-      const uv = mesh.geometry.getAttribute('uv');
+    // its own painted atlas (linear, mipmaps), never the block atlas; the glow image in step as the emissive map
+    expect(mat.map).not.toBe(atlas);
+    expect(mat.map.isDataTexture).toBe(true);
+    expect([mat.map.image.width, mat.map.image.height]).toEqual([WATCHER_ATLAS, WATCHER_ATLAS]);
+    expect(mat.map.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    expect(mat.map.colorSpace).toBe(THREE.SRGBColorSpace);
+    expect(mat.emissive.getHex()).toBe(0xffffff); // the glow image carries the colours
+    expect(mat.emissiveMap.isDataTexture).toBe(true);
+    expect(Buffer.from(mat.emissiveMap.image.data).equals(Buffer.from(watcherModel().glow.data))).toBe(true);
+    expect(mat.vertexColors).toBe(false);
+    expect(r.smoke.material.map).toBe(mat.map);
+    for (const p of [...r.rings, r.lantern, r.smoke]) {
+      const uv = p.geometry.getAttribute('uv');
       for (let k = 0; k < uv.count; k++) {
-        expect(uv.getX(k)).toBeGreaterThanOrEqual(u0 - 1e-6);
-        expect(uv.getX(k)).toBeLessThanOrEqual(u1 + 1e-6);
-        expect(uv.getY(k)).toBeGreaterThanOrEqual(v0 - 1e-6);
-        expect(uv.getY(k)).toBeLessThanOrEqual(v1 + 1e-6);
+        expect(uv.getX(k)).toBeGreaterThanOrEqual(0);
+        expect(uv.getX(k)).toBeLessThanOrEqual(1);
       }
-    };
-    for (const p of [...r.rings, r.lantern]) inside(p, TILE.WATCHER_STONE);
-    inside(r.smoke, TILE.WATCHER_SMOKE);
-    expect(r.smoke.material.map).toBe(atlas);
-    // The inner walls are shaded darker than the outer ones: the hollow reads.
-    const col = r.rings[2].geometry.getAttribute('color');
-    const shades = new Set();
-    for (let k = 0; k < col.count; k++) shades.add(col.getX(k));
-    expect(Math.min(...shades)).toBeLessThan(0.6);
-    expect(Math.max(...shades)).toBe(1);
+    }
     // The pulse: slow (CRACK_PULSE_S ≥ 4 s), within CRACK_GLOW · (1 ± CRACK_PULSE).
     expect(CRACK_PULSE_S).toBeGreaterThanOrEqual(4);
     const seen = new Set();
@@ -304,7 +305,54 @@ describe('the Hollow Watcher model', () => {
     }
     expect(seen.size).toBeGreaterThan(3);
     r.dispose();
-    expect(atlas.version).toBe(0); // the shared atlas is never disposed or re-flagged by the figure
+    expect(atlas.version).toBe(0); // the shared atlas is never touched by the figure
+  });
+
+  it('the painted stone: ash grey, shaded across each band (the hollow inside darkest), the cracks bright cyan in the glow', () => {
+    const m = watcherModel();
+    const img = m.image.data;
+    const glow = m.glow.data;
+    let cracks = 0;
+    let dim = 0;
+    let mismatched = 0;
+    const lum = (d, i) => (d[i] + d[i + 1] + d[i + 2]) / 3;
+    for (let i = 0; i < img.length; i += 4) {
+      if (img[i + 3] < 128) continue;
+      const [gr, gg, gb] = [glow[i], glow[i + 1], glow[i + 2]];
+      if (gg > gr + 60 && gb > gr + 60) {
+        cracks++;
+        if (lum(img, i) > 90) mismatched++; // a crack glows where the stone has its dark groove
+      } else if (Math.abs(lum(glow, i) - lum(img, i) * WATCHER_SELF_LIGHT) <= 3) dim++;
+    }
+    expect(cracks).toBeGreaterThan(150);
+    expect(cracks).toBeLessThan(dim / 8); // few and thin
+    expect(mismatched / cracks).toBeLessThan(0.25);
+    expect(CRACK_LIGHT & 0xff).toBeGreaterThan(0xc0);
+    // a band's strip, across its section: inner wall < underside < top < outer wall
+    const zones = bandZones({ R: 0.3, wall: 0.035, h: 0.12, c: RING_CHAMFER });
+    expect(zones.map(([n]) => n)).toEqual(['bottom', 'chamfer', 'outer', 'chamfer', 'top', 'inner']);
+    expect(zones[zones.length - 1][2]).toBeCloseTo(1, 9);
+    expect(BAND_SHADE.inner).toBeLessThan(BAND_SHADE.bottom);
+    expect(BAND_SHADE.bottom).toBeLessThan(BAND_SHADE.top);
+    expect(BAND_SHADE.top).toBeLessThan(BAND_SHADE.outer);
+    // ash grey overall: neutral, light to mid
+    let n = 0;
+    const sum = [0, 0, 0];
+    for (let i = 0; i < img.length; i += 4) {
+      if (img[i + 3] < 128) continue;
+      for (let c = 0; c < 3; c++) sum[c] += img[i + c];
+      n++;
+    }
+    const avg = sum.map((v) => v / n);
+    expect(Math.max(...avg) - Math.min(...avg)).toBeLessThan(12);
+    expect(avg[0]).toBeGreaterThan(60);
+    expect(avg[0]).toBeLessThan(170);
+    // the same every time, and within budget
+    const again = buildWatcherModel();
+    expect(Buffer.from(again.image.data).equals(Buffer.from(m.image.data))).toBe(true);
+    expect(m.tris).toBeLessThan(1200);
+    expect(triangleCount(hexBand({ R: 0.3, wall: 0.035, h: 0.12, a0: 0, c: 0.01 }))).toBeLessThanOrEqual(80);
+    expect(rgbOf(CRACK_LIGHT)[1]).toBeGreaterThan(rgbOf(CRACK_LIGHT)[0] + 60);
   });
 
   it('dispose frees every geometry, material and texture of its own (never the shared atlas)', () => {
@@ -325,7 +373,7 @@ describe('the Hollow Watcher model', () => {
     for (const o of owned) o.addEventListener('dispose', () => freed.add(o));
     r.dispose();
     expect(freed.size).toBe(owned.size);
-    expect([...owned].filter((o) => o.isTexture)).toHaveLength(2); // the glow sprite's texture, the crack map clone
+    expect([...owned].filter((o) => o.isTexture)).toHaveLength(3); // the glow sprite's texture, the stone, its glow
     expect(atlasDisposed).toBe(false);
     expect(scene.children).toHaveLength(0);
     expect(r.visible()).toBe(false);
@@ -433,7 +481,7 @@ describe('pre-warm: no shader compile on the first sighting (§40.4)', () => {
   });
 });
 
-describe('watcher tiles (§40)', () => {
+describe('watcher tiles (§40; still painted, unused by the figure since §102)', () => {
   const px = (t, x, y) => [t[(y * 16 + x) * 4], t[(y * 16 + x) * 4 + 1], t[(y * 16 + x) * 4 + 2]];
   const lum = ([r, g, b]) => (r + g + b) / 3;
   const TILES = [TILE.WATCHER_STONE, TILE.WATCHER_CRACKS, TILE.WATCHER_SMOKE];

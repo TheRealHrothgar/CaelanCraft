@@ -13,6 +13,8 @@ import { computeSky, createSkyState } from './daynight.js';
 import { createAvatarRenderer } from './avatarRenderer.js';
 import { AvatarMotion } from './avatarMotion.js';
 import { createZombieRenderer } from './zombieRenderer.js';
+import { createWatcherRenderer } from './watcherRenderer.js';
+import { createPhantomRenderer } from './phantomRenderer.js';
 import { createAnimalRenderer } from './animalRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
 import { plantModel, PLANT_QUAD_STRIDE } from './plantModels.js';
@@ -217,7 +219,6 @@ const fmt = (n) => n.toLocaleString('en-US');
 /** The kids in the avatar row, left to right, and where they stand. */
 const KID_IDS = /** @type {const} */ (['caelan', 'brayden', 'annabelle']);
 const AVATAR_X = [-0.9, 0, 0.9];
-const pilotStats = (m, extra = '') => `${fmt(m.tris)} tris${extra} · atlas ${m.atlas[0]}×${m.atlas[1]} (${fmt(m.texels)} px painted) · 1 draw`;
 
 /**
  * @type {Record<string, { title: string, note: string, target: number[], dist: number, far: number, today: () => Shown,
@@ -256,22 +257,22 @@ const ROWS = {
     },
   },
   zombie: {
-    title: 'Zombie — a walker after someone',
-    note: 'people-like, stooped, narrow slits in sunken hollows, a torn flannel shirt, patched trousers; no gore, nothing red',
-    target: [0, 0.9, -0.1], dist: 3.7, far: 9,
+    title: 'Zombies — a walker, a runner and an alpha (the game\'s renderer, phase 2)',
+    note: 'left: after someone; right: idle, the runner shielding its eyes from a light — hex-faceted, gaunt, ragged clothes, nothing red',
+    target: [0.05, 0.95, -0.1], dist: 5.4, far: 9,
     today() {
-      const scene = stage();
-      const zr = createZombieRenderer(scene, null, 2);
-      zr.sync([/** @type {*} */ ({ id: 3, x: 0, y: 0, z: 0, yaw: 0, kind: 'walker', walkPhase: 0.7, swing: 0, mode: 'chase', tilt: 0.12, hurt: 0, smoking: false, side: 1, shield: 0 })], 0, 0);
-      scene.add(blobShadow(0.42));
-      return { scene, stats: `${fmt(trianglesOf(zr.group))} tris · skin page 128×64 (8,192 px) + glow, nearest · 5 draws` };
+      return zombieScene([
+        { id: 3, x: -1.05, kind: 'walker', walkPhase: 0.7, mode: 'chase', tilt: 0.12 },
+        { id: 5, x: 0, kind: 'runner', walkPhase: 1.2, mode: 'chase', tilt: -0.1 },
+        { id: 8, x: 1.25, z: 0.1, kind: 'alpha', walkPhase: 0.4, mode: 'chase', tilt: 0.05 },
+      ]);
     },
-    pilot(style) {
-      const scene = stage();
-      const m = buildPilot('zombie', style);
-      scene.add(pilotMesh(m));
-      scene.add(blobShadow(0.42));
-      return { scene, stats: pilotStats(m) };
+    pilot() {
+      return zombieScene([
+        { id: 1, x: -1.05, kind: 'walker', walkPhase: 0, mode: 'idle', tilt: 0.2 },
+        { id: 2, x: 0, kind: 'runner', walkPhase: 0, mode: 'idle', tilt: 0.1, shield: 1, side: 1 },
+        { id: 8, x: 1.25, z: 0.1, kind: 'alpha', walkPhase: 0, mode: 'idle', tilt: 0 },
+      ]);
     },
   },
   animal: {
@@ -334,6 +335,19 @@ const ROWS = {
   },
 };
 
+/**
+ * The game's zombie renderer drawing `list` (partial zombies, by day) on a stage.
+ * @param {Array<Record<string, *>>} list
+ * @returns {Shown}
+ */
+function zombieScene(list) {
+  const scene = stage({ blocks: [[-2.3, 1.6]] });
+  const zr = createZombieRenderer(scene, null, 4);
+  zr.sync(list.map((z) => /** @type {*} */ ({ y: 0, z: 0, yaw: 0, swing: 0, hurt: 0, smoking: false, side: 1, shield: 0, ...z })), 0, 0);
+  for (const z of list) scene.add(blobShadow(z.kind === 'alpha' ? 0.55 : 0.45, z.x, z.z ?? 0));
+  return { scene, stats: `${fmt(trianglesOf(zr.group))} tris for the three · a 256×256 atlas each + glow · 5 draws a kind` };
+}
+
 /** Close looks (not in the 'all' view): ?row=fist (the fist in its own frame), ?row=head (the four heads). */
 const DEBUG_ROWS = {};
 DEBUG_ROWS.head = {
@@ -354,6 +368,29 @@ DEBUG_ROWS.fist = {
     scene.add(pilotMesh(m));
     scene.add(slabMesh('iron_pick', /** @type {Float64Array} */ (m.tool)).mesh);
     return { scene, stats: `${fmt(m.tris)} tris` };
+  },
+};
+
+DEBUG_ROWS.zhead = {
+  title: 'Zombie heads, close up — the walker, the runner, the alpha', note: 'gaunt faceted heads, a heavy brow over the slits',
+  target: [0, 1.6, 0], dist: 1.2, far: 4, zgrid: true,
+  today: () => ROWS.zombie.today(),
+  pilot: () => ROWS.zombie.pilot('hex'),
+};
+
+DEBUG_ROWS.watcher = {
+  title: 'The Hollow Watcher and the figure at the edge of sight', note: 'chamfered hollow hex bands, a lantern round a crystal, painted stone with glowing cracks',
+  target: [0.3, 1.35, 0], dist: 5.2, far: 14, az: 0.3,
+  today() {
+    const scene = stage({ blocks: [[-1.8, 1.4]] });
+    const wr = createWatcherRenderer(scene, null);
+    wr.sync(/** @type {*} */ ({ x: 0, y: 0, z: 0, yaw: 0, headYaw: 0.3, headPitch: 0, q: 0, r: 0, kind: 'summon' }), 0, 1.6, -6, 2);
+    const ph = createPhantomRenderer(scene);
+    ph.sync(/** @type {*} */ ({ x: 1.2, y: 0, z: 0.4, yaw: 0.2, age: 1, alpha: 0.5, d0: 14 }));
+    return { scene, stats: `the Watcher ${fmt(trianglesOf(wr.group))} tris · the figure ${fmt(trianglesOf(ph.group))} tris` };
+  },
+  pilot() {
+    return this.today();
   },
 };
 
@@ -486,12 +523,23 @@ function layoutRow(key, top, height, compact) {
     const shown = col === 'today' ? row.today() : row.pilot(col);
     const y0 = top + head;
     const h = height - head;
-    if (row.grid) {
+    if (row.zgrid) {
+      // the three heads, from the front (top) and from 3/4 (bottom)
+      const heads = [[-1.05, 1.62, -0.12], [0, 1.5, -0.32], [1.25, 1.95, -0.08]];
+      const gw = (colW - 6) / 3;
+      const gh = (h - 26) / 2;
+      heads.forEach((target, k) => {
+        for (let v = 0; v < 2; v++) {
+          const rect = [x0 + 3 + k * gw, y0 + 2 + v * gh, gw - 2, gh - 2];
+          panels.push({ scene: shown.scene, cam: orbit(target, k === 2 ? 1.25 : 1.0, v === 0 ? 0 : 0.7, 0.04, rect[2] / rect[3]), rect });
+        }
+      });
+    } else if (row.grid) {
       // four close-ups: the three kids (the avatar row's scene) and the walker (the zombie row's)
-      const zs = col === 'today' ? ROWS.zombie.today() : ROWS.zombie.pilot(col);
+      const zs = col === 'today' ? ROWS.zombie.today() : ROWS.zombie.pilot('hex');
       const heads = [
         [shown.scene, [AVATAR_X[0], 1.43, 0], 'Caelan'], [shown.scene, [AVATAR_X[1], 1.62, 0], 'Brayden'],
-        [shown.scene, [AVATAR_X[2], 1.5, 0], 'Annabelle'], [zs.scene, [0.02, 1.58, -0.16], 'the walker'],
+        [shown.scene, [AVATAR_X[2], 1.5, 0], 'Annabelle'], [zs.scene, [-1.05, 1.6, -0.12], 'the walker'],
       ];
       const gw = (colW - 6) / 2;
       const gh = (h - 26) / 2;
