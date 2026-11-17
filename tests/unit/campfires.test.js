@@ -1,10 +1,10 @@
 // Unit tests for src/campfires.js and the campfire's block / mesher / pig rules (CONTRACTS §32).
 import { describe, it, expect } from 'vitest';
 import { BLOCK, BLOCKS, TILE, getFaceTile, isSolid, isOpaque, isPlaceable, isBreakable, isTargetable, isMeshed, FACE_TOP } from '../../src/blocks.js';
-import { CAMPFIRE_MAX_TRACKED, CAMPFIRE_RETRACK_DISTANCE, CAMPFIRE_RETRACK_BATCH } from '../../src/config.js';
+import { CAMPFIRE_MAX_TRACKED, CAMPFIRE_RETRACK_DISTANCE, CAMPFIRE_RETRACK_BATCH, CHUNK_SIZE } from '../../src/config.js';
 import { Campfires, campfireKey, flicker, scorchPlayer, wouldDouseCampfire } from '../../src/campfires.js';
 import { createPlayer } from '../../src/physics.js';
-import { forEachEditedCell, localIndex, chunkKey } from '../../src/coords.js';
+import { forEachEditedCell, forEachEditedCellIn, localIndex, chunkKey } from '../../src/coords.js';
 import { hexToWorld } from '../../src/hex.js';
 import { buildChunkMesh } from '../../src/mesher.js';
 import { World } from '../../src/world.js';
@@ -34,6 +34,7 @@ describe('campfire block', () => {
       'earth_wire', 'terminal_board', 'voltaic_battery', 'blasting_machine', 'selenium_panel', 'knife_switch', 'push_button',
       'clockwork_timer', 'relay', 'igniter', 'filament_lamp', 'electric_bell', 'spark_transmitter', 'coherer_receiver',
       'brick_shadow', 'brick_fill', 'brick_gap', // §93: the bricks' shadows are never drawn (the brick mesher draws the bricks)
+      'pennant', // §101.4: pennantRenderer draws it
     ]);
   });
   it('the mesher skips the campfire cell but still draws the ground under it', () => {
@@ -301,6 +302,50 @@ describe('Campfires tracking', () => {
     const seen = [];
     forEachEditedCell(edits, B.CAMPFIRE, (q, y, r) => seen.push([q, y, r]));
     expect(seen).toEqual([[16 + 2, 7, -16 + 3]]);
+    // forEachEditedCellIn: one chunk's alone
+    const one = [];
+    forEachEditedCellIn(edits, 1, -1, B.CAMPFIRE, (q, y, r) => one.push([q, y, r]));
+    expect(one).toEqual([[16 + 2, 7, -16 + 3]]);
+    forEachEditedCellIn(edits, 0, 0, B.CAMPFIRE, () => one.push(null));
+    forEachEditedCellIn(edits, 1, -1, B.STONE, () => one.push(null));
+    expect(one).toHaveLength(1);
+  });
+  it('on a server: a fire another player lights or puts out in a chunk not generated here comes in with that chunk', () => {
+    // wired as main wires it (§101.4, as the pennants): loadFromEdits on load, onBlockChange, and onChunkLoaded from
+    // World.onChunkGenerated. World.applyServerCell keeps a cell for a chunk not generated here as an edit (importEdits),
+    // which fires no onBlockChange, and the CAMPFIRE is not meshed: without onChunkLoaded it would never be drawn.
+    const w = new World({ worldGen: flatWorldGen(10), renderDistance: 1 });
+    const c = new Campfires();
+    c.loadFromEdits(w.edits);
+    w.onBlockChange = (q, y, r, prev, next) => c.onBlockChange(q, y, r, prev, next);
+    w.onChunkGenerated = (cq, cr) => c.onChunkLoaded(cq, cr, w.edits, w.getBlock);
+    const far = CHUNK_SIZE * 40 + 3;
+    const [fx, fz] = hexToWorld(far, 0);
+    w.updateCentres([[0, 0]], 1e9);
+    // a fire at home, lit here: tracked through onBlockChange
+    expect(w.setBlock(2, 11, 0, B.CAMPFIRE)).toBe(true);
+    expect(c.total).toBe(1);
+    // lit by someone far away, in a chunk this client has not generated: not yet known …
+    expect(w.hasChunkAtCell(far, 0)).toBe(false);
+    expect(w.applyServerCell(far, 11, 0, B.CAMPFIRE)).toBe(false);
+    expect(c.known.has(campfireKey(far, 11, 0))).toBe(false);
+    // … and known (and drawn near) once the player walks there and the chunk is generated
+    w.updateCentres([[fx, fz]], 1e9);
+    expect(w.hasChunkAtCell(0, 0)).toBe(false);
+    expect(w.getBlock(far, 11, 0)).toBe(B.CAMPFIRE);
+    expect(c.nearest(fx, 11.3, fz, 4).map((n) => n.fire.key)).toEqual([campfireKey(far, 11, 0)]);
+    // the fire at home is put out by someone there while the player is away: no fire over the ash when they come back
+    expect(w.applyServerCell(2, 11, 0, B.AIR)).toBe(false);
+    expect(c.known.has(campfireKey(2, 11, 0))).toBe(true); // still believed lit while home is not generated here
+    w.updateCentres([[0, 0]], 1e9);
+    expect(w.getBlock(2, 11, 0)).toBe(B.AIR);
+    expect(c.known.has(campfireKey(2, 11, 0))).toBe(false);
+    expect([...c.known.keys()]).toEqual([campfireKey(far, 11, 0)]); // a chunk coming in leaves other chunks' fires alone
+    // coming back to chunks whose fires are already right changes nothing
+    w.updateCentres([[fx, fz]], 1e9);
+    w.updateCentres([[0, 0]], 1e9);
+    expect([...c.known.keys()]).toEqual([campfireKey(far, 11, 0)]);
+    expect(c.total).toBe(1);
   });
 });
 

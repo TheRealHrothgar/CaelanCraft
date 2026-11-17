@@ -34,6 +34,10 @@ export const POSE_SNEAKING = 2;
 export const POSE_ON_GROUND = 4;
 export const POSE_SWING = 8;
 export const POSE_SWIMMING = 16;
+/** §100: Place is held with a spear, a dart or a bow — the others see the draw. */
+export const POSE_DRAWING = 32;
+/** Every pose flag: anything else that arrives is dropped. */
+export const POSE_FLAGS = 63;
 
 /** @param {object} msg @returns {string} */
 export function encode(msg) {
@@ -100,7 +104,7 @@ export function cleanPose(m) {
   if (Math.abs(x) > 1e7 || Math.abs(z) > 1e7 || y < -64 || y > WORLD_HEIGHT + 256) return null;
   const vx = fin(m.vx) ? Math.max(-100, Math.min(100, m.vx)) : 0;
   const vz = fin(m.vz) ? Math.max(-100, Math.min(100, m.vz)) : 0;
-  const flags = int(m.flags) ? m.flags & 31 : 0;
+  const flags = int(m.flags) ? m.flags & POSE_FLAGS : 0;
   const tau = Math.PI * 2;
   return {
     x, y, z, yaw: ((yaw % tau) + tau) % tau, pitch: Math.max(-Math.PI / 2, Math.min(Math.PI / 2, pitch)), flags, vx, vz,

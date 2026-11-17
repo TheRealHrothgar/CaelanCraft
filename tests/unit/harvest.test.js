@@ -12,6 +12,8 @@ import {
 } from '../../src/harvest.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
 import { mulberry32 } from '../../src/noise.js';
+import { wearsFromDigging } from '../../src/survivalControl.js';
+import { HARD_WORK_SHOW_S } from '../../src/survival.js';
 
 const B = BLOCK;
 const tool = (key) => getItem(key).tool;
@@ -888,5 +890,33 @@ describe('§99: work costs time and the tool', () => {
       const rule = ruleFor(id);
       if (rule && rule.tier === 0 && rule.tool && rule.h > SLOW_HINT_S) expect(text, BLOCKS[id].name).not.toBe(null);
     }
+  });
+
+  it('the seams: §100\'s weapons dig like a hand and never wear by it; §101\'s Pennant is a quick pull', () => {
+    // a spear, a dart or a bow is no digging tool: on every block it works like the hand (tier 0, the hand's time) and
+    // loses nothing by it (a bow wears by its shots alone, §100.2)
+    const weapons = ['flint_spear', 'bow'].map((k) => tool(k));
+    expect(weapons.map((t) => t.type)).toEqual(['spear', 'bow']);
+    for (const t of weapons) {
+      expect(DIG_TOOL_TYPES.has(t.type), t.type).toBe(false);
+      expect(wearsFromDigging(t), t.type).toBe(false);
+      for (let id = 0; id < BLOCK_COUNT; id++) {
+        expect(digWear(id, t), BLOCKS[id].name).toBe(0);
+        expect(workTier(id, t), BLOCKS[id].name).toBe(0);
+        if (canHarvest(id, t)) expect(breakSeconds(id, t), BLOCKS[id].name).toBe(breakSeconds(id, null));
+      }
+    }
+    expect(getItem('flint_dart').tool ?? null).toBe(null); // a dart is no tool at all: a hand
+    // the Pennant (§101.4) pulls up by hand, whatever is in hand: never slow, never worn for, never hard work
+    for (const t of [null, ...weapons, tool('stone_axe'), tool('steel_pick')]) {
+      const name = t ? t.type : 'hand';
+      expect(canHarvest(B.PENNANT, t), name).toBe(true);
+      expect(breakSeconds(B.PENNANT, t), name).toBeCloseTo(0.4, 9);
+      expect(breakSeconds(B.PENNANT, t), name).toBeLessThan(HARD_WORK_SHOW_S); // §99.2: a moment of work is not hard work
+      expect(slowHint(B.PENNANT, t), name).toBe(null);
+      expect(workTier(B.PENNANT, t), name).toBe(0);
+    }
+    expect(digWear(B.PENNANT, null)).toBe(0);
+    expect(rollDrops(B.PENNANT, null, {}, () => 0.5)).toEqual([{ k: 'pennant', n: 1 }]);
   });
 });

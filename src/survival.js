@@ -75,6 +75,11 @@ export const SALT_MESSAGE_GAP_S = 5;
 export const DOT_PULSE_HP = 3;
 /** §99: seconds the `Hard work` label stays after the last moment of hard work (between one block and the next). */
 export const WORK_LABEL_HOLD_S = 1.5;
+/**
+ * §99: seconds of hard work (gaps shorter than WORK_LABEL_HOLD_S do not end it) before `Hard work` shows. A quick pull — a
+ * torch, a fern, loose stones, anything that comes away in a second or so by hand — never shows it, whatever is in hand.
+ */
+export const HARD_WORK_SHOW_S = 1.5;
 
 /** The death screen's title by cause (§2.5). */
 export const DEATH_TITLES = Object.freeze({
@@ -165,6 +170,8 @@ export class Survival {
     this._flags = { headInWater: false, buried: false, work: 0 };
     /** §99: seconds the `Hard work` label still shows after the hard work stops (it does not flicker between blocks) */
     this._workHold = 0;
+    /** §99: seconds of the hard work under way (HARD_WORK_SHOW_S of it shows the label) */
+    this._workRun = 0;
   }
 
   /** In Survival (SV): the mode is 'survival', dead or alive. */
@@ -221,6 +228,7 @@ export class Survival {
     this._flags.buried = false;
     this._flags.work = 0;
     this._workHold = 0;
+    this._workRun = 0;
   }
 
   /**
@@ -275,14 +283,17 @@ export class Survival {
     const moving = !sleep && (env.moving ?? (p ? Math.hypot(p.vx, p.vz) > RATES.WALK_MIN_SPEED : false));
     const sprinting = !!p?.sprinting && moving;
     const breaking = !sleep && !!env.breaking;
-    // §99: the work's activity by the tool doing it; hard work (a bare hand, a stone tool) shows for a moment after
+    // §99: the work's activity by the tool doing it. Hard work (a bare hand, a stone tool) shows once it has gone on for
+    // HARD_WORK_SHOW_S, and for a moment after it stops, so neither a quick pull nor the gap between two blocks flickers it.
     const work = breaking ? workActivity(env.workTier) : 0;
     if (work >= HARD_WORK_AT) {
-      this._flags.work = work;
+      this._workRun += dt;
       this._workHold = WORK_LABEL_HOLD_S;
+      if (this._workRun >= HARD_WORK_SHOW_S) this._flags.work = work;
     } else if ((this._workHold -= dt) <= 0) {
       this._flags.work = work;
       this._workHold = 0;
+      this._workRun = 0;
     }
     const c = env.climate ?? /** @type {SurvivalEnv['climate']} */ ({});
     const heat = finite(env.heat) ? env.heat : 0;

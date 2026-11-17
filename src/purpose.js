@@ -79,6 +79,8 @@ export const PURPOSE = Object.freeze({
   bed: 'The best sleep: you heal most and need the fewest hours.',
   // ---- the wind (§101)
   pennant: 'Shows the wind. Stalk game with the wind in your face.',
+  // ---- finding the way (§102)
+  compass: 'Carry it, and the wind vane shows north.',
 });
 
 /**

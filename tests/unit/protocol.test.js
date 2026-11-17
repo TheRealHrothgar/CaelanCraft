@@ -2,8 +2,8 @@
 // whatever arrives into well-formed values or null.
 import { describe, it, expect } from 'vitest';
 import {
-  PROTOCOL_VERSION, MAX_NAME, MAX_CHAT, POSE_FLYING, POSE_SWING, encode, decode, cleanName, cleanChat, cleanPose, packPose,
-  unpackPose, cleanCell, cleanBrick, unflatten4,
+  PROTOCOL_VERSION, MAX_NAME, MAX_CHAT, POSE_FLYING, POSE_SWING, POSE_DRAWING, POSE_FLAGS, encode, decode, cleanName, cleanChat,
+  cleanPose, packPose, unpackPose, cleanCell, cleanBrick, unflatten4,
 } from '../../src/protocol.js';
 import { WORLD_HEIGHT } from '../../src/config.js';
 
@@ -81,8 +81,13 @@ describe('poses', () => {
     expect(p.pitch).toBeCloseTo(Math.PI / 2);
     expect(p.vx).toBe(100);
     expect(p.vz).toBe(0);
-    expect(p.flags).toBe(31);
+    expect(p.flags).toBe(POSE_FLAGS); // six flags: §100 added DRAWING
+    expect(POSE_FLAGS).toBe(63);
     expect(cleanPose({ ...ok, flags: 1.5 }).flags).toBe(0);
+    // §100: the draw goes through the cleaner and the packing
+    const drawing = cleanPose({ ...ok, flags: POSE_DRAWING | 4 });
+    expect(drawing.flags & POSE_DRAWING).toBe(POSE_DRAWING);
+    expect(unpackPose(packPose(3, drawing)).flags).toBe(POSE_DRAWING | 4);
   });
 
   it('packs to a short array and back (3 decimals)', () => {

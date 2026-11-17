@@ -15,6 +15,7 @@ import { FLORA_TABLE } from '../../src/worldgen.js';
 import { DART_KEYS, ARROW_KEYS } from '../../src/looseItems.js';
 import { PLANTABLE } from '../../src/farming.js';
 import { homesteadAction } from '../../src/homestead.js';
+import { COMPASS_KEY } from '../../src/compass.js';
 
 const B = BLOCK;
 /** Items the game gives rather than the world (§14.2: the Handbook is in the pack when a survival state begins). */
@@ -68,6 +69,7 @@ describe('every item has a source and a use (§10 I-1)', () => {
   for (const k of DART_KEYS) uses.add(k); // thrown (CONTRACTS §60)
   for (const k of ARROW_KEYS) uses.add(k); // shot from a bow (§100)
   for (const k of Object.keys(PLANTABLE)) uses.add(k); // planted with R (§80 farming): what the three seeds are for
+  uses.add(COMPASS_KEY); // carried, it puts north on the HUD's wind vane (§102)
 
   it.each(nonBlockKeys)('%s comes from somewhere', (key) => {
     expect(sources.has(key) || GIVEN.has(key)).toBe(true);

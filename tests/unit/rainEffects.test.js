@@ -685,8 +685,8 @@ describe('the wiring (main.js, diagnostics.js, renderer.js): read from the sourc
       expect(frame.indexOf(text), text).toBeGreaterThan(0);
       return frame.indexOf(text);
     };
-    expect(at('const shownSky = stepWeather(dt, live, eyeY);')).toBeGreaterThan(at('computeSky(time, sky);'));
-    expect(at('stepWorldSounds(dt, live);')).toBeGreaterThan(at('const shownSky = stepWeather(dt, live, eyeY);')); // the ambience hears this frame's rain
+    expect(at('const shownSky = stepWeather(dt, live, eyeY, cam.yaw);')).toBeGreaterThan(at('computeSky(time, sky);'));
+    expect(at('stepWorldSounds(dt, live);')).toBeGreaterThan(at('const shownSky = stepWeather(dt, live, eyeY, cam.yaw);')); // the ambience hears this frame's rain
     expect(at('renderer.setSky(shownSky);')).toBeGreaterThan(at('stepWorldSounds(dt, live);'));
     const step = body('stepWeather');
     expect(step).toContain('for (const line of seasonNews(fx.lastDay, day)) logLine(line, false, SEASON_LINE_MS);');

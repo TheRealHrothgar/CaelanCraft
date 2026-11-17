@@ -1,9 +1,12 @@
 // src/wind.js — the wind: deterministic from the seed and the clock, a wandering direction, gusts, stronger in showers;
 // which way the player's scent goes.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
-  windAt, windSeed, scentToward, windFromWord, windWord, WIND_MIN, WIND_MAX, WIND_MAX_MS, SHOWER_WIND,
+  windAt, windSeed, scentToward, windFromWord, windWord, WIND_MIN, WIND_MAX, WIND_MAX_MS, SHOWER_WIND, WIND_CALM,
 } from '../../src/wind.js';
+import { DAY_LENGTH_SECONDS } from '../../src/config.js';
 
 describe('windAt', () => {
   it('is the same for the same seed and time (every player on a server feels it alike)', () => {
@@ -65,5 +68,35 @@ describe('scent and words', () => {
     expect(windFromWord({ ...east, x: 0, z: 1 })).toBe('north'); // toward +z, from −z
     expect(windWord({ ...east, strength: 0.1 })).toBe('calm');
     expect(windWord({ ...east, strength: 0.8 })).toBe('a strong breeze');
+    // a calm is below WIND_CALM (the vane, the drawn wind, the flag and the stalking hint share it, §101.1)
+    expect(WIND_CALM).toBeGreaterThan(WIND_MIN);
+    expect(windWord({ ...east, strength: WIND_CALM - 1e-9 })).toBe('calm');
+    expect(windWord({ ...east, strength: WIND_CALM })).toBe('a light breeze');
+  });
+});
+
+describe('what the module says of itself', () => {
+  it('no hour is calmer than another: the strength swells over minutes and rises in showers, with no dawn calm', () => {
+    const header = readFileSync(fileURLToPath(new URL('../../src/wind.js', import.meta.url)), 'utf8').split('\nimport')[0].split('\nexport')[0];
+    expect(header).not.toMatch(/dawn/i);
+    // the mean strength in the hour after sunrise (04:30) against the rest of the day, over many days: alike
+    const hour = DAY_LENGTH_SECONDS / 24;
+    let dawn = 0;
+    let dawnN = 0;
+    let rest = 0;
+    let restN = 0;
+    for (let day = 0; day < 400; day++) {
+      for (let h = 0; h < 24; h += 0.25) {
+        const s = windAt(11, day * DAY_LENGTH_SECONDS + h * hour).strength;
+        if (h >= 4.5 && h < 5.5) {
+          dawn += s;
+          dawnN++;
+        } else {
+          rest += s;
+          restN++;
+        }
+      }
+    }
+    expect(Math.abs(dawn / dawnN - rest / restN)).toBeLessThan(0.03);
   });
 });

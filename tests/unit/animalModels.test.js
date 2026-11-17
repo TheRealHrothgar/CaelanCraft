@@ -190,4 +190,36 @@ describe('animalRenderer — heads, the young, tags and snares (§69.1, §100)',
     expect(at.y).toBeLessThan(10.15);
     r.dispose();
   });
+
+  it('a stranded fish lies on its side on the bed (§100 `lie`); a swimming one is upright', () => {
+    const scene = new THREE.Scene();
+    const r = createAnimalRenderer(scene);
+    const body = by(r, 'fish-body');
+    const pos = body.geometry.getAttribute('position');
+    const span = (M) => {
+      const v = new THREE.Vector3();
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(M);
+        lo = Math.min(lo, v.y);
+        hi = Math.max(hi, v.y);
+      }
+      return [lo, hi];
+    };
+    const fish = mk('fish', { stranded: true, walkPhase: 0 });
+    r.sync([fish], 10);
+    const M = mat(body);
+    expect(Math.abs(new THREE.Vector3(0, 1, 0).transformDirection(M).y)).toBeLessThan(1e-6);
+    const [lo, hi] = span(M);
+    expect(lo - 10).toBeGreaterThan(-0.05); // a fin at most a little in the mud
+    expect(lo - 10).toBeLessThan(0.02);
+    expect(hi - 10).toBeLessThan(0.2); // flat on the ground, not standing on its back fin
+    // the trunk itself rests on the bed: its spine line (x 0 in model space) at about its half width above it
+    const spine = new THREE.Vector3(0, MODELS.fish.lie.mid, 0).applyMatrix4(M).y - 10;
+    expect(spine).toBeCloseTo(MODELS.fish.lie.up, 6);
+    r.sync([{ ...fish, stranded: false }], 10);
+    expect(new THREE.Vector3(0, 1, 0).transformDirection(mat(body)).y).toBeCloseTo(1, 6);
+    r.dispose();
+  });
 });

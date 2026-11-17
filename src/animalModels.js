@@ -51,6 +51,8 @@ export const MODEL_KINDS = Object.freeze(['cow', 'sheep', 'horse', 'wolf', 'deer
  *   `level` the share of a rear's pitch it takes back; `graze` the pitch (rad, negative: down) while it grazes, `alert`
  *   while it stares (§100)
  * @property {number[]} [tag]  where a tame one's tag hangs (on the head group; documentation and tests)
+ * @property {{ mid: number, up: number }} [lie]  a stranded animal (§100: a fish whose water is gone) lies on its side:
+ *   rolled a quarter turn about its length round its middle `mid` above the feet, which then sits `up` above the ground
  */
 
 /** The joints of every kind (the old box models' joints, kept: hips, stride, rear-up, wings). */
@@ -74,7 +76,7 @@ export const ANIMAL_RIGS = Object.freeze({
     rear: { y: 0.75, z: 0.48, angle: 1.2, arms: 0.55, swipe: 1.1 },
     head: { pivot: [0, 1.1, -0.66], level: 0.9, graze: -0.35, alert: 0.15 },
   }),
-  fish: Object.freeze({ legs: 0, legH: 0, legW: 0, legX: 0, legZ: [0], swing: 0, wiggle: 0.3 }),
+  fish: Object.freeze({ legs: 0, legH: 0, legW: 0, legX: 0, legZ: [0], swing: 0, wiggle: 0.3, lie: { mid: 0.1, up: 0.062 } }),
   pig: Object.freeze({ legH: 0.3, legW: 0.13, legX: 0.16, legZ: [-0.26, 0.32], swing: 0.6, head: { pivot: [0, 0.6, -0.34], level: 0, graze: -0.45, alert: 0.2 } }),
 });
 
@@ -1254,7 +1256,8 @@ function fishSpec() {
       c.add(cardAt([0, 0.11, 0.18], [0, 0.22, 0.34], 0.085, [1, 0, 0]), 'fish.fin');
       c.add(cardAt([0, 0.09, 0.18], [0, 0.035, 0.33], 0.075, [1, 0, 0]), 'fish.fin');
       c.add(cardAt([0, 0.14, 0.06], [0, 0.33, 0.1], 0.13, [1, 0, 0]), 'fish.fin');
-      for (const sd of [-1, 1]) c.add(cardAt([sd * 0.05, 0.07, -0.12], [sd * 0.12, 0.04, -0.04], 0.05, [0, 1, 0]), 'fish.fin');
+      // (swept back along the flanks: a stranded fish lies on one, §100 `lie`)
+      for (const sd of [-1, 1]) c.add(cardAt([sd * 0.045, 0.065, -0.12], [sd * 0.098, 0.035, -0.025], 0.05, [0, 1, 0]), 'fish.fin');
       return { parts: { body: c.done() }, variants: { body: ['body', null] } };
     },
   };

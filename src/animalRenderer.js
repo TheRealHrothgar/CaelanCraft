@@ -16,7 +16,8 @@
 // a rabbit bounds), `wiggle` (a fish's body swings with its tail), `wing` (two wings drawn only in the air, beating with
 // `walkPhase`; the legs are tucked back then), `rear` (the bear's rear-up: the body pitches up about its hips by
 // `animal.rear`, the forelegs rise with it and swing when it swipes) and `head` (the head group turns at its pivot and
-// stays `level` while the body rears: a rearing bear looks AT the player, not at the sky).
+// stays `level` while the body rears: a rearing bear looks AT the player, not at the sky). §100: `lie` lays a stranded
+// animal (`animal.stranded`: a fish whose water is gone) on its side.
 //
 // §88 (populations.js). Sex is shown where real animals show it: a variant's own trunk or head — the bull (heavier, a hump,
 // wide horns, a ring in his nose), the ram (curled horns; shorn: `maleAlt`), the stag (antlers), the cock pheasant
@@ -54,7 +55,7 @@ const NEWBORN = 0.55;
 /**
  * Per species, the rig of its model (animalModels.ANIMAL_RIGS): `legH` the hip height, `legW` the leg's width, `legX` /
  * `legZ` the hips (±x, front −z and back +z), `swing` the stride (rad), and the optional `legs`, `turn`, `hop`, `wiggle`,
- * `wing`, `rear` and `head`.
+ * `wing`, `rear`, `head` and `lie`.
  * @type {Readonly<Record<string, AnimalRig>>}
  */
 export const MODELS = Object.freeze(Object.fromEntries(ANIMAL_KINDS.map((k) => [k, /** @type {AnimalRig} */ (/** @type {*} */ (ANIMAL_RIGS)[k])])));
@@ -313,6 +314,12 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
       if (rear > 0 && rig.rear) {
         bodyM.multiply(tmp.makeTranslation(0, rig.rear.y, rig.rear.z)).multiply(rot.makeRotationX(rear * rig.rear.angle))
           .multiply(tmp.makeTranslation(0, -rig.rear.y, -rig.rear.z));
+      }
+      // §100: a stranded fish lies on its side on the bed (it still flaps with its tail): rolled a quarter turn about its
+      // length round its middle, which then sits `up` above the ground
+      if (rig.lie && a.stranded) {
+        bodyM.multiply(tmp.makeTranslation(0, rig.lie.up, 0)).multiply(rot.makeRotationZ(Math.PI / 2))
+          .multiply(tmp.makeTranslation(0, -rig.lie.mid, 0));
       }
       if (youth > 0) {
         // rounder: the trunk a little fuller and shorter about its middle

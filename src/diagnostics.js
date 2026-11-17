@@ -14,6 +14,9 @@ import { runeKey } from './runes.js';
 import { normalizeAvatarId } from './avatars.js';
 import { normalizeViewMode } from './viewCamera.js';
 import { isItemPick, normalizePick } from './creativePicks.js';
+import { breakSeconds, digWear } from './harvest.js';
+import { ITEMS } from './items.js';
+import { durabilityLeft } from './inventory.js';
 
 /** @typedef {import('./types.js').GameContext} GameContext */
 /** @typedef {import('./types.js').SmokeResult} SmokeResult */
@@ -942,7 +945,13 @@ const SMOKE_REMESH_FRAMES = 30;
 const SMOKE_HIT_RETRY_FRAMES = 10;
 /** v0.9: frames to wait for a queued mode switch; at most this many 1/60 s dig and eat frames in the survival step. */
 const SMOKE_MODE_FRAMES = 10;
-const SMOKE_DIG_FRAMES = 240;
+/** The step the smoke test's own dig and eat frames advance by (s). */
+export const SMOKE_HEADLESS_DT = 1 / 60;
+/**
+ * The survival step's dig: the frames a flint pick needs for its cell of stone (§99: 5.45 s, 328 frames), worked out from the
+ * data so a retuned hardness or tier speed cannot leave it short, and half a second more.
+ */
+export const SMOKE_DIG_FRAMES = Math.ceil(breakSeconds(BLOCK.STONE, ITEMS.flint_pick.tool ?? null) / SMOKE_HEADLESS_DT) + 30;
 /** Frames the smoke test waits for a dug rock to fly into the pack (CONTRACTS §60: about half a second). */
 const SMOKE_PICKUP_FRAMES = 120;
 const SMOKE_EAT_FRAMES = 180;
@@ -957,7 +966,6 @@ const SMOKE_WATCHDOG_MS = 20_000;
  * rAF is starved (a few frames per minute of virtual time) while timers run, so the fallback drives the run.
  */
 const SMOKE_RAF_FALLBACK_MS = 40;
-const SMOKE_HEADLESS_DT = 1 / 60;
 
 const SMOKE_RESULT_CSS =
   'position:fixed;left:0;bottom:0;z-index:100000;max-width:48vw;max-height:35vh;overflow:hidden;margin:0;' +
@@ -1378,17 +1386,26 @@ async function runSurvivalSmoke(game, world, player, tick, st, yaw0) {
   const hit = await waitForHit(game, tick, (h) => h !== null && h.blockId === BLOCK.STONE, SMOKE_HIT_RETRY_FRAMES);
   if (!st.check(!!hit, 'looking at the stone below', 'no stone below to dig')) return;
   const rockBefore = game.pack.count('rock');
+  const pick = pickSlot >= 0 ? game.pack.slots[pickSlot] : null;
+  const usesBefore = durabilityLeft(pick);
   let dug = 0;
   for (; dug < SMOKE_DIG_FRAMES; dug++) {
     game.digTargeted(SMOKE_HEADLESS_DT);
     if (world.getBlock(hit.q, hit.y, hit.r) === BLOCK.AIR) break;
   }
   const broke = world.getBlock(hit.q, hit.y, hit.r) === BLOCK.AIR;
+  const usesAfter = pickSlot >= 0 ? durabilityLeft(game.pack.slots[pickSlot]) : 0;
   // v0.10 (CONTRACTS §60): the rock flies to the player and enters the pack at the threshold — wait for it to arrive.
   for (let f = 0; broke && f < SMOKE_PICKUP_FRAMES && game.pack.count('rock') <= rockBefore; f++) await tick();
   st.check(broke && game.pack.count('rock') > rockBefore,
     `dug the stone with the flint pick in ${((dug + 1) * SMOKE_HEADLESS_DT).toFixed(2)} s; the pack holds ${game.pack.count('rock')} rock`,
     `hold-dig failed: block is ${blockName(world.getBlock(hit.q, hit.y, hit.r))}, rock ${game.pack.count('rock')}`);
+  // §99.3: the finished dig wore the pick by the block's work (a cell of stone takes 4 uses of a flint pick), not by 1
+  const wear = digWear(BLOCK.STONE, ITEMS.flint_pick.tool ?? null);
+  if (broke && pick) {
+    st.check(usesAfter === usesBefore - wear, `the dig wore the flint pick by ${wear} (${usesBefore} → ${usesAfter} uses)`,
+      `the flint pick went ${usesBefore} → ${usesAfter} uses, not ${usesBefore - wear}`);
+  }
   await tick();
   const food = game.runCommand('pack add honeyberries 2');
   const berrySlot = game.pack.hotbarSlotOf('honeyberries');

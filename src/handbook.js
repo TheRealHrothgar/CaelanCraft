@@ -1488,6 +1488,7 @@ function makeChapters() {
         '*Smoke drifts downwind.* On a calm day it rises straight up.',
         `*A Pennant* shows the wind where you set it. Make one by hand: ${rec('pennant').inputs.some((i) => 'tag' in i && i.tag === 'cloth') ? 'a rag or a hide' : 'a cloth'} lashed to a Stick with Cord. Its flag streams out in a breeze, flutters in the gusts and hangs limp in a calm.`,
       ]),
+      p('With a *Compass* in your pack, an N on the dial shows where north lies.'), // §102
       tip('Animals smell you on the wind. Stalk them with the wind in your face.'),
     ],
   ]);
@@ -1741,6 +1742,8 @@ function makeChapters() {
       p('Iron never melts in a kiln. A *Bloomery*, a tall brick stack blown with bellows, turns hematite and charcoal into an *iron bloom*: a spongy lump of iron and slag.'),
       p('Hammering the hot bloom drives the slag out: with a Bronze Hammer, the Bloomery makes *Wrought Iron*.'),
       p('The *Forge* works iron into tools with a Bronze Hammer. With an Iron Hammer it folds charcoal\'s carbon into wrought iron: *Steel*, the fastest and toughest of all.'),
+      // §102: the Compass
+      p(`The Forge also makes a *Compass*, an iron needle in a copper case under glass (${recipeInputsProse(rec('compass'))}). Carry it anywhere in your pack, and an N on the wind vane at the top of the screen shows where north lies.`),
       tip('Fuel means coal or charcoal, and coal is used first. Keep your charcoal: the Bloomery and the Forge burn nothing else.'),
     ],
     [...needsTable()],
@@ -1917,9 +1920,9 @@ function makeChapters() {
     // §100: stillness, cover and the wind
     [
       h('Keep still'),
-      p('When an animal turns and sees you crouching, it does not bolt at once. It lifts its head and stares at you. Freeze.'),
-      p(`Keep still and it settles in about ${numWord(Math.round((SUSPECT_WATCH - SUSPECT_CALM) / SUSPECT_SETTLE))} seconds, then lowers its head again. Move while it stares and it is gone. The hint says so: *The Doe is watching you — keep still*.`),
-      p('Every step it hears makes it warier, the more so the nearer you are. Creep while its head is down; stop when it looks up.'),
+      p('When an animal turns and sees you crouching, it does not bolt at once. It stops, turns to face you and stares. Freeze.'),
+      p(`Keep still and it settles in about ${numWord(Math.round((SUSPECT_WATCH - SUSPECT_CALM) / SUSPECT_SETTLE))} seconds and goes back to grazing. Move while it stares and it is gone. The hint says so: *The Doe is watching you — keep still*.`),
+      p('Every step it hears makes it warier, the more so the nearer you are. Creep while it looks away; freeze the moment it turns to face you.'),
     ],
     [
       h('Cover and the wind'),
@@ -1955,7 +1958,7 @@ function makeChapters() {
       h('Hold [RMB] to throw'),
       p(`With a spear or a dart in hand, hold [RMB] (the Place button on a tablet) to draw it back, and let go to throw. The longer you hold, the harder it flies, up to a full draw in ${drawTime}.`),
       p(`A quick tap only lobs it, at ${fmtPct(DRAW_SPEED_MIN)} of the speed and ${fmtPct(DRAW_POWER_MIN)} of the power. A full draw gives it ${fullPower} and throws it ${fmtPct(DRAW_SPEED_FULL - 1)} faster than [G] does.`),
-      p('[G] still throws at once, with no draw: use it when an animal bolts and there is no time.'),
+      p('On a keyboard [G] still throws at once, with no draw: use it when an animal bolts and there is no time.'),
     ],
     [
       h('The bow'),

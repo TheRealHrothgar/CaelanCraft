@@ -78,6 +78,23 @@ export function forEachEditedCell(edits, id, fn) {
   }
 }
 
+/**
+ * forEachEditedCell for one chunk's edits: fn(q, y, r) for every recorded edit of chunk (cq, cr) whose id is `id`. The
+ * trackers' onChunkLoaded (pennants, campfires: §101.4) learn a chunk's cells with it as the chunk comes in.
+ * @param {Map<string, Map<number, number>>} edits
+ * @param {number} cq @param {number} cr @param {number} id
+ * @param {(q: number, y: number, r: number) => void} fn
+ */
+export function forEachEditedCellIn(edits, cq, cr, id, fn) {
+  const chunkEdits = edits.get(chunkKey(cq, cr));
+  if (chunkEdits === undefined) return;
+  for (const [li, v] of chunkEdits) {
+    if (v !== id) continue;
+    const [lq, ly, lr] = indexToLocal(li);
+    fn(cq * CHUNK_SIZE + lq, ly, cr * CHUNK_SIZE + lr);
+  }
+}
+
 // Packed cell keys (block physics, CONTRACTS §33): q and r offset by 2^20 into 21 bits each, y in 7 bits, as ONE double
 // (exact: the largest key is below 2^49), like world.js packs chunk ids. Cells beyond ±2^20 are far outside playability.
 const CELL_OFFSET = 1 << 20;

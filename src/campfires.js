@@ -1,8 +1,10 @@
 // Caelancraft — Campfires: where they are, which are near, and how they flicker. See src/CONTRACTS.md §32. Pure.
 //
 // A campfire is a CAMPFIRE cell. Worldgen never emits one, so main seeds the tracker from World.edits on load
-// (loadFromEdits) and keeps it in step through World.onBlockChange, exactly like black holes. The model, light and
-// smoke are drawn by campfireRenderer.js; this module only answers "which fires, where, how bright".
+// (loadFromEdits) and keeps it in step through World.onBlockChange, exactly like black holes, and through
+// World.onChunkGenerated (onChunkLoaded: a fire another player lit or put out in a chunk not generated here comes in with
+// that chunk, as the pennants do). The model, light and smoke are drawn by campfireRenderer.js; this module only answers
+// "which fires, where, how bright".
 //
 // At most CAMPFIRE_MAX_TRACKED fires are tracked (they are scanned every frame). Fires past the cap are remembered as
 // `refused`; while there are any, retrack() keeps the tracked set to the fires nearest the player, so the fires you
@@ -15,7 +17,7 @@
 // one, and then only the fires that change side move in or out of the small tracked map.
 import { CAMPFIRE_MAX_TRACKED, CAMPFIRE_RETRACK_DISTANCE, CAMPFIRE_RETRACK_BATCH } from './config.js';
 import { BLOCK, isLiquid } from './blocks.js';
-import { forEachEditedCell } from './coords.js';
+import { forEachEditedCell, forEachEditedCellIn, worldToChunk } from './coords.js';
 import { hexToWorld, worldToHex } from './hex.js';
 
 /**
@@ -294,6 +296,26 @@ export class Campfires {
   loadFromEdits(edits) {
     this.clear();
     forEachEditedCell(edits, BLOCK.CAMPFIRE, (q, y, r) => this.add(q, y, r));
+  }
+
+  /**
+   * World.onChunkGenerated: bring chunk (cq, cr) into step with its blocks, as Pennants.onChunkLoaded does (§101.4). Cells
+   * written into a chunk not generated here (World.applyServerCell: another player's fire on a server) fire no
+   * onBlockChange, so when the chunk comes in its known fires that are gone are removed and every CAMPFIRE in its edits
+   * is added (worldgen makes none; a known one is left as it is).
+   * @param {number} cq @param {number} cr
+   * @param {Map<string, Map<number, number>>} edits  World.edits
+   * @param {(q: number, y: number, r: number) => number} getBlock
+   */
+  onChunkLoaded(cq, cr, edits, getBlock) {
+    /** @type {Campfire[]} */
+    const gone = [];
+    for (const fire of this.known.values()) {
+      if (worldToChunk(fire.q) !== cq || worldToChunk(fire.r) !== cr) continue;
+      if (getBlock(fire.q, fire.y, fire.r) !== BLOCK.CAMPFIRE) gone.push(fire);
+    }
+    for (const fire of gone) this.remove(fire.q, fire.y, fire.r);
+    forEachEditedCellIn(edits, cq, cr, BLOCK.CAMPFIRE, (q, y, r) => this.add(q, y, r));
   }
 
   /**

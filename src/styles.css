@@ -320,6 +320,11 @@ kbd{display:inline-block;min-width:18px;padding:1px 6px;background:#2b2b2b;borde
 @keyframes wind-sway{from{transform:rotate(-5deg)}to{transform:rotate(5deg)}}
 @keyframes wind-sway-hard{from{transform:rotate(-9deg)}to{transform:rotate(9deg)}}
 @media (prefers-reduced-motion:reduce){.wind-sway,.wind-indicator.wind-gust .wind-sway{animation:none}}
+/* The compass (CONTRACTS §102): while one is carried the capsule grows to take a bigger dial, whose rim holds an upright
+   N and a red tick at north's bearing, turning as you turn (hud.setNorth). Without one the vane is exactly as above. */
+.wind-indicator.wind-compass{height:38px;padding-left:0;gap:8px}
+.wind-north-tick{fill:none;stroke:#ff5a48;stroke-width:2.2;stroke-linecap:round}
+.wind-north-letter{fill:#fff;stroke:rgba(14,16,26,.6);stroke-width:1.6px;stroke-linejoin:round;paint-order:stroke;font-family:var(--ui-font);font-weight:800}
 /* Sleep (CONTRACTS §87). The tiredness reading: the hours awake in words over a thin bar with a mark at each stage, right
    of the right-hand vitals on the hotbar's own line (bottom 8px; no hexagon, no icon). Its chip joins the other warnings.
    #sleep-overlay is the dark of a sleep or a nod: it lies over the whole HUD (z 8, above the hotbar's own layers) and
