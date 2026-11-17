@@ -4,7 +4,8 @@ import * as THREE from 'three';
 import {
   createZombieRenderer, zombieGeometries, boxesGeometry, patchZombieShader, LEG_H, LEG_X, TORSO_H, UPPER_L, FORE_L, ARM_L,
   SHOULDER_X, SHOULDER_Y, ALPHA_SCALE, RUNNER_WIDTH, SHIRT_TINTS, ARMS, GLOW_DAY, RIGS, ZOMBIE_FILL, ZOMBIE_PROGRAM,
-  twitchOf, TWITCH_HZ, TWITCH_PART, TWITCH_ANGLE, shieldOf, SHIELD_ARM, SHIELD_NOD, SHIELD_ROLL,
+  twitchOf, TWITCH_HZ, TWITCH_PART, TWITCH_ANGLE, shieldOf, SHIELD_ARM, SHIELD_NOD, SHIELD_ROLL, ZOMBIE_HURT,
+  ZOMBIE_HURT_INTENSITY,
 } from '../../src/zombieRenderer.js';
 import { zombieModel, zombieRig, ZOMBIE_ATLAS, TINT_ALPHA } from '../../src/zombieModel.js';
 import { ZOMBIE_MAX, ZOMBIE_HEIGHT, MAX_INFALL_MOBS } from '../../src/config.js';
@@ -162,14 +163,100 @@ describe('createZombieRenderer — instanced zombie models', () => {
       fragmentShader: THREE.ShaderLib.lambert.fragmentShader,
       uniforms: {},
     };
-    patchZombieShader(shader);
-    expect(shader.fragmentShader).toContain('caelFill');
-    expect(shader.fragmentShader).toContain('caelSky');
-    expect(shader.fragmentShader).not.toContain('#include <color_fragment>');
-    expect(shader.fragmentShader).toContain('mix( vec3( 1.0 ), vColor.rgb');
+    const glow = { value: 0.3 };
+    patchZombieShader(shader, glow);
+    const f = shader.fragmentShader;
+    expect(f).toContain('caelFill');
+    expect(f).toContain('caelSky');
+    expect(f).not.toContain('#include <color_fragment>');
+    expect(f).toContain('mix( vec3( 1.0 ), vColor.rgb');
     expect(shader.uniforms.caelVol).toBeTruthy();
     expect(ZOMBIE_FILL.strength).toBeGreaterThan(0.05);
     expect(ZOMBIE_FILL.strength).toBeLessThan(0.3); // a fill, never a light of its own
+    // the glow image takes the shirt's tint too (at night the self-light outshines the moonlit cloth): the tint is kept
+    // from the colour step and multiplies the emissive right after three reads the glow image, only where there is one
+    const at = (needle) => {
+      const i = f.indexOf(needle);
+      expect(i, needle).toBeGreaterThan(-1);
+      return i;
+    };
+    expect(at('vec3 zTint = vec3( 1.0 );')).toBeLessThan(at('diffuseColor.rgb *= zTint;'));
+    expect(at('diffuseColor.rgb *= zTint;')).toBeLessThan(at('#include <emissivemap_fragment>'));
+    const tinted = at('totalEmissiveRadiance *= zTint;');
+    expect(at('#include <emissivemap_fragment>')).toBeLessThan(tinted);
+    expect(f.lastIndexOf('#ifdef USE_EMISSIVEMAP', tinted)).toBeGreaterThan(at('#include <emissivemap_fragment>'));
+    // … and shines as at night wherever the sky does not reach (the light volume's caelSky), whatever the hour
+    expect(shader.uniforms.zombieGlow).toBe(glow);
+    expect(at('uniform float zombieGlow;')).toBeLessThan(at('void main()'));
+    const local = at('max( zombieGlow,');
+    expect(local).toBeGreaterThan(at('float caelSky ='));
+    expect(local).toBeGreaterThan(at('#include <lights_fragment_end>'));
+    expect(local).toBeLessThan(at('vec3 outgoingLight'));
+    expect(f.slice(local, local + 200)).toContain('( 1.0 - caelSky )');
+    // without a uniform of its own (a stand-alone patch) the glow by the hour is 1: the night's
+    const lone = { vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader, uniforms: {} };
+    patchZombieShader(lone);
+    expect(lone.uniforms.zombieGlow.value).toBe(1);
+  });
+
+  it('the glow by the hour reaches every zombie program (one shared uniform), set by sync with the material', () => {
+    const scene = new THREE.Scene();
+    const r = createZombieRenderer(scene, null);
+    /** what each zombie material's program would be given */
+    const uniformsOf = (mat) => {
+      const shader = { vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader, uniforms: {} };
+      mat.onBeforeCompile(shader, /** @type {*} */ (null));
+      return shader.uniforms;
+    };
+    const mats = new Set();
+    for (const m of r.group.children) mats.add(/** @type {THREE.InstancedMesh} */ (m).material);
+    const glows = new Set([...mats].map((m) => uniformsOf(m).zombieGlow));
+    expect(glows.size).toBe(1);
+    const [glow] = glows;
+    r.sync([zombie(0, 10, 0)], 0, 0);
+    expect(glow.value).toBeCloseTo(GLOW_DAY, 9);
+    expect(glow.value).toBeCloseTo(byName(r, 'zombie-head-walker').material.emissiveIntensity, 9);
+    r.sync([zombie(0, 10, 0)], 0, 1);
+    expect(glow.value).toBe(1);
+    r.dispose();
+  });
+
+  it('dispose frees every geometry, material and texture of its own, and leaves the scene', () => {
+    const scene = new THREE.Scene();
+    const r = createZombieRenderer(scene, null);
+    r.sync([zombie(0, 10, 0), zombie(2, 10, 0, { hurt: 0.3, kind: 'runner' }), zombie(4, 10, 0, { smoking: true, kind: 'alpha' })]);
+    /** @type {Set<*>} */
+    const geos = new Set();
+    /** @type {Set<*>} */
+    const mats = new Set();
+    /** @type {Set<*>} */
+    const texs = new Set();
+    const meshes = [];
+    r.group.traverse((o) => {
+      if (!(/** @type {*} */ (o)).isMesh) return;
+      const mesh = /** @type {THREE.InstancedMesh} */ (o);
+      meshes.push(mesh);
+      geos.add(mesh.geometry);
+      for (const m of [].concat(/** @type {*} */ (mesh.material))) {
+        mats.add(m);
+        for (const t of [m.map, m.emissiveMap]) if (t) texs.add(t);
+      }
+    });
+    expect(meshes.length).toBe(3 * 3 * 5); // kinds × base, hurt, burn × five parts
+    expect(geos.size).toBe(3 * 5); // five parts a kind
+    expect(mats.size).toBe(3 * 3);
+    expect(texs.size).toBe(3 * 2); // a painted atlas and a glow image a kind
+    const freed = new Set();
+    for (const x of [...geos, ...mats, ...texs]) x.addEventListener('dispose', () => freed.add(x));
+    let meshesFreed = 0;
+    for (const mesh of meshes) mesh.addEventListener('dispose', () => meshesFreed++);
+    r.dispose();
+    for (const x of geos) expect(freed.has(x), 'a geometry').toBe(true);
+    for (const x of mats) expect(freed.has(x), 'a material').toBe(true);
+    for (const x of texs) expect(freed.has(x), 'a texture').toBe(true);
+    expect(meshesFreed).toBe(meshes.length); // and each instanced mesh's own buffers
+    expect(scene.children).not.toContain(r.group);
+    expect(r.count()).toBe(0);
   });
 
   it('stacks the parts: legs from the ground to the hips, the torso on them, the head on the torso, forearms from the elbows', () => {
@@ -250,7 +337,12 @@ describe('createZombieRenderer — instanced zombie models', () => {
     expect(byName(r, 'zombie-torso-alpha-hurt').count).toBe(1);
     expect(byName(r, 'zombie-torso-alpha').count).toBe(0);
     const hurt = byName(r, 'zombie-head-walker-hurt').material;
-    expect(hurt.emissive.r).toBeGreaterThan(0.9);
+    // a pale, cold flash — never red on a zombie (DESIGN-characters §2): bright, its red never leading
+    expect(hurt.emissive.getHex()).toBe(ZOMBIE_HURT);
+    expect(hurt.emissiveIntensity).toBe(ZOMBIE_HURT_INTENSITY);
+    expect(hurt.emissive.r + hurt.emissive.g + hurt.emissive.b).toBeGreaterThan(2);
+    expect(hurt.emissive.r).toBeLessThanOrEqual(Math.min(hurt.emissive.g, hurt.emissive.b) + 0.02);
+    expect(hurt.emissiveIntensity).toBeGreaterThan(0.5); // still a flash you see
     expect(hurt.emissiveMap).toBeNull(); // the whole body flashes, not just its eyes
     expect(hurt.map).toBe(byName(r, 'zombie-head-walker').material.map);
     expect(byName(r, 'zombie-head-walker-burn').material.emissive.g).toBeGreaterThan(0.1);

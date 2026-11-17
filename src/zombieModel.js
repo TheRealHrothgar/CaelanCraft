@@ -4,12 +4,12 @@
 // The three kinds are HEX-FACETED dead people, built from the figure kit like the avatars (figureKit.js): tapered
 // hexagonal columns for the legs, the torso, the neck and the arms; a faceted head loft — gaunt: a narrow jaw, sunken
 // cheeks, a long skull — with a heavy BROW (a chamfered bar standing out of the face plane) over narrow eye slits painted
-// in sunken hollows; chamfered shoes and hands; hair as a thin shell with lank strands, wild tufts or long clumps.
+// in sunken hollows; chamfered shoes and hands; hair as a scalp cap on the kind's own skull and a few clumps (zombieHair).
 // Spooky, never frightening: no blood, no wounds, no bones, no fangs, and nothing red.
 //   walker — vacant: average build, a faded flannel shirt (tinted per zombie), patched trousers frayed above a bare ankle,
 //            old shoes, thin lank hair; level brows, empty slits, a slack mouth;
 //   runner — wired: leaner, a torn tee with a faded band, track trousers ripped at the knee, worn sneakers, wild straw
-//            hair in tufts; one brow hitched up, uneven slits with a pale pinprick each, a tight grimace;
+//            hair swept one way; one brow hitched up, uneven slits with a pale pinprick each, a tight grimace;
 //   alpha  — ominous: bigger and heavier (broad shoulders, thick limbs, a short neck), a long ragged dark coat open down
 //            the front with long sleeves, heavy boots, long dark hair; a scowl drawn down to the nose, slanted slits.
 // Each kind is FIVE parts, each in the frame of the joint it hangs from, exactly the joints zombieRenderer.js animates
@@ -23,8 +23,8 @@
 import { loft, wedge, transform, merge, mul, translation, compose, triangleCount, bounds, wrapU } from './modelKit.js';
 import { Painter, mix, shade, hash2, makeRng, createImage, bleed } from './paintKit.js';
 import {
-  STYLES, DENSITY, perimeter, Skin, shapes, headGeo, HEAD_CORNERS, FRONT, DEG, headRingAt, hairShell, addLocks, onHead,
-  lockGeo, seg,
+  STYLES, DENSITY, perimeter, Skin, shapes, headGeo, HEAD_CORNERS, FRONT, DEG, headRingAt, hairMass, hairline, clump,
+  hairCentre,
 } from './figureKit.js';
 
 /** @typedef {import('./modelKit.js').Geo} Geo */
@@ -347,11 +347,9 @@ function paintZombie(kind) {
   });
   const hairRamp = P.hair;
   s.plain('hair', 48, 48, (p) => p.hair(hairRamp, { dir: [0.15, 1], sheen: kind === 'runner' ? 0.35 : -1, strand: 2 }));
-  // ---- the torso's cloth
-  // (the alpha's shirt is mostly under its coat: painted at half the density)
-  const tD = kind === 'alpha' ? D / 2 : D;
-  const tw = Math.round(perimeter(L.shirt.rx * 1.02, L.shirt.rz * 1.03) * tD);
-  const th = Math.round((L.shirt.top - L.shirt.y0) * tD);
+  // ---- the torso's cloth (the alpha's shirt too: its coat hangs open, so the shirt is the middle of its front)
+  const tw = Math.round(perimeter(L.shirt.rx * 1.02, L.shirt.rz * 1.03) * D);
+  const th = Math.round((L.shirt.top - L.shirt.y0) * D);
   if (kind === 'walker') {
     // faded flannel, buttoned down the front (one button gone), a sewn patch, two tears, its hem torn away
     const sh = P.shirt;
@@ -407,11 +405,19 @@ function paintZombie(kind) {
     const sh = P.shirt;
     s.wrap('shirt', tw, th, (p) => {
       p.cloth(sh, { fold: 1.1 });
-      for (const t of [0.25, 0.45, 0.65]) p.ellipse(tw / 2, th * t, 1.4, 1.4, 0x8a8478, 1);
-      p.line(tw / 2 + 2.2, 0, tw / 2 + 2.2, th, 0.5, sh[2], 0.9);
-      p.shadeV(1.0, 0.84);
+      // a button placket down the front: two seams, small dark buttons (a dark rim round a dull face: never a pale spot
+      // that a mipmap smears into a glow), one gone, a loose thread where it was
+      for (const d of [-2.6, 2.6]) p.line(tw / 2 + d, 0, tw / 2 + d, th, 0.5, sh[2], 0.9);
+      [0.22, 0.4, 0.58, 0.76].forEach((t, i) => {
+        if (i === 2) p.line(tw / 2 - 0.8, th * t, tw / 2 + 0.6, th * t + 1.4, 0.35, P.thread, 0.8);
+        else p.ellipse(tw / 2, th * t, 1.6, 1.6, 0x1f1b19, 1).ellipse(tw / 2, th * t, 0.9, 0.9, shade(sh[1], 0.82), 1);
+      });
+      p.tear(tw * 0.3, th * 0.55, 2.4, sh);
+      for (const u of [0.25, 0.75]) p.seam(tw * u, 0, tw * u, th, sh, { stitch: false });
+      grime(p, 8, 0.6, 33);
+      p.shadeV(1.0, 0.84).ao({ top: 0.25, width: 0.12 });
       p.ragged({ edge: 'bottom', depth: 5, period: 3 });
-    }, { cap: [36, 22], top: (p) => p.cloth(sh).ellipse(18, 11, 7, 6, sh[2], 1).ellipse(18, 11, 5.4, 4.6, 0x1e1c1a, 1) });
+    }, { cap: [8, 8] }); // (its top is under the coat's)
     const C = P.coat;
     const cw = Math.round(perimeter(L.shirt.rx * L.coat.grow, L.shirt.rz * L.coat.grow * 1.05) * D);
     const ch = Math.round((L.shirt.top + 0.02 - L.coat.y0) * D);
@@ -467,7 +473,7 @@ function paintZombie(kind) {
   });
   // ---- below: the trousers' seat and belt, the legs, the ankles, the shoes
   const T = P.trousers;
-  const jD = kind === 'alpha' ? D / 2 : D; // (under the alpha's coat)
+  const jD = kind === 'alpha' ? D / 2 : D; // (under the alpha's coat: only the belt shows, in its opening)
   const jw = Math.round(perimeter(L.hips.rx, L.hips.rz) * jD);
   const jh = Math.round((L.hips.y1 - L.hips.y0) * jD);
   s.wrap('hips', jw, jh, (p) => {
@@ -580,6 +586,151 @@ function paintGlow(s, eyes, color) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+// The hair: a scalp CAP that hugs the kind's own skull, and a few CLUMPS lying on it (pass 3 of the pilot: silhouette
+// first — never a helmet or a crown of spikes)
+// ---------------------------------------------------------------------------------------------------
+
+/** A point on the skull for a clump: [yaw, pitch, lift], a pitch past 90° going on over the crown to the far side. */
+const over = (yaw, pitch, lift) => (pitch > 90 ? [(yaw + 180) % 360, 180 - pitch, lift] : [yaw, pitch, lift]);
+
+/** Each kind's scalp cap: its hairline (pitch by yaw from the back, mirrored) and how far it stands off the skull. */
+const CAPS = Object.freeze({
+  // thin and receding: high at the temples, a little peak in the middle, low at the nape; lying flat
+  walker: { rim: hairline([[0, -20], [45, -9], [80, 8], [100, 10], [128, 22], [150, 30], [166, 30], [180, 28]]), off: (yaw, pitch, s) => 0.013 + 0.01 * s },
+  // a full head of straw, close to the skull (its clumps give it its shape)
+  runner: { rim: hairline([[0, -22], [45, -12], [80, 6], [100, 8], [130, 18], [160, 24], [180, 26]]), off: (yaw, pitch, s) => 0.014 + 0.012 * s },
+  // long and heavy: down over the tops of the ears and low at the nape
+  alpha: { rim: hairline([[0, -26], [45, -14], [80, -4], [100, -2], [130, 16], [160, 23], [180, 24]]), off: (yaw, pitch, s) => 0.014 + 0.018 * s },
+});
+/**
+ * The cap's points round — over each of the head's corners, straight behind and straight ahead (the head is flat between
+ * its corners, so no more are needed) — and its rings, hairline to crown, placed so that no ridge of the gaunt skull
+ * (its widest ring, at 0.87 of its height) shows between them: zombieHairGaps.
+ */
+const ZOMBIE_CAP_YAWS = Object.freeze([0, ...HEAD_CORNERS.map((a) => Math.round(a / DEG)), 180].sort((a, b) => a - b));
+const ZOMBIE_CAP_RINGS = Object.freeze([0, 0.1, 0.2, 0.4, 0.55, 1]);
+
+/**
+ * A kind's hair in its head's frame (the chin at the origin), built against the kind's own head loft (`ZOMBIE_HEAD` or
+ * `ALPHA_HEAD`), so the skull never shows through it:
+ *   walker — thin and lank: a receding cap lying flat, two lank strands over the brow, straggles over the ears and at
+ *            the nape;
+ *   runner — wild straw: a cap and big flat clumps swept back over the crown and to its left, their tips lifting off;
+ *   alpha  — long and dark: a cap down over the ears, two locks over the brow, a lock framing the face either side and
+ *            two heavy ones hanging behind to the shoulders.
+ * @param {ZombieKind} kind
+ * @returns {{ cap: Geo, clumps: Geo[] }}
+ */
+export function zombieHair(kind) {
+  const k = kindKey(kind);
+  const L = LOOKS[k];
+  const H = L.head;
+  const shape = L.shape;
+  const cap = CAPS[k];
+  const capGeo = hairMass(H, shape, { yaws: [...ZOMBIE_CAP_YAWS], rim: cap.rim, off: cap.off, rings: ZOMBIE_CAP_RINGS });
+  const cc = hairCentre(H);
+  /** out from the cranium, but level below it (a lock hanging free faces out, not down) */
+  const outward = (c) => [c[0] - cc[0], Math.max(0, c[1] - cc[1]), c[2] - cc[2]];
+  /** @type {Geo[]} */
+  const clumps = [];
+  const lank = [0.75, 1, 0];
+  if (k === 'walker') {
+    // two lank strands over the brow, from the cap's front down to the brow
+    clumps.push(clump(H, shape, cap, [[188, 52], [191, 34, 0.003], [194, 19, 0.004]], { w: 0.052, t: 0.014, profile: lank }));
+    clumps.push(clump(H, shape, cap, [[163, 50], [161, 33, 0.003], [158, 21, 0.004]], { w: 0.044, t: 0.014, profile: lank }));
+    // straggles over the ears, and at the nape
+    for (const side of [-1, 1]) {
+      for (const [yaw, len] of [[76, 22], [112, 16]]) {
+        const y = side > 0 ? yaw : 360 - yaw;
+        const d = side * 4;
+        clumps.push(clump(H, shape, cap, [[y, 24], [y + d, 2, 0.004], [y + 2 * d, -len, 0.01]], { w: 0.05, t: 0.014, profile: lank, up: outward }));
+      }
+    }
+    clumps.push(clump(H, shape, cap, [[352, 4], [356, -18, 0.004], [2, -36, 0.01]], { w: 0.066, t: 0.014, profile: lank, up: outward }));
+  } else if (k === 'runner') {
+    // every clump flows ONE way — across from its right and back to its left — lying on the cap, and only its tip lifts off
+    const swept = [0.6, 1, 0.85, 0];
+    const t = 0.018;
+    // a messy fringe: two clumps from the top swept down across the brow to the left temple, the tips flicking up off it
+    clumps.push(clump(H, shape, cap, [[150, 74], [176, 56, 0.004], [204, 40, 0.008], [224, 31, 0.03]], { w: 0.1, t, profile: swept }));
+    clumps.push(clump(H, shape, cap, [[124, 62], [150, 46, 0.004], [178, 35, 0.006], [198, 27, 0.026]], { w: 0.09, t, profile: swept }));
+    // over the crown from the front to the back on the left, the tip flicked out behind
+    clumps.push(clump(H, shape, cap, [over(184, 68), over(164, 98, 0.006), over(144, 124, 0.012), over(130, 144, 0.05)], { w: 0.12, t, profile: swept }));
+    // the sides: back along the left side and back over the right side, their tips flicked out behind
+    clumps.push(clump(H, shape, cap, [[238, 30], [264, 38, 0.006], [298, 40, 0.012], [326, 34, 0.046]], { w: 0.11, t, profile: swept }));
+    clumps.push(clump(H, shape, cap, [[118, 28], [92, 42, 0.006], [60, 50, 0.012], [30, 54, 0.046]], { w: 0.11, t, profile: swept }));
+    // a cowlick at the crown, flicked out to the left behind
+    clumps.push(clump(H, shape, cap, [over(80, 82), [20, 70, 0.008], [334, 58, 0.016], [306, 48, 0.056]], { w: 0.1, t, profile: swept }));
+  } else {
+    // two locks over the brow
+    clumps.push(clump(H, shape, cap, [[192, 52], [196, 32, 0.004], [199, 17, 0.006]], { w: 0.056, t: 0.016, profile: lank }));
+    clumps.push(clump(H, shape, cap, [[164, 50], [160, 31, 0.004], [156, 19, 0.006]], { w: 0.05, t: 0.016, profile: lank }));
+    // a lock framing the face either side, down past the ear to the collar
+    const long = [0.85, 1, 0];
+    for (const side of [-1, 1]) {
+      clumps.push(clump(H, shape, cap, [[side > 0 ? 116 : 244, 40], [side > 0 ? 96 : 264, -2, 0.01], ['p', side * (H.rx + 0.02), -0.035, 0.012]],
+        { w: 0.085, t: 0.02, profile: long, up: outward }));
+    }
+    // two heavy locks hanging behind to the shoulders
+    for (const yaw of [336, 24]) {
+      const a = yaw * DEG;
+      clumps.push(clump(H, shape, cap, [[yaw, 52], [yaw, 2, 0.01], ['p', Math.sin(a) * (H.rx + 0.03), -0.045, Math.cos(a) * (H.rz + 0.05)]],
+        { w: 0.13, t: 0.024, profile: long, up: outward }));
+    }
+  }
+  return { cap: capGeo, clumps };
+}
+
+/**
+ * Whether the skull shows through a kind's hair: how many of its head loft's corners above the hairline lie outside the
+ * cap (looking out from the middle of the cranium; avatarModel.hairGaps' test). 0 for every kind, or the hair has a gap.
+ * @param {ZombieKind} kind
+ * @returns {number}
+ */
+export function zombieHairGaps(kind) {
+  const k = kindKey(kind);
+  const H = LOOKS[k].head;
+  const shell = zombieHair(k).cap;
+  const head = headGeo(H, LOOKS[k].shape);
+  const c = hairCentre(H);
+  const P = (g, i) => [g.positions[i * 3], g.positions[i * 3 + 1], g.positions[i * 3 + 2]];
+  /** the farthest crossing of the cap along a ray from the middle, and whether it is the cap's side (not its rim) */
+  const outer = (d) => {
+    let best = -Infinity;
+    let side = false;
+    for (let t = 0; t < shell.index.length; t += 3) {
+      const [a, b, e] = [P(shell, shell.index[t]), P(shell, shell.index[t + 1]), P(shell, shell.index[t + 2])];
+      const e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const e2 = [e[0] - a[0], e[1] - a[1], e[2] - a[2]];
+      const q = [d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0]];
+      const det = e1[0] * q[0] + e1[1] * q[1] + e1[2] * q[2];
+      if (Math.abs(det) < 1e-12) continue;
+      const sv = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      const u = (sv[0] * q[0] + sv[1] * q[1] + sv[2] * q[2]) / det;
+      if (u < 0 || u > 1) continue;
+      const r = [sv[1] * e1[2] - sv[2] * e1[1], sv[2] * e1[0] - sv[0] * e1[2], sv[0] * e1[1] - sv[1] * e1[0]];
+      const v = (d[0] * r[0] + d[1] * r[1] + d[2] * r[2]) / det;
+      if (v < 0 || u + v > 1) continue;
+      const dist = (e2[0] * r[0] + e2[1] * r[1] + e2[2] * r[2]) / det;
+      if (dist > best) {
+        best = dist;
+        side = shell.groups[shell.index[t]] === 0;
+      }
+    }
+    return { best, side };
+  };
+  let gaps = 0;
+  for (let i = 0; i < head.positions.length / 3; i++) {
+    const p = P(head, i);
+    const d = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
+    const len = Math.hypot(d[0], d[1], d[2]);
+    const hit = outer([d[0] / len, d[1] / len, d[2] / len]);
+    if (hit.side && hit.best < len - 1e-4) gaps++;
+  }
+  return gaps;
+}
+
+// ---------------------------------------------------------------------------------------------------
 // The parts, joint by joint
 // ---------------------------------------------------------------------------------------------------
 
@@ -594,6 +745,8 @@ function paintGlow(s, eyes, color) {
  * @property {Img} glow        what shines in the dark, in step with the atlas
  * @property {number} tris     one zombie's triangles (the leg and the arms counted twice)
  * @property {number} texels   pixels painted
+ * @property {Record<string, [number, number, number, number]>} rects  each skin's main rectangle in the atlas (x, y, w, h:
+ *   a wrap's strip, a box's first face, a plain's one), for the tests
  * @property {[number, number]} atlas
  * @property {{ headW: number, headD: number, headH: number, eyeY: number, foreW: number, height: number }} dims  for the
  *   renderer and its tests: the head's bounds in its frame (width, depth, pivot to crown), the eyes' height over the pivot,
@@ -730,34 +883,9 @@ export function buildZombieModel(kind) {
       add(wedge({ w: bw, h: k === 'runner' ? 0.016 : 0.02, d: bd, ridge: -1, sx: 0.82 }), 'skin',
         mul(M, compose({ t: [0, ridgeY + bd / 2, bz + 0.003], r: [-Math.PI / 2, 0, k === 'runner' ? 0.05 : 0] })));
     }
-    // the hair
-    if (k === 'walker') {
-      // thin and lank: a receding shell, a few strands over the brow, straggles at the sides and the back
-      hairShell(add, M, H, 'hair', { grow: 0.01, base: 0.75, tilt: 0.48 });
-      addLocks(add, M, 'hair', [[-0.06, 0.07, 0.034], [0.035, 0.09, 0.028]].map(([x, l, w]) =>
-        [[x, 0.92 * H.h, -H.rz * 0.78], [x + 0.025, (0.92 - l / H.h) * H.h, -H.rz * 1.02], l + 0.02, w, 0.01, 0.012, -0.006]), { n: 2 });
-      addLocks(add, M, 'hair', [[100, 0.13], [128, 0.1], [-104, 0.14], [-132, 0.11], [168, 0.15], [-165, 0.12]].map(([deg, l]) =>
-        [onHead(H, 180 - deg, 0.8, -0.004), onHead(H, 180 - deg * 1.02, 0.8 - l / H.h, 0.022), l, 0.046, 0.012, 0, 0.01]), { n: 2 });
-    } else if (k === 'runner') {
-      // wild straw hair: a shell, and flat tufts swept up and back from the hairline, their tips lifting off it every way
-      hairShell(add, M, H, 'hair', { grow: 0.016, base: 0.7, tilt: 0.34 });
-      const tufts = [[180, 0.86, 150, 1.04, 0.05], [205, 0.86, 230, 1.0, 0.045], [155, 0.86, 128, 1.0, 0.045], [232, 0.82, 262, 0.92, 0.04],
-        [128, 0.82, 98, 0.92, 0.04], [262, 0.8, 292, 0.84, 0.04], [98, 0.8, 68, 0.84, 0.04], [300, 0.86, 330, 0.9, 0.045],
-        [60, 0.86, 30, 0.9, 0.045], [0, 0.8, 350, 0.7, 0.04], [180, 0.97, 200, 1.12, 0.05]];
-      for (const [d0, t0, d1, t1, out] of tufts) {
-        const root = onHead(H, d0, t0, -0.004);
-        const tip = onHead(H, d1, t1, out);
-        add(lockGeo({ len: Math.hypot(tip[0] - root[0], tip[1] - root[1], tip[2] - root[2]), w: 0.075, t: 0.02, n: 2, sides: 4, sweep: [0, 0.01] }), 'hair',
-          mul(M, seg(root, tip, null, { back: [root[0], root[1] - 0.55 * H.h, root[2]] })));
-      }
-    } else {
-      // long dark hair: a shell, and long clumps down the sides and the back to the shoulders
-      hairShell(add, M, H, 'hair', { grow: 0.014, base: 0.7, tilt: 0.3 });
-      addLocks(add, M, 'hair', [[95, 0.24], [118, 0.27], [-95, 0.25], [-120, 0.26], [150, 0.3], [-150, 0.29], [180, 0.31], [165, 0.3], [-168, 0.3]].map(([deg, l]) =>
-        [onHead(H, 180 - deg, 0.86, -0.006), onHead(H, 180 - deg * 1.04, 0.86 - l / H.h, 0.04), l, 0.07, 0.016, 0, 0.012, 0.004]), { n: 2 });
-      addLocks(add, M, 'hair', [[-0.07, 0.08, 0.05], [0.05, 0.07, 0.045]].map(([x, l, w]) =>
-        [[x, 0.93 * H.h, -H.rz * 0.8], [x - 0.02, (0.93 - l / H.h) * H.h, -H.rz * 1.03], l + 0.02, w, 0.012, -0.01, -0.006]), { n: 2 });
-    }
+    // the hair: a scalp cap over the head's own loft, and clumps lying on it (zombieHair)
+    const hair = zombieHair(k);
+    for (const g of [hair.cap, ...hair.clumps]) add(g, 'hair', M);
   }
 
   /** @type {Record<string, Geo>} */
@@ -786,6 +914,7 @@ export function buildZombieModel(kind) {
     glow,
     tris,
     texels: s.atlas.used(),
+    rects: Object.fromEntries([...s.entries].map(([key, e]) => [key, /** @type {[number, number, number, number]} */ ([...(e.jobs[0].rect ?? [])])])),
     atlas: [ZOMBIE_ATLAS, ZOMBIE_ATLAS],
     dims,
   };

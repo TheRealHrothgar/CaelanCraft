@@ -115,12 +115,31 @@ export class Skin {
     this.entries.set(key, { kind: 'plain', jobs: [this.job(w, h, paint)] });
   }
 
-  /** Pack every rectangle (tallest first), then paint them in the order they were asked for. */
+  /**
+   * Pack every rectangle (tallest first; when that leaves no room, widest first, then largest first, on a fresh atlas),
+   * then paint them in the order they were asked for.
+   */
   pack() {
     if (this.packed) return this;
     this.packed = true;
-    const order = [...this.jobs].sort((a, b) => b.h - a.h || b.w - a.w);
-    for (const j of order) j.rect = this.atlas.alloc(j.w, j.h);
+    const orders = [
+      (a, b) => b.h - a.h || b.w - a.w,
+      (a, b) => b.w - a.w || b.h - a.h,
+      (a, b) => b.w * b.h - a.w * a.h || b.h - a.h,
+    ];
+    let first = null;
+    for (const by of orders) {
+      try {
+        for (const j of [...this.jobs].sort(by)) j.rect = this.atlas.alloc(j.w, j.h);
+        first = null;
+        break;
+      } catch (e) {
+        first ??= e;
+        const { width, height } = this.atlas.img;
+        this.atlas = new Atlas(width, height, this.atlas.pad);
+      }
+    }
+    if (first) throw first;
     for (const j of this.jobs) if (j.paint) j.paint(this.painter(j));
     this.atlas.bleedAll();
     return this;

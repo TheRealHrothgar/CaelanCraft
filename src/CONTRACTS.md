@@ -5933,11 +5933,11 @@ rules of §65 and §68 stand exactly as they are, and the two multiply. Light th
 - **The arm across the face** (zombieRenderer; a cue that the light is working). `shieldTarget(zb)` = clamp01((light −
   ZOMBIE_SHY_LIGHT) / (dreadLight(zb) − ZOMBIE_SHY_LIGHT)); `Zombie.shield` follows it every update at SHIELD_RATE (0
   without the accessor). By `shieldOf(zb)` the renderer brings the arm on the zombie's own `side` from its bearing to
-  `SHIELD_ARM` (`reach` 1.75, `bend` 1.4, `spread` 0, and `twist` 0.8: the forearm turned in about the upper arm, a
-  rotation about Y at the elbow applied only while shield > 0), so that the forearm slants up across that half of the
-  face with the hand before the eye, and the head from its own nod and roll to `SHIELD_NOD` 0.05 and `SHIELD_ROLL` 0.12
-  away from that arm; the strike's swipe and the runner's twitch fade out of that arm as it rises. A dormant walker does
-  none of it. At shield 0 every matrix is exactly what it was.
+  `SHIELD_ARM` (`reach` 1.75, `bend` 1.4, `spread` 0, and `twist` 0.65 — 0.8 on the box rig before §102.2: the forearm
+  turned in about the upper arm, a rotation about Y at the elbow applied only while shield > 0), so that the forearm
+  slants up across that half of the face with the hand before the eye, and the head from its own nod and roll to
+  `SHIELD_NOD` 0.05 and `SHIELD_ROLL` 0.12 away from that arm; the strike's swipe and the runner's twitch fade out of that
+  arm as it rises. A dormant walker does none of it. At shield 0 every matrix is exactly what it was.
 - **Main** (§23): `zombieWorld.blockLight`, and the strike's damage (above). Nothing else.
 - **Guide** (§73, the Dangers chapter): two pages after "Zombies by day" — "Light keeps them off" with the table
   `lights` (source `zombies`; head Light, Strength, Walkers and runners keep, None comes up within; one row per block
@@ -8225,10 +8225,10 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
 
 ## 102. Characters, phase 2: the zombies, the Watcher and the figure, hex-faceted — `src/zombieModel.js`, `src/watcherModel.js` (PURE), `src/zombieRenderer.js`, `src/watcherRenderer.js`, `src/phantomRenderer.js` (three), `src/lightShader.js`, `src/avatarRenderer.js`, `src/pilotModels.js`, `src/gallery.js`, `src/diagnostics.js`, `src/types.js`, `src/main.js`, `README.md`
 
-Amends §39.2, §40.4, §61, §74 and §87.5; follows §91 (docs/DESIGN-characters.md, phase 2). Only the look changes: the zombies'
+Amends §39.2, §40.4, §61, §74, §86 (`SHIELD_ARM.twist`) and §87.5; follows §91 (docs/DESIGN-characters.md, phase 2). Only the look changes: the zombies'
 colliders, heights, ray targets, behaviour, kinds and animation (`ARMS`, the lean, the limp, the lurch, the twitch, the shield,
-dormancy, the ghosts' `renderScale` / `renderSpin`, the hurt and burn twins) are as before; the Watcher's parts, sizes, motion
-and lights too.
+dormancy, the ghosts' `renderScale` / `renderSpin`, the hurt and burn twins and their timing) are as before — only the hit
+flash's colour is no longer red (§102.2); the Watcher's parts, sizes, motion and lights too.
 
 ### 102.1 The zombies' models (`zombieModel.js`, PURE)
 
@@ -8236,9 +8236,19 @@ and lights too.
   torso, neck, arms), a faceted head loft — gaunt: `ZOMBIE_HEAD` (a narrow jaw, hollow cheeks, a long skull; the alpha's
   `ALPHA_HEAD` a heavy square jaw) — with a heavy BROW (a wedge on the face plane, its ridge an overhang over the slits;
   the alpha's two in a V, a scowl), a nose wedge and hex ears; flattened hex hands (a palm and the fingers curled, flexed
-  forward from the wrist, so a held-out arm's hand hangs limp); chamfered shoes; hair as a receding shell with lank strands
-  (walker), a shell with flat straw tufts swept up and back (runner) or long dark clumps to the shoulders (alpha). People,
-  spooky not frightening: no blood, wounds, bones or fangs, and no red texel anywhere.
+  forward from the wrist, so a held-out arm's hand hangs limp); chamfered shoes. People, spooky not frightening: no blood,
+  wounds, bones or fangs, and no red texel anywhere.
+- **Hair** (`zombieHair(kind)` → `{ cap, clumps }` in the head's frame, the chin at the origin; pass 3 of the pilot): a
+  scalp CAP built against the kind's OWN head loft (`figureKit.hairMass` over `ZOMBIE_HEAD` or `ALPHA_HEAD`; its points over
+  the head's eight corners and straight behind and ahead, `ZOMBIE_CAP_RINGS` [0, 0.1, 0.2, 0.4, 0.55, 1] hairline to
+  crown, 98 triangles), so the skull never shows through it — `zombieHairGaps(kind)` (avatarModel.hairGaps' ray test: head
+  corners above the hairline outside the cap) is 0 for every kind (the alpha's square-jawed head once wore a child's
+  tilted shell, and a pale strip of skull showed across its brow) — and a few CLUMPS lying on it (`figureKit.clump`):
+  the walker's thin and receding (a flat cap high at the temples, two lank strands over the brow, straggles over the
+  ears and at the nape); the runner's wild straw swept ONE way — a messy fringe across the brow to its left temple, the
+  rest back over the crown and the sides, only the tips lifting off (never a crown of spikes); the alpha's long and dark
+  (a cap down over the tops of the ears, two locks over the brow, a lock framing the face either side and two heavy ones
+  hanging behind to the shoulders).
 - **Kinds** (`ZOMBIE_MODEL_KINDS` walker | runner | alpha; anything else is a walker): the walker average (a faded flannel
   shirt torn at the hem, the sleeves and in two places, a sewn patch, a button gone; patched trousers frayed above a bare
   ankle; old shoes); the runner leaner (thinner limbs and torso; a thin tee with a faded band and rips, track trousers
@@ -8253,17 +8263,22 @@ and lights too.
   trouser leg up past the joint), `upperArm` (from its shoulder: the arm and its sleeve, rounded over the shoulder),
   `foreArm` (from its elbow: the forearm, the alpha's cuff, the hand), `torso` (from the hips: the trousers' seat and belt,
   the shirt, the collar; the alpha's coat), `head` (from the head's pivot at the top of the torso: the neck, the head, its
-  features and hair) — each at rest hanging straight, a closed solid wound outward, its uvs on the kind's atlas. `rig` =
+  features and hair) — each at rest hanging straight, a closed solid wound outward, its uvs on the kind's atlas; `rects`
+  (each skin's main rectangle in the atlas, for the tests). `rig` =
   `zombieRig(kind)` = `{ legX, legH, torsoH, shoulderX, shoulderY, upperL, foreL, wristL }` (metres before the kind's draw
   scale): walker 0.1, 0.84, 0.58, 0.205, 0.515, 0.3, 0.34, 0.245; the runner the same but legX 0.095 and shoulderX 0.19;
   the alpha 0.112, 0.84, 0.565, 0.245, 0.5, 0.3, 0.35, 0.25. `dims` = `{ headW, headD, headH (pivot to crown), eyeY (the
   slits over the pivot), foreW, height (feet to crown at rest) }`; the height is under ZOMBIE_HEIGHT (and over it − 0.15),
   at least 4.3 heads. `zombieRestGeometry(kind)` is the whole figure standing (the gallery, the pilot).
-- **Budgets.** One zombie (the leg and the arms counted twice): walker ≈ 1,150, runner ≈ 1,190, alpha ≈ 1,280 triangles
+- **Budgets.** One zombie (the leg and the arms counted twice): walker 1,231, runner 1,289, alpha 1,298 triangles
   (tested: 900 < tris ≤ 1,320). One 256² atlas (`ZOMBIE_ATLAS`) and one 256² glow image per kind: 1.5 MB of textures for
   the three (2.1 MB with mipmaps). Built in ≈ 80 ms for the three (Node), once a page.
-- **The atlas** (paintKit, sRGB bytes, row 0 at the top): bodies at `DENSITY.body` (96 px/m; the alpha's hidden shirt and
-  seat at half), the head at `DENSITY.head`, shoes at 128; alpha 0 where cloth is torn away (`ragged` hems, the coat's
+- **The atlas** (paintKit, sRGB bytes, row 0 at the top): bodies at `DENSITY.body` (96 px/m; the alpha's seat at half —
+  under its coat, only the belt shows in the opening — but its shirt, the middle of its open front, at full density with
+  a placket and small DARK buttons, a dark rim round a dull face: a pale 1.4-px button blurred by a mipmap read as a
+  glowing smudge; nothing on that shirt is lighter than its lightest cloth), the head at `DENSITY.head`, shoes at 128;
+  the rectangles packed tallest first, or — when that leaves no room — widest first, then largest first
+  (`figureKit.Skin.pack`; a model that packed before packs exactly as before); alpha 0 where cloth is torn away (`ragged` hems, the coat's
   open front), so the renderer's alphaTest cuts them see-through. The cloth a shirt tint colours — the walker's and the
   runner's `shirt`, `sleeve` and `collar` — has alpha `TINT_ALPHA` (191) instead of 255; nothing else does, never on the
   alpha. Painted the same every time.
@@ -8271,7 +8286,8 @@ and lights too.
   cooled by `NIGHT_TINT` (0xd8ffe4) — a faint self-light that keeps a zombie's clothes readable on a moonlit night (a flat
   glow turned it into a glowing statue) — and over that the slits in `EYE_GLOW` (walker 0x4f8a58 a faint marsh green,
   runner 0xc4cb92 on its pinpricks only, alpha 0xbaa65a a pale gold; never red, never warmer than gold); black where the
-  atlas is cut away.
+  atlas is cut away. The renderer tints this light on the shirt as it tints the cloth (§102.2), so a crowd differs by
+  night too.
 
 ### 102.2 The zombies drawn (`zombieRenderer.js`)
 
@@ -8287,20 +8303,29 @@ and lights too.
   the matrices of §61/§74/§86, unchanged.
 - **Materials.** Per kind one painted map and one glow map (DataTextures: sRGB, LinearFilter, LinearMipmapLinear, mipmaps,
   anisotropy 4) and three MeshLambertMaterials (`alphaTest` 0.5): base (`emissive` white × the glow image,
-  `emissiveIntensity` GLOW_DAY + (1 − GLOW_DAY) × dark, GLOW_DAY now 0.02: by day the slits are dark), hurt (emissive
-  0xff2a2a × 0.85: the game's hit flash) and burn (colour 0x8a7c72, emissive 0xff6a1a × 0.55). All share one program key
-  (`ZOMBIE_PROGRAM`) and `patchZombieShader`: lit like every object (the light volume, §62) plus a fill
-  (`lightShader.patchFillShader` with `ZOMBIE_FILL` [0.92, 1, 0.9] × 0.12: the facets turned from the light keep their
-  colour and still go dark at night) and the shirt tint (`TINT_FRAGMENT` in place of three's color_fragment: the instance
-  colour multiplies a texel by how far its alpha is below 1 toward TINT_ALPHA — the shirt alone; skin, hair and trousers
-  stay as painted).
+  `emissiveIntensity` GLOW_DAY + (1 − GLOW_DAY) × dark, GLOW_DAY now 0.02: by day in the open the slits are dark), hurt
+  (emissive `ZOMBIE_HURT` 0xdfeee4 × `ZOMBIE_HURT_INTENSITY` 0.7: the hit flash, a pale cold grey-green — never red on a
+  zombie, DESIGN-characters §2; §39's timing unchanged; the pigs and animals keep 0xff2a2a) and burn (colour 0x8a7c72,
+  emissive 0xff6a1a × 0.55). All share one program key (`ZOMBIE_PROGRAM`) and `patchZombieShader(shader, glow)`: lit like
+  every object (the light volume, §62) plus a fill (`lightShader.patchFillShader` with `ZOMBIE_FILL` [0.92, 1, 0.9] ×
+  0.12: the facets turned from the light keep their colour and still go dark at night); the shirt tint (`TINT_FRAGMENT` in
+  place of three's color_fragment: the instance colour multiplies a texel by how far its alpha is below 1 toward
+  TINT_ALPHA — the shirt alone; skin, hair and trousers stay as painted — kept as `zTint`); the same tint on the glow
+  image's light (`GLOW_TINT_FRAGMENT`, after three's emissivemap_fragment, only with a glow image: at night the
+  self-light outshines the moonlit cloth, and untinted it turned a crowd of walkers into one grey shirt repeated; the
+  eyes are not marked, the flash and the embers have no glow image); and the glow by where the zombie stands
+  (`GLOW_LOCAL_FRAGMENT`, after the light: the glow image's light × max(`zombieGlow`, GLOW_DAY + (1 − GLOW_DAY) × (1 −
+  caelSky)) / `zombieGlow`, where `zombieGlow` is one uniform every zombie program shares, set by `sync` to the glow by the
+  hour — so out of the sky's reach, in a cave or under a roof, the slits and the self-light shine as at night whatever the
+  hour, and under the open sky by day they stay dark).
 - **Shirts.** `SHIRT_TINTS` [0xffffff, 0xa9bedd, 0xd9c29c, 0xbccf96, 0xe6d08e, 0xc6b4d8, 0xa2cdbf]: faded and pale, none
   red; walkers and runners by id as before, the alpha as painted.
 - **The shield** (§86) keeps its rule; for the new rig `SHIELD_ARM` is `{ reach 1.75, bend 1.4, spread 0, twist 0.65 }`:
   the hand comes before the eye on its own side, a few centimetres in front of the face, and no part of the arm enters
   the head's box on the way up (tested with the parts' own vertices).
-- **Cost of a crowd** (`?scene=crowd`, 24 zombies: 18 walkers, 5 runners, an alpha): 15 draw calls, 27,921 triangles
-  (≈ 1,160 a zombie; the box zombies were 108 each), one `sync` ≈ 0.035 ms of CPU (Node, 2,000 syncs).
+- **Cost of a crowd** (`?scene=crowd`, 24 zombies: 18 walkers, 5 runners, an alpha): 15 draw calls, 29,901 triangles
+  (≈ 1,250 a zombie; the box zombies were 108 each), one `sync` of the 24 ≈ 0.1 ms of CPU (Node, a renderer of
+  capacity 24 as main's, 5 × 2,000 syncs; the same as before the hair was rebuilt).
 
 ### 102.3 The Watcher (`watcherModel.js` PURE, `watcherRenderer.js`)
 
@@ -8320,16 +8345,24 @@ and lights too.
 
 ### 102.4 The figure at the edge of sight (`phantomRenderer.js`)
 
-A dark person-shaped shadow from the kit (`phantomGeometry()`, ≈ 400 triangles, no uvs): two tapered hex legs, a body
-narrowing to the shoulders, arms hanging a little out from it, a thin neck, a faceted head (KID_HEAD's loft) with its crown
-at FIGURE_HEIGHT — no face, no eyes, no arms out. Drawn twice from one geometry: `phantom-depth` (colour writes off, depth
-on, renderOrder 2) then `phantom-shape` (the unlit, transparent `material`, depthFunc LessEqual, renderOrder 3), so it is
-one even shadow where its parts overlap. Everything else of §87.5 stands.
+A dark person-shaped shadow from the kit (`phantomGeometry()`, 492 triangles, no uvs): two tapered hex legs, a body with
+a narrower waist and shoulders that SLOPE in to the neck (never square), arms hanging from the shoulders angled out from
+the body (0.12 rad), so from the front there is daylight between each arm and the body (armpits: not one slab on two
+sticks), a thick neck, a faceted head with a grown-up's fuller jaw (`PHANTOM_HEAD`) under a plain mass of hair that
+rounds its crown (`hairMass`), its top at FIGURE_HEIGHT — no face, no eyes, no arms out; 0.6 m across the hands. Drawn
+twice from one geometry: `phantom-depth` (colour writes off, depth on) then `phantom-shape` (the unlit, transparent
+`material`, depthFunc LessEqual), so it is one even shadow where its parts overlap. Both draw after EVERY other
+transparent thing (`PHANTOM_ORDER` { depth 20, shape 21 }: the particles, the rain and snow and the Watcher's glow are 3,
+the campfire's flames 2–4 and its smoke 10), so the depth the pre-pass writes clips nothing drawn later — at 2 and 3 a
+faint or fading-in figure cut a crisp person-shaped piece out of the smoke, flames or particles behind it. Everything else
+of §87.5 stands.
 
 ### 102.5 Shared light, the pilot and the gallery
 
 - `lightShader.fillFragment(color, strength)` / `patchFillShader(shader, fill)`: the fill GLSL that avatarRenderer used
   alone (patchAvatarShader now calls it with AVATAR_FILL; its output is unchanged).
+- `figureKit.Skin.pack`: tallest first as before; when that leaves no room on the atlas it tries widest first, then
+  largest first, on a fresh atlas (the alpha's full-density shirt needs it); what packed before packs the same.
 - `pilotModels.buildPilot('zombie')` is the game's walker (`zombieRestGeometry`); the pilot's own walker is gone. The
   gallery's `?row=zombie` shows the three kinds through the game's renderer (after someone; idle, the runner shielding its
   eyes); `?row=zhead` their heads close up; `?row=watcher` the Watcher and the figure.
@@ -8348,8 +8381,12 @@ title clears them. `?time=` picks day or night. The debug panel's first line gai
 ### 102.7 Tests
 
 `tests/unit/zombieModel.test.js` (kinds and parts, budgets, closed outward geometry, the joints, each kind's build, the
-atlas and glow image, nothing red, the ragged cut-outs, the tint mark, the night self-light), `zombieRenderer.test.js`
-(the kit parts per kind, the materials and the shader patch, every §61/§74/§86 pose test on the new rig, the shield
-against the head's own geometry, the scene aid), `watcherRenderer.test.js` (the chamfered bands, the painted stone and
-its glow, three owned textures), `sleep.test.js` (the figure: kit geometry, the depth pre-pass), `prewarm.test.js` and
-`pilotModels.test.js` unchanged and passing.
+hair hugging each kind's own skull — `zombieHairGaps` 0, a cap and a few clumps close to the head — and the runner's swept
+one way, the atlas and glow image, nothing red, the ragged cut-outs, the tint mark, the alpha's full-density shirt with
+no pale spot, the night self-light), `zombieRenderer.test.js` (the kit parts per kind, the materials and the shader
+patch — the tint on the cloth and on its glow, the glow by where it stands, one shared `zombieGlow` set by sync — the
+pale hit flash, every §61/§74/§86 pose test on the new rig, the shield against the head's own geometry, dispose freeing
+its 15 geometries, 9 materials and 6 textures, the scene aid), `watcherRenderer.test.js` (the chamfered bands, the
+painted stone and its glow, three owned textures), `sleep.test.js` (the figure: kit geometry, sloping shoulders and arms
+clear of the body, the depth pre-pass drawn after every transparent effect), `prewarm.test.js` and `pilotModels.test.js`
+unchanged and passing.

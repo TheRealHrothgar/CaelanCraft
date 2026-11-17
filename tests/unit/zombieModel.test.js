@@ -3,7 +3,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   zombieModel, buildZombieModel, zombieRig, zombieRestGeometry, ZOMBIE_MODEL_KINDS, ZOMBIE_PARTS, ZOMBIE_ATLAS, TINT_ALPHA,
-  EYE_GLOW, NIGHT_SELF_LIGHT, NIGHT_TINT, ZOMBIE_HEAD, ALPHA_HEAD,
+  EYE_GLOW, NIGHT_SELF_LIGHT, NIGHT_TINT, ZOMBIE_HEAD, ALPHA_HEAD, zombieHair, zombieHairGaps,
 } from '../../src/zombieModel.js';
 import { triangleCount, bounds } from '../../src/modelKit.js';
 import { rgbOf } from '../../src/paintKit.js';
@@ -109,6 +109,44 @@ describe('the zombie models', () => {
     expect(ALPHA_HEAD[0][1]).toBeGreaterThan(ZOMBIE_HEAD[0][1]);
   });
 
+  it('the hair hugs each kind\'s own skull: no corner of its head above the hairline lies outside the cap', () => {
+    // (the alpha's square-jawed head once wore a child's tilted shell: a pale strip of skull showed across its brow)
+    for (const kind of ZOMBIE_MODEL_KINDS) {
+      expect(zombieHairGaps(kind), kind).toBe(0);
+      const { cap, clumps } = zombieHair(kind);
+      expect(triangleCount(cap), kind).toBeLessThan(140);
+      // a cap and a few clumps lying on it — never a ring of spikes round the head
+      expect(clumps.length, kind).toBeGreaterThanOrEqual(4);
+      expect(clumps.length, kind).toBeLessThanOrEqual(8);
+      // every clump stays close to the head: nothing stands up off it like a crown
+      const head = bounds(zombieModel(kind).parts.head);
+      for (const g of clumps) {
+        const b = bounds(g);
+        expect(b.max[1], kind).toBeLessThan(head.max[1] + 0.06);
+      }
+    }
+  });
+
+  it('the runner\'s straw is swept one way: its clumps\' tips lie behind or to its left, never stood up all round', () => {
+    const { clumps } = zombieHair('runner');
+    for (const g of clumps) {
+      // its root is the middle of its root's cap (group 2), its tip the point farthest from there; in the head's frame
+      // the front is −z and its left −x
+      const n = g.positions.length / 3;
+      const P = (i) => [g.positions[i * 3], g.positions[i * 3 + 1], g.positions[i * 3 + 2]];
+      const cap = [];
+      for (let i = 0; i < n; i++) if (g.groups[i] === 2) cap.push(P(i));
+      expect(cap.length).toBeGreaterThan(2);
+      const root = [0, 1, 2].map((a) => cap.reduce((sum, p) => sum + p[a], 0) / cap.length);
+      let tip = root;
+      for (let i = 0; i < n; i++) {
+        const p = P(i);
+        if (Math.hypot(p[0] - root[0], p[1] - root[1], p[2] - root[2]) > Math.hypot(tip[0] - root[0], tip[1] - root[1], tip[2] - root[2])) tip = p;
+      }
+      expect(tip[2] - root[2] > 0.02 || tip[0] - root[0] < -0.02).toBe(true);
+    }
+  });
+
   it('stands on its feet at rest under ZOMBIE_HEIGHT (the gallery\'s and the pilot\'s view)', () => {
     for (const kind of ZOMBIE_MODEL_KINDS) {
       const b = bounds(zombieRestGeometry(kind));
@@ -173,6 +211,25 @@ describe('the zombie atlases', () => {
     expect(count('runner')).toBeGreaterThan(3000);
     expect(count('alpha')).toBe(0);
     expect(TINT_ALPHA / 255).toBeGreaterThan(0.6); // well over the renderer's alphaTest
+  });
+
+  it('the alpha\'s shirt — the middle of its open coat — is painted as finely as the coat, its buttons dark', () => {
+    const a = zombieModel('alpha');
+    const [x0, y0, w, h] = a.rects.shirt;
+    // as wide as the coat's strip round it (its perimeter is a little less): not the half-density strip it once was
+    expect(w / a.rects.coat[2]).toBeGreaterThan(0.8);
+    // no pale spot on it (a 1.4-px light button blurred by a mipmap read as a glowing smudge): nothing lighter than its
+    // lightest cloth
+    const d = a.image.data;
+    let lightest = 0;
+    for (let y = y0; y < y0 + h; y++) {
+      for (let x = x0; x < x0 + w; x++) {
+        const i = (y * ZOMBIE_ATLAS + x) * 4;
+        if (d[i + 3] >= 128) lightest = Math.max(lightest, 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]);
+      }
+    }
+    const [r, g, b] = rgbOf(0x6a6460);
+    expect(lightest).toBeLessThan(0.2126 * r + 0.7152 * g + 0.0722 * b + 8);
   });
 
   it('the glow image: the atlas dimmed where it is opaque (its texture still reads at night), the eyes in their colour', () => {

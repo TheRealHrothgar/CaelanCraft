@@ -8,19 +8,20 @@
 //   runner — wired. Leaner, bent far forward, elbows pumping, and its head JERKS (twitchOf);
 //   alpha  — ominous. Bigger and heavier (ALPHA_SCALE, its own broad build and long coat), hunched, arms spread wide with
 //            the forearms up, its head held low and steady.
-// The eyes are narrow slits that GLOW faintly in the dark (the model's glow image as the emissive map, in step with the
-// atlas): a faint marsh green, pale pinpricks, a pale gold — never red. Walkers and runners wear shirts tinted by
-// SHIRT_TINTS (only the shirt: the atlas marks its cloth with TINT_ALPHA), so a crowd is not one person repeated.
+// The eyes are narrow slits that GLOW faintly in the dark — at night, or out of the sky's reach at any hour (the model's
+// glow image as the emissive map, in step with the atlas): a faint marsh green, pale pinpricks, a pale gold — never red.
+// Walkers and runners wear shirts tinted by SHIRT_TINTS (only the shirt: the atlas marks its cloth with TINT_ALPHA; its
+// glow takes the tint too, so the crowd differs at night as well), so a crowd is not one person repeated.
 // The model faces −Z with its origin at the feet, so a rotation of `zombie.yaw` about +Y matches yawToForward.
 //
 // Each kind has its own five InstancedMeshes (legs, upper arms, forearms, torso, head) over its own texture and material,
-// so a crowd of one kind costs 5 draw calls whatever its size. Their twins with a red emissive (`hurt > 0`) or an ember
-// glow (smouldering) only draw while one flashes or burns. The legs swing from the hip with `walkPhase`, the torso leans
-// into a chase and lurches after an attack (`swing`, the arms swiping up), and the head lolls by its own `tilt`. In block
-// light (a torch, a lamp, a fire: CONTRACTS §86) it brings one arm up across its face and turns its head away, by its
-// `shield`. A zombie's optional `renderScale` (default 1) and `renderSpin` (default 0, extra yaw) draw a black hole's
-// shrinking, spinning ghost. The materials are lit like every object (the light volume) plus a small fill (ZOMBIE_FILL),
-// so the facets turned from the sun keep their colour and still go dark at night.
+// so a crowd of one kind costs 5 draw calls whatever its size. Their twins with a pale hit flash (`hurt > 0`,
+// ZOMBIE_HURT: never red) or an ember glow (smouldering) only draw while one flashes or burns. The legs swing from the
+// hip with `walkPhase`, the torso leans into a chase and lurches after an attack (`swing`, the arms swiping up), and the
+// head lolls by its own `tilt`. In block light (a torch, a lamp, a fire: CONTRACTS §86) it brings one arm up across its
+// face and turns its head away, by its `shield`. A zombie's optional `renderScale` (default 1) and `renderSpin` (default
+// 0, extra yaw) draw a black hole's shrinking, spinning ghost. The materials are lit like every object (the light volume)
+// plus a small fill (ZOMBIE_FILL), so the facets turned from the sun keep their colour and still go dark at night.
 import * as THREE from 'three';
 import { ZOMBIE_MAX } from './config.js';
 import { SWING_S, kindOf, isDormant, ALPHA_SCALE, ZOMBIE_KINDS } from './zombies.js';
@@ -54,13 +55,22 @@ export const RUNNER_WIDTH = 0.9;
  */
 export const SHIRT_TINTS = Object.freeze([0xffffff, 0xa9bedd, 0xd9c29c, 0xbccf96, 0xe6d08e, 0xc6b4d8, 0xa2cdbf]);
 
-const HURT = 0xff2a2a;
-const HURT_INTENSITY = 0.85;
+/**
+ * The hit flash: the whole zombie flashes a pale, cold grey-green (nothing red on a zombie, DESIGN-characters §2; the
+ * animals keep the game's red flash), for as long as before (`hurt > 0`).
+ */
+export const ZOMBIE_HURT = 0xdfeee4;
+export const ZOMBIE_HURT_INTENSITY = 0.7;
+const HURT = ZOMBIE_HURT;
+const HURT_INTENSITY = ZOMBIE_HURT_INTENSITY;
 const EMBER = 0xff6a1a;
 const EMBER_INTENSITY = 0.55;
 const SOOT = 0x8a7c72;
 const LURCH = -0.32;
-/** How strongly the glow image shines in full daylight (1 in the dark): by day the slits are dark. */
+/**
+ * How strongly the glow image shines in full daylight under the open sky (1 at night, and at any hour out of the sky's
+ * reach — a cave, under a roof: GLOW_LOCAL_FRAGMENT): by day in the open the slits are dark.
+ */
 export const GLOW_DAY = 0.02;
 /** The fill on the facets turned from the light: a little of the light that reaches them, a cool-neutral grey-green. */
 export const ZOMBIE_FILL = Object.freeze({ color: Object.freeze([0.92, 1, 0.9]), strength: 0.12 });
@@ -232,28 +242,62 @@ function paintedTexture(img) {
 
 /**
  * The shirt tint: the instance colour multiplies only the texels the atlas marks with TINT_ALPHA (its alpha 0.75 there,
- * 1 elsewhere — both well over alphaTest); in place of three's color_fragment.
+ * 1 elsewhere — both well over alphaTest); in place of three's color_fragment. `zTint` is kept for the glow.
  */
 const TINT_MID = ((TINT_ALPHA / 255 + 1) / 2).toFixed(4);
 const TINT_SLOPE = (1 / (1 - TINT_ALPHA / 255) * 2).toFixed(4);
 export const TINT_FRAGMENT = /* glsl */ `
+vec3 zTint = vec3( 1.0 );
 #if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
-	diffuseColor.rgb *= mix( vec3( 1.0 ), vColor.rgb, clamp( ( ${TINT_MID} - diffuseColor.a ) * ${TINT_SLOPE}, 0.0, 1.0 ) );
+	zTint = mix( vec3( 1.0 ), vColor.rgb, clamp( ( ${TINT_MID} - diffuseColor.a ) * ${TINT_SLOPE}, 0.0, 1.0 ) );
+	diffuseColor.rgb *= zTint;
 #endif`;
 
 /**
- * Patch a zombie material's shader: lit like every object (the light volume), the fill, the shirt tint.
- * @param {{ vertexShader: string, fragmentShader: string, uniforms: Record<string, *> }} shader
+ * The glow image's light takes the shirt's tint too (after three's emissivemap_fragment): at night the self-light
+ * outshines the moonlit cloth, so untinted it would turn a crowd into one shirt repeated. The eyes are not marked, so
+ * they stay as painted; the hit flash and the embers (no glow image) are not tinted.
  */
-export function patchZombieShader(shader) {
+export const GLOW_TINT_FRAGMENT = /* glsl */ `
+#include <emissivemap_fragment>
+#ifdef USE_EMISSIVEMAP
+	totalEmissiveRadiance *= zTint;
+#endif`;
+
+/**
+ * Where the zombie stands decides how dark it is too (after three's light accumulation, where the light volume's caelSky
+ * is in scope): out of the sky's reach — a cave, under a roof, deep shade — the glow image shines as it does at night,
+ * at any hour. `zombieGlow` is the glow by the time of day (the base material's emissiveIntensity, which three has
+ * already applied); the brighter of the two wins.
+ */
+export const GLOW_LOCAL_FRAGMENT = /* glsl */ `
+#ifdef USE_EMISSIVEMAP
+	totalEmissiveRadiance *= max( zombieGlow, ${GLOW_DAY.toFixed(4)} + ${(1 - GLOW_DAY).toFixed(4)} * ( 1.0 - caelSky ) ) / max( zombieGlow, 1e-4 );
+#endif`;
+
+/**
+ * Patch a zombie material's shader: lit like every object (the light volume), the fill, the shirt tint (on the cloth
+ * and on its glow), the glow by the light where it stands.
+ * @param {{ vertexShader: string, fragmentShader: string, uniforms: Record<string, *> }} shader
+ * @param {{ value: number }} [glow]  the glow by the time of day (the renderer shares one; 1 when not given)
+ */
+export function patchZombieShader(shader, glow = { value: 1 }) {
   patchFillShader(shader, ZOMBIE_FILL);
-  shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', TINT_FRAGMENT);
+  shader.uniforms.zombieGlow = glow;
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', '#include <common>\nuniform float zombieGlow;')
+    .replace('#include <color_fragment>', TINT_FRAGMENT)
+    .replace('#include <emissivemap_fragment>', GLOW_TINT_FRAGMENT)
+    .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${GLOW_LOCAL_FRAGMENT}`);
 }
 
-/** @param {THREE.MeshLambertMaterialParameters} params */
-function zombieMaterial(params) {
+/**
+ * @param {THREE.MeshLambertMaterialParameters} params
+ * @param {{ value: number }} glow
+ */
+function zombieMaterial(params, glow) {
   const m = new THREE.MeshLambertMaterial({ alphaTest: 0.5, ...params });
-  m.onBeforeCompile = (shader) => patchZombieShader(/** @type {*} */ (shader));
+  m.onBeforeCompile = (shader) => patchZombieShader(/** @type {*} */ (shader), glow);
   m.customProgramCacheKey = () => ZOMBIE_PROGRAM;
   return m;
 }
@@ -272,15 +316,17 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
   const mats = {};
   /** @type {Record<string, ReturnType<typeof zombieGeometries>>} */
   const geos = {};
+  /** the glow by the time of day, shared by every zombie program (GLOW_LOCAL_FRAGMENT) */
+  const glowNowUniform = { value: 1 };
   for (const kind of ZOMBIE_KINDS) {
     const model = zombieModel(/** @type {'walker'|'runner'|'alpha'} */ (kind));
     const map = paintedTexture(model.image);
     const glow = paintedTexture(model.glow);
     textures.push(map, glow);
     mats[kind] = {
-      base: zombieMaterial({ map, emissive: 0xffffff, emissiveMap: glow }),
-      hurt: zombieMaterial({ map, emissive: HURT, emissiveIntensity: HURT_INTENSITY }),
-      burn: zombieMaterial({ map, color: SOOT, emissive: EMBER, emissiveIntensity: EMBER_INTENSITY }),
+      base: zombieMaterial({ map, emissive: 0xffffff, emissiveMap: glow }, glowNowUniform),
+      hurt: zombieMaterial({ map, emissive: HURT, emissiveIntensity: HURT_INTENSITY }, glowNowUniform),
+      burn: zombieMaterial({ map, color: SOOT, emissive: EMBER, emissiveIntensity: EMBER_INTENSITY }, glowNowUniform),
     };
     geos[kind] = zombieGeometries(/** @type {'walker'|'runner'|'alpha'} */ (kind));
   }
@@ -341,6 +387,7 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
     const n = Math.min(zombies.length, capacity);
     const glowNow = GLOW_DAY + (1 - GLOW_DAY) * Math.min(1, Math.max(0, Number.isFinite(dark) ? dark : 1));
     for (const kind of ZOMBIE_KINDS) mats[kind].base.emissiveIntensity = glowNow;
+    glowNowUniform.value = glowNow;
     for (const state of STATES) for (const kind of ZOMBIE_KINDS) sets[state][kind].n = 0;
     for (let i = 0; i < n; i++) {
       const zb = zombies[i];

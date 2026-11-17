@@ -25,7 +25,16 @@ import {
   FIGURE_S, FIGURE_IN_S, FIGURE_ALPHA, FIGURE_HEIGHT, NOD_EVERY_S, NOD_S, NOD_EDGE_S, blurPx, nodDark, figureAlpha, angleFromView, TiredFx,
   phantomStandAt, tirednessView, TIRED_BAR_FULL, TIRED_BAR_MARKS,
 } from '../../src/sleep.js';
-import { createPhantomRenderer, phantomGeometry, PHANTOM_PARTS, PHANTOM_COLOR, PHANTOM_HEIGHT } from '../../src/phantomRenderer.js';
+import {
+  createPhantomRenderer, phantomGeometry, PHANTOM_PARTS, PHANTOM_COLOR, PHANTOM_HEIGHT, PHANTOM_ORDER,
+} from '../../src/phantomRenderer.js';
+import { createParticles } from '../../src/particles.js';
+import { createRainRenderer } from '../../src/rainRenderer.js';
+import { createCampfireRenderer } from '../../src/campfireRenderer.js';
+import { createWatcherRenderer } from '../../src/watcherRenderer.js';
+import { createVortexRenderer } from '../../src/vortexRenderer.js';
+import { createPennantRenderer } from '../../src/pennantRenderer.js';
+import { createCircuitRenderer } from '../../src/circuitRenderer.js';
 import { Zombies, CLIMB, RUNNER_P, ZOMBIE_SPAWN_LIGHT_MAX, spawnChance } from '../../src/zombies.js';
 import { columnHasEdits } from '../../src/blackholes.js';
 import { interactKind, HINT } from '../../src/survivalControl.js';
@@ -1731,6 +1740,7 @@ describe('the figure as it is drawn (phantomRenderer.js)', () => {
     expect(depth.material.colorWrite).toBe(false);
     expect(depth.material.depthWrite).toBe(true);
     expect(depth.renderOrder).toBeLessThan(shape.renderOrder);
+    expect([depth.renderOrder, shape.renderOrder]).toEqual([PHANTOM_ORDER.depth, PHANTOM_ORDER.shape]);
     const mat = r.material;
     expect(shape.material).toBe(mat);
     expect(mat.isMeshBasicMaterial).toBe(true); // unlit: no light makes it shine
@@ -1748,6 +1758,27 @@ describe('the figure as it is drawn (phantomRenderer.js)', () => {
     expect(g.index.length / 3).toBe(r.tris);
     expect(r.tris).toBeLessThan(600);
     expect(shape.geometry.getAttribute('uv')).toBeUndefined(); // no texture: no face, no eyes
+    // a person's outline from the front, not a slab on two sticks: the shoulders slope in to the neck, and between the
+    // waist and the hands there is daylight between each arm and the body (armpits)
+    const P = (i) => [g.positions[i * 3], g.positions[i * 3 + 1], g.positions[i * 3 + 2]];
+    const halfWidthAt = (y0, y1, pick) => {
+      let w = 0;
+      for (let i = 0; i < g.positions.length / 3; i++) {
+        const [x, y] = P(i);
+        if (y >= y0 && y <= y1 && pick(x)) w = Math.max(w, Math.abs(x));
+      }
+      return w;
+    };
+    const [, bodyY0, bodyY1] = PHANTOM_PARTS[1];
+    const mid = (x) => Math.abs(x) < 0.17; // the body and the neck (the arms hang farther out)
+    const bh = bodyY1 - bodyY0;
+    expect(halfWidthAt(bodyY1 - 0.04, bodyY1, mid)).toBeLessThan(halfWidthAt(bodyY0 + 0.3 * bh, bodyY0 + 0.8 * bh, mid) * 0.6); // sloping shoulders
+    let innerArm = Infinity;
+    for (let i = 0; i < g.positions.length / 3; i++) {
+      const [x, y] = P(i);
+      if (y > bodyY0 + 0.1 && y < bodyY0 + 0.35 && Math.abs(x) > 0.17) innerArm = Math.min(innerArm, Math.abs(x));
+    }
+    expect(innerArm - halfWidthAt(bodyY0 + 0.1, bodyY0 + 0.35, (x) => Math.abs(x) < 0.17)).toBeGreaterThan(0.02);
     r.sync({ x: 14.5, y: 10, z: -3, yaw: 1.2, age: 0.4, alpha: 0.5, d0: 15 });
     expect(r.group.visible).toBe(true);
     expect(r.group.position.toArray()).toEqual([14.5, 10, -3]);
@@ -1761,6 +1792,37 @@ describe('the figure as it is drawn (phantomRenderer.js)', () => {
     expect(r.group.visible).toBe(false);
     r.dispose();
     expect(scene.children).not.toContain(r.group);
+  });
+
+  it('its depth pre-pass draws after every other transparent thing, so the depth it writes clips nothing drawn later', () => {
+    // (drawn among them, a faint or fading-in figure cut a crisp person-shaped piece out of the smoke, the flames, the
+    // particles or the rain behind it)
+    const scene = new THREE.Scene();
+    const fakeCanvas = () => ({
+      width: 0, height: 0, getContext: () => ({ createRadialGradient: () => ({ addColorStop() {} }), fillRect() {}, fillStyle: null }),
+    });
+    const made = [
+      createParticles(scene), createRainRenderer(scene), createCampfireRenderer(scene, { makeCanvas: fakeCanvas }),
+      createWatcherRenderer(scene, null), createVortexRenderer(scene), createPennantRenderer(scene), createCircuitRenderer(scene),
+    ];
+    const r = createPhantomRenderer(scene);
+    let latest = -Infinity;
+    const names = [];
+    scene.traverse((o) => {
+      const m = /** @type {*} */ (o).material;
+      if (!m || o.parent === r.group) return;
+      if ([].concat(m).some((x) => x.transparent)) {
+        latest = Math.max(latest, o.renderOrder);
+        names.push(o.name);
+      }
+    });
+    expect(names).toEqual(expect.arrayContaining(['particles', 'rain', 'campfire-smoke', 'watcher-glow-l']));
+    expect(latest).toBeGreaterThanOrEqual(10); // the campfire's smoke
+    const [depth, shape] = r.group.children;
+    expect(depth.renderOrder).toBeGreaterThan(latest);
+    expect(shape.renderOrder).toBeGreaterThan(depth.renderOrder);
+    r.dispose();
+    for (const x of made) /** @type {*} */ (x).dispose?.();
   });
 
   it('prewarm compiles it while the game loads and leaves it hidden', async () => {
