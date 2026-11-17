@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   readTouchParam, touchModeFor, detectTouchMode, stickVector, lookDelta, hotbarCode, TouchPad, createTouchUI,
   TOUCH_BUTTONS, PAD_BUTTONS, TOP_BUTTONS, STICK_RADIUS, STICK_DEAD, TOUCH_LOOK_SENSITIVITY, TOUCH_RENDER_DISTANCE,
-  STICK_ZONE,
+  STICK_ZONE, TOUCH_CLUSTER, touchClusterRect,
 } from '../../src/touchControls.js';
 import { createControls, GAME_KEYS } from '../../src/controls.js';
 import { HOTBAR_SIZE, RENDER_DISTANCE } from '../../src/config.js';
@@ -500,6 +500,33 @@ describe('the page on an iPad', () => {
     expect(index).toMatch(/<meta name="apple-mobile-web-app-status-bar-style" content="[\w-]+">/);
     expect(index).toContain('<link rel="manifest" href="/manifest.webmanifest">');
     expect(index).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+  });
+
+  it('TOUCH_CLUSTER is where styles.css puts the right cluster\'s buttons (the first-person hand keeps clear of it, §91.4)', () => {
+    /** the first rule for `sel` alone that sets `prop`, in px (or the px inside a calc()); `or` when none does */
+    const px = (sel, prop, or) => {
+      const m = css.match(new RegExp(`(?:^|})\\s*${sel.replace('.', '\\.')}\\{[^}]*?\\b${prop}:(?:calc\\()?(\\d+)(?:px)?[;}\\s+]`, 'm'));
+      if (!m && or !== undefined) return or;
+      expect(m, `${sel} ${prop}`).toBeTruthy();
+      return Number(/** @type {RegExpMatchArray} */ (m)[1]);
+    };
+    expect(px('.touch-pad', 'right')).toBe(TOUCH_CLUSTER.right);
+    expect(px('.touch-pad', 'bottom')).toBe(TOUCH_CLUSTER.bottom);
+    expect(css).toMatch(new RegExp(`@media \\(orientation:portrait\\)\\{\\.touch-pad\\{bottom:calc\\(${TOUCH_CLUSTER.bottomPortrait}px`));
+    // the leftmost button's left edge and the highest button's top, from the pad's bottom-right corner (a button is
+    // .touch-btn's 66 px unless its own rule sizes it)
+    let left = 0;
+    let top = 0;
+    for (const id of PAD_BUTTONS) {
+      const sel = `.tb-${id}`;
+      const [w, h] = [px(sel, 'width', px('.touch-btn', 'width')), px(sel, 'height', px('.touch-btn', 'height'))];
+      left = Math.max(left, px(sel, 'right') + w);
+      top = Math.max(top, px(sel, 'bottom') + h);
+    }
+    expect(left).toBe(TOUCH_CLUSTER.width);
+    expect(top).toBe(TOUCH_CLUSTER.height);
+    expect(touchClusterRect(1024, 768)).toEqual({ left: 734, top: 486, right: 1010, bottom: 676 });
+    expect(touchClusterRect(768, 1024)).toEqual({ left: 478, top: 730, right: 754, bottom: 920 });
   });
 
   it('the manifest opens full screen in landscape; its icons exist as PNGs', () => {

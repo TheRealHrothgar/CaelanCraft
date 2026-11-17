@@ -8,6 +8,9 @@
 //   - the head follows the look: its pitch clamped to ±AVATAR_HEAD_PITCH_MAX, its yaw first — the body turns after it at
 //     AVATAR_BODY_TURN per second (twice that while walking), never letting the head turn more than AVATAR_HEAD_YAW_MAX;
 //   - a swing of the right arm on a break, a place or a strike (swing(): AVATAR_SWING_S long);
+//   - §100 the draw: `draw` rises no faster than a real draw (DRAW_RISE_S to full, so a remote player's arm, given only
+//     "drawing", comes up as fast as the player's own) and falls in DRAW_FALL_S when it is let go, so the throw's swing
+//     starts from the drawn arms instead of jumping; the renderer turns it into the pose of what is drawn (a throw, a bow);
 //   - a crouch while sneaking, a swimming stroke, arms out when flying, a seat on a horse, lying down asleep.
 import {
   AVATAR_BODY_TURN, AVATAR_HEAD_YAW_MAX, AVATAR_HEAD_PITCH_MAX, AVATAR_SWING_S, AVATAR_STRIDE_M, WALK_SPEED, SPRINT_SPEED,
@@ -26,7 +29,8 @@ import {
  * @property {boolean} [flying]
  * @property {boolean} [riding]
  * @property {boolean} [sleeping]  lying down (§87)
- * @property {number} [draw]       how far (§100) a throw or a bow is drawn back (0..1; Place held with a spear, dart or bow)
+ * @property {number} [draw]       how far (§100) a throw or a bow is drawn back (0..1; Place held with a spear, dart or bow;
+ *   a remote player's is 1 while their pose says they are drawing)
  */
 
 /**
@@ -45,6 +49,7 @@ import {
  * @property {number} elbow       both elbows' bend
  * @property {number} reachR      the right arm's extra swing forward for an action
  * @property {number} twistR      … turned in across the body
+ * @property {number} draw        §100 how far the arms are in the draw's pose (0..1, eased: see DRAW_RISE_S, DRAW_FALL_S)
  * @property {number} lean        the torso's lean (negative: forward)
  * @property {number} twist       the torso's turn toward an action
  * @property {number} hipDrop     how far the hips sink (crouching)
@@ -83,9 +88,12 @@ export const LEG_SWING_SPRINT = 0.8;
 export const ARM_SHARE = 0.75;
 /** How far the right arm swings forward at the top of an action swing. */
 export const SWING_REACH = 1.9;
-/** §100: how far the right arm draws back at a full draw (a throw or a bow), and how far the first-person arm sinks. */
-export const DRAW_BACK = 1.1;
-export const FP_DRAW_DROP = 0.05;
+/**
+ * §100: the arms come into the draw's pose no faster than a full draw takes (looseItems.DRAW_FULL_S, 1 s: a remote
+ * player's pose only says "drawing") and leave it in DRAW_FALL_S once it is let go — the throw's swing starts from there.
+ */
+export const DRAW_RISE_S = 1;
+export const DRAW_FALL_S = 0.15;
 
 /** The animation state of one avatar. */
 export class AvatarMotion {
@@ -104,10 +112,12 @@ export class AvatarMotion {
     this.fly = 0;
     this.ride = 0;
     this.lie = 0;
+    /** §100 how far the arms are in the draw's pose (0..1) */
+    this.drawn = 0;
     /** @type {AvatarPose} reused every step */
     this.pose = {
       bodyYaw: 0, headYaw: 0, headPitch: 0, legSwing: 0, legRaise: 0, legSpread: 0, armSwing: 0, armReach: 0, armSpread: 0, elbow: 0,
-      reachR: 0, twistR: 0, lean: 0, twist: 0, hipDrop: 0, chestLift: 0, bodyPitch: 0, lie: 0, ride: 0, breath: 0, fpSwing: -1, fpBobX: 0,
+      reachR: 0, twistR: 0, draw: 0, lean: 0, twist: 0, hipDrop: 0, chestLift: 0, bodyPitch: 0, lie: 0, ride: 0, breath: 0, fpSwing: -1, fpBobX: 0,
       fpBobY: 0,
     };
   }
@@ -136,6 +146,7 @@ export class AvatarMotion {
     this.fly = 0;
     this.ride = 0;
     this.lie = 0;
+    this.drawn = 0;
   }
 
   /**
@@ -202,11 +213,14 @@ export class AvatarMotion {
     p.armReach = 2.6 * stroke + 0.55 * this.ride - 0.25 * this.fly;
     p.armSpread = 0.05 + 0.03 * breath * still + 0.5 * stroke + 0.18 * this.fly;
     p.elbow = 0.12 + 0.1 * this.walk + 0.55 * this.ride + 0.3 * this.crouch;
-    const draw = clamp(Number.isFinite(s.draw) ? /** @type {number} */ (s.draw) : 0, 0, 1) * (1 - this.lie);
-    p.reachR = SWING_REACH * lift - DRAW_BACK * draw; // §100: drawn back, ready to throw
+    // §100 the draw: up no faster than a draw, down in DRAW_FALL_S
+    const want = sleeping ? 0 : clamp(Number.isFinite(s.draw) ? /** @type {number} */ (s.draw) : 0, 0, 1);
+    this.drawn = want > this.drawn ? Math.min(want, this.drawn + t / DRAW_RISE_S) : Math.max(want, this.drawn - t / DRAW_FALL_S);
+    p.reachR = SWING_REACH * lift;
     p.twistR = 0.35 * lift;
+    p.draw = this.drawn * (1 - this.lie);
     p.lean = -0.5 * this.crouch - 0.12 * this.fly - 0.05 * this.walk * sprint;
-    p.twist = 0.2 * lift - 0.25 * draw;
+    p.twist = 0.2 * lift;
     p.hipDrop = 0.08 * this.crouch;
     p.chestLift = 0.005 * breath * still;
     p.bodyPitch = -1.2 * this.swim * (1 - this.lie) + (Math.PI / 2) * this.lie;
@@ -215,7 +229,7 @@ export class AvatarMotion {
     p.breath = breath;
     p.fpSwing = sw;
     p.fpBobX = 0.014 * sinP * this.walk;
-    p.fpBobY = -0.02 * Math.abs(sinP) * this.walk + 0.004 * (breath - 0.5) * still - FP_DRAW_DROP * draw;
+    p.fpBobY = -0.02 * Math.abs(sinP) * this.walk + 0.004 * (breath - 0.5) * still;
     return p;
   }
 }

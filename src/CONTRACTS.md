@@ -6963,11 +6963,10 @@ server's `avatar` field (§96) are the same as before the new look.
 - `hair` — `{ style: 'poofy'|'silky'|'longWavy', cut, crown }`: a cut of its style (avatarModel `HAIR_CUTS`: poofy **C1**
   cloud | **C2** tousled; silky **B1** side sweep | **B2** curtain; longWavy **A1** long waves | **A2** low ponytail) and how far
   it stands over the top of the head.
-- `hands` — `palm`, `fingers`, `thumb` ([w, h, d]), and `fpCuff`: in first person, where the sleeve's cuff sits (a share of
-  the forearm from the wrist).
+- `hands` — `palm`, `fingers`, `thumb` ([w, h, d]).
 - `outfit` — `kind` `'tee'|'dress'`; `top` [light, mid, dark], `trim`, `detail` `'stripe'|'pocket'|'collar'`, `sleeve` (the share
   of the upper arm it covers), `puff?` (a short sleeve standing out ×), `cuffAt?` (a long sleeve pushed up: its cuff, a share of
-  the forearm from the wrist); a tee's `bottom` [l, m, d], `fabric` `'denim'|'cloth'`, `belt`; a dress's `sash`, `skirt { y0,
+  the forearm from the wrist — on the model and on the first-person forearm alike; without it both forearms are bare); a tee's `bottom` [l, m, d], `fabric` `'denim'|'cloth'`, `belt`; a dress's `sash`, `skirt { y0,
   y1, r0, r1 }` (pleated, waist to hem), `socks { color, up }`; `shoes { style: 'sneaker'|'laceup'|'strap', size, colors:
   [upper, sole, flash?] }`.
 - `palette` — `skin` [light, mid, dark, deep], `hair` [highlight, light, mid, dark], `eyes` [iris, deep], `brows`, `mouth`,
@@ -7015,8 +7014,8 @@ id, never throws, returns whether it did. Main passes the store the Ambience swi
 
 ### 91.3 Motion (`avatarMotion.js`, PURE)
 
-`new AvatarMotion()`; `step(dt, { yaw, pitch, vx, vz, onGround, sneaking?, swimming?, flying?, riding?, sleeping? })` →
-the reused `AvatarPose`; `swing()` (restarts only past the middle of a swing); `reset(yaw)` (a world loads). dt 0 changes
+`new AvatarMotion()`; `step(dt, { yaw, pitch, vx, vz, onGround, sneaking?, swimming?, flying?, riding?, sleeping?, draw? })`
+→ the reused `AvatarPose`; `swing()` (restarts only past the middle of a swing); `reset(yaw)` (a world loads). dt 0 changes
 nothing (a paused world).
 
 - **Walk**: the phase advances π per `AVATAR_STRIDE_M` **0.9** m walked (on the ground or swimming); the leg swing is
@@ -7028,29 +7027,54 @@ nothing (a paused world).
   never turned more than `AVATAR_HEAD_YAW_MAX` **0.9** from it (`headYaw` = look − body).
 - **Swing**: `AVATAR_SWING_S` **0.3** s; the right arm reaches forward by `SWING_REACH` 1.9 × sin(π s^0.7) and turns in; the
   torso turns toward it. `fpSwing` is the swing's progress 0..1 (−1 between swings) for the first-person hand; `fpBobX`,
-  `fpBobY` its bob while walking.
+  `fpBobY` its bob while walking. `reachR` is the swing's alone (never negative).
+- **Draw** (§100): `pose.draw` (0..1) follows `MotionInput.draw` up no faster than `DRAW_RISE_S` **1** s to full (=
+  looseItems `DRAW_FULL_S`: the player's own draw is followed as it is; a remote player's pose only says "drawing", 1, and
+  their arms come up at the same pace) and down in `DRAW_FALL_S` **0.15** s once it is let go — so the throw's swing, started
+  on the same frame, sets out from the drawn arm instead of jumping to it. 0 asleep. The renderer turns it into the pose of
+  what is drawn (§91.4).
 - **Stances**, each easing in: sneaking (on the ground) leans the torso 0.5 rad forward and lowers the hips 8 cm; swimming
   (in water, not standing) tips the body forward up to 1.2 rad with flutter kicks and a stroke; flying spreads the arms a
   little; riding sits (both legs 1.3 rad forward, spread); asleep (§87) the body lies on its back (`bodyPitch` π/2).
 
 ### 91.4 The model and the first-person hand (`avatarRenderer.js`, three)
 
-`createAvatarRenderer(scene)` → `{ setAvatar(id), avatarId(), setHeld(key), heldKey() (§98.4), sync(frame), group, armGroup,
-prewarm(webgl, camera), dispose() }`. One model and one hand are shown at most.
+`createAvatarRenderer(scene, { avatar? })` → `{ setAvatar(id), avatarId(), setHeld(key), heldKey() (§98.4), sync(frame), group,
+armGroup, prewarm(webgl, camera), dispose() }`: `avatar` (default the default one) is the figure built and shown first — the
+only one built until another is asked for (another player's renderer is made with theirs, §96). One model and one hand are
+shown at most.
 
-- **Shared resources.** `avatarAssets(def)` builds an avatar's resources the first time it is shown, ONCE per definition for
-  the page: its bones' geometries, its first-person hand's (`arm`, `grip`, `relaxed`), its atlas texture (sRGB,
-  `LinearFilter` / `LinearMipmapLinearFilter` with mipmaps, anisotropy 4) and the model's material. Every renderer — the
-  player's and each other player's (§96) — makes only groups and meshes over them; `dispose()` frees the renderer's own
-  things (the first-person materials, the held items' geometries), never the shared ones (`disposeAvatarAssets()`, tests).
+- **Shared resources.** `avatarAssets(def)` builds an avatar's resources ONCE per definition for the page: its bones'
+  geometries, its first-person hand's (`arm`, `grip`, `relaxed`), its atlas texture (sRGB, `LinearFilter` /
+  `LinearMipmapLinearFilter` with mipmaps, anisotropy 4) and the model's material. `prewarm` builds every avatar's while the
+  game loads (about 15–60 ms each on a desktop), so another player who joins with an avatar not yet seen, or the chooser's
+  portraits, never stall a frame building one. Every renderer — the player's and each other player's (§96) — makes only
+  groups and meshes over them; `dispose()` frees the renderer's own things (the first-person materials, the held items'
+  geometries), never the shared ones (`disposeAvatarAssets()`, tests).
 - **The model**: `avatar-<id>` (built when first shown), one mesh per bone hung from today's joints — the root at the feet
   turned by `bodyYaw`; `avatar-hips` at `hipY` (lowered by `hipDrop`; `RIDE_HIP_Y` 0.1 m over the feet on a horse; lying, `lieY`
   + `LIE_LIFT` 0.01), tipped by `bodyPitch`, with the seat (and a skirt: a dress caps the leg swing at `SKIRT_LEG_SWING` 0.42 so
-  the legs stay inside it); `avatar-hip-l|r` from (±legX, 0); `avatar-torso` (lean, twist, `chestLift`); `avatar-shoulder-l|r`
-  at the rig's shoulders, `avatar-elbow-l|r` under them; `avatar-neck` at the head's pivot turned by `headYaw` and nodded by
-  `headPitch` (less the torso's lean); `avatar-hair-back` (long hair) at the same pivot, following the head's turn
-  `HAIR_BACK_FOLLOW.yaw` 0.4 of the way and its nod only downward (0.8 of it: looking up would swing it into the back),
-  pressed flat lying down. About 9 draw calls.
+  the legs stay inside it; on a horse the seat and its skirt tip forward about the waist by `SKIRT_RIDE.tip` **0.85** rad ×
+  `ride` and are `SKIRT_RIDE.length` **0.72** of their length, so the skirt lies over the thighs and they leave it through the
+  hem); `avatar-hip-l|r` from (±legX, 0); `avatar-torso` (lean, twist, `chestLift`); `avatar-shoulder-l|r` at the rig's
+  shoulders, `avatar-elbow-l|r` under them (the right one bent `0.15 × clamp(reachR, 0, 1)` more on a reach, never less);
+  `avatar-neck` at the head's pivot turned by `headYaw` and nodded by `headPitch` (less the torso's lean and twist);
+  `avatar-hair-back` (long hair) at the same pivot, following the head's turn `HAIR_BACK_FOLLOW.yaw` 0.4 of the way and its nod
+  only downward (0.8 of it: looking up would swing it into the back), pressed flat lying down. About 9 draw calls.
+- **The draw** (§100; `pose.draw` eased in by a smoothstep, `w`): by what is in hand — `drawOf(heldKey).bow` draws as a bow,
+  anything else as a throw — `DRAW_POSE[kind]` gives, in the BODY's frame (+x the model's right, −z ahead), each hand's grip
+  place from its shoulder (in shares of the arm's length, shoulder to elbow plus elbow to the fist's grip), which way its elbow
+  points, the torso's `twist` and the item's lie (`dir` its length from the grip, the slab's +y; `face` its +z; `cant`). Each
+  arm's shoulder turn and elbow bend come from `reachArm(elbowAt, grip, target, pole, out)` (a two-bone reach: the bend that
+  puts the fist at the target's distance, halved for, 0..`ELBOW_MAX` 2.5; then the turn taking the fist's way and the elbow's
+  side to the target's and the pole's), the target and pole carried into the twisted torso's frame; the shoulder is slerped
+  from the walk/swing pose toward it by `w`, the elbow mixed by `w`, and the held item (`avatar-held`) turned from its rest in
+  the fist toward the drawn lie by `w`. **A throw** (twist −0.35): the right fist cocked by the ear (0.06, 0.36, 0.12) with its
+  elbow out to the side, the left arm pointing ahead, the spear or dart level over the shoulder pointing ahead. **A bow**
+  (twist 0.7, side-on; held in the right hand as every item is): the right arm straight ahead (−0.12, 0.04, −0.95) holding it
+  upright, its string toward the archer; the left hand drawn back to the chin (0.22, 0.15, −0.3) with its elbow up and out.
+  Let go, the throw's swing (main: `avatarSwing`, not for a bow) carries the arm through from there as the draw falls in
+  `DRAW_FALL_S`: no joint turns more than about 0.4 rad a frame at 60 fps.
 - **Its light**: one `MeshLambertMaterial` per avatar (program key `AVATAR_PROGRAM` 'caelancraft-avatar') lit like every
   object — `patchObjectShader` (§62), so it darkens in a cave and a torch or a fire lights it — plus a WARM FILL
   (`patchAvatarShader`): after three's light accumulation, `AVATAR_FILL.strength` **0.14** × the luminance of the light
@@ -7064,22 +7088,41 @@ prewarm(webgl, camera), dispose() }`. One model and one hand are shown at most.
   eye, so the wrist and the cuff show), the back of the hand (`back`), the wrist's tip of the fist forward (`deviate` −1.1 rad
   holding something, `deviateEmpty` −0.6 with nothing), `handScale` 1, the held tool (`toolTurn` 0.85 about the haft toward
   the eye, `toolScale` 0.55 — smaller than the model's), a held lump (`lumpAt`, `lumpScale` 0.45), the chop (`forearm` 0.25:
-  the elbow; `swingArm` −0.5, `swingIn` 0.3, `swingWrist` −0.5, `swingPush` 0.05) and `bob` 1. Two meshes over the avatar's
-  own atlas: `avatar-fp-arm-<id>` — the forearm, its skin to `hands.fpCuff` and the sleeve's cloth past it, the sleeve's cuff
-  ring there (a knit cuff on Caelan's pushed-up sleeve, a hem on a short sleeve) — and `avatar-fp-hand-<id>` in the wrist's
-  frame (`avatar-fp-wrist`): a palm, four fingers of three hex segments and a two-segment thumb, CURLED round the haft when
-  something is held (`fp.grip`), loosely open when nothing is (`fp.relaxed`). About 440 triangles.
+  the elbow; `swingArm` −0.5, `swingIn` 0.3, `swingWrist` −0.5, `swingPush` 0.05), `bob` 1, the draw (`drawThrow`,
+  `drawBow`, below) and `touchGap` 0.1 (below). Two meshes over the avatar's own atlas: `avatar-fp-arm-<id>` — the forearm,
+  dressed as the model's: skin to `outfit.cuffAt` and the pushed-up sleeve's cloth past it with its knit cuff ring there
+  (Caelan); all skin under a short sleeve, which ends on the upper arm, out of the view (Brayden, Annabelle) — and
+  `avatar-fp-hand-<id>` in the wrist's frame (`avatar-fp-wrist`): a palm, four fingers of three hex segments and a two-segment
+  thumb, CURLED round the haft when something is held (`fp.grip`), loosely open when nothing is (`fp.relaxed`). About 440
+  triangles.
 - **The chop**: `fpStroke(fpSwing)` = sin(π · fpSwing^0.6) (0 between swings: fast down, slower back); `fpHandFrame(stroke,
-  empty)` → `{ arm, hand, wrist }`: the forearm turns about the elbow by `swingArm` × stroke and pushes ahead a little, the wrist
-  bends by `deviate` + `swingWrist` × stroke — the wrist leads (the haft turns further than the forearm), the fist moves less than
-  10 cm: visible but quiet. The walk's bob (`fpBobX`, `fpBobY` × `FP_HAND.bob`) moves the whole hand in camera space.
+  empty, draw?, bow?)` → `{ arm, hand, wrist }`: the forearm turns about the elbow by `swingArm` × stroke and pushes ahead a
+  little, the wrist bends by `deviate` + `swingWrist` × stroke — the wrist leads (the haft turns further than the forearm), the
+  fist moves less than 10 cm: visible but quiet. The walk's bob (`fpBobX`, `fpBobY` × `FP_HAND.bob`) moves the whole hand in
+  camera space.
+- **The draw in first person** (§100, `pose.draw`, by the held item's kind as on the model): the forearm's frame is blended
+  (`blendFrames`: slerp, the origin along a line) from the rest-and-chop frame toward `fpDrawnArm(bow)` by a smoothstep of
+  the draw, the wrist's chop bend fading with it; nothing changes with an empty hand. `fpDrawnItem(bow)` is where the held
+  slab lies at a full draw and `fpDrawnArm` the forearm that puts it there (the wrist bent as at rest, the slab in the hand as
+  `fp.tool` places it). A throw: the fist up and back toward the eye at `drawThrow.grip` (0.23, −0.09, −0.36), the point toward
+  `drawThrow.aim` (−0.1, 0.45, −1.5) — ahead and above the crosshair, so its length shows — its picture to the eye. A bow: the
+  fist at `drawBow.grip` (0.15, −0.1, −0.4), the bow held up before the eye, its limbs in the view's plane canted `drawBow.cant`
+  0.5 rad (the top leaning right, as it lies in the hand at rest: it turns up the short way and is never seen edge-on), its
+  string toward the eye, the picture turned `drawBow.turn` 1.2 rad from edge-on. Both keep the forearm leaving the view at the
+  lower right.
+- **On a tablet** (§95): `sync`'s `fpClear` `{ left, top }` (the right cluster of buttons' left and top edges in NDC; main gives
+  it in touch mode from `touchClusterRect`) moves the whole hand along the camera's x by `fpClearShift(clear, aspect, fov)`:
+  0 when the fist at rest is already `touchGap` (NDC) left of the cluster or above it, else the move that puts it there — so the
+  fist and the tool stay clear of the glass buttons in landscape and in portrait (the forearm still runs under them to the
+  corner).
 - **Its light and depth**: its material (program key `FP_ARM_PROGRAM` 'caelancraft-avatar-arm') is the model's (the light
   volume, the warm fill) with the light read from the light volume at the EYE (`caelArmEye`) and `gl_Position.z = mix(−w, z,
   FP_DEPTH 0.02)`: its depth squeezed to the front of the range — always in front of the world, never clipped by a block,
   still hiding its own far side. `renderOrder` `FP_RENDER_ORDER` 10, never frustum-culled. It adds no light: it is prewarmed
   with the others (§72).
-- `sync({ x, y, z, pose, showModel, showArm, camera?, eyeX?, eyeY?, eyeZ? })`; `prewarm` builds the current avatar's model and
-  hand (with the held item's meshes) and compiles their programs (`compileHidden`).
+- `sync({ x, y, z, pose, showModel, showArm, camera?, eyeX?, eyeY?, eyeZ?, fpClear? })`; `prewarm` builds every avatar's
+  shared resources and the current avatar's model and hand (with the held item's meshes) and compiles their programs
+  (`compileHidden`).
 - **Portraits**: `renderAvatarPortraits(webgl, { size = PORTRAIT.size 192, ids })` → `{ [id]: { width, height, data } }` (RGBA,
   sRGB, not premultiplied, row 0 at the top): each avatar drawn once by the game's renderer — head and shoulders, turned
   `PORTRAIT.turn` 0.38, lit by a warm sun from the front and a soft sky — into a render target twice the size above the world
@@ -7131,8 +7174,9 @@ prewarm(webgl, camera), dispose() }`. One model and one hand are shown at most.
 
 - `renderFrame`: `viewCamera` (the pose from the boom) → `renderer.setCamera` → `setFov` → `drawAvatar` (the motion steps only
   while the world runs, `live`). The hand chops and the model's arm swings (`avatarSwing`) on a Creative break press or
-  repeat, a control operated, a block placed (both modes), a strike (Survival), each dig tick, and a throw.
-  `avatarMotion.reset(yaw)` when a world loads.
+  repeat, a control operated, a block placed (both modes), a strike (Survival), each dig tick, and a throw (a drawn spear or
+  dart too; a bow's shot is let down, not swung). `avatarMotion.reset(yaw)` when a world loads. In touch mode `drawAvatar`
+  gives the renderer `fpClear` from `touchClusterRect(innerWidth, innerHeight)` (worked out again when the size changes).
 - URL (diagnostics `parseParams`): `?view=first|third|front` and `?avatar=caelan|brayden|annabelle` set the view and the
   avatar for this visit (not stored); `?ui=avatars` opens the chooser over the title screen, or with `?autoplay` over the
   pause menu once the world is loaded; `?hold=<item>` (`readHoldParam`: an item that is not a block, any case, an old key
@@ -7143,12 +7187,15 @@ prewarm(webgl, camera), dispose() }`. One model and one hand are shown at most.
 - **Tests**: `tests/unit/avatars.test.js` (the data, the picks, Caelan's mild olive, the heights, the builds, the preference),
   `tests/unit/avatarModel.test.js` (every part closed and wound outward, one geometry per bone, budgets, heights, the rig,
   the atlas's determinism, the shared build, the hair cuts and their gaps, long hair; the first-person hand: `FP_HAND`, the
-  cuff on screen, the chop, its parts, the tool and the lump at the fist), `tests/unit/viewCamera.test.js` (the modes and
-  their key, the params with `?hold`, the view preference, the boom, the camera pose; the motion), and
-  `tests/unit/avatarRenderer.test.js` (the bones and their joints, height and facing, the skirt, lying down, the back hair,
-  shared resources between renderers, the atlas's filtering and the warm fill, the hand's placement, chop, bob, grip and
-  shader, the held item at the grip in both, prewarm, the other players' models, the portraits on a fake renderer, the
-  chooser on a fake DOM from index.html). `tests/unit/pilotModels.test.js` keeps the art pilot's other models.
+  cuff on screen, the forearm dressed as the model's, the chop, the draw (a bow up and never edge-on, a throw cocked), the
+  tablet's clearance at 4:3, 3:4 and other iPad sizes, its parts, the tool and the lump at the fist),
+  `tests/unit/viewCamera.test.js` (the modes and their key, the params with `?hold`, the view preference, the boom, the camera
+  pose; the motion, the draw's pace in and out), and `tests/unit/avatarRenderer.test.js` (the bones and their joints, height
+  and facing, the skirt walking and on a horse, lying down, the back hair, shared resources between renderers, the atlas's
+  filtering and the warm fill, the hand's placement, chop, bob, draw, tablet move, grip and shader, the held item at the grip
+  in both, prewarm building every avatar, the draw on the model (a bow, a throw, the release with no jump, the elbows,
+  `reachArm`), the other players' models and their draw, the portraits on a fake renderer, the chooser on a fake DOM from
+  index.html). `tests/unit/pilotModels.test.js` keeps the art pilot's other models.
 
 ## 93. Bricks: a rectangular lattice over the honeycomb — `src/bricks.js` (PURE), `src/brickmesher.js` (PURE), `src/world.js`, `src/chunk.js`, `src/blocks.js`, `src/fluids.js`, `src/waterBodies.js`, `src/blockphysics.js`, `src/mesher.js`, `src/physics.js`, `src/renderer.js`, `src/harvest.js`, `src/storage.js`, `src/main.js`, `src/controls.js`, `src/config.js`, `src/diagnostics.js`
 
@@ -7508,6 +7555,10 @@ Sneak would need a third; going down while flying is held, the mirror of Jump.
   right cluster, rounded squares in the top bar. Held = filled honey and a little smaller; toggled on = a honey glow. The
   stick's rim is a plain hexagon (nothing drawn on it) with a round honey knob, brighter while sprinting. The right
   cluster sits 92 px above the bottom (104 px in portrait), clear of the HUD's bottom band; the top bar is at the top left.
+  `TOUCH_CLUSTER` `{ right 14, bottom 92, bottomPortrait 104, width 276, height 190 }` (touchControls.js) mirrors where
+  styles.css puts its buttons (Drop's left edge, Place's top; a test reads the CSS) and `touchClusterRect(width, height)` →
+  `{ left, top, right, bottom }` (CSS px, portrait when height ≥ width, safe-area insets aside) is the box they cover: the
+  first-person hand keeps left of it (§91.4).
 - **Layers**: `#touch-ui` z 9 (over the canvas, under the HUD, which lets touches through; in touch mode the hotbar
   takes its own taps); `#touch-back` z 26 (over the block picker and the console, under the pause menu).
 
@@ -7566,8 +7617,10 @@ until the player joins a server.
 `PROTOCOL_VERSION` 1, `DEFAULT_PORT` 4180, `WS_PATH` '/ws', `INFO_PATH` '/api/info', `POSE_HZ` 15. A message is a JSON
 object with a string `t` (`decode` → it or null). The cleaners never trust a number: `cleanName` (no control characters or
 `<>`, trimmed, `MAX_NAME` 20), `cleanChat` (`MAX_CHAT` 200), `cleanPose` (finite x, y, z, yaw, pitch; |x|, |z| ≤ 1e7; y in
-[−64, WORLD_HEIGHT + 256]; yaw wrapped to [0, 2π), pitch clamped to ±π/2, vx / vz to ±100, flags to 5 bits: FLYING 1,
-SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16), `cleanCell` / `cleanBrick` (integers, y inside the world, id a byte),
+[−64, WORLD_HEIGHT + 256]; yaw wrapped to [0, 2π), pitch clamped to ±π/2, vx / vz to ±100, flags to `POSE_FLAGS` 63 (6 bits):
+FLYING 1, SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16, DRAWING 32 (§100: Place held with a spear, a dart or a bow; a
+state like SNEAKING, not a once-only like SWING; the shape is unchanged, so `PROTOCOL_VERSION` stays 1)), `cleanCell` /
+`cleanBrick` (integers, y inside the world, id a byte),
 `unflatten4` (the sound quadruples of a flat list), `packPose` / `unpackPose` (`[id, x, y, z, yaw, pitch, flags, vx, vz]`,
 3 decimals).
 
@@ -7592,10 +7645,11 @@ SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16), `cleanCell` / `cleanBrick` (inte
   shown on a server (§97.3; their handlers still say "On a server the host’s world decides that"); rune blocks neither run nor open their editor. T opens the chat: a line is said
   to everyone (`<name> text` in the chat lines), a `/command` is refused. The pause menu's world line says "· on a server".
 - **The others** (`RemotePlayers`): each one's poses (12 kept) are drawn `REMOTE_DELAY_S` (0.12 s) in the past,
-  interpolated (yaw the short way round); `remotePlayerRenderer` gives each one an avatar renderer of their avatar, an
-  `AvatarMotion` stepped from the pose's flags and speed (the arm swings when a SWING pose arrives) and a name tag over the
-  head, and drops them when they leave. The player's pose goes out 15 times a second while it changes (once a second when
-  it does not).
+  interpolated (yaw the short way round); `remotePlayerRenderer` gives each one an avatar renderer made with their avatar
+  (`createAvatarRenderer(scene, { avatar })`: no other figure is built), an `AvatarMotion` stepped from the pose's flags and
+  speed (the arm swings when a SWING pose arrives; DRAWING is `draw` 1, which the motion brings in at a draw's pace, §91.3,
+  in the pose of what they hold) and a name tag over the head, and drops them when they leave. The player's pose goes out 15
+  times a second while it changes (once a second when it does not); main sets DRAWING while `drawState` is held.
 - **Leaving**: Quit to Title closes the connection; a lost or refused connection returns to the title with the reason
   ("Left the server: …" / "Could not join: …").
 
@@ -7723,7 +7777,8 @@ in hand come later).
   - `avatar-held` on the current model's right forearm (`avatar-elbow-r`), its grip at the FIST's grip point (`rig.grip`,
     §91.2: where a haft passes through the right hand) — moved `ahead` along −z for a lump — posed by `HELD_POSE` (a tool
     ahead and a little up, its face to the side; a lump upright in front of the fist); it follows the walk, every stance and
-    the action swing. `MeshLambertMaterial({ vertexColors: true })` (the prototype hook lights it). The other players'
+    the action swing, and is turned to `DRAW_POSE`'s lie by a draw (§91.4: a spear level and ahead, a bow upright).
+    `MeshLambertMaterial({ vertexColors: true })` (the prototype hook lights it). The other players'
     models hold theirs the same way (§96: their avatar renderers).
   - `avatar-fp-held` in the first-person fist's frame (`avatar-fp-wrist`, §91.4), placed by the avatar model's
     `fp.tool` — the slab's grip at the fist, its haft along the hand's +y (out of the fist between the thumb and the index
@@ -8011,7 +8066,7 @@ seven-column pond could take a whole zone's school.
   wanderer, the stranded fish on the bed of a drained pond and drawn on its side); fauna's drained-fish test now swims to
   the next column.
 
-### 100.2 The draw: hold Place to throw (`looseItems.js`, `main.js`, `avatarMotion.js`)
+### 100.2 The draw: hold Place to throw (`looseItems.js`, `main.js`, `avatarMotion.js`, `avatarRenderer.js`, `avatarModel.js`, `protocol.js`)
 
 - `drawOf(key)` → `{ shoots, base, bow }` or null: a spear (ToolDef.type 'spear') or a dart (DART_KEYS) draws itself
   (`base` = throwOf); a bow (type 'bow') draws an `arrow` (`base` THROW_ARROW). `drawFraction(heldS)` = min(1, heldS /
@@ -8035,8 +8090,11 @@ seven-column pond could take a whole zone's school.
   bow is drawn and released the same way; a rock still throws on the press. Tests: `tests/unit/drawHold.test.js`.
 - **Seen**: the action ring at the crosshair shows the draw (`drawRing()`: at least 0.02, both modes; Survival's
   `actionProgress` puts it first); the view closes in by `DRAW_ZOOM` 0.1 × the draw (eased like the sprint's FOV); the
-  avatar's right arm draws back (`MotionInput.draw` 0..1: `reachR` − `DRAW_BACK` 1.1 × draw, `twist` − 0.25 × draw, the
-  first-person arm sinks `FP_DRAW_DROP` 0.05) and swings through on the release; the throw sound grows with the draw.
+  avatar takes the pose of what is drawn (`MotionInput.draw` 0..1 → `pose.draw`, §91.3; the model §91.4 "The draw", the hand
+  "The draw in first person"): a spear or a dart cocked overhand by the ear, its point ahead, and thrown through with the
+  swing on the release; a bow raised upright in the extended right arm, the left hand drawn back to the chin, and let down on
+  the release (no swing); in first person the throw is raised and cocked, the bow brought up before the eye. The others on a
+  server see it too (`POSE_DRAWING`, §96.2). The throw sound grows with the draw.
 - **Hints** (RMB reads "Place" on a tablet, and the G clause is left out there: no button throws at once, §97.2): with
   nothing else to say, `Flint Spear · Hold RMB to throw · G: throw at once` (a tablet: `Flint Spear · Hold Place to
   throw`), `Bow · Hold RMB to draw, let go to shoot` (`Bow · no arrows in your pack`); while drawing `Drawing · let go to

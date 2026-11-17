@@ -76,6 +76,25 @@ export function touchWords(text) {
 export const PAD_BUTTONS = Object.freeze(['jump', 'dig', 'place', 'act', 'sneak', 'drop']);
 export const TOP_BUTTONS = Object.freeze(['pause', 'pack', 'view', 'chat']);
 
+/**
+ * Where the right cluster's buttons lie (CSS px, as styles.css places `.touch-pad` and its buttons): `right` and `bottom`
+ * (in portrait `bottomPortrait`) are the pad's from the window's edges; `width` from its right edge to the leftmost
+ * button's left edge (Drop's), `height` from its bottom to the highest button's top (Place's).
+ */
+export const TOUCH_CLUSTER = Object.freeze({ right: 14, bottom: 92, bottomPortrait: 104, width: 276, height: 190 });
+
+/**
+ * The box the right cluster's buttons cover in a window `width` × `height` (CSS px, y down; safe-area insets aside).
+ * PURE. @param {number} width @param {number} height
+ * @returns {{ left: number, top: number, right: number, bottom: number }}
+ */
+export function touchClusterRect(width, height) {
+  const C = TOUCH_CLUSTER;
+  const bottom = height - (height >= width ? C.bottomPortrait : C.bottom); // CSS (orientation: portrait): height ≥ width
+  const right = width - C.right;
+  return { left: right - C.width, top: bottom - C.height, right, bottom };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Touch-mode detection (PURE)
 // ---------------------------------------------------------------------------------------------

@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { createAvatarRenderer } from './avatarRenderer.js';
 import { AvatarMotion } from './avatarMotion.js';
 import { PLAYER_HEIGHT } from './config.js';
-import { POSE_FLYING, POSE_SNEAKING, POSE_ON_GROUND, POSE_SWIMMING } from './protocol.js';
+import { POSE_FLYING, POSE_SNEAKING, POSE_ON_GROUND, POSE_SWIMMING, POSE_DRAWING } from './protocol.js';
 
 /** The name tag's height above the feet (m). */
 const TAG_Y = PLAYER_HEIGHT + 0.45;
@@ -69,6 +69,7 @@ export function createRemotePlayerRenderer(scene, doc) {
   /** @type {import('./avatarMotion.js').MotionInput} */
   const input = {
     yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true, sneaking: false, swimming: false, flying: false, riding: false, sleeping: false,
+    draw: 0,
   };
 
   function remove(id) {
@@ -96,8 +97,7 @@ export function createRemotePlayerRenderer(scene, doc) {
         e = undefined;
       }
       if (!e) {
-        const avatar = createAvatarRenderer(scene);
-        avatar.setAvatar(rp.avatar);
+        const avatar = createAvatarRenderer(scene, { avatar: rp.avatar }); // only their avatar's figure is built
         const tag = makeTag(doc, rp.name);
         scene.add(tag.sprite);
         const motion = new AvatarMotion();
@@ -125,6 +125,7 @@ export function createRemotePlayerRenderer(scene, doc) {
       input.sneaking = (pose.flags & POSE_SNEAKING) !== 0;
       input.flying = (pose.flags & POSE_FLYING) !== 0;
       input.swimming = (pose.flags & POSE_SWIMMING) !== 0;
+      input.draw = (pose.flags & POSE_DRAWING) !== 0 ? 1 : 0; // §100: the motion brings the arms up at a draw's pace
       e.motion.step(dt, input);
       e.avatar.sync({ x: pose.x, y: pose.y, z: pose.z, pose: e.motion.pose, showModel: true, showArm: false, camera: null });
       e.tag.sprite.position.set(pose.x, pose.y + TAG_Y - e.motion.pose.hipDrop, pose.z);

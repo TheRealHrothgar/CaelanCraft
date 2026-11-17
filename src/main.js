@@ -61,7 +61,7 @@ import {
 import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer, fogRangeForRenderDistance } from './renderer.js';
 import { createControls } from './controls.js';
-import { createTouchUI, detectTouchMode, touchWords, TOUCH_RENDER_DISTANCE } from './touchControls.js'; // touch (§95, §97)
+import { createTouchUI, detectTouchMode, touchWords, touchClusterRect, TOUCH_RENDER_DISTANCE } from './touchControls.js'; // touch (§95, §97)
 import { createHUD, createFlashState, flashStep } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
@@ -150,7 +150,7 @@ import {
   NetClient, RemotePlayers, probeServer, serverWsUrl, playerToken, shouldRejoin, REJOIN_TRIES, REJOIN_GAP_S,
 } from './net.js';
 import {
-  POSE_HZ, POSE_FLYING, POSE_SNEAKING, POSE_ON_GROUND, POSE_SWING, POSE_SWIMMING, unpackPose, unflatten4, cleanName,
+  POSE_HZ, POSE_FLYING, POSE_SNEAKING, POSE_ON_GROUND, POSE_SWING, POSE_SWIMMING, POSE_DRAWING, unpackPose, unflatten4, cleanName,
   cleanChat,
 } from './protocol.js';
 import { createRemotePlayerRenderer } from './remotePlayerRenderer.js';
@@ -1471,8 +1471,11 @@ export function boot(win, doc) {
   /** @type {import('./avatarRenderer.js').AvatarFrame} */
   const avatarView = {
     x: 0, y: 0, z: 0, pose: avatarMotion.pose, showModel: false, showArm: false, camera: renderer.three.camera, eyeX: 0, eyeY: 0,
-    eyeZ: 0,
+    eyeZ: 0, fpClear: null,
   };
+  /** §95 on a tablet: the right cluster's left and top edges in NDC (the first-person hand keeps clear), and for what size */
+  const fpClear = { left: 1, top: -1 };
+  let fpClearFor = '';
   avatarRenderer.setAvatar(avatarId);
   /** @type {Record<string, import('./avatarRenderer.js').Picture>|null} the chooser's portraits, drawn when first asked for */
   let portraits = null;
@@ -1576,6 +1579,19 @@ export function boot(win, doc) {
     v.eyeX = player.x;
     v.eyeY = eyeY;
     v.eyeZ = player.z;
+    if (touchOn) {
+      // §95: the first-person hand keeps left of the buttons (avatarModel.fpClearShift)
+      const w = win.innerWidth || 1;
+      const h = win.innerHeight || 1;
+      const size = `${w}x${h}`;
+      if (size !== fpClearFor) {
+        fpClearFor = size;
+        const box = touchClusterRect(w, h);
+        fpClear.left = (2 * box.left) / w - 1;
+        fpClear.top = 1 - (2 * box.top) / h;
+      }
+      v.fpClear = fpClear;
+    }
     avatarRenderer.sync(v);
     const cross = viewMode !== 'front';
     if (cross !== crosshairShown) {
@@ -1818,6 +1834,7 @@ export function boot(win, doc) {
     if (player.onGround) flags |= POSE_ON_GROUND;
     if (player.inWater && !player.onGround) flags |= POSE_SWIMMING;
     if (netSwing) flags |= POSE_SWING;
+    if (drawState) flags |= POSE_DRAWING; // §100: the others see the draw
     const pose = { x: player.x, y: player.y, z: player.z, yaw: controls.yaw, pitch: controls.pitch, flags, vx: player.vx, vz: player.vz };
     const key = `${pose.x.toFixed(2)},${pose.y.toFixed(2)},${pose.z.toFixed(2)},${pose.yaw.toFixed(2)},${pose.pitch.toFixed(2)},${flags}`;
     if (key === netPoseKey && netPoseIdle < 1) return;
@@ -4684,7 +4701,8 @@ export function boot(win, doc) {
       if (res && res.broke) toolBroke(res.key);
     }
     audio.playRecipe(SOUND_THROW, 0.45 + 0.4 * f);
-    avatarSwing(); // §91: the arm follows through
+    // §91: a throwing arm follows through from the draw; a bow is simply let down (AvatarMotion eases the draw out)
+    if (!d.bow) avatarSwing();
   }
 
   /** §100: the draw's ring at the crosshair (0..1), or null. */
