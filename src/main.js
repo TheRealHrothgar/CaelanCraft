@@ -143,7 +143,7 @@ import { createPennantRenderer } from './pennantRenderer.js';
 // CONTRACTS §87: sleep
 import {
   Sleep, SecureWatch, TiredFx, spotOf, sleepRefusal, secureAt, secureWords, rollNightAttack, placeNightAttack, stageNews, wakeLine,
-  sleepingLine, sleepDark, blurPx, phantomStandAt, tirednessView, SLEEP_LINES, TIRED_BAR_MARKS,
+  sleepingLine, sleepDark, blurPx, phantomStandAt, tirednessView, SLEEP_LINES, TIRED_BAR_MARKS, FIGURE_ALPHA,
 } from './sleep.js';
 import { createPhantomRenderer } from './phantomRenderer.js';
 // CONTRACTS §91: avatars and the third-person view
@@ -169,7 +169,7 @@ import { HANDBOOK_KEY, HANDBOOK_CHAT_LINE, buildChapters, ensureHandbook } from 
 import { createHandbookUI } from './handbookUI.js';
 import {
   parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest, circuitSceneWrites,
-  CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP, WIND_SCENE,
+  CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP, WIND_SCENE, ZOMBIE_SCENE, crowdScene, WATCHER_SCENE, PHANTOM_SCENE,
 } from './diagnostics.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -2459,6 +2459,16 @@ export function boot(win, doc) {
   let sceneNamed = null;
   /** @type {{ q: number, y: number, r: number, at: number }|null} */
   let sceneCharge = null;
+  /**
+   * §104 ?scene=zombies|crowd|watcher|phantom: figures staged ahead of the player for screenshots — drawn only (handed to
+   * their renderers each frame), in no list of mobs: they never move, strike or vanish.
+   * @type {Array<*>|null}
+   */
+  let sceneZombies = null;
+  /** @type {*} */
+  let sceneWatcher = null;
+  /** @type {*} */
+  let scenePhantom = null;
   /** the screen flash (§2.4.6, hud.flashStep) and its colour */
   const flashState = createFlashState();
   /** @type {'white'|'void'} */
@@ -3046,6 +3056,7 @@ export function boot(win, doc) {
     const fx = tiredFx.step(live ? dt : 0, tv, Math.random);
     for (const [name, volume] of fx.sounds) audio.playRecipe(name, volume);
     phantomRenderer.sync(tv.awake ? tiredFx.figure : null);
+    if (scenePhantom) phantomRenderer.sync(scenePhantom); // §104 ?scene=phantom
     if (SV) {
       const hours = Math.floor(v.fatigue + 1e-6);
       if (hours !== sleepFx.hours || !sleepFx.view) {
@@ -6993,6 +7004,7 @@ export function boot(win, doc) {
       return { ok: res.ok, message: res.message, named: sceneNamed };
     }
     if (name === 'wind' || name === 'wind-rain') return buildWindScene(fx, fz, feet, name === 'wind-rain');
+    if (name === 'zombies' || name === 'crowd' || name === 'watcher' || name === 'phantom') return buildFigureScene(name, fx, fz);
     if (name !== 'circuits') return { ok: false, message: `unknown scene "${name}"` };
     const [qa, ra] = worldToHex(player.x + fx * 10, player.z + fz * 10);
     const q0 = qa - 5;
@@ -7053,6 +7065,72 @@ export function boot(win, doc) {
     }
     sceneNamed = named;
     return { ok: true, message: `the wind scene: a campfire and two pennants ahead${rain ? ', in the rain' : ''}`, named };
+  }
+
+  /**
+   * §104 `?scene=zombies|crowd|watcher|phantom`: stage figures ahead of the player, facing it, on a patch of ground made
+   * level with the player's feet (cleared above, filled below with what the player stands on, like ?scene=wind) —
+   * ZOMBIE_SCENE's walker, runner and alpha, the crowd of crowdScene(), the Watcher at WATCHER_SCENE, or the figure at the
+   * edge of sight at PHANTOM_SCENE. They are drawn only (sceneZombies, sceneWatcher, scenePhantom), never added to a list
+   * of mobs.
+   * @param {'zombies'|'crowd'|'watcher'|'phantom'} name
+   * @param {number} fx @param {number} fz  the way the player looks
+   * @returns {{ ok: boolean, message: string }}
+   */
+  function buildFigureScene(name, fx, fz) {
+    const w = /** @type {World} */ (world);
+    const feet = Math.floor(player.y + 1e-3);
+    const [pq, pr] = worldToHex(player.x, player.z);
+    const under = w.getBlock(pq, feet - 1, pr);
+    const ground = isSolid(under) ? under : BLOCK.GRASS_BLOCK;
+    /** make a hex patch round (cq, cr) level with the player's feet: open air above, `ground` below */
+    const level = (cq, cr, radius) => {
+      for (let q = cq - radius; q <= cq + radius; q++) {
+        for (let r = cr - radius; r <= cr + radius; r++) {
+          if (hexLength(q - cq, r - cr) > radius || (q === pq && r === pr)) continue;
+          for (let y = feet; y <= feet + 4 && y < WORLD_HEIGHT; y++) if (w.getBlock(q, y, r) !== BLOCK.AIR) w.setBlock(q, y, r, BLOCK.AIR);
+          for (let y = feet - 1; y >= Math.max(1, feet - 8); y--) {
+            if (isSolid(w.getBlock(q, y, r)) && y < feet - 1) break;
+            if (w.getBlock(q, y, r) !== ground) w.setBlock(q, y, r, ground);
+          }
+        }
+      }
+    };
+    /** where `ahead` metres forward and `right` to the right of the player stands, and the yaw that faces the player */
+    const spot = (ahead, right, turn = 0) => {
+      const x = player.x + fx * ahead - fz * right;
+      const z = player.z + fz * ahead + fx * right;
+      const [q, r] = worldToHex(x, z);
+      return { x, y: feet, z, q, r, yaw: Math.atan2(x - player.x, z - player.z) + turn };
+    };
+    const centre = (ahead, radius) => {
+      const [q, r] = worldToHex(player.x + fx * ahead, player.z + fz * ahead);
+      level(q, r, radius);
+    };
+    if (name === 'zombies') centre(4.5, 4);
+    else if (name === 'crowd') centre(11, 9);
+    else if (name === 'watcher') centre(WATCHER_SCENE.ahead, 3);
+    else centre(PHANTOM_SCENE.ahead, 4);
+    const staged = (kind, at, mode, walkPhase, id) => ({
+      id, kind, x: at.x, y: at.y, z: at.z, yaw: at.yaw, mode, walkPhase, swing: 0, hurt: 0, smoking: false,
+      tilt: ((id * 0.37) % 0.4) - 0.2, side: id % 2 ? 1 : -1, shield: 0, daylit: false, provoked: 0, rallied: false,
+    });
+    if (name === 'zombies') {
+      sceneZombies = ZOMBIE_SCENE.map(([kind, ahead, right, mode, phase, id]) => staged(kind, spot(ahead, right), mode, phase, id));
+      return { ok: true, message: 'the zombies scene: a walker, a runner and an alpha ahead' };
+    }
+    if (name === 'crowd') {
+      sceneZombies = crowdScene().map((c) => staged(c.kind, spot(c.ahead, c.right, c.turn), c.mode, c.walkPhase, c.id));
+      return { ok: true, message: `the crowd scene: ${sceneZombies.length} zombies ahead` };
+    }
+    if (name === 'watcher') {
+      const at = spot(WATCHER_SCENE.ahead, WATCHER_SCENE.right);
+      sceneWatcher = { x: at.x, y: at.y, z: at.z, q: at.q, r: at.r, yaw: at.yaw, headYaw: at.yaw, headPitch: 0.08, kind: 'summon' };
+      return { ok: true, message: 'the watcher scene: the Watcher ahead' };
+    }
+    const at = spot(PHANTOM_SCENE.ahead, PHANTOM_SCENE.right);
+    scenePhantom = { x: at.x, y: at.y, z: at.z, yaw: at.yaw, age: 1, alpha: FIGURE_ALPHA, d0: PHANTOM_SCENE.ahead };
+    return { ok: true, message: 'the phantom scene: the figure at the edge of sight' };
   }
 
   function enterPlaying() {
@@ -7183,6 +7261,9 @@ export function boot(win, doc) {
     setOnServer(false);
     remotes.clear();
     remoteRenderer.clear();
+    sceneZombies = null; // §104: staged figures belong to the world they were staged in
+    sceneWatcher = null;
+    scenePhantom = null;
     if (runner) runner.reset();
     runner = null;
     ctx = null;
@@ -8522,6 +8603,7 @@ export function boot(win, doc) {
       zombieDraw.length = 0;
       for (const z of zombies.list) zombieDraw.push(z);
       infall.ghosts('zombie', zombieDraw);
+      if (sceneZombies) for (const z of sceneZombies) zombieDraw.push(z);
       pigRenderer.sync(pigDraw);
       zombieRenderer.sync(zombieDraw, fxTime, 1 - sky.daylight);
       animalDraw.length = 0;
@@ -8531,9 +8613,9 @@ export function boot(win, doc) {
     } else {
       animalRenderer.sync(animals.list);
       pigRenderer.sync(pigs.list);
-      zombieRenderer.sync(zombies.list, fxTime, 1 - sky.daylight);
+      zombieRenderer.sync(sceneZombies ? zombies.list.concat(sceneZombies) : zombies.list, fxTime, 1 - sky.daylight);
     }
-    watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime);
+    watcherRenderer.sync(sceneWatcher ?? watcher.figure, player.x, eyeY, player.z, fxTime);
     hurtFlash = Math.max(0, hurtFlash - dt / HURT_FLASH_S);
     hud.setHurtFlash(hurtFlash);
     sleepFrame(dt, live, eyeY); // §87: the stage lines, what tired eyes see, the tiredness reading, the dark of sleep

@@ -50,7 +50,8 @@ cube silhouette and the chunky pixels are what read as "Minecraft".
 | model | today | hex-faceted (pilot) |
 |---|---|---|
 | an avatar | 180 tris, ~9 draws | ~1,600 tris, 1 draw per bone group, 256² atlas |
-| a zombie | 108 tris | ~930 tris (instanced per part) |
+| a zombie | 108 tris | walker ~1,230, runner ~1,290, alpha ~1,300 tris (phase 2, done): instanced per part, 5 draws a kind; a 256² atlas + glow each |
+| the Watcher | ~500 tris, block-atlas tiles | ~830 tris, its own 256² stone atlas + glow (phase 2, done) |
 | an animal | ~200 tris, colours per vertex | ~320–470 tris, 256² atlas |
 | a bush in the chunk mesh | ~100 tris | ~1,100 tris near, today's model past ~16 m |
 | the first-person hand | 608 tris | ~430 tris + the held slab |
@@ -65,7 +66,18 @@ and plants get a level of detail.
    renderer builds them from the kit over a painted atlas; the chooser's portraits come from it; the held item (§98.4)
    sits in the new fist; remote players get the same models. Done (CONTRACTS §91, §98.4): `avatarModel.js` and `figureKit.js`
    build any avatar bone by bone; the first-person hand is `FP_HAND`; `avatarSkin.js` and the box models are gone.
-2. **Zombies, the Watcher, the phantom.** Repainted atlases with the night-glow layer in step; instanced per part.
+2. **Zombies, the Watcher, the phantom.** Repainted atlases with the night-glow layer in step; instanced per part. Done
+   (CONTRACTS §104): `zombieModel.js` builds the walker, the runner (leaner) and the alpha (bigger, heavier, a long coat)
+   part by part from the kit — gaunt faceted heads with a heavy brow wedge over narrow slits, hair as a scalp cap on each
+   kind's own skull plus a few clumps flowing one way (never a helmet or a crown of spikes), ragged painted clothes with
+   see-through torn hems, a shirt tint marked in the atlas (on the cloth and on its night glow, so a crowd differs by night
+   too), a glow image that is the atlas dimmed (clothes still read at night) with faint eyes that are never red, shining as
+   at night wherever the sky does not reach; a pale hit flash, never red; `zombieRenderer.js` keeps its API, its
+   instancing (one mesh per part and kind: a crowd of 24 is 15 draws, ~30k tris, ~0.1 ms of CPU a frame) and every pose.
+   The Watcher (`watcherModel.js`) is chamfered hollow hex bands, a lantern round a faceted crystal and painted stone with
+   glowing cracks; the figure at the edge of sight is a dark person-shaped shadow from the kit (sloping shoulders, arms
+   clear of the body, a head with a plain mass of hair), drawn after every transparent effect. Screenshot aids:
+   `?scene=zombies|crowd|watcher|phantom`.
 3. **Pigs and animals.** Every species, sex, shorn, tame and young variant from the kit, textured.
 4. **Plants.** Model plants in the chunk mesher with per-vertex atlas UVs and a plant atlas, with a level of detail.
 5. **Everything else that is a creature or a figure** (loose items, the campfire's cook pots if they read blocky,

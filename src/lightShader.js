@@ -224,6 +224,40 @@ export function patchObjectShader(shader) {
   patchFragment(shader);
 }
 
+/**
+ * GLSL of a FILL (after three's light accumulation, in an object-patched shader: caelSky and caelExtra are in scope): a
+ * share `strength` of the light that reaches the surface — the sky's and the sun's or moon's × caelSky, plus the block
+ * light, never more — comes back in `color` on every facet, through the material's diffuse term. So faces turned from
+ * the sun keep their colour (warm on the avatars, never grey), yet it is no glow: at night and in a cave it fades with
+ * everything else. (avatarRenderer's AVATAR_FILL, zombieRenderer's ZOMBIE_FILL, the Watcher's stone.)
+ * @param {ReadonlyArray<number>} color  linear rgb
+ * @param {number} strength
+ * @returns {string}
+ */
+export function fillFragment(color, strength) {
+  return /* glsl */ `
+{
+	vec3 caelFill = caelExtra;
+	#if NUM_HEMI_LIGHTS > 0
+	for ( int i = 0; i < NUM_HEMI_LIGHTS; i ++ ) caelFill += caelSky * 0.5 * ( hemisphereLights[ i ].skyColor + hemisphereLights[ i ].groundColor );
+	#endif
+	#if NUM_DIR_LIGHTS > 0
+	for ( int i = 0; i < NUM_DIR_LIGHTS; i ++ ) caelFill += caelSky * directionalLights[ i ].color;
+	#endif
+	reflectedLight.indirectDiffuse += dot( caelFill, vec3( 0.2126, 0.7152, 0.0722 ) ) * vec3( ${color.map((c) => (c * strength).toFixed(4)).join(', ')} ) * BRDF_Lambert( material.diffuseColor );
+}`;
+}
+
+/**
+ * Patch a lit object's shader like the prototype hook (the light volume) and add a fill (fillFragment).
+ * @param {{ vertexShader: string, fragmentShader: string, uniforms: Record<string, *> }} shader
+ * @param {{ color: ReadonlyArray<number>, strength: number }} fill
+ */
+export function patchFillShader(shader, fill) {
+  patchObjectShader(shader);
+  shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${fillFragment(fill.color, fill.strength)}`);
+}
+
 let installed = false;
 
 /**
