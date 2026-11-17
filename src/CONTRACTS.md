@@ -4256,8 +4256,9 @@ colliders, heights, the pig's head box, the AI, the strides, the rear-up and the
   the pheasants and a fish in a dug cell of water in front — each facing the player turned a little, and HOLDS them every
   frame (place, turn, mode 'walk', legs straight, its fields). `?scene=animal-variants`: a ewe and her lamb, a shorn ewe
   and ram, a cow and calf, a doe and fawn, a saddled horse, a rearing bear, a tame wolf, cow and ewe, a tame sow, a
-  piglet, a snared pig on a sprung snare, a grazing deer (idle) and a staring one (watch). `readSceneParam` accepts
-  both. The gallery (`gallery.html?row=fauna`, `&set=variants|far`, `&only=`, `&cols=`, `&az=`, `&target=x,y,z`, `&dist=`,
+  piglet, a snared pig on a sprung snare, a grazing deer (idle) and a staring one (watch). `?scene=animal-close`: the
+  sheep (a ewe facing the player, a lamb, a ram, a shorn ewe) and the birds (both turkeys, both pheasants) two to four
+  metres off, where wool and feathers are read. `readSceneParam` accepts the keys of `ANIMAL_SCENES` (own keys only). The gallery (`gallery.html?row=fauna`, `&set=variants|far`, `&only=`, `&cols=`, `&az=`, `&target=x,y,z`, `&dist=`,
   `&time=`) shows them through the game's own renderers; the pilot's `sheep` and `pig` are `restModel`'s.
 - Tests: `animalModels.test.js` (the parts, the atlas, budgets, variants, heights, the coats' colours, the heads' poses,
   the young, tags and snares), `animals.test.js`, `fauna.test.js` and `populations.test.js` (the meshes by name, the bold

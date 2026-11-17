@@ -9,6 +9,7 @@ import {
 import { createAnimalRenderer, headPitch, youthOf, MODELS, YOUNG_HEAD, HEAD_RATE } from '../../src/animalRenderer.js';
 import { ANIMAL_KINDS, SPECIES } from '../../src/animals.js';
 import { YOUNG_SCALE } from '../../src/populations.js';
+import { readSceneParam, ANIMAL_SCENES } from '../../src/diagnostics.js';
 
 /** The most triangles one whole animal may have in any variant (its trunk, head, legs; a bird's wings while it flies). */
 const TRI_BUDGET = 800;
@@ -103,6 +104,18 @@ describe('animalModels — the parts', () => {
     expect(Math.min(...ewe)).toBeGreaterThan(170); // cream-white fleece
     const [wr, wg, wb] = mean('wolf', 'body');
     expect(Math.max(Math.abs(wr - wg), Math.abs(wg - wb))).toBeLessThan(25); // grey
+  });
+
+  it('the screenshot scenes (?scene=animals|animal-variants|animal-close) name real kinds, and only they are scenes', () => {
+    const p = (s) => readSceneParam(new URLSearchParams(s));
+    expect([p('scene=animals'), p('scene=Animal-Variants'), p('scene=animal-close'), p('scene=toString'), p('scene=animal')])
+      .toEqual(['animals', 'animal-variants', 'animal-close', null, null]);
+    for (const [name, list] of Object.entries(ANIMAL_SCENES)) {
+      for (const [kind, ahead] of list) {
+        expect(MODEL_KINDS, `${name} ${kind}`).toContain(kind);
+        expect(ahead, `${name} ${kind}`).toBeGreaterThan(1.5); // in front of the player, clear of the camera
+      }
+    }
   });
 
   it('restModel stands a kind on its legs as one geometry (the pilot\'s sheep and pig)', () => {

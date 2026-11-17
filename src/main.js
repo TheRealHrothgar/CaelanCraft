@@ -2433,7 +2433,7 @@ export function boot(win, doc) {
   /** @type {{ q: number, y: number, r: number, at: number }|null} */
   let sceneCharge = null;
   /**
-   * §69.1 ?scene=animals|animal-variants: the creatures held where they were put, every frame (a screenshot aid)
+   * §69.1 ?scene=animals|animal-variants|animal-close: the creatures held where they were put, every frame (a screenshot aid)
    * @type {Array<{ body: *, x: number, y: number, z: number, yaw: number, fields: Record<string, *> }>|null}
    */
   let sceneHold = null;
@@ -6847,7 +6847,7 @@ export function boot(win, doc) {
       return { ok: res.ok, message: res.message, named: sceneNamed };
     }
     if (name === 'wind' || name === 'wind-rain') return buildWindScene(fx, fz, feet, name === 'wind-rain');
-    if (name === 'animals' || name === 'animal-variants') return buildAnimalScene(fx, fz, feet, name);
+    if (Object.hasOwn(ANIMAL_SCENES, name)) return buildAnimalScene(fx, fz, feet, /** @type {'animals'|'animal-variants'|'animal-close'} */ (name));
     if (name !== 'circuits') return { ok: false, message: `unknown scene "${name}"` };
     const [qa, ra] = worldToHex(player.x + fx * 10, player.z + fz * 10);
     const q0 = qa - 5;
@@ -6911,11 +6911,11 @@ export function boot(win, doc) {
   }
 
   /**
-   * §69.1 `?scene=animals|animal-variants`: each creature of ANIMAL_SCENES on grass ahead (its column cleared above the
+   * §69.1 `?scene=animals|animal-variants|animal-close`: each creature of ANIMAL_SCENES on grass ahead (its column cleared above the
    * player's feet level and filled under it; a fish in a dug cell of water, a snared one on a sprung snare), facing the
    * player turned as given, and held there every frame (holdScene) — a screenshot aid for the models.
    * @param {number} fx @param {number} fz  the way the player looks @param {number} feet
-   * @param {'animals'|'animal-variants'} name
+   * @param {'animals'|'animal-variants'|'animal-close'} name
    * @returns {{ ok: boolean, message: string }}
    */
   function buildAnimalScene(fx, fz, feet, name) {
@@ -6953,7 +6953,7 @@ export function boot(win, doc) {
       if (!body) continue;
       sceneHold.push({ body, x: body.x, y: body.y, z: body.z, yaw, fields: { mode: 'walk', ...fields, ...(fields.trapped ? { trapCell: [q, feet, r], trapT: 0 } : {}) } });
     }
-    return { ok: true, message: `the ${name === 'animals' ? 'animals' : 'animal variants'} scene: ${sceneHold.length} creatures ahead` };
+    return { ok: true, message: `the ${name.replace('-', ' ')} scene: ${sceneHold.length} creatures ahead` };
   }
 
   /** §69.1: put the lineup back where it was put, turned as it was, its fields as given, its legs straight. */
