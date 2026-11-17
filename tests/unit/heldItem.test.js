@@ -6,7 +6,7 @@ import {
 } from '../../src/heldItem.js';
 import { ITEM_ART_KEYS, ITEM_ART_SIZE, paintItem, toolArtOf } from '../../src/itemArt.js';
 import { ITEMS, ITEM_KEYS } from '../../src/items.js';
-import { DART_KEYS } from '../../src/looseItems.js';
+import { ARROW_KEYS } from '../../src/looseItems.js';
 
 /** A size × size picture with these solid pixels ([x, y, r, g, b]); everything else clear. */
 function art(size, pixels) {
@@ -180,8 +180,8 @@ describe('how a picture is held (heldGrip)', () => {
 describe('the item in hand (every item)', () => {
   const NON_BLOCK = ITEM_KEYS.filter((k) => ITEMS[k].kind !== 'block');
   const BLOCKS = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'block');
-  /** Tools with a haft (itemArt.test: everything but the hammerstone and the tier-0 kit) and the darts. */
-  const HAFTED = ITEM_KEYS.filter((k) => (ITEMS[k].tool && k !== 'hammerstone' && ITEMS[k].tool.tier > 0) || DART_KEYS.includes(k));
+  /** Tools with a haft (itemArt.test: everything but the hammerstone and the tier-0 kit) and (§100) the arrows. */
+  const HAFTED = ITEM_KEYS.filter((k) => (ITEMS[k].tool && k !== 'hammerstone' && ITEMS[k].tool.tier > 0) || ARROW_KEYS.includes(k));
 
   it('is shown for non-block items with art; block items, unknown keys and null show nothing', () => {
     for (const k of NON_BLOCK) expect(heldItemShown(k), k).toBe(true);
@@ -191,7 +191,7 @@ describe('the item in hand (every item)', () => {
     expect(heldItemGeometry('stone')).toBe(null);
     expect(heldItemGeometry(null)).toBe(null);
     expect(heldWielded('iron_pick')).toBe(true);
-    expect(heldWielded('flint_dart')).toBe(true);
+    expect(heldWielded('flint_arrow')).toBe(true);
     expect(heldWielded('honeyberries')).toBe(false);
   });
 
@@ -214,7 +214,7 @@ describe('the item in hand (every item)', () => {
     expect(faults).toEqual([]);
   });
 
-  it('the pixels say how it is held: hafted tools and darts by the haft, everything else in the fist', () => {
+  it('the pixels say how it is held: hafted tools and arrows by the haft, everything else in the fist', () => {
     const faults = [];
     for (const k of ITEM_ART_KEYS) {
       const g = /** @type {NonNullable<ReturnType<typeof heldItemGeometry>>} */ (heldItemGeometry(k));
@@ -229,8 +229,6 @@ describe('the item in hand (every item)', () => {
       const type = toolArtOf(k)?.[0];
       if (type === 'shovel') {
         if (Math.abs(Math.abs(g.turn) - Math.PI) > 0.1) faults.push(`${k}: a shovel not turned end over end (${g.turn})`);
-      } else if (DART_KEYS.includes(k)) {
-        if (g.turn < 0.3 || g.turn > 1.1) faults.push(`${k}: a dart turned ${g.turn}`);
       } else if (Math.abs(g.turn) > 0.35 || Math.abs(g.grip[0] - 8) > 0.6) {
         faults.push(`${k}: an upright tool held at ${g.grip}, turned ${g.turn}`);
       }
@@ -240,27 +238,27 @@ describe('the item in hand (every item)', () => {
     expect(heldItemGeometry('iron_pick')?.positions).toEqual(heldItemGeometry('iron_pick')?.positions);
   });
 
-  it('§100 the bow is gripped at its wrapped handle, bottom middle, its limbs and string straight ahead; an arrow fits a grip too', () => {
-    expect(heldWielded('bow')).toBe(true);
-    const bow = /** @type {NonNullable<ReturnType<typeof heldItemGeometry>>} */ (heldItemGeometry('bow'));
-    expect(bow.style).toBe('tool');
-    expect(bow.pixel).toBe(HELD_PIXEL);
-    expect(bow.turn).toBe(0); // the picture is mirror-symmetric: its bulk lies straight above the grip
-    expect(bow.grip[0]).toBe(8);
-    // the hand closes on the cord-and-leather wrap (rows 9–11), not on the string or a limb
-    const px = paintItem('bow');
-    const [u, v] = bow.grip.map(Math.floor);
-    const i = (v * ITEM_ART_SIZE + u) * 4;
-    expect([[0xd8, 0xc3, 0x8c], [0x7a, 0x4a, 0x2a]]).toContainEqual([px[i], px[i + 1], px[i + 2]]);
-    expect(v).toBeGreaterThanOrEqual(9);
-    // the Arrow and the Bow Stave are materials: held in the fist today; the arrow's picture would suit a haft grip as
-    // well (its nock and fletching at the foot), pointing straight ahead
-    expect(heldWielded('arrow')).toBe(false);
-    expect(heldItemGeometry('arrow')?.style).toBe('lump');
-    expect(heldItemGeometry('bow_stave')?.style).toBe('lump');
-    const asTool = heldGrip(paintItem('arrow'), ITEM_ART_SIZE, { wielded: true });
-    expect(asTool.style).toBe('tool');
-    expect(Math.abs(asTool.turn)).toBeLessThan(0.1);
-    expect(Math.abs(asTool.grip[0] - 7.5)).toBeLessThan(0.6);
+  it('§100 each bow is gripped at its wrapped handle, bottom middle, its limbs and string straight ahead; an arrow by its nock', () => {
+    for (const k of ['crude_bow', 'recurve_bow']) {
+      expect(heldWielded(k), k).toBe(true);
+      const bow = /** @type {NonNullable<ReturnType<typeof heldItemGeometry>>} */ (heldItemGeometry(k));
+      expect(bow.style, k).toBe('tool');
+      expect(bow.pixel, k).toBe(HELD_PIXEL);
+      expect(bow.turn, k).toBe(0); // the picture is mirror-symmetric: its bulk lies straight above the grip
+      expect(bow.grip[0], k).toBe(8);
+      // the hand closes on the wrap (rows 9–11), not on the string or a limb
+      const [, v] = bow.grip.map(Math.floor);
+      expect(v, k).toBeGreaterThanOrEqual(9);
+      expect(v, k).toBeLessThanOrEqual(11);
+    }
+    // an arrow is held by its shaft near the nock, pointing straight ahead; the staves and the sapling in the fist
+    for (const k of ARROW_KEYS) {
+      const a = /** @type {NonNullable<ReturnType<typeof heldItemGeometry>>} */ (heldItemGeometry(k));
+      expect(a.style, k).toBe('tool');
+      expect(Math.abs(a.turn), k).toBeLessThan(0.1);
+      expect(Math.abs(a.grip[0] - 7.5), k).toBeLessThan(0.6);
+    }
+    for (const k of ['bow_stave', 'treated_stave', 'sapling', 'spyglass']) expect(heldItemGeometry(k)?.style, k).toBe('lump');
+    expect(heldGrip(paintItem('flint_arrow'), ITEM_ART_SIZE, { wielded: false }).style).toBe('lump');
   });
 });

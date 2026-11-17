@@ -387,16 +387,21 @@ describe('rollDrops (§6.3)', () => {
     expect(rollDrops(B.STONE, HAND, { natural: true }, seq(0))).toEqual([]); // cannot be harvested by hand
   });
 
-  it('leaves by hand give no stick (only the odd nut); an axe lops self and a natural stick', () => {
+  it('leaves by hand give no stick (only the odd nut, §100 and the odd sapling); an axe lops self and a natural stick', () => {
     const hand = sample((r) => rollDrops(B.OAK_LEAVES, HAND, { natural: true }, r), 2000, 3);
     expect(hand.stick).toBeUndefined();
     expect(hand.oak_leaves).toBeUndefined();
     expect(hand.acorns.length / 2000).toBeGreaterThan(0.06);
     expect(hand.acorns.length / 2000).toBeLessThan(0.1);
-    expect(rollDrops(B.BIRCH_LEAVES, HAND, { natural: true }, seq(0))).toEqual([]);
+    expect(hand.sapling.length / 2000).toBeGreaterThan(0.09); // §100: SAPLING_LEAF_P 0.12
+    expect(hand.sapling.length / 2000).toBeLessThan(0.15);
+    expect(rollDrops(B.BIRCH_LEAVES, HAND, { natural: true }, seq(0.5))).toEqual([]);
+    expect(rollDrops(B.BIRCH_LEAVES, HAND, { natural: true }, seq(0))).toEqual([{ k: 'sapling', n: 1 }]);
     expect(rollDrops(B.OAK_LEAVES, tool('stone_axe'), { natural: true }, seq(0.5))).toEqual([{ k: 'oak_leaves', n: 1 }, { k: 'stick', n: 1 }]);
     expect(rollDrops(B.OAK_LEAVES, tool('stone_axe'), { natural: false }, seq(0))).toEqual([{ k: 'oak_leaves', n: 1 }]);
-    expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: true }, seq(0.07))).toEqual([{ k: 'pine_nuts', n: 1 }]);
+    // the nut's roll comes first, then the sapling's
+    expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: true }, seq(0.07, 0.5))).toEqual([{ k: 'pine_nuts', n: 1 }]);
+    expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: true }, seq(0.5, 0.1))).toEqual([{ k: 'sapling', n: 1 }]);
     expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: false }, seq(0))).toEqual([]);
     expect(rollDrops(B.BIRCH_LEAVES, tool('flint_axe'), { natural: true }, seq(0))).toEqual([{ k: 'birch_leaves', n: 1 }, { k: 'stick', n: 1 }]);
   });

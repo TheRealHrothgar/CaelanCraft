@@ -23,7 +23,7 @@ import { normalizeBricksJSON } from './bricks.js';
 import { validatePigsJSON } from './pigs.js';
 import { validateAnimalsJSON } from './animals.js';
 import { validateFaunaJSON } from './populations.js';
-import { WEAR_SLOT_NAMES, canonicalItemKey, getItem, maxDurability, stackSize } from './items.js';
+import { WEAR_SLOT_NAMES, canonicalItemKey, carriedWear, getItem, maxDurability, stackSize } from './items.js';
 import { normalizeFiresJSON, parseCellKey } from './cooking.js';
 import { normalizePartsJSON, validatePartsJSON } from './circuitStore.js';
 import { normalizePick } from './creativePicks.js';
@@ -287,9 +287,11 @@ function checkStack(raw) {
   if (v.d === undefined || v.d === null) return { stack };
   const dmax = maxDurability(k);
   if (dmax === 0) return { stack, note: `durability ignored (${def.name} never wears)` };
-  if (!Number.isInteger(v.d) || v.d < 1 || v.d > dmax) return { reason: `durability is not 1–${dmax}` };
-  stack.d = v.d;
-  return { stack };
+  // §100: an old key's wear is kept under its new name, at most the new item's durability (a Bow is a Crude Bow)
+  const d = k === v.k ? v.d : carriedWear(v.d, k);
+  if (!Number.isInteger(d) || d < 1 || d > dmax) return { reason: `durability is not 1–${dmax}` };
+  stack.d = d;
+  return d === v.d ? { stack } : { stack, note: `durability ${v.d} is ${d} as a ${def.name}` };
 }
 
 /**

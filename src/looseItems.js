@@ -12,7 +12,7 @@
 // one that lands in a lit campfire burns at once; beyond LOOSE_MAX the oldest go; `despawnNear` clears an area (the
 // `despawn` command, from the console or a Rune Block). Its age is saved.
 // The world, the player, the pack and the mobs come in through LooseEnv each step; nothing here touches them directly.
-import { getItem, canonicalItemKey } from './items.js';
+import { getItem, canonicalItemKey, carriedWear } from './items.js';
 
 /** The player's threshold: an item within this distance of the chest point (m) enters the pack. */
 export const PICKUP_RADIUS = 0.6;
@@ -91,48 +91,103 @@ export const SOUND_THUNK = Object.freeze({
 
 /**
  * Throws: launch speed (m/s) and the power a hit deals a mob (the zombie counts hits to 4, a pig has 5 health). Rocks and
- * flint hurt a little; darts and spears more. Anything else — a block, a stick, food — is just chucked a short way.
+ * flint hurt a little; spears more. Anything else — a block, a stick, food, an arrow without its bow — is just chucked a
+ * short way. (§100: the Flint Dart and the Fletched Dart are retired; their keys are Flint Arrows, items.ITEM_ALIASES.)
  */
 export const THROW_ROCK = Object.freeze({ speed: 13, power: 1 });
-export const THROW_DART = Object.freeze({ speed: 21, power: 2 });
 export const THROW_SPEAR = Object.freeze({ speed: 17, power: 4 });
 export const THROW_CHUCK = Object.freeze({ speed: 6, power: 0 });
 /** Drop: let go of an item a step in front of the feet (m/s forward). */
 export const DROP_SPEED = 3;
 /** The items that are thrown as stones. */
 export const STONE_KEYS = Object.freeze(['rock', 'flint', 'obsidian_shard']);
-/** The darts (made by hand: flint, a stick and plant fibre; v0.14: the Fletched Dart has feathers for its flight). */
-export const DART_KEYS = Object.freeze(['flint_dart', 'fletched_dart']);
-/** A dart that hits a mob breaks with this chance (a spear takes 1 wear instead). */
-export const DART_BREAK_P = 0.3;
-/**
- * v0.14 (§76 fauna): the Fletched Dart — feathers steady it, so it leaves the hand faster (it flies flatter and
- * farther), hits harder than the plain dart and survives more hits (FLETCHED_BREAK_P).
- */
-export const THROW_FLETCHED = Object.freeze({ speed: 26, power: 3 });
-export const FLETCHED_BREAK_P = 0.15;
 
-/** The chance that dart (§100: or arrow) `key` breaks on a mob it hits; 0 for anything else. @param {string} key */
-export function dartBreakP(key) {
-  if (key === 'fletched_dart') return FLETCHED_BREAK_P;
-  if (ARROW_KEYS.includes(key)) return ARROW_BREAK_P;
-  return DART_KEYS.includes(key) ? DART_BREAK_P : 0;
+// ---- §100 the bows and the arrows ---------------------------------------------------------------------------------
+
+/** The arrows, in the order of the ages (stone first). Every bow shoots every one of them. */
+export const ARROW_KEYS = Object.freeze(['stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow']);
+/** The order a bow takes its arrow from the pack (Survival): the best head first. */
+export const ARROW_PREFERENCE = Object.freeze([...ARROW_KEYS].reverse());
+/** What a bow shoots in Creative when the hotbar holds no arrow (Creative needs none: it shoots a ghost). */
+export const DEFAULT_ARROW = 'flint_arrow';
+/** A metal head survives a miss this often (stone and flint shatter on rock more often). */
+export const METAL_MISS_KEEP = 0.97;
+
+/**
+ * @typedef {Object} ArrowDef
+ * @property {string} head      'stone', 'flint', 'copper', 'bronze', 'iron', 'steel'
+ * @property {number} power     the power of a hit at full draw
+ * @property {number} hitKeep   the chance it survives a hit on a mob, to be picked up again
+ * @property {number} missKeep  the chance it survives a miss (landing on the ground or against a wall)
+ */
+/**
+ * Every arrow by key: power by its head (stone 2, flint 3, copper 3, bronze 4, iron 5, steel 6) and how likely it is to
+ * be picked up again — a hit breaks a stone head about two times in three and a steel one one time in ten; a miss lies
+ * where it fell, a stone or flint head now and then shattered.
+ * @type {Readonly<Record<string, Readonly<ArrowDef>>>}
+ */
+export const ARROWS = Object.freeze({
+  stone_arrow: Object.freeze({ head: 'stone', power: 2, hitKeep: 0.35, missKeep: 0.85 }),
+  flint_arrow: Object.freeze({ head: 'flint', power: 3, hitKeep: 0.5, missKeep: 0.9 }),
+  copper_arrow: Object.freeze({ head: 'copper', power: 3, hitKeep: 0.7, missKeep: METAL_MISS_KEEP }),
+  bronze_arrow: Object.freeze({ head: 'bronze', power: 4, hitKeep: 0.75, missKeep: METAL_MISS_KEEP }),
+  iron_arrow: Object.freeze({ head: 'iron', power: 5, hitKeep: 0.85, missKeep: METAL_MISS_KEEP }),
+  steel_arrow: Object.freeze({ head: 'steel', power: 6, hitKeep: 0.9, missKeep: METAL_MISS_KEEP }),
+});
+
+/** @param {string|null|undefined} key @returns {Readonly<ArrowDef>|null} the arrow, or null for anything else */
+export function arrowOf(key) {
+  return typeof key === 'string' && Object.hasOwn(ARROWS, key) ? ARROWS[key] : null;
+}
+
+/** The chance that projectile `key` breaks on a mob it hits: an arrow 1 − hitKeep; 0 for anything else. @param {string} key */
+export function hitBreakP(key) {
+  const a = arrowOf(key);
+  return a ? Math.round((1 - a.hitKeep) * 1000) / 1000 : 0;
+}
+
+/** The chance that projectile `key` breaks when it misses and lands: an arrow 1 − missKeep; 0 otherwise. @param {string} key */
+export function missBreakP(key) {
+  const a = arrowOf(key);
+  return a ? Math.round((1 - a.missKeep) * 1000) / 1000 : 0;
 }
 
 /**
- * §100 the bow: an Arrow loosed at full draw flies at THROW_ARROW.speed × DRAW_SPEED_FULL and hits with its power —
- * between the dart's and the spear's — on a flatter arc (ARROW_GRAVITY of ITEM_GRAVITY while it is a projectile). An
- * arrow that hits a mob breaks with ARROW_BREAK_P; one that misses lies where it fell, to be picked up again. Thrown by
- * hand (G) an arrow is only chucked.
+ * The arrow a bow takes: the first of ARROW_PREFERENCE (steel, iron, bronze, copper, flint, stone) of which `count` has
+ * any, or null when there is none. @param {(key: string) => number} count @returns {string|null}
  */
-export const THROW_ARROW = Object.freeze({ speed: 32, power: 3 });
-export const ARROW_GRAVITY = 0.55;
-export const ARROW_KEYS = Object.freeze(['arrow']);
-export const ARROW_BREAK_P = 0.25;
+export function pickArrow(count) {
+  for (const k of ARROW_PREFERENCE) if (Number(count(k)) > 0) return k;
+  return null;
+}
+
 /**
- * §100 the draw: Place held with a spear, a dart or a bow in hand draws back; released, it throws (or shoots) with the
- * speed and power of the draw: DRAW_FULL_S to full. A tap gives DRAW_SPEED_MIN of the speed and DRAW_POWER_MIN of the
- * power; a full draw DRAW_SPEED_FULL and DRAW_POWER_FULL (G throws at once at throwOf's own, 1 and 1).
+ * @typedef {Object} BowDef
+ * @property {number} drawS      seconds to full draw
+ * @property {number} speed      the arrow's speed at full draw (m/s)
+ * @property {number} spreadDeg  the half-angle of the random cone an arrow leaves in (degrees)
+ * @property {number} gravity    the share of ITEM_GRAVITY its arrow falls by while a projectile
+ */
+/**
+ * The bows (ToolDef.type 'bow'): the Crude Bow is a green sapling, quick to draw and wild; the Recurve Bow a fire-hardened
+ * stave backed with sinew, a little slower to draw but half as fast again, flatter and true.
+ * @type {Readonly<Record<string, Readonly<BowDef>>>}
+ */
+export const BOWS = Object.freeze({
+  crude_bow: Object.freeze({ drawS: 1.0, speed: 28, spreadDeg: 3, gravity: 0.6 }),
+  recurve_bow: Object.freeze({ drawS: 1.2, speed: 42, spreadDeg: 0.8, gravity: 0.5 }),
+});
+
+/** @param {string|null|undefined} key @returns {Readonly<BowDef>|null} the bow, or null for anything else */
+export function bowOf(key) {
+  return typeof key === 'string' && Object.hasOwn(BOWS, key) ? BOWS[key] : null;
+}
+
+/**
+ * §100 the draw: Place held with a spear or a bow in hand draws back; released, it throws (or shoots) with the speed and
+ * power of the draw: DRAW_FULL_S to full for a spear, the bow's own `drawS` for a bow. A tap gives DRAW_SPEED_MIN of the
+ * speed and DRAW_POWER_MIN of the power; a full draw DRAW_SPEED_FULL and DRAW_POWER_FULL (G throws at once at throwOf's
+ * own, 1 and 1). A bow's arrow at full draw flies at the bow's `speed` exactly (the same shares, scaled to it).
  */
 export const DRAW_FULL_S = 1;
 export const DRAW_SPEED_MIN = 0.4;
@@ -142,13 +197,17 @@ export const DRAW_POWER_FULL = 1;
 /** §100: how far the view closes in at full draw (a share of the field of view: the steadying of the aim). */
 export const DRAW_ZOOM = 0.1;
 
-/** The draw after `heldS` seconds of Place: 0..1. @param {number} heldS */
-export function drawFraction(heldS) {
-  return Number.isFinite(heldS) && heldS > 0 ? Math.min(1, heldS / DRAW_FULL_S) : 0;
+/**
+ * The draw after `heldS` seconds of Place: 0..1. @param {number} heldS @param {number} [fullS] seconds to full draw
+ * (DRAW_FULL_S; a bow's `drawS`)
+ */
+export function drawFraction(heldS, fullS = DRAW_FULL_S) {
+  const full = Number.isFinite(fullS) && fullS > 0 ? fullS : DRAW_FULL_S;
+  return Number.isFinite(heldS) && heldS > 0 ? Math.min(1, heldS / full) : 0;
 }
 
 /**
- * The throw of a draw: `base` (throwOf, THROW_ARROW) scaled by the draw `f` (0..1).
+ * The throw of a draw: `base` (throwOf, a spear's) scaled by the draw `f` (0..1).
  * @param {{ speed: number, power: number }} base @param {number} f @returns {{ speed: number, power: number }}
  */
 export function drawnThrow(base, f) {
@@ -159,17 +218,69 @@ export function drawnThrow(base, f) {
 }
 
 /**
- * §100: what a Place held with `key` in hand draws, or null: a spear or a dart draws itself back to throw it (`shoots`
- * its own key); a bow (ToolDef.type 'bow') draws an Arrow (`shoots` 'arrow', `bow` true). @param {string|null} key
- * @returns {{ shoots: string, base: { speed: number, power: number }, bow: boolean }|null}
+ * A bow's shot of `arrowKey` at draw `f`: the speed (the bow's at full draw, the draw's shares of it below), the power
+ * (the arrow's at full draw), the gravity share and the spread (radians, the cone's half-angle). An unknown bow shoots as
+ * the Crude Bow, an unknown arrow as a Flint Arrow.
+ * @param {string} bowKey @param {string|null} arrowKey @param {number} f
+ * @returns {{ speed: number, power: number, gravity: number, spread: number }}
+ */
+export function bowShot(bowKey, arrowKey, f) {
+  const bow = bowOf(bowKey) ?? BOWS.crude_bow;
+  const arrow = arrowOf(arrowKey) ?? ARROWS[DEFAULT_ARROW];
+  const t = drawnThrow({ speed: bow.speed / DRAW_SPEED_FULL, power: arrow.power }, f);
+  return { speed: t.speed, power: t.power, gravity: bow.gravity, spread: (bow.spreadDeg * Math.PI) / 180 };
+}
+
+/**
+ * A direction drawn uniformly over the cap of directions within `spread` radians of (dx, dy, dz): the bow's random cone.
+ * spread ≤ 0 gives the aim itself. @param {number} dx @param {number} dy @param {number} dz @param {number} spread
+ * @param {() => number} random [0, 1) @returns {[number, number, number]} a unit vector
+ */
+export function spreadDir(dx, dy, dz, spread, random) {
+  const len = Math.hypot(dx, dy, dz) || 1;
+  const ax = dx / len;
+  const ay = dy / len;
+  const az = dz / len;
+  if (!(spread > 0)) return [ax, ay, az];
+  // uniform over the spherical cap: cos θ uniform in [cos spread, 1], the turn about the aim uniform
+  const cosT = 1 - random() * (1 - Math.cos(spread));
+  const sinT = Math.sqrt(Math.max(0, 1 - cosT * cosT));
+  const phi = random() * Math.PI * 2;
+  // two unit vectors across the aim
+  const [ux, uy, uz] = Math.abs(ay) < 0.9 ? cross(ax, ay, az, 0, 1, 0) : cross(ax, ay, az, 1, 0, 0);
+  const ul = Math.hypot(ux, uy, uz) || 1;
+  const e1x = ux / ul;
+  const e1y = uy / ul;
+  const e1z = uz / ul;
+  const [e2x, e2y, e2z] = cross(ax, ay, az, e1x, e1y, e1z);
+  const c = Math.cos(phi) * sinT;
+  const sn = Math.sin(phi) * sinT;
+  return [ax * cosT + e1x * c + e2x * sn, ay * cosT + e1y * c + e2y * sn, az * cosT + e1z * c + e2z * sn];
+}
+
+/** @returns {[number, number, number]} a × b */
+function cross(ax, ay, az, bx, by, bz) {
+  return [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx];
+}
+
+/**
+ * @typedef {Object} DrawDef  what a Place held with an item in hand draws
+ * @property {boolean} bow       a bow: it shoots an arrow from the pack (or Creative's hotbar); else it throws itself
+ * @property {string|null} shoots  what a throw throws (its own key); null for a bow (the arrow is chosen at the release)
+ * @property {{ speed: number, power: number }|null} base   a throw's (drawnThrow); null for a bow (bowShot)
+ * @property {number} fullS      seconds to full draw
+ */
+
+/**
+ * §100: what a Place held with `key` in hand draws, or null: a spear draws itself back to throw it; a bow (ToolDef.type
+ * 'bow') draws an arrow. An arrow in hand draws nothing: it needs a bow. @param {string|null} key @returns {DrawDef|null}
  */
 export function drawOf(key) {
   if (!key) return null;
-  if (DART_KEYS.includes(key)) return { shoots: key, base: throwOf(key), bow: false };
   const def = getItem(key);
   const type = def && def.tool ? def.tool.type : null;
-  if (type === 'spear') return { shoots: key, base: THROW_SPEAR, bow: false };
-  if (type === 'bow') return { shoots: 'arrow', base: THROW_ARROW, bow: true };
+  if (type === 'spear') return { bow: false, shoots: key, base: THROW_SPEAR, fullS: DRAW_FULL_S };
+  if (type === 'bow') return { bow: true, shoots: null, base: null, fullS: (bowOf(key) ?? BOWS.crude_bow).drawS };
   return null;
 }
 
@@ -178,8 +289,6 @@ export function drawOf(key) {
  */
 export function throwOf(key) {
   if (STONE_KEYS.includes(key)) return THROW_ROCK;
-  if (key === 'fletched_dart') return THROW_FLETCHED;
-  if (DART_KEYS.includes(key)) return THROW_DART;
   const def = getItem(key);
   if (def && def.tool && def.tool.type === 'spear') return THROW_SPEAR;
   return THROW_CHUCK;
@@ -200,7 +309,7 @@ export function throwOf(key) {
  * @property {number} t             seconds in this mode
  * @property {number} hold          seconds before it may be collected again
  * @property {number} power         a projectile's power (0: it hurts nothing); spent on its first hit
- * @property {number} [grav]        the share (§100) of ITEM_GRAVITY it falls by while a projectile (1; an arrow less)
+ * @property {number} [grav]        the share (§100) of ITEM_GRAVITY it falls by while a projectile (1; a bow's arrow less)
  * @property {boolean} ghost        Creative: the animation only
  * @property {number} spin          a turn (radians) for the drawing
  * @property {boolean} away        the player has been away from it since it was thrown or dropped (only then is it
@@ -221,6 +330,8 @@ export function throwOf(key) {
  * @property {(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => (*|null)} [hitMob]  the first mob
  *   the segment enters, or null
  * @property {(item: LooseItem, mob: *) => (boolean|void)} [onHit]    a projectile hit `mob`; true: the item breaks
+ * @property {(item: LooseItem, why: 'hit'|'miss') => void} [onBreak] a real arrow broke (§100) — on the mob it hit (a roll of
+ *   hitBreakP) or where it landed after a miss (missBreakP); it is gone
  * @property {(item: LooseItem, speed: number) => void} [onLand]      it hit the ground or a wall at this speed
  * @property {(x: number, y: number, z: number) => boolean} [burning]  the point is in a lit fire: a real item there burns
  * @property {(item: LooseItem, why: 'time'|'fire'|'cap'|'clear') => void} [onDespawn]  a real item despawned
@@ -478,6 +589,11 @@ export class LooseItems {
           const broke = env.onHit ? env.onHit(it, mob) : false;
           it.power = 0;
           if (broke) return false;
+          // §100: a real arrow survives a hit with its head's hitKeep
+          if (!it.ghost && hitBreakP(it.s.k) > 0 && this._random() < hitBreakP(it.s.k)) {
+            if (env.onBreak) env.onBreak(it, 'hit');
+            return false;
+          }
           it.vx *= -0.15;
           it.vz *= -0.15;
           it.vy = Math.max(it.vy * 0.2, 1);
@@ -488,6 +604,7 @@ export class LooseItems {
       const nx = it.x + it.vx * h;
       if (env.solid(nx + Math.sign(it.vx) * R, it.y, it.z)) {
         if (env.onLand && Math.abs(it.vx) > LAND_SPEED) env.onLand(it, Math.abs(it.vx));
+        if (this._missBreaks(it, env)) return false;
         it.vx = -it.vx * BOUNCE;
         it.power = 0;
       } else {
@@ -496,6 +613,7 @@ export class LooseItems {
       const nz = it.z + it.vz * h;
       if (env.solid(it.x, it.y, nz + Math.sign(it.vz) * R)) {
         if (env.onLand && Math.abs(it.vz) > LAND_SPEED) env.onLand(it, Math.abs(it.vz));
+        if (this._missBreaks(it, env)) return false;
         it.vz = -it.vz * BOUNCE;
         it.power = 0;
       } else {
@@ -505,6 +623,7 @@ export class LooseItems {
       if (it.vy <= 0 && env.solid(it.x, ny - R, it.z)) {
         const hitSpeed = -it.vy;
         it.y = Math.floor(ny - R) + 1 + R;
+        if (this._missBreaks(it, env)) return false;
         it.power = 0;
         if (env.onLand) env.onLand(it, hitSpeed);
         if (hitSpeed > LAND_SPEED) {
@@ -523,6 +642,18 @@ export class LooseItems {
         it.y = ny;
       }
     }
+    return true;
+  }
+
+  /**
+   * §100: a real arrow still a projectile has missed and struck the ground or a wall: it survives with its head's
+   * missKeep (one roll, then it is spent). @returns {boolean} it broke (onBreak was told)
+   */
+  _missBreaks(it, env) {
+    if (!(it.power > 0) || it.ghost) return false;
+    const p = missBreakP(it.s.k);
+    if (!(p > 0) || !(this._random() < p)) return false;
+    if (env.onBreak) env.onBreak(it, 'miss');
     return true;
   }
 
@@ -578,7 +709,7 @@ export class LooseItems {
       if (!Number.isFinite(o.x) || !Number.isFinite(o.y) || !Number.isFinite(o.z)) continue;
       /** @type {ItemStack} */
       const s = { k: o.k, n: o.n };
-      if (Number.isInteger(o.d) && o.d >= 0) s.d = o.d;
+      if (Number.isInteger(o.d) && o.d >= 0) s.d = o.k === raw.k ? o.d : carriedWear(o.d, o.k); // §100: a Bow's wear, at most a Crude Bow's
       const age = Number.isFinite(o.a) && o.a > 0 ? Math.min(o.a, LOOSE_DESPAWN_S) : 0;
       const it = this._add(s, blockOf ? blockOf(o.k) : -1, o.x, o.y, o.z, 0, 0, 0, 'fly', { hold: 0, age });
       it.t = 0;

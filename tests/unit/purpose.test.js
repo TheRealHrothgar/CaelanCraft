@@ -95,20 +95,27 @@ describe('PURPOSE: a line for everything in the build tree', () => {
     }
   });
 
-  it('§100 the bow: the stave is strung with cord at the Work Stump; the bow shoots the arrows; the stump\'s line names it', () => {
-    expect(PURPOSE.bow_stave).toMatch(/cord at the Work Stump.*Bow/);
-    const bow = getRecipe('bow');
-    expect(bow.station).toBe('stump');
-    expect(bow.inputs.map((i) => i.k)).toEqual(['bow_stave', 'cord']);
-    expect(PURPOSE.bow).toMatch(/^Shoots arrows/);
-    expect(PURPOSE.bow).toMatch(/Hold to draw, let go to shoot/);
-    expect(PURPOSE.arrow).toMatch(/^Shot from a Bow/);
-    expect(getRecipe('arrow').outputs[0].k).toBe('arrow');
+  it('§100 the bows: each line names where its part goes next; the arrows say what their head is worth; the stump\'s line names the bow', () => {
+    expect(PURPOSE.sapling).toMatch(/cord, a Crude Bow/);
+    expect(getRecipe('crude_bow').inputs.map((i) => i.k)).toEqual(['sapling', 'cord']);
+    expect(PURPOSE.bow_stave).toMatch(/Kiln.*Treated Stave/);
+    expect(getRecipe('treated_stave')).toMatchObject({ station: 'kiln', inputs: [{ k: 'bow_stave', n: 1 }, { tag: 'fuel', n: 1 }] });
+    expect(PURPOSE.treated_stave).toMatch(/rawhide at the Workbench: a Recurve Bow/);
+    expect(getRecipe('recurve_bow')).toMatchObject({ station: 'workbench', inputs: [{ k: 'treated_stave', n: 1 }, { k: 'rawhide', n: 2 }, { k: 'cord', n: 1 }] });
+    expect(PURPOSE.crude_bow).toMatch(/Hold to draw, let go to shoot/);
+    expect(PURPOSE.recurve_bow).toMatch(/faster, farther and truer than the Crude Bow/);
+    for (const k of ['stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow']) expect(purposeOf(k), k).not.toBe('');
+    expect(PURPOSE.flint_arrow).toMatch(/^Shot from a bow/);
     expect(PURPOSE.work_stump).toMatch(/the bow/);
-    for (const id of ['bow_stave', 'bow']) expect(getRecipe(id).station, id).toBe('stump');
+    expect(getRecipe('crude_bow').station).toBe('stump');
+    expect(PURPOSE.workbench).toMatch(/recurve bows, spyglasses/);
+    // §103
+    expect(PURPOSE.spyglass).toMatch(/hold Z/);
     // the Making panel shows them with their recipes
     const views = new Map(listRecipes(new Pack(), {}, {}).map((v) => [v.id, v]));
-    for (const k of ['bow', 'bow_stave', 'arrow']) expect(views.get(k)?.purpose, k).toBe(purposeOf(k));
+    for (const k of ['crude_bow', 'bow_stave', 'treated_stave', 'recurve_bow', 'flint_arrow', 'steel_arrow', 'spyglass']) {
+      expect(views.get(k)?.purpose, k).toBe(purposeOf(k));
+    }
   });
 
   it('coal is the gate to the metal ages: smelting and casting copper and bronze burn coal, never charcoal', () => {

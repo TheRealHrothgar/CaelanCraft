@@ -49,11 +49,13 @@ import {
   COVER_NOTICE, SCENT_UPWIND, SCENT_DOWNWIND, SUSPECT_WATCH, SUSPECT_CALM, SUSPECT_SETTLE,
 } from '../../src/animals.js';
 import {
-  throwOf, STONE_KEYS, DART_KEYS, DART_BREAK_P, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS, THROW_ROCK, THROW_DART, THROW_SPEAR,
-  THROW_CHUCK, THROW_FLETCHED, FLETCHED_BREAK_P, dartBreakP,
-  // §100: the draw and the bow
-  THROW_ARROW, ARROW_GRAVITY, ARROW_BREAK_P, DRAW_FULL_S, DRAW_SPEED_MIN, DRAW_SPEED_FULL, DRAW_POWER_MIN, DRAW_POWER_FULL, drawnThrow,
+  throwOf, STONE_KEYS, LOOSE_DESPAWN_S, LOOSE_BLINK_S, COLLECT_RADIUS, THROW_ROCK, THROW_SPEAR, THROW_CHUCK,
+  // §100: the draw, the bows and the arrows
+  DRAW_FULL_S, DRAW_SPEED_MIN, DRAW_SPEED_FULL, DRAW_POWER_MIN, DRAW_POWER_FULL, drawnThrow, ARROW_KEYS, ARROWS, BOWS, hitBreakP,
+  missBreakP,
 } from '../../src/looseItems.js';
+import { SAPLING_LEAF_P } from '../../src/harvest.js';
+import { ZOOM_DEFAULT } from '../../src/spyglass.js';
 import { Pack, KEEP_ON_DEATH, slotClick } from '../../src/inventory.js';
 import { BODY_MAX_CELLS, SPILL_STEP_S } from '../../src/fluids.js';
 import {
@@ -238,7 +240,7 @@ describe('handbook: the chapters (§14.1, CONTRACTS §73)', () => {
       expect(list, id).toEqual(list.map((_, i) => i + 1));
     }
     // even splits: Hands (44 recipes with DESIGN-circuits §8.2's six and the dart) in five pages of 9, 9, 9, 9, 8
-    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([9, 9, 9, 9, 9]); // §100 + §101: 45 with the Arrows and the Pennant; // §94: 43, the flint tools at the stump; // 45 with the Snare (§69); 47 with Healwort tea and the Fletched Dart (§76); 48 with the Grass Bed (§85)
+    expect(tableById('recipes-hand').parts.map((p) => p.rows.length)).toEqual([9, 9, 9, 9, 8]); // §100 (the arrows of every age): 44, − the darts and the Arrow, + the Stone and Flint Arrows; // §100 + §101: 45 with the Arrows and the Pennant; // §94: 43, the flint tools at the stump; // 45 with the Snare (§69); 47 with Healwort tea and the Fletched Dart (§76); 48 with the Grass Bed (§85)
   });
 
   it('teaches the real survival ideas the design asks for', () => {
@@ -302,7 +304,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([45, 26, 24, 5, 15, 5, 8]); // §101: + the Pennant at hand; §100: + Arrows at hand, the Bow Stave and the Bow at the stump; // §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 26, 27, 5, 17, 7, 8]); // §100 + §103: the bows, the arrows of every age, the Spyglass; // §101: + the Pennant at hand; §100: + Arrows at hand, the Bow Stave and the Bow at the stump; // §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
@@ -928,7 +930,7 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect([VIEW_HALF_ANGLE, BEHIND_NOTICE]).toEqual([(2 * Math.PI) / 3, 0.5]);
     // from behind, every animal that runs comes within arm's reach: the deer too
     for (const k of runners) expect(SPECIES[k].notice * SNEAK_NOTICE * BEHIND_NOTICE, k).toBeLessThan(REACH);
-    expect(text).toContain('sneaking brings you within reach only from straight behind, so stalk one, throw a spear or a dart, or set a snare');
+    expect(text).toContain('sneaking brings you within reach only from straight behind, so stalk one, throw a spear, shoot it from afar with a bow, or set a snare');
     expect(text).toContain(`an animal notices you at only ${fmtPct(SNEAK_NOTICE)} of its usual distance`);
     expect(text).toContain(`it spots you from ${fmtPct(SPRINT_NOTICE - 1)} farther off`);
     // sneaking brings every animal but the horse and (v0.14, §76 fauna) the deer within reach; the deer is the wariest;
@@ -979,7 +981,7 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain('A moo, a baa, a neigh or a woof means a herd is near');
     for (const k of PROSE_KINDS) expect(text.toLowerCase()).toContain(`a ${SPECIES[k].voice}`);
     expect(text).toContain(`for at least ${HIT_FLEE_S} seconds`);
-    expect(text).toContain(`a rock counts ${THROW_ROCK.power}, a Flint Dart ${THROW_DART.power} and a Flint Spear ${THROW_SPEAR.power}.`);
+    expect(text).toContain(`a rock counts ${THROW_ROCK.power} and a Flint Spear ${THROW_SPEAR.power}. Farther off, a bow is the weapon (next pages).`);
     // milk (§72)
     const milk = ITEMS.pot_milk.food;
     expect(milk).toMatchObject({ satiation: 12, hydration: 20, sick: 0, returns: 'clay_pot' });
@@ -1017,33 +1019,26 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
   it('dropping and throwing (§60, §63): the throws table is throwOf; things on the ground come to you, blink and go', () => {
     const t = tableById('throws');
     expect(t.source).toBe('loose');
-    expect(t.keys).toEqual(['stone', 'dart', 'fletched_dart', 'spear', 'chuck']); // v0.14 (§76 fauna): a row per dart
+    expect(t.keys).toEqual(['stone', 'spear', 'chuck']); // §100: the darts are retired (Flint Arrows now)
     const spears = ITEM_KEYS.filter((k) => ITEMS[k].tool?.type === 'spear');
     expect(spears.length).toBeGreaterThan(0);
     const names = (keys) => keys.map((k) => itemName(k)).join(', ');
     expect(rowOf(t, 'stone').slice(0, 3)).toEqual([names(STONE_KEYS), `${THROW_ROCK.speed} m/s`, String(THROW_ROCK.power)]);
-    expect(DART_KEYS).toEqual(['flint_dart', 'fletched_dart']);
-    expect(rowOf(t, 'dart')).toEqual(['Flint Dart', `${THROW_DART.speed} m/s`, String(THROW_DART.power), `breaks on ${fmtPct(DART_BREAK_P)} of its hits`]);
-    expect(rowOf(t, 'fletched_dart')).toEqual(['Fletched Dart', `${THROW_FLETCHED.speed} m/s`, String(THROW_FLETCHED.power), `breaks on ${fmtPct(FLETCHED_BREAK_P)} of its hits`]);
-    expect([dartBreakP('flint_dart'), dartBreakP('fletched_dart'), dartBreakP('rock')]).toEqual([DART_BREAK_P, FLETCHED_BREAK_P, 0]);
     expect(rowOf(t, 'spear').slice(0, 3)).toEqual([names(spears), `${THROW_SPEAR.speed} m/s`, String(THROW_SPEAR.power)]);
     expect(rowOf(t, 'chuck').slice(0, 3)).toEqual(['Anything else', `${THROW_CHUCK.speed} m/s`, String(THROW_CHUCK.power)]);
     for (const k of STONE_KEYS) expect(throwOf(k)).toBe(THROW_ROCK);
-    expect([throwOf('flint_dart'), throwOf('fletched_dart')]).toEqual([THROW_DART, THROW_FLETCHED]);
-    expect(THROW_FLETCHED.speed > THROW_DART.speed && THROW_FLETCHED.power > THROW_DART.power && FLETCHED_BREAK_P < DART_BREAK_P).toBe(true);
     for (const k of spears) expect(throwOf(k)).toBe(THROW_SPEAR);
     expect(throwOf('stick')).toBe(THROW_CHUCK);
-    expect(t.rows.map((r) => r.slice(0, 3))).toEqual([['Rock, Flint, Obsidian Shard', '13 m/s', '1'], ['Flint Dart', '21 m/s', '2'],
-      ['Fletched Dart', '26 m/s', '3'], ['Flint Spear', '17 m/s', '4'], ['Anything else', '6 m/s', '0']]);
+    for (const k of ARROW_KEYS) expect(throwOf(k), k).toBe(THROW_CHUCK); // by hand an arrow is "anything else"
+    expect(t.rows.map((r) => r.slice(0, 3))).toEqual([['Rock, Flint, Obsidian Shard', '13 m/s', '1'], ['Flint Spear', '17 m/s', '4'],
+      ['Anything else', '6 m/s', '0']]);
     expect(text).toContain(`Walk within ${fmtNum(COLLECT_RADIUS)} cells of something lying loose and it comes to you`);
     expect(text).toContain(`After ${fmtDurationLong(LOOSE_DESPAWN_S)} on the ground a thing is gone; it blinks for its last ${LOOSE_BLINK_S} seconds to warn you.`);
     expect(text).toContain('After 5 minutes on the ground');
     expect(text).toContain('A burning campfire burns up whatever lands in it.');
     expect(text).toContain('It pops out, flies to you, and is yours when it reaches you.');
-    // the dart's recipe, in words
-    const dart = RECIPES.find((r) => r.id === 'flint_dart');
-    expect(dart.inputs.map((i) => [i.k, i.n])).toEqual([['flint', 1], ['stick', 1], ['cord', 1]]); // §94: bound with cord
-    expect(text).toContain(`One Flint, one Stick and one Cord make ${numWord(dart.outputs[0].n)} Flint Darts at hand, with a Hammerstone.`);
+    expect(text).toContain('Hold RMB with a spear to draw it back and throw it harder; a bow shoots its arrows the same way (see Animals).');
+    expect(text).not.toMatch(/Flint Darts?|Fletched Darts?|or a dart/); // the darts are gone from the guide
   });
 
   it('the controls chapter has Q and G, the riding keys, and R on animals and snares before everything else', () => {
@@ -1112,7 +1107,7 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     // game
     expect(text).toContain(`Deer keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}.`);
     expect(SPECIES.deer.notice).toBe(Math.max(...ANIMAL_KINDS.filter((k) => poolOf(k) !== 'fish' && !SPECIES[k].predator).map((k) => SPECIES[k].notice))); // "the wariest animal there is"
-    expect(text).toContain('a Fletched Dart flies faster, hits harder and breaks less often than a Flint Dart.');
+    expect(text).toContain('Birds give meat and Feathers. Every arrow takes a feather for its flight.');
     expect(text).toContain('Only a spear catches one: thrust with it, or hold RMB to throw it.');
     // §100: fish by the size of their water; stillness, cover and the wind
     expect(text).toContain(`one for about every ${FISH_CELLS} cells of water, so a small pond has one at most`);
@@ -1417,85 +1412,107 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
   });
 });
 
-describe('handbook: holding Place to throw, and the bow (CONTRACTS §100)', () => {
+describe('handbook: holding Place to throw, the bows and the arrows (CONTRACTS §100), the Spyglass (§103)', () => {
   const text = allProse();
   const animals = CHAPTERS.find((c) => c.id === 'animals');
   /** The page of `chapter` whose heading is `title` (marks removed). */
   const pageTitled = (chapter, title) => chapter.pages.find((pg) => pg.some((b) => b.kind === 'h' && plainText(b.text) === title));
   const rec = (id) => RECIPES.find((r) => r.id === id);
 
-  it('three pages after the hunting tables: "Hold RMB to throw", "The bow", "Arrows and wear"', () => {
+  it('four pages after the hunting tables: "Hold RMB to throw", "The bows", "Arrows", "Arrows and wear"', () => {
     const titles = animals.pages.map((pg) => pg.find((b) => b.kind === 'h')).map((b) => (b ? plainText(b.text) : null));
     const blows = animals.pages.findIndex((pg) => pg.some((b) => b.kind === 'table' && b.id === 'blows-animals'));
-    expect(titles.slice(blows + 1, blows + 4)).toEqual(['Hold RMB to throw', 'The bow', 'Arrows and wear']);
+    expect(titles.slice(blows + 1, blows + 5)).toEqual(['Hold RMB to throw', 'The bows', 'Arrows', 'Arrows and wear']);
     expect(pageTitled(animals, 'Hold RMB to throw')[0]).toEqual({ kind: 'h', text: 'Hold [RMB] to throw' }); // a key cap
+    expect(pageTitled(animals, 'The bows').some((b) => b.kind === 'table' && b.id === 'bows')).toBe(true);
+    expect(pageTitled(animals, 'Arrows').some((b) => b.kind === 'table' && b.id === 'arrows')).toBe(true);
   });
 
-  it('hold Place to throw: draw back, let go; harder the longer, full in about a second; a tap lobs; G still throws at once', () => {
+  it('hold Place to throw a spear: draw back, let go; harder the longer, full in about a second; a tap lobs; G still throws at once', () => {
     expect(DRAW_FULL_S).toBe(1);
-    expect(text).toContain('With a spear or a dart in hand, hold RMB (the Place button on a tablet) to draw it back, and let go to throw. The longer you hold, the harder it flies, up to a full draw in about a second.');
+    expect(text).toContain('With a spear in hand, hold RMB (the Place button on a tablet) to draw it back, and let go to throw. The longer you hold, the harder it flies, up to a full draw in about a second.');
     expect(text).toContain(`A quick tap only lobs it, at ${fmtPct(DRAW_SPEED_MIN)} of the speed and ${fmtPct(DRAW_POWER_MIN)} of the power.`);
     expect(DRAW_POWER_FULL).toBe(1);
     expect(text).toContain(`A full draw gives it all its power and throws it ${fmtPct(DRAW_SPEED_FULL - 1)} faster than G does.`);
     expect([fmtPct(DRAW_SPEED_MIN), fmtPct(DRAW_POWER_MIN), fmtPct(DRAW_SPEED_FULL - 1)]).toEqual(['40 %', '40 %', '15 %']);
-    // what the words say is what drawnThrow does: a tap at the minimum, a full draw a touch faster than G at G's power
-    for (const k of ['flint_dart', 'fletched_dart', 'flint_spear']) {
-      const g = throwOf(k);
-      expect(drawnThrow(g, 0).speed, k).toBeCloseTo(g.speed * DRAW_SPEED_MIN, 2);
-      expect(drawnThrow(g, 1).speed, k).toBeCloseTo(g.speed * DRAW_SPEED_FULL, 2);
-      expect(drawnThrow(g, 1).power, k).toBe(g.power);
-    }
+    const g = throwOf('flint_spear');
+    expect(drawnThrow(g, 0).speed).toBeCloseTo(g.speed * DRAW_SPEED_MIN, 2);
+    expect(drawnThrow(g, 1).speed).toBeCloseTo(g.speed * DRAW_SPEED_FULL, 2);
+    expect(drawnThrow(g, 1).power).toBe(g.power);
     expect(text).toContain('G still throws at once, with no draw: use it when an animal bolts and there is no time.');
     // the controls say it too
     const hands = tableById('keys-hands');
-    expect(hands.rows.find((r) => r[0] === 'Hold RMB')[1]).toBe('eat, drink a pot, bandage; wear clothes; draw a bow, a spear or a dart');
-    expect(text).toContain('Hold RMB with a spear or a dart to draw it back and throw it harder; a bow shoots its arrows the same way (see Animals).');
+    expect(hands.rows.find((r) => r[0] === 'Hold RMB')[1]).toBe('eat, drink a pot, bandage; wear clothes; draw a bow or a spear; look through a Spyglass');
   });
 
-  it('the bow: made at the Work Stump from a stave and cord with a knife; arrows at hand, four at a time; a full draw\'s speed and power', () => {
+  it('the bows: the Crude Bow a sapling strung with cord at the stump; the Recurve Bow a split, hardened stave backed with rawhide', () => {
+    const crude = rec('crude_bow');
     const stave = rec('bow_stave');
-    const bow = rec('bow');
-    const arrow = rec('arrow');
-    expect([stave.station, bow.station, arrow.station]).toEqual(['stump', 'stump', 'hand']);
-    expect(stave.tools).toEqual(bow.tools); // one tool named for both steps
-    expect(text).toContain(`A Bow shoots arrows farther and faster than anything you can throw. Make it at the Work Stump with a Flint Knife: shave ${stave.inputs[0].n} Sticks into a Bow Stave, then string it with ${bow.inputs[1].n} Cord.`);
-    expect(stave.inputs).toEqual([{ k: 'stick', n: 2 }]);
-    expect(bow.inputs).toEqual([{ k: 'bow_stave', n: 1 }, { k: 'cord', n: 2 }]);
-    expect(text).toContain(`Arrows are made at hand, so anywhere: one Stick, one Flint and one Feather make ${numWord(arrow.outputs[0].n)} Arrows, with a Hammerstone to knap the points.`);
-    expect(arrow.inputs.map((i) => [i.k, i.n])).toEqual([['stick', 1], ['flint', 1], ['feather', 1]]);
-    // a full draw: THROW_ARROW at the full draw, faster than any throw at its own full draw, flatter, its power between
-    // a Flint Dart's and a Flint Spear's
-    const full = drawnThrow(THROW_ARROW, 1);
-    expect(full).toEqual({ speed: 36.8, power: 3 });
-    expect(text).toContain(`With the bow in hand, hold RMB to draw and let go to shoot. Each shot takes an Arrow from your pack: without one the bow will not draw. The draw is full in about a second, and a full draw sends the arrow at ${fmtNum(full.speed)} m/s.`);
-    for (const k of [...STONE_KEYS, ...DART_KEYS, 'flint_spear']) expect(full.speed, k).toBeGreaterThan(drawnThrow(throwOf(k), 1).speed);
-    expect(ARROW_GRAVITY).toBeLessThan(1);
-    expect(text).toContain(`It drops less on the way than a thrown thing does and strikes with a power of ${full.power}, between a Flint Dart's and a Flint Spear's.`);
-    expect(THROW_DART.power).toBeLessThan(full.power);
-    expect(full.power).toBeLessThan(THROW_SPEAR.power);
+    const treated = rec('treated_stave');
+    const recurve = rec('recurve_bow');
+    expect(crude.inputs).toEqual([{ k: 'sapling', n: 1 }, { k: 'cord', n: 2 }]);
+    expect(SAPLING_LEAF_P).toBe(0.12);
+    expect(text).toContain('A bow shoots arrows farther and faster than anything you can throw. The Crude Bow is a Sapling strung with 2 Cord at the Work Stump, with a Flint Knife. Break leaves by hand for saplings: about one in eight gives one, and a hazel thicket picked with R now and then.');
+    expect([stave.outputs[0].n, treated.seconds]).toEqual([2, 30]);
+    expect(recurve.inputs).toEqual([{ k: 'treated_stave', n: 1 }, { k: 'rawhide', n: 2 }, { k: 'cord', n: 1 }]);
+    expect(text).toContain('The Recurve Bow is faster, flatter and truer. Split two Bow Staves from a log at the Work Stump, harden one in the Kiln for 30 seconds into a Treated Stave, then back it with 2 Rawhide and Cord at the Workbench, with a Copper Knife.');
+    // the table is BOWS and the items
+    const t = tableById('bows');
+    expect(t.source).toBe('loose');
+    expect(t.keys).toEqual(['crude_bow', 'recurve_bow']);
+    expect(t.rows).toEqual([
+      ['Crude Bow', '1 s', `${BOWS.crude_bow.speed} m/s`, '3°', String(ITEMS.crude_bow.tool.durability)],
+      ['Recurve Bow', '1.2 s', `${BOWS.recurve_bow.speed} m/s`, '0.8°', String(ITEMS.recurve_bow.tool.durability)],
+    ]);
+    expect(t.rows.map((r) => r[2])).toEqual(['28 m/s', '42 m/s']);
   });
 
-  it('arrows and wear: a miss is picked up again, a hit breaks one time in four, a shot costs the bow one use of its 100', () => {
+  it('the arrows: every bow shoots every arrow, the best in the pack first; stone and flint at hand, metal at the Kiln and the Forge', () => {
+    expect(text).toContain('With a bow in hand, hold RMB to draw and let go to shoot. Every bow shoots every arrow, and takes the best in your pack: steel, iron, bronze, copper, flint and stone. Without one it will not draw.');
+    expect(rec('stone_arrow').outputs[0].n).toBe(4);
+    expect(rec('copper_arrow').outputs[0].n).toBe(8);
+    expect(text).toContain('Stone and flint arrows are made at hand, four at a time: a Stick, a Feather and a Rock or a Flint, with a Hammerstone. Metal heads come eight at a time: copper and bronze cast at the Kiln, iron and steel forged at the Forge.');
+    expect([rec('copper_arrow').station, rec('bronze_arrow').station, rec('iron_arrow').station, rec('steel_arrow').station])
+      .toEqual(['kiln', 'kiln', 'forge', 'forge']);
+    const t = tableById('arrows');
+    expect(t.source).toBe('loose');
+    expect(t.keys).toEqual(ARROW_KEYS);
+    expect(t.rows).toEqual(ARROW_KEYS.map((k) => [itemName(k), String(ARROWS[k].power), fmtPct(1 - hitBreakP(k)), fmtPct(1 - missBreakP(k))]));
+    expect(t.rows[0]).toEqual(['Stone Arrow', '2', '35 %', '85 %']);
+    expect(t.rows[5]).toEqual(['Steel Arrow', '6', '90 %', '97 %']);
+  });
+
+  it('arrows and wear: a miss is picked up again; a hit may break the head; a shot costs the bow one use of its 60 or 220', () => {
     expect(text).toContain('An arrow that misses lies where it fell. Walk over to it and it comes back to your pack, ready to shoot again.');
-    expect(ARROW_BREAK_P).toBe(0.25);
-    expect(dartBreakP('arrow')).toBe(ARROW_BREAK_P);
-    expect(text).toContain(`One that hits breaks one time in four (${fmtPct(ARROW_BREAK_P)}). Carry a few spare.`);
-    expect(ITEMS.bow.tool).toMatchObject({ type: 'bow', durability: 100 });
-    expect(text).toContain(`Every shot costs the bow one use: a new Bow is good for ${ITEMS.bow.tool.durability} shots.`);
-    // thrown by hand, an arrow is only chucked
-    expect(throwOf('arrow')).toBe(THROW_CHUCK);
-    expect(THROW_CHUCK.power).toBe(0);
-    expect(text).toContain('Thrown with G, an arrow is only tossed: it does no harm without the bow.');
+    expect([hitBreakP('stone_arrow'), hitBreakP('steel_arrow')]).toEqual([0.65, 0.1]);
+    expect(text).toContain('One that hits may break: a stone head 65 % of the time, a steel one only 10 %.');
+    expect(text).toContain(`Every shot costs the bow one use: a new Crude Bow is good for ${ITEMS.crude_bow.tool.durability} shots, a Recurve Bow for ${ITEMS.recurve_bow.tool.durability}.`);
+    expect(throwOf('flint_arrow')).toBe(THROW_CHUCK);
+    expect(text).toContain('Thrown with G, an arrow is only tossed: it does no harm without a bow.');
   });
 
-  it('the bow takes its place in the generated tables: the flint age, the power of a blow', () => {
-    expect(rowOf(tableById('ages'), 2)[2].split(', ')).toContain('Bow');
-    expect(rowOf(tableById('recipes-stump'), 'bow')[0]).toBe('Bow');
-    expect(rowOf(tableById('recipes-hand'), 'arrow')[0]).toBe('Arrow ×4');
-    expect(toolPowers()).toContain(ITEMS.bow.tool.power);
+  it('the bows take their place in the generated tables: their ages, the power of a blow, the recipe tables', () => {
+    expect(rowOf(tableById('ages'), 2)[2].split(', ')).toContain('Crude Bow');
+    expect(rowOf(tableById('ages'), 4)[2].split(', ')).toContain('Recurve Bow');
+    expect(rowOf(tableById('recipes-stump'), 'crude_bow')[0]).toBe('Crude Bow');
+    expect(rowOf(tableById('recipes-hand'), 'flint_arrow')[0]).toBe('Flint Arrow ×4');
+    expect(rowOf(tableById('recipes-kiln'), 'treated_stave')[0]).toBe('Treated Stave');
+    expect(rowOf(tableById('recipes-forge'), 'steel_arrow')[0]).toBe('Steel Arrow ×8');
+    expect(rowOf(tableById('recipes-workbench'), 'recurve_bow')[0]).toBe('Recurve Bow');
+    expect(rowOf(tableById('recipes-workbench'), 'spyglass')[0]).toBe('Spyglass');
+    expect(toolPowers()).toContain(ITEMS.crude_bow.tool.power);
     // the workplaces chapter names it among what the Work Stump makes
-    expect(text).toContain('cuts planks, works leather and makes the bow.');
-    expect(rec('bow').station).toBe('stump');
+    expect(text).toContain('cuts planks, works leather and makes the Crude Bow.');
+  });
+
+  it('§103 the Spyglass: a page in Controls, the Z key, the zoom command and the tablet\'s Zoom button', () => {
+    const controls = CHAPTERS.find((c) => c.id === 'controls');
+    expect(pageTitled(controls, 'The Spyglass')).toBeTruthy();
+    expect(text).toContain('A Spyglass is two bronze tubes and a glass lens, made at the Workbench from 2 Bronze Ingots and Glass. It works from anywhere in your pack.');
+    expect(ZOOM_DEFAULT).toBe(4);
+    expect(text).toContain('Hold Z to look through it, or hold RMB with it in your hand. Everything looks four times nearer and your look slows to match; scroll the wheel for 2×, 4× or 8×.');
+    expect(text).toContain('To keep looking, type zoom 4 in the console (T): zoom off, Esc or opening a menu puts it down. On a tablet the Zoom button does the same.');
+    expect(tableById('keys-move').rows.find((r) => r[0] === 'Hold Z')[1]).toBe('look through a Spyglass you carry; the wheel brings it closer or farther');
   });
 });
 

@@ -11,8 +11,10 @@
 //   working end at the top (axe, pick, hammer, knife, spear, sword) or at the bottom (shovel). The tier shows in the head
 //   colour AND in the binding: a cord wrap (stone, flint), a cast socket ring (copper, bronze), a forged eye with a rivet
 //   pixel (iron, steel). The hammerstone is a plain cobble with a pale strike scar (§94: no haft — a stone strikes flint).
-//   The bow (§100) has no haft either: it lies on its back, the string across the top and its wrapped grip at the bottom
-//   middle, where heldItem.js grips a tool; its stave and the arrow stand upright.
+//   A bow (§100) has no haft either: it lies on its back, the string across the top and its wrapped grip at the bottom
+//   middle, where heldItem.js grips a tool — the Crude Bow a plain arc of green sapling, the Recurve Bow a dark
+//   fire-hardened stave with a rawhide back whose tips curl away from the string. The staves, the sapling and the arrows
+//   stand upright; an arrow's head shows its age (stone, flint, copper, bronze, iron, steel).
 // - Ingots and bars are hexagonal bars; ores are mineral lumps in their mineral's colours; pots have a hexagonal rim and
 //   show their fill (water, sea-green, sap amber, snow).
 // - Everything else is a small original pictogram (honeyberries are elongated dusky-blue berries with a pale bloom).
@@ -420,40 +422,74 @@ function paintSword(ic, tier) {
   ic.set(8, 15, pal.base);
 }
 
-/** §100: shaved yew-coloured wood of the bow and the bow stave (paler than a bark-covered haft: the knife took the bark). */
+/** §100: shaved yew-coloured wood of the bow stave (paler than a bark-covered haft: the knife took the bark). */
 const YEW = { light: 0xe8b878, base: 0xc08048, dark: 0x8a5428 };
+/** §100: the green sapling of the Crude Bow, its bark still on (olive), and a leaf bud. */
+const SAPLING = { light: 0xa89a5a, base: 0x7a7a3a, dark: 0x4e5424, leaf: 0x6aa03a, leafDark: 0x3f6e24 };
+/** §100: the fire-hardened stave of the Recurve Bow and the Treated Stave (dark, glossy), and the rawhide backing. */
+const TREATED = { light: 0xa0703f, base: 0x6e4424, dark: 0x40260f, char: 0x1e140c, hide: 0xe0cfa4, horn: 0x2e241c };
 
 /**
- * §100 the Bow, lying on its back (§9.8 keeps tools upright; a bow has no haft, so it is drawn the way heldItem holds a
- * tool: gripped at the bottom middle, its bulk straight above): the stave bent in a shallow arc — its belly toward the
- * string, its back darker — rising from a cord-wrapped grip at the bottom middle to a horn nock at each end, and the pale
- * string drawn straight across the top from nock to nock. Mirror-symmetric, so the grip is at the middle exactly.
+ * §100 the Crude Bow, lying on its back (§9.8 keeps tools upright; a bow has no haft, so it is drawn the way heldItem holds
+ * a tool: gripped at the bottom middle, its bulk straight above): a green sapling bent in a plain arc — bark on, a leaf
+ * bud on each limb — rising from a cord-wrapped grip at the bottom middle to a knot of cord at each end, and the twine
+ * drawn straight across the top. Mirror-symmetric, so the grip is at the middle exactly.
  */
-function paintBow(ic) {
-  // the belly of the left limb, column by column from the nock to the middle (a circular arc: steep at the tip, flat at
+function paintCrudeBow(ic) {
+  // the belly of the left limb, column by column from the tip to the middle (a circular arc: steep at the tip, flat at
   // the grip); the back is the pixel under it. The right limb is its mirror image.
   const BELLY = [3, 5, 6, 7, 7, 8, 8, 8];
   for (let x = 0; x < 8; x++) {
     const from = x > 0 ? Math.min(BELLY[x], BELLY[x - 1] + 1) : BELLY[x]; // no gap where the limb steepens
     for (const px of [x, 15 - x]) {
-      for (let y = from; y <= BELLY[x]; y++) ic.set(px, y, YEW.light);
-      ic.set(px, BELLY[x] + 1, x < 2 ? YEW.base : YEW.dark);
+      for (let y = from; y <= BELLY[x]; y++) ic.set(px, y, (x + y) % 5 === 0 ? SAPLING.dark : SAPLING.light);
+      ic.set(px, BELLY[x] + 1, x < 2 ? SAPLING.base : SAPLING.dark);
     }
   }
-  // the horn nocks at the tips, and the string between them
+  // the twine knotted round each tip, and drawn across between them
   for (const px of [0, 15]) {
-    ic.set(px, 2, 0x4a3426);
-    ic.set(px, 3, 0x6a4a34);
+    ic.set(px, 2, CORD.dark);
+    ic.set(px, 3, CORD.light);
   }
   for (let x = 1; x <= 14; x++) ic.set(x, 2, CORD.light);
-  // the grip: a thicker wrapped handle under the middle of the stave, cord over leather
-  ic.rect(6, 9, 9, 11, LEATHER.base);
-  for (let y = 9; y <= 11; y++) {
-    for (let x = 6; x <= 9; x++) if (((x + y) & 1) === 0) ic.set(x, y, CORD.light);
+  // a leaf bud left on each limb
+  for (const px of [4, 11]) {
+    ic.set(px, 6, SAPLING.leaf);
+    ic.set(px === 4 ? 3 : 12, 6, SAPLING.leafDark);
   }
-  ic.set(6, 11, LEATHER.dark);
-  ic.set(9, 11, LEATHER.dark);
-  ic.rect(7, 12, 8, 12, YEW.dark); // the stave's heel under the wrap
+  // the grip: a wrap of cord round the middle of the sapling
+  for (let y = 9; y <= 11; y++) {
+    for (let x = 6; x <= 9; x++) ic.set(x, y, ((x + y) & 1) === 0 ? CORD.light : CORD.dark);
+  }
+  ic.rect(7, 12, 8, 12, SAPLING.dark); // the sapling's heel under the wrap
+}
+
+/**
+ * §100 the Recurve Bow, on its back like the Crude Bow: a dark fire-hardened stave, its back glued with pale rawhide
+ * (the sinew), rising from a leather grip at the bottom middle; near each end the string lies on the limb and the tip
+ * curls away from it, ending in a horn nock. The string is drawn across the top. Mirror-symmetric.
+ */
+function paintRecurveBow(ic) {
+  // [top, bottom] of the left limb, column by column from the tip (x 0) to the middle (x 7)
+  const LIMB = [[5, 6], [4, 5], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 8]];
+  for (let x = 0; x < 8; x++) {
+    const [y0, y1] = LIMB[x];
+    for (const px of [x, 15 - x]) {
+      for (let y = y0; y <= y1; y++) ic.set(px, y, y === y0 ? TREATED.light : TREATED.base);
+      if (x >= 2 && x <= 5) ic.set(px, y1 + 1, TREATED.hide); // the rawhide back
+      if (x <= 1) ic.set(px, y1, TREATED.horn); // the horn nocks, curled away
+    }
+  }
+  ic.set(0, 6, TREATED.horn);
+  ic.set(15, 6, TREATED.horn);
+  // the string, from where it leaves the limb on one side to the other
+  for (let x = 3; x <= 12; x++) ic.set(x, 3, 0xece2c8);
+  // the grip: dark leather wrapped round the middle, a pale arrow rest on top
+  ic.rect(6, 9, 9, 11, LEATHER.dark);
+  for (let x = 6; x <= 9; x++) ic.set(x, 10, LEATHER.base);
+  ic.set(7, 9, LEATHER.light);
+  ic.set(8, 9, LEATHER.light);
+  ic.rect(7, 12, 8, 12, TREATED.dark); // the stave's heel under the wrap
 }
 
 function paintHammerstone(ic, rng) {
@@ -515,7 +551,7 @@ function paintTool(ic, rng, key, type, tier) {
     case 'hammer': return paintHammer(ic, tier);
     case 'shovel': return paintShovel(ic, tier);
     case 'spear': return paintSpear(ic, tier);
-    case 'bow': return paintBow(ic);
+    case 'bow': return key === 'recurve_bow' ? paintRecurveBow(ic) : paintCrudeBow(ic);
     case 'sword': return paintSword(ic, tier);
     case 'firestarter': return paintFireDrill(ic);
     case 'crucible': return paintCrucible(ic, rng, 0xd8d0c4, 0x3a2e2a);
@@ -615,6 +651,88 @@ function paintBrick(ic, rng, base) {
  * @param {Icon} ic @param {number[][]} spots @param {number} rx @param {number} ry
  * @param {{ base: number, light: number, dark: number }} pal
  */
+/** §100: an arrow's head by its age: the tier palette of the tools (stone 1 … steel 6). */
+const ARROW_TIER = Object.freeze({ stone: 1, flint: 2, copper: 3, bronze: 4, iron: 5, steel: 6 });
+/** §100: the fletching: grey-brown for stone, russet for flint and the cast heads, goose-white for the forged ones. */
+const ARROW_FLIGHT = Object.freeze({
+  stone: [0x8a7a68, 0x5a4a3a, 0xd8ccb8], flint: [0xc98a4a, 0x8a4e22, 0xf3e6c8], copper: [0xc98a4a, 0x8a4e22, 0xf3e6c8],
+  bronze: [0xc98a4a, 0x8a4e22, 0xf3e6c8], iron: [0xeeeae2, 0xaaa69e, 0x8a867e], steel: [0xeeeae2, 0xaaa69e, 0x8a867e],
+});
+
+/**
+ * §100 an arrow standing on its nock, point up: a barbed head in its age's colours — a knapped stone or flint point bound
+ * on with cord, or a metal head on a cast or forged socket — a slim pale shaft, two feather vanes with pale edges at the
+ * foot, and the notched nock. @param {Icon} ic @param {'stone'|'flint'|'copper'|'bronze'|'iron'|'steel'} head
+ */
+function paintArrow(ic, head) {
+  // a stone head is a warm knapped chert, not the cool grey of iron
+  const pal = head === 'stone' ? { light: 0xd2c0a0, base: 0x9c8a6c, dark: 0x645640 } : tierPal(ARROW_TIER[head]);
+  const knapped = head === 'stone' || head === 'flint';
+  // the head: a point lit from the left, two rows wider each step, barbed at its foot
+  ic.set(7, 0, pal.light);
+  ic.set(6, 1, pal.light);
+  ic.set(7, 1, pal.base);
+  ic.set(8, 1, pal.dark);
+  ic.set(5, 2, pal.light);
+  ic.set(6, 2, pal.base);
+  ic.set(7, 2, pal.base);
+  ic.set(8, 2, pal.dark);
+  ic.set(9, 2, pal.dark);
+  ic.set(5, 3, pal.base); // the barbs
+  ic.set(9, 3, pal.dark);
+  if (pal.cortex) ic.set(6, 2, pal.cortex); // a fleck of pale cortex on the flint
+  if (pal.glint) ic.set(6, 1, pal.glint); // steel's blue glint
+  if (head === 'stone') ic.set(7, 1, pal.light); // a rough chipped face
+  // the binding (cord) or the socket (metal)
+  ic.set(7, 3, knapped ? CORD.light : pal.light);
+  ic.set(7, 4, knapped ? CORD.dark : pal.dark);
+  for (let y = 5; y <= 13; y++) ic.set(7, y, (y & 3) === 2 ? WOOD.light : 0xd8b07a); // the shaft
+  const [a, b, edge] = ARROW_FLIGHT[head];
+  const vane = (x, y) => ((x + y) & 1 ? a : b);
+  for (const [x, y] of [[6, 9], [6, 10], [5, 10], [6, 11], [5, 11], [5, 12]]) ic.set(x, y, vane(x, y)); // left vane
+  for (const [x, y] of [[8, 9], [8, 10], [9, 10], [8, 11], [9, 11], [9, 12]]) ic.set(x, y, vane(x, y)); // right vane
+  for (const [x, y] of [[4, 11], [4, 12], [10, 11], [10, 12], [5, 13], [9, 13]]) ic.set(x, y, edge); // their pale edges
+  ic.set(6, 14, 0x8a5a2b); // the nock: two prongs round the string's notch
+  ic.set(8, 14, 0x8a5a2b);
+  ic.set(7, 14, 0x5e3b1a);
+}
+
+/** §103: the Spyglass's bronze, and its lens. */
+const SPYGLASS = Object.freeze({
+  light: 0xf0d688, base: 0xc09a40, dark: 0x7a5f22, band: 0x5a4416, eye: [0x6a4a32, 0x4a3020, 0x2a1c12],
+  glass: 0xcff0fa, glassDark: 0x6fa8c0,
+});
+
+/**
+ * §103 the Spyglass, corner to corner: a leather-bound eyepiece at the lower left, a narrow bronze draw tube sliding out
+ * of the wide main tube, dark bands where the tubes meet, and the round glass lens shining at the upper right. Lit from
+ * the upper left. @param {Icon} ic
+ */
+function paintSpyglass(ic) {
+  const ax = 2.2;
+  const ay = 13.8;
+  const L = Math.hypot(13.8 - ax, ay - 2.2);
+  const ux = (13.8 - ax) / L;
+  const uy = (2.2 - ay) / L;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const px = x + 0.5 - ax;
+      const py = y + 0.5 - ay;
+      const t = px * ux + py * uy; // along the tube
+      const side = px * -uy + py * ux; // across it: < 0 the lit upper-left side
+      if (t < -0.2 || t > L + 0.2) continue;
+      const r = t < 3.4 ? 1.15 : t < 7.6 ? 1.6 : 2.25;
+      if (Math.abs(side) > r) continue;
+      let c;
+      if (t < 3.4) c = SPYGLASS.eye[side < -0.35 ? 0 : side > 0.45 ? 2 : 1]; // the leather eyepiece
+      else if (t > L - 1.1) c = Math.abs(side) < r - 0.7 ? (side < 0 ? SPYGLASS.glass : SPYGLASS.glassDark) : SPYGLASS.band;
+      else if (Math.abs(t - 3.6) < 0.55 || Math.abs(t - 7.8) < 0.6) c = SPYGLASS.band; // where the tubes meet
+      else c = side < -r * 0.35 ? SPYGLASS.light : side > r * 0.4 ? SPYGLASS.dark : SPYGLASS.base;
+      ic.set(x, y, c);
+    }
+  }
+}
+
 function paintSeedHeap(ic, spots, rx, ry, pal) {
   for (const [cx, cy] of spots) ic.ellipse(cx, cy, rx, ry, (x, y, u, v) => (u + v < -0.45 ? pal.light : u + v > 0.55 ? pal.dark : pal.base));
 }
@@ -955,20 +1073,6 @@ const MATERIAL_PAINTERS = {
     ic.rect(4, 11, 11, 13, 0x6a6e76);
     ic.set(7, 10, 0xd8dce4);
   },
-  flint_dart(ic) {
-    // a short throwing dart, corner to corner: a dark flint point, a cord binding, a pale shaft and a fibre flight
-    for (let i = 0; i <= 8; i++) {
-      ic.set(4 + i, 11 - i, WOOD.light); // the shaft, lower left to upper right
-      ic.set(4 + i, 12 - i, WOOD.base);
-    }
-    ic.poly([[11, 2], [14, 1], [13, 5]], () => 0x3b3f4a); // the knapped point
-    ic.set(13, 2, 0x6b7184);
-    ic.set(11, 4, CORD.dark); // the binding
-    ic.set(12, 4, CORD.light);
-    ic.set(11, 5, CORD.light);
-    for (const [x, y] of [[1, 12], [2, 11], [2, 13], [3, 12], [1, 14], [3, 14], [2, 15]]) ic.set(x, y, 0x9ab04a); // the flight
-    ic.set(3, 13, 0x6f8f3a);
-  },
   handbook(ic, rng) {
     // §14 the Survival Handbook: a small leather-bound field book tied with cord, a hex burned into its cover
     const page = (i) => (i & 1 ? 0xf3ead2 : 0xc4b48c);
@@ -1009,22 +1113,6 @@ const MATERIAL_PAINTERS = {
     ic.set(2, 14, 0xe0d2b0);
     ic.set(1, 15, 0xc8b890); // the quill
   },
-  fletched_dart(ic) {
-    // the flint dart with a flight of two feathers: russet vanes with pale edges where the plain dart has grass
-    for (let i = 0; i <= 8; i++) {
-      ic.set(4 + i, 11 - i, WOOD.light);
-      ic.set(4 + i, 12 - i, WOOD.base);
-    }
-    ic.poly([[11, 2], [14, 1], [13, 5]], () => 0x3b3f4a);
-    ic.set(13, 2, 0x6b7184);
-    ic.set(11, 4, CORD.dark);
-    ic.set(12, 4, CORD.light);
-    ic.set(11, 5, CORD.light);
-    for (const [x, y] of [[1, 10], [2, 9], [2, 10], [3, 9], [3, 10], [4, 9]]) ic.set(x, y, (x + y) & 1 ? 0xc98a4a : 0x8a4e22); // upper vane
-    for (const [x, y] of [[4, 13], [5, 12], [5, 13], [5, 14], [6, 13], [6, 14]]) ic.set(x, y, (x + y) & 1 ? 0xc98a4a : 0x8a4e22); // lower vane
-    for (const [x, y] of [[1, 9], [2, 8], [6, 15], [7, 14]]) ic.set(x, y, 0xf3e6c8);
-    ic.set(3, 12, CORD.dark); // the flight's binding
-  },
   // §80 farming: three handfuls of seed, told apart by shape as well as colour
   carrot_seeds(ic) {
     // fat tan ovals, each with the dark rib a carrot seed has down its middle
@@ -1062,29 +1150,57 @@ const MATERIAL_PAINTERS = {
     ic.set(10, 14, YEW.base);
     ic.set(3, 15, YEW.base);
   },
-  arrow(ic) {
-    // an arrow standing on its nock, point up: a knapped flint point bound on with cord, a slim pale shaft, two russet
-    // feather vanes with pale edges sweeping back at the foot, and the notched nock
-    ic.set(7, 0, 0x6b7184); // the point: knapped flint, lit from the left, barbed at its foot
-    ic.set(6, 1, 0x6b7184);
-    ic.set(7, 1, 0x3b3f4a);
-    ic.set(8, 1, 0x24262e);
-    ic.set(5, 2, 0x6b7184);
-    ic.set(6, 2, 0x3b3f4a);
-    ic.set(7, 2, 0x3b3f4a);
-    ic.set(8, 2, 0x24262e);
-    ic.set(9, 2, 0x24262e);
-    ic.set(6, 2, 0xd8d2c0); // a fleck of pale cortex
-    ic.set(7, 3, CORD.light); // the binding
-    ic.set(7, 4, CORD.dark);
-    for (let y = 5; y <= 13; y++) ic.set(7, y, (y & 3) === 2 ? WOOD.light : 0xd8b07a); // the shaft
-    const vane = (x, y) => ((x + y) & 1 ? 0xc98a4a : 0x8a4e22);
-    for (const [x, y] of [[6, 9], [6, 10], [5, 10], [6, 11], [5, 11], [5, 12]]) ic.set(x, y, vane(x, y)); // left vane
-    for (const [x, y] of [[8, 9], [8, 10], [9, 10], [8, 11], [9, 11], [9, 12]]) ic.set(x, y, vane(x, y)); // right vane
-    for (const [x, y] of [[4, 11], [4, 12], [10, 11], [10, 12], [5, 13], [9, 13]]) ic.set(x, y, 0xf3e6c8); // their pale edges
-    ic.set(6, 14, 0x8a5a2b); // the nock: two prongs round the string's notch
-    ic.set(8, 14, 0x8a5a2b);
-    ic.set(7, 14, 0x5e3b1a);
+  treated_stave(ic) {
+    // the stave fire-hardened in the Kiln: the same long shaved stick, darkened glossy brown, scorched black at both
+    // ends and in a few patches along it, a bright sheen down its lit side
+    const RUNS = [[0, 1, 8, 8], [2, 4, 7, 8], [5, 10, 6, 7], [11, 13, 7, 8], [14, 15, 8, 8]]; // [y0, y1, x0, x1]
+    for (const [y0, y1, x0, x1] of RUNS) {
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) ic.set(x, y, x === x0 && x0 !== x1 ? TREATED.light : TREATED.base);
+    }
+    for (const [x, y] of [[7, 3], [6, 8], [7, 12]]) ic.set(x, y, 0xd8a468); // the sheen
+    for (const [x, y] of [[8, 0], [8, 1], [8, 15], [8, 14], [7, 6], [8, 11], [7, 9]]) ic.set(x, y, TREATED.char); // scorched
+    for (const [x, y] of [[8, 5], [7, 10]]) ic.set(x, y, TREATED.dark);
+    // a wisp of smoke still curling off it
+    for (const [x, y] of [[11, 4], [12, 3], [11, 2], [12, 1]]) ic.set(x, y, 0x9a948c);
+  },
+  sapling(ic) {
+    // a young springy shoot pulled up whole, standing upright: a slender olive stem bending a little, three pairs of
+    // fresh leaves up it and a bud at its tip, and a small ball of roots and earth at its foot
+    for (let y = 2; y <= 12; y++) ic.set(y < 8 ? 7 : 8, y, y & 1 ? SAPLING.light : SAPLING.base); // the stem
+    ic.set(7, 8, SAPLING.base); // where it bends
+    const leaf = (cx, cy, rx, ry) => ic.ellipse(cx, cy, rx, ry, (x, y, u, v) => (v < 0 ? SAPLING.leaf : SAPLING.leafDark));
+    leaf(4.6, 4.2, 2.1, 1.1);
+    leaf(10.4, 6.2, 2.2, 1.1);
+    leaf(5.2, 9.0, 2.2, 1.1);
+    leaf(11.2, 10.4, 1.9, 1.0);
+    ic.set(7, 1, SAPLING.leaf); // the bud
+    ic.set(7, 0, SAPLING.leafDark);
+    ic.set(8, 1, SAPLING.leafDark);
+    for (const [x, y] of [[6, 4], [9, 6], [7, 9]]) ic.set(x, y, SAPLING.dark); // the leaf stalks
+    // the root ball: earth with a few pale roots straggling out of it
+    ic.ellipse(8, 14.2, 3.4, 1.6, (x, y, u, v) => (u + v < -0.5 ? 0x8a6a46 : 0x5e4630));
+    for (const [x, y] of [[4, 15], [12, 15], [5, 13], [11, 13]]) ic.set(x, y, 0xcdb88c);
+  },
+  stone_arrow(ic) {
+    paintArrow(ic, 'stone');
+  },
+  flint_arrow(ic) {
+    paintArrow(ic, 'flint');
+  },
+  copper_arrow(ic) {
+    paintArrow(ic, 'copper');
+  },
+  bronze_arrow(ic) {
+    paintArrow(ic, 'bronze');
+  },
+  iron_arrow(ic) {
+    paintArrow(ic, 'iron');
+  },
+  steel_arrow(ic) {
+    paintArrow(ic, 'steel');
+  },
+  spyglass(ic) {
+    paintSpyglass(ic);
   },
 };
 
@@ -1603,10 +1719,10 @@ const OTHER_PAINTERS = {
 const TOOL_ART = Object.freeze({
   hammerstone: ['hammer', 1], stone_axe: ['axe', 1], wooden_shovel: ['shovel', 1],
   flint_knife: ['knife', 2], flint_axe: ['axe', 2], flint_pick: ['pick', 2], flint_shovel: ['shovel', 2], flint_spear: ['spear', 2],
-  bow: ['bow', 2], // §100
+  crude_bow: ['bow', 2], // §100
   copper_knife: ['knife', 3], copper_axe: ['axe', 3], copper_pick: ['pick', 3], copper_shovel: ['shovel', 3], copper_hammer: ['hammer', 3],
   bronze_knife: ['knife', 4], bronze_axe: ['axe', 4], bronze_pick: ['pick', 4], bronze_shovel: ['shovel', 4], bronze_hammer: ['hammer', 4],
-  bronze_sword: ['sword', 4],
+  bronze_sword: ['sword', 4], recurve_bow: ['bow', 4], // §100
   iron_knife: ['knife', 5], iron_axe: ['axe', 5], iron_pick: ['pick', 5], iron_shovel: ['shovel', 5], iron_hammer: ['hammer', 5],
   iron_sword: ['sword', 5],
   steel_knife: ['knife', 6], steel_axe: ['axe', 6], steel_pick: ['pick', 6], steel_shovel: ['shovel', 6], steel_hammer: ['hammer', 6],

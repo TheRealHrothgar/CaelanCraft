@@ -349,6 +349,14 @@ const PICKER_OPEN = 'picker-open';
  * @property {(view: import('./windDrawn.js').VaneView|null) => void} setWind  the wind indicator (CONTRACTS §101): the vane
  *   at `angle` degrees clockwise from the top (where the wind blows, seen from where the player looks), its `level` and
  *   `gust`, and the `words`; null hides it. The DOM is touched only when one of them changes.
+ * @property {(view: SpyglassView|null) => void} setSpyglass  §103: the Spyglass's round eyepiece (#spyglass-overlay, made
+ *   first in #hud so the crosshair, the hints and the hotbar stay over it): its darkness `amount` 0..1 in 1/32 steps and
+ *   the power under it ("4×"); hidden at 0 or null. The DOM is touched only when the step or the power changes.
+ */
+
+/**
+ * What the Spyglass's eyepiece shows (§103): how dark the round vignette is, 0..1, and the power looked through.
+ * @typedef {{ amount: number, zoom: number }} SpyglassView
  */
 
 /**
@@ -1151,6 +1159,42 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     }
   }
 
+  // ---- §103 the Spyglass's eyepiece: a round view in a dark ring, under the rest of the HUD
+  /** @type {HTMLElement|null} */
+  let glassEl = doc.getElementById('spyglass-overlay');
+  /** @type {HTMLElement|null} */
+  let glassPowerEl = null;
+  if (!glassEl && typeof doc.createElement === 'function') {
+    glassEl = doc.createElement('div');
+    glassEl.id = 'spyglass-overlay';
+    glassEl.className = HIDDEN;
+    glassEl.setAttribute('aria-hidden', 'true');
+    glassPowerEl = doc.createElement('span');
+    glassPowerEl.className = 'spyglass-power';
+    glassEl.appendChild(glassPowerEl);
+    hudEl.insertBefore(glassEl, hudEl.firstChild);
+  } else if (glassEl) {
+    glassPowerEl = glassEl.querySelector('.spyglass-power');
+  }
+  let glassLevel = -1;
+  let glassPower = '';
+
+  /** @param {SpyglassView|null} view */
+  function setSpyglass(view) {
+    if (!glassEl) return;
+    const q = view ? Math.round(Math.max(0, Math.min(1, Number(view.amount) || 0)) * 32) / 32 : 0;
+    if (q !== glassLevel) {
+      glassLevel = q;
+      glassEl.classList.toggle(HIDDEN, q === 0);
+      glassEl.style.opacity = String(q);
+    }
+    const power = view && q > 0 && Number.isFinite(view.zoom) ? `${view.zoom}×` : '';
+    if (power !== glassPower && glassPowerEl) {
+      glassPower = power;
+      glassPowerEl.textContent = power;
+    }
+  }
+
   // ---- the survival hotbar (§9.8): hex slots with a count and a wear outline
   /** @type {(import('./types.js').ItemStack|null)[]|null} the live pack slots (pack.slots, never copied) */
   let liveSlots = null;
@@ -1350,6 +1394,7 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     setTiredness,
     setSleepView,
     setWind,
+    setSpyglass,
     onSlotClick: () => {},
     dispose,
   };

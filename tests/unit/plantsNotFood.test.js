@@ -550,7 +550,7 @@ describe('the three items (items.js) and their icons (itemArt.js)', () => {
     expect(getItem('aloe_leaf')).toEqual({ key: 'aloe_leaf', name: 'Aloe Leaf', kind: 'heal', stack: 16, heal: { hp: 6, rate: 1.5, useS: 1.0 } });
     expect(itemName('nightshade_berries', 1)).toBe('Nightshade Berry');
     expect(itemName('nightshade_berries', 2)).toBe('Nightshade Berries');
-    expect(ITEM_KEYS).toHaveLength(271); // §101: + the Pennant; §100: + the Bow, the Bow Stave, the Arrow; // §94: + the Lab; // + §85: the Pot of Spring Water and four block items
+    expect(ITEM_KEYS).toHaveLength(278); // §100 + §103: + 7; // §101: + the Pennant; §100: + the Bow, the Bow Stave, the Arrow; // §94: + the Lab; // + §85: the Pot of Spring Water and four block items
   });
 
   it('each look-alike\'s food is its twin\'s in every number but one: it always poisons', () => {

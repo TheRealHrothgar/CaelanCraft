@@ -117,9 +117,10 @@ import { createPackUI, demoPackView } from './packUI.js';
 import { createItemIcons, iconBlockFor } from './itemIcons.js';
 import { createLooseItemRenderer } from './looseItemRenderer.js';
 import {
-  LooseItems, throwOf, dartBreakP, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
-  blinkHidden, drawOf, drawFraction, drawnThrow, ARROW_GRAVITY, ARROW_KEYS, DRAW_ZOOM,
+  LooseItems, throwOf, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
+  blinkHidden, drawOf, drawFraction, drawnThrow, DRAW_ZOOM, bowShot, spreadDir, pickArrow, DEFAULT_ARROW,
 } from './looseItems.js';
+import { Spyglass, carriesSpyglass, SPYGLASS_KEY, ZOOM_KEY, SPYGLASS_NEEDED, zoomLabel } from './spyglass.js'; // §103
 import { createZombieRenderer } from './zombieRenderer.js';
 import { Watcher, WATCHER_HEIGHT } from './watcher.js';
 import { createWatcherRenderer } from './watcherRenderer.js';
@@ -1355,10 +1356,22 @@ export function boot(win, doc) {
   const camPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
   /**
    * §100 the draw under way (Place held with a spear, a dart or a bow; drawStep): seconds held, `at` the clock of its last
-   * frame (ms); null when nothing is drawn. Read by the avatar, the ring, the zoom and the hints.
-   * @type {{ key: string, held: number, at: number }|null}
+   * frame (ms), `fullS` the seconds to its full draw (a bow's own); null when nothing is drawn. Read by the avatar, the
+   * ring, the zoom and the hints.
+   * @type {{ key: string, held: number, at: number, fullS: number }|null}
    */
   let drawState = null;
+  /** §100: how far the draw under way is drawn, 0..1 (0: none). */
+  const drawShare = () => (drawState ? drawFraction(drawState.held, drawState.fullS) : 0);
+  /**
+   * §103 the Spyglass: looked through while Z is held, while Place is held with it in hand (`glassPlaceHeld`, set by the
+   * frame's Place step), or while the zoom command (or the touch Zoom button) keeps it up; stepped every frame in
+   * renderFrame.
+   */
+  const spyglass = new Spyglass();
+  let glassPlaceHeld = false;
+  /** §103: the view is first person while the glass is up (a third-person camera would look at the back of the head). */
+  const shownView = () => (spyglass.handHidden ? 'first' : viewMode);
   /** @type {import('./avatarMotion.js').MotionInput} */
   const motionInput = {
     yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true, sneaking: false, swimming: false, flying: false, riding: false, sleeping: false,
@@ -1423,7 +1436,7 @@ export function boot(win, doc) {
    * @param {number} dt @param {number} eyeY
    */
   function viewCamera(dt, eyeY) {
-    if (!isThirdPerson(viewMode) || !world) {
+    if (!isThirdPerson(shownView()) || !world) {
       boom = 0;
       return cameraPose(player.x, eyeY, player.z, controls.yaw, controls.pitch, 'first', 0, camPose);
     }
@@ -1434,7 +1447,7 @@ export function boot(win, doc) {
 
   /** @param {{ x: number, y: number, z: number }} cam @returns {boolean} the camera is under water (the fog and the tint) */
   function cameraUnderwater(cam) {
-    if (!isThirdPerson(viewMode) || boom <= 0 || !world) return Boolean(player.headInWater);
+    if (!isThirdPerson(shownView()) || boom <= 0 || !world) return Boolean(player.headInWater);
     const [q, r] = worldToHex(cam.x, cam.z);
     return isUnderSurface(world.getBlock, q, cam.y, r);
   }
@@ -1446,7 +1459,7 @@ export function boot(win, doc) {
    * @param {number} dt @param {boolean} live @param {number} eyeY
    */
   function drawAvatar(dt, live, eyeY) {
-    const third = isThirdPerson(viewMode);
+    const third = isThirdPerson(shownView());
     const down = /** @type {string} */ (state) === STATE.DEAD || Boolean(survival.dead);
     const mi = motionInput;
     mi.yaw = controls.yaw;
@@ -1459,7 +1472,7 @@ export function boot(win, doc) {
     mi.swimming = Boolean(player.inWater) && !player.onGround;
     mi.riding = Boolean(riding);
     mi.sleeping = sleep.active;
-    mi.draw = drawState ? drawFraction(drawState.held) : 0; // §100: the arm draws back
+    mi.draw = drawShare(); // §100: the arm draws back
     avatarMotion.step(live ? dt : 0, mi);
     avatarRenderer.setHeld(down ? null : heldItemKey()); // §98: the item in hand, in first person and on the model
     const v = avatarView;
@@ -1467,12 +1480,12 @@ export function boot(win, doc) {
     v.y = player.y;
     v.z = player.z;
     v.showModel = third && boom >= VIEW_BOOM_HIDE && !down;
-    v.showArm = !third && !down && !sleep.active;
+    v.showArm = !third && !down && !sleep.active && !spyglass.handHidden; // §103: the hand is away while the glass is up
     v.eyeX = player.x;
     v.eyeY = eyeY;
     v.eyeZ = player.z;
     avatarRenderer.sync(v);
-    const cross = viewMode !== 'front';
+    const cross = shownView() !== 'front';
     if (cross !== crosshairShown) {
       crosshairShown = cross;
       hud.setCrosshairVisible(cross);
@@ -3204,6 +3217,8 @@ export function boot(win, doc) {
       },
       blackHoles,
       hands: { act: (kind, n) => handAction(kind, n) }, // v0.10 (§60): drop / throw
+      // §103: zoom — the glass kept up until zoom off, Esc or a menu
+      spyglass: { carried: () => spyglassCarried(), lock: (z) => spyglass.lock(z), unlock: () => spyglass.unlock() },
       animals, // §69: summon cow|sheep|horse|wolf (v0.14: and deer, stag, rabbit, pheasant, turkey, bear, fish)
       loose: { despawnNear: (x, y, z, radius) => loose.despawnNear(x, y, z, radius, looseDespawned) }, // §63: despawn
     };
@@ -3436,7 +3451,7 @@ export function boot(win, doc) {
     if (zombieTarget) return strikeInReach(zombieTarget) ? 'Zombie · click: hit it' : tooFarHint('Zombie');
     // §5.5: Creative breaking is instant, so a cell holding survival items is protected (and says why).
     if (hit && isProtectedCell(hit)) return HINT.protectedCell;
-    return blockHintText() ?? drawHintText(); // §100: what is in hand is thrown by holding Place
+    return blockHintText() ?? drawHintText() ?? glassHintText(); // §100: thrown by holding Place; §103 the glass
   }
 
   /** The circuit part, Powder Keg, Black Hole and Rune Block hints (both modes, §4.9, §3.3). */
@@ -3516,8 +3531,8 @@ export function boot(win, doc) {
   }
 
   /**
-   * §98: Place with an item in Creative's hand: a rock, a dart or a spear is thrown (as G throws it; Creative never runs
-   * out); anything else does nothing here (R still feeds, shears, … through heldItemKey).
+   * §98: Place with an item in Creative's hand: a rock or a spear is thrown (as G throws it; Creative never runs out);
+   * anything else does nothing here (R still feeds, shears, … through heldItemKey).
    * @param {string} key @returns {boolean} something happened
    */
   function useCreativeItem(key) {
@@ -4308,7 +4323,7 @@ export function boot(win, doc) {
 
   /**
    * A thrown item hit a mob with its power: a zombie counts it as hits, a pig is wounded in Survival (shoved in Creative).
-   * A dart may break; a spear takes 1 wear. @returns {boolean} the item broke
+   * A spear takes 1 wear (an arrow may break: looseItems rolls its head's chance, §100). @returns {boolean} the item broke
    */
   function looseOnHit(it, target) {
     const fromX = it.x - it.vx;
@@ -4326,7 +4341,7 @@ export function boot(win, doc) {
       }
     } else if (target.kind === 'animal') {
       const a = target.mob;
-      // v0.14 (§76 fauna): only a spear catches a fish — a rock or a dart just scares it off
+      // v0.14 (§76 fauna): only a spear catches a fish — a rock or an arrow just scares it off
       const counts = isBodyAnimal(a) || getItem(it.s.k)?.tool?.type === 'spear';
       const res = animals.wound(a, real && !a.tamed && counts ? it.power : 0, fromX, fromZ);
       if (res === 'dead') animalDied(a, real);
@@ -4347,7 +4362,6 @@ export function boot(win, doc) {
       }
     }
     if (!real) return false;
-    if (Math.random() < dartBreakP(it.s.k)) return true; // (0 for anything that is not a dart)
     const max = maxDurability(it.s.k);
     if (max > 0) {
       const d = (it.s.d ?? max) - 1;
@@ -4378,6 +4392,11 @@ export function boot(win, doc) {
     room: (st) => pack.canGive([...loose.inFlight(), { k: st.k, n: 1 }]),
     hitMob: looseHitMob,
     onHit: looseOnHit,
+    // §100: an arrow broke on what it hit, or shattered where it landed: a few splinters
+    onBreak: (it) => {
+      particles.emit('dust', it.x, it.y, it.z, 5, { color: [0.78, 0.66, 0.48], spread: 0.12 });
+      audio.playRecipe(SOUND_THUNK, 0.3);
+    },
     onLand: (it, speed) => {
       if (speed > 5 && !it.ghost) audio.playRecipe(SOUND_THUNK, Math.min(0.6, speed / 20));
     },
@@ -4410,8 +4429,9 @@ export function boot(win, doc) {
 
   /**
    * Q / G and the drop / throw commands (§60): one item (or `n`, or 'all' for a drop) of the selected stack leaves the hand
-   * — dropped in front of the feet, or thrown where the crosshair points (throwOf: rocks sting, darts and spears hurt,
-   * anything else is chucked a short way). Creative throws a ghost of the hotbar block and takes nothing.
+   * — dropped in front of the feet, or thrown where the crosshair points (throwOf: rocks sting, spears hurt, anything
+   * else — an arrow without its bow too — is chucked a short way). Creative throws a ghost of the hotbar block and takes
+   * nothing.
    * @param {'drop'|'throw'} kind
    * @param {number|'all'} n
    * @returns {{ ok: boolean, message: string, loud?: boolean }}
@@ -4489,15 +4509,26 @@ export function boot(win, doc) {
     return { ok: true, message: kind === 'throw' ? `threw ${what}` : `dropped ${what}` };
   }
 
-  // ---- §100 the draw: Place held with a spear, a dart or a bow, released to throw or shoot -----------------------
+  // ---- §100 the draw: Place held with a spear or a bow, released to throw or shoot -----------------------------
 
   /** A draw whose last frame is older than this (ms: a menu or a lost focus came between) is let go without a throw. */
   const DRAW_STALE_MS = 250;
 
   /**
-   * One frame of Place with what is in hand (both modes): with a spear, a dart or a bow it draws back while held and throws
-   * (or shoots an arrow) when let go, harder the longer it was held (looseItems.drawnThrow, full at DRAW_FULL_S). A press
-   * on a circuit control without Shift is left to the control. @returns {boolean} Place was this (nothing else uses it)
+   * §100: the arrow a bow in hand would shoot now. Survival: the best one in the pack (looseItems.pickArrow: steel, iron,
+   * bronze, copper, flint, stone), null when there is none. Creative needs none: the best one on the hotbar, else a Flint
+   * Arrow. @returns {string|null}
+   */
+  function bowArrow() {
+    if (survival.inSurvival) return pickArrow((k) => pack.count(k));
+    return pickArrow((k) => (hotbar.includes(k) ? 1 : 0)) ?? DEFAULT_ARROW;
+  }
+
+  /**
+   * One frame of Place with what is in hand (both modes): with a spear or a bow it draws back while held and throws (or
+   * shoots an arrow) when let go, harder the longer it was held (looseItems.drawnThrow and bowShot, full at the bow's own
+   * draw time). A press on a circuit control without Shift is left to the control.
+   * @returns {boolean} Place was this (nothing else uses it)
    */
   function drawStep(mouse, dt) {
     const key = heldItemKey();
@@ -4512,12 +4543,12 @@ export function boot(win, doc) {
         drawState = null;
         return false;
       }
-      if (d.bow && survival.inSurvival && pack.count(ARROW_KEYS[0]) <= 0) {
+      if (d.bow && bowArrow() === null) {
         drawState = null;
-        showHint('No arrows: make them by hand from a stick, flint and a feather');
+        showHint('No arrows: make them by hand from a stick, a rock or a flint, and a feather');
         return true;
       }
-      drawState = { key, held: 0, at: now() };
+      drawState = { key, held: 0, at: now(), fullS: d.fullS };
       return true;
     }
     if (!drawState) return true;
@@ -4533,42 +4564,49 @@ export function boot(win, doc) {
     const done = drawState;
     drawState = null;
     if (now() - done.at > DRAW_STALE_MS) return true;
-    drawRelease(d, key, drawFraction(done.held));
+    drawRelease(d, key, drawFraction(done.held, done.fullS));
     return true;
   }
 
   /**
-   * Let a draw go: the spear or dart in hand (one of it), or an arrow from the pack off the bow (Creative needs none), along
-   * the look at the draw's speed and power; a bow wears 1 a shot (Survival). @param {NonNullable<ReturnType<typeof drawOf>>} d
-   * @param {string} key @param {number} f the draw, 0..1
+   * Let a draw go: the spear in hand (one of it), or off the bow the best arrow from the pack (Creative needs none: it
+   * shoots a ghost of the hotbar's best arrow, else a Flint Arrow), along the look — a bow's arrow within its random cone —
+   * at the draw's speed and power; a bow wears 1 a shot (Survival).
+   * @param {import('./looseItems.js').DrawDef} d @param {string} key @param {number} f the draw, 0..1
    */
   function drawRelease(d, key, f) {
     if (!player || !world) return;
     const SV = survival.inSurvival;
     /** @type {ItemStack} */
     let stack;
+    let speed;
+    let power;
+    let gravity = 1;
+    let spread = 0;
     if (d.bow) {
-      if (SV && pack.take(d.shoots, 1) < 1) {
+      const arrow = bowArrow();
+      if (arrow === null || (SV && pack.take(arrow, 1) < 1)) {
         showHint('No arrows left');
         return;
       }
-      stack = { k: d.shoots, n: 1 };
-    } else if (SV) {
-      const s = pack.slots[selected];
-      if (!s || s.k !== key) return;
-      stack = { k: s.k, n: 1 };
-      if (s.d !== undefined) stack.d = s.d;
-      pack.consume(selected, 1);
+      stack = { k: arrow, n: 1 };
+      ({ speed, power, gravity, spread } = bowShot(key, arrow, f));
     } else {
-      stack = { k: key, n: 1 };
+      if (SV) {
+        const s = pack.slots[selected];
+        if (!s || s.k !== key) return;
+        stack = { k: s.k, n: 1 };
+        if (s.d !== undefined) stack.d = s.d;
+        pack.consume(selected, 1);
+      } else {
+        stack = { k: key, n: 1 };
+      }
+      ({ speed, power } = drawnThrow(/** @type {{ speed: number, power: number }} */ (d.base), f));
     }
-    const t = drawnThrow(d.base, f);
     const yaw = controls.yaw;
     const pitch = controls.pitch;
     const cp = Math.cos(pitch);
-    const dx = -Math.sin(yaw) * cp;
-    const dy = Math.sin(pitch);
-    const dz = -Math.cos(yaw) * cp;
+    const [dx, dy, dz] = spreadDir(-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp, spread, Math.random);
     const eyeY = player.y + getEyeHeight(player);
     let x = player.x + dx * 0.35;
     let y = eyeY - 0.1 + dy * 0.35;
@@ -4579,8 +4617,8 @@ export function boot(win, doc) {
       z = player.z;
     }
     const lift = d.bow ? 0.5 : 1.5; // an arrow leaves the string flat; a hand throw lofts a little (as G does)
-    loose.launch(stack, x, y, z, dx * t.speed + (player.vx || 0), dy * t.speed + lift, dz * t.speed + (player.vz || 0), {
-      block: -1, ghost: !SV, power: t.power, gravity: d.bow ? ARROW_GRAVITY : 1,
+    loose.launch(stack, x, y, z, dx * speed + (player.vx || 0), dy * speed + lift, dz * speed + (player.vz || 0), {
+      block: -1, ghost: !SV, power, gravity,
     });
     if (d.bow && SV) {
       const res = pack.damage(selected, 1);
@@ -4592,23 +4630,31 @@ export function boot(win, doc) {
 
   /** §100: the draw's ring at the crosshair (0..1), or null. */
   function drawRing() {
-    return drawState ? Math.max(0.02, drawFraction(drawState.held)) : null;
+    return drawState ? Math.max(0.02, drawShare()) : null;
+  }
+
+  /** §100: "Flint Arrows (12)" — the arrow a bow would shoot, and in Survival how many of it the pack holds. */
+  function arrowWords(arrow) {
+    const name = `${itemName(arrow)}s`;
+    return survival.inSurvival ? `${name} (${pack.count(arrow)})` : name;
   }
 
   /**
-   * §100: what the hand can throw, said in the hint: "Hold RMB to throw" (on a tablet "Hold Place to throw", §97.2), the bow
-   * "Hold RMB to draw" (and whether there are arrows), or null when what is in hand is not drawn.
+   * §100: what the hand can throw, said in the hint: "Hold RMB to throw" (on a tablet "Hold Place to throw", §97.2), a bow
+   * "Crude Bow · Flint Arrows (12) · Hold RMB to draw" (or that the pack holds no arrows), or null when what is in hand is
+   * not drawn.
    */
   function drawHintText() {
     const key = heldItemKey();
     const d = drawOf(key);
     if (!d || !key) return null;
     const verb = d.bow ? 'shoot' : 'throw';
-    if (drawState) return drawFraction(drawState.held) >= 1 ? `Full draw · let go to ${verb}` : `Drawing · let go to ${verb}`;
+    if (drawState) return drawShare() >= 1 ? `Full draw · let go to ${verb}` : `Drawing · let go to ${verb}`;
     const name = itemName(key);
     if (d.bow) {
-      if (survival.inSurvival && pack.count(d.shoots) <= 0) return `${name} · no arrows in your pack`;
-      return `${name} · Hold RMB to draw, let go to shoot`;
+      const arrow = bowArrow();
+      if (arrow === null) return `${name} · no arrows in your pack`;
+      return `${name} · ${arrowWords(arrow)} · Hold RMB to draw`;
     }
     return `${name} · Hold RMB to throw · G: throw at once`;
   }
@@ -4617,8 +4663,57 @@ export function boot(win, doc) {
   function throwWords() {
     const d = drawOf(heldItemKey());
     if (!d) return null;
-    if (d.bow && survival.inSurvival && pack.count(d.shoots) <= 0) return 'no arrows';
+    if (d.bow && bowArrow() === null) return 'no arrows';
     return d.bow ? 'Hold RMB to shoot' : 'Hold RMB to throw';
+  }
+
+  // ---- §103 the Spyglass ----------------------------------------------------------------------------------------
+
+  /** §103: a Spyglass is carried — Survival: anywhere in the pack; Creative: on the Creative hotbar (an item pick, §98). */
+  function spyglassCarried() {
+    if (!player || survival.dead) return false;
+    return carriesSpyglass({ survival: survival.inSurvival, count: (k) => pack.count(k), hotbar });
+  }
+
+  /**
+   * §103: Place with the Spyglass in hand looks through it while held (both modes). A press on a circuit control without
+   * Shift is left to the control. @returns {boolean} Place was this
+   */
+  function glassPlaceStep(mouse) {
+    if (heldItemKey() !== SPYGLASS_KEY) {
+      glassPlaceHeld = false;
+      return false;
+    }
+    drawState = null; // a draw under way when the hand changed to the glass is let go
+    const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
+    if (mouse.rightPressed && hit && !shift && latchEnv.isControl(hit.blockId)) {
+      glassPlaceHeld = false;
+      return false;
+    }
+    glassPlaceHeld = !!mouse.right;
+    return true;
+  }
+
+  /**
+   * §103, every frame (renderFrame, before the camera): the glass is up while it is carried and Z or Place (with it in
+   * hand) is held while playing, or while the zoom command keeps it up; the view eases to its power, the look slows by
+   * it and the eyepiece darkens round the screen.
+   */
+  function stepSpyglass(dt) {
+    const playing = /** @type {string} */ (state) === STATE.PLAYING;
+    const held = playing && (controls.isDown(ZOOM_KEY) || (glassPlaceHeld && heldItemKey() === SPYGLASS_KEY));
+    if (!playing) glassPlaceHeld = false;
+    spyglass.step(dt, { carried: spyglassCarried(), held });
+    controls.setLookScale(spyglass.lookScale());
+    const dark = spyglass.vignette();
+    hud.setSpyglass(dark > 0 ? { amount: dark, zoom: spyglass.zoom } : null);
+  }
+
+  /** §103: the hint with the Spyglass in hand, when nothing else is said. */
+  function glassHintText() {
+    if (heldItemKey() !== SPYGLASS_KEY) return null;
+    if (spyglass.looking) return `Spyglass ${zoomLabel(spyglass.zoom)} · scroll: closer or farther`;
+    return 'Spyglass · Hold RMB or Z to look through it';
   }
 
   /** Put one `key` into the selected slot when it is empty (a drunk pot comes back into the hand), else anywhere. */
@@ -4966,7 +5061,7 @@ export function boot(win, doc) {
       const need = canHarvest(brickHit.blockId, tool) ? slowHint(brickHit.blockId, tool) : harvestHint(brickHit.blockId);
       if (need) return need;
     }
-    return blockHintText() ?? drawHintText(); // §100: what is in hand is thrown by holding Place
+    return blockHintText() ?? drawHintText() ?? glassHintText(); // §100: thrown by holding Place; §103 the glass
   }
 
   /**
@@ -5678,8 +5773,9 @@ export function boot(win, doc) {
       if (mouse.rightPressed) openBook(); // §14.2: RMB opens it at once, no hold
       return;
     }
-    if (drawStep(mouse, dt)) {
-      // §100: a spear, a dart or a bow in hand: Place draws it back, and letting go throws or shoots
+    if (glassPlaceStep(mouse) || drawStep(mouse, dt)) {
+      // §103: the Spyglass in hand: Place held looks through it. §100: a spear or a bow in hand: Place draws it back, and
+      // letting go throws or shoots
       useState.step(dt, null, false);
       useProgress = null;
       placeHeld = 0;
@@ -6260,6 +6356,8 @@ export function boot(win, doc) {
   function setState(s) {
     state = s;
     stats.state = s;
+    // §103: Esc or a menu puts the glass down (the console is where `zoom` is typed: it keeps it up)
+    if (s !== STATE.PLAYING && s !== STATE.CONSOLE) spyglass.unlock();
     // A modal (or the title) takes the mouse: a right-click or R key held on a control is let go (§4.9).
     if (s !== STATE.PLAYING) {
       controlLatch.release();
@@ -6569,6 +6667,8 @@ export function boot(win, doc) {
       hotbar[selected] = params.hold;
       hud.setHotbar(hotbar, selected);
     }
+    // §103 screenshot aid: ?zoom=2|4|8 looks through a carried Spyglass at once, as the zoom command does
+    if (params.zoom && spyglassCarried()) spyglass.lock(params.zoom);
 
 
     ctx = buildCommandContext();
@@ -7206,10 +7306,15 @@ export function boot(win, doc) {
         closeConsole();
       },
       onTouch: () => onSleepClick(),
+      // §103: the Zoom button keeps the glass up, or puts it down (it is shown only while a Spyglass is carried)
+      onZoom: () => {
+        if (spyglassCarried()) spyglass.toggle();
+        else showHint(SPYGLASS_NEEDED);
+      },
     })
     : null;
   /** touch: what the controls are told each frame (reused) */
-  const touchView = { playing: false, back: false, survival: false, flying: false };
+  const touchView = { playing: false, back: false, survival: false, flying: false, zoom: false, zoomOn: false };
 
   // Clicking the canvas while playing without the lock (a failed/expired request) re-requests it.
   const onCanvasMouseDown = () => {
@@ -7301,6 +7406,7 @@ export function boot(win, doc) {
         survivalRight(mouse, dt);
         return null;
       }
+      if (glassPlaceStep(mouse)) return 'glass'; // §103
       if (drawStep(mouse, dt)) return 'draw'; // §100
       return rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);
     },
@@ -8040,7 +8146,8 @@ export function boot(win, doc) {
     }
 
     const mouse = controls.consumeMouse();
-    if (mouse.wheel !== 0) selectSlot(wheelSlot(selected, mouse.wheel));
+    // §103: while the Spyglass is up the wheel steps its power (2×, 4×, 8×); else it picks the hotbar slot
+    if (mouse.wheel !== 0 && !spyglass.wheel(mouse.wheel)) selectSlot(wheelSlot(selected, mouse.wheel));
 
     const rPressed = controls.consumePressed('KeyR');
     const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
@@ -8078,8 +8185,8 @@ export function boot(win, doc) {
     } else {
       leftMouseStep(leftHold, mouse, dt, leftEnv); // a press breaks (or snuffs a burning keg); held, it repeats
       // §4.9: right-click operates a control (Shift: places against it), with the control latch; else it places.
-      // §100: with a spear, a dart or a bow in hand it draws instead (and throws when let go)
-      if (!drawStep(mouse, dt)) rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);
+      // §100: with a spear or a bow in hand it draws instead (and throws when let go); §103 the Spyglass looks
+      if (!glassPlaceStep(mouse) && !drawStep(mouse, dt)) rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);
       else if (!mouse.right) controlLatch.release();
       if (mouse.middlePressed) pickTargeted();
     }
@@ -8201,13 +8308,15 @@ export function boot(win, doc) {
     else fallingRenderer.setFlash(flash.x, flash.y, flash.z, flash.intensity);
     blackHoles.cameraFx(player.x, eyeY, player.z, camFx);
     particles.update(state === STATE.PLAYING && !(blockPhysics && blockPhysics.paused) ? dt : 0);
+    // §103: the Spyglass, looked through while Z (or Place with it in hand) is held or the zoom command keeps it up
+    stepSpyglass(dt);
     // §91: the camera at the eye, or on the third-person boom from it; then the avatar's model or its arm
     const cam = viewCamera(dt, eyeY);
     renderer.setCamera(cam.x + shake[0] + camFx.sx, cam.y + shake[1] + camFx.sy, cam.z + shake[2] + camFx.sz, cam.yaw, cam.pitch);
     const wantFov = player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV;
     // §100: a draw steadies the aim: the view closes in a little, DRAW_ZOOM of it at full draw
-    fov = easeFov(fov, drawState ? wantFov * (1 - DRAW_ZOOM * drawFraction(drawState.held)) : wantFov, dt);
-    renderer.setFov(fov + camFx.fov);
+    fov = easeFov(fov, drawState ? wantFov * (1 - DRAW_ZOOM * drawShare()) : wantFov, dt);
+    renderer.setFov(spyglass.fov(fov) + camFx.fov); // §103: narrowed by the glass's power
     drawAvatar(dt, live, eyeY);
     if (net || remoteRenderer.count() > 0) remoteRenderer.sync(remotes, netNow(), dt); // the other players, live under menus too
     renderCircuitsAndVortices(dt, eyeY, live);
@@ -8406,6 +8515,8 @@ export function boot(win, doc) {
       touchView.back = st === STATE.PICKER || st === STATE.CONSOLE;
       touchView.survival = survival.inSurvival;
       touchView.flying = Boolean(player && player.flying);
+      touchView.zoom = spyglassCarried(); // §103: the Zoom button
+      touchView.zoomOn = spyglass.locked;
       touchUI.update(touchView);
     }
 
