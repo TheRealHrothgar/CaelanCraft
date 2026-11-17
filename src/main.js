@@ -905,6 +905,19 @@ export function digSlowHint(dig, target, tool) {
 }
 
 /**
+ * §100.2 / §99.4: Survival's hint says how the thing in hand is thrown BEFORE the hand's words for the block under the
+ * crosshair (the tool gate `harvestHint`, the bare-hand `handGatherHint`, the wrong-ground seed hint and digSlowHint): a
+ * spear, a dart or a bow is no block's own tool, so the gate (`Stone · needs a stone pick or better`, every log) or the
+ * bare-hand words would hide the throw on nearly all the ground in reach. A dig under way brings the block's words back.
+ * @param {DigState} dig  main's dig
+ * @param {string|null} heldKey  what is in hand (heldItemKey)
+ * @returns {boolean}
+ */
+export function throwHintFirst(dig, heldKey) {
+  return !dig.active && drawOf(heldKey) !== null;
+}
+
+/**
  * The device panel's part changed under it (a blast, a vortex, a setblock): main closes the panel (§4.10).
  * @param {string|null} deviceKey  the panel's "q,y,r"
  */
@@ -967,25 +980,24 @@ export class ControlLatch {
   }
 }
 
-/** §100: a draw whose last frame is older than this (ms: a frozen menu or a lost focus came between) goes, unthrown. */
-export const DRAW_STALE_MS = 250;
-
 /**
  * What one frame of the draw is told (§100; main's drawStep fills one and reuses it): `key` what is in hand; `draws` it is
  * a spear, a dart or a bow and the player is alive; `playing` no screen is up over the world (the pack, the field book
  * and Survival's device panel keep the world running under them, so the frame still comes); on a press, `control` the
  * crosshair is on a circuit control and Shift is up, `noArrows` it is a bow with no Arrow in the pack (Survival);
- * `latched` the control latch holds a control that Place pressed (§4.9); `now` the clock (ms).
- * @typedef {{ key: string|null, draws: boolean, playing: boolean, control: boolean, noArrows: boolean, latched: boolean,
- *   now: number }} DrawEnv
+ * `latched` the control latch holds a control that Place pressed (§4.9).
+ * @typedef {{ key: string|null, draws: boolean, playing: boolean, control: boolean, noArrows: boolean, latched: boolean }}
+ *   DrawEnv
  */
 
 /**
- * §100 the draw (PURE): Place held with a spear, a dart or a bow counts up `held`; let go, it is released (main throws or
- * shoots at drawFraction(held), kept in `f`). A press on a control without Shift is the control's, and so is the hold
- * that follows while the latch holds it (a Push Button stays pressed). The draw is let go WITHOUT a throw when the hand
- * changes, when a screen comes up over the running world (the release the cleared mouse would make there is no throw),
- * or when its last frame is older than DRAW_STALE_MS (a menu that froze the world came between).
+ * §100 the draw (PURE): Place held with a spear, a dart or a bow counts up `held` by the frames' dt; let go, it is released
+ * (main throws or shoots at drawFraction(held), kept in `f`). A press on a control without Shift is the control's, and so
+ * is the hold that follows while the latch holds it (a Push Button stays pressed). The draw is let go WITHOUT a throw when
+ * the hand changes, or when a screen comes up over the running world (the release the cleared mouse would make there is
+ * no throw); main also cancels it whenever play leaves STATE.PLAYING (setState: a menu that freezes the world, a lost
+ * pointer lock) and with the rest of the Survival input (resetSurvivalInput). There is no clock, so a slow frame never
+ * swallows a throw.
  */
 export class DrawHold {
   constructor() {
@@ -993,8 +1005,6 @@ export class DrawHold {
     this.key = /** @type {string|null} */ (null);
     /** seconds held */
     this.held = 0;
-    /** the clock of its last frame (ms) */
-    this.at = 0;
     /** the draw of the last release, 0..1 */
     this.f = 0;
   }
@@ -1015,8 +1025,8 @@ export class DrawHold {
    * @param {{ rightPressed: boolean, right: boolean }} mouse
    * @param {number} dt
    * @param {DrawEnv} env
-   * @returns {'start'|'hold'|'release'|'stale'|'cancel'|'noArrows'|'idle'|null} what it did; null: Place is not the
-   *   draw's this frame (nothing in hand draws, a press on a control, or the latch holds one), so the caller goes on
+   * @returns {'start'|'hold'|'release'|'cancel'|'noArrows'|'idle'|null} what it did; null: Place is not the draw's this
+   *   frame (nothing in hand draws, a press on a control, or the latch holds one), so the caller goes on
    */
   step(mouse, dt, env) {
     if (!env.draws || !env.key) {
@@ -1033,7 +1043,6 @@ export class DrawHold {
       if (env.noArrows) return 'noArrows';
       this.key = env.key;
       this.held = 0;
-      this.at = env.now;
       return 'start';
     }
     if (!this.on) return env.latched ? null : 'idle';
@@ -1043,13 +1052,11 @@ export class DrawHold {
     }
     if (mouse.right) {
       this.held += dt;
-      this.at = env.now;
       return 'hold';
     }
-    const stale = env.now - this.at > DRAW_STALE_MS;
     this.f = drawFraction(this.held);
     this.cancel();
-    return stale ? 'stale' : 'release';
+    return 'release';
   }
 }
 
@@ -1459,11 +1466,12 @@ export function boot(win, doc) {
   const camPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
   /**
    * §100 the draw (Place held with a spear, a dart or a bow; drawStep): `on` while one is under way, `held` its seconds.
-   * Read by the avatar, the ring, the zoom and the hints.
+   * Read by the avatar, the ring, the zoom and the hints; cancelled whenever play leaves STATE.PLAYING (setState) and with
+   * the rest of the Survival input (resetSurvivalInput).
    */
   const draw = new DrawHold();
   /** @type {DrawEnv} drawStep's, reused */
-  const drawEnv = { key: null, draws: false, playing: false, control: false, noArrows: false, latched: false, now: 0 };
+  const drawEnv = { key: null, draws: false, playing: false, control: false, noArrows: false, latched: false };
   /** @type {import('./avatarMotion.js').MotionInput} */
   const motionInput = {
     yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true, sneaking: false, swimming: false, flying: false, riding: false, sleeping: false,
@@ -4643,7 +4651,6 @@ export function boot(win, doc) {
       e.noArrows = d.bow && survival.inSurvival && pack.count(ARROW_KEYS[0]) <= 0;
     }
     e.latched = controlLatch.on;
-    e.now = now();
     const did = draw.step(mouse, dt, e);
     if (did === null) return false;
     if (did === 'noArrows') showHint('No arrows: make them by hand from a stick, flint and a feather');
@@ -5058,12 +5065,15 @@ export function boot(win, doc) {
       }
     }
     const h = hit;
+    const throwFirst = throwHintFirst(digState, heldItemKey()); // §100.2: a spear, a dart or a bow, and no dig under way
     if (h) {
       const burning = burningKegHint(h, blockPhysics ? blockPhysics.explosions : null);
       if (burning) return burning; // before the tool requirement: a left press puts it out with any tool or none
       // §80: a planted seed or a sprout says what it has: `Planted Wild Carrot · watered`, `… · needs open sky`
       const crop = cropOfBlock(h.blockId);
       if (crop) return cropHintText(h, crop);
+      // §100.2: how it is thrown, before the hand's words below (a keg, a control or a rune block still says its own)
+      if (throwFirst) return blockHintText() ?? drawHintText();
       const tool = selectedTool();
       if (!canHarvest(h.blockId, tool)) {
         const need = harvestHint(h.blockId);
@@ -5079,7 +5089,7 @@ export function boot(win, doc) {
       }
       const slow = digSlowHint(digState, h, tool); // §99.4: while digging it, `Oak Log · slow with a stone axe`
       if (slow) return slow;
-    } else if (brickHit) {
+    } else if (brickHit && !throwFirst) {
       // §93: a brick says what digs it, like its hex (§99.4: and, while dug, when that is slow)
       const tool = selectedTool();
       const need = canHarvest(brickHit.blockId, tool) ? digSlowHint(digState, brickDigTarget(brickHit), tool) : harvestHint(brickHit.blockId);
@@ -6379,10 +6389,12 @@ export function boot(win, doc) {
   function setState(s) {
     state = s;
     stats.state = s;
-    // A modal (or the title) takes the mouse: a right-click or R key held on a control is let go (§4.9).
+    // A modal (or the title) takes the mouse: a right-click or R key held on a control is let go (§4.9), and a draw goes
+    // without a throw (§100: the release that follows is the menu's, not the hand's).
     if (s !== STATE.PLAYING) {
       controlLatch.release();
       rHeldCell = null;
+      draw.cancel();
     }
   }
 
@@ -6494,8 +6506,10 @@ export function boot(win, doc) {
     world.onChunkGenerated = (cq, cr) => {
       blockPhysics.onChunkGenerated(cq, cr);
       if (circuits) circuits.onChunkLoaded(cq, cr); // a loaded chunk's cells are solved settling: loading fires nothing
-      // §101: a pennant another player placed or pulled up while this chunk was not generated here (applyServerCell)
+      // §101: a pennant another player placed or pulled up while this chunk was not generated here (applyServerCell), and
+      // a fire lit or put out there (§32: neither is meshed, so neither would be drawn or taken away)
       pennants.onChunkLoaded(cq, cr, loadedWorld.edits, loadedWorld.getBlock);
+      campfires.onChunkLoaded(cq, cr, loadedWorld.edits, loadedWorld.getBlock);
     };
     world.onBlockChange = onBlockChanged;
     world.onCoverChange = (q, y, r) => blockPhysics.onCoverChange(q, y, r); // §93.9: a face water crosses opened or closed
