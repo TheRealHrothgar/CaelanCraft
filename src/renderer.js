@@ -39,7 +39,7 @@ import {
 } from './config.js';
 import { CHUNK_RING_INRADIUS, HEX_CORNERS, HEX_SIZE, chunkOrigin, hexToWorld, hexLength, worldToHex } from './hex.js';
 import { BRICK_DEPTH, BRICK_CHUNK_I, BRICK_CHUNK_N } from './bricks.js';
-import { LIGHT_ATTRIBUTE, applyChunkLight, installObjectLighting, lightVolume } from './lightShader.js';
+import { LIGHT_ATTRIBUTE, applyChunkLight, applyPlantAtlas, installObjectLighting, lightVolume } from './lightShader.js';
 import { compileHidden } from './prewarm.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
@@ -374,9 +374,10 @@ function currentPixelRatio() {
  *
  * @param {HTMLCanvasElement} canvas
  * @param {THREE.Texture} atlasTexture  from atlas.createAtlasTexture(); shared by the three chunk materials, never disposed here
- * @param {{ sunCanvas?: *, moonCanvas?: *, renderDistance?: number, webglRenderer?: * }} [opts]
+ * @param {{ sunCanvas?: *, moonCanvas?: *, renderDistance?: number, webglRenderer?: *, plantAtlasTexture?: THREE.Texture }} [opts]
  *        `sunCanvas`/`moonCanvas`: 32×32 canvases from atlas.makeSunCanvas/makeMoonCanvas (plain coloured squares
  *        are used when absent). `renderDistance`: initial fog range (default RENDER_DISTANCE).
+ *        `plantAtlasTexture` (§105): atlas.createPlantAtlasTexture(), bound beside the block atlas on the cutout material.
  *        `webglRenderer`: test-only injection of a pre-built renderer-like object (setPixelRatio/setSize/render/info/dispose).
  * @returns {Renderer}
  */
@@ -426,6 +427,8 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   /** Layer order matches RenderLayer: 0 opaque, 1 cutout, 2 translucent. */
   const layerMaterials = [opaqueMaterial, cutoutMaterial, translucentMaterial];
   for (const m of layerMaterials) applyChunkLight(m);
+  // §105: the plants are drawn in the cutout layer from the plant atlas, bound beside the block atlas
+  applyPlantAtlas(cutoutMaterial, opts.plantAtlasTexture ?? null);
   const layerRenderOrder = [0, 0, 1];
   const layerNames = /** @type {const} */ (['opaque', 'cutout', 'translucent']);
 

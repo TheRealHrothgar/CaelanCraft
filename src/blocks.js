@@ -209,12 +209,13 @@ export const SOUND_GROUPS = Object.freeze([
  *                                  thin parts and device models, which are not prisms; DESIGN-circuits §1.5; and the plants
  *                                  and ground litter, which are sprites and decals)
  * @property {'prism'|'model'|'decal'|'litter'} shape  how the chunk mesher draws it: 'prism' (default) the hexagonal prism;
- *                                  'model' a small 3D model of boxes and leaf cards cut from the block's TOP tile (the wild
- *                                  plants: plantModels.js, CONTRACTS §78; they were three crossed pictures until v0.15;
- *                                  the planted seeds and sprouts of §80; and the well, the rain barrel and the two beds
- *                                  of §85);
+ *                                  'model' a small 3D model: the wild plants and the planted seeds and sprouts of §80 are
+ *                                  hex-faceted KIT models painted from the plant atlas, in levels of detail (plantModels.js,
+ *                                  CONTRACTS §105; boxes cut from their tile since v0.15, three crossed pictures before);
+ *                                  the well, the rain barrel and the two beds of §85 BOX models cut from their skins;
  *                                  'decal' one flat picture of the TOP tile lying on the cell's floor (the snares); 'litter'
- *                                  a few small 3D pieces lying on the floor (loose stones, fallen branches: CONTRACTS §75).
+ *                                  a few small 3D pieces lying on the floor (loose stones, fallen branches, the nests:
+ *                                  CONTRACTS §75; kit models too since §105).
  *                                  The terrain stays hexagonal prisms.
  */
 

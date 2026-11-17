@@ -58,7 +58,7 @@ import {
   SAVE_VERSION, listSlots, loadSlot, saveSlot, deleteSlot, renameSlot, duplicateSlot, migrateLegacySave, storageUsage,
   normalizeWorldName, defaultWorldName,
 } from './storage.js';
-import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
+import { createAtlasCanvas, createAtlasTexture, createPlantAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer, fogRangeForRenderDistance } from './renderer.js';
 import { createControls } from './controls.js';
 import { createTouchUI, detectTouchMode, touchWords, touchClusterRect, TOUCH_RENDER_DISTANCE } from './touchControls.js'; // touch (§95, §97)
@@ -170,6 +170,7 @@ import { createHandbookUI } from './handbookUI.js';
 import {
   parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest, circuitSceneWrites,
   CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP, WIND_SCENE, ZOMBIE_SCENE, crowdScene, WATCHER_SCENE, PHANTOM_SCENE, ANIMAL_SCENES,
+  plantSceneCells, PLANT_SCENE_AHEAD,
 } from './diagnostics.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -1336,6 +1337,7 @@ export function boot(win, doc) {
       sunCanvas: makeSunCanvas(),
       moonCanvas: makeMoonCanvas(),
       renderDistance: params.rd ?? RENDER_DISTANCE,
+      plantAtlasTexture: createPlantAtlasTexture(), // §105: the plants' pictures, beside the block atlas
     });
     // Room for the swallowed mobs' ghosts on top of the live ones (DESIGN-circuits §2.7): a ghost is never dropped.
     pigRenderer = createPigRenderer(renderer.three.scene, PIG_MAX + MAX_INFALL_MOBS);
@@ -7011,6 +7013,7 @@ export function boot(win, doc) {
     if (name === 'wind' || name === 'wind-rain') return buildWindScene(fx, fz, feet, name === 'wind-rain');
     if (name === 'zombies' || name === 'crowd' || name === 'watcher' || name === 'phantom') return buildFigureScene(name, fx, fz);
     if (Object.hasOwn(ANIMAL_SCENES, name)) return buildAnimalScene(fx, fz, feet, /** @type {'animals'|'animal-variants'|'animal-close'} */ (name));
+    if (name === 'plants') return buildPlantScene(fx, fz, feet);
     if (name !== 'circuits') return { ok: false, message: `unknown scene "${name}"` };
     const [qa, ra] = worldToHex(player.x + fx * 10, player.z + fz * 10);
     const q0 = qa - 5;
@@ -7201,6 +7204,44 @@ export function boot(win, doc) {
       if (!h.fields.trapped) b.walkPhase = Math.PI;
       Object.assign(b, h.fields);
     }
+  }
+
+  /**
+   * §105 `?scene=plants`: one of every plant (diagnostics.plantSceneCells) in rows ahead — the first `?ahead=` m away —
+   * each on a column of level ground at the player's feet (cleared above, its own soil on top, filled under it), a
+   * strip of open ground round them.
+   * @param {number} fx @param {number} fz  the way the player looks @param {number} feet
+   * @returns {{ ok: boolean, message: string, named: Record<string, [number, number, number]> }}
+   */
+  function buildPlantScene(fx, fz, feet) {
+    const w = /** @type {World} */ (world);
+    const cells = plantSceneCells(player.x, player.z, fx, fz, params.ahead ?? PLANT_SCENE_AHEAD);
+    /** @type {Map<string, number>} every column the scene levels (the plants', the player's and all round them): its soil */
+    const ground = new Map();
+    const [pq, pr] = worldToHex(player.x, player.z);
+    const qs = [pq, ...cells.map((c) => c.q)];
+    const rs = [pr, ...cells.map((c) => c.r)];
+    for (let q = Math.min(...qs) - 3; q <= Math.max(...qs) + 3; q++) {
+      for (let r = Math.min(...rs) - 3; r <= Math.max(...rs) + 3; r++) ground.set(`${q},${r}`, BLOCK.GRASS_BLOCK);
+    }
+    for (const c of cells) ground.set(`${c.q},${c.r}`, c.under);
+    for (const [key, soil] of ground) {
+      const [q, r] = key.split(',').map(Number);
+      for (let y = feet; y <= feet + 8 && y < WORLD_HEIGHT; y++) if (w.getBlock(q, y, r) !== BLOCK.AIR) w.setBlock(q, y, r, BLOCK.AIR);
+      w.setBlock(q, feet - 1, r, soil);
+      for (let y = feet - 2; y >= Math.max(1, feet - 8); y--) {
+        if (isSolid(w.getBlock(q, y, r))) break;
+        w.setBlock(q, y, r, BLOCK.DIRT);
+      }
+    }
+    /** @type {Record<string, [number, number, number]>} */
+    const named = {};
+    for (const c of cells) {
+      w.setBlock(c.q, feet, c.r, c.id);
+      named[getBlockDef(c.id).name] = [c.q, feet, c.r];
+    }
+    sceneNamed = named;
+    return { ok: true, message: `the plant scene: ${cells.length} plants in rows ahead`, named };
   }
 
   function enterPlaying() {

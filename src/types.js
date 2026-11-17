@@ -42,6 +42,8 @@
  * @property {MeshData|null} opaque
  * @property {MeshData|null} cutout
  * @property {MeshData|null} translucent
+ * @property {number} [plants]     how many kit-model cells it drew (§105: plants, the farm's blocks, litter)
+ * @property {number} [plantTris]  their triangles (§105)
  */
 
 /**

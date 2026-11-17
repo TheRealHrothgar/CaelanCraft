@@ -33,7 +33,8 @@ import { DEATH_CAUSES, serializeSave, deserializeSave } from '../../src/storage.
 import { KIND_STATS } from '../../src/zombies.js';
 import { paintTile } from '../../src/tiles.js';
 import { paintItem, hasItemArt } from '../../src/itemArt.js';
-import { buildChunkMesh, NEST_WALL, NEST_EGGS } from '../../src/mesher.js';
+import { buildChunkMesh } from '../../src/mesher.js';
+import { plantMesh, PLANT_LOD_NEAR, PLANT_STRIDE } from '../../src/plantModels.js';
 import { World } from '../../src/world.js';
 import { parseLine, executeCommand } from '../../src/commands.js';
 import { flatWorldGen, makeChunkData, makeChunkDataGetter, setWorldBlock } from '../helpers/fixtures.js';
@@ -463,7 +464,7 @@ describe('fauna — ground nests', () => {
     expect(rollDrops(B.GROUND_NEST_EMPTY, null, {}, () => 0.5)).toEqual([{ k: 'plant_fibre', n: 1 }]);
   });
 
-  it('is drawn as 3D pieces: a ring of grass bundles round a bed, and three eggs only in the full one', () => {
+  it('is drawn as 3D pieces (a kit model, §105): a woven wall round a bed of grass, and three eggs only in the full one', () => {
     const mesh = (id) => {
       const chunks = new Map();
       setWorldBlock(chunks, 4, 20, 4, B.GRASS_BLOCK);
@@ -475,9 +476,19 @@ describe('fauna — ground nests', () => {
     const none = faces(mesh(B.AIR));
     const empty = faces(mesh(B.GROUND_NEST_EMPTY)) - none;
     const full = faces(mesh(B.GROUND_NEST)) - none;
-    // five visible faces a box (its underside is never drawn): the bed and the wall; then two boxes an egg
-    expect(empty).toBe((1 + NEST_WALL.count) * 5);
-    expect(full - empty).toBe(NEST_EGGS * 2 * 5);
+    // the empty nest is the full one less its eggs
+    const model = (id) => /** @type {*} */ (plantMesh(id, PLANT_LOD_NEAR, 0));
+    expect(empty).toBe(model(B.GROUND_NEST_EMPTY).tris);
+    expect(full).toBe(model(B.GROUND_NEST).tris);
+    expect(full).toBeGreaterThan(empty);
+    expect(model(B.GROUND_NEST).keys).toEqual(expect.arrayContaining(['nest', 'nest.bed', 'egg']));
+    expect(model(B.GROUND_NEST_EMPTY).keys).not.toContain('egg');
+    // three eggs lying in the bed, inside the wall
+    const eggs = [];
+    const m = model(B.GROUND_NEST);
+    for (let v = 0; v < m.verts; v++) if (m.keys[m.vkey[v]] === 'egg') eggs.push([m.data[v * PLANT_STRIDE], m.data[v * PLANT_STRIDE + 2]]);
+    expect(eggs.length).toBeGreaterThan(30);
+    for (const [x, z] of eggs) expect(Math.hypot(x, z)).toBeLessThan(0.2);
     // its pictures: the bowl is a cut-out with something in it, the skins are opaque
     for (const t of [TILE.GROUND_NEST, TILE.GROUND_NEST_EMPTY]) {
       const px = paintTile(t);

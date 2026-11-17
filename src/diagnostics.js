@@ -43,7 +43,9 @@ import { durabilityLeft } from './inventory.js';
  *   'crowd' a crowd of CROWD_SIZE (crowdScene), 'watcher' the Watcher (WATCHER_SCENE), 'phantom' the figure at the edge of
  *   sight (PHANTOM_SCENE) — drawn only, never in a list of mobs; §69.1: 'animals' every kind of animal ahead, held where
  *   they stand, 'animal-variants' the young, the shorn, the tame, the snared and the poses, 'animal-close' the sheep and
- *   the birds a couple of metres off (ANIMAL_SCENES)
+ *   the birds a couple of metres off (ANIMAL_SCENES); §105: 'plants' one of every plant in rows ahead (plantSceneCells)
+ * @property {number|null} ahead     §105 screenshot aid: with ?scene=plants, how far ahead (m) its first row stands
+ *   (−20..60, negative: behind the player; default PLANT_SCENE_AHEAD)
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
  * @property {'creative'|'survival'|null} mode  v0.9 (§9.10): the first world's mode with ?autoplay / ?smoke; anything else → null
  * @property {boolean} soundTest     v0.16 (CONTRACTS §82): `?ui=sounds` — main opens the Sound Test as soon as the page has loaded
@@ -99,6 +101,7 @@ export function parseParams(search = defaultSearch()) {
     slot: readSlotParam(params),
     mode: readModeParam(params),
     scene: readSceneParam(params),
+    ahead: readClampedFloat(params, 'ahead', -20, 60),
     soundTest: readSoundTestParam(params),
     view: normalizeViewMode(readString(params, 'view')),
     avatar: normalizeAvatarId(readString(params, 'avatar')),
@@ -181,16 +184,16 @@ function readSoundTestParam(params) {
   return t !== null && t.toLowerCase() === 'sounds';
 }
 
-/** @typedef {'vortex'|'circuits'|'wind'|'wind-rain'|'zombies'|'crowd'|'watcher'|'phantom'|'animals'|'animal-variants'|'animal-close'} SceneName */
-/** Every `?scene=` (DESIGN-circuits §6.7, §101, §104). */
+/** @typedef {'vortex'|'circuits'|'wind'|'wind-rain'|'zombies'|'crowd'|'watcher'|'phantom'|'animals'|'animal-variants'|'animal-close'|'plants'} SceneName */
+/** Every `?scene=` (DESIGN-circuits §6.7, §101, §104, §69.1, §105). */
 export const SCENE_NAMES = Object.freeze(/** @type {SceneName[]} */ ([
-  'vortex', 'circuits', 'wind', 'wind-rain', 'zombies', 'crowd', 'watcher', 'phantom', 'animals', 'animal-variants', 'animal-close',
+  'vortex', 'circuits', 'wind', 'wind-rain', 'zombies', 'crowd', 'watcher', 'phantom', 'animals', 'animal-variants', 'animal-close', 'plants',
 ]));
 
 /**
- * `?scene=vortex|circuits|wind|wind-rain|zombies|crowd|watcher|phantom|animals|animal-variants|animal-close`
+ * `?scene=vortex|circuits|wind|wind-rain|zombies|crowd|watcher|phantom|animals|animal-variants|animal-close|plants`
  * (case-insensitive), anything else null (DESIGN-circuits §6.7; §101 the wind; §104 the zombies, the Watcher and the
- * figure; §69.1 the animals — staged for screenshots).
+ * figure; §69.1 the animals; §105 the plants — staged for screenshots).
  * @param {URLSearchParams} params
  * @returns {SceneName|null}
  */
@@ -199,6 +202,58 @@ export function readSceneParam(params) {
   if (t === null) return null;
   const v = /** @type {SceneName} */ (t.toLowerCase());
   return SCENE_NAMES.includes(v) ? v : null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// §105 `?scene=plants`: one of every plant in rows ahead of the player (screenshots of the plant models)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The rows of ?scene=plants, nearest first, each left to right across the view, six at most (the whole scene is about
+ * nine metres wide, so it fits the view from a few metres off): the bushes ripe and picked (each look-alike beside its
+ * twin); the herbs; the small greenery; the mushrooms, the reeds and the cactus; the ground litter; the farm (a planted
+ * seed, then each crop's sprout).
+ */
+export const PLANT_SCENE_ROWS = Object.freeze([
+  Object.freeze([BLOCK.HONEYBERRY_BUSH, BLOCK.NIGHTSHADE_BUSH, BLOCK.HONEYBERRY_BUSH_BARE, BLOCK.NIGHTSHADE_BUSH_BARE]),
+  Object.freeze([BLOCK.HAZEL_THICKET, BLOCK.HAZEL_THICKET_BARE, BLOCK.CRAB_APPLE_BUSH, BLOCK.CRAB_APPLE_BUSH_BARE]),
+  Object.freeze([BLOCK.CARROT_PLANT, BLOCK.HEMLOCK, BLOCK.ONION_PLANT, BLOCK.HEALWORT_PLANT, BLOCK.HEALWORT_PLANT_BARE, BLOCK.TUBER_PLANT]),
+  Object.freeze([BLOCK.TUSSOCK, BLOCK.MEADOW_DAISIES, BLOCK.FERN, BLOCK.THISTLE, BLOCK.FLAX, BLOCK.ALOE]),
+  Object.freeze([BLOCK.HONEYCAP_MUSHROOM, BLOCK.FRECKLECAP_MUSHROOM, BLOCK.CATTAILS, BLOCK.PRICKLY_PEAR, BLOCK.PRICKLY_PEAR_BARE]),
+  Object.freeze([BLOCK.LOOSE_STONES, BLOCK.FALLEN_BRANCHES, BLOCK.GROUND_NEST, BLOCK.GROUND_NEST_EMPTY]),
+  Object.freeze([BLOCK.PLANTED_CARROT, BLOCK.CARROT_SPROUT, BLOCK.ONION_SPROUT, BLOCK.TUBER_SPROUT, BLOCK.HONEYBERRY_SPROUT]),
+  Object.freeze([BLOCK.HAZEL_SPROUT, BLOCK.CRAB_APPLE_SPROUT, BLOCK.HEALWORT_SPROUT, BLOCK.PRICKLY_PEAR_SPROUT, BLOCK.CATTAILS_SPROUT]),
+]);
+/** How far ahead of the player (m) the first row of ?scene=plants stands, unless ?ahead= says. */
+export const PLANT_SCENE_AHEAD = 3;
+/** Its rows stand this far apart (m) one behind the other, its plants this far apart across a row. */
+export const PLANT_SCENE_ROW_GAP = 1.8;
+export const PLANT_SCENE_COL_GAP = 1.6;
+
+/**
+ * The cells ?scene=plants writes for a player at (px, pz) looking along the unit (fx, fz): each plant `[q, r, id]` on
+ * its own column (the rows centred on the line of sight, `ahead` m to the first), and under each the ground it wants
+ * (`under`: sand for the prickly pear, grass for the rest).
+ * @param {number} px @param {number} pz @param {number} fx @param {number} fz @param {number} [ahead]
+ * @returns {{ q: number, r: number, id: number, under: number }[]}
+ */
+export function plantSceneCells(px, pz, fx, fz, ahead = PLANT_SCENE_AHEAD) {
+  const out = [];
+  const seen = new Set();
+  PLANT_SCENE_ROWS.forEach((row, i) => {
+    const along = ahead + i * PLANT_SCENE_ROW_GAP;
+    row.forEach((id, j) => {
+      const right = (j - (row.length - 1) / 2) * PLANT_SCENE_COL_GAP;
+      // the player's right is the forward vector turned a quarter: (−fz, fx)
+      const [q, r] = worldToHex(px + fx * along - fz * right, pz + fz * along + fx * right);
+      const key = `${q},${r}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const sandy = id === BLOCK.PRICKLY_PEAR || id === BLOCK.PRICKLY_PEAR_BARE || id === BLOCK.PRICKLY_PEAR_SPROUT;
+      out.push({ q, r, id, under: sandy ? BLOCK.SAND : BLOCK.GRASS_BLOCK });
+    });
+  });
+  return out;
 }
 
 /**

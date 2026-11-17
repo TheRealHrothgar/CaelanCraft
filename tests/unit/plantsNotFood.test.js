@@ -10,7 +10,8 @@ import {
 import { paintTile, averageColor, TILE_NAMES } from '../../src/tiles.js';
 import { ITEMS, ITEM_KEYS, getItem, itemForBlock, blockForItem, itemName, stackSize } from '../../src/items.js';
 import { paintItem, hasItemArt } from '../../src/itemArt.js';
-import { PLANT_MODELS, PLANT_QUAD_STRIDE, plantModel, plantModelTile } from '../../src/plantModels.js';
+import { PLANT_LOD_NEAR, PLANT_STRIDE, plantMesh } from '../../src/plantModels.js';
+import { paintPlantAtlas, plantRect } from '../../src/plantAtlas.js';
 import {
   PICKABLE, RIPE_OF, BLOCK_RULES, Regrowth, FERN_FIBRE_P, isPickable, pick, rollDrops, ripeOf, breakSeconds, handGatherHint, harvestHint,
 } from '../../src/harvest.js';
@@ -78,36 +79,40 @@ const yellow = (r, g, b) => r > 220 && g > 180 && b < 120;
 
 // ---- models ---------------------------------------------------------------------------------------------------------
 
-/** The quads of a block's compiled model: corners, their texels [u, v] and the normal. */
-function quadsOf(id) {
-  const m = /** @type {Float32Array} */ (plantModel(id));
+/** A block's near model (§105): its vertices with their picture, and its triangles. */
+function modelOf(id, v = 0) {
+  return /** @type {*} */ (plantMesh(id, PLANT_LOD_NEAR, v));
+}
+/** Every vertex of a model: [x, y, z], its normal and its picture's name. */
+function vertsOf(id, v = 0) {
+  const m = modelOf(id, v);
   const out = [];
-  for (let o = 0; o < m.length; o += PLANT_QUAD_STRIDE) {
-    const p = [];
-    const uv = [];
-    for (let v = 0; v < 4; v++) {
-      p.push([m[o + v * 5], m[o + v * 5 + 1], m[o + v * 5 + 2]]);
-      uv.push([m[o + v * 5 + 3], m[o + v * 5 + 4]]);
+  for (let i = 0; i < m.verts; i++) {
+    const o = i * PLANT_STRIDE;
+    out.push({ p: [m.data[o], m.data[o + 1], m.data[o + 2]], n: [m.data[o + 3], m.data[o + 4], m.data[o + 5]], key: m.keys[m.vkey[i]], fruit: m.vfruit[i] === 1 });
+  }
+  return out;
+}
+const ATLAS = paintPlantAtlas();
+/** The opaque texels of a picture of the plant atlas: [r, g, b]. */
+function texelsOf(key) {
+  const [x0, y0, w, h] = plantRect(key);
+  const out = [];
+  for (let y = y0; y < y0 + h; y++) {
+    for (let x = x0; x < x0 + w; x++) {
+      const i = (y * ATLAS.width + x) * 4;
+      if (ATLAS.data[i + 3] === 255) out.push([ATLAS.data[i], ATLAS.data[i + 1], ATLAS.data[i + 2]]);
     }
-    out.push({ p, uv, n: [m[o + 20], m[o + 21], m[o + 22]] });
   }
   return out;
 }
-/** The texels of the model's tile a quad is cut from. */
-function texelsOf(id, q) {
-  const tile = paintTile(plantModelTile(id) ?? getFaceTile(id, 6));
-  const us = q.uv.map((t) => t[0]);
-  const vs = q.uv.map((t) => t[1]);
-  const out = [];
-  for (let y = Math.min(...vs); y < Math.max(...vs); y++) {
-    for (let x = Math.min(...us); x < Math.max(...us); x++) out.push([tile[(y * 16 + x) * 4], tile[(y * 16 + x) * 4 + 1], tile[(y * 16 + x) * 4 + 2], tile[(y * 16 + x) * 4 + 3]]);
-  }
-  return out;
-}
-/** The quads every texel of which is opaque and passes `pred`. */
-const facesAll = (id, pred) => quadsOf(id).filter((q) => texelsOf(id, q).every(([r, g, b, a]) => a === 255 && pred(r, g, b)));
-/** The quads with at least `least` texels that pass `pred`. */
-const facesWith = (id, pred, least = 1) => quadsOf(id).filter((q) => texelsOf(id, q).filter(([r, g, b, a]) => a === 255 && pred(r, g, b)).length >= least);
+/** The share of a picture's opaque texels that pass `pred`. */
+const shareOf = (key, pred) => {
+  const t = texelsOf(key);
+  return t.filter(([r, g, b]) => pred(r, g, b)).length / t.length;
+};
+/** The pictures a model is painted with whose texels are mostly `pred` (at least `least` of them). */
+const keysWith = (id, pred, least = 0.5) => modelOf(id).keys.filter((k) => shareOf(k, pred) >= least);
 
 // =====================================================================================================================
 
@@ -405,132 +410,127 @@ describe('the tells, measured in the pixels: how to know a look-alike from its t
   });
 });
 
-describe('the tells in 3D: the models show them too (plantModels.js)', () => {
-  const up = (q) => q.n[1] > 0.7;
-  const height = (q) => Math.min(...q.p.map((p) => p[1]));
-  const topOf = (id) => Math.max(...quadsOf(id).flatMap((q) => q.p.map((p) => p[1])));
+describe('the tells in 3D: the models show them too (plantModels.js, CONTRACTS §105)', () => {
+  const topOf = (id) => modelOf(id).height;
 
-  it('all eight meet the limits of §78 (plantModels.test.js checks them one by one); none is a flat picture', () => {
+  it('all eight are kit models of real height, leafy, none a flat picture', () => {
     for (const id of IDS) {
-      expect(PLANT_MODELS[id], BLOCKS[id].name).toBeDefined();
-      const n = quadsOf(id).length;
-      expect(n, BLOCKS[id].name).toBeGreaterThanOrEqual(9);
-      expect(n, BLOCKS[id].name).toBeLessThanOrEqual(80);
-      expect(topOf(id), BLOCKS[id].name).toBeGreaterThan(0.6);
+      expect(modelOf(id), BLOCKS[id].name).not.toBeNull();
+      expect(topOf(id), BLOCKS[id].name).toBeGreaterThan(0.38);
       expect(topOf(id), BLOCKS[id].name).toBeLessThanOrEqual(0.95);
-      // chunky: boxes, not only cards (a box has faces looking up; so has a thing with depth)
-      expect(quadsOf(id).filter(up).length, BLOCKS[id].name).toBeGreaterThanOrEqual(2);
+      expect(modelOf(id).tris, BLOCKS[id].name).toBeGreaterThan(60);
     }
   });
 
-  it('the Hemlock: white flower plates lie flat on top of it, high above its leaves; the carrot has none', () => {
-    const plates = facesAll(B.HEMLOCK, white).filter(up);
-    expect(plates).toHaveLength(3);
-    expect(facesAll(B.CARROT_PLANT, white)).toHaveLength(0);
-    expect(facesWith(B.CARROT_PLANT, white)).toHaveLength(0);
-    // each plate is a real plate: at least a quarter of a metre across and nearly level
-    for (const q of plates) {
-      const xs = q.p.map((p) => p[0]);
-      const zs = q.p.map((p) => p[2]);
-      expect(Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs))).toBeGreaterThan(0.3);
-      expect(q.n[1]).toBeGreaterThan(0.8);
-    }
-    // the highest thing on the plant is a flower plate, and all three stand in its upper half
+  it('the Hemlock: white plates of florets stand high on it, above its leaves; the carrot has nothing white', () => {
+    const plates = vertsOf(B.HEMLOCK).filter((x) => x.key === 'hemlock.umbel');
+    expect(shareOf('hemlock.umbel', white)).toBeGreaterThan(0.5);
+    // three plates (a fan of eight, seven and seven triangles round a raised centre), every one in the upper half
+    expect(new Set(plates.map((x) => x.p.map((c) => c.toFixed(2)).join())).size).toBeGreaterThan(20);
     const top = topOf(B.HEMLOCK);
-    expect(Math.max(...plates.map(height))).toBeGreaterThan(top - 0.07);
-    for (const q of plates) expect(height(q)).toBeGreaterThan(top / 2);
+    for (const x of plates) expect(x.p[1]).toBeGreaterThan(top / 2);
+    expect(Math.max(...plates.map((x) => x.p[1]))).toBeGreaterThan(top - 0.07); // the highest thing on it is a plate
+    // the leaves stay low under them
+    const fronds = vertsOf(B.HEMLOCK).filter((x) => x.key === 'carrot.frond');
+    expect(Math.max(...fronds.map((x) => x.p[1]))).toBeLessThan(Math.min(...plates.map((x) => x.p[1])));
+    expect(keysWith(B.CARROT_PLANT, white, 0.2)).toHaveLength(0);
   });
 
   it('the Hemlock: a pale crown and a purple-blotched stalk; the carrot an orange crown and no purple', () => {
-    // the crown: the faces at the plant's foot (below 13 cm)
-    const foot = (id) => quadsOf(id).filter((q) => Math.max(...q.p.map((p) => p[1])) <= 0.13 + 1e-6 && q.uv[0][1] >= 12);
-    expect(foot(B.CARROT_PLANT).length).toBeGreaterThanOrEqual(5);
-    expect(foot(B.HEMLOCK).length).toBeGreaterThanOrEqual(5);
-    for (const q of foot(B.CARROT_PLANT)) expect(texelsOf(B.CARROT_PLANT, q).every(([r, g, b]) => orange(r, g, b) || (r > 180 && b < 90))).toBe(true);
-    for (const q of foot(B.HEMLOCK)) expect(texelsOf(B.HEMLOCK, q).every(([r, g, b]) => r > 170 && g > 160 && b > 120)).toBe(true);
-    expect(facesWith(B.HEMLOCK, orange)).toHaveLength(0);
-    expect(facesWith(B.CARROT_PLANT, orange).length).toBeGreaterThanOrEqual(5);
-    // purple: on the hemlock's stalk (four upright faces as tall as the leaves) and nowhere on the carrot
-    expect(facesWith(B.CARROT_PLANT, violet)).toHaveLength(0);
-    const stalk = facesWith(B.HEMLOCK, violet, 2).filter((q) => Math.abs(q.n[1]) < 0.01 && Math.max(...q.p.map((p) => p[1])) - height(q) > 0.5);
-    expect(stalk).toHaveLength(4);
+    expect(modelOf(B.CARROT_PLANT).keys).toContain('carrot.crown');
+    expect(modelOf(B.HEMLOCK).keys).toContain('hemlock.crown');
+    expect(modelOf(B.HEMLOCK).keys).not.toContain('carrot.crown');
+    expect(shareOf('carrot.crown', orange)).toBeGreaterThan(0.6);
+    expect(shareOf('hemlock.crown', (r, g, b) => r > 170 && g > 160 && b > 120)).toBeGreaterThan(0.9);
+    // the crown is at the plant's foot
+    for (const id of [B.CARROT_PLANT, B.HEMLOCK]) {
+      const crown = vertsOf(id).filter((x) => x.key.endsWith('.crown'));
+      expect(Math.max(...crown.map((x) => x.p[1]))).toBeLessThan(0.08);
+    }
+    // purple: on the hemlock's stalk, tall as the plant, and on nothing of the carrot's
+    expect(shareOf('hemlock.stalk', violet)).toBeGreaterThan(0.05);
+    const stalk = vertsOf(B.HEMLOCK).filter((x) => x.key === 'hemlock.stalk');
+    expect(Math.max(...stalk.map((x) => x.p[1]))).toBeGreaterThan(0.6);
+    for (const k of modelOf(B.CARROT_PLANT).keys) expect(shareOf(k, violet), k).toBeLessThan(0.01);
   });
 
-  it('the Hemlock keeps the carrot\'s shape: a crown at the foot and feathery fronds leaning out of it, as many as the carrot\'s', () => {
-    const fronds = (id) => quadsOf(id).filter((q) => {
-      const t = texelsOf(id, q);
-      const green = t.filter(([r, g, b, a]) => a === 255 && g > r && g > b).length;
-      return t.length >= 40 && green / t.length > 0.3 && t.some((p) => p[3] === 0); // a big ragged green card
-    });
-    expect(fronds(B.HEMLOCK)).toHaveLength(5);
-    expect(fronds(B.CARROT_PLANT)).toHaveLength(6);
+  it('the Hemlock keeps the carrot\'s shape: the same lacy fronds arching out of its crown', () => {
+    const fronds = (id) => vertsOf(id).filter((x) => x.key === 'carrot.frond');
+    expect(fronds(B.HEMLOCK).length).toBeGreaterThan(0);
+    expect(fronds(B.CARROT_PLANT).length).toBeGreaterThan(0);
+    const reach = (id) => Math.max(...fronds(id).map((x) => Math.hypot(x.p[0], x.p[2])));
+    expect(reach(B.HEMLOCK) / reach(B.CARROT_PLANT)).toBeGreaterThan(0.8);
+    expect(reach(B.HEMLOCK) / reach(B.CARROT_PLANT)).toBeLessThan(1.25);
   });
 
-  it('the Nightshade: dark berries stand out of the bush where the Honeyberry\'s blue ones do, and purple stars open on it', () => {
-    const fruit = (id, pred) => quadsOf(id).filter((q) => {
-      const t = texelsOf(id, q);
-      return t.length === 4 && t.filter(([r, g, b]) => pred(r, g, b)).length >= 3; // a 2 × 2 berry: three of its pixels that colour
-    });
-    const dark = fruit(B.NIGHTSHADE_BUSH, berryBlack);
-    const blue = fruit(B.HONEYBERRY_BUSH, berryBlue);
-    expect(dark).toHaveLength(25); // five berries, five faces each
-    expect(blue).toHaveLength(25);
-    expect(fruit(B.NIGHTSHADE_BUSH, berryBlue)).toHaveLength(0);
-    expect(fruit(B.HONEYBERRY_BUSH, berryBlack)).toHaveLength(0);
-    // the very same places: the two bushes are one model with different berries
-    const place = (q) => q.p.flat().map((c) => c.toFixed(4)).join(',');
-    expect(dark.map(place)).toEqual(blue.map(place));
-    // the berries stand OUT of the bush: each reaches beyond the crown's faces
-    const crown = Math.max(...quadsOf(B.NIGHTSHADE_BUSH_BARE).flatMap((q) => q.p.map((p) => Math.max(Math.abs(p[0]), Math.abs(p[2])))));
-    const reach = Math.max(...dark.flatMap((q) => q.p.map((p) => Math.max(Math.abs(p[0]), Math.abs(p[2])))));
-    expect(reach).toBeGreaterThan(crown);
-    // three stars: each a small box with the five-pixel flower on its face
-    const stars = quadsOf(B.NIGHTSHADE_BUSH).filter((q) => {
-      const t = texelsOf(B.NIGHTSHADE_BUSH, q);
-      return t.length === 9 && t.filter(([r, g, b]) => violet(r, g, b)).length === 4 && t.filter(([r, g, b]) => yellow(r, g, b)).length === 1;
-    });
-    expect(stars).toHaveLength(3);
-    expect(stars.filter(up)).toHaveLength(1); // one on top, two on the sides
-    expect(facesWith(B.HONEYBERRY_BUSH, violet)).toHaveLength(0);
+  it('the Nightshade: dark berries hang where the Honeyberry\'s blue ones do, and purple stars open on it', () => {
+    expect(shareOf('night.berry', berryBlack)).toBeGreaterThan(0.4);
+    expect(shareOf('honey.berry', berryBlue)).toBeGreaterThan(0.4);
+    expect(shareOf('night.berry', berryBlue)).toBe(0);
+    expect(shareOf('honey.berry', berryBlack)).toBe(0);
+    for (const v of [0, 1]) {
+      const dark = vertsOf(B.NIGHTSHADE_BUSH, v).filter((x) => x.key === 'night.berry');
+      const blue = vertsOf(B.HONEYBERRY_BUSH, v).filter((x) => x.key === 'honey.berry');
+      expect(dark.length).toBeGreaterThan(0);
+      expect(blue.length).toBeGreaterThan(0);
+      // the very same places: each berry of one is within a berry's length of a berry of the other
+      const centres = (vs) => {
+        const out = [];
+        for (let i = 0; i < vs.length; i += 1) out.push(vs[i].p);
+        return out;
+      };
+      const near = (p, qs) => Math.min(...qs.map((q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])));
+      for (const p of centres(dark)) expect(near(p, centres(blue))).toBeLessThan(0.06);
+      // they hang on the outside of the bush, out where they can be seen
+      const reach = Math.max(...vertsOf(B.NIGHTSHADE_BUSH_BARE, v).map((x) => Math.hypot(x.p[0], x.p[2])));
+      expect(Math.max(...dark.map((x) => Math.hypot(x.p[0], x.p[2])))).toBeGreaterThan(reach * 0.55);
+    }
+    // three stars: purple petals round a yellow heart, one on top and two on the sides
+    expect(shareOf('night.star', violet)).toBeGreaterThan(0.5);
+    expect(shareOf('night.star', yellow)).toBeGreaterThan(0.02);
+    const stars = vertsOf(B.NIGHTSHADE_BUSH).filter((x) => x.key === 'night.star');
+    expect(stars.length).toBe(3 * 5 * 3); // three five-sided flowers of five triangles
+    expect(modelOf(B.HONEYBERRY_BUSH).keys).not.toContain('night.star');
+    for (const k of modelOf(B.HONEYBERRY_BUSH).keys) expect(shareOf(k, violet), k).toBeLessThan(0.05);
   });
 
   it('picked, the Nightshade loses its berries and its flowers and is the picked Honeyberry', () => {
-    const full = quadsOf(B.NIGHTSHADE_BUSH);
-    const bare = quadsOf(B.NIGHTSHADE_BUSH_BARE);
-    expect(full.length - bare.length).toBe(40); // five berries and three flowers, five faces each
-    expect([...plantModel(B.NIGHTSHADE_BUSH_BARE)]).toEqual([...plantModel(B.HONEYBERRY_BUSH_BARE)]);
-    expect(plantModelTile(B.NIGHTSHADE_BUSH_BARE)).toBe(T.HONEYBERRY_BUSH);
-    expect(PLANT_MODELS[B.NIGHTSHADE_BUSH_BARE].bare).toBe(true);
-    for (const q of bare) for (const [r, g, b] of texelsOf(B.NIGHTSHADE_BUSH_BARE, q)) expect(berryBlack(r, g, b) || violet(r, g, b) || berryBlue(r, g, b)).toBe(false);
+    const full = modelOf(B.NIGHTSHADE_BUSH);
+    const bare = modelOf(B.NIGHTSHADE_BUSH_BARE);
+    expect(full.tris).toBeGreaterThan(bare.tris);
+    expect(bare.keys).not.toContain('night.berry');
+    expect(bare.keys).not.toContain('night.star');
+    expect([...bare.data]).toEqual([...modelOf(B.HONEYBERRY_BUSH_BARE).data]);
+    expect(vertsOf(B.NIGHTSHADE_BUSH).filter((x) => x.fruit).every((x) => x.key === 'night.berry' || x.key === 'night.star')).toBe(true);
   });
 
-  it('the others: flat daisies with yellow hearts, a purple tuft on top of the thistle, sky-blue flowers on the flax, thick aloe leaves', () => {
-    // daisies: three flowers, each a flat box whose top is the whole flower (white round a yellow heart)
-    const daisies = quadsOf(B.MEADOW_DAISIES).filter((q) => {
-      const t = texelsOf(B.MEADOW_DAISIES, q);
-      return t.length === 9 && t.filter(([r, g, b]) => yellow(r, g, b)).length === 1 && t.filter(([r, g, b]) => white(r, g, b)).length === 4;
-    });
-    expect(daisies).toHaveLength(3);
-    for (const q of daisies) expect(q.n[1]).toBeGreaterThan(0.8); // facing the sky, tipped a little
-    // … and the plants that grow on every twentieth column or so stay light: a daisy clump and a fern under 32 quads
-    expect(quadsOf(B.MEADOW_DAISIES).length).toBeLessThanOrEqual(32);
-    expect(quadsOf(B.FERN).length).toBeLessThanOrEqual(32);
-    // thistle: the top of the plant is purple, and every leaf ends pale
-    const thistleTop = quadsOf(B.THISTLE).filter(up).sort((a, b) => height(b) - height(a))[0];
-    expect(texelsOf(B.THISTLE, thistleTop).every(([r, g, b]) => violet(r, g, b))).toBe(true);
-    expect(facesAll(B.THISTLE, (r, g, b) => r > 230 && g > 230 && b > 180)).toHaveLength(6); // six leaves, a spine each
-    // flax: five flowers, sky blue, in the upper half of the plant
-    const flowers = quadsOf(B.FLAX).filter((q) => texelsOf(B.FLAX, q).length === 9 && texelsOf(B.FLAX, q).filter(([r, g, b]) => skyBlue(r, g, b)).length >= 6);
-    expect(flowers).toHaveLength(5);
-    for (const q of flowers) expect(height(q)).toBeGreaterThan(topOf(B.FLAX) / 2);
-    // aloe: no cards at all — every leaf is a block with a pale-toothed edge
-    const aloe = quadsOf(B.ALOE);
-    expect(aloe.every((q) => texelsOf(B.ALOE, q).every((p) => p[3] === 255))).toBe(true);
-    expect(facesWith(B.ALOE, (r, g, b) => r > 230 && g > 230 && b > 190).length).toBeGreaterThanOrEqual(12);
-    // fern: only green, and fronds that reach out further than they stand up from the crown
-    for (const q of quadsOf(B.FERN)) for (const [r, g, b, a] of texelsOf(B.FERN, q)) if (a === 255) expect(g > r && g > b).toBe(true);
-    const reach = Math.max(...quadsOf(B.FERN).flatMap((q) => q.p.map((p) => Math.hypot(p[0], p[2]))));
-    expect(reach).toBeGreaterThan(0.45);
+  it('the others: daisies with golden hearts, a purple brush on the thistle, sky-blue flax flowers up high, thick aloe leaves', () => {
+    // daisies: three flowers, each a white disc round a yellow heart, facing the sky
+    expect(shareOf('daisy.flower', white)).toBeGreaterThan(0.3);
+    expect(shareOf('daisy.flower', yellow)).toBeGreaterThan(0.03);
+    const flowers = vertsOf(B.MEADOW_DAISIES).filter((x) => x.key === 'daisy.flower');
+    expect(flowers.length).toBe(3 * 8 * 3);
+    for (const x of flowers) expect(x.p[1]).toBeGreaterThan(0.25);
+    // thistle: its highest part is the purple brush; every leaf ends in a pale spine
+    const thistle = vertsOf(B.THISTLE);
+    const highest = thistle.reduce((a, b) => (b.p[1] > a.p[1] ? b : a));
+    expect(highest.key).toBe('thistle.tuft');
+    expect(shareOf('thistle.tuft', violet)).toBeGreaterThan(0.6);
+    expect(shareOf('thistle.leaf', (r, g, b) => r > 230 && g > 230 && b > 180)).toBeGreaterThan(0.01);
+    // flax: five or more sky-blue flowers in the upper half of the plant
+    expect(shareOf('flax.flower', skyBlue)).toBeGreaterThan(0.4);
+    const flax = vertsOf(B.FLAX).filter((x) => x.key === 'flax.flower');
+    expect(flax.length).toBeGreaterThanOrEqual(5 * 5 * 3);
+    for (const x of flax) expect(x.p[1]).toBeGreaterThan(topOf(B.FLAX) * 0.45);
+    // aloe: no cards — every leaf a thick solid wedge, pale-toothed
+    const aloe = vertsOf(B.ALOE);
+    expect(aloe.every((x) => x.key === 'aloe.leaf')).toBe(true);
+    expect(shareOf('aloe.leaf', (r, g, b) => r > 230 && g > 230 && b > 190)).toBeGreaterThan(0.01);
+    // fern: only green
+    for (const k of modelOf(B.FERN).keys.filter((k) => k.includes('frond'))) {
+      for (const [r, g, b] of texelsOf(k)) expect(g > r && g > b).toBe(true);
+    }
+    expect(modelOf(B.FERN).reach).toBeGreaterThan(0.4);
   });
 });
 

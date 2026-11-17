@@ -215,6 +215,11 @@ export const UNDO_WINDOW_S = 60;                    // the last physics event ca
 export const UNDO_MAX_CELLS = 65536;                // cells one event records for undo (beyond: recorded partially)
 export const LAZY_MESH_BUDGET_MS = 4;               // world.update(): lazy (physics) re-meshes per call, nearest first, at least one
 export const LAZY_COALESCE_UPDATES = 20;            // … a chunk dirtied only by a big crumble's instant part: one re-mesh per this many calls
+// §105: the plants' level of detail, per chunk, by the distance from the player to the chunk's nearest point
+export const PLANT_NEAR_M = 16;                     // a chunk this close draws its plants in full …
+export const PLANT_FAR_M = 48;                      // … this close the cheap leafy plants, beyond it crossed pictures
+export const PLANT_LOD_SLACK_M = 4;                 // a chunk keeps its finer level until it is this much farther (no flicker)
+export const PLANT_LOD_BUDGET_MS = 3;               // world.update(): re-meshes for a changed level per call, nearest first, at least one
 // Falling blocks (§34)
 export const MAX_FALLING = 1024;                    // column fallers in flight; beyond this (the lowest) cells settle instantly
 export const MAX_TUMBLING = 64;                     // tumbling entities (debris, lit barrels); extra debris becomes dust

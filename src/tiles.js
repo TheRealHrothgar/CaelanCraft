@@ -3127,7 +3127,7 @@ function paintHealwortPlantBare(px) {
 // ---------------------------------------------------------------------------------------------------------------
 // §80 farming, tiles 205–206: a planted seed and its sprout (original designs; these comments are normative). Both are
 // cut-outs on alpha 0 (RGB 0, alpha 0 or 255 only) and both stand on the same mound, so a sprout is plainly the seedbed
-// it came from. plantModels.js cuts the faces of their 3D models from these pictures: the rectangles it names are solid.
+// it came from. (Their 3D models are kit models on the plant atlas since §105; these pictures are their Pack icons.)
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The mound's rows, [y, x0, x1]: a low heap of earth six rows high, widest on the bottom three. */
@@ -3200,7 +3200,8 @@ function paintSprout(px) {
 // imitates, so that what differs is exactly what the comments say and nothing else:
 // - the Hemlock is the Wild Carrot's leaves with three flat white flower heads, a purple-blotched stem and a pale root;
 // - the Nightshade is the Honeyberry's bush with shiny black berries and purple star flowers.
-// plantModels.js cuts the faces of their 3D models from these pictures.
+// (Their 3D models are kit models on the plant atlas since §105, the same look-alike rules in 3D; these pictures are
+// their Pack icons and, far away, the crossed pictures their models give way to.)
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
@@ -3432,7 +3433,7 @@ function paintAloe(px) {
 // the upper left, like the plants of §81. The spring is a prism and has ordinary opaque faces. The well, the rain
 // barrel and the beds are small 3D models: each has a PICTURE (a cut-out on alpha 0 with RGB 0, alpha 0 or 255 only:
 // the Pack's icon) and — but the grass bed, whose picture is solid enough to wrap its boxes — a SKIN of opaque
-// swatches that plantModels.js cuts its faces from.
+// swatches that plantModels.js cuts its box model's faces from.
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The rim stones of a spring's top: [centre x, centre y, radius x, radius y, tone], round the pool, clockwise from the top. */

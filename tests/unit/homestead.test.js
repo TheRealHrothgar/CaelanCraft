@@ -15,7 +15,7 @@ import {
 import { FACE_TOP, FACE_BOTTOM, hexLength } from '../../src/hex.js';
 import { mulberry32 } from '../../src/noise.js';
 import { paintTile, TILE_NAMES } from '../../src/tiles.js';
-import { plantModel, plantModelTile, PLANT_MODELS, PLANT_QUAD_STRIDE } from '../../src/plantModels.js';
+import { furnitureModel, furnitureModelTile, FURNITURE_MODELS, BOX_QUAD_STRIDE } from '../../src/plantModels.js';
 import { ITEMS, ITEM_KEYS, TAGS, getItem, itemForBlock, blockForItem } from '../../src/items.js';
 import { hasItemArt, paintItem } from '../../src/itemArt.js';
 import { getRecipe, RECIPES, TAG_LABELS } from '../../src/crafting.js';
@@ -146,7 +146,7 @@ describe('the tiles 207, 225–227 and 232–237 (tiles.js)', () => {
       expect(TILE_IDS, TILE_NAMES[t]).toContain(t);
       const key = Object.keys(TILE).find((k) => TILE[k] === t);
       expect(TILE_NAMES[t]).toBe(key.toLowerCase());
-      const used = BLOCKS.some((d) => d.tiles.includes(t)) || Object.values(PLANT_MODELS).some((m) => m.tile === t);
+      const used = BLOCKS.some((d) => d.tiles.includes(t)) || Object.values(FURNITURE_MODELS).some((m) => m.tile === t);
       expect(used, TILE_NAMES[t]).toBe(true);
     }
     expect([TILE_NAMES[238], TILE_NAMES[239]]).toEqual(['aquifer_side', 'aquifer_top']); // free until §89's aquifer took them
@@ -219,9 +219,9 @@ describe('the tiles 207, 225–227 and 232–237 (tiles.js)', () => {
 describe('the models of the well, the rain barrel and the beds (plantModels.js)', () => {
   /** The quads of a compiled model: corners [x, y, z] in metres, their texels, the normal. */
   const quadsOf = (id) => {
-    const m = plantModel(id);
+    const m = furnitureModel(id);
     const out = [];
-    for (let o = 0; o < m.length; o += PLANT_QUAD_STRIDE) {
+    for (let o = 0; o < m.length; o += BOX_QUAD_STRIDE) {
       const p = [];
       const uv = [];
       for (let v = 0; v < 4; v++) {
@@ -240,17 +240,17 @@ describe('the models of the well, the rain barrel and the beds (plantModels.js)'
   it('eight models: skins for the well, the barrel and the bed, the grass bed cut from its own picture', () => {
     for (const id of FURNITURE_MODEL_IDS) {
       expect(getBlockShape(id), name(id)).toBe('model');
-      expect(plantModel(id), name(id)).toBeInstanceOf(Float32Array);
+      expect(furnitureModel(id), name(id)).toBeInstanceOf(Float32Array);
     }
-    expect([plantModelTile(B.WELL), plantModelTile(B.WELL_DRAWN)]).toEqual([TILE.WELL_SKIN, TILE.WELL_SKIN]);
-    expect(BARRELS.map((id) => plantModelTile(id))).toEqual([234, 234, 234, 234]);
-    expect([plantModelTile(B.GRASS_BED), plantModelTile(B.BED)]).toEqual([null, TILE.BED_SKIN]);
+    expect([furnitureModelTile(B.WELL), furnitureModelTile(B.WELL_DRAWN)]).toEqual([TILE.WELL_SKIN, TILE.WELL_SKIN]);
+    expect(BARRELS.map((id) => furnitureModelTile(id))).toEqual([234, 234, 234, 234]);
+    expect([furnitureModelTile(B.GRASS_BED), furnitureModelTile(B.BED)]).toEqual([null, TILE.BED_SKIN]);
   });
 
   it('the drawn well is the well less its water and its pot: the cord runs down into the dark', () => {
     const full = quadsOf(B.WELL);
     const drawn = quadsOf(B.WELL_DRAWN);
-    expect(PLANT_MODELS[B.WELL_DRAWN].bare).toBe(true);
+    expect(FURNITURE_MODELS[B.WELL_DRAWN].bare).toBe(true);
     expect(full.length - drawn.length).toBe(17); // the water (5 faces), the pot and its rim (6 each)
     const key = (q) => q.p.flat().map((c) => c.toFixed(4)).join(',');
     const places = new Set(full.map(key));
