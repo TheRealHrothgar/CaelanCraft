@@ -1917,9 +1917,9 @@ function makeChapters() {
     // §100: stillness, cover and the wind
     [
       h('Keep still'),
-      p('When an animal turns and sees you crouching, it does not bolt at once. It lifts its head and stares at you. Freeze.'),
-      p(`Keep still and it settles in about ${numWord(Math.round((SUSPECT_WATCH - SUSPECT_CALM) / SUSPECT_SETTLE))} seconds, then lowers its head again. Move while it stares and it is gone. The hint says so: *The Doe is watching you — keep still*.`),
-      p('Every step it hears makes it warier, the more so the nearer you are. Creep while its head is down; stop when it looks up.'),
+      p('When an animal turns and sees you crouching, it does not bolt at once. It stops, turns to face you and stares. Freeze.'),
+      p(`Keep still and it settles in about ${numWord(Math.round((SUSPECT_WATCH - SUSPECT_CALM) / SUSPECT_SETTLE))} seconds and goes back to grazing. Move while it stares and it is gone. The hint says so: *The Doe is watching you — keep still*.`),
+      p('Every step it hears makes it warier, the more so the nearer you are. Creep while it looks away; freeze the moment it turns to face you.'),
     ],
     [
       h('Cover and the wind'),
@@ -1955,7 +1955,7 @@ function makeChapters() {
       h('Hold [RMB] to throw'),
       p(`With a spear or a dart in hand, hold [RMB] (the Place button on a tablet) to draw it back, and let go to throw. The longer you hold, the harder it flies, up to a full draw in ${drawTime}.`),
       p(`A quick tap only lobs it, at ${fmtPct(DRAW_SPEED_MIN)} of the speed and ${fmtPct(DRAW_POWER_MIN)} of the power. A full draw gives it ${fullPower} and throws it ${fmtPct(DRAW_SPEED_FULL - 1)} faster than [G] does.`),
-      p('[G] still throws at once, with no draw: use it when an animal bolts and there is no time.'),
+      p('On a keyboard [G] still throws at once, with no draw: use it when an animal bolts and there is no time.'),
     ],
     [
       h('The bow'),

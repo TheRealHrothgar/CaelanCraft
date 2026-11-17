@@ -7640,7 +7640,8 @@ honey, latched (Crouch on, flying) a honey ring. The top bar is one glass capsul
 capsule. The stick's hexagon is a light rim on dark glass with a white glass knob (honey while sprinting). In touch mode
 the hints use the same words: `hud.setHintWords(touchWords)` rewrites every hint — "R" → "Action" ("R key" → "Action
 button"), "Shift+R" → "Crouch + Action", "LMB" → "Mine", "RMB" and "right-click" → "Place" — whole words only, so a name
-with an R in it is untouched. The key sheets (title and pause menu) are not shown on a tablet, nor the picker's key hint.
+with an R in it is untouched — and a " · G: …" clause is left out (there is no button for G: §100.2's "G: throw at
+once"). The key sheets (title and pause menu) are not shown on a tablet, nor the picker's key hint.
 Remote players' name tags are white words on a dark glass capsule with a light rim.
 
 ### 97.3 The pause menu on a server
@@ -7938,7 +7939,7 @@ tiredness per hour, the held label), `packUI.test.js` (`makesMany` over every re
 `tests/integration/toolLadder.test.js` and `survival.test.js` (the first day: gravel 4 s a cell by hand, the log 10.9 s
 with the stone axe and 8 uses of its wear).
 
-## 100. Hunting: fish in their water, the throw, the bow, stalking by sight and wind — `src/populations.js`, `src/animals.js`, `src/looseItems.js`, `src/avatarMotion.js`, `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`
+## 100. Hunting: fish in their water, the throw, the bow, stalking by sight and wind — `src/populations.js`, `src/animals.js`, `src/looseItems.js`, `src/avatarMotion.js`, `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/animalRenderer.js`, `src/touchControls.js`
 
 Amends §60 (throwing), §69 and v0.16 (stalking), §76.4 and §88 (fish), §98.2 (Creative's Place), §43 / §94.1 / §98.5
 (counts, TOOL_TYPES, the picker). Design: `docs/DESIGN-hunting.md` §2; the wind is §3 (`wind.js`, `main.windNow()`). The
@@ -7968,22 +7969,33 @@ seven-column pond could take a whole zone's school.
 - **Never removed in sight**: `_sleepFar` keeps a seen fish in a loaded chunk live past SLEEP_RADIUS until it is not seen.
   `Animals._fishAground`: a fish whose column is too shallow swims to the nearest neighbouring column deep enough
   (`fishDepth`); with none it holds still on the bed while any water is left (`fishWater` → `{ bed, surface, swim }`); with
-  no water it is `stranded` (lies on the bed) while seen, and only unseen is it gone (`events.despawned`). The swim step is
+  no water it is `stranded` while seen: it drops at `FISH_DROP` 4 m/s to the top of the first solid cell below it (a
+  block put into its cell lifts it onto that block) and lies there on its side (animalRenderer's model `lie`: rolled a
+  quarter turn about its length); only unseen is it gone (`events.despawned`). The swim step is
   at most radius + 0.2 m and is taken only when the point it ends in has water deep enough.
 - **By the size of the water**: `zoneLand` marks the zone's fresh water columns (streams on every column; a pond found on
   the every-other-column lattice is followed column by column) and joins them side by side into bodies; each holds
   `fishCapOf(columns)` = min(FISH_K_MAX 6, round(columns / FISH_CELLS 12)): a seven-column pond one, five columns none.
   `ws` is a column of each body that holds fish (the one nearest its middle), biggest first, at most `FISH_BODIES_MAX` 6,
   and `wk` what each holds; `K.fish` = min(FISH_K_MAX, Σ wk); `c` is now exact. Seeding gives the fish two by two (a pair)
-  to the body with the most room, never past its `wk`. A fish belongs to the body whose `ws` column is nearest
-  (`Fauna._bodyAt`); births need room in the mother's body as well as in the zone (`room = min(1 − N/K, (wk − n)/wk)`,
-  the litter cut to the room left); a wanderer comes in only while some body has room, into the body with the most.
+  to the body with the most room, never past its `wk`. A fish belongs to the body it is in (`Fauna._bodyAt`): `wb`, the
+  land's map of its columns to their bodies (an index into `ws`, −1 none), is made with the bodies and not saved (a land
+  read from a save has it worked out again from the generator when the generator's `ws` are the saved ones, else none);
+  off the water (young born on the bank beside their mother) it is the body nearest within `FISH_BODY_RINGS` 3 rings,
+  as far as a fish looks for water to wake in (`_fishSpot`); without the map, or farther off, the body whose `ws` column
+  is nearest. Births need room in the mother's body as well as in the zone (`room = min(1 − N/K, (wk − n)/wk)`, the
+  litter cut to the room left); young are born only into their mother's water. A wanderer comes in while some body with
+  room lacks a male or a female (`Fauna._bodies`: `room`, `f`, `m`, `lack`), not only while the whole zone lacks one,
+  so an empty pond beside a stream that breeds is stocked too, a fish at a time from a neighbour; it goes into a body
+  with room that has none of its sex, the one with the most room (else the one with the most room).
 - **Save**: a zone's land gains `wk` (written beside `ws`; `validateFaunaJSON` keeps it only with exactly as many entries
   as `ws`, integers 0..FISH_K_MAX). A land saved without it (`wk` null) has its waters worked out again from the generator
   the next time the zone is filled; the rest of its land is kept.
 - Tests: `tests/unit/fishWater.test.js` (caps, bodies, seeding, breeding to the cap, the old land, waking unseen and from
-  the deep, sleeping unseen, young in sight, the crooked stream with long frames, stranded, shallow); fauna's drained-fish
-  test now swims to the next column.
+  the deep, sleeping unseen, young in sight, the crooked stream with long frames, stranded, shallow; the column map and
+  the pair at a stream's far end, the map worked out again after a load, the pond beside a breeding stream stocked by a
+  wanderer, the stranded fish on the bed of a drained pond and drawn on its side); fauna's drained-fish test now swims to
+  the next column.
 
 ### 100.2 The draw: hold Place to throw (`looseItems.js`, `main.js`, `avatarMotion.js`)
 
@@ -7998,18 +8010,25 @@ seven-column pond could take a whole zone's school.
   feather" and does not draw); held, it counts up; let go, `drawRelease` throws one of the spear or dart in hand (or
   shoots an Arrow taken from the pack — Creative takes nothing and throws a ghost, §60) along the look from just before the
   eye, at `drawnThrow`'s speed plus the player's velocity, lifted +1.5 m/s (an arrow +0.5), with its power; a bow wears 1
-  (Survival; `toolBroke` at 0). A changed hand cancels the draw; a draw whose last frame is older than `DRAW_STALE_MS` 250
-  (a menu came between) is let go without a throw. **G** still throws at once (§60, unchanged). §98.2 is amended: in
-  Creative a spear, a dart or a bow is drawn and released the same way; a rock still throws on the press.
+  (Survival; `toolBroke` at 0). The machine is `DrawHold` (main.js, PURE, exported; `step(mouse, dt, DrawEnv)` →
+  'start' | 'hold' | 'release' | 'stale' | 'cancel' | 'noArrows' | 'idle', or null when Place is not the draw's). A
+  changed hand cancels the draw. A screen over the running world (the pack, the field book, Survival's device panel: the
+  world steps under them, `state` is not PLAYING) lets it go without a throw — the cleared mouse there is no release —
+  and `resetSurvivalInput` forgets it; a draw whose last frame is older than `DRAW_STALE_MS` 250 (a menu that froze the
+  world came between) is let go without a throw too. While the control latch holds a control that Place pressed (§4.9),
+  the hold is the latch's: with a spear, a dart or a bow in hand a Push Button stays pressed (Creative; Survival's latch
+  comes first anyway). **G** still throws at once (§60, unchanged). §98.2 is amended: in Creative a spear, a dart or a
+  bow is drawn and released the same way; a rock still throws on the press. Tests: `tests/unit/drawHold.test.js`.
 - **Seen**: the action ring at the crosshair shows the draw (`drawRing()`: at least 0.02, both modes; Survival's
   `actionProgress` puts it first); the view closes in by `DRAW_ZOOM` 0.1 × the draw (eased like the sprint's FOV); the
   avatar's right arm draws back (`MotionInput.draw` 0..1: `reachR` − `DRAW_BACK` 1.1 × draw, `twist` − 0.25 × draw, the
   first-person arm sinks `FP_DRAW_DROP` 0.05) and swings through on the release; the throw sound grows with the draw.
-- **Hints** (RMB reads "Place" on a tablet, §97.2): with nothing else to say, `Flint Spear · Hold RMB to throw · G: throw
-  at once`, `Bow · Hold RMB to draw, let go to shoot` (`Bow · no arrows in your pack`); while drawing `Drawing · let go to
+- **Hints** (RMB reads "Place" on a tablet, and the G clause is left out there: no button throws at once, §97.2): with
+  nothing else to say, `Flint Spear · Hold RMB to throw · G: throw at once` (a tablet: `Flint Spear · Hold Place to
+  throw`), `Bow · Hold RMB to draw, let go to shoot` (`Bow · no arrows in your pack`); while drawing `Drawing · let go to
   throw` / `Full draw · let go to shoot`; on a wild animal or pig `click: hunt it · Hold RMB to throw` (`… to shoot`; out of
   reach only the throw words); a fish `Fish · click: spear it · Hold RMB to throw the spear`; the fish tip "thrust with it,
-  or hold RMB to throw it".
+  or hold RMB to throw it". The guide says G is a keyboard's ("On a keyboard [G] still throws at once").
 
 ### 100.3 The bow (`items.js`, `crafting.js`, `itemArt.js`, `purpose.js`, `pickerModel.js`, `looseItems.js`)
 
@@ -8051,10 +8070,12 @@ seven-column pond could take a whole zone's school.
   sees a still crouching shape it has not accepted, at least `SUSPECT_WATCH` 0.3. From SUSPECT_WATCH it **stares**
   (`mode` 'watch': it stands and turns to face the player). Any movement it sees while it stares and faces them (within
   `WATCH_FACING` 0.6 rad), or suspicion reaching 1, makes it bolt (`_startle`, the herd with it). Otherwise suspicion falls
-  `SUSPECT_SETTLE` 0.1 a second; at `SUSPECT_CALM` 0.1 it settles (idle again, head down) and accepts the still shape
+  `SUSPECT_SETTLE` 0.1 a second; at `SUSPECT_CALM` 0.1 it settles (idle again) and accepts the still shape
   (`a.accepted`) until the player moves. A player it cannot see who keeps moving near is heard until suspicion reaches 1.
-  So a deer that turns round on a frozen hunter stares about two seconds and goes back to grazing; creep while its head
-  is down. Amends v0.16's "an animal that turns its head sees you at once".
+  So a deer that turns round on a frozen hunter stares about two seconds and goes back to grazing; creep while it looks
+  away. Nothing of its head is drawn (animalRenderer has no head pose but the bear's): the stare is seen as the animal
+  standing and turning to face the player, and in the hint. Amends v0.16's "an animal that turns its head sees you at
+  once".
 - **Cues** (main): the animal hint `Doe is watching you — keep still` while it stares (any staring animal within
   `WATCHED_HINT_RANGE` 30 m when the crosshair is elsewhere: `The Doe is watching you — keep still`); stalking (crouched)
   the wild animal's hint carries the wind's word: ` · downwind of it` (scent < −`STALK_WIND_WORD` 0.15) or ` · it can
