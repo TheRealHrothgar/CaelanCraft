@@ -2,14 +2,17 @@
 //
 // A pennant is a PENNANT cell: a hexagonal pole with a small cloth flag near its top, drawn by pennantRenderer.js (not
 // the chunk mesher). Worldgen never makes one, so main seeds the tracker from World.edits on load (loadFromEdits) and
-// keeps it in step through World.onBlockChange, exactly like the campfires.
+// keeps it in step through World.onBlockChange, like the campfires, and through World.onChunkGenerated (onChunkLoaded:
+// a pennant another player placed or pulled up in a chunk not generated here comes in with that chunk).
 //
 // The flag is a ribbon of PENNANT_SEGMENTS columns from the pole to its tip, each column a vertical edge of the cloth.
 // In a calm it hangs limp down the pole; in a breeze it lifts; in a strong breeze it streams straight out downwind. A
 // wave runs along it from the pole to the tip: slow and small in a calm, quick and wide in a gust.
 import { BLOCK } from './blocks.js';
-import { forEachEditedCell } from './coords.js';
+import { CHUNK_SIZE } from './config.js';
+import { chunkKey, forEachEditedCell, indexToLocal } from './coords.js';
 import { hexToWorld } from './hex.js';
+import { WIND_CALM } from './wind.js';
 
 /** Columns of the flag (PENNANT_SEGMENTS + 1 vertical edges, the first at the pole). */
 export const PENNANT_SEGMENTS = 8;
@@ -31,9 +34,12 @@ export const PENNANT_LIMP = 1.38;
 export const PENNANT_SAG = 0.35;
 /** A hanging flag's columns lean this share of its droop, growing over the first part of its length (no fold-over). */
 export const PENNANT_COLUMN_LEAN = 0.5;
-/** Strength at which the flag starts to lift, and the span over which it comes up to straight out. */
-export const PENNANT_LIFT_FROM = 0.1;
-export const PENNANT_LIFT_SPAN = 0.6;
+/**
+ * Strength at which the flag starts to lift (the end of a calm, wind.WIND_CALM: it hangs while the vane says "Calm"),
+ * and the span over which it comes up to straight out (at 0.7).
+ */
+export const PENNANT_LIFT_FROM = WIND_CALM;
+export const PENNANT_LIFT_SPAN = 0.52;
 /** Pennants drawn at once (nearest the eye), and how near they must be (m). */
 export const PENNANT_MAX_MODELS = 24;
 export const PENNANT_MODEL_RANGE = 64;
@@ -105,6 +111,28 @@ export class Pennants {
   loadFromEdits(edits) {
     this.clear();
     forEachEditedCell(edits, BLOCK.PENNANT, (q, y, r) => this.add(q, y, r));
+  }
+
+  /**
+   * World.onChunkGenerated: bring chunk (cq, cr) into step with its blocks. Cells written into a chunk not generated
+   * here (World.applyServerCell: another player's pennant on a server) fire no onBlockChange, so when the chunk comes
+   * in its tracked pennants that are gone are dropped and every PENNANT in its edits is added (worldgen makes none).
+   * @param {number} cq @param {number} cr
+   * @param {Map<string, Map<number, number>>} edits  World.edits
+   * @param {(q: number, y: number, r: number) => number} getBlock
+   */
+  onChunkLoaded(cq, cr, edits, getBlock) {
+    for (const p of this.list.values()) {
+      if (Math.floor(p.q / CHUNK_SIZE) !== cq || Math.floor(p.r / CHUNK_SIZE) !== cr) continue;
+      if (getBlock(p.q, p.y, p.r) !== BLOCK.PENNANT) this.list.delete(p.key); // deleting while iterating a Map is safe
+    }
+    const chunkEdits = edits.get(chunkKey(cq, cr));
+    if (chunkEdits === undefined) return;
+    for (const [li, id] of chunkEdits) {
+      if (id !== BLOCK.PENNANT) continue;
+      const [lq, ly, lr] = indexToLocal(li);
+      this.add(cq * CHUNK_SIZE + lq, ly, cr * CHUNK_SIZE + lr);
+    }
   }
 
   /**
