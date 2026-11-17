@@ -10,15 +10,19 @@ export const COMPASS_KEY = 'compass';
 
 /**
  * Is a compass carried? In Survival: a stack of it in any pack slot (the hotbar row is pack slots 0–8, so it counts
- * too; the worn slots are not pack slots and never hold one). In Creative — and on a server, which is Creative — a slot
- * of the Creative hotbar holds the compass's item pick (CONTRACTS §98).
+ * too; the worn slots are not pack slots and never hold one), or on the pack screen's cursor — a compass being moved
+ * from slot to slot never leaves the pack (closing the screen puts it back), so the N does not blink out under the
+ * drag. In Creative — and on a server, which is Creative — a slot of the Creative hotbar holds the compass's item pick
+ * (CONTRACTS §98).
  * @param {boolean} survival  the player is in Survival
  * @param {ReadonlyArray<{ k: string }|null|undefined>|null|undefined} packSlots  Pack.slots (read in Survival only)
  * @param {ReadonlyArray<number|string|null|undefined>|null|undefined} hotbar  Creative's hotbar (read in Creative only)
+ * @param {{ k: string }|null} [cursor]  the pack screen's cursor stack, SlotSession.cursor (read in Survival only)
  * @returns {boolean}
  */
-export function compassCarried(survival, packSlots, hotbar) {
+export function compassCarried(survival, packSlots, hotbar, cursor = null) {
   if (survival) {
+    if (cursor && cursor.k === COMPASS_KEY) return true;
     if (!packSlots) return false;
     for (let i = 0; i < packSlots.length; i++) {
       const s = packSlots[i];

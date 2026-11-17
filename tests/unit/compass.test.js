@@ -8,7 +8,7 @@ import { COMPASS_KEY, compassCarried, northAngle, northDeg, northView } from '..
 import { vaneAngle, vaneView } from '../../src/windDrawn.js';
 import { ITEMS, ITEM_KEYS, getItem, stackSize, maxDurability, blockForItem, resolveItem, itemName } from '../../src/items.js';
 import { getRecipe, listRecipes, RECIPES } from '../../src/crafting.js';
-import { Pack } from '../../src/inventory.js';
+import { Pack, slotClick, returnCursor } from '../../src/inventory.js';
 import { paintItem, hasItemArt, toolArtOf, ITEM_ART_KEYS } from '../../src/itemArt.js';
 import { purposeOf, PURPOSE_MAX } from '../../src/purpose.js';
 import { PICKER_ITEM_SECTIONS, buildPickerModel, searchBlocks, blurbFor } from '../../src/pickerModel.js';
@@ -16,6 +16,7 @@ import { buildChapters, plainText } from '../../src/handbook.js';
 import { buildTreeModel, placeId } from '../../src/buildTree.js';
 import { isItemPick, normalizePick } from '../../src/creativePicks.js';
 import { readHoldParam } from '../../src/diagnostics.js';
+import { cameraPose } from '../../src/viewCamera.js';
 import {
   createHUD, VANE_BOX, COMPASS_BOX, NORTH_LETTER_R, NORTH_LETTER_SIZE, NORTH_TICK, northLetterAt,
 } from '../../src/hud.js';
@@ -157,6 +158,28 @@ describe('carried or not (compass.compassCarried)', () => {
     // the Creative hotbar does not count in Survival
     expect(compassCarried(true, new Pack().slots, ['compass'])).toBe(false);
     expect(compassCarried(true, null, null)).toBe(false);
+  });
+
+  it('Survival: a compass on the pack screen\'s cursor, being moved from slot to slot, is still carried', () => {
+    const pack = packWith([[12, 'compass']]);
+    const session = { pack, cursor: null, container: null };
+    expect(compassCarried(true, pack.slots, null, session.cursor)).toBe(true);
+    slotClick(session, 'pack', 12, 0, false); // picked up: the slot is empty, the stack is on the cursor
+    expect(pack.slots[12]).toBeNull();
+    expect(session.cursor).toEqual({ k: 'compass', n: 1 });
+    expect(compassCarried(true, pack.slots, null)).toBe(false); // the slots alone no longer hold it
+    expect(compassCarried(true, pack.slots, null, session.cursor)).toBe(true); // the N stays
+    slotClick(session, 'pack', 3, 0, false); // put down on the hotbar row
+    expect(session.cursor).toBeNull();
+    expect(compassCarried(true, pack.slots, null, session.cursor)).toBe(true);
+    // closing the screen with it on the cursor puts it back in the pack
+    slotClick(session, 'pack', 3, 0, false);
+    expect(returnCursor(session)).toBeNull();
+    expect(compassCarried(true, pack.slots, null, session.cursor)).toBe(true);
+    // any other stack on the cursor is not a compass; and the cursor is not read in Creative
+    expect(compassCarried(true, new Pack().slots, null, { k: 'wrought_iron', n: 1 })).toBe(false);
+    expect(compassCarried(true, null, null, { k: 'compass', n: 1 })).toBe(true);
+    expect(compassCarried(false, null, [1, 2, 3], { k: 'compass', n: 1 })).toBe(false);
   });
 
   it('Creative (and a server, which is Creative): when a hotbar slot holds the compass item pick', () => {
@@ -332,10 +355,39 @@ describe("main's wiring: read from the source, since main needs a browser", () =
   it('every frame after the vane, the HUD is told whether a compass is carried and where north lies', () => {
     const at = main.indexOf('  function stepWeather(');
     const step = main.slice(at, main.indexOf('\n  }\n', at));
-    expect(step).toContain('hud.setNorth(northView(compassCarried(SV, pack.slots, hotbar), controls.yaw));');
+    expect(step).toContain('hud.setNorth(northView(compassCarried(SV, pack.slots, hotbar, packSession.cursor), viewYaw));');
     expect(step.indexOf('hud.setWind(')).toBeLessThan(step.indexOf('hud.setNorth('));
+    // the N and the wind's arrow share one frame: the view on screen, not the avatar's facing
+    expect(step).toContain('function stepWeather(dt, live, eyeY, viewYaw) {');
+    expect(step).toContain('hud.setWind(vaneView(wind, viewYaw, vaneNow));');
+    expect(step).not.toContain('controls.yaw');
     expect(main).toContain("import { compassCarried, northView } from './compass.js';");
     // SV is Survival; on a server the game is Creative (the hotbar's rule)
     expect(step).toContain('const SV = survival.inSurvival;');
+  });
+
+  it("the view's yaw is the camera's (viewCamera), worked out before the weather each frame", () => {
+    const at = main.indexOf('  function renderFrame(');
+    const frame = main.slice(at, main.indexOf('\n  }\n', at));
+    const camAt = frame.indexOf('const cam = viewCamera(dt, eyeY);');
+    expect(camAt).toBeGreaterThan(0);
+    const weatherAt = frame.indexOf('stepWeather(dt, live, eyeY, cam.yaw)');
+    expect(weatherAt).toBeGreaterThan(camAt);
+    expect(main.match(/stepWeather\(/g)).toHaveLength(2); // the one definition and the one call
+  });
+});
+
+describe("the dial follows the view on screen (§91's views)", () => {
+  it('first person and behind: north as from the avatar; the Front view looks back, so north turns by 180°', () => {
+    for (const yaw of [0, -Math.PI / 2, 0.7, 2.9, -2.4]) {
+      const first = cameraPose(0, 0, 0, yaw, 0.2, 'first', 0).yaw;
+      const behind = cameraPose(0, 0, 0, yaw, 0.2, 'behind', 4).yaw;
+      const front = cameraPose(0, 0, 0, yaw, 0.2, 'front', 4).yaw;
+      expect(northDeg(first), `yaw ${yaw}`).toBe(northDeg(yaw));
+      expect(northDeg(behind), `yaw ${yaw}`).toBe(northDeg(yaw));
+      expect(northDeg(front), `yaw ${yaw}`).toBe((northDeg(yaw) + 180) % 360);
+    }
+    // the avatar facing east (yaw −π/2) in the Front view: the camera looks west, so north is on the dial's right
+    expect(northDeg(cameraPose(0, 0, 0, -Math.PI / 2, 0, 'front', 4).yaw)).toBe(90);
   });
 });

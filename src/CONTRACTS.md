@@ -7983,7 +7983,10 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
   degrees), the level, the gust or the words change. A page without the element gets one made in #hud.
 - It sways: `.wind-sway` rocks ±5° (light, 2.6 s; breeze 1.4 s), ±9° (strong 0.8 s, a gust 0.4 s); no motion under
   `prefers-reduced-motion`; a solid tint where glass cannot be drawn or is not wanted.
-- main, once a frame in `stepWeather` (after this frame's shower is known): `hud.setWind(vaneView(windNow(), controls.yaw))`.
+- main, once a frame in `stepWeather` (after this frame's shower is known): `hud.setWind(vaneView(windNow(), viewYaw))`,
+  where `viewYaw` is the yaw of the view on screen — `cam.yaw` from `viewCamera` (§91), which `renderFrame` works out
+  before the weather: `controls.yaw` in first person and behind, turned by π in the Front view, which looks back at the
+  avatar (§102 amends: the arrow read against the screen, not the avatar's facing).
 
 ### 101.3 The rain leans, the snow drifts, the smoke drifts
 
@@ -8083,7 +8086,10 @@ faces north, east is +x); the compass shows it on §101's wind vane.
   check lists it beside the Bellows; `itemName('compass', 1)` is "Compass").
 - **Recipe** `compass`, at the **Forge** (the iron age): `wrought_iron + copper_ingot + glass_shards` → `compass`, tool
   `hammer 4` like the other forge work, 20 s — a magnetised iron needle in a copper case under a glass face. 126 recipes
-  (forge 16). Wrought iron comes only from the Bloomery's bloom, so the compass needs iron.
+  (forge 16). Wrought iron comes only from the Bloomery's bloom, so the compass needs iron. Glass Shards come only
+  from breaking a placed Glass block (harvest.js; Glass is made at the Bloomery and never generated), so the build
+  tree's reachability (progression.test, §77) models it: whatever is placed can be broken again, its drops those of
+  an edited cell (no `natural` ones).
 - **Picture** (itemArt, a material painter after the seeds): a round copper case (the copper tier palette, lit top-left)
   with a little bow on top, a blue-grey glass face with a glint, and the needle across it on the diagonal — red to the
   north (up and right), white to the south — on a dark pivot. Held in the hand it is a lump (heldItem.js, no haft).
@@ -8100,10 +8106,13 @@ faces north, east is +x); the compass shows it on §101's wind vane.
 ### 102.2 Carried, and where north lies (`compass.js`, PURE, no imports)
 
 - `COMPASS_KEY` 'compass'.
-- `compassCarried(survival, packSlots, hotbar)`: in **Survival**, a stack of it in ANY pack slot (`Pack.slots`, all 27:
-  the hotbar row is slots 0–8, so it counts too; the worn slots are not pack slots); the Creative hotbar is not read.
+- `compassCarried(survival, packSlots, hotbar, cursor = null)`: in **Survival**, a stack of it in ANY pack slot
+  (`Pack.slots`, all 27: the hotbar row is slots 0–8, so it counts too; the worn slots are not pack slots), or on the
+  pack screen's cursor (`SlotSession.cursor`: a compass being moved from slot to slot never leaves the pack, and
+  closing the screen puts it back — so the N does not blink out, nor the capsule shrink, under the drag); the Creative
+  hotbar is not read.
   In **Creative** — and on a **server**, which is Creative (§96) — a slot of the Creative hotbar holds the compass's item
-  pick (§98: a hotbar slot may hold an item key); the pack is not read. Null inputs: false.
+  pick (§98: a hotbar slot may hold an item key); the pack and the cursor are not read. Null inputs: false.
 - `northAngle(yaw)`: where north lies on the HUD's dial, radians clockwise from the top (the way the player faces), in
   (−π, π]. The player looks along (−sin yaw, −cos yaw); north (0, −1) is cos yaw of the way ahead and sin yaw of the
   way to their right, so the bearing is yaw itself, wrapped — exactly windDrawn.vaneAngle of a wind blowing north.
@@ -8111,6 +8120,9 @@ faces north, east is +x); the compass shows it on §101's wind vane.
   bottom. Turning right by d turns it by −d: it stays fixed to the world, like the wind's arrow.
 - `northDeg(yaw)`: that in whole degrees 0..359 (NaN yaw: 0). `northView(carried, yaw)`: `northDeg(yaw)` while
   carried, else null — what main hands the HUD.
+- "Where the player looks" is the view on screen: the yaw main hands these is the camera's (`viewCamera`, §91), as for
+  the wind's arrow (§101.2) — the avatar's own in first person and behind, turned by π in the Front view, which looks
+  back at the avatar. Read against the screen, the N is always where north is.
 
 ### 102.3 The N on the vane (`hud.setNorth`, `styles.css`)
 
@@ -8136,12 +8148,16 @@ faces north, east is +x); the compass shows it on §101's wind vane.
 
 ### 102.4 main, and the screenshot aid
 
-- In `stepWeather`, right after `hud.setWind(...)`, every frame, both modes:
-  `hud.setNorth(northView(compassCarried(SV, pack.slots, hotbar), controls.yaw));` (a scan of 27 slots or 9 picks; the
-  HUD skips unchanged degrees).
+- In `stepWeather(dt, live, eyeY, viewYaw)` (`renderFrame` passes `cam.yaw`, from `viewCamera` just before), right
+  after `hud.setWind(vaneView(wind, viewYaw, vaneNow))`, every frame, both modes and every state with a player (the
+  pack screen too):
+  `hud.setNorth(northView(compassCarried(SV, pack.slots, hotbar, packSession.cursor), viewYaw));` (a scan of 27 slots
+  or 9 picks; the HUD skips unchanged degrees).
 - `?hold=compass` (§91 / §98.4, with `?autoplay=1&mode=creative`) puts the compass in the Creative hotbar: the N shows.
   `?yaw=` (degrees) turns the view.
 - Tests: `tests/unit/compass.test.js` (the item, recipe, art, purpose, picker, handbook lines and build tree; carried or
-  not in Survival and Creative; the bearing against yaw and against vaneAngle; the N appearing and going on the page,
-  its place, the DOM writes, the stylesheet; main's wiring); the pinned counts in items, crafting, itemArt,
-  pickerModel, handbook and homestead move by one.
+  not in Survival and Creative, and on the pack screen's cursor; the bearing against yaw and against vaneAngle, and in
+  each view mode against cameraPose; the N appearing and going on the page, its place, the DOM writes, the stylesheet;
+  main's wiring, the view's yaw included); `tests/unit/windDrawn.test.js` (the vane drawn with `viewYaw`);
+  `tests/integration/progression.test.js` (placed blocks break again; the Compass behind the Forge and behind Glass);
+  the pinned counts in items, crafting, itemArt, pickerModel, handbook, homestead and plantsNotFood move by one.
