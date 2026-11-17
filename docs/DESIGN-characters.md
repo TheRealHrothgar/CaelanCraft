@@ -53,6 +53,7 @@ cube silhouette and the chunky pixels are what read as "Minecraft".
 | a zombie | 108 tris | ~930 tris (instanced per part) |
 | an animal | ~200 tris, colours per vertex | ~320–470 tris, 256² atlas |
 | a bush in the chunk mesh | ~100 tris | ~1,100 tris near, today's model past ~16 m |
+| a bush, as built (phase 4) | — | 1,224 near · 130 far (16–48 m) · 4 (crossed picture) beyond; the tussock 66 · 11 · 4 |
 | the first-person hand | 608 tris | ~430 tris + the held slab |
 
 The iPad matters: a crowd of zombies and a field of bushes are where the triangles add up, so zombies stay instanced
@@ -68,6 +69,17 @@ and plants get a level of detail.
 2. **Zombies, the Watcher, the phantom.** Repainted atlases with the night-glow layer in step; instanced per part.
 3. **Pigs and animals.** Every species, sex, shorn, tame and young variant from the kit, textured.
 4. **Plants.** Model plants in the chunk mesher with per-vertex atlas UVs and a plant atlas, with a level of detail.
+   Done (CONTRACTS §102): every wild plant, picked plant, crop stage (a seedbed, and a sprout of each crop's own kind) and
+   piece of ground litter is a kit model (`plantKit.js`, `plantModels.js`) painted from one 1024 × 256 plant atlas
+   (`plantAtlas.js`: leaf veins, bark, berries with a bloom, petals, florets, spines), drawn in the chunk's cutout layer
+   beside the block atlas (one material, a second sampler; light, fog and the per-cell turn kept). Each plant its own
+   leaf and arrangement — shrubs of branches and twigs carrying sprays and whorls of hexagonal leaf cards with gaps and a
+   skirt to the ground (no solid core: a ball of leaves was what the user rejected), fern and carrot fronds as cut-outs
+   on bending strips, cattail spikes, flax stalks with blue flowers, daisies and thistle heads, an aloe rosette of thick
+   wedges, faceted mushroom caps, faceted stones and sticks. Levels of detail per chunk by distance (16 / 48 m): the full
+   model; the same recipe thinned to about a tenth for a bush (still leafy); the tile as two crossed pictures beyond;
+   re-meshed on crossing a ring under a budget. `?scene=plants` and the dev page `plants.html` show them; the furniture
+   (well, barrel, beds) keeps its box models for phase 5.
 5. **Everything else that is a creature or a figure** (loose items, the campfire's cook pots if they read blocky,
    items in hand on the model) and a last pass on budgets on an iPad.
 

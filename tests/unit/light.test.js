@@ -2,6 +2,7 @@
 // shader patch's anchors in the installed three.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
+import { PLANT_UV_OFFSET } from '../../src/plantAtlas.js';
 import { CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, LIGHT_MAX, GLOWSTONE_LIGHT, CAMPFIRE_LIGHT, TORCH_LIGHT } from '../../src/config.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
 import { HEX_DIRS, hexLength } from '../../src/hex.js';
@@ -14,7 +15,7 @@ import {
 import { buildChunkMesh } from '../../src/mesher.js';
 import { buildLayerGeometry } from '../../src/renderer.js';
 import {
-  LIGHT_ATTRIBUTE, patchLightsFragmentBegin, applyChunkLight, patchObjectShader, isLitMaterial, lightVolume,
+  LIGHT_ATTRIBUTE, patchLightsFragmentBegin, applyChunkLight, applyPlantAtlas, PLANT_MAP_UNIFORM, patchObjectShader, isLitMaterial, lightVolume,
 } from '../../src/lightShader.js';
 import { flatWorldGen, makeChunkData, makeChunkDataGetter } from '../helpers/fixtures.js';
 import { mulberry32 } from '../../src/noise.js';
@@ -524,6 +525,29 @@ describe('shader patch and geometry', () => {
     expect(isLitMaterial(new THREE.MeshBasicMaterial())).toBe(false);
     const vol = lightVolume();
     expect(vol.data.length).toBe(vol.size * vol.size * WORLD_HEIGHT);
+  });
+
+  it('§102: the cutout material also samples the plant atlas — past u 1.5 — and never turns a plant\'s normal round', () => {
+    const lambert = THREE.ShaderLib.lambert;
+    // the anchors the patch replaces are in the installed three's Lambert shader
+    expect(lambert.fragmentShader).toContain('#include <map_fragment>');
+    expect(lambert.fragmentShader).toContain('#include <normal_fragment_begin>');
+    expect(THREE.ShaderChunk.map_fragment).toContain('diffuseColor *= sampledDiffuseColor;');
+    expect(THREE.ShaderChunk.normal_fragment_begin).toContain('normal *= faceDirection;');
+    const texture = new THREE.Texture();
+    const m = applyPlantAtlas(applyChunkLight(new THREE.MeshLambertMaterial({ vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide })), texture);
+    const shader = { vertexShader: lambert.vertexShader, fragmentShader: lambert.fragmentShader, uniforms: {} };
+    m.onBeforeCompile(/** @type {*} */ (shader), /** @type {*} */ (null));
+    // the chunk light is still there, and the plant atlas beside the block atlas
+    expect(shader.fragmentShader).toContain('float caelSky = caelCurve( vCaelLight.x );');
+    expect(shader.fragmentShader).toContain(`uniform sampler2D ${PLANT_MAP_UNIFORM};`);
+    expect(shader.fragmentShader).not.toContain('#include <map_fragment>');
+    expect(shader.fragmentShader).toContain('vMapUv.x > 1.5 ? caelPlantTexel : caelBlockTexel');
+    expect(shader.fragmentShader).toContain('vMapUv - vec2( 2.0, 0.0 )');
+    expect(shader.fragmentShader).toContain('if ( vMapUv.x > 1.5 ) normal = normalize( vNormal );');
+    expect(/** @type {*} */ (shader.uniforms)[PLANT_MAP_UNIFORM].value).toBe(texture);
+    expect(m.customProgramCacheKey()).toBe('caelancraft-chunk-light-plants');
+    expect(PLANT_UV_OFFSET).toBe(2);
   });
 
   it('buildLayerGeometry adds the normalised light attribute (open sky when a layer has none)', () => {

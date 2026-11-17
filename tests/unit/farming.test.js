@@ -14,7 +14,8 @@ import { FACE_TOP } from '../../src/hex.js';
 import { paintTile, TILE_NAMES } from '../../src/tiles.js';
 import { ITEMS, getItem, itemForBlock, itemName, isItemKey } from '../../src/items.js';
 import { hasItemArt, paintItem } from '../../src/itemArt.js';
-import { PLANT_MODELS, PLANT_QUAD_STRIDE, plantModel, plantModelTile } from '../../src/plantModels.js';
+import { PLANT_LOD_NEAR, PLANT_STRIDE, plantMesh } from '../../src/plantModels.js';
+import { paintPlantAtlas, plantRect } from '../../src/plantAtlas.js';
 import {
   BLOCK_RULES, PICKABLE, Regrowth, ripeOf, rollDrops, pick, breakSeconds, isPickable, handGatherHint, harvestHint,
 } from '../../src/harvest.js';
@@ -174,40 +175,43 @@ describe('the two farm tiles 205–206 (tiles.js) and their models (plantModels.
     expect(pixels(sprout).filter((p, i) => i < 5 * 16 && p[3] === 255).every(green)).toBe(true); // all that stands above row 5 is leaf
   });
 
-  it('all nine planted blocks are the one seedbed and all nine sprouts the one seedling; the two share their mound', () => {
-    const bed = /** @type {Float32Array} */ (plantModel(B.PLANTED_CARROT));
-    const shoot = /** @type {Float32Array} */ (plantModel(B.CARROT_SPROUT));
+  it('the models (§102): all nine planted blocks are the one seedbed; each sprout a seedling of its own crop on the same mound', () => {
+    const bed = /** @type {*} */ (plantMesh(B.PLANTED_CARROT, PLANT_LOD_NEAR, 0));
+    /** a model's vertices with their picture: [x, y, z, key] */
+    const verts = (m) => [...Array(m.verts).keys()].map((v) => [m.data[v * PLANT_STRIDE], m.data[v * PLANT_STRIDE + 1], m.data[v * PLANT_STRIDE + 2], m.keys[m.vkey[v]]]);
+    const mound = (m) => verts(m).filter((x) => String(x[3]).startsWith('earth')).map((x) => x.slice(0, 3).map((c) => c.toFixed(5)).join()).join(';');
     for (const crop of CROPS) {
-      expect(Buffer.from(plantModel(crop.planted).buffer).equals(Buffer.from(bed.buffer)), crop.key).toBe(true);
-      expect(Buffer.from(plantModel(crop.sprout).buffer).equals(Buffer.from(shoot.buffer)), crop.key).toBe(true);
-      expect(PLANT_MODELS[crop.planted].parts).toBe(PLANT_MODELS[B.PLANTED_CARROT].parts);
-      expect(PLANT_MODELS[crop.sprout].parts).toBe(PLANT_MODELS[B.CARROT_SPROUT].parts);
-      expect(plantModelTile(crop.planted) ?? plantModelTile(crop.sprout)).toBeNull(); // each is cut from its own tile
+      const planted = /** @type {*} */ (plantMesh(crop.planted, PLANT_LOD_NEAR, 0));
+      const sprout = /** @type {*} */ (plantMesh(crop.sprout, PLANT_LOD_NEAR, 0));
+      expect([...planted.data], crop.key).toEqual([...bed.data]);
+      expect(mound(sprout), crop.key).toBe(mound(bed)); // the same mound of tilled earth under the seedling
+      expect(sprout.height, crop.key).toBeGreaterThan(0.18);
+      expect(sprout.height, crop.key).toBeLessThan(bed.height); // the marker twig stands taller than any seedling
     }
-    const quads = (m) => m.length / PLANT_QUAD_STRIDE;
-    expect([quads(bed), quads(shoot)]).toEqual([21, 27]);
-    // the mound: two steps, ten quads, the same in both, 0.625 m across and 3 texels high
-    const mound = 10 * PLANT_QUAD_STRIDE;
-    expect(Buffer.from(bed.slice(0, mound).buffer).equals(Buffer.from(shoot.slice(0, mound).buffer))).toBe(true);
-    const ys = (m, from, to) => {
-      const out = [];
-      for (let o = from; o < to; o += PLANT_QUAD_STRIDE) for (let v = 0; v < 4; v++) out.push(m[o + v * 5 + 1]);
-      return out;
-    };
-    expect(Math.max(...ys(bed, 0, mound))).toBeCloseTo(3 / 16, 6);
-    // the twig stands well above the mound; the seedling's leaves lift higher than its stem's top
-    expect(Math.max(...ys(bed, mound, bed.length))).toBeGreaterThan(0.5);
-    expect(Math.max(...ys(shoot, mound, shoot.length))).toBeGreaterThan(7 / 16);
-    // every face of both is cut from solid texels (the generic limit in plantModels.test.js is 30 %)
-    for (const [m, tile] of [[bed, seedbed], [shoot, sprout]]) {
-      for (let o = 0; o < m.length; o += PLANT_QUAD_STRIDE) {
-        const us = [0, 1, 2, 3].map((v) => m[o + v * 5 + 3]);
-        const vs = [0, 1, 2, 3].map((v) => m[o + v * 5 + 4]);
-        for (let y = Math.min(...vs); y < Math.max(...vs); y++) {
-          for (let x = Math.min(...us); x < Math.max(...us); x++) expect(tile[(y * 16 + x) * 4 + 3], `texel ${x},${y}`).toBe(255);
-        }
+    // the mound: a low faceted heap about 0.6 m across and under 9 cm high, dark tilled earth with furrows on top
+    const earth = verts(bed).filter((x) => String(x[3]).startsWith('earth'));
+    expect(Math.max(...earth.map((x) => x[1]))).toBeLessThan(0.09);
+    expect(Math.max(...earth.map((x) => Math.hypot(x[0], x[2])))).toBeGreaterThan(0.25);
+    expect(bed.keys).toEqual(expect.arrayContaining(['earth', 'earth.furrow', 'twig', 'rag']));
+    const atlas = paintPlantAtlas();
+    const mean = (key) => {
+      const [x0, y0, w, h] = plantRect(key);
+      let r = 0, g = 0, b = 0;
+      for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) {
+        const i = (y * atlas.width + x) * 4;
+        r += atlas.data[i]; g += atlas.data[i + 1]; b += atlas.data[i + 2];
       }
+      const n = w * h;
+      return [r / n, g / n, b / n];
+    };
+    for (const key of ['earth', 'earth.furrow']) {
+      const [r, g, b] = mean(key);
+      expect(r > g && g > b && r < 150, key).toBe(true); // earth-brown, darker than the grass
     }
+    const [rr, rg] = mean('rag');
+    expect(rr > 200 && rg > 180).toBe(true); // the pale rag
+    // the twig stands well above the mound
+    expect(Math.max(...verts(bed).filter((x) => x[3] === 'twig').map((x) => x[1]))).toBeGreaterThan(0.35);
   });
 });
 

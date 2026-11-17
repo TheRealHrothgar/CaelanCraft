@@ -33,10 +33,12 @@ import { isItemPick, normalizePick } from './creativePicks.js';
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
  * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker, 'pack' the Pack & Making screen (Survival), 'tree' the same with its build tree open (§94), 'device' the device panel on a demo Clockwork Timer (v0.10), 'pause' the pause menu
- * @property {'vortex'|'circuits'|'wind'|'wind-rain'|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar
+ * @property {'vortex'|'circuits'|'wind'|'wind-rain'|'plants'|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar
  *   Charge 8 cells ahead 2 s after loading; 'circuits' builds the §4.14 worked examples ahead (readSceneParam,
  *   circuitSceneWrites); §101: 'wind' sets two pennants and a lit campfire ahead (the flags and the smoke in the wind),
- *   'wind-rain' the same in forced rain
+ *   'wind-rain' the same in forced rain; §102: 'plants' one of every plant in rows ahead (plantSceneCells)
+ * @property {number|null} ahead     §102 screenshot aid: with ?scene=plants, how far ahead (m) its first row stands
+ *   (−20..60, negative: behind the player; default PLANT_SCENE_AHEAD)
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
  * @property {'creative'|'survival'|null} mode  v0.9 (§9.10): the first world's mode with ?autoplay / ?smoke; anything else → null
  * @property {boolean} soundTest     v0.16 (CONTRACTS §82): `?ui=sounds` — main opens the Sound Test as soon as the page has loaded
@@ -85,6 +87,7 @@ export function parseParams(search = defaultSearch()) {
     slot: readSlotParam(params),
     mode: readModeParam(params),
     scene: readSceneParam(params),
+    ahead: readClampedFloat(params, 'ahead', -20, 60),
     soundTest: readSoundTestParam(params),
     view: normalizeViewMode(readString(params, 'view')),
     avatar: normalizeAvatarId(readString(params, 'avatar')),
@@ -119,15 +122,68 @@ function readSoundTestParam(params) {
 }
 
 /**
- * `?scene=vortex|circuits|wind|wind-rain` (case-insensitive), anything else null (DESIGN-circuits §6.7; §101 the wind).
+ * `?scene=vortex|circuits|wind|wind-rain|plants` (case-insensitive), anything else null (DESIGN-circuits §6.7; §101 the
+ * wind; §102 the plants).
  * @param {URLSearchParams} params
- * @returns {'vortex'|'circuits'|'wind'|'wind-rain'|null}
+ * @returns {'vortex'|'circuits'|'wind'|'wind-rain'|'plants'|null}
  */
 export function readSceneParam(params) {
   const t = readString(params, 'scene');
   if (t === null) return null;
   const v = t.toLowerCase();
-  return v === 'vortex' || v === 'circuits' || v === 'wind' || v === 'wind-rain' ? v : null;
+  return v === 'vortex' || v === 'circuits' || v === 'wind' || v === 'wind-rain' || v === 'plants' ? v : null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// §102 `?scene=plants`: one of every plant in rows ahead of the player (screenshots of the plant models)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The rows of ?scene=plants, nearest first, each left to right across the view, six at most (the whole scene is about
+ * nine metres wide, so it fits the view from a few metres off): the bushes ripe and picked (each look-alike beside its
+ * twin); the herbs; the small greenery; the mushrooms, the reeds and the cactus; the ground litter; the farm (a planted
+ * seed, then each crop's sprout).
+ */
+export const PLANT_SCENE_ROWS = Object.freeze([
+  Object.freeze([BLOCK.HONEYBERRY_BUSH, BLOCK.NIGHTSHADE_BUSH, BLOCK.HONEYBERRY_BUSH_BARE, BLOCK.NIGHTSHADE_BUSH_BARE]),
+  Object.freeze([BLOCK.HAZEL_THICKET, BLOCK.HAZEL_THICKET_BARE, BLOCK.CRAB_APPLE_BUSH, BLOCK.CRAB_APPLE_BUSH_BARE]),
+  Object.freeze([BLOCK.CARROT_PLANT, BLOCK.HEMLOCK, BLOCK.ONION_PLANT, BLOCK.HEALWORT_PLANT, BLOCK.HEALWORT_PLANT_BARE, BLOCK.TUBER_PLANT]),
+  Object.freeze([BLOCK.TUSSOCK, BLOCK.MEADOW_DAISIES, BLOCK.FERN, BLOCK.THISTLE, BLOCK.FLAX, BLOCK.ALOE]),
+  Object.freeze([BLOCK.HONEYCAP_MUSHROOM, BLOCK.FRECKLECAP_MUSHROOM, BLOCK.CATTAILS, BLOCK.PRICKLY_PEAR, BLOCK.PRICKLY_PEAR_BARE]),
+  Object.freeze([BLOCK.LOOSE_STONES, BLOCK.FALLEN_BRANCHES, BLOCK.GROUND_NEST, BLOCK.GROUND_NEST_EMPTY]),
+  Object.freeze([BLOCK.PLANTED_CARROT, BLOCK.CARROT_SPROUT, BLOCK.ONION_SPROUT, BLOCK.TUBER_SPROUT, BLOCK.HONEYBERRY_SPROUT]),
+  Object.freeze([BLOCK.HAZEL_SPROUT, BLOCK.CRAB_APPLE_SPROUT, BLOCK.HEALWORT_SPROUT, BLOCK.PRICKLY_PEAR_SPROUT, BLOCK.CATTAILS_SPROUT]),
+]);
+/** How far ahead of the player (m) the first row of ?scene=plants stands, unless ?ahead= says. */
+export const PLANT_SCENE_AHEAD = 3;
+/** Its rows stand this far apart (m) one behind the other, its plants this far apart across a row. */
+export const PLANT_SCENE_ROW_GAP = 1.8;
+export const PLANT_SCENE_COL_GAP = 1.6;
+
+/**
+ * The cells ?scene=plants writes for a player at (px, pz) looking along the unit (fx, fz): each plant `[q, r, id]` on
+ * its own column (the rows centred on the line of sight, `ahead` m to the first), and under each the ground it wants
+ * (`under`: sand for the prickly pear, grass for the rest).
+ * @param {number} px @param {number} pz @param {number} fx @param {number} fz @param {number} [ahead]
+ * @returns {{ q: number, r: number, id: number, under: number }[]}
+ */
+export function plantSceneCells(px, pz, fx, fz, ahead = PLANT_SCENE_AHEAD) {
+  const out = [];
+  const seen = new Set();
+  PLANT_SCENE_ROWS.forEach((row, i) => {
+    const along = ahead + i * PLANT_SCENE_ROW_GAP;
+    row.forEach((id, j) => {
+      const right = (j - (row.length - 1) / 2) * PLANT_SCENE_COL_GAP;
+      // the player's right is the forward vector turned a quarter: (−fz, fx)
+      const [q, r] = worldToHex(px + fx * along - fz * right, pz + fz * along + fx * right);
+      const key = `${q},${r}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const sandy = id === BLOCK.PRICKLY_PEAR || id === BLOCK.PRICKLY_PEAR_BARE || id === BLOCK.PRICKLY_PEAR_SPROUT;
+      out.push({ q, r, id, under: sandy ? BLOCK.SAND : BLOCK.GRASS_BLOCK });
+    });
+  });
+  return out;
 }
 
 /**

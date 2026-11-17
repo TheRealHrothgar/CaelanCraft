@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Caelancraft plants</title>
+    <!-- A dev-only page (npx vite, then /plants.html): every plant model (CONTRACTS §102) on a strip of grass, drawn by
+         the game's own mesher and renderer. `npm run build` builds index.html only.
+         ?ids=fern,thistle (block names; default every kit model) &lod=0|1|2 &time=0.42 &dist=3 &height=1.4 &yaw=0 -->
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #b9d2ea; font: 13px/1.3 system-ui, sans-serif; }
+      canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+      #info { position: fixed; left: 10px; bottom: 8px; padding: 3px 8px; border-radius: 6px; background: rgba(255, 255, 255, 0.8); }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+    <div id="info"></div>
+    <script type="module" src="/src/plantViewer.js"></script>
+  </body>
+</html>

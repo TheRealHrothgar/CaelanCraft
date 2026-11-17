@@ -42,6 +42,8 @@
  * @property {MeshData|null} opaque
  * @property {MeshData|null} cutout
  * @property {MeshData|null} translucent
+ * @property {number} [plants]     how many kit-model cells it drew (§102: plants, the farm's blocks, litter)
+ * @property {number} [plantTris]  their triangles (§102)
  */
 
 /**
@@ -445,7 +447,7 @@
  * @property {() => void} [editTarget]               the Shift+R key on the target: the device panel or the rune editor
  * @property {(q: number, y: number, r: number) => void} [openDevicePanel]
  * @property {() => void} [closeDevicePanel]
- * @property {'vortex'|'circuits'|'wind'|'wind-rain'|null} [urlScene]  `?scene=` as the page was opened with
+ * @property {'vortex'|'circuits'|'wind'|'wind-rain'|'plants'|null} [urlScene]  `?scene=` as the page was opened with
  * @property {(name: string, delay?: number) => { ok: boolean, message: string, named?: Record<string, number[]> }} [buildScene]
  * @property {Record<string, number[]>|null} [sceneCells]  the named cells of the last scene built
  * @property {() => number} [circuitSegments]       wire segments drawn (the F3 circuits line)

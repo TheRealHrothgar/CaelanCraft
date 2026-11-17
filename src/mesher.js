@@ -35,7 +35,11 @@ import {
 } from './blocks.js';
 import { FULL_SKY, LIGHT_EMISSION } from './light.js';
 import { facePieces, waterCrossesFace } from './bricks.js';
-import { plantModel, plantModelTile, PLANT_QUAD_STRIDE } from './plantModels.js';
+import {
+  furnitureModel, furnitureModelTile, BOX_QUAD_STRIDE, isKitModel, plantMesh, plantVariants, LOOSE_STONES_FLINT,
+  PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD, PLANT_STRIDE,
+} from './plantModels.js';
+import { PLANT_UV_OFFSET } from './plantAtlas.js';
 import {
   tileVariants, VARY_CAP, VARY_MIRROR, VARY_SHIFT, MAX_VARIANTS, BLOCK_JITTER, LEAFY, LEAF_HUE_SHIFT, variantHash,
 } from './tileVariants.js';
@@ -143,14 +147,19 @@ const WET = new Uint8Array(256);
 const FULL_WATER = new Uint8Array(256);
 /** SURFACE[id] = waterSurfaceHeight(id, AIR): the free surface of a water cell with no water above it (§10.2 step 1). */
 const SURFACE = new Float64Array(256);
-/** SHAPE[id] (BlockDef.shape): 0 a hexagonal prism, SHAPE_DECAL a picture on the floor, SHAPE_LITTER and SHAPE_MODEL small 3D pieces. */
+/**
+ * SHAPE[id] (BlockDef.shape): 0 a hexagonal prism, SHAPE_DECAL a picture on the floor, SHAPE_MODEL a box model (§85's
+ * furniture), SHAPE_PLANT a kit model (§102: the plants, the farm's blocks and the ground litter, 'model' and 'litter').
+ */
 const SHAPE = new Uint8Array(256);
 const SHAPE_DECAL = 2;
-const SHAPE_LITTER = 3;
+const SHAPE_PLANT = 3;
 const SHAPE_MODEL = 4;
-/** MODELS[id]: the compiled quads of a 'model' block (plantModels.js), and MODEL_UV[id] the tile rect they are cut from. */
+/** MODELS[id]: the compiled quads of a furniture block's box model (plantModels.js), and MODEL_UV[id] the tile rect they are cut from. */
 const MODELS = /** @type {(Float32Array|null)[]} */ (new Array(256).fill(null));
 const MODEL_UV = /** @type {(number[]|null)[]} */ (new Array(256).fill(null));
+/** VARIANTS[id]: how many variants a kit model has (§102), chosen per cell. */
+const VARIANTS = new Uint8Array(256);
 
 for (let id = 0; id < 256; id++) {
   OPAQUE[id] = isOpaque(id) ? 1 : 0;
@@ -161,11 +170,12 @@ for (let id = 0; id < 256; id++) {
   FULL_WATER[id] = waterLevel(id) === 7 ? 1 : 0;
   SURFACE[id] = WET[id] ? waterSurfaceHeight(id, BLOCK.AIR) : 1;
   const shape = getBlockShape(id);
-  SHAPE[id] = shape === 'decal' ? SHAPE_DECAL : shape === 'litter' ? SHAPE_LITTER : shape === 'model' ? SHAPE_MODEL : 0;
-  if (shape === 'model') {
-    MODELS[id] = plantModel(id);
-    MODEL_UV[id] = tileToUV(plantModelTile(id) ?? getFaceTile(id, FACE_TOP));
+  SHAPE[id] = shape === 'decal' ? SHAPE_DECAL : isKitModel(id) ? SHAPE_PLANT : shape === 'model' ? SHAPE_MODEL : 0;
+  if (SHAPE[id] === SHAPE_MODEL) {
+    MODELS[id] = furnitureModel(id);
+    MODEL_UV[id] = tileToUV(furnitureModelTile(id) ?? getFaceTile(id, FACE_TOP));
   }
+  VARIANTS[id] = plantVariants(id);
   for (let f = 0; f < FACE_COUNT; f++) {
     const uv = tileToUV(getFaceTile(id, f));
     const o = (id * FACE_COUNT + f) * 4;
@@ -905,212 +915,7 @@ export function cellHash(q, r, salt = 0) {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// §75: ground litter as small 3D pieces
-// ---------------------------------------------------------------------------------------------------
-
-/** The skins the litter's faces are cut from (tile rects [u0, v0, u1, v1]). */
-const ROCK_UV = Float32Array.from(tileToUV(TILE.LITTER_ROCK));
-const FLINT_ROCK_UV = Float32Array.from(tileToUV(TILE.LITTER_FLINT));
-const STICK_UV = Float32Array.from(tileToUV(TILE.LITTER_STICK));
-/** Texels per metre on the litter (the terrain's own density: a 16-texel tile spans one cell). */
-const LITTER_TEXELS = 16;
-
-/**
- * The loose stones of one cell: [distance from the cell's middle, width, height, depth, cap scale, cap height] (m). A
- * stone is a block with a smaller block on top (the cap), so it reads as a rounded lump, not a cube.
- */
-export const LITTER_ROCKS = Object.freeze([
-  Object.freeze([0.15, 0.36, 0.15, 0.29, 0.64, 0.085]),
-  Object.freeze([0.23, 0.25, 0.115, 0.2, 0.6, 0.06]),
-  Object.freeze([0.28, 0.15, 0.085, 0.13, 0, 0]),
-]);
-/**
- * The fallen branches of one cell: [length, thickness, offset along the first stick, turn from it (rad), pitch (rad),
- * height of its middle] (m). The first lies flat; the second rests across it; the third is a twig standing off it.
- */
-export const LITTER_STICKS = Object.freeze([
-  Object.freeze([0.8, 0.085, 0, 0, 0, 0.0425]),
-  Object.freeze([0.56, 0.07, 0.07, 1.15, 0.17, 0.115]),
-  Object.freeze([0.26, 0.055, 0.2, 0.8, 0.6, 0.115]),
-  Object.freeze([0.3, 0.06, -0.26, 2.3, 0, 0.03]),
-]);
-/** How much darker the faces of a piece are where it meets the ground (contact shade), and the light on its faces. */
-export const LITTER_GROUND_SHADE = 0.78;
-const LITTER_KEY_X = 0.35;
-const LITTER_KEY_Y = 0.85;
-const LITTER_KEY_Z = 0.4;
-
-/** The three axes of a box face: [normal axis, u axis, v axis] (0 x, 1 y, 2 z), +face then −face of each axis. */
-const BOX_AXES = [[0, 2, 1], [1, 0, 2], [2, 0, 1]];
-/** Whether u × v points along +normal for each of those (1) or against it (−1): it decides the winding. */
-const BOX_PARITY = [-1, -1, 1];
-const boxP = [0, 0, 0];
-
-/**
- * One box of the litter: half sizes (hx, hy, hz), centre (x, y, z) in chunk-local space, turned `pitch` about its own z
- * axis (its +x end lifts) and then `yaw` about +y. Every face is cut from `uv` at texel offset (tu, tv), sized by the
- * face's own size, and shaded by where it faces (top brightest) and darker where it meets the ground.
- */
-function emitBox(bld, x, y, z, hx, hy, hz, yaw, pitch, uv, tu, tv, own, floorY) {
-  bld.ensure(24, 36);
-  const positions = bld.positions;
-  const normals = bld.normals;
-  const uvs = bld.uvs;
-  const colors = bld.colors;
-  const indices = bld.indices;
-  const light = bld.light;
-  const cy = Math.cos(yaw);
-  const sy = Math.sin(yaw);
-  const cp = Math.cos(pitch);
-  const sp = Math.sin(pitch);
-  const half = [hx, hy, hz];
-  const du = (uv[2] - uv[0]) / LITTER_TEXELS;
-  const dv = (uv[3] - uv[1]) / LITTER_TEXELS;
-  let b = bld.vertexCount;
-  let ib = bld.indexCount;
-  let faces = 0;
-  for (let ax = 0; ax < 3; ax++) {
-    const [na, ua, va] = BOX_AXES[ax];
-    for (let sign = 1; sign >= -1; sign -= 2) {
-      if (na === 1 && sign < 0 && pitch === 0) continue; // a piece lying flat: its underside is never seen
-      // the face's size in texels, and where on the skin it is cut from (kept inside the tile)
-      const wu = Math.max(1, Math.min(LITTER_TEXELS, half[ua] * 2 * LITTER_TEXELS));
-      const wv = Math.max(1, Math.min(LITTER_TEXELS, half[va] * 2 * LITTER_TEXELS));
-      const u0 = Math.min(tu + faces * 3, LITTER_TEXELS - wu);
-      const v0 = Math.min(tv + faces * 2, LITTER_TEXELS - wv);
-      // the outward normal, turned
-      boxP[0] = 0; boxP[1] = 0; boxP[2] = 0;
-      boxP[na] = sign;
-      const nx0 = boxP[0] * cp - boxP[1] * sp;
-      const ny = boxP[0] * sp + boxP[1] * cp;
-      const nx = nx0 * cy + boxP[2] * sy;
-      const nz = -nx0 * sy + boxP[2] * cy;
-      const shade = 0.58 + 0.42 * Math.min(1, Math.max(0, 0.5 + 0.5 * (nx * LITTER_KEY_X + ny * LITTER_KEY_Y + nz * LITTER_KEY_Z)));
-      for (let v = 0; v < 4; v++) {
-        const su = v === 1 || v === 2 ? 1 : -1;
-        const sv = v >= 2 ? 1 : -1;
-        boxP[na] = sign * half[na];
-        boxP[ua] = su * half[ua];
-        boxP[va] = sv * half[va];
-        const px0 = boxP[0] * cp - boxP[1] * sp;
-        const py = boxP[0] * sp + boxP[1] * cp;
-        const wx = px0 * cy + boxP[2] * sy;
-        const wz = -px0 * sy + boxP[2] * cy;
-        const p3 = (b + v) * 3;
-        positions[p3] = x + wx;
-        positions[p3 + 1] = y + py;
-        positions[p3 + 2] = z + wz;
-        normals[p3] = nx;
-        normals[p3 + 1] = ny;
-        normals[p3 + 2] = nz;
-        const p2 = (b + v) * 2;
-        uvs[p2] = uv[0] + (u0 + (su > 0 ? wu : 0)) * du;
-        uvs[p2 + 1] = uv[1] + (v0 + (sv > 0 ? 0 : wv)) * dv;
-        const col = shade * (y + py - floorY < 0.03 ? LITTER_GROUND_SHADE : 1);
-        colors[p3] = col;
-        colors[p3 + 1] = col;
-        colors[p3 + 2] = col;
-        writeLight(light, (b + v) * 2, own);
-      }
-      // counter-clockwise seen from outside, so the two-sided cutout material lights the outside
-      if (BOX_PARITY[ax] * sign > 0) {
-        indices[ib] = b; indices[ib + 1] = b + 1; indices[ib + 2] = b + 2;
-        indices[ib + 3] = b; indices[ib + 4] = b + 2; indices[ib + 5] = b + 3;
-      } else {
-        indices[ib] = b; indices[ib + 1] = b + 2; indices[ib + 2] = b + 1;
-        indices[ib + 3] = b; indices[ib + 4] = b + 3; indices[ib + 5] = b + 2;
-      }
-      b += 4;
-      ib += 6;
-      faces++;
-    }
-  }
-  bld.vertexCount = b;
-  bld.indexCount = ib;
-  bld.faceCount += faces;
-}
-
-// v0.14 (§76 fauna): the ground nest, in the litter's style
-const NEST_UV = Float32Array.from(tileToUV(TILE.LITTER_NEST));
-const EGG_UV = Float32Array.from(tileToUV(TILE.LITTER_EGG));
-/**
- * The nest's wall: NEST_WALL.count bundles of dry grass in a ring of radius `r` (m), each `len` long, `thick` wide and
- * `h` high; its bed is a flat pad `bed` across and `bedH` thick. The eggs: NEST_EGGS of them, `eggR` from the middle,
- * each `egg` wide and `eggH` high with a smaller cap on top (so it reads as rounded, like the stones).
- */
-export const NEST_WALL = Object.freeze({ count: 6, r: 0.27, len: 0.33, thick: 0.11, h: 0.13, bed: 0.36, bedH: 0.045 });
-export const NEST_EGGS = 3;
-export const NEST_EGG = Object.freeze({ r: 0.085, w: 0.11, h: 0.1, cap: 0.6, capH: 0.045 });
-
-/**
- * A Ground Nest (BLOCK.GROUND_NEST / GROUND_NEST_EMPTY): a low ring of grass bundles round a bed, and — `eggs` — three
- * pale eggs lying in it. Turned per cell like the rest of the litter.
- */
-function emitNest(bld, wq, wr, ly, cx, cz, eggs, turn, own) {
-  const W = NEST_WALL;
-  emitBox(bld, cx, ly + W.bedH / 2, cz, W.bed / 2, W.bedH / 2, W.bed / 2, turn, 0, NEST_UV, 9, 9, own, ly);
-  for (let i = 0; i < W.count; i++) {
-    const ang = turn + (i * Math.PI * 2) / W.count;
-    const h = W.h * (0.85 + 0.3 * cellHash(wq, wr, 40 + i)); // an uneven rim
-    // yaw π/2 − ang lays the bundle along the ring (emitBox turns a box's long x axis to (cos yaw, −sin yaw))
-    emitBox(bld, cx + Math.cos(ang) * W.r, ly + h / 2, cz + Math.sin(ang) * W.r, W.len / 2, h / 2, W.thick / 2, Math.PI / 2 - ang, 0, NEST_UV,
-      Math.floor(cellHash(wq, wr, 46 + i) * 8), Math.floor(cellHash(wq, wr, 52 + i) * 8), own, ly);
-  }
-  if (!eggs) return;
-  const E = NEST_EGG;
-  for (let i = 0; i < NEST_EGGS; i++) {
-    const ang = turn + 0.5 + (i * Math.PI * 2) / NEST_EGGS;
-    const x = cx + Math.cos(ang) * E.r;
-    const z = cz + Math.sin(ang) * E.r;
-    const yaw = cellHash(wq, wr, 58 + i) * Math.PI;
-    const y0 = ly + W.bedH;
-    // floorY far below: an egg lies on the bed, not on the ground — no contact shade on its sides
-    emitBox(bld, x, y0 + E.h / 2, z, E.w / 2, E.h / 2, E.w / 2, yaw, 0, EGG_UV, i * 4, i * 3, own, ly - 1);
-    emitBox(bld, x, y0 + E.h + E.capH / 2, z, (E.w * E.cap) / 2, E.capH / 2, (E.w * E.cap) / 2, yaw, 0, EGG_UV, i * 4 + 2, i * 3 + 1, own, ly - 1);
-  }
-}
-
-/**
- * Ground litter (BlockDef.shape 'litter', CONTRACTS §75): LOOSE_STONES as three stones of different sizes (one of them a
- * dark FLINT nodule where blocks.flintAt says the column holds flint), FALLEN_BRANCHES as sticks lying across each other
- * with a twig standing up. Every cell's pieces are turned and placed by cellHash, so no two cells look alike. They are in
- * the cutout layer, lit by their own cell.
- */
-function emitLitter(bld, wq, wr, ly, cx, cz, a, own) {
-  const turn = cellHash(wq, wr, 3) * Math.PI * 2;
-  if (a === BLOCK.GROUND_NEST || a === BLOCK.GROUND_NEST_EMPTY) {
-    emitNest(bld, wq, wr, ly, cx, cz, a === BLOCK.GROUND_NEST, turn, own);
-    return;
-  }
-  if (a === BLOCK.LOOSE_STONES) {
-    const flint = flintAt(wq, wr);
-    for (let i = 0; i < LITTER_ROCKS.length; i++) {
-      const [dist, w, h, d, cap, capH] = LITTER_ROCKS[i];
-      const ang = turn + i * 2.2 + (cellHash(wq, wr, 4 + i) - 0.5) * 0.7;
-      const x = cx + Math.cos(ang) * dist;
-      const z = cz + Math.sin(ang) * dist;
-      const yaw = cellHash(wq, wr, 8 + i) * Math.PI;
-      const uv = flint && i === 1 ? FLINT_ROCK_UV : ROCK_UV;
-      const tu = Math.floor(cellHash(wq, wr, 12 + i) * 8);
-      const tv = Math.floor(cellHash(wq, wr, 16 + i) * 8);
-      emitBox(bld, x, ly + h / 2, z, w / 2, h / 2, d / 2, yaw, 0, uv, tu, tv, own, ly);
-      if (cap > 0) emitBox(bld, x, ly + h + capH / 2, z, (w * cap) / 2, capH / 2, (d * cap) / 2, yaw + 0.35, 0, uv, tu + 3, tv + 2, own, ly);
-    }
-    return;
-  }
-  const ax = Math.cos(turn);
-  const az = -Math.sin(turn);
-  for (let i = 0; i < LITTER_STICKS.length; i++) {
-    const [len, thick, along, off, pitch, mid] = LITTER_STICKS[i];
-    const jitter = (cellHash(wq, wr, 20 + i) - 0.5) * 0.5;
-    const tu = Math.floor(cellHash(wq, wr, 24 + i) * 3);
-    const tv = Math.floor(cellHash(wq, wr, 28 + i) * 12);
-    emitBox(bld, cx + ax * along, ly + mid, cz + az * along, len / 2, thick / 2, thick / 2, turn + (i === 0 ? 0 : off + jitter), pitch, STICK_UV, tu, tv, own, ly);
-  }
-}
-
-// ---------------------------------------------------------------------------------------------------
-// §78: the wild plants as small 3D models
+// §102: the plants, the farm's blocks and the ground litter as kit models on the plant atlas
 // ---------------------------------------------------------------------------------------------------
 
 /** A plant model is turned by any angle, moved off the cell's middle by up to MODEL_JITTER (m) … */
@@ -1118,17 +923,111 @@ export const MODEL_JITTER = 0.04;
 /** … and sized between MODEL_SCALE_MIN and MODEL_SCALE_MAX of its drawing, per world cell: no two plants quite alike. */
 export const MODEL_SCALE_MIN = 0.9;
 export const MODEL_SCALE_MAX = 1.05;
+/**
+ * A chunk draws at most this many triangles of NEAR plants: past it, the rest of its plants (in meshing order) are drawn
+ * FAR. A field planted solid in Creative stays affordable; the land's own plants never come near it (CONTRACTS §102.5).
+ */
+export const PLANT_NEAR_TRIS_MAX = 60000;
+
+/** The plant triangles of the chunk being built, near and in all; and how many plant cells it holds. */
+let plantNearTris = 0;
+let plantTris = 0;
+let plantCells = 0;
 
 /**
- * A plant (BlockDef.shape 'model', CONTRACTS §78): the compiled quads of plantModels.js, turned, nudged and sized per
- * world cell by cellHash, cut from the plant's own tile, in the cutout layer. Faces are shaded like the litter (by where
- * they face, darker where they meet the ground) and lit by the plant's own cell.
+ * The variant of kit model `a` at world column (wq, wr): LOOSE_STONES shows its flint one where blocks.flintAt says the
+ * column holds flint (§70), every other model one of its variants by cellHash (salt 7).
+ */
+export function plantVariantAt(a, wq, wr) {
+  if (a === BLOCK.LOOSE_STONES && flintAt(wq, wr)) return LOOSE_STONES_FLINT;
+  const n = VARIANTS[a];
+  return n > 1 ? Math.floor(cellHash(wq, wr, 7) * n) : 0;
+}
+
+/**
+ * A kit model (§102): block `a`'s compiled plant at level of detail `lod` (its variant for the cell), turned by
+ * cellHash(q, r) · 2π, nudged by up to MODEL_JITTER (salts 1, 2) and sized MODEL_SCALE_MIN..MAX (salt 5), in the cutout
+ * layer. Its uvs are the plant atlas's, moved PLANT_UV_OFFSET along u (the cutout material samples the plant atlas
+ * there); a CARD's are the block atlas's own. Every vertex is lit by the plant's own cell (§62) and coloured grey by its
+ * baked shade (plantKit compile: openness, slope, contact). No tint, no AO from the terrain, no culling.
+ */
+function emitPlant(bld, wq, wr, ly, cx, cz, a, own, lod) {
+  let L = lod;
+  if (L === PLANT_LOD_NEAR && plantNearTris >= PLANT_NEAR_TRIS_MAX) L = PLANT_LOD_FAR;
+  const m = plantMesh(a, L, plantVariantAt(a, wq, wr));
+  if (m === null) return;
+  const nv = m.verts;
+  const ni = m.tris * 3;
+  bld.ensure(nv, ni);
+  const positions = bld.positions;
+  const normals = bld.normals;
+  const uvs = bld.uvs;
+  const colors = bld.colors;
+  const indices = bld.indices;
+  const light = bld.light;
+  const turn = cellHash(wq, wr) * Math.PI * 2;
+  const c = Math.cos(turn);
+  const s = Math.sin(turn);
+  const k = MODEL_SCALE_MIN + (MODEL_SCALE_MAX - MODEL_SCALE_MIN) * cellHash(wq, wr, 5);
+  const ox = cx + (cellHash(wq, wr, 1) - 0.5) * 2 * MODEL_JITTER;
+  const oz = cz + (cellHash(wq, wr, 2) - 0.5) * 2 * MODEL_JITTER;
+  const du = m.block ? 0 : PLANT_UV_OFFSET;
+  const d = m.data;
+  const b = bld.vertexCount;
+  for (let v = 0, o = 0; v < nv; v++, o += PLANT_STRIDE) {
+    const x = d[o];
+    const z = d[o + 2];
+    const p3 = (b + v) * 3;
+    positions[p3] = ox + (x * c + z * s) * k;
+    positions[p3 + 1] = ly + d[o + 1] * k;
+    positions[p3 + 2] = oz + (-x * s + z * c) * k;
+    const nx = d[o + 3];
+    const nz = d[o + 5];
+    normals[p3] = nx * c + nz * s;
+    normals[p3 + 1] = d[o + 4];
+    normals[p3 + 2] = -nx * s + nz * c;
+    const p2 = (b + v) * 2;
+    uvs[p2] = d[o + 6] + du;
+    uvs[p2 + 1] = d[o + 7];
+    const shade = d[o + 8];
+    colors[p3] = shade;
+    colors[p3 + 1] = shade;
+    colors[p3 + 2] = shade;
+    writeLight(light, p2, own);
+  }
+  const idx = m.index;
+  let ib = bld.indexCount;
+  for (let t = 0; t < ni; t++) indices[ib++] = idx[t] + b;
+  bld.vertexCount = b + nv;
+  bld.indexCount = ib;
+  bld.faceCount += m.tris;
+  plantTris += m.tris;
+  plantCells++;
+  if (L === PLANT_LOD_NEAR) plantNearTris += m.tris;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// §85: the furniture (the well, the rain barrel, the two beds) as box models cut from 16-px skins
+// ---------------------------------------------------------------------------------------------------
+
+/** How much darker a box model's faces are where they meet the ground (contact shade), and the light on its faces. */
+export const BOX_GROUND_SHADE = 0.78;
+const BOX_KEY_X = 0.35;
+const BOX_KEY_Y = 0.85;
+const BOX_KEY_Z = 0.4;
+/** Texels per metre on a box model's skin (a 16-texel tile spans one cell). */
+const BOX_TEXELS = 16;
+
+/**
+ * A piece of furniture (§85, BlockDef.shape 'model' without a kit model): the compiled quads of its box model, turned,
+ * nudged and sized per world cell like a plant, cut from its own tile, in the cutout layer. Faces are shaded by where
+ * they face (top brightest) × the quad's shade, darker where they meet the ground, and lit by the cell's own light.
  */
 function emitModel(bld, wq, wr, ly, cx, cz, a, own) {
   const quads = MODELS[a];
   const uv = MODEL_UV[a];
   if (quads === null || uv === null) return;
-  const n = quads.length / PLANT_QUAD_STRIDE;
+  const n = quads.length / BOX_QUAD_STRIDE;
   bld.ensure(4 * n, 6 * n);
   const positions = bld.positions;
   const normals = bld.normals;
@@ -1142,17 +1041,17 @@ function emitModel(bld, wq, wr, ly, cx, cz, a, own) {
   const k = MODEL_SCALE_MIN + (MODEL_SCALE_MAX - MODEL_SCALE_MIN) * cellHash(wq, wr, 5);
   const ox = cx + (cellHash(wq, wr, 1) - 0.5) * 2 * MODEL_JITTER;
   const oz = cz + (cellHash(wq, wr, 2) - 0.5) * 2 * MODEL_JITTER;
-  const du = (uv[2] - uv[0]) / LITTER_TEXELS;
-  const dv = (uv[3] - uv[1]) / LITTER_TEXELS;
+  const du = (uv[2] - uv[0]) / BOX_TEXELS;
+  const dv = (uv[3] - uv[1]) / BOX_TEXELS;
   let b = bld.vertexCount;
   let ib = bld.indexCount;
-  for (let q = 0, o = 0; q < n; q++, o += PLANT_QUAD_STRIDE) {
+  for (let q = 0, o = 0; q < n; q++, o += BOX_QUAD_STRIDE) {
     const mx = quads[o + 20];
     const ny = quads[o + 21];
     const mz = quads[o + 22];
     const nx = mx * c + mz * s;
     const nz = -mx * s + mz * c;
-    const shade = quads[o + 23] * (0.58 + 0.42 * Math.min(1, Math.max(0, 0.5 + 0.5 * (nx * LITTER_KEY_X + ny * LITTER_KEY_Y + nz * LITTER_KEY_Z))));
+    const shade = quads[o + 23] * (0.58 + 0.42 * Math.min(1, Math.max(0, 0.5 + 0.5 * (nx * BOX_KEY_X + ny * BOX_KEY_Y + nz * BOX_KEY_Z))));
     for (let v = 0; v < 4; v++) {
       const p = o + v * 5;
       const x = quads[p];
@@ -1168,7 +1067,7 @@ function emitModel(bld, wq, wr, ly, cx, cz, a, own) {
       const p2 = (b + v) * 2;
       uvs[p2] = uv[0] + quads[p + 3] * du;
       uvs[p2 + 1] = uv[1] + quads[p + 4] * dv;
-      const col = shade * (y < 0.03 ? LITTER_GROUND_SHADE : 1);
+      const col = shade * (y < 0.03 ? BOX_GROUND_SHADE : 1);
       colors[p3] = col;
       colors[p3 + 1] = col;
       colors[p3 + 2] = col;
@@ -1188,15 +1087,6 @@ function emitModel(bld, wq, wr, ly, cx, cz, a, own) {
 // Main entry point
 // ---------------------------------------------------------------------------------------------------
 
-/**
- * Build the render geometry of chunk (cq, cr). Positions are chunk-local: relative to the centre of local
- * cell (0, 0) (hex.chunkOrigin), which is where the renderer places the mesh. Never throws for well-formed
- * inputs; a chunk with no visible faces yields `{ opaque: null, cutout: null, translucent: null }`.
- * @param {number} cq
- * @param {number} cr
- * @param {GetChunkDataFn} getChunkData  called for the centre chunk and its six hex neighbours; null → AIR
- * @returns {ChunkMeshData}
- */
 const BRICK_SHADOW = BLOCK.BRICK_SHADOW;
 
 /**
@@ -1236,7 +1126,21 @@ function drawThrough(pq, pr, lr, ly, cx, cz, colBase, even, tint) {
   }
 }
 
-export function buildChunkMesh(cq, cr, getChunkData) {
+/**
+ * Build the render geometry of chunk (cq, cr). Positions are chunk-local: relative to the centre of local
+ * cell (0, 0) (hex.chunkOrigin), which is where the renderer places the mesh. Never throws for well-formed
+ * inputs; a chunk with no visible faces yields `{ opaque: null, cutout: null, translucent: null }`.
+ * @param {number} cq
+ * @param {number} cr
+ * @param {GetChunkDataFn} getChunkData  called for the centre chunk and its six hex neighbours; null → AIR
+ * @param {{ plantLod?: number }} [opts]  the level of detail of its plants (§102: PLANT_LOD_NEAR, the default; FAR; CARD)
+ * @returns {ChunkMeshData}  with `plants` (how many kit-model cells it drew) and `plantTris` (their triangles) when it drew any
+ */
+export function buildChunkMesh(cq, cr, getChunkData, opts = {}) {
+  const plantLod = opts.plantLod ?? PLANT_LOD_NEAR;
+  plantNearTris = 0;
+  plantTris = 0;
+  plantCells = 0;
   const opaqueB = builders[0];
   const cutoutB = builders[1];
   const translucentB = builders[2];
@@ -1285,7 +1189,8 @@ export function buildChunkMesh(cq, cr, getChunkData) {
         const bld = layer === 0 ? opaqueB : layer === 1 ? cutoutB : translucentB;
         const tintRow = a * FACE_COUNT;
 
-        // A plant is a small 3D model, litter a few 3D pieces, a snare a picture on the floor: never a hexagonal prism (no faces, no culling).
+        // A plant or a piece of litter is a kit model, furniture a box model, a snare a picture on the floor: never a
+        // hexagonal prism (no faces, no culling).
         const shape = SHAPE[a];
         varyOn = shape === 0 && variationEnabled ? VARIES[a] : 0;
         if (shape !== 0) {
@@ -1294,8 +1199,8 @@ export function buildChunkMesh(cq, cr, getChunkData) {
           const tg = t ? tint[1] : 1;
           const tb = t ? tint[2] : 1;
           const own = lightAt(pq, ly, pr); // a plant or a decal is lit by its own cell (§62)
-          if (shape === SHAPE_MODEL) emitModel(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, own);
-          else if (shape === SHAPE_LITTER) emitLitter(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, own);
+          if (shape === SHAPE_PLANT) emitPlant(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, own, plantLod);
+          else if (shape === SHAPE_MODEL) emitModel(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, own);
           else {
             // §70: the loose stones that hold flint are drawn with the flint tile, so flint can be seen where it lies.
             decalUV = a === BLOCK.LOOSE_STONES && flintAt(cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr) ? FLINT_UV : null;
@@ -1374,11 +1279,17 @@ export function buildChunkMesh(cq, cr, getChunkData) {
   }
 
   varyOn = 0;
-  return {
+  /** @type {ChunkMeshData} */
+  const out = {
     opaque: opaqueB.build(),
     cutout: cutoutB.build(),
     translucent: translucentB.build(),
   };
+  if (plantCells > 0) {
+    out.plants = plantCells;
+    out.plantTris = plantTris;
+  }
+  return out;
 }
 
 /** Scratch chunk for buildCellMesh: one cell in an otherwise empty chunk (plains biome so tinted faces look normal). */
@@ -1402,7 +1313,8 @@ export function buildCellMesh(id) {
   }
   const i = localIndex(0, 1, 0);
   cellChunk.blocks[i] = id;
-  const out = buildChunkMesh(0, 0, (cq, cr) => (cq === 0 && cr === 0 ? cellChunk : null));
+  // §102: a plant's moving cell is its crossed picture (block atlas uvs, like every other moving block's)
+  const out = buildChunkMesh(0, 0, (cq, cr) => (cq === 0 && cr === 0 ? cellChunk : null), { plantLod: PLANT_LOD_CARD });
   cellChunk.blocks[i] = 0;
   for (const layer of [out.opaque, out.cutout, out.translucent]) {
     if (!layer) continue;

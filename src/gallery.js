@@ -15,11 +15,11 @@ import { AvatarMotion } from './avatarMotion.js';
 import { createZombieRenderer } from './zombieRenderer.js';
 import { createAnimalRenderer } from './animalRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { plantModel, PLANT_QUAD_STRIDE } from './plantModels.js';
-import { paintSlot } from './atlas.js';
-import { BLOCK, TILE, getFaceTile } from './blocks.js';
+import { plantMesh, PLANT_LOD_NEAR, PLANT_STRIDE } from './plantModels.js';
+import { paintSlot, createPlantAtlasTexture } from './atlas.js';
+import { BLOCK, TILE } from './blocks.js';
 import { heldItemGeometry } from './heldItem.js';
-import { HEX_SIZE, FACE_TOP } from './hex.js';
+import { HEX_SIZE } from './hex.js';
 import { buildPilot, buildHand, STYLES, HAIR_OPTIONS, HAIR_LABELS } from './pilotModels.js';
 import { avatarById } from './avatars.js';
 
@@ -306,11 +306,11 @@ const ROWS = {
     target: [0.2, 0.36, 0.1], dist: 3.4, far: 5, az: 0.45, elev: 0.28, second: 16,
     today() {
       const scene = stage({ blocks: [] });
-      const a = todayPlant(BLOCK.HONEYBERRY_BUSH, TILE.HONEYBERRY_BUSH);
-      const b = todayPlant(BLOCK.CRAB_APPLE_BUSH, null);
+      const a = todayPlant(BLOCK.HONEYBERRY_BUSH);
+      const b = todayPlant(BLOCK.CRAB_APPLE_BUSH);
       b.mesh.position.set(0.85, 0, 0.2);
       scene.add(a.mesh, b.mesh);
-      return { scene, stats: `${fmt(a.tris)} + ${fmt(b.tris)} tris · its 32-px tile (1,024 px), nearest · in the chunk mesh` };
+      return { scene, stats: `${fmt(a.tris)} + ${fmt(b.tris)} tris · the game's kit models (§102) on the plant atlas · in the chunk mesh` };
     },
     pilot(style) {
       const scene = stage({ blocks: [] });
@@ -357,49 +357,35 @@ DEBUG_ROWS.fist = {
   },
 };
 
+/** The plant atlas (§102), made once. @type {THREE.Texture|null} */
+let plantAtlas = null;
+
 /**
- * Today's plant model of a block (plantModels.js quads on its own tile, shaded the way the mesher shades them), in a
- * mesh of its own.
+ * The game's plant model of a block (plantModels.js, CONTRACTS §102: the kit model, near, on the plant atlas, shaded as
+ * the mesher shades it), in a mesh of its own. (Since phase 4 the game's plants ARE the hex-faceted ones.)
  */
-function todayPlant(blockId, tile) {
-  const quads = /** @type {Float32Array} */ (plantModel(blockId));
-  const n = quads.length / PLANT_QUAD_STRIDE;
+function todayPlant(blockId) {
+  const m = /** @type {import('./plantKit.js').CompiledPlant} */ (plantMesh(blockId, PLANT_LOD_NEAR, 0));
   const pos = [];
   const nor = [];
   const uv = [];
   const col = [];
-  const idx = [];
-  for (let q = 0; q < n; q++) {
-    const o = q * PLANT_QUAD_STRIDE;
-    const [nx, ny, nz, sh] = [quads[o + 20], quads[o + 21], quads[o + 22], quads[o + 23]];
-    const shade = sh * (0.58 + 0.42 * Math.min(1, Math.max(0, 0.5 + 0.5 * (nx * 0.35 + ny * 0.85 + nz * 0.4))));
-    for (let v = 0; v < 4; v++) {
-      const p = o + v * 5;
-      pos.push(quads[p], quads[p + 1], quads[p + 2]);
-      nor.push(nx, ny, nz);
-      uv.push(quads[p + 3] / 16, quads[p + 4] / 16);
-      col.push(shade, shade, shade);
-    }
-    const b = q * 4;
-    idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+  for (let v = 0; v < m.verts; v++) {
+    const o = v * PLANT_STRIDE;
+    pos.push(m.data[o], m.data[o + 1], m.data[o + 2]);
+    nor.push(m.data[o + 3], m.data[o + 4], m.data[o + 5]);
+    uv.push(m.data[o + 6], m.data[o + 7]);
+    col.push(m.data[o + 8], m.data[o + 8], m.data[o + 8]);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  g.setIndex(idx);
-  const tex = tileTexture(tile ?? blockTopTile(blockId), 1);
-  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
-  const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: tex, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide }));
-  return { mesh, tris: n * 2 };
-}
-
-/** A block's top tile (blocks.js). */
-function blockTopTile(id) {
-  return getFaceTile(id, FACE_TOP);
+  g.setIndex(Array.from(m.index));
+  plantAtlas ??= createPlantAtlasTexture();
+  const mesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ map: plantAtlas, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide }));
+  return { mesh, tris: m.tris };
 }
 
 /** The first-person stage: the player's eye 1.62 m over the grass, looking down a little at a stone block ahead. */

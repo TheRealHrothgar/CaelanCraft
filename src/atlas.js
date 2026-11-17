@@ -4,13 +4,17 @@
 //
 // DOM + three. Every DOM access happens inside a function so the module can be imported in Node.
 // Imports: config, blocks, hex, tiles, three (per the CONTRACTS.md import graph).
-import { DataTexture, NearestFilter, NearestMipmapLinearFilter, SRGBColorSpace, ClampToEdgeWrapping, RGBAFormat, UnsignedByteType } from 'three';
+import {
+  DataTexture, NearestFilter, NearestMipmapLinearFilter, LinearFilter, LinearMipmapLinearFilter, SRGBColorSpace, ClampToEdgeWrapping,
+  RGBAFormat, UnsignedByteType,
+} from 'three';
 import { ATLAS_SLOT_PX, ATLAS_TILES_PER_ROW, ATLAS_SIZE_PX, ATLAS_MIP_LEVELS } from './config.js';
 import { BLOCK, TILE, TILE_IDS, getBlockDef, getFaceTile, FACE_TOP } from './blocks.js';
 import { HEX_CORNERS, HEX_SIZE } from './hex.js';
 import { paintTile } from './tiles.js';
 import { paintTileHD, upscale16 } from './tilesHD.js';
 import { extraSlots } from './tileVariants.js';
+import { plantAtlasMips } from './plantAtlas.js';
 
 /** Icon geometry is specified on a 32×32 canvas; other sizes scale uniformly from it. */
 export const ICON_BASE_SIZE = 32;
@@ -214,6 +218,29 @@ export function createAtlasTexture(canvas) {
   texture.mipmaps = mips;
   texture.magFilter = NearestFilter;
   texture.minFilter = NearestMipmapLinearFilter;
+  texture.generateMipmaps = false;
+  texture.flipY = false;
+  texture.colorSpace = SRGBColorSpace;
+  texture.wrapS = ClampToEdgeWrapping;
+  texture.wrapT = ClampToEdgeWrapping;
+  texture.anisotropy = 1;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * §102: the PLANT atlas as a texture (plantAtlas.js: painted once, its own mip chain). Unlike the block atlas it is
+ * filtered LINEARLY (`magFilter` Linear, `minFilter` LinearMipmapLinear: painted leaves and bark, not pixel art), with
+ * the same conventions otherwise: `flipY = false` (v down the image), sRGB, clamp wrapping, anisotropy 1. The chunks'
+ * cutout material samples it where a vertex's u is past PLANT_UV_OFFSET (lightShader.applyPlantAtlas).
+ * @returns {DataTexture}
+ */
+export function createPlantAtlasTexture() {
+  const mips = plantAtlasMips();
+  const texture = new DataTexture(mips[0].data, mips[0].width, mips[0].height, RGBAFormat, UnsignedByteType);
+  texture.mipmaps = mips;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
   texture.generateMipmaps = false;
   texture.flipY = false;
   texture.colorSpace = SRGBColorSpace;

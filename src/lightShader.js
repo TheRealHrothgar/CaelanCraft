@@ -156,6 +156,57 @@ export function applyChunkLight(material) {
   return material;
 }
 
+/** §102: the uniform holding the plant atlas on the chunks' cutout material. */
+export const PLANT_MAP_UNIFORM = 'caelPlantMap';
+
+/**
+ * §102: the cutout layer's map lookup. A vertex whose u is past 1.5 is a plant's (the mesher moved its plant-atlas u by
+ * PLANT_UV_OFFSET 2): the plant atlas there, the block atlas everywhere else. Both are sampled (uniform control flow,
+ * so the mip level of each is right) and one is kept.
+ */
+/**
+ * §102: after three's normal_fragment_begin. The cutout material is double-sided and three turns a back face's normal
+ * round; a plant's leaf card is seen from both sides alike, so a plant's normal is never turned (plantKit gives a card
+ * the normal of its upper side, leaning out of the plant): foliage is lit like foliage from wherever it is seen.
+ */
+export const PLANT_NORMAL_FRAGMENT = /* glsl */ `
+#if defined( USE_MAP ) && defined( DOUBLE_SIDED ) && ! defined( FLAT_SHADED )
+	if ( vMapUv.x > 1.5 ) normal = normalize( vNormal );
+#endif
+`;
+
+export const PLANT_MAP_FRAGMENT = /* glsl */ `
+#ifdef USE_MAP
+	vec4 caelBlockTexel = texture2D( map, vMapUv );
+	vec4 caelPlantTexel = texture2D( caelPlantMap, vMapUv - vec2( 2.0, 0.0 ) );
+	vec4 sampledDiffuseColor = vMapUv.x > 1.5 ? caelPlantTexel : caelBlockTexel;
+	diffuseColor *= sampledDiffuseColor;
+#endif
+`;
+
+/**
+ * §102: give a chunk material (already patched by applyChunkLight) the plant atlas: a second sampler, and the map lookup
+ * that picks it for the plants' vertices. One material, one draw per chunk layer: the plants stay in the chunk mesh.
+ * @param {THREE.Material} material
+ * @param {THREE.Texture|null} texture
+ * @returns {THREE.Material}
+ */
+export function applyPlantAtlas(material, texture) {
+  const before = material.onBeforeCompile;
+  const uniform = { value: texture };
+  material.onBeforeCompile = (shader, webgl) => {
+    before.call(material, shader, webgl);
+    shader.uniforms[PLANT_MAP_UNIFORM] = uniform;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\nuniform sampler2D ${PLANT_MAP_UNIFORM};`)
+      .replace('#include <map_fragment>', PLANT_MAP_FRAGMENT)
+      .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>\n${PLANT_NORMAL_FRAGMENT}`);
+  };
+  material.customProgramCacheKey = () => 'caelancraft-chunk-light-plants';
+  material.userData.caelPlantMap = uniform;
+  return material;
+}
+
 /** Vertex declarations of the object patch: the volume and its cell lookup (hex.worldToHex's cube rounding in GLSL). */
 export const LIGHT_VOLUME_VERTEX_PARS = /* glsl */ `
 uniform sampler3D caelVol;

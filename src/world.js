@@ -37,9 +37,10 @@
 import {
   CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE, DATA_RADIUS_EXTRA,
   UNLOAD_RADIUS_EXTRA, BUILD_BUDGET_MS, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS, LAZY_COALESCE_UPDATES, GEN_LATEST,
+  PLANT_NEAR_M, PLANT_FAR_M, PLANT_LOD_SLACK_M, PLANT_LOD_BUDGET_MS,
 } from './config.js';
 import { chunkKey, parseChunkKey, localIndex, indexToLocal } from './coords.js';
-import { HEX_DIRS, hexLength, hexNormSq, hexToWorld, worldToHex } from './hex.js';
+import { HEX_DIRS, HEX_ROW_SPACING, hexLength, hexNormSq, hexToWorld, worldToHex } from './hex.js';
 import { BLOCK, BIOME, UNLOADED, isSolid, isOpaque, isBrickShadow, isWater, isLiquid as isLiquidId } from './blocks.js';
 import {
   BrickGrid, BRICK_CHUNK_I, BRICK_CHUNK_N, BRICK_DEPTH, hexesOfBrick, bricksOfHex, fullPieceMask, brickChunksOfHexChunk,
@@ -49,6 +50,7 @@ import { buildBrickMesh } from './brickmesher.js';
 import { Chunk } from './chunk.js';
 import { createWorldGen } from './worldgen.js';
 import { buildChunkMesh } from './mesher.js';
+import { PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD } from './plantKit.js';
 import { LightEngine } from './light.js';
 import { normalizeSeed } from './noise.js';
 
@@ -109,6 +111,36 @@ function packId(cq, cr) {
 function chunkDistSq(chunk, px, pz) {
   const [cx, cz] = hexToWorld(chunk.cq * CHUNK_SIZE + CHUNK_SIZE / 2, chunk.cr * CHUNK_SIZE + CHUNK_SIZE / 2);
   return (cx - px) * (cx - px) + (cz - pz) * (cz - pz);
+}
+
+/**
+ * §102: the distance (m, in the ground plane) from (px, pz) to the nearest point of chunk (cq, cr) — the parallelogram
+ * its cells' hexagons fill, 0 inside it.
+ * @param {number} cq @param {number} cr @param {number} px @param {number} pz
+ * @returns {number}
+ */
+export function chunkNearestDistance(cq, cr, px, pz) {
+  // the corners of the parallelogram: the outer edges of the cells (half a cell beyond the corner cells' centres)
+  const q0 = cq * CHUNK_SIZE - 0.5;
+  const r0 = cr * CHUNK_SIZE - 0.5;
+  const x0 = q0 + r0 * 0.5;
+  const z0 = r0 * HEX_ROW_SPACING;
+  const ex = CHUNK_SIZE; // along q: (16, 0)
+  const rx = CHUNK_SIZE * 0.5; // along r: (8, 16·√3/2)
+  const rz = CHUNK_SIZE * HEX_ROW_SPACING;
+  const dx = px - x0;
+  const dz = pz - z0;
+  const b = dz / rz;
+  const a = (dx - b * rx) / ex;
+  if (a >= 0 && a <= 1 && b >= 0 && b <= 1) return 0;
+  // the nearest of the four edges
+  const seg = (ax, az, bx, bz) => {
+    const vx = bx - ax;
+    const vz = bz - az;
+    const t = Math.max(0, Math.min(1, ((dx - ax) * vx + (dz - az) * vz) / (vx * vx + vz * vz)));
+    return Math.hypot(dx - ax - vx * t, dz - az - vz * t);
+  };
+  return Math.min(seg(0, 0, ex, 0), seg(rx, rz, ex + rx, rz), seg(0, 0, rx, rz), seg(ex, 0, ex + rx, rz));
 }
 
 /** @returns {() => number} millisecond clock */
@@ -206,6 +238,11 @@ export class World {
 
     /** @type {Chunk[]} scratch list of lazily dirty chunks for update() step 2 */
     this._lazyScratch = [];
+    /** @type {Chunk[]} scratch list of chunks whose plants want another level of detail (update() step 2b, §102) */
+    this._lodScratch = [];
+    /** the player's position at the last update() (§102: each chunk's plants are meshed for it); NaN before the first */
+    this._px = NaN;
+    this._pz = NaN;
     /** update() calls so far (a 'coalesce' chunk's wait, §9.2) */
     this._updateCalls = 0;
 
@@ -833,6 +870,8 @@ export class World {
     const pcq = Math.floor(pq / CHUNK_SIZE);
     const pcr = Math.floor(pr / CHUNK_SIZE);
     const now = this._now;
+    this._px = px;
+    this._pz = pz;
     const start = now();
     const renderDistance = this.renderDistance;
     let builds = 0;
@@ -879,6 +918,25 @@ export class World {
         meshed++;
       }
       lazy.length = 0;
+    }
+
+    // 2b. §102: chunks whose plants were meshed at another level of detail than their distance now asks for (the player
+    //     crossed a ring) are re-meshed nearest first under PLANT_LOD_BUDGET_MS, at least one per call: no frame hitch.
+    const relod = this._lodScratch;
+    relod.length = 0;
+    for (const chunk of this.chunks.values()) {
+      if (!chunk.meshed || chunk.dirty || chunk.plants === 0) continue;
+      if (this._plantLodFor(chunk, chunk.plantLod) !== chunk.plantLod) relod.push(chunk);
+    }
+    if (relod.length > 0) {
+      if (relod.length > 1) relod.sort((a, b) => chunkDistSq(a, px, pz) - chunkDistSq(b, px, pz));
+      const lodStart = now();
+      for (let i = 0; i < relod.length; i++) {
+        if (i > 0 && now() - lodStart >= PLANT_LOD_BUDGET_MS) break;
+        this._mesh(relod[i]);
+        meshed++;
+      }
+      relod.length = 0;
     }
 
     // 3. Ring walk, nearest first. After the budget/cap trips we keep walking in count-only mode
@@ -1221,8 +1279,29 @@ export class World {
   }
 
   /** Build and hand off the mesh of a chunk whose 6 neighbours are loaded. */
+  /**
+   * §102: the level of detail chunk `chunk`'s plants should be meshed at for the player at the last update(): NEAR when
+   * the chunk's nearest point is within PLANT_NEAR_M, FAR within PLANT_FAR_M, else CARD — a chunk keeps the finer level
+   * it has (`current`) until it is PLANT_LOD_SLACK_M farther, so a player standing on a ring never makes it flicker.
+   * NEAR before the first update() (no player yet).
+   * @param {Chunk} chunk @param {number} [current]  the level it has now (−1: none)
+   * @returns {number}
+   */
+  _plantLodFor(chunk, current = -1) {
+    const px = this._px;
+    const pz = this._pz;
+    if (!Number.isFinite(px + pz)) return PLANT_LOD_NEAR;
+    const d = chunkNearestDistance(chunk.cq, chunk.cr, px, pz);
+    if (d < PLANT_NEAR_M + (current === PLANT_LOD_NEAR ? PLANT_LOD_SLACK_M : 0)) return PLANT_LOD_NEAR;
+    if (d < PLANT_FAR_M + (current === PLANT_LOD_NEAR || current === PLANT_LOD_FAR ? PLANT_LOD_SLACK_M : 0)) return PLANT_LOD_FAR;
+    return PLANT_LOD_CARD;
+  }
+
   _mesh(chunk) {
-    const meshData = buildChunkMesh(chunk.cq, chunk.cr, this.getChunkData);
+    const lod = this._plantLodFor(chunk, chunk.plantLod);
+    const meshData = buildChunkMesh(chunk.cq, chunk.cr, this.getChunkData, { plantLod: lod });
+    chunk.plantLod = lod;
+    chunk.plants = meshData.plants ?? 0;
     chunk.dirty = false;
     chunk.lazy = false;
     chunk.coalesce = false;
