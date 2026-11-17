@@ -326,7 +326,7 @@ function spots(p, color, { rows = [0.08, 0.15, 0.85, 0.92], r = 2.2, step = 7, s
  */
 function puffs(p, ramp, { r = 6, step = 1.3, wrap = true } = {}) {
   const [L, M, Dk] = ramp;
-  p.fill(shade(Dk, 0.84)).mottle(0.1, 4);
+  p.fill(shade(Dk, 0.74)).mottle(0.1, 4);
   const rnd = makeRng(p.seed + 5);
   const sx = r * step;
   const sy = r * step * 0.82;
@@ -342,7 +342,7 @@ function puffs(p, ramp, { r = 6, step = 1.3, wrap = true } = {}) {
   for (const [x0, y, rr, a, b, c] of all) {
     for (const x of wrap ? [x0 - p.w, x0, x0 + p.w] : [x0]) {
       if (x + rr * 1.3 < 0 || x - rr * 1.3 > p.w) continue;
-      p.ellipse(x + rr * 0.12, y + rr * 0.22, rr * 1.04, rr * 0.92, shade(Dk, 0.78), 0.75);
+      p.ellipse(x + rr * 0.12, y + rr * 0.22, rr * 1.04, rr * 0.92, shade(Dk, 0.7), 0.85);
       p.ellipse(x, y, rr, rr * 0.86, mix(M, Dk, 0.25 * a), 1);
       p.glow(x - rr * 0.2, y - rr * 0.28, rr * 0.8, L, 0.95, rr * 0.62);
       p.arc(x, y + rr * 0.05, rr * 0.86, PI * 0.12, PI * 0.88, Math.max(0.45, rr * 0.09), Dk, 0.6, rr * 0.72);
@@ -458,7 +458,7 @@ function plumage(p, o) {
         ...(flight && o.flightBars ? { bars: o.flightBars, bar: o.barColor ?? r[0] } : {}),
       });
       // the wing bar: a bold band across the coverts' tips where the flight feathers begin
-      if (!flight && t > 0.32 && t < 0.52) p.feather(x, y - L * 0.6, PI / 2, L * 0.7, W * 1.05, o.bar, { edge: shade(o.bar, 1.2), fringe: 0.3, wrap: true });
+      if (!flight && t > 0.36 && t < 0.5) p.feather(x, y - L * 0.6, PI / 2, L * 0.7, W * 1.05, o.bar, { edge: shade(o.bar, 1.2), fringe: 0.3, wrap: true });
     }
   }
   // a soft shadow under each wing's lower edge, the edge itself a fine pale line
@@ -738,8 +738,8 @@ const SHEEP = Object.freeze({
   wool: [0xfffdf6, 0xf3eee2, 0xd8d0bf], shorn: [0xf4d8c8, 0xe2bfae, 0xbc9584], face: [0x6e655c, 0x4a443e, 0x312d29],
   hoof: 0x2a2420, inner: 0xd2a49c, horn: [0xeee2c4, 0xd6c9a8, 0xa89778],
   // the fleece: twelve corners, every other one drawn in (lumpy's notch) — six puffs round it — closed by a low point
-  // at each end; its rings swell and dip along it
-  fleece: { y: 0.68, zRear: 0.47, L: 0.92, rx: 0.335, rz: 0.325, sides: 12, phase: 0, rings: [[-0.05, 0, 0, 0.005], [-0.02, 0.42, 0.46, 0.005], [0.06, 0.8, 0.84, 0.01], [0.2, 0.97, 0.99, 0.02], [0.4, 0.93, 0.95, 0.025], [0.6, 1.0, 1.03, 0.025], [0.8, 0.95, 0.97, 0.02], [0.94, 0.78, 0.84, 0.03], [1.02, 0.42, 0.46, 0.035], [1.06, 0, 0, 0.035]] },
+  // at each end (the chest's no further forward than before: the face stays clear of it); its rings swell and dip
+  fleece: { y: 0.68, zRear: 0.47, L: 0.92, rx: 0.335, rz: 0.325, sides: 12, phase: 0, rings: [[-0.05, 0, 0, 0.005], [-0.02, 0.42, 0.46, 0.005], [0.06, 0.8, 0.84, 0.01], [0.2, 0.97, 0.99, 0.02], [0.4, 0.93, 0.95, 0.025], [0.6, 1.0, 1.03, 0.025], [0.8, 0.95, 0.97, 0.02], [0.93, 0.78, 0.84, 0.03], [0.985, 0.46, 0.5, 0.035], [1.01, 0, 0, 0.035]] },
   shornT: { y: 0.645, zRear: 0.42, L: 0.82, rx: 0.23, rz: 0.22, rings: [[0, 0.55, 0.6, 0.02], [0.1, 0.92, 0.92, 0.01], [0.3, 1, 1, 0], [0.6, 0.97, 1.02, -0.005], [0.85, 0.94, 0.98, 0.02], [0.96, 0.72, 0.8, 0.03], [1, 0.5, 0.58, 0.03]] },
   head: { rx: 0.1, rz: 0.115, rings: [[0, 0.8, 0.85], [0.15, 1, 1], [0.5, 0.86, 0.9], [0.82, 0.66, 0.76, -0.006], [1, 0.58, 0.66, -0.008]] },
 });
@@ -1329,7 +1329,7 @@ const TURKEY = Object.freeze({
   wattle: 0xd23a32, neck: [0xe08a7a, 0xc86a5c, 0x9a4a40], beak: [0xf0e0a0, 0xe0c878, 0xa08a48], leg: [0xc8a080, 0xb08a6a, 0x7a5a40],
   fan: [0x8a6a46, 0x6e4e2e, 0x3a2818], band: 0xd8b67a, tip: 0xf4ecdc,
   /** @type {Plumage} the hen: brown, each feather with a dark band and a pale tip; white-barred flight feathers */
-  henPlumage: { back: [0x9e8060, 0x765a3e, 0x4a3624], breast: [0xb0926a, 0x8c6e4c, 0x5e4630], wing: [0xa08262, 0x7a5c40, 0x4e3a28], flight: [0x5e4a38, 0x463628, 0x2a2018], edge: 0xe8d4b0, size: 8, bar: 0xdccaa4, mark: 0x2e2216, markAt: 'mid', flightBars: 3, barColor: 0xf0e6d4 },
+  henPlumage: { back: [0x9e8060, 0x765a3e, 0x4a3624], breast: [0xb0926a, 0x8c6e4c, 0x5e4630], wing: [0xa08262, 0x7a5c40, 0x4e3a28], flight: [0x5e4a38, 0x463628, 0x2a2018], edge: 0xe0caa4, size: 8, bar: 0xb89c74, mark: 0x2e2216, markAt: 'mid', flightBars: 3, barColor: 0xf0e6d4 },
   /** @type {Plumage} the tom: bronze, every feather tipped black (his barring), bronze coverts, white-barred flight feathers */
   tomPlumage: { back: [0x9a7848, 0x6a5030, 0x2e2418], breast: [0x7a5e3c, 0x564230, 0x2a2018], wing: [0xa8865a, 0x7a5e3c, 0x4a3826], flight: [0x5a4a3c, 0x3e3228, 0x1e1812], edge: 0xc89656, size: 8, bar: 0xe0c084, mark: 0x0e0a08, markAt: 'tip', flightBars: 3, barColor: 0xf0e6d4 },
   trunk: { y: 0.53, zRear: 0.25, L: 0.5, rx: 0.16, rz: 0.17, rings: [[0, 0.32, 0.38, 0.04], [0.12, 0.84, 0.86, 0.02], [0.42, 1.04, 1, 0], [0.68, 1.06, 1.08, -0.02], [0.85, 0.9, 1.0, -0.01], [0.96, 0.55, 0.66, 0.02], [1, 0.18, 0.24, 0.03]] },
