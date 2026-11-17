@@ -14,6 +14,9 @@ import {
   BELONGINGS_KEPT, BELONGINGS_LOST, WORK_LABEL_HOLD_S,
 } from '../../src/survival.js';
 import { flatGetBlock } from '../helpers/fixtures.js';
+import { Pack } from '../../src/inventory.js';
+import { Containers } from '../../src/containers.js';
+import { heldKeys } from '../../src/survivalControl.js';
 
 const DT = 1 / 60;
 const GROUND = 63;          // solid up to y 63: feet rest at 64 (altitude 0)
@@ -693,6 +696,50 @@ describe('export / import (§9.6)', () => {
     s.import({});
     expect(s.hasState).toBe(true);
     expect(s.vitals).toEqual(createVitals());
+  });
+
+  it('§94.4 the has-had set: noted for good, saved sorted (only when any), loaded; a fresh state has none', () => {
+    const s = started();
+    expect(s.had.size).toBe(0);
+    expect(s.export().had).toBeUndefined(); // nothing had yet: not written (the save is as before)
+    expect(s.noteHad(['stick', 'rock', 'stick'])).toBe(true);
+    expect(s.noteHad(['rock'])).toBe(false); // nothing new
+    expect(s.noteHad(['no_such_thing', 42])).toBe(false); // unknown keys are not items
+    expect(s.noteHad(['stone_hammer'])).toBe(true); // an old name is noted under its new one (§94)
+    expect([...s.had].sort()).toEqual(['hammerstone', 'rock', 'stick']);
+    const json = s.export();
+    expect(json.had).toEqual(['hammerstone', 'rock', 'stick']);
+    expect(Object.keys(json).at(-1)).toBe('had');
+    const back = new Survival();
+    back.import(JSON.parse(JSON.stringify(json)));
+    expect([...back.had].sort()).toEqual(['hammerstone', 'rock', 'stick']);
+    expect(back.export()).toEqual(json);
+    // dying keeps it (what you have known you know); a new survival state starts with none
+    s.damage(500, 'fall');
+    expect(s.had.size).toBe(3);
+    s.begin();
+    expect(s.had.size).toBe(0);
+    // garbage is ignored
+    back.import({ had: 'rock' });
+    expect(back.had.size).toBe(0);
+    back.import({ had: ['rock', null, 7, 'zzz'] });
+    expect([...back.had]).toEqual(['rock']);
+    back.import(null);
+    expect(back.had.size).toBe(0);
+  });
+
+  it('§94.4 an older save has no `had`: main derives it from the pack and the containers (heldKeys)', () => {
+    const old = { health: 80, spawn: null, deaths: 0 }; // no `had`
+    const s = new Survival();
+    s.import(old);
+    expect(s.had.size).toBe(0);
+    const pack = new Pack();
+    pack.load({ pack: [{ k: 'flint_knife', n: 1, d: 20 }, { k: 'cord', n: 3 }], wear: [{ k: 'straw_hat', n: 1 }, null, null] });
+    const containers = new Containers();
+    containers.load({ '0,64,0': { kind: 'basket', slots: [{ k: 'oak_log', n: 6 }, null] } });
+    expect(s.noteHad(heldKeys(pack, containers.entries.values()))).toBe(true);
+    expect([...s.had].sort()).toEqual(['cord', 'flint_knife', 'oak_log', 'straw_hat']);
+    expect(s.export().had).toEqual(['cord', 'flint_knife', 'oak_log', 'straw_hat']);
   });
 
   it('the stillFor timer and the last temperatures are not part of the save', () => {

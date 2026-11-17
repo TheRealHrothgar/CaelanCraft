@@ -651,6 +651,8 @@ export function chooseBelongingsCell(getBlock, q, y, r) {
  * @property {ReadonlyArray<{station: string, jobs: ReadonlyArray<any>}>} [lanes]  craftQueue.lanes()
  * @property {{text: string, error?: boolean}|null} [message]  a line for the screen itself (§14.4 "The handbook stays with
  *   you.", a Make result): the HUD's target hint is not drawn under the pack screen
+ * @property {Iterable<string>} [had]   (§94.4) survival.had: every item key that has ever entered the pack (the build tree)
+ * @property {boolean} [circuits]       (§94.4) the world's circuits switch (default on): off, the build tree has no circuits
  */
 
 /**
@@ -667,7 +669,32 @@ export function chooseBelongingsCell(getBlock, q, y, r) {
  * @property {{station: string, label: string, jobs: {name: string, progress: number, waiting: any}[]}[]} lanes  busy lanes only
  * @property {{text: string, error: boolean}|null} message  the screen's own feedback line (refusals, Make results)
  * @property {string[]} ready  the ids of every recipe, whatever the tab, that could be started now (§94: the build tree)
+ * @property {string[]} had    §94.4: every item key ever had in the pack, sorted (the build tree's reveal)
+ * @property {boolean} circuits  §94.4: the world's circuits are on
  */
+
+/**
+ * §94.4: the item keys in these stores, sorted and once each — the pack (its slots and what is worn), the containers'
+ * slots, and any loose stacks (the cursor) — for survival.noteHad: main notes the pack's whenever it changes, and on
+ * loading the pack's and the containers' (an older save without `had` gets it from them).
+ * @param {{ slots: ReadonlyArray<ItemStack|null>, wear: ReadonlyArray<ItemStack|null> }|null} pack
+ * @param {Iterable<{ slots: ReadonlyArray<ItemStack|null> }>} [containers]
+ * @param {ReadonlyArray<ItemStack|null|undefined>} [extra]
+ * @returns {string[]}
+ */
+export function heldKeys(pack, containers = [], extra = []) {
+  const keys = new Set();
+  const take = (list) => {
+    for (const st of list) if (st && typeof st.k === 'string' && st.n > 0) keys.add(st.k);
+  };
+  if (pack) {
+    take(pack.slots);
+    take(pack.wear);
+  }
+  for (const c of containers) if (c && Array.isArray(c.slots)) take(c.slots);
+  take(extra);
+  return [...keys].sort();
+}
 
 /** @param {ItemStack|null|undefined} s @returns {ItemStack|null} */
 function copy(s) {
@@ -699,7 +726,8 @@ const TAB_LABEL = Object.fromEntries(STATION_TABS.map((t) => [t.id, t.label]));
  * - `hover`: the hovered slot's item, else the cursor's, else null;
  * - `lanes`: one row per busy station;
  * - `message`: the screen's feedback line, or null;
- * - `ready` (§94): the ids of every recipe, whatever the tab, that could be started now (the build tree's states).
+ * - `ready` (§94): the ids of every recipe, whatever the tab, that could be started now (the build tree's states);
+ * - `had` and `circuits` (§94.4): the keys ever had (sorted; none given: none) and the circuits switch (default on).
  * @param {PackViewInput} input
  * @returns {PackView}
  */
@@ -747,5 +775,7 @@ export function buildPackView(input) {
     recipes: [...recipes],
     ready: (input.recipes ?? []).filter((rv) => /** @type {*} */ (rv).craftable && /** @type {*} */ (rv).stationOk).map((rv) => /** @type {*} */ (rv).id),
     lanes,
+    had: [...(input.had ?? [])].sort(),
+    circuits: input.circuits !== false,
   };
 }

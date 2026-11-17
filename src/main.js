@@ -98,7 +98,7 @@ import {
 } from './harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
-  strikeReach, outOfReachHint, STRIKE_REACH_MAX,
+  strikeReach, outOfReachHint, STRIKE_REACH_MAX, heldKeys,
   wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterHint, WATER_POTS,
 } from './survivalControl.js';
 import { WaterCycle, waterAt, drawWater, applyWaterWrites, aquiferInfo, POT_GULPS, WATER_STEP_MAX_S, CYCLE_RANGE, AQUIFER_NEAR_MAX } from './waterBodies.js';
@@ -6011,7 +6011,29 @@ export function boot(win, doc) {
       recipes: listRecipes(pack, stations, { queue: craftQueue }),
       lanes: craftQueue.lanes(),
       message: packMessage,
+      had: noteHad(), // §94.4: the build tree reveals what has been had
+      circuits: circuits ? circuits.enabled : true,
     });
+  }
+
+  /** §94.4: the pack version whose keys survival.had last took in (and that set: a fresh survival state has a new one) */
+  let hadPackVersion = -1;
+  /** @type {Set<string>|null} */
+  let hadSeen = null;
+  /**
+   * §94.4: every item that enters the pack (or the cursor) in Survival is had for good: note the pack's keys whenever it
+   * changed. @returns {Set<string>} survival.had
+   */
+  function noteHad() {
+    if (survival.inSurvival) {
+      if (pack.version !== hadPackVersion || survival.had !== hadSeen) {
+        hadPackVersion = pack.version;
+        hadSeen = survival.had;
+        survival.noteHad(heldKeys(pack));
+      }
+      if (packSession.cursor) survival.noteHad([packSession.cursor.k]);
+    }
+    return survival.had;
   }
 
   function packKey() {
@@ -6370,6 +6392,10 @@ export function boot(win, doc) {
     circuitStore.replaceAll(restoring && restoring.circuitParts ? restoring.circuitParts : null);
     circuits = new Circuits(circuitStore, circuitHooks);
     circuits.setEnabled(!(restoring && restoring.circuits === false));
+    if (params.circuits !== null) {
+      circuits.setEnabled(params.circuits); // §94.4 screenshot aid ?circuits=off|on: this visit's first world only
+      params.circuits = null;
+    }
     blackHoles.setEnabled(!(restoring && restoring.blackholes === false));
     world.onChunkGenerated = (cq, cr) => {
       blockPhysics.onChunkGenerated(cq, cr);
@@ -6475,6 +6501,9 @@ export function boot(win, doc) {
     const containerWarnings = containers.load(restoring ? restoring.containers : null);
     for (const w of containerWarnings) console.warn('Caelancraft containers:', w);
     loose.load(survival.hasState && restoring && restoring.survival ? restoring.survival.loose : null, looseBlockOf);
+    // §94.4: what the pack and the baskets hold has been had (an older save has no `had`: this is all of it)
+    if (survival.hasState) survival.noteHad(heldKeys(pack, containers.entries.values()));
+    hadPackVersion = -1;
     regrowth.loadFromEdits(world.edits);
     growth.loadFromEdits(world.edits); // §80: the planted cells are edits, like the picked bushes
     refill.loadFromEdits(world.edits); // §85: so are a drawn spring, a well and a rain barrel
@@ -6658,7 +6687,10 @@ export function boot(win, doc) {
       // The Pack & Making screen (§9.10): Survival only. Under ?nosave an empty pack is stocked with the screen's demo kit
       // (nothing is saved), so the screenshot shows a lived-in pack.
       if (!survival.inSurvival) return;
-      if (params.nosave && pack.slots.every((s) => s === null || s.k === HANDBOOK_KEY)) {
+      if (params.nosave && params.kit !== null) {
+        // §94.4 ?kit=none|<items>: exactly this kit (none: the start of a world, the handbook alone)
+        for (const { k, n } of params.kit) pack.give(k, n);
+      } else if (params.nosave && pack.slots.every((s) => s === null || s.k === HANDBOOK_KEY)) {
         const demo = demoPackView();
         demo.slots.forEach((s, i) => { if (s && !pack.slots[i]) pack.setSlot(i, s); });
         demo.wear.forEach((s, i) => { if (s) pack.setWear(i, s); });
@@ -8265,6 +8297,7 @@ export function boot(win, doc) {
     // §9.8: the survival HUD — hex hotbar from the pack (no per-frame copy), vitals bookends, the action ring, the job chip.
     hud.setSurvivalVisible(SV);
     hud.setHotbarStacks(SV ? pack.slots : null, selected, pack.version);
+    noteHad(); // §94.4
     if (SV) {
       const v = survival.vitals;
       vitalsView.health = v.health;

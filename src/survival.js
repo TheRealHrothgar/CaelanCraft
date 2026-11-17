@@ -10,7 +10,7 @@
 // Death is deferred (§2.5): `damage` and `step` only set `dead` and report the cause; main turns it into its
 // `pendingDeath` and runs `die()` at the frame's checkpoints. `deaths` is counted by main's `die()`.
 import { STAT_MAX, BREATH_MAX_S, BODY_TEMP_NORMAL, BODY_TEMP_MIN, BODY_TEMP_MAX, SICK_MAX_S, HEAL_MAX } from './config.js';
-import { getItem } from './items.js';
+import { getItem, canonicalItemKey } from './items.js';
 import {
   createVitals, wakeVitals, statusOf, stepVitals, activityFactor, fallDamage, eatFood, gulpWater, queueHeal,
   DAMAGE_CAUSES, RATES, FATIGUE_MAX, workActivity, HARD_WORK_AT,
@@ -165,6 +165,29 @@ export class Survival {
     this._flags = { headInWater: false, buried: false, work: 0 };
     /** §99: seconds the `Hard work` label still shows after the hard work stops (it does not flicker between blocks) */
     this._workHold = 0;
+    /**
+     * §94.4: every item key that has ever entered the pack in this world's Survival (the build tree shows what has been
+     * had and one step on). Saved as `had`; main adds the pack's keys as they come (noteHad).
+     * @type {Set<string>}
+     */
+    this.had = new Set();
+  }
+
+  /**
+   * §94.4: note item keys as had (main: the pack's, the worn and the cursor's, whenever the pack changes; on loading, the
+   * pack's and the containers'). Unknown keys are skipped; an old name is noted under its new one.
+   * @param {Iterable<string>} keys
+   * @returns {boolean} the set grew
+   */
+  noteHad(keys) {
+    let grew = false;
+    for (const raw of keys) {
+      const k = canonicalItemKey(raw);
+      if (typeof k !== 'string' || this.had.has(k) || !getItem(k)) continue;
+      this.had.add(k);
+      grew = true;
+    }
+    return grew;
   }
 
   /** In Survival (SV): the mode is 'survival', dead or alive. */
@@ -206,6 +229,7 @@ export class Survival {
     this.spawn = null;
     this.deaths = 0;
     this.dead = null;
+    this.had = new Set();
     this.hasState = true;
     this.fallGrace = true;
     this._resetTransient();
@@ -449,10 +473,10 @@ export class Survival {
 
   /**
    * The vitals part of SurvivalJSON (§9.6), canonical key order, numbers rounded to 3 decimal places; main adds the pack,
-   * the worn items and the fire spots. `dead` is present only while dead.
+   * the worn items and the fire spots. `dead` is present only while dead; `had` (§94.4, sorted) only when anything has been.
    * @returns {{ health: number, satiation: number, hydration: number, temp: number, breath: number, wet: number,
    *   sick: number, heal: number, healRate: number, fatigue: number, spawn: [number, number, number]|null, deaths: number,
-   *   dead?: string }}
+   *   dead?: string, had?: string[] }}
    */
   export() {
     const v = this.vitals;
@@ -462,6 +486,7 @@ export class Survival {
     out.spawn = this.spawn ? [this.spawn[0], this.spawn[1], this.spawn[2]] : null;
     out.deaths = this.deaths;
     if (this.dead) out.dead = this.dead;
+    if (this.had.size > 0) out.had = [...this.had].sort();
     return out;
   }
 
@@ -469,6 +494,7 @@ export class Survival {
    * Load a (validated) SurvivalJSON (§9.6); null or a non-object means the world never had a survival state
    * (hasState false). Defensive anyway: a bad number becomes its fresh value (§2.1), a bad spawn null, bad deaths 0, an
    * unknown `dead` cause alive. The mode is not touched (main sets it from the save). A loaded state starts with fallGrace.
+   * §94.4 `had`: the keys had (an older save has none: main then derives it from the pack and the containers).
    * @param {*} json
    */
   import(json) {
@@ -476,6 +502,7 @@ export class Survival {
     this.spawn = null;
     this.deaths = 0;
     this.dead = null;
+    this.had = new Set();
     this.fallGrace = false;
     this._resetTransient();
     if (!json || typeof json !== 'object' || Array.isArray(json)) {
@@ -493,6 +520,7 @@ export class Survival {
     if (Array.isArray(s) && s.length === 3 && s.every((n) => Number.isInteger(n))) this.spawn = [s[0], s[1], s[2]];
     if (Number.isInteger(json.deaths) && json.deaths >= 0) this.deaths = json.deaths;
     if (typeof json.dead === 'string' && DAMAGE_CAUSES.includes(json.dead)) this.dead = json.dead;
+    if (Array.isArray(json.had)) this.noteHad(json.had.filter((k) => typeof k === 'string'));
     this.fallGrace = true;
   }
 }

@@ -1068,6 +1068,26 @@ describe('survival save fields: the survival state', () => {
     expect(normalizeSurvivalJSON(survivalState({ temp: 45 })).temp).toBe(45);
   });
 
+  it('§94.4 `had`: sorted, once each, old names under new ones, unknown keys dropped with a warning; absent stays absent', () => {
+    expect(normalizeSurvivalJSON(survivalState()).had).toBeUndefined(); // an older save: no field, no warning
+    const warnings = [];
+    const n = normalizeSurvivalJSON(survivalState({ had: ['stick', 'rock', 'stick', 'stone_hammer', 'zzz', 5] }), warnings);
+    expect(n.had).toEqual(['hammerstone', 'rock', 'stick']);
+    expect(Object.keys(n).at(-1)).toBe('had');
+    expect(warnings).toEqual(['survival.had: 2 unknown items, dropped']);
+    const w2 = [];
+    expect(normalizeSurvivalJSON(survivalState({ had: 'rock' }), w2).had).toBeUndefined();
+    expect(w2).toEqual(['survival.had: not a list, ignored']);
+    expect(normalizeSurvivalJSON(survivalState({ had: [] })).had).toBeUndefined(); // none: not written
+    // through a save and back
+    const back = load(serializeSave({ ...makeSave(), gen: 2, mode: 'survival', survival: survivalState({ had: ['cord', 'flint_knife'] }) }));
+    expect(back.survival.had).toEqual(['cord', 'flint_knife']);
+    expect(back.warnings).toEqual([]);
+    const older = load(serializeSave({ ...makeSave(), gen: 2, mode: 'survival', survival: survivalState() }));
+    expect(older.survival.had).toBeUndefined();
+    expect(older.warnings).toEqual([]);
+  });
+
   it('a bad stat is reset to its fresh value with `survival.<stat>: invalid, reset`', () => {
     const fresh = { health: 100, satiation: 80, hydration: 80, temp: 37, breath: 20, wet: 0, sick: 0, heal: 0, healRate: 0 };
     const bad = { health: [-1, 100.1], satiation: [NaN, 101], hydration: ['50', null], temp: [24.9, 45.1], breath: [21, -0.5], wet: [1.5, -1], sick: [601, -1], heal: [51, 'x'], healRate: [6, {}] };

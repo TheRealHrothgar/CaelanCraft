@@ -7,9 +7,9 @@ import {
   rosetteCells, ringsFor, hexToPixel, stripCells, cardLayout, formatSeconds, haveNeedText, haveNeedLevel, countLabel,
   durabilityText, stackTitle, recipeTitle, stationHint, stationName, tabLabel, jobStatusText, toolLabel, toolIconKey,
   filterRecipes, demoPackView, createPackUI, STATION_TABS, CELL_S, searchRecipes, recipeSearchText, treeFactsFromView,
-  makesMany, MAKE_MANY,
+  makesMany, MAKE_MANY, revealSignature,
 } from '../../src/packUI.js';
-import { buildTreeModel } from '../../src/buildTree.js';
+import { buildTreeModel, treeStates, revealTree, revealedTree, isCircuitKey } from '../../src/buildTree.js';
 import { PACK_SLOTS, HOTBAR_SIZE, BASKET_SLOTS, REMAINS_SLOTS } from '../../src/config.js';
 import { isItemKey, ITEM_KEYS, stackSize } from '../../src/items.js';
 import { RECIPES } from '../../src/crafting.js';
@@ -541,7 +541,7 @@ describe('the pack screen on a page', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('§94: the build tree opens over the screen with every node, shows their states, and a click searches for it', () => {
+  it('§94: the build tree opens over the screen with what is revealed, shows their states, and a click searches for it', () => {
     const onTab = vi.fn();
     const { ui, root, doc } = setup({ onTab });
     const view = { ...demoPackView(), tab: 'hand' };
@@ -551,26 +551,43 @@ describe('the pack screen on a page', () => {
     root.querySelector('.tree-open').click();
     expect(ui.isTreeOpen()).toBe(true);
     expect(tree.classList.contains('hidden')).toBe(false);
+    // §94.4: what the demo pack has, can make, or is one step from (its view has no `had`: what it carries counts)
     const model = buildTreeModel();
-    expect(root.querySelectorAll('.tree-node')).toHaveLength(model.nodes.length);
+    const shown = revealedTree(model, revealTree(model, { states: treeStates(model, treeFactsFromView(view)) }));
+    expect(root.querySelectorAll('.tree-node')).toHaveLength(shown.nodes.length);
+    expect(shown.nodes.length).toBeLessThan(model.nodes.length);
     expect(root.querySelectorAll('.tree-col-head')).toHaveLength(6);
-    expect(root.querySelectorAll('.tree-edge')).toHaveLength(model.edges.length);
+    expect(root.querySelectorAll('.tree-edge')).toHaveLength(shown.edges.length);
     const at = (id) => root.querySelector(`.tree-node[data-node="${id}"]`);
     expect(at('rock').getAttribute('data-state')).toBe('have'); // the demo pack holds 23 rock
     expect(at('flint_pick').getAttribute('data-state')).toBe('have');
     expect(at('@kiln').getAttribute('data-state')).toBe('ready'); // the demo can make a Kiln now
     expect(at('@lab').getAttribute('data-state')).toBe('locked');
-    expect(at('cassiterite').getAttribute('data-state')).toBe('gather');
+    expect(at('#sand').getAttribute('data-state')).toBe('gather');
+    expect(at('cassiterite')).toBeNull(); // tin ore wants a copper pick: two steps off, not shown
     // a workplace is a colour, not a level: what is made at the Kiln is filled with the Kiln's, so are the links into it;
     // each column is tinted with its own workplace's; the workplace heads its column with its recipe and what it unlocks
-    expect(at('fired_brick').querySelector('.tree-fill').classList.contains('ws-kiln')).toBe(true);
+    expect(at('copper_ingot').querySelector('.tree-fill').classList.contains('ws-kiln')).toBe(true);
     expect(at('rock').querySelector('.tree-fill').classList.contains('ws-gather')).toBe(true);
     expect(at('stone_axe').querySelector('.tree-fill').classList.contains('ws-hand')).toBe(true);
-    expect(root.querySelectorAll('.tree-col').map((c) => c.className)).toEqual(
+    expect(root.querySelectorAll('.tree-col').map((c) => c.className.replace(' unreached', ''))).toEqual(
       ['stump', 'kiln', 'bloomery', 'forge', 'workbench', 'lab'].map((s) => `tree-col ws-${s}`));
+    // a column not reached is a dim head: its name and what it needs, no unlocks; a workplace in sight shows its unlocks
+    expect(at('@lab').classList.contains('unreached')).toBe(true);
+    expect(root.querySelector('.tree-col.ws-lab').classList.contains('unreached')).toBe(true);
     expect(at('@lab').querySelectorAll('.tree-needs .tree-mini')).toHaveLength(model.byId.get('@lab').needs.length);
-    expect(at('@lab').querySelectorAll('.tree-unlocks .tree-mini')).toHaveLength(6);
+    expect(at('@lab').querySelector('.tree-unlocks')).toBeNull();
+    expect(at('@stump').querySelectorAll('.tree-unlocks .tree-mini')).toHaveLength(6);
+    // each column with hidden things says how many: a "?" in its build lane
+    const more = root.querySelector('.tree-node[data-node="?lab"]');
+    expect(more.classList.contains('tree-node-more')).toBe(true);
+    expect(more.getAttribute('data-state')).toBe('more');
+    expect(more.querySelector('.tree-label').textContent).toBe(`${shown.byId.get('?lab').more} more`);
+    expect(root.querySelectorAll('.tree-node-more')).toHaveLength(shown.nodes.filter((n) => n.more !== undefined).length);
     expect(root.querySelectorAll('.tree-edge.ws-kiln').length).toBeGreaterThan(0);
+    // a click on the "more" marker does nothing
+    more.querySelector('.tree-label').click();
+    expect(ui.isTreeOpen()).toBe(true);
     // Esc goes back to Making, not out of the pack
     fire(doc.body, 'keydown', { key: 'Escape', code: 'Escape' });
     expect(ui.isTreeOpen()).toBe(false);
@@ -583,6 +600,53 @@ describe('the pack screen on a page', () => {
     expect(onTab).toHaveBeenCalledWith('all');
     ui.close();
     expect(ui.isTreeOpen()).toBe(false);
+  });
+
+  it('§94.4: the tree grows as things are had (drawn again only then), and with the circuits off has no Lab and no circuits', () => {
+    const { ui, root } = setup();
+    const start = { ...demoPackView(), slots: demoPackView().slots.map((s) => (s && s.k === 'handbook' ? s : null)), wear: [null, null, null],
+      ready: [], had: ['handbook'], circuits: true };
+    ui.open(start);
+    ui.openTree();
+    const ids = () => root.querySelectorAll('.tree-node').map((n) => n.getAttribute('data-node')).filter((id) => !id.startsWith('@') && !id.startsWith('?')).sort();
+    // the start of a world: the first steps only
+    expect(ids()).toEqual(['cord', 'hammerstone', 'plant_fibre', 'rock', 'stick']);
+    expect(root.querySelector('.tree-node[data-node="?stump"] .tree-label').textContent).toBe('2 more');
+    const canvas = root.querySelector('.tree-canvas');
+    // a refresh that changes no reveal keeps the drawing
+    ui.refresh({ ...start });
+    expect(root.querySelector('.tree-canvas')).toBe(canvas);
+    // a kit had (a flint knife, cord, a stone axe): the tree grows
+    ui.refresh({ ...start, had: ['handbook', 'flint_knife', 'cord', 'stone_axe'] });
+    expect(root.querySelector('.tree-canvas')).not.toBe(canvas);
+    expect(ids()).toEqual(expect.arrayContaining(['#log', 'stone_axe', 'flint_knife', 'leather', 'wooden_shovel']));
+    expect(root.querySelector('.tree-node[data-node="flint_knife"]').getAttribute('data-state')).toBe('locked'); // had, not carried
+    // the circuits off: no Lab column, no circuit anywhere in the tree's nodes or unlocks
+    const all = ITEM_KEYS.filter((k) => k !== 'handbook');
+    ui.refresh({ ...start, had: all, circuits: false });
+    expect(root.querySelectorAll('.tree-col-head')).toHaveLength(5);
+    expect(root.querySelector('.tree-col.ws-lab')).toBeNull();
+    expect(root.querySelector('.tree-key.ws-lab')).toBeNull();
+    expect(root.querySelector('.tree-node[data-node="@lab"]')).toBeNull();
+    for (const id of ids()) expect(isCircuitKey(id), id).toBe(false);
+    expect(root.querySelectorAll('.tree-node-more')).toHaveLength(0);
+    // the Workbench's recipe is still whole (its copper wire drawn in its strip), but it unlocks nothing to show
+    expect(root.querySelector('.tree-node[data-node="@workbench"] .tree-unlocks')).toBeNull();
+    // on again: the Lab is back
+    ui.refresh({ ...start, had: all, circuits: true });
+    expect(root.querySelectorAll('.tree-col-head')).toHaveLength(6);
+    expect(root.querySelector('.tree-node[data-node="relay"]')).toBeNull(); // devices are the Lab's unlocks, not nodes
+    expect(root.querySelector('.tree-node[data-node="voltaic_battery"]')).not.toBeNull();
+  });
+
+  it('§94.4: the reveal signature changes with what is shown, the columns and the circuits', () => {
+    const m = buildTreeModel();
+    const st = (have) => treeStates(m, { count: (k) => (have.includes(k) ? 1 : 0), hasTool: () => false, canMake: () => false, near: () => false });
+    const a = revealSignature(m, revealTree(m, { states: st([]), had: [] }));
+    expect(revealSignature(m, revealTree(m, { states: st([]), had: ['handbook'] }))).toBe(a);
+    expect(revealSignature(m, revealTree(m, { states: st(['cord']), had: [] }))).not.toBe(a);
+    const off = buildTreeModel({ circuits: false });
+    expect(revealSignature(off, revealTree(off, { states: treeStates(off, { count: () => 0, hasTool: () => false, canMake: () => false, near: () => false }) }))).not.toBe(a);
   });
 
   it('works without #pack-screen in the page (creates it)', () => {
