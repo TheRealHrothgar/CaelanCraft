@@ -4229,7 +4229,8 @@ colliders, heights, the pig's head box, the AI, the strides, the rear-up and the
   unchanged.
 - **The head shows what it does** (§100): `headPitch(a, rig)` = `rig.head.alert` (0.15–0.3, up) while it stares
   (`mode` 'watch'), `rig.head.graze` (down: −1.15 to −1.3 for the grazers, −0.85 to −0.9 for the birds' pecking, −0.35
-  to −0.5 for the wolf's, the bear's and the pig's sniffing and rooting) while it stands `idle` on the ground (not
+  to −0.5 for the wolf's, the bear's and the rabbit's sniffing; −0.1 for the pig's rooting, a nod that keeps its head
+  inside `PIG_HEAD_BOX`) while it stands `idle` on the ground (not
   ridden, sitting, snared, in water or in the air), 0 otherwise; the drawn pitch eases toward it at `HEAD_RATE` 5/s (a
   WeakMap per renderer keyed by the body: nothing is written on the animal; a body seen for the first time starts at its
   target).
@@ -4246,7 +4247,9 @@ colliders, heights, the pig's head box, the AI, the strides, the rear-up and the
   `pig-legs-hurt` (0xff2a2a × 0.6; the base material's emissive is 0), `pig-tusks` (a grown boar's, on the head),
   `pig-tag` (a tame pig's ribbon), `pig-snare` (a snared pig's loop) — any number of pigs is **3 draw calls** (6 while one
   flashes, one more each while a boar, a tame pig or a snared pig is in view). A piglet's head is larger and its body
-  rounder, as an animal's. Its head stays inside `PIG_HEAD_BOX`.
+  rounder, as an animal's. Its head as drawn stays inside `PIG_HEAD_BOX` (within 0.025, the part ahead of the box's
+  back) at rest, rooting and between: the pig only nods (`graze` −0.1), so a click on its lowered snout still finds the
+  pig and not the block behind it (PB-3; the box is gameplay and unchanged).
 - **Screenshots** (`diagnostics.ANIMAL_SCENES`, main `buildAnimalScene` / `holdScene`): `?scene=animals` (with
   `?autoplay=1`; use `?nosave=1` and `?fly=1`) flattens a meadow of grass at the player's feet level ahead and puts every
   kind there — cow and bull, horse, doe and stag, bear behind; ewe and ram, wolf, sow and boar, the turkeys; the rabbit,

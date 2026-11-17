@@ -11,7 +11,8 @@
 //
 // Every pig shares a handful of InstancedMeshes, so all pigs together cost 3 draw calls (6 while one flashes):
 //   skin      the body and its tail
-//   head      the head, snout and ears: it roots (head down) while the pig stands idle, and eases back up (HEAD_RATE)
+//   head      the head, snout and ears: it nods to root while the pig stands idle (small: it stays in PIG_HEAD_BOX), and
+//             eases back up (HEAD_RATE)
 //   legs      one instance per leg (4 per pig), pivoting at the hip so the swing is a rotation about x
 //   skin-hurt / head-hurt / legs-hurt  the same geometry with the red emissive flash: a pig with `hurt > 0` is drawn there
 //   tusks     §88: a grown boar's two tusks, curving up beside the snout (one more draw call while a boar is in view)

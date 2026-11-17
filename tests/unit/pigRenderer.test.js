@@ -106,6 +106,35 @@ describe('createPigRenderer — instanced pig models', () => {
     r.dispose();
   });
 
+  it('the head as drawn stays inside PIG_HEAD_BOX in every pose — walking, rooting, easing (PB-3: a click on it hits the pig)', () => {
+    const scene = new THREE.Scene();
+    const r = createPigRenderer(scene);
+    const head = byName(r, 'pig-head');
+    const pos = head.geometry.getAttribute('position');
+    const m = new THREE.Matrix4();
+    const v = new THREE.Vector3();
+    const TOL = 0.025;
+    const p = pig(0, 10, 0, { mode: 'walk', yaw: 0 });
+    for (const [mode, dt] of [['walk', 10], ['idle', 0.05], ['idle', 0.3], ['idle', 10], ['walk', 0.1]]) {
+      p.mode = mode;
+      r.sync([p], dt);
+      head.getMatrixAt(0, m);
+      let lo = Infinity;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(m);
+        v.y -= 10;
+        // what sticks out of the body's cylinder ahead of the box's back is what a click must find in the box
+        if (v.z > PIG_HEAD_BOX.z1) continue;
+        lo = Math.min(lo, v.y);
+        expect(Math.abs(v.x), mode).toBeLessThan(PIG_HEAD_BOX.x + TOL);
+        expect(v.y, mode).toBeLessThan(PIG_HEAD_BOX.y1 + TOL);
+        expect(v.z, mode).toBeGreaterThan(PIG_HEAD_BOX.z0 - TOL);
+      }
+      expect(lo, `${mode} ${dt}`).toBeGreaterThan(PIG_HEAD_BOX.y0 - TOL);
+    }
+    r.dispose();
+  });
+
   it('roots with its head down while it stands idle, eases back up walking; a piglet\'s head is larger', () => {
     const scene = new THREE.Scene();
     const r = createPigRenderer(scene);
@@ -123,7 +152,7 @@ describe('createPigRenderer — instanced pig models', () => {
     const easing = snout();
     r.sync([p], 10);
     const rooting = snout();
-    expect(rooting.y).toBeLessThan(level.y - 0.08);
+    expect(rooting.y).toBeLessThan(level.y - 0.03); // a nod: the head stays in its box (above)
     expect(easing.y).toBeLessThan(level.y);
     expect(easing.y).toBeGreaterThan(rooting.y);
     const piglet = pig(0, 10, 0, { mode: 'walk', size: 0.55 });
