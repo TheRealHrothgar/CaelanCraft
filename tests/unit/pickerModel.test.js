@@ -183,7 +183,7 @@ describe('buildPickerModel: every item (tools, weapons, food, materials, clothes
       ['materials', 'Materials', 'copper_ingot'], ['clothes', 'Clothes & Healing', 'straw_hat']]);
     const kinds = (id) => section(id).entries.map((e) => (e.type === 'family' ? `[${e.key}]` : e.key));
     expect(kinds('tools')).toEqual(['[picks]', '[axes]', '[shovels]', '[hammers]', '[knives]', 'fire_drill', 'crucible',
-      'casting_mold', 'handbook']);
+      'casting_mold', 'compass', 'handbook']); // §102: the Compass
     expect(kinds('weapons')).toEqual(['[swords]', 'flint_spear', '[darts]', '[bows]', 'rock']); // §100: + Bows & Arrows
     expect(kinds('food')).toEqual(['[meat]', '[fish-eggs]', '[fruit-nuts]', '[roots]', '[mushrooms]', '[pots]', 'snow']);
     expect(kinds('clothes')).toEqual(['straw_hat', 'leather_hood', 'grass_cape', 'leather_coat', 'hide_shoes', 'fibre_bandage',
@@ -218,7 +218,7 @@ describe('buildPickerModel: every item (tools, weapons, food, materials, clothes
       expect(model.info.get(k)?.section, k).toBe(cures.includes(k) ? 'clothes' : 'food');
     }
     // materials: Materials, except what is thrown, the field book and what belongs with the food (the pots, the cactus fruit)
-    const elsewhere = { rock: 'weapons', flint_dart: 'weapons', fletched_dart: 'weapons', arrow: 'weapons', handbook: 'tools', clay_pot: 'food',
+    const elsewhere = { rock: 'weapons', flint_dart: 'weapons', fletched_dart: 'weapons', arrow: 'weapons', handbook: 'tools', compass: 'tools', clay_pot: 'food',
       salt_pot: 'food', pot_snow: 'food', unpeeled_cactus_fruit: 'food' };
     for (const k of NON_BLOCK_KEYS.filter((x) => ITEMS[x].kind === 'material')) {
       expect(model.info.get(k)?.section, k).toBe(elsewhere[k] ?? 'materials');
@@ -348,7 +348,7 @@ describe('searchBlocks (§5.5)', () => {
     expect(find('digging stick')).toEqual(['wooden_shovel']);
     expect(find('throw')).toEqual(['flint_spear', 'flint_dart', 'fletched_dart', 'rock']);
     expect(find('weapon')).toEqual(['bronze_sword', 'iron_sword', 'steel_sword', 'flint_spear', 'flint_dart', 'fletched_dart', 'bow', 'arrow', 'rock']);
-    expect(find('tools')).toHaveLength(31);
+    expect(find('tools')).toHaveLength(32); // §102: + the Compass
     expect(find('bandage')).toEqual(['fibre_bandage', 'rag_bandage']);
     expect(find('hat')).toEqual(['straw_hat', 'leather_hood']);
     // blocks and items together, blocks first (section order)

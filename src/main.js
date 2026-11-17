@@ -133,6 +133,7 @@ import {
 import { windAt } from './wind.js';
 import { createRainRenderer } from './rainRenderer.js';
 import { vaneView, windAir } from './windDrawn.js'; // §101: the wind drawn
+import { compassCarried, northView } from './compass.js'; // §102: the compass puts north on the vane
 import { Pennants, PENNANT_MAX_MODELS, PENNANT_MODEL_RANGE, poleHeight } from './pennants.js';
 import { createPennantRenderer } from './pennantRenderer.js';
 // CONTRACTS §87: sleep
@@ -1946,9 +1947,11 @@ export function boot(win, doc) {
    * Once a frame (renderFrame, after computeSky): the calendar's log lines when the day moved on, what falls on the
    * player's biome and how much of it reaches them, the drops, the rain for the ambience, the HUD's calendar line.
    * @param {number} dt @param {boolean} live  the simulation stepped this frame @param {number} eyeY
+   * @param {number} viewYaw  the yaw of the view on screen (viewCamera's: controls.yaw, or turned by π in the Front view):
+   *   the vane's arrow and the compass's N are drawn relative to it (§101.2, §102.4)
    * @returns {import('./types.js').SkyState} the sky to show: `sky`, greyed while it rains
    */
-  function stepWeather(dt, live, eyeY) {
+  function stepWeather(dt, live, eyeY, viewYaw) {
     const w = theWeather();
     const fx = weatherFx;
     const SV = survival.inSurvival;
@@ -1972,7 +1975,10 @@ export function boot(win, doc) {
     windAir(wind, windAirNow);
     particles.setWind(windAirNow[0], windAirNow[1]);
     campfireRenderer.setWind(wind);
-    hud.setWind(vaneView(wind, controls.yaw, vaneNow));
+    hud.setWind(vaneView(wind, viewYaw, vaneNow));
+    // §102: a compass carried (anywhere in the pack or on the pack screen's cursor in Survival, on the hotbar in
+    // Creative) puts north on the vane, in the vane's frame: the view on screen
+    hud.setNorth(northView(compassCarried(SV, pack.slots, hotbar, packSession.cursor), viewYaw));
     rainRenderer.update(live ? dt : 0, {
       x: player.x, y: eyeY, z: player.z, intensity: fx.shown, snow: fx.snow, getBlock: world.getBlock, daylight: sky.daylight, wind,
     });
@@ -8256,7 +8262,7 @@ export function boot(win, doc) {
       pennantRenderer.sync(nearP, windNow(), fxTime, pennantHeight);
     }
     computeSky(time, sky);
-    const shownSky = stepWeather(dt, live, eyeY); // §84: the rain, the calendar; the sky greyed while it rains
+    const shownSky = stepWeather(dt, live, eyeY, cam.yaw); // §84: the rain, the calendar; the sky greyed while it rains
     stepWorldSounds(dt, live); // v0.16 (§82): footsteps, movement and the ambience
     renderer.setSky(shownSky);
     const camUnder = cameraUnderwater(cam); // §91: where the camera is (the eye in first person)

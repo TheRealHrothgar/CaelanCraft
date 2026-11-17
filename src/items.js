@@ -133,6 +133,9 @@ const MATERIAL_ROWS = [
   // §100 the bow: the Bow Stave is a long stick shaved with a knife, strung into a Bow; an Arrow is a stick with a knapped
   // flint point and a feather flight, made four at a time and shot from the bow (looseItems ARROW_KEYS)
   ['bow_stave', 'Bow Stave', 4], ['arrow', 'Arrow', 16],
+  // §102: carried anywhere in the pack, it puts north on the HUD's wind vane (compass.js). Made at the Forge; no tool, it
+  // never wears.
+  ['compass', 'Compass', 1],
 ];
 
 /**

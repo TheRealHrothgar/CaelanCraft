@@ -752,7 +752,7 @@ describe('the wiring (main.js, diagnostics.js): read from the source, since main
   it('stepWeather draws the wind here and now: the vane, the rain, the smoke and the particles all read windNow()', () => {
     const step = body('stepWeather');
     expect(step).toContain('const wind = windNow();');
-    expect(step).toContain('hud.setWind(vaneView(wind, controls.yaw, vaneNow));');
+    expect(step).toContain('hud.setWind(vaneView(wind, viewYaw, vaneNow));'); // §102: the view on screen's yaw (viewCamera)
     expect(step).toContain('campfireRenderer.setWind(wind);');
     expect(step).toContain('particles.setWind(windAirNow[0], windAirNow[1]);');
     expect(step).toMatch(/rainRenderer\.update\([^;]*wind,\s*\}\);/);
