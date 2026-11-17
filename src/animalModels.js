@@ -96,10 +96,92 @@ const ahead = (y, zRear) => mul(translation(0, y, zRear), rotation(0, -PI / 2));
  * A trunk: a hexagonal loft lying along the animal from its rump (t 0, at zRear) to its chest (t 1), rings [t, sx, sz,
  * dy (m, up)]. Its strip runs round from the spine (u 0) through the right flank (0.25), the belly (0.5) and the left
  * flank (0.75); its rows from the chest (row 0) to the rump; its bottom cap is the rump, seen from behind upside down.
- * @param {{ rx: number, rz: number, L: number, rings: number[][], phase?: number }} T
+ * @param {{ rx: number, rz: number, L: number, rings: number[][], phase?: number, sides?: number }} T
  */
 function trunkGeo(T) {
-  return loft({ sides: 6, rx: T.rx, rz: T.rz, phase: T.phase, rings: T.rings.map(([t, sx, sz = sx, dy = 0]) => ({ y: t * T.L, sx, sz, dz: dy })) });
+  return loft({ sides: T.sides ?? 6, rx: T.rx, rz: T.rz, phase: T.phase, rings: T.rings.map(([t, sx, sz = sx, dy = 0]) => ({ y: t * T.L, sx, sz, dz: dy })) });
+}
+
+/**
+ * The flat normals of a geometry whose polygons may have been bent out of their planes: each polygon (the triangles that
+ * share its vertices: modelKit gives every polygon its own) gets the sum of its triangles' normals.
+ * @param {Float32Array} P @param {Uint32Array} index @returns {Float32Array}
+ */
+function polyNormals(P, index) {
+  const n = P.length / 3;
+  const root = new Int32Array(n);
+  for (let i = 0; i < n; i++) root[i] = i;
+  const find = (a) => {
+    while (root[a] !== a) {
+      root[a] = root[root[a]];
+      a = root[a];
+    }
+    return a;
+  };
+  for (let t = 0; t < index.length; t += 3) {
+    const a = find(index[t]);
+    for (const v of [index[t + 1], index[t + 2]]) {
+      const b = find(v);
+      if (b !== a) root[b] = a;
+    }
+  }
+  const acc = new Float64Array(n * 3);
+  for (let t = 0; t < index.length; t += 3) {
+    const [a, b, c] = [index[t] * 3, index[t + 1] * 3, index[t + 2] * 3];
+    const e1 = [P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]];
+    const e2 = [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]];
+    const r = find(index[t]) * 3;
+    acc[r] += e1[1] * e2[2] - e1[2] * e2[1];
+    acc[r + 1] += e1[2] * e2[0] - e1[0] * e2[2];
+    acc[r + 2] += e1[0] * e2[1] - e1[1] * e2[0];
+  }
+  const out = new Float32Array(n * 3);
+  for (let v = 0; v < n; v++) {
+    const r = find(v) * 3;
+    const l = Math.hypot(acc[r], acc[r + 1], acc[r + 2]) || 1;
+    out[v * 3] = acc[r] / l;
+    out[v * 3 + 1] = acc[r + 1] / l;
+    out[v * 3 + 2] = acc[r + 2] / l;
+  }
+  return out;
+}
+
+/**
+ * Puff a loft out of true (a fleece): every corner of its rings pushed out or in by up to `amp` of its distance from its
+ * ring's middle — the same push wherever the corner repeats (the strip, the seam, a cap), so it stays closed — and the
+ * facets' normals made again. Lumps at no cost in triangles. `notch` [n, k]: of a loft of n corners (phase 0), every
+ * other corner drawn in to k (the one at the top among them: a parting along the spine) — six puffs round its outline,
+ * seen end on. The loft lies along +y (before
+ * it is placed).
+ * @param {Geo} g @param {number} amp @param {number} seed @param {number[]} [notch] @returns {Geo}
+ */
+function lumpy(g, amp, seed, notch) {
+  const P = new Float32Array(g.positions);
+  const key = (v) => Math.round(v * 1e4);
+  /** @type {Map<number, number[]>} each ring's extent (by its height): its middle is the middle of that */
+  const ext = new Map();
+  for (let i = 0; i < P.length; i += 3) {
+    const k = key(P[i + 1]);
+    const e = ext.get(k) ?? [Infinity, -Infinity, Infinity, -Infinity];
+    e[0] = Math.min(e[0], P[i]);
+    e[1] = Math.max(e[1], P[i]);
+    e[2] = Math.min(e[2], P[i + 2]);
+    e[3] = Math.max(e[3], P[i + 2]);
+    ext.set(k, e);
+  }
+  for (let i = 0; i < P.length; i += 3) {
+    const e = /** @type {number[]} */ (ext.get(key(P[i + 1])));
+    const cx = (e[0] + e[1]) / 2;
+    const cz = (e[2] + e[3]) / 2;
+    let k = 1 + amp * (hash2(key(P[i]) * 3 + key(P[i + 2]) * 7, key(P[i + 1]), seed) * 2 - 1);
+    if (notch) {
+      const j = Math.round((Math.atan2(P[i] - cx, P[i + 2] - cz) / (2 * PI)) * notch[0]);
+      if (((j % 2) + 2) % 2 === 0) k *= notch[1];
+    }
+    P[i] = cx + (P[i] - cx) * k;
+    P[i + 2] = cz + (P[i + 2] - cz) * k;
+  }
+  return { ...g, positions: P, normals: polyNormals(P, g.index) };
 }
 
 /**
@@ -231,6 +313,212 @@ function spots(p, color, { rows = [0.08, 0.15, 0.85, 0.92], r = 2.2, step = 7, s
     for (let y = step * 0.6; y < p.h - step * 0.5; y += step * (0.8 + 0.4 * rnd())) {
       const x = u * p.w + (rnd() - 0.5) * 2.5;
       p.ellipse(x, y, r * (0.8 + 0.4 * rnd()), r * (0.9 + 0.4 * rnd()), color, 0.9);
+    }
+  }
+  return p;
+}
+
+/**
+ * A fleece's wool: big puffs lit from above with dark hollows between them, a few tight curls in each, so the fleece
+ * reads as wool from across a field and as curls up close. `wrap`: seamless round a strip (a puff near one side is
+ * painted again past the other). @param {Painter} p @param {number[]} ramp [light, mid, dark]
+ * @param {{ r?: number, step?: number, wrap?: boolean }} [o]
+ */
+function puffs(p, ramp, { r = 6, step = 1.3, wrap = true } = {}) {
+  const [L, M, Dk] = ramp;
+  p.fill(shade(Dk, 0.84)).mottle(0.1, 4);
+  const rnd = makeRng(p.seed + 5);
+  const sx = r * step;
+  const sy = r * step * 0.82;
+  /** @type {number[][]} */
+  const all = [];
+  for (let gy = -1; gy * sy < p.h + sy; gy++) {
+    for (let gx = 0; gx * sx < p.w; gx++) {
+      all.push([(gx + (gy & 1 ? 0.5 : 0)) * sx + (rnd() - 0.5) * r * 0.7, gy * sy + (rnd() - 0.5) * r * 0.6, r * (0.78 + 0.42 * rnd()), rnd(), rnd(), rnd()]);
+    }
+  }
+  // the lower ones first: each puff lies over the bottom of the one above it
+  all.sort((a, b) => b[1] - a[1]);
+  for (const [x0, y, rr, a, b, c] of all) {
+    for (const x of wrap ? [x0 - p.w, x0, x0 + p.w] : [x0]) {
+      if (x + rr * 1.3 < 0 || x - rr * 1.3 > p.w) continue;
+      p.ellipse(x + rr * 0.12, y + rr * 0.22, rr * 1.04, rr * 0.92, shade(Dk, 0.78), 0.75);
+      p.ellipse(x, y, rr, rr * 0.86, mix(M, Dk, 0.25 * a), 1);
+      p.glow(x - rr * 0.2, y - rr * 0.28, rr * 0.8, L, 0.95, rr * 0.62);
+      p.arc(x, y + rr * 0.05, rr * 0.86, PI * 0.12, PI * 0.88, Math.max(0.45, rr * 0.09), Dk, 0.6, rr * 0.72);
+      // two tight curls in it: a dark crook and a lit one
+      const cx = x + (b - 0.5) * rr * 0.6;
+      const cy = y + (c - 0.5) * rr * 0.4;
+      p.arc(cx, cy, rr * 0.32, PI * 0.9, PI * 2.1, 0.45, shade(Dk, 0.9), 0.55);
+      p.arc(cx - rr * 0.18, cy - rr * 0.22, rr * 0.22, PI * 1.1, PI * 1.9, 0.4, L, 0.8);
+    }
+  }
+  return p;
+}
+
+/**
+ * @typedef {Object} Plumage  a bird's colours by region (each ramp [light, mid, dark])
+ * @property {number[]} back     the back's feathers
+ * @property {number[]} breast   the breast's and the belly's (smaller)
+ * @property {number[]} wing     the folded wing's coverts
+ * @property {number[]} flight   its long flight feathers toward the tail
+ * @property {number} edge       the pale fringe round a feather's tip
+ * @property {number} size       a back feather's width (px); the breast's are smaller, the flight feathers long
+ * @property {number} bar        the bold band across the folded wing (a wing bar)
+ * @property {number} [mark]     a dark mark on each body feather: a band across its middle (`markAt` 'mid', a hen's
+ *   dark centres) or across its tip ('tip': a cock's crescents, a tom's black tips)
+ * @property {'mid'|'tip'} [markAt]
+ * @property {number} [flightBars]  bars across each flight feather (a turkey's black and white)
+ * @property {number} [barColor]    their colour (default the flight ramp's light)
+ * @property {number} [rump]     the lower back's colour toward the tail (a cock pheasant's blue-grey)
+ */
+
+/**
+ * A bird's body over its trunk strip (u: 0 the spine, 0.25 the right flank, 0.5 the breast and belly, 0.75 the left;
+ * rows from the chest, row 0, back toward the tail): overlapping feathers that grow from the small ones of the breast to
+ * the larger ones of the back; a FOLDED WING laid along each flank — rows of coverts with pale edges, a bold bar across
+ * it, long flight feathers reaching back toward the tail, a soft shadow under its lower edge; the chest's first rows
+ * left plain and soft, where the strip gathers to the front (no rosette of feather rings there).
+ * @param {Painter} p @param {Plumage} o
+ */
+function plumage(p, o) {
+  const w = p.w;
+  const h = p.h;
+  const rnd = makeRng(p.seed + 17);
+  const U = (x) => (((x + 0.5) / w) % 1 + 1) % 1;
+  const V = (y) => (y + 0.5) / h;
+  // the folded wing on each flank: its middle high on the side, from the shoulder (v 0.16) back to its tip at the tail
+  const W0 = 0.16;
+  /** how far inside a wing (u, v) is: > 0 inside, its t along the wing (0 the shoulder .. 1 the tip) */
+  const inWing = (u, v) => {
+    if (v < W0) return { d: -1, t: 0 };
+    const t = (v - W0) / (1 - W0);
+    const half = 0.125 * (t < 0.3 ? 0.55 + 1.5 * t : 1 - 0.6 * ((t - 0.3) / 0.7) ** 1.6);
+    const du = Math.min(Math.abs(u - 0.215), Math.abs(u - 0.785));
+    return { d: (half - du) / half, t };
+  };
+  const region = (u) => {
+    const up = Math.cos(2 * PI * u);
+    return { back: smooth01(0.2, 0.6, up), breast: smooth01(-0.15, -0.6, up) };
+  };
+  const bodyColor = (u, v, k) => {
+    const r = region(u);
+    const mid = mix(mix(o.wing[1], o.back[1], r.back), o.breast[1], r.breast);
+    const c = o.rump !== undefined && v > 0.7 ? mix(mid, o.rump, smooth01(0.7, 0.95, v) * r.back) : mid;
+    return k === 0 ? c : mix(c, k > 0 ? mix(o.back[0], o.breast[0], r.breast) : mix(o.back[2], o.breast[2], r.breast), Math.abs(k));
+  };
+  p.fill((x, y) => shade(bodyColor(U(x), V(y), 0), 0.82 + 0.1 * fbm(x / 5, y / 5, p.seed))).mottle(0.06, 4);
+  // the body's feathers: rows from the tail up to the chest (each row over the roots of the one behind it)
+  /** @type {number[][]} */
+  const body = [];
+  for (let y = h + o.size; y > h * 0.06; ) {
+    const v = V(y);
+    for (let x = rnd() * o.size; x < w; ) {
+      const u = U(x);
+      const r = region(u);
+      const k = (1 - 0.38 * r.breast) * (0.8 + 0.4 * rnd()) * (v < 0.25 ? 0.75 + v : 1);
+      body.push([x + (rnd() - 0.5) * o.size * 0.35, y + (rnd() - 0.5) * o.size * 0.25, k, rnd(), rnd()]);
+      x += o.size * k * (0.7 + 0.25 * rnd());
+    }
+    y -= o.size * (0.36 + 0.14 * rnd()) * (v < 0.3 ? 0.8 : 1);
+  }
+  for (const [x, y, k, a, b] of body) {
+    const u = U(x);
+    const v = V(y);
+    if (inWing(u, v).d > 0.15) continue; // under the wing
+    const W = o.size * k * 0.5;
+    const L = W * 2.6 * (0.9 + 0.2 * a);
+    const col = bodyColor(u, v, (b - 0.5) * 0.7);
+    const mark = o.mark === undefined ? {} : o.markAt === 'tip' ? { tip: o.mark } : { bars: 1.2, bar: o.mark };
+    p.feather(x, y - L * 0.7, PI / 2 + (a - 0.5) * 0.45, L, W, col, { edge: o.edge, fringe: 0.4, wrap: true, ...mark });
+  }
+  // the wings: coverts in rows from the shoulder, the bar, then the long flight feathers toward the tail
+  for (const side of [0.215, 0.785]) {
+    /** @type {number[][]} */
+    const wingF = [];
+    for (let v = 1.02; v > W0 - 0.02; ) {
+      const t = (v - W0) / (1 - W0);
+      const flight = t > 0.5;
+      const sz = o.size * (flight ? 0.85 : 0.95);
+      const n = flight ? 4 : 5;
+      for (let i = 0; i < n; i++) {
+        const u = side + (((i + 0.5) / n) - 0.5) * 0.23 + (rnd() - 0.5) * 0.015;
+        if (inWing(u, Math.min(0.999, v)).d < -0.05) continue;
+        wingF.push([u * w, v * h, sz * (0.85 + 0.3 * rnd()), flight ? 1 : 0, rnd(), t]);
+      }
+      v -= (flight ? 0.11 : 0.075) * (0.85 + 0.3 * rnd());
+    }
+    for (const [x, y, sz, flight, a, t] of wingF) {
+      const W = sz * 0.5;
+      const L = W * (flight ? 5.2 : 2.4) * (0.9 + 0.2 * a);
+      const r = flight ? o.flight : o.wing;
+      const col = mix(r[1], a < 0.5 ? r[0] : r[2], 0.35 * a);
+      p.feather(x, y - L * 0.75, PI / 2 + (a - 0.5) * 0.18 + (x / w < 0.5 ? -0.06 : 0.06), L, W, col, {
+        edge: flight ? r[0] : o.edge, fringe: flight ? 0.35 : 0.85, wrap: true,
+        ...(flight && o.flightBars ? { bars: o.flightBars, bar: o.barColor ?? r[0] } : {}),
+      });
+      // the wing bar: a bold band across the coverts' tips where the flight feathers begin
+      if (!flight && t > 0.32 && t < 0.52) p.feather(x, y - L * 0.6, PI / 2, L * 0.7, W * 1.05, o.bar, { edge: shade(o.bar, 1.2), fringe: 0.3, wrap: true });
+    }
+  }
+  // a soft shadow under each wing's lower edge, the edge itself a fine pale line
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const u = U(x);
+      const { d } = inWing(u, V(y));
+      const below = (u > 0.215 && u < 0.5) || (u > 0.5 && u < 0.785);
+      if (below && d < 0 && d > -0.45) p.tone(x, y, 1 - 0.32 * (1 + d / 0.45));
+    }
+  }
+  // lit along the back, shaded under the belly; the chest's first rows soft and plain
+  for (let y = 0; y < h; y++) {
+    const v = V(y);
+    const plain = 1 - smooth01(0.03, 0.09, v);
+    for (let x = 0; x < w; x++) {
+      const up = upness(x, w);
+      if (plain > 0) p.px(x, y, shade(bodyColor(U(x), v, 0), 0.92 + 0.12 * fbm(x / 3, y / 3, p.seed + 3)), plain);
+      p.tone(x, y, up > 0 ? 1 + 0.07 * up : 1 + 0.18 * up);
+    }
+  }
+  return p;
+}
+
+/**
+ * A bird's trunk cap (the tip of its breast, or its rump): plain and soft, the colour of the feathers round it, lighter
+ * toward the top (`up`: +1 the picture's top is up, −1 a cap seen upside down) — no pattern to gather into a knob.
+ * @param {Painter} p @param {number[]} ramp
+ */
+function softCap(p, ramp, up = 1) {
+  p.fill((x, y) => {
+    const t = up > 0 ? y / p.h : 1 - y / p.h;
+    return shade(mix(ramp[1], ramp[2], 0.35 * t), 0.94 + 0.1 * fbm(x / 3, y / 3, p.seed));
+  });
+  return p;
+}
+
+/**
+ * A bird's spread wing over its strip (rows from the tip, row 0, in to the shoulder): long flight feathers out to the
+ * tip (barred when `flightBars`), coverts in rows over their roots, a bar across them where they end, every feather
+ * pointing out toward the tip. @param {Painter} p @param {Plumage} o
+ */
+function spreadWing(p, o) {
+  p.fill(mix(o.flight[1], o.flight[2], 0.5)).mottle(0.06, 4);
+  const rnd = makeRng(p.seed + 23);
+  const rows = [];
+  for (let y = -o.size * 0.5; y < p.h + o.size; y += o.size * 0.42) rows.push(y);
+  // from the tip in: each row nearer the shoulder lies over the roots of the one further out
+  for (const y of rows) {
+    const t = y / p.h;
+    const flight = t < 0.48;
+    const r = flight ? o.flight : o.wing;
+    for (let x = rnd() * o.size; x < p.w + o.size; x += o.size * (flight ? 0.7 : 0.8)) {
+      const W = o.size * 0.5 * (0.85 + 0.3 * rnd());
+      const L = W * (flight ? 4.6 : 2.3);
+      const col = t > 0.48 && t < 0.6 ? o.bar : mix(r[1], rnd() < 0.5 ? r[0] : r[2], 0.3 * rnd());
+      p.feather(x, y + L * 0.72, -PI / 2 + (rnd() - 0.5) * 0.2, L, W, col, {
+        edge: flight ? r[0] : o.edge, fringe: flight ? 0.3 : 0.75, wrap: true,
+        ...(flight && o.flightBars ? { bars: o.flightBars, bar: o.barColor ?? r[0] } : {}),
+      });
     }
   }
   return p;
@@ -449,7 +737,9 @@ function cowSpec() {
 const SHEEP = Object.freeze({
   wool: [0xfffdf6, 0xf3eee2, 0xd8d0bf], shorn: [0xf4d8c8, 0xe2bfae, 0xbc9584], face: [0x6e655c, 0x4a443e, 0x312d29],
   hoof: 0x2a2420, inner: 0xd2a49c, horn: [0xeee2c4, 0xd6c9a8, 0xa89778],
-  fleece: { y: 0.68, zRear: 0.47, L: 0.92, rx: 0.32, rz: 0.31, rings: [[0, 0.48, 0.52, 0], [0.06, 0.8, 0.84, 0.01], [0.15, 0.96, 0.98, 0.02], [0.25, 0.92, 0.93, 0.02], [0.36, 1.0, 1.03, 0.025], [0.48, 0.95, 0.97, 0.025], [0.6, 1.0, 1.03, 0.025], [0.72, 0.94, 0.96, 0.02], [0.83, 0.97, 0.98, 0.025], [0.93, 0.8, 0.86, 0.03], [1, 0.55, 0.6, 0.03]] },
+  // the fleece: twelve corners, every other one drawn in (lumpy's notch) — six puffs round it — closed by a low point
+  // at each end; its rings swell and dip along it
+  fleece: { y: 0.68, zRear: 0.47, L: 0.92, rx: 0.335, rz: 0.325, sides: 12, phase: 0, rings: [[-0.05, 0, 0, 0.005], [-0.02, 0.42, 0.46, 0.005], [0.06, 0.8, 0.84, 0.01], [0.2, 0.97, 0.99, 0.02], [0.4, 0.93, 0.95, 0.025], [0.6, 1.0, 1.03, 0.025], [0.8, 0.95, 0.97, 0.02], [0.94, 0.78, 0.84, 0.03], [1.02, 0.42, 0.46, 0.035], [1.06, 0, 0, 0.035]] },
   shornT: { y: 0.645, zRear: 0.42, L: 0.82, rx: 0.23, rz: 0.22, rings: [[0, 0.55, 0.6, 0.02], [0.1, 0.92, 0.92, 0.01], [0.3, 1, 1, 0], [0.6, 0.97, 1.02, -0.005], [0.85, 0.94, 0.98, 0.02], [0.96, 0.72, 0.8, 0.03], [1, 0.5, 0.58, 0.03]] },
   head: { rx: 0.1, rz: 0.115, rings: [[0, 0.8, 0.85], [0.15, 1, 1], [0.5, 0.86, 0.9], [0.82, 0.66, 0.76, -0.006], [1, 0.58, 0.66, -0.008]] },
 });
@@ -462,9 +752,9 @@ function sheepSpec() {
   const H = SH.head;
   const R = ANIMAL_RIGS.sheep;
   const headO = { rx: H.rx, rz: H.rz };
-  /** wool over a strip: curls, the belly in the fleece's shadow */
-  const fleece = (p, r = 3.6) => {
-    p.wool(SH.wool, { r });
+  /** wool over a strip: puffs and curls, the belly in the fleece's shadow */
+  const fleece = (p, r = 6.5) => {
+    puffs(p, SH.wool, { r });
     for (let y = 0; y < p.h; y++) {
       for (let x = 0; x < p.w; x++) {
         const up = upness(x, p.w);
@@ -482,12 +772,12 @@ function sheepSpec() {
   return {
     paint(s) {
       const [fw, fh] = stripSize(F.rx, F.rz, F.L, D.body);
-      s.wrap('sheep.fleece', fw, fh, (p) => { fleece(p); endShade(p, 0.2, 0.12, 0.1); }, { cap: [36, 36], top: (p) => p.wool(SH.wool, { r: 3 }), bottom: (p) => p.wool(SH.wool, { r: 3 }) });
+      s.wrap('sheep.fleece', fw, fh, (p) => { fleece(p); endShade(p, 0.2, 0.12, 0.1); }, { cap: [36, 36], top: (p) => puffs(p, SH.wool, { r: 5, wrap: false }), bottom: (p) => puffs(p, SH.wool, { r: 5, wrap: false }) });
       const [sw, sh] = stripSize(T2.rx * 1.02, T2.rz * 1.02, T2.L, D.body);
       s.wrap('sheep.shorn', sw, sh, (p) => { stubble(p); endShade(p, 0.2, 0.15, 0.12); }, { cap: [24, 24], bottom: (p) => coat(p, SH.shorn, { seamless: false, len: 2 }) });
-      s.plain('sheep.wool', 48, 48, (p) => p.wool(SH.wool, { r: 3.2 }));
+      s.plain('sheep.wool', 48, 48, (p) => puffs(p, SH.wool, { r: 5, wrap: false }));
       const [nw, nh] = stripSize(0.15, 0.16, 0.3, D.body);
-      s.wrap('sheep.neck', nw, nh, (p) => { fleece(p, 3.2); endShade(p, 0, 0.25, 0.15); });
+      s.wrap('sheep.neck', nw, nh, (p) => { fleece(p, 5); endShade(p, 0, 0.25, 0.15); }, { cap: [16, 16], top: (p) => puffs(p, SH.wool, { r: 4, wrap: false }) });
       s.wrap('sheep.neckShorn', nw, nh, (p) => { stubble(p); endShade(p, 0, 0.25, 0.15); });
       const [hw, hh] = stripSize(H.rx, H.rz, 0.34, D.head);
       s.wrap('sheep.head', hw, hh, (p) => {
@@ -522,7 +812,8 @@ function sheepSpec() {
     build(s) {
       const fleeceTrunk = () => {
         const c = collector(s);
-        c.add(trunkGeo(F), 'sheep.fleece', ahead(F.y, F.zRear));
+        // its outline lumpy as well as its rings: every corner pushed in or out a little, so it reads as a fleece
+        c.add(lumpy(trunkGeo(F), 0.08, 7, [12, 0.82]), 'sheep.fleece', ahead(F.y, F.zRear));
         // a woolly stub of a tail
         c.add(swept([[0, 0.8, 0.43], [0, 0.74, 0.52], [0, 0.62, 0.55]], 0.06, [0.85, 1, 0.75, 0.3], { sides: 6, segments: 3, up: [1, 0, 0] }), 'sheep.wool');
         return c.done();
@@ -538,10 +829,12 @@ function sheepSpec() {
         const c = collector(s);
         const poll = [0, 0.86, -0.5];
         const nose = [0, 0.64, -0.75];
-        c.add(along([0, 0.66, -0.27], [0, 0.82, -0.5], shorn ? 0.11 : 0.15, shorn ? 0.12 : 0.16, [[0, 1.05], [0.6, 1], [1, 0.82]], { caps: false }), shorn ? 'sheep.neckShorn' : 'sheep.neck');
+        // the neck: a closed solid from inside the fleece, rounding off into the back of the head (no open rim, not even
+        // at a lamb's larger head)
+        c.add(along([0, 0.64, -0.25], [0, 0.845, -0.56], shorn ? 0.11 : 0.15, shorn ? 0.12 : 0.16, [[0, 1.05], [0.55, 1], [0.8, 0.86, 0.9], [1, 0.42, 0.48]]), shorn ? 'sheep.neckShorn' : 'sheep.neck');
         c.add(along(poll, nose, H.rx, H.rz, H.rings), 'sheep.head');
-        // a woolly tuft on the crown
-        c.add(loft({ sides: 6, rx: 0.1, rz: 0.09, caps: { bottom: false }, rings: [{ y: 0, sx: 0.9 }, { y: 0.03, sx: 1 }, { y: 0.06, sx: 0.5 }] }), 'sheep.wool', compose({ t: [0, 0.855, -0.555], r: [-0.72, 0.5, 0] }));
+        // a woolly tuft on the crown: a closed puff sitting on the poll
+        c.add(loft({ sides: 6, rx: 0.085, rz: 0.075, rings: [{ y: 0, sx: 0.7 }, { y: 0.025, sx: 1 }, { y: 0.055, sx: 0.85 }, { y: 0.075, sx: 0.4 }] }), 'sheep.wool', compose({ t: [0, 0.85, -0.55], r: [-0.72, 0.5, 0] }));
         for (const sd of [-1, 1]) {
           // ears out to the sides, drooping a little
           c.add(wedge({ w: 0.13, h: 0.022, d: 0.055, sx: 0.35 }), 'sheep.ear', compose({ t: [sd * 0.14, 0.83, -0.52], r: [0.1, 0, -sd * 0.35] }));
@@ -937,6 +1230,10 @@ function rabbitSpec() {
 
 const PHEASANT = Object.freeze({
   hen: [0xc8a878, 0x9a7a52, 0x6a5034], cock: [0xd88a44, 0xb5622a, 0x7a3a18], green: [0x3a8a70, 0x1f5a48, 0x103a2e], ring: 0xf8f4ec,
+  /** @type {Plumage} the hen: buff, each feather with a dark centre and a pale edge; barred flight feathers */
+  henPlumage: { back: [0xb89668, 0x8a6a44, 0x5a4228], breast: [0xdcc092, 0xc0a070, 0x8e6e48], wing: [0xcaa878, 0x9e7c52, 0x6a5034], flight: [0x9a7a52, 0x6a5034, 0x463220], edge: 0xf0e0b8, size: 7, bar: 0x5e4630, mark: 0x3e2c1a, markAt: 'mid', flightBars: 3, barColor: 0xdcc494 },
+  /** @type {Plumage} the cock: copper with black crescent tips, sandy wing coverts, a blue-grey rump */
+  cockPlumage: { back: [0xc8803e, 0x9a4e22, 0x5a2a10], breast: [0xec9c52, 0xcc6c2c, 0x8a3a14], wing: [0xdcc48e, 0xb89a68, 0x7a6040], flight: [0xa88a64, 0x765634, 0x423020], edge: 0xf8d8a0, size: 7, bar: 0x8a6a48, mark: 0x1e0e06, markAt: 'tip', flightBars: 3, barColor: 0xdcc89a, rump: 0x7e8e84 },
   wattle: 0xd23a2a, beak: [0xf0e6c0, 0xe6d9a8, 0xb0a070], leg: [0xb0a080, 0x9a8a64, 0x6a5a3a], barTail: [0xe0c890, 0xc9a56a, 0x5a3a1c],
   trunk: { y: 0.27, zRear: 0.18, L: 0.36, rx: 0.095, rz: 0.11, rings: [[0, 0.3, 0.35, 0.04], [0.12, 0.8, 0.82, 0.02], [0.42, 1, 1, 0], [0.7, 1, 1.06, -0.01], [0.86, 0.86, 0.96, -0.005], [0.96, 0.55, 0.65, 0.01], [1, 0.18, 0.22, 0.02]] },
 });
@@ -950,21 +1247,18 @@ function pheasantSpec() {
   return {
     paint(s) {
       const [tw, th] = stripSize(T.rx, T.rz * 1.06, T.L, D.body * 2);
-      s.wrap('pheasant.hen', tw, th, (p) => { p.feathers(P.hen, { size: 6, edge: 0xe8d8b0, vary: 0.5 }); for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) { const up = upness(x, p.w); p.tone(x, y, up > 0 ? 1 + 0.05 * up : 1 + 0.15 * up); } }, { cap: [20, 20] });
-      s.wrap('pheasant.cock', tw, th, (p) => {
-        p.feathers(P.cock, { size: 6, edge: 0xf0c890, vary: 0.4 });
-        // dark scalloped flecks on the copper; the folded wings paler and barred on the sides
-        const rnd = makeRng(3);
-        for (let i = 0; i < p.w * p.h * 0.02; i++) p.ellipse(rnd() * p.w, rnd() * p.h, 1.3, 0.9, 0x2a1408, 0.7);
-        for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) { const up = upness(x, p.w); p.tone(x, y, up > 0 ? 1 + 0.06 * up : 1 + 0.15 * up); }
-      }, { cap: [20, 20] });
+      // the body: breast, back and a folded wing on each flank (plumage); the chest's cap a soft breast, the rump's soft
+      const HP = /** @type {Plumage} */ (P.henPlumage);
+      const CP = /** @type {Plumage} */ (P.cockPlumage);
+      s.wrap('pheasant.hen', tw, th, (p) => plumage(p, HP), { cap: [20, 20], top: (p) => softCap(p, HP.breast, 1), bottom: (p) => softCap(p, HP.back, -1) });
+      s.wrap('pheasant.cock', tw, th, (p) => plumage(p, CP), { cap: [20, 20], top: (p) => softCap(p, CP.breast, 1), bottom: (p) => softCap(p, [0x9aa89c, CP.rump ?? 0x7e8e84, 0x56645a], -1) });
       const [nw, nh] = stripSize(0.05, 0.055, 0.15, D.head);
       const [hw, hh] = stripSize(headO.rx, headO.rz, 0.1, D.head * 1.6);
       /** the glossy green of the cock's head and neck */
       const green = (p) => p.fill((x, y) => mix(P.green[1], P.green[0], 0.25 + 0.5 * fbm(x / 3, y / 4, 6)));
-      s.wrap('pheasant.henNeck', nw, nh, (p) => { p.feathers(P.hen, { size: 4, edge: 0xe8d8b0 }); endShade(p, 0, 0.3, 0.2); });
+      s.wrap('pheasant.henNeck', nw, nh, (p) => { p.feathers(HP.breast, { size: 5, edge: 0xeedcb4, wrap: true, long: 1.3, fringe: 0.35 }); endShade(p, 0, 0.3, 0.2); });
       s.wrap('pheasant.henHead', hw, hh, (p) => {
-        p.feathers([0xd8bc90, 0xb09068, 0x806040], { size: 3.5, edge: 0xeee0c0 });
+        p.feathers([0xdcc096, 0xb89870, 0x8a6a48], { size: 4, edge: 0xeee0c0, wrap: true, long: 1.2, fringe: 0.3 });
         eyes(p, headO, 80, p.h * 0.45, 2.6, { ring: 0xeee0c0 });
       }, { cap: [10, 10] });
       s.wrap('pheasant.cockNeck', nw, nh, (p) => {
@@ -992,12 +1286,7 @@ function pheasantSpec() {
         p.fill(P.hen[1]);
         for (let y = 3; y < p.h - 2; y += 6) p.line(-1, y, p.w + 1, y + 1, 1, P.hen[2], 0.8);
       });
-      s.wrap('pheasant.wing', 48, 40, (p) => {
-        p.feathers(P.hen, { size: 5, edge: 0xf0e0b8 });
-        // the primaries: long dark feathers toward the tip (the strip's far rows), pale bars
-        for (let y = 0; y < p.h * 0.35; y++) for (let x = 0; x < p.w; x++) p.px(x, y, mix(P.hen[2], P.hen[1], ((x + y) % 6) / 12), 0.85);
-        for (let x = 0; x < p.w; x += 4) p.line(x, 0, x, p.h * 0.35, 0.4, 0xe8d8b0, 0.6);
-      }, { cap: [12, 12] });
+      s.wrap('pheasant.wing', 64, 48, (p) => spreadWing(p, { ...HP, size: 8 }), { cap: [12, 12] });
     },
     build(s) {
       const trunk = (cock) => {
@@ -1014,11 +1303,11 @@ function pheasantSpec() {
       /** @param {boolean} cock */
       const head = (cock) => {
         const c = collector(s);
-        // a short neck rising from the breast, a small round head on it, the beak
-        c.add(along([0, 0.27, -0.1], [0, 0.41, -0.17], 0.05, 0.055, [[0, 1.3, 1.25], [0.5, 0.9], [1, 0.72]], { caps: false, up: [0, 0.3, 1] }), cock ? 'pheasant.cockNeck' : 'pheasant.henNeck');
-        c.add(along([0, 0.43, -0.14], [0, 0.42, -0.24], headO.rx, headO.rz, [[0, 0.7, 0.75], [0.3, 1], [0.75, 0.88], [1, 0.55, 0.6]]), cock ? 'pheasant.cockHead' : 'pheasant.henHead');
-        c.add(pyramid({ sides: 4, rx: 0.014, rz: 0.011, h: 0.045, apex: { dz: -0.006 } }), 'pheasant.beak', compose({ t: [0, 0.415, -0.232], r: [-PI / 2 - 0.25, 0, 0] }));
-        if (cock) for (const sd of [-1, 1]) c.add(pyramid({ sides: 4, rx: 0.011, rz: 0.007, h: 0.035 }), 'pheasant.cockHead', compose({ t: [sd * 0.016, 0.455, -0.15], r: [0.9, 0, -sd * 0.3] }));
+        // a short neck rising clear of the breast (the cock's green with its white ring), a small round head on it, the beak
+        c.add(along([0, 0.27, -0.1], [0, 0.45, -0.19], 0.05, 0.055, [[0, 1.3, 1.25], [0.5, 0.9], [1, 0.72]], { up: [0, 0.3, 1] }), cock ? 'pheasant.cockNeck' : 'pheasant.henNeck');
+        c.add(along([0, 0.47, -0.16], [0, 0.46, -0.26], headO.rx, headO.rz, [[0, 0.7, 0.75], [0.3, 1], [0.75, 0.88], [1, 0.55, 0.6]]), cock ? 'pheasant.cockHead' : 'pheasant.henHead');
+        c.add(pyramid({ sides: 4, rx: 0.014, rz: 0.011, h: 0.045, apex: { dz: -0.006 } }), 'pheasant.beak', compose({ t: [0, 0.455, -0.252], r: [-PI / 2 - 0.25, 0, 0] }));
+        if (cock) for (const sd of [-1, 1]) c.add(pyramid({ sides: 4, rx: 0.011, rz: 0.007, h: 0.035 }), 'pheasant.cockHead', compose({ t: [sd * 0.016, 0.495, -0.17], r: [0.9, 0, -sd * 0.3] }));
         return c.done();
       };
       const lg = collector(s);
@@ -1039,6 +1328,10 @@ const TURKEY = Object.freeze({
   hen: [0x9a7c5c, 0x76593e, 0x4e3a28], tom: [0x6e5a46, 0x4a3a2c, 0x2a2018], bronze: 0xb8864a, head: [0xc8d8e8, 0x9fb0c0, 0x6e8094],
   wattle: 0xd23a32, neck: [0xe08a7a, 0xc86a5c, 0x9a4a40], beak: [0xf0e0a0, 0xe0c878, 0xa08a48], leg: [0xc8a080, 0xb08a6a, 0x7a5a40],
   fan: [0x8a6a46, 0x6e4e2e, 0x3a2818], band: 0xd8b67a, tip: 0xf4ecdc,
+  /** @type {Plumage} the hen: brown, each feather with a dark band and a pale tip; white-barred flight feathers */
+  henPlumage: { back: [0x9e8060, 0x765a3e, 0x4a3624], breast: [0xb0926a, 0x8c6e4c, 0x5e4630], wing: [0xa08262, 0x7a5c40, 0x4e3a28], flight: [0x5e4a38, 0x463628, 0x2a2018], edge: 0xe8d4b0, size: 8, bar: 0xdccaa4, mark: 0x2e2216, markAt: 'mid', flightBars: 3, barColor: 0xf0e6d4 },
+  /** @type {Plumage} the tom: bronze, every feather tipped black (his barring), bronze coverts, white-barred flight feathers */
+  tomPlumage: { back: [0x9a7848, 0x6a5030, 0x2e2418], breast: [0x7a5e3c, 0x564230, 0x2a2018], wing: [0xa8865a, 0x7a5e3c, 0x4a3826], flight: [0x5a4a3c, 0x3e3228, 0x1e1812], edge: 0xc89656, size: 8, bar: 0xe0c084, mark: 0x0e0a08, markAt: 'tip', flightBars: 3, barColor: 0xf0e6d4 },
   trunk: { y: 0.53, zRear: 0.25, L: 0.5, rx: 0.16, rz: 0.17, rings: [[0, 0.32, 0.38, 0.04], [0.12, 0.84, 0.86, 0.02], [0.42, 1.04, 1, 0], [0.68, 1.06, 1.08, -0.02], [0.85, 0.9, 1.0, -0.01], [0.96, 0.55, 0.66, 0.02], [1, 0.18, 0.24, 0.03]] },
 });
 
@@ -1060,24 +1353,26 @@ function turkeySpec() {
   return {
     paint(s) {
       const [tw, th] = stripSize(T.rx * 1.06, T.rz * 1.08, T.L, D.body * 1.4);
-      s.wrap('turkey.hen', tw, th, (p) => { p.feathers(TK.hen, { size: 7, edge: 0xe0cca8, vary: 0.45 }); endShade(p, 0.1, 0.1, 0.1); }, { cap: [24, 24] });
+      const HP = /** @type {Plumage} */ (TK.henPlumage);
+      const TP = /** @type {Plumage} */ (TK.tomPlumage);
+      s.wrap('turkey.hen', tw, th, (p) => { plumage(p, HP); endShade(p, 0, 0.1, 0.1); }, { cap: [24, 24], top: (p) => softCap(p, HP.breast, 1), bottom: (p) => softCap(p, HP.back, -1) });
       s.wrap('turkey.tom', tw, th, (p) => {
-        p.feathers(TK.tom, { size: 7, edge: TK.bronze, vary: 0.3 });
+        plumage(p, TP);
         // an iridescent sheen on the back, a black-tipped beard on the breast
         for (let y = 0; y < p.h; y++) for (let x = 0; x < p.w; x++) { const up = upness(x, p.w); if (up > 0.3) p.px(x, y, TK.bronze, 0.12 * up); }
         p.line(p.w / 2, p.h * 0.05, p.w / 2 + 1, p.h * 0.3, 1.6, 0x14100c, 0.9);
-      }, { cap: [24, 24] });
+      }, { cap: [24, 24], top: (p) => { softCap(p, TP.breast, 1); p.line(p.w / 2, p.h * 0.55, p.w / 2, p.h, 1.4, 0x14100c, 0.9); }, bottom: (p) => softCap(p, TP.back, -1) });
       const [nw, nh] = stripSize(0.06, 0.065, 0.25, D.head);
       const [hw, hh] = stripSize(headO.rx, headO.rz, 0.1, D.head * 1.5);
       /** bare skin with warty bumps over its top `bare` share, feathers below */
       const neck = (p, skin, warts, feathers, bare) => {
-        p.feathers(feathers, { size: 4.5, edge: 0xe0cca8 });
+        p.feathers(feathers, { size: 5, edge: 0xe0cca8, wrap: true, long: 1.3, fringe: 0.35 });
         const rnd = makeRng(8);
         for (let y = 0; y < p.h * bare; y++) for (let x = 0; x < p.w; x++) p.px(x, y, shade(skin, 0.94 + 0.12 * hash2(x, y, 5)), smooth01(p.h * bare, p.h * (bare - 0.12), y + (hash2(x, 1, 2) - 0.5) * 3));
         for (let i = 0; i < p.w * p.h * bare * 0.06; i++) p.ellipse(rnd() * p.w, rnd() * p.h * bare * 0.9, 0.9, 0.9, warts, 0.65);
       };
-      s.wrap('turkey.henNeck', nw, nh, (p) => neck(p, TK.head[1], TK.head[0], TK.hen, 0.4), { cap: [10, 10] });
-      s.wrap('turkey.tomNeck', nw, nh, (p) => neck(p, TK.neck[1], TK.neck[0], TK.tom, 0.55), { cap: [10, 10] });
+      s.wrap('turkey.henNeck', nw, nh, (p) => neck(p, TK.head[1], TK.head[0], HP.breast, 0.45), { cap: [10, 10] });
+      s.wrap('turkey.tomNeck', nw, nh, (p) => neck(p, TK.neck[1], TK.neck[0], TP.breast, 0.55), { cap: [10, 10] });
       s.wrap('turkey.henHead', hw, hh, (p) => {
         p.fill((x, y) => shade(TK.head[1], 0.92 + 0.12 * fbm(x / 3, y / 3, 4)));
         eyes(p, headO, 80, p.h * 0.45, 2.6, {});
@@ -1095,10 +1390,7 @@ function turkeySpec() {
       s.plain('turkey.toes', 12, 12, (p) => p.fill(TK.leg[2]));
       s.plain('turkey.fan', 20, 72, (p) => fanFeather(p, false));
       s.plain('turkey.henFan', 20, 48, (p) => fanFeather(p, true));
-      s.wrap('turkey.wing', 56, 44, (p) => {
-        p.feathers(TK.hen, { size: 6, edge: 0xf0e0c0 });
-        for (let y = 0; y < p.h * 0.4; y++) for (let x = 0; x < p.w; x++) p.px(x, y, (Math.floor(y / 4) & 1) ? 0xf0e6d4 : 0x3a2c20, 0.85);
-      }, { cap: [12, 12] });
+      s.wrap('turkey.wing', 72, 52, (p) => spreadWing(p, { ...HP, size: 9 }), { cap: [12, 12] });
     },
     build(s) {
       const trunk = (tom) => {
@@ -1127,14 +1419,14 @@ function turkeySpec() {
       /** @param {boolean} tom */
       const head = (tom) => {
         const c = collector(s);
-        // a neck feathered at its foot and bare above, curving up from the breast; a small round head on it
-        c.add(along([0, 0.54, -0.15], [0, 0.77, -0.23], 0.06, 0.065, [[0, 1.55, 1.45], [0.3, 1.0], [0.65, 0.8], [1, 0.72]], { caps: false, up: [0, 0.3, 1] }), tom ? 'turkey.tomNeck' : 'turkey.henNeck');
-        c.add(along([0, 0.8, -0.2], [0, 0.79, -0.3], headO.rx, headO.rz, [[0, 0.72, 0.78], [0.3, 1], [0.75, 0.88], [1, 0.58, 0.62]]), tom ? 'turkey.tomHead' : 'turkey.henHead');
-        c.add(pyramid({ sides: 4, rx: 0.018, rz: 0.014, h: 0.05, apex: { dz: -0.008 } }), 'turkey.beak', compose({ t: [0, 0.785, -0.292], r: [-PI / 2 - 0.3, 0, 0] }));
+        // a neck feathered at its foot and bare above, rising well clear of the breast; a small round head on it
+        c.add(along([0, 0.55, -0.15], [0, 0.86, -0.27], 0.06, 0.065, [[0, 1.55, 1.45], [0.3, 1.0], [0.65, 0.8], [1, 0.72]], { up: [0, 0.3, 1] }), tom ? 'turkey.tomNeck' : 'turkey.henNeck');
+        c.add(along([0, 0.88, -0.24], [0, 0.87, -0.34], headO.rx, headO.rz, [[0, 0.72, 0.78], [0.3, 1], [0.75, 0.88], [1, 0.58, 0.62]]), tom ? 'turkey.tomHead' : 'turkey.henHead');
+        c.add(pyramid({ sides: 4, rx: 0.018, rz: 0.014, h: 0.05, apex: { dz: -0.008 } }), 'turkey.beak', compose({ t: [0, 0.865, -0.332], r: [-PI / 2 - 0.3, 0, 0] }));
         if (tom) {
           // the snood over the beak and the wattle down the throat
-          c.add(swept([[0, 0.835, -0.27], [0.005, 0.81, -0.325], [0.01, 0.75, -0.33]], 0.012, [1, 1.1, 0.8, 0.5], { sides: 5, segments: 3, up: [1, 0, 0] }), 'turkey.wattle');
-          c.add(swept([[0, 0.77, -0.27], [0, 0.71, -0.26], [0, 0.65, -0.23]], 0.022, [0.8, 1.2, 1, 0.6], { sides: 5, segments: 3, rz: 0.014, up: [0, 0, -1] }), 'turkey.wattle');
+          c.add(swept([[0, 0.915, -0.31], [0.005, 0.89, -0.365], [0.01, 0.83, -0.37]], 0.012, [1, 1.1, 0.8, 0.5], { sides: 5, segments: 3, up: [1, 0, 0] }), 'turkey.wattle');
+          c.add(swept([[0, 0.85, -0.31], [0, 0.79, -0.3], [0, 0.73, -0.27]], 0.022, [0.8, 1.2, 1, 0.6], { sides: 5, segments: 3, rz: 0.014, up: [0, 0, -1] }), 'turkey.wattle');
         }
         return c.done();
       };

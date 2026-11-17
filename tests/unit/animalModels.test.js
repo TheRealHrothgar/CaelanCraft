@@ -10,6 +10,32 @@ import { createAnimalRenderer, headPitch, youthOf, MODELS, YOUNG_HEAD, HEAD_RATE
 import { ANIMAL_KINDS, SPECIES } from '../../src/animals.js';
 import { YOUNG_SCALE } from '../../src/populations.js';
 import { readSceneParam, ANIMAL_SCENES } from '../../src/diagnostics.js';
+import { bounds } from '../../src/modelKit.js';
+
+/** Edges of a geometry used by one triangle only (its polygons welded by position): an open rim. */
+function openEdges(g) {
+  const P = g.positions;
+  const id = new Map();
+  const vid = (i) => {
+    const k = [0, 1, 2].map((a) => Math.round(P[i * 3 + a] * 1e4)).join(',');
+    if (!id.has(k)) id.set(k, id.size);
+    return id.get(k);
+  };
+  const edges = new Map();
+  for (let t = 0; t < g.index.length; t += 3) {
+    const v = [vid(g.index[t]), vid(g.index[t + 1]), vid(g.index[t + 2])];
+    for (let e = 0; e < 3; e++) {
+      const a = v[e];
+      const b = v[(e + 1) % 3];
+      if (a === b) continue;
+      const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+      edges.set(k, (edges.get(k) ?? 0) + 1);
+    }
+  }
+  let open = 0;
+  for (const c of edges.values()) if (c === 1) open++;
+  return open;
+}
 
 /** The most triangles one whole animal may have in any variant (its trunk, head, legs; a bird's wings while it flies). */
 const TRI_BUDGET = 800;
@@ -114,6 +140,43 @@ describe('animalModels — the parts', () => {
       for (const [kind, ahead] of list) {
         expect(MODEL_KINDS, `${name} ${kind}`).toContain(kind);
         expect(ahead, `${name} ${kind}`).toBeGreaterThan(1.5); // in front of the player, clear of the camera
+      }
+    }
+  });
+
+  it('a sheep\'s head has no open shell: the neck and the woolly tuft are closed (no paper rims, not at a lamb\'s head either)', () => {
+    for (const part of ['head', 'head-male', 'head-alt', 'head-maleAlt', 'body', 'alt']) expect(openEdges(m.kinds.sheep.parts[part]), part).toBe(0);
+  });
+
+  it('the fleece is lumpy: seen end on, its outline is six puffs round a parting along the spine, not a hexagon', () => {
+    const g = m.kinds.sheep.parts.body;
+    const b = bounds(g);
+    const zMid = (b.min[2] + b.max[2]) / 2;
+    // the ring nearest the middle of its length: the corners' distances from the ring's own middle
+    let best = Infinity;
+    for (let i = 2; i < g.positions.length; i += 3) best = Math.min(best, Math.abs(g.positions[i] - zMid));
+    const pts = [];
+    for (let i = 0; i < g.positions.length; i += 3) {
+      if (Math.abs(g.positions[i + 2] - zMid) < Math.max(0.06, best + 0.02)) pts.push([g.positions[i], g.positions[i + 1]]);
+    }
+    const cx = (Math.min(...pts.map((p) => p[0])) + Math.max(...pts.map((p) => p[0]))) / 2;
+    const cy = (Math.min(...pts.map((p) => p[1])) + Math.max(...pts.map((p) => p[1]))) / 2;
+    const r = pts.map(([x, y]) => Math.hypot(x - cx, y - cy)).filter((d) => d > 0.05);
+    expect(Math.min(...r) / Math.max(...r)).toBeLessThan(0.82); // notches and lumps, not one even hexagon
+    expect(variantTriangles(m, 'sheep', 'male')).toBeLessThanOrEqual(TRI_BUDGET);
+  });
+
+  it('the birds hold their heads clear of their bodies on a neck: the turkey hen\'s well above her breast', () => {
+    for (const [kind, min] of [['turkey', 0.22], ['pheasant', 0.12]]) {
+      for (const variant of ['body', 'male']) {
+        const [trunk, head] = m.kinds[kind].variants[variant];
+        const top = bounds(m.kinds[kind].parts[/** @type {string} */ (trunk)]);
+        // the trunk's own top (its fan and tail cards aside): the highest point ahead of the legs
+        let back = -Infinity;
+        const P = m.kinds[kind].parts[/** @type {string} */ (trunk)].positions;
+        for (let i = 0; i < P.length; i += 3) if (P[i + 2] < 0.1) back = Math.max(back, P[i + 1]);
+        expect(top.max[1]).toBeGreaterThan(0);
+        expect(bounds(m.kinds[kind].parts[/** @type {string} */ (head)]).max[1] - back, `${kind} ${variant}`).toBeGreaterThan(min);
       }
     }
   });

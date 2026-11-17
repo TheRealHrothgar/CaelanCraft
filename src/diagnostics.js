@@ -162,8 +162,8 @@ export const ANIMAL_SCENES = Object.freeze(/** @type {*} */ ({
   ].map((e) => Object.freeze(e))),
   'animal-close': Object.freeze([
     ['sheep', 3.0, -1.5, 0.0, {}], ['sheep', 2.3, -0.4, 0.5, { size: 0.55 }], ['sheep', 4.4, -2.9, 1.3, { sex: 'm' }], ['sheep', 4.6, -0.9, -1.2, { shorn: 300 }],
-    ['turkey', 2.6, 1.3, 1.1, {}], ['pheasant', 1.9, 0.5, -0.8, {}], ['pheasant', 2.4, 2.2, 0.4, { sex: 'm' }], ['turkey', 4.4, 2.6, -0.5, { sex: 'm' }],
-    ['turkey', 2.0, 3.2, -0.2, {}],
+    ['turkey', 2.8, 1.0, 1.1, {}], ['pheasant', 2.0, 0.4, -0.8, {}], ['pheasant', 2.6, 1.9, 0.4, { sex: 'm' }], ['turkey', 4.8, 2.3, -0.5, { sex: 'm' }],
+    ['turkey', 3.9, 0.3, 0.0, {}],
   ].map((e) => Object.freeze(e))),
 }));
 

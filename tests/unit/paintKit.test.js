@@ -107,6 +107,40 @@ describe('the painter', () => {
 });
 
 describe('feathers and scales (§69.1)', () => {
+  const lum = (img, x, y) => {
+    const i = (y * img.width + x) * 4;
+    return img.data[i] * 0.3 + img.data[i + 1] * 0.59 + img.data[i + 2] * 0.11;
+  };
+
+  it('one feather: a quill-thin root, a vane lit on one side, a pale fringe round its rounded tip', () => {
+    const img = createImage(40, 40, 0x000000);
+    const p = new Painter(img, [0, 0, 40, 40], 3);
+    p.feather(20, 4, Math.PI / 2, 30, 7, 0x806040, { edge: 0xffffff, fringe: 1 });
+    expect(lum(img, 14, 5)).toBe(0); // beside the root: nothing (the root is a quill)
+    expect(lum(img, 15, 22)).toBeGreaterThan(30); // the vane is wide in the middle
+    const nearTip = lum(img, 20, 31);
+    const fringe = Math.max(lum(img, 15, 28), lum(img, 25, 28));
+    expect(fringe).toBeGreaterThan(nearTip); // the fringe paler than the vane inside it
+    expect(lum(img, 20, 36)).toBe(0); // the tip is rounded off before its full length
+  });
+
+  it('feathers overlap in loose rows of differing size; `wrap` leaves no seam round a strip', () => {
+    const W = 64;
+    const seam = (wrap) => {
+      const img = createImage(W, 48);
+      new Painter(img, [0, 0, W, 48], 5).feathers([0xf0e0c0, 0x9a7a52, 0x4a3a28], { size: 8, edge: 0xffffff, wrap });
+      let across = 0;
+      let inside = 0;
+      for (let y = 0; y < 48; y++) {
+        across += Math.abs(lum(img, W - 1, y) - lum(img, 0, y));
+        for (let x = 0; x + 1 < W; x++) inside += Math.abs(lum(img, x, y) - lum(img, x + 1, y)) / (W - 1);
+      }
+      return across / inside;
+    };
+    expect(seam(true)).toBeLessThan(1.6); // about as different as any two neighbours
+    expect(seam(false)).toBeGreaterThan(seam(true));
+  });
+
   it('feathers cover the rectangle in staggered tips, each with a pale fringe; scales draw rims over what is there', () => {
     const img = createImage(48, 48);
     const p = new Painter(img, [0, 0, 48, 48], 3);

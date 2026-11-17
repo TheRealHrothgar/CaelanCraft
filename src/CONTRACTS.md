@@ -4181,9 +4181,15 @@ colliders, heights, the pig's head box, the AI, the strides, the rear-up and the
   are on **ONE atlas**, `ANIMAL_ATLAS` **1024** square, about two-thirds painted (`ANIMAL_DENSITY`: trunks 112, heads 190,
   legs 150 texels a metre; small parts denser): short hair laid in strokes along the body over a seamless mottle, the back
   lit and the belly shaded (or a paler belly blended in), a cow's white patches, a deer's dark back line, white rump and a
-  fawn's spots, a wolf's dark saddle, pale mask and amber eyes, a bear's grizzled stripe and pale chest and claws, curly
-  wool, the clipper's stubble, feathers (`Painter.feathers`) with pale fringes and bars, a cock pheasant's green head, white
-  collar and red wattles, a turkey's bare warty neck, scales (`Painter.scales`), hooves and muddy trotters, eyes with a
+  fawn's spots, a wolf's dark saddle, pale mask and amber eyes, a bear's grizzled stripe and pale chest and claws, wool
+  in big lit puffs with dark hollows and curls in them (`puffs`, read across a field), the clipper's stubble, a bird's
+  `plumage` (single overlapping feathers, `Painter.feather`: small on the breast, larger on the back, and a FOLDED WING
+  on each flank — coverts with pale edges, a bold bar, long barred flight feathers toward the tail, a shadow under its
+  edge; the hen pheasant's dark centres, the cock's black crescents and blue-grey rump, the turkey hen's pale tips, the
+  tom's black tips, his bronze barring; the chest's first rows and the trunk's caps plain and soft, `softCap`, so the
+  strip gathering at the breast makes no rosette or knob), a spread wing's long feathers (`spreadWing`), a cock
+  pheasant's green head, white collar and red wattles, a turkey's bare warty neck, scales (`Painter.scales`), hooves and
+  muddy trotters, eyes with a
   catchlight and lids, muzzles with nostrils. Deterministic (a seed per picture): the same bytes every build.
 - `ANIMAL_RIGS[kind]`: `legH`, `legW` (the snare loop's size), `legX`, `legZ` [front, back], `swing`, `turn` (true: a front
   leg is the hind leg turned half round — cow, sheep, horse, wolf, deer; the rabbit, the bear and the pig have a front to
@@ -4196,18 +4202,22 @@ colliders, heights, the pig's head box, the AI, the strides, the rear-up and the
   `head`, `head-male`, `head-alt`, `head-maleAlt`, `legs`, `legs-male`, `wings`, `tag`, `tusks` as the kind has them —
   and `variants` maps each bodyVariant (and `young`) to [trunk part, head part (null: none), legs part (absent: `legs`)]:
   cow body [body, head], male [male, head-male, legs-male] (the bull: bigger, darker, a rise over the shoulders, wide horns,
-  a brass ring in his nose, no udder); sheep body [body, head] (the fleece), alt [alt, head-alt] (shorn, its neck too),
+  a brass ring in his nose, no udder); sheep body [body, head] (the fleece: twelve corners, every other one drawn in —
+  `lumpy`'s notch, a parting along the spine — and every corner pushed in or out a little, closed by a low point at each
+  end: seen end on, six puffs round it, not a hexagonal block; its neck a closed solid that rounds off into the back of the
+  head and a closed woolly tuft on the poll — no open shell, not at a lamb's larger head), alt [alt, head-alt] (shorn, its neck too),
   male [body, head-male] (the ram's curled horns), maleAlt [alt, head-maleAlt]; horse body, alt [alt, head-alt] (a blanket
   round the back, a saddle with a pommel and a cantle; a bridle painted on the head and reins to the withers); wolf body,
   alt [body, head]; deer body, male [body, head-male] (antlers, a darker maned neck), young [young, head] (the spotted
   fawn); pheasant and turkey body / male (the cock's copper body and long barred tail, his green head; the tom's bronze
-  body, his fan of two rows of barred, white-tipped feathers, his bare blue head, snood and wattle); rabbit, bear, fish
+  body, his fan of two rows of barred, white-tipped feathers, his bare blue head, snood and wattle; both birds hold their
+  heads clear of the breast on a neck: the turkey's rises about a quarter of a metre over her back); rabbit, bear, fish
   (no head part: a fish never turns its head) and pig body. `tag`: a tame cow's leather collar and brass bell, a tame
   ewe's blue ribbon, bow and bell, a tame wolf's red collar and brass tag, a tame pig's green ribbon and bow. `tusks`: the
   boar's. `snare`: a loop of cord and its trailing end, at unit size (scaled by a rig's `legW`).
 - **Budgets**: a whole animal in any variant — trunk, head, `legs` legs, and a bird's two wings — at most **800**
-  triangles (`variantTriangles`): cow 680, bull 762, ewe 531, ram 663, shorn ewe 487, horse 636, saddled horse 788, wolf
-  542, doe 576, stag 748, rabbit 426, pheasant 414 / 438 and turkey 450 / 642 (hen / male, their wings counted), bear
+  triangles (`variantTriangles`): cow 680, bull 762, ewe 612, ram 744, shorn ewe 526, horse 636, saddled horse 788, wolf
+  542, doe 576, stag 748, rabbit 426, pheasant 422 / 446 and turkey 458 / 650 (hen / male, their wings counted), bear
   544, fish 134 (it is small and under water), pig 542 (+ 44 the tusks). `variantBounds(m, kind, variant)` (the trunk's and head's reach at rest) and
   `restModel(kind, variant)` (a kind standing at rest as one geometry: the pilot's and the gallery's form) are for tests
   and tools.
@@ -4263,7 +4273,9 @@ colliders, heights, the pig's head box, the AI, the strides, the rear-up and the
 - Tests: `animalModels.test.js` (the parts, the atlas, budgets, variants, heights, the coats' colours, the heads' poses,
   the young, tags and snares), `animals.test.js`, `fauna.test.js` and `populations.test.js` (the meshes by name, the bold
   features measured on the geometry: antlers, ears, the cock's tail, the tom's fan, the bear's bulk, the fish's fin),
-  `pigRenderer.test.js`, `paintKit.test.js` (feathers, scales), `pilotModels.test.js`.
+  `pigRenderer.test.js`, `paintKit.test.js` (one feather, overlapping feathers with no seam, scales), `pilotModels.test.js`;
+  `animalModels.test.js` also: the sheep's head and fleece closed, the fleece's outline lumpy end on, the birds' heads
+  clear of their bodies, every snareable kind's loop, the stranded fish on its side, the screenshot scenes.
 
 ## 70. Flint you can see; bolder ground litter — `src/blocks.js`, `src/mesher.js`, `src/tiles.js`, `src/harvest.js`
 
@@ -7104,8 +7116,9 @@ id, never throws, returns whether it did. Main passes the store the Ambience swi
 
 - **The kit.** `modelKit.js` makes closed, outward-wound solids in typed arrays (n-gon lofts, prisms and pyramids — six sides,
   flat facets — chamfered boxes, wedges, sweeps along a curve, transforms, merges, atlas uvs). `paintKit.js` paints RGBA
-  pictures from a seed (cloth, denim, knit, skin, hair strands, stone; seams, hems, stitches; faces; §69.1: feathers and
-  scales) and packs them on an atlas with gutters bled for the mipmaps. `figureKit.js` is what figures share: `Skin` (one model's atlas: rectangles asked
+  pictures from a seed (cloth, denim, knit, skin, hair strands, stone; seams, hems, stitches; faces; §69.1: a single
+  feather — quill root, lit vane, pale fringe round a rounded tip, bars — and loose overlapping rows of them, sized by
+  region and seamless round a strip when asked; scales) and packs them on an atlas with gutters bled for the mipmaps. `figureKit.js` is what figures share: `Skin` (one model's atlas: rectangles asked
   for by name — a strip round a column and its caps, a box's faces, a plain picture — packed tallest first, painted once),
   `shapes(STYLES.hex)` (columns, chamfered blocks, nubs), the faceted head (`HEAD_CORNERS`, `KID_HEAD`, `headSkin` paints the
   face on its front plane, `addHead` adds a nose wedge and hex ears) and the hair (`hairMass` a mass or cap laid off the head

@@ -611,6 +611,7 @@ const FAUNA_SETS = {
     { name: 'Turkey gliding', animals: [mkA('turkey', { air: 0.5, walkPhase: 1.4, y: 0.2 })], h: 1.1 },
     { name: 'Wolf pup, bear cub', animals: [mkA('wolf', { size: 0.55, x: -0.5 }), mkA('bear', { size: 0.55, x: 0.45 })], h: 1 },
     { name: 'Rabbit kit, chick', animals: [mkA('rabbit', { size: 0.55, x: -0.15 }), mkA('pheasant', { size: 0.55, x: 0.2 })], h: 0.5 },
+    { name: 'Stranded fish (§100), snared pheasant', animals: [mkA('fish', { stranded: true, x: -0.3, z: 0.1, yaw: -0.5 }), mkA('pheasant', { trapped: 30, x: 0.3 })], h: 0.5 },
   ],
 };
 
