@@ -6,7 +6,10 @@
 // the chosen look (pilotModels.js, pass 2). Each row is one family, seen from a 3/4 front view, from the side and at game
 // distance (a crop of a 900-pixel-tall view at the game's field of view, one pixel a pixel); the hand row is the
 // first-person view at rest and mid-swing. `?row=avatar|zombie|animal|plant|hand` shows one row large, `?row=all` (the
-// default) every row small. Every panel is one viewport of one canvas.
+// default) every row small. Every panel is one viewport of one canvas. `?row=fauna` (phase 3, CONTRACTS §69.1) is a grid
+// of every kind of animal and the pig through the game's own renderers (`&set=variants` the young, the shorn, the tame,
+// the snared and the poses; `&set=far` all of them at game distance; `&only=0,3&cols=2&az=&target=x,y,z&dist=` to look
+// closer; `&time=` the time of day).
 import * as THREE from 'three';
 import { FOV } from './config.js';
 import { computeSky, createSkyState } from './daynight.js';
@@ -48,7 +51,7 @@ renderer.setScissorTest(true);
 renderer.autoClear = false;
 
 // ---- the light: the game's noon-ish sky (computeSky), the sun turned to come from the front-left of the 3/4 views
-const sky = computeSky(0.42, createSkyState());
+const sky = computeSky(Number(params.get('time')) || 0.42, createSkyState());
 const SUN_DIR = new THREE.Vector3(-0.42, 0.7, -0.58).normalize();
 const lin = (rgb) => new THREE.Color().setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);
 const HEMI_GROUND_FACTOR = 0.45;
@@ -277,7 +280,7 @@ const ROWS = {
   },
   animal: {
     title: 'Animals — a ewe and a pig',
-    note: 'fleece as curls with puffs, a long dark face with side eyes; a pig with bristles, a snout, floppy ears, a curled tail',
+    note: 'the game\'s own models now (phase 3: ?row=fauna for every kind): the pilot column shows animalModels.restModel',
     target: [0.05, 0.5, 0], dist: 3.6, far: 7, az: 0.95,
     today() {
       const scene = stage({ blocks: [[-1.6, 1.4]] });
@@ -619,13 +622,110 @@ function layoutHair(top) {
   });
 }
 
+// ---------------------------------------------------------------------------------------------------
+// ?row=fauna: every kind and variant through the game's own renderers (phase 3); &set=variants the young, the shorn, the
+// tame, the snared and the poses; &set=far all of them at game distance
+// ---------------------------------------------------------------------------------------------------
+
+/** @typedef {{ name: string, animals?: object[], pigs?: object[], h: number, dist?: number, az?: number, dt?: number }} FaunaCell */
+const mkA = (kind, more = {}) => ({ kind, x: 0, y: 0, z: 0, yaw: 0, walkPhase: 0, hurt: 0, shorn: 0, tamed: false, air: 0, rear: 0, swipe: 0, sex: 'f', size: 1, mode: 'walk', ...more });
+const mkP = (more = {}) => ({ x: 0, y: 0, z: 0, yaw: 0, walkPhase: 0, hurt: 0, mode: 'walk', ...more });
+/** @type {Record<string, FaunaCell[]>} */
+const FAUNA_SETS = {
+  all: [
+    { name: 'Cow', animals: [mkA('cow')], h: 1.3 }, { name: 'Bull', animals: [mkA('cow', { sex: 'm' })], h: 1.35 },
+    { name: 'Ewe', animals: [mkA('sheep')], h: 1 }, { name: 'Ram', animals: [mkA('sheep', { sex: 'm' })], h: 1 },
+    { name: 'Horse', animals: [mkA('horse')], h: 2.1 }, { name: 'Wolf', animals: [mkA('wolf')], h: 1 },
+    { name: 'Doe', animals: [mkA('deer')], h: 1.7 }, { name: 'Stag', animals: [mkA('deer', { sex: 'm' })], h: 2.2 },
+    { name: 'Rabbit', animals: [mkA('rabbit')], h: 0.65 }, { name: 'Pheasant hen / cock', animals: [mkA('pheasant', { x: -0.25 }), mkA('pheasant', { sex: 'm', x: 0.3, z: 0.1 })], h: 0.6 },
+    { name: 'Turkey hen', animals: [mkA('turkey')], h: 0.9 }, { name: 'Tom turkey', animals: [mkA('turkey', { sex: 'm' })], h: 1.1 },
+    { name: 'Bear', animals: [mkA('bear')], h: 1.5 }, { name: 'Fish', animals: [mkA('fish')], h: 0.4 },
+    { name: 'Sow', pigs: [mkP({ sex: 'f' })], h: 0.9 }, { name: 'Boar', pigs: [mkP({ sex: 'm' })], h: 0.9 },
+  ],
+  variants: [
+    { name: 'Ewe and lamb', animals: [mkA('sheep', { x: 0.3 }), mkA('sheep', { size: 0.55, x: -0.45, z: -0.3, yaw: 0.4 })], h: 1 },
+    { name: 'Shorn ewe, shorn ram', animals: [mkA('sheep', { shorn: 9, x: 0.35 }), mkA('sheep', { shorn: 9, sex: 'm', x: -0.4, z: 0.3 })], h: 1 },
+    { name: 'Cow and calf', animals: [mkA('cow', { x: 0.4 }), mkA('cow', { size: 0.55, x: -0.55, z: -0.4, yaw: 0.3 })], h: 1.3 },
+    { name: 'Doe and fawn', animals: [mkA('deer', { x: 0.35 }), mkA('deer', { size: 0.55, x: -0.45, z: -0.3, yaw: 0.4 })], h: 1.7 },
+    { name: 'Saddled horse', animals: [mkA('horse', { tamed: true })], h: 2.1 },
+    { name: 'Tame wolf (collar)', animals: [mkA('wolf', { tamed: true })], h: 1 },
+    { name: 'Tame cow, tame ewe', animals: [mkA('cow', { tamed: true, x: 0.45 }), mkA('sheep', { tamed: true, x: -0.6, z: -0.4 })], h: 1.3 },
+    { name: 'Tame sow, piglet', pigs: [mkP({ tamed: true, x: 0.35 }), mkP({ size: 0.55, x: -0.45, z: -0.3, yaw: 0.4 })], h: 0.9 },
+    { name: 'Snared pig, snared deer', pigs: [mkP({ trapped: 30, walkPhase: 1.2, x: -0.5, z: -0.2 })], animals: [mkA('deer', { trapped: 30, walkPhase: 1.2, x: 0.5, z: 0.3 })], h: 1.4 },
+    { name: 'Grazing (idle)', animals: [mkA('deer', { mode: 'idle', x: 0.4 }), mkA('cow', { mode: 'idle', x: -0.6, z: 0.2 })], h: 1.4 },
+    { name: 'Staring (watch, §100)', animals: [mkA('deer', { mode: 'watch', x: 0.4 }), mkA('sheep', { mode: 'watch', x: -0.5 })], h: 1.6 },
+    { name: 'Bear rearing', animals: [mkA('bear', { rear: 1, mode: 'warn' })], h: 2.4, az: 0.9 },
+    { name: 'Pheasant flushed', animals: [mkA('pheasant', { sex: 'm', air: 1.5, walkPhase: 1.2, y: 0.3 })], h: 0.9 },
+    { name: 'Turkey gliding', animals: [mkA('turkey', { air: 0.5, walkPhase: 1.4, y: 0.2 })], h: 1.1 },
+    { name: 'Wolf pup, bear cub', animals: [mkA('wolf', { size: 0.55, x: -0.5 }), mkA('bear', { size: 0.55, x: 0.45 })], h: 1 },
+    { name: 'Rabbit kit, chick', animals: [mkA('rabbit', { size: 0.55, x: -0.15 }), mkA('pheasant', { size: 0.55, x: 0.2 })], h: 0.5 },
+    { name: 'Stranded fish (§100), snared pheasant', animals: [mkA('fish', { stranded: true, x: -0.3, z: 0.1, yaw: -0.5 }), mkA('pheasant', { trapped: 30, x: 0.3 })], h: 0.5 },
+  ],
+};
+
+/** One scene for one cell: the stage and the game's own renderers. @param {FaunaCell} c */
+function faunaScene(c) {
+  const scene = stage({ blocks: [] });
+  if (c.animals) {
+    const ar = createAnimalRenderer(scene, 4);
+    ar.sync(/** @type {*} */ (c.animals), 10);
+  }
+  if (c.pigs) {
+    const pr = createPigRenderer(scene, 4);
+    pr.sync(/** @type {*} */ (c.pigs), 10);
+  }
+  for (const a of [...(c.animals ?? []), ...(c.pigs ?? [])]) scene.add(blobShadow(0.45 * (/** @type {*} */ (a).size ?? 1), /** @type {*} */ (a).x, /** @type {*} */ (a).z));
+  return scene;
+}
+
+/** ?row=fauna: a grid of cells, each one kind or variant at a 3/4 front view (`&set=variants`, `&set=far`). */
+function layoutFauna(top) {
+  const set = params.get('set') || 'all';
+  if (set === 'far') {
+    const scene = stage({ blocks: [] });
+    const ar = createAnimalRenderer(scene, 24);
+    const pr = createPigRenderer(scene, 4);
+    const kinds = ['cow', 'sheep', 'horse', 'wolf', 'deer', 'rabbit', 'pheasant', 'turkey', 'bear'];
+    ar.sync(/** @type {*} */ (kinds.map((k, i) => mkA(k, { x: -9 + i * 2.1, z: (i % 2) * 1.5, yaw: 0.6, sex: i % 2 ? 'm' : 'f' }))), 10);
+    pr.sync(/** @type {*} */ ([mkP({ x: 10, z: 0.5, yaw: 0.6 })]), 10);
+    const half = (H - top) / 2;
+    for (const [k, d] of [[0, 9], [1, 18]]) {
+      const rect = [2, top + k * half + 2, W - 4, half - 4];
+      const cam = new THREE.PerspectiveCamera(FOV, rect[2] / rect[3], 0.1, 300);
+      cam.position.set(0.5, 1.6, d);
+      cam.lookAt(0.5, 0.6, 0);
+      panels.push({ scene, cam, rect });
+      label(`at ${d} m, the game's field of view`, rect[0] + 6, rect[1] + 6, 'view');
+    }
+    return;
+  }
+  const only = (params.get('only') || '').split(',').filter(Boolean).map(Number);
+  const all = FAUNA_SETS[set] ?? FAUNA_SETS.all;
+  const cells = only.length ? only.map((i) => all[i]).filter(Boolean) : all;
+  const cols = Number(params.get('cols')) || 4;
+  const rows = Math.ceil(cells.length / cols);
+  const cw = W / cols;
+  const ch = (H - top) / rows;
+  cells.forEach((c, i) => {
+    const rect = [(i % cols) * cw + 2, top + Math.floor(i / cols) * ch + 2, cw - 4, ch - 4];
+    const scene = faunaScene(c);
+    const dist = c.dist ?? Math.max(1.4, c.h * 2.3);
+    const az = Number(params.get('az')) || c.az || 0.7;
+    const t = (params.get('target') || '').split(',').map(Number);
+    const target = t.length === 3 && t.every(Number.isFinite) ? t : [0, c.h * 0.48, 0];
+    panels.push({ scene, cam: orbit(target, Number(params.get('dist')) || dist, az, Number(params.get('elev')) || 0.14, rect[2] / rect[3], 32), rect });
+    label(c.name, rect[0] + 6, rect[1] + 6, 'view');
+  });
+}
+
 const keys = DEBUG_ROWS[ROW] ? [ROW] : ROW === 'all' || !ROWS[ROW] ? Object.keys(ROWS) : [ROW];
-titleEl.innerHTML = ROW === 'hair'
+titleEl.innerHTML = ROW === 'fauna' ? 'Caelancraft — the animals, hex-faceted (phase 3)<span>the game\'s own animalRenderer and pigRenderer</span>' : ROW === 'hair'
   ? 'Caelancraft art pilot, pass 3 — hair options<span>silhouette first: Caelan a poofy mass; Brayden and Annabelle a cap and a few big clumps</span>'
   : 'Caelancraft art-direction pilot, pass 3<span>Today · A: Hex-faceted, the chosen look — hair rethought, the far bush leafy</span>';
 const top0 = 34;
 const rowH = (H - top0) / keys.length;
 if (ROW === 'hair') layoutHair(top0);
+else if (ROW === 'fauna') layoutFauna(top0);
 else keys.forEach((k, i) => layoutRow(k, top0 + i * rowH, rowH, keys.length > 1));
 
 function draw() {

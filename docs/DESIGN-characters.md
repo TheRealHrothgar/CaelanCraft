@@ -52,7 +52,7 @@ cube silhouette and the chunky pixels are what read as "Minecraft".
 | an avatar | 180 tris, ~9 draws | ~1,600 tris, 1 draw per bone group, 256² atlas |
 | a zombie | 108 tris | walker ~1,230, runner ~1,290, alpha ~1,300 tris (phase 2, done): instanced per part, 5 draws a kind; a 256² atlas + glow each |
 | the Watcher | ~500 tris, block-atlas tiles | ~830 tris, its own 256² stone atlas + glow (phase 2, done) |
-| an animal | ~200 tris, colours per vertex | ~320–470 tris, 256² atlas |
+| an animal | ~200 tris, colours per vertex | shipped (phase 3): 426–788 tris a whole animal (the fish 134), every kind and the pig on ONE shared 1024² atlas, 1 draw per part group (trunk, head, legs) |
 | a bush in the chunk mesh | ~100 tris | ~1,100 tris near, today's model past ~16 m |
 | the first-person hand | 608 tris | ~430 tris + the held slab |
 
@@ -78,7 +78,18 @@ and plants get a level of detail.
    glowing cracks; the figure at the edge of sight is a dark person-shaped shadow from the kit (sloping shoulders, arms
    clear of the body, a head with a plain mass of hair), drawn after every transparent effect. Screenshot aids:
    `?scene=zombies|crowd|watcher|phantom`.
-3. **Pigs and animals.** Every species, sex, shorn, tame and young variant from the kit, textured.
+3. **Pigs and animals.** Every species, sex, shorn, tame and young variant from the kit, textured. Done (CONTRACTS §69.1):
+   `animalModels.js` builds the ten kinds of animals.js and the pig — hexagonal barrels whose rings swell and pinch,
+   tapered legs with hocks, hooves, paws and trotters, faceted heads with a ridge down the nose and a painted muzzle,
+   wedge and pyramid ears, swept horns, the ram's curl and the stag's antlers, manes, tails, feathered wings, the tom's fan,
+   fins — over one painted 1024² atlas (hair strokes with direction, patches and spots, wool in lit puffs over a lumpy
+   fleece that reads as six puffs end on, stubble, a bird's plumage of single overlapping feathers with a folded wing on
+   each flank, scales). The heads graze while an animal stands idle and come UP while it stares at a crouching hunter (§100); the young
+   are larger-headed and rounder (a fawn spotted); a tame cow, ewe, wolf or pig wears a collar, a bell or a ribbon; a
+   snared one a loop of cord; the bull a ring in his nose. Lit like the avatars (the light volume and the warm fill).
+   `?scene=animals` / `?scene=animal-variants` / `?scene=animal-close` stage them in the game for screenshots (the last the
+   sheep and the birds up close); `gallery.html?row=fauna` lines
+   them up through the game's own renderers.
 4. **Plants.** Model plants in the chunk mesher with per-vertex atlas UVs and a plant atlas, with a level of detail.
 5. **Everything else that is a creature or a figure** (loose items, the campfire's cook pots if they read blocky,
    items in hand on the model) and a last pass on budgets on an iPad.

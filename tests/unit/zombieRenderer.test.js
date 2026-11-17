@@ -691,7 +691,8 @@ describe('§104 screenshot aid: ?scene=zombies|crowd|watcher|phantom (drawn only
     expect(main).toContain('if (sceneZombies) for (const z of sceneZombies) zombieDraw.push(z);');
     expect(main).toContain('watcherRenderer.sync(sceneWatcher ?? watcher.figure, player.x, eyeY, player.z, fxTime);');
     expect(main).toContain('if (scenePhantom) phantomRenderer.sync(scenePhantom);');
-    const fn = main.slice(main.indexOf('function buildFigureScene('), main.indexOf('function enterPlaying('));
+    const fn = main.slice(main.indexOf('function buildFigureScene('), main.indexOf('function buildAnimalScene('));
+    expect(fn.length).toBeGreaterThan(500);
     expect(fn).not.toMatch(/zombies\.(spawn|list\.push)|watcher\.summon|animals\./); // drawn only
     expect(read('../../README.md')).toContain('`?scene=zombies` / `?scene=crowd` / `?scene=watcher` / `?scene=phantom`');
   });

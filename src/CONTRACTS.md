@@ -1585,6 +1585,11 @@ ledge straight ahead. `walkPhase` advances by 4 × horizontal distance (mod 2π)
 0.2 m/s · dt it eases toward the nearest multiple of π by `1 − exp(−LEG_SETTLE_RATE 10 · dt)` (the legs stand straight again).
 `oinkIn` resets to 6–18 s.
 
+> **§69.1 amendment (phase 3, hex-faceted):** the pig is drawn from `animalModels.js` over the animals' shared atlas —
+> `pig-skin` (the trunk and tail), `pig-head` (it roots while the pig stands idle), `pig-legs`, their hurt twins, and
+> `pig-tusks`, `pig-tag` (tame), `pig-snare` (snared); `pig-features` is gone, the colours are painted. Still 3 draw calls.
+> The paragraph below is the original.
+
 `createPigRenderer(scene, capacity = PIG_MAX)` → `{ sync(pigs), count(), dispose(), group }`: the first `capacity` pigs are drawn
 with five shared InstancedMeshes in `group` — `pig-skin` (body, head, ears, tail merged; PINK), `pig-features` (snout, nostrils,
 eyes, pupils merged with vertex colours), `pig-legs` (4 instances per pig, pivoting at the hip) and their twins `pig-skin-hurt` /
@@ -4169,7 +4174,121 @@ z, yaw)`, `remove`, `update(dt, world) → events`, `wound`, `feed`, `shear`, `m
 - **Items**: raw_beef / roast_beef (36), raw_mutton / roast_mutton (26), roasted on a skewer (24 s / 18 s), spoiling like
   pork; 211 items, 117 recipes.
 - **Models** (animalRenderer `MODELS`, zombieRenderer.boxesGeometry): per species a body (and an `alt`: shorn sheep, saddled
-  horse, collared wolf) and four legs swinging in diagonal pairs; red-flash twins for `hurt`.
+  horse, collared wolf) and four legs swinging in diagonal pairs; red-flash twins for `hurt`. *Replaced by §69.1 (phase 3):
+  hex-faceted parts over one painted atlas; the strides and twins stay.*
+
+### 69.1 The models, hex-faceted (phase 3 of docs/DESIGN-characters.md) — `src/animalModels.js` (PURE), `src/animalRenderer.js`, `src/pigRenderer.js` (three), `src/paintKit.js`, `src/diagnostics.js`, `src/main.js`, `src/gallery.js`, `src/pilotModels.js`
+
+Amends §30's and §69's models, §76.4's and §88.4's "Models" (the boxes coloured per vertex are gone; `zombieRenderer`'s
+`boxesGeometry` is no longer used by the animals). The look is §91's **A, hex-faceted**; only the look changed: the
+colliders, heights, the pig's head box, the AI, the strides, the rear-up and the wings are as they were.
+
+- **`animalModels.js`** (PURE) builds every kind from the kit (`modelKit.js`, `figureKit.js`'s `Skin`): `MODEL_KINDS` =
+  animals.js's ten and `'pig'`. Each kind is a **trunk** (a hexagonal loft lying along it, rump to chest, its rings
+  swelling at the ribs and the quarters and pinching at the waist, the back arched where the animal's is), a **head
+  group** (a neck and a faceted head loft — phase 0, a ridge down the nose, the muzzle painted on its front cap — with
+  wedge or pyramid ears, swept horns, a ram's curl, a stag's beam and tines, a horse's mane and forelock, a bird's beak, a
+  tom's snood and wattle), **one leg** (a loft from its hip at the origin down to −legH, reaching 0.06–0.15 up into the
+  body; the hind leg's hock bends back), a bird's **wing** (a flattened loft along +x from its shoulder) and swept or
+  carded tails, fins and fans (a `card` is a flat elongated hexagon, both faces painted the same way up). Every part's uvs
+  are on **ONE atlas**, `ANIMAL_ATLAS` **1024** square, about two-thirds painted (`ANIMAL_DENSITY`: trunks 112, heads 190,
+  legs 150 texels a metre; small parts denser): short hair laid in strokes along the body over a seamless mottle, the back
+  lit and the belly shaded (or a paler belly blended in), a cow's white patches, a deer's dark back line, white rump and a
+  fawn's spots, a wolf's dark saddle, pale mask and amber eyes, a bear's grizzled stripe and pale chest and claws, wool
+  in big lit puffs with dark hollows and curls in them (`puffs`, read across a field), the clipper's stubble, a bird's
+  `plumage` (single overlapping feathers, `Painter.feather`: small on the breast, larger on the back, and a FOLDED WING
+  on each flank — coverts with pale edges, a bold bar, long barred flight feathers toward the tail, a shadow under its
+  edge; the hen pheasant's dark centres, the cock's black crescents and blue-grey rump, the turkey hen's pale tips, the
+  tom's black tips, his bronze barring; the chest's first rows and the trunk's caps plain and soft, `softCap`, so the
+  strip gathering at the breast makes no rosette or knob), a spread wing's long feathers (`spreadWing`), a cock
+  pheasant's green head, white collar and red wattles, a turkey's bare warty neck, scales (`Painter.scales`), hooves and
+  muddy trotters, eyes with a
+  catchlight and lids, muzzles with nostrils. Deterministic (a seed per picture): the same bytes every build.
+- `ANIMAL_RIGS[kind]`: `legH`, `legW` (the snare loop's size), `legX`, `legZ` [front, back], `swing`, `turn` (true: a front
+  leg is the hind leg turned half round — cow, sheep, horse, wolf, deer; the rabbit, the bear and the pig have a front to
+  their paws and trotters and are drawn as they are), and the optional `legs`, `hop`, `wiggle`, `wing { pivot, len, chord,
+  flap }`, `rear { y, z, angle, arms, swipe }`, `head { pivot, level, graze, alert }` and `lie { mid, up }` (the fish's,
+  §100) — the joints of the old models, kept (§69, §76.4).
+- `buildAnimalModels()` → `{ image, atlas: [1024, 1024], texels, kinds, snare }`; `animalModels()` builds once a page and
+  returns the same (both renderers and the gallery share it; about half a second). `kinds[kind]` = `{ parts, variants }`:
+  `parts` its geometries in MODEL space (metres, feet at the origin, facing −Z) by name — `body`, `alt`, `male`, `young`,
+  `head`, `head-male`, `head-alt`, `head-maleAlt`, `legs`, `legs-male`, `wings`, `tag`, `tusks` as the kind has them —
+  and `variants` maps each bodyVariant (and `young`) to [trunk part, head part (null: none), legs part (absent: `legs`)]:
+  cow body [body, head], male [male, head-male, legs-male] (the bull: bigger, darker, a rise over the shoulders, wide horns,
+  a brass ring in his nose, no udder); sheep body [body, head] (the fleece: twelve corners, every other one drawn in —
+  `lumpy`'s notch, a parting along the spine — and every corner pushed in or out a little, closed by a low point at each
+  end: seen end on, six puffs round it, not a hexagonal block; its neck a closed solid that rounds off into the back of the
+  head and a closed woolly tuft on the poll — no open shell, not at a lamb's larger head), alt [alt, head-alt] (shorn, its neck too),
+  male [body, head-male] (the ram's curled horns), maleAlt [alt, head-maleAlt]; horse body, alt [alt, head-alt] (a blanket
+  round the back, a saddle with a pommel and a cantle; a bridle painted on the head and reins to the withers); wolf body,
+  alt [body, head]; deer body, male [body, head-male] (antlers, a darker maned neck), young [young, head] (the spotted
+  fawn); pheasant and turkey body / male (the cock's copper body and long barred tail, his green head; the tom's bronze
+  body, his fan of two rows of barred, white-tipped feathers, his bare blue head, snood and wattle; both birds hold their
+  heads clear of the breast on a neck: the turkey's rises about a quarter of a metre over her back); rabbit, bear, fish
+  (no head part: a fish never turns its head) and pig body. `tag`: a tame cow's leather collar and brass bell, a tame
+  ewe's blue ribbon, bow and bell, a tame wolf's red collar and brass tag, a tame pig's green ribbon and bow. `tusks`: the
+  boar's. `snare`: a loop of cord and its trailing end, at unit size (scaled by a rig's `legW`).
+- **Budgets**: a whole animal in any variant — trunk, head, `legs` legs, and a bird's two wings — at most **800**
+  triangles (`variantTriangles`): cow 680, bull 762, ewe 612, ram 744, shorn ewe 526, horse 636, saddled horse 788, wolf
+  542, doe 576, stag 748, rabbit 426, pheasant 422 / 446 and turkey 458 / 650 (hen / male, their wings counted), bear
+  544, fish 134 (it is small and under water), pig 542 (+ 44 the tusks). `variantBounds(m, kind, variant)` (the trunk's and head's reach at rest) and
+  `restModel(kind, variant)` (a kind standing at rest as one geometry: the pilot's and the gallery's form) are for tests
+  and tools.
+- **`animalRenderer.js`**: `faunaAssets()` builds the atlas texture (sRGB, `LinearFilter` / `LinearMipmapLinearFilter`,
+  mipmaps, anisotropy 4) and one BufferGeometry per part once a page, shared with pigRenderer (`disposeFaunaAssets` for
+  tests). `faunaMaterial(map, emissive, intensity)`: a Lambert material over the atlas lit like the avatars
+  (`avatarRenderer.patchAvatarShader`: the light volume and the warm fill — a shaded facet stays warm, and the animal still
+  goes dark at night and in a cave), program key `FAUNA_PROGRAM`; the animals' base material keeps the faint
+  `NIGHT_GLOW` 0x1a1a1a, the hurt twin 0xff2a2a × 0.7. Meshes: per kind and part `${kind}-${part}` and its twin
+  `${kind}-${part}-hurt` (the legs' capacity × legs, the wings' × 2), `${kind}-tag` (no twin) and one `animal-snare` for
+  every kind. `sync(animals, dt?)` (dt: seconds since the last sync for the heads' easing; measured with `performance` when
+  absent — main passes none): per animal its variant's trunk, head and legs (a young deer: `young`); the trunk at
+  translate · rotateY(yaw + renderSpin) · scale (size × renderScale), the bear's rear as before, then a `stranded` fish's
+  roll onto its side (§100: · T(0, lie.up, 0) · Rz(π/2) · T(0, −lie.mid, 0): its trunk on the bed, a side fin at most
+  0.05 in the mud; its side fins are swept back along the flanks for it); the **head group** at
+  the trunk's matrix · T(pivot) · Rx(pitch − rear · angle · level) · S(head scale) · T(−pivot); the legs as before (diagonal
+  pairs, a bird's tucked in the air, a reared bear's forelegs on the body), a front leg of a `turn` rig turned half round
+  after its swing; the wings as before. `MODELS` = the animals' rigs (ANIMAL_KINDS order); `bodyVariant` and `legCount`
+  unchanged.
+- **The head shows what it does** (§100): `headPitch(a, rig)` = `rig.head.alert` (0.15–0.3, up) while it stares
+  (`mode` 'watch'), `rig.head.graze` (down: −1.15 to −1.3 for the grazers, −0.85 to −0.9 for the birds' pecking, −0.35
+  to −0.5 for the wolf's, the bear's and the rabbit's sniffing; −0.1 for the pig's rooting, a nod that keeps its head
+  inside `PIG_HEAD_BOX`) while it stands `idle` on the ground (not
+  ridden, sitting, snared, in water or in the air), 0 otherwise; the drawn pitch eases toward it at `HEAD_RATE` 5/s (a
+  WeakMap per renderer keyed by the body: nothing is written on the animal; a body seen for the first time starts at its
+  target).
+- **The young** (`youthOf(a)`: 0 grown .. 1 at YOUNG_SCALE): drawn at its size as before, its head `1 + YOUNG_HEAD`
+  (0.3) × youth larger about the pivot and its trunk `YOUNG_ROUND` [1.08, 1.06, 0.94] (rounder, shorter) about its middle,
+  easing out as it grows; a fawn on the spotted coat.
+- **Tame and snared**: a tame animal whose kind has a `tag` wears it on its head group (the saddled horse needs none). An
+  animal (or a pig) with `trapped > 0` gets the snare's loop on its left hind leg (a bird's left leg: both of a bird's
+  legs count as front ones), at the ankle, scaled by `legW` (one more draw call while one is held; the sprung snare is
+  drawn by the mesher as before).
+- **`pigRenderer.js`** keeps its API, `renderScaleOf`, `pigSizeOf`, `renderSpinOf`, LEG_H 0.3, the hips and the diagonal
+  swing (±sin(walkPhase) · 0.6): meshes `pig-skin` (the trunk and the tail), `pig-head` (head, snout disc, ears; it roots
+  while the pig stands idle — headPitch, eased), `pig-legs` (4 per pig), their twins `pig-skin-hurt`, `pig-head-hurt`,
+  `pig-legs-hurt` (0xff2a2a × 0.6; the base material's emissive is 0), `pig-tusks` (a grown boar's, on the head),
+  `pig-tag` (a tame pig's ribbon), `pig-snare` (a snared pig's loop) — any number of pigs is **3 draw calls** (6 while one
+  flashes, one more each while a boar, a tame pig or a snared pig is in view). A piglet's head is larger and its body
+  rounder, as an animal's. Its head as drawn stays inside `PIG_HEAD_BOX` (within 0.025, the part ahead of the box's
+  back) at rest, rooting and between: the pig only nods (`graze` −0.1), so a click on its lowered snout still finds the
+  pig and not the block behind it (PB-3; the box is gameplay and unchanged).
+- **Screenshots** (`diagnostics.ANIMAL_SCENES`, main `buildAnimalScene` / `holdScene`): `?scene=animals` (with
+  `?autoplay=1`; use `?nosave=1` and `?fly=1`) flattens a meadow of grass at the player's feet level ahead and puts every
+  kind there — cow and bull, horse, doe and stag, bear behind; ewe and ram, wolf, sow and boar, the turkeys; the rabbit,
+  the pheasants and a fish in a dug cell of water in front — each facing the player turned a little, and HOLDS them every
+  frame (place, turn, mode 'walk', legs straight, its fields). `?scene=animal-variants`: a ewe and her lamb, a shorn ewe
+  and ram, a cow and calf, a doe and fawn, a saddled horse, a rearing bear, a tame wolf, cow and ewe, a tame sow, a
+  piglet, a snared pig on a sprung snare, a grazing deer (idle) and a staring one (watch). `?scene=animal-close`: the
+  sheep (a ewe facing the player, a lamb, a ram, a shorn ewe) and the birds (both turkeys, both pheasants) two to four
+  metres off, where wool and feathers are read. `readSceneParam` accepts the keys of `ANIMAL_SCENES` (own keys only). The gallery (`gallery.html?row=fauna`, `&set=variants|far`, `&only=`, `&cols=`, `&az=`, `&target=x,y,z`, `&dist=`,
+  `&time=`) shows them through the game's own renderers; the pilot's `sheep` and `pig` are `restModel`'s.
+- Tests: `animalModels.test.js` (the parts, the atlas, budgets, variants, heights, the coats' colours, the heads' poses,
+  the young, tags and snares), `animals.test.js`, `fauna.test.js` and `populations.test.js` (the meshes by name, the bold
+  features measured on the geometry: antlers, ears, the cock's tail, the tom's fan, the bear's bulk, the fish's fin),
+  `pigRenderer.test.js`, `paintKit.test.js` (one feather, overlapping feathers with no seam, scales), `pilotModels.test.js`;
+  `animalModels.test.js` also: the sheep's head and fleece closed, the fleece's outline lumpy end on, the birds' heads
+  clear of their bodies, every snareable kind's loop, the stranded fish on its side, the screenshot scenes.
 
 ## 70. Flint you can see; bolder ground litter — `src/blocks.js`, `src/mesher.js`, `src/tiles.js`, `src/harvest.js`
 
@@ -4606,7 +4725,8 @@ ground), `nests`, `predator`, `snare: false`, `water`, `pad` (extra crosshair re
 - **Damage**: vitals DAMAGE_CAUSES, storage DEATH_CAUSES and survival DEATH_TITLES gain 'bear' ("A bear brought you down.").
 - **Models** (animalRenderer MODELS): optional `legs` (2 birds, 0 fish), `hop`, `wiggle`, `wing` (two boards drawn only
   while `air ≠ 0`, legs tucked), `rear` (the body pitches up about the hips by `animal.rear`, the forelegs with it; `swipe`
-  swings them) and `head` (its own mesh, kept level while the body rears). `bodyVariant`: a stag is `alt`.
+  swings them) and `head` (its own mesh, kept level while the body rears). `bodyVariant`: a stag is `alt`. *§69.1: every
+  kind but the fish now has a head group of its own (it grazes and stares, §100); the wings are feathered lofts.*
 - **Commands**: `summon deer|stag|rabbit|pheasant|turkey|bear|fish [q y r]`; a fish only into water.
 - **Save**: the `animals` field gains `v` (1 = stag, deer only); at most ANIMAL_MAX 40; a list written before v0.14 validates
   to itself. `air`, the bear's warn / chase / rest and a fish's dart are not saved.
@@ -6596,7 +6716,9 @@ retired. (config.js still holds PIG_NATURAL_COUNT and the PIG_REPOP_* numbers, r
   pheasant (the old body; the hen is drab brown with a short tail), the tom turkey (the old body with its fan; the hen
   is plainer, her tail low). `bodyVariant` gives 'body' | 'alt' | 'male' | 'maleAlt'; a young animal is drawn at its
   `size` on the female's body. Pigs: a grown boar's tusks (`pig-tusks`, one more draw call); a piglet drawn at its size.
-  Horses, wolves, rabbits, the bear and fish look alike. `variant` 1 still marks a stag (a male deer) for the old field.
+  Horses, wolves, rabbits, the bear and fish look alike. *§69.1: the male's look is its variant's trunk or head (a ram is the
+  ewe's fleece with the horned head); the young are drawn larger-headed and rounder, a fawn spotted; a tame cow, ewe, wolf
+  or pig wears a tag.* `variant` 1 still marks a stag (a male deer) for the old field.
 
 ### 88.5 The save, the debug handle, the guide
 
@@ -7012,8 +7134,9 @@ id, never throws, returns whether it did. Main passes the store the Ambience swi
 
 - **The kit.** `modelKit.js` makes closed, outward-wound solids in typed arrays (n-gon lofts, prisms and pyramids — six sides,
   flat facets — chamfered boxes, wedges, sweeps along a curve, transforms, merges, atlas uvs). `paintKit.js` paints RGBA
-  pictures from a seed (cloth, denim, knit, skin, hair strands, stone; seams, hems, stitches; faces) and packs them on an
-  atlas with gutters bled for the mipmaps. `figureKit.js` is what figures share: `Skin` (one model's atlas: rectangles asked
+  pictures from a seed (cloth, denim, knit, skin, hair strands, stone; seams, hems, stitches; faces; §69.1: a single
+  feather — quill root, lit vane, pale fringe round a rounded tip, bars — and loose overlapping rows of them, sized by
+  region and seamless round a strip when asked; scales) and packs them on an atlas with gutters bled for the mipmaps. `figureKit.js` is what figures share: `Skin` (one model's atlas: rectangles asked
   for by name — a strip round a column and its caps, a box's faces, a plain picture — packed tallest first, painted once),
   `shapes(STYLES.hex)` (columns, chamfered blocks, nubs), the faceted head (`HEAD_CORNERS`, `KID_HEAD`, `headSkin` paints the
   face on its front plane, `addHead` adds a nose wedge and hex ears; each avatar may carry its own profile as
@@ -8165,8 +8288,8 @@ seven-column pond could take a whole zone's school.
   `Animals._fishAground`: a fish whose column is too shallow swims to the nearest neighbouring column deep enough
   (`fishDepth`); with none it holds still on the bed while any water is left (`fishWater` → `{ bed, surface, swim }`); with
   no water it is `stranded` while seen: it drops at `FISH_DROP` 4 m/s to the top of the first solid cell below it (a
-  block put into its cell lifts it onto that block) and lies there on its side (animalRenderer's model `lie`: rolled a
-  quarter turn about its length); only unseen is it gone (`events.despawned`). The swim step is
+  block put into its cell lifts it onto that block) and lies there on its side (the fish rig's `lie`, `ANIMAL_RIGS` /
+  animalRenderer's `MODELS`: rolled a quarter turn about its length; §69.1); only unseen is it gone (`events.despawned`). The swim step is
   at most radius + 0.2 m and is taken only when the point it ends in has water deep enough.
 - **By the size of the water**: `zoneLand` marks the zone's fresh water columns (streams on every column; a pond found on
   the every-other-column lattice is followed column by column) and joins them side by side into bodies; each holds
@@ -8286,9 +8409,9 @@ seven-column pond could take a whole zone's school.
   `SUSPECT_SETTLE` 0.1 a second; at `SUSPECT_CALM` 0.1 it settles (idle again) and accepts the still shape
   (`a.accepted`) until the player moves. A player it cannot see who keeps moving near is heard until suspicion reaches 1.
   So a deer that turns round on a frozen hunter stares about two seconds and goes back to grazing; creep while it looks
-  away. Nothing of its head is drawn (animalRenderer has no head pose but the bear's): the stare is seen as the animal
-  standing and turning to face the player, and in the hint. Amends v0.16's "an animal that turns its head sees you at
-  once".
+  away. The stare is seen as the animal standing and turning to face the player with its head UP, and in the hint
+  (§69.1: `headPitch` — the head group raised by the rig's `alert` while it stares, lowered to graze while it stands
+  idle). Amends v0.16's "an animal that turns its head sees you at once".
 - **Cues** (main): the animal hint `Doe is watching you — keep still` while it stares (any staring animal within
   `WATCHED_HINT_RANGE` 30 m when the crosshair is elsewhere: `The Doe is watching you — keep still`); stalking
   (crouched) the wild animal's hint carries the wind's word: ` · downwind of it` (scent < −`STALK_WIND_WORD`) or ` · it
@@ -8548,7 +8671,7 @@ nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vec
   which also raises the wind; as a screenshot aid the shower is at full strength at once, the sky grey and the field
   run 150 steps, since a headless browser may draw a frame only every few seconds). `?time=` picks the moment and so
   the wind (with `?time` the clock is frozen: the wind holds still, the flags still wave). `readSceneParam` accepts
-  'wind' and 'wind-rain'.
+  'wind' and 'wind-rain' (§69.1: and 'animals', 'animal-variants').
 - Not done: leaves and tall plants swaying with the wind. It wants a vertex displacement in the chunk shader that knows
   which vertices are leaves or plant tips, and the mesher marks nothing of the kind; left for later.
 - Tests: `tests/unit/windDrawn.test.js` (the pure helpers, the one calm, the vane on the page and on the screen in every

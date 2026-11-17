@@ -1,7 +1,10 @@
-// pigRenderer.js regression tests — Node only (three core objects work without WebGL). CONTRACTS §30.
+// pigRenderer.js regression tests — Node only (three core objects work without WebGL). CONTRACTS §30, §69.1.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { createPigRenderer, renderScaleOf, renderSpinOf } from '../../src/pigRenderer.js';
+import { faunaAssets, FAUNA_PROGRAM, YOUNG_HEAD } from '../../src/animalRenderer.js';
+import { ANIMAL_RIGS, ANIMAL_ATLAS } from '../../src/animalModels.js';
+import { PIG_HEAD_BOX } from '../../src/pigs.js';
 import { PIG_MAX, MAX_INFALL_MOBS } from '../../src/config.js';
 
 /** A minimal pig as the renderer reads it. */
@@ -28,11 +31,14 @@ describe('createPigRenderer — instanced pig models', () => {
     r.sync(pigs);
     expect(r.count()).toBe(PIG_MAX);
     const meshes = drawn(scene);
-    expect(meshes.map((m) => m.name).sort()).toEqual(['pig-features', 'pig-legs', 'pig-skin']);
+    expect(meshes.map((m) => m.name).sort()).toEqual(['pig-head', 'pig-legs', 'pig-skin']);
     let objects = 0;
     scene.traverse((o) => { if (o.isMesh) objects++; });
-    expect(objects).toBe(6); // skin, features, legs, their two hurt twins and (§88) the boars' tusks — whatever the number of pigs
+    // skin, head, legs, their three hurt twins, (§88) the boars' tusks, a tame one's ribbon and a snared one's loop —
+    // whatever the number of pigs
+    expect(objects).toBe(9);
     expect(byName(r, 'pig-skin').count).toBe(PIG_MAX);
+    expect(byName(r, 'pig-head').count).toBe(PIG_MAX);
     expect(byName(r, 'pig-legs').count).toBe(PIG_MAX * 4);
     r.dispose();
     expect(scene.children).toHaveLength(0);
@@ -43,12 +49,15 @@ describe('createPigRenderer — instanced pig models', () => {
     const r = createPigRenderer(scene);
     r.sync([pig(0, 10, 0, { sex: 'f' }), pig(2, 10, 0, { sex: 'm' }), pig(4, 10, 0, { sex: 'm', size: 0.6 })]);
     expect(byName(r, 'pig-tusks').count).toBe(1);
-    expect(drawn(scene).map((m) => m.name).sort()).toEqual(['pig-features', 'pig-legs', 'pig-skin', 'pig-tusks']);
+    expect(drawn(scene).map((m) => m.name).sort()).toEqual(['pig-head', 'pig-legs', 'pig-skin', 'pig-tusks']);
     const m = new THREE.Matrix4();
     byName(r, 'pig-tusks').getMatrixAt(0, m);
     expect(translation(m).x).toBe(2); // the boar's
-    byName(r, 'pig-skin').getMatrixAt(2, m);
+    byName(r, 'pig-legs').getMatrixAt(8, m); // the piglet's first leg: the whole pig at its size
     expect(new THREE.Vector3().setFromMatrixScale(m).x).toBeCloseTo(0.6, 6);
+    byName(r, 'pig-skin').getMatrixAt(2, m); // its body a little rounder than that
+    expect(new THREE.Vector3().setFromMatrixScale(m).x).toBeGreaterThan(0.6);
+    expect(new THREE.Vector3().setFromMatrixScale(m).z).toBeLessThan(0.6);
     byName(r, 'pig-skin').getMatrixAt(0, m);
     expect(new THREE.Vector3().setFromMatrixScale(m).x).toBeCloseTo(1, 6);
     r.sync([pig(0, 10, 0, { sex: 'f' })]);
@@ -70,27 +79,108 @@ describe('createPigRenderer — instanced pig models', () => {
     r.dispose();
   });
 
-  it('keeps the parts and colours of the old 16-mesh model (merged by material)', () => {
+  it('is hex-faceted and painted: the animals\' shared atlas, linear filtering with mipmaps, its head inside PIG_HEAD_BOX', () => {
     const scene = new THREE.Scene();
     const r = createPigRenderer(scene);
     const skin = byName(r, 'pig-skin');
-    const features = byName(r, 'pig-features');
-    // body (6-sided cylinder) + head + tail + 2 ears; snout + 2 nostrils + 2 eyes + 2 pupils.
-    const cyl = new THREE.CylinderGeometry(1, 1, 1, 6).getAttribute('position').count;
-    const box = new THREE.BoxGeometry(1, 1, 1).getAttribute('position').count;
-    expect(skin.geometry.getAttribute('position').count).toBe(cyl + 4 * box);
-    expect(features.geometry.getAttribute('position').count).toBe(7 * box);
-    expect(skin.material.color.getHex()).toBe(0xf2a7b5);
-    expect(features.material.vertexColors).toBe(true);
-    const colors = new Set();
-    const col = features.geometry.getAttribute('color');
-    const c = new THREE.Color();
-    for (let i = 0; i < col.count; i++) colors.add(c.setRGB(col.getX(i), col.getY(i), col.getZ(i)).getHex());
-    expect([...colors].sort()).toEqual([0x3a1f26, 0xe0808f, 0xffffff].sort());
+    const head = byName(r, 'pig-head');
+    const A = faunaAssets();
+    for (const m of [skin, head, byName(r, 'pig-legs')]) {
+      expect(m.material.map).toBe(A.texture); // one texture for every animal and the pig
+      expect(m.material.vertexColors).toBe(false);
+      expect(m.material.customProgramCacheKey()).toBe(FAUNA_PROGRAM);
+      expect(m.geometry.getAttribute('uv')).toBeDefined();
+    }
+    expect([A.texture.image.width, A.texture.image.height]).toEqual([ANIMAL_ATLAS, ANIMAL_ATLAS]);
+    expect(A.texture.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    expect(A.texture.magFilter).toBe(THREE.LinearFilter);
+    expect(skin.material.color.getHex()).toBe(0xffffff); // the colour is in the atlas
+    // a pig's triangles, all told, within the budget; the head (its snout and ears) where the ray test looks for it
+    const tris = (m) => m.geometry.index.count / 3;
+    expect(tris(skin) + tris(head) + 4 * tris(byName(r, 'pig-legs'))).toBeLessThanOrEqual(800);
+    head.geometry.computeBoundingBox();
+    const hb = head.geometry.boundingBox;
+    expect(hb.min.z).toBeGreaterThan(PIG_HEAD_BOX.z0 - 0.02);
+    expect(hb.max.y).toBeLessThan(PIG_HEAD_BOX.y1 + 0.02);
+    expect(Math.max(-hb.min.x, hb.max.x)).toBeLessThan(PIG_HEAD_BOX.x + 0.02);
     r.dispose();
   });
 
-  it('flashes a hurt pig red (skin and legs only) and puts it back afterwards', () => {
+  it('the head as drawn stays inside PIG_HEAD_BOX in every pose — walking, rooting, easing (PB-3: a click on it hits the pig)', () => {
+    const scene = new THREE.Scene();
+    const r = createPigRenderer(scene);
+    const head = byName(r, 'pig-head');
+    const pos = head.geometry.getAttribute('position');
+    const m = new THREE.Matrix4();
+    const v = new THREE.Vector3();
+    const TOL = 0.025;
+    const p = pig(0, 10, 0, { mode: 'walk', yaw: 0 });
+    for (const [mode, dt] of [['walk', 10], ['idle', 0.05], ['idle', 0.3], ['idle', 10], ['walk', 0.1]]) {
+      p.mode = mode;
+      r.sync([p], dt);
+      head.getMatrixAt(0, m);
+      let lo = Infinity;
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(m);
+        v.y -= 10;
+        // what sticks out of the body's cylinder ahead of the box's back is what a click must find in the box
+        if (v.z > PIG_HEAD_BOX.z1) continue;
+        lo = Math.min(lo, v.y);
+        expect(Math.abs(v.x), mode).toBeLessThan(PIG_HEAD_BOX.x + TOL);
+        expect(v.y, mode).toBeLessThan(PIG_HEAD_BOX.y1 + TOL);
+        expect(v.z, mode).toBeGreaterThan(PIG_HEAD_BOX.z0 - TOL);
+      }
+      expect(lo, `${mode} ${dt}`).toBeGreaterThan(PIG_HEAD_BOX.y0 - TOL);
+    }
+    r.dispose();
+  });
+
+  it('roots with its head down while it stands idle, eases back up walking; a piglet\'s head is larger', () => {
+    const scene = new THREE.Scene();
+    const r = createPigRenderer(scene);
+    const head = byName(r, 'pig-head');
+    const m = new THREE.Matrix4();
+    const snout = () => {
+      head.getMatrixAt(0, m);
+      return new THREE.Vector3(0, 0.59, -0.74).applyMatrix4(m);
+    };
+    const p = pig(0, 10, 0, { mode: 'walk' });
+    r.sync([p], 10);
+    const level = snout();
+    p.mode = 'idle';
+    r.sync([p], 0.05);
+    const easing = snout();
+    r.sync([p], 10);
+    const rooting = snout();
+    expect(rooting.y).toBeLessThan(level.y - 0.03); // a nod: the head stays in its box (above)
+    expect(easing.y).toBeLessThan(level.y);
+    expect(easing.y).toBeGreaterThan(rooting.y);
+    const piglet = pig(0, 10, 0, { mode: 'walk', size: 0.55 });
+    r.sync([piglet], 10);
+    head.getMatrixAt(0, m);
+    expect(new THREE.Vector3().setFromMatrixScale(m).x).toBeCloseTo(0.55 * (1 + YOUNG_HEAD), 5);
+    expect(ANIMAL_RIGS.pig.head.graze).toBeLessThan(0);
+    r.dispose();
+  });
+
+  it('a tame pig wears a ribbon, a snared one a loop of cord round its left hind trotter (one draw each, only then)', () => {
+    const scene = new THREE.Scene();
+    const r = createPigRenderer(scene);
+    r.sync([pig(0, 10, 0), pig(2, 10, 0, { tamed: true }), pig(4, 10, 0, { trapped: 30 })]);
+    expect(byName(r, 'pig-tag').count).toBe(1);
+    expect(byName(r, 'pig-snare').count).toBe(1);
+    const m = new THREE.Matrix4();
+    byName(r, 'pig-snare').getMatrixAt(0, m);
+    const at = translation(m);
+    expect(at.x).toBeCloseTo(4 - ANIMAL_RIGS.pig.legX, 1); // the left hind leg
+    expect(at.z).toBeGreaterThan(0.1);
+    expect(at.y).toBeLessThan(10.15); // low on the trotter
+    r.sync([pig(0, 10, 0)]);
+    expect(drawn(scene).map((x) => x.name).sort()).toEqual(['pig-head', 'pig-legs', 'pig-skin']);
+    r.dispose();
+  });
+
+  it('flashes a hurt pig red (skin, head and legs) and puts it back afterwards', () => {
     const scene = new THREE.Scene();
     const r = createPigRenderer(scene);
     const a = pig(0, 10, 0, { id: 1 });
@@ -100,7 +190,7 @@ describe('createPigRenderer — instanced pig models', () => {
     expect(hurt.count).toBe(1);
     expect(byName(r, 'pig-legs-hurt').count).toBe(4);
     expect(byName(r, 'pig-skin').count).toBe(1);
-    expect(byName(r, 'pig-features').count).toBe(2); // eyes and snout never flash
+    expect([byName(r, 'pig-head').count, byName(r, 'pig-head-hurt').count]).toEqual([1, 1]);
     expect(hurt.material.emissive.getHex()).toBe(0xff2a2a);
     expect(hurt.material.emissiveIntensity).toBeCloseTo(0.6, 9);
     expect(byName(r, 'pig-skin').material.emissive.getHex()).toBe(0);

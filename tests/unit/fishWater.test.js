@@ -396,19 +396,26 @@ describe('§100 fish — each fish counts in the water it is in, and every water
       body.getMatrixAt(0, M);
       return new THREE.Vector3(0, 1, 0).transformDirection(M);
     };
-    const lowest = (box) => {
+    // the fish's own geometry (its trunk and fins, one part: §69.1), placed as drawn
+    const lowest = () => {
       body.getMatrixAt(0, M);
+      const pos = body.geometry.getAttribute('position');
+      const v = new THREE.Vector3();
       let lo = Infinity;
-      for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
-        lo = Math.min(lo, new THREE.Vector3(box[3] + sx * box[0] / 2, box[4] + sy * box[1] / 2, box[5] + sz * box[2] / 2).applyMatrix4(M).y);
-      }
+      for (let i = 0; i < pos.count; i++) lo = Math.min(lo, v.fromBufferAttribute(pos, i).applyMatrix4(M).y);
       return lo;
+    };
+    const spine = () => {
+      body.getMatrixAt(0, M);
+      return new THREE.Vector3(0, MODELS.fish.lie.mid, 0).applyMatrix4(M).y;
     };
     r.sync([a]);
     expect(Math.abs(up().y)).toBeLessThan(1e-6);
-    expect(lowest(MODELS.fish.body[0]) - a.y).toBeGreaterThanOrEqual(0);
-    expect(lowest(MODELS.fish.body[0]) - a.y).toBeLessThan(0.05);
-    for (const box of MODELS.fish.body) expect(lowest(box) - a.y).toBeGreaterThan(-0.05); // a fin at most a little in the mud
+    expect(lowest() - a.y).toBeGreaterThan(-0.05); // a fin at most a little in the mud
+    expect(lowest() - a.y).toBeLessThan(0.05);
+    // its trunk on the bed: the spine about the trunk's half width above it
+    expect(spine() - a.y).toBeGreaterThan(0.04);
+    expect(spine() - a.y).toBeLessThan(0.1);
     r.sync([{ ...a, stranded: false }]);
     expect(up().y).toBeCloseTo(1, 6); // swimming, upright
     r.dispose();

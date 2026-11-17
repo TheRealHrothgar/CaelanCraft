@@ -7,6 +7,7 @@ import { HEAD_CORNERS } from '../../src/figureKit.js';
 import { fpHandFrame, FP_HAND } from '../../src/avatarModel.js';
 import { AVATAR_IDS, avatarById } from '../../src/avatars.js';
 import { PLAYER_HEIGHT } from '../../src/config.js';
+import { ANIMAL_ATLAS } from '../../src/animalModels.js';
 
 /** Most triangles any one pilot model may have (a guard against a runaway: the gallery reports the real counts). */
 const TRI_BUDGET = 2300;
@@ -33,7 +34,9 @@ describe('the pilot models', () => {
       for (let i = 0; i < g.normals.length; i += 3) expect(Math.hypot(g.normals[i], g.normals[i + 1], g.normals[i + 2])).toBeCloseTo(1, 4);
       expect(g.index.every((i) => i < g.positions.length / 3)).toBe(true);
       expect(m.image.data.length).toBe(m.atlas[0] * m.atlas[1] * 4);
-      expect(m.atlas).toEqual([256, 256]);
+      // the kids, the walker and the plants paint a 256² atlas each; the sheep and the pig are the game's own (phase 3),
+      // on the animals' shared atlas
+      expect(m.atlas).toEqual(name === 'sheep' || name === 'pig' ? [ANIMAL_ATLAS, ANIMAL_ATLAS] : [256, 256]);
       expect(m.texels).toBeGreaterThan(0);
       expect(m.texels).toBeLessThanOrEqual(m.atlas[0] * m.atlas[1]);
     });

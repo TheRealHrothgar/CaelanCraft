@@ -599,6 +599,113 @@ export class Painter {
     return this;
   }
 
+  /**
+   * One feather from its root (x, y) along `ang` (radians, y down), `L` long and `W` wide at most: a quill-thin root
+   * widening to its vane and a rounded tip; the vane lit on one side of its shaft, darker toward the root (where the
+   * feather above covers it); a pale fringe round its tip; `bars` dark bands across it (that many along its length),
+   * `tip` a band of that colour across its end; `wrap`: seamless round a strip (painted again a width over when it
+   * crosses a side).
+   * @param {number} x @param {number} y @param {number} ang @param {number} L @param {number} W @param {number} c
+   * @param {{ edge?: number, fringe?: number, shaft?: number, bars?: number, bar?: number, tip?: number, wrap?: boolean }} [o]
+   */
+  feather(x, y, ang, L, W, c, { edge = shade(c, 1.3), fringe = 0.6, shaft = shade(c, 0.62), bars = 0, bar = shade(c, 0.5), tip = -1, wrap = false } = {}) {
+    const cs = Math.cos(ang);
+    const sn = Math.sin(ang);
+    // its bounds: the root and the tip, W either side across, a pixel more
+    const ex = Math.abs(sn) * W + 1;
+    const ey = Math.abs(cs) * W + 1;
+    const x0 = Math.min(x, x + cs * L) - ex;
+    const x1 = Math.max(x, x + cs * L) + ex;
+    if (wrap) {
+      for (const dx of [-this.w, 0, this.w]) {
+        if (x1 + dx >= 0 && x0 + dx <= this.w) this.feather(x + dx, y, ang, L, W, c, { edge, fringe, shaft, bars, bar, tip });
+      }
+      return this;
+    }
+    const y0 = Math.max(0, Math.floor(Math.min(y, y + sn * L) - ey));
+    const y1 = Math.min(this.h - 1, Math.ceil(Math.max(y, y + sn * L) + ey));
+    for (let py = y0; py <= y1; py++) {
+      for (let px = Math.max(0, Math.floor(x0)); px <= Math.min(this.w - 1, Math.ceil(x1)); px++) {
+        const dx = px + 0.5 - x;
+        const dy = py + 0.5 - y;
+        const t = (dx * cs + dy * sn) / L; // along: 0 the root, 1 the tip
+        const s = -dx * sn + dy * cs; // across
+        if (t <= 0 || t >= 1) continue;
+        const grow = Math.min(1, t / 0.22);
+        const round = t > 0.6 ? Math.sqrt(Math.max(0, 1 - ((t - 0.6) / 0.4) ** 2)) : 1;
+        const half = W * Math.sqrt(grow) * round;
+        const cover = clamp01(half + 0.5 - Math.abs(s));
+        if (cover <= 0) continue;
+        const side = s / (half || 1);
+        let k = side < 0 ? 1.07 - 0.08 * Math.abs(side) : 0.95 - 0.08 * side;
+        k *= 0.78 + 0.26 * Math.min(1, t / 0.75);
+        let col = shade(c, k);
+        if (bars > 0 && t > 0.12 && t < 0.92 && (t * bars) % 1 < 0.34) col = mix(col, bar, 0.78);
+        if (tip >= 0 && t > 0.84) col = mix(col, tip, 0.88);
+        const rim = half - Math.abs(s);
+        if (fringe > 0 && t > 0.5 && rim < 1.3) col = mix(col, edge, fringe * (1 - rim / 1.3) * Math.min(1, (t - 0.5) * 4));
+        if (Math.abs(s) < 0.5 && t < 0.86) col = mix(col, shaft, 0.4);
+        this.px(px, py, col, cover);
+      }
+    }
+    return this;
+  }
+
+  /**
+   * Feathers over the rectangle: overlapping feathers laid in loose rows pointing down it (toward its last row), each a
+   * little bigger or smaller, turned a little, lighter or darker than the next — the rows nearer the top laid over the
+   * ones below, as feathers lie (tips toward the tail), so what shows is each feather's rounded tip and pale fringe. `long`
+   * their length to their width; `sizeAt(x, y)` scales them by region (small on a breast, long on a wing), `wrap` makes
+   * them seamless round a strip.
+   * @param {number[]} ramp [light, mid, dark]
+   * @param {{ size?: number, edge?: number, vary?: number, long?: number, fringe?: number, wrap?: boolean,
+   *   sizeAt?: (x: number, y: number) => number }} [o]
+   */
+  feathers(ramp, { size = 6, edge = ramp[0], vary = 0.35, long = 1.5, fringe = 0.45, wrap = false, sizeAt = () => 1 } = {}) {
+    this.fill(mix(ramp[1], ramp[2], 0.55)).mottle(0.1, 5);
+    const rnd = makeRng(this.seed + 7);
+    /** @type {number[][]} */
+    const all = [];
+    for (let y = -size; y < this.h + size; ) {
+      const rowK = sizeAt(this.w / 2, Math.max(0, Math.min(this.h - 1, y)));
+      const off = rnd() * size;
+      for (let x = -off; x < this.w + size * 0.5; ) {
+        const k = sizeAt(Math.max(0, Math.min(this.w - 1, x)), Math.max(0, Math.min(this.h - 1, y))) * (0.78 + 0.44 * rnd());
+        all.push([x + (rnd() - 0.5) * size * 0.3 * k, y + (rnd() - 0.5) * size * 0.3 * k, k, rnd(), rnd(), rnd()]);
+        x += size * k * (0.72 + 0.2 * rnd());
+      }
+      y += size * rowK * (0.42 + 0.14 * rnd());
+    }
+    // the tail end first, so each feather toward the head lies over the root of the one behind it
+    all.sort((a, b) => b[1] - a[1]);
+    for (const [x, y, k, a, b, c] of all) {
+      const W = size * k * 0.5;
+      const L = W * 2 * long * (0.9 + 0.2 * a);
+      const col = mix(ramp[1], b < 0.5 ? ramp[0] : ramp[2], c * vary);
+      this.feather(x, y - L * 0.72, Math.PI / 2 + (a - 0.5) * 0.5, L, W, col, { edge, fringe, wrap });
+    }
+    return this;
+  }
+
+  /**
+   * Scales: small overlapping arcs in staggered rows (a fish), each lit along its rim with a darker crescent under it.
+   * @param {number[]} ramp [light, mid, dark] @param {{ size?: number }} [o]
+   */
+  scales(ramp, { size = 4 } = {}) {
+    const rnd = makeRng(this.seed + 13);
+    const sx = size;
+    const sy = size * 0.62;
+    for (let gy = Math.ceil(this.h / sy) + 1; gy >= -1; gy--) {
+      for (let gx = -1; gx <= Math.ceil(this.w / sx) + 1; gx++) {
+        const x = (gx + (gy & 1 ? 0.5 : 0)) * sx;
+        const y = gy * sy;
+        this.arc(x, y, size * 0.5, 0.1 * Math.PI, 0.9 * Math.PI, Math.max(0.3, size * 0.08), ramp[2], 0.45, size * 0.42);
+        this.arc(x, y - size * 0.1, size * 0.46, 0.15 * Math.PI, 0.85 * Math.PI, Math.max(0.3, size * 0.06), ramp[0], 0.35 + 0.25 * rnd(), size * 0.36);
+      }
+    }
+    return this;
+  }
+
   /** Grass seen from above: blades of the ramp's greens over a darker ground. @param {number[]} ramp [light, mid, dark] */
   grass(ramp) {
     this.fill(ramp[2]);
