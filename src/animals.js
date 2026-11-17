@@ -111,7 +111,7 @@ export const BEHIND_NOTICE = WARY_BEHIND_FACTOR;
  *   SUSPECT_RISE more suspicious (twice that at point blank); seeing a still, crouching shape it grows SUSPECT_WATCH
  *   suspicious. From SUSPECT_WATCH it stares ('watch': it stands and faces the player). Any movement it sees while it
  *   stares (turned within WATCH_FACING) spooks it, and so does suspicion reaching 1. Otherwise its suspicion falls at
- *   SUSPECT_SETTLE a second, and at SUSPECT_CALM it settles: it lowers its head and accepts the still shape until it moves.
+ *   SUSPECT_SETTLE a second, and at SUSPECT_CALM it settles (idle again) and accepts the still shape until it moves.
  *   The player counts as still below STILL_SPEED (m/s). Walking or sprinting inside the distance spooks it at once.
  */
 export const COVER_NOTICE = 0.45;
@@ -281,12 +281,14 @@ export const FISH_DART_S = 1.1;
 export const FISH_REST_S = 1.5;
 /**
  * §100 fish belong to their water. A fish whose own column has run too shallow swims to a deeper neighbour; with none it
- * holds still in the shallows; with no water at all it is stranded and lies on the bed while the player can see it
- * (`world.inView`), and is gone only once nobody can. A fish woken FISH_DEEP or more below its swimming height (populations:
- * deep water hides it) rises at FISH_RISE m/s instead of easing up at once.
+ * holds still in the shallows; with no water at all it is stranded: it drops to the bed (the first solid cell below it)
+ * at FISH_DROP m/s and lies there on its side while the player can see it (`world.inView`), and is gone only once nobody
+ * can. A fish woken FISH_DEEP or more below its swimming height (populations: deep water hides it) rises at FISH_RISE m/s
+ * instead of easing up at once.
  */
 export const FISH_DEEP = 1.5;
 export const FISH_RISE = 0.5;
+export const FISH_DROP = 4;
 
 /** The voices and the snare's snap (audio.playRecipe data). Gentle, short, never startling. */
 export const SOUNDS = Object.freeze({
@@ -1014,7 +1016,7 @@ export class Animals {
     if (!rose) a.suspicion = Math.max(0, a.suspicion - SUSPECT_SETTLE * dt);
     if (a.mode === 'watch') {
       if (a.suspicion <= SUSPECT_CALM) {
-        a.mode = 'idle'; // it settles: its head goes down again
+        a.mode = 'idle'; // it settles: back to grazing
         a.timer = 1 + this._rng() * 2;
         a.accepted = inRange;
         return 'stand';
@@ -1502,10 +1504,12 @@ export class Animals {
       return true;
     }
     if (world.inView && world.inView(a.x, a.y, a.z)) {
-      // stranded in plain sight: it lies on the ground, flapping now and then, until nobody can see it
+      // stranded in plain sight: it drops to the bed the water left and lies there, flapping now and then, until nobody
+      // can see it (a block that filled its cell lifts it onto its top)
       a.stranded = true;
       a.inWater = false;
-      a.y = Math.max(Math.floor(a.y + 0.5), a.y - 2 * dt);
+      const bed = groundBelow(getBlock, a.x, a.y + 0.05, a.z, this._under);
+      a.y = Math.max(bed, a.y - FISH_DROP * dt);
       a.walkPhase = (a.walkPhase + dt * 9) % TWO_PI;
       return true;
     }

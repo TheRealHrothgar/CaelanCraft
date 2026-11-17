@@ -967,6 +967,92 @@ export class ControlLatch {
   }
 }
 
+/** §100: a draw whose last frame is older than this (ms: a frozen menu or a lost focus came between) goes, unthrown. */
+export const DRAW_STALE_MS = 250;
+
+/**
+ * What one frame of the draw is told (§100; main's drawStep fills one and reuses it): `key` what is in hand; `draws` it is
+ * a spear, a dart or a bow and the player is alive; `playing` no screen is up over the world (the pack, the field book
+ * and Survival's device panel keep the world running under them, so the frame still comes); on a press, `control` the
+ * crosshair is on a circuit control and Shift is up, `noArrows` it is a bow with no Arrow in the pack (Survival);
+ * `latched` the control latch holds a control that Place pressed (§4.9); `now` the clock (ms).
+ * @typedef {{ key: string|null, draws: boolean, playing: boolean, control: boolean, noArrows: boolean, latched: boolean,
+ *   now: number }} DrawEnv
+ */
+
+/**
+ * §100 the draw (PURE): Place held with a spear, a dart or a bow counts up `held`; let go, it is released (main throws or
+ * shoots at drawFraction(held), kept in `f`). A press on a control without Shift is the control's, and so is the hold
+ * that follows while the latch holds it (a Push Button stays pressed). The draw is let go WITHOUT a throw when the hand
+ * changes, when a screen comes up over the running world (the release the cleared mouse would make there is no throw),
+ * or when its last frame is older than DRAW_STALE_MS (a menu that froze the world came between).
+ */
+export class DrawHold {
+  constructor() {
+    /** what is drawn, or null: no draw under way */
+    this.key = /** @type {string|null} */ (null);
+    /** seconds held */
+    this.held = 0;
+    /** the clock of its last frame (ms) */
+    this.at = 0;
+    /** the draw of the last release, 0..1 */
+    this.f = 0;
+  }
+
+  /** A draw is under way. */
+  get on() {
+    return this.key !== null;
+  }
+
+  /** Let the draw go without a throw. */
+  cancel() {
+    this.key = null;
+    this.held = 0;
+  }
+
+  /**
+   * One frame of Place.
+   * @param {{ rightPressed: boolean, right: boolean }} mouse
+   * @param {number} dt
+   * @param {DrawEnv} env
+   * @returns {'start'|'hold'|'release'|'stale'|'cancel'|'noArrows'|'idle'|null} what it did; null: Place is not the
+   *   draw's this frame (nothing in hand draws, a press on a control, or the latch holds one), so the caller goes on
+   */
+  step(mouse, dt, env) {
+    if (!env.draws || !env.key) {
+      this.cancel();
+      return null;
+    }
+    if (!env.playing) {
+      this.cancel();
+      return 'cancel';
+    }
+    if (mouse.rightPressed) {
+      this.cancel();
+      if (env.control) return null;
+      if (env.noArrows) return 'noArrows';
+      this.key = env.key;
+      this.held = 0;
+      this.at = env.now;
+      return 'start';
+    }
+    if (!this.on) return env.latched ? null : 'idle';
+    if (this.key !== env.key) {
+      this.cancel(); // the hand changed: the draw is let go
+      return 'cancel';
+    }
+    if (mouse.right) {
+      this.held += dt;
+      this.at = env.now;
+      return 'hold';
+    }
+    const stale = env.now - this.at > DRAW_STALE_MS;
+    this.f = drawFraction(this.held);
+    this.cancel();
+    return stale ? 'stale' : 'release';
+  }
+}
+
 /** The hold-repeat never places against a control without Shift (§4.9). */
 export function repeatBlocked(hit, shift, isControlFn) {
   return !!hit && !shift && isControlFn(hit.blockId);
@@ -1372,11 +1458,12 @@ export function boot(win, doc) {
   const avatarMotion = new AvatarMotion();
   const camPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
   /**
-   * §100 the draw under way (Place held with a spear, a dart or a bow; drawStep): seconds held, `at` the clock of its last
-   * frame (ms); null when nothing is drawn. Read by the avatar, the ring, the zoom and the hints.
-   * @type {{ key: string, held: number, at: number }|null}
+   * §100 the draw (Place held with a spear, a dart or a bow; drawStep): `on` while one is under way, `held` its seconds.
+   * Read by the avatar, the ring, the zoom and the hints.
    */
-  let drawState = null;
+  const draw = new DrawHold();
+  /** @type {DrawEnv} drawStep's, reused */
+  const drawEnv = { key: null, draws: false, playing: false, control: false, noArrows: false, latched: false, now: 0 };
   /** @type {import('./avatarMotion.js').MotionInput} */
   const motionInput = {
     yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true, sneaking: false, swimming: false, flying: false, riding: false, sleeping: false,
@@ -1477,7 +1564,7 @@ export function boot(win, doc) {
     mi.swimming = Boolean(player.inWater) && !player.onGround;
     mi.riding = Boolean(riding);
     mi.sleeping = sleep.active;
-    mi.draw = drawState ? drawFraction(drawState.held) : 0; // §100: the arm draws back
+    mi.draw = draw.on ? drawFraction(draw.held) : 0; // §100: the arm draws back
     avatarMotion.step(live ? dt : 0, mi);
     avatarRenderer.setHeld(down ? null : heldItemKey()); // §98: the item in hand, in first person and on the model
     const v = avatarView;
@@ -4517,49 +4604,33 @@ export function boot(win, doc) {
 
   // ---- §100 the draw: Place held with a spear, a dart or a bow, released to throw or shoot -----------------------
 
-  /** A draw whose last frame is older than this (ms: a menu or a lost focus came between) is let go without a throw. */
-  const DRAW_STALE_MS = 250;
-
   /**
-   * One frame of Place with what is in hand (both modes): with a spear, a dart or a bow it draws back while held and throws
-   * (or shoots an arrow) when let go, harder the longer it was held (looseItems.drawnThrow, full at DRAW_FULL_S). A press
-   * on a circuit control without Shift is left to the control. @returns {boolean} Place was this (nothing else uses it)
+   * One frame of Place with what is in hand (both modes; the machine is DrawHold): with a spear, a dart or a bow it draws
+   * back while held and throws (or shoots an arrow) when let go, harder the longer it was held (looseItems.drawnThrow, full
+   * at DRAW_FULL_S). A press on a circuit control without Shift, and the hold the control latch keeps on it, are left to
+   * the control; under a screen (the pack, the field book, a device panel) the draw is let go without a throw.
+   * @returns {boolean} Place was this (nothing else uses it)
    */
   function drawStep(mouse, dt) {
     const key = heldItemKey();
     const d = drawOf(key);
-    if (!d || !key || survival.dead) {
-      drawState = null;
-      return false;
+    const e = drawEnv;
+    e.key = key;
+    e.draws = !!d && !survival.dead;
+    e.playing = /** @type {string} */ (state) === STATE.PLAYING; // not under the pack, the book or a device panel
+    e.control = false;
+    e.noArrows = false;
+    if (mouse.rightPressed && d) {
+      const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
+      e.control = !!hit && !shift && latchEnv.isControl(hit.blockId);
+      e.noArrows = d.bow && survival.inSurvival && pack.count(ARROW_KEYS[0]) <= 0;
     }
-    const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
-    if (mouse.rightPressed) {
-      if (hit && !shift && latchEnv.isControl(hit.blockId)) {
-        drawState = null;
-        return false;
-      }
-      if (d.bow && survival.inSurvival && pack.count(ARROW_KEYS[0]) <= 0) {
-        drawState = null;
-        showHint('No arrows: make them by hand from a stick, flint and a feather');
-        return true;
-      }
-      drawState = { key, held: 0, at: now() };
-      return true;
-    }
-    if (!drawState) return true;
-    if (drawState.key !== key) {
-      drawState = null; // the hand changed: the draw is let go
-      return true;
-    }
-    if (mouse.right) {
-      drawState.held += dt;
-      drawState.at = now();
-      return true;
-    }
-    const done = drawState;
-    drawState = null;
-    if (now() - done.at > DRAW_STALE_MS) return true;
-    drawRelease(d, key, drawFraction(done.held));
+    e.latched = controlLatch.on;
+    e.now = now();
+    const did = draw.step(mouse, dt, e);
+    if (did === null) return false;
+    if (did === 'noArrows') showHint('No arrows: make them by hand from a stick, flint and a feather');
+    else if (did === 'release' && d && key) drawRelease(d, key, draw.f);
     return true;
   }
 
@@ -4618,7 +4689,7 @@ export function boot(win, doc) {
 
   /** §100: the draw's ring at the crosshair (0..1), or null. */
   function drawRing() {
-    return drawState ? Math.max(0.02, drawFraction(drawState.held)) : null;
+    return draw.on ? Math.max(0.02, drawFraction(draw.held)) : null;
   }
 
   /**
@@ -4630,7 +4701,7 @@ export function boot(win, doc) {
     const d = drawOf(key);
     if (!d || !key) return null;
     const verb = d.bow ? 'shoot' : 'throw';
-    if (drawState) return drawFraction(drawState.held) >= 1 ? `Full draw · let go to ${verb}` : `Drawing · let go to ${verb}`;
+    if (draw.on) return drawFraction(draw.held) >= 1 ? `Full draw · let go to ${verb}` : `Drawing · let go to ${verb}`;
     const name = itemName(key);
     if (d.bow) {
       if (survival.inSurvival && pack.count(d.shoots) <= 0) return `${name} · no arrows in your pack`;
@@ -4814,11 +4885,12 @@ export function boot(win, doc) {
     doSave(false);
   }
 
-  /** Forget every in-progress dig, use and hold, and the action ring. */
+  /** Forget every in-progress dig, use, hold and draw (§100: let go without a throw), and the action ring. */
   function resetSurvivalInput() {
     digState.reset();
     useState.reset();
     holdState.reset();
+    draw.cancel();
     digHit = null;
     digProgress = 0;
     digAdvanced = false;
@@ -4927,7 +4999,7 @@ export function boot(win, doc) {
     if (animalTarget) return animalHint(animalTarget.animal);
     const staring = watchingAnimal(); // §100: one is staring at the hunter, though the crosshair is elsewhere
     if (staring) return `The ${animalName(staring)} is watching you — keep still`;
-    if (drawState) return drawHintText(); // §100: while drawing, how to let go
+    if (draw.on) return drawHintText(); // §100: while drawing, how to let go
     if (hit && hit.blockId === BLOCK.SNARE) return 'Snare · R with food in hand: bait it';
     if (hit && hit.blockId === BLOCK.SNARE_BAITED) return 'Baited Snare · animals nearby will come to it';
     if (hit && hit.blockId === BLOCK.SNARE_SPRUNG) return 'Sprung Snare · it holds what it caught for a while';
@@ -5815,7 +5887,7 @@ export function boot(win, doc) {
 
   /** The action ring (§9.8): the dig, else a held use, else a held R. */
   function actionProgress() {
-    if (drawState) return drawRing(); // §100: the draw
+    if (draw.on) return drawRing(); // §100: the draw
     if (digProgress > 0) return digProgress;
     if (useProgress !== null) return useProgress;
     if (holdProgress !== null) return holdProgress;
@@ -8238,7 +8310,7 @@ export function boot(win, doc) {
     renderer.setCamera(cam.x + shake[0] + camFx.sx, cam.y + shake[1] + camFx.sy, cam.z + shake[2] + camFx.sz, cam.yaw, cam.pitch);
     const wantFov = player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV;
     // §100: a draw steadies the aim: the view closes in a little, DRAW_ZOOM of it at full draw
-    fov = easeFov(fov, drawState ? wantFov * (1 - DRAW_ZOOM * drawFraction(drawState.held)) : wantFov, dt);
+    fov = easeFov(fov, draw.on ? wantFov * (1 - DRAW_ZOOM * drawFraction(draw.held)) : wantFov, dt);
     renderer.setFov(fov + camFx.fov);
     drawAvatar(dt, live, eyeY);
     if (net || remoteRenderer.count() > 0) remoteRenderer.sync(remotes, netNow(), dt); // the other players, live under menus too

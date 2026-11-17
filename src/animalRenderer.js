@@ -16,6 +16,7 @@
 // wings drawn only in the air, beating with `walkPhase`; the legs are tucked back then), `rear` (the bear's rear-up:
 // the body pitches up about its hips by `animal.rear`, the forelegs rise with it and swing when it swipes) and `head`
 // (a head of its own, which stays level while the body rears: a rearing bear looks AT the player, not at the sky).
+// §100: `lie` lays a stranded animal (`animal.stranded`: a fish whose water is gone) on its side.
 //
 // §88 (populations.js). Sex is shown where real animals show it, one chunky feature each: a model's optional `male` body
 // is the grown male's — a bull heavier with a hump and wide horns, a ram with curled horns (`maleAlt`: shorn), a stag's
@@ -237,6 +238,9 @@ export const MODELS = Object.freeze({
   // water, so its BACK is its brightest part (a silver-blue fish all but vanished there). No legs; it wiggles.
   fish: {
     legs: 0, legH: 0, legW: 0, legX: 0, legZ: [0], swing: 0, leg: [FISH, FISH], wiggle: 0.3,
+    // §100: stranded (the water gone from under it) it lies on its side: rolled about its length round its middle `mid`
+    // above the feet, which then sits `up` above the ground
+    lie: { mid: 0.1, up: 0.08 },
     body: [
       [0.14, 0.15, 0.4, 0, 0.1, 0, FISH],
       [0.07, 0.03, 0.36, 0, 0.19, 0, 0xffe2a0], // the pale stripe down its back
@@ -477,6 +481,11 @@ export function createAnimalRenderer(scene, capacity = ANIMAL_MAX) {
       if (rear > 0) {
         bodyM.multiply(tmp.makeTranslation(0, m.rear.y, m.rear.z)).multiply(rot.makeRotationX(rear * m.rear.angle))
           .multiply(tmp.makeTranslation(0, -m.rear.y, -m.rear.z));
+      }
+      // §100: a stranded fish lies on its side on the bed (it still flaps with its tail)
+      if (m.lie && a.stranded) {
+        bodyM.multiply(tmp.makeTranslation(0, m.lie.up, 0)).multiply(rot.makeRotationZ(Math.PI / 2))
+          .multiply(tmp.makeTranslation(0, -m.lie.mid, 0));
       }
       which.setMatrixAt(which.count++, bodyM);
       if (set.head) {

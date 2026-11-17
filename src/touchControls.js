@@ -47,10 +47,12 @@ export const TOUCH_BUTTONS = Object.freeze({
 });
 /**
  * Key names in a hint written for the keyboard, and the touch buttons that do the same (§97.2): the R key is Action, Shift
- * is Crouch, the left mouse button Mine, the right one Place. Applied in order (Shift+R before R).
+ * is Crouch, the left mouse button Mine, the right one Place. A clause for the G key (§60's throw at once) is left out:
+ * there is no button for it. Applied in order (Shift+R before R).
  * @type {ReadonlyArray<readonly [RegExp, string]>}
  */
 const TOUCH_WORDS = Object.freeze([
+  [/ · G: [^·]*?(?=( · |$))/g, ''],
   [/\bShift\+R(?: key)?\b/g, 'Crouch + Action'],
   [/\bShift\+right-click\b/gi, 'Crouch + Place'],
   [/\bR key\b/g, 'Action button'],

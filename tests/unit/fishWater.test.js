@@ -14,6 +14,7 @@ import {
 } from '../../src/populations.js';
 import * as THREE from 'three';
 import { pointInView, VIEW_SEEN_DIST } from '../../src/main.js';
+import { createAnimalRenderer, MODELS } from '../../src/animalRenderer.js';
 
 const B = BLOCK;
 const GROUND = 10;
@@ -289,5 +290,127 @@ describe('§100 fish — never made or removed in sight', () => {
     expect(pointInView(cam, 30, 1, -2)).toBe(false); // far off to the side
     expect(pointInView(cam, 0, 1, -(VIEW_SEEN_DIST + 5))).toBe(false); // too far to make out a fish
     expect(pointInView(null, 0, 0, 0)).toBe(false);
+  });
+});
+
+describe('§100 fish — each fish counts in the water it is in, and every water is stocked', () => {
+  /** A stream down q = 5 (the zone's whole length) and a seven-column pond round (9, 3), near the stream's north end. */
+  const streamAndPond = () => {
+    const pond = pondCols(9, 3);
+    return { pond, gen: fakeGen({ stream: (q) => q === 5, pond: (q, r) => pond.has(`${q},${r}`) }) };
+  };
+  const LIFE = { youth: { fish: 1 }, rest: { fish: 0 }, rate: { fish: 2 } };
+
+  it('zoneLand maps every column to its body: a pair at the far end of a stream, nearer the pond\'s middle, is the stream\'s and breeds', () => {
+    const { gen } = streamAndPond();
+    const land = zoneLand(gen, 0, 0);
+    expect(land.ws).toEqual([[5, 31], [9, 3]]);
+    expect(land.wk).toEqual([5, 1]);
+    expect(land.wb[5 * ZONE_SIZE + 1]).toBe(0);
+    expect(land.wb[9 * ZONE_SIZE + 3]).toBe(1);
+    expect(land.wb[20 * ZONE_SIZE + 20]).toBe(-1);
+    const fauna = new Fauna({ rng: seededRng(7), life: LIFE });
+    const z = putZone(fauna, 0, 0, { fish: 6 }, { ...land, K: { fish: 6 } }, [fishRec('f', 5, 1), fishRec('m', 5, 2)]);
+    // (5, 1) is nearer the pond's middle (9, 3) than the stream's (5, 31), and it is the stream's all the same
+    expect(fauna._bodyAt(z, ...hexToWorld(5, 1))).toBe(0);
+    // on the bank beside it, where a young one may be born: the stream's too, not the pond's
+    expect(fauna._bodyAt(z, ...hexToWorld(6, 0))).toBe(0);
+    expect(fauna._bodies(z, z.list).room).toEqual([3, 1]);
+    fauna.step(120, makeEnv(pondWorld(new Set()), null));
+    const fish = z.list.filter((r) => r.kind === 'fish');
+    expect(fish.length).toBeGreaterThan(2); // they bred
+    expect(fish.length).toBeLessThanOrEqual(5); // and filled the stream no further than it holds
+    expect(fish.every((r) => fauna._bodyAt(z, r.x, r.z) === 0)).toBe(true); // every one of them in the stream
+  });
+
+  it('the column map is not saved: a land read from a save has it worked out again from the generator', () => {
+    const { gen } = streamAndPond();
+    const env = makeEnv(pondWorld(new Set()), null, { gen });
+    const a = new Fauna({ rng: seededRng(1) });
+    a.zone(0, 0, true, env);
+    const saved = JSON.parse(JSON.stringify(a.export()));
+    expect(saved.z[0].wb).toBeUndefined();
+    const b = new Fauna({ rng: seededRng(2) });
+    b.load(saved);
+    const z = b.zones.get('0,0');
+    expect(z.land.wb).toBeUndefined();
+    b.zone(0, 0, true, env);
+    expect(z.land.wb).toEqual(zoneLand(gen, 0, 0).wb);
+    // a generator whose waters are not the saved ones: no map (the nearest body, as before)
+    const c = new Fauna({ rng: seededRng(3) });
+    c.load(saved);
+    c.zone(0, 0, true, makeEnv(pondWorld(new Set()), null, { gen: fakeGen({ stream: (q) => q === 7 }) }));
+    expect(c.zones.get('0,0').land.wb).toBe(null);
+  });
+
+  it('an empty pond beside a stream that breeds is stocked by a wanderer from a neighbour', () => {
+    const fauna = new Fauna({ rng: seededRng(13) });
+    // zone (0, 0): a stream full with both sexes (5 of 5) and a pond (1) with no fish
+    const z = putZone(fauna, 0, 0, { fish: 6 }, { ws: [[40, 32], [10, 10]], wk: [5, 1] },
+      [0, 1, 2, 3, 4].map((i) => fishRec(i % 2 ? 'm' : 'f', 40, 30 + i)));
+    // zone (1, 0): a stream of dormant fish that can send one
+    putZone(fauna, 1, 0, { fish: 5 }, { ws: [[104, 32]], wk: [5] }, [0, 1, 2, 3, 4].map((i) => fishRec(i % 2 ? 'm' : 'f', 104, 30 + i)));
+    const inBody = (bi) => z.list.filter((r) => r.kind === 'fish' && fauna._bodyAt(z, r.x, r.z) === bi).length;
+    expect(inBody(1)).toBe(0);
+    fauna.step(60, makeEnv(pondWorld(new Set()), null));
+    expect(inBody(1)).toBe(1); // the pond has its fish
+    expect(inBody(0)).toBe(5); // and the stream no more than it holds
+    expect(fauna.counts.wanderersIn).toBe(1);
+  });
+
+  it('a wanderer goes where its sex is missing: a male to a stream of females, a female to the empty pond', () => {
+    const fauna = new Fauna({ rng: seededRng(17) });
+    const z = putZone(fauna, 0, 0, { fish: 6 }, { ws: [[40, 32], [10, 10]], wk: [5, 1] }, [fishRec('f', 40, 32), fishRec('f', 40, 33)]);
+    const nb = putZone(fauna, 1, 0, { fish: 5 }, { ws: [[104, 32]], wk: [5] });
+    const male = fishRec('m', 104, 30);
+    fauna._moveTo(male, z, nb, 0, fauna._bodies(z, z.list));
+    expect(fauna._bodyAt(z, male.x, male.z)).toBe(0);
+    const female = fishRec('f', 104, 31);
+    fauna._moveTo(female, z, nb, 0, fauna._bodies(z, z.list));
+    expect(fauna._bodyAt(z, female.x, female.z)).toBe(1);
+  });
+
+  it('a stranded fish drops to the bed of a drained pond and is drawn lying on its side', () => {
+    let wet = true;
+    const BED = GROUND - 3; // three cells of water over stone round (0, 0): the bed's top is y = BED
+    const gb = (q, y, r) => {
+      if (hexLength(q, r) > 1) return pondWorld(new Set())(q, y, r);
+      if (y < BED) return B.STONE;
+      return y < GROUND && wet ? B.WATER : B.AIR; // drained: the cells are empty
+    };
+    const animals = new Animals(seededRng(51));
+    const [x0, z0] = hexToWorld(0, 0);
+    const a = animals.spawn('fish', x0, fishDepth(gb, 0, 0, GROUND - 0.5), z0);
+    const env = { getBlock: gb, isLoaded: () => true, player: null, heldKey: null, inView: () => true };
+    for (let i = 0; i < 10; i++) animals.update(0.1, env);
+    expect(a.y).toBeGreaterThan(BED + 2); // swimming just under the surface
+    wet = false;
+    for (let i = 0; i < 20; i++) expect(animals.update(0.1, env).despawned).toBe(0);
+    expect(a.stranded).toBe(true);
+    expect(a.y).toBeCloseTo(BED, 6); // on the bed, not in the air where the water was
+    // drawn on its side: its up turned flat, its trunk on the bed
+    const r = createAnimalRenderer(new THREE.Scene());
+    const body = r.group.children.find((m) => m.name === 'fish-body');
+    const M = new THREE.Matrix4();
+    const up = () => {
+      body.getMatrixAt(0, M);
+      return new THREE.Vector3(0, 1, 0).transformDirection(M);
+    };
+    const lowest = (box) => {
+      body.getMatrixAt(0, M);
+      let lo = Infinity;
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+        lo = Math.min(lo, new THREE.Vector3(box[3] + sx * box[0] / 2, box[4] + sy * box[1] / 2, box[5] + sz * box[2] / 2).applyMatrix4(M).y);
+      }
+      return lo;
+    };
+    r.sync([a]);
+    expect(Math.abs(up().y)).toBeLessThan(1e-6);
+    expect(lowest(MODELS.fish.body[0]) - a.y).toBeGreaterThanOrEqual(0);
+    expect(lowest(MODELS.fish.body[0]) - a.y).toBeLessThan(0.05);
+    for (const box of MODELS.fish.body) expect(lowest(box) - a.y).toBeGreaterThan(-0.05); // a fin at most a little in the mud
+    r.sync([{ ...a, stranded: false }]);
+    expect(up().y).toBeCloseTo(1, 6); // swimming, upright
+    r.dispose();
   });
 });
