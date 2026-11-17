@@ -12,7 +12,7 @@
 // one that lands in a lit campfire burns at once; beyond LOOSE_MAX the oldest go; `despawnNear` clears an area (the
 // `despawn` command, from the console or a Rune Block). Its age is saved.
 // The world, the player, the pack and the mobs come in through LooseEnv each step; nothing here touches them directly.
-import { getItem, canonicalItemKey, carriedWear } from './items.js';
+import { getItem, canonicalItemKey, carriedWear, itemName } from './items.js';
 
 /** The player's threshold: an item within this distance of the chest point (m) enters the pack. */
 export const PICKUP_RADIUS = 0.6;
@@ -161,6 +161,32 @@ export function missBreakP(key) {
 export function pickArrow(count) {
   for (const k of ARROW_PREFERENCE) if (Number(count(k)) > 0) return k;
   return null;
+}
+
+/**
+ * The arrow a bow shoots now (main's bowArrow): Survival the best one in the pack (pickArrow over `count`: steel first),
+ * null when there is none of any age; Creative needs none — the best arrow on the Creative hotbar, else DEFAULT_ARROW (it
+ * shoots a ghost).
+ * @param {{ survival: boolean, count: (key: string) => number, hotbar: ReadonlyArray<number|string|null> }} where
+ * @returns {string|null}
+ */
+export function bowArrowFrom(where) {
+  if (where.survival) return pickArrow(where.count);
+  return pickArrow((k) => (where.hotbar.includes(k) ? 1 : 0)) ?? DEFAULT_ARROW;
+}
+
+/**
+ * The hint with bow `bowKey` in hand, not drawing: "Crude Bow · Flint Arrows (12) · Hold RMB to draw" — the bow, the arrow
+ * it would shoot (bowArrowFrom) and, in Survival, how many of it the pack holds (Creative: no count); "Crude Bow · no
+ * arrows in your pack" when there is none. A tablet reads "Hold Place to draw" (touchWords, §97.2).
+ * @param {string} bowKey @param {string|null} arrow @param {boolean} survival @param {(key: string) => number} count
+ * @returns {string}
+ */
+export function bowHint(bowKey, arrow, survival, count) {
+  const name = itemName(bowKey);
+  if (arrow === null) return `${name} · no arrows in your pack`;
+  const arrows = `${itemName(arrow)}s`;
+  return `${name} · ${survival ? `${arrows} (${count(arrow)})` : arrows} · Hold RMB to draw`;
 }
 
 /**

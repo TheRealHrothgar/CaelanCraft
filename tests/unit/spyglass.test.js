@@ -1,13 +1,15 @@
 // Tests for the Spyglass (CONTRACTS §103): whether one is carried (Survival and Creative), the narrowed field of view and
-// the slowed look, the hold, the wheel and the kept zoom, the console's `zoom`, the touch Zoom button, the eyepiece on the
-// HUD, and main's wiring (read from the source: main needs a browser).
+// the slowed look, the hold, the wheel and the kept zoom, the console's `zoom` (on a server too), the touch Zoom button and
+// the hints per screen, the eyepiece under the touch controls and the HUD, Place on a latched control, and main's wiring
+// (read from the source: main needs a browser).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  Spyglass, carriesSpyglass, zoomedFov, zoomLookScale, wheelZoom, parseZoomArg, zoomLabel, SPYGLASS_KEY, ZOOM_KEY,
-  ZOOM_LEVELS, ZOOM_DEFAULT, ZOOM_EASE, SPYGLASS_NEEDED,
+  Spyglass, carriesSpyglass, zoomedFov, zoomLookScale, wheelZoom, parseZoomArg, zoomLabel, glassPlace, glassHint,
+  serverZoomLine, SPYGLASS_KEY, ZOOM_KEY, ZOOM_LEVELS, ZOOM_DEFAULT, ZOOM_EASE, SPYGLASS_NEEDED,
 } from '../../src/spyglass.js';
+import { ControlLatch, rightMouseStep } from '../../src/main.js';
 import { executeCommand, parseLine, COMMANDS } from '../../src/commands.js';
 import { createControls, GAME_KEYS } from '../../src/controls.js';
 import { TOUCH_BUTTONS, TOP_BUTTONS, topButtonShown, createTouchUI, touchWords } from '../../src/touchControls.js';
@@ -146,9 +148,26 @@ describe('§103 the view through it: the field of view and the look', () => {
     expect(g.unlock()).toBe(false);
     expect(g.toggle()).toBe(true);
     expect(g.toggle()).toBe(false);
-    g.lock();
-    g.reset();
-    expect([g.locked, g.held, g.shown]).toEqual([false, false, 1]);
+    g.lock(8);
+    frames(g, 1, { carried: true, held: true });
+    g.reset(); // leaving a world (main's resetSpyglass): at rest at once, at the power it starts at
+    expect([g.locked, g.held, g.shown, g.zoom, g.lookScale(), g.vignette(), g.handHidden]).toEqual([false, false, 1, ZOOM_DEFAULT, 1, 0, false]);
+  });
+
+  it('the tablet\'s Zoom button (no wheel there): up at 2×, a tap a power closer, down after 8×', () => {
+    const g = new Spyglass();
+    const taps = [];
+    for (let i = 0; i < 5; i++) {
+      taps.push(g.button());
+      frames(g, 0.5, { carried: true, held: false });
+      taps.push(g.locked ? g.shown : 0);
+    }
+    expect(taps).toEqual([2, 2, 4, 4, 8, 8, 0, 0, 2, 2]); // and round again
+    // kept up by the console at 8×: the next tap puts it down
+    g.unlock();
+    g.lock(8);
+    expect(g.button()).toBe(0);
+    expect(g.locked).toBe(false);
   });
 });
 
@@ -273,6 +292,7 @@ describe('§103 the touch Zoom button', () => {
     expect(zooms).toBe(1);
     ui.update({ playing: true, survival: true, zoom: true, zoomOn: true });
     expect(zoom.classList.contains('on')).toBe(true);
+    expect(zoom.classList.contains('hidden')).toBe(false); // the button that puts the glass down is there while it is up
     ui.update({ playing: true, survival: false, zoom: false });
     expect(zoom.classList.contains('hidden')).toBe(true);
     ui.dispose();
@@ -280,14 +300,43 @@ describe('§103 the touch Zoom button', () => {
 
   it('a hint for the keyboard names the Zoom button on a tablet', () => {
     expect(touchWords('Spyglass · Hold RMB or Z to look through it')).toBe('Spyglass · Hold Place, or tap Zoom, to look through it');
-    expect(read('src/main.js')).toContain("return 'Spyglass · Hold RMB or Z to look through it';");
+    expect(read('src/main.js')).toContain('return glassHint(spyglass, touchOn);');
+  });
+
+  it('the hints say what each screen has: the wheel on a keyboard, the Zoom button on a tablet (never a wheel there)', () => {
+    const g = new Spyglass();
+    expect(glassHint(g, false)).toBe('Spyglass · Hold RMB or Z to look through it');
+    expect(glassHint(g, true)).toBe('Spyglass · Hold RMB or Z to look through it'); // touchWords rewrites it
+    g.step(DT, { carried: true, held: true });
+    expect(glassHint(g, false)).toBe('Spyglass 4× · scroll: closer or farther');
+    expect(glassHint(g, true)).toBe('Spyglass 4×'); // Place holds it: no wheel to name
+    g.step(DT, { carried: true, held: false });
+    g.button();
+    expect(glassHint(g, true)).toBe('Spyglass 2× · tap Zoom: closer');
+    g.button();
+    g.button();
+    expect(glassHint(g, true)).toBe('Spyglass 8× · tap Zoom to put it down');
+    for (const touch of [true, false]) {
+      for (const z of ZOOM_LEVELS) {
+        g.lock(z);
+        const words = touchWords(glassHint(g, touch));
+        expect(/scroll|wheel|\bZ\b|RMB/.test(words), `${touch} ${z}`).toBe(!touch);
+      }
+    }
+  });
+
+  it('the purpose line names no key (it shows in the pack and the picker on a tablet too)', () => {
+    const purpose = read('src/purpose.js');
+    const line = /spyglass: '([^']*)'/.exec(purpose)?.[1] ?? '';
+    expect(line).toBe('Carry it, and look through it to see far.');
+    expect(/\b(Z|RMB|LMB|scroll|wheel)\b/.test(line)).toBe(false);
   });
 
   it('main tells it: zoom while a Spyglass is carried, zoomOn while the zoom is kept up; the tap toggles it', () => {
     const main = read('src/main.js');
     expect(main).toContain('touchView.zoom = spyglassCarried();');
     expect(main).toContain('touchView.zoomOn = spyglass.locked;');
-    expect(main).toMatch(/onZoom: \(\) => \{\s*if \(spyglassCarried\(\)\) spyglass\.toggle\(\);/);
+    expect(main).toMatch(/onZoom: \(\) => \{\s*if \(spyglassCarried\(\)\) spyglass\.button\(\);/);
   });
 });
 
@@ -297,9 +346,13 @@ describe('§103 the eyepiece on the HUD', () => {
     const doc = documentFromHTML(html);
     const hud = createHUD(/** @type {any} */ (doc), /** @type {any} */ ({ width: 256, height: 256 }));
     const el = /** @type {any} */ (doc.getElementById('spyglass-overlay'));
+    const hudEl = /** @type {any} */ (doc.getElementById('hud'));
     expect(el).not.toBe(null);
-    expect(el.parentNode).toBe(doc.getElementById('hud'));
-    expect(el.parentNode.firstChild).toBe(el); // first in #hud: the crosshair, the hints and the hotbar draw over it
+    // its own layer, just before #hud: not inside the HUD (whose z-index would lift it over the touch controls)
+    expect(el.parentNode).toBe(hudEl.parentNode);
+    expect(hudEl.contains(el)).toBe(false);
+    const sibs = Array.from(el.parentNode.childNodes);
+    expect(sibs.indexOf(el)).toBe(sibs.indexOf(hudEl) - 1);
     expect(el.classList.contains('hidden')).toBe(true);
     hud.setSpyglass({ amount: 1, zoom: 4 });
     expect(el.classList.contains('hidden')).toBe(false);
@@ -314,6 +367,34 @@ describe('§103 the eyepiece on the HUD', () => {
     const css = read('src/styles.css');
     expect(css).toMatch(/#spyglass-overlay\{[^}]*radial-gradient\(circle closest-side/);
     expect(css).toMatch(/#spyglass-overlay\{[^}]*pointer-events:none/);
+  });
+
+  it('on a tablet it lies under the touch controls: the top bar (Menu, the Zoom button), the stick and the buttons stay in sight', async () => {
+    const css = read('src/styles.css');
+    const z = (sel) => Number(new RegExp(`(?:^|\\n)${sel}\\{[^}]*z-index:(\\d+)`).exec(css)?.[1]);
+    expect(css).toMatch(/#spyglass-overlay\{position:fixed;inset:0;/);
+    expect(z('#spyglass-overlay')).toBeLessThan(z('#touch-ui'));
+    expect(z('#touch-ui')).toBeLessThan(z('#hud')); // and the crosshair, the hints and the hotbar over both
+    expect(z('#spyglass-overlay')).toBeGreaterThan(0); // over the canvas (z 0)
+    // on the page: the eyepiece is in no layer that holds the touch controls or the HUD
+    const doc = documentFromHTML(html);
+    const hud = createHUD(/** @type {any} */ (doc), /** @type {any} */ ({ width: 256, height: 256 }));
+    const controls = createControls(doc.getElementById('game-canvas'), doc);
+    controls.setTouchMode(true);
+    controls.lock();
+    await tick();
+    const ui = createTouchUI(/** @type {any} */ (doc), controls, {});
+    hud.setSpyglass({ amount: 1, zoom: 4 });
+    ui.update({ playing: true, survival: true, zoom: true, zoomOn: true });
+    const el = /** @type {any} */ (doc.getElementById('spyglass-overlay'));
+    const touchEl = /** @type {any} */ (doc.getElementById('touch-ui'));
+    const zoomBtn = /** @type {any} */ (doc.querySelector('[data-touch="zoom"]'));
+    expect(el.classList.contains('hidden')).toBe(false);
+    expect(touchEl.contains(el) || el.contains(touchEl)).toBe(false);
+    expect(doc.getElementById('hud').contains(el)).toBe(false);
+    expect(zoomBtn.classList.contains('hidden')).toBe(false);
+    ui.dispose();
+    controls.dispose();
   });
 });
 
@@ -343,5 +424,109 @@ describe('§103 main\'s wiring (read from the source)', () => {
     expect(main).toContain('spyglass: { carried: () => spyglassCarried(), lock: (z) => spyglass.lock(z), unlock: () => spyglass.unlock() },');
     // Survival: anywhere in the pack; Creative: the Creative hotbar
     expect(main).toContain('carriesSpyglass({ survival: survival.inSurvival, count: (k) => pack.count(k), hotbar })');
+  });
+
+  it('leaving a world puts the glass down at once: no eyepiece, slowed look or last power in the next world', () => {
+    const quit = /function quitToTitle\([^)]*\) \{([\s\S]*?)\n {2}\}\n/.exec(main)?.[1] ?? '';
+    expect(quit).toContain('resetSpyglass();');
+    const reset = /function resetSpyglass\(\) \{([\s\S]*?)\n {2}\}\n/.exec(main)?.[1] ?? '';
+    for (const call of ['spyglass.reset();', 'glassPlaceHeld = false;', 'controls.setLookScale(1);', 'hud.setSpyglass(null);']) {
+      expect(reset, call).toContain(call);
+    }
+  });
+
+  it('Place with the glass in hand goes through glassPlace, told when the control latch holds a control', () => {
+    const step = /function glassPlaceStep\(mouse\) \{([\s\S]*?)\n {2}\}\n/.exec(main)?.[1] ?? '';
+    expect(step).toMatch(/glassPlace\(\{[^}]*latched: controlLatch\.on/);
+    expect(step).toContain('glassPlaceHeld = g.held;');
+    expect(step).toContain('return g.mine;');
+    // the Creative frame: the glass first, then the draw, then the control latch and placing
+    expect(main).toContain('if (!glassPlaceStep(mouse) && !drawStep(mouse, dt)) rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);');
+  });
+});
+
+describe('§103 Place on a circuit control with the glass in hand (Creative): the control keeps the hold', () => {
+  const PRESS = { rightPressed: true, right: true };
+  const HELD = { rightPressed: false, right: true };
+  const UP = { rightPressed: false, right: false };
+
+  it('glassPlace: not in hand, on a control press, or while the latch holds one, Place is not the glass\'s', () => {
+    const base = { inHand: true, rightPressed: false, right: true, control: false, latched: false };
+    expect(glassPlace(base)).toEqual({ mine: true, held: true });
+    expect(glassPlace({ ...base, right: false })).toEqual({ mine: true, held: false });
+    expect(glassPlace({ ...base, inHand: false })).toEqual({ mine: false, held: false });
+    expect(glassPlace({ ...base, rightPressed: true, control: true })).toEqual({ mine: false, held: false });
+    expect(glassPlace({ ...base, rightPressed: true })).toEqual({ mine: true, held: true }); // a press on nothing: it looks
+    expect(glassPlace({ ...base, latched: true })).toEqual({ mine: false, held: false });
+  });
+
+  it('holding Place on a Push Button keeps it pressed every frame, and the glass never comes up', () => {
+    // main's Creative frame: `if (!glassPlaceStep(mouse) && !drawStep(mouse, dt)) rightMouseStep(controlLatch, …)`; with
+    // the Spyglass in hand drawStep draws nothing, so it is false
+    const latch = new ControlLatch();
+    const g = new Spyglass();
+    const button = { q: 3, y: 64, r: 4, blockId: 1, face: 0 };
+    const calls = { operate: 0, hold: 0, place: 0 };
+    const env = { isControl: () => true, operate: () => calls.operate++, hold: () => calls.hold++, place: () => calls.place++ };
+    const frame = (mouse) => {
+      const p = glassPlace({ inHand: true, rightPressed: mouse.rightPressed, right: mouse.right, control: mouse.rightPressed, latched: latch.on });
+      if (!p.mine) rightMouseStep(latch, mouse, button, false, DT, env);
+      else if (!mouse.right) latch.release();
+      g.step(DT, { carried: true, held: p.held });
+    };
+    frame(PRESS);
+    expect(calls.operate).toBe(1);
+    expect(latch.on).toBe(true);
+    for (let i = 0; i < 30; i++) frame(HELD);
+    expect(calls.hold).toBe(30); // circuits.hold every held frame: the button stays pressed
+    expect(g.looking).toBe(false); // and the view never zoomed
+    expect(g.shown).toBe(1);
+    frame(UP);
+    expect(latch.on).toBe(false);
+    expect(calls.place).toBe(0);
+    // off the control, Place held looks through it as before
+    const away = glassPlace({ inHand: true, rightPressed: true, right: true, control: false, latched: latch.on });
+    expect(away).toEqual({ mine: true, held: true });
+  });
+});
+
+describe('§103 the zoom command on a server', () => {
+  it('serverZoomLine: /zoom always runs here; without the slash a whole zoom command; anything else is said', () => {
+    expect(serverZoomLine('zoom 4')).toBe('zoom 4');
+    expect(serverZoomLine('  Zoom 8x ')).toBe('zoom 8x');
+    expect(serverZoomLine('zoom')).toBe('zoom');
+    expect(serverZoomLine('zoom off')).toBe('zoom off');
+    expect(serverZoomLine('/zoom 4')).toBe('zoom 4');
+    expect(serverZoomLine('/zoom 3')).toBe('zoom 3'); // its mistake gets the usage, not the chat
+    expect(serverZoomLine('/ZOOM')).toBe('zoom');
+    for (const chat of ['zoom zoom!', 'zoom in on that', 'zoomed', 'hello', '/give rock', 'look zoom 4', '', 'zoom 3']) {
+      expect(serverZoomLine(chat), chat).toBe(null);
+    }
+  });
+
+  it('runs on a server as in a world of one: the line reaches the command (with and without a Spyglass)', () => {
+    const run = (carried, line) => {
+      const g = new Spyglass();
+      const ctx = { spyglass: { carried: () => carried, lock: (z) => g.lock(z), unlock: () => g.unlock() } };
+      const local = serverZoomLine(line);
+      const cmd = parseLine(/** @type {string} */ (local));
+      return { g, res: executeCommand(/** @type {*} */ (cmd), /** @type {*} */ (ctx)) };
+    };
+    const a = run(true, '/zoom 8');
+    expect(a.res.ok).toBe(true);
+    expect([a.g.locked, a.g.zoom]).toEqual([true, 8]);
+    const b = run(false, 'zoom 4');
+    expect(b.res).toEqual({ ok: false, message: `zoom: ${SPYGLASS_NEEDED} — usage: zoom [2|4|8|off]` });
+  });
+
+  it('main: on a server the zoom line runs here before the chat and the "Commands are off" refusal', () => {
+    const main = read('src/main.js');
+    const onLine = /onLine: \(line\) => \{([\s\S]*?)\n {6}\},/.exec(main)?.[1] ?? '';
+    const local = onLine.indexOf('const local = serverZoomLine(line);');
+    expect(local).toBeGreaterThan(0);
+    expect(onLine).toContain('if (local !== null) return runner ? runner.runConsoleLine(local)');
+    expect(local).toBeLessThan(onLine.indexOf("'Commands are off on a server'"));
+    expect(local).toBeLessThan(onLine.indexOf('net.sendChat(line)'));
+    expect(onLine.indexOf('if (net)')).toBeLessThan(local);
   });
 });

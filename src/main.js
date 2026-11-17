@@ -118,10 +118,12 @@ import { createItemIcons, iconBlockFor } from './itemIcons.js';
 import { createLooseItemRenderer } from './looseItemRenderer.js';
 import {
   LooseItems, throwOf, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
-  blinkHidden, drawOf, drawFraction, drawnThrow, DRAW_ZOOM, DRAW_FULL_S, bowShot, spreadDir, pickArrow, DEFAULT_ARROW,
+  blinkHidden, drawOf, drawFraction, drawnThrow, DRAW_ZOOM, DRAW_FULL_S, bowShot, spreadDir, bowArrowFrom, bowHint,
   NO_ARROWS_HINT,
 } from './looseItems.js';
-import { Spyglass, carriesSpyglass, SPYGLASS_KEY, ZOOM_KEY, SPYGLASS_NEEDED, zoomLabel } from './spyglass.js'; // §103
+import {
+  Spyglass, carriesSpyglass, glassPlace, glassHint, serverZoomLine, SPYGLASS_KEY, ZOOM_KEY, SPYGLASS_NEEDED,
+} from './spyglass.js'; // §103
 import { createZombieRenderer } from './zombieRenderer.js';
 import { Watcher, WATCHER_HEIGHT } from './watcher.js';
 import { createWatcherRenderer } from './watcherRenderer.js';
@@ -1375,6 +1377,9 @@ export function boot(win, doc) {
     consoleUI = createConsole(doc, {
       onLine: (line) => {
         if (net) { // DESIGN-multiplayer: on a server the line is said to everyone
+          // §103: but `zoom` changes only this player's own view, so it runs here (a Spyglass on the hotbar unlocks it)
+          const local = serverZoomLine(line);
+          if (local !== null) return runner ? runner.runConsoleLine(local) : { ok: false, message: 'no world is loaded' };
           if (line.startsWith('/')) return { ok: false, message: 'Commands are off on a server' };
           net.sendChat(line);
           return null;
@@ -4658,8 +4663,7 @@ export function boot(win, doc) {
    * Arrow. @returns {string|null}
    */
   function bowArrow() {
-    if (survival.inSurvival) return pickArrow((k) => pack.count(k));
-    return pickArrow((k) => (hotbar.includes(k) ? 1 : 0)) ?? DEFAULT_ARROW;
+    return bowArrowFrom({ survival: survival.inSurvival, count: (k) => pack.count(k), hotbar });
   }
 
   /**
@@ -4760,12 +4764,6 @@ export function boot(win, doc) {
     return draw.on ? Math.max(0.02, drawShare()) : null;
   }
 
-  /** §100: "Flint Arrows (12)" — the arrow a bow would shoot, and in Survival how many of it the pack holds. */
-  function arrowWords(arrow) {
-    const name = `${itemName(arrow)}s`;
-    return survival.inSurvival ? `${name} (${pack.count(arrow)})` : name;
-  }
-
   /**
    * §100: what the hand can throw, said in the hint: "Hold RMB to throw" (on a tablet "Hold Place to throw", §97.2), a bow
    * "Crude Bow · Flint Arrows (12) · Hold RMB to draw" (or that the pack holds no arrows), or null when what is in hand is
@@ -4777,13 +4775,8 @@ export function boot(win, doc) {
     if (!d || !key) return null;
     const verb = d.bow ? 'shoot' : 'throw';
     if (draw.on) return drawShare() >= 1 ? `Full draw · let go to ${verb}` : `Drawing · let go to ${verb}`;
-    const name = itemName(key);
-    if (d.bow) {
-      const arrow = bowArrow();
-      if (arrow === null) return `${name} · no arrows in your pack`;
-      return `${name} · ${arrowWords(arrow)} · Hold RMB to draw`;
-    }
-    return `${name} · Hold RMB to throw · G: throw at once`;
+    if (d.bow) return bowHint(key, bowArrow(), survival.inSurvival, (k) => pack.count(k));
+    return `${itemName(key)} · Hold RMB to throw · G: throw at once`;
   }
 
   /** §100: the words for a throw at a mob, by what is in hand ('Hold RMB to throw' / '… to shoot'), or null. */
@@ -4803,22 +4796,26 @@ export function boot(win, doc) {
   }
 
   /**
-   * §103: Place with the Spyglass in hand looks through it while held (both modes). A press on a circuit control without
-   * Shift is left to the control. @returns {boolean} Place was this
+   * §103: Place with the Spyglass in hand looks through it while held (both modes; spyglass.glassPlace). A press on a
+   * circuit control without Shift, and the hold the control latch keeps on it, are left to the control (a Push Button
+   * stays pressed and the glass stays down). @returns {boolean} Place was this
    */
   function glassPlaceStep(mouse) {
-    if (heldItemKey() !== SPYGLASS_KEY) {
-      glassPlaceHeld = false;
-      return false;
-    }
-    draw.cancel(); // a draw under way when the hand changed to the glass is let go
+    const inHand = heldItemKey() === SPYGLASS_KEY;
+    if (inHand) draw.cancel(); // a draw under way when the hand changed to the glass is let go
     const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
-    if (mouse.rightPressed && hit && !shift && latchEnv.isControl(hit.blockId)) {
-      glassPlaceHeld = false;
-      return false;
-    }
-    glassPlaceHeld = !!mouse.right;
-    return true;
+    const control = !!mouse.rightPressed && !!hit && !shift && latchEnv.isControl(hit.blockId);
+    const g = glassPlace({ inHand, rightPressed: !!mouse.rightPressed, right: !!mouse.right, control, latched: controlLatch.on });
+    glassPlaceHeld = g.held;
+    return g.mine;
+  }
+
+  /** §103: leaving a world puts the glass down at once: the view, the look's speed and the eyepiece are back to rest. */
+  function resetSpyglass() {
+    spyglass.reset();
+    glassPlaceHeld = false;
+    controls.setLookScale(1);
+    hud.setSpyglass(null);
   }
 
   /**
@@ -4836,11 +4833,10 @@ export function boot(win, doc) {
     hud.setSpyglass(dark > 0 ? { amount: dark, zoom: spyglass.zoom } : null);
   }
 
-  /** §103: the hint with the Spyglass in hand, when nothing else is said. */
+  /** §103: the hint with the Spyglass in hand, when nothing else is said (a tablet: the Zoom button, not the wheel). */
   function glassHintText() {
     if (heldItemKey() !== SPYGLASS_KEY) return null;
-    if (spyglass.looking) return `Spyglass ${zoomLabel(spyglass.zoom)} · scroll: closer or farther`;
-    return 'Spyglass · Hold RMB or Z to look through it';
+    return glassHint(spyglass, touchOn);
   }
 
   /** Put one `key` into the selected slot when it is empty (a drunk pot comes back into the hand), else anywhere. */
@@ -7148,6 +7144,7 @@ export function boot(win, doc) {
     zombieTarget = null;
     hurtFlash = 0;
     hud.setHurtFlash(0);
+    resetSpyglass(); // §103: no eyepiece, slowed look or last power carried into the next world
     watcher.clear();
     clearCircuits();
     clearSurvival();
@@ -7440,9 +7437,10 @@ export function boot(win, doc) {
         closeConsole();
       },
       onTouch: () => onSleepClick(),
-      // §103: the Zoom button keeps the glass up, or puts it down (it is shown only while a Spyglass is carried)
+      // §103: the Zoom button keeps the glass up, a tap a power (2×, 4×, 8×), then puts it down (a tablet has no wheel);
+      // it is shown only while a Spyglass is carried
       onZoom: () => {
-        if (spyglassCarried()) spyglass.toggle();
+        if (spyglassCarried()) spyglass.button();
         else showHint(SPYGLASS_NEEDED);
       },
     })

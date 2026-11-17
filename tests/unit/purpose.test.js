@@ -100,17 +100,19 @@ describe('PURPOSE: a line for everything in the build tree', () => {
     expect(getRecipe('crude_bow').inputs.map((i) => i.k)).toEqual(['sapling', 'cord']);
     expect(PURPOSE.bow_stave).toMatch(/Kiln.*Treated Stave/);
     expect(getRecipe('treated_stave')).toMatchObject({ station: 'kiln', inputs: [{ k: 'bow_stave', n: 1 }, { tag: 'fuel', n: 1 }] });
-    expect(PURPOSE.treated_stave).toMatch(/rawhide at the Workbench: a Recurve Bow/);
-    expect(getRecipe('recurve_bow')).toMatchObject({ station: 'workbench', inputs: [{ k: 'treated_stave', n: 1 }, { k: 'rawhide', n: 2 }, { k: 'cord', n: 1 }] });
+    expect(PURPOSE.treated_stave).toMatch(/rawhide at the Work Stump: a Recurve Bow/);
+    expect(getRecipe('recurve_bow')).toMatchObject({ station: 'stump', inputs: [{ k: 'treated_stave', n: 1 }, { k: 'rawhide', n: 2 }, { k: 'cord', n: 1 }] });
     expect(PURPOSE.crude_bow).toMatch(/Hold to draw, let go to shoot/);
     expect(PURPOSE.recurve_bow).toMatch(/faster, farther and truer than the Crude Bow/);
     for (const k of ['stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow']) expect(purposeOf(k), k).not.toBe('');
     expect(PURPOSE.flint_arrow).toMatch(/^Shot from a bow/);
-    expect(PURPOSE.work_stump).toMatch(/the bow/);
+    expect(PURPOSE.work_stump).toMatch(/bows/);
     expect(getRecipe('crude_bow').station).toBe('stump');
-    expect(PURPOSE.workbench).toMatch(/recurve bows, spyglasses/);
-    // §103
-    expect(PURPOSE.spyglass).toMatch(/hold Z/);
+    expect(getRecipe('recurve_bow').station).toBe('stump');
+    expect(PURPOSE.workbench).toBe('Workplace: switches, buttons, boards, batteries, and the Lab.'); // the circuit parts only
+    // §103: no key in it (it shows in the pack and the picker on a tablet too)
+    expect(PURPOSE.spyglass).toBe('Carry it, and look through it to see far.');
+    expect(getRecipe('spyglass').station).toBe('stump');
     // the Making panel shows them with their recipes
     const views = new Map(listRecipes(new Pack(), {}, {}).map((v) => [v.id, v]));
     for (const k of ['crude_bow', 'bow_stave', 'treated_stave', 'recurve_bow', 'flint_arrow', 'steel_arrow', 'spyglass']) {

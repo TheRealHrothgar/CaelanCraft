@@ -1,12 +1,16 @@
-// Tests for the bows and the arrows of every age (CONTRACTS §100.6–§100.9): the arrows' powers and how often they are
-// picked up again (seeded), the two bows' draw, speed, spread and arc, the arrow a bow takes from the pack, the sapling
-// and where it comes from, and old saves' Bow, Arrow and darts.
+// Tests for the bows and the arrows of every age (CONTRACTS §100.6): the arrows' powers and how often they are
+// picked up again (seeded), the two bows' draw, speed, spread and arc, the arrow a bow takes from the pack (and in
+// Creative), the bow's hint, main's wiring of the shot (read from the source: main needs a browser), the sapling and where
+// it comes from, and old saves' Bow, Arrow and darts.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   LooseItems, ARROW_KEYS, ARROW_PREFERENCE, ARROWS, DEFAULT_ARROW, METAL_MISS_KEEP, BOWS, arrowOf, bowOf, hitBreakP,
   missBreakP, pickArrow, bowShot, spreadDir, drawOf, drawFraction, DRAW_SPEED_MIN, DRAW_SPEED_FULL, DRAW_POWER_MIN,
-  ITEM_GRAVITY, THROW_CHUCK, throwOf,
+  ITEM_GRAVITY, THROW_CHUCK, throwOf, bowArrowFrom, bowHint, NO_ARROWS_HINT,
 } from '../../src/looseItems.js';
+import { touchWords } from '../../src/touchControls.js';
 import { ITEMS, getItem, maxDurability, canonicalItemKey } from '../../src/items.js';
 import { BLOCK } from '../../src/blocks.js';
 import { rollDrops, pick, SAPLING_LEAF_P, SAPLING_HAZEL_P } from '../../src/harvest.js';
@@ -18,6 +22,7 @@ import { PACK_SLOTS } from '../../src/config.js';
 import { seededRandom } from '../helpers/offlineAudio.js';
 
 const DT = 1 / 60;
+const read = (p) => readFileSync(fileURLToPath(new URL(`../../${p}`, import.meta.url)), 'utf8');
 
 /** An env: a floor below y = `floor`, nobody to collect, a mob at x ≥ `mobX` (or none), counting hits and breaks. */
 function env({ floor = 10, mobX = Infinity, wall = Infinity } = {}) {
@@ -230,6 +235,75 @@ describe('§100 the arrow a bow takes', () => {
     expect(pickArrow((k) => pack.count(k))).toBe('iron_arrow');
     pack.take('iron_arrow', 2);
     expect(pickArrow((k) => pack.count(k))).toBe('stone_arrow');
+  });
+
+  it('bowArrowFrom: Survival the pack\'s best (none of any age: null); Creative the hotbar\'s best, else a Flint Arrow', () => {
+    const pack = new Pack();
+    const sv = () => bowArrowFrom({ survival: true, count: (k) => pack.count(k), hotbar: ['steel_arrow'] });
+    expect(sv()).toBe(null); // the Creative hotbar never counts in Survival
+    for (const k of ARROW_KEYS) {
+      const only = new Pack();
+      only.give(k, 3);
+      // ANY age will do: a pack of only flint or only metal arrows is not "no arrows"
+      expect(bowArrowFrom({ survival: true, count: (key) => only.count(key), hotbar: [] }), k).toBe(k);
+    }
+    pack.give('flint_arrow', 12);
+    pack.give('copper_arrow', 1);
+    expect(sv()).toBe('copper_arrow');
+    // Creative needs none: the best arrow on the hotbar, else DEFAULT_ARROW (a ghost), never null
+    const cr = (hotbar) => bowArrowFrom({ survival: false, count: () => 0, hotbar });
+    expect(cr([1, 2, 3])).toBe(DEFAULT_ARROW);
+    expect(DEFAULT_ARROW).toBe('flint_arrow');
+    expect(cr([1, 'stone_arrow', 'bronze_arrow', null])).toBe('bronze_arrow');
+    expect(cr(['crude_bow', 'stone_arrow'])).toBe('stone_arrow');
+  });
+
+  it('the hint names the bow and the arrow it would shoot, and in Survival how many; none: says so', () => {
+    const pack = new Pack();
+    pack.give('flint_arrow', 12);
+    const count = (k) => pack.count(k);
+    expect(bowHint('crude_bow', 'flint_arrow', true, count)).toBe('Crude Bow · Flint Arrows (12) · Hold RMB to draw');
+    expect(touchWords(bowHint('crude_bow', 'flint_arrow', true, count))).toBe('Crude Bow · Flint Arrows (12) · Hold Place to draw');
+    expect(bowHint('recurve_bow', 'steel_arrow', false, count)).toBe('Recurve Bow · Steel Arrows · Hold RMB to draw');
+    expect(bowHint('crude_bow', null, true, count)).toBe('Crude Bow · no arrows in your pack');
+    expect(NO_ARROWS_HINT).toBe('No arrows: make them by hand from a stick, a rock or a flint, and a feather');
+  });
+});
+
+describe('§100 main\'s wiring of the bow (read from the source)', () => {
+  const main = read('src/main.js');
+  const body = (name) => new RegExp(`function ${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n {2}\\}\\n`).exec(main)?.[1] ?? '';
+
+  it('bowArrow is bowArrowFrom over the pack (Survival) and the Creative hotbar', () => {
+    expect(body('bowArrow')).toContain('return bowArrowFrom({ survival: survival.inSurvival, count: (k) => pack.count(k), hotbar });');
+  });
+
+  it('the press: no arrow of any age refuses the draw with NO_ARROWS_HINT; the bow\'s own full draw is told', () => {
+    const step = body('drawStep');
+    expect(step).toContain('e.noArrows = d.bow && bowArrow() === null;');
+    expect(step).not.toMatch(/ARROW_KEYS\[/); // not one age only
+    expect(step).toContain('e.fullS = d ? d.fullS : DRAW_FULL_S;');
+    expect(step).toContain("if (did === 'noArrows') showHint(NO_ARROWS_HINT);");
+    expect(step).toContain("else if (did === 'release' && d && key) drawRelease(d, key, draw.f);");
+  });
+
+  it('the release: the chosen arrow from the pack, the bow\'s shot of it, its cone and its gravity; the bow wears', () => {
+    const rel = body('drawRelease');
+    expect(rel).toContain('const arrow = bowArrow();');
+    expect(rel).toContain('if (arrow === null || (SV && pack.take(arrow, 1) < 1)) {');
+    expect(rel).toContain('({ speed, power, gravity, spread } = bowShot(key, arrow, f));');
+    expect(rel).toMatch(/spreadDir\([^;]*, spread, Math\.random\)/);
+    expect(rel).toMatch(/loose\.launch\(stack,[\s\S]*ghost: !SV, power, gravity,/);
+    expect(rel).toContain('const res = pack.damage(selected, 1);');
+  });
+
+  it('the hint is bowHint\'s; the ring, the zoom and the arm follow the bow\'s own draw (draw.share)', () => {
+    expect(body('drawHintText')).toContain('if (d.bow) return bowHint(key, bowArrow(), survival.inSurvival, (k) => pack.count(k));');
+    expect(main).toContain('const drawShare = () => draw.share;');
+    expect(body('drawRing')).toContain('return draw.on ? Math.max(0.02, drawShare()) : null;');
+    expect(main).toContain('mi.draw = drawShare();');
+    expect(main).toContain('fov = easeFov(fov, draw.on ? wantFov * (1 - DRAW_ZOOM * drawShare()) : wantFov, dt);');
+    expect(main).not.toMatch(/drawFraction\(draw\.held\)/); // never against DRAW_FULL_S alone
   });
 });
 

@@ -304,7 +304,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 26, 27, 5, 18, 7, 8]); // §102: + the Compass at the Forge; §100 + §103: the bows, the arrows of every age, the Spyglass; // §101: + the Pennant at hand; §100: + Arrows at hand, the Bow Stave and the Bow at the stump; // §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 28, 27, 5, 18, 5, 8]); // §100.6 / §103: the Recurve Bow and the Spyglass at the stump (basic survival, not the circuits' Workbench); §102: + the Compass at the Forge; §100 + §103: the bows, the arrows of every age, the Spyglass; // §101: + the Pennant at hand; §100: + Arrows at hand, the Bow Stave and the Bow at the stump; // §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
@@ -1459,7 +1459,7 @@ describe('handbook: holding Place to throw, the bows and the arrows (CONTRACTS �
     expect(text).toContain('A bow shoots arrows farther and faster than anything you can throw. The Crude Bow is a Sapling strung with 2 Cord at the Work Stump, with a Flint Knife. Break leaves by hand for saplings: about one in eight gives one, and a hazel thicket picked with R now and then.');
     expect([stave.outputs[0].n, treated.seconds]).toEqual([2, 30]);
     expect(recurve.inputs).toEqual([{ k: 'treated_stave', n: 1 }, { k: 'rawhide', n: 2 }, { k: 'cord', n: 1 }]);
-    expect(text).toContain('The Recurve Bow is faster, flatter and truer. Split two Bow Staves from a log at the Work Stump, harden one in the Kiln for 30 seconds into a Treated Stave, then back it with 2 Rawhide and Cord at the Workbench, with a Copper Knife.');
+    expect(text).toContain('The Recurve Bow is faster, flatter and truer. Split two Bow Staves from a log at the Work Stump, harden one in the Kiln for 30 seconds into a Treated Stave, then back it with 2 Rawhide and Cord at the Work Stump again, with a Copper Knife.');
     // the table is BOWS and the items
     const t = tableById('bows');
     expect(t.source).toBe('loose');
@@ -1502,20 +1502,22 @@ describe('handbook: holding Place to throw, the bows and the arrows (CONTRACTS �
     expect(rowOf(tableById('recipes-hand'), 'flint_arrow')[0]).toBe('Flint Arrow ×4');
     expect(rowOf(tableById('recipes-kiln'), 'treated_stave')[0]).toBe('Treated Stave');
     expect(rowOf(tableById('recipes-forge'), 'steel_arrow')[0]).toBe('Steel Arrow ×8');
-    expect(rowOf(tableById('recipes-workbench'), 'recurve_bow')[0]).toBe('Recurve Bow');
-    expect(rowOf(tableById('recipes-workbench'), 'spyglass')[0]).toBe('Spyglass');
+    expect(rowOf(tableById('recipes-stump'), 'recurve_bow')[0]).toBe('Recurve Bow');
+    expect(rowOf(tableById('recipes-stump'), 'spyglass')[0]).toBe('Spyglass');
+    // basic survival items: neither waits on the circuits' Workbench
+    for (const k of ['recurve_bow', 'spyglass']) expect(tableById('recipes-workbench').keys, k).not.toContain(k);
     expect(toolPowers()).toContain(ITEMS.crude_bow.tool.power);
     // the workplaces chapter names it among what the Work Stump makes
-    expect(text).toContain('cuts planks, works leather and makes the Crude Bow.');
+    expect(text).toContain('cuts planks, works leather and makes both bows and the Spyglass.');
   });
 
   it('§103 the Spyglass: a page in Controls, the Z key, the zoom command and the tablet\'s Zoom button', () => {
     const controls = CHAPTERS.find((c) => c.id === 'controls');
     expect(pageTitled(controls, 'The Spyglass')).toBeTruthy();
-    expect(text).toContain('A Spyglass is two bronze tubes and a glass lens, made at the Workbench from 2 Bronze Ingots and Glass. It works from anywhere in your pack.');
+    expect(text).toContain('A Spyglass is two bronze tubes and a glass lens, made at the Work Stump from 2 Bronze Ingots and Glass as soon as you have them. It works from anywhere in your pack.');
     expect(ZOOM_DEFAULT).toBe(4);
     expect(text).toContain('Hold Z to look through it, or hold RMB with it in your hand. Everything looks four times nearer and your look slows to match; scroll the wheel for 2×, 4× or 8×.');
-    expect(text).toContain('To keep looking, type zoom 4 in the console (T): zoom off, Esc or opening a menu puts it down. On a tablet the Zoom button does the same.');
+    expect(text).toContain('To keep looking, type zoom 4 in the console (T), on a server too: zoom off, Esc or opening a menu puts it down. On a tablet each tap of the Zoom button looks closer (2×, 4×, 8×), and one more puts it down.');
     expect(tableById('keys-move').rows.find((r) => r[0] === 'Hold Z')[1]).toBe('look through a Spyglass you carry; the wheel brings it closer or farther');
   });
 });

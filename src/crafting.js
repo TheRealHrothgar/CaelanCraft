@@ -126,8 +126,8 @@ export function findStations(getBlock, q, y, r) {
 // bloomery and 3 at the forge (114 in all). §94 moved the flint tools to the Work Stump, the simple circuit parts to the
 // Workbench and the devices to the Lab; the elementary consumables (fuse, powder, wire, filings, the keg) stay early.
 // Today, with the later additions (the snare, the homestead, the Lab, the Pennant; §100 the bows, the staves and the
-// arrows of every age, the darts retired; §102 the Compass; §103 the Spyglass): 44 at hand, 26 at the stump, 27 at the
-// kiln, 5 at the bloomery, 18 at the forge, 7 at the workbench and 8 at the lab (135 in all).
+// arrows of every age, the darts retired; §102 the Compass; §103 the Spyglass): 44 at hand, 28 at the stump, 27 at the
+// kiln, 5 at the bloomery, 18 at the forge, 5 at the workbench and 8 at the lab (135 in all).
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** "2 #knapstone + stick + 2 cord" → [{tag:'knapstone',n:2}, {k:'stick',n:1}, {k:'cord',n:2}]. */
@@ -215,7 +215,7 @@ const RECIPE_ROWS = [
   ['grass_bed', 'hand', '8 plant_fibre + 3 stick', 'grass_bed', '', 4],
   // §101: the Pennant — a rag or a hide lashed to a stick with cord: it shows which way the wind blows, and how hard
   ['pennant', 'hand', 'stick + cord + #cloth', 'pennant', '', 3],
-  // ---- Work Stump (26); riving a log into sticks is real work: there is no planks-to-sticks shortcut
+  // ---- Work Stump (28); riving a log into sticks is real work: there is no planks-to-sticks shortcut
   // §94: flint is knapped on the stump's flat top with the hammerstone: the stump comes before the flint tools
   ['flint_knife', 'stump', '#knapstone + stick + cord', 'flint_knife', 'hammer 1', 3],
   ['flint_axe', 'stump', '#knapstone + stick + cord', 'flint_axe', 'hammer 1', 4],
@@ -226,6 +226,12 @@ const RECIPE_ROWS = [
   // shaved with the knife (two from a log), for the Kiln to fire-harden into a Treated Stave (the Recurve Bow's)
   ['crude_bow', 'stump', 'sapling + 2 cord', 'crude_bow', 'knife 2', 6],
   ['bow_stave', 'stump', '#log', '2 bow_stave', 'axe 1, knife 2', 6],
+  // §100: the Recurve Bow — the treated stave's back glued with rawhide (the sinew), its tips bent back, strung with cord;
+  // a copper knife or better to fit it. §103: the Spyglass — two bronze tubes, one sliding in the other, and a glass lens.
+  // The user's "basic survival items": both are made at the stump as soon as their parts exist, not at the circuits'
+  // Workbench (steel, copper wire and a steel hammer)
+  ['recurve_bow', 'stump', 'treated_stave + 2 rawhide + cord', 'recurve_bow', 'knife 3', 20],
+  ['spyglass', 'stump', '2 bronze_ingot + glass', 'spyglass', '', 15],
   ['oak_planks', 'stump', 'oak_log', '3 oak_planks', 'axe 2', 3],
   ['spruce_planks', 'stump', 'spruce_log', '3 spruce_planks', 'axe 2', 3],
   ['birch_planks', 'stump', 'birch_log', '3 birch_planks', 'axe 2', 3],
@@ -248,7 +254,7 @@ const RECIPE_ROWS = [
   ['well', 'stump', '12 cobblestone + 3 cord + 2 #planks + clay_pot', 'well', 'shovel 1', 12],
   ['rain_barrel', 'stump', '6 #planks + 2 cord', 'rain_barrel', 'axe 1', 8],
   ['bed', 'stump', '6 #planks + 3 cord + 3 #wool + leather', 'bed', 'knife 2', 12],
-  // ---- Kiln (24; every recipe burns fuel — in the charcoal job the logs themselves smoulder)
+  // ---- Kiln (27; every recipe burns fuel — in the charcoal job the logs themselves smoulder)
   ['charcoal', 'kiln', '6 #log', '8 charcoal', '', 40],
   ['clay_pot', 'kiln', 'greenware_pot + #fuel', 'clay_pot', '', 15],
   ['fired_brick', 'kiln', '6 green_brick + #fuel', '6 fired_brick', '', 30],
@@ -280,7 +286,7 @@ const RECIPE_ROWS = [
   ['remelt_glass', 'bloomery', '3 glass_shards + charcoal', 'glass', '', 15],
   // v0.10 circuits (§8.2): the lamp's glass is sealed hot
   ['filament_lamp', 'bloomery', 'glass + 3 carbon_filament + copper_wire + #planks', 'filament_lamp', '', 20],
-  // ---- Forge (16 with §102's Compass; charcoal only: carbon matters for iron)
+  // ---- Forge (18 with §102's Compass and §100's arrows; charcoal only: carbon matters for iron)
   ...metalToolRows('forge', 'iron', 'wrought_iron', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 4', 30),
   ['steel_bar', 'forge', 'wrought_iron + 2 charcoal', 'steel_bar', 'hammer 5', 45],
   ...metalToolRows('forge', 'steel', 'steel_bar', ['knife', 'shovel', 'axe', 'hammer', 'pick', 'sword'], 'charcoal', 'hammer 5', 40),
@@ -298,10 +304,6 @@ const RECIPE_ROWS = [
   ['voltaic_battery', 'workbench', '6 copper_ingot + 6 tin_ingot + 6 plant_fibre + pot_seawater', 'voltaic_battery + clay_pot', 'hammer 3', 12],
   ['knife_switch', 'workbench', '3 rock + copper_ingot + 2 copper_wire', 'knife_switch', 'hammer 3', 6], // a slate base
   ['push_button', 'workbench', 'rock + bronze_ingot + 2 copper_wire', 'push_button', 'hammer 3', 5],
-  // §100: the Recurve Bow — the treated stave's back glued with rawhide (the sinew), its tips bent back, strung with cord;
-  // a copper knife or better to fit it. §103: the Spyglass — two bronze tubes, one sliding in the other, and a glass lens
-  ['recurve_bow', 'workbench', 'treated_stave + 2 rawhide + cord', 'recurve_bow', 'knife 3', 20],
-  ['spyglass', 'workbench', '2 bronze_ingot + glass', 'spyglass', '', 15],
   // §94: the Lab — glassware, a steel frame and a battery on a bench: it needs the parts the Workbench makes
   ['lab', 'workbench', '3 glass + 2 steel_bar + 3 bronze_ingot + 6 copper_wire + voltaic_battery + 5 #planks', 'lab', 'hammer 5', 30],
   // ---- Lab (§94): the advanced devices, each built on the simple parts made at the Workbench

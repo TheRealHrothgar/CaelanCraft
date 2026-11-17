@@ -4,7 +4,8 @@
 // While a Spyglass is carried (Survival: anywhere in the pack; Creative: an item pick on the Creative hotbar, §98), the
 // player can look through it:
 //   - HOLD: Z held (or Place held with the Spyglass in hand) looks through it while held; let go and the view returns;
-//   - LOCK: the console's `zoom [2|4|8]` keeps looking through it until `zoom off`, Esc or a menu (main ends it);
+//   - LOCK: the console's `zoom [2|4|8]` keeps looking through it until `zoom off`, Esc or a menu (main ends it); so does
+//     the tablet's Zoom button, a tap a power: 2×, 4×, 8×, then down (a tablet has no wheel);
 //   - the wheel steps the power through ZOOM_LEVELS (2×, 4×, 8×) while looking.
 // Looking, the view narrows smoothly to the power (`fov`), the look slows by it (`lookScale`), a round dark eyepiece
 // closes in at the screen's edge (`vignette`) and the first-person hand is put away (`handHidden`). A Spyglass that is
@@ -24,6 +25,34 @@ export const ZOOM_EASE = 12;
 export const ZOOM_HAND_AT = 1.05;
 /** What the zoom command (and the Zoom button) answer without a Spyglass. */
 export const SPYGLASS_NEEDED = 'You need a spyglass';
+
+/**
+ * Place with the Spyglass in hand (main's glassPlaceStep, both modes): whether this frame's Place is the glass's, and
+ * whether it is held to look through it. Not in hand, it is not. A press on a circuit control without Shift (`control`)
+ * is the control's, and so is every frame while the control latch holds one that Place pressed (`latched`, §4.9): a Push
+ * Button stays pressed, and the glass does not come up.
+ * @param {{ inHand: boolean, rightPressed: boolean, right: boolean, control: boolean, latched: boolean }} e
+ * @returns {{ mine: boolean, held: boolean }}
+ */
+export function glassPlace(e) {
+  if (!e.inHand || e.latched || (e.rightPressed && e.control)) return { mine: false, held: false };
+  return { mine: true, held: !!e.right };
+}
+
+/**
+ * The hint with the Spyglass in hand. Not looking: "Spyglass · Hold RMB or Z to look through it" (a tablet's words come
+ * from touchWords, §97.2). Looking: the power, and how to change it — the wheel on a keyboard; on a tablet the Zoom
+ * button while it keeps the glass up (closer, or down from the last power), else just the power.
+ * @param {{ looking: boolean, locked: boolean, zoom: number }} glass @param {boolean} touch
+ * @returns {string}
+ */
+export function glassHint(glass, touch) {
+  if (!glass.looking) return 'Spyglass · Hold RMB or Z to look through it';
+  const head = `Spyglass ${zoomLabel(glass.zoom)}`;
+  if (!touch) return `${head} · scroll: closer or farther`;
+  if (!glass.locked) return head;
+  return glass.zoom < ZOOM_LEVELS[ZOOM_LEVELS.length - 1] ? `${head} · tap Zoom: closer` : `${head} · tap Zoom to put it down`;
+}
 
 /**
  * Is a Spyglass carried? Survival: the pack holds one anywhere (`count`); Creative: one of the Creative hotbar's picks is
@@ -79,6 +108,20 @@ export function parseZoomArg(arg) {
   if (t === 'off') return { off: true };
   const n = Number(t);
   return ZOOM_LEVELS.includes(n) ? { zoom: n } : null;
+}
+
+/**
+ * On a server every console line is said to everyone and commands are off (§96) — but `zoom` changes only this player's
+ * own view, so main runs it there too. The line to run for `line` when it is the zoom command, or null (say it): `/zoom
+ * …` always is (its mistakes get the usage); without the slash only a whole zoom command is (`zoom`, `zoom 4`, `zoom
+ * off`), so "zoom zoom!" is still said. @param {string} line @returns {string|null}
+ */
+export function serverZoomLine(line) {
+  const m = /^(\/?)zoom(?:\s+(.*))?$/i.exec(String(line ?? '').trim());
+  if (!m) return null;
+  const arg = (m[2] ?? '').trim();
+  if (!m[1] && arg !== '' && parseZoomArg(arg) === null) return null;
+  return arg ? `zoom ${arg}` : 'zoom';
 }
 
 /** "4×" @param {number} zoom */
@@ -139,11 +182,23 @@ export class Spyglass {
     return was;
   }
 
-  /** The Zoom button: lock at the power it has, or let go of the lock. @returns {boolean} now locked */
+  /** Lock at the power it has, or let go of the lock. @returns {boolean} now locked */
   toggle() {
     if (this.locked) this.unlock();
     else this.lock();
     return this.locked;
+  }
+
+  /**
+   * The tablet's Zoom button (a tablet has no wheel): up at the lowest power, a tap a power closer, and down after the
+   * highest — 2×, 4×, 8×, down. @returns {number} the power now, 0 when it put the glass down
+   */
+  button() {
+    if (!this.locked) return this.lock(ZOOM_LEVELS[0]);
+    const i = ZOOM_LEVELS.indexOf(this.zoom);
+    if (i >= 0 && i < ZOOM_LEVELS.length - 1) return this.lock(ZOOM_LEVELS[i + 1]);
+    this.unlock();
+    return 0;
   }
 
   /**
@@ -176,10 +231,11 @@ export class Spyglass {
     return this.looking || this.shown > ZOOM_HAND_AT;
   }
 
-  /** Back to rest at once (a new world, death). */
+  /** Back to rest at once, at the power it starts at (leaving a world: main's resetSpyglass). */
   reset() {
     this.held = false;
     this.locked = false;
     this.shown = 1;
+    this.zoom = ZOOM_DEFAULT;
   }
 }

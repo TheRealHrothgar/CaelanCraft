@@ -60,10 +60,11 @@ describe('the build tree model (§94)', () => {
     expect(toolItemFor('bow', 3)).toBe('recurve_bow');
     expect(toolItemFor('knife', 3)).toBe('copper_knife');
     // the Treated Stave and the cast arrows at the Kiln, the forged ones at the Forge, the Recurve Bow and (§103) the
-    // Spyglass at the Workbench
+    // Spyglass at the Work Stump — basic survival items: neither waits on the circuits' Workbench
     expect(node('@kiln').unlocks).toEqual(expect.arrayContaining(['treated_stave', 'copper_arrow', 'bronze_arrow']));
     expect(node('@forge').unlocks).toEqual(expect.arrayContaining(['iron_arrow', 'steel_arrow']));
-    expect(node('@workbench').unlocks).toEqual(expect.arrayContaining(['recurve_bow', 'spyglass']));
+    expect(node('@stump').unlocks).toEqual(expect.arrayContaining(['crude_bow', 'bow_stave', 'recurve_bow', 'spyglass']));
+    for (const k of ['recurve_bow', 'spyglass']) expect(node('@workbench').unlocks, k).not.toContain(k);
     // none is a node: the tree is the road to the workplaces; the stone and flint arrows are made by hand, so no column lists them
     for (const k of ['crude_bow', 'recurve_bow', 'bow_stave', 'treated_stave', 'sapling', 'spyglass', 'flint_arrow']) expect(model.byId.has(k), k).toBe(false);
     for (const s of TREE_STATIONS) for (const k of ['stone_arrow', 'flint_arrow']) expect(node(placeId(s)).unlocks, s).not.toContain(k);

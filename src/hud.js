@@ -385,9 +385,10 @@ const PICKER_OPEN = 'picker-open';
  * @property {(deg: number|null) => void} setNorth  the compass on the vane (CONTRACTS §102): an N and a red tick on the
  *   dial's rim at north's bearing, `deg` whole degrees clockwise from the top (compass.northView); null: no compass, the
  *   plain vane. The DOM is touched only when the degree or the null changes.
- * @property {(view: SpyglassView|null) => void} setSpyglass  §103: the Spyglass's round eyepiece (#spyglass-overlay, made
- *   first in #hud so the crosshair, the hints and the hotbar stay over it): its darkness `amount` 0..1 in 1/32 steps and
- *   the power under it ("4×"); hidden at 0 or null. The DOM is touched only when the step or the power changes.
+ * @property {(view: SpyglassView|null) => void} setSpyglass  §103: the Spyglass's round eyepiece (#spyglass-overlay, its
+ *   own layer made just before #hud, under the touch controls and the HUD, so a tablet's buttons, the crosshair, the
+ *   hints and the hotbar stay over it): its darkness `amount` 0..1 in 1/32 steps and the power under it ("4×"); hidden at
+ *   0 or null. The DOM is touched only when the step or the power changes.
  */
 
 /**
@@ -1195,7 +1196,9 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     }
   }
 
-  // ---- §103 the Spyglass's eyepiece: a round view in a dark ring, under the rest of the HUD
+  // ---- §103 the Spyglass's eyepiece: a round view in a dark ring. Its own layer, just before #hud: over the canvas but
+  // under the touch controls (#touch-ui) and the HUD (the stylesheet's z-index 8 < 9 < 10), so a tablet's buttons — the
+  // Zoom button that puts the glass down, the Menu — and the crosshair, the hints and the hotbar all stay in sight.
   /** @type {HTMLElement|null} */
   let glassEl = doc.getElementById('spyglass-overlay');
   /** @type {HTMLElement|null} */
@@ -1208,7 +1211,8 @@ export function createHUD(doc = globalThis.document, atlasCanvas) {
     glassPowerEl = doc.createElement('span');
     glassPowerEl.className = 'spyglass-power';
     glassEl.appendChild(glassPowerEl);
-    hudEl.insertBefore(glassEl, hudEl.firstChild);
+    if (hudEl.parentNode) hudEl.parentNode.insertBefore(glassEl, hudEl);
+    else hudEl.insertBefore(glassEl, hudEl.firstChild); // a detached HUD (no page round it): first in it
   } else if (glassEl) {
     glassPowerEl = glassEl.querySelector('.spyglass-power');
   }

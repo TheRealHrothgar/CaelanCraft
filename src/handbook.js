@@ -1342,6 +1342,7 @@ function makeChapters() {
   /** §103: the Spyglass */
   const glassRec = rec(SPYGLASS_KEY);
   const zoomWords = listJoin(ZOOM_LEVELS.map(zoomLabel), 'or');
+  const zoomSteps = ZOOM_LEVELS.map(zoomLabel).join(', '); // the tablet's Zoom button, a tap a power
   // zombies
   const alphaStrike = zombieStrike('alpha');
   const everySeconds = (/** @type {number} */ n) => (n === 1 ? 'every second' : `every ${n} seconds`);
@@ -1802,7 +1803,7 @@ function makeChapters() {
     ],
     [
       ...workplacesTable(),
-      p(`The Work Stump comes first: ${recipeInputsProse(stump)} and an axe. Flint is knapped into tools on it; it splits a log into ${splitSticks.outputs[0].n} sticks, cuts planks, works leather and makes the Crude Bow. A Kiln, a Bloomery or the Forge at work is a warm place to stand.`),
+      p(`The Work Stump comes first: ${recipeInputsProse(stump)} and an axe. Flint is knapped into tools on it; it splits a log into ${splitSticks.outputs[0].n} sticks, cuts planks, works leather and makes both bows and the Spyglass. A Kiln, a Bloomery or the Forge at work is a warm place to stand.`),
     ],
     ...recipeTable('hand').map((t) => [t]),
     ...recipeTable('stump').map((t) => [t]),
@@ -1988,7 +1989,7 @@ function makeChapters() {
     [
       h('The bows'),
       p(`A bow shoots arrows farther and faster than anything you can throw. The *Crude Bow* is a *Sapling* strung with ${besides(crudeRec, 'sapling')} at the Work Stump, with a ${plain(recipeTools(crudeRec))}. Break leaves by hand for saplings: about one in ${numWord(Math.round(1 / SAPLING_LEAF_P))} gives one, and a hazel thicket picked with [R] now and then.`),
-      p(`The *Recurve Bow* is faster, flatter and truer. Split ${numWord(staveRec.outputs[0].n)} *Bow Staves* from a log at the Work Stump, harden one in the Kiln for ${treatRec.seconds} seconds into a *Treated Stave*, then back it with ${besides(recurveRec, 'treated_stave')} at the Workbench, with a ${plain(recipeTools(recurveRec))}.`),
+      p(`The *Recurve Bow* is faster, flatter and truer. Split ${numWord(staveRec.outputs[0].n)} *Bow Staves* from a log at the Work Stump, harden one in the Kiln for ${treatRec.seconds} seconds into a *Treated Stave*, then back it with ${besides(recurveRec, 'treated_stave')} at the Work Stump again, with a ${plain(recipeTools(recurveRec))}.`),
       ...bowsTable(),
     ],
     [
@@ -2227,9 +2228,9 @@ function makeChapters() {
     // §103: the Spyglass
     [
       h('The Spyglass'),
-      p(`A *Spyglass* is two bronze tubes and a glass lens, made at the Workbench from ${recipeInputsProse(glassRec)}. It works from anywhere in your pack.`),
+      p(`A *Spyglass* is two bronze tubes and a glass lens, made at the Work Stump from ${recipeInputsProse(glassRec)} as soon as you have them. It works from anywhere in your pack.`),
       p(`Hold [Z] to look through it, or hold [RMB] with it in your hand. Everything looks ${numWord(ZOOM_DEFAULT)} times nearer and your look slows to match; scroll the wheel for ${zoomWords}. Let go to look up again.`),
-      p('To keep looking, type *zoom 4* in the console ([T]): *zoom off*, [Esc] or opening a menu puts it down. On a tablet the *Zoom* button does the same.'),
+      p(`To keep looking, type *zoom 4* in the console ([T]), on a server too: *zoom off*, [Esc] or opening a menu puts it down. On a tablet each tap of the *Zoom* button looks closer (${zoomSteps}), and one more puts it down.`),
       tip('Climb a hill and look out: a herd far off, ore in a distant cliff, the smoke of your own camp.'),
     ],
     [
