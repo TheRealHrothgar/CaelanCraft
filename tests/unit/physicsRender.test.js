@@ -5,7 +5,9 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PARTICLE_CAPACITY, BLACK_HOLE_FLASH_COLOR, VORTEX_EVENT_R } from '../../src/config.js';
 import { BLOCK } from '../../src/blocks.js';
-import { createFallingRenderer, PREWARM_IDS, FLASH_COLOR } from '../../src/fallingRenderer.js';
+import { createFallingRenderer, PREWARM_IDS, FLASH_COLOR, PLANT_CACHE_KEY, usesPlantAtlas } from '../../src/fallingRenderer.js';
+import { createPlantAtlasTexture } from '../../src/atlas.js';
+import { PLANT_MAP_UNIFORM } from '../../src/lightShader.js';
 import { createParticles, PARTICLE_KINDS, blockParticleColor } from '../../src/particles.js';
 
 const item = (id, x, y, z, extra = {}) => ({ id, x, y, z, rx: 0, ry: 0, rz: 0, scale: 1, ...extra });
@@ -102,6 +104,38 @@ describe('fallingRenderer', () => {
     let all = 0;
     scene.traverse((o) => { if (o.isLight) all++; });
     expect(all).toBe(1); // still one light
+    fr.dispose();
+  });
+
+  it('§105: a plant, litter or farm block moves as its FAR kit model; the cutout material binds the plant atlas for it', () => {
+    const scene = new THREE.Scene();
+    const atlas = new THREE.Texture();
+    const fr = createFallingRenderer(scene, atlas);
+    fr.sync([item(BLOCK.GLASS, 0, 10, 0)]);
+    const glass = /** @type {*} */ (scene.getObjectByName(`falling:${BLOCK.GLASS}:cutout`));
+    const plantMap = glass.material.userData.caelPlantMap;
+    expect(plantMap.value).toBeNull(); // nothing of the plants' moved yet: no atlas painted for it
+    for (const id of [BLOCK.LOOSE_STONES, BLOCK.GROUND_NEST, BLOCK.PLANTED_CARROT, BLOCK.HONEYBERRY_BUSH]) {
+      fr.sync([item(id, 0, 10, 0)]);
+      const mesh = /** @type {*} */ (scene.getObjectByName(`falling:${id}:cutout`));
+      expect(mesh.material).toBe(glass.material); // one cutout material
+      expect(mesh.material.map).toBe(atlas);
+      // its uvs are the plant atlas's (u past 1.5): the material samples the plant atlas there
+      const uv = mesh.geometry.getAttribute('uv');
+      for (let i = 0; i < uv.count; i++) expect(uv.getX(i)).toBeGreaterThan(1.5);
+      expect(usesPlantAtlas({ uvs: uv.array, vertexCount: uv.count })).toBe(true);
+    }
+    expect(plantMap.value).toBe(createPlantAtlasTexture()); // the page's one plant atlas texture
+    // the program: the object light, the plant atlas beside the block atlas, a plant's normal never turned round
+    const lambert = THREE.ShaderLib.lambert;
+    const shader = { vertexShader: lambert.vertexShader, fragmentShader: lambert.fragmentShader, uniforms: {} };
+    glass.material.onBeforeCompile(shader, null);
+    expect(shader.vertexShader).toContain('vec2 caelVolumeLevels( vec3 p )');
+    expect(shader.fragmentShader).toContain(`uniform sampler2D ${PLANT_MAP_UNIFORM};`);
+    expect(shader.fragmentShader).toContain('if ( vMapUv.x > 1.5 ) normal = normalize( vNormal );');
+    expect(/** @type {*} */ (shader.uniforms)[PLANT_MAP_UNIFORM]).toBe(plantMap);
+    expect(glass.material.customProgramCacheKey()).toBe(PLANT_CACHE_KEY);
+    expect(PLANT_CACHE_KEY).not.toBe('caelancraft-chunk-light-plants'); // not the chunks' program
     fr.dispose();
   });
 });

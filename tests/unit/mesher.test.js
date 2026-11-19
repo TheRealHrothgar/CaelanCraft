@@ -8,13 +8,13 @@ import {
 import { BLOCK, BIOME, FURNITURE_MODEL_IDS, getFaceTile, tileToUV, isOpaque, flintAt } from '../../src/blocks.js';
 import {
   buildChunkMesh, buildCellMesh, vertexAO, hexCornerAO, createMeshBuilder, BIOME_TINT, isTintedFace, BOX_GROUND_SHADE,
-  MODEL_JITTER, MODEL_SCALE_MIN, MODEL_SCALE_MAX, PLANT_NEAR_TRIS_MAX, plantVariantAt, setCellVariation,
+  MODEL_JITTER, MODEL_SCALE_MIN, MODEL_SCALE_MAX, PLANT_NEAR_TRIS_MAX, plantVariantAt, setCellVariation, buildChunkPlants,
 } from '../../src/mesher.js';
 import {
   KIT_MODEL_IDS, LOOSE_STONES_FLINT, PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD, plantMesh, furnitureModel, furnitureModelTile,
-  BOX_QUAD_STRIDE,
+  BOX_QUAD_STRIDE, plantCardSlot,
 } from '../../src/plantModels.js';
-import { PLANT_UV_OFFSET } from '../../src/plantAtlas.js';
+import { PLANT_UV_OFFSET, PLANT_ATLAS_W, PLANT_ATLAS_H, plantCardRect } from '../../src/plantAtlas.js';
 import { createWorldGen } from '../../src/worldgen.js';
 import { makeChunkData, makeChunkDataGetter, setWorldBlock, countFaces } from '../helpers/fixtures.js';
 
@@ -735,18 +735,20 @@ describe('buildChunkMesh — plants, litter and furniture (kit models §105, box
   };
   const meshLod = (cells, lod) => buildChunkMesh(0, 0, makeChunkDataGetter(world(cells)), { plantLod: lod });
 
-  it('a plant (CONTRACTS §105) is its kit model in the cutout layer: its triangles, plant-atlas uvs, in its own cell, on the floor', () => {
+  it('a plant (CONTRACTS §105) is its kit model in the chunk\'s plant layer: its triangles, plant-atlas uvs, in its own cell, on the floor', () => {
     for (const id of KIT_MODEL_IDS) {
       const m = mesh(world([STONE_UNDER, [...A, id]]));
       const model = /** @type {*} */ (plantMesh(id, PLANT_LOD_NEAR, plantVariantAt(id, A[0], A[2])));
-      expect(m.cutout.faceCount, `${id}`).toBe(model.tris);
-      expect(m.cutout.vertexCount).toBe(model.verts);
-      expect(m.cutout.indexCount).toBe(model.tris * 3);
+      expect(m.cutout, `${id}`).toBeNull(); // the plants are a layer of their own (§105.4), drawn with the cutout material
+      expect(m.plantLayer.faceCount, `${id}`).toBe(model.tris);
+      expect(m.plantLayer.vertexCount).toBe(model.verts);
+      expect(m.plantLayer.indexCount).toBe(model.tris * 3);
       expect(m.plants).toBe(1);
       expect(m.plantTris).toBe(model.tris);
+      expect(m.plantCards).toBe(plantCardSlot(id) >= 0 ? 1 : 0);
       let lo = Infinity;
       let hi = -Infinity;
-      for (const { p, n, uv, c } of verts(m.cutout)) {
+      for (const { p, n, uv, c } of verts(m.plantLayer)) {
         lo = Math.min(lo, p[1]);
         hi = Math.max(hi, p[1]);
         expect(Math.hypot(p[0] - cx, p[2] - cz), `${id}`).toBeLessThan(0.66); // in its own cell (a corner is 0.577 out)
@@ -768,7 +770,7 @@ describe('buildChunkMesh — plants, litter and furniture (kit models §105, box
 
   it('a plant is turned, nudged, sized and given its variant per world cell', () => {
     const at = (q, r, id = B.HONEYCAP_MUSHROOM) => mesh(world([[q, A[1] - 1, r, B.STONE], [q, A[1], r, id]]));
-    const top = (m) => Math.max(...verts(m.cutout).map((v) => v.p[1])) - A[1];
+    const top = (m) => Math.max(...verts(m.plantLayer).map((v) => v.p[1])) - A[1];
     const h = /** @type {*} */ (plantMesh(B.HONEYCAP_MUSHROOM, PLANT_LOD_NEAR, 0)).height;
     const tops = [];
     for (const [q, r] of [[A[0], A[2]], [6, 7], [3, 9], [9, 4]]) {
@@ -784,7 +786,7 @@ describe('buildChunkMesh — plants, litter and furniture (kit models §105, box
     expect(MODEL_JITTER).toBeLessThanOrEqual(0.05);
     const a = at(A[0], A[2]);
     const b = at(6, 7);
-    expect(Math.abs(a.cutout.normals[0] - b.cutout.normals[0]) + Math.abs(a.cutout.normals[2] - b.cutout.normals[2])).toBeGreaterThan(1e-3);
+    expect(Math.abs(a.plantLayer.normals[0] - b.plantLayer.normals[0]) + Math.abs(a.plantLayer.normals[2] - b.plantLayer.normals[2])).toBeGreaterThan(1e-3);
     // the variants of a plant are chosen per cell, and both show up over a field
     const seen = new Set();
     for (let q = 0; q < 16; q++) for (let r = 0; r < 16; r++) seen.add(plantVariantAt(B.FERN, q, r));
@@ -795,31 +797,85 @@ describe('buildChunkMesh — plants, litter and furniture (kit models §105, box
     }
   });
 
-  it('the level of detail: FAR is the same plant thinned out, CARD two crossed pictures of its tile from the BLOCK atlas', () => {
+  it('the level of detail: FAR is the same plant thinned out, CARD two crossed pictures of the plant from the PLANT atlas', () => {
     const cells = [STONE_UNDER, [...A, B.HONEYBERRY_BUSH]];
     const near = meshLod(cells, PLANT_LOD_NEAR);
     const far = meshLod(cells, PLANT_LOD_FAR);
     const card = meshLod(cells, PLANT_LOD_CARD);
-    expect(near.cutout.faceCount / far.cutout.faceCount).toBeGreaterThan(6); // about a tenth
-    expect(card.cutout.faceCount).toBe(4);
-    for (const { uv } of verts(far.cutout)) expect(uv[0]).toBeGreaterThanOrEqual(PLANT_UV_OFFSET);
-    // the card is cut from the block's own tile in the block atlas (no offset), lit like a top face, darker at its root
-    const [u0, v0, u1, v1] = tileToUV(getFaceTile(B.HONEYBERRY_BUSH, FACE_TOP));
-    for (const { uv, n } of verts(card.cutout)) {
-      expect(uv[0] >= u0 - 1e-6 && uv[0] <= u1 + 1e-6 && uv[1] >= v0 - 1e-6 && uv[1] <= v1 + 1e-6).toBe(true);
+    expect(near.plantLayer.faceCount / far.plantLayer.faceCount).toBeGreaterThan(5); // about a tenth
+    expect(card.plantLayer.faceCount).toBe(4);
+    expect(card.plantCards).toBe(1);
+    for (const { uv } of verts(far.plantLayer)) expect(uv[0]).toBeGreaterThanOrEqual(PLANT_UV_OFFSET);
+    // the card is cut from the plant's own card slot of the PLANT atlas (u moved PLANT_UV_OFFSET, past 1.5: the shader
+    // never turns its normal round, so it is lit alike from both sides), lit like a top face
+    const [rx, ry, rw, rh] = plantCardRect(plantCardSlot(B.HONEYBERRY_BUSH));
+    for (const { uv, n } of verts(card.plantLayer)) {
+      const u = (uv[0] - PLANT_UV_OFFSET) * PLANT_ATLAS_W;
+      const v = uv[1] * PLANT_ATLAS_H;
+      expect(u >= rx - 1e-3 && u <= rx + rw + 1e-3 && v >= ry - 1e-3 && v <= ry + rh + 1e-3).toBe(true);
+      expect(uv[0]).toBeGreaterThan(1.5);
       expect([n[0] + 0, n[1], n[2] + 0]).toEqual([0, 1, 0]);
     }
     // the litter and the farm keep their FAR model in the far distance (an upright picture of a stone would read wrong)
     for (const id of [B.LOOSE_STONES, B.FALLEN_BRANCHES, B.GROUND_NEST, B.PLANTED_CARROT, B.CARROT_SPROUT]) {
       const c = meshLod([STONE_UNDER, [...A, id]], PLANT_LOD_CARD);
       const f = meshLod([STONE_UNDER, [...A, id]], PLANT_LOD_FAR);
-      expect(c.cutout.faceCount, `${id}`).toBe(f.cutout.faceCount);
-      expect(c.cutout.uvs[0]).toBeGreaterThanOrEqual(PLANT_UV_OFFSET);
+      expect(c.plantLayer.faceCount, `${id}`).toBe(f.plantLayer.faceCount);
+      expect(c.plantLayer.uvs[0]).toBeGreaterThanOrEqual(PLANT_UV_OFFSET);
+      expect(c.plantCards, `${id}`).toBe(0);
     }
-    // the default is NEAR, and a moving block's mesh (buildCellMesh) is the CARD (block atlas uvs, like every moving block)
-    expect(mesh(world(cells)).cutout.faceCount).toBe(near.cutout.faceCount);
-    const cell = buildCellMesh(B.HONEYBERRY_BUSH);
-    expect(cell.cutout.faceCount).toBe(4);
+    // the default is NEAR
+    expect(mesh(world(cells)).plantLayer.faceCount).toBe(near.plantLayer.faceCount);
+  });
+
+  it('a moving copy of every kit model (buildCellMesh) is its FAR model in the cutout layer, sampling only what its renderer binds', () => {
+    // fallingRenderer's cutout material binds the block atlas (u in [0, 1]) and the plant atlas (u past 1.5, at u − 2):
+    // a moving plant, litter or farm block never samples past either (it once clamped to the block atlas's last column)
+    for (const id of KIT_MODEL_IDS) {
+      const cell = buildCellMesh(id);
+      const far = /** @type {*} */ (plantMesh(id, PLANT_LOD_FAR, plantVariantAt(id, 0, 0)));
+      expect(cell.plantLayer, `${id}`).toBeUndefined();
+      expect(cell.cutout.faceCount, `${id}`).toBe(far.tris);
+      for (const { uv } of verts(cell.cutout)) {
+        expect(uv[0] >= PLANT_UV_OFFSET && uv[0] <= PLANT_UV_OFFSET + 1, `${id} u ${uv[0]}`).toBe(true);
+        expect(uv[1] >= 0 && uv[1] <= 1, `${id}`).toBe(true);
+      }
+    }
+  });
+
+  it('buildChunkPlants: the plant layer alone — exactly buildChunkMesh\'s, at every level, lit by each plant\'s own cell', () => {
+    const gen = createWorldGen('plants', { gen: GEN_LATEST });
+    const cache = new Map();
+    const get = (q, r) => {
+      const k = `${q},${r}`;
+      if (!cache.has(k)) {
+        const d = gen.generateChunk(q, r);
+        // a light array (§62) with something in it besides open sky, so the plants' light is checked too
+        d.light = new Uint8Array(d.blocks.length).map((_, i) => ((i * 7) % 16) << 4 | (i % 5));
+        cache.set(k, d);
+      }
+      return cache.get(k);
+    };
+    let checked = 0;
+    for (const [q, r] of [[0, 0], [-1, 2], [2, -1]]) {
+      for (const lod of [PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD]) {
+        const full = buildChunkMesh(q, r, get, { plantLod: lod });
+        const only = buildChunkPlants(q, r, get, { plantLod: lod });
+        expect(only.plantsOnly).toBe(true);
+        expect(only.plants).toBe(full.plants ?? 0);
+        expect(only.plantTris).toBe(full.plantTris ?? 0);
+        expect(only.plantCards).toBe(full.plantCards ?? 0);
+        if (!full.plantLayer) {
+          expect(only.plantLayer).toBeNull();
+          continue;
+        }
+        for (const k of ['positions', 'normals', 'uvs', 'colors', 'light', 'indices']) expect(only.plantLayer[k], `${q},${r} ${k}`).toEqual(full.plantLayer[k]);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(3);
+    // no chunk data: nothing
+    expect(buildChunkPlants(0, 0, () => null)).toEqual({ plantsOnly: true, plantLayer: null, plants: 0, plantTris: 0, plantCards: 0 });
   });
 
   it(`a chunk draws at most PLANT_NEAR_TRIS_MAX NEAR plant triangles: past it the rest of its plants are FAR`, () => {
@@ -834,9 +890,9 @@ describe('buildChunkMesh — plants, litter and furniture (kit models §105, box
   });
 
   it('the litter (§75) is kit models: stones that stand on the floor with real height, sticks a stick long, a nest with eggs', () => {
-    const top = (m) => Math.max(...verts(m.cutout).map((v) => v.p[1])) - A[1];
+    const top = (m) => Math.max(...verts(m.plantLayer).map((v) => v.p[1])) - A[1];
     const span = (m) => {
-      const ps = verts(m.cutout).map((v) => v.p);
+      const ps = verts(m.plantLayer).map((v) => v.p);
       return Math.max(Math.max(...ps.map((p) => p[0])) - Math.min(...ps.map((p) => p[0])), Math.max(...ps.map((p) => p[2])) - Math.min(...ps.map((p) => p[2])));
     };
     const stones = mesh(world([STONE_UNDER, [...A, B.LOOSE_STONES]]));
@@ -847,7 +903,7 @@ describe('buildChunkMesh — plants, litter and furniture (kit models §105, box
     expect(top(sticks)).toBeLessThan(0.4);
     const nest = mesh(world([STONE_UNDER, [...A, B.GROUND_NEST]]));
     const empty = mesh(world([STONE_UNDER, [...A, B.GROUND_NEST_EMPTY]]));
-    expect(nest.cutout.faceCount).toBeGreaterThan(empty.cutout.faceCount); // the eggs
+    expect(nest.plantLayer.faceCount).toBeGreaterThan(empty.plantLayer.faceCount); // the eggs
   });
 
   it('furniture (§85) keeps its box model: quads cut from its 16-px skin in the block atlas, shaded by where they face', () => {
@@ -908,10 +964,29 @@ describe('buildChunkMesh — plants, litter and furniture (kit models §105, box
     }
     expect(best.plants).toBeGreaterThan(5);
     expect(best.tris).toBeLessThan(PLANT_NEAR_TRIS_MAX);
-    for (let i = 0; i < 2; i++) buildChunkMesh(best.q, best.r, get);
-    const t0 = performance.now();
-    for (let i = 0; i < 4; i++) buildChunkMesh(best.q, best.r, get);
-    expect((performance.now() - t0) / 4).toBeLessThan(25);
+    // Timed against the same chunk WITHOUT its plants, in turns, the best of nine of each: a loaded machine (the
+    // parallel suite: a lone 25 ms bound failed there at 41 and 64 ms) slows both alike, and the best run is the one load
+    // touched least. Its plants alone (buildChunkPlants: exactly the plant emission, and what a change of level
+    // re-meshes) cost a seventh of its terrain's mesh (0.11–0.16 measured): a regression of 3× in the plants' meshing
+    // fails, the machine's load does not. With its plants the whole chunk meshes in 1–1.7× its terrain's time; the
+    // bounds on it only catch a disaster.
+    const kit = new Set(KIT_MODEL_IDS);
+    const d = get(best.q, best.r);
+    const bare = { ...d, blocks: d.blocks.map((b) => (kit.has(b) ? 0 : b)) };
+    const getBare = (q, r) => (q === best.q && r === best.r ? bare : get(q, r));
+    const run = { full: () => buildChunkMesh(best.q, best.r, get), bare: () => buildChunkMesh(best.q, best.r, getBare), plants: () => buildChunkPlants(best.q, best.r, get) };
+    const fastest = { full: Infinity, bare: Infinity, plants: Infinity };
+    for (let i = 0; i < 2; i++) for (const k of Object.keys(run)) run[k]();
+    for (let i = 0; i < 9; i++) {
+      for (const k of Object.keys(run)) {
+        const t0 = performance.now();
+        run[k]();
+        fastest[k] = Math.min(fastest[k], performance.now() - t0);
+      }
+    }
+    expect(fastest.full).toBeLessThan(fastest.bare * 3);
+    expect(fastest.plants).toBeLessThan(fastest.bare * 0.5);
+    expect(fastest.full).toBeLessThan(250);
   });
 });
 

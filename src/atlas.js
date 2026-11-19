@@ -15,6 +15,7 @@ import { paintTile } from './tiles.js';
 import { paintTileHD, upscale16 } from './tilesHD.js';
 import { extraSlots } from './tileVariants.js';
 import { plantAtlasMips } from './plantAtlas.js';
+import { plantAtlasImage } from './plantModels.js';
 
 /** Icon geometry is specified on a 32×32 canvas; other sizes scale uniformly from it. */
 export const ICON_BASE_SIZE = 32;
@@ -228,15 +229,21 @@ export function createAtlasTexture(canvas) {
   return texture;
 }
 
+/** @type {DataTexture|null} the one plant atlas texture of the page */
+let plantTexture = null;
+
 /**
- * §105: the PLANT atlas as a texture (plantAtlas.js: painted once, its own mip chain). Unlike the block atlas it is
- * filtered LINEARLY (`magFilter` Linear, `minFilter` LinearMipmapLinear: painted leaves and bark, not pixel art), with
- * the same conventions otherwise: `flipY = false` (v down the image), sRGB, clamp wrapping, anisotropy 1. The chunks'
- * cutout material samples it where a vertex's u is past PLANT_UV_OFFSET (lightShader.applyPlantAtlas).
+ * §105: the PLANT atlas as a texture (plantAtlas.js: painted once, the far cards painted into it by
+ * plantModels.plantAtlasImage, its own mip chain). Unlike the block atlas it is filtered LINEARLY (`magFilter` Linear,
+ * `minFilter` LinearMipmapLinear: painted leaves and bark, not pixel art), with the same conventions otherwise:
+ * `flipY = false` (v down the image), sRGB, clamp wrapping, anisotropy 1. The chunks' cutout material samples it where a
+ * vertex's u is past PLANT_UV_OFFSET (lightShader.applyPlantAtlas), and so does the moving cells' (fallingRenderer).
+ * ONE texture a page, made on the first call and shared by every later one (never disposed: like the block atlas).
  * @returns {DataTexture}
  */
 export function createPlantAtlasTexture() {
-  const mips = plantAtlasMips();
+  if (plantTexture) return plantTexture;
+  const mips = plantAtlasMips(plantAtlasImage());
   const texture = new DataTexture(mips[0].data, mips[0].width, mips[0].height, RGBAFormat, UnsignedByteType);
   texture.mipmaps = mips;
   texture.magFilter = LinearFilter;
@@ -248,6 +255,7 @@ export function createPlantAtlasTexture() {
   texture.wrapT = ClampToEdgeWrapping;
   texture.anisotropy = 1;
   texture.needsUpdate = true;
+  plantTexture = texture;
   return texture;
 }
 

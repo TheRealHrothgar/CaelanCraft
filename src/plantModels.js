@@ -9,18 +9,20 @@
 // (plantAtlas.js), built by the plant kit (plantKit.js), and drawn by the chunk mesher in the chunk's cutout layer.
 //
 // Each model comes in three levels of detail (plantKit.PLANT_LOD_*): NEAR, the full plant; FAR, the same recipe thinned
-// out (about a tenth of the triangles, still leafy, never a ball); CARD, two crossed pictures of the block's own 16-px
-// tile (its Pack icon) for the far distance — the ground litter and the farm's mounds keep their FAR model there. A
+// out (about a tenth of the triangles, still leafy, never a ball, as wide and as tall as the near one); CARD, two crossed
+// pictures of the plant's own near model painted into the plant atlas (plantAtlasImage), for the far distance — the
+// ground litter and the farm's mounds keep their FAR model there. A
 // plant has 1–3 VARIANTS (the same recipe, another seed), chosen per cell by the mesher, so a meadow never repeats one
 // stamp. A picked plant is the same recipe built `bare`: the same plant without its fruit, leaf for leaf.
 //
 // The furniture of §85 (the well, the rain barrel, the two beds) keeps its BOX model: boxes and cards cut from 16-px
 // skins (compileBoxModel), drawn by the mesher's box path.
-import { BLOCK, TILE, FARM_IDS, CROP_ROWS, getFaceTile } from './blocks.js';
-import { paintTile } from './tiles.js';
-import { tileToUV } from './blocks.js';
+import { BLOCK, TILE, FARM_IDS, CROP_ROWS } from './blocks.js';
 import {
-  Plant, PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD, PLANT_STRIDE, dirAt, vec, ribbonGeo,
+  PLANT_ATLAS_W, PLANT_ATLAS_H, PLANT_CARD_PX, plantCardRect, paintPlantAtlas, finishCutout,
+} from './plantAtlas.js';
+import {
+  Plant, PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD, PLANT_STRIDE, dirAt, vec, ribbonGeo, farLeafGrowth,
 } from './plantKit.js';
 
 /** @typedef {import('./plantKit.js').CompiledPlant} CompiledPlant */
@@ -56,7 +58,7 @@ const lerp3 = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, 
  * straight up the middle. Returns the twig tips ([point, the way round it points]) for the fruit to hang from.
  * @param {Plant} k
  * @param {{ root: Vec3, n: number, len: number[], elev: number[], keys: string[], bark: string, leaf: number[],
- *   r: number, up?: number, phase?: number, lift?: number, splay?: number }} o
+ *   r: number, up?: number, phase?: number, lift?: number, splay?: number, keep?: number }} o
  * @returns {[Vec3, number][]}
  */
 function shrub(k, o) {
@@ -71,13 +73,13 @@ function shrub(k, o) {
     const end = add(o.root, scale(dirAt(a, el), L));
     if (!k.far) k.stem(o.root, end, o.r, o.r * 0.45, o.bark, { sides: 4 });
     if (!centre) k.whorl(lerp3(o.root, end, 0.3), 3, ll * 0.85, lw * 0.85, 0.05, a + 0.5, o.keys, { keep: 0.34 });
-    k.spray(lerp3(o.root, end, 0.4), end, 6, ll, lw, o.keys, { phase: i * 1.3, lift: o.lift, splay: o.splay });
+    k.spray(lerp3(o.root, end, 0.4), end, 6, ll, lw, o.keys, { phase: i * 1.3, lift: o.lift, splay: o.splay, keep: o.keep });
     for (const s of [-1, 1]) {
       const from = lerp3(o.root, end, s < 0 ? 0.42 : 0.68);
       const ta = a + s * (0.75 + k.jit(0.2));
       const to = add(from, scale(dirAt(ta, Math.min(1.3, el * 0.5 + 0.25)), L * 0.45));
       if (!k.far) k.stem(from, to, o.r * 0.55, o.r * 0.3, o.bark, { sides: 3 });
-      k.spray(lerp3(from, to, 0.15), to, 5, ll * 0.95, lw * 0.95, o.keys, { phase: i + s, lift: o.lift, splay: o.splay });
+      k.spray(lerp3(from, to, 0.15), to, 5, ll * 0.95, lw * 0.95, o.keys, { phase: i + s, lift: o.lift, splay: o.splay, keep: o.keep });
       if (!centre) tips.push([to, ta]);
     }
   }
@@ -192,7 +194,7 @@ function crabApple(k) {
   k.whorl([fork[0], 0.42, fork[2]], 11, 0.19, 0.095, -0.38, 0.2, APPLE, { out: 0.2, keep: 0.25 });
   const tips = shrub(k, {
     root: /** @type {Vec3} */ (fork), n: 7, len: [0.3, 0.37], elev: [0.4, 0.8], keys: APPLE, bark: 'appleBark', leaf: [0.17, 0.09], r: 0.022,
-    up: 0.42, phase: 0.1, lift: 0.22,
+    up: 0.42, phase: 0.1, lift: 0.22, keep: 0.34,
   });
   tips.filter((_, i) => i % 2 === 0).slice(0, 5).forEach(([tip, a]) => {
     // an apple hanging under the twig, on a short stalk
@@ -296,9 +298,12 @@ function tuber(k) {
       const a = ph + (i * TAU) / n + k.jit(0.2);
       const at = [Math.cos(a) * 0.06, h, Math.sin(a) * 0.06];
       if (!k.far) k.stem([0, 0.04, 0], /** @type {Vec3} */ (at), 0.006, 0.005, 'stem', { sides: 3 });
+      const tl = tilt + k.jit(0.1);
+      const roll = k.jit(0.2);
       if (!k.far || i % 2 === 0) {
-        const g = k.far ? 1.4 : 1;
-        k.leaf(/** @type {Vec3} */ (at), dirAt(a, tilt + k.jit(0.1)), len * g, len * 0.9 * g, L[i % 2], { shape: 'heart', fold: 0.18, roll: k.jit(0.2) });
+        // far away every other leaf, wider for the one it stands for (the same reach)
+        const [gl, gw] = k.far ? farLeafGrowth(2) : [1, 1];
+        k.leaf(/** @type {Vec3} */ (at), dirAt(a, tl), len * gl, len * 0.9 * gw, L[i % 2], { shape: 'heart', fold: 0.18, roll });
       }
     }
   }
@@ -341,11 +346,15 @@ function cattails(k) {
     }, 'cattail.head', { top: 'cattail.head', lift: 0.6 });
     if (!k.far) k.stem(add(head, [0, 0.17, 0]), add(head, [0.004, 0.24, 0]), 0.004, 0.0015, 'stem', { sides: 3 });
   }
-  for (let i = 0; i < 9; i++) {
-    const a = (i * TAU) / 9 + k.jit(0.3);
-    if (k.far && i % 2) continue;
-    k.blade([Math.cos(a) * 0.03, 0, Math.sin(a) * 0.03], dirAt(a, Math.PI / 2 - k.range(0.1, 0.35)), dirAt(a, 0), k.range(0.5, 0.85), k.far ? 0.06 : 0.044, k.range(0.25, 0.8), 'cattail.leaf', { segs: 3 });
-  }
+  // every blade's numbers are drawn near and far alike, so the far tuft keeps the near one's blades where they are: far
+  // away every other one, and the longest (the tuft's reach)
+  const blades = [];
+  for (let i = 0; i < 9; i++) blades.push({ a: (i * TAU) / 9 + k.jit(0.3), lean: k.range(0.1, 0.35), len: k.range(0.5, 0.85), bend: k.range(0.25, 0.8) });
+  const longest = blades.reduce((m, b, i) => (b.len > blades[m].len ? i : m), 0);
+  blades.forEach(({ a, lean, len, bend }, i) => {
+    if (k.far && i % 2 && i !== longest) return;
+    k.blade([Math.cos(a) * 0.03, 0, Math.sin(a) * 0.03], dirAt(a, Math.PI / 2 - lean), dirAt(a, 0), len, k.far ? 0.06 : 0.044, bend, 'cattail.leaf', { segs: 3 });
+  });
 }
 
 /**
@@ -797,7 +806,7 @@ const cache = new Map();
 
 /**
  * Block `id`'s compiled model at `lod`, variant `v` (wrapped into its count), cached: what the chunk mesher copies.
- * CARD is two crossed pictures of the block's own tile (plantCard), or the FAR model for litter and the farm's mounds.
+ * CARD is two crossed pictures of the plant itself (plantCard), or the FAR model for litter and the farm's mounds.
  * @param {number} id @param {number} lod @param {number} [v]
  * @returns {CompiledPlant|null}
  */
@@ -817,46 +826,273 @@ export function plantMesh(id, lod, v = 0) {
 }
 
 // =====================================================================================================================
-// The card: two crossed pictures of the block's own tile, as tall as the plant, for the far distance
+// The card: two crossed pictures of the plant's own near model, painted into the plant atlas, for the far distance
 // =====================================================================================================================
+//
+// Far away (CARD, past PLANT_FAR_M) a plant is two crossed quads showing a picture of ITSELF: its near model (variant 0)
+// seen from the side, rasterised once into a card slot of the plant atlas (plantAtlas.PLANT_CARD_PX square, a grid of
+// its own) with the atlas's own pictures, its baked shade and the light its leaves would get — so the far plant is the
+// same leafy plant in the same colours, never its 16-px Pack icon, and it sits in the plant atlas's uv range: the shader
+// never turns its normal round (lightShader.PLANT_NORMAL_FRAGMENT), so a card is lit alike from both sides.
 
-/** How much darker a card's foot is than its top. */
-export const CARD_ROOT_SHADE = 0.72;
+/** The card-able plants (not the litter, not the farm's mounds), in id order: card slot i is CARD_IDS[i]'s. */
+const CARD_IDS = Object.freeze(KIT_MODEL_IDS.filter((id) => !RECIPES[id].noCard));
+
+/** A card's picture keeps this many clear pixels round the plant (so its quad never shows its slot's edge). */
+export const CARD_MARGIN_PX = 2;
+/** The card is rasterised at this many samples a pixel across (and down), then averaged: smooth leaf edges. */
+const CARD_SUPERSAMPLE = 2;
+/**
+ * The light the card's picture is baked for: the sky's hemisphere (ground CARD_LIGHT_GROUND of the sky's), the sun at
+ * CARD_SUN_ELEVATION (radians) round the plant (it is turned any way) — relative to a face looking straight up, which is
+ * how the card is lit in the game (its normal is up).
+ */
+const CARD_LIGHT_SKY = 1.4;
+const CARD_LIGHT_SUN = 2.0;
+const CARD_LIGHT_GROUND = 0.15;
+const CARD_SUN_ELEVATION = (40 * Math.PI) / 180;
 
 /**
- * Two crossed quads of block `id`'s TOP tile (its Pack picture), from the BLOCK atlas: sized so the picture's plant is as
- * tall as the near model, its foot on the floor; normals straight up (lit evenly, like a top face), darker at the root.
+ * The irradiance on a face whose normal's y is `ny`, from the card's nominal sky: three's hemisphere term
+ * mix(ground, sky, ½ + ½ny) and the sun's max(0, n·s) averaged over the sun's way round.
+ * @param {number} ny
+ */
+function cardIrradiance(ny) {
+  const y = Math.max(-1, Math.min(1, ny));
+  const hemi = CARD_LIGHT_SKY * (CARD_LIGHT_GROUND + (1 - CARD_LIGHT_GROUND) * (0.5 + 0.5 * y));
+  const A = Math.sqrt(1 - y * y) * Math.cos(CARD_SUN_ELEVATION);
+  const B = y * Math.sin(CARD_SUN_ELEVATION);
+  let sun;
+  if (B >= A) sun = B;
+  else if (B <= -A) sun = 0;
+  else {
+    const t = Math.acos(-B / A);
+    sun = (A * Math.sin(t) + B * t) / Math.PI;
+  }
+  return hemi + CARD_LIGHT_SUN * sun;
+}
+
+/**
+ * How bright a face with normal y `ny` is beside the card's own (normal up): what the card's picture is darkened by.
+ * @param {number} ny @returns {number} 0..1
+ */
+export function cardLightRatio(ny) {
+  return cardIrradiance(ny) / cardIrradiance(1);
+}
+
+/**
+ * Block `id`'s card slot in the plant atlas (−1: it has no card: litter and the farm's mounds keep their FAR model).
+ * @param {number} id
+ */
+export function plantCardSlot(id) {
+  return CARD_IDS.indexOf(id);
+}
+
+/** The ways round a card's picture may look at its plant (eighths of a half turn): the one it is widest from wins. */
+const CARD_VIEWS = 8;
+
+/**
+ * How block `id`'s near model maps into its card's picture: seen from the side it is WIDEST from (of CARD_VIEWS ways
+ * round: a prickly pear's pads face on, not edge on) — across it `h = x·cos θ + z·sin θ`, toward the eye
+ * `−x·sin θ + z·cos θ`, y up — at `k` pixels a metre so the wider of its width and its height fills the picture but
+ * CARD_MARGIN_PX round it, centred across, its foot CARD_MARGIN_PX above the picture's bottom row.
+ * @param {number} id
+ * @returns {{ near: CompiledPlant, rect: import('./paintKit.js').Rect, k: number, cos: number, sin: number, cx: number,
+ *   x0: number, x1: number, top: number }}
+ */
+function cardView(id) {
+  const near = /** @type {CompiledPlant} */ (plantMesh(id, PLANT_LOD_NEAR, 0));
+  const d = near.data;
+  let best = { cos: 1, sin: 0, x0: 0, x1: 0 };
+  for (let i = 0; i < CARD_VIEWS; i++) {
+    const cos = Math.cos((i * Math.PI) / CARD_VIEWS);
+    const sin = Math.sin((i * Math.PI) / CARD_VIEWS);
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    for (let o = 0; o < d.length; o += PLANT_STRIDE) {
+      const h = d[o] * cos + d[o + 2] * sin;
+      if (h < x0) x0 = h;
+      if (h > x1) x1 = h;
+    }
+    if (x1 - x0 > best.x1 - best.x0 + 1e-6) best = { cos, sin, x0, x1 };
+  }
+  const { cos, sin, x0, x1 } = best;
+  const top = near.height;
+  const k = (PLANT_CARD_PX - 2 * CARD_MARGIN_PX) / Math.max(x1 - x0, top, 0.05);
+  return { near, rect: plantCardRect(plantCardSlot(id)), k, cos, sin, cx: (x0 + x1) / 2, x0, x1, top };
+}
+
+/**
+ * Two crossed quads (at 45° and 135°) of block `id`'s card picture in the PLANT atlas: each spans the near model's width
+ * and height (a pixel more round it), its foot on the floor, the picture's plant exactly as big as the model; normals
+ * straight up and shade 1 (the picture carries the shade). Its uvs are plant-atlas uvs like a model's (the mesher adds
+ * PLANT_UV_OFFSET).
  * @param {number} id
  * @returns {CompiledPlant}
  */
 export function plantCard(id) {
-  const near = plantMesh(id, PLANT_LOD_NEAR, 0);
-  const tile = getFaceTile(id, 6);
-  const px = paintTile(tile);
-  let topRow = 16;
-  for (let y = 0; y < 16 && topRow === 16; y++) for (let x = 0; x < 16; x++) if (px[(y * 16 + x) * 4 + 3] > 0) { topRow = y; break; }
-  const rows = Math.max(1, 16 - topRow);
-  const H = /** @type {CompiledPlant} */ (near).height;
-  const S = (H * 16) / rows; // the whole tile's side, metres
-  const [u0, v0, u1, v1] = tileToUV(tile);
+  const { rect, k, cx, x0, x1, top } = cardView(id);
+  const [rx, ry, rw, rh] = rect;
+  const e = 1 / k; // a pixel of the picture, in metres
+  const uOf = (s) => (rx + rw / 2 + (s - cx) * k) / PLANT_ATLAS_W;
+  const vOf = (y) => (ry + rh - CARD_MARGIN_PX - y * k) / PLANT_ATLAS_H;
+  const s0 = x0 - e;
+  const s1 = x1 + e;
+  const H = top + e;
   const data = new Float32Array(8 * PLANT_STRIDE);
   const index = new Uint16Array(12);
   let o = 0;
   for (let q = 0; q < 2; q++) {
     const a = q * (Math.PI / 2) + Math.PI / 4;
-    const cx = Math.cos(a) * (S / 2);
-    const cz = Math.sin(a) * (S / 2);
-    const corners = [[-cx, 0, -cz, u0, v1, CARD_ROOT_SHADE], [cx, 0, cz, u1, v1, CARD_ROOT_SHADE], [cx, S, cz, u1, v0, 1], [-cx, S, -cz, u0, v0, 1]];
-    for (const [x, y, z, u, v, s] of corners) {
-      data.set([x, y, z, 0, 1, 0, u, v, s], o);
+    const ax = Math.cos(a);
+    const az = Math.sin(a);
+    for (const [s, y] of [[s0, 0], [s1, 0], [s1, H], [s0, H]]) {
+      data.set([ax * s, y, az * s, 0, 1, 0, uOf(s), vOf(y), 1], o);
       o += PLANT_STRIDE;
     }
     index.set([q * 4, q * 4 + 1, q * 4 + 2, q * 4, q * 4 + 2, q * 4 + 3], q * 6);
   }
   return {
-    data, index, verts: 8, tris: 4, block: true, keys: [`tile:${tile}`], vkey: new Uint8Array(8), vfruit: new Uint8Array(8),
-    height: S, reach: S / 2,
+    data, index, verts: 8, tris: 4, keys: [`card.${plantCardSlot(id)}`], vkey: new Uint8Array(8),
+    vfruit: new Uint8Array(8), height: H, reach: Math.max(-s0, s1),
   };
+}
+
+/** sRGB byte → linear 0..1. */
+const SRGB_TO_LINEAR = Float32Array.from({ length: 256 }, (_, i) => {
+  const c = i / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+});
+
+/** @param {number} c linear 0..1 @returns {number} an sRGB byte */
+function linearToSrgb(c) {
+  const v = c <= 0 ? 0 : c >= 1 ? 1 : c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055;
+  return Math.round(v * 255);
+}
+
+/**
+ * Paint block `id`'s card picture into `img` (the plant atlas being finished) from `pictures` (the painted atlas the
+ * model's uvs point into): its near model's triangles, seen from its widest side (cardView), nearest first per sample, each sample its
+ * picture's texel (a cut-out's clear texel leaves it empty) × the baked shade × cardLightRatio of its normal; averaged
+ * CARD_SUPERSAMPLE² to a pixel, a pixel at least half covered opaque; then finished like any cut-out.
+ * @param {import('./paintKit.js').Img} img @param {import('./paintKit.js').Img} pictures @param {number} id
+ */
+function paintCard(img, pictures, id) {
+  const { near, rect, k, cos, sin, cx } = cardView(id);
+  const [rx, ry, rw, rh] = rect;
+  const S = CARD_SUPERSAMPLE;
+  const W = rw * S;
+  const H = rh * S;
+  const rgb = new Float32Array(W * H * 3);
+  const depth = new Float32Array(W * H).fill(-Infinity);
+  const PW = pictures.width;
+  const PH = pictures.height;
+  const pd = pictures.data;
+  // per vertex: where it falls in the picture (samples), its depth, its uv in texels and its brightness
+  const d = near.data;
+  const n = near.verts;
+  const VX = new Float32Array(n), VY = new Float32Array(n), VZ = new Float32Array(n);
+  const VU = new Float32Array(n), VV = new Float32Array(n), VF = new Float32Array(n);
+  for (let v = 0, o = 0; v < n; v++, o += PLANT_STRIDE) {
+    VX[v] = (rw / 2 + (d[o] * cos + d[o + 2] * sin - cx) * k) * S;
+    VY[v] = (rh - CARD_MARGIN_PX - d[o + 1] * k) * S;
+    VZ[v] = d[o + 2] * cos - d[o] * sin;
+    VU[v] = d[o + 6] * PW;
+    VV[v] = d[o + 7] * PH;
+    VF[v] = d[o + 8] * cardLightRatio(d[o + 4]);
+  }
+  const idx = near.index;
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t];
+    const b = idx[t + 1];
+    const c = idx[t + 2];
+    const ax = VX[a], ay = VY[a], bx = VX[b], by = VY[b], cx2 = VX[c], cy = VY[c];
+    const area = (bx - ax) * (cy - ay) - (cx2 - ax) * (by - ay);
+    if (Math.abs(area) < 1e-9) continue; // seen edge on
+    const minX = Math.max(0, Math.floor(Math.min(ax, bx, cx2)));
+    const maxX = Math.min(W - 1, Math.ceil(Math.max(ax, bx, cx2)));
+    const minY = Math.max(0, Math.floor(Math.min(ay, by, cy)));
+    const maxY = Math.min(H - 1, Math.ceil(Math.max(ay, by, cy)));
+    const inv = 1 / area;
+    // the weights are linear across a row: wa = a0 + ka·px, wb = b0 + kb·px (wc the rest)
+    const ka = (by - cy) * inv;
+    const kb = (cy - ay) * inv;
+    for (let sy = minY; sy <= maxY; sy++) {
+      const py = sy + 0.5;
+      const a0 = (bx * (cy - py) - cx2 * (by - py)) * inv;
+      const b0 = (cx2 * (ay - py) - ax * (cy - py)) * inv;
+      // the samples of this row inside the triangle: every weight ≥ 0
+      const c0 = 1 - a0 - b0;
+      const kc = -ka - kb;
+      let lo = minX + 0.5;
+      let hi = maxX + 0.5;
+      if (ka > 1e-12) lo = Math.max(lo, -a0 / ka); else if (ka < -1e-12) hi = Math.min(hi, -a0 / ka); else if (a0 < 0) continue;
+      if (kb > 1e-12) lo = Math.max(lo, -b0 / kb); else if (kb < -1e-12) hi = Math.min(hi, -b0 / kb); else if (b0 < 0) continue;
+      if (kc > 1e-12) lo = Math.max(lo, -c0 / kc); else if (kc < -1e-12) hi = Math.min(hi, -c0 / kc); else if (c0 < 0) continue;
+      const x0 = Math.max(minX, Math.ceil(lo - 0.5));
+      const x1 = Math.min(maxX, Math.floor(hi - 0.5));
+      for (let sx = x0; sx <= x1; sx++) {
+        const px = sx + 0.5;
+        const wa = a0 + ka * px;
+        const wb = b0 + kb * px;
+        const wc = 1 - wa - wb;
+        if (wa < -1e-6 || wb < -1e-6 || wc < -1e-6) continue;
+        const z = wa * VZ[a] + wb * VZ[b] + wc * VZ[c];
+        const s = sy * W + sx;
+        if (z <= depth[s]) continue;
+        const tx = Math.min(PW - 1, Math.max(0, Math.floor(wa * VU[a] + wb * VU[b] + wc * VU[c])));
+        const ty = Math.min(PH - 1, Math.max(0, Math.floor(wa * VV[a] + wb * VV[b] + wc * VV[c])));
+        const ti = (ty * PW + tx) * 4;
+        if (pd[ti + 3] < 128) continue; // a cut-out's clear texel: what is behind it shows
+        const f = wa * VF[a] + wb * VF[b] + wc * VF[c];
+        depth[s] = z;
+        rgb[s * 3] = SRGB_TO_LINEAR[pd[ti]] * f;
+        rgb[s * 3 + 1] = SRGB_TO_LINEAR[pd[ti + 1]] * f;
+        rgb[s * 3 + 2] = SRGB_TO_LINEAR[pd[ti + 2]] * f;
+      }
+    }
+  }
+  const out = img.data;
+  for (let y = 0; y < rh; y++) {
+    for (let x = 0; x < rw; x++) {
+      let n = 0, r = 0, g = 0, bl = 0;
+      for (let j = 0; j < S; j++) {
+        for (let i = 0; i < S; i++) {
+          const s = (y * S + j) * W + x * S + i;
+          if (depth[s] === -Infinity) continue;
+          n++;
+          r += rgb[s * 3]; g += rgb[s * 3 + 1]; bl += rgb[s * 3 + 2];
+        }
+      }
+      const o = ((ry + y) * img.width + rx + x) * 4;
+      if (n === 0) {
+        out[o] = out[o + 1] = out[o + 2] = out[o + 3] = 0;
+        continue;
+      }
+      out[o] = linearToSrgb(r / n);
+      out[o + 1] = linearToSrgb(g / n);
+      out[o + 2] = linearToSrgb(bl / n);
+      out[o + 3] = Math.round((255 * n) / (S * S));
+    }
+  }
+  finishCutout(img, rect);
+}
+
+/** @type {import('./paintKit.js').Img|null} */
+let withCards = null;
+
+/**
+ * The whole plant atlas as the game binds it: paintPlantAtlas's pictures and every card-able plant's far card painted
+ * into its slot (≈ 20 ms more; deterministic). Cached; callers must not change it. atlas.createPlantAtlasTexture's image.
+ * @returns {import('./paintKit.js').Img}
+ */
+export function plantAtlasImage() {
+  if (withCards) return withCards;
+  const pictures = paintPlantAtlas();
+  const img = { width: pictures.width, height: pictures.height, data: new Uint8ClampedArray(pictures.data) };
+  for (const id of CARD_IDS) paintCard(img, pictures, id);
+  withCards = img;
+  return img;
 }
 
 // =====================================================================================================================

@@ -27,9 +27,13 @@ export class Chunk {
     this.meshedAt = -Infinity;
     /** has been handed to the renderer at least once */
     this.meshed = false;
-    /** §105: the level of detail its plants were last meshed at (−1: never), and how many kit-model cells it drew */
+    /**
+     * §105: the level of detail its plants were last meshed at (−1: never), how many kit-model cells it drew, and how
+     * many of those have a card of their own (with none, FAR and CARD draw the same: no re-mesh between them)
+     */
     this.plantLod = -1;
     this.plants = 0;
+    this.plantCards = 0;
     /**
      * Light levels (§62), indexed like `blocks`: one byte per cell, sky << 4 | block. Null until World lights the chunk
      * (light.js LightEngine.lightChunk); the mesher reads a missing array as open sky.

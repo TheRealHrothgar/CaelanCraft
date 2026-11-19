@@ -2,13 +2,18 @@
 // (CONTRACTS §105), and the furniture's box models (§85).
 import { describe, it, expect } from 'vitest';
 import {
-  BLOCK, BLOCKS, PLANT_IDS, FARM_IDS, FURNITURE_MODEL_IDS, CROP_ROWS, getBlockShape, getFaceTile, tileToUV,
+  BLOCK, BLOCKS, PLANT_IDS, FARM_IDS, FURNITURE_MODEL_IDS, CROP_ROWS, getBlockShape,
 } from '../../src/blocks.js';
 import {
   KIT_MODEL_IDS, PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD, PLANT_STRIDE, LOOSE_STONES_FLINT, isKitModel, plantMesh,
-  plantVariants, buildPlantModel, FURNITURE_MODELS, BOX_QUAD_STRIDE, compileBoxModel, furnitureModel,
+  plantVariants, buildPlantModel, FURNITURE_MODELS, BOX_QUAD_STRIDE, compileBoxModel, furnitureModel, plantCardSlot,
+  plantAtlasImage, cardLightRatio,
 } from '../../src/plantModels.js';
-import { plantRect, PLANT_ATLAS_W, PLANT_ATLAS_H } from '../../src/plantAtlas.js';
+import {
+  plantRect, plantCardRect, paintPlantAtlas, PLANT_ATLAS_W, PLANT_ATLAS_H, PLANT_CARD_SLOTS, PLANT_CARD_PX, PLANT_CARD_TOP,
+  PLANT_ATLAS_PAD,
+} from '../../src/plantAtlas.js';
+import { FAR_LEAF_LONGER, FAR_LEAF_WIDER, farLeafGrowth } from '../../src/plantKit.js';
 
 const B = BLOCK;
 const name = (id) => BLOCKS[id].name;
@@ -57,7 +62,6 @@ describe('the kit models (plantModels.js, CONTRACTS §105)', () => {
       for (const v of variants(id)) {
         for (const lod of [PLANT_LOD_NEAR, PLANT_LOD_FAR]) {
           const m = /** @type {*} */ (plantMesh(id, lod, v));
-          expect(m.block, name(id)).toBe(false);
           expect(m.data.length).toBe(m.verts * PLANT_STRIDE);
           expect(m.index.length).toBe(m.tris * 3);
           expect(m.index.every((i) => i < m.verts)).toBe(true);
@@ -129,18 +133,120 @@ describe('the kit models (plantModels.js, CONTRACTS §105)', () => {
     }
   });
 
-  it('the card is two crossed pictures of the block\'s own tile, from the block atlas, as tall as the plant', () => {
-    for (const id of PLANT_IDS) {
+  it('far away a plant keeps its near size and shape: FAR reach and height within 10 % of NEAR, for every model', () => {
+    // the thinned whorls and sprays grow their leaves WIDER rather than longer (farLeafGrowth), a spray keeps its tip's
+    // leaf, and a recipe draws its random numbers near and far alike: no plant changes size crossing PLANT_NEAR_M
+    const extent = (m) => {
+      let r = 0;
+      let h = 0;
+      for (const x of vertsOf(m)) {
+        r = Math.max(r, Math.hypot(x.p[0], x.p[2]));
+        h = Math.max(h, x.p[1]);
+      }
+      return [r, h];
+    };
+    for (const id of KIT_MODEL_IDS) {
+      for (const v of variants(id)) {
+        const [rn, hn] = extent(plantMesh(id, PLANT_LOD_NEAR, v));
+        const [rf, hf] = extent(plantMesh(id, PLANT_LOD_FAR, v));
+        expect(Math.abs(rf / rn - 1), `${name(id)} #${v} reach ${rn.toFixed(2)} → ${rf.toFixed(2)}`).toBeLessThanOrEqual(0.1);
+        expect(Math.abs(hf / hn - 1), `${name(id)} #${v} height ${hn.toFixed(2)} → ${hf.toFixed(2)}`).toBeLessThanOrEqual(0.1);
+      }
+    }
+    // a far leaf standing for f near ones: a little longer at most, the rest of their area in its width, never a disc
+    expect(farLeafGrowth(1)).toEqual([1, 1]);
+    for (const f of [2, 3, 4, 6]) {
+      const [gl, gw] = farLeafGrowth(f);
+      expect(gl).toBeLessThanOrEqual(FAR_LEAF_LONGER);
+      expect(gw).toBeLessThanOrEqual(FAR_LEAF_WIDER);
+      expect(gw).toBeGreaterThan(gl);
+    }
+  });
+
+  it('the card is two crossed pictures of the plant itself, from its own slot of the PLANT atlas, as big as the plant', () => {
+    const cardIds = KIT_MODEL_IDS.filter((id) => plantCardSlot(id) >= 0);
+    expect(cardIds.length).toBe(PLANT_IDS.length); // every wild plant, ripe or picked
+    expect(cardIds.length).toBeLessThanOrEqual(PLANT_CARD_SLOTS);
+    expect(new Set(cardIds.map(plantCardSlot)).size).toBe(cardIds.length); // a slot each
+    for (const id of cardIds) {
       const card = /** @type {*} */ (plantMesh(id, PLANT_LOD_CARD, 0));
       const near = /** @type {*} */ (plantMesh(id, PLANT_LOD_NEAR, 0));
-      expect(card.block, name(id)).toBe(true);
       expect(card.tris).toBe(4);
-      const [u0, v0, u1, v1] = tileToUV(getFaceTile(id, 6));
-      for (const x of vertsOf(card)) expect(x.uv[0] >= u0 - 1e-6 && x.uv[0] <= u1 + 1e-6 && x.uv[1] >= v0 - 1e-6 && x.uv[1] <= v1 + 1e-6).toBe(true);
-      expect(card.height, name(id)).toBeGreaterThanOrEqual(near.height - 1e-6); // the picture's plant as tall as the model
+      expect(card.verts).toBe(8);
+      const [rx, ry, rw, rh] = plantCardRect(plantCardSlot(id));
+      for (const x of vertsOf(card)) {
+        // plant-atlas uvs (the mesher moves them PLANT_UV_OFFSET along u, so the shader never turns their normal round)
+        const u = x.uv[0] * PLANT_ATLAS_W;
+        const v = x.uv[1] * PLANT_ATLAS_H;
+        expect(u >= rx - 1e-3 && u <= rx + rw + 1e-3 && v >= ry - 1e-3 && v <= ry + rh + 1e-3, name(id)).toBe(true);
+        expect(x.n).toEqual([0, 1, 0]); // lit like a top face, from both sides alike
+        expect(x.shade).toBe(1); // the picture carries the plant's shade
+        expect(x.p[1]).toBeGreaterThanOrEqual(0);
+      }
+      // the picture's plant is the model's size: as tall (a pixel more) and no wider
+      expect(card.height, name(id)).toBeGreaterThanOrEqual(near.height - 1e-6);
+      expect(card.height, name(id)).toBeLessThan(near.height * 1.1 + 0.02);
+      expect(card.reach, name(id)).toBeLessThanOrEqual(near.reach + 0.03);
+      expect(card.reach, name(id)).toBeGreaterThan(near.reach * 0.5);
     }
-    // the litter and the farm keep their FAR model in the far distance
-    for (const id of [...LITTER, ...FARM_IDS]) expect(plantMesh(id, PLANT_LOD_CARD, 0), name(id)).toBe(plantMesh(id, PLANT_LOD_FAR, 0));
+    // the litter and the farm keep their FAR model in the far distance, and have no card
+    for (const id of [...LITTER, ...FARM_IDS]) {
+      expect(plantMesh(id, PLANT_LOD_CARD, 0), name(id)).toBe(plantMesh(id, PLANT_LOD_FAR, 0));
+      expect(plantCardSlot(id), name(id)).toBe(-1);
+    }
+    // the slots are a grid of their own below every packed picture, a gutter round each
+    for (let i = 0; i < PLANT_CARD_SLOTS; i++) {
+      const [x, y, w, h] = plantCardRect(i);
+      expect([w, h]).toEqual([PLANT_CARD_PX, PLANT_CARD_PX]);
+      expect(y - PLANT_ATLAS_PAD).toBeGreaterThanOrEqual(PLANT_CARD_TOP);
+      expect(x + w + PLANT_ATLAS_PAD <= PLANT_ATLAS_W && y + h + PLANT_ATLAS_PAD <= PLANT_ATLAS_H).toBe(true);
+    }
+    expect(() => plantCardRect(PLANT_CARD_SLOTS)).toThrow(RangeError);
+  });
+
+  it('a card\'s picture is the plant painted from the atlas: a leafy cut-out in its own colours, a clear margin round it', () => {
+    const img = plantAtlasImage();
+    expect(plantAtlasImage()).toBe(img); // cached
+    const base = paintPlantAtlas();
+    expect(img).not.toBe(base); // the pictures' own image is left as it was …
+    const [bx, by, bw, bh] = plantRect('honey.leaf0');
+    for (let y = by; y < by + bh; y += 3) {
+      for (let x = bx; x < bx + bw; x += 3) expect(img.data[(y * PLANT_ATLAS_W + x) * 4 + 1]).toBe(base.data[(y * PLANT_ATLAS_W + x) * 4 + 1]); // … and copied
+    }
+    const at = (x, y) => [...img.data.slice((y * PLANT_ATLAS_W + x) * 4, (y * PLANT_ATLAS_W + x) * 4 + 4)];
+    for (const id of KIT_MODEL_IDS.filter((i) => plantCardSlot(i) >= 0)) {
+      const [x0, y0, w, h] = plantCardRect(plantCardSlot(id));
+      let opaque = 0;
+      let g = 0;
+      let rb = 0;
+      for (let y = y0; y < y0 + h; y++) {
+        for (let x = x0; x < x0 + w; x++) {
+          const [r, gg, b, a] = at(x, y);
+          expect(a === 0 || a === 255, name(id)).toBe(true); // a cut-out, as the alpha test sees it
+          if (a === 0) continue;
+          opaque++;
+          g += gg;
+          rb += (r + b) / 2;
+        }
+      }
+      expect(opaque / (w * h), name(id)).toBeGreaterThan(0.015);
+      expect(opaque / (w * h), name(id)).toBeLessThan(0.75); // see-through: leaves with gaps, never a solid blob
+      // a clear margin round it: the quad's edges never show a frame
+      for (let k = 0; k < w; k++) {
+        expect(at(x0 + k, y0)[3], name(id)).toBe(0);
+        expect(at(x0, y0 + k)[3], name(id)).toBe(0);
+        expect(at(x0 + w - 1, y0 + k)[3], name(id)).toBe(0);
+      }
+      // a green plant's card is green
+      if ([B.HONEYBERRY_BUSH, B.HAZEL_THICKET, B.CRAB_APPLE_BUSH, B.FERN, B.TUSSOCK, B.NIGHTSHADE_BUSH].includes(id)) {
+        expect(g / opaque, name(id)).toBeGreaterThan(rb / opaque + 15);
+      }
+    }
+    // the light it is baked for: a face looking up is lit as the card is (1), one turned from the sky darker
+    expect(cardLightRatio(1)).toBeCloseTo(1, 6);
+    expect(cardLightRatio(0)).toBeLessThan(0.75);
+    expect(cardLightRatio(-1)).toBeLessThan(cardLightRatio(0));
+    expect(cardLightRatio(-1)).toBeGreaterThan(0);
   });
 
   it('a picked plant is the same plant less its fruit, vertex for vertex; picked, the Nightshade is the picked Honeyberry', () => {

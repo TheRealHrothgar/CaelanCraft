@@ -5,6 +5,8 @@
 // Every cell is a pointy-top hexagonal prism (src/hex.js): six side quads (faces 0..5), a hexagonal top
 // (face 6) and bottom (face 7). Faces are culled with blocks.shouldRenderFace, shaded with
 // FACE_SHADE × per-vertex ambient occlusion × biome tint, and emitted CCW seen from outside.
+// The kit models (CONTRACTS §105: the plants, the farm's blocks, the litter) go into a fourth list of their own,
+// `plantLayer` (drawn with the cutout material), so buildChunkPlants can re-mesh them alone for a change of level of detail.
 //
 // Performance notes: this runs on the main thread inside world.update()'s time budget, so the hot loop is
 // allocation-free. The padded 18×18×128 volume and the three mesh builders are module-level scratch buffers
@@ -36,8 +38,8 @@ import {
 import { FULL_SKY, LIGHT_EMISSION } from './light.js';
 import { facePieces, waterCrossesFace } from './bricks.js';
 import {
-  furnitureModel, furnitureModelTile, BOX_QUAD_STRIDE, isKitModel, plantMesh, plantVariants, LOOSE_STONES_FLINT,
-  PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD, PLANT_STRIDE,
+  furnitureModel, furnitureModelTile, BOX_QUAD_STRIDE, isKitModel, plantMesh, plantVariants, plantCardSlot,
+  LOOSE_STONES_FLINT, PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_STRIDE,
 } from './plantModels.js';
 import { PLANT_UV_OFFSET } from './plantAtlas.js';
 import {
@@ -46,6 +48,7 @@ import {
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
+/** @typedef {import('./types.js').ChunkPlantData} ChunkPlantData */
 /** @typedef {import('./types.js').GetChunkDataFn} GetChunkDataFn */
 /** @typedef {import('./types.js').ChunkData} ChunkData */
 
@@ -160,6 +163,8 @@ const MODELS = /** @type {(Float32Array|null)[]} */ (new Array(256).fill(null));
 const MODEL_UV = /** @type {(number[]|null)[]} */ (new Array(256).fill(null));
 /** VARIANTS[id]: how many variants a kit model has (§105), chosen per cell. */
 const VARIANTS = new Uint8Array(256);
+/** CARDED[id] = 1 for a kit model whose CARD is not its FAR model (§105.3: not the litter, not the farm's mounds). */
+const CARDED = new Uint8Array(256);
 
 for (let id = 0; id < 256; id++) {
   OPAQUE[id] = isOpaque(id) ? 1 : 0;
@@ -176,6 +181,7 @@ for (let id = 0; id < 256; id++) {
     MODEL_UV[id] = tileToUV(furnitureModelTile(id) ?? getFaceTile(id, FACE_TOP));
   }
   VARIANTS[id] = plantVariants(id);
+  CARDED[id] = isKitModel(id) && plantCardSlot(id) >= 0 ? 1 : 0;
   for (let f = 0; f < FACE_COUNT; f++) {
     const uv = tileToUV(getFaceTile(id, f));
     const o = (id * FACE_COUNT + f) * 4;
@@ -449,8 +455,11 @@ export function createMeshBuilder(initialVertices = 1024) {
   return b;
 }
 
-/** Module-level builders, index = render layer (0 opaque, 1 cutout, 2 translucent). */
-const builders = [createMeshBuilder(8192), createMeshBuilder(1024), createMeshBuilder(1024)];
+/**
+ * Module-level builders, index = render layer (0 opaque, 1 cutout, 2 translucent), and 3 the kit models' own (§105.4:
+ * drawn with the cutout material in a mesh of their own, so a change of their level of detail re-meshes only them).
+ */
+const builders = [createMeshBuilder(8192), createMeshBuilder(1024), createMeshBuilder(1024), createMeshBuilder(4096)];
 
 // ---------------------------------------------------------------------------------------------------
 // Padded volume fill
@@ -929,10 +938,20 @@ export const MODEL_SCALE_MAX = 1.05;
  */
 export const PLANT_NEAR_TRIS_MAX = 60000;
 
-/** The plant triangles of the chunk being built, near and in all; and how many plant cells it holds. */
+/** The plant triangles of the chunk being built, near and in all; how many plant cells it holds, and how many of them
+ * have a card of their own (CARDED). */
 let plantNearTris = 0;
 let plantTris = 0;
 let plantCells = 0;
+let plantCarded = 0;
+
+/** Start counting a chunk's plants. */
+function resetPlantCounts() {
+  plantNearTris = 0;
+  plantTris = 0;
+  plantCells = 0;
+  plantCarded = 0;
+}
 
 /**
  * The variant of kit model `a` at world column (wq, wr): LOOSE_STONES shows its flint one where blocks.flintAt says the
@@ -946,9 +965,9 @@ export function plantVariantAt(a, wq, wr) {
 
 /**
  * A kit model (§105): block `a`'s compiled plant at level of detail `lod` (its variant for the cell), turned by
- * cellHash(q, r) · 2π, nudged by up to MODEL_JITTER (salts 1, 2) and sized MODEL_SCALE_MIN..MAX (salt 5), in the cutout
- * layer. Its uvs are the plant atlas's, moved PLANT_UV_OFFSET along u (the cutout material samples the plant atlas
- * there); a CARD's are the block atlas's own. Every vertex is lit by the plant's own cell (§62) and coloured grey by its
+ * cellHash(q, r) · 2π, nudged by up to MODEL_JITTER (salts 1, 2) and sized MODEL_SCALE_MIN..MAX (salt 5), into `bld`
+ * (the chunk's plant layer). Its uvs are the plant atlas's — a CARD's too — moved PLANT_UV_OFFSET along u (the cutout
+ * material samples the plant atlas there). Every vertex is lit by the plant's own cell (§62) and coloured grey by its
  * baked shade (plantKit compile: openness, slope, contact). No tint, no AO from the terrain, no culling.
  */
 function emitPlant(bld, wq, wr, ly, cx, cz, a, own, lod) {
@@ -971,7 +990,7 @@ function emitPlant(bld, wq, wr, ly, cx, cz, a, own, lod) {
   const k = MODEL_SCALE_MIN + (MODEL_SCALE_MAX - MODEL_SCALE_MIN) * cellHash(wq, wr, 5);
   const ox = cx + (cellHash(wq, wr, 1) - 0.5) * 2 * MODEL_JITTER;
   const oz = cz + (cellHash(wq, wr, 2) - 0.5) * 2 * MODEL_JITTER;
-  const du = m.block ? 0 : PLANT_UV_OFFSET;
+  const du = PLANT_UV_OFFSET;
   const d = m.data;
   const b = bld.vertexCount;
   for (let v = 0, o = 0; v < nv; v++, o += PLANT_STRIDE) {
@@ -1003,6 +1022,7 @@ function emitPlant(bld, wq, wr, ly, cx, cz, a, own, lod) {
   bld.faceCount += m.tris;
   plantTris += m.tris;
   plantCells++;
+  plantCarded += CARDED[a];
   if (L === PLANT_LOD_NEAR) plantNearTris += m.tris;
 }
 
@@ -1134,19 +1154,21 @@ function drawThrough(pq, pr, lr, ly, cx, cz, colBase, even, tint) {
  * @param {number} cr
  * @param {GetChunkDataFn} getChunkData  called for the centre chunk and its six hex neighbours; null → AIR
  * @param {{ plantLod?: number }} [opts]  the level of detail of its plants (§105: PLANT_LOD_NEAR, the default; FAR; CARD)
- * @returns {ChunkMeshData}  with `plants` (how many kit-model cells it drew) and `plantTris` (their triangles) when it drew any
+ * @returns {ChunkMeshData}  with, when it drew any kit model, `plantLayer` (their geometry, drawn with the cutout
+ *   material), `plants` (how many kit-model cells), `plantTris` (their triangles) and `plantCards` (how many of them have a
+ *   card of their own)
  */
 export function buildChunkMesh(cq, cr, getChunkData, opts = {}) {
   const plantLod = opts.plantLod ?? PLANT_LOD_NEAR;
-  plantNearTris = 0;
-  plantTris = 0;
-  plantCells = 0;
+  resetPlantCounts();
   const opaqueB = builders[0];
   const cutoutB = builders[1];
   const translucentB = builders[2];
+  const plantB = builders[3];
   opaqueB.reset();
   cutoutB.reset();
   translucentB.reset();
+  plantB.reset();
 
   if (!fillPadded(cq, cr, getChunkData)) {
     return { opaque: null, cutout: null, translucent: null };
@@ -1199,7 +1221,7 @@ export function buildChunkMesh(cq, cr, getChunkData, opts = {}) {
           const tg = t ? tint[1] : 1;
           const tb = t ? tint[2] : 1;
           const own = lightAt(pq, ly, pr); // a plant or a decal is lit by its own cell (§62)
-          if (shape === SHAPE_PLANT) emitPlant(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, own, plantLod);
+          if (shape === SHAPE_PLANT) emitPlant(plantB, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, own, plantLod);
           else if (shape === SHAPE_MODEL) emitModel(bld, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, cx, cz, a, own);
           else {
             // §70: the loose stones that hold flint are drawn with the flint tile, so flint can be seen where it lies.
@@ -1286,10 +1308,50 @@ export function buildChunkMesh(cq, cr, getChunkData, opts = {}) {
     translucent: translucentB.build(),
   };
   if (plantCells > 0) {
+    out.plantLayer = plantB.build();
     out.plants = plantCells;
     out.plantTris = plantTris;
+    out.plantCards = plantCarded;
   }
   return out;
+}
+
+/**
+ * §105.5: ONLY the kit models of chunk (cq, cr) at level of detail `plantLod` — exactly the `plantLayer` (and counts)
+ * buildChunkMesh gives the same chunk — for a change of their level of detail: nothing else of the chunk is meshed, and
+ * only the chunk's own blocks and light are read (a plant is lit by its own cell). `plantsOnly` marks it for the
+ * renderer (setChunkMesh replaces the chunk's plant mesh and keeps the rest).
+ * @param {number} cq
+ * @param {number} cr
+ * @param {GetChunkDataFn} getChunkData  called for the chunk itself only
+ * @param {{ plantLod?: number }} [opts]
+ * @returns {ChunkPlantData}
+ */
+export function buildChunkPlants(cq, cr, getChunkData, opts = {}) {
+  const plantLod = opts.plantLod ?? PLANT_LOD_NEAR;
+  resetPlantCounts();
+  const plantB = builders[3];
+  plantB.reset();
+  const data = getChunkData(cq, cr);
+  const blocks = data && data.blocks;
+  const n = WORLD_HEIGHT * CHUNK_SIZE * CHUNK_SIZE;
+  if (!blocks || typeof blocks.subarray !== 'function' || blocks.length < n) {
+    return { plantsOnly: true, plantLayer: null, plants: 0, plantTris: 0, plantCards: 0 };
+  }
+  const lightArr = /** @type {{ light?: Uint8Array|null }} */ (data).light;
+  const light = lightArr instanceof Uint8Array && lightArr.length >= blocks.length ? lightArr : null;
+  for (let lq = 0; lq < CHUNK_SIZE; lq++) {
+    for (let lr = 0; lr < CHUNK_SIZE; lr++) {
+      const base = localIndex(lq, 0, lr);
+      for (let ly = 0; ly < WORLD_HEIGHT; ly++) {
+        const a = blocks[base + ly];
+        if (SHAPE[a] !== SHAPE_PLANT || UNMESHED[a] === 1) continue;
+        const own = light ? light[base + ly] : FULL_SKY;
+        emitPlant(plantB, cq * CHUNK_SIZE + lq, cr * CHUNK_SIZE + lr, ly, lq + lr * 0.5, lr * HEX_ROW_SPACING, a, own, plantLod);
+      }
+    }
+  }
+  return { plantsOnly: true, plantLayer: plantB.build(), plants: plantCells, plantTris, plantCards: plantCarded };
 }
 
 /** Scratch chunk for buildCellMesh: one cell in an otherwise empty chunk (plains biome so tinted faces look normal). */
@@ -1313,9 +1375,14 @@ export function buildCellMesh(id) {
   }
   const i = localIndex(0, 1, 0);
   cellChunk.blocks[i] = id;
-  // §105: a plant's moving cell is its crossed picture (block atlas uvs, like every other moving block's)
-  const out = buildChunkMesh(0, 0, (cq, cr) => (cq === 0 && cr === 0 ? cellChunk : null), { plantLod: PLANT_LOD_CARD });
+  // §105: a plant's moving cell is its FAR kit model (plant-atlas uvs: fallingRenderer's cutout material binds the plant
+  // atlas), in the cutout layer
+  const out = buildChunkMesh(0, 0, (cq, cr) => (cq === 0 && cr === 0 ? cellChunk : null), { plantLod: PLANT_LOD_FAR });
   cellChunk.blocks[i] = 0;
+  if (out.plantLayer !== undefined) {
+    if (out.cutout === null) out.cutout = out.plantLayer;
+    delete out.plantLayer;
+  }
   for (const layer of [out.opaque, out.cutout, out.translucent]) {
     if (!layer) continue;
     const pos = layer.positions;

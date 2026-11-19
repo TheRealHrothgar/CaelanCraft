@@ -185,13 +185,16 @@ export const PLANT_MAP_FRAGMENT = /* glsl */ `
 `;
 
 /**
- * §105: give a chunk material (already patched by applyChunkLight) the plant atlas: a second sampler, and the map lookup
- * that picks it for the plants' vertices. One material, one draw per chunk layer: the plants stay in the chunk mesh.
+ * §105: give a lit material the plant atlas: a second sampler, and the map lookup that picks it for the plants'
+ * vertices; a plant's normal is never turned round. The chunks' cutout material (already patched by applyChunkLight) and
+ * the moving cells' (fallingRenderer: the object light, `cacheKey` its own) — whatever onBeforeCompile the material has
+ * when this is called runs first. `material.userData.caelPlantMap` is the uniform (its `value` the texture).
  * @param {THREE.Material} material
  * @param {THREE.Texture|null} texture
+ * @param {string} [cacheKey]  the program's cache key
  * @returns {THREE.Material}
  */
-export function applyPlantAtlas(material, texture) {
+export function applyPlantAtlas(material, texture, cacheKey = 'caelancraft-chunk-light-plants') {
   const before = material.onBeforeCompile;
   const uniform = { value: texture };
   material.onBeforeCompile = (shader, webgl) => {
@@ -202,7 +205,7 @@ export function applyPlantAtlas(material, texture) {
       .replace('#include <map_fragment>', PLANT_MAP_FRAGMENT)
       .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>\n${PLANT_NORMAL_FRAGMENT}`);
   };
-  material.customProgramCacheKey = () => 'caelancraft-chunk-light-plants';
+  material.customProgramCacheKey = () => cacheKey;
   material.userData.caelPlantMap = uniform;
   return material;
 }

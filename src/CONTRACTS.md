@@ -573,7 +573,7 @@ exposes `gen, pondAt, treeTrunkAt, FLORA_TABLE`. A warm generation-2 chunk is al
 ## 9. `src/world.js`
 
 > **Light amendment (§62):** `light` (the LightEngine), `lightAt(q, y, r)` (packed, flushes first), `flushLight()`; update() re-lights the frame's edits first (step 0); `_generate` lights each chunk as it registers it (before onChunkGenerated); setBlock and loaded importEdits note the cell for the next flush; light that changes another meshed chunk dirties it lazily.
-> **§105 amendment:** each chunk's plants are meshed at a level of detail by its distance from the player (`chunkNearestDistance`; NEAR / FAR / CARD at 16 / 48 m, 4 m of slack); update() step 2b re-meshes the chunks whose level changed, nearest first, under `PLANT_LOD_BUDGET_MS` (at least one a call); `chunk.plantLod`, `chunk.plants`.
+> **§105 amendment:** each chunk's plants are meshed at a level of detail by its distance from the player (`chunkNearestDistance`; NEAR / FAR / CARD at 16 / 48 m, 4 m of slack); update() step 2b re-meshes the PLANTS ALONE (`_meshPlants`: a `plantsOnly` mesh to onChunkMesh) of the chunks within the mesh radius whose level changed, nearest first, under `PLANT_LOD_BUDGET_MS` (at least one a call); `chunk.plantLod`, `chunk.plants`, `chunk.plantCards` (§105.5).
 
 ```js
 export class World {
@@ -682,8 +682,9 @@ export function buildChunkMesh(cq, cr, getChunkData)   // → ChunkMeshData { op
                                                         //   decal into its layer instead of a prism (no AO, no culling either way)
                                                         //   v0.15 (§78): a 'model' cell emits its plant model (the crossed sprite is gone)
                                                         //   §105: buildChunkMesh(cq, cr, getChunkData, { plantLod }) — a plant, farm block or piece of
-                                                        //   litter emits its kit model at that level of detail (plant-atlas uvs + PLANT_UV_OFFSET; a CARD
-                                                        //   its block-atlas tile); the result has `plants` and `plantTris` when it drew any
+                                                        //   litter emits its kit model at that level of detail (plant-atlas uvs + PLANT_UV_OFFSET, a
+                                                        //   CARD's too) into the result's `plantLayer`, with `plants`, `plantTris`, `plantCards` when
+                                                        //   it drew any; buildChunkPlants(cq, cr, getChunkData, { plantLod }) → those alone (§105.4)
 export function vertexAO(side1, side2, corner)          // (side1 && side2) ? 0 : 3 - (side1 + side2 + corner); args 0|1  (side faces)
 export function hexCornerAO(sideA, sideB)               // 3 - (sideA + sideB)                                            (hex caps)
 export function isTintedFace(id, face)                  // OAK_LEAVES: every face; GRASS_BLOCK: FACE_TOP only
@@ -2007,6 +2008,10 @@ A non-persistent tumbler that hits a floor while moving down vanishes in 10 dust
 ### 34.4 `createFallingRenderer(scene, atlasTexture)` → `{ sync(items, count = items.length), setFlash(x, y, z, intensity), count(), meshCount(), prewarm(webglRenderer, camera) → Promise, dispose() }`
 
 > **v0.10 amendment (§54):** `setFlash(x, y, z, intensity, color = 0xffd49a)` — the colour is set only when it changes.
+> **§105 amendment:** a kit model (a plant, the litter, a farm block) moves as its FAR model in the cutout layer, plant-atlas
+> uvs; the cutout material binds the plant atlas beside the block atlas (`applyPlantAtlas` after the object light, program key
+> `PLANT_CACHE_KEY`; the page's one `createPlantAtlasTexture()`, fetched when a moving cell first `usesPlantAtlas`) and never
+> turns a plant's normal round (§105.4).
 One InstancedMesh per (block id, render layer) from `mesher.buildCellMesh(id)` (ids with no geometry — CAMPFIRE — draw nothing),
 three Lambert materials like the chunks' (opaque; cutout alphaTest 0.5 DoubleSide; translucent transparent, depthWrite false,
 DoubleSide, renderOrder 1) on the shared atlas texture (never disposed here), `frustumCulled = false`, DynamicDrawUsage. Capacity
@@ -4794,7 +4799,7 @@ bare rock.
 > discs, gems) painted from the plant atlas, in three levels of detail, its variant chosen per cell (§105). The turn,
 > nudge and size per cell, the cutout layer, the own-cell light, no tint, no AO and no culling stand. The parts, the
 > compiler and the limits of this section now serve only the furniture (§85), under new names (§105.3); a plant's
-> 16 × 16 tile stays its Pack picture and becomes its far-distance crossed picture.
+> 16 × 16 tile stays its Pack picture (far away it is a picture of its own model: §105.3's card).
 
 Amends §59 (the plants' shape), §75 (it follows the litter's style) and §76.2. No block, tile, item or recipe is added.
 
@@ -9079,7 +9084,7 @@ painted stone and its glow, three owned textures), `sleep.test.js` (the figure: 
 clear of the body, the depth pre-pass drawn after every transparent effect), `prewarm.test.js` and `pilotModels.test.js`
 unchanged and passing.
 
-## 105. Every plant hex-faceted: kit models on a painted plant atlas, with levels of detail — `src/plantKit.js`, `src/plantAtlas.js`, `src/plantModels.js` (PURE), `src/mesher.js`, `src/world.js`, `src/chunk.js`, `src/config.js`, `src/lightShader.js`, `src/renderer.js`, `src/atlas.js`, `src/main.js`, `src/diagnostics.js`, `src/types.js`, `src/gallery.js`, `src/plantViewer.js`, `plants.html`
+## 105. Every plant hex-faceted: kit models on a painted plant atlas, with levels of detail — `src/plantKit.js`, `src/plantAtlas.js`, `src/plantModels.js` (PURE), `src/mesher.js`, `src/world.js`, `src/chunk.js`, `src/config.js`, `src/lightShader.js`, `src/renderer.js`, `src/atlas.js`, `src/fallingRenderer.js`, `src/main.js`, `src/diagnostics.js`, `src/types.js`, `src/gallery.js`, `src/plantViewer.js`, `plants.html`
 
 Phase 4 of docs/DESIGN-characters.md ("style A, HEX-FACETED everywhere"). Replaces §78's boxes and cards for every plant,
 amends §59, §62, §75, §78, §80.4, §81.2, §85, §9 and §10. Only the drawing changes: no block, item, tile, recipe, drop,
@@ -9094,9 +9099,13 @@ ball, never a boulder; far away a cheap leafy version, never a ball.
   asked; optional bulging `rings`), `stemPath` (one column per segment, half of them FAR), `leaf(base, dir, len, wid, key,
   o)` (a leaf CARD: a flat hexagon pointed at both ends — `LEAF_SHAPES` hex, round, lance, heart, or a diamond — folded
   along its midrib by `fold` so its halves are two facets, 4 triangles, a diamond 2; FAR always a diamond; lifted so its
-  tip never goes below 1.2 cm), `whorl(at, n, …)` (n leaves round one point; FAR keeps `keep` (default 0.34) of them,
-  each grown by √(n / kept) ≤ 1.75), `spray(from, to, n, …)` (n leaves stepping along a twig a golden angle apart, splayed
-  out and lifted to the light, the last carrying the twig on; FAR keeps 0.25), `blade` (a tapering ribbon arching out,
+  tip never goes below 1.2 cm), `whorl(at, n, …)` (n leaves round one point; FAR keeps `keep` (default 0.34) of them),
+  `spray(from, to, n, …)` (n leaves stepping along a twig a golden angle apart, splayed out and lifted to the light, the
+  last carrying the twig on; FAR keeps 0.25 of them, spread along the twig and always the last — the tip's leaf gives the
+  twig its reach and height). A FAR leaf standing for f near ones grows by `farLeafGrowth(f)`: its length by √f up to
+  `FAR_LEAF_LONGER` 1.1, the rest of their area in its width up to `FAR_LEAF_WIDER` 1.9 — so a thinned plant keeps the near
+  one's reach and height, a little less leafy (it was √f both ways, up to 1.75–1.8: the far healwort reached 65 % farther,
+  the far honeyberry splayed out flat like a palm). `blade` (a tapering ribbon arching out,
   `segs` segments, ONE triangle FAR), `frond` (a cut-out picture on a bending strip; at most two segments FAR),
   `disc(at, face, r, …)` (a flat n-gon with a raised centre: a flower, a plate of florets), `gem` (a faceted spindle: a
   berry, a nut, a bud; FAR a three-sided point of four triangles), `ball` (a faceted loft: an apple, a bulb, a flower
@@ -9116,13 +9125,19 @@ ball, never a boulder; far away a cheap leafy version, never a ball.
   A CARD's normal is its upper side's (turned up when it faced down) leaned 45 % toward the plant's outside (from a
   point 0.4 of its height up) and a little up; the shader never turns a plant's normal round (105.4), so a leaf is lit
   alike from both sides and foliage reads as a lit mass, brighter on top and on the sunny side, not as black backs.
-- `PLANT_LOD_NEAR` 0, `PLANT_LOD_FAR` 1, `PLANT_LOD_CARD` 2.
+- A recipe draws every random number near and far alike, then skips a part far away (the cattails' blades, the tuber's
+  leaves): the far plant's parts stand where the near one's do.
+- `PLANT_LOD_NEAR` 0, `PLANT_LOD_FAR` 1, `PLANT_LOD_CARD` 2. **CompiledPlant** has no `block` flag any more (every model
+  and card is on the plant atlas).
 
 ### 105.2 The plant atlas (`plantAtlas.js`, PURE)
 
 - One image `PLANT_ATLAS_W` × `PLANT_ATLAS_H` (1024 × 256) holds every picture of every plant and of the ground litter
   (72 pictures, 78 208 texels in 132 rows: room to spare), each a named rectangle packed tallest first with a `PLANT_ATLAS_PAD` (4)
-  gutter (paintKit Atlas), at about 160 px a metre. `plantAtlasLayout()` → `{ width, height, rects, cut }` is known
+  gutter (paintKit Atlas), at about 160 px a metre, all above `PLANT_CARD_TOP` (144); below it the far CARDS' grid
+  (105.3): `PLANT_CARD_SLOTS` (36: two rows of eighteen) squares of `PLANT_CARD_PX` (48), `PLANT_CARD_GAP` (8, two
+  gutters) apart — a card's neighbours are other cards' clear margins, never a solid picture, so no frame bleeds round a
+  far card at any mip level. `plantCardRect(i)` → slot i's rectangle (a RangeError past the grid). `plantAtlasLayout()` → `{ width, height, rects, cut }` is known
   without painting a pixel (the mesher and the tests need only uvs); `plantRect(key)`, `plantUV(key, fu, fv)`,
   `plantPictureKeys()`, `PLANT_PALETTE` (each plant's colours follow its 16-px tile, so a model and its Pack icon are
   plainly the same plant).
@@ -9133,7 +9148,7 @@ ball, never a boulder; far away a cheap leafy version, never a ball.
   CUT-OUTS (`cut`: the fern's frond, the carrot's lacy leaf — the hemlock's is the same picture —, the thistle's spiny leaf,
   the daisy, the flax flower, the nightshade's star, the hemlock's plate of florets) have alpha snapped to 0 or 255 and
   their clear texels coloured from their neighbours (six texels deep, then the picture's mean), so filtering never pulls
-  in black.
+  in black. `finishCutout(img, rect)` does the same to a picture painted elsewhere (the cards).
 - `plantAtlasMips()` → `PLANT_ATLAS_MIPS` (6) levels, 1024 × 256 → 32 × 8: a texel is its 2 × 2 children, colour
   alpha-weighted, alpha halfway between their mean and the most opaque (a frond thins far away but does not vanish).
 - `PLANT_UV_OFFSET` 2: a plant vertex's u is its atlas u + 2 (105.4).
@@ -9148,10 +9163,24 @@ ball, never a boulder; far away a cheap leafy version, never a ball.
 - A picked plant is its ripe plant's recipe and seed built `bare` (the same vertices in the same order less the fruit's);
   the Nightshade, ripe or picked, grows from the Honeyberry's seed: its berries hang exactly where the honeyberry's do,
   and picked it IS the picked Honeyberry, float for float.
-- CARD: `plantCard(id)` — two crossed quads (at 45° and 135°) of the block's own TOP tile in the BLOCK atlas (`block`
-  true), sized so the picture's plant is as tall as the near model (the tile's top opaque row to its bottom row), normals
-  straight up, the root `CARD_ROOT_SHADE` (0.72) darker. The litter and the farm's mounds keep their FAR model at CARD
-  (an upright picture of a stone would read wrong).
+- CARD: `plantCard(id)` — two crossed quads (at 45° and 135°) of a picture of the PLANT ITSELF in its card slot of the
+  plant atlas (`plantCardSlot(id)`: the card-able ids — the 25 wild plants, ripe and picked — in id order), each spanning
+  the near model's width and height (a pixel more round it), its foot on the floor, the picture's plant exactly the
+  model's size; normals straight up, shade 1 (the picture carries the shade), plant-atlas uvs like a model's (the mesher
+  adds PLANT_UV_OFFSET: u past 1.5, so the shader never turns a card's normal round — it is lit alike from both sides).
+  It was the block's 16-px TOP tile in the BLOCK atlas: past 48 m every bush became its old Pack icon (a ball, a pixel
+  lollipop tree) in other colours, half of the cards were near-black from behind (three turned their up normals down),
+  and coarse block-atlas mips drew a faint frame round each. The litter and the farm's mounds keep their FAR model at
+  CARD (an upright picture of a stone would read wrong): `plantCardSlot` −1.
+- The card's picture (`plantAtlasImage()`: a copy of paintPlantAtlas's image with every card painted into its slot,
+  cached; atlas.createPlantAtlasTexture's image) is the near model (variant 0) rasterised from the side it is widest from
+  (of eight ways round: a prickly pear's pads face on), at `k` pixels a metre so the wider of its width and height fills
+  the slot but `CARD_MARGIN_PX` (2) of clear round it, nearest triangle first per sample, 2 × 2 samples a pixel: each
+  sample the atlas texel its uv names (a cut-out's clear texel leaves it to what is behind) × the vertex's baked shade ×
+  `cardLightRatio(ny)` — the light a face of that normal gets from the sky's hemisphere (ground 0.15 of the sky) and a
+  sun 40° up round the plant, beside a face looking up (how the card is lit: its normal is up) — so the card is as bright
+  as the leaves it stands for; then finished like any cut-out. ≈ 100 ms more at boot (Node, a loaded machine), beside the
+  25 near models it needs (≈ 170 ms, most of which near chunks build anyway).
 
 | plant | near model | near / far tris |
 |---|---|---|
@@ -9159,14 +9188,14 @@ ball, never a boulder; far away a cheap leafy version, never a ball.
 | Nightshade Bush | the honeyberry's bush leaf for leaf; round glossy black berries in the same places; three purple star flowers (fruit) | 1 311 / 145 |
 | picked bushes | the same less the berries (and the stars) | 972 / 106 |
 | Hazel Thicket | a vase of seven slender stems leaning out of one stool, rounded leaves in sprays up each, a side shoot each, a low skirt; nuts in frilly pale husks in twos and threes | 1 090 / 176 |
-| Crab Apple Bush | a little tree: a flared trunk to a fork, a crown of seven branches and a leader in sprays, a ring of leaves under it; red apples hanging on stalks | 1 146 / 190 |
+| Crab Apple Bush | a little tree: a flared trunk to a fork, a crown of seven branches and a leader in sprays, a ring of leaves under it; red apples hanging on stalks (far away its sprays keep a third: `keep` 0.34) | 1 146 / 222 |
 | Healwort | a silver rosette of lance leaves in two tiers; three violet flower spikes on stalks (fruit) | 198 / 94 |
 | Wild Onion | three squat white bulbs, three hollow leaves arching from each; a tall stalk with a lilac-white flower ball | 340 / 194 |
 | Wild Carrot | an orange root crown; eight lacy fronds arching out and one upright | 80 / 62 |
 | Hemlock | the carrot's fronds (fewer) round a PALE crown; a purple-blotched stalk with a domed white plate of florets on top and two more on leaning stalks | 112 / 83 |
 | Wild Tuber | the knobbly tuber showing; ten broad heart leaves on short stalks in two low tiers | 144 / 30 |
 | Tussock | 22 blades in a tuft, the inner ones standing, the outer ones arching over, golden at the tips | 66 / 11 |
-| Cattails | three stalks with fat brown velvet heads and a spike above each; nine long arching blades | 219 / 107 |
+| Cattails | three stalks with fat brown velvet heads and a spike above each; nine long arching blades (far away five, and the longest) | 219 / 108 |
 | Prickly Pear | four oval pads (soft-normalled solids) growing from each other's rims, spined areoles; red fruit on the rims (fruit) over pale scars | 429 / 195 |
 | Honeycap / Frecklecap | faceted caps on hex stems — a fat golden dome over a pale yellow sponge on a cream stem; a wide flat freckled cap with a low peak over white gills on a thin white stem with a ring and a bulb — two or three of them | 204 / 100, 324 / 124 |
 | Fern | a fibrous crown; three young fronds; eleven cut-out fronds arching over in two tiers | 132 / 50 |
@@ -9185,7 +9214,10 @@ largest per-cell size 1.05 it stays under the cell's roof) and reaches at most 0
 than 0.13 m and wider than 0.18 m, litter taller than 0.08 m and wider than 0.3 m; NEAR ≤ 1 400 triangles, FAR ≤ 260 and
 ≤ NEAR; a bush > 800 NEAR and more than 5× its FAR; the tussock ≤ 80 / 12; the fern and the daisies ≤ 160 NEAR; far away
 a bush, the hazel, the crab apple, the fern and the tussock reach at least 80 % as far and stand 80 % as tall as near, and
-at least 40 % of their vertices are leaves, fronds or blades (leafy, never a ball). The tells of §81 in 3D
+at least 40 % of their vertices are leaves, fronds or blades (leafy, never a ball); EVERY model's FAR reach and height
+are within 10 % of its NEAR one's, every variant (no plant changes size or shape crossing PLANT_NEAR_M). A card is four
+triangles in its slot, as tall as its model and no wider; its picture a cut-out with a clear margin, between 1.5 % and
+75 % opaque (leaves with gaps), green for the green plants. The tells of §81 in 3D
 (`plantsNotFood.test.js`) are measured in the plant atlas: the hemlock's plates (white) stand in its upper half above its
 fronds and are its highest part; its crown is pale and the carrot's orange; purple is on the hemlock's stalk and on
 nothing of the carrot's; the nightshade's black berries hang within 6 cm of the honeyberry's blue ones; its three stars
@@ -9200,26 +9232,41 @@ solids only.
 ### 105.4 The mesher and the shader (`mesher.js`, `lightShader.js`, `renderer.js`, `atlas.js`, `main.js`)
 
 - `buildChunkMesh(cq, cr, getChunkData, { plantLod = PLANT_LOD_NEAR } = {})`. A kit-model cell (SHAPE_PLANT) emits
-  `plantMesh(a, lod, plantVariantAt(a, q, r))` into the cutout layer (`emitPlant`): turned by `cellHash(q, r)·2π`,
-  nudged ±`MODEL_JITTER`, sized `MODEL_SCALE_MIN`..`MAX` as before; normals turned; u + `PLANT_UV_OFFSET` (a CARD's block
-  atlas uvs as they are); colour = the baked shade (grey: no tint); light = the cell's own (§62). No AO from the terrain,
-  no culling either way, as before. `plantVariantAt(a, q, r)`: LOOSE_STONES' flint variant where `flintAt`, else
+  `plantMesh(a, lod, plantVariantAt(a, q, r))` into the chunk's PLANT LAYER (`emitPlant`, a builder of its own): turned
+  by `cellHash(q, r)·2π`, nudged ±`MODEL_JITTER`, sized `MODEL_SCALE_MIN`..`MAX` as before; normals turned;
+  u + `PLANT_UV_OFFSET` (a CARD's too); colour = the baked shade (grey: no tint); light = the cell's own (§62). No AO from
+  the terrain, no culling either way, as before. The cutout layer no longer holds the plants. `plantVariantAt(a, q, r)`: LOOSE_STONES' flint variant where `flintAt`, else
   `floor(cellHash(q, r, 7) · variants)`.
 - `PLANT_NEAR_TRIS_MAX` 60 000: past that many NEAR plant triangles a chunk's later plants (in meshing order) are FAR (a
   Creative field planted solid stays affordable; no generated chunk comes near it).
-- The result carries `plants` (kit-model cells drawn) and `plantTris` when it drew any (`types.ChunkMeshData`).
-  `buildCellMesh` (moving blocks) meshes plants at CARD: block-atlas uvs, like every moving block.
+- The result carries, when it drew any kit model, `plantLayer` (their MeshData), `plants` (kit-model cells drawn),
+  `plantTris` and `plantCards` (how many of them have a card: not litter, not the farm's mounds) (`types.ChunkMeshData`).
+- `buildChunkPlants(cq, cr, getChunkData, { plantLod })` → **ChunkPlantData** `{ plantsOnly: true, plantLayer, plants,
+  plantTris, plantCards }`: exactly buildChunkMesh's plant layer and counts (the same cells in the same order, the same
+  PLANT_NEAR_TRIS_MAX), from the chunk's OWN blocks and light only — no padded volume, no terrain: what a change of level
+  re-meshes (105.5). The densest test chunk: 0.2–1 ms against 4–8 ms for its whole mesh.
+- `buildCellMesh` (moving blocks) meshes a kit model at FAR and puts it in the CUTOUT layer, plant-atlas uvs:
+  fallingRenderer's cutout material binds the plant atlas beside the block atlas (`applyPlantAtlas(material, texture,
+  PLANT_CACHE_KEY)` after the object light; the page's one `createPlantAtlasTexture()`, fetched the first time a moving
+  cell's layer `usesPlantAtlas`). It was the CARD with block-atlas uvs, so the litter's and the farm's 22 blocks (their
+  CARD is their FAR model, plant-atlas uvs) moved — a Creative break's ghost, the vortex's infall — painted from the
+  block atlas's last column (magenta, stripes) or cut away, and a bush's ghost flashed black from behind.
 - SHAPE_MODEL is now only the furniture's box path (`emitModel`, `BOX_GROUND_SHADE` 0.78, was `LITTER_GROUND_SHADE`); the
   litter's boxes (`emitLitter`, `emitBox`, `emitNest`, `LITTER_ROCKS`, `LITTER_STICKS`, `NEST_WALL`, `NEST_EGGS`,
   `NEST_EGG`) are gone — the litter is kit models. Its skin tiles (LITTER_ROCK, _FLINT, _STICK, _NEST, _EGG) stay painted.
-- `atlas.createPlantAtlasTexture()`: a DataTexture of `plantAtlasMips()` — `magFilter` Linear, `minFilter`
-  LinearMipmapLinear (painted, not pixel art), flipY false, sRGB, clamp, anisotropy 1. main makes it beside the block
-  atlas and passes it as `createRenderer(…, { plantAtlasTexture })`.
+- `atlas.createPlantAtlasTexture()`: a DataTexture of `plantAtlasMips(plantAtlasImage())` (the cards painted in) —
+  `magFilter` Linear, `minFilter` LinearMipmapLinear (painted, not pixel art), flipY false, sRGB, clamp, anisotropy 1;
+  ONE a page, made on the first call and returned by every later one (never disposed). main makes it beside the block
+  atlas and passes it as `createRenderer(…, { plantAtlasTexture })`; fallingRenderer takes the same one.
 - `lightShader.applyPlantAtlas(material, texture)` (on the cutout material after `applyChunkLight`): a second sampler
   `caelPlantMap` (`PLANT_MAP_UNIFORM`); `map_fragment` samples both atlases and keeps the plant one where `vMapUv.x > 1.5`
   (`PLANT_MAP_FRAGMENT`); after `normal_fragment_begin` a plant's normal is never turned round for its back face
-  (`PLANT_NORMAL_FRAGMENT`). Program cache key `'caelancraft-chunk-light-plants'`. One material, one draw per chunk
-  layer: the plants stay in the chunk mesh — no draw per plant, none per chunk.
+  (`PLANT_NORMAL_FRAGMENT`). Program cache key `'caelancraft-chunk-light-plants'` (a third argument names another: the
+  moving cells' `'caelancraft-object-light-plants'`). `material.userData.caelPlantMap` is the uniform.
+- `renderer.setChunkMesh` draws a chunk's `plantLayer` as a mesh of its own (`chunk:<key>:plants`, the cutout material,
+  render order 0), stored beside the chunk under `plants:<key>`; a `plantsOnly` mesh (ChunkPlantData) replaces that one
+  alone and keeps the chunk's three layers; a full mesh or null replaces or removes both, as does removeChunkMesh. One
+  more draw for a chunk with plants — no draw per plant.
 
 ### 105.5 The level of detail (`world.js`, `chunk.js`, `config.js`)
 
@@ -9228,9 +9275,17 @@ solids only.
   beyond. A chunk keeps the finer level it has until it is `PLANT_LOD_SLACK_M` 4 farther (`_plantLodFor(chunk, current)`):
   no flicker for a player on a ring. NEAR before the first update().
 - `_mesh` meshes a chunk at its level and records `chunk.plantLod` (−1: never) and `chunk.plants`.
-- update() step 2b (after the lazy re-meshes, before the ring walk): every meshed, clean chunk with plants whose level
-  its distance now asks for differs is re-meshed, nearest first, until `PLANT_LOD_BUDGET_MS` (3) has passed — always at
-  least one per call. A chunk without plants never re-meshes for them; level changes are not `pendingMesh`.
+- update() step 2b (after the lazy re-meshes, before the ring walk): every meshed, clean chunk with plants within the
+  mesh radius whose level its distance now asks for differs has its PLANTS re-meshed (`_meshPlants`: buildChunkPlants,
+  handed to onChunkMesh as a `plantsOnly` mesh; the chunk stays clean, its terrain, water and light untouched), nearest
+  first, until `PLANT_LOD_BUDGET_MS` (3) has passed — always at least one per call. A chunk beyond the mesh radius (it
+  only waits to unload) keeps its level; one with `plantCards` 0 (litter, the farm's mounds only) has a change between FAR
+  and CARD just noted (the same geometry). A chunk without plants never re-meshes for them; level changes are not
+  `pendingMesh`. `chunk.plantCards` (chunk.js) is recorded by `_mesh` and `_meshPlants`.
+- It re-meshed the WHOLE chunk (terrain, water, every layer: ≈ 15 ms, always over the 3 ms budget, so one whole chunk a
+  frame while walking). Walking 96 m at 4.5 m/s, 60 updates a second (Node, seed 7 generation 6): update() 1 644 →
+  1 005 ms in all at render distance 4, 2 045 → 1 034 ms at 5; the 90th-percentile frame 6.3 → 0.8 ms and 6.8 → 0.9 ms
+  (111 and 125 plants-only meshes instead of whole chunks; the ring walk's new chunks are the rest, unchanged).
 
 ### 105.6 Budgets (measured; Node, a loaded machine)
 
@@ -9241,8 +9296,12 @@ solids only.
   thousands of plant triangles, beside the terrain's.
 - Meshing a chunk: the lean meadow's densest chunks 4.2 ms before → 5.0–5.3 ms (NEAR); generation 3's 8.3–12.8 ms
   before → 9.9–13.5 ms (alternating runs under load); sparse chunks unchanged. Re-meshing for a level change is
-  budgeted like the lazy re-mesh. `mesher.test.js` checks the densest real chunk of a test world meshes NEAR in < 25 ms.
-- The plant atlas: 1024 × 256 RGBA, 1 MB (1.3 MB with mips), painted ≈ 100 ms at boot.
+  the plants alone (0.2–1 ms), budgeted like the lazy re-mesh. `mesher.test.js` times the densest real chunk of a test
+  world against the same chunk without its plants, in turns, the best of nine of each (a lone 25 ms bound failed under
+  the parallel suite at 41 and 64 ms): its plants alone (buildChunkPlants) under half its terrain's mesh (0.11–0.16
+  measured), the whole NEAR chunk under three times it and under 250 ms.
+- The plant atlas with its cards: painted ≈ 100 ms, the cards ≈ 100 ms more (Node).
+- The plant atlas: 1024 × 256 RGBA, 1 MB (1.3 MB with mips), one texture a page.
 
 ### 105.7 The screenshot aid and the viewer
 

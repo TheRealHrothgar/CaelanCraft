@@ -6,7 +6,10 @@ import {
   buildLayerGeometry, createRenderer, fogRangeForRenderDistance, HIGHLIGHT_SIZE,
   DIG_TRACE_COLOR, DIG_TRACE_RENDER_ORDER, DIG_TRACE_SEGMENTS, DIG_TRACE_CORNER_ORDER, digTraceVertexCount, digTracePositions,
 } from '../../src/renderer.js';
-import { buildChunkMesh } from '../../src/mesher.js';
+import { buildChunkMesh, buildChunkPlants } from '../../src/mesher.js';
+import { BLOCK } from '../../src/blocks.js';
+import { localIndex } from '../../src/coords.js';
+import { PLANT_LOD_NEAR, PLANT_LOD_CARD } from '../../src/plantKit.js';
 import { flatWorldGen } from '../helpers/fixtures.js';
 import { chunkKey } from '../../src/coords.js';
 import { MAX_PIXEL_RATIO, FOG_FAR_CHUNK_MARGIN, RENDER_DISTANCE } from '../../src/config.js';
@@ -167,6 +170,51 @@ describe('createRenderer', () => {
     r.removeChunkMesh('1,0');
     r.removeChunkMesh('does-not-exist');
     expect(r.getStats().chunkMeshes).toBe(3);
+    r.dispose();
+  });
+
+  it('§105.5: a chunk\'s plants are a mesh of their own (the cutout material); a plants-only mesh swaps them alone', () => {
+    const r = createRenderer(fakeCanvas(), new THREE.Texture(), { webglRenderer: stubWebGLRenderer() });
+    const gen = flatWorldGen(60);
+    const chunks = new Map();
+    for (let cq = -1; cq <= 1; cq++) for (let cr = -1; cr <= 1; cr++) chunks.set(chunkKey(cq, cr), gen.generateChunk(cq, cr));
+    const centre = chunks.get(chunkKey(0, 0));
+    centre.blocks[localIndex(4, 61, 4)] = BLOCK.HONEYBERRY_BUSH;
+    centre.blocks[localIndex(9, 61, 6)] = BLOCK.FERN;
+    const get = (cq, cr) => chunks.get(chunkKey(cq, cr)) ?? null;
+    const full = buildChunkMesh(0, 0, get, { plantLod: PLANT_LOD_NEAR });
+    expect(full.plantLayer).toBeTruthy();
+    r.setChunkMesh('0,0', 0, 0, full);
+    const scene = r.three.scene;
+    const terrain = scene.getObjectByName('chunk:0,0:opaque');
+    const plants = /** @type {THREE.Mesh} */ (scene.getObjectByName('chunk:0,0:plants'));
+    expect(terrain).toBeDefined();
+    expect(plants).toBeDefined();
+    expect(plants.renderOrder).toBe(0);
+    expect(/** @type {*} */ (plants.material).alphaTest).toBe(0.5); // the cutout material: one per page, shared
+    expect(/** @type {*} */ (plants.material).userData.caelPlantMap).toBeDefined();
+    expect(plants.geometry.index.count).toBe(full.plantLayer.indexCount);
+    expect(r.getStats().chunkMeshes).toBe(2);
+    // a change of level: the plants alone are swapped, the terrain's mesh is the very same object
+    r.setChunkMesh('0,0', 0, 0, buildChunkPlants(0, 0, get, { plantLod: PLANT_LOD_CARD }));
+    expect(scene.getObjectByName('chunk:0,0:opaque')).toBe(terrain);
+    const cards = /** @type {THREE.Mesh} */ (scene.getObjectByName('chunk:0,0:plants'));
+    expect(cards).not.toBe(plants);
+    expect(cards.geometry.index.count).toBe(2 * 12); // two plants, two crossed quads each
+    expect(scene.children.filter((o) => o.name === 'chunk:0,0:plants')).toHaveLength(1);
+    expect(r.getStats().chunkMeshes).toBe(2);
+    // a full mesh replaces both; removing the chunk removes both
+    r.setChunkMesh('0,0', 0, 0, full);
+    expect(scene.getObjectByName('chunk:0,0:opaque')).not.toBe(terrain);
+    expect(r.getStats().chunkMeshes).toBe(2);
+    r.removeChunkMesh('0,0');
+    expect(scene.getObjectByName('chunk:0,0:plants')).toBeUndefined();
+    expect(r.getStats().chunkMeshes).toBe(0);
+    // a chunk without plants has no plant mesh; a plants-only mesh with none drops its old one
+    r.setChunkMesh('0,0', 0, 0, full);
+    r.setChunkMesh('0,0', 0, 0, { plantsOnly: true, plantLayer: null, plants: 0, plantTris: 0, plantCards: 0 });
+    expect(scene.getObjectByName('chunk:0,0:plants')).toBeUndefined();
+    expect(scene.getObjectByName('chunk:0,0:opaque')).toBeDefined();
     r.dispose();
   });
 
