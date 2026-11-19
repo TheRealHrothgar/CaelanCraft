@@ -17,7 +17,7 @@
 // shoulder), a tame animal's tag (a collar, a bell, a ribbon: hung on the head group) and a snare's loop (on a hind leg).
 // `variants` names each bodyVariant's [trunk, head] parts. Nothing here touches the gameplay sizes: the colliders,
 // heights and the pig's head box are animals.js's and pigs.js's.
-import { loft, sweep, pyramid, prism, wedge, transform, merge, mul, translation, rotation, compose, triangleCount, wrapU, bounds } from './modelKit.js';
+import { loft, sweep, pyramid, prism, wedge, transform, merge, mul, translation, rotation, compose, triangleCount, wrapU, bounds, shapeLanguage } from './modelKit.js';
 import { mix, shade, fbm, hash2, makeRng } from './paintKit.js';
 import { perimeter, Skin, seg, len } from './figureKit.js';
 
@@ -156,6 +156,7 @@ function polyNormals(P, index) {
  * @param {Geo} g @param {number} amp @param {number} seed @param {number[]} [notch] @returns {Geo}
  */
 function lumpy(g, amp, seed, notch) {
+  if (shapeLanguage() !== 'hex') return g; // the blocky pilot: a fleece is a plain block
   const P = new Float32Array(g.positions);
   const key = (v) => Math.round(v * 1e4);
   /** @type {Map<number, number[]>} each ring's extent (by its height): its middle is the middle of that */

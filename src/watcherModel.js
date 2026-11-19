@@ -12,9 +12,12 @@
 // darkest: the hollow reads) and its cracks fall differently on every ring (each starts its strip at its own corner). A
 // GLOW image in step with it is what the stone gives off: the stone itself at WATCHER_SELF_LIGHT of its brightness (by
 // night it still reads as pale stone, never a black shape) and the cracks bright cyan.
-import { loft, ringLoft, merge, translation, triangleCount } from './modelKit.js';
+import { loft as kitLoft, ringLoft, merge, translation, triangleCount } from './modelKit.js';
 import { Painter, createImage, bleed, makeRng, shade, mix } from './paintKit.js';
 import { Skin } from './figureKit.js';
+
+/** The Watcher keeps its hex bands whatever the figures' shape language is (the blocky pilot). @param {*} o */
+const loft = (o) => kitLoft({ ...o, keep: true });
 
 /** @typedef {import('./modelKit.js').Geo} Geo */
 /** @typedef {import('./paintKit.js').Img} Img */

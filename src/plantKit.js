@@ -19,7 +19,10 @@
 // shade is baked light the cell's own light and the sun then multiply: an openness term (the inside and the foot of a
 // plant are darker, its outer top is fully lit), a gentle term from how the face looks up or down (both sides of a card
 // alike), and a contact darkening on the ground.
-import { loft, transform, mul, translation, rotation, scaling, alongSegment } from './modelKit.js';
+import { loft as kitLoft, transform, mul, translation, rotation, scaling, alongSegment } from './modelKit.js';
+
+/** Plants keep their own shapes whatever the figures' shape language is (the blocky pilot). @param {*} o */
+const loft = (o) => kitLoft({ ...o, keep: true });
 import { plantRect, PLANT_ATLAS_W, PLANT_ATLAS_H } from './plantAtlas.js';
 
 /** @typedef {import('./modelKit.js').Geo} Geo */

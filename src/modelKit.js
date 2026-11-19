@@ -129,11 +129,12 @@ class Builder {
  *   corners?: number[], caps?: boolean|{ top?: boolean, bottom?: boolean } }} o
  * @returns {Geo}
  */
-export function loft({ sides = 6, rx = 0.5, rz = rx, rings, smooth = false, phase = Math.PI / sides, corners, caps = true }) {
+export function loft({ sides = 6, rx = 0.5, rz = rx, rings, smooth = false, phase = Math.PI / sides, corners, caps = true, keep = false }) {
   if (!Array.isArray(rings) || rings.length < 2) throw new RangeError('loft: at least two rings');
-  const { pts, us } = basePolygon({ sides, rx, rz, phase, corners });
+  const { pts, us } = basePolygon({ sides, rx, rz, phase, corners, keep });
   const m = pts.length; // ring points; the strip closes on a copy of the first (u = 1)
-  const R = rings.map((r) => ({ y: r.y, sx: r.sx ?? 1, sz: r.sz ?? r.sx ?? 1, dx: r.dx ?? 0, dz: r.dz ?? 0 }));
+  let R = rings.map((r) => ({ y: r.y, sx: r.sx ?? 1, sz: r.sz ?? r.sx ?? 1, dx: r.dx ?? 0, dz: r.dz ?? 0 }));
+  if (SHAPE === 'box' && !keep) R = boxRings(R, rx, rz);
   const apex = R.map((r) => Math.abs(r.sx * rx) < EPS && Math.abs(r.sz * rz) < EPS);
   /** @returns {Vec3} */
   const at = (k, j) => {
@@ -194,13 +195,74 @@ export function loft({ sides = 6, rx = 0.5, rz = rx, rings, smooth = false, phas
   return b.done('wrap');
 }
 
+// ---- PILOT (blocky look): the shape language. 'hex' is the game's; 'block' makes every cross-section a rectangle
+// (limbs, bodies and heads keep their tapers: chiselled blocks); 'box' also squares every loft off to one plain box.
+// Read from ?shape= when there is a page, so every model built afterwards speaks it. `keep` on a loft opts out (plants,
+// the Watcher).
+/** @type {'hex'|'block'|'box'} */
+let SHAPE = 'hex';
+try {
+  const q = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('shape') : null;
+  if (q === 'block' || q === 'box') SHAPE = q;
+} catch { /* no page */ }
+/** @param {'hex'|'block'|'box'} s */
+export function setShapeLanguage(s) {
+  SHAPE = s;
+}
+export const shapeLanguage = () => SHAPE;
+/** A rectangle's half-sides as a share of the ellipse's radii it stands for (about a hexagon's area). */
+const BLOCK_K = 0.9;
+
+/** The base polygon of a block: a rectangle, its faces square to the axes, the seam's point in the middle of the back. */
+function blockPolygon(rx, rz) {
+  const a = Math.abs(rx) * BLOCK_K;
+  const b = Math.abs(rz) * BLOCK_K;
+  const th = (x, z) => {
+    const t = Math.atan2(x, z);
+    return t < 0 ? t + 2 * Math.PI : t;
+  };
+  const pts = [{ th: 0, x: 0, z: b }, { th: th(a, b), x: a, z: b }, { th: th(a, -b), x: a, z: -b }, { th: th(-a, -b), x: -a, z: -b }, { th: th(-a, b), x: -a, z: b }];
+  if (!(a > 0) || !(b > 0)) {
+    // a flat or empty section: spread the corners so nothing divides by zero
+    pts[1].th = Math.PI / 4;
+    pts[2].th = (3 * Math.PI) / 4;
+    pts[3].th = (5 * Math.PI) / 4;
+    pts[4].th = (7 * Math.PI) / 4;
+  }
+  const lens = [0];
+  for (let j = 0; j < pts.length; j++) {
+    const p = pts[j];
+    const q = pts[(j + 1) % pts.length];
+    lens.push(lens[j] + Math.hypot(q.x - p.x, q.z - p.z));
+  }
+  const perimeter = lens[pts.length] || 1;
+  return { pts, us: lens.map((l) => l / perimeter), perimeter };
+}
+
+/**
+ * 'box': a loft's rings squared off to one plain box from its first ring to its last — as wide and deep as its widest
+ * ring, at the middle of where its rings stand. A loft that comes to a point (a horn, a beak) becomes a slimmer box.
+ */
+function boxRings(R, rx, rz) {
+  const live = R.filter((r) => Math.abs(r.sx * rx) > EPS || Math.abs(r.sz * rz) > EPS);
+  if (live.length === 0) return R;
+  const pointed = live.length < R.length;
+  const f = pointed ? 0.6 : 1;
+  const sx = Math.max(...live.map((r) => Math.abs(r.sx))) * f;
+  const sz = Math.max(...live.map((r) => Math.abs(r.sz))) * f;
+  const dx = live.reduce((s, r) => s + r.dx, 0) / live.length;
+  const dz = live.reduce((s, r) => s + r.dz, 0) / live.length;
+  return [{ y: R[0].y, sx, sz, dx, dz }, { y: R[R.length - 1].y, sx, sz, dx, dz }];
+}
+
 /**
  * A loft's base polygon: its corners on the ellipse (rx, rz) in order round from the back, the seam's point at the
  * middle of the back (θ = 0) added when no corner is there, and each point's u (its share of the way round).
  * @param {{ sides?: number, rx?: number, rz?: number, phase?: number, corners?: number[] }} o
  * @returns {{ pts: { th: number, x: number, z: number }[], us: number[], perimeter: number }}
  */
-export function basePolygon({ sides = 6, rx = 0.5, rz = rx, phase = Math.PI / sides, corners }) {
+export function basePolygon({ sides = 6, rx = 0.5, rz = rx, phase = Math.PI / sides, corners, keep = false }) {
+  if (SHAPE !== 'hex' && !keep) return blockPolygon(rx, rz);
   const angles = corners ?? [];
   if (!corners) {
     if (!(sides >= 3)) throw new RangeError('loft: at least three sides');
@@ -464,6 +526,11 @@ function outward(pts, inside) {
  * @returns {Geo}
  */
 export function chamferBox({ w = 1, h = 1, d = 1, c = 0.1, cb = c, smooth = false, top = {} } = {}) {
+  if (SHAPE !== 'hex') {
+    c = 1e-4;
+    cb = 1e-4;
+    if (SHAPE === 'box') top = {};
+  }
   const most = Math.min(w, h, d) / 2 - 1e-4;
   const cTop = Math.max(0, Math.min(c, most));
   const cBot = Math.max(0, Math.min(cb, most));
@@ -535,6 +602,10 @@ export function chamferBox({ w = 1, h = 1, d = 1, c = 0.1, cb = c, smooth = fals
  * @returns {Geo}
  */
 export function wedge({ w = 1, h = 1, d = 1, ridge = 0, sx = 1 } = {}) {
+  if (SHAPE === 'box') {
+    ridge = 0;
+    sx = 1;
+  }
   const hw = w / 2;
   const hd = d / 2;
   const rz = ridge * hd;

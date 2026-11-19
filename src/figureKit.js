@@ -243,7 +243,7 @@ export const FRONT = Math.abs(Math.cos(150 * DEG));
 export function headSkin(s, key, H, skin, face) {
   const o = { corners: [...HEAD_CORNERS], rx: H.rx, rz: H.rz };
   const per = wrapU(o, 0).perimeter;
-  s.wrap(key, Math.round(per * DENSITY.head), Math.round(H.h * DENSITY.head), (p) => {
+  s.wrap(key, Math.min(250, Math.round(per * DENSITY.head)), Math.round(H.h * DENSITY.head), (p) => { // 250: a block's head is wider round (the blocky pilot)
     skin(p);
     // the face's own rectangle: 52° either side of straight ahead
     const u0 = wrapU(o, (180 - 52) * DEG).u;
