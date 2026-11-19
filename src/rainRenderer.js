@@ -7,10 +7,21 @@
 // RAIN_COLUMN_SCANS columns are looked at in one update), falls straight down and dies where the rain lands in that
 // column: on the roof, on the ground, on the water. So no drop is ever under a roof. Leaves are no roof: LEAF_COVER of
 // the drops come through them, the rest stop on the canopy. How many drops live follows the rain's strength.
+//
+// §101 the wind: given `view.wind`, a raindrop leans downwind (windDrawn.dropDrift: RAIN_LEAN_MAX sideways metres per
+// metre fallen at full strength) and a snowflake drifts at SNOW_DRIFT_MS, far more. A slanted drop still lands where its
+// column was looked at: it is born upwind of its landing, at the top of the cylinder or where its path enters the
+// cylinder's side, whichever it reaches first going back. Its path is walked (at most RAIN_PATH_STEPS looks, from the
+// remembered columns) and a drop whose path would pass through anything solid is not born: the lee of a wall or a hill is
+// a rain shadow. In flight a slanted drop that runs into a column's cover (a roof's corner between two looks) stops
+// there, as does one in a column that cannot be looked at this update. Gusts swirl the drops to and fro as they are
+// drawn. With no wind (or a calm) nothing changes. A full column cache forgets only the columns the player has left
+// behind (farther than RAIN_COLUMNS_NEAR), so walking never leaves the drops in the air with nothing remembered.
 import * as THREE from 'three';
 import { WORLD_HEIGHT } from './config.js';
-import { worldToHex } from './hex.js';
+import { hexToWorld, worldToHex } from './hex.js';
 import { LEAF_COVER, rainColumn } from './weather.js';
+import { dropDrift, dropSwirl, timeInCircle } from './windDrawn.js';
 
 /** Drops alive at once at the most (the pool's size), and splashes. */
 export const RAIN_MAX_DROPS = 480;
@@ -48,6 +59,12 @@ export const SPLASH_SIZE = Object.freeze([0.08, 0.3]);
 export const RAIN_COLUMN_SCANS = 8;
 export const RAIN_COLUMN_TTL_S = 2;
 export const RAIN_COLUMNS_KEPT = 1024;
+/**
+ * When RAIN_COLUMNS_KEPT columns are remembered, those whose centre is farther than this from the eye are forgotten
+ * (the ones the player has walked away from); the near ones — every column a drop in the air or a drop being born can
+ * be in (within RAIN_RADIUS + 2 of the eye, about 600 of them) — are kept, so walking never empties the cache at once.
+ */
+export const RAIN_COLUMNS_NEAR = RAIN_RADIUS + 3;
 /** Drops that may be born in one update: the rain thickens over a few frames instead of all at once. */
 export const RAIN_BIRTHS = 48;
 /** sRGB colours of a raindrop and of a snowflake, and how opaque each is. */
@@ -57,6 +74,19 @@ export const RAIN_ALPHA = 0.55;
 export const SNOW_ALPHA = 0.9;
 /** By night the drops keep this part of their brightness. */
 export const RAIN_NIGHT_LIGHT = 0.3;
+/**
+ * §101: a slanted drop is born inside this radius round the eye (where its path enters the cylinder, going back), its
+ * path is looked at about every RAIN_PATH_STEP metres sideways and at most RAIN_PATH_STEPS times.
+ */
+export const RAIN_ENTRY_RADIUS = RAIN_RADIUS + 1;
+export const RAIN_PATH_STEP = 0.5;
+export const RAIN_PATH_STEPS = 12;
+/** How fast a gust swirls a drop (radians a second). */
+export const RAIN_SWIRL_RATE = 2.3;
+
+/** The column cache's keys: (q, r) packed into one number (exact for |q|, |r| < 2^20, far beyond any world walked). */
+const COLUMN_KEY_OFFSET = 1 << 20;
+const COLUMN_KEY_SPAN = 1 << 21;
 
 /** Vertices and indices of one quad. */
 const QUAD_VERTS = 4;
@@ -70,6 +100,7 @@ const QUAD_INDICES = 6;
  * @property {number} intensity  how hard it falls here, 0..1 (0 lets the drops in the air finish their fall)
  * @property {boolean} [snow]    it falls as snow
  * @property {(q: number, y: number, r: number) => number} getBlock
+ * @property {import('./wind.js').Wind|null} [wind]  the wind (main.windNow(); §101): the drops lean, drift and swirl in it
  */
 
 /**
@@ -94,6 +125,11 @@ export class RainField {
     this.alive = new Uint8Array(n);
     /** 1 for a flake */
     this.flake = new Uint8Array(n);
+    /** §101: each drop's sideways velocity (m/s), set at its birth from the wind */
+    this.vx = new Float32Array(n);
+    this.vz = new Float32Array(n);
+    /** §101: how far (m) a gust swirls the drops now (windDrawn.dropSwirl, from the last update) */
+    this.swirl = 0;
     this.live = 0;
     const m = this.maxSplashes;
     this.sx = new Float32Array(m);
@@ -103,7 +139,7 @@ export class RainField {
     this.sAge = new Float32Array(m).fill(Infinity);
     this.nextSplash = 0;
     this.landings = 0;
-    /** @type {Map<string, { floor: number, canopy: number, at: number }>} "q,r" → where the rain lands there */
+    /** @type {Map<number, { floor: number, canopy: number, at: number }>} (q, r) packed → where the rain lands there */
     this.columns = new Map();
     /** the field's own clock (s) */
     this.t = 0;
@@ -140,16 +176,64 @@ export class RainField {
    */
   _column(view, x, z) {
     const [q, r] = worldToHex(x, z);
-    const key = `${q},${r}`;
+    const key = (q + COLUMN_KEY_OFFSET) * COLUMN_KEY_SPAN + (r + COLUMN_KEY_OFFSET); // a number: no string per look
     const known = this.columns.get(key);
     if (known && this.t - known.at < RAIN_COLUMN_TTL_S) return known;
     if (this.scans >= RAIN_COLUMN_SCANS) return known ?? null; // an old answer is better than none
     this.scans++;
     const c = rainColumn(view.getBlock, q, r, WORLD_HEIGHT - 1);
-    if (this.columns.size >= RAIN_COLUMNS_KEPT) this.columns.clear();
+    if (!known && this.columns.size >= RAIN_COLUMNS_KEPT) this._forgetFar(view);
     const entry = { floor: c.floor, canopy: c.canopy, at: this.t };
     this.columns.set(key, entry);
     return entry;
+  }
+
+  /**
+   * The cache is full: forget the columns farther than RAIN_COLUMNS_NEAR from the eye (left behind as the player
+   * walks), keeping every column a drop can be in. Should the near ones alone fill it, everything is forgotten.
+   * @param {RainView} view
+   */
+  _forgetFar(view) {
+    const far = RAIN_COLUMNS_NEAR * RAIN_COLUMNS_NEAR;
+    for (const key of this.columns.keys()) {
+      const q = Math.floor(key / COLUMN_KEY_SPAN) - COLUMN_KEY_OFFSET;
+      const r = (key % COLUMN_KEY_SPAN) - COLUMN_KEY_OFFSET;
+      const [cx, cz] = hexToWorld(q, r);
+      const dx = cx - view.x;
+      const dz = cz - view.z;
+      if (dx * dx + dz * dz > far) this.columns.delete(key);
+    }
+    if (this.columns.size >= RAIN_COLUMNS_KEPT) this.columns.clear();
+  }
+
+  /**
+   * §101: what is remembered of the column of (x, z), however old, without looking (null: never looked at).
+   * @param {number} x @param {number} z @returns {{ floor: number, canopy: number, at: number }|null}
+   */
+  _known(x, z) {
+    const [q, r] = worldToHex(x, z);
+    return this.columns.get((q + COLUMN_KEY_OFFSET) * COLUMN_KEY_SPAN + (r + COLUMN_KEY_OFFSET)) ?? null;
+  }
+
+  /**
+   * §101: whether a slanted drop that lands at (px, land, pz) comes there through open air: its path, going back up and
+   * upwind (lx, lz sideways metres per metre of height) for `rise` metres, is looked at about every RAIN_PATH_STEP metres
+   * sideways (at most RAIN_PATH_STEPS looks, its landing column not among them) and must pass over every column's floor
+   * (leaves let it through). An unknown column (no look left this update) counts as blocked: the drop waits.
+   * @param {RainView} view @param {number} px @param {number} pz @param {number} land
+   * @param {number} lx @param {number} lz @param {number} rise
+   * @returns {boolean}
+   */
+  _clearPath(view, px, pz, land, lx, lz, rise) {
+    const side = Math.hypot(lx, lz) * rise;
+    if (!(side > RAIN_PATH_STEP * 0.5)) return true;
+    const steps = Math.min(RAIN_PATH_STEPS, Math.ceil(side / RAIN_PATH_STEP));
+    for (let k = 1; k <= steps; k++) {
+      const h = (rise * k) / steps;
+      const col = this._column(view, px - lx * h, pz - lz * h);
+      if (!col || col.floor > land + h) return false;
+    }
+    return true;
   }
 
   /**
@@ -162,8 +246,11 @@ export class RainField {
     if (!(dt > 0) || !view) return;
     const step = Math.min(dt, 0.1);
     this.t += step;
-    const { x, y, z, floor, speed, size, phase, alive, flake } = this;
+    const { x, y, z, floor, speed, size, phase, alive, flake, vx, vz } = this;
     const snow = !!view.snow;
+    const wind = view.wind ?? null;
+    this.swirl = dropSwirl(wind, snow);
+    const drift = [0, 0];
     const want = this.target(view.intensity, snow);
     const top = view.y + RAIN_TOP;
     const reach = (RAIN_RADIUS + 2) * (RAIN_RADIUS + 2);
@@ -174,6 +261,23 @@ export class RainField {
     for (let i = 0; i < this.max; i++) {
       if (alive[i]) {
         y[i] -= speed[i] * step;
+        if (vx[i] !== 0 || vz[i] !== 0) {
+          x[i] += vx[i] * step;
+          z[i] += vz[i] * step;
+          // §101: a slanted drop that has run into something its path was not seen to cross (the corner of a roof
+          // between two looks) stops there
+          if (y[i] > floor[i]) {
+            // what is remembered, however old (a stale column is never looked at again for this); a column never seen
+            // is looked at while this update has looks left, and with none left the drop stops (it cannot be told
+            // clear, as an unknown column blocks a birth)
+            const col = this._known(x[i], z[i]) ?? this._column(view, x[i], z[i]);
+            if (!col || y[i] < col.floor) {
+              alive[i] = 0;
+              this.live--;
+              continue;
+            }
+          }
+        }
         const dx = x[i] - view.x;
         const dz = z[i] - view.z;
         if (y[i] <= floor[i]) {
@@ -207,10 +311,25 @@ export class RainField {
       if (!(land < top - 0.5)) continue; // covered from above the cylinder: a roof over the eye, a hillside
       const range = snow ? SNOW_SPEED : RAIN_SPEED;
       const sizes = snow ? SNOW_SIZE : RAIN_LENGTH;
-      x[i] = px;
-      z[i] = pz;
-      speed[i] = range[0] + (range[1] - range[0]) * this.random();
-      y[i] = top - this.random() * speed[i] * 0.05;
+      const fall = range[0] + (range[1] - range[0]) * this.random();
+      let y0 = top - this.random() * fall * 0.05;
+      let bx = px;
+      let bz = pz;
+      dropDrift(wind, snow, fall, drift);
+      if (drift[0] !== 0 || drift[1] !== 0) {
+        // §101: born upwind of where it lands — at the top, or where its path enters the cylinder's side
+        const tb = Math.min((y0 - land) / fall, timeInCircle(px, pz, drift[0], drift[1], view.x, view.z, RAIN_ENTRY_RADIUS));
+        bx = px - drift[0] * tb;
+        bz = pz - drift[1] * tb;
+        y0 = land + fall * tb;
+        if (!this._clearPath(view, px, pz, land, drift[0] / fall, drift[1] / fall, tb * fall)) continue; // a rain shadow
+      }
+      x[i] = bx;
+      z[i] = bz;
+      speed[i] = fall;
+      vx[i] = drift[0];
+      vz[i] = drift[1];
+      y[i] = y0;
       floor[i] = land;
       size[i] = sizes[0] + (sizes[1] - sizes[0]) * this.random();
       phase[i] = this.random() * Math.PI * 2;
@@ -229,7 +348,8 @@ export class RainField {
    * @param {number} eyeX @param {number} eyeZ
    */
   fill(positions, alphas, eyeX, eyeZ) {
-    const { x, y, z, size, phase, alive, flake } = this;
+    const { x, y, z, size, phase, alive, flake, vx, vz, speed } = this;
+    const swirl = this.swirl;
     let p = 0;
     let c = 0;
     for (let i = 0; i < this.max; i++) {
@@ -239,8 +359,11 @@ export class RainField {
         continue;
       }
       const sway = flake[i] ? Math.sin(this.t * 1.3 + phase[i]) * SNOW_SWAY : 0;
-      const cx = x[i] + sway;
-      const cz = z[i];
+      // §101: a gust swirls it to and fro
+      const swx = swirl > 0 ? swirl * Math.sin(this.t * RAIN_SWIRL_RATE + phase[i] * 3) : 0;
+      const swz = swirl > 0 ? swirl * Math.cos(this.t * RAIN_SWIRL_RATE * 0.8 + phase[i] * 5) : 0;
+      const cx = x[i] + sway + swx;
+      const cz = z[i] + swz;
       // a unit vector across the line of sight, level with the ground
       let rx = cz - eyeZ;
       let rz = -(cx - eyeX);
@@ -259,10 +382,13 @@ export class RainField {
       const tall = flake[i] ? wide : size[i];
       const near = Math.min(1, RAIN_NEAR_ALPHA + (1 - RAIN_NEAR_ALPHA) * (len / RAIN_NEAR_M));
       const y0 = y[i];
+      // §101: a streak's tail trails back up its path (upwind); a flake stays a square
+      const tx = flake[i] || !(speed[i] > 0) ? 0 : (-vx[i] / speed[i]) * tall;
+      const tz = flake[i] || !(speed[i] > 0) ? 0 : (-vz[i] / speed[i]) * tall;
       positions[p++] = cx - rx * half; positions[p++] = y0; positions[p++] = cz - rz * half;
       positions[p++] = cx + rx * half; positions[p++] = y0; positions[p++] = cz + rz * half;
-      positions[p++] = cx + rx * half; positions[p++] = y0 + tall; positions[p++] = cz + rz * half;
-      positions[p++] = cx - rx * half; positions[p++] = y0 + tall; positions[p++] = cz - rz * half;
+      positions[p++] = cx + tx + rx * half; positions[p++] = y0 + tall; positions[p++] = cz + tz + rz * half;
+      positions[p++] = cx + tx - rx * half; positions[p++] = y0 + tall; positions[p++] = cz + tz - rz * half;
       alphas[c++] = near;
       alphas[c++] = near;
       alphas[c++] = flake[i] ? near : 0;

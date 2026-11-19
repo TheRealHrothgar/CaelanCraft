@@ -6,12 +6,14 @@ import { describe, it, expect } from 'vitest';
 import {
   CHUNK_SIZE, WORLD_HEIGHT, CHUNK_VOLUME, SEA_LEVEL, RENDER_DISTANCE, GEN_LATEST,
   DATA_RADIUS_EXTRA, UNLOAD_RADIUS_EXTRA, MAX_BUILDS_PER_UPDATE, LAZY_MESH_BUDGET_MS, LAZY_COALESCE_UPDATES,
+  PLANT_NEAR_M, PLANT_FAR_M, PLANT_LOD_SLACK_M, PLANT_LOD_BUDGET_MS,
 } from '../../src/config.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
 import { HEX_DIRS, hexLength, hexNormSq, hexToWorld, worldToHex, hexDiscCount } from '../../src/hex.js';
 import { BLOCK, BIOME, UNLOADED } from '../../src/blocks.js';
 import { normalizeSeed, hashString } from '../../src/noise.js';
-import { World } from '../../src/world.js';
+import { World, chunkNearestDistance } from '../../src/world.js';
+import { PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD } from '../../src/plantKit.js';
 import { createWorldGen } from '../../src/worldgen.js';
 import { trivialWorldGen, flatWorldGen, countFaces, makeChunkData } from '../helpers/fixtures.js';
 
@@ -33,8 +35,9 @@ function makeWorld(opts = {}) {
     ...opts,
   });
   world.onChunkMesh = (key, cq, cr, m) => {
-    meshCalls.push({ key, cq, cr });
-    meshes.set(key, m);
+    // §105.5: a change of the plants' level of detail hands over the plants alone (`plantsOnly`), the rest is kept
+    meshCalls.push({ key, cq, cr, plantsOnly: !!(/** @type {*} */ (m).plantsOnly) });
+    meshes.set(key, /** @type {*} */ (m).plantsOnly ? { ...meshes.get(key), ...m } : m);
   };
   world.onChunkUnload = (key) => unloadCalls.push(key);
   return { world, meshCalls, unloadCalls, meshes };
@@ -1471,5 +1474,164 @@ describe('lazy re-meshing', () => {
     world.setBlock(8, 14, 8, B.STONE, 'coalesce');
     for (let i = 0; i < LAZY_COALESCE_UPDATES && world.update(0, 0, Infinity).pendingMesh > 0; i++);
     expect(dirtyKeys(world)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// §105: the plants' level of detail per chunk
+
+describe('the plants\' level of detail (CONTRACTS §105)', () => {
+  /** A flat stone world with a honeyberry bush on the middle cell of every chunk. */
+  function bushWorldGen() {
+    const flat = flatWorldGen(9);
+    return {
+      ...flat,
+      generateChunk: (cq, cr) => {
+        const d = flat.generateChunk(cq, cr);
+        d.blocks[localIndex(8, 10, 8)] = B.HONEYBERRY_BUSH;
+        return d;
+      },
+    };
+  }
+
+  it('chunkNearestDistance: 0 inside a chunk, the distance to its nearest edge outside it', () => {
+    const [x, z] = hexToWorld(8, 8);
+    expect(chunkNearestDistance(0, 0, x, z)).toBe(0);
+    // a point 10 m along +x beyond the chunk's slanted +q edge (x = 15.5 + r/2 at row r) is 10 · cos 30° from it
+    const [ex, ez] = hexToWorld(15.5, 8);
+    expect(chunkNearestDistance(0, 0, ex + 10, ez)).toBeCloseTo(10 * Math.cos(Math.PI / 6), 3);
+    // the next chunk along q starts half a cell past the last cell of this one
+    expect(chunkNearestDistance(1, 0, x, z)).toBeGreaterThan(5);
+    expect(chunkNearestDistance(1, 0, x, z)).toBeLessThan(9);
+    expect(chunkNearestDistance(5, 0, x, z)).toBeGreaterThan(PLANT_FAR_M);
+  });
+
+  it('a chunk is meshed with its plants NEAR within PLANT_NEAR_M of the player, FAR within PLANT_FAR_M, CARD beyond', () => {
+    const { world, meshes } = makeWorld({ worldGen: bushWorldGen(), renderDistance: 5 });
+    const [x, z] = hexToWorld(8, 8);
+    while (world.update(x, z, Infinity).pendingMesh > 0);
+    const lods = new Set();
+    for (const chunk of world.chunks.values()) {
+      if (!chunk.meshed) continue;
+      const d = chunkNearestDistance(chunk.cq, chunk.cr, x, z);
+      const want = d < PLANT_NEAR_M ? PLANT_LOD_NEAR : d < PLANT_FAR_M ? PLANT_LOD_FAR : PLANT_LOD_CARD;
+      expect(chunk.plantLod, chunk.key).toBe(want);
+      expect(chunk.plants).toBe(1);
+      expect(meshes.get(chunk.key).plants).toBe(1);
+      lods.add(chunk.plantLod);
+    }
+    expect([...lods].sort()).toEqual([PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD]);
+    // the near chunk draws the full bush, a card chunk two crossed pictures
+    const here = world.getChunk(0, 0);
+    expect(meshes.get(/** @type {*} */ (here).key).plantTris).toBeGreaterThan(500);
+    const far = [...world.chunks.values()].find((c) => c.meshed && c.plantLod === PLANT_LOD_CARD);
+    expect(meshes.get(/** @type {*} */ (far).key).plantTris).toBe(4);
+  });
+
+  it('crossing a ring re-meshes ONLY the plants of the chunks whose level changed, nearest first, under PLANT_LOD_BUDGET_MS', () => {
+    let t = 0;
+    const renderDistance = 4;
+    const { world, meshCalls, meshes } = makeWorld({ worldGen: bushWorldGen(), renderDistance, now: () => t });
+    const [x, z] = hexToWorld(8, 8);
+    while (world.update(x, z, Infinity).pendingMesh > 0);
+    meshCalls.length = 0;
+    // standing still: nothing more is meshed
+    world.update(x, z, Infinity);
+    expect(meshCalls).toHaveLength(0);
+    // walk 40 m along +x: every mesh the walk asks for costs 2 ms on the clock, so each call re-meshes about
+    // PLANT_LOD_BUDGET_MS / 2 chunks' plants (at least one), never all at once
+    const nx = x + 40;
+    const [pq, pr] = worldToHex(nx, z);
+    const inRadius = (c) => hexLength(c.cq - Math.floor(pq / CHUNK_SIZE), c.cr - Math.floor(pr / CHUNK_SIZE)) <= renderDistance;
+    let calls = 0;
+    const perCall = [];
+    for (;;) {
+      // count the re-meshes of chunks already meshed (new chunks coming into the ring are the ring walk's)
+      const meshedBefore = new Set([...world.chunks.values()].filter((c) => c.meshed).map((c) => c.key));
+      const before = meshCalls.length;
+      const origNow = world._now;
+      world._now = () => {
+        t += 2;
+        return t;
+      };
+      world.update(nx, z, Infinity);
+      world._now = origNow;
+      const relod = meshCalls.slice(before).filter((m) => meshedBefore.has(m.key));
+      // a level change is the plants alone: no terrain, no water re-meshed for it
+      for (const m of relod) if (!world.getChunk(m.cq, m.cr)?.dirty) expect(m.plantsOnly, m.key).toBe(true);
+      perCall.push(relod.filter((m) => m.plantsOnly).length);
+      calls++;
+      const pending = [...world.chunks.values()].filter((c) => c.meshed && !c.dirty && c.plants > 0 && inRadius(c) && world._plantLodFor(c, c.plantLod) !== c.plantLod);
+      if (pending.length === 0 || calls > 200) break;
+    }
+    expect(calls).toBeGreaterThan(1);
+    expect(perCall.reduce((a, b) => a + b, 0)).toBeGreaterThan(3);
+    expect(Math.max(...perCall.slice(1))).toBeLessThanOrEqual(Math.ceil(PLANT_LOD_BUDGET_MS / 2) + 1);
+    for (const chunk of world.chunks.values()) {
+      if (!chunk.meshed || chunk.dirty) continue;
+      // within the mesh radius every chunk is at its level; one beyond it only waits to unload and is left as it is
+      if (inRadius(chunk)) expect(chunk.plantLod, chunk.key).toBe(world._plantLodFor(chunk, chunk.plantLod));
+      // the renderer's copy: the chunk's terrain as it was, its plants at their level
+      const m = meshes.get(chunk.key);
+      expect(m.opaque, chunk.key).not.toBeUndefined();
+      if (chunk.plantLod === PLANT_LOD_CARD) expect(m.plantTris, chunk.key).toBe(4);
+    }
+  });
+
+  it('a level change between FAR and CARD skips a chunk whose kit models have no card (litter, the farm\'s mounds)', () => {
+    function litterWorldGen() {
+      const flat = flatWorldGen(9);
+      return {
+        ...flat,
+        generateChunk: (cq, cr) => {
+          const d = flat.generateChunk(cq, cr);
+          d.blocks[localIndex(8, 10, 8)] = B.LOOSE_STONES;
+          return d;
+        },
+      };
+    }
+    const { world, meshCalls } = makeWorld({ worldGen: litterWorldGen(), renderDistance: 5 });
+    const [x, z] = hexToWorld(8, 8);
+    while (world.update(x, z, Infinity).pendingMesh > 0);
+    for (const c of world.chunks.values()) if (c.meshed) expect(c.plantCards, c.key).toBe(0);
+    meshCalls.length = 0;
+    // walk 30 m along +x: chunks cross the 16 m ring (their stones re-meshed, NEAR ↔ FAR) and the 48 m one (not)
+    for (let i = 1; i <= 10; i++) world.update(x + i * 3, z, Infinity);
+    const far = [...world.chunks.values()].filter((c) => c.meshed && c.plantLod === PLANT_LOD_CARD);
+    expect(far.length).toBeGreaterThan(0);
+    const remeshed = new Set(meshCalls.filter((m) => m.plantsOnly).map((m) => m.key));
+    // a chunk that went from FAR to CARD only had its level noted: its stones look the same at both
+    const [px, pz] = [x + 30, z];
+    for (const c of far) {
+      if (chunkNearestDistance(c.cq, c.cr, px, pz) < PLANT_NEAR_M + PLANT_LOD_SLACK_M) continue;
+      const wasFar = chunkNearestDistance(c.cq, c.cr, x, z) < PLANT_FAR_M && chunkNearestDistance(c.cq, c.cr, x, z) >= PLANT_NEAR_M;
+      if (wasFar) expect(remeshed.has(c.key), c.key).toBe(false);
+    }
+  });
+
+  it('a chunk keeps its finer level until it is PLANT_LOD_SLACK_M farther (no flicker on a ring); chunks without plants never re-mesh', () => {
+    const { world, meshCalls } = makeWorld({ worldGen: bushWorldGen(), renderDistance: 3 });
+    const [x, z] = hexToWorld(8, 8);
+    while (world.update(x, z, Infinity).pendingMesh > 0);
+    const chunk = /** @type {*} */ (world.getChunk(1, 0));
+    // stand d metres from chunk (1, 0)'s slanted −q edge (row 8 of it), straight out along −x
+    const [ex] = hexToWorld(15.5, 8);
+    const standAt = (d) => ex - d / Math.cos(Math.PI / 6);
+    world.update(standAt(PLANT_NEAR_M - 1), z, Infinity);
+    expect(chunkNearestDistance(1, 0, standAt(PLANT_NEAR_M - 1), z)).toBeCloseTo(PLANT_NEAR_M - 1, 2);
+    expect(chunk.plantLod).toBe(PLANT_LOD_NEAR);
+    meshCalls.length = 0;
+    for (let i = 0; i < 6; i++) world.update(standAt(PLANT_NEAR_M + (i % 2 ? 1 : -1)), z, Infinity);
+    expect(meshCalls.filter((m) => m.key === chunk.key)).toHaveLength(0);
+    world.update(standAt(PLANT_NEAR_M + PLANT_LOD_SLACK_M + 1), z, Infinity);
+    expect(chunk.plantLod).toBe(PLANT_LOD_FAR);
+    // a world without plants: walking meshes only the chunks that come into the ring, never one again for its plants
+    const bare = makeWorld({ worldGen: flatWorldGen(9), renderDistance: 3 });
+    while (bare.world.update(x, z, Infinity).pendingMesh > 0);
+    const before = new Set(bare.meshCalls.map((m) => m.key));
+    bare.meshCalls.length = 0;
+    for (let i = 1; i <= 10; i++) bare.world.update(x + i * 3, z, Infinity);
+    for (const c of bare.world.chunks.values()) expect(c.plants).toBe(0);
+    expect(bare.meshCalls.filter((m) => before.has(m.key))).toHaveLength(0);
   });
 });

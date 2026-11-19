@@ -1,8 +1,8 @@
 // Caelancraft — the Avatar chooser (DOM). See src/CONTRACTS.md §91.
 //
-// "Who do you want to be?": one card per avatar on a plain ROUNDED SQUARE (never a hexagon badge), each with a pixel
-// portrait of its head and shoulders painted from its own skin (avatarSkin.portrait) and its name; the chosen one is
-// lit in honey. Opened from the title screen (`#btn-avatar-title`, beside the Survival Guide button) and from the pause
+// "Who do you want to be?": one card per avatar on a plain ROUNDED SQUARE (never a hexagon badge), each with a portrait
+// of its head and shoulders — the avatar's own model drawn once by the game's renderer (avatarRenderer.renderAvatarPortraits,
+// handed in as opts.portrait) — and its name; the chosen one is lit in honey. Opened from the title screen (`#btn-avatar-title`, beside the Survival Guide button) and from the pause
 // menu (`#btn-avatar-pause`, in its "You" row); both buttons say who is chosen. A click or Enter / Space on a card chooses
 // it (opts.onChoose: main stores it and swaps the model at once); the arrow keys move between the cards; Done, Esc or a
 // click on the dimmed backdrop closes it and gives the focus back. The pause menu's View button reports clicks
@@ -10,13 +10,14 @@
 //
 // DOM module. Every DOM access goes through `doc` and happens inside a function, so this file imports in Node.
 import { AVATARS, avatarById } from './avatars.js';
-import { paintAvatarSheet, portrait } from './avatarSkin.js';
 
 const HIDDEN = 'hidden';
 /** Screens the chooser can open over, made `inert` while it is open (as the Guide and the Sound Test do). */
 export const INERT_BENEATH = Object.freeze(['title-screen', 'pause-menu']);
-/** The portraits' size on screen (CSS pixels): each skin texel is drawn as a crisp block. */
+/** The portraits' size on screen (CSS pixels). */
 export const PORTRAIT_PX = 120;
+
+/** @typedef {{ width: number, height: number, data: Uint8ClampedArray }} Picture  RGBA, sRGB, row 0 at the top */
 
 /** The text of the buttons that open the chooser. @param {string} id @returns {string} */
 export function avatarButtonLabel(id) {
@@ -29,6 +30,8 @@ export function avatarButtonLabel(id) {
  * @property {(id: string) => void} [onChoose]   a card was chosen
  * @property {() => void} [onView]               the pause menu's View button was clicked
  * @property {string} [viewLabel]                that button's text
+ * @property {(id: string) => Picture|null} [portrait]  an avatar's portrait (asked for when the chooser is first opened;
+ *   none: the card shows its plain background)
  */
 
 /**
@@ -68,7 +71,7 @@ export function createAvatarMenu(doc, opts) {
     return node;
   }
 
-  /** Paint a portrait on a canvas, one texel a pixel (CSS scales it up crisply). */
+  /** Paint a portrait on a canvas, one pixel a pixel (CSS scales it to PORTRAIT_PX). */
   function drawPortrait(canvas, pic) {
     canvas.width = pic.width;
     canvas.height = pic.height;
@@ -102,12 +105,16 @@ export function createAvatarMenu(doc, opts) {
     row.setAttribute('role', 'radiogroup');
     row.setAttribute('aria-labelledby', 'avatar-title');
     panel.appendChild(row);
-    let sheet = null;
-    try {
-      sheet = paintAvatarSheet();
-    } catch (err) {
-      console.warn('[avatars] portraits unavailable:', err);
-    }
+    /** @param {string} id @returns {Picture|null} */
+    const portraitOf = (id) => {
+      if (typeof opts.portrait !== 'function') return null;
+      try {
+        return opts.portrait(id);
+      } catch (err) {
+        console.warn('[avatars] portrait unavailable:', err);
+        return null;
+      }
+    };
     el.cards = AVATARS.map((def) => {
       const card = make('button', 'av-card');
       card.setAttribute('type', 'button');
@@ -115,7 +122,8 @@ export function createAvatarMenu(doc, opts) {
       card.dataset.avatar = def.id;
       const canvas = make('canvas', 'av-portrait');
       canvas.setAttribute('aria-hidden', 'true');
-      if (sheet) drawPortrait(canvas, portrait(def, sheet));
+      const pic = portraitOf(def.id);
+      if (pic) drawPortrait(canvas, pic);
       card.appendChild(canvas);
       card.appendChild(make('span', 'av-name', def.displayName));
       card.appendChild(make('span', 'av-blurb', def.blurb));

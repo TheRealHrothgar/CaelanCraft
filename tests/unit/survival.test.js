@@ -7,13 +7,20 @@ import { hexToWorld } from '../../src/hex.js';
 import { createPlayer, stepPlayer, supportingCells } from '../../src/physics.js';
 import { resolveBodies } from '../../src/bodies.js';
 import { Pigs, seededRng } from '../../src/pigs.js';
-import { softLandingFactor, fallDamage, createVitals, RATES, DAMAGE_CAUSES } from '../../src/vitals.js';
+import { softLandingFactor, fallDamage, createVitals, RATES, DAMAGE_CAUSES, WORK_ACTIVITY, GAME_HOUR_S } from '../../src/vitals.js';
 import { groundChillOf, heatAt, heatSource, CHEST_HEIGHT } from '../../src/climate.js';
 import {
   Survival, MODES, DEATH_TITLES, deathTitle, SICK_MESSAGE, SALT_MESSAGE, SALT_MESSAGE_GAP_S, DOT_PULSE_HP,
-  BELONGINGS_KEPT, BELONGINGS_LOST,
+  BELONGINGS_KEPT, BELONGINGS_LOST, WORK_LABEL_HOLD_S, HARD_WORK_SHOW_S,
 } from '../../src/survival.js';
-import { flatGetBlock } from '../helpers/fixtures.js';
+import { flatGetBlock, flatWorldGen } from '../helpers/fixtures.js';
+import { workTier } from '../../src/harvest.js';
+import { ITEMS } from '../../src/items.js';
+import { Pack } from '../../src/inventory.js';
+import { Containers } from '../../src/containers.js';
+import { heldKeys, placedWorkplaceKeys, nearWorkplaceKeys } from '../../src/survivalControl.js';
+import { World } from '../../src/world.js';
+import { buildTreeModel, treeStates, revealTree } from '../../src/buildTree.js';
 
 const DT = 1 / 60;
 const GROUND = 63;          // solid up to y 63: feet rest at 64 (altitude 0)
@@ -348,11 +355,16 @@ describe('the step: climate and vitals together (§2, §3, §9.4)', () => {
     };
     const still = at({});
     const walk = at({ moving: true });
-    const brk = at({ breaking: true });
+    const brk = at({ breaking: true }); // §99: no tier said — the bare hand
+    const brkFlint = at({ breaking: true, workTier: 2 });
+    const brkSteel = at({ breaking: true, workTier: 6 });
     const sprint = at({ moving: true }, stander({ sprinting: true }));
     const sprintStill = at({ moving: false }, stander({ sprinting: true })); // pressing into a wall is not sprinting
     expect(walk.drain / still.drain).toBeCloseTo(1.4, 6);
-    expect(brk.drain / still.drain).toBeCloseTo(1.8, 6);
+    expect(brk.drain / still.drain).toBeCloseTo(3, 6);
+    expect(brkFlint.drain / still.drain).toBeCloseTo(2.2, 6);
+    expect(brkSteel.drain / still.drain).toBeCloseTo(1.5, 6);
+    expect(at({ workTier: 0 }).drain).toBeCloseTo(still.drain, 9); // a tier without breaking costs nothing
     expect(sprint.drain / still.drain).toBeCloseTo(2.5, 6);
     expect(sprintStill.drain).toBeCloseTo(still.drain, 9);
     expect(walk.felt - still.felt).toBeCloseTo(1, 9);
@@ -363,6 +375,72 @@ describe('the step: climate and vitals together (§2, §3, §9.4)', () => {
     expect(fast.drain / still.drain).toBeCloseTo(1.4, 6);
     const slow = at({ moving: undefined }, stander({ vx: 0.3 }));
     expect(slow.drain).toBeCloseTo(still.drain, 9);
+  });
+
+  it('§99: work by the tool — the drain, the tiredness and the Hard work label (held a moment between blocks)', () => {
+    const work = (tier, hours) => {
+      const s = started();
+      s.vitals.fatigue = 0;
+      s.step(hours * GAME_HOUR_S, envFor(stander(), flatGetBlock(GROUND), { time: H(14), breaking: true, workTier: tier }));
+      return s;
+    };
+    // an hour of digging by hand adds two hours of tiredness; with steel an hour and a quarter
+    expect(work(0, 1).vitals.fatigue).toBeCloseTo(2, 6);
+    expect(work(1, 1).vitals.fatigue).toBeCloseTo(1.8, 6);
+    expect(work(6, 1).vitals.fatigue).toBeCloseTo(1.25, 6);
+    expect(WORK_ACTIVITY[0]).toBe(3);
+    // the label: on once a bare hand or a stone tool has worked HARD_WORK_SHOW_S, held WORK_LABEL_HOLD_S after, never for flint
+    expect(HARD_WORK_SHOW_S).toBe(1.5);
+    const s = started();
+    const env = envFor(stander(), flatGetBlock(GROUND), { time: H(14), breaking: true, workTier: 1 });
+    s.step(DT, env);
+    expect(s.status.labels).not.toContain('Hard work'); // a moment of it is not hard work yet
+    s.step(HARD_WORK_SHOW_S, env);
+    expect(s.status.labels).toContain('Hard work');
+    env.breaking = false;
+    s.step(WORK_LABEL_HOLD_S / 2, env);
+    expect(s.status.labels).toContain('Hard work');
+    s.step(WORK_LABEL_HOLD_S, env);
+    expect(s.status.labels).not.toContain('Hard work');
+    env.breaking = true;
+    env.workTier = 2;
+    s.step(DT, env);
+    expect(s.status.labels).not.toContain('Hard work');
+    // asleep there is no work
+    env.workTier = 0;
+    env.sleep = { recover: 4, heal: 0 };
+    s.step(DT, env);
+    expect(s.status.labels).not.toContain('Hard work');
+  });
+
+  it('§99: a quick pull is not hard work — a torch with a steel pick, a fern by hand — but a run of pulls is', () => {
+    // no tool speeds a torch, so the steel pick works it like the hand (tier 0) — for the 0.3 s it takes
+    const tier = workTier(BLOCK.TORCH, ITEMS.steel_pick.tool ?? null);
+    expect(tier).toBe(0);
+    const s = started();
+    const env = envFor(stander(), flatGetBlock(GROUND), { time: H(14), breaking: true, workTier: tier });
+    let seen = false;
+    for (let t = 0; t < 0.3; t += DT) {
+      s.step(DT, env);
+      if (s.status.labels.includes('Hard work')) seen = true;
+    }
+    env.breaking = false;
+    for (let t = 0; t < WORK_LABEL_HOLD_S * 2; t += DT) {
+      s.step(DT, env);
+      if (s.status.labels.includes('Hard work')) seen = true;
+    }
+    expect(seen).toBe(false);
+    // pull after pull by hand, a frame apart: the gaps do not end the work, and after HARD_WORK_SHOW_S it shows
+    const pulls = started();
+    const pull = envFor(stander(), flatGetBlock(GROUND), { time: H(14), breaking: true, workTier: 0 });
+    let shownAt = -1;
+    for (let t = 0; t < 3 && shownAt < 0; t += DT) {
+      pull.breaking = Math.round(t / DT) % 13 !== 12; // a fern every 0.2 s, one frame between
+      pulls.step(DT, pull);
+      if (pulls.status.labels.includes('Hard work')) shownAt = t;
+    }
+    expect(shownAt).toBeGreaterThan(HARD_WORK_SHOW_S);
+    expect(shownAt).toBeLessThan(HARD_WORK_SHOW_S * 1.2);
   });
 
   it('regenerates by a campfire twice as fast while standing still for 3 s; walking resets it', () => {
@@ -655,6 +733,74 @@ describe('export / import (§9.6)', () => {
     s.import({});
     expect(s.hasState).toBe(true);
     expect(s.vitals).toEqual(createVitals());
+  });
+
+  it('§94.4 the has-had set: noted for good, saved sorted (only when any), loaded; a fresh state has none', () => {
+    const s = started();
+    expect(s.had.size).toBe(0);
+    expect(s.export().had).toBeUndefined(); // nothing had yet: not written (the save is as before)
+    expect(s.noteHad(['stick', 'rock', 'stick'])).toBe(true);
+    expect(s.noteHad(['rock'])).toBe(false); // nothing new
+    expect(s.noteHad(['no_such_thing', 42])).toBe(false); // unknown keys are not items
+    expect(s.noteHad(['stone_hammer'])).toBe(true); // an old name is noted under its new one (§94)
+    expect([...s.had].sort()).toEqual(['hammerstone', 'rock', 'stick']);
+    const json = s.export();
+    expect(json.had).toEqual(['hammerstone', 'rock', 'stick']);
+    expect(Object.keys(json).at(-1)).toBe('had');
+    const back = new Survival();
+    back.import(JSON.parse(JSON.stringify(json)));
+    expect([...back.had].sort()).toEqual(['hammerstone', 'rock', 'stick']);
+    expect(back.export()).toEqual(json);
+    // dying keeps it (what you have known you know); a new survival state starts with none
+    s.damage(500, 'fall');
+    expect(s.had.size).toBe(3);
+    s.begin();
+    expect(s.had.size).toBe(0);
+    // garbage is ignored
+    back.import({ had: 'rock' });
+    expect(back.had.size).toBe(0);
+    back.import({ had: ['rock', null, 7, 'zzz'] });
+    expect([...back.had]).toEqual(['rock']);
+    back.import(null);
+    expect(back.had.size).toBe(0);
+  });
+
+  it('§94.4 an older save has no `had`: main derives it from the pack and the containers (heldKeys)', () => {
+    const old = { health: 80, spawn: null, deaths: 0 }; // no `had`
+    const s = new Survival();
+    s.import(old);
+    expect(s.had.size).toBe(0);
+    const pack = new Pack();
+    pack.load({ pack: [{ k: 'flint_knife', n: 1, d: 20 }, { k: 'cord', n: 3 }], wear: [{ k: 'straw_hat', n: 1 }, null, null] });
+    const containers = new Containers();
+    containers.load({ '0,64,0': { kind: 'basket', slots: [{ k: 'oak_log', n: 6 }, null] } });
+    expect(s.noteHad(heldKeys(pack, containers.entries.values()))).toBe(true);
+    expect([...s.had].sort()).toEqual(['cord', 'flint_knife', 'oak_log', 'straw_hat']);
+    expect(s.export().had).toEqual(['cord', 'flint_knife', 'oak_log', 'straw_hat']);
+  });
+
+  it('§94.4 an older save\'s workplaces built in the world are had (from its edits), so the tree keeps them in sight away from base', () => {
+    const world = new World({ worldGen: flatWorldGen(10), renderDistance: 1 });
+    world.update(0, 0, 1e9);
+    expect(world.setBlock(0, 11, 0, BLOCK.KILN)).toBe(true);
+    expect(world.setBlock(2, 11, 0, BLOCK.FORGE)).toBe(true);
+    expect(world.setBlock(4, 11, 0, BLOCK.STONE)).toBe(true);
+    const s = new Survival();
+    s.import({ health: 80, spawn: null, deaths: 0 }); // no `had`
+    const pack = new Pack();
+    pack.load({ pack: [{ k: 'iron_pick', n: 1, d: 200 }], wear: [null, null, null] });
+    s.noteHad(heldKeys(pack));
+    const model = buildTreeModel();
+    const facts = { count: () => 0, hasTool: () => false, canMake: () => false, near: () => false }; // away from base
+    const away = () => revealTree(model, { states: treeStates(model, facts), had: s.had });
+    expect(away().open.has('@forge')).toBe(false); // the iron pick alone does not say a Forge was built
+    s.noteHad(placedWorkplaceKeys(world.edits));
+    expect([...s.had].sort()).toEqual(['forge', 'iron_pick', 'kiln']);
+    expect(away().open.has('@forge')).toBe(true);
+    expect(away().open.has('@kiln')).toBe(true);
+    // and in a new world: a workplace stood at is had, whoever built it
+    expect(s.noteHad(nearWorkplaceKeys({ hand: true, bloomery: [0, 11, 3] }))).toBe(true);
+    expect(s.had.has('bloomery')).toBe(true);
   });
 
   it('the stillFor timer and the last temperatures are not part of the save', () => {

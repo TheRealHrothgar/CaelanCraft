@@ -41,7 +41,9 @@ import { Containers } from '../../src/containers.js';
 import { FireSlots } from '../../src/cooking.js';
 import { CraftQueue } from '../../src/crafting.js';
 import { parseLine, executeCommand } from '../../src/commands.js';
-import { parseParams, survivalDebugLine, buildDebugText, circuitSceneWrites } from '../../src/diagnostics.js';
+import {
+  parseParams, survivalDebugLine, buildDebugText, circuitSceneWrites, SMOKE_DIG_FRAMES, SMOKE_HEADLESS_DT,
+} from '../../src/diagnostics.js';
 import { createMenus } from '../../src/menus.js';
 import {
   STATE, stateSimulates, stateAfterLoading, loadingGen, loadingMode, modeParamPlan, consumeModeParam, survivalSaveFields,
@@ -57,14 +59,15 @@ import { BlackHoles } from '../../src/blackholes.js';
 import { Circuits } from '../../src/circuits.js';
 import { CircuitStore } from '../../src/circuitStore.js';
 import { isControl as isControlPart } from '../../src/circuitParts.js';
-import { interactKind } from '../../src/survivalControl.js';
+import { interactKind, DigState } from '../../src/survivalControl.js';
 import { makeFakeWorld } from '../helpers/fixtures.js';
 import {
   rKeyStep, rightMouseStep, ControlLatch, explainLine, snuffsKeg, panelCellChanged, kegHintText, hotbarFrom, hasRAction,
   makeCircuitHooks, makeBlackHoleWorld, physicsCircuitHooks, KEG_EXPLAIN,
 } from '../../src/main.js';
 import * as mainModule from '../../src/main.js';
-import { canHarvest, harvestHint } from '../../src/harvest.js';
+import { canHarvest, harvestHint, breakSeconds, slowHint } from '../../src/harvest.js';
+import { ITEMS } from '../../src/items.js';
 import { getBlockDef } from '../../src/blocks.js';
 
 const SEED = 1;
@@ -1149,6 +1152,18 @@ describe('integration harness: Survival (v0.9)', () => {
     expect(packListText(pack)).toBe('1: Flint Pick (90/90)\n2: 3 Rock');
   });
 
+  it('§94.4 screenshot aids: ?kit= stocks the pack with exactly a kit (none: the start of a world), ?circuits=off', () => {
+    expect(parseParams('?ui=tree').kit).toBeNull();
+    expect(parseParams('?ui=tree&kit=none').kit).toEqual([]);
+    expect(parseParams('?kit=Flint_Knife,cord:3,zzz,stone_hammer,rock:0,stick:5000').kit).toEqual([
+      { k: 'flint_knife', n: 1 }, { k: 'cord', n: 3 }, { k: 'hammerstone', n: 1 }, { k: 'stick', n: 999 },
+    ]);
+    expect(parseParams('?circuits=off').circuits).toBe(false);
+    expect(parseParams('?circuits=ON').circuits).toBe(true);
+    expect(parseParams('?circuits=maybe').circuits).toBeNull();
+    expect(parseParams('').circuits).toBeNull();
+  });
+
   it('diagnostics: ?ui=pack, and the F3 survival line only while Survival is active (§9.10)', () => {
     expect(parseParams('?autoplay=1&ui=pack').ui).toBe('pack');
     const s = new Survival();
@@ -1575,5 +1590,77 @@ describe('v0.10 circuits through main\'s rules (§7 I-2)', () => {
     expect(interactKind({ ...base, hit: keg, selectedKey: HANDBOOK_KEY })).toMatchObject({ kind: 'read' }); // the Handbook first
     // without circuits (no partR), survival's old steps are exactly as they were
     expect(interactKind({ ...base, partR: undefined, hit: fuse, selectedKey: 'spark_transmitter' })).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// §99 (work costs time, food, water and the tool) through main's own wiring: the smoke test's dig, the slow hint while
+// digging, the work tier handed to the body and the wear of a finished dig.
+
+describe('§99 work through main', () => {
+  const tool = (k) => ITEMS[k].tool ?? null;
+  const mainSrc = () => readFileSync(fileURLToPath(new URL('../../src/main.js', import.meta.url)), 'utf8');
+  /** @param {string} src @param {string} head  the function's first line, as main writes it */
+  const body = (src, head) => {
+    const at = src.indexOf(head);
+    expect(at, head).toBeGreaterThan(0);
+    return src.slice(at, src.indexOf('\n  }\n', at));
+  };
+
+  it('the survival smoke step holds the dig long enough for a flint pick to break its cell of stone', () => {
+    const need = breakSeconds(BLOCK.STONE, tool('flint_pick'));
+    expect(need).toBeGreaterThan(5); // §99: 24 / 4.4
+    expect(SMOKE_DIG_FRAMES * SMOKE_HEADLESS_DT).toBeGreaterThan(need);
+    expect(SMOKE_DIG_FRAMES * SMOKE_HEADLESS_DT).toBeLessThan(need + 1); // and not so long that a stuck dig hides
+  });
+
+  it('the slow hint shows only while a dig is held on that cell (idle it never nags, nor hides a weapon\'s draw hint)', () => {
+    const digSlowHint = /** @type {*} */ (mainModule).digSlowHint;
+    expect(typeof digSlowHint).toBe('function');
+    const at = (blockId, q = 0) => ({ q, y: 10, r: 0, blockId });
+    const dig = new DigState();
+    const log = at(BLOCK.OAK_LOG);
+    expect(digSlowHint(dig, log, tool('stone_axe'))).toBeNull(); // looking at it: nothing
+    dig.step(TICK, log, true, breakSeconds(BLOCK.OAK_LOG, tool('stone_axe')), 'stone_axe');
+    expect(digSlowHint(dig, log, tool('stone_axe'))).toBe('Oak Log · slow with a stone axe');
+    expect(digSlowHint(dig, at(BLOCK.OAK_LOG, 1), tool('stone_axe'))).toBeNull(); // another cell
+    expect(digSlowHint(dig, null, tool('stone_axe'))).toBeNull();
+    dig.step(TICK, log, false, Infinity, 'stone_axe'); // let go
+    expect(digSlowHint(dig, log, tool('stone_axe'))).toBeNull();
+    // a birch is chopped like an oak (R taps it, but the dig says it is slow)
+    const birch = at(BLOCK.BIRCH_LOG);
+    dig.step(TICK, birch, true, breakSeconds(BLOCK.BIRCH_LOG, tool('stone_axe')), 'stone_axe');
+    expect(digSlowHint(dig, birch, tool('stone_axe'))).toBe('Birch Log · slow with a stone axe');
+    // dirt by hand, while dug; with a bow in hand and the ground in the crosshair, only the draw hint is left to say
+    const dirt = at(BLOCK.DIRT);
+    expect(slowHint(BLOCK.DIRT, tool('crude_bow'))).toBe('Dirt · slow — a shovel digs much faster');
+    expect(digSlowHint(new DigState(), dirt, tool('crude_bow'))).toBeNull();
+    dig.step(TICK, dirt, true, breakSeconds(BLOCK.DIRT, null), null);
+    expect(digSlowHint(dig, dirt, null)).toBe('Dirt · slow by hand — a shovel digs much faster');
+    // §93: a brick's dig target (its column keyed apart from every hex) works the same
+    const brick = { q: 'brick:3', y: 10, r: 0, blockId: BLOCK.DIRT };
+    dig.step(TICK, brick, true, breakSeconds(BLOCK.DIRT, null), null);
+    expect(digSlowHint(dig, brick, null)).toBe('Dirt · slow by hand — a shovel digs much faster');
+    expect(digSlowHint(dig, dirt, null)).toBeNull(); // the hex at the same height is another cell
+    // survivalHintText asks digSlowHint, never slowHint itself, and the birch's tap hint gives way to it while chopping
+    const hint = body(mainSrc(), '  function survivalHintText() {');
+    expect(hint).not.toMatch(/[^A-Za-z]slowHint\(/);
+    expect(hint).toMatch(/case 'tap_hint':\n[^\n]*\n\s+return digSlowHint\(digState, hit, selectedTool\(\)\) \?\? /);
+    expect(hint).toMatch(/const slow = digSlowHint\(digState, h, tool\);/);
+    expect(hint).toMatch(/digSlowHint\(digState, brickDigTarget\(brickHit\), tool\)/);
+  });
+
+  it('main hands the dig\'s work tier to the body and wears the tool by digWear on every finished dig', () => {
+    const src = mainSrc();
+    expect(body(src, '  function digStep(dt, held) {')).toMatch(/digWorkTier = workTier\(h\.blockId, tool\);/);
+    const step = body(src, '  function stepSurvival(dt, buried) {');
+    expect(step).toMatch(/env\.breaking = digAdvanced;\n\s+env\.workTier = digWorkTier;/);
+    for (const head of ['  function finishDig(h, tool) {', '  function finishBrickDig(b, tool) {']) {
+      const fn = body(src, head);
+      expect(fn, head).toMatch(/wearSelectedTool\('dig', digWear\(id, tool\)\);/);
+      expect(fn, head).not.toMatch(/wearSelectedTool\('dig'\)/);
+    }
+    const wear = body(src, '  function wearSelectedTool(how, n = 1) {');
+    expect(wear).toMatch(/pack\.damage\(selected, n\)/);
   });
 });

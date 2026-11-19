@@ -28,7 +28,7 @@ import { CROPS, SEED_BACK_P } from './farming.js';
 /** @typedef {DropBranch[]} DropGroup */
 /**
  * @typedef {Object} BlockRule
- * @property {number} h            seconds by hand
+ * @property {number} h            the hardness: seconds by bare hand (for a block that needs a tool, what the hand would take)
  * @property {string|null} tool    the preferred tool type ('shovel', 'axe', 'pick', 'knife'), null when none is faster
  * @property {number} tier         the minimum tier of that tool; 0 = bare hands allowed
  * @property {DropGroup[]} drops
@@ -53,6 +53,12 @@ export const SEED_DROPS = deepFreeze({
 });
 /** §81: the chance that a fern pulled up by hand gives a strand of Plant Fibre. */
 export const FERN_FIBRE_P = 0.3;
+/**
+ * §100: the chance that untouched leaves broken with anything but an axe (by hand, with a knife) give a Sapling — a young
+ * springy shoot, the Crude Bow's stave; and that picking a ripe hazel thicket with R gives one (its long straight rods).
+ */
+export const SAPLING_LEAF_P = 0.12;
+export const SAPLING_HAZEL_P = 0.2;
 /** Breaking with the head under water takes this many times longer (§6.1). */
 export const UNDERWATER_DIG_FACTOR = 2.5;
 /** No block breaks faster than this (s). */
@@ -124,28 +130,32 @@ function setAlt(ids, h, tool, tier, drops) {
 }
 
 // ---- §6.3, row by row ----
-set([B.DIRT], 0.9, 'shovel', 0, SELF_DROPS);
-set([B.GRASS_BLOCK], 1.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('plant_fibre', 1, { p: 0.2, ...natural }))]]);
-set([B.SNOWY_GRASS], 1.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('snow', 1, natural))]]);
-set([B.SAND, B.RED_SAND], 0.8, 'shovel', 0, SELF_DROPS);
+// §99: the land's own materials are real work — earth several seconds by hand, a log or a cell of rock many seconds even
+// with the first tool that cuts it (CONTRACTS §99 tables the hardness and the seconds each age takes).
+set([B.DIRT], 4.5, 'shovel', 0, SELF_DROPS);
+set([B.GRASS_BLOCK], 5.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('plant_fibre', 1, { p: 0.2, ...natural }))]]);
+set([B.SNOWY_GRASS], 5.0, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('dirt'), drop('snow', 1, natural))]]);
+set([B.SAND, B.RED_SAND], 3.5, 'shovel', 0, SELF_DROPS);
 // v0.14 (§76): digging WILD gravel sometimes turns up a Flint (GRAVEL_FLINT_P), with or without a shovel — this is where
 // most flint comes from. Gravel you put down yourself, or that fell, gives none, so it cannot be dug over and over.
 // FLINT_GRAVEL is v0.13's withdrawn block: the same rule (its gravel is plain gravel).
-set([B.GRAVEL, B.FLINT_GRAVEL], 1.2, 'shovel', 0, [
+set([B.GRAVEL, B.FLINT_GRAVEL], 4.0, 'shovel', 0, [
   [when('shovel', drop('gravel')), when(null, drop('rock', 2))], always(drop('flint', 1, { p: GRAVEL_FLINT_P, ...natural })),
 ]);
 // v0.14 (§77): clay needs a shovel (the Wooden Shovel will do): that is what the first shovel is for, and it gates the Kiln.
-set([B.CLAY], 1.4, 'shovel', 1, [always(drop('clay_lump', 6))]);
-set([B.SNOW_BLOCK], 0.5, 'shovel', 0, [always(drop('snow', 6))]);
-set([B.ICE], 1.0, 'pick', 0, [[when('pick', drop('ice_chunk', 2)), when(null, drop('ice_chunk', 1))]]);
-set([B.PACKED_ICE], 2.0, 'pick', 2, [always(drop('ice_chunk', 3))]);
+set([B.CLAY], 7.0, 'shovel', 1, [always(drop('clay_lump', 6))]);
+set([B.SNOW_BLOCK], 2.0, 'shovel', 0, [always(drop('snow', 6))]);
+set([B.ICE], 4.0, 'pick', 0, [[when('pick', drop('ice_chunk', 2)), when(null, drop('ice_chunk', 1))]]);
+set([B.PACKED_ICE], 16, 'pick', 2, [always(drop('ice_chunk', 3))]);
 set([B.LOOSE_STONES], 0.2, null, 0, [always(drop('rock', [1, 2])), always(drop('flint', 1, { p: FLINT_SHARE, ...natural }))]);
 set([B.FALLEN_BRANCHES], 0.2, null, 0, [always(drop('stick', [2, 3]))]);
-// Leaves: only an axe lops them (self, and a stick from untouched leaves); by hand they give nothing but the odd nut.
+// Leaves: only an axe lops them (self, and a stick from untouched leaves); by hand they give nothing but the odd nut,
+// and (§100) now and then a Sapling — the axe lops the shoot with the leaves, so it gives none.
 const LOP = [when('axe', drop(SELF), drop('stick', 1, natural))];
-set([B.OAK_LEAVES], 0.4, 'axe', 0, [LOP, always(drop('acorns', 1, { p: 0.08, ...natural }))]);
-set([B.SPRUCE_LEAVES], 0.4, 'axe', 0, [LOP, always(drop('pine_nuts', 1, { p: 0.08, ...natural }))]);
-set([B.BIRCH_LEAVES], 0.4, 'axe', 0, [LOP]);
+const SAPLING = [when('axe'), when(null, drop('sapling', 1, { p: SAPLING_LEAF_P, ...natural }))];
+set([B.OAK_LEAVES], 0.4, 'axe', 0, [LOP, always(drop('acorns', 1, { p: 0.08, ...natural })), SAPLING]);
+set([B.SPRUCE_LEAVES], 0.4, 'axe', 0, [LOP, always(drop('pine_nuts', 1, { p: 0.08, ...natural })), SAPLING]);
+set([B.BIRCH_LEAVES], 0.4, 'axe', 0, [LOP, SAPLING]);
 // Wild plants: a shovel digs the plant up (its item places the picked variant, which must regrow).
 set([B.HONEYBERRY_BUSH], 0.5, 'shovel', 0, [[when('shovel', drop('honeyberry_bush'))], always(drop('honeyberries', [2, 4])), always(drop('stick', [1, 2]))]);
 set([B.HONEYBERRY_BUSH_BARE], 0.5, 'shovel', 0, [[when('shovel', drop('honeyberry_bush'))], always(drop('stick', [1, 2]))]);
@@ -189,9 +199,9 @@ set([B.NIGHTSHADE_BUSH_BARE], 0.5, 'shovel', 0, [[when('shovel', drop('nightshad
 set([B.FLAX], 0.3, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('plant_fibre', [3, 4]))]]);
 set([B.ALOE], 0.3, 'shovel', 0, [[when('shovel', drop(SELF)), when(null, drop('aloe_leaf', [1, 2]))]]);
 // Wood
-set([B.OAK_LOG, B.SPRUCE_LOG], 3.0, 'axe', 1, SELF_DROPS);
-set([B.BIRCH_LOG], 3.0, 'axe', 1, [always(drop(SELF)), always(drop('birch_bark', 1, { p: 0.5, ...natural }))]);
-set([B.OAK_PLANKS, B.SPRUCE_PLANKS, B.BIRCH_PLANKS], 2.0, 'axe', 1, SELF_DROPS);
+set([B.OAK_LOG, B.SPRUCE_LOG], 24, 'axe', 1, SELF_DROPS);
+set([B.BIRCH_LOG], 24, 'axe', 1, [always(drop(SELF)), always(drop('birch_bark', 1, { p: 0.5, ...natural }))]);
+set([B.OAK_PLANKS, B.SPRUCE_PLANKS, B.BIRCH_PLANKS], 6.0, 'axe', 1, SELF_DROPS);
 set([B.BOOKSHELF], 1.5, 'axe', 1, SELF_DROPS);
 set([B.WORK_STUMP], 2.5, 'axe', 1, SELF_DROPS);
 set([B.WORKBENCH], 3.0, 'axe', 1, SELF_DROPS); // v0.11 (CONTRACTS §67)
@@ -218,30 +228,30 @@ set([B.KILN], 3.0, 'pick', 0, SELF_DROPS);
 set([B.BLOOMERY], 4.0, 'pick', 2, SELF_DROPS);
 set([B.FORGE], 5.0, 'pick', 2, SELF_DROPS);
 // Rock: no stone pick exists, so a flint pick is the first way in.
-set([B.STONE], 3.0, 'pick', 2, [
+set([B.STONE], 24, 'pick', 2, [
   always(drop('rock', 2)),
   always(drop('saltpetre', 1, { p: 0.06, deep: true, ...natural })), // v0.10 (DESIGN-circuits §8.1): cave saltpetre
 ]);
 // §93: a copper (or better) hammer dresses stone straight into building bricks: one or two per cell (a cell is 1.5 bricks).
-setAlt([B.STONE], 4.0, 'hammer', 3, [always(drop('stone_bricks', [1, 2]))]);
-set([B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.BRICKS], 3.0, 'pick', 2, SELF_DROPS);
-set([B.GRANITE, B.DIORITE, B.ANDESITE, B.SLATE], 3.5, 'pick', 2, SELF_DROPS);
-set([B.SANDSTONE], 2.0, 'pick', 2, SELF_DROPS);
-set([B.OBSIDIAN], 2.5, 'pick', 2, [always(drop('obsidian_shard', [2, 3]))]);
+setAlt([B.STONE], 32, 'hammer', 3, [always(drop('stone_bricks', [1, 2]))]);
+set([B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.BRICKS], 12, 'pick', 2, SELF_DROPS);
+set([B.GRANITE, B.DIORITE, B.ANDESITE, B.SLATE], 28, 'pick', 2, SELF_DROPS);
+set([B.SANDSTONE], 16, 'pick', 2, SELF_DROPS);
+set([B.OBSIDIAN], 20, 'pick', 2, [always(drop('obsidian_shard', [2, 3]))]);
 set([B.RUNE_BLOCK], 2.0, 'pick', 2, SELF_DROPS); // its script is lost, as today
 // Ores
-set([B.COAL_ORE], 3.5, 'pick', 2, [always(drop('coal', [1, 2])), always(drop('pyrite', 1, { p: 0.25, ...natural }))]);
-set([B.COPPER_ORE], 4.0, 'pick', 2, [always(drop('malachite', [1, 2]))]);
-set([B.TIN_ORE], 4.0, 'pick', 3, [always(drop('cassiterite', 1)), always(drop('cassiterite', 1, { p: 0.25 }))]);
-set([B.IRON_ORE], 5.0, 'pick', 4, [always(drop('hematite', [1, 2]))]);
+set([B.COAL_ORE], 28, 'pick', 2, [always(drop('coal', [1, 2])), always(drop('pyrite', 1, { p: 0.25, ...natural }))]);
+set([B.COPPER_ORE], 32, 'pick', 2, [always(drop('malachite', [1, 2]))]);
+set([B.TIN_ORE], 32, 'pick', 3, [always(drop('cassiterite', 1)), always(drop('cassiterite', 1, { p: 0.25 }))]);
+set([B.IRON_ORE], 40, 'pick', 4, [always(drop('hematite', [1, 2]))]);
 // v0.14 (§77): every pick opens something — flint: stone, coal, copper ore; copper: tin; bronze: iron; iron: gold;
 // steel: gems.
-set([B.GOLD_ORE], 5.0, 'pick', 5, [always(drop('gold_nugget', [1, 2]))]);
-set([B.DIAMOND_ORE], 4.0, 'pick', 6, [always(drop('rough_gem', 1))]);
+set([B.GOLD_ORE], 40, 'pick', 5, [always(drop('gold_nugget', [1, 2]))]);
+set([B.DIAMOND_ORE], 32, 'pick', 6, [always(drop('rough_gem', 1))]);
 // Storage blocks come apart with any pick.
-set([B.COAL_BLOCK], 4.0, 'pick', 2, SELF_DROPS);
-set([B.COPPER_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK], 5.0, 'pick', 2, SELF_DROPS);
-set([B.IRON_BLOCK], 6.0, 'pick', 2, SELF_DROPS);
+set([B.COAL_BLOCK], 16, 'pick', 2, SELF_DROPS);
+set([B.COPPER_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK], 20, 'pick', 2, SELF_DROPS);
+set([B.IRON_BLOCK], 24, 'pick', 2, SELF_DROPS);
 // v0.10 circuits (DESIGN-circuits §8.3): every part comes away whole. (A battery's charge is not carried yet: KNOWN-ISSUES.)
 set([B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE, B.POWDER_FUSE], 0.2, null, 0, SELF_DROPS);
 set([B.TORCH], 0.3, null, 0, SELF_DROPS);
@@ -265,6 +275,7 @@ set([B.WELL, B.WELL_DRAWN], 3.0, 'pick', 0, SELF_DROPS);
 set([B.RAIN_BARREL, B.RAIN_BARREL_1, B.RAIN_BARREL_2, B.RAIN_BARREL_3], 1.5, 'axe', 0, SELF_DROPS);
 set([B.GRASS_BED], 0.4, null, 0, SELF_DROPS);
 set([B.BED], 1.5, 'axe', 0, SELF_DROPS);
+set([B.PENNANT], 0.4, null, 0, SELF_DROPS); // §101: pulled up by hand
 // BEDROCK, AIR and the water family keep the null rule: unbreakable. So do SPRING and SPRING_DRAWN (§85): a spring is
 // the land's, and the rock it rises through runs deep (homestead.deepHint says so). And so does the AQUIFER (§89): the
 // rock the ground's water rises through cannot be dug (homestead.deepHint says that too).
@@ -329,6 +340,61 @@ export function harvestHint(id) {
   const rule = ruleFor(id);
   if (!rule || rule.tier === 0) return null;
   return `${getBlockDef(id).displayName} · needs ${withArticle(gateToolName(/** @type {string} */ (rule.tool), rule.tier))} or better`;
+}
+
+// ---- §99: work costs time, food, water and the tool ------------------------------------------------------------------
+
+/** A digging tool loses this many uses per second of the work it does (at its own speed), rounded, at least 1 a block. */
+export const WEAR_PER_WORK_S = 0.75;
+/** The target hint calls breaking slow beyond this many seconds, by hand or with a stone tool (tier ≤ SLOW_TIER_MAX). */
+export const SLOW_HINT_S = 3;
+/** The best tier the target hint still calls slow: the stone age. Flint is the first clearly better tool. */
+export const SLOW_TIER_MAX = 1;
+/** How the hint says what the right tool does. */
+const TOOL_VERB = Object.freeze({ shovel: 'digs', axe: 'chops', pick: 'breaks', knife: 'cuts', hammer: 'breaks' });
+
+/**
+ * §99: the tier of the tool doing the work of breaking block `id` — the tool's tier when it is the block's own tool (the
+ * rule's, or that of the second way it breaks by), else 0: a bare hand, or a tool that does not help, works like the
+ * hand. 0 too when it cannot break the block at all. Main hands it to the body (SurvivalEnv.workTier).
+ * @param {number} id @param {ToolDef|null} tool @returns {number}
+ */
+export function workTier(id, tool) {
+  const rule = ruleWith(id, tool);
+  return rule && tool && tool.type === rule.tool ? tool.tier : 0;
+}
+
+/**
+ * §99: the uses a digging tool (DIG_TOOL_TYPES) loses on breaking block `id`. The block's own tool loses them in
+ * proportion to the block's hardness over its speed, `max(1, round(WEAR_PER_WORK_S × h / TIER_SPEED[tier]))`; any other
+ * digging tool takes the knocks without speeding the work, 1; a hand, a tool that never digs, or a block the tool cannot
+ * break, 0.
+ * @param {number} id @param {ToolDef|null} tool @returns {number}
+ */
+export function digWear(id, tool) {
+  if (!tool || !DIG_TOOL_TYPES.has(tool.type)) return 0;
+  const rule = ruleWith(id, tool);
+  if (!rule) return 0;
+  if (tool.type !== rule.tool) return 1;
+  return Math.max(1, Math.round((WEAR_PER_WORK_S * rule.h) / TIER_SPEED[tool.tier]));
+}
+
+/**
+ * §99: the target hint that names slow work, or null. By hand (or with a tool that does not help) on a block its own tool
+ * would speed: `Dirt · slow by hand — a shovel digs much faster` (`Dirt · slow — …` with another item in hand); with the
+ * block's own tool of the stone age: `Oak Log · slow with a stone axe`. Only beyond SLOW_HINT_S, so the quick blocks
+ * (plants, leaves, litter) never nag. Null when the tool cannot break it (harvestHint says what can).
+ * @param {number} id @param {ToolDef|null} tool @returns {string|null}
+ */
+export function slowHint(id, tool) {
+  const rule = ruleWith(id, tool);
+  if (!rule || !rule.tool || !(breakSeconds(id, tool) > SLOW_HINT_S)) return null;
+  const name = getBlockDef(id).displayName;
+  if (!tool || tool.type !== rule.tool) {
+    const verb = Object.hasOwn(TOOL_VERB, rule.tool) ? TOOL_VERB[/** @type {keyof typeof TOOL_VERB} */ (rule.tool)] : 'works';
+    return `${name} · slow${tool ? '' : ' by hand'} — ${withArticle(rule.tool)} ${verb} much faster`;
+  }
+  return tool.tier <= SLOW_TIER_MAX ? `${name} · slow with ${withArticle(gateToolName(rule.tool, tool.tier))}` : null;
 }
 
 /**
@@ -440,7 +506,8 @@ export const PICKABLE = deepFreeze({
   [B.FRECKLECAP_MUSHROOM]: { to: B.AIR, drops: [always(drop('frecklecap', [1, 2]))] },
   [B.ONION_PLANT]: { to: B.AIR, drops: [always(drop('wild_onion', [1, 2])), always(SEED_DROPS.onion)] },
   [B.CARROT_PLANT]: { to: B.AIR, drops: [always(drop('wild_carrot', 1)), always(SEED_DROPS.carrot)] },
-  [B.HAZEL_THICKET]: { to: B.HAZEL_THICKET_BARE, drops: [always(drop('hazelnuts', [1, 3]))] },
+  // §100: and now and then one of its straight springy shoots, a Sapling
+  [B.HAZEL_THICKET]: { to: B.HAZEL_THICKET_BARE, drops: [always(drop('hazelnuts', [1, 3])), always(drop('sapling', 1, { p: SAPLING_HAZEL_P }))] },
   [B.CRAB_APPLE_BUSH]: { to: B.CRAB_APPLE_BUSH_BARE, drops: [always(drop('crab_apple', [2, 3]))] },
   [B.HEALWORT_PLANT]: { to: B.HEALWORT_PLANT_BARE, drops: [always(drop('healwort', 1)), always(SEED_DROPS.healwort)] },
   // §81: the two look-alikes are picked exactly as the plants they imitate (a root comes away, a bush stays and

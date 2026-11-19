@@ -15,7 +15,7 @@ import {
 import { FACE_TOP, FACE_BOTTOM, hexLength } from '../../src/hex.js';
 import { mulberry32 } from '../../src/noise.js';
 import { paintTile, TILE_NAMES } from '../../src/tiles.js';
-import { plantModel, plantModelTile, PLANT_MODELS, PLANT_QUAD_STRIDE } from '../../src/plantModels.js';
+import { furnitureModel, furnitureModelTile, FURNITURE_MODELS, BOX_QUAD_STRIDE } from '../../src/plantModels.js';
 import { ITEMS, ITEM_KEYS, TAGS, getItem, itemForBlock, blockForItem } from '../../src/items.js';
 import { hasItemArt, paintItem } from '../../src/itemArt.js';
 import { getRecipe, RECIPES, TAG_LABELS } from '../../src/crafting.js';
@@ -80,7 +80,7 @@ const isBlue = ([r, g, b]) => b > 150 && b > r + 40 && b >= g;
 
 describe('the ten blocks 163–172 (blocks.js)', () => {
   it('ids, names and display names, appended after the water of §83', () => {
-    expect(BLOCK_COUNT).toBe(178); // §94: + the Lab 177; §93: + the bricks' shadows 174–176; // (§89 appended the aquifer, 173)
+    expect(BLOCK_COUNT).toBe(179); // §101: + the Pennant 178; §94: + the Lab 177; §93: + the bricks' shadows 174–176; // (§89 appended the aquifer, 173)
     expect([...HOMESTEAD_IDS]).toEqual([163, 164, 165, 166, 167, 168, 169, 170, 171, 172]);
     expect(HOMESTEAD_IDS.map((id) => [id, BLOCKS[id].name, BLOCKS[id].displayName])).toEqual([
       [B.SPRING, 'spring', 'Spring'], [B.SPRING_DRAWN, 'spring_drawn', 'Spring (drawn)'],
@@ -126,9 +126,9 @@ describe('the ten blocks 163–172 (blocks.js)', () => {
     }
     expect([BLOCKS[B.GRASS_BED].soundGroup, BLOCKS[B.BED].soundGroup]).toEqual(['grass', 'wood']);
     expect(HOMESTEAD_IDS.filter(isPlaceable)).toEqual([B.WELL, B.RAIN_BARREL, B.GRASS_BED, B.BED]);
-    // in the picker's flat order after the snare, and so among the block items
+    // in the picker's flat order after the snare, and so among the block items (§101: the Pennant follows them)
     const i = PICKER_ORDER.indexOf(B.SNARE);
-    expect(PICKER_ORDER.slice(i + 1, i + 6)).toEqual([B.GRASS_BED, B.BED, B.WELL, B.RAIN_BARREL, B.CAMPFIRE]);
+    expect(PICKER_ORDER.slice(i + 1, i + 7)).toEqual([B.GRASS_BED, B.BED, B.WELL, B.RAIN_BARREL, B.PENNANT, B.CAMPFIRE]);
     for (const id of FURNITURE_MODEL_IDS) expect(isSolid(id), name(id)).toBe(id < B.GRASS_BED);
     expect(FURNITURE_MODEL_IDS.some(isOpaque)).toBe(false);
   });
@@ -141,12 +141,12 @@ describe('the tiles 207, 225–227 and 232–237 (tiles.js)', () => {
   it('ten tiles in the ids the flora range left free, each named after its key and used by a block or a model', () => {
     expect([TILE.SPRING_SIDE, TILE.SPRING_TOP, TILE.SPRING_DRAWN_TOP, TILE.WELL, TILE.WELL_SKIN, TILE.RAIN_BARREL, TILE.RAIN_BARREL_SKIN,
       TILE.GRASS_BED, TILE.BED, TILE.BED_SKIN]).toEqual([207, 225, 226, 227, 232, 233, 234, 235, 236, 237]);
-    expect(TILE_IDS).toHaveLength(197); // §94: + the Lab's 105, 106; // (§89: + the aquifer's two)
+    expect(TILE_IDS).toHaveLength(198); // §101: + the Pennant's 107; §94: + the Lab's 105, 106; // (§89: + the aquifer's two)
     for (const t of [...PICTURES, ...OPAQUE]) {
       expect(TILE_IDS, TILE_NAMES[t]).toContain(t);
       const key = Object.keys(TILE).find((k) => TILE[k] === t);
       expect(TILE_NAMES[t]).toBe(key.toLowerCase());
-      const used = BLOCKS.some((d) => d.tiles.includes(t)) || Object.values(PLANT_MODELS).some((m) => m.tile === t);
+      const used = BLOCKS.some((d) => d.tiles.includes(t)) || Object.values(FURNITURE_MODELS).some((m) => m.tile === t);
       expect(used, TILE_NAMES[t]).toBe(true);
     }
     expect([TILE_NAMES[238], TILE_NAMES[239]]).toEqual(['aquifer_side', 'aquifer_top']); // free until §89's aquifer took them
@@ -219,9 +219,9 @@ describe('the tiles 207, 225–227 and 232–237 (tiles.js)', () => {
 describe('the models of the well, the rain barrel and the beds (plantModels.js)', () => {
   /** The quads of a compiled model: corners [x, y, z] in metres, their texels, the normal. */
   const quadsOf = (id) => {
-    const m = plantModel(id);
+    const m = furnitureModel(id);
     const out = [];
-    for (let o = 0; o < m.length; o += PLANT_QUAD_STRIDE) {
+    for (let o = 0; o < m.length; o += BOX_QUAD_STRIDE) {
       const p = [];
       const uv = [];
       for (let v = 0; v < 4; v++) {
@@ -240,17 +240,17 @@ describe('the models of the well, the rain barrel and the beds (plantModels.js)'
   it('eight models: skins for the well, the barrel and the bed, the grass bed cut from its own picture', () => {
     for (const id of FURNITURE_MODEL_IDS) {
       expect(getBlockShape(id), name(id)).toBe('model');
-      expect(plantModel(id), name(id)).toBeInstanceOf(Float32Array);
+      expect(furnitureModel(id), name(id)).toBeInstanceOf(Float32Array);
     }
-    expect([plantModelTile(B.WELL), plantModelTile(B.WELL_DRAWN)]).toEqual([TILE.WELL_SKIN, TILE.WELL_SKIN]);
-    expect(BARRELS.map((id) => plantModelTile(id))).toEqual([234, 234, 234, 234]);
-    expect([plantModelTile(B.GRASS_BED), plantModelTile(B.BED)]).toEqual([null, TILE.BED_SKIN]);
+    expect([furnitureModelTile(B.WELL), furnitureModelTile(B.WELL_DRAWN)]).toEqual([TILE.WELL_SKIN, TILE.WELL_SKIN]);
+    expect(BARRELS.map((id) => furnitureModelTile(id))).toEqual([234, 234, 234, 234]);
+    expect([furnitureModelTile(B.GRASS_BED), furnitureModelTile(B.BED)]).toEqual([null, TILE.BED_SKIN]);
   });
 
   it('the drawn well is the well less its water and its pot: the cord runs down into the dark', () => {
     const full = quadsOf(B.WELL);
     const drawn = quadsOf(B.WELL_DRAWN);
-    expect(PLANT_MODELS[B.WELL_DRAWN].bare).toBe(true);
+    expect(FURNITURE_MODELS[B.WELL_DRAWN].bare).toBe(true);
     expect(full.length - drawn.length).toBe(17); // the water (5 faces), the pot and its rim (6 each)
     const key = (q) => q.p.flat().map((c) => c.toFixed(4)).join(',');
     const places = new Set(full.map(key));
@@ -310,7 +310,7 @@ describe('the items and the recipes (items.js, itemArt.js, crafting.js, purpose.
     }
     expect(itemForBlock(B.WELL_DRAWN)).toBe('well');
     expect(BARRELS.map((id) => itemForBlock(id))).toEqual(['rain_barrel', 'rain_barrel', 'rain_barrel', 'rain_barrel']);
-    expect(ITEM_KEYS).toHaveLength(267); // §94: + the Lab;
+    expect(ITEM_KEYS).toHaveLength(280); // §106: + the Fishing Rod; §102: + the Compass; §100 + §103: + 7 (the bows, the staves, the sapling, six arrows, the Spyglass; − the darts, the Bow, the Arrow); §101: + the Pennant; §100: + the Bow, the Bow Stave, the Arrow; // §94: + the Lab;
   });
 
   it('the recipes: a Grass Bed by hand; the Well, the Rain Barrel and the Bed at the Work Stump', () => {
@@ -324,7 +324,7 @@ describe('the items and the recipes (items.js, itemArt.js, crafting.js, purpose.
     expect(row('rain_barrel')).toEqual(['stump', [{ tag: 'planks', n: 6 }, { k: 'cord', n: 2 }], [{ k: 'rain_barrel', n: 1 }], [{ type: 'axe', tier: 1 }], 8]);
     expect(row('bed')).toEqual(['stump', [{ tag: 'planks', n: 6 }, { k: 'cord', n: 3 }, { tag: 'wool', n: 3 }, { k: 'leather', n: 1 }],
       [{ k: 'bed', n: 1 }], [{ type: 'knife', tier: 2 }], 12]);
-    expect(RECIPES).toHaveLength(124); // §94: + the Lab;
+    expect(RECIPES).toHaveLength(136); // §106: + the Fishing Rod; §102: + the Compass; §100 + §103: + 6; §101: + the Pennant; §100: + the Bow Stave, the Bow and Arrows; // §94: + the Lab;
     // wool of any colour, white (what a sheep gives) first
     expect(TAGS.wool).toHaveLength(16);
     expect(TAGS.wool[0]).toBe('wool_white');

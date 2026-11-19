@@ -2,8 +2,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   LooseItems, PICKUP_RADIUS, PICKUP_CHEST, POP_S, ITEM_RADIUS, THROW_HOLD_S, COLLECT_RADIUS, HOME_MAX_S, GHOST_MAX,
-  throwOf, THROW_ROCK, THROW_DART, THROW_SPEAR, THROW_CHUCK,
+  throwOf, THROW_ROCK, THROW_SPEAR, THROW_CHUCK,
   LOOSE_DESPAWN_S, LOOSE_BLINK_S, LOOSE_MAX, blinkHidden,
+  ARROW_KEYS, DRAW_FULL_S, DRAW_SPEED_MIN, DRAW_SPEED_FULL,
+  DRAW_POWER_MIN, DRAW_POWER_FULL, drawFraction, drawnThrow, drawOf, hitBreakP,
 } from '../../src/looseItems.js';
 import { normalizeLooseJSON, normalizeSurvivalJSON } from '../../src/storage.js';
 import { executeCommand, parseLine, COMMANDS } from '../../src/commands.js';
@@ -136,15 +138,14 @@ describe('looseItems — a drop flies to the player and enters the pack at the t
 });
 
 describe('looseItems — throw and drop', () => {
-  it('throwOf: rocks sting (1), darts (2) and spears (4) hurt more; anything else is chucked a short way', () => {
+  it('throwOf: rocks sting (1), spears (4) hurt more; anything else — an arrow by hand too (§100) — is chucked a short way', () => {
     expect(throwOf('rock')).toBe(THROW_ROCK);
     expect(throwOf('flint')).toBe(THROW_ROCK);
-    expect(throwOf('flint_dart')).toBe(THROW_DART);
     expect(throwOf('flint_spear')).toBe(THROW_SPEAR);
     expect(throwOf('cobblestone')).toBe(THROW_CHUCK);
     expect(throwOf('stick')).toBe(THROW_CHUCK);
+    for (const k of ARROW_KEYS) expect(throwOf(k), k).toBe(THROW_CHUCK); // the darts' heirs: weak, by hand
     expect(THROW_ROCK.power).toBeGreaterThan(0);
-    expect(THROW_DART.power).toBeGreaterThan(THROW_ROCK.power);
     expect(THROW_SPEAR.power).toBeGreaterThan(THROW_ROCK.power);
     expect(THROW_CHUCK.power).toBe(0);
     expect(THROW_CHUCK.speed).toBeLessThan(THROW_ROCK.speed);
@@ -178,7 +179,7 @@ describe('looseItems — throw and drop', () => {
     // a drop from a dig that the full pack turned away is the same: collected once there is room and the hold is over
   });
 
-  it('a projectile hits the first mob on its path once, with its power; a broken dart is gone', () => {
+  it('a projectile hits the first mob on its path once, with its power; one that breaks on it is gone', () => {
     const mob = { name: 'zombie' };
     const hitMob = (x0, y0, z0, x1) => (x0 < 5 && x1 >= 5 ? mob : null);
     const loose = new LooseItems(() => 0.5);
@@ -188,12 +189,12 @@ describe('looseItems — throw and drop', () => {
     expect(hits).toEqual([{ power: 1, mob }]);
     expect(loose.list[0].power).toBe(0);
     expect(loose.list[0].x).toBeLessThan(6); // bounced off it
-    const darts = new LooseItems(() => 0.5);
+    const spears = new LooseItems(() => 0.5);
     const broken = makeEnv({ hitMob, breaks: true, player: { x: -50, y: 10, z: 0 } });
-    darts.launch({ k: 'flint_dart', n: 1 }, 0, 11.5, 0, THROW_DART.speed, 1, 0, { power: THROW_DART.power });
-    run(darts, broken.env, 1);
-    expect(broken.hits).toEqual([{ power: 2, mob }]);
-    expect(darts.count).toBe(0);
+    spears.launch({ k: 'flint_spear', n: 1, d: 1 }, 0, 11.5, 0, THROW_SPEAR.speed, 1, 0, { power: THROW_SPEAR.power });
+    run(spears, broken.env, 1);
+    expect(broken.hits).toEqual([{ power: 4, mob }]);
+    expect(spears.count).toBe(0);
   });
 
   it('a chucked item (power 0) and a slow projectile hurt nothing; a wall stops the power', () => {
@@ -408,5 +409,48 @@ describe('looseItems — despawns (CONTRACTS §63)', () => {
     expect(calls).toEqual([[1, 11, 2, Infinity], [1, 11, 2, 8], [0, 5.5, 0, 3]]);
     expect(exec(ctx, 'despawn -1').ok).toBe(false);
     expect(exec({ player: ctx.player }, 'despawn').ok).toBe(false);
+  });
+});
+
+describe('§100 the draw and the bow — looseItems', () => {
+  it('drawFraction: 0 at a tap, full at DRAW_FULL_S (about a second), never more', () => {
+    expect(DRAW_FULL_S).toBe(1);
+    expect(drawFraction(0)).toBe(0);
+    expect(drawFraction(-1)).toBe(0);
+    expect(drawFraction(NaN)).toBe(0);
+    expect(drawFraction(DRAW_FULL_S / 2)).toBeCloseTo(0.5, 9);
+    expect(drawFraction(DRAW_FULL_S)).toBe(1);
+    expect(drawFraction(5)).toBe(1);
+  });
+
+  it('drawnThrow: speed and power grow with the draw; a full draw is a little faster than G and as hard', () => {
+    expect([DRAW_SPEED_MIN, DRAW_SPEED_FULL, DRAW_POWER_MIN, DRAW_POWER_FULL]).toEqual([0.4, 1.15, 0.4, 1]);
+    const tap = drawnThrow(THROW_SPEAR, 0);
+    const half = drawnThrow(THROW_SPEAR, 0.5);
+    const full = drawnThrow(THROW_SPEAR, 1);
+    expect(tap.speed).toBeCloseTo(THROW_SPEAR.speed * DRAW_SPEED_MIN, 6);
+    expect(full.speed).toBeCloseTo(THROW_SPEAR.speed * DRAW_SPEED_FULL, 6);
+    expect(full.power).toBe(THROW_SPEAR.power);
+    expect(tap.power).toBeCloseTo(THROW_SPEAR.power * DRAW_POWER_MIN, 6);
+    expect(tap.speed).toBeLessThan(half.speed);
+    expect(half.speed).toBeLessThan(full.speed);
+    expect(tap.power).toBeLessThan(half.power);
+    expect(half.power).toBeLessThan(full.power);
+    expect(drawnThrow(THROW_CHUCK, 1).power).toBe(0);
+    expect(drawnThrow(THROW_SPEAR, 7)).toEqual(full); // clamped
+  });
+
+  it('drawOf: a spear draws itself; a bow draws an arrow (its own draw time); an arrow in hand, or anything else, is not drawn', () => {
+    expect(drawOf('flint_spear')).toEqual({ bow: false, shoots: 'flint_spear', base: THROW_SPEAR, fullS: DRAW_FULL_S });
+    expect(drawOf('crude_bow')).toEqual({ bow: true, shoots: null, base: null, fullS: 1 });
+    expect(drawOf('recurve_bow')).toEqual({ bow: true, shoots: null, base: null, fullS: 1.2 });
+    for (const k of ['rock', 'flint_arrow', 'steel_arrow', 'stick', 'flint_axe', 'spyglass', null, 'nope', 'bow', 'flint_dart']) {
+      expect(drawOf(k), String(k)).toBe(null);
+    }
+    // a draw's share grows to 1 at the bow's own full draw
+    expect(drawFraction(0.6, 1.2)).toBeCloseTo(0.5, 9);
+    expect(drawFraction(1.2, 1.2)).toBe(1);
+    expect(drawFraction(1, 0)).toBe(1); // a bad full time is DRAW_FULL_S
+    expect(hitBreakP('flint_spear')).toBe(0); // a spear wears instead
   });
 });

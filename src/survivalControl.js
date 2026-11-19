@@ -6,7 +6,8 @@ import {
   DIG_TICK_S, USE_REPEAT_GAP_S, TAP_HOLD_S, RELIGHT_HOLD_S, FUEL_STICK_S, FUEL_LOG_S, WORLD_HEIGHT, STATION_RANGE,
 } from './config.js';
 import { BLOCK, getBlockDef, isDeepRock, isPopOff, isReplaceable, isSolid, isWater } from './blocks.js';
-import { getItem, hasTag, itemName, maxDurability } from './items.js';
+import { getItem, hasTag, itemName, maxDurability, itemForBlock } from './items.js';
+import { STATION_BLOCKS } from './crafting.js';
 import { isPickable, tap, toolPower, DIG_TOOL_TYPES } from './harvest.js';
 import { HEX_DIRS, FACE_TOP } from './hex.js';
 import { plantAt, cropOfBlock } from './farming.js';
@@ -651,6 +652,8 @@ export function chooseBelongingsCell(getBlock, q, y, r) {
  * @property {ReadonlyArray<{station: string, jobs: ReadonlyArray<any>}>} [lanes]  craftQueue.lanes()
  * @property {{text: string, error?: boolean}|null} [message]  a line for the screen itself (§14.4 "The handbook stays with
  *   you.", a Make result): the HUD's target hint is not drawn under the pack screen
+ * @property {Iterable<string>} [had]   (§94.4) survival.had: every item key that has ever entered the pack (the build tree)
+ * @property {boolean} [circuits]       (§94.4) the world's circuits switch (default on): off, the build tree has no circuits
  */
 
 /**
@@ -667,7 +670,71 @@ export function chooseBelongingsCell(getBlock, q, y, r) {
  * @property {{station: string, label: string, jobs: {name: string, progress: number, waiting: any}[]}[]} lanes  busy lanes only
  * @property {{text: string, error: boolean}|null} message  the screen's own feedback line (refusals, Make results)
  * @property {string[]} ready  the ids of every recipe, whatever the tab, that could be started now (§94: the build tree)
+ * @property {string[]} had    §94.4: every item key ever had in the pack, sorted (the build tree's reveal)
+ * @property {boolean} circuits  §94.4: the world's circuits are on
  */
+
+/**
+ * §94.4: the item keys in these stores, sorted and once each — the pack (its slots and what is worn), the containers'
+ * slots, and any loose stacks (the cursor) — for survival.noteHad: main notes the pack's whenever it changes, and on
+ * loading the pack's and the containers' (an older save without `had` gets it from them).
+ * @param {{ slots: ReadonlyArray<ItemStack|null>, wear: ReadonlyArray<ItemStack|null> }|null} pack
+ * @param {Iterable<{ slots: ReadonlyArray<ItemStack|null> }>} [containers]
+ * @param {ReadonlyArray<ItemStack|null|undefined>} [extra]
+ * @returns {string[]}
+ */
+export function heldKeys(pack, containers = [], extra = []) {
+  const keys = new Set();
+  const take = (list) => {
+    for (const st of list) if (st && typeof st.k === 'string' && st.n > 0) keys.add(st.k);
+  };
+  if (pack) {
+    take(pack.slots);
+    take(pack.wear);
+  }
+  for (const c of containers) if (c && Array.isArray(c.slots)) take(c.slots);
+  take(extra);
+  return [...keys].sort();
+}
+
+/** §94.4: workplace block id → its item key (the Work Stump's, the Kiln's, … the Lab's) @type {Map<number, string|null>} */
+const WORKPLACE_ITEM = new Map(Object.values(STATION_BLOCKS).map((id) => [id, itemForBlock(id)]));
+
+/**
+ * §94.4: the item keys of the workplaces near (a crafting.findStations result), sorted — for survival.noteHad: a
+ * workplace stood at has been had, whoever built it. @param {Record<string, unknown>|null|undefined} near
+ * @returns {string[]}
+ */
+export function nearWorkplaceKeys(near) {
+  const keys = new Set();
+  if (near) {
+    for (const [s, id] of Object.entries(STATION_BLOCKS)) {
+      const k = WORKPLACE_ITEM.get(id);
+      if (near[s] && k) keys.add(k);
+    }
+  }
+  return [...keys].sort();
+}
+
+/**
+ * §94.4: the item keys of every workplace set down in the world (a cell of world.edits holding a workplace's block),
+ * sorted — on loading, for survival.noteHad: an older save's built Kiln and Forge have been had.
+ * @param {Iterable<[unknown, Iterable<[number, number]>]>|null|undefined} edits   world.edits
+ * @returns {string[]}
+ */
+export function placedWorkplaceKeys(edits) {
+  const keys = new Set();
+  if (edits) {
+    for (const [, chunkEdits] of edits) {
+      for (const [, id] of chunkEdits) {
+        const k = WORKPLACE_ITEM.get(id);
+        if (k) keys.add(k);
+      }
+      if (keys.size === WORKPLACE_ITEM.size) break;
+    }
+  }
+  return [...keys].sort();
+}
 
 /** @param {ItemStack|null|undefined} s @returns {ItemStack|null} */
 function copy(s) {
@@ -699,7 +766,8 @@ const TAB_LABEL = Object.fromEntries(STATION_TABS.map((t) => [t.id, t.label]));
  * - `hover`: the hovered slot's item, else the cursor's, else null;
  * - `lanes`: one row per busy station;
  * - `message`: the screen's feedback line, or null;
- * - `ready` (§94): the ids of every recipe, whatever the tab, that could be started now (the build tree's states).
+ * - `ready` (§94): the ids of every recipe, whatever the tab, that could be started now (the build tree's states);
+ * - `had` and `circuits` (§94.4): the keys ever had (sorted; none given: none) and the circuits switch (default on).
  * @param {PackViewInput} input
  * @returns {PackView}
  */
@@ -747,5 +815,7 @@ export function buildPackView(input) {
     recipes: [...recipes],
     ready: (input.recipes ?? []).filter((rv) => /** @type {*} */ (rv).craftable && /** @type {*} */ (rv).stationOk).map((rv) => /** @type {*} */ (rv).id),
     lanes,
+    had: [...(input.had ?? [])].sort(),
+    circuits: input.circuits !== false,
   };
 }

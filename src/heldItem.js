@@ -6,16 +6,16 @@
 // model's right hand and in the first-person arm's.
 //
 // How it is held comes from the pixels, never from a table of hand positions:
-//   - a hafted thing (a tool, a weapon, a dart) is gripped near the end of its haft — the bottom of the picture, the top
+//   - a hafted thing (a tool, a weapon, an arrow) is gripped near the end of its haft — the bottom of the picture, the top
 //     for a shovel (itemArt draws its blade at the bottom) — and turned in its own plane so its bulk lies straight ahead
-//     of the grip: a pick points along its haft, a diagonal dart along its shaft;
+//     of the grip: a pick points along its haft, an arrow along its shaft;
 //   - anything else (food, a lump of ore, a pot, the hammerstone, a tool without a haft) is held at the middle of its
 //     pixels, a little smaller.
 // The slab's frame: x = the picture's right, y = straight ahead of the grip (the picture's up for an upright tool),
 // z = out of the picture's front; the grip at the origin; metres.
 import { paintItem, hasItemArt, toolArtOf, ITEM_ART_SIZE } from './itemArt.js';
 import { getItem } from './items.js';
-import { DART_KEYS } from './looseItems.js';
+import { ARROW_KEYS } from './looseItems.js';
 
 /** Metres per art pixel of a held tool (a 16-pixel pick is 0.4 m: a child's tool). */
 export const HELD_PIXEL = 0.025;
@@ -65,13 +65,13 @@ export function heldItemShown(key) {
 }
 
 /**
- * Whether an item is wielded by a haft (a tool or a dart) rather than held in the fist — what its picture then says
- * decides (heldGrip: a "tool" without a haft is still held like a lump).
+ * Whether an item is wielded by a haft (a tool, or §100 an arrow by its nock) rather than held in the fist — what its
+ * picture then says decides (heldGrip: a "tool" without a haft is still held like a lump).
  * @param {string} key
  */
 export function heldWielded(key) {
   const def = getItem(key);
-  return !!def && (!!def.tool || DART_KEYS.includes(key));
+  return !!def && (!!def.tool || ARROW_KEYS.includes(key));
 }
 
 /**
@@ -207,16 +207,77 @@ export function extrudeItemArt(rgba, size, { pixel = HELD_PIXEL, grip = [size / 
   return { positions, normals, colors };
 }
 
+/** §106: the Fishing Rod in hand is its own long picture (its icon's line and float are drawn by fishingRenderer). */
+export const ROD_HELD_KEY = 'fishing_rod';
+/** The held rod's picture is this many pixels square, and drawn at HELD_ROD_PIXEL metres a pixel (a 1.1 m pole). */
+export const ROD_HELD_SIZE = 32;
+export const HELD_ROD_PIXEL = HELD_PIXEL * 1.4;
+
+/**
+ * §106: the Fishing Rod as held: a pole ROD_HELD_SIZE pixels tall standing up from a cord-wrapped grip at its butt, two
+ * pixels thick to its middle and one to its tip, a little reel of cord beside the grip. No line: the line is drawn from
+ * its tip to the float. @returns {Uint8ClampedArray} RGBA bytes (sRGB), row 0 at the top
+ */
+export function rodHeldArt() {
+  const N = ROD_HELD_SIZE;
+  const px = new Uint8ClampedArray(N * N * 4);
+  const set = (x, y, hex) => {
+    const i = (y * N + x) * 4;
+    px[i] = (hex >> 16) & 255;
+    px[i + 1] = (hex >> 8) & 255;
+    px[i + 2] = hex & 255;
+    px[i + 3] = 255;
+  };
+  const SAP = { light: 0xa89a5a, base: 0x7a7a3a, dark: 0x4e5424 };
+  const CORD = { light: 0xd8c38c, dark: 0x8f7a4a };
+  for (let y = 0; y <= 21; y++) {
+    set(16, y, y < 3 ? SAP.dark : y < 12 ? SAP.light : SAP.base);
+    if (y >= 10) set(15, y, SAP.dark);
+  }
+  for (let y = 22; y <= 29; y++) for (const x of [15, 16]) set(x, y, ((x + y) & 1) === 0 ? CORD.light : CORD.dark);
+  for (const x of [15, 16]) for (const y of [30, 31]) set(x, y, SAP.dark);
+  set(17, 21, CORD.dark);
+  set(17, 22, CORD.light);
+  return px;
+}
+
+/**
+ * The tip of a held picture in the slab's frame (metres): the middle of the top edge of its top-most row of solid
+ * pixels, turned as the slab is — where a rod's line starts. @returns {[number, number, number]}
+ */
+function slabTip(rgba, size, hold) {
+  for (let y = 0; y < size; y++) {
+    let n = 0;
+    let su = 0;
+    for (let x = 0; x < size; x++) {
+      if (rgba[(y * size + x) * 4 + 3] > SOLID_ALPHA) {
+        n++;
+        su += x + 0.5;
+      }
+    }
+    if (n === 0) continue;
+    const X = (su / n - hold.grip[0]) * hold.pixel;
+    const Y = (hold.grip[1] - y) * hold.pixel;
+    const c = Math.cos(hold.turn);
+    const s = Math.sin(hold.turn);
+    return [X * c - Y * s, X * s + Y * c, 0];
+  }
+  return [0, 0, 0];
+}
+
 /**
  * The slab of the item in hand, held as its picture says (heldGrip), or null for a key that is not shown
- * (heldItemShown).
+ * (heldItemShown); `tip` is the far end of the picture in the slab's frame (slabTip).
  * @param {string|null|undefined} key
- * @returns {(ItemSlab & HeldGrip)|null}
+ * @returns {(ItemSlab & HeldGrip & { tip: [number, number, number] })|null}
  */
 export function heldItemGeometry(key) {
   if (!heldItemShown(key)) return null;
   const k = /** @type {string} */ (key);
-  const rgba = paintItem(k);
-  const hold = heldGrip(rgba, ITEM_ART_SIZE, { wielded: heldWielded(k), handleTop: toolArtOf(k)?.[0] === 'shovel' });
-  return { ...hold, ...extrudeItemArt(rgba, ITEM_ART_SIZE, hold) };
+  const rod = k === ROD_HELD_KEY;
+  const size = rod ? ROD_HELD_SIZE : ITEM_ART_SIZE;
+  const rgba = rod ? rodHeldArt() : paintItem(k);
+  const hold = heldGrip(rgba, size, { wielded: heldWielded(k), handleTop: toolArtOf(k)?.[0] === 'shovel' });
+  if (rod) hold.pixel = HELD_ROD_PIXEL;
+  return { ...hold, ...extrudeItemArt(rgba, size, hold), tip: slabTip(rgba, size, hold) };
 }

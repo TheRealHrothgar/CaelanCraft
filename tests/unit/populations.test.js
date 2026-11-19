@@ -9,7 +9,7 @@ import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { createPlayer } from '../../src/physics.js';
 import { Animals, SPECIES, ANIMAL_MAX, SHEAR_REGROW_S, MILK_REGROW_S, HOME_RANGE, validateAnimalsJSON } from '../../src/animals.js';
 import { Pigs, seededRng } from '../../src/pigs.js';
-import { createAnimalRenderer, bodyVariant } from '../../src/animalRenderer.js';
+import { createAnimalRenderer, bodyVariant, YOUNG_ROUND } from '../../src/animalRenderer.js';
 import { rollMobDrops } from '../../src/harvest.js';
 import { serializeSave, deserializeSave } from '../../src/storage.js';
 import { createWorldGen } from '../../src/worldgen.js';
@@ -794,10 +794,13 @@ describe('populations — sex shown in names and models', () => {
     const r = createAnimalRenderer(scene);
     const by = (name) => r.group.children.find((m) => m.name === name);
     r.sync([mk('cow'), mk('cow', { sex: 'm' }), mk('cow', { sex: 'm', size: 0.55 }), mk('sheep', { sex: 'm' }), mk('pheasant', { sex: 'm' }), mk('turkey', { sex: 'm' })]);
-    expect([by('cow-body').count, by('cow-male').count, by('sheep-male').count, by('pheasant-male').count, by('turkey-male').count]).toEqual([2, 1, 1, 1, 1]);
+    // the bull's own trunk, the ram's horned head on the ewe's fleece, the cock's and the tom's own trunks
+    expect([by('cow-body').count, by('cow-male').count, by('sheep-head-male').count, by('pheasant-male').count, by('turkey-male').count]).toEqual([2, 1, 1, 1, 1]);
     const m = new THREE.Matrix4();
+    by('cow-legs').getMatrixAt(4, m);
+    expect(new THREE.Vector3().setFromMatrixScale(m).x).toBeCloseTo(0.55, 6); // the calf, drawn small …
     by('cow-body').getMatrixAt(1, m);
-    expect(new THREE.Vector3().setFromMatrixScale(m).x).toBeCloseTo(0.55, 6); // the calf, drawn small
+    expect(new THREE.Vector3().setFromMatrixScale(m).x).toBeCloseTo(0.55 * YOUNG_ROUND[0], 6); // … and rounder
     r.dispose();
   });
 });

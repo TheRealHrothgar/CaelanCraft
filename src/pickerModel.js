@@ -98,6 +98,8 @@ export const PICKER_SECTIONS = Object.freeze([
     'wicker_basket', 'sleeping_hide', 'snare',
     // §85: a place to stay — the two beds, the well, the rain barrel
     'grass_bed', 'bed', 'well', 'rain_barrel',
+    // §101: the pennant shows the wind
+    'pennant',
   ]),
   sec('powder', 'Black Powder', 'powder_keg', ['powder_keg', 'powder_fuse', 'torch']),
   sec('circuits', 'Circuits', 'voltaic_battery', [
@@ -125,13 +127,17 @@ export const PICKER_ITEM_SECTIONS = Object.freeze([
       'tools'),
     fam('hammers', 'Hammers', ['hammerstone', 'copper_hammer', 'bronze_hammer', 'iron_hammer', 'steel_hammer'], 'tools'),
     fam('knives', 'Knives', ['flint_knife', 'copper_knife', 'bronze_knife', 'iron_knife', 'steel_knife'], 'tools'),
-    'fire_drill', 'crucible', 'casting_mold', 'handbook',
+    'fire_drill', 'crucible', 'casting_mold', 'compass', 'handbook', // §102: the Compass
+    'spyglass', // §103
+    'fishing_rod', // §106
   ]),
-  // what hurts a creature: the swords and the spear, and what flies (looseItems.throwOf: darts, the spear, a thrown rock)
+  // what hurts a creature: the swords and the spear, and what flies (looseItems.throwOf: the spear, a thrown rock; §100
+  // the bows and the arrows of every age they shoot — the darts are retired)
   sec('weapons', 'Weapons', 'iron_sword', [
     fam('swords', 'Swords', ['bronze_sword', 'iron_sword', 'steel_sword']),
     'flint_spear',
-    fam('darts', 'Darts', ['flint_dart', 'fletched_dart']),
+    fam('bows', 'Bows & Arrows', ['crude_bow', 'recurve_bow', 'stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow',
+      'iron_arrow', 'steel_arrow']),
     'rock',
   ]),
   sec('food', 'Food', 'roast_pork', [
@@ -151,7 +157,7 @@ export const PICKER_ITEM_SECTIONS = Object.freeze([
   ]),
   sec('materials', 'Materials', 'copper_ingot', [
     fam('knapping', 'Flint & Obsidian', ['flint', 'obsidian_shard']),
-    fam('wood-fibre', 'Wood & Fibre', ['stick', 'plant_fibre', 'cord', 'birch_bark']),
+    fam('wood-fibre', 'Wood & Fibre', ['stick', 'sapling', 'bow_stave', 'treated_stave', 'plant_fibre', 'cord', 'birch_bark']),
     fam('fuel', 'Fuel', ['coal', 'charcoal']),
     fam('minerals', 'Minerals', ['malachite', 'cassiterite', 'hematite', 'gold_nugget', 'rough_gem', 'pyrite']),
     fam('metals', 'Metals', ['copper_ingot', 'tin_ingot', 'bronze_ingot', 'iron_bloom', 'wrought_iron', 'steel_bar']),
@@ -197,6 +203,7 @@ export const PICKER_ALIASES = Object.freeze({
   voltaic_battery: Object.freeze(['power', 'cell', 'power source', 'pile']),
   selenium_panel: Object.freeze(['selenium cell', 'solar', 'photocell', 'daylight']),
   filament_lamp: Object.freeze(['light', 'bulb']),
+  pennant: Object.freeze(['flag', 'banner', 'wind', 'windsock', 'weather vane']), // §101
 });
 
 /**
@@ -210,9 +217,18 @@ export const PICKER_ITEM_ALIASES = Object.freeze({
   crucible: Object.freeze(['melting pot']),
   casting_mold: Object.freeze(['mould', 'cast']),
   handbook: Object.freeze(['book', 'guide', 'field book', 'manual']),
+  compass: Object.freeze(['north', 'direction', 'navigation', 'needle']), // §102
   flint_spear: Object.freeze(['javelin', 'throw', 'hunting']),
-  flint_dart: Object.freeze(['arrow', 'throw']),
-  fletched_dart: Object.freeze(['arrow', 'throw', 'feathered']),
+  // §100: the bows' own words are PICKER_TOOL_WORDS.bow; every arrow is found by "arrow" (its name), and by these
+  ...Object.fromEntries(['stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow']
+    .map((k) => [k, Object.freeze(['archery', 'shoot', 'ammunition', 'fletched'])])),
+  crude_bow: Object.freeze(['sapling bow', 'self bow']),
+  recurve_bow: Object.freeze(['composite', 'sinew']),
+  bow_stave: Object.freeze(['archery', 'split']),
+  treated_stave: Object.freeze(['archery', 'fire-hardened', 'hardened']),
+  sapling: Object.freeze(['shoot', 'young tree', 'sprout', 'withy']),
+  // §103
+  spyglass: Object.freeze(['telescope', 'zoom', 'lens', 'scope', 'far']),
   rock: Object.freeze(['stone', 'pebble', 'throw']),
   coal: Object.freeze(['fuel']),
   charcoal: Object.freeze(['fuel']),
@@ -258,6 +274,8 @@ export const PICKER_TOOL_WORDS = Object.freeze({
   knife: Object.freeze(['blade', 'cutting']),
   sword: Object.freeze(['blade', 'weapon']),
   spear: Object.freeze(['weapon']),
+  bow: Object.freeze(['archery', 'weapon', 'shoot', 'longbow', 'hunting']), // §100
+  rod: Object.freeze(['fishing', 'angling', 'fish', 'hook', 'line', 'pole', 'float', 'bobber']), // §106
 });
 
 /** The pseudo-section of the Recent row (never in the rail). */
@@ -614,7 +632,6 @@ export function pushRecent(recent, id, max = PICKER_RECENT_MAX) {
  */
 export const PICKER_ITEM_LINES = Object.freeze({
   handbook: 'The field book of the wild: open it to read.',
-  fletched_dart: 'A dart with feathers: it flies faster and hits harder.',
   rock: 'A stone to throw, or to make things with.',
   carrot_seeds: 'Plant it on grass or dirt.',
   onion_seeds: 'Plant it on grass or dirt.',

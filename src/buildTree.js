@@ -11,16 +11,43 @@
 // Edges run from each input and tool to what it makes, and from a gathering tool to what it gathers. A WORKPLACE is never
 // an edge or a level: where a thing is made is its `station`, which the screen shows as colour (§94.5); a workplace's own
 // recipe is its `needs`.
+//
+// The tree REVEALS itself as the player goes (§94.4, `revealTree`): what has been had, what could be made now and what is
+// one step on from those are shown; everything deeper is counted, not drawn. With the world's circuits switched off the
+// circuit parts, the devices and the Lab are not in the tree at all (`buildTreeModel({ circuits: false })`).
 import { BLOCK_RULES, PICKABLE, MOB_DROPS } from './harvest.js';
 import { ITEMS, ITEM_KEYS, TAGS, itemName, itemForBlock } from './items.js';
 import { RECIPES, STATION_IDS, STATION_BLOCKS, STATION_NAMES, TAG_LABELS } from './crafting.js';
 import { getBlockDef } from './blocks.js';
 import { FIRE_TRANSFORMS } from './cooking.js';
+import { PARTS } from './circuitParts.js';
 
 /** @typedef {import('./crafting.js').Recipe} Recipe */
 
 /** The workplaces in the order a survivor reaches them: one column each. */
 export const TREE_STATIONS = Object.freeze(STATION_IDS.filter((s) => s !== 'hand'));
+
+/** The circuit parts' roles (circuitParts.PARTS): what carries, stores, switches or uses electricity. */
+const ELECTRIC_ROLES = new Set(['wire', 'junction', 'source', 'contact', 'load']);
+
+/**
+ * §94.4: the items the tree leaves out while the world's circuits are off (DESIGN-circuits made them): every electric part
+ * (the four wires, the Terminal Board, the Voltaic Battery, the switches, the devices: PARTS whose role carries
+ * electricity), the materials only they are made of (carbon filament, selenium, iron filings) and the Lab. Black powder,
+ * the fuse, the torch and the keg are not circuits: they burn. Sorted.
+ */
+export const CIRCUIT_KEYS = Object.freeze([...new Set([
+  ...Object.values(PARTS).filter((p) => ELECTRIC_ROLES.has(p.role)).map((p) => itemForBlock(p.id)).filter((k) => k !== null),
+  'carbon_filament', 'selenium', 'iron_filings', 'lab',
+])].sort());
+const CIRCUIT_SET = new Set(CIRCUIT_KEYS);
+/** §94.4: the workplaces that are circuits (their column goes while the circuits are off). */
+export const CIRCUIT_STATIONS = Object.freeze(['lab']);
+
+/** @param {string} k @returns {boolean} item `k` is a circuit part, device or material (CIRCUIT_KEYS) */
+export function isCircuitKey(k) {
+  return CIRCUIT_SET.has(k);
+}
 
 /** The lanes under the column heads, top to bottom (a workplace node, lane 'place', heads its column). */
 export const TREE_LANES = Object.freeze(['gather', 'build']);
@@ -37,8 +64,13 @@ export const TREE_LANES = Object.freeze(['gather', 'build']);
  * @property {string} how         one short line: "by hand", "at the Kiln", "with a Flint Pick", "from animals"
  * @property {string|null} tool   gather: the key of the tool node it takes to get it, else null
  * @property {number} depth       how many making steps lie under it (0 for raw), for ordering within a lane
- * @property {string[]} unlocks   place: the outputs this workplace makes that are not in the tree, in recipe order
+ * @property {string[]} unlocks   place: the outputs this workplace makes that are not in the tree, in recipe order (in a
+ *   revealed tree: only those shown, §94.4a)
  * @property {Array<{ id: string, n: number }>} needs   place: its recipe — the nodes it takes, how many (0 for a tool)
+ * @property {boolean} [reached]  place, in a revealed tree (`revealedTree`): its column is reached (false: the column shows
+ *   nothing but its head and its count)
+ * @property {boolean} [veiled]   place, in a revealed tree: its workplace is not in sight yet (its head is dim)
+ * @property {number} [more]      the "N more to discover" marker of a revealed column (id `?station`): how many are hidden
  */
 
 /**
@@ -46,6 +78,7 @@ export const TREE_LANES = Object.freeze(['gather', 'build']);
  * @property {TreeNode[]} nodes                   in column, then lane, then depth order
  * @property {Map<string, TreeNode>} byId
  * @property {Array<[string, string]>} edges      [from, to]: what is needed → what needs it
+ * @property {ReadonlyArray<string>} stations     the workplaces of its columns, in order (a node's `column` indexes it)
  */
 
 /** The workplace node id of a station. @param {string} s */
@@ -56,6 +89,19 @@ export function placeId(s) {
 /** @type {Map<string, Recipe>} output key → the first recipe that makes it (table order) */
 const MAKER = new Map();
 for (const rec of RECIPES) for (const out of rec.outputs.slice(0, 1)) if (!MAKER.has(out.k)) MAKER.set(out.k, rec);
+/** @type {Map<string, Recipe[]>} output key → every recipe that makes it; `station|key` → those made at that workplace */
+const MAKERS = new Map();
+for (const rec of RECIPES) {
+  for (const key of [rec.outputs[0].k, `${rec.station}|${rec.outputs[0].k}`]) {
+    const list = MAKERS.get(key);
+    if (list) list.push(rec);
+    else MAKERS.set(key, [rec]);
+  }
+}
+/** @param {import('./crafting.js').KeyInput|import('./crafting.js').TagInput} inp @returns {string} the node id it is */
+function inputId(inp) {
+  return 'tag' in inp ? `#${inp.tag}` : TAG_OF.get(inp.k) ?? inp.k;
+}
 
 /** Items that are one member of a raw tag stand for the tag ("Any Log", not "Oak Log"). */
 const TAG_OF = new Map(['log', 'sand', 'wool'].flatMap((tag) => TAGS[tag].map((k) => [k, `#${tag}`])));
@@ -121,10 +167,17 @@ function tagIsBuilt(tag) {
 }
 
 /**
- * The build tree (pure, the same every call): see the header.
+ * The build tree (pure, the same every call): see the header. `circuits: false` (the world's circuits are off, §94.4)
+ * leaves out every circuit key and the Lab's column: nothing is followed through them, no workplace unlocks one, and no
+ * workplace's `needs` name one (the Workbench's strip has no copper wire: the tree shows no circuit at all).
+ * @param {{ circuits?: boolean }} [opts]
  * @returns {TreeModel}
  */
-export function buildTreeModel() {
+export function buildTreeModel(opts = {}) {
+  const circuits = opts.circuits !== false;
+  /** @param {string} k @returns {boolean} the tree leaves `k` out */
+  const skip = (k) => !circuits && CIRCUIT_SET.has(k);
+  const stations = circuits ? TREE_STATIONS : Object.freeze(TREE_STATIONS.filter((s) => !CIRCUIT_STATIONS.includes(s)));
   /** @type {Map<string, TreeNode>} */
   const byId = new Map();
   /** @type {Array<[string, string]>} */
@@ -201,7 +254,8 @@ export function buildTreeModel() {
     };
     let depth = 0;
     for (const inp of rec.inputs) {
-      const dep = 'tag' in inp ? `#${inp.tag}` : TAG_OF.get(inp.k) ?? inp.k;
+      const dep = inputId(inp);
+      if (skip(dep)) continue; // a circuit while the circuits are off: no node, no edge, not in a workplace's needs
       depth = Math.max(depth, visit(dep, column));
       into(dep, inp.n);
     }
@@ -240,22 +294,22 @@ export function buildTreeModel() {
   }
 
   // The workplaces, in order: each one's making (and all under it) lands in its own column.
-  TREE_STATIONS.forEach((s, column) => {
+  stations.forEach((s, column) => {
     const key = itemForBlock(STATION_BLOCKS[s]) ?? getBlockDef(STATION_BLOCKS[s]).name;
     const rec = /** @type {Recipe} */ (makerOf(key));
     const node = add(placeId(s), 'place', column, STATION_NAMES[s], key, rec);
     node.depth = visitRecipe(placeId(s), rec, column) + 1;
   });
   // What each workplace unlocks beyond the tree
-  for (const s of TREE_STATIONS) {
+  for (const s of stations) {
     const node = /** @type {TreeNode} */ (byId.get(placeId(s)));
     node.unlocks = [...new Set(RECIPES.filter((r) => r.station === s && !byId.has(r.outputs[0].k) && !byId.has(placeId(stationOfOutput(r))))
-      .map((r) => r.outputs[0].k))];
+      .map((r) => r.outputs[0].k).filter((k) => !skip(k)))];
   }
 
   const nodes = [...byId.values()].sort((a, b) => a.column - b.column || TREE_LANES.indexOf(a.lane) - TREE_LANES.indexOf(b.lane)
     || a.depth - b.depth || stationCol(a.station ?? 'hand') - stationCol(b.station ?? 'hand'));
-  return { nodes, byId, edges };
+  return { nodes, byId, edges, stations };
 }
 
 /** The station a recipe's output IS (the Lab is made at the Workbench), or '' when it is not a workplace. */
@@ -286,7 +340,8 @@ export function treeStates(model, facts) {
   const out = new Map();
   for (const node of model.nodes) {
     let state;
-    if (node.lane === 'place') {
+    if (node.more !== undefined) state = 'more'; // a revealed column's "N more to discover"
+    else if (node.lane === 'place') {
       const s = node.id.slice(1);
       state = facts.near(s) || facts.count(node.icon) > 0 ? 'have' : node.recipe && facts.canMake(node.recipe) ? 'ready' : 'locked';
     } else {
@@ -308,11 +363,186 @@ export function treeStates(model, facts) {
  * @returns {Array<{ station: string, done: number, total: number, built: boolean }>}
  */
 export function columnProgress(model, states) {
-  return TREE_STATIONS.map((s, column) => {
-    const nodes = model.nodes.filter((n) => n.column === column);
+  return (model.stations ?? TREE_STATIONS).map((s, column) => {
+    const nodes = model.nodes.filter((n) => n.column === column && n.more === undefined);
     const done = nodes.filter((n) => states.get(n.id) === 'have').length;
     return { station: s, done, total: nodes.length, built: states.get(placeId(s)) === 'have' };
   });
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// the reveal (§94.4): what the player has had, can make now, or is one step from; the rest is counted, not drawn
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * @typedef {Object} TreeReveal
+ * @property {Set<string>} shown      the gather and build nodes shown
+ * @property {Set<string>} open       the workplaces in sight: had, makeable now or one step away (their heads are lit)
+ * @property {boolean[]} reached      per column: anything in it (or that its workplace unlocks) has been had, or a build
+ *   node in it could be made or is one step away, or its workplace is in sight; an unreached column shows only its head,
+ *   dim (its name and what it needs), and its count
+ * @property {string[][]} unlocks     per column: what its workplace unlocks that is shown (the same rule), in its order
+ * @property {number[]} hidden        per column: how many of its gather and build nodes and its workplace's unlocks are
+ *   not shown
+ */
+
+/** @type {Map<string, { how: string, tool: string|null, picked?: boolean }>} gatherOf, once per key */
+const GATHER = new Map();
+/** @param {string} k */
+function gatherCached(k) {
+  let g = GATHER.get(k);
+  if (!g) {
+    g = gatherOf(k);
+    GATHER.set(k, g);
+  }
+  return g;
+}
+
+/**
+ * Which nodes the player sees (pure). A node is SHOWN when
+ *   - it has been HAD: its key is in `had` (every item that has ever entered the pack in this world, survival.had), or it
+ *     is had now (`states` 'have'); a tag by any member, a tool by any tool of its kind as good or better, a workplace by
+ *     its block item (made, or carried) or by being near;
+ *   - or it could be got NOW: makeable now (`states` 'ready'), or raw and its gathering tool (if any) had;
+ *   - or it is ONE STEP away: every input and tool of its recipe is had or could be got now, and its workplace is had or
+ *     could be built (its recipe all had or got now, where it is built had); a raw thing whose tool could be made now;
+ * and its column is REACHED (see TreeReveal). What a workplace unlocks (not nodes) follows the same rule: had, makeable
+ * now (`canMake`, the view's ready recipes), or one step away by one of that workplace's recipes for it. Everything else
+ * is hidden; each column counts its hidden ones, unlocks included.
+ * @param {TreeModel} model
+ * @param {{ states: Map<string, string>, had?: Iterable<string>, canMake?: (recipeId: string) => boolean }} input
+ *   `states` from treeStates(model, …); `canMake` as the TreeFacts' (absent: nothing that is not a node is makeable now)
+ * @returns {TreeReveal}
+ */
+export function revealTree(model, input) {
+  const states = input.states;
+  const hadKeys = input.had instanceof Set ? input.had : new Set(input.had ?? []);
+  const canMake = typeof input.canMake === 'function' ? input.canMake : () => false;
+  /** @type {Map<string, number>} tool type → the best tier had */
+  const bestTier = new Map();
+  for (const k of hadKeys) {
+    const t = ITEMS[k]?.tool;
+    if (t && (bestTier.get(t.type) ?? -1) < t.tier) bestTier.set(t.type, t.tier);
+  }
+  /** @param {string} k an item key: had (a tool by any of its type at its tier or better) */
+  const hadKey = (k) => {
+    const t = ITEMS[k]?.tool;
+    return t ? (bestTier.get(t.type) ?? -1) >= t.tier : hadKeys.has(k);
+  };
+  /** @param {TreeNode} n */
+  const hadNode = (n) => {
+    if (states.get(n.id) === 'have') return true;
+    if (n.lane === 'place') return hadKeys.has(n.icon);
+    if (n.id.startsWith('#')) return TAGS[n.id.slice(1)].some((k) => hadKeys.has(k));
+    return hadKey(n.id);
+  };
+  /** @type {Map<string, boolean>} */
+  const had = new Map(model.nodes.map((n) => [n.id, hadNode(n)]));
+  /** @param {string} id a node, or an item with no node: had by its key */
+  const hadId = (id) => had.get(id) ?? hadKey(id);
+  /** @param {TreeNode} n had, or could be got now */
+  const nowNode = (n) => had.get(n.id) || states.get(n.id) === 'ready' || (n.lane === 'gather' && (n.tool === null || hadId(n.tool)));
+  /**
+   * An item with no node (what an unlocked recipe takes): had, makeable now (cooked: its raw got now, and a campfire), or
+   * raw (as `visit` judges it: no recipe, or it lies about) and its gathering tool had. @param {string} k
+   */
+  const nowKey = (k) => {
+    const n = model.byId.get(k);
+    if (n) return nowNode(n);
+    if (hadKey(k)) return true;
+    const makers = MAKERS.get(k);
+    const g = gatherCached(k);
+    if (makers && g.picked !== true) return makers.some((r) => canMake(r.id));
+    const cooked = makers ? undefined : COOKED_FROM.get(k);
+    if (cooked !== undefined) return nowId(cooked) && nowId('campfire');
+    return g.tool === null || hadId(g.tool);
+  };
+  /** @param {string} id a node, a tag or an item: had or could be got now */
+  const nowId = (id) => {
+    const n = model.byId.get(id);
+    if (n) return nowNode(n);
+    return id.startsWith('#') ? (TAGS[id.slice(1)] ?? []).some(nowKey) : nowKey(id);
+  };
+  /** @type {Map<string, string[]>} node → what goes into it (its recipe's inputs and tools; a raw thing's tool) */
+  const into = new Map();
+  for (const [from, to] of model.edges) {
+    const list = into.get(to);
+    if (list) list.push(from);
+    else into.set(to, [from]);
+  }
+  /** @param {string|null} s @returns {boolean} the workplace `s` is had or could be built */
+  const placeOk = (s) => {
+    if (!s || s === 'hand') return true;
+    const p = model.byId.get(placeId(s));
+    if (!p) return false; // not in this tree (the Lab while the circuits are off)
+    if (nowNode(p)) return true;
+    return p.needs.every(({ id }) => nowId(id)) && (!p.station || p.station === 'hand' || hadId(placeId(p.station)));
+  };
+  /** @param {TreeNode} n */
+  const oneStep = (n) => {
+    if (n.lane === 'place') return placeOk(n.id.slice(1));
+    if (n.lane === 'gather') return n.tool !== null && nowId(n.tool);
+    return (into.get(n.id) ?? []).every(nowId) && placeOk(n.station);
+  };
+  /**
+   * What workplace `s` unlocks, `k`, is had, makeable now, or one step away: one of `s`'s recipes for it takes only what is
+   * had or got now, and `s` is had or could be built. @param {string} s @param {string} k
+   */
+  const unlockOk = (s, k) => {
+    if (hadKey(k)) return true;
+    const recs = MAKERS.get(`${s}|${k}`) ?? [];
+    if (recs.some((r) => canMake(r.id))) return true;
+    if (!placeOk(s)) return false;
+    return recs.some((r) => r.inputs.every((inp) => nowId(inputId(inp)))
+      && r.tools.every((t) => {
+        const tool = toolItemFor(t.type, t.tier);
+        return tool === null || nowId(tool);
+      }));
+  };
+  /** @type {Set<string>} */
+  const candidate = new Set(model.nodes.filter((n) => nowNode(n) || oneStep(n)).map((n) => n.id));
+  const stations = model.stations ?? TREE_STATIONS;
+  const heads = stations.map((s) => /** @type {TreeNode} */ (model.byId.get(placeId(s))));
+  const reached = stations.map((_, c) => heads[c].unlocks.some(hadKey) || model.nodes.some((n) => n.column === c
+    && (had.get(n.id) || (n.lane !== 'gather' && candidate.has(n.id)))));
+  const shown = new Set(model.nodes.filter((n) => n.lane !== 'place' && reached[n.column] && candidate.has(n.id)).map((n) => n.id));
+  const open = new Set(model.nodes.filter((n) => n.lane === 'place' && candidate.has(n.id)).map((n) => n.id));
+  const unlocks = stations.map((s, c) => (reached[c] ? heads[c].unlocks.filter((k) => unlockOk(s, k)) : []));
+  const hidden = stations.map((_, c) => model.nodes.filter((n) => n.column === c && n.lane !== 'place' && !shown.has(n.id)).length
+    + heads[c].unlocks.length - unlocks[c].length);
+  return { shown, open, reached, unlocks, hidden };
+}
+
+/** The id of a revealed column's "N more to discover" marker. @param {string} s */
+export function moreId(s) {
+  return `?${s}`;
+}
+
+/**
+ * The tree as the player sees it (pure): every column's head (marked `reached` and `veiled`, its `unlocks` only those
+ * shown), the shown nodes, and after them in the build lane a marker `?station` counting the hidden ones (`more`); only
+ * the edges between two shown nodes.
+ * @param {TreeModel} model @param {TreeReveal} reveal @returns {TreeModel}
+ */
+export function revealedTree(model, reveal) {
+  /** @type {TreeNode[]} */
+  const nodes = [];
+  const stations = model.stations ?? TREE_STATIONS;
+  stations.forEach((s, c) => {
+    const head = /** @type {TreeNode} */ (model.byId.get(placeId(s)));
+    nodes.push({ ...head, unlocks: [...(reveal.unlocks[c] ?? [])], reached: reveal.reached[c], veiled: !reveal.open.has(head.id) });
+    for (const n of model.nodes) if (n.column === c && n.lane !== 'place' && reveal.shown.has(n.id)) nodes.push(n);
+    const more = reveal.hidden[c];
+    if (more > 0) {
+      nodes.push({
+        id: moreId(s), lane: 'build', column: c, label: `${more} more to discover`, icon: '', recipe: null, station: null,
+        how: '', tool: null, depth: 0, unlocks: [], needs: [], more,
+      });
+    }
+  });
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const edges = model.edges.filter(([a, b]) => byId.has(a) && byId.has(b));
+  return { nodes, byId, edges, stations };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -341,7 +571,8 @@ const LANE_GAP = 14;
  *   columns: Array<{ x: number, w: number }>, lanes: Array<{ lane: string, y: number, h: number }> }}
  */
 export function layoutTree(model) {
-  const cols = TREE_STATIONS.map((_, c) => TREE_LANES.map((lane) => model.nodes.filter((n) => n.column === c && n.lane === lane)));
+  const stations = model.stations ?? TREE_STATIONS;
+  const cols = stations.map((_, c) => TREE_LANES.map((lane) => model.nodes.filter((n) => n.column === c && n.lane === lane)));
   const perRow = cols.map((lanes) => Math.min(TREE_MAX_PER_ROW, Math.max(2, ...lanes.map((l) => Math.ceil(l.length / TREE_MAX_ROWS)))));
   const rows = TREE_LANES.map((_, li) => Math.max(1, ...cols.map((lanes, c) => Math.ceil(lanes[li].length / perRow[c]))));
   /** @type {Array<{ lane: string, y: number, h: number }>} */
@@ -377,7 +608,7 @@ export function layoutTree(model) {
         pos.set(node.id, [Math.round(px), Math.round(py)]);
       });
     });
-    pos.set(placeId(TREE_STATIONS[c]), [Math.round(columns[c].x + columns[c].w / 2), TREE_PLACE_Y]);
+    pos.set(placeId(stations[c]), [Math.round(columns[c].x + columns[c].w / 2), TREE_PLACE_Y]);
   });
   return { width, height, pos, columns, lanes };
 }

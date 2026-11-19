@@ -125,6 +125,7 @@ export const TILE_NAMES = Object.freeze({
   104: 'fire_pit_side',
   105: 'lab_side', // §94
   106: 'lab_top',
+  107: 'pennant', // §101
   // v0.11 (CONTRACTS §67)
   195: 'workbench_side',
   196: 'workbench_top',
@@ -2190,6 +2191,37 @@ function paintLabTop(px, rng) {
   set(px, 7, 10, 0xd07a38);
 }
 
+/** §101: the Pennant's colours — honey cloth (H, shaded h), a teal band (T, shaded t), the wooden pole (P, p), its stone foot (S, s). */
+const PENNANT_PALETTE = Object.freeze({
+  H: 0xf2b33d, h: 0xc98a1e, T: 0x2f9e8f, t: 0x1f6e64, P: 0x9a6a3a, p: 0x6a4422, S: 0x92979c, s: 0x5c6166,
+});
+/**
+ * 107 pennant (§101) — the Pennant's picture: a two-pixel wooden pole on a small stone foot, a honey knob on top, and a
+ * honey pennant with a teal band streaming out to the right from under the knob. The rest is clear (a flat icon).
+ */
+const PENNANT_ART = Object.freeze([
+  '  hHHh          ',
+  '   pPHHH        ',
+  '   pPHHHHHH     ',
+  '   pPHHHHHHHH   ',
+  '   pPTTTTTTTTTT ',
+  '   pPTTTTTTTTt  ',
+  '   pPHHHHHHh    ',
+  '   pPHHHh       ',
+  '   pPhh         ',
+  '   pP           ',
+  '   pP           ',
+  '   pP           ',
+  '   pP           ',
+  '   pP           ',
+  '  sSSs          ',
+  ' sSSSSs         ',
+]);
+function paintPennant(px) {
+  clearTile(px);
+  paintPicture(px, PENNANT_ART, PENNANT_PALETTE);
+}
+
 /**
  * 95 basket_side — a diagonal straw weave: strands run along both diagonals in 3-px bands, and the strand on top at a
  * pixel alternates with the band parity ((floor((x + y) / 3) + floor((x − y + 16) / 3)) & 1): straw 0xc8a45a or the
@@ -3095,7 +3127,7 @@ function paintHealwortPlantBare(px) {
 // ---------------------------------------------------------------------------------------------------------------
 // §80 farming, tiles 205–206: a planted seed and its sprout (original designs; these comments are normative). Both are
 // cut-outs on alpha 0 (RGB 0, alpha 0 or 255 only) and both stand on the same mound, so a sprout is plainly the seedbed
-// it came from. plantModels.js cuts the faces of their 3D models from these pictures: the rectangles it names are solid.
+// it came from. (Their 3D models are kit models on the plant atlas since §105; these pictures are their Pack icons.)
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The mound's rows, [y, x0, x1]: a low heap of earth six rows high, widest on the bottom three. */
@@ -3168,7 +3200,8 @@ function paintSprout(px) {
 // imitates, so that what differs is exactly what the comments say and nothing else:
 // - the Hemlock is the Wild Carrot's leaves with three flat white flower heads, a purple-blotched stem and a pale root;
 // - the Nightshade is the Honeyberry's bush with shiny black berries and purple star flowers.
-// plantModels.js cuts the faces of their 3D models from these pictures.
+// (Their 3D models are kit models on the plant atlas since §105, the same look-alike rules in 3D; these pictures are
+// their Pack icons and, far away, the crossed pictures their models give way to.)
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
@@ -3400,7 +3433,7 @@ function paintAloe(px) {
 // the upper left, like the plants of §81. The spring is a prism and has ordinary opaque faces. The well, the rain
 // barrel and the beds are small 3D models: each has a PICTURE (a cut-out on alpha 0 with RGB 0, alpha 0 or 255 only:
 // the Pack's icon) and — but the grass bed, whose picture is solid enough to wrap its boxes — a SKIN of opaque
-// swatches that plantModels.js cuts its faces from.
+// swatches that plantModels.js cuts its box model's faces from.
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The rim stones of a spring's top: [centre x, centre y, radius x, radius y, tone], round the pool, clockwise from the top. */
@@ -3869,6 +3902,7 @@ const RECIPES = Object.freeze({
   workbench_side: paintWorkbenchSide,
   lab_side: paintLabSide,
   lab_top: paintLabTop,
+  pennant: paintPennant, // §101
   workbench_top: paintWorkbenchTop,
   snare: paintSnare,
   snare_baited: paintSnareBaited,

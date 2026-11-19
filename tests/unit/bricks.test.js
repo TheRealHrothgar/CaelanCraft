@@ -3,7 +3,7 @@ import {
   BRICK_DEPTH, BRICK_CHUNK_I, BRICK_CHUNK_N, BRICK_CHUNK_VOLUME, hexesOfBrick, bricksOfHex, facePieces, fullPieceMask,
   isEvenRow, worldToBrick, brickLocalIndex, brickIndexToLocal, BrickGrid, normalizeBricksJSON, brickChunksOfHexChunk,
   raycastBricks, brickCircleContact, cylinderIntersectsBrick, BRICK_FACE_SHADE, parseBrickChunkKey,
-  PIECE_NW, PIECE_NE, PIECE_SW, PIECE_SE, PIECE_TOP, PIECE_MID, PIECE_BOT,
+  PIECE_NW, PIECE_NE, PIECE_SW, PIECE_TOP, PIECE_MID, PIECE_BOT,
 } from '../../src/bricks.js';
 import { HEX_SIZE, HEX_ROW_SPACING, HEX_CORNERS, HEX_AREA, FACE_SHADE, hexToWorld } from '../../src/hex.js';
 import { CHUNK_SIZE, WORLD_HEIGHT } from '../../src/config.js';

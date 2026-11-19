@@ -19,7 +19,21 @@ export const PURPOSE = Object.freeze({
   flint_pick: 'Your first way into stone: rock, coal and copper ore.',
   flint_shovel: 'Digs faster and lasts longer than wood.',
   flint_spear: 'The hunting weapon: thrust it or throw it.',
-  flint_dart: 'A light thrown weapon for small game.',
+  // ---- the bows and the arrows (§100)
+  sapling: 'A springy young shoot: strung with cord, a Crude Bow.',
+  crude_bow: 'Shoots any arrow. Hold to draw, let go to shoot.',
+  fishing_rod: 'Hold to cast. Click when the float goes under.',
+  bow_stave: 'Fire-hardened in the Kiln, it becomes a Treated Stave.',
+  treated_stave: 'Backed with rawhide at the Work Stump: a Recurve Bow.',
+  recurve_bow: 'Shoots faster, farther and truer than the Crude Bow.',
+  stone_arrow: 'Shot from a bow. A stone head often breaks on a hit.',
+  flint_arrow: 'Shot from a bow. Pick it up again after a miss.',
+  copper_arrow: 'Hits like flint, and breaks far less often.',
+  bronze_arrow: 'Hits harder than copper, and seldom breaks.',
+  iron_arrow: 'Hits harder than bronze. Most can be shot again.',
+  steel_arrow: 'The hardest-hitting arrow. It hardly ever breaks.',
+  // ---- seeing far (§103)
+  spyglass: 'Carry it, and look through it to see far.',
   // ---- copper
   copper_knife: 'Cuts deeper and lasts longer than flint.',
   copper_axe: 'Fells faster and lasts longer than flint.',
@@ -52,7 +66,7 @@ export const PURPOSE = Object.freeze({
   crucible: 'Holds molten metal: needed to alloy bronze and to cast.',
   casting_mold: 'Shapes molten copper and bronze into tools.',
   // ---- workplaces
-  work_stump: 'Workplace: flint tools, planks, leather, powder, wire.',
+  work_stump: 'Workplace: flint tools, bows, planks, leather, powder, wire.',
   kiln: 'Workplace: fires clay, burns charcoal, smelts copper and bronze.',
   bloomery: 'Workplace: smelts iron and melts glass.',
   forge: 'Workplace: iron and steel tools.',
@@ -73,6 +87,10 @@ export const PURPOSE = Object.freeze({
   rain_barrel: 'Catches rain. Stores 3 pots of water that never spoil.',
   grass_bed: 'A poor place to sleep. Better than none.',
   bed: 'The best sleep: you heal most and need the fewest hours.',
+  // ---- the wind (§101)
+  pennant: 'Shows the wind. Stalk game with the wind in your face.',
+  // ---- finding the way (§102)
+  compass: 'Carry it, and the wind vane shows north.',
 });
 
 /**

@@ -8,9 +8,12 @@ import {
   BLOCK_RULES, ruleFor, canHarvest, breakSeconds, harvestHint, rollDrops, rollGroups, PICKABLE, isPickable, pick, tap,
   Tapped, Regrowth, RIPE_OF, ripeOf, MOB_DROPS, rollMobDrops, toolPower, UNDERWATER_DIG_FACTOR, MIN_BREAK_S,
   HAND_GATHER, handGatherHint, withArticle, DIG_TOOL_TYPES, isDeep, DEEP_BELOW_SEA, GRAVEL_FLINT_P,
+  workTier, digWear, slowHint, WEAR_PER_WORK_S, SLOW_HINT_S, SLOW_TIER_MAX,
 } from '../../src/harvest.js';
 import { chunkKey, localIndex } from '../../src/coords.js';
 import { mulberry32 } from '../../src/noise.js';
+import { wearsFromDigging } from '../../src/survivalControl.js';
+import { HARD_WORK_SHOW_S } from '../../src/survival.js';
 
 const B = BLOCK;
 const tool = (key) => getItem(key).tool;
@@ -42,22 +45,23 @@ const WOOLS = BLOCKS.filter((b) => b.name.startsWith('wool_')).map((b) => b.id);
 
 /** §6.3 h / tool / tier for every breakable block. */
 const TABLE = [
-  [[B.DIRT], 0.9, 'shovel', 0],
-  [[B.GRASS_BLOCK, B.SNOWY_GRASS], 1.0, 'shovel', 0],
-  [[B.SAND, B.RED_SAND], 0.8, 'shovel', 0],
-  [[B.GRAVEL, B.FLINT_GRAVEL], 1.2, 'shovel', 0], // §76: 119 is v0.13's withdrawn Flinty Gravel, now plain gravel
-  [[B.CLAY], 1.4, 'shovel', 1], // §77: clay needs a shovel
-  [[B.SNOW_BLOCK], 0.5, 'shovel', 0],
-  [[B.ICE], 1.0, 'pick', 0],
-  [[B.PACKED_ICE], 2.0, 'pick', 2],
+  // §99: the land's own materials are real work (dirt, grass, sand, gravel, clay, snow, ice, logs, rock and ore)
+  [[B.DIRT], 4.5, 'shovel', 0],
+  [[B.GRASS_BLOCK, B.SNOWY_GRASS], 5.0, 'shovel', 0],
+  [[B.SAND, B.RED_SAND], 3.5, 'shovel', 0],
+  [[B.GRAVEL, B.FLINT_GRAVEL], 4.0, 'shovel', 0], // §76: 119 is v0.13's withdrawn Flinty Gravel, now plain gravel
+  [[B.CLAY], 7.0, 'shovel', 1], // §77: clay needs a shovel
+  [[B.SNOW_BLOCK], 2.0, 'shovel', 0],
+  [[B.ICE], 4.0, 'pick', 0],
+  [[B.PACKED_ICE], 16, 'pick', 2],
   [[B.LOOSE_STONES, B.FALLEN_BRANCHES], 0.2, null, 0],
   [[B.OAK_LEAVES, B.SPRUCE_LEAVES, B.BIRCH_LEAVES], 0.4, 'axe', 0],
   [[B.HONEYBERRY_BUSH, B.HONEYBERRY_BUSH_BARE, B.PRICKLY_PEAR, B.PRICKLY_PEAR_BARE], 0.5, 'shovel', 0],
   [[B.TUSSOCK], 0.2, 'knife', 0],
   [[B.CATTAILS], 0.3, 'knife', 0],
   [[B.TUBER_PLANT], 0.4, 'shovel', 0],
-  [[B.OAK_LOG, B.SPRUCE_LOG, B.BIRCH_LOG], 3.0, 'axe', 1],
-  [[B.OAK_PLANKS, B.SPRUCE_PLANKS, B.BIRCH_PLANKS], 2.0, 'axe', 1],
+  [[B.OAK_LOG, B.SPRUCE_LOG, B.BIRCH_LOG], 24, 'axe', 1],
+  [[B.OAK_PLANKS, B.SPRUCE_PLANKS, B.BIRCH_PLANKS], 6.0, 'axe', 1],
   [[B.BOOKSHELF], 1.5, 'axe', 1],
   [[B.WORK_STUMP], 2.5, 'axe', 1],
   [[B.WORKBENCH], 3.0, 'axe', 1], // v0.11 (CONTRACTS §67)
@@ -75,20 +79,21 @@ const TABLE = [
   [[B.KILN], 3.0, 'pick', 0],
   [[B.BLOOMERY], 4.0, 'pick', 2],
   [[B.FORGE], 5.0, 'pick', 2],
-  [[B.STONE, B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.BRICKS], 3.0, 'pick', 2],
-  [[B.GRANITE, B.DIORITE, B.ANDESITE, B.SLATE], 3.5, 'pick', 2],
-  [[B.SANDSTONE], 2.0, 'pick', 2],
-  [[B.OBSIDIAN], 2.5, 'pick', 2],
+  [[B.STONE], 24, 'pick', 2],
+  [[B.COBBLESTONE, B.MOSSY_COBBLESTONE, B.STONE_BRICKS, B.MOSSY_STONE_BRICKS, B.BRICKS], 12, 'pick', 2],
+  [[B.GRANITE, B.DIORITE, B.ANDESITE, B.SLATE], 28, 'pick', 2],
+  [[B.SANDSTONE], 16, 'pick', 2],
+  [[B.OBSIDIAN], 20, 'pick', 2],
   [[B.RUNE_BLOCK], 2.0, 'pick', 2],
-  [[B.COAL_ORE], 3.5, 'pick', 2],
-  [[B.COPPER_ORE], 4.0, 'pick', 2],
-  [[B.TIN_ORE], 4.0, 'pick', 3],
-  [[B.IRON_ORE], 5.0, 'pick', 4],
-  [[B.GOLD_ORE], 5.0, 'pick', 5], // §77: the iron pick opens gold …
-  [[B.DIAMOND_ORE], 4.0, 'pick', 6], // … and the steel pick gems
-  [[B.COAL_BLOCK], 4.0, 'pick', 2],
-  [[B.COPPER_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK], 5.0, 'pick', 2],
-  [[B.IRON_BLOCK], 6.0, 'pick', 2],
+  [[B.COAL_ORE], 28, 'pick', 2],
+  [[B.COPPER_ORE], 32, 'pick', 2],
+  [[B.TIN_ORE], 32, 'pick', 3],
+  [[B.IRON_ORE], 40, 'pick', 4],
+  [[B.GOLD_ORE], 40, 'pick', 5], // §77: the iron pick opens gold …
+  [[B.DIAMOND_ORE], 32, 'pick', 6], // … and the steel pick gems
+  [[B.COAL_BLOCK], 16, 'pick', 2],
+  [[B.COPPER_BLOCK, B.GOLD_BLOCK, B.DIAMOND_BLOCK], 20, 'pick', 2],
+  [[B.IRON_BLOCK], 24, 'pick', 2],
   // DESIGN-circuits §8.3: the circuit parts
   [[B.COPPER_WIRE, B.BROWN_WIRE, B.WHITE_WIRE, B.EARTH_WIRE, B.POWDER_FUSE], 0.2, null, 0],
   [[B.TORCH], 0.3, null, 0],
@@ -113,6 +118,7 @@ const TABLE = [
   [[B.RAIN_BARREL, B.RAIN_BARREL_1, B.RAIN_BARREL_2, B.RAIN_BARREL_3], 1.5, 'axe', 0],
   [[B.GRASS_BED], 0.4, null, 0],
   [[B.BED], 1.5, 'axe', 0],
+  [[B.PENNANT], 0.4, null, 0], // §101
 ];
 
 describe('BLOCK_RULES (§6.3)', () => {
@@ -200,43 +206,47 @@ describe('BLOCK_RULES (§6.3)', () => {
 });
 
 describe('breakSeconds and canHarvest (§6.1)', () => {
-  it('the worked example times', () => {
+  it('the worked example times (§99: each age clearly faster)', () => {
     const rows = [
-      [B.DIRT, HAND, 0.9],
-      [B.DIRT, 'wooden_shovel', 0.6],
-      [B.OAK_LOG, 'stone_axe', 2.0],
-      [B.OAK_LOG, 'flint_axe', 1.5],
-      [B.OAK_LOG, 'steel_axe', 0.5],
-      [B.STONE, 'flint_pick', 1.5],
-      [B.STONE, 'bronze_pick', 0.88],
-      [B.IRON_ORE, 'bronze_pick', 1.47],
-      [B.OBSIDIAN, 'flint_pick', 1.25],
+      [B.DIRT, HAND, 4.5],
+      [B.DIRT, 'wooden_shovel', 2.05],
+      [B.DIRT, 'flint_shovel', 1.02],
+      [B.OAK_LOG, 'stone_axe', 10.91],
+      [B.OAK_LOG, 'flint_axe', 5.45],
+      [B.OAK_LOG, 'copper_axe', 3.75],
+      [B.OAK_LOG, 'bronze_axe', 2.67],
+      [B.OAK_LOG, 'iron_axe', 1.92],
+      [B.OAK_LOG, 'steel_axe', 1.41],
+      [B.STONE, 'flint_pick', 5.45],
+      [B.STONE, 'bronze_pick', 2.67],
+      [B.IRON_ORE, 'bronze_pick', 4.44],
+      [B.OBSIDIAN, 'flint_pick', 4.55],
     ];
     for (const [id, key, s] of rows) expect(breakSeconds(id, key ? tool(key) : null)).toBeCloseTo(s, 2);
   });
 
   it('a tool of another type counts as the hand', () => {
-    expect(breakSeconds(B.DIRT, tool('steel_pick'))).toBeCloseTo(0.9, 9);
-    expect(breakSeconds(B.GRAVEL, tool('flint_axe'))).toBeCloseTo(1.2, 9);
+    expect(breakSeconds(B.DIRT, tool('steel_pick'))).toBeCloseTo(4.5, 9);
+    expect(breakSeconds(B.GRAVEL, tool('flint_axe'))).toBeCloseTo(4, 9);
     expect(breakSeconds(B.TUSSOCK, tool('fire_drill'))).toBeCloseTo(0.2, 9);
   });
 
   it('speed is TIER_SPEED of the tool tier, for every tier', () => {
     const picks = ['flint_pick', 'copper_pick', 'bronze_pick', 'iron_pick', 'steel_pick'];
-    for (const k of picks) expect(breakSeconds(B.STONE, tool(k))).toBeCloseTo(3 / TIER_SPEED[tool(k).tier], 9);
-    expect(breakSeconds(B.DIRT, tool('wooden_shovel'))).toBeCloseTo(0.9 / 1.5, 9);
+    for (const k of picks) expect(breakSeconds(B.STONE, tool(k))).toBeCloseTo(24 / TIER_SPEED[tool(k).tier], 9);
+    expect(breakSeconds(B.DIRT, tool('wooden_shovel'))).toBeCloseTo(4.5 / 2.2, 9);
   });
 
   it('§93.7: stone breaks into rocks with a pick, or is dressed into stone bricks with a copper hammer or better', () => {
     expect(rollDrops(B.STONE, tool('flint_pick'), {}, () => 0.99).filter((s) => s.k === 'rock')).toEqual([{ k: 'rock', n: 2 }]);
     expect(breakSeconds(B.STONE, tool('hammerstone'))).toBe(Infinity); // tier 1: the dressed way wants metal
     expect(canHarvest(B.STONE, tool('copper_hammer'))).toBe(true);
-    expect(breakSeconds(B.STONE, tool('copper_hammer'))).toBeCloseTo(4 / TIER_SPEED[tool('copper_hammer').tier], 9);
+    expect(breakSeconds(B.STONE, tool('copper_hammer'))).toBeCloseTo(32 / TIER_SPEED[tool('copper_hammer').tier], 9);
     const bricks = rollDrops(B.STONE, tool('copper_hammer'), {}, () => 0.5);
     expect(bricks.map((s) => s.k)).toEqual(['stone_bricks']);
     expect(bricks[0].n).toBeGreaterThanOrEqual(1);
     expect(bricks[0].n).toBeLessThanOrEqual(2);
-    expect(ruleFor(B.STONE).alt).toMatchObject({ tool: 'hammer', tier: 3, h: 4 });
+    expect(ruleFor(B.STONE).alt).toMatchObject({ tool: 'hammer', tier: 3, h: 32 }); // §99: a little slower than the pick
   });
 
   it('cannot: below the tier, the wrong type, or the hand where a tier is needed → Infinity', () => {
@@ -247,14 +257,14 @@ describe('breakSeconds and canHarvest (§6.1)', () => {
     expect(breakSeconds(B.OAK_LOG, tool('flint_knife'))).toBe(Infinity);
     expect(breakSeconds(B.PACKED_ICE, HAND)).toBe(Infinity);
     expect(breakSeconds(B.TIN_ORE, tool('flint_pick'))).toBe(Infinity);
-    expect(breakSeconds(B.TIN_ORE, tool('copper_pick'))).toBeCloseTo(4 / 2.6, 9);
+    expect(breakSeconds(B.TIN_ORE, tool('copper_pick'))).toBeCloseTo(32 / 6.4, 9);
     expect(breakSeconds(B.IRON_ORE, tool('copper_pick'))).toBe(Infinity);
     expect(breakSeconds(B.GOLD_ORE, tool('bronze_pick'))).toBe(Infinity); // §77: gold needs the iron pick …
-    expect(breakSeconds(B.GOLD_ORE, tool('iron_pick'))).toBeCloseTo(5 / TIER_SPEED[5], 9);
+    expect(breakSeconds(B.GOLD_ORE, tool('iron_pick'))).toBeCloseTo(40 / TIER_SPEED[5], 9);
     expect(breakSeconds(B.DIAMOND_ORE, tool('iron_pick'))).toBe(Infinity); // … and gems the steel pick
-    expect(breakSeconds(B.DIAMOND_ORE, tool('steel_pick'))).toBeCloseTo(4 / TIER_SPEED[6], 9);
+    expect(breakSeconds(B.DIAMOND_ORE, tool('steel_pick'))).toBeCloseTo(32 / TIER_SPEED[6], 9);
     expect(breakSeconds(B.CLAY, HAND)).toBe(Infinity); // clay needs a shovel
-    expect(breakSeconds(B.CLAY, tool('wooden_shovel'))).toBeCloseTo(1.4 / TIER_SPEED[1], 9);
+    expect(breakSeconds(B.CLAY, tool('wooden_shovel'))).toBeCloseTo(7 / TIER_SPEED[1], 9);
     expect(breakSeconds(B.BLOOMERY, HAND)).toBe(Infinity);
     expect(canHarvest(B.STONE, HAND)).toBe(false);
     expect(canHarvest(B.STONE, tool('flint_pick'))).toBe(true);
@@ -285,9 +295,9 @@ describe('breakSeconds and canHarvest (§6.1)', () => {
 
   it('under water takes 2.5×, and nothing is faster than 0.05 s', () => {
     expect(UNDERWATER_DIG_FACTOR).toBe(2.5);
-    expect(breakSeconds(B.DIRT, HAND, true)).toBeCloseTo(2.25, 9);
-    expect(breakSeconds(B.STONE, tool('flint_pick'), true)).toBeCloseTo(3.75, 9);
-    expect(breakSeconds(B.TUSSOCK, tool('steel_knife'))).toBe(MIN_BREAK_S); // 0.2 / 6 < 0.05
+    expect(breakSeconds(B.DIRT, HAND, true)).toBeCloseTo(11.25, 9);
+    expect(breakSeconds(B.STONE, tool('flint_pick'), true)).toBeCloseTo((24 / 4.4) * 2.5, 9);
+    expect(breakSeconds(B.TUSSOCK, tool('steel_knife'))).toBe(MIN_BREAK_S); // 0.2 / 17 < 0.05
     expect(breakSeconds(B.TUSSOCK, tool('steel_knife'), true)).toBeCloseTo(0.125, 9);
     expect(breakSeconds(B.STONE, HAND, true)).toBe(Infinity);
   });
@@ -379,16 +389,21 @@ describe('rollDrops (§6.3)', () => {
     expect(rollDrops(B.STONE, HAND, { natural: true }, seq(0))).toEqual([]); // cannot be harvested by hand
   });
 
-  it('leaves by hand give no stick (only the odd nut); an axe lops self and a natural stick', () => {
+  it('leaves by hand give no stick (only the odd nut, §100 and the odd sapling); an axe lops self and a natural stick', () => {
     const hand = sample((r) => rollDrops(B.OAK_LEAVES, HAND, { natural: true }, r), 2000, 3);
     expect(hand.stick).toBeUndefined();
     expect(hand.oak_leaves).toBeUndefined();
     expect(hand.acorns.length / 2000).toBeGreaterThan(0.06);
     expect(hand.acorns.length / 2000).toBeLessThan(0.1);
-    expect(rollDrops(B.BIRCH_LEAVES, HAND, { natural: true }, seq(0))).toEqual([]);
+    expect(hand.sapling.length / 2000).toBeGreaterThan(0.09); // §100: SAPLING_LEAF_P 0.12
+    expect(hand.sapling.length / 2000).toBeLessThan(0.15);
+    expect(rollDrops(B.BIRCH_LEAVES, HAND, { natural: true }, seq(0.5))).toEqual([]);
+    expect(rollDrops(B.BIRCH_LEAVES, HAND, { natural: true }, seq(0))).toEqual([{ k: 'sapling', n: 1 }]);
     expect(rollDrops(B.OAK_LEAVES, tool('stone_axe'), { natural: true }, seq(0.5))).toEqual([{ k: 'oak_leaves', n: 1 }, { k: 'stick', n: 1 }]);
     expect(rollDrops(B.OAK_LEAVES, tool('stone_axe'), { natural: false }, seq(0))).toEqual([{ k: 'oak_leaves', n: 1 }]);
-    expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: true }, seq(0.07))).toEqual([{ k: 'pine_nuts', n: 1 }]);
+    // the nut's roll comes first, then the sapling's
+    expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: true }, seq(0.07, 0.5))).toEqual([{ k: 'pine_nuts', n: 1 }]);
+    expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: true }, seq(0.5, 0.1))).toEqual([{ k: 'sapling', n: 1 }]);
     expect(rollDrops(B.SPRUCE_LEAVES, HAND, { natural: false }, seq(0))).toEqual([]);
     expect(rollDrops(B.BIRCH_LEAVES, tool('flint_axe'), { natural: true }, seq(0))).toEqual([{ k: 'birch_leaves', n: 1 }, { k: 'stick', n: 1 }]);
   });
@@ -780,5 +795,133 @@ describe('articles and dig-tool types', () => {
     for (const t of ['spear', 'sword', 'firestarter', 'crucible', 'mold']) expect(DIG_TOOL_TYPES.has(t)).toBe(false);
     // every rule's tool is a dig-tool type
     for (const rule of BLOCK_RULES) if (rule && rule.tool) expect(DIG_TOOL_TYPES.has(rule.tool), rule.tool).toBe(true);
+  });
+});
+
+describe('§99: work costs time and the tool', () => {
+  const secs = (id, key) => breakSeconds(id, key ? tool(key) : null);
+  /** Blocks a new tool breaks before it breaks (the last one breaks it). */
+  const lasts = (id, key) => Math.ceil(tool(key).durability / digWear(id, tool(key)));
+
+  it('the time table: a bare hand digs dirt in several seconds; each age is clearly faster than the one before', () => {
+    expect(TIER_SPEED).toEqual([1, 2.2, 4.4, 6.4, 9, 12.5, 17]);
+    expect(secs(B.DIRT, null)).toBeCloseTo(4.5, 9);
+    // the Wooden Shovel more than halves the hand; flint halves it again
+    expect(secs(B.DIRT, 'wooden_shovel')).toBeLessThan(secs(B.DIRT, null) / 2);
+    expect(secs(B.DIRT, 'flint_shovel')).toBeCloseTo(secs(B.DIRT, 'wooden_shovel') / 2, 9);
+    // a bare hand cannot fell a tree; a stone axe takes 10–12 s, flint about half of that
+    expect(secs(B.OAK_LOG, null)).toBe(Infinity);
+    expect(secs(B.OAK_LOG, 'stone_axe')).toBeGreaterThanOrEqual(10);
+    expect(secs(B.OAK_LOG, 'stone_axe')).toBeLessThanOrEqual(12);
+    expect(secs(B.OAK_LOG, 'flint_axe')).toBeCloseTo(secs(B.OAK_LOG, 'stone_axe') / 2, 9);
+    // every metal is noticeably faster than the one before (at least a quarter less time)
+    const ladder = (keys, id) => {
+      for (let i = 1; i < keys.length; i++) expect(secs(id, keys[i]), keys[i]).toBeLessThan(secs(id, keys[i - 1]) * 0.75);
+    };
+    ladder(['stone_axe', 'flint_axe', 'copper_axe', 'bronze_axe', 'iron_axe', 'steel_axe'], B.OAK_LOG);
+    ladder(['flint_pick', 'copper_pick', 'bronze_pick', 'iron_pick', 'steel_pick'], B.STONE);
+    ladder(['wooden_shovel', 'flint_shovel', 'copper_shovel', 'bronze_shovel', 'iron_shovel', 'steel_shovel'], B.DIRT);
+    // stone stays gated as before: no stone pick, and flint is the first way in; a cell of rock is real work too
+    expect(secs(B.STONE, null)).toBe(Infinity);
+    expect(secs(B.STONE, 'flint_pick')).toBeCloseTo(secs(B.OAK_LOG, 'flint_axe'), 9);
+    expect(secs(B.TIN_ORE, 'flint_pick')).toBe(Infinity);
+    expect(secs(B.IRON_ORE, 'copper_pick')).toBe(Infinity);
+  });
+
+  it('workTier: the tier of the tool doing the work, 0 for a hand or a tool that does not help', () => {
+    expect(workTier(B.DIRT, null)).toBe(0);
+    expect(workTier(B.DIRT, tool('stone_axe'))).toBe(0);
+    expect(workTier(B.DIRT, tool('wooden_shovel'))).toBe(1);
+    expect(workTier(B.OAK_LOG, tool('flint_axe'))).toBe(2);
+    expect(workTier(B.STONE, tool('steel_pick'))).toBe(6);
+    expect(workTier(B.STONE, tool('copper_hammer'))).toBe(3); // §93: the dressed way works with the hammer
+    expect(workTier(B.STONE, tool('stone_axe'))).toBe(0); // cannot break it at all
+    expect(workTier(B.LOOSE_STONES, tool('iron_pick'))).toBe(0); // no tool helps
+  });
+
+  it('wear: in proportion to the hardness over the speed — a stone axe fells about five logs, a flint one twenty-odd', () => {
+    expect(WEAR_PER_WORK_S).toBe(0.75);
+    const log = ['stone_axe', 'flint_axe', 'copper_axe', 'bronze_axe', 'iron_axe', 'steel_axe'];
+    expect(log.map((k) => digWear(B.OAK_LOG, tool(k)))).toEqual([8, 4, 3, 2, 1, 1]);
+    expect(log.map((k) => lasts(B.OAK_LOG, k))).toEqual([5, 23, 54, 160, 600, 1200]);
+    expect(lasts(B.OAK_LOG, 'stone_axe')).toBeGreaterThanOrEqual(4);
+    expect(lasts(B.OAK_LOG, 'stone_axe')).toBeLessThanOrEqual(6);
+    expect(lasts(B.OAK_LOG, 'flint_axe')).toBeGreaterThanOrEqual(20);
+    // picks on stone and shovels on dirt likewise
+    const picks = ['flint_pick', 'copper_pick', 'bronze_pick', 'iron_pick', 'steel_pick'];
+    expect(picks.map((k) => lasts(B.STONE, k))).toEqual([23, 54, 160, 600, 1200]);
+    const shovels = ['wooden_shovel', 'flint_shovel', 'copper_shovel', 'bronze_shovel', 'iron_shovel', 'steel_shovel'];
+    expect(shovels.map((k) => lasts(B.DIRT, k))).toEqual([20, 90, 160, 320, 600, 1200]);
+    // the formula, and at least 1 a block
+    for (const k of [...log, ...picks, ...shovels]) {
+      const t = tool(k);
+      const id = t.type === 'axe' ? B.OAK_LOG : t.type === 'pick' ? B.STONE : B.DIRT;
+      expect(digWear(id, t), k).toBe(Math.max(1, Math.round((WEAR_PER_WORK_S * ruleFor(id).h) / TIER_SPEED[t.tier])));
+    }
+    expect(digWear(B.OAK_LEAVES, tool('stone_axe'))).toBe(1);
+    expect(digWear(B.TUSSOCK, tool('steel_knife'))).toBe(1);
+    // another digging tool takes the knocks without helping; the hand and the tools that never dig wear nothing
+    expect(digWear(B.DIRT, tool('steel_pick'))).toBe(1);
+    expect(digWear(B.DIRT, null)).toBe(0);
+    expect(digWear(B.DIRT, tool('flint_spear'))).toBe(0);
+    expect(digWear(B.CLAY, tool('crucible'))).toBe(0);
+    expect(digWear(B.STONE, tool('stone_axe'))).toBe(0); // cannot break it
+    // §93: the hammer that dresses stone wears by the dressed way's hardness
+    expect(digWear(B.STONE, tool('copper_hammer'))).toBe(Math.round((0.75 * 32) / 6.4));
+  });
+
+  it('slowHint: names slow work by hand or with a stone tool, plain words only', () => {
+    expect(SLOW_HINT_S).toBe(3);
+    expect(SLOW_TIER_MAX).toBe(1);
+    expect(slowHint(B.DIRT, null)).toBe('Dirt · slow by hand — a shovel digs much faster');
+    expect(slowHint(B.DIRT, tool('stone_axe'))).toBe('Dirt · slow — a shovel digs much faster');
+    expect(slowHint(B.ICE, null)).toBe('Ice · slow by hand — a pick breaks much faster');
+    expect(slowHint(B.OAK_LOG, tool('stone_axe'))).toBe('Oak Log · slow with a stone axe');
+    expect(slowHint(B.CLAY, tool('wooden_shovel'))).toBe('Clay · slow with a wooden shovel');
+    // flint is the first clearly better tool; quick work never nags; a tool that cannot break it is harvestHint's
+    expect(slowHint(B.OAK_LOG, tool('flint_axe'))).toBe(null);
+    expect(slowHint(B.STONE, tool('flint_pick'))).toBe(null);
+    expect(slowHint(B.DIRT, tool('wooden_shovel'))).toBe(null);
+    expect(slowHint(B.TUSSOCK, null)).toBe(null);
+    expect(slowHint(B.OAK_LEAVES, null)).toBe(null);
+    expect(slowHint(B.LOOSE_STONES, null)).toBe(null);
+    expect(slowHint(B.OAK_LOG, null)).toBe(null);
+    expect(slowHint(B.STONE, tool('stone_axe'))).toBe(null);
+    expect(slowHint(B.BEDROCK, null)).toBe(null);
+    // no key names (§97.2 rewrites them on a tablet) and nothing slow is left unsaid by hand
+    for (let id = 0; id < BLOCK_COUNT; id++) {
+      const text = slowHint(id, null);
+      if (text) expect(text, BLOCKS[id].name).not.toMatch(/LMB|RMB|\[|click/);
+      const rule = ruleFor(id);
+      if (rule && rule.tier === 0 && rule.tool && rule.h > SLOW_HINT_S) expect(text, BLOCKS[id].name).not.toBe(null);
+    }
+  });
+
+  it('the seams: §100\'s weapons dig like a hand and never wear by it; §101\'s Pennant is a quick pull', () => {
+    // a spear, a dart or a bow is no digging tool: on every block it works like the hand (tier 0, the hand's time) and
+    // loses nothing by it (a bow wears by its shots alone, §100.2)
+    const weapons = ['flint_spear', 'crude_bow', 'recurve_bow'].map((k) => tool(k));
+    expect(weapons.map((t) => t.type)).toEqual(['spear', 'bow', 'bow']);
+    for (const t of weapons) {
+      expect(DIG_TOOL_TYPES.has(t.type), t.type).toBe(false);
+      expect(wearsFromDigging(t), t.type).toBe(false);
+      for (let id = 0; id < BLOCK_COUNT; id++) {
+        expect(digWear(id, t), BLOCKS[id].name).toBe(0);
+        expect(workTier(id, t), BLOCKS[id].name).toBe(0);
+        if (canHarvest(id, t)) expect(breakSeconds(id, t), BLOCKS[id].name).toBe(breakSeconds(id, null));
+      }
+    }
+    expect(getItem('flint_arrow').tool ?? null).toBe(null); // an arrow is no tool at all: a hand (§100.6: the darts are gone)
+    // the Pennant (§101.4) pulls up by hand, whatever is in hand: never slow, never worn for, never hard work
+    for (const t of [null, ...weapons, tool('stone_axe'), tool('steel_pick')]) {
+      const name = t ? t.type : 'hand';
+      expect(canHarvest(B.PENNANT, t), name).toBe(true);
+      expect(breakSeconds(B.PENNANT, t), name).toBeCloseTo(0.4, 9);
+      expect(breakSeconds(B.PENNANT, t), name).toBeLessThan(HARD_WORK_SHOW_S); // §99.2: a moment of work is not hard work
+      expect(slowHint(B.PENNANT, t), name).toBe(null);
+      expect(workTier(B.PENNANT, t), name).toBe(0);
+    }
+    expect(digWear(B.PENNANT, null)).toBe(0);
+    expect(rollDrops(B.PENNANT, null, {}, () => 0.5)).toEqual([{ k: 'pennant', n: 1 }]);
   });
 });

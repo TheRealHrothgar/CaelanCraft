@@ -101,15 +101,26 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/fallingRenderer.js` | three, moving cells + explosion light (§34.4) | v0.8 | `tests/unit/physicsRender.test.js` |
 | `src/particles.js` | three, one particle system (§34.5) | v0.8 | `tests/unit/physicsRender.test.js` |
 | `src/zombies.js` | PURE, zombies: spawning, AI, daylight, hits (§39) | zombies | `tests/unit/zombies.test.js` |
-| `src/zombieRenderer.js` | three, instanced four-prism zombie models (§39.2) | zombies | `tests/unit/zombieRenderer.test.js` |
+| `src/zombieRenderer.js` | three, the zombies drawn instanced, one mesh per part and kind, their poses and glow (§39.2, §74, §86, §104) | zombies, characters | `tests/unit/zombieRenderer.test.js` |
+| `src/zombieModel.js` | PURE, the three zombies' hex-faceted models part by part, their painted atlases and glow images (§104) | characters | `tests/unit/zombieModel.test.js` |
 | `src/avatars.js` | PURE, the avatars as data, the avatar preference (§91) | avatars | `tests/unit/avatars.test.js` |
-| `src/avatarSkin.js` | PURE, the avatars' pixel-art sheet, rig, front picture and portraits (§91) | avatars | `tests/unit/avatars.test.js` |
+| `src/modelKit.js` | PURE, the model kit: closed faceted solids, transforms, merges, atlas uvs (§91.2) | characters | `tests/unit/modelKit.test.js` |
+| `src/paintKit.js` | PURE, the paint kit: seeded RGBA painters and a padded atlas (§91.2) | characters | `tests/unit/paintKit.test.js` |
+| `src/figureKit.js` | PURE, what figures share: the Skin atlas, the hex shapes, faceted heads, hair (§91.2) | characters | `tests/unit/avatarModel.test.js` |
+| `src/avatarModel.js` | PURE, the avatars' hex-faceted models bone by bone, their atlases, the first-person hand (§91.2, §91.4) | characters | `tests/unit/avatarModel.test.js` |
+| `src/fishing.js` | PURE, the Fishing Rod: the cast, the float, a fish that comes, nibbles and bites, the hook; the spear's shallow-water limit (§106) | hunting | `tests/unit/fishing.test.js` |
+| `src/fishingRenderer.js` | three, the rod's line and its float (§106) | hunting | `tests/unit/fishing.test.js` |
+| `src/plantKit.js` | PURE, what plants are built of: stems, leaf cards, whorls, sprays, blades, fronds, discs, gems, the bake (§105.1) | characters | `tests/unit/plantAtlas.test.js` |
+| `src/plantAtlas.js` | PURE, the painted plant atlas: its layout, pictures and mips (§105.2) | characters | `tests/unit/plantAtlas.test.js` |
+| `src/plantModels.js` | PURE, every plant, crop and piece of litter as a kit model in three levels of detail; the furniture's box models (§105.3, §85) | characters | `tests/unit/plantModels.test.js`, `tests/unit/plantsNotFood.test.js` |
+| `src/plantViewer.js` | three + DOM, the dev page `plants.html` (§105.7; not built) | characters | — |
 | `src/avatarMotion.js` | PURE, the avatar's walk, look, swing and stances (§91) | avatars | `tests/unit/viewCamera.test.js` |
 | `src/viewCamera.js` | PURE, the view modes, their preference, the third-person boom (§91) | avatars | `tests/unit/viewCamera.test.js` |
-| `src/avatarRenderer.js` | three, the avatar's model and the first-person arm (§91) | avatars | `tests/unit/avatarRenderer.test.js` |
+| `src/avatarRenderer.js` | three, the avatar's model, the first-person hand, the item in hand and the chooser's portraits (§91, §98.4) | avatars, characters | `tests/unit/avatarRenderer.test.js` |
 | `src/avatarMenu.js` | DOM, the Avatar chooser and the pause menu's View button (§91) | avatars | `tests/unit/avatarRenderer.test.js` |
 | `src/watcher.js` | PURE, the Hollow Watcher: sightings, placement, vanishing, traces (§40) | watcher | `tests/unit/watcher.test.js` |
-| `src/watcherRenderer.js` | three, the Watcher's figure — hollow hex rings, hex lantern with fog-free lights, smoke wisp — and its shader pre-warm (§40.4) | watcher | `tests/unit/watcherRenderer.test.js` |
+| `src/watcherRenderer.js` | three, the Watcher's figure — hollow hex rings, hex lantern with fog-free lights, smoke wisp — and its shader pre-warm (§40.4, §104) | watcher | `tests/unit/watcherRenderer.test.js` |
+| `src/watcherModel.js` | PURE, the Watcher's figure from the kit (chamfered hex bands, the lantern, the crystal, the wisp) and its painted stone (§104) | characters | `tests/unit/watcherRenderer.test.js` |
 | `src/atlas.js` | DOM + three | A-atlas | — |
 | `src/renderer.js` | three | A-renderer | `tests/unit/renderer.test.js` |
 | `src/controls.js` | DOM | A-controls | — |
@@ -153,7 +164,7 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/homestead.js` | PURE, springs, wells and rain barrels: what R does, what brings their water back (§85) | a place to stay | `tests/unit/homestead.test.js`, `tests/unit/worldgenHomestead.test.js` |
 | `src/rainRenderer.js` | three (+ the pure `RainField`), rain and snow as one mesh of quads (§84) | seasons and rain | `tests/unit/rainRenderer.test.js` |
 | `src/sleep.js` | PURE, sleep spots, lying down, a sleep and its reasons to wake, the secure place, the night attack, the effects of being awake too long (§87) | sleep | `tests/unit/sleep.test.js` |
-| `src/phantomRenderer.js` | three, the figure at the edge of sight: three dark boxes, drawing only (§87) | sleep | `tests/unit/sleep.test.js` |
+| `src/phantomRenderer.js` | three, the figure at the edge of sight: a dark person-shaped shadow from the kit, drawing only (§87, §104) | sleep, characters | `tests/unit/sleep.test.js` |
 | `src/populations.js` | PURE, animals that live in the world: zones and their land, live and dormant animals, births on the logistic curve, wanderers, the `fauna` save field (§88) | populations | `tests/unit/populations.test.js` |
 | — | circuits integration, the worked examples (§58) | v0.10 I | `tests/integration/circuits.test.js`, `tests/integration/harness.test.js` |
 | `tests/helpers/fixtures.js` | test helpers | Wave 0 (done) | — |
@@ -193,9 +204,9 @@ diagnostics                        → config, blocks, coords, hex, runes (runeK
 console                            → config
 runeEditor                         → config, commands (parseScript)
 zombies                            → config, physics, hex, blocks, pigs (fireAhead, shoreYaw, isOpen, wrapAngle, SWIM_REAIM_S)
-zombieRenderer                     → config, blocks (TILE), zombies (SWING_S), three
+zombieRenderer                     → config, zombies (SWING_S…), prewarm, lightShader, zombieModel, three (§104)
 watcher                            → config, hex, blocks, raycast, physics (playerIntersectsBlock), daynight (isDayTime), support (isLoadBearing)
-watcherRenderer                    → config (ATLAS_TILE_PX, TILE_UV), blocks (TILE, tileToUV), watcher (WATCHER_EYE_Y), three
+watcherRenderer                    → watcher (WATCHER_EYE_Y), watcherModel, three (§104)
 main                               → everything except three (renderer, atlas, pigRenderer, campfireRenderer,
                                      fallingRenderer, particles, zombieRenderer and watcherRenderer are the three-importing
                                      modules)
@@ -241,13 +252,20 @@ storage                            → … + circuitStore
 audio                              → … + circuitSounds
 main                               → … + all of the above (vortexRenderer and circuitRenderer import three)
 # §91 avatars and the third-person view (all leaf-ward; still acyclic):
-avatars                            → config
-avatarSkin                         → avatars
+avatars                            → (nothing)
+modelKit, paintKit                 → (nothing)
+figureKit                          → modelKit, paintKit
+avatarModel                        → modelKit, paintKit, figureKit, avatars
 avatarMotion                       → config
 viewCamera                         → config, blocks, raycast
-avatarRenderer                     → three, config, avatars, avatarSkin, lightShader, prewarm
-avatarMenu                         → avatars, avatarSkin
-diagnostics                        → … + avatars, viewCamera (the ?avatar= and ?view= params)
+avatarRenderer                     → three, config, avatars, avatarModel, avatarMotion, lightShader, prewarm, heldItem
+# §104 the zombies, the Watcher and the figure (all leaf-ward; still acyclic):
+zombieModel                        → modelKit, paintKit, figureKit
+watcherModel                       → modelKit, paintKit, figureKit
+phantomRenderer                    → three, prewarm, sleep, modelKit, figureKit
+pilotModels                        → modelKit, paintKit, figureKit, avatarModel, avatars, zombieModel (the pilot's walker is the game's)
+avatarMenu                         → avatars
+diagnostics                        → … + avatars, viewCamera, creativePicks (the ?avatar=, ?view= and ?hold= params)
 main                               → … + avatars, avatarMotion, avatarRenderer, avatarMenu, viewCamera, physics (isUnderSurface)
 ```
 
@@ -315,7 +333,9 @@ useSelected?`, §49). (worldgen.js types its generator locally as `SurvivalWorld
 `indexToLocal(index)`, `columnIndex(lq,lr)`, `inHeightRange(y)`,
 `yawToForward(yaw) → [fx,fz] = [-sin, -cos]`, `yawToRight(yaw) → [cos, -sin]`,
 `lookDirection(yaw,pitch) → [-sin(yaw)cos(pitch), sin(pitch), -cos(yaw)cos(pitch)]`,
-`forEachEditedCell(edits, id, fn(q, y, r))` (v0.7: every World.edits entry with that id; malformed chunk keys skipped).
+`forEachEditedCell(edits, id, fn(q, y, r))` (v0.7: every World.edits entry with that id; malformed chunk keys skipped);
+`forEachEditedCellIn(edits, cq, cr, id, fn(q, y, r))` (the same for one chunk's edits: the pennants' and campfires'
+`onChunkLoaded`, §101.4).
 v0.8: `packCell(q, y, r)` → `((q + 2^20)·2^21 + (r + 2^20))·128 + y`, one exact double below 2^49 (the physics queues'
 numeric cell key); `unpackCell(key, out = [0,0,0])` → `out = [q, y, r]`.
 The cube face tables (`FACE_*`, `FACE_VERTS`) are gone; face geometry is in `hex.js`.
@@ -355,6 +375,7 @@ vector equal to `FACE_NORMALS[j]`; the midpoint of corners `j, j+1` equals `FACE
 > **v0.10 amendment (§59):** `BlockDef.shape` (`'prism'` default | `'cross'` | `'decal'`) and `getBlockShape(id)`; the wild plants are crossed sprites and the ground litter floor decals.
 >
 > **v0.15 amendment (§78):** the wild plants are `'model'` (small 3D models, `plantModels.js`); `'cross'` is withdrawn. The shapes are `'prism'` | `'model'` | `'decal'` | `'litter'`.
+> **§105 amendment:** every plant, farm block and piece of litter (`'model'` or `'litter'`) is a hex-faceted kit model on the plant atlas, in three levels of detail; `'model'` without a kit model is the furniture's box model (§85).
 >
 > **Farming amendment (§80):** ids 133–150 (nine planted blocks, nine sprouts: `'model'`, not placeable), `BLOCK_COUNT` 151, tiles 205–206, `CROP_ROWS`, `FARM_IDS`, `isFarmBlock`; `isPopOff` and `POP_OFF_IDS` (39 ids) include them, `isPlant` and `PLANT_IDS` do not.
 >
@@ -552,6 +573,7 @@ exposes `gen, pondAt, treeTrunkAt, FLORA_TABLE`. A warm generation-2 chunk is al
 ## 9. `src/world.js`
 
 > **Light amendment (§62):** `light` (the LightEngine), `lightAt(q, y, r)` (packed, flushes first), `flushLight()`; update() re-lights the frame's edits first (step 0); `_generate` lights each chunk as it registers it (before onChunkGenerated); setBlock and loaded importEdits note the cell for the next flush; light that changes another meshed chunk dirties it lazily.
+> **§105 amendment:** each chunk's plants are meshed at a level of detail by its distance from the player (`chunkNearestDistance`; NEAR / FAR / CARD at 16 / 48 m, 4 m of slack); update() step 2b re-meshes the PLANTS ALONE (`_meshPlants`: a `plantsOnly` mesh to onChunkMesh) of the chunks within the mesh radius whose level changed, nearest first, under `PLANT_LOD_BUDGET_MS` (at least one a call); `chunk.plantLod`, `chunk.plants`, `chunk.plantCards` (§105.5).
 
 ```js
 export class World {
@@ -659,6 +681,10 @@ export function buildChunkMesh(cq, cr, getChunkData)   // → ChunkMeshData { op
                                                         //   v0.10 (§59): a 'cross' / 'decal' cell emits its crossed sprite / floor
                                                         //   decal into its layer instead of a prism (no AO, no culling either way)
                                                         //   v0.15 (§78): a 'model' cell emits its plant model (the crossed sprite is gone)
+                                                        //   §105: buildChunkMesh(cq, cr, getChunkData, { plantLod }) — a plant, farm block or piece of
+                                                        //   litter emits its kit model at that level of detail (plant-atlas uvs + PLANT_UV_OFFSET, a
+                                                        //   CARD's too) into the result's `plantLayer`, with `plants`, `plantTris`, `plantCards` when
+                                                        //   it drew any; buildChunkPlants(cq, cr, getChunkData, { plantLod }) → those alone (§105.4)
 export function vertexAO(side1, side2, corner)          // (side1 && side2) ? 0 : 3 - (side1 + side2 + corner); args 0|1  (side faces)
 export function hexCornerAO(sideA, sideB)               // 3 - (sideA + sideB)                                            (hex caps)
 export function isTintedFace(id, face)                  // OAK_LEAVES: every face; GRASS_BLOCK: FACE_TOP only
@@ -847,7 +873,7 @@ export function clearSave(storage = globalThis.localStorage)        // void
 **v0.9 Survival (§42).** `serializeSave` writes, after `watcherNight` and before `meta`, in this order: `gen` (an integer ≥ 2 only),
 `mode` (`'creative' | 'survival'`), `survival` (an object, canonicalised by `normalizeSurvivalJSON`: `{ health, satiation, hydration,
 temp, breath, wet, sick, heal, healRate, spawn: [q,y,r]|null, deaths, dead?, pack: (ItemStack|null)[27], wear: (ItemStack|null)[3],
-fires: { "q,y,r": { s: ({k, t}|null)[7], f? } } }`, numbers to 3 dp) and `containers` (only when non-empty after
+fires: { "q,y,r": { s: ({k, t}|null)[7], f? } }, had?: string[] }`, numbers to 3 dp; `had`: §94.4a) and `containers` (only when non-empty after
 `normalizeContainersJSON`: `{ "q,y,r": { kind: 'basket'|'remains', slots } }`). **`version: 3` exactly when `gen ≥ 2` or `survival`
 is present, else 2**; `deserializeSave` reads 2 and 3; `gen > GEN_LATEST` is unloadable (`unloadableReason`: "gen 3: made by a newer
 version of Caelancraft"). `serializeSave` throws a TypeError for `gen > GEN_LATEST` or a non-object `survival` / `containers` (never
@@ -1571,6 +1597,11 @@ ledge straight ahead. `walkPhase` advances by 4 × horizontal distance (mod 2π)
 0.2 m/s · dt it eases toward the nearest multiple of π by `1 − exp(−LEG_SETTLE_RATE 10 · dt)` (the legs stand straight again).
 `oinkIn` resets to 6–18 s.
 
+> **§69.1 amendment (phase 3, hex-faceted):** the pig is drawn from `animalModels.js` over the animals' shared atlas —
+> `pig-skin` (the trunk and tail), `pig-head` (it roots while the pig stands idle), `pig-legs`, their hurt twins, and
+> `pig-tusks`, `pig-tag` (tame), `pig-snare` (snared); `pig-features` is gone, the colours are painted. Still 3 draw calls.
+> The paragraph below is the original.
+
 `createPigRenderer(scene, capacity = PIG_MAX)` → `{ sync(pigs), count(), dispose(), group }`: the first `capacity` pigs are drawn
 with five shared InstancedMeshes in `group` — `pig-skin` (body, head, ears, tail merged; PINK), `pig-features` (snout, nostrils,
 eyes, pupils merged with vertex colours), `pig-legs` (4 instances per pig, pivoting at the hip) and their twins `pig-skin-hurt` /
@@ -1657,6 +1688,10 @@ export class Campfires {
   remove(q, y, r) → known?                  // forgets the cell, tracked or not
   onBlockChange(q, y, r, prev, next)        // CAMPFIRE appears → add; disappears → remove
   loadFromEdits(world.edits)                // clear, then forEachEditedCell(edits, CAMPFIRE, add)
+  onChunkLoaded(cq, cr, world.edits, getBlock) // World.onChunkGenerated (main, §101.4 as the pennants): remove a known
+                                            // fire in the chunk whose cell is no CAMPFIRE now, then
+                                            // forEachEditedCellIn(edits, cq, cr, CAMPFIRE, add) — a server's cells for a
+                                            // chunk not generated here fire no onBlockChange (World.applyServerCell, §96)
   retrack(x, y, z) → finished?              // advances or finishes a re-pick; see "Tracking cap"
   nearest(x, y, z, maxDist, limit = ∞)      // [{ fire, dist }] over TRACKED fires, by distance to (x, y + 0.3, z) of the fire, nearest first (ties by key)
 }
@@ -1973,6 +2008,10 @@ A non-persistent tumbler that hits a floor while moving down vanishes in 10 dust
 ### 34.4 `createFallingRenderer(scene, atlasTexture)` → `{ sync(items, count = items.length), setFlash(x, y, z, intensity), count(), meshCount(), prewarm(webglRenderer, camera) → Promise, dispose() }`
 
 > **v0.10 amendment (§54):** `setFlash(x, y, z, intensity, color = 0xffd49a)` — the colour is set only when it changes.
+> **§105 amendment:** a kit model (a plant, the litter, a farm block) moves as its FAR model in the cutout layer, plant-atlas
+> uvs; the cutout material binds the plant atlas beside the block atlas (`applyPlantAtlas` after the object light, program key
+> `PLANT_CACHE_KEY`; the page's one `createPlantAtlasTexture()`, fetched when a moving cell first `usesPlantAtlas`) and never
+> turns a plant's normal round (§105.4).
 One InstancedMesh per (block id, render layer) from `mesher.buildCellMesh(id)` (ids with no geometry — CAMPFIRE — draw nothing),
 three Lambert materials like the chunks' (opaque; cutout alphaTest 0.5 DoubleSide; translucent transparent, depthWrite false,
 DoubleSide, renderOrder 1) on the shared atlas texture (never disposed here), `frustumCulled = false`, DynamicDrawUsage. Capacity
@@ -2603,6 +2642,7 @@ ZOMBIE_KNOCKBACK (6.5) away from the hitter, `vy ≥ ZOMBIE_KNOCK_LIFT` (4.5), `
 BLAST_IMPULSE·(1 − d/2R) reaches that within about the blast radius R (its BLAST_MIN_UP floor adds a little); weaker knocks add the
 velocity and count as a hit (unless flashing), which can also be the knock-out.
 ### 39.2 Rendering
+*Replaced by §61, §74 and §104 (the hex-faceted zombies); the API below stands.*
 `createZombieRenderer(scene, atlasTexture, capacity = ZOMBIE_MAX)` → `{ sync(zombies), count(), dispose(), group }`. The model
 faces −Z with its origin at the feet (matrix translate(x, y, z) · rotateY(yaw), like pigs) and is four hexagonal prisms from
 `hexPrismGeometry(R, h, y0, { front, sides, top, bottom })` (corners at 60°·k from +X toward +Z, so side face 4 — normal −Z — is the
@@ -2779,6 +2819,8 @@ within 16 of spawn) and none has a liquid among its 8 neighbours. Each kind is l
   where the tree stood. `at` = [q, h, r].
   Logs and the root are removed together in one frame, so the support search finds nothing floating (§36.2) and no tree topples.
 ### 40.4 Rendering and integration
+*Amended by §104: the figure is built from the kit and paints its own stone (watcherModel.js); the tiles 250–252 stay
+painted, unused, and `atlasTexture` is ignored. Its parts, names, sizes, motion, lights and pre-warm below stand.*
 `createWatcherRenderer(scene, atlasTexture)` → `{ sync(figure|null, camX, camY, camZ, time), visible(), prewarm(webgl, camera),
 warmPending(), dispose(), group, head, rings, lantern, core, smoke, eyes, glows }`: ONE group `watcher` of 12 parts (10 meshes, 2
 sprites — it is one figure, so a handful of draw calls), hidden when `figure` is null; origin at the feet (the cell floor),
@@ -2981,7 +3023,7 @@ Design and rationale: `docs/DESIGN-survival.md` (its §13 Decisions and §14 Han
 
 ```js
 // items.js (imports blocks only; deep-frozen; Map lookups, so '__proto__' is just unknown; throws at import on a duplicate key or name)
-export const TIER /* {HAND 0, STONE 1, FLINT 2, COPPER 3, BRONZE 4, IRON 5, STEEL 6} */, TIER_NAMES, TIER_SPEED /* [1,1.5,2,2.6,3.4,4.5,6] */,
+export const TIER /* {HAND 0, STONE 1, FLINT 2, COPPER 3, BRONZE 4, IRON 5, STEEL 6} */, TIER_NAMES, TIER_SPEED /* §99: [1,2.2,4.4,6.4,9,12.5,17] */,
   TOOL_TYPES, WEAR_SLOT_NAMES /* ['head','body','feet'] */, TAGS /* log, planks, fuel (coal then charcoal), tinder, knapstone, sand */;
 export const ITEMS, ITEM_KEYS   // display order: tools, materials, food, heal, wear, then blocks in PICKER_ORDER order
 export function getItem(key), isItemKey(key), stackSize(key) /* 0 unknown */, maxDurability(key) /* 0 none */, itemForBlock(id),
@@ -3050,6 +3092,9 @@ export function tap(id, selectedKey, knifeInPack) → { gives: 'pot_sap', takes:
 export class Tapped { canTap(key, day), mark(key, day), clear() }          // once per birch cell per game day; not saved
 export class Regrowth { track, untrack, onBlockChange, loadFromEdits(edits), step(dt, random, isLoadedCell) → [{q,y,r,id}], clear, size }
 export const MOB_DROPS; export function rollMobDrops(kind, random), toolPower(tool) /* hand 1 */, ripeOf(id)
+// §99: work costs time, food, water and the tool
+export const WEAR_PER_WORK_S /* 0.75 */, SLOW_HINT_S /* 3 */, SLOW_TIER_MAX /* 1 */
+export function workTier(id, tool) /* 0 hand or no help */, digWear(id, tool) /* uses lost */, slowHint(id, tool) /* string|null */
 ```
 `breakSeconds = max(0.05, h / speed) × (underwater ? 2.5 : 1)`, `speed = TIER_SPEED[tier]` with the rule's tool type, else 1;
 a rule with `tier > 0` needs that tool type of at least that tier (else Infinity: hint `Iron Ore · needs a bronze pick or better`).
@@ -3099,7 +3144,8 @@ BREATH_REFILL_PER_S 5, BODY_TEMP_NORMAL 37, BODY_TEMP_MIN 25 / MAX 45, SICK_MAX_
   heal (pending bandage HP) 0–50. New: 100 / 80 / 80 / 37 / 20. **Waking**: health 60, satiation and hydration max(current, 50),
   37 °C, full breath, dry, well, nothing pending.
 - **Drain** satiation 0.0556 × activity × coldFactor × sickFactor, hydration 0.0833 × activity × heatFactor × sickFactor; activity is
-  the largest of still 1, walking 1.4, breaking 1.8, swimming 2.2, sprinting 2.5. heatFactor and coldFactor are the only temperature
+  the largest of still 1, walking 1.4, breaking (§99: `WORK_ACTIVITY[workTier]`, 3 by hand … 1.5 with steel; was 1.8),
+  swimming 2.2, sprinting 2.5. heatFactor and coldFactor are the only temperature
   terms. **Regeneration** 0.12 HP/s (× 2 still ≥ 3 s within 4 of a burning campfire) needs satiation ≥ 50, hydration ≥ 50, body
   35.5–38.5, not sick, breath > 0; each HP costs 0.25 satiation. Bandages pay out queued HP at 1.5 / 2.5 HP/s whatever else holds.
 - **`statusOf(v, {headInWater, buried}) → { canSprint, moveFactor (≥ 0.6), regen, labels }`** (§2.3 table). Of each pair only the
@@ -3124,7 +3170,7 @@ BREATH_REFILL_PER_S 5, BODY_TEMP_NORMAL 37, BODY_TEMP_MIN 25 / MAX 45, SICK_MAX_
   `eat(key, random) → { ok, message?, returns? }`, `drink(salty, random) → line` (fresh +8 with 1 % Sick; salt −4, "Salt water only
   makes you thirstier." at most once per 5 s), `bandage(key)`, `respawn()`, `setVital(name, v)`, `restoreVitals()`, `export()` (§14
   canonical order, 3 dp, `dead` only while dead) / `import(json)` (null → no state). `DEATH_TITLES` / `deathTitle(cause)`,
-  `BELONGINGS_KEPT`, `BELONGINGS_LOST`. SurvivalEnv = `{ player, softFactor, breaking, moving?, still?, buried, climate: {biome, climateT,
+  `BELONGINGS_KEPT`, `BELONGINGS_LOST`. SurvivalEnv = `{ player, softFactor, breaking, workTier? (§99), moving?, still?, buried, climate: {biome, climateT,
   openSky, underground, groundChill}, heat, nearFire, insulation, sunShade, time, random }`.
 - **Damage sources** (cause keys, `vitals.DAMAGE_CAUSES`): `fall` `0.1·(v² − 14²)` × the softest landing factor under the feet
   (SNOW_BLOCK 0.4, leaves and HAY_BALE 0.6, wool 0.7, SLEEPING_HIDE 0.9) — FALL_SAFE_SPEED 14 (v0.9 play-test; was 13.5): a 3-cell
@@ -3263,7 +3309,7 @@ CONTRACT-ISSUE):** a saved spot is kept when its item can be on that kind of spo
   (the picker's layer; never open together): flat-top hexes — an 18-slot rosette (slots 9–26, ring 1 then ring 2, clockwise from the
   top; pure `rosetteCells`) around a centre info hex, a 9-cell zig-zag hotbar strip, the head / body / feet wear chain and a red discard
   hex; a basket opens as a second rosette replacing the Making panel; Making = station tabs (far ones dimmed), mini-rosette recipe
-  cards (output in the middle, inputs with have/need, the tool chip, time, Make / ×5) and the busy lanes with ✕. **Adjudicated (E):**
+  cards (output in the middle, inputs with have/need, the tool chip, time, Make / ×5 — §99: ×5 only for what stacks) and the busy lanes with ✕. **Adjudicated (E):**
   the centre hex shows the icon with its wear outline; the name and "45/90" sit on the line under the rosette. All item logic stays in
   main, survivalControl and inventory.js; the view is `survivalControl.buildPackView({ pack, selected, cursor, hover, container,
   stations, tab, recipes: crafting.listRecipes(…, { queue }), lanes: craftQueue.lanes(), message? })`; `demoPackView()` is the `?ui=pack`
@@ -3849,6 +3895,9 @@ it flies out of the cell to the player and enters the pack **only when it crosse
 
 ## 61. Zombie kinds and the cartoon zombie — `src/zombies.js`, `src/zombieRenderer.js`
 
+*The model described here was replaced by §74 and then by §104 (the hex-faceted zombies); the kinds, spawning, hordes and the
+animation's angles stand.*
+
 Amends §39 (and §26's `summon`). The zombie is no longer four hexagonal-prism blocks with atlas tiles (tiles 240–245 stay
 painted, unused).
 
@@ -4141,7 +4190,121 @@ z, yaw)`, `remove`, `update(dt, world) → events`, `wound`, `feed`, `shear`, `m
 - **Items**: raw_beef / roast_beef (36), raw_mutton / roast_mutton (26), roasted on a skewer (24 s / 18 s), spoiling like
   pork; 211 items, 117 recipes.
 - **Models** (animalRenderer `MODELS`, zombieRenderer.boxesGeometry): per species a body (and an `alt`: shorn sheep, saddled
-  horse, collared wolf) and four legs swinging in diagonal pairs; red-flash twins for `hurt`.
+  horse, collared wolf) and four legs swinging in diagonal pairs; red-flash twins for `hurt`. *Replaced by §69.1 (phase 3):
+  hex-faceted parts over one painted atlas; the strides and twins stay.*
+
+### 69.1 The models, hex-faceted (phase 3 of docs/DESIGN-characters.md) — `src/animalModels.js` (PURE), `src/animalRenderer.js`, `src/pigRenderer.js` (three), `src/paintKit.js`, `src/diagnostics.js`, `src/main.js`, `src/gallery.js`, `src/pilotModels.js`
+
+Amends §30's and §69's models, §76.4's and §88.4's "Models" (the boxes coloured per vertex are gone; `zombieRenderer`'s
+`boxesGeometry` is no longer used by the animals). The look is §91's **A, hex-faceted**; only the look changed: the
+colliders, heights, the pig's head box, the AI, the strides, the rear-up and the wings are as they were.
+
+- **`animalModels.js`** (PURE) builds every kind from the kit (`modelKit.js`, `figureKit.js`'s `Skin`): `MODEL_KINDS` =
+  animals.js's ten and `'pig'`. Each kind is a **trunk** (a hexagonal loft lying along it, rump to chest, its rings
+  swelling at the ribs and the quarters and pinching at the waist, the back arched where the animal's is), a **head
+  group** (a neck and a faceted head loft — phase 0, a ridge down the nose, the muzzle painted on its front cap — with
+  wedge or pyramid ears, swept horns, a ram's curl, a stag's beam and tines, a horse's mane and forelock, a bird's beak, a
+  tom's snood and wattle), **one leg** (a loft from its hip at the origin down to −legH, reaching 0.06–0.15 up into the
+  body; the hind leg's hock bends back), a bird's **wing** (a flattened loft along +x from its shoulder) and swept or
+  carded tails, fins and fans (a `card` is a flat elongated hexagon, both faces painted the same way up). Every part's uvs
+  are on **ONE atlas**, `ANIMAL_ATLAS` **1024** square, about two-thirds painted (`ANIMAL_DENSITY`: trunks 112, heads 190,
+  legs 150 texels a metre; small parts denser): short hair laid in strokes along the body over a seamless mottle, the back
+  lit and the belly shaded (or a paler belly blended in), a cow's white patches, a deer's dark back line, white rump and a
+  fawn's spots, a wolf's dark saddle, pale mask and amber eyes, a bear's grizzled stripe and pale chest and claws, wool
+  in big lit puffs with dark hollows and curls in them (`puffs`, read across a field), the clipper's stubble, a bird's
+  `plumage` (single overlapping feathers, `Painter.feather`: small on the breast, larger on the back, and a FOLDED WING
+  on each flank — coverts with pale edges, a bold bar, long barred flight feathers toward the tail, a shadow under its
+  edge; the hen pheasant's dark centres, the cock's black crescents and blue-grey rump, the turkey hen's pale tips, the
+  tom's black tips, his bronze barring; the chest's first rows and the trunk's caps plain and soft, `softCap`, so the
+  strip gathering at the breast makes no rosette or knob), a spread wing's long feathers (`spreadWing`), a cock
+  pheasant's green head, white collar and red wattles, a turkey's bare warty neck, scales (`Painter.scales`), hooves and
+  muddy trotters, eyes with a
+  catchlight and lids, muzzles with nostrils. Deterministic (a seed per picture): the same bytes every build.
+- `ANIMAL_RIGS[kind]`: `legH`, `legW` (the snare loop's size), `legX`, `legZ` [front, back], `swing`, `turn` (true: a front
+  leg is the hind leg turned half round — cow, sheep, horse, wolf, deer; the rabbit, the bear and the pig have a front to
+  their paws and trotters and are drawn as they are), and the optional `legs`, `hop`, `wiggle`, `wing { pivot, len, chord,
+  flap }`, `rear { y, z, angle, arms, swipe }`, `head { pivot, level, graze, alert }` and `lie { mid, up }` (the fish's,
+  §100) — the joints of the old models, kept (§69, §76.4).
+- `buildAnimalModels()` → `{ image, atlas: [1024, 1024], texels, kinds, snare }`; `animalModels()` builds once a page and
+  returns the same (both renderers and the gallery share it; about half a second). `kinds[kind]` = `{ parts, variants }`:
+  `parts` its geometries in MODEL space (metres, feet at the origin, facing −Z) by name — `body`, `alt`, `male`, `young`,
+  `head`, `head-male`, `head-alt`, `head-maleAlt`, `legs`, `legs-male`, `wings`, `tag`, `tusks` as the kind has them —
+  and `variants` maps each bodyVariant (and `young`) to [trunk part, head part (null: none), legs part (absent: `legs`)]:
+  cow body [body, head], male [male, head-male, legs-male] (the bull: bigger, darker, a rise over the shoulders, wide horns,
+  a brass ring in his nose, no udder); sheep body [body, head] (the fleece: twelve corners, every other one drawn in —
+  `lumpy`'s notch, a parting along the spine — and every corner pushed in or out a little, closed by a low point at each
+  end: seen end on, six puffs round it, not a hexagonal block; its neck a closed solid that rounds off into the back of the
+  head and a closed woolly tuft on the poll — no open shell, not at a lamb's larger head), alt [alt, head-alt] (shorn, its neck too),
+  male [body, head-male] (the ram's curled horns), maleAlt [alt, head-maleAlt]; horse body, alt [alt, head-alt] (a blanket
+  round the back, a saddle with a pommel and a cantle; a bridle painted on the head and reins to the withers); wolf body,
+  alt [body, head]; deer body, male [body, head-male] (antlers, a darker maned neck), young [young, head] (the spotted
+  fawn); pheasant and turkey body / male (the cock's copper body and long barred tail, his green head; the tom's bronze
+  body, his fan of two rows of barred, white-tipped feathers, his bare blue head, snood and wattle; both birds hold their
+  heads clear of the breast on a neck: the turkey's rises about a quarter of a metre over her back); rabbit, bear, fish
+  (no head part: a fish never turns its head) and pig body. `tag`: a tame cow's leather collar and brass bell, a tame
+  ewe's blue ribbon, bow and bell, a tame wolf's red collar and brass tag, a tame pig's green ribbon and bow. `tusks`: the
+  boar's. `snare`: a loop of cord and its trailing end, at unit size (scaled by a rig's `legW`).
+- **Budgets**: a whole animal in any variant — trunk, head, `legs` legs, and a bird's two wings — at most **800**
+  triangles (`variantTriangles`): cow 680, bull 762, ewe 612, ram 744, shorn ewe 526, horse 636, saddled horse 788, wolf
+  542, doe 576, stag 748, rabbit 426, pheasant 422 / 446 and turkey 458 / 650 (hen / male, their wings counted), bear
+  544, fish 134 (it is small and under water), pig 542 (+ 44 the tusks). `variantBounds(m, kind, variant)` (the trunk's and head's reach at rest) and
+  `restModel(kind, variant)` (a kind standing at rest as one geometry: the pilot's and the gallery's form) are for tests
+  and tools.
+- **`animalRenderer.js`**: `faunaAssets()` builds the atlas texture (sRGB, `LinearFilter` / `LinearMipmapLinearFilter`,
+  mipmaps, anisotropy 4) and one BufferGeometry per part once a page, shared with pigRenderer (`disposeFaunaAssets` for
+  tests). `faunaMaterial(map, emissive, intensity)`: a Lambert material over the atlas lit like the avatars
+  (`avatarRenderer.patchAvatarShader`: the light volume and the warm fill — a shaded facet stays warm, and the animal still
+  goes dark at night and in a cave), program key `FAUNA_PROGRAM`; the animals' base material keeps the faint
+  `NIGHT_GLOW` 0x1a1a1a, the hurt twin 0xff2a2a × 0.7. Meshes: per kind and part `${kind}-${part}` and its twin
+  `${kind}-${part}-hurt` (the legs' capacity × legs, the wings' × 2), `${kind}-tag` (no twin) and one `animal-snare` for
+  every kind. `sync(animals, dt?)` (dt: seconds since the last sync for the heads' easing; measured with `performance` when
+  absent — main passes none): per animal its variant's trunk, head and legs (a young deer: `young`); the trunk at
+  translate · rotateY(yaw + renderSpin) · scale (size × renderScale), the bear's rear as before, then a `stranded` fish's
+  roll onto its side (§100: · T(0, lie.up, 0) · Rz(π/2) · T(0, −lie.mid, 0): its trunk on the bed, a side fin at most
+  0.05 in the mud; its side fins are swept back along the flanks for it); the **head group** at
+  the trunk's matrix · T(pivot) · Rx(pitch − rear · angle · level) · S(head scale) · T(−pivot); the legs as before (diagonal
+  pairs, a bird's tucked in the air, a reared bear's forelegs on the body), a front leg of a `turn` rig turned half round
+  after its swing; the wings as before. `MODELS` = the animals' rigs (ANIMAL_KINDS order); `bodyVariant` and `legCount`
+  unchanged.
+- **The head shows what it does** (§100): `headPitch(a, rig)` = `rig.head.alert` (0.15–0.3, up) while it stares
+  (`mode` 'watch'), `rig.head.graze` (down: −1.15 to −1.3 for the grazers, −0.85 to −0.9 for the birds' pecking, −0.35
+  to −0.5 for the wolf's, the bear's and the rabbit's sniffing; −0.1 for the pig's rooting, a nod that keeps its head
+  inside `PIG_HEAD_BOX`) while it stands `idle` on the ground (not
+  ridden, sitting, snared, in water or in the air), 0 otherwise; the drawn pitch eases toward it at `HEAD_RATE` 5/s (a
+  WeakMap per renderer keyed by the body: nothing is written on the animal; a body seen for the first time starts at its
+  target).
+- **The young** (`youthOf(a)`: 0 grown .. 1 at YOUNG_SCALE): drawn at its size as before, its head `1 + YOUNG_HEAD`
+  (0.3) × youth larger about the pivot and its trunk `YOUNG_ROUND` [1.08, 1.06, 0.94] (rounder, shorter) about its middle,
+  easing out as it grows; a fawn on the spotted coat.
+- **Tame and snared**: a tame animal whose kind has a `tag` wears it on its head group (the saddled horse needs none). An
+  animal (or a pig) with `trapped > 0` gets the snare's loop on its left hind leg (a bird's left leg: both of a bird's
+  legs count as front ones), at the ankle, scaled by `legW` (one more draw call while one is held; the sprung snare is
+  drawn by the mesher as before).
+- **`pigRenderer.js`** keeps its API, `renderScaleOf`, `pigSizeOf`, `renderSpinOf`, LEG_H 0.3, the hips and the diagonal
+  swing (±sin(walkPhase) · 0.6): meshes `pig-skin` (the trunk and the tail), `pig-head` (head, snout disc, ears; it roots
+  while the pig stands idle — headPitch, eased), `pig-legs` (4 per pig), their twins `pig-skin-hurt`, `pig-head-hurt`,
+  `pig-legs-hurt` (0xff2a2a × 0.6; the base material's emissive is 0), `pig-tusks` (a grown boar's, on the head),
+  `pig-tag` (a tame pig's ribbon), `pig-snare` (a snared pig's loop) — any number of pigs is **3 draw calls** (6 while one
+  flashes, one more each while a boar, a tame pig or a snared pig is in view). A piglet's head is larger and its body
+  rounder, as an animal's. Its head as drawn stays inside `PIG_HEAD_BOX` (within 0.025, the part ahead of the box's
+  back) at rest, rooting and between: the pig only nods (`graze` −0.1), so a click on its lowered snout still finds the
+  pig and not the block behind it (PB-3; the box is gameplay and unchanged).
+- **Screenshots** (`diagnostics.ANIMAL_SCENES`, main `buildAnimalScene` / `holdScene`): `?scene=animals` (with
+  `?autoplay=1`; use `?nosave=1` and `?fly=1`) flattens a meadow of grass at the player's feet level ahead and puts every
+  kind there — cow and bull, horse, doe and stag, bear behind; ewe and ram, wolf, sow and boar, the turkeys; the rabbit,
+  the pheasants and a fish in a dug cell of water in front — each facing the player turned a little, and HOLDS them every
+  frame (place, turn, mode 'walk', legs straight, its fields). `?scene=animal-variants`: a ewe and her lamb, a shorn ewe
+  and ram, a cow and calf, a doe and fawn, a saddled horse, a rearing bear, a tame wolf, cow and ewe, a tame sow, a
+  piglet, a snared pig on a sprung snare, a grazing deer (idle) and a staring one (watch). `?scene=animal-close`: the
+  sheep (a ewe facing the player, a lamb, a ram, a shorn ewe) and the birds (both turkeys, both pheasants) two to four
+  metres off, where wool and feathers are read. `readSceneParam` accepts the keys of `ANIMAL_SCENES` (own keys only). The gallery (`gallery.html?row=fauna`, `&set=variants|far`, `&only=`, `&cols=`, `&az=`, `&target=x,y,z`, `&dist=`,
+  `&time=`) shows them through the game's own renderers; the pilot's `sheep` and `pig` are `restModel`'s.
+- Tests: `animalModels.test.js` (the parts, the atlas, budgets, variants, heights, the coats' colours, the heads' poses,
+  the young, tags and snares), `animals.test.js`, `fauna.test.js` and `populations.test.js` (the meshes by name, the bold
+  features measured on the geometry: antlers, ears, the cock's tail, the tom's fan, the bear's bulk, the fish's fin),
+  `pigRenderer.test.js`, `paintKit.test.js` (one feather, overlapping feathers with no seam, scales), `pilotModels.test.js`;
+  `animalModels.test.js` also: the sheep's head and fleece closed, the fleece's outline lumpy end on, the birds' heads
+  clear of their bodies, every snareable kind's loop, the stranded fish on its side, the screenshot scenes.
 
 ## 70. Flint you can see; bolder ground litter — `src/blocks.js`, `src/mesher.js`, `src/tiles.js`, `src/harvest.js`
 
@@ -4246,6 +4409,10 @@ Amends §43 (the Handbook), §48 and §1 (imports); DESIGN-survival §14.1's cha
 
 ## 74. Zombies: pixel-art dead people, spooky not frightening — `src/zombieSkin.js` (PURE), `src/zombieRenderer.js`
 
+*The skin and the box model described here were replaced by §104 (characters, phase 2): `zombieSkin.js` is gone. What stands:
+the look's rules (a dead person under moonlight, narrow slits in sunken hollows, nothing gory, nothing red), the kinds'
+characters, SHIRT_TINTS by id, the bearing (`ARMS`, `WALKER_DROOP`, `RUNNER_COCK`, `twitchOf`) and `sync(zombies, t, dark)`.*
+
 Replaces §71's model and face (its sounds stand) and amends §61. A zombie is a dead PERSON under moonlight — not a green
 child, not a golem, and not another game's zombie: a few plain boxes wrapped in pixel art in the terrain's style. Nothing
 is gory (no blood, wounds, bones or fangs) and no texel is red or pure white.
@@ -4301,6 +4468,10 @@ its coat box (`COAT_PUFF` 0.7 texel). `boxesGeometry` stays for the animals.
 ## 75. Rocks and sticks in 3D; flint in gravel — `src/mesher.js`, `src/blocks.js`, `src/worldgen.js`, `src/harvest.js`, `src/tiles.js`, `src/itemArt.js`
 
 Amends §59 (litter), §70 (visible flint) and DESIGN-survival §6.3 / §8.3.
+
+> **§105 amendment:** the litter (the stones, the branches, the nests) is drawn by kit models on the plant atlas
+> (faceted stone lumps — a flint one where `flintAt` —, hex sticks with sawn ends and dead leaves, a woven ring with
+> eggs), in levels of detail; `emitLitter`, `LITTER_ROCKS`, `LITTER_STICKS` and `LITTER_GROUND_SHADE` below are gone.
 
 **Litter is 3D.** LOOSE_STONES and FALLEN_BRANCHES have `BlockDef.shape` `'litter'` (the snares keep `'decal'`): the
 mesher's `emitLitter` builds them from small boxes in the cutout layer, lit by their own cell, turned and placed per world
@@ -4574,7 +4745,8 @@ ground), `nests`, `predator`, `snare: false`, `water`, `pad` (extra crosshair re
 - **Damage**: vitals DAMAGE_CAUSES, storage DEATH_CAUSES and survival DEATH_TITLES gain 'bear' ("A bear brought you down.").
 - **Models** (animalRenderer MODELS): optional `legs` (2 birds, 0 fish), `hop`, `wiggle`, `wing` (two boards drawn only
   while `air ≠ 0`, legs tucked), `rear` (the body pitches up about the hips by `animal.rear`, the forelegs with it; `swipe`
-  swings them) and `head` (its own mesh, kept level while the body rears). `bodyVariant`: a stag is `alt`.
+  swings them) and `head` (its own mesh, kept level while the body rears). `bodyVariant`: a stag is `alt`. *§69.1: every
+  kind but the fish now has a head group of its own (it grazes and stares, §100); the wings are feathered lofts.*
 - **Commands**: `summon deer|stag|rabbit|pheasant|turkey|bear|fish [q y r]`; a fish only into water.
 - **Save**: the `animals` field gains `v` (1 = stag, deer only); at most ANIMAL_MAX 40; a list written before v0.14 validates
   to itself. `air`, the bear's warn / chase / rest and a fish's dart are not saved.
@@ -4621,6 +4793,13 @@ and DIRT. About 30 cells a chunk, of which about one is open to the air: seams s
 bare rock.
 
 ## 78. Wild plants in 3D — `src/plantModels.js` (PURE), `src/mesher.js`, `src/blocks.js`
+
+> **§105 amendment (phase 4 of the characters):** the plants below are no longer boxes and cards cut from their 16-px
+> tiles: each is a hex-faceted KIT model (faceted stems, leaf cards in whorls and sprays with gaps, blades, fronds,
+> discs, gems) painted from the plant atlas, in three levels of detail, its variant chosen per cell (§105). The turn,
+> nudge and size per cell, the cutout layer, the own-cell light, no tint, no AO and no culling stand. The parts, the
+> compiler and the limits of this section now serve only the furniture (§85), under new names (§105.3); a plant's
+> 16 × 16 tile stays its Pack picture (far away it is a picture of its own model: §105.3's card).
 
 Amends §59 (the plants' shape), §75 (it follows the litter's style) and §76.2. No block, tile, item or recipe is added.
 
@@ -4785,6 +4964,10 @@ BLOCK_COUNT 151.
 first, of every sprout the second. Both are cut-outs (alpha 0 or 255) on one shared mound of dark tilled earth (rows
 10–15, painted with the "seedbed" seed, so the two are the same earth pixel for pixel). The seedbed adds a marker twig
 with a pale rag and nothing green; the sprout a green stem and two seed leaves. TILE_IDS 176 (207 is free).
+
+> **§105 amendment:** the seedbed and the sprouts are kit models: one faceted mound of tilled earth under all eighteen,
+> the seedbed's marker twig and rag on it, and each sprout a seedling of ITS OWN crop (carrot fronds, onion leaves, a
+> tuber leaf, a twig of its bush or tree, a silver rosette, a little pad, reeds). The paragraph below is history.
 
 **Models** (plantModels.js, §78's parts; one model for all nine planted blocks, one for all nine sprouts). The mound:
 two steps, 10 × 1.5 × 10 and 7 × 1.5 × 7 texels. The seedbed (21 quads, 0.57 m): the mound, a twig 1.5 × 6 × 1.5
@@ -5011,6 +5194,9 @@ The two look-alikes are painted FROM the plant each imitates, so what differs is
   black on the honeyberry's twig; the leaf is one thick sea-green leaf with pale teeth, cut at its base.
 
 ### 81.2 Models (plantModels.js; §78's parts and limits, unrelaxed)
+
+> **§105 amendment:** the eight are kit models (§105.3's table); the tells are kept in 3D and measured in the plant atlas
+> (§105.3's limits). The quad counts below are history.
 
 | Plant | Model | quads |
 |---|---|---|
@@ -5704,7 +5890,8 @@ snow, getBlock, daylight? }`.
   mesh of (480 + 48) quads in one geometry with one unlit, fogged, transparent `MeshBasicMaterial` (vertex colours
   with alpha, no depth write, render order 3): one draw call whatever the weather, hidden while nothing falls. An
   update bears at most `RAIN_BIRTHS` 48 drops and looks at `RAIN_COLUMN_SCANS` **8** columns at the most (a
-  `rainColumn` each, kept `RAIN_COLUMN_TTL_S` 2 s, `RAIN_COLUMNS_KEPT` 1024 at the most). Measured on the offline
+  `rainColumn` each, kept `RAIN_COLUMN_TTL_S` 2 s, `RAIN_COLUMNS_KEPT` 1024 at the most; full, it forgets the columns
+  farther than `RAIN_COLUMNS_NEAR` 13 m from the eye, §101.3). Measured on the offline
   test: 0.025 ms and 160–240 block reads a frame in the heaviest rain.
 - **Where.** A drop is born at the top of a cylinder round the eye (`RAIN_RADIUS` 10 m, `RAIN_TOP` 9 m above it), in a
   column whose `rainColumn` is known, falls **straight down** (`RAIN_SPEED` 13–17 m/s) and dies at the column's
@@ -5907,11 +6094,11 @@ rules of §65 and §68 stand exactly as they are, and the two multiply. Light th
 - **The arm across the face** (zombieRenderer; a cue that the light is working). `shieldTarget(zb)` = clamp01((light −
   ZOMBIE_SHY_LIGHT) / (dreadLight(zb) − ZOMBIE_SHY_LIGHT)); `Zombie.shield` follows it every update at SHIELD_RATE (0
   without the accessor). By `shieldOf(zb)` the renderer brings the arm on the zombie's own `side` from its bearing to
-  `SHIELD_ARM` (`reach` 1.75, `bend` 1.4, `spread` 0, and `twist` 0.8: the forearm turned in about the upper arm, a
-  rotation about Y at the elbow applied only while shield > 0), so that the forearm slants up across that half of the
-  face with the hand before the eye, and the head from its own nod and roll to `SHIELD_NOD` 0.05 and `SHIELD_ROLL` 0.12
-  away from that arm; the strike's swipe and the runner's twitch fade out of that arm as it rises. A dormant walker does
-  none of it. At shield 0 every matrix is exactly what it was.
+  `SHIELD_ARM` (`reach` 1.75, `bend` 1.4, `spread` 0, and `twist` 0.65 — 0.8 on the box rig before §104.2: the forearm
+  turned in about the upper arm, a rotation about Y at the elbow applied only while shield > 0), so that the forearm
+  slants up across that half of the face with the hand before the eye, and the head from its own nod and roll to
+  `SHIELD_NOD` 0.05 and `SHIELD_ROLL` 0.12 away from that arm; the strike's swipe and the runner's twitch fade out of that
+  arm as it rises. A dormant walker does none of it. At shield 0 every matrix is exactly what it was.
 - **Main** (§23): `zombieWorld.blockLight`, and the strike's damage (above). Nothing else.
 - **Guide** (§73, the Dangers chapter): two pages after "Zombies by day" — "Light keeps them off" with the table
   `lights` (source `zombies`; head Light, Strength, Walkers and runners keep, None comes up within; one row per block
@@ -6004,6 +6191,9 @@ and 239 stay free:
 
 A PICTURE is a cut-out on alpha 0 with RGB 0 (alpha 0 or 255): the Pack's icon. A SKIN and the spring's three faces
 are opaque. The pool of a spring is far lighter than the water tile: it is meant to be seen from a distance.
+
+> **§105 amendment:** these are box models still, under new names: `FURNITURE_MODELS[id].tile` names the skin,
+> `furnitureModel(id)` compiles one (`compileBoxModel`), the mesher's `emitModel` draws it (`BOX_GROUND_SHADE`).
 
 **Models** (plantModels.js; §78's parts and limits, unrelaxed; `PLANT_MODELS[id].tile` names the skin). A hexagonal
 ring of six wall boxes is the well's stones and the barrel's staves; neighbouring walls differ in height, so two box
@@ -6376,10 +6566,11 @@ nothing changes; asleep, dead or below the stage everything is cleared and the t
     opacity; it is in no list, has no body, cannot be targeted or struck, and sleep.js makes no zombie for it.
   - **In a world whose zombies are switched off** (`view.spooky` false; main: `zombies.enabled`) there is no groan
     (`PHANTOM_SOUNDS_CALM`: the footstep and the twig) and no figure; the nods and the blur stay.
-- **`phantomRenderer.js`**: `createPhantomRenderer(scene)` → `{ group, material, sync(figure | null), prewarm(webgl,
-  camera), dispose() }`: three plain boxes (`PHANTOM_PARTS`: legs, body, head; together `FIGURE_HEIGHT` 1.8) sharing
-  one unlit, transparent `MeshBasicMaterial` (`PHANTOM_COLOR` near black, no depth write), no face, no eyes, no arms;
-  hidden without a figure.
+- **`phantomRenderer.js`**: `createPhantomRenderer(scene)` → `{ group, material, tris, sync(figure | null),
+  prewarm(webgl, camera), dispose() }`: since §104 a dark person-shaped shadow from the kit (`phantomGeometry()`;
+  `PHANTOM_PARTS` [name, from, to]: legs, body, head, its crown at `FIGURE_HEIGHT` 1.8) — no face, no eyes, its arms
+  hanging, never held out — drawn twice: depth only, then one unlit, transparent `MeshBasicMaterial` (`PHANTOM_COLOR`
+  near black, no depth write) where it is the nearest surface; hidden without a figure.
 
 ### 87.6 The HUD and the sounds
 
@@ -6562,7 +6753,9 @@ retired. (config.js still holds PIG_NATURAL_COUNT and the PIG_REPOP_* numbers, r
   pheasant (the old body; the hen is drab brown with a short tail), the tom turkey (the old body with its fan; the hen
   is plainer, her tail low). `bodyVariant` gives 'body' | 'alt' | 'male' | 'maleAlt'; a young animal is drawn at its
   `size` on the female's body. Pigs: a grown boar's tusks (`pig-tusks`, one more draw call); a piglet drawn at its size.
-  Horses, wolves, rabbits, the bear and fish look alike. `variant` 1 still marks a stag (a male deer) for the old field.
+  Horses, wolves, rabbits, the bear and fish look alike. *§69.1: the male's look is its variant's trunk or head (a ram is the
+  ewe's fleece with the horned head); the young are drawn larger-headed and rounder, a fawn spotted; a tame cow, ewe, wolf
+  or pig wears a tag.* `variant` 1 still marks a stag (a male deer) for the old field.
 
 ### 88.5 The save, the debug handle, the guide
 
@@ -6919,75 +7112,97 @@ and a fake clock; `put`, `ticks`) and `reload(env)` (a fresh Circuits over the s
     no 'ignite' reseeder, §33.4.3).
 38. (v0.10) On a hex, cells on neighbouring side faces touch. Any rule or test about "the two sides" of a device must name its faces.
 
-## 91. Avatars and the third-person view — `src/avatars.js`, `src/avatarSkin.js`, `src/avatarMotion.js`, `src/viewCamera.js` (PURE), `src/avatarRenderer.js` (three), `src/avatarMenu.js` (DOM), `src/main.js`, `src/controls.js`, `src/diagnostics.js`, `src/menus.js`, `src/handbook.js`, `src/config.js`, `index.html`, `src/styles.css`
+## 91. Avatars and the third-person view — `src/avatars.js`, `src/avatarModel.js`, `src/figureKit.js`, `src/modelKit.js`, `src/paintKit.js`, `src/avatarMotion.js`, `src/viewCamera.js` (PURE), `src/avatarRenderer.js` (three), `src/avatarMenu.js` (DOM), `src/main.js`, `src/controls.js`, `src/diagnostics.js`, `src/menus.js`, `src/handbook.js`, `src/config.js`, `index.html`, `src/styles.css`
 
-The player has an **avatar** they can see: their own arm in first person, and their whole self from behind or from in front
+The player has an **avatar** they can see: their own hand in first person, and their whole self from behind or from in front
 (the key **V**). Three avatars to start, chosen on the title screen or in the pause menu: **Caelan**, **Brayden** and
 **Annabelle**. Customisable skins and wardrobes come later: an avatar is DATA, so a new one (or a new look for one) is an
 entry in `AVATARS`, not new code. The game is played by a child: everything here is cheerful, and nothing is frightening.
+
+**The look** (docs/DESIGN-characters.md, phase 1; style A, HEX-FACETED, chosen by the user): limbs and torsos are tapered
+hexagonal columns with flat facets, the head a faceted loft with a flat face plane, hair a poofy mass or a scalp cap with big
+swept clumps, hands and shoes chamfered blocks — every part a closed solid over one painted 256² atlas (cloth weave, denim,
+knit, seams, stitching, a face with irises and catchlights), drawn with linear filtering and mipmaps. Not boxes in pixel art.
 
 **Unchanged (normative).** An avatar is only how the player LOOKS. Physics is the same for all of them: the one collider
 (`PLAYER_HEIGHT` 1.8, `PLAYER_WIDTH` 0.56), the eye at `EYE_HEIGHT` 1.62 (`SNEAK_EYE_HEIGHT` sneaking), speeds, reach. Aiming,
 the block highlight, digging, placing, striking, the R key, throws and every mob's view of the player go from the EYE along
 the look, in every view mode: only the camera moves. Nothing is added to the save: the avatar and the view are the player's
-own preferences, the same in every world.
+own preferences, the same in every world. The ids, names, order, heights, `normalizeAvatarId`, the preferences and the
+server's `avatar` field (§96) are the same as before the new look.
 
 ### 91.1 The avatars as data (`avatars.js`, PURE)
 
-`AVATARS` (frozen, chooser order): `{ id, displayName, blurb, height, body, hair, outfit, palette }`. `AVATAR_IDS`,
-`DEFAULT_AVATAR` `'caelan'`, `normalizeAvatarId(v)` (one of the ids, any case, trimmed; else null), `avatarById(id)` (the
-default for an unknown id), `avatarHeight(def)` (metres: `leg.h + waist.h + chest.h + max(head.h, hair.box.y + hair.box.h)`
-texels × `AVATAR_TEXEL` **1/32**; `height` equals it to within a texel).
+`AVATARS` (frozen, chooser order): `{ id, displayName, blurb, height, scale, body, head, hair, hands, outfit, palette }`.
+`AVATAR_IDS`, `DEFAULT_AVATAR` `'caelan'`, `normalizeAvatarId(v)` (one of the ids, any case, trimmed; else null),
+`avatarById(id)` (the default for an unknown id), `avatarHeight(def)` = (`head.y` + `head.h` + `hair.crown`) × `scale`
+(metres; `height` equals it to within 1/32 m).
 
-- `body`: boxes `{ w, h, d }` in whole texels (w across, h tall, d deep; the model faces −Z): `head`, `chest` (shoulder to
-  shoulder), `waist` (narrower for a tapered build), `leg`, `upperArm`, `foreArm` (its last `hand` rows are the hand), and
-  `legGap` (texels between the legs).
-- `hair`: `style` `'poofy' | 'silky' | 'longWavy'`; `box` — the hair layer round the head (its own texel size, its bottom
-  `y` texels up the head, centred on it); `tufts` (poofy: boxes placed from the bottom centre of the head, `x, y, z`, turned
-  `rx`, `rz`); `back` (long hair: a panel down the back, its top `top` texels above the shoulders, hanging from the torso).
-- `outfit`: `kind` `'tee' | 'dress'`; `top` (the tee's or the dress's cloth, [light, mid, dark]), `trim`, `detail`
-  (`'stripe' | 'pocket' | 'collar'`), `sleeve` (texels of the upper arm the sleeve covers), `bottom` (a tee's trousers),
-  `sash`, `skirt` (a flared box over the upper legs), `skirtUp`, `socks` (a dress), `shoes` ([upper, sole, accent?]).
-- `palette`: `skin` [light, mid, dark, deep], `hair` [highlight, light, mid, dark], `eyes` [iris, deep], `brows`, `mouth`,
-  `blush`, `lashes?`. Colours are 0xRRGGBB, sRGB.
+- `body` — the BUILD in metres (the model faces −Z, its feet at the origin, x to its right; it is drawn at `scale`, so the top
+  of its hair is `height`): `legX` (each leg's middle), `ankle` (the leg's lower end), `leg { rx, rz, len }` (ankle to the hip
+  joint), `hips { y0, y1, rx, rz }` (the seat), `torso { y0, h, rx, rz }`, `neck { y0, y1, r }`, the right `shoulder`, `elbow`
+  and `wrist` at rest ([x, y, z]; the left mirrors them), `upper { rx, rz }`, `fore { rx, rz }`.
+- `head` — `{ y (the chin), h, rx, rz, eyeAt, eyeX, eyeW, mouthAt, noseAt }`.
+- `hair` — `{ style: 'poofy'|'silky'|'longWavy', cut, crown }`: a cut of its style (avatarModel `HAIR_CUTS`: poofy **C1**
+  cloud | **C2** tousled; silky **B1** side sweep | **B2** curtain; longWavy **A1** long waves | **A2** low ponytail) and how far
+  it stands over the top of the head.
+- `hands` — `palm`, `fingers`, `thumb` ([w, h, d]).
+- `outfit` — `kind` `'tee'|'dress'`; `top` [light, mid, dark], `trim`, `detail` `'stripe'|'pocket'|'collar'`, `sleeve` (the share
+  of the upper arm it covers), `puff?` (a short sleeve standing out ×), `cuffAt?` (a long sleeve pushed up: its cuff, a share of
+  the forearm from the wrist — on the model and on the first-person forearm alike; without it both forearms are bare); a tee's `bottom` [l, m, d], `fabric` `'denim'|'cloth'`, `belt`; a dress's `sash`, `skirt { y0,
+  y1, r0, r1 }` (pleated, waist to hem), `socks { color, up }`; `shoes { style: 'sneaker'|'laceup'|'strap', size, colors:
+  [upper, sole, flash?] }`.
+- `palette` — `skin` [light, mid, dark, deep], `hair` [highlight, light, mid, dark], `eyes` [iris, deep], `brows`, `mouth`,
+  `blush`, `lashes?`, `freckles?`. Colours are 0xRRGGBB, sRGB.
 
-| avatar | height | build (texels) | look |
+| avatar | height | scale | look |
 |---|---|---|---|
-| Caelan | 1.625 m | head 14, chest 18 × 10 × 9 over a 14-wide waist (tapered), legs 19 | a young boy: olive skin, dirty-blonde POOFY hair (a hair box bigger than the head and five tufts sticking out), green-blue-grey eyes; a green tee with a white stripe, jeans, white sneakers |
-| Brayden | 1.781 m | head 13, chest 15 × 10 × 7 (narrow shoulders), legs 25, arms 23 | a tall slender boy: fair skin, SILKY auburn hair with a fringe swept to one side, brown eyes; a blue tee with a pocket, khaki trousers, brown shoes |
-| Annabelle | 1.719 m | head 14, chest 18 × 11 × 10 over a 16 × 8 × 9 waist (solid), legs 21 | a taller sturdy girl: fair skin, golden-blonde LONG WAVY hair (the layer frames her face; a panel falls to mid-back), blue eyes with lashes; a rose dress with a round white collar, a sash with a bow at the back, a pleated flared skirt with a white hem, white socks, red shoes |
+| Caelan | 1.625 m | 0.955 | a young boy, tapered (shoulders over a narrower seat): a MILD OLIVE skin (light #ead0b0, mid #dab894; its shadows a muted olive-brown, never grey or orange), a few freckles, a dirty-blonde POOFY mop (C2: one faceted mass, never locks, taller at the front), green-blue-grey eyes; a green long-sleeved tee with a white stripe, its sleeves pushed up to a knit cuff, jeans with a belt, white sneakers with a red flash |
+| Brayden | 1.781 m | 0.972 | a tall slender boy (narrow shoulders, long legs and arms): fair skin, SILKY auburn hair in a side sweep (B1: smooth panels from a parting across the brow), brown eyes; a blue tee with a pocket and short sleeves, khaki trousers, brown leather lace-ups |
+| Annabelle | 1.719 m | 1.009 | a taller sturdy girl: fair skin, golden-blonde LONG WAVY hair (A1: a fringe, a framing lock each side, a curtain of six waving ribbons to mid-back), blue eyes with lashes; a rose dress with puffed sleeves, a round white collar, a sash with a bow at the back, a pleated skirt with a white hem, white socks, red strap shoes |
 
-Brayden and Annabelle are visibly taller than Caelan; every avatar is at most `PLAYER_HEIGHT` tall (tufts aside).
+Brayden and Annabelle are visibly taller than Caelan; every avatar is at most `PLAYER_HEIGHT` tall.
 
 **The preference.** `AVATAR_PREF_KEY` `'caelancraft:v2:avatar'` (localStorage; the id). `loadAvatarPref(storage)` → the
 stored id, else `DEFAULT_AVATAR` (no store, an unknown id, a store that throws); `saveAvatarPref(storage, id)` stores a known
 id, never throws, returns whether it did. Main passes the store the Ambience switch uses (§82): `null` under `?nosave`.
 
-### 91.2 The skins (`avatarSkin.js`, PURE)
+### 91.2 The models (`avatarModel.js`; the kit: `figureKit.js`, `modelKit.js`, `paintKit.js` — PURE)
 
-`paintAvatarSheet(avatars = AVATARS)` → `{ width: SHEET_W 128, height: PAGE_H 128 × avatars, data, pages: { [id]: { page,
-layout } } }`: one RGBA sheet (sRGB bytes, row 0 at the top), one page per avatar, the same bytes every call. `avatarParts(def)`
-names the boxes (head, hair, chest, waist, leg, upperArm, foreArm, tuft0…, back, skirt); `layoutParts(parts)` packs their
-unwraps on a page, tallest first, in rows (a `RangeError` when they do not fit); `faceRect(part, face)` is the zombies' unwrap
-(§74: top and bottom side by side over right, front, left, back; seen from outside x runs to the viewer's right).
-
-- Body parts are painted SOLID. The hair layer, the tufts and the long-hair panel have alpha 0 wherever there is no hair: the
-  layer's front is open under the fringe (the face shows through), its bottom is clear, a long panel's lower edge is wavy.
-- **Faces** (`faceLayout(head)`): eyes on row `round(h / 2)` — on each side a white column (`EYE_WHITE`) outside a 2 × 2 iris
-  in the avatar's eye colour with a sparkle at its top outer texel and the darker `eyes[1]` pupil at its bottom inner one;
-  the two eyes are mirror images about the middle; brows in `brows` two rows up; a nose shadow; a small smile (two rows: the
-  corners a row higher); rosy cheeks; ears on the sides. No detailed realism.
-- Hair textures: poofy — soft two-texel curls; silky — long light runs with a strand line every fourth column and a sheen;
-  long wavy — strands running down that sway side to side. Cloth: flat colour with a few soft folds, never grimy.
-- `avatarRig(def)` (texels): `legX`, `hipY`, `waistH`, `chestH`, `torsoH`, `neckY`, `shoulderX` = (chest.w + upperArm.w) / 2,
-  `shoulderY` = torsoH − upperArm.w / 2 (from the hips), `upperL`, `foreL`, `hairY`, `tufts`, `back` (centre from the hips),
-  `skirt`. `restBoxes(def)`: every box's centre at rest (model space, origin at the feet). `frontPicture(def, sheet, crop)`:
-  the figure from straight in front, one texel a pixel; `portrait(def, sheet)`: head and shoulders on a square (the chooser).
+- **The kit.** `modelKit.js` makes closed, outward-wound solids in typed arrays (n-gon lofts, prisms and pyramids — six sides,
+  flat facets — chamfered boxes, wedges, sweeps along a curve, transforms, merges, atlas uvs). `paintKit.js` paints RGBA
+  pictures from a seed (cloth, denim, knit, skin, hair strands, stone; seams, hems, stitches; faces; §69.1: a single
+  feather — quill root, lit vane, pale fringe round a rounded tip, bars — and loose overlapping rows of them, sized by
+  region and seamless round a strip when asked; scales) and packs them on an atlas with gutters bled for the mipmaps. `figureKit.js` is what figures share: `Skin` (one model's atlas: rectangles asked
+  for by name — a strip round a column and its caps, a box's faces, a plain picture — packed tallest first, painted once),
+  `shapes(STYLES.hex)` (columns, chamfered blocks, nubs), the faceted head (`HEAD_CORNERS`, `KID_HEAD`, `headSkin` paints the
+  face on its front plane, `addHead` adds a nose wedge and hex ears; each avatar may carry its own profile as
+  `head.shape` — `avatars.ROUND_HEAD` for Caelan, a broad face with a wide soft jaw; `avatars.OVAL_HEAD` for Brayden, a long
+  oval tapering to a narrower chin; Annabelle keeps `KID_HEAD` — and the head, the hair masses, caps and clumps are all
+  laid on that profile, so `hairGaps` stays 0) and the hair (`hairMass` a mass or cap laid off the head
+  so the skull never shows, `clump` a swept ribbon lying on it, `hairline`, `CAP_YAWS`, `CAP_RINGS`).
+- `paintAvatar(def)` → the `Skin`: the same bytes for the same entry; `AVATAR_ATLAS` **256**.
+- `buildAvatarModel(def, { cut?, parts? })` → `{ id, cut, bones, rig, fp, image, tris, hairTris, texels, atlas }`. `bones`: ONE
+  geometry per bone (`AVATAR_BONES`), each in its joint's frame and scaled: `hips` (the seat; a skirt), `torso` (with the
+  neck, a sash and a bow), `head` (the head, nose, ears and hair), `hairBack` (long hair's back curtain or ponytail; null for
+  short hair), `legL`/`legR` (the leg, a trouser cuff, the shoe — toes turned out a little), `upperL`/`upperR` (the upper arm,
+  a puffed sleeve), `foreL`/`foreR` (the forearm, a pushed-up sleeve's cuff, the hand: a palm block, a finger block curled
+  in, a thumb wedge). Every part is a closed solid wound outward. About 1.4k (Caelan) to 2.1k (Annabelle) triangles;
+  `hairTris` at most 900. `cut` builds another cut of the same style (a cut of another style is a `RangeError`); `parts`
+  keeps every part on its own (tests).
+- `rig` (metres, scaled; the right side, the left mirrors x): `hipY` (the hip joints: the hips' and the torso's origin),
+  `legX`, `shoulder` (from the hips), `elbow` (from the shoulder), `head` (the head's pivot, `HEAD_PIVOT` 0.12 of the head's
+  height over the chin, from the hips; the back hair's too), `grip` (where a haft passes through the right fist, from the
+  elbow), `lieY` (lying on its back, the hips this high: the back of the head and the shoulders on the ground, the hair
+  sinking in a little, a skirt and long back hair pressed flat), `height` (the top of the hair), `scale`.
+- `avatarModel(def)` builds once per definition and returns the same model after (the renderers share it);
+  `restPlacements(rig)` and `restGeometry(model)` put the bones at rest (the gallery, tests); `hairGaps(def, cut?)` counts
+  head corners showing through the hair (0 for every cut).
 
 ### 91.3 Motion (`avatarMotion.js`, PURE)
 
-`new AvatarMotion()`; `step(dt, { yaw, pitch, vx, vz, onGround, sneaking?, swimming?, flying?, riding?, sleeping? })` →
-the reused `AvatarPose`; `swing()` (restarts only past the middle of a swing); `reset(yaw)` (a world loads). dt 0 changes
+`new AvatarMotion()`; `step(dt, { yaw, pitch, vx, vz, onGround, sneaking?, swimming?, flying?, riding?, sleeping?, draw? })`
+→ the reused `AvatarPose`; `swing()` (restarts only past the middle of a swing); `reset(yaw)` (a world loads). dt 0 changes
 nothing (a paused world).
 
 - **Walk**: the phase advances π per `AVATAR_STRIDE_M` **0.9** m walked (on the ground or swimming); the leg swing is
@@ -6998,32 +7213,108 @@ nothing (a paused world).
   eases after it at `AVATAR_BODY_TURN` **5**/s (×2 while moving faster than 0.5 m/s) and is pulled along so the head is
   never turned more than `AVATAR_HEAD_YAW_MAX` **0.9** from it (`headYaw` = look − body).
 - **Swing**: `AVATAR_SWING_S` **0.3** s; the right arm reaches forward by `SWING_REACH` 1.9 × sin(π s^0.7) and turns in; the
-  torso turns toward it. `fpSwing` is the swing's progress 0..1 (−1 between swings) for the first-person arm.
+  torso turns toward it. `fpSwing` is the swing's progress 0..1 (−1 between swings) for the first-person hand; `fpBobX`,
+  `fpBobY` its bob while walking. `reachR` is the swing's alone (never negative).
+- **Draw** (§100): `pose.draw` (0..1) follows `MotionInput.draw` up no faster than `DRAW_RISE_S` **1** s to full (=
+  looseItems `DRAW_FULL_S`: the player's own draw is followed as it is; a remote player's pose only says "drawing", 1, and
+  their arms come up at the same pace) and down in `DRAW_FALL_S` **0.15** s once it is let go — so the throw's swing, started
+  on the same frame, sets out from the drawn arm instead of jumping to it. 0 asleep. The renderer turns it into the pose of
+  what is drawn (§91.4).
 - **Stances**, each easing in: sneaking (on the ground) leans the torso 0.5 rad forward and lowers the hips 8 cm; swimming
   (in water, not standing) tips the body forward up to 1.2 rad with flutter kicks and a stroke; flying spreads the arms a
   little; riding sits (both legs 1.3 rad forward, spread); asleep (§87) the body lies on its back (`bodyPitch` π/2).
 
-### 91.4 The model and the first-person arm (`avatarRenderer.js`, three)
+### 91.4 The model and the first-person hand (`avatarRenderer.js`, three)
 
-`createAvatarRenderer(scene)` → `{ setAvatar(id), avatarId(), setHeld(key), heldKey() (§98.4), sync(frame), group, armGroup, prewarm(webgl, camera),
-dispose() }`. Every avatar's model and arm are built at once over ONE texture (the sheet: nearest, no mipmaps, sRGB); one
-model and one arm are shown at most.
+`createAvatarRenderer(scene, { avatar? })` → `{ setAvatar(id), avatarId(), setHeld(key), heldKey() (§98.4), sync(frame), group,
+armGroup, prewarm(webgl, camera), dispose() }`: `avatar` (default the default one) is the figure built and shown first — the
+only one built until another is asked for (another player's renderer is made with theirs, §96). One model and one hand are
+shown at most.
 
-- **The model**: plain skinned boxes (`avatarBox`, UVs inset 0.02 texel, the front is −Z) at `AVATAR_TEXEL` a texel, one
-  `MeshLambertMaterial` (`alphaTest` 0.5) — so the light volume (§62) lights it exactly like the animals: it darkens in a cave
-  and a torch or a fire lights it. Joints: the root at the feet turned by `bodyYaw`; the hips at `hipY` (lowered by `hipDrop`;
-  0.1 m over the feet on a horse; lying, half the head's — or the back's with long hair — depth over the ground), tipped by
-  `bodyPitch`; the legs from (±legX, 0); a skirt hangs from the hips (a dress caps the leg swing at `SKIRT_LEG_SWING` 0.42 so
-  the legs stay inside it); the torso (waist, chest, the long-hair panel) leans by `lean`; the arms from the shoulders, the
-  forearm from the elbow; the head (with the hair layer and the tufts) turned by `headYaw` and nodded by `headPitch`
-  (less the torso's lean). About 9 draw calls.
-- **The arm**: the avatar's right upper arm (sleeve) and forearm (hand) with their own skin, placed in CAMERA space each frame
-  at `FP_ARM` (shoulder (0.45, −0.25, −0.32) m, held forward and a little out), bobbing with the walk (`fpBobX`, `fpBobY`) and
-  swinging up and in on `fpSwing`. Its material is the model's with `patchObjectShader` (§62) plus: the light is read from the
-  light volume at the EYE (`caelArmEye`), and `gl_Position.z = mix(−w, z, FP_DEPTH 0.02)` squeezes its depth to the front of
-  the range — always in front of the world, still hiding its own far side. `renderOrder` `FP_RENDER_ORDER` 10, never
-  frustum-culled. Program key `'caelancraft-avatar-arm'`. It adds no light: it is prewarmed with the others (§72).
-- `sync({ x, y, z, pose, showModel, showArm, camera?, eyeX?, eyeY?, eyeZ? })`.
+- **Shared resources.** `avatarAssets(def)` builds an avatar's resources ONCE per definition for the page: its bones'
+  geometries, its first-person hand's (`arm`, `grip`, `relaxed`), its atlas texture (sRGB, `LinearFilter` /
+  `LinearMipmapLinearFilter` with mipmaps, anisotropy 4) and the model's material. `prewarm` builds every avatar's while the
+  game loads (about 15–60 ms each on a desktop), so another player who joins with an avatar not yet seen, or the chooser's
+  portraits, never stall a frame building one. Every renderer — the player's and each other player's (§96) — makes only
+  groups and meshes over them; `dispose()` frees the renderer's own things (the first-person materials, the held items'
+  geometries), never the shared ones (`disposeAvatarAssets()`, tests).
+- **The model**: `avatar-<id>` (built when first shown), one mesh per bone hung from today's joints — the root at the feet
+  turned by `bodyYaw`; `avatar-hips` at `hipY` (lowered by `hipDrop`; `RIDE_HIP_Y` 0.1 m over the feet on a horse; lying, `lieY`
+  + `LIE_LIFT` 0.01), tipped by `bodyPitch`, with the seat (and a skirt: a dress caps the leg swing at `SKIRT_LEG_SWING` 0.42 so
+  the legs stay inside it; on a horse the seat and its skirt tip forward about the waist by `SKIRT_RIDE.tip` **0.85** rad ×
+  `ride` and are `SKIRT_RIDE.length` **0.72** of their length, so the skirt lies over the thighs and they leave it through the
+  hem); `avatar-hip-l|r` from (±legX, 0); `avatar-torso` (lean, twist, `chestLift`); `avatar-shoulder-l|r` at the rig's
+  shoulders, `avatar-elbow-l|r` under them (the right one bent `0.15 × clamp(reachR, 0, 1)` more on a reach, never less);
+  `avatar-neck` at the head's pivot turned by `headYaw` and nodded by `headPitch` (less the torso's lean and twist);
+  `avatar-hair-back` (long hair) at the same pivot, following the head's turn `HAIR_BACK_FOLLOW.yaw` 0.4 of the way and its nod
+  only downward (0.8 of it: looking up would swing it into the back), pressed flat lying down. About 9 draw calls.
+- **The draw** (§100; `pose.draw` eased in by a smoothstep, `w`): by what is in hand — `drawOf(heldKey).bow` draws as a bow,
+  anything else as a throw — `DRAW_POSE[kind]` gives, in the BODY's frame (+x the model's right, −z ahead), each hand's grip
+  place from its shoulder (in shares of the arm's length, shoulder to elbow plus elbow to the fist's grip), which way its elbow
+  points, the torso's `twist` and the item's lie (`dir` its length from the grip, the slab's +y; `face` its +z; `cant`). Each
+  arm's shoulder turn and elbow bend come from `reachArm(elbowAt, grip, target, pole, out)` (a two-bone reach: the bend that
+  puts the fist at the target's distance, halved for, 0..`ELBOW_MAX` 2.5; then the turn taking the fist's way and the elbow's
+  side to the target's and the pole's), the target and pole carried into the twisted torso's frame; the shoulder is slerped
+  from the walk/swing pose toward it by `w`, the elbow mixed by `w`, and the held item (`avatar-held`) turned from its rest in
+  the fist toward the drawn lie by `w`. **A throw** (twist −0.35): the right fist cocked by the ear (0.06, 0.36, 0.12) with its
+  elbow out to the side, the left arm pointing ahead, the spear or dart level over the shoulder pointing ahead. **A bow**
+  (twist 0.7, side-on; held in the right hand as every item is): the right arm straight ahead (−0.12, 0.04, −0.95) holding it
+  upright, its string toward the archer; the left hand drawn back to the chin (0.22, 0.15, −0.3) with its elbow up and out.
+  Let go, the throw's swing (main: `avatarSwing`, not for a bow) carries the arm through from there as the draw falls in
+  `DRAW_FALL_S`: no joint turns more than about 0.4 rad a frame at 60 fps.
+- **Its light**: one `MeshLambertMaterial` per avatar (program key `AVATAR_PROGRAM` 'caelancraft-avatar') lit like every
+  object — `patchObjectShader` (§62), so it darkens in a cave and a torch or a fire lights it — plus a WARM FILL
+  (`patchAvatarShader`): after three's light accumulation, `AVATAR_FILL.strength` **0.14** × the luminance of the light
+  reaching the cell (the hemisphere light's mean of sky and ground, the sun's or moon's light, both × `caelSky`, and the block
+  light and floor of `caelExtra`) comes back in `AVATAR_FILL.color` (1, 0.82, 0.62) through the albedo, so a facet turned
+  from the sun stays warm, never grey. It is in proportion to the light — no emissive, no glow: at night and in a cave it
+  fades with everything else.
+- **The first-person hand** (`avatar-arm-<id>`, built the first time the hand is shown or prewarmed; never for another
+  player): in CAMERA space, `FP_HAND` (avatarModel.js) holds every tunable: the fist (`grip` (0.25, −0.19, −0.5) m, low at the
+  right of the view, clear of the hotbar), the forearm's way back toward the elbow (`arm`, out to the right more than at the
+  eye, so the wrist and the cuff show), the back of the hand (`back`), the wrist's tip of the fist forward (`deviate` −1.1 rad
+  holding something, `deviateEmpty` −0.6 with nothing), `handScale` 1, the held tool (`toolTurn` 0.85 about the haft toward
+  the eye, `toolScale` 0.55 — smaller than the model's), a held lump (`lumpAt`, `lumpScale` 0.45), the chop (`forearm` 0.25:
+  the elbow; `swingArm` −0.5, `swingIn` 0.3, `swingWrist` −0.5, `swingPush` 0.05), `bob` 1, the draw (`drawThrow`,
+  `drawBow`, below) and `touchGap` 0.1 (below). Two meshes over the avatar's own atlas: `avatar-fp-arm-<id>` — the forearm,
+  dressed as the model's: skin to `outfit.cuffAt` and the pushed-up sleeve's cloth past it with its knit cuff ring there
+  (Caelan); all skin under a short sleeve, which ends on the upper arm, out of the view (Brayden, Annabelle) — and
+  `avatar-fp-hand-<id>` in the wrist's frame (`avatar-fp-wrist`): a palm, four fingers of three hex segments and a two-segment
+  thumb, CURLED round the haft when something is held (`fp.grip`), loosely open when nothing is (`fp.relaxed`). About 440
+  triangles.
+- **The chop**: `fpStroke(fpSwing)` = sin(π · fpSwing^0.6) (0 between swings: fast down, slower back); `fpHandFrame(stroke,
+  empty, draw?, bow?)` → `{ arm, hand, wrist }`: the forearm turns about the elbow by `swingArm` × stroke and pushes ahead a
+  little, the wrist bends by `deviate` + `swingWrist` × stroke — the wrist leads (the haft turns further than the forearm), the
+  fist moves less than 10 cm: visible but quiet. The walk's bob (`fpBobX`, `fpBobY` × `FP_HAND.bob`) moves the whole hand in
+  camera space.
+- **The draw in first person** (§100, `pose.draw`, by the held item's kind as on the model): the forearm's frame is blended
+  (`blendFrames`: slerp, the origin along a line) from the rest-and-chop frame toward `fpDrawnArm(bow)` by a smoothstep of
+  the draw, the wrist's chop bend fading with it; nothing changes with an empty hand. `fpDrawnItem(bow)` is where the held
+  slab lies at a full draw and `fpDrawnArm` the forearm that puts it there (the wrist bent as at rest, the slab in the hand as
+  `fp.tool` places it). A throw: the fist up and back toward the eye at `drawThrow.grip` (0.23, −0.09, −0.36), the point toward
+  `drawThrow.aim` (−0.1, 0.45, −1.5) — ahead and above the crosshair, so its length shows — its picture to the eye. A bow: the
+  fist at `drawBow.grip` (0.15, −0.1, −0.4), the bow held up before the eye, its limbs in the view's plane canted `drawBow.cant`
+  0.5 rad (the top leaning right, as it lies in the hand at rest: it turns up the short way and is never seen edge-on), its
+  string toward the eye, the picture turned `drawBow.turn` 1.2 rad from edge-on. Both keep the forearm leaving the view at the
+  lower right.
+- **On a tablet** (§95): `sync`'s `fpClear` `{ left, top }` (the right cluster of buttons' left and top edges in NDC; main gives
+  it in touch mode from `touchClusterRect`) moves the whole hand along the camera's x by `fpClearShift(clear, aspect, fov)`:
+  0 when the fist at rest is already `touchGap` (NDC) left of the cluster or above it, else the move that puts it there — so the
+  fist and the tool stay clear of the glass buttons in landscape and in portrait (the forearm still runs under them to the
+  corner).
+- **Its light and depth**: its material (program key `FP_ARM_PROGRAM` 'caelancraft-avatar-arm') is the model's (the light
+  volume, the warm fill) with the light read from the light volume at the EYE (`caelArmEye`) and `gl_Position.z = mix(−w, z,
+  FP_DEPTH 0.02)`: its depth squeezed to the front of the range — always in front of the world, never clipped by a block,
+  still hiding its own far side. `renderOrder` `FP_RENDER_ORDER` 10, never frustum-culled. It adds no light: it is prewarmed
+  with the others (§72).
+- `sync({ x, y, z, pose, showModel, showArm, camera?, eyeX?, eyeY?, eyeZ?, fpClear? })`; `prewarm` builds every avatar's
+  shared resources and the current avatar's model and hand (with the held item's meshes) and compiles their programs
+  (`compileHidden`).
+- **Portraits**: `renderAvatarPortraits(webgl, { size = PORTRAIT.size 192, ids })` → `{ [id]: { width, height, data } }` (RGBA,
+  sRGB, not premultiplied, row 0 at the top): each avatar drawn once by the game's renderer — head and shoulders, turned
+  `PORTRAIT.turn` 0.38, lit by a warm sun from the front and a soft sky — into a render target twice the size above the world
+  (the light volume reads open sky there), on a clear background, averaged down 2 × 2 and made sRGB; the renderer's target and
+  clear colour are put back.
 
 ### 91.5 The view modes and the camera (`viewCamera.js`, PURE; main)
 
@@ -7043,8 +7334,8 @@ model and one arm are shown at most.
 - `cameraPose(eye, yaw, pitch, mode, boom)`: first person at the eye along the look; behind at eye − look × boom, looking
   along the look; in front at eye + look × boom, looking back (yaw + π, −pitch). Main adds the camera shake and the black
   holes' camera effects to it as before.
-- **What is drawn**: first person — the arm (not while dead or asleep), no model; third person — the model when the boom is
-  at least `VIEW_BOOM_HIDE` **0.7** (else the camera would be in its head), no arm; neither while dead. The crosshair shows
+- **What is drawn**: first person — the hand (not while dead or asleep), no model; third person — the model when the boom is
+  at least `VIEW_BOOM_HIDE` **0.7** (else the camera would be in its head), no hand; neither while dead. The crosshair shows
   in first person and behind, never in front. The underwater fog and tint follow the CAMERA: in third person they come
   from the camera's own cell (`physics.isUnderSurface`), in first person from the eye as before.
 
@@ -7056,29 +7347,42 @@ model and one arm are shown at most.
   "View: First person | Third person | Front".
 - `#avatar-chooser` (z 32 like the Guide; `.over-title` 55 over the title screen; the screens under it `inert`): "Who do you
   want to be?", one `.av-card` per avatar — a button (`role="radio"`, `aria-checked`) on a plain ROUNDED SQUARE (never a
-  hexagon), with the portrait drawn one texel a pixel and scaled up crisply, the name and the blurb; the chosen one lit in
-  honey. A click or Enter / Space chooses; ← → (↑ ↓) choose the next card; Done, Esc or a click on the backdrop closes it and
-  gives the focus back. `createAvatarMenu(doc, { current, onChoose, onView, viewLabel })` → `{ open, close, isOpen, current,
-  setCurrent, setView, handleKey, dispose }`; `onChoose(id)` only for a change: main stores it and swaps the model at once
-  (under the pause menu too).
+  hexagon), with its portrait (a `canvas.av-portrait` at `PORTRAIT_PX` 120 CSS px, smoothly scaled), the name and the blurb;
+  the chosen one lit in honey. A click or Enter / Space chooses; ← → (↑ ↓) choose the next card; Done, Esc or a click on the
+  backdrop closes it and gives the focus back. `createAvatarMenu(doc, { current, onChoose, onView, viewLabel, portrait })` →
+  `{ open, close, isOpen, current, setCurrent, setView, handleKey, dispose }`; `onChoose(id)` only for a change: main stores
+  it and swaps the model at once (under the pause menu too). `portrait(id)` → a picture (`{ width, height, data }`) or null,
+  asked for each card when the chooser is first built (main: `renderAvatarPortraits` with the game's renderer, once, at the
+  first opening); none, or one that throws, leaves the card's plain sky background.
 - The controls sheet's last row is `F3 · M · V` "Debug overlay · mute / unmute · first / third person view" (still 17 rows,
   still two that wrap); the Survival Guide's Controls chapter lists V.
 
 ### 91.7 Main's wiring and the screenshot aids
 
 - `renderFrame`: `viewCamera` (the pose from the boom) → `renderer.setCamera` → `setFov` → `drawAvatar` (the motion steps only
-  while the world runs, `live`). The arm swings (`avatarSwing`) on a Creative break press or repeat, a control operated, a
-  block placed (both modes), a strike (Survival), each dig tick, and a throw. `avatarMotion.reset(yaw)` when a world loads.
+  while the world runs, `live`). The hand chops and the model's arm swings (`avatarSwing`) on a Creative break press or
+  repeat, a control operated, a block placed (both modes), a strike (Survival), each dig tick, and a throw (a drawn spear or
+  dart too; a bow's shot is let down, not swung). `avatarMotion.reset(yaw)` when a world loads. In touch mode `drawAvatar`
+  gives the renderer `fpClear` from `touchClusterRect(innerWidth, innerHeight)` (worked out again when the size changes).
 - URL (diagnostics `parseParams`): `?view=first|third|front` and `?avatar=caelan|brayden|annabelle` set the view and the
   avatar for this visit (not stored); `?ui=avatars` opens the chooser over the title screen, or with `?autoplay` over the
-  pause menu once the world is loaded.
+  pause menu once the world is loaded; `?hold=<item>` (`readHoldParam`: an item that is not a block, any case, an old key
+  under its new name; else null) puts that item in the selected hotbar slot once a world has loaded in Creative (as `give`
+  does, without its toast) — the first-person hand and the model hold it (screenshots).
 - The debug handle (`window.__caelancraft`): `getView()`, `setView(mode)`, `getBoom()`, `getAvatar()`, `setAvatar(id)`,
   `avatarSwing()` (nothing stored).
-- **Tests**: `tests/unit/avatars.test.js` (the data, the preference, the sheet's size and determinism, solid and see-through
-  parts, the eyes, the rig's height, the portraits), `tests/unit/viewCamera.test.js` (the modes and their key, the params,
-  the view preference, the boom with blocks behind, beside and inside, easing, the camera pose; the motion), and
-  `tests/unit/avatarRenderer.test.js` (the models, the skirt, lying down, the UVs, the arm's placement and its shader patch,
-  the chooser on a fake DOM from index.html).
+- **Tests**: `tests/unit/avatars.test.js` (the data, the picks, Caelan's mild olive, the heights, the builds, the preference),
+  `tests/unit/avatarModel.test.js` (every part closed and wound outward, one geometry per bone, budgets, heights, the rig,
+  the atlas's determinism, the shared build, the hair cuts and their gaps, long hair; the first-person hand: `FP_HAND`, the
+  cuff on screen, the forearm dressed as the model's, the chop, the draw (a bow up and never edge-on, a throw cocked), the
+  tablet's clearance at 4:3, 3:4 and other iPad sizes, its parts, the tool and the lump at the fist),
+  `tests/unit/viewCamera.test.js` (the modes and their key, the params with `?hold`, the view preference, the boom, the camera
+  pose; the motion, the draw's pace in and out), and `tests/unit/avatarRenderer.test.js` (the bones and their joints, height
+  and facing, the skirt walking and on a horse, lying down, the back hair, shared resources between renderers, the atlas's
+  filtering and the warm fill, the hand's placement, chop, bob, draw, tablet move, grip and shader, the held item at the grip
+  in both, prewarm building every avatar, the draw on the model (a bow, a throw, the release with no jump, the elbows,
+  `reachArm`), the other players' models and their draw, the portraits on a fake renderer, the chooser on a fake DOM from
+  index.html). `tests/unit/pilotModels.test.js` keeps the art pilot's other models.
 
 ## 93. Bricks: a rectangular lattice over the honeycomb — `src/bricks.js` (PURE), `src/brickmesher.js` (PURE), `src/world.js`, `src/chunk.js`, `src/blocks.js`, `src/fluids.js`, `src/waterBodies.js`, `src/blockphysics.js`, `src/mesher.js`, `src/physics.js`, `src/renderer.js`, `src/harvest.js`, `src/storage.js`, `src/main.js`, `src/controls.js`, `src/config.js`, `src/diagnostics.js`
 
@@ -7175,7 +7479,7 @@ solid hexes: mobs stop up to half a cell short of a brick wall.
 
 - Raw natural blocks (`RAW_HEX_IDS`: the stone kinds, grass, logs, leaves, ores, sandstone, ice, glowstone, pumpkins) are
   never placed in Survival: "‹Name› is raw: work it into building materials first". Stone breaks into rocks with a flint pick
-  or better, and into 1–2 STONE BRICKS with a copper (tier 3) or better HAMMER, 4.0 s base (`harvest` `alt`: a second tool
+  or better, and into 1–2 STONE BRICKS with a copper (tier 3) or better HAMMER, hardness 32 (§99; 4.0 before it) (`harvest` `alt`: a second tool
   with its own time and drops; `canHarvest`, `breakSeconds` and `rollDrops` take whichever rule the tool satisfies).
 - Loose ground (`TERRAFORM_IDS`: dirt, sand, gravel, snow block, clay, red sand) is placed as hexes, at most
   `TERRAFORM_MAX_RISE` **3** layers above the column's generated surface ("Loose ‹name› will not heap any higher here"):
@@ -7226,7 +7530,7 @@ wide, and leaks through a hole one brick wide.
 `getBrick(x, y, z)` / `setBrick(x, y, z, id)` at WORLD positions (the brick containing the point; setBrick checks
 `brickBlocker`, AIR removes).
 
-## 94. The Lab, the Work Stump's flint, the Making search and the build tree — `src/crafting.js`, `src/buildTree.js` (PURE), `src/packUI.js`, `src/blocks.js`, `src/tiles.js`, `src/survivalControl.js`, `src/pickerModel.js`, `src/harvest.js`, `src/purpose.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `src/styles.css`
+## 94. The Lab, the Work Stump's flint, the Making search and the build tree — `src/crafting.js`, `src/buildTree.js` (PURE), `src/packUI.js`, `src/blocks.js`, `src/tiles.js`, `src/survivalControl.js`, `src/pickerModel.js`, `src/harvest.js`, `src/purpose.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `src/styles.css`; §94.4a–b, §94.5a: `src/survival.js`, `src/storage.js`, `src/types.js`
 
 Amends §47, §50, §67 and DESIGN-circuits §8.2. The workplaces now read as a road: hands, Work Stump, Kiln, Bloomery, Forge,
 Workbench and a new **Lab**, and the Making panel shows the road itself.
@@ -7309,6 +7613,75 @@ for a tool) — no edge touches an `@station` node.
 - `layoutTree(model)` → node centres, columns (side by side, at most `TREE_MAX_ROWS` 3 rows a lane and 2–5 nodes across)
   and lanes (bands across the whole tree under the column heads, `TREE_HEAD_H` 150 tall, each lane as tall as its fullest
   column); a workplace sits at its column's centre, `TREE_PLACE_Y` 40 down its head. The height stays within 640 px.
+- A model carries its columns' workplaces, `stations` (a node's `column` indexes it); `layoutTree` and `columnProgress`
+  follow them.
+
+**§94.4a The tree reveals itself** (the user: "Don't show advanced items in the build tree automatically"). The pack
+screen no longer draws every recipe of the game: `revealTree(model, { states, had, canMake? })` → `{ shown, open, reached,
+unlocks, hidden }` (pure), from `treeStates`, the world's has-had set and (`canMake`, the TreeFacts') the recipes that could
+start now.
+- **Had**: the node's key is in `had`, or it is 'have' now; a tag by any member, a tool by any tool of its type at that tier
+  or better (a copper axe had is a stone axe had), a workplace by its block item (made, or carried) or by being near.
+- **Got now**: had, or 'ready' (makeable now), or raw with its gathering tool had (rock and sticks lie about: always). An
+  item with no node (what an unlocked recipe takes) is got now when had, when a recipe making it could start now
+  (`canMake`), or when it is raw and its gathering tool is had; a tag when any member is.
+- **One step away**: every input and tool of its recipe (its in-edges) is had or got now, and its workplace is had or got
+  now or could be built (every need had or got now, and where it is built had: by hand, or the Workbench for the Lab); a
+  raw thing whose gathering tool could be got now. A workplace is in sight (`open`) when it is had, got now or one step
+  away. A workplace built (its block item had, or stood at) is had by itself, whatever its own needs.
+- **What a workplace unlocks** (its `unlocks`, not nodes) follows the same rule (`unlocks[c]`, in its order): an output is
+  shown when it is had (a tool by any of its type at its tier or better), when one of that workplace's recipes for it could
+  start now, or when one of them takes only what is had or got now (inputs and tools) and the workplace is had or could
+  be built; and its column is reached. So an in-sight Work Stump shows the flint shovel and spear, not the bow (it wants a
+  flint knife, then a stave); a Kiln a step away shows none of its copper or bronze (they want ingots), a Forge a step
+  away no steel.
+- A column is **reached** when anything in it (or anything its workplace unlocks) has been had, or a build node in it or
+  its workplace is had, got now or one step away (a raw thing alone does not reach a column: flint, rawhide and sand wait
+  for theirs). A column can be reached while its workplace is not in sight: the fire drill, tinder and sand sit in the
+  Workbench's column (glass needs them), so they show early under the Workbench's dim head.
+- A gather or build node is **shown** when it is had, got now or one step away and its column is reached; everything else
+  is hidden. `hidden[c]` counts each column's hidden nodes and its workplace's hidden unlocks.
+- `revealedTree(model, reveal)` → the TreeModel drawn: every column's head (a copy marked `reached`, `veiled` while its
+  workplace is not in sight, its `unlocks` only those shown), the shown nodes in model order, then (when any are hidden)
+  a marker node `moreId(station)` = `?station` in the build lane: `{ lane: 'build', label: 'N more to discover', more: N,
+  icon: '' }` (treeStates gives it 'more'; columnProgress leaves it out). Only edges between two drawn nodes are kept, so
+  a shown node whose only uses are hidden has no edge (no dangling link), and no edge reaches a marker.
+- At the start of a world (the handbook alone) the Work Stump column shows rock, stick, plant fibre, cord and the
+  hammerstone ("20 more to discover": the stone axe, a log and the stump's 18 recipes); every other column is a dim head.
+  Twisting cord and shaping a hammerstone bring the stone axe, and the fire drill with tinder and sand (the Workbench's
+  column, its head still dim). A stone axe made (or makeable now) brings the log, the Work Stump into sight (its head lit,
+  unlocking the flint shovel and spear), the flint tools, flint, rawhide and pig fat (the Bloomery's column) and the
+  wooden shovel (the Kiln's); a flint knife had adds the bow stave to the stump's unlocks and leather, and a stave had the
+  bow.
+
+**The has-had set** (`survival.had`, a `Set<string>`): every item key that has ever entered the pack in this world's
+Survival, and every workplace stood at. `Survival.noteHad(keys)` adds known keys (an old name under its new one; @returns
+whether it grew); main notes the pack's keys (`survivalControl.heldKeys(pack, containers?, extra?)`: the slots, the worn,
+the containers' slots and loose stacks, sorted, once each) and the near workplaces' block items
+(`survivalControl.nearWorkplaceKeys(stations)`, of the findStations result: one built by another player counts) whenever
+`pack.version` or the stations change in Survival, and the cursor's while the pack is open; `begin()` (a new survival
+state) empties it; dying keeps it. Saved as `survival.had` (sorted; written only when non-empty, after
+`loose`): `normalizeSurvivalJSON` keeps it sorted and unique, aliases read under their new keys, unknown keys dropped with
+`survival.had: N unknown items, dropped`, a non-list ignored with `survival.had: not a list, ignored`. **An older save** has
+no `had` (no warning): on loading main adds `heldKeys(pack, containers)`, everything the pack and the baskets hold, and
+`placedWorkplaceKeys(world.edits)`, the block item of every workplace set down in the world (its Kiln and Forge built long
+ago stay in sight away from base). It does so for every save: what they hold, and what was built, has been had. Main's
+stations key (what makes `stations` and `stationsVersion` change) covers every workplace, the Workbench and the Lab too.
+`SurvivalJSON.had?` (types.js).
+
+**§94.4b The circuits switch.** `buildTreeModel({ circuits: false })` — the world's circuits off (the pause menu's Devices
+row, `circuits.setEnabled`) — leaves out every circuit key and the Lab's column: `stations` is `stump … workbench`;
+nothing is followed through a circuit (no node, no edge: the copper wire, the copper hammer that only draws it, the
+battery), no workplace unlocks one (the Workbench then unlocks nothing; the stump keeps black powder and the keg), and no
+workplace's `needs` name one: the Workbench's strip and tooltip have no copper wire (the tree shows no circuit at all; the
+Making list still shows its whole recipe), and the reveal judges it on its planks, steel bars, glass, tin and iron hammer.
+The copper hammer is a metal tool like the others: with the circuits off it is one of the Kiln's unlocks. **The circuit keys** (`CIRCUIT_KEYS`, sorted; `isCircuitKey(k)`; `CIRCUIT_STATIONS` `['lab']`):
+the item of every `circuitParts.PARTS` entry whose role carries electricity (`wire`, `junction`, `source`, `contact`,
+`load`): `copper_wire`, `brown_wire`, `white_wire`, `earth_wire`, `terminal_board`, `voltaic_battery`, `blasting_machine`,
+`selenium_panel`, `knife_switch`, `push_button`, `clockwork_timer`, `relay`, `igniter`, `filament_lamp`, `electric_bell`,
+`spark_transmitter`, `coherer_receiver`; the materials only they are made of, `carbon_filament`, `selenium` and
+`iron_filings`; and `lab`. Black powder, the Powder Fuse, the Torch, the Powder Keg (role `fuse`, `flame`, `ignitable`),
+sulfur and saltpetre are not circuits: they burn, and stay. `buildTreeModel()` (circuits on) is the whole tree, as before.
 
 ### 94.5 The build tree on screen (`packUI.js`)
 
@@ -7323,8 +7696,8 @@ legend, and a scrolling canvas with the lanes named on the left.
 - **The ring is the state**: the outer hex round the fill is green with a ✓ after the name (have it), gold and pulsing
   (can make now), blue (to gather), or dark with the node dimmed (not yet).
 - **A column's head** is its workplace: its hex in its own colour, its name, "built by hand" / "built at the Workbench",
-  a strip of what it is built from (icons, "×n", a tool unnumbered) and "unlocks" with up to 6 icons and "+N"; in its
-  corner "done / total" of the column's nodes, "set up ✓" once the workplace is there.
+  a strip of what it is built from (icons, "×n", a tool unnumbered) and "unlocks" with up to 6 icons and "+N" (of those
+  shown, §94.4a); in its corner "done / total" of the column's nodes, "set up ✓" once the workplace is there.
 - Links inside a column are always drawn, a link between columns only while one of its ends is under the mouse. A link
   from something had to something not yet had is bold (the next steps); between two things had, faint. The mouse over a
   node lights its links and their other ends. A click on a node closes the tree and searches the list for it
@@ -7332,6 +7705,30 @@ legend, and a scrolling canvas with the lanes named on the left.
 The states come from the view: `treeFactsFromView(view)` (counts over the pack, the worn and the cursor; tools by type and
 tier; `view.ready` — survivalControl.buildPackView's ids of every recipe, whatever the tab, that could start now; the near
 workplaces). `?ui=tree` (with `?autoplay` in Survival) opens the pack with the tree over it, for screenshots.
+
+**§94.5a What is drawn (§94.4a, §94.4b).** The PackView carries `had` (survival.had, sorted; absent: only what is carried
+counts) and `circuits` (the world's switch; absent: on). Each time the tree is shown or the view changes, the screen takes
+the whole tree for that switch (built once each), its states and `revealTree`, and draws `revealedTree` — again only when
+`revealSignature(model, reveal)` (packUI, pure: the columns, the shown nodes, the workplaces in sight, the columns reached,
+the hidden counts and the unlocks shown) changes, keeping the scroll; the states, edges and counts are set every time.
+`revealTree` is given the view's `canMake` (treeFactsFromView).
+- The columns, lanes, colours and state rings are as before. A column not reached (`.tree-col.unreached`) is barely
+  tinted. A workplace not in sight (`veiled`: `.tree-col.veiled` dims its banner, `.tree-node.veiled` its head) is a dim
+  head: its workplace, "built by hand", and what it needs; a column can be reached under a dim head (the fire drill under
+  the Workbench's). The "unlocks" strip draws only the unlocks shown (none: no strip); the head's tooltip counts them.
+  Every need is a node of the whole tree (shown or not), coloured by where it is made.
+- The tree's listeners are delegated, once, on `.build-tree` (a click on "✕ Making", `data-tree-close`, goes back; on a
+  node, it searches; mouseover lights a node's links, mouseleave clears them): drawing it again as it grows adds none, and
+  `dispose` removes them with the rest.
+- The marker `?station` is a "?" hex in its column's colour (`.tree-node-more`, state 'more'), "N more" / "to discover";
+  a click on it does nothing. The legend adds a dashed "still to discover" ring and lists only the columns drawn (no Lab
+  while the circuits are off). The heading's line: "… The next steps show as you go. …". The corner count stays "done /
+  total" of the whole column.
+- Creative has no build tree (it is the Survival pack's): the picker and its lists are unchanged.
+- Screenshot aids (diagnostics.parseParams): `?kit=none` or `?kit=<key>[:n],…` (with `?ui=pack|tree` and `?nosave`) stocks
+  the pack with exactly that kit instead of the screen's demo kit (none: the handbook alone, the start of a world); old
+  names read as new, unknown keys skipped, n 1..999. `?circuits=off|on` sets the first world's circuits switch after the save's.
+- The handbook's Making page says the tree "grows as you go, showing the next steps".
 
 ## 95. Touch controls (iPad) — `src/touchControls.js` (PURE + DOM), `src/controls.js`, `src/main.js`, `index.html`, `src/styles.css`, `public/manifest.webmanifest`, `public/apple-touch-icon.png`, `public/icons/`, `scripts/make-touch-icons.mjs`
 
@@ -7438,6 +7835,10 @@ Sneak would need a third; going down while flying is held, the mirror of Jump.
   right cluster, rounded squares in the top bar. Held = filled honey and a little smaller; toggled on = a honey glow. The
   stick's rim is a plain hexagon (nothing drawn on it) with a round honey knob, brighter while sprinting. The right
   cluster sits 92 px above the bottom (104 px in portrait), clear of the HUD's bottom band; the top bar is at the top left.
+  `TOUCH_CLUSTER` `{ right 14, bottom 92, bottomPortrait 104, width 276, height 190 }` (touchControls.js) mirrors where
+  styles.css puts its buttons (Drop's left edge, Place's top; a test reads the CSS) and `touchClusterRect(width, height)` →
+  `{ left, top, right, bottom }` (CSS px, portrait when height ≥ width, safe-area insets aside) is the box they cover: the
+  first-person hand keeps left of it (§91.4).
 - **Layers**: `#touch-ui` z 9 (over the canvas, under the HUD, which lets touches through; in touch mode the hotbar
   takes its own taps); `#touch-back` z 26 (over the block picker and the console, under the pause menu).
 
@@ -7496,8 +7897,10 @@ until the player joins a server.
 `PROTOCOL_VERSION` 1, `DEFAULT_PORT` 4180, `WS_PATH` '/ws', `INFO_PATH` '/api/info', `POSE_HZ` 15. A message is a JSON
 object with a string `t` (`decode` → it or null). The cleaners never trust a number: `cleanName` (no control characters or
 `<>`, trimmed, `MAX_NAME` 20), `cleanChat` (`MAX_CHAT` 200), `cleanPose` (finite x, y, z, yaw, pitch; |x|, |z| ≤ 1e7; y in
-[−64, WORLD_HEIGHT + 256]; yaw wrapped to [0, 2π), pitch clamped to ±π/2, vx / vz to ±100, flags to 5 bits: FLYING 1,
-SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16), `cleanCell` / `cleanBrick` (integers, y inside the world, id a byte),
+[−64, WORLD_HEIGHT + 256]; yaw wrapped to [0, 2π), pitch clamped to ±π/2, vx / vz to ±100, flags to `POSE_FLAGS` 63 (6 bits):
+FLYING 1, SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16, DRAWING 32 (§100: Place held with a spear, a dart or a bow; a
+state like SNEAKING, not a once-only like SWING; the shape is unchanged, so `PROTOCOL_VERSION` stays 1)), `cleanCell` /
+`cleanBrick` (integers, y inside the world, id a byte),
 `unflatten4` (the sound quadruples of a flat list), `packPose` / `unpackPose` (`[id, x, y, z, yaw, pitch, flags, vx, vz]`,
 3 decimals).
 
@@ -7522,10 +7925,11 @@ SNEAKING 2, ON_GROUND 4, SWING 8, SWIMMING 16), `cleanCell` / `cleanBrick` (inte
   shown on a server (§97.3; their handlers still say "On a server the host’s world decides that"); rune blocks neither run nor open their editor. T opens the chat: a line is said
   to everyone (`<name> text` in the chat lines), a `/command` is refused. The pause menu's world line says "· on a server".
 - **The others** (`RemotePlayers`): each one's poses (12 kept) are drawn `REMOTE_DELAY_S` (0.12 s) in the past,
-  interpolated (yaw the short way round); `remotePlayerRenderer` gives each one an avatar renderer of their avatar, an
-  `AvatarMotion` stepped from the pose's flags and speed (the arm swings when a SWING pose arrives) and a name tag over the
-  head, and drops them when they leave. The player's pose goes out 15 times a second while it changes (once a second when
-  it does not).
+  interpolated (yaw the short way round); `remotePlayerRenderer` gives each one an avatar renderer made with their avatar
+  (`createAvatarRenderer(scene, { avatar })`: no other figure is built), an `AvatarMotion` stepped from the pose's flags and
+  speed (the arm swings when a SWING pose arrives; DRAWING is `draw` 1, which the motion brings in at a draw's pace, §91.3,
+  in the pose of what they hold) and a name tag over the head, and drops them when they leave. The player's pose goes out 15
+  times a second while it changes (once a second when it does not); main sets DRAWING while `drawState` is held.
 - **Leaving**: Quit to Title closes the connection; a lost or refused connection returns to the title with the reason
   ("Left the server: …" / "Could not join: …").
 
@@ -7571,7 +7975,8 @@ honey, latched (Crouch on, flying) a honey ring. The top bar is one glass capsul
 capsule. The stick's hexagon is a light rim on dark glass with a white glass knob (honey while sprinting). In touch mode
 the hints use the same words: `hud.setHintWords(touchWords)` rewrites every hint — "R" → "Action" ("R key" → "Action
 button"), "Shift+R" → "Crouch + Action", "LMB" → "Mine", "RMB" and "right-click" → "Place" — whole words only, so a name
-with an R in it is untouched. The key sheets (title and pause menu) are not shown on a tablet, nor the picker's key hint.
+with an R in it is untouched — and a " · G: …" clause is left out (there is no button for G: §100.2's "G: throw at
+once"). The key sheets (title and pause menu) are not shown on a tablet, nor the picker's key hint.
 Remote players' name tags are white words on a dark glass capsule with a light rim.
 
 ### 97.3 The pause menu on a server
@@ -7648,15 +8053,21 @@ in hand come later).
   16-pixel pick is 0.4 m: a child's tool); **'lump'** — everything else (food, materials, pots, the hammerstone, the fire
   drill, the crucible, the mold), held at the middle of its solid pixels, unturned, `HELD_PIXEL × HELD_LUMP_SCALE` 0.7.
 - `heldItemShown(key)`, `heldItemGeometry(key)` → `{ style, grip, turn, pixel, positions, normals, colors }` or null.
-- `setHeld(key)` / `heldKey()`: one cached `BufferGeometry` per key (freed by `dispose()`); two meshes, `avatar-held` on the
-  current model's right forearm (`arms[1].elbow`) and `avatar-fp-held` on the first-person arm's (`fpElbow`), the grip at
-  the middle of the hand; `setAvatar` moves them; they follow the walk, every stance and the action swing. Poses
-  `HELD_POSE` (the model: a tool ahead and a little up, its face to the side; a lump upright in front of the fist) and
-  `FP_HELD_POSE` (first person: a tool up and away from the hand at the lower right, a lump on the hand). The model's item
-  is `MeshLambertMaterial({ vertexColors: true })`; the first-person one is drawn like the arm (the arm's material
-  generalised: the light volume at the eye, `FP_DEPTH`, `FP_RENDER_ORDER`, never culled), programs `FP_ARM_PROGRAM`
-  'caelancraft-avatar-arm' and `FP_HELD_PROGRAM` 'caelancraft-avatar-held', both compiled by `prewarm` (an empty slab
-  stands in before anything is held).
+- `setHeld(key)` / `heldKey()`: one cached `BufferGeometry` per key (freed by `dispose()`); two meshes:
+  - `avatar-held` on the current model's right forearm (`avatar-elbow-r`), its grip at the FIST's grip point (`rig.grip`,
+    §91.2: where a haft passes through the right hand) — moved `ahead` along −z for a lump — posed by `HELD_POSE` (a tool
+    ahead and a little up, its face to the side; a lump upright in front of the fist); it follows the walk, every stance and
+    the action swing, and is turned to `DRAW_POSE`'s lie by a draw (§91.4: a spear level and ahead, a bow upright).
+    `MeshLambertMaterial({ vertexColors: true })` (the prototype hook lights it). The other players'
+    models hold theirs the same way (§96: their avatar renderers).
+  - `avatar-fp-held` in the first-person fist's frame (`avatar-fp-wrist`, §91.4), placed by the avatar model's
+    `fp.tool` — the slab's grip at the fist, its haft along the hand's +y (out of the fist between the thumb and the index
+    finger), its picture in the chop's plane turned `FP_HAND.toolTurn` toward the eye, scaled `FP_HAND.toolScale` — or
+    `fp.lump` (a lump standing on the fist, its picture upright and facing the eye, `FP_HAND.lumpScale`); the fingers curl
+    round it (`fp.grip`; open, `fp.relaxed`, when nothing is held). It chops and bobs with the hand. Drawn like the hand
+    (the light volume at the eye, `FP_DEPTH`, `FP_RENDER_ORDER`, never culled; no warm fill).
+  `setAvatar` moves both. Programs `FP_ARM_PROGRAM` 'caelancraft-avatar-arm' (the hand) and `FP_HELD_PROGRAM`
+  'caelancraft-avatar-held', both compiled by `prewarm` with the model's (an empty slab stands in before anything is held).
 - Tests: `tests/unit/heldItem.test.js`, `tests/unit/avatarRenderer.test.js`, `tests/unit/creativeItems.test.js`.
 
 ### 98.5 Every item in the picker (`pickerModel.js` PURE, `pickerUI.js`, `menus.js`)
@@ -7677,3 +8088,1337 @@ from its data (food: "+4 Nourishment, +2 Hydration." — never a sick chance, so
 imitates). An item cell is `.picker-cell.picker-item` with `data-item-key`, drawn with `itemIcons`; `onPickBlock(pick,
 slot)` passes the number or the string unchanged. On a window under 900 px tall the rail's buttons are 26 px (§56's 34 px
 above) so all 16 fit. The console's `give <block|item> [slot]` hands out an item too (Creative).
+
+## 99. Work costs time, food, water and the tool — `src/items.js`, `src/harvest.js`, `src/vitals.js`, `src/survival.js` (PURE), `src/packUI.js`, `src/hud.js`, `src/styles.css`, `src/main.js`, `src/handbook.js`
+
+Amends §43 (`TIER_SPEED`), §44 (the hardness of the land's blocks; wear on a dig), §45 (the breaking activity; tiredness),
+§48 (the Making cards), §73 (the guide), §93.7 (the hammer's dressed stone) and DESIGN-survival §6.3's times. docs/DESIGN-hunting.md §1. The user: "Digging by
+hand should be a long, energy sapping process. Cutting a tree down with a stone axe should also be labor intensive and
+impact axe durability significantly. Flint is better, and so. The difference along each era should be noticeable and a
+strong motivator to level up." **No block, item or recipe is added; nothing new is saved.**
+
+### 99.1 Time: the tier speeds and the hardness
+
+- `breakSeconds` keeps its formula (`max(0.05, h / TIER_SPEED[tier]) × (underwater ? 2.5 : 1)`, the right type of tool,
+  else 1; main still divides by `digFactorOf` when Weak, §87).
+- **`items.TIER_SPEED`** `[1, 2.2, 4.4, 6.4, 9, 12.5, 17]` (was `[1, 1.5, 2, 2.6, 3.4, 4.5, 6]`). A stone tool more than
+  doubles the hand, flint doubles stone, and every metal is about 1.4 times the one before (each at least a quarter less
+  time, tested).
+- **Hardness** (`BlockRule.h`: seconds by bare hand; for a block that needs a tool, what the hand would take). The land's
+  own materials are real work; the made building blocks are harder too, less so. Everything not listed keeps its §44 /
+  §85 / §94 hardness: workplaces and furniture (taken up whole), plants, leaves, litter, the circuit parts, glowstone, the
+  rune block, the beds and barrels.
+
+  | block | was | now |
+  |---|---|---|
+  | Dirt | 0.9 | 4.5 |
+  | Grass Block, Snowy Grass | 1.0 | 5.0 |
+  | Sand, Red Sand | 0.8 | 3.5 |
+  | Gravel (and FLINT_GRAVEL) | 1.2 | 4.0 |
+  | Clay (shovel 1) | 1.4 | 7.0 |
+  | Snow Block | 0.5 | 2.0 |
+  | Ice | 1.0 | 4.0 |
+  | Packed Ice | 2.0 | 16 |
+  | Logs (oak, spruce, birch) | 3.0 | 24 |
+  | Planks (three woods) | 2.0 | 6.0 |
+  | Stone | 3.0 | 24 |
+  | Stone dressed into bricks, hammer 3 (§93 `alt`) | 4.0 | 32 |
+  | Cobblestone, Mossy Cobblestone, Stone Bricks, Mossy Stone Bricks, Bricks | 3.0 | 12 |
+  | Granite, Diorite, Andesite, Slate | 3.5 | 28 |
+  | Sandstone | 2.0 | 16 |
+  | Obsidian | 2.5 | 20 |
+  | Coal Ore | 3.5 | 28 |
+  | Copper Ore, Tin Ore | 4.0 | 32 |
+  | Iron Ore, Gold Ore | 5.0 | 40 |
+  | Diamond Ore | 4.0 | 32 |
+  | Block of Coal; Copper, Gold, Diamond Blocks; Block of Iron | 4; 5; 6 | 16; 20; 24 |
+
+  The tool and tier of every rule are unchanged, so the gates are as before (no stone pick; flint opens stone, coal and
+  copper ore; copper tin; bronze iron; iron gold; steel gems; clay wants the Wooden Shovel).
+- **Seconds to break, with the right kind of tool of each age** (✕ cannot; — no tool of that kind in that age):
+
+  | block | Hand | Stone | Flint | Copper | Bronze | Iron | Steel |
+  |---|---|---|---|---|---|---|---|
+  | Dirt | 4.5 | 2.05 | 1.02 | 0.7 | 0.5 | 0.36 | 0.26 |
+  | Grass Block | 5 | 2.27 | 1.14 | 0.78 | 0.56 | 0.4 | 0.29 |
+  | Sand | 3.5 | 1.59 | 0.8 | 0.55 | 0.39 | 0.28 | 0.21 |
+  | Gravel | 4 | 1.82 | 0.91 | 0.63 | 0.44 | 0.32 | 0.24 |
+  | Clay | ✕ | 3.18 | 1.59 | 1.09 | 0.78 | 0.56 | 0.41 |
+  | Snow Block | 2 | 0.91 | 0.45 | 0.31 | 0.22 | 0.16 | 0.12 |
+  | Ice | 4 | — | 0.91 | 0.63 | 0.44 | 0.32 | 0.24 |
+  | Packed Ice | ✕ | — | 3.64 | 2.5 | 1.78 | 1.28 | 0.94 |
+  | Log | ✕ | **10.91** | **5.45** | 3.75 | 2.67 | 1.92 | 1.41 |
+  | Planks | ✕ | 2.73 | 1.36 | 0.94 | 0.67 | 0.48 | 0.35 |
+  | Stone | ✕ | — | 5.45 | 3.75 | 2.67 | 1.92 | 1.41 |
+  | Cobblestone, bricks | ✕ | — | 2.73 | 1.88 | 1.33 | 0.96 | 0.71 |
+  | Granite (and kin), Coal Ore | ✕ | — | 6.36 | 4.38 | 3.11 | 2.24 | 1.65 |
+  | Sandstone | ✕ | — | 3.64 | 2.5 | 1.78 | 1.28 | 0.94 |
+  | Obsidian | ✕ | — | 4.55 | 3.13 | 2.22 | 1.6 | 1.18 |
+  | Copper Ore | ✕ | — | 7.27 | 5 | 3.56 | 2.56 | 1.88 |
+  | Tin Ore | ✕ | — | ✕ | 5 | 3.56 | 2.56 | 1.88 |
+  | Iron Ore | ✕ | — | ✕ | ✕ | 4.44 | 3.2 | 2.35 |
+  | Gold Ore | ✕ | — | ✕ | ✕ | ✕ | 3.2 | 2.35 |
+  | Diamond Ore | ✕ | — | ✕ | ✕ | ✕ | ✕ | 1.88 |
+  | Stone dressed into bricks (hammer) | ✕ | ✕ | — | 5 | 3.56 | 2.56 | 1.88 |
+
+  A tool of another type counts as the hand (a stone axe digs dirt in 4.5 s). Under water ×2.5, Weak ÷0.7, as before.
+
+### 99.2 Energy: the work's activity, and tiredness (`vitals.js`, `survival.js`)
+
+- **`vitals.WORK_ACTIVITY`** `[3, 2.6, 2.2, 1.9, 1.7, 1.6, 1.5]`, index = the **work tier**: the tier of the tool doing the
+  work (`harvest.workTier(id, tool)`: the tool's tier when it is the block's own tool — the rule's, or the §93 `alt`'s it
+  breaks by — else 0: a bare hand, or a tool that does not help, works like the hand; 0 too for a block it cannot
+  break). `workActivity(tier)`: a value that is not an integer → the hand; clamped to 0..6. It replaces §45's flat
+  breaking 1.8 (`RATES.ACTIVITY_BREAK` is gone): `activityFactor({ breaking, workTier, … })` takes `workActivity(workTier)`
+  for breaking (absent → the hand, 3); the largest factor still wins, so digging by hand (3) outweighs a sprint (2.5).
+  The exertion heat (`climate.activityHeat`, breaking +2) is unchanged.
+- **Tiredness.** `VitalsInput.work` (the work activity while breaking, else 0 or absent). Awake, `stepVitals` adds
+  `dt / GAME_HOUR_S × fatigueRate(work)`, `fatigueRate(w) = 1 + max(0, w − 1) × WORK_TIRES` with **`WORK_TIRES` 0.5** (1
+  when not working). Asleep it counts for nothing (§87 as before).
+- **The numbers** (comfortable weather; the cold, heat and poison factors multiply as ever):
+
+  | work tier | activity | Nourishment / min | Hydration / min | tiredness / hour | hours of steady work, from rested, to Tired (20) |
+  |---|---|---|---|---|---|
+  | none (standing) | 1 | 3.3 | 5.0 | 1 | 20 |
+  | 0 hand | 3.0 | 10.0 | 15.0 | 2.0 | 10 |
+  | 1 stone | 2.6 | 8.7 | 13.0 | 1.8 | 11.1 |
+  | 2 flint | 2.2 | 7.3 | 11.0 | 1.6 | 12.5 |
+  | 3 copper | 1.9 | 6.3 | 9.5 | 1.45 | 13.8 |
+  | 4 bronze | 1.7 | 5.7 | 8.5 | 1.35 | 14.8 |
+  | 5 iron | 1.6 | 5.3 | 8.0 | 1.3 | 15.4 |
+  | 6 steel | 1.5 | 5.0 | 7.5 | 1.25 | 16 |
+
+  Felt within minutes: three minutes of digging by hand cost 30 Nourishment and 45 Hydration (standing still, 10 and 15).
+  Per block: dirt by hand 1.1 Hydration, with the Wooden Shovel 0.44, with flint 0.19; a log with a stone axe 2.4, with
+  flint 1.0, with steel 0.18.
+- **`Hard work`** (`vitals.HARD_WORK_LABEL`): `statusOf(v, { …, work })` adds it after Wet and before the tiredness stage
+  (which stays last) while `work ≥ HARD_WORK_AT` **2.5** — a bare hand or a stone tool; flint is the relief. It changes
+  nothing else. `Survival` keeps `_flags.work`: the label shows once the hard work has gone on **`HARD_WORK_SHOW_S` 1.5** s
+  (gaps shorter than the hold do not end it), and is held **`WORK_LABEL_HOLD_S` 1.5** s after the hard work stops, so it
+  does not flicker between one block and the next. A quick pull — a torch, a fern, loose stones, a snare (everything no
+  tool speeds takes at most 1 s on land, and works like the hand whatever is held) — never shows it (its drain, at the
+  hand's rate for that moment, is a few hundredths of a point). Asleep there is no work. `hud.chipKind('Hard work')` → `'work'`;
+  `.chip-work` is an earthy brown (`#8a6e4b`, white text). The chip is the cue: no sound and no breath effect are added
+  (DESIGN-hunting §1's breath cue is left for later).
+- **`SurvivalEnv.workTier`** (0..6, absent → the hand): main sets it every frame from the dig (99.6).
+
+### 99.3 Wear (`harvest.digWear`)
+
+- A **digging tool** (`DIG_TOOL_TYPES`: axe, shovel, pick, knife, hammer) breaking a block loses:
+  - as the block's own tool (rule or `alt`): `max(1, round(WEAR_PER_WORK_S × h / TIER_SPEED[tier]))`, **`WEAR_PER_WORK_S`
+    0.75**: uses in proportion to the block's hardness over its speed (0.75 a second of its own work);
+  - as any other digging tool: **1** (it takes the knocks without speeding the work: §44's "a pick wears just as fast on
+    dirt" is kept);
+  - 0 for a hand, a tool that never digs (spear, sword, the kiln kit) or a block it cannot break.
+
+  Blows still cost 1 (`wearsFromStriking`, unchanged); crafting wear is unchanged.
+- **Uses lost per block / blocks a new tool breaks** (the last one breaks it: `ceil(durability / wear)`):
+
+  | tool | log (axe) | stone (pick) | dirt (shovel) |
+  |---|---|---|---|
+  | stone: Stone Axe 40, Wooden Shovel 40 | **8 / 5** | — | 2 / 20 |
+  | flint (90) | **4 / 23** | 4 / 23 | 1 / 90 |
+  | copper (160) | 3 / 54 | 3 / 54 | 1 / 160 |
+  | bronze (320) | 2 / 160 | 2 / 160 | 1 / 320 |
+  | iron (600) | 1 / 600 | 1 / 600 | 1 / 600 |
+  | steel (1200) | 1 / 1200 | 1 / 1200 | 1 / 1200 |
+
+  Also: copper ore with a flint pick 5 (18 a pick); clay and grass with the Wooden Shovel 2 (20 a shovel); gravel and
+  sand with it 1; leaves, plants, wool and every quick block 1; the §93 copper hammer dressing stone 4 (40 a hammer).
+
+### 99.4 Feedback: the target hint
+
+`harvest.slowHint(id, tool)` → string | null. Main shows it **only while a dig is held on that cell**
+(`main.digSlowHint(digState, target, tool)`: the DigState is active on the same q, y, r and block id, else null): idle, the
+crosshair resting on the ground says nothing, so walking and looking about never nag. `survivalHintText` shows it after
+the tool-gate hint (`harvestHint`), the bare-hand gathering hint (`handGatherHint`: gravel still says `Gravel · hold LMB:
+dig`) and the wrong-ground seed hint, and before `blockHintText` (none of whose blocks is ever slow); a brick shows it like
+its hex (`brickDigTarget`); a Birch Log's `tap_hint` (R: how to tap its sap) gives way to it while the log is chopped, as an
+oak says `Oak Log · slow with a stone axe`. With a spear, a dart or a bow in hand and no dig under way
+(`main.throwHintFirst`), §100.2's throw words come before all four, on a hex and a brick alike: a spear is not the
+block's own tool, so the gate would otherwise hide the throw on stone and every log (§100.2 amends this order). Only when
+`breakSeconds(id, tool)` > **`SLOW_HINT_S` 3** and the block's rule names a tool type:
+
+- by hand (or a non-tool in hand): `Dirt · slow by hand — a shovel digs much faster`;
+- with a tool that is not the block's own: `Dirt · slow — a shovel digs much faster`;
+- the verbs: shovel digs, axe chops, pick breaks, knife cuts, hammer breaks (`Ice · slow by hand — a pick breaks much
+  faster`);
+- with the block's own tool of tier ≤ **`SLOW_TIER_MAX` 1**: `Oak Log · slow with a stone axe`, `Clay · slow with a wooden
+  shovel` (`gateToolName`). Flint and better: nothing.
+
+Plain words only (§97.2's touch rewrite has no key names to change here). The dig ring already shows the time.
+
+### 99.5 Making ×5 only for what stacks (`packUI.js`)
+
+`packUI.makesMany(out)` = `stackSize(out.k) > 1`; `MAKE_MANY` 5. A recipe card draws the `×5` button (`data-times` 5) only
+when it makes many: a tool, the Hammerstone, the Bellows and anything else of stack 1 has `Make` alone (the card's entry
+holds `make5: null`). There is no keyboard shortcut for ×5. `CraftQueue.enqueue(id, times)` is unchanged: it still queues
+what it is asked (the console, the tests).
+
+### 99.6 main.js
+
+- `digStep`: `digWorkTier = harvest.workTier(h.blockId, tool)` while a dig is held; `stepSurvival`: `env.workTier =
+  digWorkTier` beside `env.breaking = digAdvanced` (the reused env starts with `workTier: 0`).
+- `wearSelectedTool(how, n = 1)`: `pack.damage(selected, n)`, nothing for n ≤ 0. `finishDig` and `finishBrickDig` pass
+  `digWear(id, tool)`; strikes pass 1 as before.
+- `survivalHintText`: `digSlowHint` (exported, PURE over its arguments) as in 99.4; never `slowHint` while idle;
+  `throwHintFirst(dig, heldKey)` (exported, PURE: `!dig.active && drawOf(heldKey) !== null`) puts §100.2's throw words
+  before the hand's words for the block.
+
+### 99.7 The guide (`handbook.js`)
+
+- *Tools and the ages*: the break-time table adds Gravel and Clay (10 rows: Dirt, Gravel, Clay, Oak Log, Stone, Coal,
+  Copper, Tin and Iron Ore, Obsidian). A new page, **Work, age by age** (table id `work`, source `harvest`, keys 0..6):
+  Age · Food and water (`×WORK_ACTIVITY`) · Tired after (`hoursToTired(tier)` rounded: "10 h") · Axe: logs · Pick: stone ·
+  Shovel: dirt (`blocksPerTool(id, type, tier)`: null → —, Infinity → ✕), with one paragraph. The Wear page becomes **Wear
+  and hard work**: wear with the work (the Stone and Flint Axe's uses on a log and the Wooden Shovel's on dirt, from
+  `digWear`), a wrong tool no faster and
+  still worn, and the `Hard work` status.
+- *Workplaces and making*: "Click *Make*, or *×5* for five of what stacks."
+- New exports: `blocksPerTool(id, type, tier)`, `hoursToTired(tier)`.
+
+### 99.8 Tests
+
+`tests/unit/harvest.test.js` (the hardness table; the worked times; the §99 time table and the age ladder; `workTier`;
+`digWear` with the logs-to-break counts; `slowHint`; the seams: §100's spear, dart and bow dig like a hand and never wear
+by it, §101's Pennant is a quick pull), `drawHold.test.js` (§100.2's throw words before this section's, unless digging),
+`vitals.test.js` (the activity by tool, the drains per minute, three minutes by hand, the fatigue rate and the hours to
+Tired, the label), `survival.test.js` (the drain by work tier, the
+tiredness per hour, the held label), `packUI.test.js` (`makesMany` over every recipe; a tool's card has no ×5),
+`handbook.test.js` (the break and work tables against the data), `survivalHud.test.js` (the chip), `items.test.js`, and
+`tests/integration/toolLadder.test.js` and `survival.test.js` (the first day: gravel 4 s a cell by hand, the log 10.9 s
+with the stone axe and 8 uses of its wear); `survival.test.js` also: a quick pull never shows `Hard work`, a run of them
+does; `tests/integration/harness.test.js` (§99 through main: the smoke's dig budget, `digSlowHint` only while digging and
+the birch, the work tier and `digWear` wiring). The `?smoke=1&mode=survival` step digs its stone for
+`diagnostics.SMOKE_DIG_FRAMES` (worked out from `breakSeconds(STONE, flint pick)`, + 30 frames) and checks the pick lost
+`digWear(STONE, flint pick)` = 4 uses.
+
+## 100. Hunting: fish in their water, the throw, the bows and arrows, stalking by sight and wind — `src/populations.js`, `src/animals.js`, `src/looseItems.js`, `src/avatarMotion.js`, `src/items.js`, `src/crafting.js`, `src/harvest.js`, `src/heldItem.js`, `src/storage.js`, `src/inventory.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/animalRenderer.js`, `src/touchControls.js`
+
+Amends §60 (throwing), §69 and v0.16 (stalking), §76.4 and §88 (fish), §91.3 / §91.4 / §98.4 (the draw's pose and the
+item's lie), §96.2 (`POSE_DRAWING`), §97.2 (the tablet's words: no G), §98.2 (Creative's Place), §99.4 (the target hint's
+order: the throw's words first), §43 / §94.1 / §98.5 (counts, TOOL_TYPES, the picker). Design: `docs/DESIGN-hunting.md`
+§2; the wind is §3 (`wind.js`, `main.windNow()`). The user's words: "Fish seem to appear and disappear spontaneously in
+small pond or stream." "Need a bow and arrow in the progression." "Unclear how throwing a spear is supposed to work."
+"When you sneak up behind and the animal turns to face you, it should be less likely to spook if the player stays
+still." "Stalking works better when there's no line of sight." "Hunting upwind should confer a sneak penalty."
+
+### 100.1 Fish belong to their water
+
+*Why they came and went:* a fish was woken (made live) as soon as its record was within LIVE_RADIUS 72 in a loaded chunk —
+in plain sight from the bank — and slept (removed) by the LIVE_MAX swap while seen; a live mother's fry were spawned live
+beside her; a wanderer was put straight into the water by the player; a fish whose column went too shallow (drunk from,
+dried in the sun, §83: shallow 0.22 < FISH_MIN_WATER 0.3) or dry was removed at once; and the swim step checked only the
+point a body length ahead, so on the hex grid a dart could cut the corner of a dry column (or a long frame overshoot) and
+the fish was removed the next frame. All of a zone's fish were also seeded round a random one of its water spots, so a
+seven-column pond could take a whole zone's school.
+
+- **Seen** (`AnimalWorld.inView` / `FaunaWorld.inView(x, y, z)`, optional; absent: nothing is seen): main passes
+  `pointInView(camera, x, y, z)` — in front of the camera, within `VIEW_SEEN_DIST` 56 m and on screen with
+  `VIEW_SEEN_MARGIN` 0.25 of clip space to spare (occlusion is not tested).
+- **Never made in sight**: `Fauna._fishSpot(rec, env)` is the water nearest the record's column (its own, then rings to
+  3, `fishSpotAt`); a fish wakes there (placed or not) only when that point is not seen, or when its water is at least
+  `FISH_DEEP` 1.5 deep below where it swims: then it wakes at the bed and rises at `FISH_RISE` 0.5 m/s. A full live list
+  never puts a seen fish to sleep for a swap, and a swap is tried only when the sleeper can wake. Young born where they
+  would be seen are records beside the mother (they wake unseen).
+- **Never removed in sight**: `_sleepFar` keeps a seen fish in a loaded chunk live past SLEEP_RADIUS until it is not seen.
+  `Animals._fishAground`: a fish whose column is too shallow swims to the nearest neighbouring column deep enough
+  (`fishDepth`); with none it holds still on the bed while any water is left (`fishWater` → `{ bed, surface, swim }`); with
+  no water it is `stranded` while seen: it drops at `FISH_DROP` 4 m/s to the top of the first solid cell below it (a
+  block put into its cell lifts it onto that block) and lies there on its side (the fish rig's `lie`, `ANIMAL_RIGS` /
+  animalRenderer's `MODELS`: rolled a quarter turn about its length; §69.1); only unseen is it gone (`events.despawned`). The swim step is
+  at most radius + 0.2 m and is taken only when the point it ends in has water deep enough.
+- **By the size of the water**: `zoneLand` marks the zone's fresh water columns (streams on every column; a pond found on
+  the every-other-column lattice is followed column by column) and joins them side by side into bodies; each holds
+  `fishCapOf(columns)` = min(FISH_K_MAX 6, round(columns / FISH_CELLS 12)): a seven-column pond one, five columns none.
+  `ws` is a column of each body that holds fish (the one nearest its middle), biggest first, at most `FISH_BODIES_MAX` 6,
+  and `wk` what each holds; `K.fish` = min(FISH_K_MAX, Σ wk); `c` is now exact. Seeding gives the fish two by two (a pair)
+  to the body with the most room, never past its `wk`. A fish belongs to the body it is in (`Fauna._bodyAt`): `wb`, the
+  land's map of its columns to their bodies (an index into `ws`, −1 none), is made with the bodies and not saved (a land
+  read from a save has it worked out again from the generator when the generator's `ws` are the saved ones, else none);
+  off the water (young born on the bank beside their mother) it is the body nearest within `FISH_BODY_RINGS` 3 rings,
+  as far as a fish looks for water to wake in (`_fishSpot`); without the map, or farther off, the body whose `ws` column
+  is nearest. Births need room in the mother's body as well as in the zone (`room = min(1 − N/K, (wk − n)/wk)`, the
+  litter cut to the room left); young are born only into their mother's water. A wanderer comes in while some body with
+  room lacks a male or a female (`Fauna._bodies`: `room`, `f`, `m`, `lack`), not only while the whole zone lacks one,
+  so an empty pond beside a stream that breeds is stocked too, a fish at a time from a neighbour; it goes into a body
+  with room that has none of its sex, the one with the most room (else the one with the most room).
+- **Save**: a zone's land gains `wk` (written beside `ws`; `validateFaunaJSON` keeps it only with exactly as many entries
+  as `ws`, integers 0..FISH_K_MAX). A land saved without it (`wk` null) has its waters worked out again from the generator
+  the next time the zone is filled; the rest of its land is kept.
+- Tests: `tests/unit/fishWater.test.js` (caps, bodies, seeding, breeding to the cap, the old land, waking unseen and from
+  the deep, sleeping unseen, young in sight, the crooked stream with long frames, stranded, shallow; the column map and
+  the pair at a stream's far end, the map worked out again after a load, the pond beside a breeding stream stocked by a
+  wanderer, the stranded fish on the bed of a drained pond and drawn on its side); fauna's drained-fish test now swims to
+  the next column.
+
+### 100.2 The draw: hold Place to throw (`looseItems.js`, `main.js`, `avatarMotion.js`, `avatarRenderer.js`, `avatarModel.js`, `protocol.js`) — the darts and the bow's numbers as amended by 100.6
+
+- `drawOf(key)` → `{ shoots, base, bow }` or null: a spear (ToolDef.type 'spear') or a dart (DART_KEYS) draws itself
+  (`base` = throwOf); a bow (type 'bow') draws an `arrow` (`base` THROW_ARROW). `drawFraction(heldS)` = min(1, heldS /
+  `DRAW_FULL_S` 1). `drawnThrow(base, f)`: speed × (DRAW_SPEED_MIN 0.4 + (DRAW_SPEED_FULL 1.15 − 0.4) f), power × (DRAW_POWER_MIN
+  0.4 + (DRAW_POWER_FULL 1 − 0.4) f) (to 0.1). So a tap lobs it; a full draw is 15 % faster than G and as hard: spear 19.55
+  m/s power 4, dart 24.15 / 2, fletched dart 29.9 / 3, arrow 36.8 / 3.
+- **Main** (`drawStep(mouse, dt)`, both modes, before Survival's use / place and instead of Creative's `rightMouseStep`
+  when what is in hand draws): a Place press starts a draw (a press on a circuit control without Shift is left to the
+  control; a bow in Survival with no Arrow in the pack says "No arrows: make them by hand from a stick, flint and a
+  feather" and does not draw); held, it counts up; let go, `drawRelease` throws one of the spear or dart in hand (or
+  shoots an Arrow taken from the pack — Creative takes nothing and throws a ghost, §60) along the look from just before the
+  eye, at `drawnThrow`'s speed plus the player's velocity, lifted +1.5 m/s (an arrow +0.5), with its power; a bow wears 1
+  (Survival; `toolBroke` at 0). The machine is `DrawHold` (main.js, PURE, exported; `step(mouse, dt, DrawEnv)` →
+  'start' | 'hold' | 'release' | 'cancel' | 'noArrows' | 'idle', or null when Place is not the draw's; `cancel()`). It
+  counts the frames' dt and reads no clock, so a slow frame never swallows a throw. A changed hand cancels the draw, and
+  so does death (`draws` false). Only frames of play draw or throw: a screen over the running world (the pack, the field
+  book, Survival's device panel: the world steps under them, `state` is not PLAYING) lets it go without a throw — the
+  cleared mouse there is no release; `setState` cancels it whenever play leaves STATE.PLAYING (also a menu that freezes
+  the world: the pause menu or a lost pointer lock, the picker, the console, death), and `resetSurvivalInput` forgets it
+  (sleep, death, a mode switch, a load). While the control latch holds a control that Place pressed (§4.9), the hold is
+  the latch's: with a spear, a dart or a bow in hand a Push Button stays pressed (Creative's frame and the debug handle's
+  `rightClick`; Survival's latch comes first anyway). **G** still throws at once (§60, unchanged). §98.2 is amended: in
+  Creative a spear, a dart or a bow is drawn and released the same way; a rock still throws on the press.
+- **Seen**: the action ring at the crosshair shows the draw (`drawRing()`: at least 0.02, both modes; Survival's
+  `actionProgress` puts it first); the view closes in by `DRAW_ZOOM` 0.1 × the draw (eased like the sprint's FOV); the
+  avatar takes the pose of what is drawn (`MotionInput.draw` 0..1 → `pose.draw`, §91.3; the model §91.4 "The draw", the hand
+  "The draw in first person"): a spear or a dart cocked overhand by the ear, its point ahead, and thrown through with the
+  swing on the release; a bow raised upright in the extended right arm, the left hand drawn back to the chin, and let down on
+  the release (no swing); in first person the throw is raised and cocked, the bow brought up before the eye. The others on a
+  server see it too (`POSE_DRAWING`, §96.2). The throw sound grows with the draw.
+- **Hints** (RMB reads "Place" on a tablet, and the G clause is left out there: no button throws at once, §97.2): with
+  nothing else to say, `Flint Spear · Hold RMB to throw · G: throw at once` (a tablet: `Flint Spear · Hold Place to
+  throw`), `Bow · Hold RMB to draw, let go to shoot` (`Bow · no arrows in your pack`) — in Survival also on a block in
+  reach, before §99.4's words for it (the tool gate, the bare-hand words, the wrong ground, the slow word) while no dig is
+  under way (`main.throwHintFirst(digState, heldKey)`, PURE: a spear is no block's own tool, so the gate would hide the
+  throw on stone and every log; holding LMB on the block brings its words back), though a burning keg, a crop, and a keg,
+  a control or a rune block (`blockHintText`) still say their own; while drawing `Drawing · let go to throw` / `Full draw
+  · let go to shoot`; on a wild animal or pig `click: hunt it · Hold RMB to throw` (`… to shoot`; out of reach only the
+  throw words); a fish `Fish · click: spear it · Hold RMB to throw the spear`; the fish tip "thrust with it, or hold RMB
+  to throw it". The guide says G is a keyboard's ("On a keyboard [G] still throws at once").
+- Tests: `tests/unit/drawHold.test.js` (DrawHold: press, hold and release, a slow frame, a screen mid-draw, cancel, a
+  changed hand and death, no arrows, a Push Button held in Creative; main's draw path from the source: setState and
+  resetSurvivalInput cancel, no clock, every Place through drawStep; throwHintFirst and where survivalHintText asks it),
+  `tests/unit/harvest.test.js` (the seams with §99: a spear, a dart or a bow digs like a hand and never wears by it),
+  `tests/unit/looseItems.test.js` (drawOf, drawFraction, drawnThrow), `tests/unit/glass.test.js` (the tablet's words),
+  `tests/unit/avatarModel.test.js`, `tests/unit/avatarRenderer.test.js` and `tests/unit/viewCamera.test.js` (the
+  poses).
+
+### 100.3 The bow (`items.js`, `crafting.js`, `itemArt.js`, `purpose.js`, `pickerModel.js`, `looseItems.js`) — superseded by 100.6
+
+- **Items**: `bow` "Bow" (tool, new ToolDef type **'bow'** in TOOL_TYPES after 'spear'; tier 2, durability 100, power 1;
+  after the Flint Spear in TOOL_ROWS), `bow_stave` "Bow Stave" (material, stack 4) and `arrow` "Arrow" (material, stack
+  16). With §101's Pennant and §102's Compass: **272 items: 35 tools, 54 materials, 55 foods, 3 heals, 5 wear, 120
+  blocks** (the tally §101.4 and §102.1 refer to).
+- **Recipes**: `bow_stave` at the Work Stump, 2 stick → 1, knife 2, 4 s; `bow` at the Work Stump, bow_stave + 2 cord, knife
+  2, 5 s; `arrow` at hand (so anywhere), stick + flint + feather → 4, hammer 1, 3 s. With §101's Pennant (at hand) and
+  §102's Compass (at the Forge): **129 recipes: hand 45, stump 26, kiln 24, bloomery 5, forge 16, workbench 5, lab 8**
+  (amends §94.1's tally).
+- **Flight**: `THROW_ARROW` { speed 32, power 3 } (drawn: 36.8 m/s at full); while a projectile it falls by `ARROW_GRAVITY`
+  0.55 of ITEM_GRAVITY (`launch(…, { gravity })`, `LooseItem.grav`; after its power is spent it falls as anything does);
+  `ARROW_KEYS` ['arrow']; a hit breaks it with `ARROW_BREAK_P` 0.25 (`dartBreakP`); a miss lies loose and is collected
+  like any item. Thrown with G an arrow is only chucked (THROW_CHUCK). Only a spear catches a fish (§76.4, unchanged).
+- **Art and the hand**: three 16×16 pictures; the Bow lies on its back with the grip low in the middle (`heldGrip`:
+  'tool', grip [8, 11], turn 0); the arrow is held as a lump (heldWielded is unchanged).
+- **Picker** (amends §98.5): Weapons = Swords; the spear; Darts; **Bows & Arrows** (bow, arrow); the rock. The stave is in
+  Wood & Fibre after the stick. `PICKER_TOOL_WORDS.bow`: archery, weapon, shoot, longbow, hunting; aliases for the arrow
+  and the stave; "arrow" no longer finds the darts. The build tree shows the stave and the bow among the Work Stump's
+  unlocks (buildTree.js unchanged).
+
+### 100.4 Stalking: stillness, sight and cover, the wind (`animals.js`, `main.js`)
+
+- **Senses** (`Animals._sense`, every frame for a wild animal that is not a fish, with a player on foot): `a.scent` =
+  `scentOf(world.wind, player, a)` = `wind.scentToward(wind, player, animal) × wind.strength` (−1..1; main's animal world
+  gives `wind` = `windNow()`); within `SIGHT_RANGE` 40 m, every `SIGHT_CHECK_S` 0.25 (staggered), `a.hidden` = not
+  `canSee(getBlock, a, player)`: no clear line from its eye (0.85 of its height) to the player's head (1.62, crouching
+  1.27) or chest (0.95 / 0.7). `lineOfSight` samples every `SIGHT_STEP` 0.3 m past the first 0.5 m: blocked by
+  `blocksSight` (anything solid but glass: trunks, leaves, earth, stone) and by a `SIGHT_PLANTS` plant (bushes, thickets,
+  cattails, tussock, fern, flax, prickly pear, nightshade, planted cattails) in the cell or up to `TALL_PLANT_COVER` 0.35
+  above it — not the plant the animal stands in.
+- **The distance**: `noticeRange(a, player, sense?)` = notice × gait (sneak 0.4, sprint 1.35) × unseen × scent, where
+  unseen is BEHIND_NOTICE 0.5 for a sneaker in the blind arc and `COVER_NOTICE` 0.45 when `sense.hidden` (the smaller of
+  the two), and scent is `scentFactor(s)` = 1 + `SCENT_UPWIND` 0.8 s upwind (×1.8 at full strength), 1 + `SCENT_DOWNWIND`
+  0.15 s downwind (×0.85). Scent counts behind cover too. Without `sense` the old distances stand (the guide's table, the
+  pigs, the fish). The bear's `bearRange` takes the same senses.
+- **Stillness** (`Animals._stalked`, a wild animal that is not lured, fed or running): a walking or sprinting player inside
+  the distance is run from at once, as before. A crouching one makes it suspicious (`a.suspicion` 0..1): while they move
+  (horizontal speed over `STILL_SPEED` 0.25 m/s) inside it, + `SUSPECT_RISE` 0.5 × (2 − d / distance) a second; when it
+  sees a still crouching shape it has not accepted, at least `SUSPECT_WATCH` 0.3. From SUSPECT_WATCH it **stares**
+  (`mode` 'watch': it stands and turns to face the player). Any movement it sees while it stares and faces them (within
+  `WATCH_FACING` 0.6 rad), or suspicion reaching 1, makes it bolt (`_startle`, the herd with it). Otherwise suspicion falls
+  `SUSPECT_SETTLE` 0.1 a second; at `SUSPECT_CALM` 0.1 it settles (idle again) and accepts the still shape
+  (`a.accepted`) until the player moves. A player it cannot see who keeps moving near is heard until suspicion reaches 1.
+  So a deer that turns round on a frozen hunter stares about two seconds and goes back to grazing; creep while it looks
+  away. The stare is seen as the animal standing and turning to face the player with its head UP, and in the hint
+  (§69.1: `headPitch` — the head group raised by the rig's `alert` while it stares, lowered to graze while it stands
+  idle). Amends v0.16's "an animal that turns its head sees you at once".
+- **Cues** (main): the animal hint `Doe is watching you — keep still` while it stares (any staring animal within
+  `WATCHED_HINT_RANGE` 30 m when the crosshair is elsewhere: `The Doe is watching you — keep still`); stalking
+  (crouched) the wild animal's hint carries the wind's word: ` · downwind of it` (scent < −`STALK_WIND_WORD`) or ` · it
+  can smell you` (> STALK_WIND_WORD), which is `wind.WIND_CALM` 0.18 (§101.1: a scent that strong needs a wind the vane
+  shows with its arrow, so the hint never names the wind while the vane says "Calm").
+- **Not changed**: pigs (pigs.js keeps v0.16's blind side, no cover, wind or suspicion), fish, tame animals, the bear's
+  warn and charge.
+- Tests: `tests/unit/stalking.test.js` (the distances, scentOf, sight blockers, canSee, the look's interval and range,
+  cover, the stare and settling, movement while watched, suspicion rising and freezing, the heard creeper, the wind both
+  ways); `animals.test.js` and `fauna.test.js` now expect a still sneaker in front to be stared at (and run from when they
+  move).
+
+### 100.5 The guide
+
+The Animals chapter gains "Keep still" (the stare, about two seconds to settle, the hint), "Cover and the wind"
+(COVER_NOTICE, SCENT_UPWIND, SCENT_DOWNWIND, the wind's words), "Hold [RMB] to throw", "The bow" and "Arrows and wear"
+(the recipes, DRAW_FULL_S, the draw's shares, 36.8 m/s and power 3, ARROW_BREAK_P, the bow's 100 shots); the Fish page
+says a pond holds one fish for about every FISH_CELLS cells of water and to hold RMB to throw the spear; the controls
+table's Hold RMB row adds the draw. handbook.test.js pins each number to its constant.
+
+### 100.6 The bows and the arrows of every age; the darts retired (amends 100.2, 100.3, 100.5, §43, §46, §60, §69, §76, §80, §94, §98.5)
+
+The user (2026-11-16): "Crude bow (replaces darts): requires twine and sapling (new item). Recurve bow: requires treated
+staves + rawhide (sinew). Better velocity, distance, and accuracy. All bows can be used with arrows with arrowheads from
+all generations: stone, flint, copper, bronze, iron, and steel. Arrows have a chance of recoverability (greater chance of
+recovery with metal over stone + flint)." "Twine" is the game's Cord. Where 100.2, 100.3 and 100.5 say otherwise, this
+section wins; so it does over the darts as §60 (the Flint Dart), §69 (darts wound), §76 (the Fletched Dart, THROW_FLETCHED,
+FLETCHED_BREAK_P, dartBreakP and its recipe), §80 (the seeds "after `fletched_dart`") and §94 (the darts at hand) describe
+them: those items, recipes and constants are gone.
+
+- **Items** (`items.js`): the Bow becomes `crude_bow` "Crude Bow" (tool, type 'bow', tier 2, durability 60, power 1; after
+  the Flint Spear in TOOL_ROWS) and `recurve_bow` "Recurve Bow" (type 'bow', tier 4, durability 220, power 1; after the
+  Bronze Sword). Materials: `bow_stave` (stack 4, kept), `treated_stave` "Treated Stave" (4), `sapling` "Sapling" (16),
+  and six arrows of stack 16 — `stone_arrow`, `flint_arrow`, `copper_arrow`, `bronze_arrow`, `iron_arrow`, `steel_arrow`
+  ("Stone Arrow" …) — then §103's `spyglass` (and §102's `compass`, the last material). The `arrow`, `flint_dart` and
+  `fletched_dart` items are gone. 279 items with §102's Compass: 36 tools, 60 materials, 55 foods, 3 heals, 5 wear, 120
+  blocks.
+- **Old saves** (`ITEM_ALIASES`): `bow` → `crude_bow`; `arrow`, `flint_dart`, `fletched_dart` → `flint_arrow`. A stack
+  read under a new key keeps its wear, at most the new item's durability (`items.carriedWear`: a Bow of 80 uses is a
+  Crude Bow of 60): `storage.checkStack` (a note, not a drop), `inventory.withCurrentKey`, `LooseItems.load`; Creative
+  hotbar picks read through `normalizePick`, typed names through `resolveItem`.
+- **The Sapling**: untouched (`natural`) leaves — oak, spruce, birch — broken with anything but an axe (by hand, with a
+  knife) give one with `harvest.SAPLING_LEAF_P` 0.12 (a third drop group after the lop and the nut: `[when('axe'),
+  when(null, sapling)]`); an axe lops the shoot with the leaves. Picking a ripe Hazel Thicket with R gives one with
+  `SAPLING_HAZEL_P` 0.2 (a roll after the nuts).
+- **Recipes** (`crafting.js`; 135 in all with §102's Compass: 44 at hand, 28 at the stump, 27 at the kiln, 5 at the
+  bloomery, 18 at the forge, 5 at the workbench, 8 at the lab):
+  - hand: `stone_arrow` stick + rock + feather → 4, hammer 1, 3 s; `flint_arrow` stick + flint + feather → 4, hammer 1,
+    3 s (the darts' and the Arrow's recipes are gone);
+  - stump: `crude_bow` sapling + 2 cord, knife 2, 6 s (right after the flint tools); `bow_stave` #log → 2, axe 1 + knife 2,
+    6 s (a stave is split from a log, no longer shaved from two sticks); `recurve_bow` treated_stave + 2 rawhide + cord,
+    knife 3 (copper or better), 20 s; §103's `spyglass`. The user's "basic survival items": both are made at the stump
+    as soon as their parts exist, not at the circuits' Workbench (steel bars, copper wire, a steel hammer);
+  - kiln: `treated_stave` bow_stave + #fuel, 30 s; `copper_arrow` / `bronze_arrow` 4 stick + 4 feather + the ingot +
+    coal → 8, crucible 0 + mold 0 (as the cast tools), 20 / 25 s;
+  - forge: `iron_arrow` / `steel_arrow` 4 stick + 4 feather + wrought_iron / steel_bar + charcoal → 8, hammer 4 / 5 (as
+    the forged tools), 25 / 30 s.
+- **Arrows** (`looseItems.js`): `ARROW_KEYS` (stone … steel), `ARROWS[key]` = `{ head, power, hitKeep, missKeep }`:
+  power 2, 3, 3, 4, 5, 6; kept after a hit 0.35, 0.5, 0.7, 0.75, 0.85, 0.9; after a miss 0.85, 0.9 and `METAL_MISS_KEEP`
+  0.97 for every metal. `arrowOf`, `hitBreakP(key)` = 1 − hitKeep, `missBreakP(key)` = 1 − missKeep (0 for anything that
+  is not an arrow; replaces `dartBreakP`). **The rolls are LooseItems'** (its seeded `random`, real items only — a
+  Creative ghost never breaks): after `env.onHit` a real arrow breaks with hitBreakP (gone; `env.onBreak(it, 'hit')`); a
+  real arrow still a projectile (power > 0) that strikes the ground or a wall breaks with missBreakP (`_missBreaks`,
+  `onBreak(it, 'miss')`), once — a hit spends its power, so it never rolls again. main's onBreak puffs a few splinters.
+  By hand (G) an arrow is chucked (THROW_CHUCK: no power, never rolls). `pickArrow(count)`: the first of
+  `ARROW_PREFERENCE` (steel, iron, bronze, copper, flint, stone) the count has, else null.
+- **Bows**: `BOWS[key]` = `{ drawS, speed, spreadDeg, gravity }`: crude_bow 1.0 s, 28 m/s, 3°, 0.6; recurve_bow 1.2 s,
+  42 m/s, 0.8°, 0.5. `bowShot(bow, arrow, f)` → `{ speed, power, gravity, spread }`: `drawnThrow({ speed: bow.speed /
+  DRAW_SPEED_FULL, power: arrow.power }, f)` — so a full draw flies at the bow's speed exactly and hits with the arrow's
+  power, and a tap gets the same 40/115 of the speed and 40 % of the power as a throw — the bow's gravity share and its
+  spread in radians. `spreadDir(dx, dy, dz, spread, random)`: a direction uniform over the cap within `spread` of the aim.
+  `drawFraction(heldS, fullS = DRAW_FULL_S)`; `drawOf(key)` → `{ bow, shoots, base, fullS }`: a spear `{ false, key,
+  THROW_SPEAR, DRAW_FULL_S }`, a bow `{ true, null, null, its drawS }`, anything else (an arrow in hand too) null.
+  THROW_ARROW, ARROW_GRAVITY, ARROW_BREAK_P, DART_KEYS, THROW_DART, THROW_FLETCHED and their break chances are gone.
+- **Main**: the draw keeps its full time: drawStep tells `DrawHold` the full draw of what is in hand (`DrawEnv.fullS` =
+  `drawOf(key).fullS`), the press keeps it (`DrawHold.fullS`), the release's `f` is `drawFraction(held, fullS)` and
+  `draw.share` (main's `drawShare()`) is the same while drawing — used by the ring, the zoom, the arm and the hints, so a
+  Recurve Bow is fully drawn at 1.2 s. On the press `DrawEnv.noArrows` is `bow && bowArrow() === null` (no arrow of ANY
+  age: Creative never). `bowArrow()` is `looseItems.bowArrowFrom({ survival, count: pack.count, hotbar })`: Survival
+  `pickArrow(count)`; Creative the best arrow on the Creative hotbar, else `DEFAULT_ARROW` 'flint_arrow' (it takes none:
+  a ghost). A Place press with a bow and no arrow says `NO_ARROWS_HINT` "No arrows: make them by hand from a stick, a
+  rock or a flint, and a feather". The release takes that arrow from the pack (Survival), shoots it along `spreadDir` of
+  the look by the bow's spread, at bowShot's speed (plus the player's velocity, lifted 0.5 m/s) with its power and
+  gravity; the bow wears 1. The hint is `looseItems.bowHint(bow, arrow, survival, count)`: `Crude Bow · Flint Arrows (12)
+  · Hold RMB to draw` (Creative without the count; `Crude Bow · no arrows in your pack`); on a tablet "Hold Place to
+  draw" (§97.2).
+- **Art** (`itemArt.js`): the Crude Bow is the old Bow's shape in olive sapling with a leaf bud on each limb, cord knots
+  for nocks and a cord-wrapped grip; the Recurve Bow a dark treated stave with a pale rawhide back, tips curling away from
+  the string and a leather grip — both mirror-symmetric with the grip at the bottom middle (`heldGrip` 'tool', [8, 11],
+  turn 0). The Treated Stave is the stave darkened and scorched with a wisp of smoke; the Sapling a leafy shoot with a root
+  ball; each arrow stands point up (`paintArrow`): its head in its age's colours (a warm chert for stone, the tier
+  palette otherwise; steel's glint), cord-bound when knapped, socketed when metal; grey-brown vanes for stone, russet for
+  flint, copper and bronze, white for iron and steel. Arrows are wielded (`heldWielded`: a tool or an arrow), held by
+  the shaft near the nock.
+- **Picker** (amends §98.5): Weapons = Swords; the spear; **Bows & Arrows** (crude_bow, recurve_bow, the six arrows); the
+  rock (the Darts family is gone). Wood & Fibre = stick, sapling, bow_stave, treated_stave, plant fibre, cord, birch bark.
+  Tools gains the spyglass after the handbook. Each arrow is found by "archery", "shoot", "ammunition", "fletched";
+  "dart" finds the Flint Arrow (its old keys).
+- **Purpose lines**: the sapling, both staves (the Treated Stave "Backed with rawhide at the Work Stump: a Recurve Bow."),
+  both bows, each arrow; the Work Stump's is "Workplace: flint tools, bows, planks, leather, powder, wire."; the
+  Workbench's stays "Workplace: switches, buttons, boards, batteries, and the Lab."
+- **The guide**: after the hunting tables the Animals chapter has four pages — "Hold [RMB] to throw" (a spear),
+  "The bows" (the Crude Bow from a sapling and where saplings come from; the Recurve Bow's stave, kiln and stump; the
+  `bows` table: full draw, arrow speed, spread, shots), "Arrows" (every bow shoots every arrow, the best first; the
+  recipes; the `arrows` table: power, kept after a hit, kept after a miss) and "Arrows and wear". The throws table loses
+  its dart rows (stone, spear, anything else). The darts are gone from the guide (deer, birds, zombies, the controls).
+  handbook.test.js pins each number to its constant.
+- **Build tree**: unchanged code; the Work Stump's unlocks show the Crude Bow, the stave, the Recurve Bow and the
+  Spyglass, the Kiln's the Treated Stave and the cast arrows, the Forge's the forged ones — none of them behind the
+  Workbench, so none waits on the circuits.
+- Tests: `tests/unit/bows.test.js` (powers and the keep chances, seeded hits and misses, ghosts and chucks never rolling,
+  the bows' stats and shots, the spread cone, the recurve's reach, the arrow taken from the pack and chosen in Creative,
+  the bow's hint, main's wiring of the shot read from the source, the sapling's drops, old saves' Bow, Arrow and darts,
+  the grips); `tests/unit/drawHold.test.js` (the Recurve Bow's 1.2 s full draw); the pinned counts in items, crafting, homestead, plantsNotFood, itemArt,
+  pickerModel, handbook and survivalData move.
+
+## 101. The wind drawn: the indicator, the rain, the smoke and the pennant — `src/windDrawn.js` (PURE), `src/pennants.js` (PURE), `src/pennantRenderer.js` (three), `src/rainRenderer.js`, `src/campfireRenderer.js`, `src/particles.js`, `src/hud.js`, `src/blocks.js`, `src/tiles.js`, `src/items.js`, `src/crafting.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`, `src/diagnostics.js`, `index.html`, `src/styles.css`
+
+The user (docs/DESIGN-hunting.md): "introduce wind direction and strength as a visual indicator … It should also affect
+graphics (flag furling, rain direction, etc.) and can later affect sailing." The wind itself is `wind.js` (`windAt`, from
+the world's seed and clock, so every player on a server feels the same wind with nothing on the wire); main works it out
+once per clock tick in `windNow()` (stronger in the shower on the player's biome as it is shown — `weatherFx.shown`, the
+biome's rain eased over `RAIN_SHOWN_TAU_S` 2.5 s, so walking into a biome the shower does not fall on eases the wind
+down with the rain instead of dropping it at once, every flag and smoke column with it; worked out again when that
+changes too, so with the clock frozen by `?time=` a shower still raises it) and everything here draws THAT wind:
+nothing else calls `windAt`. Directions follow wind.js: `(x, z)` is the unit vector the wind blows TOWARD.
+
+### 101.1 What is drawn of it (`windDrawn.js`, PURE)
+
+- **One calm**: `wind.WIND_CALM` 0.18 (above `WIND_MIN` 0.08) — below it `windWord` says 'calm' and the vane "Calm"
+  with no arrow (`VANE_LEVELS[0]`), nothing drawn moves (`DRAWN_CALM`), the pennant hangs (`PENNANT_LIFT_FROM`) and the
+  stalking hint names no wind (main `STALK_WIND_WORD`, §100). All four are that one constant, so the vane never says
+  "Calm" while the smoke drifts, a flag lifts or the hint says the animal can smell you.
+- `drawnStrength(wind)` 0..1: 0 up to `DRAWN_CALM` (= WIND_CALM), then rising evenly to 1 at full strength. A calm is
+  still: the smoke rises straight up, the rain falls straight down, the pennant hangs.
+- `windAir(wind)` → `[x, z]` m/s: the drawn air smoke and light particles move in, downwind, `AIR_MS` 3.2 ×
+  drawnStrength (the real 12 m/s would tear a campfire's smoke out of sight in a second).
+- `smokeDrift(age, airX, airZ)` → how far a puff `age` seconds old has drifted: it starts at rest and takes the air's
+  speed at `SMOKE_CATCH` 1.2/s, `air × (age − (1 − e^(−k·age))/k)`, so a column leaves the fire upright and bends over
+  downwind as it rises. `smokeRise(wind)`: it rises up to `SMOKE_FLATTEN` 35 % slower in a full wind.
+- `dropDrift(wind, snow, fallSpeed)` → a falling drop's sideways velocity: a raindrop leans `RAIN_LEAN_MAX` 0.55
+  sideways metres per metre fallen (about 29°) × drawnStrength; a snowflake drifts at `SNOW_DRIFT_MS` 2.2 m/s ×
+  drawnStrength whatever its fall speed (1.1–1.9 m/s), far more. `dropSwirl(wind, snow)`: a gust swirls a drawn drop to
+  and fro by up to `RAIN_SWIRL_M` 0.14 m (a flake `SNOW_SWIRL_M` 0.5 m) × gust × drawnStrength.
+- `timeInCircle(x, z, vx, vz, cx, cz, R)`: how long a drop moving at (vx, vz) has been inside the circle when at (x, z).
+- The HUD's vane: `vaneAngle(wind, yaw)` radians clockwise from the top of the dial — where the wind blows as seen from
+  where the player looks (they look along (−sin yaw, −cos yaw)): 0 at their back, π in their face, π/2 from their left
+  to their right. It turns by −d when the player turns right by d: it stays fixed to the world. `vaneLevel` 0 calm, 1 a
+  light breeze, 2 a breeze, 3 a strong breeze (`VANE_LEVELS` WIND_CALM 0.18 / 0.4 / 0.7, wind.windWord's words),
+  `vaneWords` "Calm" or "A light breeze from the west" (windWord + windFromWord), `vaneView(wind, yaw)` → `{ angle
+  (whole degrees 0..359), level, gust (gust ≥ VANE_GUST 0.35, never in a calm), words }`.
+
+### 101.2 The indicator (`hud.setWind`, `#wind-indicator`)
+
+- A small glass capsule (the §97 tokens: `--glass-control`, a soft rim, the shine, a 12 px blur written twice) at the
+  top centre: at 6 px in Creative, at 28 px in Survival (under the calendar line, 6–24 px). On a tablet narrower than
+  900 px it keeps clear of the top bar like the calendar line: at 88 px, 110 px in Survival. Both modes; it lies under
+  the dark of sleep and every menu like the rest of the HUD.
+- Inside: a 22 px dial (`svg.wind-vane`: a faint ring, a calm dot, and `g.wind-arrow` — a white shaft, a honey head
+  pointing where the wind goes, two tail feathers) and `span.wind-words`. `setWind(view)` sets the arrow's
+  `transform="rotate(angle) scale(VANE_SCALE[level])"` (0.6, 0.72, 0.86, 1: the stronger, the bigger), one level class
+  of `VANE_CLASSES` ('wind-calm' hides the arrow and shows the dot), `wind-gust`, the words, the svg's title and the
+  element's `aria-label` ("Wind: A breeze from the west"). null hides it. The DOM is touched only when the angle (whole
+  degrees), the level, the gust or the words change. A page without the element gets one made in #hud.
+- It sways: `.wind-sway` rocks ±5° (light, 2.6 s; breeze 1.4 s), ±9° (strong 0.8 s, a gust 0.4 s); no motion under
+  `prefers-reduced-motion`; a solid tint where glass cannot be drawn or is not wanted.
+- main, once a frame in `stepWeather` (after this frame's shower is known): `hud.setWind(vaneView(windNow(), viewYaw))`,
+  where `viewYaw` is the yaw of the view on screen — `cam.yaw` from `viewCamera` (§91), which `renderFrame` works out
+  before the weather: `controls.yaw` in first person and behind, turned by π in the Front view, which looks back at the
+  avatar (§102 amends: the arrow read against the screen, not the avatar's facing).
+
+### 101.3 The rain leans, the snow drifts, the smoke drifts
+
+- **Rain** (`RainView.wind`, amends §84.5): a drop's sideways velocity is set at its birth (`RainField.vx`, `.vz`,
+  dropDrift) and it moves with it. A slanted drop still lands where its column was looked at: it is born upwind of its
+  landing, at the top of the cylinder or where its path enters the cylinder's side (`RAIN_ENTRY_RADIUS` =
+  RAIN_RADIUS + 1, timeInCircle), whichever it reaches first going back. Its path is walked first (about every
+  `RAIN_PATH_STEP` 0.5 m sideways, at most `RAIN_PATH_STEPS` 12 looks, from the remembered columns): a drop whose path
+  would pass under any column's cover (its rain floor; leaves let it through) is not born — the lee of a wall or a hill
+  is a rain shadow. In flight a slanted drop that runs into a column's cover (a roof's corner between two looks) stops
+  there: the column as remembered, however old (`_known`; a stale column is never looked at again for this), or, never
+  seen, looked at while the update has looks left; with none left it stops (it cannot be told clear, as an unknown
+  column blocks a birth). So no drop is ever under a roof or inside a wall, in any wind, standing or walking. A streak's
+  tail trails back up its path (upwind); a flake stays a square. A gust swirls the drawn drops (`RainField.swirl`,
+  `RAIN_SWIRL_RATE` 2.3 rad/s). Without `wind`, or in a calm, the field does exactly what it did (the same rolls, the
+  same drops). The column cache is keyed by (q, r) packed into one number. When it holds `RAIN_COLUMNS_KEPT` columns it
+  forgets those whose centre is farther than `RAIN_COLUMNS_NEAR` (RAIN_RADIUS + 3 = 13 m) from the eye — the ones walked
+  away from — and keeps the near ones (about 600: every column a drop in the air or a birth can be in; were they ever
+  all of it, it is emptied). Emptied all at once, the drops in the air would spend every look on columns already crossed
+  and none would be born for half a second, every few seconds of walking in a wind (the rain halving, and drops
+  unchecked against walls). A frame of heavy rain in a full gusting wind costs about 0.2 ms (still: about 0.08 ms).
+- **Campfire smoke** (`campfireRenderer.setWind(wind)`, amends §32): each puff is offset by smokeDrift(age, windAir) and
+  rises at SMOKE_RISE × smokeRise; the flame tongues lean downwind about their base (a shear of 0.22 × drawnStrength
+  metres per metre of height, flickering). Without setWind (or in a calm) the smoke is as before.
+- **Particles** (`particles.setWind(x, z)`, amends §34.5): drag pulls a particle's sideways velocity toward the air's
+  (× its kind's `wind`, `PARTICLE_WIND`: smoke and steam 1, leaves 0.6, dust 0.15, sparks and infall 0) instead of toward
+  rest; in still air nothing changes. Every smoke the game makes (a fire, a kiln's job, a burning zombie, a blast) drifts
+  downwind.
+- main gives them the wind in `stepWeather` (the rain's view gets `wind`; `particles.setWind(...windAir(wind))`,
+  `campfireRenderer.setWind(wind)`); both modes.
+
+### 101.4 The Pennant (`pennants.js` PURE, `pennantRenderer.js`)
+
+- **Block** `PENNANT` 178 (appended; `BLOCK_COUNT` 179) "Pennant": walk-through like the torch (not solid, not opaque,
+  cutout, `cullSame` false), `meshed: false` (pennantRenderer draws it), a flat icon, sound 'cloth', placeable in both
+  modes, in PICKER_ORDER after the Rain Barrel (121 placeable blocks) and in the picker's Camp & Crafts section after the
+  Rain Barrel (search also by "flag", "banner", "wind", "windsock", "weather vane"). **Tile** `PENNANT` 107 `pennant`: its
+  picture on clear — a two-pixel wooden pole on a small stone foot, a honey knob, a honey pennant with a teal band
+  (`TILE_IDS` 198). **Item** `pennant` (a block item, stack 64; with §100's three and §102's Compass, 272 items and 120
+  block items: §100.3). **Recipe** `pennant`, by hand, 3 s: `stick + cord + #cloth`, the new tag `cloth` = grave_rag,
+  rawhide, leather (the cheapest first; "Rag or Hide", "a rag or a hide"); with §100's three and §102's, 129 recipes, 45
+  at hand (§100.3). **Purpose**: "Shows the wind. Stalk game with the wind in your face."
+- **Harvest**: `set([B.PENNANT], 0.4, null, 0, SELF_DROPS)` in harvest.js — it pulls up by hand in 0.4 s, no tool, and
+  comes away whole.
+- **Tracker** `Pennants`: like the campfires, main seeds it from `World.edits` on load (`loadFromEdits`) and keeps it in
+  step through `onBlockChange`; and through `World.onChunkGenerated`: `onChunkLoaded(cq, cr, world.edits,
+  world.getBlock)` drops the chunk's tracked pennants that are gone and adds every PENNANT in its edits. On a server a
+  cell another player changes in a chunk not generated here is kept as an edit (`applyServerCell` → importEdits, no
+  onBlockChange): without this, their pennant would never be drawn and one they pulled up would stay as a ghost. The
+  campfires (§32, not meshed either) are kept in step the same way: main calls `campfires.onChunkLoaded` beside it, so
+  a fire lit there is drawn and one put out there leaves no flame over the ash (both read the chunk's edits with
+  `coords.forEachEditedCellIn`). `nearest(x, y, z, maxDist, limit)` (to the middle of the pole, nearest first, ties by
+  key). Each pennant `{ key, q, y, r, x, z, seed }` (`pennantSeed`, a phase in [0, 2π)).
+- **The pole**: `poleHeight(blockAbove)`: `PENNANT_POLE_TALL` 1.75 m under open air, `PENNANT_POLE_SHORT` 0.95 under
+  anything else (it never pokes into a block over it); radius `PENNANT_POLE_RADIUS` 0.04, six-sided.
+- **The flag** (`flagRibbon(strength, gust, t, seed, length, hoist)` → `FLAG_FLOATS` numbers: PENNANT_SEGMENTS 8 + 1
+  vertical columns, each top then bottom vertex, in the pennant's frame: +x downwind, +y up, +z across): `length` =
+  `PENNANT_FLAG_LENGTH` 0.4 × the pole's height, the hoist `PENNANT_FLAG_HOIST` 0.22 × it, tapering to `PENNANT_TIP`
+  18 % at the tip. Column 0 is the hoist on the pole, upright, its top at the origin. `flagLift(strength)`: 0 up to
+  `PENNANT_LIFT_FROM` (= WIND_CALM 0.18), rising quickly (1 − (1 − x)²) over `PENNANT_LIFT_SPAN` 0.52 to 1 at 0.7 — limp
+  in a calm, lifting in a light breeze, straight out in a breeze. The root points `PENNANT_LIMP` 1.38 rad × (1 − lift)
+  below the level, the fly droops `PENNANT_SAG` 0.35 × (1 − lift) more; a hanging flag's columns lean with the droop
+  (`PENNANT_COLUMN_LEAN` 0.5, growing over the first third) so the cloth never folds onto itself. A wave runs from the
+  pole to the tip (1.2 waves along it): `flagWave` ω = 2.5 + 9·strength + 6·gust rad/s, sideways reach at the tip
+  `length × (0.06 + 0.14·lift + 0.12·gust)` (a calm still sways a little), with a small up-and-down ripple while it
+  stands out. Deterministic in its arguments.
+- **Drawn** (`createPennantRenderer(scene, { capacity = PENNANT_MAX_MODELS 24 })`): group 'pennants' — InstancedMeshes
+  'pennant-feet' (a small stone hex foot), 'pennant-poles' (a unit hex prism scaled to the pole's height) and
+  'pennant-knobs' (a honey hex knob on top), Lambert; and 'pennant-flags': ONE non-indexed geometry holding every flag
+  (FLAG_TRIANGLES 16 triangles each, positions rewritten every frame, honey with a teal band over segments 3–5, a colour
+  per triangle), `MeshLambertMaterial({ vertexColors, flatShading, side: DoubleSide })` — the facets catch the light as
+  the wave runs along it. Four draw calls however many pennants; no light. The flag's root sits on the pole's downwind
+  face, its top `PENNANT_FLAG_DROP` 0.05 under the pole's top, turned so +x runs downwind. `sync(near, wind, t,
+  heightOf)`, `count()`, `prewarm` (prewarm.compileHidden of the group), `dispose`.
+- main: `pennantRenderer` is created with the other renderers, before every prewarm, and pre-warmed with them; each frame
+  after the campfires: `pennantRenderer.sync(pennants.nearest(eye, PENNANT_MODEL_RANGE 64, PENNANT_MAX_MODELS) in loaded
+  chunks, windNow(), fxTime, (p) => poleHeight(block above p))`.
+- **Handbook**: "Seasons and rain" gains a fifth page, *The wind*: how it changes, the vane (up: at your back; down: in
+  your face; bigger and shaking in a gust; a dot in a calm; the words), the rain leaning and the rain shadow, the smoke,
+  the Pennant and its recipe, and "Stalk them with the wind in your face."
+
+### 101.5 The screenshot aid, and what was left
+
+- `?scene=wind` (with `?autoplay=1`, use `?nosave=1`): `diagnostics.WIND_SCENE` — a lit campfire 4.5 cells ahead and 1.2
+  to the left, a Pennant 4 ahead and 1.3 to the right, a second Pennant 9 ahead and 3 to the left, each on cleared ground
+  floored with stone (`main.buildWindScene`). `?scene=wind-rain` the same, with the rain forced (`weather.force('rain')`,
+  which also raises the wind; as a screenshot aid the shower is at full strength at once, the sky grey and the field
+  run 150 steps, since a headless browser may draw a frame only every few seconds). `?time=` picks the moment and so
+  the wind (with `?time` the clock is frozen: the wind holds still, the flags still wave). `readSceneParam` accepts
+  'wind' and 'wind-rain' (§69.1: and 'animals', 'animal-variants').
+- Not done: leaves and tall plants swaying with the wind. It wants a vertex displacement in the chunk shader that knows
+  which vertices are leaves or plant tips, and the mesher marks nothing of the kind; left for later.
+- Tests: `tests/unit/windDrawn.test.js` (the pure helpers, the one calm, the vane on the page and on the screen in every
+  view, the rain in the wind and its rain shadow and cost, walking past walls through trims of the column cache, the
+  smoke and the particles, the flag's pose against the strength, the tracker (and a server's cells in a chunk not
+  generated here), the renderer, the block / tile / item / recipe / picker / purpose / handbook entries, main's wiring
+  and its eased shower); `tests/unit/rainRenderer.test.js` (a full cache forgets only the far columns);
+  `tests/unit/wind.test.js` (WIND_CALM, no dawn calm); `tests/unit/campfires.test.js` (a fire lit or put out in a chunk
+  not generated here, against a real World; the Pennant among the blocks not meshed); `tests/unit/harvest.test.js` (the
+  Pennant under §99: a quick pull by hand, never slow, never hard work); the pinned counts in wave0, tiles,
+  items, crafting, pickerModel, pickerUI, atlasIcons, homestead, flora, plantsNotFood, farming, aquifer, waterLaws and
+  handbook move by one.
+
+## 102. The compass — `src/compass.js` (PURE), `src/hud.js`, `src/styles.css`, `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/main.js`
+
+The user: "Let's add basic survival items to the crafting menu: compass: require iron. When in the inventory, a N
+indicator displays on the player's HUD." North is the world's −z everywhere in the game (wind.js `windFromWord`: yaw 0
+faces north, east is +x); the compass shows it on §101's wind vane.
+
+### 102.1 The item and its making
+
+- **Item** `compass` "Compass": a material (`kind: 'material'`), stack 1, appended to the materials after the seeds
+  (with §100's Bow, Bow Stave and Arrow, 272 items: 35 tools, 54 materials, 55 foods, 3 heals, 5 clothes, 120 block
+  items — §100.3). It is no tool and has no durability: it never wears, and does nothing in the hand. Its name ends in
+  "s" but is one thing (items.test's plural check lists it beside the Bellows; `itemName('compass', 1)` is "Compass").
+- **Recipe** `compass`, at the **Forge** (the iron age): `wrought_iron + copper_ingot + glass_shards` → `compass`, tool
+  `hammer 4` like the other forge work, 20 s — a magnetised iron needle in a copper case under a glass face. With §100's
+  three, 129 recipes (forge 16; §100.3). Wrought iron comes only from the Bloomery's bloom, so the compass needs iron.
+  Glass Shards come only from breaking a placed Glass block (harvest.js; Glass is made at the Bloomery and never
+  generated), so the build tree's reachability (progression.test, §77) models it: whatever is placed can be broken
+  again, its drops those of an edited cell (no `natural` ones).
+- **Picture** (itemArt, a material painter after the seeds): a round copper case (the copper tier palette, lit top-left)
+  with a little bow on top, a blue-grey glass face with a glint, and the needle across it on the diagonal — red to the
+  north (up and right), white to the south — on a dark pivot. Held in the hand it is a lump (heldItem.js, no haft).
+- **Purpose** "Carry it, and the wind vane shows north." (also its picker line, `blurbFor`).
+- **Picker**: Creative's Tools section, after the Casting Mold and before the Survival Handbook
+  (`PICKER_ITEM_SECTIONS`); search also by "north", "direction", "navigation", "needle" (`PICKER_ITEM_ALIASES`).
+- **Build tree**: nothing to add — the Forge's column lists it among what the Forge unlocks, from the recipe.
+- **Handbook**: the *Iron and steel* page: "The Forge also makes a *Compass*, an iron needle in a copper case under glass
+  (Wrought Iron Bar, Copper Ingot and Glass Shards). Carry it anywhere in your pack, and an N on the wind vane at the
+  top of the screen shows where north lies." (the inputs from the recipe); *The wind* page: "With a *Compass* in your
+  pack, an N on the dial shows where north lies." The Forge's recipe table gains the row.
+- survivalData's "good for something": a compass is carried (`uses.add(COMPASS_KEY)`).
+
+### 102.2 Carried, and where north lies (`compass.js`, PURE, no imports)
+
+- `COMPASS_KEY` 'compass'.
+- `compassCarried(survival, packSlots, hotbar, cursor = null)`: in **Survival**, a stack of it in ANY pack slot
+  (`Pack.slots`, all 27: the hotbar row is slots 0–8, so it counts too; the worn slots are not pack slots), or on the
+  pack screen's cursor (`SlotSession.cursor`: a compass being moved from slot to slot never leaves the pack, and
+  closing the screen puts it back — so the N does not blink out, nor the capsule shrink, under the drag); the Creative
+  hotbar is not read.
+  In **Creative** — and on a **server**, which is Creative (§96) — a slot of the Creative hotbar holds the compass's item
+  pick (§98: a hotbar slot may hold an item key); the pack and the cursor are not read. Null inputs: false.
+- `northAngle(yaw)`: where north lies on the HUD's dial, radians clockwise from the top (the way the player faces), in
+  (−π, π]. The player looks along (−sin yaw, −cos yaw); north (0, −1) is cos yaw of the way ahead and sin yaw of the
+  way to their right, so the bearing is yaw itself, wrapped — exactly windDrawn.vaneAngle of a wind blowing north.
+  Facing north (yaw 0): the top; facing east (+x, yaw −π/2): the left; facing west: the right; facing south: the
+  bottom. Turning right by d turns it by −d: it stays fixed to the world, like the wind's arrow.
+- `northDeg(yaw)`: that in whole degrees 0..359 (NaN yaw: 0). `northView(carried, yaw)`: `northDeg(yaw)` while
+  carried, else null — what main hands the HUD.
+- "Where the player looks" is the view on screen: the yaw main hands these is the camera's (`viewCamera`, §91), as for
+  the wind's arrow (§101.2) — the avatar's own in first person and behind, turned by π in the Front view, which looks
+  back at the avatar. Read against the screen, the N is always where north is.
+
+### 102.3 The N on the vane (`hud.setNorth`, `styles.css`)
+
+- `hud.setNorth(deg|null)`: `deg` is north's bearing in degrees clockwise from the top of the dial (rounded, taken mod
+  360); null is no compass. The DOM is touched only when the whole degree, or whether there is a compass, changes. A
+  page without `#wind-indicator` gets one made (as `setWind` does); the N may be told before the wind (the capsule stays
+  hidden until `setWind` shows it).
+- With a compass the capsule gains the class `wind-compass` and the dial grows a rim: the svg's viewBox goes from
+  `VANE_BOX` ('-12 -12 24 24', 22 px) to `COMPASS_BOX` ('-19 -19 38 38', 36 px), so the ring (r 10.5), the calm dot and
+  the arrow keep their size on screen, and `.wind-indicator.wind-compass` is 38 px tall (the dial and the capsule's
+  1 px rim; `padding-left: 0`, `gap: 8px` before the words). Its round end is concentric with the dial.
+- `g.wind-north`, put in under the arrow (the arrow is never hidden by it): `path.wind-north-tick` — a red radial tick
+  from r `NORTH_TICK` 6.4 to 9.4 (inside the ring), `transform="rotate(deg)"` — and `text.wind-north-letter` "N",
+  `font-size` `NORTH_LETTER_SIZE` 10.5, text-anchor middle, UPRIGHT whatever the bearing: its x, y are
+  `northLetterAt(deg)` — the middle and the baseline that put the capital's centre `NORTH_LETTER_R` 13.4 out at that
+  bearing (baseline 0.35 em below the centre), to 0.01. The whole letter stays inside the capsule's round end at every
+  bearing. Style: white, 800 weight, `var(--ui-font)`, a dark 1.6 px outline drawn under the fill (`paint-order:
+  stroke`); the tick `#ff5a48`, 2.2 wide, round caps. Glass, the capsule's places (desktop, Survival under the calendar
+  line, `html.touch` and the narrow tablet), the sway and the reduced-motion and no-glass fallbacks are §101's,
+  unchanged.
+- Without a compass (null) the group is taken out of the svg, the class removed and the viewBox and size restored: the
+  vane is exactly §101's.
+
+### 102.4 main, and the screenshot aid
+
+- In `stepWeather(dt, live, eyeY, viewYaw)` (`renderFrame` passes `cam.yaw`, from `viewCamera` just before), right
+  after `hud.setWind(vaneView(wind, viewYaw, vaneNow))`, every frame, both modes and every state with a player (the
+  pack screen too):
+  `hud.setNorth(northView(compassCarried(SV, pack.slots, hotbar, packSession.cursor), viewYaw));` (a scan of 27 slots
+  or 9 picks; the HUD skips unchanged degrees).
+- `?hold=compass` (§91 / §98.4, with `?autoplay=1&mode=creative`) puts the compass in the Creative hotbar: the N shows.
+  `?yaw=` (degrees) turns the view.
+- Tests: `tests/unit/compass.test.js` (the item, recipe, art, purpose, picker, handbook lines and build tree; carried or
+  not in Survival and Creative, and on the pack screen's cursor; the bearing against yaw and against vaneAngle, and in
+  each view mode against cameraPose; the N appearing and going on the page, its place, the DOM writes, the stylesheet;
+  main's wiring, the view's yaw included); `tests/unit/windDrawn.test.js` (the vane drawn with `viewYaw`);
+  `tests/integration/progression.test.js` (placed blocks break again; the Compass behind the Forge and behind Glass);
+  the pinned counts in items, crafting, itemArt, pickerModel, handbook, homestead and plantsNotFood move by one.
+## 103. The spyglass — `src/spyglass.js` (PURE), `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/controls.js`, `src/commands.js`, `src/touchControls.js`, `src/hud.js`, `src/styles.css`, `src/diagnostics.js`, `src/main.js`, `src/handbook.js`
+
+The user (2026-11-16): "Let's add basic survival items to the crafting menu: … spyglass: requires bronze + glass. Unlocks
+spyglass zoom + zoom command when in the player's inventory". (§102 is the compass.)
+
+### 103.1 The item
+
+`spyglass` "Spyglass": a material of stack 1 that never wears (no durability; made one at a time, §99). Recipe at the
+**Work Stump**: 2 bronze_ingot + glass (the block item) → 1, no tool, 15 s — a basic survival item, made as soon as there
+are bronze and glass (not at the circuits' Workbench, which wants steel, copper wire and a steel hammer). Purpose: "Carry
+it, and look through it to see far." (no key: the line shows in the pack and the picker on a tablet too). Its picture lies corner to corner: a leather eyepiece at the lower left, a narrow bronze draw tube and the
+wide main tube with dark bands where they meet, the glass lens shining at the upper right; held as a lump. In the
+picker's Tools after the handbook (search: telescope, zoom, lens, scope, far).
+
+### 103.2 Carried, looked through (`spyglass.js`)
+
+- `carriesSpyglass({ survival, count, hotbar })`: Survival — the pack holds one anywhere (`count('spyglass') > 0`);
+  Creative — one of the Creative hotbar's picks is the item pick 'spyglass' (§98). Nothing else counts.
+- `ZOOM_LEVELS` [2, 4, 8], `ZOOM_DEFAULT` 4. `zoomedFov(fov, z)` = 2·atan(tan(fov/2) / z) (everything z times bigger);
+  `zoomLookScale(z)` = 1 / z; `wheelZoom(z, notches)` — scrolling up (negative) one level closer per notch, down farther,
+  stopping at 2× and 8×; `parseZoomArg` ('2', '4x', '8×' → `{ zoom }`, 'off' → `{ off }`, none → `{ zoom: null }`, else
+  null); `zoomLabel(4)` "4×"; `SPYGLASS_NEEDED` "You need a spyglass".
+- `Spyglass`: `zoom`, `held`, `locked`, `shown` (the power the view shows). `step(dt, { carried, held })`: not carried,
+  neither lasts (held and the lock end); then `shown` eases in log space toward `zoom` while `looking` (held or locked)
+  and toward 1 after, at `ZOOM_EASE` 12/s (settled in about 0.3 s; snapped within 0.2 %). `lock(z|null)` (the power it
+  has with null; a power not in ZOOM_LEVELS is ignored), `unlock()`, `toggle()`, `button()` (the tablet's Zoom button: not
+  locked → locked at 2×; locked → the next power; after 8× → down; returns the power, 0 when down), `wheel(notches)` (only
+  while looking: true when it used the wheel), `fov(base)`, `lookScale()`, `vignette()` = ln(shown)/ln 2 to at most 1,
+  `handHidden` (looking, or shown > `ZOOM_HAND_AT` 1.05), `reset()` (not held, not locked, shown 1, the power back to
+  ZOOM_DEFAULT).
+- `glassPlace({ inHand, rightPressed, right, control, latched })` → `{ mine, held }`: Place is the glass's only with it in
+  hand; a press on a circuit control without Shift (`control`) is the control's, and so is every frame while the control
+  latch holds one (`latched`, §4.9: a Push Button stays pressed and the glass stays down); else `mine`, `held` = right.
+- `glassHint({ looking, locked, zoom }, touch)`: not looking "Spyglass · Hold RMB or Z to look through it"; looking on a
+  keyboard "Spyglass 4× · scroll: closer or farther"; on a tablet "Spyglass 4× · tap Zoom: closer" while kept up below 8×,
+  "Spyglass 8× · tap Zoom to put it down" at 8×, and just "Spyglass 4×" while Place holds it (no wheel, no Z on a tablet).
+- `serverZoomLine(line)`: the line to run on a server for a zoom command, else null — `/zoom …` always (`zoom` plus its
+  words; mistakes get the usage), `zoom`, `zoom 4`, `zoom off` without the slash (a whole command: "zoom zoom!" is chat).
+
+### 103.3 The keys, the look and the view (main, controls)
+
+- **Z** (`ZOOM_KEY` 'KeyZ', in controls' GAME_KEYS) held while playing looks through it; so does Place held with the
+  Spyglass in hand (`glassPlaceStep`, both modes, before the draw, through `glassPlace` with `latched: controlLatch.on`:
+  a press on a circuit control without Shift, and the latch's hold after it, are left to the control — in Creative the
+  frame then reaches `rightMouseStep` and `circuits.hold`; it lets go of any draw). Main steps it every frame (`stepSpyglass`, in renderFrame before the camera):
+  `controls.setLookScale(spyglass.lookScale())`, `renderer.setFov(spyglass.fov(fov) + camFx.fov)` (after the eased
+  sprint/draw FOV), `hud.setSpyglass`.
+- **The wheel** while looking steps the power (`spyglass.wheel`); otherwise it picks the hotbar slot as before.
+- **controls.js**: `lookScale` (1) and `setLookScale(s)` (clamped 0.01..1, non-finite 1): mouse movement and the touch
+  `virtualLook` turn by it.
+- **The view**: while the glass is up (`handHidden`) the camera is first person whatever `viewMode` says (`shownView()`:
+  the third-person views would look at the back of the head), the first-person hand is put away (`showArm` false), and
+  the crosshair, the hints and the HUD stay.
+- **Hint** with the Spyglass in hand and nothing else to say: `glassHint(spyglass, touchOn)` — `Spyglass · Hold RMB or Z
+  to look through it` (touch: "Hold Place, or tap Zoom, to look through it", §97.2), while looking `Spyglass 4× · scroll:
+  closer or farther` (a tablet: the Zoom button's words, never the wheel).
+- **Leaving a world** (`quitToTitle`, also when a server connection drops): `resetSpyglass()` — `spyglass.reset()`, the
+  Place hold forgotten, `controls.setLookScale(1)`, `hud.setSpyglass(null)`: the next world opens with no eyepiece, the
+  look at full speed and the power at 4×.
+
+### 103.4 The zoom command (§26)
+
+`zoom [2|4|8|off]` (args `choice:2|4|8|off`, min 0, **consoleOnly**; in help): through `ctx.spyglass` (`{ carried(),
+lock(z), unlock() }`; absent: "there is nothing to look through here"). `off` → "zoom off" / "the zoom is already off"
+(with or without a Spyglass). Otherwise without a Spyglass it fails `zoom: You need a spyglass — usage: zoom
+[2|4|8|off]`; with one it keeps the glass up at that power (alone: the power it has) — "looking through the Spyglass at
+4×: zoom off, Esc or a menu ends it; the wheel changes it". It lasts until `zoom off`, Esc or a menu: `setState` unlocks
+it on every state but PLAYING and CONSOLE (the console is where it is typed), and losing the Spyglass ends it.
+**On a server** (§96, Creative: a Spyglass on the hotbar) the console's lines are chat and commands are off, but the zoom
+command changes only this player's view: main's `onLine` runs `serverZoomLine(line)` through the runner before the chat
+(`zoom 4` and `/zoom 4` look; "zoom zoom!" is still said).
+
+### 103.5 The tablet's Zoom button (§95, §97)
+
+`TOUCH_BUTTONS.zoom` { 'Zoom', kind 'hook', hook 'onZoom' }, last in `TOP_BUTTONS`. `topButtonShown(id, view)`: every top
+button, but Zoom only while `view.zoom`. `TouchView` gains `zoom` (a Spyglass is carried) and `zoomOn` (kept up: the
+button is lit, `.on`). Main: `touchView.zoom = spyglassCarried()`, `touchView.zoomOn = spyglass.locked`; `onZoom` calls
+`spyglass.button()` — a tap a power, 2×, 4×, 8×, then down (a tablet has no wheel) — and without a Spyglass says
+SPYGLASS_NEEDED. TOUCH_WORDS rewrites "RMB or Z" as "Place, or tap Zoom,". The button stays in sight while the glass is
+up: the eyepiece lies under #touch-ui (103.6).
+
+### 103.6 The eyepiece (`hud.setSpyglass`, styles)
+
+`#spyglass-overlay` (`aria-hidden`) is its own layer, made just before #hud in #hud's parent (first in #hud only when
+the HUD has no parent): `position: fixed`, `z-index` 8 — over the canvas, under `#touch-ui` (9) and `#hud` (10), so a
+tablet's top bar (Menu, Blocks, Camera, Chat, the Zoom button that puts the glass down), its stick and its buttons, and
+the crosshair, the hints and the hotbar all draw over the dark ring. It holds `span.spyglass-power`. `setSpyglass({ amount, zoom }|null)`: opacity = amount in 1/32 steps, hidden at 0 or null, the
+power ("4×") shown while visible; the DOM only on change. CSS: a `radial-gradient(circle closest-side …)` clear to 84 %, a
+faint bronze rim at 88 %, near-black from 93 % — a round eyepiece the height of a landscape screen — `pointer-events:
+none`; the power sits low inside it (36vmin under the middle, above the hotbar).
+
+### 103.7 The screenshot aid, the guide, the tests
+
+- `?zoom=2|4|8` (`diagnostics.readZoomParam`, `Params.zoom`): once the world has loaded, main locks the zoom at that power
+  when a Spyglass is carried (Creative: `?hold=spyglass&zoom=4`).
+- The guide: a page "The Spyglass" in Controls after "Dropping and throwing" (the recipe at the Work Stump, Z or RMB, four
+  times nearer, the wheel's 2×, 4×, 8×, `zoom 4` / `zoom off` "on a server too", the tablet's button a tap a power); the
+  keys-move table's `Hold Z` row; keys-hands' `Hold RMB` row "… draw a bow or a spear; look through a Spyglass". The
+  workplaces page: the Work Stump "makes both bows and the Spyglass".
+- Tests: `tests/unit/spyglass.test.js` (the gate in both modes, zoomedFov and the look's scale, the hold easing in and out,
+  the wheel, the lock, the button's ladder, reset, controls' lookScale, the zoom command with and without a Spyglass and
+  on a server, the touch button's visibility (lit and still shown while kept up), the hints per mode, the eyepiece's
+  layer under the touch controls, Place on a latched control in Creative, the screenshot aid, main's wiring read from the
+  source).
+
+## 104. Characters, phase 2: the zombies, the Watcher and the figure, hex-faceted — `src/zombieModel.js`, `src/watcherModel.js` (PURE), `src/zombieRenderer.js`, `src/watcherRenderer.js`, `src/phantomRenderer.js` (three), `src/lightShader.js`, `src/avatarRenderer.js`, `src/pilotModels.js`, `src/gallery.js`, `src/diagnostics.js`, `src/types.js`, `src/main.js`, `README.md`
+
+Amends §39.2, §40.4, §61, §74, §86 (`SHIELD_ARM.twist`) and §87.5; follows §91 (docs/DESIGN-characters.md, phase 2). Only the look changes: the zombies'
+colliders, heights, ray targets, behaviour, kinds and animation (`ARMS`, the lean, the limp, the lurch, the twitch, the shield,
+dormancy, the ghosts' `renderScale` / `renderSpin`, the hurt and burn twins and their timing) are as before — only the hit
+flash's colour is no longer red (§104.2); the Watcher's parts, sizes, motion and lights too.
+
+### 104.1 The zombies' models (`zombieModel.js`, PURE)
+
+- **Look.** Style A, hex-faceted, from the figure kit (figureKit.js), like the avatars: tapered hexagonal columns (legs,
+  torso, neck, arms), a faceted head loft — gaunt: `ZOMBIE_HEAD` (a narrow jaw, hollow cheeks, a long skull; the alpha's
+  `ALPHA_HEAD` a heavy square jaw) — with a heavy BROW (a wedge on the face plane, its ridge an overhang over the slits;
+  the alpha's two in a V, a scowl), a nose wedge and hex ears; flattened hex hands (a palm and the fingers curled, flexed
+  forward from the wrist, so a held-out arm's hand hangs limp); chamfered shoes. People, spooky not frightening: no blood,
+  wounds, bones or fangs, and no red texel anywhere.
+- **Hair** (`zombieHair(kind)` → `{ cap, clumps }` in the head's frame, the chin at the origin; pass 3 of the pilot): a
+  scalp CAP built against the kind's OWN head loft (`figureKit.hairMass` over `ZOMBIE_HEAD` or `ALPHA_HEAD`; its points over
+  the head's eight corners and straight behind and ahead, `ZOMBIE_CAP_RINGS` [0, 0.1, 0.2, 0.4, 0.55, 1] hairline to
+  crown, 98 triangles), so the skull never shows through it — `zombieHairGaps(kind)` (avatarModel.hairGaps' ray test: head
+  corners above the hairline outside the cap) is 0 for every kind (the alpha's square-jawed head once wore a child's
+  tilted shell, and a pale strip of skull showed across its brow) — and a few CLUMPS lying on it (`figureKit.clump`):
+  the walker's thin and receding (a flat cap high at the temples, two lank strands over the brow, straggles over the
+  ears and at the nape); the runner's wild straw swept ONE way — a messy fringe across the brow to its left temple, the
+  rest back over the crown and the sides, only the tips lifting off (never a crown of spikes); the alpha's long and dark
+  (a cap down over the tops of the ears, two locks over the brow, a lock framing the face either side and two heavy ones
+  hanging behind to the shoulders).
+- **Kinds** (`ZOMBIE_MODEL_KINDS` walker | runner | alpha; anything else is a walker): the walker average (a faded flannel
+  shirt torn at the hem, the sleeves and in two places, a sewn patch, a button gone; patched trousers frayed above a bare
+  ankle; old shoes); the runner leaner (thinner limbs and torso; a thin tee with a faded band and rips, track trousers
+  ripped at the knee, worn sneakers); the alpha bigger and heavier (its own rig: broad shoulders, thick limbs, a short thick
+  neck; a long ragged coat open down the front, its tails below the hips, long sleeves with ragged cuffs, a turned-up
+  collar, buttons; heavy boots). Faces (`paintZombieFace`): sunken hollows round narrow slits, bags, lit cheekbones over
+  hollow cheeks, the nose's shadow; the walker's slits level with a dull glint (open but empty) and a slack mouth; the
+  runner's uneven, a pale pinprick in each, one brow hitched, a tight grimace with a few pale teeth; the alpha's slanted
+  down to the nose under a scowl, a hard mouth turned down. Earth and dust smudges on the cloth (`grime`, never red).
+- **Parts and rig.** `zombieModel(kind)` (built once, shared; `buildZombieModel` builds afresh) → `{ kind, parts, rig,
+  image, glow, tris, texels, atlas, dims }`. `parts` are `ZOMBIE_PARTS` — `leg` (from its hip: the shoe, the ankle, the
+  trouser leg up past the joint), `upperArm` (from its shoulder: the arm and its sleeve, rounded over the shoulder),
+  `foreArm` (from its elbow: the forearm, the alpha's cuff, the hand), `torso` (from the hips: the trousers' seat and belt,
+  the shirt, the collar; the alpha's coat), `head` (from the head's pivot at the top of the torso: the neck, the head, its
+  features and hair) — each at rest hanging straight, a closed solid wound outward, its uvs on the kind's atlas; `rects`
+  (each skin's main rectangle in the atlas, for the tests). `rig` =
+  `zombieRig(kind)` = `{ legX, legH, torsoH, shoulderX, shoulderY, upperL, foreL, wristL }` (metres before the kind's draw
+  scale): walker 0.1, 0.84, 0.58, 0.205, 0.515, 0.3, 0.34, 0.245; the runner the same but legX 0.095 and shoulderX 0.19;
+  the alpha 0.112, 0.84, 0.565, 0.245, 0.5, 0.3, 0.35, 0.25. `dims` = `{ headW, headD, headH (pivot to crown), eyeY (the
+  slits over the pivot), foreW, height (feet to crown at rest) }`; the height is under ZOMBIE_HEIGHT (and over it − 0.15),
+  at least 4.3 heads. `zombieRestGeometry(kind)` is the whole figure standing (the gallery, the pilot).
+- **Budgets.** One zombie (the leg and the arms counted twice): walker 1,231, runner 1,289, alpha 1,298 triangles
+  (tested: 900 < tris ≤ 1,320). One 256² atlas (`ZOMBIE_ATLAS`) and one 256² glow image per kind: 1.5 MB of textures for
+  the three (2.1 MB with mipmaps). Built in ≈ 80 ms for the three (Node), once a page.
+- **The atlas** (paintKit, sRGB bytes, row 0 at the top): bodies at `DENSITY.body` (96 px/m; the alpha's seat at half —
+  under its coat, only the belt shows in the opening — but its shirt, the middle of its open front, at full density with
+  a placket and small DARK buttons, a dark rim round a dull face: a pale 1.4-px button blurred by a mipmap read as a
+  glowing smudge; nothing on that shirt is lighter than its lightest cloth), the head at `DENSITY.head`, shoes at 128;
+  the rectangles packed tallest first, or — when that leaves no room — widest first, then largest first
+  (`figureKit.Skin.pack`; a model that packed before packs exactly as before); alpha 0 where cloth is torn away (`ragged` hems, the coat's
+  open front), so the renderer's alphaTest cuts them see-through. The cloth a shirt tint colours — the walker's and the
+  runner's `shirt`, `sleeve` and `collar` — has alpha `TINT_ALPHA` (191) instead of 255; nothing else does, never on the
+  alpha. Painted the same every time.
+- **The glow image**, in step with the atlas: wherever the atlas is opaque, its own colour × `NIGHT_SELF_LIGHT` (0.22)
+  cooled by `NIGHT_TINT` (0xd8ffe4) — a faint self-light that keeps a zombie's clothes readable on a moonlit night (a flat
+  glow turned it into a glowing statue) — and over that the slits in `EYE_GLOW` (walker 0x4f8a58 a faint marsh green,
+  runner 0xc4cb92 on its pinpricks only, alpha 0xbaa65a a pale gold; never red, never warmer than gold); black where the
+  atlas is cut away. The renderer tints this light on the shirt as it tints the cloth (§104.2), so a crowd differs by
+  night too.
+
+### 104.2 The zombies drawn (`zombieRenderer.js`)
+
+- **API unchanged**: `createZombieRenderer(scene, _atlasTexture, capacity)` → `{ sync(zombies, t = 0, dark = 1), count(),
+  dispose(), group, prewarm(webgl, camera) }`; main's calls are as they were. Still exported: `ALPHA_SCALE`, `RUNNER_WIDTH`
+  0.9, `SHIRT_TINTS`, `ARMS`, `WALKER_DROOP`, `RUNNER_COCK`, `TWITCH_*`, `twitchOf`, `SHIELD_*`, `shieldOf`, `GLOW_DAY`,
+  `boxesGeometry` (the animals'), `zombieGeometries(kind)` (now the model's parts as BufferGeometries); the walker's joints
+  as `LEG_H`, `LEG_X`, `TORSO_H`, `UPPER_L`, `FORE_L`, `ARM_L`, `SHOULDER_X`, `SHOULDER_Y`, and every kind's as `RIGS`.
+  Gone: `skinBox`, `HEAD_W/H/D`, `TORSO_W/D`, `HAIR_PUFF`, `COAT_PUFF`, `MODEL_HEIGHT` (the model's `dims`).
+- **Instanced per part.** Per kind and state the same five InstancedMeshes as §74 (`zombie-legs-<kind>`,
+  `-upper-arms-`, `-forearms-`, `-torso-`, `-head-`, + `-hurt`, `-burn`): a crowd of one kind is 5 draw calls whatever
+  its size, 15 for all three, bounded by parts, never by zombies. Each part hangs from its kind's rig (`RIGS[kind]`) with
+  the matrices of §61/§74/§86, unchanged.
+- **Materials.** Per kind one painted map and one glow map (DataTextures: sRGB, LinearFilter, LinearMipmapLinear, mipmaps,
+  anisotropy 4) and three MeshLambertMaterials (`alphaTest` 0.5): base (`emissive` white × the glow image,
+  `emissiveIntensity` GLOW_DAY + (1 − GLOW_DAY) × dark, GLOW_DAY now 0.02: by day in the open the slits are dark), hurt
+  (emissive `ZOMBIE_HURT` 0xdfeee4 × `ZOMBIE_HURT_INTENSITY` 0.7: the hit flash, a pale cold grey-green — never red on a
+  zombie, DESIGN-characters §2; §39's timing unchanged; the pigs and animals keep 0xff2a2a) and burn (colour 0x8a7c72,
+  emissive 0xff6a1a × 0.55). All share one program key (`ZOMBIE_PROGRAM`) and `patchZombieShader(shader, glow)`: lit like
+  every object (the light volume, §62) plus a fill (`lightShader.patchFillShader` with `ZOMBIE_FILL` [0.92, 1, 0.9] ×
+  0.12: the facets turned from the light keep their colour and still go dark at night); the shirt tint (`TINT_FRAGMENT` in
+  place of three's color_fragment: the instance colour multiplies a texel by how far its alpha is below 1 toward
+  TINT_ALPHA — the shirt alone; skin, hair and trousers stay as painted — kept as `zTint`); the same tint on the glow
+  image's light (`GLOW_TINT_FRAGMENT`, after three's emissivemap_fragment, only with a glow image: at night the
+  self-light outshines the moonlit cloth, and untinted it turned a crowd of walkers into one grey shirt repeated; the
+  eyes are not marked, the flash and the embers have no glow image); and the glow by where the zombie stands
+  (`GLOW_LOCAL_FRAGMENT`, after the light: the glow image's light × max(`zombieGlow`, GLOW_DAY + (1 − GLOW_DAY) × (1 −
+  caelSky)) / `zombieGlow`, where `zombieGlow` is one uniform every zombie program shares, set by `sync` to the glow by the
+  hour — so out of the sky's reach, in a cave or under a roof, the slits and the self-light shine as at night whatever the
+  hour, and under the open sky by day they stay dark).
+- **Shirts.** `SHIRT_TINTS` [0xffffff, 0xa9bedd, 0xd9c29c, 0xbccf96, 0xe6d08e, 0xc6b4d8, 0xa2cdbf]: faded and pale, none
+  red; walkers and runners by id as before, the alpha as painted.
+- **The shield** (§86) keeps its rule; for the new rig `SHIELD_ARM` is `{ reach 1.75, bend 1.4, spread 0, twist 0.65 }`:
+  the hand comes before the eye on its own side, a few centimetres in front of the face, and no part of the arm enters
+  the head's box on the way up (tested with the parts' own vertices).
+- **Cost of a crowd** (`?scene=crowd`, 24 zombies: 18 walkers, 5 runners, an alpha): 15 draw calls, 29,901 triangles
+  (≈ 1,250 a zombie; the box zombies were 108 each), one `sync` of the 24 ≈ 0.1 ms of CPU (Node, a renderer of
+  capacity 24 as main's, 5 × 2,000 syncs; the same as before the hair was rebuilt).
+
+### 104.3 The Watcher (`watcherModel.js` PURE, `watcherRenderer.js`)
+
+- The same figure, numbers and motion (§40.4: the constants live in watcherModel.js and are re-exported), built from the
+  kit: each ring is `hexBand` — a hollow pointy-top hex band whose outer top and bottom edges are chamfered `RING_CHAMFER`
+  (0.012), six mitred facets swept round its section (a ringLoft round the corners, so every face is flat and the band is
+  one closed solid), ≤ 80 triangles; the lantern two heavier chamfered bands and six slim tapered hex posts; the core a hex
+  BIPYRAMID crystal (`CORE_R` widest a little below its middle); the wisp three open tapered hex tubes with a per-vertex
+  alpha (`smokeAlpha`). ≈ 830 triangles in all.
+- **Paint** (`WATCHER_ATLAS` 256², `WATCHER_DENSITY` 128 px/m): weathered ash grey (`WATCHER_ASH`), mottled and pitted;
+  one strip serves every ring (each starts it at its own corner, so the cracks fall differently) and one the rims; a band's
+  strip is shaded across its section (`bandZones`, `BAND_SHADE`: outer wall 1, chamfers 0.94, top 0.9, underside 0.72,
+  inner wall 0.5 — the hollow reads; the vertex shades are gone); thin cracks wander round the outer walls as dark teal
+  grooves (`CRACK_GROOVE`). The glow image in step: the stone × `WATCHER_SELF_LIGHT` (0.4) and the cracks `CRACK_LIGHT`
+  cyan. The stone material is `map` = the atlas, `emissiveMap` = the glow image (both its own DataTextures, linear with
+  mipmaps), pulsing as before; the smoke shares the atlas. `dispose` frees the three textures it owns.
+
+### 104.4 The figure at the edge of sight (`phantomRenderer.js`)
+
+A dark person-shaped shadow from the kit (`phantomGeometry()`, 492 triangles, no uvs): two tapered hex legs, a body with
+a narrower waist and shoulders that SLOPE in to the neck (never square), arms hanging from the shoulders angled out from
+the body (0.12 rad), so from the front there is daylight between each arm and the body (armpits: not one slab on two
+sticks), a thick neck, a faceted head with a grown-up's fuller jaw (`PHANTOM_HEAD`) under a plain mass of hair that
+rounds its crown (`hairMass`), its top at FIGURE_HEIGHT — no face, no eyes, no arms out; 0.6 m across the hands. Drawn
+twice from one geometry: `phantom-depth` (colour writes off, depth on) then `phantom-shape` (the unlit, transparent
+`material`, depthFunc LessEqual), so it is one even shadow where its parts overlap. Both draw after EVERY other
+transparent thing (`PHANTOM_ORDER` { depth 20, shape 21 }: the particles, the rain and snow and the Watcher's glow are 3,
+the campfire's flames 2–4 and its smoke 10), so the depth the pre-pass writes clips nothing drawn later — at 2 and 3 a
+faint or fading-in figure cut a crisp person-shaped piece out of the smoke, flames or particles behind it. Everything else
+of §87.5 stands.
+
+### 104.5 Shared light, the pilot and the gallery
+
+- `lightShader.fillFragment(color, strength)` / `patchFillShader(shader, fill)`: the fill GLSL that avatarRenderer used
+  alone (patchAvatarShader now calls it with AVATAR_FILL; its output is unchanged).
+- `figureKit.Skin.pack`: tallest first as before; when that leaves no room on the atlas it tries widest first, then
+  largest first, on a fresh atlas (the alpha's full-density shirt needs it); what packed before packs the same.
+- `pilotModels.buildPilot('zombie')` is the game's walker (`zombieRestGeometry`); the pilot's own walker is gone. The
+  gallery's `?row=zombie` shows the three kinds through the game's renderer (after someone; idle, the runner shielding its
+  eyes); `?row=zhead` their heads close up; `?row=watcher` the Watcher and the figure.
+
+### 104.6 The screenshot aid (`diagnostics.js`, main; README's URL table)
+
+`?scene=zombies|crowd|watcher|phantom` (with `?autoplay=1`; `SCENE_NAMES`, `readSceneParam`): main's `buildFigureScene`
+levels a hex patch ahead with the player's feet (cleared above, filled below with what the player stands on, like
+`?scene=wind`) and stages, facing the player: `ZOMBIE_SCENE` (a walker, a runner and an alpha 3–4.5 m off, after
+someone), `crowdScene()` (`CROWD_SIZE` 24 in a fixed loose crowd 6–17 m off, one alpha, a few runners), the Watcher at
+`WATCHER_SCENE` (4.6 m) or the figure at `PHANTOM_SCENE` (6.5 m, at FIGURE_ALPHA). They are DRAWN ONLY — `sceneZombies`
+join the zombie renderer's list each frame, `sceneWatcher` replaces `watcher.figure` for its renderer, `scenePhantom` is
+synced after the tired eyes' figure — and are in no list of mobs: they never move, strike, vanish or save; quitting to the
+title clears them. `?time=` picks day or night. The debug panel's first line gains `draws` and `tris` (renderer.getStats).
+
+### 104.7 Tests
+
+`tests/unit/zombieModel.test.js` (kinds and parts, budgets, closed outward geometry, the joints, each kind's build, the
+hair hugging each kind's own skull — `zombieHairGaps` 0, a cap and a few clumps close to the head — and the runner's swept
+one way, the atlas and glow image, nothing red, the ragged cut-outs, the tint mark, the alpha's full-density shirt with
+no pale spot, the night self-light), `zombieRenderer.test.js` (the kit parts per kind, the materials and the shader
+patch — the tint on the cloth and on its glow, the glow by where it stands, one shared `zombieGlow` set by sync — the
+pale hit flash, every §61/§74/§86 pose test on the new rig, the shield against the head's own geometry, dispose freeing
+its 15 geometries, 9 materials and 6 textures, the scene aid), `watcherRenderer.test.js` (the chamfered bands, the
+painted stone and its glow, three owned textures), `sleep.test.js` (the figure: kit geometry, sloping shoulders and arms
+clear of the body, the depth pre-pass drawn after every transparent effect), `prewarm.test.js` and `pilotModels.test.js`
+unchanged and passing.
+
+## 105. Every plant hex-faceted: kit models on a painted plant atlas, with levels of detail — `src/plantKit.js`, `src/plantAtlas.js`, `src/plantModels.js` (PURE), `src/mesher.js`, `src/world.js`, `src/chunk.js`, `src/config.js`, `src/lightShader.js`, `src/renderer.js`, `src/atlas.js`, `src/fallingRenderer.js`, `src/main.js`, `src/diagnostics.js`, `src/types.js`, `src/gallery.js`, `src/plantViewer.js`, `plants.html`
+
+Phase 4 of docs/DESIGN-characters.md ("style A, HEX-FACETED everywhere"). Replaces §78's boxes and cards for every plant,
+amends §59, §62, §75, §78, §80.4, §81.2, §85, §9 and §10. Only the drawing changes: no block, item, tile, recipe, drop,
+collider, pick, harvest, growth, spreading or light rule moves. The user: foliage must read as LEAVES — branches carrying
+tiers of hexagonal leaf cards with gaps, a lower skirt so a shrub is full at the bottom, berries hanging; never a leaf
+ball, never a boulder; far away a cheap leafy version, never a ball.
+
+### 105.1 The kit (`plantKit.js`, PURE)
+
+- `Plant(lod, bare, seed)` builds one model; a recipe calls its helpers, which thin themselves out at `PLANT_LOD_FAR`:
+  `stem(a, b, r0, r1, key, o)` (a faceted column: six sides when r0 ≥ 1.2 cm, four when thin, three FAR; no caps unless
+  asked; optional bulging `rings`), `stemPath` (one column per segment, half of them FAR), `leaf(base, dir, len, wid, key,
+  o)` (a leaf CARD: a flat hexagon pointed at both ends — `LEAF_SHAPES` hex, round, lance, heart, or a diamond — folded
+  along its midrib by `fold` so its halves are two facets, 4 triangles, a diamond 2; FAR always a diamond; lifted so its
+  tip never goes below 1.2 cm), `whorl(at, n, …)` (n leaves round one point; FAR keeps `keep` (default 0.34) of them),
+  `spray(from, to, n, …)` (n leaves stepping along a twig a golden angle apart, splayed out and lifted to the light, the
+  last carrying the twig on; FAR keeps 0.25 of them, spread along the twig and always the last — the tip's leaf gives the
+  twig its reach and height). A FAR leaf standing for f near ones grows by `farLeafGrowth(f)`: its length by √f up to
+  `FAR_LEAF_LONGER` 1.1, the rest of their area in its width up to `FAR_LEAF_WIDER` 1.9 — so a thinned plant keeps the near
+  one's reach and height, a little less leafy (it was √f both ways, up to 1.75–1.8: the far healwort reached 65 % farther,
+  the far honeyberry splayed out flat like a palm). `blade` (a tapering ribbon arching out,
+  `segs` segments, ONE triangle FAR), `frond` (a cut-out picture on a bending strip; at most two segments FAR),
+  `disc(at, face, r, …)` (a flat n-gon with a raised centre: a flower, a plate of florets), `gem` (a faceted spindle: a
+  berry, a nut, a bud; FAR a three-sided point of four triangles), `ball` (a faceted loft: an apple, a bulb, a flower
+  head), `solid(a, b, loftOptions, key, o)` (any faceted loft laid along a segment: a cap, a pad, a thick leaf).
+- `frame(a, b, back, roll)` is alongSegment with a safe hint: when the segment runs along the hint, a hint across it is
+  used, so a part standing straight up never collapses.
+- Options of any part: `fruit` (left off a picked plant — after the recipe has run, so a picked plant is the same plant
+  leaf for leaf), `lift` (the least shade its vertices get: berries and flowers bright among the leaves), `top` /
+  `bottom` (a solid's cap pictures), `soft` (a solid whose normals lean 0..1 toward the plant's outside and up: a thick
+  leaf, a pad).
+- `compile({ open = 0.32, ground = 0.82 })` → **CompiledPlant** `{ data, index, verts, tris, block, keys, vkey, vfruit,
+  height, reach }`: `PLANT_STRIDE` (9) floats a vertex — x, y, z (m, from the middle of the cell's floor, y ≥ 0), the
+  unit normal, the plant-atlas u, v, a SHADE — and Uint16 indices; `keys` the pictures, `vkey` each vertex's (a solid's
+  caps their own), `vfruit` 1 on a fruit vertex. The SHADE is baked light the cell's light and the sun then multiply:
+  `1 − open · (1 − openness)`, openness `clamp(0.12 + 0.55·y/H + 0.55·|xz|/R)` (the inside and the foot are darker, the
+  outer top fully lit); a solid × `0.82 + 0.18·(0.5 + 0.5·ny)`; × `ground` within 3 cm of the floor; at least `lift`.
+  A CARD's normal is its upper side's (turned up when it faced down) leaned 45 % toward the plant's outside (from a
+  point 0.4 of its height up) and a little up; the shader never turns a plant's normal round (105.4), so a leaf is lit
+  alike from both sides and foliage reads as a lit mass, brighter on top and on the sunny side, not as black backs.
+- A recipe draws every random number near and far alike, then skips a part far away (the cattails' blades, the tuber's
+  leaves): the far plant's parts stand where the near one's do.
+- `PLANT_LOD_NEAR` 0, `PLANT_LOD_FAR` 1, `PLANT_LOD_CARD` 2. **CompiledPlant** has no `block` flag any more (every model
+  and card is on the plant atlas).
+
+### 105.2 The plant atlas (`plantAtlas.js`, PURE)
+
+- One image `PLANT_ATLAS_W` × `PLANT_ATLAS_H` (1024 × 256) holds every picture of every plant and of the ground litter
+  (72 pictures, 78 208 texels in 132 rows: room to spare), each a named rectangle packed tallest first with a `PLANT_ATLAS_PAD` (4)
+  gutter (paintKit Atlas), at about 160 px a metre, all above `PLANT_CARD_TOP` (144); below it the far CARDS' grid
+  (105.3): `PLANT_CARD_SLOTS` (36: two rows of eighteen) squares of `PLANT_CARD_PX` (48), `PLANT_CARD_GAP` (8, two
+  gutters) apart — a card's neighbours are other cards' clear margins, never a solid picture, so no frame bleeds round a
+  far card at any mip level. `plantCardRect(i)` → slot i's rectangle (a RangeError past the grid). `plantAtlasLayout()` → `{ width, height, rects, cut }` is known
+  without painting a pixel (the mesher and the tests need only uvs); `plantRect(key)`, `plantUV(key, fu, fv)`,
+  `plantPictureKeys()`, `PLANT_PALETTE` (each plant's colours follow its 16-px tile, so a model and its Pack icon are
+  plainly the same plant).
+- `paintPlantAtlas()` paints it once (deterministic: each painter seeded by its picture's name; ≈ 100 ms in Node), cached.
+  SOLID pictures (a leaf's face — darker at the stalk and the edges, lighter at the tip, a pale midrib, paired side veins
+  sweeping to the tip, a fine mottle; bark; skins with a glint, a dusty bloom on the honeyberry, a blush on the apple;
+  earth with clods and furrows; stone with lichen; glassy flint) are opaque everywhere: the geometry gives the outline.
+  CUT-OUTS (`cut`: the fern's frond, the carrot's lacy leaf — the hemlock's is the same picture —, the thistle's spiny leaf,
+  the daisy, the flax flower, the nightshade's star, the hemlock's plate of florets) have alpha snapped to 0 or 255 and
+  their clear texels coloured from their neighbours (six texels deep, then the picture's mean), so filtering never pulls
+  in black. `finishCutout(img, rect)` does the same to a picture painted elsewhere (the cards).
+- `plantAtlasMips()` → `PLANT_ATLAS_MIPS` (6) levels, 1024 × 256 → 32 × 8: a texel is its 2 × 2 children, colour
+  alpha-weighted, alpha halfway between their mean and the most opaque (a frond thins far away but does not vanish).
+- `PLANT_UV_OFFSET` 2: a plant vertex's u is its atlas u + 2 (105.4).
+
+### 105.3 The models (`plantModels.js`, PURE)
+
+- `KIT_MODEL_IDS`: the 25 wild plants (§76, §78, §81, picked ones included), the 18 farm blocks (§80) and the ground
+  litter (LOOSE_STONES, FALLEN_BRANCHES, GROUND_NEST, GROUND_NEST_EMPTY) — each a recipe built from the kit;
+  `isKitModel(id)`, `plantVariants(id)` (1–3 seeds of the recipe, chosen per cell; LOOSE_STONES has two, plus its flint
+  one `LOOSE_STONES_FLINT` 2, shown where `blocks.flintAt` says the column holds flint, §70), `buildPlantModel(id, lod, v)`
+  (uncached), `plantMesh(id, lod, v)` (cached; v wraps).
+- A picked plant is its ripe plant's recipe and seed built `bare` (the same vertices in the same order less the fruit's);
+  the Nightshade, ripe or picked, grows from the Honeyberry's seed: its berries hang exactly where the honeyberry's do,
+  and picked it IS the picked Honeyberry, float for float.
+- CARD: `plantCard(id)` — two crossed quads (at 45° and 135°) of a picture of the PLANT ITSELF in its card slot of the
+  plant atlas (`plantCardSlot(id)`: the card-able ids — the 25 wild plants, ripe and picked — in id order), each spanning
+  the near model's width and height (a pixel more round it), its foot on the floor, the picture's plant exactly the
+  model's size; normals straight up, shade 1 (the picture carries the shade), plant-atlas uvs like a model's (the mesher
+  adds PLANT_UV_OFFSET: u past 1.5, so the shader never turns a card's normal round — it is lit alike from both sides).
+  It was the block's 16-px TOP tile in the BLOCK atlas: past 48 m every bush became its old Pack icon (a ball, a pixel
+  lollipop tree) in other colours, half of the cards were near-black from behind (three turned their up normals down),
+  and coarse block-atlas mips drew a faint frame round each. The litter and the farm's mounds keep their FAR model at
+  CARD (an upright picture of a stone would read wrong): `plantCardSlot` −1.
+- The card's picture (`plantAtlasImage()`: a copy of paintPlantAtlas's image with every card painted into its slot,
+  cached; atlas.createPlantAtlasTexture's image) is the near model (variant 0) rasterised from the side it is widest from
+  (of eight ways round: a prickly pear's pads face on), at `k` pixels a metre so the wider of its width and height fills
+  the slot but `CARD_MARGIN_PX` (2) of clear round it, nearest triangle first per sample, 2 × 2 samples a pixel: each
+  sample the atlas texel its uv names (a cut-out's clear texel leaves it to what is behind) × the vertex's baked shade ×
+  `cardLightRatio(ny)` — the light a face of that normal gets from the sky's hemisphere (ground 0.15 of the sky) and a
+  sun 40° up round the plant, beside a face looking up (how the card is lit: its normal is up) — so the card is as bright
+  as the leaves it stands for; then finished like any cut-out. ≈ 100 ms more at boot (Node, a loaded machine), beside the
+  25 near models it needs (≈ 170 ms, most of which near chunks build anyway).
+
+| plant | near model | near / far tris |
+|---|---|---|
+| Honeyberry Bush | a thick hex trunk; a SKIRT of two leaf rings drooping to the ground; eight branches and a leader, each with a low whorl, two side twigs and three sprays of leaves with gaps (no solid core); elongated blue berries hanging in threes under the six twigs that reach farthest out | 1 224 / 130 |
+| Nightshade Bush | the honeyberry's bush leaf for leaf; round glossy black berries in the same places; three purple star flowers (fruit) | 1 311 / 145 |
+| picked bushes | the same less the berries (and the stars) | 972 / 106 |
+| Hazel Thicket | a vase of seven slender stems leaning out of one stool, rounded leaves in sprays up each, a side shoot each, a low skirt; nuts in frilly pale husks in twos and threes | 1 090 / 176 |
+| Crab Apple Bush | a little tree: a flared trunk to a fork, a crown of seven branches and a leader in sprays, a ring of leaves under it; red apples hanging on stalks (far away its sprays keep a third: `keep` 0.34) | 1 146 / 222 |
+| Healwort | a silver rosette of lance leaves in two tiers; three violet flower spikes on stalks (fruit) | 198 / 94 |
+| Wild Onion | three squat white bulbs, three hollow leaves arching from each; a tall stalk with a lilac-white flower ball | 340 / 194 |
+| Wild Carrot | an orange root crown; eight lacy fronds arching out and one upright | 80 / 62 |
+| Hemlock | the carrot's fronds (fewer) round a PALE crown; a purple-blotched stalk with a domed white plate of florets on top and two more on leaning stalks | 112 / 83 |
+| Wild Tuber | the knobbly tuber showing; ten broad heart leaves on short stalks in two low tiers | 144 / 30 |
+| Tussock | 22 blades in a tuft, the inner ones standing, the outer ones arching over, golden at the tips | 66 / 11 |
+| Cattails | three stalks with fat brown velvet heads and a spike above each; nine long arching blades (far away five, and the longest) | 219 / 108 |
+| Prickly Pear | four oval pads (soft-normalled solids) growing from each other's rims, spined areoles; red fruit on the rims (fruit) over pale scars | 429 / 195 |
+| Honeycap / Frecklecap | faceted caps on hex stems — a fat golden dome over a pale yellow sponge on a cream stem; a wide flat freckled cap with a low peak over white gills on a thin white stem with a ring and a bulb — two or three of them | 204 / 100, 324 / 124 |
+| Fern | a fibrous crown; three young fronds; eleven cut-out fronds arching over in two tiers | 132 / 50 |
+| Meadow Daisies | a tuft of lance leaves; three daisies (white disc, golden heart, domed) tipped out on thin stems, and a bud | 134 / 74 |
+| Thistle | a stout stalk; jagged spiny cut-out leaves in three tiers; a scaly green bulb with a magenta brush on top (its highest part), and a smaller head on a side branch | 178 / 104 |
+| Flax | six slender dark stems leaning apart, tiny leaves up them, a sky-blue five-petalled flower tipped out on each, buds | 226 / 102 |
+| Aloe | a rosette of eleven thick four-sided wedges (soft-normalled), pale-flecked, pale-toothed along both edges | 240 / 180 |
+| seedbed (all nine) | a low faceted hexagonal mound of dark tilled earth raked across its top; a marker twig with a pale rag | 53 / 43 |
+| sprouts | the same mound with a seedling of its own crop: carrot fronds, onion's hollow leaves, a tuber leaf, a twig of the bush or tree it will be, a silver rosette, a little pad, reeds | 48–113 |
+| Loose Stones | three irregular faceted lumps, the middle one dark flint where the column holds flint | 141 / 69 |
+| Fallen Branches | a stick lying, one propped across it, twigs; sawn pale ends; dead leaves | 72 / 28 |
+| Ground Nest (Empty) | a woven faceted ring with a rolled rim round a bed of grass; three speckled eggs (fruit) | 204 / 85 (72 / 25) |
+
+Limits (`plantModels.test.js`): a model stands on the floor (lowest y in [0, 0.03)), is at most 0.95 m tall (× the
+largest per-cell size 1.05 it stays under the cell's roof) and reaches at most 0.58 m from the middle; a plant is taller
+than 0.13 m and wider than 0.18 m, litter taller than 0.08 m and wider than 0.3 m; NEAR ≤ 1 400 triangles, FAR ≤ 260 and
+≤ NEAR; a bush > 800 NEAR and more than 5× its FAR; the tussock ≤ 80 / 12; the fern and the daisies ≤ 160 NEAR; far away
+a bush, the hazel, the crab apple, the fern and the tussock reach at least 80 % as far and stand 80 % as tall as near, and
+at least 40 % of their vertices are leaves, fronds or blades (leafy, never a ball); EVERY model's FAR reach and height
+are within 10 % of its NEAR one's, every variant (no plant changes size or shape crossing PLANT_NEAR_M). A card is four
+triangles in its slot, as tall as its model and no wider; its picture a cut-out with a clear margin, between 1.5 % and
+75 % opaque (leaves with gaps), green for the green plants. The tells of §81 in 3D
+(`plantsNotFood.test.js`) are measured in the plant atlas: the hemlock's plates (white) stand in its upper half above its
+fronds and are its highest part; its crown is pale and the carrot's orange; purple is on the hemlock's stalk and on
+nothing of the carrot's; the nightshade's black berries hang within 6 cm of the honeyberry's blue ones; its three stars
+(45 vertices) are fruit; the thistle's highest part is its brush; the flax's flowers are in its upper half; the aloe is
+solids only.
+
+**The furniture** (§85: the well, the rain barrel, the two beds) keeps its box model: `FURNITURE_MODELS`,
+`compileBoxModel(parts, bare)`, `furnitureModel(id)`, `furnitureModelTile(id)`, `BOX_QUAD_STRIDE` 24, `BOX_TEXELS` 16,
+`CARD_NORMAL_LIFT` 0.5 — §78's parts, renamed (they were `PLANT_MODELS`, `compilePlantModel`, `plantModel`,
+`plantModelTile`, `PLANT_QUAD_STRIDE`, `PLANT_TEXELS`).
+
+### 105.4 The mesher and the shader (`mesher.js`, `lightShader.js`, `renderer.js`, `atlas.js`, `main.js`)
+
+- `buildChunkMesh(cq, cr, getChunkData, { plantLod = PLANT_LOD_NEAR } = {})`. A kit-model cell (SHAPE_PLANT) emits
+  `plantMesh(a, lod, plantVariantAt(a, q, r))` into the chunk's PLANT LAYER (`emitPlant`, a builder of its own): turned
+  by `cellHash(q, r)·2π`, nudged ±`MODEL_JITTER`, sized `MODEL_SCALE_MIN`..`MAX` as before; normals turned;
+  u + `PLANT_UV_OFFSET` (a CARD's too); colour = the baked shade (grey: no tint); light = the cell's own (§62). No AO from
+  the terrain, no culling either way, as before. The cutout layer no longer holds the plants. `plantVariantAt(a, q, r)`: LOOSE_STONES' flint variant where `flintAt`, else
+  `floor(cellHash(q, r, 7) · variants)`.
+- `PLANT_NEAR_TRIS_MAX` 60 000: past that many NEAR plant triangles a chunk's later plants (in meshing order) are FAR (a
+  Creative field planted solid stays affordable; no generated chunk comes near it).
+- The result carries, when it drew any kit model, `plantLayer` (their MeshData), `plants` (kit-model cells drawn),
+  `plantTris` and `plantCards` (how many of them have a card: not litter, not the farm's mounds) (`types.ChunkMeshData`).
+- `buildChunkPlants(cq, cr, getChunkData, { plantLod })` → **ChunkPlantData** `{ plantsOnly: true, plantLayer, plants,
+  plantTris, plantCards }`: exactly buildChunkMesh's plant layer and counts (the same cells in the same order, the same
+  PLANT_NEAR_TRIS_MAX), from the chunk's OWN blocks and light only — no padded volume, no terrain: what a change of level
+  re-meshes (105.5). The densest test chunk: 0.2–1 ms against 4–8 ms for its whole mesh.
+- `buildCellMesh` (moving blocks) meshes a kit model at FAR and puts it in the CUTOUT layer, plant-atlas uvs:
+  fallingRenderer's cutout material binds the plant atlas beside the block atlas (`applyPlantAtlas(material, texture,
+  PLANT_CACHE_KEY)` after the object light; the page's one `createPlantAtlasTexture()`, fetched the first time a moving
+  cell's layer `usesPlantAtlas`). It was the CARD with block-atlas uvs, so the litter's and the farm's 22 blocks (their
+  CARD is their FAR model, plant-atlas uvs) moved — a Creative break's ghost, the vortex's infall — painted from the
+  block atlas's last column (magenta, stripes) or cut away, and a bush's ghost flashed black from behind.
+- SHAPE_MODEL is now only the furniture's box path (`emitModel`, `BOX_GROUND_SHADE` 0.78, was `LITTER_GROUND_SHADE`); the
+  litter's boxes (`emitLitter`, `emitBox`, `emitNest`, `LITTER_ROCKS`, `LITTER_STICKS`, `NEST_WALL`, `NEST_EGGS`,
+  `NEST_EGG`) are gone — the litter is kit models. Its skin tiles (LITTER_ROCK, _FLINT, _STICK, _NEST, _EGG) stay painted.
+- `atlas.createPlantAtlasTexture()`: a DataTexture of `plantAtlasMips(plantAtlasImage())` (the cards painted in) —
+  `magFilter` Linear, `minFilter` LinearMipmapLinear (painted, not pixel art), flipY false, sRGB, clamp, anisotropy 1;
+  ONE a page, made on the first call and returned by every later one (never disposed). main makes it beside the block
+  atlas and passes it as `createRenderer(…, { plantAtlasTexture })`; fallingRenderer takes the same one.
+- `lightShader.applyPlantAtlas(material, texture)` (on the cutout material after `applyChunkLight`): a second sampler
+  `caelPlantMap` (`PLANT_MAP_UNIFORM`); `map_fragment` samples both atlases and keeps the plant one where `vMapUv.x > 1.5`
+  (`PLANT_MAP_FRAGMENT`); after `normal_fragment_begin` a plant's normal is never turned round for its back face
+  (`PLANT_NORMAL_FRAGMENT`). Program cache key `'caelancraft-chunk-light-plants'` (a third argument names another: the
+  moving cells' `'caelancraft-object-light-plants'`). `material.userData.caelPlantMap` is the uniform.
+- `renderer.setChunkMesh` draws a chunk's `plantLayer` as a mesh of its own (`chunk:<key>:plants`, the cutout material,
+  render order 0), stored beside the chunk under `plants:<key>`; a `plantsOnly` mesh (ChunkPlantData) replaces that one
+  alone and keeps the chunk's three layers; a full mesh or null replaces or removes both, as does removeChunkMesh. One
+  more draw for a chunk with plants — no draw per plant.
+
+### 105.5 The level of detail (`world.js`, `chunk.js`, `config.js`)
+
+- Per chunk, by `chunkNearestDistance(cq, cr, px, pz)` (exported: metres from the player to the nearest point of the
+  parallelogram the chunk's hexagons fill, 0 inside): NEAR within `PLANT_NEAR_M` 16, FAR within `PLANT_FAR_M` 48, CARD
+  beyond. A chunk keeps the finer level it has until it is `PLANT_LOD_SLACK_M` 4 farther (`_plantLodFor(chunk, current)`):
+  no flicker for a player on a ring. NEAR before the first update().
+- `_mesh` meshes a chunk at its level and records `chunk.plantLod` (−1: never) and `chunk.plants`.
+- update() step 2b (after the lazy re-meshes, before the ring walk): every meshed, clean chunk with plants within the
+  mesh radius whose level its distance now asks for differs has its PLANTS re-meshed (`_meshPlants`: buildChunkPlants,
+  handed to onChunkMesh as a `plantsOnly` mesh; the chunk stays clean, its terrain, water and light untouched), nearest
+  first, until `PLANT_LOD_BUDGET_MS` (3) has passed — always at least one per call. A chunk beyond the mesh radius (it
+  only waits to unload) keeps its level; one with `plantCards` 0 (litter, the farm's mounds only) has a change between FAR
+  and CARD just noted (the same geometry). A chunk without plants never re-meshes for them; level changes are not
+  `pendingMesh`. `chunk.plantCards` (chunk.js) is recorded by `_mesh` and `_meshPlants`.
+- It re-meshed the WHOLE chunk (terrain, water, every layer: ≈ 15 ms, always over the 3 ms budget, so one whole chunk a
+  frame while walking). Walking 96 m at 4.5 m/s, 60 updates a second (Node, seed 7 generation 6): update() 1 644 →
+  1 005 ms in all at render distance 4, 2 045 → 1 034 ms at 5; the 90th-percentile frame 6.3 → 0.8 ms and 6.8 → 0.9 ms
+  (111 and 125 plants-only meshes instead of whole chunks; the ring walk's new chunks are the rest, unchanged).
+
+### 105.6 Budgets (measured; Node, a loaded machine)
+
+- Per plant: the table above. Building every model (all LODs and variants) ≈ 90 ms once, lazily per (id, lod, variant).
+- Worst chunk's plant triangles (the 12 densest of 121 chunks): the lean land (seed 7, generation 6, a meadow: 48 plants)
+  NEAR 5 994, FAR 2 860, CARD 1 179; generation 3's bush-rich forest edge (seed 33, honeyberry and nightshade patches)
+  NEAR 15 000, FAR 3 288, CARD 1 183. A tablet draws at most a handful of NEAR chunks (16 m round the player): tens of
+  thousands of plant triangles, beside the terrain's.
+- Meshing a chunk: the lean meadow's densest chunks 4.2 ms before → 5.0–5.3 ms (NEAR); generation 3's 8.3–12.8 ms
+  before → 9.9–13.5 ms (alternating runs under load); sparse chunks unchanged. Re-meshing for a level change is
+  the plants alone (0.2–1 ms), budgeted like the lazy re-mesh. `mesher.test.js` times the densest real chunk of a test
+  world against the same chunk without its plants, in turns, the best of nine of each (a lone 25 ms bound failed under
+  the parallel suite at 41 and 64 ms): its plants alone (buildChunkPlants) under half its terrain's mesh (0.11–0.16
+  measured), the whole NEAR chunk under three times it and under 250 ms.
+- The plant atlas with its cards: painted ≈ 100 ms, the cards ≈ 100 ms more (Node).
+- The plant atlas: 1024 × 256 RGBA, 1 MB (1.3 MB with mips), one texture a page.
+
+### 105.7 The screenshot aid and the viewer
+
+- `?scene=plants` (with `?autoplay=1`; use `?nosave=1`, `?mode=creative`): `diagnostics.PLANT_SCENE_ROWS` — eight rows,
+  nearest first, six plants at most each, `PLANT_SCENE_COL_GAP` 1.6 m apart across and `PLANT_SCENE_ROW_GAP` 1.8 m
+  apart: the bushes ripe and picked (each look-alike beside its twin), the hazel and the crab apple ripe and picked, the
+  herbs, the greenery, the mushrooms / cattails / prickly pear, the ground litter, the seedbed and the sprouts.
+  `plantSceneCells(px, pz, fx, fz, ahead)` → `[{ q, r, id, under }]` (sand under the prickly pear, grass under the rest),
+  the first row `?ahead=` m ahead (`Params.ahead`, −20..60, default `PLANT_SCENE_AHEAD` 3; negative puts the player
+  among the rows). `main.buildPlantScene` levels the rectangle the rows and the player stand in (three cells round) at
+  the player's feet — cleared above, soil on top, dirt under — and sets each plant. `readSceneParam` accepts 'plants';
+  `GameContext.urlScene` may be 'plants'. README's URL table lists it.
+- `plants.html` + `src/plantViewer.js` (dev only, `npx vite`; not built): chosen plants (`?ids=` block names, default
+  every kit model) on a strip of grass, meshed by `buildChunkMesh` at `?lod=` and drawn by `createRenderer` with both
+  atlases — what the game draws; `?time= ?dist= ?height= ?yaw= ?pitch= ?gap=`.
+- `gallery.html?row=plant`: its "Today" column now shows the game's own kit models (the pilot's bush beside them).
+- Not done: plants swaying in the wind (§101.5 still stands); trees stay terrain blocks (logs and leaves).
+
+## 106. The Fishing Rod, and the spear in shallow water only — `src/fishing.js` (PURE), `src/fishingRenderer.js` (three), `src/animals.js`, `src/looseItems.js`, `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/diagnostics.js`, `src/main.js`
+
+The user: "add a fishing rod to the mix as well (spear still works for shallow streams)". Amends §76.4 and §100 (only a
+spear catches a fish: now a spear in shallow water, or the rod in any) and §100.2 (what Place draws).
+
+### 106.1 The spear and deep water (`animals.js`, `fishing.js`, `main.js`)
+
+- **Shallow** water is no deeper than `FISH_SHALLOW` 1.2 m from its surface to its bed (a stream is one cell, about 0.9;
+  the edge of a pond too). `fishing.spearReaches(getBlock, fish)` is true there (and where no water is found).
+- A **darting** fish (`mode` 'flee') in deep water dives to `FISH_DIVE` 1.1 below the surface (never below just above the
+  bed; eased at 6/s); once calm it rises again at `FISH_RISE` (§100), as from the deep. In shallow water it stays at its
+  swimming height (§76.4, unchanged).
+- **Main**: a spear's thrust or a thrown spear on a fish in deep water does not wound it (it darts and dives) and says
+  `FISH_DEEP_HINT` "Too deep to spear: the fish dives. A Fishing Rod reaches fish in deep water."; a rod swung at a fish
+  says how to cast. The target hint on a fish (`fishHint`, both modes): with the rod `Fish · Hold RMB to cast near it, and
+  wait for a bite`; in deep water `Fish · too deep to spear · a Fishing Rod reaches it`; with a spear as §100.2; else `Fish
+  · it takes a spear, or a Fishing Rod, to catch one`.
+
+### 106.2 The rod (`items.js`, `crafting.js`, `itemArt.js`, `purpose.js`, `pickerModel.js`, `looseItems.js`)
+
+- **Item**: `fishing_rod` "Fishing Rod", a tool of the new ToolDef type **'rod'** (TOOL_TYPES after 'bow'), tier 2,
+  durability 80, power 1, after the Crude Bow in TOOL_ROWS. Swung it is only a stick; it digs like a hand (not in
+  `DIG_TOOL_TYPES`).
+- **Recipe**: at the Work Stump, `sapling + 2 cord + #knapstone` → 1, knife 2, 6 s (after the Crude Bow). The tallies of
+  §100.6 / §103 move by one: one more tool, one more stump recipe.
+- **Art**: the icon is an upright sapling on a cord-wrapped grip (columns 7–8, the haft), a reel of cord by the grip, the
+  line from the tip over to the right and hanging to a red-and-white float. **In hand** (heldItem.js, amends §98.4) the
+  rod is its own picture, `rodHeldArt()`: a ROD_HELD_SIZE 32-px pole with no line, drawn at HELD_ROD_PIXEL (1.4 ×
+  HELD_PIXEL: about 1.1 m) and held by its butt as a tool. `heldItemGeometry` gives every slab a `tip` (the middle of the
+  top edge of its top-most solid row, turned with it), and `avatarRenderer.heldTip(firstPerson)` puts the tip of the item
+  in hand into the world (the first-person one or the model's): the line starts there.
+- **Picker**: Weapons, after the Flint Spear. `PICKER_TOOL_WORDS.rod`: fishing, angling, fish, hook, line, pole, float,
+  bobber. **Purpose**: "Hold to cast. When the float goes under, click to hook the fish. Reaches deep water a spear
+  cannot."
+- **Draw**: `drawOf('fishing_rod')` = `{ bow: false, rod: true, shoots: null, base: null, fullS: CAST_FULL_S }` with
+  `CAST_FULL_S` 0.8 (looseItems; fishing re-exports it). So Place held draws back a cast exactly as a throw (DrawHold, the
+  ring, the cocked pose, the swing on the release, `POSE_DRAWING` on a server, `throwHintFirst`); the release casts
+  instead of throwing (`drawRelease` → `castLine`). `throwWords` says nothing for a rod (it is not cast at beasts).
+
+### 106.3 The line (`fishing.js`, PURE)
+
+- `castSpeed(f)` = CAST_SPEED_MIN 4 + (CAST_SPEED_FULL 12 − 4) f; `castVelocity(dx, dy, dz, f, pvx, pvz)` adds the player's
+  run and lifts by CAST_LIFT 2.5 m/s. The float falls at FLOAT_GRAVITY 14 m/s², stepped at most 0.02 s at a time: a full
+  cast from the bank carries 10–14 m.
+- `FishingLine` (one; main's `fishing`): `state` 'none' | 'flying' | 'float' | 'coming' | 'nibble' | 'bite' | 'ground';
+  `out`, `onWater`, `x y z`, `dip` (0..1, eased back at 3/s), `quiet`, `fish`. `cast(x, y, z, vx, vy, vz)`; `step(dt, {
+  getBlock, player, fish })` → 'splash' | 'land' | 'nibble' | 'bite' | 'escaped' | 'snap' | null; `reel()` → `{ result:
+  'caught' | 'spooked' | 'reeled', fish }` (the line is in afterwards); `bait()` → `{ fish, x, z }` or null; `reset()`.
+  - **Flight**: into water at or under its surface (`floatSurface`) it floats there ('splash', dip 0.6); into anything
+    solid, below y 0 or after 5 s it lies where it is ('ground', 'land').
+  - **Float**: it rides the surface; the water gone, it lies there ('ground'). Every BITE_WAIT 3–9 s it chooses the
+    nearest fish within BITE_RADIUS 6 (level) and 2.5 up or down that is not darting ('coming'); with none, `quiet`
+    counts up. A chosen fish within BAIT_NEAR 0.45 (level) is at it: 'nibble' for NIBBLE_S 1.2–3.2 s (a twitch, dip
+    0.35, every 0.45–1.05 s: 'nibble'), then 'bite': the float under (dip 1) for HOOK_WINDOW_S 0.9 s. Not there within
+    COME_GIVE_UP_S 10 s (other water), darting, or gone, and it waits again for another. The window passed: 'escaped'
+    (the fish stays in `fish` that frame for main) and it waits again.
+  - Past LINE_MAX 24 m from the player it comes in ('snap').
+- `lineCurve(tip, end, n, slack)` (n points from the tip to the float); `lineSlack(d, tight)` =
+  min(0.6, 0.03 d), 0.02 drawn tight (a bite, a cast in flight); the sag is 6.75 t² (1 − t) × slack, most two thirds
+  of the way out and hardly any by the tip (in first person the tip is a span from the eye).
+- **Fish** (`animals.js`): `floatAt` `{ x, z }` | null (not saved). A fish with it, not darting, swims to that point at
+  FISH_BAIT_SPEED 0.7 and holds within 0.3 m, its nose to it; noticing the player (its `notice`) still makes it dart.
+
+### 106.4 Main (`main.js`)
+
+- `rodPlace(mouse)` first in `drawStep` (so every Place path: Survival, Creative, the debug handle): with the line out
+  and the rod in hand Place is the line's — a press while playing reels (`reelIn`); held, nothing else places.
+- `castLine(f)`: the float leaves `rodTip()` (the rod in hand's tip, `avatarRenderer.heldTip`; without it, first person
+  1.05 m along the look, 0.32 right, 0.3 up, or third person over the avatar's right hand, 1.95 m up) at `castVelocity`; Survival wears the rod 1 a cast (`toolBroke` at 0, the line in);
+  the throw sound grows with the cast; the arm swings through.
+- `reelIn()`: 'caught' → the fish dies (`animals.wound` 999) with a spray of water, its drops fly to the player
+  (`animalDied`: Survival only; Creative logs that it gives nothing), "You caught a fish."; 'spooked' → it darts (and
+  dives) and "Too soon: wait until the float goes right under."; then every fish's `floatAt` is cleared.
+- `stepFishing(dt)` every world frame, both modes, after the animals (on a server with no fish: they are the server's):
+  the line comes in when the rod leaves the hand, at death or with no world; the bait's fish gets `floatAt`, the rest
+  none; 'splash' and 'bite' spray and plop (the fish's `plop` voice at 0.35 / 0.6, a nibble 0.12); 'escaped' sends the
+  fish off ("It got away: click the moment the float goes under."); 'snap' says "Your line came in: you walked too far
+  from the float."; QUIET_HINT_S 25 s with no fish near says once a cast "No fish near the float. Try deeper water, or
+  where you saw a fin."
+- `resetFishing()` with the draw in `resetSurvivalInput` (sleep, death, a mode switch, a load) and on leaving a world.
+- **Hint** (`rodHintText`, from `drawHintText`): `Fishing Rod · Hold RMB to cast, let go to cast it out`; drawing
+  `Casting · let go to cast` / `Full cast · let go to cast`; out `Fishing Rod · the float is out`, `Fishing Rod · wait for
+  a bite · RMB: reel in` (quiet: `No fish near the float · RMB: reel in`), `Something is nibbling · wait for the float to
+  go under`, `Bite! · RMB now to hook it`, `The float is on dry land · RMB: reel in` (a tablet reads Place, §97.2).
+- **Drawn** (`fishingRenderer.js`, `syncFishing` in renderFrame): two draw calls — the line (a LINE_POINTS 16 THREE.Line,
+  dark, 0.75 opaque) and the float (a six-sided double cone, red cap over a white belly with a dark quill, flat-shaded,
+  per-vertex colours; FLOAT_R 0.08 across the flats, 0.2 m tall with its quill). On the water it bobs (±0.012 m), sinks
+  FLOAT_SINK 0.2 × dip and tips with a bite; on land it
+  lies on its side. Prewarmed with the others.
+- Not on a server's wire: the others do not see the line (§96 phase 1).
+
+### 106.5 The guide, the scene aid, tests
+
+- The Survival Guide's *Fish* (Animals): a spear in shallow water, the dive in deep water, the rod — how it is made, the
+  cast, the nibble and the bite, its casts.
+- `?scene=fishing` (diagnostics `FISHING_SCENE` { ahead 7, radius 3, deep 2 }): a pond ahead on level grass with two fish
+  and, with `?hold=fishing_rod`, the float cast to its middle.
+- Tests: `tests/unit/fishing.test.js` (the cast's speed and reach, the rod's item, draw and recipe, landing on water and on
+  land, the bite from start to hook, the escape and the nibble pulled, a darting fish never comes, the quiet hint, the snap
+  and a pond let dry, the line's sag; the spear in a stream and in a deep pond, the dive and the rise, a fish steered by
+  `floatAt`; main's wiring).
+

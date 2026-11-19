@@ -38,7 +38,9 @@ import { bodyTarget } from './climate.js';
 
 /**
  * @typedef {Object} VitalsInput  one step's circumstances (§2.2–§2.4)
- * @property {number} activity      the activity factor (activityFactor): 1 still … 2.5 sprinting
+ * @property {number} activity      the activity factor (activityFactor): 1 still … 3 digging by hand
+ * @property {number} [work]        the work activity while breaking (CONTRACTS §99: WORK_ACTIVITY of the tool doing it), 0
+ *   or absent when not breaking: each unit above rest adds WORK_TIRES hours of tiredness per hour of work
  * @property {number} felt          felt temperature (climate.feltTemperature), °C
  * @property {boolean} [inWater]    swimming: the body drifts 3.3× faster (§3.3)
  * @property {boolean} [headInWater] the eye is under water: breath drains (drown at 0)
@@ -73,7 +75,7 @@ export const RATES = Object.freeze({
   BREATH_REFILL: BREATH_REFILL_PER_S,
   ACTIVITY_STILL: 1,
   ACTIVITY_WALK: 1.4,         // horizontal speed > WALK_MIN_SPEED
-  ACTIVITY_BREAK: 1.8,
+  // breaking: WORK_ACTIVITY by the tier of the tool doing the work (§99), 3 by hand … 1.5 with steel
   ACTIVITY_SWIM: 2.2,
   ACTIVITY_SPRINT: 2.5,
   WALK_MIN_SPEED: 0.5,        // m/s
@@ -155,6 +157,32 @@ export const RATES = Object.freeze({
   GULP_TAINTED_SICK: 0.4,     // v0.14 (CONTRACTS §76 water): a gulp of tainted water poisons two times in five
   GULP_SALT: -4,
 });
+
+// ---- work (CONTRACTS §99) ----------------------------------------------------------------------------------------------
+
+/**
+ * The activity factor of breaking a block, index = the tier of the tool doing the work (harvest.workTier): 0 the bare
+ * hand (or a tool that is not the block's own), 1 stone … 6 steel. The cruder the tool, the more the work costs in
+ * Nourishment and Hydration (and, through WORK_TIRES, in tiredness).
+ */
+export const WORK_ACTIVITY = Object.freeze([3, 2.6, 2.2, 1.9, 1.7, 1.6, 1.5]);
+/** Each unit of work activity above rest (1) adds this many hours of tiredness per game hour of work. */
+export const WORK_TIRES = 0.5;
+/** From this work activity up (the bare hand and stone tools) the status shows `Hard work`. */
+export const HARD_WORK_AT = 2.5;
+/** The status label of hard work (hud.chipKind → 'work'). */
+export const HARD_WORK_LABEL = 'Hard work';
+
+/** @param {number} [tier] the tier of the tool doing the work (absent or not a tier: the hand) @returns {number} */
+export function workActivity(tier) {
+  const t = Number.isInteger(tier) ? Math.max(0, Math.min(WORK_ACTIVITY.length - 1, /** @type {number} */ (tier))) : 0;
+  return WORK_ACTIVITY[t];
+}
+
+/** Hours of tiredness per game hour while working at activity `work` (1 when not working). @param {number} [work] */
+export function fatigueRate(work) {
+  return 1 + (finite(work) && /** @type {number} */ (work) > RATES.ACTIVITY_STILL ? (/** @type {number} */ (work) - RATES.ACTIVITY_STILL) * WORK_TIRES : 0);
+}
 
 // ---- tiredness (CONTRACTS §87) ----------------------------------------------------------------------------------------
 
@@ -268,15 +296,16 @@ export function wakeVitals(v) {
 }
 
 /**
- * The activity factor (§2.2): the largest that applies — still 1, walking 1.4, breaking 1.8, swimming 2.2, sprinting 2.5.
- * @param {{ moving?: boolean, breaking?: boolean, swimming?: boolean, sprinting?: boolean }} a
+ * The activity factor (§2.2): the largest that applies — still 1, walking 1.4, breaking WORK_ACTIVITY[workTier] (§99: 3
+ * by hand … 1.5 with steel; the hand when no tier is given), swimming 2.2, sprinting 2.5.
+ * @param {{ moving?: boolean, breaking?: boolean, workTier?: number, swimming?: boolean, sprinting?: boolean }} a
  * @returns {number}
  */
 export function activityFactor(a) {
   /** @type {number} */
   let f = RATES.ACTIVITY_STILL;
   if (a.moving) f = Math.max(f, RATES.ACTIVITY_WALK);
-  if (a.breaking) f = Math.max(f, RATES.ACTIVITY_BREAK);
+  if (a.breaking) f = Math.max(f, workActivity(a.workTier));
   if (a.swimming) f = Math.max(f, RATES.ACTIVITY_SWIM);
   if (a.sprinting) f = Math.max(f, RATES.ACTIVITY_SPRINT);
   return f;
@@ -334,8 +363,9 @@ export function tempBand(temp) {
  * §87's tiredness: Tired, Exhausted, Weak or Seeing things). Of each pair only the worse label shows (Starving replaces
  * Hungry, Parched replaces Thirsty), and of tiredness only its stage. Drowning and Smothering need `inp`. Tiredness:
  * from Exhausted there is no regeneration, from Weak the move factor is × WEAK_MOVE.
+ * §99: `Hard work` (after Wet, before the tiredness stage) while `inp.work` is HARD_WORK_AT or more.
  * @param {Vitals} v
- * @param {{ headInWater?: boolean, buried?: boolean }} [inp]
+ * @param {{ headInWater?: boolean, buried?: boolean, work?: number }} [inp]
  * @returns {VitalsStatus}
  */
 export function statusOf(v, inp) {
@@ -376,6 +406,7 @@ export function statusOf(v, inp) {
   else if (noBreath && inp?.buried) labels.push('Smothering');
   if (v.sick > 0) labels.push('Poisoned');
   if (v.wet > RATES.WET_LABEL) labels.push('Wet');
+  if (finite(inp?.work) && /** @type {number} */ (inp?.work) >= HARD_WORK_AT) labels.push(HARD_WORK_LABEL);
   const tired = fatigueStage(v);
   if (tired > 0) labels.push(FATIGUE_STAGES[tired]);
   if (tired >= 3) move *= WEAK_MOVE;
@@ -446,10 +477,12 @@ export function stepVitals(v, dt, inp, _random) {
   v.hydration = clamp(v.hydration - drain.hydration * dt, 0, STAT_MAX);
   if (sickBefore) v.sick = Math.max(0, v.sick - dt);
 
-  // Tiredness (§87): an hour awake adds one; an hour asleep takes off what the sleep spot gives back.
+  // Tiredness (§87): an hour awake adds one (§99: more while working with a crude tool, fatigueRate); an hour asleep
+  // takes off what the sleep spot gives back.
   const hours = dt / GAME_HOUR_S;
   const tired = finite(v.fatigue) && v.fatigue > 0 ? v.fatigue : 0;
-  v.fatigue = sleep ? Math.max(0, tired - Math.max(0, sleep.recover) * hours) : Math.min(FATIGUE_MAX, tired + hours);
+  v.fatigue = sleep ? Math.max(0, tired - Math.max(0, sleep.recover) * hours)
+    : Math.min(FATIGUE_MAX, tired + hours * fatigueRate(inp.work));
 
   // Regeneration: doubled while standing still beside a burning campfire; each HP costs satiation. Asleep there is only
   // the sleep spot's healing, whatever the other conditions, unless Poisoned.

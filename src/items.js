@@ -16,11 +16,14 @@ import { BLOCK, BLOCKS, PICKER_ORDER } from './blocks.js';
 export const TIER = Object.freeze({ HAND: 0, STONE: 1, FLINT: 2, COPPER: 3, BRONZE: 4, IRON: 5, STEEL: 6 });
 /** Index = tier. */
 export const TIER_NAMES = Object.freeze(['hand', 'stone', 'flint', 'copper', 'bronze', 'iron', 'steel']);
-/** Dig speed of a tool of the right type, index = tier (the bare hand is 1). */
-export const TIER_SPEED = Object.freeze([1, 1.5, 2, 2.6, 3.4, 4.5, 6]);
+/**
+ * Dig speed of a tool of the right type, index = tier (the bare hand is 1). §99: each age is clearly faster than the
+ * last — a stone tool more than doubles the hand, flint doubles stone, and every metal is about 1.4 times the one before.
+ */
+export const TIER_SPEED = Object.freeze([1, 2.2, 4.4, 6.4, 9, 12.5, 17]);
 /** Every `ToolDef.type`, in the order the tool table first uses them. */
 export const TOOL_TYPES = Object.freeze([
-  'hammer', 'axe', 'shovel', 'knife', 'pick', 'spear', 'sword', 'firestarter', 'crucible', 'mold',
+  'hammer', 'axe', 'shovel', 'knife', 'pick', 'spear', 'bow', 'rod', 'sword', 'firestarter', 'crucible', 'mold',
 ]);
 /** The three wear slots, index = wear slot (`Pack.wear[i]`). */
 export const WEAR_SLOT_NAMES = Object.freeze(['head', 'body', 'feet']);
@@ -37,6 +40,8 @@ export const TAGS = Object.freeze({
     'wool_white', 'wool_light_gray', 'wool_gray', 'wool_black', 'wool_brown', 'wool_red', 'wool_orange', 'wool_yellow',
     'wool_lime', 'wool_green', 'wool_cyan', 'wool_light_blue', 'wool_blue', 'wool_purple', 'wool_magenta', 'wool_pink',
   ]),
+  // §101: a piece of cloth for the Pennant's flag — a rag, a rawhide or leather (the cheapest first)
+  cloth: Object.freeze(['grave_rag', 'rawhide', 'leather']),
 });
 
 /** Stack size of every block item. */
@@ -57,6 +62,12 @@ const TOOL_ROWS = [
   ['flint_pick', 'Flint Pick', 'pick', 2, 90, 1],
   ['flint_shovel', 'Flint Shovel', 'shovel', 2, 90, 1],
   ['flint_spear', 'Flint Spear', 'spear', 2, 60, 3],
+  // §100 the bows: the Crude Bow is a green Sapling strung with cord at the Work Stump. A bow shoots arrows from the pack
+  // and wears 1 a shot (looseItems BOWS, drawOf); swung, it is only a stick (power 1)
+  ['crude_bow', 'Crude Bow', 'bow', 2, 60, 1],
+  // §106 the Fishing Rod: a sapling with a cord line and a knapped flint hook. Cast with Place held (looseItems.drawOf);
+  // it wears 1 a cast. It reaches the deep water a spear cannot (fishing.spearReaches); swung, only a stick (power 1)
+  ['fishing_rod', 'Fishing Rod', 'rod', 2, 80, 1],
   // tier 3, copper
   ['copper_knife', 'Copper Knife', 'knife', 3, 140, 2],
   ['copper_axe', 'Copper Axe', 'axe', 3, 160, 2],
@@ -70,6 +81,8 @@ const TOOL_ROWS = [
   ['bronze_shovel', 'Bronze Shovel', 'shovel', 4, 320, 1],
   ['bronze_hammer', 'Bronze Hammer', 'hammer', 4, 320, 1],
   ['bronze_sword', 'Bronze Sword', 'sword', 4, 280, 3],
+  // §100: the Recurve Bow — a fire-hardened stave backed with rawhide at the Workbench: faster, farther and truer
+  ['recurve_bow', 'Recurve Bow', 'bow', 4, 220, 1],
   // tier 5, iron
   ['iron_knife', 'Iron Knife', 'knife', 5, 500, 3],
   ['iron_axe', 'Iron Axe', 'axe', 5, 600, 3],
@@ -111,17 +124,27 @@ const MATERIAL_ROWS = [
   // made of. Pyrite comes from coal seams, saltpetre from deep cave walls; the kiln roasts pyrite for sulfur (and selenium).
   ['pyrite', 'Pyrite', 32], ['sulfur', 'Sulfur', 32], ['selenium', 'Selenium', 16], ['saltpetre', 'Saltpetre', 32],
   ['black_powder', 'Black Powder', 32], ['carbon_filament', 'Carbon Filament', 32], ['iron_filings', 'Iron Filings', 32],
-  // v0.10 throwing (CONTRACTS §60): a dart flies far and hurts more than a rock; made by hand, four at a time
-  ['flint_dart', 'Flint Dart', 16],
   // §14 the Survival Handbook: every survival state starts with it; never lost on death, never discarded, never made
   // (inventory.js KEEP_ON_DEATH, handbook.js ensureHandbook). R or RMB with it in hand opens the field book.
   ['handbook', 'Survival Handbook', 1],
-  // v0.14 (§76 fauna): feathers come off pheasants and wild turkeys (and out of their nests); a dart fletched with them
-  // flies faster and straighter than the plain Flint Dart, hits harder and breaks less often (looseItems THROW_FLETCHED)
-  ['feather', 'Feather', 32], ['fletched_dart', 'Fletched Dart', 16],
+  // v0.14 (§76 fauna): feathers come off pheasants and wild turkeys (and out of their nests); they fletch the arrows (§100;
+  // the Flint Dart and the Fletched Dart of v0.10 and v0.14 are Flint Arrows now: ITEM_ALIASES)
+  ['feather', 'Feather', 32],
   // §80 farming: seed shaken out of a picked Wild Carrot, a Wild Onion or a cut Healwort. R plants one on grass or dirt
   // (farming.js PLANTABLE); the other crops are planted from the food itself (a tuber, a berry, a nut, a fruit, a root).
   ['carrot_seeds', 'Carrot Seeds', 32], ['onion_seeds', 'Onion Seeds', 32], ['healwort_seeds', 'Healwort Seeds', 32],
+  // §100 the bows: a Sapling (a young springy shoot from the leaves, or a hazel thicket) strung with cord is the Crude Bow;
+  // a Bow Stave split from a log and fire-hardened in the Kiln (the Treated Stave), backed with rawhide, the Recurve Bow
+  ['bow_stave', 'Bow Stave', 4], ['treated_stave', 'Treated Stave', 4], ['sapling', 'Sapling', 16],
+  // §100: arrows of every age (looseItems ARROW_KEYS, ARROWS): the head is stone, flint or a metal; the better the head,
+  // the harder it hits and the likelier it is to be picked up again
+  ['stone_arrow', 'Stone Arrow', 16], ['flint_arrow', 'Flint Arrow', 16], ['copper_arrow', 'Copper Arrow', 16],
+  ['bronze_arrow', 'Bronze Arrow', 16], ['iron_arrow', 'Iron Arrow', 16], ['steel_arrow', 'Steel Arrow', 16],
+  // §103 the Spyglass: bronze tubes and a glass lens. Carried, it lets the player look far (spyglass.js); it never wears
+  ['spyglass', 'Spyglass', 1],
+  // §102: carried anywhere in the pack, it puts north on the HUD's wind vane (compass.js). Made at the Forge; no tool, it
+  // never wears. The last of the materials.
+  ['compass', 'Compass', 1],
 ];
 
 /**
@@ -326,11 +349,25 @@ export const ITEM_ALIASES = Object.freeze({
   copper_spade: 'copper_shovel', bronze_spade: 'bronze_shovel', iron_spade: 'iron_shovel', steel_spade: 'steel_shovel',
   // §94: the tier-1 hammer is the Hammerstone again
   stone_hammer: 'hammerstone',
+  // §100: the Bow is the Crude Bow (its wear is kept, at most the Crude Bow's own: inventory.withCurrentKey), the Arrow
+  // the Flint Arrow, and the retired darts are Flint Arrows too
+  bow: 'crude_bow', arrow: 'flint_arrow', flint_dart: 'flint_arrow', fletched_dart: 'flint_arrow',
 });
 
 /** @param {*} key @returns {*} the current key of a possibly old one (anything else unchanged) */
 export function canonicalItemKey(key) {
   return typeof key === 'string' && Object.hasOwn(ITEM_ALIASES, key) ? ITEM_ALIASES[key] : key;
+}
+
+/**
+ * §100: the wear `d` a saved stack of old key `from` keeps under its current key `to`: unchanged, but never more than the
+ * current item's durability (a Bow of 100 uses is a Crude Bow of at most 60). Anything that is not a whole number is
+ * returned as it is (the validators judge it).
+ * @param {*} d @param {string} to @returns {*}
+ */
+export function carriedWear(d, to) {
+  const max = maxDurability(to);
+  return Number.isInteger(d) && max > 0 && d > max ? max : d;
 }
 
 /** @param {string} key @returns {ItemDef|null} */

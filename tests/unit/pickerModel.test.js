@@ -66,10 +66,11 @@ describe('buildPickerModel: sections and families (§5.2)', () => {
     const placeable = NO_SURVIVAL.filter((b) => b.placeable).map((b) => b.id).sort((a, b) => a - b);
     expect([...ids].sort((a, b) => a - b)).toEqual(placeable);
     // the Workplaces family and the Wild Plants family vanish, Ores loses two members, Camp & Crafts keeps the campfire
+    // (and §101's Pennant, which is no survival block: it is placed in both modes)
     expect(model.families.has('workplaces')).toBe(false);
     expect(model.families.has('wild-plants')).toBe(false);
     expect(model.families.get('ores')?.ids).toHaveLength(4);
-    expect(model.sections.find((s) => s.id === 'camp')?.entries).toEqual([{ type: 'block', id: BLOCK.CAMPFIRE }]);
+    expect(model.sections.find((s) => s.id === 'camp')?.entries).toEqual([{ type: 'block', id: BLOCK.CAMPFIRE }, { type: 'block', id: BLOCK.PENNANT }]);
     expect(model.sections.some((s) => s.id === OTHER_SECTION_ID)).toBe(false);
   });
 
@@ -182,8 +183,8 @@ describe('buildPickerModel: every item (tools, weapons, food, materials, clothes
       ['materials', 'Materials', 'copper_ingot'], ['clothes', 'Clothes & Healing', 'straw_hat']]);
     const kinds = (id) => section(id).entries.map((e) => (e.type === 'family' ? `[${e.key}]` : e.key));
     expect(kinds('tools')).toEqual(['[picks]', '[axes]', '[shovels]', '[hammers]', '[knives]', 'fire_drill', 'crucible',
-      'casting_mold', 'handbook']);
-    expect(kinds('weapons')).toEqual(['[swords]', 'flint_spear', '[darts]', 'rock']);
+      'casting_mold', 'compass', 'handbook', 'spyglass', 'fishing_rod']); // §102: the Compass; §103: + the Spyglass; §106: + the Fishing Rod
+    expect(kinds('weapons')).toEqual(['[swords]', 'flint_spear', '[bows]', 'rock']); // §100: + Bows & Arrows, − the darts
     expect(kinds('food')).toEqual(['[meat]', '[fish-eggs]', '[fruit-nuts]', '[roots]', '[mushrooms]', '[pots]', 'snow']);
     expect(kinds('clothes')).toEqual(['straw_hat', 'leather_hood', 'grass_cape', 'leather_coat', 'hide_shoes', 'fibre_bandage',
       'rag_bandage', 'aloe_leaf', 'healwort', 'pot_healwort_tea']);
@@ -197,7 +198,7 @@ describe('buildPickerModel: every item (tools, weapons, food, materials, clothes
     const tools = NON_BLOCK_KEYS.filter((k) => ITEMS[k].kind === 'tool');
     for (const k of tools) {
       const type = /** @type {*} */ (ITEMS[k]).tool.type;
-      expect(model.info.get(k)?.section, k).toBe(type === 'sword' || type === 'spear' ? 'weapons' : 'tools');
+      expect(model.info.get(k)?.section, k).toBe(type === 'sword' || type === 'spear' || type === 'bow' ? 'weapons' : 'tools');
     }
     // each tool family holds every tool of its type, lowest tier first
     for (const [fam, type] of [['picks', 'pick'], ['axes', 'axe'], ['shovels', 'shovel'], ['hammers', 'hammer'], ['knives', 'knife'],
@@ -217,13 +218,15 @@ describe('buildPickerModel: every item (tools, weapons, food, materials, clothes
       expect(model.info.get(k)?.section, k).toBe(cures.includes(k) ? 'clothes' : 'food');
     }
     // materials: Materials, except what is thrown, the field book and what belongs with the food (the pots, the cactus fruit)
-    const elsewhere = { rock: 'weapons', flint_dart: 'weapons', fletched_dart: 'weapons', handbook: 'tools', clay_pot: 'food',
-      salt_pot: 'food', pot_snow: 'food', unpeeled_cactus_fruit: 'food' };
+    const elsewhere = { rock: 'weapons', handbook: 'tools', compass: 'tools', spyglass: 'tools', clay_pot: 'food', salt_pot: 'food', pot_snow: 'food',
+      unpeeled_cactus_fruit: 'food',
+      // §100: the arrows of every age, with the bows
+      stone_arrow: 'weapons', flint_arrow: 'weapons', copper_arrow: 'weapons', bronze_arrow: 'weapons', iron_arrow: 'weapons', steel_arrow: 'weapons' };
     for (const k of NON_BLOCK_KEYS.filter((x) => ITEMS[x].kind === 'material')) {
       expect(model.info.get(k)?.section, k).toBe(elsewhere[k] ?? 'materials');
     }
-    expect(keysOf('weapons')).toEqual(['bronze_sword', 'iron_sword', 'steel_sword', 'flint_spear', 'flint_dart', 'fletched_dart',
-      'rock']);
+    expect(keysOf('weapons')).toEqual(['bronze_sword', 'iron_sword', 'steel_sword', 'flint_spear', 'crude_bow', 'recurve_bow',
+      'stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow', 'rock']);
   });
 
   it('an item no table names goes to a last "Other Items" section; block items and junk in the list are skipped', () => {
@@ -345,15 +348,42 @@ describe('searchBlocks (§5.5)', () => {
     expect(find('spade')).toEqual(['wooden_shovel', 'flint_shovel', 'copper_shovel', 'bronze_shovel', 'iron_shovel', 'steel_shovel']);
     expect(find('stone chopper')).toEqual(['stone_axe']);
     expect(find('digging stick')).toEqual(['wooden_shovel']);
-    expect(find('throw')).toEqual(['flint_spear', 'flint_dart', 'fletched_dart', 'rock']);
-    expect(find('weapon')).toEqual(['bronze_sword', 'iron_sword', 'steel_sword', 'flint_spear', 'flint_dart', 'fletched_dart', 'rock']);
-    expect(find('tools')).toHaveLength(31);
+    expect(find('throw')).toEqual(['flint_spear', 'rock']);
+    expect(find('weapon')).toEqual(['bronze_sword', 'iron_sword', 'steel_sword', 'flint_spear', 'crude_bow', 'recurve_bow', 'stone_arrow',
+      'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow', 'rock']);
+    expect(find('tools')).toHaveLength(34); // §102: + the Compass; §103: + the Spyglass; §106: + the Fishing Rod
     expect(find('bandage')).toEqual(['fibre_bandage', 'rag_bandage']);
     expect(find('hat')).toEqual(['straw_hat', 'leather_hood']);
     // blocks and items together, blocks first (section order)
     const iron = searchBlocks(model, 'iron');
     expect(iron.filter((p) => typeof p === 'number').map((id) => model.info.get(id)?.name)).toEqual(['iron_ore', 'iron_block']);
     expect(iron.indexOf('iron_pick')).toBeGreaterThan(iron.indexOf(BLOCK.IRON_BLOCK));
+  });
+
+  it('§100 the bows: Bows & Arrows among the Weapons, the sapling and the staves with the wood; "archery", "arrow", "bow", "dart" find them', () => {
+    const ARROWS = ['stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow'];
+    const fam = /** @type {*} */ (model.families.get('bows'));
+    expect(fam.ids).toEqual(['crude_bow', 'recurve_bow', ...ARROWS]);
+    expect(familyLine(fam)).toBe('Bows & Arrows · 8 kinds — click to open');
+    expect(model.families.has('darts')).toBe(false);
+    expect(model.info.get('crude_bow')).toMatchObject({ section: 'weapons', family: 'bows', displayName: 'Crude Bow' });
+    for (const k of ['sapling', 'bow_stave', 'treated_stave']) expect(model.info.get(k), k).toMatchObject({ section: 'materials', family: 'wood-fibre' });
+    expect(model.families.get('wood-fibre')?.ids).toEqual(['stick', 'sapling', 'bow_stave', 'treated_stave', 'plant_fibre', 'cord', 'birch_bark']);
+    expect(find('archery')).toEqual(['crude_bow', 'recurve_bow', ...ARROWS, 'bow_stave', 'treated_stave']);
+    expect(find('arrow')).toEqual(['crude_bow', 'recurve_bow', ...ARROWS]); // the family name and the arrows' names
+    expect(find('bow')).toEqual(expect.arrayContaining(['crude_bow', 'recurve_bow', 'bow_stave', 'fire_drill'])); // and the bow drill
+    expect(find('longbow')).toEqual(['crude_bow', 'recurve_bow']);
+    expect(find('steel arrow')).toEqual(['steel_arrow']);
+    expect(find('dart')).toEqual(['flint_arrow']); // an old key: a save's dart is a Flint Arrow
+    expect(find('sapling')).toEqual(['crude_bow', 'sapling']);
+    for (const k of ['crude_bow', 'recurve_bow', 'sapling', 'bow_stave', 'treated_stave', ...ARROWS]) expect(blurbFor(k), k).toBe(purposeOf(k));
+  });
+
+  it('§103 the Spyglass: among the Tools; "telescope" and "zoom" find it', () => {
+    expect(model.info.get('spyglass')).toMatchObject({ section: 'tools', displayName: 'Spyglass' });
+    for (const q of ['spyglass', 'telescope', 'zoom']) expect(find(q), q).toEqual(['spyglass']);
+    for (const q of ['fishing', 'angling', 'bobber']) expect(find(q), q).toEqual(['fishing_rod']); // §106
+    expect(blurbFor('spyglass')).toBe(purposeOf('spyglass'));
   });
 
   it('every item alias and tool word finds its items', () => {

@@ -1,70 +1,81 @@
-// Caelancraft — zombie models (three). See src/CONTRACTS.md §39, §61 and §74.
+// Caelancraft — zombie models (three). See src/CONTRACTS.md §39, §61, §74, §86 and §104.
 //
-// A zombie is a few plain boxes — two legs, a torso, two upper arms, two forearms, a head — wrapped in PIXEL ART painted
-// by zombieSkin.js (pure): dead people under moonlight, spooky without being frightening. The head carries a second,
-// slightly larger box for its hair and the alpha's torso one for its ragged coat (see-through where there is none), so
-// the silhouettes are not bare cubes. The three kinds share the shapes and differ by their skins, a scale and a bearing:
+// A zombie is a HEX-FACETED dead person (zombieModel.js, pure): tapered hexagonal columns, a gaunt faceted head with a
+// heavy brow over narrow slits, chamfered shoes and hands, ragged painted clothes on ONE 256² atlas per kind (linear
+// filtering, mipmaps; cut out where a hem is torn away). Spooky without being frightening. The three kinds have their
+// own models and atlases, a scale and a bearing:
 //   walker — vacant. It limps and sways; its arms hang until it is after someone, then come up in front;
 //   runner — wired. Leaner, bent far forward, elbows pumping, and its head JERKS (twitchOf);
-//   alpha  — ominous. Bigger (ALPHA_SCALE), hunched, arms spread wide with the forearms up, its head held low and steady.
-// The eyes are narrow slits that GLOW in the dark (the skin's glow sheet as the emissive map): a faint marsh green, pale
-// pinpricks, a hot amber. Walkers and runners wear shirts tinted by SHIRT_TINTS, so a crowd is not one person repeated.
+//   alpha  — ominous. Bigger and heavier (ALPHA_SCALE, its own broad build and long coat), hunched, arms spread wide with
+//            the forearms up, its head held low and steady.
+// The eyes are narrow slits that GLOW faintly in the dark — at night, or out of the sky's reach at any hour (the model's
+// glow image as the emissive map, in step with the atlas): a faint marsh green, pale pinpricks, a pale gold — never red.
+// Walkers and runners wear shirts tinted by SHIRT_TINTS (only the shirt: the atlas marks its cloth with TINT_ALPHA; its
+// glow takes the tint too, so the crowd differs at night as well), so a crowd is not one person repeated.
 // The model faces −Z with its origin at the feet, so a rotation of `zombie.yaw` about +Y matches yawToForward.
 //
-// Each kind has its own five InstancedMeshes (legs, upper arms, forearms, torso, head) over ONE texture and material, so
-// a crowd of one kind costs 5 draw calls. Their twins with a red emissive (`hurt > 0`) or an ember glow (smouldering)
-// only draw while one flashes or burns. The legs swing from the hip with `walkPhase`, the torso leans into a chase and
-// lurches after an attack (`swing`, the arms swiping up), and the head lolls by its own `tilt`. In block light (a torch, a
-// lamp, a fire: CONTRACTS §86) it brings one arm up across its face and turns its head away, by its `shield`. A zombie's
-// optional `renderScale` (default 1) and `renderSpin` (default 0, extra yaw) draw a black hole's shrinking, spinning ghost.
+// Each kind has its own five InstancedMeshes (legs, upper arms, forearms, torso, head) over its own texture and material,
+// so a crowd of one kind costs 5 draw calls whatever its size. Their twins with a pale hit flash (`hurt > 0`,
+// ZOMBIE_HURT: never red) or an ember glow (smouldering) only draw while one flashes or burns. The legs swing from the
+// hip with `walkPhase`, the torso leans into a chase and lurches after an attack (`swing`, the arms swiping up), and the
+// head lolls by its own `tilt`. In block light (a torch, a lamp, a fire: CONTRACTS §86) it brings one arm up across its
+// face and turns its head away, by its `shield`. A zombie's optional `renderScale` (default 1) and `renderSpin` (default
+// 0, extra yaw) draw a black hole's shrinking, spinning ghost. The materials are lit like every object (the light volume)
+// plus a small fill (ZOMBIE_FILL), so the facets turned from the sun keep their colour and still go dark at night.
 import * as THREE from 'three';
 import { ZOMBIE_MAX } from './config.js';
 import { SWING_S, kindOf, isDormant, ALPHA_SCALE, ZOMBIE_KINDS } from './zombies.js';
 import { compileHidden } from './prewarm.js';
-import { paintZombieAtlas, PARTS, faceRect, SKIN_TEXEL, SKIN_H, SKIN_KINDS, ATLAS_W, ATLAS_H } from './zombieSkin.js';
+import { patchFillShader } from './lightShader.js';
+import { zombieModel, zombieRig, TINT_ALPHA, ZOMBIE_ATLAS } from './zombieModel.js';
 
 export { ALPHA_SCALE };
 
 /** @typedef {import('./zombies.js').Zombie} Zombie */
+/** @typedef {import('./zombieModel.js').ZombieRig} ZombieRig */
 
-const T = SKIN_TEXEL;
-/** Part sizes (m), from the skin's boxes. The hips are at LEG_H, the head stands on the torso. */
-export const LEG_H = PARTS.leg.h * T;
-export const LEG_X = 4 * T;
-export const TORSO_W = PARTS.torso.w * T;
-export const TORSO_H = PARTS.torso.h * T;
-export const TORSO_D = PARTS.torso.d * T;
-export const HEAD_W = PARTS.head.w * T;
-export const HEAD_H = PARTS.head.h * T;
-export const HEAD_D = PARTS.head.d * T;
-/** The arm: shoulder to elbow, elbow to fingertips. */
-export const UPPER_L = PARTS.upperArm.h * T;
-export const FORE_L = PARTS.foreArm.h * T;
+/** Each kind's joints (zombieModel's rigs): the renderer hangs the parts from them. */
+export const RIGS = Object.freeze({ walker: zombieRig('walker'), runner: zombieRig('runner'), alpha: zombieRig('alpha') });
+/** The walker's joints (m): the hips at LEG_H, the head's pivot TORSO_H over them, the shoulders, the arm's two lengths. */
+export const LEG_H = RIGS.walker.legH;
+export const LEG_X = RIGS.walker.legX;
+export const TORSO_H = RIGS.walker.torsoH;
+export const UPPER_L = RIGS.walker.upperL;
+export const FORE_L = RIGS.walker.foreL;
 export const ARM_L = UPPER_L + FORE_L;
-export const SHOULDER_X = ((PARTS.torso.w + PARTS.upperArm.w) / 2) * T;
-export const SHOULDER_Y = TORSO_H - T;
-/** How far the hair stands off the head and the coat off the torso. */
-export const HAIR_PUFF = 0.5 * T;
-export const COAT_PUFF = 0.7 * T;
-/** The walker's height to the top of its hair (≤ ZOMBIE_HEIGHT 1.9). */
-export const MODEL_HEIGHT = LEG_H + TORSO_H + HEAD_H + HAIR_PUFF;
+export const SHOULDER_X = RIGS.walker.shoulderX;
+export const SHOULDER_Y = RIGS.walker.shoulderY;
 /** The runner is drawn this much narrower (the alpha ALPHA_SCALE bigger: zombies.js, shared with its ray target). */
 export const RUNNER_WIDTH = 0.9;
 
 /**
- * Shirt colours: a walker's or a runner's torso and arms are tinted by SHIRT_TINTS[id mod its length] (kept pale, so the
- * hands barely change), so no two neighbours in a crowd need wear the same shirt. The alpha's stays as painted.
+ * Shirt colours: a walker's or a runner's shirt is tinted by SHIRT_TINTS[id mod its length] (its skin, hair and trousers
+ * are not: the atlas marks the cloth), so no two neighbours in a crowd need wear the same shirt. Faded colours, kept pale
+ * (and nothing red); the alpha's coat stays as painted.
  */
-export const SHIRT_TINTS = Object.freeze([0xffffff, 0xbccbe2, 0xe6bca8, 0xd0d8a6, 0xe8d79c, 0xd2bedb, 0xb6d2c6]);
+export const SHIRT_TINTS = Object.freeze([0xffffff, 0xa9bedd, 0xd9c29c, 0xbccf96, 0xe6d08e, 0xc6b4d8, 0xa2cdbf]);
 
-const HURT = 0xff2a2a;
-const HURT_INTENSITY = 0.85;
+/**
+ * The hit flash: the whole zombie flashes a pale, cold grey-green (nothing red on a zombie, DESIGN-characters §2; the
+ * animals keep the game's red flash), for as long as before (`hurt > 0`).
+ */
+export const ZOMBIE_HURT = 0xdfeee4;
+export const ZOMBIE_HURT_INTENSITY = 0.7;
+const HURT = ZOMBIE_HURT;
+const HURT_INTENSITY = ZOMBIE_HURT_INTENSITY;
 const EMBER = 0xff6a1a;
 const EMBER_INTENSITY = 0.55;
 const SOOT = 0x8a7c72;
 const LURCH = -0.32;
-/** How strongly the skin's glow sheet shines in full daylight (1 in the dark): by day the walker's slits are black. */
-export const GLOW_DAY = 0.2;
+/**
+ * How strongly the glow image shines in full daylight under the open sky (1 at night, and at any hour out of the sky's
+ * reach — a cave, under a roof: GLOW_LOCAL_FRAGMENT): by day in the open the slits are dark.
+ */
+export const GLOW_DAY = 0.02;
+/** The fill on the facets turned from the light: a little of the light that reaches them, a cool-neutral grey-green. */
+export const ZOMBIE_FILL = Object.freeze({ color: Object.freeze([0.92, 1, 0.9]), strength: 0.12 });
+/** The program key of every zombie material. */
+export const ZOMBIE_PROGRAM = 'caelancraft-zombie';
 
 /** A runner's head jerks TWITCH_HZ times a second, each jerk taking TWITCH_PART of that beat and reaching TWITCH_ANGLE. */
 export const TWITCH_HZ = 1.7;
@@ -109,7 +120,7 @@ export const RUNNER_COCK = 0.16;
  * strike's swipe and the runner's twitch leave that arm as it rises. A dormant walker, asleep on its feet, does none
  * of it.
  */
-export const SHIELD_ARM = Object.freeze({ reach: 1.75, bend: 1.4, spread: 0, twist: 0.8 });
+export const SHIELD_ARM = Object.freeze({ reach: 1.75, bend: 1.4, spread: 0, twist: 0.65 });
 export const SHIELD_NOD = 0.05;
 export const SHIELD_ROLL = 0.12;
 
@@ -143,8 +154,8 @@ function renderSpinOf(body) {
 }
 
 /**
- * Boxes merged into one non-indexed-free geometry with a colour per vertex. Each box: [w, h, d, x, y, z, colour, rotZ?]
- * (centre x y z; rotZ turns it about its own centre).
+ * Boxes merged into one geometry with a colour per vertex (the animals' builder). Each box: [w, h, d, x, y, z, colour,
+ * rotZ?] (centre x y z; rotZ turns it about its own centre).
  * @param {ReadonlyArray<ReadonlyArray<number>>} boxes
  * @returns {THREE.BufferGeometry}
  */
@@ -189,102 +200,136 @@ export function boxesGeometry(boxes) {
   return out;
 }
 
-/** three's BoxGeometry faces, in its order (+x, −x, +y, −y, +z, −z), as the skin names them (the model faces −Z). */
-const BOX_FACES = /** @type {const} */ (['right', 'left', 'top', 'bottom', 'back', 'front']);
-/** UVs stop this far (texels) inside each face, so a neighbouring face's texels never bleed in at the edges. */
-const UV_INSET = 0.02;
-
-/**
- * One skinned box: `part`'s box (grown by `puff` on every side), centred at (x, y, z), its six faces mapped to that
- * part's unwrap on `kind`'s page of the skin.
- * @param {keyof typeof PARTS} partName
- * @param {'walker'|'runner'|'alpha'} kind
- * @param {{ puff?: number, x?: number, y?: number, z?: number }} [at]
- * @returns {THREE.BufferGeometry}
- */
-export function skinBox(partName, kind, { puff = 0, x = 0, y = 0, z = 0 } = {}) {
-  const part = PARTS[partName];
-  const g = new THREE.BoxGeometry(part.w * T + 2 * puff, part.h * T + 2 * puff, part.d * T + 2 * puff);
-  const uv = g.getAttribute('uv');
-  const page = SKIN_KINDS.indexOf(kind) * SKIN_H;
-  for (let face = 0; face < 6; face++) {
-    const r = faceRect(part, BOX_FACES[face]);
-    for (let i = face * 4; i < face * 4 + 4; i++) {
-      const u = UV_INSET + uv.getX(i) * (r.w - 2 * UV_INSET);
-      const v = UV_INSET + (1 - uv.getY(i)) * (r.h - 2 * UV_INSET);
-      uv.setXY(i, (r.x + u) / ATLAS_W, (page + r.y + v) / ATLAS_H);
-    }
-  }
-  g.translate(x, y, z);
-  return g;
-}
-
-/** Several indexed geometries (position, normal, uv) as one; the inputs are disposed. */
-function mergeGeos(list) {
-  const pos = [];
-  const nor = [];
-  const uvs = [];
-  const idx = [];
-  for (const g of list) {
-    const base = pos.length / 3;
-    pos.push(...g.getAttribute('position').array);
-    nor.push(...g.getAttribute('normal').array);
-    uvs.push(...g.getAttribute('uv').array);
-    for (const i of /** @type {THREE.BufferAttribute} */ (g.getIndex()).array) idx.push(base + i);
-    g.dispose();
-  }
+/** A kit geometry as a BufferGeometry. @param {import('./modelKit.js').Geo} g */
+function bufferOf(g) {
   const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  out.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-  out.setIndex(idx);
+  out.setAttribute('position', new THREE.BufferAttribute(g.positions, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(g.normals, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(g.uvs, 2));
+  out.setIndex(new THREE.BufferAttribute(g.index, 1));
   out.computeBoundingSphere();
   return out;
 }
 
 /**
- * A kind's part geometries (local frames: a leg hangs from its hip, an upper arm from its shoulder, a forearm from its
- * elbow, the torso stands on the hips, the head on the torso). The head carries its hair layer; the alpha's torso its coat.
+ * A kind's part geometries (zombieModel's, in their joints' frames: a leg hangs from its hip, an upper arm from its
+ * shoulder, a forearm from its elbow, the torso stands on the hips, the head on the torso).
  * @param {'walker'|'runner'|'alpha'} kind
+ * @returns {{ leg: THREE.BufferGeometry, upperArm: THREE.BufferGeometry, foreArm: THREE.BufferGeometry, torso: THREE.BufferGeometry, head: THREE.BufferGeometry }}
  */
 export function zombieGeometries(kind) {
-  const torso = [skinBox('torso', kind, { y: TORSO_H / 2 })];
-  if (kind === 'alpha') torso.push(skinBox('coat', kind, { puff: COAT_PUFF, y: TORSO_H / 2 }));
+  const m = zombieModel(kind);
   return {
-    leg: skinBox('leg', kind, { y: -LEG_H / 2 }),
-    upperArm: skinBox('upperArm', kind, { y: -UPPER_L / 2 }),
-    foreArm: skinBox('foreArm', kind, { y: -FORE_L / 2 }),
-    torso: mergeGeos(torso),
-    head: mergeGeos([skinBox('head', kind, { y: HEAD_H / 2 }), skinBox('hair', kind, { puff: HAIR_PUFF, y: HEAD_H / 2 })]),
+    leg: bufferOf(m.parts.leg),
+    upperArm: bufferOf(m.parts.upperArm),
+    foreArm: bufferOf(m.parts.foreArm),
+    torso: bufferOf(m.parts.torso),
+    head: bufferOf(m.parts.head),
   };
 }
 
-/** A sheet of the skin as a pixel-art texture (nearest filtering, no mipmaps, sRGB). */
-function skinTexture(bytes) {
-  const tex = new THREE.DataTexture(bytes, ATLAS_W, ATLAS_H, THREE.RGBAFormat);
+/** A painted image as a texture: sRGB, linear filtering with mipmaps. @param {import('./paintKit.js').Img} img */
+function paintedTexture(img) {
+  const tex = new THREE.DataTexture(new Uint8Array(img.data.buffer, img.data.byteOffset, img.data.byteLength), img.width, img.height, THREE.RGBAFormat);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.magFilter = THREE.NearestFilter;
-  tex.minFilter = THREE.NearestFilter;
-  tex.generateMipmaps = false;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.anisotropy = 4;
   tex.needsUpdate = true;
   return tex;
 }
 
 /**
+ * The shirt tint: the instance colour multiplies only the texels the atlas marks with TINT_ALPHA (its alpha 0.75 there,
+ * 1 elsewhere — both well over alphaTest); in place of three's color_fragment. `zTint` is kept for the glow.
+ */
+const TINT_MID = ((TINT_ALPHA / 255 + 1) / 2).toFixed(4);
+const TINT_SLOPE = (1 / (1 - TINT_ALPHA / 255) * 2).toFixed(4);
+export const TINT_FRAGMENT = /* glsl */ `
+vec3 zTint = vec3( 1.0 );
+#if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
+	zTint = mix( vec3( 1.0 ), vColor.rgb, clamp( ( ${TINT_MID} - diffuseColor.a ) * ${TINT_SLOPE}, 0.0, 1.0 ) );
+	diffuseColor.rgb *= zTint;
+#endif`;
+
+/**
+ * The glow image's light takes the shirt's tint too (after three's emissivemap_fragment): at night the self-light
+ * outshines the moonlit cloth, so untinted it would turn a crowd into one shirt repeated. The eyes are not marked, so
+ * they stay as painted; the hit flash and the embers (no glow image) are not tinted.
+ */
+export const GLOW_TINT_FRAGMENT = /* glsl */ `
+#include <emissivemap_fragment>
+#ifdef USE_EMISSIVEMAP
+	totalEmissiveRadiance *= zTint;
+#endif`;
+
+/**
+ * Where the zombie stands decides how dark it is too (after three's light accumulation, where the light volume's caelSky
+ * is in scope): out of the sky's reach — a cave, under a roof, deep shade — the glow image shines as it does at night,
+ * at any hour. `zombieGlow` is the glow by the time of day (the base material's emissiveIntensity, which three has
+ * already applied); the brighter of the two wins.
+ */
+export const GLOW_LOCAL_FRAGMENT = /* glsl */ `
+#ifdef USE_EMISSIVEMAP
+	totalEmissiveRadiance *= max( zombieGlow, ${GLOW_DAY.toFixed(4)} + ${(1 - GLOW_DAY).toFixed(4)} * ( 1.0 - caelSky ) ) / max( zombieGlow, 1e-4 );
+#endif`;
+
+/**
+ * Patch a zombie material's shader: lit like every object (the light volume), the fill, the shirt tint (on the cloth
+ * and on its glow), the glow by the light where it stands.
+ * @param {{ vertexShader: string, fragmentShader: string, uniforms: Record<string, *> }} shader
+ * @param {{ value: number }} [glow]  the glow by the time of day (the renderer shares one; 1 when not given)
+ */
+export function patchZombieShader(shader, glow = { value: 1 }) {
+  patchFillShader(shader, ZOMBIE_FILL);
+  shader.uniforms.zombieGlow = glow;
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', '#include <common>\nuniform float zombieGlow;')
+    .replace('#include <color_fragment>', TINT_FRAGMENT)
+    .replace('#include <emissivemap_fragment>', GLOW_TINT_FRAGMENT)
+    .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${GLOW_LOCAL_FRAGMENT}`);
+}
+
+/**
+ * @param {THREE.MeshLambertMaterialParameters} params
+ * @param {{ value: number }} glow
+ */
+function zombieMaterial(params, glow) {
+  const m = new THREE.MeshLambertMaterial({ alphaTest: 0.5, ...params });
+  m.onBeforeCompile = (shader) => patchZombieShader(/** @type {*} */ (shader), glow);
+  m.customProgramCacheKey = () => ZOMBIE_PROGRAM;
+  return m;
+}
+
+/**
  * @param {THREE.Scene} scene
- * @param {*} [_atlasTexture]  unused (the zombies have their own skin); kept so main's call stays as it was
+ * @param {*} [_atlasTexture]  unused (the zombies have their own atlases); kept so main's call stays as it was
  * @param {number} [capacity=ZOMBIE_MAX]     most zombies drawn (main: ZOMBIE_MAX + MAX_INFALL_MOBS, for ghosts)
  * @returns {ZombieRenderer}
  */
 export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX) {
-  const atlas = paintZombieAtlas();
-  const map = skinTexture(atlas.data);
-  const glow = skinTexture(atlas.glow);
-  const mats = {
-    base: new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, emissive: 0xffffff, emissiveMap: glow }),
-    hurt: new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, emissive: HURT, emissiveIntensity: HURT_INTENSITY }),
-    burn: new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, color: SOOT, emissive: EMBER, emissiveIntensity: EMBER_INTENSITY }),
-  };
+  const STATES = /** @type {const} */ (['base', 'hurt', 'burn']);
+  /** @type {THREE.Texture[]} */
+  const textures = [];
+  /** @type {Record<string, Record<'base'|'hurt'|'burn', THREE.MeshLambertMaterial>>} */
+  const mats = {};
+  /** @type {Record<string, ReturnType<typeof zombieGeometries>>} */
+  const geos = {};
+  /** the glow by the time of day, shared by every zombie program (GLOW_LOCAL_FRAGMENT) */
+  const glowNowUniform = { value: 1 };
+  for (const kind of ZOMBIE_KINDS) {
+    const model = zombieModel(/** @type {'walker'|'runner'|'alpha'} */ (kind));
+    const map = paintedTexture(model.image);
+    const glow = paintedTexture(model.glow);
+    textures.push(map, glow);
+    mats[kind] = {
+      base: zombieMaterial({ map, emissive: 0xffffff, emissiveMap: glow }, glowNowUniform),
+      hurt: zombieMaterial({ map, emissive: HURT, emissiveIntensity: HURT_INTENSITY }, glowNowUniform),
+      burn: zombieMaterial({ map, color: SOOT, emissive: EMBER, emissiveIntensity: EMBER_INTENSITY }, glowNowUniform),
+    };
+    geos[kind] = zombieGeometries(/** @type {'walker'|'runner'|'alpha'} */ (kind));
+  }
   const group = new THREE.Group();
   group.name = 'zombies';
   const white = new THREE.Color(0xffffff);
@@ -301,21 +346,19 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
     return mesh;
   };
   /** @typedef {{ legs: THREE.InstancedMesh, upperArms: THREE.InstancedMesh, foreArms: THREE.InstancedMesh, torso: THREE.InstancedMesh, head: THREE.InstancedMesh, n: number }} PartSet */
-  const STATES = /** @type {const} */ (['base', 'hurt', 'burn']);
-  const geos = /** @type {Record<string, ReturnType<typeof zombieGeometries>>} */ ({});
   /** @type {Record<'base'|'hurt'|'burn', Record<string, PartSet>>} */
   const sets = /** @type {*} */ ({ base: {}, hurt: {}, burn: {} });
   for (const kind of ZOMBIE_KINDS) {
-    const g = zombieGeometries(/** @type {'walker'|'runner'|'alpha'} */ (kind));
-    geos[kind] = g;
+    const g = geos[kind];
     for (const state of STATES) {
       const suffix = state === 'base' ? '' : `-${state}`;
+      const mat = mats[kind][state];
       sets[state][kind] = {
-        legs: instanced(g.leg, mats[state], capacity * 2, `zombie-legs-${kind}${suffix}`),
-        upperArms: instanced(g.upperArm, mats[state], capacity * 2, `zombie-upper-arms-${kind}${suffix}`),
-        foreArms: instanced(g.foreArm, mats[state], capacity * 2, `zombie-forearms-${kind}${suffix}`),
-        torso: instanced(g.torso, mats[state], capacity, `zombie-torso-${kind}${suffix}`),
-        head: instanced(g.head, mats[state], capacity, `zombie-head-${kind}${suffix}`),
+        legs: instanced(g.leg, mat, capacity * 2, `zombie-legs-${kind}${suffix}`),
+        upperArms: instanced(g.upperArm, mat, capacity * 2, `zombie-upper-arms-${kind}${suffix}`),
+        foreArms: instanced(g.foreArm, mat, capacity * 2, `zombie-forearms-${kind}${suffix}`),
+        torso: instanced(g.torso, mat, capacity, `zombie-torso-${kind}${suffix}`),
+        head: instanced(g.head, mat, capacity, `zombie-head-${kind}${suffix}`),
         n: 0,
       };
     }
@@ -342,12 +385,15 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
    */
   function sync(zombies, t = 0, dark = 1) {
     const n = Math.min(zombies.length, capacity);
-    mats.base.emissiveIntensity = GLOW_DAY + (1 - GLOW_DAY) * Math.min(1, Math.max(0, Number.isFinite(dark) ? dark : 1));
+    const glowNow = GLOW_DAY + (1 - GLOW_DAY) * Math.min(1, Math.max(0, Number.isFinite(dark) ? dark : 1));
+    for (const kind of ZOMBIE_KINDS) mats[kind].base.emissiveIntensity = glowNow;
+    glowNowUniform.value = glowNow;
     for (const state of STATES) for (const kind of ZOMBIE_KINDS) sets[state][kind].n = 0;
     for (let i = 0; i < n; i++) {
       const zb = zombies[i];
       const state = zb.hurt > 0 ? 'hurt' : zb.smoking ? 'burn' : 'base';
       const kind = kindOf(zb);
+      const R = RIGS[kind];
       const set = sets[state][kind];
       const slot = set.n++;
       const run = kind === 'runner';
@@ -369,13 +415,13 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
       for (let k = 0; k < 2; k++) {
         const side = k === 0 ? -1 : 1;
         const amp = kind === 'walker' && side > 0 ? legAmp * 0.55 : legAmp;
-        partM.multiplyMatrices(bodyM, tmp.makeTranslation(side * LEG_X, LEG_H, 0)).multiply(rot.makeRotationX(-side * sw * amp));
+        partM.multiplyMatrices(bodyM, tmp.makeTranslation(side * R.legX, R.legH, 0)).multiply(rot.makeRotationX(-side * sw * amp));
         set.legs.setMatrixAt(slot * 2 + k, partM);
       }
       // Torso on the hips: stooped forward (more in a chase, most for a runner), swaying, lurching after a strike.
       const lean = (run ? -0.42 : alpha ? -0.3 : chase ? -0.17 : -0.1) + LURCH * attack;
       const sway = sw * (kind === 'walker' ? 0.045 : 0.03) + twitch * 0.15;
-      torsoM.multiplyMatrices(bodyM, tmp.makeTranslation(0, LEG_H, 0))
+      torsoM.multiplyMatrices(bodyM, tmp.makeTranslation(0, R.legH, 0))
         .multiply(rot.makeRotationX(lean))
         .multiply(tmp.makeRotationZ(sway));
       set.torso.setMatrixAt(slot, torsoM);
@@ -393,12 +439,12 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
         const free = 1 - up; // how much of the swipe and the twitch that arm still follows
         const bob = run ? side * sw * 0.9 : dormant ? 0 : 0.06 * Math.sin(phase + side * 1.4);
         const reach = pose.reach + bob - lean * 0.6;
-        partM.multiplyMatrices(torsoM, tmp.makeTranslation(side * SHOULDER_X, SHOULDER_Y, 0))
+        partM.multiplyMatrices(torsoM, tmp.makeTranslation(side * R.shoulderX, R.shoulderY, 0))
           .multiply(rot.makeRotationX(reach + (SHIELD_ARM.reach - reach) * up + 0.55 * attack * free))
           .multiply(tmp.makeRotationZ(side * (pose.spread + (SHIELD_ARM.spread - pose.spread) * up) + twitch * 0.3 * free));
         set.upperArms.setMatrixAt(slot * 2 + k, partM);
         set.upperArms.setColorAt(slot * 2 + k, shirt);
-        foreM.multiplyMatrices(partM, tmp.makeTranslation(0, -UPPER_L, 0));
+        foreM.multiplyMatrices(partM, tmp.makeTranslation(0, -R.upperL, 0));
         if (up > 0) foreM.multiply(rot.makeRotationY(side * SHIELD_ARM.twist * up)); // the forearm turns in toward the face
         foreM.multiply(rot.makeRotationX(pose.bend + (SHIELD_ARM.bend - pose.bend) * up + 0.25 * attack * free));
         set.foreArms.setMatrixAt(slot * 2 + k, foreM);
@@ -415,7 +461,7 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
         ? Math.cos(phase) * 0.03 - lean * 0.25
         : Math.cos(phase) * 0.06 - lean * (run ? 0.8 : 0.5) - (dormant ? 0.45 : run || chase ? 0 : WALKER_DROOP);
       // … and in block light it holds its head up behind the raised arm, leaning it away from that arm (§86).
-      headM.multiplyMatrices(torsoM, tmp.makeTranslation(0, TORSO_H, 0))
+      headM.multiplyMatrices(torsoM, tmp.makeTranslation(0, R.torsoH, 0))
         .multiply(rot.makeRotationZ(roll + (shieldSide * SHIELD_ROLL - roll) * shield))
         .multiply(tmp.makeRotationX(nod + (SHIELD_NOD - nod) * shield));
       set.head.setMatrixAt(slot, headM);
@@ -445,9 +491,8 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
     scene.remove(group);
     for (const mesh of group.children) /** @type {THREE.InstancedMesh} */ (mesh).dispose();
     for (const g of Object.values(geos)) for (const part of Object.values(g)) part.dispose();
-    for (const m of Object.values(mats)) m.dispose();
-    map.dispose();
-    glow.dispose();
+    for (const set of Object.values(mats)) for (const m of Object.values(set)) m.dispose();
+    for (const t of textures) t.dispose();
     drawn = 0;
   }
 
@@ -456,3 +501,6 @@ export function createZombieRenderer(scene, _atlasTexture, capacity = ZOMBIE_MAX
 
   return { sync, count: () => drawn, dispose, group, prewarm };
 }
+
+/** The atlas size of every kind (zombieModel.ZOMBIE_ATLAS). */
+export const ATLAS_SIZE = ZOMBIE_ATLAS;

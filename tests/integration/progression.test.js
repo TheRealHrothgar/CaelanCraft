@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { GEN_LATEST, CHUNK_VOLUME, CHUNK_SIZE } from '../../src/config.js';
 import { BLOCK, BLOCKS } from '../../src/blocks.js';
-import { ITEMS, ITEM_KEYS, TAGS, getItem, itemForBlock } from '../../src/items.js';
+import { ITEMS, ITEM_KEYS, TAGS, getItem, itemForBlock, blockForItem } from '../../src/items.js';
 import { BLOCK_RULES, PICKABLE, MOB_DROPS, rollDrops, pick, rollMobDrops } from '../../src/harvest.js';
 import { RECIPES, STATION_BLOCKS } from '../../src/crafting.js';
 import { FIRE_TRANSFORMS } from '../../src/cooking.js';
@@ -63,6 +63,14 @@ function reachable(barred = []) {
     for (const id of NATURAL) {
       if (BLOCK_RULES[id]) for (const t of hands) for (const s of rollDrops(id, t, ctx, ALWAYS)) changed = add(s.k) || changed;
       if (Object.hasOwn(PICKABLE, id)) for (const s of pick(id, ctx, ALWAYS).drops) changed = add(s.k) || changed;
+    }
+    // what is placed can be broken again (an edited cell: no `natural` drops) — §102: a placed Glass block is the only
+    // source of Glass Shards, which the Compass takes
+    const placed = { natural: false, deep: true, knifeInPack: ctx.knifeInPack };
+    for (const k of [...have]) {
+      const id = blockForItem(k);
+      if (id < 0 || !BLOCK_RULES[id]) continue;
+      for (const t of hands) for (const s of rollDrops(id, t, placed, ALWAYS)) changed = add(s.k) || changed;
     }
     // hunting needs something to hit with
     if (tools().length > 0) for (const kind of Object.keys(MOB_DROPS)) for (const s of rollMobDrops(kind, ALWAYS)) changed = add(s.k) || changed;
@@ -126,7 +134,9 @@ describe('the build tree: logical and blocking (§77)', () => {
     ['the Casting Mold', ['casting_mold'], ['copper_pick', 'copper_hammer', 'cassiterite', 'bronze_ingot'], ['copper_ingot', 'crucible']],
     ['the Bellows', ['bellows'], ['bloomery', 'forge', 'wrought_iron', 'glass'], ['bronze_ingot', 'leather']],
     ['the Bloomery', ['bloomery'], ['wrought_iron', 'glass', 'forge', 'steel_bar'], ['bronze_pick', 'hematite', 'fired_brick']],
-    ['the Forge', ['forge'], ['iron_pick', 'steel_bar', 'workbench'], ['wrought_iron', 'bronze_hammer']],
+    ['the Forge', ['forge'], ['iron_pick', 'steel_bar', 'workbench', 'compass'], ['wrought_iron', 'bronze_hammer']],
+    // §102: Glass Shards come only from breaking a placed Glass block (the Bloomery's), and the Compass's face is made of them
+    ['Glass', ['glass'], ['glass_shards', 'compass'], ['wrought_iron', 'copper_ingot', 'forge', 'iron_pick']],
     // §94: the Workbench makes the simple circuit parts and the Lab; the Lab makes the devices
     ['the Workbench', ['workbench'], ['knife_switch', 'push_button', 'terminal_board', 'voltaic_battery', 'lab', 'relay'], ['steel_bar', 'copper_wire', 'black_powder', 'powder_fuse']],
     ['the Lab', ['lab'], ['relay', 'electric_bell', 'clockwork_timer', 'spark_transmitter', 'coherer_receiver'], ['knife_switch', 'voltaic_battery', 'workbench']],

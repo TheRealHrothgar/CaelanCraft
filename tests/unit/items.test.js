@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   TIER, TIER_NAMES, TIER_SPEED, TOOL_TYPES, WEAR_SLOT_NAMES, TAGS, ITEMS, ITEM_KEYS,
   getItem, isItemKey, stackSize, maxDurability, itemForBlock, blockForItem, hasTag, itemName, resolveItem, SINGULAR_NAMES,
-  canonicalItemKey,
+  canonicalItemKey, ITEM_ALIASES, carriedWear,
 } from '../../src/items.js';
 import { BLOCK, BLOCKS, BLOCK_COUNT, PICKER_ORDER, isPlaceable } from '../../src/blocks.js';
 
@@ -22,6 +22,8 @@ const TOOLS = {
   flint_pick: ['Flint Pick', 'pick', 2, 90, 1],
   flint_shovel: ['Flint Shovel', 'shovel', 2, 90, 1],
   flint_spear: ['Flint Spear', 'spear', 2, 60, 3],
+  crude_bow: ['Crude Bow', 'bow', 2, 60, 1], // §100: wears 1 a shot
+  fishing_rod: ['Fishing Rod', 'rod', 2, 80, 1], // §106: wears 1 a cast
   copper_knife: ['Copper Knife', 'knife', 3, 140, 2],
   copper_axe: ['Copper Axe', 'axe', 3, 160, 2],
   copper_pick: ['Copper Pick', 'pick', 3, 160, 1],
@@ -33,6 +35,7 @@ const TOOLS = {
   bronze_shovel: ['Bronze Shovel', 'shovel', 4, 320, 1],
   bronze_hammer: ['Bronze Hammer', 'hammer', 4, 320, 1],
   bronze_sword: ['Bronze Sword', 'sword', 4, 280, 3],
+  recurve_bow: ['Recurve Bow', 'bow', 4, 220, 1], // §100
   iron_knife: ['Iron Knife', 'knife', 5, 500, 3],
   iron_axe: ['Iron Axe', 'axe', 5, 600, 3],
   iron_pick: ['Iron Pick', 'pick', 5, 600, 1],
@@ -66,10 +69,15 @@ const MATERIALS = {
   // DESIGN-circuits §8.1: the circuit materials
   pyrite: ['Pyrite', 32], sulfur: ['Sulfur', 32], selenium: ['Selenium', 16], saltpetre: ['Saltpetre', 32],
   black_powder: ['Black Powder', 32], carbon_filament: ['Carbon Filament', 32], iron_filings: ['Iron Filings', 32],
-  flint_dart: ['Flint Dart', 16], // v0.10 throwing (CONTRACTS §60)
   handbook: ['Survival Handbook', 1], // §14: added by package H
-  feather: ['Feather', 32], fletched_dart: ['Fletched Dart', 16], // v0.14 (§76 fauna)
+  feather: ['Feather', 32], // v0.14 (§76 fauna); §100: the darts are retired (Flint Arrows now)
   carrot_seeds: ['Carrot Seeds', 32], onion_seeds: ['Onion Seeds', 32], healwort_seeds: ['Healwort Seeds', 32], // §80 farming
+  // §100 the bows and the arrows of every age
+  bow_stave: ['Bow Stave', 4], treated_stave: ['Treated Stave', 4], sapling: ['Sapling', 16],
+  stone_arrow: ['Stone Arrow', 16], flint_arrow: ['Flint Arrow', 16], copper_arrow: ['Copper Arrow', 16],
+  bronze_arrow: ['Bronze Arrow', 16], iron_arrow: ['Iron Arrow', 16], steel_arrow: ['Steel Arrow', 16],
+  spyglass: ['Spyglass', 1], // §103
+  compass: ['Compass', 1], // §102
 };
 
 /** §5.1 / §4.5 food: key → [display name, stack, satiation, hydration, sick, useS, extra]. */
@@ -189,12 +197,12 @@ describe('items — tiers, tool types, wear slots', () => {
   it('TIER, TIER_NAMES and TIER_SPEED follow §5.1', () => {
     expect(TIER).toEqual({ HAND: 0, STONE: 1, FLINT: 2, COPPER: 3, BRONZE: 4, IRON: 5, STEEL: 6 });
     expect(TIER_NAMES).toEqual(['hand', 'stone', 'flint', 'copper', 'bronze', 'iron', 'steel']);
-    expect(TIER_SPEED).toEqual([1, 1.5, 2, 2.6, 3.4, 4.5, 6]);
+    expect(TIER_SPEED).toEqual([1, 2.2, 4.4, 6.4, 9, 12.5, 17]); // §99: each age clearly faster (was §5.1's 1, 1.5, 2, 2.6, 3.4, 4.5, 6)
     for (const [name, t] of Object.entries(TIER)) expect(TIER_NAMES[t]).toBe(name.toLowerCase());
     for (let t = 1; t < TIER_SPEED.length; t++) expect(TIER_SPEED[t]).toBeGreaterThan(TIER_SPEED[t - 1]);
   });
   it('TOOL_TYPES lists every tool type once; WEAR_SLOT_NAMES is head, body, feet', () => {
-    expect([...TOOL_TYPES].sort()).toEqual(['axe', 'crucible', 'firestarter', 'hammer', 'knife', 'mold', 'pick', 'shovel', 'spear', 'sword']);
+    expect([...TOOL_TYPES].sort()).toEqual(['axe', 'bow', 'crucible', 'firestarter', 'hammer', 'knife', 'mold', 'pick', 'rod', 'shovel', 'spear', 'sword']); // §100: + the bow; §106: + the rod
     expect(new Set(Object.values(TOOLS).map((t) => t[1]))).toEqual(new Set(TOOL_TYPES));
     expect(WEAR_SLOT_NAMES).toEqual(['head', 'body', 'feet']);
   });
@@ -232,8 +240,8 @@ describe('items — the registry', () => {
     // twelve game foods (fauna)
     // §80: + the three seeds (materials). The 18 farm blocks are not placeable, so they are no items.
     // §81: + Hemlock Root and Nightshade Berries (foods), the Aloe Leaf (a heal) and the seven placeable plants.
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([34, 51, 55, 3, 5, 119]); // §94: + the Lab; // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(267); // §94: + the Lab; // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([37, 60, 55, 3, 5, 120]); // §106: + the Fishing Rod (a tool); §102: + the Compass (a material); §100 (the bows, the arrows): − the Bow, + the Crude Bow and the Recurve Bow (tools); − the two darts and the Arrow, + the Treated Stave, the Sapling, six arrows and (§103) the Spyglass (materials); // §101: + the Pennant (a block item); §100: + the Bow (a tool), the Bow Stave and the Arrow (materials); // §94: + the Lab; // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(280); // §106: + the Fishing Rod; §102: + the Compass; §100 + §103: + 7; // §101: + the Pennant; §100: + the Bow, the Bow Stave, the Arrow; // §94: + the Lab; // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();
@@ -345,9 +353,55 @@ describe('items — the registry', () => {
     expect(blockForItem('handbook')).toBe(-1);
     expect(resolveItem('handbook')).toEqual({ key: 'handbook' });
     expect(resolveItem('Survival Handbook')).toEqual({ key: 'handbook' });
-    // the last material of the first releases; v0.14's feather and Fletched Dart follow it (§76 fauna)
+    // the last material of the first releases; v0.14's feather follows it (§76 fauna; §100: the darts are retired)
     const materials = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'material');
-    expect(materials.slice(materials.indexOf('handbook'))).toEqual(['handbook', 'feather', 'fletched_dart', 'carrot_seeds', 'onion_seeds', 'healwort_seeds']); // + the seeds (§80)
+    expect(materials.slice(materials.indexOf('handbook'))).toEqual(['handbook', 'feather', 'carrot_seeds', 'onion_seeds', 'healwort_seeds',
+      'bow_stave', 'treated_stave', 'sapling', 'stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow',
+      'spyglass', 'compass']); // + the seeds (§80); + the bows' and the arrows (§100); + the Spyglass (§103); + the Compass (§102), last
+  });
+  it('§100 the bows: the Crude Bow of the flint age and the Recurve Bow of bronze, their own tool type; staves, the sapling and six arrows stack', () => {
+    expect(getItem('crude_bow')).toEqual({ key: 'crude_bow', name: 'Crude Bow', kind: 'tool', stack: 1, tool: { type: 'bow', tier: TIER.FLINT, durability: 60, power: 1 } });
+    expect(getItem('recurve_bow')).toEqual({ key: 'recurve_bow', name: 'Recurve Bow', kind: 'tool', stack: 1, tool: { type: 'bow', tier: TIER.BRONZE, durability: 220, power: 1 } });
+    expect(TOOL_TYPES.indexOf('bow')).toBe(TOOL_TYPES.indexOf('spear') + 1); // in the order the tool table first uses them
+    // the Crude Bow follows the Flint Spear among the flint tools, the Recurve Bow the Bronze Sword; nothing else is a bow
+    const tools = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool');
+    expect(tools[tools.indexOf('flint_spear') + 1]).toBe('crude_bow');
+    expect(tools[tools.indexOf('bronze_sword') + 1]).toBe('recurve_bow');
+    expect(tools.filter((k) => ITEMS[k].tool.type === 'bow')).toEqual(['crude_bow', 'recurve_bow']);
+    expect(getItem('bow_stave')).toEqual({ key: 'bow_stave', name: 'Bow Stave', kind: 'material', stack: 4 });
+    expect(getItem('treated_stave')).toEqual({ key: 'treated_stave', name: 'Treated Stave', kind: 'material', stack: 4 });
+    expect(getItem('sapling')).toEqual({ key: 'sapling', name: 'Sapling', kind: 'material', stack: 16 });
+    for (const head of ['stone', 'flint', 'copper', 'bronze', 'iron', 'steel']) {
+      const k = `${head}_arrow`;
+      expect(getItem(k), k).toEqual({ key: k, name: `${head[0].toUpperCase()}${head.slice(1)} Arrow`, kind: 'material', stack: 16 });
+      expect(maxDurability(k), k).toBe(0);
+      expect(itemName(k, 1)).toBe(itemName(k));
+    }
+    for (const [token, key] of [['crude_bow', 'crude_bow'], ['Recurve_Bow', 'recurve_bow'], ['Bow_Stave', 'bow_stave'], ['sapling', 'sapling'],
+      ['Steel_Arrow', 'steel_arrow']]) {
+      expect(resolveItem(token)).toEqual({ key });
+    }
+  });
+  it('§100 old saves: the Bow is the Crude Bow, the Arrow and both darts are Flint Arrows; a Bow keeps its wear up to the Crude Bow\'s', () => {
+    expect(ITEM_ALIASES).toMatchObject({ bow: 'crude_bow', arrow: 'flint_arrow', flint_dart: 'flint_arrow', fletched_dart: 'flint_arrow' });
+    for (const old of ['bow', 'arrow', 'flint_dart', 'fletched_dart']) {
+      expect(isItemKey(old), old).toBe(false); // no longer items …
+      expect(isItemKey(canonicalItemKey(old)), old).toBe(true); // … but read as the current ones
+    }
+    // typed names read through the aliases too (the console's pack add)
+    for (const [token, key] of [['bow', 'crude_bow'], ['arrow', 'flint_arrow'], ['ARROW', 'flint_arrow'], ['flint_dart', 'flint_arrow'], ['fletched_dart', 'flint_arrow']]) {
+      expect(resolveItem(token), token).toEqual({ key });
+    }
+    // a Bow of 100 uses with 80 left is a Crude Bow with its 60; one with 40 left keeps them
+    expect(carriedWear(80, 'crude_bow')).toBe(60);
+    expect(carriedWear(40, 'crude_bow')).toBe(40);
+    expect(carriedWear(undefined, 'crude_bow')).toBe(undefined);
+    expect(carriedWear(5, 'flint_arrow')).toBe(5); // no durability: left for the validators to judge
+  });
+  it('§103 the Spyglass: a material of stack 1 that never wears', () => {
+    expect(getItem('spyglass')).toEqual({ key: 'spyglass', name: 'Spyglass', kind: 'material', stack: 1 });
+    expect(maxDurability('spyglass')).toBe(0);
+    expect(resolveItem('Spyglass')).toEqual({ key: 'spyglass' });
   });
   it('every key the rest of the design names exists (drops, picks, fire spots, recipes, workplaces)', () => {
     for (const key of REFERENCED) expect(isItemKey(key), key).toBe(true);
@@ -425,6 +479,8 @@ describe('items — tags', () => {
       // §85: any wool, white first (what a sheep gives): the Bed
       wool: ['wool_white', 'wool_light_gray', 'wool_gray', 'wool_black', 'wool_brown', 'wool_red', 'wool_orange', 'wool_yellow',
         'wool_lime', 'wool_green', 'wool_cyan', 'wool_light_blue', 'wool_blue', 'wool_purple', 'wool_magenta', 'wool_pink'],
+      // §101: a rag or a hide for the Pennant's flag, the cheapest first
+      cloth: ['grave_rag', 'rawhide', 'leather'],
     });
     for (const [tag, keys] of Object.entries(TAGS)) {
       expect(tag).toMatch(LOWER_SNAKE);
@@ -524,8 +580,10 @@ describe('itemName with a count: the singular of a plural display name', () => {
 
   it('every plural-named item (a display name ending in "s" that is not a mass noun) has a singular, and every singular names a real item', () => {
     for (const k of Object.keys(SINGULAR_NAMES)) expect(isItemKey(k), k).toBe(true);
-    // (food and materials: a pair of shoes or a hat is one thing already)
-    const plural = ITEM_KEYS.map((k) => getItem(k)).filter((d) => /s$/.test(d.name) && d.key !== 'bellows' && (d.kind === 'food' || d.kind === 'material'));
+    // (food and materials: a pair of shoes or a hat is one thing already; Bellows is both, and a Compass is one, §102)
+    // (§103: a Spyglass is one glass)
+    const plural = ITEM_KEYS.map((k) => getItem(k))
+      .filter((d) => /s$/.test(d.name) && !['bellows', 'compass', 'spyglass'].includes(d.key) && (d.kind === 'food' || d.kind === 'material'));
     for (const d of plural) expect(Object.hasOwn(SINGULAR_NAMES, d.key), d.key).toBe(true);
   });
 });

@@ -12,9 +12,10 @@ import { BLOCK_RULES, PICKABLE, MOB_DROPS, GRAVEL_FLINT_P, canHarvest, tap } fro
 import { RECIPES, STATION_BLOCKS } from '../../src/crafting.js';
 import { FIRE_TRANSFORMS, fuelSeconds } from '../../src/cooking.js';
 import { FLORA_TABLE } from '../../src/worldgen.js';
-import { DART_KEYS } from '../../src/looseItems.js';
+import { ARROW_KEYS } from '../../src/looseItems.js';
 import { PLANTABLE } from '../../src/farming.js';
 import { homesteadAction } from '../../src/homestead.js';
+import { COMPASS_KEY } from '../../src/compass.js';
 
 const B = BLOCK;
 /** Items the game gives rather than the world (§14.2: the Handbook is in the pack when a survival state begins). */
@@ -65,8 +66,10 @@ describe('every item has a source and a use (§10 I-1)', () => {
   for (const rec of RECIPES) for (const opts of inputOptions(rec)) for (const k of opts) uses.add(k);
   for (const k of Object.keys(FIRE_TRANSFORMS)) uses.add(k);
   uses.add('clay_pot'); // filled at water and tapped into (§4.2)
-  for (const k of DART_KEYS) uses.add(k); // thrown (CONTRACTS §60)
+  for (const k of ARROW_KEYS) uses.add(k); // shot from a bow (§100; the darts of §60 are Flint Arrows now)
+  uses.add('spyglass'); // carried, it is looked through (§103)
   for (const k of Object.keys(PLANTABLE)) uses.add(k); // planted with R (§80 farming): what the three seeds are for
+  uses.add(COMPASS_KEY); // carried, it puts north on the HUD's wind vane (§102)
 
   it.each(nonBlockKeys)('%s comes from somewhere', (key) => {
     expect(sources.has(key) || GIVEN.has(key)).toBe(true);

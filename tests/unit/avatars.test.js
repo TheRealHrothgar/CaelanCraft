@@ -1,16 +1,12 @@
-// Avatars (CONTRACTS §91): the data (avatars.js), the skins (avatarSkin.js) and the per-player preference.
+// Avatars (CONTRACTS §91): the data (avatars.js) and the per-player preference. The models are avatarModel.test.js's.
 import { describe, it, expect } from 'vitest';
 import {
   AVATARS, AVATAR_IDS, DEFAULT_AVATAR, AVATAR_PREF_KEY, normalizeAvatarId, avatarById, avatarHeight, loadAvatarPref,
   saveAvatarPref,
 } from '../../src/avatars.js';
-import {
-  paintAvatarSheet, avatarParts, layoutParts, faceRect, avatarRig, restBoxes, faceLayout, frontPicture, portrait, SHEET_W, PAGE_H,
-  FACES, HAIR_PARTS, EYE_WHITE,
-} from '../../src/avatarSkin.js';
-import { AVATAR_TEXEL, PLAYER_HEIGHT, PLAYER_WIDTH, EYE_HEIGHT } from '../../src/config.js';
+import { HAIR_CUTS } from '../../src/avatarModel.js';
+import { PLAYER_HEIGHT, PLAYER_WIDTH, EYE_HEIGHT } from '../../src/config.js';
 
-const T = AVATAR_TEXEL;
 const byId = (id) => /** @type {import('../../src/avatars.js').AvatarDef} */ (AVATARS.find((a) => a.id === id));
 
 /** A Map-backed Web Storage. */
@@ -24,41 +20,74 @@ function fakeStorage(init = {}) {
   };
 }
 const throwing = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('full'); }, removeItem() { throw new Error('x'); } };
+const lum = (c) => 0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255);
 
 describe('the avatars as data', () => {
   it('Caelan, Brayden and Annabelle, in that order; Caelan first and the default', () => {
     expect(AVATAR_IDS).toEqual(['caelan', 'brayden', 'annabelle']);
     expect(AVATARS.map((a) => a.displayName)).toEqual(['Caelan', 'Brayden', 'Annabelle']);
     expect(DEFAULT_AVATAR).toBe('caelan');
-    expect(Object.isFrozen(AVATARS) && Object.isFrozen(AVATARS[0].body.head) && Object.isFrozen(AVATARS[0].palette.skin)).toBe(true);
+    expect(Object.isFrozen(AVATARS) && Object.isFrozen(AVATARS[0].body.leg) && Object.isFrozen(AVATARS[0].palette.skin)).toBe(true);
+    expect(Object.isFrozen(AVATARS[0].hands.palm) && Object.isFrozen(AVATARS[2].outfit.skirt)).toBe(true);
     for (const a of AVATARS) expect(a.blurb.length, a.id).toBeGreaterThan(4);
   });
 
-  it('every box is whole texels; every colour is 0xRRGGBB; styles and outfits are known kinds', () => {
-    const boxes = (a) => [a.body.head, a.body.chest, a.body.waist, a.body.leg, a.body.upperArm, a.body.foreArm, a.hair.box,
-      ...(a.hair.tufts ?? []), ...(a.hair.back ? [a.hair.back] : []), ...(a.outfit.skirt ? [a.outfit.skirt] : [])];
+  it('every number is a positive metre; every colour is 0xRRGGBB; styles, cuts and outfits are known kinds', () => {
     const colours = (a) => [...a.palette.skin, ...a.palette.hair, ...a.palette.eyes, a.palette.brows, a.palette.mouth, a.palette.blush,
-      ...a.outfit.top, a.outfit.trim, ...(a.outfit.bottom ?? []), ...a.outfit.shoes, ...(a.outfit.sash ? [a.outfit.sash] : []),
-      ...(a.outfit.socks ? [a.outfit.socks] : [])];
+      ...a.outfit.top, a.outfit.trim, ...(a.outfit.bottom ?? []), ...a.outfit.shoes.colors, ...(a.outfit.sash ? [a.outfit.sash] : []),
+      ...(a.outfit.socks ? [a.outfit.socks.color] : []), ...(a.outfit.belt ? [a.outfit.belt] : [])];
     for (const a of AVATARS) {
-      for (const b of boxes(a)) for (const k of ['w', 'h', 'd']) expect(Number.isInteger(b[k]) && b[k] > 0, `${a.id} ${k}`).toBe(true);
+      const b = a.body;
+      const sizes = [b.legX, b.ankle, b.leg.rx, b.leg.rz, b.leg.len, b.hips.rx, b.hips.rz, b.torso.h, b.torso.rx, b.torso.rz, b.neck.r,
+        b.upper.rx, b.upper.rz, b.fore.rx, b.fore.rz, a.head.h, a.head.rx, a.head.rz, a.hair.crown, ...a.hands.palm, ...a.hands.fingers,
+        ...a.hands.thumb, ...a.outfit.shoes.size];
+      for (const v of sizes) expect(v > 0 && v < 1, `${a.id} ${v}`).toBe(true);
       for (const c of colours(a)) expect(Number.isInteger(c) && c >= 0 && c <= 0xffffff, `${a.id} ${c}`).toBe(true);
       expect(['poofy', 'silky', 'longWavy']).toContain(a.hair.style);
+      expect(HAIR_CUTS[a.hair.cut].style, a.id).toBe(a.hair.style);
       expect(['tee', 'dress']).toContain(a.outfit.kind);
+      expect(['sneaker', 'laceup', 'strap']).toContain(a.outfit.shoes.style);
       expect(a.palette.skin).toHaveLength(4);
       expect(a.palette.hair).toHaveLength(4);
       expect(a.palette.eyes).toHaveLength(2);
-      expect(a.body.hand).toBeLessThan(a.body.foreArm.h);
-      expect(a.outfit.sleeve).toBeLessThan(a.body.upperArm.h);
+      expect(a.outfit.sleeve).toBeGreaterThan(0);
+      expect(a.outfit.sleeve).toBeLessThanOrEqual(1);
+      // a pushed-up sleeve's cuff (on the model and in first person) sits part way up the forearm; a short sleeve has none
+      if (a.outfit.cuffAt !== undefined) expect(a.outfit.cuffAt > 0 && a.outfit.cuffAt < 1, a.id).toBe(true);
+      expect(a.outfit.cuffAt === undefined || a.outfit.sleeve === 1, a.id).toBe(true);
+      // the joints run down the arm and the body stacks up
+      expect(b.shoulder[1]).toBeGreaterThan(b.elbow[1]);
+      expect(b.elbow[1]).toBeGreaterThan(b.wrist[1]);
+      expect(b.ankle + b.leg.len).toBeGreaterThan(b.hips.y0);
+      expect(b.torso.y0 + b.torso.h).toBeGreaterThan(b.neck.y0);
+      expect(a.head.y).toBeLessThan(b.neck.y1);
+      expect(a.scale > 0.9 && a.scale < 1.1, a.id).toBe(true);
     }
   });
 
-  it('each one\'s height is its boxes\' (to within a texel), close to the one collider, and Brayden and Annabelle are taller than Caelan', () => {
+  it('the picks: Caelan a tousled mop (C2), Brayden a side sweep (B1), Annabelle long waves (A1)', () => {
+    expect(byId('caelan').hair).toMatchObject({ style: 'poofy', cut: 'C2' });
+    expect(byId('brayden').hair).toMatchObject({ style: 'silky', cut: 'B1' });
+    expect(byId('annabelle').hair).toMatchObject({ style: 'longWavy', cut: 'A1' });
+  });
+
+  it('gives Caelan a mild olive skin, its shadows warm, not grey', () => {
+    for (const c of byId('caelan').palette.skin) {
+      const [r, g, b] = [(c >> 16) & 255, (c >> 8) & 255, c & 255];
+      expect(r).toBeGreaterThan(g); // warm
+      expect(g - b).toBeGreaterThan(20); // a yellow-green (olive) undertone, never grey
+      expect(r - g).toBeLessThan(45); // not orange
+    }
+    expect(lum(byId('caelan').palette.skin[0])).toBeGreaterThan(190); // mild, not tan
+  });
+
+  it('each one\'s height is its build\'s (to within 1/32 m), close to the one collider, and Brayden and Annabelle are taller than Caelan', () => {
     for (const a of AVATARS) {
-      expect(Math.abs(avatarHeight(a) - a.height), a.id).toBeLessThan(T);
+      expect(Math.abs(avatarHeight(a) - a.height), a.id).toBeLessThan(1 / 32);
       expect(a.height, a.id).toBeLessThanOrEqual(PLAYER_HEIGHT);
       expect(a.height, a.id).toBeGreaterThan(PLAYER_HEIGHT - 0.2);
     }
+    expect([byId('caelan').height, byId('brayden').height, byId('annabelle').height]).toEqual([1.625, 1.781, 1.719]);
     expect(byId('brayden').height - byId('caelan').height).toBeGreaterThan(0.1);
     expect(byId('annabelle').height - byId('caelan').height).toBeGreaterThan(0.06);
     expect(byId('brayden').height).toBeGreaterThan(byId('annabelle').height); // tall and slender
@@ -67,33 +96,27 @@ describe('the avatars as data', () => {
     expect([PLAYER_HEIGHT, PLAYER_WIDTH, EYE_HEIGHT]).toEqual([1.8, 0.56, 1.62]);
   });
 
-  it('the builds read: Caelan tapers (shoulders wider than the waist), Brayden is slender with long limbs, Annabelle is solid', () => {
+  it('the builds read: Caelan tapers, Brayden is slender with long limbs, Annabelle is solid and wears a dress', () => {
     const c = byId('caelan').body;
     const b = byId('brayden').body;
     const a = byId('annabelle').body;
-    expect(c.chest.w - c.waist.w).toBeGreaterThanOrEqual(4);
-    expect(b.chest.w).toBeLessThan(c.chest.w);
-    expect(b.leg.h).toBeGreaterThan(c.leg.h + 4);
-    expect(b.upperArm.h + b.foreArm.h).toBeGreaterThan(c.upperArm.h + c.foreArm.h);
-    expect(a.chest.w).toBeGreaterThanOrEqual(c.chest.w);
-    expect(a.waist.w).toBeGreaterThan(c.waist.w);
-    expect(a.chest.d).toBeGreaterThan(c.chest.d);
-    expect(byId('caelan').hair.tufts?.length).toBeGreaterThanOrEqual(3); // poofy: tufts that stick out
-    expect(byId('annabelle').hair.back).toBeTruthy(); // long hair down her back
-    expect(byId('annabelle').outfit.skirt).toBeTruthy(); // a dress
+    expect(c.torso.rx).toBeGreaterThan(c.hips.rx); // shoulders over a narrower seat
+    expect(b.torso.rx).toBeLessThan(c.torso.rx);
+    expect(b.leg.len).toBeGreaterThan(c.leg.len + 0.1);
+    expect(b.shoulder[1] - b.wrist[1]).toBeGreaterThan(c.shoulder[1] - c.wrist[1]);
+    expect(a.torso.rx).toBeGreaterThan(c.torso.rx);
+    expect(a.hips.rx).toBeGreaterThan(c.hips.rx);
+    expect(a.torso.rz).toBeGreaterThan(c.torso.rz);
+    const ann = byId('annabelle').outfit;
+    expect(ann.kind).toBe('dress');
+    expect(ann.skirt && ann.skirt.r1 > a.hips.rx).toBe(true); // the skirt flares wider than the hips
   });
 
-  it('the legs fit under the waist, the arms clear the chest and the skirt, the skirt is wider than the hips', () => {
+  it('the legs fit under the hips and the arms hang clear of the torso', () => {
     for (const def of AVATARS) {
       const b = def.body;
-      const g = avatarRig(def);
-      expect(2 * g.legX + b.leg.w, def.id).toBeLessThanOrEqual(b.waist.w);
-      expect(g.shoulderX - b.upperArm.w / 2, def.id).toBeGreaterThanOrEqual(b.chest.w / 2);
-      if (def.outfit.skirt) {
-        expect(def.outfit.skirt.w / 2, def.id).toBeLessThanOrEqual(g.shoulderX - b.upperArm.w / 2);
-        expect(def.outfit.skirt.w).toBeGreaterThan(2 * g.legX + b.leg.w);
-        expect(def.outfit.skirt.d).toBeGreaterThan(b.waist.d);
-      }
+      expect(b.legX + b.leg.rx * 0.9, def.id).toBeLessThanOrEqual(b.hips.rx + 0.01);
+      expect(b.shoulder[0] - b.upper.rx * 0.5, def.id).toBeGreaterThan(b.torso.rx * 0.9);
     }
   });
 
@@ -119,126 +142,5 @@ describe('the avatars as data', () => {
     expect(loadAvatarPref(throwing)).toBe('caelan');
     expect(saveAvatarPref(throwing, 'brayden')).toBe(false);
     expect(saveAvatarPref(null, 'brayden')).toBe(false);
-  });
-});
-
-describe('the skins (avatarSkin.js)', () => {
-  const sheet = paintAvatarSheet();
-  const at = (page, x, y) => {
-    const i = ((page * PAGE_H + y) * SHEET_W + x) * 4;
-    return [sheet.data[i], sheet.data[i + 1], sheet.data[i + 2], sheet.data[i + 3]];
-  };
-  const rgb = (c) => [(c >> 16) & 255, (c >> 8) & 255, c & 255];
-
-  it('one SHEET_W × PAGE_H page per avatar, the same bytes every call', () => {
-    expect([sheet.width, sheet.height]).toEqual([SHEET_W, PAGE_H * AVATARS.length]);
-    expect(sheet.data.length).toBe(sheet.width * sheet.height * 4);
-    expect(Object.keys(sheet.pages)).toEqual(AVATAR_IDS);
-    expect(paintAvatarSheet().data).toEqual(sheet.data);
-  });
-
-  it('every part has an unwrap on its own page, none overlapping, all inside the page', () => {
-    for (const def of AVATARS) {
-      const { layout } = sheet.pages[def.id];
-      expect(Object.keys(layout).sort()).toEqual(Object.keys(avatarParts(def)).sort());
-      const used = new Set();
-      for (const [name, p] of Object.entries(layout)) {
-        expect(p.x + 2 * (p.w + p.d), `${def.id} ${name}`).toBeLessThanOrEqual(SHEET_W);
-        expect(p.y + p.d + p.h, `${def.id} ${name}`).toBeLessThanOrEqual(PAGE_H);
-        for (const face of FACES) {
-          const r = faceRect(p, face);
-          for (let y = r.y; y < r.y + r.h; y++) {
-            for (let x = r.x; x < r.x + r.w; x++) {
-              expect(used.has(`${x},${y}`), `${def.id} ${name} ${face}`).toBe(false);
-              used.add(`${x},${y}`);
-            }
-          }
-        }
-      }
-    }
-    expect(() => layoutParts({ huge: { w: 60, h: 10, d: 10 } })).toThrow(RangeError);
-    expect(() => layoutParts({ a: { w: 40, h: 100, d: 20 }, b: { w: 40, h: 100, d: 20 } })).toThrow(RangeError);
-  });
-
-  it('body parts are painted solid; the hair layer is see-through where the face shows', () => {
-    for (const def of AVATARS) {
-      const { page, layout } = sheet.pages[def.id];
-      for (const [name, p] of Object.entries(layout)) {
-        if (HAIR_PARTS.includes(name) || name.startsWith('tuft')) continue;
-        for (const face of FACES) {
-          const r = faceRect(p, face);
-          let clear = 0;
-          for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) if (at(page, x, y)[3] !== 255) clear++;
-          expect(clear, `${def.id} ${name} ${face}`).toBe(0);
-        }
-      }
-      // the hair layer: hair on top, open over the eyes, nothing on its bottom
-      const hair = layout.hair;
-      const front = faceRect(hair, 'front');
-      const L = faceLayout(def.body.head);
-      const above = def.hair.box.y + def.hair.box.h - def.body.head.h;
-      const inset = (def.hair.box.w - def.body.head.w) / 2;
-      expect(at(page, front.x + Math.floor(front.w / 2), front.y)[3], def.id).toBe(255);
-      for (const e of [L.left, L.right]) {
-        for (const col of [e.white, ...e.iris]) expect(at(page, front.x + inset + col, front.y + above + L.eyeRow)[3], def.id).toBe(0);
-      }
-      const bottom = faceRect(hair, 'bottom');
-      expect(at(page, bottom.x + 1, bottom.y + 1)[3], def.id).toBe(0);
-    }
-  });
-
-  it('friendly eyes in each avatar\'s eye colour: a white, the iris, a darker pupil; brows in the hair colour', () => {
-    for (const def of AVATARS) {
-      const { page, layout } = sheet.pages[def.id];
-      const f = faceRect(layout.head, 'front');
-      const L = faceLayout(def.body.head);
-      for (const e of [L.left, L.right]) {
-        expect(at(page, f.x + e.white, f.y + L.eyeRow).slice(0, 3), def.id).toEqual(rgb(EYE_WHITE));
-        expect(at(page, f.x + e.iris[1], f.y + L.eyeRow).slice(0, 3), def.id).toEqual(rgb(def.palette.eyes[0]));
-        expect(at(page, f.x + e.iris[1], f.y + L.eyeRow + 1).slice(0, 3), def.id).toEqual(rgb(def.palette.eyes[1]));
-        expect(at(page, f.x + e.iris[0], f.y + L.browRow).slice(0, 3), def.id).toEqual(rgb(def.palette.brows));
-      }
-      // the eyes are mirror images about the middle of the face
-      expect(L.left.white + L.right.white).toBe(def.body.head.w - 1);
-      expect(L.left.iris[0] + L.right.iris[0]).toBe(def.body.head.w - 1);
-    }
-  });
-
-  it('the rest pose stacks legs, waist, chest and head to the avatar\'s height', () => {
-    for (const def of AVATARS) {
-      const { layout } = sheet.pages[def.id];
-      let top = 0;
-      let bottom = Infinity;
-      for (const b of restBoxes(def)) {
-        if (b.part.startsWith('tuft')) continue;
-        top = Math.max(top, b.y + layout[b.part].h / 2);
-        bottom = Math.min(bottom, b.y - layout[b.part].h / 2);
-      }
-      expect(bottom, def.id).toBe(0);
-      expect(top * T, def.id).toBeCloseTo(avatarHeight(def), 6);
-    }
-  });
-
-  it('a front picture and a square portrait (head and shoulders), painted from the skin', () => {
-    for (const def of AVATARS) {
-      const pic = frontPicture(def, sheet);
-      const tall = Math.round(avatarHeight(def) / T);
-      if (def.hair.tufts) expect(pic.height, def.id).toBeGreaterThan(tall); // the tufts stick up out of the hair
-      else expect(pic.height, def.id).toBe(tall);
-      expect(pic.height, def.id).toBeLessThanOrEqual(tall + 4);
-      const p = portrait(def, sheet);
-      expect(p.width, def.id).toBe(p.height);
-      expect(p.data.length).toBe(p.width * p.height * 4);
-      let opaque = 0;
-      for (let i = 3; i < p.data.length; i += 4) if (p.data[i] === 255) opaque++;
-      expect(opaque / (p.width * p.height), def.id).toBeGreaterThan(0.35);
-      // the bottom row is the chest's cloth, the eye colour is in there
-      const has = (c) => {
-        const [r, g, b] = rgb(c);
-        for (let i = 0; i < p.data.length; i += 4) if (p.data[i] === r && p.data[i + 1] === g && p.data[i + 2] === b) return true;
-        return false;
-      };
-      expect(has(def.palette.eyes[0]), def.id).toBe(true);
-    }
   });
 });

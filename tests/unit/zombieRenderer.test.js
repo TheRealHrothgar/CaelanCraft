@@ -1,13 +1,19 @@
-// zombieRenderer.js regression tests — Node only (three core objects work without WebGL). CONTRACTS §39, §61, §74.
+// zombieRenderer.js regression tests — Node only (three core objects work without WebGL). CONTRACTS §39, §61, §74, §86, §104.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
-  createZombieRenderer, zombieGeometries, skinBox, boxesGeometry, LEG_H, LEG_X, TORSO_W, TORSO_H, HEAD_W, HEAD_H, MODEL_HEIGHT,
-  UPPER_L, FORE_L, ARM_L, SHOULDER_X, SHOULDER_Y, ALPHA_SCALE, RUNNER_WIDTH, SHIRT_TINTS, ARMS, GLOW_DAY,
-  twitchOf, TWITCH_HZ, TWITCH_PART, TWITCH_ANGLE, HEAD_D, HAIR_PUFF, shieldOf, SHIELD_ARM, SHIELD_NOD, SHIELD_ROLL,
+  createZombieRenderer, zombieGeometries, boxesGeometry, patchZombieShader, LEG_H, LEG_X, TORSO_H, UPPER_L, FORE_L, ARM_L,
+  SHOULDER_X, SHOULDER_Y, ALPHA_SCALE, RUNNER_WIDTH, SHIRT_TINTS, ARMS, GLOW_DAY, RIGS, ZOMBIE_FILL, ZOMBIE_PROGRAM,
+  twitchOf, TWITCH_HZ, TWITCH_PART, TWITCH_ANGLE, shieldOf, SHIELD_ARM, SHIELD_NOD, SHIELD_ROLL, ZOMBIE_HURT,
+  ZOMBIE_HURT_INTENSITY,
 } from '../../src/zombieRenderer.js';
-import { PARTS, faceRect, SKIN_H, SKIN_KINDS, ATLAS_W, ATLAS_H, SKIN_TEXEL, EYE_ROW } from '../../src/zombieSkin.js';
+import { zombieModel, zombieRig, ZOMBIE_ATLAS, TINT_ALPHA } from '../../src/zombieModel.js';
 import { ZOMBIE_MAX, ZOMBIE_HEIGHT, MAX_INFALL_MOBS } from '../../src/config.js';
+import {
+  readSceneParam, SCENE_NAMES, ZOMBIE_SCENE, crowdScene, CROWD_SIZE, WATCHER_SCENE, PHANTOM_SCENE,
+} from '../../src/diagnostics.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 /** A minimal zombie as the renderer reads it. */
 const zombie = (x, y, z, extra = {}) => ({ id: 0, x, y, z, yaw: 0, walkPhase: 0, hurt: 0, smoking: false, swing: 0, tilt: 0, mode: 'idle', ...extra });
@@ -33,81 +39,56 @@ const boxUnder = (geo, m) => {
   return geo.boundingBox.clone().applyMatrix4(m);
 };
 const FIVE = (kind, suffix = '') => ['forearms', 'head', 'legs', 'torso', 'upper-arms'].map((p) => `zombie-${p}-${kind}${suffix}`);
-/** The forearm's width (m), from the skin's box. */
-const FORE_W = PARTS.foreArm.w * SKIN_TEXEL;
+/** The middle of a kind's hand in its forearm's frame (the vertices below the wrist). */
+const handIn = (kind) => {
+  const m = zombieModel(kind);
+  const g = m.parts.foreArm;
+  const c = [0, 0, 0];
+  let n = 0;
+  for (let i = 0; i < g.positions.length; i += 3) {
+    if (g.positions[i + 1] < -m.rig.wristL - 0.005) {
+      c[0] += g.positions[i];
+      c[1] += g.positions[i + 1];
+      c[2] += g.positions[i + 2];
+      n++;
+    }
+  }
+  return new THREE.Vector3(c[0] / n, c[1] / n, c[2] / n);
+};
 
-describe('zombie model: a few boxes wrapped in pixel art (no hexagons)', () => {
-  it('stands under ZOMBIE_HEIGHT with a grown body: a small head on wide shoulders, long legs, arms to mid thigh', () => {
-    expect(MODEL_HEIGHT).toBeLessThanOrEqual(ZOMBIE_HEIGHT);
-    expect(MODEL_HEIGHT).toBeGreaterThan(ZOMBIE_HEIGHT - 0.15);
-    expect(MODEL_HEIGHT / HEAD_H).toBeGreaterThan(4.3); // not a child
-    expect(HEAD_W).toBeLessThan(TORSO_W * 0.85);
-    expect(SHOULDER_X * 2).toBeGreaterThan(HEAD_W * 1.5);
-    expect(LEG_H).toBeGreaterThan(TORSO_H);
+describe('zombie model: hex-faceted parts from the kit, hung from the joints', () => {
+  it('the walker\'s joints are the exported sizes; each kind its own rig; a grown body under ZOMBIE_HEIGHT', () => {
+    expect([LEG_H, LEG_X, TORSO_H, UPPER_L, FORE_L, SHOULDER_X, SHOULDER_Y]).toEqual([
+      RIGS.walker.legH, RIGS.walker.legX, RIGS.walker.torsoH, RIGS.walker.upperL, RIGS.walker.foreL, RIGS.walker.shoulderX, RIGS.walker.shoulderY,
+    ]);
     expect(ARM_L).toBeCloseTo(UPPER_L + FORE_L, 9);
+    for (const kind of ['walker', 'runner', 'alpha']) expect(RIGS[kind]).toEqual(zombieRig(kind));
+    const m = zombieModel('walker');
+    expect(m.dims.height).toBeLessThanOrEqual(ZOMBIE_HEIGHT);
+    expect(m.dims.height).toBeGreaterThan(ZOMBIE_HEIGHT - 0.15);
+    expect(LEG_H).toBeGreaterThan(TORSO_H);
+    // a head on wider shoulders
+    expect((SHOULDER_X + 0.05) * 2).toBeGreaterThan(m.dims.headW * 1.4);
     const fingertips = LEG_H + SHOULDER_Y - ARM_L;
     expect(fingertips).toBeLessThan(LEG_H * 0.9);
     expect(fingertips).toBeGreaterThan(LEG_H * 0.4);
-    // every size is a whole number of the skin's texels
-    for (const v of [LEG_H, TORSO_W, TORSO_H, HEAD_W, HEAD_H, UPPER_L, FORE_L]) expect(v / SKIN_TEXEL).toBeCloseTo(Math.round(v / SKIN_TEXEL), 9);
   });
 
-  it('every part is a textured box on its own kind\'s page: uv, no vertex colours, whole boxes', () => {
-    SKIN_KINDS.forEach((kind, page) => {
+  it('every part is the kind\'s kit geometry on its own atlas: uvs, no vertex colours, indexed, about 1,000–1,300 tris', () => {
+    for (const kind of ['walker', 'runner', 'alpha']) {
       const g = zombieGeometries(kind);
+      const m = zombieModel(kind);
+      let tris = 0;
       for (const [name, geo] of Object.entries(g)) {
         expect(geo.getAttribute('uv'), name).toBeTruthy();
         expect(geo.getAttribute('color'), name).toBeUndefined();
-        expect(geo.getIndex().count % 36, name).toBe(0);
-        const uv = geo.getAttribute('uv');
-        for (let i = 0; i < uv.count; i++) {
-          expect(uv.getX(i)).toBeGreaterThanOrEqual(0);
-          expect(uv.getX(i)).toBeLessThanOrEqual(1);
-          expect(uv.getY(i) * ATLAS_H).toBeGreaterThanOrEqual(page * SKIN_H);
-          expect(uv.getY(i) * ATLAS_H).toBeLessThanOrEqual((page + 1) * SKIN_H);
-        }
+        expect(geo.getIndex().count, name).toBe(m.parts[name].index.length);
+        tris += (geo.getIndex().count / 3) * (name === 'torso' || name === 'head' ? 1 : 2);
       }
-      // the head carries its hair layer, the alpha's torso its coat; the rest are one box
-      expect(g.head.getIndex().count).toBe(72);
-      expect(g.torso.getIndex().count).toBe(kind === 'alpha' ? 72 : 36);
-      for (const name of ['leg', 'upperArm', 'foreArm']) expect(g[name].getIndex().count).toBe(36);
+      expect(tris, kind).toBe(m.tris);
+      expect(tris, kind).toBeLessThanOrEqual(1320);
       for (const geo of Object.values(g)) geo.dispose();
-    });
-  });
-
-  it('skinBox maps each side of the box to that face of the unwrap; the model\'s front is −Z', () => {
-    const g = skinBox('head', 'runner');
-    const pos = g.getAttribute('position');
-    const nor = g.getAttribute('normal');
-    const uv = g.getAttribute('uv');
-    const page = SKIN_KINDS.indexOf('runner') * SKIN_H;
-    const faceOf = (i) => {
-      const n = [nor.getX(i), nor.getY(i), nor.getZ(i)];
-      return n[2] < -0.5 ? 'front' : n[2] > 0.5 ? 'back' : n[0] > 0.5 ? 'right' : n[0] < -0.5 ? 'left' : n[1] > 0.5 ? 'top' : 'bottom';
-    };
-    for (let i = 0; i < pos.count; i++) {
-      const r = faceRect(PARTS.head, faceOf(i));
-      const px = uv.getX(i) * ATLAS_W;
-      const py = uv.getY(i) * ATLAS_H - page;
-      expect(px).toBeGreaterThanOrEqual(r.x);
-      expect(px).toBeLessThanOrEqual(r.x + r.w);
-      expect(py).toBeGreaterThanOrEqual(r.y);
-      expect(py).toBeLessThanOrEqual(r.y + r.h);
-      // upright: the top edge of a side face is the top row of its rect
-      if (faceOf(i) === 'front') expect(py < r.y + r.h / 2).toBe(pos.getY(i) > 0);
     }
-    // seen from in front (the viewer at −Z), the picture's left edge is at +X
-    for (let i = 0; i < pos.count; i++) {
-      if (faceOf(i) !== 'front') continue;
-      const r = faceRect(PARTS.head, 'front');
-      expect(uv.getX(i) * ATLAS_W < r.x + r.w / 2).toBe(pos.getX(i) > 0);
-    }
-    const puffed = skinBox('hair', 'walker', { puff: 0.01, y: 1 });
-    puffed.computeBoundingBox();
-    expect(puffed.boundingBox.max.x).toBeCloseTo(HEAD_W / 2 + 0.01, 6);
-    expect(puffed.boundingBox.min.y).toBeCloseTo(1 - HEAD_H / 2 - 0.01, 6);
-    g.dispose();
-    puffed.dispose();
   });
 
   it('boxesGeometry (the animals\' builder) merges boxes with their colours and turns a box about its own centre', () => {
@@ -139,30 +120,143 @@ describe('createZombieRenderer — instanced zombie models', () => {
     r.dispose();
   });
 
-  it('one pixel-art texture for every part: nearest filtering, sRGB, cut out where a layer is empty; the eyes glow', () => {
+  it('one painted texture per kind: linear filtering with mipmaps, sRGB, cut out where a hem is torn; the eyes glow', () => {
     const scene = new THREE.Scene();
     const r = createZombieRenderer(scene, null);
-    const mat = byName(r, 'zombie-head-walker').material;
-    for (const name of [...FIVE('walker'), ...FIVE('runner'), ...FIVE('alpha')]) expect(byName(r, name).material).toBe(mat);
-    expect(mat.map.isDataTexture).toBe(true);
-    expect([mat.map.image.width, mat.map.image.height]).toEqual([ATLAS_W, ATLAS_H]);
-    expect(mat.map.magFilter).toBe(THREE.NearestFilter);
-    expect(mat.map.minFilter).toBe(THREE.NearestFilter);
-    expect(mat.map.colorSpace).toBe(THREE.SRGBColorSpace);
-    expect(mat.alphaTest).toBeGreaterThan(0);
-    expect(mat.emissiveMap.isDataTexture).toBe(true);
-    expect(mat.vertexColors).toBe(false);
+    const maps = new Set();
+    for (const kind of ['walker', 'runner', 'alpha']) {
+      const mat = byName(r, `zombie-head-${kind}`).material;
+      for (const name of FIVE(kind)) expect(byName(r, name).material).toBe(mat);
+      expect(mat.map.isDataTexture).toBe(true);
+      expect([mat.map.image.width, mat.map.image.height]).toEqual([ZOMBIE_ATLAS, ZOMBIE_ATLAS]);
+      expect(mat.map.magFilter).toBe(THREE.LinearFilter);
+      expect(mat.map.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+      expect(mat.map.generateMipmaps).toBe(true);
+      expect(mat.map.colorSpace).toBe(THREE.SRGBColorSpace);
+      expect(mat.alphaTest).toBe(0.5);
+      expect(TINT_ALPHA / 255).toBeGreaterThan(mat.alphaTest + 0.15);
+      expect(mat.emissiveMap.isDataTexture).toBe(true);
+      expect(mat.emissiveMap.image.data.length).toBe(ZOMBIE_ATLAS * ZOMBIE_ATLAS * 4);
+      expect(mat.vertexColors).toBe(false);
+      expect(mat.customProgramCacheKey()).toBe(ZOMBIE_PROGRAM);
+      maps.add(mat.map);
+    }
+    expect(maps.size).toBe(3);
     // the glow follows the dark: full at night (the default), GLOW_DAY in full daylight
+    const mat = byName(r, 'zombie-head-walker').material;
     r.sync([zombie(0, 10, 0)]);
     expect(mat.emissiveIntensity).toBe(1);
     r.sync([zombie(0, 10, 0)], 0, 0);
     expect(mat.emissiveIntensity).toBeCloseTo(GLOW_DAY, 9);
+    expect(byName(r, 'zombie-head-alpha').material.emissiveIntensity).toBeCloseTo(GLOW_DAY, 9);
     r.sync([zombie(0, 10, 0)], 0, 0.5);
     expect(mat.emissiveIntensity).toBeCloseTo(GLOW_DAY + (1 - GLOW_DAY) * 0.5, 9);
     r.sync([zombie(0, 10, 0)], 0, NaN);
     expect(mat.emissiveIntensity).toBe(1);
-    expect(GLOW_DAY).toBeLessThan(0.35);
+    expect(GLOW_DAY).toBeLessThan(0.1); // by day the slits are dark
     r.dispose();
+  });
+
+  it('the shader: lit like every object, a small fill, and the tint only where the atlas marks the shirt', () => {
+    const shader = {
+      vertexShader: THREE.ShaderLib.lambert.vertexShader,
+      fragmentShader: THREE.ShaderLib.lambert.fragmentShader,
+      uniforms: {},
+    };
+    const glow = { value: 0.3 };
+    patchZombieShader(shader, glow);
+    const f = shader.fragmentShader;
+    expect(f).toContain('caelFill');
+    expect(f).toContain('caelSky');
+    expect(f).not.toContain('#include <color_fragment>');
+    expect(f).toContain('mix( vec3( 1.0 ), vColor.rgb');
+    expect(shader.uniforms.caelVol).toBeTruthy();
+    expect(ZOMBIE_FILL.strength).toBeGreaterThan(0.05);
+    expect(ZOMBIE_FILL.strength).toBeLessThan(0.3); // a fill, never a light of its own
+    // the glow image takes the shirt's tint too (at night the self-light outshines the moonlit cloth): the tint is kept
+    // from the colour step and multiplies the emissive right after three reads the glow image, only where there is one
+    const at = (needle) => {
+      const i = f.indexOf(needle);
+      expect(i, needle).toBeGreaterThan(-1);
+      return i;
+    };
+    expect(at('vec3 zTint = vec3( 1.0 );')).toBeLessThan(at('diffuseColor.rgb *= zTint;'));
+    expect(at('diffuseColor.rgb *= zTint;')).toBeLessThan(at('#include <emissivemap_fragment>'));
+    const tinted = at('totalEmissiveRadiance *= zTint;');
+    expect(at('#include <emissivemap_fragment>')).toBeLessThan(tinted);
+    expect(f.lastIndexOf('#ifdef USE_EMISSIVEMAP', tinted)).toBeGreaterThan(at('#include <emissivemap_fragment>'));
+    // … and shines as at night wherever the sky does not reach (the light volume's caelSky), whatever the hour
+    expect(shader.uniforms.zombieGlow).toBe(glow);
+    expect(at('uniform float zombieGlow;')).toBeLessThan(at('void main()'));
+    const local = at('max( zombieGlow,');
+    expect(local).toBeGreaterThan(at('float caelSky ='));
+    expect(local).toBeGreaterThan(at('#include <lights_fragment_end>'));
+    expect(local).toBeLessThan(at('vec3 outgoingLight'));
+    expect(f.slice(local, local + 200)).toContain('( 1.0 - caelSky )');
+    // without a uniform of its own (a stand-alone patch) the glow by the hour is 1: the night's
+    const lone = { vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader, uniforms: {} };
+    patchZombieShader(lone);
+    expect(lone.uniforms.zombieGlow.value).toBe(1);
+  });
+
+  it('the glow by the hour reaches every zombie program (one shared uniform), set by sync with the material', () => {
+    const scene = new THREE.Scene();
+    const r = createZombieRenderer(scene, null);
+    /** what each zombie material's program would be given */
+    const uniformsOf = (mat) => {
+      const shader = { vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader, uniforms: {} };
+      mat.onBeforeCompile(shader, /** @type {*} */ (null));
+      return shader.uniforms;
+    };
+    const mats = new Set();
+    for (const m of r.group.children) mats.add(/** @type {THREE.InstancedMesh} */ (m).material);
+    const glows = new Set([...mats].map((m) => uniformsOf(m).zombieGlow));
+    expect(glows.size).toBe(1);
+    const [glow] = glows;
+    r.sync([zombie(0, 10, 0)], 0, 0);
+    expect(glow.value).toBeCloseTo(GLOW_DAY, 9);
+    expect(glow.value).toBeCloseTo(byName(r, 'zombie-head-walker').material.emissiveIntensity, 9);
+    r.sync([zombie(0, 10, 0)], 0, 1);
+    expect(glow.value).toBe(1);
+    r.dispose();
+  });
+
+  it('dispose frees every geometry, material and texture of its own, and leaves the scene', () => {
+    const scene = new THREE.Scene();
+    const r = createZombieRenderer(scene, null);
+    r.sync([zombie(0, 10, 0), zombie(2, 10, 0, { hurt: 0.3, kind: 'runner' }), zombie(4, 10, 0, { smoking: true, kind: 'alpha' })]);
+    /** @type {Set<*>} */
+    const geos = new Set();
+    /** @type {Set<*>} */
+    const mats = new Set();
+    /** @type {Set<*>} */
+    const texs = new Set();
+    const meshes = [];
+    r.group.traverse((o) => {
+      if (!(/** @type {*} */ (o)).isMesh) return;
+      const mesh = /** @type {THREE.InstancedMesh} */ (o);
+      meshes.push(mesh);
+      geos.add(mesh.geometry);
+      for (const m of [].concat(/** @type {*} */ (mesh.material))) {
+        mats.add(m);
+        for (const t of [m.map, m.emissiveMap]) if (t) texs.add(t);
+      }
+    });
+    expect(meshes.length).toBe(3 * 3 * 5); // kinds × base, hurt, burn × five parts
+    expect(geos.size).toBe(3 * 5); // five parts a kind
+    expect(mats.size).toBe(3 * 3);
+    expect(texs.size).toBe(3 * 2); // a painted atlas and a glow image a kind
+    const freed = new Set();
+    for (const x of [...geos, ...mats, ...texs]) x.addEventListener('dispose', () => freed.add(x));
+    let meshesFreed = 0;
+    for (const mesh of meshes) mesh.addEventListener('dispose', () => meshesFreed++);
+    r.dispose();
+    for (const x of geos) expect(freed.has(x), 'a geometry').toBe(true);
+    for (const x of mats) expect(freed.has(x), 'a material').toBe(true);
+    for (const x of texs) expect(freed.has(x), 'a texture').toBe(true);
+    expect(meshesFreed).toBe(meshes.length); // and each instanced mesh's own buffers
+    expect(scene.children).not.toContain(r.group);
+    expect(r.count()).toBe(0);
   });
 
   it('stacks the parts: legs from the ground to the hips, the torso on them, the head on the torso, forearms from the elbows', () => {
@@ -175,13 +269,15 @@ describe('createZombieRenderer — instanced zombie models', () => {
       const m = matrixOf(legs, k);
       expect(translation(m).y).toBeCloseTo(20 + LEG_H, 5);
       expect(Math.abs(translation(m).x - 4)).toBeCloseTo(LEG_X, 5);
-      expect(boxUnder(g.leg, m).min.y).toBeCloseTo(20, 1); // the shoes on the ground
+      expect(boxUnder(g.leg, m).min.y).toBeCloseTo(20, 2); // the shoes on the ground
     }
     const torso = matrixOf(byName(r, 'zombie-torso-walker'), 0);
     expect(translation(torso).y).toBeCloseTo(20 + LEG_H, 5);
     const head = boxUnder(g.head, matrixOf(byName(r, 'zombie-head-walker'), 0));
     expect(head.min.y).toBeGreaterThan(20 + LEG_H + TORSO_H * 0.8);
     expect(head.max.y).toBeLessThanOrEqual(20 + ZOMBIE_HEIGHT + 0.02);
+    // the torso's seat covers the tops of the legs
+    expect(boxUnder(g.torso, matrixOf(byName(r, 'zombie-torso-walker'), 0)).min.y).toBeLessThan(20 + LEG_H - 0.05);
     for (let k = 0; k < 2; k++) {
       const upper = matrixOf(byName(r, 'zombie-upper-arms-walker'), k);
       const fore = matrixOf(byName(r, 'zombie-forearms-walker'), k);
@@ -229,7 +325,7 @@ describe('createZombieRenderer — instanced zombie models', () => {
     r.dispose();
   });
 
-  it('a hurt zombie flashes red and a smouldering one glows, on their own instanced twins', () => {
+  it('a hurt zombie flashes (the game\'s hit flash) and a smouldering one glows, on their own instanced twins', () => {
     const scene = new THREE.Scene();
     const r = createZombieRenderer(scene, null);
     r.sync([zombie(0, 10, 0), zombie(2, 10, 0, { hurt: 0.3 }), zombie(4, 10, 0, { smoking: true }), zombie(6, 10, 0, { hurt: 0.1, kind: 'alpha' })]);
@@ -241,7 +337,12 @@ describe('createZombieRenderer — instanced zombie models', () => {
     expect(byName(r, 'zombie-torso-alpha-hurt').count).toBe(1);
     expect(byName(r, 'zombie-torso-alpha').count).toBe(0);
     const hurt = byName(r, 'zombie-head-walker-hurt').material;
-    expect(hurt.emissive.r).toBeGreaterThan(0.9);
+    // a pale, cold flash — never red on a zombie (DESIGN-characters §2): bright, its red never leading
+    expect(hurt.emissive.getHex()).toBe(ZOMBIE_HURT);
+    expect(hurt.emissiveIntensity).toBe(ZOMBIE_HURT_INTENSITY);
+    expect(hurt.emissive.r + hurt.emissive.g + hurt.emissive.b).toBeGreaterThan(2);
+    expect(hurt.emissive.r).toBeLessThanOrEqual(Math.min(hurt.emissive.g, hurt.emissive.b) + 0.02);
+    expect(hurt.emissiveIntensity).toBeGreaterThan(0.5); // still a flash you see
     expect(hurt.emissiveMap).toBeNull(); // the whole body flashes, not just its eyes
     expect(hurt.map).toBe(byName(r, 'zombie-head-walker').material.map);
     expect(byName(r, 'zombie-head-walker-burn').material.emissive.g).toBeGreaterThan(0.1);
@@ -325,7 +426,7 @@ describe('how each kind carries itself (CONTRACTS §74)', () => {
     expect(ARMS.chase.reach).toBeGreaterThan(ARMS.hang.reach + 0.6);
     r.sync([zombie(0, 10, 0, { kind: 'alpha' })]);
     const [left, right] = hands(r, 'alpha');
-    expect(Math.abs(right.x - left.x)).toBeGreaterThan(SHOULDER_X * 2 * ALPHA_SCALE + 0.2); // wider than its shoulders
+    expect(Math.abs(right.x - left.x)).toBeGreaterThan(RIGS.alpha.shoulderX * 2 * ALPHA_SCALE + 0.2); // wider than its shoulders
     expect(-left.z).toBeGreaterThan(0.4);
     expect(ARMS.alpha.spread).toBeGreaterThan(ARMS.chase.spread + 0.2);
     expect(ARMS.alpha.bend).toBeGreaterThan(0.7);
@@ -333,13 +434,17 @@ describe('how each kind carries itself (CONTRACTS §74)', () => {
     r.dispose();
   });
 
-  it('people: walkers and runners wear shirts of different faded colours by id; the alpha is as painted', () => {
+  it('people: walkers and runners wear shirts of different faded colours by id (none red); the alpha is as painted', () => {
     const scene = new THREE.Scene();
     const r = createZombieRenderer(scene, null);
     const n = SHIRT_TINTS.length;
     expect(n).toBeGreaterThanOrEqual(5);
     expect(new Set(SHIRT_TINTS).size).toBe(n);
-    for (const hex of SHIRT_TINTS) for (const ch of new THREE.Color(hex).toArray()) expect(ch).toBeGreaterThan(0.3); // pale: the hands barely change
+    for (const hex of SHIRT_TINTS) {
+      const [cr, cg, cb] = new THREE.Color(hex).toArray();
+      for (const ch of [cr, cg, cb]) expect(ch).toBeGreaterThan(0.25); // faded, pale
+      expect(cr).toBeLessThan(Math.max(cg, cb) * 1.45); // nothing red
+    }
     r.sync(Array.from({ length: n + 1 }, (_, i) => zombie(i * 2, 10, 0, { id: i })));
     const colour = (name, i) => {
       const c = new THREE.Color();
@@ -424,24 +529,29 @@ describe('light hurts its eyes: one arm up across the face, the head turned away
 
   /** A point of instance `i` of mesh `name` (its local x, y, z) in the HEAD's own frame: x across, y up from the neck, −z the face. */
   const inHead = (r, kind, name, i, x, y, z) => point(r, name, i, x, y, z).applyMatrix4(matrixOf(byName(r, `zombie-head-${kind}`), 0).invert());
-  /**
-   * How deep (m) the arm on instance `k` cuts into the head and its hair: the deepest of a grid of points through the
-   * upper arm's and the forearm's boxes, measured inside the head's box.
-   */
+  /** The head's box in its own frame, above the chin (its hair, ears, brow and nose included; not the thin neck). */
+  const headBox = (kind) => {
+    const g = zombieModel(kind).parts.head;
+    const box = { x0: Infinity, x1: -Infinity, y0: 0.04, y1: -Infinity, z0: Infinity, z1: -Infinity };
+    for (let i = 0; i < g.positions.length; i += 3) {
+      if (g.positions[i + 1] < 0.04) continue;
+      box.x0 = Math.min(box.x0, g.positions[i]);
+      box.x1 = Math.max(box.x1, g.positions[i]);
+      box.y1 = Math.max(box.y1, g.positions[i + 1]);
+      box.z0 = Math.min(box.z0, g.positions[i + 2]);
+      box.z1 = Math.max(box.z1, g.positions[i + 2]);
+    }
+    return box;
+  };
+  /** How deep (m) the arm on instance `k` cuts into the head's box: the deepest of its upper arm's and forearm's vertices. */
   function cutsIntoHead(r, kind, k) {
-    const hx = HEAD_W / 2 + HAIR_PUFF;
-    const hz = HEAD_D / 2 + HAIR_PUFF;
+    const box = headBox(kind);
+    const m = zombieModel(kind);
     let worst = 0;
-    for (const [name, part, len] of [[`zombie-upper-arms-${kind}`, PARTS.upperArm, UPPER_L], [`zombie-forearms-${kind}`, PARTS.foreArm, FORE_L]]) {
-      const w = part.w * SKIN_TEXEL;
-      const d = part.d * SKIN_TEXEL;
-      for (let a = 0; a <= 4; a++) {
-        for (let b = 0; b <= 10; b++) {
-          for (let c = 0; c <= 4; c++) {
-            const p = inHead(r, kind, name, k, (a / 4 - 0.5) * w, -(b / 10) * len, (c / 4 - 0.5) * d);
-            worst = Math.max(worst, Math.min(hx - Math.abs(p.x), p.y + HAIR_PUFF, HEAD_H + HAIR_PUFF - p.y, hz - Math.abs(p.z)));
-          }
-        }
+    for (const [name, geo] of [[`zombie-upper-arms-${kind}`, m.parts.upperArm], [`zombie-forearms-${kind}`, m.parts.foreArm]]) {
+      for (let i = 0; i < geo.positions.length; i += 3) {
+        const p = inHead(r, kind, name, k, geo.positions[i], geo.positions[i + 1], geo.positions[i + 2]);
+        worst = Math.max(worst, Math.min(p.x - box.x0, box.x1 - p.x, p.y - box.y0, box.y1 - p.y, p.z - box.z0, box.z1 - p.z));
       }
     }
     return worst;
@@ -452,8 +562,11 @@ describe('light hurts its eyes: one arm up across the face, the head turned away
     expect(SHIELD_ARM.reach).toBeGreaterThan(ARMS.chase.reach + 0.5);
     expect(SHIELD_ARM.bend).toBeGreaterThan(1); // the forearm bent up …
     expect(SHIELD_ARM.twist).toBeGreaterThan(0.5); // … and turned in across the face
-    const eyeY = HEAD_H * (1 - (EYE_ROW + 0.5) / PARTS.head.h); // the eye slits' height above the neck
     for (const kind of ['walker', 'runner', 'alpha']) {
+      const model = zombieModel(kind);
+      const eyeY = model.dims.eyeY; // the eye slits' height above the neck
+      const front = headBox(kind).z0; // the face's front (the nose, the brow)
+      const H = handIn(kind);
       for (const side of [1, -1]) {
         for (const extra of [{ mode: 'idle' }, { mode: 'chase' }, { mode: 'chase', walkPhase: 1.6, tilt: 0.28, swing: 0.17 }]) {
           const at = `${kind}, side ${side}, ${JSON.stringify(extra)}`;
@@ -472,17 +585,17 @@ describe('light hurts its eyes: one arm up across the face, the head turned away
           }
           expect(after[`zombie-legs-${kind}`], at).toEqual(before[`zombie-legs-${kind}`]);
           expect(after[`zombie-torso-${kind}`], at).toEqual(before[`zombie-torso-${kind}`]);
-          // The hand (the far end of the forearm), seen from the head: on the arm's side of the face, at the height of
-          // the eyes, and a little way in front of them. The same for every kind and whatever else the body is doing.
-          const hand = inHead(r, kind, `zombie-forearms-${kind}`, mine, 0, -FORE_L + 2 * SKIN_TEXEL, 0);
+          // The hand, seen from the head: on the arm's side of the face, at the height of the eyes, and a little way in
+          // front of the face. The same for every kind and whatever else the body is doing.
+          const hand = inHead(r, kind, `zombie-forearms-${kind}`, mine, H.x, H.y, H.z);
           expect(hand.x * side, `${at}: on its side`).toBeGreaterThan(0.02);
-          expect(hand.x * side, `${at}: over the face`).toBeLessThan(HEAD_W / 2);
-          expect(Math.abs(hand.y - eyeY), `${at}: at the eyes`).toBeLessThan(0.08);
-          expect(-hand.z - HEAD_D / 2 - FORE_W / 2, `${at}: in front`).toBeGreaterThan(0.03);
-          expect(-hand.z - HEAD_D / 2 - FORE_W / 2, `${at}: close`).toBeLessThan(0.15);
+          expect(hand.x * side, `${at}: over the face`).toBeLessThan(model.dims.headW / 2);
+          expect(Math.abs(hand.y - eyeY), `${at}: at the eyes`).toBeLessThan(0.06);
+          expect(front - hand.z - model.dims.foreW / 2, `${at}: in front`).toBeGreaterThan(0.02);
+          expect(front - hand.z - model.dims.foreW / 2, `${at}: close`).toBeLessThan(0.12);
           // the elbow is out in front of the shoulder, lower and farther out than the hand: the forearm slants up and in
           const elbow = inHead(r, kind, `zombie-forearms-${kind}`, mine, 0, 0, 0);
-          expect(elbow.x * side, at).toBeGreaterThan(hand.x * side + 0.15);
+          expect(elbow.x * side, at).toBeGreaterThan(hand.x * side + 0.12);
           expect(elbow.y, at).toBeLessThan(hand.y - 0.15);
           expect(cutsIntoHead(r, kind, mine), `${at}: clear of the head`).toBe(0);
           r.dispose();
@@ -537,7 +650,7 @@ describe('light hurts its eyes: one arm up across the face, the head turned away
     const y1 = hand({ side: 1, shield: 1 }).y;
     expect(y5).toBeGreaterThan(y0 + 0.2);
     expect(y1).toBeGreaterThan(y5 + 0.2);
-    expect(y1).toBeGreaterThan(10 + LEG_H + TORSO_H); // above the shoulders: up by the face
+    expect(y1).toBeGreaterThan(10 + LEG_H + SHOULDER_Y); // above the shoulders: up by the face
     // asleep on its feet by day, a walker does not lift a hand
     const dormant = { daylit: true, side: 1 };
     r.sync([zombie(0, 10, 0, dormant)]);
@@ -545,5 +658,42 @@ describe('light hurts its eyes: one arm up across the face, the head turned away
     r.sync([zombie(0, 10, 0, { ...dormant, shield: 1 })]);
     expect(snapshot(r)).toEqual(asleep);
     r.dispose();
+  });
+});
+
+describe('§104 screenshot aid: ?scene=zombies|crowd|watcher|phantom (drawn only)', () => {
+  const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+  it('reads the scene names; stages the three kinds and a crowd of CROWD_SIZE in a fixed layout ahead', () => {
+    const p = (s) => readSceneParam(new URLSearchParams(s));
+    expect(['scene=zombies', 'scene=CROWD', 'scene=watcher', 'scene=phantom', 'scene=zombie', ''].map(p)).toEqual(['zombies', 'crowd', 'watcher', 'phantom', null, null]);
+    expect(SCENE_NAMES).toEqual(expect.arrayContaining(['vortex', 'circuits', 'wind', 'wind-rain', 'zombies', 'crowd', 'watcher', 'phantom']));
+    expect(ZOMBIE_SCENE.map((z) => z[0])).toEqual(['walker', 'runner', 'alpha']);
+    for (const [, ahead] of ZOMBIE_SCENE) expect(ahead).toBeGreaterThan(2.5);
+    const crowd = crowdScene();
+    expect(crowd).toHaveLength(CROWD_SIZE);
+    expect(CROWD_SIZE).toBe(24);
+    expect(crowdScene()).toEqual(crowd); // the same every time
+    expect(new Set(crowd.map((c) => c.kind))).toEqual(new Set(['walker', 'runner', 'alpha']));
+    expect(crowd.filter((c) => c.kind === 'alpha')).toHaveLength(1);
+    for (const c of crowd) expect(c.ahead).toBeGreaterThan(4);
+    // two never stand on top of each other
+    for (let i = 0; i < crowd.length; i++) {
+      for (let j = i + 1; j < crowd.length; j++) expect(Math.hypot(crowd[i].ahead - crowd[j].ahead, crowd[i].right - crowd[j].right)).toBeGreaterThan(0.6);
+    }
+    expect(WATCHER_SCENE.ahead).toBeGreaterThan(3);
+    expect(PHANTOM_SCENE.ahead).toBeGreaterThan(WATCHER_SCENE.ahead);
+  });
+
+  it('main draws the staged figures with the live ones and adds them to no list; the README documents the aid', () => {
+    const main = read('../../src/main.js');
+    expect(main).toContain("if (name === 'zombies' || name === 'crowd' || name === 'watcher' || name === 'phantom') return buildFigureScene(name, fx, fz);");
+    expect(main).toContain('zombieRenderer.sync(sceneZombies ? zombies.list.concat(sceneZombies) : zombies.list, fxTime, 1 - sky.daylight);');
+    expect(main).toContain('if (sceneZombies) for (const z of sceneZombies) zombieDraw.push(z);');
+    expect(main).toContain('watcherRenderer.sync(sceneWatcher ?? watcher.figure, player.x, eyeY, player.z, fxTime);');
+    expect(main).toContain('if (scenePhantom) phantomRenderer.sync(scenePhantom);');
+    const fn = main.slice(main.indexOf('function buildFigureScene('), main.indexOf('function buildAnimalScene('));
+    expect(fn.length).toBeGreaterThan(500);
+    expect(fn).not.toMatch(/zombies\.(spawn|list\.push)|watcher\.summon|animals\./); // drawn only
+    expect(read('../../README.md')).toContain('`?scene=zombies` / `?scene=crowd` / `?scene=watcher` / `?scene=phantom`');
   });
 });

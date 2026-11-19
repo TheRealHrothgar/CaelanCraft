@@ -23,9 +23,10 @@ function rules() {
 }
 
 describe('the touch buttons say what they do', () => {
-  it('Jump, Mine, Place, Action, Crouch, Drop; Menu, Pack, Camera, Chat (no Fly: a double tap of Jump)', () => {
+  it('Jump, Mine, Place, Action, Crouch, Drop; Menu, Pack, Camera, Chat, Zoom (no Fly: a double tap of Jump)', () => {
     expect(PAD_BUTTONS.map((id) => TOUCH_BUTTONS[id].label)).toEqual(['Jump', 'Mine', 'Place', 'Action', 'Crouch', 'Drop']);
-    expect(TOP_BUTTONS.map((id) => TOUCH_BUTTONS[id].label)).toEqual(['Menu', 'Pack', 'Camera', 'Chat']);
+    // §103: Zoom only while a Spyglass is carried (spyglass.test)
+    expect(TOP_BUTTONS.map((id) => TOUCH_BUTTONS[id].label)).toEqual(['Menu', 'Pack', 'Camera', 'Chat', 'Zoom']);
   });
 
   it('a hint written for the keyboard reads in those words', () => {
@@ -36,6 +37,10 @@ describe('the touch buttons say what they do', () => {
     expect(touchWords('Shift+R key on a part tells you more.')).toBe('Crouch + Action on a part tells you more.');
     expect(touchWords('hold LMB to dig, RMB to eat')).toBe('hold Mine to dig, Place to eat');
     expect(touchWords('right-click a lever (Shift+right-click places)')).toBe('Place a lever (Crouch + Place places)');
+    // §100.2: no button throws at once, so the G clause is left out (the draw is how a tablet throws)
+    expect(touchWords('Flint Spear · Hold RMB to throw · G: throw at once')).toBe('Flint Spear · Hold Place to throw');
+    expect(touchWords('A · G: one thing · B')).toBe('A · B');
+    expect(touchWords('Bow · Hold RMB to draw, let go to shoot')).toBe('Bow · Hold Place to draw, let go to shoot');
   });
 
   it('leaves words that only contain an R alone', () => {

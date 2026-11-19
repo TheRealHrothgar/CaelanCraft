@@ -13,6 +13,10 @@ import { BRICK_DEPTH } from './bricks.js';
 import { runeKey } from './runes.js';
 import { normalizeAvatarId } from './avatars.js';
 import { normalizeViewMode } from './viewCamera.js';
+import { isItemPick, normalizePick } from './creativePicks.js';
+import { breakSeconds, digWear } from './harvest.js';
+import { ITEMS, canonicalItemKey, isItemKey } from './items.js';
+import { durabilityLeft } from './inventory.js';
 
 /** @typedef {import('./types.js').GameContext} GameContext */
 /** @typedef {import('./types.js').SmokeResult} SmokeResult */
@@ -32,8 +36,17 @@ import { normalizeViewMode } from './viewCamera.js';
  * @property {number|null} yaw       initial look yaw in DEGREES (0 = north/−Z, 90 = west/−X, 180 = south/+Z, 270 = east/+X)
  * @property {number|null} pitch     initial look pitch in DEGREES, clamped to ±89.9 (negative looks down)
  * @property {string|null} ui        screenshot aid with ?autoplay: 'console' opens the console, 'editor' places a rune block ahead and opens its editor, 'picker' opens the block picker, 'pack' the Pack & Making screen (Survival), 'tree' the same with its build tree open (§94), 'device' the device panel on a demo Clockwork Timer (v0.10), 'pause' the pause menu
- * @property {'vortex'|'circuits'|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar Charge 8 cells ahead 2 s
- *   after loading; 'circuits' builds the §4.14 worked examples ahead (readSceneParam, circuitSceneWrites)
+ * @property {SceneName|null} scene  v0.10 (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar
+ *   Charge 8 cells ahead 2 s after loading; 'circuits' builds the §4.14 worked examples ahead (readSceneParam,
+ *   circuitSceneWrites); §101: 'wind' sets two pennants and a lit campfire ahead (the flags and the smoke in the wind),
+ *   'wind-rain' the same in forced rain; §104: 'zombies' stands a walker, a runner and an alpha ahead (ZOMBIE_SCENE),
+ *   'crowd' a crowd of CROWD_SIZE (crowdScene), 'watcher' the Watcher (WATCHER_SCENE), 'phantom' the figure at the edge of
+ *   sight (PHANTOM_SCENE) — drawn only, never in a list of mobs; §69.1: 'animals' every kind of animal ahead, held where
+ *   they stand, 'animal-variants' the young, the shorn, the tame, the snared and the poses, 'animal-close' the sheep and
+ *   the birds a couple of metres off (ANIMAL_SCENES); §105: 'plants' one of every plant in rows ahead (plantSceneCells);
+ *   §106: 'fishing' a deep pond ahead with two fish, and the float cast into it (FISHING_SCENE; with ?hold=fishing_rod)
+ * @property {number|null} ahead     §105 screenshot aid: with ?scene=plants, how far ahead (m) its first row stands
+ *   (−20..60, negative: behind the player; default PLANT_SCENE_AHEAD)
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
  * @property {'creative'|'survival'|null} mode  v0.9 (§9.10): the first world's mode with ?autoplay / ?smoke; anything else → null
  * @property {boolean} soundTest     v0.16 (CONTRACTS §82): `?ui=sounds` — main opens the Sound Test as soon as the page has loaded
@@ -42,10 +55,20 @@ import { normalizeViewMode } from './viewCamera.js';
  * @property {string|null} avatar    §91 screenshot aid: `?avatar=caelan|brayden|annabelle` for this visit (not stored)
  * @property {boolean} avatarMenu    §91: `?ui=avatars` — the Avatar chooser opens over the title screen, or (with ?autoplay)
  *   over the pause menu once the world has loaded
+ * @property {string|null} hold      §91 / §98.4 screenshot aid: `?hold=<item>` — in Creative, once a world has loaded, that
+ *   item (a tool, a weapon, food… by key, case-insensitive; an old name under its new one) goes in the selected hotbar slot;
+ *   anything that is not an item (a block, nonsense) → null
+ * @property {number|null} zoom      a screenshot aid (§103): `?zoom=2|4|8` — once a world has loaded, look through the Spyglass
+ *   at that power as the zoom command does (only while one is carried: in Creative with `?hold=spyglass`); else null
  * @property {string|null} server    DESIGN-multiplayer §2: `?server=host[:port]` — the game server to offer (default: the one
  *   that served the page, if it is one)
  * @property {string|null} join      `?join=<name>`: join that server at once under this name (with ?autoplay: straight into
  *   play, no click; screenshots and a home-screen bookmark)
+ * @property {Array<{ k: string, n: number }>|null} kit  §94.4 screenshot aid with `?ui=pack|tree` and ?nosave: the pack is
+ *   stocked with exactly these instead of the screen's demo kit — `?kit=none` (nothing but the handbook: the start of a
+ *   world) or `?kit=flint_knife,cord:3,stone_axe` (`key` or `key:n`; old names under new ones; unknown keys skipped)
+ * @property {boolean|null} circuits  §94.4 screenshot aid: `?circuits=off` starts the world with its circuits switched off
+ *   (as the pause menu's Devices row does; `on` → true); anything else → null (the save decides)
  */
 
 /** @typedef {{ message: string, stack: string }} ErrorInfo */
@@ -79,13 +102,76 @@ export function parseParams(search = defaultSearch()) {
     slot: readSlotParam(params),
     mode: readModeParam(params),
     scene: readSceneParam(params),
+    ahead: readClampedFloat(params, 'ahead', -20, 60),
     soundTest: readSoundTestParam(params),
     view: normalizeViewMode(readString(params, 'view')),
     avatar: normalizeAvatarId(readString(params, 'avatar')),
     avatarMenu: (readString(params, 'ui') ?? '').toLowerCase() === 'avatars',
+    hold: readHoldParam(params),
+    zoom: readZoomParam(params),
     server: readString(params, 'server'),
     join: readString(params, 'join'),
+    kit: readKitParam(params),
+    circuits: readOnOffParam(params, 'circuits'),
   };
+}
+
+/**
+ * §94.4 `?kit=none` → [] or `?kit=a,b:3` → [{ k: 'a', n: 1 }, { k: 'b', n: 3 }]: items only (by key, any case, an old name
+ * under its new one), n 1..999; anything unknown is skipped; absent → null.
+ * @param {URLSearchParams} params
+ * @returns {Array<{ k: string, n: number }>|null}
+ */
+export function readKitParam(params) {
+  const t = readString(params, 'kit');
+  if (t === null) return null;
+  if (t.toLowerCase() === 'none') return [];
+  const out = [];
+  for (const part of t.split(',')) {
+    const [name, count] = part.trim().toLowerCase().split(':');
+    const k = canonicalItemKey(name ?? '');
+    if (!isItemKey(k)) continue;
+    const n = count === undefined ? 1 : Math.floor(Number(count));
+    if (Number.isFinite(n) && n >= 1) out.push({ k, n: Math.min(999, n) });
+  }
+  return out;
+}
+
+/**
+ * `?<name>=on|off` (also 1/0, true/false; any case) → true / false; anything else or absent → null.
+ * @param {URLSearchParams} params @param {string} name @returns {boolean|null}
+ */
+function readOnOffParam(params, name) {
+  const t = readString(params, name);
+  if (t === null) return null;
+  const v = t.toLowerCase();
+  if (v === 'on' || v === '1' || v === 'true') return true;
+  if (v === 'off' || v === '0' || v === 'false') return false;
+  return null;
+}
+
+/**
+ * `?hold=<item>`: the key of an item that is not a block (creativePicks.isItemPick), any case; else null.
+ * @param {URLSearchParams} params
+ * @returns {string|null}
+ */
+export function readHoldParam(params) {
+  const t = readString(params, 'hold');
+  if (t === null) return null;
+  const pick = normalizePick(t.toLowerCase());
+  return isItemPick(pick) ? pick : null;
+}
+
+/**
+ * §103 `?zoom=2|4|8` (a trailing x or × allowed): the Spyglass's power for the screenshot aid; anything else null.
+ * @param {URLSearchParams} params
+ * @returns {number|null}
+ */
+export function readZoomParam(params) {
+  const t = readString(params, 'zoom');
+  if (t === null) return null;
+  const n = Number(t.trim().toLowerCase().replace(/[x×]$/, ''));
+  return n === 2 || n === 4 || n === 8 ? n : null;
 }
 
 /**
@@ -99,17 +185,169 @@ function readSoundTestParam(params) {
   return t !== null && t.toLowerCase() === 'sounds';
 }
 
+/** @typedef {'vortex'|'circuits'|'wind'|'wind-rain'|'zombies'|'crowd'|'watcher'|'phantom'|'animals'|'animal-variants'|'animal-close'|'plants'|'fishing'} SceneName */
+/** Every `?scene=` (DESIGN-circuits §6.7, §101, §104, §69.1, §105, §106). */
+export const SCENE_NAMES = Object.freeze(/** @type {SceneName[]} */ ([
+  'vortex', 'circuits', 'wind', 'wind-rain', 'zombies', 'crowd', 'watcher', 'phantom', 'animals', 'animal-variants', 'animal-close', 'plants', 'fishing',
+]));
+
 /**
- * `?scene=vortex|circuits` (case-insensitive), anything else null (DESIGN-circuits §6.7).
+ * `?scene=vortex|circuits|wind|wind-rain|zombies|crowd|watcher|phantom|animals|animal-variants|animal-close|plants|fishing`
+ * (case-insensitive), anything else null (DESIGN-circuits §6.7; §101 the wind; §104 the zombies, the Watcher and the
+ * figure; §69.1 the animals; §105 the plants; §106 a pond to fish — staged for screenshots).
  * @param {URLSearchParams} params
- * @returns {'vortex'|'circuits'|null}
+ * @returns {SceneName|null}
  */
 export function readSceneParam(params) {
   const t = readString(params, 'scene');
   if (t === null) return null;
-  const v = t.toLowerCase();
-  return v === 'vortex' || v === 'circuits' ? v : null;
+  const v = /** @type {SceneName} */ (t.toLowerCase());
+  return SCENE_NAMES.includes(v) ? v : null;
 }
+
+// ---------------------------------------------------------------------------------------------
+// §105 `?scene=plants`: one of every plant in rows ahead of the player (screenshots of the plant models)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The rows of ?scene=plants, nearest first, each left to right across the view, six at most (the whole scene is about
+ * nine metres wide, so it fits the view from a few metres off): the bushes ripe and picked (each look-alike beside its
+ * twin); the herbs; the small greenery; the mushrooms, the reeds and the cactus; the ground litter; the farm (a planted
+ * seed, then each crop's sprout).
+ */
+export const PLANT_SCENE_ROWS = Object.freeze([
+  Object.freeze([BLOCK.HONEYBERRY_BUSH, BLOCK.NIGHTSHADE_BUSH, BLOCK.HONEYBERRY_BUSH_BARE, BLOCK.NIGHTSHADE_BUSH_BARE]),
+  Object.freeze([BLOCK.HAZEL_THICKET, BLOCK.HAZEL_THICKET_BARE, BLOCK.CRAB_APPLE_BUSH, BLOCK.CRAB_APPLE_BUSH_BARE]),
+  Object.freeze([BLOCK.CARROT_PLANT, BLOCK.HEMLOCK, BLOCK.ONION_PLANT, BLOCK.HEALWORT_PLANT, BLOCK.HEALWORT_PLANT_BARE, BLOCK.TUBER_PLANT]),
+  Object.freeze([BLOCK.TUSSOCK, BLOCK.MEADOW_DAISIES, BLOCK.FERN, BLOCK.THISTLE, BLOCK.FLAX, BLOCK.ALOE]),
+  Object.freeze([BLOCK.HONEYCAP_MUSHROOM, BLOCK.FRECKLECAP_MUSHROOM, BLOCK.CATTAILS, BLOCK.PRICKLY_PEAR, BLOCK.PRICKLY_PEAR_BARE]),
+  Object.freeze([BLOCK.LOOSE_STONES, BLOCK.FALLEN_BRANCHES, BLOCK.GROUND_NEST, BLOCK.GROUND_NEST_EMPTY]),
+  Object.freeze([BLOCK.PLANTED_CARROT, BLOCK.CARROT_SPROUT, BLOCK.ONION_SPROUT, BLOCK.TUBER_SPROUT, BLOCK.HONEYBERRY_SPROUT]),
+  Object.freeze([BLOCK.HAZEL_SPROUT, BLOCK.CRAB_APPLE_SPROUT, BLOCK.HEALWORT_SPROUT, BLOCK.PRICKLY_PEAR_SPROUT, BLOCK.CATTAILS_SPROUT]),
+]);
+/** How far ahead of the player (m) the first row of ?scene=plants stands, unless ?ahead= says. */
+export const PLANT_SCENE_AHEAD = 3;
+/** Its rows stand this far apart (m) one behind the other, its plants this far apart across a row. */
+export const PLANT_SCENE_ROW_GAP = 1.8;
+export const PLANT_SCENE_COL_GAP = 1.6;
+
+/**
+ * The cells ?scene=plants writes for a player at (px, pz) looking along the unit (fx, fz): each plant `[q, r, id]` on
+ * its own column (the rows centred on the line of sight, `ahead` m to the first), and under each the ground it wants
+ * (`under`: sand for the prickly pear, grass for the rest).
+ * @param {number} px @param {number} pz @param {number} fx @param {number} fz @param {number} [ahead]
+ * @returns {{ q: number, r: number, id: number, under: number }[]}
+ */
+export function plantSceneCells(px, pz, fx, fz, ahead = PLANT_SCENE_AHEAD) {
+  const out = [];
+  const seen = new Set();
+  PLANT_SCENE_ROWS.forEach((row, i) => {
+    const along = ahead + i * PLANT_SCENE_ROW_GAP;
+    row.forEach((id, j) => {
+      const right = (j - (row.length - 1) / 2) * PLANT_SCENE_COL_GAP;
+      // the player's right is the forward vector turned a quarter: (−fz, fx)
+      const [q, r] = worldToHex(px + fx * along - fz * right, pz + fz * along + fx * right);
+      const key = `${q},${r}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const sandy = id === BLOCK.PRICKLY_PEAR || id === BLOCK.PRICKLY_PEAR_BARE || id === BLOCK.PRICKLY_PEAR_SPROUT;
+      out.push({ q, r, id, under: sandy ? BLOCK.SAND : BLOCK.GRASS_BLOCK });
+    });
+  });
+  return out;
+}
+
+/**
+ * §104 `?scene=zombies`: a walker, a runner and an alpha standing ahead of the player, facing it, as [kind, metres ahead,
+ * metres to the right, mode, walkPhase, id] — drawn only (main hands them to the zombie renderer; they are in no list of
+ * mobs, never move and do nothing). `?time=` picks day or night.
+ * @type {ReadonlyArray<readonly ['walker'|'runner'|'alpha', number, number, 'idle'|'chase', number, number]>}
+ */
+export const ZOMBIE_SCENE = Object.freeze(/** @type {Array<readonly ['walker'|'runner'|'alpha', number, number, 'idle'|'chase', number, number]>} */ ([
+  Object.freeze(['walker', 3.6, -1.25, 'chase', 0.7, 3]),
+  Object.freeze(['runner', 3.3, 0.05, 'chase', 1.3, 5]),
+  Object.freeze(['alpha', 4.3, 1.45, 'chase', 0.4, 8]),
+]));
+/** §104 `?scene=crowd`: how many zombies stand in the crowd (the cost of a crowd on screen). */
+export const CROWD_SIZE = 24;
+
+/**
+ * §104 `?scene=crowd`: CROWD_SIZE zombies in a loose crowd 6–17 m ahead, mostly walkers with a few runners and one alpha,
+ * every one at its own place, stride and lean (a fixed layout: the same every time).
+ * @param {number} [n]
+ * @returns {Array<{ kind: 'walker'|'runner'|'alpha', ahead: number, right: number, mode: 'idle'|'chase', walkPhase: number, id: number, turn: number }>}
+ */
+export function crowdScene(n = CROWD_SIZE) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const row = Math.floor(i / 6);
+    const col = i % 6;
+    const jitter = (k) => Math.sin(i * 12.9898 + k * 78.233) * 0.5;
+    out.push({
+      kind: i === 9 ? 'alpha' : i % 5 === 2 ? 'runner' : 'walker',
+      ahead: 6 + row * 2.8 + jitter(1) * 1.2,
+      right: (col - 2.5) * 1.5 + jitter(2) * 0.8 + (row % 2) * 0.6,
+      mode: i % 3 === 0 ? 'idle' : 'chase',
+      walkPhase: (i * 1.7) % (Math.PI * 2),
+      id: i,
+      turn: jitter(3) * 0.6,
+    });
+  }
+  return out;
+}
+
+/**
+ * §106 `?scene=fishing`: a round pond `radius` cells across its middle, `deep` cells deep, `ahead` m ahead of the player
+ * on level grass, two fish in it; with the Fishing Rod in hand (`?hold=fishing_rod`) the float is cast to its middle.
+ */
+export const FISHING_SCENE = Object.freeze({ ahead: 7, radius: 3, deep: 2 });
+
+/** §104 `?scene=watcher`: the Watcher this many metres ahead, a little to the right, facing the player. */
+export const WATCHER_SCENE = Object.freeze({ ahead: 4.6, right: 0.5 });
+/** §104 `?scene=phantom`: the figure at the edge of sight, ahead and to the right, at its full opacity (sleep.FIGURE_ALPHA). */
+export const PHANTOM_SCENE = Object.freeze({ ahead: 6.5, right: 2.2 });
+
+/**
+ * §69.1 `?scene=animals` / `?scene=animal-variants` / `?scene=animal-close` (screenshot aids for the models; the last
+ * the sheep and the birds up close, where wool and feathers are read): each creature as [kind ('pig' for a
+ * pig), cells ahead, cells to the right, how it turns from facing the player (rad), its fields]. Main puts each on
+ * grass at the player's feet level and HOLDS it there every frame (its place, its turn, its mode, the fields, legs
+ * straight), so a headless screenshot catches the whole lineup. A `trapped` one stands on a sprung snare; a fish on a
+ * cell of water dug at its place.
+ * @type {Readonly<Record<'animals'|'animal-variants'|'animal-close', ReadonlyArray<readonly [string, number, number, number, Readonly<Record<string, *>>]>>>}
+ */
+export const ANIMAL_SCENES = Object.freeze(/** @type {*} */ ({
+  animals: Object.freeze([
+    ['cow', 9, -6.6, 0.7, {}], ['cow', 9, -4.1, 0.7, { sex: 'm' }], ['horse', 10, -1.5, 0.7, {}], ['deer', 9, 1.0, 0.7, {}],
+    ['deer', 9.5, 3.2, 0.7, { sex: 'm' }], ['bear', 10, 6.2, 0.7, {}],
+    ['sheep', 6, -5.6, 0.6, {}], ['sheep', 6, -3.8, 0.6, { sex: 'm' }], ['wolf', 6, -2.0, 0.6, {}], ['pig', 6, -0.3, 0.6, {}],
+    ['pig', 6, 1.4, 0.6, { sex: 'm' }], ['turkey', 6, 3.1, 0.6, {}], ['turkey', 6.2, 4.7, 0.6, { sex: 'm' }],
+    ['rabbit', 3.6, -1.6, 0.6, {}], ['pheasant', 3.6, -0.4, 0.6, {}], ['pheasant', 3.8, 0.8, 0.6, { sex: 'm' }], ['fish', 3.4, 2.2, 0.9, {}],
+  ].map((e) => Object.freeze(e))),
+  'animal-variants': Object.freeze([
+    ['cow', 10.5, -6.4, 0.7, {}], ['cow', 9.6, -4.9, 0.3, { size: 0.55 }], ['deer', 10.5, -3.0, 0.7, {}], ['deer', 9.6, -1.8, 0.3, { size: 0.55 }],
+    ['horse', 11, 0.6, 0.7, { tamed: true }], ['bear', 11.5, 3.6, 0.0, { mode: 'warn', rear: 1 }], ['cow', 10.5, 6.4, 0.7, { tamed: true }],
+    ['sheep', 6.5, -6.0, 0.6, {}], ['sheep', 6.0, -4.9, 0.3, { size: 0.55 }], ['sheep', 6.5, -3.5, 0.6, { shorn: 300 }], ['sheep', 6.5, -1.9, 0.6, { shorn: 300, sex: 'm' }],
+    ['wolf', 6.5, -0.2, 0.6, { tamed: true }], ['sheep', 6.5, 1.4, 0.6, { tamed: true }], ['deer', 7, 3.3, 1.2, { mode: 'idle' }], ['deer', 7, 5.4, 0.0, { mode: 'watch', suspicion: 0.6 }],
+    ['pig', 4, -1.9, 0.6, { tamed: true }], ['pig', 3.8, -0.6, 0.4, { size: 0.55 }], ['pig', 4, 0.8, 0.6, { trapped: 60 }],
+  ].map((e) => Object.freeze(e))),
+  'animal-close': Object.freeze([
+    ['sheep', 3.0, -1.5, 0.0, {}], ['sheep', 2.3, -0.4, 0.5, { size: 0.55 }], ['sheep', 4.4, -2.9, 1.3, { sex: 'm' }], ['sheep', 4.6, -0.9, -1.2, { shorn: 300 }],
+    ['turkey', 2.8, 1.0, 1.1, {}], ['pheasant', 2.0, 0.4, -0.8, {}], ['pheasant', 2.6, 1.9, 0.4, { sex: 'm' }], ['turkey', 4.8, 2.3, -0.5, { sex: 'm' }],
+    ['turkey', 3.9, 0.3, 0.0, {}],
+  ].map((e) => Object.freeze(e))),
+}));
+
+/**
+ * §101 `?scene=wind`: where its pieces stand, as [name, cells ahead, cells to the right] from the player: a lit campfire
+ * and a pennant beside it a few cells ahead, and a second pennant farther off (the flags and the smoke in the wind).
+ * @type {ReadonlyArray<readonly ['campfire'|'pennant'|'far-pennant', number, number]>}
+ */
+export const WIND_SCENE = Object.freeze(/** @type {Array<readonly ['campfire'|'pennant'|'far-pennant', number, number]>} */ ([
+  Object.freeze(['campfire', 4.5, -1.2]),
+  Object.freeze(['pennant', 4, 1.3]),
+  Object.freeze(['far-pennant', 9, -3]),
+]));
 
 // ---------------------------------------------------------------------------------------------
 // v0.10 `?scene=circuits`: the named worked examples of DESIGN-circuits §4.14, as cells for main to write
@@ -710,6 +948,8 @@ export function buildDebugText(game, stats) {
   const pitch = controls && Number.isFinite(controls.pitch) ? controls.pitch : 0;
   const dir = lookDirection(yaw, pitch);
 
+  /** what the renderer drew last frame (§104: the cost of a crowd) */
+  const draw = /** @type {{ drawCalls?: number, triangles?: number }} */ (s);
   let biome = 'unknown';
   if (world && typeof world.getBiome === 'function') biome = BIOME_NAMES[world.getBiome(bq, br)] ?? 'unknown';
   const seed = world && world.seed != null ? world.seed : '?';
@@ -754,7 +994,7 @@ export function buildDebugText(game, stats) {
 
   return (
     `Caelancraft v${VERSION}  (F3 to hide)\n` +
-    `FPS: ${fmtInt(s.fps)}  frame ${fmt1(s.frameMs)} ms\n` +
+    `FPS: ${fmtInt(s.fps)}  frame ${fmt1(s.frameMs)} ms  draws ${fmtInt(draw.drawCalls)}  tris ${fmtInt(draw.triangles)}\n` +
     `XYZ: ${fmt3(px)} / ${fmt3(py)} / ${fmt3(pz)}\n` +
     `Cell (q y r): ${bq} ${by} ${br}   Chunk: ${cq} ${cr}  (local ${lq} ${lr})\n` +
     `Facing: ${facingName(dir[0], dir[2])}  yaw ${fmt1(yawDegrees(yaw))}  pitch ${fmt1(pitch * RAD_TO_DEG)}\n` +
@@ -885,7 +1125,13 @@ const SMOKE_REMESH_FRAMES = 30;
 const SMOKE_HIT_RETRY_FRAMES = 10;
 /** v0.9: frames to wait for a queued mode switch; at most this many 1/60 s dig and eat frames in the survival step. */
 const SMOKE_MODE_FRAMES = 10;
-const SMOKE_DIG_FRAMES = 240;
+/** The step the smoke test's own dig and eat frames advance by (s). */
+export const SMOKE_HEADLESS_DT = 1 / 60;
+/**
+ * The survival step's dig: the frames a flint pick needs for its cell of stone (§99: 5.45 s, 328 frames), worked out from the
+ * data so a retuned hardness or tier speed cannot leave it short, and half a second more.
+ */
+export const SMOKE_DIG_FRAMES = Math.ceil(breakSeconds(BLOCK.STONE, ITEMS.flint_pick.tool ?? null) / SMOKE_HEADLESS_DT) + 30;
 /** Frames the smoke test waits for a dug rock to fly into the pack (CONTRACTS §60: about half a second). */
 const SMOKE_PICKUP_FRAMES = 120;
 const SMOKE_EAT_FRAMES = 180;
@@ -900,7 +1146,6 @@ const SMOKE_WATCHDOG_MS = 20_000;
  * rAF is starved (a few frames per minute of virtual time) while timers run, so the fallback drives the run.
  */
 const SMOKE_RAF_FALLBACK_MS = 40;
-const SMOKE_HEADLESS_DT = 1 / 60;
 
 const SMOKE_RESULT_CSS =
   'position:fixed;left:0;bottom:0;z-index:100000;max-width:48vw;max-height:35vh;overflow:hidden;margin:0;' +
@@ -1321,17 +1566,26 @@ async function runSurvivalSmoke(game, world, player, tick, st, yaw0) {
   const hit = await waitForHit(game, tick, (h) => h !== null && h.blockId === BLOCK.STONE, SMOKE_HIT_RETRY_FRAMES);
   if (!st.check(!!hit, 'looking at the stone below', 'no stone below to dig')) return;
   const rockBefore = game.pack.count('rock');
+  const pick = pickSlot >= 0 ? game.pack.slots[pickSlot] : null;
+  const usesBefore = durabilityLeft(pick);
   let dug = 0;
   for (; dug < SMOKE_DIG_FRAMES; dug++) {
     game.digTargeted(SMOKE_HEADLESS_DT);
     if (world.getBlock(hit.q, hit.y, hit.r) === BLOCK.AIR) break;
   }
   const broke = world.getBlock(hit.q, hit.y, hit.r) === BLOCK.AIR;
+  const usesAfter = pickSlot >= 0 ? durabilityLeft(game.pack.slots[pickSlot]) : 0;
   // v0.10 (CONTRACTS §60): the rock flies to the player and enters the pack at the threshold — wait for it to arrive.
   for (let f = 0; broke && f < SMOKE_PICKUP_FRAMES && game.pack.count('rock') <= rockBefore; f++) await tick();
   st.check(broke && game.pack.count('rock') > rockBefore,
     `dug the stone with the flint pick in ${((dug + 1) * SMOKE_HEADLESS_DT).toFixed(2)} s; the pack holds ${game.pack.count('rock')} rock`,
     `hold-dig failed: block is ${blockName(world.getBlock(hit.q, hit.y, hit.r))}, rock ${game.pack.count('rock')}`);
+  // §99.3: the finished dig wore the pick by the block's work (a cell of stone takes 4 uses of a flint pick), not by 1
+  const wear = digWear(BLOCK.STONE, ITEMS.flint_pick.tool ?? null);
+  if (broke && pick) {
+    st.check(usesAfter === usesBefore - wear, `the dig wore the flint pick by ${wear} (${usesBefore} → ${usesAfter} uses)`,
+      `the flint pick went ${usesBefore} → ${usesAfter} uses, not ${usesBefore - wear}`);
+  }
   await tick();
   const food = game.runCommand('pack add honeyberries 2');
   const berrySlot = game.pack.hotbarSlotOf('honeyberries');

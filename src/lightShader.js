@@ -156,6 +156,60 @@ export function applyChunkLight(material) {
   return material;
 }
 
+/** §105: the uniform holding the plant atlas on the chunks' cutout material. */
+export const PLANT_MAP_UNIFORM = 'caelPlantMap';
+
+/**
+ * §105: the cutout layer's map lookup. A vertex whose u is past 1.5 is a plant's (the mesher moved its plant-atlas u by
+ * PLANT_UV_OFFSET 2): the plant atlas there, the block atlas everywhere else. Both are sampled (uniform control flow,
+ * so the mip level of each is right) and one is kept.
+ */
+/**
+ * §105: after three's normal_fragment_begin. The cutout material is double-sided and three turns a back face's normal
+ * round; a plant's leaf card is seen from both sides alike, so a plant's normal is never turned (plantKit gives a card
+ * the normal of its upper side, leaning out of the plant): foliage is lit like foliage from wherever it is seen.
+ */
+export const PLANT_NORMAL_FRAGMENT = /* glsl */ `
+#if defined( USE_MAP ) && defined( DOUBLE_SIDED ) && ! defined( FLAT_SHADED )
+	if ( vMapUv.x > 1.5 ) normal = normalize( vNormal );
+#endif
+`;
+
+export const PLANT_MAP_FRAGMENT = /* glsl */ `
+#ifdef USE_MAP
+	vec4 caelBlockTexel = texture2D( map, vMapUv );
+	vec4 caelPlantTexel = texture2D( caelPlantMap, vMapUv - vec2( 2.0, 0.0 ) );
+	vec4 sampledDiffuseColor = vMapUv.x > 1.5 ? caelPlantTexel : caelBlockTexel;
+	diffuseColor *= sampledDiffuseColor;
+#endif
+`;
+
+/**
+ * §105: give a lit material the plant atlas: a second sampler, and the map lookup that picks it for the plants'
+ * vertices; a plant's normal is never turned round. The chunks' cutout material (already patched by applyChunkLight) and
+ * the moving cells' (fallingRenderer: the object light, `cacheKey` its own) — whatever onBeforeCompile the material has
+ * when this is called runs first. `material.userData.caelPlantMap` is the uniform (its `value` the texture).
+ * @param {THREE.Material} material
+ * @param {THREE.Texture|null} texture
+ * @param {string} [cacheKey]  the program's cache key
+ * @returns {THREE.Material}
+ */
+export function applyPlantAtlas(material, texture, cacheKey = 'caelancraft-chunk-light-plants') {
+  const before = material.onBeforeCompile;
+  const uniform = { value: texture };
+  material.onBeforeCompile = (shader, webgl) => {
+    before.call(material, shader, webgl);
+    shader.uniforms[PLANT_MAP_UNIFORM] = uniform;
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\nuniform sampler2D ${PLANT_MAP_UNIFORM};`)
+      .replace('#include <map_fragment>', PLANT_MAP_FRAGMENT)
+      .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>\n${PLANT_NORMAL_FRAGMENT}`);
+  };
+  material.customProgramCacheKey = () => cacheKey;
+  material.userData.caelPlantMap = uniform;
+  return material;
+}
+
 /** Vertex declarations of the object patch: the volume and its cell lookup (hex.worldToHex's cube rounding in GLSL). */
 export const LIGHT_VOLUME_VERTEX_PARS = /* glsl */ `
 uniform sampler3D caelVol;
@@ -222,6 +276,40 @@ export function patchObjectShader(shader) {
     .replace('#include <common>', `#include <common>\n${LIGHT_VOLUME_VERTEX_PARS}`)
     .replace('#include <project_vertex>', `#include <project_vertex>\n${LIGHT_VOLUME_VERTEX_MAIN}`);
   patchFragment(shader);
+}
+
+/**
+ * GLSL of a FILL (after three's light accumulation, in an object-patched shader: caelSky and caelExtra are in scope): a
+ * share `strength` of the light that reaches the surface — the sky's and the sun's or moon's × caelSky, plus the block
+ * light, never more — comes back in `color` on every facet, through the material's diffuse term. So faces turned from
+ * the sun keep their colour (warm on the avatars, never grey), yet it is no glow: at night and in a cave it fades with
+ * everything else. (avatarRenderer's AVATAR_FILL, zombieRenderer's ZOMBIE_FILL, the Watcher's stone.)
+ * @param {ReadonlyArray<number>} color  linear rgb
+ * @param {number} strength
+ * @returns {string}
+ */
+export function fillFragment(color, strength) {
+  return /* glsl */ `
+{
+	vec3 caelFill = caelExtra;
+	#if NUM_HEMI_LIGHTS > 0
+	for ( int i = 0; i < NUM_HEMI_LIGHTS; i ++ ) caelFill += caelSky * 0.5 * ( hemisphereLights[ i ].skyColor + hemisphereLights[ i ].groundColor );
+	#endif
+	#if NUM_DIR_LIGHTS > 0
+	for ( int i = 0; i < NUM_DIR_LIGHTS; i ++ ) caelFill += caelSky * directionalLights[ i ].color;
+	#endif
+	reflectedLight.indirectDiffuse += dot( caelFill, vec3( 0.2126, 0.7152, 0.0722 ) ) * vec3( ${color.map((c) => (c * strength).toFixed(4)).join(', ')} ) * BRDF_Lambert( material.diffuseColor );
+}`;
+}
+
+/**
+ * Patch a lit object's shader like the prototype hook (the light volume) and add a fill (fillFragment).
+ * @param {{ vertexShader: string, fragmentShader: string, uniforms: Record<string, *> }} shader
+ * @param {{ color: ReadonlyArray<number>, strength: number }} fill
+ */
+export function patchFillShader(shader, fill) {
+  patchObjectShader(shader);
+  shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>\n${fillFragment(fill.color, fill.strength)}`);
 }
 
 let installed = false;

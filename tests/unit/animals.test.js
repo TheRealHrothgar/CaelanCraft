@@ -15,6 +15,7 @@ import { Pigs, seededRng } from '../../src/pigs.js';
 import { createPlayer, shouldPaddle, settleFloat, FLOAT_POINT } from '../../src/physics.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { createAnimalRenderer, bodyVariant, MODELS } from '../../src/animalRenderer.js';
+import { animalModels, variantBounds } from '../../src/animalModels.js';
 import * as THREE from 'three';
 
 const B = BLOCK;
@@ -446,9 +447,14 @@ describe('stalking from behind (v0.16, CONTRACTS §69 amendment)', () => {
     const [as, a] = still(0);
     as.update(DT, view(flatWorld(), standing(0, near, { sneaking: true })));
     expect(a.mode).not.toBe('flee');
-    // the same player in front of it
+    // the same player in front of it: §100 it sees a still, crouching shape and stares, but does not bolt …
     const [bs, b] = still(0);
-    bs.update(DT, view(flatWorld(), standing(0, -near, { sneaking: true })));
+    const front = standing(0, -near, { sneaking: true });
+    bs.update(DT, view(flatWorld(), front));
+    expect(b.mode).toBe('watch');
+    // … until the player moves while it stares at them
+    front.vz = 1;
+    bs.update(DT, view(flatWorld(), front));
     expect(b.mode).toBe('flee');
     // walking up behind it is heard
     const [cs, c] = still(0);
@@ -462,10 +468,11 @@ describe('stalking from behind (v0.16, CONTRACTS §69 amendment)', () => {
     d.yaw = Math.PI; // facing +z
     d.targetYaw = Math.PI;
     ds.update(DT, view(flatWorld(), player));
-    expect(d.mode).toBe('flee');
-    // and even from behind there is a limit
+    expect(d.mode).toBe('watch'); // §100: it stares at the still shape instead of bolting at once
+    // and even from behind there is a limit: a sneaker who keeps moving that near is heard; it turns, sees them, bolts
     const [es, e] = still(0);
-    es.update(DT, view(flatWorld(), standing(0, SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE - 0.3, { sneaking: true })));
+    const creeper = standing(0, SPECIES.deer.notice * SNEAK_NOTICE * BEHIND_NOTICE - 0.3, { sneaking: true, vz: -0.8 });
+    for (let i = 0; i < 90 && e.mode !== 'flee'; i++) es.update(DT, view(flatWorld(), creeper));
     expect(e.mode).toBe('flee');
   });
 
@@ -506,8 +513,8 @@ describe('pigs are wary too, and can be snared (CONTRACTS §69)', () => {
   });
 });
 
-describe('animalRenderer — chunky box models', () => {
-  it('draws each animal as one body (or its variant) and four legs; a hurt one on the red twins', () => {
+describe('animalRenderer — hex-faceted models (§69.1)', () => {
+  it('draws each animal as one trunk (or its variant), a head and four legs; a hurt one on the red twins', () => {
     const scene = new THREE.Scene();
     const r = createAnimalRenderer(scene);
     const by = (name) => r.group.children.find((m) => m.name === name);
@@ -515,21 +522,26 @@ describe('animalRenderer — chunky box models', () => {
     r.sync([mk('cow'), mk('sheep'), mk('sheep', { shorn: 9 }), mk('horse', { tamed: true }), mk('wolf', { hurt: 0.2 }), mk('wolf', { tamed: true })]);
     expect(r.count()).toBe(6);
     expect(by('cow-body').count).toBe(1);
+    expect(by('cow-head').count).toBe(1);
     expect(by('cow-legs').count).toBe(4);
     expect(by('sheep-body').count).toBe(1);
     expect(by('sheep-alt').count).toBe(1); // shorn
+    expect(by('sheep-head-alt').count).toBe(1); // its neck shorn too
     expect(by('sheep-legs').count).toBe(8);
     expect(by('horse-alt').count).toBe(1); // saddled
+    expect(by('horse-head-alt').count).toBe(1); // bridled
     expect(by('horse-body').count).toBe(0);
     expect(by('wolf-body-hurt').count).toBe(1);
-    expect(by('wolf-alt').count).toBe(1); // collared
+    expect(by('wolf-body').count).toBe(1);
+    expect(by('wolf-tag').count).toBe(1); // collared
     expect(by('wolf-legs-hurt').count).toBe(4);
-    // the legs stand on the ground, and each model is about as tall as its body
+    // the trunk and head stand on the ground, and each model is about as tall as its body
+    const models = animalModels();
     for (const kind of ANIMAL_KINDS) {
-      const boxes = MODELS[kind].body;
-      const top = Math.max(...boxes.map((b) => b[4] + b[1] / 2));
-      expect(top, kind).toBeGreaterThan(SPECIES[kind].height - 0.1);
-      expect(top, kind).toBeLessThan(SPECIES[kind].height + 0.6);
+      const b = variantBounds(models, kind);
+      expect(b.max[1], kind).toBeGreaterThan(SPECIES[kind].height - 0.1);
+      expect(b.max[1], kind).toBeLessThan(SPECIES[kind].height + 0.6);
+      expect(b.min[1], kind).toBeGreaterThanOrEqual(0);
     }
     r.sync([]);
     expect(r.group.children.every((m) => m.count === 0 && !m.visible)).toBe(true);

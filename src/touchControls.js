@@ -44,18 +44,23 @@ export const TOUCH_BUTTONS = Object.freeze({
   pack: Object.freeze({ label: 'Pack', kind: 'key', code: 'KeyE' }), // Creative: the block picker ("Blocks")
   view: Object.freeze({ label: 'Camera', kind: 'key', code: 'KeyV' }),
   chat: Object.freeze({ label: 'Chat', kind: 'key', code: 'KeyT' }),
+  // §103: look through the Spyglass and keep looking (a toggle, like the zoom command); shown only while one is carried
+  zoom: Object.freeze({ label: 'Zoom', kind: 'hook', hook: 'onZoom' }),
 });
 /**
  * Key names in a hint written for the keyboard, and the touch buttons that do the same (§97.2): the R key is Action, Shift
- * is Crouch, the left mouse button Mine, the right one Place. Applied in order (Shift+R before R).
+ * is Crouch, the left mouse button Mine, the right one Place. A clause for the G key (§60's throw at once) is left out:
+ * there is no button for it. Applied in order (Shift+R before R).
  * @type {ReadonlyArray<readonly [RegExp, string]>}
  */
 const TOUCH_WORDS = Object.freeze([
+  [/ · G: [^·]*?(?=( · |$))/g, ''],
   [/\bShift\+R(?: key)?\b/g, 'Crouch + Action'],
   [/\bShift\+right-click\b/gi, 'Crouch + Place'],
   [/\bR key\b/g, 'Action button'],
   [/\bR\b/g, 'Action'],
   [/\bLMB\b/g, 'Mine'],
+  [/\bRMB or Z\b/g, 'Place, or tap Zoom,'], // §103: the Spyglass's hint (no Z key on a tablet)
   [/\bRMB\b/g, 'Place'],
   [/\bright-click\b/gi, 'Place'],
 ]);
@@ -72,7 +77,35 @@ export function touchWords(text) {
 
 /** The right-hand cluster, and the bar at the top left, in DOM order. */
 export const PAD_BUTTONS = Object.freeze(['jump', 'dig', 'place', 'act', 'sneak', 'drop']);
-export const TOP_BUTTONS = Object.freeze(['pause', 'pack', 'view', 'chat']);
+export const TOP_BUTTONS = Object.freeze(['pause', 'pack', 'view', 'chat', 'zoom']);
+
+/**
+ * Is top-bar button `id` shown for `view`? Every one is, but the Zoom button (§103) only while a Spyglass is carried
+ * (`view.zoom`). PURE. @param {string} id @param {TouchView|null|undefined} view @returns {boolean}
+ */
+export function topButtonShown(id, view) {
+  if (id === 'zoom') return !!(view && view.zoom);
+  return TOP_BUTTONS.includes(id);
+}
+
+/**
+ * Where the right cluster's buttons lie (CSS px, as styles.css places `.touch-pad` and its buttons): `right` and `bottom`
+ * (in portrait `bottomPortrait`) are the pad's from the window's edges; `width` from its right edge to the leftmost
+ * button's left edge (Drop's), `height` from its bottom to the highest button's top (Place's).
+ */
+export const TOUCH_CLUSTER = Object.freeze({ right: 14, bottom: 92, bottomPortrait: 104, width: 276, height: 190 });
+
+/**
+ * The box the right cluster's buttons cover in a window `width` × `height` (CSS px, y down; safe-area insets aside).
+ * PURE. @param {number} width @param {number} height
+ * @returns {{ left: number, top: number, right: number, bottom: number }}
+ */
+export function touchClusterRect(width, height) {
+  const C = TOUCH_CLUSTER;
+  const bottom = height - (height >= width ? C.bottomPortrait : C.bottom); // CSS (orientation: portrait): height ≥ width
+  const right = width - C.right;
+  return { left: right - C.width, top: bottom - C.height, right, bottom };
+}
 
 // ---------------------------------------------------------------------------------------------
 // Touch-mode detection (PURE)
@@ -228,6 +261,7 @@ export function hotbarCode(slot) {
  * @typedef {Object} TouchHooks
  * @property {() => void} [onPause]   the Pause button
  * @property {() => void} [onTouch]   any touch on the controls (main wakes a sleeper with it)
+ * @property {() => void} [onZoom]    the Zoom button (§103: main looks through the Spyglass, or stops)
  */
 
 export class TouchPad {
@@ -424,6 +458,8 @@ export class TouchPad {
  * @property {boolean} [back]    a screen with no close button of its own is open (the block picker, the console)
  * @property {boolean} [survival]
  * @property {boolean} [flying]
+ * @property {boolean} [zoom]      a Spyglass is carried: the Zoom button shows (§103)
+ * @property {boolean} [zoomOn]    the zoom is kept up: the button is lit (§103)
  */
 
 /**
@@ -453,6 +489,9 @@ export function createTouchUI(doc, controls, hooks = {}) {
     },
     onTouch: () => {
       if (typeof hooks.onTouch === 'function') hooks.onTouch();
+    },
+    onZoom: () => {
+      if (typeof hooks.onZoom === 'function') hooks.onZoom();
     },
   });
 
@@ -631,6 +670,10 @@ export function createTouchUI(doc, controls, hooks = {}) {
     // flying shows on Jump (a double tap of it took off; another lands)
     setFlag(/** @type {HTMLElement} */ (buttons.get('jump')), 'jump', 'on', !!lastView.flying);
     setText(/** @type {HTMLElement} */ (buttons.get('pack')), lastView.survival ? TOUCH_BUTTONS.pack.label : 'Blocks');
+    // §103: the Zoom button only while a Spyglass is carried, lit while the zoom is kept up
+    const zoom = /** @type {HTMLElement} */ (buttons.get('zoom'));
+    setFlag(zoom, 'zoom', 'hidden', !topButtonShown('zoom', lastView));
+    setFlag(zoom, 'zoom', 'on', !!lastView.zoomOn);
     drawStick();
   }
 

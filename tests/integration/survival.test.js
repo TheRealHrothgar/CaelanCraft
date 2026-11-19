@@ -12,7 +12,7 @@ import { createPlayer, stepPlayer } from '../../src/physics.js';
 import { getItem } from '../../src/items.js';
 import { Pack } from '../../src/inventory.js';
 import { Containers } from '../../src/containers.js';
-import { breakSeconds, rollDrops, pick } from '../../src/harvest.js';
+import { breakSeconds, rollDrops, pick, digWear } from '../../src/harvest.js';
 import { DigState, HINT, interactKind, chooseBelongingsCell, handKeyOf } from '../../src/survivalControl.js';
 import { CraftQueue, getRecipe } from '../../src/crafting.js';
 import { FireSlots } from '../../src/cooking.js';
@@ -97,7 +97,7 @@ describe('the first day (§7.5)', () => {
     const need = breakSeconds(id, tool, false);
     expect(Number.isFinite(need)).toBe(true);
     let held = 0;
-    for (let f = 0; f < 600; f++) {
+    for (let f = 0; f < 1200; f++) { // up to 20 s (§99: a log takes a stone axe 10.9 s)
       held += FRAME;
       const res = dig.step(FRAME, { q, y, r, id }, true, need, handKeyOf(selected, stack));
       if (!res.done) continue;
@@ -106,7 +106,7 @@ describe('the first day (§7.5)', () => {
       expect(pack.canGive(drops)).toBe(true);
       world.setBlock(q, y, r, B.AIR);
       pack.addAll(drops);
-      if (tool) pack.damage(selected, 1);
+      if (tool && digWear(id, tool) > 0) pack.damage(selected, digWear(id, tool)); // §99: main's wear by the work
       return held;
     }
     throw new Error('the dig never finished');
@@ -140,9 +140,10 @@ describe('the first day (§7.5)', () => {
     expect(pack.count('rock')).toBeGreaterThanOrEqual(9);
     expect(pack.countTag('knapstone')).toBeGreaterThanOrEqual(4);
     expect(pack.count('plant_fibre')).toBeGreaterThanOrEqual(13);
-    // Gravel by hand is 1.2 s a cell, tussock 0.2 s (§6.3), give or take a frame a cell.
-    expect(gatherSeconds).toBeGreaterThanOrEqual(gravelDug * 1.2 + 16 * 0.2 - 1e-9);
-    expect(gatherSeconds).toBeLessThan(gravelDug * 1.2 + 16 * 0.2 + (gravelDug + 16) * FRAME + 1e-9);
+    // Gravel by hand is 4 s a cell (§99: real work), tussock 0.2 s (§6.3), give or take a frame a cell.
+    expect(breakSeconds(B.GRAVEL, null)).toBe(4);
+    expect(gatherSeconds).toBeGreaterThanOrEqual(gravelDug * 4 + 16 * 0.2 - 1e-9);
+    expect(gatherSeconds).toBeLessThan(gravelDug * 4 + 16 * 0.2 + (gravelDug + 16) * FRAME + 1e-9);
     // Everything beyond the kit's 9 rock, 4 knapstone, 13 fibre and the one stick the axe is hafted on is set aside, so
     // "nothing left over" can be checked.
     store.ensureBasket(0, GROUND + 1, -1);
@@ -163,15 +164,17 @@ describe('the first day (§7.5)', () => {
     const chopper = slotOf(pack, 'stone_axe');
     let lop = 0;
     for (let i = 0; i < 8; i++) lop += digAt(i - 4, GROUND + 5, -7, chopper);
-    expect(lop / 8).toBeCloseTo(0.4 / 1.5, 1); // 0.27 s a leaf (§7.5)
+    expect(lop / 8).toBeCloseTo(0.4 / 2.2, 1); // 0.18 s a leaf (§7.5, §99)
     expect(pack.count('stick')).toBe(8);
     // The lopped leaves (and the odd acorn, 8 % a natural leaf) are not kit materials: set them aside too.
     expect(pack.count('oak_leaves')).toBe(8);
     pack.take('oak_leaves', 8);
     pack.take('acorns', pack.count('acorns'));
-    // §94: the trunk gives the log the Work Stump is shaped from
-    digAt(0, GROUND + 1, -7, chopper);
+    // §94: the trunk gives the log the Work Stump is shaped from — §99: real labour with a stone axe, and real wear
+    const felled = digAt(0, GROUND + 1, -7, chopper);
+    expect(felled).toBeGreaterThanOrEqual(24 / 2.2 - 1e-9);
     expect(pack.count('oak_log')).toBe(1);
+    expect(pack.slots[chopper].d).toBe(getItem('stone_axe').tool.durability - 8 - 8); // 8 leaves at 1, the log 8
   });
 
   it('9 rock, 4 knapstone, 13 fibre, 9 sticks and a log make the whole kit in 34 s, the flint at the Work Stump, with nothing left over', () => {
@@ -200,13 +203,14 @@ describe('the first day (§7.5)', () => {
     expect(pack.slots[slotOf(pack, 'hammerstone')].d).toBe(getItem('hammerstone').tool.durability - 4);
   });
 
-  it('the flint pick cuts a STONE cell in 1.5 s (§6.3)', () => {
+  it('the flint pick cuts a STONE cell in 5.45 s (§6.3, §99)', () => {
     const pickSlot = slotOf(pack, 'flint_pick');
-    expect(breakSeconds(B.STONE, toolIn(pack, pickSlot), false)).toBeCloseTo(1.5, 10);
+    const need = 24 / 4.4;
+    expect(breakSeconds(B.STONE, toolIn(pack, pickSlot), false)).toBeCloseTo(need, 10);
     const before = pack.count('rock');
     const held = digAt(0, GROUND - 1, 2, pickSlot);
-    expect(held).toBeGreaterThanOrEqual(1.5 - 1e-9);
-    expect(held).toBeLessThan(1.5 + 2 * FRAME);
+    expect(held).toBeGreaterThanOrEqual(need - 1e-9);
+    expect(held).toBeLessThan(need + 2 * FRAME);
     expect(pack.count('rock')).toBe(before + 2);
     expect(world.getBlock(0, GROUND - 1, 2)).toBe(B.AIR);
   });

@@ -10,7 +10,8 @@ import { getItem } from '../../src/items.js';
 import {
   RATES, DAMAGE_CAUSES, SOFT_LANDING, createVitals, wakeVitals, activityFactor, heatFactor, coldFactor, drainRates,
   tempBand, statusOf, stepBreath, stepBodyTemp, stepVitals, softLandingFactor, fallDamage, knockDamage, crushDamage,
-  makeSick, eatFood, gulpWater, queueHeal,
+  makeSick, eatFood, gulpWater, queueHeal, WORK_ACTIVITY, WORK_TIRES, HARD_WORK_AT, HARD_WORK_LABEL, workActivity,
+  fatigueRate, GAME_HOUR_S, TIRED_AT, fatigueStage,
 } from '../../src/vitals.js';
 
 const COMFY = 20; // a felt temperature inside every comfort band (no heat or cold factor)
@@ -99,17 +100,86 @@ describe('drain (§2.2)', () => {
     expect(drains[0][0]).toBeCloseTo(RATES.SATIATION_DRAIN, 12);
   });
 
-  it('activity factor: the largest of still 1, walking 1.4, breaking 1.8, swimming 2.2, sprinting 2.5', () => {
+  it('activity factor: the largest of still 1, walking 1.4, breaking by the tool (§99: 3 by hand … 1.5 steel), swimming 2.2, sprinting 2.5', () => {
     expect(activityFactor({})).toBe(1);
     expect(activityFactor({ moving: true })).toBe(1.4);
-    expect(activityFactor({ breaking: true })).toBe(1.8);
+    expect(activityFactor({ breaking: true })).toBe(3); // no tier said: the bare hand
+    expect(activityFactor({ breaking: true, workTier: 2 })).toBe(2.2);
+    expect(activityFactor({ breaking: true, workTier: 6 })).toBe(1.5);
+    expect(activityFactor({ workTier: 0 })).toBe(1); // not breaking: the tier says nothing
     expect(activityFactor({ swimming: true })).toBe(2.2);
     expect(activityFactor({ sprinting: true })).toBe(2.5);
-    expect(activityFactor({ moving: true, breaking: true })).toBe(1.8);
-    expect(activityFactor({ moving: true, swimming: true, breaking: true })).toBe(2.2);
+    expect(activityFactor({ moving: true, breaking: true, workTier: 6 })).toBe(1.5);
+    expect(activityFactor({ moving: true, swimming: true, breaking: true, workTier: 4 })).toBe(2.2);
     expect(activityFactor({ swimming: true, sprinting: true })).toBe(2.5);
+    expect(activityFactor({ sprinting: true, breaking: true })).toBe(3); // digging by hand is harder than a sprint
     expect(drainRates(1.8, COMFY, false).satiation).toBeCloseTo(0.0556 * 1.8, 12);
     expect(drainRates(NaN, COMFY, false).satiation).toBeCloseTo(0.0556, 12);
+  });
+
+  it('§99 work: the cruder the tool, the faster hunger and thirst — felt within minutes of digging', () => {
+    expect(WORK_ACTIVITY).toEqual([3, 2.6, 2.2, 1.9, 1.7, 1.6, 1.5]);
+    for (let t = 1; t < WORK_ACTIVITY.length; t++) expect(WORK_ACTIVITY[t]).toBeLessThan(WORK_ACTIVITY[t - 1]);
+    expect(workActivity(0)).toBe(3);
+    expect(workActivity(1)).toBe(2.6);
+    expect(workActivity(undefined)).toBe(3);
+    expect(workActivity(9)).toBe(1.5);
+    expect(workActivity(-1)).toBe(3);
+    expect(workActivity(1.5)).toBe(3); // not a tier: the hand
+    // per minute of work, by hand: Nourishment −10 and Hydration −15 (at rest −3.3 and −5)
+    const perMin = (a) => { const d = drainRates(a, COMFY, false); return [d.satiation * 60, d.hydration * 60]; };
+    expect(perMin(workActivity(0))[0]).toBeCloseTo(10, 1);
+    expect(perMin(workActivity(0))[1]).toBeCloseTo(15, 1);
+    expect(perMin(workActivity(1))[1]).toBeCloseTo(13, 1);
+    expect(perMin(workActivity(2))[1]).toBeCloseTo(11, 1);
+    expect(perMin(workActivity(6))[1]).toBeCloseTo(7.5, 1);
+    expect(perMin(1)[1]).toBeCloseTo(5, 1);
+    // three minutes of digging by hand: a third of a full Hydration more than standing still
+    const dig = vitals();
+    const idle = vitals();
+    for (let i = 0; i < 180; i++) {
+      stepVitals(dig, 1, rest({ activity: workActivity(0), work: workActivity(0) }));
+      stepVitals(idle, 1, rest());
+    }
+    expect(idle.hydration - dig.hydration).toBeCloseTo(30, 0);
+    expect(idle.satiation - dig.satiation).toBeCloseTo(20, 0);
+  });
+
+  it('§99 work tires: a long stretch of hand-digging or stone-axe felling makes you Tired within a working day', () => {
+    expect(WORK_TIRES).toBe(0.5);
+    expect(fatigueRate(0)).toBe(1);
+    expect(fatigueRate(undefined)).toBe(1);
+    expect(fatigueRate(1)).toBe(1);
+    expect(fatigueRate(3)).toBe(2); // by hand: two hours of tiredness an hour
+    expect(fatigueRate(2.6)).toBeCloseTo(1.8, 12);
+    expect(fatigueRate(1.5)).toBeCloseTo(1.25, 12);
+    // hours of steady work from rested until Tired: 10 by hand, 11 with stone, 12½ with flint … 16 with steel; 20 idle
+    expect(TIRED_AT / fatigueRate(workActivity(0))).toBeCloseTo(10, 9);
+    expect(TIRED_AT / fatigueRate(workActivity(1))).toBeCloseTo(11.1, 1);
+    expect(TIRED_AT / fatigueRate(workActivity(2))).toBeCloseTo(12.5, 9);
+    expect(TIRED_AT / fatigueRate(workActivity(6))).toBeCloseTo(16, 9);
+    const v = vitals({ fatigue: 0 });
+    for (let i = 0; i < 10 * GAME_HOUR_S; i++) stepVitals(v, 1, rest({ work: 3 })); // (the drain is the activity's: kept at rest here)
+    expect(v.fatigue).toBeCloseTo(TIRED_AT, 6);
+    expect(fatigueStage(v)).toBe(1);
+    // asleep, work counts for nothing (the sleep spot's recovery only)
+    const s = vitals({ fatigue: 30 });
+    stepVitals(s, GAME_HOUR_S, rest({ work: 3, sleep: { recover: 4, heal: 0 } }));
+    expect(s.fatigue).toBeCloseTo(26, 9);
+  });
+
+  it('§99 the Hard work label: from HARD_WORK_AT (a bare hand or a stone tool), after Wet and before the tiredness stage', () => {
+    expect(HARD_WORK_AT).toBe(2.5);
+    expect(HARD_WORK_LABEL).toBe('Hard work');
+    expect(statusOf(vitals(), { work: workActivity(0) }).labels).toEqual(['Hard work']);
+    expect(statusOf(vitals(), { work: workActivity(1) }).labels).toEqual(['Hard work']);
+    expect(statusOf(vitals(), { work: workActivity(2) }).labels).toEqual([]);
+    expect(statusOf(vitals(), {}).labels).toEqual([]);
+    expect(statusOf(vitals({ wet: 1, fatigue: 25 }), { work: 3 }).labels).toEqual(['Wet', 'Hard work', 'Tired']);
+    // it changes nothing else
+    const a = statusOf(vitals(), { work: 3 });
+    const b = statusOf(vitals(), {});
+    expect([a.canSprint, a.moveFactor, a.regen]).toEqual([b.canSprint, b.moveFactor, b.regen]);
   });
 
   it('heat factor min(2.5, 1 + max(0, felt − 26)/8); cold factor min(2, 1 + max(0, 12 − felt)/12); sick ×1.6', () => {

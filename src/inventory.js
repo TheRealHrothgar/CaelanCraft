@@ -9,7 +9,7 @@
 // `Pack` also implements PackOps, the narrow surface crafting.js uses (count, countTag, take, takeTag, canGive, give,
 // hasTool, useTool), so crafting imports no inventory code.
 import { PACK_SLOTS, WEAR_SLOTS, HOTBAR_SIZE } from './config.js';
-import { TAGS, WEAR_SLOT_NAMES, canonicalItemKey, getItem, isItemKey, itemName, stackSize, maxDurability } from './items.js';
+import { TAGS, WEAR_SLOT_NAMES, canonicalItemKey, carriedWear, getItem, isItemKey, itemName, stackSize, maxDurability } from './items.js';
 
 /** @typedef {import('./types.js').ItemStack} ItemStack */
 /** @typedef {import('./types.js').ToolDef} ToolDef */
@@ -81,7 +81,9 @@ export function durabilityLeft(s) {
 export function withCurrentKey(s) {
   if (!s || typeof s !== 'object' || Array.isArray(s) || typeof s.k !== 'string') return s;
   const k = canonicalItemKey(s.k);
-  return k === s.k ? s : { ...s, k };
+  if (k === s.k) return s;
+  // §100: a Bow's wear goes over to the Crude Bow, at most the Crude Bow's own durability
+  return s.d === undefined ? { ...s, k } : { ...s, k, d: carriedWear(s.d, k) };
 }
 
 /**

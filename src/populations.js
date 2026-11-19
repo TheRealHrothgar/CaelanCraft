@@ -13,13 +13,14 @@
 //     process run event by event (`_advanceKind`): live zones every game hour, a dormant zone when it wakes, over the
 //     time it slept (at most CATCH_UP_DAYS). Both use the same code, so a zone grows the same awake or asleep.
 //   - WANDERERS. A zone that lacks a male or a female of a kind it can hold receives one now and then from a neighbour
-//     with at least WANDER_SOURCE_MIN of that kind; a zone over its K sends its surplus out to neighbours with room.
+//     with at least WANDER_SOURCE_MIN of that kind (fish, §100: while any of its waters with room lacks one); a zone over
+//     its K sends its surplus out to neighbours with room.
 //   - LIVESTOCK. Tame cattle, sheep and pigs (and horses and wolves) breed by the same rule against TAME_CAP instead of the
 //     wild K: their keeper's food and water stand in for the land's. Young of a tame mother are born tame.
-import { ANIMAL_KINDS, ANIMAL_MAX, SPECIES, HERD_WEIGHTS, validateAnimalsJSON } from './animals.js';
+import { ANIMAL_KINDS, ANIMAL_MAX, SPECIES, HERD_WEIGHTS, validateAnimalsJSON, fishWater, FISH_DEEP } from './animals.js';
 import { seededRng } from './pigs.js';
 import { BLOCK, BIOME, BIOME_NAMES, isPlant, isFarmBlock, isWater, isTaintedWater, isSolid } from './blocks.js';
-import { hexToWorld, worldToHex, hexLength, HEX_ROW_SPACING } from './hex.js';
+import { hexToWorld, worldToHex, hexLength, HEX_ROW_SPACING, HEX_DIRS } from './hex.js';
 import { floorDiv } from './coords.js';
 import { hash2 } from './noise.js';
 import { isSaltyBiome } from './climate.js';
@@ -74,6 +75,22 @@ export const BASE_K = Object.freeze({
 /** Fish: one for every FISH_CELLS fresh water columns of the zone, at most FISH_K_MAX. */
 export const FISH_CELLS = 12;
 export const FISH_K_MAX = 6;
+/**
+ * §100 fish belong to their water: each body of fresh water in a zone (a pond, the zone's stretch of a stream) holds
+ * round(its columns / FISH_CELLS) fish, at most FISH_K_MAX — a seven-column pond one at most. A zone keeps its
+ * FISH_BODIES_MAX biggest bodies (`ws` a column of each, `wk` what each holds); fish are seeded, born and come in body by
+ * body, never past what that body holds.
+ */
+export const FISH_BODIES_MAX = 6;
+/**
+ * §100: how far (rings of cells) from its column a fish record finds its water: where it wakes (`_fishSpot`) and which
+ * body it is counted in (`_bodyAt`, for one off the water, as young born on the bank beside their mother are).
+ */
+export const FISH_BODY_RINGS = 3;
+/** The fish a body of `columns` fresh water columns holds. @param {number} columns */
+export function fishCapOf(columns) {
+  return Math.min(FISH_K_MAX, Math.round(Math.max(0, columns) / FISH_CELLS));
+}
 /** A zone without fresh water in or beside it (within WATER_BESIDE cells of its edge) holds DRY_WATER of its K. */
 export const DRY_WATER = 0.35;
 export const WATER_BESIDE = 8;
@@ -252,9 +269,13 @@ export function zoneDistance(zq, zr, x, z) {
 
 /**
  * The cached land of a zone. `K` the carrying capacity per kind (the predators' at full prey), `g` the share of its
- * columns that graze (0..1), `w` its water factor (1 or DRY_WATER), `c` its fresh water columns (estimated), `ws` up to
- * six fresh water columns [q, r] (where its fish live), `mix` the share of each land.
- * @typedef {{ K: Record<string, number>, g: number, w: number, c: number, ws: [number, number][], mix: Record<string, number> }} ZoneLand
+ * columns that graze (0..1), `w` its water factor (1 or DRY_WATER), `c` its fresh water columns, `ws` a column [q, r] of
+ * each of its (up to FISH_BODIES_MAX) bodies of fresh water that hold fish and `wk` how many each holds (§100; null in a
+ * land saved before it: worked out again), `mix` the share of each land. `wb` (§100, not saved) the body of each of the
+ * zone's columns, an index into `ws` (−1: none), at (q − q0) × ZONE_SIZE + (r − r0); absent (undefined) in a land read
+ * from a save until the generator works it out again, null when it cannot (no water, or the generator's waters differ).
+ * @typedef {{ K: Record<string, number>, g: number, w: number, c: number, ws: [number, number][], wk: number[]|null,
+ *   mix: Record<string, number>, wb?: Int8Array|null }} ZoneLand
  */
 
 /** Sample columns: SAMPLE_STEP apart, SAMPLE_STEP / 2 in from the zone's corner (16 × 16 of them). */
@@ -265,14 +286,15 @@ const SAMPLE_STEP = 4;
  * biomeShare is the mean `suitability` over 256 sampled columns; foodFactor (grazers) the share of the sampled columns of
  * a suitable land that graze (grass 1, snowy grass ½, under water 0); for wolves and the bear it is 1 here (their K is
  * scaled by their prey when it is used); waterFactor 1 with fresh water — a stream, an untainted pond or a spring — in
- * the zone or within WATER_BESIDE cells of it, else DRY_WATER. Fish: one per FISH_CELLS fresh water columns in the zone,
- * at most FISH_K_MAX. Streams are read on every column, ponds on every other (a pond is seven columns: every one of them
- * holds a point of that lattice), springs from their grid. Deterministic.
+ * the zone or within WATER_BESIDE cells of it, else DRY_WATER. Fish (§100): the zone's fresh water columns joined side by
+ * side into bodies, each holding fishCapOf(its columns); the zone's K the sum, at most FISH_K_MAX. Streams are read on
+ * every column, ponds found on every other (a pond is seven columns: every one of them holds a point of that lattice)
+ * and then followed column by column, springs from their grid. Deterministic.
  * @param {FaunaGen|null|undefined} gen @param {number} zq @param {number} zr @returns {ZoneLand}
  */
 export function zoneLand(gen, zq, zr) {
   /** @type {ZoneLand} */
-  const land = { K: {}, g: 0, w: DRY_WATER, c: 0, ws: [], mix: {} };
+  const land = { K: {}, g: 0, w: DRY_WATER, c: 0, ws: [], wk: [], mix: {} };
   if (!gen || typeof gen.getColumn !== 'function') return land;
   const q0 = zq * ZONE_SIZE;
   const r0 = zr * ZONE_SIZE;
@@ -303,36 +325,90 @@ export function zoneLand(gen, zq, zr) {
   }
   for (const name of Object.keys(land.mix)) land.mix[name] = Math.round(land.mix[name] * 1000) / 1000;
   land.g = Math.round((grazeAll / S) * 1000) / 1000;
-  // Fresh water in the zone (counted) and beside it (only whether there is any).
-  let wet = 0;
+  // Fresh water in the zone (each column marked) and beside it (only whether there is any).
   let near = false;
-  /** @type {[number, number][]} */
-  const spots = [];
+  const wetMap = new Uint8Array(ZONE_SIZE * ZONE_SIZE);
   const B = WATER_BESIDE;
   const inZone = (q, r) => q >= q0 && q < q0 + ZONE_SIZE && r >= r0 && r < r0 + ZONE_SIZE;
+  const at = (q, r) => (q - q0) * ZONE_SIZE + (r - r0);
   if (typeof gen.streamAt === 'function') {
     for (let q = q0 - B; q < q0 + ZONE_SIZE + B; q++) {
       for (let r = r0 - B; r < r0 + ZONE_SIZE + B; r++) {
         if (!gen.streamAt(q, r)) continue;
         near = true;
-        if (inZone(q, r)) {
-          wet++;
-          if ((wet & 7) === 1) spots.push([q, r]);
-        }
+        if (inZone(q, r)) wetMap[at(q, r)] = 1;
       }
     }
   }
   if (typeof gen.pondAt === 'function') {
+    const freshPond = (q, r) => gen.pondAt(q, r) && !(typeof gen.pondTaintedAt === 'function' && gen.pondTaintedAt(q, r));
     for (let q = q0 - B; q < q0 + ZONE_SIZE + B; q += 2) {
       for (let r = r0 - B; r < r0 + ZONE_SIZE + B; r += 2) {
-        if (!gen.pondAt(q, r) || (typeof gen.pondTaintedAt === 'function' && gen.pondTaintedAt(q, r))) continue;
+        if (!freshPond(q, r)) continue;
         near = true;
-        if (inZone(q, r)) {
-          wet += 4; // a point of the lattice stands for four columns
-          spots.push([q, r]);
+        if (!inZone(q, r) || wetMap[at(q, r)]) continue;
+        // §100: the pond itself, column by column (a pond is a few columns: this is cheap)
+        const todo = [[q, r]];
+        wetMap[at(q, r)] = 2;
+        while (todo.length > 0) {
+          const [cq, cr] = /** @type {[number, number]} */ (todo.pop());
+          for (const [dq, dr] of HEX_DIRS) {
+            const nq = cq + dq;
+            const nr = cr + dr;
+            if (!inZone(nq, nr) || wetMap[at(nq, nr)] || !freshPond(nq, nr)) continue;
+            wetMap[at(nq, nr)] = 2;
+            todo.push([nq, nr]);
+          }
         }
       }
     }
+  }
+  // §100: the bodies of water: the marked columns joined side by side; each holds fishCapOf(its columns)
+  let wet = 0;
+  /** @type {{ q: number, r: number, n: number, cap: number, cells: [number, number][] }[]} */
+  const bodies = [];
+  const seen = new Uint8Array(ZONE_SIZE * ZONE_SIZE);
+  for (let i = 0; i < wetMap.length; i++) {
+    if (!wetMap[i] || seen[i]) continue;
+    /** @type {[number, number][]} */
+    const cells = [];
+    const todo = [i];
+    seen[i] = 1;
+    while (todo.length > 0) {
+      const k = /** @type {number} */ (todo.pop());
+      const cq = q0 + Math.floor(k / ZONE_SIZE);
+      const cr = r0 + (k % ZONE_SIZE);
+      cells.push([cq, cr]);
+      for (const [dq, dr] of HEX_DIRS) {
+        if (!inZone(cq + dq, cr + dr)) continue;
+        const j = at(cq + dq, cr + dr);
+        if (!wetMap[j] || seen[j]) continue;
+        seen[j] = 1;
+        todo.push(j);
+      }
+    }
+    wet += cells.length;
+    const cap = fishCapOf(cells.length);
+    if (cap < 1) continue;
+    // its column nearest the middle of it (always one of its own columns)
+    let mq = 0;
+    let mr = 0;
+    for (const [cq, cr] of cells) {
+      mq += cq;
+      mr += cr;
+    }
+    mq /= cells.length;
+    mr /= cells.length;
+    let best = cells[0];
+    let bd = Infinity;
+    for (const c of cells) {
+      const d = hexLength(c[0] - mq, c[1] - mr);
+      if (d < bd - 1e-9) {
+        bd = d;
+        best = c;
+      }
+    }
+    bodies.push({ q: best[0], r: best[1], n: cells.length, cap, cells });
   }
   if (typeof gen.naturalSpringOf === 'function') {
     for (let kq = zq - 1; kq <= zq + 1; kq++) {
@@ -345,9 +421,16 @@ export function zoneLand(gen, zq, zr) {
   }
   land.w = near ? 1 : DRY_WATER;
   land.c = wet;
-  // up to six spots, spread along what was found
-  const step = Math.max(1, Math.ceil(spots.length / 6));
-  for (let i = 0; i < spots.length && land.ws.length < 6; i += step) land.ws.push(spots[i]);
+  // the biggest bodies that hold fish (ties: the order they were found in, which is fixed)
+  bodies.sort((a, b) => b.n - a.n);
+  land.wb = null;
+  for (const b of bodies.slice(0, FISH_BODIES_MAX)) {
+    // each column knows its body: a fish belongs to the water it is in, not to the nearest body's middle
+    land.wb ??= new Int8Array(ZONE_SIZE * ZONE_SIZE).fill(-1);
+    for (const [cq, cr] of b.cells) land.wb[at(cq, cr)] = land.ws.length;
+    land.ws.push([b.q, b.r]);
+    /** @type {number[]} */ (land.wk).push(b.cap);
+  }
   for (const k of GRAZERS) {
     if (!suitN[k]) continue;
     const biomeShare = suit[k] / S;
@@ -360,7 +443,7 @@ export function zoneLand(gen, zq, zr) {
     const K = Math.round(BASE_K[k] * (suit[k] / S) * land.w);
     if (K > 0) land.K[k] = K;
   }
-  const fish = Math.min(FISH_K_MAX, Math.round(wet / FISH_CELLS));
+  const fish = Math.min(FISH_K_MAX, /** @type {number[]} */ (land.wk).reduce((a, b) => a + b, 0));
   if (fish > 0 && land.ws.length > 0) land.K.fish = fish;
   return land;
 }
@@ -425,12 +508,21 @@ export function seedZone(zone, gen, seed, now, youth = YOUTH_DAYS) {
     /** @type {[number, number][]} */
     const centres = [];
     const G = Math.max(1, Math.min(3, Math.ceil(n / 4)));
-    for (let tries = 0; tries < 40 && centres.length < G; tries++) {
-      if (kind === 'fish') {
-        if (land.ws.length === 0) break;
-        centres.push(land.ws[Math.floor(rng() * land.ws.length)]);
-        continue;
+    if (kind === 'fish') {
+      // §100: the fish go two by two (a pair can breed) to the body of water with the most room left, never past what
+      // a body holds
+      const room = land.ws.map((_, i) => (land.wk ? land.wk[i] ?? 0 : 1));
+      while (centres.length < n) {
+        let bi = -1;
+        for (let j = 0; j < room.length; j++) if (room[j] > 0 && (bi < 0 || room[j] > room[bi])) bi = j;
+        if (bi < 0) break;
+        for (let k = Math.min(2, room[bi], n - centres.length); k > 0; k--) {
+          room[bi]--;
+          centres.push(land.ws[bi]);
+        }
       }
+    }
+    for (let tries = 0; tries < 40 && centres.length < G && kind !== 'fish'; tries++) {
       const q = q0 + 6 + Math.floor(rng() * (ZONE_SIZE - 12));
       const r = r0 + 6 + Math.floor(rng() * (ZONE_SIZE - 12));
       if (!gen) break;
@@ -449,8 +541,9 @@ export function seedZone(zone, gen, seed, now, youth = YOUTH_DAYS) {
     }
     const per = Math.ceil(n / centres.length);
     const y = youth[kind] ?? 1;
-    for (let i = 0; i < n; i++) {
-      const [cq, cr] = centres[Math.min(centres.length - 1, Math.floor(i / per))];
+    const count = kind === 'fish' ? centres.length : n;
+    for (let i = 0; i < count; i++) {
+      const [cq, cr] = kind === 'fish' ? centres[i] : centres[Math.min(centres.length - 1, Math.floor(i / per))];
       const spread = kind === 'fish' ? 1 : 4;
       const q = cq + Math.round((rng() * 2 - 1) * spread);
       const r = cr + Math.round((rng() * 2 - 1) * spread);
@@ -521,6 +614,8 @@ export function scanHabitat(env, q0, y0, r0, range = FEED_RANGE) {
  * @property {(q: number, r: number) => number} [getBiome]
  * @property {FaunaGen|null} [gen]                  the world generator (a zone's K)
  * @property {number} [seed]                        the world seed (a zone's seeding)
+ * @property {(x: number, y: number, z: number) => boolean} [inView]  whether the player could see this point now; a fish is
+ *   never woken, put to sleep or born live where it is true (absent: nothing is in view)
  */
 
 /**
@@ -648,6 +743,26 @@ export class Fauna {
       if (!env || !env.gen) return;
       z.land = zoneLand(env.gen, z.zq, z.zr);
       this.counts.zonesMade++;
+    } else if (z.land.wk === null || z.land.wb === undefined) {
+      const land = z.land;
+      if (land.wk !== null && land.ws.length === 0) {
+        land.wb = null; // no water that holds fish: nothing to tell apart
+      } else if (env && env.gen) {
+        const fresh = zoneLand(env.gen, z.zq, z.zr);
+        if (land.wk === null) {
+          // §100: a land saved before its waters were told apart: its bodies of water (and the fish K) are worked out again
+          land.ws = fresh.ws;
+          land.wk = fresh.wk;
+          land.c = fresh.c;
+          land.wb = fresh.wb;
+          if (fresh.K.fish) land.K.fish = fresh.K.fish;
+          else delete land.K.fish;
+        } else {
+          // §100: which column is in which body is not saved: worked out again, while the generator's waters are the saved ones
+          const same = fresh.ws.length === land.ws.length && fresh.ws.every((p, i) => p[0] === land.ws[i][0] && p[1] === land.ws[i][1]);
+          land.wb = same ? fresh.wb : null;
+        }
+      }
     }
     if (!z.seeded) {
       z.seeded = true;
@@ -733,8 +848,15 @@ export class Fauna {
       if (this._keepsAwake(b)) continue;
       const d = Math.hypot(b.x - p.x, b.z - p.z);
       const [q, r] = worldToHex(b.x, b.z);
-      if (d > SLEEP_RADIUS || !env.isLoadedCell(q, r)) this.sleep(b, env);
+      const loaded = env.isLoadedCell(q, r);
+      if (loaded && d > SLEEP_RADIUS && this._seen(b, env)) continue; // §100: a fish goes only where nobody sees it
+      if (d > SLEEP_RADIUS || !loaded) this.sleep(b, env);
     }
+  }
+
+  /** §100: a live fish the player could see now (env.inView); never true of anything else. */
+  _seen(b, env) {
+    return kindOf(b) === 'fish' && typeof env.inView === 'function' && env.inView(b.x, b.y, b.z);
   }
 
   /**
@@ -800,12 +922,15 @@ export class Fauna {
     const woke = new Set();
     let swaps = 4;
     for (const c of cands) {
+      // §100: a fish wakes only where the player cannot see it come (or deep enough to rise unseen)
+      const spot = c.rec.kind === 'fish' ? this._fishSpot(c.rec, env) : null;
+      if (c.rec.kind === 'fish' && !spot) continue;
       if (this.liveCount >= LIVE_MAX) {
         // full: the farthest live one gives way to a nearer sleeper, a few a scan
         let far = null;
         let fd = c.d + SWAP_MARGIN;
         for (const b of this.liveBodies()) {
-          if (this._keepsAwake(b)) continue;
+          if (this._keepsAwake(b) || this._seen(b, env)) continue;
           const d = Math.hypot(b.x - p.x, b.z - p.z);
           if (d > fd) {
             fd = d;
@@ -815,7 +940,7 @@ export class Fauna {
         if (!far || swaps-- <= 0) break;
         this.sleep(far, env);
       }
-      const body = this.wake(c.rec, env);
+      const body = this.wake(c.rec, env, spot);
       if (body) {
         woke.add(c.rec);
         c.z.touched = true;
@@ -828,9 +953,12 @@ export class Fauna {
   /**
    * Wake a record: a live body where it was (a column-only record is put on the ground there first), in the state it
    * was, its timers run down by the time it slept. The record is NOT taken out of its zone (the caller does).
-   * @returns {any|null} the body, or null (no room, nowhere to stand, not loaded)
+   * A fish (§100) wakes in the water nearest where it was, and only where the player cannot see it (`spot`, from
+   * `_fishSpot`, when the caller has it).
+   * @param {FaunaRecord} rec @param {FaunaWorld} [env] @param {[number, number, number]|null} [spot]
+   * @returns {any|null} the body, or null (no room, nowhere to stand, not loaded, a fish in plain sight)
    */
-  wake(rec, env = this._env) {
+  wake(rec, env = this._env, spot = null) {
     if (!env) return null;
     const kind = rec.kind;
     const isPig = kind === 'pig';
@@ -838,7 +966,11 @@ export class Fauna {
     let x = rec.x;
     let y = rec.y;
     let z = rec.z;
-    if (!rec.placed) {
+    if (kind === 'fish') {
+      const at = spot ?? this._fishSpot(rec, env);
+      if (!at) return null;
+      [x, y, z] = at;
+    } else if (!rec.placed) {
       const spot = this._place(rec, env);
       if (!spot) return null;
       [x, y, z] = spot;
@@ -880,22 +1012,32 @@ export class Fauna {
     return body;
   }
 
+  /**
+   * §100: where a fish wakes — the water nearest its column (its own first, then rings out to three) — or null: no water
+   * deep enough near, or the player could see it appear there (`env.inView`). Water at least FISH_DEEP below where it
+   * swims hides it: it wakes at the bottom and rises. @returns {[number, number, number]|null}
+   */
+  _fishSpot(rec, env) {
+    const [q0, r0] = worldToHex(rec.x, rec.z);
+    for (let rad = 0; rad <= FISH_BODY_RINGS; rad++) {
+      for (const [q, r] of ring(q0, r0, rad)) {
+        if (!env.isLoadedCell(q, r) || !this.animals) continue;
+        const y = this.animals.fishSpotAt(/** @type {*} */ (env), q, r);
+        if (Number.isNaN(y)) continue;
+        const [x, z] = hexToWorld(q, r);
+        if (typeof env.inView !== 'function' || !env.inView(x, y, z)) return [x, y, z];
+        const w = fishWater(env.getBlock, q, r, y);
+        if (w && w.swim - w.bed >= FISH_DEEP) return [x, w.bed + 0.06, z];
+        return null; // its water is in plain sight: it waits
+      }
+    }
+    return null;
+  }
+
   /** Where a column-only record stands: its column or one near it. @returns {[number, number, number]|null} */
   _place(rec, env) {
     const [q0, r0] = worldToHex(rec.x, rec.z);
-    if (rec.kind === 'fish') {
-      for (let rad = 0; rad <= 3; rad++) {
-        for (const [q, r] of ring(q0, r0, rad)) {
-          if (!env.isLoadedCell(q, r) || !this.animals) continue;
-          const y = this.animals.fishSpotAt(/** @type {*} */ (env), q, r);
-          if (!Number.isNaN(y)) {
-            const [x, z] = hexToWorld(q, r);
-            return [x, y, z];
-          }
-        }
-      }
-      return null;
-    }
+    if (rec.kind === 'fish') return this._fishSpot(rec, env);
     const radius = rec.kind === 'pig' ? PIG_RADIUS : SPECIES[rec.kind].radius;
     const height = rec.kind === 'pig' ? PIG_HEIGHT : SPECIES[rec.kind].height;
     for (const strict of [true, false]) {
@@ -1038,9 +1180,9 @@ export class Fauna {
   /**
    * The event loop of one kind in one zone over [t0, t1]: competing exponential clocks for a birth candidate (BIRTH_RATE
    * × the females), a wanderer in (one a WANDER_DAYS per neighbour that can send one, while the zone lacks a male or a
-   * female and is under K) and one wandering out (the surplus over K, each one a WANDER_DAYS). A birth candidate is a
-   * random female; she gives birth when she is able and with probability (1 − N / K) — thinning, which makes the births
-   * exactly a Poisson process at her rate × (1 − N / K).
+   * female — a fish: while one of its waters with room does — and is under K) and one wandering out (the surplus over K,
+   * each one a WANDER_DAYS). A birth candidate is a random female; she gives birth when she is able and with probability
+   * (1 − N / K) — thinning, which makes the births exactly a Poisson process at her rate × (1 − N / K).
    */
   _advanceKind(z, kind, members, K, t0, t1, ctx) {
     const rng = this._rng;
@@ -1067,7 +1209,12 @@ export class Fauna {
     let preyNow = -1;
     let t = t0;
     for (let guard = 0; guard < 20000; guard++) {
-      const lacking = wildF === 0 || wildM === 0;
+      // §100: fish body by body — the room left in each water and which of them lacks a male or a female
+      const bodies = kind === 'fish' ? this._bodies(z, members) : null;
+      const fishRoom = bodies ? bodies.room : null;
+      // a wanderer comes while the zone lacks a male or a female; a fish while some water with room lacks one (a pond
+      // beside a stream that breeds is stocked too: young are born only into their mother's water)
+      const lacking = bodies ? bodies.lack.some(Boolean) : wildF === 0 || wildM === 0;
       let rateIn = 0;
       if (lacking && K >= 1 && wildN < K && !(kind === 'fish' && (!z.land || z.land.ws.length === 0))) {
         sources ??= this._sources(z, kind, ctx);
@@ -1098,9 +1245,17 @@ export class Fauna {
         if (!f) continue;
         if (preyNow < 0 && PREY[kind]) preyNow = this._preyIn(z, kind, ctx);
         if (!this._able(f, t, z, kind, members, ctx, preyNow)) continue;
-        const room = f.tamed ? (cap > 0 ? 1 - tameN / cap : 0) : (K > 0 ? 1 - wildN / K : 0);
+        let room = f.tamed ? (cap > 0 ? 1 - tameN / cap : 0) : (K > 0 ? 1 - wildN / K : 0);
+        let most = Infinity;
+        if (fishRoom && !f.tamed) {
+          // §100: a fish's young are born into her own water, and only while it has room for them
+          const bi = this._bodyAt(z, f.x, f.z);
+          const held = bi >= 0 ? /** @type {number[]} */ (/** @type {ZoneLand} */ (z.land).wk)[bi] : 0;
+          most = bi >= 0 ? Math.max(0, fishRoom[bi]) : 0;
+          room = Math.min(room, held > 0 ? most / held : 0);
+        }
         if (!(rng() < room)) continue;
-        const n = litterSize(kind, rng);
+        const n = Math.min(most, litterSize(kind, rng));
         for (let i = 0; i < n; i++) {
           const young = this._birth(f, t, z, kind, ctx);
           if (!young) break;
@@ -1128,7 +1283,7 @@ export class Fauna {
         s.n--;
         s.z.touched = true;
         if (s.n < WANDER_SOURCE_MIN || s.dormant.length === 0) sources.splice(si, 1);
-        this._moveTo(rec, z, s.z, t);
+        this._moveTo(rec, z, s.z, t, bodies);
         members.push(rec);
         if (rec.sex === 'f') {
           females++;
@@ -1151,7 +1306,7 @@ export class Fauna {
           wildF--;
         } else wildM--;
         wildN--;
-        this._moveTo(rec, tg.z, z, t);
+        this._moveTo(rec, tg.z, z, t, kind === 'fish' ? this._bodies(tg.z, this._fishOf(tg.z, ctx)) : null);
         tg.n++;
         tg.z.touched = true;
         if (tg.n >= tg.K) targets.splice(0, 1);
@@ -1159,6 +1314,86 @@ export class Fauna {
         z.touched = true;
       }
     }
+  }
+
+  /**
+   * §100: the body of water of zone z (an index into its land's `ws`) that (x, z) is in, by the land's column map `wb`; off
+   * the water (a young one born on the bank beside its mother), the body nearest within FISH_BODY_RINGS, which is where it
+   * wakes (_fishSpot); else (or a land without the map) the one whose `ws` column is nearest; −1 when it has none.
+   */
+  _bodyAt(z, x, zz) {
+    const ws = z.land ? z.land.ws : [];
+    const wb = z.land ? z.land.wb : null;
+    if (wb) {
+      const [q0, r0] = worldToHex(x, zz);
+      const bq = z.zq * ZONE_SIZE;
+      const br = z.zr * ZONE_SIZE;
+      const bodyOf = (q, r) => {
+        const dq = q - bq;
+        const dr = r - br;
+        if (dq < 0 || dq >= ZONE_SIZE || dr < 0 || dr >= ZONE_SIZE) return -1;
+        const b = wb[dq * ZONE_SIZE + dr];
+        return b < ws.length ? b : -1;
+      };
+      const own = bodyOf(q0, r0);
+      if (own >= 0) return own;
+      for (let rad = 1; rad <= FISH_BODY_RINGS; rad++) {
+        let best = -1;
+        let bd = Infinity;
+        for (const [q, r] of ring(q0, r0, rad)) {
+          const b = bodyOf(q, r);
+          if (b < 0) continue;
+          const [cx, cz] = hexToWorld(q, r);
+          const d = (cx - x) * (cx - x) + (cz - zz) * (cz - zz);
+          if (d < bd) {
+            bd = d;
+            best = b;
+          }
+        }
+        if (best >= 0) return best;
+      }
+    }
+    let bi = -1;
+    let bd = Infinity;
+    for (let i = 0; i < ws.length; i++) {
+      const [wx, wz] = hexToWorld(ws[i][0], ws[i][1]);
+      const d = (wx - x) * (wx - x) + (wz - zz) * (wz - zz);
+      if (d < bd) {
+        bd = d;
+        bi = i;
+      }
+    }
+    return bi;
+  }
+
+  /**
+   * §100: the bodies of water of zone z as they are now (`members`: any of the zone's animals, records or live; only wild
+   * fish count): `room` what each holds (`wk`) less the fish in it, `f` / `m` its females and males, `lack` it has room and
+   * lacks a female or a male — or null when the land does not tell its waters apart.
+   * @returns {{ room: number[], f: number[], m: number[], lack: boolean[] }|null}
+   */
+  _bodies(z, members) {
+    const wk = z.land && z.land.wk ? z.land.wk : null;
+    if (!wk) return null;
+    const room = [...wk];
+    const f = wk.map(() => 0);
+    const m = wk.map(() => 0);
+    for (const a of members) {
+      if (a.tamed || kindOf(a) !== 'fish') continue;
+      const bi = this._bodyAt(z, a.x, a.z);
+      if (bi < 0) continue;
+      room[bi]--;
+      if (a.sex === 'f') f[bi]++;
+      else m[bi]++;
+    }
+    return { room, f, m, lack: room.map((v, i) => v > 0 && (f[i] === 0 || m[i] === 0)) };
+  }
+
+  /** The fish of zone z, dormant and live. */
+  _fishOf(z, ctx) {
+    const out = z.list.filter((r) => r.kind === 'fish');
+    for (const b of ctx.byZone.get(z.key) ?? []) if (kindOf(b) === 'fish') out.push(b);
+    return out;
   }
 
   /** The neighbours that can send a wanderer of `kind`: at least WANDER_SOURCE_MIN of it (wild), one of them dormant. */
@@ -1204,14 +1439,28 @@ export class Fauna {
   /**
    * Move a record into zone `to`, as a column (put down on waking): beside one of its kind already there (it finds the
    * others: a pair that came in from opposite sides must be able to meet), else at the edge facing `from` (a fish: into
-   * the zone's water).
+   * the zone's water; §100 with `bodies`, _bodies of `to`: into a water with room that has none of its sex — an empty
+   * pond, or a stream with only the other sex — the one with the most room; else the one with the most room).
+   * @param {{ room: number[], f: number[], m: number[] }|null} [bodies]
    */
-  _moveTo(rec, to, from, t) {
+  _moveTo(rec, to, from, t, bodies = null) {
     const rng = this._rng;
     let q;
     let r;
     const kin = to.list.filter((o) => o.kind === rec.kind && !o.tamed);
-    if (kin.length > 0) {
+    const room = bodies ? bodies.room : null;
+    if (rec.kind === 'fish' && bodies && room && room.length > 0 && to.land && to.land.ws.length === room.length) {
+      const same = rec.sex === 'f' ? bodies.f : bodies.m;
+      let bi = -1;
+      for (let j = 0; j < room.length; j++) if (room[j] > 0 && same[j] === 0 && (bi < 0 || room[j] > room[bi])) bi = j;
+      if (bi < 0) {
+        bi = 0;
+        for (let j = 1; j < room.length; j++) if (room[j] > room[bi]) bi = j;
+      }
+      [q, r] = to.land.ws[bi];
+      room[bi]--;
+      same[bi]++;
+    } else if (kin.length > 0) {
       const k = kin[Math.floor(rng() * kin.length)];
       const [kq, kr] = worldToHex(k.x, k.z);
       const lo = (zc) => zc * ZONE_SIZE + 1;
@@ -1307,7 +1556,10 @@ export class Fauna {
     const sex = rng() < 0.5 ? 'f' : 'm';
     const dx = (rng() - 0.5) * 1.2;
     const dz = (rng() - 0.5) * 1.2;
-    if (!f.rec && ctx.env && this.liveCount < LIVE_MAX) {
+    // §100: a fish's young are not seen to appear: born where the player could see, they wait as a record (and wake unseen)
+    const hidden = kind !== 'fish' || !ctx.env || typeof ctx.env.inView !== 'function'
+      || !ctx.env.inView(f.x + dx * 0.5, f.y, f.z + dz * 0.5);
+    if (!f.rec && ctx.env && this.liveCount < LIVE_MAX && hidden) {
       const isPig = kind === 'pig';
       const body = isPig ? this.pigs?.spawn(f.x + dx * 0.5, f.y, f.z + dz * 0.5, rng() * Math.PI * 2 - Math.PI, sex)
         : this.animals?.spawn(kind, f.x + dx * 0.5, f.y, f.z + dz * 0.5, rng() * Math.PI * 2 - Math.PI, sex);
@@ -1501,7 +1753,12 @@ export class Fauna {
         key: zoneKey(o.q, o.r), zq: o.q, zr: o.r, t: o.t, t0: o.t0 ?? o.t, land: null, seeded: o.u !== 1,
         touched: o.u !== 1 || list.length > 0, list,
       };
-      if (o.K) z.land = { K: { ...o.K }, g: o.g ?? 0, w: o.w ?? DRY_WATER, c: o.c ?? 0, ws: (o.ws ?? []).map((p) => [p[0], p[1]]), mix: {} };
+      if (o.K) {
+        z.land = {
+          K: { ...o.K }, g: o.g ?? 0, w: o.w ?? DRY_WATER, c: o.c ?? 0, ws: (o.ws ?? []).map((p) => [p[0], p[1]]),
+          wk: o.wk ? [...o.wk] : (o.ws ?? []).length === 0 ? [] : null, mix: {},
+        };
+      }
       this.zones.set(z.key, z);
     }
     // an older save: its animals and pigs go into their zones as they stood
@@ -1595,6 +1852,7 @@ function landJSON(land) {
   const o = { K: { ...land.K }, g: land.g, w: land.w };
   if (land.c > 0) o.c = land.c;
   if (land.ws.length > 0) o.ws = land.ws.map((p) => [p[0], p[1]]);
+  if (land.ws.length > 0 && land.wk) o.wk = [...land.wk];
   return o;
 }
 
@@ -1719,6 +1977,10 @@ export function validateFaunaJSON(raw) {
       if (Number.isInteger(o.c) && o.c > 0) z.c = o.c;
       const ws = Array.isArray(o.ws) ? o.ws.filter((p) => Array.isArray(p) && p.length === 2 && p.every(Number.isSafeInteger)).slice(0, 6) : [];
       if (ws.length > 0) z.ws = ws.map((p) => [p[0], p[1]]);
+      // §100: what each body holds, only beside the very spots it was saved with (else it is worked out again)
+      const wk = Array.isArray(o.wk) && Array.isArray(o.ws) && o.wk.length === o.ws.length && ws.length === o.ws.length
+        && o.wk.every((k) => Number.isInteger(k) && k >= 0 && k <= FISH_K_MAX) ? o.wk : null;
+      if (ws.length > 0 && wk) z.wk = [...wk];
 
     }
     if (o.a !== undefined) {

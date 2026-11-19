@@ -10,8 +10,11 @@ import { FakeDocument } from '../helpers/fakeDom.js';
 const N = ITEM_ART_SIZE;
 const NON_BLOCK = ITEM_KEYS.filter((k) => ITEMS[k].kind !== 'block');
 const TOOLS = ITEM_KEYS.filter((k) => ITEMS[k].kind === 'tool');
-/** Tools with a haft (everything but the hammerstone and the tier-0 kit: drill, crucible, mold). */
-const HAFTED = TOOLS.filter((k) => k !== 'hammerstone' && ITEMS[k].tool.tier > 0);
+/**
+ * Tools with a haft (everything but the hammerstone, the bows and the tier-0 kit: drill, crucible, mold). §100: a bow has
+ * no haft; it lies on its back, gripped at the bottom middle (their own test below).
+ */
+const HAFTED = TOOLS.filter((k) => k !== 'hammerstone' && ITEMS[k].tool.type !== 'bow' && ITEMS[k].tool.tier > 0);
 
 /** @param {Uint8ClampedArray} px @returns {Array<[number, number]>} opaque pixels */
 function opaque(px) {
@@ -43,7 +46,7 @@ function principalAngle(points) {
 
 describe('itemArt: coverage', () => {
   it('every non-block item in ITEMS has art, and only those (block items are drawn from the atlas)', () => {
-    expect(NON_BLOCK.length).toBe(148); // + §85: the Pot of Spring Water; // + §81: Hemlock Root, Nightshade Berries, Aloe Leaf; // + §80: the three seeds; // + §76: 14 wild foods (flora), the Pot of Tainted Water (water), feather, fletched dart and twelve game foods (fauna); // + the Pot of Milk (§72); // + beef and mutton, raw and roast (§69); // 98 + the Survival Handbook (§14) + the 7 circuit materials (DESIGN-circuits §8.1) + the dart (§60)
+    expect(NON_BLOCK.length).toBe(160); // + §106: the Fishing Rod; + §102: the Compass; + §100 (the bows and the arrows): − the Bow, the Arrow and the two darts, + the Crude and Recurve Bows, the Treated Stave, the Sapling, six arrows; + §103 the Spyglass; // + §100: the Bow, the Bow Stave, the Arrow; // + §85: the Pot of Spring Water; // + §81: Hemlock Root, Nightshade Berries, Aloe Leaf; // + §80: the three seeds; // + §76: 14 wild foods (flora), the Pot of Tainted Water (water), feather, fletched dart and twelve game foods (fauna); // + the Pot of Milk (§72); // + beef and mutton, raw and roast (§69); // 98 + the Survival Handbook (§14) + the 7 circuit materials (DESIGN-circuits §8.1) + the dart (§60)
     expect([...ITEM_ART_KEYS].sort()).toEqual([...NON_BLOCK].sort());
     expect(ITEM_ART_KEYS).toEqual(NON_BLOCK); // same order as ITEM_KEYS (tools, materials, food, bandages, clothes)
     for (const k of NON_BLOCK) expect(hasItemArt(k), k).toBe(true);
@@ -201,6 +204,114 @@ describe('itemArt: the art rules (§9.8, §11)', () => {
     expect(leather).toBeGreaterThan(80);
     const page = at(13, 5);
     expect(page && page[0] > 190 && page[1] > 170).toBe(true);
+  });
+});
+
+describe('itemArt: §100 the bows, the staves, the sapling and the arrows; §103 the Spyglass', () => {
+  /** @param {string} k @returns {(x: number, y: number) => number[]|null} rgb of an opaque pixel, else null */
+  const reader = (k) => {
+    const px = paintItem(k);
+    return (x, y) => {
+      const i = (y * N + x) * 4;
+      return px[i + 3] ? [px[i], px[i + 1], px[i + 2]] : null;
+    };
+  };
+  const is = (c, hex) => !!c && c[0] === ((hex >> 16) & 255) && c[1] === ((hex >> 8) & 255) && c[2] === (hex & 255);
+  const ARROWS = ['stone_arrow', 'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow'];
+
+  it('each bow lies on its back: the string straight across the top, the stave arched under it, the grip at the bottom middle', () => {
+    expect(toolArtOf('crude_bow')).toEqual(['bow', 2]);
+    expect(toolArtOf('recurve_bow')).toEqual(['bow', 4]);
+    for (const [k, stringRow, stringFrom] of [['crude_bow', 2, 1], ['recurve_bow', 3, 3]]) {
+      const at = reader(k);
+      const pts = opaque(paintItem(k));
+      // mirror-symmetric, so a hand at the grip holds it at the middle
+      for (const [x, y] of pts) expect(at(15 - x, y), `${k}: mirror of ${x},${y}`).not.toBeNull();
+      // the string: one pale row across
+      for (let x = stringFrom; x <= 15 - stringFrom; x++) {
+        const c = at(x, stringRow);
+        expect(c && c[0] > 200 && c[1] > 180, `${k}: string ${x}`).toBe(true);
+      }
+      // under the middle of the string lies the gap a strung bow has
+      for (let y = stringRow + 2; y <= 5; y++) for (let x = 6; x <= 9; x++) expect(at(x, y), `${k}: gap ${x},${y}`).toBeNull();
+      // the bottom two rows (the heel, the grip's foot) within columns 6–9, so heldItem finds a handle there
+      const maxY = Math.max(...pts.map(([, y]) => y));
+      for (const [x, y] of pts) if (y > maxY - 2) expect(x >= 6 && x <= 9, `${k}: low pixel ${x},${y}`).toBe(true);
+      // wider than tall: the bow's bulk is above its grip
+      const xs = pts.map(([x]) => x);
+      const ys = pts.map(([, y]) => y);
+      expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(Math.max(...ys) - Math.min(...ys));
+      expect(Math.abs(principalAngle(pts))).toBeLessThan(20);
+    }
+    // the Crude Bow is green sapling with a leaf bud and a cord grip; the Recurve dark treated wood backed with pale
+    // rawhide, its tips curling away from the string
+    const crude = reader('crude_bow');
+    expect(is(crude(4, 6), 0x6aa03a) && is(crude(11, 6), 0x6aa03a)).toBe(true); // the leaf buds
+    expect(opaque(paintItem('crude_bow')).some(([x, y]) => is(crude(x, y), 0xa89a5a))).toBe(true); // its olive bark
+    const recurve = reader('recurve_bow');
+    expect(is(recurve(3, 6), 0xe0cfa4) && is(recurve(12, 6), 0xe0cfa4)).toBe(true); // the rawhide back
+    expect(recurve(0, 5) && recurve(0, 6)).toBeTruthy(); // the tip curls down, below where the string meets the limb
+    expect(Buffer.from(paintItem('crude_bow')).equals(Buffer.from(paintItem('recurve_bow')))).toBe(false);
+  });
+
+  it('the staves and the sapling stand upright: a pale shaved stave, a dark fire-hardened one, a leafy shoot with its roots', () => {
+    for (const k of ['bow_stave', 'treated_stave', 'sapling']) {
+      const pts = opaque(paintItem(k));
+      expect(Math.abs(principalAngle(pts)), k).toBeGreaterThan(60); // upright
+      const at = reader(k);
+      for (let y = 1; y < N - 1; y++) expect([5, 6, 7, 8, 9].some((x) => at(x, y)), `${k} row ${y}`).toBe(true); // end to end
+    }
+    const stave = reader('bow_stave');
+    expect(opaque(paintItem('bow_stave')).some(([x, y]) => is(stave(x, y), 0xe8b878))).toBe(true); // shaved yew
+    const treated = reader('treated_stave');
+    const dark = opaque(paintItem('treated_stave')).filter(([x, y]) => {
+      const c = treated(x, y);
+      return c && c[0] + c[1] + c[2] < 300;
+    });
+    expect(dark.length).toBeGreaterThan(opaque(paintItem('treated_stave')).length / 2); // fire-darkened
+    expect(is(treated(8, 0), 0x1e140c)).toBe(true); // a scorched end
+    const sap = reader('sapling');
+    const green = opaque(paintItem('sapling')).filter(([x, y]) => is(sap(x, y), 0x6aa03a) || is(sap(x, y), 0x3f6e24));
+    expect(green.length).toBeGreaterThan(15); // leaves
+    expect(green.some(([x]) => x < 7) && green.some(([x]) => x > 8)).toBe(true); // on both sides of the stem
+    const roots = opaque(paintItem('sapling')).filter(([, y]) => y >= 13);
+    expect(roots.length).toBeGreaterThan(6); // a root ball at the foot
+  });
+
+  it('the arrows stand point up, slim shafts with two vanes at the foot; each age\'s head in its own colour', () => {
+    const heads = [];
+    for (const k of ARROWS) {
+      const pts = opaque(paintItem(k));
+      expect(Math.abs(principalAngle(pts)), k).toBeGreaterThan(70);
+      const at = reader(k);
+      for (let y = 5; y <= 8; y++) expect(pts.filter(([, py]) => py === y).length, `${k} shaft row ${y}`).toBe(3); // one pixel between its rims
+      const vane = pts.filter(([x, y]) => y >= 9 && y <= 12 && x !== 7);
+      expect(vane.some(([x]) => x < 7) && vane.some(([x]) => x > 7), k).toBe(true);
+      heads.push(at(7, 1).join(','));
+    }
+    expect(new Set(heads).size).toBe(ARROWS.length); // six heads, six colours
+    // the copper head is copper, the steel head bright with steel's blue glint
+    expect(is(reader('copper_arrow')(7, 1), 0xc8743a)).toBe(true);
+    expect(is(reader('steel_arrow')(6, 1), 0x7fb2ff)).toBe(true);
+    // the knapped heads are bound with cord; the metal ones sit on a socket of their metal
+    expect(is(reader('flint_arrow')(7, 3), 0xd8c38c) && is(reader('stone_arrow')(7, 3), 0xd8c38c)).toBe(true);
+    expect(is(reader('iron_arrow')(7, 3), 0xbcc1c8)).toBe(true);
+    for (const k of ARROWS) for (const j of ARROWS) if (k !== j) expect(Buffer.from(paintItem(k)).equals(Buffer.from(paintItem(j))), `${k} ${j}`).toBe(false);
+  });
+
+  it('§103 the Spyglass lies corner to corner: a dark eyepiece at the lower left, bronze tubes widening, a glass lens at the upper right', () => {
+    const pts = opaque(paintItem('spyglass'));
+    expect(principalAngle(pts)).toBeLessThan(-30); // rising to the right (image y grows down)
+    expect(principalAngle(pts)).toBeGreaterThan(-60);
+    const at = reader('spyglass');
+    const lens = pts.filter(([x, y]) => is(at(x, y), 0xcff0fa) || is(at(x, y), 0x6fa8c0));
+    expect(lens.length).toBeGreaterThan(1);
+    for (const [x, y] of lens) expect(x > 9 && y < 6, `lens at ${x},${y}`).toBe(true);
+    const bronze = pts.filter(([x, y]) => is(at(x, y), 0xc09a40) || is(at(x, y), 0xf0d688));
+    expect(bronze.length).toBeGreaterThan(20);
+    // the tube is wider at the lens end than at the eyepiece
+    const across = (cx) => pts.filter(([x]) => x === cx).length;
+    expect(across(11)).toBeGreaterThan(across(3));
   });
 });
 

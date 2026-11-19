@@ -10,10 +10,10 @@
 // Death is deferred (§2.5): `damage` and `step` only set `dead` and report the cause; main turns it into its
 // `pendingDeath` and runs `die()` at the frame's checkpoints. `deaths` is counted by main's `die()`.
 import { STAT_MAX, BREATH_MAX_S, BODY_TEMP_NORMAL, BODY_TEMP_MIN, BODY_TEMP_MAX, SICK_MAX_S, HEAL_MAX } from './config.js';
-import { getItem } from './items.js';
+import { getItem, canonicalItemKey } from './items.js';
 import {
   createVitals, wakeVitals, statusOf, stepVitals, activityFactor, fallDamage, eatFood, gulpWater, queueHeal,
-  DAMAGE_CAUSES, RATES, FATIGUE_MAX,
+  DAMAGE_CAUSES, RATES, FATIGUE_MAX, workActivity, HARD_WORK_AT,
 } from './vitals.js';
 import { feltTemperature, activityHeat, wetRate } from './climate.js';
 
@@ -29,6 +29,8 @@ import { feltTemperature, activityHeat, wetRate } from './climate.js';
  * @property {PlayerState} player
  * @property {number} [softFactor]  softLandingFactor of the cells under the feet (physics.supportingCells), default 1
  * @property {boolean} [breaking]   dig progress advanced this frame
+ * @property {number} [workTier]    the tier of the tool doing that work (CONTRACTS §99, harvest.workTier: 0 the bare hand
+ *   or a tool that is not the block's own, 1 stone … 6 steel); absent → the hand. It sets the work's activity (vitals.WORK_ACTIVITY)
  * @property {boolean} [moving]     horizontal speed > 0.5 m/s
  * @property {boolean} [still]      stood still this frame (regeneration beside a fire)
  * @property {boolean} [buried]     the eye is inside a solid cell with no room within 3 above (unstickPlayer)
@@ -71,6 +73,13 @@ export const CURED_MESSAGE = 'The bitter herb settles your stomach: you are no l
 export const SALT_MESSAGE_GAP_S = 5;
 /** Damage over time pulses the hurt flash once per this many HP lost (§2.4). */
 export const DOT_PULSE_HP = 3;
+/** §99: seconds the `Hard work` label stays after the last moment of hard work (between one block and the next). */
+export const WORK_LABEL_HOLD_S = 1.5;
+/**
+ * §99: seconds of hard work (gaps shorter than WORK_LABEL_HOLD_S do not end it) before `Hard work` shows. A quick pull — a
+ * torch, a fern, loose stones, anything that comes away in a second or so by hand — never shows it, whatever is in hand.
+ */
+export const HARD_WORK_SHOW_S = 1.5;
 
 /** The death screen's title by cause (§2.5). */
 export const DEATH_TITLES = Object.freeze({
@@ -157,8 +166,35 @@ export class Survival {
     this.clock = 0;
     this._saltAt = -Infinity;
     this._dot = 0;
-    /** the last step's breath circumstances, for the Drowning / Smothering labels */
-    this._flags = { headInWater: false, buried: false };
+    /** the last step's breath circumstances, for the Drowning / Smothering labels; §99: the hard work, for `Hard work` */
+    this._flags = { headInWater: false, buried: false, work: 0 };
+    /** §99: seconds the `Hard work` label still shows after the hard work stops (it does not flicker between blocks) */
+    this._workHold = 0;
+    /** §99: seconds of the hard work under way (HARD_WORK_SHOW_S of it shows the label) */
+    this._workRun = 0;
+    /**
+     * §94.4: every item key that has ever entered the pack in this world's Survival (the build tree shows what has been
+     * had and one step on). Saved as `had`; main adds the pack's keys as they come (noteHad).
+     * @type {Set<string>}
+     */
+    this.had = new Set();
+  }
+
+  /**
+   * §94.4: note item keys as had (main: the pack's, the worn and the cursor's, whenever the pack changes; on loading, the
+   * pack's and the containers'). Unknown keys are skipped; an old name is noted under its new one.
+   * @param {Iterable<string>} keys
+   * @returns {boolean} the set grew
+   */
+  noteHad(keys) {
+    let grew = false;
+    for (const raw of keys) {
+      const k = canonicalItemKey(raw);
+      if (typeof k !== 'string' || this.had.has(k) || !getItem(k)) continue;
+      this.had.add(k);
+      grew = true;
+    }
+    return grew;
   }
 
   /** In Survival (SV): the mode is 'survival', dead or alive. */
@@ -200,6 +236,7 @@ export class Survival {
     this.spawn = null;
     this.deaths = 0;
     this.dead = null;
+    this.had = new Set();
     this.hasState = true;
     this.fallGrace = true;
     this._resetTransient();
@@ -213,6 +250,9 @@ export class Survival {
     this._dot = 0;
     this._flags.headInWater = false;
     this._flags.buried = false;
+    this._flags.work = 0;
+    this._workHold = 0;
+    this._workRun = 0;
   }
 
   /**
@@ -267,6 +307,18 @@ export class Survival {
     const moving = !sleep && (env.moving ?? (p ? Math.hypot(p.vx, p.vz) > RATES.WALK_MIN_SPEED : false));
     const sprinting = !!p?.sprinting && moving;
     const breaking = !sleep && !!env.breaking;
+    // §99: the work's activity by the tool doing it. Hard work (a bare hand, a stone tool) shows once it has gone on for
+    // HARD_WORK_SHOW_S, and for a moment after it stops, so neither a quick pull nor the gap between two blocks flickers it.
+    const work = breaking ? workActivity(env.workTier) : 0;
+    if (work >= HARD_WORK_AT) {
+      this._workRun += dt;
+      this._workHold = WORK_LABEL_HOLD_S;
+      if (this._workRun >= HARD_WORK_SHOW_S) this._flags.work = work;
+    } else if ((this._workHold -= dt) <= 0) {
+      this._flags.work = work;
+      this._workHold = 0;
+      this._workRun = 0;
+    }
     const c = env.climate ?? /** @type {SurvivalEnv['climate']} */ ({});
     const heat = finite(env.heat) ? env.heat : 0;
     // Wet (§3.2, §84): swimming soaks at once; rain that reaches you wets you; otherwise you dry.
@@ -294,7 +346,8 @@ export class Survival {
 
     // 2, 4–6. Breath, body temperature, drains, regeneration, bandages and damage over time.
     const res = stepVitals(v, dt, {
-      activity: activityFactor({ moving, breaking, swimming: inWater, sprinting }),
+      activity: activityFactor({ moving, breaking, workTier: env.workTier, swimming: inWater, sprinting }),
+      work,
       felt: t.felt,
       inWater,
       headInWater,
@@ -431,10 +484,10 @@ export class Survival {
 
   /**
    * The vitals part of SurvivalJSON (§9.6), canonical key order, numbers rounded to 3 decimal places; main adds the pack,
-   * the worn items and the fire spots. `dead` is present only while dead.
+   * the worn items and the fire spots. `dead` is present only while dead; `had` (§94.4, sorted) only when anything has been.
    * @returns {{ health: number, satiation: number, hydration: number, temp: number, breath: number, wet: number,
    *   sick: number, heal: number, healRate: number, fatigue: number, spawn: [number, number, number]|null, deaths: number,
-   *   dead?: string }}
+   *   dead?: string, had?: string[] }}
    */
   export() {
     const v = this.vitals;
@@ -444,6 +497,7 @@ export class Survival {
     out.spawn = this.spawn ? [this.spawn[0], this.spawn[1], this.spawn[2]] : null;
     out.deaths = this.deaths;
     if (this.dead) out.dead = this.dead;
+    if (this.had.size > 0) out.had = [...this.had].sort();
     return out;
   }
 
@@ -451,6 +505,7 @@ export class Survival {
    * Load a (validated) SurvivalJSON (§9.6); null or a non-object means the world never had a survival state
    * (hasState false). Defensive anyway: a bad number becomes its fresh value (§2.1), a bad spawn null, bad deaths 0, an
    * unknown `dead` cause alive. The mode is not touched (main sets it from the save). A loaded state starts with fallGrace.
+   * §94.4 `had`: the keys had (an older save has none: main then derives it from the pack and the containers).
    * @param {*} json
    */
   import(json) {
@@ -458,6 +513,7 @@ export class Survival {
     this.spawn = null;
     this.deaths = 0;
     this.dead = null;
+    this.had = new Set();
     this.fallGrace = false;
     this._resetTransient();
     if (!json || typeof json !== 'object' || Array.isArray(json)) {
@@ -475,6 +531,7 @@ export class Survival {
     if (Array.isArray(s) && s.length === 3 && s.every((n) => Number.isInteger(n))) this.spawn = [s[0], s[1], s[2]];
     if (Number.isInteger(json.deaths) && json.deaths >= 0) this.deaths = json.deaths;
     if (typeof json.dead === 'string' && DAMAGE_CAUSES.includes(json.dead)) this.dead = json.dead;
+    if (Array.isArray(json.had)) this.noteHad(json.had.filter((k) => typeof k === 'string'));
     this.fallGrace = true;
   }
 }

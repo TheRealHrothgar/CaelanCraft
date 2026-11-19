@@ -23,7 +23,7 @@ import { normalizeBricksJSON } from './bricks.js';
 import { validatePigsJSON } from './pigs.js';
 import { validateAnimalsJSON } from './animals.js';
 import { validateFaunaJSON } from './populations.js';
-import { WEAR_SLOT_NAMES, canonicalItemKey, getItem, maxDurability, stackSize } from './items.js';
+import { WEAR_SLOT_NAMES, canonicalItemKey, carriedWear, getItem, maxDurability, stackSize } from './items.js';
 import { normalizeFiresJSON, parseCellKey } from './cooking.js';
 import { normalizePartsJSON, validatePartsJSON } from './circuitStore.js';
 import { normalizePick } from './creativePicks.js';
@@ -287,9 +287,11 @@ function checkStack(raw) {
   if (v.d === undefined || v.d === null) return { stack };
   const dmax = maxDurability(k);
   if (dmax === 0) return { stack, note: `durability ignored (${def.name} never wears)` };
-  if (!Number.isInteger(v.d) || v.d < 1 || v.d > dmax) return { reason: `durability is not 1–${dmax}` };
-  stack.d = v.d;
-  return { stack };
+  // §100: an old key's wear is kept under its new name, at most the new item's durability (a Bow is a Crude Bow)
+  const d = k === v.k ? v.d : carriedWear(v.d, k);
+  if (!Number.isInteger(d) || d < 1 || d > dmax) return { reason: `durability is not 1–${dmax}` };
+  stack.d = d;
+  return d === v.d ? { stack } : { stack, note: `durability ${v.d} is ${d} as a ${def.name}` };
 }
 
 /**
@@ -362,7 +364,9 @@ function editIdAt(edits, cache, q, y, r) {
  * fresh value (`survival.<stat>: invalid, reset`; a save from before §87 simply has no `fatigue`: 0, no warning), a bad
  * stack is dropped (`survival.pack[i]: <reason>, dropped`), a pack or
  * wear list of the wrong length is padded or cut, and the fires are canonicalised by cooking.normalizeFiresJSON — checked
- * against `opts.edits` when given (an entry whose cell is not CAMPFIRE or FIRE_PIT there is dropped).
+ * against `opts.edits` when given (an entry whose cell is not CAMPFIRE or FIRE_PIT there is dropped). Then `loose` and
+ * (§94.4) `had`, each only when non-empty: `had` sorted, unique, old names under their new ones, unknown keys dropped
+ * (`survival.had: N unknown items, dropped`).
  * @param {unknown} raw
  * @param {string[]} [warnings]   repairs are pushed here
  * @param {{ edits?: Record<string, number[]> }} [opts]
@@ -419,6 +423,22 @@ export function normalizeSurvivalJSON(raw, warnings = [], opts = {}) {
   if (src.loose !== undefined) {
     const loose = normalizeLooseJSON(src.loose, warnings);
     if (loose.length > 0) out.loose = loose;
+  }
+  // §94.4: every item key that has ever entered the pack (the build tree's reveal), written only when there are any. An
+  // older save has none (no warning): main derives it from the pack and the containers.
+  if (src.had !== undefined && src.had !== null) {
+    if (!Array.isArray(src.had)) warnings.push('survival.had: not a list, ignored');
+    else {
+      const keys = new Set();
+      let unknown = 0;
+      for (const raw of src.had) {
+        const k = typeof raw === 'string' ? canonicalItemKey(raw) : null;
+        if (k !== null && getItem(k)) keys.add(k);
+        else unknown++;
+      }
+      if (unknown > 0) warnings.push(`survival.had: ${unknown} unknown item${unknown === 1 ? '' : 's'}, dropped`);
+      if (keys.size > 0) out.had = [...keys].sort();
+    }
   }
   return /** @type {import('./types.js').SurvivalJSON} */ (out);
 }

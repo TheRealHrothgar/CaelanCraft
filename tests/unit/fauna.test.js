@@ -1,6 +1,6 @@
 // Unit tests for the game of the harder land (v0.14, CONTRACTS §76 fauna): deer, rabbits, pheasants, wild turkeys, the bear
 // and the fish of the streams (src/animals.js), their models (src/animalRenderer.js), what a hunt gives (harvest, items,
-// cooking), the Fletched Dart (looseItems, crafting), the Ground Nest (blocks, harvest, mesher), `summon` and the save.
+// cooking), feathers for the arrows (§100: the Fletched Dart is retired), the Ground Nest (blocks, harvest, mesher), `summon` and the save.
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { BLOCK, BIOME, TILE, getBlockDef, getBlockShape, isPlaceable, isSolid } from '../../src/blocks.js';
@@ -18,21 +18,23 @@ import {
   TRAP_HOLD_S, TRAP_IMMUNE_S, ANIMAL_HURT_S, ANIMAL_KNOCKBACK,
 } from '../../src/animals.js';
 import { createAnimalRenderer, bodyVariant, legCount, MODELS } from '../../src/animalRenderer.js';
+import { animalModels, variantBounds } from '../../src/animalModels.js';
 import { Pigs, seededRng } from '../../src/pigs.js';
 import { createPlayer, stepPlayer } from '../../src/physics.js';
 import { hexToWorld, worldToHex } from '../../src/hex.js';
 import { MOB_DROPS, PICKABLE, BLOCK_RULES, rollMobDrops, pick, rollDrops, isPickable } from '../../src/harvest.js';
-import { ITEMS, getItem, isItemKey } from '../../src/items.js';
+import { ITEMS, getItem, isItemKey, canonicalItemKey } from '../../src/items.js';
 import { FIRE_TRANSFORMS, isSkewerFood } from '../../src/cooking.js';
 import { getRecipe } from '../../src/crafting.js';
-import { throwOf, dartBreakP, DART_KEYS, THROW_DART, THROW_FLETCHED, DART_BREAK_P, FLETCHED_BREAK_P } from '../../src/looseItems.js';
+import { throwOf, ARROW_KEYS, ARROWS, THROW_CHUCK } from '../../src/looseItems.js';
 import { DAMAGE_CAUSES, fallDamage } from '../../src/vitals.js';
 import { Survival, deathTitle } from '../../src/survival.js';
 import { DEATH_CAUSES, serializeSave, deserializeSave } from '../../src/storage.js';
 import { KIND_STATS } from '../../src/zombies.js';
 import { paintTile } from '../../src/tiles.js';
 import { paintItem, hasItemArt } from '../../src/itemArt.js';
-import { buildChunkMesh, NEST_WALL, NEST_EGGS } from '../../src/mesher.js';
+import { buildChunkMesh } from '../../src/mesher.js';
+import { plantMesh, PLANT_LOD_NEAR, PLANT_STRIDE } from '../../src/plantModels.js';
 import { World } from '../../src/world.js';
 import { parseLine, executeCommand } from '../../src/commands.js';
 import { flatWorldGen, makeChunkData, makeChunkDataGetter, setWorldBlock } from '../helpers/fixtures.js';
@@ -128,7 +130,8 @@ describe('fauna — deer: very skittish herds', () => {
       const as = new Animals(seededRng(2));
       const a = as.spawn('deer', 0, GROUND, 0);
       as.update(DT, view(flatWorld(), standing(-d, 0, more)));
-      expect(a.mode === 'flee', `${JSON.stringify(more)} at ${d}`).toBe(flees);
+      // §100: a still, crouching player it notices is stared at (it bolts when they move); the others are run from
+      expect(a.mode === (more.sneaking ? 'watch' : 'flee'), `${JSON.stringify(more)} at ${d}`).toBe(flees);
     }
   });
 
@@ -326,7 +329,13 @@ describe('fauna — pheasants flush, turkeys dart off', () => {
     for (const [d, up] of [[3.2, false], [2.5, true]]) {
       const as = new Animals(seededRng(12));
       const a = as.spawn('pheasant', 0, GROUND, 0);
-      const ev = as.update(DT, view(flatWorld(), standing(-d, 0, { sneaking: true })));
+      const p = standing(-d, 0, { sneaking: true });
+      let ev = as.update(DT, view(flatWorld(), p));
+      // §100: a still sneaker it notices is stared at; it goes up when they move
+      expect([ev.flushed.length, a.mode === 'watch'], `still at ${d}`).toEqual([0, up]);
+      for (let i = 0; i < 10; i++) as.update(DT, view(flatWorld(), p)); // it turns to face them
+      p.vx = 1;
+      ev = as.update(DT, view(flatWorld(), p));
       expect([ev.flushed.length, a.air > 0], `sneaking at ${d}`).toEqual(up ? [1, true] : [0, false]);
     }
     expect(noticeRange({ kind: 'pheasant' }, { sneaking: true })).toBeCloseTo(2.8, 9);
@@ -455,7 +464,7 @@ describe('fauna — ground nests', () => {
     expect(rollDrops(B.GROUND_NEST_EMPTY, null, {}, () => 0.5)).toEqual([{ k: 'plant_fibre', n: 1 }]);
   });
 
-  it('is drawn as 3D pieces: a ring of grass bundles round a bed, and three eggs only in the full one', () => {
+  it('is drawn as 3D pieces (a kit model, §105): a woven wall round a bed of grass, and three eggs only in the full one', () => {
     const mesh = (id) => {
       const chunks = new Map();
       setWorldBlock(chunks, 4, 20, 4, B.GRASS_BLOCK);
@@ -463,13 +472,23 @@ describe('fauna — ground nests', () => {
       if (!chunks.has('0,0')) chunks.set('0,0', makeChunkData());
       return buildChunkMesh(0, 0, makeChunkDataGetter(chunks));
     };
-    const faces = (m) => (m.cutout ? m.cutout.faceCount : 0);
+    const faces = (m) => (m.plantLayer ? m.plantLayer.faceCount : 0); // §105.4: the kit models are a layer of their own
     const none = faces(mesh(B.AIR));
     const empty = faces(mesh(B.GROUND_NEST_EMPTY)) - none;
     const full = faces(mesh(B.GROUND_NEST)) - none;
-    // five visible faces a box (its underside is never drawn): the bed and the wall; then two boxes an egg
-    expect(empty).toBe((1 + NEST_WALL.count) * 5);
-    expect(full - empty).toBe(NEST_EGGS * 2 * 5);
+    // the empty nest is the full one less its eggs
+    const model = (id) => /** @type {*} */ (plantMesh(id, PLANT_LOD_NEAR, 0));
+    expect(empty).toBe(model(B.GROUND_NEST_EMPTY).tris);
+    expect(full).toBe(model(B.GROUND_NEST).tris);
+    expect(full).toBeGreaterThan(empty);
+    expect(model(B.GROUND_NEST).keys).toEqual(expect.arrayContaining(['nest', 'nest.bed', 'egg']));
+    expect(model(B.GROUND_NEST_EMPTY).keys).not.toContain('egg');
+    // three eggs lying in the bed, inside the wall
+    const eggs = [];
+    const m = model(B.GROUND_NEST);
+    for (let v = 0; v < m.verts; v++) if (m.keys[m.vkey[v]] === 'egg') eggs.push([m.data[v * PLANT_STRIDE], m.data[v * PLANT_STRIDE + 2]]);
+    expect(eggs.length).toBeGreaterThan(30);
+    for (const [x, z] of eggs) expect(Math.hypot(x, z)).toBeLessThan(0.2);
     // its pictures: the bowl is a cut-out with something in it, the skins are opaque
     for (const t of [TILE.GROUND_NEST, TILE.GROUND_NEST_EMPTY]) {
       const px = paintTile(t);
@@ -803,10 +822,24 @@ describe('fauna — fish keep to the water', () => {
     const hit = as.raycast(a.x - 3, a.y + 0.1, a.z + 0.25, 1, 0, 0, 6);
     expect(hit && hit.animal).toBe(a);
     expect(SPECIES.fish.radius + 0.06).toBeLessThan(0.25);
-    // drain its cell: it is removed at the next update, quietly
+    // §100: drain its cell: it swims over to the water beside it
     const [q, r] = worldToHex(a.x, a.z);
     cells.delete(`${q},${GROUND - 1},${r}`);
-    const ev = as.update(DT, view(gb, null));
+    let ev = as.update(DT, view(gb, null));
+    expect(as.list.includes(a)).toBe(true);
+    expect(ev.despawned).toBe(0);
+    for (let i = 0; i < 40; i++) as.update(DT, view(gb, null));
+    expect(worldToHex(a.x, a.z)).not.toEqual([q, r]);
+    expect(Number.isNaN(fishDepth(gb, ...worldToHex(a.x, a.z), a.y + a.height / 2))).toBe(false);
+    // drain the whole stream: stranded where the player can see it, it lies there; once nobody can, it is gone, quietly
+    for (let k = -3; k <= 3; k++) cells.delete(`${k},${GROUND - 1},0`);
+    let seen = true;
+    const w = { ...view(gb, null), inView: () => seen };
+    expect(as.update(DT, w).despawned).toBe(0);
+    expect(as.list.includes(a)).toBe(true);
+    expect(a.stranded).toBe(true);
+    seen = false;
+    ev = as.update(DT, w);
     expect(as.list.includes(a)).toBe(false);
     expect(ev.despawned).toBe(1);
   });
@@ -882,28 +915,23 @@ describe('fauna — what a hunt gives', () => {
     expect(ITEMS.raw_fish.food.spoilS).toBeLessThan(ITEMS.raw_pork.food.spoilS);
   });
 
-  it('feathers fletch a better dart: faster, harder, tougher — made at hand like the plain one', () => {
+  it('feathers fletch the arrows (§100): every arrow takes one a head; the Fletched Dart of v0.14 is a Flint Arrow now', () => {
     expect(getItem('feather')).toMatchObject({ kind: 'material', stack: 32 });
-    expect(getItem('fletched_dart')).toMatchObject({ kind: 'material', stack: 16 });
-    const rec = getRecipe('fletched_dart');
-    expect(rec.station).toBe('hand');
-    expect(rec.inputs).toEqual([{ k: 'flint', n: 1 }, { k: 'stick', n: 1 }, { k: 'feather', n: 2 }, { k: 'cord', n: 1 }]); // §94: bound with cord like every flint tool
-    expect(rec.outputs).toEqual([{ k: 'fletched_dart', n: 4 }]);
-    expect(rec.tools).toEqual([{ type: 'hammer', tier: 1 }]);
-    const plain = getRecipe('flint_dart');
-    expect(rec.outputs[0].n).toBe(plain.outputs[0].n);
-    expect(DART_KEYS).toEqual(['flint_dart', 'fletched_dart']);
-    expect(throwOf('fletched_dart')).toBe(THROW_FLETCHED);
-    expect(throwOf('flint_dart')).toBe(THROW_DART);
-    expect(THROW_FLETCHED.speed).toBeGreaterThan(THROW_DART.speed);
-    expect(THROW_FLETCHED.power).toBe(THROW_DART.power + 1);
-    expect([dartBreakP('fletched_dart'), dartBreakP('flint_dart'), dartBreakP('flint_spear')]).toEqual([FLETCHED_BREAK_P, DART_BREAK_P, 0]);
-    expect(FLETCHED_BREAK_P).toBeLessThan(DART_BREAK_P);
-    // one fletched dart brings down a pheasant or a rabbit, two a turkey; a deer takes three
-    const darts = (k) => Math.ceil(SPECIES[k].health / THROW_FLETCHED.power);
-    expect([darts('pheasant'), darts('rabbit'), darts('turkey'), darts('deer')]).toEqual([1, 1, 2, 3]);
-    expect(hasItemArt('feather') && hasItemArt('fletched_dart')).toBe(true);
-    expect(Array.from(paintItem('fletched_dart'))).not.toEqual(Array.from(paintItem('flint_dart')));
+    for (const k of ARROW_KEYS) {
+      const rec = getRecipe(k);
+      const feathers = rec.inputs.find((i) => i.k === 'feather')?.n ?? 0;
+      expect(feathers / rec.outputs[0].n, k).toBe(rec.station === 'hand' ? 1 / 4 : 1 / 2);
+    }
+    for (const old of ['fletched_dart', 'flint_dart']) {
+      expect(getItem(old), old).toBe(null);
+      expect(getRecipe(old), old).toBe(null);
+      expect(canonicalItemKey(old), old).toBe('flint_arrow');
+    }
+    expect(throwOf('flint_arrow')).toBe(THROW_CHUCK); // by hand an arrow is only chucked: it takes a bow
+    // a flint arrow at full draw brings down a pheasant or a rabbit, a turkey takes two, a deer three
+    const shots = (k) => Math.ceil(SPECIES[k].health / ARROWS.flint_arrow.power);
+    expect([shots('pheasant'), shots('rabbit'), shots('turkey'), shots('deer')]).toEqual([1, 1, 2, 3]);
+    expect(hasItemArt('feather')).toBe(true);
   });
 });
 
@@ -971,16 +999,43 @@ describe('fauna — the models', () => {
     mesh.getMatrixAt(i, out);
     return out;
   };
-  /** the highest and the foremost (−z) point of a model's boxes */
-  const reach = (boxes) => ({ top: Math.max(...boxes.map((b) => b[4] + b[1] / 2)), front: Math.min(...boxes.map((b) => b[5] - b[2] / 2)),
-    back: Math.max(...boxes.map((b) => b[5] + b[2] / 2)), wide: Math.max(...boxes.map((b) => Math.abs(b[3]) + b[0] / 2)) * 2 });
+  const models = animalModels();
+  /** the highest, the foremost (−z), the hindmost and the widest reach of a kind's trunk and head (§69.1) */
+  const reach = (kind, variant = 'body') => {
+    const b = variantBounds(models, kind, variant);
+    return { top: b.max[1], low: b.min[1], front: b.min[2], back: b.max[2], wide: 2 * Math.max(-b.min[0], b.max[0]) };
+  };
+  /** a part's width (x), height (y) and length (z) */
+  const size = (kind, part) => {
+    const g = models.kinds[kind].parts[part];
+    const lo = [Infinity, Infinity, Infinity];
+    const hi = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < g.positions.length; i += 3) for (let a = 0; a < 3; a++) {
+      lo[a] = Math.min(lo[a], g.positions[i + a]);
+      hi[a] = Math.max(hi[a], g.positions[i + a]);
+    }
+    return [0, 1, 2].map((a) => hi[a] - lo[a]);
+  };
+  /** the mean colour (0..255 rgb) the atlas paints a part with, over its vertices' uvs */
+  const meanColour = (kind, part) => {
+    const g = models.kinds[kind].parts[part];
+    const { width: w, height: h, data } = models.image;
+    const sum = [0, 0, 0];
+    const n = g.uvs.length / 2;
+    for (let v = 0; v < n; v++) {
+      const x = Math.min(w - 1, Math.floor(g.uvs[v * 2] * w));
+      const y = Math.min(h - 1, Math.floor(g.uvs[v * 2 + 1] * h));
+      for (let c = 0; c < 3; c++) sum[c] += data[(y * w + x) * 4 + c] / n;
+    }
+    return sum;
+  };
 
-  it('one body each, legs by kind (four, a bird\'s two, a fish\'s none), a stag on the antlered body; hurt on the red twins', () => {
+  it('one trunk and one head each, legs by kind (four, a bird\'s two, a fish\'s none), a stag\'s head antlered; hurt on the red twins', () => {
     const scene = new THREE.Scene();
     const r = createAnimalRenderer(scene);
     r.sync([mk('deer'), mk('deer', { sex: 'm' }), mk('rabbit'), mk('pheasant'), mk('turkey', { hurt: 0.3 }), mk('bear'), mk('fish'), mk('fish')]);
     expect(r.count()).toBe(8);
-    expect([by(r, 'deer-body').count, by(r, 'deer-male').count, by(r, 'deer-legs').count]).toEqual([1, 1, 8]);
+    expect([by(r, 'deer-body').count, by(r, 'deer-head').count, by(r, 'deer-head-male').count, by(r, 'deer-legs').count]).toEqual([2, 1, 1, 8]);
     expect([by(r, 'rabbit-body').count, by(r, 'rabbit-legs').count]).toEqual([1, 4]);
     expect([by(r, 'pheasant-body').count, by(r, 'pheasant-legs').count, by(r, 'pheasant-wings').count]).toEqual([1, 2, 0]); // wings only in the air
     expect([by(r, 'turkey-body-hurt').count, by(r, 'turkey-legs-hurt').count, by(r, 'turkey-body').count]).toEqual([1, 2, 0]);
@@ -994,42 +1049,47 @@ describe('fauna — the models', () => {
   });
 
   it('each is told from the others by one bold feature: antlers, ears, a long tail, a fan, bulk', () => {
-    const doe = reach(MODELS.deer.body);
-    const stag = reach(MODELS.deer.male); // §88: the grown male's body
+    const doe = reach('deer');
+    const stag = reach('deer', 'male'); // §88: the grown male's antlered head
     expect(stag.top).toBeGreaterThan(doe.top + 0.3); // antlers stand well above a doe's ears …
     expect(stag.wide).toBeGreaterThan(doe.wide + 0.15); // … and spread wider than its body
-    const rabbit = reach(MODELS.rabbit.body);
-    const rabbitBack = Math.max(...MODELS.rabbit.body.filter((b) => b[0] >= 0.16).map((b) => b[4] + b[1] / 2));
+    const rabbit = reach('rabbit');
+    const rabbitBack = variantBounds({ ...models, kinds: { rabbit: { ...models.kinds.rabbit, variants: { body: ['body', null] } } } }, 'rabbit').max[1];
     expect(rabbit.top).toBeGreaterThan(rabbitBack + 0.2); // ears stand a hand above its head and back
     // §88: the cock pheasant's long tail and the tom turkey's fan (the hens have neither)
-    const pheasant = reach(MODELS.pheasant.male);
+    const pheasant = reach('pheasant', 'male');
     expect(pheasant.back).toBeGreaterThan(-pheasant.front * 2); // the tail is longer than the rest of the bird
-    const turkey = reach(MODELS.turkey.male);
+    const turkey = reach('turkey', 'male');
     expect(turkey.wide).toBeGreaterThan(0.9); // the fan, far wider than the body in front of it
-    expect(turkey.wide).toBeGreaterThan(2.5 * MODELS.turkey.male[0][0]);
-    const hen = reach(MODELS.pheasant.body);
+    expect(turkey.wide).toBeGreaterThan(2.5 * size('turkey', 'body')[0]);
+    const hen = reach('pheasant');
     expect(hen.back).toBeLessThan(pheasant.back - 0.25);
-    expect(reach(MODELS.turkey.body).wide).toBeLessThan(turkey.wide / 2);
+    expect(reach('turkey').wide).toBeLessThan(turkey.wide / 2);
     expect(turkey.wide).toBeGreaterThan(pheasant.wide * 2.5);
     expect(turkey.top).toBeGreaterThan(pheasant.top * 1.7);
-    const bear = reach(MODELS.bear.body);
-    expect(MODELS.bear.body[0][0]).toBeGreaterThanOrEqual(2 * MODELS.deer.body[0][0]); // a trunk twice a deer's width
-    for (const k of [0, 1, 2]) expect(MODELS.bear.body[0][k], `box side ${k}`).toBeGreaterThan(MODELS.cow.body[0][k] * 1.2); // bigger than a cow all round
+    const bear = reach('bear');
+    expect(size('bear', 'body')[0]).toBeGreaterThanOrEqual(2 * size('deer', 'body')[0]); // a trunk twice a deer's width
+    for (const k of [0, 2]) expect(size('bear', 'body')[k], `side ${k}`).toBeGreaterThan(size('cow', 'body')[k] * 1.2); // wider and longer than a cow
+    expect(size('bear', 'body')[1]).toBeGreaterThan(size('cow', 'body')[1]); // and deeper
     expect(MODELS.bear.legW).toBeGreaterThan(2 * MODELS.deer.legW);
     expect(bear.top).toBeLessThan(doe.top); // low and heavy on all fours
     // a fish's body rides under the water's surface, but its back fin stands out of it: that is how one is spotted
-    const fishTop = reach(MODELS.fish.body).top;
+    const fishTop = reach('fish').top;
     expect(SPECIES.fish.height).toBeLessThan(FISH_UNDER);
     expect(fishTop).toBeGreaterThan(FISH_UNDER + 0.05);
-    // no two of the new kinds share a main colour
-    const main = NEW_KINDS.map((k) => MODELS[k].body[0][6]);
-    expect(new Set(main).size).toBe(NEW_KINDS.length);
+    // no two of the new kinds share a main colour: their coats as the atlas paints them stand apart
+    const main = NEW_KINDS.map((k) => meanColour(k, 'body'));
+    for (let i = 0; i < main.length; i++) {
+      for (let j = i + 1; j < main.length; j++) {
+        const d = Math.hypot(main[i][0] - main[j][0], main[i][1] - main[j][1], main[i][2] - main[j][2]);
+        expect(d, `${NEW_KINDS[i]} / ${NEW_KINDS[j]}`).toBeGreaterThan(12);
+      }
+    }
     // the new models stand on the ground and are about as tall as their bodies (as the old ones are)
     for (const kind of NEW_KINDS) {
-      const { top } = reach(MODELS[kind].body);
+      const { top, low } = reach(kind);
       expect(top, kind).toBeGreaterThan(SPECIES[kind].height - 0.1);
       expect(top, kind).toBeLessThan(SPECIES[kind].height + 0.6);
-      const low = Math.min(...MODELS[kind].body.map((b) => b[4] - b[1] / 2));
       expect(low, kind).toBeGreaterThanOrEqual(0);
     }
   });
@@ -1065,7 +1125,8 @@ describe('fauna — the models', () => {
     const body = by(r, 'bear-body');
     const headMesh = by(r, 'bear-head');
     const legs = by(r, 'bear-legs');
-    const head = new THREE.Vector3(0, 1.12, -0.92); // the head box's centre
+    const hb = variantBounds({ ...models, kinds: { bear: { ...models.kinds.bear, variants: { body: ['head', null] } } } }, 'bear');
+    const head = new THREE.Vector3(0, (hb.min[1] + hb.max[1]) / 2, (hb.min[2] + hb.max[2]) / 2); // the head group's middle
     const headAt = (rear) => {
       r.sync([mk('bear', { rear })]);
       return head.clone().applyMatrix4(mat(headMesh));
@@ -1074,7 +1135,7 @@ describe('fauna — the models', () => {
     const down = headAt(0);
     const half = headAt(0.5);
     const up = headAt(1);
-    expect(down.y).toBeCloseTo(11.12, 5);
+    expect(down.y).toBeCloseTo(10 + head.y, 5);
     expect(half.y).toBeGreaterThan(down.y + 0.3);
     expect(up.y).toBeGreaterThan(down.y + 0.7);
     expect(up.y).toBeGreaterThan(10 + 1.9); // it towers over the player
@@ -1082,8 +1143,9 @@ describe('fauna — the models', () => {
     expect(headMesh.count).toBe(1);
     expect(Math.abs(pitchOf(body))).toBeGreaterThan(1.1);
     expect(Math.abs(pitchOf(headMesh))).toBeLessThan(0.2);
-    expect(MODELS.bear.head.boxes.length).toBeGreaterThan(4);
-    expect(by(r, 'deer-head')).toBeUndefined(); // only the bear has one
+    expect(headMesh.geometry.index.count / 3).toBeGreaterThan(100); // a faceted head, ears and muzzle
+    expect(by(r, 'deer-head')).toBeDefined(); // every kind turns its head (§100) …
+    expect(by(r, 'fish-head')).toBeUndefined(); // … but a fish
     // hips: the two front ones go up with the shoulders, the hind ones stay where they were
     const hipY = (i) => new THREE.Vector3().setFromMatrixPosition(mat(legs, i)).y;
     r.sync([mk('bear', { rear: 0 })]);

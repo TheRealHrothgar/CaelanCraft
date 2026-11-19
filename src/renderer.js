@@ -39,11 +39,12 @@ import {
 } from './config.js';
 import { CHUNK_RING_INRADIUS, HEX_CORNERS, HEX_SIZE, chunkOrigin, hexToWorld, hexLength, worldToHex } from './hex.js';
 import { BRICK_DEPTH, BRICK_CHUNK_I, BRICK_CHUNK_N } from './bricks.js';
-import { LIGHT_ATTRIBUTE, applyChunkLight, installObjectLighting, lightVolume } from './lightShader.js';
+import { LIGHT_ATTRIBUTE, applyChunkLight, applyPlantAtlas, installObjectLighting, lightVolume } from './lightShader.js';
 import { compileHidden } from './prewarm.js';
 
 /** @typedef {import('./types.js').MeshData} MeshData */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
+/** @typedef {import('./types.js').ChunkPlantData} ChunkPlantData */
 /** @typedef {import('./types.js').RaycastHit} RaycastHit */
 /** @typedef {import('./types.js').SkyState} SkyState */
 /**
@@ -54,7 +55,7 @@ import { compileHidden } from './prewarm.js';
 /**
  * @typedef {Object} Renderer
  * @property {{ renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera }} three
- * @property {(key: string, cq: number, cr: number, meshData: ChunkMeshData|null|undefined) => void} setChunkMesh
+ * @property {(key: string, cq: number, cr: number, meshData: ChunkMeshData|ChunkPlantData|null|undefined) => void} setChunkMesh
  * @property {(key: string) => void} removeChunkMesh
  * @property {(key: string, ci: number, cn: number, meshData: ChunkMeshData|null|undefined) => void} setBrickMesh  §93
  * @property {(key: string) => void} removeBrickMesh  §93
@@ -374,9 +375,10 @@ function currentPixelRatio() {
  *
  * @param {HTMLCanvasElement} canvas
  * @param {THREE.Texture} atlasTexture  from atlas.createAtlasTexture(); shared by the three chunk materials, never disposed here
- * @param {{ sunCanvas?: *, moonCanvas?: *, renderDistance?: number, webglRenderer?: * }} [opts]
+ * @param {{ sunCanvas?: *, moonCanvas?: *, renderDistance?: number, webglRenderer?: *, plantAtlasTexture?: THREE.Texture }} [opts]
  *        `sunCanvas`/`moonCanvas`: 32×32 canvases from atlas.makeSunCanvas/makeMoonCanvas (plain coloured squares
  *        are used when absent). `renderDistance`: initial fog range (default RENDER_DISTANCE).
+ *        `plantAtlasTexture` (§105): atlas.createPlantAtlasTexture(), bound beside the block atlas on the cutout material.
  *        `webglRenderer`: test-only injection of a pre-built renderer-like object (setPixelRatio/setSize/render/info/dispose).
  * @returns {Renderer}
  */
@@ -426,6 +428,8 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
   /** Layer order matches RenderLayer: 0 opaque, 1 cutout, 2 translucent. */
   const layerMaterials = [opaqueMaterial, cutoutMaterial, translucentMaterial];
   for (const m of layerMaterials) applyChunkLight(m);
+  // §105: the plants are drawn in the cutout layer from the plant atlas, bound beside the block atlas
+  applyPlantAtlas(cutoutMaterial, opts.plantAtlasTexture ?? null);
   const layerRenderOrder = [0, 0, 1];
   const layerNames = /** @type {const} */ (['opaque', 'cutout', 'translucent']);
 
@@ -749,33 +753,48 @@ export function createRenderer(canvas, atlasTexture, opts = {}) {
     },
 
     setChunkMesh(key, cq, cr, meshData) {
-      removeMeshesForKey(key);
+      // §105.5: a chunk's kit models are a mesh of their own (the cutout material), stored beside it under 'plants:',
+      // so a change of their level of detail (a `plantsOnly` mesh) replaces them alone
+      const plantStore = `plants:${key}`;
+      removeMeshesForKey(plantStore);
+      if (!meshData || !('plantsOnly' in meshData && meshData.plantsOnly)) removeMeshesForKey(key);
       if (!meshData) return;
-
-      /** @type {THREE.Mesh[]|null} */
-      let meshes = null;
-      for (let layer = 0; layer < 3; layer++) {
-        const data = meshData[layerNames[layer]];
-        if (!isDrawableLayer(data)) continue;
-        const geometry = buildLayerGeometry(data);
-        const mesh = new THREE.Mesh(geometry, layerMaterials[layer]);
-        const origin = chunkOrigin(cq, cr);
+      const origin = chunkOrigin(cq, cr);
+      /** @param {MeshData} data @param {number} layer @param {string} name */
+      const place = (data, layer, name) => {
+        const mesh = new THREE.Mesh(buildLayerGeometry(data), layerMaterials[layer]);
         mesh.position.set(origin[0], 0, origin[1]);
         mesh.matrixAutoUpdate = false;
         mesh.updateMatrix();
         mesh.renderOrder = layerRenderOrder[layer];
-        mesh.name = `chunk:${key}:${layerNames[layer]}`;
+        mesh.name = `chunk:${key}:${name}`;
         scene.add(mesh);
-        (meshes || (meshes = [])).push(mesh);
+        return mesh;
+      };
+
+      if (!('plantsOnly' in meshData && meshData.plantsOnly)) {
+        /** @type {THREE.Mesh[]|null} */
+        let meshes = null;
+        for (let layer = 0; layer < 3; layer++) {
+          const data = meshData[layerNames[layer]];
+          if (!isDrawableLayer(data)) continue;
+          (meshes || (meshes = [])).push(place(data, layer, layerNames[layer]));
+        }
+        if (meshes) {
+          chunkMeshes.set(key, meshes);
+          chunkMeshCount += meshes.length;
+        }
       }
-      if (meshes) {
-        chunkMeshes.set(key, meshes);
-        chunkMeshCount += meshes.length;
+      const plants = meshData.plantLayer;
+      if (isDrawableLayer(plants)) {
+        chunkMeshes.set(plantStore, [place(plants, 1, 'plants')]);
+        chunkMeshCount++;
       }
     },
 
     removeChunkMesh(key) {
       removeMeshesForKey(key);
+      removeMeshesForKey(`plants:${key}`);
     },
 
     setCamera(x, y, z, yaw, pitch) {

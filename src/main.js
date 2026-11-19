@@ -58,10 +58,10 @@ import {
   SAVE_VERSION, listSlots, loadSlot, saveSlot, deleteSlot, renameSlot, duplicateSlot, migrateLegacySave, storageUsage,
   normalizeWorldName, defaultWorldName,
 } from './storage.js';
-import { createAtlasCanvas, createAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
+import { createAtlasCanvas, createAtlasTexture, createPlantAtlasTexture, makeSunCanvas, makeMoonCanvas } from './atlas.js';
 import { createRenderer, fogRangeForRenderDistance } from './renderer.js';
 import { createControls } from './controls.js';
-import { createTouchUI, detectTouchMode, touchWords, TOUCH_RENDER_DISTANCE } from './touchControls.js'; // touch (§95, §97)
+import { createTouchUI, detectTouchMode, touchWords, touchClusterRect, TOUCH_RENDER_DISTANCE } from './touchControls.js'; // touch (§95, §97)
 import { createHUD, createFlashState, flashStep } from './hud.js';
 import { createMenus } from './menus.js';
 import { createAudio } from './audio.js';
@@ -85,7 +85,7 @@ import { resolveBodies, detachBody } from './bodies.js';
 import { Campfires, scorchPlayer, wouldDouseCampfire, RAIN_DOUSE_HINT, RAIN_DOUSE_LINE } from './campfires.js';
 import { createCampfireRenderer } from './campfireRenderer.js';
 import { createPigRenderer } from './pigRenderer.js';
-import { Animals, SPECIES, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE } from './animals.js';
+import { Animals, SPECIES, SADDLE_Y, WOLF_BITE, TRAP_HOLD_S, ANIMAL_MAX, BEAR_DAMAGE, FISH_UNDER, scentOf } from './animals.js';
 import { createAnimalRenderer } from './animalRenderer.js';
 import { Fauna, animalName, youngDrops } from './populations.js';
 import { Zombies, zombieVolume as zombieVolumeFor, loudestVolume, openSky, statsOf, strikeDamage, standLight, SOUND_ROAR } from './zombies.js';
@@ -94,10 +94,11 @@ import { Pack, slotClick, returnCursor, isKept, KEEP_REFUSED } from './inventory
 import { Containers } from './containers.js';
 import {
   breakSeconds, rollDrops, harvestHint, handGatherHint, canHarvest, pick, Tapped, Regrowth, rollMobDrops, ripeOf, isDeep,
+  workTier, digWear, slowHint,
 } from './harvest.js';
 import {
   DigState, UseState, interactKind, chooseBelongingsCell, buildPackView, useActionOf, placeRefusal, strikeKind, handKeyOf,
-  strikeReach, outOfReachHint, STRIKE_REACH_MAX,
+  strikeReach, outOfReachHint, STRIKE_REACH_MAX, heldKeys, nearWorkplaceKeys, placedWorkplaceKeys,
   wearsFromDigging, wearsFromStriking, HINT, KNIFE_TIER, waterHint, WATER_POTS,
 } from './survivalControl.js';
 import { WaterCycle, waterAt, drawWater, applyWaterWrites, aquiferInfo, POT_GULPS, WATER_STEP_MAX_S, CYCLE_RANGE, AQUIFER_NEAR_MAX } from './waterBodies.js';
@@ -106,7 +107,7 @@ import {
 } from './farming.js';
 import { Refill, homesteadAction, homesteadSecondOn, deepHint, EMPTY_POT, WATERING_POTS } from './homestead.js';
 import { Spread } from './spread.js';
-import { CraftQueue, findStations, listRecipes } from './crafting.js';
+import { CraftQueue, findStations, listRecipes, STATION_IDS } from './crafting.js';
 import { FireSlots, fireHint, isSkewerFood, isCentrePot } from './cooking.js';
 import { heatSource, heatAt, groundChillOf, isSaltyBiome, bodyTarget, CHEST_HEIGHT, HEAT_SOURCES } from './climate.js';
 import { softLandingFactor, knockDamage, crushDamage, fatigueStage, digFactorOf, strikeFactorOf } from './vitals.js';
@@ -116,9 +117,13 @@ import { createPackUI, demoPackView } from './packUI.js';
 import { createItemIcons, iconBlockFor } from './itemIcons.js';
 import { createLooseItemRenderer } from './looseItemRenderer.js';
 import {
-  LooseItems, throwOf, dartBreakP, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
-  blinkHidden,
+  LooseItems, throwOf, DROP_SPEED, SOUND_THROW, SOUND_PICKUP, SOUND_THUNK, LOOSE_BLOCK_SCALE,
+  blinkHidden, drawOf, drawFraction, drawnThrow, DRAW_ZOOM, DRAW_FULL_S, bowShot, spreadDir, bowArrowFrom, bowHint,
+  NO_ARROWS_HINT,
 } from './looseItems.js';
+import {
+  Spyglass, carriesSpyglass, glassPlace, glassHint, serverZoomLine, SPYGLASS_KEY, ZOOM_KEY, SPYGLASS_NEEDED,
+} from './spyglass.js'; // §103
 import { createZombieRenderer } from './zombieRenderer.js';
 import { Watcher, WATCHER_HEIGHT } from './watcher.js';
 import { createWatcherRenderer } from './watcherRenderer.js';
@@ -129,22 +134,29 @@ import {
   createWeather, seasonOf, seasonNews, hudLine, weatherWord, worldSeconds, fallsAsSnow, rainExposure, rainReaching, rainedOnCell,
   rainSky, approach, weatherEnv, OVERCAST_TAU_S,
 } from './weather.js';
+import { windAt, WIND_CALM } from './wind.js';
 import { createRainRenderer } from './rainRenderer.js';
+import { vaneView, windAir } from './windDrawn.js'; // §101: the wind drawn
+import { compassCarried, northView } from './compass.js'; // §102: the compass puts north on the vane
+import { Pennants, PENNANT_MAX_MODELS, PENNANT_MODEL_RANGE, poleHeight } from './pennants.js';
+import { createPennantRenderer } from './pennantRenderer.js';
+import { createFishingRenderer } from './fishingRenderer.js';
+import { FishingLine, ROD_KEY, castVelocity, spearReaches, lineCurve, lineSlack, QUIET_HINT_S } from './fishing.js';
 // CONTRACTS §87: sleep
 import {
   Sleep, SecureWatch, TiredFx, spotOf, sleepRefusal, secureAt, secureWords, rollNightAttack, placeNightAttack, stageNews, wakeLine,
-  sleepingLine, sleepDark, blurPx, phantomStandAt, tirednessView, SLEEP_LINES, TIRED_BAR_MARKS,
+  sleepingLine, sleepDark, blurPx, phantomStandAt, tirednessView, SLEEP_LINES, TIRED_BAR_MARKS, FIGURE_ALPHA,
 } from './sleep.js';
 import { createPhantomRenderer } from './phantomRenderer.js';
 // CONTRACTS §91: avatars and the third-person view
 import { loadAvatarPref, saveAvatarPref, avatarById } from './avatars.js';
 import { AvatarMotion } from './avatarMotion.js';
-import { createAvatarRenderer } from './avatarRenderer.js';
+import { createAvatarRenderer, renderAvatarPortraits } from './avatarRenderer.js';
 import {
   NetClient, RemotePlayers, probeServer, serverWsUrl, playerToken, shouldRejoin, REJOIN_TRIES, REJOIN_GAP_S,
 } from './net.js';
 import {
-  POSE_HZ, POSE_FLYING, POSE_SNEAKING, POSE_ON_GROUND, POSE_SWING, POSE_SWIMMING, unpackPose, unflatten4, cleanName,
+  POSE_HZ, POSE_FLYING, POSE_SNEAKING, POSE_ON_GROUND, POSE_SWING, POSE_SWIMMING, POSE_DRAWING, unpackPose, unflatten4, cleanName,
   cleanChat,
 } from './protocol.js';
 import { createRemotePlayerRenderer } from './remotePlayerRenderer.js';
@@ -159,7 +171,8 @@ import { HANDBOOK_KEY, HANDBOOK_CHAT_LINE, buildChapters, ensureHandbook } from 
 import { createHandbookUI } from './handbookUI.js';
 import {
   parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest, circuitSceneWrites,
-  CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP,
+  CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP, WIND_SCENE, ZOMBIE_SCENE, crowdScene, WATCHER_SCENE, PHANTOM_SCENE, ANIMAL_SCENES,
+  plantSceneCells, PLANT_SCENE_AHEAD, FISHING_SCENE,
 } from './diagnostics.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -626,6 +639,39 @@ export function projectToScreen(camera, x, y, z, width, height) {
   return { x: ((cx / cw + 1) / 2) * width, y: ((1 - cy / cw) / 2) * height };
 }
 
+/**
+ * §100: the wind's word joins a stalked animal's hint from this much scent (scentOf: −1..1). wind.WIND_CALM (§101): a
+ * scent that strong needs a wind the HUD's vane shows with its arrow, never in a "Calm".
+ */
+export const STALK_WIND_WORD = WIND_CALM;
+/** §100: an animal staring at the player within this many metres says so in the hint, wherever the crosshair is. */
+export const WATCHED_HINT_RANGE = 30;
+/** §100: how far off the player is taken to see a fish appear or go (m; a fish is a few pixels there, under water). */
+export const VIEW_SEEN_DIST = 56;
+/** §100: how far past the screen's edge (in clip space) a point still counts as seen (the view turns). */
+export const VIEW_SEEN_MARGIN = 0.25;
+
+/**
+ * §100: could the player see world point (x, y, z) now — in front of the camera, within `maxDist` of it and on screen
+ * (VIEW_SEEN_MARGIN beyond its edges counts)? Occlusion is not tested: a point behind a hill counts as seen.
+ * @returns {boolean} false without matrices
+ */
+export function pointInView(camera, x, y, z, maxDist = VIEW_SEEN_DIST) {
+  const vi = camera && camera.matrixWorldInverse ? camera.matrixWorldInverse.elements : null;
+  const p = camera && camera.projectionMatrix ? camera.projectionMatrix.elements : null;
+  if (!vi || !p || !Number.isFinite(x + y + z)) return false;
+  const vx = vi[0] * x + vi[4] * y + vi[8] * z + vi[12];
+  const vy = vi[1] * x + vi[5] * y + vi[9] * z + vi[13];
+  const vz = vi[2] * x + vi[6] * y + vi[10] * z + vi[14];
+  if (vx * vx + vy * vy + vz * vz > maxDist * maxDist) return false;
+  const cx = p[0] * vx + p[4] * vy + p[8] * vz + p[12];
+  const cy = p[1] * vx + p[5] * vy + p[9] * vz + p[13];
+  const cw = p[3] * vx + p[7] * vy + p[11] * vz + p[15];
+  if (!(cw > 1e-6)) return false;
+  const lim = 1 + VIEW_SEEN_MARGIN;
+  return Math.abs(cx / cw) <= lim && Math.abs(cy / cw) <= lim;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Small pure helpers (exported for tests / reuse)
 // ---------------------------------------------------------------------------------------------
@@ -852,6 +898,33 @@ export function burningKegHint(h, explosions) {
 }
 
 /**
+ * §99.4: the slow-work hint (`harvest.slowHint`: `Oak Log · slow with a stone axe`) for `target` while `dig` is held on that
+ * very cell, else null. Idle, the crosshair resting on the ground says nothing, so walking and looking about never nag and
+ * a weapon's draw hint (§100) is not hidden by the ground under it.
+ * @param {DigState} dig  main's dig (its cell, block id and `active`)
+ * @param {{ q: number|string, y: number, r: number, blockId: number }|null} target  the hit, or a brick's dig target (§93)
+ * @param {import('./types.js').ToolDef|null} tool  the selected tool, null for the hand
+ * @returns {string|null}
+ */
+export function digSlowHint(dig, target, tool) {
+  if (!dig.active || !target || dig.q !== target.q || dig.y !== target.y || dig.r !== target.r || dig.id !== target.blockId) return null;
+  return slowHint(target.blockId, tool);
+}
+
+/**
+ * §100.2 / §99.4: Survival's hint says how the thing in hand is thrown BEFORE the hand's words for the block under the
+ * crosshair (the tool gate `harvestHint`, the bare-hand `handGatherHint`, the wrong-ground seed hint and digSlowHint): a
+ * spear, a dart or a bow is no block's own tool, so the gate (`Stone · needs a stone pick or better`, every log) or the
+ * bare-hand words would hide the throw on nearly all the ground in reach. A dig under way brings the block's words back.
+ * @param {DigState} dig  main's dig
+ * @param {string|null} heldKey  what is in hand (heldItemKey)
+ * @returns {boolean}
+ */
+export function throwHintFirst(dig, heldKey) {
+  return !dig.active && drawOf(heldKey) !== null;
+}
+
+/**
  * The device panel's part changed under it (a blast, a vortex, a setblock): main closes the panel (§4.10).
  * @param {string|null} deviceKey  the panel's "q,y,r"
  */
@@ -911,6 +984,95 @@ export class ControlLatch {
     if (!this.on) return false;
     if (hit && hit.q === this.q && hit.y === this.y && hit.r === this.r) env.hold(hit);
     return true;
+  }
+}
+
+/**
+ * What one frame of the draw is told (§100; main's drawStep fills one and reuses it): `key` what is in hand; `draws` it is
+ * a spear or a bow and the player is alive; `playing` no screen is up over the world (the pack, the field book and
+ * Survival's device panel keep the world running under them, so the frame still comes); on a press, `control` the
+ * crosshair is on a circuit control and Shift is up, `noArrows` it is a bow with no arrow of any age in the pack
+ * (Survival); `latched` the control latch holds a control that Place pressed (§4.9); `fullS` the seconds to a full draw
+ * of what is in hand (looseItems.drawOf: DRAW_FULL_S for a spear, the bow's own `drawS`).
+ * @typedef {{ key: string|null, draws: boolean, playing: boolean, control: boolean, noArrows: boolean, latched: boolean,
+ *   fullS?: number }} DrawEnv
+ */
+
+/**
+ * §100 the draw (PURE): Place held with a spear or a bow counts up `held` by the frames' dt; let go, it is released (main
+ * throws or shoots at drawFraction(held, fullS), kept in `f`; `fullS` is the full draw the press was told: a Recurve
+ * Bow's 1.2 s). A press on a control without Shift is the control's, and so is the hold that follows while the latch
+ * holds it (a Push Button stays pressed). The draw is let go WITHOUT a throw when the hand changes, or when a screen
+ * comes up over the running world (the release the cleared mouse would make there is no throw); main also cancels it
+ * whenever play leaves STATE.PLAYING (setState: a menu that freezes the world, a lost pointer lock) and with the rest of
+ * the Survival input (resetSurvivalInput). There is no clock, so a slow frame never swallows a throw.
+ */
+export class DrawHold {
+  constructor() {
+    /** what is drawn, or null: no draw under way */
+    this.key = /** @type {string|null} */ (null);
+    /** seconds held */
+    this.held = 0;
+    /** the draw of the last release, 0..1 */
+    this.f = 0;
+    /** the seconds to the full draw of what is drawn (DrawEnv.fullS at the press) */
+    this.fullS = DRAW_FULL_S;
+  }
+
+  /** A draw is under way. */
+  get on() {
+    return this.key !== null;
+  }
+
+  /** How far the draw under way is drawn, 0..1 against its own full draw (0: none). */
+  get share() {
+    return this.on ? drawFraction(this.held, this.fullS) : 0;
+  }
+
+  /** Let the draw go without a throw. */
+  cancel() {
+    this.key = null;
+    this.held = 0;
+  }
+
+  /**
+   * One frame of Place.
+   * @param {{ rightPressed: boolean, right: boolean }} mouse
+   * @param {number} dt
+   * @param {DrawEnv} env
+   * @returns {'start'|'hold'|'release'|'cancel'|'noArrows'|'idle'|null} what it did; null: Place is not the draw's this
+   *   frame (nothing in hand draws, a press on a control, or the latch holds one), so the caller goes on
+   */
+  step(mouse, dt, env) {
+    if (!env.draws || !env.key) {
+      this.cancel();
+      return null;
+    }
+    if (!env.playing) {
+      this.cancel();
+      return 'cancel';
+    }
+    if (mouse.rightPressed) {
+      this.cancel();
+      if (env.control) return null;
+      if (env.noArrows) return 'noArrows';
+      this.key = env.key;
+      this.held = 0;
+      this.fullS = env.fullS ?? DRAW_FULL_S; // drawFraction falls back to DRAW_FULL_S for a bad one
+      return 'start';
+    }
+    if (!this.on) return env.latched ? null : 'idle';
+    if (this.key !== env.key) {
+      this.cancel(); // the hand changed: the draw is let go
+      return 'cancel';
+    }
+    if (mouse.right) {
+      this.held += dt;
+      return 'hold';
+    }
+    this.f = drawFraction(this.held, this.fullS);
+    this.cancel();
+    return 'release';
   }
 }
 
@@ -1133,6 +1295,10 @@ export function boot(win, doc) {
   let particles;
   /** @type {import('./rainRenderer.js').RainRenderer} the rain and the snow (CONTRACTS §84) */
   let rainRenderer;
+  /** @type {import('./pennantRenderer.js').PennantRenderer} §101: the pennants' poles and flags */
+  let pennantRenderer;
+  /** @type {import('./fishingRenderer.js').FishingRenderer|null} §106: the line and the float */
+  let fishingRenderer = null;
   /** @type {import('./pigRenderer.js').PigRenderer} */
   let pigRenderer;
   /** @type {import('./animalRenderer.js').AnimalRenderer} */
@@ -1175,6 +1341,7 @@ export function boot(win, doc) {
       sunCanvas: makeSunCanvas(),
       moonCanvas: makeMoonCanvas(),
       renderDistance: params.rd ?? RENDER_DISTANCE,
+      plantAtlasTexture: createPlantAtlasTexture(), // §105: the plants' pictures, beside the block atlas
     });
     // Room for the swallowed mobs' ghosts on top of the live ones (DESIGN-circuits §2.7): a ghost is never dropped.
     pigRenderer = createPigRenderer(renderer.three.scene, PIG_MAX + MAX_INFALL_MOBS);
@@ -1186,6 +1353,8 @@ export function boot(win, doc) {
     looseRenderer = createLooseItemRenderer(renderer.three.scene, createItemIcons(doc, atlasCanvas));
     particles = createParticles(renderer.three.scene);
     rainRenderer = createRainRenderer(renderer.three.scene); // §84: one mesh, no light
+    pennantRenderer = createPennantRenderer(renderer.three.scene); // §101: four draw calls, no light
+    fishingRenderer = createFishingRenderer(renderer.three.scene); // §106: the line and its float (two draw calls)
     phantomRenderer = createPhantomRenderer(renderer.three.scene); // §87: three boxes, no light
     avatarRenderer = createAvatarRenderer(renderer.three.scene); // §91: the player's model and first-person arm, no light
     remoteRenderer = createRemotePlayerRenderer(renderer.three.scene, doc); // nothing in the scene until someone joins
@@ -1205,6 +1374,8 @@ export function boot(win, doc) {
     fallingRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     particles.prewarm(renderer.three.renderer, renderer.three.camera);
     rainRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    pennantRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    fishingRenderer?.prewarm(renderer.three.renderer, renderer.three.camera);
     vortexRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     circuitRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     // The Watcher's figure too (§40.4) — only now: the scene's lights are part of every program's key, so compiling it
@@ -1221,6 +1392,9 @@ export function boot(win, doc) {
     consoleUI = createConsole(doc, {
       onLine: (line) => {
         if (net) { // DESIGN-multiplayer: on a server the line is said to everyone
+          // §103: but `zoom` changes only this player's own view, so it runs here (a Spyglass on the hotbar unlocks it)
+          const local = serverZoomLine(line);
+          if (local !== null) return runner ? runner.runConsoleLine(local) : { ok: false, message: 'no world is loaded' };
           if (line.startsWith('/')) return { ok: false, message: 'Commands are off on a server' };
           net.sendChat(line);
           return null;
@@ -1314,6 +1488,29 @@ export function boot(win, doc) {
   let crosshairShown = true;
   const avatarMotion = new AvatarMotion();
   const camPose = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0 };
+  /**
+   * §100 the draw (Place held with a spear or a bow; drawStep): `on` while one is under way, `held` its seconds, `fullS`
+   * the seconds to its full draw (a bow's own, from DrawEnv.fullS). Read by the avatar, the ring, the zoom and the hints;
+   * cancelled whenever play leaves STATE.PLAYING (setState) and with the rest of the Survival input (resetSurvivalInput).
+   */
+  const draw = new DrawHold();
+  /** §106 the Fishing Rod's line and float (fishing.js); out while it is cast */
+  const fishing = new FishingLine();
+  /** §106: the quiet hint (no fish near the float) is said once a cast */
+  let fishingQuietSaid = false;
+  /** @type {DrawEnv} drawStep's, reused */
+  const drawEnv = { key: null, draws: false, playing: false, control: false, noArrows: false, latched: false, fullS: DRAW_FULL_S };
+  /** §100: how far the draw under way is drawn, 0..1 (0: none), against its own full draw. */
+  const drawShare = () => draw.share;
+  /**
+   * §103 the Spyglass: looked through while Z is held, while Place is held with it in hand (`glassPlaceHeld`, set by the
+   * frame's Place step), or while the zoom command (or the touch Zoom button) keeps it up; stepped every frame in
+   * renderFrame.
+   */
+  const spyglass = new Spyglass();
+  let glassPlaceHeld = false;
+  /** §103: the view is first person while the glass is up (a third-person camera would look at the back of the head). */
+  const shownView = () => (spyglass.handHidden ? 'first' : viewMode);
   /** @type {import('./avatarMotion.js').MotionInput} */
   const motionInput = {
     yaw: 0, pitch: 0, vx: 0, vz: 0, onGround: true, sneaking: false, swimming: false, flying: false, riding: false, sleeping: false,
@@ -1321,15 +1518,33 @@ export function boot(win, doc) {
   /** @type {import('./avatarRenderer.js').AvatarFrame} */
   const avatarView = {
     x: 0, y: 0, z: 0, pose: avatarMotion.pose, showModel: false, showArm: false, camera: renderer.three.camera, eyeX: 0, eyeY: 0,
-    eyeZ: 0,
+    eyeZ: 0, fpClear: null,
   };
+  /** §95 on a tablet: the right cluster's left and top edges in NDC (the first-person hand keeps clear), and for what size */
+  const fpClear = { left: 1, top: -1 };
+  let fpClearFor = '';
   avatarRenderer.setAvatar(avatarId);
+  /** @type {Record<string, import('./avatarRenderer.js').Picture>|null} the chooser's portraits, drawn when first asked for */
+  let portraits = null;
+  /** An avatar's portrait: every avatar drawn once by the game's renderer, the first time the chooser opens. @param {string} id */
+  function avatarPortrait(id) {
+    if (!portraits) {
+      try {
+        portraits = renderAvatarPortraits(renderer.three.renderer);
+      } catch (err) {
+        console.warn('[avatars] portraits unavailable:', err);
+        portraits = {};
+      }
+    }
+    return portraits[id] ?? null;
+  }
   /** "First person", "Third person", "Front" (the pause menu's View button). @param {string} m */
   const viewWords = (m) => VIEW_LABELS[/** @type {import('./viewCamera.js').ViewMode} */ (m)].replace(/ view$/, '');
   /** The Avatar chooser (title screen and pause menu) and the pause menu's View button. */
   const avatarMenu = createAvatarMenu(doc, {
     current: avatarId,
     viewLabel: viewWords(viewMode),
+    portrait: avatarPortrait,
     onChoose: (id) => {
       avatarId = avatarById(id).id;
       saveAvatarPref(soundPrefs, avatarId);
@@ -1363,7 +1578,7 @@ export function boot(win, doc) {
    * @param {number} dt @param {number} eyeY
    */
   function viewCamera(dt, eyeY) {
-    if (!isThirdPerson(viewMode) || !world) {
+    if (!isThirdPerson(shownView()) || !world) {
       boom = 0;
       return cameraPose(player.x, eyeY, player.z, controls.yaw, controls.pitch, 'first', 0, camPose);
     }
@@ -1374,7 +1589,7 @@ export function boot(win, doc) {
 
   /** @param {{ x: number, y: number, z: number }} cam @returns {boolean} the camera is under water (the fog and the tint) */
   function cameraUnderwater(cam) {
-    if (!isThirdPerson(viewMode) || boom <= 0 || !world) return Boolean(player.headInWater);
+    if (!isThirdPerson(shownView()) || boom <= 0 || !world) return Boolean(player.headInWater);
     const [q, r] = worldToHex(cam.x, cam.z);
     return isUnderSurface(world.getBlock, q, cam.y, r);
   }
@@ -1386,7 +1601,7 @@ export function boot(win, doc) {
    * @param {number} dt @param {boolean} live @param {number} eyeY
    */
   function drawAvatar(dt, live, eyeY) {
-    const third = isThirdPerson(viewMode);
+    const third = isThirdPerson(shownView());
     const down = /** @type {string} */ (state) === STATE.DEAD || Boolean(survival.dead);
     const mi = motionInput;
     mi.yaw = controls.yaw;
@@ -1399,6 +1614,7 @@ export function boot(win, doc) {
     mi.swimming = Boolean(player.inWater) && !player.onGround;
     mi.riding = Boolean(riding);
     mi.sleeping = sleep.active;
+    mi.draw = drawShare(); // §100: the arm draws back
     avatarMotion.step(live ? dt : 0, mi);
     avatarRenderer.setHeld(down ? null : heldItemKey()); // §98: the item in hand, in first person and on the model
     const v = avatarView;
@@ -1406,12 +1622,25 @@ export function boot(win, doc) {
     v.y = player.y;
     v.z = player.z;
     v.showModel = third && boom >= VIEW_BOOM_HIDE && !down;
-    v.showArm = !third && !down && !sleep.active;
+    v.showArm = !third && !down && !sleep.active && !spyglass.handHidden; // §103: the hand is away while the glass is up
     v.eyeX = player.x;
     v.eyeY = eyeY;
     v.eyeZ = player.z;
+    if (touchOn) {
+      // §95: the first-person hand keeps left of the buttons (avatarModel.fpClearShift)
+      const w = win.innerWidth || 1;
+      const h = win.innerHeight || 1;
+      const size = `${w}x${h}`;
+      if (size !== fpClearFor) {
+        fpClearFor = size;
+        const box = touchClusterRect(w, h);
+        fpClear.left = (2 * box.left) / w - 1;
+        fpClear.top = 1 - (2 * box.top) / h;
+      }
+      v.fpClear = fpClear;
+    }
     avatarRenderer.sync(v);
-    const cross = viewMode !== 'front';
+    const cross = shownView() !== 'front';
     if (cross !== crosshairShown) {
       crosshairShown = cross;
       hud.setCrosshairVisible(cross);
@@ -1652,6 +1881,7 @@ export function boot(win, doc) {
     if (player.onGround) flags |= POSE_ON_GROUND;
     if (player.inWater && !player.onGround) flags |= POSE_SWIMMING;
     if (netSwing) flags |= POSE_SWING;
+    if (draw.on) flags |= POSE_DRAWING; // §100: the others see the draw
     const pose = { x: player.x, y: player.y, z: player.z, yaw: controls.yaw, pitch: controls.pitch, flags, vx: player.vx, vz: player.vz };
     const key = `${pose.x.toFixed(2)},${pose.y.toFixed(2)},${pose.z.toFixed(2)},${pose.yaw.toFixed(2)},${pose.pitch.toFixed(2)},${flags}`;
     if (key === netPoseKey && netPoseIdle < 1) return;
@@ -1774,7 +2004,7 @@ export function boot(win, doc) {
 
   /** The player's surroundings are looked at this often for the rain (s): the biome, and the cover overhead. */
   const WEATHER_SAMPLE_S = 0.5;
-  /** The rain as it is drawn follows the weather with this time constant (s). */
+  /** The rain as it is drawn follows the weather with this time constant (s); so does the wind's shower (windNow). */
   const RAIN_SHOWN_TAU_S = 2.5;
   /** The HUD says `Rain` (or `Snow`) from this strength up. */
   const RAIN_WORD_MIN = 0.03;
@@ -1837,6 +2067,31 @@ export function boot(win, doc) {
 
   /** The world's clock (weather.worldSeconds of the saved day and time). */
   const weatherNow = () => worldSeconds(day, time);
+
+  /**
+   * @type {{ at: number, seed: unknown, shower: number, wind: import('./wind.js').Wind|null }} the wind, worked out once per
+   * clock tick (and again when the shower changes: with the clock frozen by ?time a shower must still raise it, §101)
+   */
+  const windCache = { at: NaN, seed: null, shower: NaN, wind: null };
+  /**
+   * The wind here and now (docs/DESIGN-hunting.md §3): from the world's seed and clock, stronger in the shower on the
+   * player's biome as it is shown (weatherFx.shown, eased over RAIN_SHOWN_TAU_S: walking into a biome the shower does
+   * not fall on, the wind eases down with the rain instead of dropping at once, and every flag and smoke column with
+   * it); the same for every player on a server. Stalking, the rain, the smoke and the pennant read it.
+   * @returns {import('./wind.js').Wind}
+   */
+  function windNow() {
+    const t = weatherNow();
+    const seed = world ? world.seed : 0;
+    const shower = weatherFx.shown;
+    if (windCache.wind === null || windCache.at !== t || windCache.seed !== seed || windCache.shower !== shower) {
+      windCache.at = t;
+      windCache.seed = seed;
+      windCache.shower = shower;
+      windCache.wind = windAt(seed, t, shower);
+    }
+    return windCache.wind;
+  }
   /** The real weather is Survival's; forced weather (the debug handle) shows in either mode. */
   const weatherOn = () => survival.inSurvival || (weather !== null && weather.forced !== null);
 
@@ -1863,9 +2118,11 @@ export function boot(win, doc) {
    * Once a frame (renderFrame, after computeSky): the calendar's log lines when the day moved on, what falls on the
    * player's biome and how much of it reaches them, the drops, the rain for the ambience, the HUD's calendar line.
    * @param {number} dt @param {boolean} live  the simulation stepped this frame @param {number} eyeY
+   * @param {number} viewYaw  the yaw of the view on screen (viewCamera's: controls.yaw, or turned by π in the Front view):
+   *   the vane's arrow and the compass's N are drawn relative to it (§101.2, §102.4)
    * @returns {import('./types.js').SkyState} the sky to show: `sky`, greyed while it rains
    */
-  function stepWeather(dt, live, eyeY) {
+  function stepWeather(dt, live, eyeY, viewYaw) {
     const w = theWeather();
     const fx = weatherFx;
     const SV = survival.inSurvival;
@@ -1884,8 +2141,17 @@ export function boot(win, doc) {
     fx.shown = approach(fx.shown, fx.falling, dt, RAIN_SHOWN_TAU_S);
     fx.overcast = approach(fx.overcast, fx.falling, dt, OVERCAST_TAU_S);
     ambienceSample.rain = fx.snow ? 0 : fx.falling; // snow is silent; the ambience smooths the level itself
+    // §101: the wind drawn — the rain leans in it, the smoke drifts in it, the HUD's vane shows it
+    const wind = windNow();
+    windAir(wind, windAirNow);
+    particles.setWind(windAirNow[0], windAirNow[1]);
+    campfireRenderer.setWind(wind);
+    hud.setWind(vaneView(wind, viewYaw, vaneNow));
+    // §102: a compass carried (anywhere in the pack or on the pack screen's cursor in Survival, on the hotbar in
+    // Creative) puts north on the vane, in the vane's frame: the view on screen
+    hud.setNorth(northView(compassCarried(SV, pack.slots, hotbar, packSession.cursor), viewYaw));
     rainRenderer.update(live ? dt : 0, {
-      x: player.x, y: eyeY, z: player.z, intensity: fx.shown, snow: fx.snow, getBlock: world.getBlock, daylight: sky.daylight,
+      x: player.x, y: eyeY, z: player.z, intensity: fx.shown, snow: fx.snow, getBlock: world.getBlock, daylight: sky.daylight, wind,
     });
     if (SV) {
       const word = fx.falling >= RAIN_WORD_MIN ? weatherWord(fx.falling, fx.biome) : '';
@@ -2022,6 +2288,13 @@ export function boot(win, doc) {
   let inertHolesWarned = false;
   // Campfires (CONTRACTS §32): re-seeded from the world's edits on every load, like black holes.
   const campfires = new Campfires();
+  // §101: the pennants, likewise
+  const pennants = new Pennants();
+  /** §101: a pennant's pole is short under a block @param {import('./pennants.js').Pennant} p */
+  const pennantHeight = (p) => poleHeight(/** @type {World} */ (world).getBlock(p.q, p.y + 1, p.r));
+  /** §101: the drawn wind's scratch (the air the smoke drifts in, the vane) */
+  const windAirNow = [0, 0];
+  const vaneNow = { angle: 0, level: 0, gust: false, words: '' };
   /** seconds of animation time for flames and smoke (advances in every state that renders) */
   let fxTime = 0;
   /** throttle for the "too hot" chat line */
@@ -2122,6 +2395,12 @@ export function boot(win, doc) {
       const gen = /** @type {{ streamAt?: (q: number, r: number) => boolean }} */ (world.worldGen);
       return typeof gen.streamAt === 'function' ? gen.streamAt(q, r) : false;
     },
+    // §100: what the player could see now (the camera of the last frame): no fish is made or removed there
+    inView: (x, y, z) => pointInView(renderer.three.camera, x, y, z),
+    // §100: the wind here and now: an animal downwind of the player smells them from farther
+    get wind() {
+      return windNow();
+    },
   };
   /** v0.14 (§76 fauna): a fish is in the water, not among the bodies that push, carry and are blown about. */
   const isBodyAnimal = (a) => !(/** @type {*} */ (SPECIES[a.kind]).water);
@@ -2192,6 +2471,21 @@ export function boot(win, doc) {
   let sceneNamed = null;
   /** @type {{ q: number, y: number, r: number, at: number }|null} */
   let sceneCharge = null;
+  /**
+   * §104 ?scene=zombies|crowd|watcher|phantom: figures staged ahead of the player for screenshots — drawn only (handed to
+   * their renderers each frame), in no list of mobs: they never move, strike or vanish.
+   * @type {Array<*>|null}
+   */
+  let sceneZombies = null;
+  /** @type {*} */
+  let sceneWatcher = null;
+  /** @type {*} */
+  let scenePhantom = null;
+  /**
+   * §69.1 ?scene=animals|animal-variants|animal-close: the creatures held where they were put, every frame (a screenshot aid)
+   * @type {Array<{ body: *, x: number, y: number, z: number, yaw: number, fields: Record<string, *> }>|null}
+   */
+  let sceneHold = null;
   /** the screen flash (§2.4.6, hud.flashStep) and its colour */
   const flashState = createFlashState();
   /** @type {'white'|'void'} */
@@ -2419,6 +2713,8 @@ export function boot(win, doc) {
   let digHit = /** @type {RaycastHit|null} */ (null);
   let digProgress = 0;
   let digAdvanced = false;
+  /** §99: the tier of the tool doing the dig's work (harvest.workTier: 0 the hand), for the body's drain */
+  let digWorkTier = 0;
   let digPackFull = false;
   /** @type {number|null} the action ring's RMB / R-hold progress */
   let useProgress = null;
@@ -2500,6 +2796,7 @@ export function boot(win, doc) {
     player: /** @type {PlayerState|null} */ (null),
     softFactor: 1,
     breaking: false,
+    workTier: 0, // §99
     buried: false,
     climate: /** @type {*} */ (null),
     heat: 0,
@@ -2776,6 +3073,7 @@ export function boot(win, doc) {
     const fx = tiredFx.step(live ? dt : 0, tv, Math.random);
     for (const [name, volume] of fx.sounds) audio.playRecipe(name, volume);
     phantomRenderer.sync(tv.awake ? tiredFx.figure : null);
+    if (scenePhantom) phantomRenderer.sync(scenePhantom); // §104 ?scene=phantom
     if (SV) {
       const hours = Math.floor(v.fatigue + 1e-6);
       if (hours !== sleepFx.hours || !sleepFx.view) {
@@ -2953,6 +3251,7 @@ export function boot(win, doc) {
   function onBlockChanged(q, y, r, prev, next) {
     blackHoles.onBlockChange(q, y, r, prev, next);
     campfires.onBlockChange(q, y, r, prev, next);
+    pennants.onBlockChange(q, y, r, prev, next); // §101
     if (next === BLOCK.RUNE_BLOCK && prev !== BLOCK.RUNE_BLOCK) {
       runeStore.ensure(q, y, r);
     } else if (prev === BLOCK.RUNE_BLOCK && next !== BLOCK.RUNE_BLOCK) {
@@ -3058,6 +3357,10 @@ export function boot(win, doc) {
       get timeFrozen() {
         return params.time != null;
       },
+      /** The wind here and now (DESIGN-hunting §3; the debug handle, the stalking and the weather's drawing). */
+      get wind() {
+        return windNow();
+      },
       get hotbar() {
         return hotbar;
       },
@@ -3094,6 +3397,8 @@ export function boot(win, doc) {
       },
       blackHoles,
       hands: { act: (kind, n) => handAction(kind, n) }, // v0.10 (§60): drop / throw
+      // §103: zoom — the glass kept up until zoom off, Esc or a menu
+      spyglass: { carried: () => spyglassCarried(), lock: (z) => spyglass.lock(z), unlock: () => spyglass.unlock() },
       animals, // §69: summon cow|sheep|horse|wolf (v0.14: and deer, stag, rabbit, pheasant, turkey, bear, fish)
       loose: { despawnNear: (x, y, z, radius) => loose.despawnNear(x, y, z, radius, looseDespawned) }, // §63: despawn
     };
@@ -3326,7 +3631,7 @@ export function boot(win, doc) {
     if (zombieTarget) return strikeInReach(zombieTarget) ? 'Zombie · click: hit it' : tooFarHint('Zombie');
     // §5.5: Creative breaking is instant, so a cell holding survival items is protected (and says why).
     if (hit && isProtectedCell(hit)) return HINT.protectedCell;
-    return blockHintText();
+    return blockHintText() ?? drawHintText() ?? glassHintText(); // §100: thrown by holding Place; §103 the glass
   }
 
   /** The circuit part, Powder Keg, Black Hole and Rune Block hints (both modes, §4.9, §3.3). */
@@ -3406,8 +3711,8 @@ export function boot(win, doc) {
   }
 
   /**
-   * §98: Place with an item in Creative's hand: a rock, a dart or a spear is thrown (as G throws it; Creative never runs
-   * out); anything else does nothing here (R still feeds, shears, … through heldItemKey).
+   * §98: Place with an item in Creative's hand: a rock or a spear is thrown (as G throws it; Creative never runs out);
+   * anything else does nothing here (R still feeds, shears, … through heldItemKey).
    * @param {string} key @returns {boolean} something happened
    */
   function useCreativeItem(key) {
@@ -3765,6 +4070,20 @@ export function boot(win, doc) {
   /** §88: the tame kinds a keeper may butcher with a tool (pigs too, in pigs.js); a horse and a wolf are companions. */
   const LIVESTOCK = Object.freeze(['cow', 'sheep']);
 
+  /** §106: a spear is no use on a fish in deep water (it dives). */
+  const FISH_DEEP_HINT = 'Too deep to spear: the fish dives. A Fishing Rod reaches fish in deep water.';
+  /** §106: a rod is cast, not swung. */
+  const FISH_ROD_HINT = 'Cast the rod: hold RMB, let go, and wait for the float to go under.';
+
+  /** §106: the hint on a fish: what catches it here — a spear in shallow water, a rod in any. */
+  function fishHint(a, name) {
+    const type = getItem(heldItemKey() ?? '')?.tool?.type; // both modes (Creative's hand is the hotbar's)
+    if (type === 'rod') return `${name} · Hold RMB to cast near it, and wait for a bite`;
+    if (world && !spearReaches(world.getBlock, a)) return `${name} · too deep to spear · a Fishing Rod reaches it`;
+    if (type === 'spear') return `${name} · click: spear it · Hold RMB to throw the spear`;
+    return `${name} · it takes a spear, or a Fishing Rod, to catch one`;
+  }
+
   function animalHint(a) {
     const sp = SPECIES[a.kind];
     const name = animalName(a);
@@ -3779,29 +4098,63 @@ export function boot(win, doc) {
     }
     // v0.16: beyond the hand's reach the hint says so in place of the hunting words (R actions keep their own reach)
     const near = !animalTarget || animalTarget.animal !== a || strikeInReach(animalTarget);
-    const hunt = !near ? `out of reach: ${selectedTool() ? 'this tool reaches' : 'bare hands reach'} ${reachNow()} cells`
-      : selectedTool() ? 'click: hunt it' : 'hunting needs a tool';
+    const throws = throwWords(); // §100: a spear, a dart or a bow in hand: Place held throws or shoots
+    const hunt = throws ? (near ? `click: hunt it · ${throws}` : throws)
+      : !near ? `out of reach: ${selectedTool() ? 'this tool reaches' : 'bare hands reach'} ${reachNow()} cells`
+        : selectedTool() ? 'click: hunt it' : 'hunting needs a tool';
     // v0.14 (§76 fauna)
-    if (a.kind === 'fish') return selectedTool()?.type === 'spear' ? `${name} · click: spear it · G: throw the spear` : `${name} · it takes a spear to catch one`;
+    if (a.kind === 'fish') return fishHint(a, name);
+    // §100: it stares at a still hunter: keep still; and, stalking, which way the wind carries the scent
+    if (a.mode === 'watch') return `${name} is watching you — keep still${windWords(a)}`;
+    const wind = player && player.sneaking && a.mode !== 'flee' ? windWords(a) : ''; // stalking: the wind's word
     if (a.kind === 'bear') {
       if (a.mode === 'charge') return `${name} · it is charging: run, or fight`;
       if (a.mode === 'warn') return `${name} · it is warning you: back away`;
-      return `${name} · keep your distance · ${hunt}`;
+      return `${name}${wind} · keep your distance · ${hunt}`;
     }
-    if (a.kind === 'horse') return `${name}${snared} · R with a Wild Tuber or Honeyberries: feed it (${a.trust}/${sp.tame} to tame)`;
-    if (a.kind === 'wolf') return `${name}${snared} · R with meat: feed it (${a.trust}/${sp.tame} to tame)`;
+    if (a.kind === 'horse') return `${name}${snared}${wind} · R with a Wild Tuber or Honeyberries: feed it (${a.trust}/${sp.tame} to tame)`;
+    if (a.kind === 'wolf') return `${name}${snared}${wind} · R with meat: feed it (${a.trust}/${sp.tame} to tame)`;
     // §88: cattle and sheep are tamed like a horse
     const tame = sp.tame > 0 ? ` · feed it to tame (${a.trust}/${sp.tame})` : '';
-    if (a.kind === 'sheep') return `${name}${snared} · ${hunt}${young ? '' : ' · R with a knife: shear'}${tame}`;
-    if (a.kind === 'cow') return `${name}${snared} · ${hunt}${a.sex === 'f' && !young ? ' · R with a Clay Pot: milk her' : ''}${tame}`;
-    return `${name}${snared} · ${hunt}`;
+    if (a.kind === 'sheep') return `${name}${snared}${wind} · ${hunt}${young ? '' : ' · R with a knife: shear'}${tame}`;
+    if (a.kind === 'cow') return `${name}${snared}${wind} · ${hunt}${a.sex === 'f' && !young ? ' · R with a Clay Pot: milk her' : ''}${tame}`;
+    return `${name}${snared}${wind} · ${hunt}`;
+  }
+
+  /**
+   * §100: the wind's word for a stalked animal: ' · downwind of it' (the scent goes away from it), ' · it can smell you'
+   * (the wind carries it to it), or '' (across the wind, or calm). @param {{ x: number, z: number }} a
+   */
+  function windWords(a) {
+    if (!player) return '';
+    const s = scentOf(windNow(), player, a);
+    if (s > STALK_WIND_WORD) return ' · it can smell you';
+    if (s < -STALK_WIND_WORD) return ' · downwind of it';
+    return '';
+  }
+
+  /** §100: the nearest wild animal staring at the player (a suspicious one), within WATCHED_HINT_RANGE, or null. */
+  function watchingAnimal() {
+    if (!player) return null;
+    let best = null;
+    let bd = WATCHED_HINT_RANGE;
+    for (const a of animals.list) {
+      if (a.mode !== 'watch') continue;
+      const d = Math.hypot(a.x - player.x, a.z - player.z);
+      if (d < bd) {
+        bd = d;
+        best = a;
+      }
+    }
+    return best;
   }
 
   /** §88: the target hint for a pig (Sow, Boar, Piglet). */
   function pigHint(pig) {
     const name = animalName(pig);
     if (pig.tamed) return `Your ${name} · it follows the food in your hand${selectedTool() ? ' · click: butcher' : ''}`;
-    const hunt = selectedTool() ? 'click: hunt it' : 'click: shove it (hunting needs a tool)';
+    const throws = throwWords(); // §100
+    const hunt = selectedTool() ? `click: hunt it${throws ? ` · ${throws}` : ''}` : 'click: shove it (hunting needs a tool)';
     return `${name} · ${hunt} · feed it to tame (${pig.trust}/${PIG_TAME})`;
   }
 
@@ -4164,7 +4517,7 @@ export function boot(win, doc) {
 
   /**
    * A thrown item hit a mob with its power: a zombie counts it as hits, a pig is wounded in Survival (shoved in Creative).
-   * A dart may break; a spear takes 1 wear. @returns {boolean} the item broke
+   * A spear takes 1 wear (an arrow may break: looseItems rolls its head's chance, §100). @returns {boolean} the item broke
    */
   function looseOnHit(it, target) {
     const fromX = it.x - it.vx;
@@ -4182,8 +4535,12 @@ export function boot(win, doc) {
       }
     } else if (target.kind === 'animal') {
       const a = target.mob;
-      // v0.14 (§76 fauna): only a spear catches a fish — a rock or a dart just scares it off
-      const counts = isBodyAnimal(a) || getItem(it.s.k)?.tool?.type === 'spear';
+      // v0.14 (§76 fauna): only a spear catches a fish — a rock or an arrow just scares it off; §106: and only in
+      // shallow water (in deep water it dives as the spear goes in)
+      const spear = !isBodyAnimal(a) && getItem(it.s.k)?.tool?.type === 'spear';
+      const deep = spear && !spearReaches(world.getBlock, a);
+      if (deep && real) showHint(FISH_DEEP_HINT);
+      const counts = isBodyAnimal(a) || (spear && !deep);
       const res = animals.wound(a, real && !a.tamed && counts ? it.power : 0, fromX, fromZ);
       if (res === 'dead') animalDied(a, real);
       else if (res === 'hit') animalVoice(a, 1);
@@ -4203,7 +4560,6 @@ export function boot(win, doc) {
       }
     }
     if (!real) return false;
-    if (Math.random() < dartBreakP(it.s.k)) return true; // (0 for anything that is not a dart)
     const max = maxDurability(it.s.k);
     if (max > 0) {
       const d = (it.s.d ?? max) - 1;
@@ -4234,6 +4590,11 @@ export function boot(win, doc) {
     room: (st) => pack.canGive([...loose.inFlight(), { k: st.k, n: 1 }]),
     hitMob: looseHitMob,
     onHit: looseOnHit,
+    // §100: an arrow broke on what it hit, or shattered where it landed: a few splinters
+    onBreak: (it) => {
+      particles.emit('dust', it.x, it.y, it.z, 5, { color: [0.78, 0.66, 0.48], spread: 0.12 });
+      audio.playRecipe(SOUND_THUNK, 0.3);
+    },
     onLand: (it, speed) => {
       if (speed > 5 && !it.ghost) audio.playRecipe(SOUND_THUNK, Math.min(0.6, speed / 20));
     },
@@ -4266,8 +4627,9 @@ export function boot(win, doc) {
 
   /**
    * Q / G and the drop / throw commands (§60): one item (or `n`, or 'all' for a drop) of the selected stack leaves the hand
-   * — dropped in front of the feet, or thrown where the crosshair points (throwOf: rocks sting, darts and spears hurt,
-   * anything else is chucked a short way). Creative throws a ghost of the hotbar block and takes nothing.
+   * — dropped in front of the feet, or thrown where the crosshair points (throwOf: rocks sting, spears hurt, anything
+   * else — an arrow without its bow too — is chucked a short way). Creative throws a ghost of the hotbar block and takes
+   * nothing.
    * @param {'drop'|'throw'} kind
    * @param {number|'all'} n
    * @returns {{ ok: boolean, message: string, loud?: boolean }}
@@ -4345,6 +4707,367 @@ export function boot(win, doc) {
     return { ok: true, message: kind === 'throw' ? `threw ${what}` : `dropped ${what}` };
   }
 
+  // ---- §100 the draw: Place held with a spear or a bow, released to throw or shoot -----------------------------
+
+  /**
+   * §100: the arrow a bow in hand would shoot now. Survival: the best one in the pack (looseItems.pickArrow: steel, iron,
+   * bronze, copper, flint, stone), null when there is none. Creative needs none: the best one on the hotbar, else a Flint
+   * Arrow. @returns {string|null}
+   */
+  function bowArrow() {
+    return bowArrowFrom({ survival: survival.inSurvival, count: (k) => pack.count(k), hotbar });
+  }
+
+  /**
+   * One frame of Place with what is in hand (both modes; the machine is DrawHold): with a spear or a bow it draws back
+   * while held and throws (or shoots an arrow) when let go, harder the longer it was held (looseItems.drawnThrow and
+   * bowShot, full at the bow's own draw time, DrawEnv.fullS). A press on a circuit control without Shift, and the hold the
+   * control latch keeps on it, are left to the control; under a screen (the pack, the field book, a device panel) the
+   * draw is let go without a throw.
+   * @returns {boolean} Place was this (nothing else uses it)
+   */
+  function drawStep(mouse, dt) {
+    if (rodPlace(mouse)) return true; // §106: with the line out, Place reels it in (or hooks a biting fish)
+    const key = heldItemKey();
+    const d = drawOf(key);
+    const e = drawEnv;
+    e.key = key;
+    e.draws = !!d && !survival.dead;
+    e.playing = /** @type {string} */ (state) === STATE.PLAYING; // not under the pack, the book or a device panel
+    e.control = false;
+    e.noArrows = false;
+    e.fullS = d ? d.fullS : DRAW_FULL_S;
+    if (mouse.rightPressed && d) {
+      const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
+      e.control = !!hit && !shift && latchEnv.isControl(hit.blockId);
+      e.noArrows = d.bow && bowArrow() === null; // Survival: none in the pack (Creative needs none)
+    }
+    e.latched = controlLatch.on;
+    const did = draw.step(mouse, dt, e);
+    if (did === null) return false;
+    if (did === 'noArrows') showHint(NO_ARROWS_HINT);
+    else if (did === 'release' && d && key) drawRelease(d, key, draw.f);
+    return true;
+  }
+
+  /**
+   * Let a draw go: the spear in hand (one of it), or off the bow the best arrow from the pack (Creative needs none: it
+   * shoots a ghost of the hotbar's best arrow, else a Flint Arrow), along the look — a bow's arrow within its random cone —
+   * at the draw's speed and power; a bow wears 1 a shot (Survival).
+   * @param {import('./looseItems.js').DrawDef} d @param {string} key @param {number} f the draw, 0..1
+   */
+  function drawRelease(d, key, f) {
+    if (!player || !world) return;
+    const SV = survival.inSurvival;
+    if (d.rod) {
+      castLine(f);
+      return;
+    }
+    /** @type {ItemStack} */
+    let stack;
+    let speed;
+    let power;
+    let gravity = 1;
+    let spread = 0;
+    if (d.bow) {
+      const arrow = bowArrow();
+      if (arrow === null || (SV && pack.take(arrow, 1) < 1)) {
+        showHint('No arrows left');
+        return;
+      }
+      stack = { k: arrow, n: 1 };
+      ({ speed, power, gravity, spread } = bowShot(key, arrow, f));
+    } else {
+      if (SV) {
+        const s = pack.slots[selected];
+        if (!s || s.k !== key) return;
+        stack = { k: s.k, n: 1 };
+        if (s.d !== undefined) stack.d = s.d;
+        pack.consume(selected, 1);
+      } else {
+        stack = { k: key, n: 1 };
+      }
+      ({ speed, power } = drawnThrow(/** @type {{ speed: number, power: number }} */ (d.base), f));
+    }
+    const yaw = controls.yaw;
+    const pitch = controls.pitch;
+    const cp = Math.cos(pitch);
+    const [dx, dy, dz] = spreadDir(-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp, spread, Math.random);
+    const eyeY = player.y + getEyeHeight(player);
+    let x = player.x + dx * 0.35;
+    let y = eyeY - 0.1 + dy * 0.35;
+    let z = player.z + dz * 0.35;
+    if (looseEnv.solid(x, y, z)) {
+      x = player.x;
+      y = eyeY - 0.1;
+      z = player.z;
+    }
+    const lift = d.bow ? 0.5 : 1.5; // an arrow leaves the string flat; a hand throw lofts a little (as G does)
+    loose.launch(stack, x, y, z, dx * speed + (player.vx || 0), dy * speed + lift, dz * speed + (player.vz || 0), {
+      block: -1, ghost: !SV, power, gravity,
+    });
+    if (d.bow && SV) {
+      const res = pack.damage(selected, 1);
+      if (res && res.broke) toolBroke(res.key);
+    }
+    audio.playRecipe(SOUND_THROW, 0.45 + 0.4 * f);
+    // §91: a throwing arm follows through from the draw; a bow is simply let down (AvatarMotion eases the draw out)
+    if (!d.bow) avatarSwing();
+  }
+
+  /** §100: the draw's ring at the crosshair (0..1), or null. */
+  function drawRing() {
+    return draw.on ? Math.max(0.02, drawShare()) : null;
+  }
+
+  /**
+   * §100: what the hand can throw, said in the hint: "Hold RMB to throw" (on a tablet "Hold Place to throw", §97.2), a bow
+   * "Crude Bow · Flint Arrows (12) · Hold RMB to draw" (or that the pack holds no arrows), or null when what is in hand is
+   * not drawn.
+   */
+  function drawHintText() {
+    const key = heldItemKey();
+    const d = drawOf(key);
+    if (!d || !key) return null;
+    if (d.rod) return rodHintText();
+    const verb = d.bow ? 'shoot' : 'throw';
+    if (draw.on) return drawShare() >= 1 ? `Full draw · let go to ${verb}` : `Drawing · let go to ${verb}`;
+    if (d.bow) return bowHint(key, bowArrow(), survival.inSurvival, (k) => pack.count(k));
+    return `${itemName(key)} · Hold RMB to throw · G: throw at once`;
+  }
+
+  /** §100: the words for a throw at a mob, by what is in hand ('Hold RMB to throw' / '… to shoot'), or null. */
+  function throwWords() {
+    const d = drawOf(heldItemKey());
+    if (!d || d.rod) return null; // §106: a rod casts at the water, not at a beast
+    if (d.bow && bowArrow() === null) return 'no arrows';
+    return d.bow ? 'Hold RMB to shoot' : 'Hold RMB to throw';
+  }
+
+  // ---- §106 the Fishing Rod ------------------------------------------------------------------------------------
+
+  /**
+   * §106: Place with the line out and the rod in hand belongs to the line: a press reels it in — hooking a fish that
+   * bites, pulling the float from one that only nibbles. Under a screen nothing is reeled. @returns {boolean} Place was this
+   */
+  function rodPlace(mouse) {
+    if (!fishing.out || heldItemKey() !== ROD_KEY) return false;
+    draw.cancel();
+    if (mouse.rightPressed && /** @type {string} */ (state) === STATE.PLAYING) reelIn();
+    return true;
+  }
+
+  /**
+   * §106: the rod's tip in the world (where the line starts): the far end of the rod in hand (first person or on the
+   * model; avatarRenderer.heldTip), else a point before the eye or over the avatar's hand.
+   * @returns {number[]}
+   */
+  function rodTip() {
+    const third = isThirdPerson(shownView());
+    if (avatarRenderer.heldKey() === ROD_KEY) {
+      const t = avatarRenderer.heldTip(!third);
+      if (t) return t;
+    }
+    const yaw = controls.yaw;
+    const pitch = controls.pitch;
+    const cp = Math.cos(pitch);
+    const fx = -Math.sin(yaw) * cp;
+    const fy = Math.sin(pitch);
+    const fz = -Math.cos(yaw) * cp;
+    const rx = Math.cos(yaw);
+    const rz = -Math.sin(yaw);
+    if (third) {
+      const fl = Math.hypot(fx, fz) || 1;
+      return [player.x + rx * 0.32 + (fx / fl) * 0.9, player.y + 1.95, player.z + rz * 0.32 + (fz / fl) * 0.9];
+    }
+    const eyeY = player.y + getEyeHeight(player);
+    return [player.x + fx * 1.05 + rx * 0.32, eyeY + fy * 1.05 + 0.3, player.z + fz * 1.05 + rz * 0.32];
+  }
+
+  /** §106: let a cast go (the draw `f`, 0..1): the float flies from the rod's tip along the look; a rod wears 1 a cast. */
+  function castLine(f) {
+    if (!player) return;
+    const yaw = controls.yaw;
+    const pitch = controls.pitch;
+    const cp = Math.cos(pitch);
+    let [x, y, z] = rodTip();
+    if (looseEnv.solid(x, y, z)) [x, y, z] = [player.x, player.y + getEyeHeight(player), player.z];
+    const [vx, vy, vz] = castVelocity(-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp, f, player.vx, player.vz);
+    fishing.cast(x, y, z, vx, vy, vz);
+    fishingQuietSaid = false;
+    if (survival.inSurvival) {
+      const res = pack.damage(selected, 1);
+      if (res && res.broke) {
+        toolBroke(res.key);
+        fishing.reset();
+      }
+    }
+    audio.playRecipe(SOUND_THROW, 0.3 + 0.35 * f);
+    avatarSwing(); // the cast is thrown through like a throw (§91)
+  }
+
+  /** §106: Place with the line out: hook a biting fish (it is caught: its drops fly to the player), else reel in. */
+  function reelIn() {
+    const { result, fish } = fishing.reel();
+    clearFloatAt();
+    const a = /** @type {*} */ (fish);
+    if (result === 'caught' && a && player) {
+      const res = animals.wound(a, 999, player.x, player.z);
+      if (res === 'dead') {
+        particles.emit('dust', a.x, a.y + 0.2, a.z, 18, { color: WATER_SPRAY, spread: 0.35 });
+        animalDied(a, true);
+        logLine(survival.inSurvival ? `You caught a ${animalName(a).toLowerCase()}.` : 'You caught a fish (Creative: it gives nothing).');
+      }
+      return;
+    }
+    if (result === 'spooked' && a && player) {
+      animals.wound(a, 0, player.x, player.z); // it darts off (and dives, in deep water)
+      showHint('Too soon: wait until the float goes right under.');
+    }
+    audio.playRecipe(SOUND_THROW, 0.18);
+  }
+
+  /** §106: the colour of the spray where the float lands or a fish bites. */
+  const WATER_SPRAY = [0.78, 0.86, 0.95];
+
+  /** §106: no fish is steered to the float. */
+  function clearFloatAt() {
+    for (const a of animals.list) if (a.floatAt) a.floatAt = null;
+  }
+
+  /** §106: the line comes in at once (the rod left the hand, sleep, death, a mode switch, a load, leaving the world). */
+  function resetFishing() {
+    if (!fishing.out) return;
+    fishing.reset();
+    clearFloatAt();
+  }
+
+  /**
+   * §106, every frame of the world (both modes): the float flies, floats and waits; a fish near it is steered to it
+   * (animals.js `floatAt`), nibbles and bites; the line comes in by itself when the rod is no longer in hand.
+   */
+  function stepFishing(dt) {
+    if (!fishing.out) return;
+    if (!player || !world || survival.dead || heldItemKey() !== ROD_KEY) {
+      resetFishing();
+      return;
+    }
+    const fish = net ? [] : animals.list.filter((a) => a.kind === 'fish' && !a.stranded); // a server's fish are its own
+    const ev = fishing.step(dt, { getBlock: world.getBlock, player, fish });
+    const b = fishing.bait();
+    for (const a of fish) {
+      const want = b && b.fish === a ? { x: b.x, z: b.z } : null;
+      if (want) a.floatAt = want;
+      else if (a.floatAt) a.floatAt = null;
+    }
+    const plop = (v) => audio.playRecipe(ANIMAL_SOUNDS.plop, v);
+    if (ev === 'splash') {
+      particles.emit('dust', fishing.x, fishing.y, fishing.z, 8, { color: WATER_SPRAY, spread: 0.15 });
+      plop(0.35);
+    } else if (ev === 'nibble') {
+      plop(0.12);
+    } else if (ev === 'bite') {
+      particles.emit('dust', fishing.x, fishing.y, fishing.z, 12, { color: WATER_SPRAY, spread: 0.2 });
+      plop(0.6);
+    } else if (ev === 'escaped') {
+      const a = /** @type {*} */ (fishing.fish);
+      if (a) animals.wound(a, 0, fishing.x, fishing.z); // it takes the bait and is gone
+      showHint('It got away: click the moment the float goes under.');
+    } else if (ev === 'snap') {
+      clearFloatAt();
+      showHint('Your line came in: you walked too far from the float.');
+    }
+    if (fishing.onWater && fishing.quiet >= QUIET_HINT_S && !fishingQuietSaid) {
+      fishingQuietSaid = true;
+      showHint('No fish near the float. Try deeper water, or where you saw a fin.');
+    }
+  }
+
+  /** §106: draw the line and its float (renderFrame), or hide them. */
+  function syncFishing(time) {
+    if (!fishingRenderer) return;
+    if (!fishing.out || !player) {
+      fishingRenderer.sync(null);
+      return;
+    }
+    const tip = rodTip();
+    const end = [fishing.x, fishing.y, fishing.z];
+    const d = Math.hypot(end[0] - tip[0], end[1] - tip[1], end[2] - tip[2]);
+    fishingRenderer.sync({
+      line: lineCurve(tip, end, 16, lineSlack(d, fishing.state === 'bite' || fishing.state === 'flying')),
+      x: fishing.x, y: fishing.y, z: fishing.z, dip: fishing.dip, onWater: fishing.onWater, time,
+    });
+  }
+
+  /**
+   * §106: the hint with the rod in hand: how to cast, then what the float is doing (tablet: Place, §97.2).
+   * @returns {string}
+   */
+  function rodHintText() {
+    if (draw.on) return drawShare() >= 1 ? 'Full cast · let go to cast' : 'Casting · let go to cast';
+    switch (fishing.state) {
+      case 'flying': return 'Fishing Rod · the float is out';
+      case 'float':
+      case 'coming': return fishing.quiet >= QUIET_HINT_S ? 'No fish near the float · RMB: reel in' : 'Fishing Rod · wait for a bite · RMB: reel in';
+      case 'nibble': return 'Something is nibbling · wait for the float to go under';
+      case 'bite': return 'Bite! · RMB now to hook it';
+      case 'ground': return 'The float is on dry land · RMB: reel in';
+      default: return 'Fishing Rod · Hold RMB to cast, let go to cast it out';
+    }
+  }
+
+  // ---- §103 the Spyglass ----------------------------------------------------------------------------------------
+
+  /** §103: a Spyglass is carried — Survival: anywhere in the pack; Creative: on the Creative hotbar (an item pick, §98). */
+  function spyglassCarried() {
+    if (!player || survival.dead) return false;
+    return carriesSpyglass({ survival: survival.inSurvival, count: (k) => pack.count(k), hotbar });
+  }
+
+  /**
+   * §103: Place with the Spyglass in hand looks through it while held (both modes; spyglass.glassPlace). A press on a
+   * circuit control without Shift, and the hold the control latch keeps on it, are left to the control (a Push Button
+   * stays pressed and the glass stays down). @returns {boolean} Place was this
+   */
+  function glassPlaceStep(mouse) {
+    const inHand = heldItemKey() === SPYGLASS_KEY;
+    if (inHand) draw.cancel(); // a draw under way when the hand changed to the glass is let go
+    const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
+    const control = !!mouse.rightPressed && !!hit && !shift && latchEnv.isControl(hit.blockId);
+    const g = glassPlace({ inHand, rightPressed: !!mouse.rightPressed, right: !!mouse.right, control, latched: controlLatch.on });
+    glassPlaceHeld = g.held;
+    return g.mine;
+  }
+
+  /** §103: leaving a world puts the glass down at once: the view, the look's speed and the eyepiece are back to rest. */
+  function resetSpyglass() {
+    spyglass.reset();
+    glassPlaceHeld = false;
+    controls.setLookScale(1);
+    hud.setSpyglass(null);
+  }
+
+  /**
+   * §103, every frame (renderFrame, before the camera): the glass is up while it is carried and Z or Place (with it in
+   * hand) is held while playing, or while the zoom command keeps it up; the view eases to its power, the look slows by
+   * it and the eyepiece darkens round the screen.
+   */
+  function stepSpyglass(dt) {
+    const playing = /** @type {string} */ (state) === STATE.PLAYING;
+    const held = playing && (controls.isDown(ZOOM_KEY) || (glassPlaceHeld && heldItemKey() === SPYGLASS_KEY));
+    if (!playing) glassPlaceHeld = false;
+    spyglass.step(dt, { carried: spyglassCarried(), held });
+    controls.setLookScale(spyglass.lookScale());
+    const dark = spyglass.vignette();
+    hud.setSpyglass(dark > 0 ? { amount: dark, zoom: spyglass.zoom } : null);
+  }
+
+  /** §103: the hint with the Spyglass in hand, when nothing else is said (a tablet: the Zoom button, not the wheel). */
+  function glassHintText() {
+    if (heldItemKey() !== SPYGLASS_KEY) return null;
+    return glassHint(spyglass, touchOn);
+  }
+
   /** Put one `key` into the selected slot when it is empty (a drunk pot comes back into the hand), else anywhere. */
   function giveToHand(key) {
     if (!pack.slots[selected]) pack.setSlot(selected, { k: key, n: 1 });
@@ -4365,18 +5088,18 @@ export function boot(win, doc) {
     audio.playToolBreak();
   }
 
-  /** The selected tool takes 1 wear (a block broken, a mob hit, §5.3); nothing for a bare hand or a non-tool item. */
   /**
-   * 1 wear on the selected tool (§6.1 step 6): on a dig only a digging tool wears (axe, shovel, pick, knife, hammer), on a
-   * blow everything but the kiln kit — a spear digs nothing and a crucible in the hand must not be used up by digging clay.
-   * @param {'dig'|'strike'} how
+   * `n` wear on the selected tool (§6.1 step 6; §99: a dig wears by harvest.digWear): on a dig only a digging tool wears
+   * (axe, shovel, pick, knife, hammer), on a blow everything but the kiln kit — a spear digs nothing and a crucible in the
+   * hand must not be used up by digging clay. Nothing for a bare hand or a non-tool item.
+   * @param {'dig'|'strike'} how @param {number} [n]
    */
-  function wearSelectedTool(how) {
+  function wearSelectedTool(how, n = 1) {
     const s = pack.slots[selected];
-    if (!s || maxDurability(s.k) === 0) return;
+    if (!s || maxDurability(s.k) === 0 || !(n > 0)) return;
     const tool = pack.toolAt(selected);
     if (how === 'dig' ? !wearsFromDigging(tool) : !wearsFromStriking(tool)) return;
-    const res = pack.damage(selected, 1);
+    const res = pack.damage(selected, n);
     if (res && res.broke) toolBroke(res.key);
   }
 
@@ -4512,11 +5235,13 @@ export function boot(win, doc) {
     doSave(false);
   }
 
-  /** Forget every in-progress dig, use and hold, and the action ring. */
+  /** Forget every in-progress dig, use, hold and draw (§100: let go without a throw), and the action ring. */
   function resetSurvivalInput() {
     digState.reset();
     useState.reset();
     holdState.reset();
+    draw.cancel();
+    resetFishing(); // §106: the line comes in
     digHit = null;
     digProgress = 0;
     digAdvanced = false;
@@ -4620,9 +5345,12 @@ export function boot(win, doc) {
   function survivalHintText() {
     if (litTarget) return 'lit keg · left-click: put it out';
     if (zombieTarget) return strikeInReach(zombieTarget) ? 'Zombie · click: hit it' : tooFarHint('Zombie');
-    if (pigTarget && !strikeInReach(pigTarget)) return tooFarHint(animalName(pigTarget.pig));
+    if (pigTarget && !strikeInReach(pigTarget)) return throwWords() ? `${animalName(pigTarget.pig)} · ${throwWords()}` : tooFarHint(animalName(pigTarget.pig));
     if (pigTarget) return pigHint(pigTarget.pig);
     if (animalTarget) return animalHint(animalTarget.animal);
+    const staring = watchingAnimal(); // §100: one is staring at the hunter, though the crosshair is elsewhere
+    if (staring) return `The ${animalName(staring)} is watching you — keep still`;
+    if (draw.on) return drawHintText(); // §100: while drawing, how to let go
     if (hit && hit.blockId === BLOCK.SNARE) return 'Snare · R with food in hand: bait it';
     if (hit && hit.blockId === BLOCK.SNARE_BAITED) return 'Baited Snare · animals nearby will come to it';
     if (hit && hit.blockId === BLOCK.SNARE_SPRUNG) return 'Sprung Snare · it holds what it caught for a while';
@@ -4655,17 +5383,23 @@ export function boot(win, doc) {
           return sleepSpotHint(act); // §87: `Sleeping Hide · R: sleep · secure here` / `… · not secure: …`
         case 'water_crop':
           return waterCropHint(act); // §85: `… · R: water it`
+        case 'tap_hint':
+          // §99.4: chopping a birch with a stone axe says so, as an oak does; otherwise how to tap its sap
+          return digSlowHint(digState, hit, selectedTool()) ?? /** @type {string} */ (act.hint);
         default:
           if (act.hint) return act.hint;
       }
     }
     const h = hit;
+    const throwFirst = throwHintFirst(digState, heldItemKey()); // §100.2: a spear, a dart or a bow, and no dig under way
     if (h) {
       const burning = burningKegHint(h, blockPhysics ? blockPhysics.explosions : null);
       if (burning) return burning; // before the tool requirement: a left press puts it out with any tool or none
       // §80: a planted seed or a sprout says what it has: `Planted Wild Carrot · watered`, `… · needs open sky`
       const crop = cropOfBlock(h.blockId);
       if (crop) return cropHintText(h, crop);
+      // §100.2: how it is thrown, before the hand's words below (a keg, a control or a rune block still says its own)
+      if (throwFirst) return blockHintText() ?? drawHintText();
       const tool = selectedTool();
       if (!canHarvest(h.blockId, tool)) {
         const need = harvestHint(h.blockId);
@@ -4679,11 +5413,15 @@ export function boot(win, doc) {
         const wrong = wrongGroundHint(world.getBlock, selectedKey(), h.q, h.y, h.r);
         if (wrong) return wrong;
       }
-    } else if (brickHit && !canHarvest(brickHit.blockId, selectedTool())) {
-      const need = harvestHint(brickHit.blockId); // §93: a brick says what digs it, like its hex
+      const slow = digSlowHint(digState, h, tool); // §99.4: while digging it, `Oak Log · slow with a stone axe`
+      if (slow) return slow;
+    } else if (brickHit && !throwFirst) {
+      // §93: a brick says what digs it, like its hex (§99.4: and, while dug, when that is slow)
+      const tool = selectedTool();
+      const need = canHarvest(brickHit.blockId, tool) ? digSlowHint(digState, brickDigTarget(brickHit), tool) : harvestHint(brickHit.blockId);
       if (need) return need;
     }
-    return blockHintText();
+    return blockHintText() ?? drawHintText() ?? glassHintText(); // §100: thrown by holding Place; §103 the glass
   }
 
   /**
@@ -5237,6 +5975,7 @@ export function boot(win, doc) {
     if (!h || !held) return res;
     const finite = Number.isFinite(need);
     if (finite && !res.done && dt > 0) digAdvanced = true;
+    digWorkTier = workTier(h.blockId, tool); // §99: the cruder the tool, the more the work costs the body
     if (res.tick) {
       avatarSwing(); // §91: the arm works at the cell with every dig tick
       audio.playDig(getBlockDef(h.blockId).soundGroup, finite ? 0.35 : 0.15);
@@ -5283,7 +6022,7 @@ export function boot(win, doc) {
     if (!ok) return;
     audio.playBreak(getBlockDef(id).soundGroup);
     flyFromCell(drops, h.q, h.y, h.r);
-    wearSelectedTool('dig');
+    wearSelectedTool('dig', digWear(id, tool)); // §99: the harder the block for the tool, the more it wears
     updateHit();
   }
 
@@ -5303,7 +6042,7 @@ export function boot(win, doc) {
     if (!ok) return;
     audio.playBreak(getBlockDef(id).soundGroup);
     flyStacks(drops, b.px, b.py, b.pz);
-    wearSelectedTool('dig');
+    wearSelectedTool('dig', digWear(id, tool));
     updateHit();
   }
 
@@ -5340,10 +6079,13 @@ export function boot(win, doc) {
         return;
       }
       const ka = strikeKind('pig', tool); // like a pig: only a tool wounds, a bare hand shoves
-      // v0.14 (§76 fauna): a fish is caught with a spear's thrust and nothing else (anything else only scares it)
+      // v0.14 (§76 fauna): a fish is caught with a spear's thrust and nothing else (anything else only scares it);
+      // §106: and only in shallow water — in deep water it dives out of reach (a Fishing Rod reaches it)
       const spearOnly = !isBodyAnimal(a) && tool?.type !== 'spear';
-      if (spearOnly) showHint('A fish is caught with a spear: thrust with it, or throw it (G).');
-      const wounds = ka.call === 'wound' && !spearOnly;
+      const tooDeep = !isBodyAnimal(a) && !spearOnly && !spearReaches(world.getBlock, a);
+      if (spearOnly) showHint(tool?.type === 'rod' ? FISH_ROD_HINT : 'A fish is caught with a spear: thrust with it, or hold RMB to throw it.');
+      else if (tooDeep) showHint(FISH_DEEP_HINT);
+      const wounds = ka.call === 'wound' && !spearOnly && !tooDeep;
       const res = animals.wound(a, wounds ? ka.power * strikeFactorNow() : 0, player.x, player.z);
       if (res === 'dead') animalDied(a, true);
       else if (res === 'hit') animalVoice(a, 1);
@@ -5392,6 +6134,14 @@ export function boot(win, doc) {
       useState.step(dt, null, false);
       useProgress = null;
       if (mouse.rightPressed) openBook(); // §14.2: RMB opens it at once, no hold
+      return;
+    }
+    if (glassPlaceStep(mouse) || drawStep(mouse, dt)) {
+      // §103: the Spyglass in hand: Place held looks through it. §100: a spear or a bow in hand: Place draws it back, and
+      // letting go throws or shoots
+      useState.step(dt, null, false);
+      useProgress = null;
+      placeHeld = 0;
       return;
     }
     const act = useActionOf(stack);
@@ -5495,6 +6245,7 @@ export function boot(win, doc) {
 
   /** The action ring (§9.8): the dig, else a held use, else a held R. */
   function actionProgress() {
+    if (draw.on) return drawRing(); // §100: the draw
     if (digProgress > 0) return digProgress;
     if (useProgress !== null) return useProgress;
     if (holdProgress !== null) return holdProgress;
@@ -5523,6 +6274,7 @@ export function boot(win, doc) {
     env.player = player;
     env.softFactor = softFactor;
     env.breaking = digAdvanced;
+    env.workTier = digWorkTier; // §99
     env.buried = buried;
     env.climate = sample;
     env.heat = sample.heat;
@@ -5629,9 +6381,9 @@ export function boot(win, doc) {
     }
   }
 
-  /** @returns {string} a comparable key of a findStations result */
+  /** @returns {string} a comparable key of a findStations result (every workplace: the Workbench and the Lab too) */
   function stationsKey(st) {
-    return ['stump', 'kiln', 'bloomery', 'forge'].map((k) => (st[k] ? st[k].join(',') : '-')).join('|');
+    return STATION_IDS.filter((k) => k !== 'hand').map((k) => (st[k] ? st[k].join(',') : '-')).join('|');
   }
 
 
@@ -5718,7 +6470,37 @@ export function boot(win, doc) {
       recipes: listRecipes(pack, stations, { queue: craftQueue }),
       lanes: craftQueue.lanes(),
       message: packMessage,
+      had: noteHad(), // §94.4: the build tree reveals what has been had
+      circuits: circuits ? circuits.enabled : true,
     });
+  }
+
+  /**
+   * §94.4: the pack version and the stations (findStations result) whose keys survival.had last took in, and that set (a
+   * fresh survival state has a new one)
+   */
+  let hadPackVersion = -1;
+  /** @type {Record<string, any>|null} */
+  let hadStations = null;
+  /** @type {Set<string>|null} */
+  let hadSeen = null;
+  /**
+   * §94.4: every item that enters the pack (or the cursor) in Survival is had for good, and so is every workplace stood
+   * at (whoever built it): note the pack's keys and the near workplaces' whenever either changed.
+   * @returns {Set<string>} survival.had
+   */
+  function noteHad() {
+    if (survival.inSurvival) {
+      if (pack.version !== hadPackVersion || stations !== hadStations || survival.had !== hadSeen) {
+        hadPackVersion = pack.version;
+        hadStations = stations;
+        hadSeen = survival.had;
+        survival.noteHad(heldKeys(pack));
+        survival.noteHad(nearWorkplaceKeys(stations));
+      }
+      if (packSession.cursor) survival.noteHad([packSession.cursor.k]);
+    }
+    return survival.had;
   }
 
   function packKey() {
@@ -5967,10 +6749,14 @@ export function boot(win, doc) {
   function setState(s) {
     state = s;
     stats.state = s;
-    // A modal (or the title) takes the mouse: a right-click or R key held on a control is let go (§4.9).
+    // §103: Esc or a menu puts the glass down (the console is where `zoom` is typed: it keeps it up)
+    if (s !== STATE.PLAYING && s !== STATE.CONSOLE) spyglass.unlock();
+    // A modal (or the title) takes the mouse: a right-click or R key held on a control is let go (§4.9), and a draw goes
+    // without a throw (§100: the release that follows is the menu's, not the hand's).
     if (s !== STATE.PLAYING) {
       controlLatch.release();
       rHeldCell = null;
+      draw.cancel();
     }
   }
 
@@ -6077,10 +6863,19 @@ export function boot(win, doc) {
     circuitStore.replaceAll(restoring && restoring.circuitParts ? restoring.circuitParts : null);
     circuits = new Circuits(circuitStore, circuitHooks);
     circuits.setEnabled(!(restoring && restoring.circuits === false));
+    if (params.circuits !== null) {
+      circuits.setEnabled(params.circuits); // §94.4 screenshot aid ?circuits=off|on: this visit's first world only
+      params.circuits = null;
+    }
     blackHoles.setEnabled(!(restoring && restoring.blackholes === false));
+    const loadedWorld = world;
     world.onChunkGenerated = (cq, cr) => {
       blockPhysics.onChunkGenerated(cq, cr);
       if (circuits) circuits.onChunkLoaded(cq, cr); // a loaded chunk's cells are solved settling: loading fires nothing
+      // §101: a pennant another player placed or pulled up while this chunk was not generated here (applyServerCell), and
+      // a fire lit or put out there (§32: neither is meshed, so neither would be drawn or taken away)
+      pennants.onChunkLoaded(cq, cr, loadedWorld.edits, loadedWorld.getBlock);
+      campfires.onChunkLoaded(cq, cr, loadedWorld.edits, loadedWorld.getBlock);
     };
     world.onBlockChange = onBlockChanged;
     world.onCoverChange = (q, y, r) => blockPhysics.onCoverChange(q, y, r); // §93.9: a face water crosses opened or closed
@@ -6093,6 +6888,7 @@ export function boot(win, doc) {
     circuits.loadFromEdits(world.edits); // after the holes, settling (§4.7)
     resetCircuitSession();
     campfires.loadFromEdits(world.edits);
+    pennants.loadFromEdits(world.edits); // §101
     lampLights.clear(); // §72: the new world's light engine starts without extra emitters
     riding = null;
     animalTarget = null;
@@ -6181,6 +6977,14 @@ export function boot(win, doc) {
     const containerWarnings = containers.load(restoring ? restoring.containers : null);
     for (const w of containerWarnings) console.warn('Caelancraft containers:', w);
     loose.load(survival.hasState && restoring && restoring.survival ? restoring.survival.loose : null, looseBlockOf);
+    // §94.4: what the pack and the baskets hold, and every workplace set down in the world, has been had (an older save
+    // has no `had`: this is all of it)
+    if (survival.hasState) {
+      survival.noteHad(heldKeys(pack, containers.entries.values()));
+      survival.noteHad(placedWorkplaceKeys(world.edits));
+    }
+    hadPackVersion = -1;
+    hadStations = null;
     regrowth.loadFromEdits(world.edits);
     growth.loadFromEdits(world.edits); // §80: the planted cells are edits, like the picked bushes
     refill.loadFromEdits(world.edits); // §85: so are a drawn spring, a well and a rain barrel
@@ -6270,6 +7074,13 @@ export function boot(win, doc) {
       player.landSpeed = 0;
       survival.fallGrace = true;
     }
+    // §91 / §98.4 screenshot aid: ?hold=<item> puts that item in the selected slot (Creative; like `give`, no toast)
+    if (params.hold && !survival.inSurvival) {
+      hotbar[selected] = params.hold;
+      hud.setHotbar(hotbar, selected);
+    }
+    // §103 screenshot aid: ?zoom=2|4|8 looks through a carried Spyglass at once, as the zoom command does
+    if (params.zoom && spyglassCarried()) spyglass.lock(params.zoom);
 
 
     ctx = buildCommandContext();
@@ -6359,7 +7170,10 @@ export function boot(win, doc) {
       // The Pack & Making screen (§9.10): Survival only. Under ?nosave an empty pack is stocked with the screen's demo kit
       // (nothing is saved), so the screenshot shows a lived-in pack.
       if (!survival.inSurvival) return;
-      if (params.nosave && pack.slots.every((s) => s === null || s.k === HANDBOOK_KEY)) {
+      if (params.nosave && params.kit !== null) {
+        // §94.4 ?kit=none|<items>: exactly this kit (none: the start of a world, the handbook alone)
+        for (const { k, n } of params.kit) pack.give(k, n);
+      } else if (params.nosave && pack.slots.every((s) => s === null || s.k === HANDBOOK_KEY)) {
         const demo = demoPackView();
         demo.slots.forEach((s, i) => { if (s && !pack.slots[i]) pack.setSlot(i, s); });
         demo.wear.forEach((s, i) => { if (s) pack.setWear(i, s); });
@@ -6383,7 +7197,8 @@ export function boot(win, doc) {
 
   /**
    * `?scene=` (DESIGN-circuits §6.7): 'vortex' sets off a Collapsar Charge 8 cells ahead (`delay` seconds later), 'circuits'
-   * flattens the ground 10 cells ahead and builds the §4.14 worked examples there (diagnostics.circuitSceneWrites).
+   * flattens the ground 10 cells ahead and builds the §4.14 worked examples there (diagnostics.circuitSceneWrites); §101
+   * 'wind' sets a lit campfire and two pennants ahead (diagnostics.WIND_SCENE), 'wind-rain' the same and forces the rain.
    * @param {string} name
    * @param {number} [delay]
    * @returns {{ ok: boolean, message: string, named?: Record<string, [number, number, number]> }}
@@ -6405,6 +7220,11 @@ export function boot(win, doc) {
       const res = blackHoles.activate(q, y, r, blackHoleWorld);
       return { ok: res.ok, message: res.message, named: sceneNamed };
     }
+    if (name === 'wind' || name === 'wind-rain') return buildWindScene(fx, fz, feet, name === 'wind-rain');
+    if (name === 'zombies' || name === 'crowd' || name === 'watcher' || name === 'phantom') return buildFigureScene(name, fx, fz);
+    if (Object.hasOwn(ANIMAL_SCENES, name)) return buildAnimalScene(fx, fz, feet, /** @type {'animals'|'animal-variants'|'animal-close'} */ (name));
+    if (name === 'plants') return buildPlantScene(fx, fz, feet);
+    if (name === 'fishing') return buildFishingScene(fx, fz, feet);
     if (name !== 'circuits') return { ok: false, message: `unknown scene "${name}"` };
     const [qa, ra] = worldToHex(player.x + fx * 10, player.z + fz * 10);
     const q0 = qa - 5;
@@ -6426,6 +7246,259 @@ export function boot(win, doc) {
     for (const [q, y, r, partial] of scene.settings) circuits.applySettings(q, y, r, partial);
     sceneNamed = scene.named;
     return { ok: true, message: `built the circuit examples at (${q0}, ${feet}, ${r0})`, named: scene.named };
+  }
+
+  /**
+   * §101 `?scene=wind`: each piece of WIND_SCENE on the ground ahead (the column cleared above the player's feet level
+   * and filled with stone under it), and with `rain` the rain forced on, at its full strength at once, its drops already
+   * falling.
+   * @param {number} fx @param {number} fz  the way the player looks @param {number} feet @param {boolean} rain
+   * @returns {{ ok: boolean, message: string, named: Record<string, [number, number, number]> }}
+   */
+  function buildWindScene(fx, fz, feet, rain) {
+    const w = /** @type {World} */ (world);
+    /** @type {Record<string, [number, number, number]>} */
+    const named = {};
+    for (const [piece, ahead, right] of WIND_SCENE) {
+      // the player's right is the forward vector turned a quarter: (−fz, fx)
+      const [q, r] = worldToHex(player.x + fx * ahead - fz * right, player.z + fz * ahead + fx * right);
+      for (let y = feet; y <= feet + 3 && y < WORLD_HEIGHT; y++) if (w.getBlock(q, y, r) !== BLOCK.AIR) w.setBlock(q, y, r, BLOCK.AIR);
+      for (let y = feet - 1; y >= Math.max(1, feet - 8); y--) {
+        if (isSolid(w.getBlock(q, y, r))) break;
+        w.setBlock(q, y, r, BLOCK.STONE);
+      }
+      w.setBlock(q, feet, r, piece === 'campfire' ? BLOCK.CAMPFIRE : BLOCK.PENNANT);
+      named[piece] = [q, feet, r];
+    }
+    if (rain) {
+      theWeather().force('rain');
+      // a screenshot aid: the shower at its full strength at once, the sky grey and the drops already falling (a headless
+      // browser may draw a frame only every few seconds, too few for the rain to build up by itself)
+      weatherFx.falling = 1;
+      weatherFx.shown = 1;
+      weatherFx.overcast = 1;
+      const view = {
+        x: player.x, y: player.y + getEyeHeight(player), z: player.z, intensity: 1, snow: weatherFx.snow, getBlock: w.getBlock,
+        daylight: sky.daylight, wind: windNow(),
+      };
+      for (let i = 0; i < 150; i++) rainRenderer.update(1 / 60, view);
+    }
+    sceneNamed = named;
+    return { ok: true, message: `the wind scene: a campfire and two pennants ahead${rain ? ', in the rain' : ''}`, named };
+  }
+
+  /**
+   * §104 `?scene=zombies|crowd|watcher|phantom`: stage figures ahead of the player, facing it, on a patch of ground made
+   * level with the player's feet (cleared above, filled below with what the player stands on, like ?scene=wind) —
+   * ZOMBIE_SCENE's walker, runner and alpha, the crowd of crowdScene(), the Watcher at WATCHER_SCENE, or the figure at the
+   * edge of sight at PHANTOM_SCENE. They are drawn only (sceneZombies, sceneWatcher, scenePhantom), never added to a list
+   * of mobs.
+   * @param {'zombies'|'crowd'|'watcher'|'phantom'} name
+   * @param {number} fx @param {number} fz  the way the player looks
+   * @returns {{ ok: boolean, message: string }}
+   */
+  function buildFigureScene(name, fx, fz) {
+    const w = /** @type {World} */ (world);
+    const feet = Math.floor(player.y + 1e-3);
+    const [pq, pr] = worldToHex(player.x, player.z);
+    const under = w.getBlock(pq, feet - 1, pr);
+    const ground = isSolid(under) ? under : BLOCK.GRASS_BLOCK;
+    /** make a hex patch round (cq, cr) level with the player's feet: open air above, `ground` below */
+    const level = (cq, cr, radius) => {
+      for (let q = cq - radius; q <= cq + radius; q++) {
+        for (let r = cr - radius; r <= cr + radius; r++) {
+          if (hexLength(q - cq, r - cr) > radius || (q === pq && r === pr)) continue;
+          for (let y = feet; y <= feet + 4 && y < WORLD_HEIGHT; y++) if (w.getBlock(q, y, r) !== BLOCK.AIR) w.setBlock(q, y, r, BLOCK.AIR);
+          for (let y = feet - 1; y >= Math.max(1, feet - 8); y--) {
+            if (isSolid(w.getBlock(q, y, r)) && y < feet - 1) break;
+            if (w.getBlock(q, y, r) !== ground) w.setBlock(q, y, r, ground);
+          }
+        }
+      }
+    };
+    /** where `ahead` metres forward and `right` to the right of the player stands, and the yaw that faces the player */
+    const spot = (ahead, right, turn = 0) => {
+      const x = player.x + fx * ahead - fz * right;
+      const z = player.z + fz * ahead + fx * right;
+      const [q, r] = worldToHex(x, z);
+      return { x, y: feet, z, q, r, yaw: Math.atan2(x - player.x, z - player.z) + turn };
+    };
+    const centre = (ahead, radius) => {
+      const [q, r] = worldToHex(player.x + fx * ahead, player.z + fz * ahead);
+      level(q, r, radius);
+    };
+    if (name === 'zombies') centre(4.5, 4);
+    else if (name === 'crowd') centre(11, 9);
+    else if (name === 'watcher') centre(WATCHER_SCENE.ahead, 3);
+    else centre(PHANTOM_SCENE.ahead, 4);
+    const staged = (kind, at, mode, walkPhase, id) => ({
+      id, kind, x: at.x, y: at.y, z: at.z, yaw: at.yaw, mode, walkPhase, swing: 0, hurt: 0, smoking: false,
+      tilt: ((id * 0.37) % 0.4) - 0.2, side: id % 2 ? 1 : -1, shield: 0, daylit: false, provoked: 0, rallied: false,
+    });
+    if (name === 'zombies') {
+      sceneZombies = ZOMBIE_SCENE.map(([kind, ahead, right, mode, phase, id]) => staged(kind, spot(ahead, right), mode, phase, id));
+      return { ok: true, message: 'the zombies scene: a walker, a runner and an alpha ahead' };
+    }
+    if (name === 'crowd') {
+      sceneZombies = crowdScene().map((c) => staged(c.kind, spot(c.ahead, c.right, c.turn), c.mode, c.walkPhase, c.id));
+      return { ok: true, message: `the crowd scene: ${sceneZombies.length} zombies ahead` };
+    }
+    if (name === 'watcher') {
+      const at = spot(WATCHER_SCENE.ahead, WATCHER_SCENE.right);
+      sceneWatcher = { x: at.x, y: at.y, z: at.z, q: at.q, r: at.r, yaw: at.yaw, headYaw: at.yaw, headPitch: 0.08, kind: 'summon' };
+      return { ok: true, message: 'the watcher scene: the Watcher ahead' };
+    }
+    const at = spot(PHANTOM_SCENE.ahead, PHANTOM_SCENE.right);
+    scenePhantom = { x: at.x, y: at.y, z: at.z, yaw: at.yaw, age: 1, alpha: FIGURE_ALPHA, d0: PHANTOM_SCENE.ahead };
+    return { ok: true, message: 'the phantom scene: the figure at the edge of sight' };
+  }
+
+  /**
+   * §69.1 `?scene=animals|animal-variants|animal-close`: each creature of ANIMAL_SCENES on grass ahead (its column cleared above the
+   * player's feet level and filled under it; a fish in a dug cell of water, a snared one on a sprung snare), facing the
+   * player turned as given, and held there every frame (holdScene) — a screenshot aid for the models.
+   * @param {number} fx @param {number} fz  the way the player looks @param {number} feet
+   * @param {'animals'|'animal-variants'|'animal-close'} name
+   * @returns {{ ok: boolean, message: string }}
+   */
+  function buildAnimalScene(fx, fz, feet, name) {
+    const w = /** @type {World} */ (world);
+    sceneHold = [];
+    const face = controls.yaw + Math.PI; // an animal with this yaw faces the player
+    // a flat meadow under the lineup and round the player: grass at the feet level, open air above it
+    const meadow = new Set();
+    for (let a = -2; a <= 13; a += 0.4) {
+      for (let b = -10; b <= 10; b += 0.4) {
+        const [q, r] = worldToHex(player.x + fx * a - fz * b, player.z + fz * a + fx * b);
+        const key = `${q},${r}`;
+        if (meadow.has(key)) continue;
+        meadow.add(key);
+        for (let y = feet; y <= feet + 8 && y < WORLD_HEIGHT; y++) if (w.getBlock(q, y, r) !== BLOCK.AIR) w.setBlock(q, y, r, BLOCK.AIR);
+        for (let y = feet - 2; y >= Math.max(1, feet - 10); y--) {
+          if (isSolid(w.getBlock(q, y, r))) break;
+          w.setBlock(q, y, r, BLOCK.DIRT);
+        }
+        w.setBlock(q, feet - 1, r, BLOCK.GRASS_BLOCK);
+      }
+    }
+    for (const [kind, ahead, right, turn, fields] of ANIMAL_SCENES[name]) {
+      const x = player.x + fx * ahead - fz * right;
+      const z = player.z + fz * ahead + fx * right;
+      const [q, r] = worldToHex(x, z);
+      if (kind === 'fish') {
+        w.setBlock(q, feet - 2, r, BLOCK.DIRT);
+        w.setBlock(q, feet - 1, r, BLOCK.WATER);
+      }
+      if (fields.trapped) w.setBlock(q, feet, r, BLOCK.SNARE_SPRUNG);
+      const yaw = face + turn;
+      const sex = fields.sex === 'm' ? 'm' : 'f';
+      const body = kind === 'pig' ? pigs.spawn(x, feet, z, yaw, sex) : animals.spawn(kind, x, kind === 'fish' ? feet - 1 + 0.875 - FISH_UNDER : feet, z, yaw, sex);
+      if (!body) continue;
+      sceneHold.push({ body, x: body.x, y: body.y, z: body.z, yaw, fields: { mode: 'walk', ...fields, ...(fields.trapped ? { trapCell: [q, feet, r], trapT: 0 } : {}) } });
+    }
+    return { ok: true, message: `the ${name.replace('-', ' ')} scene: ${sceneHold.length} creatures ahead` };
+  }
+
+  /** §69.1: put the lineup back where it was put, turned as it was, its fields as given, its legs straight. */
+  function holdScene() {
+    for (const h of /** @type {NonNullable<typeof sceneHold>} */ (sceneHold)) {
+      const b = h.body;
+      b.x = h.x;
+      b.y = h.y;
+      b.z = h.z;
+      b.vx = 0;
+      b.vy = 0;
+      b.vz = 0;
+      b.yaw = h.yaw;
+      b.targetYaw = h.yaw;
+      b.timer = 99;
+      if (!h.fields.trapped) b.walkPhase = Math.PI;
+      Object.assign(b, h.fields);
+    }
+  }
+
+  /**
+   * §106 `?scene=fishing`: a round pond FISHING_SCENE.radius cells across its middle and FISHING_SCENE.deep deep, on
+   * level grass FISHING_SCENE.ahead m ahead, two fish in it; with the Fishing Rod in hand the float is cast to its middle.
+   * @param {number} fx @param {number} fz  the way the player looks @param {number} feet
+   * @returns {{ ok: boolean, message: string }}
+   */
+  function buildFishingScene(fx, fz, feet) {
+    const w = /** @type {World} */ (world);
+    const S = FISHING_SCENE;
+    const [cq, cr] = worldToHex(player.x + fx * S.ahead, player.z + fz * S.ahead);
+    const [pq, pr] = worldToHex(player.x, player.z);
+    /** level a disc of grass round (q0, r0): open air above the feet, dirt under */
+    const level = (q0, r0, radius) => {
+      for (let q = q0 - radius; q <= q0 + radius; q++) {
+        for (let r = r0 - radius; r <= r0 + radius; r++) {
+          if (hexLength(q - q0, r - r0) > radius) continue;
+          for (let y = feet; y <= feet + 6 && y < WORLD_HEIGHT; y++) if (w.getBlock(q, y, r) !== BLOCK.AIR) w.setBlock(q, y, r, BLOCK.AIR);
+          w.setBlock(q, feet - 1, r, BLOCK.GRASS_BLOCK);
+          for (let y = feet - 2; y >= Math.max(1, feet - 8); y--) {
+            if (isSolid(w.getBlock(q, y, r))) break;
+            w.setBlock(q, y, r, BLOCK.DIRT);
+          }
+        }
+      }
+    };
+    level(pq, pr, 2);
+    level(cq, cr, S.radius + 3);
+    for (let q = cq - S.radius; q <= cq + S.radius; q++) {
+      for (let r = cr - S.radius; r <= cr + S.radius; r++) {
+        if (hexLength(q - cq, r - cr) > S.radius) continue;
+        for (let y = feet - S.deep; y <= feet - 1; y++) w.setBlock(q, y, r, BLOCK.WATER);
+        w.setBlock(q, feet - S.deep - 1, r, BLOCK.SAND);
+      }
+    }
+    const swim = feet - 1 + 0.875 - FISH_UNDER;
+    for (const [dq, dr] of [[-1, 1], [1, 0]]) {
+      const [x, z] = hexToWorld(cq + dq, cr + dr);
+      animals.spawn('fish', x, swim, z, 0, dq < 0 ? 'f' : 'm');
+    }
+    if (heldItemKey() === ROD_KEY) {
+      const [x, z] = hexToWorld(cq, cr);
+      fishing.cast(x, feet + 1.2, z, 0, -1, 0);
+    }
+    return { ok: true, message: `the fishing scene: a pond ${S.deep} cells deep ahead, two fish${fishing.out ? ', the float cast' : ''}` };
+  }
+
+  /**
+   * §105 `?scene=plants`: one of every plant (diagnostics.plantSceneCells) in rows ahead — the first `?ahead=` m away —
+   * each on a column of level ground at the player's feet (cleared above, its own soil on top, filled under it), a
+   * strip of open ground round them.
+   * @param {number} fx @param {number} fz  the way the player looks @param {number} feet
+   * @returns {{ ok: boolean, message: string, named: Record<string, [number, number, number]> }}
+   */
+  function buildPlantScene(fx, fz, feet) {
+    const w = /** @type {World} */ (world);
+    const cells = plantSceneCells(player.x, player.z, fx, fz, params.ahead ?? PLANT_SCENE_AHEAD);
+    /** @type {Map<string, number>} every column the scene levels (the plants', the player's and all round them): its soil */
+    const ground = new Map();
+    const [pq, pr] = worldToHex(player.x, player.z);
+    const qs = [pq, ...cells.map((c) => c.q)];
+    const rs = [pr, ...cells.map((c) => c.r)];
+    for (let q = Math.min(...qs) - 3; q <= Math.max(...qs) + 3; q++) {
+      for (let r = Math.min(...rs) - 3; r <= Math.max(...rs) + 3; r++) ground.set(`${q},${r}`, BLOCK.GRASS_BLOCK);
+    }
+    for (const c of cells) ground.set(`${c.q},${c.r}`, c.under);
+    for (const [key, soil] of ground) {
+      const [q, r] = key.split(',').map(Number);
+      for (let y = feet; y <= feet + 8 && y < WORLD_HEIGHT; y++) if (w.getBlock(q, y, r) !== BLOCK.AIR) w.setBlock(q, y, r, BLOCK.AIR);
+      w.setBlock(q, feet - 1, r, soil);
+      for (let y = feet - 2; y >= Math.max(1, feet - 8); y--) {
+        if (isSolid(w.getBlock(q, y, r))) break;
+        w.setBlock(q, y, r, BLOCK.DIRT);
+      }
+    }
+    /** @type {Record<string, [number, number, number]>} */
+    const named = {};
+    for (const c of cells) {
+      w.setBlock(c.q, feet, c.r, c.id);
+      named[getBlockDef(c.id).name] = [c.q, feet, c.r];
+    }
+    sceneNamed = named;
+    return { ok: true, message: `the plant scene: ${cells.length} plants in rows ahead`, named };
   }
 
   function enterPlaying() {
@@ -6556,6 +7629,9 @@ export function boot(win, doc) {
     setOnServer(false);
     remotes.clear();
     remoteRenderer.clear();
+    sceneZombies = null; // §104: staged figures belong to the world they were staged in
+    sceneWatcher = null;
+    scenePhantom = null;
     if (runner) runner.reset();
     runner = null;
     ctx = null;
@@ -6574,6 +7650,8 @@ export function boot(win, doc) {
     zombieTarget = null;
     hurtFlash = 0;
     hud.setHurtFlash(0);
+    resetSpyglass(); // §103: no eyepiece, slowed look or last power carried into the next world
+    resetFishing(); // §106
     watcher.clear();
     clearCircuits();
     clearSurvival();
@@ -6866,10 +7944,16 @@ export function boot(win, doc) {
         closeConsole();
       },
       onTouch: () => onSleepClick(),
+      // §103: the Zoom button keeps the glass up, a tap a power (2×, 4×, 8×), then puts it down (a tablet has no wheel);
+      // it is shown only while a Spyglass is carried
+      onZoom: () => {
+        if (spyglassCarried()) spyglass.button();
+        else showHint(SPYGLASS_NEEDED);
+      },
     })
     : null;
   /** touch: what the controls are told each frame (reused) */
-  const touchView = { playing: false, back: false, survival: false, flying: false };
+  const touchView = { playing: false, back: false, survival: false, flying: false, zoom: false, zoomOn: false };
 
   // Clicking the canvas while playing without the lock (a failed/expired request) re-requests it.
   const onCanvasMouseDown = () => {
@@ -6961,6 +8045,8 @@ export function boot(win, doc) {
         survivalRight(mouse, dt);
         return null;
       }
+      if (glassPlaceStep(mouse)) return 'glass'; // §103
+      if (drawStep(mouse, dt)) return 'draw'; // §100
       return rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);
     },
     /** Let go of the right mouse button. */
@@ -7699,7 +8785,8 @@ export function boot(win, doc) {
     }
 
     const mouse = controls.consumeMouse();
-    if (mouse.wheel !== 0) selectSlot(wheelSlot(selected, mouse.wheel));
+    // §103: while the Spyglass is up the wheel steps its power (2×, 4×, 8×); else it picks the hotbar slot
+    if (mouse.wheel !== 0 && !spyglass.wheel(mouse.wheel)) selectSlot(wheelSlot(selected, mouse.wheel));
 
     const rPressed = controls.consumePressed('KeyR');
     const shift = controls.isDown('ShiftLeft') || controls.isDown('ShiftRight');
@@ -7737,7 +8824,9 @@ export function boot(win, doc) {
     } else {
       leftMouseStep(leftHold, mouse, dt, leftEnv); // a press breaks (or snuffs a burning keg); held, it repeats
       // §4.9: right-click operates a control (Shift: places against it), with the control latch; else it places.
-      rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);
+      // §100: with a spear or a bow in hand it draws instead (and throws when let go); §103 the Spyglass looks
+      if (!glassPlaceStep(mouse) && !drawStep(mouse, dt)) rightMouseStep(controlLatch, mouse, hit, shift, dt, latchEnv);
+      else if (!mouse.right) controlLatch.release();
       if (mouse.middlePressed) pickTargeted();
     }
 
@@ -7768,12 +8857,14 @@ export function boot(win, doc) {
       stepFauna(dt); // §88: the live and the dormant animals, births, wanderers
       stepPigs(dt);
       stepAnimals(dt);
+      if (sceneHold) holdScene(); // §69.1: the lineup stays put for its screenshot
       stepZombies(dt);
       stepWatcher(dt);
       stepBlockPhysics(dt);
       stepCampfires(dt);
       stepCircuits(dt); // v0.10 (§6.6 step 10): the circuit tick and the infall
     }
+    stepFishing(dt); // §106: the line, and the fish that come to it (none on a server: its fish are the server's)
     if (sceneCharge && fxTime >= sceneCharge.at) {
       const c = sceneCharge;
       sceneCharge = null;
@@ -7858,11 +8949,15 @@ export function boot(win, doc) {
     else fallingRenderer.setFlash(flash.x, flash.y, flash.z, flash.intensity);
     blackHoles.cameraFx(player.x, eyeY, player.z, camFx);
     particles.update(state === STATE.PLAYING && !(blockPhysics && blockPhysics.paused) ? dt : 0);
+    // §103: the Spyglass, looked through while Z (or Place with it in hand) is held or the zoom command keeps it up
+    stepSpyglass(dt);
     // §91: the camera at the eye, or on the third-person boom from it; then the avatar's model or its arm
     const cam = viewCamera(dt, eyeY);
     renderer.setCamera(cam.x + shake[0] + camFx.sx, cam.y + shake[1] + camFx.sy, cam.z + shake[2] + camFx.sz, cam.yaw, cam.pitch);
-    fov = easeFov(fov, player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV, dt);
-    renderer.setFov(fov + camFx.fov);
+    const wantFov = player.sprinting && state === STATE.PLAYING ? SPRINT_FOV : FOV;
+    // §100: a draw steadies the aim: the view closes in a little, DRAW_ZOOM of it at full draw
+    fov = easeFov(fov, draw.on ? wantFov * (1 - DRAW_ZOOM * drawShare()) : wantFov, dt);
+    renderer.setFov(spyglass.fov(fov) + camFx.fov); // §103: narrowed by the glass's power
     drawAvatar(dt, live, eyeY);
     if (net || remoteRenderer.count() > 0) remoteRenderer.sync(remotes, netNow(), dt); // the other players, live under menus too
     renderCircuitsAndVortices(dt, eyeY, live);
@@ -7879,6 +8974,7 @@ export function boot(win, doc) {
       zombieDraw.length = 0;
       for (const z of zombies.list) zombieDraw.push(z);
       infall.ghosts('zombie', zombieDraw);
+      if (sceneZombies) for (const z of sceneZombies) zombieDraw.push(z);
       pigRenderer.sync(pigDraw);
       zombieRenderer.sync(zombieDraw, fxTime, 1 - sky.daylight);
       animalDraw.length = 0;
@@ -7888,9 +8984,9 @@ export function boot(win, doc) {
     } else {
       animalRenderer.sync(animals.list);
       pigRenderer.sync(pigs.list);
-      zombieRenderer.sync(zombies.list, fxTime, 1 - sky.daylight);
+      zombieRenderer.sync(sceneZombies ? zombies.list.concat(sceneZombies) : zombies.list, fxTime, 1 - sky.daylight);
     }
-    watcherRenderer.sync(watcher.figure, player.x, eyeY, player.z, fxTime);
+    watcherRenderer.sync(sceneWatcher ?? watcher.figure, player.x, eyeY, player.z, fxTime);
     hurtFlash = Math.max(0, hurtFlash - dt / HURT_FLASH_S);
     hud.setHurtFlash(hurtFlash);
     sleepFrame(dt, live, eyeY); // §87: the stage lines, what tired eyes see, the tiredness reading, the dark of sleep
@@ -7904,8 +9000,15 @@ export function boot(win, doc) {
       // §9.9: the skewers, the food on them and the pot in the embers (fire spots, Survival only hold anything).
       campfireRenderer.sync(near, fxTime, dt, spotsViewFn);
     }
+    // §101: the pennants, their flags in the wind
+    if (pennants.size > 0 || pennantRenderer.count() > 0) {
+      const nearP = pennants.nearest(player.x, eyeY, player.z, PENNANT_MODEL_RANGE, PENNANT_MAX_MODELS)
+        .filter((n) => world.hasChunkAtCell(n.pennant.q, n.pennant.r));
+      pennantRenderer.sync(nearP, windNow(), fxTime, pennantHeight);
+    }
+    syncFishing(fxTime); // §106
     computeSky(time, sky);
-    const shownSky = stepWeather(dt, live, eyeY); // §84: the rain, the calendar; the sky greyed while it rains
+    const shownSky = stepWeather(dt, live, eyeY, cam.yaw); // §84: the rain, the calendar; the sky greyed while it rains
     stepWorldSounds(dt, live); // v0.16 (§82): footsteps, movement and the ambience
     renderer.setSky(shownSky);
     const camUnder = cameraUnderwater(cam); // §91: where the camera is (the eye in first person)
@@ -7914,6 +9017,7 @@ export function boot(win, doc) {
     // §9.8: the survival HUD — hex hotbar from the pack (no per-frame copy), vitals bookends, the action ring, the job chip.
     hud.setSurvivalVisible(SV);
     hud.setHotbarStacks(SV ? pack.slots : null, selected, pack.version);
+    noteHad(); // §94.4
     if (SV) {
       const v = survival.vitals;
       vitalsView.health = v.health;
@@ -7928,7 +9032,7 @@ export function boot(win, doc) {
       hud.setActionProgress(state === STATE.PLAYING ? actionProgress() : null);
       hud.setJobChip(craftQueue.chipText());
     } else {
-      hud.setActionProgress(null);
+      hud.setActionProgress(/** @type {string} */ (state) === STATE.PLAYING ? drawRing() : null); // §100: Creative draws too
       hud.setJobChip(null);
     }
     hud.setTargetHint(state === STATE.PLAYING ? targetHintText() : null);
@@ -8055,6 +9159,8 @@ export function boot(win, doc) {
       touchView.back = st === STATE.PICKER || st === STATE.CONSOLE;
       touchView.survival = survival.inSurvival;
       touchView.flying = Boolean(player && player.flying);
+      touchView.zoom = spyglassCarried(); // §103: the Zoom button
+      touchView.zoomOn = spyglass.locked;
       touchUI.update(touchView);
     }
 
