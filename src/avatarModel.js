@@ -25,7 +25,7 @@ import {
 import { mix, shade, fbm, hash2, makeRng } from './paintKit.js';
 import {
   STYLES, DENSITY, perimeter, Skin, shapes, seg, len, KID_HEAD, headGeo, addHead, headSkin, hairMass, hairline, frontness,
-  lumps, clump, CAP_YAWS, CAP_RINGS, lockGeo, hairCentre, rotateAbout, norm, cross,
+  lumps, clump, capYaws, CAP_RINGS, lockGeo, hairCentre, rotateAbout, norm, cross,
 } from './figureKit.js';
 
 /** The avatar's own head profile (avatars.js `head.shape`: Caelan round, Brayden a long oval), else the kid's. */
@@ -115,7 +115,7 @@ function hairPoofy(add, H, tall) {
 function hairSilky(add, H, curtain) {
   /** @type {import('./figureKit.js').Cap} */
   const cap = { rim: hairline([[0, -26], [45, -14], [80, 8], [100, 9], [130, 20], [160, 25], [180, 26]]), off: (yaw, pitch, s) => 0.014 + 0.018 * s };
-  add(hairMass(H, headShape(H), { yaws: CAP_YAWS, rim: cap.rim, off: cap.off, rings: CAP_RINGS }), 'hairCap');
+  add(hairMass(H, headShape(H), { yaws: capYaws(H), rim: cap.rim, off: cap.off, rings: CAP_RINGS }), 'hairCap');
   const L = curtain ? 1 : 0;
   const panel = [0.55, 1, 1, 0.9, 0.6, 0];
   for (let k = 0; k < 4; k++) {
@@ -142,7 +142,7 @@ function hairSilky(add, H, curtain) {
 function hairLongWavy(add, H, ponytail) {
   /** @type {import('./figureKit.js').Cap} */
   const cap = { rim: hairline([[0, -28], [45, -16], [80, -2], [100, -1], [130, 18], [160, 25], [180, 26]]), off: (yaw, pitch, s) => 0.016 + 0.024 * s };
-  add(hairMass(H, headShape(H), { yaws: CAP_YAWS, rim: cap.rim, off: cap.off, rings: CAP_RINGS }), 'hairCap');
+  add(hairMass(H, headShape(H), { yaws: capYaws(H), rim: cap.rim, off: cap.off, rings: CAP_RINGS }), 'hairCap');
   for (let k = -1; k <= 1; k++) {
     add(clump(H, headShape(H), cap, [[180 + 10 * k, 86], [180 + 13 * k, 60, 0.006], [180 + 17 * k, 38, 0.01], [180 + 19 * k, 25, 0.006]],
       { w: 0.12, profile: [0.55, 1, 0.9, 0] }), 'hairLock');

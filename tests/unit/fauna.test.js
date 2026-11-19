@@ -1017,17 +1017,44 @@ describe('fauna — the models', () => {
     return [0, 1, 2].map((a) => hi[a] - lo[a]);
   };
   /** the mean colour (0..255 rgb) the atlas paints a part with, over its vertices' uvs */
+  /**
+   * A part's main colour as the atlas paints it: the mean of its triangles' texels, each triangle sampled across its
+   * face and weighed by its size on the model (§107: not at its corners — a block has few, and they sit on the seams).
+   */
   const meanColour = (kind, part) => {
     const g = models.kinds[kind].parts[part];
     const { width: w, height: h, data } = models.image;
     const sum = [0, 0, 0];
-    const n = g.uvs.length / 2;
-    for (let v = 0; v < n; v++) {
-      const x = Math.min(w - 1, Math.floor(g.uvs[v * 2] * w));
-      const y = Math.min(h - 1, Math.floor(g.uvs[v * 2 + 1] * h));
-      for (let c = 0; c < 3; c++) sum[c] += data[(y * w + x) * 4 + c] / n;
+    let total = 0;
+    const P = (i) => [g.positions[i * 3], g.positions[i * 3 + 1], g.positions[i * 3 + 2]];
+    const U = (i) => [g.uvs[i * 2], g.uvs[i * 2 + 1]];
+    for (let t = 0; t < g.index.length; t += 3) {
+      const [a, b, c] = [g.index[t], g.index[t + 1], g.index[t + 2]];
+      const [pa, pb, pc] = [P(a), P(b), P(c)];
+      const e1 = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+      const e2 = [pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]];
+      const area = Math.hypot(e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]) / 2;
+      if (!(area > 0)) continue;
+      const [ua, ub, uc] = [U(a), U(b), U(c)];
+      const N = 6;
+      let n = 0;
+      const col = [0, 0, 0];
+      for (let i = 0; i < N; i++) {
+        for (let j = 0; j < N - i; j++) {
+          const s1 = (i + 1 / 3) / N;
+          const s2 = (j + 1 / 3) / N;
+          const u = ua[0] + (ub[0] - ua[0]) * s1 + (uc[0] - ua[0]) * s2;
+          const v = ua[1] + (ub[1] - ua[1]) * s1 + (uc[1] - ua[1]) * s2;
+          const x = Math.min(w - 1, Math.max(0, Math.floor(u * w)));
+          const y = Math.min(h - 1, Math.max(0, Math.floor(v * h)));
+          for (let k = 0; k < 3; k++) col[k] += data[(y * w + x) * 4 + k];
+          n++;
+        }
+      }
+      for (let k = 0; k < 3; k++) sum[k] += (col[k] / n) * area;
+      total += area;
     }
-    return sum;
+    return sum.map((v) => v / (total || 1));
   };
 
   it('one trunk and one head each, legs by kind (four, a bird\'s two, a fish\'s none), a stag\'s head antlered; hurt on the red twins', () => {

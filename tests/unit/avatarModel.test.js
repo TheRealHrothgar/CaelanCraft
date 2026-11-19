@@ -65,7 +65,7 @@ describe('the avatars\' models', () => {
   it('one geometry per bone: hips, torso, head, each leg, upper arm and forearm (long hair has its own back-hair bone)', () => {
     for (const m of models) {
       for (const b of ['hips', 'torso', 'head', 'legL', 'legR', 'upperL', 'upperR', 'foreL', 'foreR']) {
-        expect(m.bones[b] && triangleCount(m.bones[b]), `${m.id} ${b}`).toBeGreaterThan(20);
+        expect(m.bones[b] && triangleCount(m.bones[b]), `${m.id} ${b}`).toBeGreaterThanOrEqual(16); // §107: a plain block is 16
       }
       expect(!!m.bones.hairBack, m.id).toBe(m.id === 'annabelle');
       // every part hangs from the bone it belongs to: the hair on the head, the shoes on the legs, the hands on the forearms
@@ -76,10 +76,10 @@ describe('the avatars\' models', () => {
     }
   });
 
-  it('stays within budget (about 1.4k–2.1k triangles, one 256² atlas each) with valid uvs and unit normals', () => {
+  it('stays within budget (about 1.1k–1.6k triangles in blocks, §107; one 256² atlas each) with valid uvs and unit normals', () => {
     for (const m of models) {
-      expect(m.tris, m.id).toBeGreaterThan(1200);
-      expect(m.tris, m.id).toBeLessThan(2300);
+      expect(m.tris, m.id).toBeGreaterThan(1000);
+      expect(m.tris, m.id).toBeLessThan(1800);
       expect(m.atlas).toEqual([AVATAR_ATLAS, AVATAR_ATLAS]);
       expect(m.image.data.length).toBe(AVATAR_ATLAS * AVATAR_ATLAS * 4);
       expect(m.texels).toBeGreaterThan(20000);

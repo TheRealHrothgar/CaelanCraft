@@ -2,7 +2,7 @@
 // never loads it (`npm run build` builds index.html only).
 //
 // Two columns side by side on a sky-and-grass stage lit the way the game lights its mobs (the sun and the sky's
-// hemisphere light of computeSky, Lambert materials): TODAY (the game's own renderers and skins) and A: HEX-FACETED,
+// hemisphere light of computeSky, Lambert materials): TODAY (the game's own renderers and skins) and the pilot's column (since §107 both are CHISELLED BLOCKS),
 // the chosen look (pilotModels.js, pass 2). Each row is one family, seen from a 3/4 front view, from the side and at game
 // distance (a crop of a 900-pixel-tall view at the game's field of view, one pixel a pixel); the hand row is the
 // first-person view at rest and mid-swing. `?row=avatar|zombie|animal|plant|hand` shows one row large, `?row=all` (the
@@ -230,7 +230,7 @@ const AVATAR_X = [-0.9, 0, 0.9];
 const ROWS = {
   avatar: {
     title: 'Avatars — Caelan, Brayden, Annabelle',
-    note: 'faceted heads with a face plane; hair C2 (a tousled mop), B1 (a side sweep), A1 (long waves); ?row=hair for all six options',
+    note: 'chiselled blocks (§107): a flat face, a tapering jaw; hair C2 (a tousled mop), B1 (a side sweep), A1 (long waves); ?row=hair for all six options',
     target: [0, 0.9, 0], dist: 5.0, far: 9, az: 0.42, second: 'back',
     today() {
       const scene = stage({ blocks: [[-2.2, 1.6]] });
@@ -261,7 +261,7 @@ const ROWS = {
   },
   zombie: {
     title: 'Zombies — a walker, a runner and an alpha (the game\'s renderer, phase 2)',
-    note: 'left: after someone; right: idle, the runner shielding its eyes from a light — hex-faceted, gaunt, ragged clothes, nothing red',
+    note: 'left: after someone; right: idle, the runner shielding its eyes from a light — chiselled blocks, gaunt, ragged clothes, nothing red',
     target: [0.05, 0.95, -0.1], dist: 5.4, far: 9,
     today() {
       return zombieScene([
@@ -354,7 +354,7 @@ function zombieScene(list) {
 /** Close looks (not in the 'all' view): ?row=fist (the fist in its own frame), ?row=head (the four heads). */
 const DEBUG_ROWS = {};
 DEBUG_ROWS.head = {
-  title: 'Heads, close up — Caelan, Brayden, Annabelle, the walker', note: 'the faceted head, its face plane, the hair',
+  title: 'Heads, close up — Caelan, Brayden, Annabelle, the walker', note: 'the block head, its flat face, the hair',
   target: [0, 1.4, 0], dist: 1.2, far: 4, grid: true,
   today: () => ROWS.avatar.today(),
   pilot: (style) => ROWS.avatar.pilot(style),
@@ -375,7 +375,7 @@ DEBUG_ROWS.fist = {
 };
 
 DEBUG_ROWS.zhead = {
-  title: 'Zombie heads, close up — the walker, the runner, the alpha', note: 'gaunt faceted heads, a heavy brow over the slits',
+  title: 'Zombie heads, close up — the walker, the runner, the alpha', note: 'gaunt block heads, a heavy brow over the slits',
   target: [0, 1.6, 0], dist: 1.2, far: 4, zgrid: true,
   today: () => ROWS.zombie.today(),
   pilot: () => ROWS.zombie.pilot('hex'),
@@ -705,9 +705,9 @@ function layoutFauna(top) {
 }
 
 const keys = DEBUG_ROWS[ROW] ? [ROW] : ROW === 'all' || !ROWS[ROW] ? Object.keys(ROWS) : [ROW];
-titleEl.innerHTML = ROW === 'fauna' ? 'Caelancraft — the animals, hex-faceted (phase 3)<span>the game\'s own animalRenderer and pigRenderer</span>' : ROW === 'hair'
+titleEl.innerHTML = ROW === 'fauna' ? 'Caelancraft — the animals, chiselled blocks (§107)<span>the game\'s own animalRenderer and pigRenderer</span>' : ROW === 'hair'
   ? 'Caelancraft art pilot, pass 3 — hair options<span>silhouette first: Caelan a poofy mass; Brayden and Annabelle a cap and a few big clumps</span>'
-  : 'Caelancraft art-direction pilot, pass 3<span>Today · A: Hex-faceted, the chosen look — hair rethought, the far bush leafy</span>';
+  : 'Caelancraft art-direction gallery<span>Today · chiselled blocks (§107), the kids\' pick — the painted textures kept</span>';
 const top0 = 34;
 const rowH = (H - top0) / keys.length;
 if (ROW === 'hair') layoutHair(top0);

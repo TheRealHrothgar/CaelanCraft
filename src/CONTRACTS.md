@@ -104,9 +104,9 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/zombieRenderer.js` | three, the zombies drawn instanced, one mesh per part and kind, their poses and glow (§39.2, §74, §86, §104) | zombies, characters | `tests/unit/zombieRenderer.test.js` |
 | `src/zombieModel.js` | PURE, the three zombies' hex-faceted models part by part, their painted atlases and glow images (§104) | characters | `tests/unit/zombieModel.test.js` |
 | `src/avatars.js` | PURE, the avatars as data, the avatar preference (§91) | avatars | `tests/unit/avatars.test.js` |
-| `src/modelKit.js` | PURE, the model kit: closed faceted solids, transforms, merges, atlas uvs (§91.2) | characters | `tests/unit/modelKit.test.js` |
+| `src/modelKit.js` | PURE, the model kit: closed faceted solids, the shape language (chiselled blocks, §107), transforms, merges, atlas uvs (§91.2) | characters | `tests/unit/modelKit.test.js` |
 | `src/paintKit.js` | PURE, the paint kit: seeded RGBA painters and a padded atlas (§91.2) | characters | `tests/unit/paintKit.test.js` |
-| `src/figureKit.js` | PURE, what figures share: the Skin atlas, the hex shapes, faceted heads, hair (§91.2) | characters | `tests/unit/avatarModel.test.js` |
+| `src/figureKit.js` | PURE, what figures share: the Skin atlas, the shapes, heads, hair fitted to a block skull (§91.2, §107) | characters | `tests/unit/avatarModel.test.js` |
 | `src/avatarModel.js` | PURE, the avatars' hex-faceted models bone by bone, their atlases, the first-person hand (§91.2, §91.4) | characters | `tests/unit/avatarModel.test.js` |
 | `src/fishing.js` | PURE, the Fishing Rod: the cast, the float, a fish that comes, nibbles and bites, the hook; the spear's shallow-water limit (§106) | hunting | `tests/unit/fishing.test.js` |
 | `src/fishingRenderer.js` | three, the rod's line and its float (§106) | hunting | `tests/unit/fishing.test.js` |
@@ -4195,6 +4195,10 @@ z, yaw)`, `remove`, `update(dt, world) → events`, `wound`, `feed`, `shear`, `m
 
 ### 69.1 The models, hex-faceted (phase 3 of docs/DESIGN-characters.md) — `src/animalModels.js` (PURE), `src/animalRenderer.js`, `src/pigRenderer.js` (three), `src/paintKit.js`, `src/diagnostics.js`, `src/main.js`, `src/gallery.js`, `src/pilotModels.js`
 
+> **§107 amendment:** the figures are CHISELLED BLOCKS now: every hexagonal column, faceted head, pyramid, sweep and
+> card described below has a rectangular cross-section (its rings, tapers and points kept), and the triangle counts are
+> §107.4's. The painted atlases, the rigs, the poses and the renderers are unchanged.
+
 Amends §30's and §69's models, §76.4's and §88.4's "Models" (the boxes coloured per vertex are gone; `zombieRenderer`'s
 `boxesGeometry` is no longer used by the animals). The look is §91's **A, hex-faceted**; only the look changed: the
 colliders, heights, the pig's head box, the AI, the strides, the rear-up and the wings are as they were.
@@ -7169,6 +7173,10 @@ id, never throws, returns whether it did. Main passes the store the Ambience swi
 
 ### 91.2 The models (`avatarModel.js`; the kit: `figureKit.js`, `modelKit.js`, `paintKit.js` — PURE)
 
+> **§107 amendment:** the figures are CHISELLED BLOCKS now: every hexagonal column, faceted head, pyramid, sweep and
+> card described below has a rectangular cross-section (its rings, tapers and points kept), and the triangle counts are
+> §107.4's. The painted atlases, the rigs, the poses and the renderers are unchanged.
+
 - **The kit.** `modelKit.js` makes closed, outward-wound solids in typed arrays (n-gon lofts, prisms and pyramids — six sides,
   flat facets — chamfered boxes, wedges, sweeps along a curve, transforms, merges, atlas uvs). `paintKit.js` paints RGBA
   pictures from a seed (cloth, denim, knit, skin, hair strands, stone; seams, hems, stitches; faces; §69.1: a single
@@ -7180,7 +7188,7 @@ id, never throws, returns whether it did. Main passes the store the Ambience swi
   `head.shape` — `avatars.ROUND_HEAD` for Caelan, a broad face with a wide soft jaw; `avatars.OVAL_HEAD` for Brayden, a long
   oval tapering to a narrower chin; Annabelle keeps `KID_HEAD` — and the head, the hair masses, caps and clumps are all
   laid on that profile, so `hairGaps` stays 0) and the hair (`hairMass` a mass or cap laid off the head
-  so the skull never shows, `clump` a swept ribbon lying on it, `hairline`, `CAP_YAWS`, `CAP_RINGS`).
+  so the skull never shows, `clump` a swept ribbon lying on it, `hairline`, `capYaws` (§107: was `CAP_YAWS`), `CAP_RINGS`).
 - `paintAvatar(def)` → the `Skin`: the same bytes for the same entry; `AVATAR_ATLAS` **256**.
 - `buildAvatarModel(def, { cut?, parts? })` → `{ id, cut, bones, rig, fp, image, tris, hairTris, texels, atlas }`. `bones`: ONE
   geometry per bone (`AVATAR_BONES`), each in its joint's frame and scaled: `hips` (the seat; a skirt), `torso` (with the
@@ -8918,6 +8926,10 @@ none`; the power sits low inside it (36vmin under the middle, above the hotbar).
 
 ## 104. Characters, phase 2: the zombies, the Watcher and the figure, hex-faceted — `src/zombieModel.js`, `src/watcherModel.js` (PURE), `src/zombieRenderer.js`, `src/watcherRenderer.js`, `src/phantomRenderer.js` (three), `src/lightShader.js`, `src/avatarRenderer.js`, `src/pilotModels.js`, `src/gallery.js`, `src/diagnostics.js`, `src/types.js`, `src/main.js`, `README.md`
 
+> **§107 amendment:** the figures are CHISELLED BLOCKS now: every hexagonal column, faceted head, pyramid, sweep and
+> card described below has a rectangular cross-section (its rings, tapers and points kept), and the triangle counts are
+> §107.4's. The painted atlases, the rigs, the poses and the renderers are unchanged. The Watcher keeps its hex bands.
+
 Amends §39.2, §40.4, §61, §74, §86 (`SHIELD_ARM.twist`) and §87.5; follows §91 (docs/DESIGN-characters.md, phase 2). Only the look changes: the zombies'
 colliders, heights, ray targets, behaviour, kinds and animation (`ARMS`, the lean, the limp, the lurch, the twitch, the shield,
 dormancy, the ghosts' `renderScale` / `renderSpin`, the hurt and burn twins and their timing) are as before — only the hit
@@ -9421,4 +9433,72 @@ spear catches a fish: now a spear in shallow water, or the rod in any) and §100
   land, the bite from start to hook, the escape and the nibble pulled, a darting fish never comes, the quiet hint, the snap
   and a pond let dry, the line's sag; the spear in a stream and in a deep pond, the dive and the rise, a fish steered by
   `floatAt`; main's wiring).
+
+## 107. Chiselled blocks: the figures' shape language — `src/modelKit.js`, `src/figureKit.js`, `src/avatarModel.js`, `src/zombieModel.js`, `src/animalModels.js`, `src/pilotModels.js`, `src/plantKit.js`, `src/watcherModel.js`, `src/gallery.js`
+
+The user (2026-11-19): "My kids voted and they like the blocky graphics better than the tessellated polygons/hexagonal
+prisms used to build the characters and mobs. Is there any way we can go back to cubism while maintaining the newly
+developed textural detail." Shown three looks side by side over the same painted atlases — the hex-faceted one, CHISELLED
+BLOCKS (rectangular cross-sections, the tapers kept) and plain boxes — they chose **chiselled blocks**. Amends §69.1,
+§91.2, §91.4 and §104 (the shapes; their counts) and docs/DESIGN-characters.md §2. Nothing else moves: the atlases and
+every painter, the rigs and bones, the poses, the renderers and their draw calls, the held items, the light.
+
+### 107.1 The language (`modelKit.js`)
+
+- `basePolygon` is where every `loft`, `prism`, `pyramid`, `sweep` and `wrapU` takes its cross-section. In the **'block'**
+  language (the game's, the default) it is a rectangle square to the part's axes: half-sides `BLOCK_K` 0.9 × (rx, rz)
+  (about the area of the hexagon it replaces), whatever `sides`, `phase` or `corners` the part asks for; five points — the
+  seam's, in the middle of the back, and the four corners — so a strip still starts at the back (u 0), has the middle of the
+  front at u 0.5 and the flanks' middles at 0.25 and 0.75: **every painted strip wraps a block as it wrapped a column**
+  (a shirt's buttons down the front, a face on the front face). A part's rings are kept: it tapers, swells and comes to a
+  point as before (chiselled, not boxed). A plain block is 16 triangles (5 side quads, two caps of 3).
+- `chamferBox` has square edges in blocks (a 0.1 mm chamfer keeps its faces, groups and uvs). `wedge` is unchanged.
+- **'hex'** is each part's own n-gon (the faceted look, kept for a comparison): `setShapeLanguage('block'|'hex')`
+  (RangeError otherwise), `shapeLanguage()`, `withShapeLanguage(s, fn)` (builds in `s`, then back, also after a throw).
+- **`keep: true`** on `loft` / `prism` / `pyramid` / `sweep` / `basePolygon` / `wrapU` is the part's own n-gon whatever the
+  language: **the plants** (`plantKit.js` wraps `loft`) and **the Hollow Watcher** (`watcherModel.js`: its hex bands, its
+  posts, its crystal, its smoke) keep theirs; the pilot's old plants are built in 'hex' (`pilotModels.js`). §105 is not
+  amended: the user's vote was on characters and mobs.
+- A loft still needs two rings and three sides or corners (RangeError), in either language.
+
+### 107.2 Heads and hair on a block skull (`figureKit.js`)
+
+- The head is its ring profile (`KID_HEAD`, `ROUND_HEAD`, `OVAL_HEAD`, the zombies') over a rectangle: a flat face, flat
+  flanks, a jaw that narrows. `headSkin` paints the face where it did (the front, by `wrapU`); its strip is at most
+  `HEAD_STRIP_MAX` 250 px round (a block is longer round than a 256² atlas is wide at DENSITY.head). The ears are rooted
+  0.004 inside the head's flank at their height (the polygon's reach × the ring's width there).
+- A block's skull has four sharp edges, and they do not stand at one yaw all the way up (its rings narrow and shift).
+  `headCornerYaws(H)` are a head's own corners (degrees round from the back) in the kit's language; `capYaws(H)` a cap's
+  points: straight behind, each corner, halfway between each two (replaces the constant `CAP_YAWS`); `massYaws(H,
+  around)` as many points as asked for, the nearest to each corner moved onto it (`hairMass`'s default). In blocks
+  `hairMass` moves each corner point, ring by ring, onto the skull's edge at that ring's pitch (`skullEdgeYaw`: the yaw
+  within 25° at which the head reaches farthest; kept from the ring below where there is no edge — the flat top), and
+  stands it `EDGE_CLEAR` 0.004 farther off. So no edge of the skull shows: `hairGaps` and `zombieHairGaps` are 0 for
+  every cut and kind.
+- A `clump` is a slab `CLUMP_THICK` 0.7 of its `t` thick (a block is as thick at its edges as in its middle), so the
+  avatars stand as tall as before to within 5 mm (§91.1's heights are unchanged).
+- The zombies' caps use `capYaws(H)` and rings [0, 0.1, 0.2, 0.3, 0.4, 0.55, 0.78, 1]; the walker's hairline arches up
+  over the brow (166° → 32, 180° → 33: on a flat forehead a dip in the middle folds the rim).
+
+### 107.3 The animals (`animalModels.js`)
+
+- Trunks, legs, heads, horns, antlers, tails, manes and feathers are blocks and square-section sweeps; a feather or an
+  ear card is a thin rectangle. `lumpy` (the fleece's lumps) does nothing in blocks: a fleece is a plain block and the
+  wool is its paint. The fish's lying pose is `lie { mid 0.1, up 0.075 }` (a block is wider on its side).
+
+### 107.4 Counts (triangles)
+
+- Avatars: Caelan 1,136, Brayden 1,236, Annabelle 1,546 (hair 382 / 442 / 606); a bone is at least 16. The first-person
+  hand 310.
+- Zombies: walker 877, runner 919, alpha 926 (legs and arms drawn twice).
+- Animals, a whole one: cow 576 (bull 666), sheep 422 (ram 554), horse 550 (tame 698), wolf 438, deer 464 (stag 652),
+  rabbit 339, pheasant 334 (cock 356), turkey 362 (tom 524), bear 424, fish 96, pig 462.
+
+### 107.5 Tests
+
+`tests/unit/modelKit.test.js` (the language: rectangles of BLOCK_K, rings kept, the strip's seam and front, every
+primitive closed and outward in blocks, `keep`, the faceted language asked for and given back; the primitives' own tests
+run in 'hex'), `avatarModel.test.js` and `zombieModel.test.js` (budgets, no hair gap, winding), `avatarRenderer.test.js`
+(the skirt as a block), `animalModels.test.js` (the fish), `fauna.test.js` (a coat's main colour is measured across its
+faces, weighed by their size, not at its corners).
 

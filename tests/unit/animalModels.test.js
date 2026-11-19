@@ -77,7 +77,7 @@ describe('animalModels — the parts', () => {
         if (kind !== 'fish') expect(K.parts[legs], `${kind} ${v} legs`).toBeDefined();
         const tris = variantTriangles(m, kind, v);
         expect(tris, `${kind} ${v}`).toBeLessThanOrEqual(TRI_BUDGET);
-        expect(tris, `${kind} ${v}`).toBeGreaterThan(100);
+        expect(tris, `${kind} ${v}`).toBeGreaterThan(80); // §107: the fish is 96 in blocks
       }
     }
     // the variants the game draws: sex, shorn, tame, young

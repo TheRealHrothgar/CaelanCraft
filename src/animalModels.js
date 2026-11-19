@@ -17,7 +17,7 @@
 // shoulder), a tame animal's tag (a collar, a bell, a ribbon: hung on the head group) and a snare's loop (on a hind leg).
 // `variants` names each bodyVariant's [trunk, head] parts. Nothing here touches the gameplay sizes: the colliders,
 // heights and the pig's head box are animals.js's and pigs.js's.
-import { loft, sweep, pyramid, prism, wedge, transform, merge, mul, translation, rotation, compose, triangleCount, wrapU, bounds } from './modelKit.js';
+import { loft, sweep, pyramid, prism, wedge, transform, merge, mul, translation, rotation, compose, triangleCount, wrapU, bounds, shapeLanguage } from './modelKit.js';
 import { mix, shade, fbm, hash2, makeRng } from './paintKit.js';
 import { perimeter, Skin, seg, len } from './figureKit.js';
 
@@ -76,7 +76,7 @@ export const ANIMAL_RIGS = Object.freeze({
     rear: { y: 0.75, z: 0.48, angle: 1.2, arms: 0.55, swipe: 1.1 },
     head: { pivot: [0, 1.1, -0.66], level: 0.9, graze: -0.35, alert: 0.15 },
   }),
-  fish: Object.freeze({ legs: 0, legH: 0, legW: 0, legX: 0, legZ: [0], swing: 0, wiggle: 0.3, lie: { mid: 0.1, up: 0.062 } }),
+  fish: Object.freeze({ legs: 0, legH: 0, legW: 0, legX: 0, legZ: [0], swing: 0, wiggle: 0.3, lie: { mid: 0.1, up: 0.075 } }),
   // the pig only nods to root: its head must stay inside PIG_HEAD_BOX (pigs.js), the gameplay box a click on its head hits
   pig: Object.freeze({ legH: 0.3, legW: 0.13, legX: 0.16, legZ: [-0.26, 0.32], swing: 0.6, head: { pivot: [0, 0.6, -0.34], level: 0, graze: -0.1, alert: 0.2 } }),
 });
@@ -156,6 +156,7 @@ function polyNormals(P, index) {
  * @param {Geo} g @param {number} amp @param {number} seed @param {number[]} [notch] @returns {Geo}
  */
 function lumpy(g, amp, seed, notch) {
+  if (shapeLanguage() !== 'hex') return g; // the blocky pilot: a fleece is a plain block
   const P = new Float32Array(g.positions);
   const key = (v) => Math.round(v * 1e4);
   /** @type {Map<number, number[]>} each ring's extent (by its height): its middle is the middle of that */
