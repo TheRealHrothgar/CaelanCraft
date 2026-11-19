@@ -42,8 +42,21 @@
  * @property {MeshData|null} opaque
  * @property {MeshData|null} cutout
  * @property {MeshData|null} translucent
+ * @property {MeshData|null} [plantLayer]  the kit models' own geometry (§105.4: drawn with the cutout material, in a
+ *   mesh of its own); present when it drew any
  * @property {number} [plants]     how many kit-model cells it drew (§105: plants, the farm's blocks, litter)
  * @property {number} [plantTris]  their triangles (§105)
+ * @property {number} [plantCards] how many of them have a card of their own (not litter, not the farm's mounds: §105.3)
+ */
+
+/**
+ * @typedef {Object} ChunkPlantData  a chunk's kit models alone (§105.5, mesher.buildChunkPlants), for a change of their
+ *   level of detail: the renderer replaces only the chunk's plant mesh with it.
+ * @property {true} plantsOnly
+ * @property {MeshData|null} plantLayer
+ * @property {number} plants
+ * @property {number} plantTris
+ * @property {number} plantCards
  */
 
 /**

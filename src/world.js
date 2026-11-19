@@ -49,7 +49,7 @@ import {
 import { buildBrickMesh } from './brickmesher.js';
 import { Chunk } from './chunk.js';
 import { createWorldGen } from './worldgen.js';
-import { buildChunkMesh } from './mesher.js';
+import { buildChunkMesh, buildChunkPlants } from './mesher.js';
 import { PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_LOD_CARD } from './plantKit.js';
 import { LightEngine } from './light.js';
 import { normalizeSeed } from './noise.js';
@@ -60,6 +60,7 @@ import { normalizeSeed } from './noise.js';
 /** @typedef {import('./types.js').WorldGen} WorldGen */
 /** @typedef {import('./types.js').EditsJSON} EditsJSON */
 /** @typedef {import('./types.js').ChunkMeshData} ChunkMeshData */
+/** @typedef {import('./types.js').ChunkPlantData} ChunkPlantData */
 
 /**
  * @typedef {Object} WorldOptions
@@ -206,7 +207,11 @@ export class World {
     /** incremented on every successful setBlock (autosave uses it) */
     this.editVersion = 0;
 
-    /** @type {(key: ChunkKey, cq: number, cr: number, meshData: ChunkMeshData) => void} */
+    /**
+     * A chunk's mesh — or, after a change of its plants' level of detail (§105.5), a `plantsOnly` mesh of its kit models
+     * alone, which replaces just those (renderer.setChunkMesh does both).
+     * @type {(key: ChunkKey, cq: number, cr: number, meshData: ChunkMeshData|ChunkPlantData) => void}
+     */
     this.onChunkMesh = (_key, _cq, _cr, _meshData) => {};
     /** @type {(key: ChunkKey) => void} */
     this.onChunkUnload = (_key) => {};
@@ -920,20 +925,30 @@ export class World {
       lazy.length = 0;
     }
 
-    // 2b. §105: chunks whose plants were meshed at another level of detail than their distance now asks for (the player
-    //     crossed a ring) are re-meshed nearest first under PLANT_LOD_BUDGET_MS, at least one per call: no frame hitch.
+    // 2b. §105.5: chunks whose plants were meshed at another level of detail than their distance now asks for (the
+    //     player crossed a ring) have their PLANTS re-meshed (only them: _meshPlants), nearest first under
+    //     PLANT_LOD_BUDGET_MS, at least one per call. Not a chunk beyond the mesh radius (it only waits to unload), and
+    //     not between FAR and CARD for a chunk none of whose kit models has a card (litter, the farm's mounds: the same
+    //     geometry) — its level is just noted.
     const relod = this._lodScratch;
     relod.length = 0;
     for (const chunk of this.chunks.values()) {
       if (!chunk.meshed || chunk.dirty || chunk.plants === 0) continue;
-      if (this._plantLodFor(chunk, chunk.plantLod) !== chunk.plantLod) relod.push(chunk);
+      const want = this._plantLodFor(chunk, chunk.plantLod);
+      if (want === chunk.plantLod) continue;
+      if (hexLength(chunk.cq - pcq, chunk.cr - pcr) > renderDistance) continue;
+      if (chunk.plantCards === 0 && want !== PLANT_LOD_NEAR && chunk.plantLod !== PLANT_LOD_NEAR) {
+        chunk.plantLod = want;
+        continue;
+      }
+      relod.push(chunk);
     }
     if (relod.length > 0) {
       if (relod.length > 1) relod.sort((a, b) => chunkDistSq(a, px, pz) - chunkDistSq(b, px, pz));
       const lodStart = now();
       for (let i = 0; i < relod.length; i++) {
         if (i > 0 && now() - lodStart >= PLANT_LOD_BUDGET_MS) break;
-        this._mesh(relod[i]);
+        this._meshPlants(relod[i]);
         meshed++;
       }
       relod.length = 0;
@@ -1302,6 +1317,7 @@ export class World {
     const meshData = buildChunkMesh(chunk.cq, chunk.cr, this.getChunkData, { plantLod: lod });
     chunk.plantLod = lod;
     chunk.plants = meshData.plants ?? 0;
+    chunk.plantCards = meshData.plantCards ?? 0;
     chunk.dirty = false;
     chunk.lazy = false;
     chunk.coalesce = false;
@@ -1315,6 +1331,21 @@ export class World {
         if (bc !== undefined) bc.dirty = true;
       }
     }
+  }
+
+  /**
+   * §105.5: re-mesh ONLY the kit models of a meshed chunk at the level of detail its distance now asks for
+   * (mesher.buildChunkPlants: no terrain, no water, no light of the neighbours) and hand them over as a `plantsOnly` mesh:
+   * the renderer swaps the chunk's plant mesh and keeps the rest. The chunk stays as meshed as it was (not dirtied).
+   * @param {Chunk} chunk
+   */
+  _meshPlants(chunk) {
+    const lod = this._plantLodFor(chunk, chunk.plantLod);
+    const plantData = buildChunkPlants(chunk.cq, chunk.cr, this.getChunkData, { plantLod: lod });
+    chunk.plantLod = lod;
+    chunk.plants = plantData.plants;
+    chunk.plantCards = plantData.plantCards;
+    this.onChunkMesh(chunk.key, chunk.cq, chunk.cr, plantData);
   }
 
   /** Drop a chunk from both indices, firing onChunkUnload if it had been meshed. */

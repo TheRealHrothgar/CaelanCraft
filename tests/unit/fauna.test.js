@@ -472,7 +472,7 @@ describe('fauna — ground nests', () => {
       if (!chunks.has('0,0')) chunks.set('0,0', makeChunkData());
       return buildChunkMesh(0, 0, makeChunkDataGetter(chunks));
     };
-    const faces = (m) => (m.cutout ? m.cutout.faceCount : 0);
+    const faces = (m) => (m.plantLayer ? m.plantLayer.faceCount : 0); // §105.4: the kit models are a layer of their own
     const none = faces(mesh(B.AIR));
     const empty = faces(mesh(B.GROUND_NEST_EMPTY)) - none;
     const full = faces(mesh(B.GROUND_NEST)) - none;

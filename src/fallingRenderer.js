@@ -11,9 +11,16 @@
 // DESIGN-circuits §6.2.12; main passes the brighter of the two).
 // prewarm() compiles the three layers' programs while the game loads (like campfireRenderer), so the first falling
 // block of a session does not compile a shader mid-frame.
+// §105: a plant's moving copy (a Creative break's ghost, the vortex's infall) is its FAR kit model, in the plant atlas's
+// uvs: the cutout material binds the plant atlas beside the block atlas as the chunks' does (lightShader.applyPlantAtlas,
+// the page's one atlas.createPlantAtlasTexture, fetched the first time a plant moves) and, like the chunks', never turns
+// a plant's normal round.
 import * as THREE from 'three';
 import { BLOCK } from './blocks.js';
 import { buildCellMesh } from './mesher.js';
+import { applyPlantAtlas, installObjectLighting } from './lightShader.js';
+import { createPlantAtlasTexture } from './atlas.js';
+import { PLANT_UV_OFFSET } from './plantAtlas.js';
 
 /** @typedef {import('./blockphysics.js').RenderItem} RenderItem */
 /** @typedef {import('./types.js').MeshData} MeshData */
@@ -41,6 +48,16 @@ const WARM_MATRIX = new THREE.Matrix4().makeTranslation(0, -1e4, 0).multiply(new
  * @property {() => void} dispose
  */
 
+/** The moving cells' cutout program (the object light and the plant atlas): its own, apart from the chunks'. */
+export const PLANT_CACHE_KEY = 'caelancraft-object-light-plants';
+
+/** @param {MeshData} layer @returns {boolean} some vertex samples the plant atlas (u past PLANT_UV_OFFSET − 0.5) */
+export function usesPlantAtlas(layer) {
+  const uvs = layer.uvs;
+  for (let i = 0; i < layer.vertexCount * 2; i += 2) if (uvs[i] > PLANT_UV_OFFSET - 0.5) return true;
+  return false;
+}
+
 /** @returns {THREE.BufferGeometry} geometry of one mesher layer (arrays copied: the mesher's buffers are growable) */
 function layerGeometry(layer) {
   const vc = layer.vertexCount;
@@ -66,6 +83,11 @@ export function createFallingRenderer(scene, atlasTexture) {
     new THREE.MeshLambertMaterial({ map: atlasTexture, vertexColors: true, alphaTest: 0.5, side: THREE.DoubleSide }),
     new THREE.MeshLambertMaterial({ map: atlasTexture, vertexColors: true, transparent: true, depthWrite: false, side: THREE.DoubleSide }),
   ];
+  // §105: the cutout one draws the plants too: the object light first (the prototype hook), then the plant atlas
+  installObjectLighting();
+  applyPlantAtlas(materials[1], null, PLANT_CACHE_KEY);
+  /** the plant atlas uniform: its texture is fetched the first time a plant's cell is built */
+  const plantMap = materials[1].userData.caelPlantMap;
 
   /**
    * Per block id: its layers (geometry + current InstancedMesh + capacity) and this frame's instance count.
@@ -119,6 +141,7 @@ export function createFallingRenderer(scene, atlasTexture) {
       /** @type {MeshData|null} */
       const l = data[LAYER_NAMES[layer]];
       if (!l || !(l.vertexCount > 0) || !(l.indexCount > 0)) continue;
+      if (plantMap.value === null && usesPlantAtlas(l)) plantMap.value = createPlantAtlasTexture();
       const geometry = layerGeometry(l);
       e.layers.push({ geometry, layer, mesh: makeMesh(geometry, layer, INITIAL_CAPACITY, id), capacity: INITIAL_CAPACITY });
     }

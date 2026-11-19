@@ -17,7 +17,9 @@
 //     neighbour (dilate), so filtering never pulls in black.
 // The layout (which rectangle is where) is known without painting (plantAtlasLayout: the mesher needs only the uvs);
 // paintPlantAtlas() paints it once (about 100 ms) and plantAtlasMips() makes its mip chain (colour alpha-weighted, alpha
-// between the mean and the most opaque child, so a frond thins far away but never vanishes).
+// between the mean and the most opaque child, so a frond thins far away but never vanishes). Below the packed pictures
+// a grid of CARD slots (plantCardRect) holds each plant's far picture of itself: plantModels.plantAtlasImage paints them
+// from the models into a copy of this image (they need the models, which need this module's uvs).
 import { Atlas, Painter, createImage, mix, shade, hash2, fbm, makeRng, bleed } from './paintKit.js';
 
 /** @typedef {import('./paintKit.js').Img} Img */
@@ -35,6 +37,33 @@ export const PLANT_ATLAS_MIPS = 6;
  * past PLANT_UV_OFFSET − 0.5 and the block atlas everywhere else (one material, one draw per chunk layer).
  */
 export const PLANT_UV_OFFSET = 2;
+
+/**
+ * The far CARDS (§105.3): each card-able plant's picture of itself — its near model seen from the side, painted by
+ * plantModels.paintPlantCards — is a PLANT_CARD_PX square in a grid of its own below the packed pictures, PLANT_CARD_GAP
+ * (two gutters) from the next: a card's neighbours are other cards' clear margins, never a solid picture, so no frame
+ * bleeds round a far card at any mip level.
+ */
+export const PLANT_CARD_PX = 48;
+export const PLANT_CARD_GAP = 2 * PLANT_ATLAS_PAD;
+const CARD_PITCH = PLANT_CARD_PX + PLANT_CARD_GAP;
+const CARD_COLS = Math.floor(PLANT_ATLAS_W / CARD_PITCH);
+const CARD_ROWS = 2;
+/** How many cards the grid holds (two rows of eighteen). */
+export const PLANT_CARD_SLOTS = CARD_COLS * CARD_ROWS;
+/** The grid's first row: the packed pictures stay above it. */
+export const PLANT_CARD_TOP = PLANT_ATLAS_H - CARD_ROWS * CARD_PITCH;
+
+/**
+ * Card slot `i`'s rectangle (pixels, row 0 at the top), PLANT_ATLAS_PAD inside its cell of the grid.
+ * @param {number} i @returns {Rect}
+ */
+export function plantCardRect(i) {
+  if (!(i >= 0 && i < PLANT_CARD_SLOTS) || !Number.isInteger(i)) throw new RangeError(`plant atlas: no card slot ${i}`);
+  const x = (i % CARD_COLS) * CARD_PITCH + PLANT_ATLAS_PAD;
+  const y = PLANT_CARD_TOP + Math.floor(i / CARD_COLS) * CARD_PITCH + PLANT_ATLAS_PAD;
+  return [x, y, PLANT_CARD_PX, PLANT_CARD_PX];
+}
 
 /**
  * @typedef {Object} PictureDef
@@ -124,6 +153,9 @@ function roundSkin(p, ramp, { glint = 0xffffff, bloom = -1, bloomA = 0.35, speck
   p.mottle(0.05, 3);
 }
 
+/** The four neighbours a clear texel takes its colour from (dx, dy pairs). */
+const DILATE_STEPS = [1, 0, -1, 0, 0, 1, 0, -1];
+
 /**
  * Dilate a cut-out's colour into its see-through texels (alpha stays 0), six texels deep, and give the rest its mean
  * colour, so filtering never pulls in black.
@@ -147,9 +179,9 @@ function dilate(img, [x0, y0, w, h]) {
         const i = (y * W + x) * 4;
         if (d[i + 3] > 0 || d[i] + d[i + 1] + d[i + 2] > 0) continue;
         let r = 0, g = 0, b = 0, n = 0;
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-          const nx = x + dx;
-          const ny = y + dy;
+        for (let k = 0; k < 8; k += 2) {
+          const nx = x + DILATE_STEPS[k];
+          const ny = y + DILATE_STEPS[k + 1];
           if (nx < x0 || ny < y0 || nx >= x0 + w || ny >= y0 + h) continue;
           const j = (ny * W + nx) * 4;
           if (d[j + 3] > 0 || d[j] + d[j + 1] + d[j + 2] > 0) {
@@ -175,6 +207,17 @@ function dilate(img, [x0, y0, w, h]) {
       }
     }
   }
+}
+
+/**
+ * Finish a cut-out painted into `rect` of `img` (a far card, plantModels.paintPlantCards): alpha snapped to 0 or 255,
+ * its clear texels coloured from their neighbours, its gutter filled — as paintPlantAtlas finishes its own cut-outs.
+ * @param {Img} img @param {Rect} rect
+ */
+export function finishCutout(img, rect) {
+  snapAlpha(img, rect);
+  dilate(img, rect);
+  bleed(img, rect, PLANT_ATLAS_PAD);
 }
 
 /** Snap a cut-out's alpha to 0 or 255 (what the alpha test sees), keeping its shape crisp at every distance. */
@@ -722,15 +765,15 @@ pic('leaf.dead', 24, 32, (p) => leafFace(p, [0xd8a85a, 0xa8743a, 0x6a4420], { ve
 let layout = null;
 
 /**
- * Where every picture is (packed tallest first, then widest; the order of registration breaks ties): known without
- * painting a pixel. Cached.
+ * Where every picture is (packed tallest first, then widest; the order of registration breaks ties, all above
+ * PLANT_CARD_TOP, where the cards' grid begins): known without painting a pixel. Cached.
  * @returns {PlantAtlasLayout}
  */
 export function plantAtlasLayout() {
   if (layout) return layout;
   const atlas = new Atlas(1, 1, PLANT_ATLAS_PAD);
   // the packer reads only the image's size: lend it an empty one of the atlas's (the layout needs no pixels)
-  atlas.img = { width: PLANT_ATLAS_W, height: PLANT_ATLAS_H, data: new Uint8ClampedArray(0) };
+  atlas.img = { width: PLANT_ATLAS_W, height: PLANT_CARD_TOP, data: new Uint8ClampedArray(0) };
   atlas.sky = [{ x: 0, y: 0, w: PLANT_ATLAS_W }];
   const order = PICTURES.map((d, i) => ({ d, i })).sort((a, b) => b.d.h - a.d.h || b.d.w - a.d.w || a.i - b.i);
   /** @type {Record<string, Rect>} */

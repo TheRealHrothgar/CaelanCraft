@@ -10,7 +10,7 @@
 // geometry the cutout material draws from both sides.
 //
 // The same recipe builds every level of detail: a Plant knows its `lod` (PLANT_LOD_NEAR, PLANT_LOD_FAR) and its helpers
-// thin themselves out far away — a whorl keeps a third of its leaves, bigger, as diamonds; a stem has three sides; a blade
+// thin themselves out far away — a whorl keeps a third of its leaves, wider, as diamonds; a stem has three sides; a blade
 // is one triangle — so the far plant is the near one's shape at about a tenth of the triangles. `bare` builds a picked
 // plant: parts marked `fruit` are left out AFTER the recipe has run, so the picked plant is the same plant, leaf for leaf.
 //
@@ -40,7 +40,6 @@ export const PLANT_STRIDE = 9;
  * @property {Uint16Array} index    three per triangle, counter-clockwise seen from the normal's side
  * @property {number} verts
  * @property {number} tris
- * @property {boolean} block        its uvs are in the BLOCK atlas (the crossed picture), not the plant atlas
  * @property {string[]} keys        the pictures its parts are painted with
  * @property {Uint8Array} vkey      each vertex's picture (a solid's cap its own), an index into `keys`
  * @property {Uint8Array} vfruit    1 for a vertex of a `fruit` part (a picked plant has none)
@@ -364,8 +363,9 @@ export class Plant {
 
   /**
    * A whorl: `n` leaves springing from `at` round the stem, tilted `tilt` up from level (negative: drooping), the first
-   * at `yaw`, a little irregular; `keys` picks each one's picture in turn. Far away it keeps about a third of them, each
-   * bigger by the square root of what it stands for (the same leafy area), as diamonds.
+   * at `yaw`, a little irregular; `keys` picks each one's picture in turn. Far away it keeps about a third of them, as
+   * diamonds, each grown for what it stands for WIDER rather than longer (farLeafGrowth), so the far plant keeps the near
+   * one's reach and height.
    * @param {number[]} at @param {number} n @param {number} len @param {number} wid @param {number} tilt @param {number} yaw
    * @param {string[]} keys
    * @param {{ shape?: keyof typeof LEAF_SHAPES, spread?: number, fold?: number, keep?: number, out?: number }} [o]
@@ -375,7 +375,7 @@ export class Plant {
     const jitters = [];
     for (let k = 0; k < n; k++) jitters.push([this.jit(0.28), this.jit(0.14), this.jit(0.4), this.range(0.88, 1.12)]);
     const count = this.far ? Math.max(1, Math.round(n * (o.keep ?? 0.34))) : n;
-    const grow = this.far ? Math.min(1.75, Math.sqrt(n / count)) : 1;
+    const [gl, gw] = this.far ? farLeafGrowth(n / count) : [1, 1];
     const spread = o.spread ?? 1;
     for (let k = 0; k < count; k++) {
       const j = jitters[Math.floor((k * n) / count)];
@@ -383,7 +383,7 @@ export class Plant {
       const tl = tilt + j[1];
       const d = dirAt(a, tl);
       const base = add(at, scale(d, o.out ?? 0.006));
-      this.leaf(base, d, len * j[3] * grow, wid * j[3] * grow, keys[k % keys.length], { shape: o.shape, roll: j[2] * 0.6, fold: o.fold });
+      this.leaf(base, d, len * j[3] * gl, wid * j[3] * gw, keys[k % keys.length], { shape: o.shape, roll: j[2] * 0.6, fold: o.fold });
     }
   }
 
@@ -391,7 +391,8 @@ export class Plant {
    * A spray: `n` leaves stepping along a twig from `from` to `to`, turn by turn round it (the golden angle apart), each
    * leaning `splay` radians out from the twig toward the tip and a little up toward the light, the last one carrying the
    * twig on past its tip — how a shrub's twig holds its leaves (a whorl's leaves all spring from one point). Far away it
-   * keeps about a quarter of them, bigger.
+   * keeps about a quarter of them, spread along the twig and always the last (the tip's leaf gives the twig its reach and
+   * its height), grown wider rather than longer (farLeafGrowth).
    * @param {number[]} from @param {number[]} to @param {number} n @param {number} len @param {number} wid @param {string[]} keys
    * @param {{ shape?: keyof typeof LEAF_SHAPES, splay?: number, keep?: number, phase?: number, fold?: number, lift?: number }} [o]
    */
@@ -404,10 +405,10 @@ export class Plant {
     const u = unit(cross(axis, ref));
     const w = cross(axis, u);
     const count = this.far ? Math.max(1, Math.round(n * (o.keep ?? 0.25))) : n;
-    const grow = this.far ? Math.min(1.8, Math.sqrt(n / count)) : 1;
+    const [gl, gw] = this.far ? farLeafGrowth(n / count) : [1, 1];
     const splay = o.splay ?? 0.95;
     for (let k = 0; k < count; k++) {
-      const kk = Math.floor((k * n) / count);
+      const kk = Math.min(n - 1, Math.round(((k + 1) * n) / count) - 1);
       const j = jitters[kk];
       const last = kk === n - 1;
       const t = n === 1 ? 1 : 0.15 + (0.85 * kk) / (n - 1);
@@ -418,8 +419,8 @@ export class Plant {
       // out from the twig, and lifted a little toward the sky so the leaves face up
       let d = add(scale(axis, Math.cos(sp)), scale(side, Math.sin(sp)));
       d = unit(add(d, [0, o.lift ?? 0.35, 0]));
-      const s = j[3] * grow * (last ? 0.9 : 1);
-      this.leaf(at, d, len * s, wid * s, keys[kk % keys.length], { shape: o.shape, roll: j[2] * 0.5, fold: o.fold });
+      const s = j[3] * (last ? 0.9 : 1);
+      this.leaf(at, d, len * s * gl, wid * s * gw, keys[kk % keys.length], { shape: o.shape, roll: j[2] * 0.5, fold: o.fold });
     }
   }
 
@@ -612,8 +613,25 @@ export class Plant {
       for (let t = 0; t < g.index.length; t++) index[oi++] = g.index[t] + base;
       base += n;
     }
-    return { data, index, verts, tris, block: false, keys, vkey, vfruit, height: top, reach };
+    return { data, index, verts, tris, keys, vkey, vfruit, height: top, reach };
   }
+}
+
+/** A far leaf standing for several near ones grows at most this much longer (the plant keeps its reach) … */
+export const FAR_LEAF_LONGER = 1.1;
+/** … and at most this much wider (a broad leaf, never a disc). */
+export const FAR_LEAF_WIDER = 1.9;
+
+/**
+ * How much longer and wider a FAR leaf grows that stands for `f` near ones (f ≥ 1): its length by √f up to
+ * FAR_LEAF_LONGER, its width by the rest of the area up to FAR_LEAF_WIDER — so a thinned whorl or spray keeps the near
+ * plant's reach and height (plantModels.test.js: within 10 %), a little less leafy but never splayed out like a palm.
+ * @param {number} f
+ * @returns {[number, number]} [length, width] factors
+ */
+export function farLeafGrowth(f) {
+  const gl = Math.min(FAR_LEAF_LONGER, Math.sqrt(Math.max(1, f)));
+  return [gl, Math.min(FAR_LEAF_WIDER, Math.max(1, f) / gl)];
 }
 
 /** Keep a face uv a hair inside its picture (no texel of the gutter ever shows at a card's edge). */

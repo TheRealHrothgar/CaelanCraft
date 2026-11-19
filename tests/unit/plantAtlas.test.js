@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   PLANT_ATLAS_W, PLANT_ATLAS_H, PLANT_ATLAS_PAD, PLANT_ATLAS_MIPS, PLANT_UV_OFFSET, plantAtlasLayout, plantPictureKeys,
-  plantRect, paintPlantAtlas, plantAtlasMips, plantUV,
+  plantRect, paintPlantAtlas, plantAtlasMips, plantUV, PLANT_CARD_TOP,
 } from '../../src/plantAtlas.js';
 import {
   Plant, PLANT_LOD_NEAR, PLANT_LOD_FAR, PLANT_STRIDE, leafGeo, ribbonGeo, curve, discGeo, frame, dirAt,
@@ -30,6 +30,7 @@ describe('the plant atlas (plantAtlas.js)', () => {
     for (const [x, y, w, h] of rects) {
       expect(x >= PLANT_ATLAS_PAD && y >= PLANT_ATLAS_PAD).toBe(true);
       expect(x + w + PLANT_ATLAS_PAD <= PLANT_ATLAS_W && y + h + PLANT_ATLAS_PAD <= PLANT_ATLAS_H).toBe(true);
+      expect(y + h + PLANT_ATLAS_PAD).toBeLessThanOrEqual(PLANT_CARD_TOP); // above the far cards' grid (§105.3)
     }
     for (let i = 0; i < rects.length; i++) {
       for (let j = i + 1; j < rects.length; j++) {
