@@ -317,6 +317,8 @@ function heldGeometry(slab) {
  * @property {() => string} avatarId
  * @property {(key: string|null) => void} setHeld  show this item in hand (a block item, an unknown key or null: nothing)
  * @property {() => string|null} heldKey  the item shown in hand (null: none)
+ * @property {(firstPerson: boolean) => ([number, number, number]|null)} heldTip  §106: the far end of the item in hand in
+ *   the world (first person or on the model), or null with nothing in hand
  * @property {(frame: AvatarFrame) => void} sync
  * @property {THREE.Group} group      the models
  * @property {THREE.Group} armGroup   the first-person hands (placed in camera space)
@@ -343,8 +345,11 @@ export function createAvatarRenderer(scene, { avatar = '' } = {}) {
   const fpHeldMaterial = fpMaterial({ vertexColors: true }, eye, FP_HELD_PROGRAM, false);
   /** @type {THREE.MeshLambertMaterial[]} the first-person hands' materials (one per avatar shown) */
   const fpMaterials = [];
-  /** @type {Map<string, { geometry: THREE.BufferGeometry, style: HeldStyle }>} one geometry per item, made when first held */
+  /** @type {Map<string, { geometry: THREE.BufferGeometry, style: HeldStyle, tip: [number, number, number] }>} one geometry per item, made when first held */
   const heldCache = new Map();
+  /** §106: the far end of the item in hand in its slab's frame (heldItem's `tip`), and a scratch vector for heldTip */
+  const heldTipLocal = new THREE.Vector3();
+  const tipWorld = new THREE.Vector3();
   // before anything is held: an empty slab with the same attributes, so prewarm compiles the held item's own programs
   const empty = new Float32Array(0);
   const noHeld = heldGeometry({ positions: empty, normals: empty, colors: empty });
@@ -531,12 +536,13 @@ export function createAvatarRenderer(scene, { avatar = '' } = {}) {
       let e = heldCache.get(k);
       if (!e) {
         const slab = /** @type {NonNullable<ReturnType<typeof heldItemGeometry>>} */ (heldItemGeometry(k));
-        e = { geometry: heldGeometry(slab), style: slab.style };
+        e = { geometry: heldGeometry(slab), style: slab.style, tip: slab.tip };
         heldCache.set(k, e);
       }
       held.geometry = e.geometry;
       fpHeld.geometry = e.geometry;
       heldStyle = e.style;
+      heldTipLocal.fromArray(e.tip);
     }
     placeHeld();
     held.visible = !!k;
@@ -726,8 +732,21 @@ export function createAvatarRenderer(scene, { avatar = '' } = {}) {
     return compileHidden([group, armGroup], webgl, camera, scene);
   };
 
+  /**
+   * §106: where the far end of the item in hand is in the world (a rod's line starts there): of the first-person one when
+   * `firstPerson`, else of the one on the model; null with nothing in hand. @param {boolean} firstPerson
+   * @returns {[number, number, number]|null}
+   */
+  function heldTip(firstPerson) {
+    if (!heldKey) return null;
+    const m = firstPerson ? fpHeld : held;
+    m.updateWorldMatrix(true, false);
+    tipWorld.copy(heldTipLocal).applyMatrix4(m.matrixWorld);
+    return [tipWorld.x, tipWorld.y, tipWorld.z];
+  }
+
   return {
-    setAvatar, avatarId: () => current.def.id, setHeld, heldKey: () => heldKey, sync, group, armGroup, prewarm, dispose,
+    setAvatar, avatarId: () => current.def.id, setHeld, heldKey: () => heldKey, heldTip, sync, group, armGroup, prewarm, dispose,
   };
 }
 

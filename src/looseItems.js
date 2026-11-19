@@ -297,11 +297,16 @@ function cross(ax, ay, az, bx, by, bz) {
  * @property {string|null} shoots  what a throw throws (its own key); null for a bow (the arrow is chosen at the release)
  * @property {{ speed: number, power: number }|null} base   a throw's (drawnThrow); null for a bow (bowShot)
  * @property {number} fullS      seconds to full draw
+ * @property {boolean} [rod]     a fishing rod (§106): the release casts its float (fishing.js), nothing is thrown
  */
+
+/** §106: seconds of Place held to a full cast of the Fishing Rod (fishing.js re-exports it). */
+export const CAST_FULL_S = 0.8;
 
 /**
  * §100: what a Place held with `key` in hand draws, or null: a spear draws itself back to throw it; a bow (ToolDef.type
- * 'bow') draws an arrow. An arrow in hand draws nothing: it needs a bow. @param {string|null} key @returns {DrawDef|null}
+ * 'bow') draws an arrow; §106 a rod (type 'rod') draws back a cast. An arrow in hand draws nothing: it needs a bow.
+ * @param {string|null} key @returns {DrawDef|null}
  */
 export function drawOf(key) {
   if (!key) return null;
@@ -309,6 +314,7 @@ export function drawOf(key) {
   const type = def && def.tool ? def.tool.type : null;
   if (type === 'spear') return { bow: false, shoots: key, base: THROW_SPEAR, fullS: DRAW_FULL_S };
   if (type === 'bow') return { bow: true, shoots: null, base: null, fullS: (bowOf(key) ?? BOWS.crude_bow).drawS };
+  if (type === 'rod') return { bow: false, rod: true, shoots: null, base: null, fullS: CAST_FULL_S };
   return null;
 }
 

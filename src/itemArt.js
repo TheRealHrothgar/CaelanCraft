@@ -465,6 +465,31 @@ function paintCrudeBow(ic) {
 }
 
 /**
+ * §106 the Fishing Rod: a springy sapling standing up from a cord-wrapped grip at the bottom (the hand's haft) to its tip,
+ * a little reel of cord beside the grip, and the line from the tip hanging down at the right to a red-and-white float.
+ */
+function paintFishingRod(ic) {
+  // the rod: upright, thick at the butt (columns 7–8) and thinning to one pixel from the middle up to its tip (column 8)
+  for (let y = 1; y <= 10; y++) {
+    ic.set(8, y, y > 6 ? SAPLING.base : y > 3 ? SAPLING.light : SAPLING.dark);
+    if (y > 5) ic.set(7, y, SAPLING.dark);
+  }
+  // the grip: a wrap of cord to the butt
+  for (let y = 11; y <= 14; y++) {
+    for (let x = 7; x <= 8; x++) ic.set(x, y, ((x + y) & 1) === 0 ? CORD.light : CORD.dark);
+  }
+  ic.set(7, 15, SAPLING.dark);
+  ic.set(8, 15, SAPLING.dark);
+  // the reel of spare line beside the grip
+  ic.set(9, 10, CORD.dark);
+  // the line: from the tip across to the right, hanging down to the float
+  for (let x = 9; x <= 12; x++) ic.set(x, 0, CORD.light);
+  for (let y = 1; y <= 6; y++) ic.set(13, y, CORD.light);
+  ic.set(13, 7, 0xd04a32);
+  ic.set(13, 8, 0xf2eee2);
+}
+
+/**
  * §100 the Recurve Bow, on its back like the Crude Bow: a dark fire-hardened stave, its back glued with pale rawhide
  * (the sinew), rising from a leather grip at the bottom middle; near each end the string lies on the limb and the tip
  * curls away from it, ending in a horn nock. The string is drawn across the top. Mirror-symmetric.
@@ -552,6 +577,7 @@ function paintTool(ic, rng, key, type, tier) {
     case 'shovel': return paintShovel(ic, tier);
     case 'spear': return paintSpear(ic, tier);
     case 'bow': return key === 'recurve_bow' ? paintRecurveBow(ic) : paintCrudeBow(ic);
+    case 'rod': return paintFishingRod(ic);
     case 'sword': return paintSword(ic, tier);
     case 'firestarter': return paintFireDrill(ic);
     case 'crucible': return paintCrucible(ic, rng, 0xd8d0c4, 0x3a2e2a);
@@ -1737,7 +1763,7 @@ const OTHER_PAINTERS = {
 const TOOL_ART = Object.freeze({
   hammerstone: ['hammer', 1], stone_axe: ['axe', 1], wooden_shovel: ['shovel', 1],
   flint_knife: ['knife', 2], flint_axe: ['axe', 2], flint_pick: ['pick', 2], flint_shovel: ['shovel', 2], flint_spear: ['spear', 2],
-  crude_bow: ['bow', 2], // §100
+  crude_bow: ['bow', 2], fishing_rod: ['rod', 2], // §100, §106
   copper_knife: ['knife', 3], copper_axe: ['axe', 3], copper_pick: ['pick', 3], copper_shovel: ['shovel', 3], copper_hammer: ['hammer', 3],
   bronze_knife: ['knife', 4], bronze_axe: ['axe', 4], bronze_pick: ['pick', 4], bronze_shovel: ['shovel', 4], bronze_hammer: ['hammer', 4],
   bronze_sword: ['sword', 4], recurve_bow: ['bow', 4], // §100

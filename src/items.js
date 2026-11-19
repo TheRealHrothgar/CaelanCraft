@@ -23,7 +23,7 @@ export const TIER_NAMES = Object.freeze(['hand', 'stone', 'flint', 'copper', 'br
 export const TIER_SPEED = Object.freeze([1, 2.2, 4.4, 6.4, 9, 12.5, 17]);
 /** Every `ToolDef.type`, in the order the tool table first uses them. */
 export const TOOL_TYPES = Object.freeze([
-  'hammer', 'axe', 'shovel', 'knife', 'pick', 'spear', 'bow', 'sword', 'firestarter', 'crucible', 'mold',
+  'hammer', 'axe', 'shovel', 'knife', 'pick', 'spear', 'bow', 'rod', 'sword', 'firestarter', 'crucible', 'mold',
 ]);
 /** The three wear slots, index = wear slot (`Pack.wear[i]`). */
 export const WEAR_SLOT_NAMES = Object.freeze(['head', 'body', 'feet']);
@@ -65,6 +65,9 @@ const TOOL_ROWS = [
   // §100 the bows: the Crude Bow is a green Sapling strung with cord at the Work Stump. A bow shoots arrows from the pack
   // and wears 1 a shot (looseItems BOWS, drawOf); swung, it is only a stick (power 1)
   ['crude_bow', 'Crude Bow', 'bow', 2, 60, 1],
+  // §106 the Fishing Rod: a sapling with a cord line and a knapped flint hook. Cast with Place held (looseItems.drawOf);
+  // it wears 1 a cast. It reaches the deep water a spear cannot (fishing.spearReaches); swung, only a stick (power 1)
+  ['fishing_rod', 'Fishing Rod', 'rod', 2, 80, 1],
   // tier 3, copper
   ['copper_knife', 'Copper Knife', 'knife', 3, 140, 2],
   ['copper_axe', 'Copper Axe', 'axe', 3, 160, 2],

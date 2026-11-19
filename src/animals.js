@@ -289,6 +289,15 @@ export const FISH_REST_S = 1.5;
 export const FISH_DEEP = 1.5;
 export const FISH_RISE = 0.5;
 export const FISH_DROP = 4;
+/**
+ * §106 the rod and the spear. Water deeper than FISH_SHALLOW (m, its surface to its bed: a stream is one cell, about
+ * 0.9) is deep: there a darting fish dives to FISH_DIVE below the surface (never below just above the bed), out of a
+ * spear's reach (fishing.spearReaches), and rises again at FISH_RISE once it has calmed. A fish with `floatAt` set (main,
+ * from fishing.FishingLine.bait) swims to that point at FISH_BAIT_SPEED and holds there.
+ */
+export const FISH_SHALLOW = 1.2;
+export const FISH_DIVE = 1.1;
+export const FISH_BAIT_SPEED = 0.7;
 
 /** The voices and the snare's snap (audio.playRecipe data). Gentle, short, never startling. */
 export const SOUNDS = Object.freeze({
@@ -318,6 +327,7 @@ export const SOUNDS = Object.freeze({
  *   id: number, kind: AnimalKind, yaw: number, targetYaw: number,
  *   mode: 'idle'|'walk'|'flee'|'lure'|'bait'|'follow'|'hunt'|'warn'|'charge'|'watch',
  *   suspicion: number, accepted: boolean, hidden: boolean, scent: number, senseIn: number, stranded: boolean,
+ *   floatAt: { x: number, z: number }|null,
  *   timer: number, hurt: number, health: number, walkPhase: number, voiceIn: number,
  *   tamed: boolean, trust: number, calm: number, shorn: number, milked: number, sitting: boolean, ridden: boolean,
  *   homeX: number, homeZ: number, trapped: number, trapT: number, trapCell: [number, number, number]|null, immune: number,
@@ -652,6 +662,7 @@ export class Animals {
       scent: 0,
       senseIn: this._rng() * SIGHT_CHECK_S,
       stranded: false,
+      floatAt: null, // §106: the float a fish is coming to (main sets it from the line)
       rear: 0,
       warn: 0,
       chase: 0,
@@ -1386,11 +1397,20 @@ export class Animals {
     const getBlock = world.getBlock;
     const sp = SPECIES[a.kind];
     const [q, r] = worldToHex(a.x, a.z);
-    const depth = fishDepth(getBlock, q, r, a.y + a.height / 2);
+    const water = fishWater(getBlock, q, r, a.y + a.height / 2);
+    const depth = water && water.surface - water.bed >= FISH_MIN_WATER ? water.swim : NaN; // fishDepth
     if (Number.isNaN(depth)) return this._fishAground(a, dt, world, q, r);
     a.stranded = false;
-    if (a.y < depth - FISH_DEEP / 2) a.y = Math.min(depth, a.y + FISH_RISE * dt); // §100: up out of the deep, slowly
-    else a.y += (depth - a.y) * (1 - Math.exp(-8 * dt)); // a stream steps down: it eases to the new level
+    const w = /** @type {{ bed: number, surface: number, swim: number }} */ (water);
+    if (a.mode === 'flee' && w.surface - w.bed > FISH_SHALLOW) {
+      // §106: startled in deep water, it dives out of a spear's reach
+      const dive = Math.max(w.bed + 0.06, w.surface - FISH_DIVE);
+      a.y += (dive - a.y) * (1 - Math.exp(-6 * dt));
+    } else if (a.y < depth - FISH_DEEP / 2 || (a.y < depth - 0.3 && w.surface - w.bed > FISH_SHALLOW)) {
+      a.y = Math.min(depth, a.y + FISH_RISE * dt); // §100: up out of the deep, slowly (§106: and after a dive)
+    } else {
+      a.y += (depth - a.y) * (1 - Math.exp(-8 * dt)); // a stream steps down: it eases to the new level
+    }
     a.vy = 0;
     a.inWater = true;
     a.onGround = false;
@@ -1407,6 +1427,12 @@ export class Animals {
     if (a.mode !== 'flee' && p && a.calm <= 0 && d < noticeRange(a, p)) this._startle(a, p.x, p.z, ev, FISH_DART_S);
     if (a.mode === 'flee') {
       speed = FISH_DART;
+    } else if (a.floatAt) {
+      // §106: it comes to the float on the line and holds there, nose to it
+      a.targetYaw = yawToward(a.x, a.z, a.floatAt.x, a.floatAt.z);
+      a.mode = 'walk';
+      a.timer = 1;
+      speed = Math.hypot(a.floatAt.x - a.x, a.floatAt.z - a.z) > 0.3 ? FISH_BAIT_SPEED : 0;
     } else {
       if (a.timer <= 0) {
         if (a.mode === 'idle') {

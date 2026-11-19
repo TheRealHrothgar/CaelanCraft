@@ -1329,6 +1329,7 @@ function makeChapters() {
   const staveRec = rec('bow_stave');
   const treatRec = rec('treated_stave');
   const recurveRec = rec('recurve_bow');
+  const rodRec = rec('fishing_rod'); // §106
   const stoneArrowRec = rec('stone_arrow');
   const flintArrowRec = rec('flint_arrow');
   const castArrowRec = rec('copper_arrow');
@@ -2051,8 +2052,14 @@ function makeChapters() {
       h('Fish'),
       p('*Fish* live in streams and ponds and never leave the water. Look for a fin cutting the surface. They dart away when you come near: sneak.'),
       p(`A pond holds as many fish as its size allows: one for about every ${FISH_CELLS} cells of water, so a small pond has one at most. A pond fished out stays empty until a fish finds its way back.`),
-      p('Only a spear catches one: thrust with it, or hold [RMB] to throw it. A thrown spear stays where it fell, so you wade in for it.'),
+      p('In shallow water, a stream or the edge of a pond, a *spear* catches one: thrust with it, or hold [RMB] to throw it. A thrown spear stays where it fell, so you wade in for it. In deeper water a startled fish dives out of a spear\'s reach.'),
       tip('Fish goes bad faster than any other meat. Roast it soon.'),
+    ],
+    [
+      h('Fishing'),
+      p(`A *Fishing Rod* reaches any water, from the bank. Make it at the Work Stump: a *Sapling* with ${besides(rodRec, 'sapling')}, and a ${plain(recipeTools(rodRec))}. Hold [RMB] to cast and let go: the longer you hold, the farther the float flies, up to about a dozen cells.`),
+      p(`Then wait, and keep still. A fish nearby comes to the float and nibbles: the float twitches. When it goes right under, click [RMB] at once to hook the fish. Too soon and it swims off; a moment too late and it has the bait. Click with nothing biting to reel the float in. Each cast wears the rod once: it is good for ${shots('fishing_rod')} casts.`),
+      tip('No bite for a long while? There may be no fish near the float. Try deeper water, or where you saw a fin.'),
     ],
     [
       h('The bear'),

@@ -22,6 +22,7 @@ export const PURPOSE = Object.freeze({
   // ---- the bows and the arrows (§100)
   sapling: 'A springy young shoot: strung with cord, a Crude Bow.',
   crude_bow: 'Shoots any arrow. Hold to draw, let go to shoot.',
+  fishing_rod: 'Hold to cast. Click when the float goes under.',
   bow_stave: 'Fire-hardened in the Kiln, it becomes a Treated Stave.',
   treated_stave: 'Backed with rawhide at the Work Stump: a Recurve Bow.',
   recurve_bow: 'Shoots faster, farther and truer than the Crude Bow.',

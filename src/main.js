@@ -140,6 +140,8 @@ import { vaneView, windAir } from './windDrawn.js'; // §101: the wind drawn
 import { compassCarried, northView } from './compass.js'; // §102: the compass puts north on the vane
 import { Pennants, PENNANT_MAX_MODELS, PENNANT_MODEL_RANGE, poleHeight } from './pennants.js';
 import { createPennantRenderer } from './pennantRenderer.js';
+import { createFishingRenderer } from './fishingRenderer.js';
+import { FishingLine, ROD_KEY, castVelocity, spearReaches, lineCurve, lineSlack, QUIET_HINT_S } from './fishing.js';
 // CONTRACTS §87: sleep
 import {
   Sleep, SecureWatch, TiredFx, spotOf, sleepRefusal, secureAt, secureWords, rollNightAttack, placeNightAttack, stageNews, wakeLine,
@@ -170,7 +172,7 @@ import { createHandbookUI } from './handbookUI.js';
 import {
   parseParams, installErrorCapture, installDebugHandle, updateDebugHandle, buildDebugText, runSmokeTest, circuitSceneWrites,
   CIRCUIT_SCENE_ROWS, SCENE_ROW_GAP, WIND_SCENE, ZOMBIE_SCENE, crowdScene, WATCHER_SCENE, PHANTOM_SCENE, ANIMAL_SCENES,
-  plantSceneCells, PLANT_SCENE_AHEAD,
+  plantSceneCells, PLANT_SCENE_AHEAD, FISHING_SCENE,
 } from './diagnostics.js';
 
 /** @typedef {import('./types.js').PlayerState} PlayerState */
@@ -1295,6 +1297,8 @@ export function boot(win, doc) {
   let rainRenderer;
   /** @type {import('./pennantRenderer.js').PennantRenderer} §101: the pennants' poles and flags */
   let pennantRenderer;
+  /** @type {import('./fishingRenderer.js').FishingRenderer|null} §106: the line and the float */
+  let fishingRenderer = null;
   /** @type {import('./pigRenderer.js').PigRenderer} */
   let pigRenderer;
   /** @type {import('./animalRenderer.js').AnimalRenderer} */
@@ -1350,6 +1354,7 @@ export function boot(win, doc) {
     particles = createParticles(renderer.three.scene);
     rainRenderer = createRainRenderer(renderer.three.scene); // §84: one mesh, no light
     pennantRenderer = createPennantRenderer(renderer.three.scene); // §101: four draw calls, no light
+    fishingRenderer = createFishingRenderer(renderer.three.scene); // §106: the line and its float (two draw calls)
     phantomRenderer = createPhantomRenderer(renderer.three.scene); // §87: three boxes, no light
     avatarRenderer = createAvatarRenderer(renderer.three.scene); // §91: the player's model and first-person arm, no light
     remoteRenderer = createRemotePlayerRenderer(renderer.three.scene, doc); // nothing in the scene until someone joins
@@ -1370,6 +1375,7 @@ export function boot(win, doc) {
     particles.prewarm(renderer.three.renderer, renderer.three.camera);
     rainRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     pennantRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
+    fishingRenderer?.prewarm(renderer.three.renderer, renderer.three.camera);
     vortexRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     circuitRenderer.prewarm(renderer.three.renderer, renderer.three.camera);
     // The Watcher's figure too (§40.4) — only now: the scene's lights are part of every program's key, so compiling it
@@ -1488,6 +1494,10 @@ export function boot(win, doc) {
    * cancelled whenever play leaves STATE.PLAYING (setState) and with the rest of the Survival input (resetSurvivalInput).
    */
   const draw = new DrawHold();
+  /** §106 the Fishing Rod's line and float (fishing.js); out while it is cast */
+  const fishing = new FishingLine();
+  /** §106: the quiet hint (no fish near the float) is said once a cast */
+  let fishingQuietSaid = false;
   /** @type {DrawEnv} drawStep's, reused */
   const drawEnv = { key: null, draws: false, playing: false, control: false, noArrows: false, latched: false, fullS: DRAW_FULL_S };
   /** §100: how far the draw under way is drawn, 0..1 (0: none), against its own full draw. */
@@ -4060,6 +4070,20 @@ export function boot(win, doc) {
   /** §88: the tame kinds a keeper may butcher with a tool (pigs too, in pigs.js); a horse and a wolf are companions. */
   const LIVESTOCK = Object.freeze(['cow', 'sheep']);
 
+  /** §106: a spear is no use on a fish in deep water (it dives). */
+  const FISH_DEEP_HINT = 'Too deep to spear: the fish dives. A Fishing Rod reaches fish in deep water.';
+  /** §106: a rod is cast, not swung. */
+  const FISH_ROD_HINT = 'Cast the rod: hold RMB, let go, and wait for the float to go under.';
+
+  /** §106: the hint on a fish: what catches it here — a spear in shallow water, a rod in any. */
+  function fishHint(a, name) {
+    const type = getItem(heldItemKey() ?? '')?.tool?.type; // both modes (Creative's hand is the hotbar's)
+    if (type === 'rod') return `${name} · Hold RMB to cast near it, and wait for a bite`;
+    if (world && !spearReaches(world.getBlock, a)) return `${name} · too deep to spear · a Fishing Rod reaches it`;
+    if (type === 'spear') return `${name} · click: spear it · Hold RMB to throw the spear`;
+    return `${name} · it takes a spear, or a Fishing Rod, to catch one`;
+  }
+
   function animalHint(a) {
     const sp = SPECIES[a.kind];
     const name = animalName(a);
@@ -4079,7 +4103,7 @@ export function boot(win, doc) {
       : !near ? `out of reach: ${selectedTool() ? 'this tool reaches' : 'bare hands reach'} ${reachNow()} cells`
         : selectedTool() ? 'click: hunt it' : 'hunting needs a tool';
     // v0.14 (§76 fauna)
-    if (a.kind === 'fish') return selectedTool()?.type === 'spear' ? `${name} · click: spear it · Hold RMB to throw the spear` : `${name} · it takes a spear to catch one`;
+    if (a.kind === 'fish') return fishHint(a, name);
     // §100: it stares at a still hunter: keep still; and, stalking, which way the wind carries the scent
     if (a.mode === 'watch') return `${name} is watching you — keep still${windWords(a)}`;
     const wind = player && player.sneaking && a.mode !== 'flee' ? windWords(a) : ''; // stalking: the wind's word
@@ -4511,8 +4535,12 @@ export function boot(win, doc) {
       }
     } else if (target.kind === 'animal') {
       const a = target.mob;
-      // v0.14 (§76 fauna): only a spear catches a fish — a rock or an arrow just scares it off
-      const counts = isBodyAnimal(a) || getItem(it.s.k)?.tool?.type === 'spear';
+      // v0.14 (§76 fauna): only a spear catches a fish — a rock or an arrow just scares it off; §106: and only in
+      // shallow water (in deep water it dives as the spear goes in)
+      const spear = !isBodyAnimal(a) && getItem(it.s.k)?.tool?.type === 'spear';
+      const deep = spear && !spearReaches(world.getBlock, a);
+      if (deep && real) showHint(FISH_DEEP_HINT);
+      const counts = isBodyAnimal(a) || (spear && !deep);
       const res = animals.wound(a, real && !a.tamed && counts ? it.power : 0, fromX, fromZ);
       if (res === 'dead') animalDied(a, real);
       else if (res === 'hit') animalVoice(a, 1);
@@ -4699,6 +4727,7 @@ export function boot(win, doc) {
    * @returns {boolean} Place was this (nothing else uses it)
    */
   function drawStep(mouse, dt) {
+    if (rodPlace(mouse)) return true; // §106: with the line out, Place reels it in (or hooks a biting fish)
     const key = heldItemKey();
     const d = drawOf(key);
     const e = drawEnv;
@@ -4730,6 +4759,10 @@ export function boot(win, doc) {
   function drawRelease(d, key, f) {
     if (!player || !world) return;
     const SV = survival.inSurvival;
+    if (d.rod) {
+      castLine(f);
+      return;
+    }
     /** @type {ItemStack} */
     let stack;
     let speed;
@@ -4796,6 +4829,7 @@ export function boot(win, doc) {
     const key = heldItemKey();
     const d = drawOf(key);
     if (!d || !key) return null;
+    if (d.rod) return rodHintText();
     const verb = d.bow ? 'shoot' : 'throw';
     if (draw.on) return drawShare() >= 1 ? `Full draw · let go to ${verb}` : `Drawing · let go to ${verb}`;
     if (d.bow) return bowHint(key, bowArrow(), survival.inSurvival, (k) => pack.count(k));
@@ -4805,9 +4839,181 @@ export function boot(win, doc) {
   /** §100: the words for a throw at a mob, by what is in hand ('Hold RMB to throw' / '… to shoot'), or null. */
   function throwWords() {
     const d = drawOf(heldItemKey());
-    if (!d) return null;
+    if (!d || d.rod) return null; // §106: a rod casts at the water, not at a beast
     if (d.bow && bowArrow() === null) return 'no arrows';
     return d.bow ? 'Hold RMB to shoot' : 'Hold RMB to throw';
+  }
+
+  // ---- §106 the Fishing Rod ------------------------------------------------------------------------------------
+
+  /**
+   * §106: Place with the line out and the rod in hand belongs to the line: a press reels it in — hooking a fish that
+   * bites, pulling the float from one that only nibbles. Under a screen nothing is reeled. @returns {boolean} Place was this
+   */
+  function rodPlace(mouse) {
+    if (!fishing.out || heldItemKey() !== ROD_KEY) return false;
+    draw.cancel();
+    if (mouse.rightPressed && /** @type {string} */ (state) === STATE.PLAYING) reelIn();
+    return true;
+  }
+
+  /**
+   * §106: the rod's tip in the world (where the line starts): the far end of the rod in hand (first person or on the
+   * model; avatarRenderer.heldTip), else a point before the eye or over the avatar's hand.
+   * @returns {number[]}
+   */
+  function rodTip() {
+    const third = isThirdPerson(shownView());
+    if (avatarRenderer.heldKey() === ROD_KEY) {
+      const t = avatarRenderer.heldTip(!third);
+      if (t) return t;
+    }
+    const yaw = controls.yaw;
+    const pitch = controls.pitch;
+    const cp = Math.cos(pitch);
+    const fx = -Math.sin(yaw) * cp;
+    const fy = Math.sin(pitch);
+    const fz = -Math.cos(yaw) * cp;
+    const rx = Math.cos(yaw);
+    const rz = -Math.sin(yaw);
+    if (third) {
+      const fl = Math.hypot(fx, fz) || 1;
+      return [player.x + rx * 0.32 + (fx / fl) * 0.9, player.y + 1.95, player.z + rz * 0.32 + (fz / fl) * 0.9];
+    }
+    const eyeY = player.y + getEyeHeight(player);
+    return [player.x + fx * 1.05 + rx * 0.32, eyeY + fy * 1.05 + 0.3, player.z + fz * 1.05 + rz * 0.32];
+  }
+
+  /** §106: let a cast go (the draw `f`, 0..1): the float flies from the rod's tip along the look; a rod wears 1 a cast. */
+  function castLine(f) {
+    if (!player) return;
+    const yaw = controls.yaw;
+    const pitch = controls.pitch;
+    const cp = Math.cos(pitch);
+    let [x, y, z] = rodTip();
+    if (looseEnv.solid(x, y, z)) [x, y, z] = [player.x, player.y + getEyeHeight(player), player.z];
+    const [vx, vy, vz] = castVelocity(-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp, f, player.vx, player.vz);
+    fishing.cast(x, y, z, vx, vy, vz);
+    fishingQuietSaid = false;
+    if (survival.inSurvival) {
+      const res = pack.damage(selected, 1);
+      if (res && res.broke) {
+        toolBroke(res.key);
+        fishing.reset();
+      }
+    }
+    audio.playRecipe(SOUND_THROW, 0.3 + 0.35 * f);
+    avatarSwing(); // the cast is thrown through like a throw (§91)
+  }
+
+  /** §106: Place with the line out: hook a biting fish (it is caught: its drops fly to the player), else reel in. */
+  function reelIn() {
+    const { result, fish } = fishing.reel();
+    clearFloatAt();
+    const a = /** @type {*} */ (fish);
+    if (result === 'caught' && a && player) {
+      const res = animals.wound(a, 999, player.x, player.z);
+      if (res === 'dead') {
+        particles.emit('dust', a.x, a.y + 0.2, a.z, 18, { color: WATER_SPRAY, spread: 0.35 });
+        animalDied(a, true);
+        logLine(survival.inSurvival ? `You caught a ${animalName(a).toLowerCase()}.` : 'You caught a fish (Creative: it gives nothing).');
+      }
+      return;
+    }
+    if (result === 'spooked' && a && player) {
+      animals.wound(a, 0, player.x, player.z); // it darts off (and dives, in deep water)
+      showHint('Too soon: wait until the float goes right under.');
+    }
+    audio.playRecipe(SOUND_THROW, 0.18);
+  }
+
+  /** §106: the colour of the spray where the float lands or a fish bites. */
+  const WATER_SPRAY = [0.78, 0.86, 0.95];
+
+  /** §106: no fish is steered to the float. */
+  function clearFloatAt() {
+    for (const a of animals.list) if (a.floatAt) a.floatAt = null;
+  }
+
+  /** §106: the line comes in at once (the rod left the hand, sleep, death, a mode switch, a load, leaving the world). */
+  function resetFishing() {
+    if (!fishing.out) return;
+    fishing.reset();
+    clearFloatAt();
+  }
+
+  /**
+   * §106, every frame of the world (both modes): the float flies, floats and waits; a fish near it is steered to it
+   * (animals.js `floatAt`), nibbles and bites; the line comes in by itself when the rod is no longer in hand.
+   */
+  function stepFishing(dt) {
+    if (!fishing.out) return;
+    if (!player || !world || survival.dead || heldItemKey() !== ROD_KEY) {
+      resetFishing();
+      return;
+    }
+    const fish = net ? [] : animals.list.filter((a) => a.kind === 'fish' && !a.stranded); // a server's fish are its own
+    const ev = fishing.step(dt, { getBlock: world.getBlock, player, fish });
+    const b = fishing.bait();
+    for (const a of fish) {
+      const want = b && b.fish === a ? { x: b.x, z: b.z } : null;
+      if (want) a.floatAt = want;
+      else if (a.floatAt) a.floatAt = null;
+    }
+    const plop = (v) => audio.playRecipe(ANIMAL_SOUNDS.plop, v);
+    if (ev === 'splash') {
+      particles.emit('dust', fishing.x, fishing.y, fishing.z, 8, { color: WATER_SPRAY, spread: 0.15 });
+      plop(0.35);
+    } else if (ev === 'nibble') {
+      plop(0.12);
+    } else if (ev === 'bite') {
+      particles.emit('dust', fishing.x, fishing.y, fishing.z, 12, { color: WATER_SPRAY, spread: 0.2 });
+      plop(0.6);
+    } else if (ev === 'escaped') {
+      const a = /** @type {*} */ (fishing.fish);
+      if (a) animals.wound(a, 0, fishing.x, fishing.z); // it takes the bait and is gone
+      showHint('It got away: click the moment the float goes under.');
+    } else if (ev === 'snap') {
+      clearFloatAt();
+      showHint('Your line came in: you walked too far from the float.');
+    }
+    if (fishing.onWater && fishing.quiet >= QUIET_HINT_S && !fishingQuietSaid) {
+      fishingQuietSaid = true;
+      showHint('No fish near the float. Try deeper water, or where you saw a fin.');
+    }
+  }
+
+  /** §106: draw the line and its float (renderFrame), or hide them. */
+  function syncFishing(time) {
+    if (!fishingRenderer) return;
+    if (!fishing.out || !player) {
+      fishingRenderer.sync(null);
+      return;
+    }
+    const tip = rodTip();
+    const end = [fishing.x, fishing.y, fishing.z];
+    const d = Math.hypot(end[0] - tip[0], end[1] - tip[1], end[2] - tip[2]);
+    fishingRenderer.sync({
+      line: lineCurve(tip, end, 16, lineSlack(d, fishing.state === 'bite' || fishing.state === 'flying')),
+      x: fishing.x, y: fishing.y, z: fishing.z, dip: fishing.dip, onWater: fishing.onWater, time,
+    });
+  }
+
+  /**
+   * §106: the hint with the rod in hand: how to cast, then what the float is doing (tablet: Place, §97.2).
+   * @returns {string}
+   */
+  function rodHintText() {
+    if (draw.on) return drawShare() >= 1 ? 'Full cast · let go to cast' : 'Casting · let go to cast';
+    switch (fishing.state) {
+      case 'flying': return 'Fishing Rod · the float is out';
+      case 'float':
+      case 'coming': return fishing.quiet >= QUIET_HINT_S ? 'No fish near the float · RMB: reel in' : 'Fishing Rod · wait for a bite · RMB: reel in';
+      case 'nibble': return 'Something is nibbling · wait for the float to go under';
+      case 'bite': return 'Bite! · RMB now to hook it';
+      case 'ground': return 'The float is on dry land · RMB: reel in';
+      default: return 'Fishing Rod · Hold RMB to cast, let go to cast it out';
+    }
   }
 
   // ---- §103 the Spyglass ----------------------------------------------------------------------------------------
@@ -5035,6 +5241,7 @@ export function boot(win, doc) {
     useState.reset();
     holdState.reset();
     draw.cancel();
+    resetFishing(); // §106: the line comes in
     digHit = null;
     digProgress = 0;
     digAdvanced = false;
@@ -5872,10 +6079,13 @@ export function boot(win, doc) {
         return;
       }
       const ka = strikeKind('pig', tool); // like a pig: only a tool wounds, a bare hand shoves
-      // v0.14 (§76 fauna): a fish is caught with a spear's thrust and nothing else (anything else only scares it)
+      // v0.14 (§76 fauna): a fish is caught with a spear's thrust and nothing else (anything else only scares it);
+      // §106: and only in shallow water — in deep water it dives out of reach (a Fishing Rod reaches it)
       const spearOnly = !isBodyAnimal(a) && tool?.type !== 'spear';
-      if (spearOnly) showHint('A fish is caught with a spear: thrust with it, or hold RMB to throw it.');
-      const wounds = ka.call === 'wound' && !spearOnly;
+      const tooDeep = !isBodyAnimal(a) && !spearOnly && !spearReaches(world.getBlock, a);
+      if (spearOnly) showHint(tool?.type === 'rod' ? FISH_ROD_HINT : 'A fish is caught with a spear: thrust with it, or hold RMB to throw it.');
+      else if (tooDeep) showHint(FISH_DEEP_HINT);
+      const wounds = ka.call === 'wound' && !spearOnly && !tooDeep;
       const res = animals.wound(a, wounds ? ka.power * strikeFactorNow() : 0, player.x, player.z);
       if (res === 'dead') animalDied(a, true);
       else if (res === 'hit') animalVoice(a, 1);
@@ -7014,6 +7224,7 @@ export function boot(win, doc) {
     if (name === 'zombies' || name === 'crowd' || name === 'watcher' || name === 'phantom') return buildFigureScene(name, fx, fz);
     if (Object.hasOwn(ANIMAL_SCENES, name)) return buildAnimalScene(fx, fz, feet, /** @type {'animals'|'animal-variants'|'animal-close'} */ (name));
     if (name === 'plants') return buildPlantScene(fx, fz, feet);
+    if (name === 'fishing') return buildFishingScene(fx, fz, feet);
     if (name !== 'circuits') return { ok: false, message: `unknown scene "${name}"` };
     const [qa, ra] = worldToHex(player.x + fx * 10, player.z + fz * 10);
     const q0 = qa - 5;
@@ -7207,6 +7418,52 @@ export function boot(win, doc) {
   }
 
   /**
+   * §106 `?scene=fishing`: a round pond FISHING_SCENE.radius cells across its middle and FISHING_SCENE.deep deep, on
+   * level grass FISHING_SCENE.ahead m ahead, two fish in it; with the Fishing Rod in hand the float is cast to its middle.
+   * @param {number} fx @param {number} fz  the way the player looks @param {number} feet
+   * @returns {{ ok: boolean, message: string }}
+   */
+  function buildFishingScene(fx, fz, feet) {
+    const w = /** @type {World} */ (world);
+    const S = FISHING_SCENE;
+    const [cq, cr] = worldToHex(player.x + fx * S.ahead, player.z + fz * S.ahead);
+    const [pq, pr] = worldToHex(player.x, player.z);
+    /** level a disc of grass round (q0, r0): open air above the feet, dirt under */
+    const level = (q0, r0, radius) => {
+      for (let q = q0 - radius; q <= q0 + radius; q++) {
+        for (let r = r0 - radius; r <= r0 + radius; r++) {
+          if (hexLength(q - q0, r - r0) > radius) continue;
+          for (let y = feet; y <= feet + 6 && y < WORLD_HEIGHT; y++) if (w.getBlock(q, y, r) !== BLOCK.AIR) w.setBlock(q, y, r, BLOCK.AIR);
+          w.setBlock(q, feet - 1, r, BLOCK.GRASS_BLOCK);
+          for (let y = feet - 2; y >= Math.max(1, feet - 8); y--) {
+            if (isSolid(w.getBlock(q, y, r))) break;
+            w.setBlock(q, y, r, BLOCK.DIRT);
+          }
+        }
+      }
+    };
+    level(pq, pr, 2);
+    level(cq, cr, S.radius + 3);
+    for (let q = cq - S.radius; q <= cq + S.radius; q++) {
+      for (let r = cr - S.radius; r <= cr + S.radius; r++) {
+        if (hexLength(q - cq, r - cr) > S.radius) continue;
+        for (let y = feet - S.deep; y <= feet - 1; y++) w.setBlock(q, y, r, BLOCK.WATER);
+        w.setBlock(q, feet - S.deep - 1, r, BLOCK.SAND);
+      }
+    }
+    const swim = feet - 1 + 0.875 - FISH_UNDER;
+    for (const [dq, dr] of [[-1, 1], [1, 0]]) {
+      const [x, z] = hexToWorld(cq + dq, cr + dr);
+      animals.spawn('fish', x, swim, z, 0, dq < 0 ? 'f' : 'm');
+    }
+    if (heldItemKey() === ROD_KEY) {
+      const [x, z] = hexToWorld(cq, cr);
+      fishing.cast(x, feet + 1.2, z, 0, -1, 0);
+    }
+    return { ok: true, message: `the fishing scene: a pond ${S.deep} cells deep ahead, two fish${fishing.out ? ', the float cast' : ''}` };
+  }
+
+  /**
    * §105 `?scene=plants`: one of every plant (diagnostics.plantSceneCells) in rows ahead — the first `?ahead=` m away —
    * each on a column of level ground at the player's feet (cleared above, its own soil on top, filled under it), a
    * strip of open ground round them.
@@ -7394,6 +7651,7 @@ export function boot(win, doc) {
     hurtFlash = 0;
     hud.setHurtFlash(0);
     resetSpyglass(); // §103: no eyepiece, slowed look or last power carried into the next world
+    resetFishing(); // §106
     watcher.clear();
     clearCircuits();
     clearSurvival();
@@ -8606,6 +8864,7 @@ export function boot(win, doc) {
       stepCampfires(dt);
       stepCircuits(dt); // v0.10 (§6.6 step 10): the circuit tick and the infall
     }
+    stepFishing(dt); // §106: the line, and the fish that come to it (none on a server: its fish are the server's)
     if (sceneCharge && fxTime >= sceneCharge.at) {
       const c = sceneCharge;
       sceneCharge = null;
@@ -8747,6 +9006,7 @@ export function boot(win, doc) {
         .filter((n) => world.hasChunkAtCell(n.pennant.q, n.pennant.r));
       pennantRenderer.sync(nearP, windNow(), fxTime, pennantHeight);
     }
+    syncFishing(fxTime); // §106
     computeSky(time, sky);
     const shownSky = stepWeather(dt, live, eyeY, cam.yaw); // §84: the rain, the calendar; the sky greyed while it rains
     stepWorldSounds(dt, live); // v0.16 (§82): footsteps, movement and the ambience

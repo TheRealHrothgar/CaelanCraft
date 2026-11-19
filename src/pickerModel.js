@@ -129,6 +129,7 @@ export const PICKER_ITEM_SECTIONS = Object.freeze([
     fam('knives', 'Knives', ['flint_knife', 'copper_knife', 'bronze_knife', 'iron_knife', 'steel_knife'], 'tools'),
     'fire_drill', 'crucible', 'casting_mold', 'compass', 'handbook', // §102: the Compass
     'spyglass', // §103
+    'fishing_rod', // §106
   ]),
   // what hurts a creature: the swords and the spear, and what flies (looseItems.throwOf: the spear, a thrown rock; §100
   // the bows and the arrows of every age they shoot — the darts are retired)
@@ -274,6 +275,7 @@ export const PICKER_TOOL_WORDS = Object.freeze({
   sword: Object.freeze(['blade', 'weapon']),
   spear: Object.freeze(['weapon']),
   bow: Object.freeze(['archery', 'weapon', 'shoot', 'longbow', 'hunting']), // §100
+  rod: Object.freeze(['fishing', 'angling', 'fish', 'hook', 'line', 'pole', 'float', 'bobber']), // §106
 });
 
 /** The pseudo-section of the Recent row (never in the rail). */

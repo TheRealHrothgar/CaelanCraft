@@ -304,7 +304,7 @@ describe('handbook: generated tables match the game (§14.1)', () => {
       }
     }
     // 89 recipes in all (37 / 12 / 21 / 4 / 15)
-    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 28, 27, 5, 18, 5, 8]); // §100.6 / §103: the Recurve Bow and the Spyglass at the stump (basic survival, not the circuits' Workbench); §102: + the Compass at the Forge; §100 + §103: the bows, the arrows of every age, the Spyglass; // §101: + the Pennant at hand; §100: + Arrows at hand, the Bow Stave and the Bow at the stump; // §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
+    expect(STATION_IDS.map((s) => tableById(`recipes-${s}`).rows.length)).toEqual([44, 29, 27, 5, 18, 5, 8]); // §106: + the Fishing Rod at the stump; // §100.6 / §103: the Recurve Bow and the Spyglass at the stump (basic survival, not the circuits' Workbench); §102: + the Compass at the Forge; §100 + §103: the bows, the arrows of every age, the Spyglass; // §101: + the Pennant at hand; §100: + Arrows at hand, the Bow Stave and the Bow at the stump; // §94: flint tools to the stump, simple parts to the Workbench, devices to the Lab; // §85: + the Grass Bed at hand, the Well, the Rain Barrel and the Bed at the stump; v0.11: + the Workbench (§67); v0.14: + Healwort tea and the Fletched Dart (§76)
   });
 
   it('tool labels name the cheapest tool that qualifies, "+" when better ones exist', () => {
@@ -1108,7 +1108,8 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(text).toContain(`Deer keep to forest and plains in herds of ${SPECIES.deer.herd[0]} to ${SPECIES.deer.herd[1]}.`);
     expect(SPECIES.deer.notice).toBe(Math.max(...ANIMAL_KINDS.filter((k) => poolOf(k) !== 'fish' && !SPECIES[k].predator).map((k) => SPECIES[k].notice))); // "the wariest animal there is"
     expect(text).toContain('Birds give meat and Feathers. Every arrow takes a feather for its flight.');
-    expect(text).toContain('Only a spear catches one: thrust with it, or hold RMB to throw it.');
+    expect(text).toContain('In shallow water, a stream or the edge of a pond, a spear catches one: thrust with it, or hold RMB to throw it.');
+    expect(text).toContain('A Fishing Rod reaches any water, from the bank.'); // §106
     // §100: fish by the size of their water; stillness, cover and the wind
     expect(text).toContain(`one for about every ${FISH_CELLS} cells of water, so a small pond has one at most`);
     expect(fishCapOf(7)).toBe(1);
@@ -1320,7 +1321,7 @@ describe('handbook: the game since v0.11 (CONTRACTS §59–§73): the day, zombi
     expect(worth).toContain('Two strands twist into a Cord, and cord binds every flint tool, the Fire Drill and the Snare.');
     const takesCord = (r) => r.inputs.some((inp) => 'k' in inp && inp.k === 'cord');
     const flintTools = ITEM_KEYS.filter((k) => ITEMS[k].tool && TIER_NAMES[ITEMS[k].tool.tier] === 'flint');
-    expect(flintTools).toHaveLength(6); // the five knapped tools and (§100) the Bow, strung with cord
+    expect(flintTools).toHaveLength(7); // the five knapped tools, (§100) the Bow, strung with cord, and (§106) the Fishing Rod
     for (const k of [...flintTools, 'fire_drill', 'snare']) expect(takesCord(RECIPES.find((r) => r.outputs[0].k === k)), k).toBe(true);
     // the aloe: where it grows, what a pick gives, and the heal's three numbers beside the bandage's
     const aloe = ITEMS.aloe_leaf.heal;

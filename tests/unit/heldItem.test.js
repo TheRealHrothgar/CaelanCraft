@@ -207,7 +207,8 @@ describe('the item in hand (every item)', () => {
         if (g.colors[i] < 0 || g.colors[i] > 1) faults.push(`${k}: colour out of range at ${i}`);
         far = Math.max(far, Math.abs(g.positions[i]));
       }
-      if (far > 0.5 || far < 0.02) faults.push(`${k}: reaches ${far} m`);
+      // §106: the Fishing Rod is its own long pole in hand (fishing.test.js): about 1.1 m
+      if ((far > (k === 'fishing_rod' ? 1.2 : 0.5)) || far < 0.02) faults.push(`${k}: reaches ${far} m`);
       const bad = slabFaults(g);
       if (bad.length) faults.push(`${k}: ${bad[0]} (+${bad.length - 1})`);
     }
@@ -221,7 +222,7 @@ describe('the item in hand (every item)', () => {
       const want = HAFTED.includes(k) ? 'tool' : 'lump';
       if (g.style !== want) faults.push(`${k}: ${g.style}, not ${want}`);
       if (g.style === 'lump' && (g.turn !== 0 || g.pixel !== HELD_PIXEL * HELD_LUMP_SCALE)) faults.push(`${k}: lump turned or full size`);
-      if (g.style !== 'tool') continue;
+      if (g.style !== 'tool' || k === 'fishing_rod') continue; // §106: its own 32-px picture (fishing.test.js)
       // the grip is on the picture (in the haft)
       const px = paintItem(k);
       const [u, v] = g.grip.map(Math.floor);

@@ -108,6 +108,8 @@ import `three`. Pure modules never touch `window`, `document`, `performance` (ex
 | `src/paintKit.js` | PURE, the paint kit: seeded RGBA painters and a padded atlas (§91.2) | characters | `tests/unit/paintKit.test.js` |
 | `src/figureKit.js` | PURE, what figures share: the Skin atlas, the hex shapes, faceted heads, hair (§91.2) | characters | `tests/unit/avatarModel.test.js` |
 | `src/avatarModel.js` | PURE, the avatars' hex-faceted models bone by bone, their atlases, the first-person hand (§91.2, §91.4) | characters | `tests/unit/avatarModel.test.js` |
+| `src/fishing.js` | PURE, the Fishing Rod: the cast, the float, a fish that comes, nibbles and bites, the hook; the spear's shallow-water limit (§106) | hunting | `tests/unit/fishing.test.js` |
+| `src/fishingRenderer.js` | three, the rod's line and its float (§106) | hunting | `tests/unit/fishing.test.js` |
 | `src/plantKit.js` | PURE, what plants are built of: stems, leaf cards, whorls, sprays, blades, fronds, discs, gems, the bake (§105.1) | characters | `tests/unit/plantAtlas.test.js` |
 | `src/plantAtlas.js` | PURE, the painted plant atlas: its layout, pictures and mips (§105.2) | characters | `tests/unit/plantAtlas.test.js` |
 | `src/plantModels.js` | PURE, every plant, crop and piece of litter as a kit model in three levels of detail; the furniture's box models (§105.3, §85) | characters | `tests/unit/plantModels.test.js`, `tests/unit/plantsNotFood.test.js` |
@@ -9258,3 +9260,106 @@ solids only.
   atlases — what the game draws; `?time= ?dist= ?height= ?yaw= ?pitch= ?gap=`.
 - `gallery.html?row=plant`: its "Today" column now shows the game's own kit models (the pilot's bush beside them).
 - Not done: plants swaying in the wind (§101.5 still stands); trees stay terrain blocks (logs and leaves).
+
+## 106. The Fishing Rod, and the spear in shallow water only — `src/fishing.js` (PURE), `src/fishingRenderer.js` (three), `src/animals.js`, `src/looseItems.js`, `src/items.js`, `src/crafting.js`, `src/itemArt.js`, `src/purpose.js`, `src/pickerModel.js`, `src/handbook.js`, `src/diagnostics.js`, `src/main.js`
+
+The user: "add a fishing rod to the mix as well (spear still works for shallow streams)". Amends §76.4 and §100 (only a
+spear catches a fish: now a spear in shallow water, or the rod in any) and §100.2 (what Place draws).
+
+### 106.1 The spear and deep water (`animals.js`, `fishing.js`, `main.js`)
+
+- **Shallow** water is no deeper than `FISH_SHALLOW` 1.2 m from its surface to its bed (a stream is one cell, about 0.9;
+  the edge of a pond too). `fishing.spearReaches(getBlock, fish)` is true there (and where no water is found).
+- A **darting** fish (`mode` 'flee') in deep water dives to `FISH_DIVE` 1.1 below the surface (never below just above the
+  bed; eased at 6/s); once calm it rises again at `FISH_RISE` (§100), as from the deep. In shallow water it stays at its
+  swimming height (§76.4, unchanged).
+- **Main**: a spear's thrust or a thrown spear on a fish in deep water does not wound it (it darts and dives) and says
+  `FISH_DEEP_HINT` "Too deep to spear: the fish dives. A Fishing Rod reaches fish in deep water."; a rod swung at a fish
+  says how to cast. The target hint on a fish (`fishHint`, both modes): with the rod `Fish · Hold RMB to cast near it, and
+  wait for a bite`; in deep water `Fish · too deep to spear · a Fishing Rod reaches it`; with a spear as §100.2; else `Fish
+  · it takes a spear, or a Fishing Rod, to catch one`.
+
+### 106.2 The rod (`items.js`, `crafting.js`, `itemArt.js`, `purpose.js`, `pickerModel.js`, `looseItems.js`)
+
+- **Item**: `fishing_rod` "Fishing Rod", a tool of the new ToolDef type **'rod'** (TOOL_TYPES after 'bow'), tier 2,
+  durability 80, power 1, after the Crude Bow in TOOL_ROWS. Swung it is only a stick; it digs like a hand (not in
+  `DIG_TOOL_TYPES`).
+- **Recipe**: at the Work Stump, `sapling + 2 cord + #knapstone` → 1, knife 2, 6 s (after the Crude Bow). The tallies of
+  §100.6 / §103 move by one: one more tool, one more stump recipe.
+- **Art**: the icon is an upright sapling on a cord-wrapped grip (columns 7–8, the haft), a reel of cord by the grip, the
+  line from the tip over to the right and hanging to a red-and-white float. **In hand** (heldItem.js, amends §98.4) the
+  rod is its own picture, `rodHeldArt()`: a ROD_HELD_SIZE 32-px pole with no line, drawn at HELD_ROD_PIXEL (1.4 ×
+  HELD_PIXEL: about 1.1 m) and held by its butt as a tool. `heldItemGeometry` gives every slab a `tip` (the middle of the
+  top edge of its top-most solid row, turned with it), and `avatarRenderer.heldTip(firstPerson)` puts the tip of the item
+  in hand into the world (the first-person one or the model's): the line starts there.
+- **Picker**: Weapons, after the Flint Spear. `PICKER_TOOL_WORDS.rod`: fishing, angling, fish, hook, line, pole, float,
+  bobber. **Purpose**: "Hold to cast. When the float goes under, click to hook the fish. Reaches deep water a spear
+  cannot."
+- **Draw**: `drawOf('fishing_rod')` = `{ bow: false, rod: true, shoots: null, base: null, fullS: CAST_FULL_S }` with
+  `CAST_FULL_S` 0.8 (looseItems; fishing re-exports it). So Place held draws back a cast exactly as a throw (DrawHold, the
+  ring, the cocked pose, the swing on the release, `POSE_DRAWING` on a server, `throwHintFirst`); the release casts
+  instead of throwing (`drawRelease` → `castLine`). `throwWords` says nothing for a rod (it is not cast at beasts).
+
+### 106.3 The line (`fishing.js`, PURE)
+
+- `castSpeed(f)` = CAST_SPEED_MIN 4 + (CAST_SPEED_FULL 12 − 4) f; `castVelocity(dx, dy, dz, f, pvx, pvz)` adds the player's
+  run and lifts by CAST_LIFT 2.5 m/s. The float falls at FLOAT_GRAVITY 14 m/s², stepped at most 0.02 s at a time: a full
+  cast from the bank carries 10–14 m.
+- `FishingLine` (one; main's `fishing`): `state` 'none' | 'flying' | 'float' | 'coming' | 'nibble' | 'bite' | 'ground';
+  `out`, `onWater`, `x y z`, `dip` (0..1, eased back at 3/s), `quiet`, `fish`. `cast(x, y, z, vx, vy, vz)`; `step(dt, {
+  getBlock, player, fish })` → 'splash' | 'land' | 'nibble' | 'bite' | 'escaped' | 'snap' | null; `reel()` → `{ result:
+  'caught' | 'spooked' | 'reeled', fish }` (the line is in afterwards); `bait()` → `{ fish, x, z }` or null; `reset()`.
+  - **Flight**: into water at or under its surface (`floatSurface`) it floats there ('splash', dip 0.6); into anything
+    solid, below y 0 or after 5 s it lies where it is ('ground', 'land').
+  - **Float**: it rides the surface; the water gone, it lies there ('ground'). Every BITE_WAIT 3–9 s it chooses the
+    nearest fish within BITE_RADIUS 6 (level) and 2.5 up or down that is not darting ('coming'); with none, `quiet`
+    counts up. A chosen fish within BAIT_NEAR 0.45 (level) is at it: 'nibble' for NIBBLE_S 1.2–3.2 s (a twitch, dip
+    0.35, every 0.45–1.05 s: 'nibble'), then 'bite': the float under (dip 1) for HOOK_WINDOW_S 0.9 s. Not there within
+    COME_GIVE_UP_S 10 s (other water), darting, or gone, and it waits again for another. The window passed: 'escaped'
+    (the fish stays in `fish` that frame for main) and it waits again.
+  - Past LINE_MAX 24 m from the player it comes in ('snap').
+- `lineCurve(tip, end, n, slack)` (n points from the tip to the float); `lineSlack(d, tight)` =
+  min(0.6, 0.03 d), 0.02 drawn tight (a bite, a cast in flight); the sag is 6.75 t² (1 − t) × slack, most two thirds
+  of the way out and hardly any by the tip (in first person the tip is a span from the eye).
+- **Fish** (`animals.js`): `floatAt` `{ x, z }` | null (not saved). A fish with it, not darting, swims to that point at
+  FISH_BAIT_SPEED 0.7 and holds within 0.3 m, its nose to it; noticing the player (its `notice`) still makes it dart.
+
+### 106.4 Main (`main.js`)
+
+- `rodPlace(mouse)` first in `drawStep` (so every Place path: Survival, Creative, the debug handle): with the line out
+  and the rod in hand Place is the line's — a press while playing reels (`reelIn`); held, nothing else places.
+- `castLine(f)`: the float leaves `rodTip()` (the rod in hand's tip, `avatarRenderer.heldTip`; without it, first person
+  1.05 m along the look, 0.32 right, 0.3 up, or third person over the avatar's right hand, 1.95 m up) at `castVelocity`; Survival wears the rod 1 a cast (`toolBroke` at 0, the line in);
+  the throw sound grows with the cast; the arm swings through.
+- `reelIn()`: 'caught' → the fish dies (`animals.wound` 999) with a spray of water, its drops fly to the player
+  (`animalDied`: Survival only; Creative logs that it gives nothing), "You caught a fish."; 'spooked' → it darts (and
+  dives) and "Too soon: wait until the float goes right under."; then every fish's `floatAt` is cleared.
+- `stepFishing(dt)` every world frame, both modes, after the animals (on a server with no fish: they are the server's):
+  the line comes in when the rod leaves the hand, at death or with no world; the bait's fish gets `floatAt`, the rest
+  none; 'splash' and 'bite' spray and plop (the fish's `plop` voice at 0.35 / 0.6, a nibble 0.12); 'escaped' sends the
+  fish off ("It got away: click the moment the float goes under."); 'snap' says "Your line came in: you walked too far
+  from the float."; QUIET_HINT_S 25 s with no fish near says once a cast "No fish near the float. Try deeper water, or
+  where you saw a fin."
+- `resetFishing()` with the draw in `resetSurvivalInput` (sleep, death, a mode switch, a load) and on leaving a world.
+- **Hint** (`rodHintText`, from `drawHintText`): `Fishing Rod · Hold RMB to cast, let go to cast it out`; drawing
+  `Casting · let go to cast` / `Full cast · let go to cast`; out `Fishing Rod · the float is out`, `Fishing Rod · wait for
+  a bite · RMB: reel in` (quiet: `No fish near the float · RMB: reel in`), `Something is nibbling · wait for the float to
+  go under`, `Bite! · RMB now to hook it`, `The float is on dry land · RMB: reel in` (a tablet reads Place, §97.2).
+- **Drawn** (`fishingRenderer.js`, `syncFishing` in renderFrame): two draw calls — the line (a LINE_POINTS 16 THREE.Line,
+  dark, 0.75 opaque) and the float (a six-sided double cone, red cap over a white belly with a dark quill, flat-shaded,
+  per-vertex colours; FLOAT_R 0.08 across the flats, 0.2 m tall with its quill). On the water it bobs (±0.012 m), sinks
+  FLOAT_SINK 0.2 × dip and tips with a bite; on land it
+  lies on its side. Prewarmed with the others.
+- Not on a server's wire: the others do not see the line (§96 phase 1).
+
+### 106.5 The guide, the scene aid, tests
+
+- The Survival Guide's *Fish* (Animals): a spear in shallow water, the dive in deep water, the rod — how it is made, the
+  cast, the nibble and the bite, its casts.
+- `?scene=fishing` (diagnostics `FISHING_SCENE` { ahead 7, radius 3, deep 2 }): a pond ahead on level grass with two fish
+  and, with `?hold=fishing_rod`, the float cast to its middle.
+- Tests: `tests/unit/fishing.test.js` (the cast's speed and reach, the rod's item, draw and recipe, landing on water and on
+  land, the bite from start to hook, the escape and the nibble pulled, a darting fish never comes, the quiet hint, the snap
+  and a pond let dry, the line's sag; the spear in a stream and in a deep pond, the dive and the rise, a fish steered by
+  `floatAt`; main's wiring).
+

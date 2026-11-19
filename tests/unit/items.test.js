@@ -23,6 +23,7 @@ const TOOLS = {
   flint_shovel: ['Flint Shovel', 'shovel', 2, 90, 1],
   flint_spear: ['Flint Spear', 'spear', 2, 60, 3],
   crude_bow: ['Crude Bow', 'bow', 2, 60, 1], // §100: wears 1 a shot
+  fishing_rod: ['Fishing Rod', 'rod', 2, 80, 1], // §106: wears 1 a cast
   copper_knife: ['Copper Knife', 'knife', 3, 140, 2],
   copper_axe: ['Copper Axe', 'axe', 3, 160, 2],
   copper_pick: ['Copper Pick', 'pick', 3, 160, 1],
@@ -201,7 +202,7 @@ describe('items — tiers, tool types, wear slots', () => {
     for (let t = 1; t < TIER_SPEED.length; t++) expect(TIER_SPEED[t]).toBeGreaterThan(TIER_SPEED[t - 1]);
   });
   it('TOOL_TYPES lists every tool type once; WEAR_SLOT_NAMES is head, body, feet', () => {
-    expect([...TOOL_TYPES].sort()).toEqual(['axe', 'bow', 'crucible', 'firestarter', 'hammer', 'knife', 'mold', 'pick', 'shovel', 'spear', 'sword']); // §100: + the bow
+    expect([...TOOL_TYPES].sort()).toEqual(['axe', 'bow', 'crucible', 'firestarter', 'hammer', 'knife', 'mold', 'pick', 'rod', 'shovel', 'spear', 'sword']); // §100: + the bow; §106: + the rod
     expect(new Set(Object.values(TOOLS).map((t) => t[1]))).toEqual(new Set(TOOL_TYPES));
     expect(WEAR_SLOT_NAMES).toEqual(['head', 'body', 'feet']);
   });
@@ -239,8 +240,8 @@ describe('items — the registry', () => {
     // twelve game foods (fauna)
     // §80: + the three seeds (materials). The 18 farm blocks are not placeable, so they are no items.
     // §81: + Hemlock Root and Nightshade Berries (foods), the Aloe Leaf (a heal) and the seven placeable plants.
-    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([36, 60, 55, 3, 5, 120]); // §102: + the Compass (a material); §100 (the bows, the arrows): − the Bow, + the Crude Bow and the Recurve Bow (tools); − the two darts and the Arrow, + the Treated Stave, the Sapling, six arrows and (§103) the Spyglass (materials); // §101: + the Pennant (a block item); §100: + the Bow (a tool), the Bow Stave and the Arrow (materials); // §94: + the Lab; // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
-    expect(ITEM_KEYS).toHaveLength(279); // §102: + the Compass; §100 + §103: + 7; // §101: + the Pennant; §100: + the Bow, the Bow Stave, the Arrow; // §94: + the Lab; // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
+    expect([count('tool'), count('material'), count('food'), count('heal'), count('wear'), count('block')]).toEqual([37, 60, 55, 3, 5, 120]); // §106: + the Fishing Rod (a tool); §102: + the Compass (a material); §100 (the bows, the arrows): − the Bow, + the Crude Bow and the Recurve Bow (tools); − the two darts and the Arrow, + the Treated Stave, the Sapling, six arrows and (§103) the Spyglass (materials); // §101: + the Pennant (a block item); §100: + the Bow (a tool), the Bow Stave and the Arrow (materials); // §94: + the Lab; // §85: + the Pot of Spring Water, and the Grass Bed, the Bed, the Well and the Rain Barrel; + the flint dart (§60), the Workbench (§67), beef, mutton and the Snare (§69)
+    expect(ITEM_KEYS).toHaveLength(280); // §106: + the Fishing Rod; §102: + the Compass; §100 + §103: + 7; // §101: + the Pennant; §100: + the Bow, the Bow Stave, the Arrow; // §94: + the Lab; // + §85: 5; + the Pot of Milk (§72); + §76: 21 (flora), 1 (water), 14 (fauna); + §80: 3 seeds; + §81: 10
   });
   it('no item clashes with another: keys and display names are unique, and no display name spells another item\'s key', () => {
     const names = new Map();

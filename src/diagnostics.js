@@ -43,7 +43,8 @@ import { durabilityLeft } from './inventory.js';
  *   'crowd' a crowd of CROWD_SIZE (crowdScene), 'watcher' the Watcher (WATCHER_SCENE), 'phantom' the figure at the edge of
  *   sight (PHANTOM_SCENE) — drawn only, never in a list of mobs; §69.1: 'animals' every kind of animal ahead, held where
  *   they stand, 'animal-variants' the young, the shorn, the tame, the snared and the poses, 'animal-close' the sheep and
- *   the birds a couple of metres off (ANIMAL_SCENES); §105: 'plants' one of every plant in rows ahead (plantSceneCells)
+ *   the birds a couple of metres off (ANIMAL_SCENES); §105: 'plants' one of every plant in rows ahead (plantSceneCells);
+ *   §106: 'fishing' a deep pond ahead with two fish, and the float cast into it (FISHING_SCENE; with ?hold=fishing_rod)
  * @property {number|null} ahead     §105 screenshot aid: with ?scene=plants, how far ahead (m) its first row stands
  *   (−20..60, negative: behind the player; default PLANT_SCENE_AHEAD)
  * @property {number|null} slot      save slot 1..SAVE_SLOTS for ?autoplay (§41; main defaults to 1); anything else → null
@@ -184,16 +185,16 @@ function readSoundTestParam(params) {
   return t !== null && t.toLowerCase() === 'sounds';
 }
 
-/** @typedef {'vortex'|'circuits'|'wind'|'wind-rain'|'zombies'|'crowd'|'watcher'|'phantom'|'animals'|'animal-variants'|'animal-close'|'plants'} SceneName */
-/** Every `?scene=` (DESIGN-circuits §6.7, §101, §104, §69.1, §105). */
+/** @typedef {'vortex'|'circuits'|'wind'|'wind-rain'|'zombies'|'crowd'|'watcher'|'phantom'|'animals'|'animal-variants'|'animal-close'|'plants'|'fishing'} SceneName */
+/** Every `?scene=` (DESIGN-circuits §6.7, §101, §104, §69.1, §105, §106). */
 export const SCENE_NAMES = Object.freeze(/** @type {SceneName[]} */ ([
-  'vortex', 'circuits', 'wind', 'wind-rain', 'zombies', 'crowd', 'watcher', 'phantom', 'animals', 'animal-variants', 'animal-close', 'plants',
+  'vortex', 'circuits', 'wind', 'wind-rain', 'zombies', 'crowd', 'watcher', 'phantom', 'animals', 'animal-variants', 'animal-close', 'plants', 'fishing',
 ]));
 
 /**
- * `?scene=vortex|circuits|wind|wind-rain|zombies|crowd|watcher|phantom|animals|animal-variants|animal-close|plants`
+ * `?scene=vortex|circuits|wind|wind-rain|zombies|crowd|watcher|phantom|animals|animal-variants|animal-close|plants|fishing`
  * (case-insensitive), anything else null (DESIGN-circuits §6.7; §101 the wind; §104 the zombies, the Watcher and the
- * figure; §69.1 the animals; §105 the plants — staged for screenshots).
+ * figure; §69.1 the animals; §105 the plants; §106 a pond to fish — staged for screenshots).
  * @param {URLSearchParams} params
  * @returns {SceneName|null}
  */
@@ -294,6 +295,12 @@ export function crowdScene(n = CROWD_SIZE) {
   }
   return out;
 }
+
+/**
+ * §106 `?scene=fishing`: a round pond `radius` cells across its middle, `deep` cells deep, `ahead` m ahead of the player
+ * on level grass, two fish in it; with the Fishing Rod in hand (`?hold=fishing_rod`) the float is cast to its middle.
+ */
+export const FISHING_SCENE = Object.freeze({ ahead: 7, radius: 3, deep: 2 });
 
 /** §104 `?scene=watcher`: the Watcher this many metres ahead, a little to the right, facing the player. */
 export const WATCHER_SCENE = Object.freeze({ ahead: 4.6, right: 0.5 });

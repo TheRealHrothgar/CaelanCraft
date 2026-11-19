@@ -310,7 +310,7 @@ describe('the items and the recipes (items.js, itemArt.js, crafting.js, purpose.
     }
     expect(itemForBlock(B.WELL_DRAWN)).toBe('well');
     expect(BARRELS.map((id) => itemForBlock(id))).toEqual(['rain_barrel', 'rain_barrel', 'rain_barrel', 'rain_barrel']);
-    expect(ITEM_KEYS).toHaveLength(279); // §102: + the Compass; §100 + §103: + 7 (the bows, the staves, the sapling, six arrows, the Spyglass; − the darts, the Bow, the Arrow); §101: + the Pennant; §100: + the Bow, the Bow Stave, the Arrow; // §94: + the Lab;
+    expect(ITEM_KEYS).toHaveLength(280); // §106: + the Fishing Rod; §102: + the Compass; §100 + §103: + 7 (the bows, the staves, the sapling, six arrows, the Spyglass; − the darts, the Bow, the Arrow); §101: + the Pennant; §100: + the Bow, the Bow Stave, the Arrow; // §94: + the Lab;
   });
 
   it('the recipes: a Grass Bed by hand; the Well, the Rain Barrel and the Bed at the Work Stump', () => {
@@ -324,7 +324,7 @@ describe('the items and the recipes (items.js, itemArt.js, crafting.js, purpose.
     expect(row('rain_barrel')).toEqual(['stump', [{ tag: 'planks', n: 6 }, { k: 'cord', n: 2 }], [{ k: 'rain_barrel', n: 1 }], [{ type: 'axe', tier: 1 }], 8]);
     expect(row('bed')).toEqual(['stump', [{ tag: 'planks', n: 6 }, { k: 'cord', n: 3 }, { tag: 'wool', n: 3 }, { k: 'leather', n: 1 }],
       [{ k: 'bed', n: 1 }], [{ type: 'knife', tier: 2 }], 12]);
-    expect(RECIPES).toHaveLength(135); // §102: + the Compass; §100 + §103: + 6; §101: + the Pennant; §100: + the Bow Stave, the Bow and Arrows; // §94: + the Lab;
+    expect(RECIPES).toHaveLength(136); // §106: + the Fishing Rod; §102: + the Compass; §100 + §103: + 6; §101: + the Pennant; §100: + the Bow Stave, the Bow and Arrows; // §94: + the Lab;
     // wool of any colour, white (what a sheep gives) first
     expect(TAGS.wool).toHaveLength(16);
     expect(TAGS.wool[0]).toBe('wool_white');

@@ -183,7 +183,7 @@ describe('buildPickerModel: every item (tools, weapons, food, materials, clothes
       ['materials', 'Materials', 'copper_ingot'], ['clothes', 'Clothes & Healing', 'straw_hat']]);
     const kinds = (id) => section(id).entries.map((e) => (e.type === 'family' ? `[${e.key}]` : e.key));
     expect(kinds('tools')).toEqual(['[picks]', '[axes]', '[shovels]', '[hammers]', '[knives]', 'fire_drill', 'crucible',
-      'casting_mold', 'compass', 'handbook', 'spyglass']); // §102: the Compass; §103: + the Spyglass
+      'casting_mold', 'compass', 'handbook', 'spyglass', 'fishing_rod']); // §102: the Compass; §103: + the Spyglass; §106: + the Fishing Rod
     expect(kinds('weapons')).toEqual(['[swords]', 'flint_spear', '[bows]', 'rock']); // §100: + Bows & Arrows, − the darts
     expect(kinds('food')).toEqual(['[meat]', '[fish-eggs]', '[fruit-nuts]', '[roots]', '[mushrooms]', '[pots]', 'snow']);
     expect(kinds('clothes')).toEqual(['straw_hat', 'leather_hood', 'grass_cape', 'leather_coat', 'hide_shoes', 'fibre_bandage',
@@ -351,7 +351,7 @@ describe('searchBlocks (§5.5)', () => {
     expect(find('throw')).toEqual(['flint_spear', 'rock']);
     expect(find('weapon')).toEqual(['bronze_sword', 'iron_sword', 'steel_sword', 'flint_spear', 'crude_bow', 'recurve_bow', 'stone_arrow',
       'flint_arrow', 'copper_arrow', 'bronze_arrow', 'iron_arrow', 'steel_arrow', 'rock']);
-    expect(find('tools')).toHaveLength(33); // §102: + the Compass; §103: + the Spyglass
+    expect(find('tools')).toHaveLength(34); // §102: + the Compass; §103: + the Spyglass; §106: + the Fishing Rod
     expect(find('bandage')).toEqual(['fibre_bandage', 'rag_bandage']);
     expect(find('hat')).toEqual(['straw_hat', 'leather_hood']);
     // blocks and items together, blocks first (section order)
@@ -382,6 +382,7 @@ describe('searchBlocks (§5.5)', () => {
   it('§103 the Spyglass: among the Tools; "telescope" and "zoom" find it', () => {
     expect(model.info.get('spyglass')).toMatchObject({ section: 'tools', displayName: 'Spyglass' });
     for (const q of ['spyglass', 'telescope', 'zoom']) expect(find(q), q).toEqual(['spyglass']);
+    for (const q of ['fishing', 'angling', 'bobber']) expect(find(q), q).toEqual(['fishing_rod']); // §106
     expect(blurbFor('spyglass')).toBe(purposeOf('spyglass'));
   });
 

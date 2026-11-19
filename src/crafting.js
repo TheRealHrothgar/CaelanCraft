@@ -215,7 +215,7 @@ const RECIPE_ROWS = [
   ['grass_bed', 'hand', '8 plant_fibre + 3 stick', 'grass_bed', '', 4],
   // §101: the Pennant — a rag or a hide lashed to a stick with cord: it shows which way the wind blows, and how hard
   ['pennant', 'hand', 'stick + cord + #cloth', 'pennant', '', 3],
-  // ---- Work Stump (28); riving a log into sticks is real work: there is no planks-to-sticks shortcut
+  // ---- Work Stump (29); riving a log into sticks is real work: there is no planks-to-sticks shortcut
   // §94: flint is knapped on the stump's flat top with the hammerstone: the stump comes before the flint tools
   ['flint_knife', 'stump', '#knapstone + stick + cord', 'flint_knife', 'hammer 1', 3],
   ['flint_axe', 'stump', '#knapstone + stick + cord', 'flint_axe', 'hammer 1', 4],
@@ -232,6 +232,8 @@ const RECIPE_ROWS = [
   // Workbench (steel, copper wire and a steel hammer)
   ['recurve_bow', 'stump', 'treated_stave + 2 rawhide + cord', 'recurve_bow', 'knife 3', 20],
   ['spyglass', 'stump', '2 bronze_ingot + glass', 'spyglass', '', 15],
+  // §106: the Fishing Rod — a sapling, a long cord line and a hook knapped from flint (knife to whittle and notch it)
+  ['fishing_rod', 'stump', 'sapling + 2 cord + #knapstone', 'fishing_rod', 'knife 2', 6],
   ['oak_planks', 'stump', 'oak_log', '3 oak_planks', 'axe 2', 3],
   ['spruce_planks', 'stump', 'spruce_log', '3 spruce_planks', 'axe 2', 3],
   ['birch_planks', 'stump', 'birch_log', '3 birch_planks', 'axe 2', 3],
