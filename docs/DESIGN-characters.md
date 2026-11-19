@@ -1,5 +1,12 @@
 # Caelancraft — Characters, creatures and plants: the hex-faceted look (DRAFT v1, 2026-11-16)
 
+> **2026-11-19, the figures are CHISELLED BLOCKS (CONTRACTS §107).** The user's kids voted: "they like the blocky
+> graphics better than the tessellated polygons/hexagonal prisms used to build the characters and mobs"; the user asked
+> to "go back to cubism while maintaining the newly developed textural detail". Shown the hex-faceted look, chiselled
+> blocks and plain boxes side by side, they chose chiselled blocks: avatars, zombies, animals, the phantom and the hand
+> are built of rectangular cross-sections with their tapers kept, under the same painted atlases. The plants and the
+> Hollow Watcher keep the shapes described below. Read "hexagonal column" below as "block" for every figure.
+
 ## 1. Why
 
 The user: "The characters, mobs, and NPCs are too blocky (and dare I say, Minecraft-y). This isn't a clone of Minecraft and

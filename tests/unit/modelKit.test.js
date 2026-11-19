@@ -1,9 +1,10 @@
 // modelKit.js (PURE): the art pilot's affine primitives — closed meshes wound outward, unit normals, uvs in [0, 1] of
 // their faces, small triangle counts — and the helpers that place and combine them.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   prism, loft, pyramid, chamferBox, wedge, transform, merge, atlasUV, compose, alongSegment, mul, rotation, translation,
-  scaling, identity, triangleCount, bounds, wrapU, ringLoft, sweep, BOX_FACES, WRAP_GROUPS,
+  scaling, identity, triangleCount, bounds, wrapU, ringLoft, sweep, BOX_FACES, WRAP_GROUPS, basePolygon,
+  setShapeLanguage, shapeLanguage, withShapeLanguage, BLOCK_K,
 } from '../../src/modelKit.js';
 
 /** Weld vertices by position; every undirected edge must be used by exactly two triangles, once each way. */
@@ -88,7 +89,77 @@ const PRIMS = {
   'wedge to a point': () => wedge({ w: 0.1, h: 0.2, d: 0.1, ridge: 0.3, sx: 0 }),
 };
 
-describe('primitives', () => {
+describe('the shape language: chiselled blocks (§107)', () => {
+  it('is the game\'s: every cross-section a rectangle square to the axes, BLOCK_K of the radii it was given', () => {
+    expect(shapeLanguage()).toBe('block');
+    const g = prism({ sides: 6, rx: 0.3, rz: 0.2, h: 1 });
+    expect(volume(g)).toBeCloseTo(4 * 0.3 * BLOCK_K * 0.2 * BLOCK_K, 6);
+    const b = bounds(g);
+    expect([b.max[0], b.max[2], b.min[0], b.min[2]].map((v) => +v.toFixed(6))).toEqual([0.27, 0.18, -0.27, -0.18]);
+    // its side faces look along the axes: flat fronts and flanks
+    for (let v = 0; v < g.groups.length; v++) {
+      if (g.groups[v] !== 0) continue;
+      const n = [g.normals[v * 3], g.normals[v * 3 + 1], g.normals[v * 3 + 2]].map((x) => Math.abs(x));
+      expect(Math.max(n[0], n[2])).toBeCloseTo(1, 6);
+      expect(n[1]).toBeCloseTo(0, 6);
+    }
+    expect(triangleCount(g)).toBe(16); // 5 side quads (the back face split at the seam) + 3 + 3
+    // whatever n-gon or corners a part asks for
+    expect(triangleCount(prism({ sides: 12 }))).toBe(16);
+    expect(triangleCount(loft({ corners: [30, 84, 122, 150, 210, 238, 276, 330].map((d) => (d * Math.PI) / 180), rings: [{ y: 0 }, { y: 1 }] }))).toBe(16);
+  });
+
+  it('keeps a part\'s rings: a taper, a swell, a point (chiselled, not boxed)', () => {
+    const g = loft({ rx: 0.2, rings: [{ y: 0, sx: 0.5 }, { y: 0.5, sx: 1 }, { y: 1, sx: 0 }] });
+    expect(closedness(g)).toBe(0);
+    expect(allOutward(g)).toBe(true);
+    const b = bounds(g);
+    expect(b.max[0]).toBeCloseTo(0.2 * BLOCK_K, 6);
+    let low = 0;
+    for (let v = 0; v < g.positions.length / 3; v++) if (Math.abs(P(g, v)[1]) < 1e-9) low = Math.max(low, P(g, v)[0]);
+    expect(low).toBeCloseTo(0.1 * BLOCK_K, 6);
+  });
+
+  it('paints as before: the strip starts in the middle of the back and has the front\'s middle at u 0.5', () => {
+    const o = { sides: 6, rx: 0.3, rz: 0.2 };
+    expect(wrapU(o, 0).u).toBeCloseTo(0, 9);
+    expect(wrapU(o, Math.PI).u).toBeCloseTo(0.5, 9);
+    expect(wrapU(o, Math.PI / 2).u).toBeCloseTo(0.25, 9);
+    expect(wrapU(o, 0).perimeter).toBeCloseTo(4 * BLOCK_K * (0.3 + 0.2), 9);
+    const { pts, us } = basePolygon(o);
+    expect(pts).toHaveLength(5); // the seam's point and the four corners
+    expect(us[0]).toBe(0);
+    expect(us[us.length - 1]).toBe(1);
+  });
+
+  it('every primitive is closed, wound outward and unit-normalled in blocks too', () => {
+    for (const [name, make] of Object.entries(PRIMS)) {
+      const g = make();
+      expect(closedness(g), name).toBe(0);
+      expect(volume(g), name).toBeGreaterThan(0);
+      expect(allOutward(g), name).toBe(true);
+      expect(unitNormals(g), name).toBe(true);
+      expect(uvsInRange(g), name).toBe(true);
+    }
+  });
+
+  it('`keep` is a part\'s own n-gon whatever the language (the plants, the Watcher\'s bands)', () => {
+    expect(triangleCount(prism({ sides: 6, keep: true }))).toBe(24);
+    expect(bounds(prism({ sides: 6, rx: 0.3, keep: true })).max[0]).toBeCloseTo(0.3, 6);
+  });
+
+  it('the faceted language can be asked for, for a while', () => {
+    expect(withShapeLanguage('hex', () => triangleCount(prism({ sides: 6 })))).toBe(24);
+    expect(shapeLanguage()).toBe('block');
+    expect(() => withShapeLanguage('hex', () => { throw new Error('x'); })).toThrow('x');
+    expect(shapeLanguage()).toBe('block');
+    expect(() => setShapeLanguage(/** @type {*} */ ('round'))).toThrow(RangeError);
+  });
+});
+
+describe('primitives (the faceted language: each part\'s own n-gon)', () => {
+  beforeAll(() => setShapeLanguage('hex'));
+  afterAll(() => setShapeLanguage('block'));
   for (const [name, make] of Object.entries(PRIMS)) {
     it(`${name}: closed, wound outward, unit normals, uvs in [0, 1], valid groups`, () => {
       const g = make();

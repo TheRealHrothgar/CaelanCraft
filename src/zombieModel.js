@@ -23,7 +23,7 @@
 import { loft, wedge, transform, merge, mul, translation, compose, triangleCount, bounds, wrapU } from './modelKit.js';
 import { Painter, mix, shade, hash2, makeRng, createImage, bleed } from './paintKit.js';
 import {
-  STYLES, DENSITY, perimeter, Skin, shapes, headGeo, HEAD_CORNERS, FRONT, DEG, headRingAt, hairMass, hairline, clump,
+  STYLES, DENSITY, perimeter, Skin, shapes, headGeo, HEAD_CORNERS, FRONT, DEG, headRingAt, hairMass, hairline, clump, capYaws,
   hairCentre,
 } from './figureKit.js';
 
@@ -595,8 +595,9 @@ const over = (yaw, pitch, lift) => (pitch > 90 ? [(yaw + 180) % 360, 180 - pitch
 
 /** Each kind's scalp cap: its hairline (pitch by yaw from the back, mirrored) and how far it stands off the skull. */
 const CAPS = Object.freeze({
-  // thin and receding: high at the temples, a little peak in the middle, low at the nape; lying flat
-  walker: { rim: hairline([[0, -20], [45, -9], [80, 8], [100, 10], [128, 22], [150, 30], [166, 30], [180, 28]]), off: (yaw, pitch, s) => 0.013 + 0.01 * s },
+  // thin and receding: high at the temples and higher still over the brow (a block's flat forehead: the hairline arches
+  // up between its corners, never dips), low at the nape; lying flat
+  walker: { rim: hairline([[0, -20], [45, -9], [80, 8], [100, 10], [128, 22], [150, 30], [166, 32], [180, 33]]), off: (yaw, pitch, s) => 0.013 + 0.01 * s },
   // a full head of straw, close to the skull (its clumps give it its shape)
   runner: { rim: hairline([[0, -22], [45, -12], [80, 6], [100, 8], [130, 18], [160, 24], [180, 26]]), off: (yaw, pitch, s) => 0.014 + 0.012 * s },
   // long and heavy: down over the tops of the ears and low at the nape
@@ -607,8 +608,8 @@ const CAPS = Object.freeze({
  * its corners, so no more are needed) — and its rings, hairline to crown, placed so that no ridge of the gaunt skull
  * (its widest ring, at 0.87 of its height) shows between them: zombieHairGaps.
  */
-const ZOMBIE_CAP_YAWS = Object.freeze([0, ...HEAD_CORNERS.map((a) => Math.round(a / DEG)), 180].sort((a, b) => a - b));
-const ZOMBIE_CAP_RINGS = Object.freeze([0, 0.1, 0.2, 0.4, 0.55, 1]);
+const zombieCapYaws = (H) => capYaws(H);
+const ZOMBIE_CAP_RINGS = Object.freeze([0, 0.1, 0.2, 0.3, 0.4, 0.55, 0.78, 1]);
 
 /**
  * A kind's hair in its head's frame (the chin at the origin), built against the kind's own head loft (`ZOMBIE_HEAD` or
@@ -627,7 +628,7 @@ export function zombieHair(kind) {
   const H = L.head;
   const shape = L.shape;
   const cap = CAPS[k];
-  const capGeo = hairMass(H, shape, { yaws: [...ZOMBIE_CAP_YAWS], rim: cap.rim, off: cap.off, rings: ZOMBIE_CAP_RINGS });
+  const capGeo = hairMass(H, shape, { yaws: zombieCapYaws(H), rim: cap.rim, off: cap.off, rings: ZOMBIE_CAP_RINGS });
   const cc = hairCentre(H);
   /** out from the cranium, but level below it (a lock hanging free faces out, not down) */
   const outward = (c) => [c[0] - cc[0], Math.max(0, c[1] - cc[1]), c[2] - cc[2]];

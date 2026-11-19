@@ -25,14 +25,14 @@ describe('the zombie models', () => {
     expect(zombieModel(/** @type {*} */ ('nonsense')).kind).toBe('walker');
   });
 
-  it('stays in the budget: about 1,000–1,300 triangles a zombie (legs and arms drawn twice)', () => {
+  it('stays in the budget: about 880–930 triangles a zombie in blocks (§107; legs and arms drawn twice)', () => {
     for (const kind of ZOMBIE_MODEL_KINDS) {
       const m = zombieModel(kind);
       let t = 0;
       for (const p of ZOMBIE_PARTS) t += triangleCount(m.parts[p]) * (p === 'torso' || p === 'head' ? 1 : 2);
       expect(m.tris, kind).toBe(t);
-      expect(m.tris, kind).toBeGreaterThan(900);
-      expect(m.tris, kind).toBeLessThanOrEqual(1320);
+      expect(m.tris, kind).toBeGreaterThan(800);
+      expect(m.tris, kind).toBeLessThanOrEqual(1000);
     }
   });
 

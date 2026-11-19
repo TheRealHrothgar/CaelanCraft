@@ -125,16 +125,16 @@ class Builder {
  * back (+z) toward +x — the default π/sides puts a flat face at the back and (for an even count) the front. A ring
  * scaled to nothing is a point (an apex): its facets are triangles and it has no cap. `corners` (radians round from
  * the back toward +x, any order) puts the corners where it says instead — a head with a broad flat face plane in front.
+ * `keep`: the n-gon as asked for, whatever the shape language (§107).
  * @param {{ sides?: number, rx?: number, rz?: number, rings: Ring[], smooth?: boolean, phase?: number,
- *   corners?: number[], caps?: boolean|{ top?: boolean, bottom?: boolean } }} o
+ *   corners?: number[], caps?: boolean|{ top?: boolean, bottom?: boolean }, keep?: boolean }} o
  * @returns {Geo}
  */
 export function loft({ sides = 6, rx = 0.5, rz = rx, rings, smooth = false, phase = Math.PI / sides, corners, caps = true, keep = false }) {
   if (!Array.isArray(rings) || rings.length < 2) throw new RangeError('loft: at least two rings');
   const { pts, us } = basePolygon({ sides, rx, rz, phase, corners, keep });
   const m = pts.length; // ring points; the strip closes on a copy of the first (u = 1)
-  let R = rings.map((r) => ({ y: r.y, sx: r.sx ?? 1, sz: r.sz ?? r.sx ?? 1, dx: r.dx ?? 0, dz: r.dz ?? 0 }));
-  if (SHAPE === 'box' && !keep) R = boxRings(R, rx, rz);
+  const R = rings.map((r) => ({ y: r.y, sx: r.sx ?? 1, sz: r.sz ?? r.sx ?? 1, dx: r.dx ?? 0, dz: r.dz ?? 0 }));
   const apex = R.map((r) => Math.abs(r.sx * rx) < EPS && Math.abs(r.sz * rz) < EPS);
   /** @returns {Vec3} */
   const at = (k, j) => {
@@ -195,23 +195,36 @@ export function loft({ sides = 6, rx = 0.5, rz = rx, rings, smooth = false, phas
   return b.done('wrap');
 }
 
-// ---- PILOT (blocky look): the shape language. 'hex' is the game's; 'block' makes every cross-section a rectangle
-// (limbs, bodies and heads keep their tapers: chiselled blocks); 'box' also squares every loft off to one plain box.
-// Read from ?shape= when there is a page, so every model built afterwards speaks it. `keep` on a loft opts out (plants,
-// the Watcher).
-/** @type {'hex'|'block'|'box'} */
-let SHAPE = 'hex';
-try {
-  const q = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('shape') : null;
-  if (q === 'block' || q === 'box') SHAPE = q;
-} catch { /* no page */ }
-/** @param {'hex'|'block'|'box'} s */
+// ---- The shape language (CONTRACTS §107). The figures — avatars, zombies, animals, the phantom, the hand — are built of
+// CHISELLED BLOCKS: every cross-section a rectangle square to its part's axes, the tapers, swells and points of the
+// rings kept (the user's kids voted the hex-faceted figures out: "they like the blocky graphics better"; the painted
+// atlases stay). 'block' is the game's language; 'hex' is the n-gon each call asks for (`sides`, `corners`, `phase`),
+// kept for the gallery's comparison. A loft with `keep` is always its own n-gon (the plants, the Watcher's hex bands).
+/** @typedef {'block'|'hex'} ShapeLanguage */
+/** @type {ShapeLanguage} */
+let SHAPE = 'block';
+/** Set the language every loft, prism, pyramid and sweep built from now on speaks. @param {ShapeLanguage} s */
 export function setShapeLanguage(s) {
+  if (s !== 'block' && s !== 'hex') throw new RangeError(`modelKit: no shape language "${s}"`);
   SHAPE = s;
 }
+/** @returns {ShapeLanguage} */
 export const shapeLanguage = () => SHAPE;
-/** A rectangle's half-sides as a share of the ellipse's radii it stands for (about a hexagon's area). */
-const BLOCK_K = 0.9;
+/**
+ * Build something in another language and come back (the gallery's faceted column, the pilot's plants, a test).
+ * @template T @param {ShapeLanguage} s @param {() => T} fn @returns {T}
+ */
+export function withShapeLanguage(s, fn) {
+  const was = SHAPE;
+  setShapeLanguage(s);
+  try {
+    return fn();
+  } finally {
+    SHAPE = was;
+  }
+}
+/** A block's half-sides as a share of the radii (rx, rz) its part was given: about the area of the hexagon it replaces. */
+export const BLOCK_K = 0.9;
 
 /** The base polygon of a block: a rectangle, its faces square to the axes, the seam's point in the middle of the back. */
 function blockPolygon(rx, rz) {
@@ -240,32 +253,16 @@ function blockPolygon(rx, rz) {
 }
 
 /**
- * 'box': a loft's rings squared off to one plain box from its first ring to its last — as wide and deep as its widest
- * ring, at the middle of where its rings stand. A loft that comes to a point (a horn, a beak) becomes a slimmer box.
- */
-function boxRings(R, rx, rz) {
-  const live = R.filter((r) => Math.abs(r.sx * rx) > EPS || Math.abs(r.sz * rz) > EPS);
-  if (live.length === 0) return R;
-  const pointed = live.length < R.length;
-  const f = pointed ? 0.6 : 1;
-  const sx = Math.max(...live.map((r) => Math.abs(r.sx))) * f;
-  const sz = Math.max(...live.map((r) => Math.abs(r.sz))) * f;
-  const dx = live.reduce((s, r) => s + r.dx, 0) / live.length;
-  const dz = live.reduce((s, r) => s + r.dz, 0) / live.length;
-  return [{ y: R[0].y, sx, sz, dx, dz }, { y: R[R.length - 1].y, sx, sz, dx, dz }];
-}
-
-/**
  * A loft's base polygon: its corners on the ellipse (rx, rz) in order round from the back, the seam's point at the
  * middle of the back (θ = 0) added when no corner is there, and each point's u (its share of the way round).
- * @param {{ sides?: number, rx?: number, rz?: number, phase?: number, corners?: number[] }} o
+ * @param {{ sides?: number, rx?: number, rz?: number, phase?: number, corners?: number[], keep?: boolean }} o
  * @returns {{ pts: { th: number, x: number, z: number }[], us: number[], perimeter: number }}
  */
 export function basePolygon({ sides = 6, rx = 0.5, rz = rx, phase = Math.PI / sides, corners, keep = false }) {
-  if (SHAPE !== 'hex' && !keep) return blockPolygon(rx, rz);
+  if (corners ? corners.length < 3 : !(sides >= 3)) throw new RangeError('loft: at least three sides');
+  if (SHAPE === 'block' && !keep) return blockPolygon(rx, rz);
   const angles = corners ?? [];
   if (!corners) {
-    if (!(sides >= 3)) throw new RangeError('loft: at least three sides');
     for (let i = 0; i < Math.round(sides); i++) angles.push(phase + (i * 2 * Math.PI) / Math.round(sides));
   }
   if (angles.length < 3) throw new RangeError('loft: at least three sides');
@@ -301,7 +298,7 @@ export function basePolygon({ sides = 6, rx = 0.5, rz = rx, phase = Math.PI / si
 /**
  * Where a loft's strip is at angle θ round from the back (radians toward +x): its u (0..1), and the base polygon's
  * perimeter (metres) — for painting a picture (a face) on the facets that face that way.
- * @param {{ sides?: number, rx?: number, rz?: number, phase?: number, corners?: number[] }} o  the loft's own
+ * @param {{ sides?: number, rx?: number, rz?: number, phase?: number, corners?: number[], keep?: boolean }} o  the loft's own
  * @param {number} theta
  * @returns {{ u: number, perimeter: number }}
  */
@@ -408,10 +405,10 @@ function sub3(a, b) {
  * that bends. `segments` stations past the first; a profile ending in 0 ends in a point. `up` may be a function of a
  * station's centre (a ribbon kept flat to a curved surface: up its normal there).
  * @param {{ points: number[][], sides?: number, rx?: number, rz?: number, up?: number[]|((c: number[], t: number) => number[]),
- *   profile?: number[]|((t: number) => number), segments?: number, phase?: number }} o
+ *   profile?: number[]|((t: number) => number), segments?: number, phase?: number, keep?: boolean }} o
  * @returns {Geo}
  */
-export function sweep({ points, sides = 6, rx = 0.05, rz = rx, up = [0, 0, 1], profile, segments = 4, phase }) {
+export function sweep({ points, sides = 6, rx = 0.05, rz = rx, up = [0, 0, 1], profile, segments = 4, phase, keep = false }) {
   if (!Array.isArray(points) || points.length < 2) throw new RangeError('sweep: at least two points');
   const n = points.length;
   const at = (i) => points[Math.max(0, Math.min(n - 1, i))];
@@ -431,7 +428,7 @@ export function sweep({ points, sides = 6, rx = 0.05, rz = rx, up = [0, 0, 1], p
   const centres = [];
   for (let k = 0; k <= S; k++) centres.push(curve(((n - 1) * k) / S));
   const scale = (k) => (typeof profile === 'function' ? profile(k / S) : profile ? profile[Math.min(profile.length - 1, k)] : 1 - (k / S) ** 1.5);
-  const { pts } = basePolygon({ sides, rx: 1, rz: 1, phase });
+  const { pts } = basePolygon({ sides, rx: 1, rz: 1, phase, keep });
   const upAt = (c, k) => (typeof up === 'function' ? up(c, k / S) : up);
   const u0 = upAt(centres[0], 0);
   let prevN = unit(/** @type {Vec3} */ ([u0[0], u0[1], u0[2]]));
@@ -457,22 +454,22 @@ export function sweep({ points, sides = 6, rx = 0.05, rz = rx, up = [0, 0, 1], p
  * An n-gon prism or frustum standing on its base (y = 0 to h): an elliptical cross-section (rx, rz), the top scaled
  * (sx, sz) and moved (dx, dz) — a taper and a shear, nothing that bends.
  * @param {{ sides?: number, rx?: number, rz?: number, h?: number, top?: { sx?: number, sz?: number, dx?: number, dz?: number },
- *   smooth?: boolean, phase?: number, caps?: boolean|{ top?: boolean, bottom?: boolean } }} [o]
+ *   smooth?: boolean, phase?: number, caps?: boolean|{ top?: boolean, bottom?: boolean }, keep?: boolean }} [o]
  * @returns {Geo}
  */
-export function prism({ sides = 6, rx = 0.5, rz = rx, h = 1, top = {}, smooth = false, phase, caps = true } = {}) {
-  return loft({ sides, rx, rz, smooth, phase, caps, rings: [{ y: 0 }, { y: h, ...top }] });
+export function prism({ sides = 6, rx = 0.5, rz = rx, h = 1, top = {}, smooth = false, phase, caps = true, keep = false } = {}) {
+  return loft({ sides, rx, rz, smooth, phase, caps, keep, rings: [{ y: 0 }, { y: h, ...top }] });
 }
 
 /**
  * An n-gon pyramid (a cone of flat facets) on its base: the apex `h` up, moved (dx, dz) — a horn, a beak, a tail, a
  * spike of hair.
  * @param {{ sides?: number, rx?: number, rz?: number, h?: number, apex?: { dx?: number, dz?: number }, smooth?: boolean,
- *   phase?: number }} [o]
+ *   phase?: number, keep?: boolean }} [o]
  * @returns {Geo}
  */
-export function pyramid({ sides = 4, rx = 0.5, rz = rx, h = 1, apex = {}, smooth = false, phase } = {}) {
-  return loft({ sides, rx, rz, smooth, phase, rings: [{ y: 0 }, { y: h, sx: 0, sz: 0, dx: apex.dx ?? 0, dz: apex.dz ?? 0 }] });
+export function pyramid({ sides = 4, rx = 0.5, rz = rx, h = 1, apex = {}, smooth = false, phase, keep = false } = {}) {
+  return loft({ sides, rx, rz, smooth, phase, keep, rings: [{ y: 0 }, { y: h, sx: 0, sz: 0, dx: apex.dx ?? 0, dz: apex.dz ?? 0 }] });
 }
 
 /** Box-face projection: the uv of point p (in the box [−w/2, w/2] × [−h/2, h/2] × [−d/2, d/2]) on face f. */
@@ -526,10 +523,10 @@ function outward(pts, inside) {
  * @returns {Geo}
  */
 export function chamferBox({ w = 1, h = 1, d = 1, c = 0.1, cb = c, smooth = false, top = {} } = {}) {
-  if (SHAPE !== 'hex') {
+  if (SHAPE === 'block') {
+    // a block's box has square edges (a hair of a chamfer keeps its twenty-six faces, their groups and their uvs)
     c = 1e-4;
     cb = 1e-4;
-    if (SHAPE === 'box') top = {};
   }
   const most = Math.min(w, h, d) / 2 - 1e-4;
   const cTop = Math.max(0, Math.min(c, most));
@@ -602,10 +599,6 @@ export function chamferBox({ w = 1, h = 1, d = 1, c = 0.1, cb = c, smooth = fals
  * @returns {Geo}
  */
 export function wedge({ w = 1, h = 1, d = 1, ridge = 0, sx = 1 } = {}) {
-  if (SHAPE === 'box') {
-    ridge = 0;
-    sx = 1;
-  }
   const hw = w / 2;
   const hd = d / 2;
   const rz = ridge * hd;

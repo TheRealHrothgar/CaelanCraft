@@ -1,7 +1,7 @@
 // Caelancraft — the art-direction pilot's models (PURE: typed arrays, no three, no DOM). Shown by gallery.html next
 // to today's models. See docs/DESIGN-characters.md.
 //
-// The chosen look, A: HEX-FACETED. The kit for every figure is figureKit.js (faceted heads, hair, the Skin atlas, the
+// The figures' look is CHISELLED BLOCKS (CONTRACTS §107). The kit for every figure is figureKit.js (heads, hair, the Skin atlas, the
 // style's shapes); the avatars left the pilot in phase 1 — they are avatarModel.js, the game's own models, and the pilot
 // shows them from there (buildPilot('caelan'), buildHand); the zombies left in phase 2 (zombieModel.js: buildPilot('zombie')
 // is the game's walker); the sheep and the pig left it in phase 3 — they are animalModels.js's, over the animals' shared
@@ -10,7 +10,7 @@
 // A model is { geo, image, tris, texels, atlas: [w, h] }: one merged geometry in its own frame (metres; a figure stands on
 // its feet at the origin and faces −Z; the first-person hand is in CAMERA space), one RGBA atlas (sRGB bytes, row 0 at
 // the top, a DataTexture with flipY off) and its budgets. Static poses only: the pilot is about the look.
-import { loft, prism, transform, compose, mul, translation, rotation, identity, triangleCount } from './modelKit.js';
+import { loft, prism, transform, compose, mul, translation, rotation, identity, triangleCount, withShapeLanguage } from './modelKit.js';
 import { mix } from './paintKit.js';
 import {
   STYLES, Skin, shapes, seg, len,
@@ -93,9 +93,10 @@ export function buildPilot(name, style = 'hex', { hair } = {}) {
     case 'zombie': return buildWalker();
     case 'sheep': return restModel('sheep');
     case 'pig': return restModel('pig');
-    case 'honeyberry': return buildHoneyberry(st, paintBush());
-    case 'honeyberry_far': return buildHoneyberryFar(st, paintBush());
-    case 'sapling': return buildSapling(st, paintBush());
+    // the pilot's plants keep their own n-gons (§107: the blocks are the figures'; the game's plants are plantKit's)
+    case 'honeyberry': return withShapeLanguage('hex', () => buildHoneyberry(st, paintBush()));
+    case 'honeyberry_far': return withShapeLanguage('hex', () => buildHoneyberryFar(st, paintBush()));
+    case 'sapling': return withShapeLanguage('hex', () => buildSapling(st, paintBush()));
     default: throw new RangeError(`no pilot model ${name}`);
   }
 }

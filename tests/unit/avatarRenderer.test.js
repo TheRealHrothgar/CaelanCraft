@@ -11,6 +11,7 @@ import {
 import { AvatarMotion } from '../../src/avatarMotion.js';
 import { AVATARS, avatarHeight } from '../../src/avatars.js';
 import { avatarModel, fpHandFrame, fpClearShift } from '../../src/avatarModel.js';
+import { BLOCK_K } from '../../src/modelKit.js';
 import { createAvatarMenu, avatarButtonLabel, INERT_BENEATH } from '../../src/avatarMenu.js';
 import { createRemotePlayerRenderer } from '../../src/remotePlayerRenderer.js';
 import { POSE_ON_GROUND, POSE_DRAWING } from '../../src/protocol.js';
@@ -148,7 +149,10 @@ describe('the avatar model (three)', () => {
     const k = def.scale;
     const rig = avatarModel(def).rig;
     const r = createAvatarRenderer(new THREE.Scene(), { avatar: def.id });
-    /** How far out of the skirt the legs reach (the largest (x/rx)² + (z/rz)² of a leg's corner inside the skirt's height). */
+    /**
+     * How far out of the skirt the legs reach: the largest share of the skirt's half-width or half-depth a leg's corner
+     * comes to, inside the skirt's height (§107: the skirt is a block, BLOCK_K of its radii).
+     */
     const outOfSkirt = (p) => {
       r.sync({ x: 0, y: 0, z: 0, pose: p, showModel: true, showArm: false });
       const root = model(r, def.id);
@@ -174,7 +178,7 @@ describe('the avatar model (three)', () => {
           const t = (v.y - hem) / (waist - hem);
           if (t <= 0.02 || t >= 1) continue; // below the hem the legs are out in the open
           const [rx, rz] = radii(t);
-          worst = Math.max(worst, (v.x / rx) ** 2 + (v.z / rz) ** 2);
+          worst = Math.max(worst, Math.abs(v.x) / (rx * BLOCK_K), Math.abs(v.z) / (rz * BLOCK_K));
         }
       });
       return worst;

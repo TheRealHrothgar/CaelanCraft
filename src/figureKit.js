@@ -1,22 +1,24 @@
 // Caelancraft — the figure kit: what every faceted FIGURE is made of (PURE: typed arrays, no three, no DOM). See
 // src/CONTRACTS.md §91 and docs/DESIGN-characters.md.
 //
-// The look is A, HEX-FACETED: limbs, torsos and bodies are tapered HEXAGONAL columns with flat facets (the honeycomb's
-// own cross-section); heads are faceted lofts — a broad flat face plane, cheeks, a jaw tapering to the chin, a fuller
-// cranium — with the face painted on the front plane; hair is a mass or a scalp cap over the crown with CLUMPS (swept,
-// faceted ribbons) lying on it; hands and shoes are chamfered boxes; noses and ears are wedges and hex pieces.
+// The look is CHISELLED BLOCKS (CONTRACTS §107; the user's kids voted the hex-faceted figures out): limbs, torsos and
+// bodies are tapered columns of rectangular cross-section; heads are the same lofts — a flat face, flat flanks, a jaw
+// tapering to the chin, a fuller cranium; hair is a mass or a scalp cap laid off the skull (following its four edges)
+// with clumps (swept slabs) lying on it; hands and shoes are square-edged boxes; noses and ears are wedges and low
+// blocks. A part still says which n-gon it would be in the faceted language (`sides`, `corners`): modelKit makes it a
+// block.
 // modelKit.js makes the solids, paintKit.js paints the pictures; here are the pieces figures share:
 //   - Skin: one model's 256² atlas — rectangles asked for by name (a strip round a column and its caps, a box's six
 //     faces, one plain picture), packed tallest first, painted once, and the parts' uvs moved onto them;
 //   - shapes(style): the style's columns, chamfered blocks, nubs, spikes and puffs;
 //   - heads: the faceted head loft (HEAD_CORNERS, KID_HEAD), its painted face (headSkin), its nose and ears (addHead);
-//   - hair: a mass or a cap laid off the head (hairMass, hairline, CAP_YAWS, CAP_RINGS), clumps lying on it (clump),
+//   - hair: a mass or a cap laid off the head (hairMass, hairline, capYaws, CAP_RINGS), clumps lying on it (clump),
 //     locks and a receding shell (lockGeo, addLocks, hairShell);
 //   - little matrices (seg, rotateAbout).
 // avatarModel.js builds the avatars from these; pilotModels.js (the art pilot) its zombie, animals and plants.
 import {
   loft, pyramid, chamferBox, wedge, transform, merge, atlasUV, mul, translation, compose, alongSegment, triangleCount, wrapU,
-  ringLoft, sweep, basePolygon,
+  ringLoft, sweep, basePolygon, shapeLanguage,
 } from './modelKit.js';
 import { Atlas, Painter, paintFace, shade } from './paintKit.js';
 
@@ -39,9 +41,12 @@ import { Atlas, Painter, paintFace, shade } from './paintKit.js';
  * @property {boolean} boxSmooth  a chamfered box's bevels blended into its faces
  */
 
-/** The style's rules (pass 1 also tried 'soft', octagons with smoothed normals; the user chose this one). */
+/**
+ * The style's rules (pass 1 also tried 'soft', octagons with smoothed normals; the user chose 'hex'; since §107 modelKit's
+ * shape language makes every cross-section a block, so `sides` and `bevel` speak only in the faceted language).
+ */
 export const STYLES = Object.freeze({
-  hex: Object.freeze(/** @type {Style} */ ({ id: 'hex', label: 'A: Hex-faceted', sides: 6, smooth: false, bevel: 0.16, boxSmooth: false })),
+  hex: Object.freeze(/** @type {Style} */ ({ id: 'hex', label: 'Chiselled blocks', sides: 6, smooth: false, bevel: 0.16, boxSmooth: false })),
 });
 
 /** Texels per metre: bodies, heads (the face is what is read first), animals, plants. Today's avatars are 32. */
@@ -226,6 +231,9 @@ export const KID_HEAD = Object.freeze([
  * @property {ReadonlyArray<ReadonlyArray<number>>} [shape]  its ring profile (avatars.js; default KID_HEAD)
  */
 
+/** A head's strip is at most this wide (px): a block's head is longer round than the atlas is wide at DENSITY.head. */
+export const HEAD_STRIP_MAX = 250;
+
 /** The head loft. @param {HeadDims} H @param {ReadonlyArray<ReadonlyArray<number>>} shape */
 export function headGeo(H, shape) {
   return loft({ corners: [...HEAD_CORNERS], rx: H.rx, rz: H.rz, rings: shape.map(([t, sx, sz, dz]) => ({ y: t * H.h, sx, sz, dz })) });
@@ -243,7 +251,7 @@ export const FRONT = Math.abs(Math.cos(150 * DEG));
 export function headSkin(s, key, H, skin, face) {
   const o = { corners: [...HEAD_CORNERS], rx: H.rx, rz: H.rz };
   const per = wrapU(o, 0).perimeter;
-  s.wrap(key, Math.min(250, Math.round(per * DENSITY.head)), Math.round(H.h * DENSITY.head), (p) => { // 250: a block's head is wider round (the blocky pilot)
+  s.wrap(key, Math.min(HEAD_STRIP_MAX, Math.round(per * DENSITY.head)), Math.round(H.h * DENSITY.head), (p) => {
     skin(p);
     // the face's own rectangle: 52° either side of straight ahead
     const u0 = wrapU(o, (180 - 52) * DEG).u;
@@ -265,10 +273,12 @@ export function addHead(add, M, H, shape, { head = 'head', skin = 'skin', nose =
   // the nose: a wedge standing out of the face plane, its ridge low (the tip)
   const z = -H.rz * FRONT * 0.95;
   add(wedge({ w: nose[0], h: nose[1], d: nose[2], ridge: -0.45, sx: 0.35 }), skin, mul(M, compose({ t: [0, H.noseAt * H.h, z + 0.004], r: [-Math.PI / 2, 0, 0] })));
-  // the ears: half-hexagons on the sides at the eyes' height
+  // the ears: low blocks on the sides at the eyes' height, their roots a little inside the head's flank there
+  const earT = H.eyeAt - 0.07;
+  const flank = Math.max(...basePolygon({ corners: [...HEAD_CORNERS], rx: H.rx, rz: H.rz }).pts.map((p) => Math.abs(p.x))) * headRingAt(shape, earT)[0];
   for (const side of [-1, 1]) {
     const ear = loft({ sides: 6, rx: 0.042, rz: 0.03, rings: [{ y: 0 }, { y: 0.024, sx: 0.72, sz: 0.7 }] });
-    add(ear, skin, mul(M, compose({ t: [side * (H.rx * 0.97 - 0.006), (H.eyeAt - 0.07) * H.h, 0.012], r: [0, 0, -side * Math.PI / 2] })));
+    add(ear, skin, mul(M, compose({ t: [side * (flank - 0.004), earT * H.h, 0.012], r: [0, 0, -side * Math.PI / 2] })));
   }
 }
 
@@ -386,6 +396,40 @@ export function headRadius(H, shape, dir) {
   return lo;
 }
 
+/** How much farther off a block skull's edge the hair stands than off its faces (m). */
+export const EDGE_CLEAR = 0.004;
+
+/**
+ * Where a block skull's edge is at `pitch`, between yaws lo and hi (degrees): the yaw at which the head reaches farthest
+ * from the cranium's middle (the surface falls away either side of an edge).
+ */
+export function skullEdgeYaw(H, shape, pitch, lo, hi) {
+  const g = (Math.sqrt(5) - 1) / 2;
+  const f = (y) => headRadius(H, shape, hairDir(y, pitch));
+  let a = lo;
+  let b = hi;
+  let c = b - g * (b - a);
+  let d = a + g * (b - a);
+  let fc = f(c);
+  let fd = f(d);
+  for (let i = 0; i < 18; i++) {
+    if (fc > fd) {
+      b = d;
+      d = c;
+      fd = fc;
+      c = b - g * (b - a);
+      fc = f(c);
+    } else {
+      a = c;
+      c = d;
+      fc = fd;
+      d = a + g * (b - a);
+      fd = f(d);
+    }
+  }
+  return (a + b) / 2;
+}
+
 /** A point `out` metres off the head's surface along hairDir(yaw, pitch). */
 export function onSkull(H, shape, yaw, pitch, out) {
   const d = hairDir(yaw, pitch);
@@ -404,7 +448,23 @@ export function onSkull(H, shape, yaw, pitch, out) {
  *   rings?: ReadonlyArray<number>, yaws?: number[] }} o
  */
 export function hairMass(H, shape, { around = 20, rim, off, rings = [0, 0.12, 0.3, 0.5, 0.7, 0.86, 1], yaws: given }) {
-  const yaws = given ?? [...Array(around).keys()].map((j) => (j * 360) / around);
+  const yaws = given ?? massYaws(H, around);
+  // a block's skull has four sharp edges, and they do not stand at one yaw all the way up (its rings narrow and shift):
+  // the points over its corners follow the edge itself at each ring, or the edge would show between two of them
+  const corners = shapeLanguage() === 'block' ? headCornerYaws(H) : [];
+  const onCorner = yaws.map((y) => corners.some((c) => Math.abs(c - y) < 1e-6));
+  /** @type {number[]} each corner point's yaw at the ring below (kept where the skull has no edge: over its flat top) */
+  const edgeYaw = [...yaws];
+  const yawAt = (j, pitch) => {
+    if (!onCorner[j]) return yaws[j];
+    const lo = Math.max(yaws[j] - 25, (yaws[j - 1] ?? yaws[j] - 25) + 2);
+    const hi = Math.min(yaws[j] + 25, (yaws[j + 1] ?? 360) - 2);
+    const y = skullEdgeYaw(H, shape, pitch, lo, hi);
+    // an edge is a peak: the skull falls away either side of it. On the flat top there is none: keep the yaw below
+    const r = (a) => headRadius(H, shape, hairDir(a, pitch));
+    if (y - 6 > lo && y + 6 < hi && r(y) > Math.max(r(y - 6), r(y + 6)) + 5e-4) edgeYaw[j] = y;
+    return edgeYaw[j];
+  };
   let last = [0];
   return ringLoft({
     rings: rings.map((s) => {
@@ -414,7 +474,9 @@ export function hairMass(H, shape, { around = 20, rim, off, rings = [0, 0.12, 0.
       last = offs;
       return yaws.map((yaw, j) => {
         const r0 = rim(yaw, j);
-        return onSkull(H, shape, yaw, r0 + (90 - r0) * s ** 0.85, offs[j]);
+        const pitch = r0 + (90 - r0) * s ** 0.85;
+        // over an edge a hair more: the edge bends at each of the skull's rings, between two of the hair's
+        return onSkull(H, shape, yawAt(j, pitch), pitch, offs[j] + (onCorner[j] ? EDGE_CLEAR : 0));
       });
     }),
   });
@@ -436,18 +498,49 @@ export function hairline(knots) {
   };
 }
 
-/** A cap's points round: over each of the head's corners and halfway between them, from the back (the seam). */
-export const CAP_YAWS = (() => {
-  const c = HEAD_CORNERS.map((a) => (a * 180) / Math.PI).sort((a, b) => a - b);
-  const out = [0];
-  c.forEach((d, i) => {
-    out.push(d);
-    const next = i + 1 < c.length ? c[i + 1] : 360;
-    if (next < 360) out.push((d + next) / 2);
-  });
-  return out;
-})();
+/**
+ * A head's own corners as yaws (degrees round from the back toward +x), in the kit's shape language: a block's four,
+ * the faceted head's eight. Hair must have a point over each, or the corner shows between two of its points.
+ * @param {HeadDims} H @returns {number[]}
+ */
+export function headCornerYaws(H) {
+  return basePolygon({ corners: [...HEAD_CORNERS], rx: H.rx, rz: H.rz }).pts.map((p) => p.th / DEG).filter((d) => d > 1e-6 && d < 360 - 1e-6);
+}
 
+/** A cap's points round: straight behind (the seam), over each of the head's corners, and halfway between them. */
+export function capYaws(H) {
+  const c = headCornerYaws(H).sort((a, b) => a - b);
+  const out = [0];
+  let prev = 0;
+  for (const d of c) {
+    out.push((prev + d) / 2, d);
+    prev = d;
+  }
+  out.push((prev + 360) / 2);
+  return out;
+}
+
+/**
+ * `around` points evenly round a head, the one nearest each of its corners moved onto that corner (a mass's outline:
+ * as many points as asked for, none of the head's corners between two of them).
+ * @param {HeadDims} H @param {number} around @returns {number[]}
+ */
+export function massYaws(H, around) {
+  const yaws = [...Array(around).keys()].map((j) => (j * 360) / around);
+  const taken = new Set([0]);
+  for (const d of headCornerYaws(H)) {
+    let best = -1;
+    for (let j = 1; j < around; j++) {
+      if (taken.has(j)) continue;
+      if (best < 0 || Math.abs(yaws[j] - d) < Math.abs(yaws[best] - d)) best = j;
+    }
+    if (best > 0) {
+      yaws[best] = d;
+      taken.add(best);
+    }
+  }
+  return yaws;
+}
 /** A cap's rings, hairline to crown: close enough together that no edge of the head shows between them (hairGaps). */
 export const CAP_RINGS = Object.freeze([0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.88, 1]);
 
@@ -471,6 +564,9 @@ export const capOff = (cap, yaw, pitch) => {
   return cap.off(yaw, pitch, s, 0);
 };
 
+/** A clump's slab is as thick at its edges as in its middle (a block), so it is cut this much thinner than `t`. */
+export const CLUMP_THICK = 0.7;
+
 /**
  * A CLUMP of hair lying on a cap: a flattened hex section swept along a curve through `ctrl` — [yaw, pitch, lift]
  * points (`lift` metres over the cap; the first, the root, just under the cap's surface, its end dark), or
@@ -487,7 +583,7 @@ export function clump(H, shape, cap, ctrl, { w, t = 0.022, profile, segments, up
   // flat to the head all along it: its thickness faces out from the cranium at every station (or `up`)
   const u = up ?? ((c) => [c[0] - cc[0], c[1] - cc[1], c[2] - cc[2]]);
   const S = segments ?? profile.length - 1;
-  return sweep({ points: pts, sides: 6, rx: w / 2, rz: t / 2, up: u, profile, segments: S });
+  return sweep({ points: pts, sides: 6, rx: w / 2, rz: (t / 2) * CLUMP_THICK, up: u, profile, segments: S });
 }
 
 /** @param {ArrayLike<number>} v @returns {number[]} */
